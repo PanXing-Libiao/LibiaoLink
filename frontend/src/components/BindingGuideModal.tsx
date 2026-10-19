@@ -89,7 +89,7 @@ export function BindingGuideModal({ me }: { me: MeResponse }) {
         aria-label={t("settings.guide.title")}
         data-wecom-binding-guide="true"
         data-wecom-binding-guide-auto-dismiss={String(GUIDE_AUTO_DISMISS_MS)}
-        className="fixed right-5 top-1/2 z-[70] max-h-[calc(100dvh-2rem)] w-[min(calc(100vw-2.5rem),24rem)] -translate-y-1/2 overflow-y-auto rounded-2xl border border-white/80 bg-white/85 p-5 text-zinc-900 shadow-[0_18px_50px_rgba(15,23,42,0.16),0_2px_8px_rgba(15,23,42,0.06)] ring-1 ring-zinc-900/5 backdrop-blur-xl sm:right-6"
+        className="wecom-guide-pop fixed right-5 top-1/2 z-[70] max-h-[calc(100dvh-2rem)] w-[min(calc(100vw-2.5rem),24rem)] -translate-y-1/2 overflow-y-auto rounded-2xl border border-white/80 bg-white/85 p-5 text-zinc-900 shadow-[0_18px_50px_rgba(15,23,42,0.16),0_2px_8px_rgba(15,23,42,0.06)] ring-1 ring-zinc-900/5 backdrop-blur-xl sm:right-6"
       >
         <button
           type="button"
