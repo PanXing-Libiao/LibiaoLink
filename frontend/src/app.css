@@ -2525,3 +2525,45 @@ body {
 .hub-dash-word-detail__table td:nth-child(7) {
   min-width: 11rem;
 }
+
+
+/* 全站悬停提示（2026-10-19 · 业务口径「当前系统的提示如图二 我要改成如图1的样式 但是不用那个小点指向的效果」）：
+   接管原生 title 的白色圆角卡，紫色正文 + 柔和投影；不画 ::before / ::after，因此没有指向箭头或小三角。 */
+.ll-tooltip {
+  position: fixed;
+  z-index: 100;
+  max-width: min(40rem, calc(100vw - 1.5rem));
+  padding: 0.64rem 1.05rem;
+  border-radius: 0.68rem;
+  background: #ffffff;
+  color: #5146b7;
+  box-shadow:
+    0 2px 6px rgb(27 25 79 / 0.08),
+    0 18px 38px -22px rgb(27 25 79 / 0.5);
+  font-size: 0.95rem;
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: 0.005em;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  pointer-events: none;
+  animation: ll-tooltip-in 120ms ease-out both;
+}
+
+@keyframes ll-tooltip-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ll-tooltip {
+    animation: none;
+  }
+}
