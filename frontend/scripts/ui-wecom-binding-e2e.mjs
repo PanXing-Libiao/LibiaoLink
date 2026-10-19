@@ -9,8 +9,9 @@
  * v1.4 §3 / §6 / §9 / §10（D2 · D3 · D5 · D6）。
  *
  * 本脚本用真机浏览器（无头 Chrome + CDP）验：
- *   ① 首登引导：未绑定 + 本机未跳过 → 弹窗出现（标题 / 两步指引 / 未绑定面板）；点「稍后再说」→ 关闭且落跳过位；
- *      刷新不再弹（跳过位按账号分记 —— 账号键 = `/auth/me` 的 `user.id`（= 库内 `casdoor_id`）· 退出登录清除）；
+ *   ① 首登绑定提醒：未绑定 + 本机未跳过 → 右侧垂直居中半透明卡出现（非模态 / 无遮罩 / 标题与两步指引）；
+ *      10 秒自动收起且不落跳过位；刷新再次提醒；关闭 X → 落跳过位，刷新不再显示
+ *      （跳过位按账号分记 —— 账号键 = `/auth/me` 的 `user.id`（= 库内 `casdoor_id`）· 退出登录清除）；
  *   ② 头像菜单首项 = 「设置」（文案 + `#/settings` 落点），点它 → 地址到 `#/settings`、设置页渲染（`data-settings`）；
  *   ③ 未绑定态：设置页出「未绑定」+ D4 终稿话术；点「获取绑定码」→ 6 位码（`^[0-9]{6}$`）+ 倒计时递减 + 库内落 pending 行；
  *   ③-诊断（Push 255）：机器人诊断块显示 server/.env 的 bot_id / secret（默认掩码，点「显示」切明文）+ 最近回调统计；
@@ -26,7 +27,7 @@
  *      已绑定 = 不弹引导（清掉本机跳过位后刷新仍不弹）；
  *   ⑥ 解绑：二次确认（取消 = 仍是已绑定、确认 = 回未绑定）+ 库内绑定行去址（`bound_at` / `user_id` 置空、行仍在）
  *      + `audit_logs` 恰一条（objectType user / action delete / summary 与 changes 只带掩码）；
- *   ⑦ 解绑后引导恢复（未绑定 + 未跳过 → 再弹），点「前往设置」→ 地址到 `#/settings`；
+ *   ⑦ 解绑后提醒恢复（未绑定 + 未跳过 → 再显示），点「前往设置」→ 地址到 `#/settings`；
  *   ⑧ 未绑定提示：站内信弹窗底部「当前用户未绑定企业微信」+「前往设置补绑」→ 点它落 `#/settings`；
  *   ⑨ 控制台零报错；跑完撤销会话 / 清绑定码行 / 清绑定夹具行
  *      （audit_logs 只读留痕 —— api 角色无 DELETE 权，同 m6-stakeholder 先例，不算残留）。
@@ -289,23 +290,39 @@ const textOf = (selector) => "(function(){var el=document.querySelector(" + j(se
 await page.send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 1000, deviceScaleFactor: 1, mobile: false });
 const shots = [];
 
-// ── ① 首登引导弹窗（未绑定 + 本机未跳过 → 弹；「稍后再说」→ 落跳过位 + 刷新不再弹）──────────────────────
+// ── ① 首登右侧悬浮提醒（未绑定 + 本机未跳过 → 显示；10 秒自动收起；关闭 X 落跳过位）──────────────
 await goto("#/projects", "[data-topnav]");
 await waitFor(exists("[data-wecom-binding-guide]"), 15000);
-check("首登引导弹窗出现（未绑定 + 本机未跳过 · 口径 §10 D5）", (await ev(exists("[data-wecom-binding-guide]"))) === true);
-const guideText = String(await ev(textOf("[data-wecom-binding-guide]")) ?? "");
-const guideRoles = await ev("(function(){var el=document.querySelector(" + j("[data-wecom-binding-guide]") + ");if(el===null){return null;}return {role:el.getAttribute(" + j("role") + "),modal:el.getAttribute(" + j("aria-modal") + "),skip:el.querySelector(" + j("[data-wecom-binding-guide-skip]") + ")===null?null:String(el.querySelector(" + j("[data-wecom-binding-guide-skip]") + ").textContent||" + j("") + ").trim(),go:el.querySelector(" + j("[data-wecom-binding-guide-goto]") + ")===null?null:String(el.querySelector(" + j("[data-wecom-binding-guide-goto]") + ").textContent||" + j("") + ").trim(),panel:el.querySelector(" + j("[data-wecom-binding]") + ")===null?null:el.querySelector(" + j("[data-wecom-binding]") + ").getAttribute(" + j("data-wecom-binding") + ")};})()");
-check("引导弹窗是模态框（role=dialog + aria-modal）且内含未绑定面板", guideRoles !== null && guideRoles.role === "dialog" && guideRoles.modal === "true" && guideRoles.panel === "unbound", JSON.stringify(guideRoles));
-check("引导弹窗文案 = 标题「绑定企业微信」+ 两步指引（取码 → 单聊发码）", guideText.indexOf("绑定企业微信") >= 0 && guideText.indexOf("获取绑定码") >= 0, guideText.slice(0, 120));
-check("引导弹窗可跳过：按钮文案 =「稍后再说」+「前往设置」", guideRoles !== null && guideRoles.skip === "稍后再说" && guideRoles.go === "前往设置", JSON.stringify(guideRoles === null ? null : [guideRoles.skip, guideRoles.go]));
+check("首登绑定提醒出现（未绑定 + 本机未跳过 · 口径 §10 D5）", (await ev(exists("[data-wecom-binding-guide]"))) === true);
+const guideStateExpr = "(function(){var el=document.querySelector(" + j("[data-wecom-binding-guide]") + ");if(el===null){return null;}var r=el.getBoundingClientRect();var cs=window.getComputedStyle(el);var copy=el.querySelector(" + j("[data-wecom-binding-guide-copy-link]") + ");var close=el.querySelector(" + j("[data-wecom-binding-guide-skip]") + ");var go=el.querySelector(" + j("[data-wecom-binding-guide-goto]") + ");var panel=el.querySelector(" + j("[data-wecom-binding]") + ");var outside=document.elementFromPoint(5,5);return {role:el.getAttribute(" + j("role") + "),modal:el.getAttribute(" + j("aria-modal") + "),position:cs.position,rightGap:Math.round(window.innerWidth-r.right),centerGap:Math.round(Math.abs((r.top+r.bottom)/2-window.innerHeight/2)),width:Math.round(r.width),background:String(cs.backgroundColor),backdrop:String(cs.backdropFilter||cs.webkitBackdropFilter||" + j("") + "),text:String(el.textContent||" + j("") + ").trim(),copyText:copy===null?null:String(copy.textContent||" + j("") + ").trim(),closeLabel:close===null?null:close.getAttribute(" + j("aria-label") + "),goText:go===null?null:String(go.textContent||" + j("") + ").trim(),panel:panel===null?null:panel.getAttribute(" + j("data-wecom-binding") + "),overlayHit:outside===null?null:(el.contains(outside)?" + j("guide") + ":" + j("page") + ")};})()";
+const guideState = await ev(guideStateExpr);
+check("引导为非模态 region（无 aria-modal）且内含未绑定面板", guideState !== null && guideState.role === "region" && guideState.modal === null && guideState.panel === "unbound", JSON.stringify(guideState));
+check("右侧垂直居中悬浮（fixed、右边距 16–32px、中心偏差 ≤ 3px）", guideState !== null && guideState.position === "fixed" && guideState.rightGap >= 16 && guideState.rightGap <= 32 && guideState.centerGap <= 3 && guideState.width <= 400, JSON.stringify(guideState === null ? null : {rightGap:guideState.rightGap,centerGap:guideState.centerGap,width:guideState.width}));
+check("半透明磨砂材质（非纯白背景 + backdrop blur）", guideState !== null && guideState.background !== "rgb(255, 255, 255)" && String(guideState.backdrop).indexOf("blur") >= 0, guideState === null ? "null" : JSON.stringify({background:guideState.background,backdrop:guideState.backdrop}));
+check("页面不被遮罩拦截（左上角命中页面，而非引导卡）", guideState !== null && guideState.overlayHit === "page", guideState === null ? "null" : guideState.overlayHit);
+const guideText = String(guideState === null ? "" : guideState.text);
+check("引导文案 = 标题「绑定企微」+ 副标题「帮助你及时收到/跟进相关任务」+ 取码指引", guideText.indexOf("绑定企微") >= 0 && guideText.indexOf("帮助你及时收到/跟进相关任务") >= 0 && guideText.indexOf("获取绑定码") >= 0 && guideText.indexOf("企微任意对话框发送给机器人") >= 0, guideText.slice(0, 200));
+check("机器人链接不直接展示，只提供「复制机器人链接」按钮", guideState !== null && guideState.copyText === "复制机器人链接" && guideText.indexOf("work.weixin.qq.com") < 0, JSON.stringify(guideState === null ? null : {copyText:guideState.copyText,hasUrl:guideText.indexOf("work.weixin.qq.com") >= 0}));
+check("右上关闭 X + 「前往设置」入口", guideState !== null && guideState.closeLabel === "关闭" && guideState.goText === "前往设置", JSON.stringify(guideState === null ? null : {closeLabel:guideState.closeLabel,goText:guideState.goText}));
+check("引导内不再显示重复的「未绑定」状态行与轮询提示", guideText.indexOf("当前用户未绑定企业微信，请前往设置补绑。") < 0 && guideText.indexOf("每 5 秒检查一次") < 0, guideText.slice(0, 220));
 shots.push(await shot("wecom-guide-1"));
+await click("[data-wecom-binding-guide-copy-link]");
+const linkCopyToast = await waitFor("(function(){var el=document.querySelector(" + j("[data-toast]") + ");return el!==null && String(el.textContent||" + j("") + ").indexOf(" + j("机器人链接已复制") + ") >= 0;})()", 6000);
+check("点「复制机器人链接」→ 成功提示（链接本体不出现在页面文案）", linkCopyToast === true);
+const autoDismissMs = Number(await ev("(function(){var el=document.querySelector(" + j("[data-wecom-binding-guide]") + ");return el===null?null:el.getAttribute(" + j("data-wecom-binding-guide-auto-dismiss") + ");})()"));
+check("自动收起时长 = 10 秒", autoDismissMs === 10000, String(autoDismissMs));
+const autoDismissed = await waitFor("document.querySelector(" + j("[data-wecom-binding-guide]") + ") === null", 12000);
+const storedAfterAutoDismiss = String(await ev("String(window.localStorage.getItem(" + j(GUIDE_KEY) + "))"));
+check("10 秒后自动消失、页面可继续用；自动消失不写跳过位", autoDismissed === true && (await ev(exists("[data-topnav]"))) === true && storedAfterAutoDismiss.indexOf(userRow.casdoor_id) < 0, storedAfterAutoDismiss);
+await reload("[data-topnav]");
+check("未绑定时刷新会再次提醒", (await waitFor(exists("[data-wecom-binding-guide]"), 12000)) === true);
 await click("[data-wecom-binding-guide-skip]");
-check("点「稍后再说」→ 弹窗关闭、页面可继续用（顶栏在位）", (await waitFor("document.querySelector(" + j("[data-wecom-binding-guide]") + ") === null", 8000)) === true && (await ev(exists("[data-topnav]"))) === true);
+check("点关闭 X → 提醒关闭、页面可继续用（顶栏在位）", (await waitFor("document.querySelector(" + j("[data-wecom-binding-guide]") + ") === null", 8000)) === true && (await ev(exists("[data-topnav]"))) === true);
 const storedGuide = String(await ev("String(window.localStorage.getItem(" + j(GUIDE_KEY) + "))"));
-check("跳过位落本机记忆（按账号分记 · 账号键 = /auth/me 的 user.id = 库内 casdoor_id）", storedGuide.indexOf(userRow.casdoor_id) >= 0, storedGuide);
+check("关闭 X 落本机跳过位（按账号分记 · 账号键 = /auth/me 的 user.id = 库内 casdoor_id）", storedGuide.indexOf(userRow.casdoor_id) >= 0, storedGuide);
 await reload("[data-topnav]");
 await sleep(2000);
-check("跳过位生效：刷新后不再弹引导", (await ev(exists("[data-wecom-binding-guide]"))) === false);
+check("跳过位生效：刷新后不再显示引导", (await ev(exists("[data-wecom-binding-guide]"))) === false);
 
 // ── ② 头像菜单首项「设置」→ #/settings ────────────────────────────────────────────────────────────────
 const avatarSel = "(function(){var list=document.querySelectorAll(" + j("button[aria-haspopup=menu]") + ");if(list.length===0){return null;}var el=list[list.length-1];var r=el.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),label:el.getAttribute(" + j("aria-label") + ")};})()";
