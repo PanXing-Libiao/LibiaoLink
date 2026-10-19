@@ -7,7 +7,7 @@ export const ProjectSchema = z
   .object({
     id: UuidSchema,
     code: z.string().openapi({ example: "CNBJ-20260708-0001", description: "项目编号：创建人填写（建后可修改）；服务端只校验唯一性，不生成；格式仅前端提示" }),
-    seqNo: z.number().int().positive().openapi({ example: 1, description: "项目序号：服务端创建时分配（全库唯一、不可修改、不回收；与项目编号一一对应同一项目）；卡片等展示场景两位补零，列表支持 sort=seqNo:asc|desc" }),
+    seqNo: z.number().int().positive().openapi({ example: 1, description: "项目序号：服务端创建时分配（全库唯一、不可修改；彻底删除后的空号由下一次创建按最小可用序号复用）；与项目编号一一对应同一项目；卡片等展示场景两位补零，列表支持 sort=seqNo:asc|desc" }),
     name: z.string().openapi({ example: "XX 客户分拣项目" }),
     customer: z.string().nullable(),
     region: z.string().openapi({ description: "项目落地地区（字典 region；缺省「未分类」）" }),

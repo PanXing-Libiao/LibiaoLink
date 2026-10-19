@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { and, asc, count, desc, eq, gte, ilike, inArray, isNotNull, isNull, lt, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, ilike, inArray, isNotNull, isNull, lt, lte, or, sql, type SQL } from "drizzle-orm";
 import { AppError } from "../../common/errors/app-error.js";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
@@ -168,12 +168,14 @@ export class ProjectRepository {
   }
 
   async insert(input: ProjectInsertInput, at: Date, client: DbClient = this.database.db): Promise<ProjectRow> {
+    const seqNo = await this.allocateSeqNo(client);
     try {
       const rows = await client
         .insert(projects)
         .values({
           ...(input.id === undefined ? {} : { id: input.id }),
           code: input.code,
+          seqNo,
           name: input.name,
           customer: input.customer,
           region: input.region,
@@ -197,6 +199,50 @@ export class ProjectRepository {
       }
       throw error;
     }
+  }
+
+  /** 回收站到期项目（worker 清理入口；按进入回收站时间升序先进先出）。 */
+  async listExpiredRecycledProjects(
+    cutoff: Date,
+    limit: number,
+    client: DbClient = this.database.db,
+  ): Promise<ProjectRow[]> {
+    return client
+      .select()
+      .from(projects)
+      .where(and(isNotNull(projects.deletedAt), lte(projects.deletedAt, cutoff)))
+      .orderBy(asc(projects.deletedAt))
+      .limit(limit);
+  }
+
+  /**
+   * 分配最小可用 seq_no（项目在库期间全库唯一；彻底删除后的空号由下一次创建复用）。
+   * 事务级 advisory lock 串行化并发创建：锁在事务提交 / 回滚时释放，回滚号可被下一事务立即复用。
+   * 查询只扫 seq_no 唯一索引，避免 generate_series 在大序号 / 稀疏数据上膨胀。
+   */
+  private async allocateSeqNo(client: DbClient): Promise<number> {
+    await client.execute(sql`select pg_advisory_xact_lock(hashtext('libiaolink.projects.seq_no'))`);
+    const result = await client.execute<{ seqNo: number }>(sql`
+      with candidates as (
+        select 1 as candidate
+        where not exists (select 1 from ${projects} where ${projects.seqNo} = 1)
+        union all
+        select seq_no + 1
+        from (
+          select ${projects.seqNo} as seq_no,
+                 lead(${projects.seqNo}) over (order by ${projects.seqNo}) as next_no
+          from ${projects}
+        ) ordered
+        where next_no is null or next_no > seq_no + 1
+      )
+      select coalesce(min(candidate), 1)::int as "seqNo"
+      from candidates
+    `);
+    const seqNo = Number(result.rows[0]?.seqNo);
+    if (!Number.isSafeInteger(seqNo) || seqNo < 1) {
+      throw new Error("projects.seq_no 分配失败：" + String(result.rows[0]?.seqNo));
+    }
+    return seqNo;
   }
 
   async updateWithVersion(

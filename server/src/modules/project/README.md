@@ -3,24 +3,26 @@
 | 字段 | 内容 |
 |---|---|
 | 类型 | 领域模块（domain） |
-| 职责 | 项目主数据、首页分类字段（地区 / 项目类型 / 项目经理）、项目硬删（物理删聚合子表 · Push 190 起）；阶段推进 / 成员 / 视图随 M2-03 / M2-05 / M2-06 |
+| 职责 | 项目主数据、首页分类字段（地区 / 项目类型 / 项目经理）、项目回收站（软删 / 恢复 / 满 30 天自动或管理员手动彻底删除）、最小空闲 seq_no 复用；阶段推进 / 成员 / 视图随 M2-03 / M2-05 / M2-06 |
 | 主责 | wmj（团队分工.md §2） |
-| 对外接口 | ProjectService（listProjects / getFacets / getProject / createProject / updateProject / deleteProject）、ProjectMemberService（listMembers / addMember / removeMember）、ArchiveService（archiveProject / getArchive）；FlowService（importSnapshot / getFlow / listStages / createNode / deleteNode / completeNode / canComplete / advanceStage / rollbackStage）；HTTP：GET /api/v1/projects、GET /api/v1/projects/facets、GET / PATCH / DELETE /api/v1/projects/{id}、POST /api/v1/projects、GET / POST /api/v1/projects/{id}/members、DELETE /api/v1/projects/{id}/members/{userId}、GET / PUT / DELETE /api/v1/projects/{id}/group、POST / GET /api/v1/projects/{id}/archive、GET /api/v1/projects/{id}/flow、GET /api/v1/projects/{id}/stages、POST /api/v1/projects/{id}/stages/{key}/advance、POST /api/v1/projects/{id}/stages/{key}/rollback、POST / DELETE /api/v1/projects/{id}/nodes[/{nodeId}]、POST /api/v1/nodes/{id}/complete、GET /api/v1/nodes/{id}/can-complete |
+| 对外接口 | ProjectService（listProjects / getFacets / getProject / createProject / updateProject / deleteProject / restoreProject / purgeProject / sweepExpiredRecycled）、ProjectMemberService（listMembers / addMember / removeMember）、ArchiveService（archiveProject / getArchive）；FlowService（importSnapshot / getFlow / listStages / createNode / deleteNode / completeNode / canComplete / advanceStage / rollbackStage）；HTTP：GET /api/v1/projects、GET /api/v1/projects/facets、GET / PATCH / DELETE /api/v1/projects/{id}、POST /api/v1/projects、GET / POST /api/v1/projects/{id}/members、DELETE /api/v1/projects/{id}/members/{userId}、GET / PUT / DELETE /api/v1/projects/{id}/group、POST / GET /api/v1/projects/{id}/archive、GET /api/v1/projects/{id}/flow、GET /api/v1/projects/{id}/stages、POST /api/v1/projects/{id}/stages/{key}/advance、POST /api/v1/projects/{id}/stages/{key}/rollback、POST / DELETE /api/v1/projects/{id}/nodes[/{nodeId}]、POST /api/v1/nodes/{id}/complete、GET /api/v1/nodes/{id}/can-complete |
 
 ## 已实现（h2 第一批）
 
 - 路由（契约 `shared/src/modules/projects.ts`，OpenAPI tags=projects）：全部挂 `SessionGuard + CsrfGuard`（读要登录、写要 `X-CSRF-Token`）。注册顺序上 `GET /facets` 在 `GET /:id` 之前（否则被 `:id` 吃掉）；`id` 走 `UuidSchema` 校验（非法 400 VALIDATION_FAILED）。
 - M2-01 项目 CRUD：
-  - 创建 `POST /api/v1/projects` → 201；`seq_no` 由数据库序列分配（请求不接受 `seqNo`）；`code` 唯一由约束兜底，23505 + `projects_code_key` → 409 `PROJECT_CODE_EXISTS`；缺省 `stageKey = presale`。
+  - 创建 `POST /api/v1/projects` → 201；`seq_no` 由服务端在事务内分配“当前最小可用正整数”（请求不接受 `seqNo`；彻底删除后的空号由下一次创建复用，并发创建用事务级 advisory lock 串行化）；`code` 唯一由约束兜底，23505 + `projects_code_key` → 409 `PROJECT_CODE_EXISTS`；缺省 `stageKey = presale`。
   - 更新 `PATCH /api/v1/projects/{id}`：乐观锁（正文回传 `version`，命中则 `version + 1` 并刷新 `updated_at`）；不匹配 409 `VERSION_CONFLICT`；期间被删 → 404。
-  - 硬删 `DELETE /api/v1/projects/{id}`（Push 190 起，原软删口径作废）：`If-Match` 头回传当前 `version`（缺失 / 非纯数字 400；不匹配 409）；事务内先数 9 张聚合子表行数（进审计 `metadata.children`），再按外键依赖序物理删 15 步 + 1 步解环（issue_events → task_events → 置空 `files.current_version_id`（files ⇄ file_versions 循环外键，删版本行前必须解环）→ file_versions → files → change_requests → issues → daily_reports → tasks → node_requirements → project_nodes → project_stages → project_archives → project_members → project_stakeholders → projects），删除前快照写审计（`action=delete` + `metadata.hardDelete=true` + `changes` 每条 `to=null`）；返回**删除前快照**。**编号随行释放 → 同编号可再建**（撞库内其它项目仍 409）；`seq_no` 不回收。
+  - 回收站 `DELETE /api/v1/projects/{id}`：`If-Match` 回传当前 `version`，只写 `deleted_at` / `deleted_by` 并 `version + 1`；普通读面立即不可见，`GET /projects?filter[recycled]=true` 可查。
+  - 恢复 / 彻底删除：`POST /projects/{id}/restore`（只需 `project.delete`）清回收站标记；`POST /projects/{id}/purge`（仅 admin）先按 `projects/{id}/` 前缀清对象全部版本，再按外键序物理清 9 张聚合子表与项目行。`code` 与 `seq_no` 均在回收站期间保留，彻底删除后同时释放。
+  - 30 天到期清理：worker 每 24 小时扫描 `deleted_at <= now() - 30 days` 的项目，单轮内按 ≤ 20 个一批（`PROJECT_RECYCLE_SWEEP_BATCH`）drain，直到不满批或无进展；复用彻底删除链路清理数据、文件 / 图片对象并写 `source=system` 审计；并发恢复 / 手动彻底删除在行锁内复核后跳过。
   - 归档（M7-04 · Push 167）：走专门端点 —— `POST /api/v1/projects/{id}/archive`（门禁 + 置位 + 引用式清单 + 撤销上传会话 + 审计）与 `GET /api/v1/projects/{id}/archive`（清单读面，未归档 404）；`PATCH` 的 `status` 收紧为 active / paused / done（**不再接受 archived**）；列表增 `filter[archivedYear]`（C4-07 检索）。写保护不变：`status = archived` 的项目 PATCH / DELETE 一律 409 `PROJECT_ARCHIVED`。
 - M2-04 首页列表 / facets：`GET /api/v1/projects` 与 `GET /api/v1/projects/facets` 共用 `buildProjectFilter`（v0.3 §3.3「禁止两套 SQL」）——多值 `filter[region|projectType|managerId|stageKey|status]`（英文逗号分隔；`managerId` 命中口径 = 项目挂的任意一位经理，A22 · Push 136）；facets 的项目经理维度 = 数组展开后按人头计数（一个项目挂多位经理时每位各计一次）、`q` 命中编号 / 名称 / 客户 / 序号、`filter[timeFrom] / filter[timeTo]` 闭区间（`updated_at`）；facets 五组固定返回（A6），`total` 与列表同口径。
 - 时间口径（ADR-028 · **Push 175 维度修订**）：区间按 Asia/Shanghai 日界（固定 `+08:00`，中国无夏令时）——下界含当日 00:00，上界取次日 00:00 不含；**区间维度 = `projects.created_at`（项目创建时间；原「最近活动 `updated_at`」口径作废）**；`timeFrom` 晚于 `timeTo` 或 `status` / `stageKey` / `managerId` 含非法值一律 400（不返回静默空列表）。
 - 排序（A9 · **Push 175 缺省修订**）：白名单 `updatedAt` / `createdAt` / `seqNo`，方向 `asc|desc`；**缺省 `createdAt:desc`（最近创建的在前；原 `updatedAt:desc` 作废）** —— 前端 TIME = 「维度 × 方向」（创建时间 / 更新时间 × 降序 / 升序）；仓储补 `asc(seq_no)` 稳定 tie-breaker，分页不跳行。
-- 可见性（A5）：列表 / 详情 / facets 统一 `deleted_at is null`（**兼容列过滤 —— Push 190 起删除 = 物理删行、新数据恒 null**）；`seq_no` 不回收；**`code` 唯一约束（库内活跃项目间）保留，但删除即释放编号 → 同编号可再建**（撞库内其它项目仍 409）；新列 + 局部索引 `ix_projects_active_updated` 见迁移 `0009_projects_soft_delete.sql`（**删除语义另见 0035**）（`npm run check:db-schema`：18 张表 / 190 列 / 51 索引 / 47 CHECK）。
+- 可见性（A5）：普通列表 / 详情 / facets 统一 `deleted_at is null`，项目回收站显式 `filter[recycled]=true`；`code` / `seq_no` 在回收站期间仍唯一且占用，彻底删除后释放（`seq_no` 由下一次创建取最小空号）。索引见 `0056_project_recycle_bin.sql`（回收站 updated_at）与 `0057_project_recycle_retention.sql`（deleted_at 到期扫描）。
 - 触点：`ProjectRepository.touch(id, at)` 为 ADR-022「项目 updated_at 触发集」的单点入口（阶段推进 / 任务变更等聚合视图变更调用；文件 / 日报 / 系统调度不调用）；本批 CRUD 自身由 `updateWithVersion` 一并刷新。
-- 单测：`test/project-crud.test.ts` —— 筛选解析（多值 / 非法枚举 400 / 上海时区日界 / 区间反向 400）、排序白名单、行 → 契约视图映射、创建缺省阶段与撞号 409、乐观锁冲突、归档写保护、软删可见性与操作人透传、唯一约束违例解包（21 例，不连库）。
+- 单测：`test/project-crud.test.ts` —— 筛选解析（多值 / 非法枚举 400 / 上海时区日界 / 区间反向 400）、排序白名单、行 → 契约视图映射、创建缺省阶段与撞号 409、乐观锁冲突、归档写保护、软删可见性与操作人透传、唯一约束违例解包、彻底删除后 seq_no 空号复用、30 天到期清理边界与系统审计（32 例，不连库）；真 PG 回放见 `scripts/project-recycle-retention-replay.mjs`（编号复用 / 并发唯一 / 满 30 天自动清理 / 未满保留，7 项断言）。
 
 ## 已实现（h2 第二批 · M2-05 名册 + 分类字段口径）
 
