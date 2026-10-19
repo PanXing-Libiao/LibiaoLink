@@ -2373,7 +2373,7 @@ body {
 /* 「数据总览」（Push 358 · 业务口径 2026-10-16「我要在最左边加一个数据总览 点击后展示的效果如图所示各图表等比例缩小集中展示
    点击效果 鼠标触碰标签效果依旧」；追修（Push 359）2026-10-16「统一展示主要是文字太小了 所以布局要改 不能死板的不改布局尺寸」
    +「不要滚动」+「你完全可以在原本的空间下实现 尺寸画面放大让人感到舒服」）：
-   五图等比例缩小、卡片内一屏铺满、**不滚动** —— 两行版式：第一行 项目进度 / 任务状态 / 问题（三等分），第二行 交付时间 /
+   五图等比例缩小、卡片内一屏铺满、**不滚动** —— 两行版式（Push 361 对调后）：第一行 问题 / 任务状态 / 交付时间（三等分），第二行 项目进度 /
    词频图（两等分、更大）；读序照业务参考图；图表本身（viewBox 1200 × 596 + preserveAspectRatio=meet）与配色 / 组件一律不动，
    只做版式：每格宽 = 图表高 × 1200 / 596 + 面板内衬（图 100% 铺满格子、不再「小图飘在大面板里」）；
    图表高按「可用宽三等分（行 1）/ 两等分（行 2）」与「可用高按 0.396 / 0.604 比例分配」两档取小 ——
@@ -2425,10 +2425,12 @@ body {
   padding: var(--ov-pad-y) var(--ov-pad-x);
 }
 
-/* 两行版式（读序照业务参考图）：行 1 = 进度 / 任务状态 / 问题（各 2 列 ≈ 三等分）；行 2 = 交付时间 / 词频图（各 3 列 = 两等分）。 */
+/* 两行版式（读序照业务参考图）：行 1 = 问题 / 任务状态 / 交付时间（各 2 列 ≈ 三等分）；行 2 = 项目进度 / 词频图（各 3 列 = 两等分）。
+   追修（Push 361）2026-10-16「把项目进度一览放到现在交付时间的地方 项目交付时间放到现在问题的地方 问题放到现在项目进度一览的地方」：
+   三块面板对调（项目进度 → 行 2 第 1-3 列；交付时间 → 行 1 第 5-6 列；问题 → 行 1 第 1-2 列），字号倍率随格子档位对调（见 HubDashOverview.tsx 的 OVERVIEW_FONT_SCALE）。 */
 .hub-dash-overview__panel[data-panel="progress"] {
-  grid-column: 1 / span 2;
-  grid-row: 1;
+  grid-column: 1 / span 3;
+  grid-row: 2;
 }
 
 .hub-dash-overview__panel[data-panel="status"] {
@@ -2437,13 +2439,13 @@ body {
 }
 
 .hub-dash-overview__panel[data-panel="issues"] {
-  grid-column: 5 / span 2;
+  grid-column: 1 / span 2;
   grid-row: 1;
 }
 
 .hub-dash-overview__panel[data-panel="delivery"] {
-  grid-column: 1 / span 3;
-  grid-row: 2;
+  grid-column: 5 / span 2;
+  grid-row: 1;
 }
 
 .hub-dash-overview__panel[data-panel="wordcloud"] {

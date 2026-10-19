@@ -77,7 +77,7 @@ function sectorPathOf(startAngle: number, endAngle: number): string {
   );
 }
 
-export function HubDashStatus({ status, canDrill, onTip, onLeave, onPick }: {
+export function HubDashStatus({ status, canDrill, onTip, onLeave, onPick, fontScale = 1 }: {
   readonly status: DashboardStatus;
   readonly canDrill: boolean;
   /** 悬停 / 移动扇区：父组件把鼠标位置换算成白卡坐标并出浮层卡（占比文本一并带上）。 */
@@ -86,9 +86,16 @@ export function HubDashStatus({ status, canDrill, onTip, onLeave, onPick }: {
   readonly onLeave: () => void;
   /** 点扇区：打开只读「数据详情」（仅选中具体项目时可点，由父组件按 canDrill 挂 onClick）。 */
   readonly onPick: (slice: DashboardStatusSlice) => void;
+  /** 总览字号倍率（Push 360 · 业务口径 2026-10-16「文字不够清晰 那些小字还是要大一点」）：只有「数据总览」传 >1，单视图不传、逐值不变。 */
+  readonly fontScale?: number;
 }) {
   const t = useT();
   const locale = useLocale();
+  /** 总览字号倍率（见上）：字号与随之变化的排版量都从这里取；倍率 1 时与旧值逐值一致。 */
+  const fs = fontScale;
+  const legendFont = LEGEND_FONT * fs;
+  const labelFont = LABEL_FONT * fs;
+  const labelMinGap = LABEL_MIN_GAP * fs;
   const slices = status.slices;
   if (slices.length === 0 || status.totalTasks <= 0) {
     return null;
@@ -104,7 +111,7 @@ export function HubDashStatus({ status, canDrill, onTip, onLeave, onPick }: {
   }
   /** 图例（居中）：状态色块 + 状态名（顺序 = 扇区顺序）。 */
   const legendItems: Array<{ slice: DashboardStatusSlice; text: string; x: number }> = [];
-  const legendWidths = arcs.map((arc) => LEGEND_SWATCH + 8 + textWidthOf(statusText(locale, arc.slice.status), LEGEND_FONT));
+  const legendWidths = arcs.map((arc) => LEGEND_SWATCH + 8 + textWidthOf(statusText(locale, arc.slice.status), legendFont));
   const legendTotal = legendWidths.reduce((sum, width) => sum + width, 0) + LEGEND_ITEM_GAP * Math.max(legendWidths.length - 1, 0);
   let legendX = (VIEW_W - legendTotal) / 2;
   arcs.forEach((arc, index) => {
@@ -119,7 +126,7 @@ export function HubDashStatus({ status, canDrill, onTip, onLeave, onPick }: {
   for (const right of [false, true]) {
     const group = labelItems.filter((item) => item.right === right).sort((a, b) => a.y - b.y);
     for (let index = 1; index < group.length; index += 1) {
-      group[index].y = Math.max(group[index].y, group[index - 1].y + LABEL_MIN_GAP);
+      group[index].y = Math.max(group[index].y, group[index - 1].y + labelMinGap);
     }
     const last = group[group.length - 1];
     if (last !== undefined && last.y > LABEL_Y_MAX) {
@@ -141,7 +148,7 @@ export function HubDashStatus({ status, canDrill, onTip, onLeave, onPick }: {
       {legendItems.map((item) => (
         <g key={"legend-" + item.slice.status}>
           <rect className="hub-dash-status__swatch" data-status={item.slice.status} x={item.x} y={9} width={LEGEND_SWATCH} height={LEGEND_SWATCH} rx={3} />
-          <text className="hub-dash-status__legendText" x={item.x + LEGEND_SWATCH + 8} y={22} fontSize={LEGEND_FONT}>{item.text}</text>
+          <text className="hub-dash-status__legendText" x={item.x + LEGEND_SWATCH + 8} y={22 + (legendFont - LEGEND_FONT) * 0.35} fontSize={legendFont}>{item.text}</text>
         </g>
       ))}
       {arcs.map((arc) => (
@@ -178,7 +185,7 @@ export function HubDashStatus({ status, canDrill, onTip, onLeave, onPick }: {
         const attach = { x: CX + direction.x * (R - 1), y: CY + direction.y * (R - 1) };
         const bend = { x: CX + direction.x * (R + LEADER_STUB), y: CY + direction.y * (R + LEADER_STUB) };
         const text = statusText(locale, item.arc.slice.status) + ": " + item.arc.slice.count + " (" + item.arc.share + ")";
-        const innerX = item.right ? VIEW_W - LABEL_PAD - textWidthOf(text, LABEL_FONT) - LEADER_END_GAP : LABEL_PAD + textWidthOf(text, LABEL_FONT) + LEADER_END_GAP;
+        const innerX = item.right ? VIEW_W - LABEL_PAD - textWidthOf(text, labelFont) - LEADER_END_GAP : LABEL_PAD + textWidthOf(text, labelFont) + LEADER_END_GAP;
         return (
           <g key={"label-" + item.arc.slice.status} data-status={item.arc.slice.status}>
             <polyline
@@ -190,8 +197,8 @@ export function HubDashStatus({ status, canDrill, onTip, onLeave, onPick }: {
             <text
               className="hub-dash-status__label"
               x={item.right ? VIEW_W - LABEL_PAD : LABEL_PAD}
-              y={item.y + 6}
-              fontSize={LABEL_FONT}
+              y={item.y + labelFont / 3}
+              fontSize={labelFont}
               textAnchor={item.right ? "end" : "start"}
             >
               {text}

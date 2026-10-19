@@ -40,6 +40,16 @@ const NUM_ANIM_OFFSET = 300;
 /** 五档图例（与 DASHBOARD_BINS 同下标；父组件浮层卡的同款文案也用它）。 */
 export const LEGEND_KEYS: readonly TextKey[] = ["hub.dash.b0", "hub.dash.b25", "hub.dash.b50", "hub.dash.b75", "hub.dash.b100"];
 
+/** 估算文本宽（CJK 按 1 em、其余 0.55 em；只服务总览放大后的行名自适应与数字显隐阈值）。 */
+function textWidthOf(text: string, fontSize: number): number {
+  let width = 0;
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0;
+    width += code >= 0x2e80 && code <= 0x9fff ? fontSize : fontSize * 0.55;
+  }
+  return width;
+}
+
 /** x 轴刻度步长：按最大行合计挑 1 / 2 / 5 / 10 / 20。 */
 function tickStepOf(maxTotal: number): number {
   if (maxTotal <= 10) {
@@ -64,7 +74,7 @@ function tickMaxOf(maxTotal: number): { max: number; step: number } {
   return { max: Math.max(step, target), step };
 }
 
-export function HubDashProgress({ progress, canDrill, onTip, onRowTip, onLeave, onPick }: {
+export function HubDashProgress({ progress, canDrill, onTip, onRowTip, onLeave, onPick, fontScale = 1 }: {
   readonly progress: DashboardProgress;
   /** 选中具体项目才可点柱段（开只读「数据详情」）；「全部项目」下混合来源不可点。 */
   readonly canDrill: boolean;
@@ -76,6 +86,8 @@ export function HubDashProgress({ progress, canDrill, onTip, onRowTip, onLeave, 
   readonly onLeave: () => void;
   /** 点柱段：打开只读「数据详情」（仅选中具体项目时可点）。 */
   readonly onPick: (rowKey: string, bin: number) => void;
+  /** 总览字号倍率（Push 360 · 业务口径 2026-10-16「文字不够清晰 那些小字还是要大一点」）：只有「数据总览」传 >1（格子小、等比缩放后小字不清晰），单视图不传、逐值不变。 */
+  readonly fontScale?: number;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -83,6 +95,14 @@ export function HubDashProgress({ progress, canDrill, onTip, onRowTip, onLeave, 
   const uid = useId().replace(/:/g, "");
   /** 悬停行高亮（Push 340 行阴影常驻命中区；悬停出的浮层卡由 onRowTip 联动）。 */
   const [hoverRow, setHoverRow] = useState<string | null>(null);
+  /** 总览字号倍率（见上）：字号与随之变化的排版量都从这里取；倍率 1 时与旧值逐值一致。 */
+  const fs = fontScale;
+  const legendFont = 13 * fs;
+  const legendStep = 150 * fs;
+  const labelFont = 14.5 * fs;
+  const totalFont = 13 * fs;
+  const tickFont = 12 * fs;
+  const numFont = 13 * fs;
   const rows = progress.rows;
   const maxTotal = rows.reduce((max, row) => Math.max(max, row.total), 0);
   const { max: tickMax, step } = tickMaxOf(maxTotal);
@@ -105,8 +125,8 @@ export function HubDashProgress({ progress, canDrill, onTip, onRowTip, onLeave, 
       </defs>
       {LEGEND_KEYS.map((key, index) => (
         <g key={key}>
-          <rect className="hub-dash__swatch" data-bin={DASHBOARD_BINS[index]} x={40 + index * 150} y={10} width={14} height={14} rx={3} />
-          <text x={60 + index * 150} y={22} fontSize={13} fill="#4b5563">{t(key)}</text>
+          <rect className="hub-dash__swatch" data-bin={DASHBOARD_BINS[index]} x={40 + index * legendStep} y={10} width={14} height={14} rx={3} />
+          <text x={60 + index * legendStep} y={22 + (legendFont - 13) * 0.35} fontSize={legendFont} fill="#4b5563">{t(key)}</text>
         </g>
       ))}
       {ticks.map((value) => (
@@ -114,9 +134,12 @@ export function HubDashProgress({ progress, canDrill, onTip, onRowTip, onLeave, 
       ))}
       {rows.map((row, index) => {
         const barY = barYOf(index);
-        const baseline = barY + barH / 2 + 4.5;
+        const baseline = barY + barH / 2 + labelFont * 0.31;
         let cursor = PLOT_X0;
         const rowText = row.isUngrouped ? t("hub.dash.ungrouped") : stageText(locale, row.label);
+        /** 行名自适应：估算宽超可用列宽（英文长阶段名 / 总览放大后）就收字，不裁字、不越界。 */
+        const rowEmWidth = textWidthOf(rowText, 1);
+        const rowFont = rowEmWidth > 0 ? Math.min(labelFont, (LABEL_X - 10) / rowEmWidth) : labelFont;
         return (
           <g key={row.key} onMouseEnter={() => setHoverRow(row.key)} onMouseLeave={() => { setHoverRow(null); onLeave(); }}>
             {/* Push 340 行阴影常驻命中区（悬停出「行名 + 五档整排」卡）；Push 341：默认态内联 style 真透明（呈现属性压不过 CSS 类），悬停才着色。 */}
@@ -131,7 +154,7 @@ export function HubDashProgress({ progress, canDrill, onTip, onRowTip, onLeave, 
               onMouseEnter={(event) => onRowTip(event, rowText, row.counts)}
               onMouseMove={(event) => onRowTip(event, rowText, row.counts)}
             />
-            <text x={LABEL_X} y={baseline} textAnchor="end" fontSize={14.5} fill="#374151">{rowText}</text>
+            <text x={LABEL_X} y={baseline} textAnchor="end" fontSize={rowFont} fill="#374151">{rowText}</text>
             <g clipPath={"url(#" + uid + "-clip-" + index + ")"}>
               {row.counts.map((count, bin) => {
                 if (count === 0) {
@@ -149,20 +172,20 @@ export function HubDashProgress({ progress, canDrill, onTip, onRowTip, onLeave, 
                     onClick={canDrill ? () => onPick(row.key, bin) : undefined}
                   >
                     <rect className="hub-dash__seg" data-bin={DASHBOARD_BINS[bin]} data-drill={canDrill ? "true" : "false"} style={{ animationDelay: index * ROW_ANIM_STAGGER + "ms" }} x={x} y={barY} width={width} height={barH} />
-                    {width >= 24 ? (
-                      <text className="hub-dash__num" data-tone={bin === 0 || bin === 2 ? "dark" : "light"} style={{ animationDelay: index * ROW_ANIM_STAGGER + NUM_ANIM_OFFSET + "ms" }} x={x + width / 2} y={baseline} textAnchor="middle" fontSize={13} fontWeight={600}>{count}</text>
+                    {width >= Math.max(24, textWidthOf(String(count), numFont) + 10) ? (
+                      <text className="hub-dash__num" data-tone={bin === 0 || bin === 2 ? "dark" : "light"} style={{ animationDelay: index * ROW_ANIM_STAGGER + NUM_ANIM_OFFSET + "ms" }} x={x + width / 2} y={baseline} textAnchor="middle" fontSize={numFont} fontWeight={600}>{count}</text>
                     ) : null}
                   </g>
                 );
               })}
             </g>
-            <text x={TOTAL_X} y={baseline} fontSize={13} fill="#9ca3af">{row.total}</text>
+            <text x={TOTAL_X} y={baseline} fontSize={totalFont} fill="#9ca3af">{row.total}</text>
           </g>
         );
       })}
       <line x1={PLOT_X0 - 8} y1={AXIS_Y} x2={PLOT_X1 + 8} y2={AXIS_Y} stroke="#b8bec6" />
       {ticks.map((value) => (
-        <text key={value} x={PLOT_X0 + value * unit} y={TICK_LABEL_Y} textAnchor="middle" fontSize={12} fill="#8a9099">{value}</text>
+        <text key={value} x={PLOT_X0 + value * unit} y={TICK_LABEL_Y} textAnchor="middle" fontSize={tickFont} fill="#8a9099">{value}</text>
       ))}
     </svg>
   );

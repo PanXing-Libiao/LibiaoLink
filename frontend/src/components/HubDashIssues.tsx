@@ -61,7 +61,7 @@ function textWidthOf(text: string, fontSize: number): number {
 /** 一组柱子里的分类行（只含有数据的归类）。 */
 export type DashboardIssueRow = { readonly category: string; readonly count: number };
 
-export function HubDashIssues({ issues, canDrill, onTip, onRowTip, onLeave, onPick }: {
+export function HubDashIssues({ issues, canDrill, onTip, onRowTip, onLeave, onPick, fontScale = 1 }: {
   readonly issues: DashboardIssues;
   /** 选中具体项目才可点柱（开「数据详情」）；「全部项目」下光标保持箭头、不给来源。 */
   readonly canDrill: boolean;
@@ -73,11 +73,19 @@ export function HubDashIssues({ issues, canDrill, onTip, onRowTip, onLeave, onPi
   readonly onLeave: () => void;
   /** 点柱：打开只读「数据详情」（仅选中具体项目时可点）。 */
   readonly onPick: (state: string, category: string) => void;
+  /** 总览字号倍率（Push 360 · 业务口径 2026-10-16「文字不够清晰 那些小字还是要大一点」）：只有「数据总览」传 >1，单视图不传、逐值不变。 */
+  readonly fontScale?: number;
 }) {
   const t = useT();
   const locale = useLocale();
   /** 悬停中的状态组（整组铺浅灰底，与参考图二同款）。 */
   const [hover, setHover] = useState<string | null>(null);
+  /** 总览字号倍率（见上）：字号与随之变化的排版量都从这里取；倍率 1 时与旧值逐值一致。 */
+  const fs = fontScale;
+  const legendBaseFont = LEGEND_FONT * fs;
+  const numFont = 13 * fs;
+  const tickFont = 12 * fs;
+  const stateFont = 14 * fs;
   if (issues.states.length === 0 || issues.categories.length === 0) {
     return null;
   }
@@ -100,7 +108,11 @@ export function HubDashIssues({ issues, canDrill, onTip, onRowTip, onLeave, onPi
   }
   /** 图例（居中）：归类色块 + 归类名（顺序 = 契约 C9 原序）。 */
   const legendItems: Array<{ category: string; text: string; x: number }> = [];
-  const legendWidths = issues.categories.map((category) => LEGEND_SWATCH + 8 + textWidthOf(fieldText(locale, category), LEGEND_FONT));
+  /** 图例宽随字号涨：按可用宽收口（归类多时逐档收小，保证居中不越界；常规 5~6 个归类不触发）。 */
+  const legendEmSum = issues.categories.reduce((sum, category) => sum + textWidthOf(fieldText(locale, category), 1), 0);
+  const legendFitFont = legendEmSum > 0 ? (VIEW_W - 40 - issues.categories.length * (LEGEND_SWATCH + 8) - LEGEND_ITEM_GAP * Math.max(issues.categories.length - 1, 0)) / legendEmSum : legendBaseFont;
+  const legendFont = Math.max(12, Math.min(legendBaseFont, legendFitFont));
+  const legendWidths = issues.categories.map((category) => LEGEND_SWATCH + 8 + textWidthOf(fieldText(locale, category), legendFont));
   const legendTotal = legendWidths.reduce((sum, width) => sum + width, 0) + LEGEND_ITEM_GAP * Math.max(legendWidths.length - 1, 0);
   let legendX = (VIEW_W - legendTotal) / 2;
   issues.categories.forEach((category, index) => {
@@ -112,7 +124,7 @@ export function HubDashIssues({ issues, canDrill, onTip, onRowTip, onLeave, onPi
       {legendItems.map((item) => (
         <g key={"legend-" + item.category}>
           <rect className="hub-dash-issues__swatch" data-category={item.category} x={item.x} y={9} width={LEGEND_SWATCH} height={LEGEND_SWATCH} rx={3} fill={DASHBOARD_ISSUE_COLORS[item.category] ?? "#c9ced6"} />
-          <text className="hub-dash-issues__legendText" x={item.x + LEGEND_SWATCH + 8} y={22} fontSize={LEGEND_FONT}>{item.text}</text>
+          <text className="hub-dash-issues__legendText" x={item.x + LEGEND_SWATCH + 8} y={22 + (legendFont - LEGEND_FONT) * 0.35} fontSize={legendFont}>{item.text}</text>
         </g>
       ))}
       {ticks.map((value) => (
@@ -120,7 +132,7 @@ export function HubDashIssues({ issues, canDrill, onTip, onRowTip, onLeave, onPi
       ))}
       <line className="hub-dash-issues__axis" x1={PLOT_X0 - 8} y1={AXIS_Y} x2={PLOT_X1 + 8} y2={AXIS_Y} />
       {ticks.map((value) => (
-        <text key={"tick-" + value} className="hub-dash-issues__tick" x={PLOT_X0 - 14} y={AXIS_Y - value * unit + 4} textAnchor="end" fontSize={12}>{value}</text>
+        <text key={"tick-" + value} className="hub-dash-issues__tick" x={PLOT_X0 - 14} y={AXIS_Y - value * unit + tickFont * 0.33} textAnchor="end" fontSize={tickFont}>{value}</text>
       ))}
       {groups.map((group, groupIndex) => {
         const gx = PLOT_X0 + groupW * groupIndex;
@@ -169,11 +181,11 @@ export function HubDashIssues({ issues, canDrill, onTip, onRowTip, onLeave, onPi
                     onMouseLeave={() => { setHover(null); onLeave(); }}
                     onClick={canDrill ? () => { onPick(group.state, category); } : undefined}
                   />
-                  <text className="hub-dash-issues__num" data-category={category} style={{ animationDelay: seriesIndex * SERIES_ANIM_STAGGER + NUM_ANIM_OFFSET + "ms" }} x={x + barW / 2} y={y - 8} textAnchor="middle" fontSize={13} fontWeight={600} fill={DASHBOARD_ISSUE_COLORS[category] ?? "#c9ced6"}>{count}</text>
+                  <text className="hub-dash-issues__num" data-category={category} style={{ animationDelay: seriesIndex * SERIES_ANIM_STAGGER + NUM_ANIM_OFFSET + "ms" }} x={x + barW / 2} y={y - numFont * 0.62} textAnchor="middle" fontSize={numFont} fontWeight={600} fill={DASHBOARD_ISSUE_COLORS[category] ?? "#c9ced6"}>{count}</text>
                 </g>
               );
             })}
-            <text className="hub-dash-issues__state" x={center} y={TICK_LABEL_Y} textAnchor="middle" fontSize={14}>{statusText(locale, group.state)}</text>
+            <text className="hub-dash-issues__state" x={center} y={TICK_LABEL_Y} textAnchor="middle" fontSize={stateFont}>{statusText(locale, group.state)}</text>
           </g>
         );
       })}
