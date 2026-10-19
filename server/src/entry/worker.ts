@@ -265,7 +265,7 @@ async function bootstrap(): Promise<void> {
   const snoozeSweep = setInterval(() => void flushSnoozes(), env.NOTIFY_SNOOZE_SWEEP_INTERVAL_MS);
   void flushSnoozes();
 
-  // 积压 / 最老待领取 / 近期死信告警（ADR-005）；死信单条即时告警不依赖本循环（dispatcher 直发）。
+  // 可执行即时告警（ADR-005）：队列停滞 / 未消费主题；积压与最老等待只在连续无进度时合并升级。
   const probeAlerts = async (): Promise<void> => {
     try {
       await alerts.probeOnce();
@@ -275,6 +275,23 @@ async function bootstrap(): Promise<void> {
   };
   const alertProbe = setInterval(() => void probeAlerts(), env.OUTBOX_ALERT_INTERVAL_MS);
   void probeAlerts();
+
+  // outbox 日报：恢复通知、死信窗口汇总与当前队列快照；没有内容时只写日志，不推群。
+  let digesting = false;
+  const flushDigest = async (): Promise<void> => {
+    if (digesting) {
+      return;
+    }
+    digesting = true;
+    try {
+      await alerts.digestOnce();
+    } catch (error) {
+      logger.error("outbox 日报生成失败：" + messageOf(error));
+    } finally {
+      digesting = false;
+    }
+  };
+  const alertDigest = setInterval(() => void flushDigest(), env.OUTBOX_ALERT_DIGEST_INTERVAL_MS);
 
   // done 行保留期清理（ADR-005 约 90 天）：分批删除，内容与条数由 OutboxRetention 自记日志。
   const sweepOutbox = async (): Promise<void> => {
@@ -297,6 +314,7 @@ async function bootstrap(): Promise<void> {
     clearInterval(notifyFlush);
     clearInterval(snoozeSweep);
     clearInterval(alertProbe);
+    clearInterval(alertDigest);
     clearInterval(retentionSweep);
     aibot.stop();
     logger.log("worker 收到 " + signal + "，正在退出");

@@ -10,7 +10,7 @@
 | 环境 | 真企微环境（智能机器人长连接 · 真机器人）+ 本机 Windows / Docker Desktop + PG `libiaolink-pg` @ `127.0.0.1:55432`（worker 真机消费）；测试群 A（`wrsu…aKSg`）+ 告警群（`wrsu…9vww`）—— 掩码口径；单聊段（2026-10-15）= 同一真企微环境 + 未激活测试账号（userid 掩码 `wosu…bmUw` · 32 字符）+ 告警群（`wrsu…9vww`） |
 | 数据库 | 群段（2026-10-13）= 迁移至 `0046` 无漂移；单聊段（2026-10-15 · Push 240）= 迁移至 `0053` 无漂移（单聊激活表 `0048` 已落 · 真机段未改 schema） |
 | 代码版本 | 真机段 = `lan` @ `35f5ef1`（Push 227 · PR #322 时点 `dist` 构建；真机段零代码改动）；复验段（T5R / T5R2）= Push 230 时点构建（含 Push 229 修复 + Push 230 文案 · `lan` @ `b81b724`）；单聊段（Push 240）= `lan` @ `dcfa901` 时点 `dist` 构建（2026-10-15 13:54 · 含 Push 235 ~ 239 全部落地 —— 契约 / 迁移 / 实现 / 接线 / B6 终稿；真机段零代码改动） |
-| 脚本（stub / 回放段） | `m5-03-1-wecom-stub-replay.mjs`（21 断言）/ `m5-03-2-aibot-stub-replay.mjs`（20 断言）/ `m5-03-2-group-replay.mjs`（28 断言）/ `m5-03-3-app-replay.mjs`（29 断言）/ `s7-4-automation-wiring-replay.mjs`（23 断言）；真机段 = `server/dist/entry/worker.js` 真实消费（证据 = §五 落痕 + 群内目视）；单聊段（Push 240）= 同一 worker 真实消费 + 仓外探针（`dm-capture` / `dm-evi` / `dm-burst` · 证据 = §六 落痕 + 企微目视） |
+| 脚本（stub / 回放段） | `m5-03-1-wecom-stub-replay.mjs`（21 断言）/ `m5-03-2-aibot-stub-replay.mjs`（20 断言）/ `m5-03-2-group-replay.mjs`（28 断言）/ `m5-03-3-app-replay.mjs`（31 断言 · Push 257 扩 W2b / W6）/ `s7-4-automation-wiring-replay.mjs`（23 断言）；真机段 = `server/dist/entry/worker.js` 真实消费（证据 = §五 落痕 + 群内目视）；单聊段（Push 240）= 同一 worker 真实消费 + 仓外探针（`dm-capture` / `dm-evi` / `dm-burst` · 证据 = §六 落痕 + 企微目视） |
 | 口径 | 三分类（permanent / retryable / rate_limited）+ token 特例；群通道 = 智能机器人 + `chatid`（P5 定案 2026-10-12）；限速 = 群通道按会话 30 条/分钟 + 1000 条/小时（env 默认值 · T3 实证判定链；A5 应用面随单聊面暂缓）；告警出口 = 智能机器人告警群（失败 / 未配置回退结构化日志；真机段实测成功 · T5） |
 
 ## 一、验收四条对照（§一 目标 → 证据）

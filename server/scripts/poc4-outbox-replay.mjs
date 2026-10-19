@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 /**
- * S7-2 · PoC-4 真机回放（i6 · 团队分工.md §6 第 4 行）：Outbox 投递语义验证 —— 不丢 / 不重发 / 重试与死信告警。
+ * S7-2 · PoC-4 真机回放（i6 · 团队分工.md §6 第 4 行）：Outbox 投递语义验证 —— 不丢 / 不重发 / 重试与可执行告警。
  *
  *   证据一（杀 worker 不丢）：真实子进程执行真领取语句（OutboxStore.claim，workerId=poc4-crashed-worker）后被 SIGKILL ——
  *        行留在 processing（可查、未丢）；崩溃窗口内第二 worker drain 0 条（不重复投递）；把 locked_at 回拨到
  *        OUTBOX_STALE_MS 之外（等价于「崩溃已超阈值」；CI 不等满默认窗口）→ 真 OutboxDispatcher 重领并消费
  *        **恰好一次**（done · locked_by = 第二 worker）。
  *   证据二（重复领取不重发）：done 行不再被领取；同 dedupeKey 复投（appendOutboxIfAbsent）不新增行、不重开 pending。
- *   证据三（重试与死信告警）：可重试失败按主题策略退避回 pending（attempts 累计 / available_at = now + base*2^(n-1)）；
+ *   证据三（重试与可执行告警）：可重试失败按主题策略退避回 pending（attempts 累计 / available_at = now + base*2^(n-1)）；
  *        到顶转 dead + onDead 留痕 + OUTBOX_ALERT_SINK 捕获「outbox.dead」即时告警；告警探针真机对照 ——
- *        阈值内 backlog / oldest_due / dead_letter 三码齐发 + 合成 backlog 主题无消费者告警；
- *        同一快照宽阈值下阈值类 0 告警（未消费主题仍如实报告，证明不是恒告警噪声）。
+ *        积压 / 最老等待只记日志，连续无 done 进度时合并升级为 queue_stalled；合成 backlog 主题无消费者另发
+ *        unconsumed_topic；dead_letter 不即时推送，只进入日报。同一快照宽阈值下阈值类 0 告警（未消费主题
+ *        仍如实报告，证明不是恒告警噪声）。
  *
  * 前置：真 PG（迁移器角色即可）+ 已构建的 server/dist（cd server && npm run build）。
  * 用法：cd server && POC4_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink \
@@ -104,9 +105,13 @@ function fmtRow(row) {
 class RecordingSink {
   constructor() {
     this.alerts = [];
+    this.digests = [];
   }
   emit(alert) {
     this.alerts.push(alert);
+  }
+  emitDigest(report) {
+    this.digests.push(report);
   }
 }
 
@@ -159,6 +164,8 @@ function buildEnv(overrides = {}) {
     OUTBOX_DEFAULT_BACKOFF_MAX_MS: "2000",
     OUTBOX_ALERT_BACKLOG_MAX: "1",
     OUTBOX_ALERT_OLDEST_MS: "60000",
+    OUTBOX_ALERT_PROGRESS_WINDOW_MS: "60000",
+    OUTBOX_ALERT_STALL_PROBES: "1",
     ...overrides,
   });
 }
@@ -365,7 +372,7 @@ async function runMain() {
       dedupeRows === 1 && statsA6.claimed === 1 && statsA6.done === 1 && dedupeRow.status === "done" && countDeliveries(TOPIC_DEDUPE) === 1,
     );
 
-    // ------------------------------------------------------- 证据三：重试与死信告警
+    // ------------------------------------------------------- 证据三：重试与可执行告警
     await runtime.appendOutbox(db.db, { topic: TOPIC_RETRY, payload: { scenario: "retry", tag }, dedupeKey: keyRetry });
     const statsB1 = await dispatcher.drainOnce();
     const retryRow1 = await rowOfKey(keyRetry);
@@ -427,25 +434,31 @@ async function runMain() {
         deadAlerts[0].detail.maxAttempts === 3,
     );
 
-    // ------------------------------------------------------- 告警探针（积压 / 最老 / 近期死信）
+    // ------------------------------------------------------- 告警探针（停滞升级 / 未消费主题 / 死信日报）
     await runtime.appendOutbox(db.db, { topic: TOPIC_BACKLOG, payload: { scenario: "probe", tag }, dedupeKey: keyBacklog + "-a" });
     await runtime.appendOutbox(db.db, { topic: TOPIC_BACKLOG, payload: { scenario: "probe", tag }, dedupeKey: keyBacklog + "-b" });
     await backdateAvailable(keyBacklog + "-b", 120);
+    // 前面的成功消费落在进度窗口内，会掩盖「当前已停滞」；回拨 done 行等价于窗口内 0 完成。
+    await db.pool.query(
+      "update outbox_events set updated_at = now() - interval '2 minutes' where topic like $1 and status = 'done'",
+      [TOPIC_PREFIX + "%"],
+    );
     const probeAlerts = await probe.probeOnce();
     const codes = probeAlerts.map((item) => item.code).sort();
-    const backlogAlert = probeAlerts.find((item) => item.code === "outbox.backlog");
-    const oldestAlert = probeAlerts.find((item) => item.code === "outbox.oldest_due");
+    const stalledAlert = probeAlerts.find((item) => item.code === "outbox.queue_stalled");
+    const unconsumedAlert = probeAlerts.find((item) => item.code === "outbox.unconsumed_topic");
     check(
       "C1",
-      "告警探针（阈值内）：backlog / oldest_due / dead_letter 三码齐发 + 未消费主题告警",
-      "四码齐发；backlog.detail.duePending>=2；oldest_due.detail.oldestDueMs>=119000；dead_letter 命中（窗口内 deadRecent>=1）；unconsumed_topic 命中合成 backlog 主题",
+      "告警探针（阈值内且进度窗口 0 完成）：仅 queue_stalled + unconsumed_topic 即时告警；dead_letter 只记日志",
+      "两码齐发；queue_stalled.detail.duePending>=2；oldestDueMs>=119000 且 doneRecent=0；unconsumed_topic 命中合成 backlog 主题；不含 backlog / oldest_due / dead_letter",
       "codes=" + short(codes) + " / " + short(probeAlerts.map((item) => ({ code: item.code, detail: item.detail }))),
-      codes.includes("outbox.backlog") &&
-        codes.includes("outbox.oldest_due") &&
-        codes.includes("outbox.dead_letter") &&
+      codes.length === 2 &&
+        codes.includes("outbox.queue_stalled") &&
         codes.includes("outbox.unconsumed_topic") &&
-        backlogAlert.detail.duePending >= 2 &&
-        oldestAlert.detail.oldestDueMs >= 119_000,
+        stalledAlert.detail.duePending >= 2 &&
+        stalledAlert.detail.oldestDueMs >= 119_000 &&
+        stalledAlert.detail.doneRecent === 0 &&
+        unconsumedAlert.detail.byTopic.some((item) => item.topic === TOPIC_BACKLOG),
     );
 
     const wideEnv = buildEnv({
@@ -482,13 +495,13 @@ async function runMain() {
   } finally {
     try {
       if (args.keep === true) {
-        note("| KEEP | --keep：保留本脚本 outbox 行（前缀 " + TOPIC_PREFIX + "） |");
+        note("| KEEP | — | --keep：保留本脚本 outbox 行 | 期望：— | 实际：前缀 " + TOPIC_PREFIX + " |");
       } else {
         const deleted = await db.pool.query("delete from outbox_events where topic like $1", [TOPIC_PREFIX + "%"]);
-        note("| CLEANUP | 清除本脚本 outbox 行 " + deleted.rowCount + " 条（前缀 " + TOPIC_PREFIX + "） |");
+        note("| CLEANUP | — | 清除本脚本 outbox 行 | 期望：— | 实际：删除 " + deleted.rowCount + " 条（前缀 " + TOPIC_PREFIX + "） |");
       }
     } catch (error) {
-      note("| WARN | 收尾未完全成功：" + messageOf(error) + " |");
+      note("| WARN | — | 收尾未完全成功 | 期望：— | 实际：" + messageOf(error) + " |");
     }
     await db.onApplicationShutdown();
   }
@@ -496,9 +509,9 @@ async function runMain() {
   const commit = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: process.cwd() }).toString().trim();
   const dirty = execFileSync("git", ["status", "--porcelain"], { cwd: process.cwd() }).toString().trim() !== "";
   const lines = [];
-  lines.push("# S7-2 · PoC-4 回放证据（Outbox 投递语义：不丢 / 不重发 / 重试与死信告警）");
+  lines.push("# S7-2 · PoC-4 回放证据（Outbox 投递语义：不丢 / 不重发 / 重试与可执行告警）");
   lines.push("");
-  lines.push("> 卡片：i6 · S7·PoC-4（主责 lan，评审 wmj 或 px）｜验收：杀 worker 不丢消息、重复领取不重发、重试与死信告警演示（团队分工.md §6 第 4 行）。");
+  lines.push("> 卡片：i6 · S7·PoC-4（主责 lan，评审 wmj 或 px）｜验收：杀 worker 不丢消息、重复领取不重发、重试与可执行告警演示（团队分工.md §6 第 4 行）。");
   lines.push("");
   lines.push("| 项 | 值 |");
   lines.push("|---|---|");
@@ -506,21 +519,22 @@ async function runMain() {
   lines.push("| 数据库 | " + DATABASE_URL.replace(/:[^:@/]+@/, ":***") + " |");
   lines.push("| 代码版本 | " + commit + (dirty ? "（工作区含未提交改动）" : "") + " |");
   lines.push("| 脚本 | server/scripts/poc4-outbox-replay.mjs |");
-  lines.push("| 环境口径 | OUTBOX_STALE_MS=60000（env 下限）· 退避 1000ms 起 / 2000ms 封顶 · maxAttempts=3 · 告警阈值 backlog=1 / oldest=60s / deadRecent>=1 |");
+  lines.push("| 环境口径 | OUTBOX_STALE_MS=60000（env 下限）· 退避 1000ms 起 / 2000ms 封顶 · maxAttempts=3 · 告警阈值 backlog=1 / oldest=60s / 进度窗口=60s / 停滞=1 轮 |");
   lines.push("| 领取者 | " + WORKER_MAIN + "（主）· " + WORKER_CHILD + "（被 SIGKILL 的子进程）|");
   lines.push("");
   lines.push("## 断言明细");
   lines.push("");
+  lines.push("| 结果 | 编号 | 断言 | 期望 | 实际 |");
+  lines.push("|---|---|---|---|---|");
   lines.push(...report);
   lines.push("");
   lines.push("## 汇总");
   lines.push("");
-  lines.push(failures === 0 ? "- 全部断言通过：杀 worker 不丢（A1~A4）· 重复领取不重发（A3 / A5 / A6）· 重试与死信告警（B1~B3 / C1~C3）。" : "- 有 " + failures + " 项失败，见上方 FAIL 行。");
+  lines.push(failures === 0 ? "- 全部断言通过：杀 worker 不丢（A1~A4）· 重复领取不重发（A3 / A5 / A6）· 重试与可执行告警（B1~B3 / C1~C3）。" : "- 有 " + failures + " 项失败，见上方 FAIL 行。");
   lines.push("");
   lines.push("## 复跑");
   lines.push("");
   lines.push("cd server && POC4_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink node --env-file-if-exists=.env scripts/poc4-outbox-replay.mjs [--out ../docs/PoC-4-回放证据(Outbox投递语义).md] [--keep]");
-  lines.push("");
   if (args.json !== undefined) writeFileSync(args.json, JSON.stringify(evidence, null, 2) + "\n", "utf8");
   if (args.out !== undefined) writeFileSync(args.out, lines.join("\n") + "\n", "utf8");
   process.stdout.write("\n" + lines.join("\n") + "\n");

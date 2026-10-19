@@ -5,7 +5,7 @@ import { AppConfig } from "../src/config/config.module.js";
 import type { Env } from "../src/config/env.js";
 import type { ClaimOutboxInput, OutboxClaimedRow, OutboxRetryInput } from "../src/db/outbox.store.js";
 import type { OutboxStore } from "../src/db/outbox.store.js";
-import type { OutboxAlert, OutboxAlertSink } from "../src/outbox/alert.js";
+import type { OutboxAlert, OutboxAlertSink, OutboxDailyDigest } from "../src/outbox/alert.js";
 import { OutboxDispatcher } from "../src/outbox/dispatcher.js";
 import type { OutboxHandleOutcome, OutboxTopicHandler } from "../src/outbox/handler.js";
 import { previewTopicPolicy, type OutboxTopicPolicy } from "../src/outbox/policy.js";
@@ -81,6 +81,8 @@ class FakeAlertSink implements OutboxAlertSink {
   emit(alert: OutboxAlert): void {
     this.emitted.push(alert);
   }
+
+  emitDigest(_report: OutboxDailyDigest): void {}
 }
 
 interface Harness {
