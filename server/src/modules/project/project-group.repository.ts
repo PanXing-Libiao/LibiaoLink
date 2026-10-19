@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { and, desc, eq, gte, notExists } from "drizzle-orm";
+import { and, desc, eq, gte, notExists, sql } from "drizzle-orm";
 import { AppError } from "../../common/errors/app-error.js";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
@@ -47,6 +47,32 @@ export class ProjectGroupRepository {
   async removeCandidate(id: number, client: DbClient = this.database.db): Promise<WecomGroupCandidateRow | null> {
     const rows = await client.delete(wecomGroupCandidates).where(eq(wecomGroupCandidates.id, id)).returning();
     return rows[0] ?? null;
+  }
+
+  /**
+   * 解绑已激活群时恢复候选：保留群名，最近活跃 = 原 activated_at；已有候选按 last_seen_at 取较大值，
+   * 防止旧绑定的恢复动作把刚收到的新消息时间回拨。
+   */
+  async restoreCandidate(
+    input: { chatid: string; name: string | null; firstSeenAt: Date; lastSeenAt: Date },
+    client: DbClient = this.database.db,
+  ): Promise<WecomGroupCandidateRow> {
+    const rows = await client
+      .insert(wecomGroupCandidates)
+      .values({ chatid: input.chatid, name: input.name, firstSeenAt: input.firstSeenAt, lastSeenAt: input.lastSeenAt })
+      .onConflictDoUpdate({
+        target: [wecomGroupCandidates.chatid],
+        set: {
+          name: input.name === null ? sql`${wecomGroupCandidates.name}` : input.name,
+          lastSeenAt: sql`greatest(${wecomGroupCandidates.lastSeenAt}, ${input.lastSeenAt})`,
+        },
+      })
+      .returning();
+    const row = rows[0];
+    if (row === undefined) {
+      throw new Error("wecom_group_candidates restore 未返回记录");
+    }
+    return row;
   }
 
   /**
