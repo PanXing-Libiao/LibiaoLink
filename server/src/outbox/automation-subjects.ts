@@ -180,7 +180,7 @@ export class AutomationSubjectReader {
       const taskId = stringField(payload, "taskId");
       if (taskId === null) return null;
       const rows = await client.select(TASK_SUBJECT_COLUMNS).from(tasks).where(eq(tasks.id, taskId)).limit(1);
-      const subjects = await this.buildTaskSubjects(rows, at, client);
+      const subjects = await this.buildTaskSubjects(rows, at, client, stringField(payload, "actorId"));
       return subjects.get(taskId) ?? null;
     }
     return null;
@@ -282,16 +282,17 @@ export class AutomationSubjectReader {
     rows: readonly TaskSubjectRow[],
     at: Date,
     client: DbClient,
+    actorId: string | null = null,
   ): Promise<Map<string, ReplaySubject>> {
     const result = new Map<string, ReplaySubject>();
     if (rows.length === 0) return result;
     const today = shanghaiToday(at);
     const projectIds = [...new Set(rows.map((row) => row.projectId))];
     const projectRows = await client
-      .select({ id: projects.id, managerIds: projects.managerIds })
+      .select({ id: projects.id, code: projects.code, name: projects.name, managerIds: projects.managerIds })
       .from(projects)
       .where(and(inArray(projects.id, projectIds), isNull(projects.deletedAt)));
-    const managerByProject = new Map(projectRows.map((row) => [row.id, row.managerIds[0] ?? null]));
+    const projectById = new Map(projectRows.map((row) => [row.id, row]));
     const groupProjectIds = await this.enabledGroupProjectIds(projectIds, client);
     const progressByProject = await this.projectProgress(projectIds, client);
     const nameIds = new Set<string>();
@@ -299,17 +300,20 @@ export class AutomationSubjectReader {
       const ownerId = row.ownerIds[0];
       if (ownerId !== undefined) nameIds.add(ownerId);
     }
-    for (const managerId of managerByProject.values()) {
-      if (managerId !== null) nameIds.add(managerId);
+    for (const project of projectRows) {
+      const managerId = project.managerIds[0];
+      if (managerId !== undefined) nameIds.add(managerId);
     }
+    if (actorId !== null) nameIds.add(actorId);
     const nameById = await this.userNames([...nameIds], client);
     const fileCountByTask = await this.taskFileCounts(rows.map((row) => row.id), client);
     for (const row of rows) {
       // 项目已进回收站 / 已删除：丢弃迟到事件，避免继续生成提醒。
-      if (!managerByProject.has(row.projectId)) continue;
+      const project = projectById.get(row.projectId);
+      if (project === undefined) continue;
       // 多负责人只取首位（数组顺序 = 展示顺序）：单收件人口径随 M5-06 定案（README 登记）。
       const ownerId = row.ownerIds[0] ?? null;
-      const managerId = managerByProject.get(row.projectId) ?? null;
+      const managerId = project.managerIds[0] ?? null;
       const snapshot: ReplayTask = {
         id: row.id,
         title: row.title,
@@ -332,7 +336,10 @@ export class AutomationSubjectReader {
         managerId,
         managerName: managerId === null ? null : (nameById.get(managerId) ?? null),
         projectId: row.projectId,
+        projectCode: project.code,
+        projectName: project.name,
         projectProgress: progressByProject.get(row.projectId) ?? 0,
+        completedByName: actorId === null ? null : (nameById.get(actorId) ?? "未知用户"),
         projectGroupId: groupProjectIds.has(row.projectId) ? row.projectId : null,
         deliverableTypes: row.deliverableTypes,
         fileCount: fileCountByTask.get(row.id) ?? 0,

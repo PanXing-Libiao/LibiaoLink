@@ -20,42 +20,42 @@ export const BUILTIN_MESSAGE_TEMPLATES: readonly AutomationMessageTemplate[] = [
   {
     code: "R02_INBOX",
     title: "及时添加文件",
-    body: "请为项目任务{任务描述}及时添加成果文件",
+    body: "项目：**{项目}**\n{完成人}已点击完成任务，请为项目任务「**{任务描述}**」及时添加成果文件",
   },
   {
     code: "R02_WECOM",
     title: "及时添加文件",
-    body: "请为项目任务{任务描述}及时添加成果文件",
+    body: "项目：**{项目}**\n{完成人}已点击完成任务，请为项目任务「**{任务描述}**」及时添加成果文件",
   },
   {
     code: "R03_GROUP",
     title: null,
-    body: "hello，{任务负责人}，你的任务{任务描述}还有1天就要截止了，快加加油，尽快追上进度吧！",
+    body: "项目：**{项目}**\nhello，{任务负责人}，你的任务「**{任务描述}**」还有1天就要截止了，快加加油，尽快追上进度吧！",
   },
   {
     code: "R04_GROUP",
     title: "有新任务已到启动时间",
-    body: "{任务负责人}你好呀，你的任务{任务描述}已到启动时间，快查看任务详情吧~今日工作加油",
+    body: "项目：**{项目}**\n{任务负责人}你好呀，你的任务「**{任务描述}**」已到启动时间，快查看任务详情吧~今日工作加油",
   },
   {
     code: "R05_GROUP",
     title: "！任务超时提醒",
-    body: "hello，{任务负责人}，你的任务{任务描述}已经超时一天了，快加加油，尽快追上进度吧！",
+    body: "项目：**{项目}**\nhello，{任务负责人}，你的任务「**{任务描述}**」已经超时一天了，快加加油，尽快追上进度吧！",
   },
   {
     code: "R06_GROUP",
     title: "叮咚~喜报来啦！",
-    body: "恭喜{任务负责人}成功拿下一项重要任务：{任务描述}。大家一起为这位优秀的伙伴喝彩吧",
+    body: "项目：**{项目}**\n恭喜{任务负责人}成功拿下一项重要任务：「**{任务描述}**」。大家一起为这位优秀的伙伴喝彩吧",
   },
   {
     code: "R07_APP",
     title: "重点任务提醒",
-    body: "以下重点任务正在进行中：{任务描述}请关注并及时推进任务~",
+    body: "{任务负责人}，以下重点任务正在进行中：\n{任务详情}\n请关注并及时推进任务~",
   },
   {
     code: "R07_APP_MERGED",
     title: "重点任务提醒",
-    body: "以下重点任务正在进行中：{任务清单}请关注并及时推进任务~",
+    body: "{任务负责人}，以下重点任务正在进行中：\n{任务清单}\n请关注并及时推进任务~",
   },
   {
     code: "A01_INBOX_MERGED",
@@ -224,6 +224,9 @@ export const SUBJECT_TEMPLATE_VARIABLES: Readonly<
 > = {
   task: {
     "任务描述": ["task.title"],
+    "任务详情": ["task.brief"],
+    "项目": ["project.label"],
+    "完成人": ["task.completed_by_name"],
     "任务负责人": ["task.owner_name", "task.manager_name"],
   },
   report_slot: {
@@ -249,10 +252,12 @@ export interface MergedTemplateSpec {
   template: string;
   listVariable: string;
   listField: string;
+  /** 多条目连接符（缺省「、」；R07 用换行保持项目 / 任务分行）。 */
+  separator?: string;
 }
 
 export const MERGED_TEMPLATE_SPECS: Readonly<Record<string, MergedTemplateSpec>> = {
-  R07: { template: "R07_APP_MERGED", listVariable: "任务清单", listField: "task.title" },
+  R07: { template: "R07_APP_MERGED", listVariable: "任务清单", listField: "task.brief", separator: "\n" },
   "A01|inbox": { template: "A01_INBOX_MERGED", listVariable: "项目清单", listField: "project.name" },
   "A01|wecom_app": { template: "A01_WECOM_MERGED", listVariable: "项目清单", listField: "project.name" },
   "A01|wecom_aibot": { template: "A01_WECOM_MERGED", listVariable: "项目清单", listField: "project.name" },

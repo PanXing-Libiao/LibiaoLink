@@ -178,7 +178,7 @@ export const AutomationMessageTemplateSchema = z
   .object({
     code: z.string().min(1).max(64),
     title: z.string().nullable().openapi({ example: "及时添加文件", description: "消息标题（null = 无标题，如 R03 群播报）" }),
-    body: z.string().min(1).openapi({ example: "请为项目任务{任务描述}及时添加成果文件" }),
+    body: z.string().min(1).openapi({ example: "项目：**{项目}**\n{完成人}已点击完成任务，请为项目任务「**{任务描述}**」及时添加成果文件" }),
   })
   .openapi("AutomationMessageTemplate", { description: "消息模板（逐字基准：标题与内容不得改字，变量占位符保持 {字段} 原文格式）" });
 export type AutomationMessageTemplate = z.infer<typeof AutomationMessageTemplateSchema>;
