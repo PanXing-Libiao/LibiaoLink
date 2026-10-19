@@ -9125,7 +9125,10 @@
         "description": "更新视图（局部更新：只传变更键；空更新 400 VALIDATION_FAILED）"
       },
       "WecomDmBindingCode": {
-        "type": "object",
+        "type": [
+          "object",
+          "null"
+        ],
         "properties": {
           "code": {
             "type": "string",
@@ -9139,7 +9142,7 @@
                 "$ref": "#/components/schemas/DateTime"
               },
               {
-                "description": "失效时刻（= 生成时刻 + 10 分钟）"
+                "description": "失效时刻（= 生成时刻 + 5 分钟）"
               }
             ]
           },
@@ -9154,7 +9157,7 @@
           "expiresAt",
           "expiresInSeconds"
         ],
-        "description": "绑定码（一次性：用户首次发码即绑定并置 used；重复取码会作废上一条未用码）"
+        "description": "当前仍有效的（pending）绑定码 —— 刷新 / 重进页面后据此恢复码面与倒计时；无未用码 = null"
       },
       "WecomDmBindingState": {
         "type": "object",
@@ -9183,14 +9186,33 @@
                 "description": "绑定确立时刻；未绑定 / 解绑后 = null"
               }
             ]
+          },
+          "bindingCode": {
+            "$ref": "#/components/schemas/WecomDmBindingCode"
+          },
+          "retryAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "取码频率到顶时的可重试时刻 —— 刷新后据此恢复罚时倒计时；未到顶 = null"
+              }
+            ]
           }
         },
         "required": [
           "bound",
           "wecomUseridMasked",
-          "boundAt"
+          "boundAt",
+          "bindingCode",
+          "retryAt"
         ],
-        "description": "企业微信单聊绑定态：绑定按机器人维度成立（换机器人后旧绑定不生效 → 读面回到 bound:false）；解绑 = 注销投递资格（保留激活登记）"
+        "description": "企业微信单聊绑定态：绑定按机器人维度成立（换机器人后旧绑定不生效 → 读面回到 bound:false）；解绑 = 注销投递资格（保留激活登记）；另回当前未用绑定码与取码限流可重试时刻（页面刷新不丢状态）"
       },
       "WorkspaceIssueItem": {
         "type": "object",
@@ -18036,7 +18058,7 @@
         "tags": [
           "notifications"
         ],
-        "summary": "企业微信单聊绑定态（D5 / D6 设置页）：按当前机器人（`WECOM_BOT_ID`）维度判定；恒 200（未绑定 = bound:false）；企微 open_userid 只回掩码末 4 位",
+        "summary": "企业微信单聊绑定态（D5 / D6 设置页）：按当前机器人（`WECOM_BOT_ID`）维度判定；恒 200（未绑定 = bound:false）；企微 open_userid 只回掩码末 4 位；v1.8 另回当前未用绑定码（bindingCode）与取码限流可重试时刻（retryAt）—— 页面刷新不丢码面 / 倒计时 / 罚时",
         "responses": {
           "200": {
             "description": "绑定态（未绑定 = bound:false；wecomUseridMasked / boundAt = null）",
@@ -18094,14 +18116,21 @@
         "tags": [
           "notifications"
         ],
-        "summary": "生成绑定码（D3 / D5）：6 位数字 · TTL 10 分钟 · 一次性 · 5 次 / 10 分钟 / 用户（D3 修订 v1.7 —— 超出 429 RATE_LIMITED）；重复取码作废上一条未用码；用户把码发进企微单聊即绑定（会话内回执由 worker 承担）",
+        "summary": "生成绑定码（D3 / D5）：6 位数字 · TTL 5 分钟 · 一次性 · 5 次 / 3 分钟 / 用户（D3 修订 v1.8 —— 超出 429 RATE_LIMITED）；重复取码作废上一条未用码；用户把码发进企微单聊即绑定（v1.8：以码持有者为准换绑 · 会话内回执由 worker 承担）",
         "responses": {
           "200": {
             "description": "绑定码（code / expiresAt / expiresInSeconds）",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WecomDmBindingCode"
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/WecomDmBindingCode"
+                    },
+                    {
+                      "description": "绑定码（一次性：用户首次发码即绑定并置 used；重复取码会作废上一条未用码；TTL 5 分钟）"
+                    }
+                  ]
                 }
               }
             }
@@ -18117,7 +18146,7 @@
             }
           },
           "429": {
-            "description": "取码频率到顶（RATE_LIMITED；details[0].meta.retryAt = 可重试时刻，meta.window = 10m）",
+            "description": "取码频率到顶（RATE_LIMITED；details[0].meta.retryAt = 可重试时刻，meta.window = 3m）",
             "content": {
               "application/json": {
                 "schema": {

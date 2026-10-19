@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   loadWecomDmBinding,
   rateLimitedRetryAt,
@@ -25,6 +25,9 @@ import { formatDateTime } from "../projectApi";
  * 绑定态刷新（Push 253 修「企微已回执绑定成功、设置页仍显示未绑定」）：绑定只能由用户在企微里发码完成，
  *  页面侧无法从写口响应得知 —— 未绑定时每 5 秒静默重读（上限 15 分钟）+ 「刷新绑定状态」按钮 +
  *  窗口重新可见 / 聚焦立即读一次。
+ * 状态持久（Push 254 修「刷新页面后绑定码 / 罚时消失」）：码面与倒计时的唯一真源 = 服务端读面（GET 回
+ *  bindingCode / retryAt）—— `applyState` 把「绑定态 + 未用码 + 罚时」一起播种，刷新 / 重进页面后原样恢复；
+ *  码失效（倒计时归零）时主动提示「请重新获取」（toast + 码面内文案）。
  * 复制（Push 253 修「复制一直失败」）：走 `../clipboard` 双通道 —— 异步剪贴板 API 不可用
  *  （http 非安全上下文 / 权限被拒）时回退 `document.execCommand("copy")`，码面同时置为可全选。
  */
@@ -60,13 +63,23 @@ export function WecomBindingPanel(props: {
   const [checking, setChecking] = useState(false);
   const [now, setNow] = useState(() => Date.now());
 
+  /**
+   * 读面 → 本地（Push 254 · v1.8 回填）：绑定态 + 当前未用码 + 取码罚时**一起**播种 —— 刷新 / 重进页面
+   * 不丢码面、倒计时与罚时；状态真源在服务端，前端不另存（localStorage 不落企微标识 —— 口径 §9）。
+   */
+  const applyState = (next: WecomDmBindingState): void => {
+    setState(next);
+    setCode(next.bindingCode);
+    setRetryAt(next.retryAt);
+    props.onBoundChange?.(next.bound);
+  };
+
   const reload = (): void => {
     setLoadFailed(false);
     setState(null);
     void loadWecomDmBinding()
       .then((next) => {
-        setState(next);
-        props.onBoundChange?.(next.bound);
+        applyState(next);
       })
       .catch(() => {
         setLoadFailed(true);
@@ -82,9 +95,8 @@ export function WecomBindingPanel(props: {
   const refreshState = async (): Promise<void> => {
     try {
       const next = await loadWecomDmBinding();
-      setState(next);
+      applyState(next);
       setLoadFailed(false);
-      props.onBoundChange?.(next.bound);
     } catch {
       // 静默失败：保留当前状态（下一轮 / 手动刷新再试），不把已绑定的界面打回错误态
     }
@@ -147,6 +159,19 @@ export function WecomBindingPanel(props: {
     };
   }, [ticking]);
 
+  /**
+   * 码失效提醒（Push 254 · 用户口径「绑定码失效后需要提醒用户重新获取」）：倒计时归零时提示一次
+   * （码面内文案同时切「已失效，请重新获取」）；同一枚码只提醒一次，刷新后由读面回填的新码各自计时。
+   */
+  const expirationNotified = useRef<string | null>(null);
+  useEffect(() => {
+    if (code === null || codeLeft > 0 || expirationNotified.current === code.code) {
+      return;
+    }
+    expirationNotified.current = code.code;
+    props.onNotice({ kind: "error", text: t("settings.bind.codeExpiredNotice") });
+  }, [code, codeLeft]);
+
   const handleGetCode = async (): Promise<void> => {
     setBusy("code");
     try {
@@ -184,9 +209,7 @@ export function WecomBindingPanel(props: {
     setBusy("unbind");
     try {
       const next = await unbindWecomDm();
-      setState(next);
-      props.onBoundChange?.(next.bound);
-      setCode(null);
+      applyState(next);
       setConfirmUnbind(false);
       props.onNotice({ kind: "ok", text: t("settings.bind.unboundOk") });
     } catch {

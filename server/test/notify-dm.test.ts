@@ -25,7 +25,6 @@ import {
   DM_BINDING_CODE_WINDOW_MS,
   DM_BINDING_CODE_TTL_MS,
   DM_BINDING_DEGRADE_PREFIX,
-  DM_BINDING_REPLY_ALREADY_BOUND,
   DM_BINDING_REPLY_BOUND,
   DM_BINDING_REPLY_INVALID,
   DM_DEGRADE_PREFIX,
@@ -146,6 +145,20 @@ class FakeDmRepository {
 
   async findBindingCode(code: string): Promise<DmBindingCodeRow | null> {
     return this.codes.get(code) ?? null;
+  }
+
+  /** 读面回填替身（v1.8）：该用户当前仍未失效的 pending 码（同一用户至多一条 —— 取 id 最大者）。 */
+  async findPendingBindingCode(userId: string, at: Date): Promise<{ code: string; expiresAt: Date } | null> {
+    let found: { code: string; expiresAt: Date; id: number } | null = null;
+    for (const row of this.codes.values()) {
+      if (row.userId !== userId || row.status !== "pending" || row.expiresAt.getTime() <= at.getTime()) {
+        continue;
+      }
+      if (found === null || row.id > found.id) {
+        found = { code: row.code, expiresAt: row.expiresAt, id: row.id };
+      }
+    }
+    return found === null ? null : { code: found.code, expiresAt: found.expiresAt };
   }
 
   async bindWithCode(input: {
@@ -750,17 +763,47 @@ describe("NotifyDmService.ingestCallback（单聊绑定码 · 口径 §5）", ()
     expect(aibot.replies).toEqual([{ reqId: "ReqIdCallback0001", userid: OPEN_USERID, content: DM_BINDING_REPLY_INVALID }]);
   });
 
-  it("该企微号已绑定：回「已绑定」+ 不再绑定（幂等 · 含回调重复投递）", async () => {
-    const { service, repo, aibot } = makeBoundService();
+  it("跨用户换绑（v1.8 · 以码持有者为准）：绑定行改挂到码持有者 + 旧持有者回落未绑定 + 审计 1 条", async () => {
+    const otherUser = "22222222-2222-4222-8222-222222222222";
+    const { service, repo, aibot, audit } = makeBoundService();
+    repo.codes.set(CODE, codeRow({ userId: otherUser }));
+
+    await service.ingestCallback(codeIncoming());
+
+    expect(repo.bindCalls).toHaveLength(1);
+    expect(repo.bindCalls[0]).toMatchObject({ userId: otherUser, botId: BOT_ID, wecomUserid: OPEN_USERID });
+    // 绑定行按 (bot_id, wecom_userid) 唯一键改挂：同一企微号不再挂在旧持有者名下。
+    expect(repo.bindings.get(key(BOT_ID, OPEN_USERID))!.userId).toBe(otherUser);
+    expect(await service.getBindingState(USER_ID)).toMatchObject({ bound: false, wecomUseridMasked: null, boundAt: null });
+    expect(await service.getBindingState(otherUser)).toMatchObject({
+      bound: true,
+      wecomUseridMasked: "****" + OPEN_USERID.slice(-4),
+    });
+    expect(aibot.replies).toEqual([{ reqId: "ReqIdCallback0001", userid: OPEN_USERID, content: DM_BINDING_REPLY_BOUND }]);
+    // 换绑留痕（与绑定行改挂同一事务）：action=update / objectId = 旧持有者 / 摘要与 changes 不带完整密文。
+    expect(audit.records).toHaveLength(1);
+    expect(audit.records[0]!.input).toMatchObject({
+      action: "update",
+      objectType: "user",
+      objectId: USER_ID,
+      actorId: otherUser,
+      changes: [{ field: "wecomDmBinding.owner", from: USER_ID, to: otherUser }],
+      metadata: { botId: BOT_ID, wecomUseridMasked: "****" + OPEN_USERID.slice(-4) },
+    });
+    expect(JSON.stringify(audit.records[0]!.input).includes(OPEN_USERID)).toBe(false);
+  });
+
+  it("回调重复投递（码已用 + 绑定已归码持有者）：回「绑定成功」幂等、不重复绑定、不再写审计", async () => {
+    const { service, repo, aibot, audit } = makeService();
     repo.codes.set(CODE, codeRow());
 
     await service.ingestCallback(codeIncoming());
     await service.ingestCallback(codeIncoming());
 
-    expect(repo.bindCalls).toEqual([]);
-    expect(aibot.replies).toHaveLength(2);
-    expect(aibot.replies[0]!.content).toBe(DM_BINDING_REPLY_ALREADY_BOUND);
-    expect(repo.bindings.get(key(BOT_ID, OPEN_USERID))!.boundAt).toEqual(BEFORE); // 原绑定未被覆盖
+    expect(repo.bindCalls).toHaveLength(1); // 第二次不再触绑定
+    expect(repo.bindings.get(key(BOT_ID, OPEN_USERID))!.boundAt).toEqual(AT);
+    expect(aibot.replies.map((item) => item.content)).toEqual([DM_BINDING_REPLY_BOUND, DM_BINDING_REPLY_BOUND]);
+    expect(audit.records).toHaveLength(0); // 本人重复投递非换绑
   });
 
   it("占用失败（并发消费 / 恰过期）：回「码已失效」+ 不写绑定", async () => {
@@ -806,7 +849,7 @@ describe("NotifyDmService.ingestCallback（单聊绑定码 · 口径 §5）", ()
 // ---------- 取码与绑定态 ----------
 
 describe("NotifyDmService.requestBindingCode / getBindingState（D3 / D5 口径）", () => {
-  it("取码：6 位数字 + expiresAt = now + 10 分钟", async () => {
+  it("取码：6 位数字 + expiresAt = now + 5 分钟", async () => {
     const { service, repo } = makeService();
 
     const result = await service.requestBindingCode(USER_ID);
@@ -817,19 +860,20 @@ describe("NotifyDmService.requestBindingCode / getBindingState（D3 / D5 口径�
       expect(result.expiresAt.getTime()).toBe(AT.getTime() + DM_BINDING_CODE_TTL_MS);
       expect(result.expiresInSeconds).toBe(DM_BINDING_CODE_TTL_MS / 1000);
     }
+    expect(DM_BINDING_CODE_TTL_MS).toBe(300_000); // D3 修订 v1.8：TTL 5 分钟
     expect(repo.codeCreateCalls).toHaveLength(1);
     expect(repo.codeCreateCalls[0]).toMatchObject({ userId: USER_ID, expiresAt: new Date(AT.getTime() + DM_BINDING_CODE_TTL_MS), at: AT });
   });
 
-  it("频率限制：窗口内已取满 5 次 → rate_limited + retryAt = 最早一次码 + 窗口长度（≤ 10 分钟）", async () => {
+  it("频率限制：窗口内已取满 5 次 → rate_limited + retryAt = 最早一次码 + 窗口长度（≤ 3 分钟）", async () => {
     const { service, repo } = makeService();
-    const first = new Date(AT.getTime() - 500_000);
+    const first = new Date(AT.getTime() - 170_000);
     repo.issuedAt = [
       first,
-      new Date(AT.getTime() - 400_000),
-      new Date(AT.getTime() - 300_000),
-      new Date(AT.getTime() - 200_000),
-      new Date(AT.getTime() - 100_000),
+      new Date(AT.getTime() - 140_000),
+      new Date(AT.getTime() - 110_000),
+      new Date(AT.getTime() - 80_000),
+      new Date(AT.getTime() - 50_000),
     ];
 
     const result = await service.requestBindingCode(USER_ID);
@@ -838,12 +882,12 @@ describe("NotifyDmService.requestBindingCode / getBindingState（D3 / D5 口径�
     if (!result.ok) {
       expect(result.reason).toBe("rate_limited");
       expect(result.retryAt.getTime()).toBe(first.getTime() + DM_BINDING_CODE_WINDOW_MS);
-      // 最长等待 = 窗口长度（10 分钟）—— D3 修订 v1.7 的可用性口径
+      // 最长等待 = 窗口长度（3 分钟）—— D3 修订 v1.8 的可用性口径
       expect(result.retryAt.getTime() - AT.getTime()).toBeLessThanOrEqual(DM_BINDING_CODE_WINDOW_MS);
     }
     expect(repo.codeCreateCalls).toEqual([]);
     expect(DM_BINDING_CODE_MAX_PER_WINDOW).toBe(5);
-    expect(DM_BINDING_CODE_WINDOW_MS).toBe(600_000);
+    expect(DM_BINDING_CODE_WINDOW_MS).toBe(180_000);
   });
 
   it("撞码重试：前两次被唯一键挡下 → 第三次成功", async () => {
@@ -869,6 +913,8 @@ describe("NotifyDmService.requestBindingCode / getBindingState（D3 / D5 口径�
       bound: true,
       wecomUseridMasked: "****" + OPEN_USERID.slice(-4),
       boundAt: BEFORE.toISOString(),
+      bindingCode: null,
+      retryAt: null,
     });
 
     const unbound = makeService();
@@ -877,6 +923,8 @@ describe("NotifyDmService.requestBindingCode / getBindingState（D3 / D5 口径�
       bound: false,
       wecomUseridMasked: null,
       boundAt: null,
+      bindingCode: null,
+      retryAt: null,
     });
 
     // 换机器人：旧绑定按 (bot_id, ...) 维度不再命中 → 读面回到未绑定（无需清库即生效）。
@@ -890,6 +938,39 @@ describe("NotifyDmService.requestBindingCode / getBindingState（D3 / D5 口径�
     });
     expect((await otherBot.service.getBindingState(USER_ID)).bound).toBe(false);
   });
+
+  it("读面回填（v1.8）：回当前未用绑定码与取码限流可重试时刻 —— 刷新 / 重进页面不丢码面与罚时", async () => {
+    const { service, repo } = makeService();
+    const expiresAt = new Date(AT.getTime() + 240_000);
+    repo.codes.set(CODE, codeRow({ expiresAt }));
+    repo.issuedAt = [
+      new Date(AT.getTime() - 170_000),
+      new Date(AT.getTime() - 140_000),
+      new Date(AT.getTime() - 110_000),
+      new Date(AT.getTime() - 80_000),
+      new Date(AT.getTime() - 50_000),
+    ];
+
+    const state = await service.getBindingState(USER_ID);
+
+    expect(state.bound).toBe(false);
+    expect(state.bindingCode).toEqual({ code: CODE, expiresAt: expiresAt.toISOString(), expiresInSeconds: 240 });
+    // 罚时回填与取码侧同一判定：窗口内最早一码 + 窗口长度。
+    expect(state.retryAt).toBe(new Date(AT.getTime() - 170_000 + 180_000).toISOString());
+
+    // 未到顶 → retryAt = null；码已过期 / 已用 → bindingCode = null（读面只回「此刻仍可用」的码）。
+    const noLimit = makeService();
+    noLimit.repo.codes.set(CODE, codeRow());
+    expect((await noLimit.service.getBindingState(USER_ID)).retryAt).toBeNull();
+
+    const stale = makeService();
+    stale.repo.codes.set(CODE, codeRow({ expiresAt: new Date(AT.getTime() - 1) }));
+    expect((await stale.service.getBindingState(USER_ID)).bindingCode).toBeNull();
+
+    const used = makeService();
+    used.repo.codes.set(CODE, codeRow({ status: "used" }));
+    expect((await used.service.getBindingState(USER_ID)).bindingCode).toBeNull();
+  });
 });
 
 // ---------- 解绑（D6） ----------
@@ -900,7 +981,7 @@ describe("NotifyDmService.unbind（D6：清绑定 + 同事务审计 / 幂等）"
 
     const state = await service.unbind(USER_ID, USER_ID);
 
-    expect(state).toEqual({ bound: false, wecomUseridMasked: null, boundAt: null });
+    expect(state).toEqual({ bound: false, wecomUseridMasked: null, boundAt: null, bindingCode: null, retryAt: null });
     expect(repo.clearCalls).toHaveLength(1);
     expect(repo.clearCalls[0]).toMatchObject({ botId: BOT_ID, userId: USER_ID, at: AT });
     expect(repo.bindings.size).toBe(0);
@@ -927,6 +1008,8 @@ describe("NotifyDmService.unbind（D6：清绑定 + 同事务审计 / 幂等）"
       bound: false,
       wecomUseridMasked: null,
       boundAt: null,
+      bindingCode: null,
+      retryAt: null,
     });
     expect(repo.clearCalls).toEqual([]);
     expect(audit.records).toEqual([]);

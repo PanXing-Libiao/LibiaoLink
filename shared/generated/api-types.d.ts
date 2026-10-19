@@ -7327,7 +7327,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 企业微信单聊绑定态（D5 / D6 设置页）：按当前机器人（`WECOM_BOT_ID`）维度判定；恒 200（未绑定 = bound:false）；企微 open_userid 只回掩码末 4 位 */
+        /** 企业微信单聊绑定态（D5 / D6 设置页）：按当前机器人（`WECOM_BOT_ID`）维度判定；恒 200（未绑定 = bound:false）；企微 open_userid 只回掩码末 4 位；v1.8 另回当前未用绑定码（bindingCode）与取码限流可重试时刻（retryAt）—— 页面刷新不丢码面 / 倒计时 / 罚时 */
         get: {
             parameters: {
                 query?: never;
@@ -7403,7 +7403,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 生成绑定码（D3 / D5）：6 位数字 · TTL 10 分钟 · 一次性 · 5 次 / 10 分钟 / 用户（D3 修订 v1.7 —— 超出 429 RATE_LIMITED）；重复取码作废上一条未用码；用户把码发进企微单聊即绑定（会话内回执由 worker 承担） */
+        /** 生成绑定码（D3 / D5）：6 位数字 · TTL 5 分钟 · 一次性 · 5 次 / 3 分钟 / 用户（D3 修订 v1.8 —— 超出 429 RATE_LIMITED）；重复取码作废上一条未用码；用户把码发进企微单聊即绑定（v1.8：以码持有者为准换绑 · 会话内回执由 worker 承担） */
         post: {
             parameters: {
                 query?: never;
@@ -7419,7 +7419,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["WecomDmBindingCode"];
+                        "application/json": components["schemas"]["WecomDmBindingCode"] & unknown;
                     };
                 };
                 /** @description 未认证（AUTH_REQUIRED） */
@@ -7431,7 +7431,7 @@ export interface paths {
                         "application/json": components["schemas"]["ApiError"];
                     };
                 };
-                /** @description 取码频率到顶（RATE_LIMITED；details[0].meta.retryAt = 可重试时刻，meta.window = 10m） */
+                /** @description 取码频率到顶（RATE_LIMITED；details[0].meta.retryAt = 可重试时刻，meta.window = 3m） */
                 429: {
                     headers: {
                         [name: string]: unknown;
@@ -9927,7 +9927,7 @@ export interface components {
             grouping?: components["schemas"]["ViewGrouping"];
             isDefault?: boolean;
         };
-        /** @description 绑定码（一次性：用户首次发码即绑定并置 used；重复取码会作废上一条未用码） */
+        /** @description 当前仍有效的（pending）绑定码 —— 刷新 / 重进页面后据此恢复码面与倒计时；无未用码 = null */
         WecomDmBindingCode: {
             /**
              * @description 6 位数字绑定码（用户在企微里把这条码发给机器人完成绑定）
@@ -9937,14 +9937,16 @@ export interface components {
             expiresAt: components["schemas"]["DateTime"] & unknown;
             /** @description 剩余有效期（秒；供前端倒计时） */
             expiresInSeconds: number;
-        };
-        /** @description 企业微信单聊绑定态：绑定按机器人维度成立（换机器人后旧绑定不生效 → 读面回到 bound:false）；解绑 = 注销投递资格（保留激活登记） */
+        } | null;
+        /** @description 企业微信单聊绑定态：绑定按机器人维度成立（换机器人后旧绑定不生效 → 读面回到 bound:false）；解绑 = 注销投递资格（保留激活登记）；另回当前未用绑定码与取码限流可重试时刻（页面刷新不丢状态） */
         WecomDmBindingState: {
             /** @description 当前机器人（`WECOM_BOT_ID`）下是否已有可投递地址 */
             bound: boolean;
             /** @description 企微 open_userid 掩码（只回末 4 位）；未绑定 / 解绑后 = null */
             wecomUseridMasked: string | null;
             boundAt: components["schemas"]["DateTime"] & (string | null);
+            bindingCode: components["schemas"]["WecomDmBindingCode"];
+            retryAt: components["schemas"]["DateTime"] & (string | null);
         };
         /** @description 工作台问题项（跨项目；问题追踪七列数据源随行下发） */
         WorkspaceIssueItem: {

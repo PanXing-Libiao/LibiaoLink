@@ -382,22 +382,41 @@ export type NotificationSnoozeListResponse = z.infer<typeof NotificationSnoozeLi
  *   产生 —— 本组端点 = 「取码（POST codes）→ 用户把码发进企微单聊（worker ingest 落绑定 + 会话内回执）→
  *   查绑定态（GET）→ 解绑（DELETE）」。
  * 安全口径（§9）：密文 open_userid 只回掩码末 4 位（最小暴露 · 沿用群绑定 `chatidMasked` 先例）；绑定码正文
- *   不入库、不落日志；取码频率 5 次 / 10 分钟 / 用户（D3 修订 v1.7 —— 原「3 次 / 小时」等待过久，超出 = 429
- *   `RATE_LIMITED` + `details[].meta.retryAt`，最长等待 ≤ 窗口长度）；
- *   解绑 / 换绑写 `audit_logs`（D6）。
+ *   不入库、不落日志；取码频率 **5 次 / 3 分钟 / 用户**（D3 修订 v1.8 —— v1.7 的 10 分钟窗口罚时仍偏长，窗口改
+ *   3 分钟 = 罚时上限 3 分钟；超出 = 429 `RATE_LIMITED` + `details[].meta.retryAt`）；
+ *   解绑写 `audit_logs`（D6）；跨用户换绑同写 `audit_logs`。
+ * 换绑口径（v1.8 明确）：码命中即以**码持有者为准** —— 发送方企微号已绑在别的库内用户上时不再短路「已绑定」，
+ *   改为把该 `(bot_id, wecom_userid)` 行改挂到码的持有者（旧持有者回落未绑定），并回「绑定成功」。
+ * 读面回填（v1.8）：绑定态读面另回「当前 pending 绑定码」与「取码限流可重试时刻」—— 刷新 / 重进页面后前端据此
+ *   恢复码面、倒计时与罚时（服务端为准，前端不缓存）。
  * 权限口径：个人资源（同收件箱 / 通知偏好先例）—— 无功能权限位；读 = 会话，写 = 会话 + CSRF。
  * ---------------------------------------------------------------------------------------------- */
 
 /** 绑定码位数（D3：6 位数字）。 */
 export const WECOM_DM_BINDING_CODE_LENGTH = 6;
-/** 绑定码有效期（D3：10 分钟）。 */
-export const WECOM_DM_BINDING_CODE_TTL_MS = 10 * 60_000;
-/** 绑定码生成频率窗口（D3 修订 v1.7：10 分钟 · 滚动窗口）。 */
-export const WECOM_DM_BINDING_CODE_WINDOW_MS = 10 * 60_000;
-/** 绑定码生成频率上限（D3 修订 v1.7：5 次 / 10 分钟 / 用户；超出 → 429 `RATE_LIMITED`）。 */
+/** 绑定码有效期（D3 修订 v1.8：5 分钟 —— 原 10 分钟）。 */
+export const WECOM_DM_BINDING_CODE_TTL_MS = 5 * 60_000;
+/** 绑定码生成频率窗口（D3 修订 v1.8：3 分钟 · 滚动窗口 = 罚时上限）。 */
+export const WECOM_DM_BINDING_CODE_WINDOW_MS = 3 * 60_000;
+/** 绑定码生成频率上限（D3 修订 v1.8：5 次 / 3 分钟 / 用户；超出 → 429 `RATE_LIMITED`，最长等待 ≤ 3 分钟）。 */
 export const WECOM_DM_BINDING_CODE_MAX_PER_WINDOW = 5;
 
-/** 绑定态（读面恒 200；未绑定 = `bound:false`）—— GET / DELETE 同形。 */
+/** 绑定码（POST codes 响应 / 绑定态读面回填）：只回码 + 失效时刻，不含任何企微标识。 */
+export const WecomDmBindingCodeSchema = z
+  .object({
+    code: z
+      .string()
+      .regex(/^[0-9]{6}$/)
+      .openapi({ description: "6 位数字绑定码（用户在企微里把这条码发给机器人完成绑定）", example: "482913" }),
+    expiresAt: DateTimeSchema.openapi({ description: "失效时刻（= 生成时刻 + 5 分钟）" }),
+    expiresInSeconds: z.number().int().positive().openapi({ description: "剩余有效期（秒；供前端倒计时）" }),
+  })
+  .openapi("WecomDmBindingCode", {
+    description: "绑定码（一次性：用户首次发码即绑定并置 used；重复取码会作废上一条未用码；TTL 5 分钟）",
+  });
+export type WecomDmBindingCode = z.infer<typeof WecomDmBindingCodeSchema>;
+
+/** 绑定态（读面恒 200；未绑定 = `bound:false`）—— GET / DELETE 同形 + 取码链路回填（v1.8）。 */
 export const WecomDmBindingStateSchema = z
   .object({
     bound: z.boolean().openapi({ description: "当前机器人（`WECOM_BOT_ID`）下是否已有可投递地址" }),
@@ -406,24 +425,15 @@ export const WecomDmBindingStateSchema = z
       .nullable()
       .openapi({ description: "企微 open_userid 掩码（只回末 4 位）；未绑定 / 解绑后 = null" }),
     boundAt: DateTimeSchema.nullable().openapi({ description: "绑定确立时刻；未绑定 / 解绑后 = null" }),
+    bindingCode: WecomDmBindingCodeSchema.nullable().openapi({
+      description: "当前仍有效的（pending）绑定码 —— 刷新 / 重进页面后据此恢复码面与倒计时；无未用码 = null",
+    }),
+    retryAt: DateTimeSchema.nullable().openapi({
+      description: "取码频率到顶时的可重试时刻 —— 刷新后据此恢复罚时倒计时；未到顶 = null",
+    }),
   })
   .openapi("WecomDmBindingState", {
     description:
-      "企业微信单聊绑定态：绑定按机器人维度成立（换机器人后旧绑定不生效 → 读面回到 bound:false）；解绑 = 注销投递资格（保留激活登记）",
+      "企业微信单聊绑定态：绑定按机器人维度成立（换机器人后旧绑定不生效 → 读面回到 bound:false）；解绑 = 注销投递资格（保留激活登记）；另回当前未用绑定码与取码限流可重试时刻（页面刷新不丢状态）",
   });
 export type WecomDmBindingState = z.infer<typeof WecomDmBindingStateSchema>;
-
-/** 绑定码（POST codes 响应）：只回码 + 失效时刻，不含任何企微标识。 */
-export const WecomDmBindingCodeSchema = z
-  .object({
-    code: z
-      .string()
-      .regex(/^[0-9]{6}$/)
-      .openapi({ description: "6 位数字绑定码（用户在企微里把这条码发给机器人完成绑定）", example: "482913" }),
-    expiresAt: DateTimeSchema.openapi({ description: "失效时刻（= 生成时刻 + 10 分钟）" }),
-    expiresInSeconds: z.number().int().positive().openapi({ description: "剩余有效期（秒；供前端倒计时）" }),
-  })
-  .openapi("WecomDmBindingCode", {
-    description: "绑定码（一次性：用户首次发码即绑定并置 used；重复取码会作废上一条未用码）",
-  });
-export type WecomDmBindingCode = z.infer<typeof WecomDmBindingCodeSchema>;

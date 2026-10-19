@@ -1919,7 +1919,7 @@ export function buildOpenApiDocument() {
     path: "/api/v1/wecom-dm-binding",
     tags: ["notifications"],
     summary:
-      "企业微信单聊绑定态（D5 / D6 设置页）：按当前机器人（`WECOM_BOT_ID`）维度判定；恒 200（未绑定 = bound:false）；企微 open_userid 只回掩码末 4 位",
+      "企业微信单聊绑定态（D5 / D6 设置页）：按当前机器人（`WECOM_BOT_ID`）维度判定；恒 200（未绑定 = bound:false）；企微 open_userid 只回掩码末 4 位；v1.8 另回当前未用绑定码（bindingCode）与取码限流可重试时刻（retryAt）—— 页面刷新不丢码面 / 倒计时 / 罚时",
     responses: {
       200: { description: "绑定态（未绑定 = bound:false；wecomUseridMasked / boundAt = null）", ...json(WecomDmBindingStateSchema) },
       401: commonErrors[401],
@@ -1931,11 +1931,11 @@ export function buildOpenApiDocument() {
     path: "/api/v1/wecom-dm-binding/codes",
     tags: ["notifications"],
     summary:
-      "生成绑定码（D3 / D5）：6 位数字 · TTL 10 分钟 · 一次性 · 5 次 / 10 分钟 / 用户（D3 修订 v1.7 —— 超出 429 RATE_LIMITED）；重复取码作废上一条未用码；用户把码发进企微单聊即绑定（会话内回执由 worker 承担）",
+      "生成绑定码（D3 / D5）：6 位数字 · TTL 5 分钟 · 一次性 · 5 次 / 3 分钟 / 用户（D3 修订 v1.8 —— 超出 429 RATE_LIMITED）；重复取码作废上一条未用码；用户把码发进企微单聊即绑定（v1.8：以码持有者为准换绑 · 会话内回执由 worker 承担）",
     responses: {
       200: { description: "绑定码（code / expiresAt / expiresInSeconds）", ...json(WecomDmBindingCodeSchema) },
       401: commonErrors[401],
-      429: errorResponse("取码频率到顶（RATE_LIMITED；details[0].meta.retryAt = 可重试时刻，meta.window = 10m）"),
+      429: errorResponse("取码频率到顶（RATE_LIMITED；details[0].meta.retryAt = 可重试时刻，meta.window = 3m）"),
     },
   });
 

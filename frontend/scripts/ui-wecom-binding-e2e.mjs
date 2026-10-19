@@ -15,8 +15,11 @@
  *   ③ 未绑定态：设置页出「未绑定」+ D4 终稿话术；点「获取绑定码」→ 6 位码（`^[0-9]{6}$`）+ 倒计时递减 + 库内落 pending 行；
  *   ③b 复制通道（Push 253）：点「复制」→ 成功提示（`navigator.clipboard`，非安全上下文回退 `execCommand`）；
  *      码面可全选（`data-wecom-binding-code-text` + `select-all`）；
- *   ④ 频率口径（D3 修订 v1.7）：连取 5 次（每次作废旧码 —— 库内 5 行 = 4 expired + 1 pending）→ 第 6 次 429：
- *      按钮置灰 +「N 分 N 秒后可再次获取」倒计时（`details[].meta.retryAt`，最长 ≤ 10 分钟）、库内不增行；
+ *   ④ 频率口径（D3 修订 v1.8）：连取 5 次（每次作废旧码 —— 库内 5 行 = 4 expired + 1 pending）→ 第 6 次 429：
+ *      按钮置灰 +「N 分 N 秒后可再次获取」倒计时（`details[].meta.retryAt`，最长 ≤ 3 分钟）、库内不增行；
+ *   ④b 刷新不丢状态（Push 254 · 读面回填）：取码后刷新 → 码面与倒计时按读面 `bindingCode` 原样恢复；
+ *      429 后刷新 → 罚时按读面 `retryAt` 恢复（按钮仍置灰 + 倒计时续算）—— 码失效提醒 toast 需等满 TTL，
+ *      回放不覆盖（由码面文案 + 单元口径承担）；
  *   ⑤ 已绑定（夹具落绑定行）：**不刷新页面**、靠面板 5 秒轮询自动切「已绑定」（Push 253 修「企微已回执绑定成功、
  *      设置页仍显示未绑定」）；设置页「已绑定」= 掩码末 4 位 + 绑定时间，页面里不出现完整 open_userid（§9 最小暴露）；
  *      已绑定 = 不弹引导（清掉本机跳过位后刷新仍不弹）；
@@ -330,13 +333,19 @@ shots.push(await shot("wecom-settings-unbound-3"));
 const codeExpr = "(function(){var el=document.querySelector(" + j("[data-wecom-binding-code]") + ");if(el===null){return null;}var cd=el.querySelector(" + j("[data-wecom-binding-countdown]") + ");return {code:el.getAttribute(" + j("data-wecom-binding-code") + "),state:el.getAttribute(" + j("data-wecom-binding-code-state") + "),countdown:cd===null?null:Number(cd.getAttribute(" + j("data-wecom-binding-countdown") + ")),text:String(cd===null?" + j("") + ":cd.textContent||" + j("") + ").trim()};})()";
 await click("[data-wecom-binding-get-code]");
 const code1 = await waitFor(exists("[data-wecom-binding-code]"), 12000) ? await ev(codeExpr) : null;
-check("点「获取绑定码」→ 出 6 位码（^[0-9]{6}$）+ 有效态 + 倒计时（≤ 600 秒）", code1 !== null && /^[0-9]{6}$/.test(String(code1.code)) && code1.state === "active" && code1.countdown <= 600 && code1.countdown >= 570, JSON.stringify(code1));
+check("点「获取绑定码」→ 出 6 位码（^[0-9]{6}$）+ 有效态 + 倒计时（≤ 300 秒 —— D3 修订 v1.8 TTL 5 分钟）", code1 !== null && /^[0-9]{6}$/.test(String(code1.code)) && code1.state === "active" && code1.countdown <= 300 && code1.countdown >= 270, JSON.stringify(code1));
 const dbCode1 = (await db.query("select code, status, expires_at > now() as live, user_id from wecom_id_binding_codes where user_id = $1 order by id desc limit 1", [userRow.id])).rows[0];
-check("库内落 pending 行且码与界面一致（TTL 10 分钟未过期）", dbCode1 !== undefined && dbCode1.code === code1.code && dbCode1.status === "pending" && dbCode1.live === true && dbCode1.user_id === userRow.id, JSON.stringify(dbCode1));
+check("库内落 pending 行且码与界面一致（TTL 5 分钟未过期）", dbCode1 !== undefined && dbCode1.code === code1.code && dbCode1.status === "pending" && dbCode1.live === true && dbCode1.user_id === userRow.id, JSON.stringify(dbCode1));
 shots.push(await shot("wecom-code-4"));
 await sleep(2600);
 const code1b = await ev(codeExpr);
 check("倒计时按秒递减（1 秒计时器）", code1b !== null && Number(code1b.countdown) < Number(code1.countdown) && String(code1b.text).indexOf("秒后失效") >= 0, JSON.stringify([code1.countdown, code1b === null ? null : code1b.countdown]));
+// ③a 刷新不丢状态（Push 254 · 读面回填 bindingCode）：刷新页面 → 码面与倒计时按库内 pending 码原样恢复
+const dbPending1 = (await db.query("select code from wecom_id_binding_codes where user_id = $1 and status = 'pending'", [userRow.id])).rows[0];
+await reload("[data-wecom-binding]");
+const codeAfterReload = (await waitFor(exists("[data-wecom-binding-code]"), 12000)) === true ? await ev(codeExpr) : null;
+check("刷新页面后绑定码仍在（读面回填 bindingCode）：码 = 库内 pending 行 + 有效态 + 倒计时续算（≤ 300 秒）", codeAfterReload !== null && dbPending1 !== undefined && codeAfterReload.code === dbPending1.code && codeAfterReload.state === "active" && codeAfterReload.countdown > 0 && codeAfterReload.countdown <= 300, JSON.stringify({ ui: codeAfterReload, db: dbPending1 === undefined ? null : dbPending1.code }));
+shots.push(await shot("wecom-code-reload-4b"));
 // ③b 复制通道（Push 253 修「复制一直失败」）：模拟非安全上下文（http + 局域网 IP = 无 navigator.clipboard）
 const codeText = await ev("(function(){var el=document.querySelector(" + j("[data-wecom-binding-code-text]") + ");if(el===null){return null;}var cs=window.getComputedStyle(el);return {text:String(el.textContent||" + j("") + ").trim(),selectable:String(cs.userSelect||cs.webkitUserSelect||" + j("") + "),cls:String(el.className)};})()");
 check("码面可全选（复制兜底：data-wecom-binding-code-text + select-all）", codeText !== null && String(codeText.cls).indexOf("select-all") >= 0 && String(codeText.selectable).indexOf("none") < 0, JSON.stringify(codeText));
@@ -359,20 +368,25 @@ const code4 = await ev(codeExpr);
 await click("[data-wecom-binding-get-code]");
 await sleep(1500);
 const code5 = await ev(codeExpr);
-check("第 4 / 5 次取码仍成功（D3 修订 v1.7：上限 = 5 次 / 10 分钟）", code4 !== null && code5 !== null && /^[0-9]{6}$/.test(String(code5.code)) && code5.state === "active" && code5.code !== code4.code, JSON.stringify([code4 === null ? null : code4.code, code5 === null ? null : code5.code]));
+check("第 4 / 5 次取码仍成功（D3 修订 v1.8：上限 = 5 次 / 3 分钟）", code4 !== null && code5 !== null && /^[0-9]{6}$/.test(String(code5.code)) && code5.state === "active" && code5.code !== code4.code, JSON.stringify([code4 === null ? null : code4.code, code5 === null ? null : code5.code]));
 const dbCodes5 = (await db.query("select status, count(*)::int n from wecom_id_binding_codes where user_id = $1 group by status order by status", [userRow.id])).rows;
 const pending5 = (await db.query("select code from wecom_id_binding_codes where user_id = $1 and status = 'pending'", [userRow.id])).rows;
 check("库内 5 行 = 4 条 expired（旧 pending 已作废）+ 1 条 pending，且 pending = 界面最新码", Number((await db.query("select count(*)::int n from wecom_id_binding_codes where user_id = $1", [userRow.id])).rows[0].n) === 5 && pending5.length === 1 && pending5[0].code === code5.code, JSON.stringify(dbCodes5));
 
-// ── ④ 频率口径（D3 修订 v1.7：5 次 / 10 分钟）—— 第 6 次 429 → 置灰 + 倒计时（details[].meta.retryAt）──────
+// ── ④ 频率口径（D3 修订 v1.8：5 次 / 3 分钟）—— 第 6 次 429 → 置灰 + 倒计时（details[].meta.retryAt）──────
+const limitExpr = "(function(){var box=document.querySelector(" + j("[data-wecom-binding-rate-limit]") + ");var btn=document.querySelector(" + j("[data-wecom-binding-get-code]") + ");return {seconds:box===null?null:Number(box.getAttribute(" + j("data-wecom-binding-rate-limit") + ")),text:String(box===null?" + j("") + ":box.textContent||" + j("") + ").trim(),disabled:btn===null?null:btn.hasAttribute(" + j("disabled") + ")};})()";
 const beforeLimit = await ev("(function(){var el=document.querySelector(" + j("[data-wecom-binding-get-code]") + ");return el===null?null:{disabled:el.hasAttribute(" + j("disabled") + ")};})()");
 await click("[data-wecom-binding-get-code]");
 const rateLimited = await waitFor(exists("[data-wecom-binding-rate-limit]"), 10000);
-const limit = await ev("(function(){var box=document.querySelector(" + j("[data-wecom-binding-rate-limit]") + ");var btn=document.querySelector(" + j("[data-wecom-binding-get-code]") + ");return {seconds:box===null?null:Number(box.getAttribute(" + j("data-wecom-binding-rate-limit") + ")),text:String(box===null?" + j("") + ":box.textContent||" + j("") + ").trim(),disabled:btn===null?null:btn.hasAttribute(" + j("disabled") + ")};})()");
-check("第 6 次取码（5 次 / 10 分钟到顶）→ 429：按钮置灰 + 「N 分 N 秒后可再次获取」倒计时（最长 ≤ 600 秒）", rateLimited === true && beforeLimit !== null && beforeLimit.disabled === false && limit.disabled === true && limit.seconds > 0 && limit.seconds <= 600 && String(limit.text).indexOf("后可再次获取") >= 0 && String(limit.text).indexOf("分") >= 0, JSON.stringify(limit));
+const limit = await ev(limitExpr);
+check("第 6 次取码（5 次 / 3 分钟到顶）→ 429：按钮置灰 + 「N 分 N 秒后可再次获取」倒计时（最长 ≤ 180 秒）", rateLimited === true && beforeLimit !== null && beforeLimit.disabled === false && limit.disabled === true && limit.seconds > 0 && limit.seconds <= 180 && String(limit.text).indexOf("后可再次获取") >= 0 && String(limit.text).indexOf("分") >= 0, JSON.stringify(limit));
 const afterLimitCount = Number((await db.query("select count(*)::int n from wecom_id_binding_codes where user_id = $1", [userRow.id])).rows[0].n);
 check("429 不落码：库内仍是 5 行", afterLimitCount === 5, String(afterLimitCount));
 shots.push(await shot("wecom-ratelimit-5"));
+// ④b 刷新不丢罚时（Push 254 · 读面回填 retryAt）：刷新页面 → 按钮仍置灰 + 倒计时续算
+await reload("[data-wecom-binding]");
+const limitAfterReload = (await waitFor(exists("[data-wecom-binding-rate-limit]"), 12000)) === true ? await ev(limitExpr) : null;
+check("刷新页面后罚时仍在（读面回填 retryAt）：按钮仍置灰 +「N 分 N 秒后可再次获取」倒计时 ≤ 180 秒", limitAfterReload !== null && limitAfterReload.disabled === true && limitAfterReload.seconds > 0 && limitAfterReload.seconds <= 180 && String(limitAfterReload.text).indexOf("后可再次获取") >= 0, JSON.stringify(limitAfterReload));
 
 // ── ⑤ 已绑定（夹具绑定行）：掩码 + 绑定时间；页面不出现完整 open_userid；已绑定 = 不弹引导 ────────────────
 await db.query("insert into wecom_aibot_dm_activations (bot_id, wecom_userid, user_id, first_activated_at, last_message_at, bound_at, created_at, updated_at) values ($1, $2, $3, now() - interval '2 hours', now() - interval '2 hours', now() - interval '90 minutes', now() - interval '2 hours', now() - interval '90 minutes')", [BOT_ID, openUserid, userRow.id]);

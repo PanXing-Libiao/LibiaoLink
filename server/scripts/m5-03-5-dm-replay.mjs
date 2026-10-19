@@ -13,11 +13,12 @@
  *      停用 → dead + 降级 / 降级写库失败 → retry。
  *   ⑤ 激活 ingest：single 消息回调 upsert（原文 userid + 反查回填 + 幂等刷新 last_message_at）/
  *      enter_chat 不激活 / 未匹配用户留空登记 / 非法 userid 忽略。
- *   ⑥ 绑定码链路（M5-03-5-6 · 迁移 0055 · 口径 v1.2）：会话内回执帧形锁帧（`aibot_respond_msg` + 回调
+ *   ⑥ 绑定码链路（M5-03-5-6 · 迁移 0055 · 口径 v1.8）：会话内回执帧形锁帧（`aibot_respond_msg` + 回调
  *      req_id 透传 + `msgtype: stream` 单帧收敛）／绑定行寻址（未绑定 → 不发帧 + dead + D4 降级）／
  *      ingest 全分支（单聊发码命中 → 同事务写绑定 + 标记码已用 + 回「绑定成功」；码过期 / 已用 → 「码已失效」；
- *      已绑定 → 「已绑定」；未命中 / 群聊 / 事件回调 → 不回复；非码消息 → 仅登记激活 D1）／
- *      取码（TTL 10 分钟 / 5 次每 10 分钟 / 撞码重试）。
+ *      跨用户换绑（v1.8：该企微号改挂到码持有者 + 同事务审计）；同一码重复投递 → 幂等「绑定成功」；
+ *      未命中 / 群聊 / 事件回调 → 不回复；非码消息 → 仅登记激活 D1）／
+ *      取码（TTL 5 分钟 / 5 次每 3 分钟 / 撞码重试）／读面回填（v1.8：未用码 + 罚时 —— 刷新不丢状态）。
  *
  * 前置：已构建的 server/dist（cd server && npm run build）。
  * 用法：cd server && node scripts/m5-03-5-dm-replay.mjs [--out <报告.md>] [--json <证据.json>]
@@ -330,6 +331,7 @@ async function main() {
       upsertCalls: [],
       backfillCalls: [],
       bindCalls: [],
+      bindClients: [],
       clearCalls: [],
       clearOverride: null,
       codeCreateCalls: [],
@@ -385,8 +387,18 @@ async function main() {
       async findBindingCode(code) {
         return this.codes.get(code) ?? null;
       },
-      async bindWithCode(input) {
+      /** 读面回填替身（v1.8）：该用户当前仍未失效的 pending 码（至多一条）。 */
+      async findPendingBindingCode(userId, at) {
+        let found = null;
+        for (const row of this.codes.values()) {
+          if (row.userId !== userId || row.status !== "pending" || row.expiresAt.getTime() <= at.getTime()) continue;
+          if (found === null || row.id > found.id) found = { code: row.code, expiresAt: row.expiresAt, id: row.id };
+        }
+        return found === null ? null : { code: found.code, expiresAt: found.expiresAt };
+      },
+      async bindWithCode(input, client) {
         this.bindCalls.push(input);
+        this.bindClients.push(client);
         if (this.bindFails) return false;
         for (const row of this.codes.values()) {
           if (row.id === input.codeId) row.status = "used";
@@ -679,10 +691,10 @@ async function main() {
     );
   }
 
-  // S18 绑定码 ingest 全分支（命中 / 已绑定 / 过期 / 未命中）
+  // S18 绑定码 ingest 全分支（命中 / 跨用户换绑 / 重复投递 / 过期 / 未命中）
   {
-    const { service, repo, aibot } = makeService({ ok: true, attempts: 1 });
-    repo.codes.set(CODE, { id: 7, code: CODE, userId: USER_ID, status: "pending", expiresAt: new Date(AT.getTime() + 600_000) });
+    const { service, repo, aibot, audit } = makeService({ ok: true, attempts: 1 });
+    repo.codes.set(CODE, { id: 7, code: CODE, userId: USER_ID, status: "pending", expiresAt: new Date(AT.getTime() + 300_000) });
     await service.ingestCallback(dmIncoming({ text: "绑定" + CODE }));
     assertTrue(
       "S18 命中：同事务写绑定（bot_id + open_userid + 库内用户）+ 标记码已用",
@@ -701,9 +713,39 @@ async function main() {
     );
     await service.ingestCallback(dmIncoming({ text: CODE }));
     assertEqual(
-      "S18 已绑定再发码（含回调重复投递）：回「已绑定」+ 不重复绑定",
-      aibot.replies[1].content + ":" + String(repo.bindCalls.length),
-      dm.DM_BINDING_REPLY_ALREADY_BOUND + ":1",
+      "S18 同一码重复投递（码已用 + 绑定仍归码持有者）：回「绑定成功」幂等、不重复绑定、零审计",
+      aibot.replies[1].content + ":" + String(repo.bindCalls.length) + ":" + String(audit.records.length),
+      dm.DM_BINDING_REPLY_BOUND + ":1:0",
+    );
+
+    // 跨用户换绑（v1.8 口径核心）：该企微号已挂在别的库内用户上 → 以码持有者为准，不再短路「已绑定」。
+    const OTHER_USER = "22222222-2222-4222-8222-222222222222";
+    const rebind = makeService({ ok: true, attempts: 1 });
+    rebind.repo.bindings.set(BOT_ID_STUB + "|" + OPEN_USERID, {
+      botId: BOT_ID_STUB,
+      wecomUserid: OPEN_USERID,
+      userId: USER_ID,
+      boundAt: AT,
+    });
+    rebind.repo.codes.set(CODE, { id: 9, code: CODE, userId: OTHER_USER, status: "pending", expiresAt: new Date(AT.getTime() + 300_000) });
+    await rebind.service.ingestCallback(dmIncoming({ text: "绑定" + CODE }));
+    assertTrue(
+      "S18 跨用户换绑（v1.8）：该企微号改挂到码持有者（旧持有者回落未绑定）+ 回「绑定成功」",
+      rebind.repo.bindings.get(BOT_ID_STUB + "|" + OPEN_USERID).userId === OTHER_USER &&
+        (await rebind.service.getBindingState(USER_ID)).bound === false &&
+        (await rebind.service.getBindingState(OTHER_USER)).bound === true &&
+        rebind.aibot.replies[0].content === dm.DM_BINDING_REPLY_BOUND,
+    );
+    assertTrue(
+      "S18 换绑审计（v1.8）：audit_logs 1 条（user / update / 旧持有者 → 码持有者 / 只带掩码）+ 与绑定改挂同一事务",
+      rebind.audit.records.length === 1 &&
+        rebind.audit.records[0].input.action === "update" &&
+        rebind.audit.records[0].input.objectType === "user" &&
+        rebind.audit.records[0].input.objectId === USER_ID &&
+        rebind.audit.records[0].input.actorId === OTHER_USER &&
+        rebind.audit.records[0].input.summary.includes("****" + OPEN_USERID.slice(-4)) &&
+        !JSON.stringify(rebind.audit.records[0].input).includes(OPEN_USERID) &&
+        rebind.audit.records[0].client === rebind.repo.bindClients[0],
     );
 
     const stale = makeService({ ok: true, attempts: 1 });
@@ -729,29 +771,29 @@ async function main() {
     const { service, repo } = makeService({ ok: true, attempts: 1 });
     const issued = await service.requestBindingCode(USER_ID);
     assertTrue(
-      "S19 取码：6 位数字 + TTL 10 分钟 + 委托仓储同一事务（作废旧 pending + 插新码）",
+      "S19 取码：6 位数字 + TTL 5 分钟 + 委托仓储同一事务（作废旧 pending + 插新码）",
       issued.ok === true &&
         /^[0-9]{6}$/.test(issued.code) &&
-        issued.expiresAt.getTime() === AT.getTime() + 600_000 &&
+        issued.expiresAt.getTime() === AT.getTime() + 300_000 &&
         repo.codeCreateCalls.length === 1 &&
         repo.codeCreateCalls[0].userId === USER_ID,
     );
     const throttled = makeService({ ok: true, attempts: 1 });
-    const first = new Date(AT.getTime() - 500_000);
+    const first = new Date(AT.getTime() - 170_000);
     throttled.repo.issuedAt = [
       first,
-      new Date(AT.getTime() - 400_000),
-      new Date(AT.getTime() - 300_000),
-      new Date(AT.getTime() - 200_000),
-      new Date(AT.getTime() - 100_000),
+      new Date(AT.getTime() - 140_000),
+      new Date(AT.getTime() - 110_000),
+      new Date(AT.getTime() - 80_000),
+      new Date(AT.getTime() - 50_000),
     ];
     const limited = await throttled.service.requestBindingCode(USER_ID);
     assertTrue(
-      "S19 频率限制：10 分钟窗口内第 6 次取码 → rate_limited + retryAt = 最早一次 + 窗口长度（最长 ≤ 10 分钟）",
+      "S19 频率限制：3 分钟窗口内第 6 次取码 → rate_limited + retryAt = 最早一次 + 窗口长度（最长 ≤ 3 分钟）",
       limited.ok === false &&
         limited.reason === "rate_limited" &&
-        limited.retryAt.getTime() === first.getTime() + 600_000 &&
-        limited.retryAt.getTime() - AT.getTime() <= 600_000 &&
+        limited.retryAt.getTime() === first.getTime() + 180_000 &&
+        limited.retryAt.getTime() - AT.getTime() <= 180_000 &&
         throttled.repo.codeCreateCalls.length === 0,
     );
     const clash = makeService({ ok: true, attempts: 1 });
@@ -826,6 +868,36 @@ async function main() {
       "S20 解绑竞态（清 0 行 = 他处已清）：不写审计、仍回 bound:false",
       String(raced.bound) + ":" + String(race.repo.clearCalls.length) + ":" + String(race.audit.records.length),
       "false:1:0",
+    );
+  }
+
+  // S21 读面回填（v1.8 · Push 254）：GET 同形回「当前未用绑定码」与「取码限流可重试时刻」—— 刷新不丢码面 / 罚时
+  {
+    const { service, repo } = makeService({ ok: true, attempts: 1 });
+    repo.codes.set(CODE, { id: 7, code: CODE, userId: USER_ID, status: "pending", expiresAt: new Date(AT.getTime() + 240_000) });
+    repo.issuedAt = [
+      new Date(AT.getTime() - 170_000),
+      new Date(AT.getTime() - 140_000),
+      new Date(AT.getTime() - 110_000),
+      new Date(AT.getTime() - 80_000),
+      new Date(AT.getTime() - 50_000),
+    ];
+    const state = await service.getBindingState(USER_ID);
+    assertTrue(
+      "S21 读面回填（v1.8）：未用码（码 + 失效时刻 + 剩余秒）+ 罚时可重试时刻（与取码侧同一判定）",
+      state.bound === false &&
+        state.bindingCode !== null &&
+        state.bindingCode.code === CODE &&
+        state.bindingCode.expiresAt === new Date(AT.getTime() + 240_000).toISOString() &&
+        state.bindingCode.expiresInSeconds === 240 &&
+        state.retryAt === new Date(AT.getTime() - 170_000 + 180_000).toISOString(),
+    );
+    const stale = makeService({ ok: true, attempts: 1 });
+    stale.repo.codes.set(CODE, { id: 7, code: CODE, userId: USER_ID, status: "pending", expiresAt: new Date(AT.getTime() - 1) });
+    const staleState = await stale.service.getBindingState(USER_ID);
+    assertTrue(
+      "S21 读面回填：码已过期 / 未到限流 → bindingCode 与 retryAt 一律 null（只回「此刻仍可用」的状态）",
+      staleState.bindingCode === null && staleState.retryAt === null,
     );
   }
 
