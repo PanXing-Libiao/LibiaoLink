@@ -147,6 +147,17 @@ export class ProjectGroupService {
     await this.database.db.transaction(async (tx) => {
       const removed = await this.groups.remove(projectId, tx);
       if (removed === null) return;
+      if (removed.activatedAt !== null) {
+        await this.groups.restoreCandidate(
+          {
+            chatid: removed.chatid,
+            name: removed.name,
+            firstSeenAt: removed.activatedAt,
+            lastSeenAt: removed.activatedAt,
+          },
+          tx,
+        );
+      }
       await this.projects.touch(projectId, at, tx);
       await this.audit.record(tx, {
         actorId,

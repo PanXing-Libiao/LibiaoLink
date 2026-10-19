@@ -108,6 +108,23 @@ class FakeGroupRepository {
     return row;
   }
 
+  async restoreCandidate(input: {
+    chatid: string;
+    name: string | null;
+    firstSeenAt: Date;
+    lastSeenAt: Date;
+  }): Promise<WecomGroupCandidateRow> {
+    const existing = [...this.candidates.values()].find((row) => row.chatid === input.chatid);
+    if (existing !== undefined) {
+      if (input.name !== null) existing.name = input.name;
+      if (input.lastSeenAt > existing.lastSeenAt) existing.lastSeenAt = input.lastSeenAt;
+      return existing;
+    }
+    const row = candidateRow({ id: 100 + this.candidates.size, chatid: input.chatid, name: input.name, firstSeenAt: input.firstSeenAt, lastSeenAt: input.lastSeenAt });
+    this.candidates.set(row.id, row);
+    return row;
+  }
+
   /** 模拟 uq_wecom_groups_chatid 唯一约束：chatid 被他项目占用 → 400（与仓储转译同形）。 */
   async upsert(
     input: { projectId: string; chatid: string; name: string | null; activatedAt: Date | null },
@@ -383,6 +400,7 @@ describe("ProjectGroupService.deleteGroup", () => {
       updatedAt: null,
     });
     expect(groups.rows.size).toBe(0);
+    expect(groups.candidates.size).toBe(0);
     expect(projects.lastTouched?.id).toBe(UUID_A);
     const entry = audit.entries[0] as { action: string; changes: unknown[] };
     expect(entry.action).toBe("delete");
@@ -390,6 +408,22 @@ describe("ProjectGroupService.deleteGroup", () => {
       { field: "groupChatid", from: "****v-12", to: null },
       { field: "groupName", from: "项目群", to: null },
     ]);
+  });
+
+  it("已激活群解绑 → 同事务恢复为候选，再次识别仍可选中原群", async () => {
+    const { service, groups } = makeService([projectRow({ id: UUID_A })]);
+    groups.rows.set(UUID_A, groupRow({ projectId: UUID_A, chatid: CHATID, name: "项目群", activatedAt: RECENT }));
+
+    await service.deleteGroup(UUID_A, UUID_B);
+    const result = await service.getCandidates(UUID_A);
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      name: "项目群",
+      chatidMasked: "****v-12",
+      lastSeenAt: RECENT.toISOString(),
+    });
+    expect([...groups.candidates.values()][0]).toMatchObject({ chatid: CHATID, firstSeenAt: RECENT, lastSeenAt: RECENT });
   });
 
   it("未绑定 → 幂等（bound:false；不写审计、不触 updatedAt）", async () => {
