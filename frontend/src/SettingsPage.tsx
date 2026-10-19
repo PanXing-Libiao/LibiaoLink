@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { Toast } from "./components/Toast";
+import { WecomBindingGuideContent } from "./components/WecomBindingGuideContent";
 import { WecomBindingPanel, type BindingNotice } from "./components/WecomBindingPanel";
 import { useT } from "./i18n";
 import type { MeResponse } from "./types";
@@ -32,11 +33,10 @@ export function SettingsPage({ me }: { me: MeResponse }) {
 
           <section
             data-settings-card="wecom-binding"
-            className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,0.04)]"
+            className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] sm:p-6"
           >
-            <h2 className="text-sm font-semibold text-zinc-900">{t("settings.bind.title")}</h2>
-            <p className="mt-1 text-xs leading-5 text-zinc-500">{t("settings.bind.desc")}</p>
-            <div className="mt-4">
+            <WecomBindingGuideContent onNotice={setNotice} />
+            <div className="mt-4 border-t border-zinc-200/70 pt-4">
               <WecomBindingPanel
                 variant="page"
                 onNotice={(next) => {
@@ -44,8 +44,6 @@ export function SettingsPage({ me }: { me: MeResponse }) {
                 }}
               />
             </div>
-            <p className="mt-4 border-t border-zinc-100 pt-3 text-xs leading-5 text-zinc-500">{t("settings.bind.robotNote")}</p>
-            <p className="mt-1 text-xs leading-5 text-zinc-500">{t("settings.bind.auditNote")}</p>
           </section>
         </div>
       </main>
