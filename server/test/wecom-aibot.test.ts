@@ -475,6 +475,7 @@ describe("企微智能机器人长连接客户端（M5-03-2 · P5）", () => {
       body: {
         chatid: "chat-9",
         chattype: "group",
+        chatname: "  项目群  ",
         from: { userid: "u-9" },
         msgid: "m-1",
         msgtype: "text",
@@ -487,6 +488,7 @@ describe("企微智能机器人长连接客户端（M5-03-2 · P5）", () => {
         reqId: "req-cb-1",
         chatid: "chat-9",
         chattype: "group",
+        chatName: "项目群",
         fromUserId: "u-9",
         msgid: "m-1",
         msgtype: "text",

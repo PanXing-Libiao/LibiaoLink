@@ -6,7 +6,11 @@
 import { describe, expect, it } from "vitest";
 import { ClockService } from "../src/common/clock/clock.service.js";
 import type { OutboxClaimedRow } from "../src/db/outbox.store.js";
-import type { NotifyDeliveryInsert, WecomGroupRow } from "../src/modules/notify/notify.group.repository.js";
+import type {
+  NotifyDeliveryInsert,
+  WecomGroupCandidateRow,
+  WecomGroupRow,
+} from "../src/modules/notify/notify.group.repository.js";
 import {
   composeGroupMarkdown,
   GROUP_DEGRADE_PREFIX,
@@ -40,6 +44,8 @@ class FakeGroupRepository {
   groups: WecomGroupRow[] = [];
   deliveries: NotifyDeliveryInsert[] = [];
   activateCalls: { chatid: string; at: Date }[] = [];
+  candidates: WecomGroupCandidateRow[] = [];
+  observeCalls: { chatid: string; name: string | null; at: Date }[] = [];
   managers = new Map<string, string>();
 
   async findGroupByProject(projectId: string): Promise<WecomGroupRow | null> {
@@ -57,6 +63,25 @@ class FakeGroupRepository {
       return null;
     }
     row.activatedAt = at;
+    return row;
+  }
+
+  async observeCandidate(input: { chatid: string; name: string | null }, at: Date): Promise<WecomGroupCandidateRow> {
+    this.observeCalls.push({ ...input, at });
+    const existing = this.candidates.find((row) => row.chatid === input.chatid);
+    if (existing !== undefined) {
+      existing.name = input.name ?? existing.name;
+      existing.lastSeenAt = at;
+      return existing;
+    }
+    const row: WecomGroupCandidateRow = {
+      id: this.candidates.length + 1,
+      chatid: input.chatid,
+      name: input.name,
+      firstSeenAt: at,
+      lastSeenAt: at,
+    };
+    this.candidates.push(row);
     return row;
   }
 
@@ -357,8 +382,8 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
 
 // ---------- 回调 ingest ----------
 
-describe("NotifyGroupService.activateFromCallback（群会话激活置位）", () => {
-  it("未激活绑定：置位（activated_at = 回调时刻）", async () => {
+describe("NotifyGroupService.activateFromCallback（群回调 ingest）", () => {
+  it("未激活绑定：置位（activated_at = 回调时刻），不写候选", async () => {
     const { service, repo } = makeService();
     repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID }));
 
@@ -366,26 +391,52 @@ describe("NotifyGroupService.activateFromCallback（群会话激活置位）", (
 
     expect(repo.activateCalls).toHaveLength(1);
     expect(repo.groups[0]!.activatedAt).toEqual(AT);
+    expect(repo.observeCalls).toEqual([]);
   });
 
-  it("已激活 / 未绑定：幂等跳过（不重复置位）", async () => {
+  it("已激活绑定：幂等跳过", async () => {
     const { service, repo } = makeService();
     repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
 
     await service.activateFromCallback(incoming());
-    expect(repo.activateCalls).toHaveLength(0);
 
-    repo.groups = [];
-    await service.activateFromCallback(incoming());
     expect(repo.activateCalls).toHaveLength(0);
+    expect(repo.observeCalls).toEqual([]);
   });
 
-  it("非群聊回调（chattype != group / 无 chatid）：直接忽略", async () => {
+  it("未绑定群：写入候选（群名 trim），不激活", async () => {
+    const { service, repo } = makeService();
+
+    await service.activateFromCallback(incoming({ chatName: "  项目交付群  " }));
+
+    expect(repo.activateCalls).toHaveLength(0);
+    expect(repo.observeCalls).toEqual([{ chatid: CHATID, name: "项目交付群", at: AT }]);
+    expect(repo.candidates).toEqual([
+      { id: 1, chatid: CHATID, name: "项目交付群", firstSeenAt: AT, lastSeenAt: AT },
+    ]);
+  });
+
+  it("同群重复回调：候选幂等 upsert（同 id、刷新 lastSeenAt、保留首次时间）", async () => {
+    const { service, repo } = makeService();
+
+    await service.activateFromCallback(incoming({ chatName: "项目群" }));
+    const firstSeenAt = repo.candidates[0]!.firstSeenAt;
+    await service.activateFromCallback(incoming({ chatName: "" }));
+
+    expect(repo.candidates).toHaveLength(1);
+    expect(repo.candidates[0]).toMatchObject({ id: 1, name: "项目群", firstSeenAt, lastSeenAt: AT });
+  });
+
+  it("非群消息回调（事件 / 单聊 / 无 chatid / 非法 chatid）：全部忽略", async () => {
     const { service, repo } = makeService();
     repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID }));
 
+    await service.activateFromCallback(incoming({ cmd: "aibot_event_callback" }));
     await service.activateFromCallback(incoming({ chattype: "single" }));
     await service.activateFromCallback(incoming({ chatid: null }));
+    await service.activateFromCallback(incoming({ chatid: "bad id" }));
+
     expect(repo.activateCalls).toHaveLength(0);
+    expect(repo.observeCalls).toEqual([]);
   });
 });

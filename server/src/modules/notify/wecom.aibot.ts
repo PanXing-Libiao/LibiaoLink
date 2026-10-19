@@ -76,6 +76,8 @@ export interface AibotIncomingMessage {
   reqId: string | null;
   chatid: string | null;
   chattype: string | null;
+  /** 群名（企微回调可选携带；未携带 = undefined，不参与单聊 / 事件语义）。 */
+  chatName?: string | null;
   fromUserId: string | null;
   msgid: string | null;
   /** 消息类型（text / image / …；事件回调为 event）。 */
@@ -619,6 +621,7 @@ export class WecomAibotClient {
     const from = body === null ? null : asRecord(body["from"]);
     const text = body === null ? null : asRecord(body["text"]);
     const event = body === null ? null : asRecord(body["event"]);
+    const chatName = readString(body, "chatname") ?? readString(body, "chat_name");
     const message: AibotIncomingMessage = {
       cmd,
       reqId,
@@ -630,6 +633,9 @@ export class WecomAibotClient {
       text: readString(text, "content"),
       eventType: readString(event, "eventtype"),
     };
+    if (chatName !== null && chatName.trim() !== "") {
+      message.chatName = chatName.trim();
+    }
     for (const handler of this.handlers) {
       try {
         handler(message);

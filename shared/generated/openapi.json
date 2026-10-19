@@ -5342,13 +5342,72 @@
         ],
         "description": "项目群绑定状态（GET 恒 200；未绑定 = bound:false）"
       },
+      "ProjectGroupCandidate": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "候选群 id（绑定请求回传）"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "回调携带 / 人工维护的群名；未知 = null"
+          },
+          "chatidMasked": {
+            "type": "string",
+            "description": "企微会话 id 掩码（只回末 4 位）"
+          },
+          "lastSeenAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "description": "最近一次收到该群消息的时刻"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "chatidMasked",
+          "lastSeenAt"
+        ],
+        "description": "自动发现但尚未绑定的项目群候选"
+      },
+      "ProjectGroupCandidateList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectGroupCandidate"
+            },
+            "maxItems": 50
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "description": "待绑定群候选（最近活跃优先，最多 50 条）"
+      },
       "ProjectGroupPutBody": {
         "type": "object",
         "properties": {
           "chatid": {
             "type": "string",
             "pattern": "^[A-Za-z0-9_-]{8,128}$",
-            "description": "企微会话 id（群消息回调 body.chatid 自动落库；形如 34 位 base64url 串）"
+            "description": "企微会话 id（手工绑定路径；与 candidateId 二选一）"
+          },
+          "candidateId": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "自动发现候选群 id（推荐；与 chatid 二选一）"
           },
           "name": {
             "type": [
@@ -5357,13 +5416,10 @@
             ],
             "minLength": 1,
             "maxLength": 64,
-            "description": "群名 / 备注（维护用；可空 —— 覆盖语义下缺省 = 清空）"
+            "description": "群名 / 备注（维护用；可空）"
           }
         },
-        "required": [
-          "chatid"
-        ],
-        "description": "绑定 / 换绑项目群：chatid 必填 + 群名备注可空；PUT = upsert 覆盖语义"
+        "description": "绑定 / 换绑项目群：chatid 或 candidateId 二选一 + 群名备注可空；PUT = upsert 覆盖语义"
       },
       "ProjectListResponse": {
         "type": "object",
@@ -10577,6 +10633,57 @@
         }
       }
     },
+    "/api/v1/projects/{id}/group/candidates": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "待绑定项目群候选（机器人已收到群消息；只回 chatid 掩码 + 最近活跃时间；权限 project.update）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "未绑定群候选列表（最近活跃优先；项目不存在 / 不可见 = 404）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectGroupCandidateList"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{id}/group": {
       "get": {
         "tags": [
@@ -10621,7 +10728,7 @@
         "tags": [
           "projects"
         ],
-        "summary": "绑定 / 换绑项目群（chatid + 可选群名备注；PUT = upsert 覆盖语义；权限 project.update）",
+        "summary": "绑定 / 换绑项目群（chatid 或 candidateId + 可选群名备注；PUT = upsert 覆盖语义；权限 project.update）",
         "parameters": [
           {
             "schema": {

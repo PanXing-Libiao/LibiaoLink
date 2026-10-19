@@ -10,6 +10,7 @@ import {
   ProjectDeleteHeadersSchema,
   ProjectFacetsSchema,
   ProjectGroupBindingSchema,
+  ProjectGroupCandidateListSchema,
   ProjectGroupPutBodySchema,
   ProjectListQuerySchema,
   ProjectListResponseSchema,
@@ -365,6 +366,19 @@ export function buildOpenApiDocument() {
 
   registry.registerPath({
     method: "get",
+    path: "/api/v1/projects/{id}/group/candidates",
+    tags: ["projects"],
+    summary: "待绑定项目群候选（机器人已收到群消息；只回 chatid 掩码 + 最近活跃时间；权限 project.update）",
+    request: { params: idParams },
+    responses: {
+      200: { description: "未绑定群候选列表（最近活跃优先；项目不存在 / 不可见 = 404）", ...json(ProjectGroupCandidateListSchema) },
+      403: commonErrors[403],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
     path: "/api/v1/projects/{id}/group",
     tags: ["projects"],
     summary: "项目群绑定状态（未绑定 = bound:false；chatid 掩码回显，activated = 群内已激活）",
@@ -379,7 +393,7 @@ export function buildOpenApiDocument() {
     method: "put",
     path: "/api/v1/projects/{id}/group",
     tags: ["projects"],
-    summary: "绑定 / 换绑项目群（chatid + 可选群名备注；PUT = upsert 覆盖语义；权限 project.update）",
+    summary: "绑定 / 换绑项目群（chatid 或 candidateId + 可选群名备注；PUT = upsert 覆盖语义；权限 project.update）",
     request: { params: idParams, body: json(ProjectGroupPutBodySchema) },
     responses: {
       200: { description: "绑定后的群状态（chatid 掩码回显）", ...json(ProjectGroupBindingSchema) },

@@ -5,7 +5,7 @@
 | 类型 | 领域模块（domain） |
 | 职责 | 项目主数据、首页分类字段（地区 / 项目类型 / 项目经理）、项目回收站（软删 / 恢复 / 满 30 天自动或管理员手动彻底删除）、最小空闲 seq_no 复用；阶段推进 / 成员 / 视图随 M2-03 / M2-05 / M2-06 |
 | 主责 | wmj（团队分工.md §2） |
-| 对外接口 | ProjectService（listProjects / getFacets / getProject / createProject / updateProject / deleteProject / restoreProject / purgeProject / sweepExpiredRecycled）、ProjectMemberService（listMembers / addMember / removeMember）、ArchiveService（archiveProject / getArchive）；FlowService（importSnapshot / getFlow / listStages / createNode / deleteNode / completeNode / canComplete / advanceStage / rollbackStage）；HTTP：GET /api/v1/projects、GET /api/v1/projects/facets、GET / PATCH / DELETE /api/v1/projects/{id}、POST /api/v1/projects、GET / POST /api/v1/projects/{id}/members、DELETE /api/v1/projects/{id}/members/{userId}、GET / PUT / DELETE /api/v1/projects/{id}/group、POST / GET /api/v1/projects/{id}/archive、GET /api/v1/projects/{id}/flow、GET /api/v1/projects/{id}/stages、POST /api/v1/projects/{id}/stages/{key}/advance、POST /api/v1/projects/{id}/stages/{key}/rollback、POST / DELETE /api/v1/projects/{id}/nodes[/{nodeId}]、POST /api/v1/nodes/{id}/complete、GET /api/v1/nodes/{id}/can-complete |
+| 对外接口 | ProjectService（listProjects / getFacets / getProject / createProject / updateProject / deleteProject / restoreProject / purgeProject / sweepExpiredRecycled）、ProjectMemberService（listMembers / addMember / removeMember）、ArchiveService（archiveProject / getArchive）；FlowService（importSnapshot / getFlow / listStages / createNode / deleteNode / completeNode / canComplete / advanceStage / rollbackStage）；HTTP：GET /api/v1/projects、GET /api/v1/projects/facets、GET / PATCH / DELETE /api/v1/projects/{id}、POST /api/v1/projects、GET / POST /api/v1/projects/{id}/members、DELETE /api/v1/projects/{id}/members/{userId}、GET /api/v1/projects/{id}/group/candidates、GET / PUT / DELETE /api/v1/projects/{id}/group、POST / GET /api/v1/projects/{id}/archive、GET /api/v1/projects/{id}/flow、GET /api/v1/projects/{id}/stages、POST /api/v1/projects/{id}/stages/{key}/advance、POST /api/v1/projects/{id}/stages/{key}/rollback、POST / DELETE /api/v1/projects/{id}/nodes[/{nodeId}]、POST /api/v1/nodes/{id}/complete、GET /api/v1/nodes/{id}/can-complete |
 
 ## 已实现（h2 第一批）
 
@@ -57,12 +57,12 @@
 - 数据面：迁移 `0036_project_archive.sql`（`projects.archived_at` / `archived_by` 成对 CHECK + `project_archives` 表 + `ck_audit_logs_action` 十值 → 十一值）；`project_archives` 已并入硬删外键依赖序（本模块 README 上节删除序列）。
 - 差异登记：① 清单为引用式（只记 id 与摘要，ADR-027；不做全库快照表）；② 清单导出（归档目录 / 压缩包）随 M7-03（lan）、C4-04 二期；③ 归档解冻不做（恢复走 DBA / 迁移器脚本，非产品口径）；④ 归档状态不可再编辑（`PATCH` 拒绝 archived；`filter[status]=archived` 只用于读 / 检索）。
 
-## 已实现（M5-03-2 接线段 · 项目群绑定 · C2-05 · Push 224）
+## 已实现（M5-03-2 接线段 · 项目群绑定 · C2-05 · Push 224；0058 自动发现候选 · 2026-10-19）
 
-- 端点（契约 `shared/src/modules/projects.ts`，OpenAPI tags = projects；类级 `SessionGuard + CsrfGuard + ProjectAccessGuard`，**PUT / DELETE 需 `project.update`** —— B3 定案，GET 为登录 + 记录级可见的读面）：`GET /api/v1/projects/{id}/group`（恒 200；未绑定 = `bound:false` 全 null）、`PUT /api/v1/projects/{id}/group`（body `{ chatid, name? }`；**覆盖语义**：name 缺省 = 清空；chatid 变更 = 换绑（`activated_at` 重置 null —— 新会话需重新激活）、同 chatid 幂等；chatid 撞其它项目唯一约束 → 400 `VALIDATION_FAILED`）、`DELETE /api/v1/projects/{id}/group`（幂等；未绑定不落审计 / 不触 `updatedAt`）。
-- 安全口径：读面 / 审计 / 日志**只回掩码**（`"****" + 末 4 位`；chatid 全文只落库 —— 等同机器人寻址凭据，防外泄）；审计 objectType=`project` 记掩码级 diff（`groupChatid` / `groupName`）；归档 409 `PROJECT_ARCHIVED`（写路径保护同主数据 · ADR-027）；变更刷新项目 `updatedAt`（ADR-022 触点）。
-- 数据面：`wecom_groups`（迁移 `0046` · Push 222；`project_id` / `chatid` 双唯一 = 一个项目一群 / 一个群一项目 —— 换绑到别的项目需先解绑）；会话激活态 `activated_at` 由**企微回调 ingest** 置位（worker · M5-03-2 接线段；未绑定回调忽略）。消费侧（`notify.group` 寻址）见 `server/src/modules/notify/README.md`。
-- 单测 `test/project-group.test.ts` **14 例**；差异登记：chatid 撞唯一约束 = 400（无新错误码，待 wmj 复核）；绑定维护 UI 随 M5-07（px）；一期 = 一项目一群（多群广播不在本期口径）。
+- 端点（契约 `shared/src/modules/projects.ts`，OpenAPI tags = projects；类级 `SessionGuard + CsrfGuard + ProjectAccessGuard`，**候选列表 / PUT / DELETE 需 `project.update`** —— B3 定案，绑定状态 GET 为登录 + 记录级可见的读面）：`GET /api/v1/projects/{id}/group/candidates`（最近 30 天、最多 50 条，排除已绑定 chatid；只回 id / name / chatidMasked / lastSeenAt）、`GET /api/v1/projects/{id}/group`（恒 200；未绑定 = `bound:false` 全 null）、`PUT /api/v1/projects/{id}/group`（body `candidateId` 或 `chatid` 二选一 + `name?`；候选路径服务端回查完整 chatid，以候选 `lastSeenAt` 作 `activated_at` 并同事务删候选行，name 缺省沿用候选名；手工 chatid 路径保持 name 缺省清空、先绑后激活；chatid 变更 = 换绑、同 chatid 幂等；chatid 撞其它项目唯一约束 → 400 `VALIDATION_FAILED`；候选不存在 / 过期 → 404）、`DELETE /api/v1/projects/{id}/group`（幂等；未绑定不落审计 / 不触 `updatedAt`）。
+- 安全口径：读面 / 候选列表 / 审计 / 日志**只回掩码**（`"****" + 末 4 位`；chatid 全文只落库 —— 等同机器人寻址凭据，防外泄）；审计 objectType=`project` 记掩码级 diff（`groupChatid` / `groupName`）；归档 409 `PROJECT_ARCHIVED`（写路径保护同主数据 · ADR-027）；变更刷新项目 `updatedAt`（ADR-022 触点）。
+- 数据面：`wecom_groups`（迁移 `0046` · Push 222；`project_id` / `chatid` 双唯一 = 一个项目一群 / 一个群一项目 —— 换绑到别的项目需先解绑）；会话激活态 `activated_at` 由**企微回调 ingest** 置位。`wecom_group_candidates`（迁移 `0058`）承接未绑定群回调：同 `chatid` 幂等 upsert 群名 / 首末活跃时间；候选绑定成功后删除，列表排除已绑定群。消费侧（`notify.group` 寻址）见 `server/src/modules/notify/README.md`。
+- 单测 `test/project-group.test.ts` **20 例**（含候选掩码读面 / 列表排除已绑定 / candidateId 绑定与过期 404）；差异登记：chatid 撞唯一约束 = 400（无新错误码，待 wmj 复核）；设置页自动发现候选 UI 已落地（px）；一期 = 一项目一群（多群广播不在本期口径）。
 
 ## 边界与后续
 

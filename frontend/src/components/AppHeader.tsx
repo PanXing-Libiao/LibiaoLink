@@ -25,7 +25,7 @@ import type { MeResponse, Project } from "../types";
  *  app.css 的 .inbox-badge 等价还原），点击 = 局部弹窗（最近 8 条 + 全部已读；见 ./InboxPanel）；
  *  红点 = ../inbox 模块级 store（登录后读面补拉 + SSE unread 快照，切页不丢）。
  * 设置页入口（业务口径 2026-10-16「在点击用户右上角头像后的列表中添加一个设置页」· Push 250）：账号菜单首项
- *  「设置」（#/settings · 全账号可见），落点 = 账号级设置（当前 = 企业微信绑定 D5 / D6）。 */
+ *  「企微绑定」（#/settings · 全账号可见），落点 = 账号级设置（单聊 D5 / D6 + 项目群绑定）。 */
 
 type AppHeaderProps = {
   me: MeResponse;
