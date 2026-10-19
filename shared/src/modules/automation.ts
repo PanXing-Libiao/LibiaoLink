@@ -43,12 +43,13 @@ export const RULE_EVENT_TOPICS = [
   "task.progress_changed",
   "change.applied",
   "node.completed",
+  "stage.advanced",
   "report.submitted",
   "issue.updated",
 ] as const;
 export const RuleEventTopicSchema = z.enum(RULE_EVENT_TOPICS).openapi("RuleEventTopic", {
   description:
-    "事件型触发的 outbox 主题：task.completed 任务完成 / task.updated 任务更新 / task.progress_changed 进度变化 / change.applied 变更生效 / node.completed 节点完成 / report.submitted 日报提交 / issue.updated 问题更新",
+    "事件型触发的 outbox 主题：task.completed 任务完成 / task.updated 任务更新 / task.progress_changed 进度变化 / change.applied 变更生效 / node.completed 节点完成 / stage.advanced 大阶段完成 / report.submitted 日报提交 / issue.updated 问题更新",
 });
 export type RuleEventTopic = z.infer<typeof RuleEventTopicSchema>;
 
@@ -107,7 +108,7 @@ export const RULE_RECIPIENTS = [
 ] as const;
 export const RuleRecipientSchema = z.enum(RULE_RECIPIENTS).openapi("RuleRecipient", {
   description:
-    "收件人口径：task.owner 任务负责人（多人时逐位）/ task.owner_or_project_manager 负责人为空回退项目经理（R02）/ project.manager 项目经理（任务主体解析）/ project.group 项目群（R03 / R04 / R05 / R06 / A02）/ rule.members 规则显式成员（A14 自定义待办）/ report.member 日报名册成员（A01 应填未填）；issue.owner 随 A03 处理时限删除下线（Push 215）",
+    "收件人口径：task.owner 任务负责人（多人时逐位）/ task.owner_or_project_manager 负责人为空回退项目经理 / project.manager 项目经理（任务主体解析）/ project.group 项目群（R04 / R06 / A02 / A08）/ rule.members 规则显式成员（A14 自定义待办）/ report.member 日报名册成员（A01 应填未填）；issue.owner 随 A03 处理时限删除下线（Push 215）",
 });
 export type RuleRecipient = z.infer<typeof RuleRecipientSchema>;
 
@@ -153,7 +154,7 @@ export const AutomationActionSchema = z
     kind: RuleActionKindSchema,
     channel: NotifyChannelSchema.nullable().optional().openapi({ description: "notify 型必填：投递渠道" }),
     recipient: z.union([RuleRecipientSchema, z.array(RuleRecipientSchema)]).openapi({ description: "收件人口径（多个 = 逐个解析，均落发送记录）" }),
-    template: z.string().min(1).max(64).openapi({ example: "R03_GROUP", description: "消息模板码（逐字文案见 docs/rules/R01-R07-内置规则文案.md）" }),
+    template: z.string().min(1).max(64).openapi({ example: "R04_GROUP", description: "消息模板码（逐字文案见 docs/rules/R01-R07-内置规则文案.md）" }),
     groupBy: z.array(z.string()).max(3).optional().openapi({ description: "合并维度字段（可选；同一维度值合并为一条消息）" }),
   })
   .openapi("AutomationAction", { description: "规则动作：notify 渠道消息（企微 / 邮件）/ notification 站内信" });
@@ -162,7 +163,7 @@ export type AutomationAction = z.infer<typeof AutomationActionSchema>;
 /** 规则文档（C2-01：参数化 + 启停；不做可视化编排）。 */
 export const AutomationRuleSchema = z
   .object({
-    code: z.string().min(2).max(32).openapi({ example: "R03", description: "规则编码（内置 R01~R07 / A01 / A02 / A14；自定义规则自定码）" }),
+    code: z.string().min(2).max(32).openapi({ example: "R03", description: "规则编码（内置 R01~R07 / A01 / A02 / A08 / A14；自定义规则自定码）" }),
     name: z.string().min(1).max(80).openapi({ example: "任务即将延期提醒" }),
     enabled: z.boolean().openapi({ description: "启停开关（C2-01 / C2-02：内置规则亦可启停）" }),
     trigger: AutomationTriggerSchema,
@@ -173,11 +174,11 @@ export const AutomationRuleSchema = z
   .openapi("AutomationRule", { description: "自动化规则文档（参数化 + 启停，不做可视化编排；技术设计v0.2 §6.1）" });
 export type AutomationRule = z.infer<typeof AutomationRuleSchema>;
 
-/** 消息模板（C2-04）：title 可为空（如 R03 无标题）；body 为逐字文案，变量占位符保持 {字段} 原文格式。 */
+/** 消息模板（C2-04）：title 可为空（投递仅正文）；body 为逐字文案，变量占位符保持 {字段} 原文格式。 */
 export const AutomationMessageTemplateSchema = z
   .object({
     code: z.string().min(1).max(64),
-    title: z.string().nullable().openapi({ example: "及时添加文件", description: "消息标题（null = 无标题，如 R03 群播报）" }),
+    title: z.string().nullable().openapi({ example: "及时添加文件", description: "消息标题（null = 无标题，投递仅正文）" }),
     body: z.string().min(1).openapi({ example: "项目：**{项目}**\n{完成人}已点击完成任务，请为项目任务「**{任务描述}**」及时添加成果文件" }),
   })
   .openapi("AutomationMessageTemplate", { description: "消息模板（逐字基准：标题与内容不得改字，变量占位符保持 {字段} 原文格式）" });

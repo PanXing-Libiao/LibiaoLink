@@ -79,7 +79,7 @@ export function truncateGroupMarkdown(content: string, maxBytes: number = GROUP_
 
 /** 降级站内信类型：A02 / R06 为播报（摘要群发 / 喜报），其余群播报按提醒。 */
 function degradeTypeOf(templateCode: string | null): "broadcast" | "reminder" {
-  return templateCode !== null && /^(A02|R06)/.test(templateCode) ? "broadcast" : "reminder";
+  return templateCode !== null && /^(A02|R06|A08)/.test(templateCode) ? "broadcast" : "reminder";
 }
 
 /** 失败描述（核心语义：errcode + 白话标签 / errmsg 概要；不含 kind / state 内部态与企微机器尾巴；不含 chatid 明文）。 */

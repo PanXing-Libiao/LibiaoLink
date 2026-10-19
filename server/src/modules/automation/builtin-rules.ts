@@ -28,8 +28,8 @@ export const BUILTIN_MESSAGE_TEMPLATES: readonly AutomationMessageTemplate[] = [
     body: "项目：**{项目}**\n{完成人}已点击完成任务，请为项目任务「**{任务描述}**」及时添加成果文件",
   },
   {
-    code: "R03_GROUP",
-    title: null,
+    code: "R03_WECOM",
+    title: "任务即将延期提醒",
     body: "项目：**{项目}**\nhello，{任务负责人}，你的任务「**{任务描述}**」还有1天就要截止了，快加加油，尽快追上进度吧！",
   },
   {
@@ -38,7 +38,7 @@ export const BUILTIN_MESSAGE_TEMPLATES: readonly AutomationMessageTemplate[] = [
     body: "项目：**{项目}**\n{任务负责人}你好呀，你的任务「**{任务描述}**」已到启动时间，快查看任务详情吧~今日工作加油",
   },
   {
-    code: "R05_GROUP",
+    code: "R05_WECOM",
     title: "！任务超时提醒",
     body: "项目：**{项目}**\nhello，{任务负责人}，你的任务「**{任务描述}**」已经超时一天了，快加加油，尽快追上进度吧！",
   },
@@ -73,6 +73,11 @@ export const BUILTIN_MESSAGE_TEMPLATES: readonly AutomationMessageTemplate[] = [
     body: "今日 {提交人数} 人已提交（应填 {应填人数} 人），发现问题 {问题数} 条。{汇总正文}",
   },
   {
+    code: "A08_GROUP",
+    title: "大阶段完成通知",
+    body: "项目：**{项目}**\n{推进人}已完成大阶段「**{完成阶段}**」，当前项目阶段：**{下一阶段}**。",
+  },
+  {
     code: "A14_INBOX",
     title: "待办提醒：{待办标题}",
     body: "{提醒对象}，你的待办「{待办标题}」已到提醒时间。{待办内容}",
@@ -83,7 +88,7 @@ export const BUILTIN_MESSAGE_TEMPLATES: readonly AutomationMessageTemplate[] = [
     body: "{提醒对象}，你的待办「{待办标题}」已到提醒时间。{待办内容}",
   },
 ];
-/** 引擎可执行的内置规则（R02 ~ R07 任务类；A01 / A02 / A14 主体类；A03 随处理时限删除下线 · Push 215）。 */
+/** 引擎可执行的内置规则（R02 ~ R07 任务类；A01 / A02 / A14 / A08 主体类；A03 随处理时限删除下线 · Push 215）。 */
 export const BUILTIN_RULES: readonly AutomationRule[] = [
   {
     code: "R02",
@@ -95,8 +100,8 @@ export const BUILTIN_RULES: readonly AutomationRule[] = [
       { field: "task.file_count", op: "eq", value: 0 },
     ],
     actions: [
-      { kind: "notification", channel: "inbox", recipient: "task.owner_or_project_manager", template: "R02_INBOX" },
-      { kind: "notify", channel: "wecom_aibot", recipient: "task.owner_or_project_manager", template: "R02_WECOM" },
+      { kind: "notification", channel: "inbox", recipient: ["task.owner", "project.manager"], template: "R02_INBOX" },
+      { kind: "notify", channel: "wecom_aibot", recipient: ["task.owner", "project.manager"], template: "R02_WECOM" },
     ],
     version: 1,
   },
@@ -106,7 +111,7 @@ export const BUILTIN_RULES: readonly AutomationRule[] = [
     enabled: true,
     trigger: { kind: "schedule", cron: "0 8 * * *", window: "T_MINUS_1", baseField: "task.planned_end" },
     conditions: [{ field: "task.display_status", op: "notIn", value: ["done", "early_done"] }],
-    actions: [{ kind: "notify", channel: "wecom_group", recipient: "project.group", template: "R03_GROUP" }],
+    actions: [{ kind: "notify", channel: "wecom_aibot", recipient: "task.owner", template: "R03_WECOM" }],
     version: 1,
   },
   {
@@ -127,7 +132,7 @@ export const BUILTIN_RULES: readonly AutomationRule[] = [
     enabled: true,
     trigger: { kind: "schedule", cron: "0 8 * * *", window: "T_PLUS_1", baseField: "task.planned_end" },
     conditions: [{ field: "task.display_status", op: "notIn", value: ["done", "early_done"] }],
-    actions: [{ kind: "notify", channel: "wecom_group", recipient: "project.group", template: "R05_GROUP" }],
+    actions: [{ kind: "notify", channel: "wecom_aibot", recipient: ["task.owner", "project.manager"], template: "R05_WECOM" }],
     version: 1,
   },
   {
@@ -182,6 +187,15 @@ export const BUILTIN_RULES: readonly AutomationRule[] = [
     version: 1,
   },
   {
+    code: "A08",
+    name: "大阶段完成播报",
+    enabled: true,
+    trigger: { kind: "event", topic: "stage.advanced" },
+    conditions: [],
+    actions: [{ kind: "notify", channel: "wecom_group", recipient: "project.group", template: "A08_GROUP" }],
+    version: 1,
+  },
+  {
     code: "A14",
     name: "自定义待办提醒",
     enabled: true,
@@ -195,7 +209,7 @@ export const BUILTIN_RULES: readonly AutomationRule[] = [
   },
 ];
 
-/** 规则码 → 回放主体类型（缺省 task）：A01 日报名册槽位 / A02 项目日报 / A14 待办（A03 问题随处理时限下线 · Push 215）。 */
+/** 规则码 → 回放主体类型（缺省 task）：A01 日报名册槽位 / A02 项目日报 / A14 待办 / A08 项目阶段（A03 问题随处理时限下线 · Push 215）。 */
 export const BUILTIN_RULE_SUBJECT_KINDS: Readonly<Record<string, ReplaySubjectKind>> = {
   R02: "task",
   R03: "task",
@@ -206,6 +220,7 @@ export const BUILTIN_RULE_SUBJECT_KINDS: Readonly<Record<string, ReplaySubjectKi
   A01: "report_slot",
   A02: "project_day",
   A14: "todo",
+  A08: "stage",
 };
 
 /** 规则码 → 主体类型（未登记的自定义规则按 task 处理 —— 保持 R 系列历史口径）。 */
@@ -244,6 +259,12 @@ export const SUBJECT_TEMPLATE_VARIABLES: Readonly<
     "待办标题": ["todo.title"],
     "待办内容": ["todo.content"],
     "提醒对象": ["@recipient"],
+  },
+  stage: {
+    "项目": ["project.label"],
+    "完成阶段": ["stage.name"],
+    "下一阶段": ["stage.next_name"],
+    "推进人": ["stage.advanced_by_name"],
   },
 };
 

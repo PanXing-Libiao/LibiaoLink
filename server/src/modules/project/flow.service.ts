@@ -397,7 +397,7 @@ export class FlowService {
         await appendOutbox(tx, {
           topic: "stage.advanced",
           dedupeKey: "stage.advanced:" + locked.id + ":" + nextVersion,
-          payload: { projectId, stageKey, nextStageKey: next?.stageKey ?? null, actorId, at: at.toISOString() },
+          payload: { projectId, stageKey, nextStageKey: next?.stageKey ?? null, stageVersion: nextVersion, actorId, at: at.toISOString() },
         });
         await this.audit.record(tx, {
           actorId,
