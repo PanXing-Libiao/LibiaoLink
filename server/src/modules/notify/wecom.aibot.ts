@@ -147,6 +147,7 @@ export class WecomAibotClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly pending = new Map<string, (outcome: AckOutcome) => void>();
   private readonly handlers = new Set<(message: AibotIncomingMessage) => void>();
+  private readonly subscribedWaiters = new Set<(ready: boolean) => void>();
   private backoffMs = 0;
   private missedPongs = 0;
   private readonly counters = {
@@ -174,6 +175,7 @@ export class WecomAibotClient {
   /** 停止：断开连接、清空待回执、不再重连（可再次 `start()`）。 */
   async stop(): Promise<void> {
     if (this.stopped) {
+      this.resolveSubscribedWaiters(false);
       return;
     }
     this.stopped = true;
@@ -184,7 +186,7 @@ export class WecomAibotClient {
     this.stopPing();
     const socket = this.socket;
     this.socket = null;
-    this.state = "stopped";
+    this.setState("stopped");
     this.failPending("closed");
     if (socket !== null) {
       try {
@@ -197,6 +199,33 @@ export class WecomAibotClient {
 
   getStats(): WecomAibotStats {
     return { state: this.state, ...this.counters };
+  }
+
+  /**
+   * 等待长连接进入 subscribed（启动时序用）：已订阅立即 true；超时 / stop() 返回 false。
+   * 订阅失败进入 backoff 时继续等待（自动重连成功仍可 true），由调用方超时收口。
+   */
+  waitForSubscribed(timeoutMs: number): Promise<boolean> {
+    if (this.state === "subscribed") {
+      return Promise.resolve(true);
+    }
+    return new Promise((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      let settled = false;
+      const waiter = (ready: boolean): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (timer !== null) {
+          clearTimeout(timer);
+        }
+        this.subscribedWaiters.delete(waiter);
+        resolve(ready);
+      };
+      this.subscribedWaiters.add(waiter);
+      timer = setTimeout(() => waiter(false), Math.max(0, timeoutMs));
+    });
   }
 
   /** 订阅回调（群绑定 ingest 用）：返回退订函数。 */
@@ -404,7 +433,7 @@ export class WecomAibotClient {
     if (this.stopped || this.socket !== null) {
       return;
     }
-    this.state = "connecting";
+    this.setState("connecting");
     this.counters.connects += 1;
     let socket: AibotSocket;
     try {
@@ -455,7 +484,7 @@ export class WecomAibotClient {
 
   private handleSubscribeAck(outcome: AckOutcome): void {
     if (outcome.ok && typeof outcome.frame.errcode === "number" && outcome.frame.errcode === 0) {
-      this.state = "subscribed";
+      this.setState("subscribed");
       this.backoffMs = 0;
       this.missedPongs = 0;
       this.counters.lastSubscribedAt = new Date(this.now());
@@ -578,7 +607,7 @@ export class WecomAibotClient {
     this.stopPing();
     this.failPending("closed");
     if (this.stopped) {
-      this.state = "stopped";
+      this.setState("stopped");
       return;
     }
     this.scheduleReconnect("连接断开（code=" + String(code) + (reason === "" ? "" : " " + reason) + "）");
@@ -590,13 +619,31 @@ export class WecomAibotClient {
     }
     this.counters.reconnects += 1;
     this.counters.lastError = reason;
-    this.state = "backoff";
+    this.setState("backoff");
     const delay = this.backoffMs === 0 ? this.options.reconnectMinMs : Math.min(this.backoffMs * 2, this.options.reconnectMaxMs);
     this.backoffMs = delay;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();
     }, delay);
+  }
+
+  /** 状态迁移统一入口：进入 subscribed 唤醒等待者 true，进入 stopped 唤醒 false。 */
+  private setState(next: AibotConnectionState): void {
+    this.state = next;
+    if (next === "subscribed") {
+      this.resolveSubscribedWaiters(true);
+    } else if (next === "stopped") {
+      this.resolveSubscribedWaiters(false);
+    }
+  }
+
+  private resolveSubscribedWaiters(ready: boolean): void {
+    const waiters = [...this.subscribedWaiters];
+    this.subscribedWaiters.clear();
+    for (const waiter of waiters) {
+      waiter(ready);
+    }
   }
 
   private waitAck(reqId: string): Promise<AckOutcome> {

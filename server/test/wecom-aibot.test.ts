@@ -2,7 +2,7 @@
  * 企微智能机器人长连接客户端回归（M5-03-2 · P5 定案；M5-03-5-3 扩单聊面）：假 socket 驱动 —— 订阅成败 /
  * 状态机与统计 / 推送帧形状（群 chat_type=2 / 单聊 chatid 填 userid + chat_type=1 · P4 锁帧）/
  * 846607 双语义（群 groupActivated / 单聊 dmActivated）/ 846609 与回执超时 / 双窗口限速拒绝（group / single）/
- * 会话内回执（M5-03-5-6 · aibot_respond_msg + 回调 req_id 透传）/ 心跳失联重连 / 回调分发 / stop 清理。
+ * 会话内回执（M5-03-5-6 · aibot_respond_msg + 回调 req_id 透传）/ 订阅就绪等待 / 心跳失联重连 / 回调分发 / stop 清理。
  * 不触外网（socketFactory 全替身；生产 `ws` 实现见 wecom.aibot.ts createWsSocketFactory）。
  */
 import { describe, expect, it } from "vitest";
@@ -132,6 +132,33 @@ describe("企微智能机器人长连接客户端（M5-03-2 · P5）", () => {
     expect(stats.framesOut).toBe(1);
     expect(stats.lastSubscribedAt).not.toBeNull();
     await client.stop();
+  });
+
+  it("waitForSubscribed：等待中完成订阅 → true；已订阅再次等待立即 true", async () => {
+    const { client, sockets } = makeClient();
+    client.start();
+    const socket = sockets[0]!;
+    const ready = client.waitForSubscribed(1_000);
+    socket.open();
+    socket.ackLast(0);
+    await expect(ready).resolves.toBe(true);
+    await expect(client.waitForSubscribed(1_000)).resolves.toBe(true);
+    await client.stop();
+  });
+
+  it("waitForSubscribed：超时未订阅 → false", async () => {
+    const { client } = makeClient();
+    client.start();
+    await expect(client.waitForSubscribed(20)).resolves.toBe(false);
+    await client.stop();
+  });
+
+  it("waitForSubscribed：stop 唤醒等待者 → false", async () => {
+    const { client } = makeClient();
+    client.start();
+    const ready = client.waitForSubscribed(10_000);
+    await client.stop();
+    await expect(ready).resolves.toBe(false);
   });
 
   it("订阅失败（853000 凭据无效）：断开并排程重连（backoff）", async () => {

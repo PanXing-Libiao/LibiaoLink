@@ -145,6 +145,9 @@ async function bootstrap(): Promise<void> {
   // 30s 心跳 + 自动重连；回调 ingest 分流 = 单聊（chattype=single → 单聊激活）与群（群会话激活置位）——
   // 主动推送前置（846607 双语义切分依据）。群未配置 = 「只存不投」（与 OutboxModule 注册表门控同口径）；
   // 单聊未配置 = 投递行按未就绪 retry 收敛（bounded）；api 进程同模块但从不 start()（构造无副作用）。
+  // 首轮告警探针需等订阅握手完成再发（WecomAlertSink 在 state=connecting 时会回 retryable）；
+  // 未启用企微时立即探，启用时最多等 10 秒，超时仍照常探（回退日志口径不变）。
+  let botReady: Promise<boolean> = Promise.resolve(true);
   if (env.NOTIFY_DELIVERY_ENABLED === "true" && env.WECOM_BOT_ID !== "" && env.WECOM_BOT_SECRET !== "") {
     aibot.onMessage((message) => {
       // 分流（M5-03-5-4；单聊面 M5-03-5-6 扩绑定码）：单聊回调 → 单聊 ingest（激活登记 + 绑定码命中）；
@@ -159,6 +162,7 @@ async function bootstrap(): Promise<void> {
       });
     });
     aibot.start();
+    botReady = aibot.waitForSubscribed(10_000);
     logger.log("企微智能机器人长连接已启动（群 + 单聊通道：订阅 + 心跳 + 会话激活 ingest）");
   } else {
     logger.warn("企微机器人通道未启动（WECOM_BOT_ID / WECOM_BOT_SECRET 未配置或通知投递关闭）：notify.group 只存不投；wecom_aibot 投递行按未就绪重试收敛（有界重试，不静默成功）");
@@ -268,6 +272,7 @@ async function bootstrap(): Promise<void> {
   // 可执行即时告警（ADR-005）：队列停滞 / 未消费主题；积压与最老等待只在连续无进度时合并升级。
   const probeAlerts = async (): Promise<void> => {
     try {
+      await botReady;
       await alerts.probeOnce();
     } catch (error) {
       logger.error("outbox 告警探针失败：" + messageOf(error));
