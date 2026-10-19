@@ -14,8 +14,8 @@ describe("Outbox 主题角色清单（完整性门禁）", () => {
   it("29 个契约主题全部显式登记，consumer / drain-only 各归其位", () => {
     expect(OUTBOX_TOPICS).toHaveLength(29);
     expect(Object.keys(OUTBOX_TOPIC_ROLES).sort()).toEqual([...OUTBOX_TOPICS].sort());
-    expect(OUTBOX_CONSUMER_TOPICS).toHaveLength(10);
-    expect(OUTBOX_DRAIN_ONLY_TOPICS).toHaveLength(19);
+    expect(OUTBOX_CONSUMER_TOPICS).toHaveLength(11);
+    expect(OUTBOX_DRAIN_ONLY_TOPICS).toHaveLength(18);
   });
 
   it("consumer 与 drain-only 不重叠且无遗漏（集合并集 = OUTBOX_TOPICS）", () => {

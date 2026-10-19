@@ -25,19 +25,20 @@
  * （含软删行 —— 事件发生在删除前，快照仍可求值），行不存在 → null（消费侧按确定性失败收口）。
  */
 import { Injectable } from "@nestjs/common";
-import type { RuleEventTopic } from "@libiaolink/contracts";
+import { STAGE_NAMES, type RuleEventTopic } from "@libiaolink/contracts";
 import { and, count, eq, inArray, isNull, ne } from "drizzle-orm";
 import type { DbClient } from "../db/db-client.js";
 import { DatabaseService } from "../db/database.service.js";
 import { files } from "../db/schema/files.js";
 import { users } from "../db/schema/identity.js";
 import { wecomGroups } from "../db/schema/notify.js";
-import { projectMembers, projects } from "../db/schema/projects.js";
+import { projectMembers, projects, projectStages } from "../db/schema/projects.js";
 import { dailyReports } from "../db/schema/reports.js";
 import { tasks } from "../db/schema/tasks.js";
 import {
   toProjectDaySubject,
   toReportMemberSubject,
+  toStageSubject,
   toTaskSubject,
   type ReplaySubject,
   type ReplayTask,
@@ -68,6 +69,12 @@ function businessDateOf(at: Date): string {
 function stringField(payload: Record<string, unknown>, key: string): string | null {
   const value = payload[key];
   return typeof value === "string" && value !== "" ? value : null;
+}
+
+/** 事件载荷取数字字段（缺 / 非有限数 = null）。 */
+function numberField(payload: Record<string, unknown>, key: string): number | null {
+  const value = payload[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 /** 闭区间业务日列表（YYYY-MM-DD，按 UTC 日算术 —— 与 calendar 的 addDays 同口径）。 */
@@ -165,9 +172,8 @@ export class AutomationSubjectReader {
   ) {}
 
   /**
-   * 事件主体：task.* → 任务主体（payload.taskId）。
-   * 其余规则主题（change.applied / node.completed / report.submitted / issue.updated —— issue 事件无订阅规则）
-   * 暂无事件型规则与主体映射 → null
+   * 事件主体：task.* → 任务主体（payload.taskId）；stage.advanced → 阶段主体（payload.projectId + stageKey）。
+   * 其余规则主题（change.applied / node.completed / report.submitted / issue.updated）暂无事件型规则与主体映射 → null
    * （消费侧对「无规则订阅」直接消费完成；新增订阅时在此补映射）。
    */
   async eventSubject(
@@ -183,7 +189,51 @@ export class AutomationSubjectReader {
       const subjects = await this.buildTaskSubjects(rows, at, client, stringField(payload, "actorId"));
       return subjects.get(taskId) ?? null;
     }
+    if (topic === "stage.advanced") return await this.stageSubject(payload, client);
     return null;
+  }
+
+  /** A08 阶段事件主体：读阶段 / 项目 / 推进人 / 项目群绑定，组装为 stage 主体。 */
+  private async stageSubject(payload: Record<string, unknown>, client: DbClient): Promise<ReplaySubject | null> {
+    const projectId = stringField(payload, "projectId");
+    const stageKey = stringField(payload, "stageKey");
+    if (projectId === null || stageKey === null) return null;
+    const stageRows = await client
+      .select({
+        id: projectStages.id,
+        stageKey: projectStages.stageKey,
+        version: projectStages.version,
+      })
+      .from(projectStages)
+      .where(and(eq(projectStages.projectId, projectId), eq(projectStages.stageKey, stageKey)))
+      .limit(1);
+    const stage = stageRows[0];
+    if (stage === undefined) return null;
+    const projectRows = await client
+      .select({ id: projects.id, code: projects.code, name: projects.name })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    const project = projectRows[0];
+    if (project === undefined) return null;
+    const actorId = stringField(payload, "actorId");
+    const nameById = await this.userNames(actorId === null ? [] : [actorId], client);
+    const groupProjectIds = await this.enabledGroupProjectIds([projectId], client);
+    const nextStageKey = stringField(payload, "nextStageKey");
+    const stageNames = STAGE_NAMES as Record<string, string>;
+    return toStageSubject({
+      stageId: stage.id,
+      stageKey: stage.stageKey,
+      stageName: stageNames[stage.stageKey] ?? stage.stageKey,
+      stageVersion: numberField(payload, "stageVersion") ?? stage.version,
+      nextStageKey,
+      nextStageName: nextStageKey === null ? "项目流程已完成" : (stageNames[nextStageKey] ?? nextStageKey),
+      advancedByName: actorId === null ? "未知用户" : (nameById.get(actorId) ?? "未知用户"),
+      projectId: project.id,
+      projectCode: project.code,
+      projectName: project.name,
+      groupId: groupProjectIds.has(projectId) ? projectId : null,
+    });
   }
 
   /**

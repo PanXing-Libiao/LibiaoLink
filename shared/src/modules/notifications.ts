@@ -123,7 +123,7 @@ export const NotifyGroupMessagePayloadSchema = z
       .nullable()
       .openapi({
         description:
-          "标题（前后空白剔除后 1 ~ 200 字；null = 无标题 —— 先例 R03_GROUP 群播报无标题，投递仅正文；个人消息不受影响）",
+          "标题（前后空白剔除后 1 ~ 200 字；null = 无标题，投递仅正文；个人消息不受影响）",
       }),
     body: nonBlankText(NOTIFICATION_BODY_MAX_LENGTH, "正文").openapi({
       description: "正文（前后空白剔除后 1 ~ 4000 字）；投递层按企微 markdown 字节上限截断 —— 尾部省略 + 截断留痕（B5 定案）",
@@ -138,7 +138,7 @@ export const NotifyGroupMessagePayloadSchema = z
       .string()
       .max(NOTIFICATION_TEMPLATE_CODE_MAX_LENGTH)
       .nullish()
-      .openapi({ description: "模板码（R03_GROUP / R04_GROUP / R05_GROUP / R06_GROUP / A02_GROUP；排障与文案回溯用）" }),
+      .openapi({ description: "模板码（R04_GROUP / R06_GROUP / A02_GROUP / A08_GROUP；排障与文案回溯用）" }),
   })
   .superRefine((value, context) => {
     const hasRefType = value.refType !== null && value.refType !== undefined && value.refType !== "";

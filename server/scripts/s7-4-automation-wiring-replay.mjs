@@ -527,17 +527,18 @@ function buildEnv(overrides = {}) {
     );
 
     const projects = await db.query(
-      "insert into projects (code, name, customer, region, project_type, manager_ids, stage_key, status, description, version) values ($1, $2, $3, 'shanghai', 'default', array[$4::uuid], 'presale', 'active', $5, 1), ($6, $7, $8, 'shanghai', 'default', array[$4::uuid], 'presale', 'active', $9, 1) returning id",
+      "insert into projects (code, name, customer, region, project_type, manager_ids, stage_key, status, description, version) values ($1, $2, $3, 'shanghai', 'default', array[$4::uuid], 'presale', 'active', $5, 1), ($6, $7, $8, 'shanghai', 'default', array[$10::uuid], 'presale', 'active', $9, 1) returning id",
       [
         "S74W-" + tag + "-A",
         "临港数据中心",
         "合成客户",
-        manager,
+        owner,
         "S7-4 接线回放项目 A",
         "S74W-" + tag + "-B",
         "张江机房",
         "合成客户",
         "S7-4 接线回放项目 B",
+        owner2,
       ],
     );
     const projectA = projects.rows[0].id;

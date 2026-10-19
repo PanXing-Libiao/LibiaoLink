@@ -258,13 +258,14 @@ describe("引擎扩项（M5-05 余项：主体类型 / T_PLUS_3 / 契约与文�
     expect(report.messages.every((message) => message.ruleCode === "A14")).toBe(true);
   });
 
-  it("内置规则集：A 系列三条（A03 随处理时限下线）与主体类型登记齐备", () => {
+  it("内置规则集：A 系列四条（A03 随处理时限下线）与主体类型登记齐备", () => {
     const codes = BUILTIN_RULES.map((rule) => rule.code);
-    for (const code of ["A01", "A02", "A14"]) expect(codes).toContain(code);
+    for (const code of ["A01", "A02", "A14", "A08"]) expect(codes).toContain(code);
     expect(codes).not.toContain("A03"); // 问题主体类型 issue 随处理时限（due_at）一并下线，A 系列只剩三条
     expect(subjectKindOf("A01")).toBe("report_slot");
     expect(subjectKindOf("A02")).toBe("project_day");
     expect(subjectKindOf("A14")).toBe("todo");
+    expect(subjectKindOf("A08")).toBe("stage");
     expect(subjectKindOf("R03")).toBe("task");
   });
 

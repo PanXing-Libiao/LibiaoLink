@@ -15,6 +15,7 @@ import {
   BUILTIN_RULES,
   toProjectDaySubject,
   toReportMemberSubject,
+  toStageSubject,
   toTaskSubject,
   type ReplaySubject,
   type ReplayTask,
@@ -141,39 +142,35 @@ function jobContext(from: Date, to: Date): JobRunContext {
   return { job, windowFrom: from, windowTo: to, fireTimes: [], tx: TX };
 }
 describe("规则事件消费（S7-4 接线 · evaluateEventMessages → notify.message）", () => {
-  it("R02 命中：产出 notify.message（载荷字段与幂等键 = 规则 + 实体 + 版本窗口）", async () => {
+  it("R02 命中：负责人与项目经理各产 inbox + aibot 行（逐收件人幂等键）", async () => {
     const h = makeHarness();
     h.subjects.eventSubjects.set("task.completed", toTaskSubject(task({ displayStatus: "done" })));
 
     const outcome = await createRuleEventConsumers(h.deps).get("task.completed")?.handle(row("task.completed", { taskId: "t-1" }));
 
     expect(outcome).toEqual({ outcome: "done" });
-    // M5-03-5-4 接线段起：R02 双动作（inbox + wecom_aibot）均产行 —— aibot 行幂等键加 ":aibot" 后缀。
-    expect(h.appended).toHaveLength(2);
-    const event = h.appended[0];
-    expect(event?.client).toBe(DB);
-    expect(event?.event.topic).toBe("notify.message");
-    expect(event?.event.dedupeKey).toBe("R02:t-1:v5");
-    const payload = event?.event.payload as Record<string, unknown>;
-    expect(payload.recipientId).toBe("u-1");
-    expect(payload.type).toBe("reminder");
-    expect(payload.channel).toBe("inbox");
-    expect(payload.refType).toBe("task");
-    expect(payload.refId).toBe("t-1");
-    expect(payload.templateCode).toBe("R02_INBOX");
-    expect(payload.mergeKey).toBe("R02:t-1:v5");
-    expect(String(payload.body)).toContain("安装摄像头");
-    // 第二条动作（wecom_aibot）：channel=wecom_aibot + 幂等键 ":aibot" 后缀 + 模板码保名（R02_WECOM）。
-    const aibotEvent = h.appended[1];
-    expect(aibotEvent?.client).toBe(DB);
-    expect(aibotEvent?.event.topic).toBe("notify.message");
-    expect(aibotEvent?.event.dedupeKey).toBe("R02:t-1:v5:aibot");
-    const aibotPayload = aibotEvent?.event.payload as Record<string, unknown>;
-    expect(aibotPayload.recipientId).toBe("u-1");
-    expect(aibotPayload.channel).toBe("wecom_aibot");
-    expect(aibotPayload.templateCode).toBe("R02_WECOM");
-    expect(aibotPayload.mergeKey).toBe("R02:t-1:v5");
-    expect(String(aibotPayload.body)).toContain("安装摄像头");
+    expect(h.appended).toHaveLength(4);
+    const expected = [
+      { channel: "inbox", recipient: "u-1", key: "R02:t-1:v5:u-1", template: "R02_INBOX", suffix: "" },
+      { channel: "inbox", recipient: "u-9", key: "R02:t-1:v5:u-9", template: "R02_INBOX", suffix: "" },
+      { channel: "wecom_aibot", recipient: "u-1", key: "R02:t-1:v5:u-1:aibot", template: "R02_WECOM", suffix: ":aibot" },
+      { channel: "wecom_aibot", recipient: "u-9", key: "R02:t-1:v5:u-9:aibot", template: "R02_WECOM", suffix: ":aibot" },
+    ];
+    for (const [index, item] of expected.entries()) {
+      const event = h.appended[index];
+      expect(event?.client).toBe(DB);
+      expect(event?.event.topic).toBe("notify.message");
+      expect(event?.event.dedupeKey).toBe(item.key);
+      const payload = event?.event.payload as Record<string, unknown>;
+      expect(payload.recipientId).toBe(item.recipient);
+      expect(payload.type).toBe("reminder");
+      expect(payload.channel).toBe(item.channel);
+      expect(payload.refType).toBe("task");
+      expect(payload.refId).toBe("t-1");
+      expect(payload.templateCode).toBe(item.template);
+      expect(payload.mergeKey).toBe(item.key.slice(0, item.key.length - item.suffix.length));
+      expect(String(payload.body)).toContain("安装摄像头");
+    }
     expect(h.logs.warn.some((line) => line.includes("渠道未落地"))).toBe(false);
   });
 
@@ -218,6 +215,43 @@ describe("规则事件消费（S7-4 接线 · evaluateEventMessages → notify.m
 
     expect(outcome?.outcome).toBe("dead");
     expect(h.appended).toHaveLength(0);
+  });
+
+  it("A08 阶段推进事件：产出 notify.group（项目群寻址 + 阶段关联 + 明确项目 / 推进人）", async () => {
+    const h = makeHarness();
+    h.subjects.eventSubjects.set(
+      "stage.advanced",
+      toStageSubject({
+        stageId: "stage-1",
+        stageKey: "design",
+        stageName: "设计开发",
+        stageVersion: 7,
+        nextStageKey: "purchase",
+        nextStageName: "加工采购",
+        advancedByName: "邵晨宇",
+        projectId: "p-1",
+        projectCode: "LBUSA-20261014-002",
+        projectName: "美国仓储公司订单",
+        groupId: "p-1",
+      }),
+    );
+
+    const outcome = await createRuleEventConsumers(h.deps)
+      .get("stage.advanced")
+      ?.handle(row("stage.advanced", { projectId: "p-1", stageKey: "design", stageVersion: 7, actorId: "u-1" }));
+
+    expect(outcome).toEqual({ outcome: "done" });
+    expect(h.appended).toHaveLength(1);
+    const event = h.appended[0];
+    expect(event?.event.topic).toBe("notify.group");
+    expect(event?.event.dedupeKey).toBe("A08:stage-1:v7");
+    const payload = event?.event.payload as Record<string, unknown>;
+    expect(payload.projectId).toBe("p-1");
+    expect(payload.title).toBe("大阶段完成通知");
+    expect(String(payload.body)).toBe("项目：**LBUSA-20261014-002·美国仓储公司订单**\n邵晨宇已完成大阶段「**设计开发**」，当前项目阶段：**加工采购**。");
+    expect(payload.refType).toBe("stage");
+    expect(payload.refId).toBe("stage-1");
+    expect(payload.templateCode).toBe("A08_GROUP");
   });
 });
 
@@ -279,10 +313,12 @@ describe("调度生产者（automation-schedule.job → notify.message）", () =
     expect(String(result?.note)).toContain("未落地渠道跳过 0 条");
   });
 
-  it("群收件人缺失（project.group 无绑定列）：零产出 + recipient_missing 留痕", async () => {
+  it("R03 负责人为空：不向 PM 回退，零产出 + recipient_missing 留痕", async () => {
     const rules = BUILTIN_RULES.filter((rule) => rule.code === "R03");
     const h = makeHarness({ rules: async () => [...rules] });
-    h.subjects.windowSubjects = [toTaskSubject(task({ plannedEnd: "2026-09-25" }))];
+    h.subjects.windowSubjects = [
+      toTaskSubject(task({ plannedEnd: "2026-09-25", ownerId: null, ownerName: null })),
+    ];
 
     const result = await createAutomationScheduleHandler(h.deps).run(jobContext(FROM, TO));
 
@@ -291,10 +327,10 @@ describe("调度生产者（automation-schedule.job → notify.message）", () =
     expect(h.logs.log.some((line) => line.includes("recipient_missing"))).toBe(true);
   });
 
-  it("R03 群播报命中：产出 notify.group（projectId = 群寻址键；R03 无标题 → title null；refType = task）", async () => {
+  it("R03 命中：只产出负责人 notify.message（wecom_aibot · 不通知项目经理）", async () => {
     const rules = BUILTIN_RULES.filter((rule) => rule.code === "R03");
     const h = makeHarness({ rules: async () => [...rules] });
-    h.subjects.windowSubjects = [toTaskSubject(task({ plannedEnd: "2026-09-25", projectGroupId: "p-1" }))];
+    h.subjects.windowSubjects = [toTaskSubject(task({ plannedEnd: "2026-09-25" }))];
 
     const result = await createAutomationScheduleHandler(h.deps).run(jobContext(FROM, TO));
 
@@ -302,16 +338,18 @@ describe("调度生产者（automation-schedule.job → notify.message）", () =
     expect(h.appended).toHaveLength(1);
     const event = h.appended[0];
     expect(event?.client).toBe(TX);
-    expect(event?.event.topic).toBe("notify.group");
-    expect(event?.event.dedupeKey).toBe("R03:t-1:2026-09-24");
+    expect(event?.event.topic).toBe("notify.message");
+    expect(event?.event.dedupeKey).toBe("R03:t-1:2026-09-24:aibot");
     const payload = event?.event.payload as Record<string, unknown>;
-    expect(payload.projectId).toBe("p-1");
-    expect(payload.title).toBeNull();
+    expect(payload.recipientId).toBe("u-1");
+    expect(payload.channel).toBe("wecom_aibot");
+    expect(payload.title).toBe("任务即将延期提醒");
     expect(String(payload.body)).toContain("安装摄像头");
     expect(payload.refType).toBe("task");
     expect(payload.refId).toBe("t-1");
-    expect(payload.templateCode).toBe("R03_GROUP");
-    expect(payload.chatid).toBeUndefined();
+    expect(payload.templateCode).toBe("R03_WECOM");
+    expect(payload.mergeKey).toBe("R03:t-1:2026-09-24");
+    expect(h.appended.some((item) => (item.event.payload as Record<string, unknown>).recipientId === "u-9")).toBe(false);
     expect(h.logs.warn.some((line) => line.includes("渠道未落地"))).toBe(false);
   });
 

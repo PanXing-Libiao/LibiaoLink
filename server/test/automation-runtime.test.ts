@@ -10,6 +10,7 @@ import {
   replayRules,
   toProjectDaySubject,
   toReportMemberSubject,
+  toStageSubject,
   toTaskSubject,
   toTodoSubject,
   type ReplayMessage,
@@ -102,14 +103,19 @@ describe("evaluateEventMessages 事件形态（R02 金标等价 + 冷启动保�
     const runtime = evaluateEventMessages({ topic: "task.completed", rules: BUILTIN_RULES, subject, at: AT });
     const replay = replayRules({ businessDate: BUSINESS_DAY, tasks: [completed], calendar: CALENDAR, shiftEnabled: false });
     expect(runtime.messages).toEqual(replay.messages);
-    expect(runtime.messages).toHaveLength(2);
-    expect(runtime.messages.map((message) => message.channel)).toEqual(["inbox", "wecom_aibot"]);
+    expect(runtime.messages).toHaveLength(4);
+    expect(runtime.messages.map((message) => message.channel)).toEqual(["inbox", "inbox", "wecom_aibot", "wecom_aibot"]);
+    expect(runtime.messages.map((message) => message.recipientName)).toEqual(["张三", "李四", "张三", "李四"]);
     for (const message of runtime.messages) {
       expect(message.ruleCode).toBe("R02");
-      expect(message.dedupeKey).toBe("R02:t-1:v5");
       expect(message.body).toBe(`${PROJECT}\n邵晨宇已点击完成任务，请为项目任务「**安装摄像头**」及时添加成果文件`);
-      expect(message.recipientName).toBe("张三");
     }
+    expect(runtime.messages.map((message) => message.dedupeKey)).toEqual([
+      "R02:t-1:v5:u-1",
+      "R02:t-1:v5:u-9",
+      "R02:t-1:v5:u-1",
+      "R02:t-1:v5:u-9",
+    ]);
     // R06 同主题命中但条件不满足（project.progress != 100）→ 登记 not_matched；A 系列不参与（主题不命中）。
     expect(runtime.skipped).toEqual([{ reason: "not_matched", ruleCode: "R06", entityId: "t-1" }]);
   });
@@ -139,7 +145,7 @@ describe("evaluateEventMessages 事件形态（R02 金标等价 + 冷启动保�
       eventAt: new Date(AT.getTime() - 10 * 60_000),
       maxEventAgeMs: 30 * 60_000,
     });
-    expect(fresh.messages).toHaveLength(2);
+    expect(fresh.messages).toHaveLength(4);
     expect(() => evaluateEventMessages({ topic: "task.completed", rules: BUILTIN_RULES, subject, at: AT, maxEventAgeMs: 1000 })).toThrow();
   });
 
@@ -151,6 +157,35 @@ describe("evaluateEventMessages 事件形态（R02 金标等价 + 冷启动保�
     expect(mismatch.messages).toEqual([]);
     expect(mismatch.skipped.map((item) => item.reason)).toEqual(["subject_mismatch", "subject_mismatch"]);
     expect(mismatch.skipped.map((item) => item.ruleCode)).toEqual(["R02", "R06"]);
+  });
+});
+
+describe("evaluateEventMessages 阶段事件（A08）", () => {
+  it("stage.advanced 主体不套用任务完成态，直接命中阶段群播报", () => {
+    const stage = toStageSubject({
+      stageId: "stage-1",
+      stageKey: "design",
+      stageName: "设计开发",
+      stageVersion: 7,
+      nextStageKey: "purchase",
+      nextStageName: "加工采购",
+      advancedByName: "邵晨宇",
+      projectId: "p-1",
+      projectCode: "LBUSA-20261014-002",
+      projectName: "美国仓储公司订单",
+      groupId: "p-1",
+    });
+    const runtime = evaluateEventMessages({ topic: "stage.advanced", rules: BUILTIN_RULES, subject: stage, at: AT });
+    expect(runtime.messages).toHaveLength(1);
+    expect(runtime.messages[0]).toMatchObject({
+      ruleCode: "A08",
+      channel: "wecom_group",
+      recipientId: "p-1",
+      title: "大阶段完成通知",
+      dedupeKey: "A08:stage-1:v7",
+    });
+    expect(runtime.messages[0]?.body).toBe(`${PROJECT}\n邵晨宇已完成大阶段「**设计开发**」，当前项目阶段：**加工采购**。`);
+    expect(runtime.skipped).toEqual([]);
   });
 });
 
@@ -289,6 +324,40 @@ describe("主体映射器（字段与收件人 = docs/rules 字段表）", () =>
     expect(unbound.recipients?.["project.group"]).toBeNull();
   });
 
+  it("toStageSubject：收件人 = project.group（未绑定 → null），项目 / 阶段 / 下一阶段字段齐备", () => {
+    const stage = toStageSubject({
+      stageId: "stage-1",
+      stageKey: "design",
+      stageName: "设计开发",
+      stageVersion: 3,
+      nextStageKey: "purchase",
+      nextStageName: "加工采购",
+      advancedByName: "邵晨宇",
+      projectId: "p-1",
+      projectCode: "LBUSA-20261014-002",
+      projectName: "美国仓储公司订单",
+      groupId: null,
+    });
+    expect(stage).toEqual({
+      kind: "stage",
+      id: "stage-1",
+      version: 3,
+      fields: {
+        "stage.id": "stage-1",
+        "stage.key": "design",
+        "stage.name": "设计开发",
+        "stage.next_key": "purchase",
+        "stage.next_name": "加工采购",
+        "stage.advanced_by_name": "邵晨宇",
+        "project.id": "p-1",
+        "project.code": "LBUSA-20261014-002",
+        "project.name": "美国仓储公司订单",
+        "project.label": "LBUSA-20261014-002·美国仓储公司订单",
+      },
+      recipients: { "project.group": null },
+    });
+  });
+
   it("toTodoSubject：收件人 = rule.members；entityId 可覆盖（多提醒对象按成员展开）", () => {
     expect(todo("2026-09-25")).toEqual({
       kind: "todo",
@@ -310,9 +379,9 @@ describe("主体映射器（字段与收件人 = docs/rules 字段表）", () =>
 describe("规则来源 listEnabledRules（一期 = 内置集）", () => {
   it("返回启用中的内置规则（异步签名，M5-06 换读表实现不变）", async () => {
     const rules = await listEnabledRules();
-    expect(rules).toHaveLength(9);
+    expect(rules).toHaveLength(10);
     expect(rules.every((rule) => rule.enabled)).toBe(true);
-    expect(rules.map((rule) => rule.code)).toEqual(["R02", "R03", "R04", "R05", "R06", "R07", "A01", "A02", "A14"]);
+    expect(rules.map((rule) => rule.code)).toEqual(["R02", "R03", "R04", "R05", "R06", "R07", "A01", "A02", "A08", "A14"]);
   });
 });
 
