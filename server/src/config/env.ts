@@ -179,6 +179,11 @@ export const EnvSchema = z
     /** 智能机器人 BotID / Secret（Secret 属凭据，只走密钥渠道；生产必填校验随接线刀启用）。 */
     WECOM_BOT_ID: z.string().default(""),
     WECOM_BOT_SECRET: z.string().default(""),
+    /**
+     * 机器人诊断开关（设置页「机器人诊断」块）：auto = 仅 NODE_ENV !== production 时开启；true = 强制开启；
+     * false = 关闭。开启时 GET /api/v1/wecom-dm-binding/diagnostics 回 bot_id / secret 原文（仅本地联调用）。
+     */
+    WECOM_BOT_DIAGNOSTICS: z.enum(["auto", "true", "false"]).default("auto"),
     /** 心跳周期（毫秒）：连续 2 个周期无 pong → 判失联重连。 */
     WECOM_BOT_PING_INTERVAL_MS: z.coerce.number().int().min(1000).max(600000).default(30000),
     /** 单帧回执超时（毫秒）：订阅 / 推送共用。 */

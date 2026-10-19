@@ -13,6 +13,7 @@
  *      刷新不再弹（跳过位按账号分记 —— 账号键 = `/auth/me` 的 `user.id`（= 库内 `casdoor_id`）· 退出登录清除）；
  *   ② 头像菜单首项 = 「设置」（文案 + `#/settings` 落点），点它 → 地址到 `#/settings`、设置页渲染（`data-settings`）；
  *   ③ 未绑定态：设置页出「未绑定」+ D4 终稿话术；点「获取绑定码」→ 6 位码（`^[0-9]{6}$`）+ 倒计时递减 + 库内落 pending 行；
+ *   ③-诊断（Push 255）：机器人诊断块显示 server/.env 的 bot_id / secret（默认掩码，点「显示」切明文）+ 最近回调统计；
  *   ③b 复制通道（Push 253）：点「复制」→ 成功提示（`navigator.clipboard`，非安全上下文回退 `execCommand`）；
  *      码面可全选（`data-wecom-binding-code-text` + `select-all`）；
  *   ④ 频率口径（D3 修订 v1.8）：连取 5 次（每次作废旧码 —— 库内 5 行 = 4 expired + 1 pending）→ 第 6 次 429：
@@ -329,6 +330,17 @@ check("设置页地址即状态：直接刷新 #/settings 仍在设置页", Stri
 // ── ③ 未绑定态 + 取码（6 位 / TTL 倒计时 / 库内 pending 行）────────────────────────────────────────────
 check("未绑定态：面板 = unbound + D4 终稿话术「当前用户未绑定企业微信，请前往设置补绑。」", (await ev(panelState())) === "unbound" && String(await ev(textOf("[data-wecom-binding]")) ?? "").indexOf("当前用户未绑定企业微信，请前往设置补绑。") >= 0, String(await ev(panelState())));
 check("取码按钮在位且可点（按钮文案 =「获取绑定码」）", String(await ev(textOf("[data-wecom-binding-get-code]"))) === "获取绑定码");
+
+// ③-诊断（Push 255）：设置页显示的机器人 ID / Secret 必须是本机 server/.env 实际读取的值（核对凭据用）
+const diagExpr = "(function(){var el=document.querySelector(" + j("[data-wecom-binding-diagnostics]") + ");if(el===null){return null;}var id=el.querySelector(" + j("[data-wecom-binding-diagnostics-bot-id]") + ");var sec=el.querySelector(" + j("[data-wecom-binding-diagnostics-secret]") + ");var toggle=el.querySelector(" + j("[data-wecom-binding-diagnostics-secret-toggle]") + ");var inbound=el.querySelector(" + j("[data-wecom-binding-diagnostics-inbound]") + ");return {count:Number(el.getAttribute(" + j("data-wecom-binding-diagnostics") + ")),botId:id===null?null:String(id.textContent||" + j("") + ").trim(),secret:sec===null?null:String(sec.textContent||" + j("") + ").trim(),visible:sec===null?null:sec.getAttribute(" + j("data-wecom-binding-diagnostics-secret-visible") + "),toggle:toggle===null?null:String(toggle.textContent||" + j("") + ").trim(),inbound:inbound===null?null:String(inbound.textContent||" + j("") + ").trim()};})()";
+await waitFor(exists("[data-wecom-binding-diagnostics]"), 10000);
+const diagMasked = await ev(diagExpr);
+check("机器人诊断块出现：机器人 ID = server/.env 的 WECOM_BOT_ID", diagMasked !== null && String(diagMasked.botId) === BOT_ID, JSON.stringify(diagMasked));
+check("机器人诊断：Secret 默认掩码（含 **** · 显示钮 =「显示」）+ 回调统计行在位", diagMasked !== null && String(diagMasked.secret).indexOf("****") >= 0 && diagMasked.visible === "false" && diagMasked.toggle === "显示" && diagMasked.inbound !== null, JSON.stringify(diagMasked));
+await click("[data-wecom-binding-diagnostics-secret-toggle]");
+const diagPlain = await ev(diagExpr);
+check("点「显示」→ Secret 切明文（长度 > 掩码 · 不含 **** · 显示钮 =「隐藏」）", diagPlain !== null && diagPlain.visible === "true" && String(diagPlain.secret).indexOf("****") < 0 && String(diagPlain.secret).length > 8 && diagPlain.toggle === "隐藏", JSON.stringify({ visible: diagPlain === null ? null : diagPlain.visible, length: diagPlain === null ? null : String(diagPlain.secret).length }));
+await click("[data-wecom-binding-diagnostics-secret-toggle]");
 shots.push(await shot("wecom-settings-unbound-3"));
 const codeExpr = "(function(){var el=document.querySelector(" + j("[data-wecom-binding-code]") + ");if(el===null){return null;}var cd=el.querySelector(" + j("[data-wecom-binding-countdown]") + ");return {code:el.getAttribute(" + j("data-wecom-binding-code") + "),state:el.getAttribute(" + j("data-wecom-binding-code-state") + "),countdown:cd===null?null:Number(cd.getAttribute(" + j("data-wecom-binding-countdown") + ")),text:String(cd===null?" + j("") + ":cd.textContent||" + j("") + ").trim()};})()";
 await click("[data-wecom-binding-get-code]");

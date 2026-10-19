@@ -396,7 +396,11 @@ export type NotificationSnoozeListResponse = z.infer<typeof NotificationSnoozeLi
 export const WECOM_DM_BINDING_CODE_LENGTH = 6;
 /** 绑定码有效期（D3 修订 v1.8：5 分钟 —— 原 10 分钟）。 */
 export const WECOM_DM_BINDING_CODE_TTL_MS = 5 * 60_000;
-/** 绑定码生成频率窗口（D3 修订 v1.8：3 分钟 · 滚动窗口 = 罚时上限）。 */
+/**
+ * 绑定码生成频率窗口（D3 修订 v1.8：3 分钟）。
+ * 罚时锚点 = 窗口内**最近一次**取码（v1.9 修订）：倒计时恒为「最近取码 + 3 分钟」，不随被拦重试延长；
+ * 按「最早一码 + 窗口」会让分散取码后的罚时只剩 1 分钟（用户实测），故锚点改为最新一码。
+ */
 export const WECOM_DM_BINDING_CODE_WINDOW_MS = 3 * 60_000;
 /** 绑定码生成频率上限（D3 修订 v1.8：5 次 / 3 分钟 / 用户；超出 → 429 `RATE_LIMITED`，最长等待 ≤ 3 分钟）。 */
 export const WECOM_DM_BINDING_CODE_MAX_PER_WINDOW = 5;
@@ -437,3 +441,37 @@ export const WecomDmBindingStateSchema = z
       "企业微信单聊绑定态：绑定按机器人维度成立（换机器人后旧绑定不生效 → 读面回到 bound:false）；解绑 = 注销投递资格（保留激活登记）；另回当前未用绑定码与取码限流可重试时刻（页面刷新不丢状态）",
   });
 export type WecomDmBindingState = z.infer<typeof WecomDmBindingStateSchema>;
+
+/** 库内出现过的机器人维度（诊断用：排查 worker 是否在用另一个 bot_id 收消息）。 */
+export const WecomDmBotInboundStatSchema = z
+  .object({
+    botId: z.string(),
+    inboundCount: z.number().int().nonnegative().openapi({ description: "该 bot_id 下累计有过单聊消息的企微号数（激活表按 (bot_id, wecom_userid) 一行；不是消息条数）" }),
+    lastInboundAt: DateTimeSchema.nullable().openapi({ description: "该 bot_id 最近一次收到单聊消息的时刻；无记录 = null" }),
+  })
+  .openapi("WecomDmBotInboundStat");
+
+/**
+ * 机器人诊断（本地联调 · 非生产）：回显当前 api 进程实际读取的 `WECOM_BOT_*`，以及该机器人维度最近是否收到单聊回调。
+ * 用途：用户在企微侧发绑定码后机器人不回时，先核对 ID / Secret 是否与企微后台一致、回调是否到达（`inboundCount`）。
+ * 安全（CONTRIBUTING §12）：仅 `NODE_ENV !== "production"`（或显式 `WECOM_BOT_DIAGNOSTICS=true`）时回敏感字段；
+ * 生产恒 `enabled:false` + 敏感字段 null；本端点不写日志、响应 `Cache-Control: no-store`。
+ */
+export const WecomDmBotDiagnosticsSchema = z
+  .object({
+    enabled: z.boolean().openapi({ description: "诊断是否开启（生产默认关闭；关闭时其余敏感字段为 null）" }),
+    botId: z.string().nullable().openapi({ description: "WECOM_BOT_ID 原文（未配置 = null）" }),
+    botSecret: z.string().nullable().openapi({ description: "WECOM_BOT_SECRET 原文（仅诊断开启时回全量；关闭 = null）" }),
+    botSecretMasked: z.string().nullable().openapi({ description: "Secret 掩码（首 4 + **** + 末 4；关闭 / 未配置 = null）" }),
+    wsUrl: z.string().nullable().openapi({ description: "WECOM_BOT_WS_URL（机器人长连接地址）" }),
+    deliveryEnabled: z.boolean().openapi({ description: "NOTIFY_DELIVERY_ENABLED（worker 是否允许启动机器人长连接）" }),
+    lastInboundAt: DateTimeSchema.nullable().openapi({ description: "当前 bot_id 最近一次收到单聊消息的时刻；null = 从未收到" }),
+    inboundCount: z.number().int().nonnegative().openapi({ description: "当前 bot_id 下有过单聊消息的企微号数（激活表行数）；0 = 回调从未到达（worker 未启动 / 凭据不对 / bot_id 不一致）" }),
+    lastInboundUseridMasked: z.string().nullable().openapi({ description: "最近一次回调的 open_userid 掩码（末 4 位）；无记录 = null" }),
+    observedBotIds: z.array(WecomDmBotInboundStatSchema).openapi({ description: "激活表内出现过的 bot_id（最多 5 个，最近在前）—— 可发现 worker 用的是另一个机器人" }),
+    serverTime: DateTimeSchema.openapi({ description: "服务端当前时刻（对照最近回调时间判断是否仍在收消息）" }),
+  })
+  .openapi("WecomDmBotDiagnostics", {
+    description: "机器人诊断（仅非生产环境）：bot_id / secret / ws 地址 / 最近回调统计；用于核对本地凭据与 worker 收消息链路",
+  });
+export type WecomDmBotDiagnostics = z.infer<typeof WecomDmBotDiagnosticsSchema>;

@@ -224,7 +224,10 @@ export class NotifyDmRepository {
       });
   }
 
-  /** 窗口内已生成绑定码的创建时刻（升序 —— D3 修订 v1.8：5 次 / 3 分钟 / 用户；空数组 = 未取过码）。 */
+  /**
+   * 窗口内已生成绑定码的创建时刻（升序 —— D3 修订 v1.8：5 次 / 3 分钟 / 用户；空数组 = 未取过码）。
+   * v1.9：罚时锚点取数组末尾（最近一码）—— 调用方不要再用首元素。
+   */
   async bindingCodesSince(userId: string, since: Date, client: DbClient = this.database.db): Promise<Date[]> {
     const rows = await client
       .select({ createdAt: wecomIdBindingCodes.createdAt })
@@ -232,6 +235,65 @@ export class NotifyDmRepository {
       .where(and(eq(wecomIdBindingCodes.userId, userId), gte(wecomIdBindingCodes.createdAt, since)))
       .orderBy(wecomIdBindingCodes.createdAt);
     return rows.map((row) => row.createdAt);
+  }
+
+  /**
+   * 诊断：当前机器人维度的单聊回调统计。激活表按 (bot_id, wecom_userid) 一行 —— 首次回调插入、
+   * 后续回调只刷新 last_message_at；因此 count = 0 即「该 bot_id 从未收到回调」，
+   * count > 0 = 有过单聊消息的企微号数（不是消息条数）；last_message_at 最大者 = 最近一次收到的时刻。
+   */
+  async botInboundStats(
+    botId: string,
+    client: DbClient = this.database.db,
+  ): Promise<{ inboundCount: number; lastInboundAt: Date | null; lastInboundUserid: string | null }> {
+    const countRows = await client
+      .select({ count: sql<number>`count(*)::int` })
+      .from(wecomAibotDmActivations)
+      .where(eq(wecomAibotDmActivations.botId, botId));
+    const lastRows = await client
+      .select({
+        wecomUserid: wecomAibotDmActivations.wecomUserid,
+        lastMessageAt: wecomAibotDmActivations.lastMessageAt,
+      })
+      .from(wecomAibotDmActivations)
+      .where(eq(wecomAibotDmActivations.botId, botId))
+      .orderBy(desc(wecomAibotDmActivations.lastMessageAt))
+      .limit(1);
+    return {
+      inboundCount: countRows[0]?.count ?? 0,
+      lastInboundAt: lastRows[0]?.lastMessageAt ?? null,
+      lastInboundUserid: lastRows[0]?.wecomUserid ?? null,
+    };
+  }
+
+  /**
+   * 诊断：激活表内出现过的 bot_id（最近有回调的在前，最多 limit 个）——
+   * 用于发现「worker 用的是另一个机器人」：当前 bot_id 计数为 0、但列表里另有 bot_id 有记录。
+   */
+  async observedBotIds(
+    limit: number,
+    client: DbClient = this.database.db,
+  ): Promise<{ botId: string | null; inboundCount: number; lastInboundAt: Date | null }[]> {
+    const rows = await client
+      .select({
+        botId: wecomAibotDmActivations.botId,
+        inboundCount: sql<number>`count(*)::int`,
+        lastInboundAt: sql<Date | null>`max(${wecomAibotDmActivations.lastMessageAt})`,
+      })
+      .from(wecomAibotDmActivations)
+      .groupBy(wecomAibotDmActivations.botId)
+      .orderBy(desc(sql`max(${wecomAibotDmActivations.lastMessageAt})`))
+      .limit(limit);
+    // 驱动对聚合列 max(timestamptz) 的解析结果可能是字符串（与列选不同）；统一归一成 Date，
+    // 避免上层 .toISOString() 在真实 PG 上炸 500（E2E 实测）。
+    return rows.map((row) => {
+      const value = row.lastInboundAt as Date | string | null;
+      return {
+        botId: row.botId,
+        inboundCount: row.inboundCount,
+        lastInboundAt: value === null ? null : value instanceof Date ? value : new Date(value),
+      };
+    });
   }
 
   /**

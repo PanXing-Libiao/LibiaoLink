@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  fetchWecomDmBotDiagnostics,
   loadWecomDmBinding,
   rateLimitedRetryAt,
   requestWecomDmBindingCode,
   unbindWecomDm,
   type WecomDmBindingCode,
   type WecomDmBindingState,
+  type WecomDmBotDiagnostics,
 } from "../bindingApi";
 import { copyTextToClipboard } from "../clipboard";
 import { useT } from "../i18n";
@@ -62,6 +64,9 @@ export function WecomBindingPanel(props: {
   const [confirmUnbind, setConfirmUnbind] = useState(false);
   const [checking, setChecking] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  /** 机器人诊断（Push 255 · 仅设置页 / 非生产）：显示本进程实际读取的凭据 + 最近回调统计。 */
+  const [diagnostics, setDiagnostics] = useState<WecomDmBotDiagnostics | null>(null);
+  const [secretVisible, setSecretVisible] = useState(false);
 
   /**
    * 读面 → 本地（Push 254 · v1.8 回填）：绑定态 + 当前未用码 + 取码罚时**一起**播种 —— 刷新 / 重进页面
@@ -102,11 +107,28 @@ export function WecomBindingPanel(props: {
     }
   };
 
-  /** 手动「刷新绑定状态」：按钮置忙，读毕复位。 */
+  /** 机器人诊断读面（失败静默：诊断块不出现，不影响绑定主流程）。 */
+  const loadDiagnostics = async (): Promise<void> => {
+    try {
+      setDiagnostics(await fetchWecomDmBotDiagnostics());
+    } catch {
+      setDiagnostics(null);
+    }
+  };
+
+  useEffect(() => {
+    if (props.variant !== "page") {
+      return;
+    }
+    void loadDiagnostics();
+    // 只在挂载 / 变体切换时读一次；后续由「刷新绑定状态」手动联动（避免每 5 秒轮询多打两笔统计查询）
+  }, [props.variant]);
+
+  /** 手动「刷新绑定状态」：按钮置忙，读毕复位（同时刷新机器人诊断 —— 发消息后点一下即可看回调计数）。 */
   const manualRefresh = async (): Promise<void> => {
     setChecking(true);
     try {
-      await refreshState();
+      await Promise.all([refreshState(), loadDiagnostics()]);
     } finally {
       setChecking(false);
     }
@@ -269,6 +291,114 @@ export function WecomBindingPanel(props: {
       </div>
     );
 
+  const diagnosticsBlock =
+    props.variant !== "page" || diagnostics === null || !diagnostics.enabled ? null : (
+      <section
+        data-wecom-binding-diagnostics={String(diagnostics.inboundCount)}
+        className="mt-4 rounded-xl border border-dashed border-amber-300 bg-amber-50/50 p-3"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-xs font-semibold text-amber-900">{t("settings.bind.diagnostics.title")}</h3>
+          <span className="rounded-full border border-amber-300 bg-white px-2 py-0.5 text-[10px] text-amber-700">
+            {t("settings.bind.diagnostics.devOnly")}
+          </span>
+        </div>
+        <p className="mt-1 text-[11px] leading-4 text-amber-800">{t("settings.bind.diagnostics.hint")}</p>
+        <dl className="mt-2 space-y-1.5 text-[11px]">
+          <div className="flex flex-wrap items-center gap-2">
+            <dt className="w-24 shrink-0 text-zinc-500">{t("settings.bind.diagnostics.botId")}</dt>
+            <dd data-wecom-binding-diagnostics-bot-id="true" className="break-all font-mono text-zinc-900">
+              {diagnostics.botId ?? t("settings.bind.diagnostics.unset")}
+            </dd>
+            {diagnostics.botId === null ? null : (
+              <button
+                type="button"
+                onClick={() => {
+                  void copyTextToClipboard(diagnostics.botId ?? "").then((copied) => {
+                    props.onNotice(
+                      copied
+                        ? { kind: "ok", text: t("settings.bind.diagnostics.copied") }
+                        : { kind: "error", text: t("settings.bind.copyFailed") },
+                    );
+                  });
+                }}
+                className="rounded border border-amber-300 bg-white px-2 py-0.5 text-[10px] text-amber-800"
+              >
+                {t("settings.bind.diagnostics.copy")}
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <dt className="w-24 shrink-0 text-zinc-500">{t("settings.bind.diagnostics.botSecret")}</dt>
+            <dd
+              data-wecom-binding-diagnostics-secret="true"
+              data-wecom-binding-diagnostics-secret-visible={String(secretVisible)}
+              className="break-all font-mono text-zinc-900"
+            >
+              {secretVisible
+                ? diagnostics.botSecret ?? t("settings.bind.diagnostics.unset")
+                : diagnostics.botSecretMasked ?? t("settings.bind.diagnostics.unset")}
+            </dd>
+            <button
+              type="button"
+              data-wecom-binding-diagnostics-secret-toggle="true"
+              onClick={() => {
+                setSecretVisible((visible) => !visible);
+              }}
+              className="rounded border border-amber-300 bg-white px-2 py-0.5 text-[10px] text-amber-800"
+            >
+              {secretVisible ? t("settings.bind.diagnostics.hide") : t("settings.bind.diagnostics.show")}
+            </button>
+            {diagnostics.botSecret === null ? null : (
+              <button
+                type="button"
+                onClick={() => {
+                  void copyTextToClipboard(diagnostics.botSecret ?? "").then((copied) => {
+                    props.onNotice(
+                      copied
+                        ? { kind: "ok", text: t("settings.bind.diagnostics.copied") }
+                        : { kind: "error", text: t("settings.bind.copyFailed") },
+                    );
+                  });
+                }}
+                className="rounded border border-amber-300 bg-white px-2 py-0.5 text-[10px] text-amber-800"
+              >
+                {t("settings.bind.diagnostics.copy")}
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <dt className="w-24 shrink-0 text-zinc-500">{t("settings.bind.diagnostics.wsUrl")}</dt>
+            <dd className="break-all font-mono text-zinc-900">{diagnostics.wsUrl ?? t("settings.bind.diagnostics.unset")}</dd>
+            <dt className="shrink-0 text-zinc-500">{t("settings.bind.diagnostics.deliveryEnabled")}</dt>
+            <dd className="text-zinc-900">
+              {diagnostics.deliveryEnabled
+                ? t("settings.bind.diagnostics.on")
+                : t("settings.bind.diagnostics.off")}
+            </dd>
+          </div>
+        </dl>
+        <p data-wecom-binding-diagnostics-inbound="true" className="mt-2 text-[11px] leading-4 text-amber-900">
+          {diagnostics.lastInboundAt === null || diagnostics.inboundCount === 0
+            ? t("settings.bind.diagnostics.noInbound")
+            : t("settings.bind.diagnostics.inbound", {
+                time: formatDateTime(diagnostics.lastInboundAt),
+                count: diagnostics.inboundCount,
+              })}
+        </p>
+        {diagnostics.observedBotIds.length <= 1 ? null : (
+          <p data-wecom-binding-diagnostics-observed="true" className="mt-1 break-all text-[11px] leading-4 text-amber-800">
+            {t("settings.bind.diagnostics.otherBots", {
+              bots: diagnostics.observedBotIds
+                .map((item) => item.botId + "（" + String(item.inboundCount) + "）")
+                .join("、"),
+            })}
+          </p>
+        )}
+        <p className="mt-1 text-[10px] leading-4 text-amber-700">{t("settings.bind.diagnostics.secretHint")}</p>
+      </section>
+    );
+
   if (state.bound) {
     return (
       <div data-wecom-binding="bound" className={props.variant === "guide" ? "" : "space-y-1"}>
@@ -322,6 +452,7 @@ export function WecomBindingPanel(props: {
           )}
         </div>
         {props.variant === "page" ? <p className="pt-2 text-xs text-zinc-500">{t("settings.bind.unbindNote")}</p> : null}
+        {diagnosticsBlock}
       </div>
     );
   }
@@ -363,6 +494,7 @@ export function WecomBindingPanel(props: {
       </div>
       <p className="mt-2 text-xs leading-5 text-zinc-400">{t("settings.bind.pollHint")}</p>
       {codeBlock}
+      {diagnosticsBlock}
     </div>
   );
 }

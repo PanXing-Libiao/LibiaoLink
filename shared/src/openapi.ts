@@ -115,6 +115,7 @@ import {
   ResourceInvalidationPayloadSchema,
   WecomDmBindingCodeSchema,
   WecomDmBindingStateSchema,
+  WecomDmBotDiagnosticsSchema,
 } from "./modules/notifications.ts";
 import {
   TranslateBatchBodySchema,
@@ -1922,6 +1923,18 @@ export function buildOpenApiDocument() {
       "企业微信单聊绑定态（D5 / D6 设置页）：按当前机器人（`WECOM_BOT_ID`）维度判定；恒 200（未绑定 = bound:false）；企微 open_userid 只回掩码末 4 位；v1.8 另回当前未用绑定码（bindingCode）与取码限流可重试时刻（retryAt）—— 页面刷新不丢码面 / 倒计时 / 罚时",
     responses: {
       200: { description: "绑定态（未绑定 = bound:false；wecomUseridMasked / boundAt = null）", ...json(WecomDmBindingStateSchema) },
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/wecom-dm-binding/diagnostics",
+    tags: ["notifications"],
+    summary:
+      "机器人诊断（仅非生产环境）：回显 api 进程实际读取的 WECOM_BOT_ID / SECRET / WS 地址 + 该 bot_id 最近回调统计（inboundCount = 0 → 回调从未到达：worker 未启动 / 凭据不对 / bot_id 不一致）；生产恒 enabled:false 且敏感字段 null",
+    responses: {
+      200: { description: "诊断信息（生产：enabled:false + 敏感字段 null）", ...json(WecomDmBotDiagnosticsSchema) },
       401: commonErrors[401],
     },
   });

@@ -7394,6 +7394,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/wecom-dm-binding/diagnostics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 机器人诊断（仅非生产环境）：回显 api 进程实际读取的 WECOM_BOT_ID / SECRET / WS 地址 + 该 bot_id 最近回调统计（inboundCount = 0 → 回调从未到达：worker 未启动 / 凭据不对 / bot_id 不一致）；生产恒 enabled:false 且敏感字段 null */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 诊断信息（生产：enabled:false + 敏感字段 null） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WecomDmBotDiagnostics"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/wecom-dm-binding/codes": {
         parameters: {
             query?: never;
@@ -9947,6 +9992,35 @@ export interface components {
             boundAt: components["schemas"]["DateTime"] & (string | null);
             bindingCode: components["schemas"]["WecomDmBindingCode"];
             retryAt: components["schemas"]["DateTime"] & (string | null);
+        };
+        /** @description 机器人诊断（仅非生产环境）：bot_id / secret / ws 地址 / 最近回调统计；用于核对本地凭据与 worker 收消息链路 */
+        WecomDmBotDiagnostics: {
+            /** @description 诊断是否开启（生产默认关闭；关闭时其余敏感字段为 null） */
+            enabled: boolean;
+            /** @description WECOM_BOT_ID 原文（未配置 = null） */
+            botId: string | null;
+            /** @description WECOM_BOT_SECRET 原文（仅诊断开启时回全量；关闭 = null） */
+            botSecret: string | null;
+            /** @description Secret 掩码（首 4 + **** + 末 4；关闭 / 未配置 = null） */
+            botSecretMasked: string | null;
+            /** @description WECOM_BOT_WS_URL（机器人长连接地址） */
+            wsUrl: string | null;
+            /** @description NOTIFY_DELIVERY_ENABLED（worker 是否允许启动机器人长连接） */
+            deliveryEnabled: boolean;
+            lastInboundAt: components["schemas"]["DateTime"] & (string | null);
+            /** @description 当前 bot_id 下有过单聊消息的企微号数（激活表行数）；0 = 回调从未到达（worker 未启动 / 凭据不对 / bot_id 不一致） */
+            inboundCount: number;
+            /** @description 最近一次回调的 open_userid 掩码（末 4 位）；无记录 = null */
+            lastInboundUseridMasked: string | null;
+            /** @description 激活表内出现过的 bot_id（最多 5 个，最近在前）—— 可发现 worker 用的是另一个机器人 */
+            observedBotIds: components["schemas"]["WecomDmBotInboundStat"][];
+            serverTime: components["schemas"]["DateTime"] & unknown;
+        };
+        WecomDmBotInboundStat: {
+            botId: string;
+            /** @description 该 bot_id 下累计有过单聊消息的企微号数（激活表按 (bot_id, wecom_userid) 一行；不是消息条数） */
+            inboundCount: number;
+            lastInboundAt: components["schemas"]["DateTime"] & (string | null);
         };
         /** @description 工作台问题项（跨项目；问题追踪七列数据源随行下发） */
         WorkspaceIssueItem: {
