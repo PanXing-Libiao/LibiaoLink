@@ -241,6 +241,7 @@ async function loadRuntime() {
       createRuleEventConsumers: wiringModule.createRuleEventConsumers,
       createAutomationScheduleHandler: wiringModule.createAutomationScheduleHandler,
       AUTOMATION_SCHEDULE_JOB_KIND: automationIndexModule.AUTOMATION_SCHEDULE_JOB_KIND,
+      BUILTIN_RULES: automationIndexModule.BUILTIN_RULES,
       listEnabledRules: automationIndexModule.listEnabledRules,
       CalendarService: calendarServiceModule.CalendarService,
       CalendarRepository: calendarRepositoryModule.CalendarRepository,
@@ -340,7 +341,7 @@ function buildEnv(overrides = {}) {
     subjects,
     append: runtime.appendOutboxIfAbsent,
     db: database.db,
-    rules: runtime.listEnabledRules,
+    rules: async () => runtime.BUILTIN_RULES.map((rule) => ({ ...rule, enabled: true })),
     now: () => clock.now(),
     shift: () => calendar.getSettings(),
     logger: {
@@ -499,6 +500,14 @@ function buildEnv(overrides = {}) {
       "outbox=0 / jobs=0",
       short(pendingBaseline.rows[0]),
       pendingBaseline.rows[0].outbox === 0 && pendingBaseline.rows[0].jobs === 0,
+    );
+    const activeRuleCodes = (await runtime.listEnabledRules()).map((rule) => rule.code);
+    check(
+      "S0d",
+      "生产规则启用集：仅 R02 / R03 / R05（本回放另行显式启用全部定义以验证保留实现）",
+      "R02,R03,R05",
+      activeRuleCodes.join(","),
+      activeRuleCodes.join(",") === "R02,R03,R05",
     );
 
     // ---------------------------------------------------------------- 造数
