@@ -828,7 +828,7 @@ export default function App() {
   }
 
   if (route.kind === "settings") {
-    // 设置页（Push 250 · 头像菜单首项「设置」）：账号级设置的家 —— 当前落点 = 企业微信绑定（D5 / D6 绑定码链路）。
+    // 企微绑定页（Push 250 · 头像菜单首项「企微绑定」）：账号级设置的家 —— 当前落点 = 企微单聊绑定（D5 / D6 绑定码链路）+ 项目群绑定。
     return (
       <>
         <SettingsPage me={state.me} />

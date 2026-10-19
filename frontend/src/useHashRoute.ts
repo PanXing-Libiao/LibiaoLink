@@ -153,7 +153,7 @@ export const AUDIT_BASE_HASH = "#/audit";
 export const FILES_BASE_HASH = "#/files";
 
 /**
- * 「设置」页地址（头像菜单首项入口 · Push 250）：账号级设置的家（当前 = 企业微信绑定 D5 / D6）。
+ * 「企微绑定」页地址（头像菜单首项入口 · Push 250）：账号级设置的家（当前 = 企微单聊绑定 + 项目群绑定）。
  * 没有页内子态，故不带 query。
  */
 export const SETTINGS_BASE_HASH = "#/settings";
@@ -609,7 +609,7 @@ export function parseHash(hash: string): Route {
     return { kind: "files", query: parseFilesQuery(search) };
   }
   if (path === "/settings") {
-    // 设置（Push 250 · 头像菜单首项入口 · 业务口径 2026-10-16「在点击用户右上角头像后的列表中添加一个设置页」）：
+    // 企微绑定（Push 250 · 头像菜单首项入口 · 业务口径 2026-10-16「在点击用户右上角头像后的列表中添加一个设置页」）：
     // 账号级设置的家 —— 当前落点 = 企业微信绑定（D5 / D6 绑定码链路）；页面 = frontend/src/SettingsPage.tsx。
     return { kind: "settings" };
   }

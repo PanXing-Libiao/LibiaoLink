@@ -103,23 +103,32 @@ export class NotifyGroupService {
   ) {}
 
   /**
-   * 群消息回调 ingest（长连接 `onMessage` 接线）：群聊回调（chattype=group）命中绑定 → 会话激活置位；
-   * 未绑定 → 掩码 warn 忽略（无 staging 表，正式录入路径 = PUT /projects/{id}/group —— 见 README 口径）；
-   * 已激活 → 幂等跳过。非群聊回调（chattype != group / 无 chatid）直接忽略。
+   * 群消息回调 ingest（长连接 onMessage 接线）：只处理群聊消息回调（cmd=aibot_msg_callback / chattype=group /
+   * 合法 chatid）。已绑定群 → 会话激活置位（幂等）；未绑定群 → 写入候选表供设置页自动发现，绑定后删除候选行。
+   * 事件回调、单聊、缺 chatid 或非法 chatid 一律忽略。
    */
   async activateFromCallback(incoming: AibotIncomingMessage): Promise<void> {
-    if (incoming.chattype !== "group" || incoming.chatid === null) {
+    if (
+      incoming.cmd !== "aibot_msg_callback" ||
+      incoming.chattype !== "group" ||
+      incoming.chatid === null ||
+      !/^[A-Za-z0-9_-]{8,128}$/.test(incoming.chatid)
+    ) {
       return;
     }
+    const at = this.clock.now();
     const row = await this.repository.findGroupByChatid(incoming.chatid);
     if (row === null) {
-      this.logger.warn("群回调未匹配绑定（忽略；chatid " + maskChatid(incoming.chatid) + "）");
+      const trimmedName = incoming.chatName?.trim() ?? "";
+      const name = trimmedName === "" ? null : Array.from(trimmedName).slice(0, 64).join("");
+      await this.repository.observeCandidate({ chatid: incoming.chatid, name }, at);
+      this.logger.log("群回调已登记候选群：" + maskChatid(incoming.chatid));
       return;
     }
     if (row.activatedAt !== null) {
       return;
     }
-    const activated = await this.repository.activateByChatid(incoming.chatid, this.clock.now());
+    const activated = await this.repository.activateByChatid(incoming.chatid, at);
     if (activated !== null) {
       this.logger.log("群会话已激活：" + maskChatid(incoming.chatid) + " · project=" + activated.projectId);
     }

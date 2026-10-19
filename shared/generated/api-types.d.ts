@@ -621,6 +621,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/group/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 待绑定项目群候选（机器人已收到群消息；只回 chatid 掩码 + 最近活跃时间；权限 project.update） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 未绑定群候选列表（最近活跃优先；项目不存在 / 不可见 = 404） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectGroupCandidateList"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/group": {
         parameters: {
             query?: never;
@@ -661,7 +718,7 @@ export interface paths {
                 };
             };
         };
-        /** 绑定 / 换绑项目群（chatid + 可选群名备注；PUT = upsert 覆盖语义；权限 project.update） */
+        /** 绑定 / 换绑项目群（chatid 或 candidateId + 可选群名备注；PUT = upsert 覆盖语义；权限 project.update） */
         put: {
             parameters: {
                 query?: never;
@@ -9163,11 +9220,27 @@ export interface components {
             activated: boolean;
             updatedAt: components["schemas"]["DateTime"] & (string | null);
         };
-        /** @description 绑定 / 换绑项目群：chatid 必填 + 群名备注可空；PUT = upsert 覆盖语义 */
+        /** @description 自动发现但尚未绑定的项目群候选 */
+        ProjectGroupCandidate: {
+            /** @description 候选群 id（绑定请求回传） */
+            id: number;
+            /** @description 回调携带 / 人工维护的群名；未知 = null */
+            name: string | null;
+            /** @description 企微会话 id 掩码（只回末 4 位） */
+            chatidMasked: string;
+            lastSeenAt: components["schemas"]["DateTime"] & unknown;
+        };
+        /** @description 待绑定群候选（最近活跃优先，最多 50 条） */
+        ProjectGroupCandidateList: {
+            items: components["schemas"]["ProjectGroupCandidate"][];
+        };
+        /** @description 绑定 / 换绑项目群：chatid 或 candidateId 二选一 + 群名备注可空；PUT = upsert 覆盖语义 */
         ProjectGroupPutBody: {
-            /** @description 企微会话 id（群消息回调 body.chatid 自动落库；形如 34 位 base64url 串） */
-            chatid: string;
-            /** @description 群名 / 备注（维护用；可空 —— 覆盖语义下缺省 = 清空） */
+            /** @description 企微会话 id（手工绑定路径；与 candidateId 二选一） */
+            chatid?: string;
+            /** @description 自动发现候选群 id（推荐；与 chatid 二选一） */
+            candidateId?: number;
+            /** @description 群名 / 备注（维护用；可空） */
             name?: string | null;
         };
         ProjectListResponse: {

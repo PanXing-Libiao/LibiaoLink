@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { AppError } from "../src/common/errors/app-error.js";
-import type { ProjectGroupRepository, WecomGroupRow } from "../src/modules/project/project-group.repository.js";
-import { ProjectGroupService, maskChatid, toProjectGroupView } from "../src/modules/project/project-group.service.js";
+import type {
+  ProjectGroupRepository,
+  WecomGroupCandidateRow,
+  WecomGroupRow,
+} from "../src/modules/project/project-group.repository.js";
+import {
+  PROJECT_GROUP_CANDIDATE_TTL_MS,
+  ProjectGroupService,
+  maskChatid,
+  toProjectGroupCandidateView,
+  toProjectGroupView,
+} from "../src/modules/project/project-group.service.js";
 import type { ProjectRepository, ProjectRow, ProjectViewRow } from "../src/modules/project/project.repository.js";
 import { DatabaseService } from "../src/db/database.service.js";
 import type { AuditService } from "../src/modules/admin/index.js";
@@ -11,6 +21,7 @@ const UUID_A = "11111111-1111-4111-8111-111111111111";
 const UUID_B = "22222222-2222-4222-8222-222222222222";
 const CHATID = "AbcDefGhiJkLmNoPqrStUv-12";
 const CHATID_2 = "ZyxWvuTsrQpoNmlKjiHgFe-34";
+const RECENT = new Date(Date.now() - 60_000);
 
 async function expectAppErrorAsync(fn: () => Promise<unknown>, code: string): Promise<void> {
   try {
@@ -46,6 +57,17 @@ function projectRow(overrides: Partial<ProjectRow> & { id: string }): ProjectRow
   };
 }
 
+function candidateRow(
+  overrides: Partial<WecomGroupCandidateRow> & { id: number; chatid: string },
+): WecomGroupCandidateRow {
+  return {
+    name: null,
+    firstSeenAt: RECENT,
+    lastSeenAt: RECENT,
+    ...overrides,
+  };
+}
+
 function groupRow(overrides: Partial<WecomGroupRow> & { projectId: string; chatid: string }): WecomGroupRow {
   return {
     id: 1,
@@ -62,10 +84,28 @@ function groupRow(overrides: Partial<WecomGroupRow> & { projectId: string; chati
 
 class FakeGroupRepository {
   rows = new Map<string, WecomGroupRow>();
+  candidates = new Map<number, WecomGroupCandidateRow>();
   lastUpsert: { projectId: string; chatid: string; name: string | null; activatedAt: Date | null } | null = null;
 
   async findByProject(projectId: string): Promise<WecomGroupRow | null> {
     return this.rows.get(projectId) ?? null;
+  }
+
+  async listCandidates(since: Date): Promise<WecomGroupCandidateRow[]> {
+    const bound = new Set([...this.rows.values()].map((row) => row.chatid));
+    return [...this.candidates.values()]
+      .filter((row) => row.lastSeenAt >= since && !bound.has(row.chatid))
+      .sort((left, right) => right.lastSeenAt.getTime() - left.lastSeenAt.getTime());
+  }
+
+  async findCandidateById(id: number): Promise<WecomGroupCandidateRow | null> {
+    return this.candidates.get(id) ?? null;
+  }
+
+  async removeCandidate(id: number): Promise<WecomGroupCandidateRow | null> {
+    const row = this.candidates.get(id) ?? null;
+    this.candidates.delete(id);
+    return row;
   }
 
   /** 模拟 uq_wecom_groups_chatid 唯一约束：chatid 被他项目占用 → 400（与仓储转译同形）。 */
@@ -144,6 +184,17 @@ describe("maskChatid / toProjectGroupView（读面最小暴露）", () => {
     expect(maskChatid(CHATID)).toBe("****v-12");
   });
 
+  it("候选群视图：只回掩码 / 群名 / 最近活跃时间，不泄露 chatid 全文", () => {
+    expect(
+      toProjectGroupCandidateView(candidateRow({ id: 9, chatid: CHATID, name: "自动发现群", lastSeenAt: RECENT })),
+    ).toEqual({
+      id: 9,
+      name: "自动发现群",
+      chatidMasked: "****v-12",
+      lastSeenAt: RECENT.toISOString(),
+    });
+  });
+
   it("未绑定 → bound:false 全 null；已绑定 → 掩码 + activated + ISO 时间", () => {
     expect(toProjectGroupView(UUID_A, null)).toEqual({
       projectId: UUID_A,
@@ -183,6 +234,32 @@ describe("ProjectGroupService.getGroup", () => {
   it("项目不存在 / 已软删 → 404 NOT_FOUND", async () => {
     const { service } = makeService([projectRow({ id: UUID_A, deletedAt: AT })]);
     await expectAppErrorAsync(() => service.getGroup(UUID_A), "NOT_FOUND");
+  });
+});
+
+describe("ProjectGroupService.getCandidates", () => {
+  it("候选列表：最近活跃优先，排除已绑定 chatid", async () => {
+    const { service, groups } = makeService([projectRow({ id: UUID_A })]);
+    const older = new Date(RECENT.getTime() - 60_000);
+    groups.candidates.set(1, candidateRow({ id: 1, chatid: CHATID, name: "较早群", lastSeenAt: older }));
+    groups.candidates.set(2, candidateRow({ id: 2, chatid: CHATID_2, lastSeenAt: RECENT }));
+    groups.candidates.set(3, candidateRow({ id: 3, chatid: "BoundGroup-abcdef", lastSeenAt: RECENT }));
+    groups.rows.set(UUID_A, groupRow({ projectId: UUID_A, chatid: "BoundGroup-abcdef" }));
+
+    const result = await service.getCandidates(UUID_A);
+
+    expect(result.items.map((item) => item.id)).toEqual([2, 1]);
+    expect(result.items[0]).toEqual({
+      id: 2,
+      name: null,
+      chatidMasked: "****e-34",
+      lastSeenAt: RECENT.toISOString(),
+    });
+  });
+
+  it("项目不存在 / 已软删 → 404 NOT_FOUND", async () => {
+    const { service } = makeService([projectRow({ id: UUID_A, deletedAt: AT })]);
+    await expectAppErrorAsync(() => service.getCandidates(UUID_A), "NOT_FOUND");
   });
 });
 
@@ -256,6 +333,37 @@ describe("ProjectGroupService.putGroup", () => {
   it("项目不存在 → 404 NOT_FOUND", async () => {
     const { service } = makeService([]);
     await expectAppErrorAsync(() => service.putGroup(UUID_A, { chatid: CHATID }, UUID_B), "NOT_FOUND");
+  });
+
+  it("candidateId 绑定：沿用候选群名，lastSeenAt 作为激活时刻，并删除候选行", async () => {
+    const { service, groups } = makeService([projectRow({ id: UUID_A })]);
+    groups.candidates.set(9, candidateRow({ id: 9, chatid: CHATID, name: "自动发现群", lastSeenAt: RECENT }));
+
+    const view = await service.putGroup(UUID_A, { candidateId: 9 }, UUID_B);
+
+    expect(view).toMatchObject({ bound: true, activated: true, name: "自动发现群", chatidMasked: "****v-12" });
+    expect(groups.lastUpsert).toMatchObject({ projectId: UUID_A, chatid: CHATID, name: "自动发现群", activatedAt: RECENT });
+    expect(groups.candidates.has(9)).toBe(false);
+  });
+
+  it("candidateId 绑定：允许覆盖群名备注", async () => {
+    const { service, groups } = makeService([projectRow({ id: UUID_A })]);
+    groups.candidates.set(9, candidateRow({ id: 9, chatid: CHATID, name: "候选名", lastSeenAt: RECENT }));
+
+    await service.putGroup(UUID_A, { candidateId: 9, name: "项目正式群名" }, UUID_B);
+
+    expect(groups.lastUpsert?.name).toBe("项目正式群名");
+  });
+
+  it("candidateId 不存在 / 超过 30 天：404 NOT_FOUND（不写绑定）", async () => {
+    const { service, groups } = makeService([projectRow({ id: UUID_A })]);
+    await expectAppErrorAsync(() => service.putGroup(UUID_A, { candidateId: 404 }, UUID_B), "NOT_FOUND");
+    expect(groups.lastUpsert).toBeNull();
+
+    const expired = new Date(Date.now() - PROJECT_GROUP_CANDIDATE_TTL_MS - 60_000);
+    groups.candidates.set(10, candidateRow({ id: 10, chatid: CHATID, lastSeenAt: expired }));
+    await expectAppErrorAsync(() => service.putGroup(UUID_A, { candidateId: 10 }, UUID_B), "NOT_FOUND");
+    expect(groups.lastUpsert).toBeNull();
   });
 });
 

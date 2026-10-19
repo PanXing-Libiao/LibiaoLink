@@ -13,7 +13,7 @@
  *      10 秒自动收起且不落跳过位；刷新再次提醒；绑定行落库后自动切「已绑定」→ 关闭 → 浅绿「绑定成功」2 秒；
  *      关闭 X → 落跳过位、刷新不再显示且不误弹成功提示
  *      （跳过位按账号分记 —— 账号键 = `/auth/me` 的 `user.id`（= 库内 `casdoor_id`）· 退出登录清除）；
- *   ② 头像菜单首项 = 「设置」（文案 + `#/settings` 落点），点它 → 地址到 `#/settings`、设置页渲染（`data-settings`）；
+ *   ② 头像菜单首项 = 「企微绑定」（文案 + `#/settings` 落点），点它 → 地址到 `#/settings`、设置页渲染（`data-settings`）；
  *   ③ 未绑定态：设置页出与提醒同款标题 / 副标题 / 两步指引 / 复制机器人链接；点「获取绑定码」→ 6 位码 + 倒计时递减 + 库内落 pending 行；
  *   ③-诊断（Push 255）：机器人诊断块显示 server/.env 的 bot_id / secret（默认掩码，点「显示」切明文）+ 最近回调统计；
  *   ③b 复制通道（Push 253）：点「复制」→ 成功提示（`navigator.clipboard`，非安全上下文回退 `execCommand`）；
@@ -310,7 +310,7 @@ check("页面不被遮罩拦截（左上角命中页面，而非引导卡）", g
 const guideText = String(guideState === null ? "" : guideState.text);
 check("引导文案 = 标题「绑定企微」+ 副标题「帮助你及时收到/跟进相关任务」+ 取码指引", guideText.indexOf("绑定企微") >= 0 && guideText.indexOf("帮助你及时收到/跟进相关任务") >= 0 && guideText.indexOf("获取绑定码") >= 0 && guideText.indexOf("企微任意对话框发送给机器人") >= 0, guideText.slice(0, 200));
 check("机器人链接不直接展示，只提供「复制机器人链接」按钮", guideState !== null && guideState.copyText === "复制机器人链接" && guideText.indexOf("work.weixin.qq.com") < 0, JSON.stringify(guideState === null ? null : {copyText:guideState.copyText,hasUrl:guideText.indexOf("work.weixin.qq.com") >= 0}));
-check("右上关闭 X + 「前往设置」入口", guideState !== null && guideState.closeLabel === "关闭" && guideState.goText === "前往设置", JSON.stringify(guideState === null ? null : {closeLabel:guideState.closeLabel,goText:guideState.goText}));
+check("右上关闭 X + 「前往企微绑定」入口", guideState !== null && guideState.closeLabel === "关闭" && guideState.goText === "前往企微绑定", JSON.stringify(guideState === null ? null : {closeLabel:guideState.closeLabel,goText:guideState.goText}));
 check("引导内不再显示重复的「未绑定」状态行与轮询提示", guideText.indexOf("当前用户未绑定企业微信，请前往设置补绑。") < 0 && guideText.indexOf("每 5 秒检查一次") < 0, guideText.slice(0, 220));
 shots.push(await shot("wecom-guide-1"));
 await click("[data-wecom-binding-guide-copy-link]");
@@ -350,7 +350,7 @@ await reload("[data-topnav]");
 await sleep(2000);
 check("跳过位生效：刷新后不再显示引导", (await ev(exists("[data-wecom-binding-guide]"))) === false);
 
-// ── ② 头像菜单首项「设置」→ #/settings ────────────────────────────────────────────────────────────────
+// ── ② 头像菜单首项「企微绑定」→ #/settings ────────────────────────────────────────────────────────────────
 const avatarSel = "(function(){var list=document.querySelectorAll(" + j("button[aria-haspopup=menu]") + ");if(list.length===0){return null;}var el=list[list.length-1];var r=el.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),label:el.getAttribute(" + j("aria-label") + ")};})()";
 const avatar = await ev(avatarSel);
 check("账号头像按钮在位（aria-label = 账号菜单）", avatar !== null && avatar.label === "账号菜单", JSON.stringify(avatar));
@@ -361,12 +361,12 @@ await sleep(500);
 const menuExpr = "(function(){var menu=document.querySelector(" + j("[role=menu]") + ");if(menu===null){return null;}var items=menu.querySelectorAll(" + j("[role=menuitem]") + ");var out=[];for(var i=0;i<items.length;i+=1){out.push({label:String(items[i].textContent||" + j("") + ").trim(),href:items[i].getAttribute(" + j("href") + "),settings:items[i].hasAttribute(" + j("data-account-settings") + ")});}return out;})()";
 const menu = await ev(menuExpr);
 const first = menu === null || menu.length === 0 ? null : menu[0];
-check("账号菜单首项 = 「设置」（业务口径 2026-10-16「在点击用户右上角头像后的列表中添加一个设置页」）", first !== null && first.settings === true && first.label === "设置" && first.href === "#/settings", JSON.stringify(menu));
-check("设置项在「退出登录」之前、其余入口（操作记录 / 文件库）仍在", menu !== null && menu.findIndex((item) => item.label === "退出登录") > 0 && menu.findIndex((item) => item.label === "设置") < menu.findIndex((item) => item.label === "退出登录"), JSON.stringify(menu === null ? null : menu.map((item) => item.label)));
+check("账号菜单首项 = 「企微绑定」（业务口径 2026-10-16「在点击用户右上角头像后的列表中添加一个设置页」）", first !== null && first.settings === true && first.label === "企微绑定" && first.href === "#/settings", JSON.stringify(menu));
+check("企微绑定项在「退出登录」之前、其余入口（操作记录 / 文件库）仍在", menu !== null && menu.findIndex((item) => item.label === "退出登录") > 0 && menu.findIndex((item) => item.label === "企微绑定") < menu.findIndex((item) => item.label === "退出登录"), JSON.stringify(menu === null ? null : menu.map((item) => item.label)));
 shots.push(await shot("wecom-account-menu-2", { x: 1000, y: 0, width: 500, height: 320, scale: 1 }));
 await click("[data-account-settings]");
-check("点「设置」→ 地址到 #/settings 且设置页渲染（data-settings）", (await waitFor("window.location.hash === " + j("#/settings"), 8000)) === true && (await waitFor(exists("[data-settings-card=wecom-binding]"), 8000)) === true, String(await hashOf()));
-check("设置页标题 =「设置」（标题 + 副标题口径）", String(await ev(textOf("[data-settings]")) ?? "").indexOf("设置") >= 0);
+check("点「企微绑定」→ 地址到 #/settings 且设置页渲染（data-settings）", (await waitFor("window.location.hash === " + j("#/settings"), 8000)) === true && (await waitFor(exists("[data-settings-card=wecom-binding]"), 8000)) === true, String(await hashOf()));
+check("企微绑定页标题 =「企微绑定」", String(await ev(textOf("[data-settings]")) ?? "").indexOf("企微绑定") >= 0);
 await reload("[data-settings-card=wecom-binding]");
 check("设置页地址即状态：直接刷新 #/settings 仍在设置页", String(await hashOf()) === "#/settings" && (await ev(exists("[data-settings-card=wecom-binding]"))) === true, String(await hashOf()));
 
@@ -514,17 +514,17 @@ await reload("[data-wecom-binding-guide]");
 
 const goClick = await click("[data-wecom-binding-guide-goto]");
 const gotoHash = await waitFor("window.location.hash === " + j("#/settings"), 8000);
-check("点「前往设置」→ 地址到 #/settings、引导关闭（跳过位同时落记）", goClick !== null && gotoHash === true && (await ev(exists("[data-wecom-binding-guide]"))) === false, String(await hashOf()));
+check("点「前往企微绑定」→ 地址到 #/settings、引导关闭（跳过位同时落记）", goClick !== null && gotoHash === true && (await ev(exists("[data-wecom-binding-guide]"))) === false, String(await hashOf()));
 
-// ── ⑧ 未绑定提示：站内信弹窗底部提示 + 「前往设置补绑」────────────────────────────────────────────────
+// ── ⑧ 未绑定提示：站内信弹窗底部提示 + 「前往企微绑定」────────────────────────────────────────────────
 await goto("#/projects", "[data-topnav]");
 await click("[data-inbox-trigger]");
 const inboxHint = await waitFor(exists("[data-inbox-wecom-unbound]"), 12000);
 const inboxText = String(await ev(textOf("[data-inbox-wecom-unbound]")) ?? "");
-check("站内信弹窗出未绑定提示（D6）：「当前用户未绑定企业微信」+「前往设置补绑」", inboxHint === true && inboxText.indexOf("当前用户未绑定企业微信") >= 0 && inboxText.indexOf("前往设置补绑") >= 0, inboxText);
+check("站内信弹窗出未绑定提示（D6）：「当前用户未绑定企业微信」+「前往企微绑定」", inboxHint === true && inboxText.indexOf("当前用户未绑定企业微信") >= 0 && inboxText.indexOf("前往企微绑定") >= 0, inboxText);
 shots.push(await shot("wecom-inbox-unbound-9"));
 await click("[data-inbox-wecom-settings]");
-check("点「前往设置补绑」→ 落 #/settings", (await waitFor("window.location.hash === " + j("#/settings"), 8000)) === true && (await waitFor(exists("[data-settings-card=wecom-binding]"), 8000)) === true, String(await hashOf()));
+check("点「前往企微绑定」→ 落 #/settings", (await waitFor("window.location.hash === " + j("#/settings"), 8000)) === true && (await waitFor(exists("[data-settings-card=wecom-binding]"), 8000)) === true, String(await hashOf()));
 
 // ── ⑨ 收口：控制台零报错 + 清夹具 ──────────────────────────────────────────────────────────────────
 // 放行两类**已知**项：① 本刀刻意触发的取码 429；② 本地沙箱没有内网翻译引擎（HY-MT1.5-1.8B）→ 页面自动翻译
