@@ -13,6 +13,7 @@
 
 - 纯函数内核（不连库、不取系统时间）：条件求值（白名单操作符）、模板逐字渲染（缺变量显性抛错）、触发窗口求值（含节假日顺延）、幂等执行键。
 - 内置规则 R02 ~ R07 定义 + 逐字文案模板（R01 无通知动作，落点 = 变更生效事务内回写，见 M4-04）。
+- 文案修订（2026-10-19，Push 371）：R02 ~ R07 正文统一为「项目行 + 相关人员 + 任务名加粗」。项目行 = `项目编号·项目名称`；R02 取 `task.completed` 载荷 `actorId` 显示实际点击完成账号人；R07 合并清单改为逐条项目 / 任务两行并以换行连接。
 - 回放器：给定规则集 + 任务数据集 + 业务日 + 日历 → 应发送清单（确定性排序、幂等去重、R07 同负责人合并）。
 - 单测 31 例（`test/automation-rules.test.ts` 16 / `test/automation-replay.test.ts` 15）。
 
@@ -42,4 +43,4 @@
 - 依赖方向：automation → calendar（`index.ts`：T±N 求值 / 顺延 / 业务日时刻）。不反向依赖业务模块。
 - 未落（lan 线）：M5-06 规则管理端点与运行留痕、M5-03 企微通道 / M5-04 SSE 与后续（站内信投递内核已落 · lan Push 178）、S7-4 规则接线（`RULE_EVENT_TOPICS` 事件消费 + `automation-schedule.job` handler）—— **已落地（Push 180 · lan；落点 = outbox 接线层 `automation-subjects.ts` / `automation-wiring.ts`，引擎侧零改动）**、`automation_rules` 落库形态（A03 同 code 两窗口场景随 Push 215 消解；落行口径随 M5-06 再定）。
 - 未落（数据面）：`todos` 表与重复规则展开（A14 落库）、漏填名单「已提醒」标记（随 M5-06 发送记录）—— 均已在文案文档登记为差异。
-- 合并文案：R07 / A01 的分组形态（同一收件人一条清单式消息）为先行口径（模板 `R07_APP_MERGED` / `A01_INBOX_MERGED` / `A01_WECOM_MERGED`），业务回执后按结论改文案与断言（待确认项见 `docs/rules` 两份文案文件文末清单）。
+- 合并文案：R07 / A01 的分组形态（同一收件人一条清单式消息）为先行口径（模板 `R07_APP_MERGED` / `A01_INBOX_MERGED` / `A01_WECOM_MERGED`）；R07 自 2026-10-19（Push 371）起逐条输出「项目 + 任务」两行并以换行连接，A01 仍按项目名「、」连接。

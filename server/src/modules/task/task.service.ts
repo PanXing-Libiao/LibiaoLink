@@ -744,9 +744,10 @@ export class TaskService {
       statusOverride: before.statusOverride,
     };
     const linked = request.status === undefined ? null : applyStatusWrite(current, request.status, today);
-    if (linked !== null && linked.status === "done" && before.status !== "done") {
-      await this.assertCompletionGate(tx, before, at, actorId);
-    }
+    const completionWarnings =
+      linked !== null && linked.status === "done" && before.status !== "done"
+        ? await this.assertCompletionGate(tx, before, at, actorId)
+        : null;
     const patch: TaskUpdatePatch = {
       title: request.title !== undefined ? request.title : before.title,
       titleEn: request.titleEn !== undefined ? request.titleEn : before.titleEn,
@@ -784,6 +785,9 @@ export class TaskService {
         at: at.toISOString(),
       },
     });
+    if (completionWarnings !== null) {
+      await this.appendCompletionOutbox(tx, { projectId, task: updated, warnings: completionWarnings, actorId, at });
+    }
     await this.repository.touchProject(projectId, at, tx);
     const changes = diffRecords(taskAuditSnapshot(before), taskAuditSnapshot(updated));
     await this.audit.record(tx, {
@@ -820,9 +824,10 @@ export class TaskService {
         throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
       }
       const linked = applyProgressWrite(body.progress, body.actualEnd ?? null, today);
-      if (linked.status === "done" && before.status !== "done") {
-        await this.assertCompletionGate(tx, before, at, actorId);
-      }
+      const completionWarnings =
+        linked.status === "done" && before.status !== "done"
+          ? await this.assertCompletionGate(tx, before, at, actorId)
+          : null;
       const patch: TaskUpdatePatch = {
         status: linked.status,
         statusOverride: linked.statusOverride,
@@ -848,6 +853,9 @@ export class TaskService {
           at: at.toISOString(),
         },
       });
+      if (completionWarnings !== null) {
+        await this.appendCompletionOutbox(tx, { projectId, task: updated, warnings: completionWarnings, actorId, at });
+      }
       await this.repository.touchProject(projectId, at, tx);
       const changes = diffRecords(taskAuditSnapshot(before), taskAuditSnapshot(updated));
       await this.audit.record(tx, {
@@ -933,27 +941,7 @@ export class TaskService {
           throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
         }
         await this.repository.insertEvents(tx, buildEvents(before, patch), actorId, at);
-        await appendOutbox(tx, {
-          topic: "task.completed",
-          dedupeKey: "task.completed:" + taskId + ":" + updated.version,
-          payload: {
-            projectId,
-            taskId,
-            status: updated.status,
-            progress: Number(updated.progress),
-            actualEnd: updated.actualEnd,
-            warnings,
-            actorId,
-            at: at.toISOString(),
-          },
-        });
-        if (warnings.length > 0) {
-          await appendOutbox(tx, {
-            topic: "task.draft_doc_reminded",
-            dedupeKey: "task.draft_doc_reminded:" + taskId + ":" + updated.version,
-            payload: { projectId, taskId, warnings, actorId, at: at.toISOString() },
-          });
-        }
+        await this.appendCompletionOutbox(tx, { projectId, task: updated, warnings, actorId, at });
         await this.repository.touchProject(projectId, at, tx);
         const changes = diffRecords(taskAuditSnapshot(before), taskAuditSnapshot(updated));
         await this.audit.record(tx, {
@@ -1121,6 +1109,37 @@ export class TaskService {
     }
     const warnings = buildDraftWarnings(await this.gate.countDraftFiles(client, scope));
     return { missing, warnings };
+  }
+
+  /**
+   * 完成事件统一出口：完成提交 / PATCH 状态 / PATCH 进度 / 批量完成在首次进入 done 时共用同一事件与幂等键，
+   * 避免只有 POST …/complete 触发 R02 而页面常态操作漏发。
+   */
+  private async appendCompletionOutbox(
+    tx: DbClient,
+    input: { projectId: string; task: TaskRow; warnings: TaskGateWarning[]; actorId: string; at: Date },
+  ): Promise<void> {
+    await appendOutbox(tx, {
+      topic: "task.completed",
+      dedupeKey: "task.completed:" + input.task.id + ":" + input.task.version,
+      payload: {
+        projectId: input.projectId,
+        taskId: input.task.id,
+        status: input.task.status,
+        progress: Number(input.task.progress),
+        actualEnd: input.task.actualEnd,
+        warnings: input.warnings,
+        actorId: input.actorId,
+        at: input.at.toISOString(),
+      },
+    });
+    if (input.warnings.length > 0) {
+      await appendOutbox(tx, {
+        topic: "task.draft_doc_reminded",
+        dedupeKey: "task.draft_doc_reminded:" + input.task.id + ":" + input.task.version,
+        payload: { projectId: input.projectId, taskId: input.task.id, warnings: input.warnings, actorId: input.actorId, at: input.at.toISOString() },
+      });
+    }
   }
 
   /** 事务内门禁强校验：缺件 → GateRejectedSignal（422 + missing）；通过 → 放行提示（R02）。拒绝留痕由调用方在事务外补写。【暂时下线 · 2026-09-30】evaluateGate 缺件恒空 → 本方法实际只剩放行提示；拒绝分支保留备恢复（见 TASK_COMPLETION_DOC_GATE_ENABLED）。 */
