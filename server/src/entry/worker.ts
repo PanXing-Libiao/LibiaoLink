@@ -145,17 +145,20 @@ async function bootstrap(): Promise<void> {
   let botReady: Promise<boolean> | null = null;
 
   // 企微机器人通道长连接（M5-03-2 接线段 · P5 定案；M5-03-5-4 接线段扩单聊）：凭据齐备才启动 —— 订阅 +
-  // 30s 心跳 + 自动重连；回调 ingest 分流 = 单聊（chattype=single → 单聊激活）与群（群会话激活置位）——
-  // 主动推送前置（846607 双语义切分依据）。群未配置 = 「只存不投」（与 OutboxModule 注册表门控同口径）；
+  // 30s 心跳 + 自动重连；回调 ingest 分流 = 单聊 enter_chat 欢迎语、单聊消息（chattype=single → 单聊激活）
+  // 与群（群会话激活置位）—— 主动推送前置（846607 双语义切分依据）。群未配置 = 「只存不投」（与
+  // OutboxModule 注册表门控同口径）；
   // 单聊未配置 = 投递行按未就绪 retry 收敛（bounded）；api 进程同模块但从不 start()（构造无副作用）。
   if (env.NOTIFY_DELIVERY_ENABLED === "true" && env.WECOM_BOT_ID !== "" && env.WECOM_BOT_SECRET !== "") {
     aibot.onMessage((message) => {
-      // 分流（M5-03-5-4；单聊面 M5-03-5-6 扩绑定码）：单聊回调 → 单聊 ingest（激活登记 + 绑定码命中）；
-      // 其余（群聊 / 事件回调）→ 群 ingest。
+      // 分流（M5-03-5-4；单聊面 M5-03-5-6 扩绑定码；Push 261 扩欢迎语）：单聊 enter_chat → 欢迎语
+      // （不激活、不绑定）；其余单聊消息 → 单聊 ingest（激活登记 + 绑定码命中）；群聊 → 群 ingest。
       // 两侧 ingest 各自带过滤防御（cmd / chattype / 合法性），入参同形 —— 互不牵连。
       const ingest =
         message.chattype === "single"
-          ? dmNotify.ingestCallback(message)
+          ? message.cmd === "aibot_event_callback" && message.eventType === "enter_chat"
+            ? dmNotify.replyWelcomeToEnterChat(message)
+            : dmNotify.ingestCallback(message)
           : groupNotify.activateFromCallback(message);
       void ingest.catch((error) => {
         logger.warn("回调 ingest 失败（忽略本次；待下次回调或人工核查）：" + messageOf(error));
