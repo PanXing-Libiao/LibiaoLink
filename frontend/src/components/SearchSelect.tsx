@@ -49,13 +49,13 @@ const LIST_MAX_HEIGHT = 280;
  *
  * 触发器与 SelectMenu 同一套（白底描边 + 右侧箭头 + 选中项文字）；浮层 = 顶部搜索框 + 列表内部滚动：
  * 打开即清空搜索并聚焦、输入实时过滤（大小写不敏感的包含匹配）、回车 = 选当前命中第一条、
- * 方向键移动、Esc / 点浮层外关闭（usePopover 统一）；打开时把当前选中项滚进可视区一次。
+ * 方向键移动、Esc / 点浮层外关闭（usePopover 统一）；搜索下拉始终向下展开，下方空间不足时先把触发器滚到视口中间，打开时把当前选中项滚进可视区一次。
  * 多选（mode="multi"）：点选项勾选 / 再点取消选择，**点选不关闭浮层**；触发器只显示筛选项名称 label +
  * 浅灰数量（空选只显示名称 —— 业务口径 2026-10-09「可以只显现这个筛选的名称 然后数量淡灰色的」）。
  * 选项文案 = 触发器展示文案（label 原样渲染）—— 回放脚本按 `[data-select-popover] [role=option]` 文本定位。
  */
 export function SearchSelect(props: SearchSelectProps) {
-  const { open, setOpen, position, triggerRef, popoverRef } = usePopover(POPOVER_WIDTH, LIST_MAX_HEIGHT + 56);
+  const { open, setOpen, position, triggerRef, popoverRef } = usePopover(POPOVER_WIDTH, LIST_MAX_HEIGHT + 56, "below", true);
   const t = useT();
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -96,6 +96,22 @@ export function SearchSelect(props: SearchSelectProps) {
       window.clearTimeout(timer);
     };
   }, [open]);
+
+  /**
+   * 搜索下拉始终向下展开（2026-10-20 追订）；下方空间不足时先把触发器滚到视口中间。
+   * 估算高度按条目数收敛，避免 4 条项目被 336px 的保守上限误判为「放不下」。
+   */
+  const prepareOpen = (): void => {
+    const trigger = triggerRef.current;
+    if (trigger === null) {
+      return;
+    }
+    const rect = trigger.getBoundingClientRect();
+    const estimatedHeight = Math.min(LIST_MAX_HEIGHT, props.options.length * 36) + 60;
+    if (rect.bottom + estimatedHeight + 8 > window.innerHeight) {
+      trigger.scrollIntoView({ block: "center", inline: "nearest" });
+    }
+  };
 
   const pick = (value: string): void => {
     if (props.mode === "multi") {
@@ -138,6 +154,9 @@ export function SearchSelect(props: SearchSelectProps) {
         onClick={() => {
           if (props.disabled === true) {
             return;
+          }
+          if (!open) {
+            prepareOpen();
           }
           setOpen((previous) => !previous);
         }}
