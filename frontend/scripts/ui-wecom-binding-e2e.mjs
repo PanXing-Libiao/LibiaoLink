@@ -9,12 +9,12 @@
  * v1.4 §3 / §6 / §9 / §10（D2 · D3 · D5 · D6）。
  *
  * 本脚本用真机浏览器（无头 Chrome + CDP）验：
- *   ① 首登绑定提醒：未绑定 + 本机未跳过 → 右侧垂直居中半透明卡出现（非模态 / 无遮罩 / 标题与两步指引）；
+ *   ① 首登绑定提醒：未绑定 + 本机未跳过 → 右侧垂直居中半透明卡出现（非模态 / 无遮罩 / 标题与两步指引 / 420ms 轻弹入场）；
  *      10 秒自动收起且不落跳过位；刷新再次提醒；绑定行落库后自动切「已绑定」→ 关闭 → 浅绿「绑定成功」2 秒；
  *      关闭 X → 落跳过位、刷新不再显示且不误弹成功提示
  *      （跳过位按账号分记 —— 账号键 = `/auth/me` 的 `user.id`（= 库内 `casdoor_id`）· 退出登录清除）；
  *   ② 头像菜单首项 = 「设置」（文案 + `#/settings` 落点），点它 → 地址到 `#/settings`、设置页渲染（`data-settings`）；
- *   ③ 未绑定态：设置页出「未绑定」+ D4 终稿话术；点「获取绑定码」→ 6 位码（`^[0-9]{6}$`）+ 倒计时递减 + 库内落 pending 行；
+ *   ③ 未绑定态：设置页出与提醒同款标题 / 副标题 / 两步指引 / 复制机器人链接；点「获取绑定码」→ 6 位码 + 倒计时递减 + 库内落 pending 行；
  *   ③-诊断（Push 255）：机器人诊断块显示 server/.env 的 bot_id / secret（默认掩码，点「显示」切明文）+ 最近回调统计；
  *   ③b 复制通道（Push 253）：点「复制」→ 成功提示（`navigator.clipboard`，非安全上下文回退 `execCommand`）；
  *      码面可全选（`data-wecom-binding-code-text` + `select-all`）；
@@ -298,11 +298,13 @@ const shots = [];
 // ── ① 首登右侧悬浮提醒（未绑定 + 本机未跳过 → 显示；10 秒自动收起；关闭 X 落跳过位）──────────────
 await goto("#/projects", "[data-topnav]");
 await waitFor(exists("[data-wecom-binding-guide]"), 15000);
+await sleep(500);
 check("首登绑定提醒出现（未绑定 + 本机未跳过 · 口径 §10 D5）", (await ev(exists("[data-wecom-binding-guide]"))) === true);
-const guideStateExpr = "(function(){var el=document.querySelector(" + j("[data-wecom-binding-guide]") + ");if(el===null){return null;}var r=el.getBoundingClientRect();var cs=window.getComputedStyle(el);var copy=el.querySelector(" + j("[data-wecom-binding-guide-copy-link]") + ");var close=el.querySelector(" + j("[data-wecom-binding-guide-skip]") + ");var go=el.querySelector(" + j("[data-wecom-binding-guide-goto]") + ");var panel=el.querySelector(" + j("[data-wecom-binding]") + ");var outside=document.elementFromPoint(5,5);return {role:el.getAttribute(" + j("role") + "),modal:el.getAttribute(" + j("aria-modal") + "),position:cs.position,rightGap:Math.round(window.innerWidth-r.right),centerGap:Math.round(Math.abs((r.top+r.bottom)/2-window.innerHeight/2)),width:Math.round(r.width),background:String(cs.backgroundColor),backdrop:String(cs.backdropFilter||cs.webkitBackdropFilter||" + j("") + "),text:String(el.textContent||" + j("") + ").trim(),copyText:copy===null?null:String(copy.textContent||" + j("") + ").trim(),closeLabel:close===null?null:close.getAttribute(" + j("aria-label") + "),goText:go===null?null:String(go.textContent||" + j("") + ").trim(),panel:panel===null?null:panel.getAttribute(" + j("data-wecom-binding") + "),overlayHit:outside===null?null:(el.contains(outside)?" + j("guide") + ":" + j("page") + ")};})()";
+const guideStateExpr = "(function(){var el=document.querySelector(" + j("[data-wecom-binding-guide]") + ");if(el===null){return null;}var r=el.getBoundingClientRect();var cs=window.getComputedStyle(el);var copy=el.querySelector(" + j("[data-wecom-binding-guide-copy-link]") + ");var close=el.querySelector(" + j("[data-wecom-binding-guide-skip]") + ");var go=el.querySelector(" + j("[data-wecom-binding-guide-goto]") + ");var panel=el.querySelector(" + j("[data-wecom-binding]") + ");var outside=document.elementFromPoint(5,5);return {role:el.getAttribute(" + j("role") + "),modal:el.getAttribute(" + j("aria-modal") + "),position:cs.position,animationName:cs.animationName,animationDuration:cs.animationDuration,rightGap:Math.round(window.innerWidth-r.right),centerGap:Math.round(Math.abs((r.top+r.bottom)/2-window.innerHeight/2)),width:Math.round(r.width),background:String(cs.backgroundColor),backdrop:String(cs.backdropFilter||cs.webkitBackdropFilter||" + j("") + "),text:String(el.textContent||" + j("") + ").trim(),copyText:copy===null?null:String(copy.textContent||" + j("") + ").trim(),closeLabel:close===null?null:close.getAttribute(" + j("aria-label") + "),goText:go===null?null:String(go.textContent||" + j("") + ").trim(),panel:panel===null?null:panel.getAttribute(" + j("data-wecom-binding") + "),overlayHit:outside===null?null:(el.contains(outside)?" + j("guide") + ":" + j("page") + ")};})()";
 const guideState = await ev(guideStateExpr);
 check("引导为非模态 region（无 aria-modal）且内含未绑定面板", guideState !== null && guideState.role === "region" && guideState.modal === null && guideState.panel === "unbound", JSON.stringify(guideState));
 check("右侧垂直居中悬浮（fixed、右边距 16–32px、中心偏差 ≤ 3px）", guideState !== null && guideState.position === "fixed" && guideState.rightGap >= 16 && guideState.rightGap <= 32 && guideState.centerGap <= 3 && guideState.width <= 400, JSON.stringify(guideState === null ? null : {rightGap:guideState.rightGap,centerGap:guideState.centerGap,width:guideState.width}));
+check("登录提醒有弹出效果（ll-guide-pop-in · 420ms）", guideState !== null && String(guideState.animationName).indexOf("ll-guide-pop-in") >= 0 && guideState.animationDuration === "0.42s", JSON.stringify(guideState === null ? null : {name:guideState.animationName,duration:guideState.animationDuration}));
 check("半透明磨砂材质（非纯白背景 + backdrop blur）", guideState !== null && guideState.background !== "rgb(255, 255, 255)" && String(guideState.backdrop).indexOf("blur") >= 0, guideState === null ? "null" : JSON.stringify({background:guideState.background,backdrop:guideState.backdrop}));
 check("页面不被遮罩拦截（左上角命中页面，而非引导卡）", guideState !== null && guideState.overlayHit === "page", guideState === null ? "null" : guideState.overlayHit);
 const guideText = String(guideState === null ? "" : guideState.text);
@@ -369,7 +371,13 @@ await reload("[data-settings-card=wecom-binding]");
 check("设置页地址即状态：直接刷新 #/settings 仍在设置页", String(await hashOf()) === "#/settings" && (await ev(exists("[data-settings-card=wecom-binding]"))) === true, String(await hashOf()));
 
 // ── ③ 未绑定态 + 取码（6 位 / TTL 倒计时 / 库内 pending 行）────────────────────────────────────────────
-check("未绑定态：面板 = unbound + D4 终稿话术「当前用户未绑定企业微信，请前往设置补绑。」", (await ev(panelState())) === "unbound" && String(await ev(textOf("[data-wecom-binding]")) ?? "").indexOf("当前用户未绑定企业微信，请前往设置补绑。") >= 0, String(await ev(panelState())));
+check("未绑定态：面板 = unbound（设置页改走与提醒同款引导）", (await ev(panelState())) === "unbound", String(await ev(panelState())));
+const settingsGuideExpr = "(function(){var card=document.querySelector(" + j("[data-settings-card=wecom-binding]") + ");var intro=card===null?null:card.querySelector(" + j("[data-wecom-binding-guide-content]") + ");var steps=intro===null?[]:Array.prototype.slice.call(intro.querySelectorAll(" + j("[data-wecom-binding-step]") + "));var copy=card===null?null:card.querySelector(" + j("[data-wecom-binding-guide-copy-link]") + ");var notesGone=card===null?false:card.querySelector(" + j("[data-settings-binding-notes]") + ")===null;return {intro:intro!==null,text:intro===null?null:String(intro.textContent||" + j("") + ").trim(),steps:steps.length,tops:steps.map(function(el){return Math.round(el.getBoundingClientRect().top);}),copy:copy===null?null:String(copy.textContent||" + j("") + ").trim(),notesGone:notesGone};})()";
+const settingsGuide = await ev(settingsGuideExpr);
+check("设置页绑定卡与提醒同款：标题 / 副标题 / 2 条步骤 / 复制机器人链接，且无底部说明块", settingsGuide !== null && settingsGuide.intro === true && settingsGuide.steps === 2 && settingsGuide.tops[1] - settingsGuide.tops[0] > 10 && settingsGuide.copy === "复制机器人链接" && settingsGuide.notesGone === true && settingsGuide.text.indexOf("绑定企微") >= 0 && settingsGuide.text.indexOf("帮助你及时收到/跟进相关任务") >= 0 && settingsGuide.text.indexOf("work.weixin.qq.com") < 0 && settingsGuide.text.indexOf("当前用户未绑定企业微信") < 0, JSON.stringify(settingsGuide));
+await click("[data-settings-card=wecom-binding] [data-wecom-binding-guide-copy-link]");
+const settingsLinkToast = await waitFor("(function(){var el=document.querySelector(" + j("[data-toast]") + ");return el!==null && String(el.textContent||" + j("") + ").indexOf(" + j("机器人链接已复制") + ") >= 0;})()", 6000);
+check("设置页点「复制机器人链接」→ 成功提示（链接本体不直出）", settingsLinkToast === true);
 check("取码按钮在位且可点（按钮文案 =「获取绑定码」）", String(await ev(textOf("[data-wecom-binding-get-code]"))) === "获取绑定码");
 
 // ③-诊断（Push 255）：设置页显示的机器人 ID / Secret 必须是本机 server/.env 实际读取的值（核对凭据用）
