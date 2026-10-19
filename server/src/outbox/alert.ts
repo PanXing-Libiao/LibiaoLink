@@ -5,7 +5,15 @@ import type { OutboxStatsSnapshot } from "../db/outbox.store.js";
 /** 告警出口令牌（S7-1）：默认结构化日志；M5-03/04 通知模块可替换为企微 / 站内信实现。 */
 export const OUTBOX_ALERT_SINK = Symbol("OUTBOX_ALERT_SINK");
 
-export type OutboxAlertCode = "outbox.dead" | "outbox.backlog" | "outbox.oldest_due" | "outbox.dead_letter";
+export type OutboxAlertCode =
+  | "outbox.dead"
+  | "outbox.backlog"
+  | "outbox.oldest_due"
+  | "outbox.dead_letter"
+  | "outbox.unconsumed_topic"
+  | "outbox.backlog.recovered"
+  | "outbox.oldest_due.recovered"
+  | "outbox.unconsumed_topic.recovered";
 
 export interface OutboxAlert {
   code: OutboxAlertCode;
@@ -35,9 +43,14 @@ export function outboxAlertThresholdsFromEnv(env: Env): OutboxAlertThresholds {
 
 /**
  * 阈值判定（纯函数，S7-1）：积压条数 / 最老待领取年龄 / 近期新增死信。
- * 消息里带主题明细（截前 5 个）—— 积压排查第一眼要看「卡在哪个主题」，尤其是「主题无消费者」这类静默漂移。
+ * 消息里带主题明细（截前 5 个）—— 积压排查第一眼要看「卡在哪个主题」；同时对照当前注册表，
+ * 单独报告「有待领取行但无消费者」的配置漂移（drain-only 主题已在注册表内，不会被误报）。
  */
-export function evaluateOutboxAlerts(stats: OutboxStatsSnapshot, thresholds: OutboxAlertThresholds): OutboxAlert[] {
+export function evaluateOutboxAlerts(
+  stats: OutboxStatsSnapshot,
+  thresholds: OutboxAlertThresholds,
+  registeredTopics: ReadonlySet<string>,
+): OutboxAlert[] {
   const alerts: OutboxAlert[] = [];
   const byTopic = stats.byTopic.slice(0, 5);
   if (stats.duePending > thresholds.backlogMax) {
@@ -46,6 +59,21 @@ export function evaluateOutboxAlerts(stats: OutboxStatsSnapshot, thresholds: Out
       level: "warn",
       message: "outbox 待领取积压 " + stats.duePending + " 条（阈值 " + thresholds.backlogMax + "）",
       detail: { duePending: stats.duePending, byTopic },
+    });
+  }
+  const unconsumedByTopic = stats.byTopic.filter((item) => item.due > 0 && !registeredTopics.has(item.topic));
+  if (unconsumedByTopic.length > 0) {
+    const unconsumedPending = unconsumedByTopic.reduce((sum, item) => sum + item.due, 0);
+    alerts.push({
+      code: "outbox.unconsumed_topic",
+      level: "error",
+      message:
+        "outbox 有 " +
+        unconsumedByTopic.length +
+        " 个待领取主题无消费者（共 " +
+        unconsumedPending +
+        " 条）",
+      detail: { duePending: unconsumedPending, byTopic: unconsumedByTopic.slice(0, 5) },
     });
   }
   if (stats.oldestDueMs !== null && stats.oldestDueMs > thresholds.oldestDueMs) {

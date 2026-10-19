@@ -9,6 +9,7 @@ import type { OutboxAlert, OutboxAlertSink } from "../src/outbox/alert.js";
 import { OutboxDispatcher } from "../src/outbox/dispatcher.js";
 import type { OutboxHandleOutcome, OutboxTopicHandler } from "../src/outbox/handler.js";
 import { previewTopicPolicy, type OutboxTopicPolicy } from "../src/outbox/policy.js";
+import { createDrainOnlyHandler } from "../src/outbox/topic-catalog.js";
 
 /**
  * S7-1 Outbox 分派器门禁（不连库）：按注册主题独立成批领取、逐条收敛（done / retry 退避 / dead + 告警）、
@@ -117,6 +118,20 @@ function handlerOf(
 }
 
 describe("OutboxDispatcher.drainOnce（S7-1 分派与收敛）", () => {
+  it("drain-only 主题：领取后直接 done，不触发重试 / 死信 / 告警", async () => {
+    const topic: OutboxTopic = "task.created";
+    const h = makeDispatcher({ registry: new Map([[topic, createDrainOnlyHandler()]]) });
+    h.store.byTopic.set(topic, [makeRow(topic, 41)]);
+
+    const stats = await h.dispatcher.drainOnce();
+
+    expect(stats).toEqual({ claimed: 1, done: 1, retried: 0, deferred: 0, dead: 0 });
+    expect(h.store.done).toEqual([41]);
+    expect(h.store.retried).toHaveLength(0);
+    expect(h.store.dead).toHaveLength(0);
+    expect(h.alerts.emitted).toHaveLength(0);
+  });
+
   it("按注册主题逐主题领取：每主题独立成批（batchLimit / staleAfterMs / workerId 均落领取参数）", async () => {
     const h = makeDispatcher({
       registry: new Map<OutboxTopic, OutboxTopicHandler>([
