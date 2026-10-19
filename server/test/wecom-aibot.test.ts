@@ -311,6 +311,38 @@ describe("企微智能机器人长连接客户端（M5-03-2 · P5）", () => {
     await client.stop();
   });
 
+  it("会话内回执（群）：传 chatid → 计入群桶（与主动群推送共享配额）", async () => {
+    const { client, sockets } = makeClient({
+      windows: [
+        { kind: "group", windowMs: WECOM_BOT_WINDOW_PER_MINUTE_MS, limit: 1 },
+        { kind: "group", windowMs: WECOM_BOT_WINDOW_PER_HOUR_MS, limit: 10 },
+      ],
+      now: () => 1_700_000_000_000,
+    });
+    const socket = await connect(client, sockets);
+
+    const first = client.replyToCallback({
+      reqId: "req-group-1",
+      userid: "u-1",
+      chatid: "group-chatid-0001",
+      content: "群名已更新：美国仓储项目群",
+    });
+    await sleep(0);
+    socket.ackLast(0);
+    expect((await first).ok).toBe(true);
+    const frames = socket.sent.length;
+
+    const refused = await client.replyToCallback({
+      reqId: "req-group-2",
+      userid: "u-1",
+      chatid: "group-chatid-0001",
+      content: "群名已更新：新名称",
+    });
+    expect(refused).toMatchObject({ ok: false, kind: "rate_limited", attempts: 0 });
+    expect(socket.sent.length).toBe(frames);
+    await client.stop();
+  });
+
   it("会话内回执：未就绪 → retryable / attempts=0（不发帧）", async () => {
     const { client, sockets } = makeClient();
 

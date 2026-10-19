@@ -77,6 +77,58 @@ export function truncateGroupMarkdown(content: string, maxBytes: number = GROUP_
   return truncateUtf8Bytes(content, maxBytes, GROUP_TRUNCATION_SUFFIX);
 }
 
+/** 群名命令最大字符数（与候选 / 绑定表 name 的 64 字符口径一致）。 */
+const GROUP_NAME_MAX_CHARS = 64;
+
+/** 群名命令提示（空名 / 未带名称时回复）。 */
+export const GROUP_NAME_COMMAND_HINT = "请发送「群名 项目群名称」设置群名（最多 64 个字符）。";
+
+export type GroupNameCommand =
+  | { kind: "set"; name: string }
+  | { kind: "invalid"; reason: "missing" | "too_long" };
+
+/**
+ * 解析群内 @机器人 的群名命令：支持「群名 XXX」「群名：XXX」「群名称 XXX」「设置群名 XXX」；
+ * 允许前置 @机器人 / <@userid> 提及。非命令返回 null（普通群聊不回复、不改名）。
+ */
+export function parseGroupNameCommand(raw: string | null): GroupNameCommand | null {
+  if (raw === null) {
+    return null;
+  }
+  let text = raw.trim();
+  for (;;) {
+    const next = text.replace(/^(?:<@[^>]+>|@\S+)\s+/u, "");
+    if (next === text) {
+      break;
+    }
+    text = next;
+  }
+  if (/^(?:设置)?群名(?:称)?\s*$/u.test(text)) {
+    return { kind: "invalid", reason: "missing" };
+  }
+  const match = /^(?:设置)?群名(?:称)?(?:\s*[:：]\s*|\s+)([\s\S]*)$/u.exec(text);
+  if (match === null) {
+    return null;
+  }
+  const name = (match[1] ?? "").trim();
+  if (name === "") {
+    return { kind: "invalid", reason: "missing" };
+  }
+  if (Array.from(name).length > GROUP_NAME_MAX_CHARS) {
+    return { kind: "invalid", reason: "too_long" };
+  }
+  return { kind: "set", name };
+}
+
+/** 回调可选群名归一：trim + 最多 64 个 Unicode 字符；空 → null。 */
+function normalizeGroupName(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  if (trimmed === "") {
+    return null;
+  }
+  return Array.from(trimmed).slice(0, GROUP_NAME_MAX_CHARS).join("");
+}
+
 /** 降级站内信类型：A02 / R06 为播报（摘要群发 / 喜报），其余群播报按提醒。 */
 function degradeTypeOf(templateCode: string | null): "broadcast" | "reminder" {
   return templateCode !== null && /^(A02|R06|A08)/.test(templateCode) ? "broadcast" : "reminder";
@@ -105,7 +157,8 @@ export class NotifyGroupService {
   /**
    * 群消息回调 ingest（长连接 onMessage 接线）：只处理群聊消息回调（cmd=aibot_msg_callback / chattype=group /
    * 合法 chatid）。已绑定群 → 会话激活置位（幂等）；未绑定群 → 写入候选表供设置页自动发现，绑定后删除候选行。
-   * 事件回调、单聊、缺 chatid 或非法 chatid 一律忽略。
+   * 群名命令（@机器人 发「群名 XXX」/「群名：XXX」/「设置群名 XXX」）只更新展示名，不做绑定授权；
+   * 绑定仍由设置页按 project.update 权限完成。事件回调、单聊、缺 chatid 或非法 chatid 一律忽略。
    */
   async activateFromCallback(incoming: AibotIncomingMessage): Promise<void> {
     if (
@@ -117,20 +170,67 @@ export class NotifyGroupService {
       return;
     }
     const at = this.clock.now();
+    const command = incoming.msgtype === "text" ? parseGroupNameCommand(incoming.text) : null;
     const row = await this.repository.findGroupByChatid(incoming.chatid);
     if (row === null) {
-      const trimmedName = incoming.chatName?.trim() ?? "";
-      const name = trimmedName === "" ? null : Array.from(trimmedName).slice(0, 64).join("");
+      const name = command?.kind === "set" ? command.name : normalizeGroupName(incoming.chatName);
       await this.repository.observeCandidate({ chatid: incoming.chatid, name }, at);
       this.logger.log("群回调已登记候选群：" + maskChatid(incoming.chatid));
+      if (command !== null) {
+        await this.replyNameCommand(incoming, command, false);
+      }
       return;
     }
-    if (row.activatedAt !== null) {
+    if (row.activatedAt === null) {
+      const activated = await this.repository.activateByChatid(incoming.chatid, at);
+      if (activated !== null) {
+        this.logger.log("群会话已激活：" + maskChatid(incoming.chatid) + " · project=" + activated.projectId);
+      }
+    }
+    if (command?.kind === "set") {
+      const updated = await this.repository.setGroupName(incoming.chatid, command.name, at);
+      if (updated !== null) {
+        this.logger.log("群名已更新：" + maskChatid(incoming.chatid));
+      }
+    }
+    if (command !== null) {
+      await this.replyNameCommand(incoming, command, true);
+    }
+  }
+
+  /** 群名命令回执（被动回复，尽力而为；失败不影响名称落库）。 */
+  private async replyNameCommand(
+    incoming: AibotIncomingMessage,
+    command: GroupNameCommand,
+    bound: boolean,
+  ): Promise<void> {
+    if (incoming.reqId === null || incoming.fromUserId === null || incoming.chatid === null) {
       return;
     }
-    const activated = await this.repository.activateByChatid(incoming.chatid, at);
-    if (activated !== null) {
-      this.logger.log("群会话已激活：" + maskChatid(incoming.chatid) + " · project=" + activated.projectId);
+    let content: string;
+    if (command.kind === "set") {
+      content = bound
+        ? "群名已更新：" + command.name
+        : "群名已记录：" + command.name + "。请到「企微绑定」页选择该项目群完成绑定。";
+    } else if (command.reason === "too_long") {
+      content = "群名最多 64 个字符。请重新发送「群名 项目群名称」。";
+    } else {
+      content = GROUP_NAME_COMMAND_HINT;
+    }
+    try {
+      const result = await this.aibot.replyToCallback({
+        reqId: incoming.reqId,
+        userid: incoming.fromUserId,
+        chatid: incoming.chatid,
+        content,
+      });
+      if (!result.ok) {
+        this.logger.warn(
+          "群名命令回执未送达：" + maskChatid(incoming.chatid) + describeWecomFailure(result.errcode, result.errmsg),
+        );
+      }
+    } catch {
+      this.logger.warn("群名命令回执异常：" + maskChatid(incoming.chatid));
     }
   }
 
