@@ -254,21 +254,24 @@ body {
 @keyframes ll-guide-pop-in {
   0% {
     opacity: 0;
-    transform: translate3d(14px, calc(-50% + 10px), 0) scale(0.96);
+    translate: 14px calc(10px - 50%);
+    scale: 0.96;
   }
   62% {
     opacity: 1;
-    transform: translate3d(0, calc(-50% - 2px), 0) scale(1.01);
+    translate: 0 calc(-50% - 2px);
+    scale: 1.01;
   }
   100% {
     opacity: 1;
-    transform: translate3d(0, -50%, 0) scale(1);
+    translate: 0 -50%;
+    scale: 1;
   }
 }
 
 .wecom-guide-pop {
   transform-origin: right center;
-  will-change: transform, opacity;
+  will-change: translate, scale, opacity;
   animation: ll-guide-pop-in 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
