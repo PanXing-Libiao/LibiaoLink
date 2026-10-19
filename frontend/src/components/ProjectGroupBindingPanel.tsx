@@ -5,7 +5,7 @@
  * 候选不存在时才使用折叠的手工 chatid 兜底入口。读面只显示群标识末 4 位。
  * 写权限由服务端 project.update 裁决；前端不按猜测隐藏入口，403 走明确 Toast。
  */
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { ApiError } from "../api";
 import { useT, type TextKey } from "../i18n";
 import { fetchProjectList, formatDateTime, type ApiProject } from "../projectApi";
@@ -18,6 +18,7 @@ import {
   type ProjectGroupCandidate,
 } from "../projectGroupApi";
 import { EMPTY_LIST_QUERY } from "../useHashRoute";
+import { SearchSelect } from "./SearchSelect";
 import type { BindingNotice } from "./WecomBindingPanel";
 
 const fieldClass =
@@ -129,6 +130,10 @@ export function ProjectGroupBindingPanel({ onNotice }: { onNotice: (notice: Bind
     };
   }, [selectedProjectId, groupReloadKey]);
 
+  const projectOptions = useMemo(
+    () => (projects ?? []).map((project) => ({ value: project.id, label: project.code + " · " + project.name })),
+    [projects],
+  );
   const selectedProject =
     projects === null ? null : projects.find((project) => project.id === selectedProjectId) ?? null;
   const selectedCandidate =
@@ -298,28 +303,23 @@ export function ProjectGroupBindingPanel({ onNotice }: { onNotice: (notice: Bind
 
       <label className="block">
         <span className="mb-1.5 block text-xs font-medium text-zinc-700">{t("settings.group.projectLabel")}</span>
-        <select
-          data-project-group-select=""
-          className={fieldClass}
-          value={selectedProjectId}
-          disabled={loadingProjects || projectsFailed || busy !== null}
-          onChange={(event) => {
-            handleProjectChange(event.target.value);
-          }}
-        >
-          <option value="">
-            {loadingProjects
-              ? t("settings.group.loadingProjects")
-              : projectsFailed
-                ? t("settings.group.projectsFailed")
-                : t("settings.group.projectPlaceholder")}
-          </option>
-          {(projects ?? []).map((project) => (
-            <option key={project.id} value={project.id}>
-              {project.code + " · " + project.name}
-            </option>
-          ))}
-        </select>
+        <div data-project-group-select="">
+          <SearchSelect
+            ariaLabel={t("settings.group.projectLabel")}
+            options={projectOptions}
+            value={selectedProjectId}
+            onChange={handleProjectChange}
+            placeholder={
+              loadingProjects
+                ? t("settings.group.loadingProjects")
+                : projectsFailed
+                  ? t("settings.group.projectsFailed")
+                  : t("settings.group.projectPlaceholder")
+            }
+            searchPlaceholder={t("settings.group.projectSearchPlaceholder")}
+            disabled={loadingProjects || projectsFailed || busy !== null}
+          />
+        </div>
       </label>
 
       {projectsFailed ? (
