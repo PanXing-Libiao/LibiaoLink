@@ -10,7 +10,8 @@
  *
  * 本脚本用真机浏览器（无头 Chrome + CDP）验：
  *   ① 首登绑定提醒：未绑定 + 本机未跳过 → 右侧垂直居中半透明卡出现（非模态 / 无遮罩 / 标题与两步指引 / 420ms 轻弹入场）；
- *      10 秒自动收起且不落跳过位；刷新再次提醒；关闭 X → 落跳过位，刷新不再显示
+ *      10 秒自动收起且不落跳过位；刷新再次提醒；绑定行落库后自动切「已绑定」→ 关闭 → 浅绿「绑定成功」2 秒；
+ *      关闭 X → 落跳过位、刷新不再显示且不误弹成功提示
  *      （跳过位按账号分记 —— 账号键 = `/auth/me` 的 `user.id`（= 库内 `casdoor_id`）· 退出登录清除）；
  *   ② 头像菜单首项 = 「设置」（文案 + `#/settings` 落点），点它 → 地址到 `#/settings`、设置页渲染（`data-settings`）；
  *   ③ 未绑定态：设置页出与提醒同款标题 / 副标题 / 两步指引 / 复制机器人链接；点「获取绑定码」→ 6 位码 + 倒计时递减 + 库内落 pending 行；
@@ -27,7 +28,8 @@
  *      已绑定 = 不弹引导（清掉本机跳过位后刷新仍不弹）；
  *   ⑥ 解绑：二次确认（取消 = 仍是已绑定、确认 = 回未绑定）+ 库内绑定行去址（`bound_at` / `user_id` 置空、行仍在）
  *      + `audit_logs` 恰一条（objectType user / action delete / summary 与 changes 只带掩码）；
- *   ⑦ 解绑后提醒恢复（未绑定 + 未跳过 → 再显示），点「前往设置」→ 地址到 `#/settings`；
+ *   ⑦ 解绑后提醒恢复（未绑定 + 未跳过 → 再显示）；手点「刷新绑定状态」绑定成功同样先切「已绑定」→ 关闭 →
+ *      浅绿「绑定成功」；随后点「前往设置」→ 地址到 `#/settings`；
  *   ⑧ 未绑定提示：站内信弹窗底部「当前用户未绑定企业微信」+「前往设置补绑」→ 点它落 `#/settings`；
  *   ⑨ 控制台零报错；跑完撤销会话 / 清绑定码行 / 清绑定夹具行
  *      （audit_logs 只读留痕 —— api 角色无 DELETE 权，同 m6-stakeholder 先例，不算残留）。
@@ -286,6 +288,9 @@ async function click(selector) {
 const hashOf = () => ev("String(window.location.hash)");
 const panelState = (scope) => "(function(){var root=" + (scope === undefined ? "document" : "document.querySelector(" + j(scope) + ")") + ";if(root===null){return null;}var el=root.querySelector(" + j("[data-wecom-binding]") + ");return el===null?null:el.getAttribute(" + j("data-wecom-binding") + ");})()";
 const textOf = (selector) => "(function(){var el=document.querySelector(" + j(selector) + ");return el===null?null:String(el.textContent||" + j("") + ").trim();})()";
+const successToastExpr = "(function(){var el=document.querySelector(" + j("[data-toast=ok]") + ");if(el===null){return null;}return {text:String(el.textContent||" + j("") + ").trim(),cls:String(el.className||" + j("") + ")};})()";
+const insertBindingFixture = () => db.query("insert into wecom_aibot_dm_activations (bot_id, wecom_userid, user_id, first_activated_at, last_message_at, bound_at, created_at, updated_at) values ($1, $2, $3, now() - interval '2 hours', now() - interval '2 hours', now() - interval '90 minutes', now() - interval '2 hours', now() - interval '90 minutes') on conflict (bot_id, wecom_userid) do update set user_id = excluded.user_id, last_message_at = excluded.last_message_at, bound_at = excluded.bound_at, updated_at = excluded.updated_at", [BOT_ID, openUserid, userRow.id]);
+const removeBindingFixture = () => db.query("delete from wecom_aibot_dm_activations where bot_id = $1 and wecom_userid = $2", [BOT_ID, openUserid]);
 
 await page.send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 1000, deviceScaleFactor: 1, mobile: false });
 const shots = [];
@@ -293,6 +298,7 @@ const shots = [];
 // ── ① 首登右侧悬浮提醒（未绑定 + 本机未跳过 → 显示；10 秒自动收起；关闭 X 落跳过位）──────────────
 await goto("#/projects", "[data-topnav]");
 await waitFor(exists("[data-wecom-binding-guide]"), 15000);
+await sleep(500);
 check("首登绑定提醒出现（未绑定 + 本机未跳过 · 口径 §10 D5）", (await ev(exists("[data-wecom-binding-guide]"))) === true);
 const guideStateExpr = "(function(){var el=document.querySelector(" + j("[data-wecom-binding-guide]") + ");if(el===null){return null;}var r=el.getBoundingClientRect();var cs=window.getComputedStyle(el);var copy=el.querySelector(" + j("[data-wecom-binding-guide-copy-link]") + ");var close=el.querySelector(" + j("[data-wecom-binding-guide-skip]") + ");var go=el.querySelector(" + j("[data-wecom-binding-guide-goto]") + ");var panel=el.querySelector(" + j("[data-wecom-binding]") + ");var outside=document.elementFromPoint(5,5);return {role:el.getAttribute(" + j("role") + "),modal:el.getAttribute(" + j("aria-modal") + "),position:cs.position,animationName:cs.animationName,animationDuration:cs.animationDuration,rightGap:Math.round(window.innerWidth-r.right),centerGap:Math.round(Math.abs((r.top+r.bottom)/2-window.innerHeight/2)),width:Math.round(r.width),background:String(cs.backgroundColor),backdrop:String(cs.backdropFilter||cs.webkitBackdropFilter||" + j("") + "),text:String(el.textContent||" + j("") + ").trim(),copyText:copy===null?null:String(copy.textContent||" + j("") + ").trim(),closeLabel:close===null?null:close.getAttribute(" + j("aria-label") + "),goText:go===null?null:String(go.textContent||" + j("") + ").trim(),panel:panel===null?null:panel.getAttribute(" + j("data-wecom-binding") + "),overlayHit:outside===null?null:(el.contains(outside)?" + j("guide") + ":" + j("page") + ")};})()";
 const guideState = await ev(guideStateExpr);
@@ -317,8 +323,27 @@ const storedAfterAutoDismiss = String(await ev("String(window.localStorage.getIt
 check("10 秒后自动消失、页面可继续用；自动消失不写跳过位", autoDismissed === true && (await ev(exists("[data-topnav]"))) === true && storedAfterAutoDismiss.indexOf(userRow.casdoor_id) < 0, storedAfterAutoDismiss);
 await reload("[data-topnav]");
 check("未绑定时刷新会再次提醒", (await waitFor(exists("[data-wecom-binding-guide]"), 12000)) === true);
+
+// ①a 自动轮询绑定成功（Push 260）：绑定行落库 → 卡片先切「已绑定」→ 关闭 → 浅绿「绑定成功」2 秒
+await insertBindingFixture();
+const autoGuideBound = await waitFor(panelState("[data-wecom-binding-guide]") + " === " + j("bound"), 15000);
+const autoGuideClosed = await waitFor("document.querySelector(" + j("[data-wecom-binding-guide]") + ") === null", 4000);
+const autoGuideToast = await ev(successToastExpr);
+check("绑定行落库后不点刷新：卡片自动切「已绑定」", autoGuideBound === true, String(await ev(panelState("[data-wecom-binding-guide]"))));
+check(
+  "自动检测绑定后卡片关闭并弹浅绿色「绑定成功」",
+  autoGuideClosed === true && autoGuideToast !== null && String(autoGuideToast.text).indexOf("绑定成功") >= 0 && String(autoGuideToast.cls).indexOf("bg-emerald-50") >= 0 && String(autoGuideToast.cls).indexOf("text-emerald-700") >= 0,
+  JSON.stringify({ closed: autoGuideClosed, toast: autoGuideToast }),
+);
+shots.push(await shot("wecom-guide-auto-bound-success-1a"));
+const autoGuideToastGone = await waitFor("document.querySelector(" + j("[data-toast=ok]") + ") === null", 3500);
+check("绑定成功提示短暂浮层按默认 2 秒消失", autoGuideToastGone === true);
+await removeBindingFixture();
+await ev("window.localStorage.removeItem(" + j(GUIDE_KEY) + ")");
+await reload("[data-wecom-binding-guide]");
+
 await click("[data-wecom-binding-guide-skip]");
-check("点关闭 X → 提醒关闭、页面可继续用（顶栏在位）", (await waitFor("document.querySelector(" + j("[data-wecom-binding-guide]") + ") === null", 8000)) === true && (await ev(exists("[data-topnav]"))) === true);
+check("点关闭 X → 提醒关闭、页面可继续用且不误弹成功提示", (await waitFor("document.querySelector(" + j("[data-wecom-binding-guide]") + ") === null", 8000)) === true && (await ev(exists("[data-topnav]"))) === true && (await ev(exists("[data-toast=ok]"))) === false);
 const storedGuide = String(await ev("String(window.localStorage.getItem(" + j(GUIDE_KEY) + "))"));
 check("关闭 X 落本机跳过位（按账号分记 · 账号键 = /auth/me 的 user.id = 库内 casdoor_id）", storedGuide.indexOf(userRow.casdoor_id) >= 0, storedGuide);
 await reload("[data-topnav]");
@@ -425,7 +450,7 @@ const limitAfterReload = (await waitFor(exists("[data-wecom-binding-rate-limit]"
 check("刷新页面后罚时仍在（读面回填 retryAt）：按钮仍置灰 +「N 分 N 秒后可再次获取」倒计时 ≤ 180 秒", limitAfterReload !== null && limitAfterReload.disabled === true && limitAfterReload.seconds > 0 && limitAfterReload.seconds <= 180 && String(limitAfterReload.text).indexOf("后可再次获取") >= 0, JSON.stringify(limitAfterReload));
 
 // ── ⑤ 已绑定（夹具绑定行）：掩码 + 绑定时间；页面不出现完整 open_userid；已绑定 = 不弹引导 ────────────────
-await db.query("insert into wecom_aibot_dm_activations (bot_id, wecom_userid, user_id, first_activated_at, last_message_at, bound_at, created_at, updated_at) values ($1, $2, $3, now() - interval '2 hours', now() - interval '2 hours', now() - interval '90 minutes', now() - interval '2 hours', now() - interval '90 minutes')", [BOT_ID, openUserid, userRow.id]);
+await insertBindingFixture();
 // ⑤-a 自动刷新（Push 253 修「企微已回执绑定成功、设置页仍显示未绑定」）：**不刷新页面** —— 面板 5 秒轮询自行切态
 const autoBound = await waitFor("(function(){var el=document.querySelector(" + j("[data-wecom-binding]") + ");return el!==null && el.getAttribute(" + j("data-wecom-binding") + ") === " + j("bound") + ";})()", 15000);
 check("绑定行落库后不刷新页面 → 面板轮询自动切「已绑定」（Push 253 修）", autoBound === true, String(await ev(panelState())));
@@ -464,10 +489,29 @@ check("操作记录只带掩码（§9）：summary 含掩码、changes.from = �
 check("操作记录不含完整密文 open_userid（最小暴露）", auditRow !== undefined && JSON.stringify(auditRow).indexOf(openUserid) < 0, String(auditRow !== undefined && JSON.stringify(auditRow).indexOf(openUserid) >= 0));
 shots.push(await shot("wecom-unbound-after-8"));
 
-// ── ⑦ 解绑后引导恢复 + 「前往设置」落 #/settings ──────────────────────────────────────────────────────
+// ── ⑦ 解绑后引导恢复 + 手动刷新绑定成功 + 「前往设置」落 #/settings ────────────────────────────────
 await reload("[data-settings-card=wecom-binding]");
 const guideBack = await waitFor(exists("[data-wecom-binding-guide]"), 12000);
 check("解绑后引导恢复（未绑定 + 未跳过 → 再弹一次）", guideBack === true);
+
+// ⑦a 手动刷新绑定成功（Push 260）：点「刷新绑定状态」→ 卡片先切「已绑定」→ 关闭 → 浅绿「绑定成功」
+await insertBindingFixture();
+const manualRefreshClick = await click("[data-wecom-binding-refresh]");
+const manualGuideBound = await waitFor(panelState("[data-wecom-binding-guide]") + " === " + j("bound"), 10000);
+const manualGuideClosed = await waitFor("document.querySelector(" + j("[data-wecom-binding-guide]") + ") === null", 4000);
+const manualGuideToast = await ev(successToastExpr);
+check("手点「刷新绑定状态」：卡片面板先切「已绑定」", manualRefreshClick !== null && manualGuideBound === true, String(await ev(panelState("[data-wecom-binding-guide]"))));
+check(
+  "手动刷新绑定后卡片关闭并弹浅绿色「绑定成功」",
+  manualGuideClosed === true && manualGuideToast !== null && String(manualGuideToast.text).indexOf("绑定成功") >= 0 && String(manualGuideToast.cls).indexOf("bg-emerald-50") >= 0 && String(manualGuideToast.cls).indexOf("text-emerald-700") >= 0,
+  JSON.stringify({ closed: manualGuideClosed, toast: manualGuideToast }),
+);
+shots.push(await shot("wecom-guide-manual-bound-success-7a"));
+await waitFor("document.querySelector(" + j("[data-toast=ok]") + ") === null", 3500);
+await removeBindingFixture();
+await ev("window.localStorage.removeItem(" + j(GUIDE_KEY) + ")");
+await reload("[data-wecom-binding-guide]");
+
 const goClick = await click("[data-wecom-binding-guide-goto]");
 const gotoHash = await waitFor("window.location.hash === " + j("#/settings"), 8000);
 check("点「前往设置」→ 地址到 #/settings、引导关闭（跳过位同时落记）", goClick !== null && gotoHash === true && (await ev(exists("[data-wecom-binding-guide]"))) === false, String(await hashOf()));
