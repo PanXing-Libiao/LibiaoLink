@@ -4713,6 +4713,34 @@
                 "description": "归档操作人（users.id；仅归档端点置位）；未归档 = null"
               }
             ]
+          },
+          "deletedAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "进入项目回收站的时间；未删除 = null。回收站项目仅通过 GET /projects?filter[recycled]=true 返回，普通列表 / 详情 / facets 继续排除"
+              }
+            ]
+          },
+          "deletedBy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "将项目移入回收站的操作人（users.id）；未删除 = null"
+              }
+            ]
           }
         },
         "required": [
@@ -4732,7 +4760,9 @@
           "createdAt",
           "updatedAt",
           "archivedAt",
-          "archivedBy"
+          "archivedBy",
+          "deletedAt",
+          "deletedBy"
         ],
         "description": "项目（v0.2 §2.3 projects）"
       },
@@ -5533,6 +5563,41 @@
           "version",
           "requirements"
         ]
+      },
+      "ProjectPurgeResponse": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "purgedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          }
+        },
+        "required": [
+          "projectId",
+          "purgedAt"
+        ],
+        "description": "项目彻底删除结果（数据库聚合数据与项目对象前缀已清理）"
+      },
+      "ProjectRecycleActionBody": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Version"
+              },
+              {
+                "description": "项目当前 version（乐观锁；不匹配 409 VERSION_CONFLICT）"
+              }
+            ]
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "description": "项目回收站操作请求：恢复或彻底删除均回传当前 version"
       },
       "ProjectStage": {
         "type": "object",
@@ -9732,6 +9797,20 @@
           {
             "schema": {
               "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "项目回收站开关：true = 仅返回已移入项目回收站的项目；false / 缺省 = 仅返回未删除项目"
+            },
+            "required": false,
+            "description": "项目回收站开关：true = 仅返回已移入项目回收站的项目；false / 缺省 = 仅返回未删除项目",
+            "name": "filter[recycled]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "description": "关键字（编号 / 名称 / 客户 / 序号）"
             },
             "required": false,
@@ -9950,6 +10029,20 @@
           {
             "schema": {
               "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "项目回收站开关：true = 仅返回已移入项目回收站的项目；false / 缺省 = 仅返回未删除项目"
+            },
+            "required": false,
+            "description": "项目回收站开关：true = 仅返回已移入项目回收站的项目；false / 缺省 = 仅返回未删除项目",
+            "name": "filter[recycled]",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "description": "关键字（编号 / 名称 / 客户 / 序号）"
             },
             "required": false,
@@ -10127,7 +10220,7 @@
         "tags": [
           "projects"
         ],
-        "summary": "删除项目（物理删：连同任务 / 流程节点 / 阶段 / 成员 / 干系人 / 日报 / 问题 / 变更 / 文件；编号随行释放可再建；If-Match 回传当前 version 防误删）",
+        "summary": "删除项目（移入项目回收站：仅置 deleted_at / deleted_by，聚合数据与图片保留；If-Match 回传当前 version 防误删）",
         "parameters": [
           {
             "schema": {
@@ -10153,7 +10246,7 @@
         ],
         "responses": {
           "200": {
-            "description": "已物理删除（删除前快照与子表行数写审计；列表 / 详情 / facets / 搜索不再返回；同编号可再建）",
+            "description": "已移入项目回收站（普通列表 / 详情 / facets / 搜索不再返回；可在项目回收站恢复或彻底删除）",
             "content": {
               "application/json": {
                 "schema": {
@@ -10164,6 +10257,166 @@
           },
           "400": {
             "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/restore": {
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "从项目回收站恢复（清 deleted_at / deleted_by；权限 project.delete；回到删除前状态）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectRecycleActionBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "恢复后的项目",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/purge": {
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "彻底删除项目（仅系统管理员：删库内项目聚合数据 + 对象存储 projects/{id}/ 全部对象与版本）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectRecycleActionBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "彻底删除完成",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectPurgeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
             "content": {
               "application/json": {
                 "schema": {

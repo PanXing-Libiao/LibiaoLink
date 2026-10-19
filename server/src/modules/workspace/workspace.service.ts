@@ -158,6 +158,9 @@ function toProjectItem(row: WorkspaceProjectRow): WorkspaceProject {
     updatedAt: row.updatedAt.toISOString(),
     archivedAt: row.archivedAt === null ? null : row.archivedAt.toISOString(),
     archivedBy: row.archivedBy,
+    // 工作台只读未删除项目；契约统一携带回收站字段。
+    deletedAt: null,
+    deletedBy: null,
   };
 }
 

@@ -30,6 +30,8 @@ export interface paths {
                     "filter[timeTo]"?: components["schemas"]["DateOnly"] & unknown;
                     /** @description 归档年份（C4-07 归档检索；多值逗号分隔，四位年份如 2025,2026；按 projects.archived_at 的 Asia/Shanghai 年判定 —— 未归档项目不命中） */
                     "filter[archivedYear]"?: string;
+                    /** @description 项目回收站开关：true = 仅返回已移入项目回收站的项目；false / 缺省 = 仅返回未删除项目 */
+                    "filter[recycled]"?: "true" | "false";
                     /** @description 关键字（编号 / 名称 / 客户 / 序号） */
                     q?: string;
                     page?: number;
@@ -143,6 +145,8 @@ export interface paths {
                     "filter[timeTo]"?: components["schemas"]["DateOnly"] & unknown;
                     /** @description 归档年份（C4-07 归档检索；多值逗号分隔，四位年份如 2025,2026；按 projects.archived_at 的 Asia/Shanghai 年判定 —— 未归档项目不命中） */
                     "filter[archivedYear]"?: string;
+                    /** @description 项目回收站开关：true = 仅返回已移入项目回收站的项目；false / 缺省 = 仅返回未删除项目 */
+                    "filter[recycled]"?: "true" | "false";
                     /** @description 关键字（编号 / 名称 / 客户 / 序号） */
                     q?: string;
                     page?: number;
@@ -226,7 +230,7 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        /** 删除项目（物理删：连同任务 / 流程节点 / 阶段 / 成员 / 干系人 / 日报 / 问题 / 变更 / 文件；编号随行释放可再建；If-Match 回传当前 version 防误删） */
+        /** 删除项目（移入项目回收站：仅置 deleted_at / deleted_by，聚合数据与图片保留；If-Match 回传当前 version 防误删） */
         delete: {
             parameters: {
                 query?: never;
@@ -242,7 +246,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description 已物理删除（删除前快照与子表行数写审计；列表 / 详情 / facets / 搜索不再返回；同编号可再建） */
+                /** @description 已移入项目回收站（普通列表 / 详情 / facets / 搜索不再返回；可在项目回收站恢复或彻底删除） */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -337,6 +341,164 @@ export interface paths {
                 };
             };
         };
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 从项目回收站恢复（清 deleted_at / deleted_by；权限 project.delete；回到删除前状态） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["ProjectRecycleActionBody"];
+                };
+            };
+            responses: {
+                /** @description 恢复后的项目 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Project"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/purge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 彻底删除项目（仅系统管理员：删库内项目聚合数据 + 对象存储 projects/{id}/ 全部对象与版本） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["ProjectRecycleActionBody"];
+                };
+            };
+            responses: {
+                /** @description 彻底删除完成 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectPurgeResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/projects/{id}/archive": {
@@ -8838,6 +9000,8 @@ export interface components {
             updatedAt: components["schemas"]["DateTime"];
             archivedAt: components["schemas"]["DateTime"] & (string | null);
             archivedBy: components["schemas"]["Uuid"] & (string | null);
+            deletedAt: components["schemas"]["DateTime"] & (string | null);
+            deletedBy: components["schemas"]["Uuid"] & (string | null);
         };
         /** @description 归档请求：version 必带；缺项越过分两步（先 422 拿清单，再 confirm=true 重试） */
         ProjectArchiveBody: {
@@ -9053,6 +9217,15 @@ export interface components {
             sourceBlueprintVersion: number;
             version: components["schemas"]["Version"];
             requirements: components["schemas"]["NodeRequirement"][];
+        };
+        /** @description 项目彻底删除结果（数据库聚合数据与项目对象前缀已清理） */
+        ProjectPurgeResponse: {
+            projectId: components["schemas"]["Uuid"];
+            purgedAt: components["schemas"]["DateTime"];
+        };
+        /** @description 项目回收站操作请求：恢复或彻底删除均回传当前 version */
+        ProjectRecycleActionBody: {
+            version: components["schemas"]["Version"] & unknown;
         };
         ProjectStage: {
             id: components["schemas"]["Uuid"];

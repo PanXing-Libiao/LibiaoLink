@@ -2,7 +2,8 @@
  * 项目接口封装（M2-07 首页联调）：
  * - 列表 GET /api/v1/projects（filter[...] + q + sort + page/limit）
  * - 分类计数 GET /api/v1/projects/facets（与列表同一套参数，禁止两套口径；《前端功能需求》§3.2）
- * - 新建 POST /api/v1/projects、编辑 PATCH /api/v1/projects/{id}（乐观锁 version）、删除 DELETE /api/v1/projects/{id}（If-Match 版本）
+ * - 新建 POST /api/v1/projects、编辑 PATCH /api/v1/projects/{id}（乐观锁 version）、删除 DELETE /api/v1/projects/{id}（移入项目回收站，If-Match 版本）
+ * - 项目回收站 GET /api/v1/projects?filter[recycled]=true、恢复 POST /api/v1/projects/{id}/restore、彻底删除 POST /api/v1/projects/{id}/purge
  * 契约 shared/src/modules/projects.ts；UI 模型见 types.ts（前端「项目描述」= 契约 name）。
  */
 import { apiRequest, apiSend, readAllPages } from "./api";
@@ -25,6 +26,10 @@ export type ApiProject = {
   version: number;
   createdAt: string;
   updatedAt: string;
+  /** 进入项目回收站的时间；未删除 = null。 */
+  deletedAt: string | null;
+  /** 移入项目回收站的操作用户 id；未删除 = null。 */
+  deletedBy: string | null;
 };
 
 export type ProjectListResult = { items: ApiProject[]; page: number; limit: number; total: number };
@@ -184,15 +189,35 @@ export function archiveProject(id: string, version: number, confirm: boolean): P
 }
 
 /**
- * 删除项目（硬删 · A5；Push 190 起物理删，Push 172 接上卡片入口）：DELETE /api/v1/projects/{id} —— 版本走 **If-Match 请求头**（不是正文），
- * 缺头 / 非数字 400 VALIDATION_FAILED；版本不一致 409 VERSION_CONFLICT；归档项目 409 PROJECT_ARCHIVED；
- * 不存在 / 不可见 404。响应 = 删除前快照（此后列表 / 详情 / facets 均不可见；项目连同任务等聚合子表物理删、编号可再用、序号不回收）。
+ * 删除项目（2026-10-19 起 = 移入项目回收站）：DELETE /api/v1/projects/{id} —— 版本走 **If-Match 请求头**（不是正文），
+ * 缺头 / 非数字 400 VALIDATION_FAILED；版本不一致 409 VERSION_CONFLICT；归档项目 409 PROJECT_ARCHIVED；不存在 / 不可见 404。
+ * 只写 deleted_at / deleted_by（version +1），项目聚合数据与对象存储图片保留；可通过项目回收站恢复。
  */
 export function deleteProject(id: string, version: number): Promise<ApiProject> {
   return apiRequest<ApiProject>("/api/v1/projects/" + encodeURIComponent(id), {
     method: "DELETE",
     headers: { "If-Match": String(version) },
   });
+}
+
+/** 项目回收站列表：全量分页取满；普通项目列表不返回已删除项目。 */
+export function fetchRecycledProjects(): Promise<ProjectListResult> {
+  return readAllPages<ApiProject>("/api/v1/projects?filter[recycled]=true&sort=createdAt:desc");
+}
+
+/** 从项目回收站恢复：清 deleted_at / deleted_by 并 version +1；version 不匹配 409。 */
+export function restoreProject(id: string, version: number): Promise<ApiProject> {
+  return apiSend<ApiProject>("/api/v1/projects/" + encodeURIComponent(id) + "/restore", "POST", { version });
+}
+
+export type ProjectPurgeResult = { projectId: string; purgedAt: string };
+
+/**
+ * 彻底删除项目（仅系统管理员）：清空数据库内项目聚合数据，并删除对象存储 projects/{id}/ 前缀下全部版本、
+ * delete marker 与暂存对象。永久不可恢复；仅回收站中的项目可执行。
+ */
+export function purgeProject(id: string, version: number): Promise<ProjectPurgeResult> {
+  return apiSend<ProjectPurgeResult>("/api/v1/projects/" + encodeURIComponent(id) + "/purge", "POST", { version });
 }
 
 /** ISO8601（UTC）→ 展示用「YYYY-MM-DD HH:mm」（Asia/Shanghai，时区口径 ADR-028）。 */
@@ -234,5 +259,7 @@ export function toUiProject(view: ApiProject): Project {
     version: view.version,
     stageKey: view.stageKey,
     status: view.status,
+    deletedAt: view.deletedAt === null ? null : formatDateTime(view.deletedAt),
+    deletedBy: view.deletedBy,
   };
 }

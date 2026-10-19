@@ -47,6 +47,10 @@ export type Project = {
   stageKey: string;
   /** 项目状态（契约 status：active / paused / done / archived）。 */
   status: string;
+  /** 进入项目回收站的时间（展示用「YYYY-MM-DD HH:mm」）；未删除 = null。 */
+  deletedAt: string | null;
+  /** 将项目移入回收站的用户 id；未删除 = null。 */
+  deletedBy: string | null;
 };
 
 /** 项目状态取值（契约 projects.status：active / paused / done / archived）。 */

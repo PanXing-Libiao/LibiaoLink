@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * LibiaoLink 前端 · 回放：文件库（Push 261 · 系统现有文件 / 回收站）
+ * LibiaoLink 前端 · 回放：文件库（Push 261 · 系统现有文件 / 文件回收站 / 项目回收站）
  *
- * 业务口径（2026-10-09）：「新增文件库 文件库里面分为 系统现有文件 回收站」（入口 = 右上角头像菜单第三项）。
+ * 业务口径（2026-10-09）：「新增文件库 文件库里面分为 系统现有文件 回收站」（入口 = 右上角头像菜单「文件库」）。
  *
  * 本脚本用真机浏览器（无头 Chrome + CDP）验：
- *   ① 头像菜单三项（退出登录 / 操作记录 / 文件库）：「文件库」在「操作记录」下方、href = #/files；
- *   ② 点入口 → #/files：两枚标签（系统现有文件 / 回收站）、缺省停在「系统现有文件」；计数 / 首屏 50 行 / 行序
+ *   ① 头像菜单四项（设置 / 退出登录 / 操作记录 / 文件库）：「文件库」在「操作记录」下方、href = #/files；
+ *   ② 点入口 → #/files：三枚标签（系统现有文件 / 文件回收站 / 项目回收站）、缺省停在「系统现有文件」；计数 / 首屏 50 行 / 行序
  *      与库内逐一对账（同一项目集 + 四档在库状态，created_at desc + id asc）；
  *   ③ 分页：下一页 → page=2、行 = 库内第 51 行起；上一页回第 1 页、地址回 #/files；
  *   ④ 筛选（地址即状态）：状态 = 草稿（status=draft，行全草稿）/ 清除筛选还原；项目筛选 = **可搜索多选下拉**
@@ -189,6 +189,7 @@ await page.send("Runtime.enable");
 await page.send("Log.enable");
 const consoleErrors = [];
 const fileRequests = [];
+const projectRequests = [];
 page.ws.addEventListener("message", (event) => {
   const msg = JSON.parse(typeof event.data === "string" ? event.data : String(event.data));
   if (msg.method === "Log.entryAdded" && msg.params !== undefined && msg.params.entry !== undefined && msg.params.entry.level === "error") {
@@ -200,6 +201,9 @@ page.ws.addEventListener("message", (event) => {
   }
   if (msg.method === "Network.requestWillBeSent" && msg.params !== undefined && msg.params.request !== undefined && String(msg.params.request.url).indexOf("/files?") !== -1) {
     fileRequests.push(String(msg.params.request.url));
+  }
+  if (msg.method === "Network.requestWillBeSent" && msg.params !== undefined && msg.params.request !== undefined && String(msg.params.request.url).indexOf("/projects?") !== -1) {
+    projectRequests.push(String(msg.params.request.url));
   }
 });
 await page.send("Network.setCookie", { name: "ll_sid", value: token, url: FRONTEND + "/", path: "/", httpOnly: true, secure: false });
@@ -284,6 +288,7 @@ const countByCreators = async (creatorIds) => Number((await db.query("select cou
 const orderedByCreators = async (creatorIds) => (await db.query("select id from files where project_id = any($1::uuid[]) and status = any($2::text[]) and created_by = any($3::uuid[]) order by created_at desc, id asc", [projectIds, STATUSES_CURRENT, creatorIds])).rows.map((row) => String(row.id));
 const fileStatusOf = async (id) => (await db.query("select status, version from files where id = $1", [id])).rows[0];
 const lastFileReq = () => fileRequests.length === 0 ? "" : fileRequests[fileRequests.length - 1];
+const lastProjectReq = () => projectRequests.length === 0 ? "" : projectRequests[projectRequests.length - 1];
 const hasReq = (needle) => fileRequests.some((url) => url.indexOf(needle) !== -1);
 const fileNameEnc = encodeURIComponent(fileName);
 await page.send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 1000, deviceScaleFactor: 1, mobile: false });
@@ -297,8 +302,15 @@ for (let i = 0; i < 50 && hubReady !== true; i += 1) {
 }
 await sleep(1200);
 
+// 首登「绑定企业微信」引导是遮罩层，先按产品允许的「稍后再说」关闭，避免挡住头像菜单。
+const guideSkipPoint = await ev("(function(){var b=document.querySelector(" + j("[data-wecom-binding-guide-skip]") + ");if(b===null){return null;}var r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
+if (guideSkipPoint !== null && guideSkipPoint !== undefined) {
+  await clickAt(guideSkipPoint);
+  await waitFor("document.querySelector(" + j("[data-wecom-binding-guide]") + ") === null", 5000);
+}
+
 // ---------- ① 头像菜单：「文件库」在「操作记录」下方 ----------
-const avatarPoint = await ev("(function(){var b=document.querySelector(" + j("button[aria-haspopup=menu]") + ");if(b===null){return null;}var r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
+const avatarPoint = await ev("(function(){var b=document.querySelector(" + j("[data-account-trigger]") + ");if(b===null){return null;}var r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
 if (avatarPoint === null || avatarPoint === undefined) { await bail("头像按钮找不到"); }
 await clickAt(avatarPoint);
 const menuReady = await waitFor("document.querySelector(" + j("[data-account-files]") + ") !== null", 8000);
@@ -307,8 +319,8 @@ const menuInfo = await ev("(function(){var f=document.querySelector(" + j("[data
 const menuShot = await shot("file-library-menu", { x: 900, y: 0, width: 600, height: 280, scale: 1 });
 console.log("截图：" + menuShot);
 const auditItem = menuInfo.items.find((item) => item.text === "操作记录");
-check("① 头像菜单三项（退出登录 / 操作记录 / 文件库）：「文件库」在「操作记录」下方、href = #/files",
-  menuInfo.items.length === 3 && menuInfo.items[0].text === "退出登录" && auditItem !== undefined && menuInfo.items[2].text === "文件库" && menuInfo.filesHref === "#/files" && auditItem.y < menuInfo.filesY,
+check("① 头像菜单四项（设置 / 退出登录 / 操作记录 / 文件库）：「文件库」在「操作记录」下方、href = #/files",
+  menuInfo.items.length === 4 && menuInfo.items[0].text === "设置" && menuInfo.items[1].text === "退出登录" && auditItem !== undefined && menuInfo.items[3].text === "文件库" && menuInfo.filesHref === "#/files" && auditItem.y < menuInfo.filesY,
   JSON.stringify(menuInfo));
 
 // ---------- ② 入口 → #/files：标签 / 计数 / 行序对账 ----------
@@ -320,8 +332,8 @@ const base = await ev(rowExpr);
 const expectCurrentIds = await orderedIds(STATUSES_CURRENT);
 const baseShot = await shot("file-library-current", { x: 0, y: 0, width: 1500, height: 950, scale: 1 });
 console.log("截图：" + baseShot);
-check("② #/files 就位：两枚标签（系统现有文件 / 回收站）、缺省当前 = 系统现有文件、页头保留 30 天口径",
-  base.tabTexts.join(",") === "系统现有文件,回收站" && base.activeTab === "current" && base.headerText.indexOf("默认保留 30 天，可恢复") !== -1,
+check("② #/files 就位：三枚标签（系统现有文件 / 文件回收站 / 项目回收站）、缺省当前 = 系统现有文件、页头保留 30 天口径",
+  base.tabTexts.join(",") === "系统现有文件,文件回收站,项目回收站" && base.activeTab === "current" && base.headerText.indexOf("默认保留 30 天，可恢复") !== -1,
   JSON.stringify({ tabs: base.tabTexts, active: base.activeTab }));
 check("②b 计数 / 首屏 50 行 / 行序与库内（四档在库状态）逐一对账、在库行不出现回收站签",
   base.count === "共 " + String(expectCurrentIds.length) + " 条" && base.rowCount === Math.min(50, expectCurrentIds.length) && base.rows.map((row) => row.id).join(",") === expectCurrentIds.slice(0, 50).join(",") && base.rows.every((row) => row.status !== "recycled"),
@@ -623,11 +635,22 @@ check("⑨c 确认彻底删除：通知「已彻底删除」+ 行消失 + DB 文
   purgedReady === true && afterPurge.notice.indexOf("已彻底删除") !== -1 && purgedRow === undefined && purgeAudit === 1,
   JSON.stringify({ notice: afterPurge.notice, db: purgedRow === undefined ? "purged" : purgedRow, audit: purgeAudit }));
 
-// ---------- ⑩ 收尾 ----------
-check("⑩ 控制台零报错 / 零异常", consoleErrors.length === 0, consoleErrors.slice(0, 3).join(" ;; "));
+// ---------- ⑩ 项目回收站 ----------
+await clickSelector("[data-file-tab=project-recycled]");
+const projectBinReady = await waitFor("window.location.hash.indexOf(" + j("tab=project-recycled") + ") !== -1 && (document.querySelector(" + j("[data-project-recycle-card]") + ") !== null || document.querySelector(" + j("[data-project-recycle-empty]") + ") !== null)", 40000);
+await sleep(1200);
+const projectBin = await ev("(function(){var tabs=document.querySelectorAll(" + j("[data-file-tab]") + ");var active=null;for(var i=0;i<tabs.length;i+=1){if(tabs[i].getAttribute(" + j("aria-current") + ")===" + j("page") + "){active=tabs[i].getAttribute(" + j("data-file-tab") + ");}}return {activeTab:active,cards:document.querySelectorAll(" + j("[data-project-recycle-card]") + ").length,empty:document.querySelector(" + j("[data-project-recycle-empty]") + ")!==null,filters:document.querySelectorAll(" + j("[data-file-filter]") + ").length,hash:window.location.hash};})()");
+const projectBinShot = await shot("file-library-project-recycled", { x: 0, y: 0, width: 1500, height: 950, scale: 1 });
+console.log("截图：" + projectBinShot);
+check("⑩ 项目回收站：地址 tab=project-recycled、当前标签正确、请求 filter[recycled]=true、卡片网格或空态存在、文件筛选条隐藏",
+  projectBinReady === true && projectBin.activeTab === "project-recycled" && projectBin.filters === 0 && (projectBin.cards > 0 || projectBin.empty === true) && lastProjectReq().indexOf("filter[recycled]=true") !== -1,
+  JSON.stringify({ projectBin: projectBin, req: lastProjectReq().slice(0, 200) }));
+
+// ---------- ⑪ 收尾 ----------
+check("⑪ 控制台零报错 / 零异常", consoleErrors.length === 0, consoleErrors.slice(0, 3).join(" ;; "));
 await db.query("update sessions set revoked_at = now() where token_hash = $1", [sha256(token)]);
 const residue = (await db.query("select (select count(*)::int from files where id = $1) as files, (select count(*)::int from file_versions where file_id = $1) as versions, (select count(*)::int from sessions where token_hash = $2 and revoked_at is null) as sessions", [fileId, sha256(token)])).rows[0];
-check("⑩b 零残留：文件 / 版本 / 会话全 0 行（上传会话行是历史台账，保留）",
+check("⑪b 零残留：文件 / 版本 / 会话全 0 行（上传会话行是历史台账，保留）",
   Number(residue.files) === 0 && Number(residue.versions) === 0 && Number(residue.sessions) === 0,
   JSON.stringify(residue));
 const failed = checks.filter((item) => item.ok !== true).length;

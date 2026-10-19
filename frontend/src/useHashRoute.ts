@@ -91,14 +91,15 @@ export const EMPTY_AUDIT_QUERY: AuditQueryState = { keyword: null, actorIds: [],
  * 取值 = current（系统现有文件，缺省，不落参数）/ recycled（回收站）；与「日报及问题」`?sub=` 同一口径：
  * 缺省不落参数、不认识 / 空值回落 current。
  */
-export type FilesTab = "current" | "recycled";
+export type FilesTab = "current" | "recycled" | "project-recycled";
 
 /**
  * 「文件库」页筛选态（Push 261 · 与首页列表 / 操作记录同一口径：地址即状态，可分享 / 可收藏 / 刷新不丢）：
  * 关键字 q（文件名，长度兜底 200）/ 项目 project=<id>[,<id>…]（**多选**：逗号分隔、去重保序，2026-10-09 追订）/
  * 状态 status=<k>[,<k>…]（**多选**；draft / final / changed / archived，只在「系统现有文件」栏有意义 ——
- * 回收站栏固定 recycled、该参数不落地址）/ 上传人 uploadedBy=<id>[,<id>…]（**多选**：逗号分隔、去重保序，
- * 2026-10-09 追订「别的筛选也是同理 要支持多选」）/ 页码 page；缺省（current 栏 + 无筛选 + 第 1 页）不落参数。
+ * 文件回收站固定 recycled、项目回收站固定 filter[recycled]=true，该参数不落地址）/
+ * 上传人 uploadedBy=<id>[,<id>…]（**多选**：逗号分隔、去重保序，2026-10-09 追订「别的筛选也是同理 要支持多选」）/
+ * 页码 page；缺省（current 栏 + 无筛选 + 第 1 页）不落参数。
  *【2026-10-09 追订】类型 docType 参数整条撤除（业务口径「文件类型不需要 因为没有明确的绑定机制」—— 库内文件
  * 没有类型绑定点、列与筛选恒空；任务侧的「输出成果文件」是任务字段，不受影响）。
  */
@@ -148,7 +149,7 @@ export const WORKSPACE_BASE_HASH = "#/my-tasks";
 /** 「操作记录」页地址（头像菜单「退出登录」下方入口；筛选态走 query，缺省不落参数）。 */
 export const AUDIT_BASE_HASH = "#/audit";
 
-/** 「文件库」页地址（头像菜单「文件库」入口；两栏 + 筛选态走 query，缺省不落参数）—— Push 261。 */
+/** 「文件库」页地址（头像菜单「文件库」入口；系统现有文件 / 文件回收站 / 项目回收站三栏 + 筛选态走 query）—— Push 261。 */
 export const FILES_BASE_HASH = "#/files";
 
 /**
@@ -734,13 +735,14 @@ export function replaceAuditQuery(query: AuditQueryState): void {
   }
 }
 
-/** 「文件库」页状态筛选白名单（四档在库状态；回收站栏不吃该参数 —— 固定 filter[status]=recycled，见 FileLibraryPage）。 */
+/** 「文件库」页状态筛选白名单（四档在库状态；文件回收站固定 filter[status]=recycled，项目回收站不吃该参数）。 */
 const FILES_STATUS_KEYS: readonly string[] = ["draft", "final", "changed", "archived"];
 
 /**
- * 解析「文件库」页的 query 串（tab=recycled&q=图纸&project=<id>[,<id>…]&status=draft,final&uploadedBy=<id>[,<id>…]&page=2）。
- * id / 关键字 / 枚举的兜底复用操作记录页同一套（trim + 长度兜底 200 / 白名单）；逗号多值逐个校验、去重保序，
- * 不认识的值一律丢弃不报错；status 只在 current 栏解析（recycled 栏恒空，地址里也不落）。
+ * 解析「文件库」页的 query 串（tab=project-recycled&q=图纸&project=<id>[,<id>…]&status=draft,final&uploadedBy=<id>[,<id>…]&page=2）。
+ * tab=recycled 兼容为「文件回收站」，tab=project-recycled =「项目回收站」；id / 关键字 / 枚举的兜底复用操作记录页同一套
+ * （trim + 长度兜底 200 / 白名单）；逗号多值逐个校验、去重保序，不认识的值一律丢弃不报错；
+ * status 只在 current 栏解析（两个回收站栏恒空，地址里也不落）。
  */
 export function parseFilesQuery(search: string): FilesQueryState {
   const params = new Map<string, string>();
@@ -754,7 +756,9 @@ export function parseFilesQuery(search: string): FilesQueryState {
       params.set(key, safeDecode(separator === -1 ? "" : chunk.slice(separator + 1)));
     }
   }
-  const tab: FilesTab = params.get("tab") === "recycled" ? "recycled" : "current";
+  const tabParam = params.get("tab");
+  const tab: FilesTab =
+    tabParam === "project-recycled" ? "project-recycled" : tabParam === "recycled" ? "recycled" : "current";
   const pageRaw = Number(params.get("page") ?? "");
   return {
     tab,
@@ -800,8 +804,8 @@ function parseAuditIdList(raw: string | null): string[] {
  *  参数固定序 tab → q → project → status → uploadedBy → page。 */
 export function buildFilesHash(query: FilesQueryState): string {
   const parts: string[] = [];
-  if (query.tab === "recycled") {
-    parts.push("tab=recycled");
+  if (query.tab !== "current") {
+    parts.push("tab=" + query.tab);
   }
   if (query.keyword !== null) {
     parts.push("q=" + encodeURIComponent(query.keyword));

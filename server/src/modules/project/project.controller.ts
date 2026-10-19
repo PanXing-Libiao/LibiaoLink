@@ -17,6 +17,7 @@ import {
   ProjectGroupPutBodySchema,
   ProjectListQuerySchema,
   ProjectMemberCreateBodySchema,
+  ProjectRecycleActionBodySchema,
   ProjectUpdateBodySchema,
   UuidSchema,
   z,
@@ -24,7 +25,7 @@ import {
 import { AppError } from "../../common/errors/app-error.js";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
-import { ProjectAccessGuard, ProjectScope, RequirePermission } from "../permission/index.js";
+import { AllowDeletedProjectAccess, ProjectAccess, ProjectAccessGuard, ProjectScope, RequirePermission } from "../permission/index.js";
 import { TranslateService } from "../translate/index.js";
 import type { ProjectScopeFilter } from "../permission/index.js";
 import { ProjectGroupService } from "./project-group.service.js";
@@ -32,13 +33,14 @@ import type { ProjectGroupBindingView } from "./project-group.service.js";
 import { ProjectMemberService } from "./project-member.service.js";
 import type { ProjectMemberListResult, ProjectMemberView } from "./project-member.service.js";
 import { ProjectService } from "./project.service.js";
-import type { ProjectFacetsResult, ProjectListResult, ProjectView } from "./project.service.js";
+import type { ProjectFacetsResult, ProjectListResult, ProjectPurgeResult, ProjectView } from "./project.service.js";
 
 type ProjectListQuery = z.infer<typeof ProjectListQuerySchema>;
 type ProjectCreateBody = z.infer<typeof ProjectCreateBodySchema>;
 type ProjectUpdateBody = z.infer<typeof ProjectUpdateBodySchema>;
 type ProjectMemberCreateBody = z.infer<typeof ProjectMemberCreateBodySchema>;
 type ProjectGroupPutBody = z.input<typeof ProjectGroupPutBodySchema>;
+type ProjectRecycleActionBody = z.infer<typeof ProjectRecycleActionBodySchema>;
 
 /** 路径参数 id 校验：非法 uuid 直接 400 VALIDATION_FAILED（不落到 SQL 层）。 */
 const uuidParam = new ZodValidationPipe(UuidSchema);
@@ -124,7 +126,7 @@ export class ProjectsController {
     return project;
   }
 
-  /** 软删（M2-01 · A5）：If-Match 回传当前 version 防误删；返回被删项目（此后列表 / 详情 / facets 均不可见）。需 project.delete。 */
+  /** 移入项目回收站（2026-10-19）：If-Match 回传当前 version 防误删；返回 deleted_at 已置位的项目。需 project.delete。 */
   @Delete(":id")
   @RequirePermission("project.delete")
   remove(
@@ -133,6 +135,34 @@ export class ProjectsController {
     @CurrentActorId() actorId: string,
   ): Promise<ProjectView> {
     return this.projects.deleteProject(id, parseIfMatch(ifMatch), actorId);
+  }
+
+  /** 从项目回收站恢复：路径项目允许已软删，记录级可见与 project.delete 仍由守卫判定。 */
+  @Post(":id/restore")
+  @HttpCode(200)
+  @ProjectAccess("project")
+  @AllowDeletedProjectAccess()
+  @RequirePermission("project.delete")
+  restore(
+    @Param("id", uuidParam) id: string,
+    @Body(new ZodValidationPipe(ProjectRecycleActionBodySchema)) body: ProjectRecycleActionBody,
+    @CurrentActorId() actorId: string,
+  ): Promise<ProjectView> {
+    return this.projects.restoreProject(id, body, actorId);
+  }
+
+  /** 彻底删除项目：仅系统管理员（服务层硬闸）；数据库聚合 + projects/{id}/ 对象前缀一并清理。 */
+  @Post(":id/purge")
+  @HttpCode(200)
+  @ProjectAccess("project")
+  @AllowDeletedProjectAccess()
+  @RequirePermission("project.delete")
+  purge(
+    @Param("id", uuidParam) id: string,
+    @Body(new ZodValidationPipe(ProjectRecycleActionBodySchema)) body: ProjectRecycleActionBody,
+    @CurrentActorId() actorId: string,
+  ): Promise<ProjectPurgeResult> {
+    return this.projects.purgeProject(id, body, actorId);
   }
 
   /** 成员名册（M2-05）：项目经理在前，同角色按工号升序；项目不存在 / 已软删统一 404。 */

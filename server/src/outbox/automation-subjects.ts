@@ -290,7 +290,7 @@ export class AutomationSubjectReader {
     const projectRows = await client
       .select({ id: projects.id, managerIds: projects.managerIds })
       .from(projects)
-      .where(inArray(projects.id, projectIds));
+      .where(and(inArray(projects.id, projectIds), isNull(projects.deletedAt)));
     const managerByProject = new Map(projectRows.map((row) => [row.id, row.managerIds[0] ?? null]));
     const groupProjectIds = await this.enabledGroupProjectIds(projectIds, client);
     const progressByProject = await this.projectProgress(projectIds, client);
@@ -305,6 +305,8 @@ export class AutomationSubjectReader {
     const nameById = await this.userNames([...nameIds], client);
     const fileCountByTask = await this.taskFileCounts(rows.map((row) => row.id), client);
     for (const row of rows) {
+      // 项目已进回收站 / 已删除：丢弃迟到事件，避免继续生成提醒。
+      if (!managerByProject.has(row.projectId)) continue;
       // 多负责人只取首位（数组顺序 = 展示顺序）：单收件人口径随 M5-06 定案（README 登记）。
       const ownerId = row.ownerIds[0] ?? null;
       const managerId = managerByProject.get(row.projectId) ?? null;

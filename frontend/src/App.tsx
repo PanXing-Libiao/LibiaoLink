@@ -367,8 +367,8 @@ export default function App() {
   };
 
   /**
-   * 删除项目（A5；Push 172 接上入口）：硬删（连同聚合子表物理删）+ If-Match 回传当前 version 防误删；卡片上的删除是隐式的，
-   * 点一下先出确认条（项目是数据级操作），确认后才调 DELETE —— 成功后 dataVersion +1 刷新列表 / 详情。
+   * 删除项目（A5；2026-10-19 起 = 移入项目回收站）：If-Match 回传当前 version 防误删；卡片上的删除是隐式的，
+   * 点一下先出确认条，确认后才调 DELETE —— 项目聚合数据与图片保留，可在文件库 > 项目回收站恢复。
    */
   const handleConfirmDeleteProject = async (): Promise<void> => {
     const project = pendingDelete;
@@ -676,7 +676,7 @@ export default function App() {
             }}
             className="rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
           >
-            {t("common.delete")}
+            {t("app.delete.confirm")}
           </button>
         </div>
       )}
@@ -810,7 +810,7 @@ export default function App() {
     // 筛选态走地址（replaceFilesQuery，地址即状态）—— 与 #/audit 同一口径；数据 = 逐项目聚合（FileLibraryPage.tsx）。
     return (
       <>
-        <FileLibraryPage me={state.me} query={route.query} onChangeQuery={replaceFilesQuery} directory={directory} />
+        <FileLibraryPage me={state.me} query={route.query} onChangeQuery={replaceFilesQuery} directory={directory} dicts={dicts} />
         {bottomBars}
       </>
     );

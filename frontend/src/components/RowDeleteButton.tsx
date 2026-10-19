@@ -12,10 +12,16 @@ import { useT } from "../i18n";
 export function RowDeleteButton({
   onDelete,
   label,
+  text,
   scope = "default",
+  wide = false,
 }: {
   onDelete: () => void;
   label?: string;
+  /** 悬停胶囊里的可见文字（缺省「删除」）；项目回收站用「彻底删除」。 */
+  text?: string;
+  /** 加宽展开态（四个汉字 / 英文长文案）。 */
+  wide?: boolean;
   /**
    * 显示作用域（Push 181 业务口径「为什么我鼠标放上去全显示了 我不要这样的」）：
    * `default` = 随**最近的 `group`**（任务表行 / 项目卡片 / 任务节点卡片自己那一个）浮现；
@@ -25,24 +31,26 @@ export function RowDeleteButton({
   scope?: "default" | "panel";
 }) {
   const t = useT();
-  const text = label ?? t("row.delete.task");
+  const ariaLabel = label ?? t("row.delete.task");
+  const visibleText = text ?? t("common.delete");
   return (
     <button
       type="button"
-      aria-label={text}
-      title={text}
+      aria-label={ariaLabel}
+      title={ariaLabel}
       onClick={(event) => {
         event.stopPropagation();
         onDelete();
       }}
       onKeyDown={(event) => event.stopPropagation()}
       className={
-        "group/del relative flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-transparent text-zinc-300 opacity-0 transition-[width,background-color,color,opacity] duration-300 ease-out hover:w-12 hover:bg-red-500 hover:text-white focus-visible:w-12 focus-visible:bg-red-500 focus-visible:text-white focus-visible:opacity-100 focus-visible:outline-none " +
+        "group/del relative flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-transparent text-zinc-300 opacity-0 transition-[width,background-color,color,opacity] duration-300 ease-out hover:bg-red-500 hover:text-white focus-visible:bg-red-500 focus-visible:text-white focus-visible:opacity-100 focus-visible:outline-none " +
+        (wide ? "hover:w-20 focus-visible:w-20 " : "hover:w-12 focus-visible:w-12 ") +
         (scope === "panel" ? "group-hover/panel:opacity-100" : "group-hover:opacity-100")
       }
     >
       <span className="pointer-events-none absolute -translate-y-3 text-[11px] font-semibold opacity-0 transition-all duration-300 group-hover/del:translate-y-0 group-hover/del:opacity-100 group-focus-visible/del:translate-y-0 group-focus-visible/del:opacity-100">
-        {t("common.delete")}
+        {visibleText}
       </span>
       <svg
         viewBox="0 0 448 512"
