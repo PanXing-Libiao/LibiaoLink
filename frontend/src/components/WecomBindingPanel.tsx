@@ -460,24 +460,7 @@ export function WecomBindingPanel(props: {
   const codeDisabled = busy !== null || retryLeft > 0;
   return (
     <div data-wecom-binding="unbound">
-      {props.variant === "page" ? (
-        <>
-          <p className="flex flex-wrap items-center gap-2 text-sm text-zinc-800">
-            <span className="rounded-full border border-zinc-200 bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">
-              {t("settings.bind.unbound")}
-            </span>
-            <span className="text-xs text-zinc-500">{t("settings.bind.unboundHint")}</span>
-          </p>
-          <p className="mt-2 text-xs leading-5 text-zinc-500">{t("settings.bind.steps")}</p>
-        </>
-      ) : null}
-      <div
-        className={
-          props.variant === "page"
-            ? "mt-3 flex flex-wrap items-center gap-3"
-            : "flex flex-wrap items-center gap-3"
-        }
-      >
+      <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"
           data-wecom-binding-get-code="true"
@@ -502,9 +485,6 @@ export function WecomBindingPanel(props: {
           </span>
         ) : null}
       </div>
-      {props.variant === "page" ? (
-        <p className="mt-2 text-xs leading-5 text-zinc-400">{t("settings.bind.pollHint")}</p>
-      ) : null}
       {codeBlock}
       {diagnosticsBlock}
     </div>
