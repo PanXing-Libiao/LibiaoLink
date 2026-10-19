@@ -11,3 +11,12 @@ export type { OutboxAlert, OutboxAlertCode, OutboxAlertSink, OutboxAlertThreshol
 export type { OutboxHandleOutcome, OutboxTopicHandler } from "./handler.js";
 export { backoffDelayMs, defaultTopicPolicy, PREVIEW_BACKOFF_MAX_MS, previewTopicPolicy, resolveOutboxPolicies } from "./policy.js";
 export type { OutboxTopicPolicy } from "./policy.js";
+export {
+  createDrainOnlyHandler,
+  OUTBOX_CONSUMER_TOPICS,
+  OUTBOX_DRAIN_ONLY_TOPICS,
+  OUTBOX_TOPIC_ROLES,
+  registerConsumerTopic,
+  registerDrainOnlyTopics,
+} from "./topic-catalog.js";
+export type { OutboxTopicRole } from "./topic-catalog.js";

@@ -9,6 +9,7 @@ import type { OutboxClaimedRow } from "../src/db/outbox.store.js";
 import { PREVIEW_JOB_TOPIC } from "../src/modules/file/index.js";
 import { NOTIFY_GROUP_TOPIC, NOTIFY_MESSAGE_TOPIC } from "../src/modules/notify/index.js";
 import { buildRegistry } from "../src/outbox/outbox.module.js";
+import { OUTBOX_DRAIN_ONLY_TOPICS } from "../src/outbox/topic-catalog.js";
 
 function makeEnv(overrides: Record<string, string> = {}): Env {
   return loadEnv({
@@ -126,5 +127,21 @@ describe("Outbox 消费注册表（M5-03-5-4 接线段）", () => {
   it("预览开关：PREVIEW_JOB_ENABLED=true 注册 preview.job；false（缺省）不注册", () => {
     expect(makeRegistry(makeEnv()).registry.has(PREVIEW_JOB_TOPIC)).toBe(false);
     expect(makeRegistry(makeEnv({ PREVIEW_JOB_ENABLED: "true" })).registry.has(PREVIEW_JOB_TOPIC)).toBe(true);
+  });
+
+  it("drain-only 全量注册：无业务订阅的主题也领取并 done，不再永久积压", async () => {
+    const h = makeRegistry(makeEnv());
+    const registeredDrainOnly = [...h.registry.keys()]
+      .filter((topic) => OUTBOX_DRAIN_ONLY_TOPICS.includes(topic))
+      .sort();
+
+    expect(registeredDrainOnly).toEqual([...OUTBOX_DRAIN_ONLY_TOPICS].sort());
+    expect(h.registry.size).toBe(OUTBOX_DRAIN_ONLY_TOPICS.length + 1);
+    const row = { ...claimedRow(null, 9), topic: "task.created" as const };
+    await expect(h.registry.get("task.created")?.handle(row)).resolves.toEqual({ outcome: "done" });
+    expect(h.notify.calls).toHaveLength(0);
+    expect(h.groupNotify.calls).toHaveLength(0);
+    expect(h.appNotify.calls).toHaveLength(0);
+    expect(h.dmNotify.calls).toHaveLength(0);
   });
 });

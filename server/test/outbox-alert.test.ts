@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { OUTBOX_TOPICS, type OutboxTopic } from "@libiaolink/contracts";
+import { ClockService } from "../src/common/clock/clock.service.js";
 import { AppConfig } from "../src/config/config.module.js";
 import type { Env } from "../src/config/env.js";
 import type { OutboxStatsSnapshot, OutboxStore } from "../src/db/outbox.store.js";
@@ -11,6 +13,7 @@ import {
   type OutboxAlertThresholds,
 } from "../src/outbox/alert.js";
 import { OutboxAlertProbe } from "../src/outbox/probe.js";
+import type { OutboxTopicHandler } from "../src/outbox/handler.js";
 import { ALERT_SUPPRESS_MS, WecomAlertSink } from "../src/outbox/wecom-alert.sink.js";
 
 /** S7-1 告警门禁：阈值判定（纯函数）与探针接线（读快照 → 发告警）。 */
@@ -20,9 +23,12 @@ const THRESHOLDS: OutboxAlertThresholds = { backlogMax: 1000, oldestDueMs: 90000
 const ENV = {
   OUTBOX_ALERT_BACKLOG_MAX: 1000,
   OUTBOX_ALERT_OLDEST_MS: 900000,
+  OUTBOX_ALERT_REPEAT_MS: 21600000,
   OUTBOX_ALERT_DEAD_RECENT_MAX: 1,
   OUTBOX_ALERT_DEAD_WINDOW_MS: 3600000,
 } as unknown as Env;
+
+const REGISTERED_TOPICS = new Set<string>(OUTBOX_TOPICS);
 
 function snapshot(overrides: Partial<OutboxStatsSnapshot> = {}): OutboxStatsSnapshot {
   return { duePending: 0, oldestDueMs: null, deadRecent: 0, deadTotal: 0, byTopic: [], ...overrides };
@@ -34,8 +40,12 @@ function backlog(topic: string, due: number, oldestMs: number): OutboxTopicBackl
 
 describe("evaluateOutboxAlerts（S7-1 阈值判定）", () => {
   it("积压超阈值：warn + 主题明细（按积压排序截前 5）", () => {
-    const topics = Array.from({ length: 7 }, (_, index) => backlog("topic." + index, 7 - index, 1000));
-    const alerts = evaluateOutboxAlerts(snapshot({ duePending: 1001, oldestDueMs: 1000, byTopic: topics }), THRESHOLDS);
+    const topics = OUTBOX_TOPICS.slice(0, 7).map((topic, index) => backlog(topic, 7 - index, 1000));
+    const alerts = evaluateOutboxAlerts(
+      snapshot({ duePending: 1001, oldestDueMs: 1000, byTopic: topics }),
+      THRESHOLDS,
+      REGISTERED_TOPICS,
+    );
 
     const backlogAlert = alerts.find((alert) => alert.code === "outbox.backlog");
     expect(backlogAlert).toMatchObject({ level: "warn", detail: { duePending: 1001 } });
@@ -43,19 +53,19 @@ describe("evaluateOutboxAlerts（S7-1 阈值判定）", () => {
   });
 
   it("积压等于阈值不告警（严格大于才报）", () => {
-    expect(evaluateOutboxAlerts(snapshot({ duePending: 1000, oldestDueMs: 1000 }), THRESHOLDS)).toHaveLength(0);
+    expect(evaluateOutboxAlerts(snapshot({ duePending: 1000, oldestDueMs: 1000 }), THRESHOLDS, REGISTERED_TOPICS)).toHaveLength(0);
   });
 
   it("最老待领取超阈值：error；无积压（oldestDueMs = null）不告警", () => {
-    const alerts = evaluateOutboxAlerts(snapshot({ duePending: 1, oldestDueMs: 900001 }), THRESHOLDS);
+    const alerts = evaluateOutboxAlerts(snapshot({ duePending: 1, oldestDueMs: 900001 }), THRESHOLDS, REGISTERED_TOPICS);
     expect(alerts).toHaveLength(1);
     expect(alerts[0]).toMatchObject({ code: "outbox.oldest_due", level: "error" });
 
-    expect(evaluateOutboxAlerts(snapshot({ oldestDueMs: null }), THRESHOLDS)).toHaveLength(0);
+    expect(evaluateOutboxAlerts(snapshot({ oldestDueMs: null }), THRESHOLDS, REGISTERED_TOPICS)).toHaveLength(0);
   });
 
   it("近期死信 >= 阈值：error（默认 1 = 窗口内出现任何死信都告警）", () => {
-    const alerts = evaluateOutboxAlerts(snapshot({ deadRecent: 1, deadTotal: 3 }), THRESHOLDS);
+    const alerts = evaluateOutboxAlerts(snapshot({ deadRecent: 1, deadTotal: 3 }), THRESHOLDS, REGISTERED_TOPICS);
 
     expect(alerts).toHaveLength(1);
     expect(alerts[0]).toMatchObject({ code: "outbox.dead_letter", level: "error" });
@@ -66,9 +76,29 @@ describe("evaluateOutboxAlerts（S7-1 阈值判定）", () => {
     const alerts = evaluateOutboxAlerts(
       snapshot({ duePending: 5000, oldestDueMs: 3600000, deadRecent: 2, deadTotal: 2 }),
       THRESHOLDS,
+      REGISTERED_TOPICS,
     );
 
     expect(alerts.map((alert) => alert.code).sort()).toEqual(["outbox.backlog", "outbox.dead_letter", "outbox.oldest_due"]);
+  });
+
+  it("待领取主题无消费者：error + 只列未消费主题（drain-only / 已注册主题不误报）", () => {
+    const alerts = evaluateOutboxAlerts(
+      snapshot({
+        duePending: 12,
+        oldestDueMs: 1000,
+        byTopic: [backlog("task.created", 10, 1000), backlog("task.updated", 2, 1000)],
+      }),
+      THRESHOLDS,
+      new Set(["task.updated"]),
+    );
+
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({
+      code: "outbox.unconsumed_topic",
+      level: "error",
+      detail: { duePending: 10, byTopic: [backlog("task.created", 10, 1000)] },
+    });
   });
 });
 
@@ -91,11 +121,25 @@ class FakeAlertSink implements OutboxAlertSink {
   }
 }
 
-function makeProbe(): { probe: OutboxAlertProbe; store: FakeStatsStore; sink: FakeAlertSink } {
+const START_MS = Date.parse("2026-10-19T00:00:00Z");
+
+function makeProbe(options: { registeredTopics?: readonly OutboxTopic[] } = {}): {
+  probe: OutboxAlertProbe;
+  store: FakeStatsStore;
+  sink: FakeAlertSink;
+  setNowMs: (value: number) => void;
+} {
   const store = new FakeStatsStore();
   const sink = new FakeAlertSink();
-  const probe = new OutboxAlertProbe(store as unknown as OutboxStore, sink, new AppConfig(ENV));
-  return { probe, store, sink };
+  let nowMs = START_MS;
+  const clock = new ClockService();
+  clock.setSource(() => new Date(nowMs));
+  const handler: OutboxTopicHandler = { handle: async () => ({ outcome: "done" }) };
+  const registry = new Map<OutboxTopic, OutboxTopicHandler>(
+    (options.registeredTopics ?? OUTBOX_TOPICS).map((topic): [OutboxTopic, OutboxTopicHandler] => [topic, handler]),
+  );
+  const probe = new OutboxAlertProbe(store as unknown as OutboxStore, sink, new AppConfig(ENV), registry, clock);
+  return { probe, store, sink, setNowMs: (value: number) => { nowMs = value; } };
 }
 
 describe("OutboxAlertProbe.probeOnce（S7-1）", () => {
@@ -143,15 +187,52 @@ describe("OutboxAlertProbe.probeOnce（S7-1）", () => {
     expect(sink.emitted).toHaveLength(3);
   });
 
-  it("水位线只收敛死信：其它告警照常每轮判定", async () => {
-    const { probe, store } = makeProbe();
+  it("状态告警冷却：首轮立即报，冷却内静默，到期复报；死信继续按水位线抑制", async () => {
+    const { probe, store, setNowMs } = makeProbe();
     store.current = snapshot({ duePending: 1001, oldestDueMs: 1000, deadRecent: 1, deadTotal: 1 });
 
     const first = await probe.probeOnce();
     expect(first.map((alert) => alert.code).sort()).toEqual(["outbox.backlog", "outbox.dead_letter"]);
 
     const second = await probe.probeOnce();
-    expect(second.map((alert) => alert.code)).toEqual(["outbox.backlog"]);
+    expect(second).toHaveLength(0);
+
+    setNowMs(START_MS + ENV.OUTBOX_ALERT_REPEAT_MS);
+    const repeated = await probe.probeOnce();
+    expect(repeated.map((alert) => alert.code)).toEqual(["outbox.backlog"]);
+  });
+
+  it("恢复通知：状态告警回到阈值内只发一次恢复，后续健康轮次静默", async () => {
+    const { probe, store, sink } = makeProbe();
+    store.current = snapshot({ duePending: 1001, oldestDueMs: 1000 });
+    expect((await probe.probeOnce()).map((alert) => alert.code)).toEqual(["outbox.backlog"]);
+
+    store.current = snapshot({ duePending: 0, oldestDueMs: null });
+    const recovered = await probe.probeOnce();
+    expect(recovered.map((alert) => alert.code)).toEqual(["outbox.backlog.recovered"]);
+    expect(await probe.probeOnce()).toHaveLength(0);
+    expect(sink.emitted.map((alert) => alert.code)).toEqual(["outbox.backlog", "outbox.backlog.recovered"]);
+  });
+
+  it("未消费主题：运行时报告并带主题明细；排空后发恢复", async () => {
+    const topics = OUTBOX_TOPICS.filter((topic) => topic !== "task.created");
+    const { probe, store } = makeProbe({ registeredTopics: topics });
+    store.current = snapshot({
+      duePending: 10,
+      oldestDueMs: 1000,
+      byTopic: [backlog("task.created", 10, 1000)],
+    });
+
+    const alerts = await probe.probeOnce();
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({
+      code: "outbox.unconsumed_topic",
+      detail: { duePending: 10, byTopic: [backlog("task.created", 10, 1000)] },
+    });
+
+    store.current = snapshot();
+    const recovered = await probe.probeOnce();
+    expect(recovered.map((alert) => alert.code)).toEqual(["outbox.unconsumed_topic.recovered"]);
   });
 });
 
