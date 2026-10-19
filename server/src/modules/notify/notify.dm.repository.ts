@@ -274,7 +274,7 @@ export class NotifyDmRepository {
     limit: number,
     client: DbClient = this.database.db,
   ): Promise<{ botId: string | null; inboundCount: number; lastInboundAt: Date | null }[]> {
-    return await client
+    const rows = await client
       .select({
         botId: wecomAibotDmActivations.botId,
         inboundCount: sql<number>`count(*)::int`,
@@ -284,6 +284,16 @@ export class NotifyDmRepository {
       .groupBy(wecomAibotDmActivations.botId)
       .orderBy(desc(sql`max(${wecomAibotDmActivations.lastMessageAt})`))
       .limit(limit);
+    // 驱动对聚合列 max(timestamptz) 的解析结果可能是字符串（与列选不同）；统一归一成 Date，
+    // 避免上层 .toISOString() 在真实 PG 上炸 500（E2E 实测）。
+    return rows.map((row) => {
+      const value = row.lastInboundAt as Date | string | null;
+      return {
+        botId: row.botId,
+        inboundCount: row.inboundCount,
+        lastInboundAt: value === null ? null : value instanceof Date ? value : new Date(value),
+      };
+    });
   }
 
   /**
