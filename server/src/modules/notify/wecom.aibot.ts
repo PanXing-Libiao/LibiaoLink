@@ -306,7 +306,13 @@ export class WecomAibotClient {
    * 单聊回调无 `chatid`，回复不依赖寻址）；body = 单帧收敛流式回复 `{ msgtype: "stream", stream: { id, finish: true, content } }`。
    * 限速：仍按目标会话桶计入（官方口径「回复 + 主动推送合计」同一配额）—— 被拒 = 不回复（回执属尽力而为，不影响绑定落库）。
    */
-  async replyToCallback(params: { reqId: string; userid: string; content: string }): Promise<AibotSendResult> {
+  async replyToCallback(params: {
+    reqId: string;
+    userid: string;
+    content: string;
+    /** 群聊回调传 chatid：限速计入该群桶；单聊不传，沿用 userid 单聊桶。 */
+    chatid?: string | null;
+  }): Promise<AibotSendResult> {
     if (this.state !== "subscribed" || this.socket === null) {
       return {
         ok: false,
@@ -318,7 +324,10 @@ export class WecomAibotClient {
         state: this.state,
       };
     }
-    const rate = await this.options.limiter.tryConsume("single", userBucketId(params.userid), this.now());
+    const rate =
+      params.chatid === undefined || params.chatid === null || params.chatid === ""
+        ? await this.options.limiter.tryConsume("single", userBucketId(params.userid), this.now())
+        : await this.options.limiter.tryConsume("group", chatBucketId(params.chatid), this.now());
     if (!rate.ok) {
       const refused = rate.windows.find((state) => state.count > state.limit);
       return {

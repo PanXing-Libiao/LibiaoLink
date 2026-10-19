@@ -65,6 +65,21 @@ export class NotifyGroupRepository {
     return rows[0] ?? null;
   }
 
+  /** 群名命令：更新已绑定群的展示名（不改寻址 / 权限；调用方负责命令解析与长度校验）。 */
+  async setGroupName(
+    chatid: string,
+    name: string,
+    at: Date,
+    client: DbClient = this.database.db,
+  ): Promise<WecomGroupRow | null> {
+    const rows = await client
+      .update(wecomGroups)
+      .set({ name, updatedAt: at })
+      .where(eq(wecomGroups.chatid, chatid))
+      .returning();
+    return rows[0] ?? null;
+  }
+
   /**
    * 未绑定群回调暂存（自动发现）：同 chatid upsert，保留首次发现时间并刷新最后活跃时间；
    * 回调没有群名时不清空已有名称。读面由 project 模块按候选 id 解析，不在这里暴露全文。
