@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, ilike, inArray, isNotNull, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { AppError } from "../../common/errors/app-error.js";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
@@ -92,7 +92,7 @@ const SORT_COLUMNS = {
   seqNo: projects.seqNo,
 } as const;
 
-/** project 数据访问（M2-01 / M2-04）：删除（Push 190 起 = 物理删聚合）、历史软删行过滤（deleted_at 兼容列）与 updated_at 触点（ADR-022）都收敛在本层。 */
+/** project 数据访问（M2-01 / M2-04）：项目回收站（软删 / 恢复 / 彻底删除）、历史软删行过滤与 updated_at 触点（ADR-022）都收敛在本层。 */
 @Injectable()
 export class ProjectRepository {
   constructor(private readonly database: DatabaseService) {}
@@ -193,7 +193,7 @@ export class ProjectRepository {
       return row;
     } catch (error) {
       if (isUniqueViolation(error, "projects_code_key")) {
-        throw new AppError("PROJECT_CODE_EXISTS", "项目编号已存在：" + input.code);
+        throw new AppError("PROJECT_CODE_EXISTS", "项目编号已存在（含项目回收站中的项目）：" + input.code);
       }
       throw error;
     }
@@ -228,6 +228,43 @@ export class ProjectRepository {
     return rows[0] ?? null;
   }
 
+  /** 事务内锁项目行：恢复 / 彻底删除 / 回收并发判定共用，防「刚恢复又被清理」竞态。 */
+  async lockRowById(id: string, client: DbClient = this.database.db): Promise<ProjectRow | null> {
+    const rows = await client.select().from(projects).where(eq(projects.id, id)).limit(1).for("update");
+    return rows[0] ?? null;
+  }
+
+  /** DELETE /projects/{id}：乐观锁下写 deleted_at / deleted_by，version + 1；不动物理数据。 */
+  async recycleWithVersion(
+    id: string,
+    expectedVersion: number,
+    at: Date,
+    actorId: string,
+    client: DbClient = this.database.db,
+  ): Promise<ProjectRow | null> {
+    const rows = await client
+      .update(projects)
+      .set({ deletedAt: at, deletedBy: actorId, version: sql`${projects.version} + 1`, updatedAt: at })
+      .where(and(eq(projects.id, id), eq(projects.version, expectedVersion), isNull(projects.deletedAt)))
+      .returning();
+    return rows[0] ?? null;
+  }
+
+  /** POST /projects/{id}/restore：清 deleted_at / deleted_by，version + 1；仅回收站行可恢复。 */
+  async restoreWithVersion(
+    id: string,
+    expectedVersion: number,
+    at: Date,
+    client: DbClient = this.database.db,
+  ): Promise<ProjectRow | null> {
+    const rows = await client
+      .update(projects)
+      .set({ deletedAt: null, deletedBy: null, version: sql`${projects.version} + 1`, updatedAt: at })
+      .where(and(eq(projects.id, id), eq(projects.version, expectedVersion), isNotNull(projects.deletedAt)))
+      .returning();
+    return rows[0] ?? null;
+  }
+
   /** 阶段推进 / 回退：projects.stage_key 前移 / 回移 + 同事务刷新 updated_at（ADR-022 / ADR-023）。 */
   async setStageKey(id: string, stageKey: string, at: Date, client: DbClient = this.database.db): Promise<void> {
     await client
@@ -237,8 +274,8 @@ export class ProjectRepository {
   }
 
   /**
-   * 硬删（Push 190 · 业务口径「删除要硬删不要软删，同一编号删了要能再建」）：
-   * 同事务按外键依赖序清空项目聚合子表 → 删 projects 行；编号随行一起释放。
+   * 彻底删除（仅项目回收站中的行）：同事务按外键依赖序清空项目聚合子表 → 删 projects 行；编号随行一起释放。
+   * 调用方须先锁行并校验 version；对象存储的 `projects/{id}/` 前缀由 ProjectService 在同事务内清理。
    * 子表顺序（全部 NO ACTION 外键，顺序错会撞 FK）：
    *   issue_events → task_events → 置空 files.current_version_id（files ⇄ file_versions 循环外键，删版本行前必须解环）
    *   → file_versions → files → change_requests → issues → daily_reports
@@ -277,7 +314,7 @@ export class ProjectRepository {
     await client.delete(projectStakeholders).where(eq(projectStakeholders.projectId, id));
     const rows = await client
       .delete(projects)
-      .where(and(eq(projects.id, id), eq(projects.version, expectedVersion), isNull(projects.deletedAt)))
+      .where(and(eq(projects.id, id), eq(projects.version, expectedVersion), isNotNull(projects.deletedAt)))
       .returning();
     const project = rows[0];
     if (project === undefined) {
@@ -321,7 +358,7 @@ export class ProjectRepository {
 
 /** 列表 / facets 共用的 WHERE 条件（同一 filter 构造器，禁止两套 SQL）。scope 为记录级可见集（h6）。 */
 function projectConditions(filter: ProjectFilter, scope: ProjectScopeFilter): SQL[] {
-  const conditions: SQL[] = [isNull(projects.deletedAt)];
+  const conditions: SQL[] = [filter.recycled ? isNotNull(projects.deletedAt) : isNull(projects.deletedAt)];
   if (scope.kind === "ids") conditions.push(inArray(projects.id, scope.ids));
   if (filter.regions !== null) conditions.push(inArray(projects.region, filter.regions));
   if (filter.projectTypes !== null) conditions.push(inArray(projects.projectType, filter.projectTypes));

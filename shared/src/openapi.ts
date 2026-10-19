@@ -16,6 +16,8 @@ import {
   ProjectMemberCreateBodySchema,
   ProjectMemberListResponseSchema,
   ProjectMemberSchema,
+  ProjectPurgeResponseSchema,
+  ProjectRecycleActionBodySchema,
   ProjectSchema,
   ProjectSummarySchema,
   ProjectUpdateBodySchema,
@@ -294,15 +296,45 @@ export function buildOpenApiDocument() {
     method: "delete",
     path: "/api/v1/projects/{id}",
     tags: ["projects"],
-    summary: "删除项目（物理删：连同任务 / 流程节点 / 阶段 / 成员 / 干系人 / 日报 / 问题 / 变更 / 文件；编号随行释放可再建；If-Match 回传当前 version 防误删）",
+    summary: "删除项目（移入项目回收站：仅置 deleted_at / deleted_by，聚合数据与图片保留；If-Match 回传当前 version 防误删）",
     request: { params: idParams, headers: ProjectDeleteHeadersSchema },
     responses: {
-      200: { description: "已物理删除（删除前快照与子表行数写审计；列表 / 详情 / facets / 搜索不再返回；同编号可再建）", ...json(ProjectSchema) },
+      200: { description: "已移入项目回收站（普通列表 / 详情 / facets / 搜索不再返回；可在项目回收站恢复或彻底删除）", ...json(ProjectSchema) },
       400: commonErrors[400],
       404: commonErrors[404],
       409: commonErrors[409],
     },
   });
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/restore",
+    tags: ["projects"],
+    summary: "从项目回收站恢复（清 deleted_at / deleted_by；权限 project.delete；回到删除前状态）",
+    request: { params: idParams, body: json(ProjectRecycleActionBodySchema) },
+    responses: {
+      200: { description: "恢复后的项目", ...json(ProjectSchema) },
+      400: commonErrors[400],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/purge",
+    tags: ["projects"],
+    summary: "彻底删除项目（仅系统管理员：删库内项目聚合数据 + 对象存储 projects/{id}/ 全部对象与版本）",
+    request: { params: idParams, body: json(ProjectRecycleActionBodySchema) },
+    responses: {
+      200: { description: "彻底删除完成", ...json(ProjectPurgeResponseSchema) },
+      400: commonErrors[400],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
   registry.registerPath({
     method: "post",
     path: "/api/v1/projects/{id}/archive",

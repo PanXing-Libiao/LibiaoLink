@@ -205,8 +205,15 @@ for (let i = 0; i < 50 && hubReady !== true; i += 1) {
 }
 await sleep(1200);
 
+// 首登「绑定企业微信」引导是遮罩层，先按产品允许的「稍后再说」关闭，避免挡住头像菜单。
+const guideSkipPoint = await ev("(function(){var b=document.querySelector(" + j("[data-wecom-binding-guide-skip]") + ");if(b===null){return null;}var r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
+if (guideSkipPoint !== null && guideSkipPoint !== undefined) {
+  await clickAt(guideSkipPoint);
+  await waitFor("document.querySelector(" + j("[data-wecom-binding-guide]") + ") === null", 5000);
+}
+
 // ① 头像菜单：「操作记录」在「退出登录」下方（audit.view 画像在场）
-const avatarPoint = await ev("(function(){var b=document.querySelector(" + j("button[aria-haspopup=menu]") + ");if(b===null){return null;}var r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
+const avatarPoint = await ev("(function(){var b=document.querySelector(" + j("[data-account-trigger]") + ");if(b===null){return null;}var r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
 if (avatarPoint === null || avatarPoint === undefined) { await bail("头像按钮找不到"); }
 await clickAt(avatarPoint);
 let menuReady = await waitFor("document.querySelector(" + j("[data-account-audit]") + ") !== null", 8000);
@@ -214,8 +221,8 @@ if (menuReady !== true) { await bail("头像菜单里没有「操作记录」入
 const menuInfo = await ev("(function(){var a=document.querySelector(" + j("[data-account-audit]") + ");var box=a.parentElement;var items=box.querySelectorAll(" + j("[role=menuitem]") + ");var list=[];for(var i=0;i<items.length;i+=1){var it=items[i];var r=it.getBoundingClientRect();list.push({text:String(it.textContent).trim(),href:it.getAttribute(" + j("href") + "),y:Math.round(r.top),h:Math.round(r.height)});}var ra=a.getBoundingClientRect();return {items:list,auditText:String(a.textContent).trim(),auditHref:a.getAttribute(" + j("href") + "),auditY:Math.round(ra.top)};})()");
 const menuShot = await shot("audit-menu", { x: 900, y: 0, width: 600, height: 220, scale: 1 });
 console.log("截图：" + menuShot);
-check("头像菜单：三枚菜单项、首枚 = 退出登录、次枚 = 操作记录（href = #/audit）、三枚 = 文件库（href = #/files）", menuInfo !== null && menuInfo.items.length === 3 && menuInfo.items[0].text === "退出登录" && menuInfo.auditText === "操作记录" && menuInfo.auditHref === "#/audit" && menuInfo.items[2].text === "文件库" && menuInfo.items[2].href === "#/files", JSON.stringify(menuInfo));
-check("「操作记录」在「退出登录」下方（同一菜单内、纵向相邻）", menuInfo !== null && menuInfo.auditY > menuInfo.items[0].y && menuInfo.auditY - menuInfo.items[0].y < 48, menuInfo === null ? "null" : "auditY " + String(menuInfo.auditY) + " / logoutY " + String(menuInfo.items[0].y));
+check("头像菜单：四枚菜单项、设置 / 退出登录 / 操作记录（href = #/audit）/ 文件库（href = #/files）", menuInfo !== null && menuInfo.items.length === 4 && menuInfo.items[0].text === "设置" && menuInfo.items[1].text === "退出登录" && menuInfo.auditText === "操作记录" && menuInfo.auditHref === "#/audit" && menuInfo.items[3].text === "文件库" && menuInfo.items[3].href === "#/files", JSON.stringify(menuInfo));
+check("「操作记录」在「退出登录」下方（同一菜单内、纵向相邻）", menuInfo !== null && menuInfo.auditY > menuInfo.items[1].y && menuInfo.auditY - menuInfo.items[1].y < 48, menuInfo === null ? "null" : "auditY " + String(menuInfo.auditY) + " / logoutY " + String(menuInfo.items[1].y));
 
 // ② 点入口 → #/audit（缺省无 query）、首屏 50 条封顶 + 总数
 const clicked = await clickSelector("[data-account-audit]");

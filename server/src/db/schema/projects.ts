@@ -34,7 +34,7 @@ export const projects = pgTable(
     version: integer("version").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-    /** deleted_at / deleted_by（0009）：软删（A5）；列表 / 详情 / facets 一律过滤 deleted_at is null。 */
+    /** deleted_at / deleted_by：项目回收站（2026-10-19）；普通列表 / 详情 / facets 过滤 deleted_at is null，回收站显式 filter[recycled]=true。 */
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     deletedBy: uuid("deleted_by"),
     /** archived_at / archived_by（0036 · ADR-027 · M7-04）：归档端点置位（成对）；归档后写路径一律 409 PROJECT_ARCHIVED。 */
@@ -42,12 +42,14 @@ export const projects = pgTable(
     archivedBy: uuid("archived_by"),
   },
   (table) => [
+    // 编号全局唯一：项目在回收站期间仍占用，彻底删除后才释放（不能用 deleted_at 部分唯一索引）。
     unique("projects_code_key").on(table.code),
     unique("uq_projects_seq_no").on(table.seqNo),
     index("ix_projects_facets").on(table.region, table.projectType),
     index("ix_projects_manager_ids").using("gin", table.managerIds),
     index("ix_projects_stage").on(table.status, table.stageKey),
     index("ix_projects_active_updated").on(desc(table.updatedAt)).where(sql`deleted_at is null`),
+    index("ix_projects_recycled_updated").on(desc(table.updatedAt)).where(sql`deleted_at is not null`),
     check(
       "ck_projects_stage_key",
       sql`${table.stageKey} in ${sql.raw(sqlValueList(STAGE_KEYS))}`,
@@ -55,6 +57,7 @@ export const projects = pgTable(
     check("ck_projects_status", sql`${table.status} in ${sql.raw(sqlValueList(["active", "paused", "done", "archived"]))}`),
     check("ck_projects_version", sql`${table.version} >= 0`),
     check("ck_projects_archived_pair", sql`(${table.archivedAt} is null) = (${table.archivedBy} is null)`),
+    check("ck_projects_deleted_pair", sql`(${table.deletedAt} is null) = (${table.deletedBy} is null)`),
     check("ck_projects_manager_ids", sql`cardinality(${table.managerIds}) >= 1`),
     check("ck_projects_manager_ids_no_null", sql`array_position(${table.managerIds}, null::uuid) is null`),
     check("ck_projects_seq_no", sql`${table.seqNo} > 0`),

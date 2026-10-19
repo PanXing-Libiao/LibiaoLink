@@ -393,6 +393,7 @@ export function AppHeader({ me, project }: AppHeaderProps) {
           <div ref={menuRef} className="relative">
             <button
               type="button"
+              data-account-trigger="true"
               title={displayName + " · " + contact}
               aria-label={t("header.account")}
               aria-haspopup="menu"

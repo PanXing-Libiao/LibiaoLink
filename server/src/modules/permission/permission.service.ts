@@ -87,11 +87,15 @@ export class PermissionService {
     return { kind: "ids", ids: await this.repository.listVisibleProjectIds(actorId, spec) };
   }
 
-  /** 解析项目上下文：不可见 / 不存在 / 已软删统一返回 null（调用方转 404）。 */
-  async resolveProjectAccess(actorId: string, projectId: string): Promise<ProjectAccessContext | null> {
+  /** 解析项目上下文：不可见 / 不存在返回 null（调用方转 404）；回收站写口可选包含已软删项目。 */
+  async resolveProjectAccess(
+    actorId: string,
+    projectId: string,
+    options: { includeDeleted?: boolean } = {},
+  ): Promise<ProjectAccessContext | null> {
     const spec = projectScopeSpec(await this.getAuthorization(actorId));
     const ref = await this.repository.findProjectRef(projectId);
-    if (ref === null || ref.deletedAt !== null) return null;
+    if (ref === null || (ref.deletedAt !== null && options.includeDeleted !== true)) return null;
     const membershipRole = await this.repository.findMembership(actorId, projectId);
     const rosterMember = membershipRole !== null;
     const managerOfRecord = ref.managerIds.includes(actorId);
@@ -105,9 +109,13 @@ export class PermissionService {
     return { projectId, member: rosterMember || managerOfRecord, projectManager };
   }
 
-  /** 记录级门禁：不可见 → 404（防 IDOR，ADR-011 不变量 3）。 */
-  async assertProjectVisible(actorId: string, projectId: string): Promise<ProjectAccessContext> {
-    const access = await this.resolveProjectAccess(actorId, projectId);
+  /** 记录级门禁：不可见 → 404（防 IDOR，ADR-011 不变量 3）；includeDeleted 仅供项目回收站恢复 / 彻底删除。 */
+  async assertProjectVisible(
+    actorId: string,
+    projectId: string,
+    options: { includeDeleted?: boolean } = {},
+  ): Promise<ProjectAccessContext> {
+    const access = await this.resolveProjectAccess(actorId, projectId, options);
     if (access === null) throw new AppError("NOT_FOUND", "项目不存在或不可见");
     return access;
   }

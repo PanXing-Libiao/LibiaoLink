@@ -26,6 +26,7 @@ index.ts              # 唯一公开出口
 - **定档不覆盖物理对象**：版本与内容哈希进键（`object-key.ts`），历史对象天然不可变。
 - **键形态（ADR-006 定案 2026-09-21）**：会话先写暂存键 `…/staging/{sessionId}`，complete 时 `copyObject` 一次复制到契约键 `…/v{seq}/{contentHash}.{ext}`，再 `purgeObject` 清理暂存；落库 `file_versions.object_key` 始终是契约形态。单对象 > 5 GiB 需 UploadPartCopy —— 一期由 `UPLOAD_MAX_SIZE_MB`（默认 2048，启动校验 ≤ 5120）挡在 5 GiB 以内。
 - **彻底删除按版本删**：桶开启版本控制后，不带 `versionId` 的 `DeleteObject` 只写 delete marker、数据版本永不回收（lifecycle 已不作为清理手段）→ 一律走 `purgeObject`（`ListObjectVersions` + 批量 `DeleteObjects` 带 `VersionId`）；暂存清理与 M4-02 回收站同口径。
+- **前缀清理兼容未开版本控制**：`purgePrefix` 先按 `ListObjectVersions` 清全部版本；若 S3 实现（本地 MinIO 实测）对未开版本控制的桶返回空集，则回退 `ListObjectsV2` 按当前对象键普通删除 —— 空桶仍返回 0，绝不把“没列到”误报成“已删掉”。
 - **api 不代理大文件流量**：分片与下载都走预签名 URL（短时）。
 
 ## 错误映射（`toApiError`）

@@ -41,6 +41,7 @@ import type {
   PartUploadUrlInput,
   GetObjectResult,
   PurgeObjectResult,
+  PurgePrefixResult,
   PutObjectInput,
   SignedUrl,
   UploadedPart,
@@ -552,6 +553,11 @@ class FakeObjectStorage extends ObjectStorage {
   async purgeObject(objectKey: string): Promise<PurgeObjectResult> {
     this.purged.push(objectKey);
     return { deletedVersions: 1, deleteMarkers: 0 };
+  }
+
+  async purgePrefix(prefix: string): Promise<PurgePrefixResult> {
+    this.purged.push(prefix);
+    return { deletedVersions: 0, deleteMarkers: 0, deletedObjects: 0 };
   }
 
   async copyObject(input: CopyObjectInput): Promise<CopyObjectResult> {

@@ -104,6 +104,11 @@ export interface PurgeObjectResult {
   deleteMarkers: number;
 }
 
+export interface PurgePrefixResult extends PurgeObjectResult {
+  /** 覆盖到的唯一对象键数（含未开启版本控制时的普通对象）。 */
+  deletedObjects: number;
+}
+
 export abstract class ObjectStorage {
   abstract readonly bucket: string;
 
@@ -148,6 +153,11 @@ export abstract class ObjectStorage {
    * 2026-09-21 真机确认）。
    */
   abstract purgeObject(objectKey: string): Promise<PurgeObjectResult>;
+  /**
+   * **按前缀彻底删除**：删掉 `prefix` 下所有对象键的全部版本与 delete marker。
+   * 项目彻底删除用（`projects/{projectId}/`）；实现必须分页列举、批量删除，且前缀为空时拒绝执行。
+   */
+  abstract purgePrefix(prefix: string): Promise<PurgePrefixResult>;
   /**
    * 服务端复制（complete 时 `…/staging/{sessionId}` → 契约键）；源对象超过单次复制上限时
    * 抛 `object_too_large`（一期由 `UPLOAD_MAX_SIZE_MB` 校验挡在上限内）。

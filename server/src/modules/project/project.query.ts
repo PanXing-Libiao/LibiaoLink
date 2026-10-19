@@ -20,6 +20,8 @@ export interface ProjectFilter {
   createdToExclusive: Date | null;
   /** 归档年份（C4-07 归档检索）：filter[archivedYear] 四位年份多值；按 archived_at 的 Asia/Shanghai 年判定。 */
   archivedYears: number[] | null;
+  /** 项目回收站：true = 仅已软删项目；false = 仅未删除项目。列表 / facets 共用。 */
+  recycled: boolean;
 }
 
 export type ProjectSortField = "updatedAt" | "createdAt" | "seqNo";
@@ -39,6 +41,7 @@ export interface ProjectListQueryInput {
   "filter[timeFrom]"?: string | undefined;
   "filter[timeTo]"?: string | undefined;
   "filter[archivedYear]"?: string | undefined;
+  "filter[recycled]"?: "true" | "false" | undefined;
   q?: string | undefined;
   page: number;
   limit: number;
@@ -88,6 +91,10 @@ export function buildProjectFilter(query: ProjectListQueryInput): ProjectFilter 
     throw new AppError("VALIDATION_FAILED", "filter[timeFrom] 不能晚于 filter[timeTo]");
   }
   const keyword = query.q?.trim() ?? "";
+  const recycled = query["filter[recycled]"];
+  if (recycled !== undefined && recycled !== "true" && recycled !== "false") {
+    throw new AppError("VALIDATION_FAILED", "filter[recycled] 仅支持 true / false");
+  }
   return {
     regions: splitMulti(query["filter[region]"]),
     projectTypes: splitMulti(query["filter[projectType]"]),
@@ -98,6 +105,7 @@ export function buildProjectFilter(query: ProjectListQueryInput): ProjectFilter 
     createdFrom,
     createdToExclusive: toDayStart === null ? null : new Date(toDayStart.getTime() + DAY_MS),
     archivedYears: archivedYears === null ? null : archivedYears.map((year) => Number(year)),
+    recycled: recycled === "true",
   };
 }
 

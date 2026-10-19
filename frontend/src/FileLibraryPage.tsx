@@ -1,17 +1,31 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError } from "./api";
+import { cardBorderOf, cardTintOf, useBackgroundTier, useCardWatermark } from "./backgroundTier";
 import { AppHeader } from "./components/AppHeader";
+import { Card } from "./components/Card";
 import { FilePreviewOverlay } from "./components/FilePreviewOverlay";
 import { FileTypeIcon } from "./components/FileTypeIcon";
 import { Loader } from "./components/Loader";
 import { SearchInput } from "./components/SearchInput";
 import { SearchSelect } from "./components/SearchSelect";
 import { Toast } from "./components/Toast";
+import { regionNameEn } from "./data/regionPicker";
+import { dictLabel, typeAccent, type Dicts } from "./dicts";
 import type { DirectoryUser } from "./directory";
 import { keepLiveOrder } from "./liveSync";
 import { useLiveRefresh } from "./useLiveRefresh";
 import { prefetchZhToEn } from "./translateApi";
-import { statusText, textOf, useLocale, useLocalizedTranslator, useT, type Locale, type TextKey } from "./i18n";
+import {
+  projectStatusTextOf,
+  projectTypeText,
+  statusText,
+  textOf,
+  useLocale,
+  useLocalizedTranslator,
+  useT,
+  type Locale,
+  type TextKey,
+} from "./i18n";
 import {
   ensurePreviewOutcome,
   fetchDownloadUrl,
@@ -24,8 +38,15 @@ import {
   type FilePreviewKind,
   type PreviewViewerConfig,
 } from "./fileApi";
-import { useMyPermissions } from "./permissions";
-import { fetchProjectList, formatDateTime, type ApiProject } from "./projectApi";
+import { hasPermission, useMyPermissions } from "./permissions";
+import {
+  fetchProjectList,
+  fetchRecycledProjects,
+  formatDateTime,
+  purgeProject,
+  restoreProject,
+  type ApiProject,
+} from "./projectApi";
 import type { MeResponse } from "./types";
 import { EMPTY_FILES_QUERY, EMPTY_LIST_QUERY, type FilesQueryState, type FilesTab } from "./useHashRoute";
 
@@ -92,6 +113,11 @@ type LibraryState =
   | { kind: "error"; message: string }
   | { kind: "ready"; items: FileLibraryItem[] };
 
+type ProjectRecycleState =
+  | { kind: "loading" }
+  | { kind: "error"; message: string }
+  | { kind: "ready"; items: ApiProject[] };
+
 type PreviewState = {
   pane: { mode: "url"; url: string } | { mode: "viewer"; viewer: PreviewViewerConfig };
   name: string;
@@ -102,10 +128,11 @@ type PreviewState = {
 
 type Notice = { kind: "ok" | "error"; text: string };
 
-/** 两栏（顺序 = 标签栏顺序；Push 301：label 存词典键，随语言切换）。 */
+/** 三栏（顺序 = 标签栏顺序；Push 301：label 存词典键，随语言切换）。 */
 const TABS: ReadonlyArray<{ key: FilesTab; label: TextKey }> = [
   { key: "current", label: "lib.tab.current" },
   { key: "recycled", label: "lib.tab.recycled" },
+  { key: "project-recycled", label: "lib.tab.projectRecycled" },
 ];
 
 /** 写失败 → 面向业务的提示（错误码口径《前端功能需求》§3.7；Push 301：提示随语言切换）。 */
@@ -125,11 +152,13 @@ function friendlyError(locale: Locale, action: string, error: unknown): string {
   return textOf(locale, "lib.err.network", { action });
 }
 
-export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
+export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: {
   me: MeResponse;
   query: FilesQueryState;
   onChangeQuery: (next: FilesQueryState) => void;
   directory: readonly DirectoryUser[];
+  /** 项目类型主题色、地区水印与卡片背景档位同首页项目空间。 */
+  dicts: Dicts;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -138,14 +167,18 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
   const [state, setState] = useState<LibraryState>({ kind: "loading" });
   const [projects, setProjects] = useState<ApiProject[] | null>(null);
   const liveProjectsRef = useRef<ApiProject[] | null>(null);
+  const [projectRecycleState, setProjectRecycleState] = useState<ProjectRecycleState>({ kind: "loading" });
   const [reloadTick, setReloadTick] = useState(0);
   const [notice, setNotice] = useState<Notice | null>(null);
   const permissions = useMyPermissions();
+  const backgroundTier = useBackgroundTier();
+  const cardWatermark = useCardWatermark();
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [previewBusy, setPreviewBusy] = useState<string | null>(null);
   const [downloadBusy, setDownloadBusy] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [purgeConfirmId, setPurgeConfirmId] = useState<string | null>(null);
+  const [projectPurgeConfirmId, setProjectPurgeConfirmId] = useState<string | null>(null);
 
   // 关键字防抖（与首页列表 / 操作记录页同口径）：输入时不每敲一个字打一次接口，250ms 内的最后一次生效
   const [debouncedKeyword, setDebouncedKeyword] = useState(query.keyword ?? "");
@@ -180,12 +213,42 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
     };
   }, [reloadTick, locale]);
 
+  // 项目回收站：独立读口 GET /projects?filter[recycled]=true；卡片沿用项目空间视觉，不复用文件聚合。
+  useEffect(() => {
+    if (query.tab !== "project-recycled") {
+      return;
+    }
+    let alive = true;
+    setProjectRecycleState((previous) => (previous.kind === "ready" ? previous : { kind: "loading" }));
+    fetchRecycledProjects()
+      .then((payload) => {
+        prefetchZhToEn(payload.items.map((project) => project.name));
+        if (alive) {
+          setProjectRecycleState({ kind: "ready", items: payload.items });
+        }
+      })
+      .catch(() => {
+        if (alive) {
+          setProjectRecycleState({ kind: "error", message: t("lib.projectRecycleLoadFailed") });
+        }
+      });
+    return () => {
+      alive = false;
+    };
+  }, [query.tab, reloadTick, locale]);
+
   // 多选筛选键（2026-10-09 追订）：数组引用每次解析都会变，用逗号串当依赖键，防误触发整页重取；
   // 上传人是内存过滤（见文件头）：不进 fetch 依赖 —— 勾选 / 取消只重算派生列表、不重发请求。
   const projectIdKey = query.projectIds.join(",");
   const statusKey = query.statuses.join(",");
 
   useLiveRefresh(["files", "projects", "permissions", "users"], async () => {
+    if (query.tab === "project-recycled") {
+      const recycled = await fetchRecycledProjects();
+      return () => {
+        setProjectRecycleState({ kind: "ready", items: recycled.items });
+      };
+    }
     const list = await fetchProjectList(EMPTY_LIST_QUERY);
     const targetIds = projectIdKey === "" ? [] : projectIdKey.split(",");
     const targets = targetIds.length === 0 ? list.items : list.items.filter((project) => targetIds.includes(project.id));
@@ -198,11 +261,11 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
       setProjects(nextProjects);
       setState((previous) => previous.kind === "ready" ? { kind: "ready", items: keepLiveOrder(previous.items, results.flat()) } : previous);
     };
-  }, query.tab + ":" + projectIdKey + ":" + statusKey + ":" + debouncedKeyword + ":" + String(reloadTick), projects !== null && state.kind === "ready");
+  }, query.tab + ":" + projectIdKey + ":" + statusKey + ":" + debouncedKeyword + ":" + String(reloadTick), query.tab === "project-recycled" ? projectRecycleState.kind === "ready" : projects !== null && state.kind === "ready");
 
   // 文件列表：按项目列表逐项目取满再合并（见文件头「数据面」；单项目失败跳过；多选 = 选中项目并集）。
   useEffect(() => {
-    if (projects === null) {
+    if (projects === null || query.tab === "project-recycled") {
       return;
     }
     if (liveProjectsRef.current === projects) { liveProjectsRef.current = null; return; }
@@ -237,9 +300,11 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
     };
   }, [projects, debouncedKeyword, query.tab, projectIdKey, statusKey, reloadTick]);
 
-  // 权限画像（与 AppHeader 共用同一份进程内单飞缓存）：只用来裁决「彻底删除」入口的渲染 —— 服务端逐请求仍是最终裁决
-
+  // 权限画像（与 AppHeader 共用同一份进程内单飞缓存）：只用来裁决恢复 / 彻底删除入口的渲染 —— 服务端逐请求仍是最终裁决。
   const isAdmin = permissions !== null && permissions.roleCodes.includes("admin");
+  const canDeleteProject = hasPermission(permissions, "project.delete");
+  const isProjectRecycle = query.tab === "project-recycled";
+  const recycledProjects = projectRecycleState.kind === "ready" ? projectRecycleState.items : [];
 
   // 上传人多选 = 内存过滤（服务端 filter[uploadedBy] 单值口径，见文件头）：空选不筛、多选取并集。
   const visibleItems =
@@ -257,6 +322,10 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
   const userNameOf = (id: string | null): string => (id === null ? "—" : userNameById.get(id) ?? id);
   const projectCodeOf = (id: string): string => projectById.get(id)?.code ?? "—";
   const projectNameOf = (id: string): string => projectById.get(id)?.name ?? "—";
+  const projectWatermarkOf = (regionCode: string): string => {
+    const label = dictLabel(dicts, "region", regionCode);
+    return locale === "zh" ? label : regionNameEn(label) || label;
+  };
 
   const patchFilter = (patch: Partial<FilesQueryState>): void => {
     onChangeQuery({ ...query, ...patch, page: 1 });
@@ -268,7 +337,9 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
     if (tab === query.tab) {
       return;
     }
-    // 换栏保留项目 / 关键字 / 上传人（两栏都成立的筛选），状态清掉（只在系统现有文件栏有语义）
+    // 换栏保留项目 / 关键字 / 上传人，状态清掉（只在系统现有文件栏有语义）；两处彻底删除确认条一并收起。
+    setPurgeConfirmId(null);
+    setProjectPurgeConfirmId(null);
     onChangeQuery({ ...query, tab, statuses: [], page: 1 });
   };
   const hasFilter =
@@ -380,6 +451,62 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
     }
   };
 
+  /** 项目回收站恢复：项目数据与图片原样保留，成功后从项目回收站列表移除。 */
+  const restoreRecycledProject = async (project: ApiProject): Promise<void> => {
+    if (actionBusy !== null) {
+      return;
+    }
+    setActionBusy(project.id);
+    setNotice(null);
+    setProjectPurgeConfirmId(null);
+    try {
+      await restoreProject(project.id, project.version);
+      setNotice({ kind: "ok", text: t("lib.projectRestored", { name: project.name }) });
+      setReloadTick((tick) => tick + 1);
+    } catch (error) {
+      setNotice({ kind: "error", text: friendlyError(locale, t("lib.act.restore"), error) });
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
+  /** 彻底删除第一下：只挂确认条，不直接调用接口。 */
+  const requestPurgeProject = (project: ApiProject): void => {
+    if (actionBusy !== null) {
+      return;
+    }
+    setNotice(null);
+    setProjectPurgeConfirmId(project.id);
+  };
+
+  /** 彻底删除第二下：服务端同事务清理项目聚合数据；projects/{id}/ 下文件、图片与暂存对象全部按版本删除。 */
+  const confirmPurgeRecycledProject = async (): Promise<void> => {
+    const project =
+      projectPurgeConfirmId === null
+        ? undefined
+        : recycledProjects.find((item) => item.id === projectPurgeConfirmId);
+    if (project === undefined || actionBusy !== null) {
+      return;
+    }
+    setActionBusy(project.id);
+    setNotice(null);
+    try {
+      await purgeProject(project.id, project.version);
+      setProjectPurgeConfirmId(null);
+      setNotice({ kind: "ok", text: t("lib.projectPurged", { name: project.name }) });
+      setReloadTick((tick) => tick + 1);
+    } catch (error) {
+      setNotice({ kind: "error", text: friendlyError(locale, t("lib.act.purge"), error) });
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
+  const projectPurgeTarget =
+    projectPurgeConfirmId === null
+      ? null
+      : recycledProjects.find((project) => project.id === projectPurgeConfirmId) ?? null;
+
   const emptyText = ((): string => {
     if (query.keyword !== null) {
       return t("lib.empty.keyword", { kw: query.keyword });
@@ -393,7 +520,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
   return (
     <div className="min-h-screen">
       <AppHeader me={me} />
-      <main className="w-full px-6 pb-10 pt-3">
+      <main className="@container w-full px-6 pb-10 pt-3">
         <div data-file-library="" className="w-full space-y-4">
           <header className="flex flex-wrap items-end justify-between gap-3">
             <div>
@@ -402,7 +529,13 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
                 {t("lib.subtitle")}
               </p>
             </div>
-            {state.kind === "ready" ? (
+            {isProjectRecycle ? (
+              projectRecycleState.kind === "ready" ? (
+                <p data-file-count="" className="text-xs text-zinc-500">
+                  {t("lib.projectCount", { n: recycledProjects.length })}
+                </p>
+              ) : null
+            ) : state.kind === "ready" ? (
               <p data-file-count="" className="text-xs text-zinc-500">
                 {t("lib.count", { n: total })}
               </p>
@@ -432,6 +565,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
             })}
           </nav>
 
+          {isProjectRecycle ? null : (
           <section className="flex flex-wrap items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2.5">
             <span data-file-filter="keyword" className="w-72 shrink-0">
               <SearchInput
@@ -510,6 +644,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
               </button>
             ) : null}
           </section>
+          )}
 
           {notice === null ? null : (
             <Toast
@@ -522,6 +657,8 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
             />
           )}
 
+          {!isProjectRecycle ? (
+            <>
           {state.kind === "loading" ? (
             <div className="flex justify-center py-16">
               <Loader />
@@ -727,8 +864,120 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory }: {
               </footer>
             </>
           ) : null}
+            </>
+          ) : (
+            <>
+              {projectRecycleState.kind === "loading" ? (
+                <div className="flex justify-center py-16">
+                  <Loader />
+                </div>
+              ) : null}
+
+              {projectRecycleState.kind === "error" ? (
+                <div role="alert" data-project-recycle-error="" className="flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                  <span>{projectRecycleState.message}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReloadTick((tick) => tick + 1);
+                    }}
+                    className="rounded-lg border border-rose-300 px-2.5 py-1 text-xs font-medium transition hover:bg-rose-100"
+                  >
+                    {t("common.retry")}
+                  </button>
+                </div>
+              ) : null}
+
+              {projectRecycleState.kind === "ready" && recycledProjects.length === 0 ? (
+                <div data-project-recycle-empty="true" className="rounded-xl border border-zinc-200 bg-white px-4 py-12 text-center text-sm text-zinc-500">
+                  {t("lib.empty.projectRecycled")}
+                </div>
+              ) : null}
+
+              {projectRecycleState.kind === "ready" && recycledProjects.length > 0 ? (
+                <div data-project-recycle="" className="grid grid-cols-1 gap-6 @md:grid-cols-2 @4xl:grid-cols-3 @6xl:grid-cols-4">
+                  {recycledProjects.map((project) => {
+                    const accent = typeAccent(dicts, project.projectType);
+                    return (
+                      <div key={project.id} data-project-recycle-card={project.id} className="w-full">
+                        <Card
+                          seqNo={project.seqNo}
+                          code={project.code}
+                          description={project.name}
+                          watermark={cardWatermark ? projectWatermarkOf(project.region) : undefined}
+                          watermarkBleed={locale === "zh"}
+                          tint={cardTintOf(backgroundTier, accent.color)}
+                          tintBorder={cardBorderOf(backgroundTier, accent.color)}
+                          vividInk={backgroundTier === "vivid"}
+                          typeLabel={projectTypeText(locale, dictLabel(dicts, "projectType", project.projectType))}
+                          status={project.status}
+                          statusText={projectStatusTextOf(locale, project.status)}
+                          accentColor={accent.color}
+                          accentText={accent.text}
+                          managerNames={project.managerNames.map((name) => (name === null || name === "" ? "—" : name)).join("、")}
+                          time={formatDateTime(project.deletedAt ?? project.updatedAt)}
+                          onRestore={
+                            canDeleteProject
+                              ? () => {
+                                  void restoreRecycledProject(project);
+                                }
+                              : undefined
+                          }
+                          onPurge={
+                            isAdmin
+                              ? () => {
+                                  requestPurgeProject(project);
+                                }
+                              : undefined
+                          }
+                          restoreLabel={t("lib.restore")}
+                          purgeLabel={actionBusy === project.id ? t("lib.projectPurge.busy") : t("lib.purge")}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </>
+          )}
         </div>
       </main>
+      {projectPurgeTarget === null ? null : (
+        <div className="pointer-events-none fixed bottom-6 left-1/2 z-[70] flex w-full max-w-3xl -translate-x-1/2 justify-center px-4">
+          <div
+            role="alertdialog"
+            aria-label={t("lib.projectPurge.aria")}
+            data-project-purge-dialog={projectPurgeTarget.id}
+            className="pointer-events-auto flex flex-wrap items-center justify-center gap-3 rounded-xl border border-rose-200 bg-white px-4 py-2.5 text-sm text-zinc-700 shadow-lg"
+          >
+            <span>
+              {t("lib.projectPurge.lead")}
+              {t("lib.projectPurge.tail", { code: projectPurgeTarget.code, name: projectPurgeTarget.name })}
+            </span>
+            <button
+              type="button"
+              data-project-purge-cancel={projectPurgeTarget.id}
+              onClick={() => {
+                setProjectPurgeConfirmId(null);
+              }}
+              className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              type="button"
+              data-project-purge-confirm={projectPurgeTarget.id}
+              disabled={actionBusy !== null}
+              onClick={() => {
+                void confirmPurgeRecycledProject();
+              }}
+              className="rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {actionBusy === projectPurgeTarget.id ? t("lib.projectPurge.busy") : t("lib.projectPurge.confirm")}
+            </button>
+          </div>
+        </div>
+      )}
       {preview === null ? null : (
         <FilePreviewOverlay
           pane={preview.pane}
