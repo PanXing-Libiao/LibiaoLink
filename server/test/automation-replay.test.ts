@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { addDays, calendarWindow } from "../src/modules/calendar/index.js";
-import { dedupeKey, replayRules, toStageSubject, type ReplayTask } from "../src/modules/automation/index.js";
+import { BUILTIN_RULES, dedupeKey, replayRules, toStageSubject, type ReplayTask } from "../src/modules/automation/index.js";
 
+const ENABLED_TEST_RULES = BUILTIN_RULES.map((rule) => ({ ...rule, enabled: true }));
 const CALENDAR = calendarWindow("2026-09-01", "2026-12-31", [
   { date: "2026-10-01", dayType: "holiday", name: "国庆节", note: null },
 ]);
@@ -36,7 +37,7 @@ function task(overrides: Partial<ReplayTask>): ReplayTask {
 }
 
 function replay(businessDate: string, tasks: ReplayTask[], extra: Record<string, unknown> = {}) {
-  return replayRules({ businessDate, tasks, calendar: CALENDAR, shiftEnabled: false, ...extra });
+  return replayRules({ businessDate, tasks, calendar: CALENDAR, shiftEnabled: false, rules: ENABLED_TEST_RULES, ...extra });
 }
 
 describe("R02 成果文件自动化通知（事件型 · 逐字）", () => {
@@ -225,7 +226,7 @@ describe("A08 大阶段完成播报", () => {
   }
 
   it("阶段推进完成 → 项目群播报，项目与推进人明确", () => {
-    const report = replayRules({ businessDate: "2026-09-23", subjects: [stage("p-1")], calendar: CALENDAR, shiftEnabled: false });
+    const report = replayRules({ businessDate: "2026-09-23", subjects: [stage("p-1")], calendar: CALENDAR, shiftEnabled: false, rules: ENABLED_TEST_RULES });
     expect(report.messages).toHaveLength(1);
     const message = report.messages[0];
     expect(message?.ruleCode).toBe("A08");
@@ -237,7 +238,7 @@ describe("A08 大阶段完成播报", () => {
   });
 
   it("项目未绑定群 → recipient_missing，不误发", () => {
-    const report = replayRules({ businessDate: "2026-09-23", subjects: [stage(null)], calendar: CALENDAR, shiftEnabled: false });
+    const report = replayRules({ businessDate: "2026-09-23", subjects: [stage(null)], calendar: CALENDAR, shiftEnabled: false, rules: ENABLED_TEST_RULES });
     expect(report.messages).toHaveLength(0);
     expect(report.details.find((item) => item.ruleCode === "A08")?.skipped).toBe("recipient_missing");
   });

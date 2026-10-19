@@ -30,6 +30,7 @@ import {
 } from "../src/outbox/automation-wiring.js";
 
 /** 固定时钟：上海 2026-09-24 09:30（事件形态求值与冷启动判据基准）。 */
+const ENABLED_TEST_RULES = BUILTIN_RULES.map((rule) => ({ ...rule, enabled: true }));
 const NOW = new Date(atShanghaiTime("2026-09-24", "09:30"));
 const CALENDAR = calendarWindow("2026-09-01", "2026-09-30", []);
 const DB = { marker: "db" } as unknown as DbClient;
@@ -98,7 +99,7 @@ function makeHarness(overrides: Partial<AutomationWiringDeps> = {}): Harness {
       appended.push({ client, event });
     },
     db: DB,
-    rules: async () => [...BUILTIN_RULES],
+    rules: async () => [...ENABLED_TEST_RULES],
     now: () => NOW,
     shift: async () => ({ reminderShiftEnabled: false, shiftDirection: "forward" }),
     logger: {
@@ -260,7 +261,7 @@ describe("调度生产者（automation-schedule.job → notify.message）", () =
   const TO = new Date(atShanghaiTime("2026-09-24", "09:15"));
 
   it("同窗口重放：幂等键稳定（outbox 唯一约束兜底不重发）", async () => {
-    const rules = BUILTIN_RULES.filter((rule) => rule.code === "A01");
+    const rules = ENABLED_TEST_RULES.filter((rule) => rule.code === "A01");
     const late = new Date(atShanghaiTime("2026-09-24", "19:45"));
     const h = makeHarness({ rules: async () => [...rules], now: () => late });
     h.subjects.windowSubjects = [
@@ -281,7 +282,7 @@ describe("调度生产者（automation-schedule.job → notify.message）", () =
     ]);
   });
   it("A01 双动作合并：同一人多项目 inbox / wecom_aibot 各合并一条（收件人粒度幂等键 + 项目清单）", async () => {
-    const rules = BUILTIN_RULES.filter((rule) => rule.code === "A01");
+    const rules = ENABLED_TEST_RULES.filter((rule) => rule.code === "A01");
     const late = new Date(atShanghaiTime("2026-09-24", "19:45"));
     const h = makeHarness({ rules: async () => [...rules], now: () => late });
     h.subjects.windowSubjects = [
@@ -314,7 +315,7 @@ describe("调度生产者（automation-schedule.job → notify.message）", () =
   });
 
   it("R03 负责人为空：不向 PM 回退，零产出 + recipient_missing 留痕", async () => {
-    const rules = BUILTIN_RULES.filter((rule) => rule.code === "R03");
+    const rules = ENABLED_TEST_RULES.filter((rule) => rule.code === "R03");
     const h = makeHarness({ rules: async () => [...rules] });
     h.subjects.windowSubjects = [
       toTaskSubject(task({ plannedEnd: "2026-09-25", ownerId: null, ownerName: null })),
@@ -328,7 +329,7 @@ describe("调度生产者（automation-schedule.job → notify.message）", () =
   });
 
   it("R03 命中：只产出负责人 notify.message（wecom_aibot · 不通知项目经理）", async () => {
-    const rules = BUILTIN_RULES.filter((rule) => rule.code === "R03");
+    const rules = ENABLED_TEST_RULES.filter((rule) => rule.code === "R03");
     const h = makeHarness({ rules: async () => [...rules] });
     h.subjects.windowSubjects = [toTaskSubject(task({ plannedEnd: "2026-09-25" }))];
 
@@ -354,7 +355,7 @@ describe("调度生产者（automation-schedule.job → notify.message）", () =
   });
 
   it("A02 项目日报命中：产出 notify.group（title 非空 / refType = project / 幂等键 = A02:项目:日期）", async () => {
-    const rules = BUILTIN_RULES.filter((rule) => rule.code === "A02");
+    const rules = ENABLED_TEST_RULES.filter((rule) => rule.code === "A02");
     const late = new Date(atShanghaiTime("2026-09-24", "19:45"));
     const h = makeHarness({ rules: async () => [...rules], now: () => late });
     h.subjects.windowSubjects = [
@@ -388,7 +389,7 @@ describe("调度生产者（automation-schedule.job → notify.message）", () =
   });
 
   it("空主体池：零产出 + note 留痕", async () => {
-    const h = makeHarness({ rules: async () => BUILTIN_RULES.filter((rule) => rule.trigger.kind === "schedule") });
+    const h = makeHarness({ rules: async () => ENABLED_TEST_RULES.filter((rule) => rule.trigger.kind === "schedule") });
 
     const result = await createAutomationScheduleHandler(h.deps).run(jobContext(FROM, TO));
 
