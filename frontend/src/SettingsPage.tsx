@@ -27,7 +27,7 @@ export function SettingsPage({ me }: { me: MeResponse }) {
     <>
       <AppHeader me={me} />
       <main className="w-full px-6 pb-10 pt-3">
-        <div data-settings="" className="w-full max-w-3xl space-y-4">
+        <div data-settings="" className="mx-auto w-full max-w-3xl space-y-4">
           <header>
             <h1 className="text-lg font-semibold text-zinc-900">{t("settings.title")}</h1>
             <p className="mt-0.5 text-xs text-zinc-500">{t("settings.subtitle")}</p>

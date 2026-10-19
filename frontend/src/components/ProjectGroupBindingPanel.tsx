@@ -50,9 +50,7 @@ export function ProjectGroupBindingPanel({ onNotice }: { onNotice: (notice: Bind
   const [candidatesLoading, setCandidatesLoading] = useState(false);
   const [candidatesLoadFailed, setCandidatesLoadFailed] = useState(false);
   const [selectedCandidateId, setSelectedCandidateId] = useState<number | null>(null);
-  const [candidateName, setCandidateName] = useState("");
   const [chatid, setChatid] = useState("");
-  const [manualName, setManualName] = useState("");
   const [editingBinding, setEditingBinding] = useState(false);
   const [confirmUnbind, setConfirmUnbind] = useState(false);
   const [busy, setBusy] = useState<Busy>(null);
@@ -95,15 +93,12 @@ export function ProjectGroupBindingPanel({ onNotice }: { onNotice: (notice: Bind
     setCandidatesLoading(true);
     setCandidatesLoadFailed(false);
     setSelectedCandidateId(null);
-    setCandidateName("");
     setConfirmUnbind(false);
     setEditingBinding(false);
     setChatid("");
-    setManualName("");
     void fetchProjectGroup(selectedProjectId, controller.signal)
       .then((next) => {
         setGroup(next);
-        setManualName(next.name ?? "");
       })
       .catch(() => {
         if (!controller.signal.aborted) {
@@ -161,13 +156,11 @@ export function ProjectGroupBindingPanel({ onNotice }: { onNotice: (notice: Bind
 
   const resetCandidateSelection = (): void => {
     setSelectedCandidateId(null);
-    setCandidateName("");
   };
 
   const handleProjectChange = (projectId: string): void => {
     setSelectedProjectId(projectId);
     setChatid("");
-    setManualName("");
     resetCandidateSelection();
     setEditingBinding(false);
     setConfirmUnbind(false);
@@ -176,7 +169,6 @@ export function ProjectGroupBindingPanel({ onNotice }: { onNotice: (notice: Bind
   const handleStartRebind = (): void => {
     setEditingBinding(true);
     setChatid("");
-    setManualName(group?.name ?? "");
     resetCandidateSelection();
     setConfirmUnbind(false);
   };
@@ -184,13 +176,11 @@ export function ProjectGroupBindingPanel({ onNotice }: { onNotice: (notice: Bind
   const handleCancelRebind = (): void => {
     setEditingBinding(false);
     setChatid("");
-    setManualName(group?.name ?? "");
     resetCandidateSelection();
   };
 
   const handleSelectCandidate = (candidate: ProjectGroupCandidate): void => {
     setSelectedCandidateId(candidate.id);
-    setCandidateName(candidate.name ?? "");
   };
 
   const handleBindCandidate = async (): Promise<void> => {
@@ -200,22 +190,13 @@ export function ProjectGroupBindingPanel({ onNotice }: { onNotice: (notice: Bind
       }
       return;
     }
-    const nextName = candidateName.trim();
-    if (nextName.length > 64) {
-      onNotice({ kind: "error", text: t("settings.group.nameTooLong") });
-      return;
-    }
     setBusy("bind");
     try {
-      const next = await putProjectGroup(selectedProjectId, {
-        candidateId: selectedCandidate.id,
-        name: nextName === "" ? null : nextName,
-      });
+      const next = await putProjectGroup(selectedProjectId, { candidateId: selectedCandidate.id });
       setGroup(next);
       setCandidates((current) => current?.filter((candidate) => candidate.id !== selectedCandidate.id) ?? current);
       resetCandidateSelection();
       setEditingBinding(false);
-      setManualName(next.name ?? "");
       setConfirmUnbind(false);
       onNotice({ kind: "ok", text: next.activated ? t("settings.group.bindOk") : t("settings.group.bindOkPending") });
     } catch (error) {
@@ -231,22 +212,16 @@ export function ProjectGroupBindingPanel({ onNotice }: { onNotice: (notice: Bind
       return;
     }
     const nextChatid = chatid.trim();
-    const nextName = manualName.trim();
     if (!CHATID_RE.test(nextChatid)) {
       onNotice({ kind: "error", text: t("settings.group.invalidChatid") });
       return;
     }
-    if (nextName.length > 64) {
-      onNotice({ kind: "error", text: t("settings.group.nameTooLong") });
-      return;
-    }
     setBusy("bind");
     try {
-      const next = await putProjectGroup(selectedProjectId, { chatid: nextChatid, name: nextName === "" ? null : nextName });
+      const next = await putProjectGroup(selectedProjectId, { chatid: nextChatid });
       setGroup(next);
       setEditingBinding(false);
       setChatid("");
-      setManualName(next.name ?? "");
       resetCandidateSelection();
       setConfirmUnbind(false);
       onNotice({ kind: "ok", text: next.activated ? t("settings.group.bindOk") : t("settings.group.bindOkPending") });
@@ -270,7 +245,6 @@ export function ProjectGroupBindingPanel({ onNotice }: { onNotice: (notice: Bind
     if (groupResult.status === "fulfilled") {
       setGroup(groupResult.value);
       setGroupLoadFailed(false);
-      setManualName(groupResult.value.name ?? "");
       groupOk = true;
     } else {
       onNotice({ kind: "error", text: errorText(groupResult.reason, "settings.group.loadFailed") });
@@ -300,7 +274,6 @@ export function ProjectGroupBindingPanel({ onNotice }: { onNotice: (notice: Bind
       setGroup(next);
       setEditingBinding(false);
       setChatid("");
-      setManualName("");
       resetCandidateSelection();
       setConfirmUnbind(false);
       onNotice({ kind: "ok", text: t("settings.group.unbindOk") });
@@ -590,20 +563,7 @@ export function ProjectGroupBindingPanel({ onNotice }: { onNotice: (notice: Bind
 
                 {selectedCandidate === null ? null : (
                   <div className="mt-3 border-t border-zinc-100 pt-3">
-                    <label className="block">
-                      <span className="mb-1.5 block text-xs font-medium text-zinc-700">{t("settings.group.nameLabel")}</span>
-                      <input
-                        data-project-group-candidate-name=""
-                        className={fieldClass}
-                        value={candidateName}
-                        maxLength={64}
-                        placeholder={t("settings.group.namePlaceholder")}
-                        onChange={(event) => {
-                          setCandidateName(event.target.value);
-                        }}
-                      />
-                    </label>
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
                         data-project-group-candidate-bind=""
@@ -629,38 +589,23 @@ export function ProjectGroupBindingPanel({ onNotice }: { onNotice: (notice: Bind
                   {t("settings.group.manualToggle")}
                 </summary>
                 <form className="mt-3" onSubmit={(event) => void handleBindManual(event)}>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="block">
-                      <span className="mb-1.5 block text-xs font-medium text-zinc-700">{t("settings.group.chatidLabel")}</span>
-                      <input
-                        data-project-group-chatid=""
-                        className={fieldClass + " font-mono"}
-                        value={chatid}
-                        maxLength={128}
-                        autoComplete="off"
-                        autoCapitalize="none"
-                        autoCorrect="off"
-                        spellCheck={false}
-                        placeholder={t("settings.group.chatidPlaceholder")}
-                        onChange={(event) => {
-                          setChatid(event.target.value);
-                        }}
-                      />
-                    </label>
-                    <label className="block">
-                      <span className="mb-1.5 block text-xs font-medium text-zinc-700">{t("settings.group.nameLabel")}</span>
-                      <input
-                        data-project-group-name=""
-                        className={fieldClass}
-                        value={manualName}
-                        maxLength={64}
-                        placeholder={t("settings.group.namePlaceholder")}
-                        onChange={(event) => {
-                          setManualName(event.target.value);
-                        }}
-                      />
-                    </label>
-                  </div>
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-medium text-zinc-700">{t("settings.group.chatidLabel")}</span>
+                    <input
+                      data-project-group-chatid=""
+                      className={fieldClass + " font-mono"}
+                      value={chatid}
+                      maxLength={128}
+                      autoComplete="off"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      placeholder={t("settings.group.chatidPlaceholder")}
+                      onChange={(event) => {
+                        setChatid(event.target.value);
+                      }}
+                    />
+                  </label>
                   <p className="mt-2 text-[11px] leading-5 text-zinc-500">{t("settings.group.chatidHint")}</p>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <button type="submit" data-project-group-bind="" disabled={busy !== null} className={primaryButtonClass}>
