@@ -550,8 +550,8 @@ function buildEnv(overrides = {}) {
     );
 
     const tasks = await db.query(
-      "insert into tasks (project_id, stage_key, sort_index, title, status, progress, priority, owner_ids, deliverable_types, version, planned_start, planned_end, actual_end) values ($1, 'presale', 0, $2, 'done', 1, '高', array[$3::uuid], array['CAD图纸'], 5, null, null, null), ($1, 'presale', 1, $4, 'done', 1, '高', array[$5::uuid], array['CAD图纸'], 1, null, null, null) returning id, version",
-      [projectA, "安装摄像头", owner, "机房布线", owner2],
+      "insert into tasks (project_id, stage_key, sort_index, title, status, progress, priority, owner_ids, deliverable_types, version, planned_start, planned_end, actual_end) values ($1, 'presale', 0, $2, 'done', 1, '高', array[$3::uuid], array['CAD图纸'], 5, null, null, null), ($6, 'presale', 1, $4, 'done', 1, '高', array[$5::uuid], array['CAD图纸'], 1, null, null, null) returning id, version",
+      [projectA, "安装摄像头", owner, "机房布线", owner2, projectB],
     );
     cleanup.taskIds = tasks.rows.map((row) => row.id);
     const taskA = cleanup.taskIds[0];
@@ -859,7 +859,7 @@ function buildEnv(overrides = {}) {
     check(
       "S6e",
       "渠道落地口径（证据九 · M5-03-5-4 接线段）：wecom_aibot 产出已接线（R02 ×2 + A01 ×1 = :aibot 行 3）且 stub 消费全 sent；无「渠道未落地」warn（channelSkipped=0 · 仅余 email）",
-      "渠道未落地 warn=0 / notify.message=7（aibot=3）/ deliveries sent=3 / activations=2",
+      "渠道未落地 warn=0 / notify.message=6（aibot=3）/ deliveries sent=3 / activations=2",
       short({
         skipWarn: wiringLogs.warn.filter((line) => line.includes("渠道未落地")).length,
         messages: await ourMessageCount(),
@@ -868,7 +868,7 @@ function buildEnv(overrides = {}) {
         activations: await activationCount(),
       }),
       wiringLogs.warn.filter((line) => line.includes("渠道未落地")).length === 0 &&
-        (await ourMessageCount()) === 7 &&
+        (await ourMessageCount()) === 6 &&
         (await ourAibotCount()) === 3 &&
         (await ourDeliveryRows()).length === 3 &&
         (await ourDeliveryRows()).every((row) => row.state === "sent") &&
