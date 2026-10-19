@@ -141,13 +141,13 @@ async function bootstrap(): Promise<void> {
     logger.warn("预览转换队列已关闭（PREVIEW_JOB_ENABLED=false）：preview.job 只投递不消费");
   }
 
+  // 首轮告警探针的订阅门（2026-10-19）：WECOM 通道启用时 = waitForSubscribed 的 Promise；未启用 = null（立即探）。
+  let botReady: Promise<boolean> | null = null;
+
   // 企微机器人通道长连接（M5-03-2 接线段 · P5 定案；M5-03-5-4 接线段扩单聊）：凭据齐备才启动 —— 订阅 +
   // 30s 心跳 + 自动重连；回调 ingest 分流 = 单聊（chattype=single → 单聊激活）与群（群会话激活置位）——
   // 主动推送前置（846607 双语义切分依据）。群未配置 = 「只存不投」（与 OutboxModule 注册表门控同口径）；
   // 单聊未配置 = 投递行按未就绪 retry 收敛（bounded）；api 进程同模块但从不 start()（构造无副作用）。
-  // 首轮告警探针需等订阅握手完成再发（WecomAlertSink 在 state=connecting 时会回 retryable）；
-  // 未启用企微时立即探，启用时最多等 10 秒，超时仍照常探（回退日志口径不变）。
-  let botReady: Promise<boolean> = Promise.resolve(true);
   if (env.NOTIFY_DELIVERY_ENABLED === "true" && env.WECOM_BOT_ID !== "" && env.WECOM_BOT_SECRET !== "") {
     aibot.onMessage((message) => {
       // 分流（M5-03-5-4；单聊面 M5-03-5-6 扩绑定码）：单聊回调 → 单聊 ingest（激活登记 + 绑定码命中）；
@@ -162,6 +162,7 @@ async function bootstrap(): Promise<void> {
       });
     });
     aibot.start();
+    // 有界等待订阅：正常 1 秒内完成；失败 / 无网 10 秒后放行首轮探针（回退日志口径不变）。
     botReady = aibot.waitForSubscribed(10_000);
     logger.log("企微智能机器人长连接已启动（群 + 单聊通道：订阅 + 心跳 + 会话激活 ingest）");
   } else {
@@ -272,14 +273,20 @@ async function bootstrap(): Promise<void> {
   // 可执行即时告警（ADR-005）：队列停滞 / 未消费主题；积压与最老等待只在连续无进度时合并升级。
   const probeAlerts = async (): Promise<void> => {
     try {
-      await botReady;
       await alerts.probeOnce();
     } catch (error) {
       logger.error("outbox 告警探针失败：" + messageOf(error));
     }
   };
   const alertProbe = setInterval(() => void probeAlerts(), env.OUTBOX_ALERT_INTERVAL_MS);
-  void probeAlerts();
+  // 首轮探针等企微长连接订阅完成（启动竞态修复）：start() 后立即探测必然拿到 state=connecting →
+  // 告警「发送失败（kind=retryable）」回退日志。未启用企微 = 立即探测；等待有界（10 秒），超时照常探测。
+  void (async () => {
+    if (botReady !== null && !(await botReady)) {
+      logger.warn("企微长连接 10 秒内未完成订阅：首轮告警探针照常执行（发送失败回退结构化日志）");
+    }
+    await probeAlerts();
+  })();
 
   // outbox 日报：恢复通知、死信窗口汇总与当前队列快照；没有内容时只写日志，不推群。
   let digesting = false;
