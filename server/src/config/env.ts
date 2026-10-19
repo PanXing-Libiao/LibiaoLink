@@ -121,6 +121,12 @@ export const EnvSchema = z
     OUTBOX_ALERT_DEAD_RECENT_MAX: z.coerce.number().int().min(1).max(100000).default(1),
     /** 死信「近期」窗口（毫秒）。 */
     OUTBOX_ALERT_DEAD_WINDOW_MS: z.coerce.number().int().min(60000).max(86400000).default(3600000),
+    /** 消费进度窗口（毫秒）：窗口内无 done 行才视为「无进展」，用于过滤正常排空。 */
+    OUTBOX_ALERT_PROGRESS_WINDOW_MS: z.coerce.number().int().min(60000).max(3600000).default(900000),
+    /** 连续无进展的探针轮数：达到后把积压 / 最老等待合并升级为 outbox.queue_stalled。 */
+    OUTBOX_ALERT_STALL_PROBES: z.coerce.number().int().min(1).max(60).default(3),
+    /** outbox 日报间隔（毫秒）：恢复通知与死信汇总只在日报出现；默认 24h。 */
+    OUTBOX_ALERT_DIGEST_INTERVAL_MS: z.coerce.number().int().min(3600000).max(604800000).default(86400000),
     /** 管理员告警群 chatid（企微智能机器人；空 = 告警仅回退结构化日志 —— OUTBOX_ALERT_SINK 出口选择）。 */
     OUTBOX_ALERT_WECOM_CHATID: z.string().default(""),
     /** done 行保留期（天；ADR-005 约 90 天）。 */

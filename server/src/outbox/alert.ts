@@ -10,20 +10,46 @@ export type OutboxAlertCode =
   | "outbox.backlog"
   | "outbox.oldest_due"
   | "outbox.dead_letter"
+  | "outbox.queue_stalled"
   | "outbox.unconsumed_topic"
-  | "outbox.backlog.recovered"
-  | "outbox.oldest_due.recovered"
+  | "outbox.queue_stalled.recovered"
   | "outbox.unconsumed_topic.recovered";
 
 export interface OutboxAlert {
   code: OutboxAlertCode;
   level: "warn" | "error";
   message: string;
+  /** 可执行处置动作；空值告警只记日志，不进入企微即时告警。 */
+  action?: string;
+  /** 对业务 / 用户的影响，随即时告警一起展示。 */
+  impact?: string;
   detail?: Record<string, unknown>;
+}
+
+/** 日报中的恢复条目：恢复不再即时推送，积攒到日报统一展示。 */
+export interface OutboxDailyDigestRecovery {
+  code: OutboxAlertCode;
+  message: string;
+  at: string;
+}
+
+/** outbox 日报：恢复通知 + 死信窗口统计 + 当前队列快照（同一管理员告警群）。 */
+export interface OutboxDailyDigest {
+  generatedAt: string;
+  /** 死信统计窗口（毫秒，默认 24h）。 */
+  windowMs: number;
+  duePending: number;
+  oldestDueMs: number | null;
+  deadRecent: number;
+  deadTotal: number;
+  byTopic: OutboxStatsSnapshot["byTopic"];
+  recoveries: OutboxDailyDigestRecovery[];
+  activeAlerts: OutboxAlertCode[];
 }
 
 export interface OutboxAlertSink {
   emit(alert: OutboxAlert): void;
+  emitDigest(report: OutboxDailyDigest): void;
 }
 
 /** 探针阈值：env 解析入口见 outboxAlertThresholdsFromEnv。 */
@@ -73,6 +99,8 @@ export function evaluateOutboxAlerts(
         " 个待领取主题无消费者（共 " +
         unconsumedPending +
         " 条）",
+      impact: "对应主题事件不会被处理，相关通知 / 业务动作可能缺失。",
+      action: "核对 shared 契约与 OUTBOX_TOPIC_ROLES；补登记消费者或 drain_only 后部署并重启 worker，确认积压排空。",
       detail: { duePending: unconsumedPending, byTopic: unconsumedByTopic.slice(0, 5) },
     });
   }
@@ -107,11 +135,39 @@ export class LogOutboxAlertSink implements OutboxAlertSink {
 
   emit(alert: OutboxAlert): void {
     const detail = alert.detail === undefined ? "" : " —— " + JSON.stringify(alert.detail);
-    const text = "outbox 告警 [" + alert.code + "]：" + alert.message + detail;
+    const impact = alert.impact === undefined ? "" : " · 影响：" + alert.impact;
+    const action = alert.action === undefined ? "" : " · 处置：" + alert.action;
+    const text = "outbox 告警 [" + alert.code + "]：" + alert.message + impact + action + detail;
     if (alert.level === "error") {
       this.logger.error(text);
     } else {
       this.logger.warn(text);
     }
+  }
+
+  emitDigest(report: OutboxDailyDigest): void {
+    const recoveries = report.recoveries.length === 0
+      ? "无"
+      : report.recoveries.map((item) => item.code).join(" / ");
+    const active = report.activeAlerts.length === 0 ? "无" : report.activeAlerts.join(" / ");
+    const byTopic = report.byTopic.length === 0
+      ? "无"
+      : report.byTopic.map((item) => item.topic + " " + item.due).join(" / ");
+    this.logger.log(
+      "outbox 日报：待领取 " +
+        report.duePending +
+        " / 最老 " +
+        (report.oldestDueMs === null ? "无" : Math.round(report.oldestDueMs / 1000) + "s") +
+        " / 窗口死信 " +
+        report.deadRecent +
+        "（累计 " +
+        report.deadTotal +
+        "）/ 恢复 " +
+        recoveries +
+        " / 仍未恢复 " +
+        active +
+        " / 主题 " +
+        byTopic,
+    );
   }
 }

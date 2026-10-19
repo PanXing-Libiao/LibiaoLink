@@ -268,11 +268,18 @@ async function main() {
     );
   }
 
-  // ---- 告警出口（WecomAlertSink · 智能机器人推管理员告警群） ----
+  // ---- 告警出口（WecomAlertSink · 单一管理员告警群 + 可执行即时告警 + 日报） ----
+  const actionable = {
+    code: "outbox.queue_stalled",
+    level: "error",
+    message: "outbox 队列停滞",
+    impact: "通知可能延迟",
+    action: "检查 worker 与消费者",
+  };
   assertEqual(
-    "W1 告警文本：含 code / message（detail 不再原样 JSON 回显）",
-    alert.composeAlertText({ code: "outbox.dead_letter", level: "error", message: "近期死信 2 条", detail: { deadRecent: 2 } }),
-    "【LibiaoLink 告警】outbox.dead_letter\n近期死信 2 条",
+    "W1 即时告警文本：含 code / message / 影响 / 处置（detail 不回显 JSON）",
+    alert.composeAlertText(actionable),
+    "【LibiaoLink 告警】outbox.queue_stalled\noutbox 队列停滞\n影响：通知可能延迟\n处置：检查 worker 与消费者",
   );
 
   const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -285,35 +292,48 @@ async function main() {
         return clientResult;
       },
     };
-    const fallback = { emitted: [], emit(value) { this.emitted.push(value); } };
+    const fallback = {
+      emitted: [],
+      digests: [],
+      emit(value) { this.emitted.push(value); },
+      emitDigest(value) { this.digests.push(value); },
+    };
     const sink = new alert.WecomAlertSink(aibot, ALERT_CHATID, fallback, nowFn ?? (() => 1_000_000));
     return { sink, aibot, fallback };
   };
 
   {
     const { sink, aibot, fallback } = makeAlertSink({ ok: true, attempts: 1 });
-    sink.emit({ code: "outbox.dead_letter", level: "error", message: "近期死信 2 条", detail: { deadRecent: 2 } });
+    sink.emit(actionable);
     await flush();
     assertTrue(
-      "W2 告警群出口：经智能机器人推管理员告警群（chatid + 文本）、不回退",
-      aibot.sends.length === 1 && aibot.sends[0].chatid === ALERT_CHATID && String(aibot.sends[0].content).includes("outbox.dead_letter") && fallback.emitted.length === 0,
+      "W2 可执行告警：经智能机器人推唯一管理员告警群（chatid + 影响 + 处置）",
+      aibot.sends.length === 1 && aibot.sends[0].chatid === ALERT_CHATID && String(aibot.sends[0].content).includes("处置：检查 worker 与消费者") && fallback.emitted.length === 0,
+    );
+  }
+
+  {
+    const { sink, aibot, fallback } = makeAlertSink({ ok: true, attempts: 1 });
+    sink.emit({ code: "outbox.dead_letter", level: "error", message: "近期死信 2 条" });
+    await flush();
+    assertTrue(
+      "W2b 无处置动作的告警：不推群，只回退结构化日志",
+      aibot.sends.length === 0 && fallback.emitted.length === 1 && fallback.emitted[0].code === "outbox.dead_letter",
     );
   }
 
   {
     let nowMs = 1_000_000;
     const { sink, aibot, fallback } = makeAlertSink({ ok: true, attempts: 1 }, () => nowMs);
-    const backlog = { code: "outbox.backlog", level: "warn", message: "积压 1001 条" };
-    const dead = { code: "outbox.dead_letter", level: "error", message: "近期死信 1 条" };
-    sink.emit(backlog);
+    sink.emit(actionable);
     await flush();
     nowMs += alert.ALERT_SUPPRESS_MS - 1;
-    sink.emit(backlog);
-    sink.emit(dead);
+    sink.emit(actionable);
+    sink.emit({ ...actionable, code: "outbox.unconsumed_topic", message: "未消费主题" });
     await flush();
     const suppressedOk = aibot.sends.length === 2;
     nowMs += 1;
-    sink.emit(backlog);
+    sink.emit(actionable);
     await flush();
     assertTrue(
       "W3 告警抑制：同 code 15 分钟内只推首条（不同 code 不受影响）、窗口过期恢复",
@@ -323,7 +343,7 @@ async function main() {
 
   {
     const { sink, aibot, fallback } = makeAlertSink({ ok: false, kind: "retryable", errcode: null, errmsg: "长连接未就绪", retryAt: null, attempts: 0, state: "connecting" });
-    const value = { code: "outbox.oldest_due", level: "error", message: "最老待领取超阈值" };
+    const value = { ...actionable, code: "outbox.unconsumed_topic", message: "未消费主题" };
     sink.emit(value);
     await flush();
     assertTrue(
@@ -334,9 +354,29 @@ async function main() {
 
   {
     const { sink, fallback } = makeAlertSink(new Error("socket 已断开"));
-    sink.emit({ code: "outbox.backlog", level: "warn", message: "积压 1001 条" });
+    sink.emit(actionable);
     await flush();
     assertTrue("W5 告警发送异常（抛错）：回退结构化日志出口（告警链不断）", fallback.emitted.length === 1);
+  }
+
+  {
+    const { sink, aibot, fallback } = makeAlertSink({ ok: true, attempts: 1 });
+    sink.emitDigest({
+      generatedAt: "2026-10-19T05:00:00.000Z",
+      windowMs: 86_400_000,
+      duePending: 0,
+      oldestDueMs: null,
+      deadRecent: 0,
+      deadTotal: 0,
+      byTopic: [],
+      recoveries: [{ code: "outbox.queue_stalled.recovered", message: "队列恢复", at: "2026-10-19T04:50:00.000Z" }],
+      activeAlerts: [],
+    });
+    await flush();
+    assertTrue(
+      "W6 outbox 日报：与即时告警共用同一管理员告警群，恢复项只在日报出现",
+      aibot.sends.length === 1 && aibot.sends[0].chatid === ALERT_CHATID && String(aibot.sends[0].content).includes("【LibiaoLink 日报】outbox") && String(aibot.sends[0].content).includes("outbox.queue_stalled.recovered") && fallback.digests.length === 0,
+    );
   }
 
   const summary = "m5-03-3 应用消息 + 告警出口回放：PASS " + pass + " / FAIL " + fail;
