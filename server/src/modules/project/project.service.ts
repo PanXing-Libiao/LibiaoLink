@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import {
   ProjectFacetsSchema,
   ProjectListResponseSchema,
@@ -36,6 +36,11 @@ type ProjectRecycleActionBody = z.infer<typeof ProjectRecycleActionBodySchema>;
 
 /** 创建时未指定阶段的兜底值：导入蓝图后会被前移到蓝图首个阶段（M2-02）。 */
 const DEFAULT_STAGE_KEY = "presale";
+const DAY_MS = 86_400_000;
+/** 项目回收站保留期：移入后满 30 天由 worker 自动彻底删除（含聚合数据、文件与图片对象）。 */
+export const PROJECT_RECYCLE_RETENTION_DAYS = 30;
+/** 项目到期清理单批上限：每个项目含对象前缀清理，批更小以缩短单轮耗时。 */
+export const PROJECT_RECYCLE_SWEEP_BATCH = 20;
 
 /** 行 → 契约视图（camelCase 对齐；managerNames 随行下发，A2 / A22）。 */
 export function toProjectView(view: ProjectViewRow): ProjectView {
@@ -81,6 +86,8 @@ function projectAuditSnapshot(row: ProjectRow): Record<string, unknown> {
 /** project 用例（M2-01 项目 CRUD + M2-04 首页列表 / facets）。 */
 @Injectable()
 export class ProjectService {
+  private readonly logger = new Logger(ProjectService.name);
+
   constructor(
     private readonly database: DatabaseService,
     private readonly projects: ProjectRepository,
@@ -303,17 +310,82 @@ export class ProjectService {
    */
   async purgeProject(id: string, body: ProjectRecycleActionBody, actorId: string): Promise<ProjectPurgeResult> {
     await this.assertAdmin(actorId);
-    const at = new Date();
+    const result = await this.purgeRecycledProject(
+      id,
+      { actorId, expectedVersion: body.version, reason: "管理员彻底删除" },
+      new Date(),
+    );
+    if (result === null) {
+      throw new AppError("NOT_FOUND", "项目不存在或不可见");
+    }
+    return result;
+  }
+
+  /**
+   * 项目回收站到期清理（worker 每日调用）：移入回收站满 30 天的项目按批彻底删除。
+   * 单个项目失败只告警，不阻断本轮其它项目；并发恢复 / 手动彻底删除在锁内复核后跳过。
+   */
+  async sweepExpiredRecycled(
+    limit: number = PROJECT_RECYCLE_SWEEP_BATCH,
+    now: Date = new Date(),
+  ): Promise<{ scanned: number; purged: number }> {
+    const cutoff = new Date(now.getTime() - PROJECT_RECYCLE_RETENTION_DAYS * DAY_MS);
+    const rows = await this.projects.listExpiredRecycledProjects(cutoff, limit);
+    let purged = 0;
+    for (const row of rows) {
+      try {
+        const result = await this.purgeRecycledProject(
+          row.id,
+          {
+            actorId: null,
+            expectedVersion: row.version,
+            dueBefore: cutoff,
+            reason: "项目回收站到期自动清理",
+          },
+          now,
+        );
+        if (result !== null) purged += 1;
+      } catch (error) {
+        this.logger.warn(
+          "项目回收站到期清理失败：" + row.id + " / " + (error instanceof Error ? error.message : String(error)),
+        );
+      }
+    }
+    return { scanned: rows.length, purged };
+  }
+
+  /**
+   * 项目彻底删除公共链路（管理员手动 / worker 到期自动）：
+   * 锁行后复核回收站、版本与到期时间，再清对象前缀、聚合子表和项目行；任一步失败整体回滚。
+   * actorId = null 表示系统清理；快照过期 / 已恢复时静默跳过，不误删其它项目状态。
+   */
+  private async purgeRecycledProject(
+    id: string,
+    options: {
+      actorId: string | null;
+      expectedVersion?: number;
+      dueBefore?: Date;
+      reason: string;
+    },
+    at: Date,
+  ): Promise<ProjectPurgeResult | null> {
+    const system = options.actorId === null;
     return this.database.db.transaction(async (tx) => {
       const locked = await this.projects.lockRowById(id, tx);
       if (locked === null) {
+        if (system) return null;
         throw new AppError("NOT_FOUND", "项目不存在或不可见");
       }
+      if (options.expectedVersion !== undefined && locked.version !== options.expectedVersion) {
+        if (system) return null;
+        throw new AppError("VERSION_CONFLICT", "项目已被他人更新，请刷新后重试");
+      }
       if (locked.deletedAt === null) {
+        if (system) return null;
         throw new AppError("VALIDATION_FAILED", "仅项目回收站中的项目可彻底删除");
       }
-      if (locked.version !== body.version) {
-        throw new AppError("VERSION_CONFLICT", "项目已被他人更新，请刷新后重试");
+      if (options.dueBefore !== undefined && locked.deletedAt.getTime() > options.dueBefore.getTime()) {
+        return null;
       }
       let storageResult: { deletedVersions: number; deleteMarkers: number; deletedObjects: number };
       try {
@@ -321,20 +393,33 @@ export class ProjectService {
       } catch (error) {
         throw toApiError(error);
       }
-      const result = await this.projects.hardDeleteWithVersion(id, body.version, tx);
+      const result = await this.projects.hardDeleteWithVersion(id, locked.version, tx);
       if (result === null) {
         throw new AppError("VERSION_CONFLICT", "项目已被他人更新，请刷新后重试");
       }
       const snapshot = projectAuditSnapshot(result.project);
       await this.audit.record(tx, {
-        actorId,
+        actorId: options.actorId,
         action: "delete",
         objectType: "project",
         objectId: id,
         projectId: id,
-        summary: "彻底删除项目：" + result.project.code + "（" + result.project.name + "）",
+        summary:
+          (system ? "项目回收站到期自动清理：" : "彻底删除项目：") +
+          result.project.code +
+          "（" +
+          result.project.name +
+          "）",
         changes: Object.keys(snapshot).map((field) => ({ field, from: snapshot[field], to: null })),
-        metadata: { hardDelete: true, children: result.children, objectStorage: storageResult },
+        metadata: {
+          hardDelete: true,
+          source: system ? "system" : "api",
+          reason: options.reason,
+          retentionDays: PROJECT_RECYCLE_RETENTION_DAYS,
+          recycledAt: locked.deletedAt.toISOString(),
+          children: result.children,
+          objectStorage: storageResult,
+        },
       });
       return { projectId: id, purgedAt: at.toISOString() };
     });

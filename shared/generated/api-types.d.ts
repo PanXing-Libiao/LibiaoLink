@@ -8977,7 +8977,7 @@ export interface components {
              */
             code: string;
             /**
-             * @description 项目序号：服务端创建时分配（全库唯一、不可修改、不回收；与项目编号一一对应同一项目）；卡片等展示场景两位补零，列表支持 sort=seqNo:asc|desc
+             * @description 项目序号：服务端创建时分配（全库唯一、不可修改；彻底删除后的空号由下一次创建按最小可用序号复用）；与项目编号一一对应同一项目；卡片等展示场景两位补零，列表支持 sort=seqNo:asc|desc
              * @example 1
              */
             seqNo: number;

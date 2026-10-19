@@ -50,6 +50,7 @@ export const projects = pgTable(
     index("ix_projects_stage").on(table.status, table.stageKey),
     index("ix_projects_active_updated").on(desc(table.updatedAt)).where(sql`deleted_at is null`),
     index("ix_projects_recycled_updated").on(desc(table.updatedAt)).where(sql`deleted_at is not null`),
+    index("ix_projects_recycled_deleted_at").on(table.deletedAt).where(sql`deleted_at is not null`),
     check(
       "ck_projects_stage_key",
       sql`${table.stageKey} in ${sql.raw(sqlValueList(STAGE_KEYS))}`,

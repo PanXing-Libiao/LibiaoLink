@@ -16,6 +16,7 @@ import type { ObjectStorage } from "../src/storage/index.js";
 import type { PermissionService } from "../src/modules/permission/index.js";
 
 const AT = new Date("2026-09-20T06:00:00.000Z");
+const DAY_MS = 86_400_000;
 const UUID_A = "11111111-1111-4111-8111-111111111111";
 const UUID_B = "22222222-2222-4222-8222-222222222222";
 
@@ -75,6 +76,8 @@ class FakeProjectRepository {
   lastRestore: { id: string; expectedVersion: number } | null = null;
   lastLock: string | null = null;
   lastTouched: { id: string; at: Date } | null = null;
+  lastExpiredCutoff: Date | null = null;
+  lastExpiredLimit: number | null = null;
 
   private visible(id: string): ProjectViewRow | null {
     return this.rows.find((view) => view.project.id === id && view.project.deletedAt === null) ?? null;
@@ -126,6 +129,16 @@ class FakeProjectRepository {
     return this.findRowById(id);
   }
 
+  async listExpiredRecycledProjects(cutoff: Date, limit: number): Promise<ProjectRow[]> {
+    this.lastExpiredCutoff = cutoff;
+    this.lastExpiredLimit = limit;
+    return this.rows
+      .map((view) => view.project)
+      .filter((row) => row.deletedAt !== null && row.deletedAt.getTime() <= cutoff.getTime())
+      .sort((left, right) => left.deletedAt!.getTime() - right.deletedAt!.getTime())
+      .slice(0, limit);
+  }
+
   async recycleWithVersion(id: string, expectedVersion: number, at: Date, actorId: string): Promise<ProjectRow | null> {
     this.lastRecycle = { id, expectedVersion, actorId };
     const found = this.visible(id);
@@ -158,10 +171,13 @@ class FakeProjectRepository {
     if (this.rows.some((view) => view.project.code === input.code)) {
       throw new AppError("PROJECT_CODE_EXISTS", "项目编号已存在：" + input.code);
     }
+    const used = new Set(this.rows.map((view) => view.project.seqNo));
+    let seqNo = 1;
+    while (used.has(seqNo)) seqNo += 1;
     const row = projectRow({
       id: UUID_B,
       code: input.code,
-      seqNo: this.rows.length + 1,
+      seqNo,
       name: input.name,
       customer: input.customer,
       region: input.region,
@@ -615,6 +631,73 @@ describe("ProjectService（M2-01 项目 CRUD + 项目回收站）", () => {
     await expectAppErrorAsync(() => stale.service.purgeProject(UUID_A, { version: 3 }, UUID_B), "VERSION_CONFLICT");
     expect(stale.storage.purgedPrefixes).toEqual([]);
     expect(stale.repo.rows).toHaveLength(1);
+  });
+
+  it("编号复用：彻底删除后新建项目取回最小空号", async () => {
+    const { service } = makeService([], { adminIds: [UUID_B] });
+    const first = await service.createProject(
+      { code: "REUSE-1", name: "首建", region: "华东", projectType: "分拣", managerIds: [UUID_A] },
+      UUID_A,
+    );
+    expect(first.seqNo).toBe(1);
+    await service.deleteProject(first.id, first.version, UUID_A);
+    await service.purgeProject(first.id, { version: first.version + 1 }, UUID_B);
+    const second = await service.createProject(
+      { code: "REUSE-2", name: "再建", region: "华东", projectType: "分拣", managerIds: [UUID_A] },
+      UUID_A,
+    );
+    expect(second.seqNo).toBe(1);
+  });
+
+  it("30 天到期：只清理满 30 天的回收站项目，系统审计 actorId=null", async () => {
+    const now = new Date("2026-10-19T06:00:00.000Z");
+    const due = projectRow({
+      id: UUID_A,
+      version: 3,
+      deletedAt: new Date(now.getTime() - 30 * DAY_MS),
+      deletedBy: UUID_B,
+    });
+    const fresh = projectRow({
+      id: UUID_B,
+      seqNo: 2,
+      code: "FRESH-1",
+      version: 2,
+      deletedAt: new Date(now.getTime() - 29 * DAY_MS),
+      deletedBy: UUID_B,
+    });
+    const { service, repo, audit, storage } = makeService([due, fresh]);
+    const result = await service.sweepExpiredRecycled(20, now);
+    expect(result).toEqual({ scanned: 1, purged: 1 });
+    expect(repo.lastExpiredCutoff?.toISOString()).toBe(new Date(now.getTime() - 30 * DAY_MS).toISOString());
+    expect(repo.lastExpiredLimit).toBe(20);
+    expect(repo.rows.map((view) => view.project.id)).toEqual([UUID_B]);
+    expect(storage.purgedPrefixes).toEqual(["projects/" + UUID_A + "/"]);
+    expect(audit.entries[0]).toMatchObject({
+      actorId: null,
+      action: "delete",
+      objectType: "project",
+      objectId: UUID_A,
+      metadata: {
+        hardDelete: true,
+        source: "system",
+        reason: "项目回收站到期自动清理",
+        retentionDays: 30,
+      },
+    });
+  });
+
+  it("30 天到期：未满 30 天不清理", async () => {
+    const now = new Date("2026-10-19T06:00:00.000Z");
+    const fresh = projectRow({
+      id: UUID_A,
+      version: 3,
+      deletedAt: new Date(now.getTime() - 29 * DAY_MS - 23 * 3_600_000),
+      deletedBy: UUID_B,
+    });
+    const { service, repo, storage } = makeService([fresh]);
+    expect(await service.sweepExpiredRecycled(20, now)).toEqual({ scanned: 0, purged: 0 });
+    expect(storage.purgedPrefixes).toEqual([]);
+    expect(repo.rows).toHaveLength(1);
   });
 
   it("彻底删除：对象存储失败 → INTERNAL，项目仍留在回收站可重试", async () => {
