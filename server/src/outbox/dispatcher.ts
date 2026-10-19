@@ -180,6 +180,11 @@ export class OutboxDispatcher {
       code: "outbox.dead",
       level: "error",
       message: "outbox 死信：" + topic + "#" + row.id + "（" + row.dedupeKey + "）—— " + error,
+      impact: "该消息不会继续重试；关联通知、预览或规则动作可能未完成。",
+      action:
+        "查看 worker 日志与 outbox_events#" +
+        row.id +
+        " 的 last_error；修复根因后重置为 pending 重放，永久错误则确认忽略并留档。",
       detail: { topic, id: row.id, dedupeKey: row.dedupeKey, attempts, maxAttempts: policy.maxAttempts },
     });
   }

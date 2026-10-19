@@ -50,6 +50,8 @@ export interface OutboxStatsSnapshot {
   duePending: number;
   /** 最老待领取消息的已等待时长（毫秒）；无积压 = null。 */
   oldestDueMs: number | null;
+  /** 进度窗口内完成的 done 行数：用于区分「正常排空」与「消费者停滞」。 */
+  doneRecent: number;
   /** 窗口内新增的 dead 行数（按 updated_at）。 */
   deadRecent: number;
   deadTotal: number;
@@ -59,6 +61,8 @@ export interface OutboxStatsSnapshot {
 export interface OutboxStatsInput {
   /** 死信「近期」窗口（毫秒）。 */
   deadWindowMs: number;
+  /** 完成进度窗口（毫秒）：统计该窗口内 done 行，判断队列是否仍有消费进展。 */
+  progressWindowMs: number;
 }
 
 export interface PurgeDoneInput {
@@ -169,6 +173,9 @@ export class OutboxStore {
         count(*) filter (where status = 'pending' and available_at <= now())::int as due_pending,
         extract(epoch from (now() - min(available_at) filter (where status = 'pending' and available_at <= now()))) * 1000 as oldest_due_ms,
         count(*) filter (
+          where status = 'done' and updated_at >= now() - ${input.progressWindowMs}::int * interval '1 millisecond'
+        )::int as done_recent,
+        count(*) filter (
           where status = 'dead' and updated_at >= now() - ${input.deadWindowMs}::int * interval '1 millisecond'
         )::int as dead_recent,
         count(*) filter (where status = 'dead')::int as dead_total
@@ -189,6 +196,7 @@ export class OutboxStore {
       duePending: Number(row.due_pending ?? 0),
       oldestDueMs:
         row.oldest_due_ms === null || row.oldest_due_ms === undefined ? null : Math.max(0, Number(row.oldest_due_ms)),
+      doneRecent: Number(row.done_recent ?? 0),
       deadRecent: Number(row.dead_recent ?? 0),
       deadTotal: Number(row.dead_total ?? 0),
       byTopic: (byTopic.rows as unknown as Array<Record<string, unknown>>).map((item) => ({
