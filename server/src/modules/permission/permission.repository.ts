@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import { projectNodes } from "../../db/schema/flow.js";
 import { projectMembers, projects } from "../../db/schema/projects.js";
@@ -37,12 +37,12 @@ export class PermissionRepository {
     return rows.map((row) => row.projectId);
   }
 
-  /** 我作为主数据责任人的项目 id（projects.manager_ids 含我，未软删；A22 · Push 136 多位，任一位命中）。 */
+  /** 我作为主数据责任人的项目 id（projects.manager_ids 含我；含回收站项目，列表查询再按 filter[recycled] 过滤）。 */
   async listOwnedProjectIds(actorId: string): Promise<string[]> {
     const rows = await this.database.db
       .select({ projectId: projects.id })
       .from(projects)
-      .where(and(sql`${projects.managerIds} @> array[${actorId}]::uuid[]`, isNull(projects.deletedAt)));
+      .where(sql`${projects.managerIds} @> array[${actorId}]::uuid[]`);
     return rows.map((row) => row.projectId);
   }
 

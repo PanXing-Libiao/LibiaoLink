@@ -6,9 +6,9 @@
  *   证据二（关注 A1-15）：关注项目 / 任务（重复关注幂等 200 created=false）、清单随行名称与时间倒序、
  *           批量五态（followed / unfollowed / unchanged / failures not_found）、取关（未关注 404）、
  *           不可见目标 404（防 IDOR）、归档项目不可新关注（既有关系行保留可见）、
- *           项目硬删 → 关注行随行清理（M7-04 × M2-06 接线，读库断言）。
+ *           项目移入回收站 → 关注行保留（可恢复；M7-04 × M2-06 接线，读库断言）。
  * 前置：真 PG（迁移器角色 —— 断言与收尾要跨表读删）+ 真 api。临时会话（跑完撤销）、合成复核用户（跑完删）、
- *       回放项目 × 3（主项目 / 归档项目 / 硬删项目；跑完连同关注行与归档清单硬删）。
+ *       回放项目 × 3（主项目 / 归档项目 / 回收站项目；跑完连同关注行与归档清单硬删）。
  * 用法：cd server && M2_06_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink \
  *       node --env-file-if-exists=.env scripts/m2-06-replay.mjs [--out <报告.md>] [--json <证据.json>] [--actor <userId>] [--keep]
  * 退出码：断言全过 = 0，否则 = 1（可当门禁用）。
@@ -255,17 +255,17 @@ try {
   const archivedRows = (listAfterArchive.body?.items ?? []).filter((item) => item.projectId === projectB);
   check("F10", "归档项目不可新关注（项目 / 任务均 404）；既有关系行保留可见（2 条）", "404 x 2 / 清单含 2 条", followArchivedProject.status + " / " + followArchivedTask.status + " / 清单 " + archivedRows.length + " 条", followArchivedProject.status === 404 && followArchivedTask.status === 404 && archivedRows.length === 2);
 
-  const createdC = await call("POST", "/api/v1/projects", { code: "M2RPL-DEL-" + stamp, name: "M2 回放硬删项目", projectType: "default", managerIds: [adminId] });
+  const createdC = await call("POST", "/api/v1/projects", { code: "M2RPL-DEL-" + stamp, name: "M2 回放回收站项目", projectType: "default", managerIds: [adminId] });
   const projectC = createdC.body?.id ?? null;
   cleanup.projectIds.push(projectC);
-  const taskC1 = await call("POST", "/api/v1/projects/" + projectC + "/tasks", { title: "M2RPL-硬删项目任务" });
+  const taskC1 = await call("POST", "/api/v1/projects/" + projectC + "/tasks", { title: "M2RPL-回收站项目任务" });
   await call("POST", "/api/v1/follows", { objectType: "project", objectId: projectC });
   await call("POST", "/api/v1/follows", { objectType: "task", objectId: taskC1.body?.id });
   const rowsBeforeDelete = await db.query("select count(*)::int as n from follows where object_id = any($1::uuid[])", [[projectC, taskC1.body?.id]]);
   const beforeDeleteC = await call("GET", "/api/v1/projects/" + projectC);
   const deletedC = await call("DELETE", "/api/v1/projects/" + projectC, undefined, admin, { "if-match": String(beforeDeleteC.body?.version) });
   const rowsAfterDelete = await db.query("select count(*)::int as n from follows where object_id = any($1::uuid[])", [[projectC, taskC1.body?.id]]);
-  check("F11", "项目硬删（M7-04）× 关注清理（M2-06）：删除前 2 行 → 删除后 0 行", "删除 200 / 2 -> 0", deletedC.status + " / " + rowsBeforeDelete.rows[0].n + " -> " + rowsAfterDelete.rows[0].n, rowsBeforeDelete.rows[0].n === 2 && deletedC.status === 200 && rowsAfterDelete.rows[0].n === 0, "硬删 15 步已在 project.repository 内按关系键清 follows");
+  check("F11", "项目移入回收站（M7-04）× 关注保留（M2-06）：删除前 2 行 → 删除后 2 行", "删除 200 / 2 -> 2", deletedC.status + " / " + rowsBeforeDelete.rows[0].n + " -> " + rowsAfterDelete.rows[0].n, rowsBeforeDelete.rows[0].n === 2 && deletedC.status === 200 && rowsAfterDelete.rows[0].n === 2, "DELETE 仅写 projects.deleted_at / deleted_by，关注行保留；收尾由 migrator 硬删回放项目");
 } catch (error) {
   failures += 1;
   report.push("| FAIL | 中断：" + (error instanceof Error ? error.message : String(error)) + " |");
@@ -336,7 +336,7 @@ lines.push("| 目标 | " + BASE_URL + " |");
 lines.push("| 数据库 | " + DATABASE_URL.replace(/:[^:@/]+@/, ":***@") + " |");
 lines.push("| 代码版本 | " + commit + (dirty ? "（回放时工作区含本卡未提交改动）" : "") + " |");
 lines.push("| 脚本 | server/scripts/m2-06-replay.mjs |");
-lines.push("| 回放项目 | M2RPL-（主）/ M2RPL-ARC-（归档）/ M2RPL-DEL-（硬删）—— 跑完连同视图 / 关注行 / 归档清单硬删 |");
+lines.push("| 回放项目 | M2RPL-（主）/ M2RPL-ARC-（归档）/ M2RPL-DEL-（回收站）—— 跑完连同视图 / 关注行 / 归档清单硬删 |");
 lines.push("");
 lines.push("## 断言明细");
 lines.push("");
@@ -344,12 +344,12 @@ lines.push(...report);
 lines.push("");
 lines.push("## 汇总");
 lines.push("");
-lines.push(failures === 0 ? "- 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：视图（A1-03 建 / 读 / 改 / 删 + 归属 + 默认互斥）+ 关注（A1-15 幂等 / 清单 / 批量 / 取关 + 可见性（按权限开关分派）+ 归档口径 + 硬删清理）。" : "- 有 " + failures + " 项失败，见上方 FAIL 行。");
+lines.push(failures === 0 ? "- 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：视图（A1-03 建 / 读 / 改 / 删 + 归属 + 默认互斥）+ 关注（A1-15 幂等 / 清单 / 批量 / 取关 + 可见性（按权限开关分派）+ 归档口径 + 回收站保留）。" : "- 有 " + failures + " 项失败，见上方 FAIL 行。");
 lines.push("");
 lines.push("## 验收对照（M2-06 · A1-03 / A1-15）");
 lines.push("");
 lines.push("- A1-03（视图管理）= V1 ' V11：个人视图全字段建 / 读（个人在前 + scope 过滤）/ 局部改（空更新 400）/ 默认视图互斥（每人至多一条）/ 物理删（重复删 404）；归属：个人视图他人 404（不可见）、公共视图非创建者 403（可见无写权）、公共视图全员可见。");
-lines.push("- A1-15（关注订阅）= F1 ' F11：关注项目 / 任务（201 created=true；重复关注 200 created=false 幂等）；清单随行名称 + 时间倒序 + object 过滤；批量五态（followed / unfollowed / unchanged / failures）+ 失败 index / code；取关（未关注 404）；关注目标可见性按 `PERMISSION_ENFORCED` 开关分派（判权限态：不可见目标 404 防 IDOR；一期不判权限态：全员可见 201 + 取关清理）；归档项目不可新关注（既有关系行保留可见 —— 一期口径）；项目硬删 → 关注行随行清理。");
+lines.push("- A1-15（关注订阅）= F1 ' F11：关注项目 / 任务（201 created=true；重复关注 200 created=false 幂等）；清单随行名称 + 时间倒序 + object 过滤；批量五态（followed / unfollowed / unchanged / failures）+ 失败 index / code；取关（未关注 404）；关注目标可见性按 `PERMISSION_ENFORCED` 开关分派（判权限态：不可见目标 404 防 IDOR；一期不判权限态：全员可见 201 + 取关清理）；归档项目不可新关注（既有关系行保留可见 —— 一期口径）；项目移入回收站 → 关注行保留（可恢复）；彻底删除路径随项目关系键清理。");
 lines.push("- 单测回归（不连库）：server/test/view.test.ts 7 例（范围透传 / 名称收敛 / 空更新 / 归属 / 默认互斥 / 物理删）+ server/test/follow.test.ts 7 例（幂等 / 404 三态 / 清单过滤 / 批量五态 / 归档失败），随 npm test 常跑。");
 lines.push("- 差异登记：公共视图「共享给指定角色」（A1-03）未做 —— 一期公共视图 = 全员可见；关注后的关键事件通知随 M5（lan），关注动态流（A6-08）随工作台二刀。");
 lines.push("- 复跑：cd server && M2_06_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink node scripts/m2-06-replay.mjs --out ../docs/m2-06-回放证据(视图与关注).md");

@@ -19,7 +19,7 @@ export type MeResponse = {
  */
 export type Project = {
   id: string;
-  /** 项目序号（契约 seqNo ↔ projects.seq_no）：服务端创建时分配，全库唯一、不可修改、不回收；卡片两位补零展示。 */
+  /** 项目序号（契约 seqNo ↔ projects.seq_no）：服务端创建时分配，全库唯一、不可修改；彻底删除后的空号由下一次创建复用；卡片两位补零展示。 */
   seqNo: number;
   code: string;
   /** 前端「项目描述」= 契约 name（唯一展示名）；备注长文本是契约 description（Push 280 起表单采集，见下 remark）。 */
@@ -47,6 +47,10 @@ export type Project = {
   stageKey: string;
   /** 项目状态（契约 status：active / paused / done / archived）。 */
   status: string;
+  /** 进入项目回收站的时间（展示用「YYYY-MM-DD HH:mm」）；未删除 = null。 */
+  deletedAt: string | null;
+  /** 将项目移入回收站的用户 id；未删除 = null。 */
+  deletedBy: string | null;
 };
 
 /** 项目状态取值（契约 projects.status：active / paused / done / archived）。 */

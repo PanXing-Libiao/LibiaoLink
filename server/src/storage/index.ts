@@ -16,6 +16,7 @@ export type {
   ObjectHead,
   PartUploadUrlInput,
   PurgeObjectResult,
+  PurgePrefixResult,
   PutObjectInput,
   SignedUrl,
   StorageFailureCode,

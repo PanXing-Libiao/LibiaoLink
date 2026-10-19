@@ -58,8 +58,14 @@ type CardProps = {
   time: string;
   /** 编辑入口（隐式：悬停 / 聚焦才显示）。 */
   onEdit?: () => void;
-  /** 删除项目（硬删，隐式：与编辑同款；不传 = 不渲染）。 */
+  /** 恢复项目（项目回收站：占用原编辑按钮位；与 onEdit 互斥，优先渲染）。 */
+  onRestore?: () => void;
+  /** 移入项目回收站（首页卡片；隐式：与编辑同款；不传 = 不渲染）。 */
   onDelete?: () => void;
+  /** 彻底删除项目（项目回收站：占用原删除按钮位；与 onDelete 互斥，优先渲染）。 */
+  onPurge?: () => void;
+  restoreLabel?: string;
+  purgeLabel?: string;
 };
 
 export function Card({
@@ -80,7 +86,11 @@ export function Card({
   managerNames,
   time,
   onEdit,
+  onRestore,
   onDelete,
+  onPurge,
+  restoreLabel,
+  purgeLabel,
 }: CardProps) {
   const t = useT();
   /** 手打内容（项目名）机翻显示：英文界面显示译文（到位后自动切换），悬停看原文。 */
@@ -139,23 +149,39 @@ export function Card({
       <h1 className="font-mono text-xl font-bold tracking-tight">{code}</h1>
       <p className="text-lg text-zinc-500 leading-7" title={localizedDescription === description ? undefined : description}>{localizedDescription}</p>
       <div className="flex items-center gap-3">
-        {onEdit === undefined ? null : (
+        {onRestore !== undefined || onEdit !== undefined ? (
           <button
             type="button"
             onClick={(event) => {
               event.stopPropagation();
-              onEdit();
+              if (onRestore !== undefined) onRestore();
+              else onEdit?.();
             }}
-            aria-label={t("card.edit")}
-            title={t("card.edit")}
+            aria-label={onRestore === undefined ? t("card.edit") : restoreLabel ?? t("lib.restore")}
+            title={onRestore === undefined ? t("card.edit") : restoreLabel ?? t("lib.restore")}
             className="relative z-10 -ml-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-zinc-400/70 opacity-0 transition duration-200 group-hover:text-zinc-400 group-hover:opacity-100 hover:bg-white hover:text-zinc-700 hover:shadow-xs focus:outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-amber-400/60"
           >
-            <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
-              <path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+            {onRestore === undefined ? (
+              <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                <path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                <path d="M9 14 4 9l5-5M4 9h9a7 7 0 0 1 7 7v1" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
           </button>
-        )}
-        {onDelete === undefined ? null : (
+        ) : null}
+        {onPurge !== undefined ? (
+          <span className="flex h-6 w-20 shrink-0 items-center">
+            <RowDeleteButton
+              onDelete={onPurge}
+              label={purgeLabel ?? t("lib.purge")}
+              text={purgeLabel ?? t("lib.purge")}
+              wide
+            />
+          </span>
+        ) : onDelete !== undefined ? (
           <span className="flex h-6 w-12 shrink-0 items-center">
             <RowDeleteButton
               onDelete={() => {
@@ -164,7 +190,7 @@ export function Card({
               label={t("card.delete")}
             />
           </span>
-        )}
+        ) : null}
         <p className="ml-auto font-mono text-sm text-zinc-400">{time}</p>
       </div>
     </div>
