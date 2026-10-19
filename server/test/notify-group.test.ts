@@ -144,6 +144,7 @@ function incoming(overrides: Partial<AibotIncomingMessage> = {}): AibotIncomingM
     msgid: "m1",
     msgtype: "event",
     text: null,
+    eventType: null,
     ...overrides,
   };
 }

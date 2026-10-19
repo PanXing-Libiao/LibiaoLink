@@ -15,6 +15,8 @@
  *   - 会话内回复 `aibot_respond_msg`（M5-03-5-6 · 绑定码回执）：透传回调帧 `headers.req_id`，body =
  *     单帧收敛流式回复（官方 SDK 1.0.3 实证 —— 回复不依赖 chatid / 寻址；`response_url` 未被 SDK 使用，
  *     本仓同样不落该字段）；
+ *   - 欢迎语回复 `aibot_respond_welcome_msg`（单聊 `enter_chat` 事件）：透传事件回调 `headers.req_id`，
+ *     body = `{ msgtype: "text", text: { content } }`；官方要求在收到事件后 5 秒内发送；
  *   - 回执帧形状 = `{ headers: { req_id }, errcode, errmsg }` —— **errcode 在帧顶层**（非 body）。
  *
  * 语义：
@@ -80,6 +82,8 @@ export interface AibotIncomingMessage {
   msgtype: string | null;
   /** 文本正文（msgtype = text 时非空；其余为 null）。 */
   text: string | null;
+  /** 事件类型（cmd = aibot_event_callback 时取 body.event.eventtype；消息回调为 null）。 */
+  eventType: string | null;
 }
 
 export type AibotSendResult =
@@ -368,6 +372,63 @@ export class WecomAibotClient {
     };
   }
 
+  /**
+   * 进入单聊会话欢迎语（企微智能机器人 `enter_chat` 事件）：被动回复走 `aibot_respond_welcome_msg`，
+   * 透传事件回调的 `req_id`（官方要求 5 秒内发送）；body = 纯文本消息。欢迎语不占用绑定回执的流式
+   * 消息形态，也不计入本地单聊限速桶（事件回调有独立时效，优先送达）。
+   */
+  async replyWelcome(params: { reqId: string; content: string }): Promise<AibotSendResult> {
+    if (this.state !== "subscribed" || this.socket === null) {
+      return {
+        ok: false,
+        kind: "retryable",
+        errcode: null,
+        errmsg: "长连接未就绪（state=" + this.state + "）",
+        retryAt: null,
+        attempts: 0,
+        state: this.state,
+      };
+    }
+    const ack = this.waitAck(params.reqId);
+    const sent = this.sendFrame({
+      cmd: "aibot_respond_welcome_msg",
+      headers: { req_id: params.reqId },
+      body: { msgtype: "text", text: { content: params.content } },
+    });
+    if (!sent) {
+      this.cancelAck(params.reqId, "closed");
+    }
+    const outcome = await ack;
+    if (!outcome.ok) {
+      return {
+        ok: false,
+        kind: "retryable",
+        errcode: null,
+        errmsg: outcome.reason === "timeout" ? "欢迎语回执超时" : "连接已断开（欢迎语未确认）",
+        retryAt: null,
+        attempts: sent ? 1 : 0,
+        state: this.state,
+      };
+    }
+    const errcode = typeof outcome.frame.errcode === "number" ? outcome.frame.errcode : null;
+    if (errcode === 0) {
+      return { ok: true, attempts: 1 };
+    }
+    const errmsg = typeof outcome.frame.errmsg === "string" ? outcome.frame.errmsg : null;
+    if (errcode === null) {
+      return { ok: false, kind: "retryable", errcode: null, errmsg: "回执缺 errcode", retryAt: null, attempts: 1, state: this.state };
+    }
+    return {
+      ok: false,
+      kind: classifyWecomErrcode("wecom_aibot", errcode, { dmActivated: true }),
+      errcode,
+      errmsg,
+      retryAt: null,
+      attempts: 1,
+      state: this.state,
+    };
+  }
+
   /** 发送主体（群 / 单聊共用）：限速（双窗口按目标桶）→ aibot_send_msg → 等回执 → 分类。 */
   private async sendMarkdown(input: {
     /** 发送目标（帧 `chatid` 字段值）：群 = chatid；单聊 = userid。 */
@@ -557,6 +618,7 @@ export class WecomAibotClient {
     const body = asRecord(frame["body"]);
     const from = body === null ? null : asRecord(body["from"]);
     const text = body === null ? null : asRecord(body["text"]);
+    const event = body === null ? null : asRecord(body["event"]);
     const message: AibotIncomingMessage = {
       cmd,
       reqId,
@@ -566,6 +628,7 @@ export class WecomAibotClient {
       msgid: readString(body, "msgid"),
       msgtype: readString(body, "msgtype"),
       text: readString(text, "content"),
+      eventType: readString(event, "eventtype"),
     };
     for (const handler of this.handlers) {
       try {

@@ -318,6 +318,7 @@ async function main() {
     msgid: "m1",
     msgtype: "text",
     text: "你好",
+    eventType: null,
     ...overrides,
   });
 
@@ -438,12 +439,17 @@ async function main() {
     const aibot = {
       sends: [],
       replies: [],
+      welcomes: [],
       async sendUserMarkdown(params) {
         this.sends.push(params);
         return clientResult;
       },
       async replyToCallback(params) {
         this.replies.push(params);
+        return { ok: true, attempts: 1 };
+      },
+      async replyWelcome(params) {
+        this.welcomes.push(params);
         return { ok: true, attempts: 1 };
       },
     };
@@ -687,6 +693,71 @@ async function main() {
     socket.ackLast(0);
     const replied = await pending;
     check("S16 回执：errcode=0 → ok / attempts=1", replied.ok === true && replied.attempts === 1, JSON.stringify(replied));
+    await aibot.stop();
+  }
+
+  // S16a 单聊 enter_chat 服务分流：只回欢迎语，不登记激活、不绑定
+  {
+    const { service, repo, aibot } = makeService({ ok: true, attempts: 1 });
+    const welcome = dm.DM_WELCOME_MESSAGE;
+    await service.replyWelcomeToEnterChat(
+      dmIncoming({ cmd: "aibot_event_callback", msgtype: "event", text: null, eventType: "enter_chat" }),
+    );
+    check(
+      "S16a 单聊 enter_chat：欢迎语逐字发送 + 含 emoji + 4–120 字符",
+      aibot.welcomes.length === 1 &&
+        aibot.welcomes[0].reqId === "ReqIdCallback0001" &&
+        aibot.welcomes[0].content === welcome &&
+        welcome.includes("👋") &&
+        welcome.includes("📣") &&
+        welcome.includes("📌") &&
+        welcome.length >= 4 &&
+        welcome.length <= 120,
+      JSON.stringify(aibot.welcomes),
+    );
+    assertEqual(
+      "S16a 单聊 enter_chat：不登记激活、不绑定、不走绑定回执",
+      String(repo.upsertCalls.length) + ":" + String(repo.bindCalls.length) + ":" + String(aibot.replies.length),
+      "0:0:0",
+    );
+    await service.replyWelcomeToEnterChat(
+      dmIncoming({ cmd: "aibot_event_callback", chattype: "group", chatid: "wrsuTest", msgtype: "event", eventType: "enter_chat" }),
+    );
+    await service.replyWelcomeToEnterChat(
+      dmIncoming({ cmd: "aibot_event_callback", msgtype: "event", eventType: "card_action" }),
+    );
+    await service.replyWelcomeToEnterChat(
+      dmIncoming({ cmd: "aibot_event_callback", msgtype: "event", eventType: "enter_chat", reqId: null }),
+    );
+    await service.replyWelcomeToEnterChat(dmIncoming({ eventType: "enter_chat" }));
+    assertEqual(
+      "S16a 欢迎语过滤：群事件 / 非 enter_chat / 缺 req_id / 消息回调均不回复",
+      String(aibot.welcomes.length),
+      "1",
+    );
+  }
+
+  // S16b 欢迎语回执帧形锁帧（aibot_respond_welcome_msg + 事件 req_id 透传 + text 纯文本）
+  {
+    const { aibot, sockets } = makeRuntime();
+    const socket = await connect(aibot, sockets);
+    const welcome = dm.DM_WELCOME_MESSAGE;
+    const pending = aibot.replyWelcome({ reqId: "ReqIdWelcome0001", content: welcome });
+    await sleep(0);
+    const frame = socket.lastFrame();
+    check(
+      "S16b 欢迎语帧形锁帧：cmd=aibot_respond_welcome_msg + headers.req_id = 事件 req_id + body = { msgtype: text, text: { content } }",
+      frame.cmd === "aibot_respond_welcome_msg" &&
+        frame.headers?.req_id === "ReqIdWelcome0001" &&
+        frame.body?.msgtype === "text" &&
+        frame.body?.text?.content === welcome &&
+        Object.keys(frame.body).length === 2 &&
+        Object.keys(frame.body.text).length === 1,
+      JSON.stringify(frame),
+    );
+    socket.ackLast(0);
+    const replied = await pending;
+    check("S16b 欢迎语回执：errcode=0 → ok / attempts=1", replied.ok === true && replied.attempts === 1, JSON.stringify(replied));
     await aibot.stop();
   }
 
