@@ -9,7 +9,8 @@
  *   证据二（重复领取不重发）：done 行不再被领取；同 dedupeKey 复投（appendOutboxIfAbsent）不新增行、不重开 pending。
  *   证据三（重试与死信告警）：可重试失败按主题策略退避回 pending（attempts 累计 / available_at = now + base*2^(n-1)）；
  *        到顶转 dead + onDead 留痕 + OUTBOX_ALERT_SINK 捕获「outbox.dead」即时告警；告警探针真机对照 ——
- *        阈值内 backlog / oldest_due / dead_letter 三码齐发，同一快照宽阈值下 0 告警（证明不是恒告警噪声）。
+ *        阈值内 backlog / oldest_due / dead_letter 三码齐发 + 合成 backlog 主题无消费者告警；
+ *        同一快照宽阈值下阈值类 0 告警（未消费主题仍如实报告，证明不是恒告警噪声）。
  *
  * 前置：真 PG（迁移器角色即可）+ 已构建的 server/dist（cd server && npm run build）。
  * 用法：cd server && POC4_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink \
@@ -258,7 +259,7 @@ async function runMain() {
     policies.set(topic, runtime.defaultTopicPolicy(env));
   }
   const dispatcher = new runtime.OutboxDispatcher(store, handlers, policies, alerts, config, clock);
-  const probe = new runtime.OutboxAlertProbe(store, alerts, config);
+  const probe = new runtime.OutboxAlertProbe(store, alerts, config, handlers, clock);
 
   const rowOfKey = async (dedupeKey) => {
     const result = await db.pool.query(
@@ -436,12 +437,13 @@ async function runMain() {
     const oldestAlert = probeAlerts.find((item) => item.code === "outbox.oldest_due");
     check(
       "C1",
-      "告警探针（阈值内）：backlog / oldest_due / dead_letter 三码齐发（真快照 + 真阈值判定）",
-      "三码齐发；backlog.detail.duePending>=2；oldest_due.detail.oldestDueMs>=119000；dead_letter 命中（窗口内 deadRecent>=1）",
+      "告警探针（阈值内）：backlog / oldest_due / dead_letter 三码齐发 + 未消费主题告警",
+      "四码齐发；backlog.detail.duePending>=2；oldest_due.detail.oldestDueMs>=119000；dead_letter 命中（窗口内 deadRecent>=1）；unconsumed_topic 命中合成 backlog 主题",
       "codes=" + short(codes) + " / " + short(probeAlerts.map((item) => ({ code: item.code, detail: item.detail }))),
       codes.includes("outbox.backlog") &&
         codes.includes("outbox.oldest_due") &&
         codes.includes("outbox.dead_letter") &&
+        codes.includes("outbox.unconsumed_topic") &&
         backlogAlert.detail.duePending >= 2 &&
         oldestAlert.detail.oldestDueMs >= 119_000,
     );
@@ -453,14 +455,15 @@ async function runMain() {
       OUTBOX_ALERT_DEAD_RECENT_MAX: "100000",
     });
     const wideSink = new RecordingSink();
-    const wideProbe = new runtime.OutboxAlertProbe(store, wideSink, new runtime.AppConfig(wideEnv));
+    const wideProbe = new runtime.OutboxAlertProbe(store, wideSink, new runtime.AppConfig(wideEnv), handlers, clock);
     const wideAlerts = await wideProbe.probeOnce();
+    const wideThresholdAlerts = wideAlerts.filter((item) => item.code !== "outbox.unconsumed_topic");
     check(
       "C2",
-      "同一份快照、宽阈值对照：0 告警（探针语义 = 阈值判定，不是恒告警噪声）",
-      "0 条",
-      wideAlerts.length + " 条 " + short(wideAlerts.map((item) => item.code)),
-      wideAlerts.length === 0,
+      "同一份快照、宽阈值对照：阈值类 0 告警 + 未消费主题 1 条（探针语义不是恒告警噪声）",
+      "threshold=0 / unconsumed=1",
+      "threshold=" + wideThresholdAlerts.length + " / codes=" + short(wideAlerts.map((item) => item.code)),
+      wideThresholdAlerts.length === 0 && wideAlerts.some((item) => item.code === "outbox.unconsumed_topic"),
     );
 
     const statusRows = await db.pool.query("select status, count(*)::int as n from outbox_events where topic like $1 group by status order by status", [TOPIC_PREFIX + "%"]);

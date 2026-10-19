@@ -108,7 +108,7 @@ function hubDashProjectOf(value: unknown): string | null {
   return typeof value === "string" && value !== "" && value.length <= HUB_DASH_PROJECT_MAX_LENGTH ? value : null;
 }
 
-/** 仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」；Push 353 加「词频图」）：jsonb 里白名单外（progress / status / issues / delivery / wordcloud 之外）/ 缺省一律回默认 progress（不抛错）。 */
+/** 仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」；Push 353 加「词频图」、Push 358 加「数据总览」）：jsonb 里白名单外（overview / progress / status / issues / delivery / wordcloud 之外）/ 缺省一律回默认 progress（不抛错）。 */
 const HUB_DASH_VIEW_SET: ReadonlySet<string> = new Set(HUB_DASH_VIEW_IDS);
 
 function hubDashViewOf(value: unknown): HubDashView {

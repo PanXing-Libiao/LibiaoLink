@@ -54,6 +54,7 @@
 - [ ] 备份脚本：PG 每 12h 加密备份 → 数据盘 + 异地；对象存储每日增量异地同步
 - [ ] 监控告警接线（§6）
 - [ ] 镜像离线化：内网 registry 或 `docker save` 离线包（ONLYOFFICE `9.4.0.1` 按 digest、MinIO quay 镜像、PG、Node 基础镜像、Nginx）
+- [ ] M5-03-5 单聊改智能机器人（绑定码链路）部署件：`deploy/prod/server.env.example` 已补 `WECOM_BOT_ID` / `WECOM_BOT_SECRET`（2026-10-16）；**待执行 = 迁移 `0055` + `server/dist` 重传 + `server.env` 回填 + `restart api worker` + BC-1 ~ BC-4 真机复跑**（项目组 2026-10-16 决定暂缓；先本地等价执行 —— 见 `docs/PoC-2-回放证据(企微通道).md` §七）
 
 **B. 外部依赖（先发起，路径最长优先）**
 
@@ -69,7 +70,7 @@
 - [x] swap、日志轮转就位（§1 / §2）—— 2026-10-13：双 4G swap（`/swap.img` pri=100 + `/srv/data/swapfile` pri=20）+ `vm.swappiness=10`；daemon.json 日志轮转
 - [x] PostgreSQL 容器 + 角色 + 迁移 + 种子就绪（§4 第 1 条前半）—— 2026-10-13 实测：容器 18.6 healthy（回环端口 / 限额）；三角色 + 密码注入；47 个迁移 + 无漂移复跑；6 个种子 + 零变更复跑
 - [ ] 磁盘告警就位（§2）—— 未开始
-- [ ] 生产 Secrets（文件挂载、不进 Git）：PG 密码 ✅（2026-10-13 已生成并注入三角色）、`INTERNAL_SYNC_TOKEN` ✅ / `OO_JWT_SECRET` ✅（均 2026-10-13 生成 hex32；OO 与 DocServer 同值待 ONLYOFFICE 切片核对）、Casdoor Client ID / Secret ✅ + `CASDOOR_ISSUER` ✅（均 2026-10-14 回填，测试环境 authtest；正式环境应用创建后替换）/ `CASDOOR_ORG_NAME=libiaorobot.com`、企微群通道 BotID / Secret、S3 凭据 ✅（minio_root 同值；专用最小权限账号列待办）+ CORS 来源 ✅（`MINIO_API_CORS_ALLOW_ORIGIN` = https://test-pm.libiaorobot.com,http://10.1.104.44；2026-10-14 随 TLS 同步）
+- [ ] 生产 Secrets（文件挂载、不进 Git）：PG 密码 ✅（2026-10-13 已生成并注入三角色）、`INTERNAL_SYNC_TOKEN` ✅ / `OO_JWT_SECRET` ✅（均 2026-10-13 生成 hex32；OO 与 DocServer 同值待 ONLYOFFICE 切片核对）、Casdoor Client ID / Secret ✅ + `CASDOOR_ISSUER` ✅（均 2026-10-14 回填，测试环境 authtest；正式环境应用创建后替换）/ `CASDOOR_ORG_NAME=libiaorobot.com`、企微智能机器人 `WECOM_BOT_ID` / `WECOM_BOT_SECRET`（群 + 单聊共用同一机器人；换机器人 = 换此二值）、S3 凭据 ✅（minio_root 同值；专用最小权限账号列待办）+ CORS 来源 ✅（`MINIO_API_CORS_ALLOW_ORIGIN` = https://test-pm.libiaorobot.com,http://10.1.104.44；2026-10-14 随 TLS 同步）
 - [ ] 内网到公司 SSO / 企微 `qyapi.weixin.qq.com` 的连通复核 —— SSO 测试环境（authtest）连通已实测（2026-10-14：宿主 + api 容器直连正常）；企微待群通道切片复核
 
 ## 4. 部署日 Runbook（按序执行）
@@ -81,6 +82,7 @@
 5. Nginx 上线：TLS、SPA 静态（`frontend` build 产物）、反代 `/api/v1`、`/auth`、`/healthz`、`/readyz`；受控预览端点仅 DocServer 网段可达、公网 404；`/example/` 不暴露；Nginx 是唯一对外端口 —— 2026-10-13 实测（HTTP 先行）：web (healthy)；经反代 `/nginx-health` ok、`/healthz` 200、`/readyz` 503 degraded（存储占位，与 api 直连口径一致）、`/` 404（SPA 未传输）；配置修正：`try_files` 末项补 `=404`（缺省内部重定向环 → 500）；→ 2026-10-14 TLS 接入实测：80 → 301（IP 访问一并收口到域名）、443 证书链校验通过（无 `-k` 请求 200；SAN 匹配 test-pm）、`/nginx-health` ok / `/healthz` 200 / `/readyz` 200 全绿、9443 MinIO https 门面预签名回放 24/24（host 断言 test-pm.libiaorobot.com:9443）、5 容器 healthy；2026-10-14 对象存储改同源 443 门面（客户端网络仅放行 22/80/443，9443 / 9000 实测被拦）：443 增 `location /libiaolink/`（= 桶名；`proxy_pass` 不重写 / `Host $http_host` 保 SigV4）、`S3_ENDPOINT` 去端口；`storage:it` 24/24 + 开发机真实网络预签名 PUT 200 / GET 200 字节一致 / DELETE 204 / 删后 404；SPA 产物已上线（2026-10-14：站点根 200 / SPA 路由兜底 200 / wasm `application/wasm`）；2026-10-14 追加：nginx 以 `resolver` + `upstream … resolve` 动态跟踪容器 IP（api / minio 重建后不再需要 `restart web`；重建回归通过）；
 6. 冒烟：SSO 登录 → 首页 / 项目空间 → 上传（分片直传 → 完成）→ 预览（Office / PDF / 图片）→ 企微群一条消息 —— SSO 测试环境已接通（2026-10-14：`/auth/login` 302 → authtest 授权页；浏览器全流程人工实测进行中）；
 7. 收口：`PERMISSION_ENFORCED=false`（一期口径）、`SESSION_COOKIE_SECURE=auto`（生产自动 Secure）；发布按 CONTRIBUTING §16（标签指向全绿主干）；值班按 `团队分工.md` §7。
+8. M5-03-5 智能机器人单聊（绑定码链路）**待执行**（项目组 2026-10-16 决定暂缓）：**先备份 PG** → `bash scripts/db-migrate.sh`（执行 `0055`；含不可回滚清理）→ 复跑「无漂移」→ 重传 `server/dist` → `server.env` 回填 `WECOM_BOT_ID` / `WECOM_BOT_SECRET` → `docker compose --profile app restart api worker` → 真机复跑 BC-1 ~ BC-4（取码 → 单聊发码绑定 → 绑定后送达 → 未绑定 / 换机器人降级）。
 
 ## 5. 备份与恢复口径（ADR-013）
 
@@ -113,6 +115,7 @@
 | 8 | `shared` 打包缺陷：`@asteasolutions/zod-to-openapi` 被 dist 运行时引用、却声明为 devDependency | wmj（契约包；px 记录） | 待修：服务器已以 `npm ci --include=dev` 绕行；修复 = 移入 `dependencies` + 重生成 `shared` / `server` 两处 lock，此后部署收回 `--omit=dev` |
 | 9 | Nginx 硬化 / TLS 切片（443 + 证书挂载；`/internal/**`、`/example/` 显式 404；SPA 产物上线） | px | 接近关闭（2026-10-14）：TLS 接入 ✅ + SPA 产物上线 ✅；剩余：`/internal/**`、`/example/` 显式 404 加固 |
 | 10 | SSO 测试环境对接（authtest 应用 → 104.44 测试环境） | px | ✅ 2026-10-14：应用按接入标准调整（回调 / grant / 字段）+ 服务器回填 + `/auth/login` 302 实测；浏览器全流程人工实测进行中 |
+| 11 | M5-03-5 智能机器人单聊（绑定码链路）部署：迁移 `0055` + `server/dist` + `server.env` 新机器人凭据 + 重启 api / worker + BC-1 ~ BC-4 真机复跑 | px（lan 协办：迁移包 / 构建件 / 证据） | 待执行（项目组 2026-10-16 决定暂缓；先本地等价执行） |
 
 ## 8. 变更记录
 
@@ -132,3 +135,4 @@
 | v1.11 | 2026-10-14 | SPA 产物更新部署（Push 304：「已有项目地区」按项目落库值聚合修复）：frontend/dist 重建 → tar 上传解包 + 权限 u=rwX,go=rX；实测站点根 200 / 新 JS 200 / /healthz 200 / /readyz 200（与 deploy/prod/README.md v1.11 对齐） | px |
 | v1.12 | 2026-10-14 | 部署口径补录：测试机登录与运维口径（10.1.104.44 / test-pm.libiaorobot.com；登录口令不落仓库 + 本机未跟踪备忘；服务器只跑不改）进 AGENTS.md「服务器与运维（测试机）」与 deploy/prod/README.md §1.1（与 deploy/prod/README.md v1.12 对齐） | px |
 | v1.13 | 2026-10-14 | 对象存储改「443 同源门面」修上传 / 预览断链：根因 = 客户端网络仅放行 22/80/443（9443 / 9000 实测被拦；API 侧 201/200 正常、浏览器预签名 PUT/GET 超时）→ 443 增 location /libiaolink/（= 桶名；proxy_pass 不重写 / Host $http_host 保 SigV4）、S3_ENDPOINT 去端口；storage:it 24/24 + 开发机真实网络预签名 PUT/GET/DELETE 全绿；9443 保留内网备用门面；§3 / §4 / §7 同步 | px |
+| v1.14 | 2026-10-16 | M5-03-5 智能机器人单聊（绑定码链路）部署登记：§3-A 补仓库侧待执行项（`server.env.example` 已补新机器人凭据）；§3-C Secrets 口径改「群 + 单聊共用同一机器人」；§4 增第 8 步（备份 → `0055` → dist 重传 → 凭据 → 重启 → BC-1 ~ BC-4）；§7 增 #11；与 `deploy/prod/README.md` §6 / §7 / §10 同步 | px（lan 代记） |

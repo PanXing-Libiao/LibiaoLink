@@ -24,11 +24,11 @@ export { NotifyAppRepository } from "./notify.app.repository.js";
 export type { NotifyAppDeliveryInsert, WecomAppContact } from "./notify.app.repository.js";
 export {
   composeDmMarkdown,
-  DM_BINDING_CODE_MAX_PER_HOUR,
+  DM_BINDING_CODE_MAX_PER_WINDOW,
+  DM_BINDING_CODE_WINDOW_MS,
   DM_BINDING_CODE_PATTERN,
   DM_BINDING_CODE_TTL_MS,
   DM_BINDING_DEGRADE_PREFIX,
-  DM_BINDING_REPLY_ALREADY_BOUND,
   DM_BINDING_REPLY_BOUND,
   DM_BINDING_REPLY_INVALID,
   DM_DEGRADE_PREFIX,

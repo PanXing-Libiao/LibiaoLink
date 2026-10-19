@@ -14,7 +14,7 @@ import { useFocusTrap } from "./useFocusTrap";
  * （日报侧五列 + 问题侧三列），另补「问题描述」一列（参考图没有，但我们的问题可无来源日报，
  * 不补这列时报告侧全空的行认不出是什么问题）。只读：除搜索 / 关闭 / 点附图预览外没有任何编辑入口。
  *
- * 形态与「项目进度一览」的「数据详情」（HubDashDetail.tsx）逐项对齐：portal 到 body + 半透明遮罩 +
+ * 形态与「项目进度」的「数据详情」（HubDashDetail.tsx）逐项对齐：portal 到 body + 半透明遮罩 +
  * 点遮罩 / Esc 关闭 + 键盘焦点陷阱收在容器本身（不抢 ✕）+ 表体底部全站同款横向滑块；
  * 弹窗打开时地图 ⇄ 仪表盘转场停用（Hub.tsx 认本弹窗的 [data-hub-detail-dialog] 标记）。
  * 传入的 rows 已由父组件按「点中的状态 × 归类」筛好（口径见 data/dashboardProgress.ts 的 isIssueInCell，

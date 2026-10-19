@@ -47,9 +47,9 @@ export type UserPreferences = {
   locale: Locale;
   /** 仪表盘页常驻视图（Push 332 · 业务口径「还是做路由吧 这个页面要记住 因为不同的人想常驻的页面可能不一样」）：地址不带 `?view=` 时本页落在哪个视图 —— 刷新 / 换设备同账号保持；默认 map。 */
   hubView: HubView;
-  /** 仪表盘「项目进度一览」常驻项目（Push 336 · 业务口径「选择的项目也要记住 不随刷新变动而回到全部项目」）：按账号记住选中的项目 id；null = 全部项目（默认）。 */
+  /** 仪表盘常驻项目（Push 336 · 业务口径「选择的项目也要记住 不随刷新变动而回到全部项目」）：按账号记住选中的项目 id；null = 全部项目（默认）。 */
   hubDashProject: string | null;
-  /** 仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」）：progress = 「项目进度一览」（默认）/ status = 「任务状态」/ issues = 「问题」/ delivery = 「交付时间」—— 刷新 / 换设备同账号保持。 */
+  /** 仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」；Push 353 加词频图、Push 358 加数据总览）：overview = 「数据总览」/ progress = 「项目进度」（默认）/ status = 「任务状态」/ issues = 「问题」/ delivery = 「交付时间」/ wordcloud = 「词频图」—— 刷新 / 换设备同账号保持。 */
   hubDashView: HubDashView;
   updatedAt: string | null;
 };

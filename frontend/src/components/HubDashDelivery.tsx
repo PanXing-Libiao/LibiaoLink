@@ -73,7 +73,7 @@ function barPathOf(x: number, top: number, width: number, height: number): strin
   return "M " + x + " " + (top + height) + " L " + x + " " + (top + radius) + " Q " + x + " " + top + " " + (x + radius) + " " + top + " L " + (x + width - radius) + " " + top + " Q " + (x + width) + " " + top + " " + (x + width) + " " + (top + radius) + " L " + (x + width) + " " + (top + height) + " Z";
 }
 
-export function HubDashDelivery({ delivery, canDrill, onTip, onRateTip, onLeave, onPick, onRatePick, onNotePick }: {
+export function HubDashDelivery({ delivery, canDrill, onTip, onRateTip, onLeave, onPick, onRatePick, onNotePick, fontScale = 1 }: {
   readonly delivery: DashboardDelivery;
   readonly canDrill: boolean;
   readonly onTip: (event: ReactMouseEvent<SVGRectElement>, bucket: DashboardDeliveryBucket, count: number, share: string) => void;
@@ -84,10 +84,19 @@ export function HubDashDelivery({ delivery, canDrill, onTip, onRateTip, onLeave,
   readonly onRatePick: () => void;
   /** 点「未到交付节点」注记（Push 346）：开未到交付节点口径的数据详情（注记里那 N 条本体）。 */
   readonly onNotePick: () => void;
+  /** 总览字号倍率（Push 360 · 业务口径 2026-10-16「文字不够清晰 那些小字还是要大一点」）：只有「数据总览」传 >1，单视图不传、逐值不变。 */
+  readonly fontScale?: number;
 }) {
   const t = useT();
   const locale = useLocale();
   const [hoverBucket, setHoverBucket] = useState<DashboardDeliveryBucket | null>(null);
+  /** 总览字号倍率（见上）：字号与随之变化的排版量都从这里取（右上「按时率」大数不动）；倍率 1 时与旧值逐值一致。 */
+  const fs = fontScale;
+  const tickFont = 12.5 * fs;
+  const countFont = 20 * fs;
+  const nameFont = 17 * fs;
+  const rateLabelFont = 14 * fs;
+  const rateNoteFont = 12.5 * fs;
   const maxCount = delivery.counts.reduce((max, count) => Math.max(max, count), 0);
   const { max: tickMax, step } = tickMaxOf(maxCount);
   const unit = (AXIS_Y - TOP) / tickMax;
@@ -101,7 +110,7 @@ export function HubDashDelivery({ delivery, canDrill, onTip, onRateTip, onLeave,
       {ticks.map((value) => (
         <g key={value}>
           {value > 0 ? <line className="hub-dash-delivery__grid" x1={PLOT_X0} y1={yOf(value)} x2={PLOT_X1} y2={yOf(value)} /> : null}
-          <text className="hub-dash-delivery__tick" x={PLOT_X0 - 14} y={yOf(value) + 4.5} textAnchor="end" fontSize={12.5}>{value}</text>
+          <text className="hub-dash-delivery__tick" x={PLOT_X0 - 14} y={yOf(value) + tickFont * 0.36} textAnchor="end" fontSize={tickFont}>{value}</text>
         </g>
       ))}
       <line className="hub-dash-delivery__axis" x1={PLOT_X0 - 6} y1={AXIS_Y} x2={PLOT_X1 + 6} y2={AXIS_Y} />
@@ -116,8 +125,8 @@ export function HubDashDelivery({ delivery, canDrill, onTip, onRateTip, onLeave,
             {count > 0 ? (
               <path className="hub-dash-delivery__bar" data-bucket={bucket} data-hover={hoverBucket === bucket ? "true" : "false"} data-drill={canDrill ? "true" : "false"} style={{ animationDelay: index * SERIES_ANIM_STAGGER + "ms" }} d={barPathOf(x, barTop, BAR_W, AXIS_Y - barTop)} />
             ) : null}
-            <text className="hub-dash-delivery__count" data-bucket={bucket} style={{ animationDelay: index * SERIES_ANIM_STAGGER + NUM_ANIM_OFFSET + "ms" }} x={cx} y={count > 0 ? barTop - 12 : AXIS_Y - 14} textAnchor="middle" fontSize={20} fontWeight={700}>{count}</text>
-            <text className="hub-dash-delivery__name" x={cx} y={TICK_LABEL_Y} textAnchor="middle" fontSize={17}>{statusText(locale, bucket)}</text>
+            <text className="hub-dash-delivery__count" data-bucket={bucket} style={{ animationDelay: index * SERIES_ANIM_STAGGER + NUM_ANIM_OFFSET + "ms" }} x={cx} y={count > 0 ? barTop - countFont * 0.6 : AXIS_Y - 14} textAnchor="middle" fontSize={countFont} fontWeight={700}>{count}</text>
+            <text className="hub-dash-delivery__name" x={cx} y={TICK_LABEL_Y} textAnchor="middle" fontSize={nameFont}>{statusText(locale, bucket)}</text>
             <rect
               className="hub-dash-delivery__hit"
               data-bucket={bucket}
@@ -140,10 +149,10 @@ export function HubDashDelivery({ delivery, canDrill, onTip, onRateTip, onLeave,
           </g>
         );
       })}
-      <text className="hub-dash-delivery__rateLabel" x={PLOT_X1} y={30} textAnchor="end" fontSize={14}>{t("hub.dash.delivery.rate")}</text>
+      <text className="hub-dash-delivery__rateLabel" x={PLOT_X1} y={30} textAnchor="end" fontSize={rateLabelFont}>{t("hub.dash.delivery.rate")}</text>
       <text className="hub-dash-delivery__rateValue" x={PLOT_X1} y={64} textAnchor="end" fontSize={32} fontWeight={700}>{delivery.onTimeRate === null ? "—" : delivery.onTimeRate + "%"}</text>
       {delivery.pendingCount > 0 ? (
-        <text className="hub-dash-delivery__rateNote" x={PLOT_X1} y={90} textAnchor="end" fontSize={12.5}>{t("hub.dash.delivery.note", { n: delivery.pendingCount })}</text>
+        <text className="hub-dash-delivery__rateNote" x={PLOT_X1} y={90} textAnchor="end" fontSize={rateNoteFont}>{t("hub.dash.delivery.note", { n: delivery.pendingCount })}</text>
       ) : null}
       <rect className="hub-dash-delivery__rateHit" data-drill={canDrill ? "true" : "false"} x={RATE_HIT_X} y={RATE_HIT_Y} width={RATE_HIT_W} height={RATE_HIT_H} onMouseEnter={onRateTip} onMouseMove={onRateTip} onMouseLeave={onLeave} onClick={canDrill ? onRatePick : undefined} />
       {delivery.pendingCount > 0 ? (

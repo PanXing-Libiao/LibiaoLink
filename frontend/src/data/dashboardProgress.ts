@@ -279,9 +279,10 @@ export function isIssueInCell(issue: DashboardIssueLike, state: string, category
  * - 按时率 = 按时交付 ÷ 已交付合计（三结果之和），百分比取整；分母 0 → 显示「—」。
  */
 
-/** 仪表盘页内视图 id（Push 345 · 业务口径「选择后刷新不变 按账号记住」；Push 353 加「词频图」；与契约 HUB_DASH_VIEW_IDS 同源）：
- *  progress = 项目进度一览（默认）/ status = 任务状态 / issues = 问题 / delivery = 交付时间 / wordcloud = 词频图。 */
-export const HUB_DASH_VIEW_IDS = ["progress", "status", "issues", "delivery", "wordcloud"] as const;
+/** 仪表盘页内视图 id（Push 345 · 业务口径「选择后刷新不变 按账号记住」；Push 353 加「词频图」、Push 358 加「数据总览」；与契约 HUB_DASH_VIEW_IDS 同源）：
+ *  overview = 数据总览（Push 358 · 切换栏最左；五图等比例缩小总览；不设默认，缺省仍 progress）/
+ *  progress = 项目进度（默认）/ status = 任务状态 / issues = 问题 / delivery = 交付时间 / wordcloud = 词频图。 */
+export const HUB_DASH_VIEW_IDS = ["overview", "progress", "status", "issues", "delivery", "wordcloud"] as const;
 
 export type HubDashView = (typeof HUB_DASH_VIEW_IDS)[number];
 

@@ -7327,7 +7327,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 企业微信单聊绑定态（D5 / D6 设置页）：按当前机器人（`WECOM_BOT_ID`）维度判定；恒 200（未绑定 = bound:false）；企微 open_userid 只回掩码末 4 位 */
+        /** 企业微信单聊绑定态（D5 / D6 设置页）：按当前机器人（`WECOM_BOT_ID`）维度判定；恒 200（未绑定 = bound:false）；企微 open_userid 只回掩码末 4 位；v1.8 另回当前未用绑定码（bindingCode）与取码限流可重试时刻（retryAt）—— 页面刷新不丢码面 / 倒计时 / 罚时 */
         get: {
             parameters: {
                 query?: never;
@@ -7394,6 +7394,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/wecom-dm-binding/diagnostics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 机器人诊断（仅非生产环境）：回显 api 进程实际读取的 WECOM_BOT_ID / SECRET / WS 地址 + 该 bot_id 最近回调统计（inboundCount = 0 → 回调从未到达：worker 未启动 / 凭据不对 / bot_id 不一致）；生产恒 enabled:false 且敏感字段 null */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 诊断信息（生产：enabled:false + 敏感字段 null） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WecomDmBotDiagnostics"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/wecom-dm-binding/codes": {
         parameters: {
             query?: never;
@@ -7403,7 +7448,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 生成绑定码（D3 / D5）：6 位数字 · TTL 10 分钟 · 一次性 · 3 次 / 小时 / 用户（超出 429 RATE_LIMITED）；重复取码作废上一条未用码；用户把码发进企微单聊即绑定（会话内回执由 worker 承担） */
+        /** 生成绑定码（D3 / D5）：6 位数字 · TTL 5 分钟 · 一次性 · 5 次 / 3 分钟 / 用户（D3 修订 v1.8 —— 超出 429 RATE_LIMITED）；重复取码作废上一条未用码；用户把码发进企微单聊即绑定（v1.8：以码持有者为准换绑 · 会话内回执由 worker 承担） */
         post: {
             parameters: {
                 query?: never;
@@ -7419,7 +7464,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["WecomDmBindingCode"];
+                        "application/json": components["schemas"]["WecomDmBindingCode"] & unknown;
                     };
                 };
                 /** @description 未认证（AUTH_REQUIRED） */
@@ -7431,7 +7476,7 @@ export interface paths {
                         "application/json": components["schemas"]["ApiError"];
                     };
                 };
-                /** @description 取码频率到顶（RATE_LIMITED；details[0].meta.retryAt = 可重试时刻，meta.window = hour） */
+                /** @description 取码频率到顶（RATE_LIMITED；details[0].meta.retryAt = 可重试时刻，meta.window = 3m） */
                 429: {
                     headers: {
                         [name: string]: unknown;
@@ -8371,15 +8416,15 @@ export interface components {
          * @enum {string}
          */
         FollowObjectType: "project" | "task";
-        /** @description 仪表盘页「项目进度一览」的常驻项目 id（Push 336 · 按账号记住）：null = 全部项目（默认）；项目已不存在时界面回落全部项目，读侧非字符串 / 空串 / 超长一律收敛为 null */
+        /** @description 仪表盘页的常驻项目 id（Push 336 · 按账号记住；Push 358 起六个图表视图共用）：null = 全部项目（默认）；项目已不存在时界面回落全部项目，读侧非字符串 / 空串 / 超长一律收敛为 null */
         HubDashProject: string | null;
         /**
-         * @description 仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」）：progress = 「项目进度一览」（默认）/ status = 「任务状态」/ issues = 「问题」/ delivery = 「交付时间」；刷新 / 换设备同账号保持，读侧白名单外 / 缺省一律收敛为 progress
+         * @description 仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」；Push 353 加「词频图」、Push 358 加「数据总览」）：overview = 「数据总览」/ progress = 「项目进度」（默认）/ status = 「任务状态」/ issues = 「问题」/ delivery = 「交付时间」/ wordcloud = 「词频图」；刷新 / 换设备同账号保持，读侧白名单外 / 缺省一律收敛为 progress
          * @enum {string}
          */
-        HubDashView: "progress" | "status" | "issues" | "delivery" | "wordcloud";
+        HubDashView: "overview" | "progress" | "status" | "issues" | "delivery" | "wordcloud";
         /**
-         * @description 仪表盘页（`#/`）的常驻视图（Push 332 · 按账号记住）：map = 世界地图（默认）/ dashboard = 「项目进度一览」；地址显式带 `?view=dashboard` 时以地址为准，读侧白名单外 / 缺省一律收敛为 map
+         * @description 仪表盘页（`#/`）的常驻视图（Push 332 · 按账号记住）：map = 世界地图（默认）/ dashboard = 仪表盘大屏（含数据总览 / 项目进度 等六个图表视图）；地址显式带 `?view=dashboard` 时以地址为准，读侧白名单外 / 缺省一律收敛为 map
          * @enum {string}
          */
         HubView: "map" | "dashboard";
@@ -9927,7 +9972,7 @@ export interface components {
             grouping?: components["schemas"]["ViewGrouping"];
             isDefault?: boolean;
         };
-        /** @description 绑定码（一次性：用户首次发码即绑定并置 used；重复取码会作废上一条未用码） */
+        /** @description 当前仍有效的（pending）绑定码 —— 刷新 / 重进页面后据此恢复码面与倒计时；无未用码 = null */
         WecomDmBindingCode: {
             /**
              * @description 6 位数字绑定码（用户在企微里把这条码发给机器人完成绑定）
@@ -9937,14 +9982,45 @@ export interface components {
             expiresAt: components["schemas"]["DateTime"] & unknown;
             /** @description 剩余有效期（秒；供前端倒计时） */
             expiresInSeconds: number;
-        };
-        /** @description 企业微信单聊绑定态：绑定按机器人维度成立（换机器人后旧绑定不生效 → 读面回到 bound:false）；解绑 = 注销投递资格（保留激活登记） */
+        } | null;
+        /** @description 企业微信单聊绑定态：绑定按机器人维度成立（换机器人后旧绑定不生效 → 读面回到 bound:false）；解绑 = 注销投递资格（保留激活登记）；另回当前未用绑定码与取码限流可重试时刻（页面刷新不丢状态） */
         WecomDmBindingState: {
             /** @description 当前机器人（`WECOM_BOT_ID`）下是否已有可投递地址 */
             bound: boolean;
             /** @description 企微 open_userid 掩码（只回末 4 位）；未绑定 / 解绑后 = null */
             wecomUseridMasked: string | null;
             boundAt: components["schemas"]["DateTime"] & (string | null);
+            bindingCode: components["schemas"]["WecomDmBindingCode"];
+            retryAt: components["schemas"]["DateTime"] & (string | null);
+        };
+        /** @description 机器人诊断（仅非生产环境）：bot_id / secret / ws 地址 / 最近回调统计；用于核对本地凭据与 worker 收消息链路 */
+        WecomDmBotDiagnostics: {
+            /** @description 诊断是否开启（生产默认关闭；关闭时其余敏感字段为 null） */
+            enabled: boolean;
+            /** @description WECOM_BOT_ID 原文（未配置 = null） */
+            botId: string | null;
+            /** @description WECOM_BOT_SECRET 原文（仅诊断开启时回全量；关闭 = null） */
+            botSecret: string | null;
+            /** @description Secret 掩码（首 4 + **** + 末 4；关闭 / 未配置 = null） */
+            botSecretMasked: string | null;
+            /** @description WECOM_BOT_WS_URL（机器人长连接地址） */
+            wsUrl: string | null;
+            /** @description NOTIFY_DELIVERY_ENABLED（worker 是否允许启动机器人长连接） */
+            deliveryEnabled: boolean;
+            lastInboundAt: components["schemas"]["DateTime"] & (string | null);
+            /** @description 当前 bot_id 下有过单聊消息的企微号数（激活表行数）；0 = 回调从未到达（worker 未启动 / 凭据不对 / bot_id 不一致） */
+            inboundCount: number;
+            /** @description 最近一次回调的 open_userid 掩码（末 4 位）；无记录 = null */
+            lastInboundUseridMasked: string | null;
+            /** @description 激活表内出现过的 bot_id（最多 5 个，最近在前）—— 可发现 worker 用的是另一个机器人 */
+            observedBotIds: components["schemas"]["WecomDmBotInboundStat"][];
+            serverTime: components["schemas"]["DateTime"] & unknown;
+        };
+        WecomDmBotInboundStat: {
+            botId: string;
+            /** @description 该 bot_id 下累计有过单聊消息的企微号数（激活表按 (bot_id, wecom_userid) 一行；不是消息条数） */
+            inboundCount: number;
+            lastInboundAt: components["schemas"]["DateTime"] & (string | null);
         };
         /** @description 工作台问题项（跨项目；问题追踪七列数据源随行下发） */
         WorkspaceIssueItem: {

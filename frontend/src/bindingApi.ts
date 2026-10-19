@@ -2,22 +2,27 @@
  * 企业微信单聊绑定客户端（M5-03-5-6 契约刀三端点 · Push 250 前端接线）。
  *
  * 契约 = shared/src/modules/notifications.ts 末段「企业微信单聊绑定」（Push 249 · lan 线 · wmj 复核）：
- *   GET    /api/v1/wecom-dm-binding        绑定态（恒 200；未绑定 = bound:false + 两个 null）
- *   POST   /api/v1/wecom-dm-binding/codes  取绑定码（6 位 / TTL 10 分钟 / 一次性 / 3 次每小时）
- *   DELETE /api/v1/wecom-dm-binding        解绑（幂等 —— 本就未绑定也 200 bound:false）
+ *   GET    /api/v1/wecom-dm-binding        绑定态（恒 200；未绑定 = bound:false + 两个 null；v1.8 另回
+ *                                          bindingCode / retryAt —— 刷新页面不丢码面与罚时）
+ *   POST   /api/v1/wecom-dm-binding/codes  取绑定码（6 位 / TTL 5 分钟 / 一次性 / 5 次每 3 分钟 —— D3 修订 v1.8）
+ *   DELETE /api/v1/wecom-dm-binding        解绑（幂等 —— 本就未绑定也 200 bound:false；返回同 GET 读面）
  *
  * 权限 = 个人资源：读 = 会话，写 = 会话 + CSRF（apiFetch 自动补 X-CSRF-Token），**不依赖功能权限键**
  * （同收件箱 / 通知偏好先例）；安全（口径 §9）：界面只展示掩码（末 4 位），前端不缓存 / 不落日志企微标识。
  */
 import { ApiError, apiRequest, apiSend } from "./api";
 
-/** 绑定态（`WecomDmBindingState` 契约同形）：掩码与绑定时刻只在已绑定时有值。 */
+/** 绑定态（`WecomDmBindingState` 契约同形）：掩码与绑定时刻只在已绑定时有值；v1.8 另带读面回填。 */
 export type WecomDmBindingState = {
   bound: boolean;
   /** 密文 open_userid 掩码（形如 `****bmUw`）；未绑定 = null。 */
   wecomUseridMasked: string | null;
   /** 绑定时刻（ISO 8601 UTC）；未绑定 = null。 */
   boundAt: string | null;
+  /** 当前仍未失效的绑定码（v1.8 读面回填）：刷新 / 重进页面后据此恢复码面与倒计时；无未用码 = null。 */
+  bindingCode: WecomDmBindingCode | null;
+  /** 取码限流可重试时刻（v1.8 读面回填，ISO 8601 UTC）：刷新后据此恢复罚时倒计时；未到顶 = null。 */
+  retryAt: string | null;
 };
 
 /** 绑定码（`WecomDmBindingCode` 契约同形）：`expiresInSeconds` 直接用于倒计时（不必前端算时差）。 */
@@ -29,6 +34,32 @@ export type WecomDmBindingCode = {
   expiresInSeconds: number;
 };
 
+/** 机器人诊断里的单聊回调统计（按 bot_id 维度）。 */
+export type WecomDmBotInboundStat = {
+  botId: string;
+  inboundCount: number;
+  lastInboundAt: string | null;
+};
+
+/**
+ * 机器人诊断（`WecomDmBotDiagnostics` 契约同形 · 仅非生产环境）：
+ * 回显本 api 进程实际读取的 `WECOM_BOT_*` + 该 bot_id 的最近回调统计 —— 用于核对凭据与 worker 收消息链路。
+ * 生产默认关闭（`enabled:false`，敏感字段 null）。
+ */
+export type WecomDmBotDiagnostics = {
+  enabled: boolean;
+  botId: string | null;
+  botSecret: string | null;
+  botSecretMasked: string | null;
+  wsUrl: string | null;
+  deliveryEnabled: boolean;
+  lastInboundAt: string | null;
+  inboundCount: number;
+  lastInboundUseridMasked: string | null;
+  observedBotIds: WecomDmBotInboundStat[];
+  serverTime: string;
+};
+
 /** 读绑定态（设置页 / 首登引导弹窗 / 站内信未绑定提示共用同一读面）。 */
 export function loadWecomDmBinding(): Promise<WecomDmBindingState> {
   return apiRequest<WecomDmBindingState>("/api/v1/wecom-dm-binding");
@@ -37,6 +68,11 @@ export function loadWecomDmBinding(): Promise<WecomDmBindingState> {
 /** 取绑定码：重复取码会作废上一条未用码 —— 前端一律以最新响应为准；频率到顶 = 429 `RATE_LIMITED`。 */
 export function requestWecomDmBindingCode(): Promise<WecomDmBindingCode> {
   return apiSend<WecomDmBindingCode>("/api/v1/wecom-dm-binding/codes", "POST");
+}
+
+/** 机器人诊断（仅非生产环境；生产返回 enabled:false → 面板整块隐藏）。 */
+export function fetchWecomDmBotDiagnostics(): Promise<WecomDmBotDiagnostics> {
+  return apiRequest<WecomDmBotDiagnostics>("/api/v1/wecom-dm-binding/diagnostics");
 }
 
 /** 解绑（幂等）：成功回未绑定态；服务端同事务写审计（对象类型「用户」/ 动作「删除」，只带掩码）。 */

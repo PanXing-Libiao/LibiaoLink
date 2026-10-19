@@ -261,7 +261,7 @@ function parseSectionValue(search: string): string | null {
 }
 
 /** 仪表盘页落地视图（Push 332 · 业务口径 2026-10-15「还是做路由吧 这个页面要记住」）：map = 世界地图（缺省、不落参数）/
- *  dashboard = 「项目进度一览」大屏；地址不带参数时落回账号偏好记的常驻视图（见 App 层 hubView）。与契约 HubViewSchema 同源。 */
+ *  dashboard = 仪表盘大屏（Push 358 起六个图表视图：数据总览 / 项目进度 / 任务状态 / 问题 / 交付时间 / 词频图）；地址不带参数时落回账号偏好记的常驻视图（见 App 层 hubView）。与契约 HubViewSchema 同源。 */
 export type HubView = "map" | "dashboard";
 
 /** 契约读侧收敛的镜像：偏好 / 地址里的未知值一律回 map（坏值不崩）。 */

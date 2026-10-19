@@ -96,24 +96,24 @@ function jitterOf(seed: number): number {
   return value - Math.floor(value);
 }
 
-/** 词量少时压低最大字号（防「5 条变更 6 个词」也铺 150px）。 */
-function topSizeOf(maxCount: number): number {
-  return Math.min(MAX_SIZE, 62 + 5.6 * maxCount);
+/** 词量少时压低最大字号（防「5 条变更 6 个词」也铺 150px）；fs = 总览字号倍率（见上）。 */
+function topSizeOf(maxCount: number, fs: number): number {
+  return Math.min(MAX_SIZE * fs, (62 + 5.6 * maxCount) * fs);
 }
 
 /** 词频 → 主字号（随词频单调：词频最高 = 封顶字号）。 */
-function baseSizeOf(count: number, maxCount: number, topSize: number): number {
+function baseSizeOf(count: number, maxCount: number, topSize: number, fs: number): number {
   const ratio = count / maxCount;
-  return Math.max(MIN_SIZE, Math.round(topSize * Math.pow(ratio, SIZE_EXPONENT)));
+  return Math.max(MIN_SIZE * fs, Math.round(topSize * Math.pow(ratio, SIZE_EXPONENT)));
 }
 
 /** 词频 → 落位实例（每词第一枚 = 主实例保形状；其余按字号递减补缝）。 */
-function buildInstances(words: readonly ChangeWord[]): readonly WordInstance[] {
+function buildInstances(words: readonly ChangeWord[], fs: number): readonly WordInstance[] {
   if (words.length === 0) {
     return [];
   }
   const maxCount = words[0].count;
-  const topSize = topSizeOf(maxCount);
+  const topSize = topSizeOf(maxCount, fs);
   const instances: WordInstance[] = [];
   const repeats: WordInstance[] = [];
   let budget = MAX_INSTANCES_TOTAL;
@@ -122,15 +122,15 @@ function buildInstances(words: readonly ChangeWord[]): readonly WordInstance[] {
     if (budget <= 0) {
       break;
     }
-    instances.push({ word: entry.word, count: entry.count, size: baseSizeOf(entry.count, maxCount, topSize), primary: true, seed: seed });
+    instances.push({ word: entry.word, count: entry.count, size: baseSizeOf(entry.count, maxCount, topSize, fs), primary: true, seed: seed });
     seed += 1;
     budget -= 1;
   }
   for (const entry of words) {
-    const base = baseSizeOf(entry.count, maxCount, topSize);
+    const base = baseSizeOf(entry.count, maxCount, topSize, fs);
     const copies = Math.min(entry.count, MAX_COPIES_PER_WORD) - 1;
     for (let index = 1; index <= copies && budget > 0; index += 1) {
-      const size = Math.max(REPEAT_MIN_SIZE, Math.round(base * REPEAT_FACTOR * Math.pow(REPEAT_SHRINK, index - 1)));
+      const size = Math.max(REPEAT_MIN_SIZE * fs, Math.round(base * REPEAT_FACTOR * Math.pow(REPEAT_SHRINK, index - 1)));
       repeats.push({ word: entry.word, count: entry.count, size: size, primary: false, seed: seed + index });
       budget -= 1;
     }
@@ -208,8 +208,8 @@ function buildSprite(word: string, size: number): Sprite | null {
 }
 
 /** 落位：像素碰撞 + 螺线试探（d3-cloud 同套思路）→ 已落位词表。 */
-function layoutWords(words: readonly ChangeWord[]): readonly PlacedWord[] {
-  const instances = buildInstances(words);
+function layoutWords(words: readonly ChangeWord[], fs: number): readonly PlacedWord[] {
+  const instances = buildInstances(words, fs);
   if (instances.length === 0) {
     return [];
   }
@@ -277,7 +277,7 @@ function layoutWords(words: readonly ChangeWord[]): readonly PlacedWord[] {
     }
   };
   for (const instance of instances) {
-    const floor = instance.primary ? PRIMARY_FLOOR_SIZE : REPEAT_FLOOR_SIZE;
+    const floor = (instance.primary ? PRIMARY_FLOOR_SIZE : REPEAT_FLOOR_SIZE) * fs;
     let size = instance.size;
     let placedItem: PlacedWord | null = null;
     while (placedItem === null) {
@@ -324,16 +324,18 @@ function layoutWords(words: readonly ChangeWord[]): readonly PlacedWord[] {
   return placed;
 }
 
-export function HubDashWordCloud({ words, canDrill, onTip, onLeave, onPick }: {
+export function HubDashWordCloud({ words, canDrill, onTip, onLeave, onPick, fontScale = 1 }: {
   readonly words: DashboardChangeWords;
   readonly canDrill: boolean;
   readonly onTip: (event: ReactMouseEvent<SVGTextElement>, word: string, count: number) => void;
   readonly onLeave: () => void;
   readonly onPick: (word: string) => void;
+  /** 总览字号倍率（Push 360 · 业务口径 2026-10-16「文字不够清晰 那些小字还是要大一点」）：只有「数据总览」传 >1，单视图不传、逐值不变。 */
+  readonly fontScale?: number;
 }) {
   const t = useT();
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
-  const placed = useMemo(() => layoutWords(words.words), [words.words]);
+  const placed = useMemo(() => layoutWords(words.words, fontScale), [words.words, fontScale]);
   return (
     <svg className="hub-dash-wordcloud" viewBox={"0 0 " + String(VIEW_W) + " " + String(VIEW_H)} preserveAspectRatio="xMidYMid meet" role="img" aria-label={t("hub.dash.wordcloud.aria")}>
       {placed.map((item, index) => {

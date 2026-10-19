@@ -52,7 +52,7 @@ async function bootstrap(): Promise<void> {
   }
 
   logger.log(
-    "worker 已启动（上传会话过期清理 / 回收站到期清理 / 导入表票据过期清理 / Outbox 运行时：领取消费（preview.job + notify.message）· 积压与死信告警 · done 行保留期清理 · 调度 tick（每分钟：cron 领取 + last_run_at 补发 + 单活锁；注册表为空 = 只存不跑）· 通知延迟投递排空（免打扰 / 每日上限）· 稍后提醒到点触发（C5-05））",
+    "worker 已启动（上传会话过期清理 / 回收站到期清理 / 导入表票据过期清理 / Outbox 运行时：已注册主题领取消费（含无业务订阅主题的 drain-only 收敛）· 未消费主题 / 积压 / 死信告警 · done 行保留期清理 · 调度 tick（每分钟：cron 领取 + last_run_at 补发 + 单活锁；注册表为空 = 只存不跑）· 通知延迟投递排空（免打扰 / 每日上限）· 稍后提醒到点触发（C5-05））",
   );
   const heartbeat = setInterval(() => logger.log("worker heartbeat"), HEARTBEAT_MS);
 

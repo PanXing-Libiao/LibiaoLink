@@ -6,12 +6,12 @@ import { statusText, useLocale, useT } from "../i18n";
  * 仪表盘「任务状态」饼图（Push 339 · 业务口径 2026-10-15「现在准备做这个任务状态的」+「鼠标触碰效果」
  * +「点击后效果」+「这些都要参考项目进度一览 之前都做过的」）：
  * 形态照业务参考图 —— 图例居中在顶、饼图居中、两侧色字标签 + 引线；悬停扇区出浮层卡、点扇区开只读
- * 「数据详情」（两者都走「项目进度一览」的既有交互；悬停卡 / 数据详情两个浮层的状态在父组件 HubDashboard）。
+ * 「数据详情」（两者都走「项目进度」的既有交互；悬停卡 / 数据详情两个浮层的状态在父组件 HubDashboard）。
  *
  * 口径：
  * - 扇区 = 任务五态（DASHBOARD_STATUS_ORDER：进行中 / 已完成 / 待开始 / 提前完成 / 已延期），
  *   顺时针自 12 点起排；0 条的状态整条不出现 —— 业务口径「已延期也要的 只是没有相关的任务状态才没显示在图中」。
- * - 画布 1200 x 596（与「项目进度一览」同款 viewBox，等比缩放填满面板）；扇区 = 全直角扇形（各自从圆心出发、
+ * - 画布 1200 x 596（与「项目进度」同款 viewBox，等比缩放填满面板）；扇区 = 全直角扇形（各自从圆心出发、
  *   在圆心尖角相汇，没有缺口），扇区之间只留 1.5 单位白描边当分隔线 —— 业务口径「中间的缝不要」。
  * - 标签 = 状态名: 条数 (占比%)（占比两位小数），色字与引线同状态色；引线从扇区外缘中角出发、
  *   先沿半径外探一小段再连到标签；同侧标签按理想位从上往下摊开防重叠。
@@ -29,7 +29,7 @@ const LABEL_FONT = 18;
 const LEGEND_FONT = 16;
 const LEGEND_SWATCH = 14;
 const LEGEND_ITEM_GAP = 44;
-/** 标签贴白卡左右内衬（与图内 x=40 同款，与「项目进度一览」同一竖线）。 */
+/** 标签贴白卡左右内衬（与图内 x=40 同款，与「项目进度」同一竖线）。 */
 const LABEL_PAD = 40;
 const LABEL_Y_MIN = 96;
 const LABEL_Y_MAX = 552;
@@ -77,7 +77,7 @@ function sectorPathOf(startAngle: number, endAngle: number): string {
   );
 }
 
-export function HubDashStatus({ status, canDrill, onTip, onLeave, onPick }: {
+export function HubDashStatus({ status, canDrill, onTip, onLeave, onPick, fontScale = 1 }: {
   readonly status: DashboardStatus;
   readonly canDrill: boolean;
   /** 悬停 / 移动扇区：父组件把鼠标位置换算成白卡坐标并出浮层卡（占比文本一并带上）。 */
@@ -86,9 +86,16 @@ export function HubDashStatus({ status, canDrill, onTip, onLeave, onPick }: {
   readonly onLeave: () => void;
   /** 点扇区：打开只读「数据详情」（仅选中具体项目时可点，由父组件按 canDrill 挂 onClick）。 */
   readonly onPick: (slice: DashboardStatusSlice) => void;
+  /** 总览字号倍率（Push 360 · 业务口径 2026-10-16「文字不够清晰 那些小字还是要大一点」）：只有「数据总览」传 >1，单视图不传、逐值不变。 */
+  readonly fontScale?: number;
 }) {
   const t = useT();
   const locale = useLocale();
+  /** 总览字号倍率（见上）：字号与随之变化的排版量都从这里取；倍率 1 时与旧值逐值一致。 */
+  const fs = fontScale;
+  const legendFont = LEGEND_FONT * fs;
+  const labelFont = LABEL_FONT * fs;
+  const labelMinGap = LABEL_MIN_GAP * fs;
   const slices = status.slices;
   if (slices.length === 0 || status.totalTasks <= 0) {
     return null;
@@ -104,7 +111,7 @@ export function HubDashStatus({ status, canDrill, onTip, onLeave, onPick }: {
   }
   /** 图例（居中）：状态色块 + 状态名（顺序 = 扇区顺序）。 */
   const legendItems: Array<{ slice: DashboardStatusSlice; text: string; x: number }> = [];
-  const legendWidths = arcs.map((arc) => LEGEND_SWATCH + 8 + textWidthOf(statusText(locale, arc.slice.status), LEGEND_FONT));
+  const legendWidths = arcs.map((arc) => LEGEND_SWATCH + 8 + textWidthOf(statusText(locale, arc.slice.status), legendFont));
   const legendTotal = legendWidths.reduce((sum, width) => sum + width, 0) + LEGEND_ITEM_GAP * Math.max(legendWidths.length - 1, 0);
   let legendX = (VIEW_W - legendTotal) / 2;
   arcs.forEach((arc, index) => {
@@ -119,7 +126,7 @@ export function HubDashStatus({ status, canDrill, onTip, onLeave, onPick }: {
   for (const right of [false, true]) {
     const group = labelItems.filter((item) => item.right === right).sort((a, b) => a.y - b.y);
     for (let index = 1; index < group.length; index += 1) {
-      group[index].y = Math.max(group[index].y, group[index - 1].y + LABEL_MIN_GAP);
+      group[index].y = Math.max(group[index].y, group[index - 1].y + labelMinGap);
     }
     const last = group[group.length - 1];
     if (last !== undefined && last.y > LABEL_Y_MAX) {
@@ -141,7 +148,7 @@ export function HubDashStatus({ status, canDrill, onTip, onLeave, onPick }: {
       {legendItems.map((item) => (
         <g key={"legend-" + item.slice.status}>
           <rect className="hub-dash-status__swatch" data-status={item.slice.status} x={item.x} y={9} width={LEGEND_SWATCH} height={LEGEND_SWATCH} rx={3} />
-          <text className="hub-dash-status__legendText" x={item.x + LEGEND_SWATCH + 8} y={22} fontSize={LEGEND_FONT}>{item.text}</text>
+          <text className="hub-dash-status__legendText" x={item.x + LEGEND_SWATCH + 8} y={22 + (legendFont - LEGEND_FONT) * 0.35} fontSize={legendFont}>{item.text}</text>
         </g>
       ))}
       {arcs.map((arc) => (
@@ -178,7 +185,7 @@ export function HubDashStatus({ status, canDrill, onTip, onLeave, onPick }: {
         const attach = { x: CX + direction.x * (R - 1), y: CY + direction.y * (R - 1) };
         const bend = { x: CX + direction.x * (R + LEADER_STUB), y: CY + direction.y * (R + LEADER_STUB) };
         const text = statusText(locale, item.arc.slice.status) + ": " + item.arc.slice.count + " (" + item.arc.share + ")";
-        const innerX = item.right ? VIEW_W - LABEL_PAD - textWidthOf(text, LABEL_FONT) - LEADER_END_GAP : LABEL_PAD + textWidthOf(text, LABEL_FONT) + LEADER_END_GAP;
+        const innerX = item.right ? VIEW_W - LABEL_PAD - textWidthOf(text, labelFont) - LEADER_END_GAP : LABEL_PAD + textWidthOf(text, labelFont) + LEADER_END_GAP;
         return (
           <g key={"label-" + item.arc.slice.status} data-status={item.arc.slice.status}>
             <polyline
@@ -190,8 +197,8 @@ export function HubDashStatus({ status, canDrill, onTip, onLeave, onPick }: {
             <text
               className="hub-dash-status__label"
               x={item.right ? VIEW_W - LABEL_PAD : LABEL_PAD}
-              y={item.y + 6}
-              fontSize={LABEL_FONT}
+              y={item.y + labelFont / 3}
+              fontSize={labelFont}
               textAnchor={item.right ? "end" : "start"}
             >
               {text}

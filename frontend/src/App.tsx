@@ -133,9 +133,9 @@ export default function App() {
   /** 首落闸门（Push 354 · 业务口径 2026-10-16「仪表盘页面重新登录点击刷新后 会触发页面转场动画效果」）：账号记忆（prefs）落定前，
    *  仪表盘页 #/（无 ?view=）先不渲染卡面 —— 落哪一屏由记忆决定，记忆没到就落屏必出「先地图、后滑屏」的假转场。 */
   const [hubPrefsSettled, setHubPrefsSettled] = useState(false);
-  /** 仪表盘「项目进度一览」常驻项目（Push 336 · 业务口径「选择的项目也要记住 不随刷新变动而回到全部项目」）：按账号记住选中的项目；null = 全部项目。 */
+  /** 仪表盘常驻项目（Push 336 · 业务口径「选择的项目也要记住 不随刷新变动而回到全部项目」）：按账号记住选中的项目；null = 全部项目。 */
   const [hubDashProject, setHubDashProject] = useState<string | null>(null);
-  /** 仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」）：按账号记住选中视图 —— 项目进度一览 / 任务状态 / 问题 / 交付时间。 */
+  /** 仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」）：按账号记住选中视图 —— 数据总览 / 项目进度 / 任务状态 / 问题 / 交付时间 / 词频图。 */
   const [hubDashView, setHubDashView] = useState<HubDashView>("progress");
   /** 权限画像（Push 172 重新接线）：管理入口的呈现层收敛 —— 字典治理（dict.manage）与删除项目（project.delete）。 */
   const permissions = useMyPermissions();
@@ -233,7 +233,7 @@ export default function App() {
           setHubView(asHubView(prefsResult.value.hubView));
           // 仪表盘常驻项目（Push 336 · 「选择的项目也要记住 不随刷新变动而回到全部项目」）：登录后从账号偏好静默落位（缺键 / 已删项目在页面内回落全部项目）
           setHubDashProject(prefsResult.value.hubDashProject ?? null);
-          // 仪表盘页内图表视图（Push 345 · 「选择后刷新不变 按账号记住」）：登录后从账号偏好静默落位（缺键 / 坏值回落项目进度一览）
+          // 仪表盘页内图表视图（Push 345 · 「选择后刷新不变 按账号记住」）：登录后从账号偏好静默落位（缺键 / 坏值回落项目进度）
           setHubDashView(asHubDashView(prefsResult.value.hubDashView));
           // 外观偏好（Push 291 背景档位 / Push 292 卡片水印）：登录后从账号偏好静默落位（坏值 / 缺键回落默认）
           applyBackgroundTier(asBackgroundTier(prefsResult.value.backgroundTier));
@@ -454,7 +454,7 @@ export default function App() {
   };
 
   /**
-   * 仪表盘「项目进度一览」常驻项目（Push 336 · 业务口径 2026-10-15「选择的项目也要记住 不随刷新变动而回到全部项目」）：
+   * 仪表盘常驻项目（Push 336 · 业务口径 2026-10-15「选择的项目也要记住 不随刷新变动而回到全部项目」）：
    * 与 hubView 同一套乐观更新 + 失败回滚（单键 PATCH user_preferences.prefs.hubDashProject；null = 回全部项目）。
    */
   const handleHubDashProjectChange = async (next: string | null): Promise<void> => {
@@ -728,7 +728,7 @@ export default function App() {
     );
 
   if (route.kind === "hub") {
-    // 仪表盘页（顶层 · Push 285 前叫「入口页 / 首页」· Push 331 起叫「仪表盘」）：地图 / 「项目进度一览」双视图（Push 332 起视图走地址 `?view=`）；登录后的默认落地已改项目空间 `#/projects`
+    // 仪表盘页（顶层 · Push 285 前叫「入口页 / 首页」· Push 331 起叫「仪表盘」）：地图 / 仪表盘双视图（Push 332 起视图走地址 `?view=`；Push 358 起仪表盘侧含「数据总览」等六个图表视图）；登录后的默认落地已改项目空间 `#/projects`
     // Push 354 首落闸门（业务口径 2026-10-16「仪表盘页面重新登录点击刷新后 会触发页面转场动画效果」）：地址没写 ?view= 时，
     // 落哪一屏由账号记忆（prefs）决定 —— 记忆没落定前先不渲染卡面，防「先按缺省落地图、记忆晚到再换屏」的假转场；
     // 记忆落定后由 Hub 对齐 effect 瞬时对齐并把视图写回地址（见 Hub.tsx），之后刷新 / 收藏 / 分享都由地址直达。

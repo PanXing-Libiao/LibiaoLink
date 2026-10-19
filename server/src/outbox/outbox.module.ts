@@ -29,6 +29,7 @@ import { resolveOutboxPolicies } from "./policy.js";
 import { OutboxAlertProbe } from "./probe.js";
 import { OutboxRetention } from "./retention.js";
 import { JOBS_REGISTRY, JobScheduler, type OutboxJobHandler } from "./scheduler.js";
+import { registerConsumerTopic, registerDrainOnlyTopics } from "./topic-catalog.js";
 import { WecomAlertSink } from "./wecom-alert.sink.js";
 
 /** 规则接线日志（Nest Logger：产出 / 跳过 / 渠道留痕与 worker 日志同管道）。 */
@@ -45,6 +46,7 @@ const registryLogger = new Logger("OutboxRegistry");
  * 只装配在 worker 进程（api 不消费）。消费 / 生产注册表都在此组装（**加项即可**，dispatcher / scheduler 不感知业务）：
  * 事件消费当前有 preview.job（受 PREVIEW_JOB_ENABLED 开关）、notify.message（S7-4 站内信投递，受
  * NOTIFY_DELIVERY_ENABLED 开关）与规则事件主题（受 AUTOMATION_WIRING_ENABLED 开关）；
+ * 其余无业务订阅的主题由 `topic-catalog.ts` 全量登记为 drain-only（领取后 done，不补发历史事件）；
  * 调度生产者当前有 automation-schedule.job（同上开关；关闭 = 「只存不跑」排障态）。
  */
 @Module({})
@@ -88,7 +90,7 @@ export class OutboxModule {
             if (env.AUTOMATION_WIRING_ENABLED === "true") {
               const deps = automationWiringDeps(env, subjects, clock, calendar, database);
               for (const [topic, handler] of createRuleEventConsumers(deps)) {
-                registry.set(topic, handler);
+                registerConsumerTopic(registry, topic, handler);
               }
             }
             return registry;
@@ -127,7 +129,8 @@ export class OutboxModule {
 
 /**
  * 注册表组装（消费侧唯一清单）：PREVIEW_JOB_ENABLED=false 时预览不入表、NOTIFY_DELIVERY_ENABLED=false 时
- * 站内信不入表（只投递不消费的排障态）。notify.message 的消费只做「落行 + 合并 / 投递 / 排期」分类；
+ * 站内信不入表（只投递不消费的排障态）；其余契约主题无条件落 drain-only，保证不会因漏登记永久积压。
+ * notify.message 的消费只做「落行 + 合并 / 投递 / 排期」分类；
  * 延迟投递（免打扰 / 每日上限）由 NotifyService.flushDue 的独立循环排空，不占 outbox 重试。
  * 导出（M5-03-5-4）：接线回放 / 门禁直接驱动「按载荷 channel 分流」这一生产装配点（先例 =
  * automation-wiring 的 createRuleEventConsumers / createAutomationScheduleHandler）。
@@ -142,13 +145,13 @@ export function buildRegistry(
 ): Map<OutboxTopic, OutboxTopicHandler> {
   const registry = new Map<OutboxTopic, OutboxTopicHandler>();
   if (env.PREVIEW_JOB_ENABLED === "true") {
-    registry.set(PREVIEW_JOB_TOPIC, {
+    registerConsumerTopic(registry, PREVIEW_JOB_TOPIC, {
       handle: (row) => previews.consume(row),
       onDead: (row, error) => previews.onDead(row, error),
     });
   }
   if (env.NOTIFY_DELIVERY_ENABLED === "true") {
-    registry.set(NOTIFY_MESSAGE_TOPIC, {
+    registerConsumerTopic(registry, NOTIFY_MESSAGE_TOPIC, {
       // 渠道分流（M5-03-3 / M5-03-5-4）：wecom_app → 应用消息消费（NotifyAppService）；wecom_aibot → 单聊 aibot
       // 消费（NotifyDmService；长连接未就绪按 retry 收敛 —— 未配置 ≠ 不领取，bounded by outbox 重试上限 →
       // dead + 告警，与群通道「未配置 = 只存不投」的差异为单聊面定案，见 M5-03-5 执行计划 §3.4）；其余
@@ -163,13 +166,14 @@ export function buildRegistry(
     // 群通道（M5-03-2 接线段）：凭据齐备才注册消费 —— 未配置时「只存不投」（notify.group 行不领取，
     // 不因客户端未就绪空转重试）；配置后由 worker 启动流程 start() 长连接（entry/worker.ts）。
     if (env.WECOM_BOT_ID !== "" && env.WECOM_BOT_SECRET !== "") {
-      registry.set(NOTIFY_GROUP_TOPIC, {
+      registerConsumerTopic(registry, NOTIFY_GROUP_TOPIC, {
         handle: (row) => groupNotify.consume(row),
       });
     } else {
       registryLogger.warn("WECOM_BOT_ID / WECOM_BOT_SECRET 未配置：群通道未启用，notify.group 只存不投");
     }
   }
+  registerDrainOnlyTopics(registry);
   return registry;
 }
 

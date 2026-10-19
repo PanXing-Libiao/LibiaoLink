@@ -225,7 +225,8 @@ export const wecomAibotDmActivations = pgTable(
 );
 
 /**
- * 企微 ID 绑定码（0055 · M5-03-5-6 · D3 定案：6 位数字 / TTL 10 分钟 / 一次性 / 3 次每小时每用户）：
+ * 企微 ID 绑定码（0055 · M5-03-5-6 · D3 签发：6 位数字 / TTL 5 分钟 / 一次性；频率 D3 修订 v1.8：5 次 / 3 分钟 / 用户；
+ * v1.9 罚时锚点 = 窗口内最近一码 + 3 分钟 —— 与 history 行的 created_at 顺序相关，无 DDL 变化）：
  * 服务端取码 → 用户在单聊发码 → 回调 ingest 命中 → 同一事务写绑定行（wecom_aibot_dm_activations.bound_at）
  * + 标记本行 used（used_at / used_wecom_userid 留痕）。status = pending（待用）/ used（已用）/ expired（重发废止）；
  * 同一 user_id 仅一个 pending（部分唯一索引 uq_wecom_id_binding_codes_pending —— 重发由写入侧先作废旧码）。

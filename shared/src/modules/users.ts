@@ -186,14 +186,14 @@ export const LocaleSchema = z
   .openapi("Locale", { description: "界面语言 id（Push 296）：zh = 中文（默认）/ en = English；读侧白名单外 / 缺省一律收敛为 zh" });
 
 /** 仪表盘页落地视图 id（Push 332 · 业务口径 2026-10-15「还是做路由吧 这个页面要记住 因为不同的人想常驻的页面可能不一样」；
- *  与前端 useHashRoute.ts 的 HubView 同源）：map = 世界地图（默认）/ dashboard = 「项目进度一览」大屏。 */
+ *  与前端 useHashRoute.ts 的 HubView 同源）：map = 世界地图（默认）/ dashboard = 仪表盘大屏（Push 358 起六个图表视图：数据总览 / 项目进度 / 任务状态 / 问题 / 交付时间 / 词频图）。 */
 export const HUB_VIEW_IDS = ["map", "dashboard"] as const;
 
 export const HubViewSchema = z
   .enum(HUB_VIEW_IDS)
-  .openapi("HubView", { description: "仪表盘页落地视图（Push 332）：map = 世界地图（默认）/ dashboard = 「项目进度一览」；读侧白名单外 / 缺省一律收敛为 map" });
+  .openapi("HubView", { description: "仪表盘页落地视图（Push 332）：map = 世界地图（默认）/ dashboard = 仪表盘大屏（含数据总览 / 项目进度 等六个图表视图）；读侧白名单外 / 缺省一律收敛为 map" });
 
-/** 仪表盘「项目进度一览」常驻项目 id（Push 336 · 业务口径 2026-10-15「选择的项目也要记住 不随刷新变动而回到全部项目」）：
+/** 仪表盘常驻项目 id（Push 336 · 业务口径 2026-10-15「选择的项目也要记住 不随刷新变动而回到全部项目」；Push 358 起六个图表视图共用）：
  *  null = 全部项目（默认）；读侧非字符串 / 空串 / 超长一律收敛为 null（项目被删时不报错，界面回落全部项目）。 */
 export const HUB_DASH_PROJECT_MAX_LENGTH = 64;
 
@@ -204,14 +204,15 @@ export const HubDashProjectSchema = z
   .nullable()
   .openapi("HubDashProject", { description: "仪表盘页常驻项目 id（Push 336）：null = 全部项目（默认）；读侧非法 / 缺省一律收敛为 null" });
 
-/** 仪表盘页内图表视图 id（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」；Push 353 加「词频图」）：
- *  progress = 「项目进度一览」（默认）/ status = 「任务状态」/ issues = 「问题」/ delivery = 「交付时间」/
+/** 仪表盘页内图表视图 id（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」；Push 353 加「词频图」；
+ *  Push 358 加「数据总览」—— 切换栏最左，不设默认（缺省仍 progress）；同批「项目进度一览」标签改名「项目进度」）：
+ *  overview = 「数据总览」（五图等比例缩小总览）/ progress = 「项目进度」（默认）/ status = 「任务状态」/ issues = 「问题」/ delivery = 「交付时间」/
  *  wordcloud = 「词频图」；读侧白名单外 / 缺省一律收敛为 progress。 */
-export const HUB_DASH_VIEW_IDS = ["progress", "status", "issues", "delivery", "wordcloud"] as const;
+export const HUB_DASH_VIEW_IDS = ["overview", "progress", "status", "issues", "delivery", "wordcloud"] as const;
 
 export const HubDashViewSchema = z
   .enum(HUB_DASH_VIEW_IDS)
-  .openapi("HubDashView", { description: "仪表盘页内图表视图（Push 345 · 按账号记住；Push 353 加词频图）：progress = 项目进度一览（默认）/ status = 任务状态 / issues = 问题 / delivery = 交付时间 / wordcloud = 词频图；读侧白名单外 / 缺省一律收敛为 progress" });
+  .openapi("HubDashView", { description: "仪表盘页内图表视图（Push 345 · 按账号记住；Push 353 加词频图；Push 358 加数据总览）：overview = 数据总览 / progress = 项目进度（默认）/ status = 任务状态 / issues = 问题 / delivery = 交付时间 / wordcloud = 词频图；读侧白名单外 / 缺省一律收敛为 progress" });
 
 /**
  * 用户级 UI 偏好（A4）：独立于项目视图 project_views（M2-06 的 filters / columns / sort / group）。
@@ -245,9 +246,9 @@ export const UserPreferencesSchema = z
       .openapi({
         description: "项目卡片右下角国家名水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」；Push 313 起默认 false）：true = 显示 / false = 隐藏（默认，无水印）；读侧非布尔 / 缺省一律收敛为 false",
       }),
-    hubView: HubViewSchema.openapi({ description: "仪表盘页（`#/`）的常驻视图（Push 332 · 按账号记住）：map = 世界地图（默认）/ dashboard = 「项目进度一览」；地址显式带 `?view=dashboard` 时以地址为准，读侧白名单外 / 缺省一律收敛为 map" }),
-    hubDashProject: HubDashProjectSchema.openapi({ description: "仪表盘页「项目进度一览」的常驻项目 id（Push 336 · 按账号记住）：null = 全部项目（默认）；项目已不存在时界面回落全部项目，读侧非字符串 / 空串 / 超长一律收敛为 null" }),
-    hubDashView: HubDashViewSchema.openapi({ description: "仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」）：progress = 「项目进度一览」（默认）/ status = 「任务状态」/ issues = 「问题」/ delivery = 「交付时间」；刷新 / 换设备同账号保持，读侧白名单外 / 缺省一律收敛为 progress" }),
+    hubView: HubViewSchema.openapi({ description: "仪表盘页（`#/`）的常驻视图（Push 332 · 按账号记住）：map = 世界地图（默认）/ dashboard = 仪表盘大屏（含数据总览 / 项目进度 等六个图表视图）；地址显式带 `?view=dashboard` 时以地址为准，读侧白名单外 / 缺省一律收敛为 map" }),
+    hubDashProject: HubDashProjectSchema.openapi({ description: "仪表盘页的常驻项目 id（Push 336 · 按账号记住；Push 358 起六个图表视图共用）：null = 全部项目（默认）；项目已不存在时界面回落全部项目，读侧非字符串 / 空串 / 超长一律收敛为 null" }),
+    hubDashView: HubDashViewSchema.openapi({ description: "仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」；Push 353 加「词频图」、Push 358 加「数据总览」）：overview = 「数据总览」/ progress = 「项目进度」（默认）/ status = 「任务状态」/ issues = 「问题」/ delivery = 「交付时间」/ wordcloud = 「词频图」；刷新 / 换设备同账号保持，读侧白名单外 / 缺省一律收敛为 progress" }),
     updatedAt: DateTimeSchema.nullable().openapi({ description: "偏好最后更新时间（尚未保存过 = null）" }),
   })
   .openapi("UserPreferences", { description: "用户偏好（全量；GET 返回当前值）" });

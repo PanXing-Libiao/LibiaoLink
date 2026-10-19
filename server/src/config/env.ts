@@ -111,6 +111,8 @@ export const EnvSchema = z
     OUTBOX_DEFAULT_BACKOFF_MAX_MS: z.coerce.number().int().min(1000).max(86400000).default(1800000),
     /** 告警探针周期（毫秒）：积压 / 最老待领取年龄 / 近期新增死信；死信单条即时告警不依赖本周期。 */
     OUTBOX_ALERT_INTERVAL_MS: z.coerce.number().int().min(10000).max(3600000).default(300000),
+    /** 持续超阈值告警的复报冷却（毫秒）：积压 / 最老待领取 / 未消费主题；回到阈值内发一次恢复。 */
+    OUTBOX_ALERT_REPEAT_MS: z.coerce.number().int().min(60000).max(604800000).default(21600000),
     /** 待领取积压条数阈值（> 即告警）。 */
     OUTBOX_ALERT_BACKLOG_MAX: z.coerce.number().int().min(1).max(1000000).default(1000),
     /** 最老待领取消息年龄阈值（毫秒）。 */
@@ -179,6 +181,11 @@ export const EnvSchema = z
     /** 智能机器人 BotID / Secret（Secret 属凭据，只走密钥渠道；生产必填校验随接线刀启用）。 */
     WECOM_BOT_ID: z.string().default(""),
     WECOM_BOT_SECRET: z.string().default(""),
+    /**
+     * 机器人诊断开关（设置页「机器人诊断」块）：auto = 仅 NODE_ENV !== production 时开启；true = 强制开启；
+     * false = 关闭。开启时 GET /api/v1/wecom-dm-binding/diagnostics 回 bot_id / secret 原文（仅本地联调用）。
+     */
+    WECOM_BOT_DIAGNOSTICS: z.enum(["auto", "true", "false"]).default("auto"),
     /** 心跳周期（毫秒）：连续 2 个周期无 pong → 判失联重连。 */
     WECOM_BOT_PING_INTERVAL_MS: z.coerce.number().int().min(1000).max(600000).default(30000),
     /** 单帧回执超时（毫秒）：订阅 / 推送共用。 */

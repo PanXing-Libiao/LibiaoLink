@@ -16,7 +16,7 @@ import { useFocusTrap } from "./useFocusTrap";
  * （变更时间 / 变更阶段 / 变更文件 / 变更内容描述 / 变更前 / 变更后 / 变更原因 / 变更申请人 / 填写者），
  * 前面补一列行号。只读：除搜索 / 关闭外没有任何编辑入口。
  *
- * 形态与「项目进度一览」/「问题」的「数据详情」逐项对齐：portal 到 body + 半透明遮罩 + 点遮罩 / Esc 关闭
+ * 形态与「项目进度」/「问题」的「数据详情」逐项对齐：portal 到 body + 半透明遮罩 + 点遮罩 / Esc 关闭
  * + 键盘焦点陷阱收在容器本身（不抢 ✕）+ 表体底部全站同款横向滑块；弹窗打开时地图 ⇄ 仪表盘转场停用
  * （Hub.tsx 认本弹窗的 [data-hub-detail-dialog] 标记）。
  * 传入的 rows 已由父组件按「点中的词」筛好（口径见 data/changeWords.ts 的 isChangeWordHit）。

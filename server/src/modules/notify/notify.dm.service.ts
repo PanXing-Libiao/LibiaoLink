@@ -20,9 +20,12 @@
  * → 降级前缀附绑定指引话术（**D4 定稿 2026-10-16**：「当前用户未绑定企业微信，请前往设置补绑」）；其余失败用通用前缀。降级写库失败 →
  * retry 收敛（有界重试，不静默丢消息）。管理员告警群留痕由 outbox 死信告警自动承担（dispatcher → OUTBOX_ALERT_SINK）。
  *
- * 绑定码链路（M5-03-5-6 · 口径 §3 / §5；HTTP 面随契约刀 Push 249 落 `/api/v1/wecom-dm-binding`）：
+ * 绑定码链路（M5-03-5-6 · 口径 §3 / §5；HTTP 面随契约刀 Push 249 落 `/api/v1/wecom-dm-binding`；
+ * Push 254 起口径 v1.8：TTL 5 分钟 · 取码 5 次 / 3 分钟 · 换绑以码持有者为准 · 读面回填；
+ * Push 255 起 v1.9：罚时锚点 = 窗口内最近一码 + 窗口长度（不再按最早一码 → 分散取码后只剩 1 分钟）：
  * `requestBindingCode`（取码）/ `ingestCallback`（单聊发码 → 同事务写绑定 + 标记码已用 → 会话内回执
- * `aibot_respond_msg`）/ `getBindingState`（读绑定态）/ `unbind`（解绑：同事务清绑定行 + 写 `audit_logs` —— D6）。
+ * `aibot_respond_msg`）/ `getBindingState`（读绑定态：v1.8 另回当前未用码与取码限流可重试时刻）/ `unbind`
+ * （解绑：同事务清绑定行 + 写 `audit_logs` —— D6；跨用户换绑同写 `audit_logs`）。
  *
  * 超长口径（B5 定案 · 同群口径）：markdown 按 UTF-8 字节截断（≤ 20000 字节，留 20480 官方上限余量），
  * 尾部省略 + warn 留痕。免打扰口径同 M5-03-3（不做投递前 DND 过滤）。安全：userid 只进库与限速桶摘要；
@@ -30,10 +33,11 @@
  */
 import { randomInt } from "node:crypto";
 import { Injectable, Logger } from "@nestjs/common";
-import type { NotifyMessagePayload, WecomDmBindingState } from "@libiaolink/contracts";
+import type { NotifyMessagePayload, WecomDmBindingState, WecomDmBotDiagnostics } from "@libiaolink/contracts";
 import { AppConfig } from "../../config/config.module.js";
 import { ClockService } from "../../common/clock/clock.service.js";
 import { DatabaseService } from "../../db/database.service.js";
+import type { DbClient } from "../../db/db-client.js";
 import type { OutboxClaimedRow } from "../../db/outbox.store.js";
 import type { OutboxHandleOutcome } from "../../outbox/handler.js";
 import { AuditService } from "../audit/index.js";
@@ -70,11 +74,19 @@ const DM_USERID_PATTERN = /^[A-Za-z0-9_.@-]{1,64}$/;
 /** 绑定码形态（D3 定案：6 位数字）—— 与迁移 0055 CHECK `^[0-9]{6}$` 同口径。 */
 export const DM_BINDING_CODE_PATTERN = /^[0-9]{6}$/;
 
-/** 绑定码有效期（D3 定案：TTL 10 分钟）。 */
-export const DM_BINDING_CODE_TTL_MS = 10 * 60_000;
+/** 绑定码有效期（D3 修订 v1.8 · 2026-10-16：TTL 5 分钟 —— 原 10 分钟，用户口径「码 5 分钟内有效」）。 */
+export const DM_BINDING_CODE_TTL_MS = 5 * 60_000;
 
-/** 绑定码生成频率上限（D3 定案：3 次/小时/用户）。 */
-export const DM_BINDING_CODE_MAX_PER_HOUR = 3;
+/** 绑定码生成频率窗口（D3 修订 v1.8 · 2026-10-16：3 分钟滚动窗口；最长等待 = 窗口长度）。 */
+export const DM_BINDING_CODE_WINDOW_MS = 3 * 60_000;
+
+/** 绑定码生成频率上限（D3 修订 v1.8 · 2026-10-16：5 次 / 3 分钟 / 用户 —— 罚时上限 3 分钟）。 */
+export const DM_BINDING_CODE_MAX_PER_WINDOW = 5;
+
+/** Secret 诊断掩码（首 4 + **** + 末 4；长度 ≤ 8 时全掩码 —— 与 userid 掩码同属最小暴露）。 */
+function maskSecret(secret: string): string {
+  return secret.length <= 8 ? "****" : secret.slice(0, 4) + "****" + secret.slice(-4);
+}
 
 /** 绑定码生成冲突重试次数（6 位数字空间 1e6，撞码概率极低；到顶抛错由调用方按 5xx 收口）。 */
 const DM_BINDING_CODE_ATTEMPTS = 8;
@@ -82,7 +94,6 @@ const DM_BINDING_CODE_ATTEMPTS = 8;
 /** 会话内回执话术（口径 §5 反馈面；未命中任何码 → 不回复，防探测）。 */
 export const DM_BINDING_REPLY_BOUND = "绑定成功";
 export const DM_BINDING_REPLY_INVALID = "码已失效，请重新获取";
-export const DM_BINDING_REPLY_ALREADY_BOUND = "已绑定";
 
 /** markdown 组装（同群口径）：加粗标题 + 空行 + 正文；标题空白防御（解析后已 trim，非空为常态）。 */
 export function composeDmMarkdown(message: Pick<NotifyMessagePayload, "title" | "body">): string {
@@ -153,9 +164,11 @@ export class NotifyDmService {
    * ② 登记（D1）：任何单聊消息都写激活登记（刷新 last_message_at，不动 user_id / bound_at）—— 保留 846607
    *    分流与观测，但该行不可作发送地址；
    * ③ 取码：非文本消息 / 正文不含 6 位数字 → 到此为止（不回复 —— 防探测）；
-   * ④ 已绑定（含回调重复投递）→ 回「已绑定」（幂等）；
-   * ⑤ 码不存在 → 不回复；码已用 / 已过期 → 回「码已失效，请重新获取」；
-   * ⑥ 命中 → 同一事务写绑定行 + 标记码已用 → 回「绑定成功」。
+   * ④ 码不存在 → 不回复（防探测）；码已用 / 已过期 → 回「码已失效，请重新获取」；例外：码已被**本人**用掉
+   *    且该企微号仍绑定在该码持有者名下（回调重复投递）→ 回「绑定成功」（幂等，不再动库）；
+   * ⑤ 命中 pending 码 → **以码持有者为准**换绑（v1.8：发送方企微号已挂在别的库内用户上时不再短路「已绑定」，
+   *    改由 `bindWithCode` 把该 (bot_id, wecom_userid) 行改挂到码的持有者，旧持有者回落未绑定）
+   *    → 同一事务写绑定行 + 标记码已用（跨用户时另写 `audit_logs`）→ 回「绑定成功」。
    * 正文只做码匹配：不入库、不落日志；userid 非法（CHECK 字符集）→ 掩码 warn 忽略（防脏数据打断 ingest）。
    */
   async ingestCallback(incoming: AibotIncomingMessage): Promise<void> {
@@ -176,35 +189,50 @@ export class NotifyDmService {
       this.logger.log("单聊回调已登记激活（非绑定码消息 · 不可作发送地址）：userid " + maskUserid(userid));
       return;
     }
-    const bound = await this.repository.findBindingByWecomUserid(userid, botId);
-    if (bound !== null) {
-      this.logger.log("单聊绑定码命中但该企微号已绑定（幂等，不换绑）：userid " + maskUserid(userid));
-      await this.replyToCallback(incoming, userid, DM_BINDING_REPLY_ALREADY_BOUND);
-      return;
-    }
     const codeRow = await this.repository.findBindingCode(code);
     if (codeRow === null) {
       this.logger.log("单聊正文未命中绑定码（不回复 —— 防探测）：userid " + maskUserid(userid));
       return;
     }
+    // 该企微号当前的绑定行（换绑前的旧持有者 —— 亦用于回调重复投递的幂等判定）。
+    const previous = await this.repository.findBindingByWecomUserid(userid, botId);
     if (codeRow.status !== "pending" || codeRow.expiresAt.getTime() <= at.getTime()) {
+      // 码已被本人用掉且绑定成立 → 回调重复投递幂等：仍回「绑定成功」，不再动库。
+      if (codeRow.status === "used" && previous !== null && previous.userId === codeRow.userId) {
+        this.logger.log("单聊绑定码已用且绑定成立（回调重复投递幂等）：userid " + maskUserid(userid) + " · code#" + String(codeRow.id));
+        await this.replyToCallback(incoming, userid, DM_BINDING_REPLY_BOUND);
+        return;
+      }
       this.logger.warn("单聊绑定码不可用（已用 / 已过期）：userid " + maskUserid(userid) + " · code#" + String(codeRow.id));
       await this.replyToCallback(incoming, userid, DM_BINDING_REPLY_INVALID);
       return;
     }
-    const boundOk = await this.repository.bindWithCode({
-      codeId: codeRow.id,
-      userId: codeRow.userId,
-      botId,
-      wecomUserid: userid,
-      at,
+    const rebound = previous !== null && previous.userId !== codeRow.userId;
+    const boundOk = await this.database.db.transaction(async (tx) => {
+      const claimed = await this.repository.bindWithCode(
+        { codeId: codeRow.id, userId: codeRow.userId, botId, wecomUserid: userid, at },
+        tx,
+      );
+      if (!claimed) {
+        return false;
+      }
+      if (rebound && previous !== null) {
+        await this.recordRebind(tx, { fromUserId: previous.userId, toUserId: codeRow.userId, wecomUserid: userid, botId });
+      }
+      return true;
     });
     if (!boundOk) {
       this.logger.warn("单聊绑定码占用失败（并发消费 / 恰过期）：userid " + maskUserid(userid) + " · code#" + String(codeRow.id));
       await this.replyToCallback(incoming, userid, DM_BINDING_REPLY_INVALID);
       return;
     }
-    this.logger.log("单聊绑定成功（绑定行 = bot_id + userid 掩码）：userid " + maskUserid(userid) + " · user_id " + codeRow.userId);
+    this.logger.log(
+      "单聊绑定成功（绑定行 = bot_id + userid 掩码）：userid " +
+        maskUserid(userid) +
+        " · user_id " +
+        codeRow.userId +
+        (rebound ? "（跨用户换绑）" : ""),
+    );
     await this.replyToCallback(incoming, userid, DM_BINDING_REPLY_BOUND);
   }
 
@@ -228,8 +256,8 @@ export class NotifyDmService {
   }
 
   /**
-   * 生成绑定码（D3 定案：6 位数字 / TTL 10 分钟 / 一次性 / 3 次每小时每用户；口径 §3 第 1 步）：
-   * 频率到顶 → 返回 rate_limited + retryAt（窗口内最早码 + 1 小时 = 最早的可用时刻）；
+   * 生成绑定码（D3 签发：6 位数字 / TTL 5 分钟 / 一次性；频率口径 D3 修订 v1.8：5 次 / 3 分钟 / 用户）：
+   * 频率到顶 → 返回 rate_limited + retryAt（窗口内**最近一码** + 窗口长度 —— v1.9 修订；恒 ≤ 3 分钟且重试不延长）；
    * 否则同一事务作废旧 pending 码 + 插入新码（撞码换码重试 DM_BINDING_CODE_ATTEMPTS 次）。
    * HTTP 面（POST /api/v1/wecom-dm-binding/codes · 契约刀）：频率到顶统一映射 429 `RATE_LIMITED` + retryAt。
    */
@@ -238,19 +266,23 @@ export class NotifyDmService {
     | { ok: false; reason: "rate_limited"; retryAt: Date }
   > {
     const at = this.clock.now();
-    const since = new Date(at.getTime() - 3_600_000);
-    const issuedAt = await this.repository.bindingCodesSince(userId, since);
-    if (issuedAt.length >= DM_BINDING_CODE_MAX_PER_HOUR) {
-      const oldest = issuedAt[0];
-      const retryAt = new Date((oldest === undefined ? at.getTime() : oldest.getTime()) + 3_600_000);
-      this.logger.warn("绑定码生成频率到顶（" + String(DM_BINDING_CODE_MAX_PER_HOUR) + " 次/小时）：user_id " + userId);
+    const retryAt = await this.rateLimitedRetryAt(userId, at);
+    if (retryAt !== null) {
+      this.logger.warn(
+        "绑定码生成频率到顶（" +
+          String(DM_BINDING_CODE_MAX_PER_WINDOW) +
+          " 次 / " +
+          String(DM_BINDING_CODE_WINDOW_MS / 60_000) +
+          " 分钟）：user_id " +
+          userId,
+      );
       return { ok: false, reason: "rate_limited", retryAt };
     }
     const expiresAt = new Date(at.getTime() + DM_BINDING_CODE_TTL_MS);
     for (let attempt = 0; attempt < DM_BINDING_CODE_ATTEMPTS; attempt += 1) {
       const code = randomBindingCode();
       if (await this.repository.createBindingCode({ userId, code, expiresAt, at })) {
-        this.logger.log("绑定码已生成（TTL 10 分钟 · 旧 pending 码作废）：user_id " + userId);
+        this.logger.log("绑定码已生成（TTL 5 分钟 · 旧 pending 码作废）：user_id " + userId);
         return { ok: true, code, expiresAt, expiresInSeconds: Math.round(DM_BINDING_CODE_TTL_MS / 1000) };
       }
     }
@@ -260,17 +292,118 @@ export class NotifyDmService {
   /**
    * 绑定态读面（设置页 / 契约读端点 · D5；口径 §6「设置页显示绑定态」）：恒 200 —— 未绑定 = bound:false。
    * 密文 open_userid 只回掩码末 4 位（§9 最小暴露 · 沿用群绑定 `chatidMasked` 先例）。
+   * v1.8 回填：另回「当前仍未失效的 pending 绑定码」与「取码限流可重试时刻」—— 页面刷新 / 重进后前端据此
+   * 恢复码面、倒计时与罚时（服务端为准，前端不缓存）。
    */
   async getBindingState(userId: string): Promise<WecomDmBindingState> {
+    const at = this.clock.now();
     const binding = await this.repository.findBindingByUserId(userId, this.botId());
-    if (binding === null) {
-      return { bound: false, wecomUseridMasked: null, boundAt: null };
-    }
+    const pending = await this.repository.findPendingBindingCode(userId, at);
+    const retryAt = await this.rateLimitedRetryAt(userId, at);
     return {
-      bound: true,
-      wecomUseridMasked: maskUserid(binding.wecomUserid),
-      boundAt: binding.boundAt.toISOString(),
+      bound: binding !== null,
+      wecomUseridMasked: binding === null ? null : maskUserid(binding.wecomUserid),
+      boundAt: binding === null ? null : binding.boundAt.toISOString(),
+      bindingCode:
+        pending === null
+          ? null
+          : {
+              code: pending.code,
+              expiresAt: pending.expiresAt.toISOString(),
+              expiresInSeconds: Math.max(1, Math.ceil((pending.expiresAt.getTime() - at.getTime()) / 1000)),
+            },
+      retryAt: retryAt === null ? null : retryAt.toISOString(),
     };
+  }
+
+  /**
+   * 取码限流可重试时刻（v1.9 读面回填 · 与 `requestBindingCode` 同一判定，避免两处口径漂移）：
+   * 窗口内已签发码不足上限 → null（未到顶）；到顶 → **窗口内最近一码** + 窗口长度。
+   * 为什么不是最早一码：5 次取码若分散在 2 分钟内，最早一码 + 3 分钟只剩 1 分钟，与「5 次 / 3 分钟」的
+   * 文案不一致（用户实测 1 分钟）；锚定最近一码后倒计时恒为「最近取码 + 3 分钟」，
+   * 且被拦期间重试不会产生新码 → 锚点不动、倒计时不会被反复延长。
+   */
+  private async rateLimitedRetryAt(userId: string, at: Date): Promise<Date | null> {
+    const since = new Date(at.getTime() - DM_BINDING_CODE_WINDOW_MS);
+    const issuedAt = await this.repository.bindingCodesSince(userId, since);
+    if (issuedAt.length < DM_BINDING_CODE_MAX_PER_WINDOW) {
+      return null;
+    }
+    const newest = issuedAt[issuedAt.length - 1];
+    return new Date((newest === undefined ? at.getTime() : newest.getTime()) + DM_BINDING_CODE_WINDOW_MS);
+  }
+
+  /**
+   * 机器人诊断（本地联调 · 非生产）：回显本进程实际读取的 WECOM_BOT_* + 该机器人维度最近回调统计。
+   * 开关 = WECOM_BOT_DIAGNOSTICS（auto 时 NODE_ENV !== production 才开）；关闭时敏感字段一律 null、统计归零。
+   * 安全：仅会话可读；不写日志；secret 不落 outbox / 留痕（CONTRIBUTING §12）。
+   */
+  async getBotDiagnostics(): Promise<WecomDmBotDiagnostics> {
+    const env = this.config.env;
+    const enabled =
+      env.WECOM_BOT_DIAGNOSTICS === "true" ||
+      (env.WECOM_BOT_DIAGNOSTICS === "auto" && env.NODE_ENV !== "production");
+    if (!enabled) {
+      return {
+        enabled: false,
+        botId: null,
+        botSecret: null,
+        botSecretMasked: null,
+        wsUrl: null,
+        deliveryEnabled: env.NOTIFY_DELIVERY_ENABLED === "true",
+        lastInboundAt: null,
+        inboundCount: 0,
+        lastInboundUseridMasked: null,
+        observedBotIds: [],
+        serverTime: this.clock.now().toISOString(),
+      };
+    }
+    const botId = this.botId();
+    const secret = env.WECOM_BOT_SECRET === "" ? null : env.WECOM_BOT_SECRET;
+    const stats = await this.repository.botInboundStats(botId);
+    const observed = await this.repository.observedBotIds(5);
+    return {
+      enabled: true,
+      botId: botId === "" ? null : botId,
+      botSecret: secret,
+      botSecretMasked: secret === null ? null : maskSecret(secret),
+      wsUrl: env.WECOM_BOT_WS_URL,
+      deliveryEnabled: env.NOTIFY_DELIVERY_ENABLED === "true",
+      lastInboundAt: stats.lastInboundAt === null ? null : stats.lastInboundAt.toISOString(),
+      inboundCount: stats.inboundCount,
+      lastInboundUseridMasked:
+        stats.lastInboundUserid === null ? null : maskUserid(stats.lastInboundUserid),
+      // 激活表 `bot_id` 可空（0048 的历史登记行）；诊断只列有 bot_id 的行。
+      observedBotIds: observed
+        .filter((row): row is { botId: string; inboundCount: number; lastInboundAt: Date | null } => row.botId !== null)
+        .map((row) => ({
+          botId: row.botId,
+          inboundCount: row.inboundCount,
+          lastInboundAt: row.lastInboundAt === null ? null : row.lastInboundAt.toISOString(),
+        })),
+      serverTime: this.clock.now().toISOString(),
+    };
+  }
+
+  /**
+   * 跨用户换绑留痕（v1.8 口径）：同一企微号从旧持有者改挂到码持有者 —— 写 `audit_logs`（objectType=user /
+   * action=update，与 D6 解绑的 delete 同一家族：只改「投递资格」，不动用户资产）；摘要与 metadata 只带掩码
+   * （§9 最小暴露；changes 记库内 user_id 迁移，便于追责）。与绑定行改挂同一事务（tx）。
+   */
+  private async recordRebind(
+    tx: DbClient,
+    input: { fromUserId: string; toUserId: string; wecomUserid: string; botId: string },
+  ): Promise<void> {
+    const masked = maskUserid(input.wecomUserid);
+    await this.audit.record(tx, {
+      actorId: input.toUserId,
+      action: "update",
+      objectType: "user",
+      objectId: input.fromUserId,
+      summary: "企业微信单聊换绑：open_userid " + masked + " 由用户 " + input.fromUserId + " 改挂到 " + input.toUserId,
+      changes: [{ field: "wecomDmBinding.owner", from: input.fromUserId, to: input.toUserId }],
+      metadata: { botId: input.botId, wecomUseridMasked: masked },
+    });
   }
 
   /**
@@ -278,12 +411,13 @@ export class NotifyDmService {
    * 与「换绑清旧」同形：注销投递资格、激活痕迹仍在），与清除**同一事务**写 `audit_logs`
    * （objectType=user / action=delete；summary 与 changes 只带掩码 —— §9 最小暴露）。
    * 幂等：本就无绑定（清除 0 行）→ 直接回落 bound:false，不写审计。
+   * 返回同 GET 读面（v1.8）：解绑不回收未用绑定码 —— 响应里仍可能带 pending 码与罚时回填（前端据同一读面收敛）。
    */
   async unbind(userId: string, actorId: string): Promise<WecomDmBindingState> {
     const botId = this.botId();
     const binding = await this.repository.findBindingByUserId(userId, botId);
     if (binding === null) {
-      return { bound: false, wecomUseridMasked: null, boundAt: null };
+      return await this.getBindingState(userId);
     }
     const masked = maskUserid(binding.wecomUserid);
     const at = this.clock.now();
@@ -303,7 +437,7 @@ export class NotifyDmService {
       });
     });
     this.logger.log("企业微信单聊已解绑（绑定行去址 · 审计同事务已写）：user_id " + userId);
-    return { bound: false, wecomUseridMasked: null, boundAt: null };
+    return await this.getBindingState(userId);
   }
 
   async consume(row: OutboxClaimedRow): Promise<OutboxHandleOutcome> {

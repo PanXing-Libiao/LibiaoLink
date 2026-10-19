@@ -1,14 +1,16 @@
-import { useEffect, useId, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { DashboardDataset, DashboardIssueDataset, DashboardWordDataset } from "../dashboardApi";
 import { isChangeWordHit } from "../data/changeWords";
 import { DASHBOARD_BINS, DASHBOARD_ISSUE_COLORS, isIssueInCell, isTaskInCell, isTaskInDeliveryBucket, isTaskPendingDelivery, type DashboardDeliveryBucket, type DashboardStatusSlice, type HubDashView } from "../data/dashboardProgress";
 import type { TaskStatus } from "../data/tasks";
-import { fieldText, stageText, statusText, useLocale, useT, type TextKey } from "../i18n";
+import { fieldText, statusText, useLocale, useT } from "../i18n";
 import { displayStatusLabel } from "../taskApi";
 import { HubDashDelivery } from "./HubDashDelivery";
 import { HubDashDetail } from "./HubDashDetail";
 import { HubDashIssueDetail } from "./HubDashIssueDetail";
 import { HubDashIssues, type DashboardIssueRow } from "./HubDashIssues";
+import { HubDashOverview } from "./HubDashOverview";
+import { HubDashProgress, LEGEND_KEYS } from "./HubDashProgress";
 import { HubDashStatus } from "./HubDashStatus";
 import { HubDashWordCloud } from "./HubDashWordCloud";
 import { HubDashWordDetail } from "./HubDashWordDetail";
@@ -76,6 +78,13 @@ import { SearchSelect, type SearchSelectOption } from "./SearchSelect";
  * （HubDashWordDetail，列序照业务参考图：变更时间 / 变更阶段 / 变更文件 / 变更内容描述 / 变更前 / 变更后 /
  * 变更原因 / 变更申请人 / 填写者）；读面懒加载（首次切到「词频图」才拉变更记录，见 Hub.tsx 的 ensureWords），
  * 分词 / 计数口径见 data/changeWords.ts。
+ *
+ * Push 358（2026-10-16 业务口径「我要在最左边加一个数据总览 点击后展示的效果如图所示各图表等比例缩小集中展示
+ * 点击效果 鼠标触碰标签效果依旧」+「项目进度一览改成项目进度字样」）：底栏最左新增第一枚视图「数据总览」
+ * （HubDashOverview）—— 五图等比例缩小并排（左列：项目进度 / 任务状态 / 问题；右列：交付时间 / 词频图），
+ * 进度图内联 JSX 抽成 HubDashProgress 组件（总览与单视图共用，DOM / 几何 / 动画逐值不变）；
+ * 悬停浮层卡 / 点开只读「数据详情」与单视图同一套口径（回调全复用）；「问题 / 词频图」读面切到总览即懒加载。
+ * 同批「项目进度一览」标签改名「项目进度」（i18n 中英 + aria + 页面指示器文案）。
  */
 export type HubDashboardState = "loading" | "ready" | "failed";
 
@@ -170,52 +179,6 @@ const RATE_TIP_H = 108;
 const WORD_TIP_W = 200;
 const WORD_TIP_H = 84;
 
-const VIEW_W = 1200;
-const VIEW_H = 596;
-/** 行标题右对齐基线（英文阶段名最长 "Hardware Implementation"，留 216 宽够放）。 */
-const LABEL_X = 216;
-const PLOT_X0 = 236;
-const PLOT_X1 = 1124;
-const PLOT_W = PLOT_X1 - PLOT_X0;
-/** 行右侧合计 x（浅灰小字）。 */
-const TOTAL_X = 1140;
-const ROWS_TOP = 68;
-const AXIS_Y = 520;
-const TICK_LABEL_Y = 544;
-/** 行内柱高（上限 30；行数再多也跟着行高缩）。 */
-const BAR_MAX_H = 30;
-
-/** 图表入场动画错峰（Push 357 · 业务口径 2026-10-16「这些图表需要有动画效果 柱状图饼状图」+「颜色色调组件都不要改 只要加动画效果」）：行间 55ms；柱段数字 300ms 后起淡入（与各自的柱段同刻落定）。 */
-const ROW_ANIM_STAGGER = 55;
-const NUM_ANIM_OFFSET = 300;
-
-/** 五档图例（与 DASHBOARD_BINS 同下标）。 */
-const LEGEND_KEYS: readonly TextKey[] = ["hub.dash.b0", "hub.dash.b25", "hub.dash.b50", "hub.dash.b75", "hub.dash.b100"];
-
-/** x 轴刻度步长：按最大行合计挑 1 / 2 / 5 / 10 / 20。 */
-function tickStepOf(maxTotal: number): number {
-  if (maxTotal <= 10) {
-    return 1;
-  }
-  if (maxTotal <= 20) {
-    return 2;
-  }
-  if (maxTotal <= 50) {
-    return 5;
-  }
-  if (maxTotal <= 100) {
-    return 10;
-  }
-  return 20;
-}
-
-/** 轴上限：给最大行合计留约 6% 余量再进到整步（18 → 20；44 → 50）。 */
-function tickMaxOf(maxTotal: number): { max: number; step: number } {
-  const step = tickStepOf(Math.max(maxTotal, 1));
-  const target = Math.ceil((maxTotal * 1.06) / step) * step;
-  return { max: Math.max(step, target), step };
-}
-
 /** 底部视图切换按钮（Push 339 追订 · 业务口径「这个按钮再做一个进度一览 靠左不居中」）：一枚按钮一个视图，
  *  勾选框式样照业务给的参考代码（灰底灰边圆角方框 → 选中蓝底白勾 + 渐变脉冲层，鼠标触碰放大 1.05 + 文字转蓝）。
  *  用单选框语义（同组 name，选中态 = 当前视图，点已选中的那枚不会取消选择）；白勾 / 脉冲层用 group-has-[:checked]:
@@ -275,15 +238,12 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, w
 }) {
   const t = useT();
   const locale = useLocale();
-  /** 每行一条圆角裁剪（柱条两端圆角、段与段之间直角）：id 需要实例级唯一。 */
-  const uid = useId().replace(/:/g, "");
   /** Push 334：项目选择器（第一行固定「全部项目」；选中项目即只统计该项目）；Push 336：初值取账号常驻项目。 */
   const [pickedId, setPickedId] = useState<string | null>(rememberedDashProject);
-  /** 仪表盘页内视图（Push 339 底栏按钮驱动；Push 345 按账号常驻）：progress = 项目进度一览 / status = 任务状态 / issues = 问题 / delivery = 交付时间。 */
+  /** 仪表盘页内视图（Push 339 底栏按钮驱动；Push 345 按账号常驻；Push 358 起六枚）：overview = 数据总览（最左）/ progress = 项目进度 / status = 任务状态 / issues = 问题 / delivery = 交付时间 / wordcloud = 词频图。 */
   const [view, setView] = useState<HubDashView>(rememberedDashView);
   /** 悬停卡 + 行高亮（同一行的柱段共用：卡里写行名，图上该行铺一条浅灰底）。 */
   const [tip, setTip] = useState<DashTip | null>(null);
-  const [hoverRow, setHoverRow] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   /** 数据详情（Push 335：点柱段打开；Push 339：点扇区打开；记「行 × 档」或「状态」，打开时按它筛任务）。 */
   const [detail, setDetail] = useState<DashDetailPick | null>(null);
@@ -297,12 +257,12 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, w
   useEffect(() => {
     setView(rememberedDashView);
   }, [rememberedDashView]);
-  /** 「问题 / 词频图」读面懒加载（Push 344 / Push 353）：切到对应视图时拉；首屏直接落在该视图（常驻视图）也拉。 */
+  /** 「问题 / 词频图」读面懒加载（Push 344 / Push 353；Push 358 起「数据总览」同拉这两份）：切到对应视图时拉；首屏直接落在该视图（常驻视图）也拉。 */
   useEffect(() => {
-    if (view === "issues") {
+    if (view === "issues" || view === "overview") {
       onNeedIssues();
     }
-    if (view === "wordcloud") {
+    if (view === "wordcloud" || view === "overview") {
       onNeedWords();
     }
   }, [view, onNeedIssues, onNeedWords]);
@@ -450,9 +410,38 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, w
   const switchView = (next: HubDashView): void => {
     setView(next);
     setTip(null);
-    setHoverRow(null);
     setDetail(null);
     void onDashViewChange(next);
+  };
+  /** 点开只读「数据详情」的七个入口（Push 335 / 339 / 344 / 345 / 346 / 353）：先关浮层卡再开详情 ——
+   *  Push 358 起单视图与「数据总览」的五张小图共用同一套（语义与各自原内联实现逐字一致）。 */
+  const pickCell = (rowKey: string, bin: number): void => {
+    setTip(null);
+    setDetail({ kind: "cell", rowKey, bin });
+  };
+  const pickStatus = (slice: DashboardStatusSlice): void => {
+    setTip(null);
+    setDetail({ kind: "status", status: slice.status });
+  };
+  const pickIssue = (state: string, category: string): void => {
+    setTip(null);
+    setDetail({ kind: "issue", state, category });
+  };
+  const pickDelivery = (bucket: DashboardDeliveryBucket): void => {
+    setTip(null);
+    setDetail({ kind: "delivery", bucket });
+  };
+  const pickDeliveryRate = (): void => {
+    setTip(null);
+    setDetail({ kind: "delivery", bucket: "按时交付" });
+  };
+  const pickDeliveryNote = (): void => {
+    setTip(null);
+    setDetail({ kind: "deliveryPending" });
+  };
+  const pickWord = (word: string): void => {
+    setTip(null);
+    setDetail({ kind: "word", word });
   };
 
   if (state === "failed") {
@@ -488,7 +477,7 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, w
   };
   const head = (
     <div className="hub-dash-head">
-      <span className="hub-dash-title">{view === "progress" ? t("hub.dash.title") : view === "status" ? t("hub.dash.status.title") : view === "issues" ? t("hub.dash.issues.title") : view === "delivery" ? t("hub.dash.delivery.title") : t("hub.dash.wordcloud.title")}</span>
+      <span className="hub-dash-title">{view === "overview" ? t("hub.dash.overview.title") : view === "progress" ? t("hub.dash.title") : view === "status" ? t("hub.dash.status.title") : view === "issues" ? t("hub.dash.issues.title") : view === "delivery" ? t("hub.dash.delivery.title") : t("hub.dash.wordcloud.title")}</span>
       <span className="hub-dash-sep" aria-hidden="true">
         •
       </span>
@@ -513,104 +502,52 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, w
       </div>
     );
   }
-  const rows = progress.rows;
-  const maxTotal = rows.reduce((max, row) => Math.max(max, row.total), 0);
-  const { max: tickMax, step } = tickMaxOf(maxTotal);
-  const unit = PLOT_W / tickMax;
-  const rowH = (AXIS_Y - ROWS_TOP) / rows.length;
-  const barH = Math.min(BAR_MAX_H, Math.max(rowH - 12, 16));
-  const ticks: number[] = [];
-  for (let value = 0; value <= tickMax; value += step) {
-    ticks.push(value);
-  }
-  const barYOf = (index: number): number => ROWS_TOP + index * rowH + (rowH - barH) / 2;
   return (
     <div ref={wrapRef} className="hub-dash-wrap">
       {head}
-      {view === "progress" ? (
-        <svg className="hub-dash" viewBox={"0 0 " + VIEW_W + " " + VIEW_H} preserveAspectRatio="xMidYMid meet" role="img" aria-label={t("hub.dash.aria")}>
-          <defs>
-            {rows.map((row, index) => (
-              <clipPath key={row.key} id={uid + "-clip-" + index}>
-                <rect x={PLOT_X0} y={barYOf(index)} width={Math.max(row.total * unit, 0)} height={barH} rx={6} />
-              </clipPath>
-            ))}
-          </defs>
-          {LEGEND_KEYS.map((key, index) => (
-            <g key={key}>
-              <rect className="hub-dash__swatch" data-bin={DASHBOARD_BINS[index]} x={40 + index * 150} y={10} width={14} height={14} rx={3} />
-              <text x={60 + index * 150} y={22} fontSize={13} fill="#4b5563">{t(key)}</text>
-            </g>
-          ))}
-          {ticks.map((value) => (
-            <line key={value} x1={PLOT_X0 + value * unit} y1={ROWS_TOP - 8} x2={PLOT_X0 + value * unit} y2={AXIS_Y} stroke="#e5e7eb" strokeDasharray="3,4" />
-          ))}
-          {rows.map((row, index) => {
-            const barY = barYOf(index);
-            const baseline = barY + barH / 2 + 4.5;
-            let cursor = PLOT_X0;
-            const rowText = row.isUngrouped ? t("hub.dash.ungrouped") : stageText(locale, row.label);
-            return (
-              <g key={row.key} onMouseEnter={() => setHoverRow(row.key)} onMouseLeave={() => { setHoverRow(null); setTip(null); }}>
-                {/* Push 340 行阴影常驻命中区（悬停出「行名 + 五档整排」卡）；Push 341：默认态内联 style 真透明（呈现属性压不过 CSS 类），悬停才着色。 */}
-                <rect
-                  className="hub-dash__rowband"
-                  style={hoverRow === row.key ? undefined : { fill: "transparent" }}
-                  x={16}
-                  y={barY - 7}
-                  width={VIEW_W - 32}
-                  height={barH + 14}
-                  rx={8}
-                  onMouseEnter={(event) => showRowTip(event, rowText, row.counts)}
-                  onMouseMove={(event) => showRowTip(event, rowText, row.counts)}
-                />
-                <text x={LABEL_X} y={baseline} textAnchor="end" fontSize={14.5} fill="#374151">{rowText}</text>
-                <g clipPath={"url(#" + uid + "-clip-" + index + ")"}>
-                  {row.counts.map((count, bin) => {
-                    if (count === 0) {
-                      return null;
-                    }
-                    const width = count * unit;
-                    const x = cursor;
-                    cursor += width;
-                    return (
-                      <g
-                        key={bin}
-                        onMouseEnter={(event) => showTip(event, rowText, bin, count)}
-                        onMouseMove={(event) => showTip(event, rowText, bin, count)}
-                        onMouseLeave={() => setTip(null)}
-                        onClick={canDrill ? () => {
-                          setTip(null);
-                          setDetail({ kind: "cell", rowKey: row.key, bin });
-                        } : undefined}
-                      >
-                        <rect className="hub-dash__seg" data-bin={DASHBOARD_BINS[bin]} data-drill={canDrill ? "true" : "false"} style={{ animationDelay: index * ROW_ANIM_STAGGER + "ms" }} x={x} y={barY} width={width} height={barH} />
-                        {width >= 24 ? (
-                          <text className="hub-dash__num" data-tone={bin === 0 || bin === 2 ? "dark" : "light"} style={{ animationDelay: index * ROW_ANIM_STAGGER + NUM_ANIM_OFFSET + "ms" }} x={x + width / 2} y={baseline} textAnchor="middle" fontSize={13} fontWeight={600}>{count}</text>
-                        ) : null}
-                      </g>
-                    );
-                  })}
-                </g>
-                <text x={TOTAL_X} y={baseline} fontSize={13} fill="#9ca3af">{row.total}</text>
-              </g>
-            );
-          })}
-          <line x1={PLOT_X0 - 8} y1={AXIS_Y} x2={PLOT_X1 + 8} y2={AXIS_Y} stroke="#b8bec6" />
-          {ticks.map((value) => (
-            <text key={value} x={PLOT_X0 + value * unit} y={TICK_LABEL_Y} textAnchor="middle" fontSize={12} fill="#8a9099">{value}</text>
-          ))}
-        </svg>
+      {view === "overview" ? (
+        <HubDashOverview
+          progress={progress}
+          status={statusView}
+          delivery={deliveryView}
+          issues={issuesView}
+          issuesState={issuesState}
+          words={wordsView}
+          wordsState={wordsState}
+          canDrill={canDrill}
+          onProgressTip={showTip}
+          onProgressRowTip={showRowTip}
+          onStatusTip={showStatusTip}
+          onIssueTip={showIssueTip}
+          onIssueRowTip={showIssueRowTip}
+          onDeliveryTip={showDeliveryTip}
+          onDeliveryRateTip={showDeliveryRateTip}
+          onWordTip={showWordTip}
+          onLeave={() => setTip(null)}
+          onPickCell={pickCell}
+          onPickStatus={pickStatus}
+          onPickIssue={pickIssue}
+          onPickDelivery={pickDelivery}
+          onPickDeliveryRate={pickDeliveryRate}
+          onPickDeliveryNote={pickDeliveryNote}
+          onPickWord={pickWord}
+        />
+      ) : view === "progress" ? (
+        <HubDashProgress
+          progress={progress}
+          canDrill={canDrill}
+          onTip={showTip}
+          onRowTip={showRowTip}
+          onLeave={() => setTip(null)}
+          onPick={pickCell}
+        />
       ) : view === "status" ? (
         <HubDashStatus
           status={statusView}
           canDrill={canDrill}
           onTip={showStatusTip}
           onLeave={() => setTip(null)}
-          onPick={(slice) => {
-            setTip(null);
-            setDetail({ kind: "status", status: slice.status });
-          }}
+          onPick={pickStatus}
         />
       ) : view === "delivery" ? (
         <HubDashDelivery
@@ -619,18 +556,9 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, w
           onTip={showDeliveryTip}
           onRateTip={showDeliveryRateTip}
           onLeave={() => setTip(null)}
-          onPick={(bucket) => {
-            setTip(null);
-            setDetail({ kind: "delivery", bucket });
-          }}
-          onRatePick={() => {
-            setTip(null);
-            setDetail({ kind: "delivery", bucket: "按时交付" });
-          }}
-          onNotePick={() => {
-            setTip(null);
-            setDetail({ kind: "deliveryPending" });
-          }}
+          onPick={pickDelivery}
+          onRatePick={pickDeliveryRate}
+          onNotePick={pickDeliveryNote}
         />
       ) : view === "wordcloud" ? (
         wordsState === "ready" && wordsView !== null ? (
@@ -642,10 +570,7 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, w
               canDrill={canDrill}
               onTip={showWordTip}
               onLeave={() => setTip(null)}
-              onPick={(word) => {
-                setTip(null);
-                setDetail({ kind: "word", word });
-              }}
+              onPick={pickWord}
             />
           )
         ) : wordsState === "failed" ? (
@@ -665,10 +590,7 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, w
             onTip={showIssueTip}
             onRowTip={showIssueRowTip}
             onLeave={() => setTip(null)}
-            onPick={(state, category) => {
-              setTip(null);
-              setDetail({ kind: "issue", state, category });
-            }}
+            onPick={pickIssue}
           />
         )
       ) : issuesState === "failed" ? (
@@ -679,6 +601,7 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, w
         </div>
       )}
       <div className="hub-dash-switch">
+        <DashViewSwitch view="overview" checked={view === "overview"} label={t("hub.dash.overview.title")} onSelect={() => switchView("overview")} />
         <DashViewSwitch view="progress" checked={view === "progress"} label={t("hub.dash.title")} onSelect={() => switchView("progress")} />
         <DashViewSwitch view="status" checked={view === "status"} label={t("hub.dash.status.title")} onSelect={() => switchView("status")} />
         <DashViewSwitch view="issues" checked={view === "issues"} label={t("hub.dash.issues.title")} onSelect={() => switchView("issues")} />

@@ -8,7 +8,7 @@
  * 激活表口径（0048 + 0055）：bound_at 非空 = 绑定行 = 可投递地址（绑定码命中时写入）；user_id 可空（D1
  * 仅激活登记行无主）；first_activated_at 首次不覆盖、last_message_at 随回调 upsert 刷新（语义 = 用户消息
  * 时刻）；发送成功旁证回填（D4）只补 user_id / updated_at，不动 last_message_at。
- * 绑定码口径（0055 · D3）：6 位数字 / TTL 10 分钟 / 一次性 / 同一 user_id 仅一个 pending（重发先作废旧码）；
+ * 绑定码口径（0055 · D3 修订 v1.8）：6 位数字 / TTL 5 分钟 / 一次性 / 同一 user_id 仅一个 pending（重发先作废旧码）；
  * 用户消息正文不入库、不落日志 —— 本层只按码取值（CONTRIBUTING §12）。
  * 留痕口径：每次尝试一行（0046 CHECK：非 sent 行必须带非空 error；sent ↔ sentAt 非空且 error 为空）。
  */
@@ -117,7 +117,10 @@ export class NotifyDmRepository {
     return { wecomUserid: row.wecomUserid, userId: row.userId, boundAt: row.boundAt };
   }
 
-  /** 该企微号在当前机器人上的绑定行（ingest 幂等判据 —— 「已绑定」回执 / 绑定态读面）。 */
+  /**
+   * 该企微号在当前机器人上的绑定行（v1.8 换绑判据）：码命中时用来取「旧持有者」（与码持有者不同 = 跨用户
+   * 换绑），亦用于回调重复投递的幂等判定（码已用 + 绑定仍归码持有者 → 回「绑定成功」）。
+   */
   async findBindingByWecomUserid(wecomUserid: string, botId: string, client: DbClient = this.database.db): Promise<DmBindingRow | null> {
     const rows = await client
       .select({
@@ -221,7 +224,10 @@ export class NotifyDmRepository {
       });
   }
 
-  /** 窗口内已生成绑定码的创建时刻（升序 —— D3 频率限制 3 次/小时/用户；空数组 = 未取过码）。 */
+  /**
+   * 窗口内已生成绑定码的创建时刻（升序 —— D3 修订 v1.8：5 次 / 3 分钟 / 用户；空数组 = 未取过码）。
+   * v1.9：罚时锚点取数组末尾（最近一码）—— 调用方不要再用首元素。
+   */
   async bindingCodesSince(userId: string, since: Date, client: DbClient = this.database.db): Promise<Date[]> {
     const rows = await client
       .select({ createdAt: wecomIdBindingCodes.createdAt })
@@ -229,6 +235,65 @@ export class NotifyDmRepository {
       .where(and(eq(wecomIdBindingCodes.userId, userId), gte(wecomIdBindingCodes.createdAt, since)))
       .orderBy(wecomIdBindingCodes.createdAt);
     return rows.map((row) => row.createdAt);
+  }
+
+  /**
+   * 诊断：当前机器人维度的单聊回调统计。激活表按 (bot_id, wecom_userid) 一行 —— 首次回调插入、
+   * 后续回调只刷新 last_message_at；因此 count = 0 即「该 bot_id 从未收到回调」，
+   * count > 0 = 有过单聊消息的企微号数（不是消息条数）；last_message_at 最大者 = 最近一次收到的时刻。
+   */
+  async botInboundStats(
+    botId: string,
+    client: DbClient = this.database.db,
+  ): Promise<{ inboundCount: number; lastInboundAt: Date | null; lastInboundUserid: string | null }> {
+    const countRows = await client
+      .select({ count: sql<number>`count(*)::int` })
+      .from(wecomAibotDmActivations)
+      .where(eq(wecomAibotDmActivations.botId, botId));
+    const lastRows = await client
+      .select({
+        wecomUserid: wecomAibotDmActivations.wecomUserid,
+        lastMessageAt: wecomAibotDmActivations.lastMessageAt,
+      })
+      .from(wecomAibotDmActivations)
+      .where(eq(wecomAibotDmActivations.botId, botId))
+      .orderBy(desc(wecomAibotDmActivations.lastMessageAt))
+      .limit(1);
+    return {
+      inboundCount: countRows[0]?.count ?? 0,
+      lastInboundAt: lastRows[0]?.lastMessageAt ?? null,
+      lastInboundUserid: lastRows[0]?.wecomUserid ?? null,
+    };
+  }
+
+  /**
+   * 诊断：激活表内出现过的 bot_id（最近有回调的在前，最多 limit 个）——
+   * 用于发现「worker 用的是另一个机器人」：当前 bot_id 计数为 0、但列表里另有 bot_id 有记录。
+   */
+  async observedBotIds(
+    limit: number,
+    client: DbClient = this.database.db,
+  ): Promise<{ botId: string | null; inboundCount: number; lastInboundAt: Date | null }[]> {
+    const rows = await client
+      .select({
+        botId: wecomAibotDmActivations.botId,
+        inboundCount: sql<number>`count(*)::int`,
+        lastInboundAt: sql<Date | null>`max(${wecomAibotDmActivations.lastMessageAt})`,
+      })
+      .from(wecomAibotDmActivations)
+      .groupBy(wecomAibotDmActivations.botId)
+      .orderBy(desc(sql`max(${wecomAibotDmActivations.lastMessageAt})`))
+      .limit(limit);
+    // 驱动对聚合列 max(timestamptz) 的解析结果可能是字符串（与列选不同）；统一归一成 Date，
+    // 避免上层 .toISOString() 在真实 PG 上炸 500（E2E 实测）。
+    return rows.map((row) => {
+      const value = row.lastInboundAt as Date | string | null;
+      return {
+        botId: row.botId,
+        inboundCount: row.inboundCount,
+        lastInboundAt: value === null ? null : value instanceof Date ? value : new Date(value),
+      };
+    });
   }
 
   /**
@@ -259,6 +324,30 @@ export class NotifyDmRepository {
     });
   }
 
+  /**
+   * 当前仍未失效的 pending 绑定码（v1.8 读面回填）：同一 user_id 至多一条（部分唯一索引
+   * uq_wecom_id_binding_codes_pending），按 id 降序取最新；已用 / 已过期 / 已废止一律不命中（null = 无可回填的码）。
+   */
+  async findPendingBindingCode(
+    userId: string,
+    at: Date,
+    client: DbClient = this.database.db,
+  ): Promise<{ code: string; expiresAt: Date } | null> {
+    const rows = await client
+      .select({ code: wecomIdBindingCodes.code, expiresAt: wecomIdBindingCodes.expiresAt })
+      .from(wecomIdBindingCodes)
+      .where(
+        and(
+          eq(wecomIdBindingCodes.userId, userId),
+          eq(wecomIdBindingCodes.status, "pending"),
+          gt(wecomIdBindingCodes.expiresAt, at),
+        ),
+      )
+      .orderBy(desc(wecomIdBindingCodes.id))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
   /** 按码取值（任意状态 —— ingest 需区分「不存在」与「已用 / 过期」两类回执，口径 §5）。 */
   async findBindingCode(code: string, client: DbClient = this.database.db): Promise<DmBindingCodeRow | null> {
     const rows = await client
@@ -278,7 +367,9 @@ export class NotifyDmRepository {
   /**
    * 绑定（同一事务 · 口径 §3 第 3 步）：① 先占码（pending 且未过期才可占 —— 并发 / 重复投递只有一方占到）；
    * ② 换绑清旧：同一用户在同一机器人上的其它绑定行去址（保留激活登记，仅注销投递资格）；③ upsert 绑定行
-   * （bot_id + wecom_userid 唯一 —— 覆盖旧行）。返回 false = 码已被占 / 已过期（调用方按「码已失效」回执）。
+   * （bot_id + wecom_userid 唯一）—— 行已存在时按唯一键改挂到码持有者：**跨用户换绑**（v1.8：发送方企微号
+   * 挂在别的库内用户上时，旧持有者随该行改挂而回落未绑定；换绑留痕由调用方同事务写 `audit_logs`）。
+   * 返回 false = 码已被占 / 已过期（调用方按「码已失效」回执）。
    */
   async bindWithCode(
     input: { codeId: number; userId: string; botId: string; wecomUserid: string; at: Date },

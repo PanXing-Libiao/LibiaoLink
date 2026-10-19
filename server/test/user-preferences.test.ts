@@ -1,5 +1,5 @@
 /**
- * 用户偏好（A4 / A24 · Push 169；A4 列显隐白名单 · Push 170；A31 工作台展开态 · Push 233；「我的计划」便签墙 · Push 268；便签墙背景色 bg · Push 271；背景档位 backgroundTier · Push 291；卡片水印 cardWatermark · Push 292；界面语言 locale · Push 296；仪表盘页常驻视图 hubView · Push 332；仪表盘常驻项目 hubDashProject · Push 336；仪表盘页内图表视图 hubDashView · Push 345）回归：无行默认值、PATCH 合并语义（只传变更键 / 数组整体替换 /
+ * 用户偏好（A4 / A24 · Push 169；A4 列显隐白名单 · Push 170；A31 工作台展开态 · Push 233；「我的计划」便签墙 · Push 268；便签墙背景色 bg · Push 271；背景档位 backgroundTier · Push 291；卡片水印 cardWatermark · Push 292；界面语言 locale · Push 296；仪表盘页常驻视图 hubView · Push 332；仪表盘常驻项目 hubDashProject · Push 336；仪表盘页内图表视图 hubDashView · Push 345；Push 358 加 overview）回归：无行默认值、PATCH 合并语义（只传变更键 / 数组整体替换 /
  * 未声明键保留）、读侧规范化（jsonb 是自由对象，脏数据一律收敛不抛错）、契约上限（≤ 20 组 / 名称 ≤ 20 字）、
  * 任务表列 key 白名单（未知 key 400 + 与前端 `TABLE_COLUMNS` 同源）、工作台展开态形状与收敛、便签墙形状 / 收敛 / 服务端盖章、背景档位枚举与读侧收敛、卡片水印布尔与读侧收敛、界面语言枚举与读侧收敛。
  * 不连库：仓储用内存替身（与 admin-audit.test.ts 同口径）；契约 schema 直接解析校验。
@@ -256,7 +256,7 @@ describe("用户偏好（A4 / A24）", () => {
     expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashProject: true }).success).toBe(false);
   });
 
-  it("仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」；Push 353 加词频图）：只传 hubDashView 落库、未传键保持原值；读侧白名单外回 progress", async () => {
+  it("仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」；Push 353 加词频图；Push 358 加数据总览）：只传 hubDashView 落库、未传键保持原值；读侧白名单外回 progress", async () => {
     const { service, repo } = makeService();
     await service.update(USER_ID, { hubDashView: "delivery" }, AT);
     expect((await service.get(USER_ID)).hubDashView).toBe("delivery");
@@ -264,12 +264,14 @@ describe("用户偏好（A4 / A24）", () => {
     expect((await service.update(USER_ID, { focusMode: true }, AT)).hubDashView).toBe("delivery");
     expect((await service.update(USER_ID, { hubDashView: "progress" }, AT)).hubDashView).toBe("progress");
     expect((await service.update(USER_ID, { hubDashView: "wordcloud" }, AT)).hubDashView).toBe("wordcloud");
+    expect((await service.update(USER_ID, { hubDashView: "overview" }, AT)).hubDashView).toBe("overview");
     expect((await service.update(USER_ID, { hubDashView: "progress" }, AT)).hubDashView).toBe("progress");
     repo.rows.set(USER_ID, { userId: USER_ID, prefs: { hubDashView: "board" }, updatedAt: AT } as unknown as UserPreferenceRow);
     expect((await service.get(USER_ID)).hubDashView).toBe("progress");
   });
 
-  it("仪表盘页内图表视图契约：progress / status / issues / delivery / wordcloud 通过，其它字符串 / 布尔 400", () => {
+  it("仪表盘页内图表视图契约：overview / progress / status / issues / delivery / wordcloud 通过，其它字符串 / 布尔 400", () => {
+    expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashView: "overview" }).success).toBe(true);
     expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashView: "progress" }).success).toBe(true);
     expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashView: "status" }).success).toBe(true);
     expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashView: "issues" }).success).toBe(true);

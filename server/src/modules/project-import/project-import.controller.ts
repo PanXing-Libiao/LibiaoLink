@@ -26,6 +26,9 @@ type ProjectImportCommitBody = z.infer<typeof ProjectImportCommitBodySchema>;
 @Controller("api/v1/project-imports")
 @UseGuards(SessionGuard, CsrfGuard, ProjectAccessGuard)
 export class ProjectImportController {
+  /** 200 MB 级导入只允许单实例并发，避免预览 / 提交同时保留整包文件与图片缓存。 */
+  private importInFlight = false;
+
   constructor(private readonly imports: ProjectImportService) {}
 
   /** 解析预览（不写业务库）：返回票据（30 分钟）+ 落位建议 + 须手动导入清单 + 节点 / 账号清单 + 提醒。 */
@@ -38,30 +41,46 @@ export class ProjectImportController {
     @Headers("accept-language") acceptLanguage: string | undefined,
     @CurrentActorId() actorId: string,
   ): Promise<ProjectImportPreview> {
-    const parts = await readMultipartParts(request, contentType ?? null, ["file"], IMPORT_MAX_FILE_BYTES);
-    const main = parts.get("file") ?? null;
-    if (main === null) {
-      throw new AppError("IMPORT_FILE_INVALID", "缺少上传文件（multipart 字段 file）");
+    if (this.importInFlight) {
+      throw new AppError("RATE_LIMITED", "导入任务正在处理中，请稍后重试");
     }
-    return this.imports.preview({
-      bytes: main.bytes,
-      fileName: main.fileName,
-      actorId,
-      locale: localeOf(acceptLanguage),
-    });
+    this.importInFlight = true;
+    try {
+      const parts = await readMultipartParts(request, contentType ?? null, ["file"], IMPORT_MAX_FILE_BYTES);
+      const main = parts.get("file") ?? null;
+      if (main === null) {
+        throw new AppError("IMPORT_FILE_INVALID", "缺少上传文件（multipart 字段 file）");
+      }
+      return await this.imports.preview({
+        bytes: main.bytes,
+        fileName: main.fileName,
+        actorId,
+        locale: localeOf(acceptLanguage),
+      });
+    } finally {
+      this.importInFlight = false;
+    }
   }
 
   /** 确认导入（单事务）：建项目 + 蓝图快照 + 成员名册 + 任务 / 日报 / 问题 / 变更 / 图片；返回完成页数据。 */
   @Post("commit")
   @HttpCode(200)
   @RequirePermission("project.create")
-  commit(
+  async commit(
     @Res({ passthrough: true }) response: Response,
     @Body(new ZodValidationPipe(ProjectImportCommitBodySchema)) body: ProjectImportCommitBody,
     @Headers("accept-language") acceptLanguage: string | undefined,
     @CurrentActorId() actorId: string,
   ): Promise<ProjectImportResult> {
-    return this.imports.commit(body, actorId, localeOf(acceptLanguage), clientGoneSignal(response));
+    if (this.importInFlight) {
+      throw new AppError("RATE_LIMITED", "导入任务正在处理中，请稍后重试");
+    }
+    this.importInFlight = true;
+    try {
+      return await this.imports.commit(body, actorId, localeOf(acceptLanguage), clientGoneSignal(response));
+    } finally {
+      this.importInFlight = false;
+    }
   }
 }
 
