@@ -22,6 +22,7 @@ const BUSINESS_DAY = "2026-09-24";
 const CALENDAR = calendarWindow("2026-09-01", "2026-12-31", [
   { date: "2026-10-01", dayType: "holiday", name: "国庆节", note: null },
 ]);
+const PROJECT = "项目：**LBUSA-20261014-002·美国仓储公司订单**";
 const AT = new Date(atShanghaiTime(BUSINESS_DAY, "12:00"));
 
 function task(overrides: Partial<ReplayTask>): ReplayTask {
@@ -40,7 +41,10 @@ function task(overrides: Partial<ReplayTask>): ReplayTask {
     managerId: "u-9",
     managerName: "李四",
     projectId: "p-1",
+    projectCode: "LBUSA-20261014-002",
+    projectName: "美国仓储公司订单",
     projectProgress: 50,
+    completedByName: "邵晨宇",
     projectGroupId: "g-1",
     deliverableTypes: ["施工方案"],
     fileCount: 1,
@@ -103,7 +107,7 @@ describe("evaluateEventMessages 事件形态（R02 金标等价 + 冷启动保�
     for (const message of runtime.messages) {
       expect(message.ruleCode).toBe("R02");
       expect(message.dedupeKey).toBe("R02:t-1:v5");
-      expect(message.body).toBe("请为项目任务安装摄像头及时添加成果文件");
+      expect(message.body).toBe(`${PROJECT}\n邵晨宇已点击完成任务，请为项目任务「**安装摄像头**」及时添加成果文件`);
       expect(message.recipientName).toBe("张三");
     }
     // R06 同主题命中但条件不满足（project.progress != 100）→ 登记 not_matched；A 系列不参与（主题不命中）。
@@ -232,7 +236,7 @@ describe("planWindowMessages 调度形态（与逐日回放等价）", () => {
     expect(merged?.channel).toBe("wecom_aibot");
     expect(merged?.dedupeKey).toBe("R07:u-1:2026-W39");
     expect(merged?.mergedFrom).toEqual(["t-1", "t-2"]);
-    expect(merged?.body).toBe("以下重点任务正在进行中：安装摄像头、调试网络请关注并及时推进任务~");
+    expect(merged?.body).toBe(`张三，以下重点任务正在进行中：\n${PROJECT}\n任务：「**安装摄像头**」\n${PROJECT}\n任务：「**调试网络**」\n请关注并及时推进任务~`);
     expect(plan.skipped).toEqual([{ reason: "not_matched", ruleCode: "R07", entityId: "t-3" }]);
   });
   it("disabled 规则登记一次；jobKind / 窗口边界错误显性抛错", () => {

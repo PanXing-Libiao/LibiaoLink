@@ -43,7 +43,10 @@ export interface ReplayTask {
   managerId: string | null;
   managerName: string | null;
   projectId: string;
+  projectCode: string;
+  projectName: string;
   projectProgress: number;
+  completedByName: string | null;
   projectGroupId: string | null;
   deliverableTypes: readonly string[];
   fileCount: number;
@@ -157,6 +160,9 @@ export interface BusinessDateEvaluation {
 const COMPLETED_STATUSES = ["done", "early_done"];
 /** 任务快照 → 通用主体（字段与 R02 ~ R07 的条件 / 文案变量一一对应）。 */
 export function toTaskSubject(task: ReplayTask): ReplaySubject {
+  const projectLabel =
+    task.projectCode === "" ? task.projectName : task.projectName === "" ? task.projectCode : task.projectCode + "·" + task.projectName;
+  const taskBrief = "项目：**" + projectLabel + "**" + String.fromCharCode(10) + "任务：「**" + task.title + "**」";
   return {
     kind: "task",
     id: task.id,
@@ -174,9 +180,14 @@ export function toTaskSubject(task: ReplayTask): ReplaySubject {
       "task.owner_id": task.ownerId,
       "task.owner_name": task.ownerName,
       "task.manager_name": task.managerName,
+      "task.completed_by_name": task.completedByName,
+      "task.brief": taskBrief,
       "task.deliverable_types": task.deliverableTypes,
       "task.file_count": task.fileCount,
       "project.id": task.projectId,
+      "project.code": task.projectCode,
+      "project.name": task.projectName,
+      "project.label": projectLabel,
       "project.progress": task.projectProgress,
     },
     recipients: {
@@ -385,8 +396,8 @@ export function evaluateBusinessDate(input: BusinessDateEvaluationInput): Busine
       merged.push({ message: { ...first, entityId: recipientEntityId, dedupeKey: recipientKey, mergedFrom: sourceIds }, fireAt: firstItem.fireAt });
       continue;
     }
-    const list = bucket.map((item) => item.listValue ?? "").join("、");
-    const listVariables = { [spec.listVariable]: list };
+    const list = bucket.map((item) => item.listValue ?? "").join(spec.separator ?? "、");
+    const listVariables = { [spec.listVariable]: list, "任务负责人": first.recipientName ?? "" };
     merged.push({
       message: {
         ...first,
