@@ -250,30 +250,28 @@ body {
 }
 
 /* 登录后企微绑定提醒（Push 369）：右侧悬浮卡轻弹入场 —— 从右侧 14px + 下方 10px 处缩放淡入，
-   轻微回弹后回到垂直居中位；prefers-reduced-motion 下直接显示。
-   Push 260 修：Tailwind v4 的 `-translate-y-1/2` 走独立的 `translate` 属性，入场位移必须同走长写，
-   否则会与 keyframe 的 `transform: translateY(-50%)` 叠加成双倍上移（视觉 / 时长 / 原点均不变）。 */
+   轻微回弹后回到垂直居中位；prefers-reduced-motion 下直接显示。 */
 @keyframes ll-guide-pop-in {
   0% {
     opacity: 0;
-    translate: 14px calc(-50% + 10px);
-    transform: scale(0.96);
+    translate: 14px calc(10px - 50%);
+    scale: 0.96;
   }
   62% {
     opacity: 1;
     translate: 0 calc(-50% - 2px);
-    transform: scale(1.01);
+    scale: 1.01;
   }
   100% {
     opacity: 1;
     translate: 0 -50%;
-    transform: scale(1);
+    scale: 1;
   }
 }
 
 .wecom-guide-pop {
   transform-origin: right center;
-  will-change: transform, opacity;
+  will-change: translate, scale, opacity;
   animation: ll-guide-pop-in 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
