@@ -33,8 +33,27 @@ export function boundaryOf(contentType: string | null | undefined): string | nul
   return value === "" ? null : value;
 }
 
-/** 整包读流（上限内；超限立即中止并 400）。 */
+/** 整包读流（上限内；超限立即中止并 400）。有 Content-Length 时预分配，避免 chunks + concat 的峰值副本。 */
 export async function readRequestBody(req: IncomingMessage, maxBytes: number): Promise<Buffer> {
+  const header = req.headers["content-length"];
+  const declared = typeof header === "string" ? Number(header) : Number.NaN;
+  if (Number.isSafeInteger(declared) && declared >= 0) {
+    if (declared > maxBytes) {
+      throw new AppError("IMPORT_FILE_INVALID", "文件超过上限（" + Math.floor(maxBytes / 1024 / 1024) + " MB），请拆分后再导入");
+    }
+    const body = Buffer.allocUnsafe(declared);
+    let offset = 0;
+    for await (const chunk of req) {
+      const part = typeof chunk === "string" ? Buffer.from(chunk) : (chunk as Buffer);
+      if (offset + part.length > declared) {
+        throw new AppError("IMPORT_FILE_INVALID", "请求体长度与 Content-Length 不一致");
+      }
+      part.copy(body, offset);
+      offset += part.length;
+    }
+    return offset === declared ? body : body.subarray(0, offset);
+  }
+
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of req) {
@@ -125,7 +144,7 @@ export function parseMultipart(body: Buffer, boundary: string): MultipartFilePar
         field: disposition.field,
         fileName: disposition.fileName,
         contentType: headerValue(headerText, "content-type"),
-        bytes: Buffer.from(body.subarray(contentStart, contentEnd)),
+        bytes: body.subarray(contentStart, contentEnd),
       });
     }
     index = next;

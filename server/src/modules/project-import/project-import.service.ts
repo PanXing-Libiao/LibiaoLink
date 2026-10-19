@@ -112,10 +112,15 @@ interface ImagePlan {
   issueIndex: number | null;
   /** 变更表下标（变更前 / 变更后图；与 insertChangeRequests 返回同序）；日报图 = null。 */
   changeIndex: number | null;
+  /** ZIP 内 xl/media 文件名；图片字节在提交循环中逐张读取，不进入 plans。 */
+  media: string;
+}
+
+/** 已完成读取 / 哈希 / 上传的图片计划，事务落库时使用。 */
+interface UploadedImagePlan extends ImagePlan {
   objectKey: string;
   sizeBytes: number;
   contentHash: string;
-  bytes: Buffer;
 }
 
 /** 票据 payload（jsonb）：解析产物 + 账号清单；提交只认这份快照（避免两次解析漂移）。 */
@@ -156,7 +161,7 @@ export class ProjectImportService {
     assertImportFile(fileName, input.bytes.length);
     const { parse, workbook } = parseLegacy(input.bytes, fileName);
     const extraSeeds: LegacyIssueSeed[] = [];
-    const skippedImages = countSkippedImages(parse, (media) => workbook.readMedia(media));
+    const skippedImages = countSkippedImages(parse, (media) => workbook.hasMedia(media));
     const resolution = await this.resolveAccounts(collectPeople(parse));
     const { groups } = await this.buildNodeGroups(parse.tasks);
     const previewId = randomUUID();
@@ -332,25 +337,40 @@ export class ProjectImportService {
         issueCount += 1;
       });
     }
-    const imageBuild = buildImagePlans(parse, (media) => zip.read("xl/media/" + media), projectId, issueIndexByReport);
+    const imageBuild = buildImagePlans(
+      parse,
+      (media) => zip.has("xl/media/" + media),
+      issueIndexByReport,
+    );
     const uploadedImageKeys: string[] = [];
+    const uploadedPlans: UploadedImagePlan[] = [];
+    let skippedImages = imageBuild.skipped;
     try {
       for (const plan of imageBuild.plans) {
         throwIfCancelled(signal);
+        // 逐张读取：method 0 返回源 Buffer 视图，method 8 仅在这一轮解压；不进入 ZipArchive 缓存。
+        const bytes = zip.readUncached("xl/media/" + plan.media);
+        if (bytes === null) {
+          skippedImages += 1;
+          continue;
+        }
+        const contentHash = createHash("sha256").update(bytes).digest("hex");
+        const objectKey = buildObjectKey({ projectId, fileId: plan.fileId, seq: 1, contentHash, fileName: plan.name });
         await this.storage.putObject({
-          objectKey: plan.objectKey,
-          body: plan.bytes,
+          objectKey,
+          body: bytes,
           contentType: plan.mime,
           metadata: { origin: "legacy-import", previewId: preview.id },
         });
-        uploadedImageKeys.push(plan.objectKey);
+        uploadedImageKeys.push(objectKey);
+        uploadedPlans.push({ ...plan, objectKey, sizeBytes: bytes.length, contentHash });
       }
     } catch (error) {
       await this.discardImages(uploadedImageKeys);
       throw error;
     }
-    if (imageBuild.skipped > 0) {
-      extraSeeds.push(imageRowMissingSeed(imageBuild.skipped));
+    if (skippedImages > 0) {
+      extraSeeds.push(imageRowMissingSeed(skippedImages));
     }
 
     const at = new Date();
@@ -551,7 +571,7 @@ export class ProjectImportService {
 
       // 图片：对象已上传；事务内登记 files + file_versions + file_links（现场图挂日报；问题图随问题转挂 issue 侧；
       // 变更前 / 变更后附图（Push 349）不落 file_links —— 登记 files 后回填 change_requests 两列，同 0052 应用内口径）。
-      const fileRows: ImportFileInsert[] = imageBuild.plans.map((plan) => ({
+      const fileRows: ImportFileInsert[] = uploadedPlans.map((plan) => ({
         id: plan.fileId,
         name: plan.name,
         objectKey: plan.objectKey,
@@ -565,7 +585,7 @@ export class ProjectImportService {
       }));
       throwIfCancelled(signal);
       await this.previews.insertFiles(tx, projectRow.id, reportIds, issueIds, fileRows, actorId, at);
-      const changeImageUpdates = buildChangeImageUpdates(imageBuild.plans, changeIds);
+      const changeImageUpdates = buildChangeImageUpdates(uploadedPlans, changeIds);
       if (changeImageUpdates.length > 0) {
         await this.previews.attachChangeSummaryImages(tx, changeImageUpdates);
       }
@@ -774,7 +794,10 @@ export class ProjectImportService {
     if (object === null) {
       throw new AppError("IMPORT_PREVIEW_EXPIRED", "预览源文件已清理（票据过期），请重新选择文件解析");
     }
-    return ZipArchive.open(Buffer.from(object.bytes));
+    const bytes = Buffer.isBuffer(object.bytes)
+      ? object.bytes
+      : Buffer.from(object.bytes.buffer, object.bytes.byteOffset, object.bytes.byteLength);
+    return ZipArchive.open(bytes);
   }
 
   /** 取消 / 失败收尾（Push 321）：丢弃本次已上传的图片对象（尽力而为；重试会重新生成对象键）。 */
@@ -925,23 +948,22 @@ function composeChangeReason(change: LegacyChange): string {
 }
 
 /** 未导入的图片数（锚点行不是有效日报 / 变更行、源文件里找不到该 media）：预览与提交同一判定，提醒口径一致。 */
-function countSkippedImages(parse: LegacyParse, readMedia: (media: string) => Buffer | null): number {
+function countSkippedImages(parse: LegacyParse, hasMedia: (media: string) => boolean): number {
   const reportRows = new Set(parse.reports.map((report) => report.row));
   const changeRows = new Set(parse.changes.map((change) => change.row));
   let skipped = 0;
   for (const image of parse.images) {
     const isChange = image.kind === "change_before" || image.kind === "change_after";
     const rowExists = isChange ? changeRows.has(image.row) : reportRows.has(image.row);
-    if (!rowExists || readMedia(image.media) === null) skipped += 1;
+    if (!rowExists || !hasMedia(image.media)) skipped += 1;
   }
   return skipped;
 }
 
-/** 图片落位计划：锚点行 = 日报行 / 变更行 → 挂该行；media 缺失 / 行未匹配 / 单条变更附图超 30 张 → 计入 skipped（提醒，不阻断）。 */
+/** 图片落位计划：只登记元数据；图片字节在提交循环中逐张读取，避免把整包图片留在内存。 */
 function buildImagePlans(
   parse: LegacyParse,
-  readMedia: (media: string) => Buffer | null,
-  projectId: string,
+  hasMedia: (media: string) => boolean,
   issueIndexByReport: Map<number, number>,
 ): { plans: ImagePlan[]; skipped: number } {
   const reportIndexByRow = new Map<number, number>();
@@ -958,8 +980,7 @@ function buildImagePlans(
       skipped += 1;
       continue;
     }
-    const bytes = readMedia(image.media);
-    if (bytes === null) {
+    if (!hasMedia(image.media)) {
       skipped += 1;
       continue;
     }
@@ -982,20 +1003,15 @@ function buildImagePlans(
       const report = parse.reports[targetIndex]!;
       name = (image.kind === "onsite" ? "现场工作照 " : "问题附图 ") + report.reportDate + " " + seq + "." + extension;
     }
-    const contentHash = createHash("sha256").update(bytes).digest("hex");
-    const fileId = randomUUID();
     plans.push({
-      fileId,
+      fileId: randomUUID(),
       name,
       mime: mimeOf(extension),
       kind: image.kind,
       reportIndex: isChange ? null : targetIndex,
       issueIndex: image.kind === "issue" ? (issueIndexByReport.get(targetIndex) ?? null) : null,
       changeIndex: isChange ? targetIndex : null,
-      objectKey: buildObjectKey({ projectId, fileId, seq: 1, contentHash, fileName: name }),
-      sizeBytes: bytes.length,
-      contentHash,
-      bytes,
+      media: image.media,
     });
   }
   return { plans, skipped };
