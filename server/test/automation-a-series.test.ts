@@ -15,12 +15,13 @@ import {
 /** 金标基准日：2026-09-24（周四）；A14 待办提醒用当日、A01/A02 用当日槽位（A03 随处理时限下线 · Push 215）。 */
 const BUSINESS_DAY = "2026-09-24";
 const NO_EXCEPTIONS = calendarWindow("2026-09-01", "2026-12-31", []);
+const ENABLED_TEST_RULES = BUILTIN_RULES.map((rule) => ({ ...rule, enabled: true }));
 const CALENDAR = calendarWindow("2026-09-01", "2026-12-31", [
   { date: "2026-10-01", dayType: "holiday", name: "国庆节", note: null },
 ]);
 
 function replay(businessDate: string, subjects: ReplaySubject[], extra: Record<string, unknown> = {}) {
-  return replayRules({ businessDate, subjects, calendar: CALENDAR, shiftEnabled: false, ...extra });
+  return replayRules({ businessDate, subjects, calendar: CALENDAR, shiftEnabled: false, rules: ENABLED_TEST_RULES, ...extra });
 }
 
 /** A01 日报名册槽位：人员 × 项目 × 日期（数据面 = GET …/reports/missing，Push 162）。 */
@@ -258,7 +259,7 @@ describe("引擎扩项（M5-05 余项：主体类型 / T_PLUS_3 / 契约与文�
     expect(report.messages.every((message) => message.ruleCode === "A14")).toBe(true);
   });
 
-  it("内置规则集：A 系列四条（A03 随处理时限下线）与主体类型登记齐备", () => {
+  it("内置规则集：A 系列定义与主体类型登记齐备，当前不进入生产启用集", () => {
     const codes = BUILTIN_RULES.map((rule) => rule.code);
     for (const code of ["A01", "A02", "A14", "A08"]) expect(codes).toContain(code);
     expect(codes).not.toContain("A03"); // 问题主体类型 issue 随处理时限（due_at）一并下线，A 系列只剩三条
@@ -267,6 +268,10 @@ describe("引擎扩项（M5-05 余项：主体类型 / T_PLUS_3 / 契约与文�
     expect(subjectKindOf("A14")).toBe("todo");
     expect(subjectKindOf("A08")).toBe("stage");
     expect(subjectKindOf("R03")).toBe("task");
+    expect(BUILTIN_RULES.filter((rule) => rule.enabled).map((rule) => rule.code)).toEqual(["R02", "R03", "R05"]);
+    for (const code of ["A01", "A02", "A08", "A14"]) {
+      expect(BUILTIN_RULES.find((rule) => rule.code === code)?.enabled).toBe(false);
+    }
   });
 
   it("模板一致性：所有动作模板存在，且模板变量都能由主体字段 / 合并清单提供", () => {

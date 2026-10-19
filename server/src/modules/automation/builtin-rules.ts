@@ -88,7 +88,7 @@ export const BUILTIN_MESSAGE_TEMPLATES: readonly AutomationMessageTemplate[] = [
     body: "{提醒对象}，你的待办「{待办标题}」已到提醒时间。{待办内容}",
   },
 ];
-/** 引擎可执行的内置规则（R02 ~ R07 任务类；A01 / A02 / A14 / A08 主体类；A03 随处理时限删除下线 · Push 215）。 */
+/** 引擎可执行的内置规则定义（R02 ~ R07 任务类；A01 / A02 / A14 / A08 主体类；A03 随处理时限删除下线 · Push 215）；当前仅启用 R02 / R03 / R05，其余 enabled = false（Push 373）。 */
 export const BUILTIN_RULES: readonly AutomationRule[] = [
   {
     code: "R02",
@@ -117,7 +117,7 @@ export const BUILTIN_RULES: readonly AutomationRule[] = [
   {
     code: "R04",
     name: "任务启动提醒",
-    enabled: true,
+    enabled: false,
     trigger: { kind: "schedule", cron: "0 10 * * *", window: "SAME_DAY", baseField: "task.planned_start" },
     conditions: [
       { field: "task.display_status", op: "in", value: ["pending", "active"] },
@@ -138,7 +138,7 @@ export const BUILTIN_RULES: readonly AutomationRule[] = [
   {
     code: "R06",
     name: "任务完成喜报",
-    enabled: true,
+    enabled: false,
     trigger: { kind: "event", topic: "task.completed" },
     conditions: [
       { field: "task.actual_end", op: "notNull" },
@@ -150,7 +150,7 @@ export const BUILTIN_RULES: readonly AutomationRule[] = [
   {
     code: "R07",
     name: "每周一提醒跟进重要 / 紧急任务",
-    enabled: true,
+    enabled: false,
     trigger: { kind: "schedule", cron: "30 9 * * 1", window: "WEEKLY" },
     conditions: [
       { field: "task.display_status", op: "eq", value: "active" },
@@ -165,7 +165,7 @@ export const BUILTIN_RULES: readonly AutomationRule[] = [
   {
     code: "A01",
     name: "日报应填未填提醒",
-    enabled: true,
+    enabled: false,
     trigger: { kind: "schedule", cron: "30 19 * * *", window: "SAME_DAY", baseField: "report.date" },
     conditions: [
       { field: "report.is_workday", op: "eq", value: true },
@@ -180,7 +180,7 @@ export const BUILTIN_RULES: readonly AutomationRule[] = [
   {
     code: "A02",
     name: "日报每日汇总群播报",
-    enabled: true,
+    enabled: false,
     trigger: { kind: "schedule", cron: "0 19 * * *", window: "SAME_DAY", baseField: "report.date" },
     conditions: [{ field: "report.entry_count", op: "gt", value: 0 }],
     actions: [{ kind: "notify", channel: "wecom_group", recipient: "project.group", template: "A02_GROUP" }],
@@ -189,7 +189,7 @@ export const BUILTIN_RULES: readonly AutomationRule[] = [
   {
     code: "A08",
     name: "大阶段完成播报",
-    enabled: true,
+    enabled: false,
     trigger: { kind: "event", topic: "stage.advanced" },
     conditions: [],
     actions: [{ kind: "notify", channel: "wecom_group", recipient: "project.group", template: "A08_GROUP" }],
@@ -198,7 +198,7 @@ export const BUILTIN_RULES: readonly AutomationRule[] = [
   {
     code: "A14",
     name: "自定义待办提醒",
-    enabled: true,
+    enabled: false,
     trigger: { kind: "schedule", cron: "0 9 * * *", window: "SAME_DAY", baseField: "todo.remind_date" },
     conditions: [{ field: "todo.status", op: "ne", value: "done" }],
     actions: [
