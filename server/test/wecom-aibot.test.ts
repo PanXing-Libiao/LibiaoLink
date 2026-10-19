@@ -134,6 +134,39 @@ describe("企微智能机器人长连接客户端（M5-03-2 · P5）", () => {
     await client.stop();
   });
 
+  it("waitForSubscribed：等待中订阅成功 → resolve(true)（首轮告警探针门）", async () => {
+    const { client, sockets } = makeClient();
+    client.start();
+    const pending = client.waitForSubscribed(1_000);
+    const socket = sockets[0]!;
+    socket.open();
+    socket.ackLast(0);
+
+    await expect(pending).resolves.toBe(true);
+    expect(client.getStats().state).toBe("subscribed");
+    await client.stop();
+  });
+
+  it("waitForSubscribed：超时 → false（有界等待，不阻塞首轮探针）", async () => {
+    const { client } = makeClient();
+    client.start();
+    await expect(client.waitForSubscribed(5)).resolves.toBe(false);
+    await client.stop();
+  });
+
+  it("waitForSubscribed：已订阅立即 true；stop() 让等待中调用返回 false", async () => {
+    const subscribed = makeClient();
+    await connect(subscribed.client, subscribed.sockets);
+    await expect(subscribed.client.waitForSubscribed(100)).resolves.toBe(true);
+    await subscribed.client.stop();
+
+    const { client } = makeClient();
+    client.start();
+    const waiting = client.waitForSubscribed(1_000);
+    await client.stop();
+    await expect(waiting).resolves.toBe(false);
+  });
+
   it("订阅失败（853000 凭据无效）：断开并排程重连（backoff）", async () => {
     const { client, sockets } = makeClient();
     client.start();
