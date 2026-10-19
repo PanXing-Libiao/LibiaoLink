@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 
 /**
  * 全站悬停提示（2026-10-19 · 业务口径「当前系统的提示如图二 我要改成如图1的样式 但是不用那个小点指向的效果」）：
- * 浏览器原生 title 灰框无法定制圆角 / 阴影 / 字体，这里统一接管带 title 的元素 —— 悬停短暂延迟后出白卡，
+ * 浏览器原生 title 灰框无法定制圆角 / 阴影 / 字体，这里统一接管带 title 的元素 —— 悬停 1s 后出白卡，
  * 贴合锚点居中、贴边夹紧、空间不足自动翻到下方；卡片与锚点之间无箭头 / 指向点。
  * 原生 title 在指针进入时临时移除，离开 / 滚动 / 点按 / Esc 时恢复，既阻断原生灰框，也保留 DOM 兜底文案。
  * 浮层 portal 到 body + position: fixed，因此表格滚动区与其它 overflow 容器不会裁掉提示。
@@ -28,20 +28,53 @@ type TooltipLayout = {
   readonly top: number;
 };
 
-type ActiveTitle = {
+type SuppressedTitle = {
   readonly element: HTMLElement;
   readonly original: string;
 };
 
-const SHOW_DELAY_MS = 180;
+type ActiveTooltip = {
+  readonly anchor: HTMLElement;
+  readonly suppressed: readonly SuppressedTitle[];
+};
+
+const SHOW_DELAY_MS = 1000;
+const TITLE_SELECTOR = "[title], [data-system-tooltip-title]";
+const TITLE_CACHE_ATTR = "data-system-tooltip-title";
 const VIEWPORT_EDGE = 12;
 const ANCHOR_GAP = 10;
+
+function titleTextOf(element: HTMLElement): string {
+  return (element.getAttribute("title") ?? element.getAttribute(TITLE_CACHE_ATTR) ?? "").trim();
+}
+
+function restoreSuppressedTitle(entry: SuppressedTitle): void {
+  if (entry.element.hasAttribute(TITLE_CACHE_ATTR)) {
+    entry.element.removeAttribute(TITLE_CACHE_ATTR);
+    entry.element.setAttribute("title", entry.original);
+  } else if (!entry.element.hasAttribute("title")) {
+    entry.element.setAttribute("title", entry.original);
+  }
+}
+
+function titleChainOf(element: HTMLElement): SuppressedTitle[] {
+  const chain: SuppressedTitle[] = [];
+  let current: HTMLElement | null = element;
+  while (current !== null) {
+    const text = titleTextOf(current);
+    if (text !== "") {
+      chain.push({ element: current, original: text });
+    }
+    current = current.parentElement;
+  }
+  return chain;
+}
 
 export function SystemTooltip() {
   const [tip, setTip] = useState<TooltipState | null>(null);
   const [layout, setLayout] = useState<TooltipLayout | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
-  const activeRef = useRef<ActiveTitle | null>(null);
+  const activeRef = useRef<ActiveTooltip | null>(null);
   const timerRef = useRef<number | null>(null);
 
   const clearTimer = useCallback(() => {
@@ -54,8 +87,8 @@ export function SystemTooltip() {
   const restoreActiveTitle = useCallback(() => {
     const active = activeRef.current;
     if (active !== null) {
-      if (!active.element.hasAttribute("title")) {
-        active.element.setAttribute("title", active.original);
+      for (const entry of active.suppressed) {
+        restoreSuppressedTitle(entry);
       }
       activeRef.current = null;
     }
@@ -75,9 +108,26 @@ export function SystemTooltip() {
   }, [clearTimer, restoreActiveTitle]);
 
   const schedule = useCallback((element: HTMLElement, text: string) => {
-    release();
-    activeRef.current = { element, original: text };
-    element.removeAttribute("title");
+    clearTimer();
+    setTip(null);
+    setLayout(null);
+    const next = titleChainOf(element);
+    const previous = activeRef.current;
+    if (previous !== null) {
+      const keep = new Set(next.map((entry) => entry.element));
+      for (const entry of previous.suppressed) {
+        if (!keep.has(entry.element)) {
+          restoreSuppressedTitle(entry);
+        }
+      }
+    }
+    for (const entry of next) {
+      if (!entry.element.hasAttribute(TITLE_CACHE_ATTR)) {
+        entry.element.setAttribute(TITLE_CACHE_ATTR, entry.original);
+        entry.element.removeAttribute("title");
+      }
+    }
+    activeRef.current = { anchor: element, suppressed: next };
     timerRef.current = window.setTimeout(() => {
       timerRef.current = null;
       if (!element.isConnected) {
@@ -98,7 +148,7 @@ export function SystemTooltip() {
         },
       });
     }, SHOW_DELAY_MS);
-  }, [release]);
+  }, [clearTimer]);
 
   useEffect(() => {
     const onPointerOver = (event: PointerEvent): void => {
@@ -106,15 +156,15 @@ export function SystemTooltip() {
       if (!(target instanceof Element)) {
         return;
       }
-      const active = activeRef.current;
-      if (active !== null && active.element.contains(target)) {
-        return;
-      }
-      const element = target.closest("[title]");
+      const element = target.closest(TITLE_SELECTOR);
       if (!(element instanceof HTMLElement)) {
         return;
       }
-      const text = (element.getAttribute("title") ?? "").trim();
+      const active = activeRef.current;
+      if (active !== null && active.anchor === element) {
+        return;
+      }
+      const text = titleTextOf(element);
       if (text === "") {
         return;
       }
@@ -126,12 +176,8 @@ export function SystemTooltip() {
       if (active === null) {
         return;
       }
-      const target = event.target;
       const related = event.relatedTarget;
-      if (target instanceof Node && !active.element.contains(target)) {
-        return;
-      }
-      if (related instanceof Node && active.element.contains(related)) {
+      if (related instanceof Node && active.anchor.contains(related)) {
         return;
       }
       release();
@@ -166,13 +212,9 @@ export function SystemTooltip() {
       window.removeEventListener("resize", onDismiss);
       window.removeEventListener("blur", onDismiss);
       clearTimer();
-      const active = activeRef.current;
-      if (active !== null && !active.element.hasAttribute("title")) {
-        active.element.setAttribute("title", active.original);
-      }
-      activeRef.current = null;
+      restoreActiveTitle();
     };
-  }, [clearTimer, dismissTooltip, release, schedule]);
+  }, [clearTimer, dismissTooltip, release, restoreActiveTitle, schedule]);
 
   useLayoutEffect(() => {
     if (tip === null) {
