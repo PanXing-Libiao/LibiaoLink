@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { loadWecomDmBinding } from "../bindingApi";
 import { isBindingGuideSkipped, skipBindingGuide } from "../bindingGuide";
 import { copyTextToClipboard } from "../clipboard";
@@ -16,6 +16,9 @@ function guideKeyOf(me: MeResponse): string {
 /** 引导自动收起时长（业务口径 2026-10-19：右侧悬浮提醒 10 秒后自动消失）。 */
 const GUIDE_AUTO_DISMISS_MS = 10_000;
 
+/** 绑定成功后先让卡片内的「已绑定」态短暂可见，再关闭并弹成功提示。 */
+const BOUND_CLOSE_DELAY_MS = 700;
+
 /** 机器人资料页：只提供复制按钮，不在界面直接展示完整链接。 */
 const WECOM_BOT_PROFILE_URL =
   "https://work.weixin.qq.com/wework_admin/common/openBotProfile/24d86e241840bad3f952d1d7bbae4058a8";
@@ -28,15 +31,32 @@ const WECOM_BOT_PROFILE_URL =
  * 关闭 X = 记下本机跳过位；自动收起只隐藏本次提醒，不写跳过位。
  * 「前往设置」= 记跳过 + 跳 `#/settings`（绑定面板的完整入口，含解绑）。
  * 取码 / 倒计时 / 复制与 429 置灰复用 WecomBindingPanel（与设置页同一份实现）。
+ * 绑定成功：自动轮询 / 手动刷新读到已绑定 → 让「已绑定」态停留约 700ms → 关闭卡片 → 浅绿「绑定成功」2 秒。
  */
 export function BindingGuideModal({ me }: { me: MeResponse }) {
   const t = useT();
   const accountKey = guideKeyOf(me);
   const [visible, setVisible] = useState(false);
   const [notice, setNotice] = useState<BindingNotice | null>(null);
+  const [boundSettling, setBoundSettling] = useState(false);
+  const [boundSuccess, setBoundSuccess] = useState(false);
+  const boundCloseTimerRef = useRef<number | null>(null);
+  const guideOpenRef = useRef(false);
+
+  const clearBoundCloseTimer = (): void => {
+    if (boundCloseTimerRef.current !== null) {
+      window.clearTimeout(boundCloseTimerRef.current);
+      boundCloseTimerRef.current = null;
+    }
+  };
 
   useEffect(() => {
+    clearBoundCloseTimer();
+    guideOpenRef.current = false;
     setVisible(false);
+    setBoundSettling(false);
+    setBoundSuccess(false);
+    setNotice(null);
     if (isBindingGuideSkipped(accountKey)) {
       return;
     }
@@ -44,6 +64,7 @@ export function BindingGuideModal({ me }: { me: MeResponse }) {
     void loadWecomDmBinding()
       .then((state) => {
         if (!cancelled && !state.bound) {
+          guideOpenRef.current = true;
           setVisible(true);
         }
       })
@@ -52,34 +73,63 @@ export function BindingGuideModal({ me }: { me: MeResponse }) {
       });
     return () => {
       cancelled = true;
+      clearBoundCloseTimer();
     };
   }, [accountKey]);
 
   useEffect(() => {
-    if (!visible) {
+    if (!visible || boundSettling) {
       return;
     }
     const timer = window.setTimeout(() => {
+      guideOpenRef.current = false;
       setVisible(false);
     }, GUIDE_AUTO_DISMISS_MS);
     return () => {
       window.clearTimeout(timer);
     };
-  }, [visible]);
+  }, [boundSettling, visible]);
 
   const close = (): void => {
+    guideOpenRef.current = false;
     setVisible(false);
+    setBoundSettling(false);
   };
 
   const handleSkip = (): void => {
+    clearBoundCloseTimer();
+    setBoundSettling(false);
+    setBoundSuccess(false);
+    setNotice(null);
     skipBindingGuide(accountKey);
     close();
   };
 
   const handleGoSettings = (): void => {
+    clearBoundCloseTimer();
+    setBoundSettling(false);
+    setBoundSuccess(false);
+    setNotice(null);
     skipBindingGuide(accountKey);
     close();
     window.location.hash = SETTINGS_BASE_HASH.slice(1);
+  };
+
+  const handleBoundChange = (bound: boolean): void => {
+    if (!bound || !guideOpenRef.current || boundCloseTimerRef.current !== null) {
+      return;
+    }
+    skipBindingGuide(accountKey);
+    setNotice(null);
+    setBoundSettling(true);
+    boundCloseTimerRef.current = window.setTimeout(() => {
+      boundCloseTimerRef.current = null;
+      guideOpenRef.current = false;
+      setVisible(false);
+      setBoundSettling(false);
+      setNotice(null);
+      setBoundSuccess(true);
+    }, BOUND_CLOSE_DELAY_MS);
   };
 
   const handleCopyBotLink = async (): Promise<void> => {
@@ -92,7 +142,15 @@ export function BindingGuideModal({ me }: { me: MeResponse }) {
   };
 
   if (!visible) {
-    return null;
+    return boundSuccess ? (
+      <Toast
+        kind="ok"
+        text={t("settings.guide.boundSuccess")}
+        onClose={() => {
+          setBoundSuccess(false);
+        }}
+      />
+    ) : null;
   }
 
   return (
@@ -163,12 +221,7 @@ export function BindingGuideModal({ me }: { me: MeResponse }) {
             onNotice={(next) => {
               setNotice(next);
             }}
-            onBoundChange={(bound) => {
-              if (bound) {
-                skipBindingGuide(accountKey);
-                close();
-              }
-            }}
+            onBoundChange={handleBoundChange}
           />
         </div>
 
