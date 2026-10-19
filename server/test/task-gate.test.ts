@@ -108,6 +108,7 @@ class FakeTaskRepository {
     const next: TaskRow = {
       ...current,
       status: patch.status ?? current.status,
+      statusOverride: patch.statusOverride !== undefined ? patch.statusOverride : current.statusOverride,
       progress: patch.progress ?? current.progress,
       actualEnd: patch.actualEnd !== undefined ? patch.actualEnd : current.actualEnd,
       note: patch.note !== undefined ? patch.note : current.note,
@@ -255,25 +256,59 @@ describe("M3-03 · 任务完成门禁（A4-20 / ADR-024）", () => {
     });
   });
 
-  it("表格编辑入口（门禁暂时下线 2026-09-30）：PATCH status=done 缺件也放行（done）", async () => {
+  it("表格编辑入口（门禁暂时下线 2026-09-30）：PATCH status=done 缺件也放行（done）并触发完成事件", async () => {
     const repo = new FakeTaskRepository();
     const gate = new FakeTaskGateRepository();
     gate.requirements = [{ docType: "合同", minCount: 1 }];
-    const { service } = makeService(repo, gate);
+    const { service, db } = makeService(repo, gate);
     const updated = await service.update(PROJECT, TASK, { status: "done", version: 3 }, ACTOR);
     // 恢复门禁时还原：rejects TASK_REQUIRED_DOC_MISSING + 不写库
     expect(updated.status).toBe("done");
     expect(repo.task?.status).toBe("done");
+    const completed = db.outbox.find((row) => row.topic === "task.completed");
+    expect(completed?.dedupeKey).toBe("task.completed:" + TASK + ":4");
+    expect(completed?.payload["warnings"]).toEqual([]);
   });
 
-  it("看板 / 四格入口（门禁暂时下线 2026-09-30）：PATCH progress=1 缺件也放行（done）", async () => {
+  it("表格编辑入口：PATCH status=early_done 首次进入完成也触发 task.completed", async () => {
+    const repo = new FakeTaskRepository();
+    const gate = new FakeTaskGateRepository();
+    gate.draftCounts = [{ docType: "合同", present: 1 }];
+    const { service, db } = makeService(repo, gate);
+    const updated = await service.update(PROJECT, TASK, { status: "early_done", version: 3 }, ACTOR);
+    expect(updated.displayStatus).toBe("early_done");
+    expect(db.outbox.some((row) => row.topic === "task.completed")).toBe(true);
+    expect(db.outbox.some((row) => row.topic === "task.draft_doc_reminded")).toBe(true);
+  });
+
+  it("批量状态完成：首次进入 done 也触发 task.completed", async () => {
+    const repo = new FakeTaskRepository();
+    const gate = new FakeTaskGateRepository();
+    const { service, db } = makeService(repo, gate);
+    const result = await service.batch(PROJECT, { ids: [TASK], changes: { status: "done" } }, ACTOR);
+    expect(result.succeededCount).toBe(1);
+    expect(result.failedCount).toBe(0);
+    expect(db.outbox.some((row) => row.topic === "task.completed")).toBe(true);
+  });
+
+  it("已完成任务再编辑其他字段：不重复发 task.completed", async () => {
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ status: "done", progress: "1", actualEnd: "2026-09-15" });
+    const gate = new FakeTaskGateRepository();
+    const { service, db } = makeService(repo, gate);
+    await service.update(PROJECT, TASK, { note: "补充说明", version: 3 }, ACTOR);
+    expect(db.outbox.some((row) => row.topic === "task.completed")).toBe(false);
+  });
+
+  it("看板 / 四格入口（门禁暂时下线 2026-09-30）：PATCH progress=1 缺件也放行（done）并触发完成事件", async () => {
     const repo = new FakeTaskRepository();
     const gate = new FakeTaskGateRepository();
     gate.requirements = [{ docType: "合同", minCount: 1 }];
-    const { service } = makeService(repo, gate);
+    const { service, db } = makeService(repo, gate);
     await service.updateProgress(PROJECT, TASK, { progress: 1, version: 3 }, ACTOR);
     // 恢复门禁时还原：rejects TASK_REQUIRED_DOC_MISSING + 不写库
     expect(repo.task?.status).toBe("done");
     expect(Number(repo.task?.progress)).toBe(1);
+    expect(db.outbox.some((row) => row.topic === "task.completed")).toBe(true);
   });
 });
