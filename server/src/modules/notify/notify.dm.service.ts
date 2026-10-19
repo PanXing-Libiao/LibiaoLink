@@ -27,6 +27,9 @@
  * `aibot_respond_msg`）/ `getBindingState`（读绑定态：v1.8 另回当前未用码与取码限流可重试时刻）/ `unbind`
  * （解绑：同事务清绑定行 + 写 `audit_logs` —— D6；跨用户换绑同写 `audit_logs`）。
  *
+ * 欢迎语（Push 261）：单聊 `enter_chat` 事件在收到后 5 秒内经 `aibot_respond_welcome_msg` 回纯文本；
+ * 欢迎语只负责引导，**不计入会话激活、不触发绑定登记**，失败只 warn，不影响后续发码 / 绑定。
+ *
  * 超长口径（B5 定案 · 同群口径）：markdown 按 UTF-8 字节截断（≤ 20000 字节，留 20480 官方上限余量），
  * 尾部省略 + warn 留痕。免打扰口径同 M5-03-3（不做投递前 DND 过滤）。安全：userid 只进库与限速桶摘要；
  * 日志 / outbox error 一律掩码（末 4 位）。
@@ -94,6 +97,12 @@ const DM_BINDING_CODE_ATTEMPTS = 8;
 /** 会话内回执话术（口径 §5 反馈面；未命中任何码 → 不回复，防探测）。 */
 export const DM_BINDING_REPLY_BOUND = "绑定成功";
 export const DM_BINDING_REPLY_INVALID = "码已失效，请重新获取";
+
+/** 单聊首次进入欢迎语（企微后台口径 4–120 字符；含可直接显示的 emoji，换行按字符计数）。 */
+export const DM_WELCOME_MESSAGE =
+  "你好，我是 LibiaoLink 项目助手 👋\n" +
+  "📣 我会把与你相关的项目动态推送到企业微信；项目群还可接收日报汇总和任务喜报。\n" +
+  "📌 本机器人主要承担消息提醒与绑定；查看项目详情、填写日报或处理文件，请登录 LibiaoLink。";
 
 /** markdown 组装（同群口径）：加粗标题 + 空行 + 正文；标题空白防御（解析后已 trim，非空为常态）。 */
 export function composeDmMarkdown(message: Pick<NotifyMessagePayload, "title" | "body">): string {
@@ -234,6 +243,37 @@ export class NotifyDmService {
         (rebound ? "（跨用户换绑）" : ""),
     );
     await this.replyToCallback(incoming, userid, DM_BINDING_REPLY_BOUND);
+  }
+
+  /**
+   * 单聊进入事件欢迎语（企微 `enter_chat`）：只处理 single + enter_chat，且必须带事件 req_id；
+   * 不写激活表、不做绑定，回复失败只 warn（5 秒时效内尽力送达，异常不打断 worker 回调链）。
+   */
+  async replyWelcomeToEnterChat(incoming: AibotIncomingMessage): Promise<void> {
+    if (
+      incoming.cmd !== "aibot_event_callback" ||
+      incoming.chattype !== "single" ||
+      incoming.eventType !== "enter_chat" ||
+      incoming.fromUserId === null ||
+      incoming.fromUserId === ""
+    ) {
+      return;
+    }
+    const masked = maskUserid(incoming.fromUserId);
+    if (incoming.reqId === null) {
+      this.logger.warn("欢迎语事件缺 req_id，跳过回复：userid " + masked);
+      return;
+    }
+    try {
+      const result = await this.aibot.replyWelcome({ reqId: incoming.reqId, content: DM_WELCOME_MESSAGE });
+      if (!result.ok) {
+        this.logger.warn("欢迎语未送达（不影响绑定）：userid " + masked + " —— " + describeDmFailure(result));
+        return;
+      }
+      this.logger.log("单聊欢迎语已发送：userid " + masked);
+    } catch (error) {
+      this.logger.warn("欢迎语发送异常（不影响绑定）：userid " + masked + " —— " + messageOf(error));
+    }
   }
 
   /**

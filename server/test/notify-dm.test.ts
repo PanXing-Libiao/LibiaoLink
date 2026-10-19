@@ -30,6 +30,7 @@ import {
   DM_DEGRADE_PREFIX,
   DM_MARKDOWN_MAX_BYTES,
   DM_TRUNCATION_SUFFIX,
+  DM_WELCOME_MESSAGE,
   extractBindingCode,
   NotifyDmService,
   truncateDmMarkdown,
@@ -221,8 +222,10 @@ class FakeDmRepository {
 class FakeAibot {
   sends: { userid: string; content: string; dmActivated?: boolean | null }[] = [];
   replies: { reqId: string; userid: string; content: string }[] = [];
+  welcomes: { reqId: string; content: string }[] = [];
   result: AibotSendResult = { ok: true, attempts: 1 };
   replyResult: AibotSendResult = { ok: true, attempts: 1 };
+  welcomeResult: AibotSendResult = { ok: true, attempts: 1 };
 
   async sendUserMarkdown(params: {
     userid: string;
@@ -236,6 +239,11 @@ class FakeAibot {
   async replyToCallback(params: { reqId: string; userid: string; content: string }): Promise<AibotSendResult> {
     this.replies.push(params);
     return this.replyResult;
+  }
+
+  async replyWelcome(params: { reqId: string; content: string }): Promise<AibotSendResult> {
+    this.welcomes.push(params);
+    return this.welcomeResult;
   }
 }
 
@@ -373,6 +381,7 @@ function incoming(overrides: Partial<AibotIncomingMessage> = {}): AibotIncomingM
     msgid: "m1",
     msgtype: "text",
     text: "你好",
+    eventType: null,
     ...overrides,
   };
 }
@@ -752,6 +761,67 @@ describe("NotifyDmService.ingestCallback（单聊绑定码 · 口径 §5）", ()
     expect(repo.upsertCalls).toEqual([]);
     expect(repo.bindCalls).toEqual([]);
     expect(aibot.replies).toEqual([]);
+  });
+
+  it("单聊 enter_chat：只回定稿欢迎语，不登记激活、不绑定", async () => {
+    const { service, repo, aibot } = makeService();
+
+    await service.replyWelcomeToEnterChat(
+      incoming({ cmd: "aibot_event_callback", msgtype: "event", text: null, eventType: "enter_chat" }),
+    );
+
+    expect(aibot.welcomes).toEqual([{ reqId: "ReqIdCallback0001", content: DM_WELCOME_MESSAGE }]);
+    expect(aibot.replies).toEqual([]);
+    expect(repo.upsertCalls).toEqual([]);
+    expect(repo.bindCalls).toEqual([]);
+  });
+
+  it("欢迎语过滤：群事件 / 非 enter_chat / 缺 req_id 或 userid / 消息回调均不回复", async () => {
+    const { service, aibot } = makeService();
+
+    await service.replyWelcomeToEnterChat(
+      incoming({ cmd: "aibot_event_callback", chattype: "group", chatid: "chat-1", eventType: "enter_chat" }),
+    );
+    await service.replyWelcomeToEnterChat(
+      incoming({ cmd: "aibot_event_callback", msgtype: "event", eventType: "card_action" }),
+    );
+    await service.replyWelcomeToEnterChat(
+      incoming({ cmd: "aibot_event_callback", msgtype: "event", eventType: "enter_chat", reqId: null }),
+    );
+    await service.replyWelcomeToEnterChat(
+      incoming({ cmd: "aibot_event_callback", msgtype: "event", eventType: "enter_chat", fromUserId: null }),
+    );
+    await service.replyWelcomeToEnterChat(incoming({ eventType: "enter_chat" }));
+
+    expect(aibot.welcomes).toEqual([]);
+  });
+
+  it("欢迎语定稿：含可显示 emoji，4–120 字符", () => {
+    expect(DM_WELCOME_MESSAGE).toBe(
+      "你好，我是 LibiaoLink 项目助手 👋\n" +
+        "📣 我会把与你相关的项目动态推送到企业微信；项目群还可接收日报汇总和任务喜报。\n" +
+        "📌 本机器人主要承担消息提醒与绑定；查看项目详情、填写日报或处理文件，请登录 LibiaoLink。",
+    );
+    expect(DM_WELCOME_MESSAGE).toContain("👋");
+    expect(DM_WELCOME_MESSAGE).toContain("📣");
+    expect(DM_WELCOME_MESSAGE).toContain("📌");
+    expect(DM_WELCOME_MESSAGE.length).toBeGreaterThanOrEqual(4);
+    expect(DM_WELCOME_MESSAGE.length).toBeLessThanOrEqual(120);
+  });
+
+  it("欢迎语发送失败只吞掉异常，不登记激活、不绑定", async () => {
+    const { service, repo, aibot } = makeService();
+    aibot.welcomeResult = permanent(853000, "invalid bot");
+
+    await expect(
+      service.replyWelcomeToEnterChat(
+        incoming({ cmd: "aibot_event_callback", msgtype: "event", text: null, eventType: "enter_chat" }),
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(aibot.welcomes).toHaveLength(1);
+    expect(repo.upsertCalls).toEqual([]);
+    expect(repo.bindCalls).toEqual([]);
   });
 
   it("正文未命中任何码：登记激活 + 不回复（防探测）", async () => {

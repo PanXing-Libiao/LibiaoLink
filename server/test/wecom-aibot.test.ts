@@ -321,6 +321,43 @@ describe("企微智能机器人长连接客户端（M5-03-2 · P5）", () => {
     await client.stop();
   });
 
+  it("欢迎语回执（enter_chat）：aibot_respond_welcome_msg + req_id 透传 + text 纯文本，回执 ok", async () => {
+    const { client, sockets } = makeClient({
+      windows: [
+        { kind: "single", windowMs: WECOM_BOT_WINDOW_PER_MINUTE_MS, limit: 0 },
+        { kind: "single", windowMs: WECOM_BOT_WINDOW_PER_HOUR_MS, limit: 0 },
+      ],
+    });
+    const socket = await connect(client, sockets);
+
+    const pending = client.replyWelcome({ reqId: "ReqIdWelcome0001", content: "你好，欢迎 👋" });
+    await sleep(0);
+    expect(socket.lastFrame()).toMatchObject({
+      cmd: "aibot_respond_welcome_msg",
+      headers: { req_id: "ReqIdWelcome0001" },
+    });
+    expect(socket.lastFrame()["body"]).toEqual({ msgtype: "text", text: { content: "你好，欢迎 👋" } });
+    socket.ackLast(0);
+    expect(await pending).toEqual({ ok: true, attempts: 1 });
+    await client.stop();
+  });
+
+  it("欢迎语回执：未就绪 → retryable / attempts=0（不发帧）；853000 → permanent", async () => {
+    const notReady = makeClient();
+    const refused = await notReady.client.replyWelcome({ reqId: "req-welcome-0", content: "欢迎" });
+    expect(refused).toMatchObject({ ok: false, kind: "retryable", attempts: 0 });
+    expect(notReady.sockets.length).toBe(0);
+    await notReady.client.stop();
+
+    const { client, sockets } = makeClient();
+    const socket = await connect(client, sockets);
+    const pending = client.replyWelcome({ reqId: "req-welcome-1", content: "欢迎" });
+    await sleep(0);
+    socket.ackLast(853000, "invalid bot");
+    expect(await pending).toMatchObject({ ok: false, kind: "permanent", errcode: 853000, attempts: 1 });
+    await client.stop();
+  });
+
   it("会话内回执：单聊桶限速拒绝 → rate_limited / attempts=0（不发帧）；846607 回执 → rate_limited", async () => {
     const { client, sockets } = makeClient({
       windows: [
@@ -454,6 +491,7 @@ describe("企微智能机器人长连接客户端（M5-03-2 · P5）", () => {
         msgid: "m-1",
         msgtype: "text",
         text: "@Bot 绑定 123456",
+        eventType: null,
       },
     ]);
 
@@ -472,6 +510,7 @@ describe("企微智能机器人长连接客户端（M5-03-2 · P5）", () => {
       msgid: "m-2",
       msgtype: "event",
       text: null,
+      eventType: "enter_chat",
     });
 
     off();

@@ -34,6 +34,7 @@ export {
   DM_DEGRADE_PREFIX,
   DM_MARKDOWN_MAX_BYTES,
   DM_TRUNCATION_SUFFIX,
+  DM_WELCOME_MESSAGE,
   extractBindingCode,
   NotifyDmService,
   truncateDmMarkdown,
