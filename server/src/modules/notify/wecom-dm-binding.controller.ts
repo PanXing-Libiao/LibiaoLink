@@ -1,5 +1,5 @@
-import { Controller, Delete, Get, HttpCode, Post, UseGuards } from "@nestjs/common";
-import type { WecomDmBindingCode, WecomDmBindingState } from "@libiaolink/contracts";
+import { Controller, Delete, Get, Header, HttpCode, Post, UseGuards } from "@nestjs/common";
+import type { WecomDmBindingCode, WecomDmBindingState, WecomDmBotDiagnostics } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
 import { NotifyDmService } from "./notify.dm.service.js";
@@ -24,6 +24,17 @@ export class WecomDmBindingController {
   @Get()
   state(@CurrentActorId() actorId: string): Promise<WecomDmBindingState> {
     return this.dm.getBindingState(actorId);
+  }
+
+  /**
+   * 机器人诊断（仅非生产环境；WECOM_BOT_DIAGNOSTICS 开关）：回显本 api 进程实际读取的 bot_id / secret /
+   * ws 地址 + 该 bot_id 的最近回调统计 —— 用于核对「企微后台凭据是否一致」与「worker 是否在收消息」。
+   * `Cache-Control: no-store`：secret 不进任何缓存；生产（开关关闭）恒 enabled:false + 敏感字段 null。
+   */
+  @Get("diagnostics")
+  @Header("Cache-Control", "no-store")
+  diagnostics(): Promise<WecomDmBotDiagnostics> {
+    return this.dm.getBotDiagnostics();
   }
 
   /**

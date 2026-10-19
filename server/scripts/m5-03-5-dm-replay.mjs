@@ -321,7 +321,7 @@ async function main() {
     ...overrides,
   });
 
-  const makeService = (clientResult) => {
+  const makeService = (clientResult, envOverrides = {}) => {
     const repo = {
       contacts: new Map([[USER_ID, contact()]]),
       activations: new Map(),
@@ -368,6 +368,14 @@ async function main() {
       },
       async bindingCodesSince(userId, since) {
         return this.issuedAt.filter((item) => item.getTime() >= since.getTime());
+      },
+      inboundStats: { inboundCount: 0, lastInboundAt: null, lastInboundUserid: null },
+      observedBots: [],
+      async botInboundStats() {
+        return this.inboundStats;
+      },
+      async observedBotIds(limit) {
+        return this.observedBots.slice(0, limit);
       },
       async createBindingCode(input) {
         this.codeCreateCalls.push(input);
@@ -460,7 +468,17 @@ async function main() {
     };
     /** 事务替身：单层事务直接跑回调并把 tx 传给仓储 / 审计（同一对象 = 同一事务证据）。 */
     const database = { db: { transaction: async (fn) => fn({ tx: "stub" }) } };
-    const config = { env: { WECOM_BOT_ID: BOT_ID_STUB } };
+    const config = {
+      env: {
+        NODE_ENV: "development",
+        WECOM_BOT_ID: BOT_ID_STUB,
+        WECOM_BOT_SECRET: "aib-secret-0123456789",
+        WECOM_BOT_WS_URL: "wss://openws.work.weixin.qq.com",
+        WECOM_BOT_DIAGNOSTICS: "auto",
+        NOTIFY_DELIVERY_ENABLED: "true",
+        ...envOverrides,
+      },
+    };
     return {
       service: new dm.NotifyDmService(repo, aibot, inbox, clock, config, audit, database),
       repo,
@@ -779,20 +797,21 @@ async function main() {
         repo.codeCreateCalls[0].userId === USER_ID,
     );
     const throttled = makeService({ ok: true, attempts: 1 });
-    const first = new Date(AT.getTime() - 170_000);
+    const newest = new Date(AT.getTime() - 50_000);
     throttled.repo.issuedAt = [
-      first,
+      new Date(AT.getTime() - 170_000),
       new Date(AT.getTime() - 140_000),
       new Date(AT.getTime() - 110_000),
       new Date(AT.getTime() - 80_000),
-      new Date(AT.getTime() - 50_000),
+      newest,
     ];
     const limited = await throttled.service.requestBindingCode(USER_ID);
     assertTrue(
-      "S19 频率限制：3 分钟窗口内第 6 次取码 → rate_limited + retryAt = 最早一次 + 窗口长度（最长 ≤ 3 分钟）",
+      "S19 频率限制（v1.9）：3 分钟窗口内第 6 次取码 → rate_limited + retryAt = 最近一码 + 窗口长度（分散取码不再只剩 1 分钟）",
       limited.ok === false &&
         limited.reason === "rate_limited" &&
-        limited.retryAt.getTime() === first.getTime() + 180_000 &&
+        limited.retryAt.getTime() === newest.getTime() + 180_000 &&
+        limited.retryAt.getTime() - AT.getTime() === 130_000 &&
         limited.retryAt.getTime() - AT.getTime() <= 180_000 &&
         throttled.repo.codeCreateCalls.length === 0,
     );
@@ -890,7 +909,7 @@ async function main() {
         state.bindingCode.code === CODE &&
         state.bindingCode.expiresAt === new Date(AT.getTime() + 240_000).toISOString() &&
         state.bindingCode.expiresInSeconds === 240 &&
-        state.retryAt === new Date(AT.getTime() - 170_000 + 180_000).toISOString(),
+        state.retryAt === new Date(AT.getTime() - 50_000 + 180_000).toISOString(),
     );
     const stale = makeService({ ok: true, attempts: 1 });
     stale.repo.codes.set(CODE, { id: 7, code: CODE, userId: USER_ID, status: "pending", expiresAt: new Date(AT.getTime() - 1) });
@@ -898,6 +917,42 @@ async function main() {
     assertTrue(
       "S21 读面回填：码已过期 / 未到限流 → bindingCode 与 retryAt 一律 null（只回「此刻仍可用」的状态）",
       staleState.bindingCode === null && staleState.retryAt === null,
+    );
+  }
+
+  // S22 机器人诊断（v1.9 · Push 255）：非生产回显 bot_id / secret / 最近回调统计；生产默认关闭
+  {
+    const { service, repo } = makeService({ ok: true, attempts: 1 });
+    repo.inboundStats = { inboundCount: 3, lastInboundAt: AT, lastInboundUserid: OPEN_USERID };
+    repo.observedBots = [
+      { botId: BOT_ID_STUB, inboundCount: 3, lastInboundAt: AT },
+      { botId: "aibOtherBot0001", inboundCount: 1, lastInboundAt: new Date(AT.getTime() - 60_000) },
+    ];
+    const diag = await service.getBotDiagnostics();
+    assertTrue(
+      "S22 机器人诊断：开发环境回 bot_id / secret（含掩码）/ ws / 最近回调统计 + 观察到的其他 bot_id",
+      diag.enabled === true &&
+        diag.botId === BOT_ID_STUB &&
+        diag.botSecret === "aib-secret-0123456789" &&
+        diag.botSecretMasked === "aib-****6789" &&
+        diag.wsUrl === "wss://openws.work.weixin.qq.com" &&
+        diag.deliveryEnabled === true &&
+        diag.inboundCount === 3 &&
+        diag.lastInboundAt === AT.toISOString() &&
+        diag.lastInboundUseridMasked === "****" + OPEN_USERID.slice(-4) &&
+        diag.observedBotIds.length === 2 &&
+        diag.serverTime === AT.toISOString(),
+    );
+    const prod = makeService({ ok: true, attempts: 1 }, { NODE_ENV: "production" });
+    prod.repo.inboundStats = { inboundCount: 3, lastInboundAt: AT, lastInboundUserid: OPEN_USERID };
+    const closed = await prod.service.getBotDiagnostics();
+    assertTrue(
+      "S22 机器人诊断：生产默认关闭（enabled:false + 敏感字段 null + 统计归零）",
+      closed.enabled === false &&
+        closed.botId === null &&
+        closed.botSecret === null &&
+        closed.inboundCount === 0 &&
+        closed.observedBotIds.length === 0,
     );
   }
 

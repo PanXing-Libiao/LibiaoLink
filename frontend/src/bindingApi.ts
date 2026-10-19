@@ -34,6 +34,32 @@ export type WecomDmBindingCode = {
   expiresInSeconds: number;
 };
 
+/** 机器人诊断里的单聊回调统计（按 bot_id 维度）。 */
+export type WecomDmBotInboundStat = {
+  botId: string;
+  inboundCount: number;
+  lastInboundAt: string | null;
+};
+
+/**
+ * 机器人诊断（`WecomDmBotDiagnostics` 契约同形 · 仅非生产环境）：
+ * 回显本 api 进程实际读取的 `WECOM_BOT_*` + 该 bot_id 的最近回调统计 —— 用于核对凭据与 worker 收消息链路。
+ * 生产默认关闭（`enabled:false`，敏感字段 null）。
+ */
+export type WecomDmBotDiagnostics = {
+  enabled: boolean;
+  botId: string | null;
+  botSecret: string | null;
+  botSecretMasked: string | null;
+  wsUrl: string | null;
+  deliveryEnabled: boolean;
+  lastInboundAt: string | null;
+  inboundCount: number;
+  lastInboundUseridMasked: string | null;
+  observedBotIds: WecomDmBotInboundStat[];
+  serverTime: string;
+};
+
 /** 读绑定态（设置页 / 首登引导弹窗 / 站内信未绑定提示共用同一读面）。 */
 export function loadWecomDmBinding(): Promise<WecomDmBindingState> {
   return apiRequest<WecomDmBindingState>("/api/v1/wecom-dm-binding");
@@ -42,6 +68,11 @@ export function loadWecomDmBinding(): Promise<WecomDmBindingState> {
 /** 取绑定码：重复取码会作废上一条未用码 —— 前端一律以最新响应为准；频率到顶 = 429 `RATE_LIMITED`。 */
 export function requestWecomDmBindingCode(): Promise<WecomDmBindingCode> {
   return apiSend<WecomDmBindingCode>("/api/v1/wecom-dm-binding/codes", "POST");
+}
+
+/** 机器人诊断（仅非生产环境；生产返回 enabled:false → 面板整块隐藏）。 */
+export function fetchWecomDmBotDiagnostics(): Promise<WecomDmBotDiagnostics> {
+  return apiRequest<WecomDmBotDiagnostics>("/api/v1/wecom-dm-binding/diagnostics");
 }
 
 /** 解绑（幂等）：成功回未绑定态；服务端同事务写审计（对象类型「用户」/ 动作「删除」，只带掩码）。 */

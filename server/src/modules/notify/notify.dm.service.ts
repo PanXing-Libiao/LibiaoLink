@@ -21,7 +21,8 @@
  * retry 收敛（有界重试，不静默丢消息）。管理员告警群留痕由 outbox 死信告警自动承担（dispatcher → OUTBOX_ALERT_SINK）。
  *
  * 绑定码链路（M5-03-5-6 · 口径 §3 / §5；HTTP 面随契约刀 Push 249 落 `/api/v1/wecom-dm-binding`；
- * Push 254 起口径 v1.8：TTL 5 分钟 · 取码 5 次 / 3 分钟 · 换绑以码持有者为准 · 读面回填）：
+ * Push 254 起口径 v1.8：TTL 5 分钟 · 取码 5 次 / 3 分钟 · 换绑以码持有者为准 · 读面回填；
+ * Push 255 起 v1.9：罚时锚点 = 窗口内最近一码 + 窗口长度（不再按最早一码 → 分散取码后只剩 1 分钟）：
  * `requestBindingCode`（取码）/ `ingestCallback`（单聊发码 → 同事务写绑定 + 标记码已用 → 会话内回执
  * `aibot_respond_msg`）/ `getBindingState`（读绑定态：v1.8 另回当前未用码与取码限流可重试时刻）/ `unbind`
  * （解绑：同事务清绑定行 + 写 `audit_logs` —— D6；跨用户换绑同写 `audit_logs`）。
@@ -32,7 +33,7 @@
  */
 import { randomInt } from "node:crypto";
 import { Injectable, Logger } from "@nestjs/common";
-import type { NotifyMessagePayload, WecomDmBindingState } from "@libiaolink/contracts";
+import type { NotifyMessagePayload, WecomDmBindingState, WecomDmBotDiagnostics } from "@libiaolink/contracts";
 import { AppConfig } from "../../config/config.module.js";
 import { ClockService } from "../../common/clock/clock.service.js";
 import { DatabaseService } from "../../db/database.service.js";
@@ -81,6 +82,11 @@ export const DM_BINDING_CODE_WINDOW_MS = 3 * 60_000;
 
 /** 绑定码生成频率上限（D3 修订 v1.8 · 2026-10-16：5 次 / 3 分钟 / 用户 —— 罚时上限 3 分钟）。 */
 export const DM_BINDING_CODE_MAX_PER_WINDOW = 5;
+
+/** Secret 诊断掩码（首 4 + **** + 末 4；长度 ≤ 8 时全掩码 —— 与 userid 掩码同属最小暴露）。 */
+function maskSecret(secret: string): string {
+  return secret.length <= 8 ? "****" : secret.slice(0, 4) + "****" + secret.slice(-4);
+}
 
 /** 绑定码生成冲突重试次数（6 位数字空间 1e6，撞码概率极低；到顶抛错由调用方按 5xx 收口）。 */
 const DM_BINDING_CODE_ATTEMPTS = 8;
@@ -251,7 +257,7 @@ export class NotifyDmService {
 
   /**
    * 生成绑定码（D3 签发：6 位数字 / TTL 5 分钟 / 一次性；频率口径 D3 修订 v1.8：5 次 / 3 分钟 / 用户）：
-   * 频率到顶 → 返回 rate_limited + retryAt（窗口内最早码 + 窗口长度 = 最早的可用时刻，最长 ≤ 3 分钟）；
+   * 频率到顶 → 返回 rate_limited + retryAt（窗口内**最近一码** + 窗口长度 —— v1.9 修订；恒 ≤ 3 分钟且重试不延长）；
    * 否则同一事务作废旧 pending 码 + 插入新码（撞码换码重试 DM_BINDING_CODE_ATTEMPTS 次）。
    * HTTP 面（POST /api/v1/wecom-dm-binding/codes · 契约刀）：频率到顶统一映射 429 `RATE_LIMITED` + retryAt。
    */
@@ -311,8 +317,11 @@ export class NotifyDmService {
   }
 
   /**
-   * 取码限流可重试时刻（v1.8 读面回填 · 与 `requestBindingCode` 同一判定，避免两处口径漂移）：
-   * 窗口内已签发码不足上限 → null（未到顶）；到顶 → 窗口内最早一码 + 窗口长度（= 最早可再取时刻）。
+   * 取码限流可重试时刻（v1.9 读面回填 · 与 `requestBindingCode` 同一判定，避免两处口径漂移）：
+   * 窗口内已签发码不足上限 → null（未到顶）；到顶 → **窗口内最近一码** + 窗口长度。
+   * 为什么不是最早一码：5 次取码若分散在 2 分钟内，最早一码 + 3 分钟只剩 1 分钟，与「5 次 / 3 分钟」的
+   * 文案不一致（用户实测 1 分钟）；锚定最近一码后倒计时恒为「最近取码 + 3 分钟」，
+   * 且被拦期间重试不会产生新码 → 锚点不动、倒计时不会被反复延长。
    */
   private async rateLimitedRetryAt(userId: string, at: Date): Promise<Date | null> {
     const since = new Date(at.getTime() - DM_BINDING_CODE_WINDOW_MS);
@@ -320,8 +329,60 @@ export class NotifyDmService {
     if (issuedAt.length < DM_BINDING_CODE_MAX_PER_WINDOW) {
       return null;
     }
-    const oldest = issuedAt[0];
-    return new Date((oldest === undefined ? at.getTime() : oldest.getTime()) + DM_BINDING_CODE_WINDOW_MS);
+    const newest = issuedAt[issuedAt.length - 1];
+    return new Date((newest === undefined ? at.getTime() : newest.getTime()) + DM_BINDING_CODE_WINDOW_MS);
+  }
+
+  /**
+   * 机器人诊断（本地联调 · 非生产）：回显本进程实际读取的 WECOM_BOT_* + 该机器人维度最近回调统计。
+   * 开关 = WECOM_BOT_DIAGNOSTICS（auto 时 NODE_ENV !== production 才开）；关闭时敏感字段一律 null、统计归零。
+   * 安全：仅会话可读；不写日志；secret 不落 outbox / 留痕（CONTRIBUTING §12）。
+   */
+  async getBotDiagnostics(): Promise<WecomDmBotDiagnostics> {
+    const env = this.config.env;
+    const enabled =
+      env.WECOM_BOT_DIAGNOSTICS === "true" ||
+      (env.WECOM_BOT_DIAGNOSTICS === "auto" && env.NODE_ENV !== "production");
+    if (!enabled) {
+      return {
+        enabled: false,
+        botId: null,
+        botSecret: null,
+        botSecretMasked: null,
+        wsUrl: null,
+        deliveryEnabled: env.NOTIFY_DELIVERY_ENABLED === "true",
+        lastInboundAt: null,
+        inboundCount: 0,
+        lastInboundUseridMasked: null,
+        observedBotIds: [],
+        serverTime: this.clock.now().toISOString(),
+      };
+    }
+    const botId = this.botId();
+    const secret = env.WECOM_BOT_SECRET === "" ? null : env.WECOM_BOT_SECRET;
+    const stats = await this.repository.botInboundStats(botId);
+    const observed = await this.repository.observedBotIds(5);
+    return {
+      enabled: true,
+      botId: botId === "" ? null : botId,
+      botSecret: secret,
+      botSecretMasked: secret === null ? null : maskSecret(secret),
+      wsUrl: env.WECOM_BOT_WS_URL,
+      deliveryEnabled: env.NOTIFY_DELIVERY_ENABLED === "true",
+      lastInboundAt: stats.lastInboundAt === null ? null : stats.lastInboundAt.toISOString(),
+      inboundCount: stats.inboundCount,
+      lastInboundUseridMasked:
+        stats.lastInboundUserid === null ? null : maskUserid(stats.lastInboundUserid),
+      // 激活表 `bot_id` 可空（0048 的历史登记行）；诊断只列有 bot_id 的行。
+      observedBotIds: observed
+        .filter((row): row is { botId: string; inboundCount: number; lastInboundAt: Date | null } => row.botId !== null)
+        .map((row) => ({
+          botId: row.botId,
+          inboundCount: row.inboundCount,
+          lastInboundAt: row.lastInboundAt === null ? null : row.lastInboundAt.toISOString(),
+        })),
+      serverTime: this.clock.now().toISOString(),
+    };
   }
 
   /**
