@@ -54,6 +54,9 @@ export {
   inferNotifyRuleCode,
   NotifyDeliveryArchiveRepository,
 } from "./notify.delivery-archive.repository.js";
+export { NotifyDeliveryReadRepository } from "./notify.delivery-read.repository.js";
+export type { NotifyDeliveryAttemptRecord, NotifyDeliveryMessageRecord } from "./notify.delivery-read.repository.js";
+export { NotifyDeliveryService } from "./notify.delivery.service.js";
 export type {
   NotifyDeliveryAttemptInsert,
   NotifyDeliveryAttemptState,
