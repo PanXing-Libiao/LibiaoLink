@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import type { NotifyMessagePayload } from "@libiaolink/contracts";
 import { ClockService } from "../src/common/clock/clock.service.js";
 import type { OutboxClaimedRow } from "../src/db/outbox.store.js";
-import type { NotifyAppDeliveryInsert, WecomAppContact } from "../src/modules/notify/notify.app.repository.js";
+import type { WecomAppContact } from "../src/modules/notify/notify.app.repository.js";
 import {
   APP_DEGRADE_PREFIX,
   APP_TEXT_MAX_BYTES,
@@ -19,22 +19,24 @@ import {
   truncateAppText,
 } from "../src/modules/notify/notify.app.service.js";
 import type { WecomClient, WecomSendResult } from "../src/modules/notify/wecom.client.js";
+import { FakeNotifyDeliveryArchive } from "./fakes/notify-delivery-archive.fake.js";
 
 const AT = new Date("2026-10-12T06:00:00.000Z");
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 const USERID = "zhangsan";
 
 class FakeAppRepository {
+  readonly archive = new FakeNotifyDeliveryArchive();
   contacts = new Map<string, WecomAppContact>();
-  deliveries: NotifyAppDeliveryInsert[] = [];
+
+  get deliveries() {
+    return this.archive.attempts;
+  }
 
   async findContact(userId: string): Promise<WecomAppContact | null> {
     return this.contacts.get(userId) ?? null;
   }
 
-  async insertDelivery(input: NotifyAppDeliveryInsert): Promise<void> {
-    this.deliveries.push(input);
-  }
 }
 
 class FakeWecomClient {
@@ -70,14 +72,21 @@ function makeService(): {
   repo: FakeAppRepository;
   client: FakeWecomClient;
   inbox: FakeNotifyInbox;
+  archive: FakeNotifyDeliveryArchive;
 } {
   const repo = new FakeAppRepository();
   const client = new FakeWecomClient();
   const inbox = new FakeNotifyInbox();
   const clock = new ClockService();
   clock.setSource(() => AT);
-  const service = new NotifyAppService(repo as never, client as unknown as WecomClient, inbox as never, clock);
-  return { service, repo, client, inbox };
+  const service = new NotifyAppService(
+    repo as never,
+    repo.archive as never,
+    client as unknown as WecomClient,
+    inbox as never,
+    clock,
+  );
+  return { service, repo, client, inbox, archive: repo.archive };
 }
 
 function contact(overrides: Partial<WecomAppContact> = {}): WecomAppContact {
@@ -135,7 +144,7 @@ describe("composeAppText / truncateAppText / maskUserid（纯函数）", () => {
 
 describe("NotifyAppService.consume（应用消息投递）", () => {
   it("ok：done + sent 行（target=userid / attempts / sentAt=时钟），发送文本逐字", async () => {
-    const { service, repo, client, inbox } = makeService();
+    const { service, repo, client, inbox, archive } = makeService();
     repo.contacts.set(USER_ID, contact());
 
     const outcome = await service.consume(claimedRow(payload()));
@@ -145,10 +154,59 @@ describe("NotifyAppService.consume（应用消息投递）", () => {
     expect(client.sends[0]!.toUser).toEqual([USERID]);
     expect(client.sends[0]!.content).toBe("任务节点完成\n\n节点：到货验收 负责人：张工");
     expect(inbox.copies).toEqual([]);
+    expect(archive.messages[0]).toMatchObject({
+      sourceDedupeKey: "R02:t-1:v5:app",
+      topic: "notify.message",
+      channel: "wecom_app",
+      recipientId: USER_ID,
+      ruleCode: "R02",
+      lastState: "sent",
+      attemptCount: 1,
+      recipientLabel: maskUserid(USERID),
+      sentAt: AT,
+    });
+    expect(archive.attempts[0]).toMatchObject({ messageId: archive.messages[0]!.id, channel: "wecom_app" });
+  });
+
+  it("重复消费：归档已 sent → done，不再发起第二次企微请求", async () => {
+    const { service, repo, client, archive } = makeService();
+    repo.contacts.set(USER_ID, contact());
+
+    expect(await service.consume(claimedRow(payload()))).toEqual({ outcome: "done" });
+    expect(await service.consume(claimedRow(payload()))).toEqual({ outcome: "done" });
+
+    expect(client.sends).toHaveLength(1);
+    expect(archive.messages).toHaveLength(1);
+    expect(archive.attempts).toHaveLength(1);
+  });
+
+  it("重复消费：归档 failed → 允许再次尝试，成功后推进 sent", async () => {
+    const { service, repo, client, archive } = makeService();
+    repo.contacts.set(USER_ID, contact());
+    client.result = { ok: false, kind: "retryable", errcode: -1, errmsg: "系统繁忙", httpStatus: null, retryAt: null, retriedToken: false, attempts: 1 };
+    expect((await service.consume(claimedRow(payload()))).outcome).toBe("retry");
+
+    client.result = { ok: true, retriedToken: false, attempts: 1 };
+    expect(await service.consume(claimedRow(payload()))).toEqual({ outcome: "done" });
+
+    expect(client.sends).toHaveLength(2);
+    expect(archive.messages[0]).toMatchObject({ lastState: "sent", attemptCount: 2 });
+  });
+
+  it("归档失败：不调用企微，交 outbox retry", async () => {
+    const { service, repo, client, archive } = makeService();
+    repo.contacts.set(USER_ID, contact());
+    archive.failEnsure = true;
+
+    const outcome = await service.consume(claimedRow(payload()));
+
+    expect(outcome).toMatchObject({ outcome: "retry", error: expect.stringContaining("归档失败") });
+    expect(client.sends).toEqual([]);
+    expect(repo.deliveries).toEqual([]);
   });
 
   it("rate_limited：deferred + availableAt = retryAt（attempts 不消耗）", async () => {
-    const { service, repo, client } = makeService();
+    const { service, repo, client, archive } = makeService();
     repo.contacts.set(USER_ID, contact());
     const retryAt = new Date(AT.getTime() + 30_000);
     client.result = { ok: false, kind: "rate_limited", errcode: 45009, errmsg: "api freq out of limit", httpStatus: null, retryAt, retriedToken: false, attempts: 0 };
@@ -160,10 +218,11 @@ describe("NotifyAppService.consume（应用消息投递）", () => {
       expect(outcome.availableAt.getTime()).toBe(retryAt.getTime());
     }
     expect(repo.deliveries[0]).toMatchObject({ state: "deferred", attempts: 0, sentAt: null });
+    expect(archive.messages[0]).toMatchObject({ lastState: "deferred", attemptCount: 1, lastError: expect.any(String) });
   });
 
   it("retryable：retry + failed 行", async () => {
-    const { service, repo, client } = makeService();
+    const { service, repo, client, archive } = makeService();
     repo.contacts.set(USER_ID, contact());
     client.result = { ok: false, kind: "retryable", errcode: -1, errmsg: "系统繁忙", httpStatus: null, retryAt: null, retriedToken: false, attempts: 1 };
 
@@ -171,10 +230,11 @@ describe("NotifyAppService.consume（应用消息投递）", () => {
 
     expect(outcome.outcome).toBe("retry");
     expect(repo.deliveries[0]).toMatchObject({ state: "failed", attempts: 1 });
+    expect(archive.messages[0]).toMatchObject({ lastState: "failed", attemptCount: 1, lastError: expect.any(String) });
   });
 
   it("permanent（60011）：dead + dead 行 + C5-04 降级（:c504 / 前缀 / 标题保留）", async () => {
-    const { service, repo, client, inbox } = makeService();
+    const { service, repo, client, inbox, archive } = makeService();
     repo.contacts.set(USER_ID, contact());
     client.result = permanent(60011, "invalid userid（不存在 / 离职 / 未激活 / 不在可见范围）");
 
@@ -184,6 +244,7 @@ describe("NotifyAppService.consume（应用消息投递）", () => {
 
     expect(outcome.outcome).toBe("dead");
     expect(repo.deliveries[0]).toMatchObject({ state: "dead", target: USERID, error: expect.stringContaining("60011") });
+    expect(archive.messages[0]).toMatchObject({ lastState: "dead", attemptCount: 1, lastError: expect.stringContaining("60011") });
     expect(inbox.copies).toHaveLength(1);
     expect(inbox.copies[0]!.topic).toBe("notify.message");
     expect(inbox.copies[0]!.dedupeKey).toBe("R02:t-1:v5:app:c504");
@@ -196,6 +257,20 @@ describe("NotifyAppService.consume（应用消息投递）", () => {
     });
     expect(inbox.copies[0]!.message.body.startsWith(APP_DEGRADE_PREFIX)).toBe(true);
     expect(inbox.copies[0]!.message.body).toContain("节点：到货验收 负责人：张工");
+  });
+
+  it("重复消费：归档 dead → 不再发起第二次企微请求，仍按 dead 收敛", async () => {
+    const { service, repo, client, inbox, archive } = makeService();
+    repo.contacts.set(USER_ID, contact());
+    client.result = permanent(60011, "invalid userid");
+
+    expect((await service.consume(claimedRow(payload()))).outcome).toBe("dead");
+    expect((await service.consume(claimedRow(payload()))).outcome).toBe("dead");
+
+    expect(client.sends).toHaveLength(1);
+    expect(archive.attempts).toHaveLength(1);
+    expect(archive.messages[0]).toMatchObject({ lastState: "dead", attemptCount: 1 });
+    expect(inbox.copies.length).toBeGreaterThanOrEqual(1);
   });
 
   it("token_invalid（重取后仍失败）：按配置类收口 dead + 降级", async () => {

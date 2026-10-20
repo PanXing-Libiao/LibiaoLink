@@ -196,13 +196,14 @@ async function loadRuntime() {
   await import("reflect-metadata");
   const load = (relative) => import(pathToFileURL(join(HERE, "..", "dist", relative)).href);
   try {
-    const [envModule, configModule, databaseModule, clockModule, repositoryModule, serviceModule, publisherModule, deliveryModule] =
+    const [envModule, configModule, databaseModule, clockModule, repositoryModule, archiveModule, serviceModule, publisherModule, deliveryModule] =
       await Promise.all([
         load("config/env.js"),
         load("config/config.module.js"),
         load("db/database.service.js"),
         load("common/clock/clock.service.js"),
         load("modules/notify/notify.repository.js"),
+        load("modules/notify/notify.delivery-archive.repository.js"),
         load("modules/notify/notify.service.js"),
         load("modules/notify/notify.stream.publisher.js"),
         load("modules/notify/notify.delivery.js"),
@@ -213,6 +214,7 @@ async function loadRuntime() {
       DatabaseService: databaseModule.DatabaseService,
       ClockService: clockModule.ClockService,
       NotifyRepository: repositoryModule.NotifyRepository,
+      NotifyDeliveryArchiveRepository: archiveModule.NotifyDeliveryArchiveRepository,
       NotifyService: serviceModule.NotifyService,
       NotifyStreamPublisher: publisherModule.NotifyStreamPublisher,
       parseQuietHours: deliveryModule.parseQuietHours,
@@ -285,11 +287,13 @@ async function main() {
   const config = new runtime.AppConfig(env);
   const database = new runtime.DatabaseService(config);
   const repository = new runtime.NotifyRepository(database);
+  const archive = new runtime.NotifyDeliveryArchiveRepository(database);
   const clock = new runtime.ClockService();
   const publisher = new runtime.NotifyStreamPublisher();
-  const notify = new runtime.NotifyService(repository, database, config, clock, publisher);
+  const notify = new runtime.NotifyService(repository, archive, database, config, clock, publisher);
   const claimed = (id, dedupeKey, message) => ({
-    id,
+    // 本回放直接构造 outbox 领取行、不落 outbox_events；2A 归档允许 outbox_id = null。
+    id: null,
     topic: "notify.message",
     payload: message,
     dedupeKey,
@@ -302,6 +306,7 @@ async function main() {
 
   try {
     // ------------------------------------------------------------------ S0 基线
+    await db.query("delete from notify_delivery_messages where source_dedupe_key like $1", [DEDUPE_PREFIX + ".%"]).catch(() => {});
     await db.query("delete from notifications where source_dedupe_key like $1", [DEDUPE_PREFIX + ".%"]).catch(() => {});
     const users = await db.query(
       "insert into users (casdoor_id, username, display_name, status) values ($1, $2, $3, 'active'), ($4, $5, $6, 'active') returning id, username",
@@ -539,7 +544,7 @@ async function main() {
       NOTIFY_DAILY_LIMIT: "0",
       NOTIFY_MERGE_WINDOW_MS: "0",
     });
-    const notifyQuiet = new runtime.NotifyService(repository, database, new runtime.AppConfig(envQuiet), clock, publisher);
+    const notifyQuiet = new runtime.NotifyService(repository, archive, database, new runtime.AppConfig(envQuiet), clock, publisher);
 
     const snoozeUntil7 = new Date(Math.floor((Date.now() + 7 * MINUTE_MS) / 1000) * 1000);
     await call("POST", "/api/v1/notifications/" + row3.id + "/snooze", { snoozeUntil: snoozeUntil7.toISOString() }, sessionA);
@@ -595,7 +600,7 @@ async function main() {
       NOTIFY_DAILY_LIMIT: "1",
       NOTIFY_MERGE_WINDOW_MS: "0",
     });
-    const notifyLimit = new runtime.NotifyService(repository, database, new runtime.AppConfig(envLimit), clock, publisher);
+    const notifyLimit = new runtime.NotifyService(repository, archive, database, new runtime.AppConfig(envLimit), clock, publisher);
     await call("POST", "/api/v1/notifications/" + row5.id + "/snooze", { snoozeUntil: snoozeUntil7.toISOString() }, sessionA);
     await db.query("update notifications set snooze_until = now() - interval '1 second' where id = $1", [row5.id]);
     const deliveredToday = Number(
@@ -630,6 +635,7 @@ async function main() {
     for (const stream of streams) stream.close();
     try {
       if (!cleanup.keep) {
+        await db.query("delete from notify_delivery_messages where source_dedupe_key like $1", [DEDUPE_PREFIX + ".%"]).catch(() => {});
         await db.query("delete from notifications where source_dedupe_key like $1", [DEDUPE_PREFIX + ".%"]);
         if (cleanup.userIds.length > 0) {
           await db.query("delete from users where id = any($1::uuid[])", [cleanup.userIds]);
@@ -637,15 +643,16 @@ async function main() {
       }
       const residue = await db.query("select count(*)::int as n from notifications where source_dedupe_key like $1", [DEDUPE_PREFIX + ".%"]);
       const userResidue = await db.query("select count(*)::int as n from users where username like $1", [USER_PREFIX + "%"]);
+      const archiveResidue = await db.query("select count(*)::int as n from notify_delivery_messages where source_dedupe_key like $1", [DEDUPE_PREFIX + ".%"]);
       const orphanSnoozes = await db.query(
         "select count(*)::int as n from notification_snoozes s left join notifications n on n.id = s.notification_id where n.id is null",
       );
       check(
         "S11",
         "自清理：合成前缀零残留 + 记录随通知级联零孤儿（--keep 时保留现场、仅留痕）",
-        cleanup.keep ? "keep=true（不清理）" : "notifications=0 / users=0 / orphanSnoozes=0",
-        short({ notifications: residue.rows[0].n, users: userResidue.rows[0].n, orphanSnoozes: orphanSnoozes.rows[0].n, keep: cleanup.keep }),
-        cleanup.keep || (residue.rows[0].n === 0 && userResidue.rows[0].n === 0 && orphanSnoozes.rows[0].n === 0),
+        cleanup.keep ? "keep=true（不清理）" : "notifications=0 / archives=0 / users=0 / orphanSnoozes=0",
+        short({ notifications: residue.rows[0].n, archives: archiveResidue.rows[0].n, users: userResidue.rows[0].n, orphanSnoozes: orphanSnoozes.rows[0].n, keep: cleanup.keep }),
+        cleanup.keep || (residue.rows[0].n === 0 && archiveResidue.rows[0].n === 0 && userResidue.rows[0].n === 0 && orphanSnoozes.rows[0].n === 0),
       );
     } catch (error) {
       check("S11", "自清理：合成前缀零残留", "清理成功", "清理失败：" + messageOf(error), false);

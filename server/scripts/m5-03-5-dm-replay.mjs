@@ -119,6 +119,7 @@ async function main() {
   const { InMemoryRateWindowStore } = await import(distFile("wecom.rate.js"));
   const dm = await import(distFile("notify.dm.service.js"));
   const { ClockService } = await import(pathToFileURL(join(HERE, "..", "dist", "common", "clock", "clock.service.js")).href);
+  const { createReplayNotifyDeliveryArchive } = await import(pathToFileURL(join(HERE, "support", "notify-delivery-archive-fake.mjs")).href);
 
   check(
     "D0 dist 单聊实现面可用（NotifyDmService / composeDmMarkdown / extractBindingCode / 绑定指引降级前缀导出）",
@@ -550,9 +551,11 @@ async function main() {
         ...envOverrides,
       },
     };
+    const archive = createReplayNotifyDeliveryArchive(repo);
     return {
-      service: new dm.NotifyDmService(repo, aibot, inbox, clock, config, audit, database),
+      service: new dm.NotifyDmService(repo, archive, aibot, inbox, clock, config, audit, database),
       repo,
+      archive,
       aibot,
       inbox,
       audit,

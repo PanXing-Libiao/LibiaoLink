@@ -12,6 +12,7 @@ import { NotifyDmService } from "./notify.dm.service.js";
 import { NotifyGroupRepository } from "./notify.group.repository.js";
 import { NotifyGroupService } from "./notify.group.service.js";
 import { NotifyController } from "./notify.controller.js";
+import { NotifyDeliveryArchiveRepository } from "./notify.delivery-archive.repository.js";
 import { NotifyRepository } from "./notify.repository.js";
 import { NotifyService } from "./notify.service.js";
 import { NotifyStreamPublisher } from "./notify.stream.publisher.js";
@@ -49,6 +50,7 @@ import { PgRateWindowStore } from "./wecom.rate.pg.js";
   controllers: [NotifyController, WecomDmBindingController],
   providers: [
     NotifyRepository,
+    NotifyDeliveryArchiveRepository,
     NotifyService,
     NotifyStreamPublisher,
     NotifyStreamService,

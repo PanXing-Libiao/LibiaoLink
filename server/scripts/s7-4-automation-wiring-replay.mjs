@@ -188,6 +188,7 @@ async function loadRuntime() {
       calendarRepositoryModule,
       auditServiceModule,
       auditRepositoryModule,
+      archiveModule,
     ] = await Promise.all([
       load("config/env.js"),
       load("config/config.module.js"),
@@ -216,6 +217,7 @@ async function loadRuntime() {
       load("modules/calendar/calendar.repository.js"),
       load("modules/audit/audit.service.js"),
       load("modules/audit/audit.repository.js"),
+      load("modules/notify/notify.delivery-archive.repository.js"),
     ]);
     return {
       loadEnv: envModule.loadEnv,
@@ -223,6 +225,7 @@ async function loadRuntime() {
       DatabaseService: databaseModule.DatabaseService,
       ClockService: clockModule.ClockService,
       NotifyRepository: notifyRepositoryModule.NotifyRepository,
+      NotifyDeliveryArchiveRepository: archiveModule.NotifyDeliveryArchiveRepository,
       NotifyService: notifyServiceModule.NotifyService,
       NotifyStreamPublisher: notifyStreamPublisherModule.NotifyStreamPublisher,
       NotifyDmRepository: notifyDmRepositoryModule.NotifyDmRepository,
@@ -280,8 +283,9 @@ function buildEnv(overrides = {}) {
   clock.setSource(() => CLOCK_NOW);
   const config = new runtime.AppConfig(env);
   const database = new runtime.DatabaseService(config);
+  const archive = new runtime.NotifyDeliveryArchiveRepository(database);
   // S8-3（M5-04-1）：投递在事务内 pg_notify 广播（本回放无 SSE 连接 → 事件静默丢弃，不影响投递断言）。
-  const notify = new runtime.NotifyService(new runtime.NotifyRepository(database), database, config, clock, new runtime.NotifyStreamPublisher());
+  const notify = new runtime.NotifyService(new runtime.NotifyRepository(database), archive, database, config, clock, new runtime.NotifyStreamPublisher());
   const outboxStore = new runtime.OutboxStore(database);
   const jobsStore = new runtime.JobsStore(database);
   const calendar = new runtime.CalendarService(
@@ -333,6 +337,7 @@ function buildEnv(overrides = {}) {
   const audit = new runtime.AuditService(database, new runtime.AuditRepository(database));
   const dmNotify = new runtime.NotifyDmService(
     new runtime.NotifyDmRepository(database),
+    archive,
     dmAibot,
     notify,
     clock,
@@ -400,6 +405,7 @@ function buildEnv(overrides = {}) {
     issueIds: [],
     jobIds: [],
     outboxKeys: [],
+    archiveKeys: [],
     parkedJobs: [],
   };
   const parkUnrelatedPendingJobs = async () => {
@@ -982,6 +988,8 @@ function buildEnv(overrides = {}) {
           .catch(() => ({ rows: [] }));
         const keys = [...new Set([...cleanup.outboxKeys, ...produced.rows.map((row) => row.dedupe_key)])];
         if (keys.length > 0) {
+          cleanup.archiveKeys = keys;
+          await db.query("delete from notify_delivery_messages where source_dedupe_key = any($1::text[])", [keys]);
           await db.query("delete from notifications where source_dedupe_key = any($1::text[])", [keys]);
           await db.query("delete from outbox_events where dedupe_key = any($1::text[])", [keys]);
         }
@@ -1014,6 +1022,9 @@ function buildEnv(overrides = {}) {
       }
       const residueUsers = await db.query("select count(*)::int as n from users where username like $1", [USER_PREFIX + "%"]);
       const residueOutbox = await db.query("select count(*)::int as n from outbox_events where dedupe_key like $1", [OUTBOX_PREFIX + "%"]);
+      const residueArchives = await db.query("select count(*)::int as n from notify_delivery_messages where source_dedupe_key = any($1::text[])", [
+        cleanup.archiveKeys,
+      ]);
       const residueJobs = await db.query("select count(*)::int as n from jobs where payload->>'replay' = $1", [JOB_REPLAY_TAG]);
       const residueRuns = await db.query("select count(*)::int as n from automation_runs where dedupe_key = any($1::text[])", [[...replayRunKeys]]);
       const residueMessages = cleanup.userIds.length === 0 ? 0 : await ourMessageCount();
@@ -1026,10 +1037,11 @@ function buildEnv(overrides = {}) {
       check(
         "S9",
         "自清理：合成前缀 / 实体 / 运行记录零残留（--keep 时保留现场、仅留痕）",
-        cleanup.keep ? "keep=true（不清理）" : "users=0 / outbox=0 / jobs=0 / runs=0 / notifications=0 / deliveries=0 / activations=0",
+        cleanup.keep ? "keep=true（不清理）" : "users=0 / outbox=0 / archives=0 / jobs=0 / runs=0 / notifications=0 / deliveries=0 / activations=0",
         short({
           users: residueUsers.rows[0].n,
           outbox: residueOutbox.rows[0].n,
+          archives: residueArchives.rows[0].n,
           jobs: residueJobs.rows[0].n,
           runs: residueRuns.rows[0].n,
           messages: residueMessages,
@@ -1041,6 +1053,7 @@ function buildEnv(overrides = {}) {
         cleanup.keep ||
           (residueUsers.rows[0].n === 0 &&
             residueOutbox.rows[0].n === 0 &&
+            residueArchives.rows[0].n === 0 &&
             residueJobs.rows[0].n === 0 &&
             residueRuns.rows[0].n === 0 &&
             residueMessages === 0 &&
