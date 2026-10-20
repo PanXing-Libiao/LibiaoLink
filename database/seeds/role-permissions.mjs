@@ -15,6 +15,7 @@ export const MATRIX = [
     // h8 起新增 calendar.manage（工作日历维护 D5-01 与顺延配置 D5-02）；管理面 UI 随 u12（px 线）。
     // M6 起新增日报 / 问题四键（report.view / report.fill / issue.view / issue.manage，A3 与 §4.1）。
     // M7-04 起新增 project.archive（归档端点，ADR-027，仅项目经理 / 管理员）。
+    // M5-06 起新增 automation.view / automation.manage / notify.record.view / notify.resend（仅管理员；admin 全量 36 键）。
     roleCode: "admin",
     keys: [
       "project.view",
@@ -49,6 +50,10 @@ export const MATRIX = [
       "stakeholder.contact.view",
       "audit.view",
       "calendar.manage",
+      "automation.view",
+      "automation.manage",
+      "notify.record.view",
+      "notify.resend",
     ],
   },
   {

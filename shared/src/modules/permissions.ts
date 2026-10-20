@@ -8,6 +8,7 @@ import { UuidSchema } from "../common/conventions.ts";
  * h8 起新增 calendar.manage（工作日历维护 D5-01 与顺延配置 D5-02，仅管理员）。
  * M6 起新增日报 / 问题四键（系统功能书 A3 与 §4.1「项目成员：日报、问题」）：report.view / report.fill / issue.view / issue.manage。
  * M7-04 起新增 project.archive（ADR-027 归档端点：仅项目经理 / 管理员，归档写清单与审计）。
+ * M5-06 起新增 automation.view / automation.manage / notify.record.view / notify.resend（规则管理与发送记录）。
  */
 export const PERMISSION_KEYS = [
   "project.view",
@@ -42,6 +43,10 @@ export const PERMISSION_KEYS = [
   "dict.manage",
   "audit.view",
   "calendar.manage",
+  "automation.view",
+  "automation.manage",
+  "notify.record.view",
+  "notify.resend",
 ] as const;
 
 export const PermissionKeySchema = z
