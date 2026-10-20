@@ -241,6 +241,7 @@ async function loadRuntime() {
       createRuleEventConsumers: wiringModule.createRuleEventConsumers,
       createAutomationScheduleHandler: wiringModule.createAutomationScheduleHandler,
       AUTOMATION_SCHEDULE_JOB_KIND: automationIndexModule.AUTOMATION_SCHEDULE_JOB_KIND,
+      BUILTIN_RULES: automationIndexModule.BUILTIN_RULES,
       listEnabledRules: automationIndexModule.listEnabledRules,
       CalendarService: calendarServiceModule.CalendarService,
       CalendarRepository: calendarRepositoryModule.CalendarRepository,
@@ -340,7 +341,7 @@ function buildEnv(overrides = {}) {
     subjects,
     append: runtime.appendOutboxIfAbsent,
     db: database.db,
-    rules: runtime.listEnabledRules,
+    rules: async () => runtime.BUILTIN_RULES.map((rule) => ({ ...rule, enabled: true })),
     now: () => clock.now(),
     shift: () => calendar.getSettings(),
     logger: {
@@ -500,6 +501,14 @@ function buildEnv(overrides = {}) {
       short(pendingBaseline.rows[0]),
       pendingBaseline.rows[0].outbox === 0 && pendingBaseline.rows[0].jobs === 0,
     );
+    const activeRuleCodes = (await runtime.listEnabledRules()).map((rule) => rule.code);
+    check(
+      "S0d",
+      "生产规则启用集：仅 R02 / R03 / R05（本回放另行显式启用全部定义以验证保留实现）",
+      "R02,R03,R05",
+      activeRuleCodes.join(","),
+      activeRuleCodes.join(",") === "R02,R03,R05",
+    );
 
     // ---------------------------------------------------------------- 造数
     const users = await db.query(
@@ -527,17 +536,18 @@ function buildEnv(overrides = {}) {
     );
 
     const projects = await db.query(
-      "insert into projects (code, name, customer, region, project_type, manager_ids, stage_key, status, description, version) values ($1, $2, $3, 'shanghai', 'default', array[$4::uuid], 'presale', 'active', $5, 1), ($6, $7, $8, 'shanghai', 'default', array[$4::uuid], 'presale', 'active', $9, 1) returning id",
+      "insert into projects (code, name, customer, region, project_type, manager_ids, stage_key, status, description, version) values ($1, $2, $3, 'shanghai', 'default', array[$4::uuid], 'presale', 'active', $5, 1), ($6, $7, $8, 'shanghai', 'default', array[$10::uuid], 'presale', 'active', $9, 1) returning id",
       [
         "S74W-" + tag + "-A",
         "临港数据中心",
         "合成客户",
-        manager,
+        owner,
         "S7-4 接线回放项目 A",
         "S74W-" + tag + "-B",
         "张江机房",
         "合成客户",
         "S7-4 接线回放项目 B",
+        owner2,
       ],
     );
     const projectA = projects.rows[0].id;
@@ -549,8 +559,8 @@ function buildEnv(overrides = {}) {
     );
 
     const tasks = await db.query(
-      "insert into tasks (project_id, stage_key, sort_index, title, status, progress, priority, owner_ids, deliverable_types, version, planned_start, planned_end, actual_end) values ($1, 'presale', 0, $2, 'done', 1, '高', array[$3::uuid], array['CAD图纸'], 5, null, null, null), ($1, 'presale', 1, $4, 'done', 1, '高', array[$5::uuid], array['CAD图纸'], 1, null, null, null) returning id, version",
-      [projectA, "安装摄像头", owner, "机房布线", owner2],
+      "insert into tasks (project_id, stage_key, sort_index, title, status, progress, priority, owner_ids, deliverable_types, version, planned_start, planned_end, actual_end) values ($1, 'presale', 0, $2, 'done', 1, '高', array[$3::uuid], array['CAD图纸'], 5, null, null, null), ($6, 'presale', 1, $4, 'done', 1, '高', array[$5::uuid], array['CAD图纸'], 1, null, null, null) returning id, version",
+      [projectA, "安装摄像头", owner, "机房布线", owner2, projectB],
     );
     cleanup.taskIds = tasks.rows.map((row) => row.id);
     const taskA = cleanup.taskIds[0];

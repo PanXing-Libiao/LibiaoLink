@@ -355,21 +355,60 @@ export const ProjectGroupBindingSchema = z
   .openapi("ProjectGroupBinding", { description: "项目群绑定状态（GET 恒 200；未绑定 = bound:false）" });
 
 /**
- * 绑定 / 换绑请求（PUT 覆盖语义）：`chatid` = 群消息回调自动落库的会话 id（机器人进群 + 群内激活一次后可得），
- * 也接受先绑后激活（activated 随回调置位）；掩码只作用于读面，写入需全文。
+ * 自动发现但尚未绑定的企微群候选（群回调 ingest 写入）：页面只展示掩码与最近活跃时间，
+ * 真正的 chatid 不进入读面；绑定走 candidateId，由服务端回查全文。
+ */
+export const ProjectGroupCandidateSchema = z
+  .object({
+    id: z.number().int().positive().openapi({ description: "候选群 id（绑定请求回传）" }),
+    name: z.string().nullable().openapi({ description: "回调携带 / 人工维护的群名；未知 = null" }),
+    chatidMasked: z.string().openapi({ description: "企微会话 id 掩码（只回末 4 位）" }),
+    lastSeenAt: DateTimeSchema.openapi({ description: "最近一次收到该群消息的时刻" }),
+  })
+  .openapi("ProjectGroupCandidate", { description: "自动发现但尚未绑定的项目群候选" });
+
+export const ProjectGroupCandidateListSchema = z
+  .object({
+    items: z.array(ProjectGroupCandidateSchema).max(50),
+  })
+  .openapi("ProjectGroupCandidateList", { description: "待绑定群候选（最近活跃优先，最多 50 条）" });
+
+/**
+ * 绑定 / 换绑请求（PUT 覆盖语义）：二选一 ——
+ *   chatid      手工录入完整会话 id（运维兜底）；
+ *   candidateId 从群回调自动发现的候选中选择（推荐，前端拿不到 chatid 明文）。
+ * 也接受先绑后激活（activated 随群内消息回调置位）；name 缺省时候选路径沿用候选群名。
  */
 export const ProjectGroupPutBodySchema = z
   .object({
     chatid: z
       .string()
       .regex(/^[A-Za-z0-9_-]{8,128}$/, "chatid 形态非法（企微会话 id：字母 / 数字 / _ / -）")
-      .openapi({ description: "企微会话 id（群消息回调 body.chatid 自动落库；形如 34 位 base64url 串）" }),
+      .optional()
+      .openapi({ description: "企微会话 id（手工绑定路径；与 candidateId 二选一）" }),
+    candidateId: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .openapi({ description: "自动发现候选群 id（推荐；与 chatid 二选一）" }),
     name: z
       .string()
       .trim()
       .min(1)
       .max(64)
       .nullish()
-      .openapi({ description: "群名 / 备注（维护用；可空 —— 覆盖语义下缺省 = 清空）" }),
+      .openapi({ description: "群名 / 备注（维护用；可空）" }),
   })
-  .openapi("ProjectGroupPutBody", { description: "绑定 / 换绑项目群：chatid 必填 + 群名备注可空；PUT = upsert 覆盖语义" });
+  .superRefine((value, context) => {
+    const hasChatid = value.chatid !== undefined;
+    const hasCandidate = value.candidateId !== undefined;
+    if (hasChatid === hasCandidate) {
+      context.addIssue({
+        code: "custom",
+        message: "chatid 与 candidateId 必须且只能提供一项",
+        path: ["chatid"],
+      });
+    }
+  })
+  .openapi("ProjectGroupPutBody", { description: "绑定 / 换绑项目群：chatid 或 candidateId 二选一 + 群名备注可空；PUT = upsert 覆盖语义" });

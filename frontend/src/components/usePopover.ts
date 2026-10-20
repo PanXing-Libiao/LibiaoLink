@@ -5,6 +5,7 @@ export type PopoverPosition = { top: number; left: number; width: number };
 /**
  * 浮层优先落点（Push 167）：
  * - below（默认，全站既有口径）= 触发器的下 / 上，宽度至少与触发器等宽；
+ * - belowOnly = 只向下展开，不因下方空间不足翻到上方（搜索下拉，2026-10-20 追订「我要下拉框」）。
  * - right = 触发器右侧、垂直对齐（宽屏放得下时用，如弹窗里的「项目地区 / 项目类型」「项目经理」——避免长列表压住表单其它字段），
  *   右侧放不下（窄屏 / 靠右面板）自动回落 below，不出现半截浮层。
  */
@@ -15,7 +16,7 @@ export type PopoverPlacement = "below" | "right";
  * 浮层 fixed 定位、跟随触发器（窗口缩放 / 滚动时重算）；点触发器与浮层之外、按 Esc 关闭。
  * 浮层内容由调用方用 `createPortal` 挂到 body —— 避免被弹窗的毛玻璃 / overflow 影响定位与裁剪。
  */
-export function usePopover(width: number, height: number, placement: PopoverPlacement = "below") {
+export function usePopover(width: number, height: number, placement: PopoverPlacement = "below", belowOnly = false) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<PopoverPosition | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -45,7 +46,7 @@ export function usePopover(width: number, height: number, placement: PopoverPlac
       }
       const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - popoverWidth - 8));
       const below = rect.bottom + gap;
-      const top = below + height > window.innerHeight - 8 ? Math.max(8, rect.top - height - gap) : below;
+      const top = belowOnly || below + height <= window.innerHeight - 8 ? below : Math.max(8, rect.top - height - gap);
       setPosition({ top, left, width: popoverWidth });
     };
     updatePosition();

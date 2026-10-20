@@ -284,10 +284,13 @@ export function evaluateBusinessDate(input: BusinessDateEvaluationInput): Busine
       let fireAt: string | null = null;
 
       if (rule.trigger.kind === "event") {
-        const status = subject.kind === "task" ? subject.fields["task.display_status"] : undefined;
-        if (typeof status !== "string" || !COMPLETED_STATUSES.includes(status)) {
-          details.push({ ruleCode: rule.code, ruleName: rule.name, entityId: subject.id, windowKey: null, matched: false, skipped: "window_mismatch", conditions: [] });
-          continue;
+        // 回放任务主体时，完成事件以任务状态代表事件已发生；其他事件主体（如 A08 stage.advanced）只看 outbox 已给出的事件。
+        if (subject.kind === "task") {
+          const status = subject.fields["task.display_status"];
+          if (typeof status !== "string" || !COMPLETED_STATUSES.includes(status)) {
+            details.push({ ruleCode: rule.code, ruleName: rule.name, entityId: subject.id, windowKey: null, matched: false, skipped: "window_mismatch", conditions: [] });
+            continue;
+          }
         }
         windowKey = "v" + String(subject.version ?? 0);
       } else {
@@ -329,12 +332,17 @@ export function evaluateBusinessDate(input: BusinessDateEvaluationInput): Busine
         const groupBy = action.groupBy !== undefined && action.groupBy.length > 0 ? action.groupBy : null;
         const spec = groupBy === null ? null : findMergedSpec(rule.code, channel);
         const recipientKinds = Array.isArray(action.recipient) ? action.recipient : [action.recipient];
-        const actionMessages: ReplayMessage[] = [];
-        let resolvedAny = false;
+        const resolvedRecipients: Array<{ kind: RuleRecipient; recipient: ReplaySubjectRecipient }> = [];
+        const seenRecipientIds = new Set<string>();
         for (const recipientKind of recipientKinds) {
           const recipient = resolveRecipient(subject, recipientKind);
-          if (recipient === null) continue;
-          resolvedAny = true;
+          if (recipient === null || recipient.id === null || seenRecipientIds.has(recipient.id)) continue;
+          seenRecipientIds.add(recipient.id);
+          resolvedRecipients.push({ kind: recipientKind, recipient });
+        }
+        const actionMessages: ReplayMessage[] = [];
+        const baseDedupeKey = dedupeKey(rule.code, subject.id, windowKey);
+        for (const { kind: recipientKind, recipient } of resolvedRecipients) {
           const variables = subjectVariables(subject, recipient.name);
           // 合并清单变量先按本主体的清单值注入（单条形态），合并步再按 bucket 重渲染全量清单。
           if (spec !== null) variables[spec.listVariable] = variableValue(subject, [spec.listField], recipient.name);
@@ -343,7 +351,8 @@ export function evaluateBusinessDate(input: BusinessDateEvaluationInput): Busine
             ruleName: rule.name,
             entityId: subject.id,
             windowKey,
-            dedupeKey: dedupeKey(rule.code, subject.id, windowKey),
+            // 多收件人动作必须逐人成键；同一人兼任多个角色时已在上面按 recipient id 去重。
+            dedupeKey: resolvedRecipients.length > 1 ? baseDedupeKey + ":" + recipient.id : baseDedupeKey,
             channel,
             recipient: recipientKind,
             recipientId: recipient.id,
@@ -352,7 +361,7 @@ export function evaluateBusinessDate(input: BusinessDateEvaluationInput): Busine
             body: renderTemplate(template.body, variables),
           });
         }
-        if (!resolvedAny) skip = skip ?? "recipient_missing";
+        if (resolvedRecipients.length === 0) skip = skip ?? "recipient_missing";
         const recipientName = actionMessages[0]?.recipientName ?? null;
         const listValue = spec === null ? null : variableValue(subject, [spec.listField], recipientName);
         for (const message of actionMessages) {

@@ -24,7 +24,7 @@ export const OUTBOX_TOPIC_ROLES = {
   "node.completed": "consumer",
   "node.deleted": "drain_only",
   "node.gate_rejected": "drain_only",
-  "stage.advanced": "drain_only",
+  "stage.advanced": "consumer",
   "stage.gate_rejected": "drain_only",
   "stage.rolled_back": "drain_only",
   "project.created": "drain_only",

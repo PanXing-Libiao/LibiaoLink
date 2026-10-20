@@ -43,6 +43,7 @@ const NOTIFICATION_TYPE_BY_RULE: Readonly<Record<string, "reminder" | "approval"
   R07: "reminder",
   A01: "reminder",
   A14: "reminder",
+  A08: "broadcast",
 };
 
 /** 接线层日志（Nest Logger 结构兼容；单测注入替身）。 */
@@ -107,6 +108,7 @@ function referenceOf(ruleCode: string, entityId: string): { refType: string | nu
   const kind = subjectKindOf(ruleCode);
   if (kind === "task") return { refType: "task", refId: entityId };
   if (kind === "project_day") return { refType: "project", refId: entityId };
+  if (kind === "stage") return { refType: "stage", refId: entityId };
   return { refType: null, refId: null };
 }
 

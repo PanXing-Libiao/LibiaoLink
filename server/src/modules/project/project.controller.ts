@@ -29,7 +29,7 @@ import { AllowDeletedProjectAccess, ProjectAccess, ProjectAccessGuard, ProjectSc
 import { TranslateService } from "../translate/index.js";
 import type { ProjectScopeFilter } from "../permission/index.js";
 import { ProjectGroupService } from "./project-group.service.js";
-import type { ProjectGroupBindingView } from "./project-group.service.js";
+import type { ProjectGroupBindingView, ProjectGroupCandidateList } from "./project-group.service.js";
 import { ProjectMemberService } from "./project-member.service.js";
 import type { ProjectMemberListResult, ProjectMemberView } from "./project-member.service.js";
 import { ProjectService } from "./project.service.js";
@@ -192,6 +192,13 @@ export class ProjectsController {
     @CurrentActorId() actorId: string,
   ): Promise<ProjectMemberView> {
     return this.members.removeMember(id, userId, actorId);
+  }
+
+  /** 自动发现但尚未绑定的群候选（只回掩码 + 最近活跃时间；需 project.update）。 */
+  @Get(":id/group/candidates")
+  @RequirePermission("project.update")
+  getGroupCandidates(@Param("id", uuidParam) id: string): Promise<ProjectGroupCandidateList> {
+    return this.groups.getCandidates(id);
   }
 
   /** 项目群绑定状态（M5-03-2 接线段）：GET 恒 200；未绑定 = bound:false；chatid 只回末 4 位掩码。 */

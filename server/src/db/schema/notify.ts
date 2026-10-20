@@ -14,6 +14,9 @@
  * 0048 · M5-03-5-2 追加：wecom_aibot_dm_activations（单聊激活表 —— 单聊 aibot 主动推送前置）/ notify_deliveries.channel CHECK 扩值（增 wecom_aibot · 保留旧值）；
  * 表口径见 database/migrations/0048_wecom_aibot_dm_activation.sql。
  *
+ * 0058 · 群自动发现追加：wecom_group_candidates（未绑定群回调暂存；绑定成功后删除；读面只回掩码）；
+ * 表口径见 database/migrations/0058_wecom_group_candidates.sql。
+ *
  * 0055 · M5-03-5-6 追加：wecom_id_binding_codes（企微 ID 绑定码 —— 绑定码链路：取码 / 单聊发码 / ingest 绑定）
  * + wecom_aibot_dm_activations 加机器人维度 bot_id 与绑定标记 bound_at（唯一键改 (bot_id, wecom_userid)）；
  * 表口径见 database/migrations/0055_wecom_id_binding_codes.sql。
@@ -187,6 +190,27 @@ export const wecomGroups = pgTable(
     uniqueIndex("uq_wecom_groups_chatid").on(table.chatid),
     check("ck_wecom_groups_chatid", sql`${table.chatid} ~ '^[A-Za-z0-9_-]{8,128}$'`),
     check("ck_wecom_groups_name", sql`${table.name} is null or char_length(btrim(${table.name})) between 1 and 64`),
+  ],
+);
+
+/**
+ * 未绑定群候选（0058 · 设置页自动发现群）：群回调 chatid 只在命中未绑定群时 upsert；
+ * 读面只暴露掩码 + 最近活跃时间，绑定成功后由 project 模块删除候选行。
+ */
+export const wecomGroupCandidates = pgTable(
+  "wecom_group_candidates",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    chatid: text("chatid").notNull(),
+    name: text("name"),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("uq_wecom_group_candidates_chatid").on(table.chatid),
+    index("ix_wecom_group_candidates_last_seen").on(table.lastSeenAt),
+    check("ck_wecom_group_candidates_chatid", sql`${table.chatid} ~ '^[A-Za-z0-9_-]{8,128}$'`),
+    check("ck_wecom_group_candidates_name", sql`${table.name} is null or char_length(btrim(${table.name})) between 1 and 64`),
   ],
 );
 

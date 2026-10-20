@@ -253,6 +253,47 @@ export function toProjectDaySubject(snapshot: ProjectDaySnapshot): ReplaySubject
     },
   };
 }
+/** A08 项目阶段推进快照（事件载荷 + 读库补齐项目 / 姓名 / 群绑定）。 */
+export interface StageSnapshot {
+  stageId: string;
+  stageKey: string;
+  stageName: string;
+  stageVersion: number;
+  nextStageKey: string | null;
+  nextStageName: string;
+  advancedByName: string;
+  projectId: string;
+  projectCode: string;
+  projectName: string;
+  groupId: string | null;
+}
+
+/** 主体映射器（A08）：阶段推进快照 → 回放主体（收件人 = project.group = 项目群机器人）。 */
+export function toStageSubject(snapshot: StageSnapshot): ReplaySubject {
+  const projectLabel =
+    snapshot.projectCode === "" ? snapshot.projectName : snapshot.projectName === "" ? snapshot.projectCode : snapshot.projectCode + "·" + snapshot.projectName;
+  return {
+    kind: "stage",
+    id: snapshot.stageId,
+    version: snapshot.stageVersion,
+    fields: {
+      "stage.id": snapshot.stageId,
+      "stage.key": snapshot.stageKey,
+      "stage.name": snapshot.stageName,
+      "stage.next_key": snapshot.nextStageKey,
+      "stage.next_name": snapshot.nextStageName,
+      "stage.advanced_by_name": snapshot.advancedByName,
+      "project.id": snapshot.projectId,
+      "project.code": snapshot.projectCode,
+      "project.name": snapshot.projectName,
+      "project.label": projectLabel,
+    },
+    recipients: {
+      "project.group": snapshot.groupId === null ? null : { id: snapshot.groupId, name: null },
+    },
+  };
+}
+
 /** A14 自定义待办快照（todos 表未落 —— 数据面随 M5-06 / M8；重复规则由待办模块展开为逐次提醒日）。 */
 export interface TodoSnapshot {
   todoId: string;

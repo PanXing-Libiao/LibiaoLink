@@ -6,15 +6,21 @@
 import { describe, expect, it } from "vitest";
 import { ClockService } from "../src/common/clock/clock.service.js";
 import type { OutboxClaimedRow } from "../src/db/outbox.store.js";
-import type { NotifyDeliveryInsert, WecomGroupRow } from "../src/modules/notify/notify.group.repository.js";
+import type {
+  NotifyDeliveryInsert,
+  WecomGroupCandidateRow,
+  WecomGroupRow,
+} from "../src/modules/notify/notify.group.repository.js";
 import {
   composeGroupMarkdown,
   GROUP_DEGRADE_PREFIX,
   GROUP_MARKDOWN_MAX_BYTES,
+  GROUP_NAME_COMMAND_HINT,
   GROUP_TRUNCATION_SUFFIX,
   maskChatid,
   NotifyGroupService,
   parseGroupMessage,
+  parseGroupNameCommand,
   truncateGroupMarkdown,
 } from "../src/modules/notify/notify.group.service.js";
 import type { AibotIncomingMessage, AibotSendResult, WecomAibotClient } from "../src/modules/notify/wecom.aibot.js";
@@ -40,7 +46,10 @@ class FakeGroupRepository {
   groups: WecomGroupRow[] = [];
   deliveries: NotifyDeliveryInsert[] = [];
   activateCalls: { chatid: string; at: Date }[] = [];
+  candidates: WecomGroupCandidateRow[] = [];
+  observeCalls: { chatid: string; name: string | null; at: Date }[] = [];
   managers = new Map<string, string>();
+  setNameCalls: { chatid: string; name: string; at: Date }[] = [];
 
   async findGroupByProject(projectId: string): Promise<WecomGroupRow | null> {
     return this.groups.find((row) => row.projectId === projectId) ?? null;
@@ -60,6 +69,36 @@ class FakeGroupRepository {
     return row;
   }
 
+  async observeCandidate(input: { chatid: string; name: string | null }, at: Date): Promise<WecomGroupCandidateRow> {
+    this.observeCalls.push({ ...input, at });
+    const existing = this.candidates.find((row) => row.chatid === input.chatid);
+    if (existing !== undefined) {
+      existing.name = input.name ?? existing.name;
+      existing.lastSeenAt = at;
+      return existing;
+    }
+    const row: WecomGroupCandidateRow = {
+      id: this.candidates.length + 1,
+      chatid: input.chatid,
+      name: input.name,
+      firstSeenAt: at,
+      lastSeenAt: at,
+    };
+    this.candidates.push(row);
+    return row;
+  }
+
+  async setGroupName(chatid: string, name: string, at: Date): Promise<WecomGroupRow | null> {
+    this.setNameCalls.push({ chatid, name, at });
+    const row = this.groups.find((item) => item.chatid === chatid);
+    if (row === undefined) {
+      return null;
+    }
+    row.name = name;
+    row.updatedAt = at;
+    return row;
+  }
+
   async findProjectManagerId(projectId: string): Promise<string | null> {
     return this.managers.get(projectId) ?? null;
   }
@@ -71,7 +110,18 @@ class FakeGroupRepository {
 
 class FakeAibot {
   sends: { chatid: string; content: string; groupActivated?: boolean | null }[] = [];
+  replies: { reqId: string; userid: string; content: string; chatid?: string | null }[] = [];
   result: AibotSendResult = { ok: true, attempts: 1 };
+
+  async replyToCallback(params: {
+    reqId: string;
+    userid: string;
+    content: string;
+    chatid?: string | null;
+  }): Promise<AibotSendResult> {
+    this.replies.push(params);
+    return this.result;
+  }
 
   async sendGroupMarkdown(params: {
     chatid: string;
@@ -198,6 +248,29 @@ describe("parseGroupMessage / composeGroupMarkdown / truncateGroupMarkdown（纯
 
   it("掩码 = **** + 末 4 位", () => {
     expect(maskChatid(CHATID)).toBe("****v-12");
+  });
+});
+
+// ---------- 群名命令 ----------
+
+describe("parseGroupNameCommand（群内群名命令）", () => {
+  it("支持冒号 / 空格 / 设置前缀 / 前置提及", () => {
+    expect(parseGroupNameCommand("群名：美国仓储项目群")).toEqual({ kind: "set", name: "美国仓储项目群" });
+    expect(parseGroupNameCommand("群名 美国仓储项目群")).toEqual({ kind: "set", name: "美国仓储项目群" });
+    expect(parseGroupNameCommand("设置群名：美国仓储项目群")).toEqual({ kind: "set", name: "美国仓储项目群" });
+    expect(parseGroupNameCommand("@机器人 群名：美国仓储项目群")).toEqual({ kind: "set", name: "美国仓储项目群" });
+    expect(parseGroupNameCommand("<@user1> 群名称 美国仓储项目群")).toEqual({ kind: "set", name: "美国仓储项目群" });
+  });
+
+  it("非命令不误判：群名叫什么 / 普通聊天 / 空名", () => {
+    expect(parseGroupNameCommand("群名叫什么")).toBeNull();
+    expect(parseGroupNameCommand("大家好")).toBeNull();
+    expect(parseGroupNameCommand("群名")).toEqual({ kind: "invalid", reason: "missing" });
+    expect(parseGroupNameCommand("群名：")).toEqual({ kind: "invalid", reason: "missing" });
+  });
+
+  it("超过 64 字符：invalid too_long", () => {
+    expect(parseGroupNameCommand("群名：" + "汉".repeat(65))).toEqual({ kind: "invalid", reason: "too_long" });
   });
 });
 
@@ -357,8 +430,8 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
 
 // ---------- 回调 ingest ----------
 
-describe("NotifyGroupService.activateFromCallback（群会话激活置位）", () => {
-  it("未激活绑定：置位（activated_at = 回调时刻）", async () => {
+describe("NotifyGroupService.activateFromCallback（群回调 ingest）", () => {
+  it("未激活绑定：置位（activated_at = 回调时刻），不写候选", async () => {
     const { service, repo } = makeService();
     repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID }));
 
@@ -366,26 +439,124 @@ describe("NotifyGroupService.activateFromCallback（群会话激活置位）", (
 
     expect(repo.activateCalls).toHaveLength(1);
     expect(repo.groups[0]!.activatedAt).toEqual(AT);
+    expect(repo.observeCalls).toEqual([]);
   });
 
-  it("已激活 / 未绑定：幂等跳过（不重复置位）", async () => {
+  it("已激活绑定：幂等跳过", async () => {
     const { service, repo } = makeService();
     repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
 
     await service.activateFromCallback(incoming());
-    expect(repo.activateCalls).toHaveLength(0);
 
-    repo.groups = [];
-    await service.activateFromCallback(incoming());
     expect(repo.activateCalls).toHaveLength(0);
+    expect(repo.observeCalls).toEqual([]);
   });
 
-  it("非群聊回调（chattype != group / 无 chatid）：直接忽略", async () => {
+  it("未绑定群：写入候选（群名 trim），不激活", async () => {
+    const { service, repo } = makeService();
+
+    await service.activateFromCallback(incoming({ chatName: "  项目交付群  " }));
+
+    expect(repo.activateCalls).toHaveLength(0);
+    expect(repo.observeCalls).toEqual([{ chatid: CHATID, name: "项目交付群", at: AT }]);
+    expect(repo.candidates).toEqual([
+      { id: 1, chatid: CHATID, name: "项目交付群", firstSeenAt: AT, lastSeenAt: AT },
+    ]);
+  });
+
+  it("同群重复回调：候选幂等 upsert（同 id、刷新 lastSeenAt、保留首次时间）", async () => {
+    const { service, repo } = makeService();
+
+    await service.activateFromCallback(incoming({ chatName: "项目群" }));
+    const firstSeenAt = repo.candidates[0]!.firstSeenAt;
+    await service.activateFromCallback(incoming({ chatName: "" }));
+
+    expect(repo.candidates).toHaveLength(1);
+    expect(repo.candidates[0]).toMatchObject({ id: 1, name: "项目群", firstSeenAt, lastSeenAt: AT });
+  });
+
+  it("非群消息回调（事件 / 单聊 / 无 chatid / 非法 chatid）：全部忽略", async () => {
     const { service, repo } = makeService();
     repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID }));
 
+    await service.activateFromCallback(incoming({ cmd: "aibot_event_callback" }));
     await service.activateFromCallback(incoming({ chattype: "single" }));
     await service.activateFromCallback(incoming({ chatid: null }));
+    await service.activateFromCallback(incoming({ chatid: "bad id" }));
+
     expect(repo.activateCalls).toHaveLength(0);
+    expect(repo.observeCalls).toEqual([]);
+  });
+
+  it("未绑定群 + 群名命令：候选名落库并回执", async () => {
+    const { service, repo, aibot } = makeService();
+
+    await service.activateFromCallback(incoming({ msgtype: "text", text: "群名：美国仓储项目群", reqId: "req-1" }));
+
+    expect(repo.observeCalls).toEqual([{ chatid: CHATID, name: "美国仓储项目群", at: AT }]);
+    expect(repo.candidates[0]).toMatchObject({ name: "美国仓储项目群" });
+    expect(repo.activateCalls).toEqual([]);
+    expect(aibot.replies).toHaveLength(1);
+    expect(aibot.replies[0]).toMatchObject({ reqId: "req-1", chatid: CHATID });
+    expect(aibot.replies[0]!.content).toContain("群名已记录：美国仓储项目群");
+  });
+
+  it("已绑定群 + 群名命令：更新绑定名并回执", async () => {
+    const { service, repo, aibot } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, name: "旧名", activatedAt: AT }));
+
+    await service.activateFromCallback(incoming({ msgtype: "text", text: "设置群名 新名称", reqId: "req-2" }));
+
+    expect(repo.setNameCalls).toEqual([{ chatid: CHATID, name: "新名称", at: AT }]);
+    expect(repo.groups[0]!.name).toBe("新名称");
+    expect(repo.activateCalls).toEqual([]);
+    expect(aibot.replies[0]!.content).toBe("群名已更新：新名称");
+  });
+
+  it("已绑定未激活 + 群名命令：激活并更新名称", async () => {
+    const { service, repo } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID }));
+
+    await service.activateFromCallback(incoming({ msgtype: "text", text: "群名：新名称" }));
+
+    expect(repo.activateCalls).toHaveLength(1);
+    expect(repo.groups[0]!.activatedAt).toEqual(AT);
+    expect(repo.groups[0]!.name).toBe("新名称");
+  });
+
+  it("群名超长：候选不写名，回执提示 64 字符", async () => {
+    const { service, repo, aibot } = makeService();
+
+    await service.activateFromCallback(incoming({ msgtype: "text", text: "群名：" + "汉".repeat(65), reqId: "req-3" }));
+
+    expect(repo.observeCalls[0]!.name).toBeNull();
+    expect(aibot.replies[0]!.content).toContain("最多 64 个字符");
+  });
+
+  it("群名命令缺名称：候选不写名，回执用法", async () => {
+    const { service, repo, aibot } = makeService();
+
+    await service.activateFromCallback(incoming({ msgtype: "text", text: "群名", reqId: "req-4" }));
+
+    expect(repo.observeCalls[0]!.name).toBeNull();
+    expect(aibot.replies[0]!.content).toBe(GROUP_NAME_COMMAND_HINT);
+  });
+
+  it("普通群聊：只登记候选，不回执", async () => {
+    const { service, repo, aibot } = makeService();
+
+    await service.activateFromCallback(incoming({ msgtype: "text", text: "大家好", reqId: "req-5" }));
+
+    expect(repo.observeCalls[0]!.name).toBeNull();
+    expect(aibot.replies).toEqual([]);
+  });
+
+  it("无 reqId：名称仍落库但不回执", async () => {
+    const { service, repo, aibot } = makeService();
+
+    await service.activateFromCallback(incoming({ msgtype: "text", text: "群名：美国仓储项目群" }));
+
+    expect(repo.observeCalls[0]!.name).toBe("美国仓储项目群");
+    expect(aibot.replies).toEqual([]);
   });
 });

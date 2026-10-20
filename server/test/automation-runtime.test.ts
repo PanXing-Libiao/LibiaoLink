@@ -10,6 +10,7 @@ import {
   replayRules,
   toProjectDaySubject,
   toReportMemberSubject,
+  toStageSubject,
   toTaskSubject,
   toTodoSubject,
   type ReplayMessage,
@@ -18,6 +19,7 @@ import {
 } from "../src/modules/automation/index.js";
 
 /** 金标基准日：2026-09-24（周四）；A14 待办提醒日 = 2026-09-25（窗口内命中）。A03 随处理时限下线 · Push 215。 */
+const ENABLED_TEST_RULES = BUILTIN_RULES.map((rule) => ({ ...rule, enabled: true }));
 const BUSINESS_DAY = "2026-09-24";
 const CALENDAR = calendarWindow("2026-09-01", "2026-12-31", [
   { date: "2026-10-01", dayType: "holiday", name: "国庆节", note: null },
@@ -99,17 +101,22 @@ describe("evaluateEventMessages 事件形态（R02 金标等价 + 冷启动保�
   const subject = toTaskSubject(completed);
 
   it("同一主体下与回放器逐字段一致（dedupeKey / channel / recipientName 全量比对）", () => {
-    const runtime = evaluateEventMessages({ topic: "task.completed", rules: BUILTIN_RULES, subject, at: AT });
-    const replay = replayRules({ businessDate: BUSINESS_DAY, tasks: [completed], calendar: CALENDAR, shiftEnabled: false });
+    const runtime = evaluateEventMessages({ topic: "task.completed", rules: ENABLED_TEST_RULES, subject, at: AT });
+    const replay = replayRules({ businessDate: BUSINESS_DAY, tasks: [completed], calendar: CALENDAR, shiftEnabled: false, rules: ENABLED_TEST_RULES });
     expect(runtime.messages).toEqual(replay.messages);
-    expect(runtime.messages).toHaveLength(2);
-    expect(runtime.messages.map((message) => message.channel)).toEqual(["inbox", "wecom_aibot"]);
+    expect(runtime.messages).toHaveLength(4);
+    expect(runtime.messages.map((message) => message.channel)).toEqual(["inbox", "inbox", "wecom_aibot", "wecom_aibot"]);
+    expect(runtime.messages.map((message) => message.recipientName)).toEqual(["张三", "李四", "张三", "李四"]);
     for (const message of runtime.messages) {
       expect(message.ruleCode).toBe("R02");
-      expect(message.dedupeKey).toBe("R02:t-1:v5");
       expect(message.body).toBe(`${PROJECT}\n邵晨宇已点击完成任务，请为项目任务「**安装摄像头**」及时添加成果文件`);
-      expect(message.recipientName).toBe("张三");
     }
+    expect(runtime.messages.map((message) => message.dedupeKey)).toEqual([
+      "R02:t-1:v5:u-1",
+      "R02:t-1:v5:u-9",
+      "R02:t-1:v5:u-1",
+      "R02:t-1:v5:u-9",
+    ]);
     // R06 同主题命中但条件不满足（project.progress != 100）→ 登记 not_matched；A 系列不参与（主题不命中）。
     expect(runtime.skipped).toEqual([{ reason: "not_matched", ruleCode: "R06", entityId: "t-1" }]);
   });
@@ -117,7 +124,7 @@ describe("evaluateEventMessages 事件形态（R02 金标等价 + 冷启动保�
   it("冷启动保护：超龄事件整体放弃 → 逐规则 event_too_old（不评估主体）", () => {
     const runtime = evaluateEventMessages({
       topic: "task.completed",
-      rules: BUILTIN_RULES,
+      rules: ENABLED_TEST_RULES,
       subject,
       at: AT,
       eventAt: new Date(AT.getTime() - 3_600_000),
@@ -133,24 +140,53 @@ describe("evaluateEventMessages 事件形态（R02 金标等价 + 冷启动保�
   it("未超龄：正常求值；给了阈值缺 eventAt → 显性抛错", () => {
     const fresh = evaluateEventMessages({
       topic: "task.completed",
-      rules: BUILTIN_RULES,
+      rules: ENABLED_TEST_RULES,
       subject,
       at: AT,
       eventAt: new Date(AT.getTime() - 10 * 60_000),
       maxEventAgeMs: 30 * 60_000,
     });
-    expect(fresh.messages).toHaveLength(2);
-    expect(() => evaluateEventMessages({ topic: "task.completed", rules: BUILTIN_RULES, subject, at: AT, maxEventAgeMs: 1000 })).toThrow();
+    expect(fresh.messages).toHaveLength(4);
+    expect(() => evaluateEventMessages({ topic: "task.completed", rules: ENABLED_TEST_RULES, subject, at: AT, maxEventAgeMs: 1000 })).toThrow();
   });
 
   it("主题与主体类型：主题不命中 → 不参与；主体类型不符 → subject_mismatch", () => {
-    const noTopic = evaluateEventMessages({ topic: "report.submitted", rules: BUILTIN_RULES, subject, at: AT });
+    const noTopic = evaluateEventMessages({ topic: "report.submitted", rules: ENABLED_TEST_RULES, subject, at: AT });
     expect(noTopic.messages).toEqual([]);
     expect(noTopic.skipped).toEqual([]);
-    const mismatch = evaluateEventMessages({ topic: "task.completed", rules: BUILTIN_RULES, subject: todo("2026-09-25"), at: AT });
+    const mismatch = evaluateEventMessages({ topic: "task.completed", rules: ENABLED_TEST_RULES, subject: todo("2026-09-25"), at: AT });
     expect(mismatch.messages).toEqual([]);
     expect(mismatch.skipped.map((item) => item.reason)).toEqual(["subject_mismatch", "subject_mismatch"]);
     expect(mismatch.skipped.map((item) => item.ruleCode)).toEqual(["R02", "R06"]);
+  });
+});
+
+describe("evaluateEventMessages 阶段事件（A08）", () => {
+  it("stage.advanced 主体不套用任务完成态，直接命中阶段群播报", () => {
+    const stage = toStageSubject({
+      stageId: "stage-1",
+      stageKey: "design",
+      stageName: "设计开发",
+      stageVersion: 7,
+      nextStageKey: "purchase",
+      nextStageName: "加工采购",
+      advancedByName: "邵晨宇",
+      projectId: "p-1",
+      projectCode: "LBUSA-20261014-002",
+      projectName: "美国仓储公司订单",
+      groupId: "p-1",
+    });
+    const runtime = evaluateEventMessages({ topic: "stage.advanced", rules: ENABLED_TEST_RULES, subject: stage, at: AT });
+    expect(runtime.messages).toHaveLength(1);
+    expect(runtime.messages[0]).toMatchObject({
+      ruleCode: "A08",
+      channel: "wecom_group",
+      recipientId: "p-1",
+      title: "大阶段完成通知",
+      dedupeKey: "A08:stage-1:v7",
+    });
+    expect(runtime.messages[0]?.body).toBe(`${PROJECT}\n邵晨宇已完成大阶段「**设计开发**」，当前项目阶段：**加工采购**。`);
+    expect(runtime.skipped).toEqual([]);
   });
 });
 
@@ -168,10 +204,10 @@ describe("planWindowMessages 调度形态（与逐日回放等价）", () => {
       from: new Date(atShanghaiTime("2026-09-24", "00:00")),
       to: new Date(atShanghaiTime("2026-09-26", "23:59")),
     };
-    const plan = planWindowMessages({ jobKind: AUTOMATION_SCHEDULE_JOB_KIND, window, rules: BUILTIN_RULES, subjects, at: window.to, calendar: CALENDAR });
+    const plan = planWindowMessages({ jobKind: AUTOMATION_SCHEDULE_JOB_KIND, window, rules: ENABLED_TEST_RULES, subjects, at: window.to, calendar: CALENDAR });
     const union: ReplayMessage[] = [];
     for (const date of ["2026-09-24", "2026-09-25", "2026-09-26"]) {
-      union.push(...replayRules({ businessDate: date, subjects, calendar: CALENDAR, shiftEnabled: false }).messages);
+      union.push(...replayRules({ businessDate: date, subjects, calendar: CALENDAR, shiftEnabled: false, rules: ENABLED_TEST_RULES }).messages);
     }
     expect(plan.messages).toEqual([...union].sort((left, right) => sortKey(left).localeCompare(sortKey(right))));
     expect(plan.messages).toHaveLength(7);
@@ -194,7 +230,7 @@ describe("planWindowMessages 调度形态（与逐日回放等价）", () => {
     const excluded = planWindowMessages({
       jobKind: AUTOMATION_SCHEDULE_JOB_KIND,
       window: { from: new Date(fireAt), to: after },
-      rules: BUILTIN_RULES,
+      rules: ENABLED_TEST_RULES,
       subjects,
       at: after,
       calendar: CALENDAR,
@@ -204,7 +240,7 @@ describe("planWindowMessages 调度形态（与逐日回放等价）", () => {
     const included = planWindowMessages({
       jobKind: AUTOMATION_SCHEDULE_JOB_KIND,
       window: { from: new Date(atShanghaiTime("2026-09-24", "19:29")), to: after },
-      rules: BUILTIN_RULES,
+      rules: ENABLED_TEST_RULES,
       subjects,
       at: after,
       calendar: CALENDAR,
@@ -224,10 +260,10 @@ describe("planWindowMessages 调度形态（与逐日回放等价）", () => {
       from: new Date(atShanghaiTime("2026-09-20", "12:00")),
       to: new Date(atShanghaiTime("2026-09-21", "23:59")),
     };
-    const plan = planWindowMessages({ jobKind: AUTOMATION_SCHEDULE_JOB_KIND, window, rules: BUILTIN_RULES, subjects, at: window.to, calendar: CALENDAR });
+    const plan = planWindowMessages({ jobKind: AUTOMATION_SCHEDULE_JOB_KIND, window, rules: ENABLED_TEST_RULES, subjects, at: window.to, calendar: CALENDAR });
     const union: ReplayMessage[] = [];
     for (const date of ["2026-09-20", "2026-09-21"]) {
-      union.push(...replayRules({ businessDate: date, subjects, calendar: CALENDAR, shiftEnabled: false }).messages);
+      union.push(...replayRules({ businessDate: date, subjects, calendar: CALENDAR, shiftEnabled: false, rules: ENABLED_TEST_RULES }).messages);
     }
     expect(plan.messages).toEqual([...union].sort((left, right) => sortKey(left).localeCompare(sortKey(right))));
     expect(plan.messages).toHaveLength(1);
@@ -289,6 +325,40 @@ describe("主体映射器（字段与收件人 = docs/rules 字段表）", () =>
     expect(unbound.recipients?.["project.group"]).toBeNull();
   });
 
+  it("toStageSubject：收件人 = project.group（未绑定 → null），项目 / 阶段 / 下一阶段字段齐备", () => {
+    const stage = toStageSubject({
+      stageId: "stage-1",
+      stageKey: "design",
+      stageName: "设计开发",
+      stageVersion: 3,
+      nextStageKey: "purchase",
+      nextStageName: "加工采购",
+      advancedByName: "邵晨宇",
+      projectId: "p-1",
+      projectCode: "LBUSA-20261014-002",
+      projectName: "美国仓储公司订单",
+      groupId: null,
+    });
+    expect(stage).toEqual({
+      kind: "stage",
+      id: "stage-1",
+      version: 3,
+      fields: {
+        "stage.id": "stage-1",
+        "stage.key": "design",
+        "stage.name": "设计开发",
+        "stage.next_key": "purchase",
+        "stage.next_name": "加工采购",
+        "stage.advanced_by_name": "邵晨宇",
+        "project.id": "p-1",
+        "project.code": "LBUSA-20261014-002",
+        "project.name": "美国仓储公司订单",
+        "project.label": "LBUSA-20261014-002·美国仓储公司订单",
+      },
+      recipients: { "project.group": null },
+    });
+  });
+
   it("toTodoSubject：收件人 = rule.members；entityId 可覆盖（多提醒对象按成员展开）", () => {
     expect(todo("2026-09-25")).toEqual({
       kind: "todo",
@@ -310,9 +380,10 @@ describe("主体映射器（字段与收件人 = docs/rules 字段表）", () =>
 describe("规则来源 listEnabledRules（一期 = 内置集）", () => {
   it("返回启用中的内置规则（异步签名，M5-06 换读表实现不变）", async () => {
     const rules = await listEnabledRules();
-    expect(rules).toHaveLength(9);
+    expect(rules).toHaveLength(3);
     expect(rules.every((rule) => rule.enabled)).toBe(true);
-    expect(rules.map((rule) => rule.code)).toEqual(["R02", "R03", "R04", "R05", "R06", "R07", "A01", "A02", "A14"]);
+    expect(rules.map((rule) => rule.code)).toEqual(["R02", "R03", "R05"]);
+    expect(rules.map((rule) => rule.code)).not.toEqual(expect.arrayContaining(["R04", "R06", "R07", "A01", "A02", "A08", "A14"]));
   });
 });
 

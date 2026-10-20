@@ -451,7 +451,6 @@ export function WecomBindingPanel(props: {
             </button>
           )}
         </div>
-        {props.variant === "page" ? <p className="pt-2 text-xs text-zinc-500">{t("settings.bind.unbindNote")}</p> : null}
         {diagnosticsBlock}
       </div>
     );

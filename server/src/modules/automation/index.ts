@@ -50,6 +50,7 @@ export {
   planWindowMessages,
   toProjectDaySubject,
   toReportMemberSubject,
+  toStageSubject,
   toTodoSubject,
 } from "./automation.runtime.js";
 export type {
@@ -58,6 +59,7 @@ export type {
   ReportMemberSnapshot,
   RuntimeEvaluation,
   RuntimeSkip,
+  StageSnapshot,
   TodoSnapshot,
   WindowPlanInput,
 } from "./automation.runtime.js";
