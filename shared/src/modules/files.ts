@@ -323,12 +323,12 @@ export const FileDownloadUrlResponseSchema = z
 /**
  * 预览目标（渲染通道口径 · wmj 评审定案 · PR #103）：按前端渲染方式定义，不按文件格式；格式差异由产物 MIME 表达。
  * 缓存键 = 内容哈希 + pipelineVersion + target（ADR-007 / v0.2 §5.4 三元组）。
- * pdf = PDF 查看器通道（PDF 直通；Office 改走查看器通道 viewer、不产转换产物 —— 历史 LibreOffice 转出口径随 S3 收口；CAD 产物格式随 M4-06 PoC 定）；image = 图片查看器通道（图片直出、图片型兜底、含矢量 SVG）；structured = 结构化表格渲染通道（一期未启用时 xlsx 走 pdf）。
+ * pdf = PDF 查看器通道（PDF 直通；Office 改走查看器通道 viewer、不产转换产物 —— 历史 LibreOffice 转出口径随 S3 收口；CAD 接入另见 ADR-035，不占既有图片/PDF 通道）；image = 图片查看器通道（图片直出、图片型兜底、含矢量 SVG）；structured = 结构化表格渲染通道（一期未启用时 xlsx 走 pdf）。
  */
 export const PREVIEW_TARGETS = ["pdf", "image", "structured"] as const;
 export const PreviewTargetSchema = z.enum(PREVIEW_TARGETS).openapi("PreviewTarget", {
   description:
-    "预览目标（渲染通道口径 · 转换产物通道）：pdf PDF 查看器通道（PDF 直通；历史 Office 转出口径随 S3 收口 —— Office 改走查看器通道、不占 target；CAD 若 PoC 产物为 PDF 也走这里） / image 图片查看器通道（图片直出、图片型兜底、含矢量 SVG 产物 —— CAD 若 PoC 只能出 SVG 也走这里） / structured 结构化表格渲染通道（一期未启用时 xlsx 走 pdf 通道）；ONLYOFFICE 查看器通道不产生转换产物、不占用 target（见 FilePreviewResponse.viewer）",
+    "预览目标（渲染通道口径 · 转换产物通道）：pdf PDF 查看器通道（PDF 直通；历史 Office 转出口径随 S3 收口 —— Office 改走查看器通道、不占 target；CAD 模型资源另按 ADR-035 接入，不占本通道） / image 图片查看器通道（图片直出、图片型兜底、含矢量 SVG 产物） / structured 结构化表格渲染通道（一期未启用时 xlsx 走 pdf 通道）；ONLYOFFICE 查看器通道不产生转换产物、不占用 target（见 FilePreviewResponse.viewer）",
 });
 
 /**

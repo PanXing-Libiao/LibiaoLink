@@ -1,9 +1,6 @@
-import { lazy, Suspense, useEffect } from "react";
+import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import type { FilePreviewKind, PreviewViewerConfig } from "../fileApi";
-/** CAD 三维查看器懒加载(ADR-031):three(~600KB gzip)+ occt WASM 按需加载 —— 只有点开 CAD 文件才下载,
- *  不进主包拖慢首屏(配合 public/occt/ 的 wasm locateFile)。 */
-const CadViewer = lazy(() => import("./CadViewer").then((m) => ({ default: m.CadViewer })));
 import { ImageZoomViewer } from "./ImageZoomViewer";
 import { OnlyOfficeViewer } from "./OnlyOfficeViewer";
 import { useFocusTrap } from "./useFocusTrap";
@@ -18,8 +15,7 @@ import { useT } from "../i18n";
  *  Push 273（业务口径 2026-10-10「图片预览要有缩放功能」）：图片分支改挂共享组件 ImageZoomViewer（滚轮以光标为锚点
  *  缩放 / ＋− 按钮 1.25 步进 / 双击 100% ↔ 200% / 放大后拖动平移，25% ~ 800%）；口径收紧为「点遮罩关浮层」——
  *  图片上的点击留给缩放 / 拖动，点图不再关（原「Esc / 点浮层关闭」里的点图分支下架）。
- *  ADR-031（2026-10-13 · CAD 预览通道）：kind=cad3d 分支挂 CadViewer（浏览器端 occt WASM / three.js 解析渲染,
- *  原对象短时签名直签 —— 与图片分支同 url pane 口径）。
+ *  ADR-035：CAD 接入准备期间只提示暂不可预览；即使收到旧就绪响应，也不读取原模型或进入图片/Office。
  *  Push 258（业务口径「原本的下载不要隐藏 / 点击右上角下载给原文件」）：查看器工具栏的 download 图标保持可见（服务端
  *  document.permissions.download=true），在其原位盖一层**透明命中层**（data-file-preview-native-download）——
  *  点它走同一 onDownload（原格式字节 + download 审计）。DocServer 内置下载是跨域 iframe 原生控件、逻辑改不了，
@@ -64,7 +60,7 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
       className={"fixed inset-0 " + zClass + " flex items-center justify-center bg-zinc-900/60 p-6"}
     >
       <figure className="relative flex max-h-full max-w-full flex-col items-center">
-        {pane.mode === "viewer" ? (
+        {kind !== "cad" && pane.mode === "viewer" ? (
           <button
             type="button"
             data-file-preview-native-download="true"
@@ -78,12 +74,17 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
             style={{ right: 92, top: 4, width: 24, height: 24 }}
           />
         ) : null}
-        {pane.mode === "viewer" ? (
+        {kind === "cad" ? (
+          <div
+            role="status"
+            data-file-preview-cad-pending="true"
+            onClick={(event) => event.stopPropagation()}
+            className="flex min-h-48 w-[min(32rem,calc(100vw-3rem))] items-center justify-center rounded-xl bg-white p-8 text-center text-sm text-zinc-600 shadow-2xl"
+          >
+            {t("fpv.cadPending")}
+          </div>
+        ) : pane.mode === "viewer" ? (
           <OnlyOfficeViewer key={nonce} viewer={pane.viewer} onRetry={onRetry} />
-        ) : kind === "cad3d" ? (
-          <Suspense fallback={<div className="flex h-[80vh] w-[min(90vw,calc(100vw-3rem))] items-center justify-center rounded-xl bg-[#14181f] text-sm text-zinc-400">{t("fpv.cadLoading")}</div>}>
-            <CadViewer src={pane.url} name={name} />
-          </Suspense>
         ) : kind === "pdf" ? (
           <iframe
             src={pane.url}

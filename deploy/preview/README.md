@@ -153,8 +153,7 @@ worker(宿主进程) --127.0.0.1:9900--> [edge 哑中继] --libiaolink-preview-i
 | 图片（png/jpg/gif/bmp/webp/tiff/**svg**） | 415（图片不该走 PDF 通道） | 原样直通 | 501 |
 | 其它 | 415 | 415 | 501 |
 
-CAD（M4-06 / PoC-8）一期只覆盖产品：SVG 归 `image`（直通）、PDF 归 `pdf`（直通），不达标降级「仅下载」，
-不影响本期 pdf / image 通道 —— 与 lan 清单口径一致。
+CAD 已改为 [独立工程接入](../../docs/CAD平台接入基线与迁移任务.md)（ADR-035），不在本 converter 中恢复旧 DWG/DXF 映射，也不将 CAD 原文件或模型资源作为 image/pdf 直通。当前平台 CAD 暂不可预览、保留原文件下载；未来任务与多资源部署另按接入契约落地。
 
 ## 六、快速上手（沙箱）
 

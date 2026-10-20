@@ -1,5 +1,7 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
+> **2026-10-21 CAD 接入准备（本地分支，未部署）**：旧 CAD 组件、WASM 与原文件图片直签已撤下，平台接入以 [新基线](../../docs/CAD平台接入基线与迁移任务.md) / ADR-035 为准。后续发布须使用本分支生成的新资源清单并删除遗留 CAD chunk 与 public/occt，不能继续复制旧 CAD 产物。下方版本/哈希是历史部署事实，保留追溯；本轮未变更生产环境。
+
 > 归属：px（部署 / 交付）· 2026-10-13 起步（postgres → tools → api / worker，逐切片加组件）。
 > 口径：`docs/adr/ADR-013-部署与容量起点.md`（Compose 单机 + Nginx 唯一对外端口；生产门禁）、`docs/adr/ADR-004-数据库与数据访问.md`（PostgreSQL 18.x，部署锁精确补丁）、`docs/M8-部署Runbook与上线检查单(单机).md`（总流程与清单）。
 > 密钥纪律（CONTRIBUTING §12）：本目录只放非敏感内容；密钥全部以文件存在服务器 `secrets/`，不进仓库、不进 `.env`。

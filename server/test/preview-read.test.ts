@@ -254,6 +254,79 @@ function makeService(env: Partial<Env> = {}): Harness {
 }
 
 describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
+  it.each(["step", "stp", "iges", "igs", "stl", "3mf", "obj", "gltf", "glb", "easm", "dxf", "dwg"])(
+    "CAD 接入准备（.%s）：即使 MIME 误报为图片或有旧 ready 产物，也不签原对象或投任务",
+    async (extension) => {
+      const h = makeService();
+      h.repo.file = makeFileRow({ name: "模型." + extension });
+      h.repo.versions.set(VERSION, makeVersionRow({ mime: "image/png", objectKey: sourceKeyOf(extension) }));
+      h.previews.rows = [makeArtifactRow({ status: "ready", objectKey: ARTIFACT_KEY })];
+
+      const result = await h.service.getPreview(FILE, null, ACTOR);
+
+      expect(result).toEqual({
+        fileId: FILE,
+        versionId: VERSION,
+        status: "failed",
+        target: null,
+        viewer: null,
+        url: null,
+        expiresAt: null,
+        pipelineVersion: null,
+        reason: "CAD 在线预览正在升级，暂不可用，请下载原文件查看",
+        generatedAt: null,
+      });
+      expect(h.storage.signed).toHaveLength(0);
+      expect(h.previews.queries).toHaveLength(0);
+      expect(h.previews.ensured).toHaveLength(0);
+      expect(h.database.outbox).toHaveLength(0);
+      expect(h.database.transactions).toBe(0);
+    },
+  );
+
+  it.each(["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"])(
+    "CAD 不因误报的 Office/PDF MIME（%s）进入查看器",
+    async (mime) => {
+      const h = makeService();
+      h.repo.versions.set(VERSION, makeVersionRow({ mime, objectKey: sourceKeyOf("STEP") }));
+
+      const result = await h.service.getPreview(FILE, null, ACTOR);
+
+      expect(result.status).toBe("failed");
+      expect(result.viewer).toBeNull();
+      expect(h.storage.signed).toHaveLength(0);
+    },
+  );
+
+  it("历史 CAD 版本按版本后缀降级；同一文件的历史图片仍可预览", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ name: "更名后的模型.png" });
+    h.repo.versions.set(HISTORY, makeVersionRow({ id: HISTORY, mime: null, objectKey: sourceKeyOf("step") }));
+
+    const cad = await h.service.getPreview(FILE, HISTORY, ACTOR);
+
+    expect(cad).toMatchObject({ versionId: HISTORY, status: "failed", url: null, viewer: null });
+    expect(cad.reason).toContain("CAD 在线预览正在升级");
+    expect(h.storage.signed).toHaveLength(0);
+
+    h.repo.file = makeFileRow({ name: "更名后的模型.step" });
+    const image = await h.service.getPreview(FILE, VERSION, ACTOR);
+
+    expect(image).toMatchObject({ versionId: VERSION, status: "ready", target: "image" });
+    expect(h.storage.signed).toEqual([{ objectKey: SOURCE_KEY, expiresInSeconds: 300 }]);
+  });
+
+  it("CAD 项目不可见时仍返回同形 404，不能通过暂不可预览提示探测文件", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ name: "模型.step" });
+    h.repo.versions.set(VERSION, makeVersionRow({ objectKey: sourceKeyOf("step"), mime: null }));
+    h.permission.visible = false;
+
+    await expect(h.service.getPreview(FILE, null, ACTOR)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(h.storage.signed).toHaveLength(0);
+    expect(h.previews.queries).toHaveLength(0);
+  });
+
   it("图片直签（缺省当前版本 · S6-前置 D6）：原对象短时签名 + 不写审计 + 产物字段全空", async () => {
     const h = makeService();
 

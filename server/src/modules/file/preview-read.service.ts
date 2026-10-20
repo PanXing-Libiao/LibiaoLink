@@ -11,7 +11,7 @@ import { FileRepository, type FileRow, type FileVersionRow } from "./file.reposi
 import { buildPreviewContentUrl, signHs256Jwt } from "./onlyoffice.jwt.js";
 import { buildPreviewJobPayload, PREVIEW_JOB_TOPIC, previewJobDedupeKey, type PreviewTarget } from "./preview.job.js";
 import { PreviewRepository, type PreviewArtifactKey, type PreviewArtifactRow } from "./preview.repository.js";
-import { isCadFile, isImageFile, previewTargetsFor, viewerChannelFor, type ViewerChannel } from "./preview.targets.js";
+import { isCadPreviewPending, isImageFile, previewTargetsFor, viewerChannelFor, type ViewerChannel } from "./preview.targets.js";
 
 type FilePreviewResponse = z.infer<typeof FilePreviewResponseSchema>;
 
@@ -48,10 +48,11 @@ const VIEWER_PERMISSIONS = {
  * - `failed`：返回 `preview_artifacts.error`（≤ 500 字）供前端降级「请下载查看」（D2-05），**不原地重试**
  *   （缓存态：管线修复靠 `PREVIEW_PIPELINE_VERSION` 递增失效）。
  *
- * 读取侧的两个**终态降级**（不落表、不投任务 —— 判不出来就永远不会有产物，落表只堆垃圾行，投任务只烧转换配额）：
+ * 读取侧的**终态降级**（不落表、不投任务）：
  * - 文件尚无版本（未完成过上传）：`failed` + 「尚无版本」；
+ * - CAD 接入准备（ADR-035）：`failed` + 「CAD 在线预览正在升级」，保留独立的原文件下载；
  * - 判不出渲染通道（如 `.zip`）：`failed` + 「暂不支持在线预览」。
- * 两者都返回 `failed` 而不是 `not_ready`，是为了让前端**轮询有终点**（契约：前端轮询至 ready / failed）。
+ * 返回 `failed` 而不是 `not_ready`，是为了让前端**轮询有终点**（契约：前端轮询至 ready / failed）。
  *
  * 权限 = 项目可见即可（Push 160 定案，同文件详情 / 版本链：不可见 / 不存在统一 404，防 IDOR）；
  * 版本 404：`versionId` 给定但不属于该文件 / 不存在（A4-06「任意历史版本可预览」，缺省 = 当前版本）。
@@ -87,15 +88,14 @@ export class PreviewReadService {
     //（否则历史的 xls 内容会被当成 pptx）。
     const channelName = versionFileName(file.name, version.objectKey);
 
+    // ADR-035：旧解析器已删除。先按版本扩展名拦截，避免误报 image/Office MIME 再签出原 CAD。
+    if (isCadPreviewPending({ fileName: channelName })) {
+      return this.degrade(file.id, version.id, "CAD 在线预览正在升级，暂不可用，请下载原文件查看");
+    }
+
     // S6-前置（D6）：图片 → 原对象短时签名直签（优先于产物通道判定：不投任务 / 不落产物行 / 不经 deploy/preview）。
     if (isImageFile({ fileName: channelName, mime: version.mime })) {
       return this.serveImageDirect(file, version);
-    }
-
-    // ADR-031（2026-10-13）：CAD 三维族 → 原对象短时签名直签（与图片直签同口径：浏览器端 occt WASM /
-    // three.js Loader 解析渲染，不投转换任务、不落产物行；dwg / dxf 二维走转换管线，另行落地）。
-    if (isCadFile({ fileName: channelName, mime: version.mime })) {
-      return this.serveCadDirect(file, version);
     }
 
     const targets = previewTargetsFor({ fileName: channelName, mime: version.mime });
@@ -218,34 +218,6 @@ export class PreviewReadService {
    * 不记录预览动作 —— 原 D2-07「签发即写一条 preview」撤销）。
    */
   private async serveImageDirect(
-    file: FileRow,
-    version: FileVersionRow,
-  ): Promise<FilePreviewResponse> {
-    const signed = await this.storage.signDownloadUrl({
-      objectKey: version.objectKey,
-      expiresInSeconds: this.config.env.PREVIEW_URL_TTL_SECONDS,
-    });
-    return {
-      fileId: file.id,
-      versionId: version.id,
-      status: "ready",
-      target: "image",
-      viewer: null,
-      url: signed.url,
-      expiresAt: signed.expiresAt.toISOString(),
-      pipelineVersion: null,
-      reason: null,
-      generatedAt: null,
-    };
-  }
-
-  /**
-   * CAD 三维直签 ready（ADR-031 · 2026-10-13）：与图片直签同口径 —— 原对象短时签名直出（status=ready、
-   * target=image —— 契约 FilePreviewResponse.target 渲染通道枚举按「浏览器渲染方式」定义，三维模型在浏览器
-   * WebGL 渲染、前端按 kind=cad3d 分流到 CadViewer 组件）；pipelineVersion / generatedAt 空（无产物语义）；
-   * 不查 / 不落产物行、不投转换任务（解析在浏览器端 occt WASM / three.js Loader 完成）。不写审计（Push 283 口径）。
-   */
-  private async serveCadDirect(
     file: FileRow,
     version: FileVersionRow,
   ): Promise<FilePreviewResponse> {
