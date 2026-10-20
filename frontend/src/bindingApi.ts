@@ -4,7 +4,7 @@
  * 契约 = shared/src/modules/notifications.ts 末段「企业微信单聊绑定」（Push 249 · lan 线 · wmj 复核）：
  *   GET    /api/v1/wecom-dm-binding        绑定态（恒 200；未绑定 = bound:false + 两个 null；v1.8 另回
  *                                          bindingCode / retryAt —— 刷新页面不丢码面与罚时）
- *   POST   /api/v1/wecom-dm-binding/codes  取绑定码（6 位 / TTL 5 分钟 / 一次性 / 5 次每 3 分钟 —— D3 修订 v1.8）
+ *   POST   /api/v1/wecom-dm-binding/codes  取绑定码（6 位 / TTL 3 分钟 / 一次性 / 5 次每 3 分钟 —— 2026-10-20 安全修订）
  *   DELETE /api/v1/wecom-dm-binding        解绑（幂等 —— 本就未绑定也 200 bound:false；返回同 GET 读面）
  *
  * 权限 = 个人资源：读 = 会话，写 = 会话 + CSRF（apiFetch 自动补 X-CSRF-Token），**不依赖功能权限键**

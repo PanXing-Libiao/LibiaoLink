@@ -7667,7 +7667,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 生成绑定码（D3 / D5）：6 位数字 · TTL 5 分钟 · 一次性 · 5 次 / 3 分钟 / 用户（D3 修订 v1.8 —— 超出 429 RATE_LIMITED）；重复取码作废上一条未用码；用户把码发进企微单聊即绑定（v1.8：以码持有者为准换绑 · 会话内回执由 worker 承担） */
+        /** 生成绑定码（D3 / D5）：6 位数字 · TTL 3 分钟 · 一次性 · 5 次 / 3 分钟 / 用户（超出 429 RATE_LIMITED）；重复取码作废上一条未用码；用户把码发进企微单聊即绑定（v1.8：以码持有者为准换绑 · 会话内回执由 worker 承担；验证侧 5 次 / 10 分钟失败后指数锁定） */
         post: {
             parameters: {
                 query?: never;
@@ -7918,10 +7918,10 @@ export interface components {
             windowId: number | null;
         };
         /**
-         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；预览事件自 2026-10-12 起不再写审计 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删）
+         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；预览事件自 2026-10-12 起不再写审计 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删） / wecom_dm_binding 企微绑定验证（对象 id = 机器人标识 + 掩码 open_userid；失败 / 锁定记 deny + denied，不落完整 userid 或绑定码）
          * @enum {string}
          */
-        AuditObjectType: "project" | "project_member" | "task" | "node" | "stage" | "dict_item" | "blueprint" | "calendar_day" | "calendar_settings" | "file" | "change" | "stakeholder" | "daily_report" | "issue" | "task_node" | "task_template" | "user";
+        AuditObjectType: "project" | "project_member" | "task" | "node" | "stage" | "dict_item" | "blueprint" | "calendar_day" | "calendar_settings" | "file" | "change" | "stakeholder" | "daily_report" | "issue" | "task_node" | "task_template" | "user" | "wecom_dm_binding";
         /**
          * @description 审计结果：succeeded 成功 / denied 越权尝试（C7-03）/ failed 业务拒绝（门禁等）
          * @enum {string}

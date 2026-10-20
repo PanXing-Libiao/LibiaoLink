@@ -8,8 +8,9 @@
  * 激活表口径（0048 + 0055）：bound_at 非空 = 绑定行 = 可投递地址（绑定码命中时写入）；user_id 可空（D1
  * 仅激活登记行无主）；first_activated_at 首次不覆盖、last_message_at 随回调 upsert 刷新（语义 = 用户消息
  * 时刻）；发送成功旁证回填（D4）只补 user_id / updated_at，不动 last_message_at。
- * 绑定码口径（0055 · D3 修订 v1.8）：6 位数字 / TTL 5 分钟 / 一次性 / 同一 user_id 仅一个 pending（重发先作废旧码）；
- * 用户消息正文不入库、不落日志 —— 本层只按码取值（CONTRIBUTING §12）。
+ * 绑定码口径（0055 + 0059）：6 位数字 / TTL 3 分钟 / 一次性 / 同一 (bot_id, user_id) 仅一个 pending（重发先作废旧码）；
+ * 验证侧守卫 = 5 次 / 10 分钟 / (bot_id, wecom_userid) + 指数锁定；用户消息正文不入库、不落日志 ——
+ * 本层只按码取值并维护激活行守卫状态（CONTRIBUTING §12）。
  * 留痕口径：每次尝试一行（0046 CHECK：非 sent 行必须带非空 error；sent ↔ sentAt 非空且 error 为空）。
  */
 import { Injectable } from "@nestjs/common";
@@ -44,10 +45,21 @@ export interface DmBindingRow {
 /** 绑定码行（ingest 判定 / 频率限制读面）。 */
 export interface DmBindingCodeRow {
   id: number;
+  botId: string;
   code: string;
   userId: string;
   status: string;
   expiresAt: Date;
+}
+
+/** 绑定验证守卫状态（0059；由服务层计算下一状态，本层负责行锁读 / 原子写）。 */
+export interface DmBindingGuardRow {
+  bindingFailCount: number;
+  bindingFailWindowStartedAt: Date | null;
+  bindingLockLevel: number;
+  bindingLockedUntil: Date | null;
+  lastBindingAttemptAt: Date | null;
+  lastBindingMsgid: string | null;
 }
 
 /** 投递留痕输入（服务层保证 CHECK 语义：sent ↔ sentAt 非空且 error 为空）。 */
@@ -145,6 +157,84 @@ export class NotifyDmRepository {
   }
 
   /**
+   * 锁定并读取绑定验证守卫行（0059）：调用方必须已在同一事务内 upsert 激活行；`.for("update")` 串行化
+   * 同一 (bot_id, wecom_userid) 的并发回调，避免重复计数 / 双重绑定。
+   */
+  async lockBindingGuard(
+    botId: string,
+    wecomUserid: string,
+    client: DbClient = this.database.db,
+  ): Promise<DmBindingGuardRow> {
+    const rows = await client
+      .select({
+        bindingFailCount: wecomAibotDmActivations.bindingFailCount,
+        bindingFailWindowStartedAt: wecomAibotDmActivations.bindingFailWindowStartedAt,
+        bindingLockLevel: wecomAibotDmActivations.bindingLockLevel,
+        bindingLockedUntil: wecomAibotDmActivations.bindingLockedUntil,
+        lastBindingAttemptAt: wecomAibotDmActivations.lastBindingAttemptAt,
+        lastBindingMsgid: wecomAibotDmActivations.lastBindingMsgid,
+      })
+      .from(wecomAibotDmActivations)
+      .where(and(eq(wecomAibotDmActivations.botId, botId), eq(wecomAibotDmActivations.wecomUserid, wecomUserid)))
+      .limit(1)
+      .for("update");
+    const row = rows[0];
+    if (row === undefined) {
+      throw new Error("绑定验证守卫行不存在（激活行 upsert 缺失）");
+    }
+    return row;
+  }
+
+  /** 写入完整守卫状态（成功清零 / 失败计数 / 锁定升级；lastBindingMsgid 为空时保留旧值）。 */
+  async updateBindingGuard(
+    input: {
+      botId: string;
+      wecomUserid: string;
+      at: Date;
+      bindingFailCount: number;
+      bindingFailWindowStartedAt: Date | null;
+      bindingLockLevel: number;
+      bindingLockedUntil: Date | null;
+      lastBindingMsgid: string | null;
+    },
+    client: DbClient = this.database.db,
+  ): Promise<void> {
+    await client
+      .update(wecomAibotDmActivations)
+      .set({
+        bindingFailCount: input.bindingFailCount,
+        bindingFailWindowStartedAt: input.bindingFailWindowStartedAt,
+        bindingLockLevel: input.bindingLockLevel,
+        bindingLockedUntil: input.bindingLockedUntil,
+        lastBindingAttemptAt: input.at,
+        lastBindingMsgid:
+          input.lastBindingMsgid === null
+            ? sql`${wecomAibotDmActivations.lastBindingMsgid}`
+            : input.lastBindingMsgid,
+        updatedAt: input.at,
+      })
+      .where(and(eq(wecomAibotDmActivations.botId, input.botId), eq(wecomAibotDmActivations.wecomUserid, input.wecomUserid)));
+  }
+
+  /** 记录锁定期间的尝试时刻（不增加失败计数、不改锁定级别；用于相邻回调重投幂等）。 */
+  async touchBindingAttempt(
+    input: { botId: string; wecomUserid: string; at: Date; lastBindingMsgid: string | null },
+    client: DbClient = this.database.db,
+  ): Promise<void> {
+    await client
+      .update(wecomAibotDmActivations)
+      .set({
+        lastBindingAttemptAt: input.at,
+        lastBindingMsgid:
+          input.lastBindingMsgid === null
+            ? sql`${wecomAibotDmActivations.lastBindingMsgid}`
+            : input.lastBindingMsgid,
+        updatedAt: input.at,
+      })
+      .where(and(eq(wecomAibotDmActivations.botId, input.botId), eq(wecomAibotDmActivations.wecomUserid, input.wecomUserid)));
+  }
+
+  /**
    * 解绑（D6 · 口径 §4）：把当前机器人下该用户的绑定行去址 —— `bound_at` / `user_id` 置空
    * （保留激活登记行，语义与「换绑清旧」同形：注销投递资格，激活痕迹仍在）。
    * 返回清除行数（0 = 本就无绑定 → 调用方按幂等收口、不写审计）。
@@ -228,11 +318,17 @@ export class NotifyDmRepository {
    * 窗口内已生成绑定码的创建时刻（升序 —— D3 修订 v1.8：5 次 / 3 分钟 / 用户；空数组 = 未取过码）。
    * v1.9：罚时锚点取数组末尾（最近一码）—— 调用方不要再用首元素。
    */
-  async bindingCodesSince(userId: string, since: Date, client: DbClient = this.database.db): Promise<Date[]> {
+  async bindingCodesSince(userId: string, botId: string, since: Date, client: DbClient = this.database.db): Promise<Date[]> {
     const rows = await client
       .select({ createdAt: wecomIdBindingCodes.createdAt })
       .from(wecomIdBindingCodes)
-      .where(and(eq(wecomIdBindingCodes.userId, userId), gte(wecomIdBindingCodes.createdAt, since)))
+      .where(
+        and(
+          eq(wecomIdBindingCodes.botId, botId),
+          eq(wecomIdBindingCodes.userId, userId),
+          gte(wecomIdBindingCodes.createdAt, since),
+        ),
+      )
       .orderBy(wecomIdBindingCodes.createdAt);
     return rows.map((row) => row.createdAt);
   }
@@ -301,17 +397,24 @@ export class NotifyDmRepository {
    * 再插入新码；码撞唯一键 → `onConflictDoNothing` 不落行，返回 false 由调用方换码重试。
    */
   async createBindingCode(
-    input: { userId: string; code: string; expiresAt: Date; at: Date },
+    input: { botId: string; userId: string; code: string; expiresAt: Date; at: Date },
     client: DbClient = this.database.db,
   ): Promise<boolean> {
     return await client.transaction(async (tx) => {
       await tx
         .update(wecomIdBindingCodes)
         .set({ status: "expired" })
-        .where(and(eq(wecomIdBindingCodes.userId, input.userId), eq(wecomIdBindingCodes.status, "pending")));
+        .where(
+          and(
+            eq(wecomIdBindingCodes.botId, input.botId),
+            eq(wecomIdBindingCodes.userId, input.userId),
+            eq(wecomIdBindingCodes.status, "pending"),
+          ),
+        );
       const rows = await tx
         .insert(wecomIdBindingCodes)
         .values({
+          botId: input.botId,
           code: input.code,
           userId: input.userId,
           status: "pending",
@@ -330,6 +433,7 @@ export class NotifyDmRepository {
    */
   async findPendingBindingCode(
     userId: string,
+    botId: string,
     at: Date,
     client: DbClient = this.database.db,
   ): Promise<{ code: string; expiresAt: Date } | null> {
@@ -338,6 +442,7 @@ export class NotifyDmRepository {
       .from(wecomIdBindingCodes)
       .where(
         and(
+          eq(wecomIdBindingCodes.botId, botId),
           eq(wecomIdBindingCodes.userId, userId),
           eq(wecomIdBindingCodes.status, "pending"),
           gt(wecomIdBindingCodes.expiresAt, at),
@@ -348,18 +453,19 @@ export class NotifyDmRepository {
     return rows[0] ?? null;
   }
 
-  /** 按码取值（任意状态 —— ingest 需区分「不存在」与「已用 / 过期」两类回执，口径 §5）。 */
-  async findBindingCode(code: string, client: DbClient = this.database.db): Promise<DmBindingCodeRow | null> {
+  /** 按 (bot_id, code) 取值（任意状态 —— ingest 需区分不存在 / 已用 / 过期；跨机器人绝不复用）。 */
+  async findBindingCode(code: string, botId: string, client: DbClient = this.database.db): Promise<DmBindingCodeRow | null> {
     const rows = await client
       .select({
         id: wecomIdBindingCodes.id,
+        botId: wecomIdBindingCodes.botId,
         code: wecomIdBindingCodes.code,
         userId: wecomIdBindingCodes.userId,
         status: wecomIdBindingCodes.status,
         expiresAt: wecomIdBindingCodes.expiresAt,
       })
       .from(wecomIdBindingCodes)
-      .where(eq(wecomIdBindingCodes.code, code))
+      .where(and(eq(wecomIdBindingCodes.botId, botId), eq(wecomIdBindingCodes.code, code)))
       .limit(1);
     return rows[0] ?? null;
   }
@@ -369,60 +475,60 @@ export class NotifyDmRepository {
    * ② 换绑清旧：同一用户在同一机器人上的其它绑定行去址（保留激活登记，仅注销投递资格）；③ upsert 绑定行
    * （bot_id + wecom_userid 唯一）—— 行已存在时按唯一键改挂到码持有者：**跨用户换绑**（v1.8：发送方企微号
    * 挂在别的库内用户上时，旧持有者随该行改挂而回落未绑定；换绑留痕由调用方同事务写 `audit_logs`）。
-   * 返回 false = 码已被占 / 已过期（调用方按「码已失效」回执）。
+   * 调用方必须传入外层事务（本方法不再开启事务 —— 守卫状态、绑定行、审计要同一事务提交）。
+   * 返回 false = 码已被占 / 已过期（调用方按统一失败话术回执并计入失败次数）。
    */
   async bindWithCode(
     input: { codeId: number; userId: string; botId: string; wecomUserid: string; at: Date },
     client: DbClient = this.database.db,
   ): Promise<boolean> {
-    return await client.transaction(async (tx) => {
-      const claimed = await tx
-        .update(wecomIdBindingCodes)
-        .set({ status: "used", usedAt: input.at, usedWecomUserid: input.wecomUserid })
-        .where(
-          and(
-            eq(wecomIdBindingCodes.id, input.codeId),
-            eq(wecomIdBindingCodes.status, "pending"),
-            gt(wecomIdBindingCodes.expiresAt, input.at),
-          ),
-        )
-        .returning({ id: wecomIdBindingCodes.id });
-      if (claimed.length === 0) {
-        return false;
-      }
-      await tx
-        .update(wecomAibotDmActivations)
-        .set({ userId: null, boundAt: null, updatedAt: input.at })
-        .where(
-          and(
-            eq(wecomAibotDmActivations.botId, input.botId),
-            eq(wecomAibotDmActivations.userId, input.userId),
-            ne(wecomAibotDmActivations.wecomUserid, input.wecomUserid),
-          ),
-        );
-      await tx
-        .insert(wecomAibotDmActivations)
-        .values({
-          botId: input.botId,
-          wecomUserid: input.wecomUserid,
+    const claimed = await client
+      .update(wecomIdBindingCodes)
+      .set({ status: "used", usedAt: input.at, usedWecomUserid: input.wecomUserid })
+      .where(
+        and(
+          eq(wecomIdBindingCodes.id, input.codeId),
+          eq(wecomIdBindingCodes.botId, input.botId),
+          eq(wecomIdBindingCodes.status, "pending"),
+          gt(wecomIdBindingCodes.expiresAt, input.at),
+        ),
+      )
+      .returning({ id: wecomIdBindingCodes.id });
+    if (claimed.length === 0) {
+      return false;
+    }
+    await client
+      .update(wecomAibotDmActivations)
+      .set({ userId: null, boundAt: null, updatedAt: input.at })
+      .where(
+        and(
+          eq(wecomAibotDmActivations.botId, input.botId),
+          eq(wecomAibotDmActivations.userId, input.userId),
+          ne(wecomAibotDmActivations.wecomUserid, input.wecomUserid),
+        ),
+      );
+    await client
+      .insert(wecomAibotDmActivations)
+      .values({
+        botId: input.botId,
+        wecomUserid: input.wecomUserid,
+        userId: input.userId,
+        firstActivatedAt: input.at,
+        lastMessageAt: input.at,
+        boundAt: input.at,
+        createdAt: input.at,
+        updatedAt: input.at,
+      })
+      .onConflictDoUpdate({
+        target: [wecomAibotDmActivations.botId, wecomAibotDmActivations.wecomUserid],
+        set: {
           userId: input.userId,
-          firstActivatedAt: input.at,
-          lastMessageAt: input.at,
           boundAt: input.at,
-          createdAt: input.at,
+          lastMessageAt: input.at,
           updatedAt: input.at,
-        })
-        .onConflictDoUpdate({
-          target: [wecomAibotDmActivations.botId, wecomAibotDmActivations.wecomUserid],
-          set: {
-            userId: input.userId,
-            boundAt: input.at,
-            lastMessageAt: input.at,
-            updatedAt: input.at,
-          },
-        });
-      return true;
-    });
+        },
+      });
+    return true;
   }
 
   /** 投递留痕（channel = wecom_aibot；一次尝试一行）。 */

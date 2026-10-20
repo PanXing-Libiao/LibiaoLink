@@ -1990,7 +1990,7 @@ export function buildOpenApiDocument() {
     path: "/api/v1/wecom-dm-binding/codes",
     tags: ["notifications"],
     summary:
-      "生成绑定码（D3 / D5）：6 位数字 · TTL 5 分钟 · 一次性 · 5 次 / 3 分钟 / 用户（D3 修订 v1.8 —— 超出 429 RATE_LIMITED）；重复取码作废上一条未用码；用户把码发进企微单聊即绑定（v1.8：以码持有者为准换绑 · 会话内回执由 worker 承担）",
+      "生成绑定码（D3 / D5）：6 位数字 · TTL 3 分钟 · 一次性 · 5 次 / 3 分钟 / 用户（超出 429 RATE_LIMITED）；重复取码作废上一条未用码；用户把码发进企微单聊即绑定（v1.8：以码持有者为准换绑 · 会话内回执由 worker 承担；验证侧 5 次 / 10 分钟失败后指数锁定）",
     responses: {
       200: { description: "绑定码（code / expiresAt / expiresInSeconds）", ...json(WecomDmBindingCodeSchema) },
       401: commonErrors[401],
