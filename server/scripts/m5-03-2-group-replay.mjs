@@ -91,6 +91,7 @@ async function main() {
   const group = await import(distFile("notify.group.service.js"));
   const { ClockService } = await import(pathToFileURL(join(HERE, "..", "dist", "common", "clock", "clock.service.js")).href);
   const { OutboxDispatcher } = await import(pathToFileURL(join(HERE, "..", "dist", "outbox", "dispatcher.js")).href);
+  const { createReplayNotifyDeliveryArchive } = await import(pathToFileURL(join(HERE, "support", "notify-delivery-archive-fake.mjs")).href);
 
   check("G1 dist 群播报消费服务可用（NotifyGroupService 导出）", typeof group.NotifyGroupService === "function");
 
@@ -160,7 +161,15 @@ async function main() {
         return { duplicate: false };
       },
     };
-    return { service: new group.NotifyGroupService(repo, aibot, inbox, clock), repo, aibot, inbox };
+    const archive = createReplayNotifyDeliveryArchive(repo);
+    const config = { env: { WECOM_R06_IMAGE_PATH: "", WECOM_R06_ON_TIME_IMAGE_PATH: "" } };
+    return {
+      service: new group.NotifyGroupService(repo, archive, aibot, inbox, clock, config),
+      repo,
+      archive,
+      aibot,
+      inbox,
+    };
   };
 
   {

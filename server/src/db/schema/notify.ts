@@ -23,6 +23,10 @@
  *
  * 0059 · 绑定码防猜码守卫生效：绑定码增加 bot_id（查询 / 唯一性按机器人隔离）；激活表增加失败窗口、指数锁定与
  * 最近回调 msgid 幂等字段。口径见 database/migrations/0059_wecom_dm_binding_guard.sql。
+ *
+ * 0061 · M5-06-2A 追加：notify_delivery_messages（消息级发送归档 · 独立于 outbox 清理）
+ * + notify_deliveries.message_id（尝试级关联；历史行允许 null）。口径见
+ * database/migrations/0061_notify_delivery_messages.sql 与 docs/M5-06-实施方案与执行计划(规则管理与发送记录).md §3.4。
  */
 import { sql } from "drizzle-orm";
 import {
@@ -33,6 +37,7 @@ import {
   check,
   index,
   integer,
+  jsonb,
   pgTable,
   primaryKey,
   text,
@@ -319,9 +324,117 @@ export const wecomIdBindingCodes = pgTable(
 );
 
 /**
+ * 消息级发送归档（C2-07 / C5-03 · M5-06-2A · 0061）：一次 outbox 消息一行，独立于 outbox /
+ * 尝试级行的保留策略；source_dedupe_key 唯一 = 重复消费与回填幂等。
+ */
+export const notifyDeliveryMessages = pgTable(
+  "notify_delivery_messages",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    outboxId: bigint("outbox_id", { mode: "number" }).references(() => outboxEvents.id, { onDelete: "set null" }),
+    /** 来源 outbox dedupeKey（唯一）：消费重放与回填幂等键。 */
+    sourceDedupeKey: text("source_dedupe_key").notNull(),
+    /** notify.message / notify.group。 */
+    topic: text("topic").notNull(),
+    /** inbox / wecom_app / wecom_aibot / wecom_group / email。 */
+    channel: text("channel").notNull(),
+    /** 站内信 / 个人企微收件人；群播报 = null；不设 users FK（用户删除后历史事实仍保留）。 */
+    recipientId: uuid("recipient_id"),
+    /** 展示名或掩码目标；不得存 Secret。 */
+    recipientLabel: text("recipient_label"),
+    title: text("title"),
+    body: text("body").notNull(),
+    templateCode: text("template_code"),
+    ruleCode: text("rule_code"),
+    refType: text("ref_type"),
+    refId: text("ref_id"),
+    /** 原始规范化载荷快照；重发所需 projectId / group 寻址等字段从此取。 */
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    /** M5-06-2B 重发关联；普通消息 = null。 */
+    resendOfMessageId: bigint("resend_of_message_id", { mode: "number" }).references(
+      (): AnyPgColumn => notifyDeliveryMessages.id,
+      { onDelete: "set null" },
+    ),
+    /** 操作 / 回填 / 迁移等附加标记；不得放 Secret。 */
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+    /** pending / sent / failed / deferred / dead。 */
+    lastState: text("last_state").notNull().default("pending"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    lastError: text("last_error"),
+    /** 首次 API 受理时刻；非 sent / 尚未成功 = null。 */
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("uq_notify_delivery_messages_source").on(table.sourceDedupeKey),
+    index("ix_notify_delivery_messages_outbox").on(table.outboxId, table.id.desc()),
+    index("ix_notify_delivery_messages_channel_created").on(table.channel, table.createdAt.desc()),
+    index("ix_notify_delivery_messages_state_created").on(table.lastState, table.createdAt.desc()),
+    index("ix_notify_delivery_messages_rule_created").on(table.ruleCode, table.createdAt.desc()),
+    index("ix_notify_delivery_messages_resend")
+      .on(table.resendOfMessageId)
+      .where(sql`${table.resendOfMessageId} is not null`),
+    check(
+      "ck_notify_delivery_messages_source_dedupe_key",
+      sql`char_length(btrim(${table.sourceDedupeKey})) between 1 and 256`,
+    ),
+    check("ck_notify_delivery_messages_topic", sql`${table.topic} in ('notify.message', 'notify.group')`),
+    check(
+      "ck_notify_delivery_messages_channel",
+      sql`${table.channel} in ('inbox', 'wecom_app', 'wecom_aibot', 'wecom_group', 'email')`,
+    ),
+    check(
+      "ck_notify_delivery_messages_recipient_label",
+      sql`${table.recipientLabel} is null or char_length(btrim(${table.recipientLabel})) between 1 and 256`,
+    ),
+    check(
+      "ck_notify_delivery_messages_title",
+      sql`${table.title} is null or char_length(btrim(${table.title})) between 1 and 200`,
+    ),
+    check("ck_notify_delivery_messages_body", sql`char_length(btrim(${table.body})) between 1 and 4000`),
+    check(
+      "ck_notify_delivery_messages_template_code",
+      sql`${table.templateCode} is null or char_length(btrim(${table.templateCode})) between 1 and 60`,
+    ),
+    check(
+      "ck_notify_delivery_messages_rule_code",
+      sql`${table.ruleCode} is null or char_length(btrim(${table.ruleCode})) between 2 and 32`,
+    ),
+    check(
+      "ck_notify_delivery_messages_ref",
+      sql`(${table.refType} is null) = (${table.refId} is null)
+        and (${table.refType} is null or char_length(btrim(${table.refType})) between 1 and 40)
+        and (${table.refId} is null or char_length(btrim(${table.refId})) between 1 and 64)`,
+    ),
+    check("ck_notify_delivery_messages_payload", sql`jsonb_typeof(${table.payload}) = 'object'`),
+    check("ck_notify_delivery_messages_metadata", sql`jsonb_typeof(${table.metadata}) = 'object'`),
+    check(
+      "ck_notify_delivery_messages_resend",
+      sql`${table.resendOfMessageId} is null or ${table.resendOfMessageId} <> ${table.id}`,
+    ),
+    check(
+      "ck_notify_delivery_messages_state",
+      sql`${table.lastState} in ('pending', 'sent', 'failed', 'deferred', 'dead')`,
+    ),
+    check("ck_notify_delivery_messages_attempt_count", sql`${table.attemptCount} >= 0`),
+    check(
+      "ck_notify_delivery_messages_outcome",
+      sql`(${table.lastState} = 'sent' and ${table.sentAt} is not null and ${table.lastError} is null)
+        or (${table.lastState} = 'pending' and ${table.sentAt} is null and ${table.lastError} is null)
+        or (${table.lastState} in ('failed', 'deferred', 'dead')
+          and ${table.sentAt} is null and ${table.lastError} is not null
+          and char_length(btrim(${table.lastError})) > 0)`,
+    ),
+    check("ck_notify_delivery_messages_timestamps", sql`${table.updatedAt} >= ${table.createdAt}`),
+  ],
+);
+
+/**
  * 外部渠道投递留痕（C2-07 / C5-03 共用底座 · 0046）：每次尝试一行；state = 处置三分类映射 ——
  * sent（API 受理成功）/ failed（retryable，将退避重试）/ deferred（rate_limited，延期重排、不消耗重试次数）/
- * dead（permanent 或重试到顶）；outbox_id 指向来源事件（outbox 行清理后置 null，留档不回删）。
+ * dead（permanent 或重试到顶）；outbox_id 指向来源事件（outbox 行清理后置 null，留档不回删）；
+ * 0061 起 message_id 关联消息级归档（历史行允许 null）。
  * 0048 扩 channel 值：增 wecom_aibot（单聊 aibot 投递留痕；保留旧值，见迁移 0048）。
  */
 export const notifyDeliveries = pgTable(
@@ -329,6 +442,10 @@ export const notifyDeliveries = pgTable(
   {
     id: bigserial("id", { mode: "number" }).primaryKey(),
     outboxId: bigint("outbox_id", { mode: "number" }).references(() => outboxEvents.id, { onDelete: "set null" }),
+    /** 消息级归档（M5-06-2A）；历史尝试行允许 null。 */
+    messageId: bigint("message_id", { mode: "number" }).references(() => notifyDeliveryMessages.id, {
+      onDelete: "set null",
+    }),
     /** 投递渠道（NOTIFY_CHANNELS 的企微 / 邮件交集；inbox 不落本表 —— 收件箱行即留档）。 */
     channel: text("channel").notNull(),
     /** 投递目标全文（wecom_app = userid / wecom_aibot = userid / wecom_group = chatid；读面掩码，库内全文供排障）。 */
@@ -344,6 +461,7 @@ export const notifyDeliveries = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    index("ix_notify_deliveries_message").on(table.messageId, table.id),
     index("ix_notify_deliveries_outbox").on(table.outboxId, table.id.desc()),
     index("ix_notify_deliveries_recent").on(table.channel, table.createdAt.desc()),
     check("ck_notify_deliveries_channel", sql`${table.channel} in ('wecom_app', 'wecom_aibot', 'wecom_group', 'email')`),

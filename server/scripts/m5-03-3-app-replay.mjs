@@ -86,6 +86,7 @@ async function main() {
   const app = await import(pathToFileURL(join(HERE, "..", "dist", "modules", "notify", "notify.app.service.js")).href);
   const alert = await import(pathToFileURL(join(HERE, "..", "dist", "outbox", "wecom-alert.sink.js")).href);
   const { ClockService } = await import(pathToFileURL(join(HERE, "..", "dist", "common", "clock", "clock.service.js")).href);
+  const { createReplayNotifyDeliveryArchive } = await import(pathToFileURL(join(HERE, "support", "notify-delivery-archive-fake.mjs")).href);
 
   check("A1 dist 应用消息消费服务可用（NotifyAppService 导出）", typeof app.NotifyAppService === "function");
 
@@ -139,7 +140,8 @@ async function main() {
         return { duplicate: false };
       },
     };
-    return { service: new app.NotifyAppService(repo, client, inbox, clock), repo, client, inbox };
+    const archive = createReplayNotifyDeliveryArchive(repo);
+    return { service: new app.NotifyAppService(repo, archive, client, inbox, clock), repo, archive, client, inbox };
   };
 
   {

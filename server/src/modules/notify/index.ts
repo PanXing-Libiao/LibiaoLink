@@ -50,6 +50,17 @@ export type {
 export { PgRateWindowStore } from "./wecom.rate.pg.js";
 export { NotifyService } from "./notify.service.js";
 export type { NotifyFlushStats, NotifySnoozeFlushStats } from "./notify.service.js";
+export {
+  inferNotifyRuleCode,
+  NotifyDeliveryArchiveRepository,
+} from "./notify.delivery-archive.repository.js";
+export type {
+  NotifyDeliveryAttemptInsert,
+  NotifyDeliveryAttemptState,
+  NotifyDeliveryMessageInsert,
+  NotifyDeliveryMessageRow,
+  NotifyDeliveryStateUpdate,
+} from "./notify.delivery-archive.repository.js";
 export { NOTIFY_GROUP_TOPIC, NOTIFY_MESSAGE_TOPIC } from "./notify.constants.js";
 export {
   channelOfNotifyPayload,

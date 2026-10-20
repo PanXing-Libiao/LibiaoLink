@@ -22,6 +22,8 @@ export interface NotifyMessageRow {
   refType: string | null;
   refId: string | null;
   templateCode: string | null;
+  /** 来源幂等键（内部字段：flush / 合并时推进消息级归档；不进收件箱契约）。 */
+  sourceDedupeKey: string;
   mergeKey: string;
   mergedCount: number;
   mergedIntoId: number | null;
@@ -94,6 +96,7 @@ const NOTIFY_SELECT = {
   refType: notifications.refType,
   refId: notifications.refId,
   templateCode: notifications.templateCode,
+  sourceDedupeKey: notifications.sourceDedupeKey,
   mergeKey: notifications.mergeKey,
   mergedCount: notifications.mergedCount,
   mergedIntoId: notifications.mergedIntoId,
@@ -126,6 +129,17 @@ export class NotifyRepository {
       })
       .onConflictDoNothing({ target: notifications.sourceDedupeKey })
       .returning(NOTIFY_SELECT);
+    return rows[0] ?? null;
+  }
+
+  /** 重复消费读回既有通知行（消息归档状态收敛用）；无行返回 null。 */
+  async findBySourceDedupeKey(sourceDedupeKey: string, tx?: DbClient): Promise<NotifyMessageRow | null> {
+    const db = tx ?? this.database.db;
+    const rows = await db
+      .select(NOTIFY_SELECT)
+      .from(notifications)
+      .where(eq(notifications.sourceDedupeKey, sourceDedupeKey))
+      .limit(1);
     return rows[0] ?? null;
   }
 

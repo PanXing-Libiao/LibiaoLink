@@ -250,6 +250,12 @@ jobs:
           M5_06_1B_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
           M5_06_1B_BASE_URL: http://127.0.0.1:3011
         run: node scripts/m5-06-1b-replay.mjs
+      # M5-06-2A（消息级发送归档 / 回填 / outbox 清理 · S8-4 · lan，Push 272）：请 px 复核（.github/ 属 px 线；先例 Push 156/157）
+      - name: M5-06-2A delivery archive replay
+        working-directory: server
+        env:
+          M5_06_2A_REPLAY_DATABASE_URL: postgresql://libiaolink_api@127.0.0.1:5432/libiaolink
+        run: node scripts/m5-06-2a-replay.mjs
       - name: M3-06 stress replay (10k tasks + index comparison)
         working-directory: server
         env:

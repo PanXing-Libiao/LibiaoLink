@@ -17,7 +17,6 @@ import type {
   DmBindingGuardRow,
   DmBindingCodeRow,
   DmBindingRow,
-  NotifyDmDeliveryInsert,
   WecomDmContact,
 } from "../src/modules/notify/notify.dm.repository.js";
 import {
@@ -41,6 +40,7 @@ import {
   truncateDmMarkdown,
 } from "../src/modules/notify/notify.dm.service.js";
 import type { AibotIncomingMessage, AibotSendResult, WecomAibotClient } from "../src/modules/notify/wecom.aibot.js";
+import { FakeNotifyDeliveryArchive } from "./fakes/notify-delivery-archive.fake.js";
 
 const AT = new Date("2026-10-14T06:00:00.000Z");
 const BEFORE = new Date("2026-10-14T05:00:00.000Z");
@@ -66,12 +66,15 @@ function emptyGuard(): DmBindingGuardRow {
 }
 
 class FakeDmRepository {
+  readonly archive = new FakeNotifyDeliveryArchive();
   contacts = new Map<string, WecomDmContact>();
   activations = new Map<string, DmActivationRow>();
   bindings = new Map<string, { botId: string; wecomUserid: string; userId: string; boundAt: Date }>();
   codes = new Map<string, DmBindingCodeRow>();
   guards = new Map<string, DmBindingGuardRow>();
-  deliveries: NotifyDmDeliveryInsert[] = [];
+  get deliveries() {
+    return this.archive.attempts;
+  }
   upsertCalls: { botId: string; wecomUserid: string; at: Date }[] = [];
   backfillCalls: { botId: string; wecomUserid: string; userId: string; at: Date }[] = [];
   bindCalls: { codeId: number; userId: string; botId: string; wecomUserid: string; at: Date }[] = [];
@@ -286,10 +289,6 @@ class FakeDmRepository {
     return true;
   }
 
-  async insertDelivery(input: NotifyDmDeliveryInsert): Promise<void> {
-    this.deliveries.push(input);
-  }
-
   /** 解绑（D6）：清当前机器人下该用户的绑定行；`clearOverride` 复现「并发已清 → 清 0 行」竞态。 */
   async clearBindingByUserId(
     input: { botId: string; userId: string; at: Date },
@@ -386,6 +385,7 @@ function makeService(envOverrides: Record<string, unknown> = {}): {
   inbox: FakeNotifyInbox;
   audit: FakeAudit;
   clock: ClockService;
+  archive: FakeNotifyDeliveryArchive;
 } {
   const repo = new FakeDmRepository();
   const aibot = new FakeAibot();
@@ -407,6 +407,7 @@ function makeService(envOverrides: Record<string, unknown> = {}): {
   const database = new FakeDatabase();
   const service = new NotifyDmService(
     repo as never,
+    repo.archive as never,
     aibot as unknown as WecomAibotClient,
     inbox as never,
     clock,
@@ -414,7 +415,7 @@ function makeService(envOverrides: Record<string, unknown> = {}): {
     audit as never,
     database as never,
   );
-  return { service, repo, aibot, inbox, audit, clock };
+  return { service, repo, aibot, inbox, audit, clock, archive: repo.archive };
 }
 
 function contact(overrides: Partial<WecomDmContact> = {}): WecomDmContact {
@@ -548,7 +549,7 @@ describe("extractBindingCode（正文归一取码 · 口径 §5）", () => {
 
 describe("NotifyDmService.consume（三分类 + 留痕 + 降级 + 绑定行寻址）", () => {
   it("ok：done + sent 行（target = 绑定行 open_userid）+ 加粗标题发出 + 未命中激活表 → 旁证回填（D4）", async () => {
-    const { service, repo, aibot, inbox } = makeBoundService();
+    const { service, repo, aibot, inbox, archive } = makeBoundService();
 
     const outcome = await service.consume(claimedRow(payload()));
 
@@ -558,6 +559,39 @@ describe("NotifyDmService.consume（三分类 + 留痕 + 降级 + 绑定行寻�
     expect(aibot.sends[0]!.content).toBe("**任务节点完成**\n\n节点：到货验收 负责人：张工");
     expect(repo.backfillCalls).toEqual([{ botId: BOT_ID, wecomUserid: OPEN_USERID, userId: USER_ID, at: AT }]);
     expect(inbox.copies).toEqual([]);
+    expect(archive.messages[0]).toMatchObject({
+      sourceDedupeKey: "R02:t-1:v5:aibot",
+      channel: "wecom_aibot",
+      recipientId: USER_ID,
+      ruleCode: "R02",
+      lastState: "sent",
+      attemptCount: 1,
+      recipientLabel: "****" + OPEN_USERID.slice(-4),
+      sentAt: AT,
+    });
+    expect(archive.attempts[0]).toMatchObject({ messageId: archive.messages[0]!.id, channel: "wecom_aibot" });
+  });
+
+  it("重复消费：归档已 sent → done，不再发起第二次单聊帧", async () => {
+    const { service, archive, aibot } = makeBoundService();
+
+    expect(await service.consume(claimedRow(payload()))).toEqual({ outcome: "done" });
+    expect(await service.consume(claimedRow(payload()))).toEqual({ outcome: "done" });
+
+    expect(aibot.sends).toHaveLength(1);
+    expect(archive.messages).toHaveLength(1);
+    expect(archive.attempts).toHaveLength(1);
+  });
+
+  it("归档失败：不发帧，交 outbox retry", async () => {
+    const { service, repo, aibot, archive } = makeBoundService();
+    archive.failEnsure = true;
+
+    const outcome = await service.consume(claimedRow(payload()));
+
+    expect(outcome).toMatchObject({ outcome: "retry", error: expect.stringContaining("归档失败") });
+    expect(aibot.sends).toEqual([]);
+    expect(repo.deliveries).toEqual([]);
   });
 
   it("ok：命中激活表 → dmActivated=true 传入、不重复回填", async () => {

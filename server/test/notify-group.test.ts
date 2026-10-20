@@ -10,7 +10,6 @@ import { describe, expect, it } from "vitest";
 import { ClockService } from "../src/common/clock/clock.service.js";
 import type { OutboxClaimedRow } from "../src/db/outbox.store.js";
 import type {
-  NotifyDeliveryInsert,
   WecomGroupCandidateRow,
   WecomGroupRow,
 } from "../src/modules/notify/notify.group.repository.js";
@@ -28,6 +27,7 @@ import {
   truncateGroupMarkdown,
 } from "../src/modules/notify/notify.group.service.js";
 import type { AibotIncomingMessage, AibotSendResult, WecomAibotClient } from "../src/modules/notify/wecom.aibot.js";
+import { FakeNotifyDeliveryArchive } from "./fakes/notify-delivery-archive.fake.js";
 
 const AT = new Date("2026-10-12T06:00:00.000Z");
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
@@ -47,8 +47,12 @@ function groupRow(overrides: Partial<WecomGroupRow> & { projectId: string; chati
 }
 
 class FakeGroupRepository {
+  readonly archive = new FakeNotifyDeliveryArchive();
   groups: WecomGroupRow[] = [];
-  deliveries: NotifyDeliveryInsert[] = [];
+
+  get deliveries() {
+    return this.archive.attempts;
+  }
   activateCalls: { chatid: string; at: Date }[] = [];
   candidates: WecomGroupCandidateRow[] = [];
   observeCalls: { chatid: string; name: string | null; at: Date }[] = [];
@@ -112,9 +116,6 @@ class FakeGroupRepository {
     return this.allTasksOnTime;
   }
 
-  async insertDelivery(input: NotifyDeliveryInsert): Promise<void> {
-    this.deliveries.push(input);
-  }
 }
 
 class FakeAibot {
@@ -184,6 +185,7 @@ function makeService(r06ImagePath = "", r06OnTimeImagePath = ""): {
   repo: FakeGroupRepository;
   aibot: FakeAibot;
   inbox: FakeNotifyInbox;
+  archive: FakeNotifyDeliveryArchive;
 } {
   const repo = new FakeGroupRepository();
   const aibot = new FakeAibot();
@@ -192,12 +194,13 @@ function makeService(r06ImagePath = "", r06OnTimeImagePath = ""): {
   clock.setSource(() => AT);
   const service = new NotifyGroupService(
     repo as never,
+    repo.archive as never,
     aibot as unknown as WecomAibotClient,
     inbox as never,
     clock,
     { env: { WECOM_R06_IMAGE_PATH: r06ImagePath, WECOM_R06_ON_TIME_IMAGE_PATH: r06OnTimeImagePath } } as never,
   );
-  return { service, repo, aibot, inbox };
+  return { service, repo, aibot, inbox, archive: repo.archive };
 }
 
 function claimedRow(payload: Record<string, unknown>, overrides: Partial<OutboxClaimedRow> = {}): OutboxClaimedRow {
@@ -312,7 +315,7 @@ describe("parseGroupNameCommand（群内群名命令）", () => {
 
 describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分类）", () => {
   it("ok：发送受理 → done + sent 行（sentAt 非空 / error 为空 / attempts=1）", async () => {
-    const { service, repo, aibot } = makeService();
+    const { service, repo, aibot, archive } = makeService();
     repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
 
     const outcome = await service.consume(claimedRow(payload({ title: null })));
@@ -320,8 +323,44 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
     expect(outcome).toEqual({ outcome: "done" });
     expect(aibot.sends[0]).toMatchObject({ chatid: CHATID, content: payload()["body"], groupActivated: true });
     expect(repo.deliveries).toEqual([
-      { outboxId: 7, target: CHATID, state: "sent", attempts: 1, error: null, sentAt: AT },
+      expect.objectContaining({ outboxId: 7, target: CHATID, state: "sent", attempts: 1, error: null, sentAt: AT }),
     ]);
+    expect(archive.messages[0]).toMatchObject({
+      sourceDedupeKey: "R03:t-1:2026-09-24",
+      topic: "notify.group",
+      channel: "wecom_group",
+      recipientId: null,
+      recipientLabel: "project:" + PROJECT_ID + " · " + maskChatid(CHATID),
+      ruleCode: "R03",
+      lastState: "sent",
+      attemptCount: 1,
+      sentAt: AT,
+    });
+    expect(archive.attempts[0]).toMatchObject({ messageId: archive.messages[0]!.id, channel: "wecom_group" });
+  });
+
+  it("重复消费：归档已 sent → done，不再发起第二次群消息", async () => {
+    const { service, repo, aibot, archive } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
+
+    expect(await service.consume(claimedRow(payload()))).toEqual({ outcome: "done" });
+    expect(await service.consume(claimedRow(payload()))).toEqual({ outcome: "done" });
+
+    expect(aibot.sends).toHaveLength(1);
+    expect(archive.messages).toHaveLength(1);
+    expect(archive.attempts).toHaveLength(1);
+  });
+
+  it("归档失败：不发群消息，交 outbox retry", async () => {
+    const { service, repo, aibot, archive } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
+    archive.failEnsure = true;
+
+    const outcome = await service.consume(claimedRow(payload()));
+
+    expect(outcome).toMatchObject({ outcome: "retry", error: expect.stringContaining("归档失败") });
+    expect(aibot.sends).toEqual([]);
+    expect(repo.deliveries).toEqual([]);
   });
 
   it("rate_limited：deferred 延期重排（availableAt = retryAt；attempts 不消耗）+ deferred 行", async () => {

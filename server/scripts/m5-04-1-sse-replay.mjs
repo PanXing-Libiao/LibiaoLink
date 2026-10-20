@@ -234,13 +234,14 @@ async function loadRuntime() {
   await import("reflect-metadata");
   const load = (relative) => import(pathToFileURL(join(HERE, "..", "dist", relative)).href);
   try {
-    const [envModule, configModule, databaseModule, clockModule, repositoryModule, serviceModule, publisherModule, streamModule] =
+    const [envModule, configModule, databaseModule, clockModule, repositoryModule, archiveModule, serviceModule, publisherModule, streamModule] =
       await Promise.all([
         load("config/env.js"),
         load("config/config.module.js"),
         load("db/database.service.js"),
         load("common/clock/clock.service.js"),
         load("modules/notify/notify.repository.js"),
+        load("modules/notify/notify.delivery-archive.repository.js"),
         load("modules/notify/notify.service.js"),
         load("modules/notify/notify.stream.publisher.js"),
         load("modules/notify/notify.stream.js"),
@@ -251,6 +252,7 @@ async function loadRuntime() {
       DatabaseService: databaseModule.DatabaseService,
       ClockService: clockModule.ClockService,
       NotifyRepository: repositoryModule.NotifyRepository,
+      NotifyDeliveryArchiveRepository: archiveModule.NotifyDeliveryArchiveRepository,
       NotifyService: serviceModule.NotifyService,
       NotifyStreamPublisher: publisherModule.NotifyStreamPublisher,
       NOTIFY_STREAM_CHANNEL: streamModule.NOTIFY_STREAM_CHANNEL,
@@ -319,10 +321,12 @@ async function main() {
   const config = new runtime.AppConfig(env);
   const database = new runtime.DatabaseService(config);
   const repository = new runtime.NotifyRepository(database);
+  const archive = new runtime.NotifyDeliveryArchiveRepository(database);
   const clock = new runtime.ClockService();
-  const notify = new runtime.NotifyService(repository, database, config, clock, new runtime.NotifyStreamPublisher());
+  const notify = new runtime.NotifyService(repository, archive, database, config, clock, new runtime.NotifyStreamPublisher());
   const claimed = (id, dedupeKey, message) => ({
-    id,
+    // 本回放直接构造 outbox 领取行、不落 outbox_events；2A 归档允许 outbox_id = null。
+    id: null,
     topic: "notify.message",
     payload: message,
     dedupeKey,
@@ -335,6 +339,7 @@ async function main() {
 
   try {
     // ------------------------------------------------------------------ S0 基线
+    await db.query("delete from notify_delivery_messages where source_dedupe_key like $1", [DEDUPE_PREFIX + ".%"]).catch(() => {});
     await db.query("delete from notifications where source_dedupe_key like $1", [DEDUPE_PREFIX + ".%"]).catch(() => {});
     const users = await db.query(
       "insert into users (casdoor_id, username, display_name, status) values ($1, $2, $3, 'active'), ($4, $5, $6, 'active') returning id, username",
@@ -544,6 +549,7 @@ async function main() {
     for (const stream of streams) stream.close();
     try {
       if (!cleanup.keep) {
+        await db.query("delete from notify_delivery_messages where source_dedupe_key like $1", [DEDUPE_PREFIX + ".%"]).catch(() => {});
         await db.query("delete from notifications where source_dedupe_key like $1", [DEDUPE_PREFIX + ".%"]).catch(() => {});
         if (cleanup.tokenHashes.length > 0) {
           await db.query("delete from sessions where token_hash = any($1::text[])", [cleanup.tokenHashes]);
@@ -559,12 +565,15 @@ async function main() {
         DEDUPE_PREFIX + ".%",
       ]);
       const userResidue = await db.query("select count(*)::int as n from users where username like $1", [USER_PREFIX + "%"]);
+      const archiveResidue = await db.query("select count(*)::int as n from notify_delivery_messages where source_dedupe_key like $1", [
+        DEDUPE_PREFIX + ".%",
+      ]);
       check(
         "S9",
         "自清理：合成前缀零残留（--keep 时保留现场、仅留痕）",
-        cleanup.keep ? "keep=true（不清理）" : "notifications=0 / users=0",
-        short({ notifications: residue.rows[0].n, users: userResidue.rows[0].n, keep: cleanup.keep }),
-        cleanup.keep || (residue.rows[0].n === 0 && userResidue.rows[0].n === 0),
+        cleanup.keep ? "keep=true（不清理）" : "notifications=0 / archives=0 / users=0",
+        short({ notifications: residue.rows[0].n, archives: archiveResidue.rows[0].n, users: userResidue.rows[0].n, keep: cleanup.keep }),
+        cleanup.keep || (residue.rows[0].n === 0 && archiveResidue.rows[0].n === 0 && userResidue.rows[0].n === 0),
       );
     } catch (error) {
       check("S9", "自清理：合成前缀零残留", "清理成功", "清理失败：" + messageOf(error), false);
