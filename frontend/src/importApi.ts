@@ -34,9 +34,15 @@ export type ImportAccount = {
   isNew: boolean;
 };
 
-/** 需手动导入的图片（导入表里的微盘 / 本地路径，系统抓不到 —— 面板列清单，导入后人工上传）。 */
+/** 手动文件落位：task = 任务表「文件」列；change_after = 变更表「变更后文件」。 */
+export type ImportManualFileKind = "task" | "change_after";
+
+/** 需手动导入的文件（导入表里的微盘 / 本地路径，系统抓不到 —— 面板就地选文件，确认导入后一并上传）。 */
 export type ImportManualImage = {
-  task: string;
+  /** 稳定标识（manual-<序号>；提交结果 manualTargets 按此回传任务 / 变更目标）。 */
+  id: string;
+  kind: ImportManualFileKind;
+  task: string | null;
   name: string;
   reason: string;
 };
@@ -91,6 +97,13 @@ export type ProjectImportCommitInput = {
   addMissingNodes: boolean;
 };
 
+/** 手动文件落位目标（提交结果回传；前端据此在导入后把选中的文件直传到对应任务 / 变更）。 */
+export type ImportManualTarget = {
+  id: string;
+  taskId: string | null;
+  changeId: string | null;
+};
+
 /** 导入结果（完成页展示 + 提醒复述）。 */
 export type ProjectImportResult = {
   projectId: string;
@@ -106,6 +119,8 @@ export type ProjectImportResult = {
     accountsCreated: number;
     nodesAdded: number;
   };
+  /** 手动文件落位目标（与预览 imagesManual 同序；旧服务端缺省 = 空数组）。 */
+  manualTargets?: ImportManualTarget[];
   issues: ImportIssue[];
 };
 
@@ -121,4 +136,13 @@ export function previewProjectImport(file: File): Promise<ProjectImportPreview> 
 /** 确认导入（可取消）：传入 signal，abort → 服务端连接断开 → 单事务回滚（零残留），票据保留可再次确认。 */
 export function commitProjectImport(input: ProjectImportCommitInput, signal?: AbortSignal): Promise<ProjectImportResult> {
   return apiSend<ProjectImportResult>("/api/v1/project-imports/commit", "POST", input, signal);
+}
+
+/** 导入补充附件回挂变更：文件直传完成后调用（变更后文件不再显示「待补」）。 */
+export function attachManualChangeFile(projectId: string, changeId: string, fileId: string): Promise<void> {
+  return apiSend<void>(
+    "/api/v1/projects/" + encodeURIComponent(projectId) + "/import-manual-files/attach-change",
+    "POST",
+    { changeId, fileId },
+  );
 }

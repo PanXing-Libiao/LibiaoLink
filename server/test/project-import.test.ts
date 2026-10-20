@@ -258,6 +258,35 @@ function createHarness() {
       this.changeImageCalls.push(updates);
     },
     changeImageCalls: [] as Array<Array<{ changeId: string; beforeFileIds: string[]; afterFileIds: string[] }>>,
+    manualAttachFile: null as {
+      id: string;
+      projectId: string;
+      name: string;
+      status: string;
+      currentVersionId: string | null;
+    } | null,
+    manualChangeProjectId: null as string | null,
+    manualAttachOutcome: "attached" as "attached" | "already" | "conflict" | "missing" | "missing_change",
+    manualAttachCalls: [] as Array<{ fileId: string; versionId: string; changeId: string; actorId: string; at: Date }>,
+    async findFileForManualAttach(): Promise<{
+      id: string;
+      projectId: string;
+      name: string;
+      status: string;
+      currentVersionId: string | null;
+    } | null> {
+      return this.manualAttachFile;
+    },
+    async findChangeProjectId(): Promise<string | null> {
+      return this.manualChangeProjectId;
+    },
+    async attachChangeFile(
+      tx: unknown,
+      input: { fileId: string; versionId: string; changeId: string; actorId: string; at: Date },
+    ): Promise<"attached" | "already" | "conflict" | "missing" | "missing_change"> {
+      this.manualAttachCalls.push(input);
+      return this.manualAttachOutcome;
+    },
     async insertFiles(
       tx: unknown,
       projectId: string,
@@ -614,6 +643,15 @@ describe("ProjectImportService.preview（导入表解析预览）", () => {
     expect(preview.accounts.find((account) => account.username === "jiahaiyang")?.displayName).toBe("贾海洋");
 
     expect(preview.imagesManual.map((image) => image.name).sort()).toEqual(["Layout更新版.dwg", "现场补装说明.docx"]);
+    expect(preview.imagesManual.map((image) => image.id)).toEqual(["manual-0", "manual-1"]);
+    expect(preview.imagesManual.find((image) => image.name === "Layout更新版.dwg")).toMatchObject({
+      kind: "change_after",
+      task: "供应商货架立柱尺寸不符",
+    });
+    expect(preview.imagesManual.find((image) => image.name === "现场补装说明.docx")).toMatchObject({
+      kind: "task",
+      task: "现场补装",
+    });
     expect(preview.imagesManual[0]?.reason).toContain("手动上传");
   });
 
@@ -778,6 +816,60 @@ describe("ProjectImportService.preview（导入表解析预览）", () => {
 // ---------- commit ----------
 
 describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
+  it("手动补充附件回挂变更：写版本变更 id + 定档 + 审计；冲突 / 跨项目拒绝", async () => {
+    const h = createHarness();
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    const changeId = "22222222-2222-4222-8222-222222222222";
+    const fileId = "33333333-3333-4333-8333-333333333333";
+    const versionId = "44444444-4444-4444-8444-444444444444";
+    h.previews.manualAttachFile = {
+      id: fileId,
+      projectId,
+      name: "Layout-更新版.dwg",
+      status: "draft",
+      currentVersionId: versionId,
+    };
+    h.previews.manualChangeProjectId = projectId;
+
+    await h.service.attachManualChangeFile(projectId, changeId, fileId, ACTOR_ID);
+
+    expect(h.previews.manualAttachCalls).toHaveLength(1);
+    expect(h.previews.manualAttachCalls[0]).toMatchObject({ fileId, versionId, changeId, actorId: ACTOR_ID });
+    expect(h.audit.records.some((record) => record.objectType === "change" && record.objectId === changeId)).toBe(true);
+
+    const auditCount = h.audit.records.length;
+    h.previews.manualAttachOutcome = "already";
+    await h.service.attachManualChangeFile(projectId, changeId, fileId, ACTOR_ID);
+    expect(h.audit.records.length).toBe(auditCount);
+
+    h.previews.manualAttachOutcome = "missing";
+    await expectCode(() => h.service.attachManualChangeFile(projectId, changeId, fileId, ACTOR_ID), "NOT_FOUND");
+
+    h.previews.manualAttachOutcome = "missing_change";
+    await expectCode(() => h.service.attachManualChangeFile(projectId, changeId, fileId, ACTOR_ID), "NOT_FOUND");
+
+    h.previews.manualAttachOutcome = "conflict";
+    await expectCode(() => h.service.attachManualChangeFile(projectId, changeId, fileId, ACTOR_ID), "VALIDATION_FAILED");
+
+    h.previews.manualAttachFile = {
+      id: fileId,
+      projectId,
+      name: "Layout-更新版.dwg",
+      status: "archived",
+      currentVersionId: versionId,
+    };
+    await expectCode(() => h.service.attachManualChangeFile(projectId, changeId, fileId, ACTOR_ID), "VALIDATION_FAILED");
+
+    h.previews.manualAttachFile = {
+      id: fileId,
+      projectId: "55555555-5555-4555-8555-555555555555",
+      name: "Layout-更新版.dwg",
+      status: "draft",
+      currentVersionId: versionId,
+    };
+    await expectCode(() => h.service.attachManualChangeFile(projectId, changeId, fileId, ACTOR_ID), "NOT_FOUND");
+  });
+
   it("写入取消（Push 321）：上传途中 abort → 回滚零残留（票据仍可提交 + 源文件保留 + 已传图片清理）", async () => {
     const h = createHarness();
     const preview = await runPreview(h);
@@ -835,6 +927,10 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
     expect(result.code).toBe("LBGW-20260331-1459");
     expect(result.name).toBe("UK-VANILLA-AIRROB");
     expect(result.counts).toEqual({ tasks: 4, reports: 2, changes: 1, changesLinked: 0, stakeholders: 0, images: 2, accountsCreated: 5, nodesAdded: 1 });
+    expect(result.manualTargets).toEqual([
+      { id: "manual-0", taskId: null, changeId: "change-0" },
+      { id: "manual-1", taskId: "task-3", changeId: null },
+    ]);
 
     // 项目落位：编号 / 地区 / 类型 / 项目经理（贾海洋 不在库 → 回落导入人）
     const inserted = h.projects.inserted[0]!;
