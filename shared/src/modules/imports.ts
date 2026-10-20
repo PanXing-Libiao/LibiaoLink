@@ -106,7 +106,7 @@ export const ImportPreviewCountsSchema = z
     tasks: z.number().int().min(0),
     reports: z.number().int().min(0),
     changes: z.number().int().min(0),
-    changesLinked: z.number().int().min(0).openapi({ description: "变更已关联任务数（「关联」列命中任务描述；其余只存变更记录）" }),
+    changesLinked: z.number().int().min(0).openapi({ description: "变更已关联任务数（「关联」列 + R01 输出成果文件匹配；其余只存变更记录）" }),
     stakeholders: z
       .number()
       .int()
@@ -125,7 +125,7 @@ export const ImportResultCountsSchema = z
     tasks: z.number().int().min(0),
     reports: z.number().int().min(0),
     changes: z.number().int().min(0),
-    changesLinked: z.number().int().min(0).openapi({ description: "变更已关联任务数（「关联」列命中任务描述；其余只存变更记录）" }),
+    changesLinked: z.number().int().min(0).openapi({ description: "变更已关联任务数（「关联」列 + R01 输出成果文件匹配；其余只存变更记录）" }),
     stakeholders: z.number().int().min(0).openapi({ description: "干系人条数（导入表「干系人」表；落 stakeholders + project_stakeholders）" }),
     images: z.number().int().min(0),
     accountsCreated: z.number().int().min(0).openapi({ description: "本次落位账号数（信息性：账号由 SSO 登录创建，这里指识别到的账号数）" }),

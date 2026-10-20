@@ -96,11 +96,11 @@ describe("ProjectImportRepository.attachChangeFile（一变更一版本）", () 
     expect(fake.versionUpdates).toEqual([]);
   });
 
-  it("成功 → 写版本变更 id + 文件定档 + file_links(change)", async () => {
+  it("成功 → 写版本变更 id + 文件状态置 changed + file_links(change)", async () => {
     const fake = fakeTx({ changeExists: true, attached: [], version: { id: input.versionId, changeRequestId: null } });
     await expect(repository.attachChangeFile(fake.tx, input)).resolves.toBe("attached");
     expect(fake.versionUpdates).toEqual([{ changeRequestId: input.changeId }]);
-    expect(fake.fileUpdates).toEqual([{ status: "final", finalizedAt: AT, finalizedBy: input.actorId, updatedAt: AT }]);
+    expect(fake.fileUpdates).toEqual([{ status: "changed", updatedAt: AT }]);
     expect(fake.linkInserts).toEqual([
       {
         fileId: input.fileId,

@@ -244,7 +244,7 @@ renderer 不执行脚本；服务容器无外网、不配置外部资源目录�
 
 ### S2 · 服务端硬边界（安全止血）
 
-- 执行状态（2026-10-20）：代码、单测与最终门禁已完成，待 PR 合入；`PREVIEW_PIPELINE_VERSION` 仍为 `1.0.0`，切 `2.0.0` 属 S4。SVG 已保留在线预览入口，但读取面只投递 / 返回 `target=image` 的 PNG 产物，原 SVG 永不进入直签分支。最终门禁 = server `typecheck` / `build` / `check:boundaries` 通过，Vitest **85 文件 / 1321 例**全过；含 64 KiB 前缀截断 UTF-8 多字节字符的合法 SVG / HTML 回归。
+- 执行状态（2026-10-20）：代码、单测与最终门禁已完成，待 PR 合入；`PREVIEW_PIPELINE_VERSION` 仍为 `1.0.0`，切 `2.0.0` 属 S4。SVG 已保留在线预览入口，但读取面只投递 / 返回 `target=image` 的 PNG 产物，原 SVG 永不进入直签分支。合并 `main` `ff1c625` 后最终门禁 = server `typecheck` / `build` / `check:boundaries` 通过，Vitest **85 文件 / 1323 例**全过；含 64 KiB 前缀截断 UTF-8 多字节字符的合法 SVG / HTML 回归。
 
 - 重构 `preview.targets.ts`；移除 `image/*` 前缀匹配与 SVG 位图直签。
 - `file.service.ts` 完成上传时规范化 MIME、检查扩展名 / 文件头一致性；数据库保存规范 MIME，原始对象固定 `application/octet-stream`。

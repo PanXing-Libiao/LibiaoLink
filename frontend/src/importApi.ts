@@ -73,6 +73,7 @@ export type ProjectImportPreview = {
     tasks: number;
     reports: number;
     changes: number;
+    /** 变更 ↔ 任务关联条数（「关联」列 + R01 输出成果文件匹配）。 */
     changesLinked: number;
     stakeholders: number;
     images: number;
@@ -113,6 +114,7 @@ export type ProjectImportResult = {
     tasks: number;
     reports: number;
     changes: number;
+    /** 变更 ↔ 任务关联条数（「关联」列 + R01 输出成果文件匹配）。 */
     changesLinked: number;
     stakeholders: number;
     images: number;
