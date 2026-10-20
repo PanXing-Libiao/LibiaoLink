@@ -71,7 +71,7 @@ function rowXml(cells: string): string {
   return "<row>" + cells + "</row>";
 }
 
-function workbook(sheetData: string, media: ZipEntryInput[] = []): Buffer {
+function workbook(sheetData: string, media: ZipEntryInput[] = [], sharedStrings?: string): Buffer {
   const quote = String.fromCharCode(34);
   return zipStore([
     {
@@ -82,6 +82,14 @@ function workbook(sheetData: string, media: ZipEntryInput[] = []): Buffer {
       name: "xl/_rels/workbook.xml.rels",
       data: Buffer.from("<Relationships><Relationship Id=" + quote + "rId1" + quote + " Target=" + quote + "worksheets/sheet1.xml" + quote + "/></Relationships>", "utf8"),
     },
+    ...(sharedStrings === undefined
+      ? []
+      : [
+          {
+            name: "xl/sharedStrings.xml",
+            data: Buffer.from(sharedStrings, "utf8"),
+          },
+        ]),
     {
       name: "xl/worksheets/sheet1.xml",
       data: Buffer.from("<worksheet><sheetData>" + sheetData + "</sheetData></worksheet>", "utf8"),
@@ -136,5 +144,17 @@ describe("xlsx parser resource limits", () => {
     const parsed = parseWorkbook(bytes, { maxMediaBytes: 100, maxMediaTotalBytes: 10 });
     expect(parsed.readMedia("a.jpg")?.length).toBe(6);
     expect(() => parsed.readMedia("b.jpg")).toThrowError(/图片总量超过上限/);
+  });
+});
+
+describe("xlsx parser text decoding", () => {
+  it("decodes decimal and hexadecimal XML character references in shared strings", () => {
+    const bytes = workbook(
+      rowXml("<c r=\"A1\" t=\"s\"><v>0</v></c>"),
+      [],
+      "<sst><si><t>第一行&#10;第二行&#13;&#10;第三行&#x4E09; &amp; 文档&#X000A;结束 &amp;#10; 保持原文</t></si></sst>",
+    );
+    const parsed = parseWorkbook(bytes);
+    expect(parsed.sheets[0]?.rows[0]?.[0]).toBe("第一行\n第二行\r\n第三行三 & 文档\n结束 &#10; 保持原文");
   });
 });

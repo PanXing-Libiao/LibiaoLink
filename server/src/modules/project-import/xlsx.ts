@@ -215,13 +215,30 @@ function between(text: string, open: string, close: string): string | null {
   return text.slice(start + open.length, end);
 }
 
+function isXmlCodePoint(codePoint: number): boolean {
+  return (
+    codePoint === 0x9 ||
+    codePoint === 0xa ||
+    codePoint === 0xd ||
+    (codePoint >= 0x20 && codePoint <= 0xd7ff) ||
+    (codePoint >= 0xe000 && codePoint <= 0xfffd) ||
+    (codePoint >= 0x10000 && codePoint <= 0x10ffff)
+  );
+}
+
 function unescapeXml(text: string): string {
-  return text
-    .split("&lt;").join("<")
-    .split("&gt;").join(">")
-    .split("&quot;").join(String.fromCharCode(34))
-    .split("&apos;").join(String.fromCharCode(39))
-    .split("&amp;").join("&");
+  return text.replace(
+    /&#(?:[xX]([0-9a-fA-F]+)|([0-9]+));|&(lt|gt|quot|apos|amp);/g,
+    (entity: string, hex: string | undefined, decimal: string | undefined, named: string | undefined): string => {
+      if (named === "lt") return "<";
+      if (named === "gt") return ">";
+      if (named === "quot") return String.fromCharCode(34);
+      if (named === "apos") return String.fromCharCode(39);
+      if (named === "amp") return "&";
+      const codePoint = hex === undefined ? Number(decimal) : Number.parseInt(hex, 16);
+      return isXmlCodePoint(codePoint) ? String.fromCodePoint(codePoint) : entity;
+    },
+  );
 }
 
 function parseRelationships(xml: string): Map<string, string> {
