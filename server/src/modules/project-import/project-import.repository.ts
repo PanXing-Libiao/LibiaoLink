@@ -117,6 +117,18 @@ export interface ImportStakeholderInsert {
   createdAt: Date | null;
 }
 
+/** 手动补充附件回挂变更的读面行（文件当前版本 + 归属）。 */
+export interface ManualAttachFileRow {
+  id: string;
+  projectId: string;
+  name: string;
+  status: string;
+  currentVersionId: string | null;
+}
+
+/** 手动补充附件回挂结果：attached = 本次挂上；already = 已挂同一变更；conflict = 变更已有其它版本 / 版本已挂其它变更；missing = 版本不存在；missing_change = 变更不存在。 */
+export type ManualAttachOutcome = "attached" | "already" | "conflict" | "missing" | "missing_change";
+
 /**
  * 导入表导入数据访问：预览票据（project_import_previews：插入 / 取回 / 状态机 / 过期清扫输入）+ 读面辅助（用户 / 节点库）+ 提交批量写入。
  * 写入方法全部接收调用方事务（tx），由服务层保证「建项目 + 全量数据」单事务。
@@ -413,6 +425,84 @@ export class ProjectImportRepository {
         .set({ currentVersionId: sql`(select id from file_versions where file_id = ${row.id} and seq = 1)`, updatedAt: at })
         .where(eq(files.id, row.id));
     }
+  }
+
+  /** 手动补充附件：按 fileId 取文件归属与当前版本（服务层做项目 / 状态校验）。 */
+  async findFileForManualAttach(fileId: string): Promise<ManualAttachFileRow | null> {
+    const rows = await this.database.db
+      .select({
+        id: files.id,
+        projectId: files.projectId,
+        name: files.name,
+        status: files.status,
+        currentVersionId: files.currentVersionId,
+      })
+      .from(files)
+      .where(eq(files.id, fileId))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  /** 变更所属项目（回挂前做归属校验；不存在 = null）。 */
+  async findChangeProjectId(changeId: string): Promise<string | null> {
+    const rows = await this.database.db
+      .select({ projectId: changeRequests.projectId })
+      .from(changeRequests)
+      .where(eq(changeRequests.id, changeId))
+      .limit(1);
+    return rows[0]?.projectId ?? null;
+  }
+
+  /**
+   * 手动补充附件回挂变更（同一事务）：file_versions.change_request_id = 本次变更 + 文件定档 + file_links(change)。
+   * 一期「一变更一版本」：先锁变更行，再查该变更是否已有版本 —— 同文件重复调用 = 幂等 no-op；
+   * 变更已有其它文件 = conflict；版本已挂其它变更 = conflict。
+   */
+  async attachChangeFile(
+    tx: DbClient,
+    input: { fileId: string; versionId: string; changeId: string; actorId: string; at: Date },
+  ): Promise<ManualAttachOutcome> {
+    const changes = await tx
+      .select({ id: changeRequests.id })
+      .from(changeRequests)
+      .where(eq(changeRequests.id, input.changeId))
+      .limit(1)
+      .for("update");
+    if (changes[0] === undefined) return "missing_change";
+    const attached = await tx
+      .select({ id: fileVersions.id })
+      .from(fileVersions)
+      .where(eq(fileVersions.changeRequestId, input.changeId))
+      .limit(1);
+    if (attached[0] !== undefined) {
+      return attached[0].id === input.versionId ? "already" : "conflict";
+    }
+    const rows = await tx
+      .select({ id: fileVersions.id, changeRequestId: fileVersions.changeRequestId })
+      .from(fileVersions)
+      .where(and(eq(fileVersions.id, input.versionId), eq(fileVersions.fileId, input.fileId)))
+      .limit(1);
+    const version = rows[0];
+    if (version === undefined) return "missing";
+    if (version.changeRequestId === input.changeId) return "already";
+    if (version.changeRequestId !== null) return "conflict";
+    await tx.update(fileVersions).set({ changeRequestId: input.changeId }).where(eq(fileVersions.id, input.versionId));
+    await tx
+      .update(files)
+      .set({ status: "final", finalizedAt: input.at, finalizedBy: input.actorId, updatedAt: input.at })
+      .where(eq(files.id, input.fileId));
+    await tx
+      .insert(fileLinks)
+      .values({
+        fileId: input.fileId,
+        objectType: "change",
+        objectId: input.changeId,
+        kind: "",
+        createdBy: input.actorId,
+        createdAt: input.at,
+      })
+      .onConflictDoNothing();
+    return "attached";
   }
 
   /** 变更附图回填（Push 349）：导入的变更前 / 变更后图（files.id 有序、≤ 30）→ change_requests 两列（同 0052 应用内口径：无 file_links、无外键）。 */

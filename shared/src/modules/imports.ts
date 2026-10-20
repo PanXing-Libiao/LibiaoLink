@@ -58,14 +58,23 @@ export const ImportAccountSchema = z
   .openapi("ImportAccount", { description: "导入涉及的人员账号（只报告，不在导入里创建账号 —— 缺号仅测试环境需预建；正式环境用户目录完整）" });
 export type ImportAccount = z.infer<typeof ImportAccountSchema>;
 
-/** 需手动导入的文件（导入表只写了文件名 / 微盘路径，源文件抓不到）：导入后按清单人工上传。 */
+/** 需手动导入的文件（导入表只写了文件名 / 微盘路径，源文件抓不到）：面板可就地选文件，确认导入后一并上传。 */
+export const ImportManualFileKindSchema = z
+  .enum(["task", "change_after"])
+  .openapi("ImportManualFileKind", {
+    description: "手动文件落位：task = 任务表「文件」列（自动挂对应任务）；change_after = 变更表「变更后文件」（有关联任务时同时挂任务）",
+  });
+export type ImportManualFileKind = z.infer<typeof ImportManualFileKindSchema>;
+
 export const ImportManualImageSchema = z
   .object({
+    id: z.string().min(1).max(60).openapi({ description: "稳定标识（manual-<序号>；提交结果据此回传任务 / 变更目标）" }),
+    kind: ImportManualFileKindSchema,
     task: z.string().max(200).nullable().openapi({ description: "关联任务 / 变更行（可空）" }),
     name: z.string().min(1).max(300).openapi({ description: "文件名 / 路径（源表原文）" }),
     reason: z.string().min(1).max(200).openapi({ description: "原因（微盘 / 本地路径，需手动上传）" }),
   })
-  .openapi("ImportManualImage", { description: "需手动导入的图片 / 文件清单" });
+  .openapi("ImportManualImage", { description: "需手动导入的图片 / 文件清单（面板可就地选文件，确认导入后一并上传）" });
 export type ImportManualImage = z.infer<typeof ImportManualImageSchema>;
 
 /** 任务节点匹配：matched = 节点库已有（逐字一致）；未匹配按文件原名导入，勾选后补进节点库。 */
@@ -171,6 +180,25 @@ export const ProjectImportCommitBodySchema = z
 export type ProjectImportCommitBody = z.infer<typeof ProjectImportCommitBodySchema>;
 export type ProjectImportCommitBodyInput = z.input<typeof ProjectImportCommitBodySchema>;
 
+/** 手动附件回挂变更：前端直传完成后，把文件版本挂到导入变更（变更详情随即可预览 / 下载）。 */
+export const ProjectImportManualAttachBodySchema = z
+  .object({
+    changeId: UuidSchema,
+    fileId: UuidSchema,
+  })
+  .openapi("ProjectImportManualAttachBody", { description: "导入补充附件挂接变更（changeId + 已上传 fileId）" });
+export type ProjectImportManualAttachBody = z.infer<typeof ProjectImportManualAttachBodySchema>;
+
+/** 手动文件提交目标：id 对应预览 imagesManual[].id；taskId / changeId 由提交时已写入库的记录回传。 */
+export const ImportManualTargetSchema = z
+  .object({
+    id: z.string().min(1).max(60),
+    taskId: UuidSchema.nullable(),
+    changeId: UuidSchema.nullable(),
+  })
+  .openapi("ImportManualTarget", { description: "手动文件落位目标（任务 / 变更；均可空）" });
+export type ImportManualTarget = z.infer<typeof ImportManualTargetSchema>;
+
 /** 导入结果（完成页展示 + 提醒复述）。 */
 export const ProjectImportResultSchema = z
   .object({
@@ -178,6 +206,11 @@ export const ProjectImportResultSchema = z
     code: z.string().min(1).max(64),
     name: z.string().min(1).max(200),
     counts: ImportResultCountsSchema,
+    manualTargets: z
+      .array(ImportManualTargetSchema)
+      .max(2000)
+      .default([])
+      .openapi({ description: "手动文件落位目标（与预览 imagesManual 同序；前端据此在导入后一并上传）" }),
     issues: z.array(ImportIssueSchema).max(5000).openapi({ description: "完成后复述的提醒清单（照原值导入项与人工待办）" }),
   })
   .openapi("ProjectImportResult", { description: "导入表导入结果（项目已创建 + 各域条数 + 提醒复述）" });
