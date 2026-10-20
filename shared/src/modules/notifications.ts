@@ -394,8 +394,8 @@ export type NotificationSnoozeListResponse = z.infer<typeof NotificationSnoozeLi
 
 /** 绑定码位数（D3：6 位数字）。 */
 export const WECOM_DM_BINDING_CODE_LENGTH = 6;
-/** 绑定码有效期（D3 修订 v1.8：5 分钟 —— 原 10 分钟）。 */
-export const WECOM_DM_BINDING_CODE_TTL_MS = 5 * 60_000;
+/** 绑定码有效期（2026-10-20 安全修订：3 分钟）。 */
+export const WECOM_DM_BINDING_CODE_TTL_MS = 3 * 60_000;
 /**
  * 绑定码生成频率窗口（D3 修订 v1.8：3 分钟）。
  * 罚时锚点 = 窗口内**最近一次**取码（v1.9 修订）：倒计时恒为「最近取码 + 3 分钟」，不随被拦重试延长；
@@ -412,11 +412,11 @@ export const WecomDmBindingCodeSchema = z
       .string()
       .regex(/^[0-9]{6}$/)
       .openapi({ description: "6 位数字绑定码（用户在企微里把这条码发给机器人完成绑定）", example: "482913" }),
-    expiresAt: DateTimeSchema.openapi({ description: "失效时刻（= 生成时刻 + 5 分钟）" }),
+    expiresAt: DateTimeSchema.openapi({ description: "失效时刻（= 生成时刻 + 3 分钟）" }),
     expiresInSeconds: z.number().int().positive().openapi({ description: "剩余有效期（秒；供前端倒计时）" }),
   })
   .openapi("WecomDmBindingCode", {
-    description: "绑定码（一次性：用户首次发码即绑定并置 used；重复取码会作废上一条未用码；TTL 5 分钟）",
+    description: "绑定码（一次性：用户首次发码即绑定并置 used；重复取码会作废上一条未用码；TTL 3 分钟）",
   });
 export type WecomDmBindingCode = z.infer<typeof WecomDmBindingCodeSchema>;
 

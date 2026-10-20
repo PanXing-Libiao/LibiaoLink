@@ -6,7 +6,7 @@ import { NotifyDmService } from "./notify.dm.service.js";
 
 /**
  * 企业微信单聊绑定接口（M5-03-5-6 绑定码链路 · 契约刀 · Push 249）：契约 = shared/src/modules/notifications.ts
- * 末尾「企业微信单聊绑定」段；口径 = `docs/M5-03-5-绑定码方案设计口径(企微单聊).md` v1.8 §3 / §4 / §9 / §10（D2 · D3 · D5 · D6）。
+ * 末尾「企业微信单聊绑定」段；口径 = `docs/M5-03-5-绑定码方案设计口径(企微单聊).md` v2.0 §3 / §4 / §9 / §10（D2 · D3 · D5 · D6）。
  * 根路径 /api/v1/wecom-dm-binding —— 个人资源（同收件箱 / 通知偏好先例）：无功能权限键、无项目域判定；
  * 读 = 会话；取码 / 解绑 = 会话 + CSRF。与 NotifyController 分挂两个前缀：本组是「绑定资源」，不是通知条目。
  * 链路：取码（POST codes）→ 用户把码发进企微单聊（worker `NotifyDmService.ingestCallback` 落绑定 + 会话内回执）
@@ -38,7 +38,7 @@ export class WecomDmBindingController {
   }
 
   /**
-   * 取码（D3 签发 · 频率 D3 修订 v1.8）：6 位数字 / TTL 5 分钟 / 一次性（重复取码作废上一条未用码）；
+   * 取码（D3 签发 · 频率 D3 修订 v1.8）：6 位数字 / TTL 3 分钟 / 一次性（重复取码作废上一条未用码）；
    * 频率到顶（5 次 / 3 分钟 / 用户）→ 429 `RATE_LIMITED` + `details[].meta.retryAt`（最长等待 ≤ 3 分钟）。
    */
   @Post("codes")

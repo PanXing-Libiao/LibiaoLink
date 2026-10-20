@@ -14,6 +14,7 @@ import type { OutboxClaimedRow } from "../src/db/outbox.store.js";
 import type { AuditRecordInput } from "../src/modules/audit/index.js";
 import type {
   DmActivationRow,
+  DmBindingGuardRow,
   DmBindingCodeRow,
   DmBindingRow,
   NotifyDmDeliveryInsert,
@@ -21,12 +22,16 @@ import type {
 } from "../src/modules/notify/notify.dm.repository.js";
 import {
   composeDmMarkdown,
+  DM_BINDING_FAILURE_LIMIT,
+  DM_BINDING_FAILURE_WINDOW_MS,
   DM_BINDING_CODE_MAX_PER_WINDOW,
   DM_BINDING_CODE_WINDOW_MS,
   DM_BINDING_CODE_TTL_MS,
   DM_BINDING_DEGRADE_PREFIX,
   DM_BINDING_REPLY_BOUND,
   DM_BINDING_REPLY_INVALID,
+  DM_BINDING_REPLY_LOCKED,
+  DM_BINDING_LOCK_STEPS_MS,
   DM_DEGRADE_PREFIX,
   DM_MARKDOWN_MAX_BYTES,
   DM_TRUNCATION_SUFFIX,
@@ -49,16 +54,31 @@ function key(botId: string, wecomUserid: string): string {
   return botId + "|" + wecomUserid;
 }
 
+function emptyGuard(): DmBindingGuardRow {
+  return {
+    bindingFailCount: 0,
+    bindingFailWindowStartedAt: null,
+    bindingLockLevel: 0,
+    bindingLockedUntil: null,
+    lastBindingAttemptAt: null,
+    lastBindingMsgid: null,
+  };
+}
+
 class FakeDmRepository {
   contacts = new Map<string, WecomDmContact>();
   activations = new Map<string, DmActivationRow>();
   bindings = new Map<string, { botId: string; wecomUserid: string; userId: string; boundAt: Date }>();
   codes = new Map<string, DmBindingCodeRow>();
+  guards = new Map<string, DmBindingGuardRow>();
   deliveries: NotifyDmDeliveryInsert[] = [];
   upsertCalls: { botId: string; wecomUserid: string; at: Date }[] = [];
   backfillCalls: { botId: string; wecomUserid: string; userId: string; at: Date }[] = [];
   bindCalls: { codeId: number; userId: string; botId: string; wecomUserid: string; at: Date }[] = [];
-  codeCreateCalls: { userId: string; code: string; expiresAt: Date; at: Date }[] = [];
+  codeCreateCalls: { botId: string; userId: string; code: string; expiresAt: Date; at: Date }[] = [];
+  findCodeCalls: { code: string; botId: string }[] = [];
+  guardUpdates: DmBindingGuardRow[] = [];
+  touchCalls: { botId: string; wecomUserid: string; at: Date; lastBindingMsgid: string | null }[] = [];
   /** 频率限制读面替身（窗口内已生成码的创建时刻）。 */
   issuedAt: Date[] = [];
   /** 前 N 次取码按「撞码」返回 false（重试路径）。 */
@@ -102,6 +122,56 @@ class FakeDmRepository {
       firstActivatedAt: existing?.firstActivatedAt ?? input.at,
       lastMessageAt: input.at,
     });
+    if (!this.guards.has(key(input.botId, input.wecomUserid))) {
+      this.guards.set(key(input.botId, input.wecomUserid), emptyGuard());
+    }
+  }
+
+  async lockBindingGuard(botId: string, wecomUserid: string): Promise<DmBindingGuardRow> {
+    const guardKey = key(botId, wecomUserid);
+    const guard = this.guards.get(guardKey) ?? emptyGuard();
+    this.guards.set(guardKey, guard);
+    return guard;
+  }
+
+  async updateBindingGuard(input: {
+    botId: string;
+    wecomUserid: string;
+    at: Date;
+    bindingFailCount: number;
+    bindingFailWindowStartedAt: Date | null;
+    bindingLockLevel: number;
+    bindingLockedUntil: Date | null;
+    lastBindingMsgid: string | null;
+  }): Promise<void> {
+    const guardKey = key(input.botId, input.wecomUserid);
+    const previous = this.guards.get(guardKey) ?? emptyGuard();
+    const next = {
+      bindingFailCount: input.bindingFailCount,
+      bindingFailWindowStartedAt: input.bindingFailWindowStartedAt,
+      bindingLockLevel: input.bindingLockLevel,
+      bindingLockedUntil: input.bindingLockedUntil,
+      lastBindingAttemptAt: input.at,
+      lastBindingMsgid: input.lastBindingMsgid ?? previous.lastBindingMsgid,
+    };
+    this.guards.set(guardKey, next);
+    this.guardUpdates.push(next);
+  }
+
+  async touchBindingAttempt(input: {
+    botId: string;
+    wecomUserid: string;
+    at: Date;
+    lastBindingMsgid: string | null;
+  }): Promise<void> {
+    this.touchCalls.push(input);
+    const guardKey = key(input.botId, input.wecomUserid);
+    const previous = this.guards.get(guardKey) ?? emptyGuard();
+    this.guards.set(guardKey, {
+      ...previous,
+      lastBindingAttemptAt: input.at,
+      lastBindingMsgid: input.lastBindingMsgid ?? previous.lastBindingMsgid,
+    });
   }
 
   async backfillActivationOnSend(input: {
@@ -123,7 +193,8 @@ class FakeDmRepository {
     });
   }
 
-  async bindingCodesSince(userId: string, since: Date): Promise<Date[]> {
+  async bindingCodesSince(userId: string, botId: string, since: Date): Promise<Date[]> {
+    void botId;
     return this.issuedAt.filter((item) => item.getTime() >= since.getTime());
   }
 
@@ -138,14 +209,21 @@ class FakeDmRepository {
     return this.observedBots.slice(0, limit);
   }
 
-  async createBindingCode(input: { userId: string; code: string; expiresAt: Date; at: Date }): Promise<boolean> {
+  async createBindingCode(input: {
+    botId: string;
+    userId: string;
+    code: string;
+    expiresAt: Date;
+    at: Date;
+  }): Promise<boolean> {
     this.codeCreateCalls.push(input);
     if (this.codeConflicts > 0) {
       this.codeConflicts -= 1;
       return false;
     }
-    this.codes.set(input.code, {
+    this.codes.set(key(input.botId, input.code), {
       id: this.nextCodeId,
+      botId: input.botId,
       code: input.code,
       userId: input.userId,
       status: "pending",
@@ -155,15 +233,25 @@ class FakeDmRepository {
     return true;
   }
 
-  async findBindingCode(code: string): Promise<DmBindingCodeRow | null> {
-    return this.codes.get(code) ?? null;
+  async findBindingCode(code: string, botId: string): Promise<DmBindingCodeRow | null> {
+    this.findCodeCalls.push({ code, botId });
+    return this.codes.get(key(botId, code)) ?? this.codes.get(code) ?? null;
   }
 
   /** 读面回填替身（v1.8）：该用户当前仍未失效的 pending 码（同一用户至多一条 —— 取 id 最大者）。 */
-  async findPendingBindingCode(userId: string, at: Date): Promise<{ code: string; expiresAt: Date } | null> {
+  async findPendingBindingCode(
+    userId: string,
+    botId: string,
+    at: Date,
+  ): Promise<{ code: string; expiresAt: Date } | null> {
     let found: { code: string; expiresAt: Date; id: number } | null = null;
     for (const row of this.codes.values()) {
-      if (row.userId !== userId || row.status !== "pending" || row.expiresAt.getTime() <= at.getTime()) {
+      if (
+        row.botId !== botId ||
+        row.userId !== userId ||
+        row.status !== "pending" ||
+        row.expiresAt.getTime() <= at.getTime()
+      ) {
         continue;
       }
       if (found === null || row.id > found.id) {
@@ -185,7 +273,7 @@ class FakeDmRepository {
       return false;
     }
     for (const row of this.codes.values()) {
-      if (row.id === input.codeId) {
+      if (row.id === input.codeId && row.botId === input.botId) {
         row.status = "used";
       }
     }
@@ -221,6 +309,7 @@ class FakeDmRepository {
 
 class FakeAibot {
   sends: { userid: string; content: string; dmActivated?: boolean | null }[] = [];
+  groupSends: { chatid: string; content: string; groupActivated?: boolean | null }[] = [];
   replies: { reqId: string; userid: string; content: string }[] = [];
   welcomes: { reqId: string; content: string }[] = [];
   result: AibotSendResult = { ok: true, attempts: 1 };
@@ -233,6 +322,15 @@ class FakeAibot {
     dmActivated?: boolean | null;
   }): Promise<AibotSendResult> {
     this.sends.push(params);
+    return this.result;
+  }
+
+  async sendGroupMarkdown(params: {
+    chatid: string;
+    content: string;
+    groupActivated?: boolean | null;
+  }): Promise<AibotSendResult> {
+    this.groupSends.push(params);
     return this.result;
   }
 
@@ -287,6 +385,7 @@ function makeService(envOverrides: Record<string, unknown> = {}): {
   aibot: FakeAibot;
   inbox: FakeNotifyInbox;
   audit: FakeAudit;
+  clock: ClockService;
 } {
   const repo = new FakeDmRepository();
   const aibot = new FakeAibot();
@@ -315,7 +414,7 @@ function makeService(envOverrides: Record<string, unknown> = {}): {
     audit as never,
     database as never,
   );
-  return { service, repo, aibot, inbox, audit };
+  return { service, repo, aibot, inbox, audit, clock };
 }
 
 function contact(overrides: Partial<WecomDmContact> = {}): WecomDmContact {
@@ -331,7 +430,15 @@ function binding(overrides: Partial<DmBindingRow> = {}): DmBindingRow {
 }
 
 function codeRow(overrides: Partial<DmBindingCodeRow> = {}): DmBindingCodeRow {
-  return { id: 7, code: CODE, userId: USER_ID, status: "pending", expiresAt: new Date(AT.getTime() + 60_000), ...overrides };
+  return {
+    id: 7,
+    botId: BOT_ID,
+    code: CODE,
+    userId: USER_ID,
+    status: "pending",
+    expiresAt: new Date(AT.getTime() + 60_000),
+    ...overrides,
+  };
 }
 
 /** 已绑定（可投递）的消费场景：联系人 + 绑定行齐备。 */
@@ -824,17 +931,28 @@ describe("NotifyDmService.ingestCallback（单聊绑定码 · 口径 §5）", ()
     expect(repo.bindCalls).toEqual([]);
   });
 
-  it("正文未命中任何码：登记激活 + 不回复（防探测）", async () => {
-    const { service, repo, aibot } = makeService();
+  it("正文含 6 位数字但未命中：统一失败话术 + 计 1 次失败（不泄露码存在性）", async () => {
+    const { service, repo, aibot, audit } = makeService();
 
     await service.ingestCallback(codeIncoming("绑定654321"));
 
     expect(repo.upsertCalls).toHaveLength(1);
     expect(repo.bindCalls).toEqual([]);
-    expect(aibot.replies).toEqual([]);
+    expect(aibot.replies).toEqual([{ reqId: "ReqIdCallback0001", userid: OPEN_USERID, content: DM_BINDING_REPLY_INVALID }]);
+    expect(repo.guards.get(key(BOT_ID, OPEN_USERID))).toMatchObject({ bindingFailCount: 1, bindingLockLevel: 0 });
+    expect(audit.records).toHaveLength(1);
+    expect(audit.records[0]!.input).toMatchObject({
+      action: "deny",
+      objectType: "wecom_dm_binding",
+      result: "denied",
+      entry: "system",
+      actorId: null,
+    });
+    expect(JSON.stringify(audit.records[0]!.input)).not.toContain(OPEN_USERID);
+    expect(JSON.stringify(audit.records[0]!.input)).not.toContain("654321");
   });
 
-  it("码已过期：回「码已失效，请重新获取」+ 不写绑定", async () => {
+  it("码已过期：统一失败话术 + 计次 + 不写绑定", async () => {
     const { service, repo, aibot } = makeService();
     repo.codes.set(CODE, codeRow({ expiresAt: new Date(AT.getTime() - 1_000) }));
 
@@ -842,9 +960,10 @@ describe("NotifyDmService.ingestCallback（单聊绑定码 · 口径 §5）", ()
 
     expect(repo.bindCalls).toEqual([]);
     expect(aibot.replies).toEqual([{ reqId: "ReqIdCallback0001", userid: OPEN_USERID, content: DM_BINDING_REPLY_INVALID }]);
+    expect(repo.guards.get(key(BOT_ID, OPEN_USERID))).toMatchObject({ bindingFailCount: 1, bindingLockLevel: 0 });
   });
 
-  it("码已用（status=used）：回「码已失效，请重新获取」+ 不写绑定", async () => {
+  it("码已用（status=used）且不归当前企微号：统一失败话术 + 计次 + 不写绑定", async () => {
     const { service, repo, aibot } = makeService();
     repo.codes.set(CODE, codeRow({ status: "used" }));
 
@@ -852,6 +971,7 @@ describe("NotifyDmService.ingestCallback（单聊绑定码 · 口径 §5）", ()
 
     expect(repo.bindCalls).toEqual([]);
     expect(aibot.replies).toEqual([{ reqId: "ReqIdCallback0001", userid: OPEN_USERID, content: DM_BINDING_REPLY_INVALID }]);
+    expect(repo.guards.get(key(BOT_ID, OPEN_USERID))).toMatchObject({ bindingFailCount: 1, bindingLockLevel: 0 });
   });
 
   it("跨用户换绑（v1.8 · 以码持有者为准）：绑定行改挂到码持有者 + 旧持有者回落未绑定 + 审计 1 条", async () => {
@@ -897,7 +1017,7 @@ describe("NotifyDmService.ingestCallback（单聊绑定码 · 口径 §5）", ()
     expect(audit.records).toHaveLength(0); // 本人重复投递非换绑
   });
 
-  it("占用失败（并发消费 / 恰过期）：回「码已失效」+ 不写绑定", async () => {
+  it("占用失败（并发消费 / 恰过期）：统一失败话术 + 计次 + 不写绑定", async () => {
     const { service, repo, aibot } = makeService();
     repo.codes.set(CODE, codeRow());
     repo.bindFails = true;
@@ -907,6 +1027,7 @@ describe("NotifyDmService.ingestCallback（单聊绑定码 · 口径 §5）", ()
     expect(repo.bindCalls).toHaveLength(1);
     expect(repo.bindings.size).toBe(0);
     expect(aibot.replies).toEqual([{ reqId: "ReqIdCallback0001", userid: OPEN_USERID, content: DM_BINDING_REPLY_INVALID }]);
+    expect(repo.guards.get(key(BOT_ID, OPEN_USERID))).toMatchObject({ bindingFailCount: 1, bindingLockLevel: 0 });
   });
 
   it("回调缺 req_id：跳过会话内回执（不抛错），绑定仍落库", async () => {
@@ -935,12 +1056,135 @@ describe("NotifyDmService.ingestCallback（单聊绑定码 · 口径 §5）", ()
     await second.service.ingestCallback(codeIncoming());
     expect(second.repo.bindings.size).toBe(1);
   });
+
+  it("5 次失败 → 锁定 1 分钟；锁定期间正确码也不查码表、不能绑定；审计与告警不含明文", async () => {
+    const alertChatid = "wrAlertTest0001";
+    const { service, repo, aibot, audit, clock } = makeService({ OUTBOX_ALERT_WECOM_CHATID: alertChatid });
+    for (let index = 0; index < DM_BINDING_FAILURE_LIMIT; index += 1) {
+      const at = new Date(AT.getTime() + index * 1_000);
+      clock.setSource(() => at);
+      await service.ingestCallback(incoming({ msgid: "bad-" + String(index), text: "654321" }));
+    }
+
+    const guard = repo.guards.get(key(BOT_ID, OPEN_USERID))!;
+    expect(DM_BINDING_FAILURE_WINDOW_MS).toBe(600_000);
+    expect(guard).toMatchObject({ bindingFailCount: 0, bindingLockLevel: 1 });
+    expect(guard.bindingLockedUntil?.getTime()).toBe(AT.getTime() + 4_000 + DM_BINDING_LOCK_STEPS_MS[0]!);
+    expect(aibot.replies.map((item) => item.content)).toEqual([
+      DM_BINDING_REPLY_INVALID,
+      DM_BINDING_REPLY_INVALID,
+      DM_BINDING_REPLY_INVALID,
+      DM_BINDING_REPLY_INVALID,
+      DM_BINDING_REPLY_LOCKED,
+    ]);
+    expect(audit.records).toHaveLength(5);
+    expect(audit.records.every((record) => record.input.objectType === "wecom_dm_binding")).toBe(true);
+
+    repo.codes.set(key(BOT_ID, CODE), codeRow());
+    const callsBeforeLockedAttempt = repo.findCodeCalls.length;
+    const lockedAt = new Date(AT.getTime() + 5_000);
+    clock.setSource(() => lockedAt);
+    await service.ingestCallback(incoming({ msgid: "valid-while-locked", text: CODE }));
+
+    expect(repo.findCodeCalls).toHaveLength(callsBeforeLockedAttempt);
+    expect(repo.bindCalls).toEqual([]);
+    expect(repo.bindings.size).toBe(0);
+    expect(aibot.replies.at(-1)?.content).toBe(DM_BINDING_REPLY_LOCKED);
+    expect(aibot.groupSends).toHaveLength(1);
+    expect(aibot.groupSends[0]).toMatchObject({ chatid: alertChatid, groupActivated: true });
+    expect(aibot.groupSends[0]!.content).toContain("****" + OPEN_USERID.slice(-4));
+    expect(aibot.groupSends[0]!.content).not.toContain(OPEN_USERID);
+    expect(aibot.groupSends[0]!.content).not.toContain(CODE);
+  });
+
+  it("锁定到期后再失败 5 次：升级到第 2 档 2 分钟；成功绑定清空失败与锁定状态", async () => {
+    const { service, repo, clock } = makeService();
+    for (let index = 0; index < DM_BINDING_FAILURE_LIMIT; index += 1) {
+      const at = new Date(AT.getTime() + index * 1_000);
+      clock.setSource(() => at);
+      await service.ingestCallback(incoming({ msgid: "first-" + String(index), text: "654321" }));
+    }
+    for (let index = 0; index < DM_BINDING_FAILURE_LIMIT; index += 1) {
+      const at = new Date(AT.getTime() + 70_000 + index * 1_000);
+      clock.setSource(() => at);
+      await service.ingestCallback(incoming({ msgid: "second-" + String(index), text: "654321" }));
+    }
+    expect(repo.guards.get(key(BOT_ID, OPEN_USERID))).toMatchObject({
+      bindingFailCount: 0,
+      bindingLockLevel: 2,
+    });
+    expect(repo.guards.get(key(BOT_ID, OPEN_USERID))!.bindingLockedUntil?.getTime()).toBe(
+      AT.getTime() + 74_000 + DM_BINDING_LOCK_STEPS_MS[1]!,
+    );
+
+    const successAt = new Date(AT.getTime() + 300_000);
+    repo.codes.set(
+      key(BOT_ID, CODE),
+      codeRow({ expiresAt: new Date(successAt.getTime() + 60_000) }),
+    );
+    clock.setSource(() => successAt);
+    await service.ingestCallback(incoming({ msgid: "success-after-lock", text: CODE }));
+    expect(repo.bindings.size).toBe(1);
+    expect(repo.guards.get(key(BOT_ID, OPEN_USERID))).toMatchObject({
+      bindingFailCount: 0,
+      bindingFailWindowStartedAt: null,
+      bindingLockLevel: 0,
+      bindingLockedUntil: null,
+      lastBindingMsgid: "success-after-lock",
+    });
+  });
+
+  it("同一 msgid 重投：不重复计数、不重复写审计；普通文本不消耗失败配额", async () => {
+    const { service, repo, aibot, audit } = makeService();
+    await service.ingestCallback(incoming({ msgid: "normal-message", text: "你好" }));
+    expect(repo.guards.get(key(BOT_ID, OPEN_USERID))).toEqual(emptyGuard());
+
+    await service.ingestCallback(incoming({ msgid: "same-msg", text: "654321" }));
+    await service.ingestCallback(incoming({ msgid: "same-msg", text: "654321" }));
+
+    expect(repo.guards.get(key(BOT_ID, OPEN_USERID))).toMatchObject({ bindingFailCount: 1, bindingLockLevel: 0 });
+    expect(audit.records).toHaveLength(1);
+    expect(aibot.replies.map((item) => item.content)).toEqual([DM_BINDING_REPLY_INVALID, DM_BINDING_REPLY_INVALID]);
+  });
+
+  it("机器人隔离：机器人 A 的绑定码不能通过机器人 B 验证或绑定", async () => {
+    const otherBot = "aibOtherBot0001";
+    const { service, repo, aibot } = makeService({ WECOM_BOT_ID: otherBot });
+    repo.codes.set(key(BOT_ID, CODE), codeRow());
+
+    await service.ingestCallback(incoming({ msgid: "other-bot-code", text: CODE }));
+
+    expect(repo.findCodeCalls.at(-1)).toEqual({ code: CODE, botId: otherBot });
+    expect(repo.bindCalls).toEqual([]);
+    expect(aibot.replies.at(-1)?.content).toBe(DM_BINDING_REPLY_INVALID);
+    expect(repo.guards.get(key(otherBot, OPEN_USERID))).toMatchObject({ bindingFailCount: 1, bindingLockLevel: 0 });
+  });
+
+  it("24 小时无验证尝试：下一次失败前锁定级别归零", async () => {
+    const { service, repo } = makeService();
+    repo.upsertActivationFromCallback({ botId: BOT_ID, wecomUserid: OPEN_USERID, at: AT });
+    repo.guards.set(key(BOT_ID, OPEN_USERID), {
+      ...emptyGuard(),
+      bindingFailCount: 4,
+      bindingFailWindowStartedAt: new Date(AT.getTime() - DM_BINDING_FAILURE_WINDOW_MS - 1),
+      bindingLockLevel: 6,
+      lastBindingAttemptAt: new Date(AT.getTime() - 24 * 60 * 60_000 - 1),
+    });
+
+    await service.ingestCallback(incoming({ msgid: "idle-reset", text: "654321" }));
+
+    expect(repo.guards.get(key(BOT_ID, OPEN_USERID))).toMatchObject({
+      bindingFailCount: 1,
+      bindingLockLevel: 0,
+      bindingLockedUntil: null,
+    });
+  });
 });
 
 // ---------- 取码与绑定态 ----------
 
 describe("NotifyDmService.requestBindingCode / getBindingState（D3 / D5 口径）", () => {
-  it("取码：6 位数字 + expiresAt = now + 5 分钟", async () => {
+  it("取码：6 位数字 + expiresAt = now + 3 分钟", async () => {
     const { service, repo } = makeService();
 
     const result = await service.requestBindingCode(USER_ID);
@@ -951,9 +1195,14 @@ describe("NotifyDmService.requestBindingCode / getBindingState（D3 / D5 口径�
       expect(result.expiresAt.getTime()).toBe(AT.getTime() + DM_BINDING_CODE_TTL_MS);
       expect(result.expiresInSeconds).toBe(DM_BINDING_CODE_TTL_MS / 1000);
     }
-    expect(DM_BINDING_CODE_TTL_MS).toBe(300_000); // D3 修订 v1.8：TTL 5 分钟
+    expect(DM_BINDING_CODE_TTL_MS).toBe(180_000); // 2026-10-20 安全修订：TTL 3 分钟
     expect(repo.codeCreateCalls).toHaveLength(1);
-    expect(repo.codeCreateCalls[0]).toMatchObject({ userId: USER_ID, expiresAt: new Date(AT.getTime() + DM_BINDING_CODE_TTL_MS), at: AT });
+    expect(repo.codeCreateCalls[0]).toMatchObject({
+      botId: BOT_ID,
+      userId: USER_ID,
+      expiresAt: new Date(AT.getTime() + DM_BINDING_CODE_TTL_MS),
+      at: AT,
+    });
   });
 
   it("频率限制（v1.9）：窗口内已取满 5 次 → rate_limited + retryAt = 最近一码 + 窗口长度（≤ 3 分钟）", async () => {
