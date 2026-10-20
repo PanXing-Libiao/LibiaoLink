@@ -17,3 +17,4 @@ export * from "./follows.js";
 export * from "./notify.js";
 export * from "./translate.js";
 export * from "./imports.js";
+export * from "./automation.js";

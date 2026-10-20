@@ -242,7 +242,6 @@ async function loadRuntime() {
       createAutomationScheduleHandler: wiringModule.createAutomationScheduleHandler,
       AUTOMATION_SCHEDULE_JOB_KIND: automationIndexModule.AUTOMATION_SCHEDULE_JOB_KIND,
       BUILTIN_RULES: automationIndexModule.BUILTIN_RULES,
-      listEnabledRules: automationIndexModule.listEnabledRules,
       CalendarService: calendarServiceModule.CalendarService,
       CalendarRepository: calendarRepositoryModule.CalendarRepository,
       AuditService: auditServiceModule.AuditService,
@@ -501,7 +500,10 @@ function buildEnv(overrides = {}) {
       short(pendingBaseline.rows[0]),
       pendingBaseline.rows[0].outbox === 0 && pendingBaseline.rows[0].jobs === 0,
     );
-    const activeRuleCodes = (await runtime.listEnabledRules()).map((rule) => rule.code);
+    // M5-06-1A 起运行时规则来源 = automation_rules（代码常量只供 seed / 本回放显式注入）。
+    const activeRuleCodes = (
+      await db.query("select code from automation_rules where enabled = true and deleted_at is null order by code")
+    ).rows.map((row) => row.code);
     check(
       "S0d",
       "生产规则启用集：仅 R02 / R03 / R05（本回放另行显式启用全部定义以验证保留实现）",

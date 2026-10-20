@@ -45,6 +45,7 @@ function makeJob(overrides: Partial<JobRow> = {}): JobRow {
     lastError: null,
     lockedBy: null,
     lockedAt: null,
+    dedupeKey: null,
     ...overrides,
   };
 }

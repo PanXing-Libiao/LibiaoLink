@@ -6,7 +6,11 @@ import { DatabaseService } from "../db/database.service.js";
 import { JobsStore } from "../db/jobs.store.js";
 import { appendOutboxIfAbsent } from "../db/outbox.js";
 import { OutboxStore } from "../db/outbox.store.js";
-import { AUTOMATION_SCHEDULE_JOB_KIND, listEnabledRules } from "../modules/automation/index.js";
+import {
+  AUTOMATION_SCHEDULE_JOB_KIND,
+  AutomationRuleRepository,
+  AutomationRunRepository,
+} from "../modules/automation/index.js";
 import { CalendarModule, CalendarService } from "../modules/calendar/index.js";
 import { FileModule, PREVIEW_JOB_TOPIC, PreviewService } from "../modules/file/index.js";
 import {
@@ -58,6 +62,8 @@ export class OutboxModule {
       providers: [
         OutboxStore,
         JobsStore,
+        AutomationRuleRepository,
+        AutomationRunRepository,
         ClockService,
         AutomationSubjectReader,
         {
@@ -85,10 +91,12 @@ export class OutboxModule {
             clock: ClockService,
             calendar: CalendarService,
             database: DatabaseService,
+            rules: AutomationRuleRepository,
+            runs: AutomationRunRepository,
           ) => {
             const registry = buildRegistry(env, previews, notify, groupNotify, appNotify, dmNotify);
             if (env.AUTOMATION_WIRING_ENABLED === "true") {
-              const deps = automationWiringDeps(env, subjects, clock, calendar, database);
+              const deps = automationWiringDeps(env, subjects, clock, calendar, database, rules, runs);
               for (const [topic, handler] of createRuleEventConsumers(deps)) {
                 registerConsumerTopic(registry, topic, handler);
               }
@@ -105,6 +113,8 @@ export class OutboxModule {
             ClockService,
             CalendarService,
             DatabaseService,
+            AutomationRuleRepository,
+            AutomationRunRepository,
           ],
         },
         {
@@ -114,8 +124,17 @@ export class OutboxModule {
             clock: ClockService,
             calendar: CalendarService,
             database: DatabaseService,
-          ) => buildJobsRegistry(env, subjects, clock, calendar, database),
-          inject: [AutomationSubjectReader, ClockService, CalendarService, DatabaseService],
+            rules: AutomationRuleRepository,
+            runs: AutomationRunRepository,
+          ) => buildJobsRegistry(env, subjects, clock, calendar, database, rules, runs),
+          inject: [
+            AutomationSubjectReader,
+            ClockService,
+            CalendarService,
+            DatabaseService,
+            AutomationRuleRepository,
+            AutomationRunRepository,
+          ],
         },
         OutboxAlertProbe,
         OutboxRetention,
@@ -187,10 +206,15 @@ function buildJobsRegistry(
   clock: ClockService,
   calendar: CalendarService,
   database: DatabaseService,
+  rules: AutomationRuleRepository,
+  runs: AutomationRunRepository,
 ): Map<string, OutboxJobHandler> {
   const registry = new Map<string, OutboxJobHandler>();
   if (env.AUTOMATION_WIRING_ENABLED === "true") {
-    registry.set(AUTOMATION_SCHEDULE_JOB_KIND, createAutomationScheduleHandler(automationWiringDeps(env, subjects, clock, calendar, database)));
+    registry.set(
+      AUTOMATION_SCHEDULE_JOB_KIND,
+      createAutomationScheduleHandler(automationWiringDeps(env, subjects, clock, calendar, database, rules, runs)),
+    );
   }
   return registry;
 }
@@ -202,13 +226,17 @@ function automationWiringDeps(
   clock: ClockService,
   calendar: CalendarService,
   database: DatabaseService,
+  rules: AutomationRuleRepository,
+  runs: AutomationRunRepository,
 ): AutomationWiringDeps {
   return {
     env,
     subjects,
     append: appendOutboxIfAbsent,
     db: database.db,
-    rules: listEnabledRules,
+    rules: (client) => rules.listEnabledRules(client),
+    runs,
+    transaction: (work) => database.db.transaction(work),
     now: () => clock.now(),
     shift: () => calendar.getSettings(),
     logger: wiringLogger,
