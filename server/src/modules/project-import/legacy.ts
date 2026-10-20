@@ -99,6 +99,12 @@ export interface LegacyImage {
 }
 
 export interface LegacyManualFile {
+  /** task = 任务表「文件」列；change_after = 变更表「变更后文件」。 */
+  kind: "task" | "change_after";
+  /** 任务表数据行下标（parse.tasks 同序；change_after = null）。 */
+  taskIndex: number | null;
+  /** 变更表数据行下标（parse.changes 同序；task = null）。 */
+  changeIndex: number | null;
   name: string;
   subject: string | null;
   reason: string;
@@ -979,9 +985,12 @@ export function convertLegacyWorkbook(workbook: ParsedWorkbook, fileName: string
     }
   }
   const manualFiles: LegacyManualFile[] = [];
-  for (const change of changes) {
+  changes.forEach((change, changeIndex) => {
     if (change.afterFileName !== null) {
       manualFiles.push({
+        kind: "change_after",
+        taskIndex: null,
+        changeIndex,
         name: change.afterFileName,
         subject: change.content === "" ? null : change.content,
         reason: "变更后文件（微盘 / 本地路径）：需手动上传",
@@ -989,16 +998,21 @@ export function convertLegacyWorkbook(workbook: ParsedWorkbook, fileName: string
         en: "The workbook only lists the file name (file lives in WeDrive or a local path); please upload it manually after import.",
       });
     }
-  }
+  });
   if (taskSheet !== null) {
     const sheetRef = taskSheet.sheet;
     const taskIndex = taskSheet.index;
+    const taskRowIndexes = new Map(tasks.map((task, index) => [task.row, index]));
     for (let row = 1; row < sheetRef.rows.length; row += 1) {
       const fileName = cellAt(sheetRef, row, taskIndex, "文件");
       if (fileName === "") continue;
       const title = splitTitle(cellAt(sheetRef, row, taskIndex, "任务描述")).title;
+      const parsedTaskIndex = taskRowIndexes.get(row + 1) ?? null;
       for (const part of splitNames(fileName)) {
         manualFiles.push({
+          kind: "task",
+          taskIndex: parsedTaskIndex,
+          changeIndex: null,
           name: part,
           subject: title,
           reason: "任务附件（微盘 / 本地路径）：需手动上传",

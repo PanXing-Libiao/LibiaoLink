@@ -4,14 +4,17 @@ import { DICT_ACCENT_PALETTE, accentOfItem, dictLabel, type Dicts } from "../dic
 import type { DictTools } from "../dictTools";
 import { fieldText, projectTypeText, useLocale, useT } from "../i18n";
 import {
+  attachManualChangeFile,
   commitProjectImport,
   IMPORT_MAX_FILE_BYTES,
   previewProjectImport,
   type ImportIssue,
   type ImportManualImage,
+  type ImportManualTarget,
   type ProjectImportPreview,
   type ProjectImportResult,
 } from "../importApi";
+import { uploadFile } from "../fileApi";
 import { DictSelect } from "./DictSelect";
 import { RegionSelect } from "./RegionSelect";
 import { ScrollArea } from "./ScrollArea";
@@ -20,20 +23,50 @@ import { useFocusTrap } from "./useFocusTrap";
 /**
  * 「导入项目」大屏面板（Push 316 待推 · 业务口径 2026-10-14「先在新建项目左侧加导入项目按钮 点击导入选择 Excel
  * 然后不切换页面 直接在项目空间里面有一块大屏里面操作」+ 同轮选型「直连 API 导入」）：
- * 选文件 → ① 解析（不写库）→ ② 校验预览（项目落位 / 条数统计 / 提醒清单 / 需手动导入图片 / 账号 / 未匹配节点）
+ * 选文件 → ① 解析（不写库）→ ② 校验预览（项目落位 / 条数统计 / 提醒清单 / 需手动导入文件 / 账号 / 未匹配节点）
  * → ③ 确认导入 → ④ 完成（提醒复述）。面板挂在项目空间内（fixed 全屏遮罩），不动路由、不刷新页面。
  * 口径（业务已回执）：解析不写库；完成日期未填不算完成；进度五档（进行中封顶 75%）；日期笔误照原值 + 提醒；
  * 任务节点按文件原名（可勾选补进节点库）；微盘图片出清单人工上传；账号初始密码 123456。
  * 写入中可取消（Push 321）：「取消写入」/ 刷新 / 关页 = 断开请求 → 服务端单事务回滚（零残留），票据保留可再次确认。
  * 干系人（Push 324）：「干系人」表随导入落台账。
+ * 手动文件就地补传（Push 396）：预览清单每行可选本地文件，确认导入后按提交结果的任务 / 变更目标一并直传；失败可重试。
  * 加载文案（业务口径 2026-10-14「项目在导入那个时间改成预计要多久」）：加载态从「已用 N 秒」改「还需要多长时间：N 秒」，并按墙钟已用时间每秒递减；文案口径「还需要  N 秒」（未完成前保底 1 秒）。
  */
+
+/** 一个补充附件未完成（上传失败，或已上传但变更回挂失败）。 */
+type ManualUploadFailure = {
+  id: string;
+  name: string;
+  message: string;
+  /** 还没传成功 = 保留 File；已传成功但回挂失败 = null（重试只重挂）。 */
+  file: File | null;
+  fileId: string | null;
+  changeId: string | null;
+};
+
+/** 补充附件上传结果（完成页复述；失败项可重试）。 */
+type ManualUploadOutcome = {
+  total: number;
+  completedIds: string[];
+  failures: ManualUploadFailure[];
+};
+
+/** 一项待上传的补充附件（id = 预览清单 id；fileId 给出 = 只重挂变更）。 */
+type ManualUploadItem = { id: string; name: string; file: File | null; fileId: string | null };
 
 type Phase =
   | { kind: "parsing" }
   | { kind: "preview"; preview: ProjectImportPreview }
   | { kind: "committing"; preview: ProjectImportPreview }
-  | { kind: "done"; preview: ProjectImportPreview; result: ProjectImportResult }
+  | {
+      kind: "uploading";
+      preview: ProjectImportPreview;
+      result: ProjectImportResult;
+      total: number;
+      done: number;
+      currentName: string;
+    }
+  | { kind: "done"; preview: ProjectImportPreview; result: ProjectImportResult; upload: ManualUploadOutcome }
   | { kind: "failed"; stage: "parse" | "commit"; error: ApiError | null; reason: "empty" | "size" | null };
 
 export type ImportProjectPanelProps = {
@@ -163,17 +196,77 @@ function ImportCarStage() {
   );
 }
 
-/** 「需手动导入」图片清单（预览与完成页共用）：微盘 / 本地路径图片，导入后按清单人工上传。 */
-function ManualImageList({ images }: { images: ImportManualImage[] }) {
+type ManualImageListProps = {
+  images: ImportManualImage[];
+  /** 预览态：已选文件（id → File）。 */
+  selections?: Readonly<Record<string, File>>;
+  /** 预览态：选择 / 清除（不给 = 只读完成页）。 */
+  onSelect?: (id: string, file: File | null) => void;
+  /** 完成页：失败原因（id → message）。 */
+  failureById?: Readonly<Record<string, string>>;
+};
+
+/** 「需手动导入」文件清单（预览与完成页共用）：可原地选文件，确认导入后一并上传。 */
+function ManualImageList({ images, selections, onSelect, failureById }: ManualImageListProps) {
+  const t = useT();
   return (
-    <ul className="mt-3 max-h-56 space-y-1.5 overflow-auto">
-      {images.map((image, index) => (
-        <li key={index} className="flex flex-wrap items-baseline gap-x-2 rounded-lg bg-white/80 px-2.5 py-1.5 text-xs">
-          <span className="font-medium text-amber-900">{image.name}</span>
-          <span className="text-amber-700">{image.reason}</span>
-          <span className="ml-auto text-[11px] text-amber-700">{image.task}</span>
-        </li>
-      ))}
+    <ul className="mt-3 max-h-72 space-y-2 overflow-auto">
+      {images.map((image) => {
+        const selected = selections?.[image.id] ?? null;
+        const failure = failureById?.[image.id] ?? null;
+        return (
+          <li key={image.id} className="rounded-xl bg-white/85 px-3 py-2.5 text-xs ring-1 ring-amber-100">
+            <div className="flex flex-wrap items-start gap-x-2 gap-y-1">
+              <span
+                className={
+                  "shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-medium " +
+                  (image.kind === "change_after" ? "bg-sky-50 text-sky-700" : "bg-amber-100 text-amber-800")
+                }
+              >
+                {image.kind === "change_after" ? t("import.images.kind.change") : t("import.images.kind.task")}
+              </span>
+              <span className="min-w-0 flex-1 font-medium text-amber-900">{image.name}</span>
+            </div>
+            <p className="mt-1 text-amber-700">{image.reason}</p>
+            <p className="mt-1 text-[11px] text-amber-700">
+              {image.task === null || image.task === ""
+                ? t("import.images.targetProject")
+                : t("import.images.targetTask", { task: image.task })}
+            </p>
+            {failure === null ? null : <p className="mt-1 text-[11px] text-rose-600">{failure}</p>}
+            {onSelect === undefined ? null : (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {selected === null ? null : (
+                  <span className="min-w-0 max-w-full truncate rounded-md bg-emerald-50 px-2 py-1 text-[11px] text-emerald-700" title={selected.name}>
+                    {t("import.images.selectedFile", { name: selected.name, size: formatBytes(selected.size) })}
+                  </span>
+                )}
+                <label className="cursor-pointer rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-medium text-amber-800 transition hover:bg-amber-50">
+                  {selected === null ? t("import.images.pick") : t("import.images.replace")}
+                  <input
+                    type="file"
+                    className="sr-only"
+                    onChange={(event) => {
+                      const picked = event.currentTarget.files?.[0] ?? null;
+                      event.currentTarget.value = "";
+                      if (picked !== null) onSelect(image.id, picked);
+                    }}
+                  />
+                </label>
+                {selected === null ? null : (
+                  <button
+                    type="button"
+                    className="rounded-lg px-2 py-1 text-[11px] text-amber-700 transition hover:bg-amber-100"
+                    onClick={() => onSelect(image.id, null)}
+                  >
+                    {t("import.images.remove")}
+                  </button>
+                )}
+              </div>
+            )}
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -188,6 +281,8 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
   const [projectType, setProjectType] = useState("");
   /** 节点补库开关（业务口径：无对应任务节点按文件原名导入，同时问用户是否补进「任务节点」）。 */
   const [addMissingNodes, setAddMissingNodes] = useState(true);
+  /** 「需手动导入」清单就地选中的文件（id → File；确认导入后一并直传并挂任务 / 变更）。 */
+  const [manualSelections, setManualSelections] = useState<Record<string, File>>({});
   /** 地区小窗开着时按 Esc 只关小窗（再按一次才关面板，与项目弹窗同口径）。 */
   const [regionPopoverOpen, setRegionPopoverOpen] = useState(false);
   /** 记住上一份导入表：换文件才复位地区 / 类型 / 节点勾选。 */
@@ -198,6 +293,8 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
   /** 倒计时随解析 / 写入两段独立计时。 */
   const parseRemainingSeconds = useImportRemainingSeconds(parseEtaSeconds, phase.kind === "parsing");
   const committing = phase.kind === "committing";
+  const uploading = phase.kind === "uploading";
+  const busy = committing || uploading;
   /** 写入中取消（Push 321）：abort 请求 → 服务端回滚；回到预览态可再次确认导入。 */
   const commitAbortRef = useRef<AbortController | null>(null);
   /** 刚取消过写入（预览态给一行说明；换文件 / 再次提交时清掉）。 */
@@ -214,6 +311,7 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
       setRegion("");
       setProjectType("");
       setAddMissingNodes(true);
+      setManualSelections({});
       setCommitCancelled(false);
     }
     if (file.size === 0 || file.size > IMPORT_MAX_FILE_BYTES) {
@@ -245,7 +343,7 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
   // Esc 关闭（写入中 / 地区小窗打开时不关）。
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || regionPopoverOpen || committing) {
+      if (event.key !== "Escape" || regionPopoverOpen || busy) {
         return;
       }
       onClose();
@@ -254,7 +352,7 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [committing, onClose, regionPopoverOpen]);
+  }, [busy, onClose, regionPopoverOpen]);
 
   // 面板打开期间锁背景滚动（与项目弹窗同款：经典滚动条占位补回，锁滚动不横向跳动）。
   useEffect(() => {
@@ -274,10 +372,65 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
     };
   }, []);
 
+  /** 补充附件上传（逐项直传 + 变更回挂）：成功记 completedIds，失败保留 File / fileId 供重试。 */
+  const uploadManualItems = (
+    preview: ProjectImportPreview,
+    result: ProjectImportResult,
+    items: ManualUploadItem[],
+    base: ManualUploadOutcome,
+  ): void => {
+    const targets = new Map<string, ImportManualTarget>((result.manualTargets ?? []).map((target) => [target.id, target]));
+    const failures = base.failures.filter((failure) => !items.some((item) => item.id === failure.id));
+    const completedIds = base.completedIds.filter((id) => !items.some((item) => item.id === id));
+    const run = async (): Promise<void> => {
+      for (const item of items) {
+        const target = targets.get(item.id) ?? null;
+        let fileId = item.fileId;
+        setPhase({
+          kind: "uploading",
+          preview: preview,
+          result: result,
+          total: base.total,
+          done: completedIds.length,
+          currentName: item.name,
+        });
+        try {
+          if (fileId === null) {
+            if (item.file === null) throw new Error("附件文件已丢失，请重新导入");
+            fileId = await uploadFile(
+              result.projectId,
+              item.file,
+              item.file.name,
+              target?.taskId === null || target?.taskId === undefined ? {} : { taskId: target.taskId },
+            );
+          }
+          if (target?.changeId !== null && target?.changeId !== undefined) {
+            await attachManualChangeFile(result.projectId, target.changeId, fileId);
+          }
+          completedIds.push(item.id);
+        } catch (error) {
+          failures.push({
+            id: item.id,
+            name: item.name,
+            message: error instanceof ApiError ? error.message : t("import.images.uploadFailed"),
+            file: fileId === null ? item.file : null,
+            fileId: fileId,
+            changeId: target?.changeId ?? null,
+          });
+        }
+      }
+      setPhase({ kind: "done", preview: preview, result: result, upload: { total: base.total, completedIds: completedIds, failures: failures } });
+    };
+    void run();
+  };
+
   const startCommit = (preview: ProjectImportPreview): void => {
     const controller = new AbortController();
     commitAbortRef.current = controller;
     setCommitCancelled(false);
+    const selectedFiles: ManualUploadItem[] = preview.imagesManual
+      .filter((image) => manualSelections[image.id] !== undefined)
+      .map((image) => ({ id: image.id, name: manualSelections[image.id]!.name, file: manualSelections[image.id]!, fileId: null }));
     setPhase({ kind: "committing", preview });
     commitProjectImport(
       { previewId: preview.previewId, region: region, projectType: projectType, addMissingNodes: addMissingNodes },
@@ -285,8 +438,12 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
     )
       .then((result) => {
         commitAbortRef.current = null;
-        setPhase({ kind: "done", preview: preview, result: result });
         onImported();
+        if (selectedFiles.length === 0) {
+          setPhase({ kind: "done", preview: preview, result: result, upload: { total: 0, completedIds: [], failures: [] } });
+          return;
+        }
+        uploadManualItems(preview, result, selectedFiles, { total: selectedFiles.length, completedIds: [], failures: [] });
       })
       .catch((error: unknown) => {
         commitAbortRef.current = null;
@@ -305,12 +462,34 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
     commitAbortRef.current?.abort();
   };
 
+  /** 完成页「重试失败附件」：已传成功的只重挂变更，未传成功的重新直传。 */
+  const retryManualUploads = (): void => {
+    if (phase.kind !== "done" || phase.upload.failures.length === 0) return;
+    const items: ManualUploadItem[] = phase.upload.failures.map((failure) => ({
+      id: failure.id,
+      name: failure.name,
+      file: failure.file,
+      fileId: failure.fileId,
+    }));
+    uploadManualItems(phase.preview, phase.result, items, phase.upload);
+  };
+
   // 预览态派生：可导入 = 无阻断项 + 地区已选（用户补选地区后，服务端的「地区未识别」阻断项随之消解）。
-  const preview = phase.kind === "preview" || phase.kind === "committing" || phase.kind === "done" ? phase.preview : null;
+  const preview =
+    phase.kind === "preview" || phase.kind === "committing" || phase.kind === "uploading" || phase.kind === "done"
+      ? phase.preview
+      : null;
   const visibleIssues = preview === null ? [] : preview.issues.filter((issue) => !(issue.code === "REGION_UNRESOLVED" && region !== ""));
   const blockingCount = visibleIssues.filter((issue) => issue.level === "error").length;
   const unmatchedNodes = preview === null ? [] : preview.nodes.filter((node) => !node.matched);
   const canCommit = phase.kind === "preview" && blockingCount === 0 && region !== "";
+  const selectedManualCount = preview === null ? 0 : preview.imagesManual.filter((image) => manualSelections[image.id] !== undefined).length;
+  const doneManualPending =
+    phase.kind === "done" ? phase.preview.imagesManual.filter((image) => !phase.upload.completedIds.includes(image.id)) : [];
+  const doneFailureById: Record<string, string> = {};
+  if (phase.kind === "done") {
+    for (const failure of phase.upload.failures) doneFailureById[failure.id] = failure.message;
+  }
 
   const commitEtaSeconds = phase.kind === "committing" ? estimateCommitSeconds(file.size, phase.preview.counts.images) : 0;
   const commitRemainingSeconds = useImportRemainingSeconds(commitEtaSeconds, phase.kind === "committing");
@@ -339,7 +518,7 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
       <div
         className="absolute inset-0 bg-zinc-900/40 backdrop-blur-[2px]"
         onClick={() => {
-          if (!committing) {
+          if (!busy) {
             onClose();
           }
         }}
@@ -366,7 +545,7 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
             <button
               type="button"
               aria-label={t("import.closeAria")}
-              disabled={committing}
+              disabled={busy}
               onClick={onClose}
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
             >
@@ -433,6 +612,26 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                   <dd className="text-zinc-800">{projectType === "" ? t("import.value.none") : dictLabel(dicts, "projectType", projectType)}</dd>
                 </div>
               </dl>
+            </div>
+          ) : null}
+
+          {phase.kind === "uploading" ? (
+            <div className="flex h-full min-h-[420px] flex-col items-center justify-center">
+              <div className="w-[420px] max-w-full text-center" data-import-loading-anim="upload-manual">
+                <ImportCarStage />
+                <p className="export-progress__title">{t("import.images.uploadingTitle")}</p>
+                <p className="export-progress__hint">
+                  {t("import.images.uploadingHint", {
+                    done: phase.done,
+                    total: phase.total,
+                    name: phase.currentName,
+                  })}
+                </p>
+                <div className="export-progress__bar is-waiting">
+                  <span className="export-progress__bar-fill" />
+                </div>
+                <p className="mt-2 text-xs text-zinc-400">{t("import.images.uploadingFoot")}</p>
+              </div>
             </div>
           ) : null}
 
@@ -561,7 +760,24 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                   <section className="rounded-2xl border border-amber-200 bg-amber-50/60 p-5" data-import-manual-images="">
                     <h3 className="text-sm font-semibold text-amber-900">{t("import.images.title", { n: phase.preview.imagesManual.length })}</h3>
                     <p className="mt-1 text-xs text-amber-800">{t("import.images.hint")}</p>
-                    <ManualImageList images={phase.preview.imagesManual} />
+                    <p className="mt-2 text-[11px] font-medium text-amber-800">
+                      {t("import.images.selectedSummary", {
+                        selected: selectedManualCount,
+                        total: phase.preview.imagesManual.length,
+                      })}
+                    </p>
+                    <ManualImageList
+                      images={phase.preview.imagesManual}
+                      selections={manualSelections}
+                      onSelect={(id, picked) => {
+                        setManualSelections((current) => {
+                          const next = { ...current };
+                          if (picked === null) delete next[id];
+                          else next[id] = picked;
+                          return next;
+                        });
+                      }}
+                    />
                   </section>
                 )}
 
@@ -663,6 +879,17 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                     nodes: phase.result.counts.nodesAdded,
                   })}
                 </p>
+                {phase.upload.total === 0 ? null : (
+                  <p className={"mt-2 text-xs " + (phase.upload.failures.length === 0 ? "text-emerald-600" : "text-rose-600")} data-import-manual-summary="">
+                    {phase.upload.failures.length === 0
+                      ? t("import.images.doneUploaded", { done: phase.upload.completedIds.length, total: phase.upload.total })
+                      : t("import.images.doneFailed", {
+                          done: phase.upload.completedIds.length,
+                          total: phase.upload.total,
+                          failed: phase.upload.failures.length,
+                        })}
+                  </p>
+                )}
               </div>
 
               {phase.result.issues.length === 0 ? null : (
@@ -676,11 +903,18 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
                 </section>
               )}
 
-              {phase.preview.imagesManual.length === 0 ? null : (
-                <section className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/60 p-5">
-                  <h3 className="text-sm font-semibold text-amber-900">{t("import.images.title", { n: phase.preview.imagesManual.length })}</h3>
-                  <p className="mt-1 text-xs text-amber-800">{t("import.images.hint")}</p>
-                  <ManualImageList images={phase.preview.imagesManual} />
+              {doneManualPending.length === 0 ? null : (
+                <section className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/60 p-5" data-import-done-manual="">
+                  <h3 className="text-sm font-semibold text-amber-900">
+                    {t("import.images.remainingTitle", { n: doneManualPending.length })}
+                  </h3>
+                  <p className="mt-1 text-xs text-amber-800">{t("import.images.remainingHint")}</p>
+                  <ManualImageList images={doneManualPending} failureById={doneFailureById} />
+                  {phase.upload.failures.length === 0 ? null : (
+                    <button type="button" className={secondaryButtonClass + " mt-3"} onClick={retryManualUploads} data-import-retry-manual="">
+                      {t("import.images.retry")}
+                    </button>
+                  )}
                 </section>
               )}
             </div>
@@ -688,6 +922,10 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
         </ScrollArea>
 
         <footer className="flex flex-wrap items-center gap-3 border-t border-zinc-200 bg-zinc-50/70 px-6 py-4">
+          {phase.kind === "uploading" ? (
+            <p className="text-xs text-zinc-500">{t("import.images.uploadingFoot")}</p>
+          ) : null}
+
           {phase.kind === "committing" ? (
             <div className="ml-auto flex flex-wrap items-center gap-2">
               <button type="button" className={secondaryButtonClass} onClick={cancelCommit} data-import-cancel-commit="">

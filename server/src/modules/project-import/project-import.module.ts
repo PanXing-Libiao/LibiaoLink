@@ -7,6 +7,7 @@ import { ProjectModule } from "../project/index.js";
 import { TemplateModule } from "../template/index.js";
 import { TranslateModule } from "../translate/index.js";
 import { ProjectImportController } from "./project-import.controller.js";
+import { ProjectImportManualController } from "./project-import-manual.controller.js";
 import { ProjectImportRepository } from "./project-import.repository.js";
 import { ProjectImportService } from "./project-import.service.js";
 
@@ -20,7 +21,7 @@ import { ProjectImportService } from "./project-import.service.js";
  */
 @Module({
   imports: [IdentityModule, PermissionModule, AdminModule, ProjectModule, TemplateModule, TranslateModule],
-  controllers: [ProjectImportController],
+  controllers: [ProjectImportController, ProjectImportManualController],
   providers: [ProjectImportRepository, ProjectImportService],
   exports: [ProjectImportService, ProjectImportRepository],
 })

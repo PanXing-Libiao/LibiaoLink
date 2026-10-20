@@ -6,6 +6,7 @@ import type {
   ImportAccount,
   ImportIssue,
   ImportManualImage,
+  ImportManualTarget,
   ImportPreviewCounts,
   ImportResultCounts,
   ImportTaskNode,
@@ -231,7 +232,7 @@ export class ProjectImportService {
       project: { ...parse.project, managerNames: parse.project.managerNames.map((name) => stripParen(name)) },
       counts,
       accounts: resolution.accounts,
-      imagesManual: parse.manualFiles.map((file) => manualImageOf(file, input.locale)),
+      imagesManual: parse.manualFiles.map((file, index) => manualImageOf(file, index, input.locale)),
       nodes: groups.map(contractNodeOf),
       issues,
     };
@@ -640,9 +641,16 @@ export class ProjectImportService {
       });
       throwIfCancelled(signal);
       await this.previews.markCommitted(preview.id, projectRow.id, at, tx);
-      return { projectId: projectRow.id, code: projectRow.code, name: projectRow.name, counts };
+      const manualTargets = buildManualTargets(parse.manualFiles, taskIds, changeIds, changeLinks);
+      return { projectId: projectRow.id, code: projectRow.code, name: projectRow.name, counts, manualTargets };
     });
-    let written: { projectId: string; code: string; name: string; counts: ImportResultCounts };
+    let written: {
+      projectId: string;
+      code: string;
+      name: string;
+      counts: ImportResultCounts;
+      manualTargets: ImportManualTarget[];
+    };
     try {
       written = await commitTx;
     } catch (error) {
@@ -667,8 +675,53 @@ export class ProjectImportService {
       code: written.code,
       name: written.name,
       counts: written.counts,
+      manualTargets: written.manualTargets,
       issues,
     };
+  }
+
+  /**
+   * 导入补充附件回挂变更：文件已由前端直传（draft + 首版本），这里把首版本挂到导入变更并定档文件。
+   * 幂等：同一变更 + 同一文件重复调用 = no-op；一期「一变更一版本」—— 同一变更已有其它文件 / 文件已挂其它变更 400，项目 / 变更不匹配 404。
+   */
+  async attachManualChangeFile(projectId: string, changeId: string, fileId: string, actorId: string): Promise<void> {
+    const file = await this.previews.findFileForManualAttach(fileId);
+    if (file === null || file.projectId !== projectId) {
+      throw new AppError("NOT_FOUND", "文件不存在或不属于该项目");
+    }
+    if (file.status === "recycled" || file.status === "archived") {
+      throw new AppError("VALIDATION_FAILED", "回收站 / 已归档文件不能挂接变更");
+    }
+    if (file.currentVersionId === null) {
+      throw new AppError("VALIDATION_FAILED", "文件还没有版本，无法挂接变更");
+    }
+    const changeProjectId = await this.previews.findChangeProjectId(changeId);
+    if (changeProjectId !== projectId) {
+      throw new AppError("NOT_FOUND", "变更记录不存在或不属于该项目");
+    }
+    const versionId = file.currentVersionId;
+    const at = new Date();
+    await this.database.db.transaction(async (tx) => {
+      const outcome = await this.previews.attachChangeFile(tx, { fileId, versionId, changeId, actorId, at });
+      if (outcome === "conflict") {
+        throw new AppError("VALIDATION_FAILED", "该变更已有其它文件，或该文件已挂接其它变更记录");
+      }
+      if (outcome === "missing") {
+        throw new AppError("NOT_FOUND", "文件版本不存在");
+      }
+      if (outcome === "missing_change") {
+        throw new AppError("NOT_FOUND", "变更记录不存在");
+      }
+      if (outcome === "already") return;
+      await this.audit.record(tx, {
+        actorId,
+        action: "update",
+        objectType: "change",
+        objectId: changeId,
+        projectId,
+        summary: "导入补充附件挂接变更后文件：" + file.name,
+      });
+    });
   }
 
   /** 「填写者」→ 库内账号（显示名直查：原文 / 去括注 / 去括注 + -test）；未命中 = null（created_by 留空 + 提醒）。 */
@@ -890,8 +943,34 @@ function renderIssue(seed: LegacyIssueSeed, locale: ImportLocale): ImportIssue {
   };
 }
 
-function manualImageOf(file: LegacyManualFile, locale: ImportLocale): ImportManualImage {
-  return { task: file.subject, name: file.name, reason: locale === "en" ? file.en : file.zh };
+function manualImageOf(file: LegacyManualFile, index: number, locale: ImportLocale): ImportManualImage {
+  return {
+    id: "manual-" + String(index),
+    kind: file.kind,
+    task: file.subject,
+    name: file.name,
+    reason: locale === "en" ? file.en : file.zh,
+  };
+}
+
+/** 手动文件 → 已写入任务 / 变更 id（与预览 imagesManual 同序；id = manual-<序号>）。 */
+function buildManualTargets(
+  files: readonly LegacyManualFile[],
+  taskIds: readonly string[],
+  changeIds: readonly string[],
+  changeLinks: readonly LegacyChangeLink[],
+): ImportManualTarget[] {
+  return files.map((file, index) => {
+    const id = "manual-" + String(index);
+    if (file.kind === "task") {
+      const taskId = file.taskIndex === null ? null : (taskIds[file.taskIndex] ?? null);
+      return { id, taskId, changeId: null };
+    }
+    const changeId = file.changeIndex === null ? null : (changeIds[file.changeIndex] ?? null);
+    const link = file.changeIndex === null ? undefined : changeLinks.find((item) => item.changeIndex === file.changeIndex);
+    const taskId = link === undefined ? null : (taskIds[link.taskIndex] ?? null);
+    return { id, taskId, changeId };
+  });
 }
 
 function contractNodeOf(group: NodeGroup): ImportTaskNode {

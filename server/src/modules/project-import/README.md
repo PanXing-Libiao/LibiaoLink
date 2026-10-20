@@ -23,10 +23,11 @@ index.ts                      # 唯一公开出口（跨模块只允许 import �
 
 ## 已落接口
 
-- `POST /api/v1/project-imports/preview`（multipart/form-data，字段 `file`）—— 解析 + 口径校验，**不写库**；返回预览票据（30 分钟）+ 落位建议 + 将写入条数 + 三份清单（需手动导入图片 / 节点匹配 / 账号）+ 提醒清单。
+- `POST /api/v1/project-imports/preview`（multipart/form-data，字段 `file`）—— 解析 + 口径校验，**不写库**；返回预览票据（30 分钟）+ 落位建议 + 将写入条数 + 三份清单（需手动导入文件：`id` / `kind` / 任务或变更行 / 文件名 / 原因 / 节点匹配 / 账号）+ 提醒清单。
   错误面：400 `IMPORT_FILE_INVALID`（缺文件名 / 非 .xlsx·.xlsm / 空文件 / 超 256 MB）· 401 未登录 · 403 缺 `project.create` · 422 `IMPORT_PARSE_FAILED`（导入表结构不对 / 不是 xlsx / 超出解析资源预算）· 429 `RATE_LIMITED`（本实例已有导入在解析或提交）。
 - `POST /api/v1/project-imports/commit`（JSON：`previewId` / `region` / `projectType` / `addMissingNodes`）—— 单事务建项目并写入全量数据（失败整批回滚，不许半量落库）。
   错误面：400 `VALIDATION_FAILED`（参数非法 / 地区空 / 票据已提交）· 403 票据非本人 · 404 票据不存在 · 409 `PROJECT_CODE_EXISTS`（编号占用）· 410 `IMPORT_PREVIEW_EXPIRED`（过期 / 源文件已清理）· 400 `IMPORT_CANCELLED`（写入中取消：连接在写完前断开 —— 单事务回滚 + 已传图片清理；票据保留 pending、源文件保留，可再次提交）。
+- `POST /api/v1/projects/{id}/import-manual-files/attach-change`（JSON：`changeId` / `fileId`）—— 导入补充附件回挂变更：文件首版本写 `file_versions.change_request_id` + 文件定档 + `file_links(change)`；同一变更重复调用幂等（204）；一期「一变更一版本」：变更行 `FOR UPDATE` 串行化后先查该变更已有版本，同一变更已有其它文件 / 文件已挂其它变更 400，项目 / 文件 / 变更不匹配 404。
 
 ## 口径铁律（与前端 / 导入表转换工具一致）
 
@@ -38,7 +39,7 @@ index.ts                      # 唯一公开出口（跨模块只允许 import �
 - 变更关联（Push 319）：变更管理「关联」列（多值按逗号 / 顿号拆）按任务描述匹配（键 = 去全部空白 + 小写；对「标题+英文名」/「标题」/「英文名」三串）→ 提交事务回写 `tasks.change_refs`（追加序 = 变更表行序、去重）；未命中 / 多命中 / 日期不一致 / 任务侧落空出提醒（`CHANGE_RELATED_UNMATCHED` / `CHANGE_RELATED_AMBIGUOUS` / `CHANGE_DATE_MISMATCH` / `TASK_CHANGE_REF_UNMATCHED` + 汇总 `CHANGE_LINK_SUMMARY`），照常导入不阻断；预览 / 结果 counts 增 `changesLinked`。
 - 问题处理人（Push 319）：源表没有处理人字段 —— 未解决（open / in_progress）默认 `owner_id` = 项目经理首位（`managerIds[0] ?? actorId`；done = null）+ info 提醒 `ISSUE_OWNER_FALLBACK` —— 未解决问题随项目经理进入工作台「待我处理」，「我提出的问题」按 reporter（日报作者）照旧。
 - 变更读面（Push 319 · file 模块）：导入遗留变更没有 `file_versions` 行 —— 列表 / 详情 `fileId` / `versionId` / `versionSeq` 可为 null（`file` / `version` 给 null，前端标「变更后文件待补」）；本模块提交只写 `change_requests` 行、不建文件行。
-- 图片：表内嵌图 → 文件库（日报现场图 / 问题图挂 `file_links`；变更表「变更前 / 变更后」列内嵌图（Push 349）登记 `files` 后回填 `change_requests.before_summary_file_ids` / `after_summary_file_ids` —— 同 0052 应用内口径：不落 `file_links`、单条 ≤ 30 张）；微盘 / 本地路径 → 「需手动导入」清单（导入时不再抓取）。
+- 图片：表内嵌图 → 文件库（日报现场图 / 问题图挂 `file_links`；变更表「变更前 / 变更后」列内嵌图（Push 349）登记 `files` 后回填 `change_requests.before_summary_file_ids` / `after_summary_file_ids` —— 同 0052 应用内口径：不落 `file_links`、单条 ≤ 30 张）；微盘 / 本地路径 → 「需手动导入」清单（导入时不再抓取）；Push 396 起面板可就地选文件，提交结果按 `manualTargets` 回传任务 / 变更 id，前端用现成分片直传挂任务，`change_after` 再调回挂接口写 `file_versions.change_request_id`。
 - 变更附图（Push 349 · 业务口径 2026-10-16「变更记录也是有图片的这个也要导入的」）：锚点按「变更前 / 变更后」列（表头定位、缺列 = 不识别）与行号（1 based = 变更表行）对变更记录；文件命名「变更前附图 <YYYY-MM-DD / 日期待补> NN.<ext>」/「变更后附图 …」；只有图没有文字的变更行同样建记录（内容 / 原因空 = 占位）；列外 / 表头行锚点出 warning `CHANGE_IMAGE_UNPLACED` 不导入；行对不上 / 媒对象缺失 / 单条变更附图超 30 张计入 `IMAGE_ROW_MISSING` 提醒（不阻断）。
 - 干系人（Push 324）：导入表「干系人」sheet导入表没有该表 = info `STAKEHOLDER_SHEET_MISSING` 照常导入）；写库 = 台账 `stakeholders` + 项目关联 `project_stakeholders` 同批（单事务）；姓名必填（空行跳过）；公司自由写法 → 四值 + 具体公司名（识别不出按 `customer` 兜底 + `STAKEHOLDER_COMPANY_UNMATCHED`）；联系方式含「微信 / WeChat / weixin」→ `wechat`、否则整段落 `phone`；「填写者」按显示名匹配（原文 / 去括注 / 去括注 + `-test`），未命中 `created_by` 留空 + `STAKEHOLDER_FILLER_MISSING`；「提交时间」→ `created_at`（当天 00:00 UTC；缺 = 导入时间）；超长截断（name 80 / company 120 / title 80 / phone 40 / wechat 64 / role 80、email 3..120）。
 - 变更申请人 / 填写者（Push 347 · 迁移 `0054`）：「变更管理」表的「变更申请人」「填写者」两列按显示名三路匹配库内账号（原文 / 去括注 / 去括注 + `-test`，与干系人「填写者」同口径；`resolveByDisplayNames` 由干系人填写者解析泛化）—— 申请人命中 = `change_requests.applied_by`（未命中回落导入人 + warning `CHANGE_APPLICANT_MISSING`）、填写者命中 = `change_requests.writer_by`（未命中留空 + info `CHANGE_WRITER_MISSING`）；预览 / 结果两处提醒；旧表缺「填写者」列 = 空、不提醒。
