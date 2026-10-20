@@ -14,6 +14,7 @@ import type {
   WecomGroupCandidateRow,
   WecomGroupRow,
 } from "../src/modules/notify/notify.group.repository.js";
+import { areAllProjectTasksOnTime } from "../src/modules/notify/notify.group.repository.js";
 import {
   composeGroupMarkdown,
   GROUP_DEGRADE_PREFIX,
@@ -52,6 +53,7 @@ class FakeGroupRepository {
   candidates: WecomGroupCandidateRow[] = [];
   observeCalls: { chatid: string; name: string | null; at: Date }[] = [];
   managers = new Map<string, string>();
+  allTasksOnTime = false;
   setNameCalls: { chatid: string; name: string; at: Date }[] = [];
 
   async findGroupByProject(projectId: string): Promise<WecomGroupRow | null> {
@@ -104,6 +106,10 @@ class FakeGroupRepository {
 
   async findProjectManagerId(projectId: string): Promise<string | null> {
     return this.managers.get(projectId) ?? null;
+  }
+
+  async areProjectTasksAllOnTime(): Promise<boolean> {
+    return this.allTasksOnTime;
   }
 
   async insertDelivery(input: NotifyDeliveryInsert): Promise<void> {
@@ -173,7 +179,7 @@ class FakeNotifyInbox {
   }
 }
 
-function makeService(r06ImagePath = ""): {
+function makeService(r06ImagePath = "", r06OnTimeImagePath = ""): {
   service: NotifyGroupService;
   repo: FakeGroupRepository;
   aibot: FakeAibot;
@@ -189,7 +195,7 @@ function makeService(r06ImagePath = ""): {
     aibot as unknown as WecomAibotClient,
     inbox as never,
     clock,
-    { env: { WECOM_R06_IMAGE_PATH: r06ImagePath } } as never,
+    { env: { WECOM_R06_IMAGE_PATH: r06ImagePath, WECOM_R06_ON_TIME_IMAGE_PATH: r06OnTimeImagePath } } as never,
   );
   return { service, repo, aibot, inbox };
 }
@@ -455,6 +461,24 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
     expect(aibot.sends[0]!.content).toBe("**任务节点完成**\n\n**节点**：到货验收\n负责人：张工");
   });
 
+  it("R06 按时交付判定：无任务 / 未完成 / 延期 / 缺完成日均不放行", () => {
+    const at = new Date("2026-10-20T02:00:00.000Z");
+    const row = (overrides: Partial<{ status: string; plannedEnd: string | null; actualEnd: string | null; onTime: boolean | null }> = {}) => ({
+      status: "done",
+      plannedEnd: "2026-10-19",
+      actualEnd: "2026-10-19",
+      onTime: null,
+      ...overrides,
+    });
+
+    expect(areAllProjectTasksOnTime([], at)).toBe(false);
+    expect(areAllProjectTasksOnTime([row(), row({ actualEnd: "2026-10-18" })], at)).toBe(true);
+    expect(areAllProjectTasksOnTime([row(), row({ actualEnd: "2026-10-20" })], at)).toBe(false);
+    expect(areAllProjectTasksOnTime([row({ status: "active" })], at)).toBe(false);
+    expect(areAllProjectTasksOnTime([row({ actualEnd: null, plannedEnd: "2026-10-19", onTime: true })], at)).toBe(false);
+    expect(areAllProjectTasksOnTime([row({ actualEnd: null, plannedEnd: null, onTime: true })], at)).toBe(true);
+  });
+
   it("R06_GROUP：文字送达后追加配置的喜报海报，投递记录累计两条消息", async () => {
     const dir = mkdtempSync(join(tmpdir(), "libiaolink-r06-"));
     const file = join(dir, "喜报.png");
@@ -476,6 +500,31 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
         mime: "image/png",
         groupActivated: true,
       });
+      expect(repo.deliveries[0]).toMatchObject({ state: "sent", attempts: 2 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("R06_GROUP：全部任务按时交付时优先使用按时交付喜报图", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "libiaolink-r06-"));
+    const fallbackFile = join(dir, "验收.gif");
+    const onTimeFile = join(dir, "按时.gif");
+    const gifHeader = Buffer.from("GIF89a", "ascii");
+    writeFileSync(fallbackFile, gifHeader);
+    writeFileSync(onTimeFile, gifHeader);
+    try {
+      const { service, repo, aibot } = makeService(fallbackFile, onTimeFile);
+      repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
+      repo.allTasksOnTime = true;
+
+      const outcome = await service.consume(
+        claimedRow(payload({ templateCode: "R06_GROUP", title: "叮咚~喜报来啦！", body: "项目圆满完成" })),
+      );
+
+      expect(outcome).toEqual({ outcome: "done" });
+      expect(aibot.imageSends).toHaveLength(1);
+      expect(aibot.imageSends[0]).toMatchObject({ fileName: "按时.gif", mime: "image/gif" });
       expect(repo.deliveries[0]).toMatchObject({ state: "sent", attempts: 2 });
     } finally {
       rmSync(dir, { recursive: true, force: true });

@@ -196,8 +196,9 @@ class FakeProjectRepository {
   async updateWithVersion(id: string, patch: Record<string, unknown>, expectedVersion: number, at: Date): Promise<ProjectRow | null> {
     const found = this.visible(id);
     if (found === null || found.project.version !== expectedVersion) return null;
-    Object.assign(found.project, patch, { version: found.project.version + 1, updatedAt: at });
-    return found.project;
+    const next: ProjectRow = { ...found.project, ...patch, version: found.project.version + 1, updatedAt: at };
+    this.rows = this.rows.map((view) => (view.project.id === id ? { ...view, project: next } : view));
+    return next;
   }
 
   async hardDeleteWithVersion(
@@ -276,14 +277,23 @@ function makeService(
   audit: FakeAuditService;
   permission: FakePermissionService;
   storage: FakeObjectStorage;
+  outbox: Array<Record<string, unknown>>;
 } {
   const audit = new FakeAuditService();
   const repo = new FakeProjectRepository();
   const permission = new FakePermissionService(options.adminIds);
   const storage = new FakeObjectStorage();
+  const outbox: Array<Record<string, unknown>> = [];
   repo.rows = rows.map((row) => ({ project: row, managerNames: ["张工"] }));
+  const tx = {
+    insert: (_table: unknown) => ({
+      values: async (value: Record<string, unknown>) => {
+        outbox.push(value);
+      },
+    }),
+  };
   const fakeDb = {
-    db: { transaction: (callback: (tx: unknown) => Promise<unknown>) => callback({}) },
+    db: { transaction: (callback: (tx: unknown) => Promise<unknown>) => callback(tx) },
   };
   const fakeFlow = {
     importSnapshot: (_tx: unknown, input: { requestedStageKey?: string }) =>
@@ -308,6 +318,7 @@ function makeService(
     audit,
     permission,
     storage,
+    outbox,
   };
 }
 
@@ -503,6 +514,30 @@ describe("ProjectService（M2-01 项目 CRUD + 项目回收站）", () => {
     expect(updated.name).toBe("改名");
     expect(updated.version).toBe(4);
     expect(updated.managerNames).toEqual(["张工"]);
+  });
+
+  it("更新为已完成：仅首次进入 done 写 project.completed；保持 done 不重复触发", async () => {
+    const { service, outbox } = makeService([projectRow({ id: UUID_A, version: 3, status: "active" })]);
+
+    const updated = await service.updateProject(UUID_A, { status: "done", version: 3 }, UUID_B);
+    expect(updated.status).toBe("done");
+    expect(outbox).toHaveLength(1);
+    expect(outbox[0]).toEqual({
+      topic: "project.completed",
+      dedupeKey: "project.completed:" + UUID_A + ":4",
+      payload: {
+        projectId: UUID_A,
+        status: "done",
+        previousStatus: "active",
+        version: 4,
+        actorId: UUID_B,
+        at: expect.any(String),
+      },
+      status: "pending",
+    });
+
+    await service.updateProject(UUID_A, { status: "done", version: 4 }, UUID_B);
+    expect(outbox).toHaveLength(1);
   });
 
   it("更新：version 不匹配 409 VERSION_CONFLICT；期间被删则 404", async () => {

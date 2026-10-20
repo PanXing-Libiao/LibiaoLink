@@ -48,6 +48,7 @@ export {
   evaluateEventMessages,
   listEnabledRules,
   planWindowMessages,
+  toProjectSubject,
   toProjectDaySubject,
   toReportMemberSubject,
   toStageSubject,
@@ -56,6 +57,7 @@ export {
 export type {
   EventEvaluationInput,
   ProjectDaySnapshot,
+  ProjectSnapshot,
   ReportMemberSnapshot,
   RuntimeEvaluation,
   RuntimeSkip,

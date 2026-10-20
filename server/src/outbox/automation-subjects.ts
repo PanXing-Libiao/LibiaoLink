@@ -6,7 +6,8 @@
  *   toReportMemberSubject）在 automation 模块内（wmj 线）—— 本层只负责读库与快照组装，不算「应发给谁」。
  *
  * 读面（全部只读；接线层不写业务表）：
- *   - 任务类（R02 ~ R07）：tasks + projects（经理 / 完成度）+ users（姓名）+ files（件数）+ wecom_groups（群绑定）；
+ *   - 任务类（R02 ~ R05 / R07）：tasks + projects（经理 / 完成度）+ users（姓名）+ files（件数）+ wecom_groups（群绑定）；
+ *   - 项目完成（R06）：projects（状态 / 群绑定）—— 由 project.completed 事件触发；
  *   - 日报名册槽位（A01）：projects（在办）× project_members（名册）× daily_reports（当日提交）× 工作日历；
  *   - 项目日报（A02 · 接线段 Push 224）：daily_reports（按项目 × 业务日聚合）+ projects + users（作者姓名）+ wecom_groups。
  *
@@ -14,7 +15,7 @@
  *   - actual_start：无库列 → 恒 null（R04 的「尚未实际开始」条件据此恒真，待实际开始字段落地后收口）；
  *   - project.group：读 `wecom_groups`（enabled = 启用态）—— 一期寻址键 = projectId（一项目一群：投递层按项目 id 解析
  *     chatid 绑定，换绑后未投递消息仍可送出）；未绑定 / 已停用 → null（引擎按 recipient_missing 收口：不产出不误发）；
- *   - project.progress：读时派生完成率（项目内未删任务 status=done 占比，四舍五入取整；无任务 = 0）—— 供 R06；
+ *   - project.progress：读时派生完成率（项目内未删任务 status=done 占比，四舍五入取整；无任务 = 0）—— 任务主体保留字段；
  *   - task.urgency：直接透传 tasks.priority（三档「高 / 中 / 低」）；R07 条件已按三档定案（高 + 中命中 · wmj · Push 171）；
  *   - task.file_count：与任务详情「文件摘要」同口径（draft / final / changed / archived，排除回收站）；
  *   - A02（project_day）已产主体（接线段 Push 224）：项目 × 业务日聚合（entryCount / headcountTotal / issueCount /
@@ -37,6 +38,7 @@ import { dailyReports } from "../db/schema/reports.js";
 import { tasks } from "../db/schema/tasks.js";
 import {
   toProjectDaySubject,
+  toProjectSubject,
   toReportMemberSubject,
   toStageSubject,
   toTaskSubject,
@@ -172,7 +174,8 @@ export class AutomationSubjectReader {
   ) {}
 
   /**
-   * 事件主体：task.* → 任务主体（payload.taskId）；stage.advanced → 阶段主体（payload.projectId + stageKey）。
+   * 事件主体：task.* → 任务主体（payload.taskId）；project.completed → 项目主体（payload.projectId）；
+   * stage.advanced → 阶段主体（payload.projectId + stageKey）。
    * 其余规则主题（change.applied / node.completed / report.submitted / issue.updated）暂无事件型规则与主体映射 → null
    * （消费侧对「无规则订阅」直接消费完成；新增订阅时在此补映射）。
    */
@@ -189,8 +192,31 @@ export class AutomationSubjectReader {
       const subjects = await this.buildTaskSubjects(rows, at, client, stringField(payload, "actorId"));
       return subjects.get(taskId) ?? null;
     }
+    if (topic === "project.completed") return await this.projectSubject(payload, client);
     if (topic === "stage.advanced") return await this.stageSubject(payload, client);
     return null;
+  }
+
+  /** R06 项目完成事件主体：读项目状态 / 版本 / 项目群绑定，组装为 project 主体。 */
+  private async projectSubject(payload: Record<string, unknown>, client: DbClient): Promise<ReplaySubject | null> {
+    const projectId = stringField(payload, "projectId");
+    if (projectId === null) return null;
+    const rows = await client
+      .select({ id: projects.id, code: projects.code, name: projects.name, status: projects.status, version: projects.version })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    const project = rows[0];
+    if (project === undefined) return null;
+    const groupProjectIds = await this.enabledGroupProjectIds([projectId], client);
+    return toProjectSubject({
+      projectId: project.id,
+      projectCode: project.code,
+      projectName: project.name,
+      projectStatus: project.status,
+      projectVersion: numberField(payload, "version") ?? project.version,
+      groupId: groupProjectIds.has(projectId) ? projectId : null,
+    });
   }
 
   /** A08 阶段事件主体：读阶段 / 项目 / 推进人 / 项目群绑定，组装为 stage 主体。 */
@@ -467,7 +493,7 @@ export class AutomationSubjectReader {
     }
     return subjects;
   }
-  /** 项目完成度（R06 的 project.progress）：未删任务 status=done 占比四舍五入取整；无任务 = 0。 */
+  /** 项目完成度（任务主体的 project.progress）：未删任务 status=done 占比四舍五入取整；无任务 = 0。 */
   private async projectProgress(projectIds: readonly string[], client: DbClient): Promise<Map<string, number>> {
     const result = new Map<string, number>();
     if (projectIds.length === 0) return result;

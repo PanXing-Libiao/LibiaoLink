@@ -103,11 +103,11 @@ interface ProduceContext {
   scope: string;
 }
 
-/** 规则码 → 关联对象（refType / refId 成对；任务主体映射 task、项目日报主体映射 project，其余暂无单一对象 → 空）。 */
+/** 规则码 → 关联对象（refType / refId 成对；任务主体映射 task、项目 / 项目日报主体映射 project，阶段映射 stage，其余暂无单一对象 → 空）。 */
 function referenceOf(ruleCode: string, entityId: string): { refType: string | null; refId: string | null } {
   const kind = subjectKindOf(ruleCode);
   if (kind === "task") return { refType: "task", refId: entityId };
-  if (kind === "project_day") return { refType: "project", refId: entityId };
+  if (kind === "project" || kind === "project_day") return { refType: "project", refId: entityId };
   if (kind === "stage") return { refType: "stage", refId: entityId };
   return { refType: null, refId: null };
 }

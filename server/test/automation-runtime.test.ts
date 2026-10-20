@@ -9,6 +9,7 @@ import {
   planWindowMessages,
   replayRules,
   toProjectDaySubject,
+  toProjectSubject,
   toReportMemberSubject,
   toStageSubject,
   toTaskSubject,
@@ -117,8 +118,32 @@ describe("evaluateEventMessages 事件形态（R02 金标等价 + 冷启动保�
       "R02:t-1:v5:u-1",
       "R02:t-1:v5:u-9",
     ]);
-    // R06 同主题命中但条件不满足（project.progress != 100）→ 登记 not_matched；A 系列不参与（主题不命中）。
-    expect(runtime.skipped).toEqual([{ reason: "not_matched", ruleCode: "R06", entityId: "t-1" }]);
+    // R06 改为 project.completed 事件，不再跟随 task.completed；A 系列也不参与（主题不命中）。
+    expect(runtime.skipped).toEqual([]);
+  });
+
+  it("project.completed 事件：项目主体命中 R06，产出项目群喜报", () => {
+    const project = toProjectSubject({
+      projectId: "p-1",
+      projectCode: "LBUSA-20261014-002",
+      projectName: "美国仓储公司订单",
+      projectStatus: "done",
+      projectVersion: 4,
+      groupId: "p-1",
+    });
+    const runtime = evaluateEventMessages({ topic: "project.completed", rules: ENABLED_TEST_RULES, subject: project, at: AT });
+    expect(runtime.messages).toHaveLength(1);
+    expect(runtime.messages[0]).toMatchObject({
+      ruleCode: "R06",
+      channel: "wecom_group",
+      recipientId: "p-1",
+      dedupeKey: "R06:p-1:v4",
+      title: "叮咚~喜报来啦！",
+    });
+    expect(runtime.messages[0]?.body).toBe(
+      `项目：**LBUSA-20261014-002·美国仓储公司订单**\n项目已全部完成，验收交付完毕。大家一起为这份成果喝彩吧`,
+    );
+    expect(runtime.skipped).toEqual([]);
   });
 
   it("冷启动保护：超龄事件整体放弃 → 逐规则 event_too_old（不评估主体）", () => {
@@ -131,10 +156,7 @@ describe("evaluateEventMessages 事件形态（R02 金标等价 + 冷启动保�
       maxEventAgeMs: 30 * 60_000,
     });
     expect(runtime.messages).toEqual([]);
-    expect(runtime.skipped).toEqual([
-      { reason: "event_too_old", ruleCode: "R02", entityId: "t-1" },
-      { reason: "event_too_old", ruleCode: "R06", entityId: "t-1" },
-    ]);
+    expect(runtime.skipped).toEqual([{ reason: "event_too_old", ruleCode: "R02", entityId: "t-1" }]);
   });
 
   it("未超龄：正常求值；给了阈值缺 eventAt → 显性抛错", () => {
@@ -156,8 +178,8 @@ describe("evaluateEventMessages 事件形态（R02 金标等价 + 冷启动保�
     expect(noTopic.skipped).toEqual([]);
     const mismatch = evaluateEventMessages({ topic: "task.completed", rules: ENABLED_TEST_RULES, subject: todo("2026-09-25"), at: AT });
     expect(mismatch.messages).toEqual([]);
-    expect(mismatch.skipped.map((item) => item.reason)).toEqual(["subject_mismatch", "subject_mismatch"]);
-    expect(mismatch.skipped.map((item) => item.ruleCode)).toEqual(["R02", "R06"]);
+    expect(mismatch.skipped.map((item) => item.reason)).toEqual(["subject_mismatch"]);
+    expect(mismatch.skipped.map((item) => item.ruleCode)).toEqual(["R02"]);
   });
 });
 

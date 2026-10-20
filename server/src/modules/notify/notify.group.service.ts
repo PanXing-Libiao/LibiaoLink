@@ -350,8 +350,9 @@ export class NotifyGroupService {
   }
 
   /**
-   * R06 喜报海报（本地联调）：仅当 templateCode = R06_GROUP 且配置了 WECOM_R06_IMAGE_PATH 时，
-   * 在文字已送达后追加图片。图片属增强项，失败只留日志，不把已送达的文字消息重排成重试。
+   * R06 喜报图：仅当 templateCode = R06_GROUP。项目内所有未删任务均按时交付时优先使用
+   * WECOM_R06_ON_TIME_IMAGE_PATH（装配动画），否则使用 WECOM_R06_IMAGE_PATH（验收悬浮图标）。
+   * 图片在文字已送达后追加；判定 / 读取 / 发送失败只留日志，不影响已送达文字。
    */
   private async sendR06Poster(input: {
     message: NotifyGroupMessagePayload;
@@ -363,7 +364,20 @@ export class NotifyGroupService {
     if (input.message.templateCode !== "R06_GROUP") {
       return 0;
     }
-    const configured = this.config.env.WECOM_R06_IMAGE_PATH.trim();
+    const defaultImagePath = this.config.env.WECOM_R06_IMAGE_PATH.trim();
+    const onTimeImagePath = this.config.env.WECOM_R06_ON_TIME_IMAGE_PATH.trim();
+    if (defaultImagePath === "" && onTimeImagePath === "") {
+      return 0;
+    }
+    let allOnTime = false;
+    if (onTimeImagePath !== "") {
+      try {
+        allOnTime = await this.repository.areProjectTasksAllOnTime(input.message.projectId, this.clock.now());
+      } catch {
+        this.logger.warn("R06 按时交付判定读取失败，回退默认喜报图：" + input.dedupeKey);
+      }
+    }
+    const configured = allOnTime ? onTimeImagePath : defaultImagePath;
     if (configured === "") {
       return 0;
     }
