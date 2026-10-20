@@ -5,7 +5,6 @@ import {
   AUTOMATION_SCHEDULE_JOB_KIND,
   BUILTIN_RULES,
   evaluateEventMessages,
-  listEnabledRules,
   planWindowMessages,
   replayRules,
   toProjectDaySubject,
@@ -396,23 +395,6 @@ describe("主体映射器（字段与收件人 = docs/rules 字段表）", () =>
     const perMember = toTodoSubject({ todoId: "todo-1", entityId: "todo-1|u-1", title: "t", content: null, status: "pending", remindDate: "2026-09-25", memberId: "u-1", memberName: "张三" });
     expect(perMember.id).toBe("todo-1|u-1");
     expect(perMember.fields["todo.content"]).toBeNull();
-  });
-});
-
-describe("规则来源 listEnabledRules（一期 = 内置集）", () => {
-  it("返回启用中的内置规则（异步签名，M5-06 换读表实现不变）", async () => {
-    const rules = await listEnabledRules();
-    expect(rules).toHaveLength(3);
-    expect(rules.every((rule) => rule.enabled)).toBe(true);
-    expect(rules.map((rule) => rule.code)).toEqual(["R02", "R03", "R05"]);
-    expect(rules.map((rule) => rule.code)).not.toEqual(expect.arrayContaining(["R04", "R06", "R07", "A01", "A02", "A08", "A14"]));
-  });
-
-  it("本机 r06Enabled 开关可显式纳入 R06，默认集不变", async () => {
-    const rules = await listEnabledRules({ r06Enabled: true });
-    const r06 = rules.find((rule) => rule.code === "R06");
-    expect(r06?.enabled).toBe(true);
-    expect(rules.map((rule) => rule.code)).toEqual(["R02", "R03", "R05", "R06"]);
   });
 });
 

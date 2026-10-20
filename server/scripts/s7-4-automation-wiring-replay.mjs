@@ -30,7 +30,8 @@
  *       node scripts/s7-4-automation-wiring-replay.mjs [--out <报告.md>] [--json <证据.json>] [--keep]
  * 退出码：断言全过 = 0，否则 = 1（可当门禁用）。
  * 说明：本机无 PG 时只做语法门禁；真机证据以 CI database job 为准（不伪造）。合成实体 id 全部由脚本生成、
- *   按 id / 前缀精确清理（--keep 时保留现场）。
+ *   按 id / 前缀精确清理（--keep 时保留现场）；非本回放 pending job 临时推到远期并在收尾恢复，
+ *   避免 M5-06 seed 的 per-rule job 混入调度领取统计。
  */
 import { randomBytes, randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
@@ -242,7 +243,8 @@ async function loadRuntime() {
       createAutomationScheduleHandler: wiringModule.createAutomationScheduleHandler,
       AUTOMATION_SCHEDULE_JOB_KIND: automationIndexModule.AUTOMATION_SCHEDULE_JOB_KIND,
       BUILTIN_RULES: automationIndexModule.BUILTIN_RULES,
-      listEnabledRules: automationIndexModule.listEnabledRules,
+      AutomationRuleRepository: automationIndexModule.AutomationRuleRepository,
+      AutomationRunRepository: automationIndexModule.AutomationRunRepository,
       CalendarService: calendarServiceModule.CalendarService,
       CalendarRepository: calendarRepositoryModule.CalendarRepository,
       AuditService: auditServiceModule.AuditService,
@@ -289,6 +291,18 @@ function buildEnv(overrides = {}) {
     clock,
   );
   const subjects = new runtime.AutomationSubjectReader(database, calendar);
+  const ruleRepository = new runtime.AutomationRuleRepository(database);
+  const runRepository = new runtime.AutomationRunRepository(database);
+  const replayRunKeys = new Set();
+  const runPort = {
+    insertIfAbsent: async (client, inputs) => {
+      const inserted = await runRepository.insertIfAbsent(client, inputs);
+      for (const input of inputs) {
+        if (inserted.has(input.dedupeKey)) replayRunKeys.add(input.dedupeKey);
+      }
+      return inserted;
+    },
+  };
 
   // M5-03-5-4 接线段：单聊 aibot 消费（真 NotifyDmService + 真客户端 + stub socket 自动应答 —— 不触外网）。
   const dmSockets = [];
@@ -342,6 +356,8 @@ function buildEnv(overrides = {}) {
     append: runtime.appendOutboxIfAbsent,
     db: database.db,
     rules: async () => runtime.BUILTIN_RULES.map((rule) => ({ ...rule, enabled: true })),
+    runs: runPort,
+    transaction: (work) => database.db.transaction(work),
     now: () => clock.now(),
     shift: () => calendar.getSettings(),
     logger: {
@@ -384,6 +400,32 @@ function buildEnv(overrides = {}) {
     issueIds: [],
     jobIds: [],
     outboxKeys: [],
+    parkedJobs: [],
+  };
+  const parkUnrelatedPendingJobs = async () => {
+    const found = await db.query("select id, run_at::text as run_at, updated_at::text as updated_at from jobs where status = 'pending' order by id");
+    cleanup.parkedJobs.push(...found.rows);
+    if (found.rows.length > 0) {
+      await db.query(
+        "update jobs set run_at = now() + interval '100 years', updated_at = now() where id = any($1::bigint[])",
+        [found.rows.map((row) => row.id)],
+      );
+    }
+    return found.rows.length;
+  };
+  const restoreParkedJobs = async () => {
+    if (cleanup.parkedJobs.length > 0) {
+      await db.query(
+        "update jobs as j set run_at = v.run_at, updated_at = v.updated_at " +
+          "from unnest($1::bigint[], $2::timestamptz[], $3::timestamptz[]) as v(id, run_at, updated_at) " +
+          "where j.id = v.id",
+        [
+          cleanup.parkedJobs.map((row) => row.id),
+          cleanup.parkedJobs.map((row) => row.run_at),
+          cleanup.parkedJobs.map((row) => row.updated_at),
+        ],
+      );
+    }
   };
   const trackedKey = (key) => {
     cleanup.outboxKeys.push(key);
@@ -491,17 +533,19 @@ function buildEnv(overrides = {}) {
       "calendar_days=" + calendarGuard.rows.length + (calendarGuard.rows.length === 0 ? "" : " · " + short(calendarGuard.rows)),
       calendarGuard.rows.length === 0,
     );
+    const parkedJobCount = await parkUnrelatedPendingJobs();
     const pendingBaseline = await db.query(
-      "select (select count(*)::int from outbox_events where topic in ('task.completed','task.updated','task.progress_changed','change.applied','node.completed','report.submitted','issue.updated','notify.message') and status in ('pending','processing')) as outbox, (select count(*)::int from jobs where status = 'pending') as jobs",
+      "select (select count(*)::int from outbox_events where topic in ('task.completed','task.updated','task.progress_changed','change.applied','node.completed','report.submitted','issue.updated','notify.message') and status in ('pending','processing')) as outbox, (select count(*)::int from jobs where status = 'pending' and run_at <= now()) as jobs",
     );
     check(
       "S0c",
-      "基线：注册主题无待领行、无待跑任务（领取统计可用精确值断言）",
+      "基线：注册主题无待领行、无到期任务（非本回放 pending job 已临时推到远期，收尾恢复）",
       "outbox=0 / jobs=0",
-      short(pendingBaseline.rows[0]),
+      short({ ...pendingBaseline.rows[0], parked: parkedJobCount }),
       pendingBaseline.rows[0].outbox === 0 && pendingBaseline.rows[0].jobs === 0,
     );
-    const activeRuleCodes = (await runtime.listEnabledRules()).map((rule) => rule.code);
+    // M5-06-1A 起运行时规则来源 = automation_rules（代码常量只供 seed / 本回放显式注入）。
+    const activeRuleCodes = (await ruleRepository.listEnabledRules()).map((rule) => rule.code);
     check(
       "S0d",
       "生产规则启用集：仅 R02 / R03 / R05（本回放另行显式启用全部定义以验证保留实现）",
@@ -913,6 +957,24 @@ function buildEnv(overrides = {}) {
     );
   } finally {
     try {
+      await restoreParkedJobs();
+      check(
+        "S9a",
+        "非本回放 pending job 原值恢复",
+        "恢复 " + cleanup.parkedJobs.length + " 条",
+        "已恢复",
+        true,
+      );
+    } catch (error) {
+      check(
+        "S9a",
+        "非本回放 pending job 原值恢复",
+        "恢复 " + cleanup.parkedJobs.length + " 条",
+        "恢复失败：" + messageOf(error),
+        false,
+      );
+    }
+    try {
       if (!cleanup.keep) {
         const userIds = cleanup.userIds;
         const produced = await db
@@ -930,6 +992,9 @@ function buildEnv(overrides = {}) {
         }
         if (cleanup.jobIds.length > 0) {
           await db.query("delete from jobs where id = any($1::bigint[])", [cleanup.jobIds]);
+        }
+        if (replayRunKeys.size > 0) {
+          await db.query("delete from automation_runs where dedupe_key = any($1::text[])", [[...replayRunKeys]]);
         }
         if (cleanup.projectIds.length > 0) {
           await db.query("delete from project_members where project_id = any($1::uuid[])", [cleanup.projectIds]);
@@ -950,6 +1015,7 @@ function buildEnv(overrides = {}) {
       const residueUsers = await db.query("select count(*)::int as n from users where username like $1", [USER_PREFIX + "%"]);
       const residueOutbox = await db.query("select count(*)::int as n from outbox_events where dedupe_key like $1", [OUTBOX_PREFIX + "%"]);
       const residueJobs = await db.query("select count(*)::int as n from jobs where payload->>'replay' = $1", [JOB_REPLAY_TAG]);
+      const residueRuns = await db.query("select count(*)::int as n from automation_runs where dedupe_key = any($1::text[])", [[...replayRunKeys]]);
       const residueMessages = cleanup.userIds.length === 0 ? 0 : await ourMessageCount();
       const residueNotifications =
         cleanup.userIds.length === 0
@@ -959,12 +1025,13 @@ function buildEnv(overrides = {}) {
       const residueActivations = await activationCount();
       check(
         "S9",
-        "自清理：合成前缀 / 实体零残留（--keep 时保留现场、仅留痕）",
-        cleanup.keep ? "keep=true（不清理）" : "users=0 / outbox=0 / jobs=0 / notifications=0 / deliveries=0 / activations=0",
+        "自清理：合成前缀 / 实体 / 运行记录零残留（--keep 时保留现场、仅留痕）",
+        cleanup.keep ? "keep=true（不清理）" : "users=0 / outbox=0 / jobs=0 / runs=0 / notifications=0 / deliveries=0 / activations=0",
         short({
           users: residueUsers.rows[0].n,
           outbox: residueOutbox.rows[0].n,
           jobs: residueJobs.rows[0].n,
+          runs: residueRuns.rows[0].n,
           messages: residueMessages,
           notifications: residueNotifications,
           deliveries: residueDeliveries,
@@ -975,6 +1042,7 @@ function buildEnv(overrides = {}) {
           (residueUsers.rows[0].n === 0 &&
             residueOutbox.rows[0].n === 0 &&
             residueJobs.rows[0].n === 0 &&
+            residueRuns.rows[0].n === 0 &&
             residueMessages === 0 &&
             residueNotifications === 0 &&
             residueDeliveries === 0 &&

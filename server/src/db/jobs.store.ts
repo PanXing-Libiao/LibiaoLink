@@ -18,6 +18,8 @@ export interface JobRow {
   lastError: string | null;
   lockedBy: string | null;
   lockedAt: Date | null;
+  /** 一规则一 job 的幂等键；历史 / 非规则 job = null。 */
+  dedupeKey: string | null;
 }
 
 export interface ClaimDueJobsInput {
@@ -64,6 +66,17 @@ export interface MarkJobFailureInput {
   windowFrom: Date;
   windowTo: Date;
 }
+
+export interface AutomationScheduleJobInput {
+  ruleCode: string;
+  ruleVersion: number;
+  cron: string;
+  enabled: boolean;
+  /** 注入时刻（测试确定性）；缺省 = 当前时刻。 */
+  now?: Date;
+}
+
+export type AutomationScheduleJobOutcome = "inserted" | "reactivated" | "updated" | "disabled" | "unchanged";
 
 /**
  * 调度任务存取（S7-3 · i11 / M5-02）：到期领取（`for update skip locked` + 崩溃遗留按 locked_at 重领）、
@@ -123,7 +136,7 @@ export class JobsStore {
          set locked_by = ${input.workerId}, locked_at = now(), updated_at = now()
         from claimed
        where j.id = claimed.id
-      returning j.id, j.kind, j.payload, j.cron, j.run_at, j.last_run_at, j.status, j.attempts, j.last_error, j.locked_by, j.locked_at
+      returning j.id, j.kind, j.payload, j.cron, j.run_at, j.last_run_at, j.status, j.attempts, j.last_error, j.locked_by, j.locked_at, j.dedupe_key
     `);
     return (result.rows as unknown as Array<Record<string, unknown>>).map((row) => ({
       id: Number(row.id),
@@ -137,6 +150,7 @@ export class JobsStore {
       lastError: row.last_error === null || row.last_error === undefined ? null : String(row.last_error),
       lockedBy: row.locked_by === null || row.locked_by === undefined ? null : String(row.locked_by),
       lockedAt: row.locked_at === null || row.locked_at === undefined ? null : new Date(row.locked_at as string | number | Date),
+      dedupeKey: row.dedupe_key === null || row.dedupe_key === undefined ? null : String(row.dedupe_key),
     }));
   }
 
@@ -211,5 +225,77 @@ export class JobsStore {
         note: input.error,
       });
     });
+  }
+
+  /**
+   * 一规则一 job 的 reconcile（M5-06-1A）：
+   * - 新行：启用 = pending，停用 = done；run_at / last_run_at 均取 now，避免补发启用前窗口；
+   * - done + enabled = 重新启用：pending、run_at / last_run_at = now、失败计数清零；
+   * - pending / failed + enabled = 仅刷新 payload / cron，不重置窗口，也不自动复活 failed；
+   * - disabled = done，保留行与历史窗口供排障。
+   */
+  async reconcileAutomationScheduleJob(
+    client: DbClient,
+    input: AutomationScheduleJobInput,
+  ): Promise<AutomationScheduleJobOutcome> {
+    const now = input.now ?? new Date();
+    const dedupeKey = "automation-schedule:" + input.ruleCode;
+    const payload = { ruleCode: input.ruleCode, ruleVersion: input.ruleVersion };
+    const rows = await client
+      .select({
+        id: jobs.id,
+        payload: jobs.payload,
+        cron: jobs.cron,
+        status: jobs.status,
+      })
+      .from(jobs)
+      .where(eq(jobs.dedupeKey, dedupeKey))
+      .limit(1);
+    const existing = rows[0];
+    if (existing === undefined) {
+      await client.insert(jobs).values({
+        kind: "automation-schedule.job",
+        payload,
+        cron: input.cron,
+        runAt: now,
+        lastRunAt: now,
+        status: input.enabled ? "pending" : "done",
+        dedupeKey,
+      });
+      return "inserted";
+    }
+    const payloadUnchanged = JSON.stringify(existing.payload) === JSON.stringify(payload);
+    const cronUnchanged = existing.cron === input.cron;
+    if (!input.enabled) {
+      if (existing.status === "done" && payloadUnchanged && cronUnchanged) return "unchanged";
+      await client
+        .update(jobs)
+        .set({ payload, cron: input.cron, status: "done", lockedAt: null, updatedAt: sql`now()` })
+        .where(eq(jobs.id, existing.id));
+      return "disabled";
+    }
+    if (existing.status === "done") {
+      await client
+        .update(jobs)
+        .set({
+          payload,
+          cron: input.cron,
+          status: "pending",
+          runAt: now,
+          lastRunAt: now,
+          attempts: 0,
+          lastError: null,
+          lockedAt: null,
+          updatedAt: sql`now()`,
+        })
+        .where(eq(jobs.id, existing.id));
+      return "reactivated";
+    }
+    if (payloadUnchanged && cronUnchanged) return "unchanged";
+    await client
+      .update(jobs)
+      .set({ payload, cron: input.cron, updatedAt: sql`now()` })
+      .where(eq(jobs.id, existing.id));
+    return "updated";
   }
 }

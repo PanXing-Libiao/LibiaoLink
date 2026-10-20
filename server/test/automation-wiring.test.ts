@@ -18,6 +18,7 @@ import {
   toReportMemberSubject,
   toStageSubject,
   toTaskSubject,
+  type AutomationRunInsert,
   type ReplaySubject,
   type ReplayTask,
 } from "../src/modules/automation/index.js";
@@ -86,12 +87,15 @@ interface Harness {
   deps: AutomationWiringDeps;
   subjects: FakeSubjectPort;
   appended: { client: DbClient; event: OutboxEventInput }[];
+  runs: AutomationRunInsert[];
   logs: { log: string[]; warn: string[]; error: string[] };
 }
 
 function makeHarness(overrides: Partial<AutomationWiringDeps> = {}): Harness {
   const subjects = new FakeSubjectPort();
   const appended: Harness["appended"] = [];
+  const runs: AutomationRunInsert[] = [];
+  const runKeys = new Set<string>();
   const logs: Harness["logs"] = { log: [], warn: [], error: [] };
   const deps: AutomationWiringDeps = {
     env: { AUTOMATION_EVENT_MAX_AGE_MS: 6 * 3_600_000 } as unknown as Env,
@@ -101,6 +105,19 @@ function makeHarness(overrides: Partial<AutomationWiringDeps> = {}): Harness {
     },
     db: DB,
     rules: async () => [...ENABLED_TEST_RULES],
+    runs: {
+      insertIfAbsent: async (_client, inputs) => {
+        const inserted = new Set<string>();
+        for (const input of inputs) {
+          if (runKeys.has(input.dedupeKey)) continue;
+          runKeys.add(input.dedupeKey);
+          runs.push(input);
+          inserted.add(input.dedupeKey);
+        }
+        return inserted;
+      },
+    },
+    transaction: async (work) => work(TX),
     now: () => NOW,
     shift: async () => ({ reminderShiftEnabled: false, shiftDirection: "forward" }),
     logger: {
@@ -110,7 +127,7 @@ function makeHarness(overrides: Partial<AutomationWiringDeps> = {}): Harness {
     },
     ...overrides,
   };
-  return { deps, subjects, appended, logs };
+  return { deps, subjects, appended, runs, logs };
 }
 
 function row(topic: OutboxTopic, payload: Record<string, unknown>, overrides: Partial<OutboxClaimedRow> = {}): OutboxClaimedRow {
@@ -127,11 +144,11 @@ function row(topic: OutboxTopic, payload: Record<string, unknown>, overrides: Pa
   };
 }
 
-function jobContext(from: Date, to: Date): JobRunContext {
+function jobContext(from: Date, to: Date, payload: Record<string, unknown> = {}): JobRunContext {
   const job: JobRow = {
     id: 3,
     kind: AUTOMATION_SCHEDULE_JOB_KIND,
-    payload: {},
+    payload,
     cron: "0 9 * * *",
     runAt: to,
     lastRunAt: from,
@@ -140,6 +157,7 @@ function jobContext(from: Date, to: Date): JobRunContext {
     lastError: null,
     lockedBy: "test",
     lockedAt: NOW,
+    dedupeKey: null,
   };
   return { job, windowFrom: from, windowTo: to, fireTimes: [], tx: TX };
 }
@@ -160,7 +178,7 @@ describe("规则事件消费（S7-4 接线 · evaluateEventMessages → notify.m
     ];
     for (const [index, item] of expected.entries()) {
       const event = h.appended[index];
-      expect(event?.client).toBe(DB);
+      expect(event?.client).toBe(TX);
       expect(event?.event.topic).toBe("notify.message");
       expect(event?.event.dedupeKey).toBe(item.key);
       const payload = event?.event.payload as Record<string, unknown>;
@@ -174,6 +192,46 @@ describe("规则事件消费（S7-4 接线 · evaluateEventMessages → notify.m
       expect(String(payload.body)).toContain("安装摄像头");
     }
     expect(h.logs.warn.some((line) => line.includes("渠道未落地"))).toBe(false);
+    // M5-06-1A 运行留痕：规则 × 实体一条 hit，消息 / 动作 / 条件快照可回溯；R06 只订阅 project.completed。
+    expect(h.runs).toHaveLength(1);
+    const run = h.runs.find((item) => item.ruleCode === "R02");
+    expect(run).toMatchObject({
+      ruleCode: "R02",
+      source: "event",
+      topic: "task.completed",
+      windowKey: "v5",
+      entityType: "task",
+      entityId: "t-1",
+      dedupeKey: "event:task.completed:t-1:R02:t-1",
+      status: "hit",
+      skipReason: null,
+      error: null,
+    });
+    expect(run?.actions).toHaveLength(2);
+    expect(run?.messages).toHaveLength(4);
+    expect(run?.conditions.length).toBeGreaterThan(0);
+    expect(Object.keys(run?.conditions[0] ?? {}).sort()).toEqual(["actual", "expected", "field", "op", "passed"]);
+    expect(Object.keys(run?.messages[0] ?? {}).sort()).toEqual([
+      "body",
+      "channel",
+      "dedupeKey",
+      "recipient",
+      "template",
+      "title",
+    ]);
+  });
+
+  it("同一事件重放：第二次运行记录唯一键拦截，零新增 outbox", async () => {
+    const h = makeHarness({ rules: async () => ENABLED_TEST_RULES.filter((rule) => rule.code === "R02") });
+    h.subjects.eventSubjects.set("task.completed", toTaskSubject(task({ displayStatus: "done" })));
+    const handler = createRuleEventConsumers(h.deps).get("task.completed");
+    const event = row("task.completed", { taskId: "t-1" });
+
+    await handler?.handle(event);
+    await handler?.handle(event);
+
+    expect(h.appended).toHaveLength(4);
+    expect(h.runs).toHaveLength(1);
   });
 
   it("冷启动保护：事件行创建时刻过旧 → 零产出且按 event_too_old 留痕", async () => {
@@ -187,6 +245,9 @@ describe("规则事件消费（S7-4 接线 · evaluateEventMessages → notify.m
     expect(outcome).toEqual({ outcome: "done" });
     expect(h.appended).toHaveLength(0);
     expect(h.logs.log.some((line) => line.includes("event_too_old"))).toBe(true);
+    expect(h.runs).toHaveLength(1);
+    expect(h.runs.every((run) => run.status === "skipped" && run.skipReason === "event_too_old")).toBe(true);
+    expect(h.runs.every((run) => run.messages.length === 0)).toBe(true);
   });
 
   it("条件不命中（缺件条件不满足）：消费完成、零产出", async () => {
@@ -197,6 +258,7 @@ describe("规则事件消费（S7-4 接线 · evaluateEventMessages → notify.m
 
     expect(outcome).toEqual({ outcome: "done" });
     expect(h.appended).toHaveLength(0);
+    expect(h.runs.find((run) => run.ruleCode === "R02")).toMatchObject({ status: "skipped", skipReason: "not_matched" });
   });
 
   it("无事件型规则订阅的主题：不读主体、直接消费完成", async () => {
@@ -304,15 +366,16 @@ describe("调度生产者（automation-schedule.job → notify.message）", () =
     const window = jobContext(new Date(atShanghaiTime("2026-09-24", "19:00")), new Date(atShanghaiTime("2026-09-24", "19:40")));
 
     await handler.run(window);
+    expect(h.appended).toHaveLength(2);
     await handler.run(window);
 
-    // M5-03-5-4 接线段起：A01 双动作（inbox + wecom_aibot）逐行产行、幂等键逐行稳定（重放不逃逸）。
+    // M5-06-1A 起：运行记录唯一键先防重放 —— 第二次重放不新增 outbox 行。
     expect(h.appended.map((item) => item.event.dedupeKey)).toEqual([
       "A01:u-1:2026-09-24",
       "A01:u-1:2026-09-24:aibot",
-      "A01:u-1:2026-09-24",
-      "A01:u-1:2026-09-24:aibot",
     ]);
+    expect(h.runs).toHaveLength(1);
+    expect(h.runs[0]?.dedupeKey).toBe("schedule:A01:p-1|u-1:2026-09-24");
   });
   it("A01 双动作合并：同一人多项目 inbox / wecom_aibot 各合并一条（收件人粒度幂等键 + 项目清单）", async () => {
     const rules = ENABLED_TEST_RULES.filter((rule) => rule.code === "A01");
@@ -385,6 +448,29 @@ describe("调度生产者（automation-schedule.job → notify.message）", () =
     expect(payload.mergeKey).toBe("R03:t-1:2026-09-24");
     expect(h.appended.some((item) => (item.event.payload as Record<string, unknown>).recipientId === "u-9")).toBe(false);
     expect(h.logs.warn.some((line) => line.includes("渠道未落地"))).toBe(false);
+    expect(h.runs).toHaveLength(1);
+    expect(h.runs[0]).toMatchObject({
+      source: "schedule",
+      topic: null,
+      windowKey: "2026-09-24",
+      status: "hit",
+      dedupeKey: "schedule:R03:t-1:2026-09-24",
+    });
+  });
+
+  it("per-rule job：payload.ruleCode 只评估指定规则", async () => {
+    const h = makeHarness();
+    h.subjects.windowSubjects = [
+      toTaskSubject(task({ plannedEnd: "2026-09-25" })),
+      toReportMemberSubject({ date: "2026-09-24", isWorkday: true, submitted: false, userId: "u-1", userName: "张三", projectId: "p-1", projectName: "临港数据中心" }),
+    ];
+
+    const result = await createAutomationScheduleHandler(h.deps).run(
+      jobContext(FROM, TO, { ruleCode: "R03", ruleVersion: 1 }),
+    );
+
+    expect(result?.produced).toBe(1);
+    expect(h.runs.map((run) => run.ruleCode)).toEqual(["R03"]);
   });
 
   it("A02 项目日报命中：产出 notify.group（title 非空 / refType = project / 幂等键 = A02:项目:日期）", async () => {
