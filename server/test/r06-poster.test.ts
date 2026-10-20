@@ -1,10 +1,16 @@
 /**
- * R06 A 方案动态海报回归：周期口径（进行中 = 计划周期，完成 = 实际历时）、按期率、
- * 900x1350 PNG 输出与任务按期判定。字体默认使用仓库内思源宋体资产，不依赖宿主系统字体。
+ * R06 动态海报回归：周期口径（进行中 = 计划周期，完成 = 实际历时）、按期率、
+ * 黄黑品牌版分流、900x1350 PNG 输出与任务按期判定。字体默认使用仓库内思源宋体资产。
  */
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { isCompletedTaskOnTime } from "../src/modules/notify/notify.group.repository.js";
-import { buildR06PosterMetrics, renderR06Poster, type R06PosterView } from "../src/modules/notify/r06.poster.js";
+import {
+  buildR06PosterMetrics,
+  renderR06Poster,
+  shouldUseR06BrandPoster,
+  type R06PosterView,
+} from "../src/modules/notify/r06.poster.js";
 
 const VIEW: R06PosterView = {
   projectCode: "LBGW-20260331-1459",
@@ -51,6 +57,24 @@ describe("buildR06PosterMetrics（R06 动态海报口径）", () => {
   });
 });
 
+describe("shouldUseR06BrandPoster（黄黑品牌海报分流）", () => {
+  it("仅当项目已完成且全部任务完成、全部按期时启用", () => {
+    expect(shouldUseR06BrandPoster({ status: "done", taskTotal: 24, taskDone: 24, onTimeDone: 24 })).toBe(true);
+    expect(shouldUseR06BrandPoster({ status: "done", taskTotal: 24, taskDone: 24, onTimeDone: 23 })).toBe(false);
+    expect(shouldUseR06BrandPoster({ status: "done", taskTotal: 24, taskDone: 23, onTimeDone: 23 })).toBe(false);
+    expect(shouldUseR06BrandPoster({ status: "done", taskTotal: 0, taskDone: 0, onTimeDone: 0 })).toBe(false);
+    expect(shouldUseR06BrandPoster({ status: "active", taskTotal: 24, taskDone: 24, onTimeDone: 24 })).toBe(false);
+  });
+});
+
+describe("R06 品牌海报资产", () => {
+  it("Logo 使用显式品牌黄填充，避免 Canvas 丢失 SVG 类样式", () => {
+    const logo = readFileSync(new URL("../assets/r06-brand-logo.svg", import.meta.url), "utf8");
+    expect(logo).toContain("fill=\"#f9be00\"");
+    expect(logo).not.toContain("class=\"cls-");
+  });
+});
+
 describe("isCompletedTaskOnTime（已完成任务按期判定）", () => {
   it("按实际 / 计划完成日比较；缺日期时只接受显式 on_time=true", () => {
     expect(
@@ -75,5 +99,13 @@ describe("renderR06Poster（动态海报 PNG）", () => {
     expect(buffer.readUInt32BE(16)).toBe(900);
     expect(buffer.readUInt32BE(20)).toBe(1350);
     expect(buffer.length).toBeGreaterThan(50_000);
+  }, 20_000);
+
+  it("全部任务按时交付时输出黄黑品牌版 900x1350 PNG", async () => {
+    const buffer = await renderR06Poster({ ...VIEW, status: "done", taskDone: 44, onTimeDone: 44 });
+    expect(buffer.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    expect(buffer.readUInt32BE(16)).toBe(900);
+    expect(buffer.readUInt32BE(20)).toBe(1350);
+    expect(buffer.length).toBeGreaterThan(100_000);
   }, 20_000);
 });
