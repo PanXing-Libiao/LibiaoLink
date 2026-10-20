@@ -9,7 +9,8 @@
  *   - 任务类（R02 ~ R05 / R07）：tasks + projects（经理 / 完成度）+ users（姓名）+ files（件数）+ wecom_groups（群绑定）；
  *   - 项目完成（R06）：projects（状态 / 群绑定）—— 由 project.completed 事件触发；
  *   - 日报名册槽位（A01）：projects（在办）× project_members（名册）× daily_reports（当日提交）× 工作日历；
- *   - 项目日报（A02 · 接线段 Push 224）：daily_reports（按项目 × 业务日聚合）+ projects + users（作者姓名）+ wecom_groups。
+ *   - 项目日报（A02 · 接线段 Push 224）：daily_reports（按项目 × 业务日聚合）+ projects + users（作者姓名）+ wecom_groups；
+ *   - 自定义待办（A14 · M5-06-3）：todos（未完成条件由引擎求值）+ users（提醒对象姓名），按重复规则在窗口内逐日展开。
  *
  * 口径与差异（README / PR 同步登记）：
  *   - actual_start：无库列 → 恒 null（R04 的「尚未实际开始」条件据此恒真，待实际开始字段落地后收口）；
@@ -20,14 +21,15 @@
  *   - task.file_count：与任务详情「文件摘要」同口径（draft / final / changed / archived，排除回收站）；
  *   - A02（project_day）已产主体（接线段 Push 224）：项目 × 业务日聚合（entryCount / headcountTotal / issueCount /
  *     summaryText —— 与 reports/summary 数据面同口径：draft 之外一律算已提交；条目按提交时刻升序，逐条「作者：当日完成工作」换行拼接）；
- *     A14（todos 表未落）本层仍不产主体 —— 登记差异，随待办表落地补。
+ *     A14 已产主体（M5-06-3 · 2026-10-20）：todos 按 `remind_at` + `repeat_rule` 展开为逐次提醒日；多人提醒对象
+ *     逐人展开，多个对象时 entityId = `<todoId>:<memberId>`，保证引擎幂等键 / outbox 键不串人。
  *
  * 边界：窗口主体池排除软删项目 / 任务与归档项目（归档 = 冻结，不再提醒）；事件形态按事件载荷的实体 id 直读
  * （含软删行 —— 事件发生在删除前，快照仍可求值），行不存在 → null（消费侧按确定性失败收口）。
  */
 import { Injectable } from "@nestjs/common";
 import { STAGE_NAMES, type RuleEventTopic } from "@libiaolink/contracts";
-import { and, asc, count, eq, gt, inArray, isNull, ne } from "drizzle-orm";
+import { and, asc, count, eq, gt, gte, inArray, isNull, lt, ne, or } from "drizzle-orm";
 import type { DbClient } from "../db/db-client.js";
 import { DatabaseService } from "../db/database.service.js";
 import { files } from "../db/schema/files.js";
@@ -36,12 +38,14 @@ import { wecomGroups } from "../db/schema/notify.js";
 import { projectMembers, projects, projectStages } from "../db/schema/projects.js";
 import { dailyReports } from "../db/schema/reports.js";
 import { tasks } from "../db/schema/tasks.js";
+import { todos } from "../db/schema/todos.js";
 import {
   toProjectDaySubject,
   toProjectSubject,
   toReportMemberSubject,
   toStageSubject,
   toTaskSubject,
+  toTodoSubject,
   type ReplaySubject,
   type ReplayTask,
 } from "../modules/automation/index.js";
@@ -65,6 +69,37 @@ const SHANGHAI_OFFSET_MS = 8 * 3_600_000;
 /** 上海业务日（YYYY-MM-DD）。 */
 function businessDateOf(at: Date): string {
   return new Date(at.getTime() + SHANGHAI_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/** ISO 日期（YYYY-MM-DD）的星期（0 = 周日；按 UTC 日历日计算，不引入时区）。 */
+function weekdayOf(date: string): number {
+  return new Date(date + "T00:00:00Z").getUTCDay();
+}
+
+/**
+ * A14 重复规则求值（纯函数 · M5-06-3）：某业务日是否为待办的提醒日。
+ * none = 仅首次提醒日；daily = 每日；weekly = 每周同星期；monthly = 每月同日（短月无该日则跳过该月）；
+ * repeat_until 含当日；未知规则 fail closed（false）。业务日按 Asia/Shanghai 折算（ADR-028）。
+ */
+export function todoOccursOn(
+  todo: { remindAt: Date; repeatRule: string; repeatUntil: string | null },
+  date: string,
+): boolean {
+  const startDate = businessDateOf(todo.remindAt);
+  if (date < startDate) return false;
+  if (todo.repeatUntil !== null && date > todo.repeatUntil) return false;
+  switch (todo.repeatRule) {
+    case "none":
+      return date === startDate;
+    case "daily":
+      return true;
+    case "weekly":
+      return weekdayOf(date) === weekdayOf(startDate);
+    case "monthly":
+      return date.slice(8, 10) === startDate.slice(8, 10);
+    default:
+      return false;
+  }
 }
 
 /** 事件载荷取字符串字段（缺 / 空 = null）。 */
@@ -148,6 +183,30 @@ interface TaskSubjectRow {
   onTime: boolean | null;
   projectId: string;
 }
+
+/** todos 行（A14 主体所需列）。 */
+interface TodoSubjectRow {
+  id: string;
+  title: string;
+  content: string | null;
+  status: string;
+  remindAt: Date;
+  repeatRule: string;
+  repeatUntil: string | null;
+  reminderUserIds: string[];
+}
+
+/** todos 主体列（与 TodoSubjectRow 同口径）。 */
+const TODO_SUBJECT_COLUMNS = {
+  id: todos.id,
+  title: todos.title,
+  content: todos.content,
+  status: todos.status,
+  remindAt: todos.remindAt,
+  repeatRule: todos.repeatRule,
+  repeatUntil: todos.repeatUntil,
+  reminderUserIds: todos.reminderUserIds,
+} as const;
 
 /** tasks 主体列（与 TaskSubjectRow 同口径）。 */
 const TASK_SUBJECT_COLUMNS = {
@@ -316,7 +375,7 @@ export class AutomationSubjectReader {
   }
 
   /**
-   * 窗口主体包（调度形态）：任务池 + 窗口内每个业务日的日报名册槽位 + 工作日历窗口。
+   * 窗口主体包（调度形态）：任务池 + 窗口内每个业务日的日报名册槽位 + 项目日报 + 待办提醒日 + 工作日历窗口。
    * 说明：planWindowMessages 逐业务日求值，槽位需覆盖窗口内每个业务日（A01 的 report.date 基准）；
    *   任务主体为「当前快照」，触发日由基准字段折算出窗口命中（fireAtWithin 过滤）。
    */
@@ -333,6 +392,7 @@ export class AutomationSubjectReader {
       ...(await this.allTaskSubjects(at, client)),
       ...(await this.reportSlotSubjects(dates, calendar, client)),
       ...(await this.projectDaySubjects(dates, client)),
+      ...(await this.todoSubjects(dates, client)),
     ];
     return { subjects, calendar };
   }
@@ -543,6 +603,69 @@ export class AutomationSubjectReader {
           groupId: groupProjectIds.has(first.projectId) ? first.projectId : null,
         }),
       );
+    }
+    return subjects;
+  }
+
+  /**
+   * 待办主体池（A14）：窗口内按 `repeat_rule` 展开为逐次提醒日 × 提醒对象。
+   * 已删除用户（数组元素无 FK）不产主体；提醒对象全部不可用时产一条无收件人主体，由引擎留 recipient_missing。
+   * 多个提醒对象时 entityId 编入成员 id，幂等键 = `A14:<待办 id>:<成员 id>:<提醒日>`；单对象保持 `A14:<待办 id>:<提醒日>`。
+   */
+  private async todoSubjects(dates: readonly string[], client: DbClient): Promise<ReplaySubject[]> {
+    const subjects: ReplaySubject[] = [];
+    const firstDate = dates[0];
+    const lastDate = dates[dates.length - 1];
+    if (firstDate === undefined || lastDate === undefined) return subjects;
+    // 窗口末日 24:00 Asia/Shanghai 的排他上界（不依赖运行机时区）。
+    const endExclusive = new Date(lastDate + "T23:59:59.999+08:00");
+    endExclusive.setTime(endExclusive.getTime() + 1);
+    const rows = await client
+      .select(TODO_SUBJECT_COLUMNS)
+      .from(todos)
+      .where(
+        and(
+          lt(todos.remindAt, endExclusive),
+          or(isNull(todos.repeatUntil), gte(todos.repeatUntil, firstDate)),
+        ),
+      )
+      .orderBy(asc(todos.remindAt), asc(todos.id));
+    if (rows.length === 0) return subjects;
+    const allMemberIds = [...new Set(rows.flatMap((row) => row.reminderUserIds))];
+    const nameById = await this.userNames(allMemberIds, client);
+    for (const row of rows as TodoSubjectRow[]) {
+      const members = [...new Set(row.reminderUserIds)].filter((memberId) => nameById.has(memberId));
+      for (const date of dates) {
+        if (!todoOccursOn(row, date)) continue;
+        if (members.length === 0) {
+          subjects.push(
+            toTodoSubject({
+              todoId: row.id,
+              title: row.title,
+              content: row.content,
+              status: row.status,
+              remindDate: date,
+              memberId: "",
+              memberName: null,
+            }),
+          );
+          continue;
+        }
+        for (const memberId of members) {
+          subjects.push(
+            toTodoSubject({
+              todoId: row.id,
+              entityId: members.length > 1 ? row.id + ":" + memberId : row.id,
+              title: row.title,
+              content: row.content,
+              status: row.status,
+              remindDate: date,
+              memberId,
+              memberName: nameById.get(memberId) ?? null,
+            }),
+          );
+        }
+      }
     }
     return subjects;
   }

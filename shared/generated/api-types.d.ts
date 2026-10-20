@@ -9147,6 +9147,7 @@ export interface components {
             reportId: components["schemas"]["Uuid"] & (string | null);
             state: components["schemas"]["DailyReportState"] & (string | null);
             submittedAt: components["schemas"]["DateTime"] & (string | null);
+            reminderSentAt: components["schemas"]["DateTime"] & (string | null);
         };
         /**
          * @description 日报状态（A3-02）：draft 草稿 / submitted 已提交 / supplement 补填（对过去日期首次提交）

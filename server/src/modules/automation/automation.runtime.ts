@@ -358,7 +358,7 @@ export function toStageSubject(snapshot: StageSnapshot): ReplaySubject {
   };
 }
 
-/** A14 自定义待办快照（todos 表未落 —— 数据面随 M5-06 / M8；重复规则由待办模块展开为逐次提醒日）。 */
+/** A14 自定义待办快照（todos 已落 0062 · M5-06-3；重复规则由主体读取层按调度窗口展开为逐次提醒日）。 */
 export interface TodoSnapshot {
   todoId: string;
   /** 主体实体 id 覆盖（缺省 = todoId；多提醒对象按成员展开时建议编入成员 id，保证幂等键不串人）。 */

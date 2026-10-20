@@ -2613,6 +2613,20 @@
                 "description": "提交时间（草稿 / 未填报为 null）"
               }
             ]
+          },
+          "reminderSentAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "当日 A01 漏填提醒成功发送时刻（站内信 / 企微单聊任一成功即非空；null = 未提醒或全部失败；A7-05 已提醒标记 · M5-06-3）"
+              }
+            ]
           }
         },
         "required": [
@@ -2622,7 +2636,8 @@
           "roleInProject",
           "reportId",
           "state",
-          "submittedAt"
+          "submittedAt",
+          "reminderSentAt"
         ],
         "description": "名册成员当日填报状态（A7-05 应填未填的一行）"
       },

@@ -4,7 +4,7 @@
  */
 import { Injectable } from "@nestjs/common";
 import type { NotifyChannel, NotifyDeliveryMessageState, NotifyDeliveryTopic, OutboxTopic } from "@libiaolink/contracts";
-import { and, asc, desc, eq, gte, lte, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lte, sql, type SQL } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { appendOutboxReturningId } from "../../db/outbox.js";
@@ -147,6 +147,46 @@ export class NotifyDeliveryReadRepository {
       .where(eq(notifyDeliveryMessages.sourceDedupeKey, sourceDedupeKey))
       .limit(1);
     return (rows[0] as unknown as NotifyDeliveryMessageRecord | undefined) ?? null;
+  }
+
+  /**
+   * 规则类提醒「已提醒」回读（M5-06-3 · A01）：按收件人 + 业务日拼规则幂等键，返回成功发送的最早时刻。
+   * A01 键 = `A01:<成员 id>:<日期>`；单聊 / 应用消息产出加 `:aibot` / `:app` 后缀，一并回读。
+   * 仅 `last_state = sent` 算已提醒（inbox 与外部渠道任一成功即可；失败 / 排队不冒充已提醒）。
+   */
+  async findReminderSentAt(
+    ruleCode: string,
+    businessDate: string,
+    recipientIds: readonly string[],
+    client: DbClient = this.database.db,
+  ): Promise<Map<string, Date>> {
+    const result = new Map<string, Date>();
+    if (recipientIds.length === 0) return result;
+    const keys = recipientIds.flatMap((recipientId) => {
+      const base = ruleCode + ":" + recipientId + ":" + businessDate;
+      return [base, base + ":aibot", base + ":app"];
+    });
+    const rows = await client
+      .select({
+        recipientId: notifyDeliveryMessages.recipientId,
+        sentAt: notifyDeliveryMessages.sentAt,
+      })
+      .from(notifyDeliveryMessages)
+      .where(
+        and(
+          eq(notifyDeliveryMessages.ruleCode, ruleCode),
+          eq(notifyDeliveryMessages.lastState, "sent"),
+          inArray(notifyDeliveryMessages.sourceDedupeKey, keys),
+        ),
+      );
+    for (const row of rows) {
+      if (row.recipientId === null || row.sentAt === null) continue;
+      const existing = result.get(row.recipientId);
+      if (existing === undefined || row.sentAt.getTime() < existing.getTime()) {
+        result.set(row.recipientId, row.sentAt);
+      }
+    }
+    return result;
   }
 
   async listAttempts(messageId: number, client: DbClient = this.database.db): Promise<NotifyDeliveryAttemptRecord[]> {
