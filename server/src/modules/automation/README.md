@@ -9,7 +9,7 @@
 
 ## 本切片交付
 
-- **当前启用集（2026-10-19，Push 373）**：仅 R02 / R03 / R05。R04 / R06 / R07 / A01 / A02 / A08 / A14 的定义、模板与实现保留，但统一 `enabled: false`，`listEnabledRules()` 不再返回，事件消费者与调度器不会产出对应消息。
+- **当前启用集（2026-10-19，Push 373）**：仅 R02 / R03 / R05。R04 / R06 / R07 / A01 / A02 / A08 / A14 的定义、模板与实现保留，但统一 `enabled: false`，`listEnabledRules()` 不再返回，事件消费者与调度器不会产出对应消息。 本机联调可用 `AUTOMATION_R06_ENABLED=true` 经 `listEnabledRules({ r06Enabled: true })` 显式纳入 R06，默认生产配置仍不返回。
 
 ### M5-01 内核（Push 161）
 

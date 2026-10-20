@@ -14,15 +14,18 @@
  * markdown 组装：title === null ? body : `**title**\n\nbody`。
  * 安全：chatid 只进库（notify_deliveries.target）与限速桶摘要；日志 / outbox error 一律掩码（末 4 位）。
  */
+import { readFile } from "node:fs/promises";
+import { basename, resolve } from "node:path";
 import { Injectable, Logger } from "@nestjs/common";
 import { NotifyGroupMessagePayloadSchema, type NotifyGroupMessagePayload } from "@libiaolink/contracts";
 import { ClockService } from "../../common/clock/clock.service.js";
+import { AppConfig } from "../../config/config.module.js";
 import type { OutboxClaimedRow } from "../../db/outbox.store.js";
 import type { OutboxHandleOutcome } from "../../outbox/handler.js";
 import { NotifyGroupRepository } from "./notify.group.repository.js";
 import { NotifyService } from "./notify.service.js";
 import type { AibotIncomingMessage, AibotSendResult } from "./wecom.aibot.js";
-import { WecomAibotClient } from "./wecom.aibot.js";
+import { aibotImageMimeFromFileName, WecomAibotClient } from "./wecom.aibot.js";
 import { describeWecomFailure } from "./wecom.errors.js";
 import { truncateUtf8Bytes } from "./wecom.text.js";
 
@@ -152,6 +155,7 @@ export class NotifyGroupService {
     private readonly aibot: WecomAibotClient,
     private readonly notify: NotifyService,
     private readonly clock: ClockService,
+    private readonly config: AppConfig,
   ) {}
 
   /**
@@ -289,11 +293,18 @@ export class NotifyGroupService {
     });
 
     if (result.ok) {
+      const imageAttempts = await this.sendR06Poster({
+        message,
+        chatid: binding.chatid,
+        groupActivated: binding.activatedAt !== null,
+        masked,
+        dedupeKey: row.dedupeKey,
+      });
       await this.repository.insertDelivery({
         outboxId: row.id,
         target: binding.chatid,
         state: "sent",
-        attempts: result.attempts,
+        attempts: result.attempts + imageAttempts,
         error: null,
         sentAt: this.clock.now(),
       });
@@ -336,6 +347,54 @@ export class NotifyGroupService {
     });
     this.logger.warn("群播报确定性失败（转 dead）：" + row.dedupeKey + " · chatid " + masked + " —— " + error);
     return await this.deadWithDegrade(row, message, error);
+  }
+
+  /**
+   * R06 喜报海报（本地联调）：仅当 templateCode = R06_GROUP 且配置了 WECOM_R06_IMAGE_PATH 时，
+   * 在文字已送达后追加图片。图片属增强项，失败只留日志，不把已送达的文字消息重排成重试。
+   */
+  private async sendR06Poster(input: {
+    message: NotifyGroupMessagePayload;
+    chatid: string;
+    groupActivated: boolean;
+    masked: string;
+    dedupeKey: string;
+  }): Promise<number> {
+    if (input.message.templateCode !== "R06_GROUP") {
+      return 0;
+    }
+    const configured = this.config.env.WECOM_R06_IMAGE_PATH.trim();
+    if (configured === "") {
+      return 0;
+    }
+    const fileName = basename(configured);
+    const mime = aibotImageMimeFromFileName(fileName);
+    if (mime === null) {
+      this.logger.warn("R06 喜报图片格式不支持（仅 PNG / JPG / GIF），已跳过：" + fileName);
+      return 0;
+    }
+    let content: Buffer;
+    try {
+      content = await readFile(resolve(configured));
+    } catch {
+      this.logger.warn("R06 喜报图片读取失败，已跳过（文字已发送）：" + fileName);
+      return 0;
+    }
+    const result = await this.aibot.sendGroupImage({
+      chatid: input.chatid,
+      content,
+      fileName,
+      mime,
+      groupActivated: input.groupActivated,
+    });
+    if (!result.ok) {
+      this.logger.warn(
+        "R06 喜报图片未送达（文字已发送）：" + input.dedupeKey + " · chatid " + input.masked + " —— " + describeAibotFailure(result),
+      );
+      return result.attempts;
+    }
+    this.logger.log("R06 喜报图片已送达：" + input.dedupeKey + " · chatid " + input.masked);
+    return result.attempts;
   }
 
   /**

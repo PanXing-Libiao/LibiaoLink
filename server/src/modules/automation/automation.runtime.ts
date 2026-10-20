@@ -334,6 +334,12 @@ export function toTodoSubject(snapshot: TodoSnapshot): ReplaySubject {
  * 表 automation_rules 与读表实现随 M5-06 落 —— 届时只换实现，异步签名保持不变。
  * 说明：「缺省禁用」落在接线层（未注册 automation-schedule.job / 未调用入口即不发），引擎不读 env。
  */
-export function listEnabledRules(): Promise<AutomationRule[]> {
-  return Promise.resolve(BUILTIN_RULES.filter((rule) => rule.enabled));
+export interface ListEnabledRulesOptions {
+  /** 本地联调用：在默认启用集之外纳入 R06（默认 false，不改现网规则集）。 */
+  r06Enabled?: boolean;
+}
+
+export function listEnabledRules(options: ListEnabledRulesOptions = {}): Promise<AutomationRule[]> {
+  const enabled = BUILTIN_RULES.filter((rule) => rule.enabled || (options.r06Enabled === true && rule.code === "R06"));
+  return Promise.resolve(enabled.map((rule) => (rule.enabled ? rule : { ...rule, enabled: true })));
 }

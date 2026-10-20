@@ -208,7 +208,7 @@ function automationWiringDeps(
     subjects,
     append: appendOutboxIfAbsent,
     db: database.db,
-    rules: listEnabledRules,
+    rules: () => listEnabledRules({ r06Enabled: env.AUTOMATION_R06_ENABLED === "true" }),
     now: () => clock.now(),
     shift: () => calendar.getSettings(),
     logger: wiringLogger,
