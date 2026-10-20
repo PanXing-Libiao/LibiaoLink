@@ -268,6 +268,7 @@ describe("引擎扩项（M5-05 余项：主体类型 / T_PLUS_3 / 契约与文�
     expect(subjectKindOf("A14")).toBe("todo");
     expect(subjectKindOf("A08")).toBe("stage");
     expect(subjectKindOf("R03")).toBe("task");
+    expect(subjectKindOf("R06")).toBe("project");
     expect(BUILTIN_RULES.filter((rule) => rule.enabled).map((rule) => rule.code)).toEqual(["R02", "R03", "R05"]);
     for (const code of ["A01", "A02", "A08", "A14"]) {
       expect(BUILTIN_RULES.find((rule) => rule.code === code)?.enabled).toBe(false);

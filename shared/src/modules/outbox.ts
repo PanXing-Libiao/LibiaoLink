@@ -13,7 +13,7 @@ import { DateTimeSchema } from "../common/conventions.ts";
  *   `server/src/outbox/`（S7-1 运行时分派 / 重试退避 / 死信与积压告警 / done 保留期）、
  *   `server/src/entry/worker.ts`（常驻三轮：分派 / 告警探针 / 保留期清理）。
  *
- *   白名单口径（Push 169 定案）：`OUTBOX_TOPICS` = **已写入主题闭集 ∪ 已定案预留主题**（当前 **29 项 = 29 项写入闭集**（`notify.group` —— M5-03-2 接线段 Push 224 转写入端：automation-wiring 产出行，回放脚本 `RESERVED_TOPICS` 同批清空）；`notify.message` 随 S7-4 规则接线转写入端；Push 215 增 `report.deleted` / `issue.deleted`；Push 252 增 `task.finalized`（任务定档 · 抽屉开关入口）；Push 260 增 `task.unfinalized`（任务取消定档 · 同一开关再次点击））。
+ *   白名单口径（Push 169 定案）：`OUTBOX_TOPICS` = **已写入主题闭集 ∪ 已定案预留主题**（当前 **30 项 = 30 项写入闭集**（`notify.group` —— M5-03-2 接线段 Push 224 转写入端：automation-wiring 产出行，回放脚本 `RESERVED_TOPICS` 同批清空）；`notify.message` 随 S7-4 规则接线转写入端；Push 215 增 `report.deleted` / `issue.deleted`；Push 252 增 `task.finalized`（任务定档 · 抽屉开关入口）；Push 260 增 `task.unfinalized`（任务取消定档 · 同一开关再次点击））。
  *   新增主题须同时改写入端与本表；`scripts/outbox-contract-replay.mjs` 扫 `server/src` 的主题字面量与主题常量，
  *   断言「写入 ⊆ 本表」且「本表无死条目」（未被写入者必须在预留清单）。
  *
@@ -52,6 +52,7 @@ export const OUTBOX_TOPICS = [
   "stage.advanced",
   "stage.gate_rejected",
   "stage.rolled_back",
+  "project.completed",
   "project.created",
   "file.version.created",
   "file.finalized",
@@ -67,7 +68,7 @@ export const OUTBOX_TOPICS = [
 ] as const;
 export const OutboxTopicSchema = z.enum(OUTBOX_TOPICS).openapi("OutboxTopic", {
   description:
-    "事件主题：task.created 任务创建 / task.updated 任务更新 / task.progress_changed 进度变化 / task.completed 任务完成 / task.finalized 任务定档（Push 252）/ task.unfinalized 任务取消定档（Push 260）/ task.deleted 任务软删 / task.locked_fields_adjusted 锁定字段例外调整 / task.draft_doc_reminded 缺件提醒 / task.gate_rejected 完成门禁拒绝 / node.added 节点新增 / node.completed 节点完成 / node.deleted 节点删除 / node.gate_rejected 节点完成门禁拒绝 / stage.advanced 阶段推进 / stage.gate_rejected 阶段门禁拒绝 / stage.rolled_back 阶段回退 / project.created 项目创建 / file.version.created 文件新版本 / file.finalized 文件定档 / preview.job 预览转换任务 / change.applied 变更生效 / report.submitted 日报提交 / report.deleted 日报删除（成对删派生问题，Push 215）/ issue.created 问题生成 / issue.updated 问题更新 / issue.deleted 问题删除（成对删来源日报，Push 215）/ notify.message 通知投递（S7-4 起为写入端：站内信 / 企微 / 邮件；合并 / 免打扰 / 限速在投递层）/ notify.group 群播报投递（M5-03-2 接线段起为写入端：企微智能机器人长连接 + chatid —— 寻址键 projectId，投递时解析群绑定）；规则可订阅的主题见 automation 的 RuleEventTopic（本表的子集）",
+    "事件主题：task.created 任务创建 / task.updated 任务更新 / task.progress_changed 进度变化 / task.completed 任务完成 / task.finalized 任务定档（Push 252）/ task.unfinalized 任务取消定档（Push 260）/ task.deleted 任务软删 / task.locked_fields_adjusted 锁定字段例外调整 / task.draft_doc_reminded 缺件提醒 / task.gate_rejected 完成门禁拒绝 / node.added 节点新增 / node.completed 节点完成 / node.deleted 节点删除 / node.gate_rejected 节点完成门禁拒绝 / stage.advanced 阶段推进 / stage.gate_rejected 阶段门禁拒绝 / stage.rolled_back 阶段回退 / project.completed 项目完成（用户将项目状态改为已完成）/ project.created 项目创建 / file.version.created 文件新版本 / file.finalized 文件定档 / preview.job 预览转换任务 / change.applied 变更生效 / report.submitted 日报提交 / report.deleted 日报删除（成对删派生问题，Push 215）/ issue.created 问题生成 / issue.updated 问题更新 / issue.deleted 问题删除（成对删来源日报，Push 215）/ notify.message 通知投递（S7-4 起为写入端：站内信 / 企微 / 邮件；合并 / 免打扰 / 限速在投递层）/ notify.group 群播报投递（M5-03-2 接线段起为写入端：企微智能机器人长连接 + chatid —— 寻址键 projectId，投递时解析群绑定）；规则可订阅的主题见 automation 的 RuleEventTopic（本表的子集）",
 });
 export type OutboxTopic = z.infer<typeof OutboxTopicSchema>;
 

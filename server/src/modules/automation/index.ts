@@ -47,6 +47,7 @@ export {
   AUTOMATION_SCHEDULE_JOB_KIND,
   evaluateEventMessages,
   planWindowMessages,
+  toProjectSubject,
   toProjectDaySubject,
   toReportMemberSubject,
   toStageSubject,
@@ -55,6 +56,7 @@ export {
 export type {
   EventEvaluationInput,
   ProjectDaySnapshot,
+  ProjectSnapshot,
   ReportMemberSnapshot,
   RuntimeEvaluation,
   RuntimeDetail,

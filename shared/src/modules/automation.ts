@@ -47,12 +47,13 @@ export const RULE_EVENT_TOPICS = [
   "change.applied",
   "node.completed",
   "stage.advanced",
+  "project.completed",
   "report.submitted",
   "issue.updated",
 ] as const;
 export const RuleEventTopicSchema = z.enum(RULE_EVENT_TOPICS).openapi("RuleEventTopic", {
   description:
-    "事件型触发的 outbox 主题：task.completed 任务完成 / task.updated 任务更新 / task.progress_changed 进度变化 / change.applied 变更生效 / node.completed 节点完成 / stage.advanced 大阶段完成 / report.submitted 日报提交 / issue.updated 问题更新",
+    "事件型触发的 outbox 主题：task.completed 任务完成 / task.updated 任务更新 / task.progress_changed 进度变化 / change.applied 变更生效 / node.completed 节点完成 / stage.advanced 大阶段完成 / project.completed 项目完成 / report.submitted 日报提交 / issue.updated 问题更新",
 });
 export type RuleEventTopic = z.infer<typeof RuleEventTopicSchema>;
 

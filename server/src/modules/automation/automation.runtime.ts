@@ -10,7 +10,7 @@
  *     冷启动保护 = at - eventAt 超阈值 → 逐规则登记 skipped.reason = event_too_old（不评估主体）。
  *   - 调度形态 planWindowMessages：schedule 型规则 × 主体 × 窗口（触发时刻 ∈ (from, to]）→ 应发送清单。
  *   - 规则来源：M5-06-1A 起由 AutomationRuleRepository 读 automation_rules（空表不回退代码常量；非法行 fail closed）。
- *   - 主体映射器：report_slot / project_day / todo 三类（输入 = 领域快照；读库在接线层；issue 随处理时限删除下线 · Push 215）。
+ *   - 主体映射器：project / report_slot / project_day / todo / stage（输入 = 领域快照；读库在接线层；issue 随处理时限删除下线 · Push 215）。
  * 边界：本文件只算「本事件 / 本窗口应发给谁、发什么、幂等键是什么」；投递 / 重试 / 死信由 M5-02 ~ M5-04（lan）承担。
  */
 import type { AutomationRule, RuleEventTopic } from "@libiaolink/contracts";
@@ -286,6 +286,37 @@ export function toProjectDaySubject(snapshot: ProjectDaySnapshot): ReplaySubject
     },
   };
 }
+/** R06 项目完成快照（事件载荷 + 读库补齐项目 / 群绑定）。 */
+export interface ProjectSnapshot {
+  projectId: string;
+  projectCode: string;
+  projectName: string;
+  projectStatus: string;
+  projectVersion: number;
+  groupId: string | null;
+}
+
+/** 主体映射器（R06）：项目完成快照 → 回放主体（收件人 = project.group = 项目群机器人）。 */
+export function toProjectSubject(snapshot: ProjectSnapshot): ReplaySubject {
+  const projectLabel =
+    snapshot.projectCode === "" ? snapshot.projectName : snapshot.projectName === "" ? snapshot.projectCode : snapshot.projectCode + "·" + snapshot.projectName;
+  return {
+    kind: "project",
+    id: snapshot.projectId,
+    version: snapshot.projectVersion,
+    fields: {
+      "project.id": snapshot.projectId,
+      "project.code": snapshot.projectCode,
+      "project.name": snapshot.projectName,
+      "project.label": projectLabel,
+      "project.status": snapshot.projectStatus,
+    },
+    recipients: {
+      "project.group": snapshot.groupId === null ? null : { id: snapshot.groupId, name: null },
+    },
+  };
+}
+
 /** A08 项目阶段推进快照（事件载荷 + 读库补齐项目 / 姓名 / 群绑定）。 */
 export interface StageSnapshot {
   stageId: string;

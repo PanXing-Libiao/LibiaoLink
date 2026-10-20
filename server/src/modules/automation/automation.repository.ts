@@ -4,7 +4,7 @@
  * 运行记录 dedupe_key 唯一：先写 run，只有新建成功的 run 才允许追加 outbox。
  */
 import { Injectable, Logger } from "@nestjs/common";
-import { and, desc, eq, gte, isNull, lte, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import {
   AutomationRuleSchema,
   type AutomationAction,
@@ -41,7 +41,12 @@ export function automationRuleFromRow(row: AutomationRuleRow): AutomationRule {
   return parsed.data;
 }
 
-/** 规则表读取：只返回 enabled = true 且未软删的行；空表不回落代码常量。 */
+/** 规则表读取：默认只返回 enabled = true 且未软删的行；空表不回落代码常量。 */
+
+export interface ListEnabledRulesOptions {
+  /** 部署侧显式启用的规则码（当前用于 R06）；只绕过 enabled，不绕过软删。 */
+  forceEnableCodes?: readonly string[];
+}
 @Injectable()
 export class AutomationRuleRepository {
   private readonly logger = new Logger(AutomationRuleRepository.name);
@@ -49,12 +54,19 @@ export class AutomationRuleRepository {
 
   constructor(private readonly database: DatabaseService) {}
 
-  async listEnabledRules(client: DbClient = this.database.db): Promise<AutomationRule[]> {
-    const rows = await client
-      .select()
-      .from(automationRules)
-      .where(and(eq(automationRules.enabled, true), isNull(automationRules.deletedAt)))
-      .orderBy(automationRules.code);
+  async listEnabledRules(
+    client: DbClient = this.database.db,
+    options: ListEnabledRulesOptions = {},
+  ): Promise<AutomationRule[]> {
+    const forced = options.forceEnableCodes ?? [];
+    const whereClause =
+      forced.length === 0
+        ? and(eq(automationRules.enabled, true), isNull(automationRules.deletedAt))
+        : and(
+            or(eq(automationRules.enabled, true), inArray(automationRules.code, forced)),
+            isNull(automationRules.deletedAt),
+          );
+    const rows = await client.select().from(automationRules).where(whereClause).orderBy(automationRules.code);
     if (rows.length === 0) {
       if (!this.emptyWarned) {
         this.emptyWarned = true;
@@ -62,7 +74,10 @@ export class AutomationRuleRepository {
       }
       return [];
     }
-    return rows.map(automationRuleFromRow);
+    return rows.map((row) => {
+      const rule = automationRuleFromRow(row);
+      return forced.includes(rule.code) ? { ...rule, enabled: true } : rule;
+    });
   }
 
   async findByCode(code: string, client: DbClient = this.database.db): Promise<AutomationRuleRow | null> {

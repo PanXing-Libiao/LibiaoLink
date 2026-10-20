@@ -19,10 +19,10 @@ import {
 export type RuleFieldValue = string | number | boolean | readonly string[] | readonly number[] | null;
 export type RuleContext = Readonly<Record<string, RuleFieldValue | undefined>>;
 
-/** 回放主体类型（规则作用对象；M5-05 余项：A 系列不再限于任务）：task 任务（R02 ~ R07）/
- * report_slot 日报名册槽位 = 人员 × 项目 × 日期（A01）/ project_day 项目日报 = 项目 × 日期（A02）/ todo 自定义待办（A14）/ stage 项目阶段推进（A08）；
+/** 回放主体类型（规则作用对象；M5-05 余项：A 系列不再限于任务）：task 任务（R02 ~ R05 / R07）/
+ * project 项目完成（R06）/ report_slot 日报名册槽位 = 人员 × 项目 × 日期（A01）/ project_day 项目日报 = 项目 × 日期（A02）/ todo 自定义待办（A14）/ stage 项目阶段推进（A08）；
  * issue 问题主体随处理时限（due_at）删除下线（Push 215）。 */
-export const REPLAY_SUBJECT_KINDS = ["task", "report_slot", "project_day", "todo", "stage"] as const;
+export const REPLAY_SUBJECT_KINDS = ["task", "project", "report_slot", "project_day", "todo", "stage"] as const;
 export type ReplaySubjectKind = (typeof REPLAY_SUBJECT_KINDS)[number];
 
 /** 求值选项：业务日（Asia/Shanghai）—— eqOffsetDays 的基准日，禁止取系统时间（v0.2 §6.2 可测试）。 */

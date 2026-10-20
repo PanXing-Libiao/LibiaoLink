@@ -12,6 +12,7 @@ import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { notifyDeliveries, wecomGroupCandidates, wecomGroups } from "../../db/schema/notify.js";
 import { projects } from "../../db/schema/projects.js";
+import { tasks } from "../../db/schema/tasks.js";
 
 export type WecomGroupRow = typeof wecomGroups.$inferSelect;
 export type WecomGroupCandidateRow = typeof wecomGroupCandidates.$inferSelect;
@@ -24,6 +25,26 @@ export interface NotifyDeliveryInsert {
   attempts: number;
   error: string | null;
   sentAt: Date | null;
+}
+
+/** R06 按时交付判定（纯函数）：无任务 / 任一未完成 / 任一延期 = false。 */
+export function areAllProjectTasksOnTime(
+  rows: readonly {
+    status: string;
+    plannedEnd: string | null;
+    actualEnd: string | null;
+    onTime: boolean | null;
+  }[],
+  at: Date,
+): boolean {
+  if (rows.length === 0) return false;
+  const today = new Date(at.getTime() + 8 * 3_600_000).toISOString().slice(0, 10);
+  return rows.every((row) => {
+    if (row.status !== "done") return false;
+    if (row.actualEnd !== null && row.plannedEnd !== null) return row.actualEnd <= row.plannedEnd;
+    if (row.actualEnd === null && row.plannedEnd !== null && row.plannedEnd < today) return false;
+    return row.onTime === true;
+  });
 }
 
 @Injectable()
@@ -53,6 +74,28 @@ export class NotifyGroupRepository {
       .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)))
       .limit(1);
     return rows[0]?.managerIds[0] ?? null;
+  }
+
+  /**
+   * R06 图片分支：项目内未删任务是否全部按时交付（R06 项目完成事件投递时读）。
+   * 口径与任务读面 A14 一致：完成日不晚于预计完成；日期不全时仅接受显式 on_time=true，
+   * 预计完成已过但未填实际完成 = 未按时。无任务 / 任一未完成 = false。
+   */
+  async areProjectTasksAllOnTime(
+    projectId: string,
+    at: Date,
+    client: DbClient = this.database.db,
+  ): Promise<boolean> {
+    const rows = await client
+      .select({
+        status: tasks.status,
+        plannedEnd: tasks.plannedEnd,
+        actualEnd: tasks.actualEnd,
+        onTime: tasks.onTime,
+      })
+      .from(tasks)
+      .where(and(eq(tasks.projectId, projectId), isNull(tasks.deletedAt)));
+    return areAllProjectTasksOnTime(rows, at);
   }
 
   /** 回调 ingest：会话激活置位（仅未激活行命中；已激活 / 未绑定返回 null —— 幂等）。 */

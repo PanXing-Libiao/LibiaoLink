@@ -4,7 +4,7 @@
  *   docs/rules/A01-A03-A14-扩展规则文案.md（A01 / A02 / A14 —— 原文未给逐字文案：该文档为建议稿 + 待确认清单）。
  * 口径来源：系统功能书 C2-02 / C2-04 / C2-11 / A6-05 / A7-03 / A7-05、技术设计v0.2 §6.1、ADR-028（时区）。
  * 说明：R01 无通知动作（落点 = 变更生效事务内同事务回写 tasks.change_refs，见 M4-04），故不在引擎规则集内；
- *   其余规则为引擎可执行规则：R02 / R06 事件型（主体 = 任务），R03 / R04 / R05 / R07 任务调度型，
+ *   其余规则为引擎可执行规则：R02 / R06 事件型（R02 主体 = 任务；R06 主体 = 项目），R03 / R04 / R05 / R07 任务调度型，
  *   A01 / A02 / A14 主体调度型（主体类型见 BUILTIN_RULE_SUBJECT_KINDS）；A03 随处理时限（due_at）删除下线（Push 215 / A3-14）。
  * 变更（M5-03-5 契约段 · 2026-10-14 · ADR-033）：R02 / R07 / A01 / A14 单聊动作渠道 `wecom_app` → `wecom_aibot`（自建应用保留备用 · 回退 = 渠道值回切）；产出接线已随 M5-03-5-4 落地（:aibot 幂等键后缀 + notify.message 消费分流）。
  */
@@ -45,7 +45,7 @@ export const BUILTIN_MESSAGE_TEMPLATES: readonly AutomationMessageTemplate[] = [
   {
     code: "R06_GROUP",
     title: "叮咚~喜报来啦！",
-    body: "项目：**{项目}**\n恭喜{任务负责人}成功拿下一项重要任务：「**{任务描述}**」。大家一起为这位优秀的伙伴喝彩吧",
+    body: "项目：**{项目}**\n项目已全部完成，验收交付完毕。大家一起为这份成果喝彩吧",
   },
   {
     code: "R07_APP",
@@ -137,13 +137,10 @@ export const BUILTIN_RULES: readonly AutomationRule[] = [
   },
   {
     code: "R06",
-    name: "任务完成喜报",
+    name: "项目完成喜报",
     enabled: false,
-    trigger: { kind: "event", topic: "task.completed" },
-    conditions: [
-      { field: "task.actual_end", op: "notNull" },
-      { field: "project.progress", op: "eq", value: 100 },
-    ],
+    trigger: { kind: "event", topic: "project.completed" },
+    conditions: [{ field: "project.status", op: "eq", value: "done" }],
     actions: [{ kind: "notify", channel: "wecom_group", recipient: "project.group", template: "R06_GROUP" }],
     version: 1,
   },
@@ -215,7 +212,7 @@ export const BUILTIN_RULE_SUBJECT_KINDS: Readonly<Record<string, ReplaySubjectKi
   R03: "task",
   R04: "task",
   R05: "task",
-  R06: "task",
+  R06: "project",
   R07: "task",
   A01: "report_slot",
   A02: "project_day",
@@ -243,6 +240,9 @@ export const SUBJECT_TEMPLATE_VARIABLES: Readonly<
     "项目": ["project.label"],
     "完成人": ["task.completed_by_name"],
     "任务负责人": ["task.owner_name", "task.manager_name"],
+  },
+  project: {
+    "项目": ["project.label"],
   },
   report_slot: {
     "项目名": ["project.name"],
