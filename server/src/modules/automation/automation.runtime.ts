@@ -9,13 +9,12 @@
  *   - 事件形态 evaluateEventMessages：topic → 命中规则（event 型 + 主题相等，与 subjectKindOf 同源）→ 单主体求值；
  *     冷启动保护 = at - eventAt 超阈值 → 逐规则登记 skipped.reason = event_too_old（不评估主体）。
  *   - 调度形态 planWindowMessages：schedule 型规则 × 主体 × 窗口（触发时刻 ∈ (from, to]）→ 应发送清单。
- *   - 规则来源 listEnabledRules()：一期 = 内置集过滤 enabled；表 automation_rules 与读表实现随 M5-06（异步签名不变）。
+ *   - 规则来源：M5-06-1A 起由 AutomationRuleRepository 读 automation_rules（空表不回退代码常量；非法行 fail closed）。
  *   - 主体映射器：report_slot / project_day / todo 三类（输入 = 领域快照；读库在接线层；issue 随处理时限删除下线 · Push 215）。
  * 边界：本文件只算「本事件 / 本窗口应发给谁、发什么、幂等键是什么」；投递 / 重试 / 死信由 M5-02 ~ M5-04（lan）承担。
  */
 import type { AutomationRule, RuleEventTopic } from "@libiaolink/contracts";
 import { addDays, calendarWindow, type CalendarShiftDirection, type CalendarWindow } from "../calendar/index.js";
-import { BUILTIN_RULES } from "./builtin-rules.js";
 import {
   evaluateBusinessDate,
   finalizeMessages,
@@ -37,6 +36,13 @@ export interface RuntimeSkip {
 export interface RuntimeEvaluation {
   messages: ReplayMessage[];
   skipped: RuntimeSkip[];
+  /** 逐规则 × 实体的求值明细（M5-06-1A 运行留痕；条件 / 窗口 / 命中态）。 */
+  details: RuntimeDetail[];
+}
+
+/** 运行留痕明细：回放明细 + 冷启动专用 event_too_old。 */
+export interface RuntimeDetail extends Omit<ReplayDetail, "skipped"> {
+  skipped: ReplaySkipReason | "event_too_old" | null;
 }
 
 /** Asia/Shanghai 业务日（ADR-028）：引擎不取系统时间，at 由接线层注入。 */
@@ -63,7 +69,7 @@ export interface EventEvaluationInput {
 }
 
 /** 事件形态留痕：与回放 details 的跳过项一一对应（disabled 为规则级，不带实体 id）。 */
-function eventSkips(details: readonly ReplayDetail[]): RuntimeSkip[] {
+function eventSkips(details: readonly RuntimeDetail[]): RuntimeSkip[] {
   const skipped: RuntimeSkip[] = [];
   for (const detail of details) {
     if (detail.skipped === null) continue;
@@ -71,6 +77,16 @@ function eventSkips(details: readonly ReplayDetail[]): RuntimeSkip[] {
     else skipped.push({ reason: detail.skipped, ruleCode: detail.ruleCode, entityId: detail.entityId });
   }
   return skipped;
+}
+
+/** 同一 rule × entity × window 只保留一条运行明细（调度逐日求值会产生重复 disabled）。 */
+function dedupeDetails(details: readonly RuntimeDetail[]): RuntimeDetail[] {
+  const result = new Map<string, RuntimeDetail>();
+  for (const detail of details) {
+    const key = [detail.ruleCode, detail.entityId, detail.windowKey ?? "-", detail.skipped ?? "hit"].join("|");
+    if (!result.has(key)) result.set(key, detail);
+  }
+  return [...result.values()];
 }
 
 /**
@@ -88,6 +104,15 @@ export function evaluateEventMessages(input: EventEvaluationInput): RuntimeEvalu
       return {
         messages: [],
         skipped: topicRules.map((rule) => ({ reason: "event_too_old", ruleCode: rule.code, entityId: input.subject.id })),
+        details: topicRules.map((rule) => ({
+          ruleCode: rule.code,
+          ruleName: rule.name,
+          entityId: input.subject.id,
+          windowKey: "v" + String(input.subject.version ?? 0),
+          matched: false,
+          skipped: "event_too_old",
+          conditions: [],
+        })),
       };
     }
   }
@@ -100,7 +125,7 @@ export function evaluateEventMessages(input: EventEvaluationInput): RuntimeEvalu
     shiftDirection: "forward",
   });
   const messages = finalizeMessages(evaluation.merged, evaluation.details, []);
-  return { messages, skipped: eventSkips(evaluation.details) };
+  return { messages, skipped: eventSkips(evaluation.details), details: dedupeDetails(evaluation.details) };
 }
 
 /** 调度任务 kind（一期唯一 = automation-schedule.job；新增 kind = 显式扩表，与接线段同步）。 */
@@ -176,7 +201,15 @@ export function planWindowMessages(input: WindowPlanInput): RuntimeEvaluation {
     if (detail.skipped === "subject_mismatch" || detail.skipped === "window_mismatch") continue;
     skipped.push({ reason: detail.skipped, ruleCode: detail.ruleCode, entityId: detail.entityId });
   }
-  return { messages, skipped };
+  const runtimeDetails = dedupeDetails(
+    details.filter(
+      (detail) =>
+        detail.skipped !== "subject_mismatch" &&
+        detail.skipped !== "window_mismatch" &&
+        (detail.windowKey !== null || detail.skipped === "disabled"),
+    ),
+  );
+  return { messages, skipped, details: runtimeDetails };
 }
 
 /** A01 日报名册槽位快照（数据面 = GET /api/v1/projects/{id}/reports/missing；字段表见 docs/rules）。 */
@@ -327,13 +360,4 @@ export function toTodoSubject(snapshot: TodoSnapshot): ReplaySubject {
       "rule.members": snapshot.memberId === "" ? null : { id: snapshot.memberId, name: snapshot.memberName },
     },
   };
-}
-
-/**
- * 规则来源（一期 = 内置集）：返回启用中的规则（BUILTIN_RULES 过滤 enabled）。
- * 表 automation_rules 与读表实现随 M5-06 落 —— 届时只换实现，异步签名保持不变。
- * 说明：「缺省禁用」落在接线层（未注册 automation-schedule.job / 未调用入口即不发），引擎不读 env。
- */
-export function listEnabledRules(): Promise<AutomationRule[]> {
-  return Promise.resolve(BUILTIN_RULES.filter((rule) => rule.enabled));
 }
