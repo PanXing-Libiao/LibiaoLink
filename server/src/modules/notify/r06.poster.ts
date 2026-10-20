@@ -291,10 +291,8 @@ function drawHeader(ctx: SKRSContext2D, status: string): void {
   const label = status === "done" ? "PROJECT COMPLETE · 项目喜报" : "PROJECT IN PROGRESS · 项目进行中";
   drawSpaced(ctx, label, 93, 54, 2.4);
   const brand = "LIBIAOLINK";
-  const suffix = "R06";
   const brandWidth = spacedWidth(ctx, brand, 2.4);
-  const suffixWidth = spacedWidth(ctx, suffix, 2.4);
-  const start = WIDTH - 56 - brandWidth - 18 - suffixWidth;
+  const start = WIDTH - 56 - brandWidth - 18;
   ctx.save();
   ctx.translate(start + 4, 49);
   ctx.rotate(Math.PI / 4);
@@ -304,9 +302,6 @@ function drawHeader(ctx: SKRSContext2D, status: string): void {
   setSans(ctx, 700, 10);
   ctx.fillStyle = INK;
   drawSpaced(ctx, brand, start + 18, 54, 2.4);
-  setSans(ctx, 500, 10);
-  ctx.fillStyle = rgba(INK, 0.46);
-  drawSpaced(ctx, suffix, start + 18 + brandWidth + 18, 54, 2.4);
 }
 
 function drawCopy(ctx: SKRSContext2D, metrics: R06PosterMetrics): void {
@@ -432,7 +427,7 @@ function drawSide(ctx: SKRSContext2D): void {
   ctx.rotate(Math.PI / 2);
   setSans(ctx, 400, 8);
   ctx.fillStyle = rgba(INK, 0.36);
-  drawSpaced(ctx, "EVERY NAME · EVERY STEP · LIBIAOLINK R06", 0, 0, 1.6);
+  drawSpaced(ctx, "EVERY NAME · EVERY STEP · LIBIAOLINK", 0, 0, 1.6);
   ctx.restore();
 }
 
@@ -578,12 +573,6 @@ function drawDetail(ctx: SKRSContext2D, view: R06PosterView, metrics: R06PosterM
   setSans(ctx, 400, 8);
   ctx.fillStyle = rgba(INK, 0.6);
   ctx.fillText(" · 数据截至 " + formatDot(view.completedAt), 57 + logoWidth, 1315);
-
-  setSerif(ctx, 400, 21);
-  ctx.fillStyle = rgba(INK, 0.42);
-  ctx.textAlign = "right";
-  ctx.fillText("No. 06", WIDTH - 57, 1315);
-  ctx.textAlign = "left";
 }
 
 export async function renderR06Poster(view: R06PosterView, fonts?: R06PosterFontPaths): Promise<Buffer> {
