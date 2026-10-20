@@ -735,11 +735,11 @@ server/
 - 回填 `scripts/m5-06-backfill-delivery-messages.mjs`：从仍存在的 `notify_deliveries + outbox_events` 和 `notifications` 只补缺失归档 / `message_id`，历史 outbox 已清理行保留 null；dry-run / 首跑 / 二跑幂等。
 - 验证：`scripts/m5-06-2a-replay.mjs` Docker PG18 **6/6**（四渠道状态机、outbox 清理 set null、回填 dry-run / 首跑 / 二跑、API 角色读写）；证据见 `docs/M5-06-回放证据.md`。本切片不含 2B 列表 / 详情 / 重发端点。
 
-## M5-06-2B · 发送记录读面与幂等重发（2026-10-20 · Push 273 · lan；权限 / 审计 / 重发语义请 wmj 复核）
+## M5-06-2B · 发送记录读面与幂等重发（2026-10-20 · Push 273 · lan；权限文案已于 Push 274 定案；审计 / 重发语义请 wmj 复核）
 
 - 新增 3 个管理员端点：`GET /api/v1/notifications/deliveries`、`GET /deliveries/{id}`、`POST /deliveries/{id}/resend`；读面 `notify.record.view`，重发 `notify.resend` + CSRF；`deliveries` 静态段先于 `notifications/{id}`。
 - 读面支持渠道 / 最新状态 / 规则 / 收件人 / 时间区间 / 关键字筛选，按 `createdAt desc, id desc` 稳定分页；尝试目标只回末 4 位，错误与收件人展示值脱敏，完整 target / payload / metadata 不下发。
 - 重发仅允许 `wecom_app` / `wecom_aibot` / `wecom_group` 且最新状态为 `failed` / `dead`；严格空请求体、必填 `Idempotency-Key`。新归档固定 `pending`，新 outbox 复用原 topic / payload 并交给既有 worker，原消息与原尝试不改写。
 - 幂等以 actor + `Idempotency-Key` 哈希写入 `source_dedupe_key`；事务内先查重发归档再做状态门禁，同 key 并发 / 重试返回同一归档，首次成功后原消息状态变化不误报 409。新归档、outbox 与 `notify_delivery.update` 审计同事务。
-- 权限沿用全仓口径：功能权限缺失 403，记录不存在 404；S8-4 第 103 行若指功能权限，需 wmj 复核契约文案。
+- 权限沿用全仓口径（Push 274 定案）：功能权限缺失 403 `FORBIDDEN`，判定先于资源探测；功能权限通过后记录不存在或记录级不可见统一 404 `NOT_FOUND`。S8-4 第三节“无权 / 不存在统一按 404”仅指记录级。
 - 无新迁移，复用 `0061`。验证：server typecheck / build、Vitest **82 文件 / 1264 例**、boundaries 267 文件 / 1220 依赖 / 0 违规、权限矩阵 36 键、schema 56 表一致；Docker PG18 `m5-06-2b-replay.mjs` DB-only **7/7**、`PERMISSION_ENFORCED=true` 真实 API **9/9**（403 / 409 / 400 / 404、幂等、掩码与零残留）。证据见 `docs/M5-06-回放证据.md`。
