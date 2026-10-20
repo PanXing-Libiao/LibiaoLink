@@ -24,6 +24,19 @@ export async function appendOutbox(client: DbClient, event: OutboxEventInput): P
   });
 }
 
+/** 同事务追加并返回新 outbox id（M5-06-2B 重发归档需要回填 outbox_id）。 */
+export async function appendOutboxReturningId(client: DbClient, event: OutboxEventInput): Promise<number> {
+  const rows = await client.insert(outboxEvents).values({
+    topic: event.topic,
+    payload: event.payload,
+    dedupeKey: event.dedupeKey,
+    status: "pending",
+  }).returning({ id: outboxEvents.id });
+  const row = rows[0];
+  if (row === undefined) throw new Error("outbox 插入后未返回 id：" + event.dedupeKey);
+  return Number(row.id);
+}
+
 /**
  * 幂等投递（M4-05c 预览任务：「同一三元组只转一次」的投递侧落点）。
  *
