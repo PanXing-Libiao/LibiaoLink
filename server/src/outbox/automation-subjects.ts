@@ -27,7 +27,7 @@
  */
 import { Injectable } from "@nestjs/common";
 import { STAGE_NAMES, type RuleEventTopic } from "@libiaolink/contracts";
-import { and, count, eq, inArray, isNull, ne } from "drizzle-orm";
+import { and, asc, count, eq, gt, inArray, isNull, ne } from "drizzle-orm";
 import type { DbClient } from "../db/db-client.js";
 import { DatabaseService } from "../db/database.service.js";
 import { files } from "../db/schema/files.js";
@@ -194,6 +194,59 @@ export class AutomationSubjectReader {
     }
     if (topic === "project.completed") return await this.projectSubject(payload, client);
     if (topic === "stage.advanced") return await this.stageSubject(payload, client);
+    return null;
+  }
+
+  /**
+   * 试运行主体（M5-06-1B）：管理面只给 entityId，不重放 outbox 载荷。
+   * task.* → 任务行 id；project.completed → 项目行 id；stage.advanced → 项目阶段行 id。
+   * 其他主题暂无事件型主体映射 → null（由 service 转 404）。
+   */
+  async subjectById(
+    topic: RuleEventTopic,
+    entityId: string,
+    at: Date,
+    client: DbClient = this.database.db,
+  ): Promise<ReplaySubject | null> {
+    if (topic.startsWith("task.")) {
+      return this.eventSubject(topic, { taskId: entityId }, at, client);
+    }
+    if (topic === "project.completed") {
+      return this.projectSubject({ projectId: entityId }, client);
+    }
+    if (topic === "stage.advanced") {
+      const stageRows = await client
+        .select({
+          projectId: projectStages.projectId,
+          stageKey: projectStages.stageKey,
+          seq: projectStages.seq,
+          version: projectStages.version,
+          advancedBy: projectStages.advancedBy,
+        })
+        .from(projectStages)
+        .where(eq(projectStages.id, entityId))
+        .limit(1);
+      const stage = stageRows[0];
+      if (stage === undefined) return null;
+      const nextRows = await client
+        .select({ stageKey: projectStages.stageKey })
+        .from(projectStages)
+        .where(and(eq(projectStages.projectId, stage.projectId), gt(projectStages.seq, stage.seq)))
+        .orderBy(asc(projectStages.seq))
+        .limit(1);
+      return this.eventSubject(
+        topic,
+        {
+          projectId: stage.projectId,
+          stageKey: stage.stageKey,
+          stageVersion: stage.version,
+          nextStageKey: nextRows[0]?.stageKey ?? null,
+          ...(stage.advancedBy === null ? {} : { actorId: stage.advancedBy }),
+        },
+        at,
+        client,
+      );
+    }
     return null;
   }
 

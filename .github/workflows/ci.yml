@@ -220,6 +220,20 @@ jobs:
         env:
           DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
         run: node scripts/seed.mjs
+      # M5-06-2A（消息级发送归档 / 回填 / outbox 清理 · S8-4 · lan，Push 272）：请 px 复核（.github/ 属 px 线；先例 Push 156/157）
+      # 2A / 2B 均为 DB-only；必须放在启动 API 之前，避免 worker 抢先消费回放写入的 outbox。
+      - name: M5-06-2A delivery archive replay
+        working-directory: server
+        env:
+          M5_06_2A_REPLAY_DATABASE_URL: postgresql://libiaolink_api@127.0.0.1:5432/libiaolink
+        run: node scripts/m5-06-2a-replay.mjs
+      # M5-06-2B（发送记录读面 / 幂等重发 · S8-4 · lan，Push 273）：请 px 复核（.github/ 属 px 线；先例 Push 156/157）
+      # 使用迁移器执行 DB-only 回放；真实权限 HTTP 9/9 已在本地以 PERMISSION_ENFORCED=true 复证。
+      - name: M5-06-2B delivery records replay
+        working-directory: server
+        env:
+          M5_06_2B_REPLAY_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
+        run: node scripts/m5-06-2b-replay.mjs
       - name: Start api in background
         working-directory: server
         env:
@@ -242,6 +256,14 @@ jobs:
           echo "api 未在 60s 内就绪；日志尾部："
           tail -n 80 api.log
           exit 1
+      # M5-06-1B（规则管理 / 只读试运行 / 运行记录 · S8-4 · lan 代做 wmj 线，Push 271）：请 px 复核（.github/ 属 px 线；先例 Push 156/157）
+      # 必须放在 M3-06 / M6 之前：调度型试运行按全库任务主体池取前 100 个，早期库只有本回放夹具，断言不受其它回放污染。
+      - name: M5-06-1B automation rules replay (list / patch / trial / runs + HTTP)
+        working-directory: server
+        env:
+          M5_06_1B_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
+          M5_06_1B_BASE_URL: http://127.0.0.1:3011
+        run: node scripts/m5-06-1b-replay.mjs
       - name: M3-06 stress replay (10k tasks + index comparison)
         working-directory: server
         env:

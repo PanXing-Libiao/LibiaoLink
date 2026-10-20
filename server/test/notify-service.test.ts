@@ -19,6 +19,7 @@ import type {
 import { NotifyService } from "../src/modules/notify/notify.service.js";
 import type { NotifyStreamWireMessage } from "../src/modules/notify/notify.stream.js";
 import { AppConfig } from "../src/config/config.module.js";
+import { FakeNotifyDeliveryArchive } from "./fakes/notify-delivery-archive.fake.js";
 
 const ME = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1";
 const OTHER = "b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2";
@@ -59,6 +60,7 @@ class FakeNotifyRepository {
       refType: input.refType,
       refId: input.refId,
       templateCode: input.templateCode,
+      sourceDedupeKey: input.sourceDedupeKey,
       mergeKey: input.mergeKey,
       mergedCount: 1,
       mergedIntoId: null,
@@ -69,6 +71,10 @@ class FakeNotifyRepository {
     };
     this.rows.push(row);
     return row;
+  }
+
+  async findBySourceDedupeKey(sourceDedupeKey: string, _tx?: unknown): Promise<NotifyMessageRow | null> {
+    return this.rows.find((row) => row.sourceDedupeKey === sourceDedupeKey) ?? null;
   }
 
   async listDue(now: Date, limit: number): Promise<NotifyMessageRow[]> {
@@ -205,6 +211,7 @@ function makeService(
   now: Date,
   overrides: Record<string, string> = {},
   publisher = new FakeStreamPublisher(),
+  archive = new FakeNotifyDeliveryArchive(),
 ) {
   const env = loadEnv({
     DATABASE_URL: "postgresql://unused",
@@ -216,7 +223,7 @@ function makeService(
   });
   const clock = new ClockService();
   clock.setSource(() => now);
-  return new NotifyService(repo as never, fakeDatabase, new AppConfig(env), clock, publisher as never);
+  return new NotifyService(repo as never, archive as never, fakeDatabase, new AppConfig(env), clock, publisher as never);
 }
 
 function claimedRow(payload: Record<string, unknown>, overrides: Partial<OutboxClaimedRow> = {}): OutboxClaimedRow {
@@ -240,7 +247,8 @@ function payload(overrides: Record<string, unknown> = {}): Record<string, unknow
 describe("站内信投递（S7-4 · j1 / M5-04 首刀）", () => {
   it("消费：合法载荷 → 落行并立即投递（deliveredAt 非空），返回 done", async () => {
     const repo = new FakeNotifyRepository();
-    const service = makeService(repo, DAYTIME);
+    const archive = new FakeNotifyDeliveryArchive();
+    const service = makeService(repo, DAYTIME, {}, new FakeStreamPublisher(), archive);
     const outcome = await service.consume(claimedRow(payload({ refType: "report", refId: REF_A, templateCode: "A01_INBOX_MERGED" })));
     expect(outcome).toEqual({ outcome: "done" });
     expect(repo.rows).toHaveLength(1);
@@ -248,6 +256,20 @@ describe("站内信投递（S7-4 · j1 / M5-04 首刀）", () => {
     expect(repo.rows[0]?.deliveredAt?.toISOString()).toBe(DAYTIME.toISOString());
     expect(repo.rows[0]?.mergeKey).toBe("A01_INBOX_MERGED");
     expect(repo.insertCalls[0]?.sourceTopic).toBe("notify.message");
+    expect(archive.messages).toHaveLength(1);
+    expect(archive.messages[0]).toMatchObject({
+      outboxId: 1,
+      sourceDedupeKey: claimedRow(payload()).dedupeKey,
+      topic: "notify.message",
+      channel: "inbox",
+      recipientId: ME,
+      title: "日报未填",
+      body: "请补填日报",
+      ruleCode: "A01",
+      lastState: "sent",
+      attemptCount: 0,
+      sentAt: DAYTIME,
+    });
   });
 
   it("消费：非法载荷 → dead（不落行、不重试）；仓储异常 → retry", async () => {
@@ -271,7 +293,8 @@ describe("站内信投递（S7-4 · j1 / M5-04 首刀）", () => {
 
   it("合并：窗口内同人同键未读主行 → 新行挂主行留档、主行 mergedCount=2、不单独投递", async () => {
     const repo = new FakeNotifyRepository();
-    const service = makeService(repo, DAYTIME);
+    const archive = new FakeNotifyDeliveryArchive();
+    const service = makeService(repo, DAYTIME, {}, new FakeStreamPublisher(), archive);
     await service.consume(claimedRow(payload({ templateCode: "A01_INBOX_MERGED" })));
     await service.consume(
       claimedRow(payload({ title: "第二个项目未填", templateCode: "A01_INBOX_MERGED" }), { id: 2, dedupeKey: "A01:" + REF_A + ":p2" }),
@@ -281,6 +304,12 @@ describe("站内信投递（S7-4 · j1 / M5-04 首刀）", () => {
     expect(repo.rows[1]?.deliveredAt).toBeNull();
     expect(repo.rows[0]?.mergedCount).toBe(2);
     expect(repo.delivered).toEqual([1]);
+    expect(archive.messages).toHaveLength(2);
+    expect(archive.messages[1]).toMatchObject({
+      lastState: "sent",
+      attemptCount: 0,
+      metadata: { mergedIntoId: 1 },
+    });
   });
 
   it("合并：超出窗口 / 键不同 / 主行已读 → 不合并，各自成行", async () => {
@@ -306,26 +335,75 @@ describe("站内信投递（S7-4 · j1 / M5-04 首刀）", () => {
 
   it("幂等重放：同 source_dedupe_key 再消费 → done 且不重复落行", async () => {
     const repo = new FakeNotifyRepository();
-    const service = makeService(repo, DAYTIME);
+    const archive = new FakeNotifyDeliveryArchive();
+    const service = makeService(repo, DAYTIME, {}, new FakeStreamPublisher(), archive);
     await service.consume(claimedRow(payload()));
     const again = await service.consume(claimedRow(payload()));
     expect(again).toEqual({ outcome: "done" });
     expect(repo.rows).toHaveLength(1);
     expect(repo.delivered).toEqual([1]);
+    expect(archive.messages).toHaveLength(1);
+  });
+
+  it("归档失败：不继续写 notifications，交 outbox retry", async () => {
+    const repo = new FakeNotifyRepository();
+    const archive = new FakeNotifyDeliveryArchive();
+    archive.failEnsure = true;
+    const service = makeService(repo, DAYTIME, {}, new FakeStreamPublisher(), archive);
+
+    const outcome = await service.consume(claimedRow(payload()));
+
+    expect(outcome).toMatchObject({ outcome: "retry", error: expect.stringContaining("fake 消息归档写库失败") });
+    expect(repo.insertCalls).toEqual([]);
+    expect(repo.rows).toEqual([]);
+  });
+
+  it("C5-04 降级副本：:c504 单独归档并保留来源键", async () => {
+    const repo = new FakeNotifyRepository();
+    const archive = new FakeNotifyDeliveryArchive();
+    const service = makeService(repo, DAYTIME, {}, new FakeStreamPublisher(), archive);
+
+    await service.deliverInboxCopy(
+      { recipientId: ME, type: "reminder", title: "降级", body: "企微未送达", mergeKey: null },
+      "notify.message",
+      "R02:" + REF_A + ":v5:app:c504",
+    );
+
+    expect(archive.messages).toHaveLength(1);
+    expect(archive.messages[0]).toMatchObject({
+      outboxId: null,
+      channel: "inbox",
+      sourceDedupeKey: "R02:" + REF_A + ":v5:app:c504",
+      metadata: { c5_04: true, sourceDedupeKey: "R02:" + REF_A + ":v5:app" },
+      lastState: "sent",
+    });
   });
 
   it("免打扰：静默排期到时段结束（次日补发），flush 到期后真正投递", async () => {
     const repo = new FakeNotifyRepository();
-    const night = makeService(repo, NIGHT);
+    const archive = new FakeNotifyDeliveryArchive();
+    const night = makeService(repo, NIGHT, {}, new FakeStreamPublisher(), archive);
     await night.consume(claimedRow(payload()));
     expect(repo.rows[0]?.deliveredAt).toBeNull();
     expect(repo.postponed[0]?.deliverAt.toISOString()).toBe("2026-09-29T00:00:00.000Z");
     expect(repo.delivered).toEqual([]);
+    expect(archive.messages[0]).toMatchObject({ lastState: "deferred", lastError: expect.stringContaining("quiet_hours") });
 
-    const nextMorning = makeService(repo, new Date("2026-09-29T00:30:00.000Z"));
+    const nextMorning = makeService(
+      repo,
+      new Date("2026-09-29T00:30:00.000Z"),
+      {},
+      new FakeStreamPublisher(),
+      archive,
+    );
     const stats = await nextMorning.flushDue();
     expect(stats).toEqual({ scanned: 1, delivered: 1, merged: 0, postponed: 0 });
     expect(repo.rows[0]?.deliveredAt?.toISOString()).toBe("2026-09-29T00:30:00.000Z");
+    expect(archive.messages[0]).toMatchObject({
+      lastState: "sent",
+      lastError: null,
+      sentAt: new Date("2026-09-29T00:30:00.000Z"),
+    });
   });
 
   it("每日上限：当日已满 → 排到次日窗口起点；次日未到（上限未重置）再排期", async () => {
@@ -497,6 +575,57 @@ describe("站内信投递（S7-4 · j1 / M5-04 首刀）", () => {
     // 幂等重放（同 dedupeKey）：duplicate → 不发。
     await service.consume(claimedRow(payload({ refType: "report", refId: REF_A, templateCode: "R02" })));
     expect(publisher.published).toHaveLength(2);
+  });
+
+  it("重复消费补归档：历史通知已投递但归档缺失 → sent，不重发", async () => {
+    const repo = new FakeNotifyRepository();
+    const publisher = new FakeStreamPublisher();
+    const archive = new FakeNotifyDeliveryArchive();
+    const service = makeService(repo, DAYTIME, {}, publisher, archive);
+    const row = claimedRow(payload({ refType: "report", refId: REF_A, templateCode: "R01_INBOX" }));
+
+    await service.consume(row);
+    archive.messages = [];
+    await service.consume(row);
+
+    expect(repo.rows).toHaveLength(1);
+    expect(publisher.published).toHaveLength(2);
+    expect(archive.messages[0]).toMatchObject({ lastState: "sent", sentAt: DAYTIME, lastError: null });
+  });
+
+  it("重复消费补归档：历史合并子行 → sent + mergedIntoId", async () => {
+    const repo = new FakeNotifyRepository();
+    const archive = new FakeNotifyDeliveryArchive();
+    const service = makeService(repo, DAYTIME, {}, new FakeStreamPublisher(), archive);
+    const parent = claimedRow(payload({ refType: "report", refId: REF_A, templateCode: "R02" }));
+    const child = claimedRow(payload({ refType: "report", refId: REF_A, templateCode: "R02" }), {
+      id: 2,
+      dedupeKey: "merge-child",
+    });
+
+    await service.consume(parent);
+    await service.consume(child);
+    archive.messages = archive.messages.filter((item) => item.sourceDedupeKey !== "merge-child");
+    await service.consume(child);
+
+    expect(repo.rows[1]?.mergedIntoId).toBe(1);
+    expect(archive.messages[1]).toMatchObject({ lastState: "sent", metadata: { mergedIntoId: 1 } });
+  });
+
+  it("重复消费补归档：历史通知尚未到期 → deferred，不重发", async () => {
+    const repo = new FakeNotifyRepository();
+    const archive = new FakeNotifyDeliveryArchive();
+    const service = makeService(repo, NIGHT, {}, new FakeStreamPublisher(), archive);
+    const row = claimedRow(payload());
+
+    await service.consume(row);
+    archive.messages = [];
+    await service.consume(row);
+
+    expect(archive.messages[0]).toMatchObject({
+      lastState: "deferred",
+      lastError: expect.stringContaining("待排期"),
+    });
   });
 
   it("实时流发布：免打扰排期不发；flush 补投按同口径发", async () => {

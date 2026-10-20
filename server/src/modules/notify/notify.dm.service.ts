@@ -37,7 +37,12 @@
  */
 import { randomInt } from "node:crypto";
 import { Injectable, Logger } from "@nestjs/common";
-import type { NotifyMessagePayload, WecomDmBindingState, WecomDmBotDiagnostics } from "@libiaolink/contracts";
+import type {
+  NotifyDeliveryTopic,
+  NotifyMessagePayload,
+  WecomDmBindingState,
+  WecomDmBotDiagnostics,
+} from "@libiaolink/contracts";
 import { AppConfig } from "../../config/config.module.js";
 import { ClockService } from "../../common/clock/clock.service.js";
 import { DatabaseService } from "../../db/database.service.js";
@@ -47,6 +52,11 @@ import type { OutboxHandleOutcome } from "../../outbox/handler.js";
 import { AuditService } from "../audit/index.js";
 import { maskUserid } from "./notify.app.service.js";
 import { parseNotifyMessage } from "./notify.delivery.js";
+import {
+  inferNotifyRuleCode,
+  NotifyDeliveryArchiveRepository,
+  type NotifyDeliveryMessageRow,
+} from "./notify.delivery-archive.repository.js";
 import { NotifyDmRepository, type DmBindingCodeRow, type DmBindingGuardRow } from "./notify.dm.repository.js";
 import { NotifyService } from "./notify.service.js";
 import type { AibotIncomingMessage, AibotSendResult } from "./wecom.aibot.js";
@@ -190,6 +200,7 @@ export class NotifyDmService {
 
   constructor(
     private readonly repository: NotifyDmRepository,
+    private readonly archive: NotifyDeliveryArchiveRepository,
     private readonly aibot: WecomAibotClient,
     private readonly notify: NotifyService,
     private readonly clock: ClockService,
@@ -760,16 +771,52 @@ export class NotifyDmService {
       };
     }
 
+    let archived: NotifyDeliveryMessageRow;
+    try {
+      archived = await this.archive.ensureMessage({
+        outboxId: row.id,
+        sourceDedupeKey: row.dedupeKey,
+        topic: row.topic as NotifyDeliveryTopic,
+        channel: "wecom_aibot",
+        recipientId: message.recipientId,
+        recipientLabel: null,
+        title: message.title,
+        body: message.body,
+        templateCode: message.templateCode ?? null,
+        ruleCode: inferNotifyRuleCode(row.dedupeKey),
+        refType: message.refType ?? null,
+        refId: message.refId ?? null,
+        payload: { ...message, channel: "wecom_aibot" },
+        metadata: {},
+      });
+    } catch (archiveError) {
+      const detail = messageOf(archiveError);
+      this.logger.error("单聊消息归档失败（不发送，交 outbox 重试）：" + row.dedupeKey + " —— " + detail);
+      return { outcome: "retry", error: "单聊消息归档失败：" + detail };
+    }
+    if (archived.lastState === "sent") {
+      this.logger.log("单聊消息已发送归档，重复消费幂等跳过：" + row.dedupeKey);
+      return { outcome: "done" };
+    }
+    const terminalDead = archived.lastState === "dead";
+
     const contact = await this.repository.findContact(message.recipientId);
     if (contact === null) {
       // 用户不存在：站内信 FK 同样不可落 —— 不降级（无收件人可降），dead 一次即弃（同 app 口径）。
-      await this.repository.insertDelivery({
+      if (terminalDead) {
+        return { outcome: "dead", error: archived.lastError ?? "单聊消息已终态失败：" + row.dedupeKey };
+      }
+      await this.archive.recordAttempt({
+        messageId: archived.id,
         outboxId: row.id,
+        channel: "wecom_aibot",
         target: "user:" + message.recipientId,
+        recipientLabel: "user:" + message.recipientId,
         state: "dead",
         attempts: 0,
         error: "收件人不存在（无法降级站内信）",
         sentAt: null,
+        at: this.clock.now(),
       });
       this.logger.warn("单聊消息收件人不存在（确定性失败转 dead，不降级）：outbox#" + row.id + " · " + row.dedupeKey);
       return { outcome: "dead", error: "单聊消息收件人不存在（无法降级站内信）：" + row.dedupeKey };
@@ -781,31 +828,54 @@ export class NotifyDmService {
       contact.removedAt !== null ? "已删除（目录源删除）" : contact.status !== "active" ? "已停用" : null;
     if (blockedReason !== null) {
       const error = "收件人不可投递（" + blockedReason + "）";
-      await this.repository.insertDelivery({
-        outboxId: row.id,
-        target: binding === null ? "user:" + contact.id : binding.wecomUserid,
-        state: "dead",
-        attempts: 0,
-        error,
-        sentAt: null,
-      });
+      const target = binding === null ? "user:" + contact.id : binding.wecomUserid;
+      if (!terminalDead) {
+        await this.archive.recordAttempt({
+          messageId: archived.id,
+          outboxId: row.id,
+          channel: "wecom_aibot",
+          target,
+          recipientLabel: maskUserid(target),
+          state: "dead",
+          attempts: 0,
+          error,
+          sentAt: null,
+          at: this.clock.now(),
+        });
+      }
       this.logger.warn("单聊消息收件人不可投递（确定性失败转 dead）：outbox#" + row.id + " · " + row.dedupeKey + " —— " + error);
-      return await this.degradeWith(message, row, error, DM_DEGRADE_PREFIX);
+      return await this.degradeWith(message, row, terminalDead ? (archived.lastError ?? error) : error, DM_DEGRADE_PREFIX);
     }
 
     // 未绑定企微（无绑定行 / 绑定行未带 user_id）：不发帧，按 permanent 收口 + D4 绑定指引降级（口径 §6）。
     if (binding === null) {
       const error = "收件人未绑定企业微信（无可投递地址）";
-      await this.repository.insertDelivery({
-        outboxId: row.id,
-        target: "user:" + contact.id,
-        state: "dead",
-        attempts: 0,
-        error,
-        sentAt: null,
-      });
+      if (!terminalDead) {
+        await this.archive.recordAttempt({
+          messageId: archived.id,
+          outboxId: row.id,
+          channel: "wecom_aibot",
+          target: "user:" + contact.id,
+          recipientLabel: "user:" + contact.id,
+          state: "dead",
+          attempts: 0,
+          error,
+          sentAt: null,
+          at: this.clock.now(),
+        });
+      }
       this.logger.warn("单聊消息收件人未绑定企微（确定性失败转 dead · 不发帧）：outbox#" + row.id + " · " + row.dedupeKey + " —— " + error);
-      return await this.degradeWith(message, row, error, DM_BINDING_DEGRADE_PREFIX);
+      return await this.degradeWith(
+        message,
+        row,
+        terminalDead ? (archived.lastError ?? error) : error,
+        DM_BINDING_DEGRADE_PREFIX,
+      );
+    }
+    if (terminalDead) {
+      const error = archived.lastError ?? "单聊消息已终态失败：" + row.dedupeKey;
+      this.logger.warn("单聊消息已归档为 dead，重复消费不再外发、仅重试降级：" + row.dedupeKey);
+      return await this.degradeWith(message, row, error, DM_DEGRADE_PREFIX);
     }
 
     const userid = binding.wecomUserid;
@@ -829,13 +899,18 @@ export class NotifyDmService {
     const result = await this.aibot.sendUserMarkdown({ userid, content, dmActivated: activation !== null });
 
     if (result.ok) {
-      await this.repository.insertDelivery({
+      const sentAt = this.clock.now();
+      await this.archive.recordAttempt({
+        messageId: archived.id,
         outboxId: row.id,
+        channel: "wecom_aibot",
         target: userid,
+        recipientLabel: maskUserid(userid),
         state: "sent",
         attempts: result.attempts,
         error: null,
-        sentAt: this.clock.now(),
+        sentAt,
+        at: sentAt,
       });
       this.logger.log("单聊消息已受理：" + row.dedupeKey + " · userid " + maskUserid(userid) + (truncated ? "（截断发送）" : ""));
       if (activation === null || activation.userId === null) {
@@ -847,35 +922,47 @@ export class NotifyDmService {
     const error = describeDmFailure(result);
     if (result.kind === "rate_limited") {
       const availableAt = result.retryAt ?? new Date(this.clock.now().getTime() + 60_000);
-      await this.repository.insertDelivery({
+      await this.archive.recordAttempt({
+        messageId: archived.id,
         outboxId: row.id,
+        channel: "wecom_aibot",
         target: userid,
+        recipientLabel: maskUserid(userid),
         state: "deferred",
         attempts: result.attempts,
         error,
         sentAt: null,
+        at: this.clock.now(),
       });
       return { outcome: "deferred", availableAt, error };
     }
     if (result.kind === "retryable") {
-      await this.repository.insertDelivery({
+      await this.archive.recordAttempt({
+        messageId: archived.id,
         outboxId: row.id,
+        channel: "wecom_aibot",
         target: userid,
+        recipientLabel: maskUserid(userid),
         state: "failed",
         attempts: result.attempts,
         error,
         sentAt: null,
+        at: this.clock.now(),
       });
       return { outcome: "retry", error };
     }
     // permanent（853000 / 846601 / 846607 未命中激活表）：dead + C5-04 降级（未激活附激活指引前缀 —— P3）。
-    await this.repository.insertDelivery({
+    await this.archive.recordAttempt({
+      messageId: archived.id,
       outboxId: row.id,
+      channel: "wecom_aibot",
       target: userid,
+      recipientLabel: maskUserid(userid),
       state: "dead",
       attempts: result.attempts,
       error,
       sentAt: null,
+      at: this.clock.now(),
     });
     this.logger.warn("单聊消息确定性失败（转 dead）：" + row.dedupeKey + " · userid " + maskUserid(userid) + " —— " + error);
     const prefix = result.errcode === WECOM_BOT_FREQ_ERRCODE ? DM_BINDING_DEGRADE_PREFIX : DM_DEGRADE_PREFIX;

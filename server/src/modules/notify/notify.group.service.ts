@@ -17,11 +17,20 @@
 import { readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { Injectable, Logger } from "@nestjs/common";
-import { NotifyGroupMessagePayloadSchema, type NotifyGroupMessagePayload } from "@libiaolink/contracts";
+import {
+  NotifyGroupMessagePayloadSchema,
+  type NotifyDeliveryTopic,
+  type NotifyGroupMessagePayload,
+} from "@libiaolink/contracts";
 import { ClockService } from "../../common/clock/clock.service.js";
 import { AppConfig } from "../../config/config.module.js";
 import type { OutboxClaimedRow } from "../../db/outbox.store.js";
 import type { OutboxHandleOutcome } from "../../outbox/handler.js";
+import {
+  inferNotifyRuleCode,
+  NotifyDeliveryArchiveRepository,
+  type NotifyDeliveryMessageRow,
+} from "./notify.delivery-archive.repository.js";
 import { NotifyGroupRepository } from "./notify.group.repository.js";
 import { NotifyService } from "./notify.service.js";
 import type { AibotIncomingMessage, AibotSendResult } from "./wecom.aibot.js";
@@ -154,6 +163,7 @@ export class NotifyGroupService {
 
   constructor(
     private readonly repository: NotifyGroupRepository,
+    private readonly archive: NotifyDeliveryArchiveRepository,
     private readonly aibot: WecomAibotClient,
     private readonly notify: NotifyService,
     private readonly clock: ClockService,
@@ -249,28 +259,76 @@ export class NotifyGroupService {
         error: "群播报载荷非法（缺 projectId / body 或超长）：" + row.dedupeKey,
       };
     }
+    let archived: NotifyDeliveryMessageRow;
+    try {
+      archived = await this.archive.ensureMessage({
+        outboxId: row.id,
+        sourceDedupeKey: row.dedupeKey,
+        topic: row.topic as NotifyDeliveryTopic,
+        channel: "wecom_group",
+        recipientId: null,
+        recipientLabel: "project:" + message.projectId,
+        title: message.title,
+        body: message.body,
+        templateCode: message.templateCode ?? null,
+        ruleCode: inferNotifyRuleCode(row.dedupeKey),
+        refType: message.refType ?? null,
+        refId: message.refId ?? null,
+        payload: { ...message },
+        metadata: {},
+      });
+    } catch (archiveError) {
+      const detail = archiveError instanceof Error ? archiveError.message : String(archiveError);
+      this.logger.error("群播报归档失败（不发送，交 outbox 重试）：" + row.dedupeKey + " —— " + detail);
+      return { outcome: "retry", error: "群播报归档失败：" + detail };
+    }
+    if (archived.lastState === "sent") {
+      this.logger.log("群播报已发送归档，重复消费幂等跳过：" + row.dedupeKey);
+      return { outcome: "done" };
+    }
+    const terminalDead = archived.lastState === "dead";
     const binding = await this.repository.findGroupByProject(message.projectId);
     if (binding === null) {
-      // 无绑定：notify_deliveries.target NOT NULL 无值可落 —— 不写投递行，dead + 日志（差异登记②）；
+      // 无绑定：notify_deliveries.target NOT NULL 无值可落 —— 不写尝试行，消息级归档置 dead + 日志（差异登记②）；
       // 运营可见性由 outbox 死信告警承担（项目群绑定维护 = M5-07 前端入口 / PUT 接口）；
       // 降级（B4）= 项目经理站内信（正文含原文）。
+      const error = "群未绑定（project " + message.projectId + "）：" + row.dedupeKey;
+      if (!terminalDead) {
+        await this.archive.markState({ messageId: archived.id, state: "dead", at: this.clock.now(), error });
+      }
       this.logger.warn(
         "群未绑定（确定性失败转 dead）：outbox#" + row.id + " · project=" + message.projectId + " · " + row.dedupeKey,
       );
-      return await this.deadWithDegrade(row, message, "群未绑定（project " + message.projectId + "）：" + row.dedupeKey);
+      return await this.deadWithDegrade(row, message, terminalDead ? (archived.lastError ?? error) : error);
     }
     const masked = maskChatid(binding.chatid);
     if (!binding.enabled) {
-      await this.repository.insertDelivery({
-        outboxId: row.id,
-        target: binding.chatid,
-        state: "dead",
-        attempts: 0,
-        error: "群绑定已停用（chatid " + masked + "）",
-        sentAt: null,
-      });
+      const error = "群绑定已停用（chatid " + masked + "）";
+      if (!terminalDead) {
+        await this.archive.recordAttempt({
+          messageId: archived.id,
+          outboxId: row.id,
+          channel: "wecom_group",
+          target: binding.chatid,
+          recipientLabel: "project:" + message.projectId + " · " + masked,
+          state: "dead",
+          attempts: 0,
+          error,
+          sentAt: null,
+          at: this.clock.now(),
+        });
+      }
       this.logger.warn("群绑定已停用（确定性失败转 dead）：outbox#" + row.id + " · chatid " + masked);
-      return await this.deadWithDegrade(row, message, "群绑定已停用（chatid " + masked + "）：" + row.dedupeKey);
+      return await this.deadWithDegrade(
+        row,
+        message,
+        terminalDead ? (archived.lastError ?? error) : error + "：" + row.dedupeKey,
+      );
+    }
+    if (terminalDead) {
+      const error = archived.lastError ?? "群播报已终态失败：" + row.dedupeKey;
+      this.logger.warn("群播报已归档为 dead，重复消费不再外发、仅重试降级：" + row.dedupeKey);
+      return await this.deadWithDegrade(row, message, error);
     }
 
     const composed = composeGroupMarkdown(message);
@@ -302,13 +360,18 @@ export class NotifyGroupService {
         masked,
         dedupeKey: row.dedupeKey,
       });
-      await this.repository.insertDelivery({
+      const sentAt = this.clock.now();
+      await this.archive.recordAttempt({
+        messageId: archived.id,
         outboxId: row.id,
+        channel: "wecom_group",
         target: binding.chatid,
+        recipientLabel: "project:" + message.projectId + " · " + masked,
         state: "sent",
         attempts: result.attempts + imageAttempts,
         error: null,
-        sentAt: this.clock.now(),
+        sentAt,
+        at: sentAt,
       });
       this.logger.log("群播报已受理：" + row.dedupeKey + " · chatid " + masked + (truncated ? "（截断发送）" : ""));
       return { outcome: "done" };
@@ -317,35 +380,47 @@ export class NotifyGroupService {
     const error = describeAibotFailure(result);
     if (result.kind === "rate_limited") {
       const availableAt = result.retryAt ?? new Date(this.clock.now().getTime() + 60_000);
-      await this.repository.insertDelivery({
+      await this.archive.recordAttempt({
+        messageId: archived.id,
         outboxId: row.id,
+        channel: "wecom_group",
         target: binding.chatid,
+        recipientLabel: "project:" + message.projectId + " · " + masked,
         state: "deferred",
         attempts: result.attempts,
         error,
         sentAt: null,
+        at: this.clock.now(),
       });
       return { outcome: "deferred", availableAt, error: error };
     }
     if (result.kind === "retryable") {
-      await this.repository.insertDelivery({
+      await this.archive.recordAttempt({
+        messageId: archived.id,
         outboxId: row.id,
+        channel: "wecom_group",
         target: binding.chatid,
+        recipientLabel: "project:" + message.projectId + " · " + masked,
         state: "failed",
         attempts: result.attempts,
         error,
         sentAt: null,
+        at: this.clock.now(),
       });
       return { outcome: "retry", error };
     }
     // permanent（含 846607 未激活分支）：不重试；降级 B4（项目经理站内信 + 管理员告警群留痕）。
-    await this.repository.insertDelivery({
+    await this.archive.recordAttempt({
+      messageId: archived.id,
       outboxId: row.id,
+      channel: "wecom_group",
       target: binding.chatid,
+      recipientLabel: "project:" + message.projectId + " · " + masked,
       state: "dead",
       attempts: result.attempts,
       error,
       sentAt: null,
+      at: this.clock.now(),
     });
     this.logger.warn("群播报确定性失败（转 dead）：" + row.dedupeKey + " · chatid " + masked + " —— " + error);
     return await this.deadWithDegrade(row, message, error);

@@ -1,6 +1,6 @@
 /**
  * R06 A 方案动态海报回归：周期口径（进行中 = 计划周期，完成 = 实际历时）、按期率、
- * 900x1350 PNG 输出与任务按期判定。字体使用仓库内 Noto 资产，不依赖宿主系统字体。
+ * 900x1350 PNG 输出与任务按期判定。字体默认使用仓库内思源宋体资产，不依赖宿主系统字体。
  */
 import { describe, expect, it } from "vitest";
 import { isCompletedTaskOnTime } from "../src/modules/notify/notify.group.repository.js";

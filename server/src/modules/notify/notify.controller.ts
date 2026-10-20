@@ -1,8 +1,10 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Headers, HttpCode, Param, Patch, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
 import {
   NotificationListQuerySchema,
   NotificationMarkBodySchema,
   NotificationSnoozeBodySchema,
+  NotifyDeliveryListQuerySchema,
+  NotifyDeliveryResendBodySchema,
   NotifyPrefsUpdateBodySchema,
   z,
   type Notification,
@@ -12,12 +14,19 @@ import {
   type NotificationMarkBody,
   type NotificationSnoozeBody,
   type NotificationSnoozeListResponse,
+  type NotifyDeliveryDetail,
+  type NotifyDeliveryListQuery,
+  type NotifyDeliveryListResponse,
+  type NotifyDeliveryResendBody,
+  type NotifyDeliveryResendResponse,
   type NotifyPrefs,
   type NotifyPrefsUpdateBody,
 } from "@libiaolink/contracts";
 import type { Request, Response } from "express";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
+import { ProjectAccessGuard, RequirePermission } from "../permission/index.js";
+import { NotifyDeliveryService } from "./notify.delivery.service.js";
 import { NotifyService } from "./notify.service.js";
 import { NotifyStreamService } from "./notify.stream.service.js";
 
@@ -35,6 +44,7 @@ export class NotifyController {
   constructor(
     private readonly notify: NotifyService,
     private readonly streamService: NotifyStreamService,
+    private readonly deliveries: NotifyDeliveryService,
   ) {}
 
   /** 收件箱清单（C5-01 / C5-02）：状态 / 类型 / 关联对象 + 投递时刻区间 + 分页；随行未读角标。 */
@@ -84,6 +94,45 @@ export class NotifyController {
     res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders();
     res.on("close", () => connection.close());
+  }
+
+  /**
+   * 发送记录列表（M5-06-2B · S8-4）：管理员读面；`deliveries` 静态段必须先于 `:id` 路由。
+   * 目标地址只回掩码，完整 target / payload 不下发。
+   */
+  @Get("deliveries")
+  @UseGuards(ProjectAccessGuard)
+  @RequirePermission("notify.record.view")
+  listDeliveries(
+    @Query(new ZodValidationPipe(NotifyDeliveryListQuerySchema)) query: NotifyDeliveryListQuery,
+    @CurrentActorId() actorId: string,
+  ): Promise<NotifyDeliveryListResponse> {
+    return this.deliveries.list(actorId, query);
+  }
+
+  /** 发送记录详情：消息归档 + 全部尝试明细；不存在 404。 */
+  @Get("deliveries/:id")
+  @UseGuards(ProjectAccessGuard)
+  @RequirePermission("notify.record.view")
+  getDelivery(
+    @Param("id", notificationIdParam) id: number,
+    @CurrentActorId() actorId: string,
+  ): Promise<NotifyDeliveryDetail> {
+    return this.deliveries.detail(actorId, id);
+  }
+
+  /** 重发失败 / 死信外部消息：空请求体 + 必填 Idempotency-Key；原记录不改写。 */
+  @Post("deliveries/:id/resend")
+  @HttpCode(200)
+  @UseGuards(CsrfGuard, ProjectAccessGuard)
+  @RequirePermission("notify.resend")
+  resendDelivery(
+    @Param("id", notificationIdParam) id: number,
+    @Headers("Idempotency-Key") idempotencyKey: string,
+    @Body(new ZodValidationPipe(NotifyDeliveryResendBodySchema)) _body: NotifyDeliveryResendBody,
+    @CurrentActorId() actorId: string,
+  ): Promise<NotifyDeliveryResendResponse> {
+    return this.deliveries.resend(actorId, id, idempotencyKey);
   }
 
   /** 更新通知偏好（局部更新；空更新 400）。 */

@@ -45,8 +45,10 @@ const INK = "#191b17";
 const ACCENT = "#9b4a39";
 const PAPER = "#f6f0e3";
 const BG = "#dbe6dc";
-const FONT_SANS = "LibiaoLink Sans";
-const FONT_SERIF = "LibiaoLink Serif";
+const FONT_SANS = "LibiaoLink Source Han Serif";
+const FONT_SERIF = "LibiaoLink Source Han Serif Numerals";
+const BUNDLED_SERIF = "SourceHanSerifSC-SemiBold.otf";
+const BUNDLED_SERIF_BOLD = "SourceHanSerifSC-Bold.otf";
 let fontsReady = false;
 let customSansMode = false;
 let customSerifMode = false;
@@ -71,15 +73,13 @@ function ensureFonts(paths?: R06PosterFontPaths): void {
   const customSans = paths?.sans?.trim() ?? "";
   const customSansBold = paths?.sansBold?.trim() ?? "";
   const customSerif = paths?.serif?.trim() ?? "";
-  // 两套字体共用同一版式：仓库 Noto 与外部授权字体只差字形，不切换字号 / 字重 / 缩放口径。
+  // 默认字体 = 仓库内思源宋体（SIL OFL）；外部路径只做已授权字体覆盖，不改字号 / 缩放口径。
   customSansMode = true;
   customSerifMode = true;
-  const sans = customSans === "" ? GlobalFonts.registerFromPath(fontPath("NotoSansSC-Variable.ttf"), FONT_SANS) : GlobalFonts.registerFromPath(customSans, FONT_SANS);
-  if (customSansBold !== "") {
-    GlobalFonts.registerFromPath(customSansBold, FONT_SANS);
-  }
-  const serif = customSerif === "" ? GlobalFonts.registerFromPath(fontPath("NotoSerif-Variable.ttf"), FONT_SERIF) : GlobalFonts.registerFromPath(customSerif, FONT_SERIF);
-  if (sans === null || serif === null) {
+  const sans = customSans === "" ? GlobalFonts.registerFromPath(fontPath(BUNDLED_SERIF), FONT_SANS) : GlobalFonts.registerFromPath(customSans, FONT_SANS);
+  const sansBold = customSansBold === "" ? GlobalFonts.registerFromPath(fontPath(BUNDLED_SERIF_BOLD), FONT_SANS) : GlobalFonts.registerFromPath(customSansBold, FONT_SANS);
+  const serif = customSerif === "" ? GlobalFonts.registerFromPath(fontPath(BUNDLED_SERIF), FONT_SERIF) : GlobalFonts.registerFromPath(customSerif, FONT_SERIF);
+  if (sans === null || sansBold === null || serif === null) {
     throw new Error("R06 poster font registration failed");
   }
   fontsReady = true;
@@ -246,25 +246,25 @@ function drawNameWall(ctx: SKRSContext2D, names: string[]): void {
   ctx.clip();
   ctx.translate(WIDTH / 2, 622);
   ctx.rotate((-7 * Math.PI) / 180);
-  setSans(ctx, 800, 71);
-  const lineHeight = 112;
+  setSans(ctx, 800, 64);
+  const lineHeight = 106;
   for (let row = 0; row < 8; row += 1) {
     const y = -390 + row * lineHeight;
     let x = -360 - (row % 3) * 110;
     let index = row * 2;
-    for (let column = 0; column < 5; column += 1) {
+    for (let column = 0; column < 6; column += 1) {
       const name = wallNames[index % wallNames.length] ?? "项目团队";
       index += 1;
       const style = (row * 7 + column) % 4;
       if (style === 3) {
-        ctx.strokeStyle = rgba(INK, 0.078);
+        ctx.strokeStyle = rgba(INK, 0.135);
         ctx.lineWidth = 1;
         ctx.strokeText(name, x, y);
       } else {
-        ctx.fillStyle = style === 1 ? rgba(ACCENT, 0.098) : rgba(INK, 0.078);
+        ctx.fillStyle = style === 1 ? rgba(ACCENT, 0.15) : rgba(INK, 0.135);
         ctx.fillText(name, x, y);
       }
-      x += ctx.measureText(name).width + 32;
+      x += ctx.measureText(name).width + 28;
     }
   }
   ctx.restore();
@@ -363,7 +363,7 @@ function drawMeter(ctx: SKRSContext2D, view: R06PosterView, metrics: R06PosterMe
     setSans(ctx, 500, 30);
     const percentWidth = ctx.measureText("%").width;
     const gap = 0;
-    const startX = cx - (digitsWidth + gap + percentWidth) / 2 + 7;
+    const startX = cx - (digitsWidth + gap + percentWidth) / 2 + 10;
     setSerif(ctx, 400, 151);
     ctx.fillStyle = INK;
     drawSpaced(ctx, metrics.rateText, startX, 657, rateTracking);
@@ -380,7 +380,7 @@ function drawMeter(ctx: SKRSContext2D, view: R06PosterView, metrics: R06PosterMe
     const gap = 0;
     const rateScale = 0.86;
     const scaledDigits = digitsWidth * rateScale;
-    const startX = cx - (scaledDigits + gap + percentWidth) / 2 + 7;
+    const startX = cx - (scaledDigits + gap + percentWidth) / 2 + 10;
     setSerif(ctx, 400, 140);
     ctx.fillStyle = INK;
     ctx.save();
@@ -514,8 +514,8 @@ function drawDetail(ctx: SKRSContext2D, view: R06PosterView, metrics: R06PosterM
     labels[2] = "计划交付";
   }
   for (let index = 0; index < labels.length; index += 1) {
-    setSans(ctx, 500, customSansMode ? 9 : 10);
-    ctx.fillStyle = rgba(INK, customSansMode ? 0.45 : 0.66);
+    setSans(ctx, 600, customSansMode ? 11 : 10);
+    ctx.fillStyle = rgba(INK, customSansMode ? 0.72 : 0.66);
     drawSpaced(ctx, labels[index] ?? "", factX[index] ?? 57, 1112, 2);
   }
 

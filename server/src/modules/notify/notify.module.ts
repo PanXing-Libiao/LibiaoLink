@@ -12,6 +12,9 @@ import { NotifyDmService } from "./notify.dm.service.js";
 import { NotifyGroupRepository } from "./notify.group.repository.js";
 import { NotifyGroupService } from "./notify.group.service.js";
 import { NotifyController } from "./notify.controller.js";
+import { NotifyDeliveryArchiveRepository } from "./notify.delivery-archive.repository.js";
+import { NotifyDeliveryReadRepository } from "./notify.delivery-read.repository.js";
+import { NotifyDeliveryService } from "./notify.delivery.service.js";
 import { NotifyRepository } from "./notify.repository.js";
 import { NotifyService } from "./notify.service.js";
 import { NotifyStreamPublisher } from "./notify.stream.publisher.js";
@@ -49,6 +52,9 @@ import { PgRateWindowStore } from "./wecom.rate.pg.js";
   controllers: [NotifyController, WecomDmBindingController],
   providers: [
     NotifyRepository,
+    NotifyDeliveryArchiveRepository,
+    NotifyDeliveryReadRepository,
+    NotifyDeliveryService,
     NotifyService,
     NotifyStreamPublisher,
     NotifyStreamService,
@@ -78,6 +84,15 @@ import { PgRateWindowStore } from "./wecom.rate.pg.js";
     },
     ClockService,
   ],
-  exports: [NotifyService, NotifyGroupService, NotifyAppService, NotifyDmService, WecomAibotClient, WecomClient, RESOURCE_CHANGE_SINK],
+  exports: [
+    NotifyService,
+    NotifyDeliveryService,
+    NotifyGroupService,
+    NotifyAppService,
+    NotifyDmService,
+    WecomAibotClient,
+    WecomClient,
+    RESOURCE_CHANGE_SINK,
+  ],
 })
 export class NotifyModule {}

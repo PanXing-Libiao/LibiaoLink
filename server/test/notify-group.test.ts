@@ -10,7 +10,6 @@ import { describe, expect, it } from "vitest";
 import { ClockService } from "../src/common/clock/clock.service.js";
 import type { OutboxClaimedRow } from "../src/db/outbox.store.js";
 import type {
-  NotifyDeliveryInsert,
   R06PosterData,
   WecomGroupCandidateRow,
   WecomGroupRow,
@@ -29,6 +28,7 @@ import {
   truncateGroupMarkdown,
 } from "../src/modules/notify/notify.group.service.js";
 import type { AibotIncomingMessage, AibotSendResult, WecomAibotClient } from "../src/modules/notify/wecom.aibot.js";
+import { FakeNotifyDeliveryArchive } from "./fakes/notify-delivery-archive.fake.js";
 
 const AT = new Date("2026-10-12T06:00:00.000Z");
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
@@ -48,8 +48,12 @@ function groupRow(overrides: Partial<WecomGroupRow> & { projectId: string; chati
 }
 
 class FakeGroupRepository {
+  readonly archive = new FakeNotifyDeliveryArchive();
   groups: WecomGroupRow[] = [];
-  deliveries: NotifyDeliveryInsert[] = [];
+
+  get deliveries() {
+    return this.archive.attempts;
+  }
   activateCalls: { chatid: string; at: Date }[] = [];
   candidates: WecomGroupCandidateRow[] = [];
   observeCalls: { chatid: string; name: string | null; at: Date }[] = [];
@@ -122,9 +126,6 @@ class FakeGroupRepository {
     return this.r06PosterData;
   }
 
-  async insertDelivery(input: NotifyDeliveryInsert): Promise<void> {
-    this.deliveries.push(input);
-  }
 }
 
 class FakeAibot {
@@ -194,6 +195,7 @@ function makeService(r06ImagePath = "", r06OnTimeImagePath = ""): {
   repo: FakeGroupRepository;
   aibot: FakeAibot;
   inbox: FakeNotifyInbox;
+  archive: FakeNotifyDeliveryArchive;
 } {
   const repo = new FakeGroupRepository();
   const aibot = new FakeAibot();
@@ -202,6 +204,7 @@ function makeService(r06ImagePath = "", r06OnTimeImagePath = ""): {
   clock.setSource(() => AT);
   const service = new NotifyGroupService(
     repo as never,
+    repo.archive as never,
     aibot as unknown as WecomAibotClient,
     inbox as never,
     clock,
@@ -216,7 +219,7 @@ function makeService(r06ImagePath = "", r06OnTimeImagePath = ""): {
       },
     } as never,
   );
-  return { service, repo, aibot, inbox };
+  return { service, repo, aibot, inbox, archive: repo.archive };
 }
 
 function claimedRow(payload: Record<string, unknown>, overrides: Partial<OutboxClaimedRow> = {}): OutboxClaimedRow {
@@ -335,7 +338,7 @@ describe("parseGroupNameCommand（群内群名命令）", () => {
 
 describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分类）", () => {
   it("ok：发送受理 → done + sent 行（sentAt 非空 / error 为空 / attempts=1）", async () => {
-    const { service, repo, aibot } = makeService();
+    const { service, repo, aibot, archive } = makeService();
     repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
 
     const outcome = await service.consume(claimedRow(payload({ title: null })));
@@ -343,8 +346,44 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
     expect(outcome).toEqual({ outcome: "done" });
     expect(aibot.sends[0]).toMatchObject({ chatid: CHATID, content: "**节点**：到货验收  \n负责人：张工", groupActivated: true });
     expect(repo.deliveries).toEqual([
-      { outboxId: 7, target: CHATID, state: "sent", attempts: 1, error: null, sentAt: AT },
+      expect.objectContaining({ outboxId: 7, target: CHATID, state: "sent", attempts: 1, error: null, sentAt: AT }),
     ]);
+    expect(archive.messages[0]).toMatchObject({
+      sourceDedupeKey: "R03:t-1:2026-09-24",
+      topic: "notify.group",
+      channel: "wecom_group",
+      recipientId: null,
+      recipientLabel: "project:" + PROJECT_ID + " · " + maskChatid(CHATID),
+      ruleCode: "R03",
+      lastState: "sent",
+      attemptCount: 1,
+      sentAt: AT,
+    });
+    expect(archive.attempts[0]).toMatchObject({ messageId: archive.messages[0]!.id, channel: "wecom_group" });
+  });
+
+  it("重复消费：归档已 sent → done，不再发起第二次群消息", async () => {
+    const { service, repo, aibot, archive } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
+
+    expect(await service.consume(claimedRow(payload()))).toEqual({ outcome: "done" });
+    expect(await service.consume(claimedRow(payload()))).toEqual({ outcome: "done" });
+
+    expect(aibot.sends).toHaveLength(1);
+    expect(archive.messages).toHaveLength(1);
+    expect(archive.attempts).toHaveLength(1);
+  });
+
+  it("归档失败：不发群消息，交 outbox retry", async () => {
+    const { service, repo, aibot, archive } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
+    archive.failEnsure = true;
+
+    const outcome = await service.consume(claimedRow(payload()));
+
+    expect(outcome).toMatchObject({ outcome: "retry", error: expect.stringContaining("归档失败") });
+    expect(aibot.sends).toEqual([]);
+    expect(repo.deliveries).toEqual([]);
   });
 
   it("rate_limited：deferred 延期重排（availableAt = retryAt；attempts 不消耗）+ deferred 行", async () => {
@@ -615,6 +654,104 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
       expect(outcome).toEqual({ outcome: "done" });
       expect(aibot.imageSends).toHaveLength(1);
       expect(aibot.imageSends[0]!.fileName).toBe("R06-LBGW-20260331-1459.png");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("R06_GROUP：全部任务按时交付时优先使用按时交付喜报图", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "libiaolink-r06-"));
+    const fallbackFile = join(dir, "验收.gif");
+    const onTimeFile = join(dir, "按时.gif");
+    const gifHeader = Buffer.from("GIF89a", "ascii");
+    writeFileSync(fallbackFile, gifHeader);
+    writeFileSync(onTimeFile, gifHeader);
+    try {
+      const { service, repo, aibot } = makeService(fallbackFile, onTimeFile);
+      repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
+      repo.allTasksOnTime = true;
+
+      const outcome = await service.consume(
+        claimedRow(payload({ templateCode: "R06_GROUP", title: "叮咚~喜报来啦！", body: "项目圆满完成" })),
+      );
+
+      expect(outcome).toEqual({ outcome: "done" });
+      expect(aibot.imageSends).toHaveLength(1);
+      expect(aibot.imageSends[0]).toMatchObject({ fileName: "按时.gif", mime: "image/gif" });
+      expect(repo.deliveries[0]).toMatchObject({ state: "sent", attempts: 2 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("R06_GROUP 图片失败不回滚已送达文字：仍 done + sent，图片仅留日志", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "libiaolink-r06-"));
+    const file = join(dir, "喜报.jpg");
+    writeFileSync(file, Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00]));
+    try {
+      const { service, repo, aibot } = makeService(file);
+      repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID }));
+      aibot.imageResult = {
+        ok: false,
+        kind: "retryable",
+        errcode: null,
+        errmsg: "素材上传初始化回执超时",
+        retryAt: null,
+        attempts: 0,
+        state: "subscribed",
+      };
+
+      const outcome = await service.consume(claimedRow(payload({ templateCode: "R06_GROUP" })));
+
+      expect(outcome).toEqual({ outcome: "done" });
+      expect(aibot.sends).toHaveLength(1);
+      expect(aibot.imageSends).toHaveLength(1);
+      expect(repo.deliveries[0]).toMatchObject({ state: "sent", attempts: 1 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("R06 按时交付判定：无任务 / 未完成 / 延期 / 缺完成日均不放行", () => {
+    const at = new Date("2026-10-20T02:00:00.000Z");
+    const row = (overrides: Partial<{ status: string; plannedEnd: string | null; actualEnd: string | null; onTime: boolean | null }> = {}) => ({
+      status: "done",
+      plannedEnd: "2026-10-19",
+      actualEnd: "2026-10-19",
+      onTime: null,
+      ...overrides,
+    });
+
+    expect(areAllProjectTasksOnTime([], at)).toBe(false);
+    expect(areAllProjectTasksOnTime([row(), row({ actualEnd: "2026-10-18" })], at)).toBe(true);
+    expect(areAllProjectTasksOnTime([row(), row({ actualEnd: "2026-10-20" })], at)).toBe(false);
+    expect(areAllProjectTasksOnTime([row({ status: "active" })], at)).toBe(false);
+    expect(areAllProjectTasksOnTime([row({ actualEnd: null, plannedEnd: "2026-10-19", onTime: true })], at)).toBe(false);
+    expect(areAllProjectTasksOnTime([row({ actualEnd: null, plannedEnd: null, onTime: true })], at)).toBe(true);
+  });
+
+  it("R06_GROUP：文字送达后追加配置的喜报海报，投递记录累计两条消息", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "libiaolink-r06-"));
+    const file = join(dir, "喜报.png");
+    writeFileSync(file, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    try {
+      const { service, repo, aibot } = makeService(file);
+      repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
+
+      const outcome = await service.consume(
+        claimedRow(payload({ templateCode: "R06_GROUP", title: "叮咚~喜报来啦！", body: "项目圆满完成" })),
+      );
+
+      expect(outcome).toEqual({ outcome: "done" });
+      expect(aibot.sends).toHaveLength(1);
+      expect(aibot.imageSends).toHaveLength(1);
+      expect(aibot.imageSends[0]).toMatchObject({
+        chatid: CHATID,
+        fileName: "喜报.png",
+        mime: "image/png",
+        groupActivated: true,
+      });
+      expect(repo.deliveries[0]).toMatchObject({ state: "sent", attempts: 2 });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
