@@ -1,0 +1,37 @@
+{
+  "ok": true,
+  "pass": 6,
+  "fail": 0,
+  "checks": [
+    {
+      "name": "0061 结构：消息归档表 / message_id / 关键索引",
+      "ok": true,
+      "detail": "表 + message_id + 5 索引"
+    },
+    {
+      "name": "四渠道归档 + attempt 状态机（pending → sent/failed/deferred/dead）",
+      "ok": true,
+      "detail": "inbox / app / aibot / group · 4 尝试 + 1 次幂等 ensure"
+    },
+    {
+      "name": "outbox 清理：消息归档与尝试留档保留",
+      "ok": true,
+      "detail": "outbox FK set null；归档正文仍可读"
+    },
+    {
+      "name": "回填 dry-run：外部 + inbox 均零写入",
+      "ok": true,
+      "detail": "dry-run 报告 1 外部 / 2 inbox，库内零写入"
+    },
+    {
+      "name": "回填首跑：outbox 尚存还原 + 尝试关联 + inbox 主/子行",
+      "ok": true,
+      "detail": "外部 1 条 + inbox 2 条；历史 null gap=1"
+    },
+    {
+      "name": "回填二跑：零新增 / 零重链",
+      "ok": true,
+      "detail": "二跑 0 / 0 / 0，gap 保留"
+    }
+  ]
+}
