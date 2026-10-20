@@ -8268,7 +8268,49 @@ export interface paths {
         };
         options?: never;
         head?: never;
-        patch?: never;
+        /** 更新企业微信单聊绑定设置（个人资源 · 会话 + CSRF）：messagesEnabled = false 后停止企微单聊外发（站内信仍保留）；绑定 / 换绑成功时默认开启 */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["WecomDmBindingUpdateBody"];
+                };
+            };
+            responses: {
+                /** @description 更新后的绑定态 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WecomDmBindingState"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         trace?: never;
     };
     "/api/v1/wecom-dm-binding/diagnostics": {
@@ -11223,8 +11265,15 @@ export interface components {
             /** @description 企微 open_userid 掩码（只回末 4 位）；未绑定 / 解绑后 = null */
             wecomUseridMasked: string | null;
             boundAt: components["schemas"]["DateTime"] & (string | null);
+            /** @description 是否允许向该企业微信单聊发送任务提醒；绑定成功后默认 true，关闭后停止企微单聊外发（站内信仍按降级规则保留） */
+            messagesEnabled: boolean;
             bindingCode: components["schemas"]["WecomDmBindingCode"];
             retryAt: components["schemas"]["DateTime"] & (string | null);
+        };
+        /** @description 企业微信单聊绑定设置更新（messagesEnabled = false 时停止企微单聊外发；绑定成功后默认开启） */
+        WecomDmBindingUpdateBody: {
+            /** @description 是否允许向该企业微信单聊发送任务提醒 */
+            messagesEnabled: boolean;
         };
         /** @description 机器人诊断（仅非生产环境）：bot_id / secret / ws 地址 / 最近回调统计；用于核对本地凭据与 worker 收消息链路 */
         WecomDmBotDiagnostics: {

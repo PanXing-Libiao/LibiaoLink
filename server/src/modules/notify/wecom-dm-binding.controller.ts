@@ -1,14 +1,21 @@
-import { Controller, Delete, Get, Header, HttpCode, Post, UseGuards } from "@nestjs/common";
-import type { WecomDmBindingCode, WecomDmBindingState, WecomDmBotDiagnostics } from "@libiaolink/contracts";
+import { Body, Controller, Delete, Get, Header, HttpCode, Patch, Post, UseGuards } from "@nestjs/common";
+import {
+  WecomDmBindingUpdateBodySchema,
+  type WecomDmBindingCode,
+  type WecomDmBindingState,
+  type WecomDmBindingUpdateBody,
+  type WecomDmBotDiagnostics,
+} from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
+import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
 import { NotifyDmService } from "./notify.dm.service.js";
 
 /**
  * 企业微信单聊绑定接口（M5-03-5-6 绑定码链路 · 契约刀 · Push 249）：契约 = shared/src/modules/notifications.ts
- * 末尾「企业微信单聊绑定」段；口径 = `docs/M5-03-5-绑定码方案设计口径(企微单聊).md` v2.0 §3 / §4 / §9 / §10（D2 · D3 · D5 · D6）。
+ * 末尾「企业微信单聊绑定」段；口径 = `docs/M5-03-5-绑定码方案设计口径(企微单聊).md` v2.1 §3 / §4 / §6 / §9 / §10（D2 · D3 · D5 · D6）。
  * 根路径 /api/v1/wecom-dm-binding —— 个人资源（同收件箱 / 通知偏好先例）：无功能权限键、无项目域判定；
- * 读 = 会话；取码 / 解绑 = 会话 + CSRF。与 NotifyController 分挂两个前缀：本组是「绑定资源」，不是通知条目。
+ * 读 = 会话；取码 / 开关 / 解绑 = 会话 + CSRF。与 NotifyController 分挂两个前缀：本组是「绑定资源」，不是通知条目。
  * 链路：取码（POST codes）→ 用户把码发进企微单聊（worker `NotifyDmService.ingestCallback` 落绑定 + 会话内回执）
  * → 查绑定态（GET）→ 解绑（DELETE）。绑定只能由用户交互产生（企微后台无管理员权限的既有事实）。
  */
@@ -24,6 +31,19 @@ export class WecomDmBindingController {
   @Get()
   state(@CurrentActorId() actorId: string): Promise<WecomDmBindingState> {
     return this.dm.getBindingState(actorId);
+  }
+
+  /**
+   * 更新消息开关（个人设置）：关闭后停止企微单聊外发，站内信降级仍保留。
+   * 未绑定时幂等返回未绑定态；绑定 / 换绑成功服务端恢复默认 true。
+   */
+  @Patch()
+  @UseGuards(CsrfGuard)
+  updateMessagesEnabled(
+    @Body(new ZodValidationPipe(WecomDmBindingUpdateBodySchema)) body: WecomDmBindingUpdateBody,
+    @CurrentActorId() actorId: string,
+  ): Promise<WecomDmBindingState> {
+    return this.dm.setMessagesEnabled(actorId, body.messagesEnabled);
   }
 
   /**

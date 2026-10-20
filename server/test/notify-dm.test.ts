@@ -32,6 +32,7 @@ import {
   DM_BINDING_REPLY_LOCKED,
   DM_BINDING_LOCK_STEPS_MS,
   DM_DEGRADE_PREFIX,
+  DM_DISABLED_DEGRADE_PREFIX,
   DM_MARKDOWN_MAX_BYTES,
   DM_TRUNCATION_SUFFIX,
   DM_WELCOME_MESSAGE,
@@ -70,7 +71,7 @@ class FakeDmRepository {
   readonly archive = new FakeNotifyDeliveryArchive();
   contacts = new Map<string, WecomDmContact>();
   activations = new Map<string, DmActivationRow>();
-  bindings = new Map<string, { botId: string; wecomUserid: string; userId: string; boundAt: Date }>();
+  bindings = new Map<string, { botId: string; wecomUserid: string; userId: string; boundAt: Date; messagesEnabled: boolean }>();
   codes = new Map<string, DmBindingCodeRow>();
   guards = new Map<string, DmBindingGuardRow>();
   get deliveries() {
@@ -92,6 +93,8 @@ class FakeDmRepository {
   backfillFails = false;
   /** 解绑调用留痕（含事务 client —— 断言「与清绑定同事务」）。 */
   clearCalls: { botId: string; userId: string; at: Date; client?: unknown }[] = [];
+  /** 消息开关调用留痕。 */
+  messageToggleCalls: { botId: string; userId: string; messagesEnabled: boolean; at: Date }[] = [];
   /** 覆盖清除行数（null = 按实际清掉的行数返回）。 */
   clearOverride: number | null = null;
   private nextCodeId = 1;
@@ -286,8 +289,26 @@ class FakeDmRepository {
       wecomUserid: input.wecomUserid,
       userId: input.userId,
       boundAt: input.at,
+      messagesEnabled: true,
     });
     return true;
+  }
+
+  async updateBindingMessagesEnabledByUserId(input: {
+    botId: string;
+    userId: string;
+    messagesEnabled: boolean;
+    at: Date;
+  }): Promise<number> {
+    this.messageToggleCalls.push(input);
+    let changed = 0;
+    for (const row of this.bindings.values()) {
+      if (row.botId === input.botId && row.userId === input.userId) {
+        row.messagesEnabled = input.messagesEnabled;
+        changed += 1;
+      }
+    }
+    return changed;
   }
 
   /** 解绑（D6）：清当前机器人下该用户的绑定行；`clearOverride` 复现「并发已清 → 清 0 行」竞态。 */
@@ -428,7 +449,7 @@ function activation(overrides: Partial<DmActivationRow> = {}): DmActivationRow {
 }
 
 function binding(overrides: Partial<DmBindingRow> = {}): DmBindingRow {
-  return { wecomUserid: OPEN_USERID, userId: USER_ID, boundAt: BEFORE, ...overrides };
+  return { wecomUserid: OPEN_USERID, userId: USER_ID, boundAt: BEFORE, messagesEnabled: true, ...overrides };
 }
 
 function codeRow(overrides: Partial<DmBindingCodeRow> = {}): DmBindingCodeRow {
@@ -447,7 +468,13 @@ function codeRow(overrides: Partial<DmBindingCodeRow> = {}): DmBindingCodeRow {
 function makeBoundService(): ReturnType<typeof makeService> {
   const made = makeService();
   made.repo.contacts.set(USER_ID, contact());
-  made.repo.bindings.set(key(BOT_ID, OPEN_USERID), { botId: BOT_ID, wecomUserid: OPEN_USERID, userId: USER_ID, boundAt: BEFORE });
+  made.repo.bindings.set(key(BOT_ID, OPEN_USERID), {
+    botId: BOT_ID,
+    wecomUserid: OPEN_USERID,
+    userId: USER_ID,
+    boundAt: BEFORE,
+    messagesEnabled: true,
+  });
   return made;
 }
 
@@ -649,6 +676,38 @@ describe("NotifyDmService.consume（三分类 + 留痕 + 降级 + 绑定行寻�
     expect(inbox.copies[0]!.dedupeKey).toBe("R02:t-1:v5:aibot:c504");
     expect(String(inbox.copies[0]!.message.body)).toContain("节点：到货验收 负责人：张工");
     expect(String(inbox.copies[0]!.message.body)).toContain("当前用户未绑定企业微信，请前往设置补绑");
+  });
+
+  it("用户关闭企微单聊提醒：不发帧 + 投递行 dead + outbox done 收口", async () => {
+    const made = makeBoundService();
+    await made.service.setMessagesEnabled(USER_ID, false);
+
+    const outcome = await made.service.consume(claimedRow(payload()));
+
+    expect(outcome.outcome).toBe("done");
+    expect(made.aibot.sends).toEqual([]);
+    expect(made.repo.deliveries[0]).toMatchObject({
+      state: "dead",
+      target: OPEN_USERID,
+      attempts: 0,
+      error: "收件人已关闭企业微信单聊提醒",
+    });
+    expect(DM_DISABLED_DEGRADE_PREFIX).toBe("【企微单聊提醒已关闭，已转站内信】\n\n");
+    expect(made.inbox.copies).toHaveLength(1);
+    expect(String(made.inbox.copies[0]!.message.body)).toContain(DM_DISABLED_DEGRADE_PREFIX.trim());
+    expect(String(made.inbox.copies[0]!.message.body)).toContain("节点：到货验收 负责人：张工");
+  });
+
+  it("用户关闭企微单聊提醒 + 站内信写库失败：不发帧 + retry 收敛", async () => {
+    const made = makeBoundService();
+    await made.service.setMessagesEnabled(USER_ID, false);
+    made.inbox.fail = true;
+
+    const outcome = await made.service.consume(claimedRow(payload()));
+
+    expect(outcome).toMatchObject({ outcome: "retry" });
+    expect(made.aibot.sends).toEqual([]);
+    expect(made.repo.deliveries[0]).toMatchObject({ state: "dead", attempts: 0 });
   });
 
   it("D4 话术终稿逐字锁定（前缀 = 标签行 + 终稿句）", () => {
@@ -882,7 +941,11 @@ describe("NotifyDmService.ingestCallback（单聊绑定码 · 口径 §5）", ()
 
     expect(repo.upsertCalls).toHaveLength(1); // 先登记激活（D1）
     expect(repo.bindCalls).toEqual([{ codeId: 7, userId: USER_ID, botId: BOT_ID, wecomUserid: OPEN_USERID, at: AT }]);
-    expect(repo.bindings.get(key(BOT_ID, OPEN_USERID))).toMatchObject({ userId: USER_ID, boundAt: AT });
+    expect(repo.bindings.get(key(BOT_ID, OPEN_USERID))).toMatchObject({
+      userId: USER_ID,
+      boundAt: AT,
+      messagesEnabled: true,
+    });
     expect(repo.codes.get(CODE)!.status).toBe("used");
     expect(aibot.replies).toEqual([{ reqId: "ReqIdCallback0001", userid: OPEN_USERID, content: DM_BINDING_REPLY_BOUND }]);
   });
@@ -1297,6 +1360,7 @@ describe("NotifyDmService.requestBindingCode / getBindingState（D3 / D5 口径�
       bound: true,
       wecomUseridMasked: "****" + OPEN_USERID.slice(-4),
       boundAt: BEFORE.toISOString(),
+      messagesEnabled: true,
       bindingCode: null,
       retryAt: null,
     });
@@ -1307,6 +1371,7 @@ describe("NotifyDmService.requestBindingCode / getBindingState（D3 / D5 口径�
       bound: false,
       wecomUseridMasked: null,
       boundAt: null,
+      messagesEnabled: true,
       bindingCode: null,
       retryAt: null,
     });
@@ -1319,8 +1384,24 @@ describe("NotifyDmService.requestBindingCode / getBindingState（D3 / D5 口径�
       wecomUserid: OPEN_USERID,
       userId: USER_ID,
       boundAt: BEFORE,
+      messagesEnabled: true,
     });
     expect((await otherBot.service.getBindingState(USER_ID)).bound).toBe(false);
+  });
+
+  it("消息开关：绑定默认开启，可关闭并持久化；未绑定时幂等", async () => {
+    const { service, repo } = makeBoundService();
+    expect((await service.getBindingState(USER_ID)).messagesEnabled).toBe(true);
+
+    const off = await service.setMessagesEnabled(USER_ID, false);
+    expect(off.messagesEnabled).toBe(false);
+    expect(repo.messageToggleCalls).toEqual([{ botId: BOT_ID, userId: USER_ID, messagesEnabled: false, at: AT }]);
+    expect((await service.getBindingState(USER_ID)).messagesEnabled).toBe(false);
+
+    const unbound = makeService();
+    const state = await unbound.service.setMessagesEnabled(USER_ID, false);
+    expect(state).toMatchObject({ bound: false, messagesEnabled: true });
+    expect(unbound.repo.messageToggleCalls).toHaveLength(1);
   });
 
   it("读面回填（v1.8）：回当前未用绑定码与取码限流可重试时刻 —— 刷新 / 重进页面不丢码面与罚时", async () => {
@@ -1365,7 +1446,14 @@ describe("NotifyDmService.unbind（D6：清绑定 + 同事务审计 / 幂等）"
 
     const state = await service.unbind(USER_ID, USER_ID);
 
-    expect(state).toEqual({ bound: false, wecomUseridMasked: null, boundAt: null, bindingCode: null, retryAt: null });
+    expect(state).toEqual({
+      bound: false,
+      wecomUseridMasked: null,
+      boundAt: null,
+      messagesEnabled: true,
+      bindingCode: null,
+      retryAt: null,
+    });
     expect(repo.clearCalls).toHaveLength(1);
     expect(repo.clearCalls[0]).toMatchObject({ botId: BOT_ID, userId: USER_ID, at: AT });
     expect(repo.bindings.size).toBe(0);
@@ -1392,6 +1480,7 @@ describe("NotifyDmService.unbind（D6：清绑定 + 同事务审计 / 幂等）"
       bound: false,
       wecomUseridMasked: null,
       boundAt: null,
+      messagesEnabled: true,
       bindingCode: null,
       retryAt: null,
     });

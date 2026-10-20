@@ -1,10 +1,11 @@
 /**
- * 企业微信单聊绑定客户端（M5-03-5-6 契约刀三端点 · Push 250 前端接线）。
+ * 企业微信单聊绑定客户端（M5-03-5-6 契约刀端点 · Push 250 前端接线；v2.1 增消息开关）。
  *
  * 契约 = shared/src/modules/notifications.ts 末段「企业微信单聊绑定」（Push 249 · lan 线 · wmj 复核）：
  *   GET    /api/v1/wecom-dm-binding        绑定态（恒 200；未绑定 = bound:false + 两个 null；v1.8 另回
  *                                          bindingCode / retryAt —— 刷新页面不丢码面与罚时）
  *   POST   /api/v1/wecom-dm-binding/codes  取绑定码（6 位 / TTL 3 分钟 / 一次性 / 5 次每 3 分钟 —— 2026-10-20 安全修订）
+ *   PATCH  /api/v1/wecom-dm-binding        更新消息开关（messagesEnabled；返回同 GET 读面）
  *   DELETE /api/v1/wecom-dm-binding        解绑（幂等 —— 本就未绑定也 200 bound:false；返回同 GET 读面）
  *
  * 权限 = 个人资源：读 = 会话，写 = 会话 + CSRF（apiFetch 自动补 X-CSRF-Token），**不依赖功能权限键**
@@ -19,6 +20,8 @@ export type WecomDmBindingState = {
   wecomUseridMasked: string | null;
   /** 绑定时刻（ISO 8601 UTC）；未绑定 = null。 */
   boundAt: string | null;
+  /** 是否允许向该企业微信单聊发送任务提醒；绑定成功后默认 true（未绑定时回默认 true）。 */
+  messagesEnabled: boolean;
   /** 当前仍未失效的绑定码（v1.8 读面回填）：刷新 / 重进页面后据此恢复码面与倒计时；无未用码 = null。 */
   bindingCode: WecomDmBindingCode | null;
   /** 取码限流可重试时刻（v1.8 读面回填，ISO 8601 UTC）：刷新后据此恢复罚时倒计时；未到顶 = null。 */
@@ -73,6 +76,11 @@ export function requestWecomDmBindingCode(): Promise<WecomDmBindingCode> {
 /** 机器人诊断（仅非生产环境；生产返回 enabled:false → 面板整块隐藏）。 */
 export function fetchWecomDmBotDiagnostics(): Promise<WecomDmBotDiagnostics> {
   return apiRequest<WecomDmBotDiagnostics>("/api/v1/wecom-dm-binding/diagnostics");
+}
+
+/** 更新企微单聊消息开关：关闭后停止外发，任务提醒仍按 C5-04 转站内信留档。 */
+export function updateWecomDmMessagesEnabled(messagesEnabled: boolean): Promise<WecomDmBindingState> {
+  return apiSend<WecomDmBindingState>("/api/v1/wecom-dm-binding", "PATCH", { messagesEnabled });
 }
 
 /** 解绑（幂等）：成功回未绑定态；服务端同事务写审计（对象类型「用户」/ 动作「删除」，只带掩码）。 */
