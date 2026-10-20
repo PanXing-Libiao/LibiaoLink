@@ -1,11 +1,11 @@
-# automation 模块（M5-01 规则引擎内核 + M5-05 余项 · A 系列 + M5-02 前置 · 运行时求值入口 + M5-06-1A 规则表 / 运行留痕）
+# automation 模块（M5-01 规则引擎内核 + M5-05 余项 · A 系列 + M5-02 前置 · 运行时求值入口 + M5-06-1A 规则表 / 运行留痕 + M5-06-1B 规则管理 / 试运行）
 
 | 字段 | 内容 |
 |---|---|
 | 类型 | 平台模块（platform） |
-| 职责 | 规则模型 / 求值 / 回放与留痕（M5-01 内核 + M5-05 余项）+ 运行时求值入口（M5-02 接线段前置：事件 / 调度窗口 → 应发送清单）+ 规则表读取与运行记录（M5-06-1A） |
+| 职责 | 规则模型 / 求值 / 回放与留痕（M5-01 内核 + M5-05 余项）+ 运行时求值入口（M5-02 接线段前置：事件 / 调度窗口 → 应发送清单）+ 规则表读取与运行记录（M5-06-1A）+ 规则管理 / 只读试运行 / 运行记录 HTTP 读面（M5-06-1B） |
 | 主责 | wmj（团队分工.md §2） |
-| 对外接口 | `BUILTIN_RULES` / `BUILTIN_MESSAGE_TEMPLATES` / `findTemplate` / `BUILTIN_RULE_SUBJECT_KINDS` / `subjectKindOf` / `SUBJECT_TEMPLATE_VARIABLES` / `MERGED_TEMPLATE_SPECS` / `findMergedSpec`、`evaluateCondition` / `evaluateOperator` / `evaluateRule`、`renderTemplate`、`resolveScheduleFire` / `mondayOf` / `isoWeekKey` / `dedupeKey`、`REPLAY_SUBJECT_KINDS`、`replayRules` / `cronTime` / `toTaskSubject`、`evaluateEventMessages` / `planWindowMessages` / `AUTOMATION_SCHEDULE_JOB_KIND`、`toReportMemberSubject` / `toProjectDaySubject` / `toTodoSubject`、`AutomationRuleRepository` / `AutomationRunRepository`（运行时入口 · M5-02 前置；A03 / `toIssueSubject` 随处理时限删除下线 · Push 215；规则读取 M5-06-1A 起改读表） |
+| 对外接口 | `BUILTIN_RULES` / `BUILTIN_MESSAGE_TEMPLATES` / `findTemplate` / `BUILTIN_RULE_SUBJECT_KINDS` / `subjectKindOf` / `SUBJECT_TEMPLATE_VARIABLES` / `MERGED_TEMPLATE_SPECS` / `findMergedSpec`、`evaluateCondition` / `evaluateOperator` / `evaluateRule`、`renderTemplate`、`resolveScheduleFire` / `mondayOf` / `isoWeekKey` / `dedupeKey`、`REPLAY_SUBJECT_KINDS`、`replayRules` / `cronTime` / `toTaskSubject`、`evaluateEventMessages` / `planWindowMessages` / `AUTOMATION_SCHEDULE_JOB_KIND`、`toReportMemberSubject` / `toProjectDaySubject` / `toTodoSubject`、`AutomationRuleRepository` / `AutomationRunRepository`（运行时入口 · M5-02 前置；HTTP 面 = `automation.module.ts` 的 `AutomationModule.forRoot`，由 `app.module.ts` 直接装配，不新增 index 出口；A03 / `toIssueSubject` 随处理时限删除下线 · Push 215；规则读取 M5-06-1A 起改读表） |
 
 ## 本切片交付
 
@@ -48,9 +48,19 @@
 - **job reconcile**：`JobsStore.reconcileAutomationScheduleJob` 新建（启用 pending / 停用 done，`run_at = last_run_at = now`）、更新（只刷新 payload / cron，不重置窗口）、停用（done 保留行）、重新启用（done → pending，窗口与失败计数重置）。
 - **验证**：`test/automation-repository.test.ts` / `automation-schedule-job.test.ts` / `automation-wiring.test.ts` 门禁；`scripts/m5-06-1a-replay.mjs` Docker PG18 10/10（空库迁移 + seed 二跑 + 事件 / 调度 run 重放 + legacy job + 应用角色授权）。
 
+### M5-06-1B · 规则管理 / 只读试运行 / 运行记录（Push 271 · lan 代做 wmj 线，待 wmj 复核）
+
+- **HTTP 面**：`AutomationController` 挂 6 个端点 —— `GET /api/v1/automation/rules`、`GET /rules/{code}`、`PATCH /rules/{code}`、`POST /rules/{code}/test`、`GET /runs`、`GET /runs/{id}`；读面 `automation.view`，写 / 试运行 `automation.manage`。`POST /rules/{code}/test` 固定 200（契约声明 200，不用 Nest 默认 201）。
+- **规则读面**：只返回内置规则（R01 排除、停用保留、code 升序）；`AutomationRuleView` 附带 `editableFields`、`lastRunAt`、`nextRunAt`、`scheduleJobStatus`（job 行按 `jobs.dedupe_key = automation-schedule:<ruleCode>` 取）。
+- **保存**：`version` 乐观锁；只允许 `enabled` 与 `actions.channel` / `actions.recipient` 变化，动作数量 / 顺序 / kind / template / groupBy 只读；模板 / 条件 / 动作数量冲突按 S8-4 返回 **409**（错误码沿用 `VERSION_CONFLICT`，消息体写明不可修改），非法渠道 / 收件人取值 400 `VALIDATION_FAILED`。保存事务内完成规则更新、`version + 1`、审计（`automation_rule.update`）与一规则一 job reconcile。
+- **停用**：不删规则行 / job 行；job 置 `done`，规则重新启用时 job `done → pending`，`run_at = last_run_at = now`，避免补发停用前窗口。
+- **试运行**：只读，不写 `automation_runs` / outbox / 审计；事件型必须给 `entityId`（task.* 读任务、stage.advanced 读项目阶段），调度型最多评估 100 个主体并置 `truncated`；`matchedCount` = 命中求值明细数（rule × entity × window，与 `replayRules.matched` 同口径），`recipient` 只回展示值。
+- **运行记录**：`AutomationRunRepository.list / count / findById`，筛选 rule / status / source / topic / entity / 时间区间，`createdAt desc, id desc` 分页；详情返回条件 / 动作 / 消息快照与错误。
+- **验证**：`test/automation-service.test.ts` 18 例门禁；`scripts/m5-06-1b-replay.mjs` Docker PG18 **16/16**（规则读面 / 乐观锁 / 只读字段 409 / 非法收件人 400 / job 联动 / 审计同事务 / 试运行零副作用 / 100 主体截断 / 运行记录 / 真实管理员 HTTP 会话）；详见 `docs/M5-06-回放证据.md`。
+
 ## 边界与后续
 
 - 依赖方向：automation → calendar（`index.ts`：T±N 求值 / 顺延 / 业务日时刻）。不反向依赖业务模块。
-- 未落（lan 线）：M5-06-1B 规则管理端点 / 试运行 / 运行记录读面；M5-03 企微通道 / M5-04 SSE 与后续（站内信投递内核已落 · lan Push 178）、S7-4 规则接线（`RULE_EVENT_TOPICS` 事件消费 + `automation-schedule.job` handler）—— **已落地（Push 180 · lan；落点 = outbox 接线层 `automation-subjects.ts` / `automation-wiring.ts`，引擎侧零改动）**。`automation_rules` 落库形态已在 1A 落定（A03 同 code 两窗口场景随 Push 215 消解）。
+- 未落（lan 线）：M5-06-2A / 2B 发送记录归档与重发；M5-03 企微通道 / M5-04 SSE 与后续（站内信投递内核已落 · lan Push 178）、S7-4 规则接线（`RULE_EVENT_TOPICS` 事件消费 + `automation-schedule.job` handler）—— **已落地（Push 180 · lan；落点 = outbox 接线层 `automation-subjects.ts` / `automation-wiring.ts`，引擎侧零改动）**。`automation_rules` 落库形态已在 1A 落定（A03 同 code 两窗口场景随 Push 215 消解）；1B 管理面已在 Push 271 落定。
 - 未落（数据面）：`todos` 表与重复规则展开（A14 落库）、漏填名单「已提醒」标记（随 M5-06 发送记录）—— 均已在文案文档登记为差异。
 - 合并文案：R07 / A01 的分组形态（同一收件人一条清单式消息）为先行口径（模板 `R07_APP_MERGED` / `A01_INBOX_MERGED` / `A01_WECOM_MERGED`）；R07 自 2026-10-19（Push 371）起逐条输出「项目 + 任务」两行并以换行连接，A01 仍按项目名「、」连接。

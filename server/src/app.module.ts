@@ -9,6 +9,8 @@ import type { Env } from "./config/env.js";
 import { DatabaseModule } from "./db/db.module.js";
 import { HealthModule } from "./health/health.module.js";
 import { AdminModule, AuditService } from "./modules/admin/index.js";
+import { AutomationModule } from "./modules/automation/automation.module.js";
+import { AUTOMATION_TRIAL_SUBJECTS } from "./modules/automation/automation.service.js";
 import { CalendarModule } from "./modules/calendar/index.js";
 import { FileModule } from "./modules/file/index.js";
 import { IdentityModule } from "./modules/identity/index.js";
@@ -25,6 +27,7 @@ import { ViewModule } from "./modules/view/index.js";
 import { TranslateModule } from "./modules/translate/index.js";
 import { FollowModule } from "./modules/follow/index.js";
 import { StorageModule } from "./storage/index.js";
+import { AutomationSubjectReader } from "./outbox/automation-subjects.js";
 
 /** api 进程：HTTP 入口（无状态、不跑 CPU 密集任务）。 */
 @Module({})
@@ -54,6 +57,9 @@ export class AppModule {
         CalendarModule,
         FileModule,
         NotifyModule,
+        AutomationModule.forRoot({
+          trialSubjects: { provide: AUTOMATION_TRIAL_SUBJECTS, useClass: AutomationSubjectReader },
+        }),
       ],
       providers: [
         { provide: APP_INTERCEPTOR, useClass: ResourceChangeInterceptor },

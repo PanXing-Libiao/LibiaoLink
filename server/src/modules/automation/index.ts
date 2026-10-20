@@ -67,10 +67,13 @@ export {
   AutomationRuleRepository,
   AutomationRunRepository,
   automationRuleFromRow,
+  automationRunFromRow,
 } from "./automation.repository.js";
 export type {
   AutomationRuleRow,
+  AutomationRuleUpdatePatch,
   AutomationRunFilter,
   AutomationRunInsert,
   AutomationRunRow,
+  AutomationScheduleJobRow,
 } from "./automation.repository.js";
