@@ -43,8 +43,8 @@ import { PgRateWindowStore } from "./wecom.rate.pg.js";
  * 生产路由 / 产出接线 / worker 回调分流随 M5-03-5-4 —— 见执行计划 §4）。
  * 单聊绑定码链路（M5-03-5-6 实现刀 · 迁移 0055）：`NotifyDmService` 扩 `requestBindingCode`（取码）/
  * `ingestCallback`（单聊发码 → 同事务写绑定 + 标记码已用 → 会话内回执）/ `getBindingState`（绑定态读）/
- * `unbind`（解绑 + 同事务写审计 —— D6）；HTTP 面 = `WecomDmBindingController`（契约刀 Push 249 ·
- * `/api/v1/wecom-dm-binding`：GET 绑定态 / POST codes 取码 / DELETE 解绑 —— 个人资源，读 = 会话、写 = 会话 + CSRF）。
+ * `setMessagesEnabled`（企微单聊消息开关）/ `unbind`（解绑 + 同事务写审计 —— D6）；HTTP 面 = `WecomDmBindingController`（契约刀 Push 249 ·
+ * `/api/v1/wecom-dm-binding`：GET 绑定态 / PATCH 消息开关 / POST codes 取码 / DELETE 解绑 —— 个人资源，读 = 会话、写 = 会话 + CSRF）。
  * audit 依赖为平台 → 平台（`check:boundaries` 规则允许非领域模块互引）。
  */
 @Module({

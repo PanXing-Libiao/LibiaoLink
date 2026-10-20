@@ -10517,6 +10517,10 @@
               }
             ]
           },
+          "messagesEnabled": {
+            "type": "boolean",
+            "description": "是否允许向该企业微信单聊发送任务提醒；绑定成功后默认 true，关闭后停止企微单聊外发（站内信仍按降级规则保留）"
+          },
           "bindingCode": {
             "$ref": "#/components/schemas/WecomDmBindingCode"
           },
@@ -10539,10 +10543,24 @@
           "bound",
           "wecomUseridMasked",
           "boundAt",
+          "messagesEnabled",
           "bindingCode",
           "retryAt"
         ],
         "description": "企业微信单聊绑定态：绑定按机器人维度成立（换机器人后旧绑定不生效 → 读面回到 bound:false）；解绑 = 注销投递资格（保留激活登记）；另回当前未用绑定码与取码限流可重试时刻（页面刷新不丢状态）"
+      },
+      "WecomDmBindingUpdateBody": {
+        "type": "object",
+        "properties": {
+          "messagesEnabled": {
+            "type": "boolean",
+            "description": "是否允许向该企业微信单聊发送任务提醒"
+          }
+        },
+        "required": [
+          "messagesEnabled"
+        ],
+        "description": "企业微信单聊绑定设置更新（messagesEnabled = false 时停止企微单聊外发；绑定成功后默认开启）"
       },
       "WecomDmBotDiagnostics": {
         "type": "object",
@@ -20569,6 +20587,53 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/WecomDmBindingState"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "更新企业微信单聊绑定设置（个人资源 · 会话 + CSRF）：messagesEnabled = false 后停止企微单聊外发（站内信仍保留）；绑定 / 换绑成功时默认开启",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WecomDmBindingUpdateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "更新后的绑定态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WecomDmBindingState"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }

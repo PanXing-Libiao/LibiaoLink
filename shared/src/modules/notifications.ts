@@ -537,6 +537,9 @@ export const WecomDmBindingStateSchema = z
       .nullable()
       .openapi({ description: "企微 open_userid 掩码（只回末 4 位）；未绑定 / 解绑后 = null" }),
     boundAt: DateTimeSchema.nullable().openapi({ description: "绑定确立时刻；未绑定 / 解绑后 = null" }),
+    messagesEnabled: z
+      .boolean()
+      .openapi({ description: "是否允许向该企业微信单聊发送任务提醒；绑定成功后默认 true，关闭后停止企微单聊外发（站内信仍按降级规则保留）" }),
     bindingCode: WecomDmBindingCodeSchema.nullable().openapi({
       description: "当前仍有效的（pending）绑定码 —— 刷新 / 重进页面后据此恢复码面与倒计时；无未用码 = null",
     }),
@@ -549,6 +552,16 @@ export const WecomDmBindingStateSchema = z
       "企业微信单聊绑定态：绑定按机器人维度成立（换机器人后旧绑定不生效 → 读面回到 bound:false）；解绑 = 注销投递资格（保留激活登记）；另回当前未用绑定码与取码限流可重试时刻（页面刷新不丢状态）",
   });
 export type WecomDmBindingState = z.infer<typeof WecomDmBindingStateSchema>;
+
+/** 绑定设置更新（当前仅消息开关；未绑定时调用幂等返回未绑定态）。 */
+export const WecomDmBindingUpdateBodySchema = z
+  .object({
+    messagesEnabled: z.boolean().openapi({ description: "是否允许向该企业微信单聊发送任务提醒" }),
+  })
+  .openapi("WecomDmBindingUpdateBody", {
+    description: "企业微信单聊绑定设置更新（messagesEnabled = false 时停止企微单聊外发；绑定成功后默认开启）",
+  });
+export type WecomDmBindingUpdateBody = z.infer<typeof WecomDmBindingUpdateBodySchema>;
 
 /** 库内出现过的机器人维度（诊断用：排查 worker 是否在用另一个 bot_id 收消息）。 */
 export const WecomDmBotInboundStatSchema = z
