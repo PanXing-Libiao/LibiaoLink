@@ -142,7 +142,7 @@ export interface LegacyProjectPlacement {
   managerNames: string[];
 }
 
-/** 变更 ↔ 任务关联（变更管理「关联」列命中任务描述）：下标分别对应 parse.changes / parse.tasks。 */
+/** 变更 ↔ 任务关联（变更管理「关联」列 + R01 输出成果文件自动匹配）：下标分别对应 parse.changes / parse.tasks。 */
 export interface LegacyChangeLink {
   changeIndex: number;
   taskIndex: number;
@@ -153,7 +153,7 @@ export interface LegacyParse {
   tasks: LegacyTask[];
   reports: LegacyReport[];
   changes: LegacyChange[];
-  /** 变更 ↔ 任务关联（变更表「关联」列命中任务描述；提交时回写任务 change_refs）。 */
+  /** 变更 ↔ 任务关联（变更表「关联」列 + R01 输出成果文件匹配；提交时回写任务 change_refs）。 */
   changeLinks: LegacyChangeLink[];
   /** 干系人（Push 324）：「干系人」表直接解析（主文件）；另附文件在服务层合并。 */
   stakeholders: LegacyStakeholder[];
@@ -844,9 +844,10 @@ export function convertLegacyWorkbook(workbook: ParsedWorkbook, fileName: string
     }
   }
 
-  // 变更关联（业务口径 2026-10-14「表格中变更关联的字样没有写」）：变更管理「关联」列（多值按逗号 / 顿号拆）
-  // 按任务描述匹配（键 = 去全部空白 + 小写，对「标题+英文名」「标题」「英文名」三串）；命中 → changeLinks
-  //（提交时回写任务 change_refs，追加序 = 变更表行序）。两侧对不上 / 日期不一致出提醒（照常导入，不阻断）。
+  // 变更关联：①「变更管理」表「关联」列（业务口径 2026-10-14「表格中变更关联的字样没有写」）按任务描述匹配；
+  // ② R01（docs/rules/R01-R07-内置规则文案.md）：变更时间 / 变更文件 / 变更后文件 / 变更后文件版本齐备时，
+  //    按「变更文件 ∈ 任务输出成果文件（多值）」自动匹配，命中多条全部关联。
+  // 两路结果去重后回写任务 change_refs（追加序 = 变更表行序 + 任务表行序）；对不上 / 日期不一致出提醒（照常导入，不阻断）。
   const changeLinks: LegacyChangeLink[] = [];
   {
     const taskKeys = tasks.map((task) => {
@@ -857,61 +858,85 @@ export function convertLegacyWorkbook(workbook: ParsedWorkbook, fileName: string
       }
       return keys;
     });
+    const linkedChanges = new Set<number>();
     const linkedTasks = new Set<number>();
+    const seenLinks = new Set<string>();
     changes.forEach((change, changeIndex) => {
-      if (change.related === null) return;
-      const wanted = change.related
-        .replace(/，|、|；|;/g, ",")
-        .split(",")
-        .map(linkKey)
-        .filter((key) => key !== "");
-      let hit: number | null = null;
-      let ambiguous = false;
-      for (let taskIndex = 0; taskIndex < tasks.length; taskIndex += 1) {
-        if (!wanted.some((key) => taskKeys[taskIndex]!.has(key))) continue;
-        if (hit === null) hit = taskIndex;
-        else ambiguous = true;
+      const explicitHits: number[] = [];
+      if (change.related !== null) {
+        const wanted = change.related
+          .replace(/，|、|；|;/g, ",")
+          .split(",")
+          .map(linkKey)
+          .filter((key) => key !== "");
+        for (let taskIndex = 0; taskIndex < tasks.length; taskIndex += 1) {
+          if (wanted.some((key) => taskKeys[taskIndex]!.has(key))) explicitHits.push(taskIndex);
+        }
       }
-      if (hit === null) {
+      const targetTaskIndexes = explicitHits.length === 0 ? [] : [explicitHits[0]!];
+      if (
+        change.appliedAt !== null &&
+        change.docType !== null &&
+        change.afterFileName !== null &&
+        change.afterFileVersion !== null
+      ) {
+        for (let taskIndex = 0; taskIndex < tasks.length; taskIndex += 1) {
+          if (tasks[taskIndex]!.deliverableTypes.includes(change.docType) && !targetTaskIndexes.includes(taskIndex)) {
+            targetTaskIndexes.push(taskIndex);
+          }
+        }
+      }
+      for (const taskIndex of targetTaskIndexes) {
+        const key = String(changeIndex) + ":" + String(taskIndex);
+        if (seenLinks.has(key)) continue;
+        seenLinks.add(key);
+        changeLinks.push({ changeIndex, taskIndex });
+        linkedChanges.add(changeIndex);
+        linkedTasks.add(taskIndex);
+      }
+      if (change.related !== null && explicitHits.length === 0) {
         issues.push(
           createIssue(
             "warning",
             "CHANGE_RELATED_UNMATCHED",
             change.row,
             change.content === "" ? null : change.content,
-            "变更「关联」在任务表找不到对应任务：未写入任务变更关联 —— " + change.related,
-            "The change 关联 value did not match any task title; it was not linked to a task: " + change.related,
+            targetTaskIndexes.length === 0
+              ? "变更「关联」在任务表找不到对应任务，R01（变更文件 = 输出成果文件）也没有匹配：未写入任务变更关联 —— " + change.related
+              : "变更「关联」在任务表找不到对应任务：已按 R01（变更文件 = 输出成果文件）关联任务 —— " + change.related,
+            targetTaskIndexes.length === 0
+              ? "The change 关联 value did not match any task and R01 found no deliverable match; it was not linked to a task: " + change.related
+              : "The change 关联 value did not match any task title; R01 linked it by deliverable type: " + change.related,
           ),
         );
-        return;
       }
-      changeLinks.push({ changeIndex, taskIndex: hit });
-      linkedTasks.add(hit);
-      const task = tasks[hit]!;
-      if (ambiguous) {
+      if (explicitHits.length > 1) {
         issues.push(
           createIssue(
             "warning",
             "CHANGE_RELATED_AMBIGUOUS",
             change.row,
-            task.title,
-            "变更「关联」命中多个任务，已挂到第一个：请核对 —— " + change.related,
-            "The change 关联 value matched multiple tasks; linked to the first one: " + change.related,
+            change.related,
+            "变更「关联」命中多个任务，已挂到第一个（R01 命中另计）：请核对 —— " + change.related,
+            "The change 关联 value matched multiple tasks; linked to the first one (R01 matches are additive): " + change.related,
           ),
         );
       }
-      const refDate = task.changeRefRaw === null ? null : parseDateStr(task.changeRefRaw, baseYear);
-      if (refDate !== null && change.appliedAt !== null && refDate !== change.appliedAt) {
-        issues.push(
-          createIssue(
-            "warning",
-            "CHANGE_DATE_MISMATCH",
-            task.row,
-            task.title,
-            "「变更关联」日期（" + refDate + "）与变更时间（" + change.appliedAt + "）不一致：已按「关联」列挂接，请核对",
-            "The 变更关联 date (" + refDate + ") differs from the change date (" + change.appliedAt + "); linked by the 关联 column, please verify.",
-          ),
-        );
+      const explicitTask = explicitHits[0] === undefined ? undefined : tasks[explicitHits[0]];
+      if (explicitTask !== undefined) {
+        const refDate = explicitTask.changeRefRaw === null ? null : parseDateStr(explicitTask.changeRefRaw, baseYear);
+        if (refDate !== null && change.appliedAt !== null && refDate !== change.appliedAt) {
+          issues.push(
+            createIssue(
+              "warning",
+              "CHANGE_DATE_MISMATCH",
+              explicitTask.row,
+              explicitTask.title,
+              "「变更关联」日期（" + refDate + "）与变更时间（" + change.appliedAt + "）不一致：已按「关联」列挂接，请核对",
+              "The 变更关联 date (" + refDate + ") differs from the change date (" + change.appliedAt + "); linked by the 关联 column, please verify.",
+            ),
+          );
+        }
       }
     });
     tasks.forEach((task, taskIndex) => {
@@ -928,15 +953,32 @@ export function convertLegacyWorkbook(workbook: ParsedWorkbook, fileName: string
       );
     });
     if (changes.length > 0) {
-      const linked = changeLinks.length;
+      const linkedChangesCount = linkedChanges.size;
+      const unlinked = changes.length - linkedChangesCount;
       issues.push(
         createIssue(
           "info",
           "CHANGE_LINK_SUMMARY",
           null,
           null,
-          "变更记录 " + String(changes.length) + " 条：按「关联」列写入任务变更关联 " + String(linked) + " 条；未关联 " + String(changes.length - linked) + " 条（只存记录，不挂任务）",
-          "Change records: " + String(changes.length) + " imported; " + String(linked) + " linked to tasks via the 关联 column; " + String(changes.length - linked) + " unlinked (kept as records only).",
+          "变更记录 " +
+            String(changes.length) +
+            " 条：写入任务变更关联 " +
+            String(changeLinks.length) +
+            " 条（覆盖 " +
+            String(linkedChangesCount) +
+            " 条变更；含「关联」列与 R01 输出成果文件匹配）；未关联 " +
+            String(unlinked) +
+            " 条（只存记录，任务列表 / 变更记录中不可见 —— 请在任务抽屉手工补关联）",
+          "Change records: " +
+            String(changes.length) +
+            " imported; " +
+            String(changeLinks.length) +
+            " task links written (covering " +
+            String(linkedChangesCount) +
+            " changes; via the 关联 column and R01 deliverable matching); " +
+            String(unlinked) +
+            " unlinked (records only and not visible from task views; link them manually in the task drawer).",
         ),
       );
     }

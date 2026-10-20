@@ -681,7 +681,7 @@ export class ProjectImportService {
   }
 
   /**
-   * 导入补充附件回挂变更：文件已由前端直传（draft + 首版本），这里把首版本挂到导入变更并定档文件。
+   * 导入补充附件回挂变更：文件已由前端直传（draft + 首版本），这里把首版本挂到导入变更并把文件置为 changed（变更后文件，文件库显示「已变更」）。
    * 幂等：同一变更 + 同一文件重复调用 = no-op；一期「一变更一版本」—— 同一变更已有其它文件 / 文件已挂其它变更 400，项目 / 变更不匹配 404。
    */
   async attachManualChangeFile(projectId: string, changeId: string, fileId: string, actorId: string): Promise<void> {
