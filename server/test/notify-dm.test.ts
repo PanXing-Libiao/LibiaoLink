@@ -41,6 +41,7 @@ import {
   truncateDmMarkdown,
 } from "../src/modules/notify/notify.dm.service.js";
 import type { AibotIncomingMessage, AibotSendResult, WecomAibotClient } from "../src/modules/notify/wecom.aibot.js";
+import { applyMarkdownHardBreaks } from "../src/modules/notify/wecom.text.js";
 
 const AT = new Date("2026-10-14T06:00:00.000Z");
 const BEFORE = new Date("2026-10-14T05:00:00.000Z");
@@ -507,6 +508,13 @@ describe("composeDmMarkdown / truncateDmMarkdown（纯函数）", () => {
 
   it("组装：空白标题防御（仅正文）", () => {
     expect(composeDmMarkdown({ title: "  ", body: "B" })).toBe("B");
+  });
+
+  it("硬换行：单个 LF 补行尾双空格，空行分隔保持原样且重复调用幂等", () => {
+    expect(applyMarkdownHardBreaks("a\nb")).toBe("a  \nb");
+    expect(applyMarkdownHardBreaks("a\n\nb")).toBe("a\n\nb");
+    expect(applyMarkdownHardBreaks("a  \nb")).toBe("a  \nb");
+    expect(composeDmMarkdown({ title: "T", body: "第一行\n第二行" })).toBe("**T**\n\n第一行  \n第二行");
   });
 
   it("截断：超长按 UTF-8 字节截断（≤ 20000 字节 + 省略标记 + 不劈多字节）", () => {

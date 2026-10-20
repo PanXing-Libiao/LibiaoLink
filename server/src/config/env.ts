@@ -202,9 +202,15 @@ export const EnvSchema = z
     /** 按会话限速（Spike 实测口径：30 条/分钟 + 1000 条/小时；0 = 未启用）。 */
     WECOM_BOT_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(0).max(1000000).default(30),
     WECOM_BOT_RATE_LIMIT_PER_HOUR: z.coerce.number().int().min(0).max(10000000).default(1000),
-    /** R06 验收交付默认喜报图（可选）：空 = 不追加图片；建议绝对路径，支持 PNG / JPG / GIF（≤10MB）。 */
+    /** R06 动态海报开关：true = 按项目真实数据生成姓名墙 PNG；生成失败回退下方静态图。 */
+    WECOM_R06_DYNAMIC_POSTER: z.enum(["true", "false"]).default("true"),
+    /** R06 动态海报字体（可选）：空 = 使用服务端资产 Noto（随仓库发布）；生产要与效果图一致可指向已授权微软雅黑 / 宋体。 */
+    WECOM_R06_FONT_SANS_PATH: z.string().default(""),
+    WECOM_R06_FONT_SANS_BOLD_PATH: z.string().default(""),
+    WECOM_R06_FONT_SERIF_PATH: z.string().default(""),
+    /** R06 静态回退图（可选）：动态海报关闭 / 生成失败时使用；空 = 不追加图片；建议绝对路径，支持 PNG / JPG / GIF（≤10MB）。 */
     WECOM_R06_IMAGE_PATH: z.string().default(""),
-    /** R06 全部任务按时交付喜报图（可选）：空 = 回退 WECOM_R06_IMAGE_PATH。 */
+    /** R06 全部任务按时交付静态回退图（可选）：空 = 回退 WECOM_R06_IMAGE_PATH。 */
     WECOM_R06_ON_TIME_IMAGE_PATH: z.string().default(""),
     // ---- 调度器（S7-3 · i11 / M5-02：cron 领取 + last_run_at 补发 + 单活 advisory lock · ADR-005） ----
     /** 单轮 tick 领取条数上限（到期任务按 run_at 序领取，逐条串行执行）。 */

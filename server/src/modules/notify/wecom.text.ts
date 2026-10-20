@@ -4,6 +4,15 @@
  * 应用文本（wecom_app · 2000 字节）共用同一实现，尾部省略标记。
  */
 
+/**
+ * 企业微信 Markdown 强制换行：移动端把单个 LF 当软换行（展示时折叠为空格），
+ * 非空行尾补两个空格可稳定换行；空行分隔保持原样，重复调用幂等。
+ */
+export function applyMarkdownHardBreaks(content: string): string {
+  const normalized = content.replace(/\r\n?/g, "\n");
+  return normalized.replace(/([^\n])[ \t]*\n(?!\n)/g, "$1  \n");
+}
+
 /** UTF-8 字节截断：未超长原样返回；超长截到 maxBytes - 后缀，尾部拼省略标记（从合法字符边界回退）。 */
 export function truncateUtf8Bytes(
   content: string,
