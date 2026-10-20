@@ -13,9 +13,11 @@
  *   rate_limited（本地桶 / 846607 命中激活表）→ deferred（deferred 行；availableAt = retryAt ?? now+60s；不消耗重试次数）；
  *   retryable（断连 / 未订阅 / 回执超时） → retry（failed 行）；
  *   permanent（853000 / 846601 / 846607 未命中激活表）→ dead（dead 行）+ C5-04 降级（同收件人站内信）；
- *   收件人不可投递（不存在 / 停用 / 离职 / 未绑定企微）→ 不发帧，按 permanent 收口（同 app 口径：用户存在即降级）。
+ *   收件人不可投递（不存在 / 停用 / 离职 / 未绑定企微）→ 不发帧，按 permanent 收口（同 app 口径：用户存在即降级）；
+ *   用户主动关闭提醒（messages_enabled=false）→ 不发帧；站内信副本成功即 done（不产生死信告警），写库失败才 retry。
  *
- * C5-04 降级：经 `NotifyService.deliverInboxCopy` —— 站内信行走同一落行 / 合并 / 免打扰 / 实时流口径；
+ * C5-04 降级：经 `NotifyService.deliverInboxCopy` —— 站内信行走同一落行 / 合并 / 免打扰 / 实时流口径；用户关闭提醒属偏好而非故障，
+ * 站内信成功即 done（不落 outbox 死信），只有站内信写库失败才 retry；
  * 幂等键 = 来源 dedupeKey + ":c504"。未绑定企微（无绑定行）/ 846607 未命中激活表 = 无可用地址的确定性失败
  * → 降级前缀附绑定指引话术（**D4 定稿 2026-10-16**：「当前用户未绑定企业微信，请前往设置补绑」）；其余失败用通用前缀。降级写库失败 →
  * retry 收敛（有界重试，不静默丢消息）。管理员告警群留痕由 outbox 死信告警自动承担（dispatcher → OUTBOX_ALERT_SINK）。
@@ -25,7 +27,8 @@
  * Push 255 起 v1.9：罚时锚点 = 窗口内最近一码 + 窗口长度（不再按最早一码 → 分散取码后只剩 1 分钟）；
  * 2026-10-20 安全修订：TTL 3 分钟 · 验证失败 5 次 / 10 分钟 / (bot_id, wecom_userid) · 指数锁定：
  * `requestBindingCode`（取码）/ `ingestCallback`（单聊发码 → 同事务写绑定 + 标记码已用 → 会话内回执
- * `aibot_respond_msg`）/ `getBindingState`（读绑定态：v1.8 另回当前未用码与取码限流可重试时刻）/ `unbind`
+ * `aibot_respond_msg`）/ `getBindingState`（读绑定态：v1.8 另回当前未用码与取码限流可重试时刻）/
+ * `setMessagesEnabled`（绑定后消息开关；关闭只停止企微外发，C5-04 站内信仍保留）/ `unbind`
  * （解绑：同事务清绑定行 + 写 `audit_logs` —— D6；跨用户换绑同写 `audit_logs`）。
  *
  * 欢迎语（Push 261）：单聊 `enter_chat` 事件在收到后 5 秒内经 `aibot_respond_welcome_msg` 回纯文本；
@@ -81,6 +84,9 @@ export const DM_DEGRADE_PREFIX = "【企微未送达，已转站内信】\n\n";
 export const DM_BINDING_DEGRADE_PREFIX =
   "【企微未送达，已转站内信】\n" +
   "当前用户未绑定企业微信，请前往设置补绑\n\n";
+
+/** 用户主动关闭企微单聊提醒时的降级前缀（不是故障，仍保留站内信留档）。 */
+export const DM_DISABLED_DEGRADE_PREFIX = "【企微单聊提醒已关闭，已转站内信】\n\n";
 
 /** 单聊 userid 字符集（同激活表 CHECK `^[A-Za-z0-9_.@-]{1,64}$`）—— 回调脏数据防御，不替代 DB 约束。 */
 const DM_USERID_PATTERN = /^[A-Za-z0-9_.@-]{1,64}$/;
@@ -617,6 +623,7 @@ export class NotifyDmService {
       bound: binding !== null,
       wecomUseridMasked: binding === null ? null : maskUserid(binding.wecomUserid),
       boundAt: binding === null ? null : binding.boundAt.toISOString(),
+      messagesEnabled: binding === null ? true : binding.messagesEnabled,
       bindingCode:
         pending === null
           ? null
@@ -627,6 +634,26 @@ export class NotifyDmService {
             },
       retryAt: retryAt === null ? null : retryAt.toISOString(),
     };
+  }
+
+  /**
+   * 更新绑定行的企微单聊消息开关（个人设置；未绑定 = 幂等返回未绑定态）。
+   * 关闭后 send 消费链不再外发，按“用户主动关闭”转站内信留档；站内信成功后按 done 收口。
+   */
+  async setMessagesEnabled(userId: string, messagesEnabled: boolean): Promise<WecomDmBindingState> {
+    const at = this.clock.now();
+    const changed = await this.repository.updateBindingMessagesEnabledByUserId({
+      botId: this.botId(),
+      userId,
+      messagesEnabled,
+      at,
+    });
+    if (changed > 0) {
+      this.logger.log(
+        "企业微信单聊提醒开关已更新：user_id " + userId + " · messagesEnabled=" + String(messagesEnabled),
+      );
+    }
+    return await this.getBindingState(userId);
   }
 
   /**
@@ -872,6 +899,30 @@ export class NotifyDmService {
         DM_BINDING_DEGRADE_PREFIX,
       );
     }
+    if (!binding.messagesEnabled) {
+      const error = "收件人已关闭企业微信单聊提醒";
+      if (!terminalDead) {
+        await this.archive.recordAttempt({
+          messageId: archived.id,
+          outboxId: row.id,
+          channel: "wecom_aibot",
+          target: binding.wecomUserid,
+          recipientLabel: maskUserid(binding.wecomUserid),
+          state: "dead",
+          attempts: 0,
+          error,
+          sentAt: null,
+          at: this.clock.now(),
+        });
+      }
+      return await this.suppressWith(
+        message,
+        row,
+        terminalDead ? (archived.lastError ?? error) : error,
+        DM_DISABLED_DEGRADE_PREFIX,
+        contact.id,
+      );
+    }
     if (terminalDead) {
       const error = archived.lastError ?? "单聊消息已终态失败：" + row.dedupeKey;
       this.logger.warn("单聊消息已归档为 dead，重复消费不再外发、仅重试降级：" + row.dedupeKey);
@@ -975,6 +1026,32 @@ export class NotifyDmService {
       await this.repository.backfillActivationOnSend({ botId: this.botId(), wecomUserid: userid, userId, at: this.clock.now() });
     } catch (error) {
       this.logger.warn("单聊发送成功旁证回填激活表失败（忽略；userid " + maskUserid(userid) + "）：" + messageOf(error));
+    }
+  }
+
+  /**
+   * 用户主动关闭提醒：不发企微帧，但站内信副本成功即视为消费完成（done）—— 这是偏好不是故障，
+   * 不落 outbox 死信、不触发管理员告警；站内信写库失败仍按 retry 收敛。
+   */
+  private async suppressWith(
+    message: NotifyMessagePayload,
+    row: OutboxClaimedRow,
+    error: string,
+    prefix: string,
+    userId: string,
+  ): Promise<OutboxHandleOutcome> {
+    try {
+      await this.notify.deliverInboxCopy(
+        { ...message, body: prefix + message.body },
+        row.topic,
+        row.dedupeKey + ":c504",
+      );
+      this.logger.log("单聊消息因用户关闭提醒已转站内信：" + row.dedupeKey + " · user_id " + userId);
+      return { outcome: "done" };
+    } catch (degradeError) {
+      const detail = messageOf(degradeError);
+      this.logger.error("单聊消息因用户关闭提醒转站内信失败（按可重试收敛）：" + row.dedupeKey + " —— " + detail);
+      return { outcome: "retry", error: error + " / 降级站内信失败：" + detail };
     }
   }
 

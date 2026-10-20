@@ -123,6 +123,7 @@ import {
   ResourceInvalidationPayloadSchema,
   WecomDmBindingCodeSchema,
   WecomDmBindingStateSchema,
+  WecomDmBindingUpdateBodySchema,
   WecomDmBotDiagnosticsSchema,
 } from "./modules/notifications.ts";
 import {
@@ -2155,6 +2156,20 @@ export function buildOpenApiDocument() {
       200: { description: "绑定码（code / expiresAt / expiresInSeconds）", ...json(WecomDmBindingCodeSchema) },
       401: commonErrors[401],
       429: errorResponse("取码频率到顶（RATE_LIMITED；details[0].meta.retryAt = 可重试时刻，meta.window = 3m）"),
+    },
+  });
+
+  registry.registerPath({
+    method: "patch",
+    path: "/api/v1/wecom-dm-binding",
+    tags: ["notifications"],
+    summary:
+      "更新企业微信单聊绑定设置（个人资源 · 会话 + CSRF）：messagesEnabled = false 后停止企微单聊外发（站内信仍保留）；绑定 / 换绑成功时默认开启",
+    request: { body: json(WecomDmBindingUpdateBodySchema) },
+    responses: {
+      200: { description: "更新后的绑定态", ...json(WecomDmBindingStateSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
     },
   });
 

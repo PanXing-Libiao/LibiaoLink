@@ -229,8 +229,10 @@ export const wecomGroupCandidates = pgTable(
  * 唯一 —— 激活态按机器人成立）；bound_at 非空 = 绑定行 = 可投递地址（绑定码命中的产物），NULL = 仅激活登记
  * （D1：不可作发送地址）；first_activated_at 首次激活后不再覆盖，last_message_at 随 upsert 刷新；
  * 0059 起 binding_fail_count / window / lock_level / locked_until 承载验证侧防猜码状态，last_binding_msgid
- * 用于企微回调重投幂等；updated_at 由应用写入（无触发器）。
- * 表口径见 database/migrations/0055_wecom_id_binding_codes.sql 与 0059_wecom_dm_binding_guard.sql。
+ * 用于企微回调重投幂等；0063 起 messages_enabled = 用户是否允许向该绑定行发送企微单聊消息（绑定默认 true）；
+ * updated_at 由应用写入（无触发器）。
+ * 表口径见 database/migrations/0055_wecom_id_binding_codes.sql、0059_wecom_dm_binding_guard.sql
+ * 与 0063_wecom_dm_messages_enabled.sql。
  */
 export const wecomAibotDmActivations = pgTable(
   "wecom_aibot_dm_activations",
@@ -248,6 +250,8 @@ export const wecomAibotDmActivations = pgTable(
     lastMessageAt: timestamp("last_message_at", { withTimezone: true }).notNull().defaultNow(),
     /** 绑定确立时刻（非空 = 绑定行 = 可投递地址；NULL = 仅激活登记）。 */
     boundAt: timestamp("bound_at", { withTimezone: true }),
+    /** 是否允许向该绑定行发送企业微信单聊消息（0063；绑定 / 重新绑定默认 true）。 */
+    messagesEnabled: boolean("messages_enabled").notNull().default(true),
     /** 当前失败窗口内已消耗的验证尝试数（达到阈值后锁定并清零，进入下一轮）。 */
     bindingFailCount: integer("binding_fail_count").notNull().default(0),
     /** 当前失败窗口起点（窗口长度 10 分钟；null = 无进行中的窗口）。 */

@@ -40,6 +40,7 @@ export interface DmBindingRow {
   wecomUserid: string;
   userId: string;
   boundAt: Date;
+  messagesEnabled: boolean;
 }
 
 /** 绑定码行（ingest 判定 / 频率限制读面）。 */
@@ -111,6 +112,7 @@ export class NotifyDmRepository {
         wecomUserid: wecomAibotDmActivations.wecomUserid,
         userId: wecomAibotDmActivations.userId,
         boundAt: wecomAibotDmActivations.boundAt,
+        messagesEnabled: wecomAibotDmActivations.messagesEnabled,
       })
       .from(wecomAibotDmActivations)
       .where(
@@ -126,7 +128,12 @@ export class NotifyDmRepository {
     if (row === undefined || row.userId === null || row.boundAt === null) {
       return null;
     }
-    return { wecomUserid: row.wecomUserid, userId: row.userId, boundAt: row.boundAt };
+    return {
+      wecomUserid: row.wecomUserid,
+      userId: row.userId,
+      boundAt: row.boundAt,
+      messagesEnabled: row.messagesEnabled,
+    };
   }
 
   /**
@@ -139,6 +146,7 @@ export class NotifyDmRepository {
         wecomUserid: wecomAibotDmActivations.wecomUserid,
         userId: wecomAibotDmActivations.userId,
         boundAt: wecomAibotDmActivations.boundAt,
+        messagesEnabled: wecomAibotDmActivations.messagesEnabled,
       })
       .from(wecomAibotDmActivations)
       .where(
@@ -153,7 +161,12 @@ export class NotifyDmRepository {
     if (row === undefined || row.userId === null || row.boundAt === null) {
       return null;
     }
-    return { wecomUserid: row.wecomUserid, userId: row.userId, boundAt: row.boundAt };
+    return {
+      wecomUserid: row.wecomUserid,
+      userId: row.userId,
+      boundAt: row.boundAt,
+      messagesEnabled: row.messagesEnabled,
+    };
   }
 
   /**
@@ -245,7 +258,26 @@ export class NotifyDmRepository {
   ): Promise<number> {
     const rows = await client
       .update(wecomAibotDmActivations)
-      .set({ userId: null, boundAt: null, updatedAt: input.at })
+      .set({ userId: null, boundAt: null, messagesEnabled: true, updatedAt: input.at })
+      .where(
+        and(
+          eq(wecomAibotDmActivations.botId, input.botId),
+          eq(wecomAibotDmActivations.userId, input.userId),
+          isNotNull(wecomAibotDmActivations.boundAt),
+        ),
+      )
+      .returning({ id: wecomAibotDmActivations.id });
+    return rows.length;
+  }
+
+  /** 更新绑定行的企微单聊消息开关（未绑定 / 非本人返回 0 行）。 */
+  async updateBindingMessagesEnabledByUserId(
+    input: { botId: string; userId: string; messagesEnabled: boolean; at: Date },
+    client: DbClient = this.database.db,
+  ): Promise<number> {
+    const rows = await client
+      .update(wecomAibotDmActivations)
+      .set({ messagesEnabled: input.messagesEnabled, updatedAt: input.at })
       .where(
         and(
           eq(wecomAibotDmActivations.botId, input.botId),
@@ -499,7 +531,7 @@ export class NotifyDmRepository {
     }
     await client
       .update(wecomAibotDmActivations)
-      .set({ userId: null, boundAt: null, updatedAt: input.at })
+      .set({ userId: null, boundAt: null, messagesEnabled: true, updatedAt: input.at })
       .where(
         and(
           eq(wecomAibotDmActivations.botId, input.botId),
@@ -516,6 +548,7 @@ export class NotifyDmRepository {
         firstActivatedAt: input.at,
         lastMessageAt: input.at,
         boundAt: input.at,
+        messagesEnabled: true,
         createdAt: input.at,
         updatedAt: input.at,
       })
@@ -524,6 +557,7 @@ export class NotifyDmRepository {
         set: {
           userId: input.userId,
           boundAt: input.at,
+          messagesEnabled: true,
           lastMessageAt: input.at,
           updatedAt: input.at,
         },

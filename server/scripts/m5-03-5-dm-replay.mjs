@@ -20,6 +20,7 @@
  *      跨用户换绑（v1.8：该企微号改挂到码持有者 + 同事务审计）；同一码重复投递 → 幂等「绑定成功」；
  *      群聊 / 事件回调 → 不处理；非码消息 → 仅登记激活 D1）／
  *      取码（TTL 3 分钟 / 5 次每 3 分钟 / 撞码重试）／读面回填（v1.8：未用码 + 罚时 —— 刷新不丢状态）。
+ *      消息开关（v2.1 / 0063）：绑定默认开启；关闭后不发帧并按关闭口径降级站内信，重新打开恢复外发。
  *
  * 前置：已构建的 server/dist（cd server && npm run build）。
  * 用法：cd server && node scripts/m5-03-5-dm-replay.mjs [--out <报告.md>] [--json <证据.json>]
@@ -340,6 +341,7 @@ async function main() {
       bindClients: [],
       clearCalls: [],
       clearOverride: null,
+      messageToggleCalls: [],
       codeCreateCalls: [],
       findCodeCalls: [],
       issuedAt: [],
@@ -359,6 +361,17 @@ async function main() {
       },
       async findBindingByWecomUserid(wecomUserid, botId) {
         return this.bindings.get(botId + "|" + wecomUserid) ?? null;
+      },
+      async updateBindingMessagesEnabledByUserId(input) {
+        this.messageToggleCalls.push(input);
+        let changed = 0;
+        for (const row of this.bindings.values()) {
+          if (row.botId === input.botId && row.userId === input.userId) {
+            row.messagesEnabled = input.messagesEnabled;
+            changed += 1;
+          }
+        }
+        return changed;
       },
       async upsertActivationFromCallback(input) {
         this.upsertCalls.push(input);
@@ -477,6 +490,7 @@ async function main() {
           wecomUserid: input.wecomUserid,
           userId: input.userId,
           boundAt: input.at,
+          messagesEnabled: true,
         });
         return true;
       },
@@ -490,6 +504,7 @@ async function main() {
       let cleared = 0;
       for (const [key, row] of this.bindings) {
         if (row.botId === input.botId && row.userId === input.userId) {
+          row.messagesEnabled = true;
           this.bindings.delete(key);
           cleared += 1;
         }
@@ -570,6 +585,7 @@ async function main() {
       wecomUserid: OPEN_USERID,
       userId: USER_ID,
       boundAt: AT,
+      messagesEnabled: true,
     });
     return made;
   };
@@ -890,6 +906,7 @@ async function main() {
       wecomUserid: OPEN_USERID,
       userId: USER_ID,
       boundAt: AT,
+      messagesEnabled: true,
     });
     rebind.repo.codes.set(codeKey(BOT_ID_STUB, CODE), {
       id: 9,
@@ -1177,6 +1194,56 @@ async function main() {
         closed.botSecret === null &&
         closed.inboundCount === 0 &&
         closed.observedBotIds.length === 0,
+    );
+  }
+
+  // S23 消息开关（v2.1 / 0063）：绑定默认开启；关闭不发帧并降级站内信；重新打开恢复外发
+  {
+    const { service, repo, aibot, inbox } = boundService({ ok: true, attempts: 1 });
+    assertEqual(
+      "S23 消息开关：绑定后默认开启",
+      String((await service.getBindingState(USER_ID)).messagesEnabled),
+      "true",
+    );
+    const off = await service.setMessagesEnabled(USER_ID, false);
+    assertEqual(
+      "S23 关闭消息开关：读面 / 绑定行持久化为 false",
+      String(off.messagesEnabled) + ":" + String(repo.bindings.get(BOT_ID_STUB + "|" + OPEN_USERID).messagesEnabled) + ":" + String(repo.messageToggleCalls.length),
+      "false:false:1",
+    );
+    const outcome = await service.consume(claimedRow(payload()));
+    assertEqual(
+      "S23 关闭后消费：不发帧 + done 收口（本地投递行 dead / attempts=0，不产生死信告警）",
+      outcome.outcome + ":" + String(aibot.sends.length) + ":" + repo.deliveries[0].state + ":" + String(repo.deliveries[0].attempts),
+      "done:0:dead:0",
+    );
+    assertTrue(
+      "S23 关闭后降级：站内信含关闭前缀且正文保留",
+      inbox.copies.length === 1 &&
+        String(inbox.copies[0].message.body).includes("【企微单聊提醒已关闭，已转站内信】") &&
+        String(inbox.copies[0].message.body).includes("节点：到货验收 负责人：张工"),
+    );
+    const on = await service.setMessagesEnabled(USER_ID, true);
+    assertEqual(
+      "S23 重新打开：读面 / 绑定行恢复 true",
+      String(on.messagesEnabled) + ":" + String(repo.bindings.get(BOT_ID_STUB + "|" + OPEN_USERID).messagesEnabled),
+      "true:true",
+    );
+    const restored = boundService({ ok: true, attempts: 1 });
+    await restored.service.setMessagesEnabled(USER_ID, false);
+    await restored.service.setMessagesEnabled(USER_ID, true);
+    const restoredOutcome = await restored.service.consume(claimedRow(payload()));
+    assertEqual(
+      "S23 重新打开后消费：恢复企微外发",
+      restoredOutcome.outcome + ":" + String(restored.aibot.sends.length),
+      "done:1",
+    );
+    const unbound = makeService({ ok: true, attempts: 1 });
+    const unboundState = await unbound.service.setMessagesEnabled(USER_ID, false);
+    assertEqual(
+      "S23 未绑定切换：幂等回未绑定态 + 读面默认开启",
+      String(unboundState.bound) + ":" + String(unboundState.messagesEnabled) + ":" + String(unbound.repo.messageToggleCalls.length),
+      "false:true:1",
     );
   }
 

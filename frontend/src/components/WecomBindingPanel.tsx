@@ -5,6 +5,7 @@ import {
   rateLimitedRetryAt,
   requestWecomDmBindingCode,
   unbindWecomDm,
+  updateWecomDmMessagesEnabled,
   type WecomDmBindingCode,
   type WecomDmBindingState,
   type WecomDmBotDiagnostics,
@@ -60,7 +61,7 @@ export function WecomBindingPanel(props: {
   const [loadFailed, setLoadFailed] = useState(false);
   const [code, setCode] = useState<WecomDmBindingCode | null>(null);
   const [retryAt, setRetryAt] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"code" | "unbind" | null>(null);
+  const [busy, setBusy] = useState<"code" | "unbind" | "messages" | null>(null);
   const [confirmUnbind, setConfirmUnbind] = useState(false);
   const [checking, setChecking] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -225,6 +226,26 @@ export function WecomBindingPanel(props: {
         ? { kind: "ok", text: t("settings.bind.copied") }
         : { kind: "error", text: t("settings.bind.copyFailed") },
     );
+  };
+
+  const handleMessagesToggle = async (): Promise<void> => {
+    if (state === null || busy !== null) {
+      return;
+    }
+    const nextEnabled = !state.messagesEnabled;
+    setBusy("messages");
+    try {
+      const next = await updateWecomDmMessagesEnabled(nextEnabled);
+      applyState(next);
+      props.onNotice({
+        kind: "ok",
+        text: nextEnabled ? t("settings.bind.messagesEnabledOk") : t("settings.bind.messagesDisabledOk"),
+      });
+    } catch {
+      props.onNotice({ kind: "error", text: t("settings.bind.messagesToggleFailed") });
+    } finally {
+      setBusy(null);
+    }
   };
 
   const handleUnbind = async (): Promise<void> => {
@@ -413,6 +434,33 @@ export function WecomBindingPanel(props: {
         {state.boundAt === null ? null : (
           <p className="text-xs text-zinc-500">{t("settings.bind.boundAt", { time: formatDateTime(state.boundAt) })}</p>
         )}
+        <div
+          data-wecom-binding-messages={String(state.messagesEnabled)}
+          className="mt-3 flex items-center justify-between gap-4 rounded-xl border border-zinc-200 bg-zinc-50/70 px-3.5 py-3"
+        >
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-zinc-800">{t("settings.bind.messagesTitle")}</p>
+            <p className="mt-0.5 text-xs leading-5 text-zinc-500">{t("settings.bind.messagesDesc")}</p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={state.messagesEnabled}
+            aria-label={t("settings.bind.messagesTitle")}
+            data-wecom-binding-messages-toggle={String(state.messagesEnabled)}
+            disabled={busy !== null}
+            onClick={() => void handleMessagesToggle()}
+            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60 ${
+              state.messagesEnabled ? "bg-emerald-500" : "bg-zinc-300"
+            }`}
+          >
+            <span
+              className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+                state.messagesEnabled ? "translate-x-5" : "translate-x-0.5"
+              }`}
+            />
+          </button>
+        </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {confirmUnbind ? (
             <>

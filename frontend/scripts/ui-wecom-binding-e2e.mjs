@@ -26,6 +26,7 @@
  *   ⑤ 已绑定（夹具落绑定行）：**不刷新页面**、靠面板 5 秒轮询自动切「已绑定」（Push 253 修「企微已回执绑定成功、
  *      设置页仍显示未绑定」）；设置页「已绑定」= 掩码末 4 位 + 绑定时间，页面里不出现完整 open_userid（§9 最小暴露）；
  *      已绑定 = 不弹引导（清掉本机跳过位后刷新仍不弹）；
+ *      消息开关（v2.1）：绑定后默认开启 → 关闭落库 → 刷新仍关闭 → 重新开启落库（关闭仅停外发、不解除绑定）；
  *   ⑥ 解绑：二次确认（取消 = 仍是已绑定、确认 = 回未绑定）+ 库内绑定行去址（`bound_at` / `user_id` 置空、行仍在）
  *      + `audit_logs` 恰一条（objectType user / action delete / summary 与 changes 只带掩码）；
  *   ⑦ 解绑后提醒恢复（未绑定 + 未跳过 → 再显示）；手点「刷新绑定状态」绑定成功同样先切「已绑定」→ 关闭 →
@@ -36,7 +37,7 @@
  *
  * 前置（三件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
- *   2. api：cd server && npm run start:api（默认 3001，需先 npm run build；本刀无服务端改动）
+ *   2. api：cd server && npm run start:api（默认 3001，需先 npm run build；本刀含消息开关接口）
  *   3. 数据库：本地沙箱 PG
  *   4. 本机装了 Chrome（脚本 headless 起一个调试实例；路径可用 CHROME_PATH 覆盖）
  *
@@ -289,7 +290,7 @@ const hashOf = () => ev("String(window.location.hash)");
 const panelState = (scope) => "(function(){var root=" + (scope === undefined ? "document" : "document.querySelector(" + j(scope) + ")") + ";if(root===null){return null;}var el=root.querySelector(" + j("[data-wecom-binding]") + ");return el===null?null:el.getAttribute(" + j("data-wecom-binding") + ");})()";
 const textOf = (selector) => "(function(){var el=document.querySelector(" + j(selector) + ");return el===null?null:String(el.textContent||" + j("") + ").trim();})()";
 const successToastExpr = "(function(){var el=document.querySelector(" + j("[data-toast=ok]") + ");if(el===null){return null;}return {text:String(el.textContent||" + j("") + ").trim(),cls:String(el.className||" + j("") + ")};})()";
-const insertBindingFixture = () => db.query("insert into wecom_aibot_dm_activations (bot_id, wecom_userid, user_id, first_activated_at, last_message_at, bound_at, created_at, updated_at) values ($1, $2, $3, now() - interval '2 hours', now() - interval '2 hours', now() - interval '90 minutes', now() - interval '2 hours', now() - interval '90 minutes') on conflict (bot_id, wecom_userid) do update set user_id = excluded.user_id, last_message_at = excluded.last_message_at, bound_at = excluded.bound_at, updated_at = excluded.updated_at", [BOT_ID, openUserid, userRow.id]);
+const insertBindingFixture = () => db.query("insert into wecom_aibot_dm_activations (bot_id, wecom_userid, user_id, first_activated_at, last_message_at, bound_at, created_at, updated_at) values ($1, $2, $3, now() - interval '2 hours', now() - interval '2 hours', now() - interval '90 minutes', now() - interval '2 hours', now() - interval '90 minutes') on conflict (bot_id, wecom_userid) do update set user_id = excluded.user_id, last_message_at = excluded.last_message_at, bound_at = excluded.bound_at, messages_enabled = true, updated_at = excluded.updated_at", [BOT_ID, openUserid, userRow.id]);
 const removeBindingFixture = () => db.query("delete from wecom_aibot_dm_activations where bot_id = $1 and wecom_userid = $2", [BOT_ID, openUserid]);
 
 await page.send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 1000, deviceScaleFactor: 1, mobile: false });
@@ -459,6 +460,20 @@ await reload("[data-wecom-binding]");
 const boundWaited = await waitFor("(function(){var el=document.querySelector(" + j("[data-wecom-binding]") + ");return el!==null && el.getAttribute(" + j("data-wecom-binding") + ") === " + j("bound") + ";})()", 12000);
 const boundText = String(await ev(textOf("[data-wecom-binding]")) ?? "");
 check("已绑定态：面板 = bound + 掩码（末 4 位）+ 绑定时间（口径 §6 / §9）", boundWaited === true && boundText.indexOf(openUseridMasked) >= 0 && boundText.indexOf("绑定时间") >= 0 && boundText.indexOf("已绑定") >= 0, boundText.slice(0, 160));
+const messageToggleExpr = "(function(){var el=document.querySelector(" + j("[data-wecom-binding-messages]") + ");var btn=document.querySelector(" + j("[data-wecom-binding-messages-toggle]") + ");return el===null?null:{value:el.getAttribute(" + j("data-wecom-binding-messages") + "),checked:btn===null?null:btn.getAttribute(" + j("aria-checked") + ")};})()";
+const toggleDefault = await ev(messageToggleExpr);
+check("企微单聊消息开关：绑定后默认开启", toggleDefault !== null && toggleDefault.value === "true" && toggleDefault.checked === "true", JSON.stringify(toggleDefault));
+await click("[data-wecom-binding-messages-toggle]");
+const toggleOff = await waitFor("(function(){var el=document.querySelector(" + j("[data-wecom-binding-messages-toggle]") + ");return el!==null && el.getAttribute(" + j("data-wecom-binding-messages-toggle") + ") === " + j("false") + ";})()", 8000);
+const toggleOffRow = (await db.query("select messages_enabled from wecom_aibot_dm_activations where bot_id = $1 and wecom_userid = $2", [BOT_ID, openUserid])).rows[0];
+check("关闭消息开关：界面关闭 + 落库 messages_enabled=false", toggleOff === true && toggleOffRow !== undefined && toggleOffRow.messages_enabled === false, JSON.stringify(toggleOffRow));
+await reload("[data-wecom-binding-messages]");
+const togglePersisted = await waitFor("(function(){var el=document.querySelector(" + j("[data-wecom-binding-messages-toggle]") + ");return el!==null && el.getAttribute(" + j("data-wecom-binding-messages-toggle") + ") === " + j("false") + ";})()", 12000);
+check("消息开关刷新后保持关闭", togglePersisted === true, String(await ev(messageToggleExpr)));
+await click("[data-wecom-binding-messages-toggle]");
+const toggleOn = await waitFor("(function(){var el=document.querySelector(" + j("[data-wecom-binding-messages-toggle]") + ");return el!==null && el.getAttribute(" + j("data-wecom-binding-messages-toggle") + ") === " + j("true") + ";})()", 8000);
+const toggleOnRow = (await db.query("select messages_enabled from wecom_aibot_dm_activations where bot_id = $1 and wecom_userid = $2", [BOT_ID, openUserid])).rows[0];
+check("重新开启消息开关：界面开启 + 落库 messages_enabled=true", toggleOn === true && toggleOnRow !== undefined && toggleOnRow.messages_enabled === true, JSON.stringify(toggleOnRow));
 const pageHtml = String(await ev("String(document.body.innerHTML)"));
 check("最小暴露（§9）：设置页不出现完整密文 open_userid（只有掩码）", pageHtml.indexOf(openUserid) < 0 && pageHtml.indexOf(openUseridMasked) >= 0, "含掩码 " + String(pageHtml.indexOf(openUseridMasked) >= 0) + " / 含完整值 " + String(pageHtml.indexOf(openUserid) >= 0));
 check("已绑定 = 不弹引导（清掉本机跳过位后刷新仍不弹）", (await ev(exists("[data-wecom-binding-guide]"))) === false);
