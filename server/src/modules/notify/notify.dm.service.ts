@@ -62,7 +62,7 @@ import { NotifyService } from "./notify.service.js";
 import type { AibotIncomingMessage, AibotSendResult } from "./wecom.aibot.js";
 import { WecomAibotClient } from "./wecom.aibot.js";
 import { describeWecomFailure, WECOM_BOT_FREQ_ERRCODE } from "./wecom.errors.js";
-import { truncateUtf8Bytes } from "./wecom.text.js";
+import { applyMarkdownHardBreaks, truncateUtf8Bytes } from "./wecom.text.js";
 
 /** 单聊 markdown 字节上限（官方口径 20480；取 20000 留余量 —— 同群口径）。 */
 export const DM_MARKDOWN_MAX_BYTES = 20_000;
@@ -131,7 +131,8 @@ export const DM_WELCOME_MESSAGE =
 /** markdown 组装（同群口径）：加粗标题 + 空行 + 正文；标题空白防御（解析后已 trim，非空为常态）。 */
 export function composeDmMarkdown(message: Pick<NotifyMessagePayload, "title" | "body">): string {
   const title = message.title.trim();
-  return title === "" ? message.body : "**" + title + "**\n\n" + message.body;
+  const content = title === "" ? message.body : "**" + title + "**\n\n" + message.body;
+  return applyMarkdownHardBreaks(content);
 }
 
 /** UTF-8 字节截断（不劈开多字节字符）：未超长原样返回；超长截到 maxBytes - 后缀，尾部拼省略标记。 */
