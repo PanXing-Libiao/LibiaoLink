@@ -7,15 +7,30 @@
  * 未绑定群回调写入 wecom_group_candidates staging 表（0058），绑定成功后由 project 模块删除。
  */
 import { Injectable } from "@nestjs/common";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
+import { users } from "../../db/schema/identity.js";
 import { notifyDeliveries, wecomGroupCandidates, wecomGroups } from "../../db/schema/notify.js";
-import { projects } from "../../db/schema/projects.js";
+import { projectMembers, projects } from "../../db/schema/projects.js";
 import { tasks } from "../../db/schema/tasks.js";
 
 export type WecomGroupRow = typeof wecomGroups.$inferSelect;
 export type WecomGroupCandidateRow = typeof wecomGroupCandidates.$inferSelect;
+
+/** R06 动态海报数据（项目 + 成员 + 任务统计一次读齐；姓名只用于 Poster 展示，不回写业务表）。 */
+export interface R06PosterData {
+  projectCode: string;
+  projectName: string;
+  status: string;
+  managers: string[];
+  participants: string[];
+  taskTotal: number;
+  taskDone: number;
+  onTimeDone: number;
+  startDate: string | null;
+  plannedEnd: string | null;
+}
 
 /** 投递留痕输入（服务层保证 CHECK 语义：sent ↔ sentAt 非空且 error 为空）。 */
 export interface NotifyDeliveryInsert {
@@ -25,6 +40,18 @@ export interface NotifyDeliveryInsert {
   attempts: number;
   error: string | null;
   sentAt: Date | null;
+}
+
+/** 已完成任务是否按时（纯函数）：有实际 / 计划完成日时按日期比较，否则只接受显式 on_time=true。 */
+export function isCompletedTaskOnTime(row: {
+  status: string;
+  plannedEnd: string | null;
+  actualEnd: string | null;
+  onTime: boolean | null;
+}): boolean {
+  if (row.status !== "done") return false;
+  if (row.actualEnd !== null && row.plannedEnd !== null) return row.actualEnd <= row.plannedEnd;
+  return row.onTime === true;
 }
 
 /** R06 按时交付判定（纯函数）：无任务 / 任一未完成 / 任一延期 = false。 */
@@ -74,6 +101,91 @@ export class NotifyGroupRepository {
       .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)))
       .limit(1);
     return rows[0]?.managerIds[0] ?? null;
+  }
+
+  /**
+   * R06 动态海报数据：项目编号 / 名称 / 状态、项目经理、项目成员与任务负责人去重姓名、任务完成与按期统计。
+   * 参与成员顺序 = 项目经理 → 项目成员（入册顺序）→ 任务负责人（任务读取顺序）；展示名去掉测试数据后缀 "-test"。
+   * 边界同文件头注：直接读表，不 import project 模块；项目不存在 / 已软删 = null。
+   */
+  async findR06PosterData(projectId: string, client: DbClient = this.database.db): Promise<R06PosterData | null> {
+    const projectRows = await client
+      .select({
+        code: projects.code,
+        name: projects.name,
+        status: projects.status,
+        managerIds: projects.managerIds,
+      })
+      .from(projects)
+      .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)))
+      .limit(1);
+    const project = projectRows[0];
+    if (project === undefined) {
+      return null;
+    }
+    const memberRows = await client
+      .select({ userId: projectMembers.userId })
+      .from(projectMembers)
+      .where(eq(projectMembers.projectId, projectId))
+      .orderBy(asc(projectMembers.joinedAt), asc(projectMembers.id));
+    const taskRows = await client
+      .select({
+        ownerIds: tasks.ownerIds,
+        status: tasks.status,
+        plannedStart: tasks.plannedStart,
+        plannedEnd: tasks.plannedEnd,
+        actualEnd: tasks.actualEnd,
+        onTime: tasks.onTime,
+      })
+      .from(tasks)
+      .where(and(eq(tasks.projectId, projectId), isNull(tasks.deletedAt)));
+    const participantIds: string[] = [];
+    const seen = new Set<string>();
+    const addId = (id: string): void => {
+      if (!seen.has(id)) {
+        seen.add(id);
+        participantIds.push(id);
+      }
+    };
+    for (const id of project.managerIds) addId(id);
+    for (const row of memberRows) addId(row.userId);
+    for (const row of taskRows) {
+      for (const id of row.ownerIds) addId(id);
+    }
+    const userRows = participantIds.length === 0
+      ? []
+      : await client
+          .select({ id: users.id, displayName: users.displayName })
+          .from(users)
+          .where(inArray(users.id, participantIds));
+    const nameById = new Map(userRows.map((row) => [row.id, row.displayName.replace(/-test$/i, "").trim()]));
+    const managerNames = project.managerIds
+      .map((id) => nameById.get(id) ?? "")
+      .filter((name) => name !== "");
+    const participantNames = participantIds
+      .map((id) => nameById.get(id) ?? "")
+      .filter((name) => name !== "");
+    const doneRows = taskRows.filter((row) => row.status === "done");
+    const starts = taskRows
+      .map((row) => row.plannedStart?.slice(0, 10) ?? null)
+      .filter((value): value is string => value !== null && /^\d{4}-\d{2}-\d{2}$/.test(value))
+      .sort();
+    const ends = taskRows
+      .map((row) => row.plannedEnd?.slice(0, 10) ?? null)
+      .filter((value): value is string => value !== null && /^\d{4}-\d{2}-\d{2}$/.test(value))
+      .sort();
+    return {
+      projectCode: project.code,
+      projectName: project.name,
+      status: project.status,
+      managers: managerNames,
+      participants: participantNames,
+      taskTotal: taskRows.length,
+      taskDone: doneRows.length,
+      onTimeDone: doneRows.filter((row) => isCompletedTaskOnTime(row)).length,
+      startDate: starts[0] ?? null,
+      plannedEnd: ends.at(-1) ?? null,
+    };
   }
 
   /**

@@ -131,7 +131,7 @@ bash scripts/db-seed.sh
 
 ```powershell
 ssh root@10.1.104.44 "mkdir -p /opt/libiaolink/server /opt/libiaolink/shared"
-scp -r D:\LibiaoLink\server\dist D:\LibiaoLink\server\scripts D:\LibiaoLink\server\package.json D:\LibiaoLink\server\package-lock.json root@10.1.104.44:/opt/libiaolink/server/
+scp -r D:\LibiaoLink\server\dist D:\LibiaoLink\server\assets D:\LibiaoLink\server\scripts D:\LibiaoLink\server\package.json D:\LibiaoLink\server\package-lock.json root@10.1.104.44:/opt/libiaolink/server/
 scp -r D:\LibiaoLink\shared\dist D:\LibiaoLink\shared\generated D:\LibiaoLink\shared\package.json D:\LibiaoLink\shared\package-lock.json root@10.1.104.44:/opt/libiaolink/shared/
 
 > scp 传输可能留下畸形目录权限（曾出现 `drwx---rwx`；症状：容器报 `Cannot find module '/opt/libiaolink/server/dist/entry/api.js'`）；修复：`chmod -R a+rX /opt/libiaolink/server /opt/libiaolink/shared`。
@@ -173,7 +173,7 @@ docker compose --profile app exec -T api node -e "fetch('http://127.0.0.1:3000/r
 **升级（改代码后）：**
 
 ```bash
-# 重传 server/dist（或 scripts）后：
+# 重传 server/dist（或 scripts / assets）后：
 docker compose --profile app restart api worker
 ```
 

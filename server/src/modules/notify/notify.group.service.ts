@@ -35,8 +35,9 @@ import { NotifyGroupRepository } from "./notify.group.repository.js";
 import { NotifyService } from "./notify.service.js";
 import type { AibotIncomingMessage, AibotSendResult } from "./wecom.aibot.js";
 import { aibotImageMimeFromFileName, WecomAibotClient } from "./wecom.aibot.js";
+import { renderR06Poster } from "./r06.poster.js";
 import { describeWecomFailure } from "./wecom.errors.js";
-import { truncateUtf8Bytes } from "./wecom.text.js";
+import { applyMarkdownHardBreaks, truncateUtf8Bytes } from "./wecom.text.js";
 
 /** 群 markdown 字节上限（官方口径 20480；取 20000 留余量 —— B5 定案「投递层按字节截断留痕」）。 */
 export const GROUP_MARKDOWN_MAX_BYTES = 20_000;
@@ -78,7 +79,8 @@ export function parseGroupMessage(raw: Record<string, unknown>): NotifyGroupMess
 
 /** markdown 组装：无标题（R03_GROUP 一类）只发正文；有标题加粗 + 空行分隔。 */
 export function composeGroupMarkdown(message: Pick<NotifyGroupMessagePayload, "title" | "body">): string {
-  return message.title === null ? message.body : "**" + message.title + "**\n\n" + message.body;
+  const content = message.title === null ? message.body : "**" + message.title + "**\n\n" + message.body;
+  return applyMarkdownHardBreaks(content);
 }
 
 /** UTF-8 字节截断（不劈开多字节字符）：未超长原样返回；超长截到 maxBytes - 后缀，尾部拼省略标记。 */
@@ -425,9 +427,9 @@ export class NotifyGroupService {
   }
 
   /**
-   * R06 喜报图：仅当 templateCode = R06_GROUP。项目内所有未删任务均按时交付时优先使用
-   * WECOM_R06_ON_TIME_IMAGE_PATH（装配动画），否则使用 WECOM_R06_IMAGE_PATH（验收悬浮图标）。
-   * 图片在文字已送达后追加；判定 / 读取 / 发送失败只留日志，不影响已送达文字。
+   * R06 喜报图：仅当 templateCode = R06_GROUP。默认按项目真实数据动态生成 A 方案姓名墙 PNG；
+   * 动态读取 / 绘制失败时回退 WECOM_R06_IMAGE_PATH（全部任务按时交付时优先 WECOM_R06_ON_TIME_IMAGE_PATH）。
+   * 图片在文字已送达后追加；图片生成 / 发送失败只留日志，不影响已送达文字。
    */
   private async sendR06Poster(input: {
     message: NotifyGroupMessagePayload;
@@ -439,8 +441,58 @@ export class NotifyGroupService {
     if (input.message.templateCode !== "R06_GROUP") {
       return 0;
     }
-    const defaultImagePath = this.config.env.WECOM_R06_IMAGE_PATH.trim();
-    const onTimeImagePath = this.config.env.WECOM_R06_ON_TIME_IMAGE_PATH.trim();
+    if (this.config.env.WECOM_R06_DYNAMIC_POSTER !== "false") {
+      const dynamicAttempts = await this.sendDynamicR06Poster(input);
+      if (dynamicAttempts !== null) {
+        return dynamicAttempts;
+      }
+    }
+    return await this.sendStaticR06Poster(input);
+  }
+
+  /** 动态海报：数据 / 字体 / 绘制任一失败 = null（调用方回退静态图）；已发出的发送帧数原样返回。 */
+  private async sendDynamicR06Poster(input: {
+    message: NotifyGroupMessagePayload;
+    chatid: string;
+    groupActivated: boolean;
+    masked: string;
+    dedupeKey: string;
+  }): Promise<number | null> {
+    let content: Buffer;
+    let fileName: string;
+    try {
+      const data = await this.repository.findR06PosterData(input.message.projectId);
+      if (data === null) {
+        this.logger.warn("R06 动态海报数据缺失，回退静态图（文字已发送）：" + input.dedupeKey);
+        return null;
+      }
+      content = renderR06Poster(
+        { ...data, completedAt: this.clock.now() },
+        {
+          sans: (this.config.env.WECOM_R06_FONT_SANS_PATH ?? "").trim(),
+          sansBold: (this.config.env.WECOM_R06_FONT_SANS_BOLD_PATH ?? "").trim(),
+          serif: (this.config.env.WECOM_R06_FONT_SERIF_PATH ?? "").trim(),
+        },
+      );
+      fileName = "R06-" + data.projectCode + ".png";
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.warn("R06 动态海报生成失败，回退静态图（文字已发送）：" + input.dedupeKey + " —— " + detail);
+      return null;
+    }
+    return await this.deliverR06Image(input, content, fileName, "image/png", "动态海报");
+  }
+
+  /** 静态回退图：原口径保持不变；无配置 / 格式不支持 / 读取失败 = 0。 */
+  private async sendStaticR06Poster(input: {
+    message: NotifyGroupMessagePayload;
+    chatid: string;
+    groupActivated: boolean;
+    masked: string;
+    dedupeKey: string;
+  }): Promise<number> {
+    const defaultImagePath = (this.config.env.WECOM_R06_IMAGE_PATH ?? "").trim();
+    const onTimeImagePath = (this.config.env.WECOM_R06_ON_TIME_IMAGE_PATH ?? "").trim();
     if (defaultImagePath === "" && onTimeImagePath === "") {
       return 0;
     }
@@ -469,6 +521,22 @@ export class NotifyGroupService {
       this.logger.warn("R06 喜报图片读取失败，已跳过（文字已发送）：" + fileName);
       return 0;
     }
+    return await this.deliverR06Image(input, content, fileName, mime, "静态回退图");
+  }
+
+  /** 单次 R06 图片发送与留痕；失败不抛错、不触发二次发送。 */
+  private async deliverR06Image(
+    input: {
+      chatid: string;
+      groupActivated: boolean;
+      masked: string;
+      dedupeKey: string;
+    },
+    content: Buffer,
+    fileName: string,
+    mime: string,
+    sourceLabel: string,
+  ): Promise<number> {
     const result = await this.aibot.sendGroupImage({
       chatid: input.chatid,
       content,
@@ -478,11 +546,18 @@ export class NotifyGroupService {
     });
     if (!result.ok) {
       this.logger.warn(
-        "R06 喜报图片未送达（文字已发送）：" + input.dedupeKey + " · chatid " + input.masked + " —— " + describeAibotFailure(result),
+        "R06 " +
+          sourceLabel +
+          "未送达（文字已发送）：" +
+          input.dedupeKey +
+          " · chatid " +
+          input.masked +
+          " —— " +
+          describeAibotFailure(result),
       );
       return result.attempts;
     }
-    this.logger.log("R06 喜报图片已送达：" + input.dedupeKey + " · chatid " + input.masked);
+    this.logger.log("R06 " + sourceLabel + "已送达：" + input.dedupeKey + " · chatid " + input.masked);
     return result.attempts;
   }
 
