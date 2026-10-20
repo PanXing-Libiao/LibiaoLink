@@ -28,6 +28,7 @@ import {
   type CreateMultipartUploadInput,
   type DownloadUrlInput,
   type GetObjectResult,
+  type ObjectPrefixResult,
   type MultipartUploadKeyInput,
   type MultipartUploadRef,
   type ObjectHead,
@@ -224,7 +225,10 @@ export class S3ObjectStorage extends ObjectStorage {
         new GetObjectCommand({
           Bucket: this.bucket,
           Key: input.objectKey,
-          ResponseContentDisposition: input.fileName ? contentDisposition(input.fileName) : undefined,
+          ResponseContentType: input.responseContentType,
+          ResponseContentDisposition:
+            input.responseContentDisposition ?? (input.fileName ? contentDisposition(input.fileName) : undefined),
+          ResponseCacheControl: input.responseCacheControl,
         }),
         { expiresIn: ttl },
       ),
@@ -247,6 +251,31 @@ export class S3ObjectStorage extends ObjectStorage {
         return null;
       }
       throw this.fail("GetObject", error);
+    }
+  }
+
+  async readObjectPrefix(objectKey: string, maxBytes: number): Promise<ObjectPrefixResult | null> {
+    if (!Number.isInteger(maxBytes) || maxBytes < 0) {
+      throw new StorageError("unavailable", "对象前缀读取长度非法");
+    }
+    if (maxBytes === 0) {
+      return { objectKey, bytes: new Uint8Array(), contentType: null };
+    }
+    try {
+      const output = await this.client.send(
+        new GetObjectCommand({
+          Bucket: this.bucket,
+          Key: objectKey,
+          Range: `bytes=0-${maxBytes - 1}`,
+        }),
+      );
+      const bytes = output.Body ? await output.Body.transformToByteArray() : new Uint8Array();
+      return { objectKey, bytes, contentType: output.ContentType ?? null };
+    } catch (error) {
+      if (isNotFound(error)) {
+        return null;
+      }
+      throw this.fail("GetObjectPrefix", error);
     }
   }
 
@@ -603,9 +632,9 @@ export function createS3ObjectStorage(env: Env): S3ObjectStorage {
 }
 
 /** 下载响应头：中文文件名走 RFC 5987（`filename*`），ASCII 兜底（契约「原文件名含中文」）。 */
-export function contentDisposition(fileName: string): string {
+export function contentDisposition(fileName: string, disposition: "attachment" | "inline" = "attachment"): string {
   const ascii = fileName.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
-  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
+  return `${disposition}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
 }
 
 function s3ErrorName(error: unknown): string {

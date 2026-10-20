@@ -7,7 +7,7 @@ import type { AuditService } from "../src/modules/admin/index.js";
 import { FileDownloadService } from "../src/modules/file/file-download.service.js";
 import type { FileRepository, FileRow, FileVersionRow } from "../src/modules/file/file.repository.js";
 import type { PermissionService } from "../src/modules/permission/index.js";
-import type { DownloadUrlInput, ObjectStorage, SignedUrl } from "../src/storage/index.js";
+import { contentDisposition, type DownloadUrlInput, type ObjectStorage, type SignedUrl } from "../src/storage/index.js";
 
 /**
  * M4-05f 下载切片门禁（不连库、不连对象存储）：`GET /files/{id}/versions/{versionId}/download-url`。
@@ -189,12 +189,19 @@ describe("FileDownloadService.getDownloadUrl（M4-05f 下载切片）", () => {
     expect(h.audit.entries[0]!.summary).toContain("v2");
   });
 
-  it("签名参数：objectKey = 该版本对象键、fileName = 原名（attachment）、窗口 = S3_DOWNLOAD_URL_TTL_SECONDS", async () => {
+  it("签名参数：objectKey = 该版本对象键，响应强制 octet-stream + attachment，窗口取 S3_DOWNLOAD_URL_TTL_SECONDS", async () => {
     const h = makeService({ S3_DOWNLOAD_URL_TTL_SECONDS: 120 });
 
     await h.service.getDownloadUrl(FILE, VERSION, ACTOR);
 
-    expect(h.storage.signed).toEqual([{ objectKey: OBJECT_KEY, fileName: "机械设计图纸.pdf", expiresInSeconds: 120 }]);
+    expect(h.storage.signed).toEqual([
+      {
+        objectKey: OBJECT_KEY,
+        responseContentType: "application/octet-stream",
+        responseContentDisposition: contentDisposition("机械设计图纸.pdf"),
+        expiresInSeconds: 120,
+      },
+    ]);
     expect(h.permission.checked).toEqual(["file.download"]);
   });
 
@@ -216,7 +223,14 @@ describe("FileDownloadService.getDownloadUrl（M4-05f 下载切片）", () => {
 
     const result = await h.service.getDownloadUrl(FILE, VERSION, ACTOR);
 
-    expect(h.storage.signed).toEqual([{ objectKey: OBJECT_KEY_DOCX, fileName: "施工方案.docx", expiresInSeconds: 300 }]);
+    expect(h.storage.signed).toEqual([
+      {
+        objectKey: OBJECT_KEY_DOCX,
+        responseContentType: "application/octet-stream",
+        responseContentDisposition: contentDisposition("施工方案.docx"),
+        expiresInSeconds: 300,
+      },
+    ]);
     expect(h.storage.signed[0]!.objectKey).not.toBe(PREVIEW_KEY_DOCX);
     expect(h.storage.signed[0]!.objectKey.startsWith("previews/")).toBe(false);
     expect(result.fileName).toBe("施工方案.docx");

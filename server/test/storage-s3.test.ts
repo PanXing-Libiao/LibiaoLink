@@ -178,6 +178,28 @@ describe("S3 适配器：读取与错误映射", () => {
     await expect(miss.storage.headObject(OBJECT_KEY)).resolves.toBeNull();
   });
 
+  it("readObjectPrefix：用 Range 只读前缀并返回字节 / 存储 Content-Type；对象缺失返回 null", async () => {
+    const prefixBytes = Uint8Array.from(Buffer.from("%PDF-1.7", "ascii"));
+    const hit = createStorage(() => ({
+      Body: { transformToByteArray: async () => prefixBytes },
+      ContentType: "application/octet-stream",
+    }));
+
+    await expect(hit.storage.readObjectPrefix(OBJECT_KEY, 1024)).resolves.toEqual({
+      objectKey: OBJECT_KEY,
+      bytes: prefixBytes,
+      contentType: "application/octet-stream",
+    });
+    expect(hit.commands).toHaveLength(1);
+    expect(hit.commands[0]?.constructor.name).toBe("GetObjectCommand");
+    expect(hit.commands[0]?.input).toMatchObject({ Bucket: "libiaolink", Key: OBJECT_KEY, Range: "bytes=0-1023" });
+
+    const miss = createStorage(() => {
+      throw s3Error("NoSuchKey", 404);
+    });
+    await expect(miss.storage.readObjectPrefix(OBJECT_KEY, 64)).resolves.toBeNull();
+  });
+
   it("错误映射：会话缺失 410 / 分片不可用 409 / 对象缺失 404 / 其他 500", async () => {
     const uploadGone = createStorage(() => { throw s3Error("NoSuchUpload", 404); });
     await expect(uploadGone.storage.listParts({ objectKey: OBJECT_KEY, uploadId: "upload-1" }))
@@ -454,12 +476,20 @@ describe("S3 适配器：项目前缀彻底删除（项目回收站 purge）", (
 });
 
 describe("下载签名与寻址", () => {
-  it("中文文件名走 RFC 5987，签名 URL 带响应头参数", async () => {
+  it("中文文件名走 RFC 5987；预览签入精确响应类型 / inline disposition / cache-control", async () => {
     const { storage } = createStorage(() => ({}));
-    const signed = await storage.signDownloadUrl({ objectKey: OBJECT_KEY, fileName: "机械设计图纸-v2.docx" });
+    const signed = await storage.signDownloadUrl({
+      objectKey: OBJECT_KEY,
+      responseContentType: "image/png",
+      responseContentDisposition: contentDisposition("机械设计图纸-v2.png", "inline"),
+      responseCacheControl: "no-store",
+    });
     expect(signed.url).toContain("response-content-disposition=");
+    expect(signed.url).toContain("response-content-type=image%2Fpng");
+    expect(signed.url).toContain("response-cache-control=no-store");
     expect(decodeURIComponent(signed.url)).toContain("filename*=UTF-8''");
     expect(contentDisposition("a\"b.docx")).toBe("attachment; filename=\"a_b.docx\"; filename*=UTF-8''a%22b.docx");
+    expect(contentDisposition("预览.png", "inline")).toMatch(/^inline; filename="__\.png"; filename\*=UTF-8''/);
   });
 
   it("寻址方式：非 AWS 端点走 path-style，AWS 走 virtual-host", () => {
