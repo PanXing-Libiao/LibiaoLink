@@ -1,0 +1,42 @@
+{
+  "pass": 7,
+  "fail": 0,
+  "checks": [
+    {
+      "name": "夹具：管理员 / 无权限用户 / 8 条消息 / 4 条尝试",
+      "ok": true,
+      "detail": "8 消息 / 4 尝试"
+    },
+    {
+      "name": "读面：关键字 / 渠道 / 状态筛选，createdAt desc + id desc",
+      "ok": true,
+      "detail": "total=8 / failed=2 / rule=8 / recipient=7 / window=3 / page2=3"
+    },
+    {
+      "name": "详情：target 末 4 位 + 错误脱敏；不存在 404",
+      "ok": true,
+      "detail": "targetMasked ****1234 / 404"
+    },
+    {
+      "name": "重发门禁：inbox / email / pending / deferred / sent 409",
+      "ok": true,
+      "detail": "5 类非法状态 / 渠道均 409"
+    },
+    {
+      "name": "重发：failed app → 新归档 pending + 新 outbox + 审计；原记录不变",
+      "ok": true,
+      "detail": "new message=20 / outbox=4"
+    },
+    {
+      "name": "重发幂等：同 key 重复 + 并发收敛；不同 key 各自新建；状态变化不破坏同 key 重试",
+      "ok": true,
+      "detail": "message=21 / same-key outbox=1 / different-key outbox=1 / audit=1"
+    },
+    {
+      "name": "无权限：读 / 重发均 FORBIDDEN",
+      "ok": true,
+      "detail": "list / resend 均 403"
+    }
+  ],
+  "tag": "M5-06-2B-REPLAY-cdbc71f4"
+}

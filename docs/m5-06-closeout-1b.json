@@ -1,0 +1,93 @@
+{
+  "generatedAt": "2026-10-20T07:31:15.896Z",
+  "database": "postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink_m5_06_closeout_59aebae",
+  "pass": 17,
+  "fail": 0,
+  "checks": [
+    {
+      "name": "夹具：管理员 / 负责人 / 经理 / 项目 / 群 / 阶段 / 102 个任务",
+      "ok": true,
+      "detail": "users=3 / project=1 / group=1 / stages=2 / tasks=102"
+    },
+    {
+      "name": "规则读面：10 条内置规则、R01 排除、停用保留、code 升序、job 摘要",
+      "ok": true,
+      "detail": "items=10 / R01 excluded / A01 disabled retained"
+    },
+    {
+      "name": "规则详情：R01 / 未知 404，R02 详情字段齐备",
+      "ok": true,
+      "detail": "R01/A03 = 404 / R02 readable"
+    },
+    {
+      "name": "保存 R02 渠道 / 收件人：version + 1、真表 actions、审计同事务、事件型无 job",
+      "ok": true,
+      "detail": "version 1 → 2 / audit=1 / job=0"
+    },
+    {
+      "name": "旧 version：409 VERSION_CONFLICT，规则 / 审计零变化",
+      "ok": true,
+      "detail": "409 / version unchanged"
+    },
+    {
+      "name": "只读字段 / 动作数量：409，规则 / 审计零变化",
+      "ok": true,
+      "detail": "template / action count = 409 / version unchanged"
+    },
+    {
+      "name": "非法收件人：400 VALIDATION_FAILED，规则零变化",
+      "ok": true,
+      "detail": "400 / version unchanged"
+    },
+    {
+      "name": "启用 A01：job done → pending，payload.ruleVersion = 新版本",
+      "ok": true,
+      "detail": "A01 v1 → v2 / job pending"
+    },
+    {
+      "name": "停用 A01：job 置 done、规则行保留、nextRunAt = null",
+      "ok": true,
+      "detail": "job done / rule retained / nextRunAt null"
+    },
+    {
+      "name": "启用 A08：事件型试运行按 stage entityId 命中群消息",
+      "ok": true,
+      "detail": "stage trial matched=1 / group message=1"
+    },
+    {
+      "name": "R06 项目完成试运行：project.completed + project entityId 命中群消息",
+      "ok": true,
+      "detail": "project.completed enabled then trial matched=1 / group message=1"
+    },
+    {
+      "name": "事件型试运行缺 entityId：400，主体零读取",
+      "ok": true,
+      "detail": "400 / runs unchanged"
+    },
+    {
+      "name": "调度型试运行：101 个任务截断为 100 主体，命中 100 / 消息 200",
+      "ok": true,
+      "detail": "evaluated=100 / matched=100 / messages=200 / truncated=true"
+    },
+    {
+      "name": "试运行零副作用：automation_runs / outbox_events / audit_logs 零新增",
+      "ok": true,
+      "detail": "runs=0 / outbox=0 / audit=5"
+    },
+    {
+      "name": "运行记录：真表插入 / list total / 详情 / 404",
+      "ok": true,
+      "detail": "total=2 / detail OK / missing = 404"
+    },
+    {
+      "name": "审计与试运行隔离：试运行未新增审计，保存仅新增规则审计",
+      "ok": true,
+      "detail": "audit rows=5 / trial audits=0"
+    },
+    {
+      "name": "HTTP：管理员会话 GET rules / POST test 200，PATCH 旧 version 409，GET runs 200",
+      "ok": true,
+      "detail": "GET rules 200 / POST test 200 / PATCH 409 / GET runs 200"
+    }
+  ]
+}

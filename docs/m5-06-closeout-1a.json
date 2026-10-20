@@ -1,0 +1,58 @@
+{
+  "generatedAt": "2026-10-20T07:31:03.501Z",
+  "database": "postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink_m5_06_closeout_59aebae",
+  "pass": 10,
+  "fail": 0,
+  "checks": [
+    {
+      "name": "0060 基线：规则 10 条 / 启用集 R02·R03·R05 / schedule job 7 个",
+      "ok": true,
+      "detail": "rules=10 / scheduleJobs=7"
+    },
+    {
+      "name": "seed 二跑零插入零更新",
+      "ok": true,
+      "detail": "第二次执行 rulesUnchanged 10 / jobsUnchanged 7"
+    },
+    {
+      "name": "规则仓库：启用集读表 / 空集不回落 / 非法行 fail closed",
+      "ok": true,
+      "detail": "enabled=3 / softDeleted=excluded / empty=[] / invalid throws"
+    },
+    {
+      "name": "automation_runs：唯一键去重 / rule_id 回填 / 查询",
+      "ok": true,
+      "detail": "insert=1 / duplicate=0 / ruleId=4a641e3c-6461-4b8e-9ebc-39b19cf0bf00"
+    },
+    {
+      "name": "事件接线真事务：R02 产出 4 条 outbox + 1 条 run；重放零新增",
+      "ok": true,
+      "detail": "append=4 / run=1 / replay=0"
+    },
+    {
+      "name": "调度接线真事务：R03 产出 1 条 outbox + 1 条 run；同窗口重放零新增",
+      "ok": true,
+      "detail": "append=1 / run=1 / replay=0"
+    },
+    {
+      "name": "job reconcile：unchanged / disabled / reactivated / updated",
+      "ok": true,
+      "detail": "4 outcomes / final payload version=1"
+    },
+    {
+      "name": "jobs.dedupe_key 唯一约束：同规则第二个 job 被拒绝",
+      "ok": true,
+      "detail": "SQLSTATE 23505"
+    },
+    {
+      "name": "legacy 通用 job：seed 置 done，保留行",
+      "ok": true,
+      "detail": "legacyJobsRetired=1"
+    },
+    {
+      "name": "应用角色 libiaolink_api 可读写新表（default privileges）",
+      "ok": true,
+      "detail": "insert / select / delete OK"
+    }
+  ]
+}
