@@ -1,0 +1,3659 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cad-preview:ucd:1.0.0",
+  "title": "UnifiedCADDocument 1.0.0",
+  "$ref": "#/$defs/Document",
+  "$defs": {
+    "Fact": {
+      "type": "object",
+      "properties": {
+        "value": {},
+        "knowledge": {
+          "enum": [
+            "native-confirmed",
+            "standard-confirmed",
+            "official-declared",
+            "source-declared",
+            "hypothesis",
+            "unknown"
+          ]
+        },
+        "validation": {
+          "enum": [
+            "experimental",
+            "verified-scope",
+            "not-implemented",
+            "not-applicable"
+          ]
+        },
+        "evidenceIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "knowledge",
+        "validation",
+        "evidenceIds"
+      ],
+      "additionalProperties": false
+    },
+    "SourceRef": {
+      "type": "object",
+      "properties": {
+        "sourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "objectKey": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "edgeChain": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 0
+        },
+        "legacyId": {
+          "type": "string"
+        },
+        "tagIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "recordOffset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "sourceId"
+      ],
+      "additionalProperties": false
+    },
+    "SourceAsset": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "name": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "byteLength": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "format": {
+          "type": "string"
+        },
+        "detectedVersion": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "sha256",
+        "byteLength",
+        "format"
+      ],
+      "additionalProperties": false
+    },
+    "Adapter": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "version": {
+          "type": "string"
+        },
+        "implementationHash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "ruleSetHash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "version"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "implementationHash",
+        "ruleSetHash",
+        "dependencies"
+      ],
+      "additionalProperties": false
+    },
+    "Capability": {
+      "type": "object",
+      "properties": {
+        "feature": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "mechanism": {
+          "enum": [
+            "native-confirmed",
+            "standard-confirmed",
+            "official-declared",
+            "unknown",
+            "not-applicable"
+          ]
+        },
+        "implementation": {
+          "enum": [
+            "candidate",
+            "verified-scope",
+            "experimental",
+            "unsupported"
+          ]
+        },
+        "evidenceIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 0
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "feature",
+        "scope",
+        "mechanism",
+        "implementation",
+        "evidenceIds",
+        "limitations"
+      ],
+      "additionalProperties": false
+    },
+    "Evidence": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "enum": [
+            "native",
+            "standard",
+            "official",
+            "independent-test",
+            "engineering-contract"
+          ]
+        },
+        "reference": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "binaryHashes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "reference": {
+                "type": "string"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "reference",
+              "sha256"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "reference",
+        "scope"
+      ],
+      "additionalProperties": false
+    },
+    "Diagnostic": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ]
+        },
+        "stage": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "sourceRefs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceRef"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "stage",
+        "message",
+        "sourceRefs"
+      ],
+      "additionalProperties": false
+    },
+    "Coordinates": {
+      "type": "object",
+      "properties": {
+        "space": {
+          "enum": [
+            "metric",
+            "source-unknown"
+          ]
+        },
+        "lengthUnit": {
+          "$ref": "#/$defs/Fact"
+        },
+        "handedness": {
+          "$ref": "#/$defs/Fact"
+        },
+        "upAxis": {
+          "$ref": "#/$defs/Fact"
+        },
+        "sourceToDocument": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 16,
+          "maxItems": 16
+        },
+        "conversionReason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "space",
+        "lengthUnit",
+        "handedness",
+        "upAxis",
+        "sourceToDocument",
+        "conversionReason"
+      ],
+      "additionalProperties": false
+    },
+    "SceneOccurrence": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "parentId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "orderInParent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sourceKind": {
+          "enum": [
+            "group",
+            "mesh-object",
+            "layer",
+            "block",
+            "unknown"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "localFromParent": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 16,
+          "maxItems": 16
+        },
+        "representationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceRefs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceRef"
+          },
+          "minItems": 0
+        },
+        "propertySetIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "id",
+        "parentId",
+        "orderInParent",
+        "sourceKind",
+        "name",
+        "localFromParent",
+        "sourceRefs",
+        "propertySetIds"
+      ],
+      "additionalProperties": false
+    },
+    "ProductDefinition": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "enum": [
+            "part",
+            "assembly",
+            "drawing"
+          ]
+        },
+        "name": {
+          "$ref": "#/$defs/Fact"
+        },
+        "partNumber": {
+          "$ref": "#/$defs/Fact"
+        },
+        "representationIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 0
+        },
+        "propertySetIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 0
+        },
+        "sourceRefs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceRef"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "representationIds",
+        "propertySetIds",
+        "sourceRefs"
+      ],
+      "additionalProperties": false
+    },
+    "ProductOccurrence": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "definitionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "parentId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "orderInParent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "memberSlotId": {
+          "type": "string"
+        },
+        "sceneAnchorIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 0
+        },
+        "sourceRefs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceRef"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "id",
+        "definitionId",
+        "parentId",
+        "orderInParent",
+        "sceneAnchorIds",
+        "sourceRefs"
+      ],
+      "additionalProperties": false
+    },
+    "Accessor": {
+      "type": "object",
+      "properties": {
+        "bufferId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "byteOffset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "byteLength": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "component": {
+          "enum": [
+            "f32",
+            "f64",
+            "u8",
+            "u16",
+            "u32"
+          ]
+        },
+        "components": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "byteStride": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "normalized": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "bufferId",
+        "byteOffset",
+        "byteLength",
+        "component",
+        "components",
+        "count",
+        "normalized"
+      ],
+      "additionalProperties": false
+    },
+    "Primitive": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "topology": {
+          "enum": [
+            "triangles",
+            "lines",
+            "points"
+          ]
+        },
+        "indices": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "range": {
+          "type": "object",
+          "properties": {
+            "first": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "first",
+            "count"
+          ],
+          "additionalProperties": false
+        },
+        "materialSlot": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "topology",
+        "range"
+      ],
+      "additionalProperties": false
+    },
+    "Geometry": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "coordinateSpace": {
+          "enum": [
+            "geometry-local"
+          ]
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "primitives": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Primitive"
+          },
+          "minItems": 1
+        },
+        "bounds": {
+          "type": "object",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        },
+        "normalOrigin": {
+          "enum": [
+            "source",
+            "recomputed",
+            "absent"
+          ]
+        },
+        "sourceRefs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceRef"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "id",
+        "coordinateSpace",
+        "attributes",
+        "primitives",
+        "bounds",
+        "normalOrigin",
+        "sourceRefs"
+      ],
+      "additionalProperties": false
+    },
+    "Representation": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "enum": [
+            "tessellation",
+            "wire",
+            "points",
+            "drawing"
+          ]
+        },
+        "bindings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "geometryId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "localFromRepresentation": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 16,
+                "maxItems": 16
+              },
+              "materialSlots": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              }
+            },
+            "required": [
+              "id",
+              "geometryId",
+              "localFromRepresentation",
+              "materialSlots"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "sourceRefs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceRef"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "bindings",
+        "sourceRefs"
+      ],
+      "additionalProperties": false
+    },
+    "Buffer": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "byteLength": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "endianness": {
+          "enum": [
+            "little"
+          ]
+        },
+        "alignment": {
+          "enum": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        "storage": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "resource"
+              ]
+            },
+            "resourceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "kind",
+            "resourceId"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "id",
+        "sha256",
+        "byteLength",
+        "endianness",
+        "alignment",
+        "storage"
+      ],
+      "additionalProperties": false
+    },
+    "Resource": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "byteLength": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "mediaType": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "font",
+            "image",
+            "opaque",
+            "plot-style"
+          ]
+        },
+        "resourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "id",
+        "sha256",
+        "byteLength",
+        "mediaType",
+        "role",
+        "resourceId"
+      ],
+      "additionalProperties": false
+    },
+    "Material": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "model": {
+          "enum": [
+            "viewer-default",
+            "unlit",
+            "pbr",
+            "unknown"
+          ]
+        },
+        "baseColor": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "metallic": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "roughness": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "alphaMode": {
+          "enum": [
+            "opaque",
+            "blend",
+            "mask"
+          ]
+        },
+        "origin": {
+          "enum": [
+            "source",
+            "viewer-policy",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "model",
+        "baseColor",
+        "metallic",
+        "roughness",
+        "alphaMode",
+        "origin"
+      ],
+      "additionalProperties": false
+    },
+    "Configuration": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceKey": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "stateIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 0
+        },
+        "validation": {
+          "enum": [
+            "candidate",
+            "verified-scope",
+            "experimental",
+            "unsupported"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "sourceKey",
+        "name",
+        "stateIds",
+        "validation"
+      ],
+      "additionalProperties": false
+    },
+    "DisplayState": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "name": {
+          "type": "string"
+        },
+        "configurationIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 1
+        },
+        "validation": {
+          "enum": [
+            "candidate",
+            "verified-scope",
+            "experimental",
+            "unsupported"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "configurationIds",
+        "validation"
+      ],
+      "additionalProperties": false
+    },
+    "Selection": {
+      "type": "object",
+      "properties": {
+        "configurationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "displayStateId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "configurationId"
+      ],
+      "additionalProperties": false
+    },
+    "PropertySet": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "values": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "enum": [
+                  "string",
+                  "number",
+                  "boolean",
+                  "quantity"
+                ]
+              },
+              "value": {},
+              "unit": {
+                "type": "string"
+              },
+              "sourceRefs": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/SourceRef"
+                },
+                "minItems": 0
+              }
+            },
+            "required": [
+              "type",
+              "value",
+              "sourceRefs"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "id",
+        "namespace",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "ExternalReference": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ownerSourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "requestedPath": {
+          "type": "string"
+        },
+        "logicalPath": {
+          "type": "string"
+        },
+        "configuration": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "resolved",
+            "missing",
+            "ambiguous",
+            "blocked",
+            "embedded"
+          ]
+        },
+        "resourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "expectedIdentity": {
+          "type": "string"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 0
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "ownerSourceId",
+        "requestedPath",
+        "status",
+        "required",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "Line": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "line"
+          ]
+        },
+        "start": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "end": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        }
+      },
+      "required": [
+        "type",
+        "start",
+        "end"
+      ],
+      "additionalProperties": false
+    },
+    "Arc": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "arc"
+          ]
+        },
+        "center": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "normal": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "xAxis": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "radius": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "startAngle": {
+          "type": "number"
+        },
+        "sweepAngle": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "center",
+        "normal",
+        "xAxis",
+        "radius",
+        "startAngle",
+        "sweepAngle"
+      ],
+      "additionalProperties": false
+    },
+    "Ellipse": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "ellipse"
+          ]
+        },
+        "center": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "majorAxis": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "minorAxis": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "startAngle": {
+          "type": "number"
+        },
+        "sweepAngle": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "center",
+        "majorAxis",
+        "minorAxis",
+        "startAngle",
+        "sweepAngle"
+      ],
+      "additionalProperties": false
+    },
+    "Polyline": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "polyline"
+          ]
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "minItems": 2
+        },
+        "closed": {
+          "type": "boolean"
+        },
+        "bulges": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "type",
+        "points",
+        "closed",
+        "bulges"
+      ],
+      "additionalProperties": false
+    },
+    "Spline": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "spline"
+          ]
+        },
+        "degree": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "controlPoints": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "minItems": 2
+        },
+        "knots": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 0
+        },
+        "weights": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "minItems": 0
+        },
+        "periodic": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "degree",
+        "controlPoints",
+        "knots",
+        "weights",
+        "periodic"
+      ],
+      "additionalProperties": false
+    },
+    "Point": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "point"
+          ]
+        },
+        "position": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        }
+      },
+      "required": [
+        "type",
+        "position"
+      ],
+      "additionalProperties": false
+    },
+    "Hatch": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "hatch"
+          ]
+        },
+        "boundaryEntityIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 1
+        },
+        "fillRule": {
+          "enum": [
+            "even-odd",
+            "nonzero"
+          ]
+        },
+        "patternId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "scale": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "angle": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "boundaryEntityIds",
+        "fillRule"
+      ],
+      "additionalProperties": false
+    },
+    "Image": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "image"
+          ]
+        },
+        "resourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "pixelSize": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "imageToEntity": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 16,
+          "maxItems": 16
+        },
+        "clipBoundary": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "type",
+        "resourceId",
+        "pixelSize",
+        "imageToEntity",
+        "clipBoundary"
+      ],
+      "additionalProperties": false
+    },
+    "UnsupportedEntity": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "unsupported"
+          ]
+        },
+        "sourceType": {
+          "type": "string"
+        },
+        "opaqueResourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "sourceType",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "Entity": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "drawingId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ownerSpaceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "layerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "localFromOwner": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 16,
+          "maxItems": 16
+        },
+        "geometry": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Line"
+            },
+            {
+              "$ref": "#/$defs/Arc"
+            },
+            {
+              "$ref": "#/$defs/Ellipse"
+            },
+            {
+              "$ref": "#/$defs/Polyline"
+            },
+            {
+              "$ref": "#/$defs/Spline"
+            },
+            {
+              "$ref": "#/$defs/Point"
+            },
+            {
+              "$ref": "#/$defs/Hatch"
+            },
+            {
+              "$ref": "#/$defs/Image"
+            },
+            {
+              "$ref": "#/$defs/UnsupportedEntity"
+            }
+          ]
+        },
+        "style": {
+          "$ref": "#/$defs/EntityStyle"
+        },
+        "sourceRefs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceRef"
+          },
+          "minItems": 0
+        },
+        "displayOrder": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "id",
+        "drawingId",
+        "ownerSpaceId",
+        "layerId",
+        "localFromOwner",
+        "geometry",
+        "style",
+        "sourceRefs",
+        "displayOrder"
+      ],
+      "additionalProperties": false
+    },
+    "EntityStyle": {
+      "type": "object",
+      "properties": {
+        "color": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "enum": [
+                "explicit",
+                "by-layer",
+                "by-block",
+                "unknown"
+              ]
+            },
+            "rgba": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 4,
+              "maxItems": 4
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "additionalProperties": false
+        },
+        "lineTypeId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lineWeight": {
+          "$ref": "#/$defs/Fact"
+        },
+        "opacity": {
+          "$ref": "#/$defs/Fact"
+        },
+        "plot": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "color",
+        "plot"
+      ],
+      "additionalProperties": false
+    },
+    "Drawing": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "name": {
+          "type": "string"
+        },
+        "sourceIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 1
+        },
+        "modelSpaceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sheetIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 0
+        },
+        "layoutIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 0
+        },
+        "layerIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 0
+        },
+        "units": {
+          "$ref": "#/$defs/Fact"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "sourceIds",
+        "modelSpaceId",
+        "sheetIds",
+        "layoutIds",
+        "layerIds",
+        "units"
+      ],
+      "additionalProperties": false
+    },
+    "Space": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "drawingId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "enum": [
+            "model",
+            "paper",
+            "block"
+          ]
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "entityIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 0
+        },
+        "annotationIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 0
+        },
+        "blockInstanceIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "id",
+        "drawingId",
+        "kind",
+        "ownerId",
+        "entityIds",
+        "annotationIds",
+        "blockInstanceIds"
+      ],
+      "additionalProperties": false
+    },
+    "Sheet": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "drawingId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "name": {
+          "type": "string"
+        },
+        "paperSize": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "paperUnit": {
+          "enum": [
+            "mm",
+            "inch",
+            "unknown"
+          ]
+        },
+        "margins": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "layoutIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 0
+        },
+        "plotStyleId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "id",
+        "drawingId",
+        "name",
+        "paperSize",
+        "paperUnit",
+        "margins",
+        "layoutIds"
+      ],
+      "additionalProperties": false
+    },
+    "Layout": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "drawingId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "name": {
+          "type": "string"
+        },
+        "sheetId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "paperSpaceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "viewportIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 0
+        },
+        "paperToSheet": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 16,
+          "maxItems": 16
+        }
+      },
+      "required": [
+        "id",
+        "drawingId",
+        "name",
+        "paperSpaceId",
+        "viewportIds",
+        "paperToSheet"
+      ],
+      "additionalProperties": false
+    },
+    "Viewport": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "layoutId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "sourceSpaceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "modelToPaper": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 16,
+              "maxItems": 16
+            },
+            "projection": {
+              "enum": [
+                "orthographic"
+              ]
+            },
+            "clipBoundary": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "minItems": 3
+            },
+            "clipEntityId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "frontClip": {
+              "type": "number"
+            },
+            "backClip": {
+              "type": "number"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "frozenLayerIds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "minItems": 0
+            },
+            "layerOverrides": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/EntityStyle"
+              }
+            },
+            "annotationScale": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "modelReference": {
+              "type": "object",
+              "properties": {
+                "sourceRef": {
+                  "$ref": "#/$defs/SourceRef"
+                },
+                "externalReferenceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceSceneOccurrenceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "configurationSourceKey": {
+                  "type": "string"
+                },
+                "displayStateSourceKey": {
+                  "type": "string"
+                },
+                "viewKind": {
+                  "enum": [
+                    "base",
+                    "projected",
+                    "section",
+                    "detail",
+                    "auxiliary",
+                    "named"
+                  ]
+                },
+                "parentViewportId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sectionPlanes": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 4,
+                    "maxItems": 4
+                  },
+                  "minItems": 0
+                },
+                "detailBoundary": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 2,
+                    "maxItems": 2
+                  },
+                  "minItems": 0
+                }
+              },
+              "required": [
+                "sourceRef",
+                "viewKind"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "layoutId",
+            "sourceSpaceId",
+            "modelToPaper",
+            "projection",
+            "clipBoundary",
+            "enabled",
+            "frozenLayerIds",
+            "layerOverrides",
+            "annotationScale"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "layoutId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "sourceSpaceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "projection": {
+              "enum": [
+                "perspective"
+              ]
+            },
+            "clipBoundary": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "minItems": 3
+            },
+            "clipEntityId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "frontClip": {
+              "type": "number"
+            },
+            "backClip": {
+              "type": "number"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "frozenLayerIds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "minItems": 0
+            },
+            "layerOverrides": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/EntityStyle"
+              }
+            },
+            "annotationScale": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "camera": {
+              "type": "object",
+              "properties": {
+                "worldToView": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 16,
+                  "maxItems": 16
+                },
+                "projectionMatrix": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 16,
+                  "maxItems": 16
+                },
+                "ndcToPaper": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 16,
+                  "maxItems": 16
+                }
+              },
+              "required": [
+                "worldToView",
+                "projectionMatrix",
+                "ndcToPaper"
+              ],
+              "additionalProperties": false
+            },
+            "modelReference": {
+              "type": "object",
+              "properties": {
+                "sourceRef": {
+                  "$ref": "#/$defs/SourceRef"
+                },
+                "externalReferenceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sourceSceneOccurrenceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "configurationSourceKey": {
+                  "type": "string"
+                },
+                "displayStateSourceKey": {
+                  "type": "string"
+                },
+                "viewKind": {
+                  "enum": [
+                    "base",
+                    "projected",
+                    "section",
+                    "detail",
+                    "auxiliary",
+                    "named"
+                  ]
+                },
+                "parentViewportId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "sectionPlanes": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 4,
+                    "maxItems": 4
+                  },
+                  "minItems": 0
+                },
+                "detailBoundary": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 2,
+                    "maxItems": 2
+                  },
+                  "minItems": 0
+                }
+              },
+              "required": [
+                "sourceRef",
+                "viewKind"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "layoutId",
+            "sourceSpaceId",
+            "projection",
+            "clipBoundary",
+            "enabled",
+            "frozenLayerIds",
+            "layerOverrides",
+            "annotationScale",
+            "camera"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "Layer": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "drawingId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "name": {
+          "type": "string"
+        },
+        "visible": {
+          "type": "boolean"
+        },
+        "frozen": {
+          "type": "boolean"
+        },
+        "lockedForEditing": {
+          "type": "boolean"
+        },
+        "plot": {
+          "type": "boolean"
+        },
+        "defaultStyle": {
+          "$ref": "#/$defs/EntityStyle"
+        },
+        "sourceRefs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceRef"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "id",
+        "drawingId",
+        "name",
+        "visible",
+        "frozen",
+        "lockedForEditing",
+        "plot",
+        "defaultStyle",
+        "sourceRefs"
+      ],
+      "additionalProperties": false
+    },
+    "BlockDefinition": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "drawingId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "name": {
+          "type": "string"
+        },
+        "spaceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "basePoint": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "units": {
+          "$ref": "#/$defs/Fact"
+        },
+        "externalReferenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "dynamicParameters": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Fact"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "drawingId",
+        "name",
+        "spaceId",
+        "basePoint",
+        "units",
+        "dynamicParameters"
+      ],
+      "additionalProperties": false
+    },
+    "BlockInstance": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ownerSpaceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "definitionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "layerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "localFromBlock": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 16,
+          "maxItems": 16
+        },
+        "array": {
+          "type": "object",
+          "properties": {
+            "rows": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "columns": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "rowOffset": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "columnOffset": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            }
+          },
+          "required": [
+            "rows",
+            "columns",
+            "rowOffset",
+            "columnOffset"
+          ],
+          "additionalProperties": false
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "style": {
+          "$ref": "#/$defs/EntityStyle"
+        },
+        "sourceRefs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceRef"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "id",
+        "ownerSpaceId",
+        "definitionId",
+        "layerId",
+        "localFromBlock",
+        "attributes",
+        "style",
+        "sourceRefs"
+      ],
+      "additionalProperties": false
+    },
+    "Annotation": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ownerSpaceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "layerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "enum": [
+            "text",
+            "mtext",
+            "dimension",
+            "leader",
+            "tolerance",
+            "table",
+            "symbol",
+            "unsupported"
+          ]
+        },
+        "position": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "direction": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "text": {
+          "type": "string"
+        },
+        "fontResourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "measuredValue": {
+          "$ref": "#/$defs/Fact"
+        },
+        "units": {
+          "$ref": "#/$defs/Fact"
+        },
+        "precision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "associativeEntityIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 0
+        },
+        "semantic": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Fact"
+          }
+        },
+        "presentationEntityIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 0
+        },
+        "annotationScales": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "minItems": 0
+        },
+        "sourceRefs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceRef"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "id",
+        "ownerSpaceId",
+        "layerId",
+        "kind",
+        "position",
+        "direction",
+        "text",
+        "associativeEntityIds",
+        "semantic",
+        "presentationEntityIds",
+        "annotationScales",
+        "sourceRefs"
+      ],
+      "additionalProperties": false
+    },
+    "LineType": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "name": {
+          "type": "string"
+        },
+        "segments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "dash",
+                  "gap",
+                  "dot",
+                  "text",
+                  "shape"
+                ]
+              },
+              "length": {
+                "type": "number",
+                "minimum": 0
+              },
+              "resourceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "kind",
+              "length"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "unit": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "segments",
+        "unit"
+      ],
+      "additionalProperties": false
+    },
+    "TextStyle": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "name": {
+          "type": "string"
+        },
+        "fontResourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "height": {
+          "type": "number",
+          "minimum": 0
+        },
+        "widthFactor": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "obliqueAngle": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "fontResourceId",
+        "height",
+        "widthFactor",
+        "obliqueAngle"
+      ],
+      "additionalProperties": false
+    },
+    "PlotStyle": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "name": {
+          "type": "string"
+        },
+        "resourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "scale": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "rotation": {
+          "type": "number"
+        },
+        "plotHiddenLayers": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "scale",
+        "rotation",
+        "plotHiddenLayers"
+      ],
+      "additionalProperties": false
+    },
+    "HatchPattern": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "name": {
+          "type": "string"
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "angle": {
+                "type": "number"
+              },
+              "origin": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "offset": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "dashes": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 0
+              }
+            },
+            "required": [
+              "angle",
+              "origin",
+              "offset",
+              "dashes"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "lines"
+      ],
+      "additionalProperties": false
+    },
+    "DrawingModel": {
+      "type": "object",
+      "properties": {
+        "drawings": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Drawing"
+          }
+        },
+        "spaces": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Space"
+          }
+        },
+        "sheets": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Sheet"
+          }
+        },
+        "layouts": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Layout"
+          }
+        },
+        "viewports": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Viewport"
+          }
+        },
+        "entities": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Entity"
+          }
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Annotation"
+          }
+        },
+        "blocks": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/BlockDefinition"
+          }
+        },
+        "blockInstances": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/BlockInstance"
+          }
+        },
+        "layers": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Layer"
+          }
+        },
+        "lineTypes": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/LineType"
+          }
+        },
+        "textStyles": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/TextStyle"
+          }
+        },
+        "plotStyles": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/PlotStyle"
+          }
+        },
+        "hatchPatterns": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/HatchPattern"
+          }
+        }
+      },
+      "required": [
+        "drawings",
+        "spaces",
+        "sheets",
+        "layouts",
+        "viewports",
+        "entities",
+        "annotations",
+        "blocks",
+        "blockInstances",
+        "layers",
+        "lineTypes",
+        "textStyles",
+        "plotStyles",
+        "hatchPatterns"
+      ],
+      "additionalProperties": false
+    },
+    "Document": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": "1.0.0"
+        },
+        "documentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceAsset"
+          },
+          "minItems": 1
+        },
+        "adapter": {
+          "$ref": "#/$defs/Adapter"
+        },
+        "coordinates": {
+          "$ref": "#/$defs/Coordinates"
+        },
+        "products": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/ProductDefinition"
+          }
+        },
+        "productOccurrences": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/ProductOccurrence"
+          }
+        },
+        "productRoots": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 0
+        },
+        "sceneOccurrences": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/SceneOccurrence"
+          }
+        },
+        "renderOwnership": {
+          "type": "object",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "representations": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Representation"
+          }
+        },
+        "geometries": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Geometry"
+          }
+        },
+        "accessors": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Accessor"
+          }
+        },
+        "buffers": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Buffer"
+          }
+        },
+        "materials": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Material"
+          }
+        },
+        "configurations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Configuration"
+          },
+          "minItems": 1
+        },
+        "displayStates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DisplayState"
+          },
+          "minItems": 0
+        },
+        "defaultSelection": {
+          "$ref": "#/$defs/Fact"
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/PropertySet"
+          }
+        },
+        "externalReferences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExternalReference"
+          },
+          "minItems": 0
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Capability"
+          },
+          "minItems": 0
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Diagnostic"
+          },
+          "minItems": 0
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "minItems": 0
+        },
+        "drawing": {
+          "$ref": "#/$defs/DrawingModel"
+        },
+        "extensions": {
+          "type": "object",
+          "additionalProperties": {}
+        },
+        "extensionsRequired": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 0
+        },
+        "resources": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Resource"
+          }
+        },
+        "serializationProfile": {
+          "enum": [
+            "ucd-json-python-sorted/1",
+            "rfc8785"
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "documentId",
+        "revision",
+        "sources",
+        "adapter",
+        "coordinates",
+        "products",
+        "productOccurrences",
+        "productRoots",
+        "sceneOccurrences",
+        "renderOwnership",
+        "representations",
+        "geometries",
+        "accessors",
+        "buffers",
+        "materials",
+        "configurations",
+        "displayStates",
+        "defaultSelection",
+        "properties",
+        "externalReferences",
+        "capabilities",
+        "diagnostics",
+        "evidence",
+        "drawing",
+        "extensions",
+        "extensionsRequired",
+        "resources",
+        "serializationProfile"
+      ],
+      "additionalProperties": false
+    },
+    "Draw": {
+      "type": "object",
+      "properties": {
+        "occurrenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "bindingId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "primitiveId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "membership": {
+          "enum": [
+            "present",
+            "absent",
+            "unknown"
+          ]
+        },
+        "availability": {
+          "enum": [
+            "ready",
+            "missing-reference",
+            "unsupported"
+          ]
+        },
+        "suppression": {
+          "enum": [
+            "active",
+            "suppressed",
+            "not-represented",
+            "unknown"
+          ]
+        },
+        "visibility": {
+          "enum": [
+            "shown",
+            "hidden",
+            "unknown"
+          ]
+        },
+        "materialId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "occurrenceId",
+        "bindingId",
+        "primitiveId",
+        "membership",
+        "availability",
+        "suppression",
+        "visibility",
+        "materialId"
+      ],
+      "additionalProperties": false
+    },
+    "Snapshot": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": "1.0.0"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "documentRevision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "selection": {
+          "$ref": "#/$defs/Selection"
+        },
+        "sceneRoots": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 0
+        },
+        "occurrenceOverrides": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "localFromParent": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 16,
+                "maxItems": 16
+              },
+              "representationId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          }
+        },
+        "draws": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Draw"
+          }
+        },
+        "completeness": {
+          "enum": [
+            "candidate",
+            "verified-scope",
+            "partial",
+            "experimental"
+          ]
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Diagnostic"
+          },
+          "minItems": 0
+        },
+        "drawingProjection": {
+          "$ref": "#/$defs/DrawingProjection"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "id",
+        "documentRevision",
+        "selection",
+        "sceneRoots",
+        "occurrenceOverrides",
+        "draws",
+        "completeness",
+        "diagnostics"
+      ],
+      "additionalProperties": false
+    },
+    "Resolved2DStyle": {
+      "type": "object",
+      "properties": {
+        "color": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "opacity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "plot": {
+          "type": "boolean"
+        },
+        "lineWeight": {
+          "$ref": "#/$defs/Fact"
+        },
+        "lineTypeId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "fontResourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "color",
+        "opacity",
+        "plot"
+      ],
+      "additionalProperties": false
+    },
+    "DrawingDraw": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "entity",
+            "annotation"
+          ]
+        },
+        "itemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "blockPath": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "instanceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "row": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "column": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "instanceId",
+              "row",
+              "column"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "viewportId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "localToSpace": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 16,
+          "maxItems": 16
+        },
+        "visibility": {
+          "enum": [
+            "shown",
+            "hidden",
+            "unknown"
+          ]
+        },
+        "availability": {
+          "enum": [
+            "ready",
+            "missing-reference",
+            "unsupported"
+          ]
+        },
+        "style": {
+          "$ref": "#/$defs/Resolved2DStyle"
+        },
+        "drawOrder": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "displayRepresentationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "kind",
+        "itemId",
+        "blockPath",
+        "localToSpace",
+        "visibility",
+        "availability",
+        "style",
+        "drawOrder"
+      ],
+      "additionalProperties": false
+    },
+    "DrawingProjection": {
+      "type": "object",
+      "properties": {
+        "drawingId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "target": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "model"
+                  ]
+                },
+                "spaceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "kind",
+                "spaceId"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "layout"
+                  ]
+                },
+                "layoutId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "kind",
+                "layoutId"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "viewports": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Viewport"
+          }
+        },
+        "layerStates": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "visible": {
+                "type": "boolean"
+              },
+              "frozen": {
+                "type": "boolean"
+              },
+              "plot": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "visible",
+              "frozen",
+              "plot"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "draws": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/DrawingDraw"
+          }
+        }
+      },
+      "required": [
+        "drawingId",
+        "target",
+        "viewports",
+        "layerStates",
+        "draws"
+      ],
+      "additionalProperties": false
+    },
+    "Envelope": {
+      "type": "object",
+      "properties": {
+        "transportProfile": {
+          "const": "ucd-base64-envelope/1"
+        },
+        "document": {
+          "$ref": "#/$defs/Document"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/Snapshot"
+        },
+        "bufferPayloads": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "presentation": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "view": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "position": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3
+                    },
+                    "target": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3
+                    },
+                    "up": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3
+                    }
+                  },
+                  "required": [
+                    "position",
+                    "target",
+                    "up"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "unit": {
+              "type": "string"
+            },
+            "sourceSHA256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "note": {
+              "type": "string"
+            },
+            "quality": {
+              "type": "string"
+            },
+            "candidate": {
+              "type": "boolean"
+            },
+            "stats": {
+              "type": "object",
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ]
+              }
+            }
+          },
+          "required": [
+            "name",
+            "view",
+            "unit",
+            "sourceSHA256",
+            "note",
+            "quality",
+            "candidate",
+            "stats"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "transportProfile",
+        "document",
+        "snapshot",
+        "bufferPayloads",
+        "presentation"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

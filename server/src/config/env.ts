@@ -53,6 +53,11 @@ export const EnvSchema = z
     PREVIEW_CONVERTER_URL: z.string().min(1).default("http://127.0.0.1:9900"),
     /** 转换管线版本（进预览产物三元组缓存键）：与镜像标签同值，换镜像必须一并递增（deploy/preview/README「四」）。 */
     PREVIEW_PIPELINE_VERSION: z.string().min(1).default("1.0.0"),
+    /** 独立 CAD 运行时；空值关闭 STEP 接入，不回退旧浏览器解析。 */
+    CAD_ENGINE_PYTHON: z.string().default(""),
+    CAD_MESHER_PYTHON: z.string().default(""),
+    CAD_CACHE_DIR: z.string().min(1).default("var/cad"),
+    CAD_MAX_INPUT_MIB: z.coerce.number().int().min(1).max(256).default(64),
     /** 客户端超时（毫秒）：比容器内硬超时（60000）留余量 —— 才拿得到 504 CONVERT_TIMEOUT 而不是被客户端掐断的裸超时。 */
     PREVIEW_CONVERT_TIMEOUT_MS: z.coerce.number().int().min(1000).max(600000).default(90000),
     /** 可重试失败的最大尝试次数（含首次）：到顶写产物 failed + outbox dead（D2-05 降级「请下载」）。 */

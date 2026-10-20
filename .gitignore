@@ -25,3 +25,9 @@ deploy/prod/server.env
 
 # 服务器登录备忘（本机未跟踪 · 供 AI / 值班取用）
 deploy/prod/*.local.md
+
+# CAD runtime/cache (source release remains tracked)
+server/var/cad/
+server/var/cad-browser-smoke/
+server/cad-engine/.runtime/
+server/cad-engine/**/__pycache__/

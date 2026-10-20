@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cad-preview:ucd-binary-manifest:1",
+  "type": "object",
+  "required": [
+    "transportProfile",
+    "resourceLease",
+    "document",
+    "snapshot",
+    "presentation",
+    "bufferResources"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "transportProfile": {
+      "const": "ucd-binary-manifest/1"
+    },
+    "resourceLease": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{48}$"
+    },
+    "document": {
+      "$ref": "urn:cad-preview:ucd:2.0.0"
+    },
+    "snapshot": {
+      "$ref": "urn:cad-preview:ucd:2.0.0#/$defs/Snapshot"
+    },
+    "presentation": {
+      "type": "object"
+    },
+    "bufferResources": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "url",
+          "sha256",
+          "byteLength"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "type": "string",
+            "pattern": "^/api/resources/[a-f0-9]{48}/[a-f0-9]{64}$"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "byteLength": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 268435456
+          }
+        }
+      }
+    }
+  }
+}

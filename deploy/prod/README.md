@@ -1,6 +1,6 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
-> **2026-10-21 CAD 接入准备（本地分支，未部署）**：旧 CAD 组件、WASM 与原文件图片直签已撤下，平台接入以 [新基线](../../docs/CAD平台接入基线与迁移任务.md) / ADR-035 为准。后续发布须使用本分支生成的新资源清单并删除遗留 CAD chunk 与 public/occt，不能继续复制旧 CAD 产物。下方版本/哈希是历史部署事实，保留追溯；本轮未变更生产环境。
+> **2026-10-21 STEP 已本地接入，未部署**：运行与打包见 [CAD runtime](../../server/cad-engine/README.md)，验收见 [逐文件表](../../docs/cad-platform-integration/RESULTS.md)。发布需包含 `server/cad-engine` 与同版本 `frontend/public/cad-viewer`，Nginx `/cad-viewer/` 缺失资源直接 404、缓存须重验证；删除旧 CAD chunk 与 public/occt。现有 Node Alpine / 768 MiB API 容器不能直接承诺运行 OCP/Gmsh；需另行验证 glibc 运行环境、可用内存与 native 隔离。未启用 CAD 时主 API 不加载 native runtime。下方部署版本/哈希保持历史事实。
 
 > 归属：px（部署 / 交付）· 2026-10-13 起步（postgres → tools → api / worker，逐切片加组件）。
 > 口径：`docs/adr/ADR-013-部署与容量起点.md`（Compose 单机 + Nginx 唯一对外端口；生产门禁）、`docs/adr/ADR-004-数据库与数据访问.md`（PostgreSQL 18.x，部署锁精确补丁）、`docs/M8-部署Runbook与上线检查单(单机).md`（总流程与清单）。

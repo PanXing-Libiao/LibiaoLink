@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><title>CAD 平台接入验证</title></head>
+  <body>
+    <main class="mx-auto max-w-4xl space-y-5 p-8">
+      <h1 class="text-2xl font-semibold">CAD 平台接入验证</h1>
+      <p class="text-sm text-zinc-600">从文件版本打开 STEP，检查产品树、拾取、显隐和缺面明细。本地验证使用测试身份与文件记录，尚未连接公司账号和文件库。</p>
+      <div id="files" class="space-y-3"></div>
+      <p id="status" role="status" class="text-sm text-zinc-600">正在准备…</p>
+    </main>
+    <div id="overlay"></div>
+    <script type="module">
+      import {createElement} from 'react';
+      import {createRoot} from 'react-dom/client';
+      import {FilePreviewOverlay} from '/src/components/FilePreviewOverlay.tsx';
+      import {ensurePreviewOutcome,previewKindOf} from '/src/fileApi.ts';
+      import '/src/app.css';
+      const root=createRoot(document.getElementById('overlay')),status=document.getElementById('status');
+      async function open(file){
+        status.textContent='正在打开 '+file.name;
+        const outcome=await ensurePreviewOutcome(file.id,file.versionId);
+        if(outcome.kind==='unavailable'){status.textContent=outcome.reason||'暂不可预览';return;}
+        root.render(createElement(FilePreviewOverlay,{pane:outcome.kind==='viewer'?{mode:'viewer',viewer:outcome.viewer}:{mode:'url',url:outcome.url},
+          name:file.name,kind:previewKindOf(file.name),nonce:Date.now(),onRetry:()=>open(file),
+          onDownload:()=>{status.textContent='本检查页不提供业务下载；原文件下载由平台既有权限链承接。';},
+          onClose:()=>{root.render(null);status.textContent='已关闭 '+file.name;}}));
+      }
+      const login=await fetch('/__cad-smoke/login',{method:'POST'});
+      if(!login.ok)throw new Error('本地接入验证服务未启动');
+      const files=await(await fetch('/__cad-smoke/files')).json();
+      for(const file of files){
+        const row=document.createElement('div');row.className='flex items-center justify-between gap-4 rounded-lg border border-zinc-200 bg-white px-4 py-3';
+        const label=document.createElement('span');label.textContent=file.name+' · '+(file.size/1e6).toFixed(2)+' MB';
+        const button=document.createElement('button');button.textContent='打开模型';button.className='shrink-0 rounded-md bg-zinc-900 px-4 py-2 text-sm text-white';button.onclick=()=>open(file);
+        row.append(label,button);document.getElementById('files').append(row);
+      }
+      status.textContent='请选择文件';
+    </script>
+  </body>
+</html>

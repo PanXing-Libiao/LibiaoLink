@@ -2,47 +2,55 @@
 
 更新：2026-10-21。CAD 主责 wmj，共享 file/preview/outbox 由 lan 协办，通用 UI 与部署由 px 协办。
 
-本文统一替代 LibiaoLink 原 CAD 选型、浏览器解析和工程测量实施计划。用户已批准接入准备及旧实现清理；新 CAD 链路尚未接入平台，本文不代表已上线。决策见 [ADR-035](adr/ADR-035-CAD接入独立能力工程.md)。
+本文统一替代 LibiaoLink 原 CAD 选型、浏览器解析和工程测量实施计划。用户已批准接入及旧实现清理。STEP 的版本、任务、资源和查看器已在本地跑通，尚未部署到公司环境。决策见 [ADR-035](adr/ADR-035-CAD接入独立能力工程.md)。
 
 ## 1. 已有能力与唯一基线
 
-CAD 能力以独立工程 `CAD逆向` 的 `0911573`（STEP v0.3.3）及其 `CAPABILITY_MATRIX.json`、`STEP_0_3_RESULTS.md` 为准。后续升级须登记实际提交与能力矩阵，不沿用 LibiaoLink 历史后缀白名单、PoC 数字或网格测量结论。
+CAD 能力以独立工程 `CAD逆向` 的 STEP v0.3.3（几何基线 `0911573`，宿主适配源码固定 `38135e6`）及其 `CAPABILITY_MATRIX.json`、`STEP_0_3_RESULTS.md` 为准。后续升级须登记实际提交与能力矩阵，不沿用 LibiaoLink 历史后缀白名单、PoC 数字或网格测量结论。
 
 | 项目 | 独立工程已有能力 | LibiaoLink 当前状态 |
 | --- | --- | --- |
-| STEP | 转换、产物校验、首帧、产品树、面拾取、显隐/隔离/恢复；组合补面与缺失明细 | 待接入；本轮撤下旧浏览器解析器，返回暂不可预览并保留下载 |
-| 模型与传输 | UCD 2.0 文档/快照、manifest、二进制几何、ID 字典、gzip | 待适配文件版本、受控资源与任务生命周期 |
+| STEP | 转换、产物校验、首帧、产品树、面拾取、显隐/隔离/恢复；组合补面与缺失明细 | 本地已接入；配置运行环境后开放 STEP，原文件下载保留 |
+| 模型与传输 | UCD 2.0 文档/快照、manifest、二进制几何、ID 字典、gzip | 已接入版本/权限/窗口隔离任务、gzip manifest、二进制几何与资源释放 |
 | EASM | 仅能力矩阵中已验证范围；语义须有 eDrawings 原生逆向依据 | 待接入；不依赖 eDrawings 运行时交付 |
 | DXF | 仅能力矩阵中已验证的实体、样式、布局与诊断范围 | 待接入；不等同任意二维 CAD 支持 |
 | DWG / IGES / 3MF 等 | 不由历史白名单推定支持 | 识别为 CAD 待接入提示不等于支持解析 |
 | 工程尺寸依据、PMI、公差 | 不作为当前交付能力 | 旧测量计划撤回，另按业务需要立项 |
 
-独立工程的文件打开成功不等于平台联调成功。平台验收必须覆盖实际登录用户、文件版本、任务、资源权限和完整交互。
+独立工程的文件打开成功不等于平台联调成功。本地已覆盖版本、任务、资源权限和交互；公司账号、真实数据库与对象存储的端到端验收仍需在部署环境执行。
 
-## 2. 本轮接入准备
+## 2. 已接入的链路
 
-1. 删除旧 `CadViewer`、专用类型声明、OCCT WASM 及仅被它使用的依赖，不移植其中的网格测量、坐标变换或拟圆规则。
-2. 删除服务端把 CAD 原文件作为 `target=image / status=ready` 直签的分支。CAD 预览明确暂不可用，原文件下载继续走已有权限与版本规则。
-3. 前端对 CAD 显示统一提示，过期的旧就绪响应也不能启动旧解析器或进入图片/Office 查看器。
-4. 更新当前需求、架构、字段说明和 CAD 专项 ADR。旧专文保留链接入口，内容改为撤回说明；历史发布记录与迁移保持历史事实。
+`文件预览 → 固定 fileId/versionId/SHA → 私有任务 → 完整产物校验 → gzip manifest → 鉴权二进制 buffers → 独立 ViewerSession`。
 
-本轮不新增数据库表、公开 CAD API、转换部署或生产发布，不把本地独立页面嵌入公司系统当作接入完成。
+- 平台通过既有 ObjectStorage 读取版本对象，核对大小与 SHA 后传本地文件；私有 stdio gateway 不监听 HTTP、不接收 S3/数据库凭据或客户端 URL。原始输入暂时由平台完整读入内存，尚非输入流式改造。
+- `server/cad-engine/source.json` 固定独立源码提交、schema 和浏览器依赖逐文件 SHA；更新只运行同步脚本，宿主副本不另改 CAD 规则。OCP 和 Gmsh 使用两套固定版本 Python 环境，不复制本机虚拟环境。
+- 复用 ConversionJobs 的持久化 SQLite/CAS、预算、超时、取消及完整结果校验。任务命名空间绑定 actor/file/version/SHA/view；关闭、换版、取消及原文件读取阶段断开只影响对应窗口。每个新窗口当前会重新转换，尚未实现跨窗口结果复用。
+- 同源 `/cad-viewer/` iframe 使用原 ViewerSession。保留产品树、source/product/occurrence/draw/face/material、XCAF entry、实例变换、visibility/membership、显示修复与缺失清单。宿主只适配传输、进度、关闭与导出。
+- manifest 与 buffers 分开，几何不回填 base64 JSON。源 ID 字典按原协议展开，资源 SHA 由浏览器复核；读取和释放逐请求重新鉴权。
+- 清单/检查记录由原函数生成，宿主确认当前版本权限后下载，外层增加平台来源关联 `libiaolink-cad-report/1`。原文件下载仍调用原业务入口。
+- 未启用运行环境、非 STEP CAD 和旧 ready 响应继续显示提示与下载；EASM/DXF 不由本次接入自动开放。旧解析器、OCCT WASM、网格测量与图片直签已经删除。
 
-## 3. 后续适配契约
+## 3. 平台接口与身份
 
-以下是接入任务边界，尚未发布为 shared API。字段最终复用独立工程实际结构，不在平台另造一套 CAD 身份。
+shared 已定义 CadPreviewViewer、CadJob 及创建响应，OpenAPI/客户端由生成器同步。
 
-| 边界 | 必须保留的内容 |
+`GET /api/v1/files/{fileId}/preview?versionId=...` 对已启用 STEP 返回 `status=ready`、`viewer.kind=cad`、fileId/versionId/sourceSHA256/engineVersion，url/target 为空。**ready 仅表示查看入口可用**；模型加载须等待 CadJob.completed，再取完整校验产物。Partial 不发布。
+
+下面的公共前缀记为 `B=/api/v1/files/{fileId}/versions/{versionId}/cad/views/{viewId}/jobs`：
+
+| 请求 | 作用 |
 | --- | --- |
-| 来源 | `fileId`、明确的 `versionId`、源 SHA-256、真实文件名与输入 bytes；历史版本不能随当前文件名改变格式 |
-| 任务 | 提交、排队、运行、取消、超时、失败、Partial、完整结果；Partial 单独报告，不计完整成功 |
-| 资源 | 文档/快照、manifest、二进制 buffers、诊断与证据；不再把几何数组塞回大 JSON 或伪装成图片 |
-| 身份 | source/product/occurrence/draw/face/material 等原有 ID、XCAF entry、面序号、实例变换、membership 与可见性；字典化只改传输编码 |
-| 完整性 | repaired、nonMeshableFaces、missing 分开计数；可见提示、明细与 JSON 导出随产物保留 |
-| 权限 | 每次任务查询、manifest、buffer、诊断及导出均校验对应文件/版本权限；签名失效与权限撤销有明确行为 |
-| 生命周期 | 换版、关闭、取消、迟到结果、缓存引用与资源清理；缓存键包含源摘要、内核/规则版本、参数和协议版本 |
+| `POST B` | 从平台版本对象创建任务，返回 job/reused |
+| `GET B/{jobId}` | 状态、阶段、来源、输入/产物 bytes、worker 耗时与峰值 RSS |
+| `POST B/{jobId}/cancel` | 取消当前命名空间任务 |
+| `GET B/{jobId}/manifest` | 重新校验完整产物，返回 gzip JSON 和短期资源 lease |
+| `GET B/{jobId}/resources/{lease}/{sha256}` | 按 lease 白名单读取二进制几何 |
+| `DELETE B/{jobId}/resources/{lease}` | 释放当前 manifest/资源引用 |
 
-平台从可信对象存储读取输入并向受限转换进程传递数据；不把对象存储凭据交给转换器，不让转换器抓取任意客户端 URL。部署端口和资源路由在适配时确定，不沿用独立工程的 localhost 地址作为生产契约。
+会话、文件/版本可见性逐请求检查，写操作校验 CSRF；无权限与不存在均不泄露资源。viewId/jobId 为 32 位十六进制，lease 为 48 位，SHA 为 64 位；它们不替代平台授权。manifest 中原 `/api/resources/...` 是核心虚拟引用，宿主 fetcher 映射到上述鉴权路径，不暴露独立服务。
+
+平台不新增业务迁移或 preview.job 伪目标。工程隔离不是 CAD 身份：namespace 不进入 UCD，固定输入的文档/快照在不同 namespace 下保持相同。
 
 ## 4. 沿用的 STEP 接收政策
 
@@ -64,14 +72,14 @@ CAD 能力以独立工程 `CAD逆向` 的 `0911573`（STEP v0.3.3）及其 `CAPA
 
 | 步骤 | 交付物 | 完成条件 |
 | --- | --- | --- |
-| 接入准备（本轮） | 统一文档、旧实现删除、明确的暂不可预览提示与下载 | 定向验证 CAD 拒绝旧路径，图片/Office/下载不回归；本地提交 |
-| 平台适配 | 版本来源、任务与受控模型资源接口 | 文件权限与版本绑定正确，任务/错误/取消可追溯，完整产物才发布 |
-| 查看器接入 | 沿用独立 ViewerSession 和模型身份 | 产品树、拾取、显隐/隔离/恢复及缺失明细在平台内可用，关闭/切换释放资源 |
-| 平台验收 | 逐文件表、可打开页面与能力矩阵更新 | 打开→首帧→可交互→树→拾取→显隐/隔离/恢复；记录 input/artifact bytes、峰值 RSS 与实际耗时；原有/新增组分开计数 |
+| 接入准备（已完成） | 统一文档、旧实现删除、明确的暂不可预览提示与下载 | 定向验证 CAD 拒绝旧路径，图片/Office/下载不回归；本地提交 |
+| 平台适配（本地已完成） | 版本来源、任务与受控模型资源接口 | 文件权限与版本绑定正确，任务/错误/取消可追溯，完整产物才发布 |
+| 查看器接入（本地已完成） | 沿用独立 ViewerSession 和模型身份 | 产品树、拾取、显隐/隔离/恢复及缺失明细在平台内可用，关闭/切换释放资源 |
+| 公司环境验收（待部署） | 逐文件表、可打开页面与能力矩阵更新 | 打开→首帧→可交互→树→拾取→显隐/隔离/恢复；记录 input/artifact bytes、峰值 RSS 与实际耗时；原有/新增组分开计数 |
 
 失败、Partial、外部依赖、已列举缺失分别报告；不预报成功率，不更换样本达标。接入与几何修复分开验收，平台适配不借机更改 CAD 语义。
 
-## 6. 本轮验证记录
+## 6. 接入准备验证记录（历史）
 
 本轮已完成文档统一与旧实现删除：
 
@@ -80,4 +88,10 @@ CAD 能力以独立工程 `CAD逆向` 的 `0911573`（STEP v0.3.3）及其 `CAPA
 - [可复现检查页](../frontend/tools/cad-preview-prep.html)：在 `frontend` 运行 `npm run dev -- --host 127.0.0.1 --port 3012`，打开 `http://127.0.0.1:3012/tools/cad-preview-prep.html`。使用实际 `FilePreviewOverlay`，不连接业务后端、不读取业务文件；仅开发环境入口，不加入生产构建入口。[页面记录](cad-integration-prep/preview.png)。
 - 删除 tracked 旧组件/声明/WASM 及本地 9 个已无引用的旧包、过期 `frontend/dist`，合计约 **57.15 MiB**（文件字节口径，非磁盘块测量）。依赖由 npm 更新，无其他现有包版本升级；shared 契约描述已同步并重新生成，生成结果无内容变化。
 
-未运行全量构建或无必要静态检查；尚未推送或部署。新 CAD 平台联调、真实登录/对象存储下载与部署验收属于后续适配，不由本轮 44 项测试代替。
+未运行全量构建或无必要静态检查；尚未推送或部署。后续 STEP 本地联调见下一节；44 项准备回归本身不代表 CAD 接入完成。
+
+## 7. STEP 本地接入交付
+
+W01/N02/N03 的平台打开、可交互、产品树、拾取、显隐/隔离/恢复与明细已验证；外部引用文件 S03 明确拒收。实际 HTTP/native 测试与旧预览/下载回归共 52 项通过，原工程 2 项任务生命周期测试通过；未做全量构建。逐文件耗时、bytes、RSS、缺失清单及截图见 [本地结果](cad-platform-integration/RESULTS.md)。运行与迁移方式见 [runtime README](../server/cad-engine/README.md)。
+
+本轮保留测试身份/存储夹具的明确标识；没有把本地夹具等同公司 SSO、数据库或对象存储。尚未推送、合并或部署。

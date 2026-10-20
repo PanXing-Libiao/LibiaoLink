@@ -1,4 +1,5 @@
 import { z } from "../zod.ts";
+import { CadPreviewViewerSchema } from "./cad.ts";
 import {
   DateTimeSchema,
   PageQuerySchema,
@@ -338,7 +339,7 @@ export const PreviewTargetSchema = z.enum(PREVIEW_TARGETS).openapi("PreviewTarge
 export const PREVIEW_STATUSES = ["ready", "not_ready", "failed"] as const;
 export const PreviewStatusSchema = z.enum(PREVIEW_STATUSES).openapi("PreviewStatus", {
   description:
-    "预览状态：ready 产物就绪（附短时签名 URL） / not_ready 尚未生成（服务端幂等补投生成任务、按三元组去重，前端轮询至 ready / failed —— 不引入请求约定） / failed 转换失败（记原因并降级「请下载」）",
+    "预览状态：ready 产物就绪（附短时签名 URL）或 viewer 入口可用（CAD 的模型转换状态另由 CadJob 判定） / not_ready 尚未生成（产物通道幂等补投、按三元组去重） / failed 转换失败（记原因并降级「请下载」）",
 });
 
 /** 预览查询参数（A4-06：任意历史版本可预览与下载；缺省 = 当前版本；不属于该文件 / 不存在 → 404）。 */
@@ -355,9 +356,9 @@ export const FilePreviewQuerySchema = z
  * download 保持可见（业务口径「原本的下载不要隐藏」）：图标原样保留，点击由浮层透明命中层接管 → 我方原文件下载链 + download 审计。
  * 安全语义在服务端受控端点（document.url 无存储凭证；鉴权 = DocServer outbox Bearer JWT，随 S3 落地）。
  */
-export const PREVIEW_VIEWER_KINDS = ["onlyoffice"] as const;
+export const PREVIEW_VIEWER_KINDS = ["onlyoffice", "cad"] as const;
 export const PreviewViewerKindSchema = z.enum(PREVIEW_VIEWER_KINDS).openapi("PreviewViewerKind", {
-  description: "在线查看器类型（一期仅 onlyoffice —— ONLYOFFICE 文档服务器查看器；后续查看器扩展在此枚举追加）",
+  description: "在线查看器类型：onlyoffice 文档 / cad 独立 CAD 模型入口（当前 STEP）",
 });
 
 /**
@@ -401,9 +402,9 @@ export const PreviewViewerEditorConfigSchema = z
   .openapi("PreviewViewerEditorConfig");
 
 /** 在线查看器配置（FilePreviewResponse.viewer；token = 对 documentType / document（含 permissions）/ editorConfig 逐字签发 + 服务端 iat / exp）。 */
-export const PreviewViewerSchema = z
+export const OnlyOfficePreviewViewerSchema = z
   .object({
-    kind: PreviewViewerKindSchema,
+    kind: z.literal("onlyoffice"),
     docServerUrl: z.string().openapi({ description: "DocServer 基址（前端据此加载 /web-apps/apps/api/documents/api.js 初始化 DocEditor；服务端配置下发）" }),
     documentType: z.enum(["word", "cell", "slide", "pdf"]).openapi("PreviewViewerDocumentType", {
       description: "文档大类（word 文档 / cell 表格 / slide 演示 / pdf 文档；由文件类型映射）",
@@ -412,9 +413,12 @@ export const PreviewViewerSchema = z
     editorConfig: PreviewViewerEditorConfigSchema,
     token: z.string().openapi({ description: "查看器 JWT（HS256；载荷 = documentType / document（含 permissions）/ editorConfig 逐字签发 + iat / exp；浏览器持有 —— 泄漏面仅只读会话，取原文件依赖服务端端点鉴权）" }),
   })
-  .openapi("PreviewViewer", {
+  .openapi("OnlyOfficePreviewViewer", {
     description: "在线查看器配置（ONLYOFFICE 查看通道；替代「转换产物 + 短时签名 URL」路径 —— 预览链全程无预签名）",
   });
+
+export const PreviewViewerSchema = z.discriminatedUnion("kind", [OnlyOfficePreviewViewerSchema, CadPreviewViewerSchema])
+  .openapi("PreviewViewer", { description: "只读查看入口；Office 与 CAD 按 kind 区分，CAD 转换进度独立显示。" });
 
 /** 预览状态响应（GET /files/{id}/preview；D2-04 短时签名 + 禁止匿名读取、D2-05 失败降级、D2-06 缓存、D2-07 审计）。 */
 export const FilePreviewResponseSchema = z
@@ -445,7 +449,7 @@ export const FilePreviewResponseSchema = z
     generatedAt: DateTimeSchema.nullable().openapi({ description: "产物生成时间（仅 ready；对齐 preview_artifacts.generated_at —— 查看时间在审计里）" }),
   })
   .openapi("FilePreviewResponse", {
-    description: "文件预览状态与短时签名地址 / 查看器配置（异步产物；未就绪 / 失败为 200 语义 —— not_ready 时服务端幂等补投生成任务，前端轮询至 ready / failed；ONLYOFFICE 查看器通道（S1 契约 / S3 起签发）：ready + viewer 非空、url 为空）",
+    description: "文件预览状态与短时签名地址 / 查看器配置；产物通道 not_ready 时幂等补投，前端轮询至 ready / failed。ONLYOFFICE / CAD 查看入口为 ready + viewer 非空、url 为空；CAD 的完整模型就绪由独立 CadJob 判定。",
   });
 
 export const FileListQuerySchema = z

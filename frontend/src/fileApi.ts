@@ -58,10 +58,10 @@ type UploadPartsResponse = { parts: Array<{ partNumber: number; url: string }> }
 type UploadCompleteResponse = { file: { id: string; name: string } };
 
 /** ONLYOFFICE 查看器配置（契约 PreviewViewer 子集 · S4 直接组装 DocEditor 配置；token = documentType / document（含 permissions）/ editorConfig 逐字签发）。 */
-export type PreviewViewerConfig = {
-  kind: string;
+export type OnlyOfficePreviewViewerConfig = {
+  kind: "onlyoffice";
   docServerUrl: string;
-  documentType: "word" | "cell" | "slide";
+  documentType: "word" | "cell" | "slide" | "pdf";
   document: {
     title: string;
     url: string;
@@ -73,6 +73,15 @@ export type PreviewViewerConfig = {
   editorConfig: { mode: "view"; lang: string; user: { id: string; name: string } };
   token: string;
 };
+
+export type CadPreviewViewerConfig = {
+  kind: "cad";
+  fileId: string;
+  versionId: string;
+  sourceSHA256: string;
+  engineVersion: string;
+};
+export type PreviewViewerConfig = OnlyOfficePreviewViewerConfig | CadPreviewViewerConfig;
 
 /** 预览状态响应（契约 FilePreviewResponse 子集）：ready 才有签名地址 / 查看器配置（两通道互斥）。 */
 type FilePreviewResponse = {

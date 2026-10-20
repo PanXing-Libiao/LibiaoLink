@@ -12,6 +12,7 @@ import { buildPreviewContentUrl, signHs256Jwt } from "./onlyoffice.jwt.js";
 import { buildPreviewJobPayload, PREVIEW_JOB_TOPIC, previewJobDedupeKey, type PreviewTarget } from "./preview.job.js";
 import { PreviewRepository, type PreviewArtifactKey, type PreviewArtifactRow } from "./preview.repository.js";
 import { isCadPreviewPending, isImageFile, previewTargetsFor, viewerChannelFor, type ViewerChannel } from "./preview.targets.js";
+import { CAD_ENGINE_VERSION } from "./cad-engine.client.js";
 
 type FilePreviewResponse = z.infer<typeof FilePreviewResponseSchema>;
 
@@ -50,7 +51,7 @@ const VIEWER_PERMISSIONS = {
  *
  * 读取侧的**终态降级**（不落表、不投任务）：
  * - 文件尚无版本（未完成过上传）：`failed` + 「尚无版本」；
- * - CAD 接入准备（ADR-035）：`failed` + 「CAD 在线预览正在升级」，保留独立的原文件下载；
+ * - CAD（ADR-035）：启用运行环境时 STEP 返回独立查看入口，其余保留提示与原文件下载；
  * - 判不出渲染通道（如 `.zip`）：`failed` + 「暂不支持在线预览」。
  * 返回 `failed` 而不是 `not_ready`，是为了让前端**轮询有终点**（契约：前端轮询至 ready / failed）。
  *
@@ -90,6 +91,13 @@ export class PreviewReadService {
 
     // ADR-035：旧解析器已删除。先按版本扩展名拦截，避免误报 image/Office MIME 再签出原 CAD。
     if (isCadPreviewPending({ fileName: channelName })) {
+      if (this.config.env.CAD_ENGINE_PYTHON && /\.(step|stp)$/i.test(channelName)) {
+        return {
+          fileId: file.id, versionId: version.id, status: "ready", target: null,
+          viewer: { kind: "cad", fileId: file.id, versionId: version.id, sourceSHA256: version.contentHash, engineVersion: CAD_ENGINE_VERSION },
+          url: null, expiresAt: null, pipelineVersion: null, generatedAt: null, reason: null,
+        };
+      }
       return this.degrade(file.id, version.id, "CAD 在线预览正在升级，暂不可用，请下载原文件查看");
     }
 
