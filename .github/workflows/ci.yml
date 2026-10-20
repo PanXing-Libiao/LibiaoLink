@@ -234,6 +234,13 @@ jobs:
         env:
           M5_06_2B_REPLAY_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
         run: node scripts/m5-06-2b-replay.mjs
+      # M5-06-3（A14 待办主体 / 重复展开 / A01 已提醒回读 · S8-4 · lan，Push 276）：请 px 复核（.github/ 属 px 线；先例 Push 156/157）
+      # 使用应用角色走真实读写；必须在启动 API / 其它业务回放之前跑，夹具在脚本 finally 中清理。
+      - name: M5-06-3 todo reminders replay
+        working-directory: server
+        env:
+          M5_06_3_REPLAY_DATABASE_URL: postgresql://libiaolink_api@127.0.0.1:5432/libiaolink
+        run: node scripts/m5-06-3-replay.mjs
       - name: Start api in background
         working-directory: server
         env:

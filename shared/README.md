@@ -154,6 +154,8 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 
 > **本表状态（Push 266 · M5-06 S8-4 契约切片）**：自动化规则管理 6 操作 + 发送记录 3 操作入 paths；`A08` 补入规则码（A03 不恢复），新增 `AutomationRuleView` / `AutomationRulePatchBody` / `AutomationRuleTestBody` / `AutomationRuleTestResponse` / `AutomationConditionEvaluation` / `AutomationRun` / `AutomationRunListQuery` / `AutomationRunListResponse` / `NotifyDeliveryMessage` / `NotifyDeliveryAttempt` / `NotifyDeliveryListQuery` / `NotifyDeliveryListResponse` / `NotifyDeliveryDetail` / `NotifyDeliveryResendBody` / `NotifyDeliveryResendResponse` 等 schema；权限 32 → 36（四键仅 admin），审计对象增 `automation_rule` / `notify_delivery`；保存 / 重发体严格拒绝额外字段，尝试记录渠道不含 `inbox`，可空引用生成 `anyOf [ref, null]`。**paths 101 → 109、operations 136 → 145、schemas 272 → 308**；`scripts/m5-06-contract-replay.mjs` 77 / 77，生成物零漂移。本刀无迁移、无服务端实现。（`shared/` 属 wmj 线，lan 代做请 wmj 复核。）
 
+> **本表状态（Push 276 · M5-06-3 A01 已提醒 · lan；本文件属 wmj 线，代记请 wmj 复核）**：`DailyReportRosterEntry` 增必填可空 `reminderSentAt`（DateTime | null；A7-05 当日 A01 漏填提醒成功发送时刻，站内信 / 企微单聊任一 `last_state=sent` 即非空；失败 / 排队 / 前一日不冒充已提醒）。`GET /api/v1/projects/{id}/reports/missing` 的路径与响应结构不变，仅加字段；生成物同批重出（paths = **109** / operations = **145** / schemas = **308** 不变），`scripts/m5-06-contract-replay.mjs` **81 / 81** 通过、drift 零漂移。本刀另落 `todos` 数据面与 A14 待办主体展开，无新增 HTTP 路径；A14 规则仍停用。
+
 ### M1 身份与平台底座（h1 + 平台）
 
 | 卡片 | 契约增量 | 类型 |

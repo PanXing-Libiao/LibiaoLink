@@ -59,9 +59,16 @@
 - **运行记录**：`AutomationRunRepository.list / count / findById`，筛选 rule / status / source / topic / entity / 时间区间，`createdAt desc, id desc` 分页；详情返回条件 / 动作 / 消息快照与错误。
 - **验证**：`test/automation-service.test.ts` 18 例门禁；`scripts/m5-06-1b-replay.mjs` Docker PG18 **17/17**（规则读面 / 乐观锁 / 只读字段 409 / 非法收件人 400 / job 联动 / 审计同事务 / A08 阶段与 R06 项目完成试运行 / 试运行零副作用 / 100 主体截断 / 运行记录 / 真实管理员 HTTP 会话）；详见 `docs/M5-06-回放证据.md`。
 
+### M5-06-3 · A14 待办主体与重复展开（Push 276 · lan；迁移请 wmj 复核）
+
+- **迁移** `0062_todos.sql`：`todos` 落标题 / 内容 / 关联项目或任务 / 首次提醒时刻 / `repeat_rule`（none / daily / weekly / monthly）/ `repeat_until` / `reminder_user_ids` / 状态 / 完成时刻 / 乐观锁版本；逐次提醒日不预展开，由主体读取层按窗口求值。
+- **主体**：`AutomationSubjectReader.loadWindow()` 追加 todo 主体；`todoOccursOn` 按 Asia/Shanghai 业务日展开，`monthly` 只在每月同日命中，短月无该日跳过；已删除提醒对象过滤，全部不可用时保留无收件人主体供引擎记 `recipient_missing`。
+- **幂等键**：单对象沿用 `A14:<todoId>:<date>`；多对象逐人展开 `entityId = <todoId>:<memberId>`、幂等键 = `A14:<todoId>:<memberId>:<date>`，双渠道同键，避免串人。A14 仍 `enabled:false`。
+- **验证**：`scripts/m5-06-3-replay.mjs` Docker PG18 **8/8**（daily / weekly / monthly、短月、多对象、已完成、删除对象、重复规划、outbox 唯一约束）；证据见 `docs/M5-06-回放证据.md`。
+
 ## 边界与后续
 
 - 依赖方向：automation → calendar（`index.ts`：T±N 求值 / 顺延 / 业务日时刻）。不反向依赖业务模块。
-- 未落（lan 线）：M5-06-2A / 2B 发送记录归档与重发；M5-03 企微通道 / M5-04 SSE 与后续（站内信投递内核已落 · lan Push 178）、S7-4 规则接线（`RULE_EVENT_TOPICS` 事件消费 + `automation-schedule.job` handler）—— **已落地（Push 180 · lan；落点 = outbox 接线层 `automation-subjects.ts` / `automation-wiring.ts`，引擎侧零改动）**。`automation_rules` 落库形态已在 1A 落定（A03 同 code 两窗口场景随 Push 215 消解）；1B 管理面已在 Push 271 落定。
-- 未落（数据面）：`todos` 表与重复规则展开（A14 落库）、漏填名单「已提醒」标记（随 M5-06 发送记录）—— 均已在文案文档登记为差异。
+- 已落（lan 线）：M5-06-2A / 2B 发送记录归档与重发（Push 272 / 273）；S7-4 规则接线（`RULE_EVENT_TOPICS` 事件消费 + `automation-schedule.job` handler，Push 180，落点 = outbox 接线层 `automation-subjects.ts` / `automation-wiring.ts`，引擎侧零改动）；M5-06-3 A14 待办主体与重复展开（Push 276）。`automation_rules` 落库形态已在 1A 落定（A03 同 code 两窗口场景随 Push 215 消解）；1B 管理面已在 Push 271 落定。
+- A14 当前只完成待办表与提醒主体展开，规则仍 `enabled:false`；待办 CRUD / 前端入口与业务验收未在本切片内。A01「已提醒」读面归 report-issue / notify 发送归档（Push 276）。
 - 合并文案：R07 / A01 的分组形态（同一收件人一条清单式消息）为先行口径（模板 `R07_APP_MERGED` / `A01_INBOX_MERGED` / `A01_WECOM_MERGED`）；R07 自 2026-10-19（Push 371）起逐条输出「项目 + 任务」两行并以换行连接，A01 仍按项目名「、」连接。

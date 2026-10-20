@@ -27,6 +27,7 @@ import {
 } from "../src/modules/notifications.ts";
 import { AUDIT_OBJECT_TYPES } from "../src/modules/audits.ts";
 import { PERMISSION_KEYS } from "../src/modules/permissions.ts";
+import { DailyReportMissingResponseSchema } from "../src/modules/reports.ts";
 
 const at = "2026-10-20T09:00:00.000Z";
 const ruleId = "11111111-1111-4111-8111-111111111111";
@@ -320,6 +321,52 @@ const pathKeys = Object.keys(openapi.paths);
 check(
   "OpenAPI deliveries 静态段声明在 notifications/{id} 之前",
   pathKeys.indexOf("/api/v1/notifications/deliveries") < pathKeys.indexOf("/api/v1/notifications/{id}"),
+);
+
+const missingResponse = {
+  date: "2026-10-20",
+  isWorkday: true,
+  dayKind: "workday",
+  dayName: null,
+  memberCount: 1,
+  submittedCount: 0,
+  draftCount: 0,
+  missingCount: 1,
+  members: [
+    {
+      userId: recipientId,
+      username: null,
+      displayName: "张三",
+      roleInProject: "project_member",
+      reportId: null,
+      state: null,
+      submittedAt: null,
+      reminderSentAt: at,
+    },
+  ],
+  missingUserIds: [recipientId],
+};
+check("A01 漏填名单 · reminderSentAt 已提醒可解析", DailyReportMissingResponseSchema.safeParse(missingResponse).success);
+check(
+  "A01 漏填名单 · reminderSentAt 可为 null",
+  DailyReportMissingResponseSchema.safeParse({
+    ...missingResponse,
+    members: [{ ...missingResponse.members[0], reminderSentAt: null }],
+  }).success,
+);
+check(
+  "A01 漏填名单 · 缺 reminderSentAt 拒绝",
+  !DailyReportMissingResponseSchema.safeParse({
+    ...missingResponse,
+    members: [{ userId: recipientId, username: null, displayName: "张三", roleInProject: "project_member", reportId: null, state: null, submittedAt: null }],
+  }).success,
+);
+const reminderSentAtProperty = componentProperty("DailyReportRosterEntry", "reminderSentAt");
+const reminderSentAtAllOf = Array.isArray(reminderSentAtProperty?.allOf) ? reminderSentAtProperty.allOf : [];
+check(
+  "OpenAPI DailyReportRosterEntry.reminderSentAt 可空",
+  reminderSentAtAllOf.some((item) => item?.$ref === "#/components/schemas/DateTime") &&
+    reminderSentAtAllOf.some((item) => Array.isArray(item?.type) && item.type.includes("null")),
 );
 
 let operationCount = 0;
