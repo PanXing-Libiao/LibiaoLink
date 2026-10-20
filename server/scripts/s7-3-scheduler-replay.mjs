@@ -22,7 +22,8 @@
  *       node --env-file-if-exists=.env scripts/s7-3-scheduler-replay.mjs [--out <报告.md>] [--json <证据.json>] [--keep]
  * 退出码：断言全过 = 0，否则 = 1（可当门禁用）。
  * 说明：本机无 PG 时只做语法门禁；真机证据以 CI database job 为准（不伪造）。合成 kind / 去重键前缀独立，
- *   全部产出取契约白名单主题 notify.message（回放环境不启动消费侧 → 稳定留在 pending）→ 不干扰生产领取侧。
+ *   全部产出取契约白名单主题 notify.message（回放环境不启动消费侧 → 稳定留在 pending）→ 不干扰生产领取侧；
+ *   开跑前把非本回放 pending job 临时推到远期（保留原行），finally 恢复原 run_at，避免 seed 规则 job 混入领取统计。
  */
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -228,6 +229,8 @@ async function runMain() {
     capped: KIND_PREFIX + "capped",
   };
   const runs = [];
+  /** 非本回放 pending job 的原值（测试期间临时推到远期，finally 恢复）。 */
+  const parkedJobs = [];
   const makeHandler = (kind, behavior) => ({
     run: async (context) => {
       runs.push({
@@ -299,6 +302,26 @@ async function runMain() {
     const result = await db.pool.query("select count(*)::int as n from outbox_events where dedupe_key = $1", [dedupeKey]);
     return result.rows[0].n;
   };
+  const parkUnrelatedPendingJobs = async () => {
+    const found = await db.pool.query(
+      "select id, run_at, updated_at from jobs where status = 'pending' and kind not like $1 order by id",
+      [KIND_PREFIX + "%"],
+    );
+    parkedJobs.push(...found.rows);
+    if (found.rows.length > 0) {
+      await db.pool.query(
+        "update jobs set run_at = now() + interval '100 years', updated_at = now() where id = any($1::bigint[])",
+        [found.rows.map((row) => row.id)],
+      );
+      note("| PARK | 暂避非本回放 pending jobs " + found.rows.length + " 条（finally 恢复原 run_at） |");
+    }
+  };
+  const restoreParkedJobs = async () => {
+    for (const row of parkedJobs) {
+      await db.pool.query("update jobs set run_at = $2, updated_at = $3 where id = $1", [row.id, row.run_at, row.updated_at]);
+    }
+    if (parkedJobs.length > 0) note("| RESTORE | 已恢复非本回放 pending jobs " + parkedJobs.length + " 条 |");
+  };
 
   evidence.anchors = {
     tag,
@@ -323,6 +346,7 @@ async function runMain() {
       "jobs=" + baselineJobs.rows[0].n + " / outbox=" + baselineOutbox,
       baselineJobs.rows[0].n === 0 && baselineOutbox === 0,
     );
+    await parkUnrelatedPendingJobs();
 
     // --------------------------------------------- 证据一：单活 advisory lock
     const lockA = await store.tryAdvisoryLock(OUTBOX_SCHEDULER.lockName);
@@ -632,6 +656,13 @@ async function runMain() {
     if (!assertionThrown) failures += 1;
     process.stderr.write("S7-3 回放失败：" + messageOf(error) + "\n");
   } finally {
+    try {
+      await restoreParkedJobs();
+    } catch (error) {
+      failures += 1;
+      assertionThrown = true;
+      note("| FAIL | 非本回放 pending jobs 恢复失败：" + messageOf(error) + " |");
+    }
     try {
       if (args.keep === true) {
         note("| KEEP | --keep：保留本脚本 jobs / outbox 行（前缀 " + KIND_PREFIX + " / " + DEDUPE_PREFIX + "） |");
