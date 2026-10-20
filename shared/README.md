@@ -59,7 +59,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | 乐观锁 | 更新必须回传 `version`；冲突返回 409（VERSION_CONFLICT） |
 | 幂等 | 写操作支持 `Idempotency-Key` 头；重复提交返回首次结果 |
 | 时间 | 时间戳 ISO8601（UTC 存储，前端按 Asia/Shanghai 展示）；业务日期 `YYYY-MM-DD` |
-| 可见性 | 资源不存在与无权访问统一 404 语义（防 IDOR） |
+| 可见性 | 记录级不可见与资源不存在统一 404 语义（防 IDOR）；功能权限缺失返回 403 FORBIDDEN（不随目标 id 变化，不泄漏单资源存在性） |
 | 错误模型 | 统一信封 `{ code, message, details[], traceId }`；错误码见 src/common/errors.ts（与 v0.2 §7.2 同步维护） |
 | 审计对象类型 | `AUDIT_OBJECT_TYPES`：project / project_member / task / node / stage / dict_item / blueprint / calendar_day / calendar_settings / file（M4-01 · PR-4 新增；审计对象 id = fileId，上传会话事件经 `metadata.uploadId` 定位 —— 扩枚举而非新增 `upload_session`，避免为同一业务对象开两套检索口径） / change（M4-04 变更记录） / stakeholder（j6 干系人） / **daily_report**（M6-01 日报；对象 id = reportId） / **issue**（M6-02 / M6-03 问题；对象 id = issueId，含日报自动生成与手工流转） / task_node / task_template / user / wecom_dm_binding / **automation_rule**（M5-06 规则变更；对象 id = 规则 id） / **notify_delivery**（M5-06 管理员重发；对象 id = 消息归档 id） |
 | 审计动作 | `AUDIT_ACTIONS`：create / update / delete / progress / complete / advance / rollback / **preview**（契约切片 · M4-05 前置；**2026-10-12 起停用 —— 操作日志不再记录预览动作（Push 283），值保留供历史行回读 / 筛选** —— 库侧 `ck_audit_logs_action` 已随迁移 `0027`（M4-05 数据层 · lan 线 Push 165）扩为十值）/ **download**（Push 160 定案；A4-10：离线下载受权限控制并记日志 —— 对象类型 file + metadata 记 versionId；库侧已随迁移 `0027` 一次扩至十值） / deny |
