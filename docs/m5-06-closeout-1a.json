@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-20T07:22:19.505Z",
-  "database": "postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink_m5_06_closeout_20261020",
+  "generatedAt": "2026-10-20T07:31:03.501Z",
+  "database": "postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink_m5_06_closeout_59aebae",
   "pass": 10,
   "fail": 0,
   "checks": [
@@ -22,7 +22,7 @@
     {
       "name": "automation_runs：唯一键去重 / rule_id 回填 / 查询",
       "ok": true,
-      "detail": "insert=1 / duplicate=0 / ruleId=a8e85d95-d834-432e-9fad-8e58b366f042"
+      "detail": "insert=1 / duplicate=0 / ruleId=4a641e3c-6461-4b8e-9ebc-39b19cf0bf00"
     },
     {
       "name": "事件接线真事务：R02 产出 4 条 outbox + 1 条 run；重放零新增",

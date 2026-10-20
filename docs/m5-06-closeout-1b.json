@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-20T07:22:40.992Z",
-  "database": "postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink_m5_06_closeout_20261020",
+  "generatedAt": "2026-10-20T07:31:15.896Z",
+  "database": "postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink_m5_06_closeout_59aebae",
   "pass": 17,
   "fail": 0,
   "checks": [
