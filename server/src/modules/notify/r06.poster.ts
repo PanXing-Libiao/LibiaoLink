@@ -8,7 +8,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createCanvas, GlobalFonts, type SKRSContext2D } from "@napi-rs/canvas";
+import type { SKRSContext2D } from "@napi-rs/canvas";
 
 export interface R06PosterView {
   projectCode: string;
@@ -49,9 +49,17 @@ const FONT_SANS = "LibiaoLink Source Han Serif";
 const FONT_SERIF = "LibiaoLink Source Han Serif Numerals";
 const BUNDLED_SERIF = "SourceHanSerifSC-SemiBold.otf";
 const BUNDLED_SERIF_BOLD = "SourceHanSerifSC-Bold.otf";
+type NapiCanvas = typeof import("@napi-rs/canvas");
+let canvasApiPromise: Promise<NapiCanvas> | null = null;
 let fontsReady = false;
 let customSansMode = false;
 let customSerifMode = false;
+
+/** Canvas 原生模块按需加载；加载失败由调用方回退静态图，不阻塞 api / worker 启动。 */
+async function loadCanvasApi(): Promise<NapiCanvas> {
+  canvasApiPromise ??= import("@napi-rs/canvas");
+  return await canvasApiPromise;
+}
 
 function fontPath(fileName: string): string {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -66,7 +74,7 @@ function fontPath(fileName: string): string {
   return found;
 }
 
-function ensureFonts(paths?: R06PosterFontPaths): void {
+function ensureFonts(globalFonts: NapiCanvas["GlobalFonts"], paths?: R06PosterFontPaths): void {
   if (fontsReady) {
     return;
   }
@@ -76,9 +84,9 @@ function ensureFonts(paths?: R06PosterFontPaths): void {
   // 默认字体 = 仓库内思源宋体（SIL OFL）；外部路径只做已授权字体覆盖，不改字号 / 缩放口径。
   customSansMode = true;
   customSerifMode = true;
-  const sans = customSans === "" ? GlobalFonts.registerFromPath(fontPath(BUNDLED_SERIF), FONT_SANS) : GlobalFonts.registerFromPath(customSans, FONT_SANS);
-  const sansBold = customSansBold === "" ? GlobalFonts.registerFromPath(fontPath(BUNDLED_SERIF_BOLD), FONT_SANS) : GlobalFonts.registerFromPath(customSansBold, FONT_SANS);
-  const serif = customSerif === "" ? GlobalFonts.registerFromPath(fontPath(BUNDLED_SERIF), FONT_SERIF) : GlobalFonts.registerFromPath(customSerif, FONT_SERIF);
+  const sans = customSans === "" ? globalFonts.registerFromPath(fontPath(BUNDLED_SERIF), FONT_SANS) : globalFonts.registerFromPath(customSans, FONT_SANS);
+  const sansBold = customSansBold === "" ? globalFonts.registerFromPath(fontPath(BUNDLED_SERIF_BOLD), FONT_SANS) : globalFonts.registerFromPath(customSansBold, FONT_SANS);
+  const serif = customSerif === "" ? globalFonts.registerFromPath(fontPath(BUNDLED_SERIF), FONT_SERIF) : globalFonts.registerFromPath(customSerif, FONT_SERIF);
   if (sans === null || sansBold === null || serif === null) {
     throw new Error("R06 poster font registration failed");
   }
@@ -209,7 +217,7 @@ function fitFontSize(ctx: SKRSContext2D, weight: number, text: string, maxWidth:
   return size;
 }
 
-function drawGrain(ctx: SKRSContext2D): void {
+function drawGrain(ctx: SKRSContext2D, createCanvas: NapiCanvas["createCanvas"]): void {
   const tile = createCanvas(5, 5);
   const tileCtx = tile.getContext("2d");
   tileCtx.fillStyle = "rgba(63,59,51,0.38)";
@@ -578,14 +586,15 @@ function drawDetail(ctx: SKRSContext2D, view: R06PosterView, metrics: R06PosterM
   ctx.textAlign = "left";
 }
 
-export function renderR06Poster(view: R06PosterView, fonts?: R06PosterFontPaths): Buffer {
-  ensureFonts(fonts);
+export async function renderR06Poster(view: R06PosterView, fonts?: R06PosterFontPaths): Promise<Buffer> {
+  const canvasApi = await loadCanvasApi();
+  ensureFonts(canvasApi.GlobalFonts, fonts);
   const metrics = buildR06PosterMetrics(view);
-  const canvas = createCanvas(WIDTH, HEIGHT);
+  const canvas = canvasApi.createCanvas(WIDTH, HEIGHT);
   const ctx = canvas.getContext("2d");
   drawBackground(ctx);
   drawNameWall(ctx, view.participants.length > 0 ? view.participants : view.managers);
-  drawGrain(ctx);
+  drawGrain(ctx, canvasApi.createCanvas);
   drawHeader(ctx, view.status);
   drawCopy(ctx, metrics);
   drawMeter(ctx, view, metrics);

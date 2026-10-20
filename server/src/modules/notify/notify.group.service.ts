@@ -466,7 +466,7 @@ export class NotifyGroupService {
         this.logger.warn("R06 动态海报数据缺失，回退静态图（文字已发送）：" + input.dedupeKey);
         return null;
       }
-      content = renderR06Poster(
+      content = await renderR06Poster(
         { ...data, completedAt: this.clock.now() },
         {
           sans: (this.config.env.WECOM_R06_FONT_SANS_PATH ?? "").trim(),
