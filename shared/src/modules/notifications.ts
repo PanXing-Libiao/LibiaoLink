@@ -1,6 +1,6 @@
 import { z } from "../zod.ts";
-import { NotifyChannelSchema } from "./automation.ts";
-import { DateTimeSchema, PageQuerySchema, UuidSchema } from "../common/conventions.ts";
+import { NotifyChannelSchema, NotifyExternalChannelSchema } from "./automation.ts";
+import { DateTimeSchema, PageQuerySchema, UuidSchema, paginated } from "../common/conventions.ts";
 
 /**
  * 通知（站内信 · 消息中心）契约（S7-4 · j1 / M5-04 首刀 · lan）。
@@ -155,6 +155,114 @@ export const NotifyGroupMessagePayloadSchema = z
     description: "群播报投递事件载荷（outbox 主题 notify.group）：目标项目 + 标题 / 正文 + 关联对象 + 模板码；chatid 不进载荷（投递时读绑定）",
   });
 export type NotifyGroupMessagePayload = z.infer<typeof NotifyGroupMessagePayloadSchema>;
+
+/**
+ * 消息级发送归档（M5-06-2A / C5-03 全量留档）：一条 outbox 消息一行；尝试明细单独存
+ * `notify_deliveries`。`lastState = pending` 表示已归档但外部渠道尚未发起第一次尝试。
+ */
+export const NOTIFY_DELIVERY_TOPICS = ["notify.message", "notify.group"] as const;
+export const NotifyDeliveryTopicSchema = z.enum(NOTIFY_DELIVERY_TOPICS).openapi("NotifyDeliveryTopic", {
+  description: "发送归档来源主题：notify.message 个人消息 / notify.group 群播报",
+});
+export type NotifyDeliveryTopic = z.infer<typeof NotifyDeliveryTopicSchema>;
+
+export const NOTIFY_DELIVERY_MESSAGE_STATES = ["pending", "sent", "failed", "deferred", "dead"] as const;
+export const NotifyDeliveryMessageStateSchema = z.enum(NOTIFY_DELIVERY_MESSAGE_STATES).openapi("NotifyDeliveryMessageState", {
+  description: "消息最新状态：pending 尚未尝试 / sent 已受理 / failed 可重试失败 / deferred 限速延期 / dead 死信",
+});
+export type NotifyDeliveryMessageState = z.infer<typeof NotifyDeliveryMessageStateSchema>;
+
+export const NOTIFY_DELIVERY_ATTEMPT_STATES = ["sent", "failed", "deferred", "dead"] as const;
+export const NotifyDeliveryAttemptStateSchema = z.enum(NOTIFY_DELIVERY_ATTEMPT_STATES).openapi("NotifyDeliveryAttemptState", {
+  description: "单次投递尝试状态（pending 仅属于消息级，不落尝试表）",
+});
+export type NotifyDeliveryAttemptState = z.infer<typeof NotifyDeliveryAttemptStateSchema>;
+
+/** 消息级发送记录读面（目标地址只回掩码；完整 target / payload 不入本 schema）。 */
+export const NotifyDeliveryMessageSchema = z
+  .object({
+    id: z.number().int().positive().openapi({ description: "消息归档 id" }),
+    sourceDedupeKey: z.string().min(1).max(256).openapi({ description: "来源 outbox 幂等键（归档幂等）" }),
+    topic: NotifyDeliveryTopicSchema,
+    channel: NotifyChannelSchema,
+    recipientId: z.union([UuidSchema, z.null()]).openapi({ description: "站内信 / 个人企微收件人 id；群播报 = null" }),
+    recipientLabel: z.string().nullable().openapi({ description: "收件人展示值或掩码目标；不得返回 Secret" }),
+    title: z.string().nullable(),
+    body: z.string().min(1),
+    templateCode: z.string().nullable(),
+    ruleCode: z.string().max(32).nullable().openapi({ description: "来源规则码；非规则消息 = null" }),
+    refType: z.string().max(40).nullable(),
+    refId: z.string().max(64).nullable(),
+    resendOfMessageId: z.number().int().positive().nullable().openapi({ description: "重发消息指向的原消息 id；普通消息 = null" }),
+    lastState: NotifyDeliveryMessageStateSchema,
+    attemptCount: z.number().int().min(0),
+    lastError: z.string().nullable().openapi({ description: "最近失败 / 延期原因（已掩码）" }),
+    sentAt: z.union([DateTimeSchema, z.null()]),
+    createdAt: DateTimeSchema,
+    updatedAt: DateTimeSchema,
+  })
+  .openapi("NotifyDeliveryMessage", {
+    description: "消息级发送归档（C2-07 / C5-03）：正文、渠道、掩码收件人、最新状态与尝试次数；独立于 outbox 清理",
+  });
+export type NotifyDeliveryMessage = z.infer<typeof NotifyDeliveryMessageSchema>;
+
+/** 单次投递尝试（notify_deliveries）：target 只回掩码。 */
+export const NotifyDeliveryAttemptSchema = z
+  .object({
+    id: z.number().int().positive(),
+    messageId: z.number().int().positive(),
+    channel: NotifyExternalChannelSchema,
+    targetMasked: z.string().min(1).openapi({ description: "投递目标掩码（如 userid / chatid 末 4 位）" }),
+    state: NotifyDeliveryAttemptStateSchema,
+    attempts: z.number().int().min(0).openapi({ description: "该尝试序号；deferred = 计划尝试序号、未发起 HTTP" }),
+    error: z.string().nullable().openapi({ description: "失败 / 延期原因（已掩码）" }),
+    sentAt: z.union([DateTimeSchema, z.null()]).openapi({ description: "API 受理成功时刻；sent 以外 = null" }),
+    createdAt: DateTimeSchema,
+  })
+  .openapi("NotifyDeliveryAttempt", { description: "发送尝试明细（每次外部投递尝试一行；目标只回掩码）" });
+export type NotifyDeliveryAttempt = z.infer<typeof NotifyDeliveryAttemptSchema>;
+
+export const NotifyDeliveryListQuerySchema = z
+  .object({
+    channel: NotifyChannelSchema.optional(),
+    lastState: NotifyDeliveryMessageStateSchema.optional(),
+    ruleCode: z.string().max(32).optional(),
+    recipientId: UuidSchema.optional(),
+    from: DateTimeSchema.optional().openapi({ description: "归档时刻下界（含）" }),
+    to: DateTimeSchema.optional().openapi({ description: "归档时刻上界（含）" }),
+    q: z.string().min(1).max(200).optional().openapi({ description: "标题或正文关键字" }),
+    page: PageQuerySchema.shape.page,
+    limit: PageQuerySchema.shape.limit,
+  })
+  .openapi("NotifyDeliveryListQuery", {
+    description: "发送记录查询（渠道 / 最新状态 / 规则 / 收件人 / 时间区间 / 关键字 + 分页）",
+  });
+export type NotifyDeliveryListQuery = z.infer<typeof NotifyDeliveryListQuerySchema>;
+
+export const NotifyDeliveryListResponseSchema = paginated(NotifyDeliveryMessageSchema).openapi("NotifyDeliveryListResponse", {
+  description: "消息级发送记录列表（createdAt desc, id desc）",
+});
+export type NotifyDeliveryListResponse = z.infer<typeof NotifyDeliveryListResponseSchema>;
+
+export const NotifyDeliveryDetailSchema = NotifyDeliveryMessageSchema.extend({
+  attempts: z.array(NotifyDeliveryAttemptSchema).openapi({ description: "全部投递尝试（含 deferred / failed / dead / sent）" }),
+})
+  .openapi("NotifyDeliveryDetail", { description: "发送记录详情：消息归档 + 全部尝试明细" });
+export type NotifyDeliveryDetail = z.infer<typeof NotifyDeliveryDetailSchema>;
+
+/** 重发请求为空对象；幂等键走 Idempotency-Key 请求头（D7）。 */
+export const NotifyDeliveryResendBodySchema = z
+  .object({})
+  .strict()
+  .openapi("NotifyDeliveryResendBody", { description: "重发请求（空对象；Idempotency-Key 必填，正文 / 收件人 / 渠道不可改写）" });
+export type NotifyDeliveryResendBody = z.infer<typeof NotifyDeliveryResendBodySchema>;
+
+export const NotifyDeliveryResendResponseSchema = z
+  .object({
+    message: NotifyDeliveryMessageSchema,
+  })
+  .openapi("NotifyDeliveryResendResponse", { description: "重发已受理：返回新建的消息归档（lastState = pending）" });
+export type NotifyDeliveryResendResponse = z.infer<typeof NotifyDeliveryResendResponseSchema>;
 
 /**
  * 收件箱条目（C5-01 / C5-03 全量留档）。
@@ -394,8 +502,8 @@ export type NotificationSnoozeListResponse = z.infer<typeof NotificationSnoozeLi
 
 /** 绑定码位数（D3：6 位数字）。 */
 export const WECOM_DM_BINDING_CODE_LENGTH = 6;
-/** 绑定码有效期（D3 修订 v1.8：5 分钟 —— 原 10 分钟）。 */
-export const WECOM_DM_BINDING_CODE_TTL_MS = 5 * 60_000;
+/** 绑定码有效期（2026-10-20 安全修订：3 分钟）。 */
+export const WECOM_DM_BINDING_CODE_TTL_MS = 3 * 60_000;
 /**
  * 绑定码生成频率窗口（D3 修订 v1.8：3 分钟）。
  * 罚时锚点 = 窗口内**最近一次**取码（v1.9 修订）：倒计时恒为「最近取码 + 3 分钟」，不随被拦重试延长；
@@ -412,11 +520,11 @@ export const WecomDmBindingCodeSchema = z
       .string()
       .regex(/^[0-9]{6}$/)
       .openapi({ description: "6 位数字绑定码（用户在企微里把这条码发给机器人完成绑定）", example: "482913" }),
-    expiresAt: DateTimeSchema.openapi({ description: "失效时刻（= 生成时刻 + 5 分钟）" }),
+    expiresAt: DateTimeSchema.openapi({ description: "失效时刻（= 生成时刻 + 3 分钟）" }),
     expiresInSeconds: z.number().int().positive().openapi({ description: "剩余有效期（秒；供前端倒计时）" }),
   })
   .openapi("WecomDmBindingCode", {
-    description: "绑定码（一次性：用户首次发码即绑定并置 used；重复取码会作废上一条未用码；TTL 5 分钟）",
+    description: "绑定码（一次性：用户首次发码即绑定并置 used；重复取码会作废上一条未用码；TTL 3 分钟）",
   });
 export type WecomDmBindingCode = z.infer<typeof WecomDmBindingCodeSchema>;
 

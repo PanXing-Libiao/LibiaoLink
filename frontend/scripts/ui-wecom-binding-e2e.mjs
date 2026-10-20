@@ -394,9 +394,9 @@ shots.push(await shot("wecom-settings-unbound-3"));
 const codeExpr = "(function(){var el=document.querySelector(" + j("[data-wecom-binding-code]") + ");if(el===null){return null;}var cd=el.querySelector(" + j("[data-wecom-binding-countdown]") + ");return {code:el.getAttribute(" + j("data-wecom-binding-code") + "),state:el.getAttribute(" + j("data-wecom-binding-code-state") + "),countdown:cd===null?null:Number(cd.getAttribute(" + j("data-wecom-binding-countdown") + ")),text:String(cd===null?" + j("") + ":cd.textContent||" + j("") + ").trim()};})()";
 await click("[data-wecom-binding-get-code]");
 const code1 = await waitFor(exists("[data-wecom-binding-code]"), 12000) ? await ev(codeExpr) : null;
-check("点「获取绑定码」→ 出 6 位码（^[0-9]{6}$）+ 有效态 + 倒计时（≤ 300 秒 —— D3 修订 v1.8 TTL 5 分钟）", code1 !== null && /^[0-9]{6}$/.test(String(code1.code)) && code1.state === "active" && code1.countdown <= 300 && code1.countdown >= 270, JSON.stringify(code1));
+check("点「获取绑定码」→ 出 6 位码（^[0-9]{6}$）+ 有效态 + 倒计时（≤ 180 秒 —— 2026-10-20 安全修订 TTL 3 分钟）", code1 !== null && /^[0-9]{6}$/.test(String(code1.code)) && code1.state === "active" && code1.countdown <= 180 && code1.countdown >= 150, JSON.stringify(code1));
 const dbCode1 = (await db.query("select code, status, expires_at > now() as live, user_id from wecom_id_binding_codes where user_id = $1 order by id desc limit 1", [userRow.id])).rows[0];
-check("库内落 pending 行且码与界面一致（TTL 5 分钟未过期）", dbCode1 !== undefined && dbCode1.code === code1.code && dbCode1.status === "pending" && dbCode1.live === true && dbCode1.user_id === userRow.id, JSON.stringify(dbCode1));
+check("库内落 pending 行且码与界面一致（TTL 3 分钟未过期）", dbCode1 !== undefined && dbCode1.code === code1.code && dbCode1.status === "pending" && dbCode1.live === true && dbCode1.user_id === userRow.id, JSON.stringify(dbCode1));
 shots.push(await shot("wecom-code-4"));
 await sleep(2600);
 const code1b = await ev(codeExpr);
@@ -405,7 +405,7 @@ check("倒计时按秒递减（1 秒计时器）", code1b !== null && Number(cod
 const dbPending1 = (await db.query("select code from wecom_id_binding_codes where user_id = $1 and status = 'pending'", [userRow.id])).rows[0];
 await reload("[data-wecom-binding]");
 const codeAfterReload = (await waitFor(exists("[data-wecom-binding-code]"), 12000)) === true ? await ev(codeExpr) : null;
-check("刷新页面后绑定码仍在（读面回填 bindingCode）：码 = 库内 pending 行 + 有效态 + 倒计时续算（≤ 300 秒）", codeAfterReload !== null && dbPending1 !== undefined && codeAfterReload.code === dbPending1.code && codeAfterReload.state === "active" && codeAfterReload.countdown > 0 && codeAfterReload.countdown <= 300, JSON.stringify({ ui: codeAfterReload, db: dbPending1 === undefined ? null : dbPending1.code }));
+check("刷新页面后绑定码仍在（读面回填 bindingCode）：码 = 库内 pending 行 + 有效态 + 倒计时续算（≤ 180 秒）", codeAfterReload !== null && dbPending1 !== undefined && codeAfterReload.code === dbPending1.code && codeAfterReload.state === "active" && codeAfterReload.countdown > 0 && codeAfterReload.countdown <= 180, JSON.stringify({ ui: codeAfterReload, db: dbPending1 === undefined ? null : dbPending1.code }));
 shots.push(await shot("wecom-code-reload-4b"));
 // ③b 复制通道（Push 253 修「复制一直失败」）：模拟非安全上下文（http + 局域网 IP = 无 navigator.clipboard）
 const codeText = await ev("(function(){var el=document.querySelector(" + j("[data-wecom-binding-code-text]") + ");if(el===null){return null;}var cs=window.getComputedStyle(el);return {text:String(el.textContent||" + j("") + ").trim(),selectable:String(cs.userSelect||cs.webkitUserSelect||" + j("") + "),cls:String(el.className)};})()");

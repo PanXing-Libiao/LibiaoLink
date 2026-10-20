@@ -21,8 +21,9 @@
  * retry 收敛（有界重试，不静默丢消息）。管理员告警群留痕由 outbox 死信告警自动承担（dispatcher → OUTBOX_ALERT_SINK）。
  *
  * 绑定码链路（M5-03-5-6 · 口径 §3 / §5；HTTP 面随契约刀 Push 249 落 `/api/v1/wecom-dm-binding`；
- * Push 254 起口径 v1.8：TTL 5 分钟 · 取码 5 次 / 3 分钟 · 换绑以码持有者为准 · 读面回填；
- * Push 255 起 v1.9：罚时锚点 = 窗口内最近一码 + 窗口长度（不再按最早一码 → 分散取码后只剩 1 分钟）：
+ * Push 254 起口径 v1.8：取码 5 次 / 3 分钟 · 换绑以码持有者为准 · 读面回填；
+ * Push 255 起 v1.9：罚时锚点 = 窗口内最近一码 + 窗口长度（不再按最早一码 → 分散取码后只剩 1 分钟）；
+ * 2026-10-20 安全修订：TTL 3 分钟 · 验证失败 5 次 / 10 分钟 / (bot_id, wecom_userid) · 指数锁定：
  * `requestBindingCode`（取码）/ `ingestCallback`（单聊发码 → 同事务写绑定 + 标记码已用 → 会话内回执
  * `aibot_respond_msg`）/ `getBindingState`（读绑定态：v1.8 另回当前未用码与取码限流可重试时刻）/ `unbind`
  * （解绑：同事务清绑定行 + 写 `audit_logs` —— D6；跨用户换绑同写 `audit_logs`）。
@@ -46,7 +47,7 @@ import type { OutboxHandleOutcome } from "../../outbox/handler.js";
 import { AuditService } from "../audit/index.js";
 import { maskUserid } from "./notify.app.service.js";
 import { parseNotifyMessage } from "./notify.delivery.js";
-import { NotifyDmRepository } from "./notify.dm.repository.js";
+import { NotifyDmRepository, type DmBindingCodeRow, type DmBindingGuardRow } from "./notify.dm.repository.js";
 import { NotifyService } from "./notify.service.js";
 import type { AibotIncomingMessage, AibotSendResult } from "./wecom.aibot.js";
 import { WecomAibotClient } from "./wecom.aibot.js";
@@ -77,14 +78,26 @@ const DM_USERID_PATTERN = /^[A-Za-z0-9_.@-]{1,64}$/;
 /** 绑定码形态（D3 定案：6 位数字）—— 与迁移 0055 CHECK `^[0-9]{6}$` 同口径。 */
 export const DM_BINDING_CODE_PATTERN = /^[0-9]{6}$/;
 
-/** 绑定码有效期（D3 修订 v1.8 · 2026-10-16：TTL 5 分钟 —— 原 10 分钟，用户口径「码 5 分钟内有效」）。 */
-export const DM_BINDING_CODE_TTL_MS = 5 * 60_000;
+/** 绑定码有效期（D3 修订 2026-10-20：TTL 3 分钟 —— 降低被猜中窗口）。 */
+export const DM_BINDING_CODE_TTL_MS = 3 * 60_000;
 
 /** 绑定码生成频率窗口（D3 修订 v1.8 · 2026-10-16：3 分钟滚动窗口；最长等待 = 窗口长度）。 */
 export const DM_BINDING_CODE_WINDOW_MS = 3 * 60_000;
 
 /** 绑定码生成频率上限（D3 修订 v1.8 · 2026-10-16：5 次 / 3 分钟 / 用户 —— 罚时上限 3 分钟）。 */
 export const DM_BINDING_CODE_MAX_PER_WINDOW = 5;
+
+/** 验证失败窗口（同一 (bot_id, wecom_userid) 10 分钟内最多 5 次失败）。 */
+export const DM_BINDING_FAILURE_WINDOW_MS = 10 * 60_000;
+
+/** 验证失败阈值（达到后进入指数锁定；成功绑定立即清零）。 */
+export const DM_BINDING_FAILURE_LIMIT = 5;
+
+/** 指数锁定档位（分钟）：第 1~6 次触发锁定分别等待这些时长。 */
+export const DM_BINDING_LOCK_STEPS_MS = [1, 2, 4, 8, 16, 30].map((minutes) => minutes * 60_000);
+
+/** 24 小时无验证尝试 → 锁定级别归零（避免历史级别长期抬高正常用户的下一档等待）。 */
+export const DM_BINDING_LOCK_RESET_MS = 24 * 60 * 60_000;
 
 /** Secret 诊断掩码（首 4 + **** + 末 4；长度 ≤ 8 时全掩码 —— 与 userid 掩码同属最小暴露）。 */
 function maskSecret(secret: string): string {
@@ -94,9 +107,10 @@ function maskSecret(secret: string): string {
 /** 绑定码生成冲突重试次数（6 位数字空间 1e6，撞码概率极低；到顶抛错由调用方按 5xx 收口）。 */
 const DM_BINDING_CODE_ATTEMPTS = 8;
 
-/** 会话内回执话术（口径 §5 反馈面；未命中任何码 → 不回复，防探测）。 */
+/** 会话内回执话术（口径 §5 反馈面；所有失败统一话术，锁定单独提示 —— 不泄露码存在性）。 */
 export const DM_BINDING_REPLY_BOUND = "绑定成功";
-export const DM_BINDING_REPLY_INVALID = "码已失效，请重新获取";
+export const DM_BINDING_REPLY_INVALID = "绑定码无效或已失效，请重新获取";
+export const DM_BINDING_REPLY_LOCKED = "尝试次数过多，请稍后再试";
 
 /** 单聊首次进入欢迎语（企微后台口径 4–120 字符；含可直接显示的 emoji，换行按字符计数）。 */
 export const DM_WELCOME_MESSAGE =
@@ -143,6 +157,28 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** 绑定验证失败原因（只进审计 / 日志，不回显给发送方）。 */
+type BindingFailureReason = "missing" | "expired" | "used" | "claim_failed";
+
+/** 绑定回调处理结果（事务内计算，事务提交后才发送回执 / 管理员告警）。 */
+type BindingIngestResult =
+  | { kind: "bound"; codeRow: DmBindingCodeRow; rebound: boolean; duplicate: boolean }
+  | { kind: "invalid"; reason: BindingFailureReason | "duplicate"; duplicate: boolean }
+  | { kind: "locked"; lockedUntil: Date; lockTriggered: boolean; lockLevel: number };
+
+interface BindingFailureGuard {
+  bindingFailCount: number;
+  bindingFailWindowStartedAt: Date | null;
+  bindingLockLevel: number;
+  bindingLockedUntil: Date | null;
+  locked: boolean;
+}
+
+/** msgid 只做相邻重投幂等；超长脏值不写库（DB CHECK 1..128）。 */
+function bindingMsgid(value: string | null): string | null {
+  return value === null || value.trim() === "" || value.length > 128 ? null : value;
+}
+
 /**
  * 单聊 aibot 消费服务（worker 注册表 · 由 OutboxModule 按载荷 channel 路由 —— 接线随 M5-03-5-4）：
  * handler 只做业务与分类，outbox 回写统一由 dispatcher 收敛；任何异常都不外抛（同 NotifyAppService 口径）。
@@ -172,12 +208,11 @@ export class NotifyDmService {
    *    群聊一律不处理（群聊不绑定 —— 防「发到群里以为绑定成功」）；
    * ② 登记（D1）：任何单聊消息都写激活登记（刷新 last_message_at，不动 user_id / bound_at）—— 保留 846607
    *    分流与观测，但该行不可作发送地址；
-   * ③ 取码：非文本消息 / 正文不含 6 位数字 → 到此为止（不回复 —— 防探测）；
-   * ④ 码不存在 → 不回复（防探测）；码已用 / 已过期 → 回「码已失效，请重新获取」；例外：码已被**本人**用掉
-   *    且该企微号仍绑定在该码持有者名下（回调重复投递）→ 回「绑定成功」（幂等，不再动库）；
-   * ⑤ 命中 pending 码 → **以码持有者为准**换绑（v1.8：发送方企微号已挂在别的库内用户上时不再短路「已绑定」，
-   *    改由 `bindWithCode` 把该 (bot_id, wecom_userid) 行改挂到码的持有者，旧持有者回落未绑定）
-   *    → 同一事务写绑定行 + 标记码已用（跨用户时另写 `audit_logs`）→ 回「绑定成功」。
+   * ③ 取码：非文本消息 / 正文不含 6 位数字 → 只登记激活、不计失败、不回执；
+   * ④ 防猜码（0059）：同一 (bot_id, wecom_userid) 10 分钟内失败 5 次 → 1/2/4/8/16/30 分钟指数锁定；
+   *    锁定期间不查询绑定码表、正确码也不能绑定；未知 / 过期 / 已用 / 并发占用统一回失败话术并计次；
+   * ⑤ 命中 pending 码 → **以码持有者为准**换绑（v1.8）→ 同一事务写绑定行 + 标记码已用 + 清零守卫
+   *    （跨用户时另写 `audit_logs`）→ 回「绑定成功」。同一 msgid 重投只回执，不重复计数 / 绑定。
    * 正文只做码匹配：不入库、不落日志；userid 非法（CHECK 字符集）→ 掩码 warn 忽略（防脏数据打断 ingest）。
    */
   async ingestCallback(incoming: AibotIncomingMessage): Promise<void> {
@@ -191,58 +226,115 @@ export class NotifyDmService {
     }
     const botId = this.botId();
     const at = this.clock.now();
-    await this.repository.upsertActivationFromCallback({ botId, wecomUserid: userid, at });
-
     const code = incoming.msgtype === "text" && incoming.text !== null ? extractBindingCode(incoming.text) : null;
     if (code === null) {
+      await this.repository.upsertActivationFromCallback({ botId, wecomUserid: userid, at });
       this.logger.log("单聊回调已登记激活（非绑定码消息 · 不可作发送地址）：userid " + maskUserid(userid));
       return;
     }
-    const codeRow = await this.repository.findBindingCode(code);
-    if (codeRow === null) {
-      this.logger.log("单聊正文未命中绑定码（不回复 —— 防探测）：userid " + maskUserid(userid));
-      return;
-    }
-    // 该企微号当前的绑定行（换绑前的旧持有者 —— 亦用于回调重复投递的幂等判定）。
-    const previous = await this.repository.findBindingByWecomUserid(userid, botId);
-    if (codeRow.status !== "pending" || codeRow.expiresAt.getTime() <= at.getTime()) {
-      // 码已被本人用掉且绑定成立 → 回调重复投递幂等：仍回「绑定成功」，不再动库。
-      if (codeRow.status === "used" && previous !== null && previous.userId === codeRow.userId) {
-        this.logger.log("单聊绑定码已用且绑定成立（回调重复投递幂等）：userid " + maskUserid(userid) + " · code#" + String(codeRow.id));
-        await this.replyToCallback(incoming, userid, DM_BINDING_REPLY_BOUND);
-        return;
+    const msgid = bindingMsgid(incoming.msgid);
+    const result = await this.database.db.transaction(async (tx) => {
+      await this.repository.upsertActivationFromCallback({ botId, wecomUserid: userid, at }, tx);
+      const guard = await this.repository.lockBindingGuard(botId, userid, tx);
+      const duplicate = msgid !== null && guard.lastBindingMsgid === msgid;
+
+      if (guard.bindingLockedUntil !== null && guard.bindingLockedUntil.getTime() > at.getTime()) {
+        if (!duplicate) {
+          await this.repository.touchBindingAttempt({ botId, wecomUserid: userid, at, lastBindingMsgid: msgid }, tx);
+        }
+        return {
+          kind: "locked",
+          lockedUntil: guard.bindingLockedUntil,
+          lockTriggered: false,
+          lockLevel: guard.bindingLockLevel,
+        } satisfies BindingIngestResult;
       }
-      this.logger.warn("单聊绑定码不可用（已用 / 已过期）：userid " + maskUserid(userid) + " · code#" + String(codeRow.id));
-      await this.replyToCallback(incoming, userid, DM_BINDING_REPLY_INVALID);
-      return;
-    }
-    const rebound = previous !== null && previous.userId !== codeRow.userId;
-    const boundOk = await this.database.db.transaction(async (tx) => {
+
+      const codeRow = await this.repository.findBindingCode(code, botId, tx);
+      const previous = await this.repository.findBindingByWecomUserid(userid, botId, tx);
+      if (duplicate || (codeRow !== null && codeRow.status === "used" && previous !== null && previous.userId === codeRow.userId)) {
+        if (codeRow !== null && previous !== null && previous.userId === codeRow.userId) {
+          this.logger.log("单聊绑定码已用且绑定成立（回调重复投递幂等）：userid " + maskUserid(userid));
+          return { kind: "bound", codeRow, rebound: false, duplicate: true } satisfies BindingIngestResult;
+        }
+        if (duplicate) {
+          return { kind: "invalid", reason: "duplicate", duplicate: true } satisfies BindingIngestResult;
+        }
+      }
+
+      const failureReason: BindingFailureReason | null =
+        codeRow === null
+          ? "missing"
+          : codeRow.status !== "pending"
+            ? codeRow.status === "used"
+              ? "used"
+              : "expired"
+            : codeRow.expiresAt.getTime() <= at.getTime()
+              ? "expired"
+              : null;
+      if (failureReason !== null || codeRow === null) {
+        return await this.recordBindingFailure(tx, {
+          botId,
+          wecomUserid: userid,
+          at,
+          msgid,
+          guard,
+          reason: failureReason ?? "missing",
+        });
+      }
+
+      const rebound = previous !== null && previous.userId !== codeRow.userId;
       const claimed = await this.repository.bindWithCode(
         { codeId: codeRow.id, userId: codeRow.userId, botId, wecomUserid: userid, at },
         tx,
       );
       if (!claimed) {
-        return false;
+        return await this.recordBindingFailure(tx, {
+          botId,
+          wecomUserid: userid,
+          at,
+          msgid,
+          guard,
+          reason: "claim_failed",
+        });
       }
+      await this.clearBindingGuard(tx, botId, userid, at, msgid);
       if (rebound && previous !== null) {
         await this.recordRebind(tx, { fromUserId: previous.userId, toUserId: codeRow.userId, wecomUserid: userid, botId });
       }
-      return true;
+      return { kind: "bound", codeRow, rebound, duplicate: false } satisfies BindingIngestResult;
     });
-    if (!boundOk) {
-      this.logger.warn("单聊绑定码占用失败（并发消费 / 恰过期）：userid " + maskUserid(userid) + " · code#" + String(codeRow.id));
-      await this.replyToCallback(incoming, userid, DM_BINDING_REPLY_INVALID);
+
+    if (result.kind === "bound") {
+      this.logger.log(
+        "单聊绑定成功（绑定行 = bot_id + userid 掩码）：userid " +
+          maskUserid(userid) +
+          " · user_id " +
+          result.codeRow.userId +
+          (result.rebound ? "（跨用户换绑）" : ""),
+      );
+      await this.replyToCallback(incoming, userid, DM_BINDING_REPLY_BOUND);
       return;
     }
-    this.logger.log(
-      "单聊绑定成功（绑定行 = bot_id + userid 掩码）：userid " +
-        maskUserid(userid) +
-        " · user_id " +
-        codeRow.userId +
-        (rebound ? "（跨用户换绑）" : ""),
+    if (result.kind === "locked") {
+      this.logger.warn(
+        "单聊绑定验证已锁定（不查询码表）：userid " + maskUserid(userid) + " · 解锁至 " + result.lockedUntil.toISOString(),
+      );
+      await this.replyToCallback(incoming, userid, DM_BINDING_REPLY_LOCKED);
+      if (result.lockTriggered) {
+        await this.sendBindingLockAlert({
+          botId,
+          wecomUserid: userid,
+          lockedUntil: result.lockedUntil,
+          lockLevel: result.lockLevel,
+        });
+      }
+      return;
+    }
+    this.logger.warn(
+      "单聊绑定验证失败（" + result.reason + "）：userid " + maskUserid(userid) + (result.duplicate ? "（重复 msgid）" : ""),
     );
-    await this.replyToCallback(incoming, userid, DM_BINDING_REPLY_BOUND);
+    await this.replyToCallback(incoming, userid, DM_BINDING_REPLY_INVALID);
   }
 
   /**
@@ -295,8 +387,175 @@ export class NotifyDmService {
     }
   }
 
+  /** 计算下一次验证失败后的守卫状态（5 次 / 10 分钟；达到阈值进入下一档指数锁定并清零窗口）。 */
+  private nextBindingFailureGuard(guard: DmBindingGuardRow, at: Date): BindingFailureGuard {
+    const idle =
+      guard.lastBindingAttemptAt === null ||
+      at.getTime() - guard.lastBindingAttemptAt.getTime() >= DM_BINDING_LOCK_RESET_MS;
+    const baseLockLevel = idle ? 0 : guard.bindingLockLevel;
+    const windowStartedAt = guard.bindingFailWindowStartedAt;
+    const sameWindow =
+      windowStartedAt !== null &&
+      at.getTime() >= windowStartedAt.getTime() &&
+      at.getTime() - windowStartedAt.getTime() < DM_BINDING_FAILURE_WINDOW_MS;
+    const bindingFailCount = (sameWindow ? guard.bindingFailCount : 0) + 1;
+    const bindingFailWindowStartedAt = sameWindow ? windowStartedAt : at;
+
+    if (bindingFailCount < DM_BINDING_FAILURE_LIMIT) {
+      return {
+        bindingFailCount,
+        bindingFailWindowStartedAt,
+        bindingLockLevel: baseLockLevel,
+        bindingLockedUntil: null,
+        locked: false,
+      };
+    }
+    const bindingLockLevel = Math.min(baseLockLevel + 1, DM_BINDING_LOCK_STEPS_MS.length);
+    const lockMs = DM_BINDING_LOCK_STEPS_MS[bindingLockLevel - 1];
+    if (lockMs === undefined) {
+      throw new Error("绑定锁定档位配置为空");
+    }
+    return {
+      bindingFailCount: 0,
+      bindingFailWindowStartedAt: null,
+      bindingLockLevel,
+      bindingLockedUntil: new Date(at.getTime() + lockMs),
+      locked: true,
+    };
+  }
+
+  /** 记录失败：更新守卫状态 + 同事务写拒绝审计；达到阈值返回锁定并触发管理员告警。 */
+  private async recordBindingFailure(
+    tx: DbClient,
+    input: {
+      botId: string;
+      wecomUserid: string;
+      at: Date;
+      msgid: string | null;
+      guard: DmBindingGuardRow;
+      reason: BindingFailureReason;
+    },
+  ): Promise<BindingIngestResult> {
+    const next = this.nextBindingFailureGuard(input.guard, input.at);
+    await this.repository.updateBindingGuard(
+      {
+        botId: input.botId,
+        wecomUserid: input.wecomUserid,
+        at: input.at,
+        bindingFailCount: next.bindingFailCount,
+        bindingFailWindowStartedAt: next.bindingFailWindowStartedAt,
+        bindingLockLevel: next.bindingLockLevel,
+        bindingLockedUntil: next.bindingLockedUntil,
+        lastBindingMsgid: input.msgid,
+      },
+      tx,
+    );
+    const masked = maskUserid(input.wecomUserid);
+    await this.audit.record(tx, {
+      actorId: null,
+      action: "deny",
+      objectType: "wecom_dm_binding",
+      objectId: input.botId + ":" + masked,
+      result: "denied",
+      entry: "system",
+      summary: "企业微信绑定码验证失败（open_userid " + masked + "）",
+      changes: null,
+      metadata: {
+        botId: input.botId,
+        wecomUseridMasked: masked,
+        reason: input.reason,
+        failCount: next.locked ? DM_BINDING_FAILURE_LIMIT : next.bindingFailCount,
+        lockLevel: next.bindingLockLevel,
+        lockedUntil: next.bindingLockedUntil === null ? null : next.bindingLockedUntil.toISOString(),
+      },
+    });
+    if (next.locked) {
+      this.logger.warn(
+        "单聊绑定验证达到失败阈值 → 临时锁定：userid " +
+          masked +
+          " · 第 " +
+          String(next.bindingLockLevel) +
+          " 档 · 至 " +
+          (next.bindingLockedUntil === null ? "?" : next.bindingLockedUntil.toISOString()),
+      );
+      return {
+        kind: "locked",
+        lockedUntil: next.bindingLockedUntil ?? input.at,
+        lockTriggered: true,
+        lockLevel: next.bindingLockLevel,
+      };
+    }
+    return { kind: "invalid", reason: input.reason, duplicate: false };
+  }
+
+  /** 成功绑定：清空失败窗口、锁定级别与锁定时刻（保留最近 msgid 供相邻重投幂等）。 */
+  private async clearBindingGuard(
+    tx: DbClient,
+    botId: string,
+    wecomUserid: string,
+    at: Date,
+    msgid: string | null,
+  ): Promise<void> {
+    await this.repository.updateBindingGuard(
+      {
+        botId,
+        wecomUserid,
+        at,
+        bindingFailCount: 0,
+        bindingFailWindowStartedAt: null,
+        bindingLockLevel: 0,
+        bindingLockedUntil: null,
+        lastBindingMsgid: msgid,
+      },
+      tx,
+    );
+  }
+
+  /** 锁定升级时推一次管理员告警群；未配置 chatid / 机器人凭据时只留 warn 日志（不阻断绑定链路）。 */
+  private async sendBindingLockAlert(input: {
+    botId: string;
+    wecomUserid: string;
+    lockedUntil: Date;
+    lockLevel: number;
+  }): Promise<void> {
+    const chatid = this.config.env.OUTBOX_ALERT_WECOM_CHATID;
+    if (chatid === "" || this.config.env.WECOM_BOT_ID === "" || this.config.env.WECOM_BOT_SECRET === "") {
+      this.logger.warn(
+        "绑定码锁定告警未推群（缺 OUTBOX_ALERT_WECOM_CHATID 或机器人凭据）：userid " + maskUserid(input.wecomUserid),
+      );
+      return;
+    }
+    const content =
+      "【LibiaoLink 安全告警】企微绑定码连续验证失败\n" +
+      "机器人：" +
+      input.botId +
+      "\n企微账号：" +
+      maskUserid(input.wecomUserid) +
+      "\n判定：" +
+      String(DM_BINDING_FAILURE_LIMIT) +
+      " 次 / " +
+      String(DM_BINDING_FAILURE_WINDOW_MS / 60_000) +
+      " 分钟；第 " +
+      String(input.lockLevel) +
+      "/" +
+      String(DM_BINDING_LOCK_STEPS_MS.length) +
+      " 档\n锁定至：" +
+      input.lockedUntil.toISOString() +
+      "\n处置：请核查来源账号；如非本人操作，建议暂停绑定并检查机器人凭据。";
+    try {
+      const result = await this.aibot.sendGroupMarkdown({ chatid, content, groupActivated: true });
+      if (!result.ok) {
+        this.logger.warn(
+          "绑定码锁定告警推群失败（不影响绑定）：userid " + maskUserid(input.wecomUserid) + " —— " + describeDmFailure(result),
+        );
+      }
+    } catch (error) {
+      this.logger.warn("绑定码锁定告警推群异常（不影响绑定）：" + messageOf(error));
+    }
+  }
+
   /**
-   * 生成绑定码（D3 签发：6 位数字 / TTL 5 分钟 / 一次性；频率口径 D3 修订 v1.8：5 次 / 3 分钟 / 用户）：
+   * 生成绑定码（D3 签发：6 位数字 / TTL 3 分钟 / 一次性；频率口径 D3 修订 v1.8：5 次 / 3 分钟 / 用户）：
    * 频率到顶 → 返回 rate_limited + retryAt（窗口内**最近一码** + 窗口长度 —— v1.9 修订；恒 ≤ 3 分钟且重试不延长）；
    * 否则同一事务作废旧 pending 码 + 插入新码（撞码换码重试 DM_BINDING_CODE_ATTEMPTS 次）。
    * HTTP 面（POST /api/v1/wecom-dm-binding/codes · 契约刀）：频率到顶统一映射 429 `RATE_LIMITED` + retryAt。
@@ -306,6 +565,7 @@ export class NotifyDmService {
     | { ok: false; reason: "rate_limited"; retryAt: Date }
   > {
     const at = this.clock.now();
+    const botId = this.botId();
     const retryAt = await this.rateLimitedRetryAt(userId, at);
     if (retryAt !== null) {
       this.logger.warn(
@@ -321,8 +581,8 @@ export class NotifyDmService {
     const expiresAt = new Date(at.getTime() + DM_BINDING_CODE_TTL_MS);
     for (let attempt = 0; attempt < DM_BINDING_CODE_ATTEMPTS; attempt += 1) {
       const code = randomBindingCode();
-      if (await this.repository.createBindingCode({ userId, code, expiresAt, at })) {
-        this.logger.log("绑定码已生成（TTL 5 分钟 · 旧 pending 码作废）：user_id " + userId);
+      if (await this.repository.createBindingCode({ botId, userId, code, expiresAt, at })) {
+        this.logger.log("绑定码已生成（TTL 3 分钟 · 旧 pending 码作废）：user_id " + userId);
         return { ok: true, code, expiresAt, expiresInSeconds: Math.round(DM_BINDING_CODE_TTL_MS / 1000) };
       }
     }
@@ -337,8 +597,9 @@ export class NotifyDmService {
    */
   async getBindingState(userId: string): Promise<WecomDmBindingState> {
     const at = this.clock.now();
-    const binding = await this.repository.findBindingByUserId(userId, this.botId());
-    const pending = await this.repository.findPendingBindingCode(userId, at);
+    const botId = this.botId();
+    const binding = await this.repository.findBindingByUserId(userId, botId);
+    const pending = await this.repository.findPendingBindingCode(userId, botId, at);
     const retryAt = await this.rateLimitedRetryAt(userId, at);
     return {
       bound: binding !== null,
@@ -365,7 +626,7 @@ export class NotifyDmService {
    */
   private async rateLimitedRetryAt(userId: string, at: Date): Promise<Date | null> {
     const since = new Date(at.getTime() - DM_BINDING_CODE_WINDOW_MS);
-    const issuedAt = await this.repository.bindingCodesSince(userId, since);
+    const issuedAt = await this.repository.bindingCodesSince(userId, this.botId(), since);
     if (issuedAt.length < DM_BINDING_CODE_MAX_PER_WINDOW) {
       return null;
     }

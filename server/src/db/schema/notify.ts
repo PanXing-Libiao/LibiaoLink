@@ -20,6 +20,9 @@
  * 0055 · M5-03-5-6 追加：wecom_id_binding_codes（企微 ID 绑定码 —— 绑定码链路：取码 / 单聊发码 / ingest 绑定）
  * + wecom_aibot_dm_activations 加机器人维度 bot_id 与绑定标记 bound_at（唯一键改 (bot_id, wecom_userid)）；
  * 表口径见 database/migrations/0055_wecom_id_binding_codes.sql。
+ *
+ * 0059 · 绑定码防猜码守卫生效：绑定码增加 bot_id（查询 / 唯一性按机器人隔离）；激活表增加失败窗口、指数锁定与
+ * 最近回调 msgid 幂等字段。口径见 database/migrations/0059_wecom_dm_binding_guard.sql。
  */
 import { sql } from "drizzle-orm";
 import {
@@ -220,7 +223,9 @@ export const wecomGroupCandidates = pgTable(
  * （企微后台无管理员权限 → 实为密文 open_userid）；bot_id = 机器人维度（WECOM_BOT_ID 原文，(bot_id, wecom_userid)
  * 唯一 —— 激活态按机器人成立）；bound_at 非空 = 绑定行 = 可投递地址（绑定码命中的产物），NULL = 仅激活登记
  * （D1：不可作发送地址）；first_activated_at 首次激活后不再覆盖，last_message_at 随 upsert 刷新；
- * updated_at 由应用写入（无触发器）。表口径见 database/migrations/0055_wecom_id_binding_codes.sql。
+ * 0059 起 binding_fail_count / window / lock_level / locked_until 承载验证侧防猜码状态，last_binding_msgid
+ * 用于企微回调重投幂等；updated_at 由应用写入（无触发器）。
+ * 表口径见 database/migrations/0055_wecom_id_binding_codes.sql 与 0059_wecom_dm_binding_guard.sql。
  */
 export const wecomAibotDmActivations = pgTable(
   "wecom_aibot_dm_activations",
@@ -238,6 +243,18 @@ export const wecomAibotDmActivations = pgTable(
     lastMessageAt: timestamp("last_message_at", { withTimezone: true }).notNull().defaultNow(),
     /** 绑定确立时刻（非空 = 绑定行 = 可投递地址；NULL = 仅激活登记）。 */
     boundAt: timestamp("bound_at", { withTimezone: true }),
+    /** 当前失败窗口内已消耗的验证尝试数（达到阈值后锁定并清零，进入下一轮）。 */
+    bindingFailCount: integer("binding_fail_count").notNull().default(0),
+    /** 当前失败窗口起点（窗口长度 10 分钟；null = 无进行中的窗口）。 */
+    bindingFailWindowStartedAt: timestamp("binding_fail_window_started_at", { withTimezone: true }),
+    /** 指数锁定级别（0 = 未锁定过；1..6 对应 1/2/4/8/16/30 分钟）。 */
+    bindingLockLevel: integer("binding_lock_level").notNull().default(0),
+    /** 锁定截止时刻（null / 已过 = 可尝试）。 */
+    bindingLockedUntil: timestamp("binding_locked_until", { withTimezone: true }),
+    /** 最近一次验证尝试时刻（用于 24 小时无失败后归零锁定级别）。 */
+    lastBindingAttemptAt: timestamp("last_binding_attempt_at", { withTimezone: true }),
+    /** 最近一次验证尝试的企微 msgid（只用于相邻重投幂等，不落消息正文）。 */
+    lastBindingMsgid: text("last_binding_msgid"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -245,22 +262,30 @@ export const wecomAibotDmActivations = pgTable(
     uniqueIndex("uq_wecom_aibot_dm_activations_bot_userid").on(table.botId, table.wecomUserid),
     check("ck_wecom_aibot_dm_activations_userid", sql`${table.wecomUserid} ~ '^[A-Za-z0-9_.@-]{1,64}$'`),
     check("ck_wecom_aibot_dm_activations_bot_id", sql`${table.botId} is null or ${table.botId} ~ '^[A-Za-z0-9_.@-]{1,64}$'`),
+    check("ck_wecom_aibot_dm_activations_binding_fail_count", sql`${table.bindingFailCount} >= 0`),
+    check("ck_wecom_aibot_dm_activations_binding_lock_level", sql`${table.bindingLockLevel} between 0 and 6`),
+    check(
+      "ck_wecom_aibot_dm_activations_last_binding_msgid",
+      sql`${table.lastBindingMsgid} is null or char_length(${table.lastBindingMsgid}) between 1 and 128`,
+    ),
   ],
 );
 
 /**
- * 企微 ID 绑定码（0055 · M5-03-5-6 · D3 签发：6 位数字 / TTL 5 分钟 / 一次性；频率 D3 修订 v1.8：5 次 / 3 分钟 / 用户；
+ * 企微 ID 绑定码（0055 · M5-03-5-6 · D3 签发：6 位数字 / TTL 3 分钟 / 一次性；频率 D3 修订 v1.8：5 次 / 3 分钟 / 用户；
  * v1.9 罚时锚点 = 窗口内最近一码 + 3 分钟 —— 与 history 行的 created_at 顺序相关，无 DDL 变化）：
  * 服务端取码 → 用户在单聊发码 → 回调 ingest 命中 → 同一事务写绑定行（wecom_aibot_dm_activations.bound_at）
  * + 标记本行 used（used_at / used_wecom_userid 留痕）。status = pending（待用）/ used（已用）/ expired（重发废止）；
- * 同一 user_id 仅一个 pending（部分唯一索引 uq_wecom_id_binding_codes_pending —— 重发由写入侧先作废旧码）。
- * 表口径见 database/migrations/0055_wecom_id_binding_codes.sql。
+ * 同一 (bot_id, user_id) 仅一个 pending（部分唯一索引 uq_wecom_id_binding_codes_pending —— 重发由写入侧先作废旧码）。
+ * 0059 起 bot_id 非空，码唯一性与查询按 (bot_id, code) 隔离；表口径见 0055 / 0059 迁移。
  */
 export const wecomIdBindingCodes = pgTable(
   "wecom_id_binding_codes",
   {
     id: bigserial("id", { mode: "number" }).primaryKey(),
-    /** 绑定码（6 位数字串；全库唯一 —— 用户把它发进单聊）。 */
+    /** 机器人维度（= WECOM_BOT_ID 原文；码按机器人隔离）。 */
+    botId: text("bot_id").notNull(),
+    /** 绑定码（6 位数字串；同一机器人内唯一 —— 用户把它发进单聊）。 */
     code: text("code").notNull(),
     /** 发起人（库内用户；用户不物理删，故无级联口径）。 */
     userId: uuid("user_id")
@@ -277,11 +302,12 @@ export const wecomIdBindingCodes = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("uq_wecom_id_binding_codes_code").on(table.code),
+    uniqueIndex("uq_wecom_id_binding_codes_bot_code").on(table.botId, table.code),
     uniqueIndex("uq_wecom_id_binding_codes_pending")
-      .on(table.userId)
+      .on(table.botId, table.userId)
       .where(sql`${table.status} = 'pending'`),
-    index("ix_wecom_id_binding_codes_user_created").on(table.userId, table.createdAt.desc()),
+    index("ix_wecom_id_binding_codes_bot_user_created").on(table.botId, table.userId, table.createdAt.desc()),
+    check("ck_wecom_id_binding_codes_bot_id", sql`${table.botId} ~ '^[A-Za-z0-9_.@-]{1,64}$'`),
     check("ck_wecom_id_binding_codes_code", sql`${table.code} ~ '^[0-9]{6}$'`),
     check("ck_wecom_id_binding_codes_status", sql`${table.status} in ('pending', 'used', 'expired')`),
     check("ck_wecom_id_binding_codes_used", sql`(${table.status} = 'used') = (${table.usedAt} is not null)`),

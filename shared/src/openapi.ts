@@ -113,6 +113,11 @@ import {
   NotificationSchema,
   NotificationSnoozeBodySchema,
   NotificationSnoozeListResponseSchema,
+  NotifyDeliveryDetailSchema,
+  NotifyDeliveryListQuerySchema,
+  NotifyDeliveryListResponseSchema,
+  NotifyDeliveryResendBodySchema,
+  NotifyDeliveryResendResponseSchema,
   NotifyPrefsSchema,
   NotifyPrefsUpdateBodySchema,
   ResourceInvalidationPayloadSchema,
@@ -120,6 +125,17 @@ import {
   WecomDmBindingStateSchema,
   WecomDmBotDiagnosticsSchema,
 } from "./modules/notifications.ts";
+import {
+  AutomationRuleCodeSchema,
+  AutomationRuleListResponseSchema,
+  AutomationRulePatchBodySchema,
+  AutomationRuleTestBodySchema,
+  AutomationRuleTestResponseSchema,
+  AutomationRuleViewSchema,
+  AutomationRunListQuerySchema,
+  AutomationRunListResponseSchema,
+  AutomationRunSchema,
+} from "./modules/automation.ts";
 import {
   TranslateBatchBodySchema,
   TranslateBatchResponseSchema,
@@ -212,10 +228,14 @@ const commonErrors = {
 
 const idParams = z.object({ id: UuidSchema });
 const notificationIdParams = z.object({ id: z.coerce.number().int().positive() });
+const deliveryIdParams = z.object({ id: z.coerce.number().int().positive() });
+const automationRuleParams = z.object({ code: AutomationRuleCodeSchema });
+const automationRunIdParams = z.object({ id: z.coerce.number().int().positive() });
 const stageParams = z.object({ id: UuidSchema, key: StageKeySchema });
 const blueprintQuery = BlueprintQuerySchema;
 const memberParams = z.object({ id: UuidSchema, userId: UuidSchema });
 const idempotencyHeader = z.object({ "Idempotency-Key": IdempotencyKeySchema.optional() });
+const requiredIdempotencyHeader = z.object({ "Idempotency-Key": IdempotencyKeySchema });
 // 字典类型路径参数：一期取值 region / projectType；未知类型返回 404（非 400）——与 DictsController 行为一致
 const dictTypeParams = z.object({ type: z.string().min(1).max(64).openapi({ description: "字典类型（一期：region / projectType）；未知类型返回 404" }) });
 // 工作日历路径参数：业务日期 YYYY-MM-DD（例外表的业务键；非法日期由契约校验拦成 400）
@@ -1836,6 +1856,95 @@ export function buildOpenApiDocument() {
     },
   });
 
+  // ---- 自动化规则管理（M5-06 S8-4 · Push 266：规则 / 试运行 / 运行记录 · wmj 线代做）----
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/automation/rules",
+    tags: ["automation"],
+    summary: "规则管理列表（M5-06）：固定返回一期内置规则，含停用规则与调度 job 状态（R01 不入列表、A03 已退役）",
+    responses: {
+      200: { description: "规则列表（按 code 升序）", ...json(AutomationRuleListResponseSchema) },
+      401: commonErrors[401],
+      403: commonErrors[403],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/automation/rules/{code}",
+    tags: ["automation"],
+    summary: "规则详情（M5-06）：完整规则 + 可编辑字段 + 最近 / 下次运行时刻 + 调度 job 状态",
+    request: { params: automationRuleParams },
+    responses: {
+      200: { description: "规则详情", ...json(AutomationRuleViewSchema) },
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "patch",
+    path: "/api/v1/automation/rules/{code}",
+    tags: ["automation"],
+    summary:
+      "保存规则（M5-06）：version 乐观锁；只允许启停、动作渠道与收件人变化；模板 / 触发 / 条件 / 动作类型只读",
+    request: { params: automationRuleParams, body: json(AutomationRulePatchBodySchema) },
+    responses: {
+      200: { description: "保存后的规则（version + 1）", ...json(AutomationRuleViewSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: errorResponse("规则版本冲突（VERSION_CONFLICT）或试图修改只读字段 / 动作数量"),
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/automation/rules/{code}/test",
+    tags: ["automation"],
+    summary:
+      "规则试运行（M5-06）：只读评估，不写 automation_runs / outbox / 审计；事件型必须给 entityId，调度型最多评估 100 个主体",
+    request: { params: automationRuleParams, body: json(AutomationRuleTestBodySchema) },
+    responses: {
+      200: { description: "试运行结果（命中 / 跳过 / 条件明细）", ...json(AutomationRuleTestResponseSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      422: commonErrors[422],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/automation/runs",
+    tags: ["automation"],
+    summary: "规则运行记录列表（M5-06）：规则 / 状态 / 来源 / 主题 / 实体 + 时间区间筛选；createdAt desc, id desc",
+    request: { query: AutomationRunListQuerySchema },
+    responses: {
+      200: { description: "运行记录列表", ...json(AutomationRunListResponseSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/automation/runs/{id}",
+    tags: ["automation"],
+    summary: "规则运行详情（M5-06）：条件求值明细、动作 / 消息快照与失败原因",
+    request: { params: automationRunIdParams },
+    responses: {
+      200: { description: "运行记录详情", ...json(AutomationRunSchema) },
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+    },
+  });
+
   // ---- 消息中心（S7-4 · j1 / M5-04 首刀：站内信投递 / 合并免打扰 / 每日上限 · lan 线）----
   registry.registerPath({
     method: "get",
@@ -1847,6 +1956,57 @@ export function buildOpenApiDocument() {
       200: { description: "收件箱清单（含未读计数）", ...json(NotificationListResponseSchema) },
       400: commonErrors[400],
       401: commonErrors[401],
+    },
+  });
+
+  // ---- 发送记录与重发（M5-06 S8-4 · Push 266：消息级归档读面 + 幂等重发）----
+  // `deliveries` 为静态段，注册顺序必须先于 `/notifications/{id}`，避免运行时被参数路由截获。
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/notifications/deliveries",
+    tags: ["notifications"],
+    summary: "发送记录列表（C2-07 / C5-03）：渠道 / 最新状态 / 规则 / 收件人 / 时间区间 / 关键字 + 分页；目标地址只回掩码",
+    request: { query: NotifyDeliveryListQuerySchema },
+    responses: {
+      200: { description: "消息级发送记录列表（createdAt desc, id desc）", ...json(NotifyDeliveryListResponseSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/notifications/deliveries/{id}",
+    tags: ["notifications"],
+    summary: "发送记录详情（C5-03）：消息归档 + 全部外部投递尝试；不返回 Secret / 完整 target / 原始载荷",
+    request: { params: deliveryIdParams },
+    responses: {
+      200: { description: "发送记录详情", ...json(NotifyDeliveryDetailSchema) },
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/notifications/deliveries/{id}/resend",
+    tags: ["notifications"],
+    summary:
+      "重发失败 / 死信外部消息（D7）：请求体必须为空，Idempotency-Key 必填；新 outbox + 新消息归档，不覆盖原记录",
+    request: {
+      params: deliveryIdParams,
+      headers: requiredIdempotencyHeader,
+      body: json(NotifyDeliveryResendBodySchema),
+    },
+    responses: {
+      200: { description: "重发已受理：返回新建的消息归档（lastState = pending）", ...json(NotifyDeliveryResendResponseSchema) },
+      400: errorResponse("请求体非法或缺少 / 非法 Idempotency-Key（VALIDATION_FAILED）"),
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: errorResponse("重发状态或渠道不允许（仅 wecom_app / wecom_aibot / wecom_group 且最新状态 failed / dead）"),
     },
   });
 
@@ -1990,7 +2150,7 @@ export function buildOpenApiDocument() {
     path: "/api/v1/wecom-dm-binding/codes",
     tags: ["notifications"],
     summary:
-      "生成绑定码（D3 / D5）：6 位数字 · TTL 5 分钟 · 一次性 · 5 次 / 3 分钟 / 用户（D3 修订 v1.8 —— 超出 429 RATE_LIMITED）；重复取码作废上一条未用码；用户把码发进企微单聊即绑定（v1.8：以码持有者为准换绑 · 会话内回执由 worker 承担）",
+      "生成绑定码（D3 / D5）：6 位数字 · TTL 3 分钟 · 一次性 · 5 次 / 3 分钟 / 用户（超出 429 RATE_LIMITED）；重复取码作废上一条未用码；用户把码发进企微单聊即绑定（v1.8：以码持有者为准换绑 · 会话内回执由 worker 承担；验证侧 5 次 / 10 分钟失败后指数锁定）",
     responses: {
       200: { description: "绑定码（code / expiresAt / expiresInSeconds）", ...json(WecomDmBindingCodeSchema) },
       401: commonErrors[401],
@@ -2067,7 +2227,12 @@ export function buildOpenApiDocument() {
       { name: "workspace", description: "工作台（A6-01 / A6-03）：我的任务与我的问题聚合读面（M6-05）" },
       { name: "views", description: "保存视图（A1-03 / M2-06）：个人与公共视图（筛选 / 列 / 排序 / 分组配置）" },
       { name: "follows", description: "关注订阅（A1-15 / M2-06）：关注项目与任务、清单与批量操作" },
-      { name: "notifications", description: "消息中心（C5 / M5-04）：站内信收件箱、状态标记、免打扰与每日上限偏好、SSE 实时流与稍后提醒（S8-3）" },
+      { name: "automation", description: "自动化规则管理（C2-01 / C2-12 / M5-06）：内置规则启停与配置、只读试运行、运行记录" },
+      {
+        name: "notifications",
+        description:
+          "消息中心（C5 / M5-04 / M5-06）：站内信收件箱、状态标记、免打扰与每日上限偏好、SSE 实时流、稍后提醒、发送记录与重发",
+      },
       { name: "translate", description: "翻译通道（§6.16 ㉕）：手打内容英译译文库 —— 单条（库优先 + 引擎兜底落库）与批量查库（切页提速）" },
     ],
   });
