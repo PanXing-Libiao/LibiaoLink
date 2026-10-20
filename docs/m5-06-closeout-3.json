@@ -1,0 +1,48 @@
+{
+  "tag": "M5-06-3-REPLAY-7d470fe7",
+  "database": "postgresql://libiaolink_api:***@127.0.0.1:55432/libiaolink_m5_06_closeout_20261020",
+  "pass": 8,
+  "fail": 0,
+  "checks": [
+    {
+      "name": "A14 主体：daily 2 人 × 3 日 + weekly 1 次 + done 1 次 + 无可用对象 1 次 = 9",
+      "ok": true,
+      "detail": "todo 主体 9 条"
+    },
+    {
+      "name": "A14 重复展开：daily 10-21/22/23；weekly 仅 10-21；monthly 短月跳过",
+      "ok": true,
+      "detail": "daily 3 次 / weekly 1 次 / 2 月无 31 日"
+    },
+    {
+      "name": "A14 提醒对象：多对象 entityId 编入成员 id；全删除对象留 recipient_missing",
+      "ok": true,
+      "detail": "多对象键 = <todo>:<member>；删除对象 = null"
+    },
+    {
+      "name": "A14 引擎：daily 12 + weekly 2 = 14 条；done 不命中；删除对象 recipient_missing",
+      "ok": true,
+      "detail": "A14 消息 14 条"
+    },
+    {
+      "name": "A14 幂等键：多人不串键；双渠道同键；单对象保持 <todo>:<date>",
+      "ok": true,
+      "detail": "去重键 7 个 / 投放面 14 个"
+    },
+    {
+      "name": "A14 重复规划：两次结果逐键一致；outbox dedupe 唯一约束阻止第二份",
+      "ok": true,
+      "detail": "首次 14 / 复跑 0"
+    },
+    {
+      "name": "A01 已提醒回读：仅 sent；按业务日 + 渠道后缀；失败 / 前一日不算",
+      "ok": true,
+      "detail": "u1 inbox / u2 aibot / u3 app"
+    },
+    {
+      "name": "A01 已提醒回读：空名册不查库、其他规则不串",
+      "ok": true,
+      "detail": "空集 0 / A14 0"
+    }
+  ]
+}
