@@ -532,7 +532,7 @@ export function ImportProjectPanel({ file, dicts, dictTools, canManageDicts, onR
         role="dialog"
         aria-modal="true"
         aria-label={t("import.aria")}
-        className="relative flex max-h-[min(860px,calc(100dvh-2rem))] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-[0_24px_60px_rgba(0,0,0,0.25)]" data-import-dialog=""
+        className="relative flex max-h-[min(860px,calc(100dvh-2rem))] w-full max-w-6xl flex-col overflow-clip rounded-2xl bg-white shadow-[0_24px_60px_rgba(0,0,0,0.25)]" data-import-dialog=""
       >
         <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-zinc-200 px-6 py-4">
           <div className="min-w-0">
