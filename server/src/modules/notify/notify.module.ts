@@ -87,6 +87,7 @@ import { PgRateWindowStore } from "./wecom.rate.pg.js";
   exports: [
     NotifyService,
     NotifyDeliveryService,
+    NotifyDeliveryReadRepository,
     NotifyGroupService,
     NotifyAppService,
     NotifyDmService,

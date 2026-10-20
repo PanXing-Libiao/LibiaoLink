@@ -10,6 +10,7 @@ import { AppError } from "../../common/errors/app-error.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { CalendarService } from "../calendar/index.js";
 import { ProjectMemberService } from "../project/index.js";
+import { NotifyDeliveryReadRepository } from "../notify/index.js";
 import { shanghaiToday } from "../task/index.js";
 import { ReportRepository, type DailyReportRow } from "./report.repository.js";
 import { loadReportPhotos } from "./report-issue.links.js";
@@ -53,6 +54,7 @@ export class ReportSummaryService {
     private readonly reports: ReportRepository,
     private readonly calendar: CalendarService,
     private readonly members: ProjectMemberService,
+    private readonly deliveryReads: NotifyDeliveryReadRepository,
   ) {}
 
   /** GET /api/v1/projects/{id}/reports/summary（A7-01）：当日已提交条目聚合 + 工作日信息。 */
@@ -79,6 +81,12 @@ export class ReportSummaryService {
     const day = await this.resolveDay(query.date);
     const rows = await this.reports.listByDate(projectId, day.date);
     const roster = await this.members.listMembers(projectId);
+    // A01 已提醒标记（M5-06-3）：只回读发送归档，不写日报主体；仅 sent 算已提醒。
+    const reminderSentAt = await this.deliveryReads.findReminderSentAt(
+      "A01",
+      day.date,
+      roster.items.map((member) => member.userId),
+    );
     // 同日多条（Push 215）：有已提交取已提交（首条），否则取任一条草稿；缺省 = 未填报。
     const byAuthor = new Map<string, DailyReportRow>();
     for (const row of rows) {
@@ -99,6 +107,7 @@ export class ReportSummaryService {
         reportId: row === undefined ? null : row.id,
         state: row === undefined ? null : (row.state as DailyReportState),
         submittedAt: row === undefined || row.submittedAt === null ? null : row.submittedAt.toISOString(),
+        reminderSentAt: reminderSentAt.get(member.userId)?.toISOString() ?? null,
       };
     });
     const submittedCount = members.filter((member) => isSubmittedState(member.state)).length;

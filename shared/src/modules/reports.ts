@@ -205,10 +205,14 @@ export const DailyReportRosterEntrySchema = z
     reportId: UuidSchema.nullable().openapi({ description: "当日日报 id（同日多条：有已提交取已提交，否则取一条草稿）；未填报为 null" }),
     state: DailyReportStateSchema.nullable().openapi({ description: "当日日报状态；null = 未填报（draft 草稿未提交，仍计「应填未填」；同日多条取提交优先）" }),
     submittedAt: DateTimeSchema.nullable().openapi({ description: "提交时间（草稿 / 未填报为 null）" }),
+    reminderSentAt: DateTimeSchema.nullable().openapi({
+      description:
+        "当日 A01 漏填提醒成功发送时刻（站内信 / 企微单聊任一成功即非空；null = 未提醒或全部失败；A7-05 已提醒标记 · M5-06-3）",
+    }),
   })
   .openapi("DailyReportRosterEntry", { description: "名册成员当日填报状态（A7-05 应填未填的一行）" });
 
-/** 应填未填清单（A7-05）：项目名册 × 工作日历 × 当日未提交 —— 非工作日整列为空；提醒发送记录（A7-05 后半）随 M5-06 发送记录。 */
+/** 应填未填清单（A7-05）：项目名册 × 工作日历 × 当日未提交 —— 非工作日整列为空；`reminderSentAt` 回读发送归档（M5-06-3）。 */
 export const DailyReportMissingResponseSchema = z
   .object({
     date: DateOnlySchema,
