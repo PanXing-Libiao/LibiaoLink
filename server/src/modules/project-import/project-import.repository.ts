@@ -454,7 +454,7 @@ export class ProjectImportRepository {
   }
 
   /**
-   * 手动补充附件回挂变更（同一事务）：file_versions.change_request_id = 本次变更 + 文件定档 + file_links(change)。
+   * 手动补充附件回挂变更（同一事务）：file_versions.change_request_id = 本次变更 + 文件状态置 changed（变更后文件，文件库显示「已变更」）+ file_links(change)。
    * 一期「一变更一版本」：先锁变更行，再查该变更是否已有版本 —— 同文件重复调用 = 幂等 no-op；
    * 变更已有其它文件 = conflict；版本已挂其它变更 = conflict。
    */
@@ -489,7 +489,7 @@ export class ProjectImportRepository {
     await tx.update(fileVersions).set({ changeRequestId: input.changeId }).where(eq(fileVersions.id, input.versionId));
     await tx
       .update(files)
-      .set({ status: "final", finalizedAt: input.at, finalizedBy: input.actorId, updatedAt: input.at })
+      .set({ status: "changed", updatedAt: input.at })
       .where(eq(files.id, input.fileId));
     await tx
       .insert(fileLinks)

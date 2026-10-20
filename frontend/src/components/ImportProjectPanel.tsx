@@ -229,9 +229,13 @@ function ManualImageList({ images, selections, onSelect, failureById }: ManualIm
             </div>
             <p className="mt-1 text-amber-700">{image.reason}</p>
             <p className="mt-1 text-[11px] text-amber-700">
-              {image.task === null || image.task === ""
-                ? t("import.images.targetProject")
-                : t("import.images.targetTask", { task: image.task })}
+              {image.kind === "change_after"
+                ? image.task === null || image.task === ""
+                  ? t("import.images.targetChange", { change: "—" })
+                  : t("import.images.targetChange", { change: image.task })
+                : image.task === null || image.task === ""
+                  ? t("import.images.targetProject")
+                  : t("import.images.targetTask", { task: image.task })}
             </p>
             {failure === null ? null : <p className="mt-1 text-[11px] text-rose-600">{failure}</p>}
             {onSelect === undefined ? null : (

@@ -562,6 +562,41 @@ function linkWorkbook(): Buffer {
   ]);
 }
 
+/** R01（Push 398）样例：变更「关联」为空，但变更文件 = 任务输出成果文件（多值匹配）。 */
+function r01Workbook(): Buffer {
+  const taskHeader = [...TASK_HEADER];
+  const taskRow = (title: string, output: string): string[] => [
+    title,
+    "组装发货",
+    "进行中",
+    "0.5",
+    "贾海洋(haiyang)",
+    "贾海洋(haiyang)",
+    "2026-09-01",
+    "2026-09-20",
+    "",
+    "1",
+    "1",
+    "",
+    output,
+    "",
+    "",
+  ];
+  return buildWorkbook([
+    {
+      name: "UK-VANILLA- 任务",
+      rows: [taskHeader, taskRow("物料清单完整版", "物料总清单")],
+    },
+    {
+      name: "变更管理",
+      rows: [
+        ["变更时间", "变更阶段", "变更文件", "变更内容描述", "变更原因", "变更前", "变更后", "变更后文件", "变更后文件版本", "关联", "变更申请人", "填写者"],
+        ["2026-09-01", "发货阶段", "物料总清单", "物料清单更新", "客户原因", "", "", "清单变更版.xlsx", "V2", "", "朱成荣(Eli)", "朱成荣(Eli)"],
+      ],
+    },
+  ]);
+}
+
 function previewPayload(h: ReturnType<typeof createHarness>): Record<string, unknown> {
   const row = h.previews.row;
   if (row === null) throw new Error("预览票据未创建");
@@ -737,6 +772,24 @@ describe("ProjectImportService.preview（导入表解析预览）", () => {
     expect(codes).toContain("TASK_CHANGE_REF_UNMATCHED");
     const summary = preview.issues.find((issue) => issue.code === "CHANGE_LINK_SUMMARY");
     expect(summary?.message).toContain("写入任务变更关联 2 条");
+  });
+
+  it("R01（Push 398）：「关联」为空但变更文件命中任务输出成果文件 → changeLinks", async () => {
+    const h = createHarness();
+    h.nodes.library = [];
+    const preview = await h.service.preview({
+      bytes: r01Workbook(),
+      fileName: "[LBGW-20260331-1459] UK-VANILLA-AIRROB.xlsx",
+      actorId: ACTOR_ID,
+      locale: "zh",
+    });
+
+    expect(preview.counts.changesLinked).toBe(1);
+    const links = (previewPayload(h).parse as { changeLinks: Array<{ changeIndex: number; taskIndex: number }> }).changeLinks;
+    expect(links).toEqual([{ changeIndex: 0, taskIndex: 0 }]);
+    const summary = preview.issues.find((issue) => issue.code === "CHANGE_LINK_SUMMARY");
+    expect(summary?.message).toContain("覆盖 1 条变更");
+    expect(summary?.message).toContain("未关联 0 条");
   });
 
   it("干系人（Push 324）：主文件含「干系人」表 → 条数 / 分类四值映射 / 联系方式拆分 / 提交时间", async () => {
@@ -1035,6 +1088,23 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
       ],
     ]);
     expect(result.issues.map((issue) => issue.code)).toContain("CHANGE_LINK_SUMMARY");
+  });
+
+  it("R01（Push 398）：提交回写任务 change_refs，手动变更后文件的目标任务同源", async () => {
+    const h = createHarness();
+    h.nodes.library = [];
+    const preview = await h.service.preview({
+      bytes: r01Workbook(),
+      fileName: "[LBGW-20260331-1459] UK-VANILLA-AIRROB.xlsx",
+      actorId: ACTOR_ID,
+      locale: "zh",
+    });
+    h.storage.objects.set(h.previews.row === null ? "" : h.previews.row.objectKey, zipStore([{ name: "xl/media/none.png", data: Buffer.from("x", "utf8") }]));
+
+    const result = await h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh");
+
+    expect(h.previews.changeRefCalls).toEqual([[{ taskId: "task-0", changeIds: ["change-0"] }]]);
+    expect(result.manualTargets).toEqual([{ id: "manual-0", taskId: "task-0", changeId: "change-0" }]);
   });
 
   it("变更申请人 / 填写者（Push 347）：源表两列命中库内账号 → applied_by / writer_by 按文件落人 + 无缺号提醒", async () => {
