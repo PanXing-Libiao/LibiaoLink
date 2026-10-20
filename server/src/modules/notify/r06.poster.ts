@@ -1,43 +1,17 @@
 /**
- * R06 A 方案动态海报（姓名墙）。
+ * R06 动态海报入口。
  *
- * 900 x 1350 PNG，直接按项目真实数据绘制：项目经理 + 项目成员 + 任务负责人去重后的姓名墙、
- * 已完成任务按期率、项目编号 / 名称 / 计划交付日期。字体随服务端资产发布，不依赖容器系统字体。
- * 绘制失败由调用方回退静态喜报图，不影响已送达的群文字。
+ * 全部任务完成且全部按期时走黄黑品牌版（r06.poster.brand.ts）；其余走 A 方案姓名墙。
+ * 900 x 1350 PNG，字体随服务端资产发布，不依赖容器系统字体；绘制失败由调用方回退静态喜报图。
  */
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SKRSContext2D } from "@napi-rs/canvas";
+import { renderR06BrandPoster } from "./r06.poster.brand.js";
 
-export interface R06PosterView {
-  projectCode: string;
-  projectName: string;
-  status: string;
-  managers: string[];
-  participants: string[];
-  taskTotal: number;
-  taskDone: number;
-  onTimeDone: number;
-  startDate: string | null;
-  plannedEnd: string | null;
-  completedAt: Date;
-}
-
-export interface R06PosterFontPaths {
-  sans?: string;
-  sansBold?: string;
-  serif?: string;
-}
-
-export interface R06PosterMetrics {
-  elapsedDays: number;
-  plannedDays: number;
-  rate: number;
-  rateText: string;
-  rateLabel: string;
-  allTasksDone: boolean;
-}
+import type { R06PosterFontPaths, R06PosterMetrics, R06PosterView } from "./r06.poster.types.js";
+export type { R06PosterFontPaths, R06PosterMetrics, R06PosterView } from "./r06.poster.types.js";
 
 const WIDTH = 900;
 const HEIGHT = 1350;
@@ -125,6 +99,10 @@ function formatDot(value: Date): string {
 function formatMonthDay(value: string | null): string {
   const date = dateOnly(value);
   return date === null ? "待定" : date.replaceAll("-", ".");
+}
+
+export function shouldUseR06BrandPoster(view: Pick<R06PosterView, "status" | "taskTotal" | "taskDone" | "onTimeDone">): boolean {
+  return view.status === "done" && view.taskTotal > 0 && view.taskDone === view.taskTotal && view.onTimeDone === view.taskTotal;
 }
 
 export function buildR06PosterMetrics(view: Pick<R06PosterView, "taskTotal" | "taskDone" | "onTimeDone" | "startDate" | "plannedEnd" | "completedAt">): R06PosterMetrics {
@@ -579,6 +557,9 @@ export async function renderR06Poster(view: R06PosterView, fonts?: R06PosterFont
   const canvasApi = await loadCanvasApi();
   ensureFonts(canvasApi.GlobalFonts, fonts);
   const metrics = buildR06PosterMetrics(view);
+  if (shouldUseR06BrandPoster(view)) {
+    return await renderR06BrandPoster(view, metrics, fonts);
+  }
   const canvas = canvasApi.createCanvas(WIDTH, HEIGHT);
   const ctx = canvas.getContext("2d");
   drawBackground(ctx);
