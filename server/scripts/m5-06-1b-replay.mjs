@@ -163,7 +163,7 @@ async function main() {
     subjects,
   );
 
-  const patchedCodes = ["R02", "A01", "A08"];
+  const patchedCodes = ["R02", "A01", "A08", "R06"];
   const originalRules = new Map();
   let originalA01Job = null;
   let auditBaseline = 0;
@@ -183,7 +183,7 @@ async function main() {
         projectType: "标准",
         managerIds: [MANAGER_ID],
         stageKey: "install",
-        status: "active",
+        status: "done",
       });
       await db.insert(wecomGroups).values({
         projectId: PROJECT_ID,
@@ -420,6 +420,22 @@ async function main() {
       assert.equal(result.messages[0].template, "A08_GROUP");
       assert.equal(result.messages[0].recipient, "project.group");
       return "stage trial matched=1 / group message=1";
+    });
+
+    await check("R06 项目完成试运行：project.completed + project entityId 命中群消息", async () => {
+      const rows = await db.select().from(automationRules).where(eq(automationRules.code, "R06"));
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].trigger.kind, "event");
+      assert.equal(rows[0].trigger.topic, "project.completed");
+      await service.patchRule(ADMIN_ID, "R06", { version: rows[0].version, enabled: true });
+      const result = await service.testRule(ADMIN_ID, "R06", { businessDate: BUSINESS_DATE, entityId: PROJECT_ID });
+      assert.equal(result.evaluatedCount, 1);
+      assert.equal(result.matchedCount, 1);
+      assert.equal(result.skippedCount, 0);
+      assert.equal(result.messages.length, 1);
+      assert.equal(result.messages[0].channel, "wecom_group");
+      assert.equal(result.messages[0].template, "R06_GROUP");
+      return "project.completed enabled then trial matched=1 / group message=1";
     });
 
     await check("事件型试运行缺 entityId：400，主体零读取", async () => {

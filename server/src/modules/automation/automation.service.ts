@@ -78,6 +78,7 @@ const TEST_SUBJECT_LIMIT = 100;
 /** 主体类型 → 允许配置的收件人口径（与运行时主体映射器提供的 recipients 表同源）。 */
 const ALLOWED_RECIPIENTS: Readonly<Record<ReplaySubjectKind, readonly RuleRecipient[]>> = {
   task: ["task.owner", "task.owner_or_project_manager", "project.manager", "project.group"],
+  project: ["project.group"],
   report_slot: ["report.member"],
   project_day: ["project.group"],
   todo: ["rule.members"],

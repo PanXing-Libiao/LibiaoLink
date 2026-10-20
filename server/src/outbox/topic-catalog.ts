@@ -27,6 +27,7 @@ export const OUTBOX_TOPIC_ROLES = {
   "stage.advanced": "consumer",
   "stage.gate_rejected": "drain_only",
   "stage.rolled_back": "drain_only",
+  "project.completed": "consumer",
   "project.created": "drain_only",
   "file.version.created": "drain_only",
   "file.finalized": "drain_only",

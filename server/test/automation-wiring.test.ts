@@ -14,6 +14,7 @@ import {
   AUTOMATION_SCHEDULE_JOB_KIND,
   BUILTIN_RULES,
   toProjectDaySubject,
+  toProjectSubject,
   toReportMemberSubject,
   toStageSubject,
   toTaskSubject,
@@ -191,8 +192,8 @@ describe("规则事件消费（S7-4 接线 · evaluateEventMessages → notify.m
       expect(String(payload.body)).toContain("安装摄像头");
     }
     expect(h.logs.warn.some((line) => line.includes("渠道未落地"))).toBe(false);
-    // M5-06-1A 运行留痕：规则 × 实体一条 hit，消息 / 动作 / 条件快照可回溯（同主题 R06 另留 skipped）。
-    expect(h.runs).toHaveLength(2);
+    // M5-06-1A 运行留痕：规则 × 实体一条 hit，消息 / 动作 / 条件快照可回溯；R06 只订阅 project.completed。
+    expect(h.runs).toHaveLength(1);
     const run = h.runs.find((item) => item.ruleCode === "R02");
     expect(run).toMatchObject({
       ruleCode: "R02",
@@ -244,7 +245,7 @@ describe("规则事件消费（S7-4 接线 · evaluateEventMessages → notify.m
     expect(outcome).toEqual({ outcome: "done" });
     expect(h.appended).toHaveLength(0);
     expect(h.logs.log.some((line) => line.includes("event_too_old"))).toBe(true);
-    expect(h.runs).toHaveLength(2);
+    expect(h.runs).toHaveLength(1);
     expect(h.runs.every((run) => run.status === "skipped" && run.skipReason === "event_too_old")).toBe(true);
     expect(h.runs.every((run) => run.messages.length === 0)).toBe(true);
   });
@@ -315,6 +316,38 @@ describe("规则事件消费（S7-4 接线 · evaluateEventMessages → notify.m
     expect(payload.refType).toBe("stage");
     expect(payload.refId).toBe("stage-1");
     expect(payload.templateCode).toBe("A08_GROUP");
+  });
+
+  it("R06 项目完成事件：产出 notify.group（项目群寻址 + 项目关联 + 项目完成文案）", async () => {
+    const h = makeHarness();
+    h.subjects.eventSubjects.set(
+      "project.completed",
+      toProjectSubject({
+        projectId: "p-1",
+        projectCode: "LBUSA-20261014-002",
+        projectName: "美国仓储公司订单",
+        projectStatus: "done",
+        projectVersion: 4,
+        groupId: "p-1",
+      }),
+    );
+
+    const outcome = await createRuleEventConsumers(h.deps)
+      .get("project.completed")
+      ?.handle(row("project.completed", { projectId: "p-1", version: 4, actorId: "u-1" }));
+
+    expect(outcome).toEqual({ outcome: "done" });
+    expect(h.appended).toHaveLength(1);
+    const event = h.appended[0];
+    expect(event?.event.topic).toBe("notify.group");
+    expect(event?.event.dedupeKey).toBe("R06:p-1:v4");
+    const payload = event?.event.payload as Record<string, unknown>;
+    expect(payload.projectId).toBe("p-1");
+    expect(payload.title).toBe("叮咚~喜报来啦！");
+    expect(String(payload.body)).toBe("项目：**LBUSA-20261014-002·美国仓储公司订单**\n项目已全部完成，验收交付完毕。大家一起为这份成果喝彩吧");
+    expect(payload.refType).toBe("project");
+    expect(payload.refId).toBe("p-1");
+    expect(payload.templateCode).toBe("R06_GROUP");
   });
 });
 

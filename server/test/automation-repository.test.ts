@@ -90,4 +90,11 @@ describe("AutomationRuleRepository.listEnabledRules（读表唯一来源）", ()
     const rules = await repository(rows).listEnabledRules(reader(rows));
     expect(rules.map((rule) => rule.code)).toEqual(["R02", "R03"]);
   });
+
+  it("forceEnableCodes 可在运行时启用库中已停用的 R06", async () => {
+    const rows = [rowOf("R02"), { ...rowOf("R06"), enabled: false }];
+    const rules = await repository(rows).listEnabledRules(reader(rows), { forceEnableCodes: ["R06"] });
+    expect(rules.map((rule) => rule.code)).toEqual(["R02", "R06"]);
+    expect(rules.find((rule) => rule.code === "R06")?.enabled).toBe(true);
+  });
 });

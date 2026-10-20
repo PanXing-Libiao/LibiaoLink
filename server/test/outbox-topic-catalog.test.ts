@@ -11,10 +11,10 @@ import {
 
 /** 主题角色完整性门禁：新增契约主题而不登记角色时，CI 必须失败。 */
 describe("Outbox 主题角色清单（完整性门禁）", () => {
-  it("29 个契约主题全部显式登记，consumer / drain-only 各归其位", () => {
-    expect(OUTBOX_TOPICS).toHaveLength(29);
+  it("30 个契约主题全部显式登记，consumer / drain-only 各归其位", () => {
+    expect(OUTBOX_TOPICS).toHaveLength(30);
     expect(Object.keys(OUTBOX_TOPIC_ROLES).sort()).toEqual([...OUTBOX_TOPICS].sort());
-    expect(OUTBOX_CONSUMER_TOPICS).toHaveLength(11);
+    expect(OUTBOX_CONSUMER_TOPICS).toHaveLength(12);
     expect(OUTBOX_DRAIN_ONLY_TOPICS).toHaveLength(18);
   });
 

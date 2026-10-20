@@ -202,6 +202,10 @@ export const EnvSchema = z
     /** 按会话限速（Spike 实测口径：30 条/分钟 + 1000 条/小时；0 = 未启用）。 */
     WECOM_BOT_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(0).max(1000000).default(30),
     WECOM_BOT_RATE_LIMIT_PER_HOUR: z.coerce.number().int().min(0).max(10000000).default(1000),
+    /** R06 验收交付默认喜报图（可选）：空 = 不追加图片；建议绝对路径，支持 PNG / JPG / GIF（≤10MB）。 */
+    WECOM_R06_IMAGE_PATH: z.string().default(""),
+    /** R06 全部任务按时交付喜报图（可选）：空 = 回退 WECOM_R06_IMAGE_PATH。 */
+    WECOM_R06_ON_TIME_IMAGE_PATH: z.string().default(""),
     // ---- 调度器（S7-3 · i11 / M5-02：cron 领取 + last_run_at 补发 + 单活 advisory lock · ADR-005） ----
     /** 单轮 tick 领取条数上限（到期任务按 run_at 序领取，逐条串行执行）。 */
     OUTBOX_SCHEDULER_BATCH_LIMIT: z.coerce.number().int().min(1).max(1000).default(10),
@@ -216,6 +220,8 @@ export const EnvSchema = z
     AUTOMATION_WIRING_ENABLED: z
       .enum(["true", "false"])
       .default("true"),
+    /** R06 项目完成喜报开关：true = 在默认启用集之外纳入 R06（项目编辑保存「已完成」时触发）。 */
+    AUTOMATION_R06_ENABLED: z.enum(["true", "false"]).default("false"),
     /**
      * 冷启动保护阈值（毫秒）：事件行创建时刻距今超此阈值 → 不评估主体、逐规则登记 `event_too_old`（消费掉不产消息）。
      * 用途：接线前积压的历史事件（重启 / 停机 / 首次上线）不补发业务通知；缺省 6 小时。

@@ -33,6 +33,7 @@
  * 接线边界：本刀只交付客户端内核（无 outbox / 投递接线 —— 消费侧接线随 M5-03-2 接线段）；
  * 单测 / stub 回放经 `socketFactory` 注入替身，不触外网；生产工厂 `createWsSocketFactory` 为全仓唯一 import "ws" 处。
  */
+import { createHash } from "node:crypto";
 import WebSocketImpl from "ws";
 import type { Env } from "../../config/env.js";
 import { classifyWecomErrcode, describeNetworkError, type WecomFailureKind } from "./wecom.errors.js";
@@ -58,12 +59,24 @@ export interface AibotSocket {
 
 export type AibotSocketFactory = (url: string) => AibotSocket;
 
+/** 智能机器人图片素材上限（官方长连接文档：图片不超过 10MB，支持 png / jpg / jpeg / gif）。 */
+export const WECOM_AIBOT_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+/** 素材分片大小：10MB 上限下最多 20 片，远低于官方 100 片限制。 */
+export const WECOM_AIBOT_MEDIA_CHUNK_BYTES = 512 * 1024;
+export const WECOM_AIBOT_MEDIA_MAX_CHUNKS = 100;
+/** 只缓存 2 天：官方 media_id 有效期约 3 天，留 1 天安全余量。 */
+export const WECOM_AIBOT_MEDIA_CACHE_TTL_MS = 2 * 24 * 60 * 60 * 1000;
+export const WECOM_AIBOT_MEDIA_CACHE_MAX_ENTRIES = 32;
+
+export type AibotImageMimeType = "image/png" | "image/jpeg" | "image/gif";
+
 export type AibotConnectionState = "stopped" | "connecting" | "subscribed" | "backoff";
 
 /** 回执帧（订阅 / 推送 / 心跳共形）：errcode 在帧顶层；字段逐项 typeof 松读。 */
 interface AibotAckFrame {
   errcode?: unknown;
   errmsg?: unknown;
+  body?: unknown;
 }
 
 /**
@@ -145,6 +158,68 @@ function readString(record: Record<string, unknown> | null, key: string): string
   return typeof value === "string" ? value : null;
 }
 
+type AibotUploadResult =
+  | { ok: true; mediaId: string }
+  | { ok: false; kind: WecomFailureKind; errcode: number | null; errmsg: string | null };
+
+type AibotImageValidation =
+  | { ok: true; mime: AibotImageMimeType; totalChunks: number }
+  | { ok: false; reason: string };
+
+export function aibotImageMimeFromFileName(fileName: string): AibotImageMimeType | null {
+  const dot = fileName.lastIndexOf(".");
+  if (dot < 0) {
+    return null;
+  }
+  const extension = fileName.slice(dot + 1).toLowerCase();
+  if (extension === "png") return "image/png";
+  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
+  if (extension === "gif") return "image/gif";
+  return null;
+}
+
+function normalizeAibotImageMime(mime: string | null | undefined): AibotImageMimeType | null {
+  if (mime === null || mime === undefined) {
+    return null;
+  }
+  const normalized = mime.trim().toLowerCase();
+  if (normalized === "image/png") return "image/png";
+  if (normalized === "image/jpeg" || normalized === "image/jpg") return "image/jpeg";
+  if (normalized === "image/gif") return "image/gif";
+  return null;
+}
+
+function validateAibotImage(input: {
+  content: Buffer;
+  fileName: string;
+  mime: string | null | undefined;
+}): AibotImageValidation {
+  const mime = normalizeAibotImageMime(input.mime) ?? aibotImageMimeFromFileName(input.fileName);
+  if (mime === null) {
+    return { ok: false, reason: "图片格式不受支持（仅支持 PNG / JPG / GIF）" };
+  }
+  if (input.fileName.trim() === "") {
+    return { ok: false, reason: "图片文件名为空" };
+  }
+  if (Buffer.byteLength(input.fileName, "utf8") > 256) {
+    return { ok: false, reason: "图片文件名超过 256 字节" };
+  }
+  if (!Buffer.isBuffer(input.content)) {
+    return { ok: false, reason: "图片内容必须是 Buffer" };
+  }
+  if (input.content.length < 5) {
+    return { ok: false, reason: "图片内容过短（至少 5 字节）" };
+  }
+  if (input.content.length > WECOM_AIBOT_IMAGE_MAX_BYTES) {
+    return { ok: false, reason: "图片超过 10MB 上限" };
+  }
+  const totalChunks = Math.ceil(input.content.length / WECOM_AIBOT_MEDIA_CHUNK_BYTES);
+  if (totalChunks > WECOM_AIBOT_MEDIA_MAX_CHUNKS) {
+    return { ok: false, reason: "图片分片数超过 100 片" };
+  }
+  return { ok: true, mime, totalChunks };
+}
+
 export class WecomAibotClient {
   private socket: AibotSocket | null = null;
   private state: AibotConnectionState = "stopped";
@@ -154,6 +229,7 @@ export class WecomAibotClient {
   private readonly pending = new Map<string, (outcome: AckOutcome) => void>();
   private readonly handlers = new Set<(message: AibotIncomingMessage) => void>();
   private readonly stateWaiters = new Set<(state: AibotConnectionState) => void>();
+  private readonly mediaCache = new Map<string, { mediaId: string; expiresAt: number }>();
   private backoffMs = 0;
   private missedPongs = 0;
   private readonly counters = {
@@ -276,6 +352,72 @@ export class WecomAibotClient {
       channel: "wecom_group",
       bucketId: chatBucketId(params.chatid),
       activated: params.groupActivated ?? null,
+    });
+  }
+
+  /**
+   * 群图片推送：先上传图片素材取得 media_id，再走 aibot_send_msg 的 image 消息。
+   *
+   * 上传帧序列（官方长连接文档）：
+   *   aibot_upload_media_init（type / filename / total_size / total_chunks / md5）
+   *   → aibot_upload_media_chunk × N（upload_id + chunk_index + base64_data）
+   *   → aibot_upload_media_finish（upload_id）→ media_id
+   *
+   * 同一图片内容在 2 天内复用 media_id；图片发送与 markdown 共用群会话双窗口限速。
+   * 上传失败不产生消息帧；发送失败沿用群通道错误分类与降级语义。
+   */
+  async sendGroupImage(params: {
+    chatid: string;
+    content: Buffer;
+    fileName: string;
+    mime?: string | null;
+    groupActivated?: boolean | null;
+  }): Promise<AibotSendResult> {
+    const validation = validateAibotImage({
+      content: params.content,
+      fileName: params.fileName,
+      mime: params.mime,
+    });
+    if (!validation.ok) {
+      return {
+        ok: false,
+        kind: "permanent",
+        errcode: null,
+        errmsg: validation.reason,
+        retryAt: null,
+        attempts: 0,
+        state: this.state,
+      };
+    }
+    if (this.state !== "subscribed" || this.socket === null) {
+      return this.notReadyResult();
+    }
+    const upload = await this.uploadImage({
+      content: params.content,
+      fileName: params.fileName,
+      mime: validation.mime,
+      totalChunks: validation.totalChunks,
+      activated: params.groupActivated ?? null,
+    });
+    if (!upload.ok) {
+      return {
+        ok: false,
+        kind: upload.kind,
+        errcode: upload.errcode,
+        errmsg: upload.errmsg,
+        retryAt: null,
+        attempts: 0,
+        state: this.state,
+      };
+    }
+    return this.sendMessage({
+      target: params.chatid,
+      chatType: 2,
+      rateKind: "group",
+      channel: "wecom_group",
+      bucketId: chatBucketId(params.chatid),
+      activated: params.groupActivated ?? null,
+      message: { msgtype: "image", image: { media_id: upload.mediaId } },
     });
   }
 
@@ -440,7 +582,7 @@ export class WecomAibotClient {
     };
   }
 
-  /** 发送主体（群 / 单聊共用）：限速（双窗口按目标桶）→ aibot_send_msg → 等回执 → 分类。 */
+  /** markdown 消息主体：复用统一发送与错误分类。 */
   private async sendMarkdown(input: {
     /** 发送目标（帧 `chatid` 字段值）：群 = chatid；单聊 = userid。 */
     target: string;
@@ -454,16 +596,41 @@ export class WecomAibotClient {
     /** 会话激活态（false = 未激活 → 846607 按 permanent 收口）。 */
     activated: boolean | null;
   }): Promise<AibotSendResult> {
+    return this.sendMessage({
+      target: input.target,
+      chatType: input.chatType,
+      rateKind: input.rateKind,
+      channel: input.channel,
+      bucketId: input.bucketId,
+      activated: input.activated,
+      message: { msgtype: "markdown", markdown: { content: input.content } },
+    });
+  }
+
+  private notReadyResult(): AibotSendResult {
+    return {
+      ok: false,
+      kind: "retryable",
+      errcode: null,
+      errmsg: "长连接未就绪（state=" + this.state + "）",
+      retryAt: null,
+      attempts: 0,
+      state: this.state,
+    };
+  }
+
+  /** 主动推送主体（群 / 单聊共用）：限速（双窗口按目标桶）→ aibot_send_msg → 等回执 → 分类。 */
+  private async sendMessage(input: {
+    target: string;
+    chatType: 1 | 2;
+    rateKind: "group" | "single";
+    channel: "wecom_group" | "wecom_aibot";
+    bucketId: string;
+    activated: boolean | null;
+    message: Record<string, unknown>;
+  }): Promise<AibotSendResult> {
     if (this.state !== "subscribed" || this.socket === null) {
-      return {
-        ok: false,
-        kind: "retryable",
-        errcode: null,
-        errmsg: "长连接未就绪（state=" + this.state + "）",
-        retryAt: null,
-        attempts: 0,
-        state: this.state,
-      };
+      return this.notReadyResult();
     }
     const rate = await this.options.limiter.tryConsume(input.rateKind, input.bucketId, this.now());
     if (!rate.ok) {
@@ -486,7 +653,7 @@ export class WecomAibotClient {
     const sent = this.sendFrame({
       cmd: "aibot_send_msg",
       headers: { req_id: reqId },
-      body: { chatid: input.target, chat_type: input.chatType, msgtype: "markdown", markdown: { content: input.content } },
+      body: { chatid: input.target, chat_type: input.chatType, ...input.message },
     });
     if (!sent) {
       this.cancelAck(reqId, "closed");
@@ -516,6 +683,132 @@ export class WecomAibotClient {
         ? classifyWecomErrcode("wecom_group", errcode, { groupActivated: input.activated })
         : classifyWecomErrcode("wecom_aibot", errcode, { dmActivated: input.activated });
     return { ok: false, kind, errcode, errmsg, retryAt: null, attempts: 1, state: this.state };
+  }
+
+  /**
+   * 上传图片素材。init / chunk / finish 每帧都等待回执；成功结果按内容 MD5 缓存 2 天。
+   * 上传本身不计入消息限速，真正发送 image 消息时由 sendMessage 计一次群消息配额。
+   */
+  private async uploadImage(input: {
+    content: Buffer;
+    fileName: string;
+    mime: AibotImageMimeType;
+    totalChunks: number;
+    activated: boolean | null;
+  }): Promise<AibotUploadResult> {
+    const digest = createHash("md5").update(input.content).digest("hex");
+    const now = this.now();
+    const cached = this.mediaCache.get(digest);
+    if (cached !== undefined) {
+      if (cached.expiresAt > now) {
+        return { ok: true, mediaId: cached.mediaId };
+      }
+      this.mediaCache.delete(digest);
+    }
+    if (this.state !== "subscribed" || this.socket === null) {
+      return { ok: false, kind: "retryable", errcode: null, errmsg: "长连接未就绪（state=" + this.state + "）" };
+    }
+
+    const init = await this.sendControlFrame("aibot_upload_media_init", {
+      type: "image",
+      filename: input.fileName,
+      total_size: input.content.length,
+      total_chunks: input.totalChunks,
+      md5: digest,
+    });
+    if (!init.ok) {
+      return this.uploadFailure(init, "素材上传初始化", input.activated);
+    }
+    const initCode = typeof init.frame.errcode === "number" ? init.frame.errcode : null;
+    if (initCode !== 0) {
+      return this.uploadFailure(init, "素材上传初始化", input.activated);
+    }
+    const uploadId = readString(asRecord(init.frame.body), "upload_id");
+    if (uploadId === null || uploadId.trim() === "") {
+      return { ok: false, kind: "retryable", errcode: initCode, errmsg: "素材上传初始化回执缺少 upload_id" };
+    }
+
+    for (let index = 0; index < input.totalChunks; index += 1) {
+      const from = index * WECOM_AIBOT_MEDIA_CHUNK_BYTES;
+      const to = Math.min(from + WECOM_AIBOT_MEDIA_CHUNK_BYTES, input.content.length);
+      const chunk = await this.sendControlFrame("aibot_upload_media_chunk", {
+        upload_id: uploadId,
+        chunk_index: String(index),
+        base64_data: input.content.subarray(from, to).toString("base64"),
+      });
+      if (!chunk.ok) {
+        return this.uploadFailure(chunk, "素材分片上传", input.activated);
+      }
+      const chunkCode = typeof chunk.frame.errcode === "number" ? chunk.frame.errcode : null;
+      if (chunkCode !== 0) {
+        return this.uploadFailure(chunk, "素材分片上传", input.activated);
+      }
+    }
+
+    const finish = await this.sendControlFrame("aibot_upload_media_finish", { upload_id: uploadId });
+    if (!finish.ok) {
+      return this.uploadFailure(finish, "素材上传合并", input.activated);
+    }
+    const finishCode = typeof finish.frame.errcode === "number" ? finish.frame.errcode : null;
+    if (finishCode !== 0) {
+      return this.uploadFailure(finish, "素材上传合并", input.activated);
+    }
+    const mediaId = readString(asRecord(finish.frame.body), "media_id");
+    if (mediaId === null || mediaId.trim() === "") {
+      return { ok: false, kind: "retryable", errcode: finishCode, errmsg: "素材上传合并回执缺少 media_id" };
+    }
+    this.rememberMedia(digest, mediaId);
+    return { ok: true, mediaId };
+  }
+
+  private async sendControlFrame(cmd: string, body: Record<string, unknown>): Promise<AckOutcome> {
+    if (this.state !== "subscribed" || this.socket === null) {
+      return { ok: false, reason: "closed" };
+    }
+    const reqId = this.nextReqId(cmd);
+    const ack = this.waitAck(reqId);
+    const sent = this.sendFrame({ cmd, headers: { req_id: reqId }, body });
+    if (!sent) {
+      this.cancelAck(reqId, "closed");
+    }
+    return ack;
+  }
+
+  private uploadFailure(outcome: AckOutcome, stage: string, activated: boolean | null): AibotUploadResult {
+    if (!outcome.ok) {
+      return {
+        ok: false,
+        kind: "retryable",
+        errcode: null,
+        errmsg:
+          outcome.reason === "timeout"
+            ? stage + "回执超时"
+            : "连接已断开（" + stage + "未确认）",
+      };
+    }
+    const errcode = typeof outcome.frame.errcode === "number" ? outcome.frame.errcode : null;
+    const errmsg = typeof outcome.frame.errmsg === "string" ? outcome.frame.errmsg : null;
+    if (errcode === null) {
+      return { ok: false, kind: "retryable", errcode: null, errmsg: stage + "回执缺 errcode" };
+    }
+    return {
+      ok: false,
+      kind: classifyWecomErrcode("wecom_group", errcode, { groupActivated: activated }),
+      errcode,
+      errmsg,
+    };
+  }
+
+  private rememberMedia(digest: string, mediaId: string): void {
+    const expiresAt = this.now() + WECOM_AIBOT_MEDIA_CACHE_TTL_MS;
+    this.mediaCache.set(digest, { mediaId, expiresAt });
+    while (this.mediaCache.size > WECOM_AIBOT_MEDIA_CACHE_MAX_ENTRIES) {
+      const oldest = this.mediaCache.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      this.mediaCache.delete(oldest);
+    }
   }
 
   // ---- 连接与帧处理 ----

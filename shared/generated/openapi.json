@@ -1141,6 +1141,7 @@
               "change.applied",
               "node.completed",
               "stage.advanced",
+              "project.completed",
               "report.submitted",
               "issue.updated",
               null
@@ -7287,10 +7288,11 @@
           "change.applied",
           "node.completed",
           "stage.advanced",
+          "project.completed",
           "report.submitted",
           "issue.updated"
         ],
-        "description": "事件型触发的 outbox 主题：task.completed 任务完成 / task.updated 任务更新 / task.progress_changed 进度变化 / change.applied 变更生效 / node.completed 节点完成 / stage.advanced 大阶段完成 / report.submitted 日报提交 / issue.updated 问题更新"
+        "description": "事件型触发的 outbox 主题：task.completed 任务完成 / task.updated 任务更新 / task.progress_changed 进度变化 / change.applied 变更生效 / node.completed 节点完成 / stage.advanced 大阶段完成 / project.completed 项目完成 / report.submitted 日报提交 / issue.updated 问题更新"
       },
       "RuleRecipient": {
         "type": "string",
@@ -19538,7 +19540,7 @@
               "$ref": "#/components/schemas/RuleEventTopic"
             },
             "required": false,
-            "description": "事件型触发的 outbox 主题：task.completed 任务完成 / task.updated 任务更新 / task.progress_changed 进度变化 / change.applied 变更生效 / node.completed 节点完成 / stage.advanced 大阶段完成 / report.submitted 日报提交 / issue.updated 问题更新",
+            "description": "事件型触发的 outbox 主题：task.completed 任务完成 / task.updated 任务更新 / task.progress_changed 进度变化 / change.applied 变更生效 / node.completed 节点完成 / stage.advanced 大阶段完成 / project.completed 项目完成 / report.submitted 日报提交 / issue.updated 问题更新",
             "name": "topic",
             "in": "query"
           },

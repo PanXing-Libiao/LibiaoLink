@@ -7358,7 +7358,7 @@ export interface paths {
                     status?: components["schemas"]["AutomationRunStatus"];
                     /** @description 触发方式：event 事件型（outbox 主题见 RuleEventTopic）/ schedule 调度型（cron 五段 + 窗口） */
                     source?: components["schemas"]["RuleTriggerKind"];
-                    /** @description 事件型触发的 outbox 主题：task.completed 任务完成 / task.updated 任务更新 / task.progress_changed 进度变化 / change.applied 变更生效 / node.completed 节点完成 / stage.advanced 大阶段完成 / report.submitted 日报提交 / issue.updated 问题更新 */
+                    /** @description 事件型触发的 outbox 主题：task.completed 任务完成 / task.updated 任务更新 / task.progress_changed 进度变化 / change.applied 变更生效 / node.completed 节点完成 / stage.advanced 大阶段完成 / project.completed 项目完成 / report.submitted 日报提交 / issue.updated 问题更新 */
                     topic?: components["schemas"]["RuleEventTopic"];
                     entityId?: string;
                     /** @description 运行时刻下界（含） */
@@ -8783,7 +8783,7 @@ export interface components {
              * @description event 型必填：outbox 主题（与业务事务同事务写入）
              * @enum {string|null}
              */
-            topic?: "task.completed" | "task.updated" | "task.progress_changed" | "change.applied" | "node.completed" | "stage.advanced" | "report.submitted" | "issue.updated" | null;
+            topic?: "task.completed" | "task.updated" | "task.progress_changed" | "change.applied" | "node.completed" | "stage.advanced" | "project.completed" | "report.submitted" | "issue.updated" | null;
             /**
              * @description schedule 型必填：五段 cron（Asia/Shanghai，ADR-028）
              * @example 0 8 * * *
@@ -10358,10 +10358,10 @@ export interface components {
          */
         RuleConditionOperator: "eq" | "ne" | "in" | "notIn" | "isNull" | "notNull" | "gt" | "gte" | "lt" | "lte" | "eqOffsetDays" | "containsAny" | "notEmpty";
         /**
-         * @description 事件型触发的 outbox 主题：task.completed 任务完成 / task.updated 任务更新 / task.progress_changed 进度变化 / change.applied 变更生效 / node.completed 节点完成 / stage.advanced 大阶段完成 / report.submitted 日报提交 / issue.updated 问题更新
+         * @description 事件型触发的 outbox 主题：task.completed 任务完成 / task.updated 任务更新 / task.progress_changed 进度变化 / change.applied 变更生效 / node.completed 节点完成 / stage.advanced 大阶段完成 / project.completed 项目完成 / report.submitted 日报提交 / issue.updated 问题更新
          * @enum {string}
          */
-        RuleEventTopic: "task.completed" | "task.updated" | "task.progress_changed" | "change.applied" | "node.completed" | "stage.advanced" | "report.submitted" | "issue.updated";
+        RuleEventTopic: "task.completed" | "task.updated" | "task.progress_changed" | "change.applied" | "node.completed" | "stage.advanced" | "project.completed" | "report.submitted" | "issue.updated";
         /**
          * @description 收件人口径：task.owner 任务负责人（多人时逐位）/ task.owner_or_project_manager 负责人为空回退项目经理 / project.manager 项目经理（任务主体解析）/ project.group 项目群（R04 / R06 / A02 / A08）/ rule.members 规则显式成员（A14 自定义待办）/ report.member 日报名册成员（A01 应填未填）；issue.owner 随 A03 处理时限删除下线（Push 215）
          * @enum {string}

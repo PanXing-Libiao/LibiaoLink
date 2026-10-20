@@ -11,6 +11,7 @@ import {
 } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import { DatabaseService } from "../../db/database.service.js";
+import { appendOutbox } from "../../db/outbox.js";
 import { AuditService, diffRecords } from "../admin/index.js";
 import { PermissionService } from "../permission/index.js";
 import type { ProjectScopeFilter } from "../permission/index.js";
@@ -213,6 +214,20 @@ export class ProjectService {
         summary: "修改项目：" + row.code + "（" + row.name + "）",
         changes: changes.length > 0 ? changes : null,
       });
+      if (body.status === "done" && current.project.status !== "done") {
+        await appendOutbox(tx, {
+          topic: "project.completed",
+          dedupeKey: "project.completed:" + id + ":" + row.version,
+          payload: {
+            projectId: id,
+            status: row.status,
+            previousStatus: current.project.status,
+            version: row.version,
+            actorId,
+            at: at.toISOString(),
+          },
+        });
+      }
       return row;
     });
     const view = await this.projects.findViewById(id);

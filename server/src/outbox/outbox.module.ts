@@ -234,7 +234,10 @@ function automationWiringDeps(
     subjects,
     append: appendOutboxIfAbsent,
     db: database.db,
-    rules: (client) => rules.listEnabledRules(client),
+    rules: (client) =>
+      rules.listEnabledRules(client, {
+        forceEnableCodes: env.AUTOMATION_R06_ENABLED === "true" ? ["R06"] : [],
+      }),
     runs,
     transaction: (work) => database.db.transaction(work),
     now: () => clock.now(),

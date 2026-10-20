@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { addDays, calendarWindow } from "../src/modules/calendar/index.js";
-import { BUILTIN_RULES, dedupeKey, replayRules, toStageSubject, type ReplayTask } from "../src/modules/automation/index.js";
+import { BUILTIN_RULES, dedupeKey, replayRules, toProjectSubject, toStageSubject, type ReplayTask } from "../src/modules/automation/index.js";
 
 const ENABLED_TEST_RULES = BUILTIN_RULES.map((rule) => ({ ...rule, enabled: true }));
 const CALENDAR = calendarWindow("2026-09-01", "2026-12-31", [
@@ -188,23 +188,32 @@ describe("R05 任务超时提醒（T+1 · 负责人 + 项目经理单聊）", ()
   });
 });
 
-describe("R06 任务完成喜报", () => {
-  it("项目整体进度 100% → 命中，文案逐字", () => {
-    const report = replay("2026-09-23", [
-      task({ displayStatus: "done", actualEnd: "2026-09-23", projectProgress: 100 }),
-    ]);
+describe("R06 项目完成喜报", () => {
+  function project(status = "done") {
+    return toProjectSubject({
+      projectId: "p-1",
+      projectCode: "LBUSA-20261014-002",
+      projectName: "美国仓储公司订单",
+      projectStatus: status,
+      projectVersion: 4,
+      groupId: "p-1",
+    });
+  }
+
+  it("项目状态完成 → 项目群命中，文案逐字", () => {
+    const report = replay("2026-09-23", [], { subjects: [project()] });
     expect(report.messages).toHaveLength(1);
     expect(report.messages[0]?.title).toBe("叮咚~喜报来啦！");
     expect(report.messages[0]?.body).toBe(
-      `项目：**LBUSA-20261014-002·美国仓储公司订单**\n恭喜张三成功拿下一项重要任务：「**安装摄像头**」。大家一起为这位优秀的伙伴喝彩吧`,
+      `项目：**LBUSA-20261014-002·美国仓储公司订单**\n项目已全部完成，验收交付完毕。大家一起为这份成果喝彩吧`,
     );
+    expect(report.messages[0]?.dedupeKey).toBe("R06:p-1:v4");
   });
 
-  it("项目整体进度 99% → 不命中", () => {
-    const report = replay("2026-09-23", [
-      task({ displayStatus: "done", actualEnd: "2026-09-23", projectProgress: 99 }),
-    ]);
+  it("项目状态未完成 → 不命中", () => {
+    const report = replay("2026-09-23", [], { subjects: [project("active")] });
     expect(report.messages).toHaveLength(0);
+    expect(report.details.find((item) => item.ruleCode === "R06")?.skipped).toBe("not_matched");
   });
 });
 
