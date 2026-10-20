@@ -69,8 +69,8 @@ describe("isCompletedTaskOnTime（已完成任务按期判定）", () => {
 });
 
 describe("renderR06Poster（动态海报 PNG）", () => {
-  it("输出 900x1350 PNG，签名与尺寸正确", () => {
-    const buffer = renderR06Poster(VIEW);
+  it("输出 900x1350 PNG，签名与尺寸正确", async () => {
+    const buffer = await renderR06Poster(VIEW);
     expect(buffer.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
     expect(buffer.readUInt32BE(16)).toBe(900);
     expect(buffer.readUInt32BE(20)).toBe(1350);

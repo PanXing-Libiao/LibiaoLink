@@ -74,7 +74,7 @@ server/
 前置：Node 24、PostgreSQL 18（库结构由 `database/` 迁移器维护）、`shared/` 已构建。
 
 1. `cd shared && npm ci && npm run build`（server 依赖 `@libiaolink/contracts` 的 `dist/` 产物）
-2. `cd server && npm ci`
+2. `cd server && npm ci`（`@napi-rs/canvas` 固定 `0.1.77`：0.1.78+ 的 Alpine/musl 预编译包要求 AVX，测试机不支持；Canvas 在生成 R06 海报时动态加载，失败只回退静态 GIF，不阻塞服务启动）
 3. `cp .env.example .env`，按需改 `DATABASE_URL`（应用角色 `libiaolink_api`，无 DDL 权限）；`/auth/*` 另需 `CASDOOR_*`（本地沙箱见 `deploy/casdoor/`，真实值不落仓库）；文件能力另需 `S3_*`（本地沙箱见 `deploy/minio/`，然后 `npm run storage:init`）
 4. `npm run build && npm run start:api`，然后 `curl http://127.0.0.1:3000/healthz`、`/readyz`
 
