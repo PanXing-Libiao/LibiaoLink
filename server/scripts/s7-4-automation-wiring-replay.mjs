@@ -403,7 +403,7 @@ function buildEnv(overrides = {}) {
     parkedJobs: [],
   };
   const parkUnrelatedPendingJobs = async () => {
-    const found = await db.query("select id, run_at, updated_at from jobs where status = 'pending' order by id");
+    const found = await db.query("select id, run_at::text as run_at, updated_at::text as updated_at from jobs where status = 'pending' order by id");
     cleanup.parkedJobs.push(...found.rows);
     if (found.rows.length > 0) {
       await db.query(
@@ -414,8 +414,17 @@ function buildEnv(overrides = {}) {
     return found.rows.length;
   };
   const restoreParkedJobs = async () => {
-    for (const row of cleanup.parkedJobs) {
-      await db.query("update jobs set run_at = $2, updated_at = $3 where id = $1", [row.id, row.run_at, row.updated_at]);
+    if (cleanup.parkedJobs.length > 0) {
+      await db.query(
+        "update jobs as j set run_at = v.run_at, updated_at = v.updated_at " +
+          "from unnest($1::bigint[], $2::timestamptz[], $3::timestamptz[]) as v(id, run_at, updated_at) " +
+          "where j.id = v.id",
+        [
+          cleanup.parkedJobs.map((row) => row.id),
+          cleanup.parkedJobs.map((row) => row.run_at),
+          cleanup.parkedJobs.map((row) => row.updated_at),
+        ],
+      );
     }
   };
   const trackedKey = (key) => {

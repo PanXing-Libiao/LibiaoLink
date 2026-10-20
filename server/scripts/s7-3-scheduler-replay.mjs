@@ -304,7 +304,7 @@ async function runMain() {
   };
   const parkUnrelatedPendingJobs = async () => {
     const found = await db.pool.query(
-      "select id, run_at, updated_at from jobs where status = 'pending' and kind not like $1 order by id",
+      "select id, run_at::text as run_at, updated_at::text as updated_at from jobs where status = 'pending' and kind not like $1 order by id",
       [KIND_PREFIX + "%"],
     );
     parkedJobs.push(...found.rows);
@@ -317,10 +317,15 @@ async function runMain() {
     }
   };
   const restoreParkedJobs = async () => {
-    for (const row of parkedJobs) {
-      await db.pool.query("update jobs set run_at = $2, updated_at = $3 where id = $1", [row.id, row.run_at, row.updated_at]);
+    if (parkedJobs.length > 0) {
+      await db.pool.query(
+        "update jobs as j set run_at = v.run_at, updated_at = v.updated_at " +
+          "from unnest($1::bigint[], $2::timestamptz[], $3::timestamptz[]) as v(id, run_at, updated_at) " +
+          "where j.id = v.id",
+        [parkedJobs.map((row) => row.id), parkedJobs.map((row) => row.run_at), parkedJobs.map((row) => row.updated_at)],
+      );
+      note("| RESTORE | 已恢复非本回放 pending jobs " + parkedJobs.length + " 条 |");
     }
-    if (parkedJobs.length > 0) note("| RESTORE | 已恢复非本回放 pending jobs " + parkedJobs.length + " 条 |");
   };
 
   evidence.anchors = {
