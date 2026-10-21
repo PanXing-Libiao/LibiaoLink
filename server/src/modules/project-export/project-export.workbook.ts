@@ -167,6 +167,8 @@ const IMAGE_WIDTH_PX = 88;
 const IMAGE_HEIGHT_PX = 64;
 const IMAGE_GAP_PX = 4;
 const PX_PER_POINT = 4 / 3;
+const EMU_PER_PIXEL = 9525;
+const IMAGE_PADDING_PX = 2;
 
 const SHANGHAI_PARTS = new Intl.DateTimeFormat("en-CA", {
   timeZone: "Asia/Shanghai",
@@ -382,7 +384,6 @@ function placeImages(
   rowNumber: number,
   capacity: number,
   baseHeightPx: number,
-  rowHeightPx: number,
 ): number {
   const available = availableRefs(refs, images);
   for (let index = 0; index < available.length; index += 1) {
@@ -392,15 +393,23 @@ function placeImages(
     if (image === undefined) continue;
     const slot = index % capacity;
     const line = Math.floor(index / capacity);
-    const xOffset = (slot / capacity) * 0.96 + 0.01;
-    const yOffset = (baseHeightPx + 2 + line * (IMAGE_HEIGHT_PX + IMAGE_GAP_PX)) / rowHeightPx;
+    const xOffsetPx = IMAGE_PADDING_PX + slot * (IMAGE_WIDTH_PX + IMAGE_GAP_PX);
+    const yOffsetPx = baseHeightPx + IMAGE_PADDING_PX + line * (IMAGE_HEIGHT_PX + IMAGE_GAP_PX);
     const imageBuffer = Uint8Array.from(image.bytes).buffer as ArrayBuffer;
     const imageId = workbook.addImage({ buffer: imageBuffer, extension: image.extension });
-    sheet.addImage(imageId, {
-      tl: { col: column - 1 + xOffset, row: rowNumber - 1 + yOffset },
+    const position = {
+      tl: {
+        col: column - 1,
+        row: rowNumber - 1,
+        nativeCol: column - 1,
+        nativeColOff: Math.round(xOffsetPx * EMU_PER_PIXEL),
+        nativeRow: rowNumber - 1,
+        nativeRowOff: Math.round(yOffsetPx * EMU_PER_PIXEL),
+      },
       ext: { width: IMAGE_WIDTH_PX, height: IMAGE_HEIGHT_PX },
       editAs: "oneCell",
-    });
+    };
+    sheet.addImage(imageId, position as unknown as ExcelJS.ImageRange);
   }
   return available.length;
 }
@@ -478,8 +487,8 @@ function addReportSheet(workbook: ExcelJS.Workbook, payload: ProjectExportPayloa
     const imageLines = Math.max(onsiteLines, issueLines);
     const rowHeightPx = basePx + imageLines * (IMAGE_HEIGHT_PX + IMAGE_GAP_PX) + 4;
     row.height = rowHeightPx / PX_PER_POINT;
-    placeImages(workbook, sheet, onsite, payload.images, 5, row.number, imageCapacity(REPORT_WIDTHS[5] ?? 60.2), basePx, rowHeightPx);
-    placeImages(workbook, sheet, issuePhotos, payload.images, 9, row.number, imageCapacity(REPORT_WIDTHS[9] ?? 37), basePx, rowHeightPx);
+    placeImages(workbook, sheet, onsite, payload.images, 5, row.number, imageCapacity(REPORT_WIDTHS[5] ?? 60.2), basePx);
+    placeImages(workbook, sheet, issuePhotos, payload.images, 9, row.number, imageCapacity(REPORT_WIDTHS[9] ?? 37), basePx);
   }
   return sheet;
 }
@@ -525,8 +534,8 @@ function addChangeSheet(workbook: ExcelJS.Workbook, payload: ProjectExportPayloa
     const imageLines = Math.max(beforeLines, afterLines);
     const rowHeightPx = basePx + imageLines * (IMAGE_HEIGHT_PX + IMAGE_GAP_PX) + 4;
     row.height = rowHeightPx / PX_PER_POINT;
-    placeImages(workbook, sheet, before, payload.images, 5, row.number, imageCapacity(CHANGE_WIDTHS[5] ?? 30), basePx, rowHeightPx);
-    placeImages(workbook, sheet, after, payload.images, 6, row.number, imageCapacity(CHANGE_WIDTHS[6] ?? 30), basePx, rowHeightPx);
+    placeImages(workbook, sheet, before, payload.images, 5, row.number, imageCapacity(CHANGE_WIDTHS[5] ?? 30), basePx);
+    placeImages(workbook, sheet, after, payload.images, 6, row.number, imageCapacity(CHANGE_WIDTHS[6] ?? 30), basePx);
   }
   return sheet;
 }

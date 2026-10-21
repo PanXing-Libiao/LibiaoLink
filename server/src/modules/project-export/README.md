@@ -44,7 +44,7 @@
 - 文件列只保留文件名 / 链接，不输出 fileId、对象键或二进制内容。
 - 一个单元格有多份文件时逐行写文件名；Excel 单元格只能挂一个超链接，主链接指向第一份文件。
 - 链接 = `{origin}/#/files?project={projectId}&q={文件名}`。`origin` 优先取前端显式回传的站点 origin（同源 GET 可能省略 `Origin`），其次 `Origin` / `Referer` / `X-Forwarded-Proto + Host`；只接受 http(s)，取不到时文件列只写文件名。
-- 日报现场图 / 问题图、变更前后图直接嵌入单元格（PNG / JPEG / GIF，按文件头识别，不信任扩展名）；行高按图片行数扩展。
+- 日报现场图 / 问题图、变更前后图直接嵌入单元格（PNG / JPEG / GIF，按文件头识别，不信任扩展名）；每个单元格内按列宽可容纳数量排成网格，图片横纵均留 4px 间距并通过 DrawingML 原生 EMU 锚点定位，超出首行自动换行；行高按图片行数扩展。
 - 图片限制：最多 250 张、单张 8 MB、总计 80 MB、并发读取 4；缺失 / 读取失败 / 不支持的图片写「（附图缺失）文件名」，不阻断整份导出。
 
 ## 分页与边界
@@ -54,4 +54,4 @@
 
 ## 测试
 
-- `server/test/project-export.test.ts`：四表名称与列序、关键字段、文件超链接、嵌入图、缺失图占位、草稿日期、文件名 / origin / Content-Disposition。
+- `server/test/project-export.test.ts`：四表名称与列序、关键字段、文件超链接、嵌入图、多图网格不重叠、缺失图占位、草稿日期、文件名 / origin / Content-Disposition。
