@@ -1,6 +1,6 @@
 # deploy/svg-preview/ · H1 SVG 安全栅格化沙箱（S3）
 
-> 状态（2026-10-21）：S3 已实现，待 PR 合入。S2 已随 PR #523 合并到 main `e2b6aab`；S4 尚未接线，服务端 `PREVIEW_PIPELINE_VERSION` 仍为 `1.0.0`。本目录当前**无生产消费者，不得单独部署生产**；必须与 S2 安全边界、S4 管线切换同批上线。
+> 状态（2026-10-21）：S3 已实现，待 PR [#529](https://github.com/PanXing-Libiao/LibiaoLink/pull/529) 合入。S2 已随 PR #523 合并到 main `e2b6aab`；S4 尚未接线，服务端 `PREVIEW_PIPELINE_VERSION` 仍为 `1.0.0`。本目录当前**无生产消费者，不得单独部署生产**；必须与 S2 安全边界、S4 管线切换同批上线。
 >
 > 口径：`docs/adr/ADR-034-SVG预览安全栅格化.md` 与 `docs/H1-SVG预览同源存储型XSS整改方案.md`。外部 V1.0 源文档同条同步仍由 px 协调人工确认，不能由本目录或本切片宣称 H1 已闭环。
 
