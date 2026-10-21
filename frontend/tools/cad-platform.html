@@ -1,10 +1,15 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><title>CAD 平台接入验证</title></head>
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><title>CAD 本地试用</title></head>
   <body>
     <main class="mx-auto max-w-4xl space-y-5 p-8">
-      <h1 class="text-2xl font-semibold">CAD 平台接入验证</h1>
-      <p class="text-sm text-zinc-600">从文件版本打开 STEP，检查产品树、拾取、显隐和缺面明细。本地验证使用测试身份与文件记录，尚未连接公司账号和文件库。</p>
+      <h1 class="text-2xl font-semibold">CAD 本地试用</h1>
+      <p class="text-sm text-zinc-600">选择本机 STEP 文件查看模型与零件结构。文件仅在本机处理；本页使用本地测试身份与存储，尚未连接公司账号和文件库。</p>
+      <div class="flex flex-wrap items-center gap-4">
+        <button id="importFile" type="button" disabled class="rounded-md bg-zinc-900 px-4 py-2 text-sm text-white disabled:opacity-40">导入 STEP 文件</button>
+        <input id="localFile" type="file" accept=".step,.stp" hidden>
+        <span class="text-xs text-zinc-500">支持 .step / .stp，单文件最大 64 MiB；也可打开下方示例。</span>
+      </div>
       <div id="files" class="space-y-3"></div>
       <p id="status" role="status" class="text-sm text-zinc-600">正在准备…</p>
     </main>
@@ -14,26 +19,46 @@
       import {createRoot} from 'react-dom/client';
       import {FilePreviewOverlay} from '/src/components/FilePreviewOverlay.tsx';
       import {ensurePreviewOutcome,previewKindOf} from '/src/fileApi.ts';
+      import {apiFetch} from '/src/api.ts';
       import '/src/app.css';
       const root=createRoot(document.getElementById('overlay')),status=document.getElementById('status');
+      const localFiles=new Map(),importButton=document.getElementById('importFile'),input=document.getElementById('localFile');
       async function open(file){
         status.textContent='正在打开 '+file.name;
         const outcome=await ensurePreviewOutcome(file.id,file.versionId);
         if(outcome.kind==='unavailable'){status.textContent=outcome.reason||'暂不可预览';return;}
         root.render(createElement(FilePreviewOverlay,{pane:outcome.kind==='viewer'?{mode:'viewer',viewer:outcome.viewer}:{mode:'url',url:outcome.url},
           name:file.name,kind:previewKindOf(file.name),nonce:Date.now(),onRetry:()=>open(file),
-          onDownload:()=>{status.textContent='本检查页不提供业务下载；原文件下载由平台既有权限链承接。';},
+          onDownload:()=>{
+            const original=localFiles.get(file.id);
+            if(!original){status.textContent='示例下载由平台既有业务入口承接；导入自己的文件后可下载原文件。';return;}
+            const url=URL.createObjectURL(original),link=document.createElement('a');link.href=url;link.download=original.name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+          },
           onClose:()=>{root.render(null);status.textContent='已关闭 '+file.name;}}));
       }
-      const login=await fetch('/__cad-smoke/login',{method:'POST'});
-      if(!login.ok)throw new Error('本地接入验证服务未启动');
-      const files=await(await fetch('/__cad-smoke/files')).json();
-      for(const file of files){
+      function addFile(file,prepend=false){
         const row=document.createElement('div');row.className='flex items-center justify-between gap-4 rounded-lg border border-zinc-200 bg-white px-4 py-3';
         const label=document.createElement('span');label.textContent=file.name+' · '+(file.size/1e6).toFixed(2)+' MB';
         const button=document.createElement('button');button.textContent='打开模型';button.className='shrink-0 rounded-md bg-zinc-900 px-4 py-2 text-sm text-white';button.onclick=()=>open(file);
-        row.append(label,button);document.getElementById('files').append(row);
+        row.append(label,button);if(prepend)document.getElementById('files').prepend(row);else document.getElementById('files').append(row);
       }
+      importButton.onclick=()=>input.click();
+      input.onchange=async()=>{
+        const original=input.files?.[0];input.value='';if(!original)return;
+        if(!/\.(step|stp)$/i.test(original.name)||original.size===0||original.size>64*1024*1024){status.textContent='请选择非空的 .step / .stp 文件，大小不超过 64 MiB。';return;}
+        importButton.disabled=true;status.textContent='正在导入 '+original.name;
+        try{
+          const response=await apiFetch('/__cad-smoke/import',{method:'POST',headers:{'Content-Type':'application/octet-stream','X-Cad-Filename':encodeURIComponent(original.name)},body:original});
+          const result=await response.json();if(!response.ok)throw new Error(result.message||'文件导入失败');
+          localFiles.set(result.id,original);addFile(result,true);await open(result);
+        }catch(error){status.textContent=error.message||'文件导入失败，请重试';}
+        finally{importButton.disabled=false;}
+      };
+      const login=await fetch('/__cad-smoke/login',{method:'POST'});
+      if(!login.ok)throw new Error('本地接入验证服务未启动');
+      const files=await(await fetch('/__cad-smoke/files')).json();
+      for(const file of files)addFile(file);
+      importButton.disabled=false;
       status.textContent='请选择文件';
     </script>
   </body>

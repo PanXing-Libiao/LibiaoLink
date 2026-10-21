@@ -41,7 +41,9 @@ CAD_MESHER_PYTHON=/path/to/mesher/bin/python \
 node scripts/cad-browser-smoke.mjs
 ```
 
-打开 `http://127.0.0.1:3013/tools/cad-platform.html`。该进程只监听 loopback；页面明确标识测试身份/文件记录/存储。使用实际守卫、PreviewReadService、CAD 控制器、native 转换和实际浮层，不依赖全量构建。测试登录路由只注册于测试夹具，生产模块不包含它。原文件下载的业务权限由既有下载服务测试覆盖，检查页的下载按钮只验证回调。
+打开 `http://127.0.0.1:3013/tools/cad-platform.html`，点击“导入 STEP 文件”选择本机非空 `.step` / `.stp`，单文件上限 64 MiB；下方保留输入清单的预置示例。该进程只监听 loopback；页面明确标识测试身份/文件记录/存储。使用实际守卫、PreviewReadService、CAD 控制器、native 转换和实际浮层，不依赖全量构建。
+
+本地导入只注册于 browser 测试夹具，使用 Session/CSRF 守卫、已有有界读流、SHA-256 和临时文件版本记录；生产模块不包含这些登录/导入路由，也不写公司文件库。相同内容复用原路径，否则写入本地专用缓存，正常停止服务后仅删除本进程创建的导入副本，不删除用户原文件。导入件的下载来自浏览器持有的原 File，已比对 SHA；预置示例仍只验证下载回调。公司业务下载的权限链由既有下载服务测试覆盖，此页不能替代公司环境验收。
 
 定向接口测试在 `server` 执行：
 
