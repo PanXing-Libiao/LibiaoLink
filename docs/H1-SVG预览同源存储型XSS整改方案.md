@@ -2,7 +2,7 @@
 
 > 来源：`LibiaoLink_安全审查报告_2026-10-19.pdf` H1（第 5 页）｜严重度 High｜报告要求：上线前处理
 > 报告审查基线：`e13664f`｜方案落档时 `lan` 分支 HEAD：`d6ae272`（审查基线祖先；H1 涉及路径未发现实质修复）
-> 起草：lan（后端平台 / file / preview / outbox）｜拟稿日期：2026-10-20｜状态：**S1 架构 / 契约已批准（ADR-034 Accepted，PR #518 已合入 main）；S2 已随 PR #523 合入 main `e2b6aab`；S3 已随 PR #529 合入 main `acd6113`；S4 已随 PR #531 合入 main `db7d5e0`；S5 已随 PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 合并 main `660cc80`；S6 自动化矩阵已实现，PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 已创建、PR CI 待结果；尚未部署测试机或生产，H1 未闭环；外部 V1.0 源文档同步已按 2026-10-21 指令移出本整改跟踪**
+> 起草：lan（后端平台 / file / preview / outbox）｜拟稿日期：2026-10-20｜状态：**S1 架构 / 契约已批准（ADR-034 Accepted，PR #518 已合入 main）；S2 已随 PR #523 合入 main `e2b6aab`；S3 已随 PR #529 合入 main `acd6113`；S4 已随 PR #531 合入 main `db7d5e0`；S5 已随 PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 合并 main `660cc80`；S6 自动化矩阵已实现且 PR CI 全绿（[run 39540053943](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39540053943) 5 / 5、矩阵 25 / 25），PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 待评审合并；尚未部署测试机或生产，H1 未闭环；外部 V1.0 源文档同步已按 2026-10-21 指令移出本整改跟踪**
 > 归属与评审：本文件位于 `docs/`（px 主责），合入前请 px 复核；ADR 与契约口径由 wmj 主责；生产部署、Nginx 与浏览器测试设施由 px 主责；服务端预览与队列由 lan 主责
 > 变更控制：后续执行以本文件为准。若执行中需要改变架构、验收条件或切片顺序，先修改本文件并说明原因；已合入主干的 ADR 与回放证据按不可变历史处理，不原地重写。
 
@@ -266,7 +266,7 @@ renderer 不执行脚本；服务容器无外网、不配置外部资源目录�
 
 ### S4 · 恢复 SVG 预览
 
-- 执行状态（2026-10-21）：已随 PR [#531](https://github.com/PanXing-Libiao/LibiaoLink/pull/531) 合并 main `db7d5e0`，**未部署生产**。worker 以版本对象键推导真实文件名，SVG 固定发送 `image/svg+xml`；读取源对象后重算 SHA-256 并与 `file_versions.content_hash` 比对；独立校验 `image/png` + `rasterize` + PNG 魔数 / IHDR / 8-bit RGBA / 尺寸 / 像素 / IEND / 20 MiB；通过后才写 `previews/{contentHash}/2.0.0/image`。`PREVIEW_PIPELINE_VERSION` 与服务端默认值、生产模板均切 `2.0.0`；`deploy/prod/` 增加 internal-only `svg-preview` 服务与 worker 双网络接线。定向回归覆盖旧 1.0.0 不命中、哈希不一致、坏 PNG、Content-Type / mode 不合规与失败不原地重试；server 全量 **85 文件 / 1330 例**、typecheck / build / boundaries 全绿。S5 已随 PR #534 合并 main `660cc80`；S6 自动化矩阵已实现，PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 已创建、PR CI 待结果；生产发布仍未执行。
+- 执行状态（2026-10-21）：已随 PR [#531](https://github.com/PanXing-Libiao/LibiaoLink/pull/531) 合并 main `db7d5e0`，**未部署生产**。worker 以版本对象键推导真实文件名，SVG 固定发送 `image/svg+xml`；读取源对象后重算 SHA-256 并与 `file_versions.content_hash` 比对；独立校验 `image/png` + `rasterize` + PNG 魔数 / IHDR / 8-bit RGBA / 尺寸 / 像素 / IEND / 20 MiB；通过后才写 `previews/{contentHash}/2.0.0/image`。`PREVIEW_PIPELINE_VERSION` 与服务端默认值、生产模板均切 `2.0.0`；`deploy/prod/` 增加 internal-only `svg-preview` 服务与 worker 双网络接线。定向回归覆盖旧 1.0.0 不命中、哈希不一致、坏 PNG、Content-Type / mode 不合规与失败不原地重试；server 全量 **85 文件 / 1330 例**、typecheck / build / boundaries 全绿。S5 已随 PR #534 合并 main `660cc80`；S6 自动化矩阵已实现并通过 PR CI（run `39540053943` 5 / 5、矩阵 25 / 25），PR #539 待评审合并；生产发布仍未执行。
 - `previewTargetsFor(SVG) => ["image"]`；`PREVIEW_PIPELINE_VERSION=2.0.0`。
 - worker 对 SVG 源对象重算 SHA-256，校验 PNG 魔数 / IHDR / 字节上限，再写 `preview_artifacts`。
 - 失败保留现有 `failed + reason` 三态；前端仍按 `not_ready` 轮询，不改生产前端组件。
@@ -287,7 +287,7 @@ renderer 不执行脚本；服务容器无外网、不配置外部资源目录�
 - `.github/workflows/ci.yml` 增加独立 `svg-preview-e2e` job；先完成至少 3 次 main 连续全绿，再由 px 将其加入分支保护必需检查。
 - 新增 `docs/H1-SVG预览整改回放证据.md` 与脱敏 JSON 摘要；不得记录会话 token、Cookie、签名 URL 的敏感查询参数或生产数据。
 - 验收：第 7 节全部浏览器用例通过，证据与命令可复跑。
-- 执行状态（2026-10-21）：`h1-svg-preview-e2e.mjs`、`h1-nginx-ci-config.mjs`、`h1-onlyoffice-stub.mjs` 与 `preview:svg-e2e` 已实现；独立 `svg-preview-e2e` job 覆盖 B1 ～ B7，使用真实 PostgreSQL / MinIO / 上传 API / `preview.job` / worker / `svg-preview` / 生产 Nginx 派生配置 / Headless Chrome，ONLYOFFICE 仅用 `api.js` 桩验证外壳生命周期。`summary.json`、失败截图与服务日志按白名单脱敏后作为 artifact 上传。脚本语法、frontend 两份 TypeScript 检查、`vite build`、Nginx 派生与 YAML 解析通过；PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 的完整 PR CI 已触发、待结果。**S6 PR 尚未合并；main 连续 3 次全绿、`svg-preview-e2e` 加入分支保护、测试机 / 生产部署、真实 ONLYOFFICE / CAD 生产样本与旧签名过期复测均未完成。**
+- 执行状态（2026-10-21）：`h1-svg-preview-e2e.mjs`、`h1-nginx-ci-config.mjs`、`h1-onlyoffice-stub.mjs` 与 `preview:svg-e2e` 已实现；独立 `svg-preview-e2e` job 覆盖 B1 ～ B7，使用真实 PostgreSQL / MinIO / 上传 API / `preview.job` / worker / `svg-preview` / 生产 Nginx 派生配置 / Headless Chrome，ONLYOFFICE 仅用 `api.js` 桩验证外壳生命周期。`summary.json`、失败截图与服务日志按白名单脱敏后作为 artifact 上传。脚本语法、frontend 两份 TypeScript 检查、`vite build`、Nginx 派生与 YAML 解析通过；PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 的 PR CI [run 39540053943](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39540053943) 已 5 / 5 全绿，`svg-preview-e2e` 的 B1 ～ B7 矩阵 **25 / 25 PASS**（Chrome 155）。B6 回放发现并修复任务抽屉 CAD 无预览入口，PDF / DOCX / STL 均通过。**S6 PR 尚未合并；main 连续 3 次全绿、`svg-preview-e2e` 加入分支保护、测试机 / 生产部署、真实 ONLYOFFICE / CAD 生产样本与旧签名过期复测均未完成。**
 
 ### S7 · 独立对象存储域
 

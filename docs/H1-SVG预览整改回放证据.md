@@ -1,8 +1,8 @@
 # H1 SVG 预览整改回放证据（S6）
 
-> 状态（2026-10-21）：S6 自动化矩阵已实现，PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 已创建；**尚未合并，PR CI 已触发、待结果，不能据此宣布 H1 闭环**。
+> 状态（2026-10-21）：S6 自动化矩阵已实现，PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 的 PR CI 已全绿（[run 39540053943](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39540053943) 5 / 5，B1 ～ B7 25 / 25）；**PR 尚未合并、测试机 / 生产尚未部署，不能据此宣布 H1 闭环**。
 >
-> 基线：S5 已随 PR #534 合并 main `660cc80`，尚未部署测试机 / 生产。S6 实现提交位于 `lan`，本文件落档前已同步 main `4fa7175`（PR #536 / #537）与 `5bc5c12`（PR #538）。
+> 基线：S5 已随 PR #534 合并 main `660cc80`，尚未部署测试机 / 生产。S6 自动化实现提交 = `lan` `3e63597`，PR CI `39540053943` 全绿；本文件落档前已同步 main `4fa7175`（PR #536 / #537）与 `5bc5c12`（PR #538）。
 >
 > 证据纪律：只保留 origin + pathname、状态、错误码与脱敏摘要；不记录 session token、Cookie、签名 URL query 或生产数据。CI artifact 保留 7 天。
 
@@ -55,8 +55,12 @@
 - `vite build`：通过（仅有既有大 chunk 警告）。
 - Nginx 派生脚本：本地执行成功，生产 upstream、证书、SPA root 与安全头片段按预期替换。
 - `git diff --check` 与 workflow YAML 解析：通过，`svg-preview-e2e` job 可正常读取。
+- PR CI [39540053943](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39540053943)：5 / 5 job 全绿；`svg-preview-e2e` job `119025492395` 通过，artifact `h1-svg-preview-e2e-39540053943` 的 `summary.json` 为 `passed`。
+- 自动矩阵 = **25 / 25 PASS**：B1 3、B2 4、B3 6、B4 1、B5 4、B6 3、B7 4；浏览器 Chrome/155.0.8059.84。
+- B6 实际结果：PDF / DOCX 为 ONLYOFFICE 外壳 `ready`，STL 为 `cad3d` 且 WebGL canvas 已挂载；三者均未进入 PNG 产物通道。
+- B7 实际结果：443 SPA、443 对象存储门面、9443 备用门面均命中 HSTS / CSP / `nosniff` / XFO；SPA 无 CSP violation 或安全日志。
 
-**未声明已执行**：完整 S6 E2E 需要 Linux PostgreSQL / MinIO / Nginx / Chrome 组合，本地未跑通；以 PR CI 的实际运行结论为准。`main` 连续 3 次全绿、分支保护必需检查、测试机 / 生产部署均尚未完成。
+**边界**：完整 S6 E2E 需要 Linux PostgreSQL / MinIO / Nginx / Chrome 组合，本次由 PR CI 实际执行，本地 Windows 未复跑全栈；测试机 / 生产仍未部署。`main` 连续 3 次全绿、分支保护必需检查、测试机 / 生产部署均尚未完成。
 
 ## 6. 自动与人工边界
 
@@ -70,7 +74,7 @@
 
 ## 7. 关闭条件（当前未满足）
 
-- [ ] S6 PR 合并且 PR CI 全绿。
+- [ ] S6 PR 合并（PR CI 已全绿：run `39540053943` 5 / 5，矩阵 25 / 25）。
 - [ ] `main` 连续 3 次全绿后，由 px 将 `svg-preview-e2e` 加入分支保护必需检查。
 - [ ] 测试机 / 生产完成同批部署与 B7 复测。
 - [ ] 真实 ONLYOFFICE、真实 CAD 生产样本与旧签名过期复测完成。
