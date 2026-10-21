@@ -44,14 +44,30 @@ document.getElementById('sidebarScrim').onclick=closeSidebar;
 sidebar.addEventListener('keydown',event=>{
  if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeSidebar();}
 });
-// Filter the displayed source product rows; identities and visibility remain core-owned.
+// Keep source parentId paths in search results; never infer hierarchy from names or indentation.
 function filterParts(){
  const tree=document.getElementById('productTree');
  if(!tree||tree.hidden)return;
  const rows=[...tree.querySelectorAll('.row')],term=document.getElementById('search').value.trim().toLocaleLowerCase();
- for(const row of rows)row.hidden=!row.textContent.toLocaleLowerCase().includes(term);
- const shown=rows.filter(row=>!row.hidden).length;
- document.getElementById('nodecount').textContent=term?`${shown} / ${rows.length} 项`:`${rows.length} 项`;
+ const matches=new Set(rows.filter(row=>row.querySelector('.node').textContent.toLocaleLowerCase().includes(term)).map(row=>row.dataset.productId));
+ const visible=new Set(matches),occurrences=loadedEnvelope?.document?.productOccurrences||{};
+ if(term)for(const id of matches){
+  const seen=new Set([id]);let parent=occurrences[id]?.parentId;
+  while(typeof parent==='string'&&!seen.has(parent)){
+   visible.add(parent);seen.add(parent);parent=occurrences[parent]?.parentId;
+  }
+ }
+ let contextCount=0;
+ for(const row of rows){
+  const match=matches.has(row.dataset.productId),context=!!term&&visible.has(row.dataset.productId)&&!match;
+  row.hidden=!visible.has(row.dataset.productId);
+  row.toggleAttribute('data-search-match',!!term&&match);row.toggleAttribute('data-search-context',context);
+  const button=row.querySelector('.node');button.title=button.textContent;
+  if(context)contextCount++;
+ }
+ document.getElementById('nodecount').textContent=term?`${matches.size} 项匹配`:`${rows.length} 项`;
+ const status=document.getElementById('searchStatus');status.hidden=!term;
+ status.textContent=!matches.size?'没有匹配的零件':contextCount?`含 ${contextCount} 个上级节点 · 加粗为匹配项`:'加粗为匹配项';
 }
 document.getElementById('search').addEventListener('input',filterParts);
 

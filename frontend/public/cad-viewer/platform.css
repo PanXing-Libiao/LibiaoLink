@@ -26,11 +26,14 @@ aside { position: absolute; z-index: 3; inset: 64px auto 58px 12px; width: 248px
 #nodecount { margin-left: auto; font-size: 11px; }
 #closeSidebar { width: 28px; min-height: 28px; padding: 5px; }
 #search { margin: 0 10px 8px; padding: 8px 10px; font-size: 12px; background: #f8fafb; }
+.search-status { margin: 0 12px 9px; font-size: 11px; line-height: 1.5; color: #637987; }
 #tree, #productTree { flex: 1; min-height: 0; max-height: none; border-bottom: 0; overflow: auto; padding: 0 10px 12px; scrollbar-width: thin; }
 #productTree > strong { display: none; }
 aside:has(#productTree:not([hidden])) #tree { display: none; }
 .row { min-height: 34px; gap: 5px; margin: 1px 0; }
 .node { min-height: 32px; padding: 6px 3px; font-size: 12px; }
+.row[data-search-match] .node { color: #1e6375; font-weight: 600; }
+.row[data-search-context] .node { color: #637987; }
 .row input { width: 14px; height: 14px; }
 .treefoot { padding: 9px; gap: 7px; }
 .workspace { position: absolute; inset: 0; min-width: 0; min-height: 0; padding: 0; display: block; overflow: hidden; }

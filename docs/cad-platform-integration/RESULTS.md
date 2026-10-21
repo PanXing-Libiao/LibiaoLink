@@ -124,6 +124,14 @@ MB = 1,000,000 bytes。[原始字节/来源/任务记录 JSON](files.json) · [C
 
 布局对照：[Autodesk 模型查看工具](https://help.autodesk.com/cloudhelp/ENU/Collab-Home/files/using-the-viewer/Design_Collab_Viewing_Toolbar.html)的查看器内面板/工具组织、[Three.js 响应式画布](https://threejs.org/manual/pages/responsive.html)的容器尺寸原则。沿用现有组件和按钮，没有引入新 UI 库。
 
+## 搜索结果保留上级路径（2026-10-21）
+
+树搜索现在沿源产品实例的 `parentId` 保留每个命中项到根的完整路径。同名零件分属不同装配时，各实例路径分别显示；其它未命中分支隐藏。命中项加粗，上级维持原层级，悬停可查看完整名称；匹配数不包含陪同显示的上级，另列上级数量。清空恢复整棵树，无结果时明确提示。
+
+内置浏览器使用真实装配检查：多处同名命中都保留全部上级，没有无关行混入；无结果隐藏全部树行，清空后全部行恢复且搜索标记清除。搜索前后模型显示统计一致，没有改变模型显隐或选择；原有上级显隐仍作用于其整个装配。页面截图保存在本机忽略目录，不提交业务文件名称或模型画面。只改宿主筛选展示，核心仍为 `5707e1d`；未新增静态测试或运行全量构建。
+
+交互对照：[MUI 树数据筛选](https://mui.com/x/react-data-grid/tree-data/#filtering-tree-data)保留子项命中时的上级，以及 [WAI 树视图](https://www.w3.org/WAI/ARIA/apg/patterns/treeview/)的层级上下文。没有引入树组件库或按缩进猜测源父子关系。
+
 ## 使用边界
 
 本轮使用页面明示的测试身份、文件记录和 ObjectStorage，实际守卫/服务/转换/查看器是真实代码。公司 SSO、数据库、真实对象存储、下载整链和正式部署仍需公司测试环境验收；检查页的原文件下载按钮仅验证回调。当前生产 Alpine/768 MiB API 环境需要另配 native runtime、内存和隔离，不能直接开启。尚未推送、合并或部署。
