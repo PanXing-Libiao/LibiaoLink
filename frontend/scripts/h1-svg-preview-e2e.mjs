@@ -45,6 +45,7 @@ const CHROME_PATH = process.env.CHROME_PATH ?? (process.platform === "win32"
 
 const results = { B1: [], B2: [], B3: [], B4: [], B5: [], B6: [], B7: [] };
 const created = { projectId: null, taskId: null, userId: null, sessionId: null, hashes: new Set() };
+const BACKGROUND_TRANSLATE_WRITES = new Set(["/api/v1/translate", "/api/v1/translate/batch"]);
 let db = null;
 let s3 = null;
 let chrome = null;
@@ -222,6 +223,7 @@ async function cleanup() {
       await db.query("delete from change_requests where project_id = $1", [projectId]);
       await db.query("delete from task_events where task_id in (select id from tasks where project_id = $1)", [projectId]);
       await db.query("delete from tasks where project_id = $1", [projectId]);
+      await db.query("delete from node_requirements where node_id in (select id from project_nodes where project_id = $1)", [projectId]);
       await db.query("delete from project_nodes where project_id = $1", [projectId]);
       await db.query("delete from project_stages where project_id = $1", [projectId]);
       await db.query("delete from project_members where project_id = $1", [projectId]);
@@ -829,7 +831,8 @@ async function assertNoUnsafeSignals(label) {
   const signals = await browserSignals();
   const apiWrites = signals.requests.filter((item) => {
     const pathname = safeLocation(item.url).replace(ORIGIN, "");
-    return pathname.startsWith("/api/v1/") && !["GET", "HEAD", "OPTIONS"].includes(item.method);
+    if (!pathname.startsWith("/api/v1/") || ["GET", "HEAD", "OPTIONS"].includes(item.method)) return false;
+    return !(item.method === "POST" && BACKGROUND_TRANSLATE_WRITES.has(pathname));
   });
   const securityLogs = signals.logs.filter((item) => item.source === "security");
   assert(signals.exceptions.length === 0, label + "：出现未捕获异常 " + signals.exceptions.join(" | "));

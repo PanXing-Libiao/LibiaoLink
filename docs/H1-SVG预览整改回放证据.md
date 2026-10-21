@@ -33,7 +33,7 @@
 | 组 | 自动覆盖 | 通过条件 |
 |---|---|---|
 | B1 正常 SVG | 上传中文 SVG；等 `ready`；抽屉缩略图、图片浮层、`ImageZoomViewer` 缩放 | 预览 URL 仅指向 `previews/{64 位哈希}/2.0.0/image`；响应 `image/png` 且 PNG 魔数正确；缩略图 / 浮层自然尺寸有效且 URL 一致；缩放值增加 |
-| B2 恶意 SVG | 带 `onload`、`<script>`、Cookie 读取和 `/api/v1/projects` POST 的 SVG；应用内点击、作为 `<img>`、顶层预览、顶层下载 | 无异常 / dialog / 脚本标记 / CSP violation / Cookie 读取 / 非预期 API 写；预览只可以是 PNG，或确定性 `failed + url=null`；顶层预览最终 `document.contentType=image/png` |
+| B2 恶意 SVG | 带 `onload`、`<script>`、Cookie 读取和 `/api/v1/projects` POST 的 SVG；应用内点击、作为 `<img>`、顶层预览、顶层下载 | 无异常 / dialog / 脚本标记 / CSP violation / Cookie 读取 / 非预期 API 写；SPA 自身的背景翻译 `translate` / `translate/batch` POST 不计入异常写，恶意夹具对 `/api/v1/projects` 的写仍必须为 0；预览只可以是 PNG，或确定性 `failed + url=null`；顶层预览最终 `document.contentType=image/png` |
 | B3 MIME / 改名 | `image/svg+xml; charset=utf-8`、大写扩展名、双扩展名；扩展名 / MIME / 文件头冲突；改名后历史版本 | 合规输入最终只能是 PNG 或 fail closed；冲突上传返回 422 `VALIDATION_FAILED` + `mime_mismatch` / `content_mismatch`；历史版本仍按版本扩展名裁决且无 `.svg` 直链 |
 | B4 原 SVG 下载 | 签名下载恶意 SVG 原对象 | 文件名保留 `.svg`；`attachment` + `application/octet-stream`；字节与上传一致；SHA-256 与上传声明一致 |
 | B5 位图回归 | PNG / JPEG / GIF / WebP 上传、缩略图、浮层 | 预览 ready；`target=image`、无 viewer / pipeline；URL 不经 `/previews/`；缩略图与浮层自然尺寸有效 |
