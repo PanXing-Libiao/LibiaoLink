@@ -253,7 +253,7 @@ jobs:
         env:
           NODE_EXTRA_CA_CERTS: /tmp/h1-certs/localhost.pem
           NODE_ENV: test
-          LOG_LEVEL: warn
+          LOG_LEVEL: info
           DATABASE_URL: postgresql://libiaolink_api@127.0.0.1:5432/libiaolink
           S3_ENDPOINT: https://localhost
           S3_REGION: us-east-1
