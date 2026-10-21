@@ -11,8 +11,7 @@
  *   （「进行中收 25/50/75」只发生在旧表导入折算里，见服务端 project-import/legacy.ts）；异常小数按
  *   最近档四舍五入兜底（与契约迁移口径一致：0.49 → 0.5）。
  * - 段上数字 = 该档任务数；行右侧合计 = 该阶段任务总数。
- * - 汇总范围 = 全部项目（项目列表读面 + 逐项目任务读面前端聚合，取数在 src/dashboardApi.ts；
- *   服务端 dashboard 读面未落地 —— server/src/modules/dashboard/README.md 仍是占位，上量后再收口）。
+ * - 汇总范围 = 全部项目（服务端 dashboard 读面一次聚合，取数在 src/dashboardApi.ts；前端不再逐项目拉任务）。
  *
  * Push 339（2026-10-15 业务口径「现在准备做这个任务状态的」+「已延期也要的 只是没有相关的任务状态才没显示在图中」）：
  * 同一份任务读面再聚一份「任务状态」分布（buildDashboardStatus）—— 供仪表盘第二个视图（任务状态饼图）用；
@@ -163,8 +162,8 @@ export function buildDashboardStatus(tasks: readonly DashboardStatusTaskLike[]):
 
 /**
  * 问题分布口径（Push 344 · 业务口径 2026-10-16「现在做这个问题 效果和上面做的一样」）：
- * 仪表盘第三个视图 ——「问题」分组柱状图（x = 问题状态、图例 = 问题归类）用；取数与明细在 src/dashboardApi.ts
- * 的 fetchDashboardIssues（懒加载：首次切到「问题」视图才拉问题 / 日报读面，任务读面不受影响）。
+ * 仪表盘第三个视图 ——「问题」分组柱状图（x = 问题状态、图例 = 问题归类）用；统计取数在 src/dashboardApi.ts
+ * 的 fetchDashboardIssues（服务端 /dashboard/issues 聚合；首次切到「问题」视图才拉，点柱明细再按项目懒取）。
  *
  * 口径（改规则只改这里）：
  * - x 轴 = 问题三态展示名（已完成 / 处理中 / 未解决，DASHBOARD_ISSUE_STATE_ORDER），**0 条的状态整组不出现**
@@ -270,7 +269,7 @@ export function isIssueInCell(issue: DashboardIssueLike, state: string, category
  * 感觉也不好 请你重新设计一个告诉我」+「选择B方案 叫交付时间 加一个「按时率」的小结」；
  * Push 346 追订「取消提前完成展示」：提前完成并入按时交付、不再单独占一档）：
  * 仪表盘第四个视图 —— 三结果竖直柱状图（按时交付 / 逾期已交付 / 逾期未交付）+ 右上「按时率」小结 +
- * 「未到交付节点」注记；取数与明细在 src/dashboardApi.ts（与进度 / 状态同一轮取数，零额外请求）。
+ * 「未到交付节点」注记；统计随 /dashboard/progress 一次聚合，明细在点柱时按选中项目懒取。
  *
  * 口径（改规则只改这里；与任务表「是否按时交付」列 + 展示态同源，见 HubDashDetail.onTimeLabelOf / data/tasks.ts）：
  * - 分类 = 服务端展示态（displayStatus）+ onTime 三选一：已延期 → 逾期未交付；完成态（已完成 / 提前完成）且

@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import type { DashboardDataset, DashboardIssueDataset, DashboardWordDataset } from "../dashboardApi";
+import {
+  fetchDashboardIssueDetail,
+  fetchDashboardTaskDetail,
+  fetchDashboardWordDetail,
+  type DashboardDataset,
+  type DashboardIssueDataset,
+  type DashboardIssueDetail,
+  type DashboardTaskDetail,
+  type DashboardWordDataset,
+  type DashboardWordDetail,
+} from "../dashboardApi";
 import { isChangeWordHit } from "../data/changeWords";
 import { DASHBOARD_BINS, DASHBOARD_ISSUE_COLORS, isIssueInCell, isTaskInCell, isTaskInDeliveryBucket, isTaskPendingDelivery, type DashboardDeliveryBucket, type DashboardStatusSlice, type HubDashView } from "../data/dashboardProgress";
 import type { TaskStatus } from "../data/tasks";
@@ -7,6 +17,7 @@ import { fieldText, statusText, useLocale, useT } from "../i18n";
 import { displayStatusLabel } from "../taskApi";
 import { HubDashDelivery } from "./HubDashDelivery";
 import { HubDashDetail } from "./HubDashDetail";
+import { HubDashDetailLoading } from "./HubDashDetailLoading";
 import { HubDashIssueDetail } from "./HubDashIssueDetail";
 import { HubDashIssues, type DashboardIssueRow } from "./HubDashIssues";
 import { HubDashOverview } from "./HubDashOverview";
@@ -159,6 +170,14 @@ type DashDetailPick =
   | { readonly kind: "deliveryPending" }
   | { readonly kind: "word"; readonly word: string };
 
+type DetailResourceKind = "tasks" | "issues" | "words";
+
+/** 数据详情按「聚合版本 + 项目 + 资源类型」缓存；聚合静默刷新后版本变化，旧明细不再复用。 */
+type DetailCacheEntry =
+  | { readonly kind: "tasks"; readonly data: DashboardTaskDetail }
+  | { readonly kind: "issues"; readonly data: DashboardIssueDetail }
+  | { readonly kind: "words"; readonly data: DashboardWordDetail };
+
 /** 柱段悬停卡尺寸（用于贴边夹紧，避免溢出白卡被裁切）。 */
 const TIP_W = 190;
 const TIP_H = 84;
@@ -178,6 +197,9 @@ const RATE_TIP_H = 108;
 /** 词频卡（Push 353；与扇区 / 交付卡同形态：行名 = 词、单行 = 词频 + 次数）。 */
 const WORD_TIP_W = 200;
 const WORD_TIP_H = 84;
+/** 选中项目在问题 / 词频聚合里没有记录时的空统计（服务端只下发有数据的项目；不能回退到全部项目）。 */
+const EMPTY_ISSUES: DashboardIssueDataset["all"] = { states: [], categories: [], counts: new Map(), totalIssues: 0 };
+const EMPTY_WORDS: DashboardWordDataset["all"] = { words: [], totalChanges: 0 };
 
 /** 底部视图切换按钮（Push 339 追订 · 业务口径「这个按钮再做一个进度一览 靠左不居中」）：一枚按钮一个视图，
  *  勾选框式样照业务给的参考代码（灰底灰边圆角方框 → 选中蓝底白勾 + 渐变脉冲层，鼠标触碰放大 1.05 + 文字转蓝）。
@@ -247,6 +269,12 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, w
   const wrapRef = useRef<HTMLDivElement | null>(null);
   /** 数据详情（Push 335：点柱段打开；Push 339：点扇区打开；记「行 × 档」或「状态」，打开时按它筛任务）。 */
   const [detail, setDetail] = useState<DashDetailPick | null>(null);
+  /** 下钻明细按项目懒取 + 缓存（B4 服务端收口后，聚合响应不再夹带全项目明细）。 */
+  const [detailCache, setDetailCache] = useState<ReadonlyMap<string, DetailCacheEntry>>(new Map());
+  const [detailFailure, setDetailFailure] = useState<string | null>(null);
+  const [detailRetry, setDetailRetry] = useState(0);
+  /** 聚合刷新版本：进入 key，避免静默刷新后复用旧明细。 */
+  const [datasetVersion, setDatasetVersion] = useState(0);
   /** 已失效的常驻项目只清一次（Push 336）：PATCH 失败回滚时不再重复请求，避免打转。 */
   const staleClearedRef = useRef<string | null>(null);
   /** 常驻项目（Push 336）：偏好晚到（首屏 prefs 未回）/ 换账号 / 保存失败回滚时跟随 —— 与本地选中同值即空转。 */
@@ -282,6 +310,52 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, w
       setDetail(null);
     }
   }, [pickedId]);
+  /** 聚合数据换代（首轮 ready / 静默刷新）：清掉下钻缓存并抬版本号；已开弹窗会重新取当前项目明细。 */
+  useEffect(() => {
+    setDatasetVersion((version) => version + 1);
+    setDetailCache(new Map());
+    setDetailFailure(null);
+  }, [data]);
+
+  const detailResourceKind: DetailResourceKind | null = detail === null ? null : detail.kind === "word" ? "words" : detail.kind === "issue" ? "issues" : "tasks";
+  const detailKey = detailResourceKind === null || pickedId === null ? null : detailResourceKind + ":" + pickedId + ":" + String(datasetVersion);
+  const cachedDetail = detailKey === null ? undefined : detailCache.get(detailKey);
+
+  /** 点开数据详情才取选中项目明细；同一聚合版本 / 项目 / 资源类型只取一次。 */
+  useEffect(() => {
+    if (detailKey === null || detailResourceKind === null || pickedId === null) {
+      setDetailFailure(null);
+      return;
+    }
+    if (detailCache.has(detailKey)) {
+      setDetailFailure(null);
+      return;
+    }
+    let cancelled = false;
+    const request: Promise<DetailCacheEntry> =
+      detailResourceKind === "tasks"
+        ? fetchDashboardTaskDetail(pickedId).then((data) => ({ kind: "tasks" as const, data }))
+        : detailResourceKind === "issues"
+          ? fetchDashboardIssueDetail(pickedId).then((data) => ({ kind: "issues" as const, data }))
+          : fetchDashboardWordDetail(pickedId).then((data) => ({ kind: "words" as const, data }));
+    void request
+      .then((entry) => {
+        if (cancelled) return;
+        setDetailCache((current) => {
+          const next = new Map(current);
+          next.set(detailKey, entry);
+          return next;
+        });
+        setDetailFailure(null);
+      })
+      .catch(() => {
+        if (!cancelled) setDetailFailure(detailKey);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [detailCache, detailKey, detailResourceKind, detailRetry, pickedId]);
+
   /** 悬停柱段：把鼠标位置换算成白卡内的坐标（贴边夹紧），卡里写行名 / 档位 / 条数。 */
   const showTip = (event: ReactMouseEvent<SVGGElement>, rowText: string, bin: number, count: number): void => {
     const wrap = wrapRef.current;
@@ -460,9 +534,9 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, w
   /** 交付结果分布（Push 345 · 「交付时间」视图）：同一套项目选择（同一轮取数里分桶，切换不发请求）。 */
   const deliveryView = pickedId === null ? data.deliveryAll : data.deliveryByProject.get(pickedId) ?? data.deliveryAll;
   /** 问题分布（Push 344）：同一套项目选择；数据懒加载（issues === null = 还没拉过）。 */
-  const issuesView = issues === null ? null : pickedId === null ? issues.all : issues.byProject.get(pickedId) ?? issues.all;
+  const issuesView = issues === null ? null : pickedId === null ? issues.all : issues.byProject.get(pickedId) ?? EMPTY_ISSUES;
   /** 词频图（Push 353）：同一套项目选择；数据懒加载（words === null = 还没拉过）。 */
-  const wordsView = words === null ? null : pickedId === null ? words.all : words.byProject.get(pickedId) ?? words.all;
+  const wordsView = words === null ? null : pickedId === null ? words.all : words.byProject.get(pickedId) ?? EMPTY_WORDS;
   /** 标题条：<视图名>·<选择器>（选择器里的当前项就是标题的后半段；视图名随底部切换走）。 */
   const pickedName = pickedId !== null ? data.options.find((option) => option.id === pickedId)?.name ?? t("hub.dash.allProjects") : t("hub.dash.allProjects");
   /** 只有选中具体项目才能点开数据详情（「全部项目」= 混合来源，不给来源明细 —— 业务口径；柱段 / 扇区同一套）。 */
@@ -701,21 +775,35 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, w
         )
       ) : null}
       {detail !== null && pickedId !== null ? (
-        detail.kind === "word" ? (
-          <HubDashWordDetail
-            rows={(words === null ? [] : words.changesByProject.get(pickedId) ?? []).filter((change) => isChangeWordHit(change.reason, detail.word))}
-            members={words === null ? [] : words.members}
-            tasks={data.tasksByProject.get(pickedId) ?? []}
+        cachedDetail === undefined ? (
+          <HubDashDetailLoading
+            projectName={pickedName}
+            failed={detailKey !== null && detailFailure === detailKey}
+            onRetry={() => {
+              setDetailFailure(null);
+              setDetailRetry((value) => value + 1);
+            }}
             onClose={() => {
               setDetail(null);
             }}
           />
-        ) : detail.kind === "issue" ? (
+        ) : cachedDetail.kind === "words" ? (
+          <HubDashWordDetail
+            rows={detail.kind === "word" ? cachedDetail.data.changes.filter((change) => isChangeWordHit(change.reason, detail.word)) : []}
+            members={cachedDetail.data.members}
+            tasks={cachedDetail.data.tasks}
+            onClose={() => {
+              setDetail(null);
+            }}
+          />
+        ) : cachedDetail.kind === "issues" ? (
           <HubDashIssueDetail
             projectName={pickedName}
-            rows={(issues === null ? [] : issues.issuesByProject.get(pickedId) ?? [])
-              .filter((issue) => isIssueInCell(issue, detail.state, detail.category))
-              .map((issue) => ({ issue, report: (issues === null ? [] : issues.reportsByProject.get(pickedId) ?? []).find((report) => report.id === issue.reportId) ?? null }))}
+            rows={detail.kind === "issue"
+              ? cachedDetail.data.issues
+                .filter((issue) => isIssueInCell(issue, detail.state, detail.category))
+                .map((issue) => ({ issue, report: cachedDetail.data.reports.find((report) => report.id === issue.reportId) ?? null }))
+              : []}
             onClose={() => {
               setDetail(null);
             }}
@@ -724,7 +812,17 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, w
           <HubDashDetail
             projectName={pickedName}
             manager={data.managerByProject.get(pickedId) ?? ""}
-            tasks={(data.tasksByProject.get(pickedId) ?? []).filter((task) => detail.kind === "cell" ? isTaskInCell(task, detail.rowKey, detail.bin) : detail.kind === "delivery" ? isTaskInDeliveryBucket(task, detail.bucket) : detail.kind === "deliveryPending" ? isTaskPendingDelivery(task) : displayStatusLabel(task.displayStatus) === detail.status)}
+            tasks={cachedDetail.data.tasks.filter((task) =>
+              detail.kind === "cell"
+                ? isTaskInCell(task, detail.rowKey, detail.bin)
+                : detail.kind === "delivery"
+                  ? isTaskInDeliveryBucket(task, detail.bucket)
+                  : detail.kind === "deliveryPending"
+                    ? isTaskPendingDelivery(task)
+                    : detail.kind === "status"
+                      ? displayStatusLabel(task.displayStatus) === detail.status
+                      : false,
+            )}
             onClose={() => {
               setDetail(null);
             }}
