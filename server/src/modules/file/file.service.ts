@@ -83,6 +83,15 @@ type FileListResponse = z.infer<typeof FileListResponseSchema>;
 type ChangeRequestView = z.infer<typeof ChangeRequestSchema>;
 type ChangeIntentBody = z.infer<typeof ChangeIntentBodySchema>;
 
+/** 项目导出所需的最小文件引用（只给文件名 / 类型 / 当前版本对象键，不夹带存储实现）。 */
+export interface ProjectExportFileRef {
+  id: string;
+  name: string;
+  mime: string | null;
+  sizeBytes: number | null;
+  objectKey: string | null;
+}
+
 /**
  * 变更申请载荷（`upload_sessions.change_payload` 原文；complete / 回溯时读入 `change_requests`）。
  * 带索引签名：直接作为 `jsonb` 值写入（drizzle `$type<Record<string, unknown>>`）。
@@ -1180,6 +1189,31 @@ export class FileService {
     const offset = (query.page - 1) * query.limit;
     const { items, total } = await this.repository.listProjectFiles(projectId, filter, sorts, query.limit, offset);
     return { items: items.map(toFileView), page: query.page, limit: query.limit, total };
+  }
+
+  /**
+   * 项目导出（project-export）：按项目 + 文件 id 批量取当前版本引用。
+   * 仅返回属于该项目且未进回收站的文件；找不到 / 无当前版本时 objectKey 为 null，由导出层降级为文件名占位。
+   */
+  async listExportFileRefs(projectId: string, fileIds: readonly string[]): Promise<Map<string, ProjectExportFileRef>> {
+    const rows = (await this.repository.findFilesByIds(fileIds)).filter((row) => row.projectId === projectId && row.status !== "recycled");
+    const versionIds = rows
+      .map((row) => row.currentVersionId)
+      .filter((value): value is string => value !== null);
+    const versions = await this.repository.findVersionsByIds(versionIds);
+    const versionById = new Map(versions.map((version) => [version.id, version]));
+    const refs = new Map<string, ProjectExportFileRef>();
+    for (const row of rows) {
+      const version = row.currentVersionId === null ? undefined : versionById.get(row.currentVersionId);
+      refs.set(row.id, {
+        id: row.id,
+        name: row.name,
+        mime: version?.mime ?? null,
+        sizeBytes: version?.sizeBytes ?? null,
+        objectKey: version?.objectKey ?? null,
+      });
+    }
+    return refs;
   }
 
   /**

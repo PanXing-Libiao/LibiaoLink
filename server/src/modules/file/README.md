@@ -8,6 +8,8 @@
 | 预留对外接口 | FileService、PreviewService、PreviewReadService、PreviewContentService、FileDownloadService、ChangeService |
 | 依据 | 系统功能书 A4-01~A4-18 / D2；技术设计v0.2 §5.1-5.3；契约 shared/src/modules/files.ts；ADR-006（对象键形态）/ ADR-022（不触发 projects.updated_at） |
 
+> 项目导出（project-export，2026-10-21）：`FileService.listExportFileRefs(projectId, fileIds)` 按项目裁出文件当前版本的最小引用（名称 / MIME / 大小 / 对象键），供导出模块生成文件超链接与内嵌图片；不返回二进制、不反向外依赖导出模块。
+
 ## 文件
 
 ```text

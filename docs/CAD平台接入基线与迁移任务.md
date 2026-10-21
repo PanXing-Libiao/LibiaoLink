@@ -2,7 +2,7 @@
 
 更新：2026-10-21。CAD 主责 wmj，共享 file/preview/outbox 由 lan 协办，通用 UI 与部署由 px 协办。
 
-本文统一替代 LibiaoLink 原 CAD 选型、浏览器解析和工程测量实施计划。用户已批准接入及旧实现清理。STEP 的版本、任务、资源和查看器已在本地跑通，尚未部署到公司环境。决策见 [ADR-035](adr/ADR-035-CAD接入独立能力工程.md)。
+本文统一替代 LibiaoLink 原 CAD 选型、浏览器解析和工程测量实施计划。用户已批准接入及旧实现清理。STEP 的版本、任务、资源和查看器已部署公司测试机并通过容器与旁路验证；生产环境尚未部署，真实公司账号浏览器验收待完成。决策见 [ADR-035](adr/ADR-035-CAD接入独立能力工程.md)。
 
 ## 1. 已有能力与唯一基线
 
@@ -10,14 +10,14 @@ CAD 能力以独立工程 `CAD逆向` 的 STEP v0.3.3（几何基线 `0911573`�
 
 | 项目 | 独立工程已有能力 | LibiaoLink 当前状态 |
 | --- | --- | --- |
-| STEP | 转换、产物校验、首帧、产品树、面拾取、显隐/隔离/恢复；组合补面与缺失明细 | 本地已接入；配置运行环境后开放 STEP，原文件下载保留 |
+| STEP | 转换、产物校验、首帧、产品树、面拾取、显隐/隔离/恢复；组合补面与缺失明细 | 已接入公司测试机；运行环境已启用 STEP，原文件下载保留 |
 | 模型与传输 | UCD 2.0 文档/快照、manifest、二进制几何、ID 字典、gzip | 已接入版本/权限/窗口隔离任务、gzip manifest、二进制几何与资源释放 |
 | EASM | 仅能力矩阵中已验证范围；语义须有 eDrawings 原生逆向依据 | 待接入；不依赖 eDrawings 运行时交付 |
 | DXF | 仅能力矩阵中已验证的实体、样式、布局与诊断范围 | 待接入；不等同任意二维 CAD 支持 |
 | DWG / IGES / 3MF 等 | 不由历史白名单推定支持 | 识别为 CAD 待接入提示不等于支持解析 |
 | 工程尺寸依据、PMI、公差 | 不作为当前交付能力 | 旧测量计划撤回，另按业务需要立项 |
 
-独立工程的文件打开成功不等于平台联调成功。本地已覆盖版本、任务、资源权限和交互；公司账号、真实数据库与对象存储的端到端验收仍需在部署环境执行。
+独立工程的文件打开成功不等于平台联调成功。测试机已覆盖版本、任务、资源权限和交互，并完成受控箱体夹具的容器内 native 冒烟；真实公司账号、业务文件与浏览器完整交互仍需另行验收。
 
 ## 2. 已接入的链路
 
@@ -78,7 +78,7 @@ shared 已定义 CadPreviewViewer、CadJob 及创建响应，OpenAPI/客户端�
 | 接入准备（已完成） | 统一文档、旧实现删除、明确的暂不可预览提示与下载 | 定向验证 CAD 拒绝旧路径，图片/Office/下载不回归；本地提交 |
 | 平台适配（本地已完成） | 版本来源、任务与受控模型资源接口 | 文件权限与版本绑定正确，任务/错误/取消可追溯，完整产物才发布 |
 | 查看器接入（本地已完成） | 沿用独立 ViewerSession 和模型身份 | 产品树、拾取、显隐/隔离/恢复及缺失明细在平台内可用，关闭/切换释放资源 |
-| 公司环境验收（待部署） | 逐文件表、可打开页面与能力矩阵更新 | 打开→首帧→可交互→树→拾取→显隐/隔离/恢复；记录 input/artifact bytes、峰值 RSS 与实际耗时；原有/新增组分开计数 |
+| 公司环境验收（测试机已部署，浏览器待验） | 逐文件表、可打开页面与能力矩阵更新 | 测试机运行容器、公网入口与旁路 STEP 已通过；真实公司账号的打开→首帧→可交互→树→拾取→显隐/隔离/恢复仍待完成，并记录 input/artifact bytes、峰值 RSS 与实际耗时 |
 
 失败、Partial、外部依赖、已列举缺失分别报告；不预报成功率，不更换样本达标。接入与几何修复分开验收，平台适配不借机更改 CAD 语义。
 
@@ -97,4 +97,18 @@ shared 已定义 CadPreviewViewer、CadJob 及创建响应，OpenAPI/客户端�
 
 W01/N02/N03 的平台打开、可交互、产品树、拾取、显隐/隔离/恢复与明细已验证；外部引用文件 S03 明确拒收。实际 HTTP/native 测试与旧预览/下载回归共 52 项通过，原工程 2 项任务生命周期测试通过；未做全量构建。逐文件耗时、bytes、RSS、缺失清单及截图见 [本地结果](cad-platform-integration/RESULTS.md)。运行与迁移方式见 [runtime README](../server/cad-engine/README.md)。
 
-本轮保留测试身份/存储夹具的明确标识；没有把本地夹具等同公司 SSO、数据库或对象存储。尚未推送、合并或部署。
+该本地轮次保留了测试身份/存储夹具的明确标识，没有把本地夹具等同公司 SSO、数据库或对象存储；后续推送、合并与测试机部署见 §8，生产仍未部署。
+
+## 8. 公司测试机部署记录（2026-10-21）
+
+本节只登记公司测试机事实，不表示生产上线，也不替代真实业务账号的浏览器验收。
+
+- 来源与目标：PR [#546](https://github.com/PanXing-Libiao/LibiaoLink/pull/546) 的 squash 提交 `71f42fa30bad112b6fb453044c72be6049dd0e36`，部署到 `10.1.104.44`（`libiao-vm`）的 [test-pm.libiaorobot.com](https://test-pm.libiaorobot.com)。
+- 发布包：服务器 `/srv/data/deploy-cad-546-20261021-1538/cad546-bundle-71f42fa-20261021-1538.tar.gz`，51,390,495 B，SHA-256 `a39e4e603668ab31eaf97ed0b912a601320d9b313d2314cc9fd9bc5625a24225`。
+- 运行镜像：`libiaolink/runtime:24.20.0-cad-20261021-1538`，Image ID `sha256:ee6147e3aef68552965e3280d85414ceead6154968737f16201fbe703842b62a`，2,051,449,037 B；Debian 13、Node 24.20.0、Python 3.13、OCP 7.8.1.1、Gmsh 4.15.2。API 限额 4 GiB，worker 1 GiB。
+- 部署前备份：`/srv/data/backups/frontend-before-cad546-20261021-1538.tar.gz`（8.7 MB，SHA-256 `bdb78f2eb7159ba67e015020d6c5a75dbbd5e052327b80db1cef26fb43f729d2`）、`server-before-cad546-20261021-1538.tar.gz`（90 MB，SHA-256 `07d5e2b0d78ead1dbe651fe40c6dbc97211a698a9abc3d698b86ea7d1dc41a2d`）、`shared-before-cad546-20261021-1538.tar.gz`（744 KB，SHA-256 `5c86dcdea8bbb4ced2142cafcf65c5893af18bfa19735f5f54a4b0f5398924aa`）；同时备份 `libiaolink.conf`、`server.env`、`prod.env` 三个配置文件。
+- 容器与入口：`api`、`worker`、`web`、`postgres`、`minio`、`svg-preview` 六个容器全部 healthy；公网站点、`/cad-viewer/` 入口、`/healthz`、`/readyz` 均返回 200；`/cad-viewer/` 缺失资源返回 404，不再误回 SPA 首页。
+- 静态一致性：公网 `index.html`（499 B，SHA-256 `df3850d7258ae2b68f0476eba948bb5250b11bb1768ddc6de214de4571925286`）、`index-DDGlw1NP.js`（1,411,015 B，SHA-256 `e588e6680889c48383a830377c9e16054ef68062f21853113d351b52fad73f3c`）、`index-mUvOZioE.css`（154,503 B，SHA-256 `40ac2ec42b0b3ae525a85257cad7735b5ea425b87fdb27aeb74bbc2d78f812b0`）与本地构建一致；`/cad-viewer/platform-entry.js` 为 `c70bf2923ee3da76c90c8b5b300ee8a4948f3ad30f2214c5cd9967a2a51ac87b`，`/server/cad-engine/bridge.py` 为 `d48d96b0e22a7483fb112e8c332b818fca74f70a0cedaf094b2ca5855ff0017e`。
+- 验证结果：旁路真实 STEP 集成测试 12/12 通过；生产 API 容器内 native bridge 使用受控箱体夹具返回 `completed`，输入 15,416 B、artifact 15,187 B、manifest 15,447 B，worker 峰值 RSS 326,103,040 B、耗时 3.263387 秒。该夹具不代表真实业务文件或浏览器验收。API / worker 近 10 分钟无 `ERROR`、`FATAL`、`SIGILL`、`Unhandled` 或模块加载错误。
+- Gmsh 运行库说明：Gmsh wheel 的 `libgmsh.so` 即使无头运行仍声明 `libXcursor`、`libXft`、`libXss` 等动态依赖；安装这些库只为满足动态装载器，不启动桌面服务、不开放 X 服务。macOS 开发机通常由系统与桌面环境直接提供同类库，因此同事在 Mac 上使用时不需单独补装。
+- 待完成：使用真实公司账号在浏览器打开真实业务 STEP 文件，完成打开、首帧、产品树、拾取、显隐/隔离/恢复走查；生产环境未部署。

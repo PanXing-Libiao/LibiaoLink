@@ -60,6 +60,10 @@ type CardProps = {
   onEdit?: () => void;
   /** 恢复项目（项目回收站：占用原编辑按钮位；与 onEdit 互斥，优先渲染）。 */
   onRestore?: () => void;
+  /** 导出项目全部数据（project.export；隐式：位于编辑与删除之间；不传 = 不渲染）。 */
+  onExport?: () => void;
+  /** 当前项目正在导出：按钮保持可见并显示忙碌态，防止重复点击。 */
+  exporting?: boolean;
   /** 移入项目回收站（首页卡片；隐式：与编辑同款；不传 = 不渲染）。 */
   onDelete?: () => void;
   /** 彻底删除项目（项目回收站：占用原删除按钮位；与 onDelete 互斥，优先渲染）。 */
@@ -87,6 +91,8 @@ export function Card({
   time,
   onEdit,
   onRestore,
+  onExport,
+  exporting = false,
   onDelete,
   onPurge,
   restoreLabel,
@@ -168,6 +174,32 @@ export function Card({
             ) : (
               <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
                 <path d="M9 14 4 9l5-5M4 9h9a7 7 0 0 1 7 7v1" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
+          </button>
+        ) : null}
+        {onExport !== undefined ? (
+          <button
+            type="button"
+            data-card-export="true"
+            disabled={exporting}
+            aria-busy={exporting ? true : undefined}
+            onClick={(event) => {
+              event.stopPropagation();
+              onExport();
+            }}
+            aria-label={exporting ? t("card.exporting") : t("card.export")}
+            title={exporting ? t("card.exporting") : t("card.export")}
+            className={"relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-zinc-400/70 transition duration-200 hover:bg-white hover:text-zinc-700 hover:shadow-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60 disabled:cursor-wait " + (exporting ? "opacity-100 text-zinc-500" : "opacity-0 group-hover:text-zinc-400 group-hover:opacity-100 focus-visible:opacity-100")}
+          >
+            {exporting ? (
+              <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 animate-spin" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-2.64-6.36" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                <path d="M21 3v6h-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                <path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             )}
           </button>

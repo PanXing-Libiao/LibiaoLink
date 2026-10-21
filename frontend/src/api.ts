@@ -113,6 +113,35 @@ async function toApiError(response: Response): Promise<ApiError> {
   return new ApiError(response.status, code, message, details, traceId);
 }
 
+/** 解析 Content-Disposition：优先 RFC 5987 的 filename*，其次普通 filename。 */
+export function fileNameFromContentDisposition(value: string | null): string | null {
+  if (value === null || value === "") return null;
+  const encoded = /filename\*\s*=\s*UTF-8\u0027\u0027([^;]+)/i.exec(value);
+  if (encoded !== null && encoded[1] !== undefined) {
+    try {
+      return decodeURIComponent(encoded[1].trim());
+    } catch {
+      return encoded[1].trim();
+    }
+  }
+  const quoted = /filename\s*=\s*"([^"]*)"/i.exec(value);
+  if (quoted !== null && quoted[1] !== undefined) return quoted[1];
+  const plain = /filename\s*=\s*([^;]+)/i.exec(value);
+  return plain === null || plain[1] === undefined ? null : plain[1].trim();
+}
+
+/** 二进制下载（xlsx 等）：与 apiRequest 共享 401 / 错误信封口径，但不把响应体当 JSON。 */
+export async function apiDownload(path: string, init: RequestInit = {}): Promise<{ blob: Blob; fileName: string | null }> {
+  const response = await apiFetch(path, init);
+  if (response.status === 401) {
+    redirectToLogin();
+    throw await toApiError(response);
+  }
+  if (!response.ok) throw await toApiError(response);
+  const blob = await response.blob();
+  return { blob, fileName: fileNameFromContentDisposition(response.headers.get("Content-Disposition")) };
+}
+
 /**
  * 业务接口请求（/api/v1/**）：同源 Cookie + 写请求自动带 CSRF 头（apiFetch）+ 统一错误信封。
  * - 2xx：返回 JSON（204 返回 undefined）
