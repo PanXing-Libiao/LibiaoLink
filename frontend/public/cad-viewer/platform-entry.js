@@ -84,7 +84,7 @@ function cancelJob(){
 }
 function failureMessage(job){
  const message=job.error?.error||'转换已停止，请重试或下载原文件';
- if(job.error?.code==='unsupported-external-reference'||message.startsWith('unsupported-external-reference:'))return '本文件引用了外部零件，当前尚不支持读取配套文件。请下载原文件及其配套文件查看。';
+ if(job.error?.code==='unsupported-external-reference'||message.startsWith('unsupported-external-reference:'))return '此文件引用了外部零件，暂不支持在线预览。请使用本地 CAD 软件打开，并确保相关零件文件齐全。';
  return message;
 }
 window.addEventListener('keydown',event=>{

@@ -24,6 +24,10 @@
 
 交互依据：[MDN progress](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/progress)、[WAI 进度取值规则](https://www.w3.org/WAI/ARIA/apg/practices/range-related-properties/)、[Microsoft progress controls](https://learn.microsoft.com/en-us/windows/apps/develop/ui/controls/progress-controls)。未知总量不伪造百分比；用户要求的预计时间以独立、可超出的估算范围提供。
 
+## 外部引用提示文案追订
+
+外部引用失败现在明确说明“暂不支持在线预览”，并提示使用本地 CAD 软件、备齐相关零件文件；重试按钮旁“也可以下载原文件查看”已移除，避免误解为下载后即可在平台打开，或下载包含外部零件。S03 实际重开已核对新提示，失败规则未变。[当前提示](external-reference-message.png)。仅改文案，未新增测试或运行全量构建。
+
 ## N02 为何只有一个树节点
 
 原始 STEP 只有 1 个 PRODUCT，未列出 NEXT_ASSEMBLY_USAGE_OCCURRENCE。独立调用官方 OCP 7.8.1.1 的 STEPCAFControl_Reader 读取并 Transfer 后，XCAF 同样为 1 个 free shape、非 assembly、0 个 component；内部有 61 个实体和 4,123 个源面。平台产品树按源产品/实例列举，没有自动把实体拆成装配零件，因此 N02 只有 1 项。该文件的装配层级并非在平台接入中丢失。[核对记录](N02-structure.json)。

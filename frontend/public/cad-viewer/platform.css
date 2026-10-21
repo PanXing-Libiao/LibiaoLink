@@ -88,7 +88,6 @@ body[data-cad-state="loading"] .viewlabel, body[data-cad-state="loading"] .hint 
 body:not([data-cad-state="ready"]) #selectionTools, body:not([data-cad-state="ready"]) #viewTools { opacity: .5; }
 #error { position: relative; left: auto; right: auto; top: auto; max-width: 500px; margin: max(40px, 12vh) auto 0; background: #fff; border-color: #e0d4cb; color: #735340; padding: 22px 24px; font-size: 13px; text-align: center; }
 .retry-actions { display: none; position: relative; z-index: 4; justify-content: center; align-items: center; gap: 14px; margin: 18px 16px; }
-.retry-actions > span { color: #788a97; font-size: 11px; }
 body:is([data-cad-state="failed"], [data-cad-state="cancelled"]) .retry-actions { display: flex; }
 body:is([data-cad-state="failed"], [data-cad-state="cancelled"]) .viewlabel, body:is([data-cad-state="failed"], [data-cad-state="cancelled"]) .hint { display: none; }
 body[data-sidebar="closed"] main { grid-template-columns: minmax(0, 1fr); }
