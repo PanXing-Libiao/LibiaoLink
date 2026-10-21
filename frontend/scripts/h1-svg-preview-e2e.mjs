@@ -343,10 +343,16 @@ async function uploadFile(input) {
     if (!response.ok) fail("分片直传失败 " + input.name + " part " + String(part.partNumber) + " → HTTP " + String(response.status));
     await response.arrayBuffer();
   }
-  const completed = await apiRequest(
-    "/api/v1/files/" + fileId + "/uploads/" + uploadId + "/complete",
-    { method: "POST", body: { contentHash } },
-  );
+  let completed;
+  try {
+    completed = await apiRequest(
+      "/api/v1/files/" + fileId + "/uploads/" + uploadId + "/complete",
+      { method: "POST", body: { contentHash } },
+    );
+  } catch (error) {
+    if (error !== null && typeof error === "object") error.uploadAttempt = { fileId, uploadId };
+    throw error;
+  }
   return {
     id: fileId,
     versionId: completed.version.id,
@@ -367,13 +373,18 @@ async function expectUploadRejected(input, expectedDetailCode) {
   }
   if (error === null) fail("冲突文件本应拒绝完成上传，实际成功：" + input.name);
   assert(
-    error.status === 422,
-    "冲突上传应返回 422，实际 HTTP " + String(error.status) + "：" + redact(error.message ?? String(error)),
+    error.status === 400,
+    "冲突上传应返回 400，实际 HTTP " + String(error.status) + "：" + redact(error.message ?? String(error)),
   );
   assert(error.code === "VALIDATION_FAILED", "冲突上传错误码应为 VALIDATION_FAILED，实际 " + String(error.code));
   const codes = error.details.map((item) => item && item.code).filter(Boolean);
   assert(codes.includes(expectedDetailCode), "冲突上传缺少 detail code " + expectedDetailCode + "；实际 " + codes.join(","));
-  return { name: input.name, status: error.status, code: error.code, detail: expectedDetailCode };
+  const attempt = error.uploadAttempt;
+  assert(attempt !== undefined && typeof attempt.fileId === "string", "冲突上传缺少被拒绝的文件标识");
+  const versions = await db.query("select count(*)::int as count from file_versions where file_id = $1", [attempt.fileId]);
+  const versionCount = versions.rows[0]?.count;
+  assert(versionCount === 0, "冲突上传后仍生成了版本行：fileId=" + attempt.fileId + " count=" + String(versionCount));
+  return { name: input.name, status: error.status, code: error.code, detail: expectedDetailCode, versionCount };
 }
 
 async function readPreview(fileId, versionId) {
@@ -462,13 +473,13 @@ async function runB3(fixtures) {
     { name: "h1-mime-conflict.svg", mime: "image/png", bytes: fixtures.normal.bytes },
     "mime_mismatch",
   );
-  record("B3", "扩展名 / MIME 冲突", "HTTP 422 / VALIDATION_FAILED / " + mimeConflict.detail);
+  record("B3", "扩展名 / MIME 冲突", "HTTP 400 / VALIDATION_FAILED / " + mimeConflict.detail + " / file_versions=0");
 
   const contentConflict = await expectUploadRejected(
     { name: "h1-content-conflict.png", mime: "image/png", bytes: fixtures.double.bytes },
     "content_mismatch",
   );
-  record("B3", "文件头 / 扩展名冲突", "HTTP 422 / VALIDATION_FAILED / " + contentConflict.detail);
+  record("B3", "文件头 / 扩展名冲突", "HTTP 400 / VALIDATION_FAILED / " + contentConflict.detail + " / file_versions=0");
 
   await apiRequest("/api/v1/files/" + fixtures.renamed.id, {
     method: "PATCH",
