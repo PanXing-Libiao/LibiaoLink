@@ -36,7 +36,33 @@ API 启动前设置以下非敏感运行参数，解释器使用部署机器内�
 
 定位、淡化、隐藏、仅显示四个操作可再次点击取消，启用时显示按下状态。取消定位恢复此前视角，取消仅显示恢复原用户隔离范围，已有隐藏及隔离期间的显隐修改保留。清空选择后仍能取消已启用模式；适应视图/摆正、全部显示、恢复初始同步更新对应模式状态。
 
-## 本地可复现页面
+## 本地完整系统
+
+无需先合入 main。`local-system.mjs` 直接运行当前分支的实际 `AppModule` 与完整前端，登录走本地 Casdoor 的 authorization code + PKCE；项目、任务、文件版本写入独立 PostgreSQL 18，文件经原有分片上传链路写入私有 MinIO。它不注册试用夹具的登录/导入接口，不连接公司数据。
+
+复用已有 Node 24、OCP、独立 Gmsh 与 PostgreSQL 18 Docker 镜像。官方本地程序放在被忽略的 `server/cad-engine/.runtime/`：MinIO `RELEASE.2025-09-07T16-13-09Z` 的 macOS arm64 二进制保存为 `.runtime/minio`；Casdoor `v4.4.0` macOS arm64 发行包解压至 `.runtime/local-system/casdoor/`，保留 `casdoor`、`web/build` 与 `conf/`。下载后按官方 release 的 SHA-256 校验，不复制或重建 CAD native 环境。
+
+在 `server/` 运行：
+
+```sh
+CAD_ENGINE_PYTHON=/path/to/ocp/bin/python \
+CAD_MESHER_PYTHON=/path/to/mesher/bin/python \
+LOCAL_PG_IMAGE=your-existing-postgresql-18-image \
+node scripts/local-system-prepare.mjs
+
+LOCAL_SYSTEM_CONFIG="$PWD/cad-engine/.runtime/local-system/private.json" \
+node scripts/local-system.mjs
+```
+
+打开 `http://localhost:3000`。准备脚本只创建专用 `libiaolink-local-pg` 容器、`libiaolink_local` 业务库、`casdoor_local` 登录库，执行已有迁移与基础字典/模板种子；不填充公司数据或 100 个演示项目。迁移角色与 API 角色分离；重复准备保留已有项目和文件。随机凭据与登录初始化数据只存于忽略目录且权限为 0600，不在控制台输出。
+
+页面为完整项目系统；创建项目、添加任务后，从任务“文件”列上传 STEP。账号菜单的“文件库”能查询并预览同一文件。正常 OIDC 登录完成后，现有浏览器即可直接试用。停止本地运行进程会关闭前端、API、Casdoor、MinIO；PostgreSQL 专用容器保留数据，可单独停止 `libiaolink-local-pg`，重启时再次运行上述命令。
+
+端口只绑定本机：前端 3000、API 3001、Casdoor 8000、MinIO 9000/9001、专用 PostgreSQL 5433。源码仅按需转译，保留 Nest 注入元数据，无需全量构建或静态检查。此启动方式服务于 STEP 的完整业务流程；Office 文档服务、外部翻译与通知通道未在这套本地环境配置。
+
+实现依据：[Vite 开发服务与代理](https://vite.dev/config/server-options)、[Node 模块加载钩子](https://nodejs.org/docs/latest-v24.x/api/module.html#moduleregisterhooksoptions)、[Casdoor 本地运行](https://casdoor.org/docs/basic/server-installation/)与[初始化数据](https://casdoor.org/docs/deployment/data-initialization/)。
+
+## 独立试用页面
 
 在安装现有 server/frontend/shared Node 依赖后，在 `server` 执行。输入清单是本地 JSON 数组，每一项为 STEP 文件的绝对路径，不上传原文件到外部服务；清单不要提交到仓库：
 

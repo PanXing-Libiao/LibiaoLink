@@ -46,6 +46,8 @@
 
 ### 快速开始
 
+本地体验当前分支的完整 STEP 业务流程（登录 → 项目/任务附件上传 → 文件库 → CAD 预览），使用 [本地完整系统启动说明](server/cad-engine/README.md#本地完整系统)，地址为 `http://localhost:3000`；无需先合入 main，不连接公司数据库。
+
 ```bash
 # 1. 本地联调：起一套 Casdoor 沙箱（公司环境已就绪，接入方一般不需要自己部署）
 cd deploy/casdoor && cp .env.example .env && vi .env && docker compose up -d
