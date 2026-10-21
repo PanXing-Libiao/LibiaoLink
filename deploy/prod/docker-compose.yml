@@ -86,7 +86,7 @@ services:
   # svg-preview：H1 · S4 SVG 安全栅格化器（execution 边界见 deploy/svg-preview/README.md）。
   # 只挂 internal 网络、不发布宿主端口；worker 经服务名 svg-preview:9900 调用。镜像 tag + digest 双锁。
   svg-preview:
-    image: ${SVG_PREVIEW_IMAGE:-libiaolink/svg-preview:2.0.0@sha256:d0a2a405dc6eb557630369c641541a61690f34a1f12a551d8d22a5f39d2500cf}
+    image: ${SVG_PREVIEW_IMAGE:-libiaolink/svg-preview:2.0.0@sha256:eaee947e1e6a9e4b3ea7e7057e76e4ac45ac6209fb470593c46686ec7a474282}
     container_name: libiaolink-prod-svg-preview
     profiles: ["app"]
     restart: unless-stopped
