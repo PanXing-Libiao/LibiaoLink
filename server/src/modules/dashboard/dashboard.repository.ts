@@ -135,7 +135,9 @@ export class DashboardRepository {
       .from(tasks)
       .innerJoin(projects, eq(projects.id, tasks.projectId))
       .where(and(...conditions))
-      .groupBy(tasks.projectId, tasks.stageKey, progressBin, displayStatus, deliveryBucket);
+      // 按选择列序号分组：展示态 / 交付桶表达式内含占位符，SELECT 与 GROUP BY 会各渲染一份不同参数，
+      // PostgreSQL 不会把两段参数化表达式视作同一表达式（即使取值相同）。
+      .groupBy(sql`1`, sql`2`, sql`3`, sql`4`, sql`5`);
     return rows.map((row) => ({
       projectId: row.projectId,
       stageKey: row.stageKey,
