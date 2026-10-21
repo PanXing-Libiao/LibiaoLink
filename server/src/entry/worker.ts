@@ -128,7 +128,7 @@ async function bootstrap(): Promise<void> {
   void runRecycleSweeps();
 
   // 预览转换器启动自检（M4-05c）：可达性 + 管线版本比对（不一致只会让任务按确定性失败降级，绝不写错缓存键 ——
-  // 「换镜像必须递增 PREVIEW_PIPELINE_VERSION」，deploy/preview/README「四」）。
+  // 「换镜像必须递增 PREVIEW_PIPELINE_VERSION」，deploy/svg-preview/README.md）。
   // 关闭时预览不入消费注册表（OutboxModule）：preview.job 只投递不消费，属排障态。
   if (env.PREVIEW_JOB_ENABLED === "true") {
     const health = await previews.checkConverter();

@@ -4,11 +4,19 @@ import { ClockService } from "../../common/clock/clock.service.js";
 import { AppConfig } from "../../config/config.module.js";
 import type { OutboxClaimedRow } from "../../db/outbox.store.js";
 import type { OutboxHandleOutcome } from "../../outbox/handler.js";
-import { buildPreviewArtifactKey, ObjectStorage } from "../../storage/index.js";
+import { buildPreviewArtifactKey, ObjectStorage, versionFileName } from "../../storage/index.js";
 import { FileRepository } from "./file.repository.js";
+import { normalizeMime, SVG_MIME } from "./file-mime.js";
 import { ConverterError, PreviewConverter, type ConverterHealth } from "./preview.converter.js";
+import {
+  inspectPreviewPng,
+  sha256Hex,
+  SVG_PREVIEW_MAX_SOURCE_BYTES,
+  type PreviewPngInfo,
+} from "./preview.integrity.js";
 import { parsePreviewJob } from "./preview.job.js";
 import { PreviewRepository, type PreviewArtifactKey } from "./preview.repository.js";
+import { isSvgFile } from "./preview.targets.js";
 
 /**
  * 预览转换队列（M4-05c）：消费 outbox `preview.job` → 调转换沙箱 → 产物回对象存储 → 更新 preview_artifacts。
@@ -19,7 +27,7 @@ import { PreviewRepository, type PreviewArtifactKey } from "./preview.repository
  * ① 投递侧去重键 = 三元组（同三元组只落一条任务）；② 消费侧先查 preview_artifacts（ready 直接复用，failed 不原地重试）；
  * ③ 对象键由三元组构造（换内容 / 换管线版本 / 换通道 = 新键，不覆盖旧产物）。
  *
- * 失败处置（deploy/preview/README「五」错误面）：可重试（503 / 504 / 连接错误 / 存储抖动）返回 retry，由 dispatcher 按
+ * 失败处置（deploy/svg-preview/README.md 错误面）：可重试（503 / 504 / 连接错误 / 存储抖动）返回 retry，由 dispatcher 按
  * `PREVIEW_CONVERT_BACKOFF_MS` 指数退避、到 `PREVIEW_CONVERT_MAX_ATTEMPTS` 次写 failed + outbox dead；
  * 确定性失败（400 / 413 / 415 / 422 / 501 / 管线版本不一致 / 超大文件）返回 dead，一次即降级（D2-05「请下载查看」）。
  */
@@ -40,7 +48,7 @@ export class PreviewService {
     private readonly clock: ClockService,
   ) {}
 
-  /** 本实例期望的转换管线版本（进三元组缓存键；与镜像标签同值，deploy/preview/README「四」）。 */
+  /** 本实例期望的转换管线版本（进三元组缓存键；与镜像标签同值，deploy/svg-preview/README.md）。 */
   get pipelineVersion(): string {
     return this.config.env.PREVIEW_PIPELINE_VERSION;
   }
@@ -78,6 +86,8 @@ export class PreviewService {
       pipelineVersion: this.pipelineVersion,
       target: job.target,
     };
+    const channelName = versionFileName(file.name, version.objectKey);
+    const isSvgImageJob = job.target === "image" && isSvgFile({ fileName: channelName, mime: version.mime });
 
     try {
       const existing = await this.previews.findByKey(key);
@@ -96,14 +106,25 @@ export class PreviewService {
       if (job.target === "structured") {
         throw new ConverterError("deterministic", "UNSUPPORTED_TARGET", null, STRUCTURED_NOT_SUPPORTED);
       }
+      if (job.target === "image" && !isSvgImageJob) {
+        throw new ConverterError(
+          "deterministic",
+          "UNSUPPORTED_SOURCE",
+          null,
+          "image 通道当前只接受 MIME / 扩展名一致的 SVG 源文件，已降级「请下载查看」",
+        );
+      }
 
-      const limitMb = this.config.env.PREVIEW_CONVERT_MAX_SOURCE_MB;
-      if (version.sizeBytes > limitMb * 1024 * 1024) {
+      const configuredLimitBytes = this.config.env.PREVIEW_CONVERT_MAX_SOURCE_MB * 1024 * 1024;
+      const sourceLimitBytes = isSvgImageJob
+        ? Math.min(configuredLimitBytes, SVG_PREVIEW_MAX_SOURCE_BYTES)
+        : configuredLimitBytes;
+      if (version.sizeBytes > sourceLimitBytes) {
         throw new ConverterError(
           "deterministic",
           "SOURCE_TOO_LARGE",
           null,
-          "源文件 " + megabytes(version.sizeBytes) + " 超过预览转换上限 " + limitMb + " MB（转换峰值内存约为源文件数倍），已降级「请下载查看」",
+          "源文件 " + megabytes(version.sizeBytes) + " 超过预览转换上限 " + megabytes(sourceLimitBytes) + "，已降级「请下载查看」",
         );
       }
 
@@ -112,22 +133,62 @@ export class PreviewService {
         // 存储侧短时不可见 / 对象缺失：按可重试处理，交给退避与到顶兜底（不立刻判死）。
         throw new ConverterError("retryable", "SOURCE_OBJECT_MISSING", null, "源对象不存在（objectKey=" + version.objectKey + "）");
       }
+      if (source.bytes.byteLength > sourceLimitBytes) {
+        throw new ConverterError(
+          "deterministic",
+          "SOURCE_TOO_LARGE",
+          null,
+          "源对象实际大小超过预览转换上限 " + megabytes(sourceLimitBytes) + "，已降级「请下载查看」",
+        );
+      }
+      if (isSvgImageJob && sha256Hex(source.bytes) !== version.contentHash.toLowerCase()) {
+        throw new ConverterError(
+          "deterministic",
+          "SOURCE_HASH_MISMATCH",
+          null,
+          "SVG 源对象 SHA-256 与版本记录不一致，已降级「请下载查看」",
+        );
+      }
 
       const requestId = randomUUID();
       const converted = await this.converter.convert({
         bytes: source.bytes,
         target: job.target,
-        fileName: file.name,
-        sourceMime: version.mime,
+        fileName: channelName,
+        sourceMime: isSvgImageJob ? SVG_MIME : version.mime,
         requestId,
       });
+      let png: PreviewPngInfo | null = null;
+      if (isSvgImageJob) {
+        if (normalizeMime(converted.contentType) !== "image/png") {
+          throw new ConverterError(
+            "deterministic",
+            "PNG_CONTENT_TYPE_MISMATCH",
+            null,
+            "SVG 栅格化服务返回的 Content-Type 不是 image/png，已降级「请下载查看」",
+          );
+        }
+        if ((converted.mode ?? "").trim().toLowerCase() !== "rasterize") {
+          throw new ConverterError(
+            "deterministic",
+            "CONVERT_MODE_MISMATCH",
+            null,
+            "SVG 栅格化服务未声明 rasterize 模式，已降级「请下载查看」",
+          );
+        }
+        const pngCheck = inspectPreviewPng(converted.bytes);
+        if (!pngCheck.ok) {
+          throw new ConverterError("deterministic", "PNG_INVALID", null, pngCheck.reason);
+        }
+        png = pngCheck.info;
+      }
 
       const objectKey = buildPreviewArtifactKey(key);
       const generatedAt = this.clock.now();
       await this.storage.putObject({
         objectKey,
         body: converted.bytes,
-        contentType: converted.contentType,
+        contentType: png === null ? converted.contentType : "image/png",
         metadata: {
           "preview-pipeline-version": key.pipelineVersion,
           "preview-target": key.target,
@@ -135,11 +196,12 @@ export class PreviewService {
           "preview-source-version": version.id,
           "preview-mode": converted.mode ?? "unknown",
           "preview-request-id": requestId,
+          ...(png === null ? {} : { "preview-png-width": String(png.width), "preview-png-height": String(png.height) }),
         },
       });
       await this.previews.markReady(key, { objectKey, generatedAt });
       this.logger.log(
-        "预览产物就绪：" + file.name + "（target=" + key.target + " / " + converted.bytes.byteLength + " 字节 / " +
+        "预览产物就绪：" + channelName + "（target=" + key.target + " / " + converted.bytes.byteLength + " 字节 / " +
           (converted.durationMs === null ? "耗时未标注" : converted.durationMs + " ms") + " / 键 " + objectKey + "）",
       );
       return { outcome: "done" };

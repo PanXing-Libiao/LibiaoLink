@@ -17,8 +17,8 @@ import { contentDisposition, type DownloadUrlInput, type ObjectStorage, type Sig
  *    不查 / 不落产物行、不投任务；存量产物行（ready / not_ready / failed）一律不参与；指定历史版本签该版本原对象；
  * ② 终态降级 —— 判不出通道 / 无版本两类（不落表不投递）；
  * ③ 404 —— 文件不存在 / 项目不可见 / 版本不属于该文件（同形，防 IDOR）。
- * 产物通道三态（not_ready 补投 / failed 缓存态回原因）为保留段（S6-前置 后无投递、对新请求不可达），
- * 不再从读 API 侧单测（structured 二期启用投递时随投递恢复补测）。
+ * 产物通道三态（not_ready 补投 / failed 缓存态回原因）在 H1 S4 起对 SVG 恢复可达，由下方专门用例覆盖；
+ * structured 二期启用投递时复用同一段。
  */
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
@@ -36,11 +36,12 @@ const SOURCE_KEY_HISTORY = "projects/" + PROJECT + "/files/" + FILE + "/v2/" + H
 function sourceKeyOf(ext: string): string {
   return "projects/" + PROJECT + "/files/" + FILE + "/v1/" + HASH + "." + ext;
 }
-const ARTIFACT_KEY = "previews/" + HASH + "/1.0.0/image";
-const ARTIFACT_KEY_HISTORY = "previews/" + HASH_HISTORY + "/1.0.0/image";
+const ARTIFACT_KEY = "previews/" + HASH + "/2.0.0/image";
+const ARTIFACT_KEY_HISTORY = "previews/" + HASH_HISTORY + "/2.0.0/image";
+const LEGACY_ARTIFACT_KEY = "previews/" + HASH + "/1.0.0/image";
 
 const ENV = {
-  PREVIEW_PIPELINE_VERSION: "1.0.0",
+  PREVIEW_PIPELINE_VERSION: "2.0.0",
   PREVIEW_URL_TTL_SECONDS: 300,
   ONLYOFFICE_DOCSERVER_URL: "http://docs.local:8001",
   ONLYOFFICE_DOCSERVER_API_BASE_URL: "http://api.internal:3000",
@@ -96,7 +97,7 @@ function makeArtifactRow(overrides: Partial<PreviewArtifactRow> = {}): PreviewAr
     versionId: VERSION,
     contentHash: HASH,
     target: "image",
-    pipelineVersion: "1.0.0",
+    pipelineVersion: "2.0.0",
     status: "not_ready",
     objectKey: null,
     error: null,
@@ -388,13 +389,13 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     );
 
     const result = await h.service.getPreview(FILE, null, ACTOR);
-    const imageKey: PreviewArtifactKey = { contentHash: HASH, pipelineVersion: "1.0.0", target: "image" };
+    const imageKey: PreviewArtifactKey = { contentHash: HASH, pipelineVersion: "2.0.0", target: "image" };
 
     expect(result).toMatchObject({
       versionId: VERSION,
       status: "not_ready",
       target: null,
-      pipelineVersion: "1.0.0",
+      pipelineVersion: "2.0.0",
       reason: null,
     });
     expect(h.storage.signed).toHaveLength(0);
@@ -402,6 +403,35 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     expect(h.previews.queries).toEqual([imageKey, { ...imageKey, fileId: FILE, versionId: VERSION }]);
     expect(h.previews.ensured).toEqual([{ ...imageKey, fileId: FILE, versionId: VERSION }]);
     expect(h.database.outbox).toHaveLength(1);
+  });
+
+  it("旧 1.0.0 的 ready / failed 产物不参与读取：SVG 仍登记并投递 2.0.0 栅格化任务", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ name: "矢量图.svg" });
+    h.repo.versions.set(VERSION, makeVersionRow({ mime: "image/svg+xml", objectKey: sourceKeyOf("svg") }));
+    h.previews.rows = [
+      makeArtifactRow({ pipelineVersion: "1.0.0", status: "ready", objectKey: LEGACY_ARTIFACT_KEY, generatedAt: NOW }),
+      makeArtifactRow({
+        id: "99999999-9999-4999-8999-999999999999",
+        pipelineVersion: "1.0.0",
+        status: "failed",
+        error: "旧管线失败",
+      }),
+    ];
+
+    const result = await h.service.getPreview(FILE, null, ACTOR);
+
+    expect(result).toMatchObject({ status: "not_ready", pipelineVersion: "2.0.0" });
+    expect(h.storage.signed).toHaveLength(0);
+    expect(h.previews.ensured).toEqual([
+      { contentHash: HASH, pipelineVersion: "2.0.0", target: "image", fileId: FILE, versionId: VERSION },
+    ]);
+    expect(h.database.outbox).toEqual([
+      expect.objectContaining({
+        topic: "preview.job",
+        dedupeKey: "preview.job:" + HASH + ":2.0.0:image",
+      }),
+    ]);
   });
 
   it("SVG 产物 ready：只签 previews/.../image 并强制 image/png + inline，绝不签 projects/...svg", async () => {
@@ -417,7 +447,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
       status: "ready",
       target: "image",
       url: "https://minio.local/" + ARTIFACT_KEY + "?sig=1",
-      pipelineVersion: "1.0.0",
+      pipelineVersion: "2.0.0",
       generatedAt: generatedAt.toISOString(),
     });
     expect(result.url).not.toContain("projects/");

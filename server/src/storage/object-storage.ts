@@ -147,7 +147,7 @@ export abstract class ObjectStorage {
   /**
    * 读对象字节（M4-05c：worker 把预览源文件字节送进转换沙箱）。
    *
-   * 走服务端凭据直读，**不签发预签名地址**：源文件字节不出内网、转换器不带任何 S3 凭证（deploy/preview/README「一」）。
+   * 走服务端凭据直读，**不签发预签名地址**：源文件字节不出内网、转换器不带任何 S3 凭证（deploy/svg-preview/README.md）。
    * 对象不存在返回 null（不抛错）—— 与 `headObject` 同口径，由调用方决定是失败降级还是重试。
    */
   abstract getObject(objectKey: string): Promise<GetObjectResult | null>;

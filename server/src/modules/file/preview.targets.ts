@@ -5,7 +5,7 @@ import type { PreviewTarget } from "./preview.job.js";
 export { isRasterImageFile, isSvgFile };
 
 /**
- * 预览通道判定（S3 起两段口径 · S6-前置 起收敛：图片直签 + 查看器通道 · ADR-030 / S8-2 定案 / 计划 D6）。
+ * 预览通道判定（S3 起两段口径 · S6-前置 图片直签 + 查看器通道 · H1 S2 / S4 恢复 SVG PNG 产物通道）。
  *
  * - **安全位图直签**（`isRasterImageFile`）：仅扩展名与规范 MIME 精确一致时签原对象；不投转换任务。
  * - **SVG 产物通道**（`previewTargetsFor`）：SVG 只投 `target=image`，浏览器最终只能拿到 PNG 产物。

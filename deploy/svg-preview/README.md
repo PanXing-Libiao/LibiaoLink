@@ -1,6 +1,6 @@
 # deploy/svg-preview/ · H1 SVG 安全栅格化沙箱（S3）
 
-> 状态（2026-10-21）：S3 已实现，待 PR [#529](https://github.com/PanXing-Libiao/LibiaoLink/pull/529) 合入。S2 已随 PR #523 合并到 main `e2b6aab`；S4 尚未接线，服务端 `PREVIEW_PIPELINE_VERSION` 仍为 `1.0.0`。本目录当前**无生产消费者，不得单独部署生产**；必须与 S2 安全边界、S4 管线切换同批上线。
+> 状态（2026-10-21）：S3 已随 PR [#529](https://github.com/PanXing-Libiao/LibiaoLink/pull/529) 合并到 main `acd6113`；S4 主栈接线已实现、PR 待创建。S2 已随 PR #523 合并 `e2b6aab`；服务端 `PREVIEW_PIPELINE_VERSION` 与默认配置已切到 `2.0.0`，生产 Compose 已接 internal-only `svg-preview:9900`。**尚未部署生产**；必须与 S5 / S6 同批完成上线与浏览器回归。
 >
 > 口径：`docs/adr/ADR-034-SVG预览安全栅格化.md` 与 `docs/H1-SVG预览同源存储型XSS整改方案.md`。外部 V1.0 源文档同条同步仍由 px 协调人工确认，不能由本目录或本切片宣称 H1 已闭环。
 
@@ -30,7 +30,7 @@ SVG bytes ──> SVG policy preflight ──> isolated render worker ──> PN
 | `x-source-mime` | 否 | 若提供，去掉参数并小写后必须精确等于 `image/svg+xml`；S4 应始终发送该值 |
 | `x-request-id` | 否 | `A-Z a-z 0-9 . _ : -`，最长 128；非法值替换为 UUID |
 
-成功：`200 image/png`，并返回 `content-disposition: inline`、`x-content-type-options: nosniff`、`cache-control: no-store`、`x-pipeline-version: 2.0.0`、`x-convert-mode: rasterize`、`x-png-width`、`x-png-height` 与请求 ID。转换器声明的版本是 `2.0.0`，但服务端消费版本在 S4 前仍保持 `1.0.0`。
+成功：`200 image/png`，并返回 `content-disposition: inline`、`x-content-type-options: nosniff`、`cache-control: no-store`、`x-pipeline-version: 2.0.0`、`x-convert-mode: rasterize`、`x-png-width`、`x-png-height` 与请求 ID。S4 起服务端消费版本同为 `2.0.0`，版本不一致会按确定性失败降级。
 
 ### `GET /healthz`
 
@@ -158,19 +158,19 @@ curl -fsS http://127.0.0.1:9900/healthz
 
 ## 7. 生产接线与回滚（S4）
 
-S4 需要：
+S4 代码已实现（2026-10-21）：
 
-1. 让主栈 worker 能访问 converter 的 internal 服务名 / 受控地址，不把 converter 暴露到宿主公网；
-2. 只对 `target=image` 的 SVG 任务发起 `x-source-mime: image/svg+xml` 请求，并在服务端重算源 SHA-256；
-3. 验证返回 PNG 的魔数、IHDR、尺寸与字节上限后，才写 `preview_artifacts` 并登记 `pipelineVersion=2.0.0`；
-4. 保持 `failed` 终态“请下载查看”，绝不回退到原 SVG 签名；
-5. 将 `PREVIEW_PIPELINE_VERSION` 从 `1.0.0` 切到 `2.0.0`，旧产物不删除但不被新预览读取。
+1. `deploy/prod/docker-compose.yml` 新增 `svg-preview`，只挂 `libiaolink-svg-preview-internal`（`internal: true`），无宿主端口；worker 同时挂 `prod` 与该 internal 网络，`PREVIEW_CONVERTER_URL=http://svg-preview:9900`。
+2. worker 只对 SVG `target=image` 发送 `x-source-mime: image/svg+xml`；读取源对象后重算 SHA-256，与 `file_versions.content_hash` 不一致即确定性失败。
+3. worker 独立校验返回的 `Content-Type: image/png`、`x-convert-mode: rasterize`、PNG 魔数 / IHDR / 8-bit RGBA / 尺寸 / 像素 / IEND / 20 MiB；通过后才写 `previews/{contentHash}/2.0.0/image` 与 `preview_artifacts`。
+4. `PREVIEW_PIPELINE_VERSION` 默认与生产模板均为 `2.0.0`，旧 `1.0.0` 产物保留但不被读取；失败仍为 `failed + reason`，绝不回退到原 SVG 签名。
+5. S4 只交付代码与部署件，不执行生产部署。实际发布前需 px 把同 digest 镜像放入内网 registry / 离线归档，并更新服务器未跟踪的 `server.env`；随后与 S5 / S6 同窗口执行。
 
-回滚只回退主栈镜像 / 管线版本与环境接线，不恢复 SVG 原对象直签；converter 不可用时预览应确定性降级为下载。生产发布前还需由 px 完成镜像归档 / 内网 registry 和部署件校验，另行记录发布证据。
+回滚只回退主栈镜像 / 环境接线，**不把 `PREVIEW_PIPELINE_VERSION` 回退到 `1.0.0`、不恢复 SVG 原对象直签**；converter 不可用时预览确定性降级为下载。生产发布前还需由 px 完成镜像归档 / 内网 registry 和部署件校验，另行记录发布证据。
 
 ## 8. 已知限制
 
 - 当前镜像约 468 MiB，主要来自 Node 基础镜像与 Noto CJK；生产分发需要 registry 或离线归档策略。
 - 动画、交互 SVG、远程字体 / 图片一律不保留；这是 ADR-034 的有意能力边界，前端只展示静态 PNG。
 - 本服务不做鉴权与租户判断，绝不能直接暴露公网；鉴权、对象读取、哈希与产物登记都在 S4 的主栈 worker 完成。
-- 外部 V1.0 源文档仍待 px 人工同步；S3 合入不代表 H1 关闭。
+- 外部 V1.0 源文档仍待 px 人工同步；S3 / S4 合入不代表 H1 关闭。
