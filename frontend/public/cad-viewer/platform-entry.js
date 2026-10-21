@@ -87,6 +87,11 @@ function failureMessage(job){
  if(job.error?.code==='unsupported-external-reference'||message.startsWith('unsupported-external-reference:'))return '此文件引用了外部零件，暂不支持在线预览。请使用本地 CAD 软件打开，并确保相关零件文件齐全。';
  return message;
 }
+function unsupportedPreview(job){
+ // Explicit capability rejections from the pinned STEP adapter; generic parse failures remain retryable.
+ const codes=new Set(['unsupported-external-reference','unsupported-state-or-style','unsupported-non-surface-product','unsupported-step-selection']);
+ return codes.has(job?.error?.code)||codes.has(job?.error?.error?.split(':',1)[0]);
+}
 window.addEventListener('keydown',event=>{
  if(event.key==='Escape'){event.preventDefault();parent.postMessage({type:'cad-close'},location.origin);}
  // Keyboard events inside an iframe do not reach the host modal's focus trap.
@@ -150,5 +155,5 @@ loadPlatformModel(async({signal,progress})=>{
  if(ready){
   ui.update(3,'模型已就绪');
   requestAnimationFrame(()=>requestAnimationFrame(()=>{ui.stop('ready');filterParts();parent.postMessage({type:'cad-ready'},location.origin);}));
- }else ui.stop(cancelled?'cancelled':'failed');
+ }else ui.stop(cancelled?'cancelled':'failed',{retryable:cancelled||!unsupportedPreview(currentJob)});
 });

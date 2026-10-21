@@ -71,7 +71,7 @@ export class ImportUI {
     $('loadElapsed').textContent = `已用 ${Math.floor((now - this.clock.start) / 1000)} 秒`;
     $('loadBasis').textContent = this.waiting ? '排队时间不计入处理时间估算' : this.history.length ? '参考此文件之前在本标签页的打开用时' : this.bytes ? '首次打开，按文件大小粗略估算' : '正在准备文件与处理任务';
   }
-  stop(state) {
+  stop(state, { retryable = true } = {}) {
     this.finished = true; clearInterval(this.timer); document.body.dataset.cadState = state;
     $('viewport').setAttribute('aria-busy', 'false');
     $('sessionStatus').textContent = state === 'ready' ? '已就绪' : state === 'cancelled' ? '已取消' : '未打开';
@@ -86,7 +86,8 @@ export class ImportUI {
     } else if (state === 'cancelled') {
       $('error').hidden = false; $('error').textContent = '已取消导入，需要时可以重新打开模型。';
     }
-    if (state !== 'ready') $('retryImport').focus();
+    $('retryActions').hidden = state === 'ready' || !retryable;
+    if (state !== 'ready') $(retryable ? 'retryImport' : 'closeViewer').focus();
   }
   destroy() { clearInterval(this.timer); }
 }
