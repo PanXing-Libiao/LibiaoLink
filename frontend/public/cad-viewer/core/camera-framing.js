@@ -1,5 +1,15 @@
 import * as THREE from 'three';
 
+// Local viewing history only; keep independent snapshots for reversible UI actions.
+export function captureCameraView(camera,controls){
+  return {position:camera.position.clone(),up:camera.up.clone(),target:controls.target.clone(),zoom:camera.zoom,minDistance:controls.minDistance,maxDistance:controls.maxDistance};
+}
+export function restoreCameraView(camera,controls,view){
+  camera.up.copy(view.up);camera.position.copy(view.position);camera.zoom=view.zoom;
+  controls.target.copy(view.target);controls.minDistance=view.minDistance;controls.maxDistance=view.maxDistance;
+  camera.updateProjectionMatrix();controls.update();
+}
+
 // Camera navigation is a viewer policy, independent of source CAD visibility.
 // Keep clipping in sync with OrbitControls, which moves the camera but does not
 // update its near/far planes. A small selection must not shrink the scene range.

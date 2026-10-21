@@ -1,6 +1,6 @@
 # LibiaoLink
 
-> **2026-10-21 STEP 本地接入已跑通，未部署**：沿用独立 `CAD逆向` 工程 STEP v0.3.3（几何基线 `0911573`，宿主适配 `38135e6`），已接入文件版本、受控任务/二进制资源和 ViewerSession；启用 CAD 运行环境后 STEP 可预览，其余 CAD 保留提示与下载。旧解析器、网格测量及原对象图片直签已撤下。见 [接入基线](docs/CAD平台接入基线与迁移任务.md) 与 [本地逐文件结果](docs/cad-platform-integration/RESULTS.md)。
+> **2026-10-21 STEP 本地接入已跑通，未部署**：沿用独立 `CAD逆向` 工程 STEP v0.3.3（几何基线 `0911573`，宿主适配 `f103d1c`），已接入文件版本、受控任务/二进制资源和 ViewerSession；启用 CAD 运行环境后 STEP 可预览，其余 CAD 保留提示与下载。旧解析器、网格测量及原对象图片直签已撤下。见 [接入基线](docs/CAD平台接入基线与迁移任务.md) 与 [本地逐文件结果](docs/cad-platform-integration/RESULTS.md)。
 
 打通公司全链路，使得信息流通，让世界更高效。
 

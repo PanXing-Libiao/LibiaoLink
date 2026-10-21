@@ -13,7 +13,7 @@ import {directProjection} from './direct-projection.js?v=step-0.2';
 import {appendNonMeshableUI,clearNonMeshableUI} from './nonmeshable-ui.js?v=step-combined';
 import {appendMeshRepairUI,repairManifest} from './mesh-repair-ui.js?v=step-combined';
 import {mountDrawingViewer} from './drawing-viewer.js';
-import {fitCameraToBox,updateCameraRange} from './camera-framing.js';
+import {fitCameraToBox,updateCameraRange,captureCameraView,restoreCameraView} from './camera-framing.js';
 const query=new URLSearchParams(location.search),binaryMode=query.get('transport')==='binary',batchMode=query.get('batch')==='1';
 // The unified pipeline is the default entry; ?pipeline=legacy keeps the old EASM bridge for regression.
 const unifiedMode=query.get('pipeline')!=='legacy';
@@ -60,7 +60,7 @@ function applyHighlight(){
     highlighter.syncVisibility();
   }catch(error){highlighter.clear();console.warn('highlight failed',error);}
 }
-let cameraBounds=null;
+let cameraBounds=null,focusView=null,isolationBefore=null;
 let renderCount=0;const render=()=>{updateCameraRange(camera,controls,cameraBounds);renderer.render(scene,camera);renderCount++;};controls.addEventListener('change',render);
 function setCameraUp(up){
  if(camera.up.equals(up))return;
@@ -129,11 +129,27 @@ function visibleLogical(){
 }
 function bounds(root,visible=false){root.updateWorldMatrix(true,true);const b=new THREE.Box3();for(const m of meshes(root,visible)){if(!m.geometry.boundingBox)m.geometry.computeBoundingBox();b.union(m.geometry.boundingBox.clone().applyMatrix4(m.matrixWorld));}return b;}
 function fit(root=model,visible=true){if(!root)return;const b=bounds(root,visible);if(b.isEmpty())return;cameraBounds=bounds(model||root).getBoundingSphere(new THREE.Sphere());fitCameraToBox(camera,controls,b,cameraBounds);render();}
-function select(entry,productId=null,drawId=null){selected=entry;selectedProductId=productId;selectedDrawId=drawId||null;if(helper){scene.remove(helper);helper.geometry.dispose();helper.material.dispose();helper=null;}if(entry&&!drawId&&!productId&&effective(entry.object)){helper=new THREE.BoxHelper(entry.object,0x1489a4);scene.add(helper);}refresh();applyHighlight();}
+function selectionKey(entry=selected,productId=selectedProductId,drawId=selectedDrawId){return productId?'product:'+productId:drawId?'draw:'+drawId:entry?.id;}
+function select(entry,productId=null,drawId=null){if(entry&&focusView&&focusView.key!==selectionKey(entry,productId,drawId))focusView=null;selected=entry;selectedProductId=productId;selectedDrawId=drawId||null;if(helper){scene.remove(helper);helper.geometry.dispose();helper.material.dispose();helper=null;}if(entry&&!drawId&&!productId&&effective(entry.object)){helper=new THREE.BoxHelper(entry.object,0x1489a4);scene.add(helper);}refresh();applyHighlight();}
+function updateSelectionTools(){
+ const hidden=!!selected&&!(selectedProductId&&viewerSession?viewerSession.productEffective(selectedProductId):effective(selected.object));
+ const active={focus:!!focusView,dim:dimMode,toggle:hidden,isolate:!!isolationBefore};
+ $('selected').textContent=selected?selected.name:'尚未选择';
+ for(const [id,on] of Object.entries(active)){
+  $(id).setAttribute('aria-pressed',String(on));$(id).disabled=loading||(!selected&&(id==='toggle'||!on));
+ }
+ $('toggle').textContent='隐藏选中';
+ $('focus').title=focusView?'再次点击取消定位，回到定位前的视角':'将选中零件居中放大，再点取消';
+ $('dim').title=dimMode?'再次点击取消淡化':'让其它零件变淡，再点取消';
+ $('toggle').title=hidden?'再次点击显示选中零件':'隐藏选中零件，再点恢复';
+ $('isolate').title=isolationBefore?'再次点击取消仅显示，恢复原显隐范围':'仅显示选中零件或装配，再点取消';
+ const focused=document.activeElement;if(focused?.disabled&&Object.hasOwn(active,focused.id))renderer.domElement.focus();
+}
+function restoreView(view){setCameraUp(view.up);restoreCameraView(camera,controls,view);render();}
 function refresh(){if(drawingViewer)return;const all=model?meshes(model):[];const shown=all.filter(effective);const idx=currentEnvelope?.snapshot?logicalIndex():null;const vis=idx?visibleLogical():null;
 if(idx){$('stats').textContent=`显示 ${vis.draws.toLocaleString()} / ${idx.draws.toLocaleString()} 个逻辑对象 · ${vis.instances.toLocaleString()} / ${idx.instances.toLocaleString()} 个实例 · ${shown.length.toLocaleString()} / ${all.length.toLocaleString()} 个物理网格`;}
 else{const tris=shown.reduce((s,m)=>s+Math.min(m.geometry.drawRange.count,m.geometry.index?m.geometry.index.count:m.geometry.attributes.position.count)/3,0);$('stats').textContent=`显示 ${shown.length.toLocaleString()} / ${all.length.toLocaleString()} 个网格 · ${Math.round(tris).toLocaleString()} 个三角形`;}
-$('selected').textContent=selected?selected.name:'尚未选择';['toggle','isolate','focus','dim'].forEach(id=>$(id).disabled=!selected||loading);$('toggle').textContent=selected&&(selectedProductId&&viewerSession?viewerSession.productEffective(selectedProductId):effective(selected.object))?'隐藏选中':viewerSession&&selected?.object.userData.sourceVisible===false?'检查显示选中':'显示选中';if(helper)helper.visible=!!selected&&effective(selected.object);
+updateSelectionTools();if(helper)helper.visible=!!selected&&effective(selected.object);
 for(const e of entries){if(!e.row)continue;let total,visible;const sid=idx?e.object.userData.sourceId:null;const sub=sid?idx.subtree.get(sid):null;if(sub&&sub.draws){total=sub.draws;visible=vis.subtree.get(sid)||0;}else{const subset=meshes(e.object);total=subset.length;visible=subset.filter(effective).length;}e.check.checked=total>0&&visible===total;e.check.indeterminate=visible>0&&visible<total;e.row.classList.toggle('off',visible===0);e.row.classList.toggle('active',e===selected);e.button.setAttribute('aria-pressed',String(e===selected));}for(const row of productRows){let total,visible;const sub=idx?idx.prodSubtree.get(row.id):null;if(sub&&sub.draws){total=sub.draws;visible=vis.productSubtree.get(row.id)||0;}else{const subset=meshes(row.object);total=subset.length;visible=subset.filter(effective).length;}row.check.checked=total>0&&visible===total;row.check.indeterminate=visible>0&&visible<total;const active=selected?.object.userData.productId===row.id;row.button.setAttribute('aria-pressed',String(active));row.row.classList.toggle('active',active);}highlighter&&highlighter.syncVisibility();render();}
 function makeTree(){const target=$('tree');target.replaceChildren();const q=$('search').value.toLowerCase();for(const e of entries){e.row=null;if(q&&!e.name.toLowerCase().includes(q))continue;const row=document.createElement('div');row.className='row';row.dataset.sceneId=e.object.userData.sourceId||e.id;row.dataset.productId=e.object.userData.productId||'';row.style.paddingLeft=Math.min(e.depth,6)*12+'px';const check=document.createElement('input');check.type='checkbox';check.setAttribute('aria-label','显示 '+e.name);check.addEventListener('change',()=>{if(viewerSession){viewerSession.setShown(e.object.userData.sourceId,check.checked);syncViewer();refresh();return;}e.object.visible=check.checked;if(check.checked){e.object.traverse(o=>o.visible=true);for(let p=e.object.parent;p&&p!==scene;p=p.parent)p.visible=true;}refresh();});const button=document.createElement('button');button.className='node';button.textContent=e.name;button.title=e.name;button.addEventListener('click',()=>select(e));row.append(check,button);target.append(row);Object.assign(e,{row,check,button});}$('nodecount').textContent=`${entries.length} 节点`;refresh();}
 function setDrawingChrome(on){
@@ -147,6 +163,7 @@ function setDrawingChrome(on){
  const hint=document.querySelector('.hint');if(hint)hint.textContent=on?'拖动平移 · 滚轮缩放 · 单击选中 · Shift 多选 · Esc 取消':'拖动旋转 · 滚轮缩放 · 右键平移 · 单击选中';
 }
 function installDrawing(envelope,info){
+ focusView=null;isolationBefore=null;
  if(drawingViewer){drawingViewer.destroy();drawingViewer=null;}
  if(model){scene.remove(model);dispose(model);model=null;}
  currentEnvelope=envelope;currentDrawObjects=null;logicalCache=null;entries=[];productRows=[];viewerSession=null;syncViewer=null;meta=info;drawingViewer=null;cameraBounds=null;
@@ -181,7 +198,7 @@ function install(root,info,session=null,sync=null,projection=null){
  if(drawingViewer){drawingViewer.destroy();drawingViewer=null;}
  window.__drawingInstalled=false;
  setDrawingChrome(false);
- selectedDrawId=null;dimMode=false;$('dim').setAttribute('aria-pressed','false');if(!meshes(root).length)throw new Error('文件没有可显示的几何对象');for(const m of meshes(root)){const p=m.geometry.attributes.position;if(!p?.count)throw new Error('网格没有顶点');for(let i=0;i<p.array.length;i++)if(!Number.isFinite(p.array[i]))throw new Error('网格含无效坐标');}
+ selectedDrawId=null;focusView=null;isolationBefore=null;dimMode=false;$('dim').setAttribute('aria-pressed','false');if(!meshes(root).length)throw new Error('文件没有可显示的几何对象');for(const m of meshes(root)){const p=m.geometry.attributes.position;if(!p?.count)throw new Error('网格没有顶点');for(let i=0;i<p.array.length;i++)if(!Number.isFinite(p.array[i]))throw new Error('网格含无效坐标');}
 select(null);if(model){scene.remove(model);dispose(model);}if(grid){scene.remove(grid);dispose(grid);}currentEnvelope=projection?.envelope||null;currentDrawObjects=projection?.drawObjects||null;logicalCache=null;model=root;meta=info;viewerSession=session;syncViewer=sync;entries=[];wire=false;$('wire').setAttribute('aria-pressed','false');scene.add(model);
 const visit=(o,depth,path)=>{if(!meshes(o).length)return;if(info.unified&&!o.userData.sourceId){o.children.forEach((c,i)=>visit(c,depth,path+'.'+i));return;}const e={id:path,name:o.name||'未命名节点 '+path,object:o,depth,initial:o.visible};entries.push(e);o.userData.entry=e;for(let i=0;i<o.children.length;i++){const child=o.children[i];if(info.unified&&child.userData.drawObject&&!child.userData.sceneAnchor){child.userData.entry=e;continue;}visit(child,depth+1,path+'.'+i);}};visit(root,0,'0');
 $('tree').setAttribute('data-title',info.unified?'显示场景树':'');if(info.unified){document.querySelector('.treehead strong').textContent='产品与显示场景';document.querySelector('.samples p').textContent='统一模型：EASM 场景与 STEP 产品装配。二维、外部依赖及未映射特性见能力诊断。';$('showAll').textContent='检查全部几何';}else{document.querySelector('.treehead strong').textContent='零件 / 文件节点';document.querySelector('.samples p').textContent='可打开 EASM、GLB、STL、OBJ。每种格式的能力边界见下方说明。';$('showAll').textContent='全部显示';}
@@ -325,11 +342,30 @@ else if(ext==='glb'){const manager=new THREE.LoadingManager();manager.setURLModi
 else if(ext==='stl'){const geo=new STLLoader().parse(await file.arrayBuffer());root=new THREE.Mesh(geo,new THREE.MeshStandardMaterial({color:0x83a7b8,metalness:.2,roughness:.5,side:THREE.DoubleSide}));root.name=file.name;info.note='STL按整个文件作为一个对象显示。未按连通块猜测设计零件；文件不提供可靠的装配树和单位。';info.unit='STL单位未知';}
 else if(ext==='obj'){root=new OBJLoader().parse(await file.text());root.name=file.name;info.note='保留OBJ的对象与分组；未加载外部MTL及纹理。分组不一定对应原始CAD零件。';info.unit='OBJ单位未知';}
 else throw new Error('当前验证版不支持此格式');if(load.token!==loadSeq)return;sourceUpload=ext==='easm'?file:null;install(root,info,session,sync,typeof unifiedProjection!=='undefined'?unifiedProjection:null);});});
-$('search').oninput=makeTree;$('fit').onclick=()=>{if(drawingViewer)return drawingViewer.fit();fit();};$('dim').onclick=()=>{dimMode=!dimMode;$('dim').setAttribute('aria-pressed',String(dimMode));applyHighlight();render();};
-$('focus').onclick=()=>{if(drawingViewer)return drawingViewer.fitSelection();if(selected)fit(selected.object,false);};
+$('search').oninput=makeTree;$('fit').onclick=()=>{if(drawingViewer)return drawingViewer.fit();focusView=null;if(isolationBefore)isolationBefore.view=null;fit();updateSelectionTools();};$('dim').onclick=()=>{dimMode=!dimMode;updateSelectionTools();applyHighlight();render();};
+$('focus').onclick=()=>{
+ if(drawingViewer)return drawingViewer.fitSelection();
+ if(focusView){const view=focusView.view;focusView=null;restoreView(view);}
+ else if(selected){focusView={key:selectionKey(),view:captureCameraView(camera,controls)};fit(selected.object,false);}
+ updateSelectionTools();
+};
 $('toggle').onclick=()=>{if(!selected)return;if(viewerSession){if(selectedProductId)viewerSession.setProductShown(selectedProductId,!viewerSession.productEffective(selectedProductId));else viewerSession.setShown(selected.object.userData.sourceId,!effective(selected.object));syncViewer();refresh();return;}const show=!effective(selected.object);selected.object.visible=show;if(show){selected.object.traverse(o=>o.visible=true);for(let p=selected.object.parent;p&&p!==scene;p=p.parent)p.visible=true;}refresh();};
-$('isolate').onclick=()=>{if(!selected)return;if(viewerSession){viewerSession.isolate(selected.object.userData.sourceId);syncViewer();refresh();fit(selected.object);return;}entries.forEach(e=>e.object.visible=false);selected.object.traverse(o=>o.visible=true);for(let p=selected.object;p&&p!==scene;p=p.parent)p.visible=true;refresh();fit(selected.object);};
-$('showAll').onclick=()=>{if(viewerSession){viewerSession.showAll();syncViewer();refresh();return;}entries.forEach(e=>e.object.visible=true);refresh();};$('reset').onclick=()=>{if(viewerSession){viewerSession.reset();syncViewer();select(null);fit();return;}entries.forEach(e=>e.object.visible=e.initial);select(null);fit();};
+$('isolate').onclick=()=>{
+ focusView=null;
+ if(isolationBefore){
+  const before=isolationBefore;isolationBefore=null;
+  // Only undo the isolation filter. Explicit hide/show edits and the source snapshot stay intact.
+  if(viewerSession){viewerSession.isolation=before.isolation;syncViewer();}
+  else for(const [object,visible] of before.visibility)object.visible=visible;
+  if(before.view)restoreView(before.view);else fit();refresh();return;
+ }
+ if(!selected)return;
+ isolationBefore={isolation:viewerSession?.isolation===null?null:new Set(viewerSession?.isolation),visibility:viewerSession?null:entries.map(e=>[e.object,e.object.visible]),view:captureCameraView(camera,controls)};
+ if(viewerSession){viewerSession.isolate(selected.object.userData.sourceId);syncViewer();}
+ else{entries.forEach(e=>e.object.visible=false);selected.object.traverse(o=>o.visible=true);for(let p=selected.object;p&&p!==scene;p=p.parent)p.visible=true;}
+ refresh();fit(selected.object);
+};
+$('showAll').onclick=()=>{isolationBefore=null;if(viewerSession){viewerSession.showAll();syncViewer();refresh();return;}entries.forEach(e=>e.object.visible=true);refresh();};$('reset').onclick=()=>{focusView=null;isolationBefore=null;dimMode=false;if(viewerSession){viewerSession.reset();syncViewer();select(null);fit();return;}entries.forEach(e=>e.object.visible=e.initial);select(null);fit();};
 $('wire').onclick=()=>{wire=!wire;$('wire').setAttribute('aria-pressed',String(wire));if(model)model.traverse(o=>{for(const m of o.material?(Array.isArray(o.material)?o.material:[o.material]):[])m.wireframe=wire;});render();};
 export function inspectionRecord(){
  if(!model||loading)return null;
@@ -361,6 +397,7 @@ function setGroundFromHit(hit){
  const box=bounds(model),size=Math.max(box.getSize(new THREE.Vector3()).length(),.001),tolerance=size*1e-5;
  if(low<plane-tolerance&&high>plane+tolerance){$('error').textContent='这个面穿过模型内部，不能作为整个总装的地面。请旋转到下面，选择脚底或模型最外侧的支撑面。';$('error').hidden=false;return;}
  if(high-plane<plane-low){up.negate();const old=low;low=-high;high=-old;}
+ focusView=null;if(isolationBefore)isolationBefore.view=null;
  if(grid){scene.remove(grid);dispose(grid);}
  grid=new THREE.GridHelper(size*1.5,30,0xb7c7d2,0xd2dde5);grid.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),up);
  const center=box.getCenter(new THREE.Vector3());grid.position.copy(center).addScaledVector(up,low-center.dot(up));scene.add(grid);
@@ -368,7 +405,7 @@ function setGroundFromHit(hit){
  const side=camera.position.clone().sub(controls.target);side.addScaledVector(up,-side.dot(up));
  if(side.lengthSq()<1e-12)side.crossVectors(up,Math.abs(up.x)<.8?new THREE.Vector3(1,0,0):new THREE.Vector3(0,1,0));
  side.normalize().addScaledVector(up,.45).normalize();setCameraUp(up);controls.target.copy(center);camera.position.copy(center).add(side);
- groundPicking=false;$('ground').setAttribute('aria-pressed','false');$('ground').textContent='重选底面';$('clearGround').disabled=false;$('error').hidden=true;$('viewlabel').textContent='所选支撑面贴地';fit();
+ groundPicking=false;$('ground').setAttribute('aria-pressed','false');$('ground').textContent='重选底面';$('clearGround').disabled=false;$('error').hidden=true;$('viewlabel').textContent='所选支撑面贴地';fit();updateSelectionTools();
 }
 $('ground').onclick=()=>{if(!model)return;groundPicking=!groundPicking;$('ground').setAttribute('aria-pressed',String(groundPicking));$('ground').textContent=groundPicking?'取消选底面':groundPlane?'重选底面':'选底面摆正';$('viewlabel').textContent=groundPicking?'旋转到模型下方，单击脚底或支撑面':groundPlane?'所选支撑面贴地':'查看方向 · 地面未设置';};
 $('clearGround').onclick=()=>{if(grid){scene.remove(grid);dispose(grid);grid=null;}groundPlane=null;groundPicking=false;$('ground').setAttribute('aria-pressed','false');$('ground').textContent='选底面摆正';$('clearGround').disabled=true;$('viewlabel').textContent='查看方向 · 地面未设置';render();};

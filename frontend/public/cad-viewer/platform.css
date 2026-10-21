@@ -4,6 +4,7 @@ html, body { height: 100%; height: 100dvh; overflow: hidden; min-width: 0; }
 body { display: flex; flex-direction: column; }
 button { min-height: 34px; padding: 7px 11px; font-size: 12px; border-radius: 6px; transition: background-color .15s, border-color .15s; }
 button:hover { background: #f0f5f6; border-color: #b8cbd0; }
+button[aria-pressed="true"], button[aria-pressed="true"]:hover { background: #dceef3; border-color: #5e9cac; }
 [hidden], .row[hidden], #open, #file, .samples, #partialOffer, #busy, #nonMeshableTopNotice, #meshRepairTopNotice { display: none !important; }
 .viewer-header { flex: none; height: 56px; padding: 0 16px; gap: 16px; }
 .file-heading, .header-actions { display: flex; align-items: center; gap: 12px; min-width: 0; }
@@ -59,7 +60,7 @@ aside:has(#productTree:not([hidden])) #tree { display: none; }
 .hint { bottom: 14px; right: 14px; left: auto; width: auto; font-size: 11px; }
 .hint span { margin: 0 4px; color: #96a5af; }
 .selection { position: absolute; z-index: 2; right: 12px; bottom: 44px; max-width: min(520px, calc(100% - 284px)); padding: 11px 12px; gap: 9px; min-height: 0; border: 1px solid #d5dfe5; border-radius: 9px; background: #fffffff5; box-shadow: 0 3px 16px #293b4812; flex-direction: column; align-items: stretch; }
-#selectionTools:not(:has(#focus:enabled)) { display: none; }
+#selectionTools:not(:has(.tools button:enabled)) { display: none; }
 .selected-label { min-width: 0; }
 .selection strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; font-size: 12px; }
 .selection small { margin-bottom: 3px; }
