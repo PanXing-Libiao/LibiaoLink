@@ -669,13 +669,13 @@ describe("PreviewService.consume（M4-05c 预览队列消费 · S7-1 收敛为�
     expect(h.converter.calls).toHaveLength(0);
   });
 
-  it("确定性失败（422）：分类 dead（不写 failed —— 终态留痕由 dispatcher 调 onDead 收口）", async () => {
+  it("确定性失败（422）：分类 dead 且只进日报（不写 failed —— 终态留痕由 dispatcher 调 onDead 收口）", async () => {
     const h = makeService();
     h.converter.result = new ConverterError("deterministic", "CONVERT_FAILED", 422, "SVG 栅格化失败：文件已损坏");
 
     const outcome = await h.service.consume(makeJobRow());
 
-    expect(outcome).toEqual({ outcome: "dead", error: "SVG 栅格化失败：文件已损坏" });
+    expect(outcome).toEqual({ outcome: "dead", error: "SVG 栅格化失败：文件已损坏", deadAlert: "digest" });
     expect(h.previews.failed).toHaveLength(0);
   });
 
@@ -704,7 +704,7 @@ describe("PreviewService.consume（M4-05c 预览队列消费 · S7-1 收敛为�
 
     const outcome = await h.service.consume(row);
 
-    expect(outcome).toMatchObject({ outcome: "dead" });
+    expect(outcome).toMatchObject({ outcome: "dead", deadAlert: "digest" });
     expect((outcome as { error: string }).error).toContain("structured");
     expect(h.converter.calls).toHaveLength(0);
   });
@@ -715,7 +715,7 @@ describe("PreviewService.consume（M4-05c 预览队列消费 · S7-1 收敛为�
 
     const outcome = await h.service.consume(makeJobRow());
 
-    expect(outcome).toMatchObject({ outcome: "dead" });
+    expect(outcome).toMatchObject({ outcome: "dead", deadAlert: "digest" });
     expect((outcome as { error: string }).error).toContain("超过预览转换上限 20.0 MB");
     expect(h.converter.calls).toHaveLength(0);
     expect(h.storage.puts).toHaveLength(0);
@@ -758,7 +758,7 @@ describe("PreviewService.consume（M4-05c 预览队列消费 · S7-1 收敛为�
 
     const outcome = await h.service.consume(makeJobRow({ payload: { fileId: FILE } }));
 
-    expect(outcome).toMatchObject({ outcome: "dead" });
+    expect(outcome).toMatchObject({ outcome: "dead", deadAlert: "digest" });
     expect((outcome as { error: string }).error).toContain("载荷非法");
     expect(h.converter.calls).toHaveLength(0);
   });

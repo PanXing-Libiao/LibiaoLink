@@ -52,6 +52,8 @@ SVG bytes ──> SVG policy preflight ──> isolated render worker ──> PN
 
 安全 / 资源相关错误包括：`SVG_ACTIVE_CONTENT`、`SVG_EVENT_ATTRIBUTE`、`SVG_EXTERNAL_RESOURCE`、`SVG_ACTIVE_CSS`、`SVG_CSS_ESCAPE`、`SVG_CSS_COMMENT`、`SVG_DTD_FORBIDDEN`、`SVG_DIMENSION_UNKNOWN`、`SVG_DIMENSION_TOO_LARGE`、`SVG_ASPECT_RATIO`、`SVG_OUTPUT_TOO_LARGE`、`SVG_PIXEL_LIMIT`、`SVG_ELEMENT_LIMIT`、`PNG_INVALID`、`PNG_TOO_LARGE`。
 
+worker 侧处置：上述 4xx / 422 拒绝属于确定性失败 —— outbox 行落 `dead`、产物置 `failed` 并降级「请下载查看」，同时只写 `event=outbox.dead.digest_only` 结构化日志并进入日报，不触发企微即时 `outbox.dead`；503 / 504 / 连接错误仍按退避重试，重试到顶才即时告警。
+
 ## 3. 安全策略与限额
 
 ADR-034 定档值只能在实现中收紧；本目录当前值如下：

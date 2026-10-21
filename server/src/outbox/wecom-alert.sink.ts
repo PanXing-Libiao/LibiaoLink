@@ -51,6 +51,10 @@ export function composeDigestText(report: OutboxDailyDigest): string {
       (report.oldestDueMs === null ? "无" : Math.round(report.oldestDueMs / 1000) + "s"),
   );
   lines.push("新增死信：" + report.deadRecent + " 条；累计：" + report.deadTotal + " 条");
+  const deadByTopic = report.deadByTopic.slice(0, 5).map((item) => item.topic + " " + item.count + " 条").join(" · ");
+  if (deadByTopic !== "") {
+    lines.push("新增死信主题：" + deadByTopic);
+  }
   const breakdown = topicBreakdownLine({ byTopic: report.byTopic });
   if (breakdown !== null) {
     lines.push(breakdown);
@@ -61,7 +65,7 @@ export function composeDigestText(report: OutboxDailyDigest): string {
   if (report.activeAlerts.length > 0) {
     lines.push("仍未恢复：" + report.activeAlerts.join(" · "));
   }
-  lines.push("处置：死信按 outbox.dead 告警排查；恢复项无需处理。");
+  lines.push("处置：需重放的死信查看 outbox_events 的 last_error；预览确定性拒绝已降级「请下载查看」，无需即时处理。");
   return lines.join("\n");
 }
 
