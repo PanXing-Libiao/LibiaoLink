@@ -1,0 +1,26 @@
+# Explicit opt-in after building, reviewing and publishing the immutable CAD image.
+services:
+  cad:
+    extends:
+      file: ../cad/docker-compose.yml
+      service: cad
+    image: ${CAD_SANDBOX_IMAGE:?Set a reviewed CAD sandbox image with tag and sha256 digest}
+    build: !reset null
+    profiles: [app]
+  api:
+    environment:
+      CAD_ENGINE_SOCKET: /run/cad/engine.sock
+      CAD_ENGINE_URL: ""
+      CAD_MAX_INPUT_MIB: "${CAD_MAX_INPUT_MIB:-64}"
+    volumes:
+      - cad_socket:/run/cad:ro
+    depends_on:
+      cad: {condition: service_healthy}
+
+volumes:
+  cad_socket:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=1m,uid=1000,gid=1000,mode=0750,noexec,nosuid,nodev

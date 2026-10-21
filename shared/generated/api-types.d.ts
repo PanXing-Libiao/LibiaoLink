@@ -9593,7 +9593,7 @@ export interface components {
             publishedAt: components["schemas"]["DateTime"] & (string | null);
             publishedBy: components["schemas"]["Uuid"] & (string | null);
         };
-        /** @description 隔离且持久化的 STEP 任务；completed 只发布完整校验产物，已列举 nonMeshableFaces 保留，Partial 不算完整成功。 */
+        /** @description 独立沙箱中的 STEP 任务；容器重建后需重新提交，API 重连不清除任务。completed 只发布完整校验产物，已列举 nonMeshableFaces 保留，Partial 不算完整成功。 */
         CadJob: {
             id: string;
             /** @enum {string} */

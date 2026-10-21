@@ -1,0 +1,76 @@
+name: libiaolink-cad
+
+services:
+  cad:
+    image: libiaolink/cad-sandbox:1.0.0
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: deploy/cad/Dockerfile
+    restart: unless-stopped
+    # Python is namespace PID 1: its watchdog can terminate every native descendant.
+    init: false
+    user: "1000:1000"
+    read_only: true
+    network_mode: none
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 3g
+    memswap_limit: 3g
+    cpus: 1
+    pids_limit: 64
+    shm_size: 8m
+    ulimits:
+      core: 0
+      nofile: {soft: 128, hard: 128}
+      fsize: {soft: 268435456, hard: 268435456}
+    tmpfs:
+      - /tmp:size=384m,uid=1000,gid=1000,mode=0700,noexec,nosuid,nodev
+      - /var/lib/cad:size=1536m,uid=1000,gid=1000,mode=0700,noexec,nosuid,nodev
+    volumes:
+      - cad_socket:/run/cad
+    environment:
+      CAD_STEP_MAX_INPUT_MIB: "${CAD_MAX_INPUT_MIB:-64}"
+    healthcheck:
+      test: ["CMD", "/opt/ocp/bin/python", "/opt/cad/healthcheck.py"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    stop_grace_period: 5s
+    logging:
+      driver: json-file
+      options: {max-size: "5m", max-file: "2"}
+
+  # macOS cannot directly share a Linux AF_UNIX socket. No native libraries load here.
+  edge:
+    image: libiaolink/cad-sandbox:1.0.0
+    platform: linux/amd64
+    profiles: [dev]
+    entrypoint: ["/opt/ocp/bin/python", "/opt/cad/edge.py"]
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 64m
+    memswap_limit: 64m
+    cpus: 0.25
+    pids_limit: 16
+    ulimits: {core: 0, nofile: 64}
+    volumes:
+      - cad_socket:/run/cad:ro
+    ports:
+      - "127.0.0.1:${CAD_DEV_PORT:-9910}:9910"
+    depends_on:
+      cad: {condition: service_healthy}
+    logging:
+      driver: json-file
+      options: {max-size: "5m", max-file: "2"}
+
+volumes:
+  cad_socket:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=1m,uid=1000,gid=1000,mode=0750,noexec,nosuid,nodev
