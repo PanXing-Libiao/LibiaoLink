@@ -11,6 +11,9 @@ import type { ApiProjectSummary } from "./taskApi";
 import type { Project } from "./types";
 
 /** 导出入参（全部来自项目详情页已取到的数据，导出零新增请求）。 */
+/** 导出报告的主体语言：zh = 中文大字 + 英文小字（当前版式）；en = 英文大字 + 中文小字。 */
+export type OverviewExportLanguage = "zh" | "en";
+
 export type OverviewExportInput = {
   project: Project;
   /** 展示顺序的任务（与「项目总览」同一份：阶段为主键、组内按 sortIndex）。 */
