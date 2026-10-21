@@ -8,7 +8,8 @@
     "build": "npm run typecheck && vite build",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
     "smoke": "node scripts/smoke-test.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "preview:svg-e2e": "node scripts/h1-svg-preview-e2e.mjs"
   },
   "dependencies": {
     "@fontsource-variable/noto-sans-sc": "5.3.1",

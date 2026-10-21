@@ -43,6 +43,301 @@ jobs:
       - name: Build
         run: npm run build
 
+  # H1 S6：真实 Postgres / MinIO / preview.job / worker / svg-preview / Nginx / Headless Chrome。
+  # ONLYOFFICE 仅以本地 api.js 桩打通外壳生命周期；真实 DocServer 文档渲染与真实 CAD 生产样本
+  # 仍属发布窗口人工项。请 px 复核 .github / Nginx 派生与 artifact 脱敏；wmj 复核安全断言。
+  svg-preview-e2e:
+    name: svg-preview-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_DB: libiaolink
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d libiaolink"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            shared/package-lock.json
+            server/package-lock.json
+            database/package-lock.json
+            deploy/svg-preview/package-lock.json
+      - name: Script syntax gate (*.mjs)
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          find scripts -type f -name "*.mjs" -print0 | xargs -0 -r -n1 node --check
+      - name: Install shared (locked)
+        working-directory: shared
+        run: npm ci
+      - name: Build shared
+        working-directory: shared
+        run: npm run build
+      - name: Install server (locked)
+        working-directory: server
+        run: npm ci
+      - name: Build server
+        working-directory: server
+        run: npm run build
+      - name: Install database (locked)
+        working-directory: database
+        run: npm ci
+      - name: Install frontend (locked)
+        working-directory: frontend
+        run: npm ci
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+      - name: Install svg-preview converter (locked)
+        working-directory: deploy/svg-preview
+        run: npm ci
+      - name: Install integration runtime packages
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq nginx fonts-noto-cjk postgresql-client
+          sudo systemctl stop nginx 2>/dev/null || true
+          test -x /usr/bin/google-chrome
+      - name: Generate localhost TLS certificate
+        run: |
+          mkdir -p /tmp/h1-certs
+          openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 \
+            -keyout /tmp/h1-certs/localhost-key.pem \
+            -out /tmp/h1-certs/localhost.pem \
+            -subj "/CN=localhost" \
+            -addext "basicConstraints=critical,CA:TRUE" \
+            -addext "keyUsage=critical,digitalSignature,keyEncipherment,keyCertSign" \
+            -addext "extendedKeyUsage=serverAuth" \
+            -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+          chmod 600 /tmp/h1-certs/localhost-key.pem
+      - name: Apply database roles
+        run: psql "postgresql://postgres@127.0.0.1:5432/libiaolink" -v ON_ERROR_STOP=1 -f database/roles/0001_roles.sql
+      - name: Migrate empty database
+        working-directory: database
+        env:
+          DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
+        run: node scripts/migrate.mjs
+      - name: Seed base data
+        working-directory: database
+        env:
+          DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
+        run: node scripts/seed.mjs
+      - name: Download MinIO (pinned release + SHA-256)
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 \
+            https://github.com/minio/minio/releases/download/RELEASE.2025-09-07T16-13-09Z/minio.linux-amd64.RELEASE.2025-09-07T16-13-09Z \
+            -o /tmp/minio
+          echo "7c5bd8512c6e966455b1d198209358b2d191c77a83ab377c4073281065fb855f  /tmp/minio" | sha256sum --check --strict
+          chmod +x /tmp/minio
+      - name: Start MinIO
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/h1-minio-data
+          setsid nohup env \
+            MINIO_ROOT_USER=libiaolink \
+            MINIO_ROOT_PASSWORD=libiaolink-dev-secret \
+            MINIO_API_CORS_ALLOW_ORIGIN=https://localhost \
+            /tmp/minio server /tmp/h1-minio-data \
+              --address 127.0.0.1:9000 --console-address 127.0.0.1:9001 \
+            > /tmp/h1-minio.log 2>&1 < /dev/null &
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:9000/minio/health/live > /dev/null; then
+              echo "MinIO ready after ${attempt}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          tail -n 80 /tmp/h1-minio.log
+          exit 1
+      - name: Start ONLYOFFICE stub and SVG converter
+        run: |
+          set -euo pipefail
+          setsid nohup node frontend/scripts/h1-onlyoffice-stub.mjs \
+            > /tmp/h1-onlyoffice.log 2>&1 < /dev/null &
+          (
+            cd deploy/svg-preview
+            setsid nohup env \
+              FONTS_DIR=/usr/share/fonts/opentype/noto \
+              PORT=9900 HOST=127.0.0.1 PIPELINE_VERSION=2.0.0 \
+              node service/server.mjs \
+              > /tmp/h1-svg-preview.log 2>&1 < /dev/null &
+          )
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8001/healthz > /dev/null && \
+               curl -fsS http://127.0.0.1:9900/healthz > /dev/null; then
+              echo "ONLYOFFICE stub / converter ready after ${attempt}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          tail -n 80 /tmp/h1-onlyoffice.log /tmp/h1-svg-preview.log
+          exit 1
+      - name: Generate and start Nginx from production config
+        run: |
+          set -euo pipefail
+          node frontend/scripts/h1-nginx-ci-config.mjs
+          sudo nginx -t -c /tmp/h1-nginx.conf
+          sudo nginx -c /tmp/h1-nginx.conf
+          for attempt in $(seq 1 30); do
+            if curl -kfsS https://localhost/nginx-health > /dev/null; then
+              echo "Nginx ready after ${attempt}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          sudo tail -n 80 /tmp/h1-nginx-error.log
+          exit 1
+      - name: Initialize object storage
+        working-directory: server
+        env:
+          NODE_EXTRA_CA_CERTS: /tmp/h1-certs/localhost.pem
+          S3_ENDPOINT: https://localhost
+          S3_REGION: us-east-1
+          S3_BUCKET: libiaolink
+          S3_ACCESS_KEY: libiaolink
+          S3_SECRET_KEY: libiaolink-dev-secret
+          S3_CORS_ORIGINS: https://localhost
+        run: node scripts/storage-init.mjs
+      - name: Start api
+        working-directory: server
+        env:
+          NODE_EXTRA_CA_CERTS: /tmp/h1-certs/localhost.pem
+          NODE_ENV: test
+          PORT: "3011"
+          LOG_LEVEL: warn
+          DATABASE_URL: postgresql://libiaolink_api@127.0.0.1:5432/libiaolink
+          S3_ENDPOINT: https://localhost
+          S3_REGION: us-east-1
+          S3_BUCKET: libiaolink
+          S3_ACCESS_KEY: libiaolink
+          S3_SECRET_KEY: libiaolink-dev-secret
+          PREVIEW_CONVERTER_URL: http://127.0.0.1:9900
+          PREVIEW_PIPELINE_VERSION: 2.0.0
+          PREVIEW_CONVERT_TIMEOUT_MS: "15000"
+          PREVIEW_CONVERT_BACKOFF_MS: "1000"
+          OUTBOX_POLL_MS: "500"
+          OUTBOX_STALE_MS: "60000"
+          ONLYOFFICE_JWT_SECRET: non-empty-test-secret
+          ONLYOFFICE_DOCSERVER_URL: https://localhost/onlyoffice
+          ONLYOFFICE_DOCSERVER_API_BASE_URL: https://localhost
+        run: |
+          set -euo pipefail
+          setsid nohup node dist/entry/api.js > /tmp/h1-api.log 2>&1 < /dev/null &
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3011/healthz > /dev/null; then
+              echo "api ready after ${attempt}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          tail -n 100 /tmp/h1-api.log
+          exit 1
+      - name: Start worker
+        working-directory: server
+        env:
+          NODE_EXTRA_CA_CERTS: /tmp/h1-certs/localhost.pem
+          NODE_ENV: test
+          LOG_LEVEL: warn
+          DATABASE_URL: postgresql://libiaolink_api@127.0.0.1:5432/libiaolink
+          S3_ENDPOINT: https://localhost
+          S3_REGION: us-east-1
+          S3_BUCKET: libiaolink
+          S3_ACCESS_KEY: libiaolink
+          S3_SECRET_KEY: libiaolink-dev-secret
+          PREVIEW_CONVERTER_URL: http://127.0.0.1:9900
+          PREVIEW_PIPELINE_VERSION: 2.0.0
+          PREVIEW_CONVERT_TIMEOUT_MS: "15000"
+          PREVIEW_CONVERT_BACKOFF_MS: "1000"
+          OUTBOX_POLL_MS: "500"
+          OUTBOX_STALE_MS: "60000"
+          ONLYOFFICE_JWT_SECRET: non-empty-test-secret
+          ONLYOFFICE_DOCSERVER_URL: https://localhost/onlyoffice
+          ONLYOFFICE_DOCSERVER_API_BASE_URL: https://localhost
+        run: |
+          set -euo pipefail
+          node dist/entry/worker.js --health-check
+          setsid nohup node dist/entry/worker.js > /tmp/h1-worker.log 2>&1 < /dev/null &
+          for attempt in $(seq 1 60); do
+            if grep -q "worker 已启动" /tmp/h1-worker.log; then
+              echo "worker ready after ${attempt}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          tail -n 100 /tmp/h1-worker.log
+          exit 1
+      - name: Run H1 S6 browser regression
+        working-directory: frontend
+        env:
+          NODE_EXTRA_CA_CERTS: /tmp/h1-certs/localhost.pem
+          H1_BASE_URL: https://localhost
+          H1_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
+          H1_S3_ENDPOINT: https://localhost
+          H1_S3_REGION: us-east-1
+          H1_S3_BUCKET: libiaolink
+          H1_S3_ACCESS_KEY: libiaolink
+          H1_S3_SECRET_KEY: libiaolink-dev-secret
+          H1_REQUIRE_HEADERS: "1"
+          H1_BACKUP_STORAGE_PORT: "9443"
+          H1_ARTIFACT_DIR: /tmp/h1-svg-preview-e2e
+          CHROME_PATH: /usr/bin/google-chrome
+        run: npm run preview:svg-e2e
+      - name: Collect H1 diagnostics
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p frontend/h1-artifacts
+          if [ -d /tmp/h1-svg-preview-e2e ]; then
+            cp -a /tmp/h1-svg-preview-e2e/. frontend/h1-artifacts/
+          fi
+          : > frontend/h1-artifacts/service-logs.txt
+          for spec in \
+            api:/tmp/h1-api.log \
+            worker:/tmp/h1-worker.log \
+            nginx-error:/tmp/h1-nginx-error.log \
+            nginx-access:/tmp/h1-nginx-access.log \
+            minio:/tmp/h1-minio.log \
+            onlyoffice:/tmp/h1-onlyoffice.log \
+            svg-preview:/tmp/h1-svg-preview.log; do
+            name=${spec%%:*}
+            file=${spec#*:}
+            printf '\n===== %s =====\n' "$name" >> frontend/h1-artifacts/service-logs.txt
+            if [ -f "$file" ]; then
+              tail -n 800 "$file" >> frontend/h1-artifacts/service-logs.txt
+            else
+              echo "(missing: $file)" >> frontend/h1-artifacts/service-logs.txt
+            fi
+          done
+          find frontend/h1-artifacts -type f \( -name "*.log" -o -name "*.txt" -o -name "*.json" \) -print0 \
+            | xargs -0 -r sed -E -i \
+                -e 's/([?&](X-Amz-[^=& ]+|token|Signature|Credential|Security-Token|Expires)=)[^& ]+/\1[REDACTED]/g' \
+                -e 's/(ll_sid|ll_csrf)=[^; ,"\x27]+/\1=[REDACTED]/g' \
+                -e 's/(authorization:[[:space:]]*bearer[[:space:]]+)[^ ,"]+/\1[REDACTED]/Ig'
+      - name: Upload H1 evidence and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: h1-svg-preview-e2e-${{ github.run_id }}
+          path: frontend/h1-artifacts
+          if-no-files-found: warn
+          retention-days: 7
+
   shared:
     name: shared
     runs-on: ubuntu-latest
