@@ -2,7 +2,7 @@
 
 > 来源：`LibiaoLink_安全审查报告_2026-10-19.pdf` H1（第 5 页）｜严重度 High｜报告要求：上线前处理
 > 报告审查基线：`e13664f`｜方案落档时 `lan` 分支 HEAD：`d6ae272`（审查基线祖先；H1 涉及路径未发现实质修复）
-> 起草：lan（后端平台 / file / preview / outbox）｜拟稿日期：2026-10-20｜状态：**S1 架构 / 契约已批准（ADR-034 Accepted，PR #518 已合入 main）；S2 已随 PR #523 合入 main `e2b6aab`；S3 已随 PR #529 合入 main `acd6113`；S4 已随 PR #531 合并 main `db7d5e0`；S5 已随 PR #534 合并 main `660cc80`；S6 已随 PR #539 合并 main `336b66fd`。2026-10-21 已在测试机 10.1.104.44 完成 S2 ～ S6 同批部署：6 容器 healthy，converter 自检 40 PASS / 0 FAIL / 0 SKIP，完整 B1 ～ B7 25/25（B7 4/4）通过，443 SPA、443 对象门面与 9443 均只回传 1 条 HSTS；PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 的修复已合并 main 333ffdeb 并部署测试机，旧式原对象签名完成等价到期复测。生产尚未部署，main 连续 3 次全绿、分支保护、真实 CAD 生产样本与关闭评审仍未完成，H1 未闭环；外部 V1.0 源文档同步已按 2026-10-21 指令移出本整改跟踪**
+> 起草：lan（后端平台 / file / preview / outbox）｜拟稿日期：2026-10-20｜状态：**S1 架构 / 契约已批准（ADR-034 Accepted，PR #518 已合入 main）；S2 已随 PR #523 合入 main `e2b6aab`；S3 已随 PR #529 合入 main `acd6113`；S4 已随 PR #531 合并 main `db7d5e0`；S5 已随 PR #534 合并 main `660cc80`；S6 已随 PR #539 合并 main `336b66fd`。2026-10-21 已在测试机 10.1.104.44 完成 S2 ～ S6 同批部署：6 容器 healthy，converter 自检 40 PASS / 0 FAIL / 0 SKIP，完整 B1 ～ B7 25/25（B7 4/4）通过，443 SPA、443 对象门面与 9443 均只回传 1 条 HSTS；PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 的修复已合并 main 333ffdeb 并部署测试机，旧式原对象签名完成等价到期复测。收口 PR [#543](https://github.com/PanXing-Libiao/LibiaoLink/pull/543) 的 PR CI [39549899388](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39549899388) 已 5 / 5 全绿，待合并。生产尚未部署，main 连续 3 次全绿、分支保护、真实 CAD 生产样本与关闭评审仍未完成，H1 未闭环；外部 V1.0 源文档同步已按 2026-10-21 指令移出本整改跟踪**
 > 归属与评审：本文件位于 `docs/`（px 主责），合入前请 px 复核；ADR 与契约口径由 wmj 主责；生产部署、Nginx 与浏览器测试设施由 px 主责；服务端预览与队列由 lan 主责
 > 变更控制：后续执行以本文件为准。若执行中需要改变架构、验收条件或切片顺序，先修改本文件并说明原因；已合入主干的 ADR 与回放证据按不可变历史处理，不原地重写。
 

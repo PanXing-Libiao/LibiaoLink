@@ -189,7 +189,7 @@ docker compose exec -T svg-preview node -e "fetch('http://127.0.0.1:9900/healthz
 docker compose exec -T worker node -e "fetch('http://svg-preview:9900/healthz').then(async r=>{console.log(r.status);console.log(await r.text())})"
 ```
 
-`server.env` 必须与模板一致：`PREVIEW_CONVERTER_URL=http://svg-preview:9900`、`PREVIEW_PIPELINE_VERSION=2.0.0`、`PREVIEW_CONVERT_TIMEOUT_MS=15000`、`PREVIEW_CONVERT_MAX_SOURCE_MB=20`。S4 已交付；2026-10-21 测试机已部署 `main@336b66fd`，6 容器 healthy，converter 自检 40 PASS / 0 FAIL / 0 SKIP；S5 / S6 已合入 main，HSTS 重复头修复随 PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 合并 main 333ffdeb 并已部署测试机；测试机完整 B1 ～ B7 25 / 25（B7 4 / 4，443 SPA、443 对象门面与 9443 均为单条 HSTS）；生产尚未部署，关闭验收前不得宣称 H1 闭环。
+`server.env` 必须与模板一致：`PREVIEW_CONVERTER_URL=http://svg-preview:9900`、`PREVIEW_PIPELINE_VERSION=2.0.0`、`PREVIEW_CONVERT_TIMEOUT_MS=15000`、`PREVIEW_CONVERT_MAX_SOURCE_MB=20`。S4 已交付；2026-10-21 测试机已部署 `main@336b66fd`，6 容器 healthy，converter 自检 40 PASS / 0 FAIL / 0 SKIP；S5 / S6 已合入 main，HSTS 重复头修复随 PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 合并 main 333ffdeb 并已部署测试机；测试机完整 B1 ～ B7 25 / 25（B7 4 / 4，443 SPA、443 对象门面与 9443 均为单条 HSTS）；收口 PR [#543](https://github.com/PanXing-Libiao/LibiaoLink/pull/543) / PR CI [39549899388](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39549899388) 5 / 5 全绿，待合并；生产尚未部署，关闭验收前不得宣称 H1 闭环。
 
 **升级（改代码后）：**
 

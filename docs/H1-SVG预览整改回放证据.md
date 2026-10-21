@@ -1,6 +1,6 @@
 # H1 SVG 预览整改回放证据（S6）
 
-> 状态（2026-10-21）：S6 已随 PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 合并 main `336b66fd`；HSTS 重复头修复随 PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 合并 main 333ffdeb 并已部署测试机。测试机 10.1.104.44 完成 S2 ～ S6 同批部署与完整 B1 ～ B7 25/25（B7 4/4）；443 SPA、443 /libiaolink/ 与 9443 均只回传 1 条 HSTS；真实 PDF / DOCX ONLYOFFICE 与 STL WebGL 通过；旧式原对象签名完成等价到期复测（不是历史 URL 重放）。生产尚未部署；真实 CAD 生产样本、生产 B7、main 连续 3 次全绿及 svg-preview-e2e 分支保护、关闭评审仍未完成，不能宣布 H1 闭环。
+> 状态（2026-10-21）：S6 已随 PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 合并 main `336b66fd`；HSTS 重复头修复随 PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 合并 main 333ffdeb 并已部署测试机。测试机 10.1.104.44 完成 S2 ～ S6 同批部署与完整 B1 ～ B7 25/25（B7 4/4）；443 SPA、443 /libiaolink/ 与 9443 均只回传 1 条 HSTS；真实 PDF / DOCX ONLYOFFICE 与 STL WebGL 通过；旧式原对象签名完成等价到期复测（不是历史 URL 重放）。收口 PR [#543](https://github.com/PanXing-Libiao/LibiaoLink/pull/543) 的 PR CI [39549899388](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39549899388) 已 5 / 5 全绿，待合并。生产尚未部署；真实 CAD 生产样本、生产 B7、main 连续 3 次全绿及 svg-preview-e2e 分支保护、关闭评审仍未完成，不能宣布 H1 闭环。
 >
 > 基线：S5 已随 PR #534 合并 main `660cc80`；S6 自动化实现提交 = `lan` `3e63597`，PR CI `39540053943` 全绿；本文件落档前已同步 main `4fa7175`（PR #536 / #537）与 `5bc5c12`（PR #538）；测试部署基线 = main `336b66fd`。
 >
@@ -56,13 +56,14 @@
 - Nginx 派生脚本：生产 upstream、证书、SPA root 与安全头片段按预期替换；生产配置 `nginx -t` 与 reload 已在测试机容器内通过。
 - PR CI [39540053943](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39540053943)：5 / 5 job 全绿；`svg-preview-e2e` artifact 的 `summary.json` 为 `passed`。
 - PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 的 PR CI [39547420183](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39547420183)：5 / 5 全绿；Nginx 修复已 squash 合并 main `333ffdeb` 并部署测试机。
+- PR [#543](https://github.com/PanXing-Libiao/LibiaoLink/pull/543) 的 PR CI [39549899388](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39549899388)：5 / 5 全绿（frontend / shared / server / database / svg-preview-e2e）；该 PR 收口 B6 / B7 / 旧签名脚本与文档。
 - 2026-10-21 测试机真实主栈回放（Windows 开发机 + SSH 隧道访问 PostgreSQL / MinIO / 9443）：完整 **B1 ～ B7 25 / 25 PASS**；Chrome/154.0.8037.99；`summary.json` 为 `passed`。
 - B6 实际结果：真实 PDF / DOCX 进入 ONLYOFFICE 且 `data-oo-status=ready`，STL 进入 `cad3d` 且 WebGL canvas 与解析终态已挂载；三者均未进入 PNG 产物通道。
 - B7 实际结果：443 SPA、443 `/libiaolink/`、9443 备用门面均 **恰好 1 条 HSTS**，CSP / `nosniff` / XFO 完整；SPA 无 CSP violation 或安全日志。9443 通过本地 `19443 -> 127.0.0.1:9443` 隧道和 `H1_BACKUP_STORAGE_URL` 覆盖验证，服务器本机 curl 结果一致。
 - 旧式原对象签名等价到期复测：TTL `300s`、等待 `315s`；未过期响应 `200 image/svg+xml`（270 B），过期后 `403 application/xml`（468 B、无 SVG）；Headless Chrome 顶层无 SVG、无脚本标记；临时对象已删除。
 - 收口修正：B6 改用仓库真实 DOCX 夹具，避免伪 ZIP 在真实 DocServer 下必失败；B7 增加原始响应行 HSTS 计数；新增 `H1_BACKUP_STORAGE_URL` 与 `preview:svg-signature-expiry` 手工脚本。
 
-**边界**：CI 使用 ONLYOFFICE 桩；测试机回放使用真实 ONLYOFFICE / PDF / DOCX / STL。Windows 本地未启动完整 Linux 主栈，本轮完整回归由开发机浏览器连测试机真实服务执行；收口代码尚待 PR CI 复跑。生产仍未部署，真实 CAD 生产样本、生产 B7、`main` 连续 3 次全绿及分支保护、关闭评审仍未完成。
+**边界**：CI 使用 ONLYOFFICE 桩；测试机回放使用真实 ONLYOFFICE / PDF / DOCX / STL。Windows 本地未启动完整 Linux 主栈，本轮完整回归由开发机浏览器连测试机真实服务执行；收口代码已在 PR #543 CI 复跑，5 / 5 全绿。生产仍未部署，真实 CAD 生产样本、生产 B7、`main` 连续 3 次全绿及分支保护、关闭评审仍未完成。
 
 ## 6. 测试机部署回放（2026-10-21）
 
@@ -104,7 +105,7 @@
 - [x] HSTS 重复头修复随 PR #542 合并并部署；443 SPA / 443 对象门面 / 9443 均单条 HSTS。
 - [x] 测试机真实 PDF / DOCX ONLYOFFICE 与 STL WebGL 回放完成。
 - [x] 旧式原对象签名等价到期复测完成（非历史 URL 原样重放）。
-- [ ] `main` 连续 3 次全绿后，由 px 将 `svg-preview-e2e` 加入分支保护必需检查。
+- [ ] `main` 连续 3 次全绿后，由 px 将 `svg-preview-e2e` 加入分支保护必需检查。当前 `main@333ffdeb` 已有 2 次含该 job 的连续全绿（#1354 / #1358），PR #543 合并后形成第 3 次候选。
 - [ ] 生产完成同批部署与 B7 复测。
 - [ ] 真实 CAD 生产样本回归完成。
 - [ ] H1 关闭评审完成；此前不得写“H1 已闭环”。
