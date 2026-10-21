@@ -32,15 +32,15 @@
       <input id="search" type="search" placeholder="搜索零件名称" aria-label="搜索零件名称" aria-describedby="searchStatus">
       <p id="searchStatus" class="search-status" role="status" hidden></p>
       <div id="tree" aria-label="模型结构"></div>
-      <div class="treefoot"><button id="showAll">全部显示</button><button id="reset">恢复初始</button></div>
+      <div class="treefoot"><button id="showAll" title="恢复显示本次隐藏或隔离的零件">全部显示</button><button id="reset" title="恢复打开时的显隐状态，并调整到完整视图">恢复初始</button></div>
     </aside>
     <section class="workspace" aria-label="模型视图">
       <div class="toolbar">
         <button id="toggleSidebar" class="sidebar-toggle" aria-controls="partsSidebar" aria-expanded="true"><svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="14" height="14" rx="2"/><path d="M8 3v14"/></svg><span>零件结构</span></button>
         <div class="tools" id="viewTools" role="group" aria-label="视图操作">
-          <button id="fit">适应视图</button><button id="wire" aria-pressed="false">三角网格</button>
+          <button id="fit" title="调整远近，让当前可见模型完整入镜">适应视图</button><button id="wire" aria-pressed="false" title="将表面切换为三角形线框，再点恢复实体显示">三角网格</button>
           <span class="tool-divider" aria-hidden="true"></span>
-          <button id="ground" aria-pressed="false">选底面摆正</button><button id="clearGround" disabled>清除地面</button>
+          <button id="ground" aria-pressed="false" title="点击脚底或支撑面，按该面调整观看方向并添加参考地面">选底面摆正</button><button id="clearGround" title="移除参考地面" disabled>清除地面</button>
         </div>
       </div>
       <div id="viewport" aria-busy="true">
@@ -65,7 +65,7 @@
       </div>
       <div class="selection" id="selectionTools">
         <div class="selected-label"><small>当前选中</small><strong id="selected">尚未选择</strong></div>
-        <div class="tools" role="group" aria-label="选中零件操作"><button id="focus" disabled>定位选中</button><button id="dim" aria-pressed="false" disabled>淡化其余</button><button id="toggle" disabled>隐藏选中</button><button id="isolate" disabled>仅显示选中</button></div>
+        <div class="tools" role="group" aria-label="选中零件操作"><button id="focus" title="将选中零件居中放大，其它零件保留" disabled>定位选中</button><button id="dim" aria-pressed="false" title="让其它零件变淡，保留装配位置关系；再点恢复" disabled>淡化其余</button><button id="toggle" title="切换选中零件的显示；可用全部显示找回" disabled>隐藏选中</button><button id="isolate" title="只显示选中零件或装配，隐藏其它；全部显示可恢复" disabled>仅显示选中</button></div>
       </div>
       <details id="modelInfo" class="evidence">
         <summary>模型信息</summary>

@@ -44,28 +44,69 @@ document.getElementById('sidebarScrim').onclick=closeSidebar;
 sidebar.addEventListener('keydown',event=>{
  if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeSidebar();}
 });
-// Keep source parentId paths in search results; never infer hierarchy from names or indentation.
+let partsTreeState=null;
+function preparePartsTree(tree){
+ const rows=[...tree.querySelectorAll('.row')];
+ if(partsTreeState?.tree===tree&&partsTreeState.rows[0]===rows[0])return partsTreeState;
+ const state={tree,rows,occurrences:loadedEnvelope?.document?.productOccurrences||{},children:new Map(),controls:new Map(),expanded:new Set(),searchExpanded:new Set(),term:''};
+ for(const row of rows){
+  const id=row.dataset.productId,parent=state.occurrences[id]?.parentId;
+  if(parent==null)state.expanded.add(id);
+  else{if(!state.children.has(parent))state.children.set(parent,[]);state.children.get(parent).push(id);}
+ }
+ for(const row of rows){
+  const id=row.dataset.productId,spacer=document.createElement('span');spacer.className='tree-expander-spacer';spacer.setAttribute('aria-hidden','true');
+  if(state.children.has(id)){
+   const button=document.createElement('button');button.type='button';button.className='tree-expander';
+   const arrow=document.createElement('span');arrow.textContent='›';arrow.setAttribute('aria-hidden','true');button.append(arrow);
+   button.onclick=()=>{
+    const expanded=state.term?state.searchExpanded:state.expanded;
+    if(expanded.has(id))expanded.delete(id);else expanded.add(id);
+    filterParts();
+   };
+   row.prepend(button,spacer);state.controls.set(id,{button,spacer});
+  }else row.prepend(spacer);
+ }
+ partsTreeState=state;return state;
+}
+// Keep source parentId paths; manual folds and temporary search folds never change CAD visibility.
 function filterParts(){
  const tree=document.getElementById('productTree');
  if(!tree||tree.hidden)return;
- const rows=[...tree.querySelectorAll('.row')],term=document.getElementById('search').value.trim().toLocaleLowerCase();
+ const state=preparePartsTree(tree),{rows,occurrences}=state,term=document.getElementById('search').value.trim().toLocaleLowerCase();
  const matches=new Set(rows.filter(row=>row.querySelector('.node').textContent.toLocaleLowerCase().includes(term)).map(row=>row.dataset.productId));
- const visible=new Set(matches),occurrences=loadedEnvelope?.document?.productOccurrences||{};
+ const visible=new Set(matches),autoExpanded=new Set();
  if(term)for(const id of matches){
   const seen=new Set([id]);let parent=occurrences[id]?.parentId;
   while(typeof parent==='string'&&!seen.has(parent)){
-   visible.add(parent);seen.add(parent);parent=occurrences[parent]?.parentId;
+   visible.add(parent);autoExpanded.add(parent);seen.add(parent);parent=occurrences[parent]?.parentId;
   }
  }
+ if(term!==state.term){state.searchExpanded=autoExpanded;state.term=term;}
+ const expanded=term?state.searchExpanded:state.expanded;
  let contextCount=0;
  for(const row of rows){
-  const match=matches.has(row.dataset.productId),context=!!term&&visible.has(row.dataset.productId)&&!match;
-  row.hidden=!visible.has(row.dataset.productId);
+  const id=row.dataset.productId,match=matches.has(id),context=!!term&&visible.has(id)&&!match;
+  let folded=false,parent=occurrences[id]?.parentId;const seen=new Set([id]);
+  while(typeof parent==='string'&&!seen.has(parent)){
+   if(state.controls.has(parent)&&!expanded.has(parent)){folded=true;break;}
+   seen.add(parent);parent=occurrences[parent]?.parentId;
+  }
+  row.hidden=!visible.has(id)||folded;
   row.toggleAttribute('data-search-match',!!term&&match);row.toggleAttribute('data-search-context',context);
   const button=row.querySelector('.node');button.title=button.textContent;
+  const control=state.controls.get(id);
+  if(control){
+   const hasChildren=state.children.get(id).some(child=>visible.has(child)),open=expanded.has(id);
+   control.button.hidden=!hasChildren;control.spacer.hidden=hasChildren;
+   control.button.setAttribute('aria-expanded',String(open));
+   control.button.setAttribute('aria-label',`${open?'收起':'展开'} ${button.textContent}`);
+   control.button.title=`${open?'收起':'展开'}下级，不改变模型显示`;
+  }
   if(context)contextCount++;
  }
- document.getElementById('nodecount').textContent=term?`${matches.size} 项匹配`:`${rows.length} 项`;
+ const count=document.getElementById('nodecount');count.textContent=term?`${matches.size} 项匹配`:`共 ${rows.length} 项`;
+ count.title=`当前展开 ${rows.filter(row=>!row.hidden).length} 项，共 ${rows.length} 项`;
  const status=document.getElementById('searchStatus');status.hidden=!term;
  status.textContent=!matches.size?'没有匹配的零件':contextCount?`含 ${contextCount} 个上级节点 · 加粗为匹配项`:'加粗为匹配项';
 }

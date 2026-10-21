@@ -31,6 +31,10 @@ aside { position: absolute; z-index: 3; inset: 64px auto 58px 12px; width: 248px
 #productTree > strong { display: none; }
 aside:has(#productTree:not([hidden])) #tree { display: none; }
 .row { min-height: 34px; gap: 5px; margin: 1px 0; }
+.tree-expander, .tree-expander-spacer { flex: none; width: 24px; height: 28px; }
+.tree-expander { display: grid; place-items: center; min-height: 28px; padding: 0; border: 0; background: transparent; color: #607786; }
+.tree-expander > span { display: block; font-size: 21px; line-height: 1; transition: transform .15s; }
+.tree-expander[aria-expanded="true"] > span { transform: rotate(90deg); }
 .node { min-height: 32px; padding: 6px 3px; font-size: 12px; }
 .row[data-search-match] .node { color: #1e6375; font-weight: 600; }
 .row[data-search-context] .node { color: #637987; }
