@@ -1,6 +1,6 @@
 # H1 SVG 预览整改回放证据（S6）
 
-> 状态（2026-10-21）：S6 已随 PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 合并 main `336b66fd`；测试机 10.1.104.44 已完成 S2 ～ S6 同批部署与 B1 ～ B6 21/21、B7 浏览器 2/4 回放，9443 由服务器本机 curl 复核；生产尚未部署。回放发现 443 /libiaolink/ 与 9443 各回传两次 HSTS，本次收口 PR 修复后待部署复测；不能据此宣布 H1 闭环。
+> 状态（2026-10-21）：S6 已随 PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 合并 main `336b66fd`；测试机 10.1.104.44 已完成 S2 ～ S6 同批部署与 B1 ～ B6 21/21、B7 浏览器 2/4 回放，9443 由服务器本机 curl 复核；生产尚未部署。回放发现 443 /libiaolink/ 与 9443 各回传两次 HSTS，PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 修复后待部署复测；不能据此宣布 H1 闭环。
 >
 > 基线：S5 已随 PR #534 合并 main `660cc80`；S6 自动化实现提交 = `lan` `3e63597`，PR CI `39540053943` 全绿；本文件落档前已同步 main `4fa7175`（PR #536 / #537）与 `5bc5c12`（PR #538）；测试部署基线 = main `336b66fd`。
 >
@@ -80,7 +80,7 @@
 | 浏览器回归 | B1 3、B2 4、B3 6、B4 1、B5 4、B6 3、B7 浏览器 2；ONLYOFFICE / WebGL / fail-closed / 下载 / MIME 断言通过 |
 | 9443 边界 | 开发机网络不可达；服务器本机 curl 返回 403，HSTS / CSP / nosniff / XFO 完整 |
 | 清理 | `users=0`、`projects=0`、`previewArtifacts=0`、测试 `outbox=0` |
-| 发现与处置 | 443 `/libiaolink/` 与 9443 各回传两次相同 HSTS（上游 MinIO）；收口 PR 已加 `proxy_hide_header Strict-Transport-Security`，部署后复测单头 |
+| 发现与处置 | 443 `/libiaolink/` 与 9443 各回传两次相同 HSTS（上游 MinIO）；PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 已加 `proxy_hide_header Strict-Transport-Security`，部署后复测单头 |
 | 本地未跟踪证据 | `tmp/h1-deploy/deployment-evidence.json`；浏览器 artifacts `tmp/h1-deploy/e2e-test-server/` 与 `tmp/h1-deploy/e2e-test-server-real-docx/`（不提交） |
 
 

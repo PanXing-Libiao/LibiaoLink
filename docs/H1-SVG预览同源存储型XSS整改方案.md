@@ -2,7 +2,7 @@
 
 > 来源：`LibiaoLink_安全审查报告_2026-10-19.pdf` H1（第 5 页）｜严重度 High｜报告要求：上线前处理
 > 报告审查基线：`e13664f`｜方案落档时 `lan` 分支 HEAD：`d6ae272`（审查基线祖先；H1 涉及路径未发现实质修复）
-> 起草：lan（后端平台 / file / preview / outbox）｜拟稿日期：2026-10-20｜状态：**S1 架构 / 契约已批准（ADR-034 Accepted，PR #518 已合入 main）；S2 已随 PR #523 合入 main `e2b6aab`；S3 已随 PR #529 合入 main `acd6113`；S4 已随 PR #531 合并 main `db7d5e0`；S5 已随 PR #534 合并 main `660cc80`；S6 已随 PR #539 合并 main `336b66fd`。2026-10-21 已在测试机 10.1.104.44 完成 S2 ～ S6 同批部署：6 容器 healthy，converter 自检 40 PASS / 0 FAIL / 0 SKIP，B1 ～ B6 21/21 与 B7 浏览器 2/4 通过，9443 由服务器本机 curl 复核；生产尚未部署，重复 HSTS 已由本次收口 PR 修复并待部署复测。main 连续 3 次全绿、分支保护、旧签名过期复测与关闭评审仍未完成，H1 未闭环；外部 V1.0 源文档同步已按 2026-10-21 指令移出本整改跟踪**
+> 起草：lan（后端平台 / file / preview / outbox）｜拟稿日期：2026-10-20｜状态：**S1 架构 / 契约已批准（ADR-034 Accepted，PR #518 已合入 main）；S2 已随 PR #523 合入 main `e2b6aab`；S3 已随 PR #529 合入 main `acd6113`；S4 已随 PR #531 合并 main `db7d5e0`；S5 已随 PR #534 合并 main `660cc80`；S6 已随 PR #539 合并 main `336b66fd`。2026-10-21 已在测试机 10.1.104.44 完成 S2 ～ S6 同批部署：6 容器 healthy，converter 自检 40 PASS / 0 FAIL / 0 SKIP，B1 ～ B6 21/21 与 B7 浏览器 2/4 通过，9443 由服务器本机 curl 复核；生产尚未部署，重复 HSTS 已由PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 修复并待部署复测。main 连续 3 次全绿、分支保护、旧签名过期复测与关闭评审仍未完成，H1 未闭环；外部 V1.0 源文档同步已按 2026-10-21 指令移出本整改跟踪**
 > 归属与评审：本文件位于 `docs/`（px 主责），合入前请 px 复核；ADR 与契约口径由 wmj 主责；生产部署、Nginx 与浏览器测试设施由 px 主责；服务端预览与队列由 lan 主责
 > 变更控制：后续执行以本文件为准。若执行中需要改变架构、验收条件或切片顺序，先修改本文件并说明原因；已合入主干的 ADR 与回放证据按不可变历史处理，不原地重写。
 
@@ -278,7 +278,7 @@ renderer 不执行脚本；服务容器无外网、不配置外部资源目录�
 - 按第 5 节修改 Nginx 443 / 9443 与 SPA 头。
 - 先用测试机验证 CSP 不破坏 SPA、ONLYOFFICE、WASM / Worker、导出打印与图片加载。
 - 验收：`nginx -t` 通过；curl 断言 `nosniff`、CSP、HSTS、XFO；浏览器控制台无 CSP 阻断错误。
-- 执行状态（2026-10-21）：已随 PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 合并 main `660cc80`；测试机已部署 `main@336b66fd`，SPA 与 443 `/libiaolink/` 的 B7 浏览器断言通过，9443 由服务器本机 curl 复核。SPA 入口使用同源 CSP（含 CAD WASM 所需 `wasm-unsafe-eval`）、HSTS、`nosniff` 与 XFO；443 `/libiaolink/` 与 9443 使用 CSP sandbox、`script-src none`、HSTS、`nosniff` 与 XFO。回放发现 443 `/libiaolink/` 与 9443 各回传两次相同 HSTS（上游 MinIO 未隐藏），本次收口 PR 增加 `proxy_hide_header Strict-Transport-Security`，待合入后重载 web 并以单头复测；生产尚未部署。
+- 执行状态（2026-10-21）：已随 PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 合并 main `660cc80`；测试机已部署 `main@336b66fd`，SPA 与 443 `/libiaolink/` 的 B7 浏览器断言通过，9443 由服务器本机 curl 复核。SPA 入口使用同源 CSP（含 CAD WASM 所需 `wasm-unsafe-eval`）、HSTS、`nosniff` 与 XFO；443 `/libiaolink/` 与 9443 使用 CSP sandbox、`script-src none`、HSTS、`nosniff` 与 XFO。回放发现 443 `/libiaolink/` 与 9443 各回传两次相同 HSTS（上游 MinIO 未隐藏），PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 增加 `proxy_hide_header Strict-Transport-Security`，待合入后重载 web 并以单头复测；生产尚未部署。
 
 ### S6 · 浏览器回归与上线证据
 

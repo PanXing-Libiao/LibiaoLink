@@ -1,6 +1,6 @@
 # deploy/svg-preview/ · H1 SVG 安全栅格化沙箱（S3）
 
-> 状态（2026-10-21）：S3 已随 PR [#529](https://github.com/PanXing-Libiao/LibiaoLink/pull/529) 合并 main `acd6113`；S4 主栈接线已随 PR [#531](https://github.com/PanXing-Libiao/LibiaoLink/pull/531) 合并 main `db7d5e0`；S5 已随 PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 合并 main `660cc80`；S2 已随 PR #523 合并 `e2b6aab`；S6 已随 PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 合并 main `336b66fd`。测试机 10.1.104.44 已于 2026-10-21 按该基线完成 S2 ～ S6 同批部署：6 容器 healthy，converter 自检 40 PASS / 0 FAIL / 0 SKIP，B1 ～ B6 21/21 与 B7 浏览器 2/4 通过；**生产尚未部署**。回放发现 443 `/libiaolink/` 与 9443 重复 HSTS，收口 PR 修复后待部署复测；生产验收前不得宣布 H1 闭环。
+> 状态（2026-10-21）：S3 已随 PR [#529](https://github.com/PanXing-Libiao/LibiaoLink/pull/529) 合并 main `acd6113`；S4 主栈接线已随 PR [#531](https://github.com/PanXing-Libiao/LibiaoLink/pull/531) 合并 main `db7d5e0`；S5 已随 PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 合并 main `660cc80`；S2 已随 PR #523 合并 `e2b6aab`；S6 已随 PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 合并 main `336b66fd`。测试机 10.1.104.44 已于 2026-10-21 按该基线完成 S2 ～ S6 同批部署：6 容器 healthy，converter 自检 40 PASS / 0 FAIL / 0 SKIP，B1 ～ B6 21/21 与 B7 浏览器 2/4 通过；**生产尚未部署**。回放发现 443 `/libiaolink/` 与 9443 重复 HSTS，PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 修复后待部署复测；生产验收前不得宣布 H1 闭环。
 >
 > 口径：`docs/adr/ADR-034-SVG预览安全栅格化.md` 与 `docs/H1-SVG预览同源存储型XSS整改方案.md`。外部 V1.0 源文档同条同步已按 2026-10-21 指令移出本整改跟踪；S6 完成前仍不能由本目录或本切片宣称 H1 已闭环。
 
