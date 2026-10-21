@@ -188,7 +188,7 @@ docker compose exec -T svg-preview node -e "fetch('http://127.0.0.1:9900/healthz
 docker compose exec -T worker node -e "fetch('http://svg-preview:9900/healthz').then(async r=>{console.log(r.status);console.log(await r.text())})"
 ```
 
-`server.env` 必须与模板一致：`PREVIEW_CONVERTER_URL=http://svg-preview:9900`、`PREVIEW_PIPELINE_VERSION=2.0.0`、`PREVIEW_CONVERT_TIMEOUT_MS=15000`、`PREVIEW_CONVERT_MAX_SOURCE_MB=20`。S4 只准备部署件，不在本切片执行生产部署；S5 / S6 完成前不得宣称 H1 闭环。
+`server.env` 必须与模板一致：`PREVIEW_CONVERTER_URL=http://svg-preview:9900`、`PREVIEW_PIPELINE_VERSION=2.0.0`、`PREVIEW_CONVERT_TIMEOUT_MS=15000`、`PREVIEW_CONVERT_MAX_SOURCE_MB=20`。S4 只准备部署件，不在本切片执行生产部署；S5 响应头已实现（PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534)）但尚未发布，S6 完成前不得宣称 H1 闭环。
 
 **升级（改代码后）：**
 
@@ -232,6 +232,26 @@ curl -sk https://test-pm.libiaorobot.com/healthz; echo               # {"status"
 curl -sk -o /dev/null -w "%{http_code}\n" https://test-pm.libiaorobot.com/readyz   # 200（对象存储就绪）
 curl -sk -o /dev/null -w "%{http_code}\n" https://test-pm.libiaorobot.com/         # 200（index.html，SPA 已上线）
 ```
+
+**H1 S5 安全响应头（2026-10-21 已实现，PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 待评审 / 合入，待发布）：**
+
+`nginx/libiaolink.conf` 对三条响应面分别下发：
+
+- SPA 入口（443 `/`）：HSTS、`X-Content-Type-Options: nosniff`、CSP（同源资源；`script-src` 仅额外放行 CAD WASM 所需的 `'wasm-unsafe-eval'`，不含 `'unsafe-eval'`）、`X-Frame-Options: DENY`。
+- 对象存储主门面（443 `/libiaolink/`）：HSTS、`nosniff`、`Content-Security-Policy: sandbox; default-src 'none'; script-src 'none'; …`、XFO `DENY`；先 `proxy_hide_header` 上游同名头，避免重复。
+- 对象存储备用门面（9443）：与 `/libiaolink/` 同口径。
+
+发布前用固定镜像执行配置自检，部署后用 curl 断言三条响应面带完整安全头（`-k` 仅用于测试机自签 / 内网排障；有正式证书时不要带）：
+
+```bash
+docker compose --profile app run --rm --no-deps web nginx -t
+
+curl -sSI https://test-pm.libiaorobot.com/ | grep -Ei 'strict-transport-security|content-security-policy|x-content-type-options|x-frame-options'
+curl -sSI https://test-pm.libiaorobot.com/libiaolink/security-header-probe | grep -Ei 'strict-transport-security|content-security-policy|x-content-type-options|x-frame-options'
+curl -sSI --resolve test-pm.libiaorobot.com:9443:127.0.0.1 https://test-pm.libiaorobot.com:9443/security-header-probe | grep -Ei 'strict-transport-security|content-security-policy|x-content-type-options|x-frame-options'
+```
+
+预期：SPA 的 CSP 为同源应用策略且 `script-src 'self' 'wasm-unsafe-eval'`；`/libiaolink/` 与 9443 的 CSP 必须含 `sandbox` 与 `script-src 'none'`，XFO 均为 `DENY`，三条路径均带 HSTS 与 `nosniff`。随后由 S6 执行 ONLYOFFICE、CAD、导出打印和恶意 SVG 的完整浏览器回归；控制台出现 CSP violation 必须阻断发布。2026-10-21 本地已用固定镜像 `nginx:1.30.5-alpine@sha256:0985e772…` 跑过 `nginx -t` 与等价 curl 断言，Headless Edge 已验证 SPA / WASM / Blob Worker / `srcdoc` 与恶意 SVG sandbox；测试机与生产尚未部署。
 
 - 服务器实测（2026-10-13 HTTP 先行）：`/nginx-health` ok、`/healthz` 200、`/readyz` 503（存储占位）、`/` 404（SPA 未传输）、web (healthy)；
 - 服务器实测（2026-10-14 TLS 接入）：证书链校验通过（无 `-k` 请求 200；SAN 匹配）、80 → 301（IP 访问一并收口）、443 `/nginx-health` ok / `/healthz` 200 / `/readyz` 200、9443 门面 `storage:it` 24/24；
