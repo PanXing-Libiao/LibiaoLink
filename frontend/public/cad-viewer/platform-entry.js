@@ -38,9 +38,11 @@ const narrow=matchMedia('(max-width:760px)');
 setSidebar(!narrow.matches);
 narrow.addEventListener('change',event=>setSidebar(!event.matches));
 sidebarButton.onclick=()=>setSidebar(document.body.dataset.sidebar==='closed');
-document.getElementById('sidebarScrim').onclick=()=>{setSidebar(false);sidebarButton.focus();};
+function closeSidebar(){setSidebar(false);sidebarButton.focus();}
+document.getElementById('closeSidebar').onclick=closeSidebar;
+document.getElementById('sidebarScrim').onclick=closeSidebar;
 sidebar.addEventListener('keydown',event=>{
- if(event.key==='Escape'&&narrow.matches){event.preventDefault();event.stopPropagation();setSidebar(false);sidebarButton.focus();}
+ if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeSidebar();}
 });
 // Filter the displayed source product rows; identities and visibility remain core-owned.
 function filterParts(){
