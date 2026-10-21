@@ -1,6 +1,6 @@
 # deploy/svg-preview/ · H1 SVG 安全栅格化沙箱（S3）
 
-> 状态（2026-10-21）：S3 已随 PR [#529](https://github.com/PanXing-Libiao/LibiaoLink/pull/529) 合并到 main `acd6113`；S4 主栈接线已随 PR [#531](https://github.com/PanXing-Libiao/LibiaoLink/pull/531) 合并 main `db7d5e0`；S5 已随 PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 合并 main `660cc80`。S2 已随 PR #523 合并 `e2b6aab`；服务端 `PREVIEW_PIPELINE_VERSION` 与默认配置已切到 `2.0.0`，生产 Compose 已接 internal-only `svg-preview:9900`。S6 自动化矩阵已实现且 PR CI 全绿（[run 39540053943](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39540053943) 5 / 5、矩阵 25 / 25），PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 待评审合并。**尚未部署测试机或生产**；必须与 S5 / S6 同批完成上线与浏览器回归。
+> 状态（2026-10-21）：S3 已随 PR [#529](https://github.com/PanXing-Libiao/LibiaoLink/pull/529) 合并 main `acd6113`；S4 主栈接线已随 PR [#531](https://github.com/PanXing-Libiao/LibiaoLink/pull/531) 合并 main `db7d5e0`；S5 已随 PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 合并 main `660cc80`；S2 已随 PR #523 合并 `e2b6aab`；S6 已随 PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 合并 main `336b66fd`。测试机 10.1.104.44 已于 2026-10-21 按该基线完成 S2 ～ S6 同批部署：6 容器 healthy，converter 自检 40 PASS / 0 FAIL / 0 SKIP，B1 ～ B6 21/21 与 B7 浏览器 2/4 通过；**生产尚未部署**。回放发现 443 `/libiaolink/` 与 9443 重复 HSTS，收口 PR 修复后待部署复测；生产验收前不得宣布 H1 闭环。
 >
 > 口径：`docs/adr/ADR-034-SVG预览安全栅格化.md` 与 `docs/H1-SVG预览同源存储型XSS整改方案.md`。外部 V1.0 源文档同条同步已按 2026-10-21 指令移出本整改跟踪；S6 完成前仍不能由本目录或本切片宣称 H1 已闭环。
 
@@ -125,8 +125,9 @@ curl -fsS http://127.0.0.1:9900/healthz
 | 项 | 值 |
 |---|---|
 | 镜像标签 | `libiaolink/svg-preview:2.0.0` |
-| OCI index / 本地镜像 digest | `sha256:d0a2a405dc6eb557630369c641541a61690f34a1f12a551d8d22a5f39d2500cf` |
-| 镜像大小 | 490,998,073 B（约 468.25 MiB） |
+| 测试机部署 digest（2026-10-21） | `sha256:eaee947e1e6a9e4b3ea7e7057e76e4ac45ac6209fb470593c46686ec7a474282` |
+| 历史 S3 台账 digest（不可重现） | `sha256:d0a2a405dc6eb557630369c641541a61690f34a1f12a551d8d22a5f39d2500cf` |
+| S3 历史镜像大小 | 490,998,073 B（约 468.25 MiB） |
 | 构建修订 | `3ed2f59-s3`（S3 工作树；主线基线 `3ed2f59b5e69563d4fe69d354ddd3c6a287acb7d`） |
 | Node / OS | Node v24.21.0 / Debian GNU/Linux 13 (trixie) |
 | 基础镜像 | `node:24-trixie-slim@sha256:8ec5d7557396cfe32d21c3f9c13072355ceab22b584578ca4bb28af31120cffe` |
@@ -135,6 +136,16 @@ curl -fsS http://127.0.0.1:9900/healthz
 | `Dockerfile` SHA-256 | `00d1ef15f9055f5c90ffcc281dabfeee9acfd0de1cd5bfe1b4aa6297cbf592ab` |
 | `docker-compose.yml` SHA-256 | `1558366cc14b212a5baed51e0aa967b6e37b356b8c518b087e480c866f35dfe0` |
 | `package-lock.json` SHA-256 | `4fa23ca86dc56b7b7e5a700bf4e1f5bcfb5194ff6c8448c80bc127eae9e15776` |
+
+### 6.1 测试机部署镜像（2026-10-21）
+
+| 项 | 值 |
+|---|---|
+| 基线 | `main@336b66fd4ee5c202828bd0480031702b5b692799` |
+| 镜像 | `libiaolink/svg-preview:2.0.0@sha256:eaee947e1e6a9e4b3ea7e7057e76e4ac45ac6209fb470593c46686ec7a474282` |
+| 离线归档 | `/srv/data/backups/h1-svg-336b66fd/svg-preview-2.0.0-linux-amd64.tar`；SHA-256 `23bfb7e3b93077ef4248790de299707a1155752b2cde73d80b20cd73af504a7d` |
+| 测试机结果 | 6 容器 healthy；converter 自检 40 PASS / 0 FAIL / 0 SKIP；B1 ～ B6 21/21、B7 浏览器 2/4；9443 由服务器本机 curl 复核 |
+| 说明 | S3 历史构建的 `d0a2…` digest 已无法重现；测试机与生产部署锁统一使用本表 `eaee947e…`。 |
 
 依赖（锁文件精确版本）：
 
@@ -164,9 +175,9 @@ S4 代码已实现（2026-10-21）：
 2. worker 只对 SVG `target=image` 发送 `x-source-mime: image/svg+xml`；读取源对象后重算 SHA-256，与 `file_versions.content_hash` 不一致即确定性失败。
 3. worker 独立校验返回的 `Content-Type: image/png`、`x-convert-mode: rasterize`、PNG 魔数 / IHDR / 8-bit RGBA / 尺寸 / 像素 / IEND / 20 MiB；通过后才写 `previews/{contentHash}/2.0.0/image` 与 `preview_artifacts`。
 4. `PREVIEW_PIPELINE_VERSION` 默认与生产模板均为 `2.0.0`，旧 `1.0.0` 产物保留但不被读取；失败仍为 `failed + reason`，绝不回退到原 SVG 签名。
-5. S4 只交付代码与部署件，不执行生产部署。实际发布前需 px 把同 digest 镜像放入内网 registry / 离线归档，并更新服务器未跟踪的 `server.env`；随后与 S5 / S6 同窗口执行。
+5. S4 代码与部署件已交付；测试机 2026-10-21 已按 `main@336b66fd` 部署，生产仍未执行。实际发布前需 px 把同 digest 镜像放入内网 registry / 离线归档，并更新服务器未跟踪的 `server.env`；随后与 S5 / S6 同窗口执行。
 
-S6 已增加独立 CI job，用真实 converter / worker / MinIO / Nginx 与浏览器覆盖转换成功、确定失败、PNG 校验、MIME / 改名绕过、原文件下载与 PDF / Office / CAD 分流；ONLYOFFICE 渲染器在 CI 用本地 `api.js` 桩替代。回放边界与 artifact 见 `docs/H1-SVG预览整改回放证据.md`；真实 DocServer、真实 CAD 生产样本与部署后验收仍需人工完成。
+S6 已增加独立 CI job，用真实 converter / worker / MinIO / Nginx 与浏览器覆盖转换成功、确定失败、PNG 校验、MIME / 改名绕过、原文件下载与 PDF / Office / CAD 分流；ONLYOFFICE 渲染器在 CI 用本地 `api.js` 桩替代。测试机已用真实 PDF / DOCX 进入 ONLYOFFICE、STL 进入 `cad3d` WebGL 完成回放；生产部署、完整 B7、真实 CAD 生产样本与旧签名过期复测仍需完成。
 
 回滚只回退主栈镜像 / 环境接线，**不把 `PREVIEW_PIPELINE_VERSION` 回退到 `1.0.0`、不恢复 SVG 原对象直签**；converter 不可用时预览确定性降级为下载。生产发布前还需由 px 完成镜像归档 / 内网 registry 和部署件校验，另行记录发布证据。
 
@@ -175,4 +186,4 @@ S6 已增加独立 CI job，用真实 converter / worker / MinIO / Nginx 与浏�
 - 当前镜像约 468 MiB，主要来自 Node 基础镜像与 Noto CJK；生产分发需要 registry 或离线归档策略。
 - 动画、交互 SVG、远程字体 / 图片一律不保留；这是 ADR-034 的有意能力边界，前端只展示静态 PNG。
 - 本服务不做鉴权与租户判断，绝不能直接暴露公网；鉴权、对象读取、哈希与产物登记都在 S4 的主栈 worker 完成。
-- 外部 V1.0 源文档同步已按 2026-10-21 指令移出本整改跟踪；S3 / S4 / S5 合入及 S6 自动化实现均不代表 H1 关闭，S6 合并、部署与人工回归完成前不得宣布闭环。
+- 外部 V1.0 源文档同步已按 2026-10-21 指令移出本整改跟踪；S3 / S4 / S5 / S6 合入与测试机部署均不代表 H1 关闭，生产部署、生产验收与人工回归完成前不得宣布闭环。
