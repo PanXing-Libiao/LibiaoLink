@@ -188,7 +188,7 @@ docker compose exec -T svg-preview node -e "fetch('http://127.0.0.1:9900/healthz
 docker compose exec -T worker node -e "fetch('http://svg-preview:9900/healthz').then(async r=>{console.log(r.status);console.log(await r.text())})"
 ```
 
-`server.env` 必须与模板一致：`PREVIEW_CONVERTER_URL=http://svg-preview:9900`、`PREVIEW_PIPELINE_VERSION=2.0.0`、`PREVIEW_CONVERT_TIMEOUT_MS=15000`、`PREVIEW_CONVERT_MAX_SOURCE_MB=20`。S4 只准备部署件，不在本切片执行生产部署；S5 已随 PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 合并 main `660cc80` 但尚未发布；S6 自动化矩阵已实现，PR / CI 待运行。S6 完成并部署验收前不得宣称 H1 闭环。
+`server.env` 必须与模板一致：`PREVIEW_CONVERTER_URL=http://svg-preview:9900`、`PREVIEW_PIPELINE_VERSION=2.0.0`、`PREVIEW_CONVERT_TIMEOUT_MS=15000`、`PREVIEW_CONVERT_MAX_SOURCE_MB=20`。S4 只准备部署件，不在本切片执行生产部署；S5 已随 PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 合并 main `660cc80` 但尚未发布；S6 自动化矩阵已实现，PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 已创建、PR CI 待结果。S6 完成并部署验收前不得宣称 H1 闭环。
 
 **升级（改代码后）：**
 
@@ -253,7 +253,7 @@ curl -sSI --resolve test-pm.libiaorobot.com:9443:127.0.0.1 https://test-pm.libia
 
 预期：SPA 的 CSP 为同源应用策略且 `script-src 'self' 'wasm-unsafe-eval'`；`/libiaolink/` 与 9443 的 CSP 必须含 `sandbox` 与 `script-src 'none'`，XFO 均为 `DENY`，三条路径均带 HSTS 与 `nosniff`。随后由 S6 执行 ONLYOFFICE、CAD、导出打印和恶意 SVG 的完整浏览器回归；控制台出现 CSP violation 必须阻断发布。2026-10-21 本地已用固定镜像 `nginx:1.30.5-alpine@sha256:0985e772…` 跑过 `nginx -t` 与等价 curl 断言，Headless Edge 已验证 SPA / WASM / Blob Worker / `srcdoc` 与恶意 SVG sandbox；测试机与生产尚未部署。
 
-**H1 S6 浏览器回归（2026-10-21 已实现，PR / CI 待运行）：**
+**H1 S6 浏览器回归（2026-10-21 已实现，PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 已创建、PR CI 待结果）：**
 
 PR 与 main 的独立 `svg-preview-e2e` job 会从本生产配置派生 CI Nginx（upstream / 证书 / SPA root 只替换运行位置），并运行 `frontend/scripts/h1-svg-preview-e2e.mjs`。本地复跑全链路需同时具备 PostgreSQL、MinIO、api、worker、`svg-preview`、Nginx TLS 与 Chrome；也可在 `frontend/` 配置 `H1_BASE_URL`、`H1_DATABASE_URL`、S3 与 `H1_REQUIRE_HEADERS=1` 后执行 `npm run preview:svg-e2e`。
 

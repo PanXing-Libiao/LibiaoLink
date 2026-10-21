@@ -1,8 +1,8 @@
 # H1 SVG 预览整改回放证据（S6）
 
-> 状态（2026-10-21）：S6 自动化矩阵已实现，PR 待创建；**尚未合并、尚未在 PR / main CI 运行，不能据此宣布 H1 闭环**。
+> 状态（2026-10-21）：S6 自动化矩阵已实现，PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 已创建；**尚未合并，PR CI 已触发、待结果，不能据此宣布 H1 闭环**。
 >
-> 基线：S5 已随 PR #534 合并 main `660cc80`，尚未部署测试机 / 生产。S6 实现提交位于 `lan`，本文件落档前已同步 main `4fa7175`。
+> 基线：S5 已随 PR #534 合并 main `660cc80`，尚未部署测试机 / 生产。S6 实现提交位于 `lan`，本文件落档前已同步 main `4fa7175`（PR #536 / #537）与 `5bc5c12`（PR #538）。
 >
 > 证据纪律：只保留 origin + pathname、状态、错误码与脱敏摘要；不记录 session token、Cookie、签名 URL query 或生产数据。CI artifact 保留 7 天。
 
