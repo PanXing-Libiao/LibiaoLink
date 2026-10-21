@@ -188,14 +188,22 @@ jobs:
           done
           tail -n 80 /tmp/h1-onlyoffice.log /tmp/h1-svg-preview.log
           exit 1
+      - name: Prepare SPA document root
+        run: |
+          set -euo pipefail
+          install -d -m 0755 /tmp/h1-web-root
+          cp -a frontend/dist/. /tmp/h1-web-root/
+          chmod -R a+rX /tmp/h1-web-root
+          test -f /tmp/h1-web-root/index.html
       - name: Generate and start Nginx from production config
         run: |
           set -euo pipefail
-          node frontend/scripts/h1-nginx-ci-config.mjs
+          H1_NGINX_WEB_ROOT=/tmp/h1-web-root node frontend/scripts/h1-nginx-ci-config.mjs
           sudo nginx -t -c /tmp/h1-nginx.conf
           sudo nginx -c /tmp/h1-nginx.conf
           for attempt in $(seq 1 30); do
-            if curl -kfsS https://localhost/nginx-health > /dev/null; then
+            if curl -kfsS https://localhost/nginx-health > /dev/null && \
+               curl -kfsS https://localhost/ | grep -q '<div id="root">'; then
               echo "Nginx ready after ${attempt}s"
               exit 0
             fi
