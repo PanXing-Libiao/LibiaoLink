@@ -1,20 +1,21 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createCadFixture, LOCAL_COOKIE, LOCAL_COOKIE_B, LOCAL_CSRF } from "./cad-http.fixture.js";
 
 const fixture = fileURLToPath(new URL("fixtures/cad/controlled-box.step", import.meta.url));
-const python = process.env.CAD_TEST_PYTHON;
-describe.skipIf(!python)("CAD 平台 HTTP 链路（真实转换，受控箱体夹具）", () => {
+const endpoint = process.env.CAD_TEST_ENDPOINT;
+describe.skipIf(!endpoint)("CAD 平台 HTTP 链路（独立沙箱真实转换，受控箱体夹具）", () => {
   let env: Awaited<ReturnType<typeof createCadFixture>>, cache: string;
   let base: string, jobId: string;
   beforeAll(async () => {
     cache = await mkdtemp(join(tmpdir(), "libiaolink-cad-"));
-    env = await createCadFixture([fixture, fixture], cache, python!);
+    env = await createCadFixture([fixture, fixture], cache, endpoint!);
     const row = env.records[0]!;
     base = `/api/v1/files/${row.id}/versions/${row.versionId}/cad/views/${"1".repeat(32)}/jobs`;
   });
@@ -170,13 +171,13 @@ describe.skipIf(!python)("CAD 平台 HTTP 链路（真实转换，受控箱体�
     } finally { release(); env.storage.beforeRead = undefined; cancelled.mockRestore(); }
   });
 
-  it("损坏的几何缓存不能命中，重新转换后恢复完整结果", async () => {
+  it.skipIf(!process.env.CAD_TEST_CONTAINER)("损坏的几何缓存不能命中，重新转换后恢复完整结果", async () => {
     const before = (await api().get(base + "/" + jobId + "/manifest").set("Cookie", LOCAL_COOKIE)).body;
     const entry = Object.values(before.bufferResources)[0] as { sha256: string };
-    const path = join(cache, "jobs", "buffers", entry.sha256);
-    const bytes = await readFile(path);
-    const corrupt = Buffer.from(bytes); corrupt[0] = corrupt[0]! ^ 1;
-    await writeFile(path, corrupt);
+    const path = "/var/lib/cad/jobs/buffers/" + entry.sha256;
+    const run = (code: string) => execFileSync("docker", ["exec", process.env.CAD_TEST_CONTAINER!, "/opt/ocp/bin/python", "-c", code], { timeout: 15_000 });
+    const bytes = run(`from pathlib import Path; import sys; sys.stdout.buffer.write(Path(${JSON.stringify(path)}).read_bytes())`);
+    run(`from pathlib import Path; p=Path(${JSON.stringify(path)}); b=bytearray(p.read_bytes()); b[0]^=1; p.write_bytes(b)`);
     const response = await api().post(base).set("Cookie", LOCAL_COOKIE).set("X-CSRF-Token", LOCAL_CSRF);
     expect(response.status).toBe(201); expect(response.body.reused).toBe(false);
     expect(response.body.job.id).not.toBe(jobId);
@@ -188,10 +189,10 @@ describe.skipIf(!python)("CAD 平台 HTTP 链路（真实转换，受控箱体�
       job = (await api().get(base + "/" + jobId).set("Cookie", LOCAL_COOKIE)).body;
     }
     expect(job.state, JSON.stringify(job)).toBe("completed");
-    expect(await readFile(path)).toEqual(bytes);
+    expect(run(`from pathlib import Path; import sys; sys.stdout.buffer.write(Path(${JSON.stringify(path)}).read_bytes())`)).toEqual(bytes);
   });
 
-  it("转换进程重启后仍可从新窗口复用已完成产物", async () => {
+  it("API 断开并重新连接后仍可从新窗口复用沙箱产物", async () => {
     await env.engine.onModuleDestroy();
     const status = await api().get(base + "/" + jobId).set("Cookie", LOCAL_COOKIE);
     expect(status.status).toBe(200); expect(status.body.state).toBe("completed");
@@ -204,5 +205,29 @@ describe.skipIf(!python)("CAD 平台 HTTP 链路（真实转换，受控箱体�
       expect(created.body).toMatchObject({ reused: true, job: { id: jobId, state: "completed" } });
       expect(read).not.toHaveBeenCalled();
     } finally { read.mockRestore(); }
+  });
+
+  it.skipIf(!process.env.CAD_TEST_CONTAINER)("CAD 容器停止不阻断 API，重启后重新提交可恢复解析", async () => {
+    const container = process.env.CAD_TEST_CONTAINER!;
+    execFileSync("docker", ["stop", container], { timeout: 15_000 });
+    try {
+      const preview = await api().get(`/api/v1/files/${env.records[0]!.id}/preview`).set("Cookie", LOCAL_COOKIE);
+      expect(preview.status).toBe(200);
+      expect((await api().get(base + "/" + jobId).set("Cookie", LOCAL_COOKIE)).status).toBe(503);
+    } finally { execFileSync("docker", ["start", container], { timeout: 15_000 }); }
+    await vi.waitFor(async () => {
+      const old = await api().get(base + "/" + jobId).set("Cookie", LOCAL_COOKIE);
+      expect(old.status).toBe(404);
+    }, { timeout: 15_000, interval: 200 });
+    const created = await api().post(base).set("Cookie", LOCAL_COOKIE).set("X-CSRF-Token", LOCAL_CSRF);
+    expect(created.status).toBe(201); expect(created.body.reused).toBe(false);
+    expect(created.body.job.id).not.toBe(jobId);
+    let state: string | undefined;
+    await vi.waitFor(async () => {
+      const result = await api().get(base + "/" + created.body.job.id).set("Cookie", LOCAL_COOKIE);
+      expect(result.status).toBe(200); state = result.body.state;
+      expect(["queued", "running"]).not.toContain(state);
+    }, { timeout: 120_000, interval: 200 });
+    expect(state).toBe("completed");
   });
 });

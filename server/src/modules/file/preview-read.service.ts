@@ -12,7 +12,7 @@ import { buildPreviewContentUrl, signHs256Jwt } from "./onlyoffice.jwt.js";
 import { buildPreviewJobPayload, PREVIEW_JOB_TOPIC, previewJobDedupeKey, type PreviewTarget } from "./preview.job.js";
 import { PreviewRepository, type PreviewArtifactKey, type PreviewArtifactRow } from "./preview.repository.js";
 import { isCadPreviewPending, isRasterImageFile, previewTargetsFor, viewerChannelFor, type ViewerChannel } from "./preview.targets.js";
-import { CAD_ENGINE_VERSION } from "./cad-engine.client.js";
+import { CAD_ENGINE_VERSION, cadEngineConfigured } from "./cad-engine.client.js";
 import { canonicalMimeForExtension, OCTET_STREAM_MIME } from "./file-mime.js";
 
 type FilePreviewResponse = z.infer<typeof FilePreviewResponseSchema>;
@@ -92,7 +92,7 @@ export class PreviewReadService {
 
     // ADR-035：旧解析器已删除。先按版本扩展名拦截，避免误报 image/Office MIME 再签出原 CAD。
     if (isCadPreviewPending({ fileName: channelName })) {
-      if (this.config.env.CAD_ENGINE_PYTHON && /\.(step|stp)$/i.test(channelName)) {
+      if (cadEngineConfigured(this.config.env) && /\.(step|stp)$/i.test(channelName)) {
         return {
           fileId: file.id, versionId: version.id, status: "ready", target: null,
           viewer: { kind: "cad", fileId: file.id, versionId: version.id, sourceSHA256: version.contentHash, engineVersion: CAD_ENGINE_VERSION },

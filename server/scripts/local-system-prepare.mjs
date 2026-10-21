@@ -10,11 +10,12 @@ import pg from "pg";
 
 const directory = resolve("cad-engine/.runtime/local-system");
 const configPath = join(directory, "private.json");
+const cadSocket = process.env.CAD_ENGINE_SOCKET || "", cadUrl = process.env.CAD_ENGINE_URL || "";
+if (!cadSocket && !cadUrl) throw new Error("Start the CAD sandbox and set CAD_ENGINE_SOCKET or CAD_ENGINE_URL");
 await mkdir(directory, { recursive: true, mode: 0o700 });
 let config;
 if (existsSync(configPath)) config = JSON.parse(await readFile(configPath, "utf8"));
 else {
-  for (const key of ["CAD_ENGINE_PYTHON", "CAD_MESHER_PYTHON"]) if (!process.env[key] || !existsSync(process.env[key])) throw new Error(`Set ${key} to an existing runtime`);
   const secret = () => randomBytes(24).toString("hex");
   const postgres = secret(), api = secret(), s3User = "local" + randomBytes(8).toString("hex"), s3Password = secret();
   config = {
@@ -29,12 +30,18 @@ else {
       SESSION_COOKIE_SECURE: "false",
       S3_ENDPOINT: "http://127.0.0.1:9000", S3_REGION: "us-east-1", S3_BUCKET: "libiaolink-local",
       S3_ACCESS_KEY: s3User, S3_SECRET_KEY: s3Password,
-      CAD_ENGINE_PYTHON: process.env.CAD_ENGINE_PYTHON, CAD_MESHER_PYTHON: process.env.CAD_MESHER_PYTHON,
-      CAD_CACHE_DIR: join(directory, "cad-cache"), CAD_MAX_INPUT_MIB: "64",
+      CAD_ENGINE_SOCKET: cadSocket, CAD_ENGINE_URL: cadUrl, CAD_MAX_INPUT_MIB: "64",
     },
   };
   await writeFile(configPath, JSON.stringify(config, null, 2), { mode: 0o600, flag: "wx" });
 }
+// Migrate only the dedicated local runner configuration; never retain the stdio fallback.
+delete config.api.CAD_ENGINE_PYTHON;
+delete config.api.CAD_MESHER_PYTHON;
+delete config.api.CAD_CACHE_DIR;
+config.api.CAD_ENGINE_SOCKET = cadSocket;
+config.api.CAD_ENGINE_URL = cadUrl;
+await writeFile(configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
 if (!config.migrator) {
   config.migrator = randomBytes(24).toString("hex");
   await writeFile(configPath, JSON.stringify(config, null, 2), { mode: 0o600 });

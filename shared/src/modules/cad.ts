@@ -30,7 +30,7 @@ export const CadJobSchema = z.object({
   workerWallSeconds: z.number().nonnegative().optional(),
   error: z.object({ code: z.string(), error: z.string().max(500) }).optional(),
 }).openapi("CadJob", {
-  description: "隔离且持久化的 STEP 任务；completed 只发布完整校验产物，已列举 nonMeshableFaces 保留，Partial 不算完整成功。",
+  description: "独立沙箱中的 STEP 任务；容器重建后需重新提交，API 重连不清除任务。completed 只发布完整校验产物，已列举 nonMeshableFaces 保留，Partial 不算完整成功。",
 });
 
 export const CadJobCreateResponseSchema = z.object({ job: CadJobSchema, reused: z.boolean() }).openapi("CadJobCreateResponse");

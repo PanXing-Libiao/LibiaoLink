@@ -1,8 +1,6 @@
 import { Injectable, ServiceUnavailableException } from "@nestjs/common";
 import type { CadNameCodepage } from "@libiaolink/contracts";
-import { createHash, randomUUID } from "node:crypto";
-import { mkdir, unlink, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { createHash } from "node:crypto";
 import { AppError } from "../../common/errors/app-error.js";
 import { ObjectStorage, versionFileName } from "../../storage/index.js";
 import { PermissionService } from "../permission/index.js";
@@ -51,7 +49,6 @@ export class CadPreviewService {
     if (cached !== null) return cached;
     if (this.preparing >= 2) throw new ServiceUnavailableException("CAD 文件读取繁忙，请稍后重试");
     this.preparing += 1;
-    const path = resolve(this.engine.root, "incoming", randomUUID() + ".step");
     try {
       const object = await this.storage.getObject(context.version.objectKey);
       if (object === null) throw new AppError("NOT_FOUND", "原文件不存在或不可访问");
@@ -59,10 +56,8 @@ export class CadPreviewService {
         || createHash("sha256").update(object.bytes).digest("hex") !== context.version.contentHash) {
         throw new ServiceUnavailableException("原文件完整性检查未通过，请重新上传或下载核对");
       }
-      await mkdir(resolve(this.engine.root, "incoming"), { recursive: true, mode: 0o700 });
-      await writeFile(path, object.bytes, { flag: "wx", mode: 0o600 });
-      return await this.engine.submit({ path, ...identity });
-    } finally { this.preparing -= 1; await unlink(path).catch(() => {}); }
+      return await this.engine.submit({ bytes: object.bytes, ...identity });
+    } finally { this.preparing -= 1; }
   }
 
   async job(action: "status" | "cancel", fileId: string, versionId: string, viewId: string, jobId: string, actorId: string) {
