@@ -2,7 +2,7 @@
 
 > 来源：`LibiaoLink_安全审查报告_2026-10-19.pdf` H1（第 5 页）｜严重度 High｜报告要求：上线前处理
 > 报告审查基线：`e13664f`｜方案落档时 `lan` 分支 HEAD：`d6ae272`（审查基线祖先；H1 涉及路径未发现实质修复）
-> 起草：lan（后端平台 / file / preview / outbox）｜拟稿日期：2026-10-20｜状态：**S1 架构 / 契约已批准（ADR-034 Accepted，PR #518 已合入 main）；S2 已随 PR #523 合入 main `e2b6aab`（不得单独部署）；S3 栅格化沙箱已实现并通过容器自检，PR #529 待合入；S4 起未实现；外部 V1.0 源文档同步仍待 px 确认**
+> 起草：lan（后端平台 / file / preview / outbox）｜拟稿日期：2026-10-20｜状态：**S1 架构 / 契约已批准（ADR-034 Accepted，PR #518 已合入 main）；S2 已随 PR #523 合入 main `e2b6aab`；S3 已随 PR #529 合入 main `acd6113`；S4 队列 / 产物 / 版本切换已实现，PR [#531](https://github.com/PanXing-Libiao/LibiaoLink/pull/531) 待评审 / 合入，尚未部署；S5 / S6 未实现；外部 V1.0 源文档同步仍待 px 确认**
 > 归属与评审：本文件位于 `docs/`（px 主责），合入前请 px 复核；ADR 与契约口径由 wmj 主责；生产部署、Nginx 与浏览器测试设施由 px 主责；服务端预览与队列由 lan 主责
 > 变更控制：后续执行以本文件为准。若执行中需要改变架构、验收条件或切片顺序，先修改本文件并说明原因；已合入主干的 ADR 与回放证据按不可变历史处理，不原地重写。
 
@@ -256,7 +256,7 @@ renderer 不执行脚本；服务容器无外网、不配置外部资源目录�
 
 ### S3 · 栅格化服务
 
-- 执行状态（2026-10-21）：`deploy/svg-preview/` 已实现，PR #529 待合入；S3 只交付沙箱服务与证据，不接主栈队列、不切生产版本。构建台账 = OCI digest `sha256:d0a2a405dc6eb557630369c641541a61690f34a1f12a551d8d22a5f39d2500cf`、linux/amd64、Node v24.21.0、490,998,073 B；容器自检 **40 PASS / 0 FAIL / 0 SKIP**，经 dev edge 实测 4096×4096 PNG 返回 200。实现过程中发现并修复 CSS 注释 / CDATA 分片绕过与 `image-set()` 外部资源面；`edge` 的 Compose `command` 不能覆盖镜像 ENTRYPOINT，已改 `entrypoint` 并收纳到 `dev` profile，默认只启 internal-only converter。详细契约与台账见 `deploy/svg-preview/README.md`。
+- 执行状态（2026-10-21）：`deploy/svg-preview/` 已随 PR #529 合入 main `acd6113`；S3 只交付沙箱服务与证据，不接主栈队列、不切生产版本。构建台账 = OCI digest `sha256:d0a2a405dc6eb557630369c641541a61690f34a1f12a551d8d22a5f39d2500cf`、linux/amd64、Node v24.21.0、490,998,073 B；容器自检 **40 PASS / 0 FAIL / 0 SKIP**，经 dev edge 实测 4096×4096 PNG 返回 200。实现过程中发现并修复 CSS 注释 / CDATA 分片绕过与 `image-set()` 外部资源面；`edge` 的 Compose `command` 不能覆盖镜像 ENTRYPOINT，已改 `entrypoint` 并收纳到 `dev` profile，默认只启 internal-only converter。详细契约与台账见 `deploy/svg-preview/README.md`。
 - 新增 `deploy/svg-preview/`：Node 24 服务、resvg-js 2.6.2、固定字体、无外网、非 root、只读、资源与超时上限。
 - 实现 `/convert`、`/healthz` 与现有 worker 客户端兼容；只接受 SVG + image。
 - 加入恶意夹具：脚本、事件属性、`foreignObject`、外部图片 / URL、DTD、超大尺寸、极长宽比、超时、超内存。
@@ -266,6 +266,7 @@ renderer 不执行脚本；服务容器无外网、不配置外部资源目录�
 
 ### S4 · 恢复 SVG 预览
 
+- 执行状态（2026-10-21）：已实现，PR [#531](https://github.com/PanXing-Libiao/LibiaoLink/pull/531) 待评审 / 合入，**未部署生产**。worker 以版本对象键推导真实文件名，SVG 固定发送 `image/svg+xml`；读取源对象后重算 SHA-256 并与 `file_versions.content_hash` 比对；独立校验 `image/png` + `rasterize` + PNG 魔数 / IHDR / 8-bit RGBA / 尺寸 / 像素 / IEND / 20 MiB；通过后才写 `previews/{contentHash}/2.0.0/image`。`PREVIEW_PIPELINE_VERSION` 与服务端默认值、生产模板均切 `2.0.0`；`deploy/prod/` 增加 internal-only `svg-preview` 服务与 worker 双网络接线。定向回归覆盖旧 1.0.0 不命中、哈希不一致、坏 PNG、Content-Type / mode 不合规与失败不原地重试；server 全量 **85 文件 / 1330 例**、typecheck / build / boundaries 全绿。S5 / S6 与生产发布仍未执行。
 - `previewTargetsFor(SVG) => ["image"]`；`PREVIEW_PIPELINE_VERSION=2.0.0`。
 - worker 对 SVG 源对象重算 SHA-256，校验 PNG 魔数 / IHDR / 字节上限，再写 `preview_artifacts`。
 - 失败保留现有 `failed + reason` 三态；前端仍按 `not_ready` 轮询，不改生产前端组件。
@@ -371,12 +372,13 @@ docker compose run --rm svg-preview npm test
 ### 8.1 发布顺序
 
 1. S1 文档 / ADR 合并。
-2. S3 栅格化服务构建、镜像 digest 台账、测试环境部署；此时无生产消费者。
-3. S2 + S4 同一发布窗口：停止旧 worker 的预览消费，更新 `PREVIEW_CONVERTER_URL` 指向新服务、`PREVIEW_PIPELINE_VERSION=2.0.0`，重启 api / worker。
-4. S5 响应头已在窗口前或同批生效。
-5. 执行 S6 浏览器回归与真实文件抽样。
-6. 等待旧预览签名过期，再复测顶层打开为下载 / 无脚本。
-7. 记录部署日志、镜像 digest、配置变更、测试证据与剩余风险。
+2. S3 栅格化服务构建并登记镜像 digest；先把同一 digest 镜像加载到目标机（离线归档或内网 registry），启动 internal-only `svg-preview`，完成容器与网络自检。此时无主栈消费者。
+3. S2 + S3 + S4 同一发布窗口：确认 S3 镜像 digest 与 `SVG_PREVIEW_IMAGE` 一致后，更新服务器未跟踪的 `server.env`（`PREVIEW_CONVERTER_URL=http://svg-preview:9900`、`PREVIEW_PIPELINE_VERSION=2.0.0`、`PREVIEW_CONVERT_TIMEOUT_MS=15000`、`PREVIEW_CONVERT_MAX_SOURCE_MB=20`）。
+4. 更新 api / worker 与生产 Compose，重启 api / worker；先验证 `svg-preview` 与 worker 互访 `/healthz`，再抽样验证 SVG 仅返回 `2.0.0` PNG 产物。旧 `1.0.0` 产物不删除但不参与读取。
+5. S5 响应头已在窗口前或同批生效。
+6. 执行 S6 浏览器回归与真实文件抽样；S6 全部通过前不得关闭 H1。
+7. 等待旧预览签名过期，再复测顶层打开为下载 / 无脚本。
+8. 记录部署日志、镜像 digest、配置变更、测试证据与剩余风险。
 
 ### 8.2 回滚
 

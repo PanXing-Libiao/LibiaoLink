@@ -170,6 +170,26 @@ docker compose --profile app exec -T api node -e "fetch('http://127.0.0.1:3000/r
 
 期望：`/healthz` 返回 200 `{"status":"ok"}`；`/readyz` 在对象存储就绪前为 **HTTP 503** + `status:degraded`（`object-storage:head-bucket` 探针失败，属预期，待对象存储选型关闭后转 ok）。busybox `wget` 遇 5xx 不打印 body，故上面用 `node -e fetch` 看正文。
 
+**SVG 栅格化服务（H1 · S4，profile app）：**
+
+`svg-preview` 与 worker 同批启动，只挂 `libiaolink-svg-preview-internal`（`internal: true`），不发布宿主端口。发布前必须把 `deploy/svg-preview/` 构建出的同 digest 镜像放入服务器本地 Docker、离线归档或内网 registry；`.env` 的 `SVG_PREVIEW_IMAGE` 为 tag + digest 双锁，禁止改成 `latest`。
+
+```bash
+# 例：离线归档已 scp 到服务器后（digest 必须与 .env 一致）
+docker load -i /srv/data/backups/svg-preview-2.0.0-linux-amd64.tar
+docker image inspect libiaolink/svg-preview:2.0.0 --format '{{.Id}}'
+# 期望 sha256:d0a2a405dc6eb557630369c641541a61690f34a1f12a551d8d22a5f39d2500cf
+# 若从 registry 拉取，再核对 RepoDigests 与 .env 中的 digest 完全一致。
+
+cd /opt/libiaolink/deploy/prod
+docker compose --profile app up -d svg-preview worker
+docker compose ps svg-preview worker              # 两者 healthy / running
+docker compose exec -T svg-preview node -e "fetch('http://127.0.0.1:9900/healthz').then(async r=>{console.log(r.status);console.log(await r.text())})"
+docker compose exec -T worker node -e "fetch('http://svg-preview:9900/healthz').then(async r=>{console.log(r.status);console.log(await r.text())})"
+```
+
+`server.env` 必须与模板一致：`PREVIEW_CONVERTER_URL=http://svg-preview:9900`、`PREVIEW_PIPELINE_VERSION=2.0.0`、`PREVIEW_CONVERT_TIMEOUT_MS=15000`、`PREVIEW_CONVERT_MAX_SOURCE_MB=20`。S4 只准备部署件，不在本切片执行生产部署；S5 / S6 完成前不得宣称 H1 闭环。
+
 **升级（改代码后）：**
 
 ```bash

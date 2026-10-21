@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ClockService } from "../src/common/clock/clock.service.js";
 import { AppConfig } from "../src/config/config.module.js";
-import type { Env } from "../src/config/env.js";
+import { loadEnv, type Env } from "../src/config/env.js";
 import type { OutboxClaimedRow } from "../src/db/outbox.store.js";
 import type { FileRepository, FileRow, FileVersionRow } from "../src/modules/file/file.repository.js";
 import { ConverterError, PreviewConverter, type ConvertInput, type ConvertResult } from "../src/modules/file/preview.converter.js";
+import { inspectPreviewPng, sha256Hex } from "../src/modules/file/preview.integrity.js";
 import { buildPreviewJobPayload, parsePreviewJob, previewJobDedupeKey } from "../src/modules/file/preview.job.js";
 import type { PreviewArtifactKey, PreviewArtifactRow, PreviewRepository } from "../src/modules/file/preview.repository.js";
 import { PreviewService } from "../src/modules/file/preview.service.js";
@@ -23,20 +24,41 @@ import type { ObjectStorage } from "../src/storage/index.js";
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 const FILE = "22222222-2222-4222-8222-222222222222";
 const VERSION = "66666666-6666-4666-8666-666666666666";
-const HASH = "a".repeat(64);
+const SOURCE_BYTES = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900"><rect width="1600" height="900" fill="#f00"/></svg>');
+const HASH = sha256Hex(SOURCE_BYTES);
 const NOW = new Date("2026-09-23T08:00:00Z");
 const OUTBOX_ID = 4242;
-const SOURCE_KEY = `projects/${PROJECT}/files/${FILE}/v1/${HASH}.pdf`;
-const ARTIFACT_KEY = `previews/${HASH}/1.0.0/pdf`;
+const SOURCE_KEY = `projects/${PROJECT}/files/${FILE}/v1/${HASH}.svg`;
+const ARTIFACT_KEY = `previews/${HASH}/2.0.0/image`;
+const VALID_PNG = makePng(1600, 900);
 
 const ENV = {
   PREVIEW_CONVERTER_URL: "http://127.0.0.1:9900",
-  PREVIEW_PIPELINE_VERSION: "1.0.0",
-  PREVIEW_CONVERT_TIMEOUT_MS: 90000,
+  PREVIEW_PIPELINE_VERSION: "2.0.0",
+  PREVIEW_CONVERT_TIMEOUT_MS: 15000,
   PREVIEW_CONVERT_MAX_ATTEMPTS: 3,
   PREVIEW_CONVERT_BACKOFF_MS: 15000,
-  PREVIEW_CONVERT_MAX_SOURCE_MB: 100,
+  PREVIEW_CONVERT_MAX_SOURCE_MB: 20,
 } as unknown as Env;
+
+/** 仅包含 worker 证明产物形状所需的 PNG 结构；resvg 的真实 PNG 由 S3 容器自检覆盖。 */
+function makePng(width: number, height: number): Uint8Array {
+  const bytes = new Uint8Array(45);
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(8, 13);
+  bytes.set([0x49, 0x48, 0x44, 0x52], 12);
+  view.setUint32(16, width);
+  view.setUint32(20, height);
+  bytes[24] = 8;
+  bytes[25] = 6;
+  bytes[26] = 0;
+  bytes[27] = 0;
+  bytes[28] = 0;
+  view.setUint32(33, 0);
+  bytes.set([0x49, 0x45, 0x4e, 0x44], 37);
+  return bytes;
+}
 
 function makeFileRow(overrides: Partial<FileRow> = {}): FileRow {
   return {
@@ -45,7 +67,7 @@ function makeFileRow(overrides: Partial<FileRow> = {}): FileRow {
     nodeId: null,
     taskId: null,
     docType: null,
-    name: "机械设计图纸.pdf",
+    name: "矢量图.svg",
     status: "final",
     currentVersionId: VERSION,
     version: 6,
@@ -68,9 +90,9 @@ function makeVersionRow(overrides: Partial<FileVersionRow> = {}): FileVersionRow
     fileId: FILE,
     seq: 1,
     objectKey: SOURCE_KEY,
-    sizeBytes: 12 * 1024 * 1024,
+    sizeBytes: SOURCE_BYTES.byteLength,
     contentHash: HASH,
-    mime: "application/pdf",
+    mime: "image/svg+xml",
     uploadedBy: "ea6eff88-4b3e-4df1-9ce0-02ffb14fed69",
     uploadedAt: NOW,
     changeRequestId: null,
@@ -84,8 +106,8 @@ function makeArtifactRow(overrides: Partial<PreviewArtifactRow> = {}): PreviewAr
     fileId: FILE,
     versionId: VERSION,
     contentHash: HASH,
-    target: "pdf",
-    pipelineVersion: "1.0.0",
+    target: "image",
+    pipelineVersion: "2.0.0",
     status: "not_ready",
     objectKey: null,
     error: null,
@@ -101,13 +123,13 @@ function makeJobRow(overrides: Partial<OutboxClaimedRow> = {}): OutboxClaimedRow
   return {
     id: OUTBOX_ID,
     topic: "preview.job",
-    dedupeKey: previewJobDedupeKey({ contentHash: HASH, pipelineVersion: "1.0.0", target: "pdf" }),
+    dedupeKey: previewJobDedupeKey({ contentHash: HASH, pipelineVersion: "2.0.0", target: "image" }),
     payload: buildPreviewJobPayload({
       projectId: PROJECT,
       fileId: FILE,
       versionId: VERSION,
       contentHash: HASH,
-      target: "pdf",
+      target: "image",
       trigger: "finalize",
     }),
     attempts: 0,
@@ -120,9 +142,9 @@ function makeJobRow(overrides: Partial<OutboxClaimedRow> = {}): OutboxClaimedRow
 
 const CONVERT_INPUT: ConvertInput = {
   bytes: new Uint8Array([1, 2, 3]),
-  target: "pdf",
-  fileName: "机械设计图纸.pdf",
-  sourceMime: "application/pdf",
+  target: "image",
+  fileName: "矢量图.svg",
+  sourceMime: "image/svg+xml",
   requestId: "req-1",
 };
 
@@ -141,17 +163,17 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("PreviewConverter（转换器客户端 · deploy/preview/README「五」）", () => {
-  it("200：读回产物字节与响应头（mode / 耗时 / 产物名解 URL 编码 / 管线版本）", async () => {
+describe("PreviewConverter（栅格化客户端 · deploy/svg-preview/README「2」）", () => {
+  it("200：读回 PNG 字节与响应头（rasterize / 耗时 / 产物名解 URL 编码 / 管线版本）", async () => {
     const fetchMock = vi.fn(async () =>
       new Response(new Uint8Array([9, 8, 7]), {
         status: 200,
         headers: {
-          "content-type": "application/pdf",
-          "x-pipeline-version": "1.0.0",
-          "x-convert-mode": "convert",
+          "content-type": "image/png",
+          "x-pipeline-version": "2.0.0",
+          "x-convert-mode": "rasterize",
           "x-convert-duration-ms": "716",
-          "x-artifact-name": encodeURIComponent("机械设计图纸.pdf"),
+          "x-artifact-name": encodeURIComponent("矢量图.png"),
         },
       }),
     );
@@ -160,33 +182,33 @@ describe("PreviewConverter（转换器客户端 · deploy/preview/README「五�
     const result = await makeConverter().convert(CONVERT_INPUT);
 
     expect(result).toMatchObject({
-      contentType: "application/pdf",
-      mode: "convert",
+      contentType: "image/png",
+      mode: "rasterize",
       durationMs: 716,
-      artifactName: "机械设计图纸.pdf",
-      pipelineVersion: "1.0.0",
+      artifactName: "矢量图.png",
+      pipelineVersion: "2.0.0",
     });
     expect([...result.bytes]).toEqual([9, 8, 7]);
 
     const call = fetchMock.mock.calls[0] as unknown as [string, { headers: Record<string, string>; body: unknown }];
     expect(call[0]).toBe("http://127.0.0.1:9900/convert");
     expect(call[1].headers).toMatchObject({
-      "x-preview-target": "pdf",
-      "x-file-name": encodeURIComponent("机械设计图纸.pdf"),
-      "x-source-mime": "application/pdf",
+      "x-preview-target": "image",
+      "x-file-name": encodeURIComponent("矢量图.svg"),
+      "x-source-mime": "image/svg+xml",
       "x-request-id": "req-1",
     });
   });
 
   it("源 MIME 为空时不发 x-source-mime（可选项不送空头）", async () => {
-    const fetchMock = vi.fn(async () => new Response(new Uint8Array([1]), { status: 200, headers: { "x-pipeline-version": "1.0.0" } }));
+    const fetchMock = vi.fn(async () => new Response(new Uint8Array([1]), { status: 200, headers: { "x-pipeline-version": "2.0.0" } }));
     vi.stubGlobal("fetch", fetchMock);
 
     await makeConverter().convert({ ...CONVERT_INPUT, sourceMime: null });
 
     const call = fetchMock.mock.calls[0] as unknown as [string, { headers: Record<string, string> }];
     expect(call[1].headers["x-source-mime"]).toBeUndefined();
-    expect(call[1].headers["x-preview-target"]).toBe("pdf");
+    expect(call[1].headers["x-preview-target"]).toBe("image");
   });
 
   it("错误面分类：503 / 504 可重试；413 / 415 / 422 / 501 确定性失败（message 直接可落降级副行）", async () => {
@@ -206,7 +228,7 @@ describe("PreviewConverter（转换器客户端 · deploy/preview/README「五�
           jsonResponse(item.status, {
             error: item.code,
             message: "转换失败：" + item.code,
-            pipelineVersion: "1.0.0",
+            pipelineVersion: "2.0.0",
           }),
         ),
       );
@@ -221,7 +243,7 @@ describe("PreviewConverter（转换器客户端 · deploy/preview/README「五�
   it("管线版本不一致（200 但 x-pipeline-version 不同）：确定性失败，绝不写错缓存键", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => new Response(new Uint8Array([1]), { status: 200, headers: { "x-pipeline-version": "1.0.1" } })),
+      vi.fn(async () => new Response(new Uint8Array([1]), { status: 200, headers: { "x-pipeline-version": "2.0.1" } })),
     );
     await expect(makeConverter().convert(CONVERT_INPUT)).rejects.toMatchObject({
       kind: "deterministic",
@@ -268,17 +290,17 @@ describe("PreviewConverter（转换器客户端 · deploy/preview/README「五�
     expect(error!.message).toHaveLength(500);
   });
 
-  it("healthz：200 + 版本一致 / 版本不一致 / 503 soffice 不可用 / 不可达（都不抛错）", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(200, { ok: true, pipelineVersion: "1.0.0" })));
-    expect(await makeConverter().healthz()).toMatchObject({ ok: true, pipelineVersion: "1.0.0", versionMatches: true });
+  it("healthz：200 + 版本一致 / 版本不一致 / 503 渲染器不可用 / 不可达（都不抛错）", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(200, { ok: true, pipelineVersion: "2.0.0" })));
+    expect(await makeConverter().healthz()).toMatchObject({ ok: true, pipelineVersion: "2.0.0", versionMatches: true });
 
-    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(200, { ok: true, pipelineVersion: "1.0.1" })));
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(200, { ok: true, pipelineVersion: "2.0.1" })));
     expect(await makeConverter().healthz()).toMatchObject({ ok: true, versionMatches: false });
 
-    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(503, { ok: false, pipelineVersion: "1.0.0" })));
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(503, { ok: false, pipelineVersion: "2.0.0" })));
     const busy = await makeConverter().healthz();
     expect(busy).toMatchObject({ ok: false, versionMatches: true });
-    expect(busy.detail).toContain("soffice");
+    expect(busy.detail).toContain("resvg");
 
     vi.stubGlobal(
       "fetch",
@@ -293,6 +315,23 @@ describe("PreviewConverter（转换器客户端 · deploy/preview/README「五�
 });
 
 describe("previewTargetsFor / 类型判定 / preview.job（投递侧映射）", () => {
+  it("S4 默认配置：管线版本 2.0.0、客户端超时 15s、源 SVG 上限 20 MiB", () => {
+    const env = loadEnv({ DATABASE_URL: "postgres://x/y" });
+    expect(env.PREVIEW_PIPELINE_VERSION).toBe("2.0.0");
+    expect(env.PREVIEW_CONVERT_TIMEOUT_MS).toBe(15000);
+    expect(env.PREVIEW_CONVERT_MAX_SOURCE_MB).toBe(20);
+  });
+
+  it("S4 PNG 完整性：接受 8-bit RGBA 受控尺寸，拒绝坏魔数与越界长边", () => {
+    expect(inspectPreviewPng(VALID_PNG)).toEqual({ ok: true, info: { width: 1600, height: 900 } });
+
+    const badMagic = Uint8Array.from(VALID_PNG);
+    badMagic[1] = 0;
+    expect(inspectPreviewPng(badMagic)).toMatchObject({ ok: false });
+
+    expect(inspectPreviewPng(makePng(4097, 1))).toMatchObject({ ok: false });
+  });
+
   it("投递通道映射（H1 · S2）：只有 SVG 进入 image 栅格化产物通道，其余不投", () => {
     expect(previewTargetsFor({ fileName: "现场照片.png", mime: "image/png" })).toEqual([]);
     expect(previewTargetsFor({ fileName: "矢量图.svg", mime: null })).toEqual(["image"]);
@@ -432,9 +471,9 @@ class FakeFileRepository {
 class FakeStorage {
   source: GetObjectResult | null = {
     objectKey: SOURCE_KEY,
-    bytes: new Uint8Array([4, 5, 6]),
-    contentType: "application/pdf",
-    sizeBytes: 3,
+    bytes: SOURCE_BYTES,
+    contentType: "application/octet-stream",
+    sizeBytes: SOURCE_BYTES.byteLength,
   };
   putError: Error | null = null;
   readonly puts: PutObjectInput[] = [];
@@ -455,12 +494,12 @@ class FakeStorage {
 class FakeConverter {
   readonly calls: ConvertInput[] = [];
   result: ConvertResult | Error = {
-    bytes: new Uint8Array([7, 8, 9, 10]),
-    contentType: "application/pdf",
-    mode: "convert",
+    bytes: VALID_PNG,
+    contentType: "image/png",
+    mode: "rasterize",
     durationMs: 716,
-    artifactName: "机械设计图纸.pdf",
-    pipelineVersion: "1.0.0",
+    artifactName: "矢量图.png",
+    pipelineVersion: "2.0.0",
   };
 
   async convert(input: ConvertInput): Promise<ConvertResult> {
@@ -504,7 +543,7 @@ function makeService(env: Partial<Env> = {}): Harness {
  * `onDead` 在 dispatcher 落 dead 前把产物置 failed。领取、退避排程与 outbox 三态回写见 outbox-dispatcher.test.ts。
  */
 describe("PreviewService.consume（M4-05c 预览队列消费 · S7-1 收敛为分类）", () => {
-  it("成功链路：直读源字节 → 转换 → 产物回对象存储（键 = 三元组）→ ready → done", async () => {
+  it("S4 成功链路：源哈希一致 → PNG 栅格化 → 产物回对象存储（2.0.0/image）→ ready → done", async () => {
     const h = makeService();
 
     const outcome = await h.service.consume(makeJobRow());
@@ -512,25 +551,100 @@ describe("PreviewService.consume（M4-05c 预览队列消费 · S7-1 收敛为�
     expect(outcome).toEqual({ outcome: "done" });
     expect(h.converter.calls).toHaveLength(1);
     expect(h.converter.calls[0]).toMatchObject({
-      target: "pdf",
-      fileName: "机械设计图纸.pdf",
-      sourceMime: "application/pdf",
+      target: "image",
+      fileName: "矢量图.svg",
+      sourceMime: "image/svg+xml",
     });
-    expect([...h.converter.calls[0]!.bytes]).toEqual([4, 5, 6]);
+    expect([...h.converter.calls[0]!.bytes]).toEqual([...SOURCE_BYTES]);
 
     expect(h.storage.puts).toHaveLength(1);
-    expect(h.storage.puts[0]).toMatchObject({ objectKey: ARTIFACT_KEY, contentType: "application/pdf" });
+    expect(h.storage.puts[0]).toMatchObject({ objectKey: ARTIFACT_KEY, contentType: "image/png" });
     expect(h.storage.puts[0]!.metadata).toMatchObject({
-      "preview-pipeline-version": "1.0.0",
-      "preview-target": "pdf",
+      "preview-pipeline-version": "2.0.0",
+      "preview-target": "image",
       "preview-content-hash": HASH,
       "preview-source-version": VERSION,
-      "preview-mode": "convert",
+      "preview-mode": "rasterize",
+      "preview-png-width": "1600",
+      "preview-png-height": "900",
     });
 
-    expect(h.previews.ready[0]!.key).toEqual({ contentHash: HASH, pipelineVersion: "1.0.0", target: "pdf" });
+    expect(h.previews.ready[0]!.key).toEqual({ contentHash: HASH, pipelineVersion: "2.0.0", target: "image" });
     expect(h.previews.ready[0]!.input.objectKey).toBe(ARTIFACT_KEY);
     expect(h.previews.ready[0]!.input.generatedAt).toBe(NOW);
+  });
+
+  it("旧 1.0.0 ready 产物不命中：按 2.0.0 重新登记与栅格化", async () => {
+    const h = makeService();
+    const oldKey = `previews/${HASH}/1.0.0/image`;
+    h.previews.rows = [makeArtifactRow({ pipelineVersion: "1.0.0", status: "ready", objectKey: oldKey, generatedAt: NOW })];
+
+    const outcome = await h.service.consume(makeJobRow());
+
+    expect(outcome).toEqual({ outcome: "done" });
+    expect(h.converter.calls).toHaveLength(1);
+    expect(h.previews.ready[0]!.key).toEqual({ contentHash: HASH, pipelineVersion: "2.0.0", target: "image" });
+    expect(h.previews.ready[0]!.input.objectKey).toBe(ARTIFACT_KEY);
+  });
+
+  it("源对象 SHA-256 与版本记录不一致：确定性失败，不调转换器、不写产物", async () => {
+    const h = makeService();
+    h.storage.source = {
+      objectKey: SOURCE_KEY,
+      bytes: Uint8Array.from([...SOURCE_BYTES, 0]),
+      contentType: "application/octet-stream",
+      sizeBytes: SOURCE_BYTES.byteLength + 1,
+    };
+
+    const outcome = await h.service.consume(makeJobRow());
+
+    expect(outcome).toMatchObject({ outcome: "dead" });
+    expect((outcome as { error: string }).error).toContain("SHA-256");
+    expect(h.converter.calls).toHaveLength(0);
+    expect(h.storage.puts).toHaveLength(0);
+    expect(h.previews.ready).toHaveLength(0);
+  });
+
+  it("转换器返回非 PNG 字节：worker 独立拒绝，不登记 ready", async () => {
+    const h = makeService();
+    h.converter.result = {
+      bytes: new Uint8Array([1, 2, 3]),
+      contentType: "image/png",
+      mode: "rasterize",
+      durationMs: 10,
+      artifactName: "bad.png",
+      pipelineVersion: "2.0.0",
+    };
+
+    const outcome = await h.service.consume(makeJobRow());
+
+    expect(outcome).toMatchObject({ outcome: "dead" });
+    expect((outcome as { error: string }).error).toContain("PNG");
+    expect(h.storage.puts).toHaveLength(0);
+    expect(h.previews.ready).toHaveLength(0);
+  });
+
+  it("转换器 Content-Type / mode 不合规：fail closed，不把可疑字节写成预览产物", async () => {
+    for (const result of [
+      { contentType: "image/svg+xml", mode: "rasterize" },
+      { contentType: "image/png", mode: "convert" },
+    ]) {
+      const h = makeService();
+      h.converter.result = {
+        bytes: VALID_PNG,
+        contentType: result.contentType,
+        mode: result.mode,
+        durationMs: 10,
+        artifactName: "bad.png",
+        pipelineVersion: "2.0.0",
+      };
+
+      const outcome = await h.service.consume(makeJobRow());
+
+      expect(outcome).toMatchObject({ outcome: "dead" });
+      expect(h.storage.puts).toHaveLength(0);
+      expect(h.previews.ready).toHaveLength(0);
+    }
   });
 
   it("三元组幂等：已有 ready 行 → 不调转换器、不重写产物，直接 done", async () => {
@@ -557,11 +671,11 @@ describe("PreviewService.consume（M4-05c 预览队列消费 · S7-1 收敛为�
 
   it("确定性失败（422）：分类 dead（不写 failed —— 终态留痕由 dispatcher 调 onDead 收口）", async () => {
     const h = makeService();
-    h.converter.result = new ConverterError("deterministic", "CONVERT_FAILED", 422, "LibreOffice 转换失败：文件已损坏");
+    h.converter.result = new ConverterError("deterministic", "CONVERT_FAILED", 422, "SVG 栅格化失败：文件已损坏");
 
     const outcome = await h.service.consume(makeJobRow());
 
-    expect(outcome).toEqual({ outcome: "dead", error: "LibreOffice 转换失败：文件已损坏" });
+    expect(outcome).toEqual({ outcome: "dead", error: "SVG 栅格化失败：文件已损坏" });
     expect(h.previews.failed).toHaveLength(0);
   });
 
@@ -597,12 +711,12 @@ describe("PreviewService.consume（M4-05c 预览队列消费 · S7-1 收敛为�
 
   it("超大源文件（> PREVIEW_CONVERT_MAX_SOURCE_MB）：不调转换器，直接降级「请下载」", async () => {
     const h = makeService();
-    h.repo.version = makeVersionRow({ sizeBytes: 101 * 1024 * 1024 });
+    h.repo.version = makeVersionRow({ sizeBytes: 21 * 1024 * 1024 });
 
     const outcome = await h.service.consume(makeJobRow());
 
     expect(outcome).toMatchObject({ outcome: "dead" });
-    expect((outcome as { error: string }).error).toContain("超过预览转换上限 100 MB");
+    expect((outcome as { error: string }).error).toContain("超过预览转换上限 20.0 MB");
     expect(h.converter.calls).toHaveLength(0);
     expect(h.storage.puts).toHaveLength(0);
   });
@@ -658,18 +772,18 @@ describe("PreviewService.consume（M4-05c 预览队列消费 · S7-1 收敛为�
       fileId: FILE,
       versionId: VERSION,
       contentHash: HASH,
-      pipelineVersion: "1.0.0",
-      target: "pdf",
+      pipelineVersion: "2.0.0",
+      target: "image",
     });
   });
 
   it("onDead 终态留痕：产物置 failed（error + clock 时刻）；载荷非法 / 源版本不存在时静默 no-op", async () => {
     const h = makeService();
 
-    await h.service.onDead(makeJobRow(), "LibreOffice 转换失败：文件已损坏");
+    await h.service.onDead(makeJobRow(), "SVG 栅格化失败：文件已损坏");
     expect(h.previews.failed[0]).toMatchObject({
-      key: { contentHash: HASH, pipelineVersion: "1.0.0", target: "pdf" },
-      input: { error: "LibreOffice 转换失败：文件已损坏", updatedAt: NOW },
+      key: { contentHash: HASH, pipelineVersion: "2.0.0", target: "image" },
+      input: { error: "SVG 栅格化失败：文件已损坏", updatedAt: NOW },
     });
 
     h.previews.failed.length = 0;

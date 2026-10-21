@@ -35,15 +35,15 @@ const VIEWER_PERMISSIONS = {
 /**
  * 预览读 API（M4-05 读面 · `GET /files/{id}/preview` · 契约 shared/src/modules/files.ts）。
  *
- * 就绪通道（S6-前置 起图片直签 + 查看器通道均同步 ready；产物通道段保留但无投递，见下）：
+ * 就绪通道（S6-前置 图片直签 + 查看器通道；H1 S4 起 SVG PNG 产物通道恢复投递，见下）：
  * - **图片直签**（S6-前置 · D6）：`isImageFile` → 原对象**短时签名直出**（D2-04：对象存储禁匿名读取）——
  *   status=ready、target=image、`pipelineVersion` / `generatedAt` 空（无产物语义）；不查 / 不落产物行、
- *   不投转换任务、不经 `deploy/preview`（字节 = 原对象）。
+ *   不投转换任务、不经栅格化器（字节 = 原对象）。
  * - **查看器通道**（S3 · ADR-030；PDF 2026-10-08 并入）：Office / 文本族 / PDF → `viewer` 非空、`target` / `url` 空，
  *   与产物通道互斥（契约 FilePreviewResponse.viewer）；不走产物表、不投递转换任务，就绪即签发只读查看器配置。
  *
- * **产物通道三态（M4-05d · 保留段）**：S6-前置 起 `previewTargetsFor` 无投递通道（图片改直签、其余走查看器）——
- * 该段对新请求**不可达**，保留 = structured 二期启用投递后复用（S6 退役评审另行处置）：
+ * **产物通道三态（M4-05d · H1 S4 起 SVG 可达）**：SVG 恢复 `target=image` 的 PNG 产物投递；图片仍走原对象直签，
+ * 其余类型按查看器 / 降级处理。structured 二期启用投递时复用同一段：
  * - `ready`：三元组命中产物 → 短时签名地址；
  * - `not_ready`：**同事务**登记产物行（首次）+ 幂等补投 `preview.job`（去重键 = 三元组）→ 前端轮询；
  * - `failed`：返回 `preview_artifacts.error`（≤ 500 字）供前端降级「请下载查看」（D2-05），**不原地重试**
@@ -74,7 +74,7 @@ export class PreviewReadService {
     private readonly config: AppConfig,
   ) {}
 
-  /** `GET /files/{id}/preview`：文件可见性 → 目标版本 → 通道判定（图片直签 / 查看器 / 产物通道三态保留段）。 */
+  /** `GET /files/{id}/preview`：文件可见性 → 目标版本 → 通道判定（SVG 产物 / 图片直签 / 查看器 / 降级）。 */
   async getPreview(fileId: string, versionId: string | null, actorId: string): Promise<FilePreviewResponse> {
     const file = await this.loadVisibleFile(fileId, actorId);
     const version = await this.resolveVersion(file, versionId);
