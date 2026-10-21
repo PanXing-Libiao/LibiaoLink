@@ -94,7 +94,10 @@ export class CadEngineClient implements OnModuleDestroy {
     });
   }
 
-  async submit(input: { path: string; name: string; sourceSHA256: string; namespace: string; nameCodepage: CadNameCodepage }): Promise<z.infer<typeof CadJobCreateResponseSchema>> {
+  async lookup(input: { name: string; sourceSHA256: string; sourceByteLength: number; namespace: string; cacheScope: string; nameCodepage: CadNameCodepage }): Promise<z.infer<typeof CadJobCreateResponseSchema> | null> {
+    return CadJobCreateResponseSchema.nullable().parse(await this.request("lookup", input));
+  }
+  async submit(input: { path: string; name: string; sourceSHA256: string; sourceByteLength: number; namespace: string; cacheScope: string; nameCodepage: CadNameCodepage }): Promise<z.infer<typeof CadJobCreateResponseSchema>> {
     return CadJobCreateResponseSchema.parse(await this.request("submit", input));
   }
   async status(input: { jobId: string; namespace: string }): Promise<CadJob> { return CadJobSchema.parse(await this.request("status", input)); }

@@ -25,7 +25,8 @@ export class CadPreviewService {
     const name = versionFileName(file.name, version.objectKey);
     if (!/\.(step|stp)$/i.test(name)) throw new AppError("NOT_FOUND", "该版本暂无 CAD 在线查看能力");
     const namespace = createHash("sha256").update(JSON.stringify([actorId, file.id, version.id, version.contentHash, viewId])).digest("hex");
-    return { version, name, namespace };
+    const cacheScope = createHash("sha256").update(JSON.stringify([file.id, version.id, version.contentHash])).digest("hex");
+    return { version, name, namespace, cacheScope };
   }
 
   async create(fileId: string, versionId: string, viewId: string, actorId: string, nameCodepage: CadNameCodepage = "UTF8") {
@@ -37,13 +38,18 @@ export class CadPreviewService {
     if (context.version.sizeBytes <= 0 || context.version.sizeBytes > this.engine.inputLimit) {
       throw new ServiceUnavailableException("文件超过当前 CAD 处理大小限制，请下载原文件查看");
     }
-    if (this.preparing >= 2) throw new ServiceUnavailableException("CAD 文件读取繁忙，请稍后重试");
     const operation = this.submit(context, nameCodepage).finally(() => { this.submitting.delete(key); });
     this.submitting.set(key, operation);
     return operation;
   }
 
   private async submit(context: Awaited<ReturnType<CadPreviewService["context"]>>, nameCodepage: CadNameCodepage) {
+    const identity = { name: context.name, sourceSHA256: context.version.contentHash, sourceByteLength: context.version.sizeBytes,
+      namespace: context.namespace, cacheScope: context.cacheScope, nameCodepage };
+    // Permissions and current version were checked above; cached bytes never cache access rights.
+    const cached = await this.engine.lookup(identity);
+    if (cached !== null) return cached;
+    if (this.preparing >= 2) throw new ServiceUnavailableException("CAD 文件读取繁忙，请稍后重试");
     this.preparing += 1;
     const path = resolve(this.engine.root, "incoming", randomUUID() + ".step");
     try {
@@ -55,7 +61,7 @@ export class CadPreviewService {
       }
       await mkdir(resolve(this.engine.root, "incoming"), { recursive: true, mode: 0o700 });
       await writeFile(path, object.bytes, { flag: "wx", mode: 0o600 });
-      return await this.engine.submit({ path, name: context.name, sourceSHA256: context.version.contentHash, namespace: context.namespace, nameCodepage });
+      return await this.engine.submit({ path, ...identity });
     } finally { this.preparing -= 1; await unlink(path).catch(() => {}); }
   }
 

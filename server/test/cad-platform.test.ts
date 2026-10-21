@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,6 +59,42 @@ describe.skipIf(!python)("CAD 平台 HTTP 链路（真实转换，受控箱体�
     expect((await api().get(wrong + "/" + jobId).set("Cookie", LOCAL_COOKIE)).status).toBe(404);
   });
 
+  it("新窗口复用已校验产物，跳过原件读取，lease 与取消仍按窗口隔离", async () => {
+    const reading = vi.spyOn(env.storage, "getObject"), submitting = vi.spyOn(env.engine, "submit");
+    const first = base.replace("1".repeat(32), "a".repeat(32));
+    const second = base.replace("1".repeat(32), "b".repeat(32));
+    try {
+      for (const target of [first, second]) {
+        const response = await api().post(target).set("Cookie", LOCAL_COOKIE).set("X-CSRF-Token", LOCAL_CSRF);
+        expect(response.status).toBe(201);
+        expect(response.body).toMatchObject({ reused: true, job: { id: jobId, state: "completed" } });
+      }
+      expect(reading).not.toHaveBeenCalled(); expect(submitting).not.toHaveBeenCalled();
+      const a = (await api().get(first + "/" + jobId + "/manifest").set("Cookie", LOCAL_COOKIE)).body;
+      const b = (await api().get(second + "/" + jobId + "/manifest").set("Cookie", LOCAL_COOKIE)).body;
+      expect(a.resourceLease).not.toBe(b.resourceLease);
+      const entry = Object.values(b.bufferResources)[0] as { sha256: string };
+      expect((await api().get(first + "/" + jobId + "/resources/" + b.resourceLease + "/" + entry.sha256).set("Cookie", LOCAL_COOKIE)).status).toBe(404);
+      const cancelled = await api().post(first + "/" + jobId + "/cancel").set("Cookie", LOCAL_COOKIE).set("X-CSRF-Token", LOCAL_CSRF);
+      expect(cancelled.body.state).toBe("completed");
+      expect((await api().get(second + "/" + jobId + "/resources/" + b.resourceLease + "/" + entry.sha256).set("Cookie", LOCAL_COOKIE)).status).toBe(200);
+      env.permission.revoked = true;
+      expect((await api().post(base.replace("1".repeat(32), "c".repeat(32))).set("Cookie", LOCAL_COOKIE).set("X-CSRF-Token", LOCAL_CSRF)).status).toBe(404);
+    } finally { env.permission.revoked = false; reading.mockRestore(); submitting.mockRestore(); }
+  });
+
+  it("同内容的新文件版本不借用旧版本缓存", async () => {
+    const row = env.records[0]!, previous = row.versionId;
+    row.versionId = "77777777-7777-4777-8777-777777777777";
+    const target = base.replace(previous, row.versionId);
+    try {
+      const response = await api().post(target).set("Cookie", LOCAL_COOKIE).set("X-CSRF-Token", LOCAL_CSRF);
+      expect(response.status).toBe(201); expect(response.body.reused).toBe(false);
+      expect(response.body.job.id).not.toBe(jobId);
+      await api().post(target + "/" + response.body.job.id + "/cancel").set("Cookie", LOCAL_COOKIE).set("X-CSRF-Token", LOCAL_CSRF);
+    } finally { row.versionId = previous; }
+  });
+
   it("名称码页受控校验、隔离任务缓存并传到原生读取器", async () => {
     const invalid = await api().post(base + "?nameCodepage=guess").set("Cookie", LOCAL_COOKIE).set("X-CSRF-Token", LOCAL_CSRF);
     expect(invalid.status).toBe(400);
@@ -97,15 +133,18 @@ describe.skipIf(!python)("CAD 平台 HTTP 链路（真实转换，受控箱体�
   });
 
   it("原文件字节与版本摘要不符时不提交 CAD 任务", async () => {
+    const other = env.records[1]!;
+    const cold = base.replace(env.records[0]!.id, other.id).replace(env.records[0]!.versionId, other.versionId);
     env.storage.corrupt = true;
-    const response = await api().post(base.replace("1".repeat(32), "3".repeat(32))).set("Cookie", LOCAL_COOKIE).set("X-CSRF-Token", LOCAL_CSRF);
+    const response = await api().post(cold.replace("1".repeat(32), "3".repeat(32))).set("Cookie", LOCAL_COOKIE).set("X-CSRF-Token", LOCAL_CSRF);
     env.storage.corrupt = false;
     expect(response.status).toBe(503);
   });
 
   it("可取消当前窗口任务，已取消任务不能发布模型清单", async () => {
-    const own = base.replace("1".repeat(32), "4".repeat(32));
-    const created = await api().post(own).set("Cookie", LOCAL_COOKIE).set("X-CSRF-Token", LOCAL_CSRF);
+    const other = env.records[1]!;
+    const own = base.replace(env.records[0]!.id, other.id).replace(env.records[0]!.versionId, other.versionId).replace("1".repeat(32), "4".repeat(32));
+    const created = await api().post(own + "?nameCodepage=GB").set("Cookie", LOCAL_COOKIE).set("X-CSRF-Token", LOCAL_CSRF);
     expect(created.status).toBe(201);
     const path = own + "/" + created.body.job.id;
     const cancelled = await api().post(path + "/cancel").set("Cookie", LOCAL_COOKIE).set("X-CSRF-Token", LOCAL_CSRF);
@@ -120,7 +159,9 @@ describe.skipIf(!python)("CAD 平台 HTTP 链路（真实转换，受控箱体�
     const blocked = new Promise<void>((resolve) => { release = resolve; });
     env.storage.beforeRead = async () => { entered(); await blocked; };
     const cancelled = vi.spyOn(env.engine, "cancel");
-    const call = api().post(base.replace("1".repeat(32), "5".repeat(32))).set("Cookie", LOCAL_COOKIE).set("X-CSRF-Token", LOCAL_CSRF);
+    const other = env.records[1]!;
+    const cold = base.replace(env.records[0]!.id, other.id).replace(env.records[0]!.versionId, other.versionId).replace("1".repeat(32), "5".repeat(32));
+    const call = api().post(cold).set("Cookie", LOCAL_COOKIE).set("X-CSRF-Token", LOCAL_CSRF);
     call.end(() => {});
     try {
       await reading; call.abort(); release();
@@ -129,11 +170,39 @@ describe.skipIf(!python)("CAD 平台 HTTP 链路（真实转换，受控箱体�
     } finally { release(); env.storage.beforeRead = undefined; cancelled.mockRestore(); }
   });
 
-  it("转换进程重启后保留已完成任务与产物校验", async () => {
+  it("损坏的几何缓存不能命中，重新转换后恢复完整结果", async () => {
+    const before = (await api().get(base + "/" + jobId + "/manifest").set("Cookie", LOCAL_COOKIE)).body;
+    const entry = Object.values(before.bufferResources)[0] as { sha256: string };
+    const path = join(cache, "jobs", "buffers", entry.sha256);
+    const bytes = await readFile(path);
+    const corrupt = Buffer.from(bytes); corrupt[0] = corrupt[0]! ^ 1;
+    await writeFile(path, corrupt);
+    const response = await api().post(base).set("Cookie", LOCAL_COOKIE).set("X-CSRF-Token", LOCAL_CSRF);
+    expect(response.status).toBe(201); expect(response.body.reused).toBe(false);
+    expect(response.body.job.id).not.toBe(jobId);
+    jobId = response.body.job.id;
+    let job = response.body.job;
+    const deadline = Date.now() + 120_000;
+    while (["queued", "running"].includes(job.state) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      job = (await api().get(base + "/" + jobId).set("Cookie", LOCAL_COOKIE)).body;
+    }
+    expect(job.state, JSON.stringify(job)).toBe("completed");
+    expect(await readFile(path)).toEqual(bytes);
+  });
+
+  it("转换进程重启后仍可从新窗口复用已完成产物", async () => {
     await env.engine.onModuleDestroy();
     const status = await api().get(base + "/" + jobId).set("Cookie", LOCAL_COOKIE);
     expect(status.status).toBe(200); expect(status.body.state).toBe("completed");
     const manifest = await api().get(base + "/" + jobId + "/manifest").set("Cookie", LOCAL_COOKIE);
     expect(manifest.status).toBe(200); expect(manifest.body.snapshot.completeness).toBe("complete");
+    const read = vi.spyOn(env.storage, "getObject");
+    try {
+      const created = await api().post(base.replace("1".repeat(32), "d".repeat(32))).set("Cookie", LOCAL_COOKIE).set("X-CSRF-Token", LOCAL_CSRF);
+      expect(created.status).toBe(201);
+      expect(created.body).toMatchObject({ reused: true, job: { id: jobId, state: "completed" } });
+      expect(read).not.toHaveBeenCalled();
+    } finally { read.mockRestore(); }
   });
 });

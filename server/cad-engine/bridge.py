@@ -18,6 +18,7 @@ BASE = Path(__file__).resolve().parent
 CORE = BASE / 'core'
 sys.path.insert(0, str(CORE))
 from unified.conversion_jobs import ConversionJobs, JobLimit
+from result_cache import ResultCache, CacheLimit
 
 
 def stop_worker(proc):
@@ -54,6 +55,7 @@ class Gateway:
         digest.update(os.environ.get('CAD_STEP_MESHER_PYTHON', '').encode())
         self.jobs = ConversionJobs(self.root / 'jobs', CORE, threading.Lock(), stop_worker,
                                    digest.hexdigest(), sys.executable)
+        self.results = ResultCache(self.root / 'result-cache.sqlite3', self.jobs)
         self.leases = {}
         for path in self.manifests.iterdir():
             if re.fullmatch(r'[a-f0-9]{48}\.json', path.name):
@@ -65,7 +67,7 @@ class Gateway:
         if not re.fullmatch(r'[a-f0-9]{64}', namespace) or not re.fullmatch(r'[a-f0-9]{32}', jid):
             raise ValueError('Invalid job reference')
         row = self.jobs.status(jid)
-        if row is None or row.get('namespace') != namespace:
+        if row is None or (row.get('namespace') != namespace and not self.results.allows(namespace, jid)):
             raise KeyError('Job not found')
         return row
 
@@ -81,6 +83,7 @@ class Gateway:
         return result
 
     def prune(self):
+        self.results.prune()
         for token, lease in list(self.leases.items()):
             if lease['expires'] <= time.monotonic():
                 self.release(token)
@@ -89,26 +92,40 @@ class Gateway:
         lease = self.leases.pop(token, None)
         if lease:
             lease['path'].unlink(missing_ok=True)
+            if not any(other['namespace'] == lease['namespace'] and other['jobId'] == lease['jobId'] for other in self.leases.values()):
+                self.results.revoke(lease['namespace'], lease['jobId'])
 
     def handle(self, request):
         self.prune()
         action = request['action']
+        if action == 'lookup':
+            row = self.results.lookup(request)
+            return {'job': self.public(row), 'reused': True} if row else None
         if action == 'submit':
             namespace = request.get('namespace', '')
             path = Path(request['path'])
             if not re.fullmatch(r'[a-f0-9]{64}', namespace) or path.is_symlink() or path.resolve().parent != self.incoming:
                 raise ValueError('Invalid source reference')
+            if path.stat().st_size != request['sourceByteLength']:
+                raise ValueError('Source size mismatch')
+            cached = self.results.lookup(request)
+            if cached:
+                return {'job': self.public(cached), 'reused': True}
             with path.open('rb') as source:
                 row, reused = self.jobs.submit_stream(source, path.stat().st_size, request['name'], False,
                                                      secrets.token_hex(16), namespace=namespace, name_codepage=request.get('nameCodepage', 'UTF8'))
             if row['sourceSHA256'] != request['sourceSHA256']:
                 self.jobs.cancel(row['id'])
                 raise ValueError('Source hash mismatch')
+            self.results.remember(request, row)
             return {'job': self.public(row), 'reused': reused}
         row = self.owned(request)
         if action == 'status':
             return self.public(row)
         if action == 'cancel':
+            if row['state'] == 'completed' and row.get('namespace') != request['namespace']:
+                self.results.revoke(request['namespace'], row['id'])
+                return self.public(row)
             return self.public(self.jobs.cancel(row['id']))
         if action == 'manifest':
             row, raw = self.jobs.result(row['id'])
@@ -166,7 +183,7 @@ def main():
                 response = {'id': rid, 'result': result}
             except KeyError:
                 response = {'id': rid, 'error': {'code': 'not-found', 'message': '模型资源不存在或不可访问'}}
-            except JobLimit:
+            except (JobLimit, CacheLimit):
                 response = {'id': rid, 'error': {'code': 'busy', 'message': '转换服务繁忙，请稍后重试'}}
             except (ValueError, OSError):
                 response = {'id': rid, 'error': {'code': 'unavailable', 'message': '模型产物不可用，请重新转换或下载原文件'}}
@@ -177,6 +194,7 @@ def main():
         gateway.jobs.close()
         for token in list(gateway.leases):
             gateway.release(token)
+        gateway.results.close()
 
 
 if __name__ == '__main__':
