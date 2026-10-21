@@ -189,7 +189,7 @@ docker compose exec -T svg-preview node -e "fetch('http://127.0.0.1:9900/healthz
 docker compose exec -T worker node -e "fetch('http://svg-preview:9900/healthz').then(async r=>{console.log(r.status);console.log(await r.text())})"
 ```
 
-`server.env` 必须与模板一致：`PREVIEW_CONVERTER_URL=http://svg-preview:9900`、`PREVIEW_PIPELINE_VERSION=2.0.0`、`PREVIEW_CONVERT_TIMEOUT_MS=15000`、`PREVIEW_CONVERT_MAX_SOURCE_MB=20`。S4 已交付；2026-10-21 测试机已部署 `main@336b66fd`，6 容器 healthy，converter 自检 40 PASS / 0 FAIL / 0 SKIP；S5 / S6 已合入 main，HSTS 重复头修复随 PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 合并 main 333ffdeb 并已部署测试机；测试机完整 B1 ～ B7 25 / 25（B7 4 / 4，443 SPA、443 对象门面与 9443 均为单条 HSTS）；收口 PR [#543](https://github.com/PanXing-Libiao/LibiaoLink/pull/543) / PR CI [39549899388](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39549899388) 5 / 5 全绿，待合并；生产尚未部署，关闭验收前不得宣称 H1 闭环。
+`server.env` 必须与模板一致：`PREVIEW_CONVERTER_URL=http://svg-preview:9900`、`PREVIEW_PIPELINE_VERSION=2.0.0`、`PREVIEW_CONVERT_TIMEOUT_MS=15000`、`PREVIEW_CONVERT_MAX_SOURCE_MB=20`。S4 已交付；2026-10-21 测试机已部署 `main@336b66fd`，6 容器 healthy，converter 自检 40 PASS / 0 FAIL / 0 SKIP；S5 / S6 已合入 main，HSTS 重复头修复随 PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 合并 main 333ffdeb 并已部署测试机；测试机完整 B1 ～ B7 25 / 25（B7 4 / 4，443 SPA、443 对象门面与 9443 均为单条 HSTS）；收口 PR [#543](https://github.com/PanXing-Libiao/LibiaoLink/pull/543) 已 squash 合并 main `5e31e4b9`；最终 head PR CI [39550779854](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39550779854) 与 main CI [39550973691](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39550973691) 均 5 / 5；main 连续 3 次全绿已完成，`svg-preview-e2e` 已加入分支保护必需检查；生产尚未部署，关闭验收前不得宣称 H1 闭环。
 
 **升级（改代码后）：**
 
@@ -260,7 +260,7 @@ PR 与 main 的独立 `svg-preview-e2e` job 会从本生产配置派生 CI Nginx
 
 经 SSH 隧道验证非默认 9443 端口时，可设置 H1_BACKUP_STORAGE_URL 指向本地转发地址；脚本仍按同一生产 Nginx 响应做原始响应行断言。
 
-证据见 `docs/H1-SVG预览整改回放证据.md`；CI artifact 为 `h1-svg-preview-e2e-<run_id>`，含脱敏 `summary.json`、失败截图与服务日志。2026-10-21 测试机 `10.1.104.44` 已按 `main@336b66fd` 部署，真实 PDF / DOCX 进入 ONLYOFFICE，STL 进入 `cad3d` WebGL；443 SPA / 443 对象门面 / 9443 均只回传 1 条 HSTS；旧式原对象签名已用新签 URL 完成等价到期复测（不是历史 URL 重放）。生产部署与 B7、真实 CAD 生产样本仍须完成；`main` 连续 3 次全绿后，再由 px 把 `svg-preview-e2e` 加入分支保护必需检查。
+证据见 `docs/H1-SVG预览整改回放证据.md`；CI artifact 为 `h1-svg-preview-e2e-<run_id>`，含脱敏 `summary.json`、失败截图与服务日志。2026-10-21 测试机 `10.1.104.44` 已按 `main@336b66fd` 部署，真实 PDF / DOCX 进入 ONLYOFFICE，STL 进入 `cad3d` WebGL；443 SPA / 443 对象门面 / 9443 均只回传 1 条 HSTS；旧式原对象签名已用新签 URL 完成等价到期复测（不是历史 URL 重放）。生产部署与 B7、真实 CAD 生产样本仍须完成；`main` 连续 3 次全绿及 `svg-preview-e2e` 分支保护已完成。
 
 - 服务器实测（2026-10-13 HTTP 先行）：`/nginx-health` ok、`/healthz` 200、`/readyz` 503（存储占位）、`/` 404（SPA 未传输）、web (healthy)；
 - 服务器实测（2026-10-14 TLS 接入）：证书链校验通过（无 `-k` 请求 200；SAN 匹配）、80 → 301（IP 访问一并收口）、443 `/nginx-health` ok / `/healthz` 200 / `/readyz` 200、9443 门面 `storage:it` 24/24；
