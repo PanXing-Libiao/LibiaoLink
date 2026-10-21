@@ -125,7 +125,8 @@ export class OutboxDispatcher {
     }
     const attempts = row.attempts + 1;
     if (outcome.outcome === "dead") {
-      await this.declareDead(topic, handler, policy, row, attempts, error, stats);
+      const deadAlert = outcome.deadAlert === "digest" ? "digest" : "immediate";
+      await this.declareDead(topic, handler, policy, row, attempts, error, deadAlert, stats);
       return;
     }
     if (attempts < policy.maxAttempts) {
@@ -154,10 +155,13 @@ export class OutboxDispatcher {
       );
       return;
     }
-    await this.declareDead(topic, handler, policy, row, attempts, error, stats);
+    await this.declareDead(topic, handler, policy, row, attempts, error, "immediate", stats);
   }
 
-  /** 终态：onDead 留痕（可选，失败只记日志）→ 落 dead → 死信告警。 */
+  /**
+   * 终态：onDead 留痕（可选，失败只记日志）→ 落 dead → 按 handler 的处置口径发即时告警或只记日志。
+   * 确定性拒绝（deadAlert=digest）仍落 dead / 触发 onDead，但只进结构化日志与日报，不推企微即时告警。
+   */
   private async declareDead(
     topic: OutboxTopic,
     handler: OutboxTopicHandler,
@@ -165,6 +169,7 @@ export class OutboxDispatcher {
     row: OutboxClaimedRow,
     attempts: number,
     error: string,
+    deadAlert: "immediate" | "digest",
     stats: OutboxDrainStats,
   ): Promise<void> {
     if (handler.onDead !== undefined) {
@@ -176,6 +181,20 @@ export class OutboxDispatcher {
     }
     await this.store.markDead(row.id, { attempts, error });
     stats.dead += 1;
+    if (deadAlert === "digest") {
+      this.logger.warn(
+        JSON.stringify({
+          event: "outbox.dead.digest_only",
+          topic,
+          outboxEventId: row.id,
+          dedupeKey: row.dedupeKey,
+          attempts,
+          maxAttempts: policy.maxAttempts,
+          lastError: error,
+        }),
+      );
+      return;
+    }
     this.alerts.emit({
       code: "outbox.dead",
       level: "error",

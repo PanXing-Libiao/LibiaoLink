@@ -29,7 +29,8 @@ import { isSvgFile } from "./preview.targets.js";
  *
  * 失败处置（deploy/svg-preview/README.md 错误面）：可重试（503 / 504 / 连接错误 / 存储抖动）返回 retry，由 dispatcher 按
  * `PREVIEW_CONVERT_BACKOFF_MS` 指数退避、到 `PREVIEW_CONVERT_MAX_ATTEMPTS` 次写 failed + outbox dead；
- * 确定性失败（400 / 413 / 415 / 422 / 501 / 管线版本不一致 / 超大文件）返回 dead，一次即降级（D2-05「请下载查看」）。
+ * 确定性失败（400 / 413 / 415 / 422 / 501 / 管线版本不一致 / 超大文件）返回 dead + deadAlert=digest，
+ * 一次即降级（D2-05「请下载查看」），不推企微即时告警，只写结构化日志并进入日报。
  */
 
 /** structured 一期不启用（ADR-007：xlsx 走 pdf）；投了也不调转换器，直接按确定性失败降级。 */
@@ -69,6 +70,7 @@ export class PreviewService {
       return {
         outcome: "dead",
         error: "预览任务载荷非法（缺 projectId / fileId / versionId / target）：" + row.dedupeKey,
+        deadAlert: "digest",
       };
     }
 
@@ -233,7 +235,7 @@ export class PreviewService {
     }
   }
 
-  /** 失败分类：可重试 → retry（dispatcher 按策略退避 / 到顶）；确定性 → dead（一次即降级）。 */
+  /** 失败分类：可重试 → retry（dispatcher 按策略退避 / 到顶）；确定性 → dead（一次即降级，告警仅进日报）。 */
   private classifyFailure(fileName: string, error: unknown): OutboxHandleOutcome {
     const message = messageOf(error);
     const retryable = !(error instanceof ConverterError) || error.kind === "retryable";
@@ -241,8 +243,8 @@ export class PreviewService {
       this.logger.warn("预览转换失败（待重试）：" + fileName + " —— " + message);
       return { outcome: "retry", error: message };
     }
-    this.logger.error("预览转换放弃（确定性失败）：" + fileName + " —— " + message);
-    return { outcome: "dead", error: message };
+    this.logger.error("预览转换放弃（确定性失败，仅记录并进入日报）：" + fileName + " —— " + message);
+    return { outcome: "dead", error: message, deadAlert: "digest" };
   }
 }
 

@@ -35,7 +35,16 @@ const ENV = {
 const REGISTERED_TOPICS = new Set<string>(OUTBOX_TOPICS);
 
 function snapshot(overrides: Partial<OutboxStatsSnapshot> = {}): OutboxStatsSnapshot {
-  return { duePending: 0, oldestDueMs: null, doneRecent: 0, deadRecent: 0, deadTotal: 0, byTopic: [], ...overrides };
+  return {
+    duePending: 0,
+    oldestDueMs: null,
+    doneRecent: 0,
+    deadRecent: 0,
+    deadTotal: 0,
+    byTopic: [],
+    deadByTopic: [],
+    ...overrides,
+  };
 }
 
 function backlog(topic: string, due: number, oldestMs: number): OutboxTopicBacklog {
@@ -224,13 +233,22 @@ describe("OutboxAlertProbe（可执行即时告警 + 日报）", () => {
 
   it("近期死信：不再即时推送；日报汇总最近窗口死信", async () => {
     const { probe, store, sink } = makeProbe();
-    store.current = snapshot({ deadRecent: 2, deadTotal: 7 });
+    store.current = snapshot({
+      deadRecent: 2,
+      deadTotal: 7,
+      deadByTopic: [{ topic: "preview.job", count: 2 }],
+    });
 
     expect(await probe.probeOnce()).toEqual([]);
     expect(sink.emitted).toEqual([]);
 
     const report = await probe.digestOnce();
-    expect(report).toMatchObject({ deadRecent: 2, deadTotal: 7, windowMs: 86400000 });
+    expect(report).toMatchObject({
+      deadRecent: 2,
+      deadTotal: 7,
+      deadByTopic: [{ topic: "preview.job", count: 2 }],
+      windowMs: 86400000,
+    });
     expect(sink.digests).toHaveLength(1);
   });
 
@@ -283,6 +301,7 @@ function digest(overrides: Partial<OutboxDailyDigest> = {}): OutboxDailyDigest {
     deadRecent: 0,
     deadTotal: 0,
     byTopic: [],
+    deadByTopic: [],
     recoveries: [],
     activeAlerts: [],
     ...overrides,
@@ -364,6 +383,7 @@ describe("WecomAlertSink（单一管理员告警群）", () => {
       deadRecent: 2,
       deadTotal: 5,
       byTopic: [backlog("notify.message", 2, 120000)],
+      deadByTopic: [{ topic: "preview.job", count: 2 }],
       recoveries: [
         { code: "outbox.queue_stalled.recovered", message: "队列恢复", at: "2026-10-20T00:10:00.000Z" },
       ],
@@ -373,6 +393,7 @@ describe("WecomAlertSink（单一管理员告警群）", () => {
     expect(composeDigestText(report)).toContain("【LibiaoLink 日报】outbox");
     expect(composeDigestText(report)).toContain("已恢复：outbox.queue_stalled.recovered");
     expect(composeDigestText(report)).toContain("仍未恢复：outbox.unconsumed_topic");
+    expect(composeDigestText(report)).toContain("新增死信主题：preview.job 2 条");
     sink.emitDigest(report);
     await flush();
     expect(aibot.sends).toHaveLength(1);

@@ -371,13 +371,14 @@ async function main() {
       deadRecent: 0,
       deadTotal: 0,
       byTopic: [],
+      deadByTopic: [{ topic: "preview.job", count: 1 }],
       recoveries: [{ code: "outbox.queue_stalled.recovered", message: "队列恢复", at: "2026-10-19T04:50:00.000Z" }],
       activeAlerts: [],
     });
     await flush();
     assertTrue(
       "W6 outbox 日报：与即时告警共用同一管理员告警群，恢复项只在日报出现",
-      aibot.sends.length === 1 && aibot.sends[0].chatid === ALERT_CHATID && String(aibot.sends[0].content).includes("【LibiaoLink 日报】outbox") && String(aibot.sends[0].content).includes("outbox.queue_stalled.recovered") && fallback.digests.length === 0,
+      aibot.sends.length === 1 && aibot.sends[0].chatid === ALERT_CHATID && String(aibot.sends[0].content).includes("【LibiaoLink 日报】outbox") && String(aibot.sends[0].content).includes("outbox.queue_stalled.recovered") && String(aibot.sends[0].content).includes("新增死信主题：preview.job 1 条") && fallback.digests.length === 0,
     );
   }
 
