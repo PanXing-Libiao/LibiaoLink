@@ -15,6 +15,8 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { createRequire } from "node:module";
 import { createServer as createNetServer } from "node:net";
 import os from "node:os";
@@ -36,6 +38,7 @@ const S3_REGION = process.env.H1_S3_REGION ?? process.env.S3_REGION ?? "us-east-
 const S3_BUCKET = process.env.H1_S3_BUCKET ?? process.env.S3_BUCKET ?? "libiaolink";
 const S3_ACCESS_KEY = process.env.H1_S3_ACCESS_KEY ?? process.env.S3_ACCESS_KEY ?? "libiaolink";
 const S3_SECRET_KEY = process.env.H1_S3_SECRET_KEY ?? process.env.S3_SECRET_KEY ?? "libiaolink-dev-secret";
+const BACKUP_STORAGE_URL = (process.env.H1_BACKUP_STORAGE_URL ?? "").replace(/\/+$/, "");
 const REQUIRE_HEADERS = process.env.H1_REQUIRE_HEADERS !== "0";
 const ARTIFACT_DIR = process.env.H1_ARTIFACT_DIR ?? "/tmp/h1-svg-preview-e2e";
 const CLEANUP = process.env.H1_CLEANUP !== "0";
@@ -552,10 +555,7 @@ async function loadFixtures() {
       "trailer\n<< /Root 1 0 R >>\n%%EOF\n",
     "utf8",
   );
-  const docx = Buffer.concat([
-    Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00]),
-    Buffer.from("H1-S6-ONLYOFFICE-STUB-DOCUMENT", "utf8"),
-  ]);
+  const docx = await readFile(path.join(REPO_ROOT, "server", "scripts", "poc10", "fixtures", "n1-03-weekly-report.docx"));
   const stl = Buffer.from(
     "solid h1-s6\n" +
       "  facet normal 0 0 1\n    outer loop\n      vertex 0 0 0\n      vertex 20 0 0\n      vertex 0 20 0\n" +
@@ -1108,6 +1108,26 @@ function responseHeader(response, name) {
   return (response.headers.get(name) ?? "").toLowerCase();
 }
 
+function rawHeaderValues(url, name) {
+  const target = new URL(url);
+  const request = target.protocol === "https:" ? httpsRequest : httpRequest;
+  const wanted = name.toLowerCase();
+  return new Promise((resolve, reject) => {
+    const req = request(target, { method: "GET" }, (response) => {
+      const values = [];
+      for (let index = 0; index < response.rawHeaders.length; index += 2) {
+        if (response.rawHeaders[index].toLowerCase() === wanted) values.push(response.rawHeaders[index + 1]);
+      }
+      response.resume();
+      response.once("end", () => resolve({ status: response.statusCode ?? 0, values }));
+      response.once("error", reject);
+    });
+    req.setTimeout(15_000, () => req.destroy(new Error("原始响应头读取超时")));
+    req.once("error", reject);
+    req.end();
+  });
+}
+
 async function assertHeaderSet(url, label, mode) {
   if (!REQUIRE_HEADERS) {
     record("B7", label, "本地显式 H1_REQUIRE_HEADERS=0，响应头检查跳过；CI 必须以 1 执行", "skipped");
@@ -1115,6 +1135,8 @@ async function assertHeaderSet(url, label, mode) {
   }
   const response = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(15_000) });
   await response.arrayBuffer();
+  const rawHsts = await rawHeaderValues(url, "strict-transport-security");
+  assert(rawHsts.values.length === 1, label + " 应回传 1 条 HSTS，实际 " + String(rawHsts.values.length) + " 条");
   const hsts = responseHeader(response, "strict-transport-security");
   const nosniff = responseHeader(response, "x-content-type-options");
   const xfo = responseHeader(response, "x-frame-options");
@@ -1131,15 +1153,15 @@ async function assertHeaderSet(url, label, mode) {
     assert(csp.includes("script-src 'none'"), label + " 缺少 script-src 'none'");
     assert(csp.includes("default-src 'none'"), label + " 缺少 default-src 'none'");
   }
-  record("B7", label, "HSTS + CSP + nosniff + XFO 生效；HTTP " + String(response.status));
+  record("B7", label, "HSTS 1 条 + CSP + nosniff + XFO 生效；HTTP " + String(response.status));
   return response;
 }
 
 async function runB7() {
   await assertHeaderSet(BASE_URL + "/", "443 SPA 入口", "spa");
   await assertHeaderSet(BASE_URL + "/libiaolink/__h1_probe__", "443 对象存储门面", "object");
-  const backup = new URL(BASE_URL);
-  backup.port = process.env.H1_BACKUP_STORAGE_PORT ?? "9443";
+  const backup = BACKUP_STORAGE_URL === "" ? new URL(BASE_URL) : new URL(BACKUP_STORAGE_URL);
+  if (BACKUP_STORAGE_URL === "") backup.port = process.env.H1_BACKUP_STORAGE_PORT ?? "9443";
   await assertHeaderSet(backup.origin + "/__h1_probe__", "9443 MinIO 备用门面", "object");
 
   await resetBrowserSignals();

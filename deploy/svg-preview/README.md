@@ -1,6 +1,6 @@
 # deploy/svg-preview/ · H1 SVG 安全栅格化沙箱（S3）
 
-> 状态（2026-10-21）：S3 已随 PR [#529](https://github.com/PanXing-Libiao/LibiaoLink/pull/529) 合并 main `acd6113`；S4 主栈接线已随 PR [#531](https://github.com/PanXing-Libiao/LibiaoLink/pull/531) 合并 main `db7d5e0`；S5 已随 PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 合并 main `660cc80`；S2 已随 PR #523 合并 `e2b6aab`；S6 已随 PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 合并 main `336b66fd`。测试机 10.1.104.44 已于 2026-10-21 按该基线完成 S2 ～ S6 同批部署：6 容器 healthy，converter 自检 40 PASS / 0 FAIL / 0 SKIP，B1 ～ B6 21/21 与 B7 浏览器 2/4 通过；**生产尚未部署**。回放发现 443 `/libiaolink/` 与 9443 重复 HSTS，PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 修复后待部署复测；生产验收前不得宣布 H1 闭环。
+> 状态（2026-10-21）：S3 已随 PR [#529](https://github.com/PanXing-Libiao/LibiaoLink/pull/529) 合并 main `acd6113`；S4 主栈接线已随 PR [#531](https://github.com/PanXing-Libiao/LibiaoLink/pull/531) 合并 main `db7d5e0`；S5 已随 PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 合并 main `660cc80`；S2 已随 PR #523 合并 `e2b6aab`；S6 已随 PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 合并 main `336b66fd`。测试机 10.1.104.44 已于 2026-10-21 按该基线完成 S2 ～ S6 同批部署：6 容器 healthy，converter 自检 40 PASS / 0 FAIL / 0 SKIP，完整 B1 ～ B7 25/25（B7 4/4）通过；443 SPA、443 对象门面与 9443 均为单条 HSTS；旧式原对象签名已完成等价到期复测；收口 PR [#543](https://github.com/PanXing-Libiao/LibiaoLink/pull/543) / PR CI [39549899388](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39549899388) 5 / 5 全绿，待合并。**生产尚未部署**，真实 CAD 生产样本与生产验收仍未完成，不得宣布 H1 闭环。
 >
 > 口径：`docs/adr/ADR-034-SVG预览安全栅格化.md` 与 `docs/H1-SVG预览同源存储型XSS整改方案.md`。外部 V1.0 源文档同条同步已按 2026-10-21 指令移出本整改跟踪；S6 完成前仍不能由本目录或本切片宣称 H1 已闭环。
 
@@ -144,7 +144,7 @@ curl -fsS http://127.0.0.1:9900/healthz
 | 基线 | `main@336b66fd4ee5c202828bd0480031702b5b692799` |
 | 镜像 | `libiaolink/svg-preview:2.0.0@sha256:eaee947e1e6a9e4b3ea7e7057e76e4ac45ac6209fb470593c46686ec7a474282` |
 | 离线归档 | `/srv/data/backups/h1-svg-336b66fd/svg-preview-2.0.0-linux-amd64.tar`；SHA-256 `23bfb7e3b93077ef4248790de299707a1155752b2cde73d80b20cd73af504a7d` |
-| 测试机结果 | 6 容器 healthy；converter 自检 40 PASS / 0 FAIL / 0 SKIP；B1 ～ B6 21/21、B7 浏览器 2/4；9443 由服务器本机 curl 复核 |
+| 测试机结果 | 6 容器 healthy；converter 自检 40 PASS / 0 FAIL / 0 SKIP；B1 ～ B7 25/25（B7 4/4）；443 SPA、443 对象门面与 9443 均单条 HSTS；9443 经 SSH 隧道验证 |
 | 说明 | S3 历史构建的 `d0a2…` digest 已无法重现；测试机与生产部署锁统一使用本表 `eaee947e…`。 |
 
 依赖（锁文件精确版本）：
@@ -177,7 +177,7 @@ S4 代码已实现（2026-10-21）：
 4. `PREVIEW_PIPELINE_VERSION` 默认与生产模板均为 `2.0.0`，旧 `1.0.0` 产物保留但不被读取；失败仍为 `failed + reason`，绝不回退到原 SVG 签名。
 5. S4 代码与部署件已交付；测试机 2026-10-21 已按 `main@336b66fd` 部署，生产仍未执行。实际发布前需 px 把同 digest 镜像放入内网 registry / 离线归档，并更新服务器未跟踪的 `server.env`；随后与 S5 / S6 同窗口执行。
 
-S6 已增加独立 CI job，用真实 converter / worker / MinIO / Nginx 与浏览器覆盖转换成功、确定失败、PNG 校验、MIME / 改名绕过、原文件下载与 PDF / Office / CAD 分流；ONLYOFFICE 渲染器在 CI 用本地 `api.js` 桩替代。测试机已用真实 PDF / DOCX 进入 ONLYOFFICE、STL 进入 `cad3d` WebGL 完成回放；生产部署、完整 B7、真实 CAD 生产样本与旧签名过期复测仍需完成。
+S6 已增加独立 CI job，用真实 converter / worker / MinIO / Nginx 与浏览器覆盖转换成功、确定失败、PNG 校验、MIME / 改名绕过、原文件下载与 PDF / Office / CAD 分流；ONLYOFFICE 渲染器在 CI 用本地 `api.js` 桩替代。测试机已用真实 PDF / DOCX 进入 ONLYOFFICE、STL 进入 `cad3d` WebGL 完成回放；生产部署与 B7、真实 CAD 生产样本仍需完成；测试机完整 B7 与旧签名等价到期复测已完成。
 
 回滚只回退主栈镜像 / 环境接线，**不把 `PREVIEW_PIPELINE_VERSION` 回退到 `1.0.0`、不恢复 SVG 原对象直签**；converter 不可用时预览确定性降级为下载。生产发布前还需由 px 完成镜像归档 / 内网 registry 和部署件校验，另行记录发布证据。
 
