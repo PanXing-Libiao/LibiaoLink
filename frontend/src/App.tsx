@@ -15,6 +15,7 @@ import { applyBackgroundTier, applyCardWatermark, asBackgroundTier, asCardWaterm
 import { applyLocale, asLocale, getLocale, textOf, useT, type TextKey } from "./i18n";
 import { Loader } from "./components/Loader";
 import { Toast } from "./components/Toast";
+import { ExportProgressOverlay } from "./components/ExportProgressOverlay";
 import { useFocusTrap } from "./components/useFocusTrap";
 import { BindingGuideModal } from "./components/BindingGuideModal";
 import { ProjectModal, type ProjectDraft, type ProjectSubmitResult } from "./components/ProjectModal";
@@ -671,6 +672,7 @@ export default function App() {
    */
   const bottomBars = (
     <>
+      {exportingProjectId === null ? null : <ExportProgressOverlay progress={null} variant="project-data" />}
       <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
       {pendingDelete === null ? null : (
         <div
