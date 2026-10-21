@@ -59,6 +59,7 @@ class FakeGroupRepository {
   observeCalls: { chatid: string; name: string | null; at: Date }[] = [];
   managers = new Map<string, string>();
   allTasksOnTime = false;
+  projectCompleted = true;
   r06PosterData: R06PosterData | null = null;
   r06PosterError = false;
   setNameCalls: { chatid: string; name: string; at: Date }[] = [];
@@ -119,6 +120,10 @@ class FakeGroupRepository {
     return this.allTasksOnTime;
   }
 
+  async isProjectCompletedWithAllTasksOnTime(): Promise<boolean> {
+    return this.projectCompleted && this.allTasksOnTime;
+  }
+
   async findR06PosterData(): Promise<R06PosterData | null> {
     if (this.r06PosterError) {
       throw new Error("fake R06 海报数据读取失败");
@@ -140,6 +145,7 @@ class FakeAibot {
   replies: { reqId: string; userid: string; content: string; chatid?: string | null }[] = [];
   result: AibotSendResult = { ok: true, attempts: 1 };
   imageResult: AibotSendResult = { ok: true, attempts: 1 };
+  imageResults = new Map<string, AibotSendResult>();
 
   async replyToCallback(params: {
     reqId: string;
@@ -168,7 +174,7 @@ class FakeAibot {
     groupActivated?: boolean | null;
   }): Promise<AibotSendResult> {
     this.imageSends.push(params);
-    return this.imageResult;
+    return this.imageResults.get(params.fileName) ?? this.imageResult;
   }
 }
 
@@ -190,7 +196,13 @@ class FakeNotifyInbox {
   }
 }
 
-function makeService(r06ImagePath = "", r06OnTimeImagePath = ""): {
+function makeService(
+  r06ImagePath = "",
+  r06OnTimeImagePath = "",
+  rocket240ImagePath = "",
+  rocket640ImagePath = "",
+  rocketFallbackImagePath = "",
+): {
   service: NotifyGroupService;
   repo: FakeGroupRepository;
   aibot: FakeAibot;
@@ -216,6 +228,9 @@ function makeService(r06ImagePath = "", r06OnTimeImagePath = ""): {
         WECOM_R06_FONT_SERIF_PATH: "",
         WECOM_R06_IMAGE_PATH: r06ImagePath,
         WECOM_R06_ON_TIME_IMAGE_PATH: r06OnTimeImagePath,
+        WECOM_R06_ROCKET_240_IMAGE_PATH: rocket240ImagePath,
+        WECOM_R06_ROCKET_640_IMAGE_PATH: rocket640ImagePath,
+        WECOM_R06_ROCKET_FALLBACK_IMAGE_PATH: rocketFallbackImagePath,
       },
     } as never,
   );
@@ -563,6 +578,124 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
         groupActivated: true,
       });
       expect(repo.deliveries[0]).toMatchObject({ state: "sent", attempts: 2 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("R06_GROUP：项目已完成且任务全部按时，文字后依次发 240 / 640 火箭，再发喜报海报", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "libiaolink-r06-rocket-"));
+    const posterFile = join(dir, "喜报.png");
+    const rocket240File = join(dir, "火箭240.gif");
+    const rocket640File = join(dir, "火箭640.gif");
+    const rocketFallbackFile = join(dir, "兜底火箭.gif");
+    writeFileSync(posterFile, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    writeFileSync(rocket240File, Buffer.from("GIF89a", "ascii"));
+    writeFileSync(rocket640File, Buffer.from("GIF89a", "ascii"));
+    writeFileSync(rocketFallbackFile, Buffer.from("GIF89a", "ascii"));
+    try {
+      const { service, repo, aibot } = makeService(
+        posterFile,
+        "",
+        rocket240File,
+        rocket640File,
+        rocketFallbackFile,
+      );
+      repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
+      repo.projectCompleted = true;
+      repo.allTasksOnTime = true;
+
+      const outcome = await service.consume(
+        claimedRow(payload({ templateCode: "R06_GROUP", title: "叮咚~喜报来啦！", body: "项目圆满完成" })),
+      );
+
+      expect(outcome).toEqual({ outcome: "done" });
+      expect(aibot.sends).toHaveLength(1);
+      expect(aibot.imageSends.map((item) => item.fileName)).toEqual([
+        "火箭240.gif",
+        "火箭640.gif",
+        "喜报.png",
+      ]);
+      expect(repo.deliveries[0]).toMatchObject({ state: "sent", attempts: 4 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("R06_GROUP：项目未完成或并非全部按时时发 200px 兜底火箭，再发喜报海报", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "libiaolink-r06-rocket-"));
+    const posterFile = join(dir, "喜报.png");
+    const rocket240File = join(dir, "火箭240.gif");
+    const rocket640File = join(dir, "火箭640.gif");
+    const rocketFallbackFile = join(dir, "兜底火箭.gif");
+    writeFileSync(posterFile, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    writeFileSync(rocket240File, Buffer.from("GIF89a", "ascii"));
+    writeFileSync(rocket640File, Buffer.from("GIF89a", "ascii"));
+    writeFileSync(rocketFallbackFile, Buffer.from("GIF89a", "ascii"));
+    try {
+      for (const state of [
+        { projectCompleted: true, allTasksOnTime: false },
+        { projectCompleted: false, allTasksOnTime: true },
+      ]) {
+        const { service, repo, aibot } = makeService(
+          posterFile,
+          "",
+          rocket240File,
+          rocket640File,
+          rocketFallbackFile,
+        );
+        repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
+        repo.projectCompleted = state.projectCompleted;
+        repo.allTasksOnTime = state.allTasksOnTime;
+
+        const outcome = await service.consume(
+          claimedRow(payload({ templateCode: "R06_GROUP", title: "叮咚~喜报来啦！", body: "项目圆满完成" })),
+        );
+
+        expect(outcome).toEqual({ outcome: "done" });
+        expect(aibot.imageSends.map((item) => item.fileName)).toEqual(["兜底火箭.gif", "喜报.png"]);
+        expect(repo.deliveries[0]).toMatchObject({ state: "sent", attempts: 3 });
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("R06_GROUP：240 火箭失败仍继续 640 与喜报海报，不回滚文字", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "libiaolink-r06-rocket-"));
+    const posterFile = join(dir, "喜报.png");
+    const rocket240File = join(dir, "火箭240.gif");
+    const rocket640File = join(dir, "火箭640.gif");
+    writeFileSync(posterFile, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    writeFileSync(rocket240File, Buffer.from("GIF89a", "ascii"));
+    writeFileSync(rocket640File, Buffer.from("GIF89a", "ascii"));
+    try {
+      const { service, repo, aibot } = makeService(posterFile, "", rocket240File, rocket640File);
+      repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
+      repo.projectCompleted = true;
+      repo.allTasksOnTime = true;
+      aibot.imageResults.set("火箭240.gif", {
+        ok: false,
+        kind: "retryable",
+        errcode: null,
+        errmsg: "素材上传初始化回执超时",
+        retryAt: null,
+        attempts: 0,
+        state: "subscribed",
+      });
+
+      const outcome = await service.consume(
+        claimedRow(payload({ templateCode: "R06_GROUP", title: "叮咚~喜报来啦！", body: "项目圆满完成" })),
+      );
+
+      expect(outcome).toEqual({ outcome: "done" });
+      expect(aibot.sends).toHaveLength(1);
+      expect(aibot.imageSends.map((item) => item.fileName)).toEqual([
+        "火箭240.gif",
+        "火箭640.gif",
+        "喜报.png",
+      ]);
+      expect(repo.deliveries[0]).toMatchObject({ state: "sent", attempts: 3 });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
