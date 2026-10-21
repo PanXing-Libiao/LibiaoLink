@@ -2,7 +2,7 @@
 
 > 来源：`LibiaoLink_安全审查报告_2026-10-19.pdf` H1（第 5 页）｜严重度 High｜报告要求：上线前处理
 > 报告审查基线：`e13664f`｜方案落档时 `lan` 分支 HEAD：`d6ae272`（审查基线祖先；H1 涉及路径未发现实质修复）
-> 起草：lan（后端平台 / file / preview / outbox）｜拟稿日期：2026-10-20｜状态：**S1 架构 / 契约已批准（ADR-034 Accepted，PR #518 已合入 main）；S2 已随 PR #523 合入 main `e2b6aab`；S3 已随 PR #529 合入 main `acd6113`；S4 已随 PR #531 合并 main `db7d5e0`；S5 已随 PR #534 合并 main `660cc80`；S6 已随 PR #539 合并 main `336b66fd`。2026-10-21 已在测试机 10.1.104.44 完成 S2 ～ S6 同批部署：6 容器 healthy，converter 自检 40 PASS / 0 FAIL / 0 SKIP，完整 B1 ～ B7 25/25（B7 4/4）通过，443 SPA、443 对象门面与 9443 均只回传 1 条 HSTS；PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 的修复已合并 main 333ffdeb 并部署测试机，旧式原对象签名完成等价到期复测。收口 PR [#543](https://github.com/PanXing-Libiao/LibiaoLink/pull/543) 的 PR CI [39549899388](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39549899388) 已 5 / 5 全绿，待合并。生产尚未部署，main 连续 3 次全绿、分支保护、真实 CAD 生产样本与关闭评审仍未完成，H1 未闭环；外部 V1.0 源文档同步已按 2026-10-21 指令移出本整改跟踪**
+> 起草：lan（后端平台 / file / preview / outbox）｜拟稿日期：2026-10-20｜状态：**S1 架构 / 契约已批准（ADR-034 Accepted，PR #518 已合入 main）；S2 已随 PR #523 合入 main `e2b6aab`；S3 已随 PR #529 合入 main `acd6113`；S4 已随 PR #531 合并 main `db7d5e0`；S5 已随 PR #534 合并 main `660cc80`；S6 已随 PR #539 合并 main `336b66fd`。2026-10-21 已在测试机 10.1.104.44 完成 S2 ～ S6 同批部署：6 容器 healthy，converter 自检 40 PASS / 0 FAIL / 0 SKIP，完整 B1 ～ B7 25/25（B7 4/4）通过，443 SPA、443 对象门面与 9443 均只回传 1 条 HSTS；PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 的修复已合并 main 333ffdeb 并部署测试机，旧式原对象签名完成等价到期复测。收口 PR [#543](https://github.com/PanXing-Libiao/LibiaoLink/pull/543) 已 squash 合并 main `5e31e4b9`；最终 head PR CI [39550779854](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39550779854) 与 main CI [39550973691](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39550973691) 均 5 / 5。main 连续 3 次全绿已完成，`svg-preview-e2e` 已加入分支保护必需检查。生产尚未部署，真实 CAD 生产样本与关闭评审仍未完成，H1 未闭环；外部 V1.0 源文档同步已按 2026-10-21 指令移出本整改跟踪**
 > 归属与评审：本文件位于 `docs/`（px 主责），合入前请 px 复核；ADR 与契约口径由 wmj 主责；生产部署、Nginx 与浏览器测试设施由 px 主责；服务端预览与队列由 lan 主责
 > 变更控制：后续执行以本文件为准。若执行中需要改变架构、验收条件或切片顺序，先修改本文件并说明原因；已合入主干的 ADR 与回放证据按不可变历史处理，不原地重写。
 
@@ -278,16 +278,16 @@ renderer 不执行脚本；服务容器无外网、不配置外部资源目录�
 - 按第 5 节修改 Nginx 443 / 9443 与 SPA 头。
 - 先用测试机验证 CSP 不破坏 SPA、ONLYOFFICE、WASM / Worker、导出打印与图片加载。
 - 验收：`nginx -t` 通过；curl 断言 `nosniff`、CSP、HSTS、XFO；浏览器控制台无 CSP 阻断错误。
-- 执行状态（2026-10-21）：已随 PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 合并 main `660cc80`；测试机已部署 `main@336b66fd`，SPA 与 443 `/libiaolink/` 的 B7 浏览器断言通过，9443 由服务器本机 curl 复核。SPA 入口使用同源 CSP（含 CAD WASM 所需 `wasm-unsafe-eval`）、HSTS、`nosniff` 与 XFO；443 `/libiaolink/` 与 9443 使用 CSP sandbox、`script-src none`、HSTS、`nosniff` 与 XFO。回放发现 443 `/libiaolink/` 与 9443 各回传两次相同 HSTS（上游 MinIO 未隐藏），PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 增加 `proxy_hide_header Strict-Transport-Security`，待合入后重载 web 并以单头复测；生产尚未部署。
+- 执行状态（2026-10-21）：已随 PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 合并 main `660cc80`；测试机已部署 `main@336b66fd`，SPA 与 443 `/libiaolink/` 的 B7 浏览器断言通过，9443 由服务器本机 curl 复核。SPA 入口使用同源 CSP（含 CAD WASM 所需 `wasm-unsafe-eval`）、HSTS、`nosniff` 与 XFO；443 `/libiaolink/` 与 9443 使用 CSP sandbox、`script-src none`、HSTS、`nosniff` 与 XFO。回放发现 443 `/libiaolink/` 与 9443 各回传两次相同 HSTS（上游 MinIO 未隐藏），PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 增加 `proxy_hide_header Strict-Transport-Security`，已合并 main `333ffdeb`、重载 web 并完成 443 SPA / 443 对象门面 / 9443 三路径单条 HSTS 复测；生产尚未部署。
 
 ### S6 · 浏览器回归与上线证据
 
 - 新增 `frontend/scripts/h1-svg-preview-e2e.mjs`，沿用现有 CDP 无头 Chrome 基座。
 - `frontend/package.json` 增加 `preview:svg-e2e` 与 `preview:svg-signature-expiry`；后者只签发旧式原对象 URL 做等价到期复测，不执行有效期内 SVG。
-- `.github/workflows/ci.yml` 增加独立 `svg-preview-e2e` job；先完成至少 3 次 main 连续全绿，再由 px 将其加入分支保护必需检查。
+- `.github/workflows/ci.yml` 增加独立 `svg-preview-e2e` job；已完成至少 3 次 main 连续全绿，并由 px 将其加入分支保护必需检查。
 - 新增 `docs/H1-SVG预览整改回放证据.md` 与脱敏 JSON 摘要；不得记录会话 token、Cookie、签名 URL 的敏感查询参数或生产数据。
 - 验收：第 7 节全部浏览器用例通过，证据与命令可复跑。
-- 执行状态（2026-10-21）：`h1-svg-preview-e2e.mjs`、`h1-nginx-ci-config.mjs`、`h1-onlyoffice-stub.mjs` 与 `preview:svg-e2e` 已实现；独立 `svg-preview-e2e` job 覆盖 B1 ～ B7，使用真实 PostgreSQL / MinIO / 上传 API / `preview.job` / worker / `svg-preview` / 生产 Nginx 派生配置 / Headless Chrome，ONLYOFFICE 仅用 `api.js` 桩验证外壳生命周期。`summary.json`、失败截图与服务日志按白名单脱敏后作为 artifact 上传。PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 已合并 main `336b66fd`；测试机同批部署后完整 B1 ～ B7 25/25（B7 4/4）通过，PDF / DOCX 进入真实 ONLYOFFICE、STL 进入 `cad3d` WebGL，恶意 SVG fail closed、原 SVG attachment 下载、MIME / 改名冲突正确拒绝，443 SPA / 443 对象门面 / 9443 均只回传 1 条 HSTS；旧式原对象签名完成等价到期复测；测试数据清理后 users / projects 均为 0。**生产部署与 B7、main 连续 3 次全绿、`svg-preview-e2e` 加入分支保护、真实 CAD 生产样本与关闭评审均未完成；H1 未闭环。**
+- 执行状态（2026-10-21）：`h1-svg-preview-e2e.mjs`、`h1-nginx-ci-config.mjs`、`h1-onlyoffice-stub.mjs` 与 `preview:svg-e2e` 已实现；独立 `svg-preview-e2e` job 覆盖 B1 ～ B7，使用真实 PostgreSQL / MinIO / 上传 API / `preview.job` / worker / `svg-preview` / 生产 Nginx 派生配置 / Headless Chrome，ONLYOFFICE 仅用 `api.js` 桩验证外壳生命周期。`summary.json`、失败截图与服务日志按白名单脱敏后作为 artifact 上传。PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 已合并 main `336b66fd`；测试机同批部署后完整 B1 ～ B7 25/25（B7 4/4）通过，PDF / DOCX 进入真实 ONLYOFFICE、STL 进入 `cad3d` WebGL，恶意 SVG fail closed、原 SVG attachment 下载、MIME / 改名冲突正确拒绝，443 SPA / 443 对象门面 / 9443 均只回传 1 条 HSTS；旧式原对象签名完成等价到期复测；测试数据清理后 users / projects 均为 0。**PR #543 已合并 main `5e31e4b9`，main 连续 3 次全绿与 `svg-preview-e2e` 分支保护已完成；生产部署与 B7、真实 CAD 生产样本与关闭评审均未完成；H1 未闭环。**
 
 ### S7 · 独立对象存储域
 
