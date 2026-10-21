@@ -8,7 +8,7 @@ import { ConverterError, PreviewConverter, type ConvertInput, type ConvertResult
 import { buildPreviewJobPayload, parsePreviewJob, previewJobDedupeKey } from "../src/modules/file/preview.job.js";
 import type { PreviewArtifactKey, PreviewArtifactRow, PreviewRepository } from "../src/modules/file/preview.repository.js";
 import { PreviewService } from "../src/modules/file/preview.service.js";
-import { isImageFile, previewTargetsFor, viewerChannelFor } from "../src/modules/file/preview.targets.js";
+import { isRasterImageFile, isSvgFile, previewTargetsFor, viewerChannelFor } from "../src/modules/file/preview.targets.js";
 import { StorageError, type GetObjectResult, type PutObjectInput } from "../src/storage/index.js";
 import type { ObjectStorage } from "../src/storage/index.js";
 
@@ -292,10 +292,11 @@ describe("PreviewConverter（转换器客户端 · deploy/preview/README「五�
   });
 });
 
-describe("previewTargetsFor / isImageFile / preview.job（投递侧映射）", () => {
-  it("投递通道映射（S6-前置 · D6）：一律不投 —— 图片改原对象直签、其余走查看器 / 降级", () => {
+describe("previewTargetsFor / 类型判定 / preview.job（投递侧映射）", () => {
+  it("投递通道映射（H1 · S2）：只有 SVG 进入 image 栅格化产物通道，其余不投", () => {
     expect(previewTargetsFor({ fileName: "现场照片.png", mime: "image/png" })).toEqual([]);
-    expect(previewTargetsFor({ fileName: "矢量图.svg", mime: null })).toEqual([]);
+    expect(previewTargetsFor({ fileName: "矢量图.svg", mime: null })).toEqual(["image"]);
+    expect(previewTargetsFor({ fileName: "矢量图.SVG", mime: "IMAGE/SVG+XML; charset=utf-8" })).toEqual(["image"]);
     expect(previewTargetsFor({ fileName: "机械设计图纸.pdf", mime: null })).toEqual([]);
     expect(previewTargetsFor({ fileName: "方案.docx", mime: null })).toEqual([]);
     expect(previewTargetsFor({ fileName: "报价.xlsx", mime: null })).toEqual([]);
@@ -305,15 +306,25 @@ describe("previewTargetsFor / isImageFile / preview.job（投递侧映射）", (
     expect(previewTargetsFor({ fileName: "工具包", mime: null })).toEqual([]);
   });
 
-  it("图片直签判定（S6-前置 · D6）：扩展名或 MIME ∈ 图片族（含矢量 SVG；无扩展名按 MIME 兜底）", () => {
-    expect(isImageFile({ fileName: "现场照片.png", mime: "image/png" })).toBe(true);
-    expect(isImageFile({ fileName: "矢量图.svg", mime: null })).toBe(true);
-    expect(isImageFile({ fileName: "扫描件.TIFF", mime: null })).toBe(true);
-    expect(isImageFile({ fileName: "无扩展名", mime: "image/webp" })).toBe(true);
-    expect(isImageFile({ fileName: "机械设计图纸.pdf", mime: null })).toBe(false);
-    expect(isImageFile({ fileName: "方案.docx", mime: null })).toBe(false);
-    expect(isImageFile({ fileName: "交付包.zip", mime: null })).toBe(false);
-    expect(isImageFile({ fileName: "工具包", mime: null })).toBe(false);
+  it("安全位图判定（H1 · S2）：扩展名与规范 MIME 必须精确一致；无扩展名 / SVG / 冲突一律 false", () => {
+    expect(isRasterImageFile({ fileName: "现场照片.png", mime: "image/png" })).toBe(true);
+    expect(isRasterImageFile({ fileName: "扫描件.TIFF", mime: "IMAGE/TIFF; charset=binary" })).toBe(true);
+    expect(isRasterImageFile({ fileName: "照片.jpg", mime: "image/jpg" })).toBe(true);
+    expect(isRasterImageFile({ fileName: "矢量图.svg", mime: null })).toBe(false);
+    expect(isRasterImageFile({ fileName: "无扩展名", mime: "image/webp" })).toBe(false);
+    expect(isRasterImageFile({ fileName: "冲突.png", mime: "image/svg+xml" })).toBe(false);
+    expect(isRasterImageFile({ fileName: "冲突.svg", mime: "image/png" })).toBe(false);
+    expect(isRasterImageFile({ fileName: "机械设计图纸.pdf", mime: null })).toBe(false);
+    expect(isRasterImageFile({ fileName: "方案.docx", mime: null })).toBe(false);
+  });
+
+  it("SVG 判定（H1 · S2）：只接受扩展名 + 缺省 / SVG MIME；声明冲突不进入产物直签", () => {
+    expect(isSvgFile({ fileName: "矢量图.svg", mime: null })).toBe(true);
+    expect(isSvgFile({ fileName: "矢量图.SVG", mime: "image/svg+xml; charset=utf-8" })).toBe(true);
+    expect(isSvgFile({ fileName: "无扩展名.bin", mime: "image/svg+xml" })).toBe(true);
+    expect(isSvgFile({ fileName: "冲突.svg", mime: "image/png" })).toBe(false);
+    expect(isSvgFile({ fileName: "冲突.png", mime: "image/svg+xml" })).toBe(false);
+    expect(isSvgFile({ fileName: "无扩展名", mime: "image/svg+xml" })).toBe(true);
   });
 
   it("查看器通道映射（S3；PDF 2026-10-08 并入）：Office / 文本族 / PDF → documentType + fileType（扩展名优先、MIME 兜底）", () => {
@@ -327,6 +338,9 @@ describe("previewTargetsFor / isImageFile / preview.job（投递侧映射）", (
       fileType: "xls",
     });
     expect(viewerChannelFor({ fileName: "现场照片.png", mime: "image/png" })).toBeNull();
+    expect(viewerChannelFor({ fileName: "恶意.html", mime: "text/html" })).toBeNull();
+    expect(viewerChannelFor({ fileName: "冲突.docx", mime: "text/html" })).toBeNull();
+    expect(viewerChannelFor({ fileName: "冲突.txt", mime: "image/png" })).toBeNull();
     // PDF（2026-10-08 业务口径「统一用onlyoffice」）：并入查看器通道（documentType = pdf）
     expect(viewerChannelFor({ fileName: "机械设计图纸.pdf", mime: null })).toEqual({ documentType: "pdf", fileType: "pdf" });
     expect(viewerChannelFor({ fileName: "无扩展名", mime: "application/pdf" })).toEqual({ documentType: "pdf", fileType: "pdf" });

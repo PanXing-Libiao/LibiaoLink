@@ -3,7 +3,7 @@
 | 字段 | 内容 |
 |---|---|
 | 类型 | 基础设施层（与 `common/` / `db/` / `config/` 同级） |
-| 职责 | 对象存储端口与 S3 适配器：分片会话、预签名直传 / 下载、ListParts、合并 / 中止、HEAD、服务端复制、按版本彻底删除 |
+| 职责 | 对象存储端口与 S3 适配器：分片会话、预签名直传 / 下载、ListParts、合并 / 中止、HEAD、对象前缀读取、服务端复制、按版本彻底删除 |
 | 主责 | lan（团队分工.md §2 后端平台） |
 | 依据 | ADR-006（S3 协议抽象 + 可替换实现；2026-09-21 阶段 0 修订，沙箱 MinIO pinned）；技术设计v0.2 §5.1；契约 `shared/src/modules/files.ts` |
 
@@ -28,6 +28,8 @@ index.ts              # 唯一公开出口
 - **彻底删除按版本删**：桶开启版本控制后，不带 `versionId` 的 `DeleteObject` 只写 delete marker、数据版本永不回收（lifecycle 已不作为清理手段）→ 一律走 `purgeObject`（`ListObjectVersions` + 批量 `DeleteObjects` 带 `VersionId`）；暂存清理与 M4-02 回收站同口径。
 - **前缀清理兼容未开版本控制**：`purgePrefix` 先按 `ListObjectVersions` 清全部版本；若 S3 实现（本地 MinIO 实测）对未开版本控制的桶返回空集，则回退 `ListObjectsV2` 按当前对象键普通删除 —— 空桶仍返回 0，绝不把“没列到”误报成“已删掉”。
 - **api 不代理大文件流量**：分片与下载都走预签名 URL（短时）。
+- **原对象响应类型由服务端签名覆盖**：原文件一律以 `application/octet-stream` 保存；下载固定 `application/octet-stream` + attachment；安全位图预览必须显式签入精确图片 MIME + inline，不能沿用对象元数据。SVG / HTML / 未知类型不得进入 inline 签名分支（H1 · S2）。
+- **文件头校验只读前缀**：`readObjectPrefix()` 通过 S3 `Range: bytes=0-N` 最多读取调用方请求的上限；上传完成用 64 KiB 前缀做扩展名 / MIME / 魔数裁决，不把大文件整块读入内存。
 
 ## 错误映射（`toApiError`）
 
