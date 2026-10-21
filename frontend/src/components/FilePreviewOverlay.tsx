@@ -58,7 +58,7 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
         event.stopPropagation();
         onClose();
       }}
-      className={"fixed inset-0 " + zClass + " flex items-center justify-center bg-zinc-900/60 p-6"}
+      className={"fixed inset-0 " + zClass + " flex items-center justify-center bg-zinc-900/60 " + (kind === "cad" ? "p-1 sm:p-3" : "p-6")}
     >
       <figure className="relative flex max-h-full max-w-full flex-col items-center">
         {kind !== "cad" && pane.mode === "viewer" && pane.viewer.kind === "onlyoffice" ? (
@@ -76,7 +76,7 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
           />
         ) : null}
         {pane.mode === "viewer" && pane.viewer.kind === "cad" ? (
-          <CadModelViewer key={`${pane.viewer.fileId}:${pane.viewer.versionId}:${nonce}`} viewer={pane.viewer} name={name} onClose={onClose} />
+          <CadModelViewer key={`${pane.viewer.fileId}:${pane.viewer.versionId}:${nonce}`} viewer={pane.viewer} name={name} onClose={onClose} onDownload={onDownload} onRetry={onRetry} />
         ) : kind === "cad" ? (
           <div
             role="status"
@@ -98,7 +98,7 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
         ) : pane.mode === "url" ? (
           <ImageZoomViewer src={pane.url} alt={name} />
         ) : null}
-        <figcaption className="relative z-10 mt-2 flex items-center gap-3 rounded-md bg-zinc-900/35 px-2 py-1 text-xs text-white/80 backdrop-blur-sm">
+        {pane.mode === "viewer" && pane.viewer.kind === "cad" ? null : <figcaption className="relative z-10 mt-2 flex items-center gap-3 rounded-md bg-zinc-900/35 px-2 py-1 text-xs text-white/80 backdrop-blur-sm">
           <span>{name}</span>
           <button
             type="button"
@@ -111,8 +111,7 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
           >
             {t("fpv.download")}
           </button>
-          {pane.mode === "viewer" && pane.viewer.kind === "cad" ? <button type="button" onClick={(event) => { event.stopPropagation(); onClose(); }} className="rounded-md border border-white/30 px-2 py-0.5 text-[11px] text-white/90 hover:bg-white/10">{t("fpv.close")}</button> : null}
-        </figcaption>
+        </figcaption>}
       </figure>
     </div>,
     document.body,

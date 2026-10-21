@@ -3,6 +3,8 @@ import {unpackMetadata} from './core/compact-transport.js';
 import {hydrateBinary} from './core/binary-transport.js';
 import {missingFaceManifest} from './core/nonmeshable-ui.js';
 import {repairManifest} from './core/mesh-repair-ui.js';
+import {ImportUI} from './import-ui.js';
+import {trackResponse} from './import-progress.js';
 
 const query=new URLSearchParams(location.search);
 const fileId=query.get('fileId'),versionId=query.get('versionId'),viewId=query.get('viewId');
@@ -10,6 +12,37 @@ const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const valid=uuid.test(fileId||'')&&uuid.test(versionId||'')&&/^[a-f0-9]{32}$/.test(viewId||'');
 const base=valid?`/api/v1/files/${fileId}/versions/${versionId}/cad/views/${viewId}/jobs`:null;
 let currentJob=null,jobBase=null,delivered=false,cancelled=false,loadedEnvelope=null;
+const ui=new ImportUI({fileId,versionId,engineVersion:query.get('engineVersion')||'unknown'});
+
+window.addEventListener('message',event=>{
+ if(event.origin!==location.origin||event.source!==parent||event.data?.type!=='cad-context')return;
+ ui.context(event.data.name);
+});
+parent.postMessage({type:'cad-context-request'},location.origin);
+
+const sidebar=document.getElementById('partsSidebar'),sidebarButton=document.getElementById('toggleSidebar');
+function setSidebar(open){
+ document.body.dataset.sidebar=open?'open':'closed';
+ sidebarButton.setAttribute('aria-expanded',String(open));
+}
+const narrow=matchMedia('(max-width:760px)');
+setSidebar(!narrow.matches);
+narrow.addEventListener('change',event=>setSidebar(!event.matches));
+sidebarButton.onclick=()=>setSidebar(document.body.dataset.sidebar==='closed');
+document.getElementById('sidebarScrim').onclick=()=>{setSidebar(false);sidebarButton.focus();};
+sidebar.addEventListener('keydown',event=>{
+ if(event.key==='Escape'&&narrow.matches){event.preventDefault();event.stopPropagation();setSidebar(false);sidebarButton.focus();}
+});
+// Filter the displayed source product rows; identities and visibility remain core-owned.
+function filterParts(){
+ const tree=document.getElementById('productTree');
+ if(!tree||tree.hidden)return;
+ const rows=[...tree.querySelectorAll('.row')],term=document.getElementById('search').value.trim().toLocaleLowerCase();
+ for(const row of rows)row.hidden=!row.textContent.toLocaleLowerCase().includes(term);
+ const shown=rows.filter(row=>!row.hidden).length;
+ document.getElementById('nodecount').textContent=term?`${shown} / ${rows.length} 项`:`${rows.length} 项`;
+}
+document.getElementById('search').addEventListener('input',filterParts);
 
 // Host owns downloads and rechecks file access. Reports are the unchanged core manifests.
 document.addEventListener('click',event=>{
@@ -56,9 +89,18 @@ function failureMessage(job){
 }
 window.addEventListener('keydown',event=>{
  if(event.key==='Escape'){event.preventDefault();parent.postMessage({type:'cad-close'},location.origin);}
+ // Keyboard events inside an iframe do not reach the host modal's focus trap.
+ if(event.key==='Tab'){
+  const items=[...document.querySelectorAll('button:not([disabled]),input:not([disabled]),select:not([disabled]),summary,[tabindex="0"]')]
+   .filter(element=>!element.closest('[inert]')&&element.checkVisibility()&&element.tabIndex>=0);
+  const first=items[0],last=items.at(-1),focused=document.activeElement;
+  if(first&&(!items.includes(focused)||event.shiftKey&&focused===first||!event.shiftKey&&focused===last)){
+   event.preventDefault();(event.shiftKey?last:first).focus();
+  }
+ }
 });
 const unloading=new AbortController();
-window.addEventListener('pagehide',()=>{unloading.abort();cancelJob();},{once:true});
+window.addEventListener('pagehide',()=>{ui.destroy();unloading.abort();cancelJob();},{once:true});
 
 loadPlatformModel(async({signal,progress})=>{
  if(!base)throw new Error('文件版本信息无效，请关闭后重新打开');
@@ -77,28 +119,36 @@ loadPlatformModel(async({signal,progress})=>{
    if(['failed','cancelled','timed-out'].includes(currentJob.state))throw new Error(failureMessage(currentJob));
    if(!['queued','running'].includes(currentJob.state))throw new Error('模型任务状态无效');
    progress(currentJob.state==='queued'?'正在排队处理模型…':'正在处理模型…');
+   ui.job(currentJob);
    await delay(active);currentJob=await json(await request(jobBase,{signal:active}));
   }
+  ui.bytes=currentJob.sourceByteLength;
+  ui.update(2,'正在准备模型视图');
   progress('正在读取已校验模型…');
   const response=await request(jobBase+'/manifest',{signal:active});
   let packet=unpackMetadata(await json(response));
   if(packet.presentation?.sourceSHA256!==currentJob.sourceSHA256||packet.snapshot?.completeness!=='complete')throw new Error('模型来源或完整性检查未通过');
   const lease=packet.resourceLease;
-  const fetcher=(url,options={})=>{
+  const fetcher=async(url,options={})=>{
    const match=/^\/api\/resources\/([a-f0-9]{48})(?:\/([a-f0-9]{64}))?$/.exec(url);
    if(!match||match[1]!==lease)throw new Error('模型资源引用无效');
-   return request(jobBase+'/resources/'+match[1]+(match[2]?'/'+match[2]:''),options);
+   const resource=await request(jobBase+'/resources/'+match[1]+(match[2]?'/'+match[2]:''),options);
+   return match[2]?trackResponse(resource,count=>ui.receive(count)):resource;
   };
   progress('正在读取模型几何…');
+  const total=Object.values(packet.document.buffers).reduce((sum,buffer)=>sum+buffer.byteLength,0);
+  ui.downloading(Number.isSafeInteger(total)&&total>0&&total<=256*1024*1024?total:0);
   packet=await hydrateBinary(packet,{signal:active,fetcher});
   active.throwIfAborted();progress('正在显示模型…');
+  ui.update(2,'正在生成可交互视图');
   loadedEnvelope=packet;delivered=true;return packet;
  }finally{
   signal.removeEventListener('abort',abort);unloading.signal.removeEventListener('abort',abort);
  }
 }).then(()=>{
  const ready=delivered&&document.getElementById('error').hidden;
- document.body.dataset.cadState=ready?'ready':cancelled?'cancelled':'failed';
- if(ready)requestAnimationFrame(()=>requestAnimationFrame(()=>parent.postMessage({type:'cad-ready'},location.origin)));
- else if(cancelled){const status=document.getElementById('busy');status.hidden=false;status.textContent='已取消加载，可关闭后重新打开';}
+ if(ready){
+  ui.update(3,'模型已就绪');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{ui.stop('ready');filterParts();parent.postMessage({type:'cad-ready'},location.origin);}));
+ }else ui.stop(cancelled?'cancelled':'failed');
 });
