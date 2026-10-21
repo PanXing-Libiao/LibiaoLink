@@ -459,13 +459,13 @@ async function runB3(fixtures) {
   }
 
   const mimeConflict = await expectUploadRejected(
-    { name: "h1-mime-conflict.svg", mime: "image/png", bytes: fixtures.normalSvg },
+    { name: "h1-mime-conflict.svg", mime: "image/png", bytes: fixtures.normal.bytes },
     "mime_mismatch",
   );
   record("B3", "扩展名 / MIME 冲突", "HTTP 422 / VALIDATION_FAILED / " + mimeConflict.detail);
 
   const contentConflict = await expectUploadRejected(
-    { name: "h1-content-conflict.png", mime: "image/png", bytes: fixtures.doubleSvg },
+    { name: "h1-content-conflict.png", mime: "image/png", bytes: fixtures.double.bytes },
     "content_mismatch",
   );
   record("B3", "文件头 / 扩展名冲突", "HTTP 422 / VALIDATION_FAILED / " + contentConflict.detail);
