@@ -60,7 +60,8 @@ describe("CAD sandbox boundary", () => {
         response.end(JSON.stringify({ job, reused: false }));
       });
     });
-    expect((await engine.submit({ ...identity, bytes: Buffer.from("abc") })).job.id).toBe(job.id);
+    const bytes = Uint8Array.of(0, 97, 98, 99, 0).subarray(1, 4);
+    expect((await engine.submit({ ...identity, bytes })).job.id).toBe(job.id);
     expect(body?.toString()).toBe("abc");
     expect(metadata).toEqual({ action: "submit", ...identity });
   });

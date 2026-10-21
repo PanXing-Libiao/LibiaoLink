@@ -36,6 +36,8 @@ CPU、OOM、PID、文件和 tmpfs 探针均有上限，只创建并删除本轮 
 
 交付前常驻分支同步 main `7b101fc`，上述四文件接口回归再次 69 项通过，22.57 秒；资源限额、namespace 清理及探针代码与此前 9 项实测版本一致。文档保留 main 中既有 STEP 接入的测试机部署记录，本次隔离修复尚未部署。
 
+PR [#553](https://github.com/PanXing-Libiao/LibiaoLink/pull/553) 首轮 CI 的三个 job 因同一处 `Uint8Array` / `Buffer` 输入类型不一致失败。客户端现与对象存储契约对齐，直接传递 `Uint8Array`（[Node.js HTTP 文档](https://nodejs.org/download/release/v24.17.0/docs/api/http.html#requestenddata-encoding-callback)），未添加整份原件复制。字节传输夹具改用带偏移的切片；客户端与真实 CAD 平台两文件 19 项定向回归通过，22.73 秒。原始 69 / 9 项记录保留，最终 CI 以 PR 当前 head 为准。
+
 ## 调试发现与边界
 
 最初构建后本机磁盘耗尽，Docker 解包出现 I/O 错误。恢复空间后，旧镜像的 OCP 动态库 SHA 与 wheel RECORD 不符，实际导入触发 SIGBUS，导致一轮 native 测试失败。随后绕过 native 构建缓存、重新下载相同固定版本依赖；完整性和导入恢复正常，上述最终两组测试均在修复后的镜像完成。失败没有记作通过。

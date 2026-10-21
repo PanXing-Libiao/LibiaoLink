@@ -28,7 +28,7 @@ export class CadEngineClient implements OnModuleDestroy {
   get enabled(): boolean { return cadEngineConfigured(this.config.env); }
   get inputLimit(): number { return (this.config.env.CAD_MAX_INPUT_MIB ?? 64) * 1024 * 1024; }
 
-  private open(action: string, input: Record<string, unknown>, source?: Buffer): Promise<IncomingMessage> {
+  private open(action: string, input: Record<string, unknown>, source?: Uint8Array): Promise<IncomingMessage> {
     if (!this.enabled) throw new ServiceUnavailableException("CAD 转换服务未启用，请下载原文件查看");
     if (this.requests.size >= 64) throw new ServiceUnavailableException("CAD 请求过多，请稍后重试");
     const socketPath = this.config.env.CAD_ENGINE_SOCKET;
@@ -69,7 +69,7 @@ export class CadEngineClient implements OnModuleDestroy {
     });
   }
 
-  private async json(action: string, input: Record<string, unknown>, source?: Buffer): Promise<unknown> {
+  private async json(action: string, input: Record<string, unknown>, source?: Uint8Array): Promise<unknown> {
     const response = await this.open(action, input, source);
     try {
       const chunks: Buffer[] = []; let bytes = 0;
@@ -89,7 +89,7 @@ export class CadEngineClient implements OnModuleDestroy {
   async lookup(input: Identity): Promise<z.infer<typeof CadJobCreateResponseSchema> | null> {
     return CadJobCreateResponseSchema.nullable().parse(await this.json("lookup", input));
   }
-  async submit(input: Identity & { bytes: Buffer }): Promise<z.infer<typeof CadJobCreateResponseSchema>> {
+  async submit(input: Identity & { bytes: Uint8Array }): Promise<z.infer<typeof CadJobCreateResponseSchema>> {
     const { bytes, ...identity } = input;
     return CadJobCreateResponseSchema.parse(await this.json("submit", identity, bytes));
   }
