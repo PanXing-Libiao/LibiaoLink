@@ -188,7 +188,7 @@ docker compose exec -T svg-preview node -e "fetch('http://127.0.0.1:9900/healthz
 docker compose exec -T worker node -e "fetch('http://svg-preview:9900/healthz').then(async r=>{console.log(r.status);console.log(await r.text())})"
 ```
 
-`server.env` 必须与模板一致：`PREVIEW_CONVERTER_URL=http://svg-preview:9900`、`PREVIEW_PIPELINE_VERSION=2.0.0`、`PREVIEW_CONVERT_TIMEOUT_MS=15000`、`PREVIEW_CONVERT_MAX_SOURCE_MB=20`。S4 只准备部署件，不在本切片执行生产部署；S5 响应头已实现但尚未发布，S6 完成前不得宣称 H1 闭环。
+`server.env` 必须与模板一致：`PREVIEW_CONVERTER_URL=http://svg-preview:9900`、`PREVIEW_PIPELINE_VERSION=2.0.0`、`PREVIEW_CONVERT_TIMEOUT_MS=15000`、`PREVIEW_CONVERT_MAX_SOURCE_MB=20`。S4 只准备部署件，不在本切片执行生产部署；S5 响应头已实现（PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534)）但尚未发布，S6 完成前不得宣称 H1 闭环。
 
 **升级（改代码后）：**
 
@@ -233,7 +233,7 @@ curl -sk -o /dev/null -w "%{http_code}\n" https://test-pm.libiaorobot.com/readyz
 curl -sk -o /dev/null -w "%{http_code}\n" https://test-pm.libiaorobot.com/         # 200（index.html，SPA 已上线）
 ```
 
-**H1 S5 安全响应头（2026-10-21 已实现，待发布）：**
+**H1 S5 安全响应头（2026-10-21 已实现，PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 待评审 / 合入，待发布）：**
 
 `nginx/libiaolink.conf` 对三条响应面分别下发：
 
