@@ -26,6 +26,7 @@ CAD 能力以独立工程 `CAD逆向` 的 STEP v0.3.3（几何基线 `0911573`�
 - 平台通过既有 ObjectStorage 读取版本对象，核对大小与 SHA 后传本地文件；私有 stdio gateway 不监听 HTTP、不接收 S3/数据库凭据或客户端 URL。原始输入暂时由平台完整读入内存，尚非输入流式改造。
 - `server/cad-engine/source.json` 固定独立源码提交、schema 和浏览器依赖逐文件 SHA；更新只运行同步脚本，宿主副本不另改 CAD 规则。OCP 和 Gmsh 使用两套固定版本 Python 环境，不复制本机虚拟环境。
 - 复用 ConversionJobs 的持久化 SQLite/CAS、预算、超时、取消及完整结果校验。任务命名空间绑定 actor/file/version/SHA/view；关闭、换版、取消及原文件读取阶段断开只影响对应窗口。每个新窗口当前会重新转换，尚未实现跨窗口结果复用。
+- 显示修复与未显示面信息统一收进默认折叠的“模型信息”，主视图不再展示两类提示条；数量、分类、统计排除说明和导出仍可展开查看。此项是用户批准的展示调整，不改变转换、接收政策或记录。
 - 同源 `/cad-viewer/` iframe 使用原 ViewerSession。保留产品树、source/product/occurrence/draw/face/material、XCAF entry、实例变换、visibility/membership、显示修复与缺失清单。宿主只适配传输、进度、关闭与导出。
 - manifest 与 buffers 分开，几何不回填 base64 JSON。源 ID 字典按原协议展开，资源 SHA 由浏览器复核；读取和释放逐请求重新鉴权。
 - 清单/检查记录由原函数生成，宿主确认当前版本权限后下载，外层增加平台来源关联 `libiaolink-cad-report/1`。原文件下载仍调用原业务入口。
