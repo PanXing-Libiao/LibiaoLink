@@ -212,6 +212,12 @@ export const EnvSchema = z
     WECOM_R06_IMAGE_PATH: z.string().default(""),
     /** R06 全部任务按时交付喜报图（可选）：空 = 回退 WECOM_R06_IMAGE_PATH。 */
     WECOM_R06_ON_TIME_IMAGE_PATH: z.string().default(""),
+    /** R06 全部完成且全部按时的前置火箭 GIF（240×288）：文字后、640 前发送；空 = 跳过。 */
+    WECOM_R06_ROCKET_240_IMAGE_PATH: z.string().default("assets/wecom-rocket-first-frame-240.gif"),
+    /** R06 全部完成且全部按时的前置火箭 GIF（640×768）：文字后、喜报海报前发送；空 = 跳过。 */
+    WECOM_R06_ROCKET_640_IMAGE_PATH: z.string().default("assets/wecom-rocket-first-frame-640.gif"),
+    /** R06 其余情况（未全部完成 / 非全部按期）的前置火箭 GIF（200×200）：文字后、喜报海报前发送；空 = 跳过。 */
+    WECOM_R06_ROCKET_FALLBACK_IMAGE_PATH: z.string().default("assets/wecom-r06-acceptance.gif"),
     // ---- 调度器（S7-3 · i11 / M5-02：cron 领取 + last_run_at 补发 + 单活 advisory lock · ADR-005） ----
     /** 单轮 tick 领取条数上限（到期任务按 run_at 序领取，逐条串行执行）。 */
     OUTBOX_SCHEDULER_BATCH_LIMIT: z.coerce.number().int().min(1).max(1000).default(10),
