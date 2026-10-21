@@ -1,0 +1,17 @@
+{
+  "name": "@libiaolink/svg-preview",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "test": "node --test service/*.test.mjs",
+    "selfcheck": "node service/selfcheck.mjs"
+  },
+  "dependencies": {
+    "@resvg/resvg-js": "2.6.2",
+    "saxes": "6.0.0"
+  }
+}
