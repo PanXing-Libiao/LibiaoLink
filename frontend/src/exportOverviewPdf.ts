@@ -6,7 +6,7 @@
  * - 数据准备（阶段分组 / 计数 / 文本与进度口径）收敛在 `overviewExportShared.ts`；
  * - 产物 = PDF：**不引第三方库**（jsPDF / html2canvas 一律不加），走浏览器打印 —— 本模块生成一份自包含的
  *   A4 横版报告 HTML（紧凑单行版式，见 REPORT_STYLE 注），塞进离屏 iframe 调 print()，用户在系统打印窗口里选「另存为 PDF」；文字矢量输出、
- *   中文字体走系统字体栈，客户可检索 / 可缩放，比截图拼 PDF 清晰、体积也小；
+ *   中文字体使用自托管 Noto Sans SC Variable（思源黑体同源，OFL-1.1），客户可检索 / 可缩放，比截图拼 PDF 清晰、体积也小；
  * - 配色与状态口径和页面同源：五个状态色签取 `components/TaskBoard.tsx` 的 STATUS_TAG_CLASS 同色（100 档底 +
  *   700 / 800 档字）；整体进度算法同同文件的 ProjectSummary（已完成 / 总数，四舍五入）；
  * - 数据只用调用方已取到的页面数据（project / tasks / summary），导出不额外发请求、不写库、不产生审计。
@@ -36,6 +36,7 @@
  *   ⑮ 序号列表头去「#」（业务 2026-10-10「这个#号删除」）：表头首格留空，行号照常出（1…N）。
  *   ⑯ 阶段进度说明去前缀（业务 2026-10-10「按项目总览的九个这个前半段字删除」）：说明句改为「施工阶段统计完成情况」（英文小字不动）。
  */
+import notoSansScCss from "@fontsource-variable/noto-sans-sc/index.css?inline";
 import { type ProjectTask, type TaskStatus } from "./data/tasks";
 import { stageNameOf } from "./taskApi";
 import { translateZhToEn } from "./translateApi";
@@ -244,6 +245,7 @@ function groupSectionHtml(counter: { value: number }, group: StageGroup, manager
 
 /** 报告的打印样式（自包含在 iframe 文档里：不依赖站内 Tailwind，也不反向影响站内样式）。 */
 const REPORT_STYLE = `
+  ${notoSansScCss}
   /* 2026-10-09 追订（先按「纸张竖着了 尽可能在一页展示」改竖版，再按「还是之前的横屏吧」回 **A4 横版**）：
      保留这轮的紧凑结构 —— 统计卡收成一条统计条、阶段进度 5 列网格、明细行英文名与进展描述并成一行小字并按
      列宽单行截断（nowrap + ellipsis），列宽按横版加宽后的单行内容重排（描述 / 交付物列更宽、日期列更窄）；
@@ -254,7 +256,7 @@ const REPORT_STYLE = `
   * { box-sizing: border-box; }
   html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   body { margin: 0; color: #1f2329; font-size: 10px; line-height: 1.45;
-    font-family: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", "Noto Sans SC", system-ui, -apple-system, sans-serif; }
+    font-family: "Noto Sans SC Variable", "Source Han Sans SC", "Noto Sans SC", sans-serif; }
   .head { padding-bottom: 6px; border-bottom: 2px solid #18181b; }
   .head__logo { display: block; height: 36px; width: auto; }
   .hero { display: flex; align-items: flex-start; gap: 16px; margin-top: 8px; }
@@ -328,7 +330,7 @@ function brandLogoUrl(): string {
   return window.location.origin + "/libiao-logo.svg";
 }
 
-/** 拼一份自包含的报告 HTML（无脚本、无外链，只有一枚 <img> 指向站内 logo）。 */
+/** 拼一份自包含的报告 HTML（无脚本、无第三方外链；只引用站内 logo 与自托管思源黑体字体分片）。 */
 export function buildOverviewReportHtml(input: OverviewExportInput, translationMap: ReadonlyMap<string, string> = EMPTY_TRANSLATIONS): string {
   const { project, tasks, summary } = input;
   const groups = groupedByStage(tasks);
@@ -481,15 +483,21 @@ function printHtmlDocument(html: string): void {
       // 打印窗口关闭（含「取消」）即回收 iframe；个别浏览器不派发 afterprint 时由下面这条兜底
       target.addEventListener("afterprint", () => frame.remove(), { once: true });
       window.setTimeout(() => frame.remove(), 10 * 60 * 1000);
-      // 等一拍，让报告版式与 logo 落定再唤起打印预览
-      window.setTimeout(() => {
-        try {
-          target.focus();
-          target.print();
-        } catch {
-          frame.remove();
-        }
-      }, 120);
+      // 自托管思源黑体按 unicode-range 分片加载；等字体就绪再唤起打印预览，最长等 5s 后兜底。
+      const fontReady = target.document.fonts?.ready ?? Promise.resolve();
+      void Promise.race([
+        fontReady.catch(() => undefined),
+        new Promise<void>((resolve) => window.setTimeout(resolve, 5000)),
+      ]).then(() => {
+        window.setTimeout(() => {
+          try {
+            target.focus();
+            target.print();
+          } catch {
+            frame.remove();
+          }
+        }, 120);
+      });
     },
     { once: true },
   );
