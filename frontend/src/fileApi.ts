@@ -74,6 +74,8 @@ export type OnlyOfficePreviewViewerConfig = {
   token: string;
 };
 
+export type CadNameCodepage = "UTF8" | "GB";
+
 export type CadPreviewViewerConfig = {
   kind: "cad";
   fileId: string;

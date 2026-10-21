@@ -737,7 +737,8 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
 
     const result = await h.service.getPreview(FILE, null, ACTOR);
 
-    const token = result.viewer!.token;
+    if (result.viewer?.kind !== "onlyoffice") throw new Error("Expected ONLYOFFICE viewer");
+    const token = result.viewer.token;
     const [header, payload, signature] = token.split(".");
     expect(signature).toBeDefined();
     expect(createHmac("sha256", "unit-test-secret").update(header + "." + payload).digest("base64url")).toBe(signature);

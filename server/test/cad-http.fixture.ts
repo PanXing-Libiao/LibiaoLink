@@ -52,7 +52,7 @@ export async function createCadFixture(paths: string[], cache: string, python: s
     async findVersionById(id: string, versionId: string) { const row = records.find((record) => record.id === id && record.versionId === versionId); return row ? { id: versionId, fileId: id, objectKey: row.objectKey, contentHash: row.sha, sizeBytes: row.size, mime: "application/step" } : null; },
   };
   const storage = { corrupt: false, beforeRead: undefined as (() => Promise<void>) | undefined,
-    async getObject(key: string) { await this.beforeRead?.(); const row = records.find((record) => record.objectKey === key); if (!row) return null; const bytes = await readFile(row.path); if (this.corrupt) bytes[0] ^= 1; return { objectKey: key, bytes, sizeBytes: bytes.byteLength, contentType: "application/step" }; } };
+    async getObject(key: string) { await this.beforeRead?.(); const row = records.find((record) => record.objectKey === key); if (!row) return null; const bytes = await readFile(row.path); if (this.corrupt && bytes.length > 0) bytes[0] = bytes[0]! ^ 1; return { objectKey: key, bytes, sizeBytes: bytes.byteLength, contentType: "application/step" }; } };
   const config = new AppConfig({ CAD_ENGINE_PYTHON: python, CAD_MESHER_PYTHON: mesher, CAD_CACHE_DIR: cache, CAD_MAX_INPUT_MIB: 64 } as Env);
   const engine = new CadEngineClient(config);
   const cad = new CadPreviewService(repository as unknown as FileRepository, permission as unknown as PermissionService, storage as unknown as ObjectStorage, engine);

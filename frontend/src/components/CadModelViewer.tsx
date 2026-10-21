@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CadPreviewViewerConfig } from "../fileApi";
+import type { CadNameCodepage, CadPreviewViewerConfig } from "../fileApi";
 import { apiFetch } from "../api";
-import type { CadNameCodepage } from "@libiaolink/contracts";
 
 function savedNameCodepage(key: string): CadNameCodepage {
   try { return sessionStorage.getItem(key) === "GB" ? "GB" : "UTF8"; } catch { return "UTF8"; }
