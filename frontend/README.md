@@ -7,6 +7,8 @@ LibiaoLink 业务前端：项目空间（首页筛选 / 排序 / 记忆）、项
 
 ## 本地启动（沙箱 + 后端 + 前端）
 
+STEP 联调已有无需全量构建的完整系统启动入口，见 [本地完整系统](../server/cad-engine/README.md#本地完整系统)。它运行当前分支的实际前后端，并使用独立本地登录、数据库和文件存储；可直接从任务附件与文件库打开新版 CAD。`3013/tools/cad-platform.html` 仍是单独试用页。
+
 前置：
 1. 本地 Casdoor 沙箱：`cd deploy/casdoor && docker compose up -d`（见沙箱文档）
 2. PostgreSQL 18 与空库迁移：见 `database/README.md`（`npm run migrate`）

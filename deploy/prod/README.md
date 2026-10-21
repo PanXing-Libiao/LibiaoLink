@@ -1,5 +1,7 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
+> **2026-10-21 STEP 已部署公司测试机，生产未部署**：PR [#546](https://github.com/PanXing-Libiao/LibiaoLink/pull/546) 的 squash `71f42fa3` 已部署到 `test-pm.libiaorobot.com`。测试机运行镜像 `libiaolink/runtime:24.20.0-cad-20261021-1538`，API 限额 4 GiB、worker 1 GiB；六个容器 healthy，公网站点 / `/cad-viewer/` / `/healthz` / `/readyz` 200，查看器缺失资源 404。真实公司账号浏览器验收仍待完成，生产环境未部署。发布需包含 `server/cad-engine` 与同版本 `frontend/public/cad-viewer`；Nginx 配置为文件级 bind mount，替换 inode 后必须 `force-recreate web`。Gmsh 即使无头运行仍由 `libgmsh.so` 声明 `libXcursor` / `libXft` / `libXss` 动态依赖，安装仅用于装载，不启动桌面服务。完整证据见 [CAD 接入基线](../../docs/CAD平台接入基线与迁移任务.md) §8；下方历史版本/哈希保持原记录。
+
 > 归属：px（部署 / 交付）· 2026-10-13 起步（postgres → tools → api / worker，逐切片加组件）。
 > 口径：`docs/adr/ADR-013-部署与容量起点.md`（Compose 单机 + Nginx 唯一对外端口；生产门禁）、`docs/adr/ADR-004-数据库与数据访问.md`（PostgreSQL 18.x，部署锁精确补丁）、`docs/M8-部署Runbook与上线检查单(单机).md`（总流程与清单）。
 > 密钥纪律（CONTRIBUTING §12）：本目录只放非敏感内容；密钥全部以文件存在服务器 `secrets/`，不进仓库、不进 `.env`。
@@ -12,6 +14,8 @@
 | db-init（角色 + 密码） | ✅ 已交付 | `scripts/db-init.sh`（幂等；密码自 `secrets/` 注入） |
 | tools（迁移 / 种子 / 依赖安装） | ✅ 已交付 | node 工具容器（`profiles: tools`，一次性）：`scripts/db-migrate.sh` / `scripts/db-seed.sh` |
 | api / worker | ✅ 部署件已交付（本切片） | `profiles: app`；node 24 双锁；entrypoint 降权（容器进程非 root）；依赖装进命名卷；外部依赖（SSO / 对象存储）以占位值先行，见 §2 / §7 |
+| svg-preview（SVG 安全栅格化） | ✅ 测试机已部署（H1 S4） | internal-only `libiaolink-svg-preview-internal`；不发布宿主端口；镜像 tag + digest 双锁；worker 经 `svg-preview:9900` 调用 |
+| CAD native runtime（OCP / Gmsh） | ✅ 测试机已部署（2026-10-21） | `libiaolink/runtime:24.20.0-cad-20261021-1538`；OCP 7.8.1.1 + Gmsh 4.15.2；API 4 GiB / worker 1 GiB；真实公司账号浏览器验收待完成，生产未部署 |
 | web（Nginx） | ✅ TLS 已接入（v1.8）· 对象存储同源门面（v1.13） | 80 → 301 / 443 应用（含 `/libiaolink/` 对象存储同源门面）/ 9443 MinIO 备用门面（ALLinSSL 自动下发证书）；SPA 静态 + `/api/v1` 反代（SPA 已上线 2026-10-14） |
 | minio（对象存储） | ✅ 服务器实测收口（本切片） | 本机自建；镜像 = 本地构建（锚点 sha256:165271c0…）；数据盘 bind `/srv/data/minio`；init + --check + it 24/24、readyz 全绿；S3 走 https 同源门面（443 `/libiaolink/`；9443 为内网备用）；见 §9 |
 | onlyoffice（文档服务器） | ✅ 生产上线（本切片 · v1.14） | 独立 compose 项目 `libiaolink-onlyoffice`（不发布公网端口；8001 回环排障）；443 子路径 `/onlyoffice/` 门面（DS 9.4 原生子路径支持）；镜像离线下发并归档 `/srv/data/images/oo_docs_9.4.0.1.tar`；JWT 与 api 同值；真实 64MB xlsx 端到端渲染 ready；见 `deploy/onlyoffice/README.md` §6 |
@@ -33,7 +37,7 @@
 - 测试机：`10.1.104.44`（主机名 `libiao-vm`，Ubuntu 26.04 LTS；对外域名 `test-pm.libiaorobot.com`）；`10.1.103.44` = ALLinSSL 证书下发接收端（同口令），仅证书用途、不作为部署目标。
 - 登录方式：开发机 PowerShell 直接 `ssh root@10.1.104.44`（首次连接接受指纹即可）。
 - **登录口令不落仓库**（CONTRIBUTING §12）：由 px 持有；开发机上的未跟踪备忘 = `deploy/prod/服务器登录.local.md`（`.gitignore` 已忽略，AI / 新会话可直接读该文件续接）。
-- 登录后入口：`cd /opt/libiaolink/deploy/prod`（`docker compose --profile app ps` 应见 postgres / api / worker / web / minio 五容器）。
+- 登录后入口：`cd /opt/libiaolink/deploy/prod`（`docker compose --profile app ps` 应见 postgres / api / worker / svg-preview / web / minio 六容器）。
 - 铁律：**不得修改 root 密码**；普通用户 `libiao` 未经许可不动；服务器只跑不改 —— 代码 / 配置变更一律走本仓 → 常驻分支 → PR → 部署件同步（§3 ~ §9），禁止在服务器上手改业务代码，临时热修必须回灌仓库。
 - MinIO 控制台（运维排查）：`ssh -L 9001:127.0.0.1:9001 root@10.1.104.44` 后浏览器开 `http://127.0.0.1:9001`（同 §9）。
 - 证书：ALLinSSL 自动下发 `*.libiaorobot.com` → 宿主 `/etc/ssl/libiaorobot.com.pem|.key`（SSH 通道自动覆盖 + reload）；未使用 1Panel。
@@ -170,6 +174,26 @@ docker compose --profile app exec -T api node -e "fetch('http://127.0.0.1:3000/r
 
 期望：`/healthz` 返回 200 `{"status":"ok"}`；`/readyz` 在对象存储就绪前为 **HTTP 503** + `status:degraded`（`object-storage:head-bucket` 探针失败，属预期，待对象存储选型关闭后转 ok）。busybox `wget` 遇 5xx 不打印 body，故上面用 `node -e fetch` 看正文。
 
+**SVG 栅格化服务（H1 · S4，profile app）：**
+
+`svg-preview` 与 worker 同批启动，只挂 `libiaolink-svg-preview-internal`（`internal: true`），不发布宿主端口。测试机已于 2026-10-21 按 `main@336b66fd` 部署，镜像 digest = `sha256:eaee947e…`，S6 回放通过；生产尚未部署。发布前必须把 `deploy/svg-preview/` 构建出的同 digest 镜像放入服务器本地 Docker、离线归档或内网 registry；`.env` 的 `SVG_PREVIEW_IMAGE` 为 tag + digest 双锁，禁止改成 `latest`。
+
+```bash
+# 例：离线归档已 scp 到服务器后（digest 必须与 .env 一致）
+docker load -i /srv/data/backups/svg-preview-2.0.0-linux-amd64.tar
+docker image inspect libiaolink/svg-preview:2.0.0 --format '{{.Id}}'
+# 期望 sha256:eaee947e1e6a9e4b3ea7e7057e76e4ac45ac6209fb470593c46686ec7a474282
+# 若从 registry 拉取，再核对 RepoDigests 与 .env 中的 digest 完全一致。
+
+cd /opt/libiaolink/deploy/prod
+docker compose --profile app up -d svg-preview worker
+docker compose ps svg-preview worker              # 两者 healthy / running
+docker compose exec -T svg-preview node -e "fetch('http://127.0.0.1:9900/healthz').then(async r=>{console.log(r.status);console.log(await r.text())})"
+docker compose exec -T worker node -e "fetch('http://svg-preview:9900/healthz').then(async r=>{console.log(r.status);console.log(await r.text())})"
+```
+
+`server.env` 必须与模板一致：`PREVIEW_CONVERTER_URL=http://svg-preview:9900`、`PREVIEW_PIPELINE_VERSION=2.0.0`、`PREVIEW_CONVERT_TIMEOUT_MS=15000`、`PREVIEW_CONVERT_MAX_SOURCE_MB=20`。S4 已交付；2026-10-21 测试机已部署 `main@336b66fd`，6 容器 healthy，converter 自检 40 PASS / 0 FAIL / 0 SKIP；S5 / S6 已合入 main，HSTS 重复头修复随 PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 合并 main 333ffdeb 并已部署测试机；测试机完整 B1 ～ B7 25 / 25（B7 4 / 4，443 SPA、443 对象门面与 9443 均为单条 HSTS）；收口 PR [#543](https://github.com/PanXing-Libiao/LibiaoLink/pull/543) 已 squash 合并 main `5e31e4b9`；最终 head PR CI [39550779854](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39550779854) 与 main CI [39550973691](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39550973691) 均 5 / 5；main 连续 3 次全绿已完成，`svg-preview-e2e` 已加入分支保护必需检查；生产尚未部署，关闭验收前不得宣称 H1 闭环。
+
 **升级（改代码后）：**
 
 ```bash
@@ -212,6 +236,34 @@ curl -sk https://test-pm.libiaorobot.com/healthz; echo               # {"status"
 curl -sk -o /dev/null -w "%{http_code}\n" https://test-pm.libiaorobot.com/readyz   # 200（对象存储就绪）
 curl -sk -o /dev/null -w "%{http_code}\n" https://test-pm.libiaorobot.com/         # 200（index.html，SPA 已上线）
 ```
+
+**H1 S5 安全响应头（2026-10-21 已随 PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 合并 main `660cc80`，测试机已部署并完成 B7 主体回放）：**
+
+`nginx/libiaolink.conf` 对三条响应面分别下发：
+
+- SPA 入口（443 `/`）：HSTS、`X-Content-Type-Options: nosniff`、CSP（同源资源；`script-src` 仅额外放行 CAD WASM 所需的 `'wasm-unsafe-eval'`，不含 `'unsafe-eval'`）、`X-Frame-Options: DENY`。
+- 对象存储主门面（443 `/libiaolink/`）：HSTS、`nosniff`、`Content-Security-Policy: sandbox; default-src 'none'; script-src 'none'; …`、XFO `DENY`；先 `proxy_hide_header` 上游同名头，避免重复。
+- 对象存储备用门面（9443）：与 `/libiaolink/` 同口径；2026-10-21 回放发现上游 MinIO 重复回传 HSTS，PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 增加 `proxy_hide_header Strict-Transport-Security`，待部署后复测单头。
+
+发布前用固定镜像执行配置自检，部署后用 curl 断言三条响应面带完整安全头（`-k` 仅用于测试机自签 / 内网排障；有正式证书时不要带）：
+
+```bash
+docker compose --profile app run --rm --no-deps web nginx -t
+
+curl -sSI https://test-pm.libiaorobot.com/ | grep -Ei 'strict-transport-security|content-security-policy|x-content-type-options|x-frame-options'
+curl -sSI https://test-pm.libiaorobot.com/libiaolink/security-header-probe | grep -Ei 'strict-transport-security|content-security-policy|x-content-type-options|x-frame-options'
+curl -sSI --resolve test-pm.libiaorobot.com:9443:127.0.0.1 https://test-pm.libiaorobot.com:9443/security-header-probe | grep -Ei 'strict-transport-security|content-security-policy|x-content-type-options|x-frame-options'
+```
+
+预期：SPA 的 CSP 为同源应用策略且 `script-src 'self' 'wasm-unsafe-eval'`；`/libiaolink/` 与 9443 的 CSP 必须含 `sandbox` 与 `script-src 'none'`，XFO 均为 `DENY`，三条路径均带 HSTS 与 `nosniff`。随后由 S6 执行 ONLYOFFICE、CAD、导出打印和恶意 SVG 的完整浏览器回归；控制台出现 CSP violation 必须阻断发布。2026-10-21 本地已用固定镜像 `nginx:1.30.5-alpine@sha256:0985e772…` 跑过 `nginx -t` 与等价 curl 断言，Headless Edge 已验证 SPA / WASM / Blob Worker / `srcdoc` 与恶意 SVG sandbox；测试机已完成完整 B7 4/4，9443 经 SSH 隧道验证；生产尚未部署。
+
+**H1 S6 浏览器回归（2026-10-21 已随 PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 合并 main `336b66fd`；PR CI [39540053943](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39540053943) 5 / 5、矩阵 25 / 25；测试机 B1 ～ B7 25/25（B7 4/4）回放通过）：**
+
+PR 与 main 的独立 `svg-preview-e2e` job 会从本生产配置派生 CI Nginx（upstream / 证书 / SPA root 只替换运行位置），并运行 `frontend/scripts/h1-svg-preview-e2e.mjs`。本地复跑全链路需同时具备 PostgreSQL、MinIO、api、worker、`svg-preview`、Nginx TLS 与 Chrome；也可在 `frontend/` 配置 `H1_BASE_URL`、`H1_DATABASE_URL`、S3 与 `H1_REQUIRE_HEADERS=1` 后执行 `npm run preview:svg-e2e`。
+
+经 SSH 隧道验证非默认 9443 端口时，可设置 H1_BACKUP_STORAGE_URL 指向本地转发地址；脚本仍按同一生产 Nginx 响应做原始响应行断言。
+
+证据见 `docs/H1-SVG预览整改回放证据.md`；CI artifact 为 `h1-svg-preview-e2e-<run_id>`，含脱敏 `summary.json`、失败截图与服务日志。2026-10-21 测试机 `10.1.104.44` 已按 `main@336b66fd` 部署，真实 PDF / DOCX 进入 ONLYOFFICE，STL 进入 `cad3d` WebGL；443 SPA / 443 对象门面 / 9443 均只回传 1 条 HSTS；旧式原对象签名已用新签 URL 完成等价到期复测（不是历史 URL 重放）。生产部署与 B7、真实 CAD 生产样本仍须完成；`main` 连续 3 次全绿及 `svg-preview-e2e` 分支保护已完成。
 
 - 服务器实测（2026-10-13 HTTP 先行）：`/nginx-health` ok、`/healthz` 200、`/readyz` 503（存储占位）、`/` 404（SPA 未传输）、web (healthy)；
 - 服务器实测（2026-10-14 TLS 接入）：证书链校验通过（无 `-k` 请求 200；SAN 匹配）、80 → 301（IP 访问一并收口）、443 `/nginx-health` ok / `/healthz` 200 / `/readyz` 200、9443 门面 `storage:it` 24/24；
@@ -315,6 +367,13 @@ bash scripts/storage.sh it            # 真机回放 24 项断言
 
 | 版本 | 日期 | 变更 | 人 |
 |---|---|---|---|
+| v2.03 | 2026-10-21 | STEP 测试机部署（PR [#546](https://github.com/PanXing-Libiao/LibiaoLink/pull/546) · squash `71f42fa3`）：发布包 `/srv/data/deploy-cad-546-20261021-1538/cad546-bundle-71f42fa-20261021-1538.tar.gz`（51,390,495 B · SHA-256 `a39e4e60…`），镜像 `libiaolink/runtime:24.20.0-cad-20261021-1538`（Image ID `sha256:ee6147e3…`，2,051,449,037 B；Debian 13 / Node 24.20.0 / Python 3.13 / OCP 7.8.1.1 / Gmsh 4.15.2）；API 4 GiB、worker 1 GiB。部署前备份 frontend 8.7 MB · `bdb78f2e…`、server 90 MB · `07d5e2b0…`、shared 744 KB · `5c86dcde…`，并备份 Nginx / server.env / prod.env。六容器 healthy；公网站点、`/cad-viewer/`、`/healthz`、`/readyz` 200，`/cad-viewer/` 缺失资源 404；公网 `index.html` `df3850d7…` / JS `e588e668…` / CSS `40ac2ec4…` 与本地一致，查看器入口 `c70bf292…`、bridge `d48d96b0…` 已核验。旁路真实 STEP 集成 12/12；容器内 native 受控夹具 `completed`，输入 15,416 B、artifact 15,187 B、manifest 15,447 B，worker 峰值 RSS 326,103,040 B、耗时 3.263387 秒；API / worker 近 10 分钟无 ERROR / FATAL / SIGILL / Unhandled。发布包含 PR #546 的 CAD API / 前端 / runtime 变更；无 DDL / 数据库迁移 / Secret 轮换，服务器未手改业务代码。真实公司账号浏览器验收待完成，生产未部署。 | px |
+| v2.02 | 2026-10-21 | H1 HSTS 单头修复部署与完整回放（PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) · squash `333ffdeb`）：部署前备份 `/srv/data/backups/h1-hsts-before-20261021-1313/libiaolink.conf`（旧 SHA-256 `f31fccb4…`），换上 PR #542 的 Nginx 配置（新 SHA-256 `36cd3f6b…`）；容器内 `nginx -t` 通过并 `nginx -s reload`，6 容器 healthy。443 站点根 HTTP 200、443 `/libiaolink/__h1_probe__` 403、9443 `/__h1_probe__` 400，三路径均只回传 1 条 HSTS；B7 原始响应行与浏览器控制台 4/4。测试机完整 B1 ～ B7 25/25，真实 PDF / DOCX ONLYOFFICE 与 STL `cad3d` WebGL 通过；旧式原对象签名完成等价到期复测（非历史 URL 重放）。无 DDL / API / Secret / 业务代码变更；生产未部署，H1 未闭环。 | px |
+| v2.01 | 2026-10-21 | H1 S2 ～ S6 测试机部署收口（baseline `main@336b66fd`；PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542)）：部署前备份 `/srv/data/backups/h1-svg-before-20261021-124249/deploy-state.tar.gz`（SHA-256 `d6008c09…`）；发布件 `/srv/data/backups/h1-svg-336b66fd`（应用 `b012ee25…`、前端 `3ae615e6…`、converter 归档 `23bfb7e3…`）；converter 镜像 `libiaolink/svg-preview:2.0.0@sha256:eaee947e…`；6 容器 healthy，`/healthz` 200、`/readyz` 200，converter 自检 40 PASS / 0 FAIL / 0 SKIP；B1 ～ B6 21/21 与 B7 浏览器 2/4 通过，真实 PDF / DOCX 进入 ONLYOFFICE、STL 进入 `cad3d` WebGL；9443 由服务器本机 curl 复核；测试数据清理为 0。回放发现 443 `/libiaolink/` 与 9443 各重复一次 HSTS，PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 增加 `proxy_hide_header Strict-Transport-Security`，需部署后复测。无 DDL / API / Secret / 依赖变化；生产未部署，H1 未闭环。 | px |
+| v2.00 | 2026-10-21 | R06 喜报前置火箭动画部署（Push 408 / 409 · PR [#540](https://github.com/PanXing-Libiao/LibiaoLink/pull/540) · PR CI [39540266798](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39540266798) 4 / 4 · squash `ba630f3d` · main CI [39540461829](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39540461829) 4 / 4）：server-only 包 `server-r06-rocket-ba630f3d-20261021-1150.tar.gz`（3,680,472 B · sha256 `7737fe8d…`）上传至 `/srv/data/backups/`；部署前备份 `server-before-r06-rocket-20261021-1150.tar.gz`（45,091,473 B · sha256 `ba2994f7…`）；staging `/srv/data/deploy-r06-rocket-20261021-1153/server` 核验 dist 560 文件 + 3 张 GIF 后，rsync 覆盖 `/opt/libiaolink/server/dist/` / `assets/` 并重启 api / worker。5 容器 healthy，`/healthz` / `/readyz` 公网 200（4 探针全通过），api / worker 近 15 分钟无 ERROR / FATAL / SIGILL / Unhandled，3 张 GIF SHA256 与本地一致。R06 真机联调经测试群2收口：`test·test` 兜底分支实发文字 + 200×200 火箭 + 动态喜报，outbox `project.completed` / `notify.group` 均 done，投递留痕 `sent`、`attempts=3`（chatid 尾号 `az8A`）；联调后群绑定已恢复。无 DDL / 迁移 / Secret / 依赖变化。 | px |
+| v1.99 | 2026-10-21 | 项目总览 PDF 导出主体语言选择部署（Push 406 / 407 · PR [#537](https://github.com/PanXing-Libiao/LibiaoLink/pull/537) · PR CI [39536650839](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39536650839) 4 / 4 · squash `4fa71756` · main CI [39536847169](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39536847169) 4 / 4）：frontend-only 包 `frontend-v1.99-4fa7175-20261021-1109.tar.gz`（8,468,255 B · sha256 `B5AFDAF4…`）已上传 /srv/data/backups/；部署前备份 `frontend-before-v1.99-20261021-1109.tar.gz`（8,487,687 B · sha256 `3d8587dc…`）；staging /srv/data/deploy-v1.99-20261021-1109/frontend 核验 110 文件、0 preview 后，rsync -a --delete 覆盖 /opt/libiaolink/frontend/dist/，未重启 web。公网 index.html 586 B · `22438ada…` / JS 1,409,720 B · `87e25d2d…` / CSS 154,052 B · `6e0e7993…` 与本地逐字节一致；/healthz /readyz 200，5 容器 healthy。无 DDL / 迁移 / Secret / 依赖变化。 | px |
+| v1.98 | 2026-10-21 | 项目总览导出字体改为自托管思源黑体（Push 404 / 405 · PR [#535](https://github.com/PanXing-Libiao/LibiaoLink/pull/535) · 功能提交 00d2b0ed · PR CI [39533228155](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39533228155) 4 / 4 · squash 5bb1277c · main CI [39533419644](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39533419644) 4 / 4，另有 Dependabot [39533545665](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39533545665) 通过）：frontend-only 包 frontend-v1.98-5bb1277-20261021-1035.tar.gz（8,467,451 B · sha256 287480fb…）已上传 /srv/data/backups/；部署前备份 frontend-before-v1.98-20261021-1035.tar.gz（3,922,037 B · sha256 802f31ba…）；staging /srv/data/deploy-v1.98-20261021-1035/frontend 核验 110 文件、98 字体分片后，rsync -a --delete 覆盖 /opt/libiaolink/frontend/dist/，未重启 web。6 容器 healthy（worker / api / web / onlyoffice-docs / minio / postgres），/healthz 与 /readyz 200，ready 检查 postgres:connect、table:projects、table:outbox_events、object-storage:head-bucket 全通过；公网 index.html 引用 index-BDYSwElB.js，JS 1,406,066 B · sha256 6b1a1ec1…、CSS 154,052 B · 6e0e7993…、字体分片 noto-sans-sc-latin-wght-normal-DDW8mKAR.woff2 24,880 B · cf5346b0…、许可证 4,314 B · 18aabf19… 均与本地逐字节一致。无 DDL / 迁移 / Secret / API 变化。 | px |
+| v1.97 | 2026-10-21 | 仪表盘 B4 服务端聚合部署（Push 401 / 402 · PR [#530](https://github.com/PanXing-Libiao/LibiaoLink/pull/530) · PR CI [39529069084](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39529069084) 4 / 4 · squash `1fdc564b` · main CI [39529261575](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39529261575) 4 / 4；修复 PR [#532](https://github.com/PanXing-Libiao/LibiaoLink/pull/532) · PR CI [39530204441](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39530204441) 4 / 4 · squash `07b6644f` · main CI [39530362620](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39530362620) 4 / 4）：前端首屏改 `GET /api/v1/dashboard/progress` 一次聚合，`issues` / `change-words` 按视图懒加载，服务端统一按 `PermissionService.projectScope` 裁剪。三包 `server-v1.97-1fdc564-20261021-0947.tar.gz`（42,429,118 B · sha256 `85249201…`）/ `shared-v1.97-1fdc564-20261021-0947.tar.gz`（343,540 B · `2016965e…`）/ `frontend-v1.97-1fdc564-20261021-0947.tar.gz`（3,912,620 B · `2057a7ee…`）已上传 `/srv/data/backups/`；部署前备份 server（42,404,101 B · `7de9a168…`）/ shared（357,617 B · `d92e0aae…`）/ frontend（3,922,658 B · `fa5790ef…`）。staging `/srv/data/deploy-v1.97-20261021-0947` 核验后覆盖 `/opt/libiaolink`；server / shared 覆盖后 restart api / worker；真库冒烟首跑 progress 500，PR #532 热更新 `dashboard.repository.js`（sha256 `44cb4c93…`）后三接口均 200：progress 69 任务 / 4 项目（逐项目合计 69）、issues 14 / 2、change-words 5 / 2，临时会话已清理。frontend `rsync --delete` 覆盖 dist 未重启 web；5 容器 healthy，`/healthz` `/readyz` 200，未登录三端点 401，公网 `index-B9fuX9vp.js`（1,298,046 B · `0521be0c…`）与 `index-BK7iJa__.css`（154,052 B · `6e0e7993…`）和本地逐字节一致。无 DDL / 迁移 / Secret / 依赖变化。 | px |
 | v1.96 | 2026-10-20 | 账号菜单顺序调整（Push 400 · PR [#525](https://github.com/PanXing-Libiao/LibiaoLink/pull/525) · PR CI [39427393294](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39427393294) 4 / 4 · squash `db5b3c26` · main CI [39427652383](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39427652383) 4 / 4）：账号菜单改为「文件库 /〔操作记录〕/ 企微绑定 / 退出登录」，各入口落点与权限不变，操作记录仍仅 `audit.view` 渲染。frontend-only 包 `frontend-v1.96-db5b3c2-20261020-2109.tar.gz`（3,912,795 B · sha256 `3010b139e96452dec20e2b23778ecc03df71584dbe73488e24053b06a3f8ebf9`）；部署前备份 `/srv/data/backups/frontend-before-push400-20261020-2109.tar.gz`（3,924,173 B · sha256 `f4f8b78276b06cd10d56095013f8a8c04796d6f6711b0363912301225c38e350`）；staging 解包核验后 rsync 覆盖，线上与 staging `diff -qr` 无差异，未重启 web；5 容器 healthy，公网 `/healthz` / `/readyz` 200，公网 `index.html` `4537d10d…` / JS `eb788ee7…` / CSS `1e51a28c…` / CadViewer `2956eb77…` 与本地逐字节一致；真浏览器确认菜单顺序「文件库 / 操作记录 / 企微绑定 / 退出登录」。无 DDL / 迁移 / Secret / 依赖变化。 | px |
 | v1.95 | 2026-10-20 | 导入预览取消文件选择后弹层自身滚动修复（Push 399 · PR [#522](https://github.com/PanXing-Libiao/LibiaoLink/pull/522) · PR CI [39403696173](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39403696173) 4 / 4 · squash `c0601ee0` · main CI [39403883431](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39403883431) 4 / 4）：弹层根节点 `overflow-hidden` → `overflow-clip`，阻止取消系统文件框时焦点恢复把弹层自身滚到约 406px；内部 `ScrollArea` 滚动不变。frontend-only 包 `frontend-v1.95-c0601ee-20261020-1754.tar.gz`（3,912,598 B · sha256 `809a78fb263c22798685ebd7b3552dcb2cb81e6ef6621042cc807d894cd36131`）；部署前备份 `/srv/data/backups/frontend-before-push399-20261020-1754.tar.gz`（3,923,418 B · sha256 `4bcf291b83b554355946cb0d552b569b35e1de7f0c9cc0a97dce052fb043cf00`）；staging 与线上逐文件一致，rsync 覆盖后未重启 web；5 容器 healthy，公网 `/healthz` / `/readyz` 200，`index.html` `957c0cd2…` / JS `06ccc9e3…` / CSS `1e51a28c…` / CadViewer `5afa8620…` 与本地逐字节一致，线上 CSS 含 `.overflow-clip{overflow:clip}`。无 DDL / 迁移 / Secret / 依赖变化。 | px |
 | v1.94 | 2026-10-20 | 导入变更补 R01 自动关联 + 变更后文件状态修正（Push 398 · PR [#520](https://github.com/PanXing-Libiao/LibiaoLink/pull/520) · PR CI [39401551340](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39401551340) 4 / 4 · squash `c7030df1` · main CI [39401770738](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39401770738) 4 / 4）：R01 在「关联」列外按「变更文件 = 任务输出成果文件」补挂任务，手动变更后文件随 `manualTargets.taskId` 直传，回挂状态修为 `changed`，文件库显示「已变更」。部署件 `server-v1.94-c7030df-20261020-1738.tar.gz`（43,072,753 B · sha256 `5ecc16c207af654ecb539742a4d0197c257ba6d414d6a59bae569c32c16dec75`）/ `shared-v1.94-c7030df-20261020-1738.tar.gz`（336,163 B · sha256 `325a5f6c0c8482c707176bc5f3d40d764ba35dddb6a20639d986bc51ef8dd394`）/ `frontend-v1.94-c7030df-20261020-1738.tar.gz`（3,912,581 B · sha256 `2f126b5789341e919588ae78ba8c19779392d93180b68277be3a815937abe8f6`）与累计包 `deploy-bundle-v1.94-c7030df-20261020-1738.tar.gz`（47,304,328 B · sha256 `671eb334fd51a01743a47c27819e578f87a06ca6ea79ffd66106fe122c40edd2`）已上传 `/srv/data/backups/` 并远端 sha256 对账一致；部署前备份 `server-before-v1.94-20261020-1738.tar.gz`（90,711,985 B · `504b5490…`）/ `shared-before-v1.94-20261020-1738.tar.gz`（752,141 B · `01fef626…`）/ `frontend-before-v1.94-20261020-1738.tar.gz`（4,079,242 B · `d887a2dd…`）。staging 与线上逐文件一致，rsync 覆盖后重启 api / worker；5 容器 healthy，公网 `/healthz` / `/readyz` 200（四探针全 true），api / worker 近 5 分钟 0 ERROR / FATAL / SIGILL。公网 `index.html` `d3d0af83…` / JS `8eda2c47…` / CSS `b2a63898…` / CadViewer `8531f3be…` / OCCT `b60e93a6…` / runtime `bbf7c508…` 与本地逐字节一致。无 DDL / 迁移 / Secret / 依赖变化。 | px |

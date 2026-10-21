@@ -83,6 +83,52 @@ services:
         max-file: "3"
     networks: [prod]
 
+  # svg-preview：H1 · S4 SVG 安全栅格化器（execution 边界见 deploy/svg-preview/README.md）。
+  # 只挂 internal 网络、不发布宿主端口；worker 经服务名 svg-preview:9900 调用。镜像 tag + digest 双锁。
+  svg-preview:
+    image: ${SVG_PREVIEW_IMAGE:-libiaolink/svg-preview:2.0.0@sha256:eaee947e1e6a9e4b3ea7e7057e76e4ac45ac6209fb470593c46686ec7a474282}
+    container_name: libiaolink-prod-svg-preview
+    profiles: ["app"]
+    restart: unless-stopped
+    init: true
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=${SVG_PREVIEW_TMPFS:-128m},mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      PORT: "9900"
+      PIPELINE_VERSION: "2.0.0"
+      FONTS_DIR: "/app/fonts"
+      CONVERT_TIMEOUT_MS: "${SVG_PREVIEW_TIMEOUT_MS:-10000}"
+      CONVERT_MAX_CONCURRENCY: "1"
+      CONVERT_MAX_QUEUE: "${SVG_PREVIEW_MAX_QUEUE:-4}"
+      SVG_MAX_SOURCE_BYTES: "20971520"
+      SVG_MAX_OUTPUT_BYTES: "20971520"
+      SVG_MAX_LONG_EDGE: "4096"
+      SVG_MAX_PIXELS: "16777216"
+      SVG_MAX_ASPECT_RATIO: "16"
+      SVG_MAX_NATURAL_EDGE: "1000000"
+      SVG_MAX_ELEMENTS: "100000"
+    mem_limit: ${SVG_PREVIEW_MEM_LIMIT:-256m}
+    cpus: ${SVG_PREVIEW_CPUS:-1}
+    pids_limit: ${SVG_PREVIEW_PIDS:-64}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9900/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    stop_grace_period: 15s
+    networks: [preview-internal]
+
   # 一次性运维容器（profile: tools）：数据库迁移 / 种子 / 依赖安装 / 一次性脚本。
   # 平时不运行；用法：bash scripts/db-migrate.sh、bash scripts/db-seed.sh（见 README 第 6 节）。
   tools:
@@ -175,6 +221,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      svg-preview:
+        condition: service_started
     mem_limit: ${WORKER_MEM_LIMIT:-768m}
     cpus: ${WORKER_CPUS:-1}
     pids_limit: 512
@@ -191,7 +239,7 @@ services:
       options:
         max-size: "20m"
         max-file: "3"
-    networks: [prod]
+    networks: [prod, preview-internal]
 
   # web：Nginx 唯一对外入口（80 → 301；443 = 应用；9443 = MinIO https 门面 → minio:9000）。
   # SPA 静态（frontend build 产物 → /srv/www）+ 反代 /api/v1 /auth /healthz /readyz → api:3000；/internal/** 不对外。
@@ -234,6 +282,9 @@ services:
 networks:
   prod:
     name: libiaolink-prod
+  preview-internal:
+    name: libiaolink-svg-preview-internal
+    internal: true
 
 volumes:
   pgdata:

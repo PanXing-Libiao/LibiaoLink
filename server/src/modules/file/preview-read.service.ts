@@ -11,8 +11,9 @@ import { FileRepository, type FileRow, type FileVersionRow } from "./file.reposi
 import { buildPreviewContentUrl, signHs256Jwt } from "./onlyoffice.jwt.js";
 import { buildPreviewJobPayload, PREVIEW_JOB_TOPIC, previewJobDedupeKey, type PreviewTarget } from "./preview.job.js";
 import { PreviewRepository, type PreviewArtifactKey, type PreviewArtifactRow } from "./preview.repository.js";
+import { isCadPreviewPending, isRasterImageFile, previewTargetsFor, viewerChannelFor, type ViewerChannel } from "./preview.targets.js";
+import { CAD_ENGINE_VERSION } from "./cad-engine.client.js";
 import { canonicalMimeForExtension, OCTET_STREAM_MIME } from "./file-mime.js";
-import { isCadFile, isRasterImageFile, previewTargetsFor, viewerChannelFor, type ViewerChannel } from "./preview.targets.js";
 
 type FilePreviewResponse = z.infer<typeof FilePreviewResponseSchema>;
 
@@ -35,24 +36,25 @@ const VIEWER_PERMISSIONS = {
 /**
  * 预览读 API（M4-05 读面 · `GET /files/{id}/preview` · 契约 shared/src/modules/files.ts）。
  *
- * 就绪通道（S6-前置 起图片直签 + 查看器通道均同步 ready；产物通道段保留但无投递，见下）：
- * - **图片直签**（S6-前置 · D6）：`isImageFile` → 原对象**短时签名直出**（D2-04：对象存储禁匿名读取）——
+ * 就绪通道（S6-前置 图片直签 + 查看器通道；H1 S4 起 SVG PNG 产物通道恢复投递，见下）：
+ * - **安全位图直签**（H1 S2）：`isRasterImageFile` → 原对象**短时签名直出**（D2-04：对象存储禁匿名读取）——
  *   status=ready、target=image、`pipelineVersion` / `generatedAt` 空（无产物语义）；不查 / 不落产物行、
- *   不投转换任务、不经 `deploy/preview`（字节 = 原对象）。
+ *   不投转换任务、不经栅格化器（字节 = 原对象）。
  * - **查看器通道**（S3 · ADR-030；PDF 2026-10-08 并入）：Office / 文本族 / PDF → `viewer` 非空、`target` / `url` 空，
  *   与产物通道互斥（契约 FilePreviewResponse.viewer）；不走产物表、不投递转换任务，就绪即签发只读查看器配置。
  *
- * **产物通道三态（M4-05d · 保留段）**：S6-前置 起 `previewTargetsFor` 无投递通道（图片改直签、其余走查看器）——
- * 该段对新请求**不可达**，保留 = structured 二期启用投递后复用（S6 退役评审另行处置）：
+ * **产物通道三态（M4-05d · H1 S4 起 SVG 可达）**：SVG 恢复 `target=image` 的 PNG 产物投递；图片仍走原对象直签，
+ * 其余类型按查看器 / 降级处理。structured 二期启用投递时复用同一段：
  * - `ready`：三元组命中产物 → 短时签名地址；
  * - `not_ready`：**同事务**登记产物行（首次）+ 幂等补投 `preview.job`（去重键 = 三元组）→ 前端轮询；
  * - `failed`：返回 `preview_artifacts.error`（≤ 500 字）供前端降级「请下载查看」（D2-05），**不原地重试**
  *   （缓存态：管线修复靠 `PREVIEW_PIPELINE_VERSION` 递增失效）。
  *
- * 读取侧的两个**终态降级**（不落表、不投任务 —— 判不出来就永远不会有产物，落表只堆垃圾行，投任务只烧转换配额）：
+ * 读取侧的**终态降级**（不落表、不投任务）：
  * - 文件尚无版本（未完成过上传）：`failed` + 「尚无版本」；
+ * - CAD（ADR-035）：启用运行环境时 STEP 返回独立查看入口，其余保留提示与原文件下载；
  * - 判不出渲染通道（如 `.zip`）：`failed` + 「暂不支持在线预览」。
- * 两者都返回 `failed` 而不是 `not_ready`，是为了让前端**轮询有终点**（契约：前端轮询至 ready / failed）。
+ * 返回 `failed` 而不是 `not_ready`，是为了让前端**轮询有终点**（契约：前端轮询至 ready / failed）。
  *
  * 权限 = 项目可见即可（Push 160 定案，同文件详情 / 版本链：不可见 / 不存在统一 404，防 IDOR）；
  * 版本 404：`versionId` 给定但不属于该文件 / 不存在（A4-06「任意历史版本可预览」，缺省 = 当前版本）。
@@ -74,7 +76,7 @@ export class PreviewReadService {
     private readonly config: AppConfig,
   ) {}
 
-  /** `GET /files/{id}/preview`：文件可见性 → 目标版本 → 通道判定（图片直签 / 查看器 / 产物通道三态保留段）。 */
+  /** `GET /files/{id}/preview`：文件可见性 → 目标版本 → 通道判定（SVG 产物 / 图片直签 / 查看器 / 降级）。 */
   async getPreview(fileId: string, versionId: string | null, actorId: string): Promise<FilePreviewResponse> {
     const file = await this.loadVisibleFile(fileId, actorId);
     const version = await this.resolveVersion(file, versionId);
@@ -87,6 +89,18 @@ export class PreviewReadService {
     // 新版本按新扩展名判通道（否则 ONLYOFFICE 报 -85「扩展名不一致」）；历史版本仍按各自旧扩展名判通道
     //（否则历史的 xls 内容会被当成 pptx）。
     const channelName = versionFileName(file.name, version.objectKey);
+
+    // ADR-035：旧解析器已删除。先按版本扩展名拦截，避免误报 image/Office MIME 再签出原 CAD。
+    if (isCadPreviewPending({ fileName: channelName })) {
+      if (this.config.env.CAD_ENGINE_PYTHON && /\.(step|stp)$/i.test(channelName)) {
+        return {
+          fileId: file.id, versionId: version.id, status: "ready", target: null,
+          viewer: { kind: "cad", fileId: file.id, versionId: version.id, sourceSHA256: version.contentHash, engineVersion: CAD_ENGINE_VERSION },
+          url: null, expiresAt: null, pipelineVersion: null, generatedAt: null, reason: null,
+        };
+      }
+      return this.degrade(file.id, version.id, "CAD 在线预览正在升级，暂不可用，请下载原文件查看");
+    }
 
     // H1 · S2：SVG 永远先走目标产物通道，绝不落入下面的原对象直签分支。
     const targets = previewTargetsFor({ fileName: channelName, mime: version.mime });
@@ -142,11 +156,6 @@ export class PreviewReadService {
     // 只有扩展名与规范 MIME 完全匹配的安全位图才允许原对象直签。
     if (isRasterImageFile({ fileName: channelName, mime: version.mime })) {
       return this.serveRasterImageDirect(file, version, channelName);
-    }
-
-    // ADR-031：CAD 三维族 → 原对象短时签名；响应强制 octet-stream，CadViewer 只读字节。
-    if (isCadFile({ fileName: channelName, mime: version.mime })) {
-      return this.serveCadDirect(file, version);
     }
 
     // Office / 文本族 / PDF → ONLYOFFICE 查看器通道。HTML / HTM 已从查看器族移除：
@@ -240,36 +249,6 @@ export class PreviewReadService {
       expiresInSeconds: this.config.env.PREVIEW_URL_TTL_SECONDS,
       responseContentType: responseType,
       responseContentDisposition: contentDisposition(versionFileName(file.name, version.objectKey), "inline"),
-    });
-    return {
-      fileId: file.id,
-      versionId: version.id,
-      status: "ready",
-      target: "image",
-      viewer: null,
-      url: signed.url,
-      expiresAt: signed.expiresAt.toISOString(),
-      pipelineVersion: null,
-      reason: null,
-      generatedAt: null,
-    };
-  }
-
-  /**
-   * CAD 三维直签 ready（ADR-031 · 2026-10-13）：与图片直签同口径 —— 原对象短时签名直出（status=ready、
-   * target=image —— 契约 FilePreviewResponse.target 渲染通道枚举按「浏览器渲染方式」定义，三维模型在浏览器
-   * WebGL 渲染、前端按 kind=cad3d 分流到 CadViewer 组件）；pipelineVersion / generatedAt 空（无产物语义）；
-   * 不查 / 不落产物行、不投转换任务（解析在浏览器端 occt WASM / three.js Loader 完成）。不写审计（Push 283 口径）。
-   */
-  private async serveCadDirect(
-    file: FileRow,
-    version: FileVersionRow,
-  ): Promise<FilePreviewResponse> {
-    const signed = await this.storage.signDownloadUrl({
-      objectKey: version.objectKey,
-      expiresInSeconds: this.config.env.PREVIEW_URL_TTL_SECONDS,
-      responseContentType: OCTET_STREAM_MIME,
-      responseContentDisposition: contentDisposition(versionFileName(file.name, version.objectKey), "attachment"),
     });
     return {
       fileId: file.id,

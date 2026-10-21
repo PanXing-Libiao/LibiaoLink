@@ -210,6 +210,26 @@ export class NotifyGroupRepository {
     return areAllProjectTasksOnTime(rows, at);
   }
 
+  /**
+   * R06 火箭动画门槛：项目状态为 done，且项目内未删任务全部完成、全部按期。
+   * 项目不存在 / 已软删 / 非 done / 无任务 / 任一完成或按期不满足 = false。
+   */
+  async isProjectCompletedWithAllTasksOnTime(
+    projectId: string,
+    at: Date,
+    client: DbClient = this.database.db,
+  ): Promise<boolean> {
+    const projectRows = await client
+      .select({ status: projects.status })
+      .from(projects)
+      .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)))
+      .limit(1);
+    if (projectRows[0]?.status !== "done") {
+      return false;
+    }
+    return await this.areProjectTasksAllOnTime(projectId, at, client);
+  }
+
   /** 回调 ingest：会话激活置位（仅未激活行命中；已激活 / 未绑定返回 null —— 幂等）。 */
   async activateByChatid(chatid: string, at: Date, client: DbClient = this.database.db): Promise<WecomGroupRow | null> {
     const rows = await client

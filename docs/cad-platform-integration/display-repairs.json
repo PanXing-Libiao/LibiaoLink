@@ -1,0 +1,244 @@
+{
+  "format": "libiaolink-cad-repair-records/1",
+  "reports": [
+    {
+      "format": "libiaolink-cad-report/1",
+      "fileId": "22222222-2222-4222-8222-000000000001",
+      "versionId": "66666666-6666-4666-8666-000000000001",
+      "sourceSHA256": "1dc0d7d1675a657ab20e67596d8e3d2c4d01add86b5a6f7f6386ba472fedb596",
+      "engineVersion": "step-0.3.3/38135e606ae560d6b808c7544f25c0a592df7311/gateway-1",
+      "report": {
+        "format": "cad-step-display-repairs/1",
+        "documentId": "document-1dc0d7d1675a657ab20e67596d8e3d2c4d01add86b5a6f7f6386ba472fedb596",
+        "documentRevision": "3d4e603a2a5c64a8ed321750236faf85d2ec10826f56a65140713db7270554fe",
+        "sources": [
+          {
+            "id": "source-1dc0d7d1675a657ab20e67596d8e3d2c4d01add86b5a6f7f6386ba472fedb596",
+            "name": "W01_asm635_main_asm.stp",
+            "sha256": "1dc0d7d1675a657ab20e67596d8e3d2c4d01add86b5a6f7f6386ba472fedb596",
+            "byteLength": 2720220,
+            "format": "STEP"
+          }
+        ],
+        "count": 2,
+        "notice": "这些面使用显示近似修复；面积和体积仍按源面及已声明的排除范围统计。",
+        "faces": [
+          {
+            "productName": "KEYPAD",
+            "productId": "product-7bfdb56dd9acb514aaf21b7bbf54fc1e1fb79dd73967550382b7ac7fca483768",
+            "entry": "0:1:1:26",
+            "face": 147,
+            "triangles": 2100,
+            "rings": 11,
+            "areaMM2": 2.143006108147602,
+            "areaRatio": 0.9995466987846297,
+            "maxDeviationMM": 0.005464635130875411,
+            "trim": "single-pcurve-loop-classified",
+            "reason": "pcurve-region-fallback",
+            "validation": {
+              "kind": "finite-sampled-display-repair",
+              "classifier": "BRepClass_FaceClassifier OCCT 7.8.1",
+              "uvTolerance": 1e-07,
+              "classificationCounts": {
+                "IN": 25394,
+                "ON": 303
+              },
+              "samplesPerTriangle": 7,
+              "boundaryMeasuredMaximumMM": 0.001268973928867209,
+              "pairedSurfaceMeshMeasuredMaximumMM": 0.005464635130875411,
+              "deviationMeaning": "Euclidean distance of paired UV surface and barycentric mesh samples; sampled correspondence in both directions, not Hausdorff maximum",
+              "degenerateBoundaryEdges": 2,
+              "boundaryInsetRatio": 0.9996608681976795,
+              "areaCheck": {
+                "policy": "step-display-area/2",
+                "accepted": true,
+                "sourceAreaMM2": 2.1439779759698365,
+                "meshAreaMM2": 2.143006108147602,
+                "absoluteErrorMM2": 0.0009718678222343513,
+                "relativeError": 0.000453301215370332,
+                "maximumErrorMM2": 0.04287955951939673,
+                "microFace": false,
+                "criterion": "relative-2-percent"
+              },
+              "float32AreaCheck": {
+                "policy": "step-display-area/2",
+                "accepted": true,
+                "sourceAreaMM2": 2.1439779759698365,
+                "meshAreaMM2": 2.1430052370680355,
+                "absoluteErrorMM2": 0.0009727389018010513,
+                "relativeError": 0.00045370750665525337,
+                "maximumErrorMM2": 0.04287955951939673,
+                "microFace": false,
+                "criterion": "relative-2-percent"
+              },
+              "sourceBoundarySamples": 156,
+              "collapsedBoundaryTriangles": 0,
+              "mathematicalMaximumBound": false
+            }
+          },
+          {
+            "productName": "KEYPAD",
+            "productId": "product-7bfdb56dd9acb514aaf21b7bbf54fc1e1fb79dd73967550382b7ac7fca483768",
+            "entry": "0:1:1:26",
+            "face": 155,
+            "triangles": 1700,
+            "rings": 9,
+            "areaMM2": 1.4284931057788675,
+            "areaRatio": 0.9994224887936344,
+            "maxDeviationMM": 0.0033425635440404414,
+            "trim": "single-pcurve-loop-classified",
+            "reason": "pcurve-region-fallback",
+            "validation": {
+              "kind": "finite-sampled-display-repair",
+              "classifier": "BRepClass_FaceClassifier OCCT 7.8.1",
+              "uvTolerance": 1e-07,
+              "classificationCounts": {
+                "IN": 22396,
+                "ON": 301
+              },
+              "samplesPerTriangle": 7,
+              "boundaryMeasuredMaximumMM": 0.0005640079875367728,
+              "pairedSurfaceMeshMeasuredMaximumMM": 0.0033425635440404414,
+              "deviationMeaning": "Euclidean distance of paired UV surface and barycentric mesh samples; sampled correspondence in both directions, not Hausdorff maximum",
+              "degenerateBoundaryEdges": 2,
+              "boundaryInsetRatio": 0.9999468363821507,
+              "areaCheck": {
+                "policy": "step-display-area/2",
+                "accepted": true,
+                "sourceAreaMM2": 1.429318553260842,
+                "meshAreaMM2": 1.4284931057788675,
+                "absoluteErrorMM2": 0.0008254474819744395,
+                "relativeError": 0.0005775112063656256,
+                "maximumErrorMM2": 0.028586371065216838,
+                "microFace": false,
+                "criterion": "relative-2-percent"
+              },
+              "float32AreaCheck": {
+                "policy": "step-display-area/2",
+                "accepted": true,
+                "sourceAreaMM2": 1.429318553260842,
+                "meshAreaMM2": 1.4284918962714879,
+                "absoluteErrorMM2": 0.0008266569893540243,
+                "relativeError": 0.000578357418972903,
+                "maximumErrorMM2": 0.028586371065216838,
+                "microFace": false,
+                "criterion": "relative-2-percent"
+              },
+              "sourceBoundarySamples": 156,
+              "collapsedBoundaryTriangles": 0,
+              "mathematicalMaximumBound": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "format": "libiaolink-cad-report/1",
+      "fileId": "22222222-2222-4222-8222-000000000002",
+      "versionId": "66666666-6666-4666-8666-000000000002",
+      "sourceSHA256": "8beb257cb915240f7012474c2dcfb55a820a343abde082faadeacfdbe93823ce",
+      "engineVersion": "step-0.3.3/38135e606ae560d6b808c7544f25c0a592df7311/gateway-1",
+      "report": {
+        "format": "cad-step-display-repairs/1",
+        "documentId": "document-8beb257cb915240f7012474c2dcfb55a820a343abde082faadeacfdbe93823ce",
+        "documentRevision": "c616699338729ec709b35a1942e1eb1b68fea0cde0e10193d8d23069e2bb71be",
+        "sources": [
+          {
+            "id": "source-8beb257cb915240f7012474c2dcfb55a820a343abde082faadeacfdbe93823ce",
+            "name": "N02_KR600_R2830-4.stp",
+            "sha256": "8beb257cb915240f7012474c2dcfb55a820a343abde082faadeacfdbe93823ce",
+            "byteLength": 12587505,
+            "format": "STEP"
+          }
+        ],
+        "count": 1,
+        "notice": "这些面使用显示近似修复；面积和体积仍按源面及已声明的排除范围统计。",
+        "faces": [
+          {
+            "productName": "Grep3AD1ka2p",
+            "productId": "product-4fb4f3202e963616345dc1420b9a8d4235552b8bdd05af60d849c95322bda337",
+            "entry": "0:1:1:1",
+            "face": 2273,
+            "triangles": 333,
+            "rings": 0,
+            "areaMM2": 0.00048763805757283456,
+            "areaRatio": 1.0178691928009949,
+            "maxDeviationMM": 0.005168600322701441,
+            "trim": "independent-source-surface-chart",
+            "reason": "independent-gmsh-source-face",
+            "validation": {
+              "kind": "independent-finite-sampled-display-repair",
+              "classifier": "BRepClass_FaceClassifier OCCT 7.8.1",
+              "uvTolerance": 1e-07,
+              "samplesPerTriangle": 7,
+              "classificationCounts": {
+                "IN": 2237,
+                "ON": 94
+              },
+              "areaCheck": {
+                "policy": "step-display-area/2",
+                "accepted": true,
+                "sourceAreaMM2": 0.0004790773323544074,
+                "meshAreaMM2": 0.0004868837616521303,
+                "absoluteErrorMM2": 7.806429297722872e-06,
+                "relativeError": 0.016294716469590558,
+                "maximumErrorMM2": 2e-05,
+                "microFace": true,
+                "criterion": "relative-2-percent"
+              },
+              "float32AreaCheck": {
+                "policy": "step-display-area/2",
+                "accepted": true,
+                "sourceAreaMM2": 0.0004790773323544074,
+                "meshAreaMM2": 0.00048763805757283456,
+                "absoluteErrorMM2": 8.560725218427153e-06,
+                "relativeError": 0.017869192800994766,
+                "maximumErrorMM2": 2e-05,
+                "microFace": true,
+                "criterion": "relative-2-percent"
+              },
+              "boundaryChecks": {
+                "rejectionReasons": [],
+                "meshBoundaryEdges": 95,
+                "maximumAllowedMM": 0.08,
+                "mathematicalMaximumBound": false,
+                "sourceWireCount": 1,
+                "meshBoundaryComponents": 1,
+                "sourcePCurveJoinMaximumMM": 0.010598403407285281,
+                "sourceToMeshBoundaryMaximumMM": 0.0019326015107783321,
+                "meshToSourceBoundaryMaximumMM": 0.005168600322701441,
+                "sourceSamples": 66,
+                "meshSamples": 475
+              },
+              "pairedSurfaceMeshMeasuredMaximumMM": 0.0001273281832070432,
+              "sourceSurfaceResampled": true,
+              "maximumVertexDisplacementMM": 0.005265099807380195,
+              "float32QuantizationMaximumMM": 0.00012946821316154117,
+              "rewoundTriangles": 0,
+              "sourceFaceReversed": false,
+              "periodicTrianglesAdjusted": 0,
+              "periodicSeamVerticesAdded": 0,
+              "mathematicalMaximumBound": false,
+              "duplicateNodeRowsCollapsed": 0,
+              "engine": "gmsh",
+              "engineVersion": "4.15.2",
+              "sourceFaceBRepSHA256": "9afc95e97bd6f64827fb25a8e60aa673749a2aa13612b8b5410474cfe665682e",
+              "maxElementSizeMM": 0.002,
+              "algorithm": 2
+            },
+            "repairAttempts": [
+              {
+                "method": "independent-gmsh-source-face",
+                "engine": "gmsh",
+                "engineVersion": "4.15.2",
+                "maxElementSizeMM": 0.002,
+                "sourceFaceBRepSHA256": "9afc95e97bd6f64827fb25a8e60aa673749a2aa13612b8b5410474cfe665682e",
+                "status": "accepted"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -43,6 +43,7 @@ export interface OutboxDailyDigest {
   deadRecent: number;
   deadTotal: number;
   byTopic: OutboxStatsSnapshot["byTopic"];
+  deadByTopic: OutboxStatsSnapshot["deadByTopic"];
   recoveries: OutboxDailyDigestRecovery[];
   activeAlerts: OutboxAlertCode[];
 }
@@ -153,6 +154,9 @@ export class LogOutboxAlertSink implements OutboxAlertSink {
     const byTopic = report.byTopic.length === 0
       ? "无"
       : report.byTopic.map((item) => item.topic + " " + item.due).join(" / ");
+    const deadByTopic = report.deadByTopic.length === 0
+      ? "无"
+      : report.deadByTopic.map((item) => item.topic + " " + item.count).join(" / ");
     this.logger.log(
       "outbox 日报：待领取 " +
         report.duePending +
@@ -167,7 +171,9 @@ export class LogOutboxAlertSink implements OutboxAlertSink {
         " / 仍未恢复 " +
         active +
         " / 主题 " +
-        byTopic,
+        byTopic +
+        " / 死信主题 " +
+        deadByTopic,
     );
   }
 }

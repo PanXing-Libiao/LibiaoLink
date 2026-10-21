@@ -144,6 +144,7 @@ export class OutboxAlertProbe {
       deadRecent: snapshot.deadRecent,
       deadTotal: snapshot.deadTotal,
       byTopic: snapshot.byTopic.slice(0, 5),
+      deadByTopic: snapshot.deadByTopic.slice(0, 5),
       recoveries,
       activeAlerts,
     };

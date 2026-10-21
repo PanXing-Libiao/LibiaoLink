@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 160" fill="none">
+  <title>零件拼合与线框描绘</title>
+  <style>
+    .part { stroke: #347d8d; stroke-width: 1.25; stroke-linejoin: round; }
+    .base { animation: base-in 4.8s ease-in-out infinite; }
+    .body { animation: body-in 4.8s cubic-bezier(.22,.68,.2,1) infinite; }
+    .cap { animation: cap-in 4.8s cubic-bezier(.22,.68,.2,1) infinite; }
+    .trace { stroke: #237c90; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 100; animation: trace-in 4.8s ease-in-out infinite; }
+    @keyframes base-in {
+      0%, 100% { transform: translateY(8px); opacity: .2; }
+      18%, 78% { transform: translateY(0); opacity: 1; }
+      94% { transform: translateY(8px); opacity: .2; }
+    }
+    @keyframes body-in {
+      0%, 10%, 100% { transform: translate(-22px,-25px); opacity: 0; }
+      35%, 78% { transform: translate(0,0); opacity: 1; }
+      94% { transform: translate(-22px,-25px); opacity: 0; }
+    }
+    @keyframes cap-in {
+      0%, 27%, 100% { transform: translate(22px,-25px); opacity: 0; }
+      52%, 78% { transform: translate(0,0); opacity: 1; }
+      94% { transform: translate(22px,-25px); opacity: 0; }
+    }
+    @keyframes trace-in {
+      0%, 48%, 100% { stroke-dashoffset: 100; opacity: 0; }
+      53% { opacity: .9; }
+      76% { stroke-dashoffset: 0; opacity: .9; }
+      86%, 94% { stroke-dashoffset: 0; opacity: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .base, .body, .cap, .trace { animation: none; transform: none; opacity: 1; }
+      .trace { stroke-dashoffset: 0; opacity: .35; }
+    }
+  </style>
+  <g stroke="#b8cbd3" stroke-width=".8">
+    <path d="m20 111 76-38 76 38-76 38-76-38Z" stroke-dasharray="2 4"/>
+    <path d="m58 92 76 38M134 92l-76 38M96 17v128" stroke-dasharray="2 5" opacity=".6"/>
+    <path d="M16 111h8m-4-4v8m148-4h8m-4-4v8M92 149h8m-4-4v8"/>
+  </g>
+  <g class="base part">
+    <path d="m36 108 60 30v7l-60-30Z" fill="#d1e1e7"/>
+    <path d="m96 138 60-30v7l-60 30Z" fill="#a9c6d0"/>
+    <path d="m36 108 60-30 60 30-60 30Z" fill="#ecf3f6"/>
+    <path d="m49 108 47-23 47 23-47 23Z" stroke="#b2cdd7" stroke-width=".8"/>
+    <ellipse cx="53" cy="109" rx="3" ry="1.5" fill="#f4f7f9"/>
+    <ellipse cx="139" cy="109" rx="3" ry="1.5" fill="#f4f7f9"/>
+  </g>
+  <g class="body part">
+    <path d="m62 70 34 17v25L62 95Z" fill="#a8ccd5"/>
+    <path d="m96 87 34-17v25l-34 17Z" fill="#78aebb"/>
+    <path d="m62 70 34-17 34 17-34 17Z" fill="#dbeef2"/>
+    <ellipse cx="96" cy="70" rx="10" ry="5" fill="#f4f7f9"/>
+    <path d="m69 83 18 9m15 6 21-10" stroke="#e2f0f3" stroke-width="1"/>
+  </g>
+  <g class="cap part">
+    <path d="m66 49 30 15v6L66 55Z" fill="#d3e6eb"/>
+    <path d="m96 64 30-15v6L96 70Z" fill="#95bdc9"/>
+    <path d="m66 49 30-15 30 15-30 15Z" fill="#f4fafb"/>
+    <ellipse cx="96" cy="49" rx="8" ry="4" fill="#c0dce4"/>
+  </g>
+  <path class="trace" pathLength="100" d="m66 49 30-15 30 15v6l-30 15-30-15v-6l30 15 30-15M96 64v6m34 0v25l26 13v7l-60 30-60-30v-7l26-13V70m-26 38 60 30 60-30M96 138v7"/>
+</svg>
