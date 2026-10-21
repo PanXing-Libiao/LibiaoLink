@@ -1,7 +1,7 @@
 # ADR-034 SVG 预览安全栅格化（原始 SVG 永不内联 · PNG 预览）
 
-- 状态：已采纳（Accepted · 2026-10-20：wmj 批准架构与契约，PR #518 已合入 main `c53e895`；S2 服务端硬边界已随 PR #523 合并 main `e2b6aab`；S3 栅格化沙箱已随 PR #529 合并 main `acd6113`；S4 主栈接线已随 PR #531 合并 main `db7d5e0`；S5 响应头已实现，PR #534 待评审 / 合入）｜评审：wmj（决策 / 架构 / 契约）、px（前端 / 运维）、lan（服务端）｜起草：lan；决策人：wmj
-- 未闭合项：px 的前端 / 运维复核仍待确认；S2 / S3 / S4 / S5 不得单独部署生产，上线窗口与 S6 同批；S5 的测试机 / 生产响应头与完整 B7 回归待发布窗口执行，S6 未实现；外部 V1.0 源文档同步已按 2026-10-21 指令移出本整改跟踪
+- 状态：已采纳（Accepted · 2026-10-20：wmj 批准架构与契约，PR #518 已合入 main `c53e895`；S2 服务端硬边界已随 PR #523 合并 main `e2b6aab`；S3 栅格化沙箱已随 PR #529 合并 main `acd6113`；S4 主栈接线已随 PR #531 合并 main `db7d5e0`；S5 响应头已随 PR #534 合并 main `660cc80`；S6 自动化矩阵已实现，PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 的 PR CI 已全绿（run `39540053943` 5 / 5，矩阵 25 / 25），PR 待评审合并）｜评审：wmj（决策 / 架构 / 契约）、px（前端 / 运维）、lan（服务端）｜起草：lan；决策人：wmj
+- 未闭合项：S6 PR 尚未合并（PR CI 已全绿），main 连续 3 次全绿、分支保护、测试机 / 生产部署、真实 ONLYOFFICE / CAD 生产样本与旧签名过期复测均未完成；S2 / S3 / S4 / S5 仍不得单独部署生产，上线窗口与 S6 同批；不得以 S1 ~ S5 合入宣称 H1 闭环；外部 V1.0 源文档同步已按 2026-10-21 指令移出本整改跟踪
 - 日期：2026-10-20
 - 依据：`LibiaoLink_安全审查报告_2026-10-19.pdf` H1（第 5 页，High，上线前处理）；`docs/H1-SVG预览同源存储型XSS整改方案.md`；ADR-007（在线预览管道）；ADR-030（Office 链由 ONLYOFFICE 承接）
 
@@ -70,6 +70,7 @@
 
 - `LibiaoLink_安全审查报告_2026-10-19.pdf` H1（第 5 页）
 - `docs/H1-SVG预览同源存储型XSS整改方案.md` §1 ~ §10
+- `docs/H1-SVG预览整改回放证据.md`
 - `docs/adr/ADR-007-在线预览管道.md`
 - `docs/adr/ADR-030-Office预览改由ONLYOFFICE承接.md`
 - `技术设计v0.2-架构与数据模型.md` §5.1 / §5.4

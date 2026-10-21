@@ -1,6 +1,6 @@
 # deploy/svg-preview/ · H1 SVG 安全栅格化沙箱（S3）
 
-> 状态（2026-10-21）：S3 已随 PR [#529](https://github.com/PanXing-Libiao/LibiaoLink/pull/529) 合并到 main `acd6113`；S4 主栈接线已随 PR [#531](https://github.com/PanXing-Libiao/LibiaoLink/pull/531) 合并 main `db7d5e0`。S2 已随 PR #523 合并 `e2b6aab`；服务端 `PREVIEW_PIPELINE_VERSION` 与默认配置已切到 `2.0.0`，生产 Compose 已接 internal-only `svg-preview:9900`。**尚未部署生产**；必须与 S5 / S6 同批完成上线与浏览器回归。
+> 状态（2026-10-21）：S3 已随 PR [#529](https://github.com/PanXing-Libiao/LibiaoLink/pull/529) 合并到 main `acd6113`；S4 主栈接线已随 PR [#531](https://github.com/PanXing-Libiao/LibiaoLink/pull/531) 合并 main `db7d5e0`；S5 已随 PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 合并 main `660cc80`。S2 已随 PR #523 合并 `e2b6aab`；服务端 `PREVIEW_PIPELINE_VERSION` 与默认配置已切到 `2.0.0`，生产 Compose 已接 internal-only `svg-preview:9900`。S6 自动化矩阵已实现且 PR CI 全绿（[run 39540053943](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39540053943) 5 / 5、矩阵 25 / 25），PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 待评审合并。**尚未部署测试机或生产**；必须与 S5 / S6 同批完成上线与浏览器回归。
 >
 > 口径：`docs/adr/ADR-034-SVG预览安全栅格化.md` 与 `docs/H1-SVG预览同源存储型XSS整改方案.md`。外部 V1.0 源文档同条同步已按 2026-10-21 指令移出本整改跟踪；S6 完成前仍不能由本目录或本切片宣称 H1 已闭环。
 
@@ -166,6 +166,8 @@ S4 代码已实现（2026-10-21）：
 4. `PREVIEW_PIPELINE_VERSION` 默认与生产模板均为 `2.0.0`，旧 `1.0.0` 产物保留但不被读取；失败仍为 `failed + reason`，绝不回退到原 SVG 签名。
 5. S4 只交付代码与部署件，不执行生产部署。实际发布前需 px 把同 digest 镜像放入内网 registry / 离线归档，并更新服务器未跟踪的 `server.env`；随后与 S5 / S6 同窗口执行。
 
+S6 已增加独立 CI job，用真实 converter / worker / MinIO / Nginx 与浏览器覆盖转换成功、确定失败、PNG 校验、MIME / 改名绕过、原文件下载与 PDF / Office / CAD 分流；ONLYOFFICE 渲染器在 CI 用本地 `api.js` 桩替代。回放边界与 artifact 见 `docs/H1-SVG预览整改回放证据.md`；真实 DocServer、真实 CAD 生产样本与部署后验收仍需人工完成。
+
 回滚只回退主栈镜像 / 环境接线，**不把 `PREVIEW_PIPELINE_VERSION` 回退到 `1.0.0`、不恢复 SVG 原对象直签**；converter 不可用时预览确定性降级为下载。生产发布前还需由 px 完成镜像归档 / 内网 registry 和部署件校验，另行记录发布证据。
 
 ## 8. 已知限制
@@ -173,4 +175,4 @@ S4 代码已实现（2026-10-21）：
 - 当前镜像约 468 MiB，主要来自 Node 基础镜像与 Noto CJK；生产分发需要 registry 或离线归档策略。
 - 动画、交互 SVG、远程字体 / 图片一律不保留；这是 ADR-034 的有意能力边界，前端只展示静态 PNG。
 - 本服务不做鉴权与租户判断，绝不能直接暴露公网；鉴权、对象读取、哈希与产物登记都在 S4 的主栈 worker 完成。
-- 外部 V1.0 源文档同步已按 2026-10-21 指令移出本整改跟踪；S3 / S4 合入不代表 H1 关闭，S6 完成前不得宣布闭环。
+- 外部 V1.0 源文档同步已按 2026-10-21 指令移出本整改跟踪；S3 / S4 / S5 合入及 S6 自动化实现均不代表 H1 关闭，S6 合并、部署与人工回归完成前不得宣布闭环。

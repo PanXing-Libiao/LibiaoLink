@@ -188,7 +188,7 @@ docker compose exec -T svg-preview node -e "fetch('http://127.0.0.1:9900/healthz
 docker compose exec -T worker node -e "fetch('http://svg-preview:9900/healthz').then(async r=>{console.log(r.status);console.log(await r.text())})"
 ```
 
-`server.env` 必须与模板一致：`PREVIEW_CONVERTER_URL=http://svg-preview:9900`、`PREVIEW_PIPELINE_VERSION=2.0.0`、`PREVIEW_CONVERT_TIMEOUT_MS=15000`、`PREVIEW_CONVERT_MAX_SOURCE_MB=20`。S4 只准备部署件，不在本切片执行生产部署；S5 响应头已实现（PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534)）但尚未发布，S6 完成前不得宣称 H1 闭环。
+`server.env` 必须与模板一致：`PREVIEW_CONVERTER_URL=http://svg-preview:9900`、`PREVIEW_PIPELINE_VERSION=2.0.0`、`PREVIEW_CONVERT_TIMEOUT_MS=15000`、`PREVIEW_CONVERT_MAX_SOURCE_MB=20`。S4 只准备部署件，不在本切片执行生产部署；S5 已随 PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 合并 main `660cc80` 但尚未发布；S6 自动化矩阵已实现且 PR CI 全绿（[run 39540053943](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39540053943) 5 / 5、矩阵 25 / 25），PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 待评审合并。S6 完成并部署验收前不得宣称 H1 闭环。
 
 **升级（改代码后）：**
 
@@ -233,7 +233,7 @@ curl -sk -o /dev/null -w "%{http_code}\n" https://test-pm.libiaorobot.com/readyz
 curl -sk -o /dev/null -w "%{http_code}\n" https://test-pm.libiaorobot.com/         # 200（index.html，SPA 已上线）
 ```
 
-**H1 S5 安全响应头（2026-10-21 已实现，PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 待评审 / 合入，待发布）：**
+**H1 S5 安全响应头（2026-10-21 已随 PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 合并 main `660cc80`，尚未部署）：**
 
 `nginx/libiaolink.conf` 对三条响应面分别下发：
 
@@ -252,6 +252,12 @@ curl -sSI --resolve test-pm.libiaorobot.com:9443:127.0.0.1 https://test-pm.libia
 ```
 
 预期：SPA 的 CSP 为同源应用策略且 `script-src 'self' 'wasm-unsafe-eval'`；`/libiaolink/` 与 9443 的 CSP 必须含 `sandbox` 与 `script-src 'none'`，XFO 均为 `DENY`，三条路径均带 HSTS 与 `nosniff`。随后由 S6 执行 ONLYOFFICE、CAD、导出打印和恶意 SVG 的完整浏览器回归；控制台出现 CSP violation 必须阻断发布。2026-10-21 本地已用固定镜像 `nginx:1.30.5-alpine@sha256:0985e772…` 跑过 `nginx -t` 与等价 curl 断言，Headless Edge 已验证 SPA / WASM / Blob Worker / `srcdoc` 与恶意 SVG sandbox；测试机与生产尚未部署。
+
+**H1 S6 浏览器回归（2026-10-21 已实现，PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 待评审合并；PR CI [39540053943](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39540053943) 5 / 5、矩阵 25 / 25）：**
+
+PR 与 main 的独立 `svg-preview-e2e` job 会从本生产配置派生 CI Nginx（upstream / 证书 / SPA root 只替换运行位置），并运行 `frontend/scripts/h1-svg-preview-e2e.mjs`。本地复跑全链路需同时具备 PostgreSQL、MinIO、api、worker、`svg-preview`、Nginx TLS 与 Chrome；也可在 `frontend/` 配置 `H1_BASE_URL`、`H1_DATABASE_URL`、S3 与 `H1_REQUIRE_HEADERS=1` 后执行 `npm run preview:svg-e2e`。
+
+证据见 `docs/H1-SVG预览整改回放证据.md`；CI artifact 为 `h1-svg-preview-e2e-<run_id>`，含脱敏 `summary.json`、失败截图与服务日志。ONLYOFFICE 自动项只验证 `api.js` / 查看器外壳，真实 DocServer 渲染、真实 CAD 生产样本、测试机 / 生产响应头与旧签名过期复测仍须在发布窗口人工完成。`main` 连续 3 次全绿后，再由 px 把 `svg-preview-e2e` 加入分支保护必需检查。
 
 - 服务器实测（2026-10-13 HTTP 先行）：`/nginx-health` ok、`/healthz` 200、`/readyz` 503（存储占位）、`/` 404（SPA 未传输）、web (healthy)；
 - 服务器实测（2026-10-14 TLS 接入）：证书链校验通过（无 `-k` 请求 200；SAN 匹配）、80 → 301（IP 访问一并收口）、443 `/nginx-health` ok / `/healthz` 200 / `/readyz` 200、9443 门面 `storage:it` 24/24；

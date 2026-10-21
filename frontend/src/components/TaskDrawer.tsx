@@ -1319,7 +1319,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                       </span>
                     )}
                     {previewing && previewKind === "image" ? <span className="shrink-0 text-[10px] text-zinc-400">{t("drawer.file.previewing")}</span> : null}
-                    {previewKind === "pdf" || previewKind === "office" ? (
+                    {previewKind !== null && previewKind !== "image" ? (
                       <button
                         type="button"
                         data-file-preview-open="true"
