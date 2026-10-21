@@ -9,7 +9,7 @@ import type { HubDashView } from "./data/dashboardProgress";
 import { buildMapDistribution, type HubMapDistribution } from "./data/mapProjects";
 import { fetchDashboardChangeWords, fetchDashboardIssues, fetchDashboardProgress } from "./dashboardApi";
 import { loadDicts } from "./dicts";
-import { fetchProjectList, type ApiProject } from "./projectApi";
+import { fetchProjectList } from "./projectApi";
 import { EMPTY_LIST_QUERY, replaceHubView, type HubView } from "./useHashRoute";
 import type { MeResponse } from "./types";
 
@@ -117,7 +117,6 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
   const issuesLoadingRef = useRef(false);
   const wordsStateRef = useRef<"idle" | "loading" | "ready" | "failed">("idle");
   const wordsLoadingRef = useRef(false);
-  const projectsRef = useRef<readonly ApiProject[] | null>(null);
   const settleTimerRef = useRef<number | null>(null);
   const noteText = note === "loading" ? t("hub.loading") : note === "failed" ? t("hub.loadFailed") : note === "none" ? "" : t("hub.capped", { n: note.n, total: note.total });
 
@@ -137,27 +136,27 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
   }, []);
 
   /** 拉统计（纯取数、不落状态）：首转 / 失败重试 / 变更静默刷新共用。 */
-  const pullDashboard = useCallback(async (projects?: readonly ApiProject[]): Promise<DashboardDataset | null> => {
+  const pullDashboard = useCallback(async (): Promise<DashboardDataset | null> => {
     try {
-      return await fetchDashboardProgress(projects ?? projectsRef.current ?? undefined);
+      return await fetchDashboardProgress();
     } catch {
       return null;
     }
   }, []);
 
   /** 拉问题读面（纯取数、不落状态）：首次 / 失败重试 / 变更静默刷新共用。 */
-  const pullIssues = useCallback(async (projects?: readonly ApiProject[]): Promise<DashboardIssueDataset | null> => {
+  const pullIssues = useCallback(async (): Promise<DashboardIssueDataset | null> => {
     try {
-      return await fetchDashboardIssues(projects ?? projectsRef.current ?? undefined);
+      return await fetchDashboardIssues();
     } catch {
       return null;
     }
   }, []);
 
   /** 拉词频图读面（纯取数、不落状态）：首次 / 失败重试 / 变更静默刷新共用。 */
-  const pullWords = useCallback(async (projects?: readonly ApiProject[]): Promise<DashboardWordDataset | null> => {
+  const pullWords = useCallback(async (): Promise<DashboardWordDataset | null> => {
     try {
-      return await fetchDashboardChangeWords(projects ?? projectsRef.current ?? undefined);
+      return await fetchDashboardChangeWords();
     } catch {
       return null;
     }
@@ -343,7 +342,6 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
         if (cancelled) {
           return;
         }
-        projectsRef.current = list.items;
         setDistribution(buildMapDistribution(list.items, dicts));
         setNote(list.items.length < list.total ? { kind: "capped", n: list.items.length, total: list.total } : "none");
       } catch {
@@ -363,13 +361,12 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
   useLiveRefresh(["projects", "dicts", "tasks", "permissions", "users"], async () => {
     const [list, dicts] = await Promise.all([fetchProjectList(EMPTY_LIST_QUERY), loadDicts()]);
     /** 统计只在已就绪后才跟着刷新（没转过场就不预拉）。 */
-    const nextDash = dashStateRef.current === "ready" ? ((await pullDashboard(list.items)) ?? dash) : dash;
+    const nextDash = dashStateRef.current === "ready" ? ((await pullDashboard()) ?? dash) : dash;
     /** 问题读面只在已经拉过（ready）后跟着静默刷新（没切过「问题」视图就不预拉）。 */
-    const nextIssues = issuesStateRef.current === "ready" ? ((await pullIssues(list.items)) ?? issues) : issues;
+    const nextIssues = issuesStateRef.current === "ready" ? ((await pullIssues()) ?? issues) : issues;
     /** 词频图读面只在已经拉过（ready）后跟着静默刷新（没切过「词频图」视图就不预拉）。 */
-    const nextWords = wordsStateRef.current === "ready" ? ((await pullWords(list.items)) ?? words) : words;
+    const nextWords = wordsStateRef.current === "ready" ? ((await pullWords()) ?? words) : words;
     return () => {
-      projectsRef.current = list.items;
       setDistribution(buildMapDistribution(list.items, dicts));
       setNote(list.items.length < list.total ? { kind: "capped", n: list.items.length, total: list.total } : "none");
       if (nextDash !== dash) {
