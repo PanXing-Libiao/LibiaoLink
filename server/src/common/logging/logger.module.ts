@@ -8,6 +8,7 @@ export function createLoggerModule(env: Env): DynamicModule {
   return LoggerModule.forRoot({
     pinoHttp: {
       level: env.LOG_LEVEL,
+      redact: ["req.headers.cookie", "req.headers.authorization", 'req.headers["x-csrf-token"]', 'req.headers["x-internal-token"]', 'res.headers["set-cookie"]'],
       genReqId: (request, response) => {
         const header = request.headers["x-request-id"];
         const candidate = Array.isArray(header) ? header[0] : header;

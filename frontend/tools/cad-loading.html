@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CAD 导入动画预览</title>
+  <link rel="stylesheet" href="/cad-viewer/core/style.css">
+  <link rel="stylesheet" href="/cad-viewer/platform.css">
+  <style>
+    body { overflow: auto; background: #f4f7f9; }
+    .preview-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 24px; border-bottom: 1px solid #dde6eb; background: #fff; }
+    .preview-header strong { font-size: 14px; }
+    .preview-header a, .preview-notes a { color: #176f84; text-underline-offset: 3px; }
+    .preview-stage { display: grid; place-items: safe center; flex: 1; min-height: 480px; padding: 32px 24px; }
+    .preview-notes { padding: 16px 24px 22px; color: #728491; text-align: center; font-size: 12px; line-height: 1.9; }
+  </style>
+</head>
+<body data-cad-state="loading">
+  <div class="preview-header"><strong>CAD 导入动画预览</strong><a href="/tools/cad-platform.html">打开真实模型</a></div>
+  <div class="preview-stage">
+    <div class="import-card">
+      <div class="import-symbol" aria-hidden="true"><img src="/cad-viewer/import-assembly.svg" width="144" height="120" alt=""></div>
+      <h1>正在导入模型</h1>
+      <p class="import-filename">零件拼合 · 线框描绘</p>
+      <ol class="import-steps" aria-label="导入步骤示意"><li data-state="done"><span>1</span>读取文件</li><li data-state="current"><span>2</span>处理模型</li><li><span>3</span>准备视图</li><li><span>4</span>完成</li></ol>
+      <div class="import-progress-head"><strong>正在准备模型几何</strong><span>第 2 步 / 共 4 步</span></div>
+      <div class="progress-track"><progress aria-label="导入等待示意"></progress><span class="progress-indicator" aria-hidden="true"></span></div>
+      <p class="import-basis">此页仅演示动画，未创建转换任务</p>
+    </div>
+  </div>
+  <div class="preview-notes">动效参考：<a href="https://css-loaders.com/3d/">CSS Loaders 立体几何</a> · <a href="https://github.com/maxwellito/vivus">Vivus 线条绘制</a><br>已按现有界面重新绘制，本地 SVG/CSS；支持系统“减少动态效果”。</div>
+</body>
+</html>

@@ -1,5 +1,5 @@
 import { extensionOf } from "../../storage/index.js";
-import { CAD_EXTENSIONS, canonicalMimeForExtension, isRasterImageFile, isSvgFile, normalizeMime } from "./file-mime.js";
+import { canonicalMimeForExtension, isRasterImageFile, isSvgFile, normalizeMime } from "./file-mime.js";
 import type { PreviewTarget } from "./preview.job.js";
 
 export { isRasterImageFile, isSvgFile };
@@ -14,18 +14,19 @@ export { isRasterImageFile, isSvgFile };
  *   文件类型（扩展名小写；无扩展名时按 MIME 反推）—— 查看器配置 `documentType` / `document.fileType` 的输入
  *   （S8-2 三补 1：文本族按 word / cell 映射）。
  *
+ * ADR-035：读取侧先判 CAD，启用时 STEP 返回独立查看器，其余降级，防止误报 MIME 绕进图片/Office。
  * H1 · S2 起图片不再看 `image/*` 前缀：只有精确位图组合允许原对象直签；SVG 只进 PNG 产物通道。
- * 判定优先级：SVG 产物通道 → 安全位图 → CAD → 查看器；判不出类型按确定性降级「请下载」。
+ * 判定优先级：CAD → SVG 产物通道 → 安全位图 → 查看器；判不出类型按确定性降级「请下载」。
  */
 
 /**
- * CAD 三维族（ADR-031 · 2026-10-13）：前端浏览器直解析渲染 —— occt-import-js（OpenCASCADE WASM）
- * 读 STEP / IGES，three.js Loader 读 STL / 3MF / OBJ / glTF。与图片直签同口径：原对象短时签名直出
- * （不投转换任务、不落产物行）；dwg / dxf 不在此列 —— 二维走服务端转换管线（ADR-031 决策 1，
- * 随 M4-06 切片另行落地，届时恢复 previewTargetsFor 投递映射）。
+ * CAD 接入准备名单（ADR-035）：只用于暂不可预览提示，不是已支持格式清单。
+ * 后续以独立工程能力矩阵接入模型资源；此处不得恢复原文件图片直签。
  */
-/** CAD 三维直签判定（ADR-031）：扩展名 ∈ CAD 三维族（MIME 常缺省、不可靠，仅按扩展名判）。 */
-export function isCadFile(input: { fileName: string; mime: string | null }): boolean {
+const CAD_EXTENSIONS = new Set(["step", "stp", "iges", "igs", "stl", "3mf", "obj", "gltf", "glb", "easm", "dxf", "dwg"]);
+
+/** 版本扩展名判定；MIME 不作为 CAD 支持或签名依据。 */
+export function isCadPreviewPending(input: { fileName: string }): boolean {
   const extension = extensionOf(input.fileName);
   return CAD_EXTENSIONS.has(extension);
 }

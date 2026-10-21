@@ -1,5 +1,8 @@
 import { Module } from "@nestjs/common";
 import { ClockService } from "../../common/clock/clock.service.js";
+import { CadEngineClient } from "./cad-engine.client.js";
+import { CadPreviewService } from "./cad-preview.service.js";
+import { CadPreviewController } from "./cad-preview.controller.js";
 import { AdminModule } from "../admin/index.js";
 import { IdentityModule } from "../identity/index.js";
 import { PermissionModule } from "../permission/index.js";
@@ -31,6 +34,7 @@ import { PreviewService } from "./preview.service.js";
 @Module({
   imports: [IdentityModule, PermissionModule, AdminModule],
   controllers: [
+    CadPreviewController,
     FileController,
     FileLibraryController,
     ChangeRequestLibraryController,
@@ -38,6 +42,8 @@ import { PreviewService } from "./preview.service.js";
     PreviewContentController,
   ],
   providers: [
+    CadEngineClient,
+    CadPreviewService,
     FileRepository,
     FileService,
     ChangeService,

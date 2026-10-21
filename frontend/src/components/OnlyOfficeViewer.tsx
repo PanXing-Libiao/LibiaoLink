@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import type { PreviewViewerConfig } from "../fileApi";
+import type { OnlyOfficePreviewViewerConfig } from "../fileApi";
 import { getLocale, textOf, useT } from "../i18n";
 
 /** 查看器就绪超时（计划 S4 · R5）：api.js 加载 + DocEditor 建会话后超过此时长仍未 onDocumentReady → 降级（重试 / 下载）。 */
@@ -75,7 +75,7 @@ function describeViewerError(data: unknown): string {
  * - 卸载（含重试重建）：destroyEditor —— 不留 DocServer 侧会话；
  * - 关闭（2026-10-10 修复「点击 iframe 内部后 Esc 关不掉」）：焦点守卫把被 iframe 抢走的焦点拉回包装层 —— Esc 回到浮层 capture 监听，见守卫段注释。
  */
-export function OnlyOfficeViewer({ viewer, onRetry }: { viewer: PreviewViewerConfig; onRetry: () => void }) {
+export function OnlyOfficeViewer({ viewer, onRetry }: { viewer: OnlyOfficePreviewViewerConfig; onRetry: () => void }) {
   const t = useT();
   const rawId = useId();
   const placeholderId = "oo-viewer-" + rawId.replace(/[^a-zA-Z0-9_-]/g, "");

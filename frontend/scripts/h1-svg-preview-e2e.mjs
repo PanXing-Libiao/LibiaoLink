@@ -1080,27 +1080,23 @@ async function runB6(fixtures) {
   }
 
   const cadPreview = await readPreview(fixtures.cad.id, fixtures.cad.versionId);
-  assert(cadPreview.status === "ready" && cadPreview.url !== null, "B6 CAD 预览未 ready");
-  assert(cadPreview.viewer === null, "B6 CAD 不应进入 ONLYOFFICE");
+  // ADR-035：平台只开放独立 STEP 链；STL 明确降级，不能恢复已移除的原对象直签/浏览器解析。
+  assert(cadPreview.status === "failed" && cadPreview.url === null, "B6 未支持的 STL 必须明确降级且不签原对象预览");
+  assert(cadPreview.viewer === null && cadPreview.target === null, "B6 STL 不应进入查看器或 PNG 产物通道");
   assert(cadPreview.pipelineVersion === null, "B6 CAD 不应占用 SVG 转换管线");
-  assert(!new URL(cadPreview.url).pathname.includes("/previews/"), "B6 CAD 误入 PNG 产物通道");
+  assert(typeof cadPreview.reason === "string" && cadPreview.reason.length > 0, "B6 STL 降级缺少用户可见原因");
   await clickFileControl(fixtures.cad.name, false);
-  await waitOverlay("cad3d");
-  await waitExpression("document.querySelector('[data-cad-viewer=true] canvas') !== null", "CAD WebGL canvas", 30_000);
   await waitExpression(
-    "(() => { const root = document.querySelector('[data-cad-viewer=true]');" +
-      " const stats = root?.querySelector('div.pointer-events-none.absolute.bottom-3.left-3.font-mono');" +
-      " return Boolean(stats && stats.textContent?.trim()); })()",
-    "CAD 解析终态",
-    30_000,
+    "[...document.querySelectorAll('[data-file-preview-note=true]')].some(node => node.textContent?.includes(" + JSON.stringify(cadPreview.reason) + "))",
+    "STL 暂不可预览提示",
+    10_000,
   );
-  const cadError = await evaluate(
-    "(() => { const root = document.querySelector('[data-cad-viewer=true]');" +
-      " return root ? (root.querySelector('.text-red-400')?.textContent || null) : 'missing'; })()",
-  );
-  assert(cadError === null, "B6 CAD 解析失败：" + String(cadError));
-  await closeOverlay();
-  record("B6", "STL CadViewer 回归", "kind=cad3d; WebGL canvas 已挂载; 未进入 PNG 产物");
+  assert(await evaluate("document.querySelector('[data-file-preview=true]') === null"), "B6 STL 不应挂载旧查看器");
+  const cadDownload = await downloadArtifact(fixtures.cad.id, fixtures.cad.versionId);
+  assert(cadDownload.bytes.equals(fixtures.cad.bytes), "B6 STL 下载字节与上传原文件不一致");
+  assert(cadDownload.contentType.split(";")[0].trim().toLowerCase() === "application/octet-stream", "B6 STL 下载必须为 octet-stream");
+  assert(/^attachment\b/i.test(cadDownload.contentDisposition), "B6 STL 下载必须为 attachment");
+  record("B6", "未支持 STL 的明确降级与原文件下载", "无预览直签、无旧查看器、未进入 PNG 产物；下载 bytes 一致");
   await assertNoUnsafeSignals("B6");
 }
 

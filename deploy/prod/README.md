@@ -1,5 +1,7 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
+> **2026-10-21 STEP 已本地接入，未部署**：运行与打包见 [CAD runtime](../../server/cad-engine/README.md)，验收见 [逐文件表](../../docs/cad-platform-integration/RESULTS.md)。发布需包含 `server/cad-engine` 与同版本 `frontend/public/cad-viewer`，Nginx `/cad-viewer/` 缺失资源直接 404、缓存须重验证；删除旧 CAD chunk 与 public/occt。现有 Node Alpine / 768 MiB API 容器不能直接承诺运行 OCP/Gmsh；需另行验证 glibc 运行环境、可用内存与 native 隔离。未启用 CAD 时主 API 不加载 native runtime。下方部署版本/哈希保持历史事实。
+
 > 归属：px（部署 / 交付）· 2026-10-13 起步（postgres → tools → api / worker，逐切片加组件）。
 > 口径：`docs/adr/ADR-013-部署与容量起点.md`（Compose 单机 + Nginx 唯一对外端口；生产门禁）、`docs/adr/ADR-004-数据库与数据访问.md`（PostgreSQL 18.x，部署锁精确补丁）、`docs/M8-部署Runbook与上线检查单(单机).md`（总流程与清单）。
 > 密钥纪律（CONTRIBUTING §12）：本目录只放非敏感内容；密钥全部以文件存在服务器 `secrets/`，不进仓库、不进 `.env`。

@@ -1447,6 +1447,139 @@
           "publishedBy"
         ]
       },
+      "CadJob": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed",
+              "cancelled",
+              "timed-out"
+            ]
+          },
+          "phase": {
+            "type": "string"
+          },
+          "sourceSHA256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "sourceByteLength": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "nameCodepage": {
+            "$ref": "#/components/schemas/CadNameCodepage"
+          },
+          "createdAt": {
+            "type": "number"
+          },
+          "updatedAt": {
+            "type": "number"
+          },
+          "artifactBytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "workerPeakRSSBytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "workerWallSeconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "error": {
+                "type": "string",
+                "maxLength": 500
+              }
+            },
+            "required": [
+              "code",
+              "error"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "phase",
+          "sourceSHA256",
+          "sourceByteLength",
+          "createdAt",
+          "updatedAt"
+        ],
+        "description": "隔离且持久化的 STEP 任务；completed 只发布完整校验产物，已列举 nonMeshableFaces 保留，Partial 不算完整成功。"
+      },
+      "CadJobCreateResponse": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "$ref": "#/components/schemas/CadJob"
+          },
+          "reused": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "job",
+          "reused"
+        ]
+      },
+      "CadNameCodepage": {
+        "type": "string",
+        "enum": [
+          "UTF8",
+          "GB"
+        ],
+        "description": "STEP 名称编码：UTF8 标准编码（默认），GB 中文旧编码；由用户按文件选择，不自动猜测。"
+      },
+      "CadPreviewViewer": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "cad"
+            ]
+          },
+          "fileId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "versionId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "sourceSHA256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "engineVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "fileId",
+          "versionId",
+          "sourceSHA256",
+          "engineVersion"
+        ],
+        "description": "STEP 查看入口；模型就绪由独立 CAD 任务状态判定。每次模型/资源读取重新校验文件版本权限，不包含原文件签名。"
+      },
       "CalendarDay": {
         "type": "object",
         "properties": {
@@ -3860,7 +3993,7 @@
           "reason",
           "generatedAt"
         ],
-        "description": "文件预览状态与短时签名地址 / 查看器配置（异步产物；未就绪 / 失败为 200 语义 —— not_ready 时服务端幂等补投生成任务，前端轮询至 ready / failed；ONLYOFFICE 查看器通道（S1 契约 / S3 起签发）：ready + viewer 非空、url 为空）"
+        "description": "文件预览状态与短时签名地址 / 查看器配置；产物通道 not_ready 时幂等补投，前端轮询至 ready / failed。ONLYOFFICE / CAD 查看入口为 ready + viewer 非空、url 为空；CAD 的完整模型就绪由独立 CadJob 判定。"
       },
       "FilePurgeBody": {
         "type": "object",
@@ -5849,6 +5982,43 @@
         "pattern": "^(default|off|([01][0-9]|2[0-3]):[0-5][0-9]-([01][0-9]|2[0-3]):[0-5][0-9])$",
         "description": "免打扰配置（三态）：default 继承缺省（env NOTIFY_QUIET_HOURS，缺省 22:00-08:00）/ off 关闭 / HH:MM-HH:MM 自定义（Asia/Shanghai，跨零点允许）"
       },
+      "OnlyOfficePreviewViewer": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "onlyoffice"
+            ]
+          },
+          "docServerUrl": {
+            "type": "string",
+            "description": "DocServer 基址（前端据此加载 /web-apps/apps/api/documents/api.js 初始化 DocEditor；服务端配置下发）"
+          },
+          "documentType": {
+            "$ref": "#/components/schemas/PreviewViewerDocumentType"
+          },
+          "document": {
+            "$ref": "#/components/schemas/PreviewViewerDocument"
+          },
+          "editorConfig": {
+            "$ref": "#/components/schemas/PreviewViewerEditorConfig"
+          },
+          "token": {
+            "type": "string",
+            "description": "查看器 JWT（HS256；载荷 = documentType / document（含 permissions）/ editorConfig 逐字签发 + iat / exp；浏览器持有 —— 泄漏面仅只读会话，取原文件依赖服务端端点鉴权）"
+          }
+        },
+        "required": [
+          "kind",
+          "docServerUrl",
+          "documentType",
+          "document",
+          "editorConfig",
+          "token"
+        ],
+        "description": "在线查看器配置（ONLYOFFICE 查看通道；替代「转换产物 + 短时签名 URL」路径 —— 预览链全程无预签名）"
+      },
       "PermissionKey": {
         "type": "string",
         "enum": [
@@ -5949,7 +6119,7 @@
           "not_ready",
           "failed"
         ],
-        "description": "预览状态：ready 产物就绪（附短时签名 URL） / not_ready 尚未生成（服务端幂等补投生成任务、按三元组去重，前端轮询至 ready / failed —— 不引入请求约定） / failed 转换失败（记原因并降级「请下载」）"
+        "description": "预览状态：ready 产物就绪（附短时签名 URL）或 viewer 入口可用（CAD 的模型转换状态另由 CadJob 判定） / not_ready 尚未生成（产物通道幂等补投、按三元组去重） / failed 转换失败（记原因并降级「请下载」）"
       },
       "PreviewTarget": {
         "type": [
@@ -5965,39 +6135,16 @@
         "description": "已就绪转换产物的目标（渲染通道）；查看器通道 / 未就绪 / 失败为空 —— 查看器就绪以 viewer 判定"
       },
       "PreviewViewer": {
-        "type": [
-          "object",
-          "null"
-        ],
-        "properties": {
-          "kind": {
-            "$ref": "#/components/schemas/PreviewViewerKind"
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/OnlyOfficePreviewViewer"
           },
-          "docServerUrl": {
-            "type": "string",
-            "description": "DocServer 基址（前端据此加载 /web-apps/apps/api/documents/api.js 初始化 DocEditor；服务端配置下发）"
+          {
+            "$ref": "#/components/schemas/CadPreviewViewer"
           },
-          "documentType": {
-            "$ref": "#/components/schemas/PreviewViewerDocumentType"
-          },
-          "document": {
-            "$ref": "#/components/schemas/PreviewViewerDocument"
-          },
-          "editorConfig": {
-            "$ref": "#/components/schemas/PreviewViewerEditorConfig"
-          },
-          "token": {
-            "type": "string",
-            "description": "查看器 JWT（HS256；载荷 = documentType / document（含 permissions）/ editorConfig 逐字签发 + iat / exp；浏览器持有 —— 泄漏面仅只读会话，取原文件依赖服务端端点鉴权）"
+          {
+            "type": "null"
           }
-        },
-        "required": [
-          "kind",
-          "docServerUrl",
-          "documentType",
-          "document",
-          "editorConfig",
-          "token"
         ],
         "description": "在线查看器配置（仅 ready 且走查看器通道时非空；与 url 互斥 —— 查看器通道无转换产物；S3 起签发）"
       },
@@ -6078,13 +6225,6 @@
           "lang",
           "user"
         ]
-      },
-      "PreviewViewerKind": {
-        "type": "string",
-        "enum": [
-          "onlyoffice"
-        ],
-        "description": "在线查看器类型（一期仅 onlyoffice —— ONLYOFFICE 文档服务器查看器；后续查看器扩展在此枚举追加）"
       },
       "PreviewViewerPermissions": {
         "type": "object",
@@ -16970,7 +17110,7 @@
         "tags": [
           "files"
         ],
-        "summary": "预览状态与短时签名地址（D2：异步产物；未就绪 / 失败为 200 语义，not_ready 幂等补投，失败降级「请下载」）",
+        "summary": "预览产物或查看入口；CAD 模型转换进度由 cad 任务独立显示",
         "parameters": [
           {
             "schema": {
@@ -17011,6 +17151,691 @@
           },
           "404": {
             "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{fileId}/versions/{versionId}/cad/views/{viewId}/jobs": {
+      "post": {
+        "tags": [
+          "files"
+        ],
+        "summary": "为已授权 STEP 版本创建隔离任务（需要 CSRF）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "fileId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "versionId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{32}$"
+            },
+            "required": true,
+            "name": "viewId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/CadNameCodepage"
+            },
+            "required": false,
+            "description": "STEP 名称编码：UTF8 标准编码（默认），GB 中文旧编码；由用户按文件选择，不自动猜测。",
+            "name": "nameCodepage",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "已创建或复用当前查看窗口的任务",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CadJobCreateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "CAD 服务未启用、繁忙或产物不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{fileId}/versions/{versionId}/cad/views/{viewId}/jobs/{jobId}": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "查询当前查看窗口的 CAD 任务",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "fileId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "versionId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{32}$"
+            },
+            "required": true,
+            "name": "viewId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{32}$"
+            },
+            "required": true,
+            "name": "jobId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "持久任务状态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CadJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "CAD 服务未启用、繁忙或产物不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{fileId}/versions/{versionId}/cad/views/{viewId}/jobs/{jobId}/cancel": {
+      "post": {
+        "tags": [
+          "files"
+        ],
+        "summary": "取消当前查看窗口的转换（需要 CSRF）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "fileId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "versionId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{32}$"
+            },
+            "required": true,
+            "name": "viewId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{32}$"
+            },
+            "required": true,
+            "name": "jobId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "取消后状态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CadJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "CAD 服务未启用、繁忙或产物不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{fileId}/versions/{versionId}/cad/views/{viewId}/jobs/{jobId}/manifest": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "读取完整校验的 UCD 二进制模型清单（支持 gzip）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "fileId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "versionId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{32}$"
+            },
+            "required": true,
+            "name": "viewId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{32}$"
+            },
+            "required": true,
+            "name": "jobId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "独立工程 ucd-binary-compact/1 清单，含短期资源 lease；每次重查文件版本权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {}
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "CAD 服务未启用、繁忙或产物不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{fileId}/versions/{versionId}/cad/views/{viewId}/jobs/{jobId}/resources/{lease}/{sha256}": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "读取当前模型清单内的二进制资源",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "fileId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "versionId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{32}$"
+            },
+            "required": true,
+            "name": "viewId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{32}$"
+            },
+            "required": true,
+            "name": "jobId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{48}$"
+            },
+            "required": true,
+            "name": "lease",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "required": true,
+            "name": "sha256",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "有权限且哈希属于该清单的 buffer",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "CAD 服务未启用、繁忙或产物不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{fileId}/versions/{versionId}/cad/views/{viewId}/jobs/{jobId}/resources/{lease}": {
+      "delete": {
+        "tags": [
+          "files"
+        ],
+        "summary": "释放模型资源清单 lease（需要 CSRF）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "fileId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "versionId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{32}$"
+            },
+            "required": true,
+            "name": "viewId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{32}$"
+            },
+            "required": true,
+            "name": "jobId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{48}$"
+            },
+            "required": true,
+            "name": "lease",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "已释放",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "released": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "released"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "CAD 服务未启用、繁忙或产物不可用",
             "content": {
               "application/json": {
                 "schema": {

@@ -1,5 +1,7 @@
 # H1 SVG 预览整改回放证据（S6）
 
+> **2026-10-21 CAD 集成后的回归口径**：ADR-035 已撤下旧浏览器 CAD 解析与原对象预览直签，平台仅显式启用独立 STEP 链。B6 的 STL 项改验明确 `failed`、页面可见提示、不进入 PNG/旧查看器以及原文件 attachment 下载字节一致；PDF / DOCX 与 B1 ～ B5、B7 原断言保留。下方此前 STL WebGL 的部署结果保留为历史记录，不代表新平台支持 STL。独立 STEP 的真实本地链路及缓存结果见 [本地系统](cad-platform-integration/LOCAL_SYSTEM_RESULTS.md) 和 [缓存结果](cad-platform-integration/CACHE_RESULTS.md)。
+
 > 状态（2026-10-21）：S6 已随 PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 合并 main `336b66fd`；HSTS 重复头修复随 PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 合并 main 333ffdeb 并已部署测试机。测试机 10.1.104.44 完成 S2 ～ S6 同批部署与完整 B1 ～ B7 25/25（B7 4/4）；443 SPA、443 /libiaolink/ 与 9443 均只回传 1 条 HSTS；真实 PDF / DOCX ONLYOFFICE 与 STL WebGL 通过；旧式原对象签名完成等价到期复测（不是历史 URL 重放）。收口 PR [#543](https://github.com/PanXing-Libiao/LibiaoLink/pull/543) 已于 2026-10-21 squash 合并 main `5e31e4b9`（最终 head `3ef3de62` 的 PR CI [39550779854](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39550779854) 5 / 5，main CI [39550973691](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39550973691) 5 / 5）。main 连续 3 次含 `svg-preview-e2e` 的全绿已完成（#1354 / #1358 / #1362），该 job 已加入分支保护必需检查（`frontend` / `server` / `database` / `svg-preview-e2e`；`enforce_admins=true`、线性历史、禁强推 / 删除）。生产尚未部署；真实 CAD 生产样本、生产 B7 与关闭评审仍未完成，不能宣布 H1 闭环。
 >
 > 基线：S5 已随 PR #534 合并 main `660cc80`；S6 自动化实现提交 = `lan` `3e63597`，PR CI `39540053943` 全绿；本文件落档前已同步 main `4fa7175`（PR #536 / #537）与 `5bc5c12`（PR #538）；测试部署基线 = main `336b66fd`。
