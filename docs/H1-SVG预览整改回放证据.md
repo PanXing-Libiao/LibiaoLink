@@ -56,7 +56,8 @@
 - Nginx 派生脚本：生产 upstream、证书、SPA root 与安全头片段按预期替换；生产配置 `nginx -t` 与 reload 已在测试机容器内通过。
 - PR CI [39540053943](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39540053943)：5 / 5 job 全绿；`svg-preview-e2e` artifact 的 `summary.json` 为 `passed`。
 - PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 的 PR CI [39547420183](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39547420183)：5 / 5 全绿；Nginx 修复已 squash 合并 main `333ffdeb` 并部署测试机。
-- PR [#543](https://github.com/PanXing-Libiao/LibiaoLink/pull/543) 的 PR CI [39549899388](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39549899388)：5 / 5 全绿（frontend / shared / server / database / svg-preview-e2e）；该 PR 收口 B6 / B7 / 旧签名脚本与文档。
+- PR [#543](https://github.com/PanXing-Libiao/LibiaoLink/pull/543) 的代码提交 `1a4dc1b` 的 PR CI [39549899388](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39549899388)：5 / 5 全绿（frontend / shared / server / database / svg-preview-e2e）。
+- PR [#543](https://github.com/PanXing-Libiao/LibiaoLink/pull/543) 的回填提交 `36fea95` 的 PR CI [39550243056](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39550243056)：attempt 1 的 `svg-preview-e2e` 在启动 Chrome DevTools 时 `fetch failed`（其余 4 job 通过）；未改代码重跑失败 job，attempt 2 **5 / 5 全绿**。该 PR 收口 B6 / B7 / 旧签名脚本与文档。
 - 2026-10-21 测试机真实主栈回放（Windows 开发机 + SSH 隧道访问 PostgreSQL / MinIO / 9443）：完整 **B1 ～ B7 25 / 25 PASS**；Chrome/154.0.8037.99；`summary.json` 为 `passed`。
 - B6 实际结果：真实 PDF / DOCX 进入 ONLYOFFICE 且 `data-oo-status=ready`，STL 进入 `cad3d` 且 WebGL canvas 与解析终态已挂载；三者均未进入 PNG 产物通道。
 - B7 实际结果：443 SPA、443 `/libiaolink/`、9443 备用门面均 **恰好 1 条 HSTS**，CSP / `nosniff` / XFO 完整；SPA 无 CSP violation 或安全日志。9443 通过本地 `19443 -> 127.0.0.1:9443` 隧道和 `H1_BACKUP_STORAGE_URL` 覆盖验证，服务器本机 curl 结果一致。
