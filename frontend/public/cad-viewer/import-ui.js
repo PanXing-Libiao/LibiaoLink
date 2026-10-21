@@ -74,8 +74,8 @@ export class ImportUI {
   stop(state, { retryable = true } = {}) {
     this.finished = true; clearInterval(this.timer); document.body.dataset.cadState = state;
     $('viewport').setAttribute('aria-busy', 'false');
-    $('sessionStatus').textContent = state === 'ready' ? '已就绪' : state === 'cancelled' ? '已取消' : '未打开';
-    $('importAnnouncement').textContent = state === 'ready' ? '模型已就绪，可以操作' : state === 'cancelled' ? '已取消导入' : '模型未能打开';
+    $('sessionStatus').textContent = state === 'ready' ? '已就绪' : state === 'cancelled' ? '已取消' : state === 'unsupported' ? '暂不支持预览' : '未打开';
+    $('importAnnouncement').textContent = state === 'ready' ? '模型已就绪，可以操作' : state === 'cancelled' ? '已取消导入' : state === 'unsupported' ? '暂不支持在线预览' : '模型未能打开';
     if (state === 'ready') {
       for (const id of ['partsSidebar', 'viewTools', 'selectionTools', 'modelInfo']) $(id).inert = false;
       try { sessionStorage.setItem(this.key, JSON.stringify([...this.history.filter(n => Number.isFinite(n) && n > 0), this.clock.elapsed(performance.now())].slice(-3))); }

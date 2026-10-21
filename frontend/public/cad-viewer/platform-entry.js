@@ -155,5 +155,8 @@ loadPlatformModel(async({signal,progress})=>{
  if(ready){
   ui.update(3,'模型已就绪');
   requestAnimationFrame(()=>requestAnimationFrame(()=>{ui.stop('ready');filterParts();parent.postMessage({type:'cad-ready'},location.origin);}));
- }else ui.stop(cancelled?'cancelled':'failed',{retryable:cancelled||!unsupportedPreview(currentJob)});
+ }else{
+  const unsupported=!cancelled&&unsupportedPreview(currentJob);
+  ui.stop(cancelled?'cancelled':unsupported?'unsupported':'failed',{retryable:!unsupported});
+ }
 });
