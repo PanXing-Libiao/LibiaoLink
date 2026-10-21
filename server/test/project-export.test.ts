@@ -157,6 +157,49 @@ describe("项目数据导出工作簿", () => {
     expect(changeFile.text).toBe("电气图.pdf");
     expect(changeFile.hyperlink).toContain("/#/files?project=" + PROJECT_ID);
   });
+
+  it("同一单元格的多个附图按网格排布，图片不重叠", async () => {
+    const sample = payload();
+    const photos = Array.from({ length: 6 }, (_value, index) => ({ fileId: "multi-" + (index + 1), name: "多图" + (index + 1) + ".png" }));
+    for (const photo of photos) sample.images.set(photo.fileId, { bytes: PNG, extension: "png" });
+    sample.reports[0]!.onsitePhotos = photos.slice(0, 3);
+    sample.reports[0]!.issuePhotos = photos.slice(3);
+    sample.changes[0]!.beforePhotos = photos.slice(0, 3);
+    sample.changes[0]!.afterPhotos = photos.slice(3);
+
+    const result = await buildProjectExportWorkbook(sample);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(result.buffer as unknown as ArrayBuffer);
+    const emuPerPx = 9525;
+    const assertNoOverlap = (sheet: ExcelJS.Worksheet): void => {
+      const images = sheet.getImages();
+      expect(images).toHaveLength(6);
+      const boxes = images.map((image) => {
+        const ext = (image.range as unknown as { ext?: { width: number; height: number } }).ext;
+        const left = image.range.tl.nativeColOff / emuPerPx;
+        const top = image.range.tl.nativeRowOff / emuPerPx;
+        return {
+          column: image.range.tl.nativeCol,
+          row: image.range.tl.nativeRow,
+          left,
+          top,
+          right: left + (ext?.width ?? 0),
+          bottom: top + (ext?.height ?? 0),
+        };
+      });
+      for (let index = 0; index < boxes.length; index += 1) {
+        for (let other = index + 1; other < boxes.length; other += 1) {
+          const a = boxes[index]!;
+          const b = boxes[other]!;
+          if (a.column !== b.column || a.row !== b.row) continue;
+          const separated = a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top;
+          expect(separated, "图片 " + (index + 1) + " 与 " + (other + 1) + " 重叠").toBe(true);
+        }
+      }
+    };
+    assertNoOverlap(workbook.getWorksheet("日报及问题汇总")!);
+    assertNoOverlap(workbook.getWorksheet("变更管理")!);
+  });
 });
 
 describe("项目导出的命名与请求边界", () => {
