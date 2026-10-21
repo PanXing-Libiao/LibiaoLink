@@ -146,14 +146,14 @@ export const PROJECT_BASE_HASH = "#/project/";
 /** 工作台「我的任务」页地址（Push 230 转正式）：标签走 `?tab=`，缺省「我的任务」不落参数。 */
 export const WORKSPACE_BASE_HASH = "#/my-tasks";
 
-/** 「操作记录」页地址（头像菜单「退出登录」下方入口；筛选态走 query，缺省不落参数）。 */
+/** 「操作记录」页地址（头像菜单「操作记录」入口；筛选态走 query，缺省不落参数）。 */
 export const AUDIT_BASE_HASH = "#/audit";
 
 /** 「文件库」页地址（头像菜单「文件库」入口；系统现有文件 / 文件回收站 / 项目回收站三栏 + 筛选态走 query）—— Push 261。 */
 export const FILES_BASE_HASH = "#/files";
 
 /**
- * 「企微绑定」页地址（头像菜单首项入口 · Push 250）：账号级设置的家（当前 = 企微单聊绑定 + 项目群绑定）。
+ * 「企微绑定」页地址（头像菜单「企微绑定」入口 · Push 250）：账号级设置的家（当前 = 企微单聊绑定 + 项目群绑定）。
  * 没有页内子态，故不带 query。
  */
 export const SETTINGS_BASE_HASH = "#/settings";

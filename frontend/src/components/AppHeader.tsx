@@ -24,8 +24,8 @@ import type { MeResponse, Project } from "../types";
  *  新增铃铛按钮 + 未读红点（Transitions.dev「Notification badge」样张：滑入 + 弹性放大、读完后缩小消散，
  *  app.css 的 .inbox-badge 等价还原），点击 = 局部弹窗（最近 8 条 + 全部已读；见 ./InboxPanel）；
  *  红点 = ../inbox 模块级 store（登录后读面补拉 + SSE unread 快照，切页不丢）。
- * 设置页入口（业务口径 2026-10-16「在点击用户右上角头像后的列表中添加一个设置页」· Push 250）：账号菜单首项
- *  「企微绑定」（#/settings · 全账号可见），落点 = 账号级设置（单聊 D5 / D6 + 项目群绑定）。 */
+ * 设置页入口（业务口径 2026-10-16「在点击用户右上角头像后的列表中添加一个设置页」· Push 250）：账号菜单第三项（Push 400 顺序调整）
+ *  「企微绑定」（#/settings · 全账号可见），落点 = 账号级设置（单聊 D5 / D6 + 项目群绑定）；菜单顺序（Push 400）= 文件库 /〔操作记录〕/ 企微绑定 / 退出登录。 */
 
 type AppHeaderProps = {
   me: MeResponse;
@@ -415,6 +415,30 @@ export function AppHeader({ me, project }: AppHeaderProps) {
               >
                 <a
                   role="menuitem"
+                  data-account-files="true"
+                  href={FILES_BASE_HASH}
+                  onClick={() => {
+                    setMenuOpen(false);
+                  }}
+                  className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
+                >
+                  {t("header.files")}
+                </a>
+                {canViewAudit ? (
+                  <a
+                    role="menuitem"
+                    data-account-audit="true"
+                    href={AUDIT_BASE_HASH}
+                    onClick={() => {
+                      setMenuOpen(false);
+                    }}
+                    className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
+                  >
+                    {t("header.audit")}
+                  </a>
+                ) : null}
+                <a
+                  role="menuitem"
                   data-account-settings="true"
                   href={SETTINGS_BASE_HASH}
                   onClick={() => {
@@ -438,30 +462,6 @@ export function AppHeader({ me, project }: AppHeaderProps) {
                   className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
                 >
                   {t("header.logout")}
-                </a>
-                {canViewAudit ? (
-                  <a
-                    role="menuitem"
-                    data-account-audit="true"
-                    href={AUDIT_BASE_HASH}
-                    onClick={() => {
-                      setMenuOpen(false);
-                    }}
-                    className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
-                  >
-                    {t("header.audit")}
-                  </a>
-                ) : null}
-                <a
-                  role="menuitem"
-                  data-account-files="true"
-                  href={FILES_BASE_HASH}
-                  onClick={() => {
-                    setMenuOpen(false);
-                  }}
-                  className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
-                >
-                  {t("header.files")}
                 </a>
               </div>
             ) : null}
