@@ -2,11 +2,9 @@
  * 「词频图」口径（Push 353 · 业务口径 2026-10-16「现在做这个词频图 根据变更原因的词频拼成这个图」+
  * 「词频图中修饰词不纳入 只保留核心词纳入词频图」+「还是和之前做的地方和效果一样」）：
  * 仪表盘第五个视图 —— 变更原因核心词词云（components/HubDashWordCloud.tsx）+ 点最中间那枚词只读「数据详情」
- * （components/HubDashWordDetail.tsx）；取数在 dashboardApi.ts 的 fetchDashboardChangeWords
- * （懒加载：首次切到「词频图」才拉 —— 与「问题」视图同一套）。
- *
- * 取数读面（零新增契约）：逐项目 GET /api/v1/projects/{id}/change-requests（readAllPages 翻页取满，
- * 与「变更管理」列表同一读面，见 fileApi.ts 的 fetchProjectChanges）；统计文本 = change_requests.reason 原文
+ * （components/HubDashWordDetail.tsx）；统计在服务端 GET /api/v1/dashboard/change-words 聚合，
+ * 取数在 dashboardApi.ts 的 fetchDashboardChangeWords（懒加载：首次切到「词频图」才拉 —— 与「问题」视图同一套）；
+ * 点词明细再按选中项目懒取。统计文本 = change_requests.reason 原文
  * （导入行是「内容描述；原因：原因」拼装文本，两段都计入 —— 业务参考图的词（供应商 / 55 / mm 等）横跨两段）。
  *
  * 分词口径（改规则只改这里；业务口径「修饰词不纳入 只保留核心词」）：
@@ -36,7 +34,7 @@ export type ChangeWord = {
   readonly count: number;
 };
 
-/** 一份核心词词频（全部项目 / 某项目各一份；明细在 dashboardApi.ts 的 fetchDashboardChangeWords）。 */
+/** 一份核心词词频（全部项目 / 某项目各一份；统计由服务端 /dashboard/change-words 下发）。 */
 export type DashboardChangeWords = {
   /** 核心词（按词频降序、同频按词面排序 —— 字号映射与配色都吃这个顺序）。 */
   readonly words: readonly ChangeWord[];
