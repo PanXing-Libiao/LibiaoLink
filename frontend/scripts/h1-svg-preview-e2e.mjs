@@ -256,6 +256,7 @@ async function apiRequest(pathname, options = {}) {
   const headers = new Headers(options.headers);
   headers.set("Cookie", cookieHeader());
   headers.set("Accept", "application/json");
+  headers.set("Connection", "close");
   if (!["GET", "HEAD", "OPTIONS"].includes(method)) headers.set("X-CSRF-Token", auth.csrfToken);
   if (options.body !== undefined && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const response = await fetch(BASE_URL + pathname, {
@@ -311,7 +312,7 @@ async function createProjectTask(actorId) {
 }
 
 async function uploadFile(input) {
-  const bytes = Buffer.isBuffer(input.bytes) ? input.bytes : Buffer.from(input.bytes);
+  const bytes = Buffer.from(input.bytes);
   const contentHash = sha256(bytes);
   created.hashes.add(contentHash);
   const body = {
@@ -365,7 +366,10 @@ async function expectUploadRejected(input, expectedDetailCode) {
     error = caught;
   }
   if (error === null) fail("冲突文件本应拒绝完成上传，实际成功：" + input.name);
-  assert(error.status === 422, "冲突上传应返回 422，实际 HTTP " + String(error.status));
+  assert(
+    error.status === 422,
+    "冲突上传应返回 422，实际 HTTP " + String(error.status) + "：" + redact(error.message ?? String(error)),
+  );
   assert(error.code === "VALIDATION_FAILED", "冲突上传错误码应为 VALIDATION_FAILED，实际 " + String(error.code));
   const codes = error.details.map((item) => item && item.code).filter(Boolean);
   assert(codes.includes(expectedDetailCode), "冲突上传缺少 detail code " + expectedDetailCode + "；实际 " + codes.join(","));
