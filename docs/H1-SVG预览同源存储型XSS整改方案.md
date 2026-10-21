@@ -2,7 +2,7 @@
 
 > 来源：`LibiaoLink_安全审查报告_2026-10-19.pdf` H1（第 5 页）｜严重度 High｜报告要求：上线前处理
 > 报告审查基线：`e13664f`｜方案落档时 `lan` 分支 HEAD：`d6ae272`（审查基线祖先；H1 涉及路径未发现实质修复）
-> 起草：lan（后端平台 / file / preview / outbox）｜拟稿日期：2026-10-20｜状态：**S1 文档草案已落（ADR-034 Proposed，待评审）；S1 尚未闭合；S2 起未实现**
+> 起草：lan（后端平台 / file / preview / outbox）｜拟稿日期：2026-10-20｜状态：**S1 架构 / 契约已批准（ADR-034 Accepted，PR #518 已合入 main）；S2 代码与最终门禁已完成，待 PR 合入（不得单独部署）；S3 起未实现；外部 V1.0 源文档同步仍待 px 确认**
 > 归属与评审：本文件位于 `docs/`（px 主责），合入前请 px 复核；ADR 与契约口径由 wmj 主责；生产部署、Nginx 与浏览器测试设施由 px 主责；服务端预览与队列由 lan 主责
 > 变更控制：后续执行以本文件为准。若执行中需要改变架构、验收条件或切片顺序，先修改本文件并说明原因；已合入主干的 ADR 与回放证据按不可变历史处理，不原地重写。
 
@@ -234,15 +234,17 @@ renderer 不执行脚本；服务容器无外网、不配置外部资源目录�
 
 ### S1 · 决策与文档冻结
 
-- 执行状态（2026-10-20）：ADR-034 与仓库内相关文档已落为 Proposed，待 wmj / px 评审；S1 尚未闭合，评审通过后才可转 Accepted 并进入 S2 / S3。
+- 执行状态（2026-10-20）：wmj 已批准架构与契约，ADR-034 转 Accepted，PR #518 squash 合入 main `c53e895`。仓库内文档已完成同条同步；px 的前端 / 运维复核与外部 V1.0 源文档人工同步仍待确认，继续作为发布资料项跟踪。
 - 新建 `docs/adr/ADR-034-SVG预览安全栅格化.md`，状态先为 Proposed，评审后 Accepted；同步 `docs/adr/README.md`。
 - 更新 `系统功能书.md` D2 预览口径、`前端功能需求.md` 的 SVG 预览 / 轮询 / 下载行为、`技术设计v0.2-架构与数据模型.md` 的预览管线说明。
 - 若 `mime` 字段语义由“客户端声明”改为“服务端规范化值”，同步 `字段对照清单.md`。
 - 明确 `target=image`、`pipelineVersion=2.0.0`、无数据库迁移、原 SVG download-only。
 - 验收：ADR 与三处文档无冲突；wmj 批准契约与架构口径；px 确认前端展示与运维可行，并确认外部 V1.0 源文档完成同条同步。
-- 评审通过后的收口：ADR-034、`docs/adr/README.md` 与本方案状态同批改为 Accepted / S1 已闭合，记录评审人与日期；随后才可进入 S2 / S3。
+- 评审收口：ADR-034 与 `docs/adr/README.md` 已记录 wmj 批准及 PR #518 合并基线。外部 V1.0 源文档不在本仓库内维护，必须由 px 协调人工同步同一条，完成后才能把 S1 的外部资料项标记闭合。
 
 ### S2 · 服务端硬边界（安全止血）
+
+- 执行状态（2026-10-20）：代码、单测与最终门禁已完成，待 PR 合入；`PREVIEW_PIPELINE_VERSION` 仍为 `1.0.0`，切 `2.0.0` 属 S4。SVG 已保留在线预览入口，但读取面只投递 / 返回 `target=image` 的 PNG 产物，原 SVG 永不进入直签分支。合并 `main` `e674b58` 后最终门禁 = server `typecheck` / `build` / `check:boundaries` 通过，Vitest **85 文件 / 1323 例**全过；含 64 KiB 前缀截断 UTF-8 多字节字符的合法 SVG / HTML 回归。
 
 - 重构 `preview.targets.ts`；移除 `image/*` 前缀匹配与 SVG 位图直签。
 - `file.service.ts` 完成上传时规范化 MIME、检查扩展名 / 文件头一致性；数据库保存规范 MIME，原始对象固定 `application/octet-stream`。

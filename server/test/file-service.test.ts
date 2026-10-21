@@ -38,6 +38,7 @@ import type {
   MultipartUploadKeyInput,
   MultipartUploadRef,
   ObjectHead,
+  ObjectPrefixResult,
   PartUploadUrlInput,
   GetObjectResult,
   PurgeObjectResult,
@@ -68,6 +69,11 @@ const HASH = "a".repeat(64);
 const OTHER_HASH = "b".repeat(64);
 const NOW = new Date("2026-09-21T08:00:00Z");
 const MI_B = 1024 * 1024;
+const PDF_PREFIX = new TextEncoder().encode("%PDF-1.7\nunit-test\n");
+const ZIP_PREFIX = Uint8Array.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00]);
+const PNG_PREFIX = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const SVG_PREFIX = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+const HTML_PREFIX = new TextEncoder().encode('<!doctype html><html><body><script>alert(1)</script></body></html>');
 const STAGING_KEY = `projects/${PROJECT}/files/${FILE}/staging/${SESSION}`;
 const CONTRACT_KEY = `projects/${PROJECT}/files/${FILE}/v1/${HASH}.pdf`;
 const CONTRACT_KEY_V2 = `projects/${PROJECT}/files/${FILE}/v2/${OTHER_HASH}.pdf`;
@@ -507,6 +513,9 @@ class FakeObjectStorage extends ObjectStorage {
   parts: UploadedPart[] = [];
   head: ObjectHead | null = null;
   listError: Error | null = null;
+  prefix: Uint8Array | null = PDF_PREFIX;
+  prefixError: Error | null = null;
+  readonly prefixReads: { objectKey: string; maxBytes: number }[] = [];
 
   created: CreateMultipartUploadInput[] = [];
   signed: PartUploadUrlInput[] = [];
@@ -574,6 +583,13 @@ class FakeObjectStorage extends ObjectStorage {
   async getObject(objectKey: string): Promise<GetObjectResult | null> {
     if (this.source === null) return null;
     return { ...this.source, objectKey };
+  }
+
+  async readObjectPrefix(objectKey: string, maxBytes: number): Promise<ObjectPrefixResult | null> {
+    this.prefixReads.push({ objectKey, maxBytes });
+    if (this.prefixError !== null) throw this.prefixError;
+    if (this.prefix === null) return null;
+    return { objectKey, bytes: this.prefix.slice(0, maxBytes), contentType: null };
   }
 
   async putObject(input: PutObjectInput): Promise<{ etag: string | null }> {
@@ -1243,7 +1259,12 @@ describe("FileService.completeUpload（合并 / 复制到契约键 / 落版本�
     // 合并按编号升序提交
     expect(h.storage.completed[0]!.parts.map((p) => p.partNumber)).toEqual([1, 2]);
     // 键形态：暂存键 → 契约键
-    expect(h.storage.copied[0]).toMatchObject({ sourceKey: STAGING_KEY, destinationKey: CONTRACT_KEY, contentType: "application/pdf" });
+    expect(h.storage.copied[0]).toMatchObject({
+      sourceKey: STAGING_KEY,
+      destinationKey: CONTRACT_KEY,
+      contentType: "application/octet-stream",
+    });
+    expect(h.storage.prefixReads).toEqual([{ objectKey: STAGING_KEY, maxBytes: 64 * 1024 }]);
     expect(h.storage.purged).toEqual([STAGING_KEY]);
 
     const version = h.repo.insertedVersions[0]!;
@@ -1251,6 +1272,7 @@ describe("FileService.completeUpload（合并 / 复制到契约键 / 落版本�
     expect(version.seq).toBe(1);
     expect(version.sizeBytes).toBe(12 * MI_B);
     expect(version.contentHash).toBe(HASH);
+    expect(version.mime).toBe("application/pdf");
 
     expect(result.file.currentVersionId).toBe(VERSION);
     expect(result.file.version).toBe(1);
@@ -1266,6 +1288,100 @@ describe("FileService.completeUpload（合并 / 复制到契约键 / 落版本�
     });
     expect(h.database.outbox).toHaveLength(1);
     expect(h.database.outbox[0]).toMatchObject({ topic: "file.version.created", dedupeKey: "file.version.created:" + VERSION, status: "pending" });
+  });
+
+  it("H1 · S2：MIME 大小写 / 参数被规范化落库，原对象固定 application/octet-stream", async () => {
+    const h = readyHarness();
+    h.repo.file = makeFileRow({ name: "部署图纸.PDF" });
+    h.repo.session = makeSessionRow({
+      storageUploadId: "storage-1",
+      contentHash: HASH,
+      mime: " Application/PDF ; charset=binary",
+    });
+
+    const result = await h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+
+    expect(result.version.mime).toBe("application/pdf");
+    expect(h.repo.insertedVersions[0]!.mime).toBe("application/pdf");
+    expect(h.storage.copied[0]).toMatchObject({
+      destinationKey: `projects/${PROJECT}/files/${FILE}/v1/${HASH}.pdf`,
+      contentType: "application/octet-stream",
+    });
+  });
+
+  it("H1 · S2：扩展名 / 声明 MIME 冲突 → 422 拒绝，不复制、不落版本", async () => {
+    const h = readyHarness();
+    h.repo.file = makeFileRow({ name: "poc.png" });
+    h.repo.session = makeSessionRow({ storageUploadId: "storage-1", contentHash: HASH, mime: "image/svg+xml" });
+    h.storage.prefix = PNG_PREFIX;
+
+    await expect(h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR)).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      httpStatus: 400,
+      details: [{ code: "mime_mismatch", path: "mime", meta: { extension: "png", expectedMime: "image/png" } }],
+    });
+    expect(h.storage.copied).toHaveLength(0);
+    expect(h.repo.insertedVersions).toHaveLength(0);
+  });
+
+  it("H1 · S2：扩展名 / 文件头冲突（含双扩展名 .svg.png）→ 422 拒绝，不能靠改名绕过", async () => {
+    for (const name of ["伪造.png", "伪造.svg.png"]) {
+      const h = readyHarness();
+      h.repo.file = makeFileRow({ name });
+      h.repo.session = makeSessionRow({ storageUploadId: "storage-1", contentHash: HASH, mime: "image/png" });
+      h.storage.prefix = SVG_PREFIX;
+
+      await expect(h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR)).rejects.toMatchObject({
+        code: "VALIDATION_FAILED",
+        httpStatus: 400,
+        details: [{ code: "content_mismatch", path: "mime", meta: { expectedMime: "image/png" } }],
+      });
+      expect(h.storage.copied).toHaveLength(0);
+      expect(h.repo.insertedVersions).toHaveLength(0);
+    }
+  });
+
+  it("H1 · S2：HTML / SVG 可按规范 MIME 入库，但原对象只保存为不透明字节", async () => {
+    const html = readyHarness();
+    html.repo.file = makeFileRow({ name: "说明.html" });
+    html.repo.session = makeSessionRow({
+      storageUploadId: "storage-1",
+      contentHash: HASH,
+      mime: "TEXT/HTML; charset=utf-8",
+    });
+    html.storage.prefix = HTML_PREFIX;
+    const htmlResult = await html.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+    expect(htmlResult.version.mime).toBe("text/html");
+    expect(html.storage.copied[0]).toMatchObject({ contentType: "application/octet-stream" });
+
+    const svg = readyHarness();
+    svg.repo.file = makeFileRow({ name: "矢量图.svg" });
+    svg.repo.session = makeSessionRow({
+      storageUploadId: "storage-1",
+      contentHash: HASH,
+      mime: "image/svg+xml; charset=utf-8",
+    });
+    svg.storage.prefix = SVG_PREFIX;
+    const svgResult = await svg.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+    expect(svgResult.version.mime).toBe("image/svg+xml");
+    expect(svg.storage.copied[0]).toMatchObject({ contentType: "application/octet-stream" });
+  });
+
+  it("H1 · S2：无扩展名即使声明 image/svg+xml 也保存为 octet-stream（不进入 SVG 预览）", async () => {
+    const h = readyHarness();
+    h.repo.file = makeFileRow({ name: "无扩展名" });
+    h.repo.session = makeSessionRow({
+      storageUploadId: "storage-1",
+      contentHash: HASH,
+      mime: "image/svg+xml",
+    });
+    h.storage.prefix = SVG_PREFIX;
+
+    const result = await h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+
+    expect(result.version.mime).toBe("application/octet-stream");
+    expect(h.repo.insertedVersions[0]!.objectKey).toBe(`projects/${PROJECT}/files/${FILE}/v1/${HASH}.bin`);
+    expect(h.storage.copied[0]).toMatchObject({ contentType: "application/octet-stream" });
   });
 
   it("分片未齐 → 409 UPLOAD_INCOMPLETE（details 带缺失分片；不合并）", async () => {
@@ -1837,7 +1953,11 @@ describe("FileService.rollbackFile（版本回溯 · 生成新版本不删历史
     const result = await h.service.rollbackFile(FILE, { toVersionId: VERSION_A, reason: "现场按 v1 施工", version: 4 }, ACTOR);
 
     expect(h.storage.copied).toHaveLength(1);
-    expect(h.storage.copied[0]).toMatchObject({ sourceKey: CONTRACT_KEY, destinationKey: CONTRACT_KEY_V3, contentType: null });
+    expect(h.storage.copied[0]).toMatchObject({
+      sourceKey: CONTRACT_KEY,
+      destinationKey: CONTRACT_KEY_V3,
+      contentType: "application/octet-stream",
+    });
     expect(result.version).toMatchObject({ id: VERSION_C, seq: 3, contentHash: HASH, uploadedBy: ACTOR });
     expect(result.file.currentVersionId).toBe(VERSION_C);
     expect(result.file.version).toBe(5);
@@ -2350,6 +2470,7 @@ describe("FileService.completeUpload 变更写入（M4-04 申请即通过 · int
         fileName: "回放-变更后.pptx",
       },
     });
+    h.storage.prefix = ZIP_PREFIX;
     h.repo.deliverableTaskIds = [TASK];
     h.repo.nodeStageKey = "construction";
 

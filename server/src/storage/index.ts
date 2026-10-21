@@ -11,6 +11,7 @@ export type {
   CreateMultipartUploadInput,
   DownloadUrlInput,
   GetObjectResult,
+  ObjectPrefixResult,
   MultipartUploadKeyInput,
   MultipartUploadRef,
   ObjectHead,

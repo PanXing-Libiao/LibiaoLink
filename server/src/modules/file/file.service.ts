@@ -39,6 +39,7 @@ import {
   buildUploadStagingKey,
   missingPartNumbers,
   ObjectStorage,
+  type ObjectPrefixResult,
   planUpload,
   toApiError,
 } from "../../storage/index.js";
@@ -54,6 +55,7 @@ import {
   type UploadSessionRow,
 } from "./file.repository.js";
 import { parseFileListFilter, parseFileListSort, type FileListQueryInput } from "./file.query.js";
+import { OCTET_STREAM_MIME, normalizeMime, validateUploadFileType } from "./file-mime.js";
 import { PreviewRepository } from "./preview.repository.js";
 import { buildPreviewJobPayload, PREVIEW_JOB_TOPIC, previewJobDedupeKey } from "./preview.job.js";
 import { previewTargetsFor } from "./preview.targets.js";
@@ -100,6 +102,8 @@ interface ChangePayload {
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
+/** MIME 文件头校验的读取上限：只读前缀，SVG / XML 的少量声明也能覆盖。 */
+const MIME_SNIFF_BYTES = 64 * 1024;
 /** 过期会话清理单批上限（worker 每轮；避免长事务与大对象清理拖住心跳）。 */
 export const EXPIRE_SWEEP_BATCH = 200;
 /** 回收站到期清理单批上限（worker 每轮；彻底删除含对象清理，批更小）。 */
@@ -439,13 +443,35 @@ export class FileService {
     // 事务内的 files.name 全部随新名称（扩展名随之上新）；历史版本对象键不动，按各自扩展名预览 / 下载（preview-read / download 同口径）。
     const changePayload = isChange ? readChangePayload(session.changePayload) : null;
     const effectiveName = changePayload?.fileName ?? file.name;
+    let prefix: ObjectPrefixResult | null;
+    try {
+      prefix = await this.storage.readObjectPrefix(stagingKey, Math.min(MIME_SNIFF_BYTES, head.sizeBytes));
+    } catch (error) {
+      throw toApiError(error);
+    }
+    if (prefix === null) {
+      throw new AppError("UPLOAD_INCOMPLETE", "合并结果在对象存储侧不可读取，请重新上传");
+    }
+    const type = validateUploadFileType({ fileName: effectiveName, mime: session.mime, bytes: prefix.bytes });
+    if (!type.ok) {
+      throw new AppError("VALIDATION_FAILED", type.message, [
+        {
+          code: type.code,
+          message: type.message,
+          path: "mime",
+          meta: { extension: type.extension, declaredMime: type.declaredMime, expectedMime: type.expectedMime },
+        },
+      ]);
+    }
+    const versionMime = type.mime;
     const seq = await this.repository.nextVersionSeq(fileId);
     const objectKey = buildObjectKey({ projectId: file.projectId, fileId, seq, contentHash, fileName: effectiveName });
     try {
       await this.storage.copyObject({
         sourceKey: stagingKey,
         destinationKey: objectKey,
-        contentType: session.mime,
+        // H1 · S2：原对象统一按不透明字节保存，浏览器投递类型只由服务端签名响应覆盖。
+        contentType: OCTET_STREAM_MIME,
         metadata: { "file-name": encodeURIComponent(effectiveName) },
       });
     } catch (error) {
@@ -507,7 +533,7 @@ export class FileService {
           objectKey,
           sizeBytes: head.sizeBytes,
           contentHash,
-          mime: session.mime,
+          mime: versionMime,
           uploadedBy: actorId,
           uploadedAt: at,
           changeRequestId,
@@ -581,7 +607,7 @@ export class FileService {
           objectKey,
           contentHash,
           sizeBytes: head.sizeBytes,
-          mime: session.mime,
+          mime: versionMime,
           actorId,
           at: at.toISOString(),
         },
@@ -988,6 +1014,7 @@ export class FileService {
       ]);
     }
     const at = this.clock.now();
+    const rollbackMime = normalizeMime(target.mime) ?? OCTET_STREAM_MIME;
     // 与 complete 同序：先把目标版对象复制到新版本契约键（事务外），事务内锁行复核位次，防并发抢同一位次。
     const seq = await this.repository.nextVersionSeq(fileId);
     const objectKey = buildObjectKey({
@@ -1001,7 +1028,7 @@ export class FileService {
       await this.storage.copyObject({
         sourceKey: target.objectKey,
         destinationKey: objectKey,
-        contentType: target.mime,
+        contentType: OCTET_STREAM_MIME,
         metadata: { "file-name": encodeURIComponent(file.name) },
       });
     } catch (error) {
@@ -1043,7 +1070,7 @@ export class FileService {
           objectKey,
           sizeBytes: target.sizeBytes,
           contentHash: target.contentHash,
-          mime: target.mime,
+          mime: rollbackMime,
           uploadedBy: actorId,
           uploadedAt: at,
           changeRequestId,
@@ -1108,7 +1135,7 @@ export class FileService {
           objectKey,
           contentHash: target.contentHash,
           sizeBytes: target.sizeBytes,
-          mime: target.mime,
+          mime: rollbackMime,
           rollbackOf: target.id,
           reason: body.reason,
           actorId,
@@ -1396,7 +1423,7 @@ export class FileService {
     }
     const created = await this.storage.createMultipartUpload({
       objectKey: session.objectKey,
-      contentType: session.mime,
+      contentType: OCTET_STREAM_MIME,
       metadata: { "file-name": encodeURIComponent(file.name) },
     });
     const updated = await this.database.db.transaction(async (tx) => {

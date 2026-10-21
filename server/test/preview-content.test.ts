@@ -198,7 +198,7 @@ async function rejectionOf(promise: Promise<unknown>): Promise<unknown> {
 }
 
 describe("PreviewContentService.serve（S3 · 受控端点 · 安全定稿 §3.2）", () => {
-  it("200：有效 Bearer → 版本 mime / Content-Length / inline / no-store / nosniff + 字节原样直写（无重定向）", async () => {
+  it("200：有效 Bearer → 精确 MIME / Content-Length / inline / no-store / nosniff + 字节原样直写（无重定向）", async () => {
     const h = makeService();
 
     await serve(h);
@@ -216,7 +216,7 @@ describe("PreviewContentService.serve（S3 · 受控端点 · 安全定稿 §3.2
     expect(h.response.redirectCalls).toBe(0);
   });
 
-  it("Content-Type 取版本 mime；非可见 ASCII（CRLF 注入）/ 缺失 → application/octet-stream 护栏", async () => {
+  it("只有精确白名单类型可 inline；SVG / HTML / 非法或缺失 MIME → octet-stream + attachment", async () => {
     const custom = makeService();
     custom.repo.versions.set(
       VERSION,
@@ -226,16 +226,31 @@ describe("PreviewContentService.serve（S3 · 受控端点 · 安全定稿 §3.2
     expect(custom.response.headers.get("Content-Type")).toBe(
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     );
+    expect(custom.response.headers.get("Content-Disposition")).toBe("inline");
+
+    const svg = makeService();
+    svg.repo.versions.set(VERSION, makeVersionRow({ mime: "image/svg+xml; charset=utf-8" }));
+    await serve(svg);
+    expect(svg.response.headers.get("Content-Type")).toBe("application/octet-stream");
+    expect(svg.response.headers.get("Content-Disposition")).toBe("attachment");
+
+    const html = makeService();
+    html.repo.versions.set(VERSION, makeVersionRow({ mime: "text/html" }));
+    await serve(html);
+    expect(html.response.headers.get("Content-Type")).toBe("application/octet-stream");
+    expect(html.response.headers.get("Content-Disposition")).toBe("attachment");
 
     const injected = makeService();
     injected.repo.versions.set(VERSION, makeVersionRow({ mime: "application/pdf\r\nX-Evil: 1" }));
     await serve(injected);
     expect(injected.response.headers.get("Content-Type")).toBe("application/octet-stream");
+    expect(injected.response.headers.get("Content-Disposition")).toBe("attachment");
 
     const missing = makeService();
     missing.repo.versions.set(VERSION, makeVersionRow({ mime: null }));
     await serve(missing);
     expect(missing.response.headers.get("Content-Type")).toBe("application/octet-stream");
+    expect(missing.response.headers.get("Content-Disposition")).toBe("attachment");
   });
 
   it("Authorization 形状：Bearer 大小写不敏感；缺头 / 其它 scheme → 401", async () => {
