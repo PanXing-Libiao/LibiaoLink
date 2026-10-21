@@ -37,7 +37,7 @@
 | B3 MIME / 改名 | `image/svg+xml; charset=utf-8`、大写扩展名、双扩展名；扩展名 / MIME / 文件头冲突；改名后历史版本 | 合规输入最终只能是 PNG 或 fail closed；冲突上传按统一错误模型返回 400 `VALIDATION_FAILED` + `mime_mismatch` / `content_mismatch`，且不生成版本行；历史版本仍按版本扩展名裁决且无 `.svg` 直链 |
 | B4 原 SVG 下载 | 签名下载恶意 SVG 原对象 | 文件名保留 `.svg`；`attachment` + `application/octet-stream`；字节与上传一致；SHA-256 与上传声明一致 |
 | B5 位图回归 | PNG / JPEG / GIF / WebP 上传、缩略图、浮层 | 预览 ready；`target=image`、无 viewer / pipeline；URL 不经 `/previews/`；缩略图与浮层自然尺寸有效 |
-| B6 PDF / Office / CAD | PDF、DOCX、STL 上传与浮层 | PDF / DOCX 进入 ONLYOFFICE viewer，不进入转换产物；STL 进入 `cad3d`，等待 WebGL canvas 与解析终态，无 `.text-red-400`，不进入 PNG 产物 |
+| B6 PDF / Office / CAD | PDF、DOCX、STL 上传与浮层 | PDF / DOCX 进入 ONLYOFFICE viewer，不进入转换产物；STL 经抽屉预览按钮进入 `cad3d`，等待 WebGL canvas 与解析终态，无 `.text-red-400`，不进入 PNG 产物 |
 | B7 响应头 / CSP | 443 SPA、443 `/libiaolink/` 探针、9443 探针；SPA 控制台 | 三路径均有 HSTS、`nosniff`、XFO `DENY`；SPA CSP 含 `default-src 'self'` / `frame-ancestors 'none'` / `object-src 'none'`；对象门面 CSP 含 `sandbox` / `script-src 'none'` / `default-src 'none'`；SPA 无 `securitypolicyviolation` 或安全日志 |
 
 浏览器同时监听 `Runtime.exceptionThrown`、console、dialog、网络请求与 `securitypolicyviolation`。远程图片、远程字体、动画和交互 SVG 按 ADR-034 不保留；正常预览是静态 PNG。
