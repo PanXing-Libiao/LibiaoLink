@@ -24,6 +24,18 @@
 
 交互依据：[MDN progress](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/progress)、[WAI 进度取值规则](https://www.w3.org/WAI/ARIA/apg/practices/range-related-properties/)、[Microsoft progress controls](https://learn.microsoft.com/en-us/windows/apps/develop/ui/controls/progress-controls)。未知总量不伪造百分比；用户要求的预计时间以独立、可超出的估算范围提供。
 
+## 导入动效追订：零件拼合与线框描绘
+
+圆环旋转已替换为 4.8 秒一轮的本地 SVG/CSS 插画：底座出现、两层零件沿不同方向滑入、合拢后描绘边缘，停留后淡出再开始。继续使用现有青灰配色，未增加库、CDN 或运行时网络依赖；系统减少动态效果时显示静态图。它只表示等待活动，不映射当前文件几何或真实转换比例，阶段/字节进度/预计时间仍取原链路。
+
+| 参考 | 查看内容 | 适配决定 |
+| --- | --- | --- |
+| [CSS Loaders / 3D](https://css-loaders.com/3d/) | 实际预览立体方块与分块运动 | 借鉴等轴视角与分块感；不使用旋转动效 |
+| [Vivus / GitHub](https://github.com/maxwellito/vivus) 及[官方演示](https://maxwellito.github.io/vivus/) | 逐条绘制 SVG 路径，官方演示可运行；仓库为 MIT | 借鉴描线方向，使用自行绘制路径与 CSS，不引入库或复制其代码 |
+| [Uiverse / 3D glass cube](https://uiverse.io//dexter-st/sharp-puma-61) | 来源页标注 MIT、等轴/透明几何；内置浏览器预览不稳定 | 作为候选调查，未直接复用 |
+
+图形与动画在平台内独立编写，不是下载的第三方动画文件。[循环预览页](../../frontend/tools/cad-loading.html)仅展示动效，不创建转换任务；运行中访问 `/tools/cad-loading.html`。内置浏览器已确认分散和拼合两个时刻的变化，真实 W01 导入中显示新图形、阶段与估算，完成后正常就绪；更新[导入截图](import-loading.png)。本轮未新增测试或运行全量构建。
+
 ## 外部引用提示文案追订
 
 外部引用失败现在明确说明“暂不支持在线预览”，并提示使用本地 CAD 软件、备齐相关零件文件；重试按钮旁“也可以下载原文件查看”已移除，避免误解为下载后即可在平台打开，或下载包含外部零件。S03 实际重开已核对新提示，失败规则未变。[当前提示](external-reference-message.png)。仅改文案，未新增测试或运行全量构建。
