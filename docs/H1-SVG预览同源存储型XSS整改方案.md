@@ -2,7 +2,7 @@
 
 > 来源：`LibiaoLink_安全审查报告_2026-10-19.pdf` H1（第 5 页）｜严重度 High｜报告要求：上线前处理
 > 报告审查基线：`e13664f`｜方案落档时 `lan` 分支 HEAD：`d6ae272`（审查基线祖先；H1 涉及路径未发现实质修复）
-> 起草：lan（后端平台 / file / preview / outbox）｜拟稿日期：2026-10-20｜状态：**S1 架构 / 契约已批准（ADR-034 Accepted，PR #518 已合入 main）；S2 代码与最终门禁已完成，待 PR 合入（不得单独部署）；S3 起未实现；外部 V1.0 源文档同步仍待 px 确认**
+> 起草：lan（后端平台 / file / preview / outbox）｜拟稿日期：2026-10-20｜状态：**S1 架构 / 契约已批准（ADR-034 Accepted，PR #518 已合入 main）；S2 已随 PR #523 合入 main `e2b6aab`（不得单独部署）；S3 栅格化沙箱已实现并通过容器自检，PR #529 待合入；S4 起未实现；外部 V1.0 源文档同步仍待 px 确认**
 > 归属与评审：本文件位于 `docs/`（px 主责），合入前请 px 复核；ADR 与契约口径由 wmj 主责；生产部署、Nginx 与浏览器测试设施由 px 主责；服务端预览与队列由 lan 主责
 > 变更控制：后续执行以本文件为准。若执行中需要改变架构、验收条件或切片顺序，先修改本文件并说明原因；已合入主干的 ADR 与回放证据按不可变历史处理，不原地重写。
 
@@ -244,7 +244,7 @@ renderer 不执行脚本；服务容器无外网、不配置外部资源目录�
 
 ### S2 · 服务端硬边界（安全止血）
 
-- 执行状态（2026-10-20）：代码、单测与最终门禁已完成，待 PR 合入；`PREVIEW_PIPELINE_VERSION` 仍为 `1.0.0`，切 `2.0.0` 属 S4。SVG 已保留在线预览入口，但读取面只投递 / 返回 `target=image` 的 PNG 产物，原 SVG 永不进入直签分支。合并 `main` `e674b58` 后最终门禁 = server `typecheck` / `build` / `check:boundaries` 通过，Vitest **85 文件 / 1323 例**全过；含 64 KiB 前缀截断 UTF-8 多字节字符的合法 SVG / HTML 回归。
+- 执行状态（2026-10-21）：已随 PR #523 合并 main `e2b6aab`；`PREVIEW_PIPELINE_VERSION` 仍为 `1.0.0`，切 `2.0.0` 属 S4。SVG 已保留在线预览入口，但读取面只投递 / 返回 `target=image` 的 PNG 产物，原 SVG 永不进入直签分支。合并 `main` `e674b58` 后最终门禁 = server `typecheck` / `build` / `check:boundaries` 通过，Vitest **85 文件 / 1323 例**全过；含 64 KiB 前缀截断 UTF-8 多字节字符的合法 SVG / HTML 回归。
 
 - 重构 `preview.targets.ts`；移除 `image/*` 前缀匹配与 SVG 位图直签。
 - `file.service.ts` 完成上传时规范化 MIME、检查扩展名 / 文件头一致性；数据库保存规范 MIME，原始对象固定 `application/octet-stream`。
@@ -256,6 +256,7 @@ renderer 不执行脚本；服务容器无外网、不配置外部资源目录�
 
 ### S3 · 栅格化服务
 
+- 执行状态（2026-10-21）：`deploy/svg-preview/` 已实现，PR #529 待合入；S3 只交付沙箱服务与证据，不接主栈队列、不切生产版本。构建台账 = OCI digest `sha256:d0a2a405dc6eb557630369c641541a61690f34a1f12a551d8d22a5f39d2500cf`、linux/amd64、Node v24.21.0、490,998,073 B；容器自检 **40 PASS / 0 FAIL / 0 SKIP**，经 dev edge 实测 4096×4096 PNG 返回 200。实现过程中发现并修复 CSS 注释 / CDATA 分片绕过与 `image-set()` 外部资源面；`edge` 的 Compose `command` 不能覆盖镜像 ENTRYPOINT，已改 `entrypoint` 并收纳到 `dev` profile，默认只启 internal-only converter。详细契约与台账见 `deploy/svg-preview/README.md`。
 - 新增 `deploy/svg-preview/`：Node 24 服务、resvg-js 2.6.2、固定字体、无外网、非 root、只读、资源与超时上限。
 - 实现 `/convert`、`/healthz` 与现有 worker 客户端兼容；只接受 SVG + image。
 - 加入恶意夹具：脚本、事件属性、`foreignObject`、外部图片 / URL、DTD、超大尺寸、极长宽比、超时、超内存。

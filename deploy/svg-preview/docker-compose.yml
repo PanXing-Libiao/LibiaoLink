@@ -1,0 +1,87 @@
+name: libiaolink-svg-preview
+
+services:
+  converter:
+    image: "${SVG_PREVIEW_IMAGE:-libiaolink/svg-preview}:${SVG_PREVIEW_TAG:-2.0.0}"
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PIPELINE_VERSION: "${SVG_PIPELINE_VERSION:-2.0.0}"
+        BUILD_REVISION: "${SVG_PREVIEW_BUILD_REVISION:-unknown}"
+    container_name: libiaolink-svg-preview
+    init: true
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=${SVG_PREVIEW_TMPFS:-128m},mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      PORT: "9900"
+      PIPELINE_VERSION: "${SVG_PIPELINE_VERSION:-2.0.0}"
+      FONTS_DIR: "/app/fonts"
+      CONVERT_TIMEOUT_MS: "${SVG_PREVIEW_TIMEOUT_MS:-10000}"
+      CONVERT_MAX_CONCURRENCY: "1"
+      CONVERT_MAX_QUEUE: "${SVG_PREVIEW_MAX_QUEUE:-4}"
+      SVG_MAX_SOURCE_BYTES: "${SVG_PREVIEW_MAX_SOURCE_BYTES:-20971520}"
+      SVG_MAX_OUTPUT_BYTES: "${SVG_PREVIEW_MAX_OUTPUT_BYTES:-20971520}"
+      SVG_MAX_LONG_EDGE: "${SVG_PREVIEW_MAX_LONG_EDGE:-4096}"
+      SVG_MAX_PIXELS: "${SVG_PREVIEW_MAX_PIXELS:-16777216}"
+      SVG_MAX_ASPECT_RATIO: "${SVG_PREVIEW_MAX_ASPECT_RATIO:-16}"
+      SVG_MAX_NATURAL_EDGE: "${SVG_PREVIEW_MAX_NATURAL_EDGE:-1000000}"
+      SVG_MAX_ELEMENTS: "${SVG_PREVIEW_MAX_ELEMENTS:-100000}"
+    mem_limit: ${SVG_PREVIEW_MEM_LIMIT:-256m}
+    cpus: ${SVG_PREVIEW_CPUS:-1}
+    pids_limit: ${SVG_PREVIEW_PIDS:-64}
+    networks: [preview-internal]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9900/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    stop_grace_period: 15s
+
+  edge:
+    image: "${SVG_PREVIEW_IMAGE:-libiaolink/svg-preview}:${SVG_PREVIEW_TAG:-2.0.0}"
+    container_name: libiaolink-svg-preview-edge
+    profiles: [dev]
+    entrypoint: ["node", "--disable-proto=throw", "/app/service/edge-forward.mjs"]
+    init: true
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      EDGE_LISTEN_PORT: "9900"
+      EDGE_UPSTREAM_HOST: converter
+      EDGE_UPSTREAM_PORT: "9900"
+    mem_limit: ${SVG_PREVIEW_EDGE_MEM_LIMIT:-64m}
+    cpus: ${SVG_PREVIEW_EDGE_CPUS:-0.25}
+    pids_limit: 64
+    ports:
+      - "127.0.0.1:${SVG_PREVIEW_PORT:-9900}:9900"
+    depends_on:
+      converter:
+        condition: service_healthy
+    networks: [preview-edge, preview-internal]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  preview-internal:
+    name: libiaolink-svg-preview-internal
+    internal: true
+  preview-edge:
+    name: libiaolink-svg-preview-edge
