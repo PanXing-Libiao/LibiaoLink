@@ -6,7 +6,7 @@
  * - 项目回收站 GET /api/v1/projects?filter[recycled]=true、恢复 POST /api/v1/projects/{id}/restore、彻底删除 POST /api/v1/projects/{id}/purge
  * 契约 shared/src/modules/projects.ts；UI 模型见 types.ts（前端「项目描述」= 契约 name）。
  */
-import { apiRequest, apiSend, readAllPages } from "./api";
+import { apiDownload, apiRequest, apiSend, readAllPages } from "./api";
 import { EMPTY_LIST_QUERY, type ListQueryState } from "./useHashRoute";
 import type { Project } from "./types";
 
@@ -262,4 +262,35 @@ export function toUiProject(view: ApiProject): Project {
     deletedAt: view.deletedAt === null ? null : formatDateTime(view.deletedAt),
     deletedBy: view.deletedBy,
   };
+}
+
+/** 浏览器保存用的兜底文件名（服务端 Content-Disposition 优先；这里只处理文件名非法字符）。 */
+function projectExportDownloadName(project: Project): string {
+  const clean = (value: string): string => value.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").replace(/[. ]+$/g, "").trim().slice(0, 120).replace(/[. ]+$/g, "") || "项目";
+  return "[" + clean(project.code) + "] " + clean(project.description) + ".xlsx";
+}
+
+/**
+ * 项目数据导出（project.export）：一次下载四个 Sheet 的 xlsx；
+ * origin 显式回传，供服务端把「文件」列生成为当前站点的文件库检索链接。
+ */
+export async function downloadProjectWorkbook(project: Project): Promise<void> {
+  const origin = encodeURIComponent(window.location.origin);
+  const response = await apiDownload(
+    "/api/v1/projects/" + encodeURIComponent(project.id) + "/export?origin=" + origin,
+    { headers: { Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" } },
+  );
+  const objectUrl = URL.createObjectURL(response.blob);
+  try {
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = response.fileName ?? projectExportDownloadName(project);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    window.setTimeout(() => {
+      URL.revokeObjectURL(objectUrl);
+    }, 1000);
+  }
 }

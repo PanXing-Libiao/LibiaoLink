@@ -48,6 +48,12 @@ type HomeProps = {
   canCreateProject: boolean;
   /** 是否持有 project.update（Push 173）：无权限时卡片编辑入口不渲染（与删除同款收敛口径）。 */
   canUpdateProject: boolean;
+  /** 是否持有 project.export：无权限时卡片导出入口不渲染（服务端仍是最终裁决）。 */
+  canExportProject: boolean;
+  /** 导出项目全部数据（App 层调下载接口、持忙碌态并在失败时出全局提示）。 */
+  onExportProject: (project: Project) => void;
+  /** 正在导出的项目 id：null = 没有进行中的导出。 */
+  exportingProjectId: string | null;
   /** 卡片删除项目（硬删；二次确认由 App 层的提示条承担）：确认后由父层调接口并刷新列表。 */
   onDeleteProject: (project: Project) => void;
   /** 新建项目：返回 null = 成功（父层刷新列表）；返回文案 = 失败提示（弹窗保持打开）。 */
@@ -107,7 +113,7 @@ type LoadError =
   | { kind: "network" }
   | { kind: "api"; message: string; code: string };
 
-export default function Home({ me, dicts, directory, dictTools, canManageDicts, canDeleteProject, canCreateProject, canUpdateProject, onDeleteProject, onCreate, onEdit, refreshToken, savedFilters, onSavedFiltersChange }: HomeProps) {
+export default function Home({ me, dicts, directory, dictTools, canManageDicts, canDeleteProject, canCreateProject, canUpdateProject, canExportProject, onExportProject, exportingProjectId, onDeleteProject, onCreate, onEdit, refreshToken, savedFilters, onSavedFiltersChange }: HomeProps) {
   const t = useT();
   const locale = useLocale();
   /** 无建项目权限提示（Push 173 口径；文案随语言切换）。 */
@@ -783,6 +789,14 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                       }
                     : undefined
                 }
+                onExport={
+                  canExportProject
+                    ? () => {
+                        onExportProject(project);
+                      }
+                    : undefined
+                }
+                exporting={exportingProjectId === project.id}
                 onDelete={
                   canDeleteProject
                     ? () => {
