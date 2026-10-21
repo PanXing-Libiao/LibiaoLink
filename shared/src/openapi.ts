@@ -88,6 +88,7 @@ import {
   IssueUpdateBodySchema,
 } from "./modules/issues.ts";
 import { WorkspaceResponseSchema } from "./modules/workspace.ts";
+import { DashboardChangeWordsResponseSchema, DashboardIssuesResponseSchema, DashboardProgressResponseSchema } from "./modules/dashboard.ts";
 import {
   SavedViewSchema,
   ViewCreateBodySchema,
@@ -1768,6 +1769,40 @@ export function buildOpenApiDocument() {
     },
   });
 
+  // ---- 仪表盘聚合（B4 / M7-02）：服务端收口，前端不再逐项目扇出 ----
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/dashboard/progress",
+    tags: ["dashboard"],
+    summary: "仪表盘任务聚合：项目进度（阶段 × 进度五档）/ 任务状态 / 交付时间；一次返回全部可见项目与逐项目统计",
+    responses: {
+      200: { description: "任务聚合（按会话用户项目可见性过滤）", ...json(DashboardProgressResponseSchema) },
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/dashboard/issues",
+    tags: ["dashboard"],
+    summary: "仪表盘问题分布聚合：问题状态 × 归类；一次返回全部与逐项目统计",
+    responses: {
+      200: { description: "问题分布聚合（按会话用户项目可见性过滤）", ...json(DashboardIssuesResponseSchema) },
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/dashboard/change-words",
+    tags: ["dashboard"],
+    summary: "仪表盘变更原因核心词频聚合：一次返回全部与逐项目词频",
+    responses: {
+      200: { description: "变更原因核心词频（按会话用户项目可见性过滤）", ...json(DashboardChangeWordsResponseSchema) },
+      401: commonErrors[401],
+    },
+  });
+
   // ---- 视图与关注（M2-06 · A1-03 / A1-15：保存视图 / 关注订阅 · wmj 线）----
   registry.registerPath({
     method: "get",
@@ -2261,6 +2296,7 @@ export function buildOpenApiDocument() {
       { name: "reports", description: "日报（A3-01 / A3-02 / A3-09；M6-01 / M6-02）" },
       { name: "issues", description: "问题闭环（A3-09~A3-13；三态流转 / 分派 / 留痕，M6-02 / M6-03）" },
       { name: "workspace", description: "工作台（A6-01 / A6-03）：我的任务与我的问题聚合读面（M6-05）" },
+      { name: "dashboard", description: "仪表盘聚合（B4 / M7-02）：项目进度、任务状态、交付时间、问题分布与变更原因词频" },
       { name: "views", description: "保存视图（A1-03 / M2-06）：个人与公共视图（筛选 / 列 / 排序 / 分组配置）" },
       { name: "follows", description: "关注订阅（A1-15 / M2-06）：关注项目与任务、清单与批量操作" },
       { name: "automation", description: "自动化规则管理（C2-01 / C2-12 / M5-06）：内置规则启停与配置、只读试运行、运行记录" },

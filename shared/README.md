@@ -222,7 +222,7 @@ CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.g
 | 卡片 | 契约增量 | 类型 |
 |---|---|---|
 | 搜索 | 新增 `/search`（对象类型过滤 + 高亮；分词先行 pg_trgm，ADR-029） | 端点 |
-| 仪表盘 | 新增 dashboard 统计端点（按对象类型聚合） | 端点 |
+| 仪表盘 | **已入并 HTTP 落地（2026-10-21 · B4 / M7-02；跨线代记，请 wmj 复核契约、lan 复核平台实现）**：`GET /api/v1/dashboard/progress`（任务聚合：阶段 × 进度五档 / 五态 / 交付三桶，含全部与逐项目）、`GET /api/v1/dashboard/issues`（问题三态 × 多归类）、`GET /api/v1/dashboard/change-words`（变更原因核心词频）；可见性按 `PermissionService.projectScope`，聚合响应不夹带明细，项目 / 任务 / 问题 / 变更口径见 `server/src/modules/dashboard/README.md` | 端点 / schema |
 | 导出 | 新增 `/exports` + 进度查询 | 端点 |
 
 ### M8 迁移与上线

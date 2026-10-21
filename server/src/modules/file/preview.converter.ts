@@ -3,17 +3,17 @@ import { AppConfig } from "../../config/config.module.js";
 import type { PreviewTarget } from "./preview.job.js";
 
 /**
- * 预览转换器客户端（M4-05c；接口契约见 deploy/preview/README.md「五」）。
+ * SVG 预览栅格化客户端（H1 · S4；接口契约见 deploy/svg-preview/README.md「2」）。
  *
  * 字节流进 / 字节流出：本客户端把源文件字节 POST 给沙箱、把产物字节读回来，
  * **不传对象键、不带 S3 凭证**（转换器不接触对象存储 —— 键由 worker 侧 `buildPreviewArtifactKey` 算）。
- * 只用 fetch（全局，零新依赖），超时用 `AbortSignal.timeout`（客户端比容器内硬超时留 30s 余量）。
+ * 只用 fetch（全局，零新依赖），超时用 `AbortSignal.timeout`（客户端比容器内 10 秒硬超时留余量）。
  */
 
 /** 失败原因上限：与 `preview_artifacts.error` 的 CHECK（≤ 500）同值 —— D2-05 降级副行直接用这条消息。 */
 const MESSAGE_MAX_LENGTH = 500;
 
-/** 自检超时：/healthz 只读自身与 soffice 状态，不走转换，用不着等转换超时那么久。 */
+/** 自检超时：/healthz 只读栅格化器自身与固定字体状态，不走转换，用不着等转换超时那么久。 */
 const HEALTH_TIMEOUT_MS = 5_000;
 
 /** 失败分类：可重试的（503 / 504 / 连接错误）退避重试；确定性的（400 / 413 / 415 / 422 / 501）重试不会好。 */
@@ -52,7 +52,7 @@ export interface ConvertResult {
 }
 
 export interface ConverterHealth {
-  /** HTTP 200 且 `ok:true`（soffice 可用）。 */
+  /** HTTP 200 且 `ok:true`（固定字体与 resvg 自检可用）。 */
   ok: boolean;
   pipelineVersion: string | null;
   /** 转换器自报的管线版本与 `PREVIEW_PIPELINE_VERSION` 是否同一串（不同 = 缓存键会写错，必须拦下）。 */
@@ -107,7 +107,7 @@ export class PreviewConverter {
     const bytes = new Uint8Array(await response.arrayBuffer());
     const pipelineVersion = response.headers.get("x-pipeline-version") ?? "";
     if (pipelineVersion !== this.pipelineVersion) {
-      // 版本不一致 = 产物是按另一条管线出的，写进本版本号的键就是「幽灵缓存」（deploy/preview/README「四」）。
+      // 版本不一致 = 产物是按另一条管线出的，写进本版本号的键就是「幽灵缓存」（deploy/svg-preview/README.md）。
       throw new ConverterError(
         "deterministic",
         "PIPELINE_VERSION_MISMATCH",
@@ -151,7 +151,7 @@ export class PreviewConverter {
     const reason = ok
       ? "预览转换器可用"
       : response.status === 503
-        ? "预览转换器自检未通过（soffice 不可用）"
+        ? "预览转换器自检未通过（固定字体或 resvg 不可用）"
         : "预览转换器 /healthz 返回 HTTP " + response.status;
     return {
       ok,

@@ -3,9 +3,10 @@ import { FileDownloadUrlResponseSchema, z } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import { AppConfig } from "../../config/config.module.js";
 import { DatabaseService } from "../../db/database.service.js";
-import { ObjectStorage, versionFileName } from "../../storage/index.js";
+import { contentDisposition, ObjectStorage, versionFileName } from "../../storage/index.js";
 import { AuditService } from "../admin/index.js";
 import { PermissionService } from "../permission/index.js";
+import { OCTET_STREAM_MIME } from "./file-mime.js";
 import { FileRepository } from "./file.repository.js";
 
 type FileDownloadUrlResponse = z.infer<typeof FileDownloadUrlResponseSchema>;
@@ -60,7 +61,8 @@ export class FileDownloadService {
     const downloadName = versionFileName(file.name, version.objectKey);
     const signed = await this.storage.signDownloadUrl({
       objectKey: version.objectKey,
-      fileName: downloadName,
+      responseContentType: OCTET_STREAM_MIME,
+      responseContentDisposition: contentDisposition(downloadName),
       expiresInSeconds: this.config.env.S3_DOWNLOAD_URL_TTL_SECONDS,
     });
     await this.audit.record(this.database.db, {

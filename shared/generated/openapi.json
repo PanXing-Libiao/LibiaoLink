@@ -77,6 +77,10 @@
       "description": "工作台（A6-01 / A6-03）：我的任务与我的问题聚合读面（M6-05）"
     },
     {
+      "name": "dashboard",
+      "description": "仪表盘聚合（B4 / M7-02）：项目进度、任务状态、交付时间、问题分布与变更原因词频"
+    },
+    {
       "name": "views",
       "description": "保存视图（A1-03 / M2-06）：个人与公共视图（筛选 / 列 / 排序 / 分组配置）"
     },
@@ -2962,6 +2966,378 @@
         ],
         "default": "submitted",
         "description": "draft 暂存 / submitted 提交（缺省 submitted）"
+      },
+      "DashboardChangeWords": {
+        "type": "object",
+        "properties": {
+          "words": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DashboardWord"
+            },
+            "description": "核心词频（count 降序、同频按词面排序）"
+          },
+          "totalChanges": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "words",
+          "totalChanges"
+        ]
+      },
+      "DashboardChangeWordsResponse": {
+        "type": "object",
+        "properties": {
+          "all": {
+            "$ref": "#/components/schemas/DashboardChangeWords"
+          },
+          "byProject": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DashboardWordProject"
+            },
+            "description": "只含有变更记录的项目；没有变更的项目由前端补空统计"
+          }
+        },
+        "required": [
+          "all",
+          "byProject"
+        ],
+        "description": "仪表盘变更原因核心词频聚合读面"
+      },
+      "DashboardDelivery": {
+        "type": "object",
+        "properties": {
+          "counts": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "三档计数，顺序 = 按时交付 / 逾期已交付 / 逾期未交付"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "已交付合计（三档之和，按时率分母）"
+          },
+          "onTimeRate": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 100,
+            "description": "按时率百分比取整；分母 0 时为 null"
+          },
+          "pendingCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "未到交付节点任务数（进行中 / 待开始 / 完成但未判定）"
+          }
+        },
+        "required": [
+          "counts",
+          "total",
+          "onTimeRate",
+          "pendingCount"
+        ]
+      },
+      "DashboardIssueCount": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/IssueState"
+          },
+          "category": {
+            "$ref": "#/components/schemas/IssueCategory"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "state",
+          "category",
+          "count"
+        ]
+      },
+      "DashboardIssueProject": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "issues": {
+            "$ref": "#/components/schemas/DashboardIssues"
+          }
+        },
+        "required": [
+          "projectId",
+          "issues"
+        ]
+      },
+      "DashboardIssues": {
+        "type": "object",
+        "properties": {
+          "states": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueState"
+            },
+            "description": "有数据的问题状态（展示序：done / in_progress / open；0 条不出现）"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueCategory"
+            },
+            "description": "有数据的问题归类（契约 C9 原序；0 条不出现）"
+          },
+          "counts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DashboardIssueCount"
+            },
+            "description": "状态 × 归类计数；一条问题多归类时每个归类各计一次"
+          },
+          "totalIssues": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "问题总数（明细行数口径；与柱高合计可能不同）"
+          }
+        },
+        "required": [
+          "states",
+          "categories",
+          "counts",
+          "totalIssues"
+        ]
+      },
+      "DashboardIssuesResponse": {
+        "type": "object",
+        "properties": {
+          "all": {
+            "$ref": "#/components/schemas/DashboardIssues"
+          },
+          "byProject": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DashboardIssueProject"
+            },
+            "description": "只含有问题记录的项目；没有问题的项目由前端补空统计"
+          }
+        },
+        "required": [
+          "all",
+          "byProject"
+        ],
+        "description": "仪表盘问题分布聚合读面"
+      },
+      "DashboardProgress": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DashboardProgressRow"
+            }
+          },
+          "totalTasks": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "rows",
+          "totalTasks"
+        ],
+        "description": "阶段 × 进度五档分布（九阶段固定存在；未分组行按需出现）"
+      },
+      "DashboardProgressResponse": {
+        "type": "object",
+        "properties": {
+          "all": {
+            "$ref": "#/components/schemas/DashboardTaskSummary"
+          },
+          "byProject": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DashboardProjectProgress"
+            },
+            "description": "逐项目统计；顺序与项目列表默认排序一致（createdAt desc、seqNo asc）"
+          }
+        },
+        "required": [
+          "all",
+          "byProject"
+        ],
+        "description": "仪表盘任务聚合读面（项目进度 / 任务状态 / 交付时间）"
+      },
+      "DashboardProgressRow": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StageKey"
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "ungrouped"
+                ]
+              }
+            ],
+            "description": "阶段 key；ungrouped = 临时任务（无阶段）"
+          },
+          "label": {
+            "type": "string",
+            "description": "阶段中文展示名；ungrouped 行为空串，由前端 i18n 补文案"
+          },
+          "isUngrouped": {
+            "type": "boolean"
+          },
+          "counts": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "进度五档计数（0 / 0.25 / 0.5 / 0.75 / 1，与前端 DASHBOARD_BINS 同序）"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "isUngrouped",
+          "counts",
+          "total"
+        ]
+      },
+      "DashboardProjectProgress": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "projectName": {
+            "type": "string"
+          },
+          "managerNames": {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": "项目经理显示名（与 managerIds 同下标；取不到姓名该位为 null）"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/DashboardTaskSummary"
+          }
+        },
+        "required": [
+          "projectId",
+          "projectName",
+          "managerNames",
+          "summary"
+        ]
+      },
+      "DashboardStatus": {
+        "type": "object",
+        "properties": {
+          "slices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DashboardStatusSlice"
+            }
+          },
+          "totalTasks": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "slices",
+          "totalTasks"
+        ],
+        "description": "任务五态分布（只含 count > 0 的状态）"
+      },
+      "DashboardStatusSlice": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/TaskDisplayStatus"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "status",
+          "count"
+        ]
+      },
+      "DashboardTaskSummary": {
+        "type": "object",
+        "properties": {
+          "progress": {
+            "$ref": "#/components/schemas/DashboardProgress"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DashboardStatus"
+          },
+          "delivery": {
+            "$ref": "#/components/schemas/DashboardDelivery"
+          }
+        },
+        "required": [
+          "progress",
+          "status",
+          "delivery"
+        ],
+        "description": "全部可见项目合计"
+      },
+      "DashboardWord": {
+        "type": "object",
+        "properties": {
+          "word": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "word",
+          "count"
+        ]
+      },
+      "DashboardWordProject": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "words": {
+            "$ref": "#/components/schemas/DashboardChangeWords"
+          }
+        },
+        "required": [
+          "projectId",
+          "words"
+        ]
       },
       "DataScope": {
         "type": "string",
@@ -19560,6 +19936,96 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/WorkspaceResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dashboard/progress": {
+      "get": {
+        "tags": [
+          "dashboard"
+        ],
+        "summary": "仪表盘任务聚合：项目进度（阶段 × 进度五档）/ 任务状态 / 交付时间；一次返回全部可见项目与逐项目统计",
+        "responses": {
+          "200": {
+            "description": "任务聚合（按会话用户项目可见性过滤）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardProgressResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dashboard/issues": {
+      "get": {
+        "tags": [
+          "dashboard"
+        ],
+        "summary": "仪表盘问题分布聚合：问题状态 × 归类；一次返回全部与逐项目统计",
+        "responses": {
+          "200": {
+            "description": "问题分布聚合（按会话用户项目可见性过滤）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardIssuesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dashboard/change-words": {
+      "get": {
+        "tags": [
+          "dashboard"
+        ],
+        "summary": "仪表盘变更原因核心词频聚合：一次返回全部与逐项目词频",
+        "responses": {
+          "200": {
+            "description": "变更原因核心词频（按会话用户项目可见性过滤）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardChangeWordsResponse"
                 }
               }
             }

@@ -4,15 +4,16 @@ import { AppError } from "../../common/errors/app-error.js";
 import { AppConfig } from "../../config/config.module.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { appendOutboxIfAbsent } from "../../db/outbox.js";
-import { ObjectStorage, versionFileName } from "../../storage/index.js";
+import { contentDisposition, ObjectStorage, versionFileName } from "../../storage/index.js";
 import { UserService } from "../identity/index.js";
 import { PermissionService } from "../permission/index.js";
 import { FileRepository, type FileRow, type FileVersionRow } from "./file.repository.js";
 import { buildPreviewContentUrl, signHs256Jwt } from "./onlyoffice.jwt.js";
 import { buildPreviewJobPayload, PREVIEW_JOB_TOPIC, previewJobDedupeKey, type PreviewTarget } from "./preview.job.js";
 import { PreviewRepository, type PreviewArtifactKey, type PreviewArtifactRow } from "./preview.repository.js";
-import { isCadPreviewPending, isImageFile, previewTargetsFor, viewerChannelFor, type ViewerChannel } from "./preview.targets.js";
+import { isCadPreviewPending, isRasterImageFile, previewTargetsFor, viewerChannelFor, type ViewerChannel } from "./preview.targets.js";
 import { CAD_ENGINE_VERSION } from "./cad-engine.client.js";
+import { canonicalMimeForExtension, OCTET_STREAM_MIME } from "./file-mime.js";
 
 type FilePreviewResponse = z.infer<typeof FilePreviewResponseSchema>;
 
@@ -35,15 +36,15 @@ const VIEWER_PERMISSIONS = {
 /**
  * 预览读 API（M4-05 读面 · `GET /files/{id}/preview` · 契约 shared/src/modules/files.ts）。
  *
- * 就绪通道（S6-前置 起图片直签 + 查看器通道均同步 ready；产物通道段保留但无投递，见下）：
- * - **图片直签**（S6-前置 · D6）：`isImageFile` → 原对象**短时签名直出**（D2-04：对象存储禁匿名读取）——
+ * 就绪通道（S6-前置 图片直签 + 查看器通道；H1 S4 起 SVG PNG 产物通道恢复投递，见下）：
+ * - **安全位图直签**（H1 S2）：`isRasterImageFile` → 原对象**短时签名直出**（D2-04：对象存储禁匿名读取）——
  *   status=ready、target=image、`pipelineVersion` / `generatedAt` 空（无产物语义）；不查 / 不落产物行、
- *   不投转换任务、不经 `deploy/preview`（字节 = 原对象）。
+ *   不投转换任务、不经栅格化器（字节 = 原对象）。
  * - **查看器通道**（S3 · ADR-030；PDF 2026-10-08 并入）：Office / 文本族 / PDF → `viewer` 非空、`target` / `url` 空，
  *   与产物通道互斥（契约 FilePreviewResponse.viewer）；不走产物表、不投递转换任务，就绪即签发只读查看器配置。
  *
- * **产物通道三态（M4-05d · 保留段）**：S6-前置 起 `previewTargetsFor` 无投递通道（图片改直签、其余走查看器）——
- * 该段对新请求**不可达**，保留 = structured 二期启用投递后复用（S6 退役评审另行处置）：
+ * **产物通道三态（M4-05d · H1 S4 起 SVG 可达）**：SVG 恢复 `target=image` 的 PNG 产物投递；图片仍走原对象直签，
+ * 其余类型按查看器 / 降级处理。structured 二期启用投递时复用同一段：
  * - `ready`：三元组命中产物 → 短时签名地址；
  * - `not_ready`：**同事务**登记产物行（首次）+ 幂等补投 `preview.job`（去重键 = 三元组）→ 前端轮询；
  * - `failed`：返回 `preview_artifacts.error`（≤ 500 字）供前端降级「请下载查看」（D2-05），**不原地重试**
@@ -75,7 +76,7 @@ export class PreviewReadService {
     private readonly config: AppConfig,
   ) {}
 
-  /** `GET /files/{id}/preview`：文件可见性 → 目标版本 → 通道判定（图片直签 / 查看器 / 产物通道三态保留段）。 */
+  /** `GET /files/{id}/preview`：文件可见性 → 目标版本 → 通道判定（SVG 产物 / 图片直签 / 查看器 / 降级）。 */
   async getPreview(fileId: string, versionId: string | null, actorId: string): Promise<FilePreviewResponse> {
     const file = await this.loadVisibleFile(fileId, actorId);
     const version = await this.resolveVersion(file, versionId);
@@ -101,69 +102,69 @@ export class PreviewReadService {
       return this.degrade(file.id, version.id, "CAD 在线预览正在升级，暂不可用，请下载原文件查看");
     }
 
-    // S6-前置（D6）：图片 → 原对象短时签名直签（优先于产物通道判定：不投任务 / 不落产物行 / 不经 deploy/preview）。
-    if (isImageFile({ fileName: channelName, mime: version.mime })) {
-      return this.serveImageDirect(file, version);
-    }
-
+    // H1 · S2：SVG 永远先走目标产物通道，绝不落入下面的原对象直签分支。
     const targets = previewTargetsFor({ fileName: channelName, mime: version.mime });
-    if (targets.length === 0) {
-      // S3（ADR-030；PDF 2026-10-08 并入）：Office / 文本族 / PDF → ONLYOFFICE 查看器通道（无转换产物 / 不占 target / 不投递转换任务）。
-      const viewerChannel = viewerChannelFor({ fileName: channelName, mime: version.mime });
-      if (viewerChannel !== null) {
-        return this.serveViewer(file, version, viewerChannel, actorId);
+    if (targets.length > 0) {
+      // 缓存键 = 三元组（内容哈希 + 管线版本 + 通道）；同一内容可有多个通道，逐个查已有产物。
+      const pipelineVersion = this.config.env.PREVIEW_PIPELINE_VERSION;
+      const keys: PreviewArtifactKey[] = targets.map((target) => ({
+        contentHash: version.contentHash,
+        pipelineVersion,
+        target,
+      }));
+      const rows: (PreviewArtifactRow | null)[] = [];
+      for (const key of keys) {
+        rows.push(await this.previews.findByKey(key));
       }
-      return this.degrade(file.id, version.id, "该文件类型暂不支持在线预览，请下载查看");
-    }
 
-    // 产物通道三态（M4-05d · 保留段）：S6-前置（D6）起 `previewTargetsFor` 无投递通道（常量空表）——本段对新请求不可达，
-    // 保留 = structured 二期启用投递后复用（S6 退役评审另行处置）；新请求就绪路径 = 上方图片直签 / 查看器 / 降级。
-    // 缓存键 = 三元组（内容哈希 + 管线版本 + 通道）；同一内容可有多个通道，逐个查已有产物。
-    const pipelineVersion = this.config.env.PREVIEW_PIPELINE_VERSION;
-    const keys: PreviewArtifactKey[] = targets.map((target) => ({
-      contentHash: version.contentHash,
-      pipelineVersion,
-      target,
-    }));
-    const rows: (PreviewArtifactRow | null)[] = [];
-    for (const key of keys) {
-      rows.push(await this.previews.findByKey(key));
-    }
+      const readyIndex = rows.findIndex((row) => row !== null && row.status === "ready");
+      if (readyIndex >= 0) {
+        return this.serveReady(file, version, keys[readyIndex]!, rows[readyIndex]!);
+      }
 
-    const readyIndex = rows.findIndex((row) => row !== null && row.status === "ready");
-    if (readyIndex >= 0) {
-      return this.serveReady(file, version, keys[readyIndex]!, rows[readyIndex]!);
-    }
+      const failed = rows.filter((row): row is PreviewArtifactRow => row !== null && row.status === "failed");
+      if (failed.length === rows.length) {
+        return {
+          fileId: file.id,
+          versionId: version.id,
+          status: "failed",
+          target: null,
+          viewer: null,
+          url: null,
+          expiresAt: null,
+          pipelineVersion,
+          reason: failed[0]!.error ?? "预览转换失败，请下载查看",
+          generatedAt: null,
+        };
+      }
 
-    const failed = rows.filter((row): row is PreviewArtifactRow => row !== null && row.status === "failed");
-    if (failed.length === rows.length) {
+      await this.dispatch(file, version, keys, rows);
       return {
         fileId: file.id,
         versionId: version.id,
-        status: "failed",
+        status: "not_ready",
         target: null,
         viewer: null,
         url: null,
         expiresAt: null,
         pipelineVersion,
-        reason: failed[0]!.error ?? "预览转换失败，请下载查看",
+        reason: null,
         generatedAt: null,
       };
     }
 
-    await this.dispatch(file, version, keys, rows);
-    return {
-      fileId: file.id,
-      versionId: version.id,
-      status: "not_ready",
-      target: null,
-      viewer: null,
-      url: null,
-      expiresAt: null,
-      pipelineVersion,
-      reason: null,
-      generatedAt: null,
-    };
+    // 只有扩展名与规范 MIME 完全匹配的安全位图才允许原对象直签。
+    if (isRasterImageFile({ fileName: channelName, mime: version.mime })) {
+      return this.serveRasterImageDirect(file, version, channelName);
+    }
+
+    // Office / 文本族 / PDF → ONLYOFFICE 查看器通道。HTML / HTM 已从查看器族移除：
+    // 主动内容不得通过应用源以可执行文档类型返回。
+    const viewerChannel = viewerChannelFor({ fileName: channelName, mime: version.mime });
+    if (viewerChannel !== null) {
+      return this.serveViewer(file, version, viewerChannel, actorId);
+    }
+    return this.degrade(file.id, version.id, "该文件类型暂不支持在线预览，请下载查看");
   }
 
   /** 文件装载（读路径）：不存在 / 不可见 → 404（同文件详情 / 版本链口径）。 */
@@ -200,10 +201,18 @@ export class PreviewReadService {
       // 库侧 CHECK（ck_preview_artifacts_ready_pair）保证 ready ⇔ object_key，这里只做不变量兜底。
       throw new AppError("INTERNAL", "预览产物登记不完整（ready 行缺 object_key），请重新生成");
     }
-    // 不传 fileName = 不改写 Content-Disposition → 浏览器内联渲染（下载地址才需要 attachment）。
+    // 产物类型必须由服务端按 target 强制，不能沿用对象存储中的历史 Content-Type。
+    const responseType =
+      key.target === "image" ? "image/png" : key.target === "pdf" ? "application/pdf" : OCTET_STREAM_MIME;
+    const responseDisposition = contentDisposition(
+      key.target === "image" ? "preview.png" : "preview.pdf",
+      responseType === OCTET_STREAM_MIME ? "attachment" : "inline",
+    );
     const signed = await this.storage.signDownloadUrl({
       objectKey: row.objectKey,
       expiresInSeconds: this.config.env.PREVIEW_URL_TTL_SECONDS,
+      responseContentType: responseType,
+      responseContentDisposition: responseDisposition,
     });
     return {
       fileId: file.id,
@@ -220,18 +229,26 @@ export class PreviewReadService {
   }
 
   /**
-   * 图片直签 ready（S6-前置 · D6）：原对象短时签名 —— 对齐产物通道 ready 的响应形状（契约不变）：
-   * status=ready、target=image、url=短时签名（**不传 fileName** → 内联渲染，缩略图 / 浮层共用）；
+   * 安全位图直签 ready：原对象短时签名 —— 对齐产物通道 ready 的响应形状（契约不变）：
+   * status=ready、target=image、url=短时签名；响应强制精确图片 MIME + inline，
+   * 不依赖原对象在存储中的类型元数据（H1 · S2）。
    * `pipelineVersion` / `generatedAt` 空（无产物语义 —— 直签不生成产物）；**不写审计**（Push 283 起操作日志
    * 不记录预览动作 —— 原 D2-07「签发即写一条 preview」撤销）。
    */
-  private async serveImageDirect(
+  private async serveRasterImageDirect(
     file: FileRow,
     version: FileVersionRow,
+    channelName: string,
   ): Promise<FilePreviewResponse> {
+    const responseType = canonicalMimeForExtension(channelName);
+    if (responseType === null) {
+      return this.degrade(file.id, version.id, "该文件类型暂不支持在线预览，请下载查看");
+    }
     const signed = await this.storage.signDownloadUrl({
       objectKey: version.objectKey,
       expiresInSeconds: this.config.env.PREVIEW_URL_TTL_SECONDS,
+      responseContentType: responseType,
+      responseContentDisposition: contentDisposition(versionFileName(file.name, version.objectKey), "inline"),
     });
     return {
       fileId: file.id,

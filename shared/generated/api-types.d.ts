@@ -7132,6 +7132,141 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/dashboard/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 仪表盘任务聚合：项目进度（阶段 × 进度五档）/ 任务状态 / 交付时间；一次返回全部可见项目与逐项目统计 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 任务聚合（按会话用户项目可见性过滤） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DashboardProgressResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dashboard/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 仪表盘问题分布聚合：问题状态 × 归类；一次返回全部与逐项目统计 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 问题分布聚合（按会话用户项目可见性过滤） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DashboardIssuesResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dashboard/change-words": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 仪表盘变更原因核心词频聚合：一次返回全部与逐项目词频 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 变更原因核心词频（按会话用户项目可见性过滤） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DashboardChangeWordsResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/views": {
         parameters: {
             query?: never;
@@ -9816,6 +9951,103 @@ export interface components {
          * @enum {string}
          */
         DailyReportWriteState: "draft" | "submitted";
+        DashboardChangeWords: {
+            /** @description 核心词频（count 降序、同频按词面排序） */
+            words: components["schemas"]["DashboardWord"][];
+            totalChanges: number;
+        };
+        /** @description 仪表盘变更原因核心词频聚合读面 */
+        DashboardChangeWordsResponse: {
+            all: components["schemas"]["DashboardChangeWords"];
+            /** @description 只含有变更记录的项目；没有变更的项目由前端补空统计 */
+            byProject: components["schemas"]["DashboardWordProject"][];
+        };
+        DashboardDelivery: {
+            /** @description 三档计数，顺序 = 按时交付 / 逾期已交付 / 逾期未交付 */
+            counts: number[];
+            /** @description 已交付合计（三档之和，按时率分母） */
+            total: number;
+            /** @description 按时率百分比取整；分母 0 时为 null */
+            onTimeRate: number | null;
+            /** @description 未到交付节点任务数（进行中 / 待开始 / 完成但未判定） */
+            pendingCount: number;
+        };
+        DashboardIssueCount: {
+            state: components["schemas"]["IssueState"];
+            category: components["schemas"]["IssueCategory"];
+            count: number;
+        };
+        DashboardIssueProject: {
+            projectId: components["schemas"]["Uuid"];
+            issues: components["schemas"]["DashboardIssues"];
+        };
+        DashboardIssues: {
+            /** @description 有数据的问题状态（展示序：done / in_progress / open；0 条不出现） */
+            states: components["schemas"]["IssueState"][];
+            /** @description 有数据的问题归类（契约 C9 原序；0 条不出现） */
+            categories: components["schemas"]["IssueCategory"][];
+            /** @description 状态 × 归类计数；一条问题多归类时每个归类各计一次 */
+            counts: components["schemas"]["DashboardIssueCount"][];
+            /** @description 问题总数（明细行数口径；与柱高合计可能不同） */
+            totalIssues: number;
+        };
+        /** @description 仪表盘问题分布聚合读面 */
+        DashboardIssuesResponse: {
+            all: components["schemas"]["DashboardIssues"];
+            /** @description 只含有问题记录的项目；没有问题的项目由前端补空统计 */
+            byProject: components["schemas"]["DashboardIssueProject"][];
+        };
+        /** @description 阶段 × 进度五档分布（九阶段固定存在；未分组行按需出现） */
+        DashboardProgress: {
+            rows: components["schemas"]["DashboardProgressRow"][];
+            totalTasks: number;
+        };
+        /** @description 仪表盘任务聚合读面（项目进度 / 任务状态 / 交付时间） */
+        DashboardProgressResponse: {
+            all: components["schemas"]["DashboardTaskSummary"];
+            /** @description 逐项目统计；顺序与项目列表默认排序一致（createdAt desc、seqNo asc） */
+            byProject: components["schemas"]["DashboardProjectProgress"][];
+        };
+        DashboardProgressRow: {
+            /** @description 阶段 key；ungrouped = 临时任务（无阶段） */
+            key: components["schemas"]["StageKey"] | "ungrouped";
+            /** @description 阶段中文展示名；ungrouped 行为空串，由前端 i18n 补文案 */
+            label: string;
+            isUngrouped: boolean;
+            /** @description 进度五档计数（0 / 0.25 / 0.5 / 0.75 / 1，与前端 DASHBOARD_BINS 同序） */
+            counts: number[];
+            total: number;
+        };
+        DashboardProjectProgress: {
+            projectId: components["schemas"]["Uuid"];
+            projectName: string;
+            /** @description 项目经理显示名（与 managerIds 同下标；取不到姓名该位为 null） */
+            managerNames: (string | null)[];
+            summary: components["schemas"]["DashboardTaskSummary"];
+        };
+        /** @description 任务五态分布（只含 count > 0 的状态） */
+        DashboardStatus: {
+            slices: components["schemas"]["DashboardStatusSlice"][];
+            totalTasks: number;
+        };
+        DashboardStatusSlice: {
+            status: components["schemas"]["TaskDisplayStatus"];
+            count: number;
+        };
+        /** @description 全部可见项目合计 */
+        DashboardTaskSummary: {
+            progress: components["schemas"]["DashboardProgress"];
+            status: components["schemas"]["DashboardStatus"];
+            delivery: components["schemas"]["DashboardDelivery"];
+        };
+        DashboardWord: {
+            word: string;
+            count: number;
+        };
+        DashboardWordProject: {
+            projectId: components["schemas"]["Uuid"];
+            words: components["schemas"]["DashboardChangeWords"];
+        };
         /**
          * @description 角色数据范围：all > managed_projects > involved_projects > own_stakeholders > granted（多角色并集）
          * @enum {string}

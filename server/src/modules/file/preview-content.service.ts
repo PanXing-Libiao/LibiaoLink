@@ -4,6 +4,7 @@ import { AppError } from "../../common/errors/app-error.js";
 import { AppConfig } from "../../config/config.module.js";
 import { ObjectStorage, StorageError } from "../../storage/index.js";
 import { FileRepository } from "./file.repository.js";
+import { safePreviewContentType } from "./file-mime.js";
 import { absoluteDocServerApiUrl, verifyPullToken } from "./onlyoffice.jwt.js";
 
 /**
@@ -15,7 +16,7 @@ import { absoluteDocServerApiUrl, verifyPullToken } from "./onlyoffice.jwt.js";
  * 任一不过 → **统一 401**（不区分原因、无重定向、无回退预签名；原因只进诊断日志，C3）。
  * 404 同形（文件 / 版本不存在、已回收、对象缺失统一文案，不泄露存在性）；存储 / 依赖故障 fail-closed：
  * 存储不可用 → 503、存储返回异常 → 502；不重定向到任何预签名地址（R1 不变量）。
- * 响应头（§3.2）：200 + `Content-Type`（版本 mime）+ `Content-Length` + `Content-Disposition: inline` +
+ * 响应头（§3.2 / H1 · S2）：200 + 服务端裁决后的 `Content-Type` + `Content-Length` + 安全 `Content-Disposition` +
  * `Cache-Control: no-store` + `X-Content-Type-Options: nosniff`。
  * 诊断日志（§3.3 / D2）：成功与失败逐条结构化记录（fileId / versionId / 耗时 / 401 原因分类）——
  * 「监控接告警出口（M5）前以日志计数替代」401 计数可观测。
@@ -88,9 +89,10 @@ export class PreviewContentService {
     }
 
     // ④ 字节流直写（无重定向、无回退预签名）。
-    input.response.setHeader("Content-Type", safeContentType(version.mime));
+    const responseType = safePreviewContentType(version.mime);
+    input.response.setHeader("Content-Type", responseType.contentType);
     input.response.setHeader("Content-Length", object.bytes.byteLength);
-    input.response.setHeader("Content-Disposition", "inline");
+    input.response.setHeader("Content-Disposition", responseType.disposition);
     input.response.setHeader("Cache-Control", "no-store");
     input.response.setHeader("X-Content-Type-Options", "nosniff");
     input.response.status(200);
@@ -123,12 +125,4 @@ function bearerOf(authorization: string | null): string | null {
   }
   const match = /^Bearer\s+(.+)$/i.exec(authorization.trim());
   return match === null ? null : match[1]!;
-}
-
-/** 版本 mime 直写响应头前的护栏：只放行可见 ASCII（无 CR / LF）、长度受限；否则按 application/octet-stream。 */
-function safeContentType(mime: string | null): string {
-  if (mime !== null && mime.length > 0 && mime.length <= 200 && /^[\x20-\x7e]+$/.test(mime)) {
-    return mime;
-  }
-  return "application/octet-stream";
 }

@@ -48,24 +48,24 @@ export const EnvSchema = z
     UPLOAD_SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
     /** 回收站保留期（天）：移入回收站时写 `files.purge_after = recycled_at + 保留期`（A4-12，默认 30）。 */
     FILE_RECYCLE_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(30),
-    // ---- 预览转换沙箱（M4-05c · ADR-007：converter 落点 deploy/preview/，接口契约见其 README「五」） ----
-    /** 转换器基址：dev = 本机哑中继 `127.0.0.1:9900`；生产 = worker 与 converter 同处 internal 网络的内部地址。 */
+    // ---- SVG 预览栅格化沙箱（H1 · S4：converter 落点 deploy/svg-preview/，接口契约见其 README） ----
+    /** 转换器基址：dev = 本机哑中继 `127.0.0.1:9900`；生产 = `http://svg-preview:9900`（同处 internal 网络）。 */
     PREVIEW_CONVERTER_URL: z.string().min(1).default("http://127.0.0.1:9900"),
-    /** 转换管线版本（进预览产物三元组缓存键）：与镜像标签同值，换镜像必须一并递增（deploy/preview/README「四」）。 */
-    PREVIEW_PIPELINE_VERSION: z.string().min(1).default("1.0.0"),
+    /** 转换管线版本（进预览产物三元组缓存键）：H1 S4 起固定为 2.0.0，旧 1.0.0 产物不再被读取。 */
+    PREVIEW_PIPELINE_VERSION: z.string().min(1).default("2.0.0"),
     /** 独立 CAD 运行时；空值关闭 STEP 接入，不回退旧浏览器解析。 */
     CAD_ENGINE_PYTHON: z.string().default(""),
     CAD_MESHER_PYTHON: z.string().default(""),
     CAD_CACHE_DIR: z.string().min(1).default("var/cad"),
     CAD_MAX_INPUT_MIB: z.coerce.number().int().min(1).max(256).default(64),
-    /** 客户端超时（毫秒）：比容器内硬超时（60000）留余量 —— 才拿得到 504 CONVERT_TIMEOUT 而不是被客户端掐断的裸超时。 */
-    PREVIEW_CONVERT_TIMEOUT_MS: z.coerce.number().int().min(1000).max(600000).default(90000),
+    /** 客户端超时（毫秒）：比容器内 10 秒硬超时留余量 —— 才拿得到 504 CONVERT_TIMEOUT 而不是被客户端掐断的裸超时。 */
+    PREVIEW_CONVERT_TIMEOUT_MS: z.coerce.number().int().min(1000).max(600000).default(15000),
     /** 可重试失败的最大尝试次数（含首次）：到顶写产物 failed + outbox dead（D2-05 降级「请下载」）。 */
     PREVIEW_CONVERT_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
     /** 重试退避基数（毫秒）：第 n 次失败后等 min(基数 × 2^(n-1), 30 分钟)。 */
     PREVIEW_CONVERT_BACKOFF_MS: z.coerce.number().int().min(1000).max(600000).default(15000),
-    /** 直接降级「仅下载」的源文件上限（MB）：转换峰值内存约为源文件数倍，别把沙箱配额打满（deploy/preview「七」）。 */
-    PREVIEW_CONVERT_MAX_SOURCE_MB: z.coerce.number().int().min(1).max(512).default(100),
+    /** 直接降级「仅下载」的源 SVG 上限（MB）：与栅格化沙箱的 20 MiB 定档值对齐。 */
+    PREVIEW_CONVERT_MAX_SOURCE_MB: z.coerce.number().int().min(1).max(512).default(20),
     /** 预览地址短时签名有效期（秒）：D2-04 短时签名 + 禁匿名；越长越接近「把产物地址变成长期免鉴权入口」。 */
     PREVIEW_URL_TTL_SECONDS: z.coerce.number().int().min(30).max(86400).default(300),
     /** 预览转换队列开关（worker）：`false` = 只投递不消费（排障 / 压测用）。 */
@@ -217,6 +217,12 @@ export const EnvSchema = z
     WECOM_R06_IMAGE_PATH: z.string().default(""),
     /** R06 全部任务按时交付喜报图（可选）：空 = 回退 WECOM_R06_IMAGE_PATH。 */
     WECOM_R06_ON_TIME_IMAGE_PATH: z.string().default(""),
+    /** R06 全部完成且全部按时的前置火箭 GIF（240×288）：文字后、640 前发送；空 = 跳过。 */
+    WECOM_R06_ROCKET_240_IMAGE_PATH: z.string().default("assets/wecom-rocket-first-frame-240.gif"),
+    /** R06 全部完成且全部按时的前置火箭 GIF（640×768）：文字后、喜报海报前发送；空 = 跳过。 */
+    WECOM_R06_ROCKET_640_IMAGE_PATH: z.string().default("assets/wecom-rocket-first-frame-640.gif"),
+    /** R06 其余情况（未全部完成 / 非全部按期）的前置火箭 GIF（200×200）：文字后、喜报海报前发送；空 = 跳过。 */
+    WECOM_R06_ROCKET_FALLBACK_IMAGE_PATH: z.string().default("assets/wecom-r06-acceptance.gif"),
     // ---- 调度器（S7-3 · i11 / M5-02：cron 领取 + last_run_at 补发 + 单活 advisory lock · ADR-005） ----
     /** 单轮 tick 领取条数上限（到期任务按 run_at 序领取，逐条串行执行）。 */
     OUTBOX_SCHEDULER_BATCH_LIMIT: z.coerce.number().int().min(1).max(1000).default(10),
@@ -250,7 +256,7 @@ export const EnvSchema = z
       });
     }
     // PREVIEW_PIPELINE_VERSION 进对象键（storage/object-key.ts 的片段白名单同口径）：非法字符会在构造键时抛错，
-    // 提前到启动期拦下（fail fast）；「与镜像标签同值」的规则见 deploy/preview/README「四」。
+    // 提前到启动期拦下（fail fast）；「与镜像标签同值」的规则见 deploy/svg-preview/README。
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value.PREVIEW_PIPELINE_VERSION)) {
       context.addIssue({
         code: "custom",

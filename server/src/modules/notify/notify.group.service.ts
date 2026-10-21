@@ -353,7 +353,14 @@ export class NotifyGroupService {
     });
 
     if (result.ok) {
-      const imageAttempts = await this.sendR06Poster({
+      const rocketAttempts = await this.sendR06Rockets({
+        message,
+        chatid: binding.chatid,
+        groupActivated: binding.activatedAt !== null,
+        masked,
+        dedupeKey: row.dedupeKey,
+      });
+      const posterAttempts = await this.sendR06Poster({
         message,
         chatid: binding.chatid,
         groupActivated: binding.activatedAt !== null,
@@ -368,7 +375,7 @@ export class NotifyGroupService {
         target: binding.chatid,
         recipientLabel: "project:" + message.projectId + " · " + masked,
         state: "sent",
-        attempts: result.attempts + imageAttempts,
+        attempts: result.attempts + rocketAttempts + posterAttempts,
         error: null,
         sentAt,
         at: sentAt,
@@ -424,6 +431,61 @@ export class NotifyGroupService {
     });
     this.logger.warn("群播报确定性失败（转 dead）：" + row.dedupeKey + " · chatid " + masked + " —— " + error);
     return await this.deadWithDegrade(row, message, error);
+  }
+
+  /**
+   * R06 火箭前缀：项目已完成且全部任务完成、全部按期时，依次发 240×288 → 640×768；
+   * 其余情况改发 200×200 兜底火箭。火箭属增强项：单张失败只留日志，继续尝试后续图片与喜报海报。
+   */
+  private async sendR06Rockets(input: {
+    message: NotifyGroupMessagePayload;
+    chatid: string;
+    groupActivated: boolean;
+    masked: string;
+    dedupeKey: string;
+  }): Promise<number> {
+    if (input.message.templateCode !== "R06_GROUP") {
+      return 0;
+    }
+    const onTimeCandidates = [
+      {
+        path: (this.config.env.WECOM_R06_ROCKET_240_IMAGE_PATH ?? "").trim(),
+        label: "火箭 GIF（240×288）",
+      },
+      {
+        path: (this.config.env.WECOM_R06_ROCKET_640_IMAGE_PATH ?? "").trim(),
+        label: "火箭 GIF（640×768）",
+      },
+    ];
+    const fallbackPath = (this.config.env.WECOM_R06_ROCKET_FALLBACK_IMAGE_PATH ?? "").trim();
+    if (onTimeCandidates.every((item) => item.path === "") && fallbackPath === "") {
+      return 0;
+    }
+    let eligible: boolean;
+    try {
+      eligible = await this.repository.isProjectCompletedWithAllTasksOnTime(
+        input.message.projectId,
+        this.clock.now(),
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.warn("R06 火箭发送条件读取失败，已跳过（文字已发送）：" + input.dedupeKey + " —— " + detail);
+      return 0;
+    }
+    if (!eligible) {
+      if (fallbackPath === "") {
+        return 0;
+      }
+      return await this.sendConfiguredR06Image(input, fallbackPath, "兜底火箭 GIF（200×200）");
+    }
+    let attempts = 0;
+    for (const item of onTimeCandidates) {
+      if (item.path === "") {
+        continue;
+      }
+      attempts += await this.sendConfiguredR06Image(input, item.path, item.label);
+    }
+    return attempts;
   }
 
   /**
@@ -483,6 +545,33 @@ export class NotifyGroupService {
     return await this.deliverR06Image(input, content, fileName, "image/png", "动态海报");
   }
 
+  /** 配置图读取 + 单次发送；格式 / 读取失败 = 0（不抛错）。 */
+  private async sendConfiguredR06Image(
+    input: {
+      chatid: string;
+      groupActivated: boolean;
+      masked: string;
+      dedupeKey: string;
+    },
+    configured: string,
+    sourceLabel: string,
+  ): Promise<number> {
+    const fileName = basename(configured);
+    const mime = aibotImageMimeFromFileName(fileName);
+    if (mime === null) {
+      this.logger.warn("R06 " + sourceLabel + "格式不支持（仅 PNG / JPG / GIF），已跳过：" + fileName);
+      return 0;
+    }
+    let content: Buffer;
+    try {
+      content = await readFile(resolve(configured));
+    } catch {
+      this.logger.warn("R06 " + sourceLabel + "读取失败，已跳过（文字已发送）：" + fileName);
+      return 0;
+    }
+    return await this.deliverR06Image(input, content, fileName, mime, sourceLabel);
+  }
+
   /** 静态回退图：原口径保持不变；无配置 / 格式不支持 / 读取失败 = 0。 */
   private async sendStaticR06Poster(input: {
     message: NotifyGroupMessagePayload;
@@ -508,20 +597,7 @@ export class NotifyGroupService {
     if (configured === "") {
       return 0;
     }
-    const fileName = basename(configured);
-    const mime = aibotImageMimeFromFileName(fileName);
-    if (mime === null) {
-      this.logger.warn("R06 喜报图片格式不支持（仅 PNG / JPG / GIF），已跳过：" + fileName);
-      return 0;
-    }
-    let content: Buffer;
-    try {
-      content = await readFile(resolve(configured));
-    } catch {
-      this.logger.warn("R06 喜报图片读取失败，已跳过（文字已发送）：" + fileName);
-      return 0;
-    }
-    return await this.deliverR06Image(input, content, fileName, mime, "静态回退图");
+    return await this.sendConfiguredR06Image(input, configured, "静态回退图");
   }
 
   /** 单次 R06 图片发送与留痕；失败不抛错、不触发二次发送。 */

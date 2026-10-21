@@ -21,6 +21,7 @@ import { TEMP_TASK_STAGE, type ProjectTask, type TaskStatus } from "./data/tasks
 import type { TemplatePresetNode } from "./data/templatePresets";
 import { fetchTaskFiles, recycleFile, renameFile, uploadFiles, type TaskFileRef } from "./fileApi";
 import { exportProjectOverviewPdf } from "./exportOverviewPdf";
+import type { OverviewExportLanguage } from "./overviewExportShared";
 import { prefetchZhToEn } from "./translateApi";
 import { useLocale, useT, viewTabText } from "./i18n";
 import { ExportProgressOverlay, type ExportTranslateProgress } from "./components/ExportProgressOverlay";
@@ -850,7 +851,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
    * 2026-10-10 起导出前经翻译通道补「项目进展描述」列英文小字（translateApi.ts；通道不通静默降级）；导出不改数据。
    * 2026-10-13 起译文已在「写进展描述」时后台预热（§6.16 ㉑）—— 命中缓存即取，只有未预热条目才现场翻。
    */
-  const exportOverview = async (): Promise<void> => {
+  const exportOverview = async (primary: OverviewExportLanguage): Promise<void> => {
     if (project === null || exportingOverview) {
       return;
     }
@@ -861,7 +862,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
       setExportOverlayVisible(true);
     }, 250);
     try {
-      await exportProjectOverviewPdf({ project, tasks, summary }, (done, total) => {
+      await exportProjectOverviewPdf({ project, tasks, summary }, primary, (done, total) => {
         setExportTranslateProgress({ done, total });
       });
     } finally {
@@ -962,7 +963,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
                 {/* 导出 PDF（业务口径 2026-10-09 · §6.16）：数据 = 页面已取到的 project / tasks / summary，
                     生成 A4 横版报告后在系统打印窗口里另存为 PDF；
                     任务数据加载中 / 加载失败时置灰 —— 导出的报告必须和页面数据一致，宁可不给点。 */}
-                <ExportOverviewButton disabled={dataLoading || dataError !== null} busy={exportingOverview} onExport={() => { void exportOverview(); }} />
+                <ExportOverviewButton disabled={dataLoading || dataError !== null} busy={exportingOverview} onExport={(primary) => { void exportOverview(primary); }} />
                 <ColumnPicker visible={visibleColumns} onToggle={handleToggleColumn} onReset={resetColumns} />
               </div>
             ) : null}

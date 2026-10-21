@@ -12,6 +12,7 @@ import { AdminModule, AuditService } from "./modules/admin/index.js";
 import { AutomationModule } from "./modules/automation/automation.module.js";
 import { AUTOMATION_TRIAL_SUBJECTS } from "./modules/automation/automation.service.js";
 import { CalendarModule } from "./modules/calendar/index.js";
+import { DashboardModule } from "./modules/dashboard/index.js";
 import { FileModule } from "./modules/file/index.js";
 import { IdentityModule } from "./modules/identity/index.js";
 import { NotifyModule } from "./modules/notify/index.js";
@@ -49,6 +50,7 @@ export class AppModule {
         TaskModule,
         TemplateModule,
         WorkspaceModule,
+        DashboardModule,
         ViewModule,
         FollowModule,
         TranslateModule,

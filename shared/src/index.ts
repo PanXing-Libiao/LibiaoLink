@@ -20,6 +20,7 @@ export * from "./modules/issues.ts";
 export * from "./modules/automation.ts";
 export * from "./modules/outbox.ts";
 export * from "./modules/workspace.ts";
+export * from "./modules/dashboard.ts";
 export * from "./modules/views.ts";
 export * from "./modules/follows.ts";
 export * from "./modules/notifications.ts";

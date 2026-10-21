@@ -1,31 +1,23 @@
 import { extensionOf } from "../../storage/index.js";
+import { canonicalMimeForExtension, isRasterImageFile, isSvgFile, normalizeMime } from "./file-mime.js";
 import type { PreviewTarget } from "./preview.job.js";
 
+export { isRasterImageFile, isSvgFile };
+
 /**
- * 预览通道判定（S3 起两段口径 · S6-前置 起收敛：图片直签 + 查看器通道 · ADR-030 / S8-2 定案 / 计划 D6）。
+ * 预览通道判定（S3 起两段口径 · S6-前置 图片直签 + 查看器通道 · H1 S2 / S4 恢复 SVG PNG 产物通道）。
  *
- * - **图片直签**（S6-前置 · D6 · `isImageFile`）：图片预览不走产物通道 —— 读取侧对原对象短时签名直出
- *   （不投转换任务、不落产物行、不经 `deploy/preview`；字节 = 原对象；前端 `url` 通道与缩略图零改动）。
- * - **投递通道**（`previewTargetsFor`）：S6-前置 起**无投递**（常量空表）—— 图片改直签后转换管线归零消费者；
- *   `structured` 一期 501 不投（缓存键 / 枚举保留，随二期结构化渲染启用：届时在此恢复映射）。
- * - **查看器通道**（`viewerChannelFor`）：Office（含宏变体 docm / xlsm / pptm）+ 文本族（txt / csv / html / htm）
+ * - **安全位图直签**（`isRasterImageFile`）：仅扩展名与规范 MIME 精确一致时签原对象；不投转换任务。
+ * - **SVG 产物通道**（`previewTargetsFor`）：SVG 只投 `target=image`，浏览器最终只能拿到 PNG 产物。
+ * - **查看器通道**（`viewerChannelFor`）：Office（含宏变体 docm / xlsm / pptm）+ 文本族（txt / csv）
  *   + PDF（2026-10-08 业务口径「统一用onlyoffice」）→ ONLYOFFICE 文档大类（word / cell / slide / pdf）+
  *   文件类型（扩展名小写；无扩展名时按 MIME 反推）—— 查看器配置 `documentType` / `document.fileType` 的输入
  *   （S8-2 三补 1：文本族按 word / cell 映射）。
  *
- * ADR-035：读取侧先判 CAD 暂不可预览，防止误报的 MIME 进入图片/Office；其余仍按图片、查看器顺序判定。
- * 判不出类型不投 / 不落表，读取侧按确定性降级「请下载」。
+ * ADR-035：读取侧先判 CAD，启用时 STEP 返回独立查看器，其余降级，防止误报 MIME 绕进图片/Office。
+ * H1 · S2 起图片不再看 `image/*` 前缀：只有精确位图组合允许原对象直签；SVG 只进 PNG 产物通道。
+ * 判定优先级：CAD → SVG 产物通道 → 安全位图 → 查看器；判不出类型按确定性降级「请下载」。
  */
-
-/** 图片族：浏览器直接渲染；矢量 SVG 也归 image 通道（ADR-007：枚举按渲染通道而非格式定义）。 */
-const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "webp", "tif", "tiff", "svg"]);
-
-/** 图片直签判定（S6-前置 · D6）：扩展名或 MIME ∈ 图片族 —— 读取侧据此走原对象短时签名。 */
-export function isImageFile(input: { fileName: string; mime: string | null }): boolean {
-  const extension = extensionOf(input.fileName);
-  const mime = (input.mime ?? "").toLowerCase();
-  return IMAGE_EXTENSIONS.has(extension) || mime.startsWith("image/");
-}
 
 /**
  * CAD 接入准备名单（ADR-035）：只用于暂不可预览提示，不是已支持格式清单。
@@ -40,12 +32,11 @@ export function isCadPreviewPending(input: { fileName: string }): boolean {
 }
 
 /**
- * 投递通道映射（M4-05c 定档预生成 / 读取侧补投的共用判定点）：S6-前置（D6）起常量空表 ——
- * 图片改原对象直签（见 `isImageFile`，不经转换）、其余走查看器通道，转换管线无投递；
- * `structured` 二期启用时在此恢复映射（契约 `PREVIEW_TARGETS` 枚举已预留）。
+ * 投递通道映射：SVG 进入 `target=image` 的服务端栅格化通道（产物必须是 PNG）；其余保持空表。
+ * 读取侧与定档预生成共用本函数，避免两端对 SVG 的投递口径漂移。
  */
-export function previewTargetsFor(_input: { fileName: string; mime: string | null }): readonly PreviewTarget[] {
-  return [];
+export function previewTargetsFor(input: { fileName: string; mime: string | null }): readonly PreviewTarget[] {
+  return isSvgFile(input) ? ["image"] : [];
 }
 
 /** 查看器通道输出：ONLYOFFICE documentType / document.fileType 的判定输入。 */
@@ -62,8 +53,6 @@ const VIEWER_EXTENSION_TYPES: Record<string, ViewerChannel> = {
   odt: { documentType: "word", fileType: "odt" },
   rtf: { documentType: "word", fileType: "rtf" },
   txt: { documentType: "word", fileType: "txt" },
-  html: { documentType: "word", fileType: "html" },
-  htm: { documentType: "word", fileType: "htm" },
   xls: { documentType: "cell", fileType: "xls" },
   xlsx: { documentType: "cell", fileType: "xlsx" },
   xlsm: { documentType: "cell", fileType: "xlsm" },
@@ -88,7 +77,6 @@ const VIEWER_MIME_TYPES: readonly { mime: string; channel: ViewerChannel }[] = [
   { mime: "application/vnd.oasis.opendocument.text", channel: { documentType: "word", fileType: "odt" } },
   { mime: "application/rtf", channel: { documentType: "word", fileType: "rtf" } },
   { mime: "text/plain", channel: { documentType: "word", fileType: "txt" } },
-  { mime: "text/html", channel: { documentType: "word", fileType: "html" } },
   { mime: "application/vnd.ms-excel", channel: { documentType: "cell", fileType: "xls" } },
   {
     mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -115,11 +103,17 @@ const VIEWER_MIME_TYPES: readonly { mime: string; channel: ViewerChannel }[] = [
  * 其余 null（含图片 —— 先经 `previewTargetsFor` 走产物通道）。扩展名优先、MIME 兜底（与历史判定优先级一致）。
  */
 export function viewerChannelFor(input: { fileName: string; mime: string | null }): ViewerChannel | null {
-  const byExtension = VIEWER_EXTENSION_TYPES[extensionOf(input.fileName)];
+  const extension = extensionOf(input.fileName);
+  const byExtension = VIEWER_EXTENSION_TYPES[extension];
   if (byExtension !== undefined) {
-    return { ...byExtension };
+    const mime = normalizeMime(input.mime);
+    const expected = canonicalMimeForExtension(input.fileName);
+    return mime === null || mime === expected ? { ...byExtension } : null;
   }
-  const mime = (input.mime ?? "").toLowerCase();
+  const mime = normalizeMime(input.mime);
+  if (mime === null) {
+    return null;
+  }
   const byMime = VIEWER_MIME_TYPES.find((item) => item.mime === mime);
   return byMime === undefined ? null : { ...byMime.channel };
 }

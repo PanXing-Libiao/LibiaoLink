@@ -9,7 +9,7 @@ import { PreviewReadService } from "../src/modules/file/preview-read.service.js"
 import type { PreviewArtifactKey, PreviewArtifactRow, PreviewRepository } from "../src/modules/file/preview.repository.js";
 import type { UserService } from "../src/modules/identity/index.js";
 import type { PermissionService } from "../src/modules/permission/index.js";
-import type { DownloadUrlInput, ObjectStorage, SignedUrl } from "../src/storage/index.js";
+import { contentDisposition, type DownloadUrlInput, type ObjectStorage, type SignedUrl } from "../src/storage/index.js";
 
 /**
  * M4-05 读 API 门禁（不连库、不连对象存储）：`GET /files/{id}/preview` 的通道语义。
@@ -17,8 +17,8 @@ import type { DownloadUrlInput, ObjectStorage, SignedUrl } from "../src/storage/
  *    不查 / 不落产物行、不投任务；存量产物行（ready / not_ready / failed）一律不参与；指定历史版本签该版本原对象；
  * ② 终态降级 —— 判不出通道 / 无版本两类（不落表不投递）；
  * ③ 404 —— 文件不存在 / 项目不可见 / 版本不属于该文件（同形，防 IDOR）。
- * 产物通道三态（not_ready 补投 / failed 缓存态回原因）为保留段（S6-前置 后无投递、对新请求不可达），
- * 不再从读 API 侧单测（structured 二期启用投递时随投递恢复补测）。
+ * 产物通道三态（not_ready 补投 / failed 缓存态回原因）在 H1 S4 起对 SVG 恢复可达，由下方专门用例覆盖；
+ * structured 二期启用投递时复用同一段。
  */
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
@@ -36,11 +36,12 @@ const SOURCE_KEY_HISTORY = "projects/" + PROJECT + "/files/" + FILE + "/v2/" + H
 function sourceKeyOf(ext: string): string {
   return "projects/" + PROJECT + "/files/" + FILE + "/v1/" + HASH + "." + ext;
 }
-const ARTIFACT_KEY = "previews/" + HASH + "/1.0.0/image";
-const ARTIFACT_KEY_HISTORY = "previews/" + HASH_HISTORY + "/1.0.0/image";
+const ARTIFACT_KEY = "previews/" + HASH + "/2.0.0/image";
+const ARTIFACT_KEY_HISTORY = "previews/" + HASH_HISTORY + "/2.0.0/image";
+const LEGACY_ARTIFACT_KEY = "previews/" + HASH + "/1.0.0/image";
 
 const ENV = {
-  PREVIEW_PIPELINE_VERSION: "1.0.0",
+  PREVIEW_PIPELINE_VERSION: "2.0.0",
   PREVIEW_URL_TTL_SECONDS: 300,
   ONLYOFFICE_DOCSERVER_URL: "http://docs.local:8001",
   ONLYOFFICE_DOCSERVER_API_BASE_URL: "http://api.internal:3000",
@@ -96,7 +97,7 @@ function makeArtifactRow(overrides: Partial<PreviewArtifactRow> = {}): PreviewAr
     versionId: VERSION,
     contentHash: HASH,
     target: "image",
-    pipelineVersion: "1.0.0",
+    pipelineVersion: "2.0.0",
     status: "not_ready",
     objectKey: null,
     error: null,
@@ -313,7 +314,12 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     const image = await h.service.getPreview(FILE, VERSION, ACTOR);
 
     expect(image).toMatchObject({ versionId: VERSION, status: "ready", target: "image" });
-    expect(h.storage.signed).toEqual([{ objectKey: SOURCE_KEY, expiresInSeconds: 300 }]);
+    expect(h.storage.signed).toEqual([{
+      objectKey: SOURCE_KEY,
+      expiresInSeconds: 300,
+      responseContentType: "image/png",
+      responseContentDisposition: contentDisposition("更名后的模型.png", "inline"),
+    }]);
   });
 
   it("CAD 项目不可见时仍返回同形 404，不能通过暂不可预览提示探测文件", async () => {
@@ -344,7 +350,14 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
       reason: null,
       generatedAt: null,
     });
-    expect(h.storage.signed).toEqual([{ objectKey: SOURCE_KEY, expiresInSeconds: 300 }]);
+    expect(h.storage.signed).toEqual([
+      {
+        objectKey: SOURCE_KEY,
+        expiresInSeconds: 300,
+        responseContentType: "image/png",
+        responseContentDisposition: contentDisposition("机械设计图纸.png", "inline"),
+      },
+    ]);
     expect(h.audit.entries).toHaveLength(0);
     // 不查产物（findByKey 0 次）/ 不登记 / 不投递 / 不开事务（S6-前置 起无 not_ready 轮询路径）。
     expect(h.previews.queries).toHaveLength(0);
@@ -353,13 +366,25 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     expect(h.database.transactions).toBe(0);
   });
 
-  it("图片直签签名参数：TTL 取 PREVIEW_URL_TTL_SECONDS，不传 fileName（内联渲染，不改写 Content-Disposition）", async () => {
+  it("图片直签签名参数：TTL 取 PREVIEW_URL_TTL_SECONDS，响应类型 / inline disposition 由服务端显式覆盖", async () => {
     const h = makeService({ PREVIEW_URL_TTL_SECONDS: 120 });
 
     await h.service.getPreview(FILE, null, ACTOR);
 
-    expect(h.storage.signed).toEqual([{ objectKey: SOURCE_KEY, expiresInSeconds: 120 }]);
-    expect(Object.keys(h.storage.signed[0]!)).toEqual(["objectKey", "expiresInSeconds"]);
+    expect(h.storage.signed).toEqual([
+      {
+        objectKey: SOURCE_KEY,
+        expiresInSeconds: 120,
+        responseContentType: "image/png",
+        responseContentDisposition: contentDisposition("机械设计图纸.png", "inline"),
+      },
+    ]);
+    expect(Object.keys(h.storage.signed[0]!)).toEqual([
+      "objectKey",
+      "expiresInSeconds",
+      "responseContentType",
+      "responseContentDisposition",
+    ]);
   });
 
   it("图片直签指定历史版本（A4-06）：签该版本原对象，不写审计", async () => {
@@ -379,7 +404,14 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
       pipelineVersion: null,
       generatedAt: null,
     });
-    expect(h.storage.signed).toEqual([{ objectKey: SOURCE_KEY_HISTORY, expiresInSeconds: 300 }]);
+    expect(h.storage.signed).toEqual([
+      {
+        objectKey: SOURCE_KEY_HISTORY,
+        expiresInSeconds: 300,
+        responseContentType: "image/png",
+        responseContentDisposition: contentDisposition("机械设计图纸.png", "inline"),
+      },
+    ]);
     expect(h.audit.entries).toHaveLength(0);
     expect(h.previews.queries).toHaveLength(0);
   });
@@ -415,8 +447,142 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     const failedResult = await failed.service.getPreview(FILE, null, ACTOR);
     expect(failedResult.status).toBe("ready");
     expect(failedResult.reason).toBeNull();
-    expect(failed.storage.signed).toEqual([{ objectKey: SOURCE_KEY, expiresInSeconds: 300 }]);
+    expect(failed.storage.signed).toEqual([
+      {
+        objectKey: SOURCE_KEY,
+        expiresInSeconds: 300,
+        responseContentType: "image/png",
+        responseContentDisposition: contentDisposition("机械设计图纸.png", "inline"),
+      },
+    ]);
     expect(failed.database.outbox).toHaveLength(0);
+  });
+
+  it("SVG 只进入 image 产物通道：不签原 SVG、登记产物行并投递；MIME 大小写 / 参数被规范化", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ name: "矢量图.svg" });
+    h.repo.versions.set(
+      VERSION,
+      makeVersionRow({ mime: "IMAGE/SVG+XML; charset=utf-8", objectKey: sourceKeyOf("svg") }),
+    );
+
+    const result = await h.service.getPreview(FILE, null, ACTOR);
+    const imageKey: PreviewArtifactKey = { contentHash: HASH, pipelineVersion: "2.0.0", target: "image" };
+
+    expect(result).toMatchObject({
+      versionId: VERSION,
+      status: "not_ready",
+      target: null,
+      pipelineVersion: "2.0.0",
+      reason: null,
+    });
+    expect(h.storage.signed).toHaveLength(0);
+    // 读面先查一次；登记 not_ready 时仓储内部再按同一键复查一次。
+    expect(h.previews.queries).toEqual([imageKey, { ...imageKey, fileId: FILE, versionId: VERSION }]);
+    expect(h.previews.ensured).toEqual([{ ...imageKey, fileId: FILE, versionId: VERSION }]);
+    expect(h.database.outbox).toHaveLength(1);
+  });
+
+  it("旧 1.0.0 的 ready / failed 产物不参与读取：SVG 仍登记并投递 2.0.0 栅格化任务", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ name: "矢量图.svg" });
+    h.repo.versions.set(VERSION, makeVersionRow({ mime: "image/svg+xml", objectKey: sourceKeyOf("svg") }));
+    h.previews.rows = [
+      makeArtifactRow({ pipelineVersion: "1.0.0", status: "ready", objectKey: LEGACY_ARTIFACT_KEY, generatedAt: NOW }),
+      makeArtifactRow({
+        id: "99999999-9999-4999-8999-999999999999",
+        pipelineVersion: "1.0.0",
+        status: "failed",
+        error: "旧管线失败",
+      }),
+    ];
+
+    const result = await h.service.getPreview(FILE, null, ACTOR);
+
+    expect(result).toMatchObject({ status: "not_ready", pipelineVersion: "2.0.0" });
+    expect(h.storage.signed).toHaveLength(0);
+    expect(h.previews.ensured).toEqual([
+      { contentHash: HASH, pipelineVersion: "2.0.0", target: "image", fileId: FILE, versionId: VERSION },
+    ]);
+    expect(h.database.outbox).toEqual([
+      expect.objectContaining({
+        topic: "preview.job",
+        dedupeKey: "preview.job:" + HASH + ":2.0.0:image",
+      }),
+    ]);
+  });
+
+  it("SVG 产物 ready：只签 previews/.../image 并强制 image/png + inline，绝不签 projects/...svg", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ name: "矢量图.svg" });
+    h.repo.versions.set(VERSION, makeVersionRow({ mime: "image/svg+xml", objectKey: sourceKeyOf("svg") }));
+    const generatedAt = new Date("2026-09-23T07:00:00Z");
+    h.previews.rows = [makeArtifactRow({ status: "ready", objectKey: ARTIFACT_KEY, generatedAt })];
+
+    const result = await h.service.getPreview(FILE, null, ACTOR);
+
+    expect(result).toMatchObject({
+      status: "ready",
+      target: "image",
+      url: "https://minio.local/" + ARTIFACT_KEY + "?sig=1",
+      pipelineVersion: "2.0.0",
+      generatedAt: generatedAt.toISOString(),
+    });
+    expect(result.url).not.toContain("projects/");
+    expect(result.url).not.toContain(".svg");
+    expect(h.storage.signed).toEqual([
+      {
+        objectKey: ARTIFACT_KEY,
+        expiresInSeconds: 300,
+        responseContentType: "image/png",
+        responseContentDisposition: contentDisposition("preview.png", "inline"),
+      },
+    ]);
+  });
+
+  it("存量 MIME 与版本对象键冲突：.png + image/svg+xml / .svg + image/png 均 fail closed，只能下载", async () => {
+    const pngKeySvgMime = makeService();
+    pngKeySvgMime.repo.file = makeFileRow({ name: "冲突.png" });
+    pngKeySvgMime.repo.versions.set(VERSION, makeVersionRow({ mime: "image/svg+xml", objectKey: sourceKeyOf("png") }));
+    const pngResult = await pngKeySvgMime.service.getPreview(FILE, null, ACTOR);
+    expect(pngResult.status).toBe("failed");
+    expect(pngResult.reason).toContain("请下载查看");
+    expect(pngKeySvgMime.storage.signed).toHaveLength(0);
+    expect(pngKeySvgMime.previews.queries).toHaveLength(0);
+
+    const svgKeyPngMime = makeService();
+    svgKeyPngMime.repo.file = makeFileRow({ name: "冲突.svg" });
+    svgKeyPngMime.repo.versions.set(VERSION, makeVersionRow({ mime: "image/png", objectKey: sourceKeyOf("svg") }));
+    const svgResult = await svgKeyPngMime.service.getPreview(FILE, null, ACTOR);
+    expect(svgResult.status).toBe("failed");
+    expect(svgResult.reason).toContain("请下载查看");
+    expect(svgKeyPngMime.storage.signed).toHaveLength(0);
+    expect(svgKeyPngMime.previews.queries).toHaveLength(0);
+  });
+
+  it("通道按版本对象键判断：当前文件名改成 .svg 也不能让历史 .png 版本走原 SVG / 产物路径", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ name: "改名.svg" });
+    h.repo.versions.set(
+      HISTORY,
+      makeVersionRow({
+        id: HISTORY,
+        seq: 2,
+        contentHash: HASH_HISTORY,
+        mime: "image/png",
+        objectKey: SOURCE_KEY_HISTORY,
+      }),
+    );
+
+    const result = await h.service.getPreview(FILE, HISTORY, ACTOR);
+
+    expect(result.status).toBe("ready");
+    expect(result.url).toBe("https://minio.local/" + SOURCE_KEY_HISTORY + "?sig=1");
+    expect(h.storage.signed[0]).toMatchObject({
+      objectKey: SOURCE_KEY_HISTORY,
+      responseContentType: "image/png",
+      responseContentDisposition: contentDisposition("改名.png", "inline"),
+    });
   });
 
   it("判不出渲染通道（.zip）：终态降级 failed，不查产物 / 不登记 / 不投递 / 不写审计", async () => {
@@ -488,6 +654,19 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
 });
 
 describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", () => {
+  it("HTML / HTM 不再进入 ONLYOFFICE：主动内容降级为下载", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ name: "说明.html" });
+    h.repo.versions.set(VERSION, makeVersionRow({ mime: "text/html", objectKey: sourceKeyOf("html") }));
+
+    const result = await h.service.getPreview(FILE, null, ACTOR);
+
+    expect(result.status).toBe("failed");
+    expect(result.reason).toContain("请下载查看");
+    expect(result.viewer).toBeNull();
+    expect(h.storage.signed).toHaveLength(0);
+  });
+
   it("PDF 并入查看器通道（2026-10-08 业务口径「统一用onlyoffice」）：ready + viewer（documentType / fileType = pdf）、不查产物 / 不投递", async () => {
     const h = makeService();
     // 默认 fixture 为 png（产物通道用例）；这里显式改回 PDF，锁定「PDF 不再走源直通产物」的新口径。
