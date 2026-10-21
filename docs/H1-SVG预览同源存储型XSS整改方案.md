@@ -2,7 +2,7 @@
 
 > 来源：`LibiaoLink_安全审查报告_2026-10-19.pdf` H1（第 5 页）｜严重度 High｜报告要求：上线前处理
 > 报告审查基线：`e13664f`｜方案落档时 `lan` 分支 HEAD：`d6ae272`（审查基线祖先；H1 涉及路径未发现实质修复）
-> 起草：lan（后端平台 / file / preview / outbox）｜拟稿日期：2026-10-20｜状态：**S1 架构 / 契约已批准（ADR-034 Accepted，PR #518 已合入 main）；S2 已随 PR #523 合入 main `e2b6aab`；S3 已随 PR #529 合入 main `acd6113`；S4 队列 / 产物 / 版本切换已实现，PR [#531](https://github.com/PanXing-Libiao/LibiaoLink/pull/531) 待评审 / 合入，尚未部署；S5 / S6 未实现；外部 V1.0 源文档同步仍待 px 确认**
+> 起草：lan（后端平台 / file / preview / outbox）｜拟稿日期：2026-10-20｜状态：**S1 架构 / 契约已批准（ADR-034 Accepted，PR #518 已合入 main）；S2 已随 PR #523 合入 main `e2b6aab`；S3 已随 PR #529 合入 main `acd6113`；S4 已随 PR #531 合入 main `db7d5e0`；S5 响应头已实现并通过本地固定镜像 / 浏览器验证，PR 待创建，尚未部署；S6 未实现；外部 V1.0 源文档同步已按 2026-10-21 指令移出本整改跟踪，不再阻塞 S5 / S6**
 > 归属与评审：本文件位于 `docs/`（px 主责），合入前请 px 复核；ADR 与契约口径由 wmj 主责；生产部署、Nginx 与浏览器测试设施由 px 主责；服务端预览与队列由 lan 主责
 > 变更控制：后续执行以本文件为准。若执行中需要改变架构、验收条件或切片顺序，先修改本文件并说明原因；已合入主干的 ADR 与回放证据按不可变历史处理，不原地重写。
 
@@ -203,7 +203,7 @@ renderer 不执行脚本；服务容器无外网、不配置外部资源目录�
 对 SPA 文档响应增加：
 
 - `Strict-Transport-Security: max-age=31536000; includeSubDomains`
-- `Content-Security-Policy` 起点：`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`
+- `Content-Security-Policy` 实际口径：`default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`。其中 `'wasm-unsafe-eval'` 仅用于 CAD 的本地 WASM 编译，不引入 `'unsafe-eval'`。
 - `X-Frame-Options: DENY`
 
 上线前用浏览器回归确认 SPA、ONLYOFFICE 外壳、CAD WASM / Worker、导出打印 iframe 均未被 CSP 误伤；若需调整，必须记录具体指令与原因。
@@ -234,7 +234,7 @@ renderer 不执行脚本；服务容器无外网、不配置外部资源目录�
 
 ### S1 · 决策与文档冻结
 
-- 执行状态（2026-10-20）：wmj 已批准架构与契约，ADR-034 转 Accepted，PR #518 squash 合入 main `c53e895`。仓库内文档已完成同条同步；px 的前端 / 运维复核与外部 V1.0 源文档人工同步仍待确认，继续作为发布资料项跟踪。
+- 执行状态（2026-10-20）：wmj 已批准架构与契约，ADR-034 转 Accepted，PR #518 squash 合入 main `c53e895`。仓库内文档已完成同条同步；px 的前端 / 运维复核仍待确认。外部 V1.0 源文档人工同步已于 2026-10-21 按项目负责人指令移出本整改跟踪。
 - 新建 `docs/adr/ADR-034-SVG预览安全栅格化.md`，状态先为 Proposed，评审后 Accepted；同步 `docs/adr/README.md`。
 - 更新 `系统功能书.md` D2 预览口径、`前端功能需求.md` 的 SVG 预览 / 轮询 / 下载行为、`技术设计v0.2-架构与数据模型.md` 的预览管线说明。
 - 若 `mime` 字段语义由“客户端声明”改为“服务端规范化值”，同步 `字段对照清单.md`。
@@ -278,6 +278,7 @@ renderer 不执行脚本；服务容器无外网、不配置外部资源目录�
 - 按第 5 节修改 Nginx 443 / 9443 与 SPA 头。
 - 先用测试机验证 CSP 不破坏 SPA、ONLYOFFICE、WASM / Worker、导出打印与图片加载。
 - 验收：`nginx -t` 通过；curl 断言 `nosniff`、CSP、HSTS、XFO；浏览器控制台无 CSP 阻断错误。
+- 执行状态（2026-10-21）：已实现，PR 待创建，**尚未部署生产**。`deploy/prod/nginx/libiaolink.conf` 的 SPA 入口使用同源 CSP（含 CAD WASM 所需 `'wasm-unsafe-eval'`）、HSTS、`nosniff` 与 XFO；443 `/libiaolink/` 与 9443 使用 CSP sandbox、`script-src 'none'`、HSTS、`nosniff` 与 XFO，并先隐藏上游同名头，避免重复。生产固定镜像 `nginx:1.30.5-alpine@sha256:0985e772…` 本地 `nginx -t` 通过；curl 已验证三条路径的响应头。Headless Edge 验证 SPA 根无 CSP violation、WASM / Blob Worker / `srcdoc` 可用；恶意 SVG 顶层打开时脚本被 sandbox 阻断、无 `/api/v1` 请求、Cookie 读取为 `SecurityError`。测试机关联 ONLYOFFICE 外壳、导出打印与真实 CAD 文件的完整 B7 回归仍由 S6 / 发布窗口执行。
 
 ### S6 · 浏览器回归与上线证据
 
