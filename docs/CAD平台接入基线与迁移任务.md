@@ -6,7 +6,7 @@
 
 ## 1. 已有能力与唯一基线
 
-CAD 能力以独立工程 `CAD逆向` 的 STEP v0.3.3（几何基线 `0911573`，宿主适配源码固定 `37d520c`）及其 `CAPABILITY_MATRIX.json`、`STEP_0_3_RESULTS.md` 为准。后续升级须登记实际提交与能力矩阵，不沿用 LibiaoLink 历史后缀白名单、PoC 数字或网格测量结论。
+CAD 能力以独立工程 `CAD逆向` 的 STEP v0.3.3（几何基线 `0911573`，宿主适配源码固定 `5707e1d`）及其 `CAPABILITY_MATRIX.json`、`STEP_0_3_RESULTS.md` 为准。后续升级须登记实际提交与能力矩阵，不沿用 LibiaoLink 历史后缀白名单、PoC 数字或网格测量结论。
 
 | 项目 | 独立工程已有能力 | LibiaoLink 当前状态 |
 | --- | --- | --- |

@@ -1,5 +1,5 @@
 {
-  "sourceCommit": "37d520c2a64e824def8eb228aed76020433f7ff7",
+  "sourceCommit": "5707e1d1f6abfb1346957b892dd722ffb88250fc",
   "stepRelease": "0.3.3",
   "gatewayProtocol": "libiaolink-cad-gateway/1",
   "engineFiles": {
@@ -34,9 +34,10 @@
     "unified/worker_trace.py": "266022c5c796b14ce9cdf8121d450c67fd5472989be8ad93980907993d1ab19e"
   },
   "browserFiles": {
-    "app.js": "27f98fd53993738cdb5f781eec93724bdb3c1dd119e956fd1bdddade2209e99f",
+    "app.js": "b681c6512b1d95a1cfc2e6b8f7b9a046cf2ac212fa60d455c83f50ee54d1df1e",
     "benchmark.js": "c81b3668354f0fc431c02f068545d5c71ce4a266bf414671341aa97674fc3e9d",
     "binary-transport.js": "99cab8e8e665b718e8cf24d7aab6c568ce2e99e02cfbaa01873501cce322fea4",
+    "camera-framing.js": "b180c2728c4cbdbd513ace030a8917b037d39139bba6490099859c06e7c85eef",
     "compact-transport.js": "25ba61842b0faa37bbe039880df4ecb4df3e30727348aa7a33e68a61fba283c4",
     "conversion-jobs.js": "05be087b3ceb9017e8d21f078b6922f297a0bf709e0f39c63c414646bfa938d0",
     "direct-projection.js": "0d7a95890aea9b431d7e86f651e83a33b904ee50c27bcffd5d38a7eb53e9b36d",

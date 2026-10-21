@@ -13,6 +13,7 @@ import {directProjection} from './direct-projection.js?v=step-0.2';
 import {appendNonMeshableUI,clearNonMeshableUI} from './nonmeshable-ui.js?v=step-combined';
 import {appendMeshRepairUI,repairManifest} from './mesh-repair-ui.js?v=step-combined';
 import {mountDrawingViewer} from './drawing-viewer.js';
+import {fitCameraToBox,updateCameraRange} from './camera-framing.js';
 const query=new URLSearchParams(location.search),binaryMode=query.get('transport')==='binary',batchMode=query.get('batch')==='1';
 // The unified pipeline is the default entry; ?pipeline=legacy keeps the old EASM bridge for regression.
 const unifiedMode=query.get('pipeline')!=='legacy';
@@ -59,7 +60,8 @@ function applyHighlight(){
     highlighter.syncVisibility();
   }catch(error){highlighter.clear();console.warn('highlight failed',error);}
 }
-let renderCount=0;const render=()=>{renderer.render(scene,camera);renderCount++;};controls.addEventListener('change',render);
+let cameraBounds=null;
+let renderCount=0;const render=()=>{updateCameraRange(camera,controls,cameraBounds);renderer.render(scene,camera);renderCount++;};controls.addEventListener('change',render);
 function setCameraUp(up){
  if(camera.up.equals(up))return;
  // This pinned OrbitControls captures camera.up in its constructor. Recreate
@@ -126,7 +128,7 @@ function visibleLogical(){
  return out;
 }
 function bounds(root,visible=false){root.updateWorldMatrix(true,true);const b=new THREE.Box3();for(const m of meshes(root,visible)){if(!m.geometry.boundingBox)m.geometry.computeBoundingBox();b.union(m.geometry.boundingBox.clone().applyMatrix4(m.matrixWorld));}return b;}
-function fit(root=model,visible=true){if(!root)return;const b=bounds(root,visible);if(b.isEmpty())return;const c=b.getCenter(new THREE.Vector3());const radius=Math.max(b.getSize(new THREE.Vector3()).length()/2,0.001);const fov=THREE.MathUtils.degToRad(camera.fov);const angle=Math.min(fov,2*Math.atan(Math.tan(fov/2)*camera.aspect));const dist=radius/Math.sin(angle/2)*1.18;let dir=camera.position.clone().sub(controls.target).normalize();if(dir.lengthSq()<.1)dir.set(1,-1,.7).normalize();camera.position.copy(c).addScaledVector(dir,dist);camera.near=Math.max(radius/10000,.00001);camera.far=Math.max(dist+radius*100,100);camera.updateProjectionMatrix();controls.target.copy(c);controls.maxDistance=radius*200;controls.minDistance=radius/200;controls.update();render();}
+function fit(root=model,visible=true){if(!root)return;const b=bounds(root,visible);if(b.isEmpty())return;cameraBounds=bounds(model||root).getBoundingSphere(new THREE.Sphere());fitCameraToBox(camera,controls,b,cameraBounds);render();}
 function select(entry,productId=null,drawId=null){selected=entry;selectedProductId=productId;selectedDrawId=drawId||null;if(helper){scene.remove(helper);helper.geometry.dispose();helper.material.dispose();helper=null;}if(entry&&!drawId&&!productId&&effective(entry.object)){helper=new THREE.BoxHelper(entry.object,0x1489a4);scene.add(helper);}refresh();applyHighlight();}
 function refresh(){if(drawingViewer)return;const all=model?meshes(model):[];const shown=all.filter(effective);const idx=currentEnvelope?.snapshot?logicalIndex():null;const vis=idx?visibleLogical():null;
 if(idx){$('stats').textContent=`显示 ${vis.draws.toLocaleString()} / ${idx.draws.toLocaleString()} 个逻辑对象 · ${vis.instances.toLocaleString()} / ${idx.instances.toLocaleString()} 个实例 · ${shown.length.toLocaleString()} / ${all.length.toLocaleString()} 个物理网格`;}
@@ -147,7 +149,7 @@ function setDrawingChrome(on){
 function installDrawing(envelope,info){
  if(drawingViewer){drawingViewer.destroy();drawingViewer=null;}
  if(model){scene.remove(model);dispose(model);model=null;}
- currentEnvelope=envelope;currentDrawObjects=null;logicalCache=null;entries=[];productRows=[];viewerSession=null;syncViewer=null;meta=info;drawingViewer=null;
+ currentEnvelope=envelope;currentDrawObjects=null;logicalCache=null;entries=[];productRows=[];viewerSession=null;syncViewer=null;meta=info;drawingViewer=null;cameraBounds=null;
  setDrawingChrome(true);
  drawingViewer=mountDrawingViewer(envelope);
  $('filename').textContent=info.name||'DXF 图纸';
@@ -243,8 +245,7 @@ function focusDraw(drawId){
  const radius=Math.max(box.getSize(new THREE.Vector3()).length()/2,1e-6),fov=THREE.MathUtils.degToRad(camera.fov);
  const angle=Math.min(fov,2*Math.atan(Math.tan(fov/2)*camera.aspect)),distance=radius/Math.sin(angle/2)*1.3;
  camera.position.copy(point).addScaledVector(normal,distance);if(Math.abs(camera.up.dot(normal))>.98)camera.up.set(1,0,0);
- camera.near=Math.max(radius/10000,1e-8);camera.far=Math.max(distance+radius*100,100);camera.updateProjectionMatrix();
- controls.target.copy(point);controls.minDistance=radius/200;controls.maxDistance=radius*200;controls.update();render();
+ controls.target.copy(point);updateCameraRange(camera,controls,cameraBounds,radius);controls.update();render();
  return {drawId,primitiveId:draw.primitiveId,sceneId:draw.occurrenceId,point:point.toArray(),normal:normal.toArray()};
 }
 function renderCompleteness(envelope,info){
