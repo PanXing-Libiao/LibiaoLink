@@ -11,8 +11,17 @@ const fileId=query.get('fileId'),versionId=query.get('versionId'),viewId=query.g
 const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const valid=uuid.test(fileId||'')&&uuid.test(versionId||'')&&/^[a-f0-9]{32}$/.test(viewId||'');
 const base=valid?`/api/v1/files/${fileId}/versions/${versionId}/cad/views/${viewId}/jobs`:null;
+const nameCodepage=query.get('nameCodepage')==='GB'?'GB':'UTF8';
 let currentJob=null,jobBase=null,delivered=false,cancelled=false,loadedEnvelope=null;
 const ui=new ImportUI({fileId,versionId,engineVersion:query.get('engineVersion')||'unknown'});
+const nameSelect=document.getElementById('nameCodepage'),reloadNames=document.getElementById('reloadNames');
+nameSelect.value=nameCodepage;
+nameSelect.onchange=()=>{reloadNames.disabled=!delivered||nameSelect.value===nameCodepage;};
+reloadNames.onclick=()=>{
+ if(delivered&&['UTF8','GB'].includes(nameSelect.value)&&nameSelect.value!==nameCodepage){
+  reloadNames.disabled=true;parent.postMessage({type:'cad-name-codepage',value:nameSelect.value},location.origin);
+ }
+};
 
 window.addEventListener('message',event=>{
  if(event.origin!==location.origin||event.source!==parent||event.data?.type!=='cad-context')return;
@@ -115,7 +124,7 @@ loadPlatformModel(async({signal,progress})=>{
  const active=controller.signal;
  try{
   active.throwIfAborted();progress('正在读取文件并创建转换任务…');
-  const created=await json(await request(base,{method:'POST',signal:active}));
+  const created=await json(await request(base+'?'+new URLSearchParams({nameCodepage}),{method:'POST',signal:active}));
   currentJob=created.job;
   if(!/^[a-f0-9]{32}$/.test(currentJob?.id||''))throw new Error('模型任务响应无效');
   jobBase=base+'/'+currentJob.id;
@@ -154,7 +163,7 @@ loadPlatformModel(async({signal,progress})=>{
  const ready=delivered&&document.getElementById('error').hidden;
  if(ready){
   ui.update(3,'模型已就绪');
-  requestAnimationFrame(()=>requestAnimationFrame(()=>{ui.stop('ready');filterParts();parent.postMessage({type:'cad-ready'},location.origin);}));
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{ui.stop('ready');filterParts();parent.postMessage({type:'cad-ready',viewId},location.origin);}));
  }else{
   const unsupported=!cancelled&&unsupportedPreview(currentJob);
   ui.stop(cancelled?'cancelled':unsupported?'unsupported':'failed',{retryable:!unsupported});

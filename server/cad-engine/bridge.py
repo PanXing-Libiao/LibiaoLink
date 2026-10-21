@@ -71,7 +71,7 @@ class Gateway:
 
     def public(self, row):
         result = {key: row[key] for key in ('id', 'state', 'phase', 'sourceSHA256', 'sourceByteLength',
-                  'artifactBytes', 'createdAt', 'updatedAt', 'workerPeakRSSBytes', 'workerWallSeconds') if key in row}
+                  'artifactBytes', 'createdAt', 'updatedAt', 'workerPeakRSSBytes', 'workerWallSeconds', 'nameCodepage') if key in row}
         error = row.get('error')
         if error:
             message = str(error.get('error', '转换失败'))
@@ -100,7 +100,7 @@ class Gateway:
                 raise ValueError('Invalid source reference')
             with path.open('rb') as source:
                 row, reused = self.jobs.submit_stream(source, path.stat().st_size, request['name'], False,
-                                                     secrets.token_hex(16), namespace=namespace)
+                                                     secrets.token_hex(16), namespace=namespace, name_codepage=request.get('nameCodepage', 'UTF8'))
             if row['sourceSHA256'] != request['sourceSHA256']:
                 self.jobs.cancel(row['id'])
                 raise ValueError('Source hash mismatch')

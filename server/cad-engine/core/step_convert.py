@@ -40,7 +40,7 @@ if __name__=='__main__':
                         if size>limit:raise ValueError('STEP input exceeds worker input budget')
                         target.write(chunk)
                 if not size:raise ValueError('STEP input is empty')
-                worker_trace.mark('parseStart');envelope=read_step(path,sink,partial=partial);worker_trace.mark('parseEnd')
+                worker_trace.mark('parseStart');envelope=read_step(path,sink,partial=partial,name_codepage=os.environ.get('CAD_STEP_NAME_CODEPAGE','UTF8'));worker_trace.mark('parseEnd')
         finally:os.dup2(saved,1);os.close(saved)
         if envelope.get('transportProfile')=='ucd-worker-binary/1':
             if os.environ.get('CAD_COMPACT_METADATA')=='1':envelope=pack_metadata(envelope)

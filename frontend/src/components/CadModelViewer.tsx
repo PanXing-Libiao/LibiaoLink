@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CadPreviewViewerConfig } from "../fileApi";
 import { apiFetch } from "../api";
+import type { CadNameCodepage } from "@libiaolink/contracts";
+
+function savedNameCodepage(key: string): CadNameCodepage {
+  try { return sessionStorage.getItem(key) === "GB" ? "GB" : "UTF8"; } catch { return "UTF8"; }
+}
 
 /** The isolated frame runs the pinned independent ViewerSession; no CAD rules live here. */
 export function CadModelViewer({ viewer, name, onClose, onDownload, onRetry }: {
@@ -14,8 +19,12 @@ export function CadModelViewer({ viewer, name, onClose, onDownload, onRetry }: {
   const startedAt = useRef(performance.now());
   const [readyMs, setReadyMs] = useState<number | null>(null);
   const [exportError, setExportError] = useState(false);
-  const viewId = useMemo(() => Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join(""), [viewer.fileId, viewer.versionId]);
-  const query = new URLSearchParams({ platform: "1", autoload: "0", fileId: viewer.fileId, versionId: viewer.versionId, viewId, engineVersion: viewer.engineVersion });
+  const nameKey = `ll.cad.nameCodepage:${viewer.fileId}:${viewer.versionId}`;
+  const [nameChoice, setNameChoice] = useState<{ key: string; value: CadNameCodepage } | null>(null);
+  const nameCodepage = nameChoice?.key === nameKey ? nameChoice.value : savedNameCodepage(nameKey);
+  const viewId = useMemo(() => Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join(""), [viewer.fileId, viewer.versionId, nameCodepage]);
+  const query = new URLSearchParams({ platform: "1", autoload: "0", fileId: viewer.fileId, versionId: viewer.versionId, viewId, engineVersion: viewer.engineVersion, nameCodepage });
+  useEffect(() => { startedAt.current = performance.now(); setReadyMs(null); }, [viewId]);
   const sendContext = () => frame.current?.contentWindow?.postMessage({ type: "cad-context", name }, window.location.origin);
   useEffect(() => {
     const exportReport = async (report: unknown, name: string) => {
@@ -37,14 +46,18 @@ export function CadModelViewer({ viewer, name, onClose, onDownload, onRetry }: {
       if (event.data.type === "cad-download") onDownload();
       if (event.data.type === "cad-retry") onRetry();
       if (event.data.type === "cad-context-request") frame.current?.contentWindow?.postMessage({ type: "cad-context", name }, window.location.origin);
-      if (event.data.type === "cad-ready") setReadyMs(Math.round(performance.now() - startedAt.current));
+      if (event.data.type === "cad-ready" && "viewId" in event.data && event.data.viewId === viewId) setReadyMs(Math.round(performance.now() - startedAt.current));
+      if (event.data.type === "cad-name-codepage" && "value" in event.data && (event.data.value === "UTF8" || event.data.value === "GB")) {
+        try { sessionStorage.setItem(nameKey, event.data.value); } catch { /* The current preview still works without storage. */ }
+        setNameChoice({ key: nameKey, value: event.data.value });
+      }
       if (event.data.type === "cad-export" && "report" in event.data && "name" in event.data && typeof event.data.name === "string") {
         void exportReport(event.data.report, event.data.name).catch(() => setExportError(true));
       }
     };
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);
-  }, [onClose, onDownload, onRetry, name, viewer.fileId, viewer.versionId, viewer.sourceSHA256, viewer.engineVersion]);
+  }, [onClose, onDownload, onRetry, name, viewer.fileId, viewer.versionId, viewer.sourceSHA256, viewer.engineVersion, viewId, nameKey]);
   if (crypto.subtle === undefined) return <div role="alert" className="rounded-xl bg-white p-8 text-sm text-zinc-600">请通过 HTTPS 打开 CAD 在线预览，或下载原文件查看。</div>;
   return <div data-cad-ready-ms={readyMs} className="relative" onClick={(event) => event.stopPropagation()}>
     <iframe ref={frame} title={name} data-file-preview-cad="true" tabIndex={0}

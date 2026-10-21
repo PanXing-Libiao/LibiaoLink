@@ -6,7 +6,7 @@
 
 ## 1. 已有能力与唯一基线
 
-CAD 能力以独立工程 `CAD逆向` 的 STEP v0.3.3（几何基线 `0911573`，宿主适配源码固定 `38135e6`）及其 `CAPABILITY_MATRIX.json`、`STEP_0_3_RESULTS.md` 为准。后续升级须登记实际提交与能力矩阵，不沿用 LibiaoLink 历史后缀白名单、PoC 数字或网格测量结论。
+CAD 能力以独立工程 `CAD逆向` 的 STEP v0.3.3（几何基线 `0911573`，宿主适配源码固定 `37d520c`）及其 `CAPABILITY_MATRIX.json`、`STEP_0_3_RESULTS.md` 为准。后续升级须登记实际提交与能力矩阵，不沿用 LibiaoLink 历史后缀白名单、PoC 数字或网格测量结论。
 
 | 项目 | 独立工程已有能力 | LibiaoLink 当前状态 |
 | --- | --- | --- |
@@ -42,7 +42,7 @@ shared 已定义 CadPreviewViewer、CadJob 及创建响应，OpenAPI/客户端�
 
 | 请求 | 作用 |
 | --- | --- |
-| `POST B` | 从平台版本对象创建任务，返回 job/reused |
+| `POST B?nameCodepage=UTF8` | 从平台版本对象创建任务，返回 job/reused；可选 UTF8（默认）或 GB |
 | `GET B/{jobId}` | 状态、阶段、来源、输入/产物 bytes、worker 耗时与峰值 RSS |
 | `POST B/{jobId}/cancel` | 取消当前命名空间任务 |
 | `GET B/{jobId}/manifest` | 重新校验完整产物，返回 gzip JSON 和短期资源 lease |
@@ -52,6 +52,8 @@ shared 已定义 CadPreviewViewer、CadJob 及创建响应，OpenAPI/客户端�
 会话、文件/版本可见性逐请求检查，写操作校验 CSRF；无权限与不存在均不泄露资源。viewId/jobId 为 32 位十六进制，lease 为 48 位，SHA 为 64 位；它们不替代平台授权。manifest 中原 `/api/resources/...` 是核心虚拟引用，宿主 fetcher 映射到上述鉴权路径，不暴露独立服务。
 
 平台不新增业务迁移或 preview.job 伪目标。工程隔离不是 CAD 身份：namespace 不进入 UCD，固定输入的文档/快照在不同 namespace 下保持相同。
+
+名称编码由“模型信息”按文件选择，当前标签页按 fileId/versionId 记忆。使用固定 OCCT 的 `read.step.codepage`，默认 UTF8，中文旧编码为 GB；非法值拒绝，所选码页进入缓存键、规则摘要和检查记录。源字节、SHA、身份算法及网格参数保持原值，不自动推测旧编码。源码依据与原生定向检查见独立工程 `docs/step-0.3/name-encoding/README.md`。
 
 ## 4. 沿用的 STEP 接收政策
 

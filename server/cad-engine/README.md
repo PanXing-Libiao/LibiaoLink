@@ -1,6 +1,6 @@
 # STEP 平台运行与源码更新
 
-本地已跑通文件版本 → SHA/bytes 核对 → 持久任务 → 完整产物 → 鉴权 manifest/buffers → ViewerSession。固定独立源码见 `source.json`，STEP v0.3.3 几何基线仍为 `0911573`，宿主适配为 `38135e6`。宿主不重写解析、补面或接收政策。结果见 [逐文件表](../../docs/cad-platform-integration/RESULTS.md)。
+本地已跑通文件版本 → SHA/bytes 核对 → 持久任务 → 完整产物 → 鉴权 manifest/buffers → ViewerSession。固定独立源码见 `source.json`，STEP v0.3.3 几何基线仍为 `0911573`，宿主适配为 `37d520c`。宿主不重写解析、补面或接收政策。结果见 [逐文件表](../../docs/cad-platform-integration/RESULTS.md)。
 
 ## 准备运行环境
 
@@ -29,6 +29,8 @@ API 启动前设置以下非敏感运行参数，解释器使用部署机器内�
 固定任务预算：1 个转换并发、最多 8 个排队、单 worker 600 秒、队列 900 秒、worker RSS 2 GiB 采样停止阈值、缓存 24 小时。Node 暂时完整读取原对象，gateway/浏览器也有清单开销；worker RSS 不等于整机内存。为 API 加 native runtime 需预留至少 4 GiB 可用内存，再据真实文件实测调整；这不是 128 MiB 文件的完成承诺。
 
 缓存只保存到 `CAD_CACHE_DIR`。转换中的文件不要手工删除；停止 API/gateway 后可以整体删除该目录重建，原平台文件不在其中。几何 CAS 按内容去重，窗口命名空间只控制任务归属。每次新开窗口当前仍会重新转换，尚未实现跨窗口产物复用。
+
+中文零件名乱码时，在“模型信息”把“零件名称编码”切换为“中文旧编码”并重新读取。默认标准 UTF8；旧中文使用 OCCT 官方 GB，不自动猜编码。选择在当前标签页按文件版本记忆，并传入任务参数 `nameCodepage`；不同码页隔离缓存，检查记录保留本次选择。源文件无需修改。
 
 ## 本地可复现页面
 

@@ -93,6 +93,14 @@ MB = 1,000,000 bytes。[原始字节/来源/任务记录 JSON](files.json) · [C
 
 导入件下载来自浏览器持有的原 File，预置示例仍只验证回调；没有因此宣称公司文件上传/下载链已验收。服务正常停止后本地导入记录失效，重开需重新选择文件。
 
+## STEP 名称编码修复（2026-10-21）
+
+已同步独立源码 `37d520c`，在“模型信息”提供标准 UTF8 / 中文旧编码 GB，重新读取后使用新窗口任务；当前标签页按文件版本记忆，切换文件仍使用各自选择。参数经过会话/CSRF 和枚举校验，进入 worker、缓存键、规则摘要及检查记录。源字节和几何参数沿用原值。
+
+定向检查：独立工程 `tests/test_step_name_encoding.py` **2 项通过**，涵盖原始 GBK、UTF-8、STEP 转义中文与英文混合名称、GB 后恢复默认、buffer SHA 一致和无效选项；`JobTests.test_name_codepage_isolates_cache_and_reaches_worker` **1 项通过**。平台使用实际 native worker 执行 `node node_modules/vitest/vitest.mjs run --config test/cad.vitest.config.ts test/cad-platform.test.ts`（设置 `CAD_TEST_PYTHON`），**9 项通过**，含原有权限、资源、取消/恢复与新增码页隔离检查。首次误用默认 Vitest 配置读到旧构建契约而未运行测试，已按项目既有源码配置重跑通过；未为此全量构建。
+
+内置浏览器实际切换后中文名称已恢复，关闭重开保留 GB；另一文件仍默认 UTF8，外部引用拒收界面保持原行为。业务文件名称、几何、逐文件数值与页面图像只保存在本机忽略目录 `server/var/cad-browser-smoke/`，不提交到仓库。完整产物与修复前对比几何 buffers、draw、产品/实例身份均一致，缺面计数保留原值。shared OpenAPI 与客户端类型由原生成器更新。
+
 ## 使用边界
 
 本轮使用页面明示的测试身份、文件记录和 ObjectStorage，实际守卫/服务/转换/查看器是真实代码。公司 SSO、数据库、真实对象存储、下载整链和正式部署仍需公司测试环境验收；检查页的原文件下载按钮仅验证回调。当前生产 Alpine/768 MiB API 环境需要另配 native runtime、内存和隔离，不能直接开启。尚未推送、合并或部署。

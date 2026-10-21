@@ -1,5 +1,5 @@
-import { Controller, Delete, Get, Inject, Param, Post, Req, Res, StreamableFile, UseGuards } from "@nestjs/common";
-import { UuidSchema, z } from "@libiaolink/contracts";
+import { Controller, Delete, Get, Inject, Param, Post, Query, Req, Res, StreamableFile, UseGuards } from "@nestjs/common";
+import { CadNameCodepageSchema, UuidSchema, z, type CadNameCodepage } from "@libiaolink/contracts";
 import { createReadStream } from "node:fs";
 import { createGzip } from "node:zlib";
 import type { Request, Response } from "express";
@@ -20,6 +20,7 @@ export class CadPreviewController {
   @Post()
   async create(@Param("fileId", uuid) fileId: string, @Param("versionId", uuid) versionId: string,
     @Param("viewId", view) viewId: string, @CurrentActorId() actorId: string,
+    @Query("nameCodepage", new ZodValidationPipe(CadNameCodepageSchema.default("UTF8"))) nameCodepage: CadNameCodepage,
     @Res({ passthrough: true }) response: Response) {
     let disconnected = false;
     let created: Awaited<ReturnType<CadPreviewService["create"]>> | undefined;
@@ -30,7 +31,7 @@ export class CadPreviewController {
       disconnected = true;
       if (created !== undefined) void cancel();
     });
-    created = await this.cad.create(fileId, versionId, viewId, actorId);
+    created = await this.cad.create(fileId, versionId, viewId, actorId, nameCodepage);
     if (disconnected) await cancel();
     return created;
   }

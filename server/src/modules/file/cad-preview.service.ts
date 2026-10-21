@@ -1,4 +1,5 @@
 import { Injectable, ServiceUnavailableException } from "@nestjs/common";
+import type { CadNameCodepage } from "@libiaolink/contracts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -27,21 +28,22 @@ export class CadPreviewService {
     return { version, name, namespace };
   }
 
-  async create(fileId: string, versionId: string, viewId: string, actorId: string) {
+  async create(fileId: string, versionId: string, viewId: string, actorId: string, nameCodepage: CadNameCodepage = "UTF8") {
     const context = await this.context(fileId, versionId, viewId, actorId);
-    const pending = this.submitting.get(context.namespace);
+    const key = context.namespace + ":" + nameCodepage;
+    const pending = this.submitting.get(key);
     if (pending !== undefined) return pending;
     if (!this.engine.enabled) throw new ServiceUnavailableException("CAD 转换服务未启用，请下载原文件查看");
     if (context.version.sizeBytes <= 0 || context.version.sizeBytes > this.engine.inputLimit) {
       throw new ServiceUnavailableException("文件超过当前 CAD 处理大小限制，请下载原文件查看");
     }
     if (this.preparing >= 2) throw new ServiceUnavailableException("CAD 文件读取繁忙，请稍后重试");
-    const operation = this.submit(context).finally(() => { this.submitting.delete(context.namespace); });
-    this.submitting.set(context.namespace, operation);
+    const operation = this.submit(context, nameCodepage).finally(() => { this.submitting.delete(key); });
+    this.submitting.set(key, operation);
     return operation;
   }
 
-  private async submit(context: Awaited<ReturnType<CadPreviewService["context"]>>) {
+  private async submit(context: Awaited<ReturnType<CadPreviewService["context"]>>, nameCodepage: CadNameCodepage) {
     this.preparing += 1;
     const path = resolve(this.engine.root, "incoming", randomUUID() + ".step");
     try {
@@ -53,7 +55,7 @@ export class CadPreviewService {
       }
       await mkdir(resolve(this.engine.root, "incoming"), { recursive: true, mode: 0o700 });
       await writeFile(path, object.bytes, { flag: "wx", mode: 0o600 });
-      return await this.engine.submit({ path, name: context.name, sourceSHA256: context.version.contentHash, namespace: context.namespace });
+      return await this.engine.submit({ path, name: context.name, sourceSHA256: context.version.contentHash, namespace: context.namespace, nameCodepage });
     } finally { this.preparing -= 1; await unlink(path).catch(() => {}); }
   }
 

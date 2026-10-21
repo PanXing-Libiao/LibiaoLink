@@ -50,6 +50,10 @@ aside:has(#productTree:not([hidden])) #tree { display: none; }
 #modelInfo { margin: 0; padding: 0; max-height: 30vh; overflow: auto; background: #fafcfd; }
 #modelInfo > summary { padding: 10px 16px; font-size: 11px; }
 .model-info-body { padding: 0 16px 14px; }
+.name-encoding { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 0 12px; }
+.name-encoding label { font-size: 12px; }
+.name-encoding select { width: auto; min-height: 32px; margin: 0; padding: 4px 8px; }
+.name-encoding p { flex-basis: 100%; margin: 0; font-size: 11px; color: #647580; }
 .status { padding: 4px 0; font-size: 11px; }
 #quality { font-size: 11px; }
 #export { font-size: 11px; }

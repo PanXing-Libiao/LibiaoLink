@@ -1472,6 +1472,9 @@
             "type": "integer",
             "minimum": 0
           },
+          "nameCodepage": {
+            "$ref": "#/components/schemas/CadNameCodepage"
+          },
           "createdAt": {
             "type": "number"
           },
@@ -1532,6 +1535,14 @@
           "job",
           "reused"
         ]
+      },
+      "CadNameCodepage": {
+        "type": "string",
+        "enum": [
+          "UTF8",
+          "GB"
+        ],
+        "description": "STEP 名称编码：UTF8 标准编码（默认），GB 中文旧编码；由用户按文件选择，不自动猜测。"
       },
       "CadPreviewViewer": {
         "type": "object",
@@ -16808,6 +16819,15 @@
             "required": true,
             "name": "viewId",
             "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/CadNameCodepage"
+            },
+            "required": false,
+            "description": "STEP 名称编码：UTF8 标准编码（默认），GB 中文旧编码；由用户按文件选择，不自动猜测。",
+            "name": "nameCodepage",
+            "in": "query"
           }
         ],
         "responses": {

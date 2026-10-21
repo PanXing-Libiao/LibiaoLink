@@ -1,6 +1,6 @@
 import { OpenAPIRegistry, OpenApiGeneratorV31 } from "@asteasolutions/zod-to-openapi";
 import { z } from "./zod.ts";
-import { CadJobSchema, CadJobCreateResponseSchema } from "./modules/cad.ts";
+import { CadJobSchema, CadJobCreateResponseSchema, CadNameCodepageSchema } from "./modules/cad.ts";
 import { DateOnlySchema, IdempotencyKeySchema, UuidSchema } from "./common/conventions.ts";
 import { StageKeySchema } from "./common/dicts.ts";
 import { ApiErrorSchema } from "./common/errors.ts";
@@ -1325,7 +1325,7 @@ export function buildOpenApiDocument() {
   const cadErrors = { 400: commonErrors[400], 401: commonErrors[401], 403: commonErrors[403], 404: commonErrors[404],
     503: { description: "CAD 服务未启用、繁忙或产物不可用", ...json(ApiErrorSchema) } };
   registry.registerPath({ method: "post", path: cadBase, tags: ["files"], summary: "为已授权 STEP 版本创建隔离任务（需要 CSRF）",
-    request: { params: cadParams }, responses: { 201: { description: "已创建或复用当前查看窗口的任务", ...json(CadJobCreateResponseSchema) }, ...cadErrors } });
+    request: { params: cadParams, query: z.object({ nameCodepage: CadNameCodepageSchema.default("UTF8") }) }, responses: { 201: { description: "已创建或复用当前查看窗口的任务", ...json(CadJobCreateResponseSchema) }, ...cadErrors } });
   registry.registerPath({ method: "get", path: cadBase + "/{jobId}", tags: ["files"], summary: "查询当前查看窗口的 CAD 任务",
     request: { params: cadJobParams }, responses: { 200: { description: "持久任务状态", ...json(CadJobSchema) }, ...cadErrors } });
   registry.registerPath({ method: "post", path: cadBase + "/{jobId}/cancel", tags: ["files"], summary: "取消当前查看窗口的转换（需要 CSRF）",

@@ -69,6 +69,12 @@
       <details id="modelInfo" class="evidence">
         <summary>模型信息</summary>
         <div class="model-info-body">
+          <div class="name-encoding">
+            <label for="nameCodepage">零件名称编码</label>
+            <select id="nameCodepage" aria-describedby="nameEncodingHelp"><option value="UTF8">标准编码</option><option value="GB">中文旧编码</option></select>
+            <button id="reloadNames" disabled>重新读取</button>
+            <p id="nameEncodingHelp">中文名称显示异常时可切换编码。重新读取会加载模型，并记住本标签页内该文件版本的选择。</p>
+          </div>
           <div class="status"><span id="stats">—</span><span id="unit">—</span></div>
           <p id="quality">本地解析</p><button id="export">导出检查记录</button>
           <div id="completeness" role="status" hidden></div>

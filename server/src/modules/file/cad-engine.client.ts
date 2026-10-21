@@ -1,5 +1,5 @@
 import { Injectable, ServiceUnavailableException, type OnModuleDestroy } from "@nestjs/common";
-import { CadJobSchema, CadJobCreateResponseSchema, z } from "@libiaolink/contracts";
+import { CadJobSchema, CadJobCreateResponseSchema, z, type CadNameCodepage } from "@libiaolink/contracts";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -94,7 +94,7 @@ export class CadEngineClient implements OnModuleDestroy {
     });
   }
 
-  async submit(input: { path: string; name: string; sourceSHA256: string; namespace: string }): Promise<z.infer<typeof CadJobCreateResponseSchema>> {
+  async submit(input: { path: string; name: string; sourceSHA256: string; namespace: string; nameCodepage: CadNameCodepage }): Promise<z.infer<typeof CadJobCreateResponseSchema>> {
     return CadJobCreateResponseSchema.parse(await this.request("submit", input));
   }
   async status(input: { jobId: string; namespace: string }): Promise<CadJob> { return CadJobSchema.parse(await this.request("status", input)); }

@@ -22,6 +22,7 @@ from .validation import validate_envelope,validate_binary_envelope
 from .transport import read_worker_buffers
 from .input_policy import step_job_input_bytes
 from .compact_transport import WORKER,VERSION,unpack_metadata
+from .step_name_encoding import name_codepage as check_name_codepage
 
 TERMINAL={'completed','failed','cancelled','timed-out'}
 POLICY={'version':'local-step-job/3','workerWallSeconds':600,'queueWallSeconds':900,'workerRSSBytes':2*1024**3,
@@ -98,12 +99,13 @@ class ConversionJobs:
         for f in (self.root/'logs').iterdir():
             if f.name not in logs:f.unlink()
 
-    def submit(self,data,name,partial,request_id,request_trace=None,namespace=None):
-        return self.submit_stream(io.BytesIO(data),len(data),name,partial,request_id,request_trace,namespace=namespace)
+    def submit(self,data,name,partial,request_id,request_trace=None,namespace=None,name_codepage='UTF8'):
+        return self.submit_stream(io.BytesIO(data),len(data),name,partial,request_id,request_trace,namespace=namespace,name_codepage=name_codepage)
 
-    def submit_stream(self,stream,length,name,partial,request_id,request_trace=None,upload_started=None,namespace=None):
+    def submit_stream(self,stream,length,name,partial,request_id,request_trace=None,upload_started=None,namespace=None,name_codepage='UTF8'):
         # Host integration isolates deduplication/cancellation between users and
         # file versions. This changes job ownership, never source CAD identities.
+        name_codepage=check_name_codepage(name_codepage)
         if namespace is not None and not re.fullmatch(r'[a-f0-9]{64}',namespace):raise ValueError('invalid job namespace')
         if not 0<length<=self.policy['inputBytes']:raise ValueError('STEP input exceeds the job input budget')
         if Path(name).name!=name or Path(name).suffix.lower() not in ('.step','.stp'):raise ValueError('jobs accept STEP only')
@@ -125,14 +127,14 @@ class ConversionJobs:
                     target.write(chunk);digest.update(chunk);remaining-=len(chunk)
             if request_trace is not None and upload_started is not None:
                 request_trace['events']['uploadCompleted']=round((time.perf_counter()-upload_started)*1000,3)
-            return self._submit_source(temporary,digest.hexdigest(),length,name,partial,request_id,request_trace,namespace)
+            return self._submit_source(temporary,digest.hexdigest(),length,name,partial,request_id,request_trace,namespace,name_codepage)
         finally:
             if temporary is not None:temporary.unlink(missing_ok=True)
             with self.lock:self.upload_reserved-=length
 
-    def _submit_source(self,temporary,sha,length,name,partial,request_id,request_trace,namespace=None):
+    def _submit_source(self,temporary,sha,length,name,partial,request_id,request_trace,namespace=None,name_codepage='UTF8'):
         identity={'sourceSHA256':sha,'sourceByteLength':length,'name':name,'partial':bool(partial),'reader':'cadquery-ocp/7.8.1.1',
-                  'rules':self.rule_version,'schema':'2.0.0','policy':self.policy['version'],
+                  'rules':self.rule_version,'schema':'2.0.0','policy':self.policy['version'],'nameCodepage':name_codepage,
                   'artifactTransport':'binary' if self.binary else 'base64',
                   'artifactMetadata':VERSION if self.compact else 'full'}
         if namespace is not None:identity['namespace']=namespace
@@ -262,6 +264,7 @@ class ConversionJobs:
                 if self.compact:env['CAD_COMPACT_METADATA']='1'
                 env['CAD_TRACE_FILE']=str(trace);env['CAD_TRACE_LIVE']='1'
                 env['CAD_STEP_INPUT_BYTES']=str(self.policy['inputBytes'])
+                env['CAD_STEP_NAME_CODEPAGE']=row.get('nameCodepage','UTF8')
                 if row['partial']:env['CAD_PARTIAL_PREVIEW']='1'
                 else:env.pop('CAD_PARTIAL_PREVIEW',None)
                 wall=time.perf_counter();peak_rss=0

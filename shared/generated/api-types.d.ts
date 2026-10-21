@@ -4844,7 +4844,10 @@ export interface paths {
         /** 为已授权 STEP 版本创建隔离任务（需要 CSRF） */
         post: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description STEP 名称编码：UTF8 标准编码（默认），GB 中文旧编码；由用户按文件选择，不自动猜测。 */
+                    nameCodepage?: components["schemas"]["CadNameCodepage"];
+                };
                 header?: never;
                 path: {
                     /** @description UUID（主键与关联 ID） */
@@ -9463,6 +9466,7 @@ export interface components {
             phase: string;
             sourceSHA256: string;
             sourceByteLength: number;
+            nameCodepage?: components["schemas"]["CadNameCodepage"];
             createdAt: number;
             updatedAt: number;
             artifactBytes?: number;
@@ -9477,6 +9481,11 @@ export interface components {
             job: components["schemas"]["CadJob"];
             reused: boolean;
         };
+        /**
+         * @description STEP 名称编码：UTF8 标准编码（默认），GB 中文旧编码；由用户按文件选择，不自动猜测。
+         * @enum {string}
+         */
+        CadNameCodepage: "UTF8" | "GB";
         /** @description STEP 查看入口；模型就绪由独立 CAD 任务状态判定。每次模型/资源读取重新校验文件版本权限，不包含原文件签名。 */
         CadPreviewViewer: {
             /** @enum {string} */
