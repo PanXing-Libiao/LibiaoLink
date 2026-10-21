@@ -7,7 +7,7 @@ export const ProjectSchema = z
   .object({
     id: UuidSchema,
     code: z.string().openapi({ example: "CNBJ-20260708-0001", description: "项目编号：创建人填写（建后可修改）；服务端只校验唯一性，不生成；格式仅前端提示" }),
-    seqNo: z.number().int().positive().openapi({ example: 1, description: "项目序号：服务端创建时分配（全库唯一、不可修改、不回收；与项目编号一一对应同一项目）；卡片等展示场景两位补零，列表支持 sort=seqNo:asc|desc" }),
+    seqNo: z.number().int().positive().openapi({ example: 1, description: "项目序号：服务端创建时分配（全库唯一、不可修改；彻底删除后的空号由下一次创建按最小可用序号复用）；与项目编号一一对应同一项目；卡片等展示场景两位补零，列表支持 sort=seqNo:asc|desc" }),
     name: z.string().openapi({ example: "XX 客户分拣项目" }),
     customer: z.string().nullable(),
     region: z.string().openapi({ description: "项目落地地区（字典 region；缺省「未分类」）" }),
@@ -29,6 +29,12 @@ export const ProjectSchema = z
     }),
     archivedBy: UuidSchema.nullable().openapi({
       description: "归档操作人（users.id；仅归档端点置位）；未归档 = null",
+    }),
+    deletedAt: DateTimeSchema.nullable().openapi({
+      description: "进入项目回收站的时间；未删除 = null。回收站项目仅通过 GET /projects?filter[recycled]=true 返回，普通列表 / 详情 / facets 继续排除",
+    }),
+    deletedBy: UuidSchema.nullable().openapi({
+      description: "将项目移入回收站的操作人（users.id）；未删除 = null",
     }),
   })
   .openapi("Project", { description: "项目（v0.2 §2.3 projects）" });
@@ -85,6 +91,10 @@ export const ProjectListQuerySchema = z
       .string()
       .optional()
       .openapi({ description: "归档年份（C4-07 归档检索；多值逗号分隔，四位年份如 2025,2026；按 projects.archived_at 的 Asia/Shanghai 年判定 —— 未归档项目不命中）" }),
+    "filter[recycled]": z
+      .enum(["true", "false"])
+      .optional()
+      .openapi({ description: "项目回收站开关：true = 仅返回已移入项目回收站的项目；false / 缺省 = 仅返回未删除项目" }),
     q: z.string().optional().openapi({ description: "关键字（编号 / 名称 / 客户 / 序号）" }),
     page: PageQuerySchema.shape.page,
     limit: PageQuerySchema.shape.limit,
@@ -292,10 +302,10 @@ export const ProjectMemberCreateBodySchema = z
   .openapi("ProjectMemberCreateBody", { description: "添加成员：重复添加（同 project + user）幂等并覆盖角色；项目归档后拒绝（409 PROJECT_ARCHIVED）" });
 
 /**
- * 项目硬删（Push 190 起；原 A5「软删」口径作废）：If-Match 回传当前 version 防误删（DELETE 不带 body，避免代理丢载荷）。
- * 口径：物理删行 —— 项目聚合子表（任务 / 流程节点 / 阶段 / 成员 / 干系人 / 日报 / 问题 / 变更 / 文件）连同清掉；
- * code 随行释放（同编号可再建）、seqNo 不回收（跳号）；删除前快照 + 子表行数写审计（action=project.delete，metadata.hardDelete=true）；
- * 非成员 / 不存在统一 404；仅项目经理 / 管理员。
+ * 项目删除（2026-10-19 起 = 移入项目回收站）：If-Match 回传当前 version 防误删（DELETE 不带 body，避免代理丢载荷）。
+ * 口径：仅写 projects.deleted_at / deleted_by（version +1），项目聚合数据与对象存储图片保持原样；
+ * 普通列表 / 详情 / facets 立即不可见，项目回收站通过 GET /projects?filter[recycled]=true 读取；
+ * 编号在回收站期间仍占用（彻底删除后才释放）；非成员 / 不存在统一 404；仅项目经理 / 管理员。
  */
 export const ProjectDeleteHeadersSchema = z
   .object({
@@ -308,6 +318,23 @@ export const ProjectDeleteHeadersSchema = z
       }),
   })
   .openapi("ProjectDeleteHeaders");
+
+/**
+ * 项目回收站写口（恢复 / 彻底删除）共用：version = 项目当前乐观锁版本。
+ * restore → 清 deleted_at / deleted_by 并 +1；purge → 仅系统管理员，删库内聚合数据 + 对象存储 projects/{id}/ 前缀（含全部版本与暂存对象）。
+ */
+export const ProjectRecycleActionBodySchema = z
+  .object({
+    version: VersionSchema.openapi({ description: "项目当前 version（乐观锁；不匹配 409 VERSION_CONFLICT）" }),
+  })
+  .openapi("ProjectRecycleActionBody", { description: "项目回收站操作请求：恢复或彻底删除均回传当前 version" });
+
+export const ProjectPurgeResponseSchema = z
+  .object({
+    projectId: UuidSchema,
+    purgedAt: DateTimeSchema,
+  })
+  .openapi("ProjectPurgeResponse", { description: "项目彻底删除结果（数据库聚合数据与项目对象前缀已清理）" });
 
 /**
  * 项目群绑定（M5-03-2 · P5 定案：企微智能机器人 + chatid）：C2-05 群聊绑定（项目主数据维护）。
@@ -328,21 +355,60 @@ export const ProjectGroupBindingSchema = z
   .openapi("ProjectGroupBinding", { description: "项目群绑定状态（GET 恒 200；未绑定 = bound:false）" });
 
 /**
- * 绑定 / 换绑请求（PUT 覆盖语义）：`chatid` = 群消息回调自动落库的会话 id（机器人进群 + 群内激活一次后可得），
- * 也接受先绑后激活（activated 随回调置位）；掩码只作用于读面，写入需全文。
+ * 自动发现但尚未绑定的企微群候选（群回调 ingest 写入）：页面只展示掩码与最近活跃时间，
+ * 真正的 chatid 不进入读面；绑定走 candidateId，由服务端回查全文。
+ */
+export const ProjectGroupCandidateSchema = z
+  .object({
+    id: z.number().int().positive().openapi({ description: "候选群 id（绑定请求回传）" }),
+    name: z.string().nullable().openapi({ description: "回调携带 / 人工维护的群名；未知 = null" }),
+    chatidMasked: z.string().openapi({ description: "企微会话 id 掩码（只回末 4 位）" }),
+    lastSeenAt: DateTimeSchema.openapi({ description: "最近一次收到该群消息的时刻" }),
+  })
+  .openapi("ProjectGroupCandidate", { description: "自动发现但尚未绑定的项目群候选" });
+
+export const ProjectGroupCandidateListSchema = z
+  .object({
+    items: z.array(ProjectGroupCandidateSchema).max(50),
+  })
+  .openapi("ProjectGroupCandidateList", { description: "待绑定群候选（最近活跃优先，最多 50 条）" });
+
+/**
+ * 绑定 / 换绑请求（PUT 覆盖语义）：二选一 ——
+ *   chatid      手工录入完整会话 id（运维兜底）；
+ *   candidateId 从群回调自动发现的候选中选择（推荐，前端拿不到 chatid 明文）。
+ * 也接受先绑后激活（activated 随群内消息回调置位）；name 缺省时候选路径沿用候选群名。
  */
 export const ProjectGroupPutBodySchema = z
   .object({
     chatid: z
       .string()
       .regex(/^[A-Za-z0-9_-]{8,128}$/, "chatid 形态非法（企微会话 id：字母 / 数字 / _ / -）")
-      .openapi({ description: "企微会话 id（群消息回调 body.chatid 自动落库；形如 34 位 base64url 串）" }),
+      .optional()
+      .openapi({ description: "企微会话 id（手工绑定路径；与 candidateId 二选一）" }),
+    candidateId: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .openapi({ description: "自动发现候选群 id（推荐；与 chatid 二选一）" }),
     name: z
       .string()
       .trim()
       .min(1)
       .max(64)
       .nullish()
-      .openapi({ description: "群名 / 备注（维护用；可空 —— 覆盖语义下缺省 = 清空）" }),
+      .openapi({ description: "群名 / 备注（维护用；可空）" }),
   })
-  .openapi("ProjectGroupPutBody", { description: "绑定 / 换绑项目群：chatid 必填 + 群名备注可空；PUT = upsert 覆盖语义" });
+  .superRefine((value, context) => {
+    const hasChatid = value.chatid !== undefined;
+    const hasCandidate = value.candidateId !== undefined;
+    if (hasChatid === hasCandidate) {
+      context.addIssue({
+        code: "custom",
+        message: "chatid 与 candidateId 必须且只能提供一项",
+        path: ["chatid"],
+      });
+    }
+  })
+  .openapi("ProjectGroupPutBody", { description: "绑定 / 换绑项目群：chatid 或 candidateId 二选一 + 群名备注可空；PUT = upsert 覆盖语义" });

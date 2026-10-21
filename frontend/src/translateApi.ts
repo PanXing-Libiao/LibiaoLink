@@ -1,127 +1,29 @@
-/** 导出报告英文译文通道 —— 业务口径 2026-10-10（「项目进展描述……需要翻译」；方案与实测见 `前端功能需求.md` §6.16 ⑭/⑮/⑯）。
+/** 导出报告英文译文通道 —— 业务口径 2026-10-10（「项目进展描述……需要翻译」；方案与实测见 前端功能需求.md §6.16 ⑭/⑮/⑯）。
  *
- * 契约：POST /api/v1/translate
+ * 契约：POST /api/v1/translate（Push 301 起由服务端实现，前端不再直连引擎）
  *   入参 { q: string, source: "zh", target: "en", format: "text" }
  *   出参 { translatedText: string }
- * （形态对齐内网 LibreTranslate 的 /translate —— 开发环境由 Vite 代理直连 127.0.0.1:5005
- *  （见 vite.config.ts 的 TRANSLATE_ORIGIN，服务本体见 deploy/libretranslate/）；
- *  生产环境由后端 server/ 按同一契约实现代理 + 缓存。）
+ * 服务端口径（Push 301 · 2026-10-13 业务口径「保存的时候后台自动翻译 并且写入数据库 下次切换翻译的时候直接调用即可」）：
+ *   库优先（content_translations，键 = sha256(原文)）→ 未命中调内网引擎（HY-MT1.5-1.8B，env TRANSLATE_ORIGIN）→
+ *   回包落库；术语保护 / 回换 / 规整在服务端做（server/src/modules/translate/translate.text.ts），本端 q 一律**原文**。
+ *   批量直取：POST /api/v1/translate/batch（只读查库）—— 英文界面切页一次请求拿整页已存译文。
+ * （旧口径：开发环境 Vite 直连 127.0.0.1:5008 翻译引擎 + 前端做术语占位符保护；Push 301 起两条都移除 ——
+ *  避免「同一原文两种键互相命中不了」与保存链路预热漏保护。）
  *
  * 容错（重要）：本模块**从不抛错** —— 任何一条拿不到译文就跳过（返回表里没有该条），
  * 调用方（导出流程）保持中文原文照出：通道不可用不影响导出的可用性。
  *
- * 「写进展描述即后台翻译」（业务口径 2026-10-13「当前项目总览导出翻译需要等待时间 我们现在换一种方式
- * 当用户写项目进展描述时直接后台翻译」，§6.16 ㉑）：会话级译文缓存 + 后台预热 ——
- * 页面数据一到 / 每次写入回写就把「项目名 + 全部非空进展描述」丢进 prefetchZhToEn
- * （去重、跳过已缓存 / 在途 / 刚失败过的，限并发静默跑）；导出时 translateZhToEn 命中缓存即取，
- * 只有没预热到的条目才现场翻（行为与原来一致），常用路径下导出不再等机器翻译。
+ * 三级取词：L1 会话缓存 → L2 服务端译文库（batch 直取）→ L3 单条 /translate（服务端库命中即出、未命中引擎 + 落库）。
+ * 保存链路（task / project 控制器）已把新写入的手打中文后台翻好入库，切换语言 / 导出绝大多数条目在 L1 / L2 就绪。
  */
 
-/** 常见缩写词（全大写译文规整时保留原样；Argos 小模型偶发整句大写，实测 2026-10-10）。 */
-const KEEP_UPPER = new Set([
-  "WCS", "AGV", "AMR", "PDF", "API", "URL", "ID", "IT", "OK",
-  "QC", "QA", "WMS", "GPS", "AI", "UI", "IP", "PLC", "ERP", "MES", "SKU",
-]);
+import { apiFetch } from "./api";
 
-/** 译文规整：去多余空白；整句全大写（小模型偶发）时转句首大写，保留常见缩写与带数字词元。 */
-export function normalizeEnglish(text: string): string {
-  const trimmed = text.replace(/\s+/g, " ").trim();
-  const letters = trimmed.replace(/[^A-Za-z]/g, "");
-  if (letters.length < 4 || letters !== letters.toUpperCase()) {
-    return trimmed;
-  }
-  let atStart = true;
-  const out: string[] = [];
-  for (const token of trimmed.split(/(\s+)/)) {
-    if (token === "") {
-      continue;
-    }
-    if (/^\s+$/.test(token)) {
-      out.push(token);
-      continue;
-    }
-    if (!/[A-Za-z]/.test(token)) {
-      out.push(token);
-      if (/[.!?]$/.test(token)) {
-        atStart = true;
-      }
-      continue;
-    }
-    let word: string;
-    if (/\d/.test(token) || KEEP_UPPER.has(token.toUpperCase())) {
-      word = token.toUpperCase();
-    } else {
-      word = token.toLowerCase();
-      if (atStart) {
-        word = word.charAt(0).toUpperCase() + word.slice(1);
-      }
-    }
-    out.push(word);
-    atStart = /[.!?]$/.test(word);
-  }
-  return out.join("");
-}
+/** 服务端译文库批量查库上限（契约 TRANSLATE_BATCH_MAX = 400）。 */
+const BATCH_MAX = 400;
 
-/** 领域术语表（Push 297 · 业务口径 2026-10-13「新西兰基督城仓配……是新西兰基督城仓库与配送中心的意思 这个模型翻译是啥逻辑 是不是需要纠正」）：
- *  内网 LibreTranslate（Argos 小模型 · §6.16 ⑮）是逐句机翻 —— 没有上下文、也不认识行业简称 / 地名别称 / 品牌，
- *  实测「基督城」→ Christtown / Christian City、「仓配」→ Hammy / Christian Barracks / 直接被吞、
- *  「立镖」→ A dart、「分拣中心」→ Selection Centre，全部不可用。做法 = **保护式强翻译**：
- *  出引擎前把命中术语换成「数字占位符」（实测该引擎对 Xq + 无连零数字 + Y 形态原样透传；纯字母 / 全大写 /
- *  含 00 的数字 / 相邻无分隔的占位符会被吞或改写），回包再把占位符换回这里的固定译法 —— 术语不参与机翻。
- *  匹配 = **长词优先**（仓配中心 先于 仓配，避免译成「… Center Center」）；人名 / 品牌 / 产品词定稿英文后加一行即可。 */
-const GLOSSARY: ReadonlyArray<{ zh: string; en: string }> = [
-  { zh: "基督城", en: "Christchurch" },
-  { zh: "立镖", en: "Libiao" },
-  { zh: "仓配中心", en: "Warehouse and Distribution Center" },
-  { zh: "仓配", en: "Warehouse and Distribution Center" },
-  { zh: "分拣中心", en: "Sorting Center" },
-  { zh: "分拣线", en: "Sorting Line" },
-  { zh: "分拨中心", en: "Distribution Center" },
-  { zh: "分拣", en: "Sorting" },
-  { zh: "分拨", en: "Distribution" },
-  { zh: "联调", en: "Integration Testing" },
-  { zh: "调试", en: "Commissioning" },
-];
-
-/** 长词优先的匹配序（模块级排一次）。 */
-const GLOSSARY_SORTED: ReadonlyArray<{ zh: string; en: string }> = GLOSSARY.slice().sort((a, b) => b.zh.length - a.zh.length);
-
-/** 占位符号码池（六位、无连零，实测原样透传）：一个术语固定取一枚（同文本内不重号；超池追加一位数字）。 */
-const TOKEN_NUMBERS: readonly string[] = ["8612345", "8612347", "8612361", "8612371", "8612381", "8612391", "8612412", "8612432", "8612452", "8612462", "8612472", "8612482", "8612492", "8612512", "8612532", "8612542"];
-
-function glossaryToken(index: number): string {
-  const base = TOKEN_NUMBERS[index % TOKEN_NUMBERS.length];
-  const extra = index < TOKEN_NUMBERS.length ? "" : String(Math.floor(index / TOKEN_NUMBERS.length) + 1);
-  return "Xq" + base + extra + "Y";
-}
-
-/** 出引擎前：长词优先把命中术语换成占位符（空格包夹，防相邻占位符互相干扰）；返回替换表（无命中 = 空表、原文照发）。 */
-function protectGlossary(text: string): { protectedText: string; tokens: ReadonlyMap<string, string> } {
-  let out = text;
-  const tokens = new Map<string, string>();
-  GLOSSARY_SORTED.forEach((term, index) => {
-    if (!out.includes(term.zh)) {
-      return;
-    }
-    const token = glossaryToken(index);
-    tokens.set(token, term.en);
-    out = out.split(term.zh).join(" " + token + " ");
-  });
-  if (tokens.size === 0) {
-    return { protectedText: text, tokens };
-  }
-  return { protectedText: out.replace(/\s{2,}/g, " ").trim(), tokens };
-}
-
-/** 回包后：占位符换回固定译法（大小写不敏感 + 容忍引擎在字符间塞空格）；随后压掉多余空格与标点前空格。 */
-function restoreGlossary(text: string, tokens: ReadonlyMap<string, string>): string {
-  let out = text;
-  for (const [token, en] of tokens) {
-    const pattern = new RegExp(token.split("").join("\\s*"), "gi");
-    out = out.replace(pattern, " " + en + " ");
-  }
-  return out.replace(/\s{2,}/g, " ").replace(/\s+([,.!?;:])/g, "$1").trim();
-}
+/** 中文痕迹（含 CJK 基本区才值得翻 / 查库）：纯英文 / 数字文本不进通道（与保存链路预热同口径）。 */
+const CJK_PATTERN = /[\u4e00-\u9fff]/;
 
 /** 并发上限：单条服务 + 导出场景（去重后个位数）小并发即可，同时防批量导入时打满请求。 */
 const MAX_CONCURRENCY = 4;
@@ -185,14 +87,13 @@ function cachePut(source: string, translated: string): void {
   notifyTranslations();
 }
 
-/** 逐条翻译（POST /api/v1/translate），失败返回 null（不抛错；由 translateOneShared 统一记退避 / 写缓存）。 */
+/** 单条翻译（POST /api/v1/translate，原文入参；服务端库优先 → 引擎 → 落库），失败返回 null（不抛错）。 */
 async function translateOne(text: string): Promise<string | null> {
   try {
-    const { protectedText, tokens } = protectGlossary(text);
-    const response = await fetch("/api/v1/translate", {
+    const response = await apiFetch("/api/v1/translate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ q: protectedText, source: "zh", target: "en", format: "text" }),
+      body: JSON.stringify({ q: text, source: "zh", target: "en", format: "text" }),
     });
     if (!response.ok) {
       return null;
@@ -200,16 +101,58 @@ async function translateOne(text: string): Promise<string | null> {
     const data: unknown = await response.json();
     const translatedText =
       typeof data === "object" && data !== null ? (data as { translatedText?: unknown }).translatedText : undefined;
-    if (typeof translatedText !== "string") {
+    if (typeof translatedText !== "string" || translatedText === "") {
       return null;
     }
-    const normalized = normalizeEnglish(translatedText);
-    // 领域术语回换（Push 297）：占位符换回固定译法（没命中术语的文本到此原样返回）。
-    const restored = tokens.size === 0 ? normalized : restoreGlossary(normalized, tokens);
-    return restored === "" ? null : restored;
+    return translatedText;
   } catch {
     return null;
   }
+}
+
+/**
+ * 服务端译文库批量直取（POST /api/v1/translate/batch · 只读查库）：一次请求（≤400 条）把已存译文写进会话缓存。
+ * 返回「新写入缓存的条数」；失败 / 未命中静默（未命中条目由调用方继续走单条通道）。
+ */
+async function lookupStoredBatch(texts: readonly string[]): Promise<number> {
+  const cjk = texts.filter((text) => CJK_PATTERN.test(text));
+  let added = 0;
+  for (let at = 0; at < cjk.length; at += BATCH_MAX) {
+    const chunk = cjk.slice(at, at + BATCH_MAX);
+    try {
+      const response = await apiFetch("/api/v1/translate/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ qs: chunk, source: "zh", target: "en" }),
+      });
+      if (!response.ok) {
+        continue;
+      }
+      const data: unknown = await response.json();
+      const items =
+        typeof data === "object" && data !== null ? (data as { translations?: unknown }).translations : undefined;
+      if (!Array.isArray(items)) {
+        continue;
+      }
+      for (const item of items) {
+        if (typeof item !== "object" || item === null) {
+          continue;
+        }
+        const q = (item as { q?: unknown }).q;
+        const translatedText = (item as { translatedText?: unknown }).translatedText;
+        if (typeof q !== "string" || typeof translatedText !== "string" || translatedText === "") {
+          continue;
+        }
+        if (!translationCache.has(q)) {
+          cachePut(q, translatedText);
+          added += 1;
+        }
+      }
+    } catch {
+      // 服务端不可达 / 网关错误：静默跳过，未命中条目继续走单条通道
+    }
+  }
+  return added;
 }
 
 /** 同一原文共用一次在途请求（预热与导出并发时只打一条机器翻译）；成功后写缓存、失败记退避时间。 */
@@ -236,10 +179,15 @@ function translateOneShared(text: string): Promise<string | null> {
 }
 
 /**
- * 后台预热（「写进展描述即后台翻译」· §6.16 ㉑）：把一批中文文本静默翻好放进会话缓存 —— 不等待、不抛错。
+ * 后台预热（保存即翻译的读侧提速 · §6.16 ㉑ / ㉕）：把一批中文文本静默补进会话缓存 —— 不等待、不抛错。
+ * ① 批量查服务端译文库（L2，一次请求）；② 未入库的再逐条 /translate（L3，服务端命中即出、未命中引擎 + 落库）。
  * 已缓存 / 在途 / 退避窗口内失败过的条目直接跳过（失败不弹提示；导出时仍按原行为现场重试、静默降级）。
  */
 export function prefetchZhToEn(texts: readonly string[]): void {
+  void prefetchZhToEnAsync(texts);
+}
+
+async function prefetchZhToEnAsync(texts: readonly string[]): Promise<void> {
   const now = Date.now();
   const queue = uniqueTexts(texts).filter(
     (text) => !translationCache.has(text) && !inFlight.has(text) && (failedAt.get(text) ?? 0) + PREFETCH_RETRY_MS <= now,
@@ -247,13 +195,22 @@ export function prefetchZhToEn(texts: readonly string[]): void {
   if (queue.length === 0) {
     return;
   }
+  await lookupStoredBatch(queue);
+  const missing = queue.filter((text) => !translationCache.has(text) && !inFlight.has(text) && CJK_PATTERN.test(text));
+  if (missing.length === 0) {
+    return;
+  }
   let cursor = 0;
-  void Promise.all(
-    Array.from({ length: Math.min(MAX_CONCURRENCY, queue.length) }, async () => {
-      while (cursor < queue.length) {
+  await Promise.all(
+    Array.from({ length: Math.min(MAX_CONCURRENCY, missing.length) }, async () => {
+      while (cursor < missing.length) {
         const at = cursor;
         cursor += 1;
-        await translateOneShared(queue[at]);
+        const text = missing[at];
+        if (text === undefined) {
+          return;
+        }
+        await translateOneShared(text);
       }
     }),
   );
@@ -264,9 +221,9 @@ export function cachedZhToEn(text: string): string | null {
   return translationCache.get(text) ?? null;
 }
 
-/** 把一批中文文本翻成英文（会话缓存优先 + 缺的现场翻：去重 + 限并发 + 逐条容错）；返回「原文 → 英文」映射
- * （含命中缓存的条目），失败 / 拿不到译文的条目不在表里。
- * onProgress(done, total)：命中缓存的条目一开始即计入 done、未缓存的每完成一条回报一次（含失败条目）——
+/** 把一批中文文本翻成英文（L1 会话缓存 → L2 服务端译文库 → L3 单条现场翻：去重 + 限并发 + 逐条容错）；
+ * 返回「原文 → 英文」映射（含命中缓存的条目），失败 / 拿不到译文的条目不在表里。
+ * onProgress(done, total)：命中缓存 / 库直取的条目一开始即计入 done、未就绪的每完成一条回报一次（含失败条目）——
  * 导出等待浮层用它显示「项目进展描述翻译中 + 预计需要 XX 秒」（§6.16 ⑳，见 components/ExportProgressOverlay.tsx）。 */
 export async function translateZhToEn(
   texts: readonly string[],
@@ -274,14 +231,23 @@ export async function translateZhToEn(
 ): Promise<ReadonlyMap<string, string>> {
   const unique = uniqueTexts(texts);
   const missing = unique.filter((text) => !translationCache.has(text));
-  let done = unique.length - missing.length;
+  onProgress?.(unique.length - missing.length, unique.length);
+  if (missing.length > 0) {
+    await lookupStoredBatch(missing);
+  }
+  const stillMissing = unique.filter((text) => !translationCache.has(text));
+  let done = unique.length - stillMissing.length;
   onProgress?.(done, unique.length);
   let cursor = 0;
-  const workers = Array.from({ length: Math.min(MAX_CONCURRENCY, missing.length) }, async () => {
-    while (cursor < missing.length) {
+  const workers = Array.from({ length: Math.min(MAX_CONCURRENCY, stillMissing.length) }, async () => {
+    while (cursor < stillMissing.length) {
       const at = cursor;
       cursor += 1;
-      await translateOneShared(missing[at]);
+      const text = stillMissing[at];
+      if (text === undefined) {
+        return;
+      }
+      await translateOneShared(text);
       done += 1;
       onProgress?.(done, unique.length);
     }

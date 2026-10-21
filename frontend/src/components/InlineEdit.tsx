@@ -5,8 +5,10 @@ import { MemberSearchList } from "./MemberSelect";
 import { MultiOptionList, OptionList, type SelectOption } from "./SelectMenu";
 import { Toast } from "./Toast";
 import { usePopover } from "./usePopover";
+import { monthYearText, useLocale, useMachineText, useT } from "../i18n";
 
-const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
+const WEEKDAYS_ZH = ["一", "二", "三", "四", "五", "六", "日"];
+const WEEKDAYS_EN = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 const pad = (value: number) => String(value).padStart(2, "0");
 const toKey = (date: Date) =>
   String(date.getFullYear()) + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate());
@@ -47,11 +49,13 @@ type InlineCellProps = {
  * Push 264（P1-1 定档锁定）：加 disabled 锁定态 —— 入口保留可点、样式与可编辑态全等，点击改为弹出站点同款顶部
  *  Toast（2026-10-10 业务追订「点击后显示弹出即可 不要红色的圆提示」+「都用这个即可」；见 InlineCellProps.disabled）。
  */
-export function InlineCell({ ariaLabel, title = "点击编辑", display, width, height, triggerClassName, bare = false, wrapContent = false, disabled = false, disabledHint, render }: InlineCellProps) {
+export function InlineCell({ ariaLabel, title, display, width, height, triggerClassName, bare = false, wrapContent = false, disabled = false, disabledHint, render }: InlineCellProps) {
   const { open, setOpen, position, triggerRef, popoverRef } = usePopover(width, height);
   /** 锁定说明 Toast（Push 264 续 · 2026-10-10 业务口径「都用这个即可」）：点击锁定入口 → 站点同款顶部浮空 Toast
    *  （error 档：rose 边框 / 浅底 + 「关闭」按钮，2s 自动消失）；tick 只增不减 —— 连点同一格也以新 key 重新计时。 */
   const [lockedHintTick, setLockedHintTick] = useState(0);
+  const t = useT();
+  const resolvedTitle = title ?? t("ie.clickEdit");
 
   return (
     <>
@@ -61,7 +65,7 @@ export function InlineCell({ ariaLabel, title = "点击编辑", display, width, 
         aria-label={ariaLabel}
         aria-expanded={open}
         aria-disabled={disabled}
-        title={disabled ? (disabledHint ?? title) : title}
+        title={disabled ? (disabledHint ?? resolvedTitle) : resolvedTitle}
         data-inline-cell={
           // 测试钩子（Push 226）：回放脚本据 [data-inline-cell=editor] 取「同款」参照；bare（裸框）模式另标；
           // 定档锁定（Push 264）落 [data-inline-cell=disabled] —— 回放脚本据此认锁定入口（点击出顶部 Toast、不出编辑浮层）。
@@ -114,7 +118,7 @@ export function InlineCell({ ariaLabel, title = "点击编辑", display, width, 
           key={"locked-hint-" + String(lockedHintTick)}
           kind="error"
           anchor={{ name: "data-inline-locked-hint", value: "true" }}
-          text={disabledHint ?? title}
+          text={disabledHint ?? resolvedTitle}
           onClose={() => {
             setLockedHintTick(0);
           }}
@@ -164,10 +168,11 @@ type InlineMemberMultiCellProps = {
  * 勾选 / 取消勾选都不收浮层（一次可以连着点好几位），选完点浮层外 / Esc 收起。
  */
 export function InlineMemberMultiCell({ values, options, ariaLabel, onPick, display, disabled = false, disabledHint }: InlineMemberMultiCellProps) {
+  const t = useT();
   return (
     <InlineCell
       ariaLabel={ariaLabel}
-      title="点击选择成员（可多选）"
+      title={t("ie.pickMembers")}
       width={280}
       height={286}
       disabled={disabled}
@@ -207,10 +212,11 @@ type InlineMemberCellProps = {
 /** 行内成员单选单元格（Push 244 · 业务口径「这个负责人要可以编辑」）：浮层 = 成员搜索列表
  *  （与人员下拉同一份版式）+ 首行「待分派」清空项（给了 onClear 才有）；选完即收浮层。 */
 export function InlineMemberCell({ value, options, ariaLabel, onPick, onClear, display, bare = false, triggerClassName }: InlineMemberCellProps) {
+  const t = useT();
   return (
     <InlineCell
       ariaLabel={ariaLabel}
-      title="点击选择成员"
+      title={t("ie.pickMember")}
       width={280}
       height={onClear === undefined ? 286 : 330}
       bare={bare}
@@ -229,7 +235,7 @@ export function InlineMemberCell({ value, options, ariaLabel, onPick, onClear, d
               className="flex w-full items-center gap-2 border-b border-zinc-100 px-3 py-2.5 text-left text-sm text-zinc-500 transition hover:bg-zinc-50"
             >
               <span className="flex h-7 w-7 items-center justify-center rounded-full bg-zinc-100 text-xs text-zinc-400">—</span>
-              待分派
+              {t("ie.unassigned")}
             </button>
           )}
           <MemberSearchList
@@ -265,10 +271,11 @@ type InlineOptionCellProps = {
 
 /** 行内枚举单元格（如紧急重要度）。 */
 export function InlineOptionCell({ value, options, ariaLabel, onPick, display, bare = false, triggerClassName, disabled = false, disabledHint }: InlineOptionCellProps) {
+  const t = useT();
   return (
     <InlineCell
       ariaLabel={ariaLabel}
-      title="点击选择"
+      title={t("ie.pick")}
       width={140}
       height={options.length * 34 + 12}
       disabled={disabled}
@@ -315,10 +322,11 @@ type InlineMultiOptionCellProps = {
 /** 行内多选单元格（Push 208 · 业务口径「问题归类都要可以修改」）：浮层 = 与「问题归类」表单侧同款的
  *  MultiOptionList（绿勾选中项、点选不收浮层、再点取消）；点浮层外 / Esc 收起。 */
 export function InlineMultiOptionCell({ values, options, ariaLabel, onChange, display, renderLabel, bare = false, triggerClassName, wrapContent = false, disabled = false, disabledHint }: InlineMultiOptionCellProps) {
+  const t = useT();
   return (
     <InlineCell
       ariaLabel={ariaLabel}
-      title="点击选择（可多选）"
+      title={t("ie.pickMulti")}
       width={180}
       height={options.length * 34 + 12}
       disabled={disabled}
@@ -354,10 +362,11 @@ export function InlineDateCell({
   /** 锁定说明文案（定档口径同 409 TASK_FINALIZED 提示文案；悬停 title 与点击 Toast 共用）。 */
   disabledHint?: string;
 }) {
+  const t = useT();
   return (
     <InlineCell
       ariaLabel={ariaLabel}
-      title="点击选择日期"
+      title={t("ie.pickDate")}
       width={264}
       height={336}
       disabled={disabled}
@@ -378,6 +387,8 @@ export function InlineDateCell({
 }
 
 function MiniCalendar({ value, onChange }: { value: string; onChange: (iso: string) => void }) {
+  const t = useT();
+  const locale = useLocale();
   const [view, setView] = useState(() => {
     const base = value === "" ? new Date() : toDate(value);
     return new Date(base.getFullYear(), base.getMonth(), 1);
@@ -398,7 +409,7 @@ function MiniCalendar({ value, onChange }: { value: string; onChange: (iso: stri
       <div className="flex items-center justify-between">
         <button
           type="button"
-          aria-label="上个月"
+          aria-label={t("ie.prevMonth")}
           onClick={() => {
             setView(new Date(view.getFullYear(), view.getMonth() - 1, 1));
           }}
@@ -409,11 +420,11 @@ function MiniCalendar({ value, onChange }: { value: string; onChange: (iso: stri
           </svg>
         </button>
         <p className="text-sm font-semibold text-zinc-800">
-          {String(view.getFullYear()) + "年" + String(view.getMonth() + 1) + "月"}
+          {monthYearText(locale, view.getFullYear(), view.getMonth() + 1)}
         </p>
         <button
           type="button"
-          aria-label="下个月"
+          aria-label={t("ie.nextMonth")}
           onClick={() => {
             setView(new Date(view.getFullYear(), view.getMonth() + 1, 1));
           }}
@@ -426,7 +437,7 @@ function MiniCalendar({ value, onChange }: { value: string; onChange: (iso: stri
       </div>
 
       <div className="mt-2 grid grid-cols-7 gap-y-1 text-center text-[11px] text-zinc-400">
-        {WEEKDAYS.map((day) => (
+        {(locale === "en" ? WEEKDAYS_EN : WEEKDAYS_ZH).map((day) => (
           <span key={day}>{day}</span>
         ))}
       </div>
@@ -464,7 +475,7 @@ function MiniCalendar({ value, onChange }: { value: string; onChange: (iso: stri
           }}
           className="rounded-lg px-2.5 py-1.5 text-xs text-zinc-500 transition hover:bg-zinc-100"
         >
-          清除
+          {t("ie.clear")}
         </button>
         <button
           type="button"
@@ -473,7 +484,7 @@ function MiniCalendar({ value, onChange }: { value: string; onChange: (iso: stri
           }}
           className="rounded-lg px-2.5 py-1.5 text-xs text-zinc-600 transition hover:bg-zinc-100"
         >
-          今天
+          {t("ie.today")}
         </button>
       </div>
     </div>
@@ -486,7 +497,7 @@ export function InlineNumberCell({
   value,
   display,
   ariaLabel,
-  suffix = "人",
+  suffix: suffixProp,
   onSave,
   disabled = false,
   disabledHint,
@@ -501,10 +512,13 @@ export function InlineNumberCell({
   /** 锁定说明文案（定档口径同 409 TASK_FINALIZED 提示文案；悬停 title 与点击 Toast 共用）。 */
   disabledHint?: string;
 }) {
+  const t = useT();
+  /** 人头单位后缀（Push 301）：默认「人」、英文界面 people；显式传入则原样用（如「天」）。 */
+  const suffix = suffixProp ?? t("ie.headcountSuffix");
   return (
     <InlineCell
       ariaLabel={ariaLabel}
-      title="点击填写"
+      title={t("ie.fill")}
       width={196}
       height={124}
       disabled={disabled}
@@ -536,6 +550,7 @@ function NumberEditor({
   onSave: (value: number) => void;
   onCancel: () => void;
 }) {
+  const t = useT();
   const [text, setText] = useState(value > 0 ? String(value) : "");
   const trimmed = text.trim();
   const parsed = trimmed === "" ? 0 : Number(trimmed);
@@ -551,7 +566,7 @@ function NumberEditor({
           step={1}
           inputMode="numeric"
           value={text}
-          aria-label={suffix === "人" ? "预计所需施工人数" : "数值"}
+          aria-label={suffix === t("ie.headcountSuffix") ? t("ie.headcountAria") : t("ie.valueAria")}
           onChange={(event) => {
             setText(event.target.value);
           }}
@@ -567,14 +582,14 @@ function NumberEditor({
         />
         <span className="shrink-0 text-xs text-zinc-400">{suffix}</span>
       </div>
-      {invalid ? <p className="mt-1.5 text-[11px] text-rose-500">请填 0 以上的整数</p> : null}
+      {invalid ? <p className="mt-1.5 text-[11px] text-rose-500">{t("ie.intError")}</p> : null}
       <div className="mt-2.5 flex justify-end gap-2">
         <button
           type="button"
           onClick={onCancel}
           className="rounded-lg border border-zinc-200 px-2.5 py-1 text-xs text-zinc-600 transition hover:bg-zinc-100"
         >
-          取消
+          {t("common.cancel")}
         </button>
         <button
           type="button"
@@ -584,7 +599,7 @@ function NumberEditor({
           }}
           className="rounded-lg bg-zinc-900 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          保存
+          {t("common.save")}
         </button>
       </div>
     </div>
@@ -599,7 +614,7 @@ export function InlineTextCell({
   display,
   ariaLabel,
   onSave,
-  placeholder = "补充当前进展、风险或下一步",
+  placeholder,
   rows = 3,
   bare = false,
   triggerClassName,
@@ -623,10 +638,11 @@ export function InlineTextCell({
   /** 锁定说明文案（定档口径同 409 TASK_FINALIZED 提示文案；悬停 title 与点击 Toast 共用）。 */
   disabledHint?: string;
 }) {
+  const t = useT();
   return (
     <InlineCell
       ariaLabel={ariaLabel}
-      title="点击填写"
+      title={t("ie.fill")}
       width={268}
       height={186}
       disabled={disabled}
@@ -638,7 +654,7 @@ export function InlineTextCell({
         <TextEditor
           value={value}
           ariaLabel={ariaLabel}
-          placeholder={placeholder}
+          placeholder={placeholder ?? t("ie.notePlaceholder")}
           rows={rows}
           onSave={(next) => {
             onSave(next);
@@ -666,10 +682,20 @@ function TextEditor({
   onSave: (value: string) => void;
   onCancel: () => void;
 }) {
+  const t = useT();
   const [text, setText] = useState(value);
+  /** 机翻译文预览（Push 301 追订 · 业务口径：编辑浮层也要能看到译文）：英文界面 + 译文就绪时，
+   *  在编辑框上方出一条只读译文行 —— 编辑的仍是原文、保存回写原文；译文只作阅读预览，不参与落值。 */
+  const translation = useMachineText(value);
 
   return (
     <div className="p-3">
+      {translation !== null && translation !== value ? (
+        <p className="mb-2 max-h-24 overflow-y-auto rounded-md bg-zinc-50 px-2.5 py-1.5 text-xs leading-5 text-zinc-600">
+          <span className="mr-1.5 text-[11px] text-zinc-400">{t("ie.mtPreview")}</span>
+          {translation}
+        </p>
+      ) : null}
       <textarea
         autoFocus
         rows={rows}
@@ -693,7 +719,7 @@ function TextEditor({
           onClick={onCancel}
           className="rounded-lg border border-zinc-200 px-2.5 py-1 text-xs text-zinc-600 transition hover:bg-zinc-100"
         >
-          取消
+          {t("common.cancel")}
         </button>
         <button
           type="button"
@@ -703,7 +729,7 @@ function TextEditor({
           }}
           className="rounded-lg bg-zinc-900 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-zinc-800"
         >
-          保存
+          {t("common.save")}
         </button>
       </div>
     </div>

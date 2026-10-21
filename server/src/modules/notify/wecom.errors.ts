@@ -19,10 +19,14 @@
  *   846609（未订阅 —— 连接恢复后重试）→ retryable；
  *   846607 双语义（未激活 / 超频，errmsg 不可区分）—— 按调用方传入的 `groupActivated` 分流：
  *     false（会话未激活）→ permanent（不重试 + 降级 B4 + 留痕）；否则 → rate_limited（超频，延期重排）。
+ * 单聊通道（`wecom_aibot`）自 M5-03-5-3 起 = 智能机器人长连接单发（chatid 填 userid + chat_type 1 · 帧形
+ * 复核 + stub 锁帧见 wecom.aibot.ts）—— 与群共用长连接码表主体；846607 同一双语义，按调用方传入的
+ * `dmActivated` 分流（false = 未命中激活表 → permanent —— 本地限速已前置挡量，未命中 + 846607 以未激活
+ * 解释为主 · 计划 §3.5；命中 → rate_limited）。群专属码（93001 移出群）单聊不适用，按未收录兜底。
  * 未收录 errcode 一律 retryable 兜底（有界重试，不误杀）。
  */
 
-export const WECOM_CHANNELS = ["wecom_app", "wecom_group"] as const;
+export const WECOM_CHANNELS = ["wecom_app", "wecom_group", "wecom_aibot"] as const;
 export type WecomChannel = (typeof WECOM_CHANNELS)[number];
 
 export type WecomFailureKind = "permanent" | "retryable" | "rate_limited" | "token_invalid";
@@ -43,28 +47,32 @@ const APP_ERRCODE_KINDS: ReadonlyMap<number, WecomFailureKind> = new Map<number,
   [-1, "retryable"], // 系统繁忙
 ]);
 
-/** 846607：未激活 / 超频双语义（errmsg 不可区分）—— 分流依赖调用方传入的会话激活态。 */
+/** 846607：未激活 / 超频双语义（errmsg 不可区分）—— 分流依赖调用方传入的会话激活态（群 / 单聊同码）。 */
 export const WECOM_BOT_FREQ_ERRCODE = 846607;
 
-/** 智能机器人（群通道）错误码分类（Spike 实测 2026-10-10 ~ 10-13；846607 在函数内按激活态分流）。 */
-const GROUP_ERRCODE_KINDS: ReadonlyMap<number, WecomFailureKind> = new Map<number, WecomFailureKind>([
-  [853000, "permanent"], // bot_id / secret 无效（订阅回执实测复现）
+/** 智能机器人（长连接）错误码分类主体：群 / 单聊共用（Spike 实测 2026-10-10 ~ 10-13；846607 在函数内按激活态分流）。 */
+const AIBOT_ERRCODE_KINDS: ReadonlyMap<number, WecomFailureKind> = new Map<number, WecomFailureKind>([
+  [853000, "permanent"], // bot_id / secret 无效（订阅回执实测复现；连接级，群 / 单聊同源）
   [846601, "permanent"], // 未开启长连接模式（配置 / 部署类）
-  [93001, "permanent"], // 机器人被移出群（T3-6 实测 2026-10-13 —— 重拉后恢复）
   [846609, "retryable"], // 未订阅（连接恢复后重试）
+]);
+
+/** 群通道专属码：单聊不适用（未实测），出现时按未收录兜底 retryable（有界重试不误杀 —— P6 真机补测口径）。 */
+const GROUP_ONLY_ERRCODE_KINDS: ReadonlyMap<number, WecomFailureKind> = new Map<number, WecomFailureKind>([
+  [93001, "permanent"], // 机器人被移出群（T3-6 实测 2026-10-13 —— 重拉后恢复）
 ]);
 
 const TOKEN_ERRCODE_SET = new Set<number>(WECOM_APP_TOKEN_ERRCODES);
 
 /**
  * errcode → 分类；未收录一律 retryable 兜底（有界重试；到顶转 dead + 告警）。
- * options.groupActivated 仅群通道 846607 使用：false = 会话未激活（permanent）；
+ * 846607 双语义分流（群 = groupActivated / 单聊 = dmActivated）：false = 会话未激活（permanent）；
  * true / null（未知）→ 按超频（rate_limited）处置。
  */
 export function classifyWecomErrcode(
   channel: WecomChannel,
   errcode: number,
-  options: { groupActivated?: boolean | null } = {},
+  options: { groupActivated?: boolean | null; dmActivated?: boolean | null } = {},
 ): WecomFailureKind {
   if (channel === "wecom_app") {
     if (TOKEN_ERRCODE_SET.has(errcode)) {
@@ -73,9 +81,13 @@ export function classifyWecomErrcode(
     return APP_ERRCODE_KINDS.get(errcode) ?? "retryable";
   }
   if (errcode === WECOM_BOT_FREQ_ERRCODE) {
-    return options.groupActivated === false ? "permanent" : "rate_limited";
+    const activated = channel === "wecom_aibot" ? options.dmActivated : options.groupActivated;
+    return activated === false ? "permanent" : "rate_limited";
   }
-  return GROUP_ERRCODE_KINDS.get(errcode) ?? "retryable";
+  if (channel === "wecom_group") {
+    return GROUP_ONLY_ERRCODE_KINDS.get(errcode) ?? AIBOT_ERRCODE_KINDS.get(errcode) ?? "retryable";
+  }
+  return AIBOT_ERRCODE_KINDS.get(errcode) ?? "retryable";
 }
 
 /** HTTP 状态 → 分类（无合法 JSON 包体时的兜底；HTTP 面仅剩自建应用 —— 智能机器人走长连接帧）：429 / 5xx / 408 可恢复；其余 4xx 视为网关 / 配置类确定性失败。 */

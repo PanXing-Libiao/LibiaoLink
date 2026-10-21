@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { createPortal } from "react-dom";
 import type { Member } from "../data/members";
 import { usePopover } from "./usePopover";
+import { useT } from "../i18n";
 
 const AVATAR_TONES = [
   "bg-sky-100 text-sky-700",
@@ -96,6 +97,7 @@ type SearchListProps = {
 
 /** 搜索列表（搜索框 + 选项 + 页脚，无触发器）：人员下拉 / 行内编辑 / 通用搜索下拉共用。 */
 function SearchList({ items, isSelected, onPick, ariaLabel, footer }: SearchListProps) {
+  const t = useT();
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -143,8 +145,8 @@ function SearchList({ items, isSelected, onPick, ariaLabel, footer }: SearchList
         <input
           ref={searchRef}
           value={query}
-          aria-label="搜索成员"
-          placeholder="搜索成员"
+          aria-label={t("ms.search")}
+          placeholder={t("ms.search")}
           onChange={(event) => {
             setQuery(event.target.value);
             setActiveIndex(0);
@@ -155,7 +157,7 @@ function SearchList({ items, isSelected, onPick, ariaLabel, footer }: SearchList
       </div>
       <div className="max-h-[200px] overflow-y-auto p-1">
         {filtered.length === 0 ? (
-          <p className="px-3 py-4 text-center text-xs text-zinc-400">没有匹配的成员</p>
+          <p className="px-3 py-4 text-center text-xs text-zinc-400">{t("ms.noMatch")}</p>
         ) : (
           filtered.map((item, index) => (
             <SearchRow
@@ -190,6 +192,7 @@ type MemberSearchListProps = {
 
 /** 成员搜索列表（搜索框 + 选项 + 页脚）：人员下拉与任务表行内编辑共用。 */
 export function MemberSearchList({ options, value, onPick, ariaLabel, selectedIds }: MemberSearchListProps) {
+  const t = useT();
   const items = useMemo<SearchSelectItem[]>(() => options.map((member): SearchSelectItem => ({ kind: "member", value: member.id, member })), [options]);
   return (
     <SearchList
@@ -201,7 +204,7 @@ export function MemberSearchList({ options, value, onPick, ariaLabel, selectedId
           onPick(item.member);
         }
       }}
-      footer={"共 " + String(options.length) + " 人 · 按姓名 / 拼音搜索 · 当前为虚构演示成员"}
+      footer={t("ms.footer", { n: options.length })}
     />
   );
 }
@@ -226,8 +229,10 @@ type SearchSelectProps = {
  * 选项既可以是成员（头像 + 姓名 + 拼音 + 角色），也可以是普通项（如筛选用的「全部」「待分配」，首字圆底 + 说明）；
  * `value` / `onChange` 走调用方自己的字符串空间（甘特图负责人筛选直接用任务里的姓名，不换成成员 id）。
  */
-export function SearchSelect({ value, items, onChange, ariaLabel, footer, placeholder = "请选择", width = 280, triggerClassName }: SearchSelectProps) {
+export function SearchSelect({ value, items, onChange, ariaLabel, footer, placeholder: placeholderProp, width = 280, triggerClassName }: SearchSelectProps) {
   const { open, setOpen, position, triggerRef, popoverRef } = usePopover(width, 286);
+  const t = useT();
+  const placeholder = placeholderProp ?? t("sel.placeholder");
   const selected = items.find((item) => item.value === value) ?? null;
 
   return (
@@ -299,8 +304,10 @@ type MemberMultiSelectProps = {
  * 浮层落点（Push 173）：与「项目地区 / 项目类型」字典下拉同口径，优先从触发器右侧弹出（不压住弹窗里其余表单字段），
  * 右侧放不下（窄屏 / 靠右的任务抽屉）自动回落 below；触发器右侧的箭头同步朝右（与弹出的方向一致）。
  */
-export function MemberMultiSelect({ values, onChange, options, placeholder = "选择成员", ariaLabel }: MemberMultiSelectProps) {
+export function MemberMultiSelect({ values, onChange, options, placeholder: placeholderProp, ariaLabel }: MemberMultiSelectProps) {
   const { open, setOpen, position, triggerRef, popoverRef } = usePopover(280, 286, "right");
+  const t = useT();
+  const placeholder = placeholderProp ?? t("ms.choose");
   const selected = values
     .map((id) => options.find((member) => member.id === id))
     .filter((member): member is Member => member !== undefined);
@@ -320,7 +327,7 @@ export function MemberMultiSelect({ values, onChange, options, placeholder = "�
             <span className="truncate">{member.name}</span>
             <button
               type="button"
-              aria-label={"移除 " + member.name}
+              aria-label={t("ms.remove", { name: member.name })}
               onClick={() => {
                 toggle(member);
               }}
@@ -343,7 +350,7 @@ export function MemberMultiSelect({ values, onChange, options, placeholder = "�
           }}
           className="inline-flex min-w-[104px] flex-1 items-center gap-1 rounded-md px-2 py-1 text-left text-sm text-zinc-400 transition hover:bg-zinc-50"
         >
-          {selected.length === 0 ? placeholder : "继续添加"}
+          {selected.length === 0 ? placeholder : t("ms.more")}
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="ml-auto h-4 w-4 shrink-0 -rotate-90 text-zinc-400">
             <path d="M6 9.5l6 6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
           </svg>

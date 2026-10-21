@@ -1,0 +1,77 @@
+# ADR-034 SVG 预览安全栅格化（原始 SVG 永不内联 · PNG 预览）
+
+- 状态：已采纳（Accepted · 2026-10-20：wmj 批准架构与契约，PR #518 已合入 main `c53e895`；S2 服务端硬边界已随 PR #523 合并 main `e2b6aab`；S3 栅格化沙箱已随 PR #529 合并 main `acd6113`；S4 主栈接线已随 PR #531 合并 main `db7d5e0`；S5 响应头已随 PR #534 合并 main `660cc80`；S6 自动化矩阵已随 PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 合并 main `336b66fd`，HSTS 单头修复随 PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 合并 main `333ffdeb` 并已部署测试机；收口 PR [#543](https://github.com/PanXing-Libiao/LibiaoLink/pull/543) 已 squash 合并 main `5e31e4b9`，最终 head `3ef3de62` 的 PR CI [39550779854](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39550779854) 与 main CI [39550973691](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39550973691) 均 5 / 5；main 连续 3 次含 `svg-preview-e2e` 全绿，该 job 已加入分支保护必需检查）｜评审：wmj（决策 / 架构 / 契约）、px（前端 / 运维）、lan（服务端）｜起草：lan；决策人：wmj
+- 未闭合项：生产部署与 B7、真实 CAD 生产样本、H1 关闭评审尚未完成；测试机 S2 ～ S6 已部署，完整 B1 ～ B7 25 / 25，真实 ONLYOFFICE PDF / DOCX 与 STL WebGL 通过，旧式原对象签名已完成等价到期复测（不是历史 URL 重放）；S2 / S3 / S4 / S5 仍不得单独部署生产，上线窗口与 S6 同批；不得以 S1 ~ S6 合入或测试机回放宣称 H1 闭环；外部 V1.0 源文档同步已按 2026-10-21 指令移出本整改跟踪
+- 日期：2026-10-20
+- 依据：`LibiaoLink_安全审查报告_2026-10-19.pdf` H1（第 5 页，High，上线前处理）；`docs/H1-SVG预览同源存储型XSS整改方案.md`；ADR-007（在线预览管道）；ADR-030（Office 链由 ONLYOFFICE 承接）
+
+## 背景
+
+安全审查 H1 确认了以下存储型 XSS 攻击链：
+
+1. 客户端可自行声明上传文件的 MIME，现有链路会把 `image/svg+xml` 当作安全图片。
+2. SVG 预览直接签原对象；对象存储又通过主站同源 `/libiaolink/` 门面暴露。
+3. 普通 `<img>` 虽不执行 SVG 脚本，但攻击者可诱导受害者在浏览器顶层打开短时签名 URL；SVG 被当作同源文档解析后，脚本可读取非 HttpOnly 的 CSRF Cookie 并调用业务接口。
+
+同时，业务明确要求保留 SVG 在线预览与缩放体验，不能通过隐藏入口或强制下载来规避。安全边界必须由服务端执行，前端判断、扩展名提示或响应头都不能单独承担该责任。
+
+## 决策
+
+**总**：SVG 可以看，但浏览器只能看到服务端生成的 PNG；原始 SVG 只能下载，不能作为同源文档或图片预览对象内联打开。
+
+1. **预览不变量**：任何 SVG、HTML、XML 或其他主动内容都不得在应用源内联展示。文件预览接口不得返回指向 `projects/.../*.svg` 原对象的签名 URL；SVG 的 `target=image` 只承载服务端生成的 PNG 产物。
+2. **保留产品能力**：SVG 预览继续复用现有 `GET /files/{id}/preview`、`not_ready → ready` 轮询、`<img>` 与 `ImageZoomViewer`；前端不需要因为安全整改降级为纯下载。SVG 正常预览应在 20 秒内进入 `ready`。
+3. **专用栅格化服务**：新增 `deploy/svg-preview/` 轻量服务，使用固定版本 `@resvg/resvg-js@2.6.2` 与镜像内固定字体；不复用已退役的 LibreOffice 全量转换栈。服务只接受 SVG + `x-preview-target: image`，只输出 PNG，不接触对象存储或数据库。
+4. **服务端类型裁决**：客户端提交的 `mime` 只作为提示。服务端在完成上传时去除 MIME 参数并转小写，使用精确白名单，再核对扩展名与文件头；三者冲突时拒绝完成上传或按不透明文件仅有下载。不得使用 `image/*` 前缀匹配。`file_versions.mime` 只保存服务端规范化的精确 MIME；对象存储中的原文件统一写 `application/octet-stream`。
+5. **下载边界**：原始 SVG 的唯一下载形态是 `Content-Disposition: attachment` + `application/octet-stream`，原字节与文件名保持不变。安全位图预览可以继续签原对象，但必须由服务端强制响应为对应精确图片 MIME；SVG 永远不进入该分支。
+6. **缓存与产物**：继续复用 `preview.job`、outbox 重试与 `preview_artifacts`，不新增 `svg` target，不新增数据库迁移。`pipelineVersion` 升至 `2.0.0`，旧 `1.0.0` 的 SVG 直通产物不再读取。worker 对 SVG 源对象重算 SHA-256，并校验 PNG 魔数、IHDR 尺寸和字节上限后才登记 `ready`。
+7. **栅格化上限**：以下值在 S1 定档，S3 实现时只能收紧；如需调整必须说明原因并重新评审：
+
+| 限制 | 定档值 |
+|---|---:|
+| 源 SVG 大小 | 20 MiB |
+| 输出长边 / 总像素 | 1600 ~ 4096 px / 16,777,216 |
+| 输出 PNG 大小 | 20 MiB |
+| 单次硬超时 | 10 s |
+| 服务并发 / 队列 | 1 / 4 |
+| 容器资源 | 1 CPU / 256 MiB / PIDs 64 / tmpfs 128 MiB |
+
+8. **沙箱不变量**：栅格化容器无外网、非 root、只读根文件系统、`cap_drop: ALL`、`no-new-privileges`；拒绝 DOCTYPE / 外部实体、脚本、事件属性、`foreignObject`、外部 `href` / `url(...)` 与非法尺寸。预检、容器隔离和“产物只可能是 PNG”共同构成纵深，不能把预检当作唯一安全边界。
+9. **降级**：栅格化或产物校验失败时只能提示“暂不支持在线预览，请下载查看”；不得回退到原始 SVG 内联签名。未知、冲突或无法证明安全的 MIME 一律 fail closed。
+10. **响应头纵深**：对象存储门面增加 `nosniff`、CSP sandbox、`X-Frame-Options: DENY`；应用入口增加 HSTS、CSP 与 `X-Frame-Options: DENY`。响应头不替代“SVG 不内联”，CSP 调整不得放宽主动内容在应用源执行。
+11. **切片边界**：S1 ~ S6 构成 H1 的 P0 上线闭环；S7 独立对象存储域与 S8 全量流式 SHA-256 作为纵深项分别独立推进，不阻塞 P0。S2 不得单独部署生产，须与 S3 / S4 同批完成切换。
+
+## 备选与不采用原因
+
+- **前端继续以 `<img>` 直接加载原 SVG**：普通图片标签不执行脚本，但无法阻止用户打开新标签页后浏览器按 SVG 文档解析，不满足安全不变量。
+- **服务端净化 SVG 后再内联**：脚本、事件属性、`foreignObject`、外部引用、CSS URL、XML 实体与浏览器解析差异面过大，净化器绕过风险不可接受。
+- **隐藏 SVG 预览入口或全部强制下载**：安全但产品能力回退，与“保留 SVG 预览”的验收要求冲突。
+- **仅给原 SVG 预览加 `Content-Disposition: attachment`**：能降低顶层打开风险，但不能提供内联预览，也不能覆盖所有签名 / 受控读面；只能作为下载链规则，不能作为预览方案。
+- **只依赖 CSP / `nosniff` / 独立对象存储域**：这些是必要的纵深项，但若预览仍签原 SVG，应用源或存储域仍存在主动内容面；S7 也不能替代服务端栅格化。
+- **复用 LibreOffice / 通用文档转换器**：攻击面、镜像体积和资源成本更大；SVG 只需固定渲染器完成受限栅格化。
+- **新增 `target=svg` 或数据库表**：当前三值 `target=image` 已能表达浏览器图片查看器通道，新增枚举和迁移没有收益，反而扩大契约与存量兼容成本。
+
+## 影响与后果
+
+- SVG 首次预览从同步直出变为异步生成；前端保留现有轮询，不新增业务页面。
+- 服务端需要维护精确图片类型矩阵、文件头校验和存量 fail-closed 兼容逻辑；无法验证的历史文件只能下载。
+- 部署增加一个受限转换容器，但不需要数据库迁移、S3 新凭证或前端路由变更。
+- `pipelineVersion=2.0.0` 会使旧 SVG 预览缓存自然失效；同一内容在相同版本下只栅格化一次。
+- 远程图片、远程字体和其他外部资源不会进入产物；这是安全约束带来的既定能力边界，需在 S6 回归与用户降级文案中体现。
+
+## 切换触发条件
+
+- `resvg-js` 对真实业务 SVG 的关键保真度不足，或出现无法在既定沙箱与上限内关闭的漏洞：评估替代渲染器，但必须新增 ADR，并继续满足“原始 SVG 永不内联”的不变量。
+- 业务出现 SVG 动画或交互需求：先评估“生成静态 PNG + 原文件下载”是否可接受；若必须执行主动内容，另立隔离域与权限模型 ADR，不能直接恢复同源内联。
+- CSP 回归发现与 SPA、ONLYOFFICE、未来独立 CAD 查看器资源 / Worker 冲突（接入前仅验证暂不可预览提示与下载，见 ADR-035）：按实际最小指令调整并留证据，不得通过允许 SVG 内联或移除 `nosniff` 规避。
+- 同源对象存储发生安全事件或平台要求独立存储域：S7 提前升级为上线阻断项。
+
+## 参考
+
+- `LibiaoLink_安全审查报告_2026-10-19.pdf` H1（第 5 页）
+- `docs/H1-SVG预览同源存储型XSS整改方案.md` §1 ~ §10
+- `docs/H1-SVG预览整改回放证据.md`
+- `docs/adr/ADR-007-在线预览管道.md`
+- `docs/adr/ADR-030-Office预览改由ONLYOFFICE承接.md`
+- `技术设计v0.2-架构与数据模型.md` §5.1 / §5.4
+- `系统功能书.md` D2-01 ~ D2-06

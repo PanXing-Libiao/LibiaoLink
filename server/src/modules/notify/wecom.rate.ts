@@ -16,6 +16,8 @@
  *   - `app`（自建应用 · M5-03-3 接线）：单窗口 `WECOM_RATE_WINDOW_MS` / `WECOM_RATE_LIMIT_APP`（待 A5 实测回填）；
  *   - `group`（智能机器人 · M5-03-2）：双窗口 = 30 条/分钟 + 1000 条/小时（Spike 实测口径，按会话；
  *     回复 + 主动推送合计）。webhook 面已退役（P5 定案 2026-10-12）—— `webhookBucketId` 同批移除。
+ *   - `single`（智能机器人单聊 · M5-03-5-3）：双窗口复用 `WECOM_BOT_RATE_LIMIT_PER_MINUTE / HOUR`（按 userid；
+ *     单聊实测后决定是否拆独立 env —— P5 待定）；桶键 = userid 摘要，与群桶按 kind 隔离。
  */
 import { createHash } from "node:crypto";
 
@@ -36,7 +38,7 @@ export class InMemoryRateWindowStore implements RateWindowStore {
   }
 }
 
-export type WecomRateKind = "app" | "group";
+export type WecomRateKind = "app" | "group" | "single";
 
 /** 单个窗口的判定结果（count 含本次；count > limit = 该窗口已拒绝）。 */
 export interface WecomRateWindowState {
@@ -65,7 +67,7 @@ export interface WecomRateWindowSpec {
 
 export interface WecomRateLimiterOptions {
   store: RateWindowStore;
-  /** 窗口组（装配方按发送面配置：app 单窗口 / group 双窗口）。 */
+  /** 窗口组（装配方按发送面配置：app 单窗口 / group 与 single 各双窗口）。 */
   windows: readonly WecomRateWindowSpec[];
   now?: () => number;
 }
@@ -110,7 +112,17 @@ export const WECOM_APP_BUCKET_ID = "global";
 export const WECOM_BOT_WINDOW_PER_MINUTE_MS = 60_000;
 export const WECOM_BOT_WINDOW_PER_HOUR_MS = 3_600_000;
 
-/** 智能机器人桶 id = chatid 摘要（sha256 前 12 位十六进制）—— 计数键 / 日志均不出现 chatid 明文。 */
+/** 智能机器人桶 id = 目标摘要（chatid / userid 共用实现；sha256 前 12 位十六进制）。 */
+function digestTargetId(target: string): string {
+  return createHash("sha256").update(target).digest("hex").slice(0, 12);
+}
+
+/** 群通道桶 id = chatid 摘要 —— 计数键 / 日志均不出现 chatid 明文。 */
 export function chatBucketId(chatid: string): string {
-  return createHash("sha256").update(chatid).digest("hex").slice(0, 12);
+  return digestTargetId(chatid);
+}
+
+/** 单聊通道桶 id = userid 摘要（镜像群桶键口径）—— 计数键 / 日志均不出现 userid 明文。 */
+export function userBucketId(userid: string): string {
+  return digestTargetId(userid);
 }

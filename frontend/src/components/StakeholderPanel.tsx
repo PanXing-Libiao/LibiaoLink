@@ -21,6 +21,7 @@ import { RowEditButton } from "./RowEditButton";
 import { SelectMenu, type SelectOption } from "./SelectMenu";
 import { ScrollArea } from "./ScrollArea";
 import { useFocusTrap } from "./useFocusTrap";
+import { fieldText as fieldLabel, textOf as pickText, useLocale, useT, type Locale } from "../i18n";
 
 /**
  * 项目详情「干系人」面板（A27 · M6-06 前端接线；标签排在最右侧）：表格形态与「项目总览」同一套 ——
@@ -69,10 +70,10 @@ function missingKey(row: Stakeholder, field: MaskableField): boolean {
   return !(field in recordOf(row));
 }
 
-/** 单元格呈现：缺键 → 浅灰「—」+ 悬停说明；空值 → 灰「—」；有值 → 文本。 */
-function fieldText(row: Stakeholder, field: MaskableField): { text: string; className: string; title?: string } {
+/** 单元格呈现（Push 301 起随语言切换）：缺键 → 浅灰「—」+ 悬停说明；空值 → 灰「—」；有值 → 文本。 */
+function cellOf(row: Stakeholder, field: MaskableField, locale: Locale): { text: string; className: string; title?: string } {
   if (missingKey(row, field)) {
-    return { text: "—", className: "text-zinc-300", title: "无权查看（字段级权限 A5-07）" };
+    return { text: "—", className: "text-zinc-300", title: pickText(locale, "sh.locked.cell") };
   }
   const raw = recordOf(row)[field];
   if (typeof raw === "string" && raw.trim() !== "") {
@@ -154,16 +155,19 @@ function patchOf(draft: StakeholderDraft, row: Stakeholder): StakeholderPatch {
   }
   return patch;
 }
-const COMPANY_TYPE_OPTIONS: SelectOption[] = STAKEHOLDER_COMPANY_TYPES.map((code) => ({
-  value: code,
-  label: (
-    <span className="flex items-center gap-2">
-      <span className={"inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] font-medium " + stakeholderCompanyTypeBadge(code)}>
-        {stakeholderCompanyTypeName(code)}
+/** 公司分类下拉项（Push 301：展示名随语言切换；色签与表格同款）。 */
+function companyTypeOptions(locale: Locale): SelectOption[] {
+  return STAKEHOLDER_COMPANY_TYPES.map((code) => ({
+    value: code,
+    label: (
+      <span className="flex items-center gap-2">
+        <span className={"inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] font-medium " + stakeholderCompanyTypeBadge(code)}>
+          {fieldLabel(locale, stakeholderCompanyTypeName(code))}
+        </span>
       </span>
-    </span>
-  ),
-}));
+    ),
+  }));
+}
 
 /** 单元格文本（缺键 / 空值都渲染「—」，样式与悬停说明由 fieldText 给）。 */
 function CellText({ value }: { value: { text: string; className: string; title?: string } }) {
@@ -194,6 +198,8 @@ function StakeholderModal({
 }) {
   /** 键盘焦点陷阱（Push 264 追订）：弹窗打开时焦点进弹窗、Tab 在弹窗内循环、关闭还原到触发按钮。 */
   const modalTrapRef = useFocusTrap<HTMLDivElement>();
+  const t = useT();
+  const locale = useLocale();
   const [draft, setDraft] = useState<StakeholderDraft>(() =>
     row === null
       ? { name: "", companyType: "", role: "", title: "", phone: "", wechat: "", email: "" }
@@ -220,7 +226,7 @@ function StakeholderModal({
     setDraft((previous) => ({ ...previous, [field]: value }));
   };
   const lockNote = (field: MaskableField) =>
-    locked(field) ? <span className="ml-1 text-[11px] font-normal text-zinc-400">无权限查看 / 修改（字段级权限）</span> : null;
+    locked(field) ? <span className="ml-1 text-[11px] font-normal text-zinc-400">{t("sh.locked.note")}</span> : null;
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
@@ -243,87 +249,87 @@ function StakeholderModal({
         ref={modalTrapRef}
         role="dialog"
         aria-modal="true"
-        aria-label={mode === "create" ? "新建干系人" : "编辑干系人"}
+        aria-label={t(mode === "create" ? "sh.title.create" : "sh.title.edit")}
         data-stakeholder-modal=""
         className="relative flex max-h-[calc(100dvh-2rem)] w-full max-w-md flex-col rounded-2xl bg-white p-6 shadow-[0_24px_60px_rgba(0,0,0,0.25)]"
       >
-        <h2 className="text-lg font-bold text-zinc-900">{mode === "create" ? "新建干系人" : "编辑干系人"}</h2>
+        <h2 className="text-lg font-bold text-zinc-900">{t(mode === "create" ? "sh.title.create" : "sh.title.edit")}</h2>
         <p className="mt-1 text-sm text-zinc-500">
-          {mode === "create" ? "录入后自动关联到当前项目（A5-03）。" : "只提交改动过的字段；清空输入框 = 删除该字段内容。"}
+          {t(mode === "create" ? "sh.sub.create" : "sh.sub.edit")}
         </p>
-        {available ? null : <p role="status" className="mt-2 text-xs text-amber-700">联系人已不存在或无权修改，当前填写内容保留，不能继续提交。</p>}
-        <ScrollArea viewportClassName="mt-5 min-h-0 flex-1" className="overscroll-contain space-y-4 px-0.5 pb-1" ariaLabel="干系人表单" thumbAlwaysVisible>
+        {available ? null : <p role="status" className="mt-2 text-xs text-amber-700">{t("sh.available.lost")}</p>}
+        <ScrollArea viewportClassName="mt-5 min-h-0 flex-1" className="overscroll-contain space-y-4 px-0.5 pb-1" ariaLabel={t("sh.form.aria")} thumbAlwaysVisible>
         <form id="stakeholder-modal-form" className="space-y-4" onSubmit={(event) => void handleSubmit(event)}>
           <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-zinc-700">干系人姓名</span>
-            <input data-stakeholder-field="name" className={fieldClass} value={draft.name} onChange={(event) => edit("name", event.target.value)} placeholder="如 Christian Winkler" />
+            <span className="mb-1.5 block text-sm font-medium text-zinc-700">{fieldLabel(locale, "干系人姓名")}</span>
+            <input data-stakeholder-field="name" className={fieldClass} value={draft.name} onChange={(event) => edit("name", event.target.value)} placeholder={t("sh.placeholder.name")} />
           </label>
           <div className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-700">
-              所属公司分类<span className="ml-1 text-xs font-normal text-zinc-400">四类之一（A5-02）</span>
+              {fieldLabel(locale, "所属公司分类")}<span className="ml-1 text-xs font-normal text-zinc-400">{t("sh.companyType.hint")}</span>
             </span>
             <div data-stakeholder-field="companyType">
               <SelectMenu
                 value={draft.companyType}
-                options={COMPANY_TYPE_OPTIONS}
+                options={companyTypeOptions(locale)}
                 onChange={(value) => edit("companyType", value)}
-                placeholder="请选择公司分类"
-                ariaLabel="选择公司分类"
+                placeholder={t("sh.placeholder.companyType")}
+                ariaLabel={t("sh.aria.companyType")}
               />
             </div>
           </div>
           <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-zinc-700">职务 / 责任板块{lockNote("title")}</span>
+            <span className="mb-1.5 block text-sm font-medium text-zinc-700">{fieldLabel(locale, "职务 / 责任板块")}{lockNote("title")}</span>
             <input
               data-stakeholder-field="title"
               className={fieldClass}
               disabled={locked("title")}
               value={locked("title") ? "" : draft.title}
               onChange={(event) => edit("title", event.target.value)}
-              placeholder={locked("title") ? "无权限查看 / 修改（字段级权限）" : "如 现场项目经理（可选）"}
+              placeholder={locked("title") ? t("sh.locked.note") : t("sh.placeholder.title")}
             />
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-zinc-700">电话 / WhatsApp{lockNote("phone")}</span>
+            <span className="mb-1.5 block text-sm font-medium text-zinc-700">{fieldLabel(locale, "电话 / WhatsApp")}{lockNote("phone")}</span>
             <input
               data-stakeholder-field="phone"
               className={fieldClass}
               disabled={locked("phone")}
               value={locked("phone") ? "" : draft.phone}
               onChange={(event) => edit("phone", event.target.value)}
-              placeholder={locked("phone") ? "无权限查看 / 修改（字段级权限）" : "如 +86 138 0000 0000（可选）"}
+              placeholder={locked("phone") ? t("sh.locked.note") : t("sh.placeholder.phone")}
             />
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-zinc-700">微信{lockNote("wechat")}</span>
+            <span className="mb-1.5 block text-sm font-medium text-zinc-700">{fieldLabel(locale, "微信")}{lockNote("wechat")}</span>
             <input
               data-stakeholder-field="wechat"
               className={fieldClass}
               disabled={locked("wechat")}
               value={locked("wechat") ? "" : draft.wechat}
               onChange={(event) => edit("wechat", event.target.value)}
-              placeholder={locked("wechat") ? "无权限查看 / 修改（字段级权限）" : "微信号（可选）"}
+              placeholder={locked("wechat") ? t("sh.locked.note") : t("sh.placeholder.wechat")}
             />
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-zinc-700">邮箱 Email{lockNote("email")}</span>
+            <span className="mb-1.5 block text-sm font-medium text-zinc-700">{fieldLabel(locale, "邮箱 Email")}{lockNote("email")}</span>
             <input
               data-stakeholder-field="email"
               className={fieldClass}
               disabled={locked("email")}
               value={locked("email") ? "" : draft.email}
               onChange={(event) => edit("email", event.target.value)}
-              placeholder={locked("email") ? "无权限查看 / 修改（字段级权限）" : "如 name@example.com（可选）"}
+              placeholder={locked("email") ? t("sh.locked.note") : t("sh.placeholder.email")}
             />
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-zinc-700">干系人角色</span>
+            <span className="mb-1.5 block text-sm font-medium text-zinc-700">{fieldLabel(locale, "干系人角色")}</span>
             <input
               data-stakeholder-field="role"
               className={fieldClass}
               value={draft.role}
               onChange={(event) => edit("role", event.target.value)}
-              placeholder="如 决策人 / 技术接口人（可选）"
+              placeholder={t("sh.placeholder.role")}
             />
           </label>
           {error === null ? null : (
@@ -340,7 +346,7 @@ function StakeholderModal({
             onClick={onClose}
             className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100"
           >
-            取消
+            {t("common.cancel")}
           </button>
           <button
             type="submit"
@@ -349,7 +355,7 @@ function StakeholderModal({
             disabled={!canSubmit}
             className="rounded-lg bg-[#feca04] px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {pending ? "提交中…" : mode === "create" ? "创建干系人" : "保存修改"}
+            {pending ? t("modal.submit.pending") : t(mode === "create" ? "sh.submit.create" : "modal.submit.edit")}
           </button>
         </div>
       </div>
@@ -368,11 +374,13 @@ function StakeholderRow({
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const phone = fieldText(row, "phone");
-  const wechat = fieldText(row, "wechat");
-  const email = fieldText(row, "email");
-  const title = fieldText(row, "title");
-  const company = fieldText(row, "company");
+  const locale = useLocale();
+  const phone = cellOf(row, "phone", locale);
+  const wechat = cellOf(row, "wechat", locale);
+  const email = cellOf(row, "email", locale);
+  const title = cellOf(row, "title", locale);
+  const company = cellOf(row, "company", locale);
+  const t = useT();
   /** 角色未登记字段级策略：恒有值（空 = 未填），行内「—」与姓名列同款。 */
   const role = row.role ?? "";
 
@@ -402,7 +410,7 @@ function StakeholderRow({
       <div data-stakeholder-cell="company" className="flex min-w-0 items-center justify-center">
         <span className="flex min-w-0 items-center gap-2">
           <span className={"inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 text-[11px] font-medium " + stakeholderCompanyTypeBadge(row.companyType)}>
-            {stakeholderCompanyTypeName(row.companyType)}
+            {fieldLabel(locale, stakeholderCompanyTypeName(row.companyType))}
           </span>
           {/* 具体公司名（Push 222 起表单不录）：有值 / 无权（缺键该给「—」说明）才渲染，空值不再挂一个多余的「—」 */}
           {missingKey(row, "company") || (typeof row.company === "string" && row.company.trim() !== "") ? <CellText value={company} /> : null}
@@ -422,10 +430,10 @@ function StakeholderRow({
         {canManage ? (
           <>
             <span data-stakeholder-edit-slot="">
-              <RowEditButton label="编辑干系人" onEdit={onEdit} />
+              <RowEditButton label={t("row.edit.stakeholder")} onEdit={onEdit} />
             </span>
             <span data-stakeholder-delete-slot="">
-              <RowDeleteButton label="删除干系人" onDelete={onDelete} />
+              <RowDeleteButton label={t("row.delete.stakeholder")} onDelete={onDelete} />
             </span>
           </>
         ) : null}
@@ -444,6 +452,8 @@ type StakeholderPanelProps = {
 };
 
 export function StakeholderPanel({ projectId, canManage, scrollRef }: StakeholderPanelProps) {
+  const t = useT();
+  const locale = useLocale();
   const [items, setItems] = useState<Stakeholder[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -464,7 +474,7 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
   useLiveRefresh(["stakeholders", "permissions"], async () => {
     let result;
     try { result = await fetchProjectStakeholders(projectId); } catch (error) {
-      if (error instanceof ApiError && (error.status === 403 || error.status === 404)) return () => { setItems([]); setTotal(0); setError("项目已不存在或无权查看联系人"); };
+      if (error instanceof ApiError && (error.status === 403 || error.status === 404)) return () => { setItems([]); setTotal(0); setError(t("sh.project.gone")); };
       throw error;
     }
     return () => {
@@ -490,7 +500,7 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
         if (!alive) {
           return;
         }
-        setError(stakeholderErrorText(loadError, "加载干系人列表"));
+        setError(stakeholderErrorText(locale, t("sh.err.act.load"), loadError));
       } finally {
         if (alive) {
           setLoading(false);
@@ -528,13 +538,13 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
     if (modal === null) {
       return null;
     }
-    if (!canManage || error !== null) return "无权修改，当前填写内容已保留。";
+    if (!canManage || error !== null) return t("sh.submit.forbidden");
     try {
       if (modal.mode === "create") {
         await createStakeholder(createBodyOf(draft, projectId));
       } else {
         const projection = items.find((item) => item.id === modal.row.id);
-        if (projection === undefined) return "联系人已被删除或已不可见，当前填写内容已保留。";
+        if (projection === undefined) return t("sh.submit.gone");
         const patch = patchOf(draft, modal.row);
         for (const field of EDITABLE_FIELDS) if (missingKey(projection, field)) delete patch[field];
         if (Object.keys(patch).length > 0) {
@@ -545,7 +555,7 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
       setDataVersion((version) => version + 1);
       return null;
     } catch (submitError) {
-      return stakeholderErrorText(submitError, modal.mode === "create" ? "新建干系人" : "保存干系人");
+      return stakeholderErrorText(locale, t(modal.mode === "create" ? "sh.err.act.create" : "sh.err.act.save"), submitError);
     }
   };
 
@@ -563,7 +573,7 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
       setPendingDelete(null);
       setActionError(null);
     } catch (deleteError) {
-      setActionError(stakeholderErrorText(deleteError, "删除干系人"));
+      setActionError(stakeholderErrorText(locale, t("sh.err.act.delete"), deleteError));
       setPendingDelete(null);
     } finally {
       setDeletePending(false);
@@ -574,11 +584,11 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
     <>
       <div className="flex flex-wrap items-center gap-3">
         <p data-stakeholder-count="" className="text-xs text-zinc-500">
-          共 <span data-stakeholder-total="" className="text-sm font-semibold text-zinc-800">{total}</span> 位干系人
+          {t("sh.count.pre")}<span data-stakeholder-total="" className="text-sm font-semibold text-zinc-800">{total}</span>{t("sh.count.post")}
         </p>
         {total > items.length ? (
           <span className="text-[11px] text-amber-600">
-            当前显示前 {items.length} 位（共 {total} 位）
+            {t("sh.shown", { shown: items.length, total })}
           </span>
         ) : null}
         {canManage ? (
@@ -593,7 +603,7 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
             <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
               <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             </svg>
-            新建干系人
+            {t("sh.new")}
           </button>
         ) : null}
       </div>
@@ -608,7 +618,7 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
             }}
             className="ml-auto rounded-lg border border-rose-300 px-3 py-1 text-xs font-medium transition hover:bg-rose-100"
           >
-            重试
+            {t("common.retry")}
           </button>
         </div>
       )}
@@ -632,7 +642,7 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
           >
             {COLUMNS.map((column) => (
               <span key={column.key} data-column={column.key} className={"truncate " + (column.key === "name" ? "" : "text-center")}>
-                {column.label}
+                {column.label === "" ? null : fieldLabel(locale, column.label)}
               </span>
             ))}
           </div>
@@ -642,10 +652,10 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
             {items.length === 0 ? (
               <div className="px-5 py-8 text-center text-sm text-zinc-400">
                 {loading
-                  ? "正在加载干系人…"
+                  ? t("sh.loading")
                   : canManage
-                    ? "本项目还没有登记干系人，点右上角「新建干系人」录入第一位。"
-                    : "本项目还没有登记干系人。"}
+                    ? t("sh.empty.manage")
+                    : t("sh.empty")}
               </div>
             ) : (
               items.map((row) => (
@@ -684,11 +694,11 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
           <div
             ref={deleteConfirmTrapRef}
             role="dialog"
-            aria-label="确认删除干系人"
+            aria-label={t("sh.delete.aria")}
             data-delete-confirm-strip=""
             className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
           >
-            <span>删除干系人（{pendingDelete.name}）？删除后其从台账与本项目联系人清单中移除，删除后不可恢复。</span>
+            <span>{t("sh.delete.text", { name: pendingDelete.name })}</span>
             <button
               type="button"
               onClick={() => {
@@ -696,7 +706,7 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
               }}
               className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
             >
-              取消
+              {t("common.cancel")}
             </button>
             <button
               type="button"
@@ -707,7 +717,7 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
               }}
               className="rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95 disabled:opacity-60"
             >
-              删除
+              {t("common.delete")}
             </button>
           </div>
         </div>

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { monthYearText, useLocale, useT } from "../i18n";
 
 export type DateRange = {
   from: string;
@@ -23,7 +24,8 @@ type DateRangePickerProps = {
   mode?: "range" | "single";
 };
 
-const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
+const WEEKDAYS_ZH = ["一", "二", "三", "四", "五", "六", "日"];
+const WEEKDAYS_EN = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 
 const pad = (value: number) => String(value).padStart(2, "0");
 
@@ -37,7 +39,12 @@ const toDate = (key: string) => {
 
 const formatKey = (key: string) => key.replace(/-/g, "/");
 
-export function DateRangePicker({ value, onChange, hintDate, placeholder = "全部时间", ariaLabel = "选择日期范围", triggerClassName, mode = "range" }: DateRangePickerProps) {
+export function DateRangePicker({ value, onChange, hintDate, placeholder, ariaLabel, triggerClassName, mode = "range" }: DateRangePickerProps) {
+  const locale = useLocale();
+  const t = useT();
+  const placeholderText = placeholder ?? t("picker.allTime");
+  const ariaText = ariaLabel ?? t("picker.aria");
+  const weekdays = locale === "en" ? WEEKDAYS_EN : WEEKDAYS_ZH;
   const single = mode === "single";
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<DateRange | null>(value);
@@ -104,7 +111,7 @@ export function DateRangePicker({ value, onChange, hintDate, placeholder = "全�
     });
   }, [view]);
 
-  const label = value === null ? placeholder : single ? formatKey(value.from) : formatKey(value.from) + " – " + formatKey(value.to);
+  const label = value === null ? placeholderText : single ? formatKey(value.from) : formatKey(value.from) + " – " + formatKey(value.to);
 
   const pick = (key: string) => {
     setDraft((previous) => {
@@ -128,7 +135,7 @@ export function DateRangePicker({ value, onChange, hintDate, placeholder = "全�
         ref={triggerRef}
         type="button"
         aria-expanded={open}
-        aria-label={ariaLabel}
+        aria-label={ariaText}
         onClick={() => {
           setOpen((previous) => !previous);
         }}
@@ -155,7 +162,7 @@ export function DateRangePicker({ value, onChange, hintDate, placeholder = "全�
           <div className="flex items-center justify-between">
             <button
               type="button"
-              aria-label="上个月"
+              aria-label={t("picker.prevMonth")}
               onClick={() => {
                 shiftMonth(-1);
               }}
@@ -166,11 +173,11 @@ export function DateRangePicker({ value, onChange, hintDate, placeholder = "全�
               </svg>
             </button>
             <p className="text-sm font-semibold text-zinc-800">
-              {String(view.getFullYear()) + "年" + String(view.getMonth() + 1) + "月"}
+              {monthYearText(locale, view.getFullYear(), view.getMonth() + 1)}
             </p>
             <button
               type="button"
-              aria-label="下个月"
+              aria-label={t("picker.nextMonth")}
               onClick={() => {
                 shiftMonth(1);
               }}
@@ -183,7 +190,7 @@ export function DateRangePicker({ value, onChange, hintDate, placeholder = "全�
           </div>
 
           <div className="mt-2 grid grid-cols-7 gap-y-1 text-center text-[11px] text-zinc-400">
-            {WEEKDAYS.map((day) => (
+            {weekdays.map((day) => (
               <span key={day}>{day}</span>
             ))}
           </div>
@@ -218,7 +225,7 @@ export function DateRangePicker({ value, onChange, hintDate, placeholder = "全�
               }}
               className="rounded-lg px-2.5 py-1.5 text-xs text-zinc-500 transition hover:bg-zinc-100"
             >
-              清除
+              {t("picker.clear")}
             </button>
             <button
               type="button"
@@ -228,7 +235,7 @@ export function DateRangePicker({ value, onChange, hintDate, placeholder = "全�
               }}
               className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-zinc-800"
             >
-              确定
+              {t("picker.ok")}
             </button>
           </div>
             </div>,

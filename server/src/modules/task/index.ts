@@ -6,4 +6,4 @@ export { applyProgressWrite, applyStatusWrite, deriveDisplayStatus, deriveOnTime
 export type { TaskBaseStatus, TaskDerivationInput, TaskDisplayStatus, TaskWriteState } from "./task.rules.js";
 export { parseTaskListFilter, parseTaskSort, TASK_DISPLAY_STATUSES } from "./task.query.js";
 export type { TaskListFilter, TaskListQueryInput, TaskSort, TaskSortField } from "./task.query.js";
-export type { TaskEventInput, TaskFileBriefRow, TaskFileSummaryCounts, TaskListRow, TaskProjectRow, TaskRow } from "./task.repository.js";
+export type { TaskChangeLinkRow, TaskEventInput, TaskFileBriefRow, TaskFileSummaryCounts, TaskListRow, TaskProjectRow, TaskRow } from "./task.repository.js";

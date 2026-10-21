@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { addDays, calendarWindow } from "../src/modules/calendar/index.js";
-import { dedupeKey, replayRules, type ReplayTask } from "../src/modules/automation/index.js";
+import { BUILTIN_RULES, dedupeKey, replayRules, toProjectSubject, toStageSubject, type ReplayTask } from "../src/modules/automation/index.js";
 
+const ENABLED_TEST_RULES = BUILTIN_RULES.map((rule) => ({ ...rule, enabled: true }));
 const CALENDAR = calendarWindow("2026-09-01", "2026-12-31", [
   { date: "2026-10-01", dayType: "holiday", name: "国庆节", note: null },
 ]);
+
+const PROJECT = "项目：**LBUSA-20261014-002·美国仓储公司订单**";
 
 function task(overrides: Partial<ReplayTask>): ReplayTask {
   return {
@@ -22,7 +25,10 @@ function task(overrides: Partial<ReplayTask>): ReplayTask {
     managerId: "u-9",
     managerName: "李四",
     projectId: "p-1",
+    projectCode: "LBUSA-20261014-002",
+    projectName: "美国仓储公司订单",
     projectProgress: 50,
+    completedByName: "邵晨宇",
     projectGroupId: "g-1",
     deliverableTypes: ["施工方案"],
     fileCount: 1,
@@ -31,41 +37,53 @@ function task(overrides: Partial<ReplayTask>): ReplayTask {
 }
 
 function replay(businessDate: string, tasks: ReplayTask[], extra: Record<string, unknown> = {}) {
-  return replayRules({ businessDate, tasks, calendar: CALENDAR, shiftEnabled: false, ...extra });
+  return replayRules({ businessDate, tasks, calendar: CALENDAR, shiftEnabled: false, rules: ENABLED_TEST_RULES, ...extra });
 }
 
 describe("R02 成果文件自动化通知（事件型 · 逐字）", () => {
-  it("完成但未上传成果文件 → 站内信 + 企微各一条，文案逐字，收件人 = 任务负责人", () => {
+  it("负责人与项目经理各收到站内信 + 企微单聊，文案逐字", () => {
     const report = replay("2026-09-23", [
       task({ displayStatus: "done", actualEnd: "2026-09-23", fileCount: 0, deliverableTypes: ["施工方案"] }),
     ]);
-    expect(report.messages).toHaveLength(2);
-    const [inbox, wecom] = report.messages;
-    expect(inbox?.channel).toBe("inbox");
-    expect(wecom?.channel).toBe("wecom_app");
+    expect(report.messages).toHaveLength(4);
+    expect(report.messages.map((message) => message.channel)).toEqual(["inbox", "inbox", "wecom_aibot", "wecom_aibot"]);
+    expect(report.messages.map((message) => message.recipientId)).toEqual(["u-1", "u-9", "u-1", "u-9"]);
     for (const message of report.messages) {
       expect(message.title).toBe("及时添加文件");
-      expect(message.body).toBe("请为项目任务安装摄像头及时添加成果文件");
-      expect(message.recipientId).toBe("u-1");
-      expect(message.recipientName).toBe("张三");
-      expect(message.dedupeKey).toBe("R02:t-1:v5");
+      expect(message.body).toBe(`${PROJECT}\n邵晨宇已点击完成任务，请为项目任务「**安装摄像头**」及时添加成果文件`);
     }
+    expect(report.messages.map((message) => message.dedupeKey)).toEqual([
+      "R02:t-1:v5:u-1",
+      "R02:t-1:v5:u-9",
+      "R02:t-1:v5:u-1",
+      "R02:t-1:v5:u-9",
+    ]);
   });
 
-  it("负责人为空 → 回退项目经理；已上传成果文件 → 不命中", () => {
+  it("负责人为空 → 只回退项目经理；负责人与项目经理为同一人时只产出一份", () => {
     const fallback = replay("2026-09-23", [
       task({ displayStatus: "done", actualEnd: "2026-09-23", fileCount: 0, ownerId: null, ownerName: null }),
     ]);
-    expect(fallback.messages[0]?.recipientId).toBe("u-9");
-    expect(fallback.messages[0]?.recipientName).toBe("李四");
+    expect(fallback.messages).toHaveLength(2);
+    expect(fallback.messages.every((message) => message.recipientId === "u-9")).toBe(true);
+    expect(fallback.messages.every((message) => message.dedupeKey === "R02:t-1:v5")).toBe(true);
 
+    const samePerson = replay("2026-09-23", [
+      task({ displayStatus: "done", actualEnd: "2026-09-23", fileCount: 0, managerId: "u-1", managerName: "张三" }),
+    ]);
+    expect(samePerson.messages).toHaveLength(2);
+    expect(samePerson.messages.every((message) => message.recipientId === "u-1")).toBe(true);
+    expect(samePerson.messages.every((message) => message.dedupeKey === "R02:t-1:v5")).toBe(true);
+  });
+
+  it("已上传成果文件 → 不命中", () => {
     const uploaded = replay("2026-09-23", [task({ displayStatus: "done", actualEnd: "2026-09-23", fileCount: 1 })]);
     expect(uploaded.messages).toHaveLength(0);
     expect(uploaded.details.find((item) => item.ruleCode === "R02")?.skipped).toBe("not_matched");
   });
 
-  it("幂等：同任务同完成版本只发一次（sentKeys 命中 → duplicate）", () => {
-    const sent = ["R02:t-1:v5"];
+  it("幂等：同任务同完成版本每个收件人只发一次（sentKeys 命中 → duplicate）", () => {
+    const sent = ["R02:t-1:v5:u-1", "R02:t-1:v5:u-9"];
     const report = replay("2026-09-23", [task({ displayStatus: "done", actualEnd: "2026-09-23", fileCount: 0 })], {
       sentKeys: sent,
     });
@@ -76,17 +94,27 @@ describe("R02 成果文件自动化通知（事件型 · 逐字）", () => {
   });
 });
 
-describe("R03 任务即将延期提醒（T-1 · 群播报）", () => {
-  it("预计完成日期前 1 天命中，无标题、正文逐字、收件人 = 项目群", () => {
+describe("R03 任务即将延期提醒（T-1 · 仅负责人单聊）", () => {
+  it("预计完成日期前 1 天命中，标题与正文逐字、只发给任务负责人", () => {
     const report = replay("2026-09-23", [task({ plannedEnd: "2026-09-24", displayStatus: "active" })]);
     expect(report.messages).toHaveLength(1);
     const message = report.messages[0];
     expect(message?.ruleCode).toBe("R03");
-    expect(message?.title).toBeNull();
-    expect(message?.body).toBe("hello，张三，你的任务安装摄像头还有1天就要截止了，快加加油，尽快追上进度吧！");
-    expect(message?.channel).toBe("wecom_group");
-    expect(message?.recipientId).toBe("g-1");
+    expect(message?.title).toBe("任务即将延期提醒");
+    expect(message?.body).toBe(`${PROJECT}\nhello，张三，你的任务「**安装摄像头**」还有1天就要截止了，快加加油，尽快追上进度吧！`);
+    expect(message?.channel).toBe("wecom_aibot");
+    expect(message?.recipient).toBe("task.owner");
+    expect(message?.recipientId).toBe("u-1");
+    expect(message?.dedupeKey).toBe("R03:t-1:2026-09-23");
     expect(message?.windowKey).toBe("2026-09-23");
+  });
+
+  it("负责人为空时不回退项目经理：零投递 + recipient_missing", () => {
+    const report = replay("2026-09-23", [
+      task({ plannedEnd: "2026-09-24", displayStatus: "active", ownerId: null, ownerName: null }),
+    ]);
+    expect(report.messages).toHaveLength(0);
+    expect(report.details.find((item) => item.ruleCode === "R03")?.skipped).toBe("recipient_missing");
   });
 
   it("已完成 / 提前完成不命中；非窗口日不命中", () => {
@@ -118,7 +146,7 @@ describe("R04 任务启动提醒（当天 10:00）", () => {
     const report = replay("2026-09-23", [task({ plannedStart: "2026-09-23", displayStatus: "pending" })]);
     expect(report.messages).toHaveLength(1);
     expect(report.messages[0]?.title).toBe("有新任务已到启动时间");
-    expect(report.messages[0]?.body).toBe("张三你好呀，你的任务安装摄像头已到启动时间，快查看任务详情吧~今日工作加油");
+    expect(report.messages[0]?.body).toBe(`${PROJECT}\n张三你好呀，你的任务「**安装摄像头**」已到启动时间，快查看任务详情吧~今日工作加油`);
   });
 
   it("已填实际开始日期 → 不命中", () => {
@@ -129,12 +157,29 @@ describe("R04 任务启动提醒（当天 10:00）", () => {
   });
 });
 
-describe("R05 任务超时提醒（T+1）", () => {
-  it("预计完成日期后 1 天命中，标题含全角感叹号、正文逐字", () => {
+describe("R05 任务超时提醒（T+1 · 负责人 + 项目经理单聊）", () => {
+  it("预计完成日期后 1 天命中，标题逐字，负责人与项目经理各一条单聊", () => {
     const report = replay("2026-09-23", [task({ plannedEnd: "2026-09-22", displayStatus: "overdue" })]);
+    expect(report.messages).toHaveLength(2);
+    expect(report.messages.map((message) => message.channel)).toEqual(["wecom_aibot", "wecom_aibot"]);
+    expect(report.messages.map((message) => message.recipientId)).toEqual(["u-1", "u-9"]);
+    expect(report.messages.map((message) => message.dedupeKey)).toEqual([
+      "R05:t-1:2026-09-23:u-1",
+      "R05:t-1:2026-09-23:u-9",
+    ]);
+    for (const message of report.messages) {
+      expect(message.title).toBe("！任务超时提醒");
+      expect(message.body).toBe(`${PROJECT}\nhello，张三，你的任务「**安装摄像头**」已经超时一天了，快加加油，尽快追上进度吧！`);
+    }
+  });
+
+  it("负责人与项目经理同一人时只发一条", () => {
+    const report = replay("2026-09-23", [
+      task({ plannedEnd: "2026-09-22", displayStatus: "overdue", managerId: "u-1", managerName: "张三" }),
+    ]);
     expect(report.messages).toHaveLength(1);
-    expect(report.messages[0]?.title).toBe("！任务超时提醒");
-    expect(report.messages[0]?.body).toBe("hello，张三，你的任务安装摄像头已经超时一天了，快加加油，尽快追上进度吧！");
+    expect(report.messages[0]?.recipientId).toBe("u-1");
+    expect(report.messages[0]?.dedupeKey).toBe("R05:t-1:2026-09-23");
   });
 
   it("已完成不命中", () => {
@@ -143,23 +188,68 @@ describe("R05 任务超时提醒（T+1）", () => {
   });
 });
 
-describe("R06 任务完成喜报", () => {
-  it("项目整体进度 100% → 命中，文案逐字", () => {
-    const report = replay("2026-09-23", [
-      task({ displayStatus: "done", actualEnd: "2026-09-23", projectProgress: 100 }),
-    ]);
+describe("R06 项目完成喜报", () => {
+  function project(status = "done") {
+    return toProjectSubject({
+      projectId: "p-1",
+      projectCode: "LBUSA-20261014-002",
+      projectName: "美国仓储公司订单",
+      projectStatus: status,
+      projectVersion: 4,
+      groupId: "p-1",
+    });
+  }
+
+  it("项目状态完成 → 项目群命中，文案逐字", () => {
+    const report = replay("2026-09-23", [], { subjects: [project()] });
     expect(report.messages).toHaveLength(1);
     expect(report.messages[0]?.title).toBe("叮咚~喜报来啦！");
     expect(report.messages[0]?.body).toBe(
-      "恭喜张三成功拿下一项重要任务：安装摄像头。大家一起为这位优秀的伙伴喝彩吧",
+      `项目：**LBUSA-20261014-002·美国仓储公司订单**\n项目已全部完成，验收交付完毕。大家一起为这份成果喝彩吧`,
     );
+    expect(report.messages[0]?.dedupeKey).toBe("R06:p-1:v4");
   });
 
-  it("项目整体进度 99% → 不命中", () => {
-    const report = replay("2026-09-23", [
-      task({ displayStatus: "done", actualEnd: "2026-09-23", projectProgress: 99 }),
-    ]);
+  it("项目状态未完成 → 不命中", () => {
+    const report = replay("2026-09-23", [], { subjects: [project("active")] });
     expect(report.messages).toHaveLength(0);
+    expect(report.details.find((item) => item.ruleCode === "R06")?.skipped).toBe("not_matched");
+  });
+});
+
+describe("A08 大阶段完成播报", () => {
+  function stage(groupId: string | null) {
+    return toStageSubject({
+      stageId: "stage-1",
+      stageKey: "design",
+      stageName: "设计开发",
+      stageVersion: 4,
+      nextStageKey: "purchase",
+      nextStageName: "加工采购",
+      advancedByName: "邵晨宇",
+      projectId: "p-1",
+      projectCode: "LBUSA-20261014-002",
+      projectName: "美国仓储公司订单",
+      groupId,
+    });
+  }
+
+  it("阶段推进完成 → 项目群播报，项目与推进人明确", () => {
+    const report = replayRules({ businessDate: "2026-09-23", subjects: [stage("p-1")], calendar: CALENDAR, shiftEnabled: false, rules: ENABLED_TEST_RULES });
+    expect(report.messages).toHaveLength(1);
+    const message = report.messages[0];
+    expect(message?.ruleCode).toBe("A08");
+    expect(message?.channel).toBe("wecom_group");
+    expect(message?.recipientId).toBe("p-1");
+    expect(message?.title).toBe("大阶段完成通知");
+    expect(message?.body).toBe(`${PROJECT}\n邵晨宇已完成大阶段「**设计开发**」，当前项目阶段：**加工采购**。`);
+    expect(message?.dedupeKey).toBe("A08:stage-1:v4");
+  });
+
+  it("项目未绑定群 → recipient_missing，不误发", () => {
+    const report = replayRules({ businessDate: "2026-09-23", subjects: [stage(null)], calendar: CALENDAR, shiftEnabled: false, rules: ENABLED_TEST_RULES });
+    expect(report.messages).toHaveLength(0);
+    expect(report.details.find((item) => item.ruleCode === "A08")?.skipped).toBe("recipient_missing");
   });
 });
 
@@ -176,7 +266,7 @@ describe("R07 每周一重点任务提醒（周窗口 + 合并 + 幂等）", () 
     expect(r07).toHaveLength(1);
     expect(r07[0]?.title).toBe("重点任务提醒");
     expect(r07[0]?.body).toBe(
-      "以下重点任务正在进行中：安装摄像头、调试网络请关注并及时推进任务~",
+      `张三，以下重点任务正在进行中：\n${PROJECT}\n任务：「**安装摄像头**」\n${PROJECT}\n任务：「**调试网络**」\n请关注并及时推进任务~`,
     );
     expect(r07[0]?.mergedFrom).toEqual(["t-1", "t-2"]);
     expect(r07[0]?.dedupeKey).toBe(dedupeKey("R07", "u-1", "2026-W39"));

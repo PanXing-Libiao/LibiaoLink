@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { useT } from "../i18n";
 
 /** 全局浮动提示（Push 261 追订 · 业务口径 2026-10-09「系统中这样的提示 要直接在屏幕上方浮空的 然后保持3s消失
  *  不要在页面顶部不然鼠标要滑到上方才能看到」）。
@@ -30,6 +31,7 @@ export function Toast(props: {
   /** 透传原页面的 data-* 钩子（例：`{ name: "data-file-notice", value: kind }`），回放脚本按它定位。 */
   anchor?: { name: string; value: string };
 }) {
+  const t = useT();
   const duration = props.durationMs ?? DEFAULT_DURATION[props.kind];
   const onCloseRef = useRef(props.onClose);
   onCloseRef.current = props.onClose;
@@ -59,7 +61,7 @@ export function Toast(props: {
         onClick={props.onClose}
         className="shrink-0 rounded-lg border border-black/15 px-2.5 py-1 text-xs font-medium text-current transition hover:bg-black/5"
       >
-        关闭
+        {t("toast.close")}
       </button>
     </div>,
     document.body,

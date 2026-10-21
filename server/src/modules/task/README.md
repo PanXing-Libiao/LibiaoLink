@@ -41,11 +41,12 @@
 - 契约：`GET /projects/{id}/tasks/{taskId}/can-complete`（预检：`canComplete` + `missing[]` + `warnings[]`）、`POST …/complete`（提交：`{ task, warnings }`）；错误码新增 422 `TASK_REQUIRED_DOC_MISSING`（缺件）与 409 `TASK_ALREADY_DONE`（重复提交）；`Task.deliverableTypes: DocType[]`（数组、服务端去重、空数组 = 不要求）。
 - 判定来源（ADR-024）：① 有节点任务按所属节点 `node_requirements` 的 `required_doc` 逐类统计（与 node 模块 `GateService.evaluateNode` 同口径）；② 无节点任务按自身 `deliverable_types` 兜底（每类 ≥ 1 份）。定档口径 = `files.status ∈ (final, changed)` 且 `current_version_id` 非空；统计范围 = 节点下 / 任务下文件（回收站不计）。
 - 三入口一致（A4-20）：完成提交（`POST …/complete`）与 `PATCH …/{taskId}`（`status=done`）、`PATCH …/progress`（`progress=1`）在**事务内走同一门禁判定**；缺件一律 422 + `missing[]`（`details[].code = required_doc`）且不部分生效（乐观锁校验在前、写库在后）。
+- 完成事件统一（2026-10-19）：上述入口及批量状态完成在任务**首次进入 done**（含 `early_done` 覆盖）时统一写 `task.completed`（同版本幂等键，与完成提交同载荷）；已完成后编辑其他字段不重复发。R02 因此不再依赖单一完成提交入口。
 - 放行提示（A2-10 / R02）：存在未定档（draft）成果文件时放行，响应带 `warnings[{ code: draft_doc_present, docType, count }]`，并写 outbox `task.draft_doc_reminded`（R02 触发点，notify 落地后消费）。
 - 留痕：拒绝 → outbox `task.gate_rejected`（事务回滚后补写）+ 审计 `result=failed`（含错误码与缺件明细）；成功 → outbox `task.completed`（payload 带 warnings）+ 审计 `action=complete`。
 - 数据面：迁移 `0018_task_deliverable_types.sql`（`deliverable` text → `deliverable_types` text[] 非空默认空数组 + `ck_tasks_deliverable_types` / `ck_tasks_deliverable_types_no_null` + GIN `ix_tasks_deliverable_types`；存量单值转单元素数组、空值转空数组）；创建任务缺省从节点 `required_doc` 类型带出（body 显式给出优先）；`TaskUpdateBody` 自 2026-10-08 起含该字段（常规编辑开放：传数组 = 整体替换 / 去重保序、显式 [] = 不要求；原「生成后锁定（A1-17）」下架）；**例外调整已落 Push 153**（见下节），本字段的例外通道保留。
 - 实现归属：门禁判定实现在本模块 `task.gate.repository.ts`（只读 `node_requirements` / `files`）—— node 模块 `GateService` 依赖 task（`TaskStatsService`），task 反向依赖会成环；两处 SQL 口径必须同步修改（node/README.md 已登记）。
-- 单测：`test/task-gate.test.ts` 8 例（预检缺件明细 / 无节点 deliverable_types 兜底 / 完成缺件 422 + outbox + 审计 failed / 门禁通过 200 + `task.completed` / draft 放行 + R02 / 重复提交 409 / `PATCH status=done` 与 `progress=1` 同一门禁）。
+- 单测：`test/task-gate.test.ts` 11 例（预检缺件明细 / 无节点 deliverable_types 兜底 / 完成缺件 422 + outbox + 审计 failed / 门禁通过 200 + `task.completed` / draft 放行 + R02 / 重复提交 409 / `PATCH status=done`、`status=early_done`、`progress=1` 与批量完成写完成事件 / 已完成后编辑不重复发）。
 
 ## 批量操作（M3-04 · A1-08 · Push 150）
 

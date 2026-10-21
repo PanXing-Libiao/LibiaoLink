@@ -140,12 +140,13 @@ export function parseNotifyMessage(raw: Record<string, unknown>): NotifyMessageP
 }
 
 /**
- * 已落地渠道（M5-03-3 起）：站内信 `inbox` + 企微应用消息 `wecom_app`（notify.message 主题两个分支；
- * wecom_app 由 NotifyAppService 消费 —— OutboxModule 按载荷 channel 路由）。未落地渠道（email 等）
- * 在接线层跳过（自动化的非落地渠道防护）+ 投递层兜底按**确定性失败**收口（consume → dead + 告警），
- * 不得静默当站内信投递 —— wmj PR #197 提请的接线段护栏。群播报走独立主题 `notify.group`，不在此表。
+ * 已落地渠道（M5-03-3 起 + M5-03-5-4 接线段）：站内信 `inbox` + 企微应用消息 `wecom_app` + 企微单聊智能机器人
+ * `wecom_aibot`（notify.message 主题三个分支；wecom_app → NotifyAppService、wecom_aibot → NotifyDmService ——
+ * OutboxModule 按载荷 channel 路由）。未落地渠道（email 等）在接线层跳过（自动化的非落地渠道防护）+ 投递层兜底按
+ * **确定性失败**收口（consume → dead + 告警），不得静默当站内信投递 —— wmj PR #197 提请的接线段护栏。
+ * 群播报走独立主题 `notify.group`，不在此表。
  */
-export const DELIVERABLE_CHANNELS: readonly string[] = ["inbox", "wecom_app"];
+export const DELIVERABLE_CHANNELS: readonly string[] = ["inbox", "wecom_app", "wecom_aibot"];
 
 /** 渠道是否可投递：非白名单 = 未落地通道，调用方按确定性失败收口（M5-03 起飞后扩表）。 */
 export function isDeliverableChannel(channel: string): boolean {

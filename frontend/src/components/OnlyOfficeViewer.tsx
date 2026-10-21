@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
-import type { PreviewViewerConfig } from "../fileApi";
+import type { OnlyOfficePreviewViewerConfig } from "../fileApi";
+import { getLocale, textOf, useT } from "../i18n";
 
 /** 查看器就绪超时（计划 S4 · R5）：api.js 加载 + DocEditor 建会话后超过此时长仍未 onDocumentReady → 降级（重试 / 下载）。 */
 const READY_TIMEOUT_MS = 20_000;
@@ -32,7 +33,7 @@ function loadDocsApi(scriptUrl: string): Promise<void> {
     script.onerror = () => {
       apiScripts.delete(scriptUrl);
       script.remove();
-      reject(new Error("查看器脚本加载失败（DocServer 不可达）"));
+      reject(new Error(textOf(getLocale(), "oov.scriptFailed")));
     };
     document.head.appendChild(script);
   });
@@ -58,10 +59,10 @@ function describeViewerError(data: unknown): string {
       }
     }
     if (record.errorCode !== undefined) {
-      return "查看器打开文件出错（错误代码 " + String(record.errorCode) + "）";
+      return textOf(getLocale(), "oov.errorCode", { code: String(record.errorCode) });
     }
   }
-  return "查看器暂时打不开，可以重试或下载原文件查看。";
+  return textOf(getLocale(), "oov.unavailable");
 }
 
 /**
@@ -74,7 +75,8 @@ function describeViewerError(data: unknown): string {
  * - 卸载（含重试重建）：destroyEditor —— 不留 DocServer 侧会话；
  * - 关闭（2026-10-10 修复「点击 iframe 内部后 Esc 关不掉」）：焦点守卫把被 iframe 抢走的焦点拉回包装层 —— Esc 回到浮层 capture 监听，见守卫段注释。
  */
-export function OnlyOfficeViewer({ viewer, onRetry }: { viewer: PreviewViewerConfig; onRetry: () => void }) {
+export function OnlyOfficeViewer({ viewer, onRetry }: { viewer: OnlyOfficePreviewViewerConfig; onRetry: () => void }) {
+  const t = useT();
   const rawId = useId();
   const placeholderId = "oo-viewer-" + rawId.replace(/[^a-zA-Z0-9_-]/g, "");
   const [status, setStatus] = useState<"loading" | "ready" | "error" | "timeout">("loading");
@@ -108,7 +110,7 @@ export function OnlyOfficeViewer({ viewer, onRetry }: { viewer: PreviewViewerCon
         }
         const docsApi = window.DocsAPI;
         if (docsApi === undefined) {
-          throw new Error("查看器脚本已加载但未挂载 DocsAPI");
+          throw new Error(t("oov.notMounted"));
         }
         editorRef.current = new docsApi.DocEditor(placeholderId, {
           width: "100%",
@@ -168,12 +170,12 @@ export function OnlyOfficeViewer({ viewer, onRetry }: { viewer: PreviewViewerCon
       <div id={placeholderId} className="h-full w-full" />
       {status === "loading" ? (
         <span data-oo-loading="true" className="absolute inset-0 flex items-center justify-center bg-white text-xs text-zinc-400">
-          查看器加载中…
+          {t("oov.loading")}
         </span>
       ) : status === "ready" ? null : (
         <div data-oo-fallback="true" className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-white px-10 text-center">
-          <p className="text-sm font-medium text-zinc-700">{status === "timeout" ? "在线预览超时" : "暂无在线预览"}</p>
-          <p className="max-w-md text-xs leading-5 text-zinc-400">{detail ?? "查看器暂时打不开，可以重试或下载原文件查看。"}</p>
+          <p className="text-sm font-medium text-zinc-700">{status === "timeout" ? t("oov.timeout") : t("oov.noPreview")}</p>
+          <p className="max-w-md text-xs leading-5 text-zinc-400">{detail ?? t("oov.unavailable")}</p>
           <button
             type="button"
             data-oo-retry="true"
@@ -183,7 +185,7 @@ export function OnlyOfficeViewer({ viewer, onRetry }: { viewer: PreviewViewerCon
             }}
             className="rounded-md border border-zinc-300 px-3 py-1 text-xs text-zinc-600 transition hover:bg-zinc-50 hover:text-zinc-900"
           >
-            重试
+            {t("common.retry")}
           </button>
         </div>
       )}

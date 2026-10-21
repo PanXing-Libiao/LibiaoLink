@@ -48,7 +48,10 @@ export function redirectToLogin(): void {
 
 
 /** 业务接口统一错误信封（服务端 ApiErrorFilter 输出：{ code, message, details, traceId }）。 */
-export type ApiErrorDetail = { code: string; message: string; path?: string };
+/** meta = 机器可读的补充字段（契约 shared/src/common/errors.ts 的 ErrorDetail.meta）——
+ *  例：429 `RATE_LIMITED` 给 `meta.retryAt`（可重试时刻 · ISO）+ `meta.window`（限流窗口），
+ *  页面据此置灰按钮 + 倒计时（《前端功能需求》§3.7 / §3.10）。 */
+export type ApiErrorDetail = { code: string; message: string; path?: string; meta?: Record<string, unknown> };
 
 /** 业务接口错误：页面按 code 分支（409 PROJECT_CODE_EXISTS / VERSION_CONFLICT …），details 给字段级提示。 */
 export class ApiError extends Error {
@@ -97,6 +100,7 @@ async function toApiError(response: Response): Promise<ApiError> {
           code: typeof item.code === "string" ? item.code : "VALIDATION_FAILED",
           message: typeof item.message === "string" ? item.message : "",
           path: typeof item.path === "string" ? item.path : undefined,
+          meta: isRecord(item.meta) ? item.meta : undefined,
         }));
       }
       if (typeof payload.traceId === "string") {
@@ -107,6 +111,35 @@ async function toApiError(response: Response): Promise<ApiError> {
     // 非 JSON 响应（网关 / 代理错误页）：保留上面的兜底文案
   }
   return new ApiError(response.status, code, message, details, traceId);
+}
+
+/** 解析 Content-Disposition：优先 RFC 5987 的 filename*，其次普通 filename。 */
+export function fileNameFromContentDisposition(value: string | null): string | null {
+  if (value === null || value === "") return null;
+  const encoded = /filename\*\s*=\s*UTF-8\u0027\u0027([^;]+)/i.exec(value);
+  if (encoded !== null && encoded[1] !== undefined) {
+    try {
+      return decodeURIComponent(encoded[1].trim());
+    } catch {
+      return encoded[1].trim();
+    }
+  }
+  const quoted = /filename\s*=\s*"([^"]*)"/i.exec(value);
+  if (quoted !== null && quoted[1] !== undefined) return quoted[1];
+  const plain = /filename\s*=\s*([^;]+)/i.exec(value);
+  return plain === null || plain[1] === undefined ? null : plain[1].trim();
+}
+
+/** 二进制下载（xlsx 等）：与 apiRequest 共享 401 / 错误信封口径，但不把响应体当 JSON。 */
+export async function apiDownload(path: string, init: RequestInit = {}): Promise<{ blob: Blob; fileName: string | null }> {
+  const response = await apiFetch(path, init);
+  if (response.status === 401) {
+    redirectToLogin();
+    throw await toApiError(response);
+  }
+  if (!response.ok) throw await toApiError(response);
+  const blob = await response.blob();
+  return { blob, fileName: fileNameFromContentDisposition(response.headers.get("Content-Disposition")) };
 }
 
 /**
@@ -164,11 +197,14 @@ export function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> 
 }
 
 /** 写请求（JSON body；CSRF 头由 apiFetch 补齐）。 */
-export function apiSend<T>(path: string, method: "POST" | "PATCH" | "PUT" | "DELETE", body?: unknown): Promise<T> {
+export function apiSend<T>(path: string, method: "POST" | "PATCH" | "PUT" | "DELETE", body?: unknown, signal?: AbortSignal): Promise<T> {
   const init: RequestInit = { method };
   if (body !== undefined) {
     init.headers = { "Content-Type": "application/json" };
     init.body = JSON.stringify(body);
+  }
+  if (signal !== undefined) {
+    init.signal = signal;
   }
   return apiRequest<T>(path, init);
 }

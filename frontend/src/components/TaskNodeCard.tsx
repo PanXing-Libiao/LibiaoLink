@@ -1,4 +1,5 @@
 import type { PointerEvent } from "react";
+import { useT } from "../i18n";
 import { RowDeleteButton } from "./RowDeleteButton";
 import { RowEditButton } from "./RowEditButton";
 
@@ -57,6 +58,7 @@ export function TaskNodeCard({
   highlighted,
   dimmed,
 }: TaskNodeCardProps) {
+  const t = useT();
   return (
     <article
       className={
@@ -109,7 +111,7 @@ export function TaskNodeCard({
             onEdit={() => {
               onEdit();
             }}
-            label={editLabel ?? "编辑节点 " + title}
+            label={editLabel ?? t("row.edit.nodeNamed", { name: title })}
           />
         )}
         {onDelete === undefined ? null : (
@@ -117,7 +119,7 @@ export function TaskNodeCard({
             onDelete={() => {
               onDelete();
             }}
-            label={deleteLabel ?? "删除节点 " + title}
+            label={deleteLabel ?? t("row.delete.node", { name: title })}
           />
         )}
       </span>

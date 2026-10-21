@@ -1,20 +1,45 @@
 import { Injectable } from "@nestjs/common";
-import { ProjectGroupBindingSchema, ProjectGroupPutBodySchema, z } from "@libiaolink/contracts";
+import {
+  ProjectGroupBindingSchema,
+  ProjectGroupCandidateListSchema,
+  ProjectGroupCandidateSchema,
+  ProjectGroupPutBodySchema,
+  z,
+} from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import { DatabaseService } from "../../db/database.service.js";
 import type { AuditChangeEntry } from "../../db/schema/admin.js";
 import { AuditService } from "../admin/index.js";
-import { ProjectGroupRepository, type WecomGroupRow } from "./project-group.repository.js";
+import {
+  ProjectGroupRepository,
+  type WecomGroupCandidateRow,
+  type WecomGroupRow,
+} from "./project-group.repository.js";
 import { ProjectRepository } from "./project.repository.js";
 
 export type ProjectGroupBindingView = z.infer<typeof ProjectGroupBindingSchema>;
+export type ProjectGroupCandidateView = z.infer<typeof ProjectGroupCandidateSchema>;
+export type ProjectGroupCandidateList = z.infer<typeof ProjectGroupCandidateListSchema>;
 
-/** 入参按「契约输入」收：name 的缺省（覆盖语义 = 清空）由 ZodValidationPipe 落定，直接调用服务时同口径兜底。 */
+/** 候选群保留窗口：30 天未再收到消息视为过期，不进入列表也不可用于绑定。 */
+export const PROJECT_GROUP_CANDIDATE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** 入参按「契约输入」收：候选路径 name 缺省沿用候选名，手工路径缺省 = null；直接调用服务时同口径兜底。 */
 type ProjectGroupPutBody = z.input<typeof ProjectGroupPutBodySchema>;
 
 /** chatid 掩码（读面 / 审计 / 日志统一口径：只回末 4 位，全文只落库）。 */
 export function maskChatid(chatid: string): string {
   return "****" + chatid.slice(-4);
+}
+
+/** 候选群行 → 读面（只暴露掩码，不返回 chatid 全文）。 */
+export function toProjectGroupCandidateView(row: WecomGroupCandidateRow): ProjectGroupCandidateView {
+  return {
+    id: row.id,
+    name: row.name,
+    chatidMasked: maskChatid(row.chatid),
+    lastSeenAt: row.lastSeenAt.toISOString(),
+  };
 }
 
 /** 绑定行 → 契约视图；未绑定（含解绑后）由 null 分支构造 bound:false 形态。 */
@@ -35,7 +60,7 @@ export function toProjectGroupView(projectId: string, row: WecomGroupRow | null)
 /**
  * 项目群绑定用例（M5-03-2 接线段 · C2-05）：读 / 绑定换绑 / 解绑。
  * 口径（S8-1 定案 + P5 切换）：GET 恒 200（未绑定 = bound:false；项目不存在 / 不可见由守卫落 404）；
- * PUT 覆盖语义（name 缺省 = 清空）、chatid 变更 = 换绑（新会话，activated_at 重置 null）；
+ * PUT 覆盖语义（候选 name 缺省沿用候选名；手工 name 缺省 = 清空）、chatid 变更 = 换绑（手工路径 activated_at 重置 null；候选路径取 lastSeenAt）；
  * 写路径归档保护同主数据（ADR-027 → 409 PROJECT_ARCHIVED）；变更写审计（objectType=project）并刷新项目 updatedAt（ADR-022）。
  */
 @Injectable()
@@ -53,17 +78,47 @@ export class ProjectGroupService {
     return toProjectGroupView(projectId, row);
   }
 
-  /** 绑定 / 换绑：同 chatid 重放幂等（保留激活态与群名外的更新）；换绑重置 activated_at（主动推送需重新激活）。 */
+  /** 自动发现候选：最近 30 天活跃、最多 50 条；已绑定群不进入列表。 */
+  async getCandidates(projectId: string): Promise<ProjectGroupCandidateList> {
+    await this.requireProject(projectId);
+    const since = new Date(Date.now() - PROJECT_GROUP_CANDIDATE_TTL_MS);
+    const rows = await this.groups.listCandidates(since);
+    return { items: rows.map(toProjectGroupCandidateView) };
+  }
+
+  /**
+   * 绑定 / 换绑：candidateId 路径从自动发现候选回查 chatid，并以候选最后活跃时刻作为会话激活时刻；
+   * 手工 chatid 路径保持先绑后激活。同 chatid 重放保留激活态，换绑到新 chatid 重置激活态。
+   */
   async putGroup(projectId: string, body: ProjectGroupPutBody, actorId: string): Promise<ProjectGroupBindingView> {
     const project = await this.requireProject(projectId);
     this.assertWritable(project.project.status);
-    const chatid = body.chatid;
-    const name = body.name ?? null;
     const at = new Date();
     const row = await this.database.db.transaction(async (tx) => {
+      const candidate =
+        body.candidateId === undefined ? null : await this.groups.findCandidateById(body.candidateId, tx);
+      if (
+        body.candidateId !== undefined &&
+        (candidate === null || candidate.lastSeenAt.getTime() < at.getTime() - PROJECT_GROUP_CANDIDATE_TTL_MS)
+      ) {
+        throw new AppError("NOT_FOUND", "候选群不存在或已过期，请到企微群重新发送消息后再试");
+      }
+      const chatid = candidate?.chatid ?? body.chatid;
+      if (chatid === undefined) {
+        throw new AppError("VALIDATION_FAILED", "缺少 chatid 或 candidateId");
+      }
+      const name = body.name !== undefined ? body.name ?? null : candidate?.name ?? null;
       const previous = await this.groups.findByProject(projectId, tx);
-      const activatedAt = previous === null || previous.chatid !== chatid ? null : previous.activatedAt;
+      const activatedAt =
+        candidate !== null
+          ? candidate.lastSeenAt
+          : previous === null || previous.chatid !== chatid
+            ? null
+            : previous.activatedAt;
       const saved = await this.groups.upsert({ projectId, chatid, name, activatedAt }, at, tx);
+      if (candidate !== null) {
+        await this.groups.removeCandidate(candidate.id, tx);
+      }
       await this.projects.touch(projectId, at, tx);
       await this.audit.record(tx, {
         actorId,
@@ -92,6 +147,17 @@ export class ProjectGroupService {
     await this.database.db.transaction(async (tx) => {
       const removed = await this.groups.remove(projectId, tx);
       if (removed === null) return;
+      if (removed.activatedAt !== null) {
+        await this.groups.restoreCandidate(
+          {
+            chatid: removed.chatid,
+            name: removed.name,
+            firstSeenAt: removed.activatedAt,
+            lastSeenAt: removed.activatedAt,
+          },
+          tx,
+        );
+      }
       await this.projects.touch(projectId, at, tx);
       await this.audit.record(tx, {
         actorId,

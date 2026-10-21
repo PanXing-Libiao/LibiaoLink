@@ -1,12 +1,11 @@
-import { lazy, Suspense, useEffect } from "react";
+import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import type { FilePreviewKind, PreviewViewerConfig } from "../fileApi";
-/** CAD 三维查看器懒加载(ADR-031):three(~600KB gzip)+ occt WASM 按需加载 —— 只有点开 CAD 文件才下载,
- *  不进主包拖慢首屏(配合 public/occt/ 的 wasm locateFile)。 */
-const CadViewer = lazy(() => import("./CadViewer").then((m) => ({ default: m.CadViewer })));
 import { ImageZoomViewer } from "./ImageZoomViewer";
 import { OnlyOfficeViewer } from "./OnlyOfficeViewer";
+import { CadModelViewer } from "./CadModelViewer";
 import { useFocusTrap } from "./useFocusTrap";
+import { useT } from "../i18n";
 
 /** 预览浮层（Push 226 续 / 续三 · S4 · Push 246 起任务列表「文件」列下拉与详情抽屉共用）：
  *  图片 = 大图（img）、PDF = 浏览器内置查看器（iframe）、Office / 文本族 = ONLYOFFICE 查看器外壳
@@ -17,8 +16,7 @@ import { useFocusTrap } from "./useFocusTrap";
  *  Push 273（业务口径 2026-10-10「图片预览要有缩放功能」）：图片分支改挂共享组件 ImageZoomViewer（滚轮以光标为锚点
  *  缩放 / ＋− 按钮 1.25 步进 / 双击 100% ↔ 200% / 放大后拖动平移，25% ~ 800%）；口径收紧为「点遮罩关浮层」——
  *  图片上的点击留给缩放 / 拖动，点图不再关（原「Esc / 点浮层关闭」里的点图分支下架）。
- *  ADR-031（2026-10-13 · CAD 预览通道）：kind=cad3d 分支挂 CadViewer（浏览器端 occt WASM / three.js 解析渲染,
- *  原对象短时签名直签 —— 与图片分支同 url pane 口径）。
+ *  ADR-035：CAD viewer 配置进入独立 ViewerSession；未启用或旧就绪响应只提示暂不可预览。
  *  Push 258（业务口径「原本的下载不要隐藏 / 点击右上角下载给原文件」）：查看器工具栏的 download 图标保持可见（服务端
  *  document.permissions.download=true），在其原位盖一层**透明命中层**（data-file-preview-native-download）——
  *  点它走同一 onDownload（原格式字节 + download 审计）。DocServer 内置下载是跨域 iframe 原生控件、逻辑改不了，
@@ -34,6 +32,7 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
   onDownload: () => void;
   onClose: () => void;
 }) {
+  const t = useT();
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -54,20 +53,20 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
       data-file-preview="true"
       data-file-preview-kind={kind}
       role="dialog" data-live-sync-readonly="true"
-      aria-label={"预览 " + name}
+      aria-label={t("fpv.aria", { name })}
       onClick={(event) => {
         event.stopPropagation();
         onClose();
       }}
-      className={"fixed inset-0 " + zClass + " flex items-center justify-center bg-zinc-900/60 p-6"}
+      className={"fixed inset-0 " + zClass + " flex items-center justify-center bg-zinc-900/60 " + (kind === "cad" ? "p-1 sm:p-3" : "p-6")}
     >
       <figure className="relative flex max-h-full max-w-full flex-col items-center">
-        {pane.mode === "viewer" ? (
+        {kind !== "cad" && pane.mode === "viewer" && pane.viewer.kind === "onlyoffice" ? (
           <button
             type="button"
             data-file-preview-native-download="true"
-            title="下载原文件"
-            aria-label="下载原文件"
+            title={t("fpv.download")}
+            aria-label={t("fpv.download")}
             onClick={(event) => {
               event.stopPropagation();
               onDownload();
@@ -76,23 +75,30 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
             style={{ right: 92, top: 4, width: 24, height: 24 }}
           />
         ) : null}
-        {pane.mode === "viewer" ? (
+        {pane.mode === "viewer" && pane.viewer.kind === "cad" ? (
+          <CadModelViewer key={`${pane.viewer.fileId}:${pane.viewer.versionId}:${nonce}`} viewer={pane.viewer} name={name} onClose={onClose} onDownload={onDownload} onRetry={onRetry} />
+        ) : kind === "cad" ? (
+          <div
+            role="status"
+            data-file-preview-cad-pending="true"
+            onClick={(event) => event.stopPropagation()}
+            className="flex min-h-48 w-[min(32rem,calc(100vw-3rem))] items-center justify-center rounded-xl bg-white p-8 text-center text-sm text-zinc-600 shadow-2xl"
+          >
+            {t("fpv.cadPending")}
+          </div>
+        ) : pane.mode === "viewer" && pane.viewer.kind === "onlyoffice" ? (
           <OnlyOfficeViewer key={nonce} viewer={pane.viewer} onRetry={onRetry} />
-        ) : kind === "cad3d" ? (
-          <Suspense fallback={<div className="flex h-[80vh] w-[min(90vw,calc(100vw-3rem))] items-center justify-center rounded-xl bg-[#14181f] text-sm text-zinc-400">CAD 查看器加载中…</div>}>
-            <CadViewer src={pane.url} name={name} />
-          </Suspense>
-        ) : kind === "pdf" ? (
+        ) : pane.mode === "url" && kind === "pdf" ? (
           <iframe
             src={pane.url}
             title={name}
             data-file-preview-frame="true"
             className="h-[80vh] w-[min(90vw,calc(100vw-3rem))] rounded-xl bg-white shadow-2xl"
           />
-        ) : (
+        ) : pane.mode === "url" ? (
           <ImageZoomViewer src={pane.url} alt={name} />
-        )}
-        <figcaption className="relative z-10 mt-2 flex items-center gap-3 rounded-md bg-zinc-900/35 px-2 py-1 text-xs text-white/80 backdrop-blur-sm">
+        ) : null}
+        {pane.mode === "viewer" && pane.viewer.kind === "cad" ? null : <figcaption className="relative z-10 mt-2 flex items-center gap-3 rounded-md bg-zinc-900/35 px-2 py-1 text-xs text-white/80 backdrop-blur-sm">
           <span>{name}</span>
           <button
             type="button"
@@ -103,9 +109,9 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
             }}
             className="rounded-md border border-white/30 px-2 py-0.5 text-[11px] text-white/90 transition hover:bg-white/10"
           >
-            下载原文件
+            {t("fpv.download")}
           </button>
-        </figcaption>
+        </figcaption>}
       </figure>
     </div>,
     document.body,

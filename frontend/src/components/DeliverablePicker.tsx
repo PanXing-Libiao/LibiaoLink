@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { InlineCell } from "./InlineEdit";
 import { DOC_TYPE_OPTIONS } from "../docTypes";
+import { fieldText, useLocale, useT, type Locale } from "../i18n";
 
 /**
  * 输出成果文件（deliverableTypes）选择器（2026-10-08 · 业务口径「文件输出成果也要可以选择」）：
@@ -28,10 +29,10 @@ export const DOC_TYPE_CLASS: Record<string, string> = {
 };
 
 /** 成果文件小色签（浮层选项 / 静态展示用；同「是否按时交付」徽标口径，未收录回落浅灰）。 */
-export function docTypeChip(name: string) {
+export function docTypeChip(name: string, locale: Locale) {
   return (
     <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + (DOC_TYPE_CLASS[name] ?? "bg-zinc-100 text-zinc-600")}>
-      {name}
+      {fieldText(locale, name)}
     </span>
   );
 }
@@ -39,7 +40,7 @@ export function docTypeChip(name: string) {
 /** 成果文件小色签（单元格 / 抽屉展示用 · 2026-10-08 业务口径「和这个相同即可 简约一点」）：
  *  对齐「是否按时交付」列徽标 —— 浅彩底 + 同色系字（rounded + px-1.5 py-0.5，无白框 / 无描边），
  *  悬停亮一档（brightness 微降，色相不动）。 */
-export function docTypeCapsule(name: string) {
+export function docTypeCapsule(name: string, locale: Locale) {
   return (
     <span
       data-deliverable-value={name}
@@ -48,13 +49,15 @@ export function docTypeCapsule(name: string) {
         (DOC_TYPE_CLASS[name] ?? "bg-zinc-100 text-zinc-600")
       }
     >
-      {name}
+      {fieldText(locale, name)}
     </span>
   );
 }
 
 /** 选择面板（搜索 + 十类多选）：点选项不关浮层、可连着选；再点已选项 = 取消。 */
 export function DeliverablePanel({ values, onChange }: { values: readonly string[]; onChange: (next: string[]) => void }) {
+  const t = useT();
+  const locale = useLocale();
   const [keyword, setKeyword] = useState("");
   const query = keyword.trim().toLowerCase();
   const filtered = query === "" ? DOC_TYPE_OPTIONS : DOC_TYPE_OPTIONS.filter((option) => option.toLowerCase().includes(query));
@@ -70,13 +73,13 @@ export function DeliverablePanel({ values, onChange }: { values: readonly string
           onKeyDown={(event) => {
             event.stopPropagation();
           }}
-          placeholder="查找选项"
+          placeholder={t("dp.search")}
           className="w-full rounded-md bg-transparent px-1.5 py-1 text-sm text-zinc-700 outline-none placeholder:text-zinc-400"
         />
       </div>
-      <div className="px-3 pb-1 pt-2 text-[11px] leading-4 text-zinc-400">多选</div>
-      <div role="listbox" aria-multiselectable="true" aria-label="选择输出成果文件" className="p-1">
-        {filtered.length === 0 ? <div className="px-2.5 py-2 text-xs text-zinc-400">无匹配选项</div> : null}
+      <div className="px-3 pb-1 pt-2 text-[11px] leading-4 text-zinc-400">{t("dp.multi")}</div>
+      <div role="listbox" aria-multiselectable="true" aria-label={t("dp.listAria")} className="p-1">
+        {filtered.length === 0 ? <div className="px-2.5 py-2 text-xs text-zinc-400">{t("dp.noMatch")}</div> : null}
         {filtered.map((option) => {
           const selected = values.includes(option);
           return (
@@ -91,7 +94,7 @@ export function DeliverablePanel({ values, onChange }: { values: readonly string
               }}
               className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition hover:bg-zinc-100"
             >
-              {docTypeChip(option)}
+              {docTypeChip(option, locale)}
               {selected ? (
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="ml-auto h-3.5 w-3.5 shrink-0 text-emerald-600">
                   <path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -120,12 +123,14 @@ type DeliverableCellProps = {
 /** 行内选择单元格（任务表列 / 抽屉行共用）：空值 = 「—」（液态玻璃小框，同列内其它空态口径）；
  *  有值 = 浅彩底小色签（首枚 + 「+N」；抽屉行 all = 全量摊开逐枚）—— 点开 = DeliverablePanel。 */
 export function DeliverableCell({ values, onChange, all = false, disabled = false, disabledHint }: DeliverableCellProps) {
+  const t = useT();
+  const locale = useLocale();
   const filled = values.length > 0;
   const shown = all ? values : values.slice(0, 1);
   const display = filled ? (
     <span className="flex flex-wrap items-center gap-1">
       {shown.map((docType) => (
-        <span key={docType}>{docTypeCapsule(docType)}</span>
+        <span key={docType}>{docTypeCapsule(docType, locale)}</span>
       ))}
       {all || values.length <= 1 ? null : <span className="text-[10px] text-zinc-400">+{values.length - 1}</span>}
     </span>
@@ -134,8 +139,8 @@ export function DeliverableCell({ values, onChange, all = false, disabled = fals
   );
   return (
     <InlineCell
-      ariaLabel="修改输出成果文件"
-      title="点击选择（可多选）"
+      ariaLabel={t("dp.editAria")}
+      title={t("dp.pickTitle")}
       width={200}
       height={DOC_TYPE_OPTIONS.length * 34 + 40 + 26 + 12}
       disabled={disabled}

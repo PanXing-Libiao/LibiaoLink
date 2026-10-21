@@ -8,6 +8,7 @@ import { NOTIFICATION_SNOOZE_MAX_AHEAD_MS, NOTIFICATION_SNOOZE_MIN_LEAD_MS } fro
 import { describe, expect, it } from "vitest";
 import { ClockService } from "../src/common/clock/clock.service.js";
 import { AppConfig } from "../src/config/config.module.js";
+import { FakeNotifyDeliveryArchive } from "./fakes/notify-delivery-archive.fake.js";
 import { loadEnv } from "../src/config/env.js";
 import type { DatabaseService } from "../src/db/database.service.js";
 import type {
@@ -49,6 +50,7 @@ class FakeSnoozeRepository {
       refType: null,
       refId: null,
       templateCode: null,
+      sourceDedupeKey: "A01:-:-",
       mergeKey: "A01:-:-",
       mergedCount: 1,
       mergedIntoId: null,
@@ -181,7 +183,14 @@ function makeService(repo: FakeSnoozeRepository, initialNow: Date, overrides: Re
   let now = initialNow;
   clock.setSource(() => now);
   const publisher = new FakeStreamPublisher();
-  const service = new NotifyService(repo as never, fakeDatabase, new AppConfig(env), clock, publisher as never);
+  const service = new NotifyService(
+    repo as never,
+    new FakeNotifyDeliveryArchive() as never,
+    fakeDatabase,
+    new AppConfig(env),
+    clock,
+    publisher as never,
+  );
   return {
     service,
     publisher,

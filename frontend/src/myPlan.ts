@@ -1,3 +1,5 @@
+import type { Locale } from "./i18n";
+
 /**
  * 「我的计划」便签墙（工作台第三枚标签 · 业务口径 2026-10-10「照 minimemo3 的便签页融入系统」）：
  * 个人便签墙 —— 新建 / 编辑 / 删除 / 完成便签（完成后只出现在「已完成」视图，便签墙与分类视图不再显示），支持颜色、字体、分类（可自定义）、搜索；页面形态与配色照 MiniMemo 参考页照搬（Push 268 起页面底改纯白、排序下架 / 198 高圆角卡片 / 7 色 hex 调色板；Push 271 起工具条可切背景色 —— white 统一白（默认，与全站页面一致）/ cream 奶白（#fdfbf7 + 左上暖色径向渐变），随账号落库），编辑（填写）弹窗亦照搬（便签底色整卡铺底 + 顶栏关闭 / 7 色圆点 / 字体 Aa 分段器 + 大标题 / 记录区 + 分类胶囊 + 「更新于」底栏 + 「完成 / 恢复」；业务口径 2026-10-10「填写也要一样」→「数据接入数据库」+「新增完成按钮 完成后只显示在已完成里面」），不做导出 / 导入。
@@ -278,8 +280,11 @@ export function filterPlanNotes(notes: readonly PlanNote[], keyword: string, cat
   });
 }
 
-/** ISO 时间 → 卡片角标相对文案（Push 266 照 MiniMemo 参考页）：刚刚 / N 分钟前 / N 小时前 / 昨天 / M月D日（跨年带年）；非法值原样透出。 */
-export function formatPlanRelative(iso: string, now: Date = new Date()): string {
+/** 英文月份短名（Push 301 · 便签卡角标 / 编辑弹窗「更新于」；与 i18n.EN_MONTHS 同款）。 */
+const PLAN_MONTHS_EN: readonly string[] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** ISO 时间 → 卡片角标相对文案（Push 266 照 MiniMemo 参考页；Push 301 按界面语言出中英）：中文 = 刚刚 / N 分钟前 / N 小时前 / 昨天 / M月D日（跨年带年）；英文 = Just now / N min ago / N hr ago / Yesterday / Sep 5；非法值原样透出。 */
+export function formatPlanRelative(iso: string, locale: Locale = "zh", now: Date = new Date()): string {
   const at = new Date(iso);
   const atMs = at.getTime();
   if (Number.isNaN(atMs)) {
@@ -290,42 +295,61 @@ export function formatPlanRelative(iso: string, now: Date = new Date()): string 
   const hour = 60 * minute;
   const day = 24 * hour;
   if (diff < minute) {
-    return "刚刚";
+    return locale === "en" ? "Just now" : "刚刚";
   }
   if (diff < hour) {
-    return String(Math.floor(diff / minute)) + " 分钟前";
+    const minutesAgo = Math.floor(diff / minute);
+    return locale === "en" ? String(minutesAgo) + " min ago" : String(minutesAgo) + " 分钟前";
   }
   if (diff < day) {
-    return String(Math.floor(diff / hour)) + " 小时前";
+    const hoursAgo = Math.floor(diff / hour);
+    return locale === "en" ? String(hoursAgo) + " hr ago" : String(hoursAgo) + " 小时前";
   }
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   if (atMs >= startOfToday - day && atMs < startOfToday) {
-    return "昨天";
+    return locale === "en" ? "Yesterday" : "昨天";
   }
   const month = String(at.getMonth() + 1);
   const dayText = String(at.getDate());
   if (at.getFullYear() === now.getFullYear()) {
-    return month + "月" + dayText + "日";
+    return locale === "en" ? PLAN_MONTHS_EN[at.getMonth()] + " " + dayText : month + "月" + dayText + "日";
   }
-  return String(at.getFullYear()) + "年" + month + "月" + dayText + "日";
+  return locale === "en"
+    ? PLAN_MONTHS_EN[at.getMonth()] + " " + dayText + ", " + String(at.getFullYear())
+    : String(at.getFullYear()) + "年" + month + "月" + dayText + "日";
 }
 
-/** 编辑弹窗底栏「更新于」：2026年10月10日 18:20（与参考页 formatFull 同口径：年 / 月 / 日原样、时 / 分补零）。 */
-export function formatPlanFull(iso: string): string {
+/** 编辑弹窗底栏「更新于」：中文 = 2026年10月10日 18:20；英文 = Oct 10, 2026 18:20（与参考页 formatFull 同口径：年 / 月 / 日原样、时 / 分补零；Push 301 起按界面语言出中英）。 */
+export function formatPlanFull(iso: string, locale: Locale = "zh"): string {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) {
     return iso;
   }
   const pad = (value: number): string => String(value).padStart(2, "0");
+  if (locale === "en") {
+    return PLAN_MONTHS_EN[at.getMonth()] + " " + String(at.getDate()) + ", " + String(at.getFullYear()) + " " + pad(at.getHours()) + ":" + pad(at.getMinutes());
+  }
   return (
     String(at.getFullYear()) + "年" + String(at.getMonth() + 1) + "月" + String(at.getDate()) + "日 " +
     pad(at.getHours()) + ":" + pad(at.getMinutes())
   );
 }
 
-/** 时段问候（Push 266 照 MiniMemo 参考页）：夜深了 / 早上好 / 中午好 / 下午好 / 晚上好。 */
-export function planGreeting(now: Date = new Date()): string {
+/** 时段问候（Push 266 照 MiniMemo 参考页；Push 301 按界面语言出中英）：中文 = 夜深了 / 早上好 / 中午好 / 下午好 / 晚上好；英文 = Late night / Good morning / Good afternoon / Good evening。 */
+export function planGreeting(locale: Locale = "zh", now: Date = new Date()): string {
   const hour = now.getHours();
+  if (locale === "en") {
+    if (hour < 5) {
+      return "Late night";
+    }
+    if (hour < 12) {
+      return "Good morning";
+    }
+    if (hour < 18) {
+      return "Good afternoon";
+    }
+    return "Good evening";
+  }
   if (hour < 5) {
     return "夜深了";
   }

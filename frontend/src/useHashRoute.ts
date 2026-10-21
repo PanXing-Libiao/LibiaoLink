@@ -91,14 +91,15 @@ export const EMPTY_AUDIT_QUERY: AuditQueryState = { keyword: null, actorIds: [],
  * 取值 = current（系统现有文件，缺省，不落参数）/ recycled（回收站）；与「日报及问题」`?sub=` 同一口径：
  * 缺省不落参数、不认识 / 空值回落 current。
  */
-export type FilesTab = "current" | "recycled";
+export type FilesTab = "current" | "recycled" | "project-recycled";
 
 /**
  * 「文件库」页筛选态（Push 261 · 与首页列表 / 操作记录同一口径：地址即状态，可分享 / 可收藏 / 刷新不丢）：
  * 关键字 q（文件名，长度兜底 200）/ 项目 project=<id>[,<id>…]（**多选**：逗号分隔、去重保序，2026-10-09 追订）/
  * 状态 status=<k>[,<k>…]（**多选**；draft / final / changed / archived，只在「系统现有文件」栏有意义 ——
- * 回收站栏固定 recycled、该参数不落地址）/ 上传人 uploadedBy=<id>[,<id>…]（**多选**：逗号分隔、去重保序，
- * 2026-10-09 追订「别的筛选也是同理 要支持多选」）/ 页码 page；缺省（current 栏 + 无筛选 + 第 1 页）不落参数。
+ * 文件回收站固定 recycled、项目回收站固定 filter[recycled]=true，该参数不落地址）/
+ * 上传人 uploadedBy=<id>[,<id>…]（**多选**：逗号分隔、去重保序，2026-10-09 追订「别的筛选也是同理 要支持多选」）/
+ * 页码 page；缺省（current 栏 + 无筛选 + 第 1 页）不落参数。
  *【2026-10-09 追订】类型 docType 参数整条撤除（业务口径「文件类型不需要 因为没有明确的绑定机制」—— 库内文件
  * 没有类型绑定点、列与筛选恒空；任务侧的「输出成果文件」是任务字段，不受影响）。
  */
@@ -117,12 +118,13 @@ export type FilesQueryState = {
 export const EMPTY_FILES_QUERY: FilesQueryState = { tab: "current", keyword: null, projectIds: [], statuses: [], uploaderIds: [], page: 1 };
 
 export type Route =
-  | { kind: "hub" }
+  | { kind: "hub"; view: HubView | null }
   | { kind: "workspace"; tab: WorkspaceTab; sub: WorkspaceIssueView }
   | { kind: "list"; filters: ListQueryState }
   | { kind: "project"; id: string; view: ProjectView; sub: DailySubView }
   | { kind: "placeholder"; page: PlaceholderPage; section: string | null }
   | { kind: "audit"; query: AuditQueryState }
+  | { kind: "settings" }
   | { kind: "files"; query: FilesQueryState };
 
 /** 任务模板页地址：当前板块（标签栏选中的阶段）也走 URL —— 与列表页筛选态同一口径，地址即状态。 */
@@ -144,11 +146,17 @@ export const PROJECT_BASE_HASH = "#/project/";
 /** 工作台「我的任务」页地址（Push 230 转正式）：标签走 `?tab=`，缺省「我的任务」不落参数。 */
 export const WORKSPACE_BASE_HASH = "#/my-tasks";
 
-/** 「操作记录」页地址（头像菜单「退出登录」下方入口；筛选态走 query，缺省不落参数）。 */
+/** 「操作记录」页地址（头像菜单「操作记录」入口；筛选态走 query，缺省不落参数）。 */
 export const AUDIT_BASE_HASH = "#/audit";
 
-/** 「文件库」页地址（头像菜单「文件库」入口；两栏 + 筛选态走 query，缺省不落参数）—— Push 261。 */
+/** 「文件库」页地址（头像菜单「文件库」入口；系统现有文件 / 文件回收站 / 项目回收站三栏 + 筛选态走 query）—— Push 261。 */
 export const FILES_BASE_HASH = "#/files";
+
+/**
+ * 「企微绑定」页地址（头像菜单「企微绑定」入口 · Push 250）：账号级设置的家（当前 = 企微单聊绑定 + 项目群绑定）。
+ * 没有页内子态，故不带 query。
+ */
+export const SETTINGS_BASE_HASH = "#/settings";
 
 const PROJECT_PATH = /^\/project\/([^/]+)$/;
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -251,6 +259,32 @@ function parseSectionValue(search: string): string | null {
     section = value === "" ? null : value;
   }
   return section;
+}
+
+/** 仪表盘页落地视图（Push 332 · 业务口径 2026-10-15「还是做路由吧 这个页面要记住」）：map = 世界地图（缺省、不落参数）/
+ *  dashboard = 仪表盘大屏（Push 358 起六个图表视图：数据总览 / 项目进度 / 任务状态 / 问题 / 交付时间 / 词频图）；地址不带参数时落回账号偏好记的常驻视图（见 App 层 hubView）。与契约 HubViewSchema 同源。 */
+export type HubView = "map" | "dashboard";
+
+/** 契约读侧收敛的镜像：偏好 / 地址里的未知值一律回 map（坏值不崩）。 */
+export function asHubView(value: unknown): HubView {
+  return value === "dashboard" ? "dashboard" : "map";
+}
+
+/** 仪表盘页视图参数（`?view=`）：map / dashboard 认，其余取值 / 缺省 = null（= 跟账号记忆，不写死）。 */
+function parseHubView(search: string): HubView | null {
+  for (const chunk of search.split("&")) {
+    if (chunk === "") {
+      continue;
+    }
+    const separator = chunk.indexOf("=");
+    const key = safeDecode(separator === -1 ? chunk : chunk.slice(0, separator));
+    if (key !== "view") {
+      continue;
+    }
+    const value = safeDecode(separator === -1 ? "" : chunk.slice(separator + 1));
+    return value === "dashboard" ? "dashboard" : value === "map" ? "map" : null;
+  }
+  return null;
 }
 
 /** 项目详情标签的合法取值（顺序与标签栏一致）。 */
@@ -479,6 +513,26 @@ export function replaceWorkspaceSub(sub: WorkspaceIssueView): void {
   }
 }
 
+/** 仪表盘页地址：视图走 query（`#/?view=dashboard`；地图 = 缺省、不落参数）—— 与项目详情标签同一口径，地址即状态。
+ *  Push 332（业务口径 2026-10-15「还是做路由吧 这个页面要记住 因为不同的人想常驻的页面可能不一样」）：地址显式带视图时以地址为准。 */
+export function hubViewHref(view: HubView): string {
+  return view === "dashboard" ? HUB_HASH + "?view=dashboard" : HUB_HASH;
+}
+
+/** 切换仪表盘页视图（Push 332）：同步渲染并写回地址（replace，不新增历史条目）—— 刷新 / 收藏 / 分享都停在同一视图。 */
+export function replaceHubView(view: HubView): void {
+  if (currentRoute.kind !== "hub" || currentRoute.view === view) {
+    return;
+  }
+  currentRoute = { ...currentRoute, view };
+  emit();
+  try {
+    window.history.replaceState(null, "", hubViewHref(view));
+  } catch {
+    // URL 只是当前视图的投影：写不进去也不影响页面（个别浏览器对 history 调用限流）
+  }
+}
+
 /** 序列化筛选态：默认值不落 URL（排序固定按创建时间、默认降序 → 省略 sort；时间区间两端齐全才写入）。 */
 export function buildListHash(filters: ListQueryState): string {
   const parts: string[] = [];
@@ -536,8 +590,9 @@ export function parseHash(hash: string): Route {
     return { kind: "list", filters: parseListQuery(search) };
   }
   if (path === "/") {
-    // 蓝图页（顶层 · Push 285 起导航项与页面名由「首页」改「蓝图」）：显式 `#/` 仍落本页 —— 刷新 / 分享 / 撤回不丢。
-    return { kind: "hub" };
+    // 仪表盘页（顶层 · Push 285 起导航项与页面名由「首页」改「蓝图」· Push 331 起叫「仪表盘」）：显式 `#/` 仍落本页 ——
+    // 刷新 / 分享 / 撤回不丢；视图走 `?view=dashboard`（Push 332 · 缺省 = 地图，不带参数时落账号记忆的常驻视图）。
+    return { kind: "hub", view: parseHubView(search) };
   }
   if (path === "/templates") {
     return { kind: "placeholder", page: "templates", section: parseSectionValue(search) };
@@ -552,6 +607,11 @@ export function parseHash(hash: string): Route {
     // 地址即状态（?tab=recycled&q=..&project=..&status=..&uploadedBy=..&page=N；缺省不落参数）；
     // 页面 = frontend/src/FileLibraryPage.tsx，数据 = 逐项目聚合 GET /projects/{id}/files（fileApi.fetchProjectFileLibrary）。
     return { kind: "files", query: parseFilesQuery(search) };
+  }
+  if (path === "/settings") {
+    // 企微绑定（Push 250 · 头像菜单首项入口 · 业务口径 2026-10-16「在点击用户右上角头像后的列表中添加一个设置页」）：
+    // 账号级设置的家 —— 当前落点 = 企业微信绑定（D5 / D6 绑定码链路）；页面 = frontend/src/SettingsPage.tsx。
+    return { kind: "settings" };
   }
   if (path === "/my-tasks") {
     // 工作台（系统功能书 A6 我的工作台 · A6-01 / A6-03）：Push 230 起页面正式落地（frontend/src/WorkspacePage.tsx），
@@ -675,13 +735,14 @@ export function replaceAuditQuery(query: AuditQueryState): void {
   }
 }
 
-/** 「文件库」页状态筛选白名单（四档在库状态；回收站栏不吃该参数 —— 固定 filter[status]=recycled，见 FileLibraryPage）。 */
+/** 「文件库」页状态筛选白名单（四档在库状态；文件回收站固定 filter[status]=recycled，项目回收站不吃该参数）。 */
 const FILES_STATUS_KEYS: readonly string[] = ["draft", "final", "changed", "archived"];
 
 /**
- * 解析「文件库」页的 query 串（tab=recycled&q=图纸&project=<id>[,<id>…]&status=draft,final&uploadedBy=<id>[,<id>…]&page=2）。
- * id / 关键字 / 枚举的兜底复用操作记录页同一套（trim + 长度兜底 200 / 白名单）；逗号多值逐个校验、去重保序，
- * 不认识的值一律丢弃不报错；status 只在 current 栏解析（recycled 栏恒空，地址里也不落）。
+ * 解析「文件库」页的 query 串（tab=project-recycled&q=图纸&project=<id>[,<id>…]&status=draft,final&uploadedBy=<id>[,<id>…]&page=2）。
+ * tab=recycled 兼容为「文件回收站」，tab=project-recycled =「项目回收站」；id / 关键字 / 枚举的兜底复用操作记录页同一套
+ * （trim + 长度兜底 200 / 白名单）；逗号多值逐个校验、去重保序，不认识的值一律丢弃不报错；
+ * status 只在 current 栏解析（两个回收站栏恒空，地址里也不落）。
  */
 export function parseFilesQuery(search: string): FilesQueryState {
   const params = new Map<string, string>();
@@ -695,7 +756,9 @@ export function parseFilesQuery(search: string): FilesQueryState {
       params.set(key, safeDecode(separator === -1 ? "" : chunk.slice(separator + 1)));
     }
   }
-  const tab: FilesTab = params.get("tab") === "recycled" ? "recycled" : "current";
+  const tabParam = params.get("tab");
+  const tab: FilesTab =
+    tabParam === "project-recycled" ? "project-recycled" : tabParam === "recycled" ? "recycled" : "current";
   const pageRaw = Number(params.get("page") ?? "");
   return {
     tab,
@@ -741,8 +804,8 @@ function parseAuditIdList(raw: string | null): string[] {
  *  参数固定序 tab → q → project → status → uploadedBy → page。 */
 export function buildFilesHash(query: FilesQueryState): string {
   const parts: string[] = [];
-  if (query.tab === "recycled") {
-    parts.push("tab=recycled");
+  if (query.tab !== "current") {
+    parts.push("tab=" + query.tab);
   }
   if (query.keyword !== null) {
     parts.push("q=" + encodeURIComponent(query.keyword));

@@ -1,29 +1,37 @@
 #!/usr/bin/env node
 /**
- * S7-4 · M5-02 接线段 真机回放（规则事件消费 + automation-schedule.job → notify.message 生产）：
+ * S7-4 · M5-02 接线段 真机回放（规则事件消费 + automation-schedule.job → notify.message 生产 /
+ *   M5-03-5-4 接线段：单聊 aibot 产出接线 + 分流消费）：
  *   证据一（事件链全链）：task.completed 真 outbox 行 → 真 OutboxDispatcher 领取 → 规则接线消费（R02 命中）
- *        → 产出 notify.message（收件人 / 类型 / 渠道 / 模板 / 关联对象 / 幂等键全字段断言）→ 下一轮领取
- *        → 真 NotifyService 落行 → 收件箱读面（notify.list）立即可见。
+ *        → 产出 notify.message（收件人 / 类型 / 渠道 / 模板 / 关联对象 / 幂等键全字段断言；M5-03-5-4 起同规则
+ *        双产行 = inbox + wecom_aibot（幂等键 :aibot 后缀））→ 下一轮领取 → 按载荷 channel 分流（镜像
+ *        OutboxModule.buildRegistry）：wecom_aibot → 真 NotifyDmService（stub socket 自动应答）→
+ *        notify_deliveries sent 行（**M5-03-5-6：发送地址 = 绑定行 `wecom_userid`** —— 夹具按
+ *        `(bot_id, wecom_userid)` 播种绑定行，等价于「该用户已完成绑定」；旁证回填 D4 仍保留为兜底）；其余 →
+ *        真 NotifyService 落行 → 收件箱读面立即可见。
  *   证据二（冷启动保护）：行创建时刻超 AUTOMATION_EVENT_MAX_AGE_MS 的历史事件 → done、零产出；同载荷新事件
  *        正常产出（对照组：拦截判据是「事件年龄」而非条件不命中）。
  *   证据三（主体不可解析）：taskId 不存在 → outbox 行 dead（确定性失败一次即弃）、零产出。
  *   证据四（无事件型规则订阅）：issue.updated 主题 → 直接消费完成、零产出（不产无主通知）。
- *   证据五（渠道分流 · M5-03-3）：wecom_app 动作产「:app」行；本回放注册表未接应用分支 → NotifyService 防御
- *        dead + 零落库（生产装配按 channel 分流至 NotifyAppService —— 应用分支语义见 m5-03-3 回放）。
+ *   证据五（渠道护栏 · M5-03-3）：channel=wecom_app 原始行（本回放注册表刻意不接应用分支 —— 保留 NotifyService
+ *        防御面证据）→ 确定性 dead + 零落库（生产装配按 channel 分流至 NotifyAppService —— 应用分支语义见 m5-03-3 回放）。
  *   证据六（调度窗口 · A01 应填未填）：真 JobScheduler tick 领取 automation-schedule.job → 产出与 last_run_at 推进
  *        同事务提交、job_runs 留痕（executed / fire_count / produced / note）→ 消费 → 收件箱可见。
  *   证据七（调度窗口 · A01 合并）：同一人名下多项目 → 收件人粒度一条（项目清单合并文案 + 幂等键收件人粒度）。
  *   证据八（重放幂等）：回拨窗口重放 → 产出幂等键不重复（appendOutboxIfAbsent 唯一约束兜底）、job_runs 如实留痕。
- *   证据九（渠道落地口径 · M5-03-3 更新）：wecom_app 动作已落地为「:app」行、不再计入跳过（email 仍计；本回放无 email
- *   产出 → note 跳过计数 = 0）。note 口径 = 主体数 / notify.message 条数（含 app）/ notify.group 条数 / 未落地渠道跳过条数。
- *   证据十（自清理）：合成前缀 / 实体 id 全量精确清理，零残留（finally 兜底）。
+ *   证据九（渠道落地口径 · M5-03-5-4 接线段）：wecom_aibot 产出接线已落（R02 ×2 + A01 ×1 → :aibot 行）且消费 =
+ *   单聊发送（stub 应答）全 sent；channelSkipped = 0（未落地渠道仅余 email · 无 warn 留痕）。note 口径 = 主体数 /
+ *   notify.message 条数 / notify.group 条数 / 未落地渠道跳过条数。
+ *   证据十（自清理）：合成前缀 / 实体 id 全量精确清理（含投递留痕 / 激活表），零残留（finally 兜底）。
  *
- * 前置：真 PG（迁移器角色即可）+ 已构建的 server/dist（cd server && npm run build）。
+ * 前置：真 PG（迁移器角色即可）+ 已构建的 server/dist（cd server && npm run build）；本回放不触外网
+ *   （aibot 长连接走 stub socket 自动应答 —— 先例 m5-03-5-dm-replay.mjs）。
  * 用法：cd server && S7_4_WIRING_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink \
  *       node scripts/s7-4-automation-wiring-replay.mjs [--out <报告.md>] [--json <证据.json>] [--keep]
  * 退出码：断言全过 = 0，否则 = 1（可当门禁用）。
  * 说明：本机无 PG 时只做语法门禁；真机证据以 CI database job 为准（不伪造）。合成实体 id 全部由脚本生成、
- *   按 id / 前缀精确清理（--keep 时保留现场）。
+ *   按 id / 前缀精确清理（--keep 时保留现场）；非本回放 pending job 临时推到远期并在收尾恢复，
+ *   避免 M5-06 seed 的 per-rule job 混入调度领取统计。
  */
 import { randomBytes, randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
@@ -43,6 +51,8 @@ const DATABASE_URL =
 /** 本回放合成 outbox 去重键前缀（清理 / 基线计数用）：证据专用，不落生产代码。 */
 const OUTBOX_PREFIX = "s74wireReplay.";
 const USER_PREFIX = "s74w-";
+/** 单聊 aibot 机器人维度（M5-03-5-6：绑定行 / 激活表按 (bot_id, wecom_userid) 成对）—— stub 客户端与 AppConfig 同值。 */
+const DM_STUB_BOT_ID = "bot-stub";
 const JOB_REPLAY_TAG = "s74wire-replay";
 const WORKER_ID = "s74wire-replay";
 const HOUR_MS = 3_600_000;
@@ -105,6 +115,46 @@ function fmtJob(row) {
   );
 }
 
+/**
+ * 假 socket（AibotSocket 替身 · 自动应答版 —— 先例 m5-03-5-dm-replay.mjs 假帧驱动面）：
+ * send 即解析 req_id 并在下一 tick 回 errcode=0 回执（订阅 / 发送 / 心跳同形）→ stub 链路不触外网。
+ */
+function makeAutoAckSocket() {
+  const socket = {
+    sent: [],
+    closed: false,
+    onopen: null,
+    onmessage: null,
+    onclose: null,
+    onerror: null,
+    send(data) {
+      socket.sent.push(data);
+      let reqId = null;
+      try {
+        reqId = JSON.parse(data)?.headers?.req_id ?? null;
+      } catch {
+        reqId = null;
+      }
+      if (typeof reqId !== "string") return;
+      setTimeout(() => {
+        if (socket.closed) return;
+        socket.onmessage?.(JSON.stringify({ headers: { req_id: reqId }, errcode: 0, errmsg: "ok" }));
+      }, 0);
+    },
+    close(code, reason) {
+      if (socket.closed) return;
+      socket.closed = true;
+      socket.onclose?.(code ?? 1000, reason ?? "closed by replay");
+    },
+    open() {
+      socket.onopen?.();
+    },
+  };
+  return socket;
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 /** 加载 dist（真运行时类）；缺构建时给出明确指引。 */
 async function loadRuntime() {
   await import("reflect-metadata");
@@ -118,6 +168,11 @@ async function loadRuntime() {
       notifyRepositoryModule,
       notifyServiceModule,
       notifyStreamPublisherModule,
+      notifyDmRepositoryModule,
+      notifyDmServiceModule,
+      notifyDeliveryModule,
+      wecomAibotModule,
+      wecomRateModule,
       notifyIndexModule,
       outboxModule,
       outboxStoreModule,
@@ -133,6 +188,7 @@ async function loadRuntime() {
       calendarRepositoryModule,
       auditServiceModule,
       auditRepositoryModule,
+      archiveModule,
     ] = await Promise.all([
       load("config/env.js"),
       load("config/config.module.js"),
@@ -141,6 +197,11 @@ async function loadRuntime() {
       load("modules/notify/notify.repository.js"),
       load("modules/notify/notify.service.js"),
       load("modules/notify/notify.stream.publisher.js"),
+      load("modules/notify/notify.dm.repository.js"),
+      load("modules/notify/notify.dm.service.js"),
+      load("modules/notify/notify.delivery.js"),
+      load("modules/notify/wecom.aibot.js"),
+      load("modules/notify/wecom.rate.js"),
       load("modules/notify/index.js"),
       load("db/outbox.js"),
       load("db/outbox.store.js"),
@@ -156,6 +217,7 @@ async function loadRuntime() {
       load("modules/calendar/calendar.repository.js"),
       load("modules/audit/audit.service.js"),
       load("modules/audit/audit.repository.js"),
+      load("modules/notify/notify.delivery-archive.repository.js"),
     ]);
     return {
       loadEnv: envModule.loadEnv,
@@ -163,8 +225,14 @@ async function loadRuntime() {
       DatabaseService: databaseModule.DatabaseService,
       ClockService: clockModule.ClockService,
       NotifyRepository: notifyRepositoryModule.NotifyRepository,
+      NotifyDeliveryArchiveRepository: archiveModule.NotifyDeliveryArchiveRepository,
       NotifyService: notifyServiceModule.NotifyService,
       NotifyStreamPublisher: notifyStreamPublisherModule.NotifyStreamPublisher,
+      NotifyDmRepository: notifyDmRepositoryModule.NotifyDmRepository,
+      NotifyDmService: notifyDmServiceModule.NotifyDmService,
+      channelOfNotifyPayload: notifyDeliveryModule.channelOfNotifyPayload,
+      createWecomAibotClientFromEnv: wecomAibotModule.createWecomAibotClientFromEnv,
+      InMemoryRateWindowStore: wecomRateModule.InMemoryRateWindowStore,
       NOTIFY_MESSAGE_TOPIC: notifyIndexModule.NOTIFY_MESSAGE_TOPIC,
       appendOutboxIfAbsent: outboxModule.appendOutboxIfAbsent,
       OutboxStore: outboxStoreModule.OutboxStore,
@@ -177,7 +245,9 @@ async function loadRuntime() {
       createRuleEventConsumers: wiringModule.createRuleEventConsumers,
       createAutomationScheduleHandler: wiringModule.createAutomationScheduleHandler,
       AUTOMATION_SCHEDULE_JOB_KIND: automationIndexModule.AUTOMATION_SCHEDULE_JOB_KIND,
-      listEnabledRules: automationIndexModule.listEnabledRules,
+      BUILTIN_RULES: automationIndexModule.BUILTIN_RULES,
+      AutomationRuleRepository: automationIndexModule.AutomationRuleRepository,
+      AutomationRunRepository: automationIndexModule.AutomationRunRepository,
       CalendarService: calendarServiceModule.CalendarService,
       CalendarRepository: calendarRepositoryModule.CalendarRepository,
       AuditService: auditServiceModule.AuditService,
@@ -208,13 +278,14 @@ function buildEnv(overrides = {}) {
   await db.connect();
 
   const tag = randomBytes(4).toString("hex");
-  const env = buildEnv();
+  const env = buildEnv({ WECOM_BOT_ID: DM_STUB_BOT_ID });
   const clock = new runtime.ClockService();
   clock.setSource(() => CLOCK_NOW);
   const config = new runtime.AppConfig(env);
   const database = new runtime.DatabaseService(config);
+  const archive = new runtime.NotifyDeliveryArchiveRepository(database);
   // S8-3（M5-04-1）：投递在事务内 pg_notify 广播（本回放无 SSE 连接 → 事件静默丢弃，不影响投递断言）。
-  const notify = new runtime.NotifyService(new runtime.NotifyRepository(database), database, config, clock, new runtime.NotifyStreamPublisher());
+  const notify = new runtime.NotifyService(new runtime.NotifyRepository(database), archive, database, config, clock, new runtime.NotifyStreamPublisher());
   const outboxStore = new runtime.OutboxStore(database);
   const jobsStore = new runtime.JobsStore(database);
   const calendar = new runtime.CalendarService(
@@ -224,6 +295,63 @@ function buildEnv(overrides = {}) {
     clock,
   );
   const subjects = new runtime.AutomationSubjectReader(database, calendar);
+  const ruleRepository = new runtime.AutomationRuleRepository(database);
+  const runRepository = new runtime.AutomationRunRepository(database);
+  const replayRunKeys = new Set();
+  const runPort = {
+    insertIfAbsent: async (client, inputs) => {
+      const inserted = await runRepository.insertIfAbsent(client, inputs);
+      for (const input of inputs) {
+        if (inserted.has(input.dedupeKey)) replayRunKeys.add(input.dedupeKey);
+      }
+      return inserted;
+    },
+  };
+
+  // M5-03-5-4 接线段：单聊 aibot 消费（真 NotifyDmService + 真客户端 + stub socket 自动应答 —— 不触外网）。
+  const dmSockets = [];
+  const dmAibot = runtime.createWecomAibotClientFromEnv(
+    {
+      WECOM_BOT_WS_URL: "wss://stub.test/aibot",
+      WECOM_BOT_ID: DM_STUB_BOT_ID,
+      WECOM_BOT_SECRET: "secret-stub",
+      WECOM_BOT_PING_INTERVAL_MS: 3_600_000,
+      WECOM_BOT_ACK_TIMEOUT_MS: 1000,
+      WECOM_BOT_RECONNECT_MIN_MS: 60_000,
+      WECOM_BOT_RECONNECT_MAX_MS: 60_000,
+      WECOM_BOT_RATE_LIMIT_PER_MINUTE: 30,
+      WECOM_BOT_RATE_LIMIT_PER_HOUR: 1000,
+    },
+    {
+      socketFactory: () => {
+        const socket = makeAutoAckSocket();
+        dmSockets.push(socket);
+        return socket;
+      },
+      store: new runtime.InMemoryRateWindowStore(),
+      now: () => CLOCK_NOW.getTime(),
+    },
+  ).aibot;
+  // M5-03-5-6 / 契约刀：第 5 参 = AppConfig（`bot_id` 维度取值来源：config.env.WECOM_BOT_ID）；
+  // 第 6 / 7 参 = 审计服务（解绑留痕 —— D6）与数据库（解绑事务）。真 AuditService 走真库（本回放不触解绑路径）。
+  const audit = new runtime.AuditService(database, new runtime.AuditRepository(database));
+  const dmNotify = new runtime.NotifyDmService(
+    new runtime.NotifyDmRepository(database),
+    archive,
+    dmAibot,
+    notify,
+    clock,
+    config,
+    audit,
+    database,
+  );
+  dmAibot.start();
+  dmSockets[0].open();
+  /** 确定性等待订阅完成（stub 应答；超时即回放异常，不静默降级断言）。 */
+  for (let waited = 0; dmAibot.getStats().state !== "subscribed"; waited += 10) {
+    if (waited > 5000) throw new Error("stub aibot 未订阅成功（超时）");
+    await sleep(10);
+  }
 
   /** 接线日志（真装配 = Nest Logger；回放捕获以断言 warn 留痕）。 */
   const wiringLogs = { log: [], warn: [], error: [] };
@@ -232,7 +360,9 @@ function buildEnv(overrides = {}) {
     subjects,
     append: runtime.appendOutboxIfAbsent,
     db: database.db,
-    rules: runtime.listEnabledRules,
+    rules: async () => runtime.BUILTIN_RULES.map((rule) => ({ ...rule, enabled: true })),
+    runs: runPort,
+    transaction: (work) => database.db.transaction(work),
     now: () => clock.now(),
     shift: () => calendar.getSettings(),
     logger: {
@@ -241,10 +371,15 @@ function buildEnv(overrides = {}) {
       error: (line) => wiringLogs.error.push(line),
     },
   };
-  /** 真分派器：规则事件主题全量 + notify.message 投递（与 OutboxModule 组合根同形）。 */
+  /** 真分派器：规则事件主题全量 + notify.message 投递（与 OutboxModule 组合根同形 · M5-03-5-4 分流：
+   *  wecom_aibot → NotifyDmService；其余（含 wecom_app —— 防御面证据）→ NotifyService；镜像 buildRegistry
+   *  的 channelOfNotifyPayload 分流）。 */
   const registry = new Map();
   for (const [topic, handler] of runtime.createRuleEventConsumers(wiringDeps)) registry.set(topic, handler);
-  registry.set(runtime.NOTIFY_MESSAGE_TOPIC, { handle: (row) => notify.consume(row) });
+  registry.set(runtime.NOTIFY_MESSAGE_TOPIC, {
+    handle: (row) =>
+      runtime.channelOfNotifyPayload(row.payload) === "wecom_aibot" ? dmNotify.consume(row) : notify.consume(row),
+  });
   const dispatcher = new runtime.OutboxDispatcher(
     outboxStore,
     registry,
@@ -270,6 +405,33 @@ function buildEnv(overrides = {}) {
     issueIds: [],
     jobIds: [],
     outboxKeys: [],
+    archiveKeys: [],
+    parkedJobs: [],
+  };
+  const parkUnrelatedPendingJobs = async () => {
+    const found = await db.query("select id, run_at::text as run_at, updated_at::text as updated_at from jobs where status = 'pending' order by id");
+    cleanup.parkedJobs.push(...found.rows);
+    if (found.rows.length > 0) {
+      await db.query(
+        "update jobs set run_at = now() + interval '100 years', updated_at = now() where id = any($1::bigint[])",
+        [found.rows.map((row) => row.id)],
+      );
+    }
+    return found.rows.length;
+  };
+  const restoreParkedJobs = async () => {
+    if (cleanup.parkedJobs.length > 0) {
+      await db.query(
+        "update jobs as j set run_at = v.run_at, updated_at = v.updated_at " +
+          "from unnest($1::bigint[], $2::timestamptz[], $3::timestamptz[]) as v(id, run_at, updated_at) " +
+          "where j.id = v.id",
+        [
+          cleanup.parkedJobs.map((row) => row.id),
+          cleanup.parkedJobs.map((row) => row.run_at),
+          cleanup.parkedJobs.map((row) => row.updated_at),
+        ],
+      );
+    }
   };
   const trackedKey = (key) => {
     cleanup.outboxKeys.push(key);
@@ -298,6 +460,42 @@ function buildEnv(overrides = {}) {
     );
     return result.rows[0].n;
   };
+  /** 本回放产出且 channel=wecom_aibot 的 notify.message 行数（M5-03-5-4）。 */
+  const ourAibotCount = async () => {
+    const result = await db.query(
+      "select count(*)::int as n from outbox_events where topic = 'notify.message' and (payload->>'recipientId')::uuid = any($1::uuid[]) and payload->>'channel' = 'wecom_aibot'",
+      [cleanup.userIds],
+    );
+    return result.rows[0].n;
+  };
+  /** 本回放 aibot 行的投递留痕（notify_deliveries · 按 outbox 幂等键 join）。 */
+  const deliveriesFor = async (dedupeKey) => {
+    const result = await db.query(
+      "select d.channel, d.target, d.state, d.attempts, d.sent_at from notify_deliveries d join outbox_events e on e.id = d.outbox_id where e.dedupe_key = $1 order by d.id",
+      [dedupeKey],
+    );
+    return result.rows;
+  };
+  /** 本回放合成目标的投递留痕行（计数 / 清理残留用）。 */
+  const ourDeliveryRows = async () => {
+    const result = await db.query("select state from notify_deliveries where target like $1", [USER_PREFIX + "%"]);
+    return result.rows;
+  };
+  /** 激活表命中（旁证回填 D4 证据）。 */
+  const activationFor = async (userid) => {
+    const result = await db.query(
+      "select user_id, first_activated_at, last_message_at from wecom_aibot_dm_activations where wecom_userid = $1",
+      [userid],
+    );
+    return result.rows[0] ?? null;
+  };
+  const activationCount = async () => {
+    const result = await db.query(
+      "select count(*)::int as n from wecom_aibot_dm_activations where wecom_userid like $1",
+      [USER_PREFIX + "%"],
+    );
+    return result.rows[0].n;
+  };
 
   evidence.anchors = {
     tag,
@@ -314,12 +512,24 @@ function buildEnv(overrides = {}) {
     const usersBaseline = await db.query("select count(*)::int as n from users where username like $1", [USER_PREFIX + "%"]);
     const outboxBaseline = await db.query("select count(*)::int as n from outbox_events where dedupe_key like $1", [OUTBOX_PREFIX + "%"]);
     const jobsBaseline = await db.query("select count(*)::int as n from jobs where payload->>'replay' = $1", [JOB_REPLAY_TAG]);
+    const deliveriesBaseline = (await ourDeliveryRows()).length;
+    const activationsBaseline = await activationCount();
     check(
       "S0a",
-      "基线：合成前缀（用户 / outbox 去重键 / 调度任务）无存量行（回放自清理）",
-      "users=0 / outbox=0 / jobs=0",
-      short({ users: usersBaseline.rows[0].n, outbox: outboxBaseline.rows[0].n, jobs: jobsBaseline.rows[0].n }),
-      usersBaseline.rows[0].n === 0 && outboxBaseline.rows[0].n === 0 && jobsBaseline.rows[0].n === 0,
+      "基线：合成前缀（用户 / outbox 去重键 / 调度任务 / 投递留痕 / 激活表）无存量行（回放自清理）",
+      "users=0 / outbox=0 / jobs=0 / deliveries=0 / activations=0",
+      short({
+        users: usersBaseline.rows[0].n,
+        outbox: outboxBaseline.rows[0].n,
+        jobs: jobsBaseline.rows[0].n,
+        deliveries: deliveriesBaseline,
+        activations: activationsBaseline,
+      }),
+      usersBaseline.rows[0].n === 0 &&
+        outboxBaseline.rows[0].n === 0 &&
+        jobsBaseline.rows[0].n === 0 &&
+        deliveriesBaseline === 0 &&
+        activationsBaseline === 0,
     );
     const calendarGuard = await db.query("select date::text as date from calendar_days where date between date '2026-09-22' and date '2026-09-25'");
     check(
@@ -329,15 +539,25 @@ function buildEnv(overrides = {}) {
       "calendar_days=" + calendarGuard.rows.length + (calendarGuard.rows.length === 0 ? "" : " · " + short(calendarGuard.rows)),
       calendarGuard.rows.length === 0,
     );
+    const parkedJobCount = await parkUnrelatedPendingJobs();
     const pendingBaseline = await db.query(
-      "select (select count(*)::int from outbox_events where topic in ('task.completed','task.updated','task.progress_changed','change.applied','node.completed','report.submitted','issue.updated','notify.message') and status in ('pending','processing')) as outbox, (select count(*)::int from jobs where status = 'pending') as jobs",
+      "select (select count(*)::int from outbox_events where topic in ('task.completed','task.updated','task.progress_changed','change.applied','node.completed','report.submitted','issue.updated','notify.message') and status in ('pending','processing')) as outbox, (select count(*)::int from jobs where status = 'pending' and run_at <= now()) as jobs",
     );
     check(
       "S0c",
-      "基线：注册主题无待领行、无待跑任务（领取统计可用精确值断言）",
+      "基线：注册主题无待领行、无到期任务（非本回放 pending job 已临时推到远期，收尾恢复）",
       "outbox=0 / jobs=0",
-      short(pendingBaseline.rows[0]),
+      short({ ...pendingBaseline.rows[0], parked: parkedJobCount }),
       pendingBaseline.rows[0].outbox === 0 && pendingBaseline.rows[0].jobs === 0,
+    );
+    // M5-06-1A 起运行时规则来源 = automation_rules（代码常量只供 seed / 本回放显式注入）。
+    const activeRuleCodes = (await ruleRepository.listEnabledRules()).map((rule) => rule.code);
+    check(
+      "S0d",
+      "生产规则启用集：仅 R02 / R03 / R05（本回放另行显式启用全部定义以验证保留实现）",
+      "R02,R03,R05",
+      activeRuleCodes.join(","),
+      activeRuleCodes.join(",") === "R02,R03,R05",
     );
 
     // ---------------------------------------------------------------- 造数
@@ -356,19 +576,28 @@ function buildEnv(overrides = {}) {
     const owner = cleanup.userIds[0];
     const manager = cleanup.userIds[1];
     const owner2 = cleanup.userIds[2];
+    const ownerUsername = USER_PREFIX + tag + "-owner";
+    const owner2Username = USER_PREFIX + tag + "-owner2";
+    // M5-03-5-6 绑定码口径：单聊可投递地址 = 绑定行（bot_id + 密文 open_userid）——
+    // 本回放以 username 充当 stub 侧的 open_userid，直接播种绑定行（等价于「该用户已完成绑定」）。
+    await db.query(
+      "insert into wecom_aibot_dm_activations (bot_id, wecom_userid, user_id, bound_at) values ($1, $2, $3, $4), ($1, $5, $6, $4)",
+      [DM_STUB_BOT_ID, ownerUsername, owner, CLOCK_NOW, owner2Username, owner2],
+    );
 
     const projects = await db.query(
-      "insert into projects (code, name, customer, region, project_type, manager_ids, stage_key, status, description, version) values ($1, $2, $3, 'shanghai', 'default', array[$4::uuid], 'presale', 'active', $5, 1), ($6, $7, $8, 'shanghai', 'default', array[$4::uuid], 'presale', 'active', $9, 1) returning id",
+      "insert into projects (code, name, customer, region, project_type, manager_ids, stage_key, status, description, version) values ($1, $2, $3, 'shanghai', 'default', array[$4::uuid], 'presale', 'active', $5, 1), ($6, $7, $8, 'shanghai', 'default', array[$10::uuid], 'presale', 'active', $9, 1) returning id",
       [
         "S74W-" + tag + "-A",
         "临港数据中心",
         "合成客户",
-        manager,
+        owner,
         "S7-4 接线回放项目 A",
         "S74W-" + tag + "-B",
         "张江机房",
         "合成客户",
         "S7-4 接线回放项目 B",
+        owner2,
       ],
     );
     const projectA = projects.rows[0].id;
@@ -380,8 +609,8 @@ function buildEnv(overrides = {}) {
     );
 
     const tasks = await db.query(
-      "insert into tasks (project_id, stage_key, sort_index, title, status, progress, priority, owner_ids, deliverable_types, version, planned_start, planned_end, actual_end) values ($1, 'presale', 0, $2, 'done', 1, '高', array[$3::uuid], array['CAD图纸'], 5, null, null, null), ($1, 'presale', 1, $4, 'done', 1, '高', array[$5::uuid], array['CAD图纸'], 1, null, null, null) returning id, version",
-      [projectA, "安装摄像头", owner, "机房布线", owner2],
+      "insert into tasks (project_id, stage_key, sort_index, title, status, progress, priority, owner_ids, deliverable_types, version, planned_start, planned_end, actual_end) values ($1, 'presale', 0, $2, 'done', 1, '高', array[$3::uuid], array['CAD图纸'], 5, null, null, null), ($6, 'presale', 1, $4, 'done', 1, '高', array[$5::uuid], array['CAD图纸'], 1, null, null, null) returning id, version",
+      [projectA, "安装摄像头", owner, "机房布线", owner2, projectB],
     );
     cleanup.taskIds = tasks.rows.map((row) => row.id);
     const taskA = cleanup.taskIds[0];
@@ -453,17 +682,30 @@ function buildEnv(overrides = {}) {
       [r02TaskAKey],
     );
     const notification1Row = notification1.rows[0] ?? null;
+    const delivery1 = await deliveriesFor(r02TaskAKey + ":aibot");
+    const activation1 = await activationFor(ownerUsername);
     check(
       "S1d",
-      "投递落库：notify.message 消费 → notifications 一行（inbox 落行；app 行经本回放注册表护栏 dead）",
-      "claimed=2 / done=1（inbox）+ dead=1（app 防御）/ 1 行 / delivered_at 非空 / source_topic=notify.message",
-      short({ ...drain2, rows: notification1.rows.length, delivered: notification1Row?.delivered_at !== null }),
+      "投递落库：notify.message 双行分流消费（inbox → notifications 一行；wecom_aibot → 读绑定行寻址（M5-03-5-6）→ 单聊发送（stub 应答 errcode=0）→ notify_deliveries sent 行）",
+      "claimed=2 / done=2 / notifications=1 行 / deliveries sent=1（channel=wecom_aibot · target=绑定行 wecom_userid = 责任人）/ 绑定行 user_id=责任人",
+      short({
+        ...drain2,
+        rows: notification1.rows.length,
+        delivered: notification1Row?.delivered_at !== null,
+        deliveries: delivery1,
+        activation: activation1 !== null,
+      }),
       drain2.claimed === 2 &&
-        drain2.done === 1 &&
-        drain2.dead === 1 &&
+        drain2.done === 2 &&
         notification1.rows.length === 1 &&
         notification1Row?.delivered_at !== null &&
-        notification1Row?.source_topic === "notify.message",
+        notification1Row?.source_topic === "notify.message" &&
+        delivery1.length === 1 &&
+        delivery1[0].channel === "wecom_aibot" &&
+        delivery1[0].state === "sent" &&
+        delivery1[0].target === ownerUsername &&
+        delivery1[0].sent_at !== null &&
+        activation1?.user_id === owner,
     );
     const inbox1 = await notify.list(owner, { page: 1, limit: 50 });
     check(
@@ -473,15 +715,32 @@ function buildEnv(overrides = {}) {
       short({ total: inbox1.total, unread: inbox1.unreadCount, ref: inbox1.items[0]?.refType }),
       inbox1.total === 1 && inbox1.unreadCount === 1 && inbox1.items[0]?.refType === "task",
     );
-    const appRow1 = await outboxRow(r02TaskAKey + ":app");
-    const appPayload1 = appRow1?.payload ?? {};
+    const aibotRow1 = await outboxRow(r02TaskAKey + ":aibot");
+    const appRow1After = await outboxRow(r02TaskAKey + ":app");
     check(
       "S1f",
-      "双行产出（M5-03-3）：R02 第二动作产 channel=wecom_app 行（:app 幂等键）；本回放注册表未接应用分支 → NotifyService 防御 dead（生产装配按 channel 分流，见 m5-03-3 回放）",
-      "app 行存在 / channel=wecom_app / status=dead / 产出 2 条 notify.message",
-      short({ appKey: appRow1 !== null, channel: appPayload1.channel, status: appRow1?.status, messages: await ourMessageCount() }),
-      appRow1 !== null && appPayload1.channel === "wecom_app" && appRow1?.status === "dead" && (await ourMessageCount()) === 2,
-    );    // --------------------------------- 证据二：冷启动保护（过旧拦截 / 新建对照）
+      "aibot 产出接线（M5-03-5-4）：R02 第二动作 wecom_aibot → :aibot 行（模板码 R02_WECOM · 收件人=责任人）且已分流消费为 done；无「渠道未落地」warn；同规则 inbox + aibot 双产行",
+      "aibot 行存在（status=done · channel=wecom_aibot · R02_WECOM）/ 无 :app 行 / 无渠道未落地 warn / notify.message=2",
+      short({
+        aibot: aibotRow1 !== null,
+        status: aibotRow1?.status,
+        channel: aibotRow1?.payload?.channel,
+        template: aibotRow1?.payload?.templateCode,
+        app: appRow1After !== null,
+        skipWarn: wiringLogs.warn.some((line) => line.includes("渠道未落地")),
+        messages: await ourMessageCount(),
+      }),
+      aibotRow1 !== null &&
+        aibotRow1.status === "done" &&
+        aibotRow1.payload?.channel === "wecom_aibot" &&
+        aibotRow1.payload?.templateCode === "R02_WECOM" &&
+        aibotRow1.payload?.recipientId === owner &&
+        appRow1After === null &&
+        !wiringLogs.warn.some((line) => line.includes("渠道未落地")) &&
+        (await ourMessageCount()) === 2,
+    );
+
+    // --------------------------------- 证据二：冷启动保护（过旧拦截 / 新建对照）
     await insertOutbox("task.completed", { taskId: taskB }, OUTBOX_PREFIX + tag + ".evt.cold", new Date(CLOCK_NOW.getTime() - EVENT_MAX_AGE_MS - HOUR_MS));
     const drain3 = await dispatcher.drainOnce();
     const coldRow = await outboxRow(OUTBOX_PREFIX + tag + ".evt.cold");
@@ -513,12 +772,19 @@ function buildEnv(overrides = {}) {
       drain4.claimed === 1 && drain4.done === 1 && freshProduced !== null && freshProduced.payload?.recipientId === owner2,
     );
     const drain4b = await dispatcher.drainOnce();
+    const deliveryB = await deliveriesFor(r02TaskBKey + ":aibot");
     check(
       "S2c",
-      "对照组落库：次责任人收件箱 1 条（inbox 落行；app 行防御 dead）",
-      "claimed=2 / done=1 + dead=1 / notifications=1 行",
-      short({ ...drain4b, rows: await notifyRowCount(r02TaskBKey) }),
-      drain4b.claimed === 2 && drain4b.done === 1 && drain4b.dead === 1 && (await notifyRowCount(r02TaskBKey)) === 1,
+      "对照组落库：次责任人收件箱 1 条 + aibot sent 行（inbox / aibot 双行分流消费）",
+      "claimed=2 / done=2 / notifications=1 行 / deliveries sent=1（channel=wecom_aibot · target=次责任人 userid）",
+      short({ ...drain4b, rows: await notifyRowCount(r02TaskBKey), deliveries: deliveryB }),
+      drain4b.claimed === 2 &&
+        drain4b.done === 2 &&
+        (await notifyRowCount(r02TaskBKey)) === 1 &&
+        deliveryB.length === 1 &&
+        deliveryB[0].state === "sent" &&
+        deliveryB[0].channel === "wecom_aibot" &&
+        deliveryB[0].target === owner2Username,
     );
 
     // ----------------------------------------- 证据三：主体不可解析 → dead
@@ -594,7 +860,7 @@ function buildEnv(overrides = {}) {
     );
     check(
       "S6b",
-      "job_runs 留痕：executed / fire_count=1 / produced=2（A01 inbox + wecom_app 双行）/ note 含主体数与双渠道计数",
+      "job_runs 留痕：executed / fire_count=1 / produced=2（A01 inbox + aibot 双产 · M5-03-5-4）/ note 含主体数与渠道计数",
       "1 行 / executed / produced=2 / note 含「主体 4」与「notify.message 2 条 / notify.group 0 条 / 未落地渠道跳过 0 条」",
       short(runs1),
       runs1.length === 1 &&
@@ -622,26 +888,50 @@ function buildEnv(overrides = {}) {
         String(a01Payload.body).includes("张江机房"),
     );
     const drain8 = await dispatcher.drainOnce();
+    const a01AibotRow = await outboxRow(a01Key + ":aibot");
+    const deliveryA01 = await deliveriesFor(a01Key + ":aibot");
     const inboxOwner = await notify.list(owner, { page: 1, limit: 50 });
     const ownerTemplates = inboxOwner.items.map((item) => item.templateCode).sort();
     check(
       "S6d",
-      "调度产出消费：A01 inbox 落行 / app 行防御 dead → 责任人收件箱共 2 条（R02 + A01）",
-      "claimed=2 / done=1 + dead=1 / total=2 / unreadCount=2 / 模板集命中",
-      short({ ...drain8, total: inboxOwner.total, unread: inboxOwner.unreadCount, templates: ownerTemplates }),
+      "调度产出消费：A01 双行分流（inbox 落行 → 责任人收件箱共 2 条；wecom_aibot → A01_WECOM_MERGED 行 sent）",
+      "claimed=2 / done=2 / total=2 / unreadCount=2 / 模板集命中 / deliveryA01 sent（target=责任人 userid）",
+      short({
+        ...drain8,
+        total: inboxOwner.total,
+        unread: inboxOwner.unreadCount,
+        templates: ownerTemplates,
+        aibotTemplate: a01AibotRow?.payload?.templateCode,
+        deliveries: deliveryA01,
+      }),
       drain8.claimed === 2 &&
-        drain8.done === 1 &&
-        drain8.dead === 1 &&
+        drain8.done === 2 &&
         inboxOwner.total === 2 &&
         inboxOwner.unreadCount === 2 &&
-        JSON.stringify(ownerTemplates) === JSON.stringify(["A01_INBOX_MERGED", "R02_INBOX"]),
+        JSON.stringify(ownerTemplates) === JSON.stringify(["A01_INBOX_MERGED", "R02_INBOX"]) &&
+        a01AibotRow?.payload?.templateCode === "A01_WECOM_MERGED" &&
+        a01AibotRow?.payload?.recipientId === owner &&
+        deliveryA01.length === 1 &&
+        deliveryA01[0].state === "sent" &&
+        deliveryA01[0].target === ownerUsername,
     );
     check(
       "S6e",
-      "渠道落地口径（证据九更新）：wecom_app 动作已落地为 :app 行、跳过计数归零（本回放无 email 产出）；产出消息数 = 7（R02 双行 + 对照组双行 + 护栏行 + A01 双行）",
-      "无「渠道未落地」warn / notify.message=7",
-      short({ warnHit: wiringLogs.warn.some((line) => line.includes("渠道未落地")), messages: await ourMessageCount() }),
-      wiringLogs.warn.some((line) => line.includes("渠道未落地")) === false && (await ourMessageCount()) === 7,
+      "渠道落地口径（证据九 · M5-03-5-4 接线段）：wecom_aibot 产出已接线（R02 ×2 + A01 ×1 = :aibot 行 3）且 stub 消费全 sent；无「渠道未落地」warn（channelSkipped=0 · 仅余 email）",
+      "渠道未落地 warn=0 / notify.message=7（aibot=3）/ deliveries sent=3 / activations=2",
+      short({
+        skipWarn: wiringLogs.warn.filter((line) => line.includes("渠道未落地")).length,
+        messages: await ourMessageCount(),
+        aibot: await ourAibotCount(),
+        deliveries: (await ourDeliveryRows()).map((row) => row.state),
+        activations: await activationCount(),
+      }),
+      wiringLogs.warn.filter((line) => line.includes("渠道未落地")).length === 0 &&
+        (await ourMessageCount()) === 7 &&
+        (await ourAibotCount()) === 3 &&
+        (await ourDeliveryRows()).length === 3 &&
+        (await ourDeliveryRows()).every((row) => row.state === "sent") &&
+        (await activationCount()) === 2,
     );
     // ------------------------------------- 证据八：同窗口重放（幂等键兜底不重发）
     await db.query(
@@ -673,6 +963,24 @@ function buildEnv(overrides = {}) {
     );
   } finally {
     try {
+      await restoreParkedJobs();
+      check(
+        "S9a",
+        "非本回放 pending job 原值恢复",
+        "恢复 " + cleanup.parkedJobs.length + " 条",
+        "已恢复",
+        true,
+      );
+    } catch (error) {
+      check(
+        "S9a",
+        "非本回放 pending job 原值恢复",
+        "恢复 " + cleanup.parkedJobs.length + " 条",
+        "恢复失败：" + messageOf(error),
+        false,
+      );
+    }
+    try {
       if (!cleanup.keep) {
         const userIds = cleanup.userIds;
         const produced = await db
@@ -680,14 +988,21 @@ function buildEnv(overrides = {}) {
           .catch(() => ({ rows: [] }));
         const keys = [...new Set([...cleanup.outboxKeys, ...produced.rows.map((row) => row.dedupe_key)])];
         if (keys.length > 0) {
+          cleanup.archiveKeys = keys;
+          await db.query("delete from notify_delivery_messages where source_dedupe_key = any($1::text[])", [keys]);
           await db.query("delete from notifications where source_dedupe_key = any($1::text[])", [keys]);
           await db.query("delete from outbox_events where dedupe_key = any($1::text[])", [keys]);
         }
         if (userIds.length > 0) {
           await db.query("delete from notifications where recipient_id = any($1::uuid[])", [userIds]);
+          await db.query("delete from notify_deliveries where target like $1", [USER_PREFIX + "%"]);
+          await db.query("delete from wecom_aibot_dm_activations where wecom_userid like $1", [USER_PREFIX + "%"]);
         }
         if (cleanup.jobIds.length > 0) {
           await db.query("delete from jobs where id = any($1::bigint[])", [cleanup.jobIds]);
+        }
+        if (replayRunKeys.size > 0) {
+          await db.query("delete from automation_runs where dedupe_key = any($1::text[])", [[...replayRunKeys]]);
         }
         if (cleanup.projectIds.length > 0) {
           await db.query("delete from project_members where project_id = any($1::uuid[])", [cleanup.projectIds]);
@@ -707,34 +1022,49 @@ function buildEnv(overrides = {}) {
       }
       const residueUsers = await db.query("select count(*)::int as n from users where username like $1", [USER_PREFIX + "%"]);
       const residueOutbox = await db.query("select count(*)::int as n from outbox_events where dedupe_key like $1", [OUTBOX_PREFIX + "%"]);
+      const residueArchives = await db.query("select count(*)::int as n from notify_delivery_messages where source_dedupe_key = any($1::text[])", [
+        cleanup.archiveKeys,
+      ]);
       const residueJobs = await db.query("select count(*)::int as n from jobs where payload->>'replay' = $1", [JOB_REPLAY_TAG]);
+      const residueRuns = await db.query("select count(*)::int as n from automation_runs where dedupe_key = any($1::text[])", [[...replayRunKeys]]);
       const residueMessages = cleanup.userIds.length === 0 ? 0 : await ourMessageCount();
       const residueNotifications =
         cleanup.userIds.length === 0
           ? 0
           : (await db.query("select count(*)::int as n from notifications where recipient_id = any($1::uuid[])", [cleanup.userIds])).rows[0].n;
+      const residueDeliveries = (await ourDeliveryRows()).length;
+      const residueActivations = await activationCount();
       check(
         "S9",
-        "自清理：合成前缀 / 实体零残留（--keep 时保留现场、仅留痕）",
-        cleanup.keep ? "keep=true（不清理）" : "users=0 / outbox=0 / jobs=0 / notifications=0",
+        "自清理：合成前缀 / 实体 / 运行记录零残留（--keep 时保留现场、仅留痕）",
+        cleanup.keep ? "keep=true（不清理）" : "users=0 / outbox=0 / archives=0 / jobs=0 / runs=0 / notifications=0 / deliveries=0 / activations=0",
         short({
           users: residueUsers.rows[0].n,
           outbox: residueOutbox.rows[0].n,
+          archives: residueArchives.rows[0].n,
           jobs: residueJobs.rows[0].n,
+          runs: residueRuns.rows[0].n,
           messages: residueMessages,
           notifications: residueNotifications,
+          deliveries: residueDeliveries,
+          activations: residueActivations,
           keep: cleanup.keep,
         }),
         cleanup.keep ||
           (residueUsers.rows[0].n === 0 &&
             residueOutbox.rows[0].n === 0 &&
+            residueArchives.rows[0].n === 0 &&
             residueJobs.rows[0].n === 0 &&
+            residueRuns.rows[0].n === 0 &&
             residueMessages === 0 &&
-            residueNotifications === 0),
+            residueNotifications === 0 &&
+            residueDeliveries === 0 &&
+            residueActivations === 0),
       );
     } catch (error) {
       check("S9", "自清理：合成前缀 / 实体零残留", "清理成功", "清理失败：" + messageOf(error), false);
     }
+    await dmAibot.stop().catch(() => {});
     await db.end().catch(() => {});
   }
 }
@@ -744,7 +1074,7 @@ function writeReports() {
   if (args.out !== undefined) {
     writeFileSync(
       args.out,
-      "# S7-4 · M5-02 接线段 真机回放证据（事件消费 + 调度产出 → notify.message）\n\n" +
+      "# S7-4 · M5-02 接线段 真机回放证据（事件消费 + 调度产出 → notify.message · M5-03-5-4 aibot 产出 / 分流消费）\n\n" +
         "| 结果 | 编号 | 断言 | 期望 | 实际 | 备注 |\n|---|---|---|---|---|---|\n" +
         report.join("\n") +
         "\n\n" + summary + "\n\n锚点：" + short(evidence.anchors) + "\n",

@@ -468,18 +468,25 @@ describe("会话后端化 /auth/*（g6 验收：可登录 / 可登出 / 超时�
     await context.close();
   });
 
-  it("登出：撤销本地会话并 302 Casdoor 单点登出（携 id_token_hint），旧 Cookie 失效", async () => {
+  it("登出：撤销本地会话并 302 Casdoor 单点登出（携 id_token_hint + 已登记回跳地址），旧 Cookie 失效", async () => {
     const context = await createApp(30);
     const { session } = await completeLogin(context);
     const response = await context.agent.get("/auth/logout").set("Cookie", cookieHeader({ ll_sid: session })).expect(302);
     const location = new URL(String(response.headers["location"]));
     expect(location.pathname).toBe("/api/logout");
     expect(location.searchParams.get("client_id")).toBe(CLIENT_ID);
-    expect(location.searchParams.get("post_logout_redirect_uri")).toBe("http://127.0.0.1:3999/");
+    expect(location.searchParams.get("post_logout_redirect_uri")).toBe(REDIRECT_URI);
     expect((location.searchParams.get("id_token_hint") ?? "").split(".")).toHaveLength(3);
     expect(setCookiesOf(response).some((cookie) => cookie.startsWith("ll_sid=") && cookie.includes("Max-Age=0"))).toBe(true);
     const me = await context.agent.get("/auth/me").set("Cookie", cookieHeader({ ll_sid: session })).expect(401);
     expect(me.body.code).toBe("AUTH_REQUIRED");
+    await context.close();
+  });
+
+  it("登出回跳：/auth/callback 无 code / state / error 时 302 回站点首页（/）", async () => {
+    const context = await createApp(30);
+    const response = await context.agent.get("/auth/callback").expect(302);
+    expect(response.headers["location"]).toBe("/");
     await context.close();
   });
 

@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { saveBackgroundTier, saveCardWatermark } from "./preferencesApi";
+import { getLocale, textOf } from "./i18n";
 
 /**
  * 背景档位（业务口径 2026-10-13「在这旁边增加一个背景下拉选择 先做弹出框 分为三个档位
@@ -21,7 +22,9 @@ import { saveBackgroundTier, saveCardWatermark } from "./preferencesApi";
  * 单键 PATCH `user_preferences.prefs.backgroundTier`（业务口径 2026-10-13「当前背景选择后刷新就没了 要按账号记住」；
  * 与常用筛选 / 工作台展开态同一条偏好通道，跨设备同账号可见；失败回滚 + 顶部 Toast 出文案）。
  * Push 292 追加**卡片水印开关**（业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」）：同一条偏好通道的
- * `cardWatermark`（默认 true = 项目卡片右下角国家名水印显示；顶栏背景菜单第四行 toggle，关 = 卡片不渲染水印）。
+ * `cardWatermark`（顶栏背景菜单第四行 toggle，关 = 卡片不渲染水印）。
+ * Push 313（业务口径 2026-10-14「把系统当前所有人的背景改成适中 无水印 这个设成默认的」）：**默认档 simple → medium、
+ * 水印默认 true → false**（新账号 / 无记录 = 适中 + 无水印；存量账号由迁移 0049 统一回填），设置菜单里用户仍可自行切换。
  */
 export type BackgroundTier = "simple" | "medium" | "vivid";
 
@@ -31,9 +34,10 @@ export const BG_TIERS: Array<{ key: BackgroundTier; label: string }> = [
   { key: "vivid", label: "炫彩" },
 ];
 
-let currentTier: BackgroundTier = "simple";
-/** 卡片水印开关（Push 292）：true = 项目卡片右下角国家名水印显示（默认）/ false = 隐藏。 */
-let currentWatermark = true;
+/** 默认档（Push 313 起 = 适中；无记录 / 坏值同口径回落，见 asBackgroundTier）。 */
+let currentTier: BackgroundTier = "medium";
+/** 卡片水印开关（Push 292 新增 · Push 313 起默认 false）：true = 项目卡片右下角国家名水印显示 / false = 隐藏（默认，无水印）。 */
+let currentWatermark = false;
 const listeners = new Set<() => void>();
 
 /** 订阅变更（档位与水印共用一套订阅：任一偏好变化都通知两边重读各自快照）。 */
@@ -44,9 +48,9 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
-/** 运行期兜底（老服务端混布 / 坏值）：白名单外一律落默认 simple。 */
+/** 运行期兜底（老服务端混布 / 坏值）：白名单外一律落默认 medium（Push 313 起）。 */
 export function asBackgroundTier(value: unknown): BackgroundTier {
-  return value === "medium" || value === "vivid" ? value : "simple";
+  return value === "simple" || value === "vivid" ? value : "medium";
 }
 
 export function getBackgroundTier(): BackgroundTier {
@@ -81,7 +85,7 @@ export async function selectBackgroundTier(next: BackgroundTier): Promise<string
   setTierInternal(next);
   try {
     const prefs = await saveBackgroundTier(next);
-    // 服务端未回该键（服务端仍是旧构建的混布窗口）时保持乐观值，不被 undefined 冲回 simple
+    // 服务端未回该键（服务端仍是旧构建的混布窗口）时保持乐观值，不被 undefined 冲回默认档
     if (currentTier === next && typeof prefs.backgroundTier === "string") {
       setTierInternal(asBackgroundTier(prefs.backgroundTier));
     }
@@ -90,7 +94,7 @@ export async function selectBackgroundTier(next: BackgroundTier): Promise<string
     if (currentTier === next) {
       setTierInternal(previous);
     }
-    return "背景档位保存失败";
+    return textOf(getLocale(), "header.bg.saveFailed");
   }
 }
 
@@ -99,9 +103,9 @@ export function useBackgroundTier(): BackgroundTier {
   return useSyncExternalStore(subscribe, getBackgroundTier);
 }
 
-/** 运行期兜底（老服务端混布 / 坏值）：只有严格 false 算关闭，缺键 / 其它一律回默认 true。 */
+/** 运行期兜底（老服务端混布 / 坏值）：只有严格 true 算开启，缺键 / 其它一律回默认 false（Push 313 起）。 */
 export function asCardWatermark(value: unknown): boolean {
-  return value !== false;
+  return value === true;
 }
 
 export function getCardWatermark(): boolean {
@@ -144,7 +148,7 @@ export async function selectCardWatermark(next: boolean): Promise<string | null>
     if (currentWatermark === next) {
       setWatermarkInternal(previous);
     }
-    return "水印设置保存失败";
+    return textOf(getLocale(), "header.bg.watermarkSaveFailed");
   }
 }
 

@@ -1,11 +1,12 @@
 /**
- * 企微限速桶回归（M5-03-1 · S8-1；M5-03-2 扩多窗口）：窗口计数 / 拒绝与 retryAt（取被拒窗口最大值）/
- * 跨窗口重置 / 桶隔离 / 同 kind 多窗口同起点不互污 / 0=未启用 / 桶键摘要（chatid）。
+ * 企微限速桶回归（M5-03-1 · S8-1；M5-03-2 扩多窗口；M5-03-5-3 扩 single kind）：窗口计数 / 拒绝与 retryAt
+ * （取被拒窗口最大值）/ 跨窗口重置 / 桶隔离 / 同 kind 多窗口同起点不互污 / 0=未启用 / 桶键摘要（chatid / userid）。
  */
 import { describe, expect, it, vi } from "vitest";
 import {
   chatBucketId,
   InMemoryRateWindowStore,
+  userBucketId,
   WECOM_BOT_WINDOW_PER_HOUR_MS,
   WECOM_BOT_WINDOW_PER_MINUTE_MS,
   WecomRateLimiter,
@@ -110,6 +111,25 @@ describe("企微限速桶（M5-03-1 · S8-1；M5-03-2 多窗口）", () => {
     expect(decision.ok).toBe(true);
     expect(decision.windows).toEqual([{ windowMs: MINUTE_MS, windowStartMs: 0, limit: 0, count: 0 }]);
     expect(store.consume).not.toHaveBeenCalled();
+  });
+
+  it("single kind：与群 / 应用桶按 kind 隔离、按摘要独立计数（单聊限速桶）", async () => {
+    const { limiter } = makeLimiter([
+      { kind: "group", windowMs: MINUTE_MS, limit: 1 },
+      { kind: "single", windowMs: MINUTE_MS, limit: 1 },
+    ]);
+    expect((await limiter.tryConsume("single", "u1", 0)).ok).toBe(true);
+    expect((await limiter.tryConsume("single", "u1", 0)).ok).toBe(false); // 同桶第 2 次拒绝
+    expect((await limiter.tryConsume("single", "u2", 0)).ok).toBe(true); // 不同 userid 摘要隔离
+    expect((await limiter.tryConsume("group", "u1", 0)).ok).toBe(true); // 群 / 单聊同摘要不互污（kind 前缀隔离）
+  });
+
+  it("userBucketId：与 chatBucketId 同摘要口径（12 位十六进制，不含 userid 明文）", () => {
+    const userid = "zhangsan.wang";
+    expect(userBucketId(userid)).toBe(userBucketId(userid));
+    expect(userBucketId(userid)).toBe(chatBucketId(userid));
+    expect(userBucketId(userid)).toMatch(/^[0-9a-f]{12}$/);
+    expect(userBucketId(userid)).not.toContain("zhangsan");
   });
 
   it("chatBucketId：确定性 12 位十六进制摘要，不含 chatid 明文", () => {

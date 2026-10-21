@@ -6,39 +6,46 @@
  *   toReportMemberSubject）在 automation 模块内（wmj 线）—— 本层只负责读库与快照组装，不算「应发给谁」。
  *
  * 读面（全部只读；接线层不写业务表）：
- *   - 任务类（R02 ~ R07）：tasks + projects（经理 / 完成度）+ users（姓名）+ files（件数）+ wecom_groups（群绑定）；
+ *   - 任务类（R02 ~ R05 / R07）：tasks + projects（经理 / 完成度）+ users（姓名）+ files（件数）+ wecom_groups（群绑定）；
+ *   - 项目完成（R06）：projects（状态 / 群绑定）—— 由 project.completed 事件触发；
  *   - 日报名册槽位（A01）：projects（在办）× project_members（名册）× daily_reports（当日提交）× 工作日历；
- *   - 项目日报（A02 · 接线段 Push 224）：daily_reports（按项目 × 业务日聚合）+ projects + users（作者姓名）+ wecom_groups。
+ *   - 项目日报（A02 · 接线段 Push 224）：daily_reports（按项目 × 业务日聚合）+ projects + users（作者姓名）+ wecom_groups；
+ *   - 自定义待办（A14 · M5-06-3）：todos（未完成条件由引擎求值）+ users（提醒对象姓名），按重复规则在窗口内逐日展开。
  *
  * 口径与差异（README / PR 同步登记）：
  *   - actual_start：无库列 → 恒 null（R04 的「尚未实际开始」条件据此恒真，待实际开始字段落地后收口）；
  *   - project.group：读 `wecom_groups`（enabled = 启用态）—— 一期寻址键 = projectId（一项目一群：投递层按项目 id 解析
  *     chatid 绑定，换绑后未投递消息仍可送出）；未绑定 / 已停用 → null（引擎按 recipient_missing 收口：不产出不误发）；
- *   - project.progress：读时派生完成率（项目内未删任务 status=done 占比，四舍五入取整；无任务 = 0）—— 供 R06；
+ *   - project.progress：读时派生完成率（项目内未删任务 status=done 占比，四舍五入取整；无任务 = 0）—— 任务主体保留字段；
  *   - task.urgency：直接透传 tasks.priority（三档「高 / 中 / 低」）；R07 条件已按三档定案（高 + 中命中 · wmj · Push 171）；
  *   - task.file_count：与任务详情「文件摘要」同口径（draft / final / changed / archived，排除回收站）；
  *   - A02（project_day）已产主体（接线段 Push 224）：项目 × 业务日聚合（entryCount / headcountTotal / issueCount /
  *     summaryText —— 与 reports/summary 数据面同口径：draft 之外一律算已提交；条目按提交时刻升序，逐条「作者：当日完成工作」换行拼接）；
- *     A14（todos 表未落）本层仍不产主体 —— 登记差异，随待办表落地补。
+ *     A14 已产主体（M5-06-3 · 2026-10-20）：todos 按 `remind_at` + `repeat_rule` 展开为逐次提醒日；多人提醒对象
+ *     逐人展开，多个对象时 entityId = `<todoId>:<memberId>`，保证引擎幂等键 / outbox 键不串人。
  *
  * 边界：窗口主体池排除软删项目 / 任务与归档项目（归档 = 冻结，不再提醒）；事件形态按事件载荷的实体 id 直读
  * （含软删行 —— 事件发生在删除前，快照仍可求值），行不存在 → null（消费侧按确定性失败收口）。
  */
 import { Injectable } from "@nestjs/common";
-import type { RuleEventTopic } from "@libiaolink/contracts";
-import { and, count, eq, inArray, isNull, ne } from "drizzle-orm";
+import { STAGE_NAMES, type RuleEventTopic } from "@libiaolink/contracts";
+import { and, asc, count, eq, gt, gte, inArray, isNull, lt, ne, or } from "drizzle-orm";
 import type { DbClient } from "../db/db-client.js";
 import { DatabaseService } from "../db/database.service.js";
 import { files } from "../db/schema/files.js";
 import { users } from "../db/schema/identity.js";
 import { wecomGroups } from "../db/schema/notify.js";
-import { projectMembers, projects } from "../db/schema/projects.js";
+import { projectMembers, projects, projectStages } from "../db/schema/projects.js";
 import { dailyReports } from "../db/schema/reports.js";
 import { tasks } from "../db/schema/tasks.js";
+import { todos } from "../db/schema/todos.js";
 import {
   toProjectDaySubject,
+  toProjectSubject,
   toReportMemberSubject,
+  toStageSubject,
   toTaskSubject,
+  toTodoSubject,
   type ReplaySubject,
   type ReplayTask,
 } from "../modules/automation/index.js";
@@ -64,10 +71,47 @@ function businessDateOf(at: Date): string {
   return new Date(at.getTime() + SHANGHAI_OFFSET_MS).toISOString().slice(0, 10);
 }
 
+/** ISO 日期（YYYY-MM-DD）的星期（0 = 周日；按 UTC 日历日计算，不引入时区）。 */
+function weekdayOf(date: string): number {
+  return new Date(date + "T00:00:00Z").getUTCDay();
+}
+
+/**
+ * A14 重复规则求值（纯函数 · M5-06-3）：某业务日是否为待办的提醒日。
+ * none = 仅首次提醒日；daily = 每日；weekly = 每周同星期；monthly = 每月同日（短月无该日则跳过该月）；
+ * repeat_until 含当日；未知规则 fail closed（false）。业务日按 Asia/Shanghai 折算（ADR-028）。
+ */
+export function todoOccursOn(
+  todo: { remindAt: Date; repeatRule: string; repeatUntil: string | null },
+  date: string,
+): boolean {
+  const startDate = businessDateOf(todo.remindAt);
+  if (date < startDate) return false;
+  if (todo.repeatUntil !== null && date > todo.repeatUntil) return false;
+  switch (todo.repeatRule) {
+    case "none":
+      return date === startDate;
+    case "daily":
+      return true;
+    case "weekly":
+      return weekdayOf(date) === weekdayOf(startDate);
+    case "monthly":
+      return date.slice(8, 10) === startDate.slice(8, 10);
+    default:
+      return false;
+  }
+}
+
 /** 事件载荷取字符串字段（缺 / 空 = null）。 */
 function stringField(payload: Record<string, unknown>, key: string): string | null {
   const value = payload[key];
   return typeof value === "string" && value !== "" ? value : null;
+}
+
+/** 事件载荷取数字字段（缺 / 非有限数 = null）。 */
+function numberField(payload: Record<string, unknown>, key: string): number | null {
+  const value = payload[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 /** 闭区间业务日列表（YYYY-MM-DD，按 UTC 日算术 —— 与 calendar 的 addDays 同口径）。 */
@@ -140,6 +184,30 @@ interface TaskSubjectRow {
   projectId: string;
 }
 
+/** todos 行（A14 主体所需列）。 */
+interface TodoSubjectRow {
+  id: string;
+  title: string;
+  content: string | null;
+  status: string;
+  remindAt: Date;
+  repeatRule: string;
+  repeatUntil: string | null;
+  reminderUserIds: string[];
+}
+
+/** todos 主体列（与 TodoSubjectRow 同口径）。 */
+const TODO_SUBJECT_COLUMNS = {
+  id: todos.id,
+  title: todos.title,
+  content: todos.content,
+  status: todos.status,
+  remindAt: todos.remindAt,
+  repeatRule: todos.repeatRule,
+  repeatUntil: todos.repeatUntil,
+  reminderUserIds: todos.reminderUserIds,
+} as const;
+
 /** tasks 主体列（与 TaskSubjectRow 同口径）。 */
 const TASK_SUBJECT_COLUMNS = {
   id: tasks.id,
@@ -165,9 +233,9 @@ export class AutomationSubjectReader {
   ) {}
 
   /**
-   * 事件主体：task.* → 任务主体（payload.taskId）。
-   * 其余规则主题（change.applied / node.completed / report.submitted / issue.updated —— issue 事件无订阅规则）
-   * 暂无事件型规则与主体映射 → null
+   * 事件主体：task.* → 任务主体（payload.taskId）；project.completed → 项目主体（payload.projectId）；
+   * stage.advanced → 阶段主体（payload.projectId + stageKey）。
+   * 其余规则主题（change.applied / node.completed / report.submitted / issue.updated）暂无事件型规则与主体映射 → null
    * （消费侧对「无规则订阅」直接消费完成；新增订阅时在此补映射）。
    */
   async eventSubject(
@@ -180,14 +248,134 @@ export class AutomationSubjectReader {
       const taskId = stringField(payload, "taskId");
       if (taskId === null) return null;
       const rows = await client.select(TASK_SUBJECT_COLUMNS).from(tasks).where(eq(tasks.id, taskId)).limit(1);
-      const subjects = await this.buildTaskSubjects(rows, at, client);
+      const subjects = await this.buildTaskSubjects(rows, at, client, stringField(payload, "actorId"));
       return subjects.get(taskId) ?? null;
     }
+    if (topic === "project.completed") return await this.projectSubject(payload, client);
+    if (topic === "stage.advanced") return await this.stageSubject(payload, client);
     return null;
   }
 
   /**
-   * 窗口主体包（调度形态）：任务池 + 窗口内每个业务日的日报名册槽位 + 工作日历窗口。
+   * 试运行主体（M5-06-1B）：管理面只给 entityId，不重放 outbox 载荷。
+   * task.* → 任务行 id；project.completed → 项目行 id；stage.advanced → 项目阶段行 id。
+   * 其他主题暂无事件型主体映射 → null（由 service 转 404）。
+   */
+  async subjectById(
+    topic: RuleEventTopic,
+    entityId: string,
+    at: Date,
+    client: DbClient = this.database.db,
+  ): Promise<ReplaySubject | null> {
+    if (topic.startsWith("task.")) {
+      return this.eventSubject(topic, { taskId: entityId }, at, client);
+    }
+    if (topic === "project.completed") {
+      return this.projectSubject({ projectId: entityId }, client);
+    }
+    if (topic === "stage.advanced") {
+      const stageRows = await client
+        .select({
+          projectId: projectStages.projectId,
+          stageKey: projectStages.stageKey,
+          seq: projectStages.seq,
+          version: projectStages.version,
+          advancedBy: projectStages.advancedBy,
+        })
+        .from(projectStages)
+        .where(eq(projectStages.id, entityId))
+        .limit(1);
+      const stage = stageRows[0];
+      if (stage === undefined) return null;
+      const nextRows = await client
+        .select({ stageKey: projectStages.stageKey })
+        .from(projectStages)
+        .where(and(eq(projectStages.projectId, stage.projectId), gt(projectStages.seq, stage.seq)))
+        .orderBy(asc(projectStages.seq))
+        .limit(1);
+      return this.eventSubject(
+        topic,
+        {
+          projectId: stage.projectId,
+          stageKey: stage.stageKey,
+          stageVersion: stage.version,
+          nextStageKey: nextRows[0]?.stageKey ?? null,
+          ...(stage.advancedBy === null ? {} : { actorId: stage.advancedBy }),
+        },
+        at,
+        client,
+      );
+    }
+    return null;
+  }
+
+  /** R06 项目完成事件主体：读项目状态 / 版本 / 项目群绑定，组装为 project 主体。 */
+  private async projectSubject(payload: Record<string, unknown>, client: DbClient): Promise<ReplaySubject | null> {
+    const projectId = stringField(payload, "projectId");
+    if (projectId === null) return null;
+    const rows = await client
+      .select({ id: projects.id, code: projects.code, name: projects.name, status: projects.status, version: projects.version })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    const project = rows[0];
+    if (project === undefined) return null;
+    const groupProjectIds = await this.enabledGroupProjectIds([projectId], client);
+    return toProjectSubject({
+      projectId: project.id,
+      projectCode: project.code,
+      projectName: project.name,
+      projectStatus: project.status,
+      projectVersion: numberField(payload, "version") ?? project.version,
+      groupId: groupProjectIds.has(projectId) ? projectId : null,
+    });
+  }
+
+  /** A08 阶段事件主体：读阶段 / 项目 / 推进人 / 项目群绑定，组装为 stage 主体。 */
+  private async stageSubject(payload: Record<string, unknown>, client: DbClient): Promise<ReplaySubject | null> {
+    const projectId = stringField(payload, "projectId");
+    const stageKey = stringField(payload, "stageKey");
+    if (projectId === null || stageKey === null) return null;
+    const stageRows = await client
+      .select({
+        id: projectStages.id,
+        stageKey: projectStages.stageKey,
+        version: projectStages.version,
+      })
+      .from(projectStages)
+      .where(and(eq(projectStages.projectId, projectId), eq(projectStages.stageKey, stageKey)))
+      .limit(1);
+    const stage = stageRows[0];
+    if (stage === undefined) return null;
+    const projectRows = await client
+      .select({ id: projects.id, code: projects.code, name: projects.name })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    const project = projectRows[0];
+    if (project === undefined) return null;
+    const actorId = stringField(payload, "actorId");
+    const nameById = await this.userNames(actorId === null ? [] : [actorId], client);
+    const groupProjectIds = await this.enabledGroupProjectIds([projectId], client);
+    const nextStageKey = stringField(payload, "nextStageKey");
+    const stageNames = STAGE_NAMES as Record<string, string>;
+    return toStageSubject({
+      stageId: stage.id,
+      stageKey: stage.stageKey,
+      stageName: stageNames[stage.stageKey] ?? stage.stageKey,
+      stageVersion: numberField(payload, "stageVersion") ?? stage.version,
+      nextStageKey,
+      nextStageName: nextStageKey === null ? "项目流程已完成" : (stageNames[nextStageKey] ?? nextStageKey),
+      advancedByName: actorId === null ? "未知用户" : (nameById.get(actorId) ?? "未知用户"),
+      projectId: project.id,
+      projectCode: project.code,
+      projectName: project.name,
+      groupId: groupProjectIds.has(projectId) ? projectId : null,
+    });
+  }
+
+  /**
+   * 窗口主体包（调度形态）：任务池 + 窗口内每个业务日的日报名册槽位 + 项目日报 + 待办提醒日 + 工作日历窗口。
    * 说明：planWindowMessages 逐业务日求值，槽位需覆盖窗口内每个业务日（A01 的 report.date 基准）；
    *   任务主体为「当前快照」，触发日由基准字段折算出窗口命中（fireAtWithin 过滤）。
    */
@@ -204,6 +392,7 @@ export class AutomationSubjectReader {
       ...(await this.allTaskSubjects(at, client)),
       ...(await this.reportSlotSubjects(dates, calendar, client)),
       ...(await this.projectDaySubjects(dates, client)),
+      ...(await this.todoSubjects(dates, client)),
     ];
     return { subjects, calendar };
   }
@@ -282,16 +471,17 @@ export class AutomationSubjectReader {
     rows: readonly TaskSubjectRow[],
     at: Date,
     client: DbClient,
+    actorId: string | null = null,
   ): Promise<Map<string, ReplaySubject>> {
     const result = new Map<string, ReplaySubject>();
     if (rows.length === 0) return result;
     const today = shanghaiToday(at);
     const projectIds = [...new Set(rows.map((row) => row.projectId))];
     const projectRows = await client
-      .select({ id: projects.id, managerIds: projects.managerIds })
+      .select({ id: projects.id, code: projects.code, name: projects.name, managerIds: projects.managerIds })
       .from(projects)
-      .where(inArray(projects.id, projectIds));
-    const managerByProject = new Map(projectRows.map((row) => [row.id, row.managerIds[0] ?? null]));
+      .where(and(inArray(projects.id, projectIds), isNull(projects.deletedAt)));
+    const projectById = new Map(projectRows.map((row) => [row.id, row]));
     const groupProjectIds = await this.enabledGroupProjectIds(projectIds, client);
     const progressByProject = await this.projectProgress(projectIds, client);
     const nameIds = new Set<string>();
@@ -299,15 +489,20 @@ export class AutomationSubjectReader {
       const ownerId = row.ownerIds[0];
       if (ownerId !== undefined) nameIds.add(ownerId);
     }
-    for (const managerId of managerByProject.values()) {
-      if (managerId !== null) nameIds.add(managerId);
+    for (const project of projectRows) {
+      const managerId = project.managerIds[0];
+      if (managerId !== undefined) nameIds.add(managerId);
     }
+    if (actorId !== null) nameIds.add(actorId);
     const nameById = await this.userNames([...nameIds], client);
     const fileCountByTask = await this.taskFileCounts(rows.map((row) => row.id), client);
     for (const row of rows) {
+      // 项目已进回收站 / 已删除：丢弃迟到事件，避免继续生成提醒。
+      const project = projectById.get(row.projectId);
+      if (project === undefined) continue;
       // 多负责人只取首位（数组顺序 = 展示顺序）：单收件人口径随 M5-06 定案（README 登记）。
       const ownerId = row.ownerIds[0] ?? null;
-      const managerId = managerByProject.get(row.projectId) ?? null;
+      const managerId = project.managerIds[0] ?? null;
       const snapshot: ReplayTask = {
         id: row.id,
         title: row.title,
@@ -330,7 +525,10 @@ export class AutomationSubjectReader {
         managerId,
         managerName: managerId === null ? null : (nameById.get(managerId) ?? null),
         projectId: row.projectId,
+        projectCode: project.code,
+        projectName: project.name,
         projectProgress: progressByProject.get(row.projectId) ?? 0,
+        completedByName: actorId === null ? null : (nameById.get(actorId) ?? "未知用户"),
         projectGroupId: groupProjectIds.has(row.projectId) ? row.projectId : null,
         deliverableTypes: row.deliverableTypes,
         fileCount: fileCountByTask.get(row.id) ?? 0,
@@ -408,7 +606,70 @@ export class AutomationSubjectReader {
     }
     return subjects;
   }
-  /** 项目完成度（R06 的 project.progress）：未删任务 status=done 占比四舍五入取整；无任务 = 0。 */
+
+  /**
+   * 待办主体池（A14）：窗口内按 `repeat_rule` 展开为逐次提醒日 × 提醒对象。
+   * 已删除用户（数组元素无 FK）不产主体；提醒对象全部不可用时产一条无收件人主体，由引擎留 recipient_missing。
+   * 多个提醒对象时 entityId 编入成员 id，幂等键 = `A14:<待办 id>:<成员 id>:<提醒日>`；单对象保持 `A14:<待办 id>:<提醒日>`。
+   */
+  private async todoSubjects(dates: readonly string[], client: DbClient): Promise<ReplaySubject[]> {
+    const subjects: ReplaySubject[] = [];
+    const firstDate = dates[0];
+    const lastDate = dates[dates.length - 1];
+    if (firstDate === undefined || lastDate === undefined) return subjects;
+    // 窗口末日 24:00 Asia/Shanghai 的排他上界（不依赖运行机时区）。
+    const endExclusive = new Date(lastDate + "T23:59:59.999+08:00");
+    endExclusive.setTime(endExclusive.getTime() + 1);
+    const rows = await client
+      .select(TODO_SUBJECT_COLUMNS)
+      .from(todos)
+      .where(
+        and(
+          lt(todos.remindAt, endExclusive),
+          or(isNull(todos.repeatUntil), gte(todos.repeatUntil, firstDate)),
+        ),
+      )
+      .orderBy(asc(todos.remindAt), asc(todos.id));
+    if (rows.length === 0) return subjects;
+    const allMemberIds = [...new Set(rows.flatMap((row) => row.reminderUserIds))];
+    const nameById = await this.userNames(allMemberIds, client);
+    for (const row of rows as TodoSubjectRow[]) {
+      const members = [...new Set(row.reminderUserIds)].filter((memberId) => nameById.has(memberId));
+      for (const date of dates) {
+        if (!todoOccursOn(row, date)) continue;
+        if (members.length === 0) {
+          subjects.push(
+            toTodoSubject({
+              todoId: row.id,
+              title: row.title,
+              content: row.content,
+              status: row.status,
+              remindDate: date,
+              memberId: "",
+              memberName: null,
+            }),
+          );
+          continue;
+        }
+        for (const memberId of members) {
+          subjects.push(
+            toTodoSubject({
+              todoId: row.id,
+              entityId: members.length > 1 ? row.id + ":" + memberId : row.id,
+              title: row.title,
+              content: row.content,
+              status: row.status,
+              remindDate: date,
+              memberId,
+              memberName: nameById.get(memberId) ?? null,
+            }),
+          );
+        }
+      }
+    }
+    return subjects;
+  }
+  /** 项目完成度（任务主体的 project.progress）：未删任务 status=done 占比四舍五入取整；无任务 = 0。 */
   private async projectProgress(projectIds: readonly string[], client: DbClient): Promise<Map<string, number>> {
     const result = new Map<string, number>();
     if (projectIds.length === 0) return result;

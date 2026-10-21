@@ -14,10 +14,6 @@ export type DirectoryUser = {
   status: string;
 };
 
-
-/** 目录一次拉满（契约限 200）。 */
-export const DIRECTORY_LIMIT = 200;
-
 export async function loadDirectory(): Promise<DirectoryUser[]> {
   const payload = await readAllPages<DirectoryUser>("/api/v1/users");
   return payload.items;

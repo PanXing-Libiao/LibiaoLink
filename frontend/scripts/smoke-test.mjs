@@ -206,6 +206,10 @@ async function main() {
   check("登出 302", logoutResponse.status === 302, String(logoutResponse.status));
   const logoutLocation = logoutResponse.headers.get("location") ?? "";
   check("登出跳 Casdoor 单点登出（带 id_token_hint）", logoutLocation.includes("/api/logout") && logoutLocation.includes("id_token_hint="), logoutLocation.slice(0, 100));
+  const logoutRedirectUri = new URL(logoutLocation).searchParams.get("post_logout_redirect_uri") ?? "";
+  check("登出回跳复用已登记回调地址（= 登录 redirect_uri）", logoutRedirectUri === redirectUri, logoutRedirectUri);
+  const landingResponse = await fetch(FRONTEND + "/auth/callback", { redirect: "manual" });
+  check("无参数 /auth/callback（单点登出回跳）302 回首页", landingResponse.status === 302 && landingResponse.headers.get("location") === "/", String(landingResponse.status) + " " + (landingResponse.headers.get("location") ?? ""));
   check("登出清理会话 Cookie（ll_sid / ll_csrf）", !jar.has("ll_sid") && !jar.has("ll_csrf"));
   const afterLogout = await fetch(FRONTEND + "/auth/me", { headers: { Cookie: cookieHeader() } });
   check("登出后 /auth/me 401", afterLogout.status === 401, String(afterLogout.status));

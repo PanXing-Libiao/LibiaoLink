@@ -1,6 +1,6 @@
 /**
- * 企微错误分类回归（M5-03-1 · S8-1；M5-03-2 群通道码表切换为智能机器人）：errcode 表（app / group）、
- * 846607 双语义分流、HTTP 状态兜底、网络错误描述掩码。
+ * 企微错误分类回归（M5-03-1 · S8-1；M5-03-2 群通道码表切换为智能机器人；M5-03-5-3 扩单聊 aibot）：
+ * errcode 表（app / group / aibot）、846607 双语义分流、HTTP 状态兜底、网络错误描述掩码。
  * 口径：docs/M5-03-实施方案(企微通道).md §五（5.3A Spike 实测码表）；错误码集合为初始集（M5-03-4 锁定的回归基线；93001 移出群已锁 · T3-6 2026-10-13）。
  */
 import { describe, expect, it } from "vitest";
@@ -42,6 +42,24 @@ describe("企微错误分类（M5-03-1 · S8-1）", () => {
     expect(classifyWecomErrcode("wecom_group", 846607, { groupActivated: true })).toBe("rate_limited");
     expect(classifyWecomErrcode("wecom_group", 846607, { groupActivated: null })).toBe("rate_limited");
     expect(classifyWecomErrcode("wecom_group", 846607)).toBe("rate_limited");
+  });
+
+  it("aibot（单聊）：846607 双语义按激活表命中态分流（false = 未命中 → permanent；true / 缺省 → rate_limited）", () => {
+    expect(classifyWecomErrcode("wecom_aibot", 846607, { dmActivated: false })).toBe("permanent");
+    expect(classifyWecomErrcode("wecom_aibot", 846607, { dmActivated: true })).toBe("rate_limited");
+    expect(classifyWecomErrcode("wecom_aibot", 846607, { dmActivated: null })).toBe("rate_limited");
+    expect(classifyWecomErrcode("wecom_aibot", 846607)).toBe("rate_limited");
+    // 群 / 单聊参数不串用：群侧传 dmActivated 不影响群分流（vice versa）
+    expect(classifyWecomErrcode("wecom_group", 846607, { dmActivated: false })).toBe("rate_limited");
+    expect(classifyWecomErrcode("wecom_aibot", 846607, { groupActivated: false })).toBe("rate_limited");
+  });
+
+  it("aibot（单聊）：主体码表同群（853000 / 846601 → permanent；846609 → retryable）；群专属 93001 未收录兜底 retryable", () => {
+    expect(classifyWecomErrcode("wecom_aibot", 853000)).toBe("permanent");
+    expect(classifyWecomErrcode("wecom_aibot", 846601)).toBe("permanent");
+    expect(classifyWecomErrcode("wecom_aibot", 846609)).toBe("retryable");
+    expect(classifyWecomErrcode("wecom_aibot", 93001)).toBe("retryable"); // 移出群 = 群专属（P6 单聊口径待真机补测）
+    expect(classifyWecomErrcode("wecom_aibot", 987654)).toBe("retryable");
   });
 
   it("group：token 失效族不适用（按未收录兜底 retryable）", () => {

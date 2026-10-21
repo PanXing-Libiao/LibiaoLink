@@ -1,6 +1,6 @@
 import { z } from "../zod.ts";
-import { NotifyChannelSchema } from "./automation.ts";
-import { DateTimeSchema, PageQuerySchema, UuidSchema } from "../common/conventions.ts";
+import { NotifyChannelSchema, NotifyExternalChannelSchema } from "./automation.ts";
+import { DateTimeSchema, PageQuerySchema, UuidSchema, paginated } from "../common/conventions.ts";
 
 /**
  * 通知（站内信 · 消息中心）契约（S7-4 · j1 / M5-04 首刀 · lan）。
@@ -123,7 +123,7 @@ export const NotifyGroupMessagePayloadSchema = z
       .nullable()
       .openapi({
         description:
-          "标题（前后空白剔除后 1 ~ 200 字；null = 无标题 —— 先例 R03_GROUP 群播报无标题，投递仅正文；个人消息不受影响）",
+          "标题（前后空白剔除后 1 ~ 200 字；null = 无标题，投递仅正文；个人消息不受影响）",
       }),
     body: nonBlankText(NOTIFICATION_BODY_MAX_LENGTH, "正文").openapi({
       description: "正文（前后空白剔除后 1 ~ 4000 字）；投递层按企微 markdown 字节上限截断 —— 尾部省略 + 截断留痕（B5 定案）",
@@ -138,7 +138,7 @@ export const NotifyGroupMessagePayloadSchema = z
       .string()
       .max(NOTIFICATION_TEMPLATE_CODE_MAX_LENGTH)
       .nullish()
-      .openapi({ description: "模板码（R03_GROUP / R04_GROUP / R05_GROUP / R06_GROUP / A02_GROUP；排障与文案回溯用）" }),
+      .openapi({ description: "模板码（R04_GROUP / R06_GROUP / A02_GROUP / A08_GROUP；排障与文案回溯用）" }),
   })
   .superRefine((value, context) => {
     const hasRefType = value.refType !== null && value.refType !== undefined && value.refType !== "";
@@ -155,6 +155,114 @@ export const NotifyGroupMessagePayloadSchema = z
     description: "群播报投递事件载荷（outbox 主题 notify.group）：目标项目 + 标题 / 正文 + 关联对象 + 模板码；chatid 不进载荷（投递时读绑定）",
   });
 export type NotifyGroupMessagePayload = z.infer<typeof NotifyGroupMessagePayloadSchema>;
+
+/**
+ * 消息级发送归档（M5-06-2A / C5-03 全量留档）：一条 outbox 消息一行；尝试明细单独存
+ * `notify_deliveries`。`lastState = pending` 表示已归档但外部渠道尚未发起第一次尝试。
+ */
+export const NOTIFY_DELIVERY_TOPICS = ["notify.message", "notify.group"] as const;
+export const NotifyDeliveryTopicSchema = z.enum(NOTIFY_DELIVERY_TOPICS).openapi("NotifyDeliveryTopic", {
+  description: "发送归档来源主题：notify.message 个人消息 / notify.group 群播报",
+});
+export type NotifyDeliveryTopic = z.infer<typeof NotifyDeliveryTopicSchema>;
+
+export const NOTIFY_DELIVERY_MESSAGE_STATES = ["pending", "sent", "failed", "deferred", "dead"] as const;
+export const NotifyDeliveryMessageStateSchema = z.enum(NOTIFY_DELIVERY_MESSAGE_STATES).openapi("NotifyDeliveryMessageState", {
+  description: "消息最新状态：pending 尚未尝试 / sent 已受理 / failed 可重试失败 / deferred 限速延期 / dead 死信",
+});
+export type NotifyDeliveryMessageState = z.infer<typeof NotifyDeliveryMessageStateSchema>;
+
+export const NOTIFY_DELIVERY_ATTEMPT_STATES = ["sent", "failed", "deferred", "dead"] as const;
+export const NotifyDeliveryAttemptStateSchema = z.enum(NOTIFY_DELIVERY_ATTEMPT_STATES).openapi("NotifyDeliveryAttemptState", {
+  description: "单次投递尝试状态（pending 仅属于消息级，不落尝试表）",
+});
+export type NotifyDeliveryAttemptState = z.infer<typeof NotifyDeliveryAttemptStateSchema>;
+
+/** 消息级发送记录读面（目标地址只回掩码；完整 target / payload 不入本 schema）。 */
+export const NotifyDeliveryMessageSchema = z
+  .object({
+    id: z.number().int().positive().openapi({ description: "消息归档 id" }),
+    sourceDedupeKey: z.string().min(1).max(256).openapi({ description: "来源 outbox 幂等键（归档幂等）" }),
+    topic: NotifyDeliveryTopicSchema,
+    channel: NotifyChannelSchema,
+    recipientId: z.union([UuidSchema, z.null()]).openapi({ description: "站内信 / 个人企微收件人 id；群播报 = null" }),
+    recipientLabel: z.string().nullable().openapi({ description: "收件人展示值或掩码目标；不得返回 Secret" }),
+    title: z.string().nullable(),
+    body: z.string().min(1),
+    templateCode: z.string().nullable(),
+    ruleCode: z.string().max(32).nullable().openapi({ description: "来源规则码；非规则消息 = null" }),
+    refType: z.string().max(40).nullable(),
+    refId: z.string().max(64).nullable(),
+    resendOfMessageId: z.number().int().positive().nullable().openapi({ description: "重发消息指向的原消息 id；普通消息 = null" }),
+    lastState: NotifyDeliveryMessageStateSchema,
+    attemptCount: z.number().int().min(0),
+    lastError: z.string().nullable().openapi({ description: "最近失败 / 延期原因（已掩码）" }),
+    sentAt: z.union([DateTimeSchema, z.null()]),
+    createdAt: DateTimeSchema,
+    updatedAt: DateTimeSchema,
+  })
+  .openapi("NotifyDeliveryMessage", {
+    description: "消息级发送归档（C2-07 / C5-03）：正文、渠道、掩码收件人、最新状态与尝试次数；独立于 outbox 清理",
+  });
+export type NotifyDeliveryMessage = z.infer<typeof NotifyDeliveryMessageSchema>;
+
+/** 单次投递尝试（notify_deliveries）：target 只回掩码。 */
+export const NotifyDeliveryAttemptSchema = z
+  .object({
+    id: z.number().int().positive(),
+    messageId: z.number().int().positive(),
+    channel: NotifyExternalChannelSchema,
+    targetMasked: z.string().min(1).openapi({ description: "投递目标掩码（如 userid / chatid 末 4 位）" }),
+    state: NotifyDeliveryAttemptStateSchema,
+    attempts: z.number().int().min(0).openapi({ description: "该尝试序号；deferred = 计划尝试序号、未发起 HTTP" }),
+    error: z.string().nullable().openapi({ description: "失败 / 延期原因（已掩码）" }),
+    sentAt: z.union([DateTimeSchema, z.null()]).openapi({ description: "API 受理成功时刻；sent 以外 = null" }),
+    createdAt: DateTimeSchema,
+  })
+  .openapi("NotifyDeliveryAttempt", { description: "发送尝试明细（每次外部投递尝试一行；目标只回掩码）" });
+export type NotifyDeliveryAttempt = z.infer<typeof NotifyDeliveryAttemptSchema>;
+
+export const NotifyDeliveryListQuerySchema = z
+  .object({
+    channel: NotifyChannelSchema.optional(),
+    lastState: NotifyDeliveryMessageStateSchema.optional(),
+    ruleCode: z.string().max(32).optional(),
+    recipientId: UuidSchema.optional(),
+    from: DateTimeSchema.optional().openapi({ description: "归档时刻下界（含）" }),
+    to: DateTimeSchema.optional().openapi({ description: "归档时刻上界（含）" }),
+    q: z.string().min(1).max(200).optional().openapi({ description: "标题或正文关键字" }),
+    page: PageQuerySchema.shape.page,
+    limit: PageQuerySchema.shape.limit,
+  })
+  .openapi("NotifyDeliveryListQuery", {
+    description: "发送记录查询（渠道 / 最新状态 / 规则 / 收件人 / 时间区间 / 关键字 + 分页）",
+  });
+export type NotifyDeliveryListQuery = z.infer<typeof NotifyDeliveryListQuerySchema>;
+
+export const NotifyDeliveryListResponseSchema = paginated(NotifyDeliveryMessageSchema).openapi("NotifyDeliveryListResponse", {
+  description: "消息级发送记录列表（createdAt desc, id desc）",
+});
+export type NotifyDeliveryListResponse = z.infer<typeof NotifyDeliveryListResponseSchema>;
+
+export const NotifyDeliveryDetailSchema = NotifyDeliveryMessageSchema.extend({
+  attempts: z.array(NotifyDeliveryAttemptSchema).openapi({ description: "全部投递尝试（含 deferred / failed / dead / sent）" }),
+})
+  .openapi("NotifyDeliveryDetail", { description: "发送记录详情：消息归档 + 全部尝试明细" });
+export type NotifyDeliveryDetail = z.infer<typeof NotifyDeliveryDetailSchema>;
+
+/** 重发请求为空对象；幂等键走 Idempotency-Key 请求头（D7）。 */
+export const NotifyDeliveryResendBodySchema = z
+  .object({})
+  .strict()
+  .openapi("NotifyDeliveryResendBody", { description: "重发请求（空对象；Idempotency-Key 必填，正文 / 收件人 / 渠道不可改写）" });
+export type NotifyDeliveryResendBody = z.infer<typeof NotifyDeliveryResendBodySchema>;
+
+export const NotifyDeliveryResendResponseSchema = z
+  .object({
+    message: NotifyDeliveryMessageSchema,
+  })
+  .openapi("NotifyDeliveryResendResponse", { description: "重发已受理：返回新建的消息归档（lastState = pending）" });
+export type NotifyDeliveryResendResponse = z.infer<typeof NotifyDeliveryResendResponseSchema>;
 
 /**
  * 收件箱条目（C5-01 / C5-03 全量留档）。
@@ -370,3 +478,121 @@ export const NotificationSnoozeListResponseSchema = z
   .object({ items: z.array(NotificationSnoozeRecordSchema) })
   .openapi("NotificationSnoozeListResponse", { description: "稍后提醒记录清单（按 id 降序，不翻页）" });
 export type NotificationSnoozeListResponse = z.infer<typeof NotificationSnoozeListResponseSchema>;
+
+/* ------------------------------------------------------------------------------------------------
+ * 企业微信单聊绑定（M5-03-5-6 绑定码链路 · 契约刀 · 2026-10-16 · lan 代记 / wmj 复核）
+ *
+ * 口径来源：`docs/M5-03-5-绑定码方案设计口径(企微单聊).md` v1.4（§3 目标形态 / §4 数据模型 / §6 投递前判定 /
+ *   §7 846607 分流 / §10 待定项 D2 · D3 · D5 · D6）；`docs/M5-03-单聊改智能机器人执行计划(企微单聊).md` §3.2 / §4。
+ *
+ * 语义：单聊可投递地址 = 绑定行（`wecom_aibot_dm_activations.bound_at` 非空）的 `wecom_userid`
+ *   （回调 `from.userid` 原文 = 密文 open_userid；企微后台无管理员权限所致的既有事实）。绑定只能由用户交互
+ *   产生 —— 本组端点 = 「取码（POST codes）→ 用户把码发进企微单聊（worker ingest 落绑定 + 会话内回执）→
+ *   查绑定态（GET）→ 解绑（DELETE）」。
+ * 安全口径（§9）：密文 open_userid 只回掩码末 4 位（最小暴露 · 沿用群绑定 `chatidMasked` 先例）；绑定码正文
+ *   不入库、不落日志；取码频率 **5 次 / 3 分钟 / 用户**（D3 修订 v1.8 —— v1.7 的 10 分钟窗口罚时仍偏长，窗口改
+ *   3 分钟 = 罚时上限 3 分钟；超出 = 429 `RATE_LIMITED` + `details[].meta.retryAt`）；
+ *   解绑写 `audit_logs`（D6）；跨用户换绑同写 `audit_logs`。
+ * 换绑口径（v1.8 明确）：码命中即以**码持有者为准** —— 发送方企微号已绑在别的库内用户上时不再短路「已绑定」，
+ *   改为把该 `(bot_id, wecom_userid)` 行改挂到码的持有者（旧持有者回落未绑定），并回「绑定成功」。
+ * 读面回填（v1.8）：绑定态读面另回「当前 pending 绑定码」与「取码限流可重试时刻」—— 刷新 / 重进页面后前端据此
+ *   恢复码面、倒计时与罚时（服务端为准，前端不缓存）。
+ * 权限口径：个人资源（同收件箱 / 通知偏好先例）—— 无功能权限位；读 = 会话，写 = 会话 + CSRF。
+ * ---------------------------------------------------------------------------------------------- */
+
+/** 绑定码位数（D3：6 位数字）。 */
+export const WECOM_DM_BINDING_CODE_LENGTH = 6;
+/** 绑定码有效期（2026-10-20 安全修订：3 分钟）。 */
+export const WECOM_DM_BINDING_CODE_TTL_MS = 3 * 60_000;
+/**
+ * 绑定码生成频率窗口（D3 修订 v1.8：3 分钟）。
+ * 罚时锚点 = 窗口内**最近一次**取码（v1.9 修订）：倒计时恒为「最近取码 + 3 分钟」，不随被拦重试延长；
+ * 按「最早一码 + 窗口」会让分散取码后的罚时只剩 1 分钟（用户实测），故锚点改为最新一码。
+ */
+export const WECOM_DM_BINDING_CODE_WINDOW_MS = 3 * 60_000;
+/** 绑定码生成频率上限（D3 修订 v1.8：5 次 / 3 分钟 / 用户；超出 → 429 `RATE_LIMITED`，最长等待 ≤ 3 分钟）。 */
+export const WECOM_DM_BINDING_CODE_MAX_PER_WINDOW = 5;
+
+/** 绑定码（POST codes 响应 / 绑定态读面回填）：只回码 + 失效时刻，不含任何企微标识。 */
+export const WecomDmBindingCodeSchema = z
+  .object({
+    code: z
+      .string()
+      .regex(/^[0-9]{6}$/)
+      .openapi({ description: "6 位数字绑定码（用户在企微里把这条码发给机器人完成绑定）", example: "482913" }),
+    expiresAt: DateTimeSchema.openapi({ description: "失效时刻（= 生成时刻 + 3 分钟）" }),
+    expiresInSeconds: z.number().int().positive().openapi({ description: "剩余有效期（秒；供前端倒计时）" }),
+  })
+  .openapi("WecomDmBindingCode", {
+    description: "绑定码（一次性：用户首次发码即绑定并置 used；重复取码会作废上一条未用码；TTL 3 分钟）",
+  });
+export type WecomDmBindingCode = z.infer<typeof WecomDmBindingCodeSchema>;
+
+/** 绑定态（读面恒 200；未绑定 = `bound:false`）—— GET / DELETE 同形 + 取码链路回填（v1.8）。 */
+export const WecomDmBindingStateSchema = z
+  .object({
+    bound: z.boolean().openapi({ description: "当前机器人（`WECOM_BOT_ID`）下是否已有可投递地址" }),
+    wecomUseridMasked: z
+      .string()
+      .nullable()
+      .openapi({ description: "企微 open_userid 掩码（只回末 4 位）；未绑定 / 解绑后 = null" }),
+    boundAt: DateTimeSchema.nullable().openapi({ description: "绑定确立时刻；未绑定 / 解绑后 = null" }),
+    messagesEnabled: z
+      .boolean()
+      .openapi({ description: "是否允许向该企业微信单聊发送任务提醒；绑定成功后默认 true，关闭后停止企微单聊外发（站内信仍按降级规则保留）" }),
+    bindingCode: WecomDmBindingCodeSchema.nullable().openapi({
+      description: "当前仍有效的（pending）绑定码 —— 刷新 / 重进页面后据此恢复码面与倒计时；无未用码 = null",
+    }),
+    retryAt: DateTimeSchema.nullable().openapi({
+      description: "取码频率到顶时的可重试时刻 —— 刷新后据此恢复罚时倒计时；未到顶 = null",
+    }),
+  })
+  .openapi("WecomDmBindingState", {
+    description:
+      "企业微信单聊绑定态：绑定按机器人维度成立（换机器人后旧绑定不生效 → 读面回到 bound:false）；解绑 = 注销投递资格（保留激活登记）；另回当前未用绑定码与取码限流可重试时刻（页面刷新不丢状态）",
+  });
+export type WecomDmBindingState = z.infer<typeof WecomDmBindingStateSchema>;
+
+/** 绑定设置更新（当前仅消息开关；未绑定时调用幂等返回未绑定态）。 */
+export const WecomDmBindingUpdateBodySchema = z
+  .object({
+    messagesEnabled: z.boolean().openapi({ description: "是否允许向该企业微信单聊发送任务提醒" }),
+  })
+  .openapi("WecomDmBindingUpdateBody", {
+    description: "企业微信单聊绑定设置更新（messagesEnabled = false 时停止企微单聊外发；绑定成功后默认开启）",
+  });
+export type WecomDmBindingUpdateBody = z.infer<typeof WecomDmBindingUpdateBodySchema>;
+
+/** 库内出现过的机器人维度（诊断用：排查 worker 是否在用另一个 bot_id 收消息）。 */
+export const WecomDmBotInboundStatSchema = z
+  .object({
+    botId: z.string(),
+    inboundCount: z.number().int().nonnegative().openapi({ description: "该 bot_id 下累计有过单聊消息的企微号数（激活表按 (bot_id, wecom_userid) 一行；不是消息条数）" }),
+    lastInboundAt: DateTimeSchema.nullable().openapi({ description: "该 bot_id 最近一次收到单聊消息的时刻；无记录 = null" }),
+  })
+  .openapi("WecomDmBotInboundStat");
+
+/**
+ * 机器人诊断（本地联调 · 非生产）：回显当前 api 进程实际读取的 `WECOM_BOT_*`，以及该机器人维度最近是否收到单聊回调。
+ * 用途：用户在企微侧发绑定码后机器人不回时，先核对 ID / Secret 是否与企微后台一致、回调是否到达（`inboundCount`）。
+ * 安全（CONTRIBUTING §12）：仅 `NODE_ENV !== "production"`（或显式 `WECOM_BOT_DIAGNOSTICS=true`）时回敏感字段；
+ * 生产恒 `enabled:false` + 敏感字段 null；本端点不写日志、响应 `Cache-Control: no-store`。
+ */
+export const WecomDmBotDiagnosticsSchema = z
+  .object({
+    enabled: z.boolean().openapi({ description: "诊断是否开启（生产默认关闭；关闭时其余敏感字段为 null）" }),
+    botId: z.string().nullable().openapi({ description: "WECOM_BOT_ID 原文（未配置 = null）" }),
+    botSecret: z.string().nullable().openapi({ description: "WECOM_BOT_SECRET 原文（仅诊断开启时回全量；关闭 = null）" }),
+    botSecretMasked: z.string().nullable().openapi({ description: "Secret 掩码（首 4 + **** + 末 4；关闭 / 未配置 = null）" }),
+    wsUrl: z.string().nullable().openapi({ description: "WECOM_BOT_WS_URL（机器人长连接地址）" }),
+    deliveryEnabled: z.boolean().openapi({ description: "NOTIFY_DELIVERY_ENABLED（worker 是否允许启动机器人长连接）" }),
+    lastInboundAt: DateTimeSchema.nullable().openapi({ description: "当前 bot_id 最近一次收到单聊消息的时刻；null = 从未收到" }),
+    inboundCount: z.number().int().nonnegative().openapi({ description: "当前 bot_id 下有过单聊消息的企微号数（激活表行数）；0 = 回调从未到达（worker 未启动 / 凭据不对 / bot_id 不一致）" }),
+    lastInboundUseridMasked: z.string().nullable().openapi({ description: "最近一次回调的 open_userid 掩码（末 4 位）；无记录 = null" }),
+    observedBotIds: z.array(WecomDmBotInboundStatSchema).openapi({ description: "激活表内出现过的 bot_id（最多 5 个，最近在前）—— 可发现 worker 用的是另一个机器人" }),
+    serverTime: DateTimeSchema.openapi({ description: "服务端当前时刻（对照最近回调时间判断是否仍在收消息）" }),
+  })
+  .openapi("WecomDmBotDiagnostics", {
+    description: "机器人诊断（仅非生产环境）：bot_id / secret / ws 地址 / 最近回调统计；用于核对本地凭据与 worker 收消息链路",
+  });
+export type WecomDmBotDiagnostics = z.infer<typeof WecomDmBotDiagnosticsSchema>;

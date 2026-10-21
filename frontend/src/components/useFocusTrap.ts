@@ -61,7 +61,7 @@ function scopeOutside(node: Element | null, container: HTMLElement): HTMLElement
 /**
  * 弹层键盘焦点陷阱（Push 264 追订 · 业务口径 2026-10-10「弹窗无键盘焦点陷阱」）：
  * 全站 `role="dialog"` 弹层（模态弹窗 / 抽屉 / 底部确认条 / 面板式浮层）统一接入：
- * - **打开时**：焦点还不在弹层内 → 移入第一个可聚焦元素（没有可聚焦元素则落到容器本身）；
+ * - **打开时**：焦点还不在弹层内 → 移入第一个可聚焦元素（没有可聚焦元素则落到容器本身）；容器挂 data-focus-container 时把焦点收到容器本身（Push 340：数据详情弹窗不再一亮就选中 ✕）；
  * - **打开期间**：Tab / Shift+Tab 在弹层内循环，不再游走到背景控件（防误触背景的破坏性按钮）；
  * - **关闭时**：焦点还原到打开前的元素（还在页面上才还原；触发按钮随删除一起消失时跳过）；
  * - **同屏叠放多个弹层**：只有最后打开的那个接管 Tab（栈顶仲裁），其余不抢（如弹窗里再开预览层）。
@@ -72,6 +72,7 @@ function scopeOutside(node: Element | null, container: HTMLElement): HTMLElement
  * - 容器已有 ref：`useFocusTrapFor(existingRef, active);`；
  * - active 给「组件常驻、弹层按状态显隐」的调用方（常驻页面里的底部确认条 / 抽屉）；
  *   弹层随组件一起挂载卸载（ProjectModal 这类）直接用默认值 true。
+ * - 希望「打开时不抢第一个可聚焦元素」的弹层：容器加 data-focus-container + tabIndex={-1}（焦点停在容器本身，不进第一个控件）。
  * - trapTab = false 只做「聚焦进入 + 关闭还原」、不循环 Tab（留给以后需要「Tab 即关闭浮层」的场景）。
  */
 export function useFocusTrapFor<T extends HTMLElement>(
@@ -93,6 +94,15 @@ export function useFocusTrapFor<T extends HTMLElement>(
         return;
       }
       if (document.activeElement !== null && live.contains(document.activeElement)) {
+        return;
+      }
+      // 容器挂 data-focus-container 的弹层（Push 340）：把焦点收到容器本身，不抢第一个可聚焦元素
+      // （数据详情弹窗的 ✕ 是容器里第一个按钮，一亮就被描上焦点环 —— 业务口径「一点进来这个叉号就被选中了」）。
+      if (live.hasAttribute("data-focus-container")) {
+        if (!live.hasAttribute("tabindex")) {
+          live.setAttribute("tabindex", "-1");
+        }
+        live.focus();
         return;
       }
       const items = focusablesIn(live);
@@ -124,7 +134,8 @@ export function useFocusTrapFor<T extends HTMLElement>(
       }
       const first = items[0];
       const last = items[items.length - 1];
-      const inside = activeElement !== null && (live.contains(activeElement) || (scope !== null && scope.contains(activeElement)));
+      // 焦点就在容器本身（data-focus-container 初聚）时按「还没进控件」处理：Tab → 首控件、Shift+Tab → 末控件，不游出弹层。
+      const inside = activeElement !== null && activeElement !== live && (live.contains(activeElement) || (scope !== null && scope.contains(activeElement)));
       if (event.shiftKey) {
         if (!inside || activeElement === first) {
           event.preventDefault();

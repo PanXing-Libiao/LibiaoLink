@@ -91,6 +91,7 @@ async function main() {
   const group = await import(distFile("notify.group.service.js"));
   const { ClockService } = await import(pathToFileURL(join(HERE, "..", "dist", "common", "clock", "clock.service.js")).href);
   const { OutboxDispatcher } = await import(pathToFileURL(join(HERE, "..", "dist", "outbox", "dispatcher.js")).href);
+  const { createReplayNotifyDeliveryArchive } = await import(pathToFileURL(join(HERE, "support", "notify-delivery-archive-fake.mjs")).href);
 
   check("G1 dist 群播报消费服务可用（NotifyGroupService 导出）", typeof group.NotifyGroupService === "function");
 
@@ -160,7 +161,15 @@ async function main() {
         return { duplicate: false };
       },
     };
-    return { service: new group.NotifyGroupService(repo, aibot, inbox, clock), repo, aibot, inbox };
+    const archive = createReplayNotifyDeliveryArchive(repo);
+    const config = { env: { WECOM_R06_IMAGE_PATH: "", WECOM_R06_ON_TIME_IMAGE_PATH: "" } };
+    return {
+      service: new group.NotifyGroupService(repo, archive, aibot, inbox, clock, config),
+      repo,
+      archive,
+      aibot,
+      inbox,
+    };
   };
 
   {
@@ -279,7 +288,7 @@ async function main() {
     const registry = new Map([
       ["notify.group", { handle: async () => ({ outcome: "deferred", availableAt: retryAt, error: "本地限速桶已满" }) }],
     ]);
-    const alerts = { emitted: [], emit(alert) { this.emitted.push(alert); } };
+    const alerts = { emitted: [], digests: [], emit(alert) { this.emitted.push(alert); }, emitDigest(report) { this.digests.push(report); } };
     const { AppConfig } = await import(pathToFileURL(join(HERE, "..", "dist", "config", "config.module.js")).href);
     const config = new AppConfig({ WORKER_ID: "replay", OUTBOX_BATCH_LIMIT: 5, OUTBOX_STALE_MS: 600000, OUTBOX_DEFAULT_MAX_ATTEMPTS: 3, OUTBOX_DEFAULT_BACKOFF_BASE_MS: 1000, OUTBOX_DEFAULT_BACKOFF_MAX_MS: 10000 });
     const dispatcher = new OutboxDispatcher(store, registry, new Map(), alerts, config, clock);

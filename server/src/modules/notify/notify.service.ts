@@ -11,6 +11,7 @@ import {
   type NotifyMessagePayload,
   type NotifyPrefs,
   type NotifyPrefsUpdateBody,
+  type NotifyDeliveryTopic,
 } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import { ClockService } from "../../common/clock/clock.service.js";
@@ -31,6 +32,12 @@ import {
   shanghaiMinuteOfDay,
   type QuietHours,
 } from "./notify.delivery.js";
+import {
+  inferNotifyRuleCode,
+  NotifyDeliveryArchiveRepository,
+  type NotifyDeliveryMessageInsert,
+  type NotifyDeliveryMessageRow,
+} from "./notify.delivery-archive.repository.js";
 import {
   NotifyRepository,
   type NotifyInboxFilter,
@@ -89,6 +96,7 @@ export class NotifyService {
 
   constructor(
     private readonly repository: NotifyRepository,
+    private readonly archive: NotifyDeliveryArchiveRepository,
     private readonly database: DatabaseService,
     private readonly config: AppConfig,
     private readonly clock: ClockService,
@@ -118,7 +126,7 @@ export class NotifyService {
       };
     }
     try {
-      const result = await this.deliverOnce(message, row.topic, row.dedupeKey);
+      const result = await this.deliverOnce(message, row.topic, row.dedupeKey, row.id);
       if (result.duplicate) {
         // 消费重放（worker 崩溃超领取窗重领 / 人工重放）：source_dedupe_key 唯一命中 —— 幂等收敛为 done。
         this.logger.log("通知重复投递（source_dedupe_key 已存在），幂等跳过：" + row.dedupeKey);
@@ -136,6 +144,7 @@ export class NotifyService {
     message: NotifyMessagePayload,
     topic: string,
     dedupeKey: string,
+    outboxId: number | null = null,
   ): Promise<{ duplicate: boolean }> {
     const now = this.clock.now();
     const prefs = await this.resolvePrefs(message.recipientId);
@@ -152,11 +161,13 @@ export class NotifyService {
       mergeKey: mergeKeyOf(message),
     };
     return this.database.db.transaction(async (tx) => {
+      const archived = await this.archive.ensureMessage(archiveInputOf(message, topic, dedupeKey, outboxId), tx);
       const row = await this.repository.insertMessage(insert, tx);
       if (row === null) {
+        await this.reconcileArchivedDuplicate(archived, dedupeKey, now, tx);
         return { duplicate: true };
       }
-      if (await this.tryMerge(row, prefs, now, tx)) {
+      if (await this.tryMerge(row, prefs, now, tx, archived.id)) {
         return { duplicate: false };
       }
       const decision = planDelivery({
@@ -168,15 +179,68 @@ export class NotifyService {
       });
       if (decision.deliver) {
         await this.repository.markDelivered(row.id, now, tx);
+        await this.archive.markState(
+          { messageId: archived.id, state: "sent", at: now, sentAt: now, error: null },
+          tx,
+        );
         await this.publishDelivered(row, now, tx);
       } else {
         this.logger.log(
           "通知静默排期（" + decision.reason + "）：#" + row.id + " → " + decision.deliverAt.toISOString(),
         );
         await this.repository.postpone(row.id, decision.deliverAt, now, tx);
+        await this.archive.markState(
+          {
+            messageId: archived.id,
+            state: "deferred",
+            at: now,
+            error: "站内信延迟投递（" + decision.reason + "）",
+          },
+          tx,
+        );
       }
       return { duplicate: false };
     });
+  }
+
+  /**
+   * 历史通知行先于 0061 归档存在时，重复消费只补状态、不重发：
+   * 已投递 → sent；合并子行 → sent + mergedIntoId；未到期 / 待排期 → deferred。
+   * 既有非 pending 归档视为真实尝试结果，不覆盖。
+   */
+  private async reconcileArchivedDuplicate(
+    archived: NotifyDeliveryMessageRow,
+    dedupeKey: string,
+    now: Date,
+    tx: DbClient,
+  ): Promise<void> {
+    if (archived.lastState !== "pending") {
+      return;
+    }
+    const existing = await this.repository.findBySourceDedupeKey(dedupeKey, tx);
+    if (existing === null) {
+      return;
+    }
+    if (existing.mergedIntoId !== null) {
+      await this.archive.markMerged(archived.id, existing.mergedIntoId, existing.deliveredAt ?? now, tx);
+      return;
+    }
+    if (existing.deliveredAt !== null) {
+      await this.archive.markState(
+        { messageId: archived.id, state: "sent", at: now, sentAt: existing.deliveredAt, error: null },
+        tx,
+      );
+      return;
+    }
+    await this.archive.markState(
+      {
+        messageId: archived.id,
+        state: "deferred",
+        at: now,
+        error: "历史站内信待排期投递（重复消费补归档）",
+      },
+      tx,
+    );
   }
 
   /**
@@ -184,7 +248,7 @@ export class NotifyService {
    * 调用方负责幂等键后缀（先例：":c504" —— 避免与来源事件 source_dedupe_key 唯一约束相撞）。
    */
   async deliverInboxCopy(message: NotifyMessagePayload, topic: string, dedupeKey: string): Promise<{ duplicate: boolean }> {
-    return this.deliverOnce(message, topic, dedupeKey);
+    return this.deliverOnce(message, topic, dedupeKey, null);
   }
 
   /**
@@ -199,7 +263,8 @@ export class NotifyService {
       try {
         const prefs = await this.resolvePrefs(row.recipientId);
         const outcome = await this.database.db.transaction(async (tx) => {
-          if (await this.tryMerge(row, prefs, now, tx)) {
+          const archived = await this.archive.ensureMessage(archiveInputOfRow(row), tx);
+          if (await this.tryMerge(row, prefs, now, tx, archived.id)) {
             return "merged" as const;
           }
           const decision = planDelivery({
@@ -211,10 +276,23 @@ export class NotifyService {
           });
           if (decision.deliver) {
             await this.repository.markDelivered(row.id, now, tx);
+            await this.archive.markState(
+              { messageId: archived.id, state: "sent", at: now, sentAt: now, error: null },
+              tx,
+            );
             await this.publishDelivered(row, now, tx);
             return "delivered" as const;
           }
           await this.repository.postpone(row.id, decision.deliverAt, now, tx);
+          await this.archive.markState(
+            {
+              messageId: archived.id,
+              state: "deferred",
+              at: now,
+              error: "站内信延迟投递（" + decision.reason + "）",
+            },
+            tx,
+          );
           return "postponed" as const;
         });
         stats[outcome] += 1;
@@ -273,6 +351,7 @@ export class NotifyService {
     prefs: ResolvedNotifyPrefs,
     now: Date,
     tx: DbClient,
+    messageId: number,
   ): Promise<boolean> {
     if (prefs.mergeWindowMs <= 0) {
       return false;
@@ -290,6 +369,7 @@ export class NotifyService {
       return false;
     }
     await this.repository.attachMerged({ childId: row.id, parentId: target.id, at: now }, tx);
+    await this.archive.markMerged(messageId, target.id, now, tx);
     return true;
   }
 
@@ -482,6 +562,63 @@ export class NotifyService {
       updatedAt: row === null ? null : row.updatedAt.toISOString(),
     };
   }
+}
+
+/** inbox 消息归档输入（payload = 规范化载荷；C5-04 以 :c504 独立归档并保留来源键）。 */
+function archiveInputOf(
+  message: NotifyMessagePayload,
+  topic: string,
+  dedupeKey: string,
+  outboxId: number | null,
+): NotifyDeliveryMessageInsert {
+  return {
+    outboxId,
+    sourceDedupeKey: dedupeKey,
+    topic: topic as NotifyDeliveryTopic,
+    channel: "inbox",
+    recipientId: message.recipientId,
+    recipientLabel: null,
+    title: message.title,
+    body: message.body,
+    templateCode: message.templateCode ?? null,
+    ruleCode: inferNotifyRuleCode(dedupeKey),
+    refType: message.refType ?? null,
+    refId: message.refId ?? null,
+    payload: { ...message, channel: "inbox" },
+    metadata: dedupeKey.endsWith(":c504")
+      ? { c5_04: true, sourceDedupeKey: dedupeKey.slice(0, -5) }
+      : {},
+  };
+}
+
+/** flush 路径从 notifications 行恢复归档输入（归档已存在时仅是幂等读回）。 */
+function archiveInputOfRow(row: NotifyMessageRow): NotifyDeliveryMessageInsert {
+  return {
+    outboxId: null,
+    sourceDedupeKey: row.sourceDedupeKey,
+    topic: "notify.message",
+    channel: "inbox",
+    recipientId: row.recipientId,
+    recipientLabel: null,
+    title: row.title,
+    body: row.body,
+    templateCode: row.templateCode,
+    ruleCode: inferNotifyRuleCode(row.sourceDedupeKey),
+    refType: row.refType,
+    refId: row.refId,
+    payload: {
+      recipientId: row.recipientId,
+      type: row.type,
+      channel: "inbox",
+      title: row.title,
+      body: row.body,
+      refType: row.refType,
+      refId: row.refId,
+      templateCode: row.templateCode,
+      mergeKey: row.mergeKey,
+    },
+    metadata: { recoveredFromNotifications: true },
+  };
 }
 
 /** 行 → 契约（收件箱条目；deliveredAt 在服务层已保证非空）。 */

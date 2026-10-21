@@ -1,36 +1,36 @@
 # 代码所有者（PR 自动请求评审）
-# 成员：px=@256-code、wmj=@suikiiovo、lan=@XSZR341。
+# 成员：px=@PanXing-Libiao、wmj=@suikiiovo、lan=@LiuAnnan-Libiao。
 # 依据：CONTRIBUTING.md（评审与合并）、根目录《团队分工.md》§5.1、AGENTS.md「分工与路由」。
 # 说明：CODEOWNERS 只做评审路由，不等于合并权限；后匹配的规则生效，具体路径写在默认规则之后。
 # main 已启用分支保护（require PR + 必需检查 frontend / server / database）。
 # 每条具体路径至少 2 名所有者，保证「非作者评审」始终有人被自动请求。
 
-* @256-code @suikiiovo @XSZR341
+* @PanXing-Libiao @suikiiovo @LiuAnnan-Libiao
 
 # —— 前端 / 交付 / 运维（主责 px）——
-/frontend/ @256-code @suikiiovo
-/assets/ @256-code @suikiiovo
-/deploy/ @256-code @XSZR341
-/.github/ @256-code @XSZR341
-/docs/ @256-code @suikiiovo
+/frontend/ @PanXing-Libiao @suikiiovo
+/assets/ @PanXing-Libiao @suikiiovo
+/deploy/ @PanXing-Libiao @LiuAnnan-Libiao
+/.github/ @PanXing-Libiao @LiuAnnan-Libiao
+/docs/ @PanXing-Libiao @suikiiovo
 
 # —— 根目录文档（主责 px）——
-/README.md @256-code @suikiiovo
-/开发日志.md @256-code @suikiiovo
-/团队分工.md @256-code @suikiiovo
-/前端功能需求.md @256-code @suikiiovo
-/字段对照清单.md @256-code @suikiiovo
-/系统功能书.md @256-code @suikiiovo
+/README.md @PanXing-Libiao @suikiiovo
+/开发日志.md @PanXing-Libiao @suikiiovo
+/团队分工.md @PanXing-Libiao @suikiiovo
+/前端功能需求.md @PanXing-Libiao @suikiiovo
+/字段对照清单.md @PanXing-Libiao @suikiiovo
+/系统功能书.md @PanXing-Libiao @suikiiovo
 
 # —— 技术设计（主责 wmj）——
-/技术设计v0.1-选型分析.md @suikiiovo @256-code
-/技术设计v0.2-架构与数据模型.md @suikiiovo @XSZR341 @256-code
+/技术设计v0.1-选型分析.md @suikiiovo @PanXing-Libiao
+/技术设计v0.2-架构与数据模型.md @suikiiovo @LiuAnnan-Libiao @PanXing-Libiao
 
 # —— 仓库规则（三方都要看）——
-/AGENTS.md @256-code @suikiiovo @XSZR341
-/CONTRIBUTING.md @256-code @suikiiovo @XSZR341
+/AGENTS.md @PanXing-Libiao @suikiiovo @LiuAnnan-Libiao
+/CONTRIBUTING.md @PanXing-Libiao @suikiiovo @LiuAnnan-Libiao
 
 # —— 后端（目录落地后自动生效；wmj 领域 + lan 平台）——
-/server/ @suikiiovo @XSZR341
-/database/ @suikiiovo @XSZR341
-/shared/ @suikiiovo @XSZR341
+/server/ @suikiiovo @LiuAnnan-Libiao
+/database/ @suikiiovo @LiuAnnan-Libiao
+/shared/ @suikiiovo @LiuAnnan-Libiao

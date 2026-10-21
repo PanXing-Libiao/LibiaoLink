@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CAD 接入准备检查</title>
+  </head>
+  <body>
+    <main class="mx-auto max-w-2xl space-y-6 p-8">
+      <h1 class="text-2xl font-semibold">CAD 接入准备检查</h1>
+      <p class="text-sm text-zinc-600">旧查看器已撤下，新 CAD 链路待接入。此页使用实际预览组件，检查提示、图片和关闭操作；不读取业务文件，下载按钮仅检查回调。</p>
+      <div class="flex flex-wrap gap-3">
+        <button id="cad-url" class="rounded-lg border bg-white px-4 py-2">检查旧 CAD 地址</button>
+        <button id="cad-viewer" class="rounded-lg border bg-white px-4 py-2">检查旧查看器响应</button>
+        <button id="image" class="rounded-lg border bg-white px-4 py-2">检查图片预览</button>
+      </div>
+      <p id="result" role="status" class="text-sm text-zinc-600">等待检查</p>
+    </main>
+    <div id="overlay"></div>
+    <script type="module">
+      import { createElement } from "react";
+      import { createRoot } from "react-dom/client";
+      import { FilePreviewOverlay } from "/src/components/FilePreviewOverlay.tsx";
+      import { previewKindOf } from "/src/fileApi.ts";
+      import "/src/app.css";
+
+      const root = createRoot(document.getElementById("overlay"));
+      const result = document.getElementById("result");
+      let downloads = 0;
+      const legacyUrl = "/__retired_cad_source_must_not_load__.step";
+      const viewer = {
+        kind: "onlyoffice", docServerUrl: "/__retired_cad_viewer_must_not_load__",
+        documentType: "word",
+        document: {
+          title: "接入检查.step", url: legacyUrl, fileType: "step", key: "local-check",
+          permissions: { edit: false, download: true, print: false, comment: false, chat: false, fillForms: false, protect: true },
+        },
+        editorConfig: { mode: "view", lang: "zh-CN", user: { id: "local-check", name: "检查页" } },
+        token: "unused-local-check",
+      };
+
+      function open(name, pane) {
+        result.textContent = "预览已打开";
+        root.render(createElement(FilePreviewOverlay, {
+          name, kind: previewKindOf(name), pane, nonce: 0,
+          onRetry: () => {},
+          onDownload: () => {
+            downloads += 1;
+            result.textContent = `下载回调已响应 ${downloads} 次（未读取业务文件）`;
+          },
+          onClose: () => {
+            root.render(null);
+            result.textContent = `已关闭；下载回调 ${downloads} 次`;
+          },
+        }));
+      }
+
+      document.getElementById("cad-url").onclick = () => open("接入检查.step", { mode: "url", url: legacyUrl });
+      document.getElementById("cad-viewer").onclick = () => open("接入检查.easm", { mode: "viewer", viewer });
+      document.getElementById("image").onclick = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 240; canvas.height = 160;
+        const context = canvas.getContext("2d");
+        context.fillStyle = "#e4e4e7"; context.fillRect(0, 0, 240, 160);
+        context.fillStyle = "#71717a"; context.font = "20px sans-serif"; context.fillText("图片预览检查", 60, 86);
+        open("预览检查.png", { mode: "url", url: canvas.toDataURL("image/png") });
+      };
+    </script>
+  </body>
+</html>

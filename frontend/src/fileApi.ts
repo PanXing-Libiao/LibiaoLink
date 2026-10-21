@@ -5,8 +5,7 @@ import { RefreshQueue, liveReadPaused, subscribeLiveHints } from "./liveSync";
  * Push 226 续二：文件改名（renameFile —— PATCH /files/{id}，先读 version 再写）与列表「文件」列
  *   显示文件名所需的项目文件名单（fetchTaskFiles —— 列表接口不带文件名，这里按项目一次拉全量，免 N+1；Push 246 起携 id 供「文件」列下拉预览 / 删除）。
  * Push 226 续三：PDF / Office / 文本点击预览（previewKindOf —— 与 server preview.targets.ts 同口径）。
- * ADR-031（2026-10-13 · CAD 预览通道）：三维族（step/stp/iges/igs/stl/3mf/obj/gltf/glb）入预览 ——
- *   kind=cad3d（CadViewer 浏览器端 occt WASM / three.js 解析），读取侧原对象直签（同图片口径,server isCadFile）。
+ * ADR-035：CAD 接入准备期间仅识别文件类型以显示暂不可预览提示，原文件下载独立保留。
  * Push 226 续四：原文件下载（fetchDownloadUrl + triggerDownload —— 版本短时签名 attachment + 原文件名；
  *   与预览浮层区分：下载始终拿原文件、写 download 审计）。
  * Push 258 续：下载改「fetch 字节 → Blob objectURL 落盘」（download 属性精确落原名、不依赖对象存储的 Content-Disposition）。
@@ -43,7 +42,7 @@ import { RefreshQueue, liveReadPaused, subscribeLiveHints } from "./liveSync";
  *   页面见 frontend/src/FileLibraryPage.tsx。
  */
 import { useEffect, useSyncExternalStore } from "react";
-import { ApiError, apiRequest, apiSend } from "./api";
+import { ApiError, apiRequest, apiSend, readAllPages } from "./api";
 import { sha256Hex } from "./sha256";
 
 type UploadCreateResponse = {
@@ -59,10 +58,10 @@ type UploadPartsResponse = { parts: Array<{ partNumber: number; url: string }> }
 type UploadCompleteResponse = { file: { id: string; name: string } };
 
 /** ONLYOFFICE 查看器配置（契约 PreviewViewer 子集 · S4 直接组装 DocEditor 配置；token = documentType / document（含 permissions）/ editorConfig 逐字签发）。 */
-export type PreviewViewerConfig = {
-  kind: string;
+export type OnlyOfficePreviewViewerConfig = {
+  kind: "onlyoffice";
   docServerUrl: string;
-  documentType: "word" | "cell" | "slide";
+  documentType: "word" | "cell" | "slide" | "pdf";
   document: {
     title: string;
     url: string;
@@ -74,6 +73,17 @@ export type PreviewViewerConfig = {
   editorConfig: { mode: "view"; lang: string; user: { id: string; name: string } };
   token: string;
 };
+
+export type CadNameCodepage = "UTF8" | "GB";
+
+export type CadPreviewViewerConfig = {
+  kind: "cad";
+  fileId: string;
+  versionId: string;
+  sourceSHA256: string;
+  engineVersion: string;
+};
+export type PreviewViewerConfig = OnlyOfficePreviewViewerConfig | CadPreviewViewerConfig;
 
 /** 预览状态响应（契约 FilePreviewResponse 子集）：ready 才有签名地址 / 查看器配置（两通道互斥）。 */
 type FilePreviewResponse = {
@@ -95,7 +105,66 @@ export type UploadFileOptions = {
  * 上传一个文件 / Blob 到站内文件库（M4-01 分片直传；任务成果文件与日报附图共用一条链路）。
  * name 单独传：剪贴板图片的 File 名与业务名不一致（见 uploadPhoto）；options.taskId 关联任务。返回新文件的 id。
  */
-/** 分片直传公共尾段（uploadFile / replaceFileContent 共用）：取分片签名 → 逐片原样 PUT → complete。 */
+/** 单片上传最大尝试次数（含首次）：浏览器侧取消流 / 网络瞬断等单次失败重试后继续，不再整单报废。 */
+const PART_UPLOAD_MAX_ATTEMPTS = 3;
+/** 重试退避基数（毫秒）：第 N 次失败后等待 N × 该值再重试。 */
+const PART_UPLOAD_RETRY_DELAY_MS = 500;
+
+/** 分片签名接口路径（首传整批签 / 重试单签共用）。 */
+function uploadPartsPath(fileId: string, uploadId: string): string {
+  return "/api/v1/files/" + encodeURIComponent(fileId) + "/uploads/" + encodeURIComponent(uploadId) + "/parts";
+}
+
+/** 失败响应体摘要（MinIO 错误 XML / 网关页等）：压平空白并截断，仅用于错误文案。 */
+async function readErrorSnippet(response: Response): Promise<string> {
+  try {
+    const text = await response.text();
+    return text.replace(/\s+/g, " ").trim().slice(0, 140);
+  } catch {
+    return "";
+  }
+}
+
+/** 单分片上传（带重试）：重试前重新签该分片（顺带规避签名过期）；全部尝试失败抛末次原因。 */
+async function putPartWithRetry(
+  fileId: string,
+  uploadId: string,
+  part: { partNumber: number; url: string },
+  slice: ArrayBuffer,
+): Promise<void> {
+  let lastReason = "";
+  for (let attempt = 1; attempt <= PART_UPLOAD_MAX_ATTEMPTS; attempt += 1) {
+    let url = part.url;
+    if (attempt > 1) {
+      const refreshed = await apiSend<UploadPartsResponse>(uploadPartsPath(fileId, uploadId), "POST", {
+        partNumbers: [part.partNumber],
+      });
+      const next = refreshed.parts.find((item) => item.partNumber === part.partNumber);
+      if (next !== undefined) {
+        url = next.url;
+      }
+    }
+    try {
+      const response = await fetch(url, { method: "PUT", body: slice });
+      if (response.ok) {
+        return;
+      }
+      const snippet = await readErrorSnippet(response);
+      lastReason = "第 " + String(part.partNumber) + " 片，HTTP " + String(response.status) + (snippet === "" ? "" : "：" + snippet);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      lastReason = "第 " + String(part.partNumber) + " 片，请求中断：" + message;
+    }
+    if (attempt < PART_UPLOAD_MAX_ATTEMPTS) {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, attempt * PART_UPLOAD_RETRY_DELAY_MS);
+      });
+    }
+  }
+  throw new Error("文件上传失败（" + lastReason + "；已尝试 " + String(PART_UPLOAD_MAX_ATTEMPTS) + " 次）");
+}
+
+/** 分片直传公共尾段（uploadFile / replaceFileContent 共用）：取分片签名 → 逐片代重试 PUT → complete。 */
 async function transferChunks(
   fileId: string,
   upload: { id: string; partSizeBytes: number; totalParts: number },
@@ -107,17 +176,14 @@ async function transferChunks(
     partNumbers.push(index);
   }
   const signed = await apiSend<UploadPartsResponse>(
-    "/api/v1/files/" + encodeURIComponent(fileId) + "/uploads/" + encodeURIComponent(upload.id) + "/parts",
+    uploadPartsPath(fileId, upload.id),
     "POST",
     { partNumbers },
   );
   for (const part of signed.parts) {
     const start = (part.partNumber - 1) * upload.partSizeBytes;
     const slice = buffer.slice(start, Math.min(start + upload.partSizeBytes, buffer.byteLength));
-    const response = await fetch(part.url, { method: "PUT", body: slice });
-    if (!response.ok) {
-      throw new Error("文件上传失败（第 " + String(part.partNumber) + " 片，HTTP " + String(response.status) + "）");
-    }
+    await putPartWithRetry(fileId, upload.id, part, slice);
   }
   await apiSend<UploadCompleteResponse>(
     "/api/v1/files/" + encodeURIComponent(fileId) + "/uploads/" + encodeURIComponent(upload.id) + "/complete",
@@ -182,6 +248,9 @@ export type FileChangePayload = {
   reason: string;
   beforeSummary?: string;
   afterSummary?: string;
+  /** Push 314（业务口径「这个变更要可以填图片」）：变更前 / 变更后摘要附图（files.id 有序，各 ≤ 30；须为本项目未回收文件）。 */
+  beforeSummaryFileIds?: string[];
+  afterSummaryFileIds?: string[];
   stageKey?: string;
 };
 
@@ -220,6 +289,8 @@ export async function applyFileChange(projectId: string, target: TaskFileRef, fi
       reason,
       beforeSummary: before === "" ? undefined : before,
       afterSummary: after === "" ? undefined : after,
+      beforeSummaryFileIds: change.beforeSummaryFileIds === undefined || change.beforeSummaryFileIds.length === 0 ? undefined : change.beforeSummaryFileIds,
+      afterSummaryFileIds: change.afterSummaryFileIds === undefined || change.afterSummaryFileIds.length === 0 ? undefined : change.afterSummaryFileIds,
       stageKey: change.stageKey === undefined || change.stageKey === "" ? undefined : change.stageKey,
     },
   });
@@ -230,7 +301,8 @@ export async function applyFileChange(projectId: string, target: TaskFileRef, fi
   invalidatePreview(target.id);
 }
 
-/** 变更记录详情（契约 ChangeRequestDetail · M4-04 读面 A4-15）：变更本体 + 变更后文件 + 变更后版本（本文件只需用到的字段）。 */
+/** 变更记录详情（契约 ChangeRequestDetail · M4-04 读面 A4-15）：变更本体 + 变更后文件 + 变更后版本（本文件只需用到的字段）；
+ *  Push 319：导入表导入变更暂无变更后文件（源文件在微盘）→ fileId / versionId / versionSeq / file / version 可为 null。 */
 export type ChangeRequestDetail = {
   id: string;
   projectId: string;
@@ -239,17 +311,54 @@ export type ChangeRequestDetail = {
   reason: string;
   beforeSummary: string | null;
   afterSummary: string | null;
+  /** Push 314：变更前 / 变更后摘要附图（files.id 有序；读面按 id 懒取预览签名）。 */
+  beforeSummaryFileIds: string[];
+  afterSummaryFileIds: string[];
   status: string;
   appliedBy: string;
+  /** Push 347：导入表导入的「填写者」账号（源表「填写者」列命中）；应用内提交 / 未命中 = null（「填写者」回落申请人展示）。 */
+  writerBy: string | null;
   appliedAt: string;
-  fileId: string;
-  versionId: string;
-  versionSeq: number;
-  file: { id: string; name: string; docType: string | null; status: string };
-  version: { id: string; seq: number; sizeBytes: number; uploadedAt: string };
+  /** Push 319：导入遗留变更（无变更后文件）= null（前端标「变更后文件待补」）。 */
+  fileId: string | null;
+  versionId: string | null;
+  versionSeq: number | null;
+  file: { id: string; name: string; docType: string | null; status: string } | null;
+  version: { id: string; seq: number; sizeBytes: number; uploadedAt: string } | null;
   /** Push 256：本次变更同时更名时 = 更名前文件名称（变更记录「变更前」行显示）；未更名 = null。 */
   filePreviousName: string | null;
 };
+
+/**
+ * 变更记录列表行（契约 ChangeRequest · M4-04 读面 A4-15）：GET /projects/{id}/change-requests 的一行
+ * （变更本体 + 反查的文件 / 版本；导入遗留变更 fileId / versionId 为空、状态仍为 pending 体系外的原值）。
+ * Push 353：仪表盘「词频图」取数（dashboardApi.ts 的 fetchDashboardChangeWords）与点词「数据详情」用它。
+ */
+export type ApiChangeRequest = {
+  readonly id: string;
+  readonly projectId: string;
+  readonly nodeId: string | null;
+  readonly stageKey: string | null;
+  readonly reason: string;
+  readonly beforeSummary: string | null;
+  readonly afterSummary: string | null;
+  readonly beforeSummaryFileIds: readonly string[];
+  readonly afterSummaryFileIds: readonly string[];
+  readonly status: string;
+  readonly appliedBy: string;
+  readonly writerBy: string | null;
+  readonly appliedAt: string;
+  readonly createdAt: string;
+  readonly fileId: string | null;
+  readonly versionId: string | null;
+  readonly versionSeq: number | null;
+};
+
+/** 项目变更记录列表（M4-04 读面 · Push 353 仪表盘「词频图」取数）：GET /projects/{id}/change-requests 翻页取满。 */
+export async function fetchProjectChanges(projectId: string): Promise<ApiChangeRequest[]> {
+  const payload = await readAllPages<ApiChangeRequest>("/api/v1/projects/" + encodeURIComponent(projectId) + "/change-requests");
+  return payload.items;
+}
 
 /** 变更详情（抽屉「变更记录」页按任务 changeLinks 逐条取全文；非成员 / 不存在统一 404）。 */
 export function fetchChangeRequest(id: string): Promise<ChangeRequestDetail> {
@@ -319,15 +428,13 @@ const PDF_PREVIEW_EXTENSIONS = [".pdf"];
  *  + 文本族（txt / csv / html / htm）。服务端负责最终通道裁决；判不出的文件前端不出预览入口。 */
 const OFFICE_VIEWER_EXTENSIONS = [".doc", ".docx", ".docm", ".odt", ".rtf", ".txt", ".html", ".htm", ".xls", ".xlsx", ".xlsm", ".ods", ".csv", ".ppt", ".pptx", ".pptm", ".odp"];
 
-/** CAD 三维族（ADR-031 · 2026-10-13）：STEP/IGES（occt-import-js WASM B-Rep 解析）+ STL/3MF/OBJ/glTF
- *  （three.js Loader）—— 前端浏览器直解析渲染（CadViewer 组件）；读取侧与图片同口径原对象直签。
- *  dwg/dxf 二维走服务端转换管线（ADR-031 决策 1，随 M4-06 切片另行落地），不在此名单。 */
-const CAD3D_PREVIEW_EXTENSIONS = [".step", ".stp", ".iges", ".igs", ".stl", ".3mf", ".obj", ".gltf", ".glb"];
+/** CAD 暂不可预览提示名单（ADR-035，与 server isCadPreviewPending 对齐）。仅分类，不声明解析支持。 */
+const CAD_PREVIEW_EXTENSIONS = [".step", ".stp", ".iges", ".igs", ".stl", ".3mf", ".obj", ".gltf", ".glb", ".easm", ".dxf", ".dwg"];
 
 /** 可视预览通道：image = 浏览器直渲染（40×40 缩略图 + img 浮层）；pdf = 浏览器内置查看器（iframe 浮层）；
  *  office = ONLYOFFICE 查看器外壳（S4：api.js + DocEditor，超时 / 重试 / 降级「请下载」）；
- *  判不出 = null（抽屉里没有预览入口，只有改名 / 删除）。 */
-export type FilePreviewKind = "image" | "pdf" | "office" | "cad3d";
+ *  cad = 接入准备提示，不加载模型；判不出 = null（抽屉里没有预览入口，只有改名 / 删除）。 */
+export type FilePreviewKind = "image" | "pdf" | "office" | "cad";
 export function previewKindOf(name: string): FilePreviewKind | null {
   if (isImageFileName(name)) {
     return "image";
@@ -339,10 +446,8 @@ export function previewKindOf(name: string): FilePreviewKind | null {
   if (OFFICE_VIEWER_EXTENSIONS.some((extension) => lower.endsWith(extension))) {
     return "office";
   }
-  // CAD 三维族（ADR-031 · 与 server isCadFile 同口径 —— 扩展名单两边对齐，见 preview.targets.ts）：浏览器端
-  // occt WASM / three.js Loader 解析（CadViewer 组件），读取侧原对象短时签名直签（同图片直签口径）。
-  if (CAD3D_PREVIEW_EXTENSIONS.some((extension) => lower.endsWith(extension))) {
-    return "cad3d";
+  if (CAD_PREVIEW_EXTENSIONS.some((extension) => lower.endsWith(extension))) {
+    return "cad";
   }
   return null;
 }

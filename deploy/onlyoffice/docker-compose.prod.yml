@@ -1,0 +1,55 @@
+# ============================================================
+# LibiaoLink ONLYOFFICE 文档服务器（生产形态 · 测试机 10.1.104.44）
+# ------------------------------------------------------------
+# 用法（服务器 /opt/libiaolink/deploy/onlyoffice）：
+#   1) 镜像来源：开发机已构建 libiaolink/onlyoffice-docs:<tag>（digest pin 见 Dockerfile）
+#      → 服务器无外网（registry-1.docker.io 实测 000）→ 开发机 docker save → scp → docker load；
+#   2) 准备 .env（OO_JWT_SECRET = 宿主 ../prod/secrets/onlyoffice_jwt_secret 同值；chmod 600）：
+#      docker compose -f docker-compose.prod.yml up -d
+#   3) 自检：docker compose -f docker-compose.prod.yml exec docs /usr/local/bin/libiaolink-selfcheck.sh
+# 形态说明：
+#   - 网关：不发布公网端口；仅经 libiaolink-prod 网络被 web（nginx）以 443 子路径 /onlyoffice/ 反代
+#     （DS 9.4 子路径原生支持：X-Forwarded-Prefix + X-Forwarded-Host，见 deploy/prod/nginx/libiaolink.conf）；
+#     8001 只绑回环（SSH 隧道排障用）。
+#   - DS→API：同挂 libiaolink-prod → 可解析 api:3000（受控预览端点 /preview-content 服务间拉取）。
+#   - F1/R3 固化键由入口包装自动落地；R6：示例 app 关闭、门面不暴露 /example/。
+# ============================================================
+name: libiaolink-onlyoffice
+
+services:
+  docs:
+    image: ${OO_IMAGE:-libiaolink/onlyoffice-docs}:${OO_TAG:-9.4.0.1}
+    container_name: libiaolink-onlyoffice-docs
+    restart: unless-stopped
+    init: true
+    environment:
+      JWT_ENABLED: "true"
+      JWT_SECRET: "${OO_JWT_SECRET:?OO_JWT_SECRET 未设置（见 .env.example）}"
+      JWT_HEADER: "Authorization"
+      GENERATE_FONTS: "false"
+      EXAMPLE_ENABLED: "false"
+    ports:
+      - "127.0.0.1:${OO_PORT:-8001}:80"
+    mem_limit: ${OO_MEM_LIMIT:-3g}
+    cpus: ${OO_CPUS:-2}
+    tmpfs:
+      - /tmp:size=${OO_TMPFS:-512m},mode=1777
+    networks: [onlyoffice-internal, prod]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/libiaolink-selfcheck.sh"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+      start_period: 240s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+networks:
+  onlyoffice-internal:
+    name: libiaolink-onlyoffice-internal
+  prod:
+    name: libiaolink-prod
+    external: true

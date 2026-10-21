@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { startLiveSync } from "./liveSync";
+import { applyInboxUnread, noteInboxNotification, refreshInboxUnread } from "./inbox";
 import { useLiveRefresh } from "./useLiveRefresh";
 import { AuditLogPage } from "./AuditLogPage";
 import { FileLibraryPage } from "./FileLibraryPage";
+import { SettingsPage } from "./SettingsPage";
 import Hub from "./Hub";
 import Home from "./Home";
 import PlaceholderPage from "./PlaceholderPage";
@@ -10,10 +12,12 @@ import ProjectDetail from "./ProjectDetail";
 import WorkspacePage from "./WorkspacePage";
 import { ApiError, apiFetch, redirectToLogin } from "./api";
 import { applyBackgroundTier, applyCardWatermark, asBackgroundTier, asCardWatermark } from "./backgroundTier";
-import { applyLocale, asLocale } from "./i18n";
+import { applyLocale, asLocale, getLocale, textOf, useT, type TextKey } from "./i18n";
 import { Loader } from "./components/Loader";
 import { Toast } from "./components/Toast";
+import { ExportProgressOverlay } from "./components/ExportProgressOverlay";
 import { useFocusTrap } from "./components/useFocusTrap";
+import { BindingGuideModal } from "./components/BindingGuideModal";
 import { ProjectModal, type ProjectDraft, type ProjectSubmitResult } from "./components/ProjectModal";
 import type { DictTools } from "./dictTools";
 import { hasPermission, loadMyPermissions, useMyPermissions } from "./permissions";
@@ -28,10 +32,11 @@ import {
   type Dicts,
 } from "./dicts";
 import { directoryMemberOptions, loadDirectory, type DirectoryUser } from "./directory";
-import { archiveProject, createProject, deleteProject, fetchProject, toUiProject, updateProject } from "./projectApi";
-import { loadMyPreferences, loadMyPreferencesWithLegacyMigration, saveHomeSavedFilters, saveTaskTableHiddenColumns, saveWorkspaceOpenProjects, type WorkspaceOpenProjects } from "./preferencesApi";
+import { archiveProject, createProject, deleteProject, downloadProjectWorkbook, fetchProject, toUiProject, updateProject } from "./projectApi";
+import { loadMyPreferences, loadMyPreferencesWithLegacyMigration, saveHomeSavedFilters, saveTaskTableHiddenColumns, saveHubDashProject, saveHubDashView, saveHubView, saveWorkspaceOpenProjects, type WorkspaceOpenProjects } from "./preferencesApi";
 import type { SavedFilter } from "./savedFilters";
-import { replaceAuditQuery, replaceFilesQuery, replaceWorkspaceSub, replaceWorkspaceTab, useHashRoute } from "./useHashRoute";
+import { asHubDashView, type HubDashView } from "./data/dashboardProgress";
+import { asHubView, replaceAuditQuery, replaceFilesQuery, replaceWorkspaceSub, replaceWorkspaceTab, useHashRoute, type HubView } from "./useHashRoute";
 import { projectStatusOf, type MeResponse, type Project } from "./types";
 
 type ViewState =
@@ -42,24 +47,25 @@ type ViewState =
 
 /** 写失败 → 面向业务的提示（错误码口径《前端功能需求》§3.7）。 */
 function errorMessageOf(error: unknown, fallback: string): string {
+  const t = (key: TextKey, params?: Record<string, string | number>): string => textOf(getLocale(), key, params);
   if (error instanceof ApiError) {
     if (error.code === "PROJECT_CODE_EXISTS") {
-      return "项目编号已存在，请换一个编号。";
+      return t("app.err.codeExists");
     }
     if (error.code === "VERSION_CONFLICT") {
-      return "数据已被他人更新，本次改动未保存。请核对最新内容后重试。";
+      return t("app.err.versionConflict");
     }
     if (error.code === "PROJECT_ARCHIVED") {
-      return "项目已归档，不能修改。";
+      return t("app.err.archived");
     }
     if (error.code === "ARCHIVE_NOT_READY") {
-      return "项目尚未完成验收，不能归档（归档需先完成验收阶段）。";
+      return t("app.err.archiveNotReady");
     }
     if (error.code === "ARCHIVE_GATE_NOT_PASSED") {
-      return "归档门禁未通过（有缺项），请重试并在弹窗内确认。";
+      return t("app.err.archiveGate");
     }
     if (error.code === "DICT_ITEM_EXISTS") {
-      return "该名称已被占用：请换一个名称，或联系管理员处理。";
+      return t("app.err.dictExists");
     }
     if (error.code === "DICT_ITEM_IN_USE") {
       // A3 删除守卫（Push 174）：服务端文案自带「哪个条目 + 多少个项目在用」，原样透出比前端复述更准。
@@ -67,17 +73,17 @@ function errorMessageOf(error: unknown, fallback: string): string {
     }
     if (error.code === "VALIDATION_FAILED") {
       const first = error.details[0];
-      return first !== undefined && first.message !== "" ? "参数校验失败：" + first.message : "参数校验失败，请检查填写内容。";
+      return first !== undefined && first.message !== "" ? t("app.err.validation", { message: first.message }) : t("app.err.validationPlain");
     }
     if (error.status === 403) {
-      return "没有权限执行该操作。";
+      return t("app.err.forbidden");
     }
     if (error.status === 404) {
-      return "项目不存在或无权访问。";
+      return t("app.err.notFound");
     }
-    return error.message + "（" + error.code + "）";
+    return t("app.err.wrapped", { message: error.message, code: error.code });
   }
-  return fallback + "：网络异常，请稍后重试。";
+  return t("app.err.network", { fallback });
 }
 
 /**
@@ -103,6 +109,7 @@ function projectFieldsChanged(
 }
 
 export default function App() {
+  const t = useT();
   const [state, setState] = useState<ViewState>({ kind: "loading" });
   // 参考数据：字典（地区 / 项目类型 + 主题色）、用户目录（项目经理）与本人偏好（常用筛选）；失败不阻塞登录，页面用兜底值
   const [dicts, setDicts] = useState<Dicts>(EMPTY_DICTS);
@@ -122,16 +129,40 @@ export default function App() {
   // 写操作后 +1：列表与详情按它重新取数（前端不做本地拼接，以服务端返回为准）
   const [dataVersion, setDataVersion] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
+  /** 仪表盘页常驻视图（Push 332 · 业务口径「这个页面要记住 因为不同的人想常驻的页面可能不一样」）：按账号记住 —— 地址不带 `?view=` 时本页落在这一屏。 */
+  const [hubView, setHubView] = useState<HubView>("map");
+  /** 首落闸门（Push 354 · 业务口径 2026-10-16「仪表盘页面重新登录点击刷新后 会触发页面转场动画效果」）：账号记忆（prefs）落定前，
+   *  仪表盘页 #/（无 ?view=）先不渲染卡面 —— 落哪一屏由记忆决定，记忆没到就落屏必出「先地图、后滑屏」的假转场。 */
+  const [hubPrefsSettled, setHubPrefsSettled] = useState(false);
+  /** 仪表盘常驻项目（Push 336 · 业务口径「选择的项目也要记住 不随刷新变动而回到全部项目」）：按账号记住选中的项目；null = 全部项目。 */
+  const [hubDashProject, setHubDashProject] = useState<string | null>(null);
+  /** 仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」）：按账号记住选中视图 —— 数据总览 / 项目进度 / 任务状态 / 问题 / 交付时间 / 词频图。 */
+  const [hubDashView, setHubDashView] = useState<HubDashView>("progress");
   /** 权限画像（Push 172 重新接线）：管理入口的呈现层收敛 —— 字典治理（dict.manage）与删除项目（project.delete）。 */
   const permissions = useMyPermissions();
   /** 待确认删除的项目（卡片删除先出确认条，第二下才真删）：null = 没有待确认的删除。 */
   const [pendingDelete, setPendingDelete] = useState<Project | null>(null);
+  /** 正在导出的项目 id：卡片按钮据此显示忙碌态；同一时间只生成一份工作簿。 */
+  const [exportingProjectId, setExportingProjectId] = useState<string | null>(null);
+  const exportInFlight = useRef(false);
   /** 键盘焦点陷阱（Push 264 追订）：删除确认条开着时焦点进条内（初始焦点不再留在背景卡片）、Tab 在条内循环、关闭还原。 */
   const deleteConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDelete !== null);
   const route = useHashRoute();
 
   const signedIn = state.kind === "signed-in";
-  useEffect(() => signedIn ? startLiveSync() : undefined, [signedIn]);
+  /** 站内信红点（Push 352）：登录后先按读面补拉一次角标（SSE 未连上也有数），随后由 unread 快照驱动；
+   *  open（含自动重连；服务端重连不补发）再补拉一次对齐；notification 只推进弹窗补拉版本号。 */
+  useEffect(() => {
+    if (!signedIn) {
+      return undefined;
+    }
+    void refreshInboxUnread();
+    return startLiveSync({
+      onUnread: applyInboxUnread,
+      onNotification: noteInboxNotification,
+      onOpen: () => { void refreshInboxUnread(); },
+    });
+  }, [signedIn]);
   useLiveRefresh(["dicts", "projects"], async () => {
     const next = await loadDicts();
     return () => setDicts(next);
@@ -152,6 +183,9 @@ export default function App() {
       filterRevision.current = prefs.revisions?.homeSavedFilters ?? 0;
       setSavedFilters(prefs.homeSavedFilters);
       setTaskTableHiddenColumns(prefs.taskTableHiddenColumns);
+      setHubView(asHubView(prefs.hubView));
+      setHubDashProject(prefs.hubDashProject ?? null);
+      setHubDashView(asHubDashView(prefs.hubDashView));
       applyBackgroundTier(asBackgroundTier(prefs.backgroundTier));
       applyCardWatermark(asCardWatermark(prefs.cardWatermark));
       applyLocale(asLocale(prefs.locale));
@@ -200,12 +234,19 @@ export default function App() {
           filterRevision.current = prefsResult.value.revisions?.homeSavedFilters ?? 0;
           setTaskTableHiddenColumns(prefsResult.value.taskTableHiddenColumns);
           setWorkspaceOpenProjects(prefsResult.value.workspaceOpenProjects);
+          setHubView(asHubView(prefsResult.value.hubView));
+          // 仪表盘常驻项目（Push 336 · 「选择的项目也要记住 不随刷新变动而回到全部项目」）：登录后从账号偏好静默落位（缺键 / 已删项目在页面内回落全部项目）
+          setHubDashProject(prefsResult.value.hubDashProject ?? null);
+          // 仪表盘页内图表视图（Push 345 · 「选择后刷新不变 按账号记住」）：登录后从账号偏好静默落位（缺键 / 坏值回落项目进度）
+          setHubDashView(asHubDashView(prefsResult.value.hubDashView));
           // 外观偏好（Push 291 背景档位 / Push 292 卡片水印）：登录后从账号偏好静默落位（坏值 / 缺键回落默认）
           applyBackgroundTier(asBackgroundTier(prefsResult.value.backgroundTier));
           applyCardWatermark(asCardWatermark(prefsResult.value.cardWatermark));
           // 界面语言（Push 296）：按账号静默落位（刷新 / 换设备同账号保持；坏值 / 缺键回落中文）
           applyLocale(asLocale(prefsResult.value.locale));
         }
+        // Push 354 首落闸门放行：账号记忆到这一步已落定（成功落值 / 失败留缺省），#/ 无 ?view= 时可渲染卡面。
+        setHubPrefsSettled(true);
       } catch (error: unknown) {
         if (!cancelled) {
           setState({ kind: "error", message: String(error) });
@@ -252,7 +293,7 @@ export default function App() {
         if (!cancelled) {
           setDetail(null);
           if (error instanceof ApiError && error.status !== 404) {
-            setNotice(errorMessageOf(error, "加载项目失败"));
+            setNotice(errorMessageOf(error, t("app.fail.loadProject")));
           }
         }
       } finally {
@@ -281,7 +322,7 @@ export default function App() {
       setDataVersion((value) => value + 1);
       return null;
     } catch (error: unknown) {
-      return errorMessageOf(error, "创建项目失败");
+      return errorMessageOf(error, t("app.fail.createProject"));
     }
   };
 
@@ -310,7 +351,7 @@ export default function App() {
       );
       return null;
     } catch (error: unknown) {
-      return errorMessageOf(error, type === "region" ? "添加地区失败" : "添加项目类型失败");
+      return errorMessageOf(error, type === "region" ? t("app.fail.addRegion") : t("app.fail.addProjectType"));
     }
   };
 
@@ -325,13 +366,13 @@ export default function App() {
       applyDictType(type, await deleteDictItem(type, code));
       return null;
     } catch (error: unknown) {
-      return errorMessageOf(error, type === "region" ? "删除地区失败" : "删除项目类型失败");
+      return errorMessageOf(error, type === "region" ? t("app.fail.deleteRegion") : t("app.fail.deleteProjectType"));
     }
   };
 
   /**
-   * 删除项目（A5；Push 172 接上入口）：硬删（连同聚合子表物理删）+ If-Match 回传当前 version 防误删；卡片上的删除是隐式的，
-   * 点一下先出确认条（项目是数据级操作），确认后才调 DELETE —— 成功后 dataVersion +1 刷新列表 / 详情。
+   * 删除项目（A5；2026-10-19 起 = 移入项目回收站）：If-Match 回传当前 version 防误删；卡片上的删除是隐式的，
+   * 点一下先出确认条，确认后才调 DELETE —— 项目聚合数据与图片保留，可在文件库 > 项目回收站恢复。
    */
   const handleConfirmDeleteProject = async (): Promise<void> => {
     const project = pendingDelete;
@@ -343,7 +384,25 @@ export default function App() {
       await deleteProject(project.id, project.version);
       setDataVersion((value) => value + 1);
     } catch (error: unknown) {
-      setNotice(errorMessageOf(error, "删除项目失败"));
+      setNotice(errorMessageOf(error, t("app.fail.deleteProject")));
+    }
+  };
+
+  /** 导出项目全部数据：浏览器保存 xlsx；失败沿用全局顶部 Toast，不阻断其他操作。 */
+  const handleExportProject = async (project: Project): Promise<void> => {
+    if (exportInFlight.current) {
+      return;
+    }
+    exportInFlight.current = true;
+    setExportingProjectId(project.id);
+    setNotice(null);
+    try {
+      await downloadProjectWorkbook(project);
+    } catch (error: unknown) {
+      setNotice(errorMessageOf(error, t("app.fail.exportProject")));
+    } finally {
+      exportInFlight.current = false;
+      setExportingProjectId(null);
     }
   };
 
@@ -361,7 +420,7 @@ export default function App() {
       return null;
     } catch (error: unknown) {
       setSavedFilters((current) => (current === items ? previous : current));
-      return errorMessageOf(error, "常用筛选保存失败");
+      return errorMessageOf(error, t("app.fail.saveFilters"));
     }
   };
 
@@ -378,7 +437,7 @@ export default function App() {
       return null;
     } catch (error: unknown) {
       setTaskTableHiddenColumns((current) => (current === keys ? previous : current));
-      return errorMessageOf(error, "列显隐保存失败");
+      return errorMessageOf(error, t("app.fail.saveColumns"));
     }
   };
 
@@ -396,7 +455,55 @@ export default function App() {
       return null;
     } catch (error: unknown) {
       setWorkspaceOpenProjects((current) => (current === value ? previous : current));
-      return errorMessageOf(error, "面板展开态保存失败");
+      return errorMessageOf(error, t("app.fail.savePanels"));
+    }
+  };
+
+  /**
+   * 仪表盘页常驻视图（Push 332 · 业务口径 2026-10-15「还是做路由吧 这个页面要记住 因为不同的人想常驻的页面可能不一样」）：
+   * 与背景档位同一套乐观更新 + 失败回滚（单键 PATCH user_preferences.prefs.hubView；地址由页面自身写回）。
+   */
+  const handleHubViewChange = async (next: HubView): Promise<void> => {
+    const previous = hubView;
+    setHubView(next);
+    try {
+      const prefs = await saveHubView(next);
+      setHubView(asHubView(prefs.hubView));
+    } catch (error: unknown) {
+      setHubView((current) => (current === next ? previous : current));
+      setNotice(errorMessageOf(error, t("app.fail.saveHubView")));
+    }
+  };
+
+  /**
+   * 仪表盘常驻项目（Push 336 · 业务口径 2026-10-15「选择的项目也要记住 不随刷新变动而回到全部项目」）：
+   * 与 hubView 同一套乐观更新 + 失败回滚（单键 PATCH user_preferences.prefs.hubDashProject；null = 回全部项目）。
+   */
+  const handleHubDashProjectChange = async (next: string | null): Promise<void> => {
+    const previous = hubDashProject;
+    setHubDashProject(next);
+    try {
+      const prefs = await saveHubDashProject(next);
+      setHubDashProject(prefs.hubDashProject ?? null);
+    } catch (error: unknown) {
+      setHubDashProject((current) => (current === next ? previous : current));
+      setNotice(errorMessageOf(error, t("app.fail.saveHubDashProject")));
+    }
+  };
+
+  /**
+   * 仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」）：
+   * 与 hubDashProject 同一套乐观更新 + 失败回滚（单键 PATCH user_preferences.prefs.hubDashView）。
+   */
+  const handleHubDashViewChange = async (next: HubDashView): Promise<void> => {
+    const previous = hubDashView;
+    setHubDashView(next);
+    try {
+      const prefs = await saveHubDashView(next);
+      setHubDashView(asHubDashView(prefs.hubDashView));
+    } catch (error: unknown) {
+      setHubDashView((current) => (current === next ? previous : current));
+      setNotice(errorMessageOf(error, t("app.fail.saveHubDashView")));
     }
   };
 
@@ -442,13 +549,13 @@ export default function App() {
           const latest = toUiProject(await fetchProject(project.id));
           return { kind: "conflict", version: latest.version, latest: { code: latest.code, description: latest.description, note: latest.remark, managerIds: latest.managerIds, projectType: latest.projectType, region: latest.region, status: projectStatusOf(latest.status) ?? "active" } };
         } catch {
-          return { kind: "error", message: "项目已被修改或已不可见，当前输入已保留，暂时无法读取最新内容。" };
+          return { kind: "error", message: t("app.err.projectGone") };
         }
       }
       if (error instanceof ApiError && error.code === "ARCHIVE_GATE_NOT_PASSED" && options?.archiveConfirm !== true) {
         return { kind: "archive-confirm", missing: error.details.map((detail) => detail.message) };
       }
-      return { kind: "error", message: errorMessageOf(error, "保存项目失败") };
+      return { kind: "error", message: errorMessageOf(error, t("app.fail.saveProject")) };
     }
   };
 
@@ -474,7 +581,7 @@ export default function App() {
       setDataVersion((value) => value + 1);
       return true;
     } catch (error: unknown) {
-      setNotice(errorMessageOf(error, "项目经理修改失败"));
+      setNotice(errorMessageOf(error, t("app.fail.saveManagers")));
       return false;
     }
   };
@@ -503,6 +610,7 @@ export default function App() {
    */
   const canCreateProject = permissions === null || hasPermission(permissions, "project.create");
   const canUpdateProject = permissions === null || hasPermission(permissions, "project.update");
+  const canExportProject = permissions === null || hasPermission(permissions, "project.export");
   /** 归档权（Push 262 · M7-04 前端接线一部分）：决定编辑弹窗「已归档」选项是否可选（服务端逐请求仍是最终裁决）。 */
   const canArchiveProject = permissions === null || hasPermission(permissions, "project.archive");
   /**
@@ -529,7 +637,7 @@ export default function App() {
     return (
       <main className="page">
         <div className="card">
-          <p className="muted">正在跳转公司统一登录…</p>
+          <p className="muted">{t("app.login.redirecting")}</p>
         </div>
       </main>
     );
@@ -539,7 +647,7 @@ export default function App() {
     return (
       <main className="page">
         <div className="card">
-          <h1>加载失败</h1>
+          <h1>{t("app.loadFailed")}</h1>
           <p className="muted">{state.message}</p>
           <p>
             <button
@@ -548,7 +656,7 @@ export default function App() {
                 window.location.reload();
               }}
             >
-              重试
+              {t("common.retry")}
             </button>
           </p>
         </div>
@@ -564,16 +672,17 @@ export default function App() {
    */
   const bottomBars = (
     <>
+      {exportingProjectId === null ? null : <ExportProgressOverlay progress={null} variant="project-data" />}
       <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
       {pendingDelete === null ? null : (
         <div
           ref={deleteConfirmTrapRef}
           role="dialog"
-          aria-label="确认删除项目"
+          aria-label={t("app.delete.aria")}
           className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
         >
           <span>
-            删除项目 <span className="font-mono font-semibold">{pendingDelete.code}</span>（{pendingDelete.description}）？删除后连同任务一起删除、编号可再用。
+            {t("app.delete.lead")} <span className="font-mono font-semibold">{pendingDelete.code}</span>{t("app.delete.tail", { name: pendingDelete.description })}
           </span>
           <button
             type="button"
@@ -582,7 +691,7 @@ export default function App() {
             }}
             className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
           >
-            取消
+            {t("common.cancel")}
           </button>
           <button
             type="button"
@@ -591,7 +700,7 @@ export default function App() {
             }}
             className="rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
           >
-            删除
+            {t("app.delete.confirm")}
           </button>
         </div>
       )}
@@ -605,6 +714,8 @@ export default function App() {
           }}
         />
       )}
+      {/* 首登「绑定企业微信」引导（D5 · Push 250）：未绑定且本机未跳过才弹；已绑定 / 已跳过 = 静默不渲染。 */}
+      <BindingGuideModal me={state.me} />
     </>
   );
 
@@ -641,10 +752,20 @@ export default function App() {
     );
 
   if (route.kind === "hub") {
-    // 蓝图页（顶层 · Push 285 前叫「入口页 / 首页」）：地图占满内容区；登录后的默认落地已改项目空间 `#/projects`
+    // 仪表盘页（顶层 · Push 285 前叫「入口页 / 首页」· Push 331 起叫「仪表盘」）：地图 / 仪表盘双视图（Push 332 起视图走地址 `?view=`；Push 358 起仪表盘侧含「数据总览」等六个图表视图）；登录后的默认落地已改项目空间 `#/projects`
+    // Push 354 首落闸门（业务口径 2026-10-16「仪表盘页面重新登录点击刷新后 会触发页面转场动画效果」）：地址没写 ?view= 时，
+    // 落哪一屏由账号记忆（prefs）决定 —— 记忆没落定前先不渲染卡面，防「先按缺省落地图、记忆晚到再换屏」的假转场；
+    // 记忆落定后由 Hub 对齐 effect 瞬时对齐并把视图写回地址（见 Hub.tsx），之后刷新 / 收藏 / 分享都由地址直达。
+    if (route.view === null && !hubPrefsSettled) {
+      return (
+        <main className="page">
+          <Loader />
+        </main>
+      );
+    }
     return (
       <>
-        <Hub me={state.me} />
+        <Hub me={state.me} routeView={route.view} rememberedView={hubView} onViewChange={handleHubViewChange} rememberedDashProject={hubDashProject} onDashProjectChange={handleHubDashProjectChange} rememberedDashView={hubDashView} onDashViewChange={handleHubDashViewChange} />
         {bottomBars}
       </>
     );
@@ -713,7 +834,7 @@ export default function App() {
     // 筛选态走地址（replaceFilesQuery，地址即状态）—— 与 #/audit 同一口径；数据 = 逐项目聚合（FileLibraryPage.tsx）。
     return (
       <>
-        <FileLibraryPage me={state.me} query={route.query} onChangeQuery={replaceFilesQuery} directory={directory} />
+        <FileLibraryPage me={state.me} query={route.query} onChangeQuery={replaceFilesQuery} directory={directory} dicts={dicts} />
         {bottomBars}
       </>
     );
@@ -730,6 +851,16 @@ export default function App() {
     );
   }
 
+  if (route.kind === "settings") {
+    // 企微绑定页（Push 250 · 头像菜单首项「企微绑定」）：账号级设置的家 —— 当前落点 = 企微单聊绑定（D5 / D6 绑定码链路）+ 项目群绑定。
+    return (
+      <>
+        <SettingsPage me={state.me} />
+        {bottomBars}
+      </>
+    );
+  }
+
   return (
     <>
       <Home
@@ -741,6 +872,11 @@ export default function App() {
         canDeleteProject={canDeleteProject}
         canCreateProject={canCreateProject}
         canUpdateProject={canUpdateProject}
+        canExportProject={canExportProject}
+        exportingProjectId={exportingProjectId}
+        onExportProject={(project) => {
+          void handleExportProject(project);
+        }}
         onDeleteProject={(project) => {
           setPendingDelete(project);
         }}

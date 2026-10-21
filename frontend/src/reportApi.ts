@@ -12,9 +12,6 @@ import { apiSend, readAllPages } from "./api";
 import { stageNameOf } from "./taskApi";
 import type { DailyReport, Issue, IssueState, ReportPhoto, ReportState } from "./data/reports";
 
-/** 列表一次取满（与任务列表同口径）：四块子视图共用。 */
-export const REPORT_PAGE_LIMIT = 200;
-
 /** 日报状态中文名（A3-02 · 契约值 → 展示）。 */
 export const REPORT_STATE_NAMES: Record<ReportState, string> = {
   draft: "草稿",

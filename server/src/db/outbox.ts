@@ -4,7 +4,7 @@ import { outboxEvents } from "./schema/platform.js";
 import type { DbClient } from "./db-client.js";
 
 export interface OutboxEventInput {
-  /** 主题：契约白名单闭集（Push 169 定案 24 项 → Push 215 后 26 项 → Push 252 后 27 项（增 task.finalized）→ Push 260 后 28 项（增 task.unfinalized）；编译期收口 —— 写入端只允许已登记主题）。 */
+  /** 主题：契约白名单闭集（Push 169 定案 24 项 → Push 215 后 26 项 → Push 252 后 27 项（增 task.finalized）→ Push 260 后 28 项（增 task.unfinalized）→ Push 385 后 30 项（增 project.completed）；编译期收口 —— 写入端只允许已登记主题）。 */
   topic: OutboxTopic;
   payload: Record<string, unknown>;
   /** 消费幂等键（unique）：状态变更事件用「实体 + 版本」，重试事件追加时间戳。 */
@@ -22,6 +22,19 @@ export async function appendOutbox(client: DbClient, event: OutboxEventInput): P
     dedupeKey: event.dedupeKey,
     status: "pending",
   });
+}
+
+/** 同事务追加并返回新 outbox id（M5-06-2B 重发归档需要回填 outbox_id）。 */
+export async function appendOutboxReturningId(client: DbClient, event: OutboxEventInput): Promise<number> {
+  const rows = await client.insert(outboxEvents).values({
+    topic: event.topic,
+    payload: event.payload,
+    dedupeKey: event.dedupeKey,
+    status: "pending",
+  }).returning({ id: outboxEvents.id });
+  const row = rows[0];
+  if (row === undefined) throw new Error("outbox 插入后未返回 id：" + event.dedupeKey);
+  return Number(row.id);
 }
 
 /**

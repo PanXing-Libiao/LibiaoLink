@@ -46,18 +46,36 @@ export type {
 export {
   AUTOMATION_SCHEDULE_JOB_KIND,
   evaluateEventMessages,
-  listEnabledRules,
   planWindowMessages,
+  toProjectSubject,
   toProjectDaySubject,
   toReportMemberSubject,
+  toStageSubject,
   toTodoSubject,
 } from "./automation.runtime.js";
 export type {
   EventEvaluationInput,
   ProjectDaySnapshot,
+  ProjectSnapshot,
   ReportMemberSnapshot,
   RuntimeEvaluation,
+  RuntimeDetail,
   RuntimeSkip,
+  StageSnapshot,
   TodoSnapshot,
   WindowPlanInput,
 } from "./automation.runtime.js";
+export {
+  AutomationRuleRepository,
+  AutomationRunRepository,
+  automationRuleFromRow,
+  automationRunFromRow,
+} from "./automation.repository.js";
+export type {
+  AutomationRuleRow,
+  AutomationRuleUpdatePatch,
+  AutomationRunFilter,
+  AutomationRunInsert,
+  AutomationRunRow,
+  AutomationScheduleJobRow,
+} from "./automation.repository.js";

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { usePopover } from "./usePopover";
+import { useT } from "../i18n";
 
 /** 选项文案：普通枚举用字符串，带色标签的枚举（如任务状态）直接用 ReactNode。 */
 export type SelectOption = {
@@ -43,6 +44,7 @@ function TrashIcon() {
 
 /** 选项列表（单选 + 勾选态）：普通下拉、任务表行内编辑与字典下拉共用；可选「行内删除」。 */
 export function OptionList({ options, value, onPick, ariaLabel, onDeleteOption, deleteLabelOf }: OptionListProps) {
+  const t = useT();
   const [activeIndex, setActiveIndex] = useState(() => Math.max(0, options.findIndex((option) => option.value === value)));
 
   return (
@@ -77,7 +79,7 @@ export function OptionList({ options, value, onPick, ariaLabel, onDeleteOption, 
         if (onDeleteOption === undefined || option.deletable === false) {
           return row;
         }
-        const label = deleteLabelOf === undefined ? "删除" : deleteLabelOf(option);
+        const label = deleteLabelOf === undefined ? t("common.delete") : deleteLabelOf(option);
         const reason = option.deleteDisabledReason;
         if (reason !== undefined) {
           // 业务拦住的删除位（Push 174 字典引用守卫）：置灰、点不动、悬停出原因；aria-label 把原因读全。
@@ -129,8 +131,10 @@ type SelectMenuProps = {
 };
 
 /** 普通下拉（不可搜索）：状态 / 紧急重要度这类枚举字段。 */
-export function SelectMenu({ value, options, onChange, placeholder = "请选择", ariaLabel, disabled = false }: SelectMenuProps) {
+export function SelectMenu({ value, options, onChange, placeholder: placeholderProp, ariaLabel, disabled = false }: SelectMenuProps) {
   const { open, setOpen, position, triggerRef, popoverRef } = usePopover(160, options.length * 34 + 12);
+  const t = useT();
+  const placeholder = placeholderProp ?? t("sel.placeholder");
   const selected = options.find((option) => option.value === value) ?? null;
 
   return (
@@ -237,6 +241,8 @@ type MultiSelectMenuProps = {
   onChange: (values: string[]) => void;
   placeholder?: string;
   ariaLabel: string;
+  /** 选项显示文案（触发器已选联结 + 选项行共用；不给 = 原样显示。Push 301 追订：「问题归类」表单侧英文界面出译文）。 */
+  labelOf?: (option: string) => string;
   /** 前置条件未满足时禁用（与 SelectMenu 同口径：灰底灰字、点不开）。 */
   disabled?: boolean;
 };
@@ -246,8 +252,12 @@ type MultiSelectMenuProps = {
  * 差异全在弹层交互 —— 点选项**不关闭**（可连续勾选），选中项打绿勾、再点即取消；
  * 触发器显示已选项（顿号连接）、空选回落占位文案；关闭口径与站点其它浮层一致（点外部 / Esc / 再点触发器）。
  */
-export function MultiSelectMenu({ values, options, onChange, placeholder = "请选择", ariaLabel, disabled = false }: MultiSelectMenuProps) {
+export function MultiSelectMenu({ values, options, onChange, placeholder: placeholderProp, ariaLabel, labelOf, disabled = false }: MultiSelectMenuProps) {
   const { open, setOpen, position, triggerRef, popoverRef } = usePopover(180, options.length * 34 + 12);
+  const t = useT();
+  const placeholder = placeholderProp ?? t("sel.placeholder");
+  /** 选项显示文案（labelOf 缺省 = 原样，等价旧行为）。 */
+  const optionLabel = (value: string): string => (labelOf === undefined ? value : labelOf(value));
   return (
     <div className="relative">
       <button
@@ -273,7 +283,7 @@ export function MultiSelectMenu({ values, options, onChange, placeholder = "请�
         {values.length === 0 ? (
           <span className="truncate text-zinc-400">{placeholder}</span>
         ) : (
-          <span className={"truncate font-medium " + (disabled ? "text-zinc-400" : "text-zinc-800")}>{values.join("、")}</span>
+          <span className={"truncate font-medium " + (disabled ? "text-zinc-400" : "text-zinc-800")}>{values.map(optionLabel).join(t("sel.multiJoin"))}</span>
         )}
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className={"ml-auto h-4 w-4 shrink-0 " + (disabled ? "text-zinc-300" : "text-zinc-400")}>
           <path d="M6 9.5l6 6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
@@ -288,7 +298,7 @@ export function MultiSelectMenu({ values, options, onChange, placeholder = "请�
               className="fixed z-50 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.18)]"
               style={{ top: position.top, left: position.left, width: position.width }}
             >
-              <MultiOptionList values={values} options={options} ariaLabel={ariaLabel} onChange={onChange} />
+              <MultiOptionList values={values} options={options} ariaLabel={ariaLabel} onChange={onChange} renderLabel={labelOf === undefined ? undefined : optionLabel} />
             </div>,
             document.body,
           )

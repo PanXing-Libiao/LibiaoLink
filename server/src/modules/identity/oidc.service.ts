@@ -66,12 +66,18 @@ export class OidcService {
     return url.toString();
   }
 
-  /** 单点登出地址（清 SSO 会话；id_token_hint 来自服务端会话记录）。 */
+  /**
+   * 单点登出地址（清 SSO 会话；id_token_hint 来自服务端会话记录）。
+   * post_logout_redirect_uri 复用已登记的回调地址（CASDOOR_REDIRECT_URI）：Casdoor 按应用
+   * 「许可跳转列表」校验该参数，站点根地址未登记时登出直接落 Casdoor 错误 JSON（2026-10-14
+   * test-pm 实测；本地沙箱因 Casdoor 对 localhost 的豁免未暴露）。登出回跳由 /auth/callback
+   * 的无参分支处理后落到站点首页。
+   */
   buildLogoutUrl(idToken: string | null): string {
     const env = this.config.env;
     const url = new URL(this.issuer + "/api/logout");
     url.searchParams.set("client_id", env.CASDOOR_CLIENT_ID);
-    url.searchParams.set("post_logout_redirect_uri", new URL(env.CASDOOR_REDIRECT_URI).origin + "/");
+    url.searchParams.set("post_logout_redirect_uri", env.CASDOOR_REDIRECT_URI);
     if (idToken !== null) {
       url.searchParams.set("id_token_hint", idToken);
     }

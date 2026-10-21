@@ -20,6 +20,11 @@ describe("shared-page invalidation", () => {
     expect(changedResources("PATCH", "/api/v1/users/me/preferences")).toEqual([]);
     expect(changedResources("PATCH", "/api/v1/projects/a/tasks/b")).toContain("tasks");
     expect(changedResources("POST", "/api/v1/files/a/uploads/b/complete")).toContain("files");
+    // 导入表导入（Push 316 服务端落地）：只有 commit 写业务数据；preview 只落票据，不触发刷新
+    expect(changedResources("POST", "/api/v1/project-imports/preview")).toEqual([]);
+    expect(changedResources("POST", "/api/v1/project-imports/commit")).toEqual(
+      expect.arrayContaining(["projects", "tasks", "reports", "issues", "files", "templates"]),
+    );
     const changed = vi.fn();
     const interceptor = new ResourceChangeInterceptor({ changed });
     const context = { switchToHttp: () => ({ getRequest: () => ({ method: "PATCH", url: "/api/v1/projects/a/tasks/b" }) }) };

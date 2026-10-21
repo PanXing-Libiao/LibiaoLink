@@ -1,0 +1,305 @@
+# ============================================================
+# LibiaoLink 生产部署件（单机 · Docker Compose）
+# ------------------------------------------------------------
+# 现状（2026-10-14）：postgres ✅ / tools ✅ / api · worker ✅ / web ✅ / minio ✅；TLS（本切片）：80 → 301、443 应用 + 9443 MinIO 门面（ALLinSSL 下发证书）。
+# 口径：ADR-013（Compose 单机 + Nginx 唯一对外端口；生产门禁）、ADR-004（PostgreSQL 18.x，部署锁精确补丁）。
+# 密钥：一律走文件挂载（secrets/，只存在于服务器；不进仓库、不进 .env）。
+# 数据卷落点：系统盘 SSD（/var/lib/docker，ADR-013 磁盘分工）；PG 备份走 pg_dump（后续切片）。
+# 应用服务带 profiles: app（依赖安装 / server.env / secrets 就绪后显式启动）：
+#   docker compose --profile app up -d api worker
+# ============================================================
+name: libiaolink-prod
+
+services:
+  postgres:
+    image: ${PG_IMAGE:-postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336}
+    container_name: libiaolink-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${PG_DB:-libiaolink}
+      POSTGRES_USER: ${PG_SUPERUSER:-postgres}
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_superuser_password
+    secrets:
+      - pg_superuser_password
+    # PG 18 官方镜像：PGDATA=/var/lib/postgresql/18/docker，镜像声明的卷 = /var/lib/postgresql（挂这个）
+    volumes:
+      - pgdata:/var/lib/postgresql
+    # 只发布到本机回环（调试 / SSH 隧道用）；Nginx 是唯一对外端口
+    ports:
+      - "127.0.0.1:${PG_PORT:-5432}:5432"
+    mem_limit: ${PG_MEM_LIMIT:-1g}
+    cpus: ${PG_CPUS:-1}
+    pids_limit: 512
+    shm_size: 256mb
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_SUPERUSER:-postgres} -d ${PG_DB:-libiaolink}"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    networks: [prod]
+
+  # minio：对象存储（S3 协议；数据盘 bind /srv/data/minio；镜像 = 服务器本地构建 libiaolink/minio:RELEASE.2025-09-07T16-13-09Z（quay 已下架，见 README §9）。
+  # 9000=API（预签名直传要求浏览器直连，故对局域网发布）；9001=控制台（仅本机回环，走 SSH 隧道）。
+  minio:
+    image: ${MINIO_IMAGE:-libiaolink/minio:RELEASE.2025-09-07T16-13-09Z}
+    container_name: libiaolink-minio
+    profiles: ["app"]
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/opt/libiaolink/deploy/minio-entrypoint.sh"]
+    environment:
+      MINIO_API_CORS_ALLOW_ORIGIN: ${MINIO_CORS_ALLOW_ORIGIN:-http://10.1.104.44}
+    secrets:
+      - minio_root_user
+      - minio_root_password
+    volumes:
+      - ${MINIO_DATA_DIR:-/srv/data/minio}:/data
+      - ./scripts/minio-entrypoint.sh:/opt/libiaolink/deploy/minio-entrypoint.sh:ro
+    ports:
+      - "9000:9000"
+      - "127.0.0.1:9001:9001"
+    mem_limit: ${MINIO_MEM_LIMIT:-512m}
+    cpus: ${MINIO_CPUS:-1}
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    networks: [prod]
+
+  # svg-preview：H1 · S4 SVG 安全栅格化器（execution 边界见 deploy/svg-preview/README.md）。
+  # 只挂 internal 网络、不发布宿主端口；worker 经服务名 svg-preview:9900 调用。镜像 tag + digest 双锁。
+  svg-preview:
+    image: ${SVG_PREVIEW_IMAGE:-libiaolink/svg-preview:2.0.0@sha256:eaee947e1e6a9e4b3ea7e7057e76e4ac45ac6209fb470593c46686ec7a474282}
+    container_name: libiaolink-prod-svg-preview
+    profiles: ["app"]
+    restart: unless-stopped
+    init: true
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=${SVG_PREVIEW_TMPFS:-128m},mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      PORT: "9900"
+      PIPELINE_VERSION: "2.0.0"
+      FONTS_DIR: "/app/fonts"
+      CONVERT_TIMEOUT_MS: "${SVG_PREVIEW_TIMEOUT_MS:-10000}"
+      CONVERT_MAX_CONCURRENCY: "1"
+      CONVERT_MAX_QUEUE: "${SVG_PREVIEW_MAX_QUEUE:-4}"
+      SVG_MAX_SOURCE_BYTES: "20971520"
+      SVG_MAX_OUTPUT_BYTES: "20971520"
+      SVG_MAX_LONG_EDGE: "4096"
+      SVG_MAX_PIXELS: "16777216"
+      SVG_MAX_ASPECT_RATIO: "16"
+      SVG_MAX_NATURAL_EDGE: "1000000"
+      SVG_MAX_ELEMENTS: "100000"
+    mem_limit: ${SVG_PREVIEW_MEM_LIMIT:-256m}
+    cpus: ${SVG_PREVIEW_CPUS:-1}
+    pids_limit: ${SVG_PREVIEW_PIDS:-64}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9900/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    stop_grace_period: 15s
+    networks: [preview-internal]
+
+  # 一次性运维容器（profile: tools）：数据库迁移 / 种子 / 依赖安装 / 一次性脚本。
+  # 平时不运行；用法：bash scripts/db-migrate.sh、bash scripts/db-seed.sh（见 README 第 6 节）。
+  tools:
+    image: ${NODE_IMAGE:-node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1}
+    profiles: ["tools"]
+    working_dir: /opt/libiaolink/database
+    entrypoint: ["/bin/sh"]
+    volumes:
+      - ../../database:/opt/libiaolink/database
+      - ../../server:/opt/libiaolink/server
+      - ../../shared:/opt/libiaolink/shared
+      # 依赖装进命名卷，不落宿主机目录（避免 Windows 检出残留 / 误传的 node_modules 干扰）
+      - tools_node_modules:/opt/libiaolink/database/node_modules
+      - server_node_modules:/opt/libiaolink/server/node_modules
+      - shared_node_modules:/opt/libiaolink/shared/node_modules
+      # 只读挂载 secrets/（脚本按身份读取对应密码文件，不写回）
+      - ./secrets:/opt/libiaolink/secrets:ro
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: ${PG_DB:-libiaolink}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: ${TOOLS_MEM_LIMIT:-512m}
+    cpus: ${TOOLS_CPUS:-1}
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    networks: [prod]
+
+  # api：NestJS HTTP（容器内 3000；不发布宿主端口，Nginx 后续反代）。
+  api:
+    image: ${NODE_IMAGE:-node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1}
+    container_name: libiaolink-api
+    profiles: ["app"]
+    restart: unless-stopped
+    working_dir: /opt/libiaolink/server
+    command: ["node", "/opt/libiaolink/deploy/service-entrypoint.cjs", "dist/entry/api.js"]
+    env_file: [./server.env]
+    volumes:
+      - ../../server:/opt/libiaolink/server
+      - ../../shared:/opt/libiaolink/shared
+      - server_node_modules:/opt/libiaolink/server/node_modules
+      - shared_node_modules:/opt/libiaolink/shared/node_modules
+      - ./secrets:/opt/libiaolink/secrets:ro
+      - ./scripts/service-entrypoint.cjs:/opt/libiaolink/deploy/service-entrypoint.cjs:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: ${API_MEM_LIMIT:-768m}
+    cpus: ${API_CPUS:-1}
+    pids_limit: 512
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    networks: [prod]
+
+  # worker：outbox / 通知 / 清理常驻循环（无对外端口）。
+  worker:
+    image: ${NODE_IMAGE:-node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1}
+    container_name: libiaolink-worker
+    profiles: ["app"]
+    restart: unless-stopped
+    working_dir: /opt/libiaolink/server
+    command: ["node", "/opt/libiaolink/deploy/service-entrypoint.cjs", "dist/entry/worker.js"]
+    env_file: [./server.env]
+    volumes:
+      - ../../server:/opt/libiaolink/server
+      - ../../shared:/opt/libiaolink/shared
+      - server_node_modules:/opt/libiaolink/server/node_modules
+      - shared_node_modules:/opt/libiaolink/shared/node_modules
+      - ./secrets:/opt/libiaolink/secrets:ro
+      - ./scripts/service-entrypoint.cjs:/opt/libiaolink/deploy/service-entrypoint.cjs:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      svg-preview:
+        condition: service_started
+    mem_limit: ${WORKER_MEM_LIMIT:-768m}
+    cpus: ${WORKER_CPUS:-1}
+    pids_limit: 512
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "/opt/libiaolink/deploy/service-entrypoint.cjs", "dist/entry/worker.js", "--health-check"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    networks: [prod, preview-internal]
+
+  # web：Nginx 唯一对外入口（80 → 301；443 = 应用；9443 = MinIO https 门面 → minio:9000）。
+  # SPA 静态（frontend build 产物 → /srv/www）+ 反代 /api/v1 /auth /healthz /readyz → api:3000；/internal/** 不对外。
+  # 证书：ALLinSSL（*.libiaorobot.com）下发到宿主 /etc/ssl/，单文件只读挂载（原地覆盖写入，容器可见）。
+  web:
+    image: ${NGINX_IMAGE:-nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94}  # 双锁（2026-10-13 回填）
+    container_name: libiaolink-web
+    profiles: ["app"]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "9443:9443"
+    volumes:
+      - ./nginx/libiaolink.conf:/etc/nginx/conf.d/default.conf:ro
+      - ../../frontend/dist:/srv/www:ro
+      - /etc/ssl/libiaorobot.com.pem:/etc/nginx/ssl/libiaorobot.com.pem:ro
+      - /etc/ssl/libiaorobot.com.key:/etc/nginx/ssl/libiaorobot.com.key:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    mem_limit: ${WEB_MEM_LIMIT:-64m}
+    cpus: ${WEB_CPUS:-0.5}
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/nginx-health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    networks: [prod]
+
+networks:
+  prod:
+    name: libiaolink-prod
+  preview-internal:
+    name: libiaolink-svg-preview-internal
+    internal: true
+
+volumes:
+  pgdata:
+    name: libiaolink-prod-pgdata
+  tools_node_modules:
+    name: libiaolink-prod-tools-node-modules
+  server_node_modules:
+    name: libiaolink-prod-server-node-modules
+  shared_node_modules:
+    name: libiaolink-prod-shared-node-modules
+
+secrets:
+  pg_superuser_password:
+    file: ./secrets/pg_superuser_password
+  minio_root_user:
+    file: ./secrets/minio_root_user
+  minio_root_password:
+    file: ./secrets/minio_root_password

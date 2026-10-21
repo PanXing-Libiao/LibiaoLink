@@ -9,11 +9,15 @@ import { ScrollArea } from "./ScrollArea";
 import { MemberMultiSelect } from "./MemberSelect";
 import { RegionSelect } from "./RegionSelect";
 import { useFocusTrapFor } from "./useFocusTrap";
-import { PROJECT_STATUS_TEXT, PROJECT_STATUS_VALUES, projectStatusOf, type ProjectStatusValue } from "../types";
+import { PROJECT_STATUS_VALUES, projectStatusOf, type ProjectStatusValue } from "../types";
+import { fieldText, projectStatusTextOf, projectTypeText, useLocale, useT } from "../i18n";
+import { regionNameEn } from "../data/regionPicker";
+import { fetchUsedRegions } from "../projectApi";
 
 /**
  * 项目地区（Push 195）：点开 = 贴字段弹出的小窗（RegionSelect）——最上方「已有项目地区」（有项目在用的，
- * 带项目数），下面按洲分组列全部标准国家 / 地区（字典没收录的国家也能搜到、选到）。
+ * 带项目数；Push 304 起按项目落库值聚合，含字典外国名），下面按洲分组列全部标准国家 / 地区（字典没收录的
+ * 国家也能搜到、选到）。
  * 业务口径（2026-09-28）：「还是要之前的小窗 然后最上方是已有项目地区」＋「那我搜索现在没有的国家不就还是不行吗」。
  * 纯选择：不支持手填 / 添加 / 删除（Push 194 口径延续）——值 = 字典码 / 标准中文国名，地图立柱 / 侧栏筛选
  * 按同一套认名规则识别（见 src/data/regionPicker.ts）。
@@ -82,6 +86,11 @@ function projectTypeContent(name: string, item: DictItem | null): ReactNode {
 
 export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, managerOptions, canArchive = false, onClose, onSubmit }: ProjectModalProps) {
   const isEdit = mode === "edit";
+  const t = useT();
+  const locale = useLocale();
+  /** 冲突摘要行的标点（中文全角 / 英文半角）。 */
+  const colon = locale === "en" ? ": " : "：";
+  const semi = locale === "en" ? "; " : "；";
   /** 已归档项目只读（ADR-027）：弹窗只读展示，不给保存（服务端同样 409 PROJECT_ARCHIVED）。 */
   const archivedLock = isEdit && initial?.status === "archived";
   const [code, setCode] = useState(initial?.code ?? "");
@@ -94,6 +103,26 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
   /** 项目状态（Push 262）：新建 = active；编辑 = 库里现值（未知值回落 active 兜底）。 */
   const [status, setStatus] = useState<ProjectStatusValue>(projectStatusOf(initial?.status ?? "active") ?? "active");
   const [regionPopoverOpen, setRegionPopoverOpen] = useState(false);
+  /**
+   * 「已有项目地区」计数（Push 304）：挂载即取全量 region 计数（值 = 项目落库原文 → 未删除项目数）——
+   * 之前只认字典条目 usageCount，地区存标准国名（如「美国」）时「已有」页恒空；取数失败维持 undefined（回落字典口径，不阻塞弹窗）。
+   */
+  const [usedRegions, setUsedRegions] = useState<Record<string, number> | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    fetchUsedRegions()
+      .then((counts) => {
+        if (!cancelled) {
+          setUsedRegions(counts);
+        }
+      })
+      .catch(() => {
+        // 计数取不到 = 小窗回落字典 usageCount（不提示、不影响建项目）。
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState<{ latest: ProjectDraft; version: number } | null>(null);
@@ -188,14 +217,14 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
     !pending &&
     archiveMissing === null &&
     !archivedLock;
-  const title = isEdit ? "编辑项目" : "新建项目";
+  const title = isEdit ? t("card.edit") : t("home.create");
   /** 触发器上的展示名：字典条目给字典名（阿联酋 → 阿拉伯联合酋长国）；否则值本身（标准中文国名）。 */
   const regionLabel = dictLabel(dicts, "region", region);
 
   const applyResult = (result: ProjectSubmitResult): void => {
     if (result.kind === "conflict") {
       setConflict(result);
-      setError("项目已被他人修改，当前填写内容已保留。核对最新内容后再保存。");
+      setError(t("modal.conflict"));
       setArchiveMissing(null);
       return;
     }
@@ -248,72 +277,73 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
       >
         <h2 className="text-lg font-bold text-zinc-900">{title}</h2>
         <p className="mt-1 text-sm text-zinc-500">
-          {isEdit ? "修改项目信息，保存后立即生效。" : "填写项目信息，创建后按创建时间出现在列表里。"}
+          {isEdit ? t("modal.subtitle.edit") : t("modal.subtitle.new")}
         </p>
 
-        <ScrollArea viewportClassName="mt-5 min-h-0 flex-1" className="overscroll-contain space-y-4 px-0.5 pb-1" ariaLabel="项目表单" thumbAlwaysVisible>
+        <ScrollArea viewportClassName="mt-5 min-h-0 flex-1" className="overscroll-contain space-y-4 px-0.5 pb-1" ariaLabel={t("modal.form.aria")} thumbAlwaysVisible>
         <form id="project-modal-form" className="space-y-4" onSubmit={(event) => void handleSubmit(event)}>
           <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目编号</span>
+            <span className="mb-1.5 block text-sm font-medium text-zinc-700">{t("modal.code.field")}</span>
             <input
               className={fieldClass}
               value={code}
               onChange={(event) => setCode(event.target.value)}
-              placeholder="如 CNBJ-20260708-0001"
+              placeholder={t("modal.code.placeholder")}
             />
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目描述</span>
+            <span className="mb-1.5 block text-sm font-medium text-zinc-700">{t("modal.name.field")}</span>
             <input
               className={fieldClass}
               value={description}
               onChange={(event) => setDescription(event.target.value)}
-              placeholder="如 中国包裹分拣"
+              placeholder={t("modal.name.placeholder")}
             />
           </label>
           <div className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-700">
-              项目经理<span className="ml-1 text-xs font-normal text-zinc-400">可多位</span>
+              {fieldText(locale, "项目经理")}<span className="ml-1 text-xs font-normal text-zinc-400">{t("modal.managers.any")}</span>
             </span>
             <MemberMultiSelect
               values={managerIds}
               onChange={setManagerIds}
               options={managerOptions}
-              placeholder="选择项目经理"
-              ariaLabel="选择项目经理"
+              placeholder={t("drawer.manager.placeholder")}
+              ariaLabel={t("drawer.manager.aria")}
             />
-            <span className="mt-1 block text-[11px] text-zinc-400">至少一位；多位时按勾选顺序展示（Push 136）。</span>
+            <span className="mt-1 block text-[11px] text-zinc-400">{t("modal.managers.caption")}</span>
           </div>
           <div className="block">
-            <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目地区</span>
+            <span className="mb-1.5 block text-sm font-medium text-zinc-700">{t("modal.province")}</span>
             {/* Push 195：小窗 = 搜索框 + 最上方「已有项目地区」+ 分洲全部国家（不支持手填 / 添加 / 删除，不写字典） */}
             <RegionSelect
               value={region}
               valueLabel={regionLabel}
               items={dicts.region}
+              usedRegions={usedRegions}
               onChange={setRegion}
               onOpenChange={setRegionPopoverOpen}
             />
           </div>
           <div className="block">
-            <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目类型</span>
+            <span className="mb-1.5 block text-sm font-medium text-zinc-700">{t("modal.type.field")}</span>
             <DictSelect
               value={projectType}
               items={dicts.projectType}
-              ariaLabel="选择项目类型"
-              placeholder="请选择项目类型"
-              renderContent={projectTypeContent}
+              ariaLabel={t("modal.type.aria")}
+              placeholder={t("modal.type.placeholder")}
+              renderContent={(name, item) => projectTypeContent(projectTypeText(locale, name), item)}
               onAdd={
                 canManageDicts
                   ? (input) => dictTools.onAdd("projectType", input)
                   : undefined
               }
               addText={{
-                label: "添加项目类型",
-                placeholder: "输入类型名称，如 分拣机",
+                label: t("modal.type.add"),
+                placeholder: t("modal.type.namePlaceholder"),
               }}
               palette={{
-                label: "颜色模板",
+                label: fieldText(locale, "颜色模板"),
                 options: DICT_ACCENT_PALETTE,
               }}
               onDelete={
@@ -321,7 +351,7 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
                   ? (code) => dictTools.onDelete("projectType", code)
                   : undefined
               }
-              deleteLabelOf={(_code, name) => "删除项目类型 " + name}
+              deleteLabelOf={(_code, name) => t("modal.type.deleteAria", { name })}
               onChange={setProjectType}
             />
           </div>
@@ -329,21 +359,21 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
           {/* Push 280：备注（契约 description）恢复采集 —— 新建 / 编辑都可填；多行、选填、上限 2000（契约 max(2000)）。 */}
           <label className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-700">
-              备注<span className="ml-1 text-xs font-normal text-zinc-400">选填</span>
+              {t("modal.note.field")}<span className="ml-1 text-xs font-normal text-zinc-400">{t("modal.note.optional")}</span>
             </span>
             <textarea
               className={fieldClass + " min-h-20 resize-y"}
               value={note}
               onChange={(event) => setNote(event.target.value)}
               maxLength={2000}
-              placeholder="项目背景 / 交付说明等"
+              placeholder={t("modal.note.placeholder")}
             />
           </label>
 
           {isEdit ? (
             <div className="block">
-              <span className="mb-1.5 block text-sm font-medium text-zinc-700">项目状态</span>
-              <div role="radiogroup" aria-label="项目状态" className="flex flex-wrap gap-2">
+              <span className="mb-1.5 block text-sm font-medium text-zinc-700">{t("modal.status.field")}</span>
+              <div role="radiogroup" aria-label={t("modal.status.aria")} className="flex flex-wrap gap-2">
                 {PROJECT_STATUS_VALUES.map((value) => {
                   const archiveOption = value === "archived";
                   const disabled = archivedLock || (archiveOption && !canArchive);
@@ -359,8 +389,8 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
                       title={
                         disabled
                           ? archivedLock
-                            ? "项目已归档，处于只读保护（ADR-027）"
-                            : "需要归档权限（项目经理 / 管理员）"
+                            ? t("modal.archive.locked")
+                            : t("modal.archive.needPerm")
                           : undefined
                       }
                       onClick={() => {
@@ -376,17 +406,17 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
                         (disabled ? " cursor-not-allowed opacity-50" : "")
                       }
                     >
-                      {PROJECT_STATUS_TEXT[value]}
+                      {projectStatusTextOf(locale, value)}
                     </button>
                   );
                 })}
               </div>
               <span className="mt-1 block text-[11px] text-zinc-400">
                 {archivedLock
-                  ? "项目已归档：处于只读保护（ADR-027），不能修改。"
+                  ? t("modal.err.archived")
                   : status === "archived"
-                    ? "归档走归档流程：需先完成验收；有缺项时二次确认后带缺项归档（留痕）。"
-                    : "保存后立即生效，并写入操作记录。"}
+                    ? t("modal.gate.note")
+                    : t("modal.save.note")}
               </span>
             </div>
           ) : null}
@@ -396,16 +426,16 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
               ref={archivePanelRef}
               data-archive-confirm="true"
               role="alertdialog"
-              aria-label="归档缺项确认"
+              aria-label={t("modal.gate.aria")}
               className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-900"
             >
-              <p className="font-medium">归档门禁未通过：{archiveMissing.length} 项缺项</p>
+              <p className="font-medium">{t("modal.gate.title", { n: archiveMissing.length })}</p>
               <ul className="mt-1 list-disc space-y-0.5 pl-4">
                 {archiveMissing.map((item, index) => (
                   <li key={String(index)} data-archive-missing-item="true">{item}</li>
                 ))}
               </ul>
-              <p className="mt-1.5">确认后带缺项归档，缺项随归档清单留痕。</p>
+              <p className="mt-1.5">{t("modal.gate.body")}</p>
               <div className="mt-2 flex justify-end gap-2">
                 <button
                   type="button"
@@ -415,7 +445,7 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
                   }}
                   className="rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-xs font-medium text-amber-900 transition hover:bg-amber-100"
                 >
-                  取消
+                  {t("common.cancel")}
                 </button>
                 <button
                   type="button"
@@ -424,7 +454,7 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
                   onClick={() => void handleArchiveConfirm()}
                   className="rounded-lg bg-[#feca04] px-2.5 py-1 text-xs font-medium text-zinc-900 shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {pending ? "归档中…" : "仍要归档"}
+                  {pending ? t("modal.gate.pending") : t("modal.gate.confirm")}
                 </button>
               </div>
             </div>
@@ -437,12 +467,12 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
           )}
           {conflict === null ? null : (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-              <details><summary>查看最新项目内容</summary><p className="mt-2 whitespace-pre-wrap">编号：{conflict.latest.code}<br />描述：{conflict.latest.description}<br />备注：{conflict.latest.note || "—"}<br />经理：{conflict.latest.managerIds.map((id) => managerOptions.find((member) => member.id === id)?.name ?? id).join("、")}<br />类型：{conflict.latest.projectType}；地区：{conflict.latest.region}；状态：{PROJECT_STATUS_TEXT[conflict.latest.status]}</p></details>
+              <details><summary>{t("modal.conflict.latest")}</summary><p className="mt-2 whitespace-pre-wrap">{fieldText(locale, "项目编号")}{colon}{conflict.latest.code}<br />{fieldText(locale, "项目描述")}{colon}{conflict.latest.description}<br />{fieldText(locale, "备注")}{colon}{conflict.latest.note || "—"}<br />{fieldText(locale, "项目经理")}{colon}{conflict.latest.managerIds.map((id) => managerOptions.find((member) => member.id === id)?.name ?? id).join(locale === "en" ? ", " : "、")}<br />{fieldText(locale, "项目类型")}{colon}{projectTypeText(locale, dictLabel(dicts, "projectType", conflict.latest.projectType))}{semi}{fieldText(locale, "项目地区")}{colon}{locale === "en" ? regionNameEn(dictLabel(dicts, "region", conflict.latest.region)) || dictLabel(dicts, "region", conflict.latest.region) : dictLabel(dicts, "region", conflict.latest.region)}{semi}{fieldText(locale, "项目状态")}{colon}{projectStatusTextOf(locale, conflict.latest.status)}</p></details>
               <button type="button" disabled={pending || conflict.latest.status === "archived"} className="mt-2 underline disabled:opacity-50" onClick={() => {
                 setConfirmedVersion(conflict.version);
                 setConflict(null);
-                setError("已确认最新版本，当前填写内容保留。点击保存修改提交。");
-              }}>核对后，确认按当前填写内容保存</button>
+                setError(t("modal.conflict.noted"));
+              }}>{t("modal.conflict.ok")}</button>
             </div>
           )}
 
@@ -455,7 +485,7 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
             onClick={onClose}
             className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100"
           >
-            取消
+            {t("common.cancel")}
           </button>
           <button
             type="submit"
@@ -463,7 +493,7 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
             disabled={!canSubmit}
             className="rounded-lg bg-[#feca04] px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {archivedLock ? "已归档只读" : pending ? "提交中…" : isEdit ? "保存修改" : "创建项目"}
+            {archivedLock ? t("modal.submit.archived") : pending ? t("modal.submit.pending") : isEdit ? t("modal.submit.edit") : t("modal.submit.create")}
           </button>
         </div>
       </div>

@@ -1,5 +1,5 @@
 /**
- * 用户偏好（A4 / A24 · Push 169；A4 列显隐白名单 · Push 170；A31 工作台展开态 · Push 233；「我的计划」便签墙 · Push 268；便签墙背景色 bg · Push 271；背景档位 backgroundTier · Push 291；卡片水印 cardWatermark · Push 292；界面语言 locale · Push 296）回归：无行默认值、PATCH 合并语义（只传变更键 / 数组整体替换 /
+ * 用户偏好（A4 / A24 · Push 169；A4 列显隐白名单 · Push 170；A31 工作台展开态 · Push 233；「我的计划」便签墙 · Push 268；便签墙背景色 bg · Push 271；背景档位 backgroundTier · Push 291；卡片水印 cardWatermark · Push 292；界面语言 locale · Push 296；仪表盘页常驻视图 hubView · Push 332；仪表盘常驻项目 hubDashProject · Push 336；仪表盘页内图表视图 hubDashView · Push 345；Push 358 加 overview）回归：无行默认值、PATCH 合并语义（只传变更键 / 数组整体替换 /
  * 未声明键保留）、读侧规范化（jsonb 是自由对象，脏数据一律收敛不抛错）、契约上限（≤ 20 组 / 名称 ≤ 20 字）、
  * 任务表列 key 白名单（未知 key 400 + 与前端 `TABLE_COLUMNS` 同源）、工作台展开态形状与收敛、便签墙形状 / 收敛 / 服务端盖章、背景档位枚举与读侧收敛、卡片水印布尔与读侧收敛、界面语言枚举与读侧收敛。
  * 不连库：仓储用内存替身（与 admin-audit.test.ts 同口径）；契约 schema 直接解析校验。
@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { PLAN_BOARD_CATEGORY_LIMIT, PLAN_BOARD_NOTE_LIMIT, SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, UserPreferencesUpdateBodySchema, WORKSPACE_OPEN_PROJECTS_LIMIT } from "@libiaolink/contracts";
+import { HUB_DASH_PROJECT_MAX_LENGTH, PLAN_BOARD_CATEGORY_LIMIT, PLAN_BOARD_NOTE_LIMIT, SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, UserPreferencesUpdateBodySchema, WORKSPACE_OPEN_PROJECTS_LIMIT } from "@libiaolink/contracts";
 import type { MyPlanNote } from "@libiaolink/contracts";
 import type { SavedHomeFilter } from "@libiaolink/contracts";
 import { UserPreferenceService } from "../src/modules/identity/user-preference.service.js";
@@ -77,7 +77,7 @@ function filterOf(index: number, name?: string): SavedHomeFilter {
 describe("用户偏好（A4 / A24）", () => {
   it("无行：返回契约默认值 + updatedAt null", async () => {
     const { service } = makeService();
-    expect(await service.get(USER_ID)).toEqual({ taskTableHiddenColumns: [], homeSavedFilters: [], focusMode: false, workspaceOpenProjects: { tasks: [], raised: [] }, myPlanBoard: { notes: [], categories: [], bg: "white", updatedAt: null }, revisions: {}, backgroundTier: "simple", cardWatermark: true, locale: "zh", updatedAt: null });
+    expect(await service.get(USER_ID)).toEqual({ taskTableHiddenColumns: [], homeSavedFilters: [], focusMode: false, workspaceOpenProjects: { tasks: [], raised: [] }, myPlanBoard: { notes: [], categories: [], bg: "white", updatedAt: null }, revisions: {}, backgroundTier: "medium", cardWatermark: false, locale: "zh", hubView: "map", hubDashProject: null, hubDashView: "progress", updatedAt: null });
   });
 
   it("首次 PATCH 只传 homeSavedFilters：数组整体落库，updatedAt 为写入时间", async () => {
@@ -154,7 +154,7 @@ describe("用户偏好（A4 / A24）", () => {
     expect(UserPreferencesUpdateBodySchema.safeParse({ focusMode: 1 }).success).toBe(false);
   });
 
-  it("背景档位（Push 291 · 业务口径「当前背景选择后刷新就没了 要按账号记住」）：只传 backgroundTier 落库、未传键保持原值；读侧白名单外回 simple", async () => {
+  it("背景档位（Push 291 · 业务口径「当前背景选择后刷新就没了 要按账号记住」；Push 313 起默认 medium）：只传 backgroundTier 落库、未传键保持原值；读侧白名单外 / 缺省回 medium", async () => {
     const { service, repo } = makeService();
     await service.update(USER_ID, { taskTableHiddenColumns: ["owner"], backgroundTier: "medium" }, AT);
     expect((await service.get(USER_ID)).backgroundTier).toBe("medium");
@@ -164,7 +164,9 @@ describe("用户偏好（A4 / A24）", () => {
     expect(after.taskTableHiddenColumns).toEqual(["owner"]);
     expect((await service.update(USER_ID, { backgroundTier: "simple" }, AT)).backgroundTier).toBe("simple");
     repo.rows.set(USER_ID, { userId: USER_ID, prefs: { backgroundTier: "neon" }, updatedAt: AT } as unknown as UserPreferenceRow);
-    expect((await service.get(USER_ID)).backgroundTier).toBe("simple");
+    expect((await service.get(USER_ID)).backgroundTier).toBe("medium");
+    repo.rows.set(USER_ID, { userId: USER_ID, prefs: { focusMode: true }, updatedAt: AT } as unknown as UserPreferenceRow);
+    expect((await service.get(USER_ID)).backgroundTier).toBe("medium");
   });
 
   it("背景档位契约：枚举 simple / medium / vivid 通过，未知档位 / 非字符串 400", () => {
@@ -175,7 +177,7 @@ describe("用户偏好（A4 / A24）", () => {
     expect(UserPreferencesUpdateBodySchema.safeParse({ backgroundTier: true }).success).toBe(false);
   });
 
-  it("卡片水印（Push 292 · 业务口径「增加一个水印选项 可以选择是否要水印」）：只传 cardWatermark 落库、未传键保持原值；读侧非布尔回默认 true", async () => {
+  it("卡片水印（Push 292 · 业务口径「增加一个水印选项 可以选择是否要水印」；Push 313 起默认 false）：只传 cardWatermark 落库、未传键保持原值；读侧非布尔 / 缺省回默认 false", async () => {
     const { service, repo } = makeService();
     await service.update(USER_ID, { cardWatermark: false }, AT);
     expect((await service.get(USER_ID)).cardWatermark).toBe(false);
@@ -183,7 +185,9 @@ describe("用户偏好（A4 / A24）", () => {
     expect((await service.update(USER_ID, { focusMode: true }, AT)).cardWatermark).toBe(false);
     expect((await service.update(USER_ID, { cardWatermark: true }, AT)).cardWatermark).toBe(true);
     repo.rows.set(USER_ID, { userId: USER_ID, prefs: { cardWatermark: "off" }, updatedAt: AT } as unknown as UserPreferenceRow);
-    expect((await service.get(USER_ID)).cardWatermark).toBe(true);
+    expect((await service.get(USER_ID)).cardWatermark).toBe(false);
+    repo.rows.set(USER_ID, { userId: USER_ID, prefs: {}, updatedAt: AT } as unknown as UserPreferenceRow);
+    expect((await service.get(USER_ID)).cardWatermark).toBe(false);
   });
 
   it("卡片水印契约：布尔通过，字符串 / 数字 400", () => {
@@ -209,6 +213,72 @@ describe("用户偏好（A4 / A24）", () => {
     expect(UserPreferencesUpdateBodySchema.safeParse({ locale: "en" }).success).toBe(true);
     expect(UserPreferencesUpdateBodySchema.safeParse({ locale: "fr" }).success).toBe(false);
     expect(UserPreferencesUpdateBodySchema.safeParse({ locale: true }).success).toBe(false);
+  });
+
+  it("仪表盘页常驻视图（Push 332 · 业务口径「还是做路由吧 这个页面要记住 因为不同的人想常驻的页面可能不一样」）：只传 hubView 落库、未传键保持原值；读侧白名单外回 map", async () => {
+    const { service, repo } = makeService();
+    await service.update(USER_ID, { hubView: "dashboard" }, AT);
+    expect((await service.get(USER_ID)).hubView).toBe("dashboard");
+    expect(repo.rows.get(USER_ID)?.prefs).toMatchObject({ hubView: "dashboard" });
+    expect((await service.update(USER_ID, { focusMode: true }, AT)).hubView).toBe("dashboard");
+    expect((await service.update(USER_ID, { hubView: "map" }, AT)).hubView).toBe("map");
+    repo.rows.set(USER_ID, { userId: USER_ID, prefs: { hubView: "board" }, updatedAt: AT } as unknown as UserPreferenceRow);
+    expect((await service.get(USER_ID)).hubView).toBe("map");
+  });
+
+  it("仪表盘页常驻视图契约：map / dashboard 通过，其它字符串 / 布尔 400", () => {
+    expect(UserPreferencesUpdateBodySchema.safeParse({ hubView: "map" }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ hubView: "dashboard" }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ hubView: "board" }).success).toBe(false);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ hubView: true }).success).toBe(false);
+  });
+
+  it("仪表盘常驻项目（Push 336 · 业务口径「选择的项目也要记住 不随刷新变动而回到全部项目」）：只传 hubDashProject 落库、未传键保持原值；读侧坏值回 null", async () => {
+    const { service, repo } = makeService();
+    await service.update(USER_ID, { hubDashProject: PROJECT_A }, AT);
+    expect((await service.get(USER_ID)).hubDashProject).toBe(PROJECT_A);
+    expect(repo.rows.get(USER_ID)?.prefs).toMatchObject({ hubDashProject: PROJECT_A });
+    expect((await service.update(USER_ID, { focusMode: true }, AT)).hubDashProject).toBe(PROJECT_A);
+    expect((await service.update(USER_ID, { hubDashProject: null }, AT)).hubDashProject).toBeNull();
+    repo.rows.set(USER_ID, { userId: USER_ID, prefs: { hubDashProject: 7 }, updatedAt: AT } as unknown as UserPreferenceRow);
+    expect((await service.get(USER_ID)).hubDashProject).toBeNull();
+    repo.rows.set(USER_ID, { userId: USER_ID, prefs: { hubDashProject: "" }, updatedAt: AT } as unknown as UserPreferenceRow);
+    expect((await service.get(USER_ID)).hubDashProject).toBeNull();
+    repo.rows.set(USER_ID, { userId: USER_ID, prefs: { hubDashProject: "x".repeat(HUB_DASH_PROJECT_MAX_LENGTH + 1) }, updatedAt: AT } as unknown as UserPreferenceRow);
+    expect((await service.get(USER_ID)).hubDashProject).toBeNull();
+  });
+
+  it("仪表盘常驻项目契约：≤ 64 字符串 / null 通过，空串 / 超 64 字 / 布尔 400", () => {
+    expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashProject: PROJECT_A }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashProject: null }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashProject: "" }).success).toBe(false);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashProject: "x".repeat(HUB_DASH_PROJECT_MAX_LENGTH + 1) }).success).toBe(false);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashProject: true }).success).toBe(false);
+  });
+
+  it("仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」；Push 353 加词频图；Push 358 加数据总览）：只传 hubDashView 落库、未传键保持原值；读侧白名单外回 progress", async () => {
+    const { service, repo } = makeService();
+    await service.update(USER_ID, { hubDashView: "delivery" }, AT);
+    expect((await service.get(USER_ID)).hubDashView).toBe("delivery");
+    expect(repo.rows.get(USER_ID)?.prefs).toMatchObject({ hubDashView: "delivery" });
+    expect((await service.update(USER_ID, { focusMode: true }, AT)).hubDashView).toBe("delivery");
+    expect((await service.update(USER_ID, { hubDashView: "progress" }, AT)).hubDashView).toBe("progress");
+    expect((await service.update(USER_ID, { hubDashView: "wordcloud" }, AT)).hubDashView).toBe("wordcloud");
+    expect((await service.update(USER_ID, { hubDashView: "overview" }, AT)).hubDashView).toBe("overview");
+    expect((await service.update(USER_ID, { hubDashView: "progress" }, AT)).hubDashView).toBe("progress");
+    repo.rows.set(USER_ID, { userId: USER_ID, prefs: { hubDashView: "board" }, updatedAt: AT } as unknown as UserPreferenceRow);
+    expect((await service.get(USER_ID)).hubDashView).toBe("progress");
+  });
+
+  it("仪表盘页内图表视图契约：overview / progress / status / issues / delivery / wordcloud 通过，其它字符串 / 布尔 400", () => {
+    expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashView: "overview" }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashView: "progress" }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashView: "status" }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashView: "issues" }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashView: "delivery" }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashView: "wordcloud" }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashView: "board" }).success).toBe(false);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ hubDashView: true }).success).toBe(false);
   });
 
   it("工作台展开态（A31 · Push 233）：只传 workspaceOpenProjects 落库、整体替换；两标签各自独立", async () => {

@@ -44,21 +44,33 @@ export interface OutboxTopicBacklog {
   oldestMs: number;
 }
 
+/** 死信窗口内的主题分布（日报用）。 */
+export interface OutboxTopicDead {
+  topic: string;
+  count: number;
+}
+
 /** Outbox 健康快照（S7-1 告警探针）：积压 / 最老年龄 / 死信。 */
 export interface OutboxStatsSnapshot {
   /** `pending` 且 `available_at <= now()`（真正可领取，不含退避未到点的行）。 */
   duePending: number;
   /** 最老待领取消息的已等待时长（毫秒）；无积压 = null。 */
   oldestDueMs: number | null;
+  /** 进度窗口内完成的 done 行数：用于区分「正常排空」与「消费者停滞」。 */
+  doneRecent: number;
   /** 窗口内新增的 dead 行数（按 updated_at）。 */
   deadRecent: number;
   deadTotal: number;
   byTopic: OutboxTopicBacklog[];
+  /** 死信窗口内按主题聚合；确定性拒绝只进日报时据此保留「卡在哪个主题」。 */
+  deadByTopic: OutboxTopicDead[];
 }
 
 export interface OutboxStatsInput {
   /** 死信「近期」窗口（毫秒）。 */
   deadWindowMs: number;
+  /** 完成进度窗口（毫秒）：统计该窗口内 done 行，判断队列是否仍有消费进展。 */
+  progressWindowMs: number;
 }
 
 export interface PurgeDoneInput {
@@ -169,6 +181,9 @@ export class OutboxStore {
         count(*) filter (where status = 'pending' and available_at <= now())::int as due_pending,
         extract(epoch from (now() - min(available_at) filter (where status = 'pending' and available_at <= now()))) * 1000 as oldest_due_ms,
         count(*) filter (
+          where status = 'done' and updated_at >= now() - ${input.progressWindowMs}::int * interval '1 millisecond'
+        )::int as done_recent,
+        count(*) filter (
           where status = 'dead' and updated_at >= now() - ${input.deadWindowMs}::int * interval '1 millisecond'
         )::int as dead_recent,
         count(*) filter (where status = 'dead')::int as dead_total
@@ -185,16 +200,29 @@ export class OutboxStore {
       group by topic
       order by due desc, topic
     `);
+    const deadByTopic = await this.database.db.execute(sql`
+      select topic, count(*)::int as count
+      from outbox_events
+      where status = 'dead'
+        and updated_at >= now() - ${input.deadWindowMs}::int * interval '1 millisecond'
+      group by topic
+      order by count desc, topic
+    `);
     return {
       duePending: Number(row.due_pending ?? 0),
       oldestDueMs:
         row.oldest_due_ms === null || row.oldest_due_ms === undefined ? null : Math.max(0, Number(row.oldest_due_ms)),
+      doneRecent: Number(row.done_recent ?? 0),
       deadRecent: Number(row.dead_recent ?? 0),
       deadTotal: Number(row.dead_total ?? 0),
       byTopic: (byTopic.rows as unknown as Array<Record<string, unknown>>).map((item) => ({
         topic: String(item.topic),
         due: Number(item.due),
         oldestMs: Math.max(0, Number(item.oldest_ms ?? 0)),
+      })),
+      deadByTopic: (deadByTopic.rows as unknown as Array<Record<string, unknown>>).map((item) => ({
+        topic: String(item.topic),
+        count: Number(item.count),
       })),
     };
   }

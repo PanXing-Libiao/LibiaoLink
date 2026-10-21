@@ -10,7 +10,8 @@
  * 契约字段 → UI 模型（data/tasks.ts 的 ProjectTask）的映射只在本文件做。
  */
 import { apiRequest, apiSend, readAllPages } from "./api";
-import { cnDateFromIso, daysBetweenInclusive, type ProjectTask, type TaskChange, type TaskFileSummary, type TaskPriority, type TaskStatus } from "./data/tasks";
+import { textOf, type Locale } from "./i18n";
+import { daysBetweenInclusive, type ProjectTask, type TaskChange, type TaskFileSummary, type TaskPriority, type TaskStatus } from "./data/tasks";
 
 /** 契约 Task / TaskListItem / TaskDetail（本文件只需用到的字段；服务端可能多给，忽略即可）。 */
 export type ApiTask = {
@@ -68,9 +69,6 @@ export type ApiProjectSummary = {
   done: number;
   total: number;
 };
-
-/** 列表一次取满（契约 limit 上限 200）：项目内任务全量给三块视图共用（与首页项目列表同一口径）。 */
-export const TASK_PAGE_LIMIT = 200;
 
 /** 九阶段字典（契约 STAGE_KEYS / STAGE_NAMES）：阶段名 ↔ key 的双向映射在前端本地维护。 */
 const STAGE_NAMES_BY_KEY: Record<string, string> = {
@@ -339,27 +337,22 @@ export function deleteTask(projectId: string, taskId: string, version: number): 
   );
 }
 
-/** 写入冲突 / 不可写时的统一文案（409 VERSION_CONFLICT 由调用方负责重取列表）。 */
-export function taskWriteMessage(error: { code: string; message: string }): string {
+/** 写入冲突 / 不可写时的统一文案（Push 301：随语言切换；409 VERSION_CONFLICT 由调用方负责重取列表）。 */
+export function taskWriteMessage(locale: Locale, error: { code: string; message: string }): string {
   if (error.code === "VERSION_CONFLICT") {
-    return "这条任务刚被改过（版本冲突），已刷新到最新数据，请再试一次";
+    return textOf(locale, "tw.versionConflict");
   }
   if (error.code === "PROJECT_ARCHIVED") {
-    return "项目已归档，任务不能修改";
+    return textOf(locale, "tw.archived");
   }
   if (error.code === "TASK_FINALIZED") {
-    return "任务已定档，不支持任何修改（文件修改走变更）";
+    return textOf(locale, "tw.finalized");
   }
   if (error.code === "TASK_HAS_REFERENCES") {
-    return "该任务已有变更记录引用，不能删除";
+    return textOf(locale, "tw.hasReferences");
   }
   if (error.code === "TASK_ALREADY_EXISTS") {
-    return "这个节点在项目里已经加过了";
+    return textOf(locale, "tw.alreadyExists");
   }
   return error.message;
-}
-
-/** 表格 / 看板 / 甘特的日期展示（ISO → M月D日；空值给「—」由调用方渲染）。 */
-export function taskDateText(iso: string): string {
-  return iso === "" ? "" : cnDateFromIso(iso);
 }

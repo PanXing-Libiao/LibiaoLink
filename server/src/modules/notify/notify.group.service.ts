@@ -14,17 +14,30 @@
  * markdown 组装：title === null ? body : `**title**\n\nbody`。
  * 安全：chatid 只进库（notify_deliveries.target）与限速桶摘要；日志 / outbox error 一律掩码（末 4 位）。
  */
+import { readFile } from "node:fs/promises";
+import { basename, resolve } from "node:path";
 import { Injectable, Logger } from "@nestjs/common";
-import { NotifyGroupMessagePayloadSchema, type NotifyGroupMessagePayload } from "@libiaolink/contracts";
+import {
+  NotifyGroupMessagePayloadSchema,
+  type NotifyDeliveryTopic,
+  type NotifyGroupMessagePayload,
+} from "@libiaolink/contracts";
 import { ClockService } from "../../common/clock/clock.service.js";
+import { AppConfig } from "../../config/config.module.js";
 import type { OutboxClaimedRow } from "../../db/outbox.store.js";
 import type { OutboxHandleOutcome } from "../../outbox/handler.js";
+import {
+  inferNotifyRuleCode,
+  NotifyDeliveryArchiveRepository,
+  type NotifyDeliveryMessageRow,
+} from "./notify.delivery-archive.repository.js";
 import { NotifyGroupRepository } from "./notify.group.repository.js";
 import { NotifyService } from "./notify.service.js";
 import type { AibotIncomingMessage, AibotSendResult } from "./wecom.aibot.js";
-import { WecomAibotClient } from "./wecom.aibot.js";
+import { aibotImageMimeFromFileName, WecomAibotClient } from "./wecom.aibot.js";
+import { renderR06Poster } from "./r06.poster.js";
 import { describeWecomFailure } from "./wecom.errors.js";
-import { truncateUtf8Bytes } from "./wecom.text.js";
+import { applyMarkdownHardBreaks, truncateUtf8Bytes } from "./wecom.text.js";
 
 /** 群 markdown 字节上限（官方口径 20480；取 20000 留余量 —— B5 定案「投递层按字节截断留痕」）。 */
 export const GROUP_MARKDOWN_MAX_BYTES = 20_000;
@@ -66,7 +79,8 @@ export function parseGroupMessage(raw: Record<string, unknown>): NotifyGroupMess
 
 /** markdown 组装：无标题（R03_GROUP 一类）只发正文；有标题加粗 + 空行分隔。 */
 export function composeGroupMarkdown(message: Pick<NotifyGroupMessagePayload, "title" | "body">): string {
-  return message.title === null ? message.body : "**" + message.title + "**\n\n" + message.body;
+  const content = message.title === null ? message.body : "**" + message.title + "**\n\n" + message.body;
+  return applyMarkdownHardBreaks(content);
 }
 
 /** UTF-8 字节截断（不劈开多字节字符）：未超长原样返回；超长截到 maxBytes - 后缀，尾部拼省略标记。 */
@@ -77,9 +91,61 @@ export function truncateGroupMarkdown(content: string, maxBytes: number = GROUP_
   return truncateUtf8Bytes(content, maxBytes, GROUP_TRUNCATION_SUFFIX);
 }
 
+/** 群名命令最大字符数（与候选 / 绑定表 name 的 64 字符口径一致）。 */
+const GROUP_NAME_MAX_CHARS = 64;
+
+/** 群名命令提示（空名 / 未带名称时回复）。 */
+export const GROUP_NAME_COMMAND_HINT = "请发送「群名 项目群名称」设置群名（最多 64 个字符）。";
+
+export type GroupNameCommand =
+  | { kind: "set"; name: string }
+  | { kind: "invalid"; reason: "missing" | "too_long" };
+
+/**
+ * 解析群内 @机器人 的群名命令：支持「群名 XXX」「群名：XXX」「群名称 XXX」「设置群名 XXX」；
+ * 允许前置 @机器人 / <@userid> 提及。非命令返回 null（普通群聊不回复、不改名）。
+ */
+export function parseGroupNameCommand(raw: string | null): GroupNameCommand | null {
+  if (raw === null) {
+    return null;
+  }
+  let text = raw.trim();
+  for (;;) {
+    const next = text.replace(/^(?:<@[^>]+>|@\S+)\s+/u, "");
+    if (next === text) {
+      break;
+    }
+    text = next;
+  }
+  if (/^(?:设置)?群名(?:称)?\s*$/u.test(text)) {
+    return { kind: "invalid", reason: "missing" };
+  }
+  const match = /^(?:设置)?群名(?:称)?(?:\s*[:：]\s*|\s+)([\s\S]*)$/u.exec(text);
+  if (match === null) {
+    return null;
+  }
+  const name = (match[1] ?? "").trim();
+  if (name === "") {
+    return { kind: "invalid", reason: "missing" };
+  }
+  if (Array.from(name).length > GROUP_NAME_MAX_CHARS) {
+    return { kind: "invalid", reason: "too_long" };
+  }
+  return { kind: "set", name };
+}
+
+/** 回调可选群名归一：trim + 最多 64 个 Unicode 字符；空 → null。 */
+function normalizeGroupName(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  if (trimmed === "") {
+    return null;
+  }
+  return Array.from(trimmed).slice(0, GROUP_NAME_MAX_CHARS).join("");
+}
+
 /** 降级站内信类型：A02 / R06 为播报（摘要群发 / 喜报），其余群播报按提醒。 */
 function degradeTypeOf(templateCode: string | null): "broadcast" | "reminder" {
-  return templateCode !== null && /^(A02|R06)/.test(templateCode) ? "broadcast" : "reminder";
+  return templateCode !== null && /^(A02|R06|A08)/.test(templateCode) ? "broadcast" : "reminder";
 }
 
 /** 失败描述（核心语义：errcode + 白话标签 / errmsg 概要；不含 kind / state 内部态与企微机器尾巴；不含 chatid 明文）。 */
@@ -97,31 +163,90 @@ export class NotifyGroupService {
 
   constructor(
     private readonly repository: NotifyGroupRepository,
+    private readonly archive: NotifyDeliveryArchiveRepository,
     private readonly aibot: WecomAibotClient,
     private readonly notify: NotifyService,
     private readonly clock: ClockService,
+    private readonly config: AppConfig,
   ) {}
 
   /**
-   * 群消息回调 ingest（长连接 `onMessage` 接线）：群聊回调（chattype=group）命中绑定 → 会话激活置位；
-   * 未绑定 → 掩码 warn 忽略（无 staging 表，正式录入路径 = PUT /projects/{id}/group —— 见 README 口径）；
-   * 已激活 → 幂等跳过。非群聊回调（chattype != group / 无 chatid）直接忽略。
+   * 群消息回调 ingest（长连接 onMessage 接线）：只处理群聊消息回调（cmd=aibot_msg_callback / chattype=group /
+   * 合法 chatid）。已绑定群 → 会话激活置位（幂等）；未绑定群 → 写入候选表供设置页自动发现，绑定后删除候选行。
+   * 群名命令（@机器人 发「群名 XXX」/「群名：XXX」/「设置群名 XXX」）只更新展示名，不做绑定授权；
+   * 绑定仍由设置页按 project.update 权限完成。事件回调、单聊、缺 chatid 或非法 chatid 一律忽略。
    */
   async activateFromCallback(incoming: AibotIncomingMessage): Promise<void> {
-    if (incoming.chattype !== "group" || incoming.chatid === null) {
+    if (
+      incoming.cmd !== "aibot_msg_callback" ||
+      incoming.chattype !== "group" ||
+      incoming.chatid === null ||
+      !/^[A-Za-z0-9_-]{8,128}$/.test(incoming.chatid)
+    ) {
       return;
     }
+    const at = this.clock.now();
+    const command = incoming.msgtype === "text" ? parseGroupNameCommand(incoming.text) : null;
     const row = await this.repository.findGroupByChatid(incoming.chatid);
     if (row === null) {
-      this.logger.warn("群回调未匹配绑定（忽略；chatid " + maskChatid(incoming.chatid) + "）");
+      const name = command?.kind === "set" ? command.name : normalizeGroupName(incoming.chatName);
+      await this.repository.observeCandidate({ chatid: incoming.chatid, name }, at);
+      this.logger.log("群回调已登记候选群：" + maskChatid(incoming.chatid));
+      if (command !== null) {
+        await this.replyNameCommand(incoming, command, false);
+      }
       return;
     }
-    if (row.activatedAt !== null) {
+    if (row.activatedAt === null) {
+      const activated = await this.repository.activateByChatid(incoming.chatid, at);
+      if (activated !== null) {
+        this.logger.log("群会话已激活：" + maskChatid(incoming.chatid) + " · project=" + activated.projectId);
+      }
+    }
+    if (command?.kind === "set") {
+      const updated = await this.repository.setGroupName(incoming.chatid, command.name, at);
+      if (updated !== null) {
+        this.logger.log("群名已更新：" + maskChatid(incoming.chatid));
+      }
+    }
+    if (command !== null) {
+      await this.replyNameCommand(incoming, command, true);
+    }
+  }
+
+  /** 群名命令回执（被动回复，尽力而为；失败不影响名称落库）。 */
+  private async replyNameCommand(
+    incoming: AibotIncomingMessage,
+    command: GroupNameCommand,
+    bound: boolean,
+  ): Promise<void> {
+    if (incoming.reqId === null || incoming.fromUserId === null || incoming.chatid === null) {
       return;
     }
-    const activated = await this.repository.activateByChatid(incoming.chatid, this.clock.now());
-    if (activated !== null) {
-      this.logger.log("群会话已激活：" + maskChatid(incoming.chatid) + " · project=" + activated.projectId);
+    let content: string;
+    if (command.kind === "set") {
+      content = bound
+        ? "群名已更新：" + command.name
+        : "群名已记录：" + command.name + "。请到「企微绑定」页选择该项目群完成绑定。";
+    } else if (command.reason === "too_long") {
+      content = "群名最多 64 个字符。请重新发送「群名 项目群名称」。";
+    } else {
+      content = GROUP_NAME_COMMAND_HINT;
+    }
+    try {
+      const result = await this.aibot.replyToCallback({
+        reqId: incoming.reqId,
+        userid: incoming.fromUserId,
+        chatid: incoming.chatid,
+        content,
+      });
+      if (!result.ok) {
+        this.logger.warn(
+          "群名命令回执未送达：" + maskChatid(incoming.chatid) + describeWecomFailure(result.errcode, result.errmsg),
+        );
+      }
+    } catch {
+      this.logger.warn("群名命令回执异常：" + maskChatid(incoming.chatid));
     }
   }
 
@@ -134,28 +259,76 @@ export class NotifyGroupService {
         error: "群播报载荷非法（缺 projectId / body 或超长）：" + row.dedupeKey,
       };
     }
+    let archived: NotifyDeliveryMessageRow;
+    try {
+      archived = await this.archive.ensureMessage({
+        outboxId: row.id,
+        sourceDedupeKey: row.dedupeKey,
+        topic: row.topic as NotifyDeliveryTopic,
+        channel: "wecom_group",
+        recipientId: null,
+        recipientLabel: "project:" + message.projectId,
+        title: message.title,
+        body: message.body,
+        templateCode: message.templateCode ?? null,
+        ruleCode: inferNotifyRuleCode(row.dedupeKey),
+        refType: message.refType ?? null,
+        refId: message.refId ?? null,
+        payload: { ...message },
+        metadata: {},
+      });
+    } catch (archiveError) {
+      const detail = archiveError instanceof Error ? archiveError.message : String(archiveError);
+      this.logger.error("群播报归档失败（不发送，交 outbox 重试）：" + row.dedupeKey + " —— " + detail);
+      return { outcome: "retry", error: "群播报归档失败：" + detail };
+    }
+    if (archived.lastState === "sent") {
+      this.logger.log("群播报已发送归档，重复消费幂等跳过：" + row.dedupeKey);
+      return { outcome: "done" };
+    }
+    const terminalDead = archived.lastState === "dead";
     const binding = await this.repository.findGroupByProject(message.projectId);
     if (binding === null) {
-      // 无绑定：notify_deliveries.target NOT NULL 无值可落 —— 不写投递行，dead + 日志（差异登记②）；
+      // 无绑定：notify_deliveries.target NOT NULL 无值可落 —— 不写尝试行，消息级归档置 dead + 日志（差异登记②）；
       // 运营可见性由 outbox 死信告警承担（项目群绑定维护 = M5-07 前端入口 / PUT 接口）；
       // 降级（B4）= 项目经理站内信（正文含原文）。
+      const error = "群未绑定（project " + message.projectId + "）：" + row.dedupeKey;
+      if (!terminalDead) {
+        await this.archive.markState({ messageId: archived.id, state: "dead", at: this.clock.now(), error });
+      }
       this.logger.warn(
         "群未绑定（确定性失败转 dead）：outbox#" + row.id + " · project=" + message.projectId + " · " + row.dedupeKey,
       );
-      return await this.deadWithDegrade(row, message, "群未绑定（project " + message.projectId + "）：" + row.dedupeKey);
+      return await this.deadWithDegrade(row, message, terminalDead ? (archived.lastError ?? error) : error);
     }
     const masked = maskChatid(binding.chatid);
     if (!binding.enabled) {
-      await this.repository.insertDelivery({
-        outboxId: row.id,
-        target: binding.chatid,
-        state: "dead",
-        attempts: 0,
-        error: "群绑定已停用（chatid " + masked + "）",
-        sentAt: null,
-      });
+      const error = "群绑定已停用（chatid " + masked + "）";
+      if (!terminalDead) {
+        await this.archive.recordAttempt({
+          messageId: archived.id,
+          outboxId: row.id,
+          channel: "wecom_group",
+          target: binding.chatid,
+          recipientLabel: "project:" + message.projectId + " · " + masked,
+          state: "dead",
+          attempts: 0,
+          error,
+          sentAt: null,
+          at: this.clock.now(),
+        });
+      }
       this.logger.warn("群绑定已停用（确定性失败转 dead）：outbox#" + row.id + " · chatid " + masked);
-      return await this.deadWithDegrade(row, message, "群绑定已停用（chatid " + masked + "）：" + row.dedupeKey);
+      return await this.deadWithDegrade(
+        row,
+        message,
+        terminalDead ? (archived.lastError ?? error) : error + "：" + row.dedupeKey,
+      );
+    }
+    if (terminalDead) {
+      const error = archived.lastError ?? "群播报已终态失败：" + row.dedupeKey;
+      this.logger.warn("群播报已归档为 dead，重复消费不再外发、仅重试降级：" + row.dedupeKey);
+      return await this.deadWithDegrade(row, message, error);
     }
 
     const composed = composeGroupMarkdown(message);
@@ -180,13 +353,32 @@ export class NotifyGroupService {
     });
 
     if (result.ok) {
-      await this.repository.insertDelivery({
+      const rocketAttempts = await this.sendR06Rockets({
+        message,
+        chatid: binding.chatid,
+        groupActivated: binding.activatedAt !== null,
+        masked,
+        dedupeKey: row.dedupeKey,
+      });
+      const posterAttempts = await this.sendR06Poster({
+        message,
+        chatid: binding.chatid,
+        groupActivated: binding.activatedAt !== null,
+        masked,
+        dedupeKey: row.dedupeKey,
+      });
+      const sentAt = this.clock.now();
+      await this.archive.recordAttempt({
+        messageId: archived.id,
         outboxId: row.id,
+        channel: "wecom_group",
         target: binding.chatid,
+        recipientLabel: "project:" + message.projectId + " · " + masked,
         state: "sent",
-        attempts: result.attempts,
+        attempts: result.attempts + rocketAttempts + posterAttempts,
         error: null,
-        sentAt: this.clock.now(),
+        sentAt,
+        at: sentAt,
       });
       this.logger.log("群播报已受理：" + row.dedupeKey + " · chatid " + masked + (truncated ? "（截断发送）" : ""));
       return { outcome: "done" };
@@ -195,38 +387,254 @@ export class NotifyGroupService {
     const error = describeAibotFailure(result);
     if (result.kind === "rate_limited") {
       const availableAt = result.retryAt ?? new Date(this.clock.now().getTime() + 60_000);
-      await this.repository.insertDelivery({
+      await this.archive.recordAttempt({
+        messageId: archived.id,
         outboxId: row.id,
+        channel: "wecom_group",
         target: binding.chatid,
+        recipientLabel: "project:" + message.projectId + " · " + masked,
         state: "deferred",
         attempts: result.attempts,
         error,
         sentAt: null,
+        at: this.clock.now(),
       });
       return { outcome: "deferred", availableAt, error: error };
     }
     if (result.kind === "retryable") {
-      await this.repository.insertDelivery({
+      await this.archive.recordAttempt({
+        messageId: archived.id,
         outboxId: row.id,
+        channel: "wecom_group",
         target: binding.chatid,
+        recipientLabel: "project:" + message.projectId + " · " + masked,
         state: "failed",
         attempts: result.attempts,
         error,
         sentAt: null,
+        at: this.clock.now(),
       });
       return { outcome: "retry", error };
     }
     // permanent（含 846607 未激活分支）：不重试；降级 B4（项目经理站内信 + 管理员告警群留痕）。
-    await this.repository.insertDelivery({
+    await this.archive.recordAttempt({
+      messageId: archived.id,
       outboxId: row.id,
+      channel: "wecom_group",
       target: binding.chatid,
+      recipientLabel: "project:" + message.projectId + " · " + masked,
       state: "dead",
       attempts: result.attempts,
       error,
       sentAt: null,
+      at: this.clock.now(),
     });
     this.logger.warn("群播报确定性失败（转 dead）：" + row.dedupeKey + " · chatid " + masked + " —— " + error);
     return await this.deadWithDegrade(row, message, error);
+  }
+
+  /**
+   * R06 火箭前缀：项目已完成且全部任务完成、全部按期时，依次发 240×288 → 640×768；
+   * 其余情况改发 200×200 兜底火箭。火箭属增强项：单张失败只留日志，继续尝试后续图片与喜报海报。
+   */
+  private async sendR06Rockets(input: {
+    message: NotifyGroupMessagePayload;
+    chatid: string;
+    groupActivated: boolean;
+    masked: string;
+    dedupeKey: string;
+  }): Promise<number> {
+    if (input.message.templateCode !== "R06_GROUP") {
+      return 0;
+    }
+    const onTimeCandidates = [
+      {
+        path: (this.config.env.WECOM_R06_ROCKET_240_IMAGE_PATH ?? "").trim(),
+        label: "火箭 GIF（240×288）",
+      },
+      {
+        path: (this.config.env.WECOM_R06_ROCKET_640_IMAGE_PATH ?? "").trim(),
+        label: "火箭 GIF（640×768）",
+      },
+    ];
+    const fallbackPath = (this.config.env.WECOM_R06_ROCKET_FALLBACK_IMAGE_PATH ?? "").trim();
+    if (onTimeCandidates.every((item) => item.path === "") && fallbackPath === "") {
+      return 0;
+    }
+    let eligible: boolean;
+    try {
+      eligible = await this.repository.isProjectCompletedWithAllTasksOnTime(
+        input.message.projectId,
+        this.clock.now(),
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.warn("R06 火箭发送条件读取失败，已跳过（文字已发送）：" + input.dedupeKey + " —— " + detail);
+      return 0;
+    }
+    if (!eligible) {
+      if (fallbackPath === "") {
+        return 0;
+      }
+      return await this.sendConfiguredR06Image(input, fallbackPath, "兜底火箭 GIF（200×200）");
+    }
+    let attempts = 0;
+    for (const item of onTimeCandidates) {
+      if (item.path === "") {
+        continue;
+      }
+      attempts += await this.sendConfiguredR06Image(input, item.path, item.label);
+    }
+    return attempts;
+  }
+
+  /**
+   * R06 喜报图：仅当 templateCode = R06_GROUP。默认按项目真实数据动态生成 A 方案姓名墙 PNG；
+   * 动态读取 / 绘制失败时回退 WECOM_R06_IMAGE_PATH（全部任务按时交付时优先 WECOM_R06_ON_TIME_IMAGE_PATH）。
+   * 图片在文字已送达后追加；图片生成 / 发送失败只留日志，不影响已送达文字。
+   */
+  private async sendR06Poster(input: {
+    message: NotifyGroupMessagePayload;
+    chatid: string;
+    groupActivated: boolean;
+    masked: string;
+    dedupeKey: string;
+  }): Promise<number> {
+    if (input.message.templateCode !== "R06_GROUP") {
+      return 0;
+    }
+    if (this.config.env.WECOM_R06_DYNAMIC_POSTER !== "false") {
+      const dynamicAttempts = await this.sendDynamicR06Poster(input);
+      if (dynamicAttempts !== null) {
+        return dynamicAttempts;
+      }
+    }
+    return await this.sendStaticR06Poster(input);
+  }
+
+  /** 动态海报：数据 / 字体 / 绘制任一失败 = null（调用方回退静态图）；已发出的发送帧数原样返回。 */
+  private async sendDynamicR06Poster(input: {
+    message: NotifyGroupMessagePayload;
+    chatid: string;
+    groupActivated: boolean;
+    masked: string;
+    dedupeKey: string;
+  }): Promise<number | null> {
+    let content: Buffer;
+    let fileName: string;
+    try {
+      const data = await this.repository.findR06PosterData(input.message.projectId);
+      if (data === null) {
+        this.logger.warn("R06 动态海报数据缺失，回退静态图（文字已发送）：" + input.dedupeKey);
+        return null;
+      }
+      content = await renderR06Poster(
+        { ...data, completedAt: this.clock.now() },
+        {
+          sans: (this.config.env.WECOM_R06_FONT_SANS_PATH ?? "").trim(),
+          sansBold: (this.config.env.WECOM_R06_FONT_SANS_BOLD_PATH ?? "").trim(),
+          serif: (this.config.env.WECOM_R06_FONT_SERIF_PATH ?? "").trim(),
+        },
+      );
+      fileName = "R06-" + data.projectCode + ".png";
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.warn("R06 动态海报生成失败，回退静态图（文字已发送）：" + input.dedupeKey + " —— " + detail);
+      return null;
+    }
+    return await this.deliverR06Image(input, content, fileName, "image/png", "动态海报");
+  }
+
+  /** 配置图读取 + 单次发送；格式 / 读取失败 = 0（不抛错）。 */
+  private async sendConfiguredR06Image(
+    input: {
+      chatid: string;
+      groupActivated: boolean;
+      masked: string;
+      dedupeKey: string;
+    },
+    configured: string,
+    sourceLabel: string,
+  ): Promise<number> {
+    const fileName = basename(configured);
+    const mime = aibotImageMimeFromFileName(fileName);
+    if (mime === null) {
+      this.logger.warn("R06 " + sourceLabel + "格式不支持（仅 PNG / JPG / GIF），已跳过：" + fileName);
+      return 0;
+    }
+    let content: Buffer;
+    try {
+      content = await readFile(resolve(configured));
+    } catch {
+      this.logger.warn("R06 " + sourceLabel + "读取失败，已跳过（文字已发送）：" + fileName);
+      return 0;
+    }
+    return await this.deliverR06Image(input, content, fileName, mime, sourceLabel);
+  }
+
+  /** 静态回退图：原口径保持不变；无配置 / 格式不支持 / 读取失败 = 0。 */
+  private async sendStaticR06Poster(input: {
+    message: NotifyGroupMessagePayload;
+    chatid: string;
+    groupActivated: boolean;
+    masked: string;
+    dedupeKey: string;
+  }): Promise<number> {
+    const defaultImagePath = (this.config.env.WECOM_R06_IMAGE_PATH ?? "").trim();
+    const onTimeImagePath = (this.config.env.WECOM_R06_ON_TIME_IMAGE_PATH ?? "").trim();
+    if (defaultImagePath === "" && onTimeImagePath === "") {
+      return 0;
+    }
+    let allOnTime = false;
+    if (onTimeImagePath !== "") {
+      try {
+        allOnTime = await this.repository.areProjectTasksAllOnTime(input.message.projectId, this.clock.now());
+      } catch {
+        this.logger.warn("R06 按时交付判定读取失败，回退默认喜报图：" + input.dedupeKey);
+      }
+    }
+    const configured = allOnTime ? onTimeImagePath : defaultImagePath;
+    if (configured === "") {
+      return 0;
+    }
+    return await this.sendConfiguredR06Image(input, configured, "静态回退图");
+  }
+
+  /** 单次 R06 图片发送与留痕；失败不抛错、不触发二次发送。 */
+  private async deliverR06Image(
+    input: {
+      chatid: string;
+      groupActivated: boolean;
+      masked: string;
+      dedupeKey: string;
+    },
+    content: Buffer,
+    fileName: string,
+    mime: string,
+    sourceLabel: string,
+  ): Promise<number> {
+    const result = await this.aibot.sendGroupImage({
+      chatid: input.chatid,
+      content,
+      fileName,
+      mime,
+      groupActivated: input.groupActivated,
+    });
+    if (!result.ok) {
+      this.logger.warn(
+        "R06 " +
+          sourceLabel +
+          "未送达（文字已发送）：" +
+          input.dedupeKey +
+          " · chatid " +
+          input.masked +
+          " —— " +
+          describeAibotFailure(result),
+      );
+      return result.attempts;
+    }
+    this.logger.log("R06 " + sourceLabel + "已送达：" + input.dedupeKey + " · chatid " + input.masked);
+    return result.attempts;
   }
 
   /**

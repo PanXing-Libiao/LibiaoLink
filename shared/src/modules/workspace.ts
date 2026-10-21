@@ -1,8 +1,9 @@
 import { z } from "../zod.ts";
 import { DateOnlySchema, DateTimeSchema, UuidSchema, VersionSchema } from "../common/conventions.ts";
-import { PrioritySchema, StageKeySchema, TaskDisplayStatusSchema } from "../common/dicts.ts";
-import { TaskProgressSchema } from "./tasks.ts";
+import { FilePhotoRefSchema } from "./files.ts";
 import { IssueCategoryListSchema, IssueStateSchema } from "./issues.ts";
+import { ProjectSchema } from "./projects.ts";
+import { TaskFileBriefSchema, TaskListItemSchema } from "./tasks.ts";
 
 /**
  * 工作台（M6-05 · 系统功能书 A6-01 / A6-03）：跨项目的个人聚合读面 ——
@@ -20,6 +21,15 @@ import { IssueCategoryListSchema, IssueStateSchema } from "./issues.ts";
  * - 排序：任务组内按 plannedEnd 升序、同日期按 id 升序（未排期空日期置末）；问题未关闭（state != done）在前 ——
  *   按提出日期（raisedAt）升序、id 升序；已完成后置。
  * - 记录级可见性：只含对我可见的项目（ADR-011；PERMISSION_ENFORCED 关闭期等价全量）。
+ *
+ * 2026-10-13 全字段修订（Push 302 · px 线代改 wmj 线契约，请 wmj / lan 复核）：
+ * - 「我的任务」项由 9 列抽取面扩为**任务表全字段**（= TaskListItem 全字段 + projectCode / projectName + 随行文件清单 files）——
+ *   原版只带 9 列，项目经理 / 输出成果文件 / 文件 / 项目进展描述 / 预计所需天数 / 预计所需施工人数 /
+ *   是否按时交付 / 变更关联八列缺失，前端只能逐项目回打 GET /projects/{id}/tasks + GET /projects/{id} + 文件清单
+ *   三路补齐，页面「先骨架、后逐列出现」且刷新卡顿；本修订后一次聚合读面即带全 15 列数据源与行内编辑所需的 version。
+ * - 「我的问题」项补 solution（解决方案或建议）与 photos（问题附图）—— 问题追踪七列的最后两列数据源。
+ * - 响应新增 projects（聚合涉及项目的项目卡，含 managerNames / managerIds / version）：工作台行内「项目经理」列
+ *   与项目经理回写不再逐项目回查。
  */
 
 /** 工作台任务四组（A6-01）：today 今日待办 / upcoming 即将到期 / overdue 已逾期 / unscheduled 未排期。 */
@@ -32,30 +42,20 @@ export const WorkspaceTaskGroupSchema = z.enum(WORKSPACE_TASK_GROUPS).openapi("W
 
 export type WorkspaceTaskGroup = z.infer<typeof WorkspaceTaskGroupSchema>;
 
-/** 工作台任务项（跨项目：带项目编号 / 名称，不带文件摘要与变更关联 —— 详情按需取）。 */
-export const WorkspaceTaskItemSchema = z
-  .object({
-    id: UuidSchema,
-    projectId: UuidSchema,
-    projectCode: z.string().openapi({ description: "项目编号（跨项目列表直接展示）" }),
-    projectName: z.string(),
-    stageKey: StageKeySchema.nullable().openapi({ description: "所属阶段；null = 「未分组」（A15）" }),
-    title: z.string(),
-    titleEn: z.string().nullable(),
-    displayStatus: TaskDisplayStatusSchema.openapi({
-      description: "展示五态（A1-06 读时派生，含显式覆盖 · Push 179）：待开始 / 进行中 / 已完成 / 提前完成 / 已延期",
-    }),
-    progress: TaskProgressSchema,
-    plannedStart: DateOnlySchema.nullable(),
-    plannedEnd: DateOnlySchema.nullable().openapi({ description: "预计完成日期（分组依据；未排期组为空）" }),
-    actualEnd: DateOnlySchema.nullable(),
-    ownerIds: z.array(UuidSchema).openapi({
-      description: "任务负责人（多值；项目经理口径命中的行可能不含会话用户 —— 2026-09-30 复评）",
-    }),
-    ownerNames: z.array(z.string().nullable()).openapi({ description: "负责人姓名（与 ownerIds 同下标；缺失为 null）" }),
-    priority: PrioritySchema.nullable(),
-  })
-  .openapi("WorkspaceTaskItem", { description: "工作台任务项（跨项目；按预计完成日期落入四组之一）" });
+/**
+ * 工作台任务项（跨项目 = TaskListItem 全字段 + 项目编号 / 名称 + 随行文件清单）。
+ * 2026-10-13 全字段修订：任务表 15 列（含项目经理 / 输出成果文件 / 文件 / 进展描述 / 天数 / 人数 / 按时交付 /
+ * 变更关联）全部随行下发，行内编辑用 version 也在行上 —— 前端不再逐项目回填。
+ */
+export const WorkspaceTaskItemSchema = TaskListItemSchema.extend({
+  projectCode: z.string().openapi({ description: "项目编号（跨项目列表直接展示）" }),
+  projectName: z.string(),
+  files: z.array(TaskFileBriefSchema).openapi({
+    description: "任务随行文件清单（口径同任务详情 files：排除回收站、创建时间倒序；工作台行内「文件」列下拉的数据源）",
+  }),
+}).openapi("WorkspaceTaskItem", {
+  description: "工作台任务项（跨项目；按预计完成日期落入四组之一；任务表 15 列数据源随行下发）",
+});
 
 export const WorkspaceTasksSchema = z
   .object({
@@ -85,10 +85,16 @@ export const WorkspaceIssueItemSchema = z
     ownerId: UuidSchema.nullable(),
     ownerName: z.string().nullable(),
     raisedAt: DateOnlySchema,
+    solution: z.string().nullable().openapi({
+      description: "解决方案或建议（A3-13；2026-10-13 全字段修订随行下发，工作台「提出/负责的问题」表直接渲染）",
+    }),
+    photos: z.array(FilePhotoRefSchema).openapi({
+      description: "问题附图（file_links(object_type=issue)，插入序；2026-10-13 全字段修订随行下发，工作台表直接渲染）",
+    }),
     updatedAt: DateTimeSchema,
     version: VersionSchema,
   })
-  .openapi("WorkspaceIssueItem", { description: "工作台问题项（跨项目）" });
+  .openapi("WorkspaceIssueItem", { description: "工作台问题项（跨项目；问题追踪七列数据源随行下发）" });
 
 export const WorkspaceIssuesSchema = z
   .object({
@@ -104,9 +110,14 @@ export const WorkspaceResponseSchema = z
     today: DateOnlySchema.openapi({ description: "分组基准日（Asia/Shanghai 今天 · ADR-028），前端可据此渲染「今天」标注" }),
     myTasks: WorkspaceTasksSchema,
     myIssues: WorkspaceIssuesSchema,
+    projects: z.array(ProjectSchema).openapi({
+      description:
+        "聚合涉及的项目卡（我的任务或我的问题命中的项目，按首次出现顺序去重；含 managerNames / managerIds / version）—— 2026-10-13 全字段修订：工作台行内「项目经理」列与项目经理回写不再逐项目回查",
+    }),
   })
-  .openapi("WorkspaceResponse", { description: "工作台聚合：我的任务四组 + 我的问题两栏" });
+  .openapi("WorkspaceResponse", { description: "工作台聚合：我的任务四组 + 我的问题两栏 + 涉及项目卡" });
 
 export type WorkspaceTaskItem = z.infer<typeof WorkspaceTaskItemSchema>;
 export type WorkspaceIssueItem = z.infer<typeof WorkspaceIssueItemSchema>;
+export type WorkspaceProject = z.infer<typeof WorkspaceResponseSchema>["projects"][number];
 export type WorkspaceResponse = z.infer<typeof WorkspaceResponseSchema>;

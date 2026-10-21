@@ -47,7 +47,8 @@ export type ChangeRequestRow = typeof changeRequests.$inferSelect;
 
 /**
  * 变更记录读面行（M4-04 读面）：变更本体 + 由 `file_versions.change_request_id` 反查的变更后文件 / 版本。
- * 一期「一变更一版本」（写入切片在同一事务落库），读面因此用内连接 —— 数据面不允许存在「无版本的变更记录」。
+ * Push 319：导入表导入的变更没有「变更后文件」（源文件在微盘，人工后补）→ 读面改左连接，fileId / versionId /
+ * versionSeq 可为空；写入切片（一变更一版本）语义不变，行内为空 = 导入遗留数据。
  */
 export interface ChangeRequestJoinedRow {
   id: string;
@@ -58,12 +59,18 @@ export interface ChangeRequestJoinedRow {
   beforeSummary: string | null;
   afterSummary: string | null;
   status: string;
+  /** Push 314：变更前 / 变更后摘要附图（files.id 有序；迁移 0050 —— 随变更申请提交，读面按 id 取预览签名）。 */
+  beforeSummaryFileIds: string[];
+  afterSummaryFileIds: string[];
   appliedBy: string;
+  /** 变更「填写者」（Push 347 / 迁移 0054）：导入表导入命中源表「填写者」列账号；应用内提交 / 未命中 / 存量行 = null。 */
+  writerBy: string | null;
   appliedAt: Date;
   createdAt: Date;
-  fileId: string;
-  versionId: string;
-  versionSeq: number;
+  /** 导入遗留变更（源文件在微盘，未挂版本）= null。 */
+  fileId: string | null;
+  versionId: string | null;
+  versionSeq: number | null;
 }
 
 export interface FileInsertInput {
@@ -101,6 +108,9 @@ export interface ChangeRequestInsertInput {
   beforeSummary: string | null;
   afterSummary: string | null;
   appliedBy: string;
+  /** Push 314：变更前 / 变更后摘要附图（files.id 有序；迁移 0050）。 */
+  beforeSummaryFileIds: string[];
+  afterSummaryFileIds: string[];
   appliedAt: Date;
   createdAt: Date;
 }
@@ -180,6 +190,20 @@ export interface FileLinkInsertInput {
   objectId: string;
   createdBy: string;
   createdAt: Date;
+}
+
+const EXPORT_ID_CHUNK_SIZE = 1000;
+
+async function loadByIdChunks<TRow>(
+  ids: readonly string[],
+  load: (chunk: string[]) => Promise<TRow[]>,
+): Promise<TRow[]> {
+  const unique = [...new Set(ids)];
+  const rows: TRow[] = [];
+  for (let index = 0; index < unique.length; index += EXPORT_ID_CHUNK_SIZE) {
+    rows.push(...(await load(unique.slice(index, index + EXPORT_ID_CHUNK_SIZE))));
+  }
+  return rows;
 }
 
 @Injectable()
@@ -268,6 +292,17 @@ export class FileRepository {
     const rows = await client.select().from(files).where(eq(files.id, fileId)).limit(1);
     return rows[0] ?? null;
   }
+  /** Push 314：变更前 / 变更后摘要附图校验用（按 id 批量取 id / 项目 / 状态；归属与回收判定在服务层）。 */
+  async listSummaryFileBriefs(ids: readonly string[], client: DbClient = this.database.db): Promise<Array<{ id: string; projectId: string; status: string }>> {
+    const unique = [...new Set(ids)];
+    if (unique.length === 0) {
+      return [];
+    }
+    return client
+      .select({ id: files.id, projectId: files.projectId, status: files.status })
+      .from(files)
+      .where(inArray(files.id, unique));
+  }
 
   /** 行锁：complete / 后续定档路径用（同一文件的版本号分配串行化）。 */
   async lockFile(tx: DbTransaction, fileId: string): Promise<FileRow | null> {
@@ -333,6 +368,8 @@ export class FileRepository {
         reason: input.reason,
         beforeSummary: input.beforeSummary,
         afterSummary: input.afterSummary,
+        beforeSummaryFileIds: input.beforeSummaryFileIds,
+        afterSummaryFileIds: input.afterSummaryFileIds,
         status: "applied",
         appliedBy: input.appliedBy,
         appliedAt: input.appliedAt,
@@ -529,6 +566,16 @@ export class FileRepository {
     return rows[0]!;
   }
 
+  /** 项目导出用：按 id 批量取文件（不做项目过滤，调用方按 projectId 再裁）。 */
+  async findFilesByIds(ids: readonly string[], client: DbClient = this.database.db): Promise<FileRow[]> {
+    return loadByIdChunks<FileRow>(ids, (chunk) => client.select().from(files).where(inArray(files.id, chunk)));
+  }
+
+  /** 项目导出用：按 id 批量取版本（不暴露给 HTTP 层）。 */
+  async findVersionsByIds(ids: readonly string[], client: DbClient = this.database.db): Promise<FileVersionRow[]> {
+    return loadByIdChunks<FileVersionRow>(ids, (chunk) => client.select().from(fileVersions).where(inArray(fileVersions.id, chunk)));
+  }
+
   /** 指定版本行（回溯目标 / 版本详情；带 fileId 限定防跨文件越权）。 */
   async findVersionById(
     fileId: string,
@@ -616,7 +663,7 @@ export class FileRepository {
   /**
    * 变更记录列表（M4-04 读面 · A4-15）：项目 + 多值阶段 / 节点 / 变更文件 / 申请人筛选 + 关键字 + 白名单排序 + 分页；
    * `total` 与 items 走同一 where（分页元数据一致）。fileId / versionId / versionSeq 由 file_versions 反查
-   * （migration 0021 的部分索引 ix_file_versions_change_request）。
+   * （migration 0021 的部分索引 ix_file_versions_change_request）；Push 319 起左连接（导入变更无版本 → 字段空）。
    */
   async listChangeRequests(
     projectId: string,
@@ -630,7 +677,7 @@ export class FileRepository {
     const items = await client
       .select(CHANGE_REQUEST_SELECT)
       .from(changeRequests)
-      .innerJoin(fileVersions, eq(fileVersions.changeRequestId, changeRequests.id))
+      .leftJoin(fileVersions, eq(fileVersions.changeRequestId, changeRequests.id))
       .where(where)
       .orderBy(...changeRequestOrderBy(sorts))
       .limit(limit)
@@ -638,7 +685,7 @@ export class FileRepository {
     const totals = await client
       .select({ value: count() })
       .from(changeRequests)
-      .innerJoin(fileVersions, eq(fileVersions.changeRequestId, changeRequests.id))
+      .leftJoin(fileVersions, eq(fileVersions.changeRequestId, changeRequests.id))
       .where(where);
     return { items, total: Number(totals[0]?.value ?? 0) };
   }
@@ -651,7 +698,7 @@ export class FileRepository {
     const rows = await client
       .select(CHANGE_REQUEST_SELECT)
       .from(changeRequests)
-      .innerJoin(fileVersions, eq(fileVersions.changeRequestId, changeRequests.id))
+      .leftJoin(fileVersions, eq(fileVersions.changeRequestId, changeRequests.id))
       .where(eq(changeRequests.id, changeRequestId))
       .limit(1);
     return rows[0] ?? null;
@@ -703,8 +750,11 @@ const CHANGE_REQUEST_SELECT = {
   reason: changeRequests.reason,
   beforeSummary: changeRequests.beforeSummary,
   afterSummary: changeRequests.afterSummary,
+  beforeSummaryFileIds: changeRequests.beforeSummaryFileIds,
+  afterSummaryFileIds: changeRequests.afterSummaryFileIds,
   status: changeRequests.status,
   appliedBy: changeRequests.appliedBy,
+  writerBy: changeRequests.writerBy,
   appliedAt: changeRequests.appliedAt,
   createdAt: changeRequests.createdAt,
   fileId: fileVersions.fileId,

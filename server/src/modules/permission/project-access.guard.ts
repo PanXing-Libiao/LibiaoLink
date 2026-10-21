@@ -13,6 +13,7 @@ export type ProjectAccessSource = "project" | "node";
 
 export const PROJECT_ACCESS_SOURCE = "permission:access-source";
 export const PROJECT_PERMISSION_KEY = "permission:required";
+export const PROJECT_INCLUDE_DELETED_KEY = "permission:include-deleted";
 
 export type RequestWithProjectAccess = RequestWithUser & {
   projectAccess?: ProjectAccessContext;
@@ -23,6 +24,9 @@ const UUID_PATTERN = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{
 
 /** 标记控制器 / 路由的项目上下文来源（缺省 project）。 */
 export const ProjectAccess = (source: ProjectAccessSource) => SetMetadata(PROJECT_ACCESS_SOURCE, source);
+
+/** 项目回收站恢复 / 彻底删除专用：路径项目允许 deleted_at 非空，记录级与功能权限仍照常判定。 */
+export const AllowDeletedProjectAccess = () => SetMetadata(PROJECT_INCLUDE_DELETED_KEY, true);
 
 /** 标记路由所需的功能权限位（项目上下文由本守卫解析后作为 can 的项目级来源）。 */
 export const RequirePermission = (key: PermissionKey) => SetMetadata(PROJECT_PERMISSION_KEY, key);
@@ -61,10 +65,12 @@ export class ProjectAccessGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
+    const includeDeleted =
+      this.reflector.getAllAndOverride<boolean>(PROJECT_INCLUDE_DELETED_KEY, [context.getHandler(), context.getClass()]) === true;
     const rawId = (request.params as Record<string, string | undefined> | undefined)?.["id"];
     const projectId = rawId !== undefined && UUID_PATTERN.test(rawId) ? await this.resolveProjectId(source, rawId) : null;
     if (projectId !== null) {
-      const access = await this.permission.assertProjectVisible(actorId, projectId);
+      const access = await this.permission.assertProjectVisible(actorId, projectId, { includeDeleted });
       request.projectAccess = access;
       if (required !== undefined) {
         await this.permission.assertCan(actorId, required, {

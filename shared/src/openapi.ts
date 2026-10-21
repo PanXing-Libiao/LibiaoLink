@@ -1,5 +1,6 @@
 import { OpenAPIRegistry, OpenApiGeneratorV31 } from "@asteasolutions/zod-to-openapi";
 import { z } from "./zod.ts";
+import { CadJobSchema, CadJobCreateResponseSchema, CadNameCodepageSchema } from "./modules/cad.ts";
 import { DateOnlySchema, IdempotencyKeySchema, UuidSchema } from "./common/conventions.ts";
 import { StageKeySchema } from "./common/dicts.ts";
 import { ApiErrorSchema } from "./common/errors.ts";
@@ -10,12 +11,15 @@ import {
   ProjectDeleteHeadersSchema,
   ProjectFacetsSchema,
   ProjectGroupBindingSchema,
+  ProjectGroupCandidateListSchema,
   ProjectGroupPutBodySchema,
   ProjectListQuerySchema,
   ProjectListResponseSchema,
   ProjectMemberCreateBodySchema,
   ProjectMemberListResponseSchema,
   ProjectMemberSchema,
+  ProjectPurgeResponseSchema,
+  ProjectRecycleActionBodySchema,
   ProjectSchema,
   ProjectSummarySchema,
   ProjectUpdateBodySchema,
@@ -84,6 +88,7 @@ import {
   IssueUpdateBodySchema,
 } from "./modules/issues.ts";
 import { WorkspaceResponseSchema } from "./modules/workspace.ts";
+import { DashboardChangeWordsResponseSchema, DashboardIssuesResponseSchema, DashboardProgressResponseSchema } from "./modules/dashboard.ts";
 import {
   SavedViewSchema,
   ViewCreateBodySchema,
@@ -110,10 +115,36 @@ import {
   NotificationSchema,
   NotificationSnoozeBodySchema,
   NotificationSnoozeListResponseSchema,
+  NotifyDeliveryDetailSchema,
+  NotifyDeliveryListQuerySchema,
+  NotifyDeliveryListResponseSchema,
+  NotifyDeliveryResendBodySchema,
+  NotifyDeliveryResendResponseSchema,
   NotifyPrefsSchema,
   NotifyPrefsUpdateBodySchema,
   ResourceInvalidationPayloadSchema,
+  WecomDmBindingCodeSchema,
+  WecomDmBindingStateSchema,
+  WecomDmBindingUpdateBodySchema,
+  WecomDmBotDiagnosticsSchema,
 } from "./modules/notifications.ts";
+import {
+  AutomationRuleCodeSchema,
+  AutomationRuleListResponseSchema,
+  AutomationRulePatchBodySchema,
+  AutomationRuleTestBodySchema,
+  AutomationRuleTestResponseSchema,
+  AutomationRuleViewSchema,
+  AutomationRunListQuerySchema,
+  AutomationRunListResponseSchema,
+  AutomationRunSchema,
+} from "./modules/automation.ts";
+import {
+  TranslateBatchBodySchema,
+  TranslateBatchResponseSchema,
+  TranslateBodySchema,
+  TranslateResponseSchema,
+} from "./modules/translate.ts";
 import {
   BlueprintImportBodySchema,
   BlueprintQuerySchema,
@@ -200,10 +231,14 @@ const commonErrors = {
 
 const idParams = z.object({ id: UuidSchema });
 const notificationIdParams = z.object({ id: z.coerce.number().int().positive() });
+const deliveryIdParams = z.object({ id: z.coerce.number().int().positive() });
+const automationRuleParams = z.object({ code: AutomationRuleCodeSchema });
+const automationRunIdParams = z.object({ id: z.coerce.number().int().positive() });
 const stageParams = z.object({ id: UuidSchema, key: StageKeySchema });
 const blueprintQuery = BlueprintQuerySchema;
 const memberParams = z.object({ id: UuidSchema, userId: UuidSchema });
 const idempotencyHeader = z.object({ "Idempotency-Key": IdempotencyKeySchema.optional() });
+const requiredIdempotencyHeader = z.object({ "Idempotency-Key": IdempotencyKeySchema });
 // 字典类型路径参数：一期取值 region / projectType；未知类型返回 404（非 400）——与 DictsController 行为一致
 const dictTypeParams = z.object({ type: z.string().min(1).max(64).openapi({ description: "字典类型（一期：region / projectType）；未知类型返回 404" }) });
 // 工作日历路径参数：业务日期 YYYY-MM-DD（例外表的业务键；非法日期由契约校验拦成 400）
@@ -285,15 +320,45 @@ export function buildOpenApiDocument() {
     method: "delete",
     path: "/api/v1/projects/{id}",
     tags: ["projects"],
-    summary: "删除项目（物理删：连同任务 / 流程节点 / 阶段 / 成员 / 干系人 / 日报 / 问题 / 变更 / 文件；编号随行释放可再建；If-Match 回传当前 version 防误删）",
+    summary: "删除项目（移入项目回收站：仅置 deleted_at / deleted_by，聚合数据与图片保留；If-Match 回传当前 version 防误删）",
     request: { params: idParams, headers: ProjectDeleteHeadersSchema },
     responses: {
-      200: { description: "已物理删除（删除前快照与子表行数写审计；列表 / 详情 / facets / 搜索不再返回；同编号可再建）", ...json(ProjectSchema) },
+      200: { description: "已移入项目回收站（普通列表 / 详情 / facets / 搜索不再返回；可在项目回收站恢复或彻底删除）", ...json(ProjectSchema) },
       400: commonErrors[400],
       404: commonErrors[404],
       409: commonErrors[409],
     },
   });
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/restore",
+    tags: ["projects"],
+    summary: "从项目回收站恢复（清 deleted_at / deleted_by；权限 project.delete；回到删除前状态）",
+    request: { params: idParams, body: json(ProjectRecycleActionBodySchema) },
+    responses: {
+      200: { description: "恢复后的项目", ...json(ProjectSchema) },
+      400: commonErrors[400],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/purge",
+    tags: ["projects"],
+    summary: "彻底删除项目（仅系统管理员：删库内项目聚合数据 + 对象存储 projects/{id}/ 全部对象与版本）",
+    request: { params: idParams, body: json(ProjectRecycleActionBodySchema) },
+    responses: {
+      200: { description: "彻底删除完成", ...json(ProjectPurgeResponseSchema) },
+      400: commonErrors[400],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
   registry.registerPath({
     method: "post",
     path: "/api/v1/projects/{id}/archive",
@@ -324,6 +389,19 @@ export function buildOpenApiDocument() {
 
   registry.registerPath({
     method: "get",
+    path: "/api/v1/projects/{id}/group/candidates",
+    tags: ["projects"],
+    summary: "待绑定项目群候选（机器人已收到群消息；只回 chatid 掩码 + 最近活跃时间；权限 project.update）",
+    request: { params: idParams },
+    responses: {
+      200: { description: "未绑定群候选列表（最近活跃优先；项目不存在 / 不可见 = 404）", ...json(ProjectGroupCandidateListSchema) },
+      403: commonErrors[403],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
     path: "/api/v1/projects/{id}/group",
     tags: ["projects"],
     summary: "项目群绑定状态（未绑定 = bound:false；chatid 掩码回显，activated = 群内已激活）",
@@ -338,7 +416,7 @@ export function buildOpenApiDocument() {
     method: "put",
     path: "/api/v1/projects/{id}/group",
     tags: ["projects"],
-    summary: "绑定 / 换绑项目群（chatid + 可选群名备注；PUT = upsert 覆盖语义；权限 project.update）",
+    summary: "绑定 / 换绑项目群（chatid 或 candidateId + 可选群名备注；PUT = upsert 覆盖语义；权限 project.update）",
     request: { params: idParams, body: json(ProjectGroupPutBodySchema) },
     responses: {
       200: { description: "绑定后的群状态（chatid 掩码回显）", ...json(ProjectGroupBindingSchema) },
@@ -1233,13 +1311,33 @@ export function buildOpenApiDocument() {
     method: "get",
     path: "/api/v1/files/{id}/preview",
     tags: ["files"],
-    summary: "预览状态与短时签名地址（D2：异步产物；未就绪 / 失败为 200 语义，not_ready 幂等补投，失败降级「请下载」）",
+    summary: "预览产物或查看入口；CAD 模型转换进度由 cad 任务独立显示",
     request: { params: idParams, query: FilePreviewQuerySchema },
     responses: {
       200: { description: "预览状态（ready / not_ready / failed）", ...json(FilePreviewResponseSchema) },
       404: commonErrors[404],
     },
   });
+
+  const cadBase = "/api/v1/files/{fileId}/versions/{versionId}/cad/views/{viewId}/jobs";
+  const cadParams = z.object({ fileId: UuidSchema, versionId: UuidSchema, viewId: z.string().regex(/^[a-f0-9]{32}$/) });
+  const cadJobParams = cadParams.extend({ jobId: z.string().regex(/^[a-f0-9]{32}$/) });
+  const cadLeaseParams = cadJobParams.extend({ lease: z.string().regex(/^[a-f0-9]{48}$/) });
+  const cadErrors = { 400: commonErrors[400], 401: commonErrors[401], 403: commonErrors[403], 404: commonErrors[404],
+    503: { description: "CAD 服务未启用、繁忙或产物不可用", ...json(ApiErrorSchema) } };
+  registry.registerPath({ method: "post", path: cadBase, tags: ["files"], summary: "为已授权 STEP 版本创建隔离任务（需要 CSRF）",
+    request: { params: cadParams, query: z.object({ nameCodepage: CadNameCodepageSchema.default("UTF8") }) }, responses: { 201: { description: "已创建或复用当前查看窗口的任务", ...json(CadJobCreateResponseSchema) }, ...cadErrors } });
+  registry.registerPath({ method: "get", path: cadBase + "/{jobId}", tags: ["files"], summary: "查询当前查看窗口的 CAD 任务",
+    request: { params: cadJobParams }, responses: { 200: { description: "持久任务状态", ...json(CadJobSchema) }, ...cadErrors } });
+  registry.registerPath({ method: "post", path: cadBase + "/{jobId}/cancel", tags: ["files"], summary: "取消当前查看窗口的转换（需要 CSRF）",
+    request: { params: cadJobParams }, responses: { 201: { description: "取消后状态", ...json(CadJobSchema) }, ...cadErrors } });
+  registry.registerPath({ method: "get", path: cadBase + "/{jobId}/manifest", tags: ["files"], summary: "读取完整校验的 UCD 二进制模型清单（支持 gzip）",
+    request: { params: cadJobParams }, responses: { 200: { description: "独立工程 ucd-binary-compact/1 清单，含短期资源 lease；每次重查文件版本权限", ...json(z.record(z.string(), z.unknown())) }, ...cadErrors } });
+  registry.registerPath({ method: "get", path: cadBase + "/{jobId}/resources/{lease}/{sha256}", tags: ["files"], summary: "读取当前模型清单内的二进制资源",
+    request: { params: cadLeaseParams.extend({ sha256: z.string().regex(/^[a-f0-9]{64}$/) }) },
+    responses: { 200: { description: "有权限且哈希属于该清单的 buffer", content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } } }, ...cadErrors } });
+  registry.registerPath({ method: "delete", path: cadBase + "/{jobId}/resources/{lease}", tags: ["files"], summary: "释放模型资源清单 lease（需要 CSRF）",
+    request: { params: cadLeaseParams }, responses: { 200: { description: "已释放", ...json(z.object({ released: z.boolean() })) }, ...cadErrors } });
 
   registry.registerPath({
     method: "get",
@@ -1671,6 +1769,40 @@ export function buildOpenApiDocument() {
     },
   });
 
+  // ---- 仪表盘聚合（B4 / M7-02）：服务端收口，前端不再逐项目扇出 ----
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/dashboard/progress",
+    tags: ["dashboard"],
+    summary: "仪表盘任务聚合：项目进度（阶段 × 进度五档）/ 任务状态 / 交付时间；一次返回全部可见项目与逐项目统计",
+    responses: {
+      200: { description: "任务聚合（按会话用户项目可见性过滤）", ...json(DashboardProgressResponseSchema) },
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/dashboard/issues",
+    tags: ["dashboard"],
+    summary: "仪表盘问题分布聚合：问题状态 × 归类；一次返回全部与逐项目统计",
+    responses: {
+      200: { description: "问题分布聚合（按会话用户项目可见性过滤）", ...json(DashboardIssuesResponseSchema) },
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/dashboard/change-words",
+    tags: ["dashboard"],
+    summary: "仪表盘变更原因核心词频聚合：一次返回全部与逐项目词频",
+    responses: {
+      200: { description: "变更原因核心词频（按会话用户项目可见性过滤）", ...json(DashboardChangeWordsResponseSchema) },
+      401: commonErrors[401],
+    },
+  });
+
   // ---- 视图与关注（M2-06 · A1-03 / A1-15：保存视图 / 关注订阅 · wmj 线）----
   registry.registerPath({
     method: "get",
@@ -1781,6 +1913,95 @@ export function buildOpenApiDocument() {
     },
   });
 
+  // ---- 自动化规则管理（M5-06 S8-4 · Push 266：规则 / 试运行 / 运行记录 · wmj 线代做）----
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/automation/rules",
+    tags: ["automation"],
+    summary: "规则管理列表（M5-06）：固定返回一期内置规则，含停用规则与调度 job 状态（R01 不入列表、A03 已退役）",
+    responses: {
+      200: { description: "规则列表（按 code 升序）", ...json(AutomationRuleListResponseSchema) },
+      401: commonErrors[401],
+      403: commonErrors[403],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/automation/rules/{code}",
+    tags: ["automation"],
+    summary: "规则详情（M5-06）：完整规则 + 可编辑字段 + 最近 / 下次运行时刻 + 调度 job 状态",
+    request: { params: automationRuleParams },
+    responses: {
+      200: { description: "规则详情", ...json(AutomationRuleViewSchema) },
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "patch",
+    path: "/api/v1/automation/rules/{code}",
+    tags: ["automation"],
+    summary:
+      "保存规则（M5-06）：version 乐观锁；只允许启停、动作渠道与收件人变化；模板 / 触发 / 条件 / 动作类型只读",
+    request: { params: automationRuleParams, body: json(AutomationRulePatchBodySchema) },
+    responses: {
+      200: { description: "保存后的规则（version + 1）", ...json(AutomationRuleViewSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: errorResponse("规则版本冲突（VERSION_CONFLICT）或试图修改只读字段 / 动作数量"),
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/automation/rules/{code}/test",
+    tags: ["automation"],
+    summary:
+      "规则试运行（M5-06）：只读评估，不写 automation_runs / outbox / 审计；事件型必须给 entityId，调度型最多评估 100 个主体",
+    request: { params: automationRuleParams, body: json(AutomationRuleTestBodySchema) },
+    responses: {
+      200: { description: "试运行结果（命中 / 跳过 / 条件明细）", ...json(AutomationRuleTestResponseSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      422: commonErrors[422],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/automation/runs",
+    tags: ["automation"],
+    summary: "规则运行记录列表（M5-06）：规则 / 状态 / 来源 / 主题 / 实体 + 时间区间筛选；createdAt desc, id desc",
+    request: { query: AutomationRunListQuerySchema },
+    responses: {
+      200: { description: "运行记录列表", ...json(AutomationRunListResponseSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/automation/runs/{id}",
+    tags: ["automation"],
+    summary: "规则运行详情（M5-06）：条件求值明细、动作 / 消息快照与失败原因",
+    request: { params: automationRunIdParams },
+    responses: {
+      200: { description: "运行记录详情", ...json(AutomationRunSchema) },
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+    },
+  });
+
   // ---- 消息中心（S7-4 · j1 / M5-04 首刀：站内信投递 / 合并免打扰 / 每日上限 · lan 线）----
   registry.registerPath({
     method: "get",
@@ -1792,6 +2013,57 @@ export function buildOpenApiDocument() {
       200: { description: "收件箱清单（含未读计数）", ...json(NotificationListResponseSchema) },
       400: commonErrors[400],
       401: commonErrors[401],
+    },
+  });
+
+  // ---- 发送记录与重发（M5-06 S8-4 · Push 266：消息级归档读面 + 幂等重发）----
+  // `deliveries` 为静态段，注册顺序必须先于 `/notifications/{id}`，避免运行时被参数路由截获。
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/notifications/deliveries",
+    tags: ["notifications"],
+    summary: "发送记录列表（C2-07 / C5-03）：渠道 / 最新状态 / 规则 / 收件人 / 时间区间 / 关键字 + 分页；目标地址只回掩码",
+    request: { query: NotifyDeliveryListQuerySchema },
+    responses: {
+      200: { description: "消息级发送记录列表（createdAt desc, id desc）", ...json(NotifyDeliveryListResponseSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/notifications/deliveries/{id}",
+    tags: ["notifications"],
+    summary: "发送记录详情（C5-03）：消息归档 + 全部外部投递尝试；不返回 Secret / 完整 target / 原始载荷",
+    request: { params: deliveryIdParams },
+    responses: {
+      200: { description: "发送记录详情", ...json(NotifyDeliveryDetailSchema) },
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/notifications/deliveries/{id}/resend",
+    tags: ["notifications"],
+    summary:
+      "重发失败 / 死信外部消息（D7）：请求体必须为空，Idempotency-Key 必填；新 outbox + 新消息归档，不覆盖原记录",
+    request: {
+      params: deliveryIdParams,
+      headers: requiredIdempotencyHeader,
+      body: json(NotifyDeliveryResendBodySchema),
+    },
+    responses: {
+      200: { description: "重发已受理：返回新建的消息归档（lastState = pending）", ...json(NotifyDeliveryResendResponseSchema) },
+      400: errorResponse("请求体非法或缺少 / 非法 Idempotency-Key（VALIDATION_FAILED）"),
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: errorResponse("重发状态或渠道不允许（仅 wecom_app / wecom_aibot / wecom_group 且最新状态 failed / dead）"),
     },
   });
 
@@ -1905,6 +2177,99 @@ export function buildOpenApiDocument() {
     },
   });
 
+  // ---- 企业微信单聊绑定（M5-03-5-6 绑定码链路 · 契约刀 · Push 249 · lan 代记 / wmj 复核）----
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/wecom-dm-binding",
+    tags: ["notifications"],
+    summary:
+      "企业微信单聊绑定态（D5 / D6 设置页）：按当前机器人（`WECOM_BOT_ID`）维度判定；恒 200（未绑定 = bound:false）；企微 open_userid 只回掩码末 4 位；v1.8 另回当前未用绑定码（bindingCode）与取码限流可重试时刻（retryAt）—— 页面刷新不丢码面 / 倒计时 / 罚时",
+    responses: {
+      200: { description: "绑定态（未绑定 = bound:false；wecomUseridMasked / boundAt = null）", ...json(WecomDmBindingStateSchema) },
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/wecom-dm-binding/diagnostics",
+    tags: ["notifications"],
+    summary:
+      "机器人诊断（仅非生产环境）：回显 api 进程实际读取的 WECOM_BOT_ID / SECRET / WS 地址 + 该 bot_id 最近回调统计（inboundCount = 0 → 回调从未到达：worker 未启动 / 凭据不对 / bot_id 不一致）；生产恒 enabled:false 且敏感字段 null",
+    responses: {
+      200: { description: "诊断信息（生产：enabled:false + 敏感字段 null）", ...json(WecomDmBotDiagnosticsSchema) },
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/wecom-dm-binding/codes",
+    tags: ["notifications"],
+    summary:
+      "生成绑定码（D3 / D5）：6 位数字 · TTL 3 分钟 · 一次性 · 5 次 / 3 分钟 / 用户（超出 429 RATE_LIMITED）；重复取码作废上一条未用码；用户把码发进企微单聊即绑定（v1.8：以码持有者为准换绑 · 会话内回执由 worker 承担；验证侧 5 次 / 10 分钟失败后指数锁定）",
+    responses: {
+      200: { description: "绑定码（code / expiresAt / expiresInSeconds）", ...json(WecomDmBindingCodeSchema) },
+      401: commonErrors[401],
+      429: errorResponse("取码频率到顶（RATE_LIMITED；details[0].meta.retryAt = 可重试时刻，meta.window = 3m）"),
+    },
+  });
+
+  registry.registerPath({
+    method: "patch",
+    path: "/api/v1/wecom-dm-binding",
+    tags: ["notifications"],
+    summary:
+      "更新企业微信单聊绑定设置（个人资源 · 会话 + CSRF）：messagesEnabled = false 后停止企微单聊外发（站内信仍保留）；绑定 / 换绑成功时默认开启",
+    request: { body: json(WecomDmBindingUpdateBodySchema) },
+    responses: {
+      200: { description: "更新后的绑定态", ...json(WecomDmBindingStateSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "delete",
+    path: "/api/v1/wecom-dm-binding",
+    tags: ["notifications"],
+    summary:
+      "解绑企业微信单聊（D6）：注销投递资格（保留激活登记）→ 未绑定态收口（不发帧 + dead + 绑定指引降级）；幂等（未绑定也 200 bound:false，不写审计）；解绑成功写 audit_logs",
+    responses: {
+      200: { description: "解绑后的绑定态（恒 bound:false）", ...json(WecomDmBindingStateSchema) },
+      401: commonErrors[401],
+    },
+  });
+
+
+  // ---- 翻译通道（§6.16 ㉕ · Push 301：手打内容英译落库 / 读库直出 · px 线）----
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/translate",
+    tags: ["translate"],
+    summary: "单条翻译（译文库优先）：命中直出；未命中调内网引擎（HY-MT1.5-1.8B）后落库 —— 引擎不可用 500 INTERNAL（前端静默降级跳过）",
+    request: { body: json(TranslateBodySchema) },
+    responses: {
+      200: { description: "译文（库内或引擎产出，产出即落库）", ...json(TranslateResponseSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      500: errorResponse("翻译引擎不可用（INTERNAL；前端静默降级跳过）"),
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/translate/batch",
+    tags: ["translate"],
+    summary: "批量查库（不调引擎）：一次请求拿整页已存译文（英文界面切页提速）；未命中条目由前端走单条通道",
+    request: { body: json(TranslateBatchBodySchema) },
+    responses: {
+      200: { description: "命中条目清单", ...json(TranslateBatchResponseSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+    },
+  });
+
   return new OpenApiGeneratorV31(registry.definitions, { sortComponents: "alphabetically" }).generateDocument({
     openapi: "3.1.0",
     info: {
@@ -1931,9 +2296,16 @@ export function buildOpenApiDocument() {
       { name: "reports", description: "日报（A3-01 / A3-02 / A3-09；M6-01 / M6-02）" },
       { name: "issues", description: "问题闭环（A3-09~A3-13；三态流转 / 分派 / 留痕，M6-02 / M6-03）" },
       { name: "workspace", description: "工作台（A6-01 / A6-03）：我的任务与我的问题聚合读面（M6-05）" },
+      { name: "dashboard", description: "仪表盘聚合（B4 / M7-02）：项目进度、任务状态、交付时间、问题分布与变更原因词频" },
       { name: "views", description: "保存视图（A1-03 / M2-06）：个人与公共视图（筛选 / 列 / 排序 / 分组配置）" },
       { name: "follows", description: "关注订阅（A1-15 / M2-06）：关注项目与任务、清单与批量操作" },
-      { name: "notifications", description: "消息中心（C5 / M5-04）：站内信收件箱、状态标记、免打扰与每日上限偏好、SSE 实时流与稍后提醒（S8-3）" },
+      { name: "automation", description: "自动化规则管理（C2-01 / C2-12 / M5-06）：内置规则启停与配置、只读试运行、运行记录" },
+      {
+        name: "notifications",
+        description:
+          "消息中心（C5 / M5-04 / M5-06）：站内信收件箱、状态标记、免打扰与每日上限偏好、SSE 实时流、稍后提醒、发送记录与重发",
+      },
+      { name: "translate", description: "翻译通道（§6.16 ㉕）：手打内容英译译文库 —— 单条（库优先 + 引擎兜底落库）与批量查库（切页提速）" },
     ],
   });
 }

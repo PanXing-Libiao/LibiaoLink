@@ -30,6 +30,8 @@ export interface paths {
                     "filter[timeTo]"?: components["schemas"]["DateOnly"] & unknown;
                     /** @description 归档年份（C4-07 归档检索；多值逗号分隔，四位年份如 2025,2026；按 projects.archived_at 的 Asia/Shanghai 年判定 —— 未归档项目不命中） */
                     "filter[archivedYear]"?: string;
+                    /** @description 项目回收站开关：true = 仅返回已移入项目回收站的项目；false / 缺省 = 仅返回未删除项目 */
+                    "filter[recycled]"?: "true" | "false";
                     /** @description 关键字（编号 / 名称 / 客户 / 序号） */
                     q?: string;
                     page?: number;
@@ -143,6 +145,8 @@ export interface paths {
                     "filter[timeTo]"?: components["schemas"]["DateOnly"] & unknown;
                     /** @description 归档年份（C4-07 归档检索；多值逗号分隔，四位年份如 2025,2026；按 projects.archived_at 的 Asia/Shanghai 年判定 —— 未归档项目不命中） */
                     "filter[archivedYear]"?: string;
+                    /** @description 项目回收站开关：true = 仅返回已移入项目回收站的项目；false / 缺省 = 仅返回未删除项目 */
+                    "filter[recycled]"?: "true" | "false";
                     /** @description 关键字（编号 / 名称 / 客户 / 序号） */
                     q?: string;
                     page?: number;
@@ -226,7 +230,7 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        /** 删除项目（物理删：连同任务 / 流程节点 / 阶段 / 成员 / 干系人 / 日报 / 问题 / 变更 / 文件；编号随行释放可再建；If-Match 回传当前 version 防误删） */
+        /** 删除项目（移入项目回收站：仅置 deleted_at / deleted_by，聚合数据与图片保留；If-Match 回传当前 version 防误删） */
         delete: {
             parameters: {
                 query?: never;
@@ -242,7 +246,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description 已物理删除（删除前快照与子表行数写审计；列表 / 详情 / facets / 搜索不再返回；同编号可再建） */
+                /** @description 已移入项目回收站（普通列表 / 详情 / facets / 搜索不再返回；可在项目回收站恢复或彻底删除） */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -337,6 +341,164 @@ export interface paths {
                 };
             };
         };
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 从项目回收站恢复（清 deleted_at / deleted_by；权限 project.delete；回到删除前状态） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["ProjectRecycleActionBody"];
+                };
+            };
+            responses: {
+                /** @description 恢复后的项目 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Project"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/purge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 彻底删除项目（仅系统管理员：删库内项目聚合数据 + 对象存储 projects/{id}/ 全部对象与版本） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["ProjectRecycleActionBody"];
+                };
+            };
+            responses: {
+                /** @description 彻底删除完成 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectPurgeResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/projects/{id}/archive": {
@@ -459,6 +621,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/group/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 待绑定项目群候选（机器人已收到群消息；只回 chatid 掩码 + 最近活跃时间；权限 project.update） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 未绑定群候选列表（最近活跃优先；项目不存在 / 不可见 = 404） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectGroupCandidateList"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/group": {
         parameters: {
             query?: never;
@@ -499,7 +718,7 @@ export interface paths {
                 };
             };
         };
-        /** 绑定 / 换绑项目群（chatid + 可选群名备注；PUT = upsert 覆盖语义；权限 project.update） */
+        /** 绑定 / 换绑项目群（chatid 或 candidateId + 可选群名备注；PUT = upsert 覆盖语义；权限 project.update） */
         put: {
             parameters: {
                 query?: never;
@@ -4569,7 +4788,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 预览状态与短时签名地址（D2：异步产物；未就绪 / 失败为 200 语义，not_ready 幂等补投，失败降级「请下载」） */
+        /** 预览产物或查看入口；CAD 模型转换进度由 cad 任务独立显示 */
         get: {
             parameters: {
                 query?: {
@@ -4608,6 +4827,543 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/{fileId}/versions/{versionId}/cad/views/{viewId}/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 为已授权 STEP 版本创建隔离任务（需要 CSRF） */
+        post: {
+            parameters: {
+                query?: {
+                    /** @description STEP 名称编码：UTF8 标准编码（默认），GB 中文旧编码；由用户按文件选择，不自动猜测。 */
+                    nameCodepage?: components["schemas"]["CadNameCodepage"];
+                };
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    fileId: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    versionId: components["schemas"]["Uuid"];
+                    viewId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 已创建或复用当前查看窗口的任务 */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CadJobCreateResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description CAD 服务未启用、繁忙或产物不可用 */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/{fileId}/versions/{versionId}/cad/views/{viewId}/jobs/{jobId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 查询当前查看窗口的 CAD 任务 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    fileId: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    versionId: components["schemas"]["Uuid"];
+                    viewId: string;
+                    jobId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 持久任务状态 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CadJob"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description CAD 服务未启用、繁忙或产物不可用 */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/{fileId}/versions/{versionId}/cad/views/{viewId}/jobs/{jobId}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 取消当前查看窗口的转换（需要 CSRF） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    fileId: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    versionId: components["schemas"]["Uuid"];
+                    viewId: string;
+                    jobId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 取消后状态 */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CadJob"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description CAD 服务未启用、繁忙或产物不可用 */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/{fileId}/versions/{versionId}/cad/views/{viewId}/jobs/{jobId}/manifest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 读取完整校验的 UCD 二进制模型清单（支持 gzip） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    fileId: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    versionId: components["schemas"]["Uuid"];
+                    viewId: string;
+                    jobId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 独立工程 ucd-binary-compact/1 清单，含短期资源 lease；每次重查文件版本权限 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description CAD 服务未启用、繁忙或产物不可用 */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/{fileId}/versions/{versionId}/cad/views/{viewId}/jobs/{jobId}/resources/{lease}/{sha256}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 读取当前模型清单内的二进制资源 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    fileId: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    versionId: components["schemas"]["Uuid"];
+                    viewId: string;
+                    jobId: string;
+                    lease: string;
+                    sha256: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 有权限且哈希属于该清单的 buffer */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/octet-stream": string;
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description CAD 服务未启用、繁忙或产物不可用 */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/{fileId}/versions/{versionId}/cad/views/{viewId}/jobs/{jobId}/resources/{lease}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 释放模型资源清单 lease（需要 CSRF） */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    fileId: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    versionId: components["schemas"]["Uuid"];
+                    viewId: string;
+                    jobId: string;
+                    lease: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 已释放 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            released: boolean;
+                        };
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description CAD 服务未启用、繁忙或产物不可用 */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -6376,6 +7132,141 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/dashboard/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 仪表盘任务聚合：项目进度（阶段 × 进度五档）/ 任务状态 / 交付时间；一次返回全部可见项目与逐项目统计 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 任务聚合（按会话用户项目可见性过滤） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DashboardProgressResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dashboard/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 仪表盘问题分布聚合：问题状态 × 归类；一次返回全部与逐项目统计 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 问题分布聚合（按会话用户项目可见性过滤） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DashboardIssuesResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dashboard/change-words": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 仪表盘变更原因核心词频聚合：一次返回全部与逐项目词频 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 变更原因核心词频（按会话用户项目可见性过滤） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DashboardChangeWordsResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/views": {
         parameters: {
             query?: never;
@@ -6842,6 +7733,430 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/automation/rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 规则管理列表（M5-06）：固定返回一期内置规则，含停用规则与调度 job 状态（R01 不入列表、A03 已退役） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 规则列表（按 code 升序） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AutomationRuleListResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/automation/rules/{code}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 规则详情（M5-06）：完整规则 + 可编辑字段 + 最近 / 下次运行时刻 + 调度 job 状态 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description 规则编码：R01~R07 为内置规则（逐字文案基准见 docs/rules/R01-R07-内置规则文案.md）；A01 日报应填未填 / A02 每日 19:00 日报汇总 / A08 阶段达成播报 / A14 自定义待办提醒（一期四条；A03 问题 SLA 随处理时限删除下线 · Push 215） */
+                    code: components["schemas"]["AutomationRuleCode"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 规则详情 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AutomationRuleView"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** 保存规则（M5-06）：version 乐观锁；只允许启停、动作渠道与收件人变化；模板 / 触发 / 条件 / 动作类型只读 */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description 规则编码：R01~R07 为内置规则（逐字文案基准见 docs/rules/R01-R07-内置规则文案.md）；A01 日报应填未填 / A02 每日 19:00 日报汇总 / A08 阶段达成播报 / A14 自定义待办提醒（一期四条；A03 问题 SLA 随处理时限删除下线 · Push 215） */
+                    code: components["schemas"]["AutomationRuleCode"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["AutomationRulePatchBody"];
+                };
+            };
+            responses: {
+                /** @description 保存后的规则（version + 1） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AutomationRuleView"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 规则版本冲突（VERSION_CONFLICT）或试图修改只读字段 / 动作数量 */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/automation/rules/{code}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 规则试运行（M5-06）：只读评估，不写 automation_runs / outbox / 审计；事件型必须给 entityId，调度型最多评估 100 个主体 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description 规则编码：R01~R07 为内置规则（逐字文案基准见 docs/rules/R01-R07-内置规则文案.md）；A01 日报应填未填 / A02 每日 19:00 日报汇总 / A08 阶段达成播报 / A14 自定义待办提醒（一期四条；A03 问题 SLA 随处理时限删除下线 · Push 215） */
+                    code: components["schemas"]["AutomationRuleCode"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["AutomationRuleTestBody"];
+                };
+            };
+            responses: {
+                /** @description 试运行结果（命中 / 跳过 / 条件明细） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AutomationRuleTestResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 业务校验未通过（门禁 / 蓝图校验，含明细） */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/automation/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 规则运行记录列表（M5-06）：规则 / 状态 / 来源 / 主题 / 实体 + 时间区间筛选；createdAt desc, id desc */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 规则编码：R01~R07 为内置规则（逐字文案基准见 docs/rules/R01-R07-内置规则文案.md）；A01 日报应填未填 / A02 每日 19:00 日报汇总 / A08 阶段达成播报 / A14 自定义待办提醒（一期四条；A03 问题 SLA 随处理时限删除下线 · Push 215） */
+                    ruleCode?: components["schemas"]["AutomationRuleCode"];
+                    /** @description 规则运行状态：hit 命中 / skipped 未命中或被幂等挡下 / failed 动作失败 */
+                    status?: components["schemas"]["AutomationRunStatus"];
+                    /** @description 触发方式：event 事件型（outbox 主题见 RuleEventTopic）/ schedule 调度型（cron 五段 + 窗口） */
+                    source?: components["schemas"]["RuleTriggerKind"];
+                    /** @description 事件型触发的 outbox 主题：task.completed 任务完成 / task.updated 任务更新 / task.progress_changed 进度变化 / change.applied 变更生效 / node.completed 节点完成 / stage.advanced 大阶段完成 / project.completed 项目完成 / report.submitted 日报提交 / issue.updated 问题更新 */
+                    topic?: components["schemas"]["RuleEventTopic"];
+                    entityId?: string;
+                    /** @description 运行时刻下界（含） */
+                    from?: components["schemas"]["DateTime"] & unknown;
+                    /** @description 运行时刻上界（含） */
+                    to?: components["schemas"]["DateTime"] & unknown;
+                    page?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 运行记录列表 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AutomationRunListResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/automation/runs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 规则运行详情（M5-06）：条件求值明细、动作 / 消息快照与失败原因 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 运行记录详情 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AutomationRun"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/notifications": {
         parameters: {
             query?: never;
@@ -6903,6 +8218,240 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 发送记录列表（C2-07 / C5-03）：渠道 / 最新状态 / 规则 / 收件人 / 时间区间 / 关键字 + 分页；目标地址只回掩码 */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 投递渠道：wecom_app 企微应用消息（备用通道）/ wecom_aibot 企微智能机器人（单聊单发）/ wecom_group 企微群机器人（群播报 · 会话双窗口限速）/ inbox 站内信 / email 邮件（基础可用） */
+                    channel?: components["schemas"]["NotifyChannel"];
+                    /** @description 消息最新状态：pending 尚未尝试 / sent 已受理 / failed 可重试失败 / deferred 限速延期 / dead 死信 */
+                    lastState?: components["schemas"]["NotifyDeliveryMessageState"];
+                    ruleCode?: string;
+                    /** @description UUID（主键与关联 ID） */
+                    recipientId?: components["schemas"]["Uuid"];
+                    /** @description 归档时刻下界（含） */
+                    from?: components["schemas"]["DateTime"] & unknown;
+                    /** @description 归档时刻上界（含） */
+                    to?: components["schemas"]["DateTime"] & unknown;
+                    /** @description 标题或正文关键字 */
+                    q?: string;
+                    page?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 消息级发送记录列表（createdAt desc, id desc） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NotifyDeliveryListResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/deliveries/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 发送记录详情（C5-03）：消息归档 + 全部外部投递尝试；不返回 Secret / 完整 target / 原始载荷 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 发送记录详情 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NotifyDeliveryDetail"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/deliveries/{id}/resend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 重发失败 / 死信外部消息（D7）：请求体必须为空，Idempotency-Key 必填；新 outbox + 新消息归档，不覆盖原记录 */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
+                    "Idempotency-Key": components["schemas"]["IdempotencyKey"];
+                };
+                path: {
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["NotifyDeliveryResendBody"];
+                };
+            };
+            responses: {
+                /** @description 重发已受理：返回新建的消息归档（lastState = pending） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NotifyDeliveryResendResponse"];
+                    };
+                };
+                /** @description 请求体非法或缺少 / 非法 Idempotency-Key（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 重发状态或渠道不允许（仅 wecom_app / wecom_aibot / wecom_group 且最新状态 failed / dead） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -7320,6 +8869,346 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/wecom-dm-binding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 企业微信单聊绑定态（D5 / D6 设置页）：按当前机器人（`WECOM_BOT_ID`）维度判定；恒 200（未绑定 = bound:false）；企微 open_userid 只回掩码末 4 位；v1.8 另回当前未用绑定码（bindingCode）与取码限流可重试时刻（retryAt）—— 页面刷新不丢码面 / 倒计时 / 罚时 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 绑定态（未绑定 = bound:false；wecomUseridMasked / boundAt = null） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WecomDmBindingState"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /** 解绑企业微信单聊（D6）：注销投递资格（保留激活登记）→ 未绑定态收口（不发帧 + dead + 绑定指引降级）；幂等（未绑定也 200 bound:false，不写审计）；解绑成功写 audit_logs */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 解绑后的绑定态（恒 bound:false） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WecomDmBindingState"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** 更新企业微信单聊绑定设置（个人资源 · 会话 + CSRF）：messagesEnabled = false 后停止企微单聊外发（站内信仍保留）；绑定 / 换绑成功时默认开启 */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["WecomDmBindingUpdateBody"];
+                };
+            };
+            responses: {
+                /** @description 更新后的绑定态 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WecomDmBindingState"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/wecom-dm-binding/diagnostics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 机器人诊断（仅非生产环境）：回显 api 进程实际读取的 WECOM_BOT_ID / SECRET / WS 地址 + 该 bot_id 最近回调统计（inboundCount = 0 → 回调从未到达：worker 未启动 / 凭据不对 / bot_id 不一致）；生产恒 enabled:false 且敏感字段 null */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 诊断信息（生产：enabled:false + 敏感字段 null） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WecomDmBotDiagnostics"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/wecom-dm-binding/codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 生成绑定码（D3 / D5）：6 位数字 · TTL 3 分钟 · 一次性 · 5 次 / 3 分钟 / 用户（超出 429 RATE_LIMITED）；重复取码作废上一条未用码；用户把码发进企微单聊即绑定（v1.8：以码持有者为准换绑 · 会话内回执由 worker 承担；验证侧 5 次 / 10 分钟失败后指数锁定） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 绑定码（code / expiresAt / expiresInSeconds） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WecomDmBindingCode"] & unknown;
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 取码频率到顶（RATE_LIMITED；details[0].meta.retryAt = 可重试时刻，meta.window = 3m） */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/translate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 单条翻译（译文库优先）：命中直出；未命中调内网引擎（HY-MT1.5-1.8B）后落库 —— 引擎不可用 500 INTERNAL（前端静默降级跳过） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TranslateBody"];
+                };
+            };
+            responses: {
+                /** @description 译文（库内或引擎产出，产出即落库） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TranslateResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 翻译引擎不可用（INTERNAL；前端静默降级跳过） */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/translate/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 批量查库（不调引擎）：一次请求拿整页已存译文（英文界面切页提速）；未命中条目由前端走单条通道 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TranslateBatchBody"];
+                };
+            };
+            responses: {
+                /** @description 命中条目清单 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TranslateBatchResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -7401,17 +9290,232 @@ export interface components {
             windowId: number | null;
         };
         /**
-         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；预览事件自 2026-10-12 起不再写审计 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删）
+         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；预览事件自 2026-10-12 起不再写审计 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删） / wecom_dm_binding 企微绑定验证（对象 id = 机器人标识 + 掩码 open_userid；失败 / 锁定记 deny + denied，不落完整 userid 或绑定码） / automation_rule 自动化规则（对象 id = 规则 id；保存记录字段级 diff，metadata 带 code / beforeVersion / afterVersion，M5-06） / notify_delivery 发送记录（对象 id = 消息归档 id；仅管理员重发写 update + metadata.operation=resend，M5-06）
          * @enum {string}
          */
-        AuditObjectType: "project" | "project_member" | "task" | "node" | "stage" | "dict_item" | "blueprint" | "calendar_day" | "calendar_settings" | "file" | "change" | "stakeholder" | "daily_report" | "issue" | "task_node" | "task_template" | "user";
+        AuditObjectType: "project" | "project_member" | "task" | "node" | "stage" | "dict_item" | "blueprint" | "calendar_day" | "calendar_settings" | "file" | "change" | "stakeholder" | "daily_report" | "issue" | "task_node" | "task_template" | "user" | "wecom_dm_binding" | "automation_rule" | "notify_delivery";
         /**
          * @description 审计结果：succeeded 成功 / denied 越权尝试（C7-03）/ failed 业务拒绝（门禁等）
          * @enum {string}
          */
         AuditResult: "succeeded" | "denied" | "failed";
+        /** @description 规则动作：notify 渠道消息（企微 / 邮件）/ notification 站内信 */
+        AutomationAction: {
+            kind: components["schemas"]["RuleActionKind"];
+            /**
+             * @description notify 型必填：投递渠道
+             * @enum {string|null}
+             */
+            channel?: "wecom_app" | "wecom_aibot" | "wecom_group" | "inbox" | "email" | null;
+            /** @description 收件人口径（多个 = 逐个解析，均落发送记录） */
+            recipient: components["schemas"]["RuleRecipient"] | components["schemas"]["RuleRecipient"][];
+            /**
+             * @description 消息模板码（逐字文案见 docs/rules/R01-R07-内置规则文案.md）
+             * @example R04_GROUP
+             */
+            template: string;
+            /** @description 合并维度字段（可选；同一维度值合并为一条消息） */
+            groupBy?: string[];
+        };
+        /** @description 规则条件（白名单操作符；全部条件与运算 = 命中） */
+        AutomationCondition: {
+            /**
+             * @description 实体字段名（点分命名空间，由回放 / 求值上下文提供）
+             * @example task.status
+             */
+            field: string;
+            op: components["schemas"]["RuleConditionOperator"];
+            /** @description 比较值（in / notIn / containsAny 用数组；isNull / notNull / notEmpty 省略） */
+            value?: string | number | boolean | string[] | number[] | null;
+        };
+        /** @description 单条条件求值明细（field / op / expected / actual / passed） */
+        AutomationConditionEvaluation: {
+            /**
+             * @description 条件字段
+             * @example task.status
+             */
+            field: string;
+            op: components["schemas"]["RuleConditionOperator"];
+            /** @description 规则期望值（可为 null / 数组；JSON 原样） */
+            expected?: unknown;
+            /** @description 求值主体实际值（可为 null / 数组；JSON 原样） */
+            actual?: unknown;
+            /** @description 本条条件是否通过 */
+            passed: boolean;
+        };
+        /** @description 规则求值产出的消息快照（试运行 / 正式运行共用） */
+        AutomationMessageSnapshot: {
+            /** @description 解析后的收件人展示值（正式记录落发送归档时再掩码） */
+            recipient: string;
+            channel: components["schemas"]["NotifyChannel"];
+            /** @description 模板码 */
+            template: string;
+            /** @description 预计幂等键 */
+            dedupeKey: string;
+            /** @description 标题（null = 仅正文） */
+            title: string | null;
+            /** @description 正文快照 */
+            body: string;
+        };
+        /** @description 自动化规则文档（参数化 + 启停，不做可视化编排；技术设计v0.2 §6.1） */
+        AutomationRule: {
+            /**
+             * @description 规则编码（内置 R01~R07 / A01 / A02 / A08 / A14；自定义规则自定码）
+             * @example R03
+             */
+            code: string;
+            /** @example 任务即将延期提醒 */
+            name: string;
+            /** @description 启停开关（C2-01 / C2-02：内置规则亦可启停） */
+            enabled: boolean;
+            trigger: components["schemas"]["AutomationTrigger"];
+            /** @description 条件（与运算；空数组 = 恒命中） */
+            conditions: components["schemas"]["AutomationCondition"][];
+            /** @description 动作（按数组顺序执行） */
+            actions: components["schemas"]["AutomationAction"][];
+            /** @description 规则版本号（每次保存 +1；随幂等执行键参与去重口径） */
+            version: number;
+        };
         /**
-         * @description 背景档位（Push 291 · 顶栏「背景 · 档位」）：simple = 简约（默认）/ medium = 适中 / vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 simple
+         * @description 规则编码：R01~R07 为内置规则（逐字文案基准见 docs/rules/R01-R07-内置规则文案.md）；A01 日报应填未填 / A02 每日 19:00 日报汇总 / A08 阶段达成播报 / A14 自定义待办提醒（一期四条；A03 问题 SLA 随处理时限删除下线 · Push 215）
+         * @enum {string}
+         */
+        AutomationRuleCode: "R01" | "R02" | "R03" | "R04" | "R05" | "R06" | "R07" | "A01" | "A02" | "A08" | "A14";
+        /**
+         * @description 规则保存时允许变化的字段：启停开关、动作渠道、动作收件人；模板 / 触发 / 条件 / 动作类型只读
+         * @enum {string}
+         */
+        AutomationRuleEditableField: "enabled" | "actions.channel" | "actions.recipient";
+        /** @description 规则管理列表（一期固定为内置规则，按 code 升序） */
+        AutomationRuleListResponse: {
+            items: components["schemas"]["AutomationRuleView"][];
+        };
+        /** @description 规则保存（乐观锁）：只允许启停、动作渠道与收件人变化；模板与动作类型只读，空更新 400 */
+        AutomationRulePatchBody: {
+            version: components["schemas"]["Version"] & unknown;
+            /** @description 启停开关 */
+            enabled?: boolean;
+            /** @description 动作整体提交：按原数组顺序；仅允许改 channel / recipient，模板 / 动作类型 / 动作数量必须保持原值 */
+            actions?: components["schemas"]["AutomationAction"][];
+        };
+        /** @description 规则试运行请求（只读；事件型必须给 entityId；业务日期缺省今天） */
+        AutomationRuleTestBody: {
+            businessDate?: components["schemas"]["DateOnly"] & unknown;
+            /** @description 事件型规则必填的单个主体 id */
+            entityId?: string;
+        };
+        /** @description 试运行命中消息（规则 / 实体 / 窗口 + 消息快照） */
+        AutomationRuleTestMessage: components["schemas"]["AutomationMessageSnapshot"] & {
+            ruleCode: components["schemas"]["AutomationRuleCode"];
+            entityId: string;
+            windowKey: string | null;
+        };
+        /** @description 规则试运行结果（只读；不回写运行记录 / outbox / 审计） */
+        AutomationRuleTestResponse: {
+            businessDate: components["schemas"]["DateOnly"] & unknown;
+            evaluatedCount: number;
+            matchedCount: number;
+            skippedCount: number;
+            /** @description 是否因调度型 100 主体上限截断 */
+            truncated: boolean;
+            messages: components["schemas"]["AutomationRuleTestMessage"][];
+            skipped: components["schemas"]["AutomationRuleTestSkipped"][];
+        };
+        /** @description 试运行跳过项（原因 + 实体 / 窗口 + 条件明细） */
+        AutomationRuleTestSkipped: {
+            reason: components["schemas"]["AutomationRunSkipReason"];
+            ruleCode: components["schemas"]["AutomationRuleCode"];
+            entityId: string | null;
+            windowKey: string | null;
+            conditions: components["schemas"]["AutomationConditionEvaluation"][];
+        };
+        /** @description 规则管理读面：完整规则 + 内置标记 + 可编辑字段 + 最近 / 下次运行时刻 + 调度 job 状态 */
+        AutomationRuleView: components["schemas"]["AutomationRule"] & {
+            code?: components["schemas"]["AutomationRuleCode"];
+            id: components["schemas"]["Uuid"] & unknown;
+            /** @description 是否内置规则；一期管理面仅内置规则 */
+            builtIn: boolean;
+            /** @description 当前允许修改的字段白名单 */
+            editableFields: components["schemas"]["AutomationRuleEditableField"][];
+            /** @description 最近一次正式运行记录时刻（含 skipped / failed）；尚未执行 = null */
+            lastRunAt: components["schemas"]["DateTime"] | null;
+            /** @description 调度 job 下次应执行时刻；事件型 / 未登记 = null */
+            nextRunAt: components["schemas"]["DateTime"] | null;
+            /** @description 调度 job 状态；无可关联 job = null */
+            scheduleJobStatus: components["schemas"]["AutomationScheduleJobStatus"] | null;
+        };
+        /** @description 规则运行记录（条件 / 动作 / 消息快照；投递结果另见发送记录） */
+        AutomationRun: {
+            id: number;
+            /** @description 规则 id；规则删除后为 null，仍保留 ruleCode 快照 */
+            ruleId: components["schemas"]["Uuid"] | null;
+            ruleCode: components["schemas"]["AutomationRuleCode"];
+            ruleVersion: number;
+            source: components["schemas"]["RuleTriggerKind"];
+            /** @description 事件主题；调度型 = null */
+            topic: components["schemas"]["RuleEventTopic"] | null;
+            windowKey: string | null;
+            entityType: string | null;
+            entityId: string | null;
+            /** @description 运行幂等键（唯一） */
+            dedupeKey: string;
+            status: components["schemas"]["AutomationRunStatus"];
+            skipReason: components["schemas"]["AutomationRunSkipReason"] | null;
+            conditions: components["schemas"]["AutomationConditionEvaluation"][];
+            actions: components["schemas"]["AutomationAction"][];
+            messages: components["schemas"]["AutomationMessageSnapshot"][];
+            /** @description failed 时的可读原因（已掩码） */
+            error: string | null;
+            createdAt: components["schemas"]["DateTime"];
+        };
+        /** @description 运行记录列表（createdAt desc, id desc） */
+        AutomationRunListResponse: {
+            items: components["schemas"]["AutomationRun"][];
+            page: number;
+            limit: number;
+            total: number;
+        };
+        /**
+         * @description 运行跳过原因：disabled 规则停用 / subject_mismatch 主体不符 / window_mismatch 窗口不符 / not_matched 条件未命中 / recipient_missing 收件人缺失 / template_missing 模板缺失 / duplicate 幂等重复 / event_too_old 事件早于冷启动保护
+         * @enum {string}
+         */
+        AutomationRunSkipReason: "disabled" | "subject_mismatch" | "window_mismatch" | "not_matched" | "recipient_missing" | "template_missing" | "duplicate" | "event_too_old";
+        /**
+         * @description 规则运行状态：hit 命中 / skipped 未命中或被幂等挡下 / failed 动作失败
+         * @enum {string}
+         */
+        AutomationRunStatus: "hit" | "skipped" | "failed";
+        /**
+         * @description 调度 job 状态：pending 待执行 / done 已完成或已停用 / failed 失败；事件型或未登记调度 job = null
+         * @enum {string}
+         */
+        AutomationScheduleJobStatus: "pending" | "done" | "failed";
+        /** @description 触发定义：event 事件型（topic）/ schedule 调度型（cron + window，基准字段 baseField 求 T-N / T+N / 当天） */
+        AutomationTrigger: {
+            kind: components["schemas"]["RuleTriggerKind"];
+            /**
+             * @description event 型必填：outbox 主题（与业务事务同事务写入）
+             * @enum {string|null}
+             */
+            topic?: "task.completed" | "task.updated" | "task.progress_changed" | "change.applied" | "node.completed" | "stage.advanced" | "project.completed" | "report.submitted" | "issue.updated" | null;
+            /**
+             * @description schedule 型必填：五段 cron（Asia/Shanghai，ADR-028）
+             * @example 0 8 * * *
+             */
+            cron?: string | null;
+            /**
+             * @description schedule 型必填：触发窗口（幂等窗口键随窗口求值）
+             * @enum {string|null}
+             */
+            window?: "T_MINUS_1" | "SAME_DAY" | "T_PLUS_1" | "T_PLUS_3" | "WEEKLY" | null;
+            /**
+             * @description 窗口基准字段（T±N / 当天用；WEEKLY 可空）
+             * @example task.planned_end
+             */
+            baseField?: string | null;
+        };
+        /**
+         * @description 背景档位（Push 291 · 顶栏「背景 · 档位」；Push 313 起默认 medium）：simple = 简约 / medium = 适中（默认）/ vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 medium
          * @enum {string}
          */
         BackgroundTier: "simple" | "medium" | "vivid";
@@ -7488,6 +9592,43 @@ export interface components {
             publishedVersion: number;
             publishedAt: components["schemas"]["DateTime"] & (string | null);
             publishedBy: components["schemas"]["Uuid"] & (string | null);
+        };
+        /** @description 隔离且持久化的 STEP 任务；completed 只发布完整校验产物，已列举 nonMeshableFaces 保留，Partial 不算完整成功。 */
+        CadJob: {
+            id: string;
+            /** @enum {string} */
+            state: "queued" | "running" | "completed" | "failed" | "cancelled" | "timed-out";
+            phase: string;
+            sourceSHA256: string;
+            sourceByteLength: number;
+            nameCodepage?: components["schemas"]["CadNameCodepage"];
+            createdAt: number;
+            updatedAt: number;
+            artifactBytes?: number;
+            workerPeakRSSBytes?: number;
+            workerWallSeconds?: number;
+            error?: {
+                code: string;
+                error: string;
+            };
+        };
+        CadJobCreateResponse: {
+            job: components["schemas"]["CadJob"];
+            reused: boolean;
+        };
+        /**
+         * @description STEP 名称编码：UTF8 标准编码（默认），GB 中文旧编码；由用户按文件选择，不自动猜测。
+         * @enum {string}
+         */
+        CadNameCodepage: "UTF8" | "GB";
+        /** @description STEP 查看入口；模型就绪由独立 CAD 任务状态判定。每次模型/资源读取重新校验文件版本权限，不包含原文件签名。 */
+        CadPreviewViewer: {
+            /** @enum {string} */
+            kind: "cad";
+            fileId: components["schemas"]["Uuid"];
+            versionId: components["schemas"]["Uuid"];
+            sourceSHA256: string;
+            engineVersion: string;
         };
         /** @description 日历例外条目；维护动作写审计留痕（object_type = calendar_day） */
         CalendarDay: {
@@ -7601,6 +9742,10 @@ export interface components {
             reason: string;
             beforeSummary?: string;
             afterSummary?: string;
+            /** @description 变更前摘要附图（文件 id 有序，≤ 30；须为本项目未回收文件，否则 400 VALIDATION_FAILED） */
+            beforeSummaryFileIds?: components["schemas"]["Uuid"][];
+            /** @description 变更后摘要附图（文件 id 有序，≤ 30；同左口径） */
+            afterSummaryFileIds?: components["schemas"]["Uuid"][];
             stageKey?: components["schemas"]["StageKey"];
         };
         /** @description intent=change 时的变更记录；version 意图为空 */
@@ -7615,17 +9760,23 @@ export interface components {
             beforeSummary: string | null;
             /** @description 变更后摘要 */
             afterSummary: string | null;
+            /** @description 变更前摘要附图（文件 id 有序；Push 314 变更前后可填图） */
+            beforeSummaryFileIds: components["schemas"]["Uuid"][];
+            /** @description 变更后摘要附图（文件 id 有序；Push 314 变更前后可填图） */
+            afterSummaryFileIds: components["schemas"]["Uuid"][];
             status: components["schemas"]["ChangeStatus"];
             appliedBy: components["schemas"]["Uuid"];
+            writerBy: components["schemas"]["Uuid"] & (string | null);
             appliedAt: components["schemas"]["DateTime"];
             createdAt: components["schemas"]["DateTime"];
-            fileId: components["schemas"]["Uuid"] & unknown;
-            versionId: components["schemas"]["Uuid"] & unknown;
-            versionSeq: number;
+            fileId: components["schemas"]["Uuid"] & (string | null);
+            versionId: components["schemas"]["Uuid"] & (string | null);
+            /** @description 变更后版本号；导入遗留变更 = null */
+            versionSeq: number | null;
         } | null;
         /** @description 变更记录（v0.2 §5.3；一期申请即通过、全程留痕） */
         ChangeRequestDetail: components["schemas"]["ChangeRequest"] & {
-            file: components["schemas"]["File"];
+            file: components["schemas"]["File"] & (Record<string, never> | null);
             version: components["schemas"]["FileVersion"];
             /** @description 变更前文件名称（Push 256：本次变更同时更名 —— name/扩展名随变更文件替换时 = 更名前名称；未更名 = null） */
             filePreviousName: string | null;
@@ -7747,6 +9898,7 @@ export interface components {
             reportId: components["schemas"]["Uuid"] & (string | null);
             state: components["schemas"]["DailyReportState"] & (string | null);
             submittedAt: components["schemas"]["DateTime"] & (string | null);
+            reminderSentAt: components["schemas"]["DateTime"] & (string | null);
         };
         /**
          * @description 日报状态（A3-02）：draft 草稿 / submitted 已提交 / supplement 补填（对过去日期首次提交）
@@ -7799,6 +9951,103 @@ export interface components {
          * @enum {string}
          */
         DailyReportWriteState: "draft" | "submitted";
+        DashboardChangeWords: {
+            /** @description 核心词频（count 降序、同频按词面排序） */
+            words: components["schemas"]["DashboardWord"][];
+            totalChanges: number;
+        };
+        /** @description 仪表盘变更原因核心词频聚合读面 */
+        DashboardChangeWordsResponse: {
+            all: components["schemas"]["DashboardChangeWords"];
+            /** @description 只含有变更记录的项目；没有变更的项目由前端补空统计 */
+            byProject: components["schemas"]["DashboardWordProject"][];
+        };
+        DashboardDelivery: {
+            /** @description 三档计数，顺序 = 按时交付 / 逾期已交付 / 逾期未交付 */
+            counts: number[];
+            /** @description 已交付合计（三档之和，按时率分母） */
+            total: number;
+            /** @description 按时率百分比取整；分母 0 时为 null */
+            onTimeRate: number | null;
+            /** @description 未到交付节点任务数（进行中 / 待开始 / 完成但未判定） */
+            pendingCount: number;
+        };
+        DashboardIssueCount: {
+            state: components["schemas"]["IssueState"];
+            category: components["schemas"]["IssueCategory"];
+            count: number;
+        };
+        DashboardIssueProject: {
+            projectId: components["schemas"]["Uuid"];
+            issues: components["schemas"]["DashboardIssues"];
+        };
+        DashboardIssues: {
+            /** @description 有数据的问题状态（展示序：done / in_progress / open；0 条不出现） */
+            states: components["schemas"]["IssueState"][];
+            /** @description 有数据的问题归类（契约 C9 原序；0 条不出现） */
+            categories: components["schemas"]["IssueCategory"][];
+            /** @description 状态 × 归类计数；一条问题多归类时每个归类各计一次 */
+            counts: components["schemas"]["DashboardIssueCount"][];
+            /** @description 问题总数（明细行数口径；与柱高合计可能不同） */
+            totalIssues: number;
+        };
+        /** @description 仪表盘问题分布聚合读面 */
+        DashboardIssuesResponse: {
+            all: components["schemas"]["DashboardIssues"];
+            /** @description 只含有问题记录的项目；没有问题的项目由前端补空统计 */
+            byProject: components["schemas"]["DashboardIssueProject"][];
+        };
+        /** @description 阶段 × 进度五档分布（九阶段固定存在；未分组行按需出现） */
+        DashboardProgress: {
+            rows: components["schemas"]["DashboardProgressRow"][];
+            totalTasks: number;
+        };
+        /** @description 仪表盘任务聚合读面（项目进度 / 任务状态 / 交付时间） */
+        DashboardProgressResponse: {
+            all: components["schemas"]["DashboardTaskSummary"];
+            /** @description 逐项目统计；顺序与项目列表默认排序一致（createdAt desc、seqNo asc） */
+            byProject: components["schemas"]["DashboardProjectProgress"][];
+        };
+        DashboardProgressRow: {
+            /** @description 阶段 key；ungrouped = 临时任务（无阶段） */
+            key: components["schemas"]["StageKey"] | "ungrouped";
+            /** @description 阶段中文展示名；ungrouped 行为空串，由前端 i18n 补文案 */
+            label: string;
+            isUngrouped: boolean;
+            /** @description 进度五档计数（0 / 0.25 / 0.5 / 0.75 / 1，与前端 DASHBOARD_BINS 同序） */
+            counts: number[];
+            total: number;
+        };
+        DashboardProjectProgress: {
+            projectId: components["schemas"]["Uuid"];
+            projectName: string;
+            /** @description 项目经理显示名（与 managerIds 同下标；取不到姓名该位为 null） */
+            managerNames: (string | null)[];
+            summary: components["schemas"]["DashboardTaskSummary"];
+        };
+        /** @description 任务五态分布（只含 count > 0 的状态） */
+        DashboardStatus: {
+            slices: components["schemas"]["DashboardStatusSlice"][];
+            totalTasks: number;
+        };
+        DashboardStatusSlice: {
+            status: components["schemas"]["TaskDisplayStatus"];
+            count: number;
+        };
+        /** @description 全部可见项目合计 */
+        DashboardTaskSummary: {
+            progress: components["schemas"]["DashboardProgress"];
+            status: components["schemas"]["DashboardStatus"];
+            delivery: components["schemas"]["DashboardDelivery"];
+        };
+        DashboardWord: {
+            word: string;
+            count: number;
+        };
+        DashboardWordProject: {
+            projectId: components["schemas"]["Uuid"];
+            words: components["schemas"]["DashboardChangeWords"];
+        };
         /**
          * @description 角色数据范围：all > managed_projects > involved_projects > own_stakeholders > granted（多角色并集）
          * @enum {string}
@@ -7896,7 +10145,7 @@ export interface components {
          * @description 统一错误码（技术设计v0.2 §7.2）
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "DICT_ITEM_IN_USE" | "STAGE_GATE_NOT_PASSED" | "ARCHIVE_NOT_READY" | "ARCHIVE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "TASK_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "TASK_ALREADY_DONE" | "TASK_HAS_REFERENCES" | "TASK_FINALIZED" | "REPORT_ALREADY_EXISTS" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "DICT_ITEM_IN_USE" | "STAGE_GATE_NOT_PASSED" | "ARCHIVE_NOT_READY" | "ARCHIVE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "TASK_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "TASK_ALREADY_DONE" | "TASK_HAS_REFERENCES" | "TASK_FINALIZED" | "REPORT_ALREADY_EXISTS" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "IMPORT_FILE_INVALID" | "IMPORT_PARSE_FAILED" | "IMPORT_PREVIEW_EXPIRED" | "IMPORT_CANCELLED" | "RATE_LIMITED" | "INTERNAL";
         /** @description 字段级错误明细（校验失败、门禁缺件等） */
         ErrorDetail: {
             /** @example too_small */
@@ -7960,7 +10209,7 @@ export interface components {
             /** @description 原文件名（缩略图角标 / 无障碍文案） */
             name: string;
         };
-        /** @description 文件预览状态与短时签名地址 / 查看器配置（异步产物；未就绪 / 失败为 200 语义 —— not_ready 时服务端幂等补投生成任务，前端轮询至 ready / failed；ONLYOFFICE 查看器通道（S1 契约 / S3 起签发）：ready + viewer 非空、url 为空） */
+        /** @description 文件预览状态与短时签名地址 / 查看器配置；产物通道 not_ready 时幂等补投，前端轮询至 ready / failed。ONLYOFFICE / CAD 查看入口为 ready + viewer 非空、url 为空；CAD 的完整模型就绪由独立 CadJob 判定。 */
         FilePreviewResponse: {
             fileId: components["schemas"]["Uuid"];
             versionId: components["schemas"]["Uuid"] & (string | null);
@@ -8108,6 +10357,18 @@ export interface components {
          * @enum {string}
          */
         FollowObjectType: "project" | "task";
+        /** @description 仪表盘页的常驻项目 id（Push 336 · 按账号记住；Push 358 起六个图表视图共用）：null = 全部项目（默认）；项目已不存在时界面回落全部项目，读侧非字符串 / 空串 / 超长一律收敛为 null */
+        HubDashProject: string | null;
+        /**
+         * @description 仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」；Push 353 加「词频图」、Push 358 加「数据总览」）：overview = 「数据总览」/ progress = 「项目进度」（默认）/ status = 「任务状态」/ issues = 「问题」/ delivery = 「交付时间」/ wordcloud = 「词频图」；刷新 / 换设备同账号保持，读侧白名单外 / 缺省一律收敛为 progress
+         * @enum {string}
+         */
+        HubDashView: "overview" | "progress" | "status" | "issues" | "delivery" | "wordcloud";
+        /**
+         * @description 仪表盘页（`#/`）的常驻视图（Push 332 · 按账号记住）：map = 世界地图（默认）/ dashboard = 仪表盘大屏（含数据总览 / 项目进度 等六个图表视图）；地址显式带 `?view=dashboard` 时以地址为准，读侧白名单外 / 缺省一律收敛为 map
+         * @enum {string}
+         */
+        HubView: "map" | "dashboard";
         /** @description 写操作幂等键（Idempotency-Key 请求头）；重复提交返回首次结果 */
         IdempotencyKey: string;
         /** @description 一条问题记录（由日报自动生成或手工创建） */
@@ -8370,6 +10631,94 @@ export interface components {
          * @enum {string}
          */
         NotificationType: "reminder" | "approval" | "broadcast" | "system";
+        /**
+         * @description 投递渠道：wecom_app 企微应用消息（备用通道）/ wecom_aibot 企微智能机器人（单聊单发）/ wecom_group 企微群机器人（群播报 · 会话双窗口限速）/ inbox 站内信 / email 邮件（基础可用）
+         * @enum {string}
+         */
+        NotifyChannel: "wecom_app" | "wecom_aibot" | "wecom_group" | "inbox" | "email";
+        /** @description 发送尝试明细（每次外部投递尝试一行；目标只回掩码） */
+        NotifyDeliveryAttempt: {
+            id: number;
+            messageId: number;
+            channel: components["schemas"]["NotifyExternalChannel"];
+            /** @description 投递目标掩码（如 userid / chatid 末 4 位） */
+            targetMasked: string;
+            state: components["schemas"]["NotifyDeliveryAttemptState"];
+            /** @description 该尝试序号；deferred = 计划尝试序号、未发起 HTTP */
+            attempts: number;
+            /** @description 失败 / 延期原因（已掩码） */
+            error: string | null;
+            /** @description API 受理成功时刻；sent 以外 = null */
+            sentAt: components["schemas"]["DateTime"] | null;
+            createdAt: components["schemas"]["DateTime"];
+        };
+        /**
+         * @description 单次投递尝试状态（pending 仅属于消息级，不落尝试表）
+         * @enum {string}
+         */
+        NotifyDeliveryAttemptState: "sent" | "failed" | "deferred" | "dead";
+        /** @description 发送记录详情：消息归档 + 全部尝试明细 */
+        NotifyDeliveryDetail: components["schemas"]["NotifyDeliveryMessage"] & {
+            /** @description 全部投递尝试（含 deferred / failed / dead / sent） */
+            attempts: components["schemas"]["NotifyDeliveryAttempt"][];
+        };
+        /** @description 消息级发送记录列表（createdAt desc, id desc） */
+        NotifyDeliveryListResponse: {
+            items: components["schemas"]["NotifyDeliveryMessage"][];
+            page: number;
+            limit: number;
+            total: number;
+        };
+        /** @description 消息级发送归档（C2-07 / C5-03）：正文、渠道、掩码收件人、最新状态与尝试次数；独立于 outbox 清理 */
+        NotifyDeliveryMessage: {
+            /** @description 消息归档 id */
+            id: number;
+            /** @description 来源 outbox 幂等键（归档幂等） */
+            sourceDedupeKey: string;
+            topic: components["schemas"]["NotifyDeliveryTopic"];
+            channel: components["schemas"]["NotifyChannel"];
+            /** @description 站内信 / 个人企微收件人 id；群播报 = null */
+            recipientId: components["schemas"]["Uuid"] | null;
+            /** @description 收件人展示值或掩码目标；不得返回 Secret */
+            recipientLabel: string | null;
+            title: string | null;
+            body: string;
+            templateCode: string | null;
+            /** @description 来源规则码；非规则消息 = null */
+            ruleCode: string | null;
+            refType: string | null;
+            refId: string | null;
+            /** @description 重发消息指向的原消息 id；普通消息 = null */
+            resendOfMessageId: number | null;
+            lastState: components["schemas"]["NotifyDeliveryMessageState"];
+            attemptCount: number;
+            /** @description 最近失败 / 延期原因（已掩码） */
+            lastError: string | null;
+            sentAt: components["schemas"]["DateTime"] | null;
+            createdAt: components["schemas"]["DateTime"];
+            updatedAt: components["schemas"]["DateTime"];
+        };
+        /**
+         * @description 消息最新状态：pending 尚未尝试 / sent 已受理 / failed 可重试失败 / deferred 限速延期 / dead 死信
+         * @enum {string}
+         */
+        NotifyDeliveryMessageState: "pending" | "sent" | "failed" | "deferred" | "dead";
+        /** @description 重发请求（空对象；Idempotency-Key 必填，正文 / 收件人 / 渠道不可改写） */
+        NotifyDeliveryResendBody: Record<string, never>;
+        /** @description 重发已受理：返回新建的消息归档（lastState = pending） */
+        NotifyDeliveryResendResponse: {
+            message: components["schemas"]["NotifyDeliveryMessage"];
+        };
+        /**
+         * @description 发送归档来源主题：notify.message 个人消息 / notify.group 群播报
+         * @enum {string}
+         */
+        NotifyDeliveryTopic: "notify.message" | "notify.group";
+        /**
+         * @description 外部投递渠道：企微应用消息 / 企微智能机器人 / 企微群机器人 / 邮件；用于发送尝试记录，不含 inbox
+         * @enum {string}
+         */
+        NotifyExternalChannel: "wecom_app" | "wecom_aibot" | "wecom_group" | "email";
         /** @description 通知偏好（免打扰时段 / 每日上限 / 合并窗口；读面为生效值） */
         NotifyPrefs: {
             quietHours: components["schemas"]["NotifyQuietHours"];
@@ -8391,11 +10740,23 @@ export interface components {
         };
         /** @description 免打扰配置（三态）：default 继承缺省（env NOTIFY_QUIET_HOURS，缺省 22:00-08:00）/ off 关闭 / HH:MM-HH:MM 自定义（Asia/Shanghai，跨零点允许） */
         NotifyQuietHours: string;
+        /** @description 在线查看器配置（ONLYOFFICE 查看通道；替代「转换产物 + 短时签名 URL」路径 —— 预览链全程无预签名） */
+        OnlyOfficePreviewViewer: {
+            /** @enum {string} */
+            kind: "onlyoffice";
+            /** @description DocServer 基址（前端据此加载 /web-apps/apps/api/documents/api.js 初始化 DocEditor；服务端配置下发） */
+            docServerUrl: string;
+            documentType: components["schemas"]["PreviewViewerDocumentType"];
+            document: components["schemas"]["PreviewViewerDocument"];
+            editorConfig: components["schemas"]["PreviewViewerEditorConfig"];
+            /** @description 查看器 JWT（HS256；载荷 = documentType / document（含 permissions）/ editorConfig 逐字签发 + iat / exp；浏览器持有 —— 泄漏面仅只读会话，取原文件依赖服务端端点鉴权） */
+            token: string;
+        };
         /**
          * @description 功能权限位（模块.操作）；一期取值见 PERMISSION_KEYS（种子 #6b 按角色分配）
          * @enum {string}
          */
-        PermissionKey: "project.view" | "project.create" | "project.update" | "project.delete" | "project.archive" | "project.export" | "member.view" | "member.manage" | "task.view" | "task.create" | "task.update" | "task.progress" | "report.view" | "report.fill" | "issue.view" | "issue.manage" | "node.view" | "node.create" | "node.delete" | "node.complete" | "node.advance" | "node.rollback" | "blueprint.view" | "blueprint.manage" | "file.upload" | "file.download" | "stakeholder.view" | "stakeholder.manage" | "stakeholder.contact.view" | "dict.manage" | "audit.view" | "calendar.manage";
+        PermissionKey: "project.view" | "project.create" | "project.update" | "project.delete" | "project.archive" | "project.export" | "member.view" | "member.manage" | "task.view" | "task.create" | "task.update" | "task.progress" | "report.view" | "report.fill" | "issue.view" | "issue.manage" | "node.view" | "node.create" | "node.delete" | "node.complete" | "node.advance" | "node.rollback" | "blueprint.view" | "blueprint.manage" | "file.upload" | "file.download" | "stakeholder.view" | "stakeholder.manage" | "stakeholder.contact.view" | "dict.manage" | "audit.view" | "calendar.manage" | "automation.view" | "automation.manage" | "notify.record.view" | "notify.resend";
         /** @description 当前用户授权画像（未登录 401） */
         PermissionMeResponse: {
             permissions: components["schemas"]["ActorPermissions"];
@@ -8416,7 +10777,7 @@ export interface components {
          */
         PlanBoardFont: "sans" | "serif" | "mono";
         /**
-         * @description 预览状态：ready 产物就绪（附短时签名 URL） / not_ready 尚未生成（服务端幂等补投生成任务、按三元组去重，前端轮询至 ready / failed —— 不引入请求约定） / failed 转换失败（记原因并降级「请下载」）
+         * @description 预览状态：ready 产物就绪（附短时签名 URL）或 viewer 入口可用（CAD 的模型转换状态另由 CadJob 判定） / not_ready 尚未生成（产物通道幂等补投、按三元组去重） / failed 转换失败（记原因并降级「请下载」）
          * @enum {string}
          */
         PreviewStatus: "ready" | "not_ready" | "failed";
@@ -8426,16 +10787,7 @@ export interface components {
          */
         PreviewTarget: "pdf" | "image" | "structured" | null;
         /** @description 在线查看器配置（仅 ready 且走查看器通道时非空；与 url 互斥 —— 查看器通道无转换产物；S3 起签发） */
-        PreviewViewer: {
-            kind: components["schemas"]["PreviewViewerKind"];
-            /** @description DocServer 基址（前端据此加载 /web-apps/apps/api/documents/api.js 初始化 DocEditor；服务端配置下发） */
-            docServerUrl: string;
-            documentType: components["schemas"]["PreviewViewerDocumentType"];
-            document: components["schemas"]["PreviewViewerDocument"];
-            editorConfig: components["schemas"]["PreviewViewerEditorConfig"];
-            /** @description 查看器 JWT（HS256；载荷 = documentType / document（含 permissions）/ editorConfig 逐字签发 + iat / exp；浏览器持有 —— 泄漏面仅只读会话，取原文件依赖服务端端点鉴权） */
-            token: string;
-        } | null;
+        PreviewViewer: components["schemas"]["OnlyOfficePreviewViewer"] | components["schemas"]["CadPreviewViewer"] | null;
         PreviewViewerDocument: {
             /** @description 文档标题（展示用；取文件名） */
             title: string;
@@ -8466,11 +10818,6 @@ export interface components {
                 name: string;
             };
         };
-        /**
-         * @description 在线查看器类型（一期仅 onlyoffice —— ONLYOFFICE 文档服务器查看器；后续查看器扩展在此枚举追加）
-         * @enum {string}
-         */
-        PreviewViewerKind: "onlyoffice";
         /** @description 查看器权限段（Push 258 起嵌 document —— ONLYOFFICE 只认该位置；download 保持可见、点击由前端命中层接管 → 原文件下载链） */
         PreviewViewerPermissions: {
             edit: boolean;
@@ -8495,7 +10842,7 @@ export interface components {
              */
             code: string;
             /**
-             * @description 项目序号：服务端创建时分配（全库唯一、不可修改、不回收；与项目编号一一对应同一项目）；卡片等展示场景两位补零，列表支持 sort=seqNo:asc|desc
+             * @description 项目序号：服务端创建时分配（全库唯一、不可修改；彻底删除后的空号由下一次创建按最小可用序号复用）；与项目编号一一对应同一项目；卡片等展示场景两位补零，列表支持 sort=seqNo:asc|desc
              * @example 1
              */
             seqNo: number;
@@ -8518,6 +10865,8 @@ export interface components {
             updatedAt: components["schemas"]["DateTime"];
             archivedAt: components["schemas"]["DateTime"] & (string | null);
             archivedBy: components["schemas"]["Uuid"] & (string | null);
+            deletedAt: components["schemas"]["DateTime"] & (string | null);
+            deletedBy: components["schemas"]["Uuid"] & (string | null);
         };
         /** @description 归档请求：version 必带；缺项越过分两步（先 422 拿清单，再 confirm=true 重试） */
         ProjectArchiveBody: {
@@ -8679,11 +11028,27 @@ export interface components {
             activated: boolean;
             updatedAt: components["schemas"]["DateTime"] & (string | null);
         };
-        /** @description 绑定 / 换绑项目群：chatid 必填 + 群名备注可空；PUT = upsert 覆盖语义 */
+        /** @description 自动发现但尚未绑定的项目群候选 */
+        ProjectGroupCandidate: {
+            /** @description 候选群 id（绑定请求回传） */
+            id: number;
+            /** @description 回调携带 / 人工维护的群名；未知 = null */
+            name: string | null;
+            /** @description 企微会话 id 掩码（只回末 4 位） */
+            chatidMasked: string;
+            lastSeenAt: components["schemas"]["DateTime"] & unknown;
+        };
+        /** @description 待绑定群候选（最近活跃优先，最多 50 条） */
+        ProjectGroupCandidateList: {
+            items: components["schemas"]["ProjectGroupCandidate"][];
+        };
+        /** @description 绑定 / 换绑项目群：chatid 或 candidateId 二选一 + 群名备注可空；PUT = upsert 覆盖语义 */
         ProjectGroupPutBody: {
-            /** @description 企微会话 id（群消息回调 body.chatid 自动落库；形如 34 位 base64url 串） */
-            chatid: string;
-            /** @description 群名 / 备注（维护用；可空 —— 覆盖语义下缺省 = 清空） */
+            /** @description 企微会话 id（手工绑定路径；与 candidateId 二选一） */
+            chatid?: string;
+            /** @description 自动发现候选群 id（推荐；与 chatid 二选一） */
+            candidateId?: number;
+            /** @description 群名 / 备注（维护用；可空） */
             name?: string | null;
         };
         ProjectListResponse: {
@@ -8733,6 +11098,15 @@ export interface components {
             sourceBlueprintVersion: number;
             version: components["schemas"]["Version"];
             requirements: components["schemas"]["NodeRequirement"][];
+        };
+        /** @description 项目彻底删除结果（数据库聚合数据与项目对象前缀已清理） */
+        ProjectPurgeResponse: {
+            projectId: components["schemas"]["Uuid"];
+            purgedAt: components["schemas"]["DateTime"];
+        };
+        /** @description 项目回收站操作请求：恢复或彻底删除均回传当前 version */
+        ProjectRecycleActionBody: {
+            version: components["schemas"]["Version"] & unknown;
         };
         ProjectStage: {
             id: components["schemas"]["Uuid"];
@@ -8820,6 +11194,31 @@ export interface components {
         ResourceInvalidationPayload: {
             resources: ("projects" | "tasks" | "reports" | "issues" | "files" | "stakeholders" | "templates" | "dicts" | "users" | "audit" | "permissions" | "preferences")[];
         };
+        /**
+         * @description 动作类型：notify 渠道消息（channel 指定渠道）/ notification 站内信（C2-11 渠道矩阵一期四渠道）
+         * @enum {string}
+         */
+        RuleActionKind: "notify" | "notification";
+        /**
+         * @description 条件操作符白名单：eq / ne 等值、in / notIn 集合、isNull / notNull 空值、gt / gte / lt / lte 大小、eqOffsetDays 日期与业务日相差 N 天（基准日 = 求值上下文的业务日）、containsAny 数组命中任一（R01 多值口径）、notEmpty 非空（字符串 / 数组）
+         * @enum {string}
+         */
+        RuleConditionOperator: "eq" | "ne" | "in" | "notIn" | "isNull" | "notNull" | "gt" | "gte" | "lt" | "lte" | "eqOffsetDays" | "containsAny" | "notEmpty";
+        /**
+         * @description 事件型触发的 outbox 主题：task.completed 任务完成 / task.updated 任务更新 / task.progress_changed 进度变化 / change.applied 变更生效 / node.completed 节点完成 / stage.advanced 大阶段完成 / project.completed 项目完成 / report.submitted 日报提交 / issue.updated 问题更新
+         * @enum {string}
+         */
+        RuleEventTopic: "task.completed" | "task.updated" | "task.progress_changed" | "change.applied" | "node.completed" | "stage.advanced" | "project.completed" | "report.submitted" | "issue.updated";
+        /**
+         * @description 收件人口径：task.owner 任务负责人（多人时逐位）/ task.owner_or_project_manager 负责人为空回退项目经理 / project.manager 项目经理（任务主体解析）/ project.group 项目群（R04 / R06 / A02 / A08）/ rule.members 规则显式成员（A14 自定义待办）/ report.member 日报名册成员（A01 应填未填）；issue.owner 随 A03 处理时限删除下线（Push 215）
+         * @enum {string}
+         */
+        RuleRecipient: "task.owner" | "task.owner_or_project_manager" | "project.manager" | "project.group" | "rule.members" | "report.member";
+        /**
+         * @description 触发方式：event 事件型（outbox 主题见 RuleEventTopic）/ schedule 调度型（cron 五段 + 窗口）
+         * @enum {string}
+         */
+        RuleTriggerKind: "event" | "schedule";
         /** @description 常用筛选组合（首页侧栏；按账号存 user_preferences.prefs.homeSavedFilters） */
         SavedHomeFilter: {
             /** @description 组合 id（前端生成 sf- 前缀；跨设备同步后保持不变） */
@@ -9358,6 +11757,42 @@ export interface components {
             note?: string | null;
             version: components["schemas"]["Version"];
         };
+        /** @description 批量查库请求（英文界面切页提速；只回已存译文） */
+        TranslateBatchBody: {
+            qs: string[];
+            source?: components["schemas"]["TranslateLang"];
+            target?: components["schemas"]["TranslateLang"];
+        };
+        TranslateBatchResponse: {
+            /** @description 命中条目（译文库已存；未命中的由前端走单条通道） */
+            translations: {
+                /** @description 原文（请求时原样回显） */
+                q: string;
+                /** @description 已存译文 */
+                translatedText: string;
+            }[];
+        };
+        /** @description 单条翻译请求：译文库优先、未命中调引擎后落库 */
+        TranslateBody: {
+            q: string;
+            source?: components["schemas"]["TranslateLang"];
+            target?: components["schemas"]["TranslateLang"];
+            /**
+             * @default text
+             * @enum {string}
+             */
+            format: "text";
+        };
+        /**
+         * @description 语言：zh 中文 / en 英文
+         * @default zh
+         * @enum {string}
+         */
+        TranslateLang: "zh" | "en";
+        TranslateResponse: {
+            /** @description 译文（译文库命中或引擎产出后落库） */
+            translatedText: string;
+        };
         UploadAbortResponse: {
             upload: components["schemas"]["UploadSession"] & unknown;
         };
@@ -9499,11 +11934,14 @@ export interface components {
             };
             backgroundTier: components["schemas"]["BackgroundTier"];
             locale: components["schemas"]["Locale"];
-            /** @description 项目卡片右下角国家名水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」）：true = 显示（默认）/ false = 隐藏；读侧非布尔 / 缺省一律收敛为 true */
+            /** @description 项目卡片右下角国家名水印（Push 292 · 业务口径 2026-10-13「增加一个水印选项 可以选择是否要水印」；Push 313 起默认 false）：true = 显示 / false = 隐藏（默认，无水印）；读侧非布尔 / 缺省一律收敛为 false */
             cardWatermark: boolean;
+            hubView: components["schemas"]["HubView"];
+            hubDashProject: components["schemas"]["HubDashProject"];
+            hubDashView: components["schemas"]["HubDashView"];
             updatedAt: components["schemas"]["DateTime"] & (string | null);
         };
-        /** @description PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单，focusMode/cardWatermark为布尔，backgroundTier和locale需在枚举内，否则400 */
+        /** @description PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单，focusMode/cardWatermark为布尔，backgroundTier/locale/hubView/hubDashView需在枚举内，hubDashProject为1..64字符或null，否则400 */
         UserPreferencesUpdateBody: {
             taskTableHiddenColumns?: components["schemas"]["TaskTableColumnKey"][];
             homeSavedFilters?: components["schemas"]["SavedHomeFilter"][];
@@ -9518,6 +11956,9 @@ export interface components {
             backgroundTier?: components["schemas"]["BackgroundTier"] & unknown;
             locale?: components["schemas"]["Locale"] & unknown;
             cardWatermark?: boolean;
+            hubView?: components["schemas"]["HubView"] & unknown;
+            hubDashProject?: components["schemas"]["HubDashProject"] & unknown;
+            hubDashView?: components["schemas"]["HubDashView"] & unknown;
         } & {
             [key: string]: unknown;
         };
@@ -9610,7 +12051,64 @@ export interface components {
             grouping?: components["schemas"]["ViewGrouping"];
             isDefault?: boolean;
         };
-        /** @description 工作台问题项（跨项目） */
+        /** @description 当前仍有效的（pending）绑定码 —— 刷新 / 重进页面后据此恢复码面与倒计时；无未用码 = null */
+        WecomDmBindingCode: {
+            /**
+             * @description 6 位数字绑定码（用户在企微里把这条码发给机器人完成绑定）
+             * @example 482913
+             */
+            code: string;
+            expiresAt: components["schemas"]["DateTime"] & unknown;
+            /** @description 剩余有效期（秒；供前端倒计时） */
+            expiresInSeconds: number;
+        } | null;
+        /** @description 企业微信单聊绑定态：绑定按机器人维度成立（换机器人后旧绑定不生效 → 读面回到 bound:false）；解绑 = 注销投递资格（保留激活登记）；另回当前未用绑定码与取码限流可重试时刻（页面刷新不丢状态） */
+        WecomDmBindingState: {
+            /** @description 当前机器人（`WECOM_BOT_ID`）下是否已有可投递地址 */
+            bound: boolean;
+            /** @description 企微 open_userid 掩码（只回末 4 位）；未绑定 / 解绑后 = null */
+            wecomUseridMasked: string | null;
+            boundAt: components["schemas"]["DateTime"] & (string | null);
+            /** @description 是否允许向该企业微信单聊发送任务提醒；绑定成功后默认 true，关闭后停止企微单聊外发（站内信仍按降级规则保留） */
+            messagesEnabled: boolean;
+            bindingCode: components["schemas"]["WecomDmBindingCode"];
+            retryAt: components["schemas"]["DateTime"] & (string | null);
+        };
+        /** @description 企业微信单聊绑定设置更新（messagesEnabled = false 时停止企微单聊外发；绑定成功后默认开启） */
+        WecomDmBindingUpdateBody: {
+            /** @description 是否允许向该企业微信单聊发送任务提醒 */
+            messagesEnabled: boolean;
+        };
+        /** @description 机器人诊断（仅非生产环境）：bot_id / secret / ws 地址 / 最近回调统计；用于核对本地凭据与 worker 收消息链路 */
+        WecomDmBotDiagnostics: {
+            /** @description 诊断是否开启（生产默认关闭；关闭时其余敏感字段为 null） */
+            enabled: boolean;
+            /** @description WECOM_BOT_ID 原文（未配置 = null） */
+            botId: string | null;
+            /** @description WECOM_BOT_SECRET 原文（仅诊断开启时回全量；关闭 = null） */
+            botSecret: string | null;
+            /** @description Secret 掩码（首 4 + **** + 末 4；关闭 / 未配置 = null） */
+            botSecretMasked: string | null;
+            /** @description WECOM_BOT_WS_URL（机器人长连接地址） */
+            wsUrl: string | null;
+            /** @description NOTIFY_DELIVERY_ENABLED（worker 是否允许启动机器人长连接） */
+            deliveryEnabled: boolean;
+            lastInboundAt: components["schemas"]["DateTime"] & (string | null);
+            /** @description 当前 bot_id 下有过单聊消息的企微号数（激活表行数）；0 = 回调从未到达（worker 未启动 / 凭据不对 / bot_id 不一致） */
+            inboundCount: number;
+            /** @description 最近一次回调的 open_userid 掩码（末 4 位）；无记录 = null */
+            lastInboundUseridMasked: string | null;
+            /** @description 激活表内出现过的 bot_id（最多 5 个，最近在前）—— 可发现 worker 用的是另一个机器人 */
+            observedBotIds: components["schemas"]["WecomDmBotInboundStat"][];
+            serverTime: components["schemas"]["DateTime"] & unknown;
+        };
+        WecomDmBotInboundStat: {
+            botId: string;
+            /** @description 该 bot_id 下累计有过单聊消息的企微号数（激活表按 (bot_id, wecom_userid) 一行；不是消息条数） */
+            inboundCount: number;
+            lastInboundAt: components["schemas"]["DateTime"] & (string | null);
+        };
+        /** @description 工作台问题项（跨项目；问题追踪七列数据源随行下发） */
         WorkspaceIssueItem: {
             id: components["schemas"]["Uuid"];
             projectId: components["schemas"]["Uuid"];
@@ -9626,6 +12124,10 @@ export interface components {
             ownerId: components["schemas"]["Uuid"] & (string | null);
             ownerName: string | null;
             raisedAt: components["schemas"]["DateOnly"] & unknown;
+            /** @description 解决方案或建议（A3-13；2026-10-13 全字段修订随行下发，工作台「提出/负责的问题」表直接渲染） */
+            solution: string | null;
+            /** @description 问题附图（file_links(object_type=issue)，插入序；2026-10-13 全字段修订随行下发，工作台表直接渲染） */
+            photos: components["schemas"]["FilePhotoRef"][];
             updatedAt: components["schemas"]["DateTime"];
             version: components["schemas"]["Version"];
         };
@@ -9643,32 +12145,21 @@ export interface components {
             /** @description 「我提出的问题」标签已展开的项目 id 列表（整体替换语义） */
             raised: components["schemas"]["Uuid"][];
         };
-        /** @description 工作台聚合：我的任务四组 + 我的问题两栏 */
+        /** @description 工作台聚合：我的任务四组 + 我的问题两栏 + 涉及项目卡 */
         WorkspaceResponse: {
             today: components["schemas"]["DateOnly"] & unknown;
             myTasks: components["schemas"]["WorkspaceTasks"];
             myIssues: components["schemas"]["WorkspaceIssues"];
+            /** @description 聚合涉及的项目卡（我的任务或我的问题命中的项目，按首次出现顺序去重；含 managerNames / managerIds / version）—— 2026-10-13 全字段修订：工作台行内「项目经理」列与项目经理回写不再逐项目回查 */
+            projects: components["schemas"]["Project"][];
         };
-        /** @description 工作台任务项（跨项目；按预计完成日期落入四组之一） */
-        WorkspaceTaskItem: {
-            id: components["schemas"]["Uuid"];
-            projectId: components["schemas"]["Uuid"];
+        /** @description 工作台任务项（跨项目；按预计完成日期落入四组之一；任务表 15 列数据源随行下发） */
+        WorkspaceTaskItem: components["schemas"]["TaskListItem"] & {
             /** @description 项目编号（跨项目列表直接展示） */
             projectCode: string;
             projectName: string;
-            stageKey: components["schemas"]["StageKey"] & (string | null);
-            title: string;
-            titleEn: string | null;
-            displayStatus: components["schemas"]["TaskDisplayStatus"] & unknown;
-            progress: components["schemas"]["TaskProgress"];
-            plannedStart: components["schemas"]["DateOnly"] & (string | null);
-            plannedEnd: components["schemas"]["DateOnly"] & (string | null);
-            actualEnd: components["schemas"]["DateOnly"] & (string | null);
-            /** @description 任务负责人（多值；项目经理口径命中的行可能不含会话用户 —— 2026-09-30 复评） */
-            ownerIds: components["schemas"]["Uuid"][];
-            /** @description 负责人姓名（与 ownerIds 同下标；缺失为 null） */
-            ownerNames: (string | null)[];
-            priority: components["schemas"]["Priority"];
+            /** @description 任务随行文件清单（口径同任务详情 files：排除回收站、创建时间倒序；工作台行内「文件」列下拉的数据源） */
+            files: components["schemas"]["TaskFileBrief"][];
         };
         /** @description 我的任务四组（A6-01；组内按 plannedEnd 升序、id 升序，未排期置末） */
         WorkspaceTasks: {

@@ -31,15 +31,6 @@ export function continentOfRegion(name: string, code = ""): string {
   return REGION_CONTINENT_OF_ISO[hit.kind === "country" ? hit.country.id : hit.micro.id] ?? REGION_CONTINENT_OTHER;
 }
 
-/** 地区下拉搜索用的可搜文本：地区名 + 英文国名（如输入 United 能搜到「美国」）。 */
-export function regionSearchText(name: string): string {
-  const hit = matchRegion(name, "");
-  if (hit === null) {
-    return name;
-  }
-  return name + " " + (hit.kind === "country" ? hit.country.name : hit.micro.name);
-}
-
 /** 一个洲分组：continent = 洲名（含兜底「其他」），items = 该洲下的条目（组内保持入参顺序）。 */
 export type ContinentGroup<T> = {
   readonly continent: string;

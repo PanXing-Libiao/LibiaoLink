@@ -17,6 +17,7 @@ import {
   ProjectGroupPutBodySchema,
   ProjectListQuerySchema,
   ProjectMemberCreateBodySchema,
+  ProjectRecycleActionBodySchema,
   ProjectUpdateBodySchema,
   UuidSchema,
   z,
@@ -24,20 +25,22 @@ import {
 import { AppError } from "../../common/errors/app-error.js";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
-import { ProjectAccessGuard, ProjectScope, RequirePermission } from "../permission/index.js";
+import { AllowDeletedProjectAccess, ProjectAccess, ProjectAccessGuard, ProjectScope, RequirePermission } from "../permission/index.js";
+import { TranslateService } from "../translate/index.js";
 import type { ProjectScopeFilter } from "../permission/index.js";
 import { ProjectGroupService } from "./project-group.service.js";
-import type { ProjectGroupBindingView } from "./project-group.service.js";
+import type { ProjectGroupBindingView, ProjectGroupCandidateList } from "./project-group.service.js";
 import { ProjectMemberService } from "./project-member.service.js";
 import type { ProjectMemberListResult, ProjectMemberView } from "./project-member.service.js";
 import { ProjectService } from "./project.service.js";
-import type { ProjectFacetsResult, ProjectListResult, ProjectView } from "./project.service.js";
+import type { ProjectFacetsResult, ProjectListResult, ProjectPurgeResult, ProjectView } from "./project.service.js";
 
 type ProjectListQuery = z.infer<typeof ProjectListQuerySchema>;
 type ProjectCreateBody = z.infer<typeof ProjectCreateBodySchema>;
 type ProjectUpdateBody = z.infer<typeof ProjectUpdateBodySchema>;
 type ProjectMemberCreateBody = z.infer<typeof ProjectMemberCreateBodySchema>;
 type ProjectGroupPutBody = z.input<typeof ProjectGroupPutBodySchema>;
+type ProjectRecycleActionBody = z.infer<typeof ProjectRecycleActionBodySchema>;
 
 /** 路径参数 id 校验：非法 uuid 直接 400 VALIDATION_FAILED（不落到 SQL 层）。 */
 const uuidParam = new ZodValidationPipe(UuidSchema);
@@ -55,7 +58,24 @@ export class ProjectsController {
     private readonly projects: ProjectService,
     private readonly members: ProjectMemberService,
     private readonly groups: ProjectGroupService,
+    private readonly translate: TranslateService,
   ) {}
+
+  /**
+   * 保存即后台翻译（§6.16 ㉕ · 2026-10-13 业务口径「保存的时候后台自动翻译 并且写入数据库」）：
+   * 把项目的手打中文（项目名 / 描述 / 客户）丢给译文库预热 —— 不同步、不阻塞保存响应、失败静默重试；
+   * 地区 / 类型等字典值不预热（英文界面走字典显示，不机翻）。
+   */
+  private warmupProjectText(project: { name: string; customer: string | null; description: string | null }): void {
+    const texts: string[] = [project.name];
+    if (project.customer !== null && project.customer !== "") {
+      texts.push(project.customer);
+    }
+    if (project.description !== null && project.description !== "") {
+      texts.push(project.description);
+    }
+    this.translate.warmup(texts);
+  }
 
   /** 列表（M2-04）：多维筛选 + 时间闭区间 + 分页 + 排序；软删项目不可见（A5）。 */
   @Get()
@@ -84,25 +104,29 @@ export class ProjectsController {
   /** 创建（M2-01）：201；编号重复 409 PROJECT_CODE_EXISTS；seq_no 由服务端分配（不接受传入）。需 project.create。 */
   @Post()
   @RequirePermission("project.create")
-  create(
+  async create(
     @Body(new ZodValidationPipe(ProjectCreateBodySchema)) body: ProjectCreateBody,
     @CurrentActorId() actorId: string,
   ): Promise<ProjectView> {
-    return this.projects.createProject(body, actorId);
+    const project = await this.projects.createProject(body, actorId);
+    this.warmupProjectText(project);
+    return project;
   }
 
   /** 更新（M2-01）：乐观锁（正文 version）；归档写保护（ADR-027）→ 409 PROJECT_ARCHIVED。需 project.update。 */
   @Patch(":id")
   @RequirePermission("project.update")
-  update(
+  async update(
     @Param("id", uuidParam) id: string,
     @Body(new ZodValidationPipe(ProjectUpdateBodySchema)) body: ProjectUpdateBody,
     @CurrentActorId() actorId: string,
   ): Promise<ProjectView> {
-    return this.projects.updateProject(id, body, actorId);
+    const project = await this.projects.updateProject(id, body, actorId);
+    this.warmupProjectText(project);
+    return project;
   }
 
-  /** 软删（M2-01 · A5）：If-Match 回传当前 version 防误删；返回被删项目（此后列表 / 详情 / facets 均不可见）。需 project.delete。 */
+  /** 移入项目回收站（2026-10-19）：If-Match 回传当前 version 防误删；返回 deleted_at 已置位的项目。需 project.delete。 */
   @Delete(":id")
   @RequirePermission("project.delete")
   remove(
@@ -111,6 +135,34 @@ export class ProjectsController {
     @CurrentActorId() actorId: string,
   ): Promise<ProjectView> {
     return this.projects.deleteProject(id, parseIfMatch(ifMatch), actorId);
+  }
+
+  /** 从项目回收站恢复：路径项目允许已软删，记录级可见与 project.delete 仍由守卫判定。 */
+  @Post(":id/restore")
+  @HttpCode(200)
+  @ProjectAccess("project")
+  @AllowDeletedProjectAccess()
+  @RequirePermission("project.delete")
+  restore(
+    @Param("id", uuidParam) id: string,
+    @Body(new ZodValidationPipe(ProjectRecycleActionBodySchema)) body: ProjectRecycleActionBody,
+    @CurrentActorId() actorId: string,
+  ): Promise<ProjectView> {
+    return this.projects.restoreProject(id, body, actorId);
+  }
+
+  /** 彻底删除项目：仅系统管理员（服务层硬闸）；数据库聚合 + projects/{id}/ 对象前缀一并清理。 */
+  @Post(":id/purge")
+  @HttpCode(200)
+  @ProjectAccess("project")
+  @AllowDeletedProjectAccess()
+  @RequirePermission("project.delete")
+  purge(
+    @Param("id", uuidParam) id: string,
+    @Body(new ZodValidationPipe(ProjectRecycleActionBodySchema)) body: ProjectRecycleActionBody,
+    @CurrentActorId() actorId: string,
+  ): Promise<ProjectPurgeResult> {
+    return this.projects.purgeProject(id, body, actorId);
   }
 
   /** 成员名册（M2-05）：项目经理在前，同角色按工号升序；项目不存在 / 已软删统一 404。 */
@@ -140,6 +192,13 @@ export class ProjectsController {
     @CurrentActorId() actorId: string,
   ): Promise<ProjectMemberView> {
     return this.members.removeMember(id, userId, actorId);
+  }
+
+  /** 自动发现但尚未绑定的群候选（只回掩码 + 最近活跃时间；需 project.update）。 */
+  @Get(":id/group/candidates")
+  @RequirePermission("project.update")
+  getGroupCandidates(@Param("id", uuidParam) id: string): Promise<ProjectGroupCandidateList> {
+    return this.groups.getCandidates(id);
   }
 
   /** 项目群绑定状态（M5-03-2 接线段）：GET 恒 200；未绑定 = bound:false；chatid 只回末 4 位掩码。 */

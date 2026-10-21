@@ -25,7 +25,7 @@ export type TaskFileSummary = {
 
 /**
  * 任务（列表行 / 看板卡片 / 甘特条 / 抽屉共用一份模型）。
- * 日期字段一律 **ISO（YYYY-MM-DD）或空串**（服务端 DateOnly 口径）；展示格式由 cnDateFromIso 生成。
+ * 日期字段一律 **ISO（YYYY-MM-DD）或空串**（服务端 DateOnly 口径）。
  */
 export type ProjectTask = {
   id: string;
@@ -97,11 +97,6 @@ export function isCompleteStatus(status: TaskStatus): boolean {
   return status === "已完成" || status === "提前完成";
 }
 
-/** 四格全亮 = 任务完成（未填预计完成时间也按完成算）。 */
-export function isTrackerComplete(task: ProjectTask): boolean {
-  return progressStep(task.progress) >= PROGRESS_STEPS;
-}
-
 /** 任务是否已完成（以服务端展示态为准）。 */
 export function isTaskDone(task: ProjectTask): boolean {
   return isCompleteStatus(task.status);
@@ -163,14 +158,6 @@ export function addedNodeKeysOf(tasks: readonly ProjectTask[]): Set<string> {
     keys.add(addedNodeKey(task.stage, task.title));
   }
   return keys;
-}
-/** ISO（YYYY-MM-DD）→ 展示用「M月D日」；空值 / 非法值返回空串（界面显示「—」）。 */
-export function cnDateFromIso(value: string): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (match === null) {
-    return "";
-  }
-  return String(Number(match[2])) + "月" + String(Number(match[3])) + "日";
 }
 
 /** ISO 时间戳 → 展示用日期（YYYY-MM-DD，Asia/Shanghai 口径取日期部分）。 */

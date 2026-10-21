@@ -1,14 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { Logger } from "@nestjs/common";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OutboxTopic } from "@libiaolink/contracts";
 import { ClockService } from "../src/common/clock/clock.service.js";
 import { AppConfig } from "../src/config/config.module.js";
 import type { Env } from "../src/config/env.js";
 import type { ClaimOutboxInput, OutboxClaimedRow, OutboxRetryInput } from "../src/db/outbox.store.js";
 import type { OutboxStore } from "../src/db/outbox.store.js";
-import type { OutboxAlert, OutboxAlertSink } from "../src/outbox/alert.js";
+import type { OutboxAlert, OutboxAlertSink, OutboxDailyDigest } from "../src/outbox/alert.js";
 import { OutboxDispatcher } from "../src/outbox/dispatcher.js";
 import type { OutboxHandleOutcome, OutboxTopicHandler } from "../src/outbox/handler.js";
 import { previewTopicPolicy, type OutboxTopicPolicy } from "../src/outbox/policy.js";
+import { createDrainOnlyHandler } from "../src/outbox/topic-catalog.js";
 
 /**
  * S7-1 Outbox 分派器门禁（不连库）：按注册主题独立成批领取、逐条收敛（done / retry 退避 / dead + 告警）、
@@ -32,6 +34,10 @@ const ENV = {
 /** 假主题一律取白名单真实值（S7-3 起 OutboxClaimedRow.topic 为 OutboxTopic）：消费语义与主题串无关。 */
 const TOPIC_A: OutboxTopic = "issue.updated";
 const TOPIC_B: OutboxTopic = "task.updated";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function makeRow(topic: OutboxTopic, id: number, overrides: Partial<OutboxClaimedRow> = {}): OutboxClaimedRow {
   return {
@@ -80,6 +86,8 @@ class FakeAlertSink implements OutboxAlertSink {
   emit(alert: OutboxAlert): void {
     this.emitted.push(alert);
   }
+
+  emitDigest(_report: OutboxDailyDigest): void {}
 }
 
 interface Harness {
@@ -117,6 +125,20 @@ function handlerOf(
 }
 
 describe("OutboxDispatcher.drainOnce（S7-1 分派与收敛）", () => {
+  it("drain-only 主题：领取后直接 done，不触发重试 / 死信 / 告警", async () => {
+    const topic: OutboxTopic = "task.created";
+    const h = makeDispatcher({ registry: new Map([[topic, createDrainOnlyHandler()]]) });
+    h.store.byTopic.set(topic, [makeRow(topic, 41)]);
+
+    const stats = await h.dispatcher.drainOnce();
+
+    expect(stats).toEqual({ claimed: 1, done: 1, retried: 0, deferred: 0, dead: 0 });
+    expect(h.store.done).toEqual([41]);
+    expect(h.store.retried).toHaveLength(0);
+    expect(h.store.dead).toHaveLength(0);
+    expect(h.alerts.emitted).toHaveLength(0);
+  });
+
   it("按注册主题逐主题领取：每主题独立成批（batchLimit / staleAfterMs / workerId 均落领取参数）", async () => {
     const h = makeDispatcher({
       registry: new Map<OutboxTopic, OutboxTopicHandler>([
@@ -289,6 +311,39 @@ describe("OutboxDispatcher.drainOnce（S7-1 分派与收敛）", () => {
     expect(stats).toEqual({ claimed: 1, done: 0, retried: 0, deferred: 0, dead: 1 });
     expect(h.store.dead[0]).toMatchObject({ id: 9, input: { attempts: 1, error: "文件损坏" } });
     expect(h.alerts.emitted[0]!.code).toBe("outbox.dead");
+  });
+
+  it("deadAlert=digest：预览确定性拒绝仍落 dead / onDead，但只写结构化日志、不发即时告警", async () => {
+    const warn = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => {});
+    const deadHooks: { id: number; error: string }[] = [];
+    const h = makeDispatcher({
+      registry: new Map<OutboxTopic, OutboxTopicHandler>([
+        [
+          "preview.job",
+          handlerOf(
+            async () => ({ outcome: "dead", error: "SVG 事件属性已拒绝", deadAlert: "digest" }),
+            async (row, error) => {
+              deadHooks.push({ id: row.id, error });
+            },
+          ),
+        ],
+      ]),
+    });
+    h.store.byTopic.set("preview.job", [makeRow("preview.job", 722)]);
+
+    const stats = await h.dispatcher.drainOnce();
+
+    expect(stats).toEqual({ claimed: 1, done: 0, retried: 0, deferred: 0, dead: 1 });
+    expect(deadHooks).toEqual([{ id: 722, error: "SVG 事件属性已拒绝" }]);
+    expect(h.store.dead[0]).toMatchObject({ id: 722, input: { attempts: 1, error: "SVG 事件属性已拒绝" } });
+    expect(h.alerts.emitted).toHaveLength(0);
+    const structured = warn.mock.calls.map((call) => String(call[0])).find((line) => line.includes("outbox.dead.digest_only"));
+    expect(JSON.parse(structured ?? "{}")).toMatchObject({
+      event: "outbox.dead.digest_only",
+      topic: "preview.job",
+      outboxEventId: 722,
+      lastError: "SVG 事件属性已拒绝",
+    });
   });
 
   it("done 路径不触发死信告警；预览主题走 PREVIEW_CONVERT_* 策略（到顶次数与 M4-05c 同口径）", async () => {

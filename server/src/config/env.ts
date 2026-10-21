@@ -48,23 +48,45 @@ export const EnvSchema = z
     UPLOAD_SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
     /** 回收站保留期（天）：移入回收站时写 `files.purge_after = recycled_at + 保留期`（A4-12，默认 30）。 */
     FILE_RECYCLE_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(30),
-    // ---- 预览转换沙箱（M4-05c · ADR-007：converter 落点 deploy/preview/，接口契约见其 README「五」） ----
-    /** 转换器基址：dev = 本机哑中继 `127.0.0.1:9900`；生产 = worker 与 converter 同处 internal 网络的内部地址。 */
+    // ---- SVG 预览栅格化沙箱（H1 · S4：converter 落点 deploy/svg-preview/，接口契约见其 README） ----
+    /** 转换器基址：dev = 本机哑中继 `127.0.0.1:9900`；生产 = `http://svg-preview:9900`（同处 internal 网络）。 */
     PREVIEW_CONVERTER_URL: z.string().min(1).default("http://127.0.0.1:9900"),
-    /** 转换管线版本（进预览产物三元组缓存键）：与镜像标签同值，换镜像必须一并递增（deploy/preview/README「四」）。 */
-    PREVIEW_PIPELINE_VERSION: z.string().min(1).default("1.0.0"),
-    /** 客户端超时（毫秒）：比容器内硬超时（60000）留余量 —— 才拿得到 504 CONVERT_TIMEOUT 而不是被客户端掐断的裸超时。 */
-    PREVIEW_CONVERT_TIMEOUT_MS: z.coerce.number().int().min(1000).max(600000).default(90000),
+    /** 转换管线版本（进预览产物三元组缓存键）：H1 S4 起固定为 2.0.0，旧 1.0.0 产物不再被读取。 */
+    PREVIEW_PIPELINE_VERSION: z.string().min(1).default("2.0.0"),
+    /** 独立 CAD 运行时；空值关闭 STEP 接入，不回退旧浏览器解析。 */
+    CAD_ENGINE_PYTHON: z.string().default(""),
+    CAD_MESHER_PYTHON: z.string().default(""),
+    CAD_CACHE_DIR: z.string().min(1).default("var/cad"),
+    CAD_MAX_INPUT_MIB: z.coerce.number().int().min(1).max(256).default(64),
+    /** 客户端超时（毫秒）：比容器内 10 秒硬超时留余量 —— 才拿得到 504 CONVERT_TIMEOUT 而不是被客户端掐断的裸超时。 */
+    PREVIEW_CONVERT_TIMEOUT_MS: z.coerce.number().int().min(1000).max(600000).default(15000),
     /** 可重试失败的最大尝试次数（含首次）：到顶写产物 failed + outbox dead（D2-05 降级「请下载」）。 */
     PREVIEW_CONVERT_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
     /** 重试退避基数（毫秒）：第 n 次失败后等 min(基数 × 2^(n-1), 30 分钟)。 */
     PREVIEW_CONVERT_BACKOFF_MS: z.coerce.number().int().min(1000).max(600000).default(15000),
-    /** 直接降级「仅下载」的源文件上限（MB）：转换峰值内存约为源文件数倍，别把沙箱配额打满（deploy/preview「七」）。 */
-    PREVIEW_CONVERT_MAX_SOURCE_MB: z.coerce.number().int().min(1).max(512).default(100),
+    /** 直接降级「仅下载」的源 SVG 上限（MB）：与栅格化沙箱的 20 MiB 定档值对齐。 */
+    PREVIEW_CONVERT_MAX_SOURCE_MB: z.coerce.number().int().min(1).max(512).default(20),
     /** 预览地址短时签名有效期（秒）：D2-04 短时签名 + 禁匿名；越长越接近「把产物地址变成长期免鉴权入口」。 */
     PREVIEW_URL_TTL_SECONDS: z.coerce.number().int().min(30).max(86400).default(300),
     /** 预览转换队列开关（worker）：`false` = 只投递不消费（排障 / 压测用）。 */
     PREVIEW_JOB_ENABLED: z.enum(["true", "false"]).default("true"),
+    // ---- 翻译通道（§6.16 ㉕ ㉖ · Push 301 / 309：手打内容英译落库；provider 可插拔 —— 本地引擎 / OpenAI 兼容 API） ----
+    /** 内网翻译引擎基址（LibreTranslate 兼容 POST /translate；provider=local 时使用；本机验证形态 = HY-MT1.5-1.8B 薄壳 5008）。 */
+    TRANSLATE_ORIGIN: z.string().min(1).default("http://127.0.0.1:5008"),
+    /** 引擎调用超时（毫秒）：超时 / 失败按 500 INTERNAL 返回（前端既有通道静默降级跳过）。 */
+    TRANSLATE_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120000).default(20000),
+    /** 翻译通道形态：`local` = 本地 / 内网引擎（TRANSLATE_ORIGIN）；`openai` = OpenAI 兼容 API（TRANSLATE_API_*，如公司 New API 网关 https://newapi.libiaorobot.com/v1）。 */
+    TRANSLATE_PROVIDER: z.enum(["local", "openai"]).default("local"),
+    /** OpenAI 兼容 API 基址（含 /v1）；provider=openai 时必填（缺失按 INTERNAL 静默降级）。 */
+    TRANSLATE_API_BASE_URL: z.string().default(""),
+    /** 翻译 API 模型名（如 deepseek-v4-flash-vision-exp）；provider=openai 时必填。 */
+    TRANSLATE_API_MODEL: z.string().default(""),
+    /** 备用 API 模型（Push 310）：主模型失败时改调（如 deepseek 断流 → gemini-3.8-flash）；留空 = 不接力。 */
+    TRANSLATE_API_MODEL_FALLBACK: z.string().default(""),
+    /** 翻译 API Key（由 secrets/translate_api_key 经入口注入，不进仓库 / 不进 .env）；网关无鉴权时可留空。 */
+    TRANSLATE_API_KEY: z.string().default(""),
+    /** 兜底引擎基址（可选）：主通道失败时改调该 LibreTranslate 兼容端点（「本地引擎方案保留」接线位；留空 = 不兜底）。 */
+    TRANSLATE_FALLBACK_ORIGIN: z.string().default(""),
     // ---- ONLYOFFICE 查看器（S3 · ADR-030：Office / 文本族预览改由 ONLYOFFICE 查看器承接；受控端点鉴权 = 与 DocServer 共享密钥） ----
     /** DocServer 浏览器侧基址：查看器配置 `docServerUrl` 下发（前端据此加载 api.js）；dev 沙箱 = deploy/onlyoffice 的 127.0.0.1:8001。 */
     ONLYOFFICE_DOCSERVER_URL: z.string().min(1).default("http://127.0.0.1:8001"),
@@ -94,6 +116,8 @@ export const EnvSchema = z
     OUTBOX_DEFAULT_BACKOFF_MAX_MS: z.coerce.number().int().min(1000).max(86400000).default(1800000),
     /** 告警探针周期（毫秒）：积压 / 最老待领取年龄 / 近期新增死信；死信单条即时告警不依赖本周期。 */
     OUTBOX_ALERT_INTERVAL_MS: z.coerce.number().int().min(10000).max(3600000).default(300000),
+    /** 持续超阈值告警的复报冷却（毫秒）：积压 / 最老待领取 / 未消费主题；回到阈值内发一次恢复。 */
+    OUTBOX_ALERT_REPEAT_MS: z.coerce.number().int().min(60000).max(604800000).default(21600000),
     /** 待领取积压条数阈值（> 即告警）。 */
     OUTBOX_ALERT_BACKLOG_MAX: z.coerce.number().int().min(1).max(1000000).default(1000),
     /** 最老待领取消息年龄阈值（毫秒）。 */
@@ -102,6 +126,12 @@ export const EnvSchema = z
     OUTBOX_ALERT_DEAD_RECENT_MAX: z.coerce.number().int().min(1).max(100000).default(1),
     /** 死信「近期」窗口（毫秒）。 */
     OUTBOX_ALERT_DEAD_WINDOW_MS: z.coerce.number().int().min(60000).max(86400000).default(3600000),
+    /** 消费进度窗口（毫秒）：窗口内无 done 行才视为「无进展」，用于过滤正常排空。 */
+    OUTBOX_ALERT_PROGRESS_WINDOW_MS: z.coerce.number().int().min(60000).max(3600000).default(900000),
+    /** 连续无进展的探针轮数：达到后把积压 / 最老等待合并升级为 outbox.queue_stalled。 */
+    OUTBOX_ALERT_STALL_PROBES: z.coerce.number().int().min(1).max(60).default(3),
+    /** outbox 日报间隔（毫秒）：恢复通知与死信汇总只在日报出现；默认 24h。 */
+    OUTBOX_ALERT_DIGEST_INTERVAL_MS: z.coerce.number().int().min(3600000).max(604800000).default(86400000),
     /** 管理员告警群 chatid（企微智能机器人；空 = 告警仅回退结构化日志 —— OUTBOX_ALERT_SINK 出口选择）。 */
     OUTBOX_ALERT_WECOM_CHATID: z.string().default(""),
     /** done 行保留期（天；ADR-005 约 90 天）。 */
@@ -162,6 +192,11 @@ export const EnvSchema = z
     /** 智能机器人 BotID / Secret（Secret 属凭据，只走密钥渠道；生产必填校验随接线刀启用）。 */
     WECOM_BOT_ID: z.string().default(""),
     WECOM_BOT_SECRET: z.string().default(""),
+    /**
+     * 机器人诊断开关（设置页「机器人诊断」块）：auto = 仅 NODE_ENV !== production 时开启；true = 强制开启；
+     * false = 关闭。开启时 GET /api/v1/wecom-dm-binding/diagnostics 回 bot_id / secret 原文（仅本地联调用）。
+     */
+    WECOM_BOT_DIAGNOSTICS: z.enum(["auto", "true", "false"]).default("auto"),
     /** 心跳周期（毫秒）：连续 2 个周期无 pong → 判失联重连。 */
     WECOM_BOT_PING_INTERVAL_MS: z.coerce.number().int().min(1000).max(600000).default(30000),
     /** 单帧回执超时（毫秒）：订阅 / 推送共用。 */
@@ -172,6 +207,22 @@ export const EnvSchema = z
     /** 按会话限速（Spike 实测口径：30 条/分钟 + 1000 条/小时；0 = 未启用）。 */
     WECOM_BOT_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(0).max(1000000).default(30),
     WECOM_BOT_RATE_LIMIT_PER_HOUR: z.coerce.number().int().min(0).max(10000000).default(1000),
+    /** R06 动态海报开关：true = 按项目真实数据生成姓名墙 PNG；生成失败回退下方静态图。 */
+    WECOM_R06_DYNAMIC_POSTER: z.enum(["true", "false"]).default("true"),
+    /** R06 动态海报字体（可选）：空 = 使用服务端资产思源宋体（SemiBold / Bold，随仓库发布）；可指向其它已授权字体。 */
+    WECOM_R06_FONT_SANS_PATH: z.string().default(""),
+    WECOM_R06_FONT_SANS_BOLD_PATH: z.string().default(""),
+    WECOM_R06_FONT_SERIF_PATH: z.string().default(""),
+    /** R06 验收交付默认喜报图（可选）：动态海报关闭 / 生成失败时使用；空 = 不追加图片；建议绝对路径，支持 PNG / JPG / GIF（≤10MB）。 */
+    WECOM_R06_IMAGE_PATH: z.string().default(""),
+    /** R06 全部任务按时交付喜报图（可选）：空 = 回退 WECOM_R06_IMAGE_PATH。 */
+    WECOM_R06_ON_TIME_IMAGE_PATH: z.string().default(""),
+    /** R06 全部完成且全部按时的前置火箭 GIF（240×288）：文字后、640 前发送；空 = 跳过。 */
+    WECOM_R06_ROCKET_240_IMAGE_PATH: z.string().default("assets/wecom-rocket-first-frame-240.gif"),
+    /** R06 全部完成且全部按时的前置火箭 GIF（640×768）：文字后、喜报海报前发送；空 = 跳过。 */
+    WECOM_R06_ROCKET_640_IMAGE_PATH: z.string().default("assets/wecom-rocket-first-frame-640.gif"),
+    /** R06 其余情况（未全部完成 / 非全部按期）的前置火箭 GIF（200×200）：文字后、喜报海报前发送；空 = 跳过。 */
+    WECOM_R06_ROCKET_FALLBACK_IMAGE_PATH: z.string().default("assets/wecom-r06-acceptance.gif"),
     // ---- 调度器（S7-3 · i11 / M5-02：cron 领取 + last_run_at 补发 + 单活 advisory lock · ADR-005） ----
     /** 单轮 tick 领取条数上限（到期任务按 run_at 序领取，逐条串行执行）。 */
     OUTBOX_SCHEDULER_BATCH_LIMIT: z.coerce.number().int().min(1).max(1000).default(10),
@@ -186,6 +237,8 @@ export const EnvSchema = z
     AUTOMATION_WIRING_ENABLED: z
       .enum(["true", "false"])
       .default("true"),
+    /** R06 项目完成喜报开关：true = 在默认启用集之外纳入 R06（项目编辑保存「已完成」时触发）。 */
+    AUTOMATION_R06_ENABLED: z.enum(["true", "false"]).default("false"),
     /**
      * 冷启动保护阈值（毫秒）：事件行创建时刻距今超此阈值 → 不评估主体、逐规则登记 `event_too_old`（消费掉不产消息）。
      * 用途：接线前积压的历史事件（重启 / 停机 / 首次上线）不补发业务通知；缺省 6 小时。
@@ -203,7 +256,7 @@ export const EnvSchema = z
       });
     }
     // PREVIEW_PIPELINE_VERSION 进对象键（storage/object-key.ts 的片段白名单同口径）：非法字符会在构造键时抛错，
-    // 提前到启动期拦下（fail fast）；「与镜像标签同值」的规则见 deploy/preview/README「四」。
+    // 提前到启动期拦下（fail fast）；「与镜像标签同值」的规则见 deploy/svg-preview/README。
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value.PREVIEW_PIPELINE_VERSION)) {
       context.addIssue({
         code: "custom",

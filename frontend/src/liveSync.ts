@@ -102,10 +102,34 @@ export function subscribeLiveRefresh(resources: readonly LiveResource[], refresh
   return () => { queue.dispose(); subscribers.delete(subscriber); };
 }
 
+/**
+ * 站内信事件处理者（Push 352 · 顶栏红点接线）：由调用方（App.tsx）从 ../inbox 注入 ——
+ * 本模块不认识业务 store，避免 liveSync → inbox → api → liveSync 的循环依赖。
+ * - onUnread = unread 事件（未读角标快照：新投递 / 标记 / 全部已读 / 稍后提醒触发的未读数变更）；
+ * - onNotification = notification 事件（新投递 / 稍后提醒触发）：打开着的站内信弹窗据此静默补拉；
+ * - onOpen = 连接打开（含自动重连；服务端「重连不补发」）—— 调用方按各自读面补拉对齐。
+ */
+export type LiveStreamHandlers = {
+  onUnread?: (unreadCount: number) => void;
+  onNotification?: () => void;
+  onOpen?: () => void;
+};
+
 /** One stream per signed-in app; payloads never become business state directly. */
-export function startLiveSync(): () => void {
+export function startLiveSync(handlers: LiveStreamHandlers = {}): () => void {
   const source = new EventSource("/api/v1/notifications/stream");
   const catchUp = () => invalidate(LIVE_RESOURCES);
+  const onStreamOpen = () => { catchUp(); handlers.onOpen?.(); };
+  const onUnread = (event: Event) => {
+    if (!(event instanceof MessageEvent) || typeof event.data !== "string") return;
+    try {
+      const payload: unknown = JSON.parse(event.data);
+      if (typeof payload !== "object" || payload === null || !("unreadCount" in payload)) return;
+      const count = (payload as { unreadCount: unknown }).unreadCount;
+      if (typeof count === "number" && Number.isInteger(count) && count >= 0) handlers.onUnread?.(count);
+    } catch { /* Ignore invalid snapshots; the read API remains the source of truth. */ }
+  };
+  const onNotification = () => { handlers.onNotification?.(); };
   const onInvalidate = (event: Event) => {
     if (!(event instanceof MessageEvent) || typeof event.data !== "string") return;
     try {
@@ -119,7 +143,9 @@ export function startLiveSync(): () => void {
   const onPointerUp = () => { pointerDown = false; };
   const onVisible = () => { if (document.visibilityState === "visible") catchUp(); };
   source.addEventListener("invalidate", onInvalidate);
-  source.addEventListener("open", catchUp);
+  source.addEventListener("unread", onUnread);
+  source.addEventListener("notification", onNotification);
+  source.addEventListener("open", onStreamOpen);
   document.addEventListener("visibilitychange", onVisible);
   window.addEventListener("online", catchUp);
   window.addEventListener("focus", catchUp);

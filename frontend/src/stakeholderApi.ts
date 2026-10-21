@@ -9,6 +9,7 @@
  * 页面按「键是否存在」渲染占位（见 components/StakeholderPanel.tsx），缺键绝不回写（否则会把无权字段清空）。
  */
 import { ApiError, apiSend, readAllPages } from "./api";
+import { textOf, type Locale } from "./i18n";
 
 /** 公司分类（契约 STAKEHOLDER_COMPANY_TYPES 同序；A5-02）。 */
 export const STAKEHOLDER_COMPANY_TYPES = ["libiao", "supplier", "general_contractor", "customer"] as const;
@@ -94,9 +95,6 @@ export type StakeholderPatch = {
   role?: string | null;
 };
 
-/** 列表一次取满（契约 limit 上限 200）；总数用响应 total，超出时页面另提示。 */
-export const STAKEHOLDER_PAGE_LIMIT = 200;
-
 /** 本项目关联的干系人台账（A5-03 按项目查看联系人清单；缺省「最近更新」在前）。 */
 export async function fetchProjectStakeholders(projectId: string): Promise<StakeholderListResult> {
   const payload = await readAllPages<Stakeholder>(
@@ -117,16 +115,16 @@ export function deleteStakeholder(id: string): Promise<{ id: string; deleted: bo
   return apiSend<{ id: string; deleted: boolean }>("/api/v1/stakeholders/" + id, "DELETE");
 }
 
-/** 写 / 读失败的用户可读文案（403 / 404 按 A27 口径单独说清；其余用服务端 message）。 */
-export function stakeholderErrorText(error: unknown, action: string): string {
+/** 写 / 读失败的用户可读文案（Push 301：随语言切换；403 / 404 按 A27 口径单独说清；其余用服务端 message）。 */
+export function stakeholderErrorText(locale: Locale, action: string, error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 403) {
-      return action + "失败：没有干系人维护权限（stakeholder.manage），请联系管理员。";
+      return textOf(locale, "sh.err.forbidden", { action });
     }
     if (error.status === 404) {
-      return "该干系人不存在或已被删除，请刷新后重试。";
+      return textOf(locale, "sh.err.notFound");
     }
-    return action + "失败：" + error.message;
+    return textOf(locale, "sh.err.generic", { action, message: error.message });
   }
-  return action + "失败：网络异常，请稍后重试。";
+  return textOf(locale, "sh.err.network", { action });
 }

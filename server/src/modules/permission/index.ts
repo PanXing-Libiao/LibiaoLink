@@ -2,7 +2,7 @@
 export { PermissionModule } from "./permission.module.js";
 export { PermissionService } from "./permission.service.js";
 export { PermissionController } from "./permission.controller.js";
-export { ProjectAccessGuard, ProjectAccess, RequirePermission, ProjectScope } from "./project-access.guard.js";
+export { ProjectAccessGuard, ProjectAccess, AllowDeletedProjectAccess, RequirePermission, ProjectScope } from "./project-access.guard.js";
 export type { ProjectAccessSource, RequestWithProjectAccess } from "./project-access.guard.js";
 export type { ProjectAccessContext } from "./permission.repository.js";
 export {

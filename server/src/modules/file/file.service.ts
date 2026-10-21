@@ -39,6 +39,7 @@ import {
   buildUploadStagingKey,
   missingPartNumbers,
   ObjectStorage,
+  type ObjectPrefixResult,
   planUpload,
   toApiError,
 } from "../../storage/index.js";
@@ -54,6 +55,7 @@ import {
   type UploadSessionRow,
 } from "./file.repository.js";
 import { parseFileListFilter, parseFileListSort, type FileListQueryInput } from "./file.query.js";
+import { OCTET_STREAM_MIME, normalizeMime, validateUploadFileType } from "./file-mime.js";
 import { PreviewRepository } from "./preview.repository.js";
 import { buildPreviewJobPayload, PREVIEW_JOB_TOPIC, previewJobDedupeKey } from "./preview.job.js";
 import { previewTargetsFor } from "./preview.targets.js";
@@ -81,6 +83,15 @@ type FileListResponse = z.infer<typeof FileListResponseSchema>;
 type ChangeRequestView = z.infer<typeof ChangeRequestSchema>;
 type ChangeIntentBody = z.infer<typeof ChangeIntentBodySchema>;
 
+/** 项目导出所需的最小文件引用（只给文件名 / 类型 / 当前版本对象键，不夹带存储实现）。 */
+export interface ProjectExportFileRef {
+  id: string;
+  name: string;
+  mime: string | null;
+  sizeBytes: number | null;
+  objectKey: string | null;
+}
+
 /**
  * 变更申请载荷（`upload_sessions.change_payload` 原文；complete / 回溯时读入 `change_requests`）。
  * 带索引签名：直接作为 `jsonb` 值写入（drizzle `$type<Record<string, unknown>>`）。
@@ -91,12 +102,17 @@ interface ChangePayload {
   beforeSummary: string | null;
   afterSummary: string | null;
   stageKey: string | null;
+  /** Push 314：变更前 / 变更后摘要附图（files.id 有序；随会话 JSONB 落库，完成变更时入 change_requests）。 */
+  beforeSummaryFileIds: string[];
+  afterSummaryFileIds: string[];
   /** Push 256：变更后文件名称（完成变更时采纳为 files.name —— 更名 + 扩展名随上传）。 */
   fileName: string | null;
 }
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
+/** MIME 文件头校验的读取上限：只读前缀，SVG / XML 的少量声明也能覆盖。 */
+const MIME_SNIFF_BYTES = 64 * 1024;
 /** 过期会话清理单批上限（worker 每轮；避免长事务与大对象清理拖住心跳）。 */
 export const EXPIRE_SWEEP_BATCH = 200;
 /** 回收站到期清理单批上限（worker 每轮；彻底删除含对象清理，批更小）。 */
@@ -192,6 +208,13 @@ export class FileService {
       ]);
     }
     await this.assertLinksInProject(body.projectId, effectiveNodeId, effectiveTaskId);
+    // Push 314（变更前后可填图）：摘要附图归属校验（存在 / 属本项目 / 未进回收站；非法 400 VALIDATION_FAILED）。
+    if (isChange) {
+      await this.assertSummaryFilesInProject(body.projectId, [
+        ...(changePayload?.beforeSummaryFileIds ?? []),
+        ...(changePayload?.afterSummaryFileIds ?? []),
+      ]);
+    }
     // 任务定档（Push 249）：任务已定档时禁止直接新增 / 替换 / 追加版本（intent=version）；修改走变更（A4-13）。
     if (body.intent !== "change" && effectiveTaskId !== undefined) {
       await this.assertTaskNotFinalized(effectiveTaskId);
@@ -429,13 +452,35 @@ export class FileService {
     // 事务内的 files.name 全部随新名称（扩展名随之上新）；历史版本对象键不动，按各自扩展名预览 / 下载（preview-read / download 同口径）。
     const changePayload = isChange ? readChangePayload(session.changePayload) : null;
     const effectiveName = changePayload?.fileName ?? file.name;
+    let prefix: ObjectPrefixResult | null;
+    try {
+      prefix = await this.storage.readObjectPrefix(stagingKey, Math.min(MIME_SNIFF_BYTES, head.sizeBytes));
+    } catch (error) {
+      throw toApiError(error);
+    }
+    if (prefix === null) {
+      throw new AppError("UPLOAD_INCOMPLETE", "合并结果在对象存储侧不可读取，请重新上传");
+    }
+    const type = validateUploadFileType({ fileName: effectiveName, mime: session.mime, bytes: prefix.bytes });
+    if (!type.ok) {
+      throw new AppError("VALIDATION_FAILED", type.message, [
+        {
+          code: type.code,
+          message: type.message,
+          path: "mime",
+          meta: { extension: type.extension, declaredMime: type.declaredMime, expectedMime: type.expectedMime },
+        },
+      ]);
+    }
+    const versionMime = type.mime;
     const seq = await this.repository.nextVersionSeq(fileId);
     const objectKey = buildObjectKey({ projectId: file.projectId, fileId, seq, contentHash, fileName: effectiveName });
     try {
       await this.storage.copyObject({
         sourceKey: stagingKey,
         destinationKey: objectKey,
-        contentType: session.mime,
+        // H1 · S2：原对象统一按不透明字节保存，浏览器投递类型只由服务端签名响应覆盖。
+        contentType: OCTET_STREAM_MIME,
         metadata: { "file-name": encodeURIComponent(effectiveName) },
       });
     } catch (error) {
@@ -497,7 +542,7 @@ export class FileService {
           objectKey,
           sizeBytes: head.sizeBytes,
           contentHash,
-          mime: session.mime,
+          mime: versionMime,
           uploadedBy: actorId,
           uploadedAt: at,
           changeRequestId,
@@ -571,7 +616,7 @@ export class FileService {
           objectKey,
           contentHash,
           sizeBytes: head.sizeBytes,
-          mime: session.mime,
+          mime: versionMime,
           actorId,
           at: at.toISOString(),
         },
@@ -613,6 +658,8 @@ export class FileService {
         reason: payload.reason,
         beforeSummary: payload.beforeSummary,
         afterSummary: payload.afterSummary,
+        beforeSummaryFileIds: payload.beforeSummaryFileIds,
+        afterSummaryFileIds: payload.afterSummaryFileIds,
         appliedBy: input.actorId,
         appliedAt: input.at,
         createdAt: input.at,
@@ -976,6 +1023,7 @@ export class FileService {
       ]);
     }
     const at = this.clock.now();
+    const rollbackMime = normalizeMime(target.mime) ?? OCTET_STREAM_MIME;
     // 与 complete 同序：先把目标版对象复制到新版本契约键（事务外），事务内锁行复核位次，防并发抢同一位次。
     const seq = await this.repository.nextVersionSeq(fileId);
     const objectKey = buildObjectKey({
@@ -989,7 +1037,7 @@ export class FileService {
       await this.storage.copyObject({
         sourceKey: target.objectKey,
         destinationKey: objectKey,
-        contentType: target.mime,
+        contentType: OCTET_STREAM_MIME,
         metadata: { "file-name": encodeURIComponent(file.name) },
       });
     } catch (error) {
@@ -1020,7 +1068,7 @@ export class FileService {
           : await this.insertChangeInTx(tx, {
               changeRequestId,
               file: locked,
-              payload: { reason: body.reason, beforeSummary: null, afterSummary: null, stageKey: null, fileName: null },
+              payload: { reason: body.reason, beforeSummary: null, afterSummary: null, beforeSummaryFileIds: [], afterSummaryFileIds: [], stageKey: null, fileName: null },
               actorId,
               at,
             });
@@ -1031,7 +1079,7 @@ export class FileService {
           objectKey,
           sizeBytes: target.sizeBytes,
           contentHash: target.contentHash,
-          mime: target.mime,
+          mime: rollbackMime,
           uploadedBy: actorId,
           uploadedAt: at,
           changeRequestId,
@@ -1096,7 +1144,7 @@ export class FileService {
           objectKey,
           contentHash: target.contentHash,
           sizeBytes: target.sizeBytes,
-          mime: target.mime,
+          mime: rollbackMime,
           rollbackOf: target.id,
           reason: body.reason,
           actorId,
@@ -1141,6 +1189,31 @@ export class FileService {
     const offset = (query.page - 1) * query.limit;
     const { items, total } = await this.repository.listProjectFiles(projectId, filter, sorts, query.limit, offset);
     return { items: items.map(toFileView), page: query.page, limit: query.limit, total };
+  }
+
+  /**
+   * 项目导出（project-export）：按项目 + 文件 id 批量取当前版本引用。
+   * 仅返回属于该项目且未进回收站的文件；找不到 / 无当前版本时 objectKey 为 null，由导出层降级为文件名占位。
+   */
+  async listExportFileRefs(projectId: string, fileIds: readonly string[]): Promise<Map<string, ProjectExportFileRef>> {
+    const rows = (await this.repository.findFilesByIds(fileIds)).filter((row) => row.projectId === projectId && row.status !== "recycled");
+    const versionIds = rows
+      .map((row) => row.currentVersionId)
+      .filter((value): value is string => value !== null);
+    const versions = await this.repository.findVersionsByIds(versionIds);
+    const versionById = new Map(versions.map((version) => [version.id, version]));
+    const refs = new Map<string, ProjectExportFileRef>();
+    for (const row of rows) {
+      const version = row.currentVersionId === null ? undefined : versionById.get(row.currentVersionId);
+      refs.set(row.id, {
+        id: row.id,
+        name: row.name,
+        mime: version?.mime ?? null,
+        sizeBytes: version?.sizeBytes ?? null,
+        objectKey: version?.objectKey ?? null,
+      });
+    }
+    return refs;
   }
 
   /**
@@ -1258,8 +1331,8 @@ export class FileService {
         }
       }
       // 定档预生成（P1 · ADR-007「定档文件预生成，其余按需懒生成」）：只投当前版本、只投一期真能出产物的通道。
-      // S6-前置（D6）起 `previewTargetsFor` 无投递通道（图片改原对象直签、其余走查看器）—— 本循环自然空转；
-      // structured 二期启用投递后恢复（保留 = 定档预生成的唯一投递点，去重与唤醒语义不变）。
+      // H1 · S4 起 `previewTargetsFor` 对 SVG 恢复投递 `target=image`（图片仍原对象直签、其余走查看器）；
+      // 本循环是定档预生成的唯一投递点，去重与唤醒语义不变。
       // 用 appendOutboxIfAbsent：去重键 = 三元组（内容 + 管线版本 + 通道）—— 同三元组已有任务不重复插入、
       // 只有 dead 才唤醒；普通 insert 会在「恢复 → 再定档」「两个文件同内容」时撞唯一约束，把整个定档事务打回 500。
       const currentVersion = versions.find((item) => item.id === locked.currentVersionId) ?? null;
@@ -1384,7 +1457,7 @@ export class FileService {
     }
     const created = await this.storage.createMultipartUpload({
       objectKey: session.objectKey,
-      contentType: session.mime,
+      contentType: OCTET_STREAM_MIME,
       metadata: { "file-name": encodeURIComponent(file.name) },
     });
     const updated = await this.database.db.transaction(async (tx) => {
@@ -1514,6 +1587,20 @@ export class FileService {
     }
   }
 
+  /** Push 314：变更前 / 变更后摘要附图校验（须为本项目未回收文件；缺失 / 跨项目 / 已回收 → 400）。 */
+  private async assertSummaryFilesInProject(projectId: string, fileIds: readonly string[]): Promise<void> {
+    const unique = [...new Set(fileIds)];
+    if (unique.length === 0) {
+      return;
+    }
+    const rows = await this.repository.listSummaryFileBriefs(unique);
+    const usable = new Set(rows.filter((row) => row.projectId === projectId && row.status !== "recycled").map((row) => row.id));
+    const missing = unique.filter((id) => !usable.has(id));
+    if (missing.length > 0) {
+      throw new AppError("VALIDATION_FAILED", "摘要附图文件不存在 / 不属于本项目，或已进回收站", missing.map((id) => ({ code: "unknown_file", message: "文件：" + id, path: "change.beforeSummaryFileIds" })));
+    }
+  }
+
   /** 惰性 / 定时过期的公共实现（先清存储、后置状态；重复调用安全）。 */
   private async expireSession(projectId: string, session: UploadSessionRow, at: Date): Promise<void> {
     await this.discardStaging(session, "expire");
@@ -1623,11 +1710,12 @@ export function toVersionView(row: FileVersionRow): z.infer<typeof FileVersionSc
   };
 }
 
-/** 变更记录视图（`fileId` / `versionId` / `versionSeq` 来自同事务的版本行，非 `change_requests` 列）。 */
+/** 变更记录视图（`fileId` / `versionId` / `versionSeq` 来自同事务的版本行，非 `change_requests` 列；
+ *  Push 319：导入遗留变更没有版本行 → 三项为 null）。 */
 export function toChangeRequestView(
   row: ChangeRequestRow,
-  fileId: string,
-  version: Pick<FileVersionRow, "id" | "seq">,
+  fileId: string | null,
+  version: Pick<FileVersionRow, "id" | "seq"> | null,
 ): ChangeRequestView {
   return {
     id: row.id,
@@ -1637,13 +1725,16 @@ export function toChangeRequestView(
     reason: row.reason,
     beforeSummary: row.beforeSummary,
     afterSummary: row.afterSummary,
+    beforeSummaryFileIds: row.beforeSummaryFileIds,
+    afterSummaryFileIds: row.afterSummaryFileIds,
     status: row.status as ChangeRequestView["status"],
     appliedBy: row.appliedBy,
+    writerBy: row.writerBy,
     appliedAt: row.appliedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
     fileId,
-    versionId: version.id,
-    versionSeq: version.seq,
+    versionId: version === null ? null : version.id,
+    versionSeq: version === null ? null : version.seq,
   };
 }
 
@@ -1653,6 +1744,8 @@ function normalizeChangePayload(change: ChangeIntentBody, fileName: string): Cha
     reason: change.reason,
     beforeSummary: change.beforeSummary ?? null,
     afterSummary: change.afterSummary ?? null,
+    beforeSummaryFileIds: dedupeIds(change.beforeSummaryFileIds),
+    afterSummaryFileIds: dedupeIds(change.afterSummaryFileIds),
     stageKey: change.stageKey ?? null,
     fileName,
   };
@@ -1665,9 +1758,21 @@ function readChangePayload(value: unknown): ChangePayload {
     reason: typeof record.reason === "string" ? record.reason : "",
     beforeSummary: typeof record.beforeSummary === "string" ? record.beforeSummary : null,
     afterSummary: typeof record.afterSummary === "string" ? record.afterSummary : null,
+    beforeSummaryFileIds: readIdArray(record.beforeSummaryFileIds),
+    afterSummaryFileIds: readIdArray(record.afterSummaryFileIds),
     stageKey: typeof record.stageKey === "string" ? record.stageKey : null,
     fileName: typeof record.fileName === "string" && record.fileName !== "" ? record.fileName : null,
   };
+}
+
+/** Push 314：摘要附图 id 去重（保序；缺省 = 空数组）。 */
+function dedupeIds(value: readonly string[] | undefined): string[] {
+  return value === undefined ? [] : [...new Set(value)];
+}
+
+/** Push 314：会话 JSONB 里的短 id 数组（非数组 / 脏值一律按空数组兜底）。 */
+function readIdArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
 /** 摘要截断（审计 / 日志里的长文本）。 */

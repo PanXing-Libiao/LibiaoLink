@@ -69,6 +69,22 @@ class FakeProjectMemberService {
   }
 }
 
+/** A01 发送归档替身（M5-06-3）：按规则 + 业务日 + 收件人回读成功时刻。 */
+class FakeDeliveryReads {
+  sentAt = new Map<string, Date>();
+  calls: Array<{ ruleCode: string; businessDate: string; recipientIds: string[] }> = [];
+
+  async findReminderSentAt(ruleCode: string, businessDate: string, recipientIds: readonly string[]): Promise<Map<string, Date>> {
+    this.calls.push({ ruleCode, businessDate, recipientIds: [...recipientIds] });
+    const result = new Map<string, Date>();
+    for (const recipientId of recipientIds) {
+      const sentAt = this.sentAt.get(recipientId);
+      if (sentAt !== undefined) result.set(recipientId, sentAt);
+    }
+    return result;
+  }
+}
+
 function makeMember(userId: string, overrides: Partial<ProjectMemberView> = {}): ProjectMemberView {
   return {
     userId,
@@ -104,12 +120,18 @@ function makeReport(id: string, overrides: Partial<DailyReportRow> = {}): DailyR
   };
 }
 
-function makeService(reports: FakeReportRepository, calendar: FakeCalendarService, members: FakeProjectMemberService): ReportSummaryService {
+function makeService(
+  reports: FakeReportRepository,
+  calendar: FakeCalendarService,
+  members: FakeProjectMemberService,
+  deliveryReads: FakeDeliveryReads = new FakeDeliveryReads(),
+): ReportSummaryService {
   return new ReportSummaryService(
     {} as unknown as DatabaseService,
     reports as unknown as ReportRepository,
     calendar as unknown as CalendarService,
     members as unknown as ProjectMemberService,
+    deliveryReads as unknown as ConstructorParameters<typeof ReportSummaryService>[4],
   );
 }
 
@@ -232,6 +254,22 @@ describe("应填未填清单（M6-01 收口 · A7-05）", () => {
     expect(result.members[0]).toMatchObject({ reportId: "r1", state: "submitted", submittedAt: AT_EARLY.toISOString() });
     expect(result.members[1]).toMatchObject({ reportId: "r2", state: "draft", submittedAt: null });
     expect(result.members[2]).toMatchObject({ reportId: null, state: null, submittedAt: null });
+  });
+
+  it("已提醒标记：按 A01 + 业务日 + 名册回读 sent 时刻；未提醒为 null（M5-06-3）", async () => {
+    const members = new FakeProjectMemberService();
+    members.items = [makeMember(ALICE), makeMember(BOB), makeMember(CAROL)];
+    const deliveryReads = new FakeDeliveryReads();
+    deliveryReads.sentAt.set(ALICE, new Date("2026-01-05T11:30:00Z"));
+    const result = await makeService(new FakeReportRepository(), new FakeCalendarService(), members, deliveryReads).missing(PROJECT, {
+      date: PAST_DATE,
+    });
+    expect(deliveryReads.calls).toEqual([
+      { ruleCode: "A01", businessDate: PAST_DATE, recipientIds: [ALICE, BOB, CAROL] },
+    ]);
+    expect(result.members[0]?.reminderSentAt).toBe("2026-01-05T11:30:00.000Z");
+    expect(result.members[1]?.reminderSentAt).toBeNull();
+    expect(result.members[2]?.reminderSentAt).toBeNull();
   });
 
   it("missingUserIds 顺序同名册（项目经理在前，由名册出口保证）", async () => {

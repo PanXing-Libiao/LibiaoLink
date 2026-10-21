@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { lockBodyScroll } from "../scrollLock";
+import { useT } from "../i18n";
 
 /**
  * 导出等待浮层（2026-10-10 · §6.16 ⑳ · 业务口径「导出时间太长了要做加载动画提示用户 大概需要多长时间
@@ -39,7 +40,10 @@ export function estimateRemainingSeconds(elapsedSeconds: number, done: number, t
   return Math.max(1, Math.ceil(rate * left + TAIL_SECONDS));
 }
 
-export function ExportProgressOverlay({ progress }: { progress: ExportTranslateProgress | null }) {
+export type ExportProgressVariant = "overview" | "project-data";
+
+export function ExportProgressOverlay({ progress, variant = "overview" }: { progress: ExportTranslateProgress | null; variant?: ExportProgressVariant }) {
+  const t = useT();
   const [elapsed, setElapsed] = useState(0);
   const [remaining, setRemaining] = useState<number | null>(null);
   const startedAt = useRef(Date.now());
@@ -62,6 +66,7 @@ export function ExportProgressOverlay({ progress }: { progress: ExportTranslateP
   const total = progress === null ? 0 : progress.total;
   const waiting = total <= 0;
   const translating = !waiting && done < total;
+  const projectData = variant === "project-data";
   const fresh = estimateRemainingSeconds(elapsed, done, total);
   const displayed = remaining === null ? fresh : remaining;
   const percent = waiting ? 0 : Math.min(100, Math.round((done / total) * 100));
@@ -76,7 +81,7 @@ export function ExportProgressOverlay({ progress }: { progress: ExportTranslateP
   }, [elapsed, done, total, fresh]);
 
   return (
-    <div className="export-progress" role="status" aria-live="polite">
+    <div className="export-progress" role="status" aria-live="polite" data-export-progress={variant}>
       <div className="export-progress__card">
         <div className="export-progress__stage" aria-hidden="true">
           <span className="export-progress__road" />
@@ -89,20 +94,22 @@ export function ExportProgressOverlay({ progress }: { progress: ExportTranslateP
             </span>
           </span>
         </div>
-        <p className="export-progress__title">{waiting || translating ? "项目进展描述翻译中…" : "正在生成报告…"}</p>
+        <p className="export-progress__title">{projectData ? t("exp.projectData.title") : waiting || translating ? t("exp.translating") : t("exp.generating")}</p>
         <p className="export-progress__hint">
-          {waiting
-            ? "正在准备导出数据…"
-            : translating
-              ? (
-                  <>
-                    预计需要 <span className="export-progress__num">{Math.max(1, Math.round(displayed))}</span> 秒 · 已完成 {done} / {total} 条
-                  </>
-                )
-              : "译文已就绪，马上就好"}
+          {projectData
+            ? t("exp.projectData.hint")
+            : waiting
+              ? t("exp.preparing")
+              : translating
+                ? (
+                    <>
+                      {t("exp.etaLead")}<span className="export-progress__num">{Math.max(1, Math.round(displayed))}</span>{t("exp.etaTail", { d: done, t: total })}
+                    </>
+                  )
+                : t("exp.ready")}
         </p>
-        <div className={"export-progress__bar" + (waiting ? " is-waiting" : "")}>
-          <span className="export-progress__bar-fill" style={waiting ? undefined : { width: percent + "%" }} />
+        <div className={"export-progress__bar" + (waiting || projectData ? " is-waiting" : "")}>
+          <span className="export-progress__bar-fill" style={waiting || projectData ? undefined : { width: percent + "%" }} />
         </div>
       </div>
     </div>

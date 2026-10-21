@@ -1,5 +1,9 @@
 # ADR-030 Office 在线预览改由 ONLYOFFICE 承接（查看器形态 · 只读）
 
+> **2026-10-21 CAD 边界更新**：D4 的“CAD 不动”为当时 Office 替换范围。CAD 当前另按 [ADR-035](ADR-035-CAD接入独立能力工程.md) 清理旧链路并接入独立工程，暂不可预览、保留下载；本文 Office 决策不因此改变。
+
+> **局部修订（2026-10-20 · H1 · ADR-034 Accepted）**：D4 中「PDF / 图片直通」继续适用于 PDF 与安全位图；SVG 原对象的直通 / 内联预览子口径由 ADR-034 取代，改为服务端栅格化 PNG。Office 查看器决策及其余边界不变。
+
 - 状态：已采纳（Accepted · 2026-09-30，随 PR #247 合并 main）｜评审：wmj（复核追认）、lan、px｜本件由 px 代 wmj 线起草（2026-09-30），请 wmj 复核决策归属与措辞
 - 日期：2026-09-30｜决策人：wmj（技术负责人）
 - 依据：docs/ONLYOFFICE替换执行计划(Office预览).md（唯一执行口径 · D1~D5 / N1~N3 / S1~S6 / R1~R6）；docs/PoC-10-回放证据(ONLYOFFICE查看器·首关).md；docs/PoC-10-回放证据(ONLYOFFICE查看器·保真度).md；docs/PoC-10-安全定稿(R1-R2·受控下载端点).md；系统功能书.md A4-19 / D2-09

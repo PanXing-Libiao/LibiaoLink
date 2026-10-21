@@ -12,7 +12,7 @@
  *   ③ 点胶囊照旧按地区筛选（URL 写 filter[region]、卡片计数同步）；
  *   ④ 新建项目弹窗的项目地区 = 贴字段弹出的小窗（Push 195 返工）：「还是要之前的小窗 然后最上方是已有项目地区」
  *      ＋「小窗做分页 已有项目地区 / 全部地区 然后选中标蓝即可 不要这个勾」——两个页签：已有项目地区（有项目在用、
- *      按用量降序、带项目数）/ 全部地区（标准国家清单 201 条（中国标准地图口径）+ 字典独有条目，按洲分组 —— 字典
+ *      按用量降序、带项目数；Push 304 起按项目落库值聚合 —— 字典外国名也照数）/ 全部地区（标准国家清单 201 条（中国标准地图口径）+ 字典独有条目，按洲分组 —— 字典
  *      没收录的国家也能搜到、选到）；两个页签的小窗同高同位（「两个分页的高度位置要一致」：固定尺寸，切页不跳）；
  *      打开即聚焦搜索框、输入关键词自动切到全部地区页、中英文都能搜（冰岛 / Iceland）、
  *      搜不到给提示行、回车选当前页第一条；选中态 = 标蓝（不带对勾）；纯选择：无「＋ 添加地区」、无行内删除、不支持手填；
@@ -612,14 +612,9 @@ const standardNames = Array.from(new Set(Array.from(worldMapText.matchAll(/nameZ
 /** 期望候选数 = 标准清单 + 字典里不是标准国名的条目（旧「华东」类；当前库为 0）。 */
 const dictOnlyRows = dictRegionRows.filter((row) => standardNames.indexOf(row.name) < 0);
 const expectedPopupRows = standardNames.length + dictOnlyRows.length;
-/** 「已有项目地区」期望 = 有项目在用的启用字典条目（码 → 活项目数）。 */
-const usedCountByCode = new Map();
-for (const row of projectRows) {
-  if (dictRegionRows.some((item) => item.code === row.region)) {
-    usedCountByCode.set(row.region, (usedCountByCode.get(row.region) ?? 0) + Number(row.n));
-  }
-}
-const usedCodes = Array.from(usedCountByCode.keys());
+/** 「已有项目地区」期望 = 有项目在用的地区（值 = 项目落库原文 → 未删除项目数；Push 304 起按落库值聚合，字典外国名也照数）。 */
+const usedCountByValue = new Map(projectRows.map((row) => [row.region, Number(row.n)]));
+const usedValues = Array.from(usedCountByValue.keys());
 
 const projectsAllBefore = Number((await db.query("select count(*)::int as n from projects")).rows[0].n);
 await clickByText("body", "新建项目");
@@ -643,10 +638,10 @@ check("小窗分页 = 「已有项目地区 / 全部地区」两页签，默认�
 const usedRows = popup === null ? [] : popup.rows;
 const usedRowByValue = new Map(usedRows.map((row) => [row.value, row]));
 const usedMismatch = [];
-for (const code of usedCodes) {
-  const row = usedRowByValue.get(code);
-  if (row === undefined || row.count !== usedCountByCode.get(code)) {
-    usedMismatch.push(code + " 期望 " + String(usedCountByCode.get(code)) + "，实际 " + String(row === undefined ? "（没找到）" : row.count));
+for (const value of usedValues) {
+  const row = usedRowByValue.get(value);
+  if (row === undefined || row.count !== usedCountByValue.get(value)) {
+    usedMismatch.push(value + " 期望 " + String(usedCountByValue.get(value)) + "，实际 " + String(row === undefined ? "（没找到）" : row.count));
   }
 }
 let usedDescending = true;
@@ -655,9 +650,9 @@ for (let index = 1; index < usedRows.length; index += 1) {
     usedDescending = false;
   }
 }
-check("已有项目地区页：" + String(usedCodes.length) + " 条有项目在用的地区、每行带项目数、按用量降序、与库内逐条对账",
-  popup !== null && popup.activeTab === "used" && usedRows.length === usedCodes.length && usedRows.every((row) => row.count !== null && row.group === "已有项目地区") && usedDescending && usedMismatch.length === 0,
-  JSON.stringify({ rows: usedRows.length, expected: usedCodes.length, descending: usedDescending, mismatch: usedMismatch.slice(0, 6) }));
+check("已有项目地区页：" + String(usedValues.length) + " 条有项目在用的地区（落库值口径）、每行带项目数、按用量降序、与库内逐条对账",
+  popup !== null && popup.activeTab === "used" && usedRows.length === usedValues.length && usedRows.every((row) => row.count !== null && row.group === "已有项目地区") && usedDescending && usedMismatch.length === 0,
+  JSON.stringify({ rows: usedRows.length, expected: usedValues.length, descending: usedDescending, mismatch: usedMismatch.slice(0, 6) }));
 const createButtonDisabled = String(await ev("(() => { const button = Array.from(document.querySelectorAll(" + j(PROJECT_DIALOG + " button") + ")).find((item) => item.textContent.trim() === " + j("创建项目") + "); return button === undefined ? " + j("missing") + " : button.disabled; })()"));
 check("新建项目默认不带地区（业务口径「不要默认英国 默认为空即可」）：触发器 = 占位「请选择地区」、小窗里没有选中项、创建按钮禁用",
   popup !== null && triggerAtOpen === "请选择地区" && popup.selectedName === null && createButtonDisabled === "true",

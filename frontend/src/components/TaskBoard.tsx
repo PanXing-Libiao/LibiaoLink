@@ -3,9 +3,9 @@ import { mediumCardBorderOf, mediumCardTintOf, vividCardBorderOf, vividCardTintO
 import { PROJECT_STAGES } from "../data/projects";
 import type { Member } from "../data/members";
 import type { TaskFileRef } from "../fileApi";
-import { TEMP_TASK_STAGE, addedNodeIdsOf, addedNodeKeysOf, cnDateFromIso, dateOnlyText, daysBetweenInclusive, lateDeliveryLabel, ownersLabel, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
+import { TEMP_TASK_STAGE, addedNodeIdsOf, addedNodeKeysOf, dateOnlyText, daysBetweenInclusive, lateDeliveryLabel, ownersLabel, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
 import { stageNameOf, type ApiProjectSummary, type TaskUpdateInput } from "../taskApi";
-import { fieldText, stageText, useLocale, useLocalizedText, useT } from "../i18n";
+import { fieldText, mdText, priorityText, stageText, statusText, useLocale, useLocalizedText, useT } from "../i18n";
 import { InlineDateCell, InlineMemberMultiCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { SelectOption } from "./SelectMenu";
 import { ChangeDetailModal } from "./ChangeDetailModal";
@@ -25,7 +25,7 @@ const STAGE_ORDER: readonly string[] = PROJECT_STAGES.filter((stage) => stage !=
 
 /** 定档任务的行内编辑入口锁定提示（Push 264 · P1-1）：与 409 TASK_FINALIZED 的提示文案同一句；
  *  2026-10-10 业务追订「定档后不能修改就点击后显示弹出即可 不要红色的圆提示」+「都用这个即可」—— 锁定入口保留可点，点击弹站点同款顶部 Toast（这句文案）。 */
-const FINALIZED_EDIT_HINT = "任务已定档，不支持任何修改（文件修改走变更）";
+// Push 301：锁定提示文案移入词典 board.finalizedHint（英文界面换英文；原 FINALIZED_EDIT_HINT 常量删除）。
 
 export type ColumnKey =
   | "title"
@@ -56,7 +56,9 @@ export type ColumnDef = {
 
 export const TABLE_COLUMNS: ColumnDef[] = [
   { key: "title", label: "任务描述", width: "340px", min: 340, locked: true },
-  { key: "manager", label: "项目经理", width: "0.66fr", min: 66 },
+  // 2026-10-13 业务口径「这个 PM 不要省略」：英文表头「Project manager」实测 ≈100px（微软雅黑 12px 中黑）；
+  // 66px 最小宽下被截成「Project ma...」，抬到 104 留余量 —— 中英文表头都整词显示。
+  { key: "manager", label: "项目经理", width: "0.66fr", min: 104 },
   { key: "owner", label: "任务负责人", width: "0.76fr", min: 76 },
   // 状态列最小宽 84（2026-10-10 业务口径「屏幕太小就要左右滑动，不要牺牲这个组件的可视化」）：
   // 最长档位「提前完成」实测 = 44px 文字 + 胶囊 / 单元格内衬 36px = 80px（刚好贴边）—— 抬到 84 留余量，
@@ -243,10 +245,15 @@ export const STATUS_TAG_TEXT_TIER_CLASS: Record<TaskStatus, string> = {
 };
 
 /** 任务状态可选项（顺序对齐业务截图：已延期 / 进行中 / 已完成 / 待开始 / 提前完成）。 */
-const STATUS_OPTIONS: SelectOption[] = (["已延期", "进行中", "已完成", "待开始", "提前完成"] as TaskStatus[]).map((status) => ({
-  value: status,
-  label: <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + STATUS_TAG_CLASS[status]}>{status}</span>,
-}));
+const STATUS_VALUES: TaskStatus[] = ["已延期", "进行中", "已完成", "待开始", "提前完成"];
+
+/** 状态下拉选项（Push 301 字段 / 提示英译：状态名经 statusText 换当前语言；色签沿用中文字典键）。 */
+function statusOptionsOf(statusOf: (value: string) => string): SelectOption[] {
+  return STATUS_VALUES.map((status) => ({
+    value: status,
+    label: <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + STATUS_TAG_CLASS[status]}>{statusOf(status)}</span>,
+  }));
+}
 
 /** 行内编辑能改的任务字段（项目经理是项目级字段，不在其中）。 */
 export type TaskPatch = Partial<Pick<ProjectTask, "title" | "titleEn" | "ownerIds" | "startDate" | "dueDate" | "days" | "headcount" | "priority" | "deliverableTypes" | "note">>;
@@ -290,11 +297,7 @@ export function taskPatchBody(version: number, patch: TaskPatch): TaskUpdateInpu
 }
 
 
-const PRIORITY_OPTIONS = [
-  { value: "高", label: "高" },
-  { value: "中", label: "中" },
-  { value: "低", label: "低" },
-];
+const PRIORITY_VALUES: TaskPriority[] = ["高", "中", "低"];
 
 type TaskBoardProps = {
   tasks: ProjectTask[];
@@ -404,6 +407,7 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
  *  subtitle 缺省 = 英文名小行（项目页口径）；工作台传「阶段 / 临时任务 · 英文名」保持自己那张表的副行。 */
 export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, onDeleteFile, files, tierTint, subtitle }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect?: () => void; onProgress?: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; tierTint?: TintedTier | false; subtitle?: string }) {
   const locale = useLocale();
+  const t = useT();
   /** 手打内容机翻显示（业务口径 2026-10-13「因为页面有些内容是手打的 我建议是提前后台机翻」）：
    *  英文界面任务名按「自带英文名 titleEn 优先 → 机翻译文 → 原文」回退；副行给中文原名对照；中文界面照旧。 */
   const localizedTitle = useLocalizedText(task.title);
@@ -418,15 +422,18 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
   /** 定档锁定（Push 264 · P1-1）：行内任务字段入口一律锁定（点击弹顶部 Toast、不弹编辑浮层）；
    *  2026-10-10 业务追订「项目经理也不可以修改」——「项目经理」列随行一并锁定；「文件」列仍走既有 taskFinalized 门控（修改走变更）。 */
   const taskFinalized = task.finalizedAt !== null;
+  /** Push 301：状态 / 优先级下拉选项按当前语言换词（显示值经 statusText / priorityText）。 */
+  const statusOptions = statusOptionsOf((value) => statusText(locale, value));
+  const priorityOptions: SelectOption[] = PRIORITY_VALUES.map((value) => ({ value, label: priorityText(locale, value) }));
   const dotClass = STATUS_DOT_CLASS[status];
   /** 负责人展示（多位按「、」连接，Push 136；2026-09-24 定案「只按名字」—— 拼音口径下线）。 */
   const fullOwners = ownersLabel(task.owners);
   const startIso = task.startDate;
   const dueIso = task.dueDate;
   const doneIso = task.doneDate;
-  const startText = cnDateFromIso(startIso);
-  const dueText = cnDateFromIso(dueIso);
-  const doneText = cnDateFromIso(doneIso);
+  const startText = mdText(locale, startIso);
+  const dueText = mdText(locale, dueIso);
+  const doneText = mdText(locale, doneIso);
   /** 行内改任一日期时，把两个显示日期与联动天数一起写回（含首尾）。 */
   const patchRange = (nextStartIso: string, nextDueIso: string) => {
     onPatch?.({
@@ -455,8 +462,8 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
       {filesForTask.length > 1 ? <span className="text-[10px] text-zinc-400">+{filesForTask.length - 1}</span> : null}
     </>
   ) : (
-    <span className="inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] tabular-nums text-zinc-600" title={"共 " + String(task.files.total) + " 份"}>
-      {task.files.total} 份
+    <span className="inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] tabular-nums text-zinc-600" title={t("board.files.title", { n: task.files.total })}>
+      {t("board.files.count", { n: task.files.total })}
     </span>
   );
 
@@ -494,9 +501,9 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
         <InlineMemberMultiCell
           values={managerIds}
           options={members}
-          ariaLabel="修改项目经理"
+          ariaLabel={t("board.edit.aria", { field: fieldText(locale, "项目经理") })}
           disabled={taskFinalized}
-          disabledHint={FINALIZED_EDIT_HINT}
+          disabledHint={t("board.finalizedHint")}
           display={<span className="text-zinc-600" title={managers}>{managers}</span>}
           onPick={(member) => {
             if (managerIds.includes(member.id)) {
@@ -514,7 +521,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
     owner:
       onPatch === undefined ? (
         task.owners.length === 0 ? (
-          <span className="text-xs text-zinc-300">待分配</span>
+          <span className="text-xs text-zinc-300">{fieldText(locale, "待分配")}</span>
         ) : (
           <span className="truncate text-xs text-zinc-600" title={fullOwners}>
             {ownersLabel(task.owners)}
@@ -524,12 +531,12 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
         <InlineMemberMultiCell
           values={task.ownerIds}
           options={members}
-          ariaLabel="修改任务负责人"
+          ariaLabel={t("board.edit.aria", { field: fieldText(locale, "任务负责人") })}
           disabled={taskFinalized}
-          disabledHint={FINALIZED_EDIT_HINT}
+          disabledHint={t("board.finalizedHint")}
           display={
             task.owners.length === 0 ? (
-              <span className="text-zinc-300">待分配</span>
+              <span className="text-zinc-300">{fieldText(locale, "待分配")}</span>
             ) : (
               <span className="text-zinc-600" title={fullOwners}>
                 {ownersLabel(task.owners)}
@@ -549,15 +556,15 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
       onSetStatus === undefined ? (
         <span className={"inline-flex items-center gap-1.5 text-xs " + STATUS_TEXT_CLASS[status]}>
           <span className={"h-1.5 w-1.5 shrink-0 rounded-full " + dotClass} />
-          {status}
+          {statusText(locale, status)}
         </span>
       ) : (
         <InlineOptionCell
           value={status}
-          options={STATUS_OPTIONS}
-          ariaLabel="修改任务状态"
+          options={statusOptions}
+          ariaLabel={t("board.edit.aria", { field: fieldText(locale, "任务状态") })}
           disabled={taskFinalized}
-          disabledHint={FINALIZED_EDIT_HINT}
+          disabledHint={t("board.finalizedHint")}
           // Push 134：状态列改成裸框胶囊 —— 简约档（默认）= 图一色签的色**填满整颗胶囊**（原白底小框 + 内层色签合成一颗）；
           // 背景档位铺色档（tierTint = medium / vivid）= 行上已有状态色，状态列收口 —— 撤掉胶囊底色只留该状态的深色字
           // （否则胶囊底 ≈ 行底色、看上去忽有忽无）。铺色档字色 = STATUS_TAG_TEXT_TIER_CLASS（自定 oklch：
@@ -569,7 +576,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
               ? STATUS_TAG_TEXT_TIER_CLASS[status] + " px-1.5 py-[3px] text-[13px] font-bold tracking-wide hover:bg-zinc-900/[0.04]"
               : STATUS_CAPSULE_CLASS[status] + " px-3 py-1.5 text-[11px] font-medium"
           }
-          display={<span className="truncate">{status}</span>}
+          display={<span className="truncate">{statusText(locale, status)}</span>}
           onPick={(value) => {
             // 五态写入（2026-09-24 定案）：进度与完成日期的联动由服务端同事务裁决，口径与原型逐条一致
             onSetStatus(value as TaskStatus);
@@ -582,19 +589,19 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
           <span className="text-xs text-zinc-300">—</span>
         ) : onPatch === undefined ? (
           <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + PRIORITY_CLASS[task.priority]}>
-            {task.priority}
+            {priorityText(locale, task.priority)}
           </span>
         ) : (
           <InlineOptionCell
             value={task.priority}
-            options={PRIORITY_OPTIONS}
-            ariaLabel="修改紧急重要度"
+            options={priorityOptions}
+            ariaLabel={t("board.edit.aria", { field: fieldText(locale, "紧急重要度") })}
             disabled={taskFinalized}
-            disabledHint={FINALIZED_EDIT_HINT}
+            disabledHint={t("board.finalizedHint")}
             // Push 134：紧急重要度同状态列 —— 裸框胶囊，色签底色**填满整颗胶囊**（业务口径「紧急程度也要」）
             bare
             triggerClassName={PRIORITY_CAPSULE_CLASS[task.priority] + " px-3 py-1.5 text-[11px] font-medium"}
-            display={<span className="truncate">{task.priority}</span>}
+            display={<span className="truncate">{priorityText(locale, task.priority)}</span>}
             onPick={(value) => {
               onPatch({ priority: value as TaskPriority });
             }}
@@ -603,15 +610,17 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
       </span>
     ),
     onTime: (
+      // 2026-10-13 业务口径（英文界面「留白太多 文字未居中」）：英文徽标（Overdue · delivered / Overdue · not delivered）
+      // 在最小宽下断成两行、徽标撑满整列 —— 断行文本居中 + 行高收紧，右半列不再留一大片空白。
       <span>
         {late === "逾期未交付" ? (
-          <span className="inline-block rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-600">逾期未交付</span>
+          <span className="inline-block rounded bg-red-50 px-1.5 py-0.5 text-center text-[11px] font-medium leading-tight text-red-600">{statusText(locale, "逾期未交付")}</span>
         ) : late === "逾期已交付" ? (
-          <span className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">逾期已交付</span>
+          <span className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-center text-[11px] font-medium leading-tight text-amber-700">{statusText(locale, "逾期已交付")}</span>
         ) : task.onTime === null ? (
           <span className="text-xs text-zinc-300">—</span>
         ) : (
-          <span className="inline-block rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] text-emerald-700">按时交付</span>
+          <span className="inline-block rounded bg-emerald-50 px-1.5 py-0.5 text-center text-[11px] leading-tight text-emerald-700">{statusText(locale, "按时交付")}</span>
         )}
       </span>
     ),
@@ -624,7 +633,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
             <span className="text-xs text-zinc-300">—</span>
           ) : (
             <>
-              {docTypeCapsule(task.deliverableTypes[0])}
+              {docTypeCapsule(task.deliverableTypes[0], locale)}
               {task.deliverableTypes.length > 1 ? <span className="text-[10px] text-zinc-400">+{task.deliverableTypes.length - 1}</span> : null}
             </>
           )}
@@ -633,7 +642,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
         <DeliverableCell
           values={task.deliverableTypes}
           disabled={taskFinalized}
-          disabledHint={FINALIZED_EDIT_HINT}
+          disabledHint={t("board.finalizedHint")}
           onChange={(next) => {
             onPatch({ deliverableTypes: next });
           }}
@@ -668,9 +677,9 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
         ) : (
           <InlineTextCell
             value={task.note}
-            ariaLabel="修改项目进展描述"
+            ariaLabel={t("board.edit.aria", { field: fieldText(locale, "项目进展描述") })}
             disabled={taskFinalized}
-            disabledHint={FINALIZED_EDIT_HINT}
+            disabledHint={t("board.finalizedHint")}
             display={task.note === "" ? <span className="text-zinc-300">—</span> : <span className="text-zinc-600" title={task.note}>{localizedNote}</span>}
             onSave={(value) => {
               onPatch({ note: value });
@@ -685,9 +694,9 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
       ) : (
         <InlineDateCell
           valueIso={startIso}
-          ariaLabel="修改开始日期"
+          ariaLabel={t("board.edit.aria", { field: fieldText(locale, "开始日期") })}
           disabled={taskFinalized}
-          disabledHint={FINALIZED_EDIT_HINT}
+          disabledHint={t("board.finalizedHint")}
           triggerClassName="tabular-nums text-zinc-600"
           display={startText === "" ? <span className="text-zinc-300">—</span> : startText}
           onChange={(iso) => {
@@ -707,9 +716,9 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
       ) : (
         <InlineDateCell
           valueIso={dueIso}
-          ariaLabel="修改预计完成日期"
+          ariaLabel={t("board.edit.aria", { field: fieldText(locale, "预计完成日期") })}
           disabled={taskFinalized}
-          disabledHint={FINALIZED_EDIT_HINT}
+          disabledHint={t("board.finalizedHint")}
           triggerClassName="tabular-nums text-zinc-600"
           display={dueText === "" ? <span className="text-zinc-300">—</span> : dueText}
           onChange={(iso) => {
@@ -721,17 +730,17 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
       <span className="text-xs tabular-nums text-zinc-600">
         {onPatch === undefined ? (
           task.headcount > 0 ? (
-            task.headcount + " 人"
+            t("drawer.headcount.value", { n: task.headcount })
           ) : (
             <span className="text-zinc-300">—</span>
           )
         ) : (
           <InlineNumberCell
             value={task.headcount}
-            ariaLabel="修改预计所需施工人数"
+            ariaLabel={t("board.edit.aria", { field: fieldText(locale, "预计所需施工人数") })}
             disabled={taskFinalized}
-            disabledHint={FINALIZED_EDIT_HINT}
-            display={task.headcount > 0 ? task.headcount + " 人" : <span className="text-zinc-300">—</span>}
+            disabledHint={t("board.finalizedHint")}
+            display={task.headcount > 0 ? t("drawer.headcount.value", { n: task.headcount }) : <span className="text-zinc-300">—</span>}
             onSave={(value) => {
               onPatch({ headcount: value });
             }}
@@ -750,9 +759,9 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
         ) : (
           <InlineDateCell
             valueIso={doneIso}
-            ariaLabel="修改实际完成日期"
+            ariaLabel={t("board.edit.aria", { field: fieldText(locale, "实际完成日期") })}
             disabled={taskFinalized}
-            disabledHint={FINALIZED_EDIT_HINT}
+            disabledHint={t("board.finalizedHint")}
             triggerClassName="tabular-nums"
             display={task.doneDate !== "" ? <span className="text-zinc-600">{doneText}</span> : <span className="text-zinc-400">—</span>}
             onChange={(iso) => {
@@ -769,21 +778,21 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
         title={
           task.changes.length === 0
             ? undefined
-            : task.changes.map((change) => "变更 " + dateOnlyText(change.appliedAt) + (change.reason === "" ? "" : "（" + change.reason + "）")).join("；")
+            : task.changes.map((change) => t("board.change.tip", { date: dateOnlyText(change.appliedAt) }) + (change.reason === "" ? "" : (locale === "en" ? " (" + change.reason + ")" : "（" + change.reason + "）"))).join(locale === "en" ? "; " : "；")
         }
       >
         {task.changes.length === 0 ? null : (
           <button
             type="button"
             data-change-link-open="true"
-            title="点击查看变更详情"
+            title={t("drawer.change.linkTitle")}
             onClick={(event) => {
               event.stopPropagation();
               setChangeModalId(task.changes[0].id);
             }}
             className="flex items-center gap-1"
           >
-            <span className="inline-block whitespace-nowrap rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 transition hover:bg-amber-200">变更</span>
+            <span className="inline-block whitespace-nowrap rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 transition hover:bg-amber-200">{t("board.change.chip")}</span>
             {task.changes.length > 1 ? <span className="text-[10px] text-zinc-400">+{task.changes.length - 1}</span> : null}
           </button>
         )}
@@ -798,7 +807,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
         data-task-finalized-row={task.finalizedAt === null ? undefined : task.id}
         data-live-row={task.id}
         tabIndex={onSelect === undefined ? -1 : 0}
-        title={onSelect === undefined ? undefined : "点击查看任务详情"}
+        title={onSelect === undefined ? undefined : t("board.row.openTitle")}
         onClick={onSelect}
         onKeyDown={(event) => {
           if (onSelect === undefined) {
@@ -858,25 +867,27 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
 }
 
 export function ProjectSummary({ summary }: { summary: ApiProjectSummary | null }) {
+  const locale = useLocale();
+  const t = useT();
   const total = summary?.total ?? 0;
   const done = summary?.done ?? 0;
   const pct = total === 0 ? 0 : Math.round((done / total) * 100);
   /** 阶段 key → 展示名；null = 服务端判不出（最慢阶段：全部完成或没有任务；最新阶段：还没任务动工）。 */
-  const stageText = (stageKey: string | null): string => (stageKey === null ? "—" : stageNameOf(stageKey));
+  const stageLabel = (stageKey: string | null): string => (stageKey === null ? "—" : stageText(locale, stageNameOf(stageKey)));
   const slowest = summary?.slowestStage ?? null;
   const latest = summary?.latestStage ?? null;
 
   return (
     <div className="flex flex-wrap items-center gap-x-5 gap-y-2.5 rounded-xl border border-zinc-200 bg-white px-5 py-3.5">
       <p className="text-xs text-zinc-500">
-        最慢阶段
-        <span className="ml-1.5 text-sm font-bold text-zinc-800">{total > 0 && slowest === null ? "全部完成" : stageText(slowest)}</span>
+        {t("board.summary.slowest")}
+        <span className="ml-1.5 text-sm font-bold text-zinc-800">{total > 0 && slowest === null ? t("board.summary.allDone") : stageLabel(slowest)}</span>
       </p>
       <p className="text-xs text-zinc-500">
-        最新阶段<span className="ml-1.5 text-sm font-bold text-zinc-800">{stageText(latest)}</span>
+        {t("board.summary.latest")}<span className="ml-1.5 text-sm font-bold text-zinc-800">{stageLabel(latest)}</span>
       </p>
       <div className="ml-auto flex items-center gap-2.5">
-        <span className="text-xs text-zinc-500">整体进度</span>
+        <span className="text-xs text-zinc-500">{t("board.summary.progress")}</span>
         <div className="h-1.5 w-32 overflow-hidden rounded-full bg-zinc-100">
           <div className="h-full rounded-full bg-zinc-900" style={{ width: pct + "%" }} />
         </div>
@@ -884,7 +895,7 @@ export function ProjectSummary({ summary }: { summary: ApiProjectSummary | null 
         {/* 没有任务的项目：不显示 0/0 完成这种没有意义的计数 */}
         {total === 0 ? null : (
           <span className="text-xs text-zinc-400">
-            已完成 {done}/{total}
+            {t("board.summary.done", { done: done, total: total })}
           </span>
         )}
       </div>
@@ -1277,18 +1288,18 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
         <span
           key={tag.key}
           data-task-finalized-badge="true"
-          title="此任务已定档：不支持任何修改（文件修改走变更）"
+          title={t("board.finalized.title")}
           style={{ top: tag.top, writingMode: "vertical-rl" }}
           className="absolute right-full z-[5] -translate-y-1/2 rounded-l-md border border-r-0 border-amber-200 bg-amber-50 py-1.5 pl-1 pr-0.5 text-[10px] font-bold leading-none tracking-[0.18em] text-amber-700 shadow-[0_1px_2px_rgba(24,24,27,0.12)]"
         >
-          定档
+          {t("drawer.finalize.label")}
         </span>
       ))}
       {tempFormOpen && onCreateTempTask !== undefined ? (
         <div
           ref={tempFormTrapRef}
           role="dialog"
-          aria-label={TEMP_TASK_STAGE + "：新建"}
+          aria-label={t("board.stage.newAria")}
           style={cardBox === null ? { top: 10, left: 24 } : cardBox}
           className="absolute z-40 w-[280px] max-w-[calc(100vw-3rem)] rounded-2xl border border-white/80 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.98),rgba(255,255,255,0.94))] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_12px_40px_rgba(15,23,42,0.22)] backdrop-blur-2xl backdrop-saturate-150"
         >

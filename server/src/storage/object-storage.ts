@@ -44,6 +44,13 @@ export interface GetObjectResult {
   sizeBytes: number;
 }
 
+/** 只读对象前缀（文件头校验用）：字节数不超过请求上限，不暴露对象总大小。 */
+export interface ObjectPrefixResult {
+  objectKey: string;
+  bytes: Uint8Array;
+  contentType: string | null;
+}
+
 export interface PutObjectInput {
   objectKey: string;
   body: Uint8Array;
@@ -81,6 +88,11 @@ export interface DownloadUrlInput {
   /** 原始文件名（含中文）：用于签名响应头 Content-Disposition，不参与对象键。 */
   fileName?: string;
   expiresInSeconds?: number;
+  /** 签名响应覆盖：安全位图 / CAD / 未知类型必须显式指定，不能沿用对象自身元数据。 */
+  responseContentType?: string;
+  /** 完整 Content-Disposition；未传且给了 fileName 时为 attachment。 */
+  responseContentDisposition?: string;
+  responseCacheControl?: string;
 }
 
 export interface CopyObjectInput {
@@ -104,6 +116,11 @@ export interface PurgeObjectResult {
   deleteMarkers: number;
 }
 
+export interface PurgePrefixResult extends PurgeObjectResult {
+  /** 覆盖到的唯一对象键数（含未开启版本控制时的普通对象）。 */
+  deletedObjects: number;
+}
+
 export abstract class ObjectStorage {
   abstract readonly bucket: string;
 
@@ -122,17 +139,23 @@ export abstract class ObjectStorage {
   /**
    * 短时签名地址（ADR-006：对象存储禁止匿名读取）。
    *
-   * 传 `fileName` = 签名 `Content-Disposition: attachment`（下载）；不传 = 不改写响应头，
-   * 浏览器按对象自身 Content-Type 内联渲染（预览读 API 走这条）。
+   * 传 `fileName` = 签名 `Content-Disposition: attachment`（下载）；不传 = 不改写响应头。
+   * 预览读面必须通过 `responseContentType` / `responseContentDisposition` 显式覆盖对象元数据，
+   * 不能依赖对象存储中的历史 Content-Type（H1 · S2）。
    */
   abstract signDownloadUrl(input: DownloadUrlInput): Promise<SignedUrl>;
   /**
    * 读对象字节（M4-05c：worker 把预览源文件字节送进转换沙箱）。
    *
-   * 走服务端凭据直读，**不签发预签名地址**：源文件字节不出内网、转换器不带任何 S3 凭证（deploy/preview/README「一」）。
+   * 走服务端凭据直读，**不签发预签名地址**：源文件字节不出内网、转换器不带任何 S3 凭证（deploy/svg-preview/README.md）。
    * 对象不存在返回 null（不抛错）—— 与 `headObject` 同口径，由调用方决定是失败降级还是重试。
    */
   abstract getObject(objectKey: string): Promise<GetObjectResult | null>;
+  /**
+   * 读对象前缀（最多 `maxBytes` 字节）：上传完成时用于文件头校验，避免把大文件整块读入内存。
+   * 对象不存在返回 null（与 `getObject` 同口径）。
+   */
+  abstract readObjectPrefix(objectKey: string, maxBytes: number): Promise<ObjectPrefixResult | null>;
   /**
    * 写对象字节（M4-05c：预览产物回对象存储）。
    *
@@ -148,6 +171,11 @@ export abstract class ObjectStorage {
    * 2026-09-21 真机确认）。
    */
   abstract purgeObject(objectKey: string): Promise<PurgeObjectResult>;
+  /**
+   * **按前缀彻底删除**：删掉 `prefix` 下所有对象键的全部版本与 delete marker。
+   * 项目彻底删除用（`projects/{projectId}/`）；实现必须分页列举、批量删除，且前缀为空时拒绝执行。
+   */
+  abstract purgePrefix(prefix: string): Promise<PurgePrefixResult>;
   /**
    * 服务端复制（complete 时 `…/staging/{sessionId}` → 契约键）；源对象超过单次复制上限时
    * 抛 `object_too_large`（一期由 `UPLOAD_MAX_SIZE_MB` 校验挡在上限内）。

@@ -5,6 +5,7 @@ import { FilePreviewOverlay } from "./FilePreviewOverlay";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { RowDeleteButton } from "./RowDeleteButton";
 import { usePopover } from "./usePopover";
+import { useT } from "../i18n";
 
 /** 任务列表「文件」列下拉（Push 246 · 业务口径 2026-10-08「这里点击后出现右侧下拉框吧 最上方是添加文件
  *  下方是已有文件 点击即可预览 也有删除按钮」）：
@@ -38,6 +39,7 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
   taskFinalized?: boolean;
   children: ReactNode;
 }) {
+  const t = useT();
   const measuredHeight = Math.min(430, 84 + Math.max(files.length, 1) * 30);
   const { open, setOpen, position, triggerRef, popoverRef } = usePopover(276, measuredHeight, "right");
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -82,7 +84,7 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
     setPreviewNote(null);
     setPendingDelete(null);
     if (taskFinalized) {
-      setFinalizeNote("任务已定档：不支持新增文件");
+      setFinalizeNote(t("files.finalizedNote"));
       return;
     }
     setFinalizeNote(null);
@@ -100,7 +102,7 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
     const outcome = await ensurePreviewOutcome(fileId);
     setPreviewing(null);
     if (outcome.kind === "unavailable") {
-      setPreviewNote(outcome.reason ?? "暂不支持在线预览，请下载查看");
+      setPreviewNote(outcome.reason ?? t("drawer.preview.unavailable"));
       return;
     }
     const kind = previewKindOf(name) ?? "image";
@@ -117,7 +119,7 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
     setPreviewing(null);
     if (outcome.kind === "unavailable") {
       setPreview(null);
-      setPreviewNote(outcome.reason ?? "暂不支持在线预览，请下载查看");
+      setPreviewNote(outcome.reason ?? t("drawer.preview.unavailable"));
       return;
     }
     setPreview((previous) => {
@@ -137,7 +139,7 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
       const signed = await fetchDownloadUrl(fileId);
       await triggerDownload(signed.url, signed.fileName);
     } catch (error) {
-      setPreviewNote(error instanceof Error && error.message !== "" ? error.message : "下载失败，请稍后再试");
+      setPreviewNote(error instanceof Error && error.message !== "" ? error.message : t("drawer.download.failed"));
     }
   };
 
@@ -155,8 +157,8 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
         ref={triggerRef}
         type="button"
         data-cell-action="task-files"
-        title={files.length === 0 ? "点击添加文件（关联到本任务）" : "点击管理文件（添加 / 预览 / 删除）"}
-        aria-label={"任务文件（" + taskTitle + "）"}
+        title={files.length === 0 ? t("files.emptyTitle") : t("files.manageTitle")}
+        aria-label={t("files.aria", { name: taskTitle })}
         onClick={(event) => {
           // 「文件」列整格是管理入口：点击不冒泡到行（行点击 = 打开详情抽屉）
           event.stopPropagation();
@@ -171,7 +173,7 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
       >
         {uploading !== null ? (
           <span className="tabular-nums text-zinc-500">
-            {uploading.done === 0 ? "上传中…" : "上传中 " + String(uploading.done) + "/" + String(uploading.total)}
+            {uploading.done === 0 ? t("drawer.files.uploading") : t("drawer.files.uploadingCount", { done: uploading.done, total: uploading.total })}
           </span>
         ) : (
           children
@@ -194,24 +196,24 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
               data-task-files-add="true"
               onClick={() => { beginAddFlow(false); }}
               disabled={uploading !== null}
-              title="添加文件（关联到本任务）"
+              title={t("files.addTitle")}
               className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-400 disabled:hover:bg-transparent"
             >
-              ＋ 添加文件
+              {t("files.add")}
             </button>
             <button
               type="button"
               data-task-files-add-finalize="true"
               onClick={() => { beginAddFlow(true); }}
               disabled={uploading !== null}
-              title="添加定档文件：定档后该任务不支持任何修改（修改走变更）"
+              title={t("files.addFinalTitle")}
               className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:text-zinc-400 disabled:hover:bg-transparent"
             >
-              ＋ 添加定档文件
+              {t("files.addFinal")}
             </button>
             {uploading === null ? null : (
               <span className="ml-auto text-[11px] tabular-nums text-zinc-400">
-                {uploading.done === 0 ? "上传中…" : "上传中 " + String(uploading.done) + "/" + String(uploading.total)}
+                {uploading.done === 0 ? t("drawer.files.uploading") : t("drawer.files.uploadingCount", { done: uploading.done, total: uploading.total })}
               </span>
             )}
           </div>
@@ -222,7 +224,7 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
             data-file-upload-input="true"
             data-task-files-input="true"
             className="hidden"
-            aria-label="选择要上传到本任务的文件"
+            aria-label={t("drawer.files.pickAria")}
             onClick={(event) => {
               // 选文件对话框关掉后浏览器会向 input 补发一次 click：拦一道，不让它冒泡出下拉（回归 Push 226 修正）
               event.stopPropagation();
@@ -235,12 +237,12 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
           />
           {taskFinalized ? (
             <p data-task-files-note-finalized="true" className="border-t border-zinc-100 px-3 py-1.5 text-[11px] leading-4 text-amber-600">
-              任务已定档：不支持新增 / 改名 / 删除等修改
+              {t("drawer.files.lockedNote")}
             </p>
           ) : null}
           <div className="border-t border-zinc-100">
             {files.length === 0 ? (
-              <p className="px-3 py-2.5 text-[11px] text-zinc-400">暂无文件</p>
+              <p className="px-3 py-2.5 text-[11px] text-zinc-400">{t("drawer.files.empty")}</p>
             ) : (
               <ul className="max-h-64 overflow-y-auto py-1">
                 {files.map((file) => {
@@ -254,12 +256,12 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
                         data-task-files-preview="true"
                         onClick={() => { void openPreview(file.id, file.name); }}
                         disabled={previewingThis}
-                        title={"点击预览：" + file.name}
+                        title={t("files.previewTitle", { name: file.name })}
                         className="min-w-0 flex-1 truncate rounded px-1 py-0.5 text-left text-xs text-zinc-700 transition-colors hover:text-zinc-900 disabled:text-zinc-400"
                       >
                         {file.name}
                       </button>
-                      {previewingThis ? <span className="shrink-0 text-[10px] text-zinc-400">预览中…</span> : null}
+                      {previewingThis ? <span className="shrink-0 text-[10px] text-zinc-400">{t("drawer.file.previewing")}</span> : null}
                       {onDelete === undefined || taskFinalized ? null : confirming ? (
                         <span data-task-files-delete-confirm="true" className="flex shrink-0 items-center gap-1">
                           <button
@@ -267,21 +269,21 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
                             onClick={() => { confirmDelete(file.id); }}
                             className="flex h-6 shrink-0 items-center justify-center rounded-full bg-red-500 px-2.5 text-[11px] font-semibold leading-none text-white shadow-[0_1px_2px_rgba(220,38,38,0.25)] transition-colors hover:bg-red-600"
                           >
-                            确认删除
+                            {t("drawer.file.deleteOk")}
                           </button>
                           <button
                             type="button"
                             onClick={() => { setPendingDelete(null); }}
                             className="flex h-6 shrink-0 items-center justify-center rounded-full bg-zinc-100 px-2.5 text-[11px] font-medium leading-none text-zinc-600 transition-colors hover:bg-zinc-200"
                           >
-                            取消
+                            {t("drawer.file.deleteCancel")}
                           </button>
                         </span>
                       ) : (
                         <span data-task-files-delete="true" className="flex h-6 w-12 shrink-0 items-center">
                           <RowDeleteButton
                             onDelete={() => { setPendingDelete(file.id); }}
-                            label={"删除（移入回收站，30 天内可恢复）：" + file.name}
+                            label={t("drawer.file.deleteAria", { name: file.name })}
                           />
                         </span>
                       )}

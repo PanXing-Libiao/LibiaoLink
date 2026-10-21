@@ -60,6 +60,12 @@ export class AuthController {
     @Req() request: Request,
     @Res() response: Response,
   ): Promise<void> {
+    // 单点登出回跳：buildLogoutUrl 复用本回调地址作 post_logout_redirect_uri，
+    // 无 code / state / error 的请求即登出落地 —— 302 回站点首页（未登录态由前端统一转登录页）。
+    if (query.code === undefined && query.state === undefined && (query.error ?? "") === "") {
+      response.redirect(302, "/");
+      return;
+    }
     if (typeof query.error === "string" && query.error !== "") {
       throw new AppError("AUTH_CALLBACK_FAILED", "SSO 授权失败（" + query.error + "）");
     }

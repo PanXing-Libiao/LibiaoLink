@@ -31,8 +31,11 @@ function makeChangeRow(overrides: Partial<ChangeRequestJoinedRow> = {}): ChangeR
     reason: "客户要求把电机功率从 5.5kW 提到 7.5kW",
     beforeSummary: "5.5kW",
     afterSummary: "7.5kW",
+    beforeSummaryFileIds: [],
+    afterSummaryFileIds: [],
     status: "applied",
     appliedBy: ACTOR,
+    writerBy: null,
     appliedAt: NOW,
     createdAt: NOW,
     fileId: FILE,
@@ -189,8 +192,11 @@ describe("ChangeService.listProjectChanges（M4-04 变更读面 · 列表）", (
         reason: "客户要求把电机功率从 5.5kW 提到 7.5kW",
         beforeSummary: "5.5kW",
         afterSummary: "7.5kW",
+        beforeSummaryFileIds: [],
+        afterSummaryFileIds: [],
         status: "applied",
         appliedBy: ACTOR,
+        writerBy: null,
         appliedAt: NOW.toISOString(),
         createdAt: NOW.toISOString(),
         fileId: FILE,
@@ -209,6 +215,35 @@ describe("ChangeService.listProjectChanges（M4-04 变更读面 · 列表）", (
     });
     expect(query.sorts).toEqual([]);
     expect(query.offset).toBe(0);
+  });
+
+  it("列表（Push 319）：导入变更没有变更后文件 → fileId / versionId / versionSeq 为 null（不再被过滤）", async () => {
+    const h = makeService();
+    h.repo.changeItems = [makeChangeRow({ fileId: null, versionId: null, versionSeq: null })];
+    h.repo.changeTotal = 1;
+
+    const result = await h.service.listProjectChanges(PROJECT, { page: 1, limit: 20 });
+
+    expect(result.total).toBe(1);
+    expect(result.items[0]).toEqual({
+      id: CHANGE,
+      projectId: PROJECT,
+      nodeId: NODE,
+      stageKey: "design",
+      reason: "客户要求把电机功率从 5.5kW 提到 7.5kW",
+      beforeSummary: "5.5kW",
+      afterSummary: "7.5kW",
+      beforeSummaryFileIds: [],
+      afterSummaryFileIds: [],
+      status: "applied",
+      appliedBy: ACTOR,
+      writerBy: null,
+      appliedAt: NOW.toISOString(),
+      createdAt: NOW.toISOString(),
+      fileId: null,
+      versionId: null,
+      versionSeq: null,
+    });
   });
 
   it("列表：阶段多值 + 关键字（trim）+ 申请人 / 文件 / 节点筛选 + 分页排序下推 repository", async () => {
@@ -294,7 +329,7 @@ describe("ChangeService.getChange（M4-04 变更读面 · 详情）", () => {
 
     const detail = await h.service.getChange(CHANGE, ACTOR);
 
-    expect(detail.file.name).toBe("机械设计图纸.pdf");
+    expect(detail.file?.name).toBe("机械设计图纸.pdf");
     expect(detail.filePreviousName).toBe("回放-变更目标-图纸.xls");
   });
 
@@ -329,5 +364,30 @@ describe("ChangeService.getChange（M4-04 变更读面 · 详情）", () => {
       code: "INTERNAL",
       httpStatus: 500,
     });
+  });
+
+  it("详情：fileId / versionId 半空 → 500 INTERNAL（半空 = 数据不一致）", async () => {
+    const h = makeService();
+    h.repo.joined = makeChangeRow({ versionId: null, versionSeq: null });
+    h.repo.file = makeFileRow();
+
+    await expect(h.service.getChange(CHANGE, ACTOR)).rejects.toMatchObject({
+      code: "INTERNAL",
+      httpStatus: 500,
+    });
+  });
+
+  it("详情（Push 319）：导入变更无变更后文件（fileId / versionId 全空）→ file / version 给 null", async () => {
+    const h = makeService();
+    h.repo.joined = makeChangeRow({ fileId: null, versionId: null, versionSeq: null });
+
+    const detail = await h.service.getChange(CHANGE, ACTOR);
+
+    expect(detail.fileId).toBeNull();
+    expect(detail.versionId).toBeNull();
+    expect(detail.versionSeq).toBeNull();
+    expect(detail.file).toBeNull();
+    expect(detail.version).toBeNull();
+    expect(detail.filePreviousName).toBeNull();
   });
 });

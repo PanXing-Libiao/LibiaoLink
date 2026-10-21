@@ -1,6 +1,7 @@
 /** file 模块唯一公开出口（跨模块只允许 import 本文件）。 */
 export { FileModule } from "./file.module.js";
-export { FileService, EXPIRE_SWEEP_BATCH } from "./file.service.js";
+export { FileService, EXPIRE_SWEEP_BATCH, RECYCLE_SWEEP_BATCH } from "./file.service.js";
+export type { ProjectExportFileRef } from "./file.service.js";
 export { ChangeService } from "./change.service.js";
 export { PreviewService } from "./preview.service.js";
 export { PreviewReadService } from "./preview-read.service.js";

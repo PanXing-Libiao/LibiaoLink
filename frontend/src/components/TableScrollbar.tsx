@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { useT } from "../i18n";
 
 /**
  * 表格底部滑块（Push 221）：项目总览 / 干系人宽表共用的横向滚动条 —— 吸附在视口底部（外层 `#table-scrollbar-bar`），
@@ -28,6 +29,7 @@ const MIN_THUMB_WIDTH = 56;
 const KEYBOARD_STEP = 160;
 
 export function TableScrollbar({ scrollRef, onOverflowChange, controlsId = "task-board-scroll" }: TableScrollbarProps) {
+  const t = useT();
   const trackRef = useRef<HTMLDivElement | null>(null);
   const [metrics, setMetrics] = useState<Metrics>(HIDDEN);
   const overflowHandlerRef = useRef(onOverflowChange);
@@ -198,7 +200,7 @@ export function TableScrollbar({ scrollRef, onOverflowChange, controlsId = "task
           onPointerUp={handleThumbPointerUp}
           onPointerCancel={handleThumbPointerUp}
           onKeyDown={handleKeyDown}
-          title="拖动查看右侧更多列"
+          title={t("ts.dragTitle")}
           style={{ width: metrics.thumbWidth, left: metrics.offset }}
           className="pointer-events-auto absolute top-1/2 h-3 -translate-y-1/2 cursor-grab rounded-full bg-zinc-400 transition-colors hover:bg-zinc-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60 active:cursor-grabbing active:bg-zinc-600"
         />

@@ -138,6 +138,29 @@ cd deploy/casdoor && cp .env.example .env && vi .env && docker compose up -d
 3. **组织级默认值是空的**：`libiaorobot.com` 的 `defaultTokenFormat` / `defaultTokenFields` 为空，新建应用**不会**自动继承公司标准，每个应用都要手工勾。
 4. 测试环境没有提供商、没有正式员工数据，必须自建与正式环境同名同邮箱的用户才能联调。
 
+### 2026-10-14 LibiaoLink 应用按接入标准调整（104.44 测试环境联调）
+
+> 面向 `test-pm.libiaorobot.com` → 10.1.104.44 测试环境联调：完成 09-16 核对的「待按接入标准调整」三项（Logo 暂留默认），并为测试环境追加回调（应用仍为 `LibiaoLink`，clientId `41e162…` 不变）。
+
+| 项 | 调整后实况 |
+|---|---|
+| Redirect URIs | 追加 `https://test-pm.libiaorobot.com/auth/callback`（localhost 两条保留） |
+| Grant Types | 只留 `authorization_code`（原 6 种） |
+| Token Format / Fields | `JWT-Custom` / 5 字段（`Name` `Owner` `Id` `DisplayName` `Email`） |
+| 服务器侧（104.44） | `CASDOOR_ISSUER=https://authtest.libiaorobot.com`、`CASDOOR_REDIRECT_URI=https://test-pm.libiaorobot.com/auth/callback`；clientId / secret 已回填 `secrets/`（文件渠道，不回显） |
+| 实测 | `/auth/login` 302 → `https://authtest.libiaorobot.com/login/oauth/authorize`（`client_id` 精确、`code_challenge_method=S256`）；授权页可达；浏览器全流程人工实测进行中 |
+
+### 2026-10-14 单点登出回跳修正（test-pm 登出报错后续）
+
+> 现象：测试环境（test-pm）点「退出登录」后，浏览器落在 Casdoor 的错误 JSON —— `{"status":"error","msg":"重定向 URI: https://test-pm.libiaorobot.com/在许可跳转列表中没有找到"}`。本地沙箱未复现：Casdoor 对 `localhost` / `127.0.0.1` 等 origin 有豁免（`util.IsValidOrigin`），部署环境才按应用「许可跳转列表」（Redirect URIs）精确校验。
+
+| 项 | 说明 |
+|---|---|
+| 原因 | `/auth/logout` 的 `post_logout_redirect_uri` 原为「站点根地址」（`origin + "/"`）；authtest 应用 Redirect URIs 只登记了 `https://test-pm.libiaorobot.com/auth/callback`（+ 两条 localhost），根地址不在册 → Casdoor `redirectToPostLogout` 拒绝并返回错误 JSON |
+| 修正（repo · 2026-10-14） | `post_logout_redirect_uri` 复用已登记的 `CASDOOR_REDIRECT_URI`；`/auth/callback` 收到无 `code` / `state` / `error` 的请求视为登出回跳 → 302 回站点首页（未登录态由前端统一转登录页） |
+| 落点 | `server/src/modules/identity/oidc.service.ts`（buildLogoutUrl）、`auth.controller.ts`（callback 回跳分支）、`server/test/auth.e2e.test.ts`（断言更新 + 回跳用例）；不动 Casdoor / SSO 侧配置 |
+| 验证 | 单测：登出 302 带 `id_token_hint` + `post_logout_redirect_uri = CASDOOR_REDIRECT_URI`；无参 `/auth/callback` → 302 `/`（本地 vitest + 2026-10-14 部署 v1.28 后 test-pm 真机探针：`/auth/logout` 302 携 `post_logout_redirect_uri=https://test-pm.libiaorobot.com/auth/callback`、无参 `/auth/callback` 302 → `/` 均过；浏览器人工点验「退出登录 → 回登录页」待业务侧确认） |
+
 ## 五、公司正式环境（auth.libiaorobot.com）：只读核对
 
 只调用公开接口（`/api/get-provider`、`/api/get-application`、`/api/get-default-application`），未登录、未改动任何配置。

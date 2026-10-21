@@ -65,6 +65,8 @@ export const jobs = pgTable(
     /** 领取者标识（migration 0039）：保留最后一次，便于多实例排障；完成后清 locked_at、保留 locked_by。 */
     lockedBy: text("locked_by"),
     lockedAt: timestamp("locked_at", { withTimezone: true }),
+    /** 一规则一 job 的幂等键（M5-06-1A · 0060）：内置调度规则 = automation-schedule:<ruleCode>；历史行 NULL。 */
+    dedupeKey: text("dedupe_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -72,6 +74,11 @@ export const jobs = pgTable(
     check("ck_jobs_status", sql`${table.status} in ('pending', 'done', 'failed')`),
     check("ck_jobs_cron", sql`${table.cron} is null or ${table.cron} ~ '^\\S+( \\S+){4}$'`),
     check("ck_jobs_attempts", sql`${table.attempts} >= 0`),
+    unique("jobs_dedupe_key_key").on(table.dedupeKey),
+    check(
+      "ck_jobs_dedupe_key",
+      sql`${table.dedupeKey} is null or char_length(btrim(${table.dedupeKey})) between 1 and 128`,
+    ),
     index("ix_jobs_due").on(table.runAt).where(sql`status = 'pending'`),
     index("ix_jobs_locked").on(table.lockedAt).where(sql`status = 'pending' and locked_at is not null`),
   ],

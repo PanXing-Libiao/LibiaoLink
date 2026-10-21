@@ -5,6 +5,7 @@ import { DICT_NAME_MAX, accentOfItem, type DictAccent, type DictItem } from "../
 import { OptionList } from "./SelectMenu";
 import type { SelectOption } from "./SelectMenu";
 import { usePopover } from "./usePopover";
+import { textOf, useLocale, useT } from "../i18n";
 
 /** 新增分支的文案（两类字典的影响范围 / 权限口径不同，由调用方给）。 */
 type DictAddText = {
@@ -47,14 +48,15 @@ type DictSelectProps = {  /** 当前值（字典码 / 存量自定义值）。 *
  * 引用守卫（A3 · Push 174）：条目正被项目卡片引用时不给删 —— 删除位置灰并在悬停时说明原因（服务端同样会 409
  * DICT_ITEM_IN_USE 兜底，缓存陈旧时不会误删）；无引用返回 undefined（正常可删）。
  */
-function deleteBlockReason(item: DictItem): string | undefined {
-  return item.usageCount > 0 ? "正被 " + String(item.usageCount) + " 个项目使用，不能删除" : undefined;
+function deleteBlockReason(item: DictItem, inUseText: (n: number) => string): string | undefined {
+  return item.usageCount > 0 ? inUseText(item.usageCount) : undefined;
 }
 
 function buildOptions(
   items: DictItem[],
   value: string,
   renderContent: ((name: string, item: DictItem | null) => ReactNode) | undefined,
+  inUseText: (n: number) => string,
 ): SelectOption[] {
   const options: SelectOption[] = [];
   const seen = new Set<string>();
@@ -68,7 +70,7 @@ function buildOptions(
     options.push({
       value: item.code,
       label: labelOf(item.name, item),
-      deleteDisabledReason: deleteBlockReason(item)
+      deleteDisabledReason: deleteBlockReason(item, inUseText)
     });
   }
   if (value !== "" && !seen.has(value)) {
@@ -103,8 +105,13 @@ function availableAccents(items: DictItem[], options: readonly DictAccent[]): re
  *   输入的名称已存在时直接选中、不重复添加。
  */
 export function DictSelect({ value, items, ariaLabel, placeholder, renderContent, onAdd, addText, palette, onDelete, deleteLabelOf, onChange }: DictSelectProps) {
+  const t = useT();
+  const locale = useLocale();
   /** 候选 = 字典项（按 sort 升序）→ 当前值兜底（不在字典里的存量值），按值去重。 */
-  const options = useMemo(() => buildOptions(items, value, renderContent), [items, value, renderContent]);
+  const options = useMemo(
+    () => buildOptions(items, value, renderContent, (n) => textOf(locale, "dictSelect.inUse", { n })),
+    [items, value, renderContent, locale],
+  );
   /** 浮层高度估算：选项最多按 8 行 + 顶部「＋ 添加」一行（超出部分列表内滚动）。 */
   const popoverHeight = useMemo(() => {
     const visible = Math.min(options.length, 8);
@@ -128,6 +135,8 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
     const item = items.find((entry) => entry.code === code);
     return item === undefined ? code : item.name;
   };
+  /** 色板名显示（Push 301）：英文界面用 nameEn（色板自身不翻译中文键）；分隔符同样按语言取。 */
+  const accentNameOf = (entry: DictAccent): string => (locale === "en" ? entry.nameEn : entry.name);
 
   /** 收起浮层并复位「添加」分支（关闭后不留残留输入 / 报错；点浮层外关掉也走这里）。 */
   const close = (): void => {
@@ -195,15 +204,15 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
     }
     const name = draft.trim();
     if (name === "") {
-      setError("名称不能为空。");
+      setError(t("dictSelect.empty"));
       return;
     }
     if (name.length > DICT_NAME_MAX) {
-      setError("名称最长 " + String(DICT_NAME_MAX) + " 个字。");
+      setError(t("dictSelect.tooLong", { n: DICT_NAME_MAX }));
       return;
     }
     if (name.includes(",")) {
-      setError("名称不能包含英文逗号。");
+      setError(t("dictSelect.comma"));
       return;
     }
     const existed = options.find((option) => option.value === name);
@@ -216,7 +225,7 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
     if (palette !== undefined) {
       const entry = accentChoices.find((option) => option.key === accentKey);
       if (entry === undefined) {
-        setError("请先选一个颜色模板。");
+        setError(t("dictSelect.pickColor"));
         return;
       }
       metadata = { accent: entry.color, accentText: entry.text };
@@ -323,9 +332,9 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
                           <button
                             key={entry.key}
                             type="button"
-                            aria-label={palette.label + "：" + entry.name}
+                            aria-label={palette.label + (locale === "en" ? ": " : "：") + accentNameOf(entry)}
                             aria-pressed={entry.key === accentKey}
-                            title={entry.name}
+                            title={accentNameOf(entry)}
                             onClick={() => {
                               setAccentKey(entry.key);
                             }}
@@ -363,7 +372,7 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
                       }}
                       className="rounded-lg border border-zinc-200 px-2.5 py-1 text-xs text-zinc-600 transition hover:bg-zinc-50"
                     >
-                      取消
+                      {t("common.cancel")}
                     </button>
                     <button
                       type="button"
@@ -373,7 +382,7 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
                       }}
                       className="rounded-lg bg-zinc-900 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      {pending ? "添加中…" : "添加"}
+                      {pending ? t("dictSelect.adding") : t("dictSelect.add")}
                     </button>
                   </div>
                 </div>

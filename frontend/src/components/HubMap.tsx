@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { WORLD_MAP_COUNTRIES, WORLD_MAP_DASHLINE_PATHS, WORLD_MAP_MICRO_STATES, WORLD_MAP_NANHAI_ISLANDS, WORLD_MAP_VIEW, type WorldMapCountry, type WorldMapMicroState } from "../data/worldMap";
-import { MAP_PROJECT_STATUS_TEXT, type HubMapDistribution, type HubMapPillar } from "../data/mapProjects";
+import { type HubMapDistribution, type HubMapPillar } from "../data/mapProjects";
+import { projectStatusTextOf, textOf, useLocale, useLocalizedTranslator, useT, type Locale } from "../i18n";
 import { buildListHash, EMPTY_LIST_QUERY } from "../useHashRoute";
 
 /**
@@ -58,8 +59,7 @@ const PILLAR_MAX_ROWS = 6;
  *  这里没有写死的「1 / 2 / 3 个及以上」天花板 —— 档位边界按当前数据算，将来项目铺开了也不会「大于 N 个全一个色」。 */
 const TIER_MAX = 5;
 
-/** 图例里「档位怎么算的」口径说明：鼠标停在「项目数」或分档提示上给看（与 buildTierBounds 同一套算法）。 */
-const TIER_RULE_TEXT = "档位随数据算：把有项目的国家/地区按项目数升序均分成最多 5 档（累计到「地区数 ÷ 档数」切一档，同项目数必同档），项目越多底色越深；色阶 5 档按档数拉开用，最深那档永远取最深槽位。";
+/** 图例里「档位怎么算的」口径说明：鼠标停在「项目数」或分档提示上给看（与 buildTierBounds 同一套算法；文案在词典 hm.tierRule，中英随界面语言）。 */
 
 /** 项目数 → 档位边界（数据自适应）：把所有有项目的国家按项目数升序排，每档尽量装一样多的国家
  *  （累计到「地区数 / 档数」就切下一档），同项目数的国家必在同一档；最多 TIER_MAX 档。
@@ -111,20 +111,21 @@ function tierSlot(index: number, count: number): number {
 }
 
 /** 档位文案：单值档报「N 个项目」，最高档报「N 个及以上」，中间多值档报「a–b 个项目」。 */
-function tierText(index: number, bounds: readonly number[]): string {
+function tierText(locale: Locale, index: number, bounds: readonly number[]): string {
   const upper = bounds[index];
   const lower = index === 0 ? 1 : bounds[index - 1] + 1;
   if (lower === upper) {
-    return String(upper) + " 个项目";
+    return textOf(locale, "hm.nProjects", { n: upper });
   }
-  return index === bounds.length - 1 ? String(lower) + " 个及以上" : String(lower) + "–" + String(upper) + " 个项目";
+  return index === bounds.length - 1 ? textOf(locale, "hm.nPlus", { n: lower }) : textOf(locale, "hm.nRange", { a: lower, b: upper });
 }
 
 /** 档位名（图例里显示的就是这个）：一档 / 二档 / …，最多 TIER_MAX 档 —— 只报「第几档」，
  *  具体几个项目放在悬停说明里（范围跟着数据变，写进图例看着就像写死的口径）。 */
-const TIER_NAMES = ["一档", "二档", "三档", "四档", "五档"];
-function tierName(index: number): string {
-  return TIER_NAMES[index] ?? String(index + 1) + " 档";
+const TIER_NAME_KEYS = ["hm.tier1", "hm.tier2", "hm.tier3", "hm.tier4", "hm.tier5"] as const;
+function tierName(locale: Locale, index: number): string {
+  const key = TIER_NAME_KEYS[index];
+  return key === undefined ? textOf(locale, "hm.tierN", { n: index + 1 }) : textOf(locale, key);
 }
 
 /** 触碰时要报国名的目标：国家路径、微国符号、南海诸岛符号，字段口径一致（nameZh + name）。 */
@@ -142,6 +143,9 @@ for (const state of WORLD_MAP_MICRO_STATES) {
 }
 
 export function HubMap({ distribution, note = "" }: { distribution: HubMapDistribution | null; note?: string }) {
+  const locale = useLocale();
+  const t = useT();
+  const localize = useLocalizedTranslator();
   const [hovered, setHovered] = useState<HoveredLabel | null>(null);
   // 九追订：点了国家区域之后钉住的那根柱（"" = 没钉）；钉住后清单可滑动 / 展开
   const [pinnedKey, setPinnedKey] = useState("");
@@ -219,7 +223,7 @@ export function HubMap({ distribution, note = "" }: { distribution: HubMapDistri
         viewBox={"0 0 " + WORLD_MAP_VIEW.width + " " + WORLD_MAP_VIEW.height}
         preserveAspectRatio="xMidYMid meet"
         role="img"
-        aria-label="世界地图（项目分布示意底图；中国国界按中国标准地图口径；有项目的国家按项目数上蓝色底色、项目越多颜色越深，鼠标触碰时立一根立柱，点一下就把立柱与项目梳理钉住（点海面空白处取消）"
+        aria-label={t("hm.mapAria")}
         onMouseLeave={() => setHovered(null)}
         onClick={(event) => {
           /* 九追订：「点击空白区域也可以取消定住」—— 事件目标就是 svg 自己时说明点在海面 / 图外空白上
@@ -329,8 +333,8 @@ export function HubMap({ distribution, note = "" }: { distribution: HubMapDistri
       <div className="hub-map-badge" data-active={hovered === null && pinnedKey === "" ? "false" : "true"} data-pinned={pinnedPillar === null ? "false" : "true"} aria-hidden="true">
         <span className="hub-map-badge__zh">{shown === null ? "" : shown.nameZh}</span>
         <span className="hub-map-badge__en">{shown === null ? "" : shown.name}</span>
-        {shownPillar === null ? null : <span className="hub-map-badge__count">{shownPillar.total} 个项目</span>}
-        {pinnedPillar === null ? null : <span className="hub-map-badge__pin">已钉住</span>}
+        {shownPillar === null ? null : <span className="hub-map-badge__count">{t("hm.nProjects", { n: shownPillar.total })}</span>}
+        {pinnedPillar === null ? null : <span className="hub-map-badge__pin">{t("hm.pinned")}</span>}
       </div>
       {/* 项目梳理：触碰有项目的国家 / 立柱时，右上角列出该国的项目（类型色点 + 状态） */}
       <div
@@ -342,12 +346,12 @@ export function HubMap({ distribution, note = "" }: { distribution: HubMapDistri
         aria-hidden={pinnedPillar === null ? "true" : undefined}
       >
         <div className="hub-map-projects__head">
-          <span className="hub-map-projects__zh">{shownPillar === null ? "" : shownPillar.nameZh}</span>
-          <span className="hub-map-projects__total">{shownPillar === null ? "" : "共 " + String(shownPillar.total) + " 个项目"}</span>
+          <span className="hub-map-projects__zh">{shownPillar === null ? "" : locale === "en" ? shownPillar.name : shownPillar.nameZh}</span>
+          <span className="hub-map-projects__total">{shownPillar === null ? "" : t("hm.total", { n: shownPillar.total })}</span>
           {pinnedPillar === null ? null : (
             <span className="hub-map-projects__tools">
-              <button type="button" className="hub-map-projects__expand" onClick={() => setExpanded((value) => !value)}>{expanded ? "收起" : "展开全部"}</button>
-              <button type="button" className="hub-map-projects__close" onClick={unpin} aria-label="取消钉住">×</button>
+              <button type="button" className="hub-map-projects__expand" onClick={() => setExpanded((value) => !value)}>{expanded ? t("hm.collapse") : t("hm.expandAll")}</button>
+              <button type="button" className="hub-map-projects__close" onClick={unpin} aria-label={t("hm.unpinAria")}>×</button>
             </span>
           )}
         </div>
@@ -357,43 +361,43 @@ export function HubMap({ distribution, note = "" }: { distribution: HubMapDistri
             : (pinnedPillar === null ? activePillar.projects.slice(0, PILLAR_MAX_ROWS) : activePillar.projects).map((project) => (
                 <li key={project.id} data-live-card={project.id} className="hub-map-projects__row">
                   <span className="hub-map-projects__dot" style={{ background: project.accent }} />
-                  <span className="hub-map-projects__name" title={project.name}>{project.name}</span>
-                  <span className="hub-map-projects__status">{project.statusText}</span>
+                  <span className="hub-map-projects__name" title={locale === "en" ? project.name : undefined}>{localize(project.name)}</span>
+                  <span className="hub-map-projects__status">{projectStatusTextOf(locale, project.status)}</span>
                 </li>
               ))}
         </ul>
         {shownPillar === null || shownPillar.projects.length <= PILLAR_MAX_ROWS ? null : pinnedPillar === null ? (
-          <div className="hub-map-projects__more">{"还有 " + String(shownPillar.projects.length - PILLAR_MAX_ROWS) + " 个项目…（点国家区域可钉住看全部）"}</div>
+          <div className="hub-map-projects__more">{t("hm.more", { n: shownPillar.projects.length - PILLAR_MAX_ROWS })}</div>
         ) : (
-          <div className="hub-map-projects__more">{"共 " + String(shownPillar.projects.length) + " 个项目 · " + (expanded ? "已展开全部" : "列表可滚动")}</div>
+          <div className="hub-map-projects__more">{t("hm.pinnedSummary", { n: shownPillar.projects.length, state: expanded ? t("hm.expandedAll") : t("hm.scrollable") })}</div>
         )}
       </div>
       {/* 图例与脚注：底色档位（一档 / 二档 …，档数与每档范围都随数据算）+ 立柱分段色 + 总量；对不上国家的地区单列 */}
       <div className="hub-map-legend" data-active={distribution !== null || note !== "" ? "true" : "false"} aria-hidden="true">
         <span className="hub-map-legend__group">
-          <span className="hub-map-legend__gloss" title={TIER_RULE_TEXT}>项目数</span>
+          <span className="hub-map-legend__gloss" title={t("hm.tierRule")}>{t("hm.legendCount")}</span>
           {tierBounds.map((bound, index) => (
-            <span key={bound} className="hub-map-legend__item" title={tierName(index) + "：" + tierText(index, tierBounds)}>
+            <span key={bound} className="hub-map-legend__item" title={tierName(locale, index) + (locale === "en" ? ": " : "：") + tierText(locale, index, tierBounds)}>
               <span className="hub-map-legend__swatch" data-tier={String(tierSlot(index + 1, tierBounds.length))} />
-              {tierName(index)}
+              {tierName(locale, index)}
             </span>
           ))}
-          <span className="hub-map-legend__hint" title={TIER_RULE_TEXT}>{"按当前数据自动分档 · 共 " + String(tierBounds.length) + " 档"}</span>
+          <span className="hub-map-legend__hint" title={t("hm.tierRule")}>{t("hm.autoTiers", { n: tierBounds.length })}</span>
         </span>
         <span className="hub-map-legend__group">
-          <span className="hub-map-legend__gloss">立柱分段</span>
+          <span className="hub-map-legend__gloss">{t("hm.legendSegment")}</span>
           {statuses.map((status) => (
             <span key={status} className="hub-map-legend__item">
               <span className="hub-map-legend__swatch" data-status={status} />
-              {MAP_PROJECT_STATUS_TEXT[status]}
+              {projectStatusTextOf(locale, status)}
             </span>
           ))}
         </span>
         {distribution === null ? null : (
-          <span className="hub-map-legend__total">{"共 " + String(distribution.totalProjects) + " 个项目 · 覆盖 " + String(distribution.pillars.length) + " 个国家/地区"}</span>
+          <span className="hub-map-legend__total">{t("hm.coverage", { n: distribution.totalProjects, m: distribution.pillars.length })}</span>
         )}
         {unmatched.length === 0 ? null : (
-          <span className="hub-map-legend__unmatched">{"未落到图上：" + unmatched.map((item) => item.region + "（" + String(item.count) + "）").join(" / ")}</span>
+          <span className="hub-map-legend__unmatched">{t("hm.unmatched") + unmatched.map((item) => t("hm.unmatchedItem", { region: item.region, n: item.count })).join(" / ")}</span>
         )}
         {note === "" ? null : <span className="hub-map-legend__note">{note}</span>}
       </div>

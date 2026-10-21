@@ -19,11 +19,16 @@
  * 安全：userid 只进库（notify_deliveries.target）与限速桶；日志 / outbox error 一律掩码（末 4 位）。
  */
 import { Injectable, Logger } from "@nestjs/common";
-import type { NotifyMessagePayload } from "@libiaolink/contracts";
+import type { NotifyDeliveryTopic, NotifyMessagePayload } from "@libiaolink/contracts";
 import { ClockService } from "../../common/clock/clock.service.js";
 import type { OutboxClaimedRow } from "../../db/outbox.store.js";
 import type { OutboxHandleOutcome } from "../../outbox/handler.js";
 import { parseNotifyMessage } from "./notify.delivery.js";
+import {
+  inferNotifyRuleCode,
+  NotifyDeliveryArchiveRepository,
+  type NotifyDeliveryMessageRow,
+} from "./notify.delivery-archive.repository.js";
 import { NotifyAppRepository } from "./notify.app.repository.js";
 import { NotifyService } from "./notify.service.js";
 import type { WecomSendResult } from "./wecom.client.js";
@@ -77,6 +82,7 @@ export class NotifyAppService {
 
   constructor(
     private readonly repository: NotifyAppRepository,
+    private readonly archive: NotifyDeliveryArchiveRepository,
     private readonly client: WecomClient,
     private readonly notify: NotifyService,
     private readonly clock: ClockService,
@@ -101,16 +107,52 @@ export class NotifyAppService {
       };
     }
 
+    let archived: NotifyDeliveryMessageRow;
+    try {
+      archived = await this.archive.ensureMessage({
+        outboxId: row.id,
+        sourceDedupeKey: row.dedupeKey,
+        topic: row.topic as NotifyDeliveryTopic,
+        channel: "wecom_app",
+        recipientId: message.recipientId,
+        recipientLabel: null,
+        title: message.title,
+        body: message.body,
+        templateCode: message.templateCode ?? null,
+        ruleCode: inferNotifyRuleCode(row.dedupeKey),
+        refType: message.refType ?? null,
+        refId: message.refId ?? null,
+        payload: { ...message, channel: "wecom_app" },
+        metadata: {},
+      });
+    } catch (archiveError) {
+      const detail = messageOf(archiveError);
+      this.logger.error("应用消息归档失败（不发送，交 outbox 重试）：" + row.dedupeKey + " —— " + detail);
+      return { outcome: "retry", error: "应用消息归档失败：" + detail };
+    }
+    if (archived.lastState === "sent") {
+      this.logger.log("应用消息已发送归档，重复消费幂等跳过：" + row.dedupeKey);
+      return { outcome: "done" };
+    }
+    const terminalDead = archived.lastState === "dead";
+
     const contact = await this.repository.findContact(message.recipientId);
     if (contact === null) {
       // 用户不存在：站内信 FK 同样不可落 —— 不降级（无收件人可降），dead 一次即弃。
-      await this.repository.insertDelivery({
+      if (terminalDead) {
+        return { outcome: "dead", error: archived.lastError ?? "应用消息已终态失败：" + row.dedupeKey };
+      }
+      await this.archive.recordAttempt({
+        messageId: archived.id,
         outboxId: row.id,
+        channel: "wecom_app",
         target: "user:" + message.recipientId,
+        recipientLabel: "user:" + message.recipientId,
         state: "dead",
         attempts: 0,
         error: "收件人不存在（无法降级站内信）",
         sentAt: null,
+        at: this.clock.now(),
       });
       this.logger.warn("应用消息收件人不存在（确定性失败转 dead，不降级）：outbox#" + row.id + " · " + row.dedupeKey);
       return { outcome: "dead", error: "应用消息收件人不存在（无法降级站内信）：" + row.dedupeKey };
@@ -121,15 +163,27 @@ export class NotifyAppService {
       contact.removedAt !== null ? "已删除（目录源删除）" : contact.status !== "active" ? "已停用" : userid === "" ? "userid 缺失" : null;
     if (blockedReason !== null) {
       const error = "收件人不可投递（" + blockedReason + "）";
-      await this.repository.insertDelivery({
-        outboxId: row.id,
-        target: userid === "" ? "user:" + contact.id : userid,
-        state: "dead",
-        attempts: 0,
-        error,
-        sentAt: null,
-      });
+      const target = userid === "" ? "user:" + contact.id : userid;
+      if (!terminalDead) {
+        await this.archive.recordAttempt({
+          messageId: archived.id,
+          outboxId: row.id,
+          channel: "wecom_app",
+          target,
+          recipientLabel: maskUserid(target),
+          state: "dead",
+          attempts: 0,
+          error,
+          sentAt: null,
+          at: this.clock.now(),
+        });
+      }
       this.logger.warn("应用消息收件人不可投递（确定性失败转 dead）：outbox#" + row.id + " · " + row.dedupeKey + " —— " + error);
+      return await this.degradeWith(message, row, terminalDead ? (archived.lastError ?? error) : error);
+    }
+    if (terminalDead) {
+      const error = archived.lastError ?? "应用消息已终态失败：" + row.dedupeKey;
+      this.logger.warn("应用消息已归档为 dead，重复消费不再外发、仅重试降级：" + row.dedupeKey);
       return await this.degradeWith(message, row, error);
     }
 
@@ -150,13 +204,18 @@ export class NotifyAppService {
 
     const result = await this.client.sendAppText({ toUser: [userid], content });
     if (result.ok) {
-      await this.repository.insertDelivery({
+      const sentAt = this.clock.now();
+      await this.archive.recordAttempt({
+        messageId: archived.id,
         outboxId: row.id,
+        channel: "wecom_app",
         target: userid,
+        recipientLabel: maskUserid(userid),
         state: "sent",
         attempts: result.attempts,
         error: null,
-        sentAt: this.clock.now(),
+        sentAt,
+        at: sentAt,
       });
       this.logger.log("应用消息已受理：" + row.dedupeKey + " · userid " + maskUserid(userid) + (truncated ? "（截断发送）" : ""));
       return { outcome: "done" };
@@ -165,35 +224,47 @@ export class NotifyAppService {
     const error = describeAppFailure(result);
     if (result.kind === "rate_limited") {
       const availableAt = result.retryAt ?? new Date(this.clock.now().getTime() + 60_000);
-      await this.repository.insertDelivery({
+      await this.archive.recordAttempt({
+        messageId: archived.id,
         outboxId: row.id,
+        channel: "wecom_app",
         target: userid,
+        recipientLabel: maskUserid(userid),
         state: "deferred",
         attempts: result.attempts,
         error,
         sentAt: null,
+        at: this.clock.now(),
       });
       return { outcome: "deferred", availableAt, error };
     }
     if (result.kind === "retryable") {
-      await this.repository.insertDelivery({
+      await this.archive.recordAttempt({
+        messageId: archived.id,
         outboxId: row.id,
+        channel: "wecom_app",
         target: userid,
+        recipientLabel: maskUserid(userid),
         state: "failed",
         attempts: result.attempts,
         error,
         sentAt: null,
+        at: this.clock.now(),
       });
       return { outcome: "retry", error };
     }
     // permanent（含 token 失效重取后仍失败 —— 配置类）：dead + C5-04 降级。
-    await this.repository.insertDelivery({
+    await this.archive.recordAttempt({
+      messageId: archived.id,
       outboxId: row.id,
+      channel: "wecom_app",
       target: userid,
+      recipientLabel: maskUserid(userid),
       state: "dead",
       attempts: result.attempts,
       error,
       sentAt: null,
+      at: this.clock.now(),
     });
     this.logger.warn("应用消息确定性失败（转 dead）：" + row.dedupeKey + " · userid " + maskUserid(userid) + " —— " + error);
     return await this.degradeWith(message, row, error);

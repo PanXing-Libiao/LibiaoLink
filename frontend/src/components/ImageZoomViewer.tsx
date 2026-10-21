@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useT } from "../i18n";
 
 /** 图片预览缩放层（Push 273 · 业务口径 2026-10-10「图片预览要有缩放功能」）：
  *  全站图片大图预览三处入口（FilePreviewOverlay 图片分支 / 项目页「日报及问题」附图 / 工作台问题附图）
@@ -33,6 +34,7 @@ function clampView(view: ZoomView, image: HTMLImageElement): ZoomView {
 }
 
 export function ImageZoomViewer({ src, alt }: { src: string; alt: string }) {
+  const t = useT();
   const [view, setView] = useState<ZoomView>({ zoom: 1, x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
   const viewRef = useRef<ZoomView>({ zoom: 1, x: 0, y: 0 });
@@ -231,12 +233,12 @@ export function ImageZoomViewer({ src, alt }: { src: string; alt: string }) {
           cursorClass
         }
       />
-      <div data-image-zoom-bar="true" role="toolbar" aria-label="图片缩放" className="relative z-10 mt-2 flex items-center gap-1.5 rounded-md bg-zinc-900/35 px-1.5 py-1 text-xs text-white/80 backdrop-blur-sm">
+      <div data-image-zoom-bar="true" role="toolbar" aria-label={t("izv.aria")} className="relative z-10 mt-2 flex items-center gap-1.5 rounded-md bg-zinc-900/35 px-1.5 py-1 text-xs text-white/80 backdrop-blur-sm">
         <button
           type="button"
           data-image-zoom-out="true"
-          title="缩小"
-          aria-label="缩小"
+          title={t("izv.out")}
+          aria-label={t("izv.out")}
           onClick={() => {
             zoomTo(viewRef.current.zoom / ZOOM_STEP);
           }}
@@ -248,8 +250,8 @@ export function ImageZoomViewer({ src, alt }: { src: string; alt: string }) {
           type="button"
           data-image-zoom-reset="true"
           data-image-zoom-percent="true"
-          title="恢复默认大小（适应窗口）"
-          aria-label={"恢复默认大小（当前 " + String(percent) + "%）"}
+          title={t("izv.resetTitle")}
+          aria-label={t("izv.resetAria", { p: percent })}
           onClick={reset}
           className="flex h-6 min-w-[3.25rem] items-center justify-center rounded-md border border-white/30 px-1.5 text-[11px] tabular-nums text-white/90 transition hover:bg-white/10"
         >
@@ -258,8 +260,8 @@ export function ImageZoomViewer({ src, alt }: { src: string; alt: string }) {
         <button
           type="button"
           data-image-zoom-in="true"
-          title="放大"
-          aria-label="放大"
+          title={t("izv.in")}
+          aria-label={t("izv.in")}
           onClick={() => {
             zoomTo(viewRef.current.zoom * ZOOM_STEP);
           }}
@@ -268,7 +270,7 @@ export function ImageZoomViewer({ src, alt }: { src: string; alt: string }) {
           ＋
         </button>
         <span data-image-zoom-hint="true" className="ml-1 hidden text-[11px] text-white/50 sm:inline">
-          滚轮缩放 · 拖动平移 · 双击放大
+          {t("izv.hint")}
         </span>
       </div>
     </div>

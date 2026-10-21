@@ -18,12 +18,24 @@ export type RegionPickerOption = {
   readonly name: string;
   readonly en: string;
   readonly continent: string;
-  /** 字典条目的项目引用数（「已有项目地区」排序用）；标准国家行恒 0。 */
+  /**
+   * 项目引用数（「已有项目地区」排序 / 行内计数用）：字典条目 = 服务端下发 usageCount、标准国家行恒 0；
+   * Push 304 起「已有项目地区」以项目落库值计数为准（见 usedRegionPickerOptions），此字段作兜底。
+   */
   readonly usageCount: number;
 };
 
 /** 洲间按 REGION_CONTINENT_GROUPS 排；洲内按中文名拼音（zh-Hans-CN 排序规则）。 */
 const collator = new Intl.Collator("zh-Hans-CN");
+
+/** 地区英文名（英文界面显示用）：标准国名 / 常用别名走 matchRegion 认名；认不出返回空串（调用方回退中文）。 */
+export function regionNameEn(name: string): string {
+  const hit = matchRegion(name, "");
+  if (hit === null) {
+    return "";
+  }
+  return hit.kind === "country" ? hit.country.name : hit.micro.name;
+}
 
 /**
  * 候选构建：字典条目先占位（码可能与标准中文名不同，如「阿联酋 / 阿拉伯联合酋长国」——命中国家的字典条目
@@ -81,13 +93,36 @@ export function buildRegionPickerOptions(items: readonly DictItem[]): RegionPick
 }
 
 /**
- * 「已有项目地区」= 有项目在用的条目（usageCount > 0，字典接口 Push 174 起下发）：
- * 按用量降序、同量按名称 —— 常用地区排最前，业务口径「最上方是已有项目地区」。
+ * 「已有项目地区」= 有项目在用的地区（Push 304 修数据源 · 业务反馈「明明已经有已有项目了 为什么没有显示呢」）：
+ * 项目 region 落库值是标准中文国名 / 存量自定义值时，旧口径（只认字典码 usageCount > 0）恒空 —— 改按**落库值**聚合：
+ * - counts = GET /api/v1/projects/facets 的 region 计数（值 → 未删除项目数，含字典外国名与存量值）；
+ * - 命中候选（字典条目 / 标准国家行）→ 复用候选行（带英文名与洲）；不在候选的存量值 → 现场造行（名 = 值）；
+ * - 字典条目 usageCount > 0 一并并入（facets 未取到时的兜底；同值去重、取较大计数）；
+ * - 排序：用量降序、同量按名称 —— 常用地区排最前，业务口径「最上方是已有项目地区」。
  */
-export function usedRegionPickerOptions(options: readonly RegionPickerOption[]): RegionPickerOption[] {
-  return options
-    .filter((option) => option.usageCount > 0)
-    .sort((left, right) => right.usageCount - left.usageCount || collator.compare(left.name, right.name));
+export function usedRegionPickerOptions(
+  options: readonly RegionPickerOption[],
+  counts: Readonly<Record<string, number>> = {},
+): RegionPickerOption[] {
+  const byValue = new Map<string, RegionPickerOption>();
+  for (const option of options) {
+    if (option.usageCount > 0) {
+      byValue.set(option.value, option);
+    }
+  }
+  const candidates = new Map(options.map((option) => [option.value, option]));
+  for (const [value, count] of Object.entries(counts)) {
+    if (value === "" || count <= 0) {
+      continue;
+    }
+    const hit = candidates.get(value);
+    if (hit === undefined) {
+      byValue.set(value, { value: value, name: value, en: regionNameEn(value), continent: continentOfRegion(value), usageCount: count });
+      continue;
+    }
+    byValue.set(value, { ...hit, usageCount: Math.max(hit.usageCount, count) });
+  }
+  return Array.from(byValue.values()).sort((left, right) => right.usageCount - left.usageCount || collator.compare(left.name, right.name));
 }
 
 /** 搜索：中文名 / 英文名 / 落库值任一段包含关键词（大小写不敏感）。 */

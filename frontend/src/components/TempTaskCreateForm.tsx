@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { useT } from "../i18n";
 
 /** 输入框样式：与看板「添加 → 临时任务」表单同一套「白底 + 淡灰描边」小框口径。 */
 const INPUT_CLASS =
@@ -23,6 +24,7 @@ type TempTaskCreateFormProps = {
  * 表单本体只到「输入 + 创建 / 取消」，外框由调用方给（看板列底 / 卡片列表 / 分组头浮层各随所在容器）。
  */
 export function TempTaskCreateForm({ onCreate, onCancel }: TempTaskCreateFormProps) {
+  const t = useT();
   const [title, setTitle] = useState("");
   const [titleEn, setTitleEn] = useState("");
   const [busy, setBusy] = useState(false);
@@ -48,20 +50,20 @@ export function TempTaskCreateForm({ onCreate, onCancel }: TempTaskCreateFormPro
   };
 
   return (
-    <form data-temp-task-form="true" aria-label="新建临时任务" onSubmit={submit}>
+    <form data-temp-task-form="true" aria-label={t("tt.formAria")} onSubmit={submit}>
       <input
         autoFocus
         value={title}
         onChange={(event) => { setTitle(event.target.value); }}
-        placeholder="任务名称（必填）"
-        aria-label="临时任务名称（中文）"
+        placeholder={t("tt.name")}
+        aria-label={t("tt.nameAria")}
         className={INPUT_CLASS}
       />
       <input
         value={titleEn}
         onChange={(event) => { setTitleEn(event.target.value); }}
-        placeholder="英文名（可留空）"
-        aria-label="临时任务名称（英文）"
+        placeholder={t("tt.nameEn")}
+        aria-label={t("tt.nameEnAria")}
         className={INPUT_CLASS + " mt-1.5"}
       />
       <div className="mt-2 flex items-center justify-end gap-1.5">
@@ -71,7 +73,7 @@ export function TempTaskCreateForm({ onCreate, onCancel }: TempTaskCreateFormPro
             onClick={onCancel}
             className="rounded-lg border border-white/70 bg-white/60 px-2 py-1 text-[11px] text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-700"
           >
-            取消
+            {t("common.cancel")}
           </button>
         )}
         <button
@@ -79,7 +81,7 @@ export function TempTaskCreateForm({ onCreate, onCancel }: TempTaskCreateFormPro
           disabled={invalid || busy}
           className="rounded-lg bg-zinc-900 px-2.5 py-1 text-[11px] font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-white/60 disabled:text-zinc-400"
         >
-          创建
+          {t("tt.create")}
         </button>
       </div>
     </form>

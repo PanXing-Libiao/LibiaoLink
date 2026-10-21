@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { WorkspaceIssueView } from "../useHashRoute";
-import { useLocale, workspaceLabelText } from "../i18n";
+import { textOf, useLocale, workspaceLabelText } from "../i18n";
 
 /**
  * 「提出/负责的问题」的下拉子菜单（业务口径 2026-10-09「然后导航栏还是改成这样的吧」；
@@ -54,7 +54,7 @@ export function WorkspaceIssueSubMenu({ active, onSelect }: { active: WorkspaceI
     <div
       data-workspace-submenu
       role="menu"
-      aria-label="提出/负责的问题子视图"
+      aria-label={textOf(locale, "ws.submenu.aria")}
       className="submenu-pop w-44 overflow-hidden rounded-2xl border border-zinc-200/80 bg-white p-1.5 shadow-[0_18px_40px_-12px_rgba(15,23,42,0.30),0_4px_12px_-4px_rgba(15,23,42,0.14)]"
     >
       {ISSUE_VIEW_ITEMS.map((item) => {

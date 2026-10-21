@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState, type Dispatch, type MouseEvent a
 import type { Member } from "../data/members";
 import { PROJECT_STAGES } from "../data/projects";
 import type { TemplatePresetNode } from "../data/templatePresets";
-import { TEMP_TASK_STAGE, addedNodeIdsOf, addedNodeKeysOf, cnDateFromIso, ownersLabel, lateDeliveryLabel, type ProjectTask, type TaskStatus } from "../data/tasks";
+import { TEMP_TASK_STAGE, addedNodeIdsOf, addedNodeKeysOf, ownersLabel, lateDeliveryLabel, type ProjectTask, type TaskStatus } from "../data/tasks";
 import { InlineDateCell } from "./InlineEdit";
 import { MemberAvatar } from "./MemberSelect";
 import { ScrollArea } from "./ScrollArea";
@@ -11,8 +11,8 @@ import { StageAddCard } from "./StageAddCard";
 import { TaskDrawer } from "./TaskDrawer";
 import type { TaskEditSubmit } from "./TaskDrawer";
 import { STATUS_TAG_CLASS, type TaskPatch } from "./TaskBoard";
-import { fieldText, stageText, useLocale, useLocalizedText, useT } from "../i18n";
-import { trackerLabel } from "./Tracker";
+import { fieldText, mdText, progressLabelOf, stageText, statusText, useLocale, useLocalizedText, useT } from "../i18n";
+import { trackerStep } from "./Tracker";
 
 /**
  * 项目详情页的两块看板（Push 82）：
@@ -53,8 +53,8 @@ export type KanbanMode = "owner" | "status";
 /** 「任务进展」看板的列顺序（业务定稿：已延期 → 进行中 → 已完成 → 提前完成 → 待开始）。 */
 const STATUS_ORDER: readonly TaskStatus[] = ["已延期", "进行中", "已完成", "提前完成", "待开始"];
 
-/** 阶段色签（卡片「所属阶段」一栏）：按阶段固定色（口径对齐业务样张里的色签）。 */
-const STAGE_TAG_CLASS: Record<string, string> = {
+/** 阶段色签（卡片「所属阶段」一栏）：按阶段固定色（口径对齐业务样张里的色签）；Push 353 起导出 —— 仪表盘「词频图」数据详情（HubDashWordDetail）的「变更阶段」列复用同一张色表。 */
+export const STAGE_TAG_CLASS: Record<string, string> = {
   售前规划: "bg-violet-100 text-violet-700",
   设计开发: "bg-sky-100 text-sky-700",
   加工采购: "bg-zinc-200 text-zinc-600",
@@ -323,7 +323,7 @@ function groupTasks(tasks: ProjectTask[], mode: KanbanMode): KanbanGroup[] {
       }
     };
     if (task.ownerIds.length === 0) {
-      addItem(OWNER_NONE_KEY, null, "待分配");
+      addItem(OWNER_NONE_KEY, null, "");
       continue;
     }
     task.ownerIds.forEach((ownerId, index) => {
@@ -357,13 +357,14 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 
 /** 卡片进度条（Push 98）：条照旧，右侧文字由百分比改成中文档位（未开始 / 刚开工 / 完成一半 / 快完成了 / 已完成），与任务表 Tracker 同一套口径。 */
 function ProgressBar({ progress }: { progress: number }) {
+  const locale = useLocale();
   const pct = Math.round(progress * 100);
   return (
     <div className="flex items-center gap-2.5">
       <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-zinc-400/40">
         <div className="h-full rounded-full bg-emerald-500" style={{ width: pct + "%" }} />
       </div>
-      <span className="shrink-0 text-xs font-semibold text-zinc-700">{trackerLabel(progress)}</span>
+      <span className="shrink-0 text-xs font-semibold text-zinc-700">{progressLabelOf(locale, trackerStep(progress))}</span>
     </div>
   );
 }
@@ -380,17 +381,18 @@ function StageChip({ stage }: { stage: string }) {
 
 /** 「是否按时交付」：逾期标注优先（与任务表同一口径），其次是数据里的按时交付值。 */
 function OnTimeChip({ task }: { task: ProjectTask }) {
+  const locale = useLocale();
   const late = lateDeliveryLabel(task);
   if (late === "逾期未交付") {
-    return <span className="inline-block rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-600">逾期未交付</span>;
+    return <span className="inline-block rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-600">{statusText(locale, "逾期未交付")}</span>;
   }
   if (late === "逾期已交付") {
-    return <span className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">逾期已交付</span>;
+    return <span className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">{statusText(locale, "逾期已交付")}</span>;
   }
   if (task.onTime !== true) {
     return <span className="text-xs text-zinc-400">—</span>;
   }
-  return <span className="inline-block rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] text-emerald-700">按时交付</span>;
+  return <span className="inline-block rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] text-emerald-700">{statusText(locale, "按时交付")}</span>;
 }
 
 /** 看板卡片：点开任务详情抽屉（要改的字段在抽屉里直接改；Push 98 起卡片上的「实际完成日期」也能直接点选）。 */
@@ -432,13 +434,13 @@ function KanbanCard({
   /** 实际完成日期（Push 98）：空值「—」也带框，点开就是单日期小日历（上 / 下月、清除、今天）。 */
   const doneField =
     onSetActualEnd === undefined ? (
-      <span className="text-sm text-zinc-800">{task.doneDate === "" ? "—" : cnDateFromIso(task.doneDate)}</span>
+      <span className="text-sm text-zinc-800">{task.doneDate === "" ? "—" : mdText(locale, task.doneDate)}</span>
     ) : (
       <InlineDateCell
         valueIso={task.doneDate}
-        ariaLabel="修改实际完成日期"
+        ariaLabel={t("drawer.actual.aria")}
         triggerClassName="tabular-nums"
-        display={task.doneDate === "" ? <span className="text-zinc-400">—</span> : cnDateFromIso(task.doneDate)}
+        display={task.doneDate === "" ? <span className="text-zinc-400">—</span> : mdText(locale, task.doneDate)}
         onChange={(iso) => {
           // 填 = 完成（四格全亮）；清 = 退回进行中（进度 3 格）—— 状态联动交给服务端
           onSetActualEnd(iso);
@@ -449,7 +451,7 @@ function KanbanCard({
     <div
       role="button"
       tabIndex={ghost === true ? -1 : 0}
-      aria-label={"任务：" + task.title}
+      aria-label={t("kanban.card.aria", { name: titleText })}
       title={onPointerDownDrag === undefined ? undefined : t("kanban.drag.title")}
       data-kanban-card="true" data-live-card={task.id}
       onPointerDown={(event) => {
@@ -483,10 +485,10 @@ function KanbanCard({
         {mode === "owner" ? (
           <>
             <Field label={fieldText(locale, "预计完成日期")}>
-              <span className="text-sm text-zinc-800">{task.dueDate === "" ? "—" : cnDateFromIso(task.dueDate)}</span>
+              <span className="text-sm text-zinc-800">{task.dueDate === "" ? "—" : mdText(locale, task.dueDate)}</span>
             </Field>
             <Field label={fieldText(locale, "任务状态")}>
-              <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + STATUS_TAG_CLASS[status]}>{status}</span>
+              <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + STATUS_TAG_CLASS[status]}>{statusText(locale, status)}</span>
             </Field>
             <Field label={fieldText(locale, "实际完成日期")}>{doneField}</Field>
           </>
@@ -499,7 +501,7 @@ function KanbanCard({
               </span>
             </Field>
             <Field label={fieldText(locale, "开始日期")}>
-              <span className="text-sm text-zinc-800">{task.startDate === "" ? "—" : cnDateFromIso(task.startDate)}</span>
+              <span className="text-sm text-zinc-800">{task.startDate === "" ? "—" : mdText(locale, task.startDate)}</span>
             </Field>
             <Field label={fieldText(locale, "实际完成日期")}>{doneField}</Field>
           </>
@@ -580,10 +582,12 @@ function KanbanColumn({
   /** 该阶段现有任务（Push 111）：给「插入位置」当锚点 —— 顺序 = 项目总览里这些任务的先后。 */
   stageTasksOf: (stage: string) => readonly { id: string; title: string }[];
 }) {
+  const t = useT();
+  const locale = useLocale();
   /** 本列负责人（「待分配」/ 状态列 = undefined，头像回落首字圆圈）。 */
   const owner = group.ownerId === null ? undefined : members.find((member) => member.id === group.ownerId);
   /** 列头 / 落点提示上的展示名（负责人看板用姓名，进展看板用状态名）。 */
-  const groupLabel = mode === "owner" ? (group.ownerName === "" ? "待分配" : group.ownerName) : group.key;
+  const groupLabel = mode === "owner" ? (group.ownerName === "" ? t("kanban.group.unassigned") : group.ownerName) : statusText(locale, group.key);
   const [title, setTitle] = useState("");
   const [titleEn, setTitleEn] = useState("");
   const [cardPos, setCardPos] = useState<{ top: number; left: number }>({ top: 112, left: 16 });
@@ -674,7 +678,7 @@ function KanbanColumn({
         data-drop-slot="true"
         className="flex items-center justify-center rounded-[35px] border-2 border-dashed border-emerald-400/70 bg-emerald-50/60 px-3 py-6 text-center text-[11px] font-medium text-emerald-700"
       >
-        {isOwnColumn ? "放开：放到这里" : "放开：移到「" + groupLabel + "」"}
+        {isOwnColumn ? t("kanban.drop.here") : t("kanban.drop.move", { name: groupLabel })}
       </div>
     );
 
@@ -691,13 +695,13 @@ function KanbanColumn({
             <span className="truncate text-sm font-medium text-zinc-700" title={groupLabel}>{groupLabel}</span>
           </>
         ) : (
-          <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + STATUS_TAG_CLASS[group.status]}>{group.key}</span>
+          <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + STATUS_TAG_CLASS[group.status]}>{statusText(locale, group.key)}</span>
         )}
-        <span className="shrink-0 text-xs text-zinc-400">{group.items.length}项</span>
+        <span className="shrink-0 text-xs text-zinc-400">{t("kanban.count", { n: group.items.length })}</span>
       </header>
 
       {/* 卡片列表：滚动条隐式（原生滚动条隐藏，滚动 / 悬停才浮出自绘滑块） */}
-      <ScrollArea viewportClassName="min-h-0 flex-1" className="flex flex-col gap-3 pr-1" ariaLabel={"任务卡片：" + groupLabel}>
+      <ScrollArea viewportClassName="min-h-0 flex-1" className="flex flex-col gap-3 pr-1" ariaLabel={t("kanban.card.scrollAria", { name: groupLabel })}>
         {group.items.map((task, index) => (
           <Fragment key={task.id}>
             {dropSlot !== null && dropIndex === index ? dropSlot : null}
@@ -720,15 +724,15 @@ function KanbanColumn({
       <div data-add-root="true" className={COLUMN_FOOTER}>
         <div className="relative">
           {panel === "menu" ? (
-            <div className={ADD_POPOVER} role="menu" aria-label={"添加任务：" + groupLabel}>
-              <p className="px-1 pb-1 text-[11px] text-zinc-400">添加任务</p>
+            <div className={ADD_POPOVER} role="menu" aria-label={t("kanban.add.aria", { name: groupLabel })}>
+              <p className="px-1 pb-1 text-[11px] text-zinc-400">{t("kanban.add.task")}</p>
               <button type="button" role="menuitem" onClick={() => { openPanel("temp"); }} className={ADD_ENTRY}>
-                临时任务
-                <span className={ADD_ENTRY_HINT}>自己填内容</span>
+                {t("kanban.add.temp")}
+                <span className={ADD_ENTRY_HINT}>{t("kanban.add.tempHint")}</span>
               </button>
               <button type="button" role="menuitem" onClick={() => { openPanel("stage"); }} className={ADD_ENTRY + " mt-1"}>
-                阶段任务
-                <span className={ADD_ENTRY_HINT}>从模板里选</span>
+                {t("kanban.add.stage")}
+                <span className={ADD_ENTRY_HINT}>{t("kanban.add.stageHint")}</span>
               </button>
             </div>
           ) : null}
@@ -746,23 +750,23 @@ function KanbanColumn({
                 closePanels();
               }}
             >
-              <p className="px-1 pb-1 text-[11px] text-zinc-400">临时任务</p>
-              <input autoFocus value={title} onChange={(event) => { setTitle(event.target.value); }} placeholder="任务名称（必填）" className={ADD_INPUT} />
-              <input value={titleEn} onChange={(event) => { setTitleEn(event.target.value); }} placeholder="英文名（可留空）" className={ADD_INPUT + " mt-1.5"} />
+              <p className="px-1 pb-1 text-[11px] text-zinc-400">{t("kanban.add.temp")}</p>
+              <input autoFocus value={title} onChange={(event) => { setTitle(event.target.value); }} placeholder={t("drawer.title.placeholder")} className={ADD_INPUT} />
+              <input value={titleEn} onChange={(event) => { setTitleEn(event.target.value); }} placeholder={t("drawer.titleEn.placeholder")} className={ADD_INPUT + " mt-1.5"} />
               <div className="mt-2 flex items-center justify-end gap-1.5">
-                <button type="button" onClick={closePanels} className="rounded-lg border border-white/70 bg-white/60 px-2 py-1 text-[11px] text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-700">取消</button>
-                <button type="submit" disabled={title.trim() === ""} className="rounded-lg bg-zinc-900 px-2.5 py-1 text-[11px] font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-white/60 disabled:text-zinc-400">创建</button>
+                <button type="button" onClick={closePanels} className="rounded-lg border border-white/70 bg-white/60 px-2 py-1 text-[11px] text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-700">{t("common.cancel")}</button>
+                <button type="submit" disabled={title.trim() === ""} className="rounded-lg bg-zinc-900 px-2.5 py-1 text-[11px] font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-white/60 disabled:text-zinc-400">{t("kanban.create")}</button>
               </div>
             </form>
           ) : null}
 
           {panel === "stage" ? (
-            <div className={ADD_POPOVER} role="menu" aria-label={"选择阶段：" + group.key}>
-              <p className="px-1 pb-1 text-[11px] text-zinc-400">阶段任务 · 先选阶段</p>
+            <div className={ADD_POPOVER} role="menu" aria-label={t("kanban.stageSelect.aria", { name: groupLabel })}>
+              <p className="px-1 pb-1 text-[11px] text-zinc-400">{t("kanban.add.pickStage")}</p>
               <div className="scrollbar-hidden grid max-h-56 gap-1 overflow-y-auto">
                 {STAGE_OPTIONS.map((stage) => (
                   <button key={stage} type="button" role="menuitem" onClick={() => { openTemplateCard(stage); }} className={ADD_STAGE}>
-                    {stage}
+                    {stageText(locale, stage)}
                   </button>
                 ))}
               </div>
@@ -772,7 +776,7 @@ function KanbanColumn({
           <button
             type="button"
             onClick={() => { openPanel(panel === "none" ? "menu" : "none"); }}
-            aria-label={"添加任务：" + group.key}
+            aria-label={t("kanban.add.aria", { name: groupLabel })}
             aria-expanded={panel !== "none"}
             className={ADD_BUTTON}
           >
@@ -780,7 +784,7 @@ function KanbanColumn({
               <circle cx="12" cy="12" r="9" />
               <path d="M12 8.5v7M8.5 12h7" strokeLinecap="round" />
             </svg>
-            添加
+            {t("kanban.add.confirm")}
           </button>
         </div>
       </div>
@@ -806,6 +810,7 @@ function KanbanColumn({
 }
 
 export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTask, onAddStageTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onSetStatus, onSetActualEnd, onReorderTask, onSetProgress, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, projectId }: TaskKanbanProps) {
+  const t = useT();
   /**
    * 任务详情抽屉选中的任务 id（Push 196 由对象改存 id）：点卡片与「建完临时任务」都先落 id，抽屉按 id 从最新列表取行 ——
    * 新建的临时任务等列表刷新回来即自动打开详情，不依赖点击那一刻的快照。
@@ -1147,7 +1152,7 @@ export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTa
   if (tasks.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-6 py-16 text-center text-sm text-zinc-500">
-        这个项目还没有任务：到「项目总览」点阶段标签，从任务节点 / 模板里挑节点加进来。
+        {t("kanban.hint.noTasks")}
       </div>
     );
   }
@@ -1163,7 +1168,7 @@ export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTa
         onPointerCancel={endBoardPan}
         onClickCapture={swallowClickAfterBoardPan}
       >
-        <ScrollArea axis="horizontal" ariaLabel="任务看板：横向滚动查看全部列" viewportClassName="pb-3" className="flex items-start gap-4">
+        <ScrollArea axis="horizontal" ariaLabel={t("kanban.board.aria")} viewportClassName="pb-3" className="flex items-start gap-4">
           {groups.map((group) => (
             <KanbanColumn
               key={group.key}

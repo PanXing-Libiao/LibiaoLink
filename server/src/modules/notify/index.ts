@@ -22,9 +22,48 @@ export {
 } from "./notify.app.service.js";
 export { NotifyAppRepository } from "./notify.app.repository.js";
 export type { NotifyAppDeliveryInsert, WecomAppContact } from "./notify.app.repository.js";
+export {
+  composeDmMarkdown,
+  DM_BINDING_CODE_MAX_PER_WINDOW,
+  DM_BINDING_CODE_WINDOW_MS,
+  DM_BINDING_CODE_PATTERN,
+  DM_BINDING_CODE_TTL_MS,
+  DM_BINDING_DEGRADE_PREFIX,
+  DM_BINDING_REPLY_BOUND,
+  DM_BINDING_REPLY_INVALID,
+  DM_DEGRADE_PREFIX,
+  DM_MARKDOWN_MAX_BYTES,
+  DM_TRUNCATION_SUFFIX,
+  DM_WELCOME_MESSAGE,
+  extractBindingCode,
+  NotifyDmService,
+  truncateDmMarkdown,
+} from "./notify.dm.service.js";
+export { NotifyDmRepository } from "./notify.dm.repository.js";
+export type {
+  DmActivationRow,
+  DmBindingCodeRow,
+  DmBindingRow,
+  NotifyDmDeliveryInsert,
+  WecomDmContact,
+} from "./notify.dm.repository.js";
 export { PgRateWindowStore } from "./wecom.rate.pg.js";
 export { NotifyService } from "./notify.service.js";
 export type { NotifyFlushStats, NotifySnoozeFlushStats } from "./notify.service.js";
+export {
+  inferNotifyRuleCode,
+  NotifyDeliveryArchiveRepository,
+} from "./notify.delivery-archive.repository.js";
+export { NotifyDeliveryReadRepository } from "./notify.delivery-read.repository.js";
+export type { NotifyDeliveryAttemptRecord, NotifyDeliveryMessageRecord } from "./notify.delivery-read.repository.js";
+export { NotifyDeliveryService } from "./notify.delivery.service.js";
+export type {
+  NotifyDeliveryAttemptInsert,
+  NotifyDeliveryAttemptState,
+  NotifyDeliveryMessageInsert,
+  NotifyDeliveryMessageRow,
+  NotifyDeliveryStateUpdate,
+} from "./notify.delivery-archive.repository.js";
 export { NOTIFY_GROUP_TOPIC, NOTIFY_MESSAGE_TOPIC } from "./notify.constants.js";
 export {
   channelOfNotifyPayload,
@@ -51,7 +90,7 @@ export {
   WECOM_CHANNELS,
 } from "./wecom.errors.js";
 export type { WecomChannel, WecomFailureKind } from "./wecom.errors.js";
-export { chatBucketId, InMemoryRateWindowStore, WECOM_APP_BUCKET_ID, WecomRateLimiter } from "./wecom.rate.js";
+export { chatBucketId, InMemoryRateWindowStore, userBucketId, WECOM_APP_BUCKET_ID, WecomRateLimiter } from "./wecom.rate.js";
 export type {
   RateWindowStore,
   WecomRateDecision,

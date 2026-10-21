@@ -10,6 +10,7 @@ import {
   HeadBucketCommand,
   HeadObjectCommand,
   ListObjectVersionsCommand,
+  ListObjectsV2Command,
   ListPartsCommand,
   PutObjectCommand,
   S3Client,
@@ -27,11 +28,13 @@ import {
   type CreateMultipartUploadInput,
   type DownloadUrlInput,
   type GetObjectResult,
+  type ObjectPrefixResult,
   type MultipartUploadKeyInput,
   type MultipartUploadRef,
   type ObjectHead,
   type PartUploadUrlInput,
   type PurgeObjectResult,
+  type PurgePrefixResult,
   type PutObjectInput,
   type SignedUrl,
   type UploadedPart,
@@ -67,6 +70,8 @@ const LIST_PARTS_MAX_PAGES = 20;
 /** 按版本删除的批量上限（S3 DeleteObjects 单请求上限）与 ListObjectVersions 翻页上限。 */
 const DELETE_VERSIONS_BATCH = 1000;
 const LIST_VERSIONS_MAX_PAGES = 20;
+/** 项目前缀清理：最多翻 100 页（约 10 万个版本）；超出直接报错，绝不静默漏删。 */
+const LIST_PREFIX_MAX_PAGES = 100;
 
 export class S3ObjectStorage extends ObjectStorage {
   readonly bucket: string;
@@ -220,7 +225,10 @@ export class S3ObjectStorage extends ObjectStorage {
         new GetObjectCommand({
           Bucket: this.bucket,
           Key: input.objectKey,
-          ResponseContentDisposition: input.fileName ? contentDisposition(input.fileName) : undefined,
+          ResponseContentType: input.responseContentType,
+          ResponseContentDisposition:
+            input.responseContentDisposition ?? (input.fileName ? contentDisposition(input.fileName) : undefined),
+          ResponseCacheControl: input.responseCacheControl,
         }),
         { expiresIn: ttl },
       ),
@@ -243,6 +251,31 @@ export class S3ObjectStorage extends ObjectStorage {
         return null;
       }
       throw this.fail("GetObject", error);
+    }
+  }
+
+  async readObjectPrefix(objectKey: string, maxBytes: number): Promise<ObjectPrefixResult | null> {
+    if (!Number.isInteger(maxBytes) || maxBytes < 0) {
+      throw new StorageError("unavailable", "对象前缀读取长度非法");
+    }
+    if (maxBytes === 0) {
+      return { objectKey, bytes: new Uint8Array(), contentType: null };
+    }
+    try {
+      const output = await this.client.send(
+        new GetObjectCommand({
+          Bucket: this.bucket,
+          Key: objectKey,
+          Range: `bytes=0-${maxBytes - 1}`,
+        }),
+      );
+      const bytes = output.Body ? await output.Body.transformToByteArray() : new Uint8Array();
+      return { objectKey, bytes, contentType: output.ContentType ?? null };
+    } catch (error) {
+      if (isNotFound(error)) {
+        return null;
+      }
+      throw this.fail("GetObjectPrefix", error);
     }
   }
 
@@ -331,6 +364,139 @@ export class S3ObjectStorage extends ObjectStorage {
       deleteMarkers += batch.filter((entry) => entry.isDeleteMarker).length;
     }
     return { deletedVersions, deleteMarkers };
+  }
+
+  /**
+   * 项目彻底删除用的前缀清空：列举 prefix 下所有键的版本 + delete marker，分批按版本删。
+   * 前缀必须以 / 结尾，避免 projects/{id}/ 误伤同前缀的其它项目；未开启版本控制时按普通键删。
+   */
+  async purgePrefix(prefix: string): Promise<PurgePrefixResult> {
+    if (prefix.trim() === "" || !prefix.endsWith("/")) {
+      throw new StorageError("unavailable", "对象前缀不能为空且必须以 / 结尾");
+    }
+    const entries = await this.listPrefixEntries(prefix);
+    if (entries.length === 0) {
+      // 兼容未开版本控制且 ListObjectVersions 返回空集的 S3 实现（本地 MinIO 实测）：
+      // 退回 ListObjectsV2 按当前对象键普通删除；确实无对象时自然返回全 0。
+      const keys = await this.listCurrentObjectKeys(prefix);
+      for (let start = 0; start < keys.length; start += DELETE_VERSIONS_BATCH) {
+        const batch = keys.slice(start, start + DELETE_VERSIONS_BATCH);
+        const output = await this.call("DeleteObjectsByPrefix", () =>
+          this.client.send(
+            new DeleteObjectsCommand({
+              Bucket: this.bucket,
+              Delete: { Objects: batch.map((key) => ({ Key: key })), Quiet: true },
+            }),
+          ),
+        );
+        if (output.Errors && output.Errors.length > 0) {
+          throw new StorageError("unavailable", "按前缀删除失败：" + (output.Errors[0]?.Code ?? "unknown"));
+        }
+      }
+      return { deletedVersions: keys.length, deleteMarkers: 0, deletedObjects: keys.length };
+    }
+    const versioned = entries.filter((entry) => entry.versionId !== "null");
+    const unversionedKeys = [...new Set(entries.filter((entry) => entry.versionId === "null").map((entry) => entry.key))];
+    let deletedVersions = 0;
+    let deleteMarkers = 0;
+    for (let start = 0; start < versioned.length; start += DELETE_VERSIONS_BATCH) {
+      const batch = versioned.slice(start, start + DELETE_VERSIONS_BATCH);
+      const output = await this.call("DeleteObjectVersionsByPrefix", () =>
+        this.client.send(
+          new DeleteObjectsCommand({
+            Bucket: this.bucket,
+            Delete: {
+              Objects: batch.map((entry) => ({ Key: entry.key, VersionId: entry.versionId })),
+              Quiet: true,
+            },
+          }),
+        ),
+      );
+      if (output.Errors && output.Errors.length > 0) {
+        throw new StorageError("unavailable", "按前缀删除失败：" + (output.Errors[0]?.Code ?? "unknown"));
+      }
+      deletedVersions += batch.filter((entry) => !entry.isDeleteMarker).length;
+      deleteMarkers += batch.filter((entry) => entry.isDeleteMarker).length;
+    }
+    for (let start = 0; start < unversionedKeys.length; start += DELETE_VERSIONS_BATCH) {
+      const batch = unversionedKeys.slice(start, start + DELETE_VERSIONS_BATCH);
+      const output = await this.call("DeleteObjectsByPrefix", () =>
+        this.client.send(
+          new DeleteObjectsCommand({
+            Bucket: this.bucket,
+            Delete: { Objects: batch.map((key) => ({ Key: key })), Quiet: true },
+          }),
+        ),
+      );
+      if (output.Errors && output.Errors.length > 0) {
+        throw new StorageError("unavailable", "按前缀删除失败：" + (output.Errors[0]?.Code ?? "unknown"));
+      }
+      deletedVersions += batch.length;
+    }
+    return {
+      deletedVersions,
+      deleteMarkers,
+      deletedObjects: new Set(entries.map((entry) => entry.key)).size,
+    };
+  }
+
+  /** 列举前缀下所有版本；超过安全页数上限直接失败，避免只清一部分。 */
+  private async listPrefixEntries(prefix: string): Promise<{ key: string; versionId: string; isDeleteMarker: boolean }[]> {
+    const entries: { key: string; versionId: string; isDeleteMarker: boolean }[] = [];
+    let keyMarker: string | undefined;
+    let versionIdMarker: string | undefined;
+    for (let page = 0; page < LIST_PREFIX_MAX_PAGES; page += 1) {
+      const output = await this.call("ListObjectVersionsPrefix", () =>
+        this.client.send(
+          new ListObjectVersionsCommand({
+            Bucket: this.bucket,
+            Prefix: prefix,
+            KeyMarker: keyMarker,
+            VersionIdMarker: versionIdMarker,
+          }),
+        ),
+      );
+      for (const version of output.Versions ?? []) {
+        if (version.Key !== undefined && version.VersionId !== undefined) {
+          entries.push({ key: version.Key, versionId: version.VersionId, isDeleteMarker: false });
+        }
+      }
+      for (const marker of output.DeleteMarkers ?? []) {
+        if (marker.Key !== undefined && marker.VersionId !== undefined) {
+          entries.push({ key: marker.Key, versionId: marker.VersionId, isDeleteMarker: true });
+        }
+      }
+      if (!output.IsTruncated) return entries;
+      keyMarker = output.NextKeyMarker;
+      versionIdMarker = output.NextVersionIdMarker;
+    }
+    throw new StorageError("unavailable", "对象前缀版本数超过单次清理上限，请分批重试");
+  }
+
+  /** 列举前缀下当前对象键（未开版本控制时的兜底；按 ContinuationToken 翻页）。 */
+  private async listCurrentObjectKeys(prefix: string): Promise<string[]> {
+    const keys = new Set<string>();
+    let continuationToken: string | undefined;
+    for (let page = 0; page < LIST_PREFIX_MAX_PAGES; page += 1) {
+      const output = await this.call("ListObjectsByPrefix", () =>
+        this.client.send(
+          new ListObjectsV2Command({
+            Bucket: this.bucket,
+            Prefix: prefix,
+            ContinuationToken: continuationToken,
+          }),
+        ),
+      );
+      for (const object of output.Contents ?? []) {
+        if (object.Key !== undefined) keys.add(object.Key);
+      }
+      if (!output.IsTruncated) return [...keys];
+      continuationToken = output.NextContinuationToken;
+      if (continuationToken === undefined) {
+        throw new StorageError("unavailable", "对象前缀列举响应缺少翻页标记");
+      }
+    }
+    throw new StorageError("unavailable", "对象前缀对象数超过单次清理上限，请分批重试");
   }
 
   /** 该键的所有版本与 delete marker（版本化桶）；未开启版本控制时 VersionId 为字符串 `null`。 */
@@ -466,9 +632,9 @@ export function createS3ObjectStorage(env: Env): S3ObjectStorage {
 }
 
 /** 下载响应头：中文文件名走 RFC 5987（`filename*`），ASCII 兜底（契约「原文件名含中文」）。 */
-export function contentDisposition(fileName: string): string {
+export function contentDisposition(fileName: string, disposition: "attachment" | "inline" = "attachment"): string {
   const ascii = fileName.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
-  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
+  return `${disposition}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
 }
 
 function s3ErrorName(error: unknown): string {

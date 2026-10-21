@@ -11,6 +11,9 @@ import type { ApiProjectSummary } from "./taskApi";
 import type { Project } from "./types";
 
 /** 导出入参（全部来自项目详情页已取到的数据，导出零新增请求）。 */
+/** 导出报告的主体语言：zh = 中文大字 + 英文小字（当前版式）；en = 英文大字 + 中文小字。 */
+export type OverviewExportLanguage = "zh" | "en";
+
 export type OverviewExportInput = {
   project: Project;
   /** 展示顺序的任务（与「项目总览」同一份：阶段为主键、组内按 sortIndex）。 */
@@ -90,11 +93,6 @@ export function dateText(value: string): string {
 /** 负责人展示：空数组 = 「待分配」（契约 ownerIds 空数组同义）。 */
 export function ownersText(task: ProjectTask): string {
   return task.owners.length === 0 ? "待分配" : task.owners.join("、");
-}
-
-/** 输出成果文件（契约 deliverableTypes，可多值）：空数组 = 「—」；全量文本（PDF 侧自行按列宽截断）。 */
-export function deliverablesText(task: ProjectTask): string {
-  return task.deliverableTypes.length === 0 ? "—" : task.deliverableTypes.join("、");
 }
 
 /** 进度（0~1 小数）→ 四格档位百分比（0 / 25 / 50 / 75 / 100；换算口径同 data/tasks.ts 的 progressStep）。 */

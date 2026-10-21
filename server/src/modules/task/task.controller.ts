@@ -26,6 +26,7 @@ import {
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
 import { ProjectAccessGuard, RequirePermission } from "../permission/index.js";
+import { TranslateService } from "../translate/index.js";
 import { TaskService } from "./task.service.js";
 
 type TaskListQuery = z.infer<typeof TaskListQuerySchema>;
@@ -50,7 +51,28 @@ const uuidParam = new ZodValidationPipe(UuidSchema);
 @Controller("api/v1/projects")
 @UseGuards(SessionGuard, CsrfGuard, ProjectAccessGuard)
 export class TaskController {
-  constructor(private readonly tasks: TaskService) {}
+  constructor(
+    private readonly tasks: TaskService,
+    private readonly translate: TranslateService,
+  ) {}
+
+  /**
+   * 保存即后台翻译（§6.16 ㉕ · 2026-10-13 业务口径「当用户写项目进展描述时直接后台翻译」）：
+   * 把任务的手打文本（中文标题 / 进展描述备注）丢给译文库预热 —— 不同步、不阻塞保存响应、失败静默重试。
+   * 已有英文名（titleEn 非空）或纯英文 / 数字文本在服务侧按 CJK 过滤跳过（translate.warmup）。
+   */
+  private warmupTaskText(items: ReadonlyArray<{ title: string; titleEn: string | null; note: string | null }>): void {
+    const texts: string[] = [];
+    for (const item of items) {
+      if (item.titleEn === null || item.titleEn === "") {
+        texts.push(item.title);
+      }
+      if (item.note !== null && item.note !== "") {
+        texts.push(item.note);
+      }
+    }
+    this.translate.warmup(texts);
+  }
 
   /** 项目总览四格：最慢阶段 / 最新阶段 / 逾期 / 已完成 / 总数（汇总卡；2026-09-24 起原 currentStage 下线）。 */
   @Get(":id/summary")
@@ -79,12 +101,14 @@ export class TaskController {
   /** 创建任务：从任务节点生成（判重 409 TASK_ALREADY_EXISTS）或手工创建（仅管理员）。 */
   @Post(":id/tasks")
   @RequirePermission("task.create")
-  create(
+  async create(
     @Param("id", uuidParam) id: string,
     @Body(new ZodValidationPipe(TaskCreateBodySchema)) body: TaskCreateBody,
     @CurrentActorId() actorId: string,
   ): Promise<z.infer<typeof TaskSchema>> {
-    return this.tasks.create(id, body, actorId);
+    const task = await this.tasks.create(id, body, actorId);
+    this.warmupTaskText([task]);
+    return task;
   }
 
   /**
@@ -93,12 +117,14 @@ export class TaskController {
    */
   @Post(":id/tasks/from-template")
   @RequirePermission("task.create")
-  createFromTemplate(
+  async createFromTemplate(
     @Param("id", uuidParam) id: string,
     @Body(new ZodValidationPipe(TaskCreateFromTemplateBodySchema)) body: TaskCreateFromTemplateBody,
     @CurrentActorId() actorId: string,
   ): Promise<z.infer<typeof TaskCreateFromTemplateResponseSchema>> {
-    return this.tasks.createFromTemplate(id, body, actorId);
+    const result = await this.tasks.createFromTemplate(id, body, actorId);
+    this.warmupTaskText(result.created);
+    return result;
   }
 
   /**
@@ -107,24 +133,28 @@ export class TaskController {
    */
   @Patch(":id/tasks/batch")
   @RequirePermission("task.update")
-  batch(
+  async batch(
     @Param("id", uuidParam) id: string,
     @Body(new ZodValidationPipe(TaskBatchBodySchema)) body: TaskBatchBody,
     @CurrentActorId() actorId: string,
   ): Promise<z.infer<typeof TaskBatchResponseSchema>> {
-    return this.tasks.batch(id, body, actorId);
+    const result = await this.tasks.batch(id, body, actorId);
+    this.warmupTaskText(result.succeeded);
+    return result;
   }
 
   /** 编辑任务（乐观锁；status 基础三态同事务联动进度 / 完成日期；任务描述 / 成果文件锁定不在本接口）。 */
   @Patch(":id/tasks/:taskId")
   @RequirePermission("task.update")
-  update(
+  async update(
     @Param("id", uuidParam) id: string,
     @Param("taskId", uuidParam) taskId: string,
     @Body(new ZodValidationPipe(TaskUpdateBodySchema)) body: TaskUpdateBody,
     @CurrentActorId() actorId: string,
   ): Promise<z.infer<typeof TaskSchema>> {
-    return this.tasks.update(id, taskId, body, actorId);
+    const task = await this.tasks.update(id, taskId, body, actorId);
+    this.warmupTaskText([task]);
+    return task;
   }
 
   /**
@@ -147,13 +177,15 @@ export class TaskController {
    */
   @Patch(":id/tasks/:taskId/locked-fields")
   @RequirePermission("task.update")
-  adjustLockedFields(
+  async adjustLockedFields(
     @Param("id", uuidParam) id: string,
     @Param("taskId", uuidParam) taskId: string,
     @Body(new ZodValidationPipe(TaskLockedFieldsAdjustBodySchema)) body: TaskLockedFieldsAdjustBody,
     @CurrentActorId() actorId: string,
   ): Promise<z.infer<typeof TaskSchema>> {
-    return this.tasks.adjustLockedFields(id, taskId, body, actorId);
+    const task = await this.tasks.adjustLockedFields(id, taskId, body, actorId);
+    this.warmupTaskText([task]);
+    return task;
   }
 
   /** 完成预检（M3-03）：门禁缺件与放行提示（UI 置灰依据；服务端仍在事务内强校验）。 */
@@ -169,13 +201,15 @@ export class TaskController {
   @Post(":id/tasks/:taskId/complete")
   @HttpCode(200)
   @RequirePermission("task.progress")
-  complete(
+  async complete(
     @Param("id", uuidParam) id: string,
     @Param("taskId", uuidParam) taskId: string,
     @Body(new ZodValidationPipe(TaskCompleteBodySchema)) body: TaskCompleteBody,
     @CurrentActorId() actorId: string,
   ): Promise<z.infer<typeof TaskCompleteResponseSchema>> {
-    return this.tasks.complete(id, taskId, body, actorId);
+    const result = await this.tasks.complete(id, taskId, body, actorId);
+    this.warmupTaskText([result.task]);
+    return result;
   }
 
   /**

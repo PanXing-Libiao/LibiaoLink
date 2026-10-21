@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { lockBodyScroll } from "../scrollLock";
 import { useFocusTrapFor } from "./useFocusTrap";
+import { planLabelText, useLocale, useT } from "../i18n";
 import {
   PLAN_CATEGORY_MAX,
   PLAN_CATEGORY_NAME_MAX,
@@ -59,6 +60,8 @@ export function PlanNoteEditor({
   conflictSummary?: string;
   onConfirmConflict?: (draft: PlanNoteDraft) => Promise<boolean>;
 }) {
+  const t = useT();
+  const locale = useLocale();
   const [title, setTitle] = useState(note?.title ?? "");
   const [content, setContent] = useState(note?.content ?? "");
   const [category, setCategory] = useState(note?.category ?? categories[0]);
@@ -129,7 +132,7 @@ export function PlanNoteEditor({
       data-plan-editor=""
       role="dialog"
       aria-modal="true"
-      aria-label={isEdit ? "编辑便签" : "新建便签"}
+      aria-label={isEdit ? t("plan.editorEditAria") : t("plan.newNote")}
       onClick={onClose}
       className="fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(41,37,36,0.36)] p-5 backdrop-blur-[4px]"
     >
@@ -152,7 +155,7 @@ export function PlanNoteEditor({
             type="button"
             data-plan-editor-close=""
             onClick={onClose}
-            aria-label="关闭"
+            aria-label={t("plan.closeAria")}
             className="grid h-[34px] w-[34px] place-items-center rounded-[10px] bg-white/60 text-[#57534e] transition hover:bg-white hover:text-[#1c1917]"
           >
             <svg viewBox="0 0 24 24" fill="none" className="h-[18px] w-[18px]" aria-hidden="true">
@@ -165,9 +168,9 @@ export function PlanNoteEditor({
                 key={item.id}
                 type="button"
                 data-plan-color={item.id}
-                aria-label={"颜色 " + item.label}
+                aria-label={t("plan.colorAria", { name: planLabelText(locale, item.label) })}
                 aria-pressed={colorId === item.id}
-                title={item.label}
+                title={planLabelText(locale, item.label)}
                 onClick={() => setColorId(item.id)}
                 style={{ backgroundColor: item.swatch }}
                 className={
@@ -183,9 +186,9 @@ export function PlanNoteEditor({
                 key={item.id}
                 type="button"
                 data-plan-font={item.id}
-                aria-label={"字体 " + item.label}
+                aria-label={t("plan.fontAria", { name: planLabelText(locale, item.label) })}
                 aria-pressed={fontId === item.id}
-                title={item.hint}
+                title={planLabelText(locale, item.hint)}
                 onClick={() => setFontId(item.id)}
                 className={
                   "rounded-lg px-2.5 py-1 text-[13px] transition " +
@@ -207,8 +210,8 @@ export function PlanNoteEditor({
             maxLength={PLAN_TITLE_MAX}
             autoFocus
             onChange={(event) => setTitle(event.target.value)}
-            placeholder="标题"
-            aria-label="标题"
+            placeholder={t("plan.titlePlaceholder")}
+            aria-label={t("plan.titlePlaceholder")}
             className={"w-full appearance-none border-0 bg-transparent py-1.5 text-[25px] font-semibold tracking-[-0.01em] text-inherit outline-none placeholder:text-black/30 " + fontClass}
           />
           <textarea
@@ -217,8 +220,8 @@ export function PlanNoteEditor({
             maxLength={PLAN_CONTENT_MAX}
             onChange={(event) => setContent(event.target.value)}
             rows={6}
-            placeholder="记录点什么…"
-            aria-label="内容"
+            placeholder={t("plan.contentPlaceholder")}
+            aria-label={t("plan.contentAria")}
             className={"min-h-[240px] flex-1 resize-none appearance-none border-0 bg-transparent pb-2.5 pt-1 text-[14.5px] leading-[1.75] text-inherit outline-none placeholder:text-black/30 " + fontClass}
           />
         </div>
@@ -258,7 +261,7 @@ export function PlanNoteEditor({
                 }
               }}
               onBlur={commitNewCategory}
-              placeholder="新分类"
+              placeholder={t("plan.newCategoryShort")}
               className="w-24 rounded-full border border-[#1c1917] bg-white px-[13px] py-[5px] text-xs font-medium text-[#1c1917] outline-none"
             />
           ) : (
@@ -266,30 +269,30 @@ export function PlanNoteEditor({
               type="button"
               data-plan-editor-category-add=""
               disabled={categories.length >= PLAN_CATEGORY_MAX}
-              title={categories.length >= PLAN_CATEGORY_MAX ? "最多 " + String(PLAN_CATEGORY_MAX) + " 个分类" : "添加新分类"}
+              title={categories.length >= PLAN_CATEGORY_MAX ? t("plan.categoryMaxTitle", { n: PLAN_CATEGORY_MAX }) : t("plan.addCategoryTitle")}
               onClick={() => setAddingCategory(true)}
               className="inline-flex items-center gap-1 rounded-full border border-dashed border-black/[0.32] bg-transparent px-[13px] py-[5px] text-xs font-medium text-[#78716c] transition hover:border-black/50 hover:text-[#1c1917] disabled:cursor-not-allowed disabled:opacity-50"
             >
               <svg viewBox="0 0 24 24" fill="none" className="h-3 w-3" aria-hidden="true">
                 <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
               </svg>
-              新分类
+              {t("plan.newCategoryShort")}
             </button>
           )}
         </div>
 
-        {saveError === undefined ? null : <div role="status" className="shrink-0 border-t border-black/10 px-5 py-3 text-xs"><p>{saveError}</p>{conflictSummary === undefined ? null : <><details className="mt-2"><summary>核对账号里的整板内容</summary><p className="max-h-32 overflow-auto whitespace-pre-wrap">{conflictSummary}</p></details><button type="button" disabled={saving} className="mt-2 underline" onClick={() => { void handleSave(true); }}>核对后，保存当前便签并替换整板</button></>}</div>}
+        {saveError === undefined ? null : <div role="status" className="shrink-0 border-t border-black/10 px-5 py-3 text-xs"><p>{saveError}</p>{conflictSummary === undefined ? null : <><details className="mt-2"><summary>{t("plan.reviewRemote")}</summary><p className="max-h-32 overflow-auto whitespace-pre-wrap">{conflictSummary}</p></details><button type="button" disabled={saving} className="mt-2 underline" onClick={() => { void handleSave(true); }}>{t("plan.conflictConfirmBtn")}</button></>}</div>}
         <footer className="flex min-h-16 shrink-0 items-center justify-between gap-3 border-t border-black/[0.08] bg-white/35 px-5 py-3">
           {isEdit && confirmingDelete ? (
             <div data-plan-editor-delete-confirm="" className="ml-auto flex flex-wrap items-center gap-2.5 text-[12.5px] font-semibold text-[#b91c1c]">
-              <span>确认删除这条便签？</span>
+              <span>{t("plan.deleteConfirm")}</span>
               <button
                 type="button"
                 data-plan-editor-delete-cancel=""
                 onClick={() => setConfirmingDelete(false)}
                 className="rounded-[11px] border border-[#e8e3da] bg-white px-3.5 py-2 text-[13px] font-medium text-[#57534e] transition hover:bg-[#faf9f7] hover:text-[#1c1917]"
               >
-                取消
+                {t("common.cancel")}
               </button>
               <button
                 type="button"
@@ -297,20 +300,20 @@ export function PlanNoteEditor({
                 onClick={onDelete}
                 className="rounded-[11px] border border-[#dc2626] bg-[#dc2626] px-3.5 py-2 text-[13px] font-medium text-white transition hover:bg-[#b91c1c]"
               >
-                删除
+                {t("common.delete")}
               </button>
             </div>
           ) : (
             <>
-              <span className="text-xs text-[#78716c]">{note === null ? "新建便签" : "更新于 " + formatPlanFull(note.updatedAt)}</span>
+              <span className="text-xs text-[#78716c]">{note === null ? t("plan.newNote") : t("plan.updatedAt", { date: formatPlanFull(note.updatedAt, locale) })}</span>
               <div className="flex items-center gap-2">
                 {note === null ? null : (
                   <button
                     type="button"
                     data-plan-editor-delete=""
                     onClick={() => setConfirmingDelete(true)}
-                    title="删除便签"
-                    aria-label="删除便签"
+                    title={t("plan.deleteNoteAria")}
+                    aria-label={t("plan.deleteNoteAria")}
                     className="grid place-items-center rounded-[11px] border border-[#e8e3da] bg-white px-2.5 py-2 text-[#dc2626] transition hover:bg-[#faf9f7]"
                   >
                     <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
@@ -328,7 +331,7 @@ export function PlanNoteEditor({
                   <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
                     <path d="M5 12.5 10 17.5 19 7" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
-                  {saving ? "保存中…" : "保存"}
+                  {saving ? t("common.saving") : t("common.save")}
                 </button>
               </div>
             </>

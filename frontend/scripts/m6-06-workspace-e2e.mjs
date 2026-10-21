@@ -52,7 +52,7 @@
  *   ① 接口先行对账（夹具落库后 GET /api/v1/workspace）：跨项目四组任务 + 「我提出的」不含他人提的问题；
  *   ② 页面骨架：两枚下划线标签（我的任务 / 我提出的问题；文字 + 选中下划线）+ 默认选中「我的任务」+ 地址不带 `?tab=`；
  *   ③ 「我的任务」折叠面板：收起 = 项目名称 + 编号（最急的项目在最上）+ 摘要签 + 「进入项目」按钮；展开 = 该项目下的任务表；
- *   ④ 任务表口径（Push 231 扩列：列口径照项目页任务表全 15 列 ——「直接把这个搬到我的任务不就好了」+
+ *   ④ 任务表口径（Push 231 扩列 · Push 302 起聚合面全字段直出：列口径照项目页任务表全 15 列 ——「直接把这个搬到我的任务不就好了」+
  *      「这些字段一个不能少懂吗」；Push 279 起**行换成项目页那枚可编辑行** —— 行内逐列可点 + 点行开右侧抽屉，
  *      见本段「④-2 / ④v ~ ④z2」）：任务描述 + 四格进度点（不含分组签 —— 业务口径「这个不要展示」，
  *      组序由行序体现）/ 项目经理 / 负责人 / 状态 / 紧急重要度 /
@@ -62,7 +62,7 @@
  *   ⑥ 「我提出的问题」折叠面板：七列（Push 260 补「问题处理人 / 责任人」）——「问题是否处理」是**行内下拉**
  *      （Push 260：与项目页「问题追踪」共用同一枚 IssueStateCell，点色签改三态、乐观锁 version、失败回滚）；
  *      照「问题追踪」的（日期 / 问题描述 / 问题归类 /
- *      解决方案或建议 / 问题附图 / 问题是否处理；后两列按项目向源接口回填，真 PNG 直传夹具保证有值）；
+ *      解决方案或建议 / 问题附图 / 问题是否处理；后两列 Push 302 起并入聚合面随行下发（此前按项目向源接口回填），真 PNG 直传夹具保证有值）；
  *      未关闭在前、不是我提的不进（Push 260 起「已完成不显示」）；Push 242 起行尾「在项目中查看」下架、六列 `table-fixed` 固定列宽（跨面板对齐）；
  *   ⑦ 深链：`#/my-tasks?tab=raised` 直接打开仍停在该标签；`?tab=` 不认识的值落回「我的任务」；
  *      「进入项目」按钮 =「我的任务」落项目总览、切到「我提出的问题」落该项目「问题追踪」（Push 232 / Push 242 / Push 253），
@@ -71,7 +71,7 @@
  *      观感 = 顶栏「背景 · 档位」（简约 / 适中 / 炫彩），工作台任务表 / 「我提出的问题」表都随档位；真点菜单切档逐档对账
  *      （data-workspace-task-tint / data-workspace-issue-tint + 行色 computed + 状态列 oklch 深色字）；Push 291 起切档 = 单键 PATCH
  *      「user_preferences.prefs.backgroundTier」（按账号记住）—— 切档落库 / 刷新保持 / 收尾恢复账号原值（不留痕）；同日 Push 292 起同菜单
- *      第四行 =「水印」开关（账号偏好 cardWatermark：点击落库 / 刷新保持 / 收尾恢复，⑨j 组对账）；点档 / 点开关都不收弹层
+ *      第四行 =「水印」开关（账号偏好 cardWatermark：点击落库 / 刷新保持 / 收尾恢复，⑨j 组对账；Push 313 起账号默认 false = 无水印）；点档 / 点开关都不收弹层
  *      （Push 292 追订「选择后不要退出 用户点别的地方再退出」：点外 / Esc / 再点触发钮才收，⑨a2 对账）；同日 Push 293 起「炫彩」档实装（同色相高饱和兑白 —— 底色 ×0.62 / 悬停 ×0.82）：⑨d2 / ⑨f2 对账（行色 computed 换高饱和值、状态列 oklch 深色字照旧）；同日追订「炫彩模式文字不明显 看不出来」：行 / 卡挂 .tint-vivid 把次要灰字提深一档（⑨d2 / ⑨f2 顺带对账类名）；同日再追订「炫彩下点这个进度条看不清」→「背景留白」→「带弧度的」→「胶囊的绿回到之前的版本」：炫彩档四格进度点底挖出胶囊白槽（rounded-full + bg-white），点回标配绿（emerald-500 / zinc-200），适中 / 简约不动：⑨c2 / ⑨f3 对账类名；
  *   ⑩ 折叠面板展开态记忆（Push 233 ·「这个下拉要有记忆」）：偏好归零 = 全收起 → 展开 A → 刷新仍展开 / B 仍收起 →
  *      切「我提出的问题」两面板全收起（两标签各自独立记忆）→ raised 展开 B → 切回 tasks 的 A 不受影响 →
@@ -296,8 +296,8 @@ const issueA1 = await addIssue(projectA, me, "回放问题·我提出的未解�
 const issueA2 = await addIssue(projectA, me, "回放问题·我提出的已完成", ["采购部", "项目部"], "A 已完成");
 const closeRes = await api("/api/v1/projects/" + projectA + "/issues/" + issueA2.issue.id, "PATCH", { state: "done", version: issueA2.issue.version });
 check("夹具：A 的第二条问题置「已完成」（PATCH state=done）", closeRes.status === 200, String(closeRes.status) + " " + closeRes.text.slice(0, 140));
-// A1：补「解决方案或建议 + 问题附图」两列（工作台聚合读面不带这两列 —— 页面按项目向
-// GET /projects/{id}/issues 回填）。附图走真直传链路：发起 → 签名分片 → PUT → 完成。
+// A1：补「解决方案或建议 + 问题附图」两列（Push 302 起聚合读面随行下发，夹具直落库即对账）。
+// 附图走真直传链路：发起 → 签名分片 → PUT → 完成。
 const issueSolution = "回放·解决方案：先抽水，复测后再装货架";
 const pngName = "回放-问题附图.png";
 const pngBytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
@@ -378,6 +378,32 @@ const upcomingTest = idsOf(inTest(ws.myTasks.upcoming));
 const overdueTest = idsOf(inTest(ws.myTasks.overdue));
 const unscheduledTest = idsOf(inTest(ws.myTasks.unscheduled));
 const ambientTotal = idsOf(ws.myTasks.today).length + idsOf(ws.myTasks.upcoming).length + idsOf(ws.myTasks.overdue).length + idsOf(ws.myTasks.unscheduled).length;
+// Push 302 拆根：工作台聚合面（GET /api/v1/workspace）直出任务表全 15 列数据源 + 问题七列（solution / photos）+
+// 项目卡 projects —— 前端不再逐项目回填（useTaskFull / useIssueFull / fallbackTaskOf 整段下架），刷新一次到位；
+// 这里先在接口层对账全字段随行，再往下走页面级断言。
+const wsTaskOf = (id) => {
+  for (const list of [ws.myTasks.overdue, ws.myTasks.today, ws.myTasks.upcoming, ws.myTasks.unscheduled]) {
+    const hit = (list === undefined ? [] : list).find((item) => item.id === id);
+    if (hit !== undefined) return hit;
+  }
+  return undefined;
+};
+const wsIssueOf = (id) => {
+  for (const list of [ws.myIssues.handling, ws.myIssues.raised]) {
+    const hit = (list === undefined ? [] : list).find((item) => item.id === id);
+    if (hit !== undefined) return hit;
+  }
+  return undefined;
+};
+const wsTaskOverdue302 = wsTaskOf(tOverdue.id);
+check("①b（Push 302）聚合面任务行随行全字段：项目编号 / 名称 + 成果文件 2 类 + 天数 5 + 人数 6 + 进展描述 + files 1 份（页面零回填）",
+  wsTaskOverdue302 !== undefined && wsTaskOverdue302.projectId === projectA && wsTaskOverdue302.projectCode === codeA && wsTaskOverdue302.projectName === "回放·工作台A" && wsTaskOverdue302.estimatedDays === 5 && wsTaskOverdue302.headcount === 6 && (wsTaskOverdue302.deliverableTypes === undefined ? [] : wsTaskOverdue302.deliverableTypes).join("|") === "CAD图纸|合同" && wsTaskOverdue302.note === "回放·进展描述：图纸已出，等待评审" && (wsTaskOverdue302.files === undefined ? [] : wsTaskOverdue302.files).length === 1 && wsTaskOverdue302.files[0].name === taskFileName,
+  JSON.stringify(wsTaskOverdue302));
+const wsTaskToday302 = wsTaskOf(tToday.id);
+check("①c（Push 302）「变更关联」随行：今日任务 changeLinks 1 条、id 对齐", wsTaskToday302 !== undefined && (wsTaskToday302.changeLinks === undefined ? [] : wsTaskToday302.changeLinks).length === 1 && wsTaskToday302.changeLinks[0].id === changeId, JSON.stringify(wsTaskToday302 === undefined ? null : wsTaskToday302.changeLinks));
+const wsIssueA1Full = wsIssueOf(issueA1.issue.id);
+check("①d（Push 302）聚合面问题行随行 solution + photos 1 枚（文件名对齐）", wsIssueA1Full !== undefined && wsIssueA1Full.solution === issueSolution && (wsIssueA1Full.photos === undefined ? [] : wsIssueA1Full.photos).length === 1 && wsIssueA1Full.photos[0].name === pngName, JSON.stringify(wsIssueA1Full === undefined ? null : { solution: wsIssueA1Full.solution, photos: wsIssueA1Full.photos }));
+check("①e（Push 302）聚合面随盘下发项目卡：三个测试项目都在 projects 里（项目经理列 / 回写不再逐项目回查）", (ws.projects === undefined ? [] : ws.projects).filter((item) => TEST_PROJECTS.indexOf(item.id) >= 0).length === 3, JSON.stringify((ws.projects === undefined ? [] : ws.projects).map((item) => item.id)));
 const expectPanelOrder = [];
 for (const group of ["overdue", "today", "upcoming", "unscheduled"]) {
   for (const task of ws.myTasks[group]) {
@@ -598,7 +624,7 @@ const expanded = await ev(panelsExpr());
 const expandedA = expanded === null ? null : expanded.find((item) => item.id === projectA);
 check("④a 点一下面板头 = 展开（data-open=true / aria-expanded=true / 表体出现）", expandedA !== null && expandedA.open === "true" && expandedA.expanded === "true" && expandedA.rows === 5, expandedA === null ? "null" : JSON.stringify(expandedA));
 const fullReady = await waitFor("(function(){var node=document.querySelector(" + j('[data-workspace-task-table][data-workspace-task-full="true"]') + ");return node!==null;})()", 25000);
-check("④a1 扩列回填完成（data-workspace-task-full=true；15 列数据源全部就绪）", fullReady === true, String(fullReady));
+check("④a1 全字段直出就绪（data-workspace-task-full=true 常真；15 列数据源来自聚合面，不再逐项目回填）", fullReady === true, String(fullReady));
 const rowsA = await ev(taskRowsExpr(projectA));
 const expectedOrder = [tOverdue.id, tToday.id, tUpcoming.id, tFar.id, tUnscheduled.id].join(",");
 check("④b 任务表 5 行、顺序 = 已逾期 → 今日 → 即将（+3 → +20 远期）→ 未排期（最急在前、未排期收尾）", rowsA !== null && rowsA.table === true && rowsA.rows.map((item) => item.id).join(",") === expectedOrder, rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.id)));
@@ -620,7 +646,7 @@ check("④p 项目进展描述列 = note 原文 / 「—」", rowsA !== null && 
 check("④q 预计所需天数窄列 = 显式 5 / 推算 3（含首尾）/ 无开始日期落 0（项目页同口径）", rowsA !== null && rowsA.rows.map((item) => item.days).join("|") === "5|3|0|0|0", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.days)));
 check("④r 预计所需施工人数列 = 6 人 / 3 人 / —", rowsA !== null && rowsA.rows.map((item) => item.headcount).join("|") === "6 人|3 人|—|—|—", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => item.headcount)));
 check("④s 变更关联列 = 空单元格 / 「变更」琥珀签（今日任务挂 1 条）/ 空", rowsA !== null && rowsA.rows.map((item) => item.change).join("|") === "|变更|||" && rowsA.rows.map((item) => item.changeCount).join("|") === "0|1|0|0|0", rowsA === null ? "null" : JSON.stringify(rowsA.rows.map((item) => [item.change, item.changeCount])));
-check("④t 扩列降级横幅不出现（两个项目的源接口都取到）", (await ev("document.querySelector(" + j("[data-workspace-task-partial]") + ") !== null")) === false, "partial=false");
+check("④t 扩列降级横幅整段下架（Push 302：聚合面全字段直出，partial 标记不再存在）", (await ev("document.querySelector(" + j("[data-workspace-task-partial]") + ") !== null")) === false, "partial=false");
 await clickSelector('[data-workspace-panel="' + projectB + '"] [data-workspace-panel-toggle]');
 const rowsB = await ev(taskRowsExpr(projectB));
 check("④u 跨项目 B：1 行、项目经理 = " + me.displayName + "、" + other.displayName + "（多值「、」连接）、其余扩列落「—」", rowsB !== null && rowsB.table === true && rowsB.rows.length === 1 && rowsB.rows[0].id === tB.id && rowsB.rows[0].manager === me.displayName + "、" + other.displayName && rowsB.rows[0].deliverable === "—" && rowsB.rows[0].files === "—" && rowsB.rows[0].note === "—" && rowsB.rows[0].headcount === "—" && rowsB.rows[0].changeCount === "0", rowsB === null ? "null" : JSON.stringify(rowsB.rows));
@@ -714,10 +740,10 @@ const back260 = await waitFor("(function(){var row=document.querySelector(" + j(
 const restoredRes260 = await api("/api/v1/projects/" + projectA + "/issues");
 const issueA1Restored260 = restoredRes260.json === null ? undefined : (restoredRes260.json.items === undefined ? [] : restoredRes260.json.items).filter((item) => item.id === issueA1.issue.id)[0];
 check("⑥e0f（Push 260）选回「未解决」→ 色签回 sky、接口回读 state=open（夹具复位，后面的断言基线不变）", back260 === true && issueA1Restored260 !== undefined && issueA1Restored260.state === "open", JSON.stringify([back260, issueA1Restored260 === undefined ? null : issueA1Restored260.state]));
-check("⑥e1 「解决方案或建议」列 = 回填的解决方案原文", rowsIssueA !== null && rowsIssueA.rows.length === 1 && rowsIssueA.rows[0].solution.indexOf("回放·解决方案") >= 0, rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => item.solution)));
+check("⑥e1 「解决方案或建议」列 = 聚合面直出的解决方案原文", rowsIssueA !== null && rowsIssueA.rows.length === 1 && rowsIssueA.rows[0].solution.indexOf("回放·解决方案") >= 0, rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => item.solution)));
 check("⑥e2 「问题附图」列 = A1 一枚真图瓦片（文件名对齐）", rowsIssueA !== null && rowsIssueA.rows.length === 1 && rowsIssueA.rows[0].photos === 1 && rowsIssueA.rows[0].photoNames[0] === pngName, rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => [item.photos, item.photoNames, item.photosText])));
 const partialBanner = await ev("document.querySelector(" + j("[data-workspace-issue-partial]") + ") !== null");
-check("⑥e3 七列回填没有 partial 降级横幅（两个项目的问题源接口都取到）", partialBanner === false, String(partialBanner));
+check("⑥e3 七列无 partial 降级横幅（Push 302：问题行随行 solution / photos，partial 标记不再存在）", partialBanner === false, String(partialBanner));
 const issuePanelLink = await ev("(function(){var a=document.querySelector(" + j('[data-workspace-panel="' + projectA + '"] [data-workspace-project-link]') + ");return a===null?null:String(a.getAttribute(" + j("href") + "));})()");
 check("⑥f（Push 242 / Push 253）行尾「在项目中查看」下架（行内无链接）+ 入口 = 面板头「进入项目」→ 该项目「问题追踪」深链", rowsIssueA !== null && rowsIssueA.rows.every((item) => item.href === "") && issuePanelLink === "#/project/" + projectA + "?view=daily&sub=issues", JSON.stringify({ rowHref: rowsIssueA === null ? "null" : rowsIssueA.rows[0].href, panelLink: issuePanelLink }));
 check("⑥g 不是我提出的（wmj 提的）不进这张表", rowsIssueA !== null && rowsIssueA.rows.every((item) => item.id !== issueOther.issue.id), rowsIssueA === null ? "null" : JSON.stringify(rowsIssueA.rows.map((item) => item.id)));
@@ -804,17 +830,17 @@ async function setBgTier(tier, label) {
   if (landed !== true) throw new Error("背景档位没切到：" + tier);
 }
 const bgTriggerExpr = "(function(){var t=document.querySelector(" + j("[data-bg-tier-trigger]") + ");var nav=document.querySelector(" + j("[data-workspace-tabs]") + ");return t===null?null:{text:String(t.textContent.trim()),expanded:String(t.getAttribute(" + j("aria-expanded") + ")),inNav:nav!==null&&nav.contains(t)};})()";
-// Push 291：档位改按账号落库 —— 起点先把账号值归一为「简约」（上次中断遗留也能自愈；bgPrefStart 收尾恢复，不留痕）
+// Push 291：档位改按账号落库 —— 起点先把账号值归一为「简约」作对照基线（Push 313 起账号默认 =「适中」；起点归一 + bgPrefStart 收尾恢复都不留痕、上次中断遗留也能自愈）
 const bgLabelOf = { simple: "简约", medium: "适中", vivid: "炫彩" };
 const bgPrefSnap = await api("/api/v1/users/me/preferences");
-const bgPrefStart = bgPrefSnap.status === 200 && bgPrefSnap.json !== null && (bgPrefSnap.json.backgroundTier === "medium" || bgPrefSnap.json.backgroundTier === "vivid") ? bgPrefSnap.json.backgroundTier : "simple";
+const bgPrefStart = bgPrefSnap.status === 200 && bgPrefSnap.json !== null && (bgPrefSnap.json.backgroundTier === "simple" || bgPrefSnap.json.backgroundTier === "vivid") ? bgPrefSnap.json.backgroundTier : "medium";
 if (bgPrefStart !== "simple") {
   await api("/api/v1/users/me/preferences", "PATCH", { backgroundTier: "simple" });
   await open("#/my-tasks", "[data-workspace-page]");
   await waitFor("document.querySelector(" + j("[data-bg-tier-trigger]") + ") !== null", 25000);
 }
 const bg0 = await ev(bgTriggerExpr);
-check("⑨a 观感开关 = 顶栏「背景 · 档位」（Push 290 原「醒目模式」开关下架：标签导航栏里不再有它）；默认档「简约」（Push 291 起按账号落库：起点先归一为「简约」）", bg0 !== null && bg0.text.indexOf("背景") >= 0 && bg0.text.indexOf("简约") >= 0 && bg0.expanded === "false" && bg0.inNav === false, bg0 === null ? "null" : JSON.stringify(bg0));
+check("⑨a 观感开关 = 顶栏「背景 · 档位」（Push 290 原「醒目模式」开关下架：标签导航栏里不再有它）；回放基线「简约」（Push 291 起按账号落库；Push 313 起账号默认「适中」，本组起点先归一为「简约」作对照）", bg0 !== null && bg0.text.indexOf("背景") >= 0 && bg0.text.indexOf("简约") >= 0 && bg0.expanded === "false" && bg0.inNav === false, bg0 === null ? "null" : JSON.stringify(bg0));
 /** 任务行 computed 底色（前 3 行 · 内层 role=button —— 适中档的行色铺在这层）。 */
 const taskRowBgExpr = (projectId) => "(function(){var panel=document.querySelector(" + j("[data-workspace-panel=" + Q + projectId + Q + "]") + ");if(panel===null){return null;}var table=panel.querySelector(" + j("[data-workspace-task-table]") + ");if(table===null){return {table:false};}var rows=table.querySelectorAll(" + j("[data-workspace-task]") + ");var out=[];for(var i=0;i<3&&i<rows.length;i+=1){var node=rows[i].querySelector(" + j("[role=button]") + ");out.push(node===null?null:getComputedStyle(node).backgroundColor);}return {table:true,bgs:out};})()";
 /** 问题行 computed 底色（逐行 tr）。 */
@@ -900,16 +926,16 @@ await open("#/my-tasks", "[data-workspace-page]");
 const bgBackLanded = await waitFor("(function(){var t=document.querySelector(" + j("[data-bg-tier-trigger]") + ");return t!==null&&String(t.textContent).indexOf(" + j(bgLabelOf[bgPrefStart]) + ") >= 0;})()", 15000);
 const bgTierBack = await ev(bgTriggerExpr);
 check("⑨i 回放收尾：账号偏好 backgroundTier 恢复原值（不留痕）且重开页档位与账号一致", bgPrefBack !== null && bgPrefBack.status === 200 && bgPrefBack.json !== null && bgPrefBack.json.backgroundTier === bgPrefStart && bgBackLanded === true && bgTierBack !== null && bgTierBack.text.indexOf(bgLabelOf[bgPrefStart]) >= 0, JSON.stringify([bgPrefBack === null ? null : bgPrefBack.json === null ? bgPrefBack.status : bgPrefBack.json.backgroundTier, bgTierBack]));
-// ⑨j 卡片水印开关（Push 292 · 业务口径「增加一个水印选项 可以选择是否要水印」）：背景菜单第四行 =「水印」开关；点击 = 单键 PATCH cardWatermark、刷新保持、收尾恢复原值
+// ⑨j 卡片水印开关（Push 292 · 业务口径「增加一个水印选项 可以选择是否要水印」；Push 313 起默认关）：背景菜单第四行 =「水印」开关；点击 = 单键 PATCH cardWatermark、刷新保持、收尾恢复原值
 const wmRowExpr = "(function(){var n=document.querySelector(" + j("[data-bg-watermark]") + ");return n===null?null:{state:String(n.getAttribute(" + j("data-bg-watermark") + ")),checked:String(n.getAttribute(" + j("aria-checked") + ")),label:String(n.textContent.trim())};})()";
 const wmStateExpr = "(function(){var n=document.querySelector(" + j("[data-bg-watermark]") + ");return n===null?null:String(n.getAttribute(" + j("data-bg-watermark") + "));})()";
 const wmPrefSnap = await api("/api/v1/users/me/preferences");
-const wmPrefStart = wmPrefSnap.status === 200 && wmPrefSnap.json !== null && wmPrefSnap.json.cardWatermark === false ? false : true;
+const wmPrefStart = wmPrefSnap.status === 200 && wmPrefSnap.json !== null && wmPrefSnap.json.cardWatermark === true;
 const wmFlip = wmPrefStart === false;
 await openBgMenu();
 await waitFor("document.querySelector(" + j("[data-bg-watermark]") + ") !== null", 15000);
 const wm0 = await ev(wmRowExpr);
-check("⑨j 水印开关在场：背景菜单第四行 =「水印」（开关态 = 账号偏好 cardWatermark，默认开）", wm0 !== null && wm0.label.indexOf("水印") >= 0 && wm0.state === (wmPrefStart ? "on" : "off") && wm0.checked === String(wmPrefStart), wm0 === null ? "null" : JSON.stringify([wm0, wmPrefStart]));
+check("⑨j 水印开关在场：背景菜单第四行 =「水印」（开关态 = 账号偏好 cardWatermark；Push 313 起账号默认 = 关）", wm0 !== null && wm0.label.indexOf("水印") >= 0 && wm0.state === (wmPrefStart ? "on" : "off") && wm0.checked === String(wmPrefStart), wm0 === null ? "null" : JSON.stringify([wm0, wmPrefStart]));
 await clickSelector("[data-bg-watermark]");
 const wmMenuStillOpen = await ev("document.querySelector(" + j("[data-bg-tier-menu]") + ") !== null");
 let wmPrefOn = null;

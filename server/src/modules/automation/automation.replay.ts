@@ -3,7 +3,7 @@
  * 口径来源：技术设计v0.2 §6.2（幂等执行键 / 可测试：时钟注入 + 规则回放 + 金标文案逐字比对）、
  *   docs/rules/R01-R07-内置规则文案.md（R 系列）、docs/rules/A01-A03-A14-扩展规则文案.md（A 系列）、
  *   技术设计v0.3 §3.6 M5 出口标准（金标回放全绿）。
- * 主体口径：任务（R02 ~ R07）与 A 系列三类主体（A01 日报名册槽位 / A02 项目日报 / A14 待办；A03 问题随处理时限删除下线 · Push 215）——
+ * 主体口径：任务（R02 ~ R05 / R07）、项目完成（R06）与 A 系列主体（A01 日报名册槽位 / A02 项目日报 / A14 待办 / A08 阶段；A03 问题随处理时限删除下线 · Push 215）——
  *   规则码 → 主体类型见 builtin-rules 的 subjectKindOf；字段与收件人由唤醒层按实体快照注入。
  * 边界：本文件只算「应发给谁、发什么、幂等键是什么」；真正投递（企微 / 站内信 / 重试 / 死信）由 M5-02 ~ M5-04 承担。
  */
@@ -43,7 +43,10 @@ export interface ReplayTask {
   managerId: string | null;
   managerName: string | null;
   projectId: string;
+  projectCode: string;
+  projectName: string;
   projectProgress: number;
+  completedByName: string | null;
   projectGroupId: string | null;
   deliverableTypes: readonly string[];
   fileCount: number;
@@ -157,6 +160,9 @@ export interface BusinessDateEvaluation {
 const COMPLETED_STATUSES = ["done", "early_done"];
 /** 任务快照 → 通用主体（字段与 R02 ~ R07 的条件 / 文案变量一一对应）。 */
 export function toTaskSubject(task: ReplayTask): ReplaySubject {
+  const projectLabel =
+    task.projectCode === "" ? task.projectName : task.projectName === "" ? task.projectCode : task.projectCode + "·" + task.projectName;
+  const taskBrief = "项目：**" + projectLabel + "**" + String.fromCharCode(10) + "任务：「**" + task.title + "**」";
   return {
     kind: "task",
     id: task.id,
@@ -174,9 +180,14 @@ export function toTaskSubject(task: ReplayTask): ReplaySubject {
       "task.owner_id": task.ownerId,
       "task.owner_name": task.ownerName,
       "task.manager_name": task.managerName,
+      "task.completed_by_name": task.completedByName,
+      "task.brief": taskBrief,
       "task.deliverable_types": task.deliverableTypes,
       "task.file_count": task.fileCount,
       "project.id": task.projectId,
+      "project.code": task.projectCode,
+      "project.name": task.projectName,
+      "project.label": projectLabel,
       "project.progress": task.projectProgress,
     },
     recipients: {
@@ -273,10 +284,13 @@ export function evaluateBusinessDate(input: BusinessDateEvaluationInput): Busine
       let fireAt: string | null = null;
 
       if (rule.trigger.kind === "event") {
-        const status = subject.kind === "task" ? subject.fields["task.display_status"] : undefined;
-        if (typeof status !== "string" || !COMPLETED_STATUSES.includes(status)) {
-          details.push({ ruleCode: rule.code, ruleName: rule.name, entityId: subject.id, windowKey: null, matched: false, skipped: "window_mismatch", conditions: [] });
-          continue;
+        // 回放任务主体时，完成事件以任务状态代表事件已发生；其他事件主体（如 A08 stage.advanced）只看 outbox 已给出的事件。
+        if (subject.kind === "task") {
+          const status = subject.fields["task.display_status"];
+          if (typeof status !== "string" || !COMPLETED_STATUSES.includes(status)) {
+            details.push({ ruleCode: rule.code, ruleName: rule.name, entityId: subject.id, windowKey: null, matched: false, skipped: "window_mismatch", conditions: [] });
+            continue;
+          }
         }
         windowKey = "v" + String(subject.version ?? 0);
       } else {
@@ -318,12 +332,17 @@ export function evaluateBusinessDate(input: BusinessDateEvaluationInput): Busine
         const groupBy = action.groupBy !== undefined && action.groupBy.length > 0 ? action.groupBy : null;
         const spec = groupBy === null ? null : findMergedSpec(rule.code, channel);
         const recipientKinds = Array.isArray(action.recipient) ? action.recipient : [action.recipient];
-        const actionMessages: ReplayMessage[] = [];
-        let resolvedAny = false;
+        const resolvedRecipients: Array<{ kind: RuleRecipient; recipient: ReplaySubjectRecipient }> = [];
+        const seenRecipientIds = new Set<string>();
         for (const recipientKind of recipientKinds) {
           const recipient = resolveRecipient(subject, recipientKind);
-          if (recipient === null) continue;
-          resolvedAny = true;
+          if (recipient === null || recipient.id === null || seenRecipientIds.has(recipient.id)) continue;
+          seenRecipientIds.add(recipient.id);
+          resolvedRecipients.push({ kind: recipientKind, recipient });
+        }
+        const actionMessages: ReplayMessage[] = [];
+        const baseDedupeKey = dedupeKey(rule.code, subject.id, windowKey);
+        for (const { kind: recipientKind, recipient } of resolvedRecipients) {
           const variables = subjectVariables(subject, recipient.name);
           // 合并清单变量先按本主体的清单值注入（单条形态），合并步再按 bucket 重渲染全量清单。
           if (spec !== null) variables[spec.listVariable] = variableValue(subject, [spec.listField], recipient.name);
@@ -332,7 +351,8 @@ export function evaluateBusinessDate(input: BusinessDateEvaluationInput): Busine
             ruleName: rule.name,
             entityId: subject.id,
             windowKey,
-            dedupeKey: dedupeKey(rule.code, subject.id, windowKey),
+            // 多收件人动作必须逐人成键；同一人兼任多个角色时已在上面按 recipient id 去重。
+            dedupeKey: resolvedRecipients.length > 1 ? baseDedupeKey + ":" + recipient.id : baseDedupeKey,
             channel,
             recipient: recipientKind,
             recipientId: recipient.id,
@@ -341,7 +361,7 @@ export function evaluateBusinessDate(input: BusinessDateEvaluationInput): Busine
             body: renderTemplate(template.body, variables),
           });
         }
-        if (!resolvedAny) skip = skip ?? "recipient_missing";
+        if (resolvedRecipients.length === 0) skip = skip ?? "recipient_missing";
         const recipientName = actionMessages[0]?.recipientName ?? null;
         const listValue = spec === null ? null : variableValue(subject, [spec.listField], recipientName);
         for (const message of actionMessages) {
@@ -385,8 +405,8 @@ export function evaluateBusinessDate(input: BusinessDateEvaluationInput): Busine
       merged.push({ message: { ...first, entityId: recipientEntityId, dedupeKey: recipientKey, mergedFrom: sourceIds }, fireAt: firstItem.fireAt });
       continue;
     }
-    const list = bucket.map((item) => item.listValue ?? "").join("、");
-    const listVariables = { [spec.listVariable]: list };
+    const list = bucket.map((item) => item.listValue ?? "").join(spec.separator ?? "、");
+    const listVariables = { [spec.listVariable]: list, "任务负责人": first.recipientName ?? "" };
     merged.push({
       message: {
         ...first,

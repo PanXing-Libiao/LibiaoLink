@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { DailySubView } from "../useHashRoute";
-import { subTabGroupText, subTabText, useLocale } from "../i18n";
+import { subTabGroupText, subTabText, useLocale, useT } from "../i18n";
 
 /**
  * 「日报及问题」的子菜单（业务口径 2026-09-30「日报及问题页面的导航栏按钮集成到页面导航栏 如图一的效果」）。
@@ -76,11 +76,12 @@ const SUB_TAB_ICON: Record<SubTab, ReactNode> = {
  */
 export function DailySubMenu({ active, onSelect }: { active: DailySubView; onSelect: (sub: DailySubView) => void }) {
   const locale = useLocale();
+  const t = useT();
   return (
     <div
       data-daily-submenu
       role="menu"
-      aria-label="日报及问题子视图"
+      aria-label={t("sub.dailyAria")}
       className="submenu-pop w-44 overflow-hidden rounded-2xl border border-zinc-200/80 bg-white p-1.5 shadow-[0_18px_40px_-12px_rgba(15,23,42,0.30),0_4px_12px_-4px_rgba(15,23,42,0.14)]"
     >
       {SUB_TAB_GROUPS.map((group, index) => (

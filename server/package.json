@@ -18,16 +18,19 @@
     "check:db-schema": "node --env-file-if-exists=.env scripts/check-db-schema.mjs",
     "check:permission-matrix": "node scripts/check-permission-matrix.mjs",
     "storage:init": "node --env-file-if-exists=.env scripts/storage-init.mjs",
-    "storage:it": "node --env-file-if-exists=.env scripts/storage-it.mjs"
+    "storage:it": "node --env-file-if-exists=.env scripts/storage-it.mjs",
+    "wecom:image:smoke": "npm run build && node scripts/wecom-image-smoke.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1136.0",
     "@aws-sdk/s3-request-presigner": "^3.1136.0",
     "@libiaolink/contracts": "file:../shared",
+    "@napi-rs/canvas": "0.1.77",
     "@nestjs/common": "^12.0.3",
     "@nestjs/core": "^12.0.3",
     "@nestjs/platform-express": "^12.0.3",
     "drizzle-orm": "^0.45.2",
+    "exceljs": "^4.4.0",
     "nestjs-pino": "^5.2.0",
     "pg": "^8.23.0",
     "pino": "^10.3.1",

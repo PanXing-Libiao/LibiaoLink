@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { usePopover } from "./usePopover";
+import { useT } from "../i18n";
 
 /** 选项：搜索下拉的选项文案必须是字符串（搜索按它做包含匹配）。 */
 export type SearchSelectOption = { value: string; label: string };
@@ -48,13 +49,14 @@ const LIST_MAX_HEIGHT = 280;
  *
  * 触发器与 SelectMenu 同一套（白底描边 + 右侧箭头 + 选中项文字）；浮层 = 顶部搜索框 + 列表内部滚动：
  * 打开即清空搜索并聚焦、输入实时过滤（大小写不敏感的包含匹配）、回车 = 选当前命中第一条、
- * 方向键移动、Esc / 点浮层外关闭（usePopover 统一）；打开时把当前选中项滚进可视区一次。
+ * 方向键移动、Esc / 点浮层外关闭（usePopover 统一）；搜索下拉始终向下展开，列表超出可视高度时在浮层内部滚动；打开时把当前选中项滚进可视区一次。
  * 多选（mode="multi"）：点选项勾选 / 再点取消选择，**点选不关闭浮层**；触发器只显示筛选项名称 label +
  * 浅灰数量（空选只显示名称 —— 业务口径 2026-10-09「可以只显现这个筛选的名称 然后数量淡灰色的」）。
  * 选项文案 = 触发器展示文案（label 原样渲染）—— 回放脚本按 `[data-select-popover] [role=option]` 文本定位。
  */
 export function SearchSelect(props: SearchSelectProps) {
-  const { open, setOpen, position, triggerRef, popoverRef } = usePopover(POPOVER_WIDTH, LIST_MAX_HEIGHT + 56);
+  const { open, setOpen, position, triggerRef, popoverRef } = usePopover(POPOVER_WIDTH, LIST_MAX_HEIGHT + 56, "below", true);
+  const t = useT();
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -71,6 +73,10 @@ export function SearchSelect(props: SearchSelectProps) {
     }
     return props.options.filter((option) => option.label.toLowerCase().indexOf(keyword) !== -1);
   }, [props.options, query]);
+
+  /** 浮层限制在视口内：列表超出时在框内滚动。 */
+  const popoverMaxHeight = position === null ? LIST_MAX_HEIGHT + 56 : Math.max(140, window.innerHeight - position.top - 8);
+  const listMaxHeight = Math.max(84, Math.min(LIST_MAX_HEIGHT, popoverMaxHeight - 56));
 
   /** 打开 = 干净态：清搜索、活跃项回第 0 条、聚焦搜索框，并把当前选中项滚进可视区一次。 */
   useEffect(() => {
@@ -94,6 +100,22 @@ export function SearchSelect(props: SearchSelectProps) {
       window.clearTimeout(timer);
     };
   }, [open]);
+
+  /**
+   * 搜索下拉始终向下展开（2026-10-20 追订）；列表超出可视高度时在浮层内部滚动。
+   * 只有触发器下方不足 180px（搜索框 + 约 3 行）时才把它滚到视口中间。
+   */
+  const prepareOpen = (): void => {
+    const trigger = triggerRef.current;
+    if (trigger === null) {
+      return;
+    }
+    const rect = trigger.getBoundingClientRect();
+    const available = window.innerHeight - rect.bottom - 6 - 8;
+    if (available < 180) {
+      trigger.scrollIntoView({ block: "center", inline: "nearest" });
+    }
+  };
 
   const pick = (value: string): void => {
     if (props.mode === "multi") {
@@ -137,6 +159,9 @@ export function SearchSelect(props: SearchSelectProps) {
           if (props.disabled === true) {
             return;
           }
+          if (!open) {
+            prepareOpen();
+          }
           setOpen((previous) => !previous);
         }}
         className={
@@ -152,7 +177,7 @@ export function SearchSelect(props: SearchSelectProps) {
             {selectedCount > 0 ? <span className="shrink-0 text-xs font-normal text-zinc-400">{selectedCount}</span> : null}
           </span>
         ) : triggerText === "" ? (
-          <span className="truncate text-zinc-400">{props.placeholder ?? "请选择"}</span>
+          <span className="truncate text-zinc-400">{props.placeholder ?? t("sel.placeholder")}</span>
         ) : (
           <span className={"truncate font-medium " + (props.disabled === true ? "text-zinc-400" : "text-zinc-800")}>{triggerText}</span>
         )}
@@ -168,7 +193,7 @@ export function SearchSelect(props: SearchSelectProps) {
               data-select-popover="true"
               data-search-select="true"
               className="fixed z-50 flex flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.18)]"
-              style={{ top: position.top, left: position.left, width: position.width }}
+              style={{ top: position.top, left: position.left, width: position.width, maxHeight: popoverMaxHeight }}
             >
               <div className="shrink-0 border-b border-zinc-100 p-1.5">
                 <input
@@ -176,8 +201,8 @@ export function SearchSelect(props: SearchSelectProps) {
                   type="text"
                   value={query}
                   data-search-select-input="true"
-                  aria-label={props.searchPlaceholder ?? "搜索选项"}
-                  placeholder={props.searchPlaceholder ?? "搜索…"}
+                  aria-label={props.searchPlaceholder ?? t("sel.searchAria")}
+                  placeholder={props.searchPlaceholder ?? t("sel.search")}
                   onChange={(event) => {
                     setQuery(event.target.value);
                     setActiveIndex(0);
@@ -186,9 +211,9 @@ export function SearchSelect(props: SearchSelectProps) {
                   className="w-full rounded-lg border border-zinc-200 px-2.5 py-1.5 text-sm text-zinc-700 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400"
                 />
               </div>
-              <div ref={listRef} data-search-select-list="true" className="overflow-y-auto overscroll-contain p-1" style={{ maxHeight: LIST_MAX_HEIGHT }}>
+              <div ref={listRef} data-search-select-list="true" className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1" style={{ maxHeight: listMaxHeight }}>
                 {matched.length === 0 ? (
-                  <p className="px-2.5 py-2 text-xs text-zinc-400">{props.emptyText ?? "没有匹配的选项。"}</p>
+                  <p className="px-2.5 py-2 text-xs text-zinc-400">{props.emptyText ?? t("sel.empty")}</p>
                 ) : (
                   matched.map((option, index) => (
                     <button

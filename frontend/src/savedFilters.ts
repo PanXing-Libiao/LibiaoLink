@@ -68,11 +68,6 @@ export function matchesCriteria(project: Project, criteria: FilterCriteria): boo
   return true;
 }
 
-/** 该组条件能筛出多少项目（常用筛选胶囊右侧的计数，与侧栏各分类计数同源）。 */
-export function countMatches(projects: Project[], criteria: FilterCriteria): number {
-  return projects.filter((project) => matchesCriteria(project, criteria)).length;
-}
-
 function sortedKey(list: string[]): string {
   return list.slice().sort().join("\u0000");
 }

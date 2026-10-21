@@ -109,17 +109,17 @@ export async function deleteDictItem(type: DictTypeCode, code: string): Promise<
  * 新增类型据此与既有类型同色系；前端不提供自由取色器（业务口径「颜色之前应该有模板」）。
  */
 export const DICT_ACCENT_PALETTE = [
-  { key: "blue", name: "蓝", color: "#3b82f6", text: "#ffffff" },
-  { key: "emerald", name: "绿", color: "#10b981", text: "#ffffff" },
-  { key: "amber", name: "品牌黄", color: "#feca04", text: "#313033" },
-  { key: "orange", name: "橙", color: "#f97316", text: "#ffffff" },
-  { key: "red", name: "红", color: "#ef4444", text: "#ffffff" },
-  { key: "violet", name: "紫", color: "#8b5cf6", text: "#ffffff" },
-  { key: "cyan", name: "青", color: "#06b6d4", text: "#ffffff" },
-  { key: "indigo", name: "靛蓝", color: "#6366f1", text: "#ffffff" },
-  { key: "pink", name: "玫红", color: "#ec4899", text: "#ffffff" },
-  { key: "lime", name: "草绿", color: "#84cc16", text: "#313033" },
-  { key: "slate", name: "石板灰", color: "#64748b", text: "#ffffff" },
+  { key: "blue", name: "蓝", nameEn: "Blue", color: "#3b82f6", text: "#ffffff" },
+  { key: "emerald", name: "绿", nameEn: "Green", color: "#10b981", text: "#ffffff" },
+  { key: "amber", name: "品牌黄", nameEn: "Brand Yellow", color: "#feca04", text: "#313033" },
+  { key: "orange", name: "橙", nameEn: "Orange", color: "#f97316", text: "#ffffff" },
+  { key: "red", name: "红", nameEn: "Red", color: "#ef4444", text: "#ffffff" },
+  { key: "violet", name: "紫", nameEn: "Violet", color: "#8b5cf6", text: "#ffffff" },
+  { key: "cyan", name: "青", nameEn: "Cyan", color: "#06b6d4", text: "#ffffff" },
+  { key: "indigo", name: "靛蓝", nameEn: "Indigo", color: "#6366f1", text: "#ffffff" },
+  { key: "pink", name: "玫红", nameEn: "Rose", color: "#ec4899", text: "#ffffff" },
+  { key: "lime", name: "草绿", nameEn: "Lawn Green", color: "#84cc16", text: "#313033" },
+  { key: "slate", name: "石板灰", nameEn: "Slate", color: "#64748b", text: "#ffffff" },
 ] as const;
 
 export type DictAccent = (typeof DICT_ACCENT_PALETTE)[number];

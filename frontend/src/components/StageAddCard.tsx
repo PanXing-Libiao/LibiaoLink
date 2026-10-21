@@ -8,6 +8,8 @@ import { fetchStageNodes, fetchStageTemplates, type TemplateItem } from "../temp
 import { ScrollArea } from "./ScrollArea";
 import { usePopover } from "./usePopover";
 import { useFocusTrapFor } from "./useFocusTrap";
+import { stageText, useLocale, useLocalizedTranslator, useT } from "../i18n";
+import { prefetchZhToEn } from "../translateApi";
 
 /**
  * 插入位置（Push 111，业务口径「人员要指定位置放入」）：新加的任务放进该阶段里的哪一格 ——
@@ -29,6 +31,7 @@ function PlacementPopover({ anchor, tasks, heading, onPick, onClose }: {
   onPick: (next: StagePlacement) => void;
   onClose: () => void;
 }) {
+  const t = useT();
   const { open, setOpen, position, triggerRef, popoverRef } = usePopover(320, 340);
   useEffect(() => {
     triggerRef.current = anchor as HTMLButtonElement;
@@ -55,8 +58,8 @@ function PlacementPopover({ anchor, tasks, heading, onPick, onClose }: {
     setOpen(false);
   };
   const fixed: readonly { kind: StagePlacement["kind"]; label: string }[] = [
-    { kind: "last", label: "该阶段最后（默认）" },
-    { kind: "before", label: "该阶段最前" },
+    { kind: "last", label: t("sac.place.last") },
+    { kind: "before", label: t("sac.place.first") },
   ];
   if (!open || position === null) {
     return null;
@@ -66,13 +69,13 @@ function PlacementPopover({ anchor, tasks, heading, onPick, onClose }: {
       ref={popoverRef}
       data-select-popover="true"
       role="dialog"
-      aria-label={heading + "：插入位置"}
+      aria-label={t("sac.place.aria", { heading })}
       style={{ top: position.top, left: position.left, width: position.width }}
       className="fixed z-50 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.18)]"
     >
       <div className="border-b border-zinc-100 px-2.5 py-2">
         <p className="truncate text-xs font-medium text-zinc-800" title={heading}>{heading}</p>
-        <p className="mt-0.5 text-[10px] text-zinc-400">插到哪一格？</p>
+        <p className="mt-0.5 text-[10px] text-zinc-400">{t("sac.place.hint")}</p>
       </div>
 
       <div className="p-1">
@@ -90,25 +93,25 @@ function PlacementPopover({ anchor, tasks, heading, onPick, onClose }: {
       </div>
 
       {tasks.length === 0 ? (
-        <p className="border-t border-zinc-100 px-2.5 py-2 text-[11px] text-zinc-400">该阶段还没有别的任务 —— 只能排在该阶段最后</p>
+        <p className="border-t border-zinc-100 px-2.5 py-2 text-[11px] text-zinc-400">{t("sac.place.empty")}</p>
       ) : (
         <>
           <div className="flex items-center justify-between gap-2 border-t border-zinc-100 px-2.5 py-1.5">
-            <span className="text-[10px] text-zinc-400">该阶段任务顺序</span>
-            <span className="text-[10px] text-zinc-400">点一条 = 插到它后面</span>
+            <span className="text-[10px] text-zinc-400">{t("sac.place.order")}</span>
+            <span className="text-[10px] text-zinc-400">{t("sac.place.afterHint")}</span>
           </div>
-          <ScrollArea ariaLabel="该阶段任务顺序" viewportClassName="h-[176px]" className="px-1 pb-1">
+          <ScrollArea ariaLabel={t("sac.place.order")} viewportClassName="h-[176px]" className="px-1 pb-1">
             {tasks.map((task, index) => (
               <button
                 key={task.id}
                 type="button"
-                title="点击插到它后面"
+                title={t("sac.place.afterTitle")}
                 onClick={() => { pick({ kind: "after", taskId: task.id }); }}
                 className="group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-zinc-700 transition hover:bg-zinc-100"
               >
                 <span className="w-5 shrink-0 text-right text-[10px] tabular-nums text-zinc-400">{index + 1}</span>
                 <span className="min-w-0 flex-1 truncate">{task.title}</span>
-                <span className="shrink-0 text-[10px] text-zinc-400 opacity-0 transition group-hover:opacity-100">插到它后面</span>
+                <span className="shrink-0 text-[10px] text-zinc-400 opacity-0 transition group-hover:opacity-100">{t("sac.place.after")}</span>
               </button>
             ))}
           </ScrollArea>
@@ -128,13 +131,10 @@ function PlacementPopover({ anchor, tasks, heading, onPick, onClose }: {
  * —— 样例里没有它，而且它盖在 16px 的勾选框上就是一圈很扎眼的黄框（业务截图里的黄框就是它）；键盘用户仍可用 Tab 聚焦、空格切换。
  */
 function SequentialToggle({ checked, onChange }: { checked: boolean; onChange: (next: boolean) => void }) {
+  const t = useT();
   return (
     <label
-      title={
-        checked
-          ? "默认顺序添加（已勾选）：点「＋ 添加」直接按顺序加到该阶段末尾；取消勾选可手动选插入位置"
-          : "已取消勾选：点「＋ 添加」后先弹浮层选插入位置；勾上可回到默认的顺序添加"
-      }
+      title={checked ? t("sac.seq.titleOn") : t("sac.seq.titleOff")}
       className="flex shrink-0 cursor-pointer select-none items-center gap-1.5 text-[11px] font-medium text-zinc-500 transition hover:text-zinc-700"
     >
       <input
@@ -174,7 +174,7 @@ function SequentialToggle({ checked, onChange }: { checked: boolean; onChange: (
           className={"transition-[stroke-dasharray] duration-150 [stroke-dashoffset:1] " + (checked ? "[stroke-dasharray:30_30]" : "[stroke-dasharray:0_30]")}
         />
       </svg>
-      <span>默认顺序添加</span>
+      <span>{t("sac.seq.label")}</span>
     </label>
   );
 }
@@ -222,6 +222,9 @@ type StageAddCardProps = {
  * 关卡片 = 右上 × / `Esc` / **点卡片外的空白处** / **再点同一个阶段标签**；换阶段标签或换项目时也会自动关掉（由 TaskBoard 控制）。
  */
 export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, onAddNodes, placement, onClose, style }: StageAddCardProps) {
+  const t = useT();
+  const locale = useLocale();
+  const localize = useLocalizedTranslator();
   /** Push 207：原「常驻临时任务入口」的展开态（tempOpen）随入口一并下架。 */
 
   /** 点了「＋ 添加」/「整套添加」之后、还没选位置的那一次（Push 113）：`nodes` = 这次要加的一条 / 一批，`anchor` = 贴哪一行浮出。 */
@@ -262,7 +265,7 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
       setNodes((previous) => keepLiveOrder(previous, nextNodes));
       setTemplates((previous) => keepLiveOrder(previous, nextTemplates));
       // An armed selection stays a snapshot; the write API still validates its nodes/template.
-      if (armed !== null && armed.nodes.some((node) => !nextNodes.some((next) => next.id === node.id))) setNodesError("所选节点已被删除，请重新选择后添加。");
+      if (armed !== null && armed.nodes.some((node) => !nextNodes.some((next) => next.id === node.id))) setNodesError(t("sac.err.nodeDeleted"));
     };
   }, stage, !nodesLoading && !templatesLoading, { readOnly: true });
 
@@ -279,7 +282,7 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
         }
       } catch (error) {
         if (alive) {
-          setNodesError(error instanceof Error ? error.message : "节点库加载失败");
+          setNodesError(error instanceof Error ? error.message : t("sac.err.nodesLoad"));
         }
       } finally {
         if (alive) {
@@ -301,11 +304,12 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
       try {
         const items = await fetchStageTemplates(stage);
         if (alive) {
+          prefetchZhToEn(items.map((item) => item.name));
           setTemplates(items);
         }
       } catch (error) {
         if (alive) {
-          setTemplatesError(error instanceof Error ? error.message : "模板加载失败");
+          setTemplatesError(error instanceof Error ? error.message : t("sac.err.templatesLoad"));
         }
       } finally {
         if (alive) {
@@ -362,15 +366,15 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
   /** 取数中的占位 / 失败提示（按当前标签取节点库或模板的加载状态）。 */
   const listNotice = isNodesTab
     ? nodesLoading
-      ? "正在加载节点库…"
+      ? t("sac.load.nodes")
       : nodesError === null
         ? null
-        : "节点库加载失败：" + nodesError
+        : t("sac.err.nodesLoadPrefix", { message: nodesError })
     : templatesLoading
-      ? "正在加载模板…"
+      ? t("sac.load.templates")
       : templatesError === null
         ? null
-        : "模板加载失败：" + templatesError;
+        : t("sac.err.templatesLoadPrefix", { message: templatesError });
   /** 失败时「重试」按钮该重取哪一边。 */
   const retryCurrent = (): void => {
     if (isNodesTab) {
@@ -386,7 +390,7 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
   /** 位置选好了（Push 113）：交给上层按这个位置插进项目；没给批量入口时逐条加。templateId = 当前标签是哪块模板（缺省 = 节点池）。 */
   const commitAdd = (picked: readonly TemplatePresetNode[], next: StagePlacement, templateId?: string) => {
     if (picked.some((node) => !nodes.some((current) => current.id === node.id)) || (templateId !== undefined && !templates.some((item) => item.id === templateId))) {
-      setNodesError("所选节点或模板已变化，请重新选择后添加。");
+      setNodesError(t("sac.err.changed"));
       return;
     }
     if (onAddNodes !== undefined) {
@@ -417,22 +421,22 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
     <aside
       ref={cardRef}
       role="dialog"
-      aria-label={stage + "：任务节点与模板"}
+      aria-label={t("sac.aria", { stage: stageText(locale, stage) })}
       style={style ?? { top: 112, right: 24 }}
       className="absolute z-40 flex max-h-[72vh] w-[400px] max-w-[calc(100vw-3rem)] flex-col rounded-2xl border border-white/80 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.98),rgba(255,255,255,0.94))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_12px_40px_rgba(15,23,42,0.22)] backdrop-blur-2xl backdrop-saturate-150"
     >
       <div className="flex shrink-0 items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-zinc-800">{stage}</p>
+          <p className="truncate text-sm font-semibold text-zinc-800">{stageText(locale, stage)}</p>
           <p className="mt-0.5 text-[11px] text-zinc-500">
-            节点 {nodes.length} 个 · 模板 {templates.length} 块
+            {t("sac.summary", { nodes: nodes.length, templates: templates.length })}
           </p>
         </div>
         <button
           type="button"
           onClick={onClose}
-          aria-label="关闭"
-          title="关闭"
+          aria-label={t("sac.closeAria")}
+          title={t("sac.closeAria")}
           className="shrink-0 rounded p-0.5 text-zinc-400 transition hover:bg-white/70 hover:text-zinc-700"
         >
           <svg viewBox="0 0 15 15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true" className="h-3.5 w-3.5">
@@ -452,7 +456,7 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
             (isNodesTab ? "border-zinc-900 text-zinc-900" : "border-transparent text-zinc-500 hover:text-zinc-800")
           }
         >
-          任务节点
+          {t("sac.tab.nodes")}
           <span className="ml-1 text-[10px] text-zinc-400">{nodes.length}</span>
         </button>
         {templates.map((template) => {
@@ -468,7 +472,7 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
                 (active ? "border-zinc-900 text-zinc-900" : "border-transparent text-zinc-500 hover:text-zinc-800")
               }
             >
-              {template.name}
+              {localize(template.name)}
               <span className="ml-1 text-[10px] text-zinc-400">{template.nodes.length}</span>
             </button>
           );
@@ -477,7 +481,7 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
 
       <div className="mt-2 flex shrink-0 items-center justify-between gap-2">
         <span className="text-[11px] text-zinc-500">
-          {isNodesTab ? "" : "模板预览 · "}已添加 {addedCount}
+          {isNodesTab ? "" : t("sac.previewPrefix")}{t("sac.added", { n: addedCount })}
         </span>
         <div className="flex shrink-0 items-center gap-2">
           {isNodesTab ? null : (
@@ -485,10 +489,10 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
               type="button"
               disabled={pendingCount === 0}
               onClick={(event) => { startAdd(items.filter((node) => !isAdded(node)), event.currentTarget); }}
-              title="把这块模板里还没加过的节点一次全加到项目"
+              title={t("sac.batch.title")}
               className="shrink-0 rounded-md bg-zinc-900 px-2 py-0.5 text-[11px] font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-white/60 disabled:text-zinc-400"
             >
-              整套添加（{pendingCount}）
+              {t("sac.batch", { n: pendingCount })}
             </button>
           )}
           <SequentialToggle checked={sequential} onChange={setSequential} />
@@ -506,7 +510,7 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
               onClick={retryCurrent}
               className="rounded border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 transition hover:bg-zinc-100"
             >
-              重试
+              {t("common.retry")}
             </button>
           )}
         </p>
@@ -520,7 +524,7 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
                 type="button"
                 disabled={added}
                 onClick={(event) => { startAdd([node], event.currentTarget); }}
-                title={added ? "已经在项目里" : "添加到项目 · " + stage}
+                title={added ? t("sac.addedTitle") : t("sac.addTitle", { stage: stageText(locale, stage) })}
                 className={
                   "flex w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition " +
                   (added
@@ -536,7 +540,7 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
                   <span className="block truncate text-[10px] text-zinc-400">{node.titleEn}</span>
                 </span>
                 <span className={"shrink-0 text-[11px] " + (added ? "text-zinc-400" : "font-medium text-emerald-700")}>
-                  {added ? "已添加" : "＋ 添加"}
+                  {added ? t("sac.addedTag") : t("sac.add")}
                 </span>
               </button>
             </li>
@@ -549,12 +553,12 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
         <PlacementPopover
           anchor={armed.anchor}
           tasks={placement?.tasks ?? []}
-          heading={armed.nodes.length === 1 ? armed.nodes[0].title : "整套添加 " + String(armed.nodes.length) + " 条"}
+          heading={armed.nodes.length === 1 ? armed.nodes[0].title : t("sac.batchHeading", { n: armed.nodes.length })}
           onPick={(next) => { commitAdd(armed.nodes, next, armed.templateId); }}
           onClose={() => { setArmed(null); }}
         />
       )}
-      <p className="mt-2 shrink-0 text-[10px] leading-4 text-zinc-400">「任务节点」来自节点库、「模板」来自模板接口（GET /api/v1/task-nodes · task-templates，任务模板页可维护）。加进项目即落库（M3-07 刀 3 起带来源节点，卡片整套添加走模板实例化接口）；「已添加」按来源节点 id 判重，旧行回落同阶段同名。</p>
+      <p className="mt-2 shrink-0 text-[10px] leading-4 text-zinc-400">{t("sac.footnote")}</p>
     </aside>
   );
 }

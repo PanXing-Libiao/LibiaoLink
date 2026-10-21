@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { ChangeEvent } from "react";
 import { keepLiveOrder } from "./liveSync";
 import { useLiveRefresh } from "./useLiveRefresh";
 import { ApiError } from "./api";
@@ -10,6 +11,8 @@ import { CategoryFilterSidebar } from "./components/CategoryFilterSidebar";
 import type { FacetOption } from "./components/CategoryFilterSidebar";
 import { CategorySwitch } from "./components/CategorySwitch";
 import type { DateRange } from "./components/DateRangePicker";
+import { FilePreviewOverlay } from "./components/FilePreviewOverlay";
+import { ImportProjectPanel } from "./components/ImportProjectPanel";
 import { ProjectModal, type ProjectDraft } from "./components/ProjectModal";
 import { SearchInput } from "./components/SearchInput";
 import { Toast } from "./components/Toast";
@@ -23,7 +26,9 @@ import type { FilterCriteria, SavedFilter } from "./savedFilters";
 import { buildListHash, EMPTY_LIST_QUERY, hasListFilters, initialRouteRestored, openProject, replaceListQuery, useHashRoute } from "./useHashRoute";
 import type { ListQueryState } from "./useHashRoute";
 import { PROJECT_STATUS_VALUES, projectManagerText } from "./types";
-import { projectStatusTextOf, useLocale, useT } from "./i18n";
+import { projectStatusTextOf, projectTypeText, useLocale, useT } from "./i18n";
+import type { Locale } from "./i18n";
+import { regionNameEn } from "./data/regionPicker";
 import { prefetchZhToEn } from "./translateApi";
 import type { MeResponse, Project } from "./types";
 
@@ -43,6 +48,12 @@ type HomeProps = {
   canCreateProject: boolean;
   /** 是否持有 project.update（Push 173）：无权限时卡片编辑入口不渲染（与删除同款收敛口径）。 */
   canUpdateProject: boolean;
+  /** 是否持有 project.export：无权限时卡片导出入口不渲染（服务端仍是最终裁决）。 */
+  canExportProject: boolean;
+  /** 导出项目全部数据（App 层调下载接口、持忙碌态并在失败时出全局提示）。 */
+  onExportProject: (project: Project) => void;
+  /** 正在导出的项目 id：null = 没有进行中的导出。 */
+  exportingProjectId: string | null;
   /** 卡片删除项目（硬删；二次确认由 App 层的提示条承担）：确认后由父层调接口并刷新列表。 */
   onDeleteProject: (project: Project) => void;
   /** 新建项目：返回 null = 成功（父层刷新列表）；返回文案 = 失败提示（弹窗保持打开）。 */
@@ -59,6 +70,18 @@ type HomeProps = {
 /** 排序维度固定「创建时间」（Push 177 口径）：显示名 / 口径说明 / 无权限提示均随语言切换，见 i18n 词典 home.sort.* 与 home.noCreatePermission。 */
 
 const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+/** 地区显示名（Push 301）：英文界面按标准英文国名（regionNameEn），认不出的值原样返回 —— 侧栏地区胶囊用（卡片水印的回退值同源）。 */
+function regionText(locale: Locale, dicts: Dicts, code: string): string {
+  const label = dictLabel(dicts, "region", code);
+  return locale === "en" ? regionNameEn(label) || label : label;
+}
+
+/** 卡片水印文本（Push 301 追订 · 业务口径「中文模式和英文模式水印不一样」「之前的中文不要改」+「缩写不好看 试试全称吧」）：中文界面 = 地区中文名（Push 289 原样，不改）；英文界面 = 英文全称（认不出回退中文名）。 */
+function regionWatermarkText(locale: Locale, dicts: Dicts, code: string): string {
+  const label = dictLabel(dicts, "region", code);
+  return locale === "zh" ? label : regionNameEn(label) || label;
+}
 
 /** 计数 → 侧栏选项：字典顺序优先、未知码排后；已选但零命中的值保留（否则没办法取消勾选）。 */
 function buildOptions(
@@ -84,12 +107,17 @@ function buildOptions(
     });
 }
 
-export default function Home({ me, dicts, directory, dictTools, canManageDicts, canDeleteProject, canCreateProject, canUpdateProject, onDeleteProject, onCreate, onEdit, refreshToken, savedFilters, onSavedFiltersChange }: HomeProps) {
+/** 加载失败提示的种类（Push 301）：文案取词典，语言切换后提示跟着变。 */
+type LoadError =
+  | { kind: "reset" }
+  | { kind: "network" }
+  | { kind: "api"; message: string; code: string };
+
+export default function Home({ me, dicts, directory, dictTools, canManageDicts, canDeleteProject, canCreateProject, canUpdateProject, canExportProject, onExportProject, exportingProjectId, onDeleteProject, onCreate, onEdit, refreshToken, savedFilters, onSavedFiltersChange }: HomeProps) {
   const t = useT();
   const locale = useLocale();
   /** 无建项目权限提示（Push 173 口径；文案随语言切换）。 */
   const noCreatePermission = t("home.noCreatePermission");
-  const expiresText = me.expiresAt === null ? "—" : new Date(me.expiresAt * 1000).toLocaleString(locale === "en" ? "en-US" : "zh-CN");
 
   const route = useHashRoute();
   /** 背景档位（Push 289 · 同日「先来适中版」→「不同项目类型的颜色不同应该」→「用 c 试试」）：适中 = 项目卡片按项目类型铺「便签同款实色」。 */
@@ -107,6 +135,20 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   const deleteFilterConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDeleteFilter !== null);
   // 无建项目权限时点「新建项目」的提示（Push 173；与 savedFilterError 同款琥珀提示条）
   const [createHint, setCreateHint] = useState<string | null>(null);
+  // 「导入项目」（Push 316 待推 · 直连 API 导入）：文件选择 + 面板开合由本页持有 —— 面板是页内大屏（不动路由不刷新页面），
+  // 选中文件即打开；关闭 / 导入完成清空。同一文件重复选也要能重开（onChange 里把 value 复位）。
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+  // 导入说明浮层（Push 329 · 2026-10-15）：点击「导入说明」= 系统内浮层预览（复用文件预览浮层 · iframe 浏览器内置 PDF 渲染 · Esc / 点遮罩关闭），不开新标签页。
+  const [guideOpen, setGuideOpen] = useState(false);
+  const onImportFileChange = (event: ChangeEvent<HTMLInputElement>): void => {
+    const picked = event.target.files?.[0] ?? null;
+    event.target.value = "";
+    if (picked === null) {
+      return;
+    }
+    setImportFile(picked);
+  };
   // 侧边栏开合：URL 带参数的入口保持「有筛选自动展开」（既定行为）；无参数的书签入口完全按本地记忆恢复
   const [filterOpen, setFilterOpen] = useState(() => {
     if (initialRouteRestored()) {
@@ -163,7 +205,16 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   const [items, setItems] = useState<Project[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  /** 加载失败提示（Push 301）：存种类不存死文案 —— 语言切换后提示跟着变。 */
+  const [loadError, setLoadError] = useState<LoadError | null>(null);
+  const loadErrorText =
+    loadError === null
+      ? null
+      : loadError.kind === "reset"
+        ? t("home.err.reset")
+        : loadError.kind === "network"
+          ? t("home.err.network")
+          : t("home.err.api", { message: loadError.message, code: loadError.code });
   const [facets, setFacets] = useState<ProjectFacets>(EMPTY_FACETS);
   const [savedCounts, setSavedCounts] = useState<Record<string, number>>({});
   const [reloadToken, setReloadToken] = useState(0);
@@ -228,11 +279,11 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
         if (error instanceof ApiError && error.status === 400) {
           // 非法筛选值（UUID / 日期 / limit）：丢弃整组条件并归一化地址栏，让页面回到可用状态
           replaceListQuery(EMPTY_LIST_QUERY);
-          setLoadError("筛选条件无效，已重置为全部项目。");
+          setLoadError({ kind: "reset" });
         } else if (error instanceof ApiError) {
-          setLoadError(error.message + "（" + error.code + "）");
+          setLoadError({ kind: "api", message: error.message, code: error.code });
         } else {
-          setLoadError("网络异常，未能加载项目列表。");
+          setLoadError({ kind: "network" });
         }
       } finally {
         if (!cancelled) {
@@ -290,20 +341,20 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
       buildOptions(
         facets.region,
         activeFilters.regions,
-        (code) => dictLabel(dicts, "region", code),
+        (code) => regionText(locale, dicts, code),
         dicts.region.map((item) => item.code),
       ),
-    [activeFilters.regions, dicts, facets.region],
+    [activeFilters.regions, dicts, facets.region, locale],
   );
   const typeOptions = useMemo(
     () =>
       buildOptions(
         facets.projectType,
         activeFilters.projectTypes,
-        (code) => dictLabel(dicts, "projectType", code),
+        (code) => projectTypeText(locale, dictLabel(dicts, "projectType", code)),
         dicts.projectType.map((item) => item.code),
       ),
-    [activeFilters.projectTypes, dicts, facets.projectType],
+    [activeFilters.projectTypes, dicts, facets.projectType, locale],
   );
   const managerOptions = useMemo(
     () =>
@@ -518,6 +569,81 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
             {keyword === "" && !hasFilters ? t("home.count.total", { n: total }) : t("home.count.found", { n: total })}
           </span>
           <div className="ml-auto flex w-full flex-col items-start gap-3 sm:w-auto sm:flex-row sm:items-center">
+            {/* 导入项目（Push 316 待推）：新建项目左侧 —— 点开原生文件选择（.xlsx / .xlsm），选完在页内大屏面板里解析 / 校验 / 导入 */}
+            {/* 导入说明（Push 328 追订 · 2026-10-15）：不常显 —— 悬停 / 键盘聚焦「导入项目」时按钮下方浮出入口（业务口径「鼠标触碰导入项目再上下显示」）；点击「导入说明」= 系统内浮层预览（Push 329 起：复用文件预览浮层 · iframe 浏览器内置 PDF 渲染 · Esc / 点遮罩关闭 · 浮层内可下载原文件），静态件随构建发布（public/docs/import-guide.pdf） */}
+            <div className="group relative">
+            <button
+              type="button"
+              data-import-project=""
+              aria-disabled={canCreateProject ? undefined : true}
+              title={canCreateProject ? undefined : noCreatePermission}
+              onClick={() => {
+                if (!canCreateProject) {
+                  setCreateHint(noCreatePermission);
+                  return;
+                }
+                importInputRef.current?.click();
+              }}
+              className={
+                "inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50 " +
+                (canCreateProject
+                  ? "border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 active:bg-zinc-200"
+                  : "cursor-not-allowed border border-transparent bg-zinc-200 text-zinc-400")
+              }
+            >
+              <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                <path d="M12 15V4M12 4L8 8M12 4l4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M4 16v2.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+              {t("home.import")}
+            </button>
+              <div className="invisible absolute left-0 top-full z-30 pt-2 opacity-0 pointer-events-none transition-[opacity,visibility] duration-150 group-hover:visible group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:visible group-focus-within:opacity-100 group-focus-within:pointer-events-auto">
+                <button
+                  type="button"
+                  data-import-guide=""
+                  onClick={() => {
+                    setGuideOpen(true);
+                  }}
+                  className="relative flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-600 shadow-lg transition hover:bg-zinc-50 hover:text-zinc-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50"
+                >
+                  <span className="absolute -top-[5px] left-5 h-2.5 w-2.5 rotate-45 border-l border-t border-zinc-200 bg-white" aria-hidden="true" />
+                  <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.8" />
+                    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M12 17h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                  {t("home.importGuide")}
+                </button>
+              </div>
+            </div>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              className="hidden"
+              data-import-file-input=""
+              onChange={onImportFileChange}
+            />
+            {guideOpen ? (
+              <FilePreviewOverlay
+                pane={{ mode: "url", url: import.meta.env.BASE_URL + "docs/import-guide.pdf" }}
+                name={t("home.importGuide")}
+                kind="pdf"
+                nonce={0}
+                onRetry={() => {}}
+                onDownload={() => {
+                  const link = document.createElement("a");
+                  link.href = import.meta.env.BASE_URL + "docs/import-guide.pdf";
+                  link.download = "LibiaoLink导入表导入规则说明.pdf";
+                  document.body.appendChild(link);
+                  link.click();
+                  link.remove();
+                }}
+                onClose={() => {
+                  setGuideOpen(false);
+                }}
+              />
+            ) : null}
             <button
               type="button"
               aria-disabled={canCreateProject ? undefined : true}
@@ -554,7 +680,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
 
         {loadError === null ? null : (
           <div role="alert" className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-            <span>{loadError}</span>
+            <span>{loadErrorText}</span>
             <button
               type="button"
               onClick={() => {
@@ -644,11 +770,12 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                 seqNo={project.seqNo}
                 code={project.code}
                 description={project.description}
-                watermark={cardWatermark ? dictLabel(dicts, "region", project.region) : undefined}
+                watermark={cardWatermark ? regionWatermarkText(locale, dicts, project.region) : undefined}
+                watermarkBleed={locale === "zh"}
                 tint={cardTintOf(backgroundTier, typeAccent(dicts, project.projectType).color)}
                 tintBorder={cardBorderOf(backgroundTier, typeAccent(dicts, project.projectType).color)}
                 vividInk={backgroundTier === "vivid"}
-                typeLabel={dictLabel(dicts, "projectType", project.projectType)}
+                typeLabel={projectTypeText(locale, dictLabel(dicts, "projectType", project.projectType))}
                 status={project.status}
                 statusText={projectStatusTextOf(locale, project.status)}
                 accentColor={typeAccent(dicts, project.projectType).color}
@@ -662,6 +789,14 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                       }
                     : undefined
                 }
+                onExport={
+                  canExportProject
+                    ? () => {
+                        onExportProject(project);
+                      }
+                    : undefined
+                }
+                exporting={exportingProjectId === project.id}
                 onDelete={
                   canDeleteProject
                     ? () => {
@@ -679,13 +814,25 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
             {t("home.shown", { shown: items.length, total: total })}
           </p>
         ) : null}
-
-        <details className="mt-12 rounded-xl border border-zinc-200 bg-white p-5 text-sm text-zinc-700">
-          <summary className="cursor-pointer text-zinc-500">{t("home.token.title")}</summary>
-          <pre className="mt-3 max-h-64 overflow-auto text-xs">{JSON.stringify(me.claims, null, 2)}</pre>
-          <p className="mt-3 text-xs text-zinc-400">{t("home.token.expires", { time: expiresText })}</p>
-        </details>
       </main>
+
+      {importFile === null ? null : (
+        <ImportProjectPanel
+          file={importFile}
+          dicts={dicts}
+          dictTools={dictTools}
+          canManageDicts={canManageDicts}
+          onReselect={() => {
+            importInputRef.current?.click();
+          }}
+          onClose={() => {
+            setImportFile(null);
+          }}
+          onImported={() => {
+            setReloadToken((value) => value + 1);
+          }}
+        />
+      )}
 
       {isCreateOpen && (
         <ProjectModal
@@ -713,7 +860,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
           <div
             ref={deleteFilterConfirmTrapRef}
             role="dialog"
-            aria-label="确认删除常用筛选"
+            aria-label={t("home.deleteFilter.aria")}
             data-saved-filter-delete-confirm=""
             className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
           >
