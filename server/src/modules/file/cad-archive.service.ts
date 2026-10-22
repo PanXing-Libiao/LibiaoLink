@@ -49,6 +49,7 @@ export class CadArchiveService {
     const bytes = buffer?.byteLength ?? artifact.manifestBytes;
     const digest = buffer?.sha256 ?? artifact.manifestSHA256;
     if (!objectKey.startsWith(artifact.objectPrefix)) throw new AppError("NOT_FOUND", "模型资源不存在或不可访问");
+    if (action === "manifest") await this.repository.lease(view.id);
     const object = await this.storage.getObjectStream(objectKey).catch(() => {
       throw new ServiceUnavailableException("模型资源暂时无法读取，请稍后重试");
     });
@@ -57,7 +58,6 @@ export class CadArchiveService {
       object?.stream.destroy(); invalidate();
       throw new ServiceUnavailableException("模型缓存缺失或损坏，已排队重新生成，请重新打开");
     }
-    if (action === "manifest") await this.repository.lease(view.id);
     return { stream: checkedCadStream(object.stream, bytes, digest, invalidate), bytes, artifactBytes: artifact.artifactBytes };
   }
 

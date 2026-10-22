@@ -2,6 +2,8 @@
 
 > CAD 持久化（2026-10-22，ADR-037）：STEP 上传完成的版本事务内登记 GB 后台队列，worker 独立消费，完整 manifest/buffers 落私有对象存储后才发布 completed。`cad_artifacts` / `cad_views` 保存状态、索引和窗口授权；完成结果跨重启复用，取消只影响当前窗口。对象统一放在 `projects/{projectId}/files/{fileId}/cad/`，文件与项目彻底删除均能清理。见 [运行说明](../../../cad-engine/README.md)。
 
+读取持久模型清单时，先完成窗口资源续租，再打开对象存储流，避免续租失败后遗留未关闭的读取流。存储暂时不可用保留已完成缓存，确认产物缺失或损坏才排队重建。
+
 | 字段 | 内容 |
 |---|---|
 | 类型 | 平台模块（platform） |
