@@ -325,15 +325,15 @@ check("10 秒后自动消失、页面可继续用；自动消失不写跳过位"
 await reload("[data-topnav]");
 check("未绑定时刷新会再次提醒", (await waitFor(exists("[data-wecom-binding-guide]"), 12000)) === true);
 
-// ①a 自动轮询绑定成功（Push 260）：绑定行落库 → 卡片先切「已绑定」→ 关闭 → 浅绿「绑定成功」2 秒
+// ①a 自动轮询绑定成功（Push 260）：绑定行落库 → 卡片先切「已绑定」→ 关闭 → 白色底部「绑定成功」2 秒
 await insertBindingFixture();
 const autoGuideBound = await waitFor(panelState("[data-wecom-binding-guide]") + " === " + j("bound"), 15000);
 const autoGuideClosed = await waitFor("document.querySelector(" + j("[data-wecom-binding-guide]") + ") === null", 4000);
 const autoGuideToast = await ev(successToastExpr);
 check("绑定行落库后不点刷新：卡片自动切「已绑定」", autoGuideBound === true, String(await ev(panelState("[data-wecom-binding-guide]"))));
 check(
-  "自动检测绑定后卡片关闭并弹浅绿色「绑定成功」",
-  autoGuideClosed === true && autoGuideToast !== null && String(autoGuideToast.text).indexOf("绑定成功") >= 0 && String(autoGuideToast.cls).indexOf("bg-emerald-50") >= 0 && String(autoGuideToast.cls).indexOf("text-emerald-700") >= 0,
+  "自动检测绑定后卡片关闭并弹白色底部「绑定成功」",
+  autoGuideClosed === true && autoGuideToast !== null && String(autoGuideToast.text).indexOf("绑定成功") >= 0 && String(autoGuideToast.cls).indexOf("fixed") >= 0 && String(autoGuideToast.cls).indexOf("bg-white") >= 0 && String(autoGuideToast.cls).indexOf("rounded-[22px]") >= 0,
   JSON.stringify({ closed: autoGuideClosed, toast: autoGuideToast }),
 );
 shots.push(await shot("wecom-guide-auto-bound-success-1a"));
@@ -509,7 +509,7 @@ await reload("[data-settings-card=wecom-binding]");
 const guideBack = await waitFor(exists("[data-wecom-binding-guide]"), 12000);
 check("解绑后引导恢复（未绑定 + 未跳过 → 再弹一次）", guideBack === true);
 
-// ⑦a 手动刷新绑定成功（Push 260）：点「刷新绑定状态」→ 卡片先切「已绑定」→ 关闭 → 浅绿「绑定成功」
+// ⑦a 手动刷新绑定成功（Push 260）：点「刷新绑定状态」→ 卡片先切「已绑定」→ 关闭 → 白色底部「绑定成功」
 await insertBindingFixture();
 const manualRefreshClick = await click("[data-wecom-binding-refresh]");
 const manualGuideBound = await waitFor(panelState("[data-wecom-binding-guide]") + " === " + j("bound"), 10000);
@@ -517,8 +517,8 @@ const manualGuideClosed = await waitFor("document.querySelector(" + j("[data-wec
 const manualGuideToast = await ev(successToastExpr);
 check("手点「刷新绑定状态」：卡片面板先切「已绑定」", manualRefreshClick !== null && manualGuideBound === true, String(await ev(panelState("[data-wecom-binding-guide]"))));
 check(
-  "手动刷新绑定后卡片关闭并弹浅绿色「绑定成功」",
-  manualGuideClosed === true && manualGuideToast !== null && String(manualGuideToast.text).indexOf("绑定成功") >= 0 && String(manualGuideToast.cls).indexOf("bg-emerald-50") >= 0 && String(manualGuideToast.cls).indexOf("text-emerald-700") >= 0,
+  "手动刷新绑定后卡片关闭并弹白色底部「绑定成功」",
+  manualGuideClosed === true && manualGuideToast !== null && String(manualGuideToast.text).indexOf("绑定成功") >= 0 && String(manualGuideToast.cls).indexOf("fixed") >= 0 && String(manualGuideToast.cls).indexOf("bg-white") >= 0 && String(manualGuideToast.cls).indexOf("rounded-[22px]") >= 0,
   JSON.stringify({ closed: manualGuideClosed, toast: manualGuideToast }),
 );
 shots.push(await shot("wecom-guide-manual-bound-success-7a"));

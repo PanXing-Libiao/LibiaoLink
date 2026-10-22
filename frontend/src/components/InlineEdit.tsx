@@ -34,7 +34,7 @@ type InlineCellProps = {
   wrapContent?: boolean;
   /** 锁定入口（Push 264 · P1-1 定档行内联编辑；2026-10-10 业务追订「点击后显示弹出即可 不要红色的圆提示」+
    *  「都用这个即可」）：true = 单元格保留可点（不再用 disabled 属性 / 不再出 not-allowed 红色圆圈光标），
-   *  点击不弹编辑浮层、改为弹出站点同款顶部浮空 Toast（error 档 · 文案 = disabledHint）；悬停 title 仍出 disabledHint，
+   *  点击不弹编辑浮层、改为弹出站点同款底部浮空 Toast（error 档 · 文案 = disabledHint）；悬停 title 仍出 disabledHint，
    *  测试钩子照旧落 [data-inline-cell=disabled]（Toast 上另挂 data-inline-locked-hint）。 */
   disabled?: boolean;
   /** 锁定说明文案（如「任务已定档，不支持任何修改（文件修改走变更）」）：悬停 title 与点击 Toast 共用。 */
@@ -46,12 +46,12 @@ type InlineCellProps = {
 /**
  * 表格行内编辑的通用外壳（Push 64）：单元格本身是按钮，点击在被点的位置弹出浮层（portal 到 body，
  * 不被表格横向滚动裁掉），点浮层外 / Esc 关闭；浮层里的控件不冒泡到行（不会触发行选中的抽屉）。
- * Push 264（P1-1 定档锁定）：加 disabled 锁定态 —— 入口保留可点、样式与可编辑态全等，点击改为弹出站点同款顶部
+ * Push 264（P1-1 定档锁定）：加 disabled 锁定态 —— 入口保留可点、样式与可编辑态全等，点击改为弹出站点同款底部
  *  Toast（2026-10-10 业务追订「点击后显示弹出即可 不要红色的圆提示」+「都用这个即可」；见 InlineCellProps.disabled）。
  */
 export function InlineCell({ ariaLabel, title, display, width, height, triggerClassName, bare = false, wrapContent = false, disabled = false, disabledHint, render }: InlineCellProps) {
   const { open, setOpen, position, triggerRef, popoverRef } = usePopover(width, height);
-  /** 锁定说明 Toast（Push 264 续 · 2026-10-10 业务口径「都用这个即可」）：点击锁定入口 → 站点同款顶部浮空 Toast
+  /** 锁定说明 Toast（Push 264 续 · 2026-10-10 业务口径「都用这个即可」）：点击锁定入口 → 站点同款底部浮空 Toast
    *  （error 档：rose 边框 / 浅底 + 「关闭」按钮，2s 自动消失）；tick 只增不减 —— 连点同一格也以新 key 重新计时。 */
   const [lockedHintTick, setLockedHintTick] = useState(0);
   const t = useT();
@@ -68,13 +68,13 @@ export function InlineCell({ ariaLabel, title, display, width, height, triggerCl
         title={disabled ? (disabledHint ?? resolvedTitle) : resolvedTitle}
         data-inline-cell={
           // 测试钩子（Push 226）：回放脚本据 [data-inline-cell=editor] 取「同款」参照；bare（裸框）模式另标；
-          // 定档锁定（Push 264）落 [data-inline-cell=disabled] —— 回放脚本据此认锁定入口（点击出顶部 Toast、不出编辑浮层）。
+          // 定档锁定（Push 264）落 [data-inline-cell=disabled] —— 回放脚本据此认锁定入口（点击出底部 Toast、不出编辑浮层）。
           disabled ? "disabled" : bare ? "bare" : "editor"
         }
         onClick={(event) => {
           event.stopPropagation();
           if (disabled) {
-            // 锁定入口（Push 264 续）：不弹编辑浮层，改出站点同款顶部 Toast（文案 = 409 TASK_FINALIZED 同句）。
+            // 锁定入口（Push 264 续）：不弹编辑浮层，改出站点同款底部 Toast（文案 = 409 TASK_FINALIZED 同句）。
             setLockedHintTick((tick) => tick + 1);
             return;
           }
@@ -99,7 +99,7 @@ export function InlineCell({ ariaLabel, title, display, width, height, triggerCl
           // Push 134：bare = 裸框模式 —— 撤掉小框的白底 / 描边 / 模糊，**尺寸与配色全交给调用方**（triggerClassName 给，
           // 例如状态列正常模式 = 色签填满整颗胶囊、醒目模式 = 只留深色字），基础类只留几何与过渡。
           // Push 264 续（2026-10-10）：锁定态不再套「只读灰框 + not-allowed 红色圆圈光标」—— 样式与可编辑态全等，
-          // 点击换出的顶部 Toast 见下方渲染片段。
+          // 点击换出的底部 Toast 见下方渲染片段。
           (bare
             ? "inline-flex max-w-full items-center justify-start rounded-lg text-left transition "
             : "inline-flex max-w-full items-center gap-1 rounded-lg border px-1.5 py-[3px] text-left text-xs " +
@@ -157,7 +157,7 @@ type InlineMemberMultiCellProps = {
   /** 勾选 / 取消勾选一位成员（浮层不自动关 —— 接着点下一位）。 */
   onPick: (member: Member) => void;
   display: ReactNode;
-  /** 锁定入口（Push 264 · P1-1 定档锁定）：透传 InlineCell —— 定档任务的行内入口不弹编辑浮层，点击改弹站点同款顶部 Toast。 */
+  /** 锁定入口（Push 264 · P1-1 定档锁定）：透传 InlineCell —— 定档任务的行内入口不弹编辑浮层，点击改弹站点同款底部 Toast。 */
   disabled?: boolean;
   /** 锁定说明文案（定档口径同 409 TASK_FINALIZED 提示文案；悬停 title 与点击 Toast 共用）。 */
   disabledHint?: string;
@@ -263,7 +263,7 @@ type InlineOptionCellProps = {
   bare?: boolean;
   /** 触发器附加类名（醒目模式下 = 状态字的深色档）。 */
   triggerClassName?: string;
-  /** 锁定入口（Push 264 · P1-1 定档锁定）：透传 InlineCell —— 定档任务的行内入口不弹编辑浮层，点击改弹站点同款顶部 Toast。 */
+  /** 锁定入口（Push 264 · P1-1 定档锁定）：透传 InlineCell —— 定档任务的行内入口不弹编辑浮层，点击改弹站点同款底部 Toast。 */
   disabled?: boolean;
   /** 锁定说明文案（定档口径同 409 TASK_FINALIZED 提示文案；悬停 title 与点击 Toast 共用）。 */
   disabledHint?: string;
@@ -313,7 +313,7 @@ type InlineMultiOptionCellProps = {
   triggerClassName?: string;
   /** 内容不裁剪（Push 217 续③）：转交 InlineCell —— 多枚色签折行的单元格用（窄窗 / 列被挤到最小时不被裁掉一角）。 */
   wrapContent?: boolean;
-  /** 锁定入口（Push 264 · P1-1 定档锁定）：透传 InlineCell —— 定档任务的行内入口不弹编辑浮层，点击改弹站点同款顶部 Toast。 */
+  /** 锁定入口（Push 264 · P1-1 定档锁定）：透传 InlineCell —— 定档任务的行内入口不弹编辑浮层，点击改弹站点同款底部 Toast。 */
   disabled?: boolean;
   /** 锁定说明文案（定档口径同 409 TASK_FINALIZED 提示文案；悬停 title 与点击 Toast 共用）。 */
   disabledHint?: string;
@@ -357,7 +357,7 @@ export function InlineDateCell({
   ariaLabel: string;
   onChange: (iso: string) => void;
   triggerClassName?: string;
-  /** 锁定入口（Push 264 · P1-1 定档锁定）：透传 InlineCell —— 定档任务的行内入口不弹编辑浮层，点击改弹站点同款顶部 Toast。 */
+  /** 锁定入口（Push 264 · P1-1 定档锁定）：透传 InlineCell —— 定档任务的行内入口不弹编辑浮层，点击改弹站点同款底部 Toast。 */
   disabled?: boolean;
   /** 锁定说明文案（定档口径同 409 TASK_FINALIZED 提示文案；悬停 title 与点击 Toast 共用）。 */
   disabledHint?: string;
@@ -507,7 +507,7 @@ export function InlineNumberCell({
   ariaLabel: string;
   suffix?: string;
   onSave: (value: number) => void;
-  /** 锁定入口（Push 264 · P1-1 定档锁定）：透传 InlineCell —— 定档任务的行内入口不弹编辑浮层，点击改弹站点同款顶部 Toast。 */
+  /** 锁定入口（Push 264 · P1-1 定档锁定）：透传 InlineCell —— 定档任务的行内入口不弹编辑浮层，点击改弹站点同款底部 Toast。 */
   disabled?: boolean;
   /** 锁定说明文案（定档口径同 409 TASK_FINALIZED 提示文案；悬停 title 与点击 Toast 共用）。 */
   disabledHint?: string;
@@ -633,7 +633,7 @@ export function InlineTextCell({
   bare?: boolean;
   /** 触发器附加类名。 */
   triggerClassName?: string;
-  /** 锁定入口（Push 264 · P1-1 定档锁定）：透传 InlineCell —— 定档任务的行内入口不弹编辑浮层，点击改弹站点同款顶部 Toast。 */
+  /** 锁定入口（Push 264 · P1-1 定档锁定）：透传 InlineCell —— 定档任务的行内入口不弹编辑浮层，点击改弹站点同款底部 Toast。 */
   disabled?: boolean;
   /** 锁定说明文案（定档口径同 409 TASK_FINALIZED 提示文案；悬停 title 与点击 Toast 共用）。 */
   disabledHint?: string;
