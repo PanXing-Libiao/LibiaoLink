@@ -6,6 +6,7 @@ import { DateRangePicker } from "./DateRangePicker";
 import { MultiOptionList, MultiSelectMenu, type SelectOption } from "./SelectMenu";
 import { SearchSelect, type SearchSelectItem } from "./MemberSelect";
 import { ImageZoomViewer } from "./ImageZoomViewer";
+import { Toast, type ToastKind } from "./Toast";
 import { InlineCell, InlineMemberCell, InlineMultiOptionCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode, TextareaHTMLAttributes } from "react";
 import { ISSUE_STATES, type DailyReport, type Issue, type IssueState, type ReportPhoto } from "../data/reports";
@@ -3081,8 +3082,11 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
   const draftVersion = useRef<number | null>(null);
   /** 写请求防重入（提交 / 暂存）。 */
   const [saving, setSaving] = useState(false);
-  /** 操作提示（提交 / 暂存 / 删除 / 失败）。 */
-  const [notice, setNotice] = useState<string>("");
+  /** 瞬态操作提示（提交 / 暂存 / 删除 / 失败）；统一走底部 Toast，常驻重试状态留在页内。 */
+  const [notice, setNotice] = useState<{ kind: ToastKind; text: string } | null>(null);
+  const notify = (kind: ToastKind, text: string) => {
+    setNotice({ kind, text });
+  };
   /** 删除二次确认（Push 218 业务口径「删除要二次提示」）：行尾红胶囊的第一下只把待删项挂到底部确认条
    *  （与首页「删除项目」/ 模板面板同款非阻断浮条），第二下「删除」才真删 —— 成对删除的连带范围写进文案。 */
   const [pendingDelete, setPendingDelete] = useState<{ kind: "report"; report: DailyReport } | { kind: "issue"; issue: Issue } | null>(null);
@@ -3109,7 +3113,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
       setLoadState("ready");
     } catch (error) {
       setLoadState("error");
-      setNotice(friendlyError(error, t("report.error.load")));
+      notify("error", friendlyError(error, t("report.error.load")));
     }
   }, [project.id]);
 
@@ -3141,7 +3145,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
    *  「当日完成工作」是契约必填，清空会被服务端拒绝 —— 前端先拦。 */
   const patchReport = (id: string, patch: ReportPatch) => {
     if (patch.doneWork !== undefined && patch.doneWork === "") {
-      setNotice(t("report.notice.doneRequired"));
+      notify("error", t("report.notice.doneRequired"));
       return;
     }
     const current = reportsRef.current.find((item) => item.id === id);
@@ -3154,7 +3158,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
         setReports((previous) => previous.map((item) => (item.id === id ? updated : item)));
       })
       .catch((error) => {
-        setNotice(friendlyError(error, t("report.error.reportSave")));
+        notify("error", friendlyError(error, t("report.error.reportSave")));
         void reload();
       });
   };
@@ -3162,11 +3166,11 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
   /** 问题行内编辑落值（Push 216 接真）：同日报一套 —— 乐观更新 + PATCH 回包替换；提出日期不动。 */
   const patchIssue = (id: string, patch: IssuePatch) => {
     if (patch.title !== undefined && patch.title === "") {
-      setNotice(t("report.notice.titleRequired"));
+      notify("error", t("report.notice.titleRequired"));
       return;
     }
     if (patch.categories !== undefined && patch.categories.length === 0) {
-      setNotice(t("report.notice.categoryRequired"));
+      notify("error", t("report.notice.categoryRequired"));
       return;
     }
     const current = issuesRef.current.find((item) => item.id === id);
@@ -3179,7 +3183,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
         setIssues((previous) => previous.map((item) => (item.id === id ? updated : item)));
       })
       .catch((error) => {
-        setNotice(friendlyError(error, t("report.error.issueSave")));
+        notify("error", friendlyError(error, t("report.error.issueSave")));
         void reload();
       });
   };
@@ -3237,10 +3241,10 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
           return open !== undefined && open.reportId === reportId ? null : current;
         });
         // Keep the deleted draft identity so a later save cannot silently recreate it.
-        setNotice(t("report.notice.reportDeleted"));
+        notify("ok", t("report.notice.reportDeleted"));
       })
       .catch((error) => {
-        setNotice(friendlyError(error, t("report.error.reportDelete")));
+        notify("error", friendlyError(error, t("report.error.reportDelete")));
         void reload();
       });
   };
@@ -3258,10 +3262,10 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
           // Keep the deleted draft identity and its text until the user starts a new report.
         }
         setOpenIssueId((current) => (current === issue.id ? null : current));
-        setNotice(result.cascadedReportId === null ? t("report.notice.issueDeleted") : t("report.notice.issueDeletedWithReport"));
+        notify("ok", result.cascadedReportId === null ? t("report.notice.issueDeleted") : t("report.notice.issueDeletedWithReport"));
       })
       .catch((error) => {
-        setNotice(friendlyError(error, t("report.error.issueDelete")));
+        notify("error", friendlyError(error, t("report.error.issueDelete")));
         void reload();
       });
   };
@@ -3371,12 +3375,12 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
     }
     const blocking = uploadBlockingMessage(draft, locale);
     if (blocking !== "") {
-      setNotice(blocking);
+      notify("error", blocking);
       return;
     }
     const body = draftWriteBody("submitted");
     if (draftId !== null && (!reportsRef.current.some((item) => item.id === draftId) || draftVersion.current === null)) {
-      setNotice(t("rp.draftGone"));
+      notify("error", t("rp.draftGone"));
       return;
     }
     const draftRow = draftId === null ? null : reportsRef.current.find((item) => item.id === draftId) ?? null;
@@ -3392,7 +3396,8 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
         setDraft(emptyDraft());
         setDraftId(null);
         draftVersion.current = null;
-        setNotice(
+        notify(
+          "ok",
           t("report.notice.submitted", { date: dateText }) +
             (issueCount > 0 ? t("report.notice.submittedIssues", { n: issueCount }) : t("report.notice.submittedEnd")),
         );
@@ -3400,7 +3405,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
         return reload();
       })
       .catch((error) => {
-        setNotice(friendlyError(error, t("report.error.submit")));
+        notify("error", friendlyError(error, t("report.error.submit")));
         void reload();
       })
       .finally(() => {
@@ -3415,17 +3420,17 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
       return;
     }
     if (renumberLines(draft.doneWork) === "") {
-      setNotice(t("report.notice.draftNeedsDone"));
+      notify("error", t("report.notice.draftNeedsDone"));
       return;
     }
     const blocking = uploadBlockingMessage(draft, locale);
     if (blocking !== "") {
-      setNotice(blocking);
+      notify("error", blocking);
       return;
     }
     const body = draftWriteBody("draft");
     if (draftId !== null && (!reportsRef.current.some((item) => item.id === draftId) || draftVersion.current === null)) {
-      setNotice(t("rp.draftGone"));
+      notify("error", t("rp.draftGone"));
       return;
     }
     const draftRow = draftId === null ? null : reportsRef.current.find((item) => item.id === draftId) ?? null;
@@ -3440,11 +3445,11 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
         if (draftRow === null) {
           setDraftId(saved.id);
         }
-        setNotice(t("report.notice.draftSaved"));
+        notify("ok", t("report.notice.draftSaved"));
         return reload();
       })
       .catch((error) => {
-        setNotice(friendlyError(error, t("report.error.draft")));
+        notify("error", friendlyError(error, t("report.error.draft")));
         void reload();
       })
       .finally(() => {
@@ -3478,10 +3483,13 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
     // 只有「日报填写」那一块在下面单独收成居中窄栏。
     <div className="w-full space-y-5">
 
-      {notice === "" ? null : (
-        <p data-subnav-notice className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-xs text-emerald-800">
-          {notice}
-        </p>
+      {notice === null ? null : (
+        <Toast
+          kind={notice.kind}
+          text={notice.text}
+          onClose={() => { setNotice(null); }}
+          anchor={{ name: "data-subnav-notice", value: notice.kind }}
+        />
       )}
 
       {subTab === "日报填写" ? (
@@ -3504,7 +3512,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
             <div data-report-draft-conflict="" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="status">
               <p>{remoteDraft === null ? t("rp.draftRemoteGone") : t("rp.draftRemoteChanged")}</p>
               {remoteDraft === null ? <button type="button" className="mt-2 underline" onClick={() => { setDraftId(null); draftVersion.current = null; }}>{t("rp.draftKeep")}</button> : (
-                <details className="mt-2"><summary>{t("rp.draftReview")}</summary><p className="whitespace-pre-wrap py-2">{remoteDraft.doneWork + "\n" + t("rp.planInline") + remoteDraft.plan}</p><button type="button" className="underline" onClick={() => { draftVersion.current = remoteDraft.version; setNotice(t("rp.draftConfirm")); }}>{t("rp.draftConfirmBtn")}</button></details>
+                <details className="mt-2"><summary>{t("rp.draftReview")}</summary><p className="whitespace-pre-wrap py-2">{remoteDraft.doneWork + "\n" + t("rp.planInline") + remoteDraft.plan}</p><button type="button" className="underline" onClick={() => { draftVersion.current = remoteDraft.version; notify("info", t("rp.draftConfirm")); }}>{t("rp.draftConfirmBtn")}</button></details>
               )}
             </div>
           ) : null}
@@ -3518,7 +3526,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
           <button
             type="button"
             onClick={() => {
-              setNotice("");
+              setNotice(null);
               void reload();
             }}
             className={BTN_SECONDARY}

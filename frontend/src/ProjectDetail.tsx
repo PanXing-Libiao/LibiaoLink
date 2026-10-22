@@ -412,7 +412,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     setAcceptanceDonePromptOpen(true);
   };
 
-  /** 确认设为已完成：成功才关弹窗；失败保留弹窗供重试，错误由父层顶部 Toast 提示。 */
+  /** 确认设为已完成：成功才关弹窗；失败保留弹窗供重试，错误由父层底部 Toast 提示。 */
   const confirmAcceptanceDonePrompt = (): void => {
     if (acceptanceDonePending || project === null || onSetProjectDone === undefined) {
       return;
@@ -1239,7 +1239,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             data-focus-container=""
             tabIndex={-1}
             data-project-acceptance-done-prompt=""
-            className={`ll-acceptance-toast pointer-events-auto relative w-full max-w-[640px] rounded-[22px] border border-zinc-200/80 bg-white px-4 py-4 text-left shadow-[0_18px_50px_-16px_rgba(15,23,42,0.22),0_4px_12px_-4px_rgba(15,23,42,0.08)] outline-none sm:px-5 ${acceptanceDoneClosing ? "is-closing" : ""}`}
+            className={`ll-toast pointer-events-auto relative w-full max-w-[640px] rounded-[22px] border border-zinc-200/80 bg-white px-4 py-4 text-left shadow-[0_18px_50px_-16px_rgba(15,23,42,0.22),0_4px_12px_-4px_rgba(15,23,42,0.08)] outline-none sm:px-5 ${acceptanceDoneClosing ? "is-closing" : ""}`}
           >
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-5">
               <div className="min-w-0 flex-1">

@@ -420,7 +420,7 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
   /**
    * 保存这份模板 = `PATCH /api/v1/task-templates/{id}`：**改名 + 节点顺序全量回传**（含增删 / 重排）+ `version` 乐观锁。
    * 成功 = 用服务端回包替换这块面板（version 前进、名字按库里的 trim 结果、节点名取节点库当前值）；
-   * 失败 = 顶部 Toast（本地改动不丢）；version 过期（409）/ 模板已被删除（404）额外重取该板块 ——
+   * 失败 = 底部 Toast（本地改动不丢）；version 过期（409）/ 模板已被删除（404）额外重取该板块 ——
    * 重取按面板合并：只有脏草稿保留，这块会标上「有冲突 / 库中已删除」，出路 = 面板上的「放弃改动」。
    */
   const saveTemplate = (templateId: string): void => {
@@ -464,7 +464,7 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
     }
   };
 
-  /** 确认删除（底部确认条的第二下）：软删成功 = 面板消失；失败 = 顶部 Toast（模板已在别处被删除时重取该板块，脏草稿标「库中已删除」）。 */
+  /** 确认删除（底部确认条的第二下）：软删成功 = 面板消失；失败 = 底部 Toast（模板已在别处被删除时重取该板块，脏草稿标「库中已删除」）。 */
   const confirmDeleteTemplate = (): void => {
     const draft = pendingDeleteTemplate;
     if (draft === null) {

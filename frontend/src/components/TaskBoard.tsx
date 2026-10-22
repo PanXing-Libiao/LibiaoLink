@@ -24,7 +24,7 @@ import type { TemplatePresetNode } from "../data/templatePresets";
 const STAGE_ORDER: readonly string[] = PROJECT_STAGES.filter((stage) => stage !== "项目总览");
 
 /** 定档任务的行内编辑入口锁定提示（Push 264 · P1-1）：与 409 TASK_FINALIZED 的提示文案同一句；
- *  2026-10-10 业务追订「定档后不能修改就点击后显示弹出即可 不要红色的圆提示」+「都用这个即可」—— 锁定入口保留可点，点击弹站点同款顶部 Toast（这句文案）。 */
+ *  2026-10-10 业务追订「定档后不能修改就点击后显示弹出即可 不要红色的圆提示」+「都用这个即可」—— 锁定入口保留可点，点击弹站点同款底部 Toast（这句文案）。 */
 // Push 301：锁定提示文案移入词典 board.finalizedHint（英文界面换英文；原 FINALIZED_EDIT_HINT 常量删除）。
 
 export type ColumnKey =
@@ -419,7 +419,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
   const status = task.status;
   /** 背景档位铺色档（适中 / 炫彩）：行铺状态色 + 状态列收口深色字；simple / 未传 = 胶囊照旧。 */
   const tierTinted = tierTint === "medium" || tierTint === "vivid";
-  /** 定档锁定（Push 264 · P1-1）：行内任务字段入口一律锁定（点击弹顶部 Toast、不弹编辑浮层）；
+  /** 定档锁定（Push 264 · P1-1）：行内任务字段入口一律锁定（点击弹底部 Toast、不弹编辑浮层）；
    *  2026-10-10 业务追订「项目经理也不可以修改」——「项目经理」列随行一并锁定；「文件」列仍走既有 taskFinalized 门控（修改走变更）。 */
   const taskFinalized = task.finalizedAt !== null;
   /** Push 301：状态 / 优先级下拉选项按当前语言换词（显示值经 statusText / priorityText）。 */

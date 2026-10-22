@@ -14,7 +14,7 @@ import { Toast } from "./Toast";
 import type { MeResponse, Project } from "../types";
 
 /** 背景档位（业务口径 2026-10-13）：「类型 / 档位表 / 选中态 + 各档观感」都收在 ../backgroundTier
- *  （模块级 store：顶栏在每页都渲染，切页不丢选择；Push 291 起点选即单键 PATCH 按账号落库、失败出顶部 Toast）；
+ *  （模块级 store：顶栏在每页都渲染，切页不丢选择；Push 291 起点选即单键 PATCH 按账号落库、失败出底部 Toast）；
  *  三档只显档名（同日追订「这些备注的话不要说」）；Push 292 起弹层第四行 =「水印」开关（同套落库口径）；
  *  同日追订「选择后不要退出 用户点别的地方再退出」：点档 / 点开关都不收弹层，点外 / Esc / 再点触发钮才收起。
  * 语言切换（业务口径 2026-10-13「现在我要做系统语言切换 暂时中英文」+「在这个左侧添加按钮」）：
@@ -48,11 +48,11 @@ export function AppHeader({ me, project }: AppHeaderProps) {
   const [langMenuOpen, setLangMenuOpen] = useState(false);
   /** 站内信弹窗（业务口径 2026-10-16「在这个左侧增加站内信按钮 点击后出现局部弹窗用来消息通知」）。 */
   const [inboxOpen, setInboxOpen] = useState(false);
-  /** 站内信标记失败文案（标记已读 / 全部已读）：失败回滚 + 顶部 Toast；关闭即清。 */
+  /** 站内信标记失败文案（标记已读 / 全部已读）：失败回滚 + 底部 Toast；关闭即清。 */
   const [inboxError, setInboxError] = useState<string | null>(null);
-  /** 语言保存失败文案（Push 296 · 按账号落库）：失败回滚 + 顶部 Toast；关闭即清。 */
+  /** 语言保存失败文案（Push 296 · 按账号落库）：失败回滚 + 底部 Toast；关闭即清。 */
   const [langError, setLangError] = useState<string | null>(null);
-  /** 背景档位保存失败文案（Push 291）：失败回滚 + 顶部 Toast；关闭即清。 */
+  /** 背景档位保存失败文案（Push 291）：失败回滚 + 底部 Toast；关闭即清。 */
   const [bgError, setBgError] = useState<string | null>(null);
   const bgTier = useBackgroundTier();
   const cardWatermark = useCardWatermark();

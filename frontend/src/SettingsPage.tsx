@@ -16,7 +16,7 @@ import type { MeResponse } from "./types";
  *   ② 项目群绑定：先选项目，再维护该项目唯一群聊的 chatid / 备注 / 激活态（解绑与换绑同页）。
  *   ③ 顶栏的「背景」「语言」「站内信」等仍在顶栏就地设置（本页不重复摆一套）。
  *
- * 页面壳与文件库 / 操作记录一致（AppHeader + main）；写口反馈走顶部浮空 Toast。
+ * 页面壳与文件库 / 操作记录一致（AppHeader + main）；写口反馈走底部浮空 Toast。
  * 未绑定提示（D6）同时落在站内信弹窗（components/InboxPanel），文案与单聊降级站内信前缀一致。
  */
 export function SettingsPage({ me }: { me: MeResponse }) {
