@@ -51,3 +51,11 @@ CAD_TEST_ENDPOINT=http://127.0.0.1:9910 CAD_TEST_CONTAINER=libiaolink-cad-cad-1 
 没有运行全量构建、typecheck、lint 或全仓审计；仅重建 CAD 专用镜像并运行以上定向验证。未重复独立 CAD 全样本矩阵，不扩展格式范围或承诺任意 STEP 成功率。缓存按文件版本隔离，不承诺跨文件、跨版本只解析一次；受支持的同一版本完成后可长期复用。
 
 上线需迁移 0064、同步 API/worker 与含临时回收行为的 CAD 镜像，生产镜像必须取得审核后的 registry digest；本地镜像 ID 不作生产发布凭据。回滚应用时停止后台 worker，保留新表与私有对象可再次启用；旧应用不会读取持久缓存。数据库和对象存储需共同备份。崩溃留下的未引用对象代由文件/项目前缀清理兜底；公司测试机与真实账号验收尚未执行。
+
+## 2026-10-22 对象读取流生命周期修复
+
+局部检查发现，原实现先打开清单对象流，再等待数据库续租；续租失败后直接抛错，未关闭已经打开的流。受控回归中五项测试有一项失败，确认遗留一个未关闭流；未据此断言公司环境发生过连接耗尽。
+
+比较三种处理：失败后消费完整对象会浪费读取；失败后销毁流仍需要处理等待续租期间的流错误；续租成功后再开流能避免提前占用读取资源。本次选择第三种，只调整顺序。依据：[AWS S3 流响应与连接释放](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/migrate-s3.html)、[GetObject 的消费/销毁要求](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/s3/command/GetObjectCommand/)、[连接池与请求排队](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/node-configuring-maxsockets.html)。
+
+在 `server/` 使用 Node 24 执行 `node node_modules/vitest/vitest.mjs run --config test/cad.vitest.config.ts test/cad-archive-resource.test.ts test/cad-engine-client.test.ts test/storage-s3.test.ts`，**3 文件、42 项通过**（1.08 秒）。新增五项覆盖续租失败无遗留读取流、正常清单摘要校验、存储异常保留缓存、长度损坏关闭并重建、查看器取消关闭上游；其余为既有传输/存储回归。未运行全量构建、静态检查、真实数据库/MinIO/native 联测或公司环境验收。
