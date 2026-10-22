@@ -587,6 +587,53 @@ export default function App() {
   };
 
   /**
+   * 验收交付完成后把项目设为已完成（2026-10-22 · 业务口径「当验收交付完成后 弹出一个弹出显示是否需要将项目设为已完成」）：
+   * 只改 status（project.update），保留其余字段；成功更新详情并触发列表刷新，失败沿用全局顶部 Toast。
+   * 409 时先回读最新项目：若他人已设为已完成则视为成功，否则让详情滚动到最新 version 供用户重试。
+   */
+  const handleSetProjectDone = async (id: string): Promise<boolean> => {
+    if (detail === null || detail.id !== id) {
+      return false;
+    }
+    const current = detail;
+    if (current.status === "done") {
+      return true;
+    }
+    try {
+      const view = await updateProject(
+        id,
+        {
+          code: current.code,
+          name: current.description,
+          region: current.region,
+          projectType: current.projectType,
+          managerIds: current.managerIds,
+        },
+        current.version,
+        "done",
+      );
+      setDetail(toUiProject(view));
+      setDataVersion((value) => value + 1);
+      return true;
+    } catch (error: unknown) {
+      if (error instanceof ApiError && error.code === "VERSION_CONFLICT") {
+        try {
+          const latest = toUiProject(await fetchProject(id));
+          setDetail(latest);
+          setDataVersion((value) => value + 1);
+          if (latest.status === "done") {
+            return true;
+          }
+        } catch {
+          // 回读失败仍走下面的统一错误提示
+        }
+      }
+      setNotice(errorMessageOf(error, t("app.fail.completeProject")));
+      return false;
+    }
+  };
+
+  /**
    * 任务字段被编辑（M3-07 刀 1 后半接线）：任务写入会 touch 项目 updated_at（ADR-022 ④），
    * 这里只轻量刷新项目列表（详情里那一行已由 ProjectDetail 自己回读），下次回到首页能看到新时间。
    */
@@ -822,6 +869,7 @@ export default function App() {
           taskHiddenColumns={taskTableHiddenColumns}
           onTaskHiddenColumnsChange={handleSaveTaskHiddenColumns}
           canManageStakeholders={canManageStakeholders}
+          onSetProjectDone={canUpdateProject ? handleSetProjectDone : undefined}
         />
         {editModal}
         {bottomBars}
