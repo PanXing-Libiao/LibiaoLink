@@ -104,6 +104,6 @@ export class CadEngineClient implements OnModuleDestroy {
     }
     return { stream, bytes: Number(length), ...(artifact === undefined ? {} : { artifactBytes: Number(artifact) }) };
   }
-  async release(input: { jobId: string; namespace: string; lease: string }): Promise<void> { await this.json("release", input); }
+  async release(input: { jobId: string; namespace: string; lease: string; retire?: boolean }): Promise<void> { await this.json("release", input); }
   async onModuleDestroy(): Promise<void> { for (const call of this.requests) call.destroy(); }
 }

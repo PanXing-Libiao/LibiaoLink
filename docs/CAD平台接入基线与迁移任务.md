@@ -1,6 +1,6 @@
 # CAD 平台接入基线与迁移任务
 
-更新：2026-10-21。CAD 主责 wmj，共享 file/preview/outbox 由 lan 协办，通用 UI 与部署由 px 协办。
+更新：2026-10-22。CAD 主责 wmj，共享 file/preview/outbox 由 lan 协办，通用 UI 与部署由 px 协办。
 
 本文统一替代 LibiaoLink 原 CAD 选型、浏览器解析和工程测量实施计划。用户已批准接入及旧实现清理。STEP 的版本、任务、资源和查看器已部署公司测试机并通过容器与旁路验证；生产环境尚未部署，真实公司账号浏览器验收待完成。决策见 [ADR-035](adr/ADR-035-CAD接入独立能力工程.md)。
 
@@ -21,13 +21,13 @@ CAD 能力以独立工程 `CAD逆向` 的 STEP v0.3.3（几何基线 `0911573`�
 
 ## 2. 已接入的链路
 
-以下描述本次隔离修复后的代码链路。独立 CAD 沙箱已完成本地定向验证，尚未部署公司测试机；前文的测试机部署状态属于既有 STEP 接入。
+以下描述 ADR-037 的持久化与上传预解析代码链路，本次变更尚未推送或部署；前文的测试机部署状态属于既有 STEP 接入。
 
-`文件预览 → 固定 fileId/versionId/SHA → 私有任务 → 完整产物校验 → gzip manifest → 鉴权二进制 buffers → 独立 ViewerSession`。
+`上传完成 → 事务登记后台任务 → 沙箱解析/校验 → 持久 manifest/buffers → 文件预览复用 → 鉴权资源 → 独立 ViewerSession`。
 
 - 平台通过既有 ObjectStorage 读取版本对象，核对大小与 SHA 后，经 Unix HTTP socket 将原始字节送入独立 CAD 沙箱；产物以有界流返回，不传本机路径、S3/数据库凭据或客户端 URL。旧 API 内 stdio/native 路线撤回；原始输入仍由平台完整读入内存，尚非输入流式改造。禁网、内核资源硬限额与迁移见 [ADR-036](adr/ADR-036-CAD解析沙箱与资源硬限额.md)。
 - `server/cad-engine/source.json` 固定独立源码提交、schema 和浏览器依赖逐文件 SHA；更新只运行同步脚本，宿主副本不另改 CAD 规则。OCP 和 Gmsh 使用两套固定版本 Python 环境，不复制本机虚拟环境。
-- 复用 ConversionJobs 的持久化 SQLite/CAS、预算、超时、取消及完整结果校验。任务命名空间绑定 actor/file/version/SHA/view；关闭、换版、取消及原文件读取阶段断开只影响对应窗口。平台另以文件/版本/内容、固定引擎和参数索引已校验完成产物；不同窗口可复用同一完成任务，仍分别检查权限、授予短期绑定和独立 lease。未完成任务不跨窗口复用，缓存损坏/过期/不同版本或参数时重新转换，缓存位于限容 tmpfs，仅 API 重连不清除，CAD 容器重启/重建后 job/lease 失效并重新提交，不承诺跨容器重启持久化；详见 `server/cad-engine/README.md`。
+- 复用 ConversionJobs 的预算与完整产物校验。上传完成时事务内登记 GB 后台任务，由独立 worker 经现有沙箱解析，数据库 `cad_artifacts` 保存状态与索引，私有对象存储保存 verified manifest/buffers；所有对象成功写入后才发布 completed。`cad_views` 绑定 actor/file/version/view、窗口取消和资源租期，取消不终止共享后台工作。文件版本/源摘要、固定引擎与编码隔离缓存；完成结果跨 API/worker/CAD 重启复用，损坏时撤销并重建，彻底删除文件清理全部对象前缀。见 [ADR-037](adr/ADR-037-CAD产物持久化与上传预解析.md)。
 - 显示修复与未显示面信息统一收进默认折叠的“模型信息”，主视图不再展示两类提示条；数量、分类、统计排除说明和导出仍可展开查看。此项是用户批准的展示调整，不改变转换、接收政策或记录。
 - 同源 `/cad-viewer/` iframe 使用原 ViewerSession。保留产品树、source/product/occurrence/draw/face/material、XCAF entry、实例变换、visibility/membership、显示修复与缺失清单。宿主只适配传输、进度、关闭与导出。
 - manifest 与 buffers 分开，几何不回填 base64 JSON。源 ID 字典按原协议展开，资源 SHA 由浏览器复核；读取和释放逐请求重新鉴权。

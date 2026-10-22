@@ -6,6 +6,7 @@ import type { Env } from "../src/config/env.js";
 import type { DatabaseService } from "../src/db/database.service.js";
 import type { AuditService } from "../src/modules/admin/index.js";
 import { FileService } from "../src/modules/file/index.js";
+import type { CadArchiveService } from "../src/modules/file/cad-archive.service.js";
 import type {
   ChangeRequestInsertInput,
   ChangeRequestRow,
@@ -676,7 +677,7 @@ interface Harness {
   clock: ClockService;
 }
 
-function makeService(env: Partial<Env> = {}): Harness {
+function makeService(env: Partial<Env> = {}, cadArchive?: CadArchiveService): Harness {
   const repo = new FakeFileRepository();
   const previews = new FakePreviewRepository();
   const storage = new FakeObjectStorage();
@@ -695,6 +696,7 @@ function makeService(env: Partial<Env> = {}): Harness {
     audit as unknown as AuditService,
     config,
     clock,
+    cadArchive,
   );
   return { service, repo, previews, storage, permission, audit, database, clock };
 }
@@ -1243,14 +1245,29 @@ describe("FileService.getUpload（会话状态 / 续传依据）", () => {
 });
 
 describe("FileService.completeUpload（合并 / 复制到契约键 / 落版本）", () => {
-  function readyHarness(): Harness {
-    const h = makeService();
+  function readyHarness(cadArchive?: CadArchiveService): Harness {
+    const h = makeService({}, cadArchive);
     h.repo.file = makeFileRow();
     h.repo.session = makeSessionRow({ storageUploadId: "storage-1", contentHash: HASH, mime: "application/pdf" });
     h.storage.parts = [part(1, 8 * MI_B), part(2, 4 * MI_B)];
     h.storage.head = { objectKey: STAGING_KEY, sizeBytes: 12 * MI_B, etag: "\"merged-etag\"", contentType: "application/pdf", lastModified: NOW };
     return h;
   }
+
+  it("STEP 上传完成即在版本事务内登记后台解析，不等待 native 转换", async () => {
+    const uploaded = vi.fn().mockResolvedValue(undefined);
+    const h = readyHarness({ uploaded } as unknown as CadArchiveService);
+    h.repo.file = makeFileRow({ name: "总装.step" });
+    h.repo.session = makeSessionRow({ storageUploadId: "storage-1", contentHash: HASH, mime: "application/octet-stream" });
+    h.storage.prefix = Buffer.from("ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\nENDSEC;\nEND-ISO-10303-21;");
+    const result = await h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+    expect(result.version.id).toBe(VERSION);
+    expect(uploaded).toHaveBeenCalledOnce();
+    expect(uploaded.mock.calls[0]?.[0]).toEqual({ fileId: FILE, versionId: VERSION, sourceSHA256: HASH,
+      sourceBytes: 12 * MI_B, sourceName: "总装.step" });
+    expect(uploaded.mock.calls[0]?.[1]).toBeDefined();
+    expect(h.database.outbox[0]).toMatchObject({ topic: "file.version.created" });
+  });
 
   it("成功：合并 → HEAD 校验 → 复制契约键 → 写版本 / 文件 / 会话 + 审计 + outbox → 清暂存", async () => {
     const h = readyHarness();

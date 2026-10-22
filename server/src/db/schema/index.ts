@@ -6,6 +6,7 @@ export * from "./tasks.js";
 export * from "./templates.js";
 export * from "./files.js";
 export * from "./preview.js";
+export * from "./cad.js";
 export * from "./change.js";
 export * from "./platform.js";
 export * from "./admin.js";

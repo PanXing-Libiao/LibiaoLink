@@ -7,7 +7,7 @@
 > - 本批来源：技术设计v0.1-选型分析.md §0.1 / §4 / §5 / §9 的选型结论固化（定档任务 g1 · S5·ADR）。
 > - 后续来源：ADR-018 来自《技术设计v0.3-实施与验收.md》（实施与验收篇）；**ADR-019 ~ ADR-029 为 M0 口径冻结决议**（2026-09-20 · Push 71，来源 = 技术设计v0.3 §7 十五项待定案清单）；**ADR-030 来自 ONLYOFFICE 替换执行计划（PoC-10 · 2026-09-30）**；**ADR-033 来自 M5-03 单聊改智能机器人执行计划（企微单聊 · M5-03-5 · 2026-10-14）**；**ADR-034 来自安全审查 H1 与《H1 SVG 预览同源存储型 XSS 整改方案》（2026-10-20）**。
 
-## 清单（ADR-001 ~ ADR-035）
+## 清单（ADR-001 ~ ADR-037）
 
 | 编号 | 主题 | 定档结论（一句话） | 切换触发条件 | 状态 |
 |---|---|---|---|---|
@@ -46,6 +46,8 @@
 | [ADR-033](ADR-033-企微消息通道改由智能机器人承接.md) | 企微消息通道改由智能机器人（aibot）承接 | 群播报 + 单聊提醒统一走 aibot 长连接（单聊新增渠道值 `wecom_aibot`）；应用消息（`wecom_app`）保留未启用备用；单聊可投递地址 = 绑定行密文 `open_userid`（绑定码链路），未绑定 = 确定性失败 + 站内信降级（前缀「当前用户未绑定企业微信，请前往设置补绑」） | aibot 形态不可行（接口下线 / 激活成本不可接受）→ 按回退规则切回应用消息；企微管理员权限可获得或 aibot 单聊接口变化 → 重评明文映射与寻址；新 IM 需求走 ADR-009 适配位 | 已采纳（Accepted · 2026-10-15：随 #340 并入 main · squash `a7d51e4`）· 2026-10-19 增补（绑定码 / 密文寻址 / 激活语义修订 · lan 代 wmj 起草，待 wmj 复核） |
 | [ADR-034](ADR-034-SVG预览安全栅格化.md) | SVG 预览安全栅格化 | 原始 SVG 永不内联；继续用 `target=image` 但只返回服务端 `2.0.0` PNG 产物；原 SVG download-only；精确 MIME + 沙箱 + fail closed | 固定渲染器无法满足保真度 / 沙箱要求，或业务要求动画 / 交互 SVG → 新增 ADR；S7 / S8 为独立纵深项 | 已采纳（Accepted · 2026-10-20：wmj 批准架构 / 契约，PR #518 squash `c53e895`；S2 已随 PR #523 合并 `e2b6aab`；S3 随 PR #529 合并 `acd6113`；S4 已随 PR [#531](https://github.com/PanXing-Libiao/LibiaoLink/pull/531) 合并 `db7d5e0`；S5 已随 PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 合并 main `660cc80`；S6 已随 PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 合并 main 336b66fd，HSTS 单头修复随 PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 合并 333ffdeb 并部署测试机；收口 PR [#543](https://github.com/PanXing-Libiao/LibiaoLink/pull/543) 已 squash 合并 main `5e31e4b9`，最终 head PR CI [39550779854](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39550779854) 与 main CI [39550973691](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39550973691) 均 5 / 5；main 连续 3 次含 `svg-preview-e2e` 全绿，该 job 已加入分支保护必需检查；测试机完整 B1 ～ B7 25 / 25，生产部署、真实 CAD 生产样本与关闭评审未完成，H1 未闭环） |
 | [ADR-035](ADR-035-CAD接入独立能力工程.md) | CAD 接入独立能力工程 | 沿用独立 UCD/ViewerSession 与能力矩阵；STEP 本地版本/任务/资源/查看器已联通，其余保留提示与下载 | 独立工程版本/范围变化须登记；平台联调单独验收 | 用户已授权接入；本地验证完成，待非作者评审及公司环境部署验收 |
+| [ADR-036](ADR-036-CAD解析沙箱与资源硬限额.md) | CAD 解析沙箱与资源硬限额 | 独立禁网容器、Unix socket、内核 CPU/内存/PID/tmpfs 限额；禁止 API 内 native 回退 | 平台持久产物按 ADR-037 承接，沙箱限额不变 | 已实现，本地验证见沙箱记录 |
+| [ADR-037](ADR-037-CAD产物持久化与上传预解析.md) | CAD 产物持久化与上传预解析 | 数据库队列/索引 + 私有对象存储产物，上传即静默登记，默认 GB，跨重启复用 | 新版本/引擎/编码或损坏时重建；迁移后更新 API/worker/CAD 镜像 | 已实现并本地验证，未推送或部署 |
 
 ## 模板与编写规则
 
