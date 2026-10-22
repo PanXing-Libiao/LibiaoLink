@@ -1,5 +1,7 @@
 # database/ · 数据库基线（g3 · S5）
 
+> CAD（2026-10-22）：新增 `0064_cad_artifacts.sql`，按版本/引擎/编码唯一的持久队列与产物索引，以及窗口授权/租期；几何文件保存到私有对象存储，应用不在启动时改结构。先迁移，再同步 API / worker。见 [ADR-037](../docs/adr/ADR-037-CAD产物持久化与上传预解析.md)。
+
 PostgreSQL 基线的唯一来源：只追加的迁移脚本、最小权限角色、带 advisory lock 与漂移校验的迁移器。
 对应《技术设计v0.2-架构与数据模型.md》§2.3（DDL 草案）与 `CONTRIBUTING.md` §14（生成物与不可变历史）；
 选型口径见 `docs/adr/` ADR-004（PostgreSQL + Drizzle）与 ADR-013（部署）。

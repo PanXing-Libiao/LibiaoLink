@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
+import { CadArchiveService } from "./cad-archive.service.js";
 import {
   ChangeIntentBodySchema,
   ChangeRequestSchema,
@@ -172,6 +173,7 @@ export class FileService {
     private readonly audit: AuditService,
     private readonly config: AppConfig,
     private readonly clock: ClockService,
+    @Optional() private readonly cadArchive?: CadArchiveService,
   ) {}
 
   /** POST /files/uploads：发起分片上传（建 draft 文件 + 会话；contentHash 命中给秒传提示）。 */
@@ -565,6 +567,8 @@ export class FileService {
         { status: "completed", completedAt: at, updatedAt: at },
         tx,
       );
+      await this.cadArchive?.uploaded({ fileId, versionId: version.id, sourceSHA256: contentHash,
+        sourceBytes: version.sizeBytes, sourceName: effectiveName }, tx);
       // M4-03 多态关联：上传成功即建立关联（project 必写，node / task 有则写；on conflict do nothing 幂等）。
       await this.repository.insertFileLinks(buildFileLinkInputs(lockedFile, actorId, at), tx);
       // M4-04 变更（申请即通过）：同事务写 file_links(change) + R01 任务回写 + 变更审计 + outbox（记录行已先落库）。
@@ -1508,6 +1512,7 @@ export class FileService {
       // M4-05 收口：预览产物按 content_hash 反查引用（迁移 `0027` 口径 3）—— 还有存活版本引用就把缓存行
       // 归属转移过去（行不随级联消失、对象保留）；无引用才清对象。与版本对象同序：清对象在删行之前、失败即回滚。
       const versionIds = versions.map((version) => version.id);
+      await this.cadArchive?.purge(file.id, file.projectId);
       const artifactRows = await this.previews.listReadyByVersionIds(versionIds, tx);
       const artifactKeys: string[] = [];
       let artifactsReassigned = 0;

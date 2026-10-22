@@ -1,6 +1,5 @@
 import { Controller, Delete, Get, Inject, Param, Post, Query, Req, Res, StreamableFile, UseGuards } from "@nestjs/common";
 import { CadNameCodepageSchema, UuidSchema, z, type CadNameCodepage } from "@libiaolink/contracts";
-import { createReadStream } from "node:fs";
 import { createGzip } from "node:zlib";
 import type { Request, Response } from "express";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
@@ -20,7 +19,7 @@ export class CadPreviewController {
   @Post()
   async create(@Param("fileId", uuid) fileId: string, @Param("versionId", uuid) versionId: string,
     @Param("viewId", view) viewId: string, @CurrentActorId() actorId: string,
-    @Query("nameCodepage", new ZodValidationPipe(CadNameCodepageSchema.default("UTF8"))) nameCodepage: CadNameCodepage,
+    @Query("nameCodepage", new ZodValidationPipe(CadNameCodepageSchema.default("GB"))) nameCodepage: CadNameCodepage,
     @Res({ passthrough: true }) response: Response) {
     let disconnected = false;
     let created: Awaited<ReturnType<CadPreviewService["create"]>> | undefined;
@@ -57,7 +56,7 @@ export class CadPreviewController {
     response.setHeader("Cache-Control", "private, no-store");
     response.setHeader("Vary", "Accept-Encoding");
     response.setHeader("X-CAD-Artifact-Bytes", String(file.artifactBytes ?? file.bytes));
-    const source = createReadStream(file.path);
+    const source = file.stream;
     const gzip = (request.headers["accept-encoding"] ?? "").split(",").some((item) => /^\s*gzip\s*(;|$)/i.test(item) && !/;\s*q=0(?:\.0*)?\s*$/i.test(item));
     response.once("close", () => source.destroy());
     if (gzip) {
@@ -77,7 +76,7 @@ export class CadPreviewController {
     const file = await this.cad.resource("buffer", fileId, versionId, viewId, jobId, actorId, lease, sha256);
     response.setHeader("Cache-Control", "private, no-store");
     response.setHeader("X-Content-Type-Options", "nosniff");
-    const source = createReadStream(file.path);
+    const source = file.stream;
     response.once("close", () => source.destroy());
     return new StreamableFile(source, { type: "application/octet-stream", length: file.bytes });
   }

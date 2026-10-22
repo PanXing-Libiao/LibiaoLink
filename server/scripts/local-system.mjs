@@ -4,6 +4,7 @@ import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { Logger } from "nestjs-pino";
 import { createRequire } from "node:module";
+import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
@@ -43,6 +44,8 @@ const app = await NestFactory.create(AppModule.forRoot(env), { bufferLogs: true 
 app.useBodyParser("json", { limit: "4mb" });
 app.useLogger(app.get(Logger));
 await app.listen(env.PORT, "127.0.0.1");
+const cadWorker = spawn(process.execPath, [fileURLToPath(new URL("./local-cad-worker.mjs", import.meta.url))],
+  { env: process.env, stdio: ["ignore", "inherit", "inherit"] });
 
 const frontRequire = createRequire(new URL("../../frontend/package.json", import.meta.url));
 const { createServer } = await import(frontRequire.resolve("vite"));
@@ -65,6 +68,12 @@ let stopping = false;
 const stop = async () => {
   if (stopping) return;
   stopping = true;
+  cadWorker.kill("SIGTERM");
+  await new Promise((resolve) => {
+    if (cadWorker.exitCode !== null) { resolve(); return; }
+    const timer = setTimeout(() => { cadWorker.kill("SIGKILL"); resolve(); }, 5000);
+    cadWorker.once("exit", () => { clearTimeout(timer); resolve(); });
+  });
   await vite.close();
   await app.close();
   stopServices();

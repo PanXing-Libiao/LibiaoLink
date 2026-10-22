@@ -39,7 +39,7 @@ class PreviewFixtureController {
   }
 }
 
-export async function createCadFixture(paths: string[], cache: string, python: string, mesher = "", browser = false, middleware?: RequestHandler) {
+export async function createCadFixture(paths: string[], cache: string, endpoint: string, browser = false, middleware?: RequestHandler) {
   const importedPaths = new Set<string>();
   const records = await Promise.all(paths.map(async (path, index) => {
     const bytes = await readFile(path), sha = createHash("sha256").update(bytes).digest("hex"), number = String(index + 1).padStart(12, "0");
@@ -53,7 +53,8 @@ export async function createCadFixture(paths: string[], cache: string, python: s
   };
   const storage = { corrupt: false, beforeRead: undefined as (() => Promise<void>) | undefined,
     async getObject(key: string) { await this.beforeRead?.(); const row = records.find((record) => record.objectKey === key); if (!row) return null; const bytes = await readFile(row.path); if (this.corrupt && bytes.length > 0) bytes[0] = bytes[0]! ^ 1; return { objectKey: key, bytes, sizeBytes: bytes.byteLength, contentType: "application/step" }; } };
-  const config = new AppConfig({ CAD_ENGINE_PYTHON: python, CAD_MESHER_PYTHON: mesher, CAD_CACHE_DIR: cache, CAD_MAX_INPUT_MIB: 64 } as Env);
+  const config = new AppConfig({ NODE_ENV: "test", CAD_ENGINE_URL: endpoint.startsWith("http:") ? endpoint : "",
+    CAD_ENGINE_SOCKET: endpoint.startsWith("/") ? endpoint : "", CAD_MAX_INPUT_MIB: 64 } as Env);
   const engine = new CadEngineClient(config);
   const cad = new CadPreviewService(repository as unknown as FileRepository, permission as unknown as PermissionService, storage as unknown as ObjectStorage, engine);
   const previews = new PreviewReadService({} as never, repository as never, {} as never, storage as never, permission as never, {} as never, config);
@@ -101,5 +102,6 @@ export async function createCadFixture(paths: string[], cache: string, python: s
   app.useGlobalFilters(new ApiErrorFilter());
   if (middleware !== undefined) app.use(middleware);
   await app.init();
+  if (!browser) await app.listen(0, "127.0.0.1");
   return { app, engine, cad, records, permission, storage, async close() { await app.close(); await engine.onModuleDestroy(); await Promise.all([...importedPaths].map(path => rm(path, { force: true }))); } };
 }

@@ -95,6 +95,24 @@ class Gateway:
             if not any(other['namespace'] == lease['namespace'] and other['jobId'] == lease['jobId'] for other in self.leases.values()):
                 self.results.revoke(lease['namespace'], lease['jobId'])
 
+    def retire(self, row, namespace):
+        # Only the owning archival task may retire its result, after durable publication.
+        # Existing views/aliases keep their temporary resources until released or expired.
+        if row.get('namespace') != namespace or row['state'] != 'completed':
+            return
+        if any(lease['jobId'] == row['id'] for lease in self.leases.values()):
+            return
+        if self.results.db.execute('SELECT 1 FROM bindings WHERE job_id=? AND expires>?',
+                                   (row['id'], time.time())).fetchone():
+            return
+        with self.jobs.lock:
+            self.jobs.db.execute("DELETE FROM jobs WHERE id=? AND state='completed'", (row['id'],))
+            self.jobs.db.commit()
+            self.jobs._prune()
+        self.results.db.execute('DELETE FROM results WHERE job_id=?', (row['id'],))
+        self.results.db.execute('DELETE FROM bindings WHERE job_id=?', (row['id'],))
+        self.results.db.commit()
+
     def handle(self, request):
         self.prune()
         action = request['action']
@@ -159,6 +177,8 @@ class Gateway:
             raise KeyError('Resource not found')
         if action == 'release':
             self.release(token)
+            if request.get('retire') is True:
+                self.retire(row, request['namespace'])
             return {'released': True}
         if action == 'buffer':
             sha = request.get('sha256', '')

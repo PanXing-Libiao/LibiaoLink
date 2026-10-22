@@ -4845,7 +4845,7 @@ export interface paths {
         post: {
             parameters: {
                 query?: {
-                    /** @description STEP 名称编码：UTF8 标准编码（默认），GB 中文旧编码；由用户按文件选择，不自动猜测。 */
+                    /** @description STEP 名称编码：GB 中文旧编码（默认），UTF8 标准编码；由用户按文件选择，不自动猜测，不同编码分别缓存。 */
                     nameCodepage?: components["schemas"]["CadNameCodepage"];
                 };
                 header?: never;
@@ -9593,7 +9593,7 @@ export interface components {
             publishedAt: components["schemas"]["DateTime"] & (string | null);
             publishedBy: components["schemas"]["Uuid"] & (string | null);
         };
-        /** @description 隔离且持久化的 STEP 任务；completed 只发布完整校验产物，已列举 nonMeshableFaces 保留，Partial 不算完整成功。 */
+        /** @description 文件版本的 CAD 查看任务；后台在独立沙箱转换并将完整产物持久保存，API/worker/CAD 重启后可复用。窗口取消不取消共享后台解析。completed 只发布完整校验产物，已列举 nonMeshableFaces 保留，Partial 不算完整成功。 */
         CadJob: {
             id: string;
             /** @enum {string} */
@@ -9617,7 +9617,7 @@ export interface components {
             reused: boolean;
         };
         /**
-         * @description STEP 名称编码：UTF8 标准编码（默认），GB 中文旧编码；由用户按文件选择，不自动猜测。
+         * @description STEP 名称编码：GB 中文旧编码（默认），UTF8 标准编码；由用户按文件选择，不自动猜测，不同编码分别缓存。
          * @enum {string}
          */
         CadNameCodepage: "UTF8" | "GB";

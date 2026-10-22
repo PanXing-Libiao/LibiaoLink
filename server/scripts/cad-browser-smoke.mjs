@@ -5,7 +5,8 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
-if (!process.env.CAD_SMOKE_INVENTORY || !process.env.CAD_ENGINE_PYTHON) throw new Error("Set CAD_SMOKE_INVENTORY and CAD_ENGINE_PYTHON for local verification");
+const endpoint = process.env.CAD_ENGINE_SOCKET || process.env.CAD_ENGINE_URL;
+if (!process.env.CAD_SMOKE_INVENTORY || !endpoint) throw new Error("Set CAD_SMOKE_INVENTORY and CAD_ENGINE_SOCKET or CAD_ENGINE_URL for the isolated sandbox");
 const paths = JSON.parse(await readFile(process.env.CAD_SMOKE_INVENTORY, "utf8"));
 const frontRequire = createRequire(new URL("../../frontend/package.json", import.meta.url));
 const react = (await import(frontRequire.resolve("@vitejs/plugin-react"))).default;
@@ -15,7 +16,7 @@ const vite = await createServer({ configFile: false, cacheDir: resolve("var/cad-
   resolve: { alias: { "@libiaolink/contracts": fileURLToPath(new URL("../../shared/src/index.ts", import.meta.url)) } } });
 const { createCadFixture } = await vite.ssrLoadModule(fileURLToPath(new URL("../test/cad-http.fixture.ts", import.meta.url)));
 const middleware = (req, res, next) => req.url.startsWith("/api/") || req.url.startsWith("/__cad-smoke") ? next() : vite.middlewares(req, res, next);
-const fixture = await createCadFixture(paths, resolve("var/cad-browser-smoke"), process.env.CAD_ENGINE_PYTHON, process.env.CAD_MESHER_PYTHON || "", true, middleware);
+const fixture = await createCadFixture(paths, resolve("var/cad-browser-smoke"), endpoint, true, middleware);
 await fixture.app.listen(3013, "127.0.0.1");
 console.log("Local CAD integration fixture ready on 127.0.0.1:3013; test identity/storage, real conversion and viewer.");
 const stop = async () => { await fixture.close(); await vite.close(); process.exit(0); };

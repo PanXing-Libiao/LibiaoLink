@@ -4,7 +4,7 @@ import { Logger } from "nestjs-pino";
 import { OUTBOX_SCHEDULER } from "@libiaolink/contracts";
 import { loadEnv } from "../config/env.js";
 import { DatabaseService } from "../db/database.service.js";
-import { FileService, PreviewService, RECYCLE_SWEEP_BATCH as FILE_RECYCLE_SWEEP_BATCH } from "../modules/file/index.js";
+import { CadArchiveWorker, FileService, PreviewService, RECYCLE_SWEEP_BATCH as FILE_RECYCLE_SWEEP_BATCH } from "../modules/file/index.js";
 import { PROJECT_RECYCLE_SWEEP_BATCH, ProjectService } from "../modules/project/index.js";
 import { IMPORT_PREVIEW_SWEEP_INTERVAL_MS, ProjectImportService } from "../modules/project-import/index.js";
 import { NotifyDmService, NotifyGroupService, NotifyService, WecomAibotClient } from "../modules/notify/index.js";
@@ -29,6 +29,7 @@ async function bootstrap(): Promise<void> {
   const database = app.get(DatabaseService);
   const files = app.get(FileService);
   const previews = app.get(PreviewService);
+  const cadArchive = app.get(CadArchiveWorker);
   const projectImports = app.get(ProjectImportService);
   const projects = app.get(ProjectService);
   const notify = app.get(NotifyService);
@@ -57,6 +58,10 @@ async function bootstrap(): Promise<void> {
     "worker 已启动（上传会话过期清理 / 文件回收站到期清理 / 项目回收站 30 天到期清理 / 导入表票据过期清理 / Outbox 运行时：已注册主题领取消费（含无业务订阅主题的 drain-only 收敛）· 未消费主题 / 积压 / 死信告警 · done 行保留期清理 · 调度 tick（每分钟：cron 领取 + last_run_at 补发 + 单活锁；注册表为空 = 只存不跑）· 通知延迟投递排空（免打扰 / 每日上限）· 稍后提醒到点触发（C5-05））",
   );
   const heartbeat = setInterval(() => logger.log("worker heartbeat"), HEARTBEAT_MS);
+  // CAD has its own durable queue so long native jobs never block notification outbox handling.
+  const drainCad = () => { void cadArchive.drainOnce().catch(() => logger.error("CAD 后台队列本轮领取失败，等待下轮重试")); };
+  const cadPoll = setInterval(drainCad, 2000);
+  drainCad();
 
   const sweepUploads = async (): Promise<void> => {
     try {
@@ -321,6 +326,8 @@ async function bootstrap(): Promise<void> {
 
   const shutdown = async (signal: string): Promise<void> => {
     clearInterval(heartbeat);
+    clearInterval(cadPoll);
+    await cadArchive.onApplicationShutdown();
     clearInterval(sweep);
     clearInterval(recycleSweep);
     clearInterval(importPreviewSweep);

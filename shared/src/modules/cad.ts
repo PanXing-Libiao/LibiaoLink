@@ -2,7 +2,7 @@ import { z } from "../zod.ts";
 import { UuidSchema } from "../common/conventions.ts";
 
 export const CadNameCodepageSchema = z.enum(["UTF8", "GB"]).openapi("CadNameCodepage", {
-  description: "STEP 名称编码：UTF8 标准编码（默认），GB 中文旧编码；由用户按文件选择，不自动猜测。",
+  description: "STEP 名称编码：GB 中文旧编码（默认），UTF8 标准编码；由用户按文件选择，不自动猜测，不同编码分别缓存。",
 });
 export type CadNameCodepage = z.infer<typeof CadNameCodepageSchema>;
 
@@ -30,7 +30,7 @@ export const CadJobSchema = z.object({
   workerWallSeconds: z.number().nonnegative().optional(),
   error: z.object({ code: z.string(), error: z.string().max(500) }).optional(),
 }).openapi("CadJob", {
-  description: "隔离且持久化的 STEP 任务；completed 只发布完整校验产物，已列举 nonMeshableFaces 保留，Partial 不算完整成功。",
+  description: "文件版本的 CAD 查看任务；后台在独立沙箱转换并将完整产物持久保存，API/worker/CAD 重启后可复用。窗口取消不取消共享后台解析。completed 只发布完整校验产物，已列举 nonMeshableFaces 保留，Partial 不算完整成功。",
 });
 
 export const CadJobCreateResponseSchema = z.object({ job: CadJobSchema, reused: z.boolean() }).openapi("CadJobCreateResponse");
