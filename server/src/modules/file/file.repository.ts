@@ -192,6 +192,20 @@ export interface FileLinkInsertInput {
   createdAt: Date;
 }
 
+const EXPORT_ID_CHUNK_SIZE = 1000;
+
+async function loadByIdChunks<TRow>(
+  ids: readonly string[],
+  load: (chunk: string[]) => Promise<TRow[]>,
+): Promise<TRow[]> {
+  const unique = [...new Set(ids)];
+  const rows: TRow[] = [];
+  for (let index = 0; index < unique.length; index += EXPORT_ID_CHUNK_SIZE) {
+    rows.push(...(await load(unique.slice(index, index + EXPORT_ID_CHUNK_SIZE))));
+  }
+  return rows;
+}
+
 @Injectable()
 export class FileRepository {
   constructor(private readonly database: DatabaseService) {}
@@ -550,6 +564,16 @@ export class FileRepository {
   async updateFileState(fileId: string, patch: FileStatePatch, client: DbClient): Promise<FileRow> {
     const rows = await client.update(files).set(patch).where(eq(files.id, fileId)).returning();
     return rows[0]!;
+  }
+
+  /** 项目导出用：按 id 批量取文件（不做项目过滤，调用方按 projectId 再裁）。 */
+  async findFilesByIds(ids: readonly string[], client: DbClient = this.database.db): Promise<FileRow[]> {
+    return loadByIdChunks<FileRow>(ids, (chunk) => client.select().from(files).where(inArray(files.id, chunk)));
+  }
+
+  /** 项目导出用：按 id 批量取版本（不暴露给 HTTP 层）。 */
+  async findVersionsByIds(ids: readonly string[], client: DbClient = this.database.db): Promise<FileVersionRow[]> {
+    return loadByIdChunks<FileVersionRow>(ids, (chunk) => client.select().from(fileVersions).where(inArray(fileVersions.id, chunk)));
   }
 
   /** 指定版本行（回溯目标 / 版本详情；带 fileId 限定防跨文件越权）。 */

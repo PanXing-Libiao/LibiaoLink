@@ -1,0 +1,511 @@
+{
+  "format": "libiaolink-cad-known-missing/1",
+  "scope": "This platform integration: W01/N02/N03; source definitions deduplicated, not multiplied by instances. No corpus success-rate claim. W01 has zero omitted faces.",
+  "count": 9,
+  "reports": [
+    {
+      "format": "libiaolink-cad-report/1",
+      "fileId": "22222222-2222-4222-8222-000000000002",
+      "versionId": "66666666-6666-4666-8666-000000000002",
+      "sourceSHA256": "8beb257cb915240f7012474c2dcfb55a820a343abde082faadeacfdbe93823ce",
+      "engineVersion": "step-0.3.3/38135e606ae560d6b808c7544f25c0a592df7311/gateway-1",
+      "report": {
+        "format": "cad-step-nonmeshable-faces/1",
+        "acceptancePolicy": "step-nonmeshable/1",
+        "documentId": "document-8beb257cb915240f7012474c2dcfb55a820a343abde082faadeacfdbe93823ce",
+        "documentRevision": "c616699338729ec709b35a1942e1eb1b68fea0cde0e10193d8d23069e2bb71be",
+        "sources": [
+          {
+            "id": "source-8beb257cb915240f7012474c2dcfb55a820a343abde082faadeacfdbe93823ce",
+            "name": "N02_KR600_R2830-4.stp",
+            "sha256": "8beb257cb915240f7012474c2dcfb55a820a343abde082faadeacfdbe93823ce",
+            "byteLength": 12587505,
+            "format": "STEP"
+          }
+        ],
+        "count": 7,
+        "countScope": "source faces per product definition; instances not multiplied",
+        "notice": "未显示面不参与拾取和面积/体积统计；受影响零件的体积及体积质心不可用。",
+        "faces": [
+          {
+            "productName": "Grep3AD1ka2p",
+            "productId": "product-4fb4f3202e963616345dc1420b9a8d4235552b8bdd05af60d849c95322bda337",
+            "entry": "0:1:1:1",
+            "face": 2300,
+            "surface": "GeomAbs_Cone",
+            "valid": true,
+            "faceToleranceMM": 1e-07,
+            "missingFacesInShape": 8,
+            "meshDone": true,
+            "meshStatus": 4,
+            "reason": "face-triangulation-missing",
+            "classification": "degenerate-zero-area",
+            "criterion": "area<=1e-9-mm2",
+            "areaMM2": 0,
+            "bboxM": {
+              "min": [
+                1.38620541185145,
+                0.202722515123926,
+                2.3009889479351777
+              ],
+              "max": [
+                1.38779458814855,
+                0.20272601683242222,
+                2.3010176381902046
+              ],
+              "diagonal": 0.0015894391136374163,
+              "space": "geometry-local"
+            },
+            "areaOverBBoxDiagSquared": 0,
+            "wireCount": 1,
+            "closed": false,
+            "wiresClosed": [
+              true
+            ],
+            "remeshAttempts": [],
+            "classificationPolicy": "step-nonmeshable/1",
+            "repairAttempts": [
+              {
+                "method": "independent-gmsh-source-face",
+                "engine": "gmsh",
+                "engineVersion": "4.15.2",
+                "status": "not-applicable",
+                "reason": "numerically-degenerate-source-area"
+              }
+            ],
+            "acceptedOmission": true,
+            "pickable": false,
+            "includedInMeasurements": false
+          },
+          {
+            "productName": "Grep3AD1ka2p",
+            "productId": "product-4fb4f3202e963616345dc1420b9a8d4235552b8bdd05af60d849c95322bda337",
+            "entry": "0:1:1:1",
+            "face": 2305,
+            "surface": "GeomAbs_Cone",
+            "valid": true,
+            "faceToleranceMM": 1e-07,
+            "missingFacesInShape": 8,
+            "meshDone": true,
+            "meshStatus": 4,
+            "reason": "face-triangulation-missing",
+            "classification": "degenerate-zero-area",
+            "criterion": "area<=1e-9-mm2",
+            "areaMM2": 0,
+            "bboxM": {
+              "min": [
+                1.38620541185145,
+                0.202722515123926,
+                2.278982361809795
+              ],
+              "max": [
+                1.38779458814855,
+                0.20272601683242222,
+                2.2790110520648224
+              ],
+              "diagonal": 0.0015894391136374163,
+              "space": "geometry-local"
+            },
+            "areaOverBBoxDiagSquared": 0,
+            "wireCount": 1,
+            "closed": false,
+            "wiresClosed": [
+              true
+            ],
+            "remeshAttempts": [],
+            "classificationPolicy": "step-nonmeshable/1",
+            "repairAttempts": [
+              {
+                "method": "independent-gmsh-source-face",
+                "engine": "gmsh",
+                "engineVersion": "4.15.2",
+                "status": "not-applicable",
+                "reason": "numerically-degenerate-source-area"
+              }
+            ],
+            "acceptedOmission": true,
+            "pickable": false,
+            "includedInMeasurements": false
+          },
+          {
+            "productName": "Grep3AD1ka2p",
+            "productId": "product-4fb4f3202e963616345dc1420b9a8d4235552b8bdd05af60d849c95322bda337",
+            "entry": "0:1:1:1",
+            "face": 2367,
+            "surface": "GeomAbs_Cone",
+            "valid": true,
+            "faceToleranceMM": 1e-07,
+            "missingFacesInShape": 8,
+            "meshDone": true,
+            "meshStatus": 4,
+            "reason": "face-triangulation-missing",
+            "classification": "degenerate-zero-area",
+            "criterion": "area<=1e-9-mm2",
+            "areaMM2": 1.4126983551632857e-15,
+            "bboxM": {
+              "min": [
+                1.02870541185145,
+                0.0109889479351777,
+                2.1400739831675772
+              ],
+              "max": [
+                1.0302945881485501,
+                0.011017638190205004,
+                2.1400774848760697
+              ],
+              "diagonal": 0.0015894391136374141,
+              "space": "geometry-local"
+            },
+            "areaOverBBoxDiagSquared": 5.591928982704946e-16,
+            "wireCount": 1,
+            "closed": false,
+            "wiresClosed": [
+              true
+            ],
+            "remeshAttempts": [],
+            "classificationPolicy": "step-nonmeshable/1",
+            "repairAttempts": [
+              {
+                "method": "independent-gmsh-source-face",
+                "engine": "gmsh",
+                "engineVersion": "4.15.2",
+                "status": "not-applicable",
+                "reason": "numerically-degenerate-source-area"
+              }
+            ],
+            "acceptedOmission": true,
+            "pickable": false,
+            "includedInMeasurements": false
+          },
+          {
+            "productName": "Grep3AD1ka2p",
+            "productId": "product-4fb4f3202e963616345dc1420b9a8d4235552b8bdd05af60d849c95322bda337",
+            "entry": "0:1:1:1",
+            "face": 2372,
+            "surface": "GeomAbs_Cone",
+            "valid": true,
+            "faceToleranceMM": 1e-07,
+            "missingFacesInShape": 8,
+            "meshDone": true,
+            "meshStatus": 4,
+            "reason": "face-triangulation-missing",
+            "classification": "degenerate-zero-area",
+            "criterion": "area<=1e-9-mm2",
+            "areaMM2": 1.2361110607678686e-15,
+            "bboxM": {
+              "min": [
+                1.02870541185145,
+                -0.011017638190204997,
+                2.1400739831675772
+              ],
+              "max": [
+                1.0302945881485501,
+                -0.0109889479351777,
+                2.1400774848760697
+              ],
+              "diagonal": 0.001589439113637414,
+              "space": "geometry-local"
+            },
+            "areaOverBBoxDiagSquared": 4.892937859866803e-16,
+            "wireCount": 1,
+            "closed": false,
+            "wiresClosed": [
+              true
+            ],
+            "remeshAttempts": [],
+            "classificationPolicy": "step-nonmeshable/1",
+            "repairAttempts": [
+              {
+                "method": "independent-gmsh-source-face",
+                "engine": "gmsh",
+                "engineVersion": "4.15.2",
+                "status": "not-applicable",
+                "reason": "numerically-degenerate-source-area"
+              }
+            ],
+            "acceptedOmission": true,
+            "pickable": false,
+            "includedInMeasurements": false
+          },
+          {
+            "productName": "Grep3AD1ka2p",
+            "productId": "product-4fb4f3202e963616345dc1420b9a8d4235552b8bdd05af60d849c95322bda337",
+            "entry": "0:1:1:1",
+            "face": 2549,
+            "surface": "GeomAbs_Cone",
+            "valid": true,
+            "faceToleranceMM": 1e-07,
+            "missingFacesInShape": 8,
+            "meshDone": true,
+            "meshStatus": 4,
+            "reason": "face-triangulation-missing",
+            "classification": "degenerate-zero-area",
+            "criterion": "area<=1e-9-mm2",
+            "areaMM2": 0,
+            "bboxM": {
+              "min": [
+                1.68170541185145,
+                0.132222515123926,
+                2.3009889479351777
+              ],
+              "max": [
+                1.68329458814855,
+                0.13222601683242224,
+                2.3010176381902046
+              ],
+              "diagonal": 0.0015894391136374163,
+              "space": "geometry-local"
+            },
+            "areaOverBBoxDiagSquared": 0,
+            "wireCount": 1,
+            "closed": false,
+            "wiresClosed": [
+              true
+            ],
+            "remeshAttempts": [],
+            "classificationPolicy": "step-nonmeshable/1",
+            "repairAttempts": [
+              {
+                "method": "independent-gmsh-source-face",
+                "engine": "gmsh",
+                "engineVersion": "4.15.2",
+                "status": "not-applicable",
+                "reason": "numerically-degenerate-source-area"
+              }
+            ],
+            "acceptedOmission": true,
+            "pickable": false,
+            "includedInMeasurements": false
+          },
+          {
+            "productName": "Grep3AD1ka2p",
+            "productId": "product-4fb4f3202e963616345dc1420b9a8d4235552b8bdd05af60d849c95322bda337",
+            "entry": "0:1:1:1",
+            "face": 2554,
+            "surface": "GeomAbs_Cone",
+            "valid": true,
+            "faceToleranceMM": 1e-07,
+            "missingFacesInShape": 8,
+            "meshDone": true,
+            "meshStatus": 4,
+            "reason": "face-triangulation-missing",
+            "classification": "degenerate-zero-area",
+            "criterion": "area<=1e-9-mm2",
+            "areaMM2": 0,
+            "bboxM": {
+              "min": [
+                1.68170541185145,
+                0.132222515123926,
+                2.278982361809795
+              ],
+              "max": [
+                1.68329458814855,
+                0.13222601683242224,
+                2.2790110520648224
+              ],
+              "diagonal": 0.0015894391136374163,
+              "space": "geometry-local"
+            },
+            "areaOverBBoxDiagSquared": 0,
+            "wireCount": 1,
+            "closed": false,
+            "wiresClosed": [
+              true
+            ],
+            "remeshAttempts": [],
+            "classificationPolicy": "step-nonmeshable/1",
+            "repairAttempts": [
+              {
+                "method": "independent-gmsh-source-face",
+                "engine": "gmsh",
+                "engineVersion": "4.15.2",
+                "status": "not-applicable",
+                "reason": "numerically-degenerate-source-area"
+              }
+            ],
+            "acceptedOmission": true,
+            "pickable": false,
+            "includedInMeasurements": false
+          },
+          {
+            "productName": "Grep3AD1ka2p",
+            "productId": "product-4fb4f3202e963616345dc1420b9a8d4235552b8bdd05af60d849c95322bda337",
+            "entry": "0:1:1:1",
+            "face": 3012,
+            "surface": "GeomAbs_Cone",
+            "valid": true,
+            "faceToleranceMM": 1e-07,
+            "missingFacesInShape": 8,
+            "meshDone": true,
+            "meshStatus": 4,
+            "reason": "face-triangulation-missing",
+            "classification": "degenerate-zero-area",
+            "criterion": "area<=1e-9-mm2",
+            "areaMM2": 4.855492726736187e-13,
+            "bboxM": {
+              "min": [
+                0.817012440575342,
+                -0.132104698590108,
+                0.954903845590057
+              ],
+              "max": [
+                0.817273553861802,
+                -0.13209748059677917,
+                0.9558480462282161
+              ],
+              "diagonal": 0.000979666827494727,
+              "space": "geometry-local"
+            },
+            "areaOverBBoxDiagSquared": 5.059137727729032e-13,
+            "wireCount": 1,
+            "closed": false,
+            "wiresClosed": [
+              true
+            ],
+            "remeshAttempts": [],
+            "classificationPolicy": "step-nonmeshable/1",
+            "repairAttempts": [
+              {
+                "method": "independent-gmsh-source-face",
+                "engine": "gmsh",
+                "engineVersion": "4.15.2",
+                "status": "not-applicable",
+                "reason": "numerically-degenerate-source-area"
+              }
+            ],
+            "acceptedOmission": true,
+            "pickable": false,
+            "includedInMeasurements": false
+          }
+        ]
+      }
+    },
+    {
+      "format": "libiaolink-cad-report/1",
+      "fileId": "22222222-2222-4222-8222-000000000003",
+      "versionId": "66666666-6666-4666-8666-000000000003",
+      "sourceSHA256": "7640da77c19d10c3373b15cbbf40c39755ab4047166aca6d5293cb3efb79ed8b",
+      "engineVersion": "step-0.3.3/38135e606ae560d6b808c7544f25c0a592df7311/gateway-1",
+      "report": {
+        "format": "cad-step-nonmeshable-faces/1",
+        "acceptancePolicy": "step-nonmeshable/1",
+        "documentId": "document-7640da77c19d10c3373b15cbbf40c39755ab4047166aca6d5293cb3efb79ed8b",
+        "documentRevision": "ce801284f586b95edbc7bb1f2806a8068b47bf0b0effb26933efd32a8399b9a9",
+        "sources": [
+          {
+            "id": "source-7640da77c19d10c3373b15cbbf40c39755ab4047166aca6d5293cb3efb79ed8b",
+            "name": "N03_RC_Buggy_2_front_suspension.stp",
+            "sha256": "7640da77c19d10c3373b15cbbf40c39755ab4047166aca6d5293cb3efb79ed8b",
+            "byteLength": 15257496,
+            "format": "STEP"
+          }
+        ],
+        "count": 2,
+        "countScope": "source faces per product definition; instances not multiplied",
+        "notice": "未显示面不参与拾取和面积/体积统计；受影响零件的体积及体积质心不可用。",
+        "faces": [
+          {
+            "productName": "Difi ház_2",
+            "productId": "product-e873d1d328613da33e9a42406c5b1ab83f4a4174ed55fdd3e603dc00558cb821",
+            "entry": "0:1:1:3",
+            "face": 201,
+            "surface": "GeomAbs_Cone",
+            "valid": false,
+            "faceToleranceMM": 1e-07,
+            "missingFacesInShape": 2,
+            "meshDone": true,
+            "meshStatus": 4,
+            "reason": "face-triangulation-missing",
+            "classification": "degenerate-zero-area",
+            "criterion": "area<=1e-9-mm2",
+            "areaMM2": 0,
+            "bboxM": {
+              "min": [
+                0.011800000000000001,
+                -0.0125,
+                -0.0182
+              ],
+              "max": [
+                0.0152,
+                -0.0125,
+                -0.0148
+              ],
+              "diagonal": 0.004808326112068521,
+              "space": "geometry-local"
+            },
+            "areaOverBBoxDiagSquared": 0,
+            "wireCount": 1,
+            "closed": false,
+            "wiresClosed": [
+              true
+            ],
+            "remeshAttempts": [],
+            "classificationPolicy": "step-nonmeshable/1",
+            "repairAttempts": [
+              {
+                "method": "independent-gmsh-source-face",
+                "engine": "gmsh",
+                "engineVersion": "4.15.2",
+                "status": "not-applicable",
+                "reason": "invalid-source-brep"
+              }
+            ],
+            "acceptedOmission": true,
+            "pickable": false,
+            "includedInMeasurements": false
+          },
+          {
+            "productName": "Difi ház_2",
+            "productId": "product-e873d1d328613da33e9a42406c5b1ab83f4a4174ed55fdd3e603dc00558cb821",
+            "entry": "0:1:1:3",
+            "face": 204,
+            "surface": "GeomAbs_Cone",
+            "valid": false,
+            "faceToleranceMM": 1e-07,
+            "missingFacesInShape": 2,
+            "meshDone": true,
+            "meshStatus": 4,
+            "reason": "face-triangulation-missing",
+            "classification": "degenerate-zero-area",
+            "criterion": "area<=1e-9-mm2",
+            "areaMM2": 0,
+            "bboxM": {
+              "min": [
+                -0.0152,
+                -0.0125,
+                -0.0182
+              ],
+              "max": [
+                -0.011800000000000001,
+                -0.0125,
+                -0.0148
+              ],
+              "diagonal": 0.004808326112068521,
+              "space": "geometry-local"
+            },
+            "areaOverBBoxDiagSquared": 0,
+            "wireCount": 1,
+            "closed": false,
+            "wiresClosed": [
+              true
+            ],
+            "remeshAttempts": [],
+            "classificationPolicy": "step-nonmeshable/1",
+            "repairAttempts": [
+              {
+                "method": "independent-gmsh-source-face",
+                "engine": "gmsh",
+                "engineVersion": "4.15.2",
+                "status": "not-applicable",
+                "reason": "invalid-source-brep"
+              }
+            ],
+            "acceptedOmission": true,
+            "pickable": false,
+            "includedInMeasurements": false
+          }
+        ]
+      }
+    }
+  ]
+}

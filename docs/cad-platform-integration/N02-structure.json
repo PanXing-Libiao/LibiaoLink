@@ -1,0 +1,22 @@
+{
+  "date": "2026-10-21",
+  "source": "N02_KR600_R2830-4.stp",
+  "sourceSHA256": "8beb257cb915240f7012474c2dcfb55a820a343abde082faadeacfdbe93823ce",
+  "sourceEntityInventory": {
+    "PRODUCT": 1,
+    "NEXT_ASSEMBLY_USAGE_OCCURRENCE": 0,
+    "CONTEXT_DEPENDENT_SHAPE_REPRESENTATION": 0
+  },
+  "officialReader": {
+    "name": "OCP 7.8.1.1 STEPCAFControl_Reader",
+    "operation": "ReadFile + Transfer to XCAF; no meshing",
+    "freeShapes": 1,
+    "rootEntry": "0:1:1:1",
+    "rootIsAssembly": false,
+    "rootComponents": 0,
+    "solidOccurrences": 61,
+    "faceOccurrences": 4123
+  },
+  "platformProductTreeNodes": 1,
+  "interpretation": "One source product, without component assembly relationships. Topological solids are retained in the source shape but are not separate product-tree nodes. No source assembly hierarchy was found to populate additional nodes."
+}

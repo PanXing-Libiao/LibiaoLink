@@ -1,5 +1,7 @@
 # H1 SVG 预览同源存储型 XSS 整改方案与执行切片
 
+> **2026-10-21 CAD 回归范围更新**：旧 CadViewer/WASM/原对象直签已撤下，CAD 以 [ADR-035](adr/ADR-035-CAD接入独立能力工程.md) 接入独立工程。本文 CAD 回归当前检查暂不可预览与原文件下载；新模型资源/Worker 在实际接入后再纳入。本文 SVG 方案的实现状态不因 CAD 清理改变。
+
 > 来源：`LibiaoLink_安全审查报告_2026-10-19.pdf` H1（第 5 页）｜严重度 High｜报告要求：上线前处理
 > 报告审查基线：`e13664f`｜方案落档时 `lan` 分支 HEAD：`d6ae272`（审查基线祖先；H1 涉及路径未发现实质修复）
 > 起草：lan（后端平台 / file / preview / outbox）｜拟稿日期：2026-10-20｜状态：**S1 架构 / 契约已批准（ADR-034 Accepted，PR #518 已合入 main）；S2 已随 PR #523 合入 main `e2b6aab`；S3 已随 PR #529 合入 main `acd6113`；S4 已随 PR #531 合并 main `db7d5e0`；S5 已随 PR #534 合并 main `660cc80`；S6 已随 PR #539 合并 main `336b66fd`。2026-10-21 已在测试机 10.1.104.44 完成 S2 ～ S6 同批部署：6 容器 healthy，converter 自检 40 PASS / 0 FAIL / 0 SKIP，完整 B1 ～ B7 25/25（B7 4/4）通过，443 SPA、443 对象门面与 9443 均只回传 1 条 HSTS；PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 的修复已合并 main 333ffdeb 并部署测试机，旧式原对象签名完成等价到期复测。收口 PR [#543](https://github.com/PanXing-Libiao/LibiaoLink/pull/543) 已 squash 合并 main `5e31e4b9`；最终 head PR CI [39550779854](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39550779854) 与 main CI [39550973691](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39550973691) 均 5 / 5。main 连续 3 次全绿已完成，`svg-preview-e2e` 已加入分支保护必需检查。生产尚未部署，真实 CAD 生产样本与关闭评审仍未完成，H1 未闭环；外部 V1.0 源文档同步已按 2026-10-21 指令移出本整改跟踪**
@@ -148,8 +150,8 @@ renderer 不执行脚本；服务容器无外网、不配置外部资源目录�
 - 将现有 `isImageFile` 拆成：
   - `isRasterImageFile`：只接受上表的安全位图精确组合，允许原对象直签。
   - `isSvgFile`：扩展名为 `svg` 或规范 MIME 为 `image/svg+xml`，只允许进入 PNG 产物通道。
-- `previewTargetsFor` 对 SVG 返回 `["image"]`，其他类型保持现有查看器 / CAD / 降级路由。
-- `getPreview` 的判定顺序改为：SVG 产物通道 → 安全位图直签 → CAD 三维 → 查看器 → 降级；SVG 永远不能落到位图直签分支。
+- `previewTargetsFor` 对 SVG 返回 `["image"]`，其他类型保持现有查看器 / CAD 暂不可预览 / 降级路由。
+- `getPreview` 的判定顺序改为：CAD 暂不可预览（优先于 MIME 回退）→ SVG 产物通道 → 安全位图直签 → 查看器 → 降级；SVG 永远不能落到位图直签分支。
 - 对存量记录：扩展名、MIME、历史内容无法证明安全时按不透明文件处理，只能下载。不得把旧数据库中客户端提交的 `mime` 当作可信值。
 
 ### 4.3 原对象直签与下载响应
@@ -163,7 +165,7 @@ renderer 不执行脚本；服务容器无外网、不配置外部资源目录�
 安全规则：
 
 - 安全位图预览：显式 `ResponseContentType` 为规范 MIME，`Content-Disposition: inline`，文件名使用服务端生成的 `.png/.jpg/...`。
-- CAD 三维原对象直签：`ResponseContentType: application/octet-stream`；CadViewer 只读取字节，不依赖浏览器按模型类型渲染。
+- CAD 不再签原文件为预览对象；当前返回暂不可预览，下载仍走有权限的原文件链。后续模型资源单独按 ADR-035 适配。
 - 任意原文件下载：`attachment` + `application/octet-stream`，文件名仍按版本真实扩展名。
 - SVG 预览：只签 PNG 产物，不签原 SVG。
 - 任何无法映射到安全响应类型的原对象：不得签发 inline 预览地址。
@@ -206,7 +208,7 @@ renderer 不执行脚本；服务容器无外网、不配置外部资源目录�
 - `Content-Security-Policy` 实际口径：`default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`。其中 `'wasm-unsafe-eval'` 仅用于 CAD 的本地 WASM 编译，不引入 `'unsafe-eval'`。
 - `X-Frame-Options: DENY`
 
-上线前用浏览器回归确认 SPA、ONLYOFFICE 外壳、CAD WASM / Worker、导出打印 iframe 均未被 CSP 误伤；若需调整，必须记录具体指令与原因。
+上线前用浏览器回归确认 SPA、ONLYOFFICE 外壳、CAD 暂不可预览提示与下载（未来独立查看器资源 / Worker 在接入后验证）、导出打印 iframe 均未被 CSP 误伤；若需调整，必须记录具体指令与原因。
 
 ### 5.3 独立对象存储域（S7 · 纵深）
 
@@ -248,7 +250,7 @@ renderer 不执行脚本；服务容器无外网、不配置外部资源目录�
 
 - 重构 `preview.targets.ts`；移除 `image/*` 前缀匹配与 SVG 位图直签。
 - `file.service.ts` 完成上传时规范化 MIME、检查扩展名 / 文件头一致性；数据库保存规范 MIME，原始对象固定 `application/octet-stream`。
-- 安全位图、CAD、下载分别签入安全响应类型；未知主动内容 fail closed。
+- 安全位图、下载分别签入安全响应类型；CAD 预览不直签；未知主动内容 fail closed。
 - 增加类型矩阵单测：大小写、参数 MIME、双扩展名、MIME 冲突、`text/html`、`image/svg+xml`、无扩展名；文件改名 / 变更 / 历史版本仍按对象键扩展名裁决，不能靠改名绕过。
 - 增加存量兼容测试：客户端 MIME 与扩展名冲突时只能下载，绝不能直签。
 - 本切片可先合入代码但不得单独部署生产；上线窗口与 S3 / S4 同批，避免半成品状态。
@@ -293,7 +295,7 @@ renderer 不执行脚本；服务容器无外网、不配置外部资源目录�
 
 - 新域名、证书、Nginx、MinIO CORS、S3 endpoint 与 SigV4 host 同批切换。
 - 只允许应用 origin 的 PUT / GET；禁止凭证模式；Cookie 不跨到存储域。
-- 验收：上传、位图预览、CAD fetch、下载、SVG PNG 预览全链路；匿名访问仍拒绝；跨域脚本不能读取应用 Cookie。
+- 验收：上传、位图预览、CAD 暂不可预览与原文件下载、下载、SVG PNG 预览全链路；匿名访问仍拒绝；跨域脚本不能读取应用 Cookie。
 - 回滚：短时签名 TTL 内保留旧门面只读窗口，再收回旧域名；不删除对象。
 
 ### S8 · 全量哈希完整性
@@ -310,7 +312,7 @@ renderer 不执行脚本；服务容器无外网、不配置外部资源目录�
 - 正常 SVG 上传后 20 秒内进入 `ready`；缩略图真实渲染，`naturalWidth > 0`。
 - 点击缩略图打开现有 `ImageZoomViewer`，缩放 / 拖动正常；图片源为 PNG 产物。
 - PNG / JPEG / GIF / WebP / BMP / TIFF（以及确认支持的 AVIF）原有预览不回归。
-- PDF / Office / 文本族仍走 ONLYOFFICE；CAD 三维仍走前端 WASM / three.js，不误入 SVG 管线。
+- PDF / Office / 文本族仍走 ONLYOFFICE；CAD 当前暂不可预览，不误入图片/Office/SVG 管线；未来独立模型通道单独验收。
 - SVG 下载字节与上传原文件 SHA-256 相同，文件名 / 扩展名正确。
 
 ### 7.2 安全性验收
@@ -333,7 +335,7 @@ renderer 不执行脚本；服务容器无外网、不配置外部资源目录�
 | B3 | MIME / 改名绕过矩阵 | 参数 MIME、大小写、双扩展名、冲突类型、改名后历史版本全部 fail closed |
 | B4 | 原 SVG 下载 | attachment、octet-stream、SHA-256 与上传一致 |
 | B5 | 位图回归 | PNG / JPEG / GIF / WebP 缩略图与浮层正常 |
-| B6 | PDF / Office / CAD 回归 | ONLYOFFICE 与 CadViewer 不回归、不误路由 |
+| B6 | PDF / Office / CAD 回归 | ONLYOFFICE 不回归；CAD 提示与下载正常，不误入图片或查看器 |
 | B7 | 响应头 | `nosniff`、CSP、HSTS、XFO 生效；SPA 控制台无 CSP 错误 |
 
 浏览器脚本必须监听网络与控制台：

@@ -1,5 +1,6 @@
 import { OpenAPIRegistry, OpenApiGeneratorV31 } from "@asteasolutions/zod-to-openapi";
 import { z } from "./zod.ts";
+import { CadJobSchema, CadJobCreateResponseSchema, CadNameCodepageSchema } from "./modules/cad.ts";
 import { DateOnlySchema, IdempotencyKeySchema, UuidSchema } from "./common/conventions.ts";
 import { StageKeySchema } from "./common/dicts.ts";
 import { ApiErrorSchema } from "./common/errors.ts";
@@ -1310,13 +1311,33 @@ export function buildOpenApiDocument() {
     method: "get",
     path: "/api/v1/files/{id}/preview",
     tags: ["files"],
-    summary: "预览状态与短时签名地址（D2：异步产物；未就绪 / 失败为 200 语义，not_ready 幂等补投，失败降级「请下载」）",
+    summary: "预览产物或查看入口；CAD 模型转换进度由 cad 任务独立显示",
     request: { params: idParams, query: FilePreviewQuerySchema },
     responses: {
       200: { description: "预览状态（ready / not_ready / failed）", ...json(FilePreviewResponseSchema) },
       404: commonErrors[404],
     },
   });
+
+  const cadBase = "/api/v1/files/{fileId}/versions/{versionId}/cad/views/{viewId}/jobs";
+  const cadParams = z.object({ fileId: UuidSchema, versionId: UuidSchema, viewId: z.string().regex(/^[a-f0-9]{32}$/) });
+  const cadJobParams = cadParams.extend({ jobId: z.string().regex(/^[a-f0-9]{32}$/) });
+  const cadLeaseParams = cadJobParams.extend({ lease: z.string().regex(/^[a-f0-9]{48}$/) });
+  const cadErrors = { 400: commonErrors[400], 401: commonErrors[401], 403: commonErrors[403], 404: commonErrors[404],
+    503: { description: "CAD 服务未启用、繁忙或产物不可用", ...json(ApiErrorSchema) } };
+  registry.registerPath({ method: "post", path: cadBase, tags: ["files"], summary: "为已授权 STEP 版本创建隔离任务（需要 CSRF）",
+    request: { params: cadParams, query: z.object({ nameCodepage: CadNameCodepageSchema.default("UTF8") }) }, responses: { 201: { description: "已创建或复用当前查看窗口的任务", ...json(CadJobCreateResponseSchema) }, ...cadErrors } });
+  registry.registerPath({ method: "get", path: cadBase + "/{jobId}", tags: ["files"], summary: "查询当前查看窗口的 CAD 任务",
+    request: { params: cadJobParams }, responses: { 200: { description: "持久任务状态", ...json(CadJobSchema) }, ...cadErrors } });
+  registry.registerPath({ method: "post", path: cadBase + "/{jobId}/cancel", tags: ["files"], summary: "取消当前查看窗口的转换（需要 CSRF）",
+    request: { params: cadJobParams }, responses: { 201: { description: "取消后状态", ...json(CadJobSchema) }, ...cadErrors } });
+  registry.registerPath({ method: "get", path: cadBase + "/{jobId}/manifest", tags: ["files"], summary: "读取完整校验的 UCD 二进制模型清单（支持 gzip）",
+    request: { params: cadJobParams }, responses: { 200: { description: "独立工程 ucd-binary-compact/1 清单，含短期资源 lease；每次重查文件版本权限", ...json(z.record(z.string(), z.unknown())) }, ...cadErrors } });
+  registry.registerPath({ method: "get", path: cadBase + "/{jobId}/resources/{lease}/{sha256}", tags: ["files"], summary: "读取当前模型清单内的二进制资源",
+    request: { params: cadLeaseParams.extend({ sha256: z.string().regex(/^[a-f0-9]{64}$/) }) },
+    responses: { 200: { description: "有权限且哈希属于该清单的 buffer", content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } } }, ...cadErrors } });
+  registry.registerPath({ method: "delete", path: cadBase + "/{jobId}/resources/{lease}", tags: ["files"], summary: "释放模型资源清单 lease（需要 CSRF）",
+    request: { params: cadLeaseParams }, responses: { 200: { description: "已释放", ...json(z.object({ released: z.boolean() })) }, ...cadErrors } });
 
   registry.registerPath({
     method: "get",

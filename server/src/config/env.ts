@@ -53,6 +53,10 @@ export const EnvSchema = z
     PREVIEW_CONVERTER_URL: z.string().min(1).default("http://127.0.0.1:9900"),
     /** 转换管线版本（进预览产物三元组缓存键）：H1 S4 起固定为 2.0.0，旧 1.0.0 产物不再被读取。 */
     PREVIEW_PIPELINE_VERSION: z.string().min(1).default("2.0.0"),
+    /** 独立 CAD 沙箱；生产只接受 Unix socket。旧 Python 配置不再启用解析。 */
+    CAD_ENGINE_SOCKET: z.string().default(""),
+    CAD_ENGINE_URL: z.string().default(""),
+    CAD_MAX_INPUT_MIB: z.coerce.number().int().min(1).max(256).default(64),
     /** 客户端超时（毫秒）：比容器内 10 秒硬超时留余量 —— 才拿得到 504 CONVERT_TIMEOUT 而不是被客户端掐断的裸超时。 */
     PREVIEW_CONVERT_TIMEOUT_MS: z.coerce.number().int().min(1000).max(600000).default(15000),
     /** 可重试失败的最大尝试次数（含首次）：到顶写产物 failed + outbox dead（D2-05 降级「请下载」）。 */
@@ -241,6 +245,18 @@ export const EnvSchema = z
     AUTOMATION_EVENT_MAX_AGE_MS: z.coerce.number().int().min(0).default(21600000),
   })
   .superRefine((value, context) => {
+    if (value.CAD_ENGINE_SOCKET && (!value.CAD_ENGINE_SOCKET.startsWith("/") || value.CAD_ENGINE_SOCKET.includes("\0") || Buffer.byteLength(value.CAD_ENGINE_SOCKET) > 100)) {
+      context.addIssue({ code: "custom", message: "CAD_ENGINE_SOCKET 必须是有效的绝对 Unix socket 路径", path: ["CAD_ENGINE_SOCKET"] });
+    }
+    if (value.CAD_ENGINE_URL) {
+      let valid = false;
+      try {
+        const url = new URL(value.CAD_ENGINE_URL);
+        valid = value.NODE_ENV !== "production" && !value.CAD_ENGINE_SOCKET && url.protocol === "http:"
+          && url.hostname === "127.0.0.1" && !url.username && !url.password && url.pathname === "/" && !url.search && !url.hash;
+      } catch { /* Invalid URLs fail closed. */ }
+      if (!valid) context.addIssue({ code: "custom", message: "CAD_ENGINE_URL 仅允许开发环境的 127.0.0.1 沙箱中继；生产使用 Unix socket", path: ["CAD_ENGINE_URL"] });
+    }
     // S3 单次 CopyObject 上限 5 GiB（ADR-006：complete 时 `…/staging/{sessionId}` → 契约键走一次复制，
     // 见 src/storage/part-plan.ts 的 SINGLE_COPY_MAX_BYTES）。放开这个上限必须先补 UploadPartCopy。
     if (value.UPLOAD_MAX_SIZE_MB * 1024 * 1024 > 5 * 1024 * 1024 * 1024) {

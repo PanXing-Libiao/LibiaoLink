@@ -7,7 +7,7 @@
 > - 本批来源：技术设计v0.1-选型分析.md §0.1 / §4 / §5 / §9 的选型结论固化（定档任务 g1 · S5·ADR）。
 > - 后续来源：ADR-018 来自《技术设计v0.3-实施与验收.md》（实施与验收篇）；**ADR-019 ~ ADR-029 为 M0 口径冻结决议**（2026-09-20 · Push 71，来源 = 技术设计v0.3 §7 十五项待定案清单）；**ADR-030 来自 ONLYOFFICE 替换执行计划（PoC-10 · 2026-09-30）**；**ADR-033 来自 M5-03 单聊改智能机器人执行计划（企微单聊 · M5-03-5 · 2026-10-14）**；**ADR-034 来自安全审查 H1 与《H1 SVG 预览同源存储型 XSS 整改方案》（2026-10-20）**。
 
-## 清单（ADR-001 ~ ADR-034）
+## 清单（ADR-001 ~ ADR-035）
 
 | 编号 | 主题 | 定档结论（一句话） | 切换触发条件 | 状态 |
 |---|---|---|---|---|
@@ -17,8 +17,8 @@
 | ADR-004 | 数据库与数据访问 | PostgreSQL 18 + Drizzle + 显式 SQL 迁移 | 公司 DBA 强制 MySQL 且不可协商 | 草案 |
 | ADR-005 | 队列与调度 | PG 原生：Outbox + SKIP LOCKED + advisory lock，不引入 Redis | 多实例 / 外发超 5 条每秒 / PG 竞争成瓶颈 | 已采纳（Accepted · 2026-09-29：S7·outbox S7-1 ~ S7-5 落地收口 · PR #221 / Push 181） |
 | ADR-006 | 对象存储 | S3 协议抽象 + 可替换实现（沙箱 MinIO pinned；生产实现待选：内网既有存储 / SeaweedFS / 云 OSS） | 已触发（2026-09-21：MinIO 上游归档 + 分发下线）→ 生产实现 M8 前关闭；后续看公司云策略 | 已采纳（2026-09-21 修订；2026-09-24 复审 —— 结论不变） |
-| ADR-007 | 在线预览管道 | 自建转换管道，只读、系统内直接查看，不支持在线编辑 | CAD 覆盖需求扩大且外部方案 PoC 更优 | 已被 ADR-030 取代（Superseded · 2026-09-30，仅 Office 预览链）；SVG 原对象直出子口径由 ADR-034 局部修订（Accepted · 2026-10-20） |
-| ADR-008 | 三维与 CAD 查看 | 内网、条件性交付原则保留；实现现状及工程路线见 ADR-031 更正 / ADR-032 | 样本与工程用途触发进一步选型 | 历史规划；实施策略拟由 ADR-032 更新 |
+| ADR-007 | 在线预览管道 | 仅保留历史沿革；Office 由 ADR-030、CAD 由 ADR-035 承接 | 既有产物与下载按各自决策 | Office 已被 ADR-030 取代；CAD 旧子口径撤回；SVG 已由 ADR-034 局部修订 |
+| [ADR-008](ADR-008-三维与CAD查看策略.md) | 三维与 CAD 查看 | 独立工程接入替代旧选型 | 见 ADR-035 | 由 ADR-035 替代 |
 | ADR-009 | 消息通道 | 企微（应用消息 + 群机器人）+ 站内信兜底，其余留适配位 | 其他部门使用不同 IM | 已被 [ADR-033](ADR-033-企微消息通道改由智能机器人承接.md) 部分取代（Superseded · 2026-10-14 —— 企微外发（群播报 + 单聊）改走智能机器人（aibot）· 应用消息保留备用；站内信兜底 / 投递语义继续有效） |
 | ADR-010 | 认证与组织 | 公司统一 SSO（Casdoor，OIDC + PKCE），不自建账号 | SSO 不可用或不覆盖外部干系人 | 草案 |
 | ADR-011 | 权限模型 | 自研策略层（功能 / 数据范围 / 记录 / 字段 / 时效五层） | 角色超 100 或出现策略 DSL 需求 | 草案 |
@@ -40,11 +40,12 @@
 | ADR-027 | 项目归档 | 冻结状态位（archived 写保护）+ 引用式归档清单；不做全库快照表；导出包属二期 C4-04 | 需要归档版本化或跨系统交付导出包 | 草案 |
 | ADR-028 | 时区口径 | 业务统一 Asia/Shanghai；日界在应用层计算 + ClockService 注入；cron 同口径；存储仍 timestamptz | 海外项目需按项目时区解释「今天 / 逾期」 | 草案 |
 | ADR-029 | 搜索分词 | 一期 pg_trgm 双字切分（零部署）；zhparser 仅作 M7 前 PoC 备选（可修订，复审 = M7 开工前） | 召回 / 精度不达标，或需要同义词 / 纠错 | 草案 |
-| ADR-030 | Office 在线预览改由 ONLYOFFICE 承接 | 查看器形态（mode=view · 只读 · 服务端锁死不做编辑）；只替换 Office 预览链（PDF / 安全位图 / CAD / 下载链不动）；预览拉取链无预签名（受控端点 + outbox Bearer JWT） | 编辑需求重启（A4-19 / D2-09）须新增 ADR；S3 受控端点不可行回计划重开 N2 | 已采纳（Accepted · 2026-09-30：随 PR #247 / Push 238 合并 main）；D4 的 SVG 原对象直通子口径由 ADR-034 局部修订（Accepted · 2026-10-20） |
-| [ADR-031](ADR-031-CAD预览通道.md) | CAD 预览通道 | PR #323 已合入参考预览实现；原路线及能力陈述见顶部更正，不能作为工程测量验收依据 | 工程用途已触发 ADR-032 修订提案 | 历史方案（实现已合入，能力待修正；拟由 ADR-032 取代） |
-| [ADR-032](ADR-032-CAD工程测量与尺寸依据.md) | CAD 工程测量与尺寸依据 | 服务端 OCCT/XDE 几何计算 + Three.js 展示 + 批准尺寸依据；wmj 主责 | 样本、公差、必要 PMI 或内核覆盖不满足时重新选型 | 修订提案（Proposed；待非作者评审，未实现） |
+| ADR-030 | Office 在线预览改由 ONLYOFFICE 承接 | 查看器形态（mode=view · 只读 · 服务端锁死不做编辑）；只替换 Office 预览链（PDF / 安全位图 / 下载链按各自决策；CAD 后续见 ADR-035）；预览拉取链无预签名（受控端点 + outbox Bearer JWT） | 编辑需求重启（A4-19 / D2-09）须新增 ADR；S3 受控端点不可行回计划重开 N2 | 已采纳（Accepted · 2026-09-30：随 PR #247 / Push 238 合并 main）；D4 的 SVG 原对象直通子口径由 ADR-034 局部修订（Accepted · 2026-10-20） |
+| [ADR-031](ADR-031-CAD预览通道.md) | CAD 预览通道 | 旧浏览器解析和原对象图片直签撤下 | 见 ADR-035 | 由 ADR-035 替代；历史全文在 Git 保留 |
+| [ADR-032](ADR-032-CAD工程测量与尺寸依据.md) | CAD 工程测量与尺寸依据 | 旧测量、字段与任务提案撤回 | 后续业务需要另行立项 | 提案撤回，由 ADR-035 替代 |
 | [ADR-033](ADR-033-企微消息通道改由智能机器人承接.md) | 企微消息通道改由智能机器人（aibot）承接 | 群播报 + 单聊提醒统一走 aibot 长连接（单聊新增渠道值 `wecom_aibot`）；应用消息（`wecom_app`）保留未启用备用；单聊可投递地址 = 绑定行密文 `open_userid`（绑定码链路），未绑定 = 确定性失败 + 站内信降级（前缀「当前用户未绑定企业微信，请前往设置补绑」） | aibot 形态不可行（接口下线 / 激活成本不可接受）→ 按回退规则切回应用消息；企微管理员权限可获得或 aibot 单聊接口变化 → 重评明文映射与寻址；新 IM 需求走 ADR-009 适配位 | 已采纳（Accepted · 2026-10-15：随 #340 并入 main · squash `a7d51e4`）· 2026-10-19 增补（绑定码 / 密文寻址 / 激活语义修订 · lan 代 wmj 起草，待 wmj 复核） |
 | [ADR-034](ADR-034-SVG预览安全栅格化.md) | SVG 预览安全栅格化 | 原始 SVG 永不内联；继续用 `target=image` 但只返回服务端 `2.0.0` PNG 产物；原 SVG download-only；精确 MIME + 沙箱 + fail closed | 固定渲染器无法满足保真度 / 沙箱要求，或业务要求动画 / 交互 SVG → 新增 ADR；S7 / S8 为独立纵深项 | 已采纳（Accepted · 2026-10-20：wmj 批准架构 / 契约，PR #518 squash `c53e895`；S2 已随 PR #523 合并 `e2b6aab`；S3 随 PR #529 合并 `acd6113`；S4 已随 PR [#531](https://github.com/PanXing-Libiao/LibiaoLink/pull/531) 合并 `db7d5e0`；S5 已随 PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 合并 main `660cc80`；S6 已随 PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 合并 main 336b66fd，HSTS 单头修复随 PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 合并 333ffdeb 并部署测试机；收口 PR [#543](https://github.com/PanXing-Libiao/LibiaoLink/pull/543) 已 squash 合并 main `5e31e4b9`，最终 head PR CI [39550779854](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39550779854) 与 main CI [39550973691](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39550973691) 均 5 / 5；main 连续 3 次含 `svg-preview-e2e` 全绿，该 job 已加入分支保护必需检查；测试机完整 B1 ～ B7 25 / 25，生产部署、真实 CAD 生产样本与关闭评审未完成，H1 未闭环） |
+| [ADR-035](ADR-035-CAD接入独立能力工程.md) | CAD 接入独立能力工程 | 沿用独立 UCD/ViewerSession 与能力矩阵；STEP 本地版本/任务/资源/查看器已联通，其余保留提示与下载 | 独立工程版本/范围变化须登记；平台联调单独验收 | 用户已授权接入；本地验证完成，待非作者评审及公司环境部署验收 |
 
 ## 模板与编写规则
 

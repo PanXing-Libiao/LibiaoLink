@@ -15,6 +15,7 @@ import { applyBackgroundTier, applyCardWatermark, asBackgroundTier, asCardWaterm
 import { applyLocale, asLocale, getLocale, textOf, useT, type TextKey } from "./i18n";
 import { Loader } from "./components/Loader";
 import { Toast } from "./components/Toast";
+import { ExportProgressOverlay } from "./components/ExportProgressOverlay";
 import { useFocusTrap } from "./components/useFocusTrap";
 import { BindingGuideModal } from "./components/BindingGuideModal";
 import { ProjectModal, type ProjectDraft, type ProjectSubmitResult } from "./components/ProjectModal";
@@ -31,7 +32,7 @@ import {
   type Dicts,
 } from "./dicts";
 import { directoryMemberOptions, loadDirectory, type DirectoryUser } from "./directory";
-import { archiveProject, createProject, deleteProject, fetchProject, toUiProject, updateProject } from "./projectApi";
+import { archiveProject, createProject, deleteProject, downloadProjectWorkbook, fetchProject, toUiProject, updateProject } from "./projectApi";
 import { loadMyPreferences, loadMyPreferencesWithLegacyMigration, saveHomeSavedFilters, saveTaskTableHiddenColumns, saveHubDashProject, saveHubDashView, saveHubView, saveWorkspaceOpenProjects, type WorkspaceOpenProjects } from "./preferencesApi";
 import type { SavedFilter } from "./savedFilters";
 import { asHubDashView, type HubDashView } from "./data/dashboardProgress";
@@ -141,6 +142,9 @@ export default function App() {
   const permissions = useMyPermissions();
   /** 待确认删除的项目（卡片删除先出确认条，第二下才真删）：null = 没有待确认的删除。 */
   const [pendingDelete, setPendingDelete] = useState<Project | null>(null);
+  /** 正在导出的项目 id：卡片按钮据此显示忙碌态；同一时间只生成一份工作簿。 */
+  const [exportingProjectId, setExportingProjectId] = useState<string | null>(null);
+  const exportInFlight = useRef(false);
   /** 键盘焦点陷阱（Push 264 追订）：删除确认条开着时焦点进条内（初始焦点不再留在背景卡片）、Tab 在条内循环、关闭还原。 */
   const deleteConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDelete !== null);
   const route = useHashRoute();
@@ -384,6 +388,24 @@ export default function App() {
     }
   };
 
+  /** 导出项目全部数据：浏览器保存 xlsx；失败沿用全局顶部 Toast，不阻断其他操作。 */
+  const handleExportProject = async (project: Project): Promise<void> => {
+    if (exportInFlight.current) {
+      return;
+    }
+    exportInFlight.current = true;
+    setExportingProjectId(project.id);
+    setNotice(null);
+    try {
+      await downloadProjectWorkbook(project);
+    } catch (error: unknown) {
+      setNotice(errorMessageOf(error, t("app.fail.exportProject")));
+    } finally {
+      exportInFlight.current = false;
+      setExportingProjectId(null);
+    }
+  };
+
   /**
    * 常用筛选（A24 · Push 169）：整体替换 PATCH —— 乐观更新（胶囊立即出现 / 消失），服务端返回后以它为准。
    * 失败回滚到上一次状态（服务端没落库，界面不能停在假状态）并把文案交给 Home 顶部的提示条。
@@ -588,6 +610,7 @@ export default function App() {
    */
   const canCreateProject = permissions === null || hasPermission(permissions, "project.create");
   const canUpdateProject = permissions === null || hasPermission(permissions, "project.update");
+  const canExportProject = permissions === null || hasPermission(permissions, "project.export");
   /** 归档权（Push 262 · M7-04 前端接线一部分）：决定编辑弹窗「已归档」选项是否可选（服务端逐请求仍是最终裁决）。 */
   const canArchiveProject = permissions === null || hasPermission(permissions, "project.archive");
   /**
@@ -649,6 +672,7 @@ export default function App() {
    */
   const bottomBars = (
     <>
+      {exportingProjectId === null ? null : <ExportProgressOverlay progress={null} variant="project-data" />}
       <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
       {pendingDelete === null ? null : (
         <div
@@ -848,6 +872,11 @@ export default function App() {
         canDeleteProject={canDeleteProject}
         canCreateProject={canCreateProject}
         canUpdateProject={canUpdateProject}
+        canExportProject={canExportProject}
+        exportingProjectId={exportingProjectId}
+        onExportProject={(project) => {
+          void handleExportProject(project);
+        }}
         onDeleteProject={(project) => {
           setPendingDelete(project);
         }}
