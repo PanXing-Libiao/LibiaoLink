@@ -11,7 +11,7 @@ const fileId=query.get('fileId'),versionId=query.get('versionId'),viewId=query.g
 const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const valid=uuid.test(fileId||'')&&uuid.test(versionId||'')&&/^[a-f0-9]{32}$/.test(viewId||'');
 const base=valid?`/api/v1/files/${fileId}/versions/${versionId}/cad/views/${viewId}/jobs`:null;
-const nameCodepage=query.get('nameCodepage')==='GB'?'GB':'UTF8';
+const nameCodepage=query.get('nameCodepage')==='UTF8'?'UTF8':'GB';
 let currentJob=null,jobBase=null,delivered=false,cancelled=false,loadedEnvelope=null;
 const ui=new ImportUI({fileId,versionId,engineVersion:query.get('engineVersion')||'unknown'});
 const nameSelect=document.getElementById('nameCodepage'),reloadNames=document.getElementById('reloadNames');
@@ -182,7 +182,7 @@ loadPlatformModel(async({signal,progress})=>{
  signal.addEventListener('abort',abort,{once:true});unloading.signal.addEventListener('abort',abort,{once:true});
  const active=controller.signal;
  try{
-  active.throwIfAborted();progress('正在读取文件并创建转换任务…');
+  active.throwIfAborted();progress('正在读取模型任务…');
   const created=await json(await request(base+'?'+new URLSearchParams({nameCodepage}),{method:'POST',signal:active}));
   currentJob=created.job;
   if(!/^[a-f0-9]{32}$/.test(currentJob?.id||''))throw new Error('模型任务响应无效');

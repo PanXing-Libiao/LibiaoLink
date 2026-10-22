@@ -39,7 +39,7 @@ describe.skipIf(!endpoint)("CAD 平台 HTTP 链路（独立沙箱真实转换，
     while (["queued", "running"].includes(job.state) && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       const status = await api().get(base + "/" + jobId).set("Cookie", LOCAL_COOKIE);
-      expect(status.status).toBe(200); job = status.body;
+      expect(status.status, JSON.stringify(status.body)).toBe(200); job = status.body;
     }
     expect(job.state, JSON.stringify(job)).toBe("completed");
     expect(job.sourceSHA256).toBe(env.records[0]!.sha);
@@ -99,10 +99,10 @@ describe.skipIf(!endpoint)("CAD 平台 HTTP 链路（独立沙箱真实转换，
   it("名称码页受控校验、隔离任务缓存并传到原生读取器", async () => {
     const invalid = await api().post(base + "?nameCodepage=guess").set("Cookie", LOCAL_COOKIE).set("X-CSRF-Token", LOCAL_CSRF);
     expect(invalid.status).toBe(400);
-    const created = await api().post(base + "?nameCodepage=GB").set("Cookie", LOCAL_COOKIE).set("X-CSRF-Token", LOCAL_CSRF);
+    const created = await api().post(base + "?nameCodepage=UTF8").set("Cookie", LOCAL_COOKIE).set("X-CSRF-Token", LOCAL_CSRF);
     expect(created.status).toBe(201);
     expect(created.body.job.id).not.toBe(jobId);
-    expect(created.body.job.nameCodepage).toBe("GB");
+    expect(created.body.job.nameCodepage).toBe("UTF8");
     let job = created.body.job;
     const deadline = Date.now() + 120_000;
     while (["queued", "running"].includes(job.state) && Date.now() < deadline) {
@@ -112,7 +112,8 @@ describe.skipIf(!endpoint)("CAD 平台 HTTP 链路（独立沙箱真实转换，
     expect(job.state, JSON.stringify(job)).toBe("completed");
     const readManifest = async (id: string) => (await api().get(base + "/" + id + "/manifest").set("Cookie", LOCAL_COOKIE)).body;
     const before = await readManifest(jobId), after = await readManifest(job.id);
-    expect(after.document.extensions["org.cad-preview.step-audit/1"].nameEncoding.codepage).toBe("GB");
+    expect(before.document.extensions["org.cad-preview.step-audit/1"].nameEncoding.codepage).toBe("GB");
+    expect(after.document.extensions["org.cad-preview.step-audit/1"].nameEncoding.codepage).toBe("UTF8");
     expect(after.document.buffers).toEqual(before.document.buffers);
     expect(after.snapshot.completeness).toBe("complete");
   });

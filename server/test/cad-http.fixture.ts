@@ -102,5 +102,6 @@ export async function createCadFixture(paths: string[], cache: string, endpoint:
   app.useGlobalFilters(new ApiErrorFilter());
   if (middleware !== undefined) app.use(middleware);
   await app.init();
+  if (!browser) await app.listen(0, "127.0.0.1");
   return { app, engine, cad, records, permission, storage, async close() { await app.close(); await engine.onModuleDestroy(); await Promise.all([...importedPaths].map(path => rm(path, { force: true }))); } };
 }

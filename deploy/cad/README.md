@@ -2,6 +2,8 @@
 
 API → Unix socket → 独立 CAD 容器 → 固定 OCP/Gmsh。解析容器完全禁网，API 只传字节与来源摘要，不共享文件目录、业务凭据或 Docker socket。决策与三种方案比较见 [ADR-036](../../docs/adr/ADR-036-CAD解析沙箱与资源硬限额.md)。
 
+ADR-037 增加上传静默预解析与持久产物：平台 worker 通过同一 socket 提交，数据库保存队列/索引，私有对象存储保存完整模型。持久发布后回收没有其他窗口/alias 使用的自有临时任务，避免上传积累填满 tmpfs；沙箱不获得存储凭据或持久目录，原硬限额不变；验证见[持久化记录](../../docs/cad-platform-integration/PERSISTENCE_RESULTS.md)。
+
 ## 限额
 
 | 项目 | 强制方式 / 上限 |
@@ -22,7 +24,7 @@ tmpfs 用量计入同一容器的内存预算，各项上限不能理解为可�
 从仓库根目录运行，仅构建 CAD 镜像：
 
 ```sh
-docker build --platform linux/amd64 -f deploy/cad/Dockerfile -t libiaolink/cad-sandbox:1.0.0 .
+docker build --platform linux/amd64 -f deploy/cad/Dockerfile -t libiaolink/cad-sandbox:1.0.1 .
 docker compose -f deploy/cad/docker-compose.yml --profile dev up -d
 ```
 
@@ -34,15 +36,15 @@ docker compose -f deploy/cad/docker-compose.yml --profile dev up -d
 
 1. 原来的 CAD_ENGINE_PYTHON、CAD_MESHER_PYTHON、CAD_CACHE_DIR 从 API 配置移除。仅保留旧 Python 参数不会开放 STEP；未配置沙箱的环境继续提示并保留下载。
 2. 在构建/发布环境生成并评审镜像，发布后取得真实 digest，设置 CAD_SANDBOX_IMAGE 为 tag@sha256:digest。不得用本地 image ID 冒充 registry manifest digest，也不允许浮动镜像代替。
-3. 使用 deploy/prod/docker-compose.cad.yml 叠加现有部署件；显式增加 CAD socket 的只读挂载和健康依赖，不改服务器业务代码。执行前按仓库流程经常驻分支、PR、非作者评审。
+3. 先由现有迁移器执行新增 `0064_cad_artifacts.sql`，再同步同版 API / worker。使用 deploy/prod/docker-compose.cad.yml 叠加现有部署件，为 API 与 worker 增加 CAD socket 的只读挂载和健康依赖，不改服务器业务代码。执行前按仓库流程经常驻分支、PR、非作者评审。
 
 ```sh
-docker compose -f deploy/prod/docker-compose.yml -f deploy/prod/docker-compose.cad.yml --profile app up -d cad api
+docker compose -f deploy/prod/docker-compose.yml -f deploy/prod/docker-compose.cad.yml --profile app up -d cad api worker
 ```
 
 该覆盖文件不允许现场 build；使用支持 !reset 的 Compose（本地验证版本 v5.1.4）。API 生产配置只接受 CAD_ENGINE_SOCKET=/run/cad/engine.sock；CAD_ENGINE_URL 在 production 中直接报配置错误。CAD 容器没有 server.env/secrets、源文件目录或公司网络。API 的现有 768 MiB 预算与 CAD 的 3 GiB 独立计量；部署前确认测试机总预算可容纳其他服务。cgroup v1 或资源控制器未启用时，CAD 拒绝启动。
 
-缓存使用 tmpfs。CAD 容器重启/重建后 job 和 lease 失效，需重新打开并提交；不删除平台原文件。API 断开或重启时，存活 CAD 容器的任务、缓存和窗口权限规则保留。缓存最长 24 小时与“跨容器重启持久化”是不同承诺，当前只保证前者。异常资源耗尽时可经部署件重启 cad 恢复，原文件始终由平台下载链路提供。
+沙箱内部缓存仍使用限容 tmpfs，重启会清除；平台已完成的持久产物不依赖它。上传提交事务只登记 GB 后台任务，worker 独立轮询，不与通知 outbox 串行等待 native；关闭预览仅取消当前窗口。成功产物跨 API/worker/CAD 重启复用，无需 native 重算；新文件版本/引擎/编码或损坏时重建。对象与数据库需一并备份，彻底删除文件或项目会清理 CAD 前缀。迁移与生命周期见 [ADR-037](../../docs/adr/ADR-037-CAD产物持久化与上传预解析.md)。
 
 ## 定向验收
 

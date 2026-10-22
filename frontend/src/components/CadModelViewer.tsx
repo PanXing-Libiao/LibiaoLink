@@ -3,7 +3,7 @@ import type { CadNameCodepage, CadPreviewViewerConfig } from "../fileApi";
 import { apiFetch } from "../api";
 
 function savedNameCodepage(key: string): CadNameCodepage {
-  try { return sessionStorage.getItem(key) === "GB" ? "GB" : "UTF8"; } catch { return "UTF8"; }
+  try { return sessionStorage.getItem(key) === "UTF8" ? "UTF8" : "GB"; } catch { return "GB"; }
 }
 
 /** The isolated frame runs the pinned independent ViewerSession; no CAD rules live here. */
