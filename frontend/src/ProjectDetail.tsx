@@ -17,7 +17,8 @@ import { TaskKanban, type KanbanAddContext } from "./components/TaskKanban";
 import type { StagePlacement } from "./components/StageAddCard";
 import { PROJECT_STAGES } from "./data/projects";
 import { memberNameOf, type Member } from "./data/members";
-import { TEMP_TASK_STAGE, type ProjectTask, type TaskStatus } from "./data/tasks";
+import { lockBodyScroll } from "./scrollLock";
+import { TEMP_TASK_STAGE, isTaskDone, type ProjectTask, type TaskStatus } from "./data/tasks";
 import type { TemplatePresetNode } from "./data/templatePresets";
 import { fetchTaskFiles, recycleFile, renameFile, uploadFiles, type TaskFileRef } from "./fileApi";
 import { exportProjectOverviewPdf } from "./exportOverviewPdf";
@@ -112,9 +113,11 @@ type ProjectDetailProps = {
   onTaskHiddenColumnsChange?: (keys: string[]) => Promise<string | null>;
   /** 干系人写入口（Push 221 · A27）：= stakeholder.manage（画像未到时乐观放行，服务端逐请求仍是最终裁决）。 */
   canManageStakeholders: boolean;
+  /** 验收完成后设为已完成的写入口（无 project.update 权限时父层不传）；false = 写失败，父层已提示。 */
+  onSetProjectDone?: (projectId: string) => Promise<boolean>;
 };
 
-export default function ProjectDetail({ me, project, view, dailySub, members, onChangeManagers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange, canManageStakeholders }: ProjectDetailProps) {
+export default function ProjectDetail({ me, project, view, dailySub, members, onChangeManagers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange, canManageStakeholders, onSetProjectDone }: ProjectDetailProps) {
   /** 顶部视图（Push 82 / 121）：阶段标签收进「项目总览」，另两块是看板视图，最后一块是「日报及问题」；Push 154 起当前标签由地址 `?view=` 派生。 */
   const locale = useLocale();
   const t = useT();
@@ -139,6 +142,11 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   const [pendingDeleteTaskId, setPendingDeleteTaskId] = useState<string | null>(null);
   /** 键盘焦点陷阱（Push 264 追订）：删除确认条开着时焦点进条内、Tab 在条内循环、关闭还原到行内删除按钮。 */
   const deleteTaskConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDeleteTaskId !== null);
+  /** 验收交付完成询问（2026-10-22）：只在本次写入让验收阶段首次全部完成时打开一次。 */
+  const [acceptanceDonePromptOpen, setAcceptanceDonePromptOpen] = useState(false);
+  const [acceptanceDonePending, setAcceptanceDonePending] = useState(false);
+  const acceptanceDonePromptOpenRef = useRef(false);
+  const acceptanceDonePromptTrapRef = useFocusTrap<HTMLDivElement>(acceptanceDonePromptOpen);
 
   /**
    * 「日报及问题」子菜单（业务口径 2026-09-30「日报及问题页面的导航栏按钮集成到页面导航栏 如图一的效果」）：
@@ -209,6 +217,45 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
       window.clearTimeout(submenuTimer.current);
     }
   }, []);
+
+  /** 换项目 / 项目已完成或归档时收起询问，避免旧项目的提示串到下一页。 */
+  useEffect(() => {
+    if (projectId === null || project?.status === "done" || project?.status === "archived") {
+      acceptanceDonePromptOpenRef.current = false;
+      setAcceptanceDonePromptOpen(false);
+      setAcceptanceDonePending(false);
+    }
+  }, [projectId, project?.status]);
+
+  /** 验收询问是模态层：打开期间锁页面滚动，避免滚轮穿透到后方的任务表。 */
+  useEffect(() => {
+    if (!acceptanceDonePromptOpen) {
+      return undefined;
+    }
+    return lockBodyScroll();
+  }, [acceptanceDonePromptOpen]);
+
+  /** Esc = 暂不；捕获阶段截住，避免同一次 Esc 又关掉后方任务抽屉；写入中只截住、不关层。 */
+  useEffect(() => {
+    if (!acceptanceDonePromptOpen) {
+      return undefined;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (!acceptanceDonePending) {
+        acceptanceDonePromptOpenRef.current = false;
+        setAcceptanceDonePromptOpen(false);
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [acceptanceDonePromptOpen, acceptanceDonePending]);
 
   /** 整表重取（新建 / 删除 / 排序 / 版本冲突后调用；换项目由下面这个 effect 自动触发）。 */
   const reloadAll = () => {
@@ -297,6 +344,63 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
 
   /** 当前行（写入要回传它的 version / sortIndex 等）。 */
   const rowOf = (taskId: string): ProjectTask | undefined => tasks.find((task) => task.id === taskId);
+
+  /**
+   * 验收交付完成询问（2026-10-22 · 业务口径「当验收交付完成后 弹出一个弹出显示是否需要将项目设为已完成」）：
+   * 本次写入把「验收」阶段最后一颗未完成任务改成完成态时打开询问；打开 / 刷新已全部完成的项目不弹。
+   * 验收完成 = 该阶段至少有一条任务，且全部为已完成 / 提前完成；写回状态以服务端响应为准。
+   */
+  const promptAfterAcceptanceCompletion = (updated: ApiTaskListItem | ApiTask): void => {
+    if (
+      onSetProjectDone === undefined ||
+      project === null ||
+      project.status === "done" ||
+      project.status === "archived" ||
+      acceptanceDonePromptOpenRef.current
+    ) {
+      return;
+    }
+    const previous = tasks.find((task) => task.id === updated.id);
+    if (previous === undefined) {
+      return;
+    }
+    const next = toUiTask(updated, previous, (id) => memberNameOf(members, id));
+    if (next.stageKey !== "acceptance" || !isTaskDone(next)) {
+      return;
+    }
+    const acceptanceTasks = tasks.filter((task) => task.stageKey === "acceptance");
+    if (acceptanceTasks.length === 0 || acceptanceTasks.every(isTaskDone)) {
+      return;
+    }
+    if (!acceptanceTasks.every((task) => task.id === updated.id || isTaskDone(task))) {
+      return;
+    }
+    acceptanceDonePromptOpenRef.current = true;
+    setAcceptanceDonePending(false);
+    setAcceptanceDonePromptOpen(true);
+  };
+
+  /** 关闭验收完成询问（暂不 / Esc）：只收弹窗，不改项目状态。 */
+  const closeAcceptanceDonePrompt = (): void => {
+    acceptanceDonePromptOpenRef.current = false;
+    setAcceptanceDonePromptOpen(false);
+  };
+
+  /** 确认设为已完成：成功才关弹窗；失败保留弹窗供重试，错误由父层顶部 Toast 提示。 */
+  const confirmAcceptanceDonePrompt = (): void => {
+    if (acceptanceDonePending || project === null || onSetProjectDone === undefined) {
+      return;
+    }
+    const id = project.id;
+    setAcceptanceDonePending(true);
+    void (async () => {
+      const ok = await onSetProjectDone(id);
+      setAcceptanceDonePending(false);
+      if (ok) {
+        closeAcceptanceDonePrompt();
+      }
+    })();
+  };
 
   /**
    * 单行替换（PATCH / 进度写入都回单行）：文件摘要从旧行继承；
@@ -403,7 +507,9 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     }
     void (async () => {
       try {
-        replaceRow(await updateTaskProgress(projectId, taskId, { progress, version: row.version }));
+        const updated = await updateTaskProgress(projectId, taskId, { progress, version: row.version });
+        replaceRow(updated);
+        promptAfterAcceptanceCompletion(updated);
         await afterWrite();
       } catch (error) {
         reportWriteError(error);
@@ -422,7 +528,9 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     }
     void (async () => {
       try {
-        replaceRow(await updateTask(projectId, taskId, { status: statusWriteValue(status), version: row.version }));
+        const updated = await updateTask(projectId, taskId, { status: statusWriteValue(status), version: row.version });
+        replaceRow(updated);
+        promptAfterAcceptanceCompletion(updated);
         await afterWrite();
       } catch (error) {
         reportWriteError(error);
@@ -476,7 +584,9 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     void (async () => {
       try {
         const body = iso === "" ? { progress: 0.75, version: row.version } : { progress: 1, actualEnd: iso, version: row.version };
-        replaceRow(await updateTaskProgress(projectId, taskId, body));
+        const updated = await updateTaskProgress(projectId, taskId, body);
+        replaceRow(updated);
+        promptAfterAcceptanceCompletion(updated);
         await afterWrite();
       } catch (error) {
         reportWriteError(error);
@@ -1082,6 +1192,52 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
         </div>
         ) : null}
       </main>
+
+      {/* 验收交付完成询问（2026-10-22 · 业务口径「当验收交付完成后 弹出一个弹出显示是否需要将项目设为已完成」）：
+          只在本次任务写入让验收阶段首次全部完成时打开；Esc / 暂不 = 只关弹窗，确认成功后项目状态写为 done。 */}
+      {acceptanceDonePromptOpen ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-zinc-900/40" aria-hidden="true" />
+          <div
+            ref={acceptanceDonePromptTrapRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="project-acceptance-done-title"
+            aria-describedby="project-acceptance-done-body"
+            aria-busy={acceptanceDonePending}
+            data-project-acceptance-done-prompt=""
+            className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-[0_24px_60px_rgba(0,0,0,0.25)]"
+          >
+            <h2 id="project-acceptance-done-title" className="text-lg font-bold text-zinc-900">
+              {t("project.acceptanceDone.title")}
+            </h2>
+            <p id="project-acceptance-done-body" className="mt-2 text-sm leading-6 text-zinc-600">
+              {t("project.acceptanceDone.body")}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-zinc-400">{t("project.acceptanceDone.note")}</p>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                data-project-acceptance-done-cancel=""
+                disabled={acceptanceDonePending}
+                onClick={closeAcceptanceDonePrompt}
+                className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {t("project.acceptanceDone.cancel")}
+              </button>
+              <button
+                type="button"
+                data-project-acceptance-done-confirm=""
+                disabled={acceptanceDonePending}
+                onClick={confirmAcceptanceDonePrompt}
+                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {acceptanceDonePending ? t("project.acceptanceDone.pending") : t("project.acceptanceDone.confirm")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* 导出等待浮层（§6.16 ⑳ / ㉑）：真在等（翻译 / 生成超过 250ms）才显示小车动画 + 预计秒数；打印窗口唤起前收起。 */}
       {exportOverlayVisible ? <ExportProgressOverlay progress={exportTranslateProgress} /> : null}
