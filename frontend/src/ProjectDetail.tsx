@@ -145,8 +145,28 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   /** 验收交付完成询问（2026-10-22）：只在本次写入让验收阶段首次全部完成时打开一次。 */
   const [acceptanceDonePromptOpen, setAcceptanceDonePromptOpen] = useState(false);
   const [acceptanceDonePending, setAcceptanceDonePending] = useState(false);
+  const [acceptanceDoneClosing, setAcceptanceDoneClosing] = useState(false);
   const acceptanceDonePromptOpenRef = useRef(false);
+  const acceptanceDoneCloseTimer = useRef<number | null>(null);
   const acceptanceDonePromptTrapRef = useFocusTrap<HTMLDivElement>(acceptanceDonePromptOpen);
+
+  /** 关闭验收完成询问（暂不 / Esc）：先播 180ms 的 toast 退出，再卸载；不改项目状态。 */
+  const closeAcceptanceDonePrompt = (): void => {
+    if (!acceptanceDonePromptOpenRef.current) {
+      return;
+    }
+    acceptanceDonePromptOpenRef.current = false;
+    setAcceptanceDoneClosing(true);
+    if (acceptanceDoneCloseTimer.current !== null) {
+      window.clearTimeout(acceptanceDoneCloseTimer.current);
+    }
+    acceptanceDoneCloseTimer.current = window.setTimeout(() => {
+      acceptanceDoneCloseTimer.current = null;
+      setAcceptanceDonePromptOpen(false);
+      setAcceptanceDoneClosing(false);
+      setAcceptanceDonePending(false);
+    }, 180);
+  };
 
   /**
    * 「日报及问题」子菜单（业务口径 2026-09-30「日报及问题页面的导航栏按钮集成到页面导航栏 如图一的效果」）：
@@ -216,13 +236,21 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     if (submenuTimer.current !== null) {
       window.clearTimeout(submenuTimer.current);
     }
+    if (acceptanceDoneCloseTimer.current !== null) {
+      window.clearTimeout(acceptanceDoneCloseTimer.current);
+    }
   }, []);
 
   /** 换项目 / 项目已完成或归档时收起询问，避免旧项目的提示串到下一页。 */
   useEffect(() => {
     if (projectId === null || project?.status === "done" || project?.status === "archived") {
       acceptanceDonePromptOpenRef.current = false;
+      if (acceptanceDoneCloseTimer.current !== null) {
+        window.clearTimeout(acceptanceDoneCloseTimer.current);
+        acceptanceDoneCloseTimer.current = null;
+      }
       setAcceptanceDonePromptOpen(false);
+      setAcceptanceDoneClosing(false);
       setAcceptanceDonePending(false);
     }
   }, [projectId, project?.status]);
@@ -247,8 +275,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
       event.preventDefault();
       event.stopImmediatePropagation();
       if (!acceptanceDonePending) {
-        acceptanceDonePromptOpenRef.current = false;
-        setAcceptanceDonePromptOpen(false);
+        closeAcceptanceDonePrompt();
       }
     };
     document.addEventListener("keydown", handleKeyDown, true);
@@ -376,14 +403,13 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
       return;
     }
     acceptanceDonePromptOpenRef.current = true;
+    if (acceptanceDoneCloseTimer.current !== null) {
+      window.clearTimeout(acceptanceDoneCloseTimer.current);
+      acceptanceDoneCloseTimer.current = null;
+    }
+    setAcceptanceDoneClosing(false);
     setAcceptanceDonePending(false);
     setAcceptanceDonePromptOpen(true);
-  };
-
-  /** 关闭验收完成询问（暂不 / Esc）：只收弹窗，不改项目状态。 */
-  const closeAcceptanceDonePrompt = (): void => {
-    acceptanceDonePromptOpenRef.current = false;
-    setAcceptanceDonePromptOpen(false);
   };
 
   /** 确认设为已完成：成功才关弹窗；失败保留弹窗供重试，错误由父层顶部 Toast 提示。 */
@@ -1194,10 +1220,15 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
       </main>
 
       {/* 验收交付完成询问（2026-10-22 · 业务口径「当验收交付完成后 弹出一个弹出显示是否需要将项目设为已完成」）：
-          只在本次任务写入让验收阶段首次全部完成时打开；Esc / 暂不 = 只关弹窗，确认成功后项目状态写为 done。 */}
+          参考 react-hot-toast 的底部 toast：白色圆角卡片、无深色遮罩，自底部弹性上浮 + 轻微放大；
+          只有本次任务写入让验收阶段首次全部完成时打开，点击卡外 / 暂不 / Esc 先播退出再卸载。 */}
       {acceptanceDonePromptOpen ? (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-zinc-900/40" aria-hidden="true" />
+        <div className="fixed inset-0 z-[80] flex items-end justify-center px-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-6">
+          <div
+            className="absolute inset-0 bg-transparent"
+            aria-hidden="true"
+            onPointerDown={acceptanceDonePending ? undefined : closeAcceptanceDonePrompt}
+          />
           <div
             ref={acceptanceDonePromptTrapRef}
             role="dialog"
@@ -1205,35 +1236,40 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             aria-labelledby="project-acceptance-done-title"
             aria-describedby="project-acceptance-done-body"
             aria-busy={acceptanceDonePending}
+            data-focus-container=""
+            tabIndex={-1}
             data-project-acceptance-done-prompt=""
-            className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-[0_24px_60px_rgba(0,0,0,0.25)]"
+            className={`ll-acceptance-toast pointer-events-auto relative w-full max-w-[640px] rounded-[22px] border border-zinc-200/80 bg-white px-4 py-4 text-left shadow-[0_18px_50px_-16px_rgba(15,23,42,0.22),0_4px_12px_-4px_rgba(15,23,42,0.08)] outline-none sm:px-5 ${acceptanceDoneClosing ? "is-closing" : ""}`}
           >
-            <h2 id="project-acceptance-done-title" className="text-lg font-bold text-zinc-900">
-              {t("project.acceptanceDone.title")}
-            </h2>
-            <p id="project-acceptance-done-body" className="mt-2 text-sm leading-6 text-zinc-600">
-              {t("project.acceptanceDone.body")}
-            </p>
-            <p className="mt-1 text-xs leading-5 text-zinc-400">{t("project.acceptanceDone.note")}</p>
-            <div className="mt-6 flex justify-end gap-2">
-              <button
-                type="button"
-                data-project-acceptance-done-cancel=""
-                disabled={acceptanceDonePending}
-                onClick={closeAcceptanceDonePrompt}
-                className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {t("project.acceptanceDone.cancel")}
-              </button>
-              <button
-                type="button"
-                data-project-acceptance-done-confirm=""
-                disabled={acceptanceDonePending}
-                onClick={confirmAcceptanceDonePrompt}
-                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {acceptanceDonePending ? t("project.acceptanceDone.pending") : t("project.acceptanceDone.confirm")}
-              </button>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-5">
+              <div className="min-w-0 flex-1">
+                <p id="project-acceptance-done-body" className="text-sm leading-6 text-zinc-600">
+                  <span id="project-acceptance-done-title" className="font-semibold text-zinc-900">
+                    {t("project.acceptanceDone.title")}
+                  </span>
+                  <span className="ml-1.5">{t("project.acceptanceDone.body")}</span>
+                </p>
+              </div>
+              <div className="flex shrink-0 justify-end gap-2">
+                <button
+                  type="button"
+                  data-project-acceptance-done-cancel=""
+                  disabled={acceptanceDonePending}
+                  onClick={closeAcceptanceDonePrompt}
+                  className="rounded-xl border border-zinc-200 bg-zinc-50 px-3.5 py-1.5 text-sm font-medium text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {t("project.acceptanceDone.cancel")}
+                </button>
+                <button
+                  type="button"
+                  data-project-acceptance-done-confirm=""
+                  disabled={acceptanceDonePending}
+                  onClick={confirmAcceptanceDonePrompt}
+                  className="rounded-xl bg-zinc-900 px-3.5 py-1.5 text-sm font-medium text-white shadow-[0_2px_8px_rgba(15,23,42,0.18)] transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {acceptanceDonePending ? t("project.acceptanceDone.pending") : t("project.acceptanceDone.confirm")}
+                </button>
+              </div>
             </div>
           </div>
         </div>
