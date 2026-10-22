@@ -331,6 +331,49 @@ body {
     filter 180ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* 验收交付完成确认（2026-10-22 · 参考 react-hot-toast）：白色底部 toast，自下而上弹性入场 +
+   轻微放大；退出时向下收拢淡出。video 实测为底部卡片无遮罩，入场约 0.2-0.3s，故取 320ms。 */
+@keyframes ll-acceptance-toast-in {
+  0% {
+    opacity: 0;
+    translate: 0 62px;
+    scale: 0.92;
+  }
+  68% {
+    opacity: 1;
+    translate: 0 -2px;
+    scale: 1.008;
+  }
+  100% {
+    opacity: 1;
+    translate: 0 0;
+    scale: 1;
+  }
+}
+
+@keyframes ll-acceptance-toast-out {
+  from {
+    opacity: 1;
+    translate: 0 0;
+    scale: 1;
+  }
+  to {
+    opacity: 0;
+    translate: 0 32px;
+    scale: 0.96;
+  }
+}
+
+.ll-acceptance-toast {
+  transform-origin: bottom center;
+  will-change: translate, scale, opacity;
+  animation: ll-acceptance-toast-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.ll-acceptance-toast.is-closing {
+  animation: ll-acceptance-toast-out 180ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .drawer-backdrop,
   .drawer-panel,
@@ -339,7 +382,9 @@ body {
   .menu-pop,
   .submenu-pop,
   .plan-bg-panel-pop,
-  .wecom-guide-pop {
+  .wecom-guide-pop,
+  .ll-acceptance-toast,
+  .ll-acceptance-toast.is-closing {
     animation: none;
   }
   .inbox-badge {
