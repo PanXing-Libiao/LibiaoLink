@@ -142,8 +142,8 @@ export class PermissionRepository {
     }));
   }
 
-  /** 权限管理页：当前目录观察到的人与群组。 */
-  async listObservedGroups(): Promise<Array<{ groupKey: string; groupName: string; memberCount: number }>> {
+  /** 群组成员计数：只作为目录群组的成员提示，不决定权限管理页能看到哪些群组。 */
+  async listGroupMembershipCounts(): Promise<Array<{ groupKey: string; groupName: string; memberCount: number }>> {
     const rows = await this.database.db
       .select({
         groupKey: userGroupMemberships.groupKey,

@@ -40,7 +40,7 @@ export const JA_TEXTS: Partial<Record<TextKey, string>> = {
   "access.noGroups": "一致するグループはありません",
   "access.groups": "グループ",
   "access.members": "{n} 人",
-  "access.noObservedGroups": "ログインまたはディレクトリ同期からグループがまだ観測されていません。",
+  "access.noObservedGroups": "Casdoor ディレクトリにグループがありません。組織同期を実行するか、下にグループキーを手動入力してください。",
   "access.addGroup": "グループキーを手動で追加",
   "access.addGroupPlaceholder": "owner/name（例：libiaorobot.com/Engineering）",
   "access.add": "追加",

@@ -13,6 +13,7 @@ import {
   resolveGroupAccess,
   type GroupAccessRuleData,
 } from "../src/modules/permission/group-access.rules.js";
+import { GroupAccessService } from "../src/modules/permission/group-access.service.js";
 import type { PermissionRepository } from "../src/modules/permission/permission.repository.js";
 import { PermissionService } from "../src/modules/permission/permission.service.js";
 
@@ -129,6 +130,43 @@ describe("群组访问规则", () => {
     expect(parseGroupAccessAdminKeys(" libiaorobot.com/a, ,libiaorobot.com/b,libiaorobot.com/a ")).toEqual([
       "libiaorobot.com/a",
       "libiaorobot.com/b",
+    ]);
+  });
+});
+
+describe("GroupAccessService 群组目录", () => {
+  it("展示 Casdoor 目录全量群组，并合并成员计数、既有规则与观察到的额外群组", async () => {
+    const repository = {
+      listGroupMembershipCounts: async () => [
+        { groupKey: "libiaorobot.com/QA", groupName: "Quality", memberCount: 2 },
+        { groupKey: "libiaorobot.com/Extra", groupName: "Extra", memberCount: 1 },
+      ],
+      listAccessRules: async () => [rule({ groupKey: "libiaorobot.com/QA", allowedPages: ["files"] })],
+      listAccessProjects: async () => [],
+      findRuleMetadata: async () => ({ groupName: "Quality", updatedAt: new Date("2026-10-23T00:00:00Z") }),
+    };
+    const permission = {
+      canManageGroupAccess: async () => true,
+      groupAccessOf: async () => ({ enforced: false, admin: true, groupKeys: ["libiaorobot.com/QA"] }),
+    };
+    const departments = {
+      listDepartments: async () => [
+        { sourceId: "RD", name: "R&D" },
+        { sourceId: "QA", name: "Quality" },
+      ],
+    };
+    const service = new GroupAccessService(
+      permission as never,
+      repository as never,
+      { recordStandalone: async () => undefined } as never,
+      departments as never,
+      new AppConfig({ CASDOOR_ORG_NAME: "libiaorobot.com" } as Env),
+    );
+    const overview = await service.overview(PROJECT_A);
+    expect(overview.groups.map((group) => ({ key: group.groupKey, members: group.memberCount, pages: group.rule?.allowedPages ?? [] }))).toEqual([
+      { key: "libiaorobot.com/Extra", members: 1, pages: [] },
+      { key: "libiaorobot.com/QA", members: 2, pages: ["files"] },
+      { key: "libiaorobot.com/RD", members: 0, pages: [] },
     ]);
   });
 });
