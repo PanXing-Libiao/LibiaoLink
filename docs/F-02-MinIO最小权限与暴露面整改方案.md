@@ -2,7 +2,7 @@
 
 > 来源：`LibiaoLink_安全审查报告_2026-10-21.pdf` F-02（第 4～5 页）｜严重度 High / P0｜报告验收要求：应用凭据不能管理用户 / 桶或访问其它桶；9000 / 9001 / 9443 从非授权网络不可达；轮换后旧凭据失效
 > 报告审查基线：`px @ e05535b8`｜S0 复核基线：`origin/main@6b846b2`（2026-10-23；F-02 涉及的 Compose、Nginx、存储脚本与凭据挂载配置未发生实质修复）
-> 起草：lan（后端平台 / file / storage / preview / outbox）｜拟稿日期：2026-10-22｜S0 评审冻结：2026-10-23｜状态：**S0 已冻结；S1 / S2 部署件与 S3 仓库件已合入，S4 仓库件已落地（PR #594 待评审）；运行时统一待测试机部署后验证，F-02 尚未关闭**
+> 起草：lan（后端平台 / file / storage / preview / outbox）｜拟稿日期：2026-10-22｜S0 评审冻结：2026-10-23｜状态：**S0 已冻结；S1 / S2 部署件与 S3 / S4 仓库件已合入，S5 仓库件已落地（PR 待创建）；运行时统一待测试机部署后验证，F-02 尚未关闭**
 > S0 签收：px（部署 / docs）与 wmj（安全）完成复核；经用户确认三方协商后，由 lan 代录。冻结结论见 §5「S0 · 方案落档与评审冻结」。
 > 归属与评审：`docs/` 归 px 主责，落档需 px 复核；生产 Compose、Nginx、主机防火墙与部署窗口归 px 主责；MinIO 身份 / 策略、`server/` 存储脚本与凭据接线归 lan 主责；安全验收请 wmj 交叉复核。涉及安全、部署与 Secrets 的高风险变更必须取得非作者批准。
 > 变更控制：后续执行以本文件为基线。若执行中需要改变端口、身份模型、策略动作、切片顺序或验收条件，先修改本文件并写明原因、影响和回滚，再实施；已合入主干的回放证据与部署记录按不可变历史处理，不原地改写。
@@ -15,8 +15,8 @@
 | S1 · 关闭宿主端口暴露 | 部署件已合入，运行时待验证 | PR [#589](https://github.com/PanXing-Libiao/LibiaoLink/pull/589)；squash `1b24536` | 测试机未重建 minio / web；待 S1～S5 仓库实现完成后统一部署复核 `ss` | 9000 不再发布；9001 / 9443 仅回环 |
 | S2 · 主机防火墙与外部网络复核 | 部署件已合入，运行时待验证 | PR [#589](https://github.com/PanXing-Libiao/LibiaoLink/pull/589)；squash `1b24536` | 临时 apply → 二次 apply → check → remove 已通过；unit 尚未持久化，待统一部署后复核 | 待安装 unit、Docker / 主机重启与外部网络复核 |
 | S3 · MinIO 最小权限身份与策略 | 仓库件已合入，测试机部署后验证 | PR [#591](https://github.com/PanXing-Libiao/LibiaoLink/pull/591)；squash `311c738c` | 本地受控 MinIO 冒烟通过（非 F-02 验收）；测试机身份、负向权限与凭据探针待统一验证 | 不切 api / worker；运行时证据统一在测试机部署后登记 |
-| S4 · Secrets 隔离与运行时凭据切换 | 仓库件已落地，PR 待评审；测试机部署后验证 | PR [#594](https://github.com/PanXing-Libiao/LibiaoLink/pull/594) | 本地隔离自检通过（非 F-02 验收）；运行时挂载、凭据切换与全链路待统一验证 | api / worker 改用 service account；S4-T1～T10 待测试机部署后验证 |
-| S5 · root 凭据轮换与旧凭据失效 | 待执行 | 待填 | 待填 | 维护窗口执行；不得回滚为 root 应用凭据 |
+| S4 · Secrets 隔离与运行时凭据切换 | 仓库件已合入，测试机部署后验证 | PR [#594](https://github.com/PanXing-Libiao/LibiaoLink/pull/594)；squash `88670d85` | 本地隔离自检通过（非 F-02 验收）；运行时挂载、凭据切换与全链路待统一验证 | api / worker 改用 service account；S4-T1～T10 待测试机部署后验证 |
+| S5 · root 凭据轮换与旧凭据失效 | 仓库件已落地，PR 待创建；测试机部署后验证 | 待填 | 本地 fake / 锁定 MinIO 自检通过（非 F-02 验收）；维护窗口轮换与旧凭据失效待统一验证 | `minio-root-rotate.sh` 提供 `plan` / `check` / `rotate` / `recover` / `finalize`；不得回滚为 root 应用凭据 |
 | S6 · 文档、H1 兼容与全量回归 | 待执行 | 待填 | 待填 | 9443 保留时只能经 SSH 隧道 |
 | S7 · 验收回放与 F-02 关闭 | 待执行 | 待填 | 待填 | 旧凭据失效、外网不可达、证据齐全后才关闭 |
 
@@ -421,25 +421,47 @@ S5 的 root 轮换是受控运维动作，不是直接手改业务代码：执�
 
 ### S5 · root 轮换与旧凭据失效
 
-**目标**：消除当前 root 值已经与业务凭据同值的暴露，并确认旧值全部失效。
+**目标**：消除当前 root 值已经与业务凭据同值的暴露，并确认旧 root、旧应用值与旧签名失效。
 
-**执行步骤**
+**仓库实现与运行时验收分界**：本切片先在仓库内交付轮换脚本、状态恢复路径、残留扫描和部署 Runbook；S1～S5 仓库实现完成后统一部署公司测试机，再在维护窗口执行真实轮换。测试机部署前不得把任何运行时项标为通过；本地 fake 回放和临时 MinIO 结果只用于实现自检，不替代 S5-T1～T10。
 
-1. 预约维护窗口，确认 minio 数据卷 / bind 目录有可恢复备份或快照；不把 Secret 内容放进备份说明或工单。
-2. 在 `umask 077`、不写 shell history、临时 `MC_CONFIG_DIR` 的受控会话中生成新的 root 用户名 / 口令，更新 `minio_root_user` / `minio_root_password` 并重建 minio。
-3. 验证 minio healthy、443 `/libiaolink/`、`readyz`、`storage:init --check` 和 `storage:it`；旧 root / 旧应用凭据的认证探针必须失败。
-4. 清理旧 Secret 的受控副本：shell 历史、临时 `mc` 配置、一次性导出、旧部署包和未受控备份；无法销毁的备份标记为敏感并限制访问。
-5. 复核应用容器、`server.env`、镜像构建上下文、日志、PR 和 artifact 中不存在旧值；只记录「未发现」或文件名，不打印值。
-6. 保留 root 于 minio 容器启动和应急会话中；确认日常 api / worker 没有 root 依赖。
+**执行期实现说明（2026-10-23）**
 
-**验收**
+- 新增 `deploy/prod/scripts/minio-root-rotate.sh`：提供 `plan` / `check` / `rotate` / `recover` / `finalize`。所有模式都以 root 在部署机执行，`mc` 必须显式提供 `MC_BIN` 与受控 `MC_SOURCE`；凭据经标准输入和一次性 `MC_CONFIG_DIR` 使用，不进入命令行、日志或证据。
+- `plan` 只读检查 Secret 权限、数据目录非空、minio healthy、应用 / bootstrap 凭据不与当前 root 相同、受控 `mc` 命令兼容性；不生成凭据、不写 Secret、不重启容器、不连接 MinIO 修改状态。
+- `check` 只读复核当前 root 认证、S3 身份、`storage:init --check`、`storage:it` 与 443 `/healthz` / `/readyz` / `/libiaolink/`，写脱敏证据但不修改运行态。
+- `rotate` 必须同时设置 `F02_S5_CONFIRM=ROTATE_MINIO_ROOT` 与 `F02_S5_BACKUP_CONFIRMED=YES`。执行顺序为：基线全链路检查 → 把旧 root 暂存到 `/run/libiaolink-f02-s5`（目录 `700`、文件 `600`，tmpfs）→ 生成新 root → 受控替换两份 Secret → 只重建 minio → 验证新 root 可用、旧 root 拒绝 → 复核 S3 身份、bootstrap、`storage:it` 与 HTTP → 扫描旧口令明文残留 → 无命中后删除状态目录并写脱敏证据。
+- 两份 root Secret 先写入同目录 `600` 临时文件，并保留旧值的受控副本；第二次替换失败时恢复第一份，避免留下用户与口令错配。进程中断由状态目录和 `recover` / `finalize` 兜底；状态目录存在时拒绝再次 `rotate`。
+- 自动回滚只覆盖“新 root 启动失败、新 root 认证失败、旧 root 仍被接受”三种可在切换阶段判定的故障：恢复旧 Secret、重建 minio、确认旧 root 可用，证据记为 `rolled-back`。若新 root 已可用但身份 / 存储 / HTTP 复核失败，或旧口令扫描命中 / 不确定，则**不回滚到旧 root**，保留 `/run` 状态并写 `failed` 证据，待人工核查后用 `recover` 或 `finalize` 收口。
+- `recover` 必须设置 `F02_S5_CONFIRM=RESTORE_PREVIOUS_ROOT`，从状态目录恢复旧 root 并重建 minio；恢复后 F-02 仍开放，必须按事件处置并重新轮换。`finalize` 必须设置 `F02_S5_CONFIRM=FINALIZE_ROOT_ROTATION`，会重新验证当前 root、运行时全链路、旧 root 拒绝和旧口令扫描，确认当前 root 与待退休值不同后才删除状态目录；任何一项失败都保留状态。
+- 证据默认写入 `/srv/data/backups/f02-s5-evidence`（目录 `700`、文件 `600`），记录阶段、`root_username_changed=yes/no/unknown`、新 / 旧 root 认证结果、回滚结果、身份 / storage / HTTP 结果、扫描结果与 `f02_status=open`，不记录 Secret 值。残留扫描覆盖部署目录、`/srv/data/backups`、历史、临时目录以及 minio / api / worker 日志；文本扫描为 0 命中才自动清状态，压缩包 / 二进制备份必须另行按敏感备份登记和处置，不能把“未扫描到”写成“未包含”。
+- api / worker 不在本脚本中重启；轮换后它们应继续使用既有应用 service account。锁定 MinIO 镜像自检已确认：root 切换后同一数据卷、同一 service account 仍可列桶，旧 root 被拒。
 
-- 新 root 可启动 minio；应用 service account 不受 root 轮换影响。
-- 旧 root 凭据与旧应用凭据（当前同值）均认证失败，旧签名 / 旧上传会话不会恢复为可用。
-- 9000 / 9001 / 9443 的暴露面仍满足 S1 / S2；没有为了轮换重开端口。
-- Secret 清理记录不含 Secret 值；未发现的旧副本有明确的处置结论。
+**测试机部署后验证登记**
 
-**回滚**：若新 root 导致 minio 无法启动，可短暂恢复旧 root 启动并立即进入事件处置；网络收口和 `DOCKER-USER` 规则不得回滚。修复后必须重新执行轮换和旧凭据失效验证。
+| ID | 验证项 | 方法 / 预期 | 状态 | 证据位置 |
+|---|---|---|---|---|
+| S5-T1 | 维护窗口与可恢复备份 | 记录 MinIO 数据目录可恢复备份 / 快照路径和校验值；确认窗口、影响面和回滚联系人；备份说明不含 Secret | 待测试机部署后验证 | 备份清单 / 变更单（脱敏） |
+| S5-T2 | 轮换前基线 | `plan` / `check` 通过；minio healthy；应用与 bootstrap 凭据均不等同于当前 root；S3 / S4 对应运行项已通过 | 待测试机部署后验证 | `plan.txt` / `check.txt` |
+| S5-T3 | 新 root 生效、旧凭据失效 | `rotate` 后新 root 可认证；旧 root 被拒；若存在与旧 root 不同的历史应用值，同样做一次拒绝探针；轮换前生成的旧预签名 URL 到期前即不可用 | 待测试机部署后验证 | 脱敏认证结果 / URL 状态码 |
+| S5-T4 | 应用身份不受影响 | 应用 / bootstrap service account 的 parent、策略和状态不变；`storage:it` 24 / 24；api / worker 未因本脚本重启，业务请求继续使用应用 service account | 待测试机部署后验证 | `identity.txt` / `storage-it.txt` / 容器重启计数 |
+| S5-T5 | 轮换后全链路 | `/healthz` / `/readyz` 200，`/libiaolink/` 返回预期安全拒绝；登录态完成上传 → 分片 / 合并 → 列表 → 复制 → 预览 → 下载 → 回收站彻底删除 | 待测试机部署后验证 | `runtime.txt` / 脱敏请求记录 |
+| S5-T6 | Secret 与状态边界 | `/run/libiaolink-f02-s5` 仅轮换期间存在且为 `700/600`；成功 / 回滚后删除；两份 root Secret 始终成对且 `600`；没有临时 `mc` 配置、旧值备份或 `.f02-s5.*` 文件残留 | 待测试机部署后验证 | `state-boundary.txt` |
+| S5-T7 | 旧口令残留 | 对部署目录、`/srv/data/backups`、history、`/home`、`/tmp`、`/var/tmp`、minio / api / worker 日志做明文扫描为 0 命中；tar / 镜像 / 压缩备份标记敏感并限制访问；证据不含旧值 | 待测试机部署后验证 | `retired-secret-scan.txt` / 敏感备份登记 |
+| S5-T8 | 失败回滚边界 | 仅在启动 / 新 root 认证 / 旧 root 仍可用阶段受控验证自动恢复旧 root、状态删除和 `rolled-back` 证据；新 root 已生效后的检查失败不得自动恢复旧 root | 待测试机部署后验证 | `rollback.txt` / 证据文件 |
+| S5-T9 | 中断恢复与 finalize | 在一个可控失败场景保留状态，确认 `recover` 能恢复旧 root；在扫描命中场景清理后确认 `finalize` 只在当前 root、全链路、旧 root 拒绝和扫描均通过后删除状态 | 待测试机部署后验证 | `recover.txt` / `finalize.txt` |
+| S5-T10 | 端口不回开、F-02 未误关 | 轮换前后 `ss -lntp` 与 `DOCKER-USER` 复核一致：9000 无宿主监听，9001 / 9443 仅回环；开发机 / 办公网 / 公网探活仍不可达；证据写 `f02_status=open` | 待测试机部署后验证 | `ports.txt` / `status.txt` |
+
+以上运行时项全部待测试机部署后验证；本地 `bash -n`、fake 回放、锁定 MinIO service account 存活实验和脚本自检只用于实现自检，不替代 S5-T1～T10。
+
+**通过条件**
+
+- 新 root 可启动 minio，应用 service account 不受 root 轮换影响，旧 root 与旧应用值均不能认证，旧预签名 / 旧上传会话不能恢复为可用。
+- `storage:init --check`、`storage:it` 24 / 24、`readyz` 与真实上传全链路通过；api / worker 仍不含 root Secret，未回退为 root 应用凭据。
+- 旧 Secret 的明文副本完成处置；压缩 / 二进制备份有明确的敏感标记和访问限制；证据、PR、日志和工单不含 Secret。
+- 9000 / 9001 / 9443 暴露面保持 S1 / S2 收口结果，未为了轮换重开端口；F-02 只在 S6 / S7 证据齐全后关闭。
+
+**回滚**：新 root 启动失败可短暂恢复旧 root 启动并立即进入事件处置；恢复后必须重新轮换。新 root 已生效且后续检查失败时，保留新 root 和状态目录，修复身份 / 存储 / 网络后执行 `finalize`，不得把 api / worker 改回 root，也不得回滚网络收口或 `DOCKER-USER` 规则。
 
 ### S6 · 文档、H1 兼容与全量回归
 
@@ -518,6 +540,7 @@ cd ..\deploy\prod
 docker compose --profile app config --quiet
 docker compose --profile tools config --quiet
 bash -n scripts/storage.sh
+bash -n scripts/minio-root-rotate.sh
 bash -n scripts/db-migrate.sh
 bash -n scripts/db-seed.sh
 bash -n scripts/db-init.sh
@@ -562,7 +585,7 @@ npm run preview:svg-e2e
 4. S4 / S5 在仓库内完成 Secret 接线、运行时切换与 root 轮换步骤。
 5. S1～S5 仓库实现完成并通过 PR 门禁后，统一部署公司测试机；先复核 S1 / S2 端口与外部网络，再执行 S3 身份创建、正向 / 负向探针。
 6. S4 切换 api / worker 到应用 service account，切断整目录 Secret 挂载；随后执行 S3-T8 `storage:init --check`、上传全链路和 `storage:it`。
-7. S5 在维护窗口轮换 root，确认旧凭据失效，清理旧副本。
+7. S5 在维护窗口按 `deploy/prod/README.md` §9.4 执行 `minio-root-rotate.sh plan` / `check` / `rotate`；确认新 root 可用、旧 root 失效、service account 不受影响并完成旧副本处置。
 8. S6 同步文档、H1 兼容说明与全量回归。
 9. S7 完成测试机 / 生产回放证据、非作者评审与开发日志，再关闭 F-02。
 
