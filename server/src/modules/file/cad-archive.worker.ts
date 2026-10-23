@@ -5,8 +5,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { Readable } from "node:stream";
 import { ObjectStorage } from "../../storage/index.js";
 import { FileRepository } from "./file.repository.js";
-import { CadEngineClient } from "./cad-engine.client.js";
-import { CadArchiveRepository } from "./cad-archive.repository.js";
+import { CadEngineBusyError, CadEngineClient } from "./cad-engine.client.js";
+import { CadArchiveRepository, type CadFailureContext } from "./cad-archive.repository.js";
 import { CAD_ARTIFACT_LIMIT, CAD_BUFFER_LIMIT, checkedCadStream, readCadManifest } from "./cad-archive.integrity.js";
 
 const definition = z.object({ sha256: z.string().regex(/^[a-f0-9]{64}$/), byteLength: z.number().int().nonnegative().max(CAD_BUFFER_LIMIT) });
@@ -45,6 +45,7 @@ export class CadArchiveWorker implements OnApplicationShutdown {
     const abort = this.abort = new AbortController();
     let prefix: string | undefined;
     let activeLease: string | undefined, nativeId: string | undefined;
+    let terminalState: CadFailureContext["terminalState"];
     let archived = false;
     const namespace = createHash("sha256").update("cad-archive:" + row.id).digest("hex");
     const heartbeat = setInterval(() => {
@@ -79,8 +80,11 @@ export class CadArchiveWorker implements OnApplicationShutdown {
         await delay(500, undefined, { signal: abort.signal });
         job = await this.engine.status({ namespace, jobId: nativeId });
       }
-      if (job.state !== "completed") throw new CadArchiveFailure(job.error?.code ?? "conversion-failed",
-        job.error?.error ?? "CAD 后台解析未完成，请下载原文件查看", false);
+      if (job.state !== "completed") {
+        terminalState = job.state;
+        throw new CadArchiveFailure(job.error?.code ?? (job.state === "timed-out" ? "job-timeout" : "conversion-failed"),
+          job.error?.error ?? "CAD 后台解析未完成，请下载原文件查看", false);
+      }
       if (!await this.repository.renew(row, "persisting")) throw new Error("CAD claim no longer owned");
       const manifest = await this.engine.file("manifest", { namespace, jobId: nativeId });
       this.streams.add(manifest.stream);
@@ -123,8 +127,11 @@ export class CadArchiveWorker implements OnApplicationShutdown {
     } catch (error) {
       if (prefix) await this.storage.purgePrefix(prefix).catch(() => {});
       const failure = error instanceof CadArchiveFailure ? error
+        : error instanceof CadEngineBusyError ? new CadArchiveFailure("engine-busy", "CAD 转换服务繁忙，请稍后重试", true)
         : new CadArchiveFailure("archive-unavailable", "CAD 后台解析或保存暂不可用，请稍后重试", true);
-      await this.repository.fail(row, failure.code, failure.message, failure.retryable);
+      await this.repository.fail(row, failure.code, failure.message, failure.retryable, {
+        ...(nativeId === undefined ? {} : { nativeJobId: nativeId }), ...(terminalState === undefined ? {} : { terminalState }),
+      });
       this.logger.warn("CAD 后台任务未完成：" + row.id + " / " + failure.code);
     } finally {
       clearInterval(heartbeat);

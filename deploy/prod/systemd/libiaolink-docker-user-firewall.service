@@ -1,0 +1,15 @@
+[Unit]
+Description=LibiaoLink F-02 DOCKER-USER port guard
+Documentation=file:/opt/libiaolink/deploy/prod/README.md
+After=docker.service network-online.target
+Requires=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/libiaolink/deploy/prod/scripts/docker-user-firewall.sh --apply
+RemainAfterExit=yes
+TimeoutStartSec=30s
+
+[Install]
+WantedBy=multi-user.target

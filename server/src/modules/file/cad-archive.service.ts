@@ -18,6 +18,11 @@ export class CadArchiveService {
   }
 
   async create(source: CadArchiveSource, actorId: string, viewId: string, codepage: CadNameCodepage) {
+    if (!this.engine.enabled) throw new ServiceUnavailableException("CAD 转换服务未启用，请下载原文件查看");
+    if (source.sourceBytes <= 0 || source.sourceBytes > this.engine.inputLimit) {
+      await this.repository.rejectInput(source, actorId, viewId, codepage, this.engine.inputLimit);
+      throw new ServiceUnavailableException("文件超过当前 CAD 处理大小限制，请下载原文件查看");
+    }
     const artifact = await this.repository.request(source, codepage);
     if (["failed", "timed-out"].includes(artifact.state)) await this.repository.retry(artifact.id, artifact.state);
     const view = await this.repository.openView(artifact.id, actorId, viewId);

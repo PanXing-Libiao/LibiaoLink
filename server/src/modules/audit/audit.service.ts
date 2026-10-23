@@ -67,7 +67,7 @@ export class AuditService implements AuditSink {
     await this.repository.insert(client, {
       occurredAt: new Date(),
       actorId: input.actorId,
-      actorName: await this.actorName(input.actorId),
+      actorName: await this.actorName(input.actorId, client),
       action: input.action,
       objectType: input.objectType,
       objectId: input.objectId,
@@ -128,12 +128,12 @@ export class AuditService implements AuditSink {
   }
 
   /** 操作人姓名快照（写审计时冗余；带 60s 缓存，避免每写一条查一次 users）。 */
-  private async actorName(actorId: string | null): Promise<string | null> {
+  private async actorName(actorId: string | null, client: DbClient = this.database.db): Promise<string | null> {
     if (actorId === null) return null;
     const now = Date.now();
     const cached = this.actorNames.get(actorId);
     if (cached !== undefined && now - cached.at < AuditService.ACTOR_NAME_TTL_MS) return cached.name;
-    const name = await this.repository.findUserDisplayName(actorId);
+    const name = await this.repository.findUserDisplayName(actorId, client);
     this.actorNames.set(actorId, { name, at: now });
     return name;
   }
