@@ -268,9 +268,16 @@ export class S3ObjectStorage extends ObjectStorage {
     }
   }
 
-  override async putObjectStream(input: { objectKey: string; body: Readable; sizeBytes: number; contentType: string }): Promise<void> {
+  override async putObjectStream(input: {
+    objectKey: string;
+    body: Readable;
+    sizeBytes: number;
+    contentType: string;
+    metadata?: Record<string, string>;
+  }): Promise<void> {
     await this.call("PutObjectStream", () => this.client.send(new PutObjectCommand({ Bucket: this.bucket,
-      Key: input.objectKey, Body: input.body, ContentLength: input.sizeBytes, ContentType: input.contentType })));
+      Key: input.objectKey, Body: input.body, ContentLength: input.sizeBytes, ContentType: input.contentType,
+      Metadata: input.metadata })));
   }
 
   async readObjectPrefix(objectKey: string, maxBytes: number): Promise<ObjectPrefixResult | null> {

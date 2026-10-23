@@ -4,6 +4,7 @@ import { DatabaseService } from "../../db/database.service.js";
 import { AuditService } from "../audit/index.js";
 import { DepartmentRepository } from "./department.repository.js";
 import { SessionService } from "./session.service.js";
+import { UserGroupRepository } from "./user-group.repository.js";
 import { UserRepository } from "./user.repository.js";
 
 /** 目录记录：同步适配器（企微 / Casdoor）归一化后的输入；本服务不直接访问外部系统。 */
@@ -20,6 +21,8 @@ export interface OrgUserRecord {
   displayName: string;
   email: string | null;
   status: "active" | "disabled";
+  /** 目录群组键；undefined = 本次快照未提供群组字段（不更新已有关系）。 */
+  groups?: string[];
 }
 
 /** 一次目录快照（拉取时间为调用方给定；ClockService 随 worker 卡片接入）。 */
@@ -113,6 +116,7 @@ export class OrgSyncService {
     private readonly sessions: SessionService,
     private readonly audit: AuditService,
     private readonly database: DatabaseService,
+    private readonly groups?: UserGroupRepository,
   ) {}
 
   async applySnapshot(snapshot: OrgDirectorySnapshot, options: OrgSyncOptions = {}): Promise<OrgSyncReport> {
@@ -207,6 +211,9 @@ export class OrgSyncService {
     for (const record of records) {
       const before = byCasdoorId.get(record.casdoorId);
       const row = await this.users.upsertFromDirectory(record, at);
+      if (this.groups !== undefined && record.groups !== undefined) {
+        await this.groups.replaceForUser(row.id, record.groups, at);
+      }
       if (before === undefined) {
         created += 1;
         continue;

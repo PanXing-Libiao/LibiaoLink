@@ -137,7 +137,13 @@ export abstract class ObjectStorage {
     return object === null ? null : { stream: Readable.from([object.bytes]), sizeBytes: object.sizeBytes, contentType: object.contentType };
   }
 
-  async putObjectStream(input: { objectKey: string; body: Readable; sizeBytes: number; contentType: string }): Promise<void> {
+  async putObjectStream(input: {
+    objectKey: string;
+    body: Readable;
+    sizeBytes: number;
+    contentType: string;
+    metadata?: Record<string, string>;
+  }): Promise<void> {
     const chunks: Buffer[] = []; let size = 0;
     for await (const chunk of input.body) {
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
@@ -146,7 +152,12 @@ export abstract class ObjectStorage {
       chunks.push(bytes);
     }
     if (size !== input.sizeBytes) throw new Error("Object stream size mismatch");
-    await this.putObject({ objectKey: input.objectKey, body: Buffer.concat(chunks), contentType: input.contentType });
+    await this.putObject({
+      objectKey: input.objectKey,
+      body: Buffer.concat(chunks),
+      contentType: input.contentType,
+      metadata: input.metadata,
+    });
   }
 
   /** 创建分片上传会话（S3 CreateMultipartUpload）；分片状态不落库。 */

@@ -1,5 +1,9 @@
 import { Module } from "@nestjs/common";
+import { AuditModule } from "../audit/index.js";
 import { IdentityModule } from "../identity/index.js";
+import { GroupAccessController } from "./group-access.controller.js";
+import { GroupAccessGuard, GroupAccessAdminGuard } from "./group-access.guard.js";
+import { GroupAccessService } from "./group-access.service.js";
 import { PermissionController } from "./permission.controller.js";
 import { PermissionRepository } from "./permission.repository.js";
 import { PermissionService } from "./permission.service.js";
@@ -11,9 +15,16 @@ import { ProjectAccessGuard } from "./project-access.guard.js";
  * 不依赖 project / task（可见性判定直接读 project_members / project_nodes，避免循环）。
  */
 @Module({
-  imports: [IdentityModule],
-  controllers: [PermissionController],
-  providers: [PermissionRepository, PermissionService, ProjectAccessGuard],
-  exports: [PermissionService, ProjectAccessGuard],
+  imports: [IdentityModule, AuditModule],
+  controllers: [PermissionController, GroupAccessController],
+  providers: [
+    PermissionRepository,
+    PermissionService,
+    ProjectAccessGuard,
+    GroupAccessGuard,
+    GroupAccessAdminGuard,
+    GroupAccessService,
+  ],
+  exports: [PermissionService, ProjectAccessGuard, GroupAccessGuard, GroupAccessAdminGuard],
 })
 export class PermissionModule {}

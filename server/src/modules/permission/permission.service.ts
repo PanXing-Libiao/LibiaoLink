@@ -1,7 +1,15 @@
 import { Injectable } from "@nestjs/common";
-import type { ActorPermissions, PermissionKey } from "@libiaolink/contracts";
+import type { ActorPermissions, GroupAccessPage, PermissionKey } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
+import { AppConfig } from "../../config/config.module.js";
 import { RoleService, type ActorAuthorization } from "../identity/index.js";
+import {
+  intersectProjectIds,
+  isGroupAccessAdmin,
+  parseGroupAccessAdminKeys,
+  resolveGroupAccess,
+  type GroupAccessProfile,
+} from "./group-access.rules.js";
 import { PermissionRepository, type ProjectAccessContext } from "./permission.repository.js";
 import {
   can,
@@ -15,6 +23,7 @@ import {
 interface CacheEntry {
   at: number;
   authorization: ActorAuthorization;
+  groupAccess?: GroupAccessProfile;
 }
 
 /**
@@ -31,6 +40,7 @@ export class PermissionService {
   constructor(
     private readonly roles: RoleService,
     private readonly repository: PermissionRepository,
+    private readonly config?: AppConfig,
   ) {}
 
   /** 授权画像（带缓存）：同一请求内多处判定只查一次库。 */
@@ -57,12 +67,49 @@ export class PermissionService {
   /** GET /api/v1/permissions/me 的响应投影。 */
   async permissionsOf(actorId: string): Promise<ActorPermissions> {
     const authorization = await this.getAuthorization(actorId);
+    const groupAccess = await this.groupAccessOf(actorId);
     return {
       userId: authorization.userId,
       roleCodes: authorization.roleCodes,
       dataScopes: authorization.dataScopes,
       permissionKeys: authorization.permissionKeys as PermissionKey[],
+      groupKeys: groupAccess.groupKeys,
+      pageKeys: groupAccess.pages,
+      groupAccessEnforced: groupAccess.enforced,
+      groupAccessAdmin: groupAccess.admin,
     };
+  }
+
+  /** 群组访问画像（与角色画像同一 10s 缓存）：页面 + 项目白名单。 */
+  async groupAccessOf(actorId: string): Promise<GroupAccessProfile> {
+    const authorization = await this.getAuthorization(actorId);
+    const entry = this.cache.get(actorId);
+    if (entry !== undefined && entry.groupAccess !== undefined) return entry.groupAccess;
+    const groupKeys = this.config === undefined ? [] : await this.repository.listUserGroupKeys(actorId);
+    const enforced = this.config?.env.GROUP_ACCESS_ENFORCED === "true";
+    const permissionEnforced = this.config?.env.PERMISSION_ENFORCED === "true";
+    const permissionAdmin = authorization.permissionKeys.includes("access.manage");
+    const admin =
+      isGroupAccessAdmin(groupKeys, parseGroupAccessAdminKeys(this.config?.env.GROUP_ACCESS_ADMIN_GROUP_KEYS ?? "")) ||
+      (permissionAdmin && (!enforced || permissionEnforced));
+    const rules = enforced && !admin ? await this.repository.listGroupAccessRules(groupKeys) : [];
+    const profile = resolveGroupAccess({ enforced, admin, groupKeys, rules });
+    if (entry !== undefined) entry.groupAccess = profile;
+    return profile;
+  }
+
+  /** 权限管理页入口：独立于 PERMISSION_ENFORCED 的群组管理员判定。 */
+  async canManageGroupAccess(actorId: string): Promise<boolean> {
+    return (await this.groupAccessOf(actorId)).admin;
+  }
+
+  async canAccessPage(actorId: string, page: GroupAccessPage): Promise<boolean> {
+    return (await this.groupAccessOf(actorId)).pages.includes(page);
+  }
+
+  async assertPageAccess(actorId: string, page: GroupAccessPage): Promise<void> {
+    if (await this.canAccessPage(actorId, page)) return;
+    throw new AppError("FORBIDDEN", "当前群组无权访问该页面：" + page);
   }
 
   async can(actorId: string, key: PermissionKey, context?: ProjectResourceContext): Promise<boolean> {
@@ -83,8 +130,10 @@ export class PermissionService {
   /** 可见项目过滤（列表 / facets 用）：all = 不裁剪；ids 空集 = 无可见项目。 */
   async projectScope(actorId: string): Promise<ProjectScopeFilter> {
     const spec = projectScopeSpec(await this.getAuthorization(actorId));
-    if (spec.all) return { kind: "all" };
-    return { kind: "ids", ids: await this.repository.listVisibleProjectIds(actorId, spec) };
+    const groupAccess = await this.groupAccessOf(actorId);
+    const roleIds = spec.all ? null : await this.repository.listVisibleProjectIds(actorId, spec);
+    const ids = intersectProjectIds(roleIds, groupAccess.projectIds);
+    return ids === null ? { kind: "all" } : { kind: "ids", ids };
   }
 
   /** 解析项目上下文：不可见 / 不存在返回 null（调用方转 404）；回收站写口可选包含已软删项目。 */
@@ -94,6 +143,7 @@ export class PermissionService {
     options: { includeDeleted?: boolean } = {},
   ): Promise<ProjectAccessContext | null> {
     const spec = projectScopeSpec(await this.getAuthorization(actorId));
+    const groupAccess = await this.groupAccessOf(actorId);
     const ref = await this.repository.findProjectRef(projectId);
     if (ref === null || (ref.deletedAt !== null && options.includeDeleted !== true)) return null;
     const membershipRole = await this.repository.findMembership(actorId, projectId);
@@ -105,7 +155,8 @@ export class PermissionService {
       managerOfRecord,
       rosterProjectManager: membershipRole === "project_manager",
     });
-    if (!visible) return null;
+    const groupVisible = groupAccess.projectIds === null || groupAccess.projectIds.includes(projectId);
+    if (!visible || !groupVisible) return null;
     return { projectId, member: rosterMember || managerOfRecord, projectManager };
   }
 

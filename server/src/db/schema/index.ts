@@ -1,6 +1,7 @@
 export * from "./projects.js";
 export * from "./blueprint.js";
 export * from "./identity.js";
+export * from "./access.js";
 export * from "./flow.js";
 export * from "./tasks.js";
 export * from "./templates.js";

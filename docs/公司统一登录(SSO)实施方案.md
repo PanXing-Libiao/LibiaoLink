@@ -149,6 +149,7 @@ server {                                # HTTP 全量跳 HTTPS
    - `Grant Types`：**公司标准只勾 `authorization_code`**（服务间调用等特殊场景另行审批）
    - `Token Format`：按公司标准选 `JWT-Custom`
    - `Token Fields`：默认只开放 `Name`、`Owner`、`Id`、`DisplayName`、`Email`，其他按需开放
+   - **按群组限制页面 / 项目时必须额外勾选 `Groups`**（LibiaoLink「权限管理」依赖该声明；未勾选时登录写入的 `groups` 为空缺，已有群组关系不会被清空，但新群组变更不会生效）。勾选后让用户重新登录，并用 `/auth/me` 检查 `claims.groups`。
    - 以上三项建议在组织级 `Default Token Format` / `Default Token Fields` 里固化，新应用自动继承（详见 `docs/开发者接入注意事项(SSO接入标准).md`）
    - `Token expire` / `Refresh expire`：访问令牌建议 1~2 小时，刷新令牌 7~30 天
    - `Enable Password` / `Enable Sign Up`：公司内部系统建议只开密码登录、关闭自助注册

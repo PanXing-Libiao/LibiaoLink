@@ -3,7 +3,7 @@ import { AuditLogListQuerySchema, z } from "@libiaolink/contracts";
 import type { AuditLogListQuery, AuditLogListResponse } from "@libiaolink/contracts";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, SessionGuard } from "../identity/index.js";
-import { ProjectAccessGuard, RequirePermission } from "../permission/index.js";
+import { GroupAccessGuard, ProjectAccessGuard, RequireAccessPage, RequirePermission } from "../permission/index.js";
 import { AuditService } from "../audit/index.js";
 
 /**
@@ -11,7 +11,8 @@ import { AuditService } from "../audit/index.js";
  * 仅 audit.view（系统管理员）。页面与导出随 u12（px 线）；越权尝试用 result=denied 筛出（C7-03，告警随 M5 通知）。
  */
 @Controller("api/v1/audit-logs")
-@UseGuards(SessionGuard, CsrfGuard, ProjectAccessGuard)
+@UseGuards(SessionGuard, CsrfGuard, GroupAccessGuard, ProjectAccessGuard)
+@RequireAccessPage("audit")
 export class AuditLogsController {
   constructor(private readonly audits: AuditService) {}
 

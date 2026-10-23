@@ -4,10 +4,11 @@ import { BG_TIER_TEXT_KEYS, LOCALES, selectLocale, useLocalizedText, useLocale, 
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { clearHomePrefs } from "../homePrefs";
 import { clearLegacyPlanBoard } from "../myPlan";
-import { hasPermission, useMyPermissions } from "../permissions";
+import { hasPageAccess, hasPermission, useMyPermissions } from "../permissions";
 import { useInboxBadge } from "../inbox";
 import { clearBindingGuidePrefs } from "../bindingGuide";
-import { AUDIT_BASE_HASH, FILES_BASE_HASH, SETTINGS_BASE_HASH, goBackToList, goUpLevel, listHref, upLevelHref } from "../useHashRoute";
+import { ACCESS_BASE_HASH, AUDIT_BASE_HASH, FILES_BASE_HASH, HUB_HASH, SETTINGS_BASE_HASH, goBackToList, goUpLevel, listHref, upLevelHref } from "../useHashRoute";
+import { firstAllowedHref } from "../accessRoutes";
 import { TopNav } from "./TopNav";
 import { InboxPanel } from "./InboxPanel";
 import { Toast } from "./Toast";
@@ -25,7 +26,7 @@ import type { MeResponse, Project } from "../types";
  *  app.css 的 .inbox-badge 等价还原），点击 = 局部弹窗（最近 8 条 + 全部已读；见 ./InboxPanel）；
  *  红点 = ../inbox 模块级 store（登录后读面补拉 + SSE unread 快照，切页不丢）。
  * 设置页入口（业务口径 2026-10-16「在点击用户右上角头像后的列表中添加一个设置页」· Push 250）：账号菜单第三项（Push 400 顺序调整）
- *  「企微绑定」（#/settings · 全账号可见），落点 = 账号级设置（单聊 D5 / D6 + 项目群绑定）；菜单顺序（Push 400）= 文件库 /〔操作记录〕/ 企微绑定 / 退出登录。 */
+ *  「企微绑定」（#/settings · 全账号可见），落点 = 账号级设置（单聊 D5 / D6 + 项目群绑定）；菜单顺序 = 文件库 /〔操作记录〕/〔权限管理〕/ 企微绑定 / 退出登录；权限管理仅群组管理员可见。 */
 
 type AppHeaderProps = {
   me: MeResponse;
@@ -65,14 +66,28 @@ export function AppHeader({ me, project }: AppHeaderProps) {
   const inboxBadge = useInboxBadge();
   const inboxUnreadText = inboxBadge.unreadCount > 99 ? "99+" : String(inboxBadge.unreadCount);
   const homeHref = listHref();
-  const upHref = upLevelHref();
+  const defaultUpHref = upLevelHref();
+  /** Logo 缺省回仪表盘；群组未开通仪表盘时落首个可访问页面，避免点 Logo 直接吃 403。 */
+  const upHref = defaultUpHref === HUB_HASH && !hasPageAccess(permissions, "dashboard")
+    ? firstAllowedHref(permissions)
+    : defaultUpHref;
+  const goUp = (): void => {
+    if (upHref === defaultUpHref) {
+      goUpLevel();
+      return;
+    }
+    if (window.location.hash !== upHref) window.location.hash = upHref.slice(1);
+  };
   const seqNoText = project ? String(project.seqNo).padStart(2, "0") : "";
   /** 手打内容（项目名）机翻显示：英文界面显示译文（自动切换到位），悬停看中文原文。 */
   const projectNameText = useLocalizedText(project?.description ?? "");
   /** 「操作记录」菜单项（audit.view）：管理面入口，画像未到 / 无权限不渲染。 */
-  const canViewAudit = hasPermission(permissions, "audit.view");
-  /** 「文件库」菜单项（Push 261）：文件库页（#/files）全账号可见 —— 读面按项目可见性放开（无单独权限位），
-   *  「彻底删除」入口在页面内按 admin 角色收敛。 */
+  const canViewAudit = hasPermission(permissions, "audit.view") && hasPageAccess(permissions, "audit");
+  const canViewFiles = hasPageAccess(permissions, "files");
+  /** 「权限管理」菜单项：群组管理员（关闭群组限制时等价管理员亦可配置）。 */
+  const canManageAccess = permissions?.groupAccessAdmin === true;
+  /** 「文件库」菜单项（Push 261）：文件库页（#/files）按群组页面权限收敛；
+   *  读面仍按项目可见性放开，「彻底删除」入口在页面内按 admin 角色收敛。 */
 
   useEffect(() => {
     if (!menuOpen) {
@@ -180,7 +195,7 @@ export function AppHeader({ me, project }: AppHeaderProps) {
   return (
     <header className="sticky top-0 z-30 border-b border-zinc-200 bg-white/90 backdrop-blur">
       <div className="flex h-16 items-center gap-3 px-6">
-        <a href={upHref} onClick={interceptNav(goUpLevel)} title={t("header.up")} className="flex shrink-0 items-center gap-3">
+        <a href={upHref} onClick={interceptNav(goUp)} title={t("header.up")} className="flex shrink-0 items-center gap-3">
           <img src="/libiaolink-logo.svg" alt="LibiaoLink" className="h-11 w-auto" />
           <div className="leading-tight">
             <p className="text-base font-semibold text-zinc-900">LibiaoLink</p>
@@ -413,17 +428,19 @@ export function AppHeader({ me, project }: AppHeaderProps) {
                 role="menu"
                 className="menu-pop absolute right-0 top-full z-20 mt-2 w-36 overflow-hidden rounded-xl border border-zinc-200/80 bg-white p-1 shadow-[0_18px_40px_-12px_rgba(15,23,42,0.30),0_4px_12px_-4px_rgba(15,23,42,0.14)]"
               >
-                <a
-                  role="menuitem"
-                  data-account-files="true"
-                  href={FILES_BASE_HASH}
-                  onClick={() => {
-                    setMenuOpen(false);
-                  }}
-                  className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
-                >
-                  {t("header.files")}
-                </a>
+                {canViewFiles ? (
+                  <a
+                    role="menuitem"
+                    data-account-files="true"
+                    href={FILES_BASE_HASH}
+                    onClick={() => {
+                      setMenuOpen(false);
+                    }}
+                    className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
+                  >
+                    {t("header.files")}
+                  </a>
+                ) : null}
                 {canViewAudit ? (
                   <a
                     role="menuitem"
@@ -435,6 +452,19 @@ export function AppHeader({ me, project }: AppHeaderProps) {
                     className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
                   >
                     {t("header.audit")}
+                  </a>
+                ) : null}
+                {canManageAccess ? (
+                  <a
+                    role="menuitem"
+                    data-account-access="true"
+                    href={ACCESS_BASE_HASH}
+                    onClick={() => {
+                      setMenuOpen(false);
+                    }}
+                    className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
+                  >
+                    {t("header.access")}
                   </a>
                 ) : null}
                 <a
