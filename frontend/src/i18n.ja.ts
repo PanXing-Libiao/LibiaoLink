@@ -1169,7 +1169,6 @@ export const JA_TEXTS: Partial<Record<TextKey, string>> = {
   "sac.addedTag": "追加済み",
   "sac.add": "+ 追加",
   "sac.batchHeading": "{n} をすべて追加",
-  "sac.footnote": "「タスクノード」はノードライブラリから、「テンプレート」はテンプレートAPI（GET /api/v1/task-nodes · task-templates、タスクテンプレートページで管理）から取得されます。プロジェクトへの追加はデータベースに書き込まれ（M3-07 パート3以降はソースノード付き、一括追加はテンプレートインスタンス化APIを使用）、「追加済み」はソースノードIDで重複排除され、古い行は同一ステージ＋同一名前にフォールバックします。",
   "ie.clickEdit": "クリックして編集",
   "ie.pickMembers": "クリックしてメンバーを選択（複数）",
   "ie.pickMember": "クリックしてメンバーを選択",

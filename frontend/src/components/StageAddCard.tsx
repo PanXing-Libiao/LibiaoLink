@@ -561,7 +561,6 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
           onClose={() => { setArmed(null); }}
         />
       )}
-      <p className="mt-2 shrink-0 text-[10px] leading-4 text-zinc-400">{t("sac.footnote")}</p>
     </aside>
   );
 }
