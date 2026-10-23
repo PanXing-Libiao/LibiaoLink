@@ -37,8 +37,8 @@ const SOURCE_KEY_HISTORY = "projects/" + PROJECT + "/files/" + FILE + "/v2/" + H
 function sourceKeyOf(ext: string): string {
   return "projects/" + PROJECT + "/files/" + FILE + "/v1/" + HASH + "." + ext;
 }
-const ARTIFACT_KEY = "previews/" + HASH + "/2.0.0/image";
-const ARTIFACT_KEY_HISTORY = "previews/" + HASH_HISTORY + "/2.0.0/image";
+const ARTIFACT_KEY = "previews/versions/" + VERSION + "/" + HASH + "/2.0.0/image";
+const ARTIFACT_KEY_HISTORY = "previews/versions/" + HISTORY + "/" + HASH_HISTORY + "/2.0.0/image";
 const LEGACY_ARTIFACT_KEY = "previews/" + HASH + "/1.0.0/image";
 
 const ENV = {
@@ -133,6 +133,7 @@ class FakePreviewRepository {
     return (
       this.rows.find(
         (row) =>
+          row.versionId === key.versionId &&
           row.contentHash === key.contentHash &&
           row.pipelineVersion === key.pipelineVersion &&
           row.target === key.target,
@@ -509,7 +510,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     );
 
     const result = await h.service.getPreview(FILE, null, ACTOR);
-    const imageKey: PreviewArtifactKey = { contentHash: HASH, pipelineVersion: "2.0.0", target: "image" };
+    const imageKey: PreviewArtifactKey = { versionId: VERSION, contentHash: HASH, pipelineVersion: "2.0.0", target: "image" };
 
     expect(result).toMatchObject({
       versionId: VERSION,
@@ -544,14 +545,32 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     expect(result).toMatchObject({ status: "not_ready", pipelineVersion: "2.0.0" });
     expect(h.storage.signed).toHaveLength(0);
     expect(h.previews.ensured).toEqual([
-      { contentHash: HASH, pipelineVersion: "2.0.0", target: "image", fileId: FILE, versionId: VERSION },
+      { versionId: VERSION, contentHash: HASH, pipelineVersion: "2.0.0", target: "image", fileId: FILE },
     ]);
     expect(h.database.outbox).toEqual([
       expect.objectContaining({
         topic: "preview.job",
-        dedupeKey: "preview.job:" + HASH + ":2.0.0:image",
+        dedupeKey: "preview.job:version:" + VERSION + ":" + HASH + ":2.0.0:image",
       }),
     ]);
+  });
+
+  it.each(["ready", "failed"])("同哈希的另一版本处于 %s，不能读取其产物或继承其失败态", async (status) => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ name: "我的.svg" });
+    h.repo.versions.set(VERSION, makeVersionRow({ mime: "image/svg+xml", objectKey: sourceKeyOf("svg") }));
+    h.previews.rows = [makeArtifactRow({
+      fileId: "99999999-9999-4999-8999-999999999999", versionId: HISTORY,
+      status, objectKey: status === "ready" ? ARTIFACT_KEY_HISTORY : null,
+      generatedAt: status === "ready" ? NOW : null, error: status === "failed" ? "另一版本的失败" : null,
+    })];
+
+    const result = await h.service.getPreview(FILE, null, ACTOR);
+
+    expect(result).toMatchObject({ status: "not_ready", url: null, reason: null, versionId: VERSION });
+    expect(h.storage.signed).toHaveLength(0);
+    expect(h.previews.ensured).toEqual([expect.objectContaining({ fileId: FILE, versionId: VERSION })]);
+    expect(h.permission.calls).toEqual([PROJECT]);
   });
 
   it("SVG 产物 ready：只签 previews/.../image 并强制 image/png + inline，绝不签 projects/...svg", async () => {
@@ -707,6 +726,21 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
 });
 
 describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", () => {
+  it("ONLYOFFICE：相同 contentHash 的不同文档版本必须签发不同缓存 key", async () => {
+    const h = makeService();
+    h.repo.file = makeFileRow({ name: "第一份.docx" });
+    h.repo.versions.set(VERSION, makeVersionRow({ mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", objectKey: sourceKeyOf("docx") }));
+    const first = await h.service.getPreview(FILE, null, ACTOR);
+    const otherFile = "99999999-9999-4999-8999-999999999999";
+    h.repo.file = makeFileRow({ id: otherFile, name: "第二份.docx", currentVersionId: HISTORY });
+    h.repo.versions.set(HISTORY, makeVersionRow({ id: HISTORY, fileId: otherFile, objectKey: `projects/${PROJECT}/files/${otherFile}/v1/${HASH}.docx`, mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }));
+    const second = await h.service.getPreview(otherFile, null, ACTOR);
+
+    if (first.viewer?.kind !== "onlyoffice" || second.viewer?.kind !== "onlyoffice") throw new Error("Expected ONLYOFFICE viewers");
+    expect(first.viewer.document.key).not.toBe(second.viewer.document.key);
+    expect(first.viewer.document.key).toMatch(/^[0-9a-zA-Z._=-]{1,128}$/);
+  });
+
   it("HTML / HTM 不再进入 ONLYOFFICE：主动内容降级为下载", async () => {
     const h = makeService();
     h.repo.file = makeFileRow({ name: "说明.html" });
@@ -780,7 +814,7 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
         title: "方案.docx",
         url: "http://api.internal:3000/api/v1/files/" + FILE + "/versions/" + VERSION + "/preview-content",
         fileType: "docx",
-        key: HASH,
+        key: expect.stringMatching(/^[a-f0-9]{64}$/),
         // Push 258 错层修正：权限段嵌 document（ONLYOFFICE 只认该位置）。
         permissions: { edit: false, download: true, print: false, comment: false, chat: false, fillForms: false, protect: true },
       },
@@ -827,7 +861,8 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
       "http://api.internal:3000/api/v1/files/" + FILE + "/versions/" + VERSION + "/preview-content",
     );
     expect(claims.document.url).not.toContain("X-Amz-");
-    expect(claims.document.key).toBe(HASH);
+    expect(claims.document.key).toBe(result.viewer.document.key);
+    expect(claims.document.key).not.toBe(HASH);
     // Push 258 业务口径「原本的下载不要隐藏」：download 保持可见（点击由前端命中层接原文件链）。
     expect(claims.document.permissions.download).toBe(true);
     expect(claims.document.permissions.edit).toBe(false);

@@ -1,14 +1,7 @@
 import { PREVIEW_TARGETS } from "@libiaolink/contracts";
 
-/**
- * 预览任务（outbox topic `preview.job`）的载荷与去重键（M4-05c · ADR-007）。
- *
- * 投递侧（定档预生成 P1 / 读取侧幂等补投）与消费侧（worker 领取器）共用这一份定义：
- * 去重键是「同一三元组只转一次」的一半，两端各拼一套字符串迟早会漂移。
- *
- * 三元组 = contentHash + pipelineVersion + target：
- * - 内容相同（跨文件 / 回溯 / 变更）→ 同一个任务、同一份产物（preview_artifacts 按三元组唯一）；
- * - 换管线版本（`PREVIEW_PIPELINE_VERSION` 递增）→ 新任务、新缓存键，旧产物自然失效（不放原地覆盖）。
+/** 预览任务按版本、管线版本和通道去重，不因客户端曾申报相同哈希而合并不同版本。
+ * contentHash 为该版本的绑定信息；新键带 version 命名空间，不继承旧全局任务终态。
  */
 export const PREVIEW_JOB_TOPIC = "preview.job";
 
@@ -33,14 +26,15 @@ export interface PreviewJob {
   target: PreviewTarget;
 }
 
-/** 去重键：三元组直接在键里 —— 同三元组只有一个任务，且任务生来就与缓存键对齐。 */
+/** 同一版本的同一管线 / 通道只投一次；不同版本拥有独立任务。 */
 export function previewJobDedupeKey(input: {
+  versionId: string;
   contentHash: string;
   pipelineVersion: string;
   target: PreviewTarget;
 }): string {
   return (
-    PREVIEW_JOB_TOPIC + ":" + input.contentHash.toLowerCase() + ":" + input.pipelineVersion + ":" + input.target
+    PREVIEW_JOB_TOPIC + ":version:" + input.versionId + ":" + input.contentHash.toLowerCase() + ":" + input.pipelineVersion + ":" + input.target
   );
 }
 

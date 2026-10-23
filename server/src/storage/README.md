@@ -29,7 +29,7 @@ index.ts              # 唯一公开出口
 - **前缀清理兼容未开版本控制**：`purgePrefix` 先按 `ListObjectVersions` 清全部版本；若 S3 实现（本地 MinIO 实测）对未开版本控制的桶返回空集，则回退 `ListObjectsV2` 按当前对象键普通删除 —— 空桶仍返回 0，绝不把“没列到”误报成“已删掉”。
 - **api 不代理大文件流量**：分片与下载都走预签名 URL（短时）。
 - **原对象响应类型由服务端签名覆盖**：原文件一律以 `application/octet-stream` 保存；下载固定 `application/octet-stream` + attachment；安全位图预览必须显式签入精确图片 MIME + inline，不能沿用对象元数据。SVG / HTML / 未知类型不得进入 inline 签名分支（H1 · S2）。
-- **文件头校验只读前缀**：`readObjectPrefix()` 通过 S3 `Range: bytes=0-N` 最多读取调用方请求的上限；上传完成用 64 KiB 前缀做扩展名 / MIME / 魔数裁决，不把大文件整块读入内存。
+- **上传实际字节核验**：完成分片合并后通过 `getObjectStream()` 流式计算完整 SHA-256 并校验实际长度，只保留 64 KiB 文件头用于扩展名 / MIME / 魔数裁决；哈希不符不复制、不落版本、不投任务，不把大文件整块读入内存。`readObjectPrefix()` 保留为需要 Range 读取的存储端口。
 
 ## 错误映射（`toApiError`）
 

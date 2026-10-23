@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { Logger } from "@nestjs/common";
+import { createHash } from "node:crypto";
+import { Readable } from "node:stream";
 import { ClockService } from "../src/common/clock/clock.service.js";
 import { AppConfig } from "../src/config/config.module.js";
 import type { Env } from "../src/config/env.js";
@@ -66,8 +68,6 @@ const IMG_A = "88888888-8888-4888-8888-88888888888a";
 const IMG_B = "88888888-8888-4888-8888-88888888888b";
 const ACTOR = "ea6eff88-4b3e-4df1-9ce0-02ffb14fed69";
 const OTHER_ACTOR = "caa8d763-4b6a-4967-9b26-7d1086272c9c";
-const HASH = "a".repeat(64);
-const OTHER_HASH = "b".repeat(64);
 const NOW = new Date("2026-09-21T08:00:00Z");
 const MI_B = 1024 * 1024;
 const PDF_PREFIX = new TextEncoder().encode("%PDF-1.7\nunit-test\n");
@@ -75,6 +75,13 @@ const ZIP_PREFIX = Uint8Array.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00]);
 const PNG_PREFIX = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const SVG_PREFIX = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
 const HTML_PREFIX = new TextEncoder().encode('<!doctype html><html><body><script>alert(1)</script></body></html>');
+function uploadBytes(prefix: Uint8Array, size = 12 * MI_B, fill = 0): Buffer {
+  const bytes = Buffer.alloc(size, fill);
+  bytes.set(prefix.subarray(0, size));
+  return bytes;
+}
+const HASH = createHash("sha256").update(uploadBytes(PDF_PREFIX)).digest("hex");
+const OTHER_HASH = createHash("sha256").update(uploadBytes(PDF_PREFIX, 12 * MI_B, 1)).digest("hex");
 const STAGING_KEY = `projects/${PROJECT}/files/${FILE}/staging/${SESSION}`;
 const CONTRACT_KEY = `projects/${PROJECT}/files/${FILE}/v1/${HASH}.pdf`;
 const CONTRACT_KEY_V2 = `projects/${PROJECT}/files/${FILE}/v2/${OTHER_HASH}.pdf`;
@@ -465,18 +472,6 @@ class FakeFileRepository {
     this.otherFiles = this.otherFiles.filter((row) => row.id !== fileId);
   }
 
-  /** M4-05 收口：同内容哈希的存活版本（null = 唯一引用 → 产物对象可清；非 null = 归属转移目标）。 */
-  survivorVersion: { id: string; fileId: string } | null = null;
-  survivorQueries: { contentHash: string; exclude: string[] }[] = [];
-
-  async findVersionByContentHash(
-    contentHash: string,
-    excludeVersionIds: readonly string[],
-  ): Promise<{ id: string; fileId: string } | null> {
-    this.survivorQueries.push({ contentHash, exclude: [...excludeVersionIds] });
-    return this.survivorVersion;
-  }
-
   // ---------- M4-03：多态关联与文件库查询 ----------
 
   /** complete 幂等写入的关联（project 必写；node / task 有则写）。 */
@@ -517,6 +512,20 @@ class FakeObjectStorage extends ObjectStorage {
   prefix: Uint8Array | null = PDF_PREFIX;
   prefixError: Error | null = null;
   readonly prefixReads: { objectKey: string; maxBytes: number }[] = [];
+  readonly streamReads: string[] = [];
+  fill = 0;
+
+  uploadBytes(): Uint8Array {
+    return this.source?.bytes ?? uploadBytes(this.prefix ?? new Uint8Array(), this.head?.sizeBytes ?? 12 * MI_B, this.fill);
+  }
+
+  override async getObjectStream(objectKey: string) {
+    this.streamReads.push(objectKey);
+    if (this.prefixError !== null) throw this.prefixError;
+    if (this.source === null && this.prefix === null) return null;
+    const bytes = this.uploadBytes();
+    return { stream: Readable.from([bytes.subarray(0, 13), bytes.subarray(13)]), sizeBytes: bytes.byteLength, contentType: null };
+  }
 
   created: CreateMultipartUploadInput[] = [];
   signed: PartUploadUrlInput[] = [];
@@ -605,19 +614,10 @@ class FakeObjectStorage extends ObjectStorage {
 /** 产物仓储替身（M4-05 收口：只实现清理用到的两个方法）。 */
 class FakePreviewRepository {
   rows: PreviewArtifactRow[] = [];
-  reassignments: { id: string; fileId: string; versionId: string; at: Date }[] = [];
   async listReadyByVersionIds(versionIds: readonly string[]): Promise<PreviewArtifactRow[]> {
     return this.rows.filter((row) => row.status === "ready" && versionIds.includes(row.versionId));
   }
-  async reassignOwner(id: string, input: { fileId: string; versionId: string }, at: Date): Promise<void> {
-    this.reassignments.push({ id, ...input, at });
-    const row = this.rows.find((candidate) => candidate.id === id);
-    if (row !== undefined) {
-      row.fileId = input.fileId;
-      row.versionId = input.versionId;
-      row.updatedAt = at;
-    }
-  }
+
 }
 
 class FakePermissionService {
@@ -1244,6 +1244,12 @@ describe("FileService.getUpload（会话状态 / 续传依据）", () => {
   });
 });
 
+function declareActualHash(h: Harness): string {
+  const hash = createHash("sha256").update(h.storage.uploadBytes()).digest("hex");
+  h.repo.session!.contentHash = hash;
+  return hash;
+}
+
 describe("FileService.completeUpload（合并 / 复制到契约键 / 落版本）", () => {
   function readyHarness(cadArchive?: CadArchiveService): Harness {
     const h = makeService({}, cadArchive);
@@ -1254,16 +1260,33 @@ describe("FileService.completeUpload（合并 / 复制到契约键 / 落版本�
     return h;
   }
 
+  it.each([null, HASH])("实际字节与 complete 哈希不符，即使 init 申报为 %s 也拒绝，不复制、不落版本、不投任务", async (declared) => {
+    const h = readyHarness();
+    const bytes = Buffer.alloc(128 * 1024);
+    bytes.set(PDF_PREFIX);
+    bytes[bytes.length - 1] = 1;
+    h.repo.session = makeSessionRow({ storageUploadId: "storage-1", contentHash: declared, sizeBytes: bytes.length });
+    h.storage.head = { ...h.storage.head!, sizeBytes: bytes.length };
+    h.storage.source = { objectKey: STAGING_KEY, bytes, sizeBytes: bytes.length, contentType: "application/pdf" };
+
+    await expect(h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR)).rejects.toMatchObject({
+      code: "FILE_HASH_MISMATCH", httpStatus: 422,
+    });
+    expect(h.storage.copied).toHaveLength(0);
+    expect(h.repo.insertedVersions).toHaveLength(0);
+    expect(h.database.outbox).toHaveLength(0);
+  });
+
   it("STEP 上传完成即在版本事务内登记后台解析，不等待 native 转换", async () => {
     const uploaded = vi.fn().mockResolvedValue(undefined);
     const h = readyHarness({ uploaded } as unknown as CadArchiveService);
     h.repo.file = makeFileRow({ name: "总装.step" });
     h.repo.session = makeSessionRow({ storageUploadId: "storage-1", contentHash: HASH, mime: "application/octet-stream" });
     h.storage.prefix = Buffer.from("ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\nENDSEC;\nEND-ISO-10303-21;");
-    const result = await h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+    const result = await h.service.completeUpload(FILE, SESSION, { contentHash: declareActualHash(h) }, ACTOR);
     expect(result.version.id).toBe(VERSION);
     expect(uploaded).toHaveBeenCalledOnce();
-    expect(uploaded.mock.calls[0]?.[0]).toEqual({ fileId: FILE, versionId: VERSION, sourceSHA256: HASH,
+    expect(uploaded.mock.calls[0]?.[0]).toEqual({ fileId: FILE, versionId: VERSION, sourceSHA256: h.repo.insertedVersions[0]!.contentHash,
       sourceBytes: 12 * MI_B, sourceName: "总装.step" });
     expect(uploaded.mock.calls[0]?.[1]).toBeDefined();
     expect(h.database.outbox[0]).toMatchObject({ topic: "file.version.created" });
@@ -1281,7 +1304,8 @@ describe("FileService.completeUpload（合并 / 复制到契约键 / 落版本�
       destinationKey: CONTRACT_KEY,
       contentType: "application/octet-stream",
     });
-    expect(h.storage.prefixReads).toEqual([{ objectKey: STAGING_KEY, maxBytes: 64 * 1024 }]);
+    expect(h.storage.prefixReads).toEqual([]);
+    expect(h.storage.streamReads).toEqual([STAGING_KEY]);
     expect(h.storage.purged).toEqual([STAGING_KEY]);
 
     const version = h.repo.insertedVersions[0]!;
@@ -1367,7 +1391,8 @@ describe("FileService.completeUpload（合并 / 复制到契约键 / 落版本�
       mime: "TEXT/HTML; charset=utf-8",
     });
     html.storage.prefix = HTML_PREFIX;
-    const htmlResult = await html.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+    const htmlHash = declareActualHash(html);
+    const htmlResult = await html.service.completeUpload(FILE, SESSION, { contentHash: htmlHash }, ACTOR);
     expect(htmlResult.version.mime).toBe("text/html");
     expect(html.storage.copied[0]).toMatchObject({ contentType: "application/octet-stream" });
 
@@ -1379,7 +1404,8 @@ describe("FileService.completeUpload（合并 / 复制到契约键 / 落版本�
       mime: "image/svg+xml; charset=utf-8",
     });
     svg.storage.prefix = SVG_PREFIX;
-    const svgResult = await svg.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+    const svgHash = declareActualHash(svg);
+    const svgResult = await svg.service.completeUpload(FILE, SESSION, { contentHash: svgHash }, ACTOR);
     expect(svgResult.version.mime).toBe("image/svg+xml");
     expect(svg.storage.copied[0]).toMatchObject({ contentType: "application/octet-stream" });
   });
@@ -1394,10 +1420,10 @@ describe("FileService.completeUpload（合并 / 复制到契约键 / 落版本�
     });
     h.storage.prefix = SVG_PREFIX;
 
-    const result = await h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+    const result = await h.service.completeUpload(FILE, SESSION, { contentHash: declareActualHash(h) }, ACTOR);
 
     expect(result.version.mime).toBe("application/octet-stream");
-    expect(h.repo.insertedVersions[0]!.objectKey).toBe(`projects/${PROJECT}/files/${FILE}/v1/${HASH}.bin`);
+    expect(h.repo.insertedVersions[0]!.objectKey).toBe(`projects/${PROJECT}/files/${FILE}/v1/${h.repo.insertedVersions[0]!.contentHash}.bin`);
     expect(h.storage.copied[0]).toMatchObject({ contentType: "application/octet-stream" });
   });
 
@@ -1460,6 +1486,7 @@ describe("FileService.completeUpload（合并 / 复制到契约键 / 落版本�
   it("init 未给哈希 → complete 的哈希即为准（大小校验仍生效）", async () => {
     const h = readyHarness();
     h.repo.session = makeSessionRow({ storageUploadId: "storage-1", contentHash: null });
+    h.storage.fill = 1;
     const result = await h.service.completeUpload(FILE, SESSION, { contentHash: OTHER_HASH.toUpperCase() }, ACTOR);
     expect(result.version.contentHash).toBe(OTHER_HASH);
     expect(h.storage.copied[0]!.destinationKey).toBe(`projects/${PROJECT}/files/${FILE}/v1/${OTHER_HASH}.pdf`);
@@ -1675,7 +1702,7 @@ describe("FileService.purgeFile（彻底删除 · 仅管理员）", () => {
   });
 });
 
-describe("FileService 预览产物清理（M4-05 收口：按 content_hash 反查引用）", () => {
+describe("FileService 预览产物清理（版本隔离）", () => {
   const ARTIFACT_FAILED = "88888888-8888-4888-8888-888888888888";
 
   function recycledHarness(): Harness {
@@ -1704,26 +1731,20 @@ describe("FileService 预览产物清理（M4-05 收口：按 content_hash 反�
     await h.service.purgeFile(FILE, { version: 7 }, ACTOR);
 
     expect(h.storage.purged).toEqual([CONTRACT_KEY, CONTRACT_KEY_V2, ARTIFACT_KEY]);
-    expect(h.previews.reassignments).toHaveLength(0);
-    expect(h.repo.survivorQueries).toEqual([{ contentHash: HASH, exclude: [VERSION_A, VERSION_B] }]);
     const last = h.audit.entries.at(-1) as { summary: string; metadata: Record<string, unknown> };
-    expect(last.metadata).toMatchObject({ previewArtifactsPurged: 1, previewArtifactsReassigned: 0 });
+    expect(last.metadata).toMatchObject({ previewArtifactsPurged: 1 });
     expect(last.summary).toContain("1 份预览产物");
   });
 
-  it("另一文件同内容存活：不清对象，缓存行归属转移到存活版本", async () => {
+  it("同哈希的另一版本有独立产物：只清本文件的源对象和产物，不转移缓存归属", async () => {
     const h = recycledHarness();
-    h.previews.rows = [makeArtifactRow({ versionId: VERSION_A })];
-    h.repo.survivorVersion = { id: VERSION_C, fileId: OTHER_FILE };
-
+    const otherKey = `previews/versions/${VERSION_C}/${HASH}/1.0.0/pdf`;
+    const other = makeArtifactRow({ id: "99999999-9999-4999-8999-999999999999", fileId: OTHER_FILE, versionId: VERSION_C, objectKey: otherKey });
+    h.previews.rows = [makeArtifactRow({ versionId: VERSION_A }), other];
     await h.service.purgeFile(FILE, { version: 7 }, ACTOR);
-
-    expect(h.storage.purged).toEqual([CONTRACT_KEY, CONTRACT_KEY_V2]);
-    expect(h.previews.reassignments).toEqual([{ id: ARTIFACT, fileId: OTHER_FILE, versionId: VERSION_C, at: NOW }]);
-    expect(h.previews.rows[0]).toMatchObject({ fileId: OTHER_FILE, versionId: VERSION_C });
-    const last = h.audit.entries.at(-1) as { summary: string; metadata: Record<string, unknown> };
-    expect(last.metadata).toMatchObject({ previewArtifactsPurged: 0, previewArtifactsReassigned: 1 });
-    expect(last.summary).not.toContain("份预览产物");
+    expect(h.storage.purged).toEqual([CONTRACT_KEY, CONTRACT_KEY_V2, ARTIFACT_KEY]);
+    expect(h.storage.purged).not.toContain(otherKey);
+    expect(other).toMatchObject({ fileId: OTHER_FILE, versionId: VERSION_C });
   });
 
   it("not_ready / failed 行（无对象键）：不反查、不调存储", async () => {
@@ -1743,8 +1764,6 @@ describe("FileService 预览产物清理（M4-05 收口：按 content_hash 反�
     await h.service.purgeFile(FILE, { version: 7 }, ACTOR);
 
     expect(h.storage.purged).toEqual([CONTRACT_KEY, CONTRACT_KEY_V2]);
-    expect(h.repo.survivorQueries).toHaveLength(0);
-    expect(h.previews.reassignments).toHaveLength(0);
   });
 
   it("产物对象清理失败 → 映射契约错误并回滚（元数据与产物行都不动）", async () => {
@@ -2491,12 +2510,12 @@ describe("FileService.completeUpload 变更写入（M4-04 申请即通过 · int
     h.repo.deliverableTaskIds = [TASK];
     h.repo.nodeStageKey = "construction";
 
-    await h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+    await h.service.completeUpload(FILE, SESSION, { contentHash: declareActualHash(h) }, ACTOR);
 
     // files.name 更名；新版本对象键 / 存储元数据用变更后扩展名（.pptx）——历史版本对象键不动（假旧名不改写）
     expect(h.repo.file!.name).toBe("回放-变更后.pptx");
-    expect(h.repo.insertedVersions[0]!.objectKey).toBe(`projects/${PROJECT}/files/${FILE}/v1/${HASH}.pptx`);
-    expect(h.storage.copied[0]!.destinationKey).toBe(`projects/${PROJECT}/files/${FILE}/v1/${HASH}.pptx`);
+    expect(h.repo.insertedVersions[0]!.objectKey).toBe(`projects/${PROJECT}/files/${FILE}/v1/${h.repo.insertedVersions[0]!.contentHash}.pptx`);
+    expect(h.storage.copied[0]!.destinationKey).toBe(`projects/${PROJECT}/files/${FILE}/v1/${h.repo.insertedVersions[0]!.contentHash}.pptx`);
     expect(h.storage.copied[0]!.metadata).toMatchObject({ "file-name": encodeURIComponent("回放-变更后.pptx") });
     // 审计：完成变更上传记「旧名 → 新名」；变更 create 审计的 changes 同步带 name 变化
     const completeAudit = h.audit.entries.at(-1) as { summary: string; changes: { field: string; from: unknown; to: unknown }[] };

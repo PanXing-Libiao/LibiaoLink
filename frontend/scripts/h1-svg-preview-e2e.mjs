@@ -47,7 +47,7 @@ const CHROME_PATH = process.env.CHROME_PATH ?? (process.platform === "win32"
   : "google-chrome");
 
 const results = { B1: [], B2: [], B3: [], B4: [], B5: [], B6: [], B7: [] };
-const created = { projectId: null, taskId: null, userId: null, sessionId: null, hashes: new Set() };
+const created = { projectId: null, taskId: null, userId: null, sessionId: null, versionIds: new Set() };
 const BACKGROUND_TRANSLATE_WRITES = new Set(["/api/v1/translate", "/api/v1/translate/batch"]);
 // 2026-10-23：项目详情进入会显式写一条访问审计；仅放行该受控路径，恶意 SVG 对 /api/v1/projects 的写仍须被捕获。
 const PROJECT_VISIT_WRITE = /^\/api\/v1\/projects\/[0-9a-f-]{36}\/visit$/i;
@@ -211,7 +211,7 @@ async function cleanup() {
   if (s3 === null) s3 = createS3Client();
   const prefixes = [];
   if (created.projectId !== null) prefixes.push("projects/" + created.projectId + "/");
-  for (const hash of created.hashes) prefixes.push("previews/" + hash + "/");
+  for (const versionId of created.versionIds) prefixes.push("previews/versions/" + versionId + "/");
   for (const prefix of prefixes) await purgeS3Prefix(prefix).catch(() => 0);
   if (db === null) return;
   await db.query("begin");
@@ -319,7 +319,6 @@ async function createProjectTask(actorId) {
 async function uploadFile(input) {
   const bytes = Buffer.from(input.bytes);
   const contentHash = sha256(bytes);
-  created.hashes.add(contentHash);
   const body = {
     projectId: created.projectId,
     name: input.name,
@@ -358,6 +357,7 @@ async function uploadFile(input) {
     if (error !== null && typeof error === "object") error.uploadAttempt = { fileId, uploadId };
     throw error;
   }
+  created.versionIds.add(completed.version.id);
   return {
     id: fileId,
     versionId: completed.version.id,

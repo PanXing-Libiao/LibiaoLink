@@ -8,7 +8,7 @@ import { AppError } from "../common/errors/app-error.js";
  * 约定：
  * - 调用方只消费「预签名地址」与「存储侧权威状态」，不接触任何厂商专属 API；
  * - 分片状态以对象存储 ListParts 为唯一真相（**不落 `upload_parts` 表**，2026-09-18 评审定案）；
- * - api 只签名与登记元数据，不代理大文件流量（ADR-006 工程要点）。
+ * - 分片与下载直传；api 在完成上传时流式核验实际 SHA-256，不把整份文件读入内存（ADR-006 工程要点）。
  *
  * 端口用抽象类而非 interface：NestJS 以类作为注入令牌，消费方无需 `@Inject`。
  */
@@ -131,7 +131,7 @@ export interface PurgePrefixResult extends PurgeObjectResult {
 export abstract class ObjectStorage {
   abstract readonly bucket: string;
 
-  /** CAD 持久产物流式读；适配器覆盖以避免整份模型进入 API 内存。 */
+  /** 上传完整性核验 / CAD 持久产物流式读；适配器覆盖以避免整份文件进入 API 内存。 */
   async getObjectStream(objectKey: string): Promise<ObjectStreamResult | null> {
     const object = await this.getObject(objectKey);
     return object === null ? null : { stream: Readable.from([object.bytes]), sizeBytes: object.sizeBytes, contentType: object.contentType };
@@ -184,8 +184,8 @@ export abstract class ObjectStorage {
   /**
    * 写对象字节（M4-05c：预览产物回对象存储）。
    *
-   * 键内含三元组版本（`previews/{contentHash}/{pipelineVersion}/{target}`，ADR-007），
-   * 同键重写只在「同一内容 + 同一管线版本 + 同一通道」发生，属幂等覆盖。
+   * 键内含三元组版本（`previews/versions/{versionId}/{contentHash}/{pipelineVersion}/{target}`，ADR-007），
+   * 同键重写只在「同一版本 + 同一内容 + 同一管线版本 + 同一通道」发生，属幂等覆盖。
    */
   abstract putObject(input: PutObjectInput): Promise<{ etag: string | null }>;
   /**
