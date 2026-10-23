@@ -15,7 +15,7 @@ export const AUDIT_ACTIONS = ["create", "update", "delete", "progress", "complet
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
 /** 审计对象类型（与契约 AUDIT_OBJECT_TYPES 同口径）。 */
-export const AUDIT_OBJECT_TYPES = ["project", "project_member", "task", "node", "stage", "dict_item", "blueprint", "calendar_day", "calendar_settings", "file", "change", "stakeholder", "daily_report", "issue", "task_node", "task_template", "user", "wecom_dm_binding"];
+export const AUDIT_OBJECT_TYPES = ["project", "project_member", "task", "node", "stage", "dict_item", "blueprint", "calendar_day", "calendar_settings", "file", "change", "stakeholder", "daily_report", "issue", "task_node", "task_template", "user", "wecom_dm_binding", "automation_rule", "notify_delivery", "group_access_rule"];
 export type AuditObjectType = (typeof AUDIT_OBJECT_TYPES)[number];
 
 /** 审计结果：成功 / 越权拒绝（C7-03）/ 失败（门禁拒绝等）。 */
@@ -56,6 +56,9 @@ export const AUDIT_OBJECT_TYPE_LABELS: Record<string, string> = {
   task_template: "任务模板",
   user: "系统用户",
   wecom_dm_binding: "企微绑定验证",
+  automation_rule: "自动化规则",
+  notify_delivery: "发送记录",
+  group_access_rule: "群组权限规则",
 };
 
 export const AUDIT_RESULT_LABELS: Record<string, string> = {

@@ -10,15 +10,33 @@
 import { useSyncExternalStore } from "react";
 import { apiRequest } from "./api";
 
+export const GROUP_ACCESS_PAGE_KEYS = ["dashboard", "projects", "templates", "workspace", "files", "audit"] as const;
+export type GroupAccessPage = (typeof GROUP_ACCESS_PAGE_KEYS)[number];
+
 export type MyPermissions = {
   /** 角色码（roles.code；多角色并集），排障 / 调试用。 */
   roleCodes: string[];
   /** 功能权限位并集（role_permissions ↔ 契约 PERMISSION_KEYS）。 */
   permissionKeys: string[];
+  /** 当前账号 Casdoor 群组键（owner/name）。 */
+  groupKeys: string[];
+  /** 群组访问限制下的可进入页面；管理员 / 开关关闭时为全量。 */
+  pageKeys: GroupAccessPage[];
+  groupAccessEnforced: boolean;
+  groupAccessAdmin: boolean;
 };
 
 type PermissionMeResponse = {
-  permissions: { userId: string; roleCodes: string[]; dataScopes: string[]; permissionKeys: string[] };
+  permissions: {
+    userId: string;
+    roleCodes: string[];
+    dataScopes: string[];
+    permissionKeys: string[];
+    groupKeys?: string[];
+    pageKeys?: GroupAccessPage[];
+    groupAccessEnforced?: boolean;
+    groupAccessAdmin?: boolean;
+  };
 };
 
 let pending: Promise<MyPermissions> | null = null;
@@ -35,7 +53,14 @@ export function loadMyPermissions(refresh = false): Promise<MyPermissions> {
   if (pending !== null) return pending;
   pending = apiRequest<PermissionMeResponse>("/api/v1/permissions/me")
     .then((payload) => {
-      snapshot = { roleCodes: payload.permissions.roleCodes, permissionKeys: payload.permissions.permissionKeys };
+      snapshot = {
+        roleCodes: payload.permissions.roleCodes,
+        permissionKeys: payload.permissions.permissionKeys,
+        groupKeys: payload.permissions.groupKeys ?? [],
+        pageKeys: payload.permissions.pageKeys ?? [...GROUP_ACCESS_PAGE_KEYS],
+        groupAccessEnforced: payload.permissions.groupAccessEnforced === true,
+        groupAccessAdmin: payload.permissions.groupAccessAdmin === true,
+      };
       for (const listener of listeners) listener();
       return snapshot;
     })
@@ -50,4 +75,9 @@ export function loadMyPermissions(refresh = false): Promise<MyPermissions> {
 /** 是否持有某个功能权限位（画像未拿到 = false：入口按「无权限」呈现）。 */
 export function hasPermission(permissions: MyPermissions | null, key: string): boolean {
   return permissions !== null && permissions.permissionKeys.includes(key);
+}
+
+/** 页面是否放行：画像未到时乐观放行（服务端逐请求仍是最终裁决）。 */
+export function hasPageAccess(permissions: MyPermissions | null, page: GroupAccessPage): boolean {
+  return permissions === null || permissions.pageKeys.includes(page);
 }

@@ -1,8 +1,11 @@
 import { Injectable } from "@nestjs/common";
-import { and, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import type { GroupAccessPage, GroupAccessProjectScope, GroupAccessRuleInput } from "@libiaolink/contracts";
 import { DatabaseService } from "../../db/database.service.js";
+import { groupAccessRules, projectGroupAccess, userGroupMemberships } from "../../db/schema/access.js";
 import { projectNodes } from "../../db/schema/flow.js";
 import { projectMembers, projects } from "../../db/schema/projects.js";
+import type { GroupAccessRuleData } from "./group-access.rules.js";
 import { visibleProjectIds, type ProjectScopeSpec } from "./permission.rules.js";
 
 /** 项目数据面引用：可见性解析需要的项目主数据字段（不做软删过滤，由调用方判定）。 */
@@ -95,5 +98,155 @@ export class PermissionRepository {
       .where(eq(projectNodes.id, nodeId))
       .limit(1);
     return rows[0]?.projectId ?? null;
+  }
+
+  // ---------- 群组访问（0068） ----------
+
+  async listUserGroupKeys(userId: string): Promise<string[]> {
+    const rows = await this.database.db
+      .select({ groupKey: userGroupMemberships.groupKey })
+      .from(userGroupMemberships)
+      .where(eq(userGroupMemberships.userId, userId));
+    return rows.map((row) => row.groupKey);
+  }
+
+  /** 给定群组的规则 + selected 项目白名单（多群组由策略层取并集）。 */
+  async listGroupAccessRules(groupKeys: readonly string[]): Promise<GroupAccessRuleData[]> {
+    if (groupKeys.length === 0) return [];
+    const rows = await this.database.db
+      .select({
+        groupKey: groupAccessRules.groupKey,
+        allowedPages: groupAccessRules.allowedPages,
+        projectScope: groupAccessRules.projectScope,
+      })
+      .from(groupAccessRules)
+      .where(inArray(groupAccessRules.groupKey, groupKeys));
+    const selectedKeys = rows.filter((row) => row.projectScope === "selected").map((row) => row.groupKey);
+    const projectIdsByGroup = new Map<string, string[]>();
+    if (selectedKeys.length > 0) {
+      const mappings = await this.database.db
+        .select({ groupKey: projectGroupAccess.groupKey, projectId: projectGroupAccess.projectId })
+        .from(projectGroupAccess)
+        .where(inArray(projectGroupAccess.groupKey, selectedKeys));
+      for (const mapping of mappings) {
+        const ids = projectIdsByGroup.get(mapping.groupKey) ?? [];
+        ids.push(mapping.projectId);
+        projectIdsByGroup.set(mapping.groupKey, ids);
+      }
+    }
+    return rows.map((row) => ({
+      groupKey: row.groupKey,
+      allowedPages: row.allowedPages as GroupAccessPage[],
+      projectScope: row.projectScope as GroupAccessProjectScope,
+      projectIds: projectIdsByGroup.get(row.groupKey) ?? [],
+    }));
+  }
+
+  /** 权限管理页：当前目录观察到的人与群组。 */
+  async listObservedGroups(): Promise<Array<{ groupKey: string; groupName: string; memberCount: number }>> {
+    const rows = await this.database.db
+      .select({
+        groupKey: userGroupMemberships.groupKey,
+        groupName: userGroupMemberships.groupName,
+        userId: userGroupMemberships.userId,
+      })
+      .from(userGroupMemberships);
+    const byKey = new Map<string, { groupName: string; users: Set<string> }>();
+    for (const row of rows) {
+      const entry = byKey.get(row.groupKey) ?? { groupName: row.groupName, users: new Set<string>() };
+      entry.users.add(row.userId);
+      byKey.set(row.groupKey, entry);
+    }
+    return Array.from(byKey.entries())
+      .map(([groupKey, entry]) => ({ groupKey, groupName: entry.groupName, memberCount: entry.users.size }))
+      .sort((left, right) => left.groupKey.localeCompare(right.groupKey));
+  }
+
+  async listAccessRules(): Promise<GroupAccessRuleData[]> {
+    const rows = await this.database.db
+      .select({
+        groupKey: groupAccessRules.groupKey,
+        allowedPages: groupAccessRules.allowedPages,
+        projectScope: groupAccessRules.projectScope,
+      })
+      .from(groupAccessRules)
+      .orderBy(asc(groupAccessRules.groupKey));
+    const mappings = await this.database.db
+      .select({ groupKey: projectGroupAccess.groupKey, projectId: projectGroupAccess.projectId })
+      .from(projectGroupAccess);
+    const projectIdsByGroup = new Map<string, string[]>();
+    for (const mapping of mappings) {
+      const ids = projectIdsByGroup.get(mapping.groupKey) ?? [];
+      ids.push(mapping.projectId);
+      projectIdsByGroup.set(mapping.groupKey, ids);
+    }
+    return rows.map((row) => ({
+      groupKey: row.groupKey,
+      allowedPages: row.allowedPages as GroupAccessPage[],
+      projectScope: row.projectScope as GroupAccessProjectScope,
+      projectIds: projectIdsByGroup.get(row.groupKey) ?? [],
+    }));
+  }
+
+  async listAccessProjects(): Promise<Array<{ id: string; code: string; name: string }>> {
+    return this.database.db
+      .select({ id: projects.id, code: projects.code, name: projects.name })
+      .from(projects)
+      .where(isNull(projects.deletedAt))
+      .orderBy(asc(projects.code));
+  }
+
+  async listExistingProjectIds(projectIds: readonly string[]): Promise<string[]> {
+    if (projectIds.length === 0) return [];
+    const rows = await this.database.db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(and(inArray(projects.id, projectIds), isNull(projects.deletedAt)));
+    return rows.map((row) => row.id);
+  }
+
+  async upsertGroupAccessRule(
+    groupKey: string,
+    groupName: string,
+    allowedPages: readonly GroupAccessPage[],
+    projectScope: GroupAccessProjectScope,
+    projectIds: readonly string[],
+    at: Date,
+  ): Promise<void> {
+    await this.database.db.transaction(async (tx) => {
+      await tx
+        .insert(groupAccessRules)
+        .values({ groupKey, groupName, allowedPages: [...allowedPages], projectScope, updatedAt: at })
+        .onConflictDoUpdate({
+          target: groupAccessRules.groupKey,
+          set: { groupName, allowedPages: [...allowedPages], projectScope, updatedAt: at },
+        });
+      await tx.delete(projectGroupAccess).where(eq(projectGroupAccess.groupKey, groupKey));
+      if (projectScope === "selected" && projectIds.length > 0) {
+        await tx.insert(projectGroupAccess).values(projectIds.map((projectId) => ({ projectId, groupKey })));
+      }
+    });
+  }
+
+  async deleteGroupAccessRule(groupKey: string): Promise<boolean> {
+    const deleted = await this.database.db
+      .delete(groupAccessRules)
+      .where(eq(groupAccessRules.groupKey, groupKey))
+      .returning({ groupKey: groupAccessRules.groupKey });
+    return deleted.length > 0;
+  }
+
+  async findGroupAccessRule(groupKey: string): Promise<GroupAccessRuleData | null> {
+    const rows = await this.listGroupAccessRules([groupKey]);
+    return rows[0] ?? null;
+  }
+
+  async findRuleMetadata(groupKey: string): Promise<{ groupName: string; updatedAt: Date } | null> {
+    const rows = await this.database.db
+      .select({ groupName: groupAccessRules.groupName, updatedAt: groupAccessRules.updatedAt })
+      .from(groupAccessRules)
+      .where(eq(groupAccessRules.groupKey, groupKey))
+      .limit(1);
+    return rows[0] ?? null;
   }
 }

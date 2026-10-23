@@ -73,6 +73,7 @@ PostgreSQL 基线的唯一来源：只追加的迁移脚本、最小权限角色
 | `migrations/0063_wecom_dm_messages_enabled.sql` | 企微单聊消息开关（2026-10-20）：`wecom_aibot_dm_activations` 增 `messages_enabled boolean not null default true`，绑定 / 换绑默认开启；关闭后停止外发并转站内信留档；站内信写库成功即按 outbox done 收口。只追加、存量绑定行由默认值回填为开启；回滚语句入头注。 |
 | `migrations/0065_notification_inbox_delete.sql` | 站内信删除（2026-10-23）：`notifications` 增 `deleted_at timestamptz`（可空）= 用户从本人收件箱删除时刻；读面 / 未读计数 / 合并目标 / 稍后提醒扫描 / 标记与删除写口过滤 `deleted_at is null`。只软删隐藏，不物理删行，C5-03 全量留档、合并子行与 `notify_delivery_messages` 保留；每日投递上限历史计数不变。只追加、无存量回填；回滚语句入头注。 |
 | `migrations/0066_audit_visit_action.sql` | 审计动作访问（2026-10-23）：`ck_audit_logs_action` 由十一值扩为十二值，新增 `visit`（紧随 `archive`，再保留 `preview` / `download` / `deny`）；项目详情进入与登录成功记 `visit`，预览实际送达恢复写 `preview`。只追加、无存量回填；回滚语句入头注。 |
+| `migrations/0068_group_access.sql` | Casdoor 群组访问控制（2026-10-23 · 群组页面 / 项目限制）：① 新建 `user_group_memberships`（`user_id` + `group_key` 主键，群组键统一 `owner/name`，登录令牌 `groups` / 目录同步写入，令牌缺声明不清空）；② 新建 `group_access_rules`（页面集合 `allowed_pages` + `project_scope` = all / selected / none，CHECK 限定枚举）；③ 新建 `project_group_access`（selected 规则的项目白名单，项目 / 规则删除级联）。只追加、无存量回填；应用角色随 roles/0001 default privileges 自动授权，迁移须由 `libiaolink_migrator` 执行。 |
 | `seeds/README.md` | 种子数据规格（M0-03 · Push 73）：可重跑、幂等、与迁移分离 |
 | `seeds/roles.mjs` / `seeds/index.mjs` | 种子 #6a：一期六个内置角色（h1 · Push 74）；index 为按序注册表，新种子追加到末尾 |
 | `seeds/blueprint.mjs` | 种子 #7：default 蓝图模板（9 阶段 19 节点 + 版本 1，h3 · Push 83）；节点清单待业务补全，库内已修订时不覆盖 |

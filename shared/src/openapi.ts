@@ -188,6 +188,11 @@ import {
 } from "./modules/calendar.ts";
 import { PermissionMeResponseSchema } from "./modules/permissions.ts";
 import {
+  GroupAccessOverviewSchema,
+  GroupAccessRuleInputSchema,
+  GroupAccessRuleResponseSchema,
+} from "./modules/group-access.ts";
+import {
   ChangeRequestDetailSchema,
   ChangeRequestListQuerySchema,
   ChangeRequestListResponseSchema,
@@ -1389,6 +1394,48 @@ export function buildOpenApiDocument() {
     },
   });
 
+  // ---- 群组访问规则（Casdoor Groups · 2026-10-23） ----
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/access",
+    tags: ["access"],
+    summary: "群组权限管理概览（仅群组管理员）：开关、当前账号群组、可配置群组与项目",
+    responses: {
+      200: { description: "群组权限概览", ...json(GroupAccessOverviewSchema) },
+      401: commonErrors[401],
+      403: commonErrors[403],
+    },
+  });
+
+  registry.registerPath({
+    method: "put",
+    path: "/api/v1/access/rules",
+    tags: ["access"],
+    summary: "保存群组页面与项目规则（仅群组管理员；projectScope=selected 时写项目白名单）",
+    request: { body: json(GroupAccessRuleInputSchema) },
+    responses: {
+      200: { description: "保存后的规则", ...json(GroupAccessRuleResponseSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+    },
+  });
+
+  registry.registerPath({
+    method: "delete",
+    path: "/api/v1/access/rules",
+    tags: ["access"],
+    summary: "删除群组访问规则（仅群组管理员；规则不存在 404）",
+    request: { query: z.object({ groupKey: z.string().trim().min(1).max(200) }) },
+    responses: {
+      204: { description: "已删除" },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+    },
+  });
+
   // ---- 认证与会话（根路径 /auth/*，浏览器直接导航；ADR-010） ----
   registry.registerPath({
     method: "get",
@@ -2328,6 +2375,7 @@ export function buildOpenApiDocument() {
       { name: "files", description: "文件、版本、上传、定档与回收站（v0.2 §5.1-5.2 / A4）" },
       { name: "users", description: "用户目录与用户偏好（A2 / A4；M1）" },
       { name: "permissions", description: "权限画像与策略出口（ADR-011；PoC-6 权限矩阵与脱敏五出口）" },
+      { name: "access", description: "群组访问规则（Casdoor Groups）：页面与项目范围配置，仅群组管理员" },
       { name: "dicts", description: "数据字典下发（A3；region / projectType，含主题色元数据）" },
       { name: "audit", description: "操作审计（C7）：关键操作留痕、按对象 / 操作人检索与越权尝试（admin 模块）" },
       { name: "calendar", description: "工作日历（D5）：日历维护 / 顺延规则配置 / T-1·T+1 求值（h8）" },

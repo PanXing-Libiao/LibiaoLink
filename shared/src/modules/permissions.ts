@@ -1,5 +1,6 @@
 import { z } from "../zod.ts";
 import { UuidSchema } from "../common/conventions.ts";
+import { GroupAccessPageSchema } from "./group-access.ts";
 
 /**
  * 功能权限位（模块.操作）—— 本数组是唯一来源：数据库 role_permissions.permission 的 CHECK 同形
@@ -47,6 +48,7 @@ export const PERMISSION_KEYS = [
   "automation.manage",
   "notify.record.view",
   "notify.resend",
+  "access.manage",
 ] as const;
 
 export const PermissionKeySchema = z
@@ -74,6 +76,10 @@ export const ActorPermissionsSchema = z
     roleCodes: z.array(z.string()).openapi({ example: ["project_manager"], description: "角色码（roles.code；多角色并集）" }),
     dataScopes: z.array(DataScopeSchema).openapi({ description: "数据范围并集（由宽到窄）" }),
     permissionKeys: z.array(PermissionKeySchema).openapi({ description: "功能权限位并集（role_permissions）" }),
+    groupKeys: z.array(z.string()).optional().openapi({ description: "当前账号的 Casdoor 群组键（owner/name；按登录或目录同步落地）" }),
+    pageKeys: z.array(GroupAccessPageSchema).optional().openapi({ description: "GROUP_ACCESS_ENFORCED=true 时当前账号可进入的页面；管理员为全量" }),
+    groupAccessEnforced: z.boolean().optional().openapi({ description: "群组访问限制是否已启用" }),
+    groupAccessAdmin: z.boolean().optional().openapi({ description: "当前账号是否可进入群组权限管理页" }),
   })
   .openapi("ActorPermissions", { description: "当前用户授权画像（角色 + 数据范围 + 功能权限位）" });
 

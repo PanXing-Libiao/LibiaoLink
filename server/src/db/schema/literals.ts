@@ -125,6 +125,12 @@ export const NOTIFICATION_TYPE_KEYS = ["reminder", "approval", "broadcast", "sys
 /** 通知状态（notifications.status，S7-4 · C5-01）：与契约 NOTIFICATION_STATUSES 同序同值。 */
 export const NOTIFICATION_STATUS_KEYS = ["unread", "read", "handled"] as const;
 
+/** 群组可访问页面（group_access_rules.allowed_pages）：与契约 GROUP_ACCESS_PAGE_KEYS 同序同值。 */
+export const GROUP_ACCESS_PAGE_KEYS = ["dashboard", "projects", "templates", "workspace", "files", "audit"] as const;
+
+/** 群组项目范围（group_access_rules.project_scope）：全部 / 指定 / 不可见。 */
+export const GROUP_ACCESS_PROJECT_SCOPE_KEYS = ["all", "selected", "none"] as const;
+
 /** 数组字面量（CHECK 用：`<@ array[… ]::text[]`）；sqlValueList 只服务 `in (…)`。 */
 export function sqlArrayLiteral(values: readonly string[]): string {
   const quote = String.fromCharCode(39);

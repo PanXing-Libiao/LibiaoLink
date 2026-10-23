@@ -124,6 +124,7 @@ export type Route =
   | { kind: "project"; id: string; view: ProjectView; sub: DailySubView }
   | { kind: "placeholder"; page: PlaceholderPage; section: string | null }
   | { kind: "audit"; query: AuditQueryState }
+  | { kind: "access" }
   | { kind: "settings" }
   | { kind: "files"; query: FilesQueryState };
 
@@ -151,6 +152,9 @@ export const AUDIT_BASE_HASH = "#/audit";
 
 /** 「文件库」页地址（头像菜单「文件库」入口；系统现有文件 / 文件回收站 / 项目回收站三栏 + 筛选态走 query）—— Push 261。 */
 export const FILES_BASE_HASH = "#/files";
+
+/** 「权限管理」页地址（头像菜单入口 · 2026-10-23）：按 Casdoor 群组配置页面与项目范围。 */
+export const ACCESS_BASE_HASH = "#/access";
 
 /**
  * 「企微绑定」页地址（头像菜单「企微绑定」入口 · Push 250）：账号级设置的家（当前 = 企微单聊绑定 + 项目群绑定）。
@@ -608,6 +612,9 @@ export function parseHash(hash: string): Route {
     // 页面 = frontend/src/FileLibraryPage.tsx，数据 = 逐项目聚合 GET /projects/{id}/files（fileApi.fetchProjectFileLibrary）。
     return { kind: "files", query: parseFilesQuery(search) };
   }
+  if (path === "/access") {
+    return { kind: "access" };
+  }
   if (path === "/settings") {
     // 企微绑定（Push 250 · 头像菜单首项入口 · 业务口径 2026-10-16「在点击用户右上角头像后的列表中添加一个设置页」）：
     // 账号级设置的家 —— 当前落点 = 企业微信绑定（D5 / D6 绑定码链路）；页面 = frontend/src/SettingsPage.tsx。
@@ -875,6 +882,8 @@ function resolveInitialRoute(): { route: Route; restored: boolean; normalized: b
   return { route: { kind: "list", filters: restoredFilters }, restored: true, normalized: false };
 }
 
+const initialBareRoot = typeof window !== "undefined" && isBareRootHash(window.location.hash);
+
 const initial =
   typeof window === "undefined"
     ? { route: { kind: "list", filters: EMPTY_LIST_QUERY } as Route, restored: false, normalized: false }
@@ -955,6 +964,11 @@ export function useHashRoute(): Route {
 /** 初始加载是否由本地记忆恢复而来（项目空间列表据此区分「书签入口」与「带参数链接」两种初始态）。 */
 export function initialRouteRestored(): boolean {
   return initial.restored;
+}
+
+/** 初始地址是否为裸根（登录回跳 / 直入域名）：群组画像到达后据此改落首个可访问页面，显式深链仍保留 403。 */
+export function initialRouteFromRoot(): boolean {
+  return initialBareRoot;
 }
 
 /** 更新筛选态：同步渲染并写入 URL（replace，不新增历史条目）。 */

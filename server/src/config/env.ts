@@ -30,6 +30,13 @@ export const EnvSchema = z
      * 只影响**裁定**，不动数据：用户偏好（常用筛选 / 醒目模式 / 任务表列显隐）仍按账号各存一行（user_preferences）。
      */
     PERMISSION_ENFORCED: z.enum(["true", "false"]).default("false"),
+    /**
+     * 群组访问限制（2026-10-23）：独立于 PERMISSION_ENFORCED。true = 按 Casdoor 群组规则收敛页面与项目；
+     * false（默认）= 规则只可配置、不参与裁定，避免 Group 声明尚未下发时锁死全员。
+     */
+    GROUP_ACCESS_ENFORCED: z.enum(["true", "false"]).default("false"),
+    /** 权限管理员群组键（逗号分隔；例 libiaorobot.com/系统管理员）。开启 GROUP_ACCESS_ENFORCED 时必填。 */
+    GROUP_ACCESS_ADMIN_GROUP_KEYS: z.string().default(""),
     // ---- 对象存储（ADR-006：S3 协议抽象 + 一期 MinIO 单节点；本地沙箱见 deploy/minio/） ----
     S3_ENDPOINT: z.string().min(1).default("http://127.0.0.1:9000"),
     S3_REGION: z.string().min(1).default("us-east-1"),
@@ -298,6 +305,13 @@ export const EnvSchema = z
           path: ["NOTIFY_QUIET_HOURS"],
         });
       }
+    }
+    if (value.GROUP_ACCESS_ENFORCED === "true" && value.GROUP_ACCESS_ADMIN_GROUP_KEYS.trim() === "") {
+      context.addIssue({
+        code: "custom",
+        message: "开启 GROUP_ACCESS_ENFORCED 时必须配置 GROUP_ACCESS_ADMIN_GROUP_KEYS（否则无人能进入权限管理）",
+        path: ["GROUP_ACCESS_ADMIN_GROUP_KEYS"],
+      });
     }
     if (value.NODE_ENV !== "production") {
       return;

@@ -1,4 +1,5 @@
 import { AppError } from "../../common/errors/app-error.js";
+import { readCasdoorGroupKeys } from "./casdoor-groups.js";
 import type { OrgDepartmentRecord, OrgDirectorySnapshot, OrgUserRecord } from "./org-sync.service.js";
 
 /**
@@ -22,23 +23,25 @@ export interface CasdoorDirectorySettings {
 }
 
 /** 归一化：目录用户 → 同步记录；缺 id / name 的脏行返回 null（调用方跳过）。 */
-export function normalizeCasdoorUser(raw: unknown): OrgUserRecord | null {
+export function normalizeCasdoorUser(raw: unknown, owner: string | null = null): OrgUserRecord | null {
   if (!isRecord(raw)) return null;
   const casdoorId = firstString(raw.id);
   const username = firstString(raw.name);
   if (casdoorId === null || username === null) return null;
   const isForbidden = raw.isForbidden === true;
   const isDeleted = raw.isDeleted === true;
+  const claimOwner = firstString(raw.owner) ?? owner;
   return {
     casdoorId,
     username,
     displayName: firstString(raw.displayName) ?? username,
     email: firstString(raw.email),
     status: isForbidden || isDeleted ? "disabled" : "active",
+    groups: readCasdoorGroupKeys(raw.groups, claimOwner) ?? undefined,
   };
 }
 
-/** 归一化：目录群组 → 部门记录（sourceId = group name，同 owner 内唯一）；isDeleted 组跳过（走缺失停用）。 */
+/** 归一化：目录群组 → 部门记录（sourceId = group name，组织同步只面对单一 owner）；isDeleted 组跳过（走缺失停用）。 */
 export function normalizeCasdoorGroup(raw: unknown): OrgDepartmentRecord | null {
   if (!isRecord(raw)) return null;
   if (raw.isDeleted === true) return null;
@@ -78,7 +81,7 @@ export class CasdoorDirectorySource {
       const items = parseListPayload(payload, "get-users");
       let added = 0;
       for (const item of items) {
-        const record = normalizeCasdoorUser(item);
+        const record = normalizeCasdoorUser(item, this.settings.owner);
         if (record === null || seen.has(record.casdoorId)) continue;
         seen.add(record.casdoorId);
         collected.push(record);

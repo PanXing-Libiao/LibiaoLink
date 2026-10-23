@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { startLiveSync } from "./liveSync";
 import { applyInboxUnread, noteInboxNotification, refreshInboxUnread } from "./inbox";
 import { useLiveRefresh } from "./useLiveRefresh";
+import { AccessControlPage } from "./AccessControlPage";
 import { AuditLogPage } from "./AuditLogPage";
 import { FileLibraryPage } from "./FileLibraryPage";
 import { SettingsPage } from "./SettingsPage";
@@ -13,6 +14,7 @@ import WorkspacePage from "./WorkspacePage";
 import { ApiError, apiFetch, redirectToLogin } from "./api";
 import { applyBackgroundTier, applyCardWatermark, asBackgroundTier, asCardWatermark } from "./backgroundTier";
 import { applyLocale, asLocale, getLocale, textOf, useT, type TextKey } from "./i18n";
+import { AppHeader } from "./components/AppHeader";
 import { Loader } from "./components/Loader";
 import { Toast, ToastConfirm } from "./components/Toast";
 import { ExportProgressOverlay } from "./components/ExportProgressOverlay";
@@ -20,7 +22,8 @@ import { useFocusTrap } from "./components/useFocusTrap";
 import { BindingGuideModal } from "./components/BindingGuideModal";
 import { ProjectModal, type ProjectDraft, type ProjectSubmitResult } from "./components/ProjectModal";
 import type { DictTools } from "./dictTools";
-import { hasPermission, loadMyPermissions, useMyPermissions } from "./permissions";
+import { hasPageAccess, hasPermission, loadMyPermissions, useMyPermissions, type GroupAccessPage } from "./permissions";
+import { firstAllowedHref } from "./accessRoutes";
 import {
   createDictItem,
   deleteDictItem,
@@ -36,7 +39,17 @@ import { archiveProject, createProject, deleteProject, downloadProjectWorkbook, 
 import { loadMyPreferences, loadMyPreferencesWithLegacyMigration, saveHomeSavedFilters, saveTaskTableHiddenColumns, saveHubDashProject, saveHubDashView, saveHubView, saveWorkspaceOpenProjects, type WorkspaceOpenProjects } from "./preferencesApi";
 import type { SavedFilter } from "./savedFilters";
 import { asHubDashView, type HubDashView } from "./data/dashboardProgress";
-import { asHubView, replaceAuditQuery, replaceFilesQuery, replaceWorkspaceSub, replaceWorkspaceTab, useHashRoute, type HubView } from "./useHashRoute";
+import {
+  asHubView,
+  initialRouteFromRoot,
+  replaceAuditQuery,
+  replaceFilesQuery,
+  replaceWorkspaceSub,
+  replaceWorkspaceTab,
+  useHashRoute,
+  type HubView,
+  type Route,
+} from "./useHashRoute";
 import { projectStatusOf, type MeResponse, type Project } from "./types";
 
 type ViewState =
@@ -44,6 +57,37 @@ type ViewState =
   | { kind: "signed-out" }
   | { kind: "signed-in"; me: MeResponse }
   | { kind: "error"; message: string };
+
+/** 地址 → 所属群组页面。项目详情算项目空间内，设置页与权限管理另判。 */
+function groupPageOfRoute(route: Route): GroupAccessPage | null {
+  if (route.kind === "hub") return "dashboard";
+  if (route.kind === "list" || route.kind === "project") return "projects";
+  if (route.kind === "placeholder") return "templates";
+  if (route.kind === "workspace") return "workspace";
+  if (route.kind === "files") return "files";
+  if (route.kind === "audit") return "audit";
+  return null;
+}
+
+/** 直链无权限时的明确落点；菜单隐藏只是呈现层，这里仍以服务端画像为准。 */
+function PageAccessDenied({ me, backHref }: { me: MeResponse; backHref: string }) {
+  const t = useT();
+  return (
+    <>
+      <AppHeader me={me} />
+      <main className="w-full px-4 pb-10 pt-3 sm:px-6">
+        <div data-access-denied="" className="mx-auto mt-12 max-w-xl rounded-2xl border border-zinc-200 bg-white p-8 text-center shadow-sm">
+          <p className="text-xs font-semibold tracking-wide text-zinc-400">403</p>
+          <h1 className="mt-2 text-lg font-semibold text-zinc-900">{t("access.denied.title")}</h1>
+          <p className="mt-2 text-sm leading-6 text-zinc-500">{t("access.denied.desc")}</p>
+          <a href={backHref} className="mt-5 inline-flex rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800">
+            {t("access.denied.back")}
+          </a>
+        </div>
+      </main>
+    </>
+  );
+}
 
 /** 写失败 → 面向业务的提示（错误码口径《前端功能需求》§3.7）。 */
 function errorMessageOf(error: unknown, fallback: string): string {
@@ -148,6 +192,16 @@ export default function App() {
   /** 键盘焦点陷阱（Push 264 追订）：删除确认条开着时焦点进条内（初始焦点不再留在背景卡片）、Tab 在条内循环、关闭还原。 */
   const deleteConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDelete !== null);
   const route = useHashRoute();
+  /** 登录回跳 / 直入域名的裸根入口：群组画像到达后，默认项目空间无权时自动落到首个可访问页面；显式深链仍保留 403。 */
+  const initialLandingSettled = useRef(false);
+  useEffect(() => {
+    if (state.kind !== "signed-in" || permissions === null || initialLandingSettled.current || !initialRouteFromRoot()) return;
+    initialLandingSettled.current = true;
+    const requiredPage = groupPageOfRoute(route);
+    if (requiredPage === null || hasPageAccess(permissions, requiredPage)) return;
+    const href = firstAllowedHref(permissions);
+    if (href !== window.location.hash) window.location.hash = href.slice(1);
+  }, [permissions, route, state.kind]);
 
   const signedIn = state.kind === "signed-in";
   /** 站内信红点（Push 352）：登录后先按读面补拉一次角标（SSE 未连上也有数），随后由 unread 快照驱动；
@@ -718,6 +772,14 @@ export default function App() {
     );
   }
 
+  const requiredPage = groupPageOfRoute(route);
+  const pageDenied = requiredPage !== null && !hasPageAccess(permissions, requiredPage);
+  const accessDenied = route.kind === "access" && permissions !== null && !permissions.groupAccessAdmin;
+  const auditDenied = route.kind === "audit" && permissions !== null && !hasPermission(permissions, "audit.view");
+  if (pageDenied || accessDenied || auditDenied) {
+    return <PageAccessDenied me={state.me} backHref={firstAllowedHref(permissions)} />;
+  }
+
   /**
    * 全局提示区：
    * ① 删除项目确认条（Push 172：卡片隐式删除的第二下）—— 非阻断式确认，统一为顶部同款确认 Toast；
@@ -882,6 +944,16 @@ export default function App() {
     return (
       <>
         <AuditLogPage me={state.me} query={route.query} onChangeQuery={replaceAuditQuery} directory={directory} />
+        {bottomBars}
+      </>
+    );
+  }
+
+  if (route.kind === "access") {
+    // 权限管理（2026-10-23 · 头像菜单入口）：按 Casdoor 群组配置页面与项目范围。
+    return (
+      <>
+        <AccessControlPage me={state.me} />
         {bottomBars}
       </>
     );
