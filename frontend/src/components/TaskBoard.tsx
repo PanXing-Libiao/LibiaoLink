@@ -5,7 +5,7 @@ import type { Member } from "../data/members";
 import type { TaskFileRef } from "../fileApi";
 import { TEMP_TASK_STAGE, addedNodeIdsOf, addedNodeKeysOf, dateOnlyText, daysBetweenInclusive, lateDeliveryLabel, ownersLabel, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
 import { stageNameOf, type ApiProjectSummary, type TaskUpdateInput } from "../taskApi";
-import { fieldText, mdText, priorityText, stageText, statusText, useLocale, useLocalizedText, useT } from "../i18n";
+import { fieldText, isLocalizedLocale, mdText, priorityText, stageText, statusText, useLocale, useLocalizedText, useT } from "../i18n";
 import { InlineDateCell, InlineMemberMultiCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { SelectOption } from "./SelectMenu";
 import { ChangeDetailModal } from "./ChangeDetailModal";
@@ -412,8 +412,8 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
    *  英文界面任务名按「自带英文名 titleEn 优先 → 机翻译文 → 原文」回退；副行给中文原名对照；中文界面照旧。 */
   const localizedTitle = useLocalizedText(task.title);
   const localizedNote = useLocalizedText(task.note);
-  const titleText = locale === "en" ? (task.titleEn !== "" ? task.titleEn : localizedTitle) : task.title;
-  const subText = locale === "en" ? (subtitle ?? (titleText === task.title ? "" : task.title)) : (subtitle ?? task.titleEn);
+  const titleText = isLocalizedLocale(locale) ? (locale === "en" && task.titleEn !== "" ? task.titleEn : localizedTitle) : task.title;
+  const subText = isLocalizedLocale(locale) ? (subtitle ?? (titleText === task.title ? "" : task.title)) : (subtitle ?? task.titleEn);
   /** 「是否按时交付」列的逾期标注（服务端展示态 + onTime 派生，前端不再本地算日期）。 */
   const late = lateDeliveryLabel(task);
   const status = task.status;
@@ -778,7 +778,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
         title={
           task.changes.length === 0
             ? undefined
-            : task.changes.map((change) => t("board.change.tip", { date: dateOnlyText(change.appliedAt) }) + (change.reason === "" ? "" : (locale === "en" ? " (" + change.reason + ")" : "（" + change.reason + "）"))).join(locale === "en" ? "; " : "；")
+            : task.changes.map((change) => t("board.change.tip", { date: dateOnlyText(change.appliedAt) }) + (change.reason === "" ? "" : (isLocalizedLocale(locale) ? " (" + change.reason + ")" : "（" + change.reason + "）"))).join(isLocalizedLocale(locale) ? "; " : "；")
         }
       >
         {task.changes.length === 0 ? null : (

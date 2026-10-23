@@ -40,8 +40,7 @@ import { useFocusTrap } from "./useFocusTrap";
 import type { Member } from "../data/members";
 import type { MeResponse, Project } from "../types";
 import { mediumCardBorderOf, mediumCardTintOf, vividCardBorderOf, vividCardTintOf, type TintedTier } from "../backgroundTier";
-import { fieldText, fullDateText, stageText, statusText, textOf, useLocale, useLocalizedTranslator, useT, type Locale } from "../i18n";
-import { prefetchZhToEn } from "../translateApi";
+import { fieldText, fullDateText, isLocalizedLocale, stageText, statusText, textOf, prefetchLocalizedText, useLocale, useLocalizedTranslator, useT, type Locale } from "../i18n";
 
 /**
  * 项目详情「日报及问题」视图（Push 128）：页内四块子视图 —— 日报填写 / 日报记录 / 问题追踪 / 问题看板。
@@ -617,7 +616,7 @@ function cnDateOf(iso: string): string {
 
 /** 日期显示（英文界面「Sep 16, 2026」/ 中文界面「YYYY年M月D日」—— Push 301 追订：与「我的任务」问题表同一套日期样式，不再用 ISO）。 */
 function isoDateText(locale: Locale, iso: string): string {
-  return locale === "en" ? fullDateText(locale, iso) : cnDateOf(iso);
+  return isLocalizedLocale(locale) ? fullDateText(locale, iso) : cnDateOf(iso);
 }
 
 /** 当天 ISO 日期（YYYY-MM-DD）。 */
@@ -1439,7 +1438,7 @@ function ReportList({ reports, onEdit, onPatch, onDelete }: {
                   {report.doneWork === "" ? (
                     <span className="text-zinc-300">—</span>
                   ) : (
-                    <span data-report-done="" title={locale === "en" ? report.doneWork : undefined} className="block whitespace-pre-line break-words">{localize(report.doneWork)}</span>
+                    <span data-report-done="" title={isLocalizedLocale(locale) ? report.doneWork : undefined} className="block whitespace-pre-line break-words">{localize(report.doneWork)}</span>
                   )}
                 </td>
                 <td className="min-w-[200px] whitespace-pre-line break-words border-b border-zinc-100 px-4 py-4 leading-6 text-zinc-700">
@@ -1447,7 +1446,7 @@ function ReportList({ reports, onEdit, onPatch, onDelete }: {
                   {report.plan === "" ? (
                     <span className="text-zinc-300">—</span>
                   ) : (
-                    <span data-report-plan="" title={locale === "en" ? report.plan : undefined} className="block whitespace-pre-line break-words">{localize(report.plan)}</span>
+                    <span data-report-plan="" title={isLocalizedLocale(locale) ? report.plan : undefined} className="block whitespace-pre-line break-words">{localize(report.plan)}</span>
                   )}
                 </td>
                 <td className="min-w-[440px] border-b border-zinc-100 px-4 py-4">
@@ -1524,7 +1523,7 @@ function IssueCard({ issue, onOpen, onPointerDownDrag, dragging = false, ghost =
       <span aria-hidden="true" className={CARD_NOISE} />
       <div className={CARD_BODY}>
         <Field label={fieldText(locale, "问题描述")} first>
-          <p data-issue-card-title="" title={locale === "en" ? issue.title : undefined} className="whitespace-pre-line break-words text-sm leading-5 text-zinc-900">{localize(issue.title)}</p>
+          <p data-issue-card-title="" title={isLocalizedLocale(locale) ? issue.title : undefined} className="whitespace-pre-line break-words text-sm leading-5 text-zinc-900">{localize(issue.title)}</p>
         </Field>
         <Field label={fieldText(locale, "问题归类")}>
           <CategoryTags values={issue.categories} />
@@ -1538,7 +1537,7 @@ function IssueCard({ issue, onOpen, onPointerDownDrag, dragging = false, ghost =
         </Field>
         {issue.solution === "" ? null : (
           <Field label={fieldText(locale, "解决方案或建议")}>
-            <p data-issue-card-solution="" title={locale === "en" ? issue.solution : undefined} className="whitespace-pre-line break-words text-sm leading-5 text-zinc-700">{localize(issue.solution)}</p>
+            <p data-issue-card-solution="" title={isLocalizedLocale(locale) ? issue.solution : undefined} className="whitespace-pre-line break-words text-sm leading-5 text-zinc-700">{localize(issue.solution)}</p>
           </Field>
         )}
         {issue.photos.length === 0 ? null : (
@@ -1891,7 +1890,7 @@ function IssueTable({ issues, tierTint, onEdit, onPatch, onDelete }: {
                     「问题归类」之间的空档，归类列（及其后各列）随之前移；描述 / 「提出人」小行仍按行换行，不截断。 */}
                 {/* Push 223（业务口径「文字和图片编辑要同款」）：问题描述改由行尾「编辑」弹窗落值 ——
                     表格里只做展示，不再是可点目标（点表格不进入任何编辑）。 */}
-                <span data-issue-title="" title={locale === "en" ? issue.title : undefined} className="block whitespace-pre-line break-words leading-6 text-zinc-800">{localize(issue.title)}</span>
+                <span data-issue-title="" title={isLocalizedLocale(locale) ? issue.title : undefined} className="block whitespace-pre-line break-words leading-6 text-zinc-800">{localize(issue.title)}</span>
                 <p className="mt-1 text-[11px] leading-4 text-zinc-400">{t("report.issue.reporter", { name: issue.reporter })}</p>
               </td>
               <td className="whitespace-nowrap px-4 py-4">
@@ -1919,7 +1918,7 @@ function IssueTable({ issues, tierTint, onEdit, onPatch, onDelete }: {
               </td>
               <td className="min-w-[280px] px-4 py-4">
                 {/* Push 223：解决方案或建议同上（展示only，编辑在行尾弹窗里做）。 */}
-                <span data-issue-solution="" title={locale === "en" ? issue.solution : undefined} className="block whitespace-pre-line break-words leading-6 text-zinc-600">{issue.solution === "" ? "—" : localize(issue.solution)}</span>
+                <span data-issue-solution="" title={isLocalizedLocale(locale) ? issue.solution : undefined} className="block whitespace-pre-line break-words leading-6 text-zinc-600">{issue.solution === "" ? "—" : localize(issue.solution)}</span>
               </td>
               <td className="min-w-[440px] px-4 py-4">
                 {/* 展示only（Push 223）：问题附图的增删 / 改名改由行尾「编辑」弹窗（AttachmentPicker）做（点图仍可看大图）。
@@ -2478,7 +2477,7 @@ function ReportFillForm({
         <label className="block">
           <span className={FORM_LABEL}>{fieldText(locale, "项目名称")}</span>
           <span data-field="projectName" className="mt-1 flex items-center rounded-lg border border-zinc-100 bg-zinc-50 px-2.5 py-2 text-sm text-zinc-600">
-            {localize(project.description)}{locale === "en" ? " (" + project.code + ")" : "（" + project.code + "）"}
+            {localize(project.description)}{isLocalizedLocale(locale) ? " (" + project.code + ")" : "（" + project.code + "）"}
           </span>
         </label>
         <div className="block">
@@ -2690,7 +2689,7 @@ function ReportFillForm({
           {t("report.saveDraft")}
         </button>
         <span data-fill-hint className={"text-xs " + (missing.length === 0 ? "text-zinc-400" : "text-rose-500")}>
-          {missing.length === 0 ? t("report.form.footer") : t("report.form.missing", { list: missing.join(locale === "en" ? ", " : "、") })}
+          {missing.length === 0 ? t("report.form.footer") : t("report.form.missing", { list: missing.join(isLocalizedLocale(locale) ? ", " : "、") })}
         </span>
       </div>
     </form>
@@ -2765,7 +2764,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
           value={issue.title}
           ariaLabel={t("rp.editTitleAria", { date: issue.raisedAt })}
           placeholder={t("report.placeholder.issueTitleSave")}
-          display={<span data-issue-title="" title={locale === "en" ? issue.title : undefined} className="block whitespace-pre-line break-words">{localize(issue.title)}</span>}
+          display={<span data-issue-title="" title={isLocalizedLocale(locale) ? issue.title : undefined} className="block whitespace-pre-line break-words">{localize(issue.title)}</span>}
           onSave={(text) => {
             onPatchIssue(issue.id, { title: renumberLines(text) });
           }}
@@ -2826,7 +2825,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
           value={issue.solution}
           ariaLabel={t("rp.editSolutionAria", { date: issue.raisedAt })}
           placeholder={t("report.placeholder.issueSuggestionSave")}
-          display={<span data-issue-solution="" title={locale === "en" ? issue.solution : undefined} className="block whitespace-pre-line break-words">{issue.solution === "" ? "—" : localize(issue.solution)}</span>}
+          display={<span data-issue-solution="" title={isLocalizedLocale(locale) ? issue.solution : undefined} className="block whitespace-pre-line break-words">{issue.solution === "" ? "—" : localize(issue.solution)}</span>}
           onSave={(text) => {
             onPatchIssue(issue.id, { solution: renumberLines(text) });
           }}
@@ -2869,7 +2868,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
                 value={report.doneWork}
                 ariaLabel={t("rp.editDoneAria", { date: report.date })}
                 placeholder={t("report.placeholder.doneWorkSave")}
-                display={<span data-report-done="" title={locale === "en" ? report.doneWork : undefined} className="block whitespace-pre-line break-words">{report.doneWork === "" ? "—" : localize(report.doneWork)}</span>}
+                display={<span data-report-done="" title={isLocalizedLocale(locale) ? report.doneWork : undefined} className="block whitespace-pre-line break-words">{report.doneWork === "" ? "—" : localize(report.doneWork)}</span>}
                 onSave={(text) => {
                   onPatchReport(report.id, { doneWork: renumberLines(text) });
                 }}
@@ -2895,7 +2894,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
                 value={report.plan}
                 ariaLabel={t("rp.editPlanAria", { date: report.date })}
                 placeholder={t("report.placeholder.planSave")}
-                display={<span data-report-plan="" title={locale === "en" ? report.plan : undefined} className="block whitespace-pre-line break-words">{report.plan === "" ? "—" : localize(report.plan)}</span>}
+                display={<span data-report-plan="" title={isLocalizedLocale(locale) ? report.plan : undefined} className="block whitespace-pre-line break-words">{report.plan === "" ? "—" : localize(report.plan)}</span>}
                 onSave={(text) => {
                   onPatchReport(report.id, { plan: renumberLines(text) });
                 }}
@@ -2949,7 +2948,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
               <InlineNumberCell
                 value={report.headcount ?? 0}
                 ariaLabel={t("rp.editHeadcountAria", { date: report.date })}
-                display={report.headcount === null || report.headcount === 0 ? <span className="text-zinc-300">—</span> : report.headcount + (locale === "en" ? "" : " 人")}
+                display={report.headcount === null || report.headcount === 0 ? <span className="text-zinc-300">—</span> : report.headcount + (locale === "en" ? "" : locale === "ko" ? "명" : " 人")}
                 onSave={(value) => {
                   onPatchReport(report.id, { headcount: value === 0 ? null : value });
                 }}
@@ -3030,7 +3029,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
               </svg>
             </button>
           </div>
-          <h2 id="issue-drawer-title" title={locale === "en" ? issue.title : undefined} className="mt-3.5 whitespace-pre-line break-words text-lg font-semibold leading-7 text-zinc-900">
+          <h2 id="issue-drawer-title" title={isLocalizedLocale(locale) ? issue.title : undefined} className="mt-3.5 whitespace-pre-line break-words text-lg font-semibold leading-7 text-zinc-900">
             {localize(issue.title)}
           </h2>
           <p className="mt-1 text-xs leading-5 text-zinc-400">{t("report.drawer.raised", { date: isoDateText(locale, issue.raisedAt), reporter: issue.reporter })}</p>
@@ -3135,13 +3134,13 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
    *  日报与问题数据一到，就把「当日完成工作 / 明日计划 / 问题描述 / 解决方案或建议」静默丢进预热队列 ——
    *  英文界面下这些列命中会话缓存直接出译文（见 translateApi.ts），不用现场等机器翻译。 */
   useEffect(() => {
-    prefetchZhToEn([
+    prefetchLocalizedText([
       ...reports.map((report) => report.doneWork),
       ...reports.map((report) => report.plan),
       ...issues.map((issue) => issue.title),
       ...issues.map((issue) => issue.solution),
     ]);
-  }, [reports, issues]);
+  }, [reports, issues, locale]);
 
   /** 行内编辑落值（Push 216 接真）：先本地乐观更新，PATCH 回包替换该行；失败提示并重取（409 乐观锁冲突同路）。
    *  日期 / 提交时间一律不碰（「编辑后时间不变」）；文字列在保存时统一过一遍自动序号（与「日报填写」提交口径一致）；

@@ -10471,10 +10471,10 @@ export interface components {
             photoFileIds?: components["schemas"]["Uuid"][];
         };
         /**
-         * @description 界面语言（Push 296 · 顶栏「语言 · 中文 / English」）：zh = 中文（默认）/ en = English；读侧白名单外 / 缺省一律收敛为 zh
+         * @description 界面语言（Push 296 · 顶栏「语言 · 中文 / English / 日本語 / 한국어」）：zh = 中文（默认）/ en = English / ja = 日本語 / ko = 한국어；读侧白名单外 / 缺省一律收敛为 zh
          * @enum {string}
          */
-        Locale: "zh" | "en";
+        Locale: "zh" | "en" | "ja" | "ko";
         /** @description /auth/me 响应（会话由 HttpOnly Cookie 承载） */
         MeResponse: {
             user: components["schemas"]["User"];
@@ -11757,7 +11757,7 @@ export interface components {
             note?: string | null;
             version: components["schemas"]["Version"];
         };
-        /** @description 批量查库请求（英文界面切页提速；只回已存译文） */
+        /** @description 批量查库请求（切页提速；只回已存译文） */
         TranslateBatchBody: {
             qs: string[];
             source?: components["schemas"]["TranslateLang"];
@@ -11772,7 +11772,7 @@ export interface components {
                 translatedText: string;
             }[];
         };
-        /** @description 单条翻译请求：译文库优先、未命中调引擎后落库 */
+        /** @description 单条翻译请求：译文库优先、未命中调引擎后落库（支持 zh / en / ja / ko） */
         TranslateBody: {
             q: string;
             source?: components["schemas"]["TranslateLang"];
@@ -11784,11 +11784,11 @@ export interface components {
             format: "text";
         };
         /**
-         * @description 语言：zh 中文 / en 英文
+         * @description 语言：zh 中文 / en 英文 / ja 日文 / ko 韩文
          * @default zh
          * @enum {string}
          */
-        TranslateLang: "zh" | "en";
+        TranslateLang: "zh" | "en" | "ja" | "ko";
         TranslateResponse: {
             /** @description 译文（译文库命中或引擎产出后落库） */
             translatedText: string;

@@ -2,6 +2,7 @@
  * 翻译落库回归（§6.16 ㉕ · Push 301）：译文库优先短路 / 未命中调引擎并落库 / 术语保护与回换在服务端 /
  * 引擎故障 INTERNAL / 批量只读查库（绝不调引擎）/ 保存链路预热（CJK 过滤 + 同文本去重 + 失败静默）。
  * Push 310 增补：翻译 API 主模型 → 备用模型接力（deepseek 断流 → gemini-3.8-flash）。
+ * 2026-10-23 追订：目标语言扩到日文 / 韩文（目标语言术语回换、日韩不做英文大小写规整、system prompt 带目标语言）。
  * 真机口径见 server/src/modules/translate/README.md。
  */
 import { createHash } from "node:crypto";
@@ -170,6 +171,29 @@ describe("TranslateService.translate（库优先 + 引擎兜底落库）", () =>
     stubEngineReply(() => ({ payload: {} }));
     await expect(service.translate("任务四", "zh", "en")).rejects.toMatchObject({ code: "INTERNAL" });
   });
+
+  it("目标日文：术语按日文回换，落库 targetLang=ja（不做英文大小写规整）", async () => {
+    const { repository, service } = makeService();
+    const engine = stubEngineReply((q) => ({ payload: { translatedText: q } }));
+    const final = await service.translate("基督城仓配中心扩建", "zh", "ja");
+    expect(engine.calls).toHaveLength(1);
+    expect(engine.calls[0]).toContain("Xq");
+    expect(final).toContain("クライストチャーチ");
+    expect(final).toContain("倉庫・配送センター");
+    expect(final).not.toContain("Christchurch");
+    expect(repository.upsertCalls[0]?.targetLang).toBe("ja");
+    expect(repository.upsertCalls[0]?.translatedText).toBe(final);
+  });
+
+  it("目标韩文：术语按韩文回换，落库 targetLang=ko", async () => {
+    const { repository, service } = makeService();
+    stubEngineReply((q) => ({ payload: { translatedText: q } }));
+    const final = await service.translate("基督城仓配中心扩建", "zh", "ko");
+    expect(final).toContain("크라이스트처치");
+    expect(final).toContain("창고·물류센터");
+    expect(final).not.toContain("Christchurch");
+    expect(repository.upsertCalls[0]?.targetLang).toBe("ko");
+  });
 });
 
 describe("TranslateService.lookup（批量只读查库）", () => {
@@ -232,17 +256,19 @@ describe("TranslateService.warmup（保存即后台翻译）", () => {
 function stubFetchRouter(options: {
   api: (q: string, model: string) => { status?: number; content?: unknown; throwError?: boolean };
   local?: (q: string) => { status?: number; payload?: unknown; throwError?: boolean };
-}): { calls: Array<{ url: string; authorization: string | null; model: string; q: string }> } {
-  const calls: Array<{ url: string; authorization: string | null; model: string; q: string }> = [];
+}): { calls: Array<{ url: string; authorization: string | null; model: string; q: string; system: string }> } {
+  const calls: Array<{ url: string; authorization: string | null; model: string; q: string; system: string }> = [];
   vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit) => {
     const url = String(input);
     const headers = new Headers(init?.headers);
     const body = JSON.parse(String(init?.body ?? "{}")) as { q?: unknown; model?: unknown; messages?: Array<{ role?: string; content?: unknown }> };
+    const systemMessage = body.messages?.[0];
+    const system = systemMessage !== undefined && typeof systemMessage.content === "string" ? systemMessage.content : "";
     if (url.includes("/chat/completions")) {
       const last = body.messages === undefined ? undefined : body.messages[body.messages.length - 1];
       const q = last !== undefined && typeof last.content === "string" ? last.content : "";
       const model = typeof body.model === "string" ? body.model : "";
-      calls.push({ url, authorization: headers.get("Authorization"), model, q });
+      calls.push({ url, authorization: headers.get("Authorization"), model, q, system });
       const outcome = options.api(q, model);
       if (outcome.throwError === true) {
         throw new Error("api down");
@@ -253,7 +279,7 @@ function stubFetchRouter(options: {
       });
     }
     const q = typeof body.q === "string" ? body.q : "";
-    calls.push({ url, authorization: headers.get("Authorization"), model: "", q });
+    calls.push({ url, authorization: headers.get("Authorization"), model: "", q, system });
     const outcome = options.local === undefined ? undefined : options.local(q);
     if (outcome !== undefined && outcome.throwError === true) {
       throw new Error("engine down");
@@ -278,6 +304,15 @@ describe("TranslateService（Push 309/310 · provider 可插拔：API 主通道�
     expect(final).toContain("Warehouse and Distribution Center");
     expect(final).not.toContain("Xq");
     expect(repository.upsertCalls[0]?.engine).toBe("api:deepseek-chat");
+  });
+
+  it("provider=openai：日文 / 韩文目标把语言名写进 system prompt", async () => {
+    const { service } = makeServiceWith(openAiConfig);
+    const router = stubFetchRouter({ api: (q) => ({ content: q }) });
+    await service.translate("基督城扩建", "zh", "ja");
+    await service.translate("基督城扩建", "zh", "ko");
+    expect(router.calls[0]?.system).toContain("Japanese");
+    expect(router.calls[1]?.system).toContain("Korean");
   });
 
   it("provider=openai + 兜底：API 失败改调本地引擎（engine 标记回落 hy-mt-1.5-1.8b）", async () => {

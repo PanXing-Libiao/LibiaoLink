@@ -26,10 +26,9 @@ import type { FilterCriteria, SavedFilter } from "./savedFilters";
 import { buildListHash, EMPTY_LIST_QUERY, hasListFilters, initialRouteRestored, openProject, replaceListQuery, useHashRoute } from "./useHashRoute";
 import type { ListQueryState } from "./useHashRoute";
 import { PROJECT_STATUS_VALUES, projectManagerText } from "./types";
-import { projectStatusTextOf, projectTypeText, useLocale, useT } from "./i18n";
+import { isLocalizedLocale, projectStatusTextOf, projectTypeText, prefetchLocalizedText, useLocale, useT } from "./i18n";
 import type { Locale } from "./i18n";
 import { regionNameEn } from "./data/regionPicker";
-import { prefetchZhToEn } from "./translateApi";
 import type { MeResponse, Project } from "./types";
 
 type HomeProps = {
@@ -74,7 +73,7 @@ const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a
 /** 地区显示名（Push 301）：英文界面按标准英文国名（regionNameEn），认不出的值原样返回 —— 侧栏地区胶囊用（卡片水印的回退值同源）。 */
 function regionText(locale: Locale, dicts: Dicts, code: string): string {
   const label = dictLabel(dicts, "region", code);
-  return locale === "en" ? regionNameEn(label) || label : label;
+  return isLocalizedLocale(locale) ? regionNameEn(label) || label : label;
 }
 
 /** 卡片水印文本（Push 301 追订 · 业务口径「中文模式和英文模式水印不一样」「之前的中文不要改」+「缩写不好看 试试全称吧」）：中文界面 = 地区中文名（Push 289 原样，不改）；英文界面 = 英文全称（认不出回退中文名）。 */
@@ -223,8 +222,8 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
    * 项目数据一到就把项目名（手打文本）丢进译文缓存后台翻好 —— 中文界面浏览时也翻，切英文 / 导出直接命中。
    */
   useEffect(() => {
-    prefetchZhToEn(items.map((project) => project.description));
-  }, [items]);
+    prefetchLocalizedText(items.map((project) => project.description));
+  }, [items, locale]);
 
   useLiveRefresh(["projects", "dicts", "permissions", "users"], async () => {
     const current = requestRef.current;

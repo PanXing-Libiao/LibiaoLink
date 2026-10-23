@@ -1,29 +1,43 @@
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { saveLocale } from "./preferencesApi";
 import type { BackgroundTier } from "./backgroundTier";
-import { cachedZhToEn, getTranslationRevision, subscribeTranslations } from "./translateApi";
+import { cachedZhTo, getTranslationRevision, prefetchZhTo, subscribeTranslations, type TranslationTarget } from "./translateApi";
 import { projectStatusText } from "./types";
+import { JA_TEXTS } from "./i18n.ja";
+import { KO_TEXTS } from "./i18n.ko";
 
 /**
  * 系统语言切换（业务口径 2026-10-13「现在我要做系统语言切换 暂时中英文」+「在这个左侧添加按钮」）：
  * 顶栏「背景」胶囊左侧新增「语言 · 中文 / Language · English」胶囊 + 弹层（中文 / English 两项、
- * 选中打点；位置与材质跟背景胶囊同排同款）。暂时只有 zh / en —— 加语言 = LOCALES 增一项 + 词典补一列。
+ * 选中打点；位置与材质跟背景胶囊同排同款）。2026-10-23 追订扩到 zh / en / ja / ko。
  *
  * 选中态挂模块级 store（同 backgroundTier 的 useSyncExternalStore 口径：顶栏每页都渲染，切页不丢选择），
- * 并同步 <html lang>（zh-CN / en）。点选即单键 PATCH `user_preferences.prefs.locale` 按账号落库
+ * 并同步 <html lang>（zh-CN / en / ja / ko）。点选即单键 PATCH `user_preferences.prefs.locale` 按账号落库
  * （Push 296 追订 · 业务口径「按账号记住 刷新不会回中文」；与背景档位 Push 291 同一条偏好通道；登录后由偏好加载静默落位）。
  *
  * 翻译范围：本刀先落**壳层** —— 顶栏导航（TopNav）+ 顶栏两个胶囊 / 弹层 + 账号菜单；页面主体
  * （项目空间 / 项目总览 / 甘特图 / 工作台 / 日报及问题 …）按页分刀推进。词典 =「中文键表 + 英文全量覆盖」
- * 两列（EN_TEXTS 类型 = Record<TextKey, string>，漏翻会在类型层报错）。
+ * 多列（EN_TEXTS 为英文全量；JA / KO 为对应语言覆盖，缺键回落英文，避免切到日韩后露出中文）。
  */
-export type Locale = "zh" | "en";
+export type Locale = "zh" | "en" | "ja" | "ko";
 
 /** 语言选项（label = 该语言的原生名称，不随界面语言翻译 —— 便于误切后找回中文）。 */
 export const LOCALES: Array<{ key: Locale; label: string }> = [
   { key: "zh", label: "中文" },
   { key: "en", label: "English" },
+  { key: "ja", label: "日本語" },
+  { key: "ko", label: "한국어" },
 ];
+
+/** 非中文界面是否走本地化分支（英文 / 日文 / 韩文）。 */
+export function isLocalizedLocale(locale: Locale): boolean {
+  return locale !== "zh";
+}
+
+/** 手打内容的机翻目标；中文界面无需翻译。 */
+export function translationTargetOf(locale: Locale): TranslationTarget | null {
+  return locale === "zh" ? null : locale;
+}
 
 let currentLocale: Locale = "zh";
 const listeners = new Set<() => void>();
@@ -37,7 +51,7 @@ function subscribe(listener: () => void): () => void {
 
 /** 运行期兜底（坏值 / 未支持的语言）：白名单外一律落默认 zh。 */
 export function asLocale(value: unknown): Locale {
-  return value === "en" ? "en" : "zh";
+  return value === "en" || value === "ja" || value === "ko" ? value : "zh";
 }
 
 export function getLocale(): Locale {
@@ -45,7 +59,7 @@ export function getLocale(): Locale {
 }
 
 function applyHtmlLang(locale: Locale): void {
-  document.documentElement.lang = locale === "en" ? "en" : "zh-CN";
+  document.documentElement.lang = locale === "zh" ? "zh-CN" : locale;
 }
 
 function setLocaleInternal(next: Locale): void {
@@ -2824,9 +2838,24 @@ export const BG_TIER_TEXT_KEYS: Record<BackgroundTier, TextKey> = {
   vivid: "bg.tier.vivid",
 };
 
+/** 各非中文语言的静态词典；日韩缺键回落英文（绝不回中文，避免切换后语义混乱）。 */
+const LOCALIZED_TEXTS: Record<Exclude<Locale, "zh">, Partial<Record<TextKey, string>>> = {
+  en: EN_TEXTS,
+  ja: JA_TEXTS,
+  ko: KO_TEXTS,
+};
+
+/** 当前界面语言对应的内容翻译预热（中文界面不请求）；调用方在数据到达时把中文手打字段整批丢进来。 */
+export function prefetchLocalizedText(texts: readonly string[]): void {
+  const target = translationTargetOf(getLocale());
+  if (target !== null) {
+    prefetchZhTo(texts, target);
+  }
+}
+
 /** 取词（可带 {name} 占位参数：t("home.count.total", { n: 3 })）。 */
 export function textOf(locale: Locale, key: TextKey, params?: Record<string, string | number>): string {
-  const template = locale === "en" ? EN_TEXTS[key] : ZH_TEXTS[key];
+  const template = locale === "zh" ? ZH_TEXTS[key] : LOCALIZED_TEXTS[locale][key] ?? EN_TEXTS[key];
   if (params === undefined) {
     return template;
   }
@@ -2844,34 +2873,61 @@ export function useT(): (key: TextKey, params?: Record<string, string | number>)
 
 /**
  * 「手打内容」机翻显示（业务口径 2026-10-13「因为页面有些内容是手打的 我建议是提前后台机翻」）：
- * 英文界面下把手打内容（项目名 / 任务名 / 备注 / 进展描述等自由文本）渲染为机翻译文 —— 译文由各页
- * 数据到达时的 prefetchZhToEn 提前后台翻好（会话缓存，见 translateApi.ts）；未就绪先显示原文、
- * 译文到位自动切换。返回取词函数（列表 / 循环里同样可用）：中文界面原样返回；英文界面 = 命中译文 ?? 原文。
+ * 英 / 日 / 韩界面下把手打内容（项目名 / 任务名 / 备注 / 进展描述等自由文本）渲染为对应目标的机翻译文 ——
+ * 译文由各页数据到达时的 prefetchLocalizedText 提前后台翻好（会话缓存，见 translateApi.ts）；未就绪先显示原文、
+ * 译文到位自动切换。返回取词函数（列表 / 循环里同样可用）：中文界面原样返回；非中文界面 = 命中译文 ?? 原文。
  */
 export function useLocalizedTranslator(): (text: string) => string {
   const locale = useLocale();
   useSyncExternalStore(subscribeTranslations, getTranslationRevision, () => 0);
   return useCallback(
-    (text: string): string => (locale === "en" && text !== "" ? cachedZhToEn(text) ?? text : text),
+    (text: string): string => {
+      const target = translationTargetOf(locale);
+      return target !== null && text !== "" ? cachedZhTo(text, target) ?? text : text;
+    },
     [locale],
   );
 }
 
-/** 单条手打文本的机翻译文：英文界面 + 缓存命中返回译文，否则 null（调用方自行回退原文 / 悬停对照）。 */
+/** 单条手打文本的机翻译文：非中文界面 + 缓存命中返回译文，否则 null（调用方自行回退原文 / 悬停对照）。 */
 export function useMachineText(text: string | null | undefined): string | null {
   const locale = useLocale();
   const source = text ?? "";
+  const target = translationTargetOf(locale);
   const translated = useSyncExternalStore(
     subscribeTranslations,
-    () => (source === "" ? null : cachedZhToEn(source)),
+    () => (source === "" || target === null ? null : cachedZhTo(source, target)),
     () => null,
   );
-  return locale === "en" ? translated : null;
+  useEffect(() => {
+    if (source !== "" && target !== null && cachedZhTo(source, target) === null) {
+      prefetchZhTo([source], target);
+    }
+  }, [source, target]);
+  return target === null ? null : translated;
 }
 
-/** 单条手打文本的「本地化显示值」：中文界面 = 原文；英文界面 = 译文（未就绪先原文，到位自动切换）。 */
+/** 单条手打文本的「本地化显示值」：中文界面 = 原文；非中文界面 = 译文（未就绪先原文，到位自动切换）。 */
 export function useLocalizedText(text: string): string {
   return useMachineText(text) ?? text;
+}
+
+/** 数据值显示名：中文原样；英文走英文表；日 / 韩优先本地表，缺项回落英文（不露中文）。 */
+function localizedName(
+  locale: Locale,
+  zh: string,
+  enMap: Record<string, string>,
+  jaMap?: Record<string, string>,
+  koMap?: Record<string, string>,
+): string {
+  if (locale === "zh") {
+    return zh;
+  }
+  if (locale === "en") {
+    return enMap[zh] ?? zh;
+  }
+  const local = locale === "ja" ? jaMap : koMap;
+  return local?.[zh] ?? enMap[zh] ?? zh;
 }
 
 /** 阶段英文名（数据层阶段名是中文：九阶段 + 项目总览 + 临时任务；显示层换英文）。 */
@@ -2889,9 +2945,37 @@ const STAGE_EN: Record<string, string> = {
   "临时任务": "Temp Task",
 };
 
-/** 阶段显示名（英文界面换英文名；未知值原样返回，不吞信息）。 */
+const STAGE_JA: Record<string, string> = {
+  "售前规划": "プリセールス計画",
+  "设计开发": "設計・開発",
+  "加工采购": "加工・調達",
+  "组装发货": "組立・出荷",
+  "硬件实施": "ハードウェア施工",
+  "软件部署": "ソフトウェア導入",
+  "试运行": "試運転",
+  "生产阶段": "生産段階",
+  "验收": "検収",
+  "项目总览": "プロジェクト概要",
+  "临时任务": "一時タスク",
+};
+
+const STAGE_KO: Record<string, string> = {
+  "售前规划": "판매 전 계획",
+  "设计开发": "설계·개발",
+  "加工采购": "가공·조달",
+  "组装发货": "조립·출하",
+  "硬件实施": "하드웨어 구축",
+  "软件部署": "소프트웨어 배포",
+  "试运行": "시험 운영",
+  "生产阶段": "생산 단계",
+  "验收": "검수",
+  "项目总览": "프로젝트 개요",
+  "临时任务": "임시 작업",
+};
+
+/** 阶段显示名（非中文界面换本地名；未知值原样返回，不吞信息）。 */
 export function stageText(locale: Locale, stage: string): string {
-  return locale === "en" ? STAGE_EN[stage] ?? stage : stage;
+  return localizedName(locale, stage, STAGE_EN, STAGE_JA, STAGE_KO);
 }
 
 /** 洲显示名（地区筛选分组用；未知值原样返回）。 */
@@ -3028,9 +3112,69 @@ const FIELD_EN: Record<string, string> = {
   "验收单": "Acceptance form",
 };
 
-/** 字段显示名（英文界面换英文；未知值原样返回，不吞信息）。 */
+const FIELD_JA: Record<string, string> = {
+  "任务描述": "タスク", "项目经理": "プロジェクトマネージャー", "任务负责人": "担当者", "负责人": "担当者",
+  "任务状态": "ステータス", "状态": "ステータス", "紧急重要度": "優先度", "是否按时交付": "納期遵守",
+  "输出成果文件": "成果物", "文件": "ファイル", "项目进展描述": "進捗メモ", "开始日期": "開始日",
+  "预计所需天数": "予定日数", "天数": "日数", "预计完成日期": "完了予定日", "预计完成": "完了予定",
+  "预计所需施工人数": "予定人数", "人数": "人数", "实际完成日期": "完了日", "变更关联": "変更",
+  "所属阶段": "フェーズ", "进度": "進捗", "进展": "進捗", "行号": "No.", "项目进度": "進捗",
+  "待分配": "未割当", "任务详情": "詳細", "变更申请": "変更申請", "变更记录": "変更履歴",
+  "开始 / 预计完成": "開始 / 完了予定", "天": "日", "任务": "タスク", "开始": "開始", "日期": "日付",
+  "填写者": "入力者", "时间time": "時刻", "关联阶段": "関連フェーズ", "关联阶段Related stages": "関連フェーズ",
+  "当日完成工作": "本日の完了作業", "当日完成工作Work completed today": "本日の完了作業",
+  "明日计划": "明日の計画", "明日计划Tomorrow's plan": "明日の計画", "现场工作附图": "現場写真",
+  "现场工作附图On-site photos": "現場写真", "问题描述": "課題", "问题归类": "分類",
+  "问题处理人 / 责任人": "担当者", "解决方案或建议": "対応策", "问题附图": "課題写真", "问题是否处理": "対応済み",
+  "未归类": "未分類", "待分派": "未割当", "提交人": "提出者", "今日施工人数": "本日の人数", "施工人数": "人数",
+  "现场发现问题Problem": "発見した課題", "当前问题附图": "課題写真", "来源日报": "元の日報", "问题详情": "課題詳細",
+  "项目名称": "プロジェクト", "时间": "時刻", "整体进度": "全体進捗", "变更时间": "変更日時", "变更阶段": "変更フェーズ",
+  "变更文件": "変更ファイル", "变更内容描述": "変更内容", "变更前": "変更前", "变更后": "変更後", "变更原因": "変更理由",
+  "变更申请人": "申請者", "变更后文件版本": "新バージョン", "变更后文件": "新ファイル", "关联": "関連",
+  "项目编号": "プロジェクト番号", "项目描述": "プロジェクト名", "项目地区": "地域", "项目类型": "プロジェクト種別",
+  "项目状态": "プロジェクト状態", "备注": "備考", "颜色模板": "色", "干系人姓名": "氏名",
+  "电话 / WhatsApp": "電話 / WhatsApp", "微信": "WeChat", "邮箱 Email": "メール", "职务 / 责任板块": "役職 / 担当",
+  "所属公司": "会社", "所属公司分类": "会社区分", "干系人角色": "役割", "立镖机器人": "Libiao Robotics",
+  "供应商": "サプライヤー", "总包单位": "元請け", "客户": "顧客", "机械部": "機械部", "采购部": "調達部",
+  "规划部": "企画部", "项目部": "プロジェクト部", "物流原因": "物流", "供应商原因": "サプライヤー", "客户原因": "顧客",
+  "客观原因": "外部要因", "生产原因": "生産", "其它原因": "その他", "申请人": "申請者", "成员": "メンバー",
+  "CAD图纸": "CAD図面", "技术协议": "技術協定", "合同": "契約書", "评审单": "レビュー票", "设备清单": "設備一覧",
+  "物料总清单": "部材総一覧", "发货装箱单": "梱包明細", "到货单": "入荷票", "安装完成证明": "設置完了証明", "验收单": "検収書",
+};
+
+const FIELD_KO: Record<string, string> = {
+  "任务描述": "작업", "项目经理": "프로젝트 매니저", "任务负责人": "담당자", "负责人": "담당자",
+  "任务状态": "상태", "状态": "상태", "紧急重要度": "우선순위", "是否按时交付": "정시 납품",
+  "输出成果文件": "산출물", "文件": "파일", "项目进展描述": "진행 메모", "开始日期": "시작일",
+  "预计所需天数": "예상 일수", "天数": "일수", "预计完成日期": "완료 예정일", "预计完成": "완료 예정",
+  "预计所需施工人数": "예상 인원", "人数": "인원", "实际完成日期": "완료일", "变更关联": "변경",
+  "所属阶段": "단계", "进度": "진행률", "进展": "진행", "行号": "No.", "项目进度": "진행률",
+  "待分配": "미배정", "任务详情": "상세", "变更申请": "변경 요청", "变更记录": "변경 기록",
+  "开始 / 预计完成": "시작 / 완료 예정", "天": "일", "任务": "작업", "开始": "시작", "日期": "날짜",
+  "填写者": "작성자", "时间time": "시간", "关联阶段": "관련 단계", "关联阶段Related stages": "관련 단계",
+  "当日完成工作": "오늘 완료한 작업", "当日完成工作Work completed today": "오늘 완료한 작업",
+  "明日计划": "내일 계획", "明日计划Tomorrow's plan": "내일 계획", "现场工作附图": "현장 사진",
+  "现场工作附图On-site photos": "현장 사진", "问题描述": "이슈", "问题归类": "분류",
+  "问题处理人 / 责任人": "담당자", "解决方案或建议": "해결 방안", "问题附图": "이슈 사진", "问题是否处理": "처리 여부",
+  "未归类": "미분류", "待分派": "미배정", "提交人": "제출자", "今日施工人数": "오늘 인원", "施工人数": "인원",
+  "现场发现问题Problem": "발견한 이슈", "当前问题附图": "이슈 사진", "来源日报": "원본 일일 보고", "问题详情": "이슈 상세",
+  "项目名称": "프로젝트", "时间": "시간", "整体进度": "전체 진행률", "变更时间": "변경 시각", "变更阶段": "변경 단계",
+  "变更文件": "변경 파일", "变更内容描述": "변경 내용", "变更前": "변경 전", "变更后": "변경 후", "变更原因": "변경 사유",
+  "变更申请人": "신청자", "变更后文件版本": "새 버전", "变更后文件": "새 파일", "关联": "연결",
+  "项目编号": "프로젝트 번호", "项目描述": "프로젝트명", "项目地区": "지역", "项目类型": "프로젝트 유형",
+  "项目状态": "프로젝트 상태", "备注": "비고", "颜色模板": "색상", "干系人姓名": "이름",
+  "电话 / WhatsApp": "전화 / WhatsApp", "微信": "WeChat", "邮箱 Email": "이메일", "职务 / 责任板块": "직책 / 담당",
+  "所属公司": "회사", "所属公司分类": "회사 구분", "干系人角色": "역할", "立镖机器人": "Libiao Robotics",
+  "供应商": "공급업체", "总包单位": "총도급업체", "客户": "고객", "机械部": "기계부", "采购部": "구매부",
+  "规划部": "기획부", "项目部": "프로젝트부", "物流原因": "물류", "供应商原因": "공급업체", "客户原因": "고객",
+  "客观原因": "외부 요인", "生产原因": "생산", "其它原因": "기타", "申请人": "신청자", "成员": "구성원",
+  "CAD图纸": "CAD 도면", "技术协议": "기술 협약", "合同": "계약서", "评审单": "검토서", "设备清单": "설비 목록",
+  "物料总清单": "자재 총목록", "发货装箱单": "포장 명세서", "到货单": "입고서", "安装完成证明": "설치 완료 증명", "验收单": "검수서",
+};
+
+/** 字段显示名（非中文界面换本地 / 英文名；未知值原样返回，不吞信息）。 */
 export function fieldText(locale: Locale, zh: string): string {
-  return locale === "en" ? FIELD_EN[zh] ?? zh : zh;
+  return localizedName(locale, zh, FIELD_EN, FIELD_JA, FIELD_KO);
 }
 
 /**
@@ -3044,9 +3188,13 @@ const PROJECT_TYPE_EN: Record<string, string> = {
   "3D分拣": "3D Sorting",
 };
 
-/** 项目类型显示名（英文界面按官方英文产品名；未知类型原样返回，不吞信息）。 */
+/** 官方产品名保持英文；日 / 韩不另造译名。 */
+const PROJECT_TYPE_JA: Record<string, string> = { "飞箱": "AirRob", "T-sort": "T-Sort", "3D分拣": "3D Sorting" };
+const PROJECT_TYPE_KO: Record<string, string> = { "飞箱": "AirRob", "T-sort": "T-Sort", "3D分拣": "3D Sorting" };
+
+/** 项目类型显示名（非中文界面按官方英文产品名；未知类型原样返回，不吞信息）。 */
 export function projectTypeText(locale: Locale, name: string): string {
-  return locale === "en" ? PROJECT_TYPE_EN[name] ?? name : name;
+  return localizedName(locale, name, PROJECT_TYPE_EN, PROJECT_TYPE_JA, PROJECT_TYPE_KO);
 }
 
 /** 便签墙（我的计划）选项显示名（Push 301）：颜色 / 字体 / 背景档位的 label 与 hint 在数据层（myPlan.ts 的 PLAN_COLORS / PLAN_FONTS / PLAN_BOARD_BGS）是中文，英文界面在此按中文键换英文；纯十六进制 hint（如 #f472b6）与未知值原样返回，不吞信息。 */
@@ -3079,9 +3227,23 @@ const PLAN_LABEL_EN: Record<string, string> = {
   "参考页默认底色": "Reference page default",
 };
 
-/** 便签墙选项显示名（英文界面换英文；未知值原样返回）。 */
+const PLAN_LABEL_JA: Record<string, string> = {
+  "白色": "ホワイト", "黄色": "イエロー", "绿色": "グリーン", "蓝色": "ブルー", "紫色": "パープル", "粉色": "ピンク", "橙色": "オレンジ",
+  "简约": "サンセリフ", "优雅": "セリフ", "等宽": "等幅", "默认无衬线": "既定のサンセリフ", "衬线体": "セリフ体", "等宽体": "等幅フォント",
+  "统一白": "標準ホワイト", "奶白": "クリーム", "粉": "ピンク", "橙": "オレンジ", "黄": "イエロー", "青柠": "ライム", "翠绿": "エメラルド",
+  "天蓝": "スカイ", "蓝": "ブルー", "紫": "バイオレット", "薰衣草": "ラベンダー", "与其它页面一致（默认）": "他のページと統一（既定）", "参考页默认底色": "参考ページの既定色",
+};
+
+const PLAN_LABEL_KO: Record<string, string> = {
+  "白色": "화이트", "黄色": "옐로", "绿色": "그린", "蓝色": "블루", "紫色": "퍼플", "粉色": "핑크", "橙色": "오렌지",
+  "简约": "산세리프", "优雅": "세리프", "等宽": "고정폭", "默认无衬线": "기본 산세리프", "衬线体": "세리프체", "等宽体": "고정폭 글꼴",
+  "统一白": "기본 화이트", "奶白": "크림", "粉": "핑크", "橙": "오렌지", "黄": "옐로", "青柠": "라임", "翠绿": "에메랄드",
+  "天蓝": "스카이", "蓝": "블루", "紫": "바이올렛", "薰衣草": "라벤더", "与其它页面一致（默认）": "다른 페이지와 동일(기본)", "参考页默认底色": "참고 페이지 기본색",
+};
+
+/** 便签墙选项显示名（非中文界面换本地 / 英文；未知值原样返回）。 */
 export function planLabelText(locale: Locale, zh: string): string {
-  return locale === "en" ? PLAN_LABEL_EN[zh] ?? zh : zh;
+  return localizedName(locale, zh, PLAN_LABEL_EN, PLAN_LABEL_JA, PLAN_LABEL_KO);
 }
 
 /** 项目详情主标签英文名（数据层标签名是中文，显示层换英文）。 */
@@ -3094,9 +3256,12 @@ const VIEW_TAB_EN: Record<string, string> = {
   "干系人": "Stakeholders",
 };
 
-/** 主标签显示名（英文界面换英文；未知值原样返回，不吞信息）。 */
+const VIEW_TAB_JA: Record<string, string> = { "项目总览": "プロジェクト概要", "甘特图": "ガントチャート", "人员任务分配": "タスク割当", "任务进展": "タスク進捗", "日报及问题": "日報・課題", "干系人": "ステークホルダー" };
+const VIEW_TAB_KO: Record<string, string> = { "项目总览": "프로젝트 개요", "甘特图": "간트 차트", "人员任务分配": "업무 배정", "任务进展": "업무 진행", "日报及问题": "일일 보고·이슈", "干系人": "이해관계자" };
+
+/** 主标签显示名（非中文界面换本地 / 英文；未知值原样返回）。 */
 export function viewTabText(locale: Locale, tab: string): string {
-  return locale === "en" ? VIEW_TAB_EN[tab] ?? tab : tab;
+  return localizedName(locale, tab, VIEW_TAB_EN, VIEW_TAB_JA, VIEW_TAB_KO);
 }
 
 /** 「日报及问题」子菜单子项英文名（数据层标签是中文，显示层换英文）。 */
@@ -3107,8 +3272,11 @@ const SUB_TAB_EN: Record<string, string> = {
   "问题看板": "Issue board",
 };
 
+const SUB_TAB_JA: Record<string, string> = { "日报填写": "日報入力", "日报记录": "日報一覧", "问题追踪": "課題追跡", "问题看板": "課題ボード" };
+const SUB_TAB_KO: Record<string, string> = { "日报填写": "일일 보고 작성", "日报记录": "일일 보고 목록", "问题追踪": "이슈 추적", "问题看板": "이슈 보드" };
+
 export function subTabText(locale: Locale, tab: string): string {
-  return locale === "en" ? SUB_TAB_EN[tab] ?? tab : tab;
+  return localizedName(locale, tab, SUB_TAB_EN, SUB_TAB_JA, SUB_TAB_KO);
 }
 
 /** 「日报及问题」子菜单分组标题英文名。 */
@@ -3117,8 +3285,11 @@ const SUB_TAB_GROUP_EN: Record<string, string> = {
   "问题": "Issues",
 };
 
+const SUB_TAB_GROUP_JA: Record<string, string> = { "日报": "日報", "问题": "課題" };
+const SUB_TAB_GROUP_KO: Record<string, string> = { "日报": "일일 보고", "问题": "이슈" };
+
 export function subTabGroupText(locale: Locale, label: string): string {
-  return locale === "en" ? SUB_TAB_GROUP_EN[label] ?? label : label;
+  return localizedName(locale, label, SUB_TAB_GROUP_EN, SUB_TAB_GROUP_JA, SUB_TAB_GROUP_KO);
 }
 
 /** 工作台主标签 / 问题子视图标签英文名（数据层标签是中文，显示层换英文）。 */
@@ -3130,8 +3301,11 @@ const WORKSPACE_LABEL_EN: Record<string, string> = {
   "待我处理的问题": "Assigned to me",
 };
 
+const WORKSPACE_LABEL_JA: Record<string, string> = { "我的任务": "マイタスク", "提出/负责的问题": "提起・担当の課題", "我的计划": "マイプラン", "我提出的问题": "私が提起した課題", "待我处理的问题": "私への割当課題" };
+const WORKSPACE_LABEL_KO: Record<string, string> = { "我的任务": "내 작업", "提出/负责的问题": "제기·담당 이슈", "我的计划": "내 계획", "我提出的问题": "내가 제기한 이슈", "待我处理的问题": "내가 처리할 이슈" };
+
 export function workspaceLabelText(locale: Locale, label: string): string {
-  return locale === "en" ? WORKSPACE_LABEL_EN[label] ?? label : label;
+  return localizedName(locale, label, WORKSPACE_LABEL_EN, WORKSPACE_LABEL_JA, WORKSPACE_LABEL_KO);
 }
 
 /** 任务状态英文名（数据层五态是中文，与 data/tasks.ts 的 TaskStatus 对齐）。 */
@@ -3159,9 +3333,21 @@ const STATUS_EN: Record<string, string> = {
   "未分组": "Ungrouped",
 };
 
-/** 任务状态显示名（英文界面换英文名；未知值原样返回）。 */
+const STATUS_JA: Record<string, string> = {
+  "待开始": "未着手", "进行中": "進行中", "已完成": "完了", "提前完成": "早期完了", "已延期": "遅延", "已暂停": "一時停止", "草稿": "下書き",
+  "已提交": "提出済み", "补填": "追記", "未解决": "未解決", "处理中": "処理中", "已定档": "確定", "未定档": "未確定", "已变更": "変更済み",
+  "已归档": "アーカイブ済み", "回收站": "ゴミ箱", "逾期未交付": "期限超過・未納品", "逾期已交付": "期限超過・納品済み", "按时交付": "納期通り", "全部完成": "すべて完了", "未分组": "未分類",
+};
+
+const STATUS_KO: Record<string, string> = {
+  "待开始": "시작 전", "进行中": "진행 중", "已完成": "완료", "提前完成": "조기 완료", "已延期": "지연", "已暂停": "일시 중지", "草稿": "초안",
+  "已提交": "제출됨", "补填": "보완 입력", "未解决": "미해결", "处理中": "처리 중", "已定档": "확정", "未定档": "미확정", "已变更": "변경됨",
+  "已归档": "보관됨", "回收站": "휴지통", "逾期未交付": "기한 초과·미납품", "逾期已交付": "기한 초과·납품 완료", "按时交付": "정시 납품", "全部完成": "모두 완료", "未分组": "미분류",
+};
+
+/** 任务状态显示名（非中文界面换本地 / 英文；未知值原样返回）。 */
 export function statusText(locale: Locale, status: string): string {
-  return locale === "en" ? STATUS_EN[status] ?? status : status;
+  return localizedName(locale, status, STATUS_EN, STATUS_JA, STATUS_KO);
 }
 
 /** 紧急重要度英文名（数据层取值 高 / 中 / 低）。 */
@@ -3171,9 +3357,12 @@ const PRIORITY_EN: Record<string, string> = {
   "低": "Low",
 };
 
-/** 紧急重要度显示名（英文界面换英文名；未知值原样返回）。 */
+const PRIORITY_JA: Record<string, string> = { "高": "高", "中": "中", "低": "低" };
+const PRIORITY_KO: Record<string, string> = { "高": "높음", "中": "보통", "低": "낮음" };
+
+/** 紧急重要度显示名（非中文界面换本地 / 英文；未知值原样返回）。 */
 export function priorityText(locale: Locale, priority: string): string {
-  return locale === "en" ? PRIORITY_EN[priority] ?? priority : priority;
+  return localizedName(locale, priority, PRIORITY_EN, PRIORITY_JA, PRIORITY_KO);
 }
 
 /** 项目状态英文名（契约取值 active / paused / done / archived）。 */
@@ -3184,18 +3373,31 @@ const PROJECT_STATUS_EN: Record<string, string> = {
   archived: "Archived",
 };
 
-/** 项目状态显示名（英文界面换英文名；中文界面沿用 types.ts 的中文口径；未知值原样返回）。 */
+const PROJECT_STATUS_JA: Record<string, string> = { active: "進行中", paused: "一時停止", done: "完了", archived: "アーカイブ済み" };
+const PROJECT_STATUS_KO: Record<string, string> = { active: "진행 중", paused: "일시 중지", done: "완료", archived: "보관됨" };
+
+/** 项目状态显示名（非中文界面按契约状态码换本地名；未知值原样返回）。 */
 export function projectStatusTextOf(locale: Locale, status: string): string {
-  return locale === "en" ? PROJECT_STATUS_EN[status] ?? status : projectStatusText(status);
+  if (locale === "zh") {
+    return projectStatusText(status);
+  }
+  const local = locale === "ja" ? PROJECT_STATUS_JA : locale === "ko" ? PROJECT_STATUS_KO : PROJECT_STATUS_EN;
+  return local[status] ?? PROJECT_STATUS_EN[status] ?? status;
 }
 
 /** 进度档位中文名 / 英文名（中文与 data/tasks.ts 的 PROGRESS_LABELS 同源；英文同下标）。 */
 const PROGRESS_ZH: readonly string[] = ["未开始", "刚开工", "完成一半", "快完成了", "已完成"];
 const PROGRESS_EN: readonly string[] = ["Not started", "Just started", "Halfway", "Almost done", "Done"];
+const PROGRESS_JA: readonly string[] = ["未着手", "開始直後", "半分完了", "もうすぐ完了", "完了"];
+const PROGRESS_KO: readonly string[] = ["시작 전", "막 시작", "절반 완료", "거의 완료", "완료"];
 
-/** 进度档位显示名（index 对齐 data/tasks.ts 的 PROGRESS_LABELS；英文界面换英文名，越界回退空串）。 */
+/** 进度档位显示名（index 对齐 data/tasks.ts 的 PROGRESS_LABELS；日韩 / 英文用本地表，越界回退空串）。 */
 export function progressLabelOf(locale: Locale, index: number): string {
-  return locale === "en" ? PROGRESS_EN[index] ?? "" : PROGRESS_ZH[index] ?? "";
+  if (locale === "zh") {
+    return PROGRESS_ZH[index] ?? "";
+  }
+  const labels = locale === "ja" ? PROGRESS_JA : locale === "ko" ? PROGRESS_KO : PROGRESS_EN;
+  return labels[index] ?? "";
 }
 
 /** 英文月份缩写（日期文案用；Push 301）。 */
@@ -3209,21 +3411,42 @@ export function mdText(locale: Locale, iso: string): string {
   }
   const month = Number(match[2]);
   const day = Number(match[3]);
+  if (locale === "ja") {
+    return String(month) + "月" + String(day) + "日";
+  }
+  if (locale === "ko") {
+    return String(month) + "월 " + String(day) + "일";
+  }
   return locale === "en" ? EN_MONTHS[month - 1] + " " + String(day) : String(month) + "月" + String(day) + "日";
 }
 
 /** 年月文案：中文 = 「2026年9月」；英文 = 「Sep 2026」。 */
 export function monthYearText(locale: Locale, year: number, month: number): string {
+  if (locale === "ja") {
+    return String(year) + "年" + String(month) + "月";
+  }
+  if (locale === "ko") {
+    return String(year) + "년 " + String(month) + "월";
+  }
   return locale === "en" ? EN_MONTHS[month - 1] + " " + String(year) : String(year) + "年" + String(month) + "月";
 }
 
 /** 短月份文案：中文 = 「9月」；英文 = 「Sep」。 */
 export function monthShortText(locale: Locale, month: number): string {
+  if (locale === "ja") {
+    return String(month) + "月";
+  }
+  if (locale === "ko") {
+    return String(month) + "월";
+  }
   return locale === "en" ? EN_MONTHS[month - 1] : String(month) + "月";
 }
 
 /** 年份文案：中文 = 「2026年」；英文 = 「2026」。 */
 export function yearText(locale: Locale, year: number): string {
+  if (locale === "ko") {
+    return String(year) + "년";
+  }
   return locale === "en" ? String(year) : String(year) + "年";
 }
 
@@ -3236,6 +3459,12 @@ export function fullDateText(locale: Locale, iso: string): string {
   const year = Number(match[1]);
   const month = Number(match[2]);
   const day = Number(match[3]);
+  if (locale === "ja") {
+    return String(year) + "年" + String(month) + "月" + String(day) + "日";
+  }
+  if (locale === "ko") {
+    return String(year) + "년 " + String(month) + "월 " + String(day) + "일";
+  }
   return locale === "en" ? EN_MONTHS[month - 1] + " " + String(day) + ", " + String(year) : String(year) + "年" + String(month) + "月" + String(day) + "日";
 }
 

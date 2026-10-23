@@ -24,8 +24,7 @@ import {
   type TemplateItem,
 } from "./templateApi";
 import { replaceTemplateSection, templateSectionFromParam, templateSectionHref, templateSectionSlug, type PlaceholderPage as PlaceholderPageKey } from "./useHashRoute";
-import { stageText, useLocale, useLocalizedTranslator, useT } from "./i18n";
-import { prefetchZhToEn } from "./translateApi";
+import { isLocalizedLocale, stageText, prefetchLocalizedText, useLocale, useLocalizedTranslator, useT } from "./i18n";
 import type { MeResponse } from "./types";
 
 /** 任务模板的阶段板块：与项目详情同口径（「项目总览」是汇总视图，不作为板块）。 */
@@ -306,6 +305,11 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
       alive = false;
     };
   }, [page, activeSection, nodesVersion]);
+
+  useEffect(() => {
+    prefetchLocalizedText(Object.values(templatesByStage).flat().map((item) => item.name));
+  }, [templatesByStage, locale]);
+
   // 模板取数（换板块 / 重取）：服务端是模板内容的真相 —— 逐面板合并（见 mergeStageTemplates）：
   // 只有**这一份**有未保存改动时才保留本地草稿（避免把刚拖好的顺序冲掉），其余面板照常刷新（别人的新建 / 改名 / 删除都能看到）。
   useEffect(() => {
@@ -319,7 +323,7 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
       try {
         const items = await fetchStageTemplates(activeSection);
         if (alive) {
-          prefetchZhToEn(items.map((item) => item.name));
+          prefetchLocalizedText(items.map((item) => item.name));
           setTemplatesByStage((previous) => mergeStageTemplates(previous, activeSection, items));
         }
       } catch (error) {
@@ -1150,7 +1154,7 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
                               "-mx-1 flex-1 truncate rounded px-1 font-semibold text-zinc-800 outline-none transition hover:bg-white/40 focus:bg-white/70 disabled:cursor-not-allowed " +
                               // 2026-10-13 业务口径（英文界面「模板名称省略」）：英文模板名比中文长，名字和「计数 / 保存 / 删除」抢一行 ——
                               // 用最小宽 12rem 当换行阈值：整行放不下时这一组整组换到下一行右对齐，名字（Hardware Implementation）不再被截成 Hardware Implementa…。
-                              (locale === "en" ? "min-w-[12rem]" : "min-w-0")
+                              (isLocalizedLocale(locale) ? "min-w-[12rem]" : "min-w-0")
                             }
                           />
                           {/* 「计数 / 保存 / 删除」收成一组：放得下就一行右对齐；英文面板放不下时整组换到第二行（名字优先占满第一行）。 */}

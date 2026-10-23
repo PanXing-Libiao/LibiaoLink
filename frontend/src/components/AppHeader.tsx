@@ -17,9 +17,9 @@ import type { MeResponse, Project } from "../types";
  *  （模块级 store：顶栏在每页都渲染，切页不丢选择；Push 291 起点选即单键 PATCH 按账号落库、失败出顶部 Toast）；
  *  三档只显档名（同日追订「这些备注的话不要说」）；Push 292 起弹层第四行 =「水印」开关（同套落库口径）；
  *  同日追订「选择后不要退出 用户点别的地方再退出」：点档 / 点开关都不收弹层，点外 / Esc / 再点触发钮才收起。
- * 语言切换（业务口径 2026-10-13「现在我要做系统语言切换 暂时中英文」+「在这个左侧添加按钮」）：
- *  「背景」胶囊左侧新增「语言 · 中文 / Language · English」胶囊 + 弹层（中文 / English 两项、选中打点，
- *  原生语言名不翻译）；交互与背景弹层同套、互斥打开；本刀先落壳层翻译（顶栏 / 三个弹层 / 账号菜单）。
+ * 语言切换（业务口径 2026-10-13「现在我要做系统语言切换 暂时中英文」+「在这个左侧添加按钮」，2026-10-23 扩到日韩）：
+ *  「背景」胶囊左侧新增「语言 · 中文 / Language · English」胶囊 + 弹层（中文 / English / 日本語 / 한국어 四项、选中打点，
+ *  原生语言名不翻译）；交互与背景弹层同套、互斥打开。
  * 站内信（业务口径 2026-10-16「在这个左侧增加站内信按钮 点击后出现局部弹窗用来消息通知」）：「语言」胶囊左侧
  *  新增铃铛按钮 + 未读红点（Transitions.dev「Notification badge」样张：滑入 + 弹性放大、读完后缩小消散，
  *  app.css 的 .inbox-badge 等价还原），点击 = 局部弹窗（最近 8 条 + 全部已读；见 ./InboxPanel）；
@@ -44,7 +44,7 @@ export function AppHeader({ me, project }: AppHeaderProps) {
   const menuRef = useRef<HTMLDivElement | null>(null);
   /** 背景档位弹出框（业务口径 2026-10-13「在这旁边增加一个背景下拉选择」）：本期只有弹层选择，不做观感上色。 */
   const [bgMenuOpen, setBgMenuOpen] = useState(false);
-  /** 语言切换弹出框（业务口径 2026-10-13「现在我要做系统语言切换 暂时中英文」）：中文 / English 两项。 */
+  /** 语言切换弹出框（业务口径 2026-10-13「现在我要做系统语言切换 暂时中英文」，2026-10-23 扩到日韩）：四项。 */
   const [langMenuOpen, setLangMenuOpen] = useState(false);
   /** 站内信弹窗（业务口径 2026-10-16「在这个左侧增加站内信按钮 点击后出现局部弹窗用来消息通知」）。 */
   const [inboxOpen, setInboxOpen] = useState(false);
@@ -255,7 +255,7 @@ export function AppHeader({ me, project }: AppHeaderProps) {
             ) : null}
           </div>
           {/* 语言切换（业务口径 2026-10-13「现在我要做系统语言切换 暂时中英文」+「在这个左侧添加按钮」）：
-              位置 =「背景」胶囊左侧、同排同款；弹层两项（原生语言名不翻译），点选 / 点外 / Esc / 再点触发钮收起。 */}
+              位置 =「背景」胶囊左侧、同排同款；弹层四项（原生语言名不翻译），点选 / 点外 / Esc / 再点触发钮收起。 */}
           <div ref={langMenuRef} className="relative">
             <button
               type="button"
