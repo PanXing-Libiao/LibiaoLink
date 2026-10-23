@@ -388,7 +388,7 @@ export default function App() {
     }
   };
 
-  /** 导出项目全部数据：浏览器保存 xlsx；失败沿用全局底部 Toast，不阻断其他操作。 */
+  /** 导出项目全部数据：浏览器保存 xlsx；失败沿用全局顶部 Toast，不阻断其他操作。 */
   const handleExportProject = async (project: Project): Promise<void> => {
     if (exportInFlight.current) {
       return;
@@ -588,7 +588,7 @@ export default function App() {
 
   /**
    * 验收交付完成后把项目设为已完成（2026-10-22 · 业务口径「当验收交付完成后 弹出一个弹出显示是否需要将项目设为已完成」）：
-   * 只改 status（project.update），保留其余字段；成功更新详情并触发列表刷新，失败沿用全局底部 Toast。
+   * 只改 status（project.update），保留其余字段；成功更新详情并触发列表刷新，失败沿用全局顶部 Toast。
    * 409 时先回读最新项目：若他人已设为已完成则视为成功，否则让详情滚动到最新 version 供用户重试。
    */
   const handleSetProjectDone = async (id: string): Promise<boolean> => {
@@ -714,8 +714,8 @@ export default function App() {
   /**
    * 全局提示区：
    * ① 删除项目确认条（Push 172：卡片隐式删除的第二下）—— 非阻断式确认，仍走底部固定条；
-   * ② 错误提示（如加载 / 删除 / 项目经理修改失败）—— 统一为**屏幕底部居中白色 Toast**
-   *   （2s 自动消失口径见 Toast 组件）。
+   * ② 错误提示（如加载 / 删除 / 项目经理修改失败）—— 统一为**屏幕顶部居中白色 Toast**
+   *   （顶部下落、2s 自动消失口径见 Toast 组件）。
    */
   const bottomBars = (
     <>

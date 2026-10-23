@@ -412,7 +412,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     setAcceptanceDonePromptOpen(true);
   };
 
-  /** 确认设为已完成：成功才关弹窗；失败保留弹窗供重试，错误由父层底部 Toast 提示。 */
+  /** 确认设为已完成：成功才关弹窗；失败保留弹窗供重试，错误由父层顶部 Toast 提示。 */
   const confirmAcceptanceDonePrompt = (): void => {
     if (acceptanceDonePending || project === null || onSetProjectDone === undefined) {
       return;

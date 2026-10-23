@@ -27,8 +27,8 @@
  *      「彻底删除」：第一下出确认条 → 取消（行仍在）→ 再点 → 确认 → 行消失、通知「已彻底删除」、
  *      DB 文件 / 版本行清零、审计留痕（delete · 彻底删除：…）；
  *   ⑧ 控制台零报错；跑完会话撤销、文件 / 版本零残留（上传会话行是历史台账，保留）。
- *   ⑨ 提示口径（2026-10-22 统一）：写口反馈 = 屏幕底部居中浮空 Toast（position=fixed / bottom ≤ 48px / 水平居中），
- *      白色圆角卡片自底部上浮，停留 2s 后自动下收消失（无需手动关闭）；
+ *   ⑨ 提示口径（2026-10-23 分层）：普通写口反馈 = 屏幕顶部居中浮空 Toast（position=fixed / top ≤ 48px / 水平居中），
+ *      白色圆角卡片自顶部下落，停留 2s 后自动向上收起（无需手动关闭）；验收交付确认仍在底部；
  *      操作列按钮定宽（预览 / 下载忙碌文案不再把自动布局的表格重排 = 抖动）。
  *
  * 前置（都在本机跑着）：前端 dev :3000 / api :3001 / 本地沙箱 PG :5433 / MinIO :9000 / 本机 Chrome。
@@ -579,7 +579,7 @@ await clickSelector("[data-file-restore=" + j(fileId) + "]");
 const restoredReady = await waitFor("document.querySelector(" + j("[data-file-notice=ok]") + ") !== null", 30000);
 const noticeSeenAt = Date.now();
 await sleep(420);
-const noticeBox = await ev("(function(){var n=document.querySelector(" + j("[data-file-notice=ok]") + ");if(n===null){return null;}var r=n.getBoundingClientRect();return {text:String(n.textContent||" + j("") + ").trim(),bottom:Math.round(window.innerHeight-r.bottom),centerX:Math.round(r.left+r.width/2),vw:window.innerWidth,position:getComputedStyle(n).position};})()");
+const noticeBox = await ev("(function(){var n=document.querySelector(" + j("[data-file-notice=ok]") + ");if(n===null){return null;}var r=n.getBoundingClientRect();return {text:String(n.textContent||" + j("") + ").trim(),top:Math.round(r.top),centerX:Math.round(r.left+r.width/2),vw:window.innerWidth,position:getComputedStyle(n).position};})()");
 const restoredRowsGone = await waitFor("document.querySelectorAll(" + j("[data-file-row]") + ").length===0", 6000);
 const afterRestore = await ev(rowExpr);
 const restoredRow = await fileStatusOf(fileId);
@@ -588,7 +588,7 @@ check("⑦ 恢复：通知「已恢复」+ 行移出回收站（空态）+ DB st
   JSON.stringify({ notice: noticeBox === null ? null : noticeBox.text, rows: afterRestore.rowCount, status: restoredRow === undefined ? null : restoredRow.status }));
 const restoreAudit = Number((await db.query("select count(*)::int n from audit_logs where object_id = $1 and action = $2 and summary like $3", [fileId, "update", "回收站恢复：%"])).rows[0].n);
 check("⑦b 恢复审计：audit_logs 一条「回收站恢复：…」（action=update）", restoreAudit === 1, String(restoreAudit));
-check("⑦a 浮动提示几何：屏幕底部居中浮空（position=fixed、0 ≤ bottom ≤ 48px、水平居中 ±40px）", noticeBox !== null && noticeBox.position === "fixed" && noticeBox.bottom >= 0 && noticeBox.bottom <= 48 && Math.abs(noticeBox.centerX - noticeBox.vw / 2) <= 40, JSON.stringify(noticeBox));
+check("⑦a 浮动提示几何：屏幕顶部居中浮空（position=fixed、0 ≤ top ≤ 48px、水平居中 ±40px）", noticeBox !== null && noticeBox.position === "fixed" && noticeBox.top >= 0 && noticeBox.top <= 48 && Math.abs(noticeBox.centerX - noticeBox.vw / 2) <= 40, JSON.stringify(noticeBox));
 const noticeGone = await waitFor("document.querySelector(" + j("[data-file-notice]") + ") === null", 8000);
 const noticeMs = Date.now() - noticeSeenAt;
 check("⑦d 自动消失：成功提示约 2s 后自行收起（停留 1.5s ~ 5s，无需点关闭）", noticeGone === true && noticeMs >= 1500 && noticeMs <= 5000, noticeMs + "ms");

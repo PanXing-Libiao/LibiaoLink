@@ -3082,7 +3082,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
   const draftVersion = useRef<number | null>(null);
   /** 写请求防重入（提交 / 暂存）。 */
   const [saving, setSaving] = useState(false);
-  /** 瞬态操作提示（提交 / 暂存 / 删除 / 失败）；统一走底部 Toast，常驻重试状态留在页内。 */
+  /** 瞬态操作提示（提交 / 暂存 / 删除 / 失败）；统一走顶部 Toast，常驻重试状态留在页内。 */
   const [notice, setNotice] = useState<{ kind: ToastKind; text: string } | null>(null);
   const notify = (kind: ToastKind, text: string) => {
     setNotice({ kind, text });
