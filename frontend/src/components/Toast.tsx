@@ -92,7 +92,7 @@ export function Toast(props: {
 
   const anchorAttr = props.anchor === undefined ? {} : { [props.anchor.name]: props.anchor.value };
   const meta = KIND_META[props.kind];
-  const className = "ll-toast ll-toast-top pointer-events-auto fixed inset-x-0 top-[max(1.25rem,env(safe-area-inset-top))] z-[90] mx-auto flex w-[min(92vw,640px)] items-center gap-3 rounded-[22px] border border-zinc-200/80 bg-white px-4 py-3 text-sm text-zinc-700 shadow-[0_18px_50px_-16px_rgba(15,23,42,0.22),0_4px_12px_-4px_rgba(15,23,42,0.08)] outline-none sm:px-5" + (closing ? " is-closing" : "");
+  const className = "ll-toast ll-toast-top pointer-events-auto fixed inset-x-0 top-[max(1.25rem,env(safe-area-inset-top))] z-[90] mx-auto flex w-fit max-w-[min(92vw,640px)] items-center gap-3 rounded-[22px] border border-zinc-200/80 bg-white px-4 py-3 text-base text-zinc-800 shadow-[0_18px_50px_-16px_rgba(15,23,42,0.22),0_4px_12px_-4px_rgba(15,23,42,0.08)] outline-none sm:px-5" + (closing ? " is-closing" : "");
 
   return createPortal(
     <div
@@ -102,6 +102,9 @@ export function Toast(props: {
       aria-busy={closing}
       className={className}
       data-toast={props.kind}
+      onPointerDown={(event) => { event.stopPropagation(); }}
+      onMouseDown={(event) => { event.stopPropagation(); }}
+      onClick={(event) => { event.stopPropagation(); }}
     >
       <span aria-hidden="true" className={"flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-white " + meta.bg}>
         <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none">
@@ -109,7 +112,7 @@ export function Toast(props: {
           {props.kind === "info" ? <circle cx="10" cy="5.9" r="1.15" fill="currentColor" /> : null}
         </svg>
       </span>
-      <span className="min-w-0 flex-1 leading-6">{props.text}</span>
+      <span className="min-w-0 flex-1 font-semibold leading-6">{props.text}</span>
       <button
         type="button"
         onClick={() => { beginCloseRef.current(); }}

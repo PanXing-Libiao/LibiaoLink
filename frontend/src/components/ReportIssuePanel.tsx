@@ -2997,7 +2997,10 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
     <div className="fixed inset-0 z-50">
       <div
         className={"drawer-backdrop absolute inset-0 bg-zinc-900/25" + (closing ? " is-closing" : "")}
-        onClick={requestClose}
+        onClick={(event) => {
+          if (event.target !== event.currentTarget) { return; }
+          requestClose();
+        }}
         aria-hidden="true"
       />
       <aside

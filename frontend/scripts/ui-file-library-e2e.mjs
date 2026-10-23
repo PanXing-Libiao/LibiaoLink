@@ -579,7 +579,7 @@ await clickSelector("[data-file-restore=" + j(fileId) + "]");
 const restoredReady = await waitFor("document.querySelector(" + j("[data-file-notice=ok]") + ") !== null", 30000);
 const noticeSeenAt = Date.now();
 await sleep(420);
-const noticeBox = await ev("(function(){var n=document.querySelector(" + j("[data-file-notice=ok]") + ");if(n===null){return null;}var r=n.getBoundingClientRect();return {text:String(n.textContent||" + j("") + ").trim(),top:Math.round(r.top),centerX:Math.round(r.left+r.width/2),vw:window.innerWidth,position:getComputedStyle(n).position};})()");
+const noticeBox = await ev("(function(){var n=document.querySelector(" + j("[data-file-notice=ok]") + ");if(n===null){return null;}var r=n.getBoundingClientRect();return {text:String(n.textContent||" + j("") + ").trim(),top:Math.round(r.top),width:Math.round(r.width),centerX:Math.round(r.left+r.width/2),vw:window.innerWidth,position:getComputedStyle(n).position};})()");
 const restoredRowsGone = await waitFor("document.querySelectorAll(" + j("[data-file-row]") + ").length===0", 6000);
 const afterRestore = await ev(rowExpr);
 const restoredRow = await fileStatusOf(fileId);
@@ -588,7 +588,7 @@ check("⑦ 恢复：通知「已恢复」+ 行移出回收站（空态）+ DB st
   JSON.stringify({ notice: noticeBox === null ? null : noticeBox.text, rows: afterRestore.rowCount, status: restoredRow === undefined ? null : restoredRow.status }));
 const restoreAudit = Number((await db.query("select count(*)::int n from audit_logs where object_id = $1 and action = $2 and summary like $3", [fileId, "update", "回收站恢复：%"])).rows[0].n);
 check("⑦b 恢复审计：audit_logs 一条「回收站恢复：…」（action=update）", restoreAudit === 1, String(restoreAudit));
-check("⑦a 浮动提示几何：屏幕顶部居中浮空（position=fixed、0 ≤ top ≤ 48px、水平居中 ±40px）", noticeBox !== null && noticeBox.position === "fixed" && noticeBox.top >= 0 && noticeBox.top <= 48 && Math.abs(noticeBox.centerX - noticeBox.vw / 2) <= 40, JSON.stringify(noticeBox));
+check("⑦a 浮动提示几何：屏幕顶部居中浮空（position=fixed、0 ≤ top ≤ 48px、内容自适应宽度 < 600px、水平居中 ±40px）", noticeBox !== null && noticeBox.position === "fixed" && noticeBox.top >= 0 && noticeBox.top <= 48 && noticeBox.width > 0 && noticeBox.width < 600 && Math.abs(noticeBox.centerX - noticeBox.vw / 2) <= 40, JSON.stringify(noticeBox));
 const noticeGone = await waitFor("document.querySelector(" + j("[data-file-notice]") + ") === null", 8000);
 const noticeMs = Date.now() - noticeSeenAt;
 check("⑦d 自动消失：成功提示约 2s 后自行收起（停留 1.5s ~ 5s，无需点关闭）", noticeGone === true && noticeMs >= 1500 && noticeMs <= 5000, noticeMs + "ms");
