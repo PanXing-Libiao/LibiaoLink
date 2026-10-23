@@ -7,8 +7,9 @@ import type {
   GroupAccessRuleResponse,
 } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
+import { AppConfig } from "../../config/config.module.js";
 import { AuditService } from "../audit/index.js";
-import { casdoorGroupName } from "../identity/index.js";
+import { casdoorGroupKey, casdoorGroupName, DepartmentService } from "../identity/index.js";
 import type { GroupAccessRuleData } from "./group-access.rules.js";
 import { PermissionRepository } from "./permission.repository.js";
 import { PermissionService } from "./permission.service.js";
@@ -20,12 +21,15 @@ export class GroupAccessService {
     private readonly permission: PermissionService,
     private readonly repository: PermissionRepository,
     private readonly audit: AuditService,
+    private readonly departments: DepartmentService,
+    private readonly config: AppConfig,
   ) {}
 
   async overview(actorId: string): Promise<GroupAccessOverview> {
     await this.assertAdmin(actorId);
-    const [observed, rules, projects, groupAccess] = await Promise.all([
-      this.repository.listObservedGroups(),
+    const [membershipCounts, directory, rules, projects, groupAccess] = await Promise.all([
+      this.repository.listGroupMembershipCounts(),
+      this.departments.listDepartments(),
       this.repository.listAccessRules(),
       this.repository.listAccessProjects(),
       this.permission.groupAccessOf(actorId),
@@ -38,8 +42,21 @@ export class GroupAccessService {
         }),
       ),
     );
+    const membershipByKey = new Map(membershipCounts.map((item) => [item.groupKey, item] as const));
     const groups = new Map<string, GroupAccessGroup>();
-    for (const item of observed) {
+    for (const department of directory) {
+      if (department.sourceId === null) continue;
+      const groupKey = casdoorGroupKey(this.config.env.CASDOOR_ORG_NAME, department.sourceId);
+      if (groupKey === "") continue;
+      groups.set(groupKey, {
+        groupKey,
+        groupName: department.name,
+        memberCount: membershipByKey.get(groupKey)?.memberCount ?? 0,
+        rule: null,
+      });
+    }
+    for (const item of membershipCounts) {
+      if (groups.has(item.groupKey)) continue;
       groups.set(item.groupKey, {
         groupKey: item.groupKey,
         groupName: item.groupName,
