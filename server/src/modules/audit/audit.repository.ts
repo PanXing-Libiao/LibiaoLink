@@ -114,8 +114,8 @@ export class AuditRepository {
   }
 
   /** 操作人姓名快照（只读 users 一列；避免平台模块依赖 identity 的业务出口 —— check:boundaries）。 */
-  async findUserDisplayName(userId: string): Promise<string | null> {
-    const rows = await this.database.db
+  async findUserDisplayName(userId: string, client: DbClient = this.database.db): Promise<string | null> {
+    const rows = await client
       .select({ displayName: users.displayName })
       .from(users)
       .where(eq(users.id, userId))

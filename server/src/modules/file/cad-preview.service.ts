@@ -32,10 +32,6 @@ export class CadPreviewService {
   async create(fileId: string, versionId: string, viewId: string, actorId: string, nameCodepage: CadNameCodepage = "GB") {
     const context = await this.context(fileId, versionId, viewId, actorId);
     if (this.archive) {
-      if (!this.engine.enabled) throw new ServiceUnavailableException("CAD 转换服务未启用，请下载原文件查看");
-      if (context.version.sizeBytes <= 0 || context.version.sizeBytes > this.engine.inputLimit) {
-        throw new ServiceUnavailableException("文件超过当前 CAD 处理大小限制，请下载原文件查看");
-      }
       return this.archive.create(this.archiveSource(context), actorId, viewId, nameCodepage);
     }
     const key = context.namespace + ":" + nameCodepage;
