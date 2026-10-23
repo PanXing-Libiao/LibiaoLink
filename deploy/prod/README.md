@@ -1,5 +1,7 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
+> **2026-10-23 F-06 preview-content 公网收口与 API 安全头已部署公司测试机（code `03ae712a`），生产未部署**：server 包 `server-f06-03ae712-20261023-1359.tar.gz`（883,269 B · SHA-256 `6cd9a65832dfa37b38f020fd53c67d2f745dfee5530ab2992ec9dff1b587731d`）、nginx 包 `nginx-f06-03ae712-20261023-1359.tar.gz`（4,934 B · `9afc27082addb0cd16d234e90d6e166a9f99568d341422ad50bc64761174afd5`）；部署前备份 `server-before-f06-20261023-1359.tar.gz`（883,292 B · `32e309271d9913538c591be72a0b69290a9abcad5589a59909b75abdfd6124ae`）与 `nginx-before-f06-20261023-1359.tar.gz`（4,516 B · `5bb8aa7f1bc1822102686da5f33437ba40dcc7025bcfc0bff0be674b3e2ce47d`）。`/opt/libiaolink/server/dist` 已替换并修正权限（`entry/api.js` `c32b9e01…`、`common/http/security-headers.js` `1c7da1d1…`），Nginx 配置哈希 `d9d5b98b…`、`nginx -t` 通过并重启 web；`ONLYOFFICE_DOCSERVER_API_BASE_URL=http://api:3000` 已确认。公网 `preview-content` 404，HSTS / `nosniff` / `Referrer-Policy` / `Permissions-Policy` 每项 1 条、`X-Powered-By` 0 条；`/` / `/healthz` / `/readyz` 200，`/libiaolink/` 403 但安全头完整；DocServer → `http://api:3000/healthz` 200；api / worker / web / postgres / minio / cad / svg-preview 七容器 healthy；staging 已清理、备份保留。无前端 / 契约 / DDL / 迁移 / compose / env / Secret 变化。
+
 > **2026-10-23 产品名称改为「立镖市场项目管理平台」已部署公司测试机（v2.18 · frontend），生产未部署**：PR [#582](https://github.com/PanXing-Libiao/LibiaoLink/pull/582)（PR CI [39908280966](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39908280966) 5 / 5、squash `eb443b44`、main CI [39908553712](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39908553712) 5 / 5）。为不把同期合入 main 的审计 UI 与尚未执行的迁移 `0066` 带入本次发布，v2.18 使用隔离前端源 `eb72d1aa` 构建；`frontend/npm run typecheck` / `npm run build` 通过。frontend-only 包 `output/frontend-v2.18-eb72d1aa-20261023-1358.tar.gz`（14,868,805 B · SHA-256 `086260e0c9f93ce78ed5dd71f81c6ae24b4025fbd8a34259b15d026d5b038b9e`）上传 `/srv/data/backups/` 后哈希一致；staging 核验 386 文件 / 18,413,514 B / 0 preview，index / JS / CSS 与本地一致；部署前备份 `frontend-before-v2.18-eb72d1aa-20261023-1358.tar.gz`（14,873,600 B · `9bbdc3450106244ed6e1aef864b81add8537e24cd9b213228223c307c85aee42`）；`rsync -a --delete` 原位覆盖 `/opt/libiaolink/frontend/dist/` 并修正读权限，web 未重启。公网 `index.html` 502 B · `23afceec6d3884daf96dd1ef9d5548db788defd95e47c2e50a55677a842db53f` / `index-CUPeO48q.js` 1,810,413 B · `41262d2f5e4158158d7bc1e11d9305f9f5e32c049001d144e6ba6bb0b1f56d98` / `index-B_ePvmT8.css` 157,072 B · `32bd4553b5a3ce0e8f89fae225eae5f050cca24080ace5a64f9d376c9abf9b34` 与本地逐字节一致；页签为「LibiaoLink 立镖市场项目管理平台」，线上 JS 新名称 1 命中、旧名称 0 命中；`/` / `/nginx-health` / `/healthz` / `/readyz` 均 200，7 个容器 healthy；staging 已清理。无接口 / 依赖 / DDL / 迁移 / compose / env / Secret 变化；审计功能与迁移 `0066` 仍未在测试机部署，生产未部署。
 
 > **2026-10-23 站内信单条 / 一键删除已部署公司测试机（v2.17 · database + shared + server + frontend），生产未部署**：main `0e21360b` 经 PR [#577](https://github.com/PanXing-Libiao/LibiaoLink/pull/577)（PR CI [39903193662](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39903193662) 5 / 5、main CI [39903450869](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39903450869) 5 / 5）部署到 `test-pm.libiaorobot.com`。迁移前 PG 备份 `pg/libiaolink-before-0065-0e21360b-20261023-1305.sql.gz`（842,484 B · `516da28d…`）；`0065` 执行 3 ms，复跑 64 个迁移无漂移。database / server / shared / frontend 四件上传 `/srv/data/backups/` 后哈希一致；api / worker 重启后 7 个容器 healthy，`/nginx-health` ok、`/healthz` 200、`/readyz` 200，未认证单删 / 全删 DELETE 均 401。frontend 386 文件 / 18,413,489 B，公网 index / JS / CSS（`6aac4a64…` / `88b19b07…` / `32bd4553…`）与本地逐字节一致；真实公司账号登录后的删除 / 角标浏览器验收待补。本次全栈 frontend 已覆盖 13:05 的 v2.17 frontend-only 部署（Push 445）；合并评审流程偏差见 `开发日志.md` Push 446。
@@ -36,8 +38,8 @@
 | api / worker | ✅ 部署件已交付（本切片） | `profiles: app`；node 24 双锁；entrypoint 降权（容器进程非 root）；依赖装进命名卷；外部依赖（SSO / 对象存储）以占位值先行，见 §2 / §7 |
 | svg-preview（SVG 安全栅格化） | ✅ 测试机已部署（H1 S4） | internal-only `libiaolink-svg-preview-internal`；不发布宿主端口；镜像 tag + digest 双锁；worker 经 `svg-preview:9900` 调用 |
 | CAD native runtime（OCP / Gmsh） | ✅ 测试机已部署（2026-10-21） | `libiaolink/runtime:24.20.0-cad-20261021-1538`；OCP 7.8.1.1 + Gmsh 4.15.2；API 4 GiB / worker 1 GiB；真实公司账号浏览器验收待完成，生产未部署 |
-| web（Nginx） | ✅ TLS 已接入（v1.8）· 对象存储同源门面（v1.13） | 80 → 301 / 443 应用（含 `/libiaolink/` 对象存储同源门面）/ 9443 MinIO 备用门面（ALLinSSL 自动下发证书）；SPA 静态 + `/api/v1` 反代（SPA 已上线 2026-10-14） |
-| minio（对象存储） | ✅ 服务器实测收口（本切片） | 本机自建；镜像 = 本地构建（锚点 sha256:165271c0…）；数据盘 bind `/srv/data/minio`；init + --check + it 24/24、readyz 全绿；S3 走 https 同源门面（443 `/libiaolink/`；9443 为内网备用）；见 §9 |
+| web（Nginx） | ✅ TLS 已接入（v1.8）· 对象存储同源门面（v1.13） | 80 → 301 / 443 应用（含 `/libiaolink/` 对象存储同源门面）/ 9443 MinIO 回环排障门面（仅 SSH 隧道；F-02 S1 部署件已改，待测试机复核）；SPA 静态 + `/api/v1` 反代（SPA 已上线 2026-10-14） |
+| minio（对象存储） | ✅ 服务器实测收口（本切片） | 本机自建；镜像 = 本地构建（锚点 sha256:165271c0…）；数据盘 bind `/srv/data/minio`；init + --check + it 24/24、readyz 全绿；S3 走 https 同源门面（443 `/libiaolink/`）；F-02 S1 部署件已收口 9000 发布与 9443 回环，待测试机复核；见 §9 |
 | onlyoffice（文档服务器） | ✅ 生产上线（本切片 · v1.14） | 独立 compose 项目 `libiaolink-onlyoffice`（不发布公网端口；8001 回环排障）；443 子路径 `/onlyoffice/` 门面（DS 9.4 原生子路径支持）；镜像离线下发并归档 `/srv/data/images/oo_docs_9.4.0.1.tar`；JWT 与 api 同值；真实 64MB xlsx 端到端渲染 ready；见 `deploy/onlyoffice/README.md` §6 |
 | 备份（PG 每 12h 加密） | 待办 | 落 `/srv/data/backups/pg` + 异地 |
 
@@ -48,7 +50,7 @@
 ├── database/            # 从仓库同步（roles / migrations / scripts / seeds / package*.json；不含 node_modules）
 ├── server/              # api / worker 产物（dist / scripts / package*.json；不含 node_modules 与 src）
 ├── shared/              # @libiaolink/contracts（dist / generated / package*.json）
-└── deploy/prod/         # 本目录（docker-compose.yml / scripts / server.env / secrets/）
+└── deploy/prod/         # 本目录（docker-compose.yml / scripts / systemd / server.env / secrets/）
     └── secrets/         # 只存在于服务器（本机生成、chmod 600、不进仓库）
 ```
 
@@ -59,7 +61,7 @@
 - **登录口令不落仓库**（CONTRIBUTING §12）：由 px 持有；开发机上的未跟踪备忘 = `deploy/prod/服务器登录.local.md`（`.gitignore` 已忽略，AI / 新会话可直接读该文件续接）。
 - 登录后入口：`cd /opt/libiaolink/deploy/prod`（`docker compose --profile app ps` 应见 postgres / api / worker / svg-preview / web / minio 六容器）。
 - 铁律：**不得修改 root 密码**；普通用户 `libiao` 未经许可不动；服务器只跑不改 —— 代码 / 配置变更一律走本仓 → 常驻分支 → PR → 部署件同步（§3 ~ §9），禁止在服务器上手改业务代码，临时热修必须回灌仓库。
-- MinIO 控制台（运维排查）：`ssh -L 9001:127.0.0.1:9001 root@10.1.104.44` 后浏览器开 `http://127.0.0.1:9001`（同 §9）。
+- MinIO 控制台 / 备用门面（运维排查）：`ssh -L 9001:127.0.0.1:9001 -L 9443:127.0.0.1:9443 root@10.1.104.44` 后浏览器开 `http://127.0.0.1:9001`；9443 仅经隧道访问（同 §9）。
 - 证书：ALLinSSL 自动下发 `*.libiaorobot.com` → 宿主 `/etc/ssl/libiaorobot.com.pem|.key`（SSH 通道自动覆盖 + reload）；未使用 1Panel。
 
 ## 2. 密钥清单（`secrets/`）
@@ -261,21 +263,29 @@ curl -sk -o /dev/null -w "%{http_code}\n" https://test-pm.libiaorobot.com/      
 
 `nginx/libiaolink.conf` 对三条响应面分别下发：
 
-- SPA 入口（443 `/`）：HSTS、`X-Content-Type-Options: nosniff`、CSP（同源资源；`script-src` 仅额外放行 CAD WASM 所需的 `'wasm-unsafe-eval'`，不含 `'unsafe-eval'`）、`X-Frame-Options: DENY`。
-- 对象存储主门面（443 `/libiaolink/`）：HSTS、`nosniff`、`Content-Security-Policy: sandbox; default-src 'none'; script-src 'none'; …`、XFO `DENY`；先 `proxy_hide_header` 上游同名头，避免重复。
-- 对象存储备用门面（9443）：与 `/libiaolink/` 同口径；2026-10-21 回放发现上游 MinIO 重复回传 HSTS，PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 增加 `proxy_hide_header Strict-Transport-Security`，待部署后复测单头。
+- SPA 入口（443 `/`）：HSTS、`X-Content-Type-Options: nosniff`、CSP（同源资源；`script-src` 仅额外放行 CAD WASM 所需的 `'wasm-unsafe-eval'`，不含 `'unsafe-eval'`）、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`、`Permissions-Policy`。
+- 对象存储主门面（443 `/libiaolink/`）：HSTS、`nosniff`、`Content-Security-Policy: sandbox; default-src 'none'; script-src 'none'; …`、XFO `DENY`、`Referrer-Policy: no-referrer`、`Permissions-Policy`；先 `proxy_hide_header` 上游同名头，避免重复。
+- 对象存储备用门面（9443）：与 `/libiaolink/` 同口径，并补 `Referrer-Policy: no-referrer` / `Permissions-Policy`；2026-10-21 回放发现上游 MinIO 重复回传 HSTS，PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 增加 `proxy_hide_header Strict-Transport-Security`，待部署后复测单头。
 
 发布前用固定镜像执行配置自检，部署后用 curl 断言三条响应面带完整安全头（`-k` 仅用于测试机自签 / 内网排障；有正式证书时不要带）：
 
 ```bash
 docker compose --profile app run --rm --no-deps web nginx -t
 
-curl -sSI https://test-pm.libiaorobot.com/ | grep -Ei 'strict-transport-security|content-security-policy|x-content-type-options|x-frame-options'
-curl -sSI https://test-pm.libiaorobot.com/libiaolink/security-header-probe | grep -Ei 'strict-transport-security|content-security-policy|x-content-type-options|x-frame-options'
-curl -sSI --resolve test-pm.libiaorobot.com:9443:127.0.0.1 https://test-pm.libiaorobot.com:9443/security-header-probe | grep -Ei 'strict-transport-security|content-security-policy|x-content-type-options|x-frame-options'
+curl -sSI https://test-pm.libiaorobot.com/ | grep -Ei 'strict-transport-security|content-security-policy|x-content-type-options|x-frame-options|referrer-policy|permissions-policy'
+curl -sSI https://test-pm.libiaorobot.com/libiaolink/security-header-probe | grep -Ei 'strict-transport-security|content-security-policy|x-content-type-options|x-frame-options|referrer-policy|permissions-policy'
+curl -sSI --resolve test-pm.libiaorobot.com:9443:127.0.0.1 https://test-pm.libiaorobot.com:9443/security-header-probe | grep -Ei 'strict-transport-security|content-security-policy|x-content-type-options|x-frame-options|referrer-policy|permissions-policy'
 ```
 
-预期：SPA 的 CSP 为同源应用策略且 `script-src 'self' 'wasm-unsafe-eval'`；`/libiaolink/` 与 9443 的 CSP 必须含 `sandbox` 与 `script-src 'none'`，XFO 均为 `DENY`，三条路径均带 HSTS 与 `nosniff`。随后由 S6 执行 ONLYOFFICE、CAD、导出打印和恶意 SVG 的完整浏览器回归；控制台出现 CSP violation 必须阻断发布。2026-10-21 本地已用固定镜像 `nginx:1.30.5-alpine@sha256:0985e772…` 跑过 `nginx -t` 与等价 curl 断言，Headless Edge 已验证 SPA / WASM / Blob Worker / `srcdoc` 与恶意 SVG sandbox；测试机已完成完整 B7 4/4，9443 经 SSH 隧道验证；生产尚未部署。
+预期：SPA 的 CSP 为同源应用策略且 `script-src 'self' 'wasm-unsafe-eval'`；`/libiaolink/` 与 9443 的 CSP 必须含 `sandbox` 与 `script-src 'none'`，XFO 均为 `DENY`，三条路径均带 HSTS、`nosniff`、`Referrer-Policy: no-referrer` 与 `Permissions-Policy`。随后由 S6 执行 ONLYOFFICE、CAD、导出打印和恶意 SVG 的完整浏览器回归；控制台出现 CSP violation 必须阻断发布。2026-10-21 本地已用固定镜像 `nginx:1.30.5-alpine@sha256:0985e772…` 跑过 `nginx -t` 与等价 curl 断言，Headless Edge 已验证 SPA / WASM / Blob Worker / `srcdoc` 与恶意 SVG sandbox；测试机已完成完整 B7 4/4，9443 经 SSH 隧道验证；生产尚未部署。
+
+**F-06 preview-content 公网收口与 API 安全头（2026-10-23 已部署公司测试机，生产未部署）：**
+
+- 443 对 `/api/v1/files/{id}/versions/{versionId}/preview-content` 使用大小写不敏感正则 location 直接返回 404，不回源；尾斜杠与 query 变体同口径。
+- DocServer 不经公网：生产按 `ONLYOFFICE_DOCSERVER_API_BASE_URL=http://api:3000` 直连容器内 API；因此公网 404 不影响受控预览拉取。
+- Express 入口关闭 `X-Powered-By`，Nginx 再以 `proxy_hide_header X-Powered-By` 兜底；经 443 的 API 200 / 401 / 404 / 500 均带 HSTS + `nosniff` + `Referrer-Policy: no-referrer` + `Permissions-Policy`，内部直连同样带后三项（不注入 HSTS）。
+- 回归：`server/test/http-security-headers.test.ts` 覆盖四类状态码与 Nginx 静态门禁；`server/test/preview-content.test.ts` 覆盖内部 200、过期 / 错签名 / 错 URL 等 401。CI 的 `svg-preview-e2e` 另以真实 Nginx 断言公网 404、无 `X-Powered-By` 与安全头，并在 API 启动后断言内部无令牌 401 同口径。
+- 测试机验收：公网预览口 404；安全头与无 `X-Powered-By` 断言全过；`/` / `/nginx-health` / `/healthz` / `/readyz` 正常；DocServer 内网 `api:3000` 可达；7 个容器 healthy；staging `/srv/data/deploy-f06-20261023-1359` 已清理，回滚备份保留在 `/srv/data/backups/`。
 
 **H1 S6 浏览器回归（2026-10-21 已随 PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 合并 main `336b66fd`；PR CI [39540053943](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39540053943) 5 / 5、矩阵 25 / 25；测试机 B1 ～ B7 25/25（B7 4/4）回放通过）：**
 
@@ -330,7 +340,7 @@ PR 与 main 的独立 `svg-preview-e2e` job 会从本生产配置派生 CI Nginx
 **设计要点：**
 
 - 数据落数据盘：bind `/srv/data/minio`（HDD；默认 docker volume 会落系统盘，禁用）；
-- 端口：`9000` = S3 API，对局域网发布（预签名直传要求浏览器直连）；`9001` 控制台仅绑 `127.0.0.1`（SSH 隧道访问）；
+- 端口：`9000` = S3 API，仅 Docker `libiaolink-prod` 网络内使用，不发布宿主端口；`9001` 控制台与 `9443` MinIO 备用门面均只绑 `127.0.0.1`（SSH 隧道访问）；浏览器对象存储只走 443 `/libiaolink/`；
 - 凭据：`secrets/minio_root_user`、`secrets/minio_root_password`（`scripts/minio-entrypoint.sh` 注入）；应用侧 `secrets/s3_access_key` / `s3_secret_key`（当前与根口令同值；专用账号最小权限列为待办）；
 - CORS：MinIO 社区版走服务端变量 `MINIO_API_CORS_ALLOW_ORIGIN`（compose 默认 `http://10.1.104.44`；换域名 / TLS 后同步更新并重建容器）。
 
@@ -348,11 +358,12 @@ chmod 600 *
 cd ..
 # server.env 已存在（v1.2 切片创建）→ 只回填 S3 段；新机首部署才 cp server.env.example server.env
 set_s3() { if grep -q "^$1=" server.env; then sed -i "s|^$1=.*|$1=$2|" server.env; else echo "$1=$2" >> server.env; fi; }
-set_s3 S3_ENDPOINT http://10.1.104.44:9000
+# F-02 S1：9000 不发布宿主端口；对象存储端点必须保持 443 同源门面。
+set_s3 S3_ENDPOINT https://test-pm.libiaorobot.com
 set_s3 S3_REGION us-east-1
 set_s3 S3_BUCKET libiaolink
 set_s3 S3_FORCE_PATH_STYLE auto
-set_s3 S3_CORS_ORIGINS http://10.1.104.44
+set_s3 S3_CORS_ORIGINS https://test-pm.libiaorobot.com
 set_s3 S3_ABORT_INCOMPLETE_DAYS 30
 
 # 镜像：quay 已下架（2026-10-13 实测 401 / token $disabled）→ 用 GitHub Release 官方二进制在服务器本地构建
@@ -362,7 +373,7 @@ cd /srv/data/images/minio
 echo "7c5bd8512c6e966455b1d198209358b2d191c77a83ab377c4073281065fb855f  minio.linux-amd64.RELEASE.2025-09-07T16-13-09Z" | sha256sum -c -
 docker build -f /opt/libiaolink/deploy/prod/minio/Dockerfile -t libiaolink/minio:RELEASE.2025-09-07T16-13-09Z /srv/data/images/minio
 cd /opt/libiaolink/deploy/prod
-docker compose --profile app up -d --force-recreate api worker minio
+docker compose --profile app up -d --force-recreate api worker minio web
 docker compose --profile app ps       # minio (healthy)
 bash scripts/storage.sh init          # 建桶 + 版本控制（CORS / 分片清理按 MinIO 能力面告警）
 bash scripts/storage.sh init --check  # 只读门禁（部署验收）
@@ -370,14 +381,80 @@ bash scripts/storage.sh it            # 真机回放 24 项断言
 ```
 
 - 完成后 `readyz` 全绿（`object-storage:head-bucket` ✓）—— 2026-10-14 服务器实测：minio healthy / api→minio 200 / init 两项能力面告警属预期 / `--check` 退出码 0 / `it` 24/24 / readyz 200 全绿；镜像锚点 `sha256:165271c0…`；
-- 换域名 / TLS 时：同步改 `server.env` 的 `S3_*` 与 compose 的 `MINIO_CORS_ALLOW_ORIGIN`，再 `up -d --force-recreate api worker`——**已执行（2026-10-14）**：`S3_ENDPOINT=https://test-pm.libiaorobot.com`（443 同源门面 `/libiaolink/` → minio:9000；客户端网络仅放行 22/80/443，9443 / 9000 实测被拦 —— **浏览器预签名地址一律走 443 默认端口，不带非标端口**；`/libiaolink/` 与 `S3_BUCKET` 强耦合，换桶名须同步 nginx）、`MINIO_CORS_ALLOW_ORIGIN=https://test-pm.libiaorobot.com,http://10.1.104.44`（改同源后 CORS 非必需，保留兼容 9443 直连与旧源）；同源门面上 `storage:it` 24/24 复跑通过；
+- 换域名 / TLS 时：同步改 `server.env` 的 `S3_*` 与 compose 的 `MINIO_CORS_ALLOW_ORIGIN`，再 `up -d --force-recreate api worker`——**已执行（2026-10-14）**：`S3_ENDPOINT=https://test-pm.libiaorobot.com`（443 同源门面 `/libiaolink/` → minio:9000；客户端网络仅放行 22/80/443，9443 / 9000 实测被拦 —— **浏览器预签名地址一律走 443 默认端口，不带非标端口**；`/libiaolink/` 与 `S3_BUCKET` 强耦合，换桶名须同步 nginx）、`MINIO_CORS_ALLOW_ORIGIN=https://test-pm.libiaorobot.com,http://10.1.104.44`（改同源后 CORS 非必需，保留兼容 9443 隧道排障与旧源）；同源门面上 `storage:it` 24/24 复跑通过；
 - 部署件同步提醒：`nginx/libiaolink.conf` 为**文件级 bind mount（绑定 inode）**——scp 覆盖后容器内仍读旧文件，务必 `docker compose --profile app up -d --force-recreate web` 生效（2026-10-14 实测踩坑，同证书更新口径）；
 - 镜像部署锚点：`docker image inspect libiaolink/minio:RELEASE.2025-09-07T16-13-09Z --format '{{.Id}}'` 记录 Image ID（换机 / 归档核对）；
-- 控制台（运维）：`ssh -L 9001:127.0.0.1:9001 root@10.1.104.44` 后浏览器开 `http://127.0.0.1:9001`。
+- 控制台（运维）：`ssh -L 9001:127.0.0.1:9001 -L 9443:127.0.0.1:9443 root@10.1.104.44` 后浏览器开 `http://127.0.0.1:9001`。
+
+### 9.1 宿主端口收口与 DOCKER-USER（F-02 S1 / S2）
+
+**端口契约（2026-10-23）**
+
+| 端口 | 宿主绑定 | 用途 |
+|---|---|---|
+| 80 | `0.0.0.0` / `[::]` | HTTP → HTTPS |
+| 443 | `0.0.0.0` / `[::]` | SPA / API / `/libiaolink/` / ONLYOFFICE |
+| 9000 | **不发布** | MinIO S3 API，仅 Docker `libiaolink-prod` 网络 |
+| 9001 | `127.0.0.1` | MinIO 控制台 / SSH 隧道 |
+| 9443 | `127.0.0.1` | MinIO 备用门面 / SSH 隧道 |
+
+**S1 · Compose 端口收口**
+
+```bash
+cd /opt/libiaolink/deploy/prod
+docker compose --profile app up -d --force-recreate minio web
+docker compose --profile app ps
+ss -lntp | grep -E ':(9000|9001|9443)\b' || true
+# 期望：9000 无宿主监听；9001 / 9443 只出现 127.0.0.1
+```
+
+不得把 `9000` 或 `9443` 恢复为 `0.0.0.0`。浏览器对象存储只使用 `https://test-pm.libiaorobot.com/libiaolink/`（443 同源门面），`S3_ENDPOINT` 不带非标端口。
+
+**S2 · DOCKER-USER 应用与持久化**
+
+```bash
+cd /opt/libiaolink/deploy/prod
+bash scripts/docker-user-firewall.sh --check   # 未应用时应非零；可作持续门禁
+bash scripts/docker-user-firewall.sh --apply
+bash scripts/docker-user-firewall.sh --check
+
+sudo install -m 0644 systemd/libiaolink-docker-user-firewall.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now libiaolink-docker-user-firewall.service
+sudo systemctl status libiaolink-docker-user-firewall.service --no-pager
+```
+
+脚本只管理带 `libiaolink-f02-s2` 标记的规则：按外部接口匹配 `9000 / 9001 / 9443`，同时覆盖 IPv4 / IPv6；不 flush `DOCKER-USER`，不改 Docker 内网 bridge 流量。`systemd` unit 与 Docker 生命周期绑定，Docker 启动后会自动重新应用。
+
+**复核**
+
+```bash
+sudo iptables -S DOCKER-USER
+sudo ip6tables -S DOCKER-USER
+bash scripts/docker-user-firewall.sh --check
+curl -fsS https://test-pm.libiaorobot.com/readyz
+curl -sS -o /dev/null -w '%{http_code}\n' https://test-pm.libiaorobot.com/libiaolink/
+```
+
+- 服务器本机 `/libiaolink/` 应返回预期的 400 / 403 / 404 安全拒绝，不能连接失败；`/readyz` 应全绿。
+- 从开发机、办公网和公网分别验证 `9000 / 9001 / 9443` 不可达；`80 / 443` 按预期可达。
+- SSH 隧道只用于 9001 / 9443 排障，不写入 `server.env` 或应用端点。
+- 维护窗口内执行 `sudo systemctl restart docker` 后，unit 状态、`ss` 与 `--check` 必须仍通过；该重启会重启在跑容器，须提前通知。
+
+**回滚**
+
+S1 只允许回滚为回环绑定，禁止重新暴露 `9000` 或 `9443`。S2 只回滚错误的具体规则：
+
+```bash
+sudo systemctl disable --now libiaolink-docker-user-firewall.service
+bash scripts/docker-user-firewall.sh --remove
+```
+
+本文件 S1 / S2 不改变 MinIO 根凭据与业务凭据；F-02 的 S3～S5 仍须完成最小权限身份、Secret 隔离与 root 轮换后才能关闭。
 
 ## 10. 后续切片（登记）
 
-- web（Nginx）：TLS 接入 ✅（2026-10-14，443 应用 + 对象存储同源门面 + ALLinSSL 自动下发）；剩余：9443 备用门面择机收敛（浏览器流量已全部走 443 同源门面，9443 仅内网直连用，待无使用后从 compose 删端口）；`/internal/**` / `/example/` 显式 404 加固（SPA 产物 2026-10-14 已上线）；备份脚本（PG 12h → `/srv/data/backups/pg`）；监控告警接线；MinIO 运维面：镜像离线固化（quay 2026-10-13 实测下架，已改服务器本地构建；`docker save` 归档待办）、SeaweedFS 迁移评估、S3 专用账号最小权限、9000 明文端口收敛（127.0.0.1，TLS 门面稳定后）；
+- web（Nginx）：TLS 接入 ✅（2026-10-14，443 应用 + 对象存储同源门面 + ALLinSSL 自动下发）；9443 已收口为回环排障口（F-02 S1）；浏览器流量已全部走 443 同源门面，待确认 H1 不再依赖后再评估删除；`/internal/**` / `/example/` 显式 404 加固（SPA 产物 2026-10-14 已上线）；备份脚本（PG 12h → `/srv/data/backups/pg`）；监控告警接线；MinIO 运维面：镜像离线固化（quay 2026-10-13 实测下架，已改服务器本地构建；`docker save` 归档待办）、SeaweedFS 迁移评估、S3 专用账号最小权限与 root 轮换（F-02 S3～S5 待执行）；
 - onlyoffice（文档服务器）：生产上线 ✅（2026-10-14，离线镜像 + 443 子路径门面 + 真实 64MB xlsx 端到端；见 `deploy/onlyoffice/README.md` §6）；剩余：升级 / 重建后按回归五项 + §6.3 表复验、缓存盘 7 天清理 cron、正式环境容量评估与 CVE 跟踪；
 - SSO：测试环境（authtest 应用 `LibiaoLink`）已按接入标准接通（2026-10-14）；正式环境应用 `libiaolink` 创建 + 企微登录方式挂接待 SSO 管理员（M8 §3-B）。
 - M5-03-5 单聊改智能机器人（绑定码链路）部署**待执行**（项目组 2026-10-16 决定暂缓）：迁移 `0055` → `server/dist` 重传 → `server.env` 回填 `WECOM_BOT_ID` / `WECOM_BOT_SECRET` → `restart api worker` → 真机复跑 **BC-1 ~ BC-4**（口径 §12）；执行前先备份 PG（`0055` 含不可回滚清理）。
@@ -387,6 +464,7 @@ bash scripts/storage.sh it            # 真机回放 24 项断言
 
 | 版本 | 日期 | 变更 | 人 |
 |---|---|---|---|
+| v2.19 · deploy（未持久化部署） | 2026-10-23 | F-02 S1 / S2 部署件：minio 删除 `9000:9000`、web 将 `9443` 收口到 `127.0.0.1`；新增 `scripts/docker-user-firewall.sh`（`--check` / `--apply` / `--remove`，IPv4 / IPv6，仅管理自有标记规则）与 `systemd/libiaolink-docker-user-firewall.service`；§9.1 补端口契约、复核与回滚。测试机临时 `apply → 二次 apply → check → remove` 通过：443 `/readyz` 200、`/libiaolink/` 403、9000 / 9001 / 9443 从开发机不可达；规则已移除，**未安装 unit、未重建 minio / web，F-02 S3～S5 未做** | px |
 | v2.18 · frontend | 2026-10-23 | 产品名称改为「立镖市场项目管理平台」测试机前端部署（Push 450 / 451 · PR [#582](https://github.com/PanXing-Libiao/LibiaoLink/pull/582) · PR CI [39908280966](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39908280966) 5 / 5 · squash `eb443b44` · main CI [39908553712](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39908553712) 5 / 5）：使用隔离前端源 `eb72d1aa` 构建，避开同期审计 UI 与未执行迁移 `0066`；frontend-only 包 14,868,805 B · `086260e0…` 上传 `/srv/data/backups/` 并远端对账一致；staging 386 文件 / 18,413,514 B / 0 preview；部署前备份 14,873,600 B · `9bbdc345…`；`rsync -a --delete` 覆盖并修正读权限，web 未重启；公网 index / JS / CSS（`23afceec…` / `41262d2f…` / `32bd4553…`）与本地逐字节一致，新名称 1 命中、旧名称 0 命中，`/` / `/nginx-health` / `/healthz` / `/readyz` 200，7 容器 healthy，staging 已清理；无接口 / 依赖 / DDL / 迁移 / Secret 变化，生产未部署。 | px |
 | v2.17 · database + shared + server + frontend | 2026-10-23 | 站内信单条 / 一键删除测试机部署（Push 444 → 回填 446 · PR [#577](https://github.com/PanXing-Libiao/LibiaoLink/pull/577) · PR CI [39903193662](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39903193662) 5 / 5 · squash `0e21360b` · main CI [39903450869](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39903450869) 5 / 5）：PG 备份 842,484 B · `516da28d…`；dry-run 仅 `0065`，执行 3 ms，复跑 64 个迁移无漂移；database 113,133 B · `6ddf423f…` / server 45,846,279 B · `c535394c…` / shared 352,608 B · `d78173f3…` / frontend 14,868,826 B · `0e8aeb28…` 上传后哈希一致；api / worker 重启 healthy，7 容器 healthy，`/nginx-health` / `/healthz` / `/readyz` 正常，未认证单删 / 全删 DELETE 均 401；frontend 386 文件 / 18,413,489 B，公网 index / JS / CSS `6aac4a64…` / `88b19b07…` / `32bd4553…` 与本地逐字节一致，「确认删除全部」/「删除这条站内信」线上 JS 各 1 命中；staging 已清理（本次全栈 frontend 覆盖同版本 frontend-only 部署 · Push 445）；真实账号浏览器验收待补，生产未部署。| px |
 | v2.17 · frontend | 2026-10-23 | 项目经理辅助说明删除测试机前端部署（Push 443 / 445 · 同一改动随 PR [#577](https://github.com/PanXing-Libiao/LibiaoLink/pull/577) squash `0e21360b` 进入 main；隔离发布源 `07fbc3e3` · PR [#578](https://github.com/PanXing-Libiao/LibiaoLink/pull/578) 按重复覆盖关闭 · PR CI [39903282634](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39903282634) 5 / 5）：从隔离前端源运行 `frontend/npm run typecheck` / `npm run build`，frontend-only 包 `output/frontend-v2.17-07fbc3e3-20261023-1305.tar.gz`（14,868,123 B · SHA-256 `1787383cb8395609424648cdc7e0d4423a89684771e76dcfd80228058b6e8c02`）上传 `/srv/data/backups/` 且哈希一致；staging 核验 386 文件 / 18,409,424 B / 0 preview；部署前备份 `frontend-before-v2.17-07fbc3e3-20261023-1305.tar.gz`（14,873,680 B · `89e8e5483d1ec3ebd5b54017a8e570b74ab341321aa9f18e1297379fccdd7d09`）；`rsync -a --delete` 覆盖并修正读权限，web 未重启；公网 `index.html` / `index-DtdFPwwL.js` / `index-Clo2AvdS.css` 逐字节一致（`4d5f20a3…` / `ccaaeadc…` / `8d09df45…`），旧文案与旧键 0 命中，`/` / `/nginx-health` / `/healthz` / `/readyz` 均 200，八容器 healthy；staging 已清理；无接口 / 依赖 / DDL / 迁移 / compose / env / Secret 变化，本次未部署 main 同期站内信功能，生产未部署。 | px |

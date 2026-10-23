@@ -40,7 +40,7 @@
 ### 1.4 网络与网关（含 R6 / D1）
 
 - DocServer 需可达 API 端点（内网）；dev 沙箱用 `docker network connect libiaolink-onlyoffice-internal <s3 容器>` 接线；
-- 网关（生产）：**不暴露** `/example/`；受控预览端点仅 DocServer 网段可达、公网 404（S3 上线后生效）；
+- 网关（生产）：**不暴露** `/example/`；受控预览端点仅 DocServer 直连容器内 API（`http://api:3000`），公网 404 已由 F-06（2026-10-23）Nginx 精确 location 强制；
 - 示例 app（`ds:example`）保持默认关闭：不得为排障等目的在生产打开。
 
 ### 1.5 资源与容量

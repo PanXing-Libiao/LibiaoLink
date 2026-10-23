@@ -15,6 +15,11 @@ type Identity = { name: string; sourceSHA256: string; sourceByteLength: number; 
 export type CadJob = z.infer<typeof CadJobSchema>;
 export type CadResource = { stream: Readable; bytes: number; artifactBytes?: number };
 
+/** Private protocol detail: the sandbox explicitly rejected a queue/storage/lease quota. */
+export class CadEngineBusyError extends ServiceUnavailableException {
+  constructor() { super("CAD 转换服务繁忙，请稍后重试或下载原文件"); }
+}
+
 export function cadEngineConfigured(env: Pick<Env, "CAD_ENGINE_SOCKET" | "CAD_ENGINE_URL">): boolean {
   return Boolean(env.CAD_ENGINE_SOCKET || env.CAD_ENGINE_URL);
 }
@@ -60,6 +65,13 @@ export class CadEngineClient implements OnModuleDestroy {
       call.once("error", () => reject(new ServiceUnavailableException("CAD 转换服务暂不可用，请重试或下载原文件")));
       call.once("response", (response) => {
         if (response.headers["x-cad-engine-version"] !== CAD_ENGINE_VERSION || response.statusCode !== 200) {
+          if (response.headers["x-cad-engine-version"] === CAD_ENGINE_VERSION && response.statusCode === 503) {
+            void this.readJson(response).then((packet) => {
+              reject(z.object({ code: z.literal("busy") }).safeParse(packet).success ? new CadEngineBusyError()
+                : new ServiceUnavailableException("CAD 转换服务暂不可用，请重试或下载原文件"));
+            }, (error: unknown) => reject(error));
+            return;
+          }
           response.destroy();
           reject(response.statusCode === 404 ? new AppError("NOT_FOUND", "模型资源不存在或不可访问")
             : new ServiceUnavailableException("CAD 转换服务暂不可用，请重试或下载原文件"));
@@ -70,7 +82,10 @@ export class CadEngineClient implements OnModuleDestroy {
   }
 
   private async json(action: string, input: Record<string, unknown>, source?: Uint8Array): Promise<unknown> {
-    const response = await this.open(action, input, source);
+    return this.readJson(await this.open(action, input, source));
+  }
+
+  private async readJson(response: IncomingMessage): Promise<unknown> {
     try {
       const chunks: Buffer[] = []; let bytes = 0;
       for await (const chunk of response) {

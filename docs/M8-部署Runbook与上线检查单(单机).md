@@ -1,6 +1,6 @@
 # M8 部署 Runbook 与上线检查单（单机部署）
 
-> 归属：px（部署 / 交付 · M8-03 / M8-04 先行落地件）｜2026-10-13｜状态：v1.10（随落地进展更新）
+> 归属：px（部署 / 交付 · M8-03 / M8-04 先行落地件）｜2026-10-23｜状态：v1.15（随落地进展更新）
 > 口径来源：`docs/adr/ADR-013-部署与容量起点.md`（单机 Compose + Nginx、容量起点、生产门禁、备份口径）、`docs/PoC-10-部署前置定稿(F1-R3·R6).md`、`deploy/onlyoffice/README.md`（S2 部署清单 + 升级回归五项）、`deploy/minio/README.md`、`docs/公司统一登录(SSO)实施方案.md`、`docs/M5-03-外部依赖清单(企微通道).md`、`技术设计v0.3-实施与验收.md` §3.9（M8）。
 > 关系说明：本文件是「单机落地方案 + 检查单」的汇总与追踪；组件级配置以各自 README / 定稿为准，冲突时以上游为准并回改本文件；M8-03 / M8-04 正式主体继续按 `技术设计v0.3` §3.9 推进。
 
@@ -43,13 +43,14 @@
   - **不要**把 docker data-root 整体挪到 HDD（PG 会跟着掉到机械盘）；40G 真放不下时：镜像改内网 registry 按需拉取 + 只保留在用版本，PG 数据卷显式 bind mount 回 sda。
 - `sdb`（HDD）放：对象存储数据目录（MinIO 默认 docker volume 在系统盘，**必须改成 bind mount 落到 sdb**）、ONLYOFFICE 转换缓存挂卷（容器内 `App_Data/cache`）、PG 备份落点、（如启用）翻译模型文件；示例：`/srv/data/minio`、`/srv/data/onlyoffice-cache`、`/srv/data/backups/pg`（挂载点以实际为准）。
 - 告警阈值：系统盘 75% / 85% 两档（系统盘满 = 数据库 + 服务同挂）；数据盘同档；告警进管理员告警群。
-- 网络可达性两点（易漏）：① 对象存储 API 要能被浏览器直连（预签名直传；CORS 来源 = 生产站点域名）；② `ONLYOFFICE_DOCSERVER_URL` 必须是浏览器可达地址。
+- 网络可达性两点（易漏）：① 浏览器对象存储只走 443 同源门面 `/libiaolink/`；`9000` 不发布宿主端口，`9001` / `9443` 仅绑回环并走 SSH 隧道（F-02 S1）；② `ONLYOFFICE_DOCSERVER_URL` 必须是浏览器可达地址。
 
 ## 3. 部署前置检查单（未完成项）
 
 **A. 仓库侧（px）**
 
-- [ ] 应用栈部署件（进行中）：PostgreSQL + 迁移/种子工具已落地 `deploy/prod/`（postgres 18.6 双锁 + 文件密钥 + db-init + tools 容器；2026-10-13 服务器实测：47 个迁移 + 无漂移复跑、6 个种子 + 零变更复跑）；api / worker 已部署件落地并服务器实测启动（profiles: app / 非 root 降权 entrypoint / 依赖命名卷 / `server.env` 模板；2026-10-13 实测：容器均 healthy、`/healthz` 200 ok、`/readyz` 503 degraded 属预期——对象存储占位凭据）；web（Nginx）已落地并服务器实测（2026-10-14 TLS 接入：80 → 301、443 应用 + 对象存储同源门面 `/libiaolink/`、9443 MinIO 备用门面；ALLinSSL 自动下发 *.libiaorobot.com；SPA 产物已上线（2026-10-14））；对象存储（MinIO 本机自建）已落地并服务器实测（本地构建镜像 / 数据盘 bind；storage init + --check + it 24/24、readyz 200 全绿，2026-10-14）—— 生产门禁全项（容器非 root、镜像精确版本 + digest、迁移独立任务、Secrets 文件挂载、CPU / 内存 / pids 限额、连接池有界）
+- [ ] F-02 S1 / S2 宿主暴露面收口：Compose 取消 `9000` 发布、`9443` 收口到 `127.0.0.1`；新增 `scripts/docker-user-firewall.sh`（`--check` / `--apply` / `--remove`）与 systemd unit；部署口径见 `deploy/prod/README.md` §9.1。**待 PR、测试机部署、开发机 / 办公网 / 公网探活及 Docker / 主机重启复核**；S1 / S2 不关闭 F-02（S3～S5 未做）
+- [ ] 应用栈部署件（进行中）：PostgreSQL + 迁移/种子工具已落地 `deploy/prod/`（postgres 18.6 双锁 + 文件密钥 + db-init + tools 容器；2026-10-13 服务器实测：47 个迁移 + 无漂移复跑、6 个种子 + 零变更复跑）；api / worker 已部署件落地并服务器实测启动（profiles: app / 非 root 降权 entrypoint / 依赖命名卷 / `server.env` 模板；2026-10-13 实测：容器均 healthy、`/healthz` 200 ok、`/readyz` 503 degraded 属预期——对象存储占位凭据）；web（Nginx）已落地并服务器实测（2026-10-14 TLS 接入：80 → 301、443 应用 + 对象存储同源门面 `/libiaolink/`、9443 MinIO 回环排障门面，F-02 S1 待部署；ALLinSSL 自动下发 *.libiaorobot.com；SPA 产物已上线（2026-10-14））；对象存储（MinIO 本机自建）已落地并服务器实测（本地构建镜像 / 数据盘 bind；storage init + --check + it 24/24、readyz 200 全绿，2026-10-14）—— 生产门禁全项（容器非 root、镜像精确版本 + digest、迁移独立任务、Secrets 文件挂载、CPU / 内存 / pids 限额、连接池有界）
 - [ ] 上线检查单、灰度与回滚预案正文（M8-04；本文件 §3 / §4 为骨架）
 - [ ] 备份脚本：PG 每 12h 加密备份 → 数据盘 + 异地；对象存储每日增量异地同步
 - [ ] 监控告警接线（§6）
@@ -83,6 +84,7 @@
 6. 冒烟：SSO 登录 → 首页 / 项目空间 → 上传（分片直传 → 完成）→ 预览（Office / PDF / 图片）→ 企微群一条消息 —— SSO 测试环境已接通（2026-10-14：`/auth/login` 302 → authtest 授权页；浏览器全流程人工实测进行中）；
 7. 收口：`PERMISSION_ENFORCED=false`（一期口径）、`SESSION_COOKIE_SECURE=auto`（生产自动 Secure）；发布按 CONTRIBUTING §16（标签指向全绿主干）；值班按 `团队分工.md` §7。
 8. M5-03-5 智能机器人单聊（绑定码链路）**待执行**（项目组 2026-10-16 决定暂缓）：**先备份 PG** → `bash scripts/db-migrate.sh`（执行 `0055`；含不可回滚清理）→ 复跑「无漂移」→ 重传 `server/dist` → `server.env` 回填 `WECOM_BOT_ID` / `WECOM_BOT_SECRET` → `docker compose --profile app restart api worker` → 真机复跑 BC-1 ~ BC-4（取码 → 单聊发码绑定 → 绑定后送达 → 未绑定 / 换机器人降级）。
+9. F-02 S1 / S2（P0）：按 `deploy/prod/README.md` §9.1 重建 minio / web → 应用 `DOCKER-USER` → 安装并启用 unit → 从开发机、办公网、公网验证 `9000 / 9001 / 9443` 不可达、443 正常 → 维护窗口重启 Docker 后复验。禁止重开 `9000` 或 `9443` 全接口；本步完成后 F-02 仍未关闭（S3～S5 待执行）。
 
 ## 5. 备份与恢复口径（ADR-013）
 
@@ -105,7 +107,7 @@
 
 | # | 事项 | 主责 | 状态 |
 |---|---|---|---|
-| 1 | 应用栈部署件（api / worker / PG / Nginx） | px | 进行中：PG + 迁移/种子工具（tools）✅ 服务器实测（47 迁移无漂移 / 6 种子零变更）；api / worker ✅ 服务器实测（均 healthy、`/healthz` ok、`/readyz` 503-degraded 属预期）；web（Nginx）✅ 服务器实测（TLS 接入：80 → 301 / 443 应用 + 对象存储同源门面 `/libiaolink/` / 9443 备用门面；SPA 产物已上线）；minio ✅ 服务器实测（healthy / api→minio 200 / storage init+check+it 24/24 / readyz 200 全绿） |
+| 1 | 应用栈部署件（api / worker / PG / Nginx） | px | 进行中：PG + 迁移/种子工具（tools）✅ 服务器实测（47 迁移无漂移 / 6 种子零变更）；api / worker ✅ 服务器实测（均 healthy、`/healthz` ok、`/readyz` 503-degraded 属预期）；web（Nginx）✅ 服务器实测（TLS 接入：80 → 301 / 443 应用 + 对象存储同源门面 `/libiaolink/`；SPA 产物已上线）；minio ✅ 服务器实测（healthy / api→minio 200 / storage init+check+it 24/24 / readyz 200 全绿）；F-02 S1 的 9000 取消发布 / 9443 回环待部署复核 |
 | 2 | 上线检查单 / 灰度 / 回滚预案正文（M8-04） | px | 本文件 §3 / §4 为骨架 |
 | 3 | 备份 / 恢复脚本 + 首次演练 | px（lan 复核） | 未开始 |
 | 4 | 正式环境 SSO 应用创建 | SSO 管理员 | 未发起 |
@@ -116,6 +118,7 @@
 | 9 | Nginx 硬化 / TLS 切片（443 + 证书挂载；`/internal/**`、`/example/` 显式 404；SPA 产物上线） | px | 接近关闭（2026-10-14）：TLS 接入 ✅ + SPA 产物上线 ✅；剩余：`/internal/**`、`/example/` 显式 404 加固 |
 | 10 | SSO 测试环境对接（authtest 应用 → 104.44 测试环境） | px | ✅ 2026-10-14：应用按接入标准调整（回调 / grant / 字段）+ 服务器回填 + `/auth/login` 302 实测；浏览器全流程人工实测进行中 |
 | 11 | M5-03-5 智能机器人单聊（绑定码链路）部署：迁移 `0055` + `server/dist` + `server.env` 新机器人凭据 + 重启 api / worker + BC-1 ~ BC-4 真机复跑 | px（lan 协办：迁移包 / 构建件 / 证据） | 待执行（项目组 2026-10-16 决定暂缓；先本地等价执行） |
+| 12 | F-02 S1 / S2：宿主 `9000 / 9001 / 9443` 端口收口 + `DOCKER-USER` 持久化边界 | px（lan / wmj 复核） | 进行中：部署件与 Runbook 已补齐；待 PR、测试机部署、外部探活及重启复核 |
 
 ## 8. 变更记录
 
@@ -136,3 +139,4 @@
 | v1.12 | 2026-10-14 | 部署口径补录：测试机登录与运维口径（10.1.104.44 / test-pm.libiaorobot.com；登录口令不落仓库 + 本机未跟踪备忘；服务器只跑不改）进 AGENTS.md「服务器与运维（测试机）」与 deploy/prod/README.md §1.1（与 deploy/prod/README.md v1.12 对齐） | px |
 | v1.13 | 2026-10-14 | 对象存储改「443 同源门面」修上传 / 预览断链：根因 = 客户端网络仅放行 22/80/443（9443 / 9000 实测被拦；API 侧 201/200 正常、浏览器预签名 PUT/GET 超时）→ 443 增 location /libiaolink/（= 桶名；proxy_pass 不重写 / Host $http_host 保 SigV4）、S3_ENDPOINT 去端口；storage:it 24/24 + 开发机真实网络预签名 PUT/GET/DELETE 全绿；9443 保留内网备用门面；§3 / §4 / §7 同步 | px |
 | v1.14 | 2026-10-16 | M5-03-5 智能机器人单聊（绑定码链路）部署登记：§3-A 补仓库侧待执行项（`server.env.example` 已补新机器人凭据）；§3-C Secrets 口径改「群 + 单聊共用同一机器人」；§4 增第 8 步（备份 → `0055` → dist 重传 → 凭据 → 重启 → BC-1 ~ BC-4）；§7 增 #11；与 `deploy/prod/README.md` §6 / §7 / §10 同步 | px（lan 代记） |
+| v1.15 | 2026-10-23 | F-02 S1 / S2 部署件：Compose 取消 MinIO `9000` 宿主发布、`9443` 改 `127.0.0.1`；新增 `docker-user-firewall.sh` + systemd unit；README §9.1 补端口契约、应用、外部复核与只回滚自有规则；§3-A 增检查项、§4 增第 9 步、§7 增 #12。**本行仅表示仓库件落地；测试机临时 apply → 二次 apply → check → remove 通过（443 `/readyz` 200、`/libiaolink/` 403、9000 / 9001 / 9443 从开发机不可达，规则已移除），持久化部署与重启证据待补；F-02 生产未关闭** | px |

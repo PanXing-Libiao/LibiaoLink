@@ -13,6 +13,8 @@ import { Pool } from "pg";
 import { AppConfig } from "../src/config/config.module.js";
 import { loadEnv } from "../src/config/env.js";
 import { DatabaseService } from "../src/db/database.service.js";
+import { AuditRepository } from "../src/modules/audit/audit.repository.js";
+import { AuditService } from "../src/modules/audit/audit.service.js";
 import { AppError } from "../src/common/errors/app-error.js";
 import { S3ObjectStorage } from "../src/storage/s3-object-storage.js";
 import { CadEngineClient } from "../src/modules/file/cad-engine.client.js";
@@ -22,6 +24,7 @@ import { CadArchiveWorker } from "../src/modules/file/cad-archive.worker.js";
 import { CadPreviewService } from "../src/modules/file/cad-preview.service.js";
 import type { FileRepository } from "../src/modules/file/file.repository.js";
 import type { PermissionService } from "../src/modules/permission/index.js";
+import { installCadAuditTables } from "./cad-audit.fixture.js";
 
 const databaseUrl = process.env.CAD_TEST_DATABASE_URL;
 const endpoint = process.env.CAD_TEST_ENDPOINT;
@@ -34,6 +37,7 @@ const sources = Array.from({ length: 4 }, () => ({ fileId: randomUUID(), version
 let database: DatabaseService, admin: Pool, minio: ChildProcess, directory: string, s3: S3Client;
 let storage: S3ObjectStorage, repository: CadArchiveRepository, engine: CadEngineClient;
 let archive: CadArchiveService, worker: CadArchiveWorker, preview: CadPreviewService, config: AppConfig;
+let audit: AuditService;
 let denied = false;
 const files = {
   async findFileById(id: string) { const source = sources.find((s) => s.fileId === id); return source ? { id, name: source.sourceName,
@@ -60,8 +64,8 @@ describe.skipIf(!databaseUrl || !endpoint || !existsSync(minioPath))("CAD durabl
     target.searchParams.set("options", "-c search_path=" + schemaName);
     config = new AppConfig(loadEnv({ NODE_ENV: "test", DATABASE_URL: target.toString(), CAD_ENGINE_URL: endpoint! }));
     database = new DatabaseService(config);
-    await database.pool.query("create table files(id uuid primary key); create table file_versions(id uuid primary key)");
-    await database.pool.query(await readFile(new URL("../../database/migrations/0064_cad_artifacts.sql", import.meta.url), "utf8"));
+    await installCadAuditTables(database, actor);
+    audit = new AuditService(database, new AuditRepository(database));
     directory = await mkdtemp(join(tmpdir(), "libiaolink-cad-archive-test-"));
     const credentials = { accessKeyId: "cad-archive-test", secretAccessKey: randomBytes(24).toString("hex") };
     minio = spawn(minioPath, ["server", "--address", "127.0.0.1:19990", "--console-address", "127.0.0.1:19991", join(directory, "objects")],
@@ -78,11 +82,11 @@ describe.skipIf(!databaseUrl || !endpoint || !existsSync(minioPath))("CAD durabl
     const raw = await readFile(new URL("./fixtures/cad/controlled-box.step", import.meta.url));
     for (const s of sources) {
       s.sourceSHA256 = createHash("sha256").update(raw).digest("hex"); s.sourceBytes = raw.byteLength;
-      await database.pool.query("insert into files(id) values($1)", [s.fileId]);
+      await database.pool.query("insert into files(id, project_id) values($1,$2)", [s.fileId, projectId]);
       await database.pool.query("insert into file_versions(id) values($1)", [s.versionId]);
       await storage.putObject({ objectKey: "sources/" + s.versionId + ".step", body: raw });
     }
-    repository = new CadArchiveRepository(database);
+    repository = new CadArchiveRepository(database, audit);
     engine = new CadEngineClient(config);
     archive = new CadArchiveService(repository, storage, engine);
     worker = new CadArchiveWorker(repository, files, engine, storage);
@@ -149,10 +153,10 @@ describe.skipIf(!databaseUrl || !endpoint || !existsSync(minioPath))("CAD durabl
     const restartedEngine = new CadEngineClient(config);
     const submitted = vi.spyOn(restartedEngine, "submit").mockRejectedValue(new Error("Must not reparse"));
     const lookup = vi.spyOn(restartedEngine, "lookup").mockRejectedValue(new Error("Must not query sandbox"));
-    const restarted = new CadPreviewService(files, permissions, storage, restartedEngine, new CadArchiveService(new CadArchiveRepository(database), storage, restartedEngine));
+    const restarted = new CadPreviewService(files, permissions, storage, restartedEngine, new CadArchiveService(new CadArchiveRepository(database, audit), storage, restartedEngine));
     const created = await open("4", restarted);
     expect(created.reused).toBe(true); expect((await manifest(created.job.id, "4", restarted)).snapshot.completeness).toBe("complete");
-    await new CadArchiveWorker(new CadArchiveRepository(database), files, restartedEngine, storage).drainOnce();
+    await new CadArchiveWorker(new CadArchiveRepository(database, audit), files, restartedEngine, storage).drainOnce();
     expect(submitted).not.toHaveBeenCalled(); expect(lookup).not.toHaveBeenCalled();
     await restartedEngine.onModuleDestroy();
     let ready = false;

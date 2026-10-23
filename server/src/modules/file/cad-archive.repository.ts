@@ -4,16 +4,22 @@ import { randomUUID } from "node:crypto";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { cadArtifacts, cadViews } from "../../db/schema/cad.js";
+import { files } from "../../db/schema/files.js";
+import { AuditService, type AuditRecordInput } from "../admin/index.js";
 import { CAD_ENGINE_VERSION } from "./cad-release.js";
 import type { CadNameCodepage } from "@libiaolink/contracts";
 
 export type CadArtifactRow = typeof cadArtifacts.$inferSelect;
 export type CadViewRow = typeof cadViews.$inferSelect;
 export type CadArchiveSource = { fileId: string; versionId: string; sourceSHA256: string; sourceBytes: number; sourceName: string };
+export type CadFailureContext = { nativeJobId?: string; terminalState?: "failed" | "timed-out" | "cancelled" };
+
+const TIMEOUT_CODES = new Set(["job-timeout", "job-queue-timeout", "conversion-timeout"]);
+const LIMIT_CODES = new Set(["job-memory-quota", "job-output-quota", "artifact-budget", "engine-busy"]);
 
 @Injectable()
 export class CadArchiveRepository {
-  constructor(private readonly database: DatabaseService) {}
+  constructor(private readonly database: DatabaseService, private readonly audit: AuditService) {}
 
   async request(source: CadArchiveSource, codepage: CadNameCodepage, client: DbClient = this.database.db): Promise<CadArtifactRow> {
     const inserted = await client.insert(cadArtifacts).values({ ...source, engineVersion: CAD_ENGINE_VERSION, nameCodepage: codepage })
@@ -46,7 +52,27 @@ export class CadArchiveRepository {
   }
 
   async cancelView(id: string): Promise<void> {
-    await this.database.db.update(cadViews).set({ cancelled: true, leaseExpiresAt: null }).where(eq(cadViews.id, id));
+    await this.database.db.transaction(async (tx) => {
+      const [view] = await tx.update(cadViews).set({ cancelled: true, leaseExpiresAt: null })
+        .where(and(eq(cadViews.id, id), eq(cadViews.cancelled, false))).returning();
+      if (!view) return;
+      const [artifact] = await tx.select().from(cadArtifacts).where(eq(cadArtifacts.id, view.artifactId));
+      if (!artifact) throw new Error("CAD view lost its artifact");
+      await this.recordAudit(tx, artifact, {
+        actorId: view.actorId, action: "update", result: "succeeded", entry: "api", summary: "取消 CAD 预览窗口",
+        metadata: { operation: "cad.cancelled", versionId: artifact.versionId, artifactId: artifact.id,
+          engineVersion: artifact.engineVersion, nameCodepage: artifact.nameCodepage,
+          viewId: view.viewId, viewJobId: view.id.replaceAll("-", "") },
+      });
+    });
+  }
+
+  async rejectInput(source: CadArchiveSource, actorId: string, viewId: string, codepage: CadNameCodepage, limitBytes: number): Promise<void> {
+    await this.recordAudit(this.database.db, source, {
+      actorId, action: "update", result: "failed", entry: "api", summary: "CAD 输入大小超出处理限制",
+      metadata: { operation: "cad.limit_exceeded", errorCode: "input-limit", versionId: source.versionId,
+        engineVersion: CAD_ENGINE_VERSION, nameCodepage: codepage, viewId, sourceBytes: source.sourceBytes, limitBytes },
+    });
   }
   async lease(id: string, release = false): Promise<void> {
     await this.database.db.update(cadViews).set({ leaseExpiresAt: release ? null : new Date(Date.now() + 300_000) })
@@ -68,6 +94,9 @@ export class CadArchiveRepository {
           and(eq(cadArtifacts.state, "running"), lt(cadArtifacts.claimUntil, now)))))
         .orderBy(cadArtifacts.availableAt).limit(1).for("update", { skipLocked: true }))[0];
       if (!row) return null;
+      if (row.state === "running" || row.attempts >= 3) {
+        await this.recordFailure(tx, row, "worker-interrupted", row.attempts < 3);
+      }
       if (row.attempts >= 3) {
         await tx.update(cadArtifacts).set({ state: "failed", phase: "failed", claimToken: null, claimUntil: null,
           errorCode: "worker-interrupted", error: "CAD 后台任务多次中断，请重新打开后重试", updatedAt: now })
@@ -95,15 +124,38 @@ export class CadArchiveRepository {
     return rows.length > 0;
   }
 
-  async fail(row: CadArtifactRow, code: string, message: string, retryable: boolean): Promise<void> {
+  async fail(row: CadArtifactRow, code: string, message: string, retryable: boolean, context: CadFailureContext = {}): Promise<void> {
     const retry = retryable && row.attempts < 3;
-    await this.database.db.update(cadArtifacts).set({ state: retry ? "queued" : "failed", phase: retry ? "queued" : "failed",
-      errorCode: code, error: message.slice(0, 500), claimToken: null, claimUntil: null,
-      availableAt: new Date(Date.now() + Math.min(60_000, 5000 * 2 ** row.attempts)), updatedAt: new Date() }).where(this.owner(row));
+    await this.database.db.transaction(async (tx) => {
+      const [updated] = await tx.update(cadArtifacts).set({ state: retry ? "queued" : "failed", phase: retry ? "queued" : "failed",
+        errorCode: code, error: message.slice(0, 500), claimToken: null, claimUntil: null,
+        availableAt: new Date(Date.now() + Math.min(60_000, 5000 * 2 ** row.attempts)), updatedAt: new Date() })
+        .where(this.owner(row)).returning();
+      if (updated) await this.recordFailure(tx, updated, code, retry, context);
+    });
   }
 
   async clearExpiredViews(): Promise<void> {
     await this.database.db.delete(cadViews).where(lt(cadViews.expiresAt, new Date()));
+  }
+
+  private async recordFailure(client: DbClient, row: CadArtifactRow, code: string, retry: boolean, context: CadFailureContext = {}) {
+    const timedOut = context.terminalState === "timed-out" || TIMEOUT_CODES.has(code);
+    const limited = LIMIT_CODES.has(code);
+    await this.recordAudit(client, row, {
+      actorId: null, action: "update", result: "failed", entry: "system",
+      summary: timedOut ? "CAD 解析超时" : limited ? "CAD 解析资源超限" : "CAD 后台任务失败",
+      metadata: { operation: timedOut ? "cad.timed_out" : limited ? "cad.limit_exceeded" : "cad.failed",
+        versionId: row.versionId, artifactId: row.id, engineVersion: row.engineVersion, nameCodepage: row.nameCodepage,
+        attempt: row.attempts, errorCode: code, retryScheduled: retry, ...context },
+    });
+  }
+
+  private async recordAudit(client: DbClient, source: Pick<CadArchiveSource, "fileId" | "versionId">,
+    input: Omit<AuditRecordInput, "objectType" | "objectId" | "projectId">) {
+    const [file] = await client.select({ projectId: files.projectId }).from(files).where(eq(files.id, source.fileId));
+    if (!file) throw new Error("CAD audit file is unavailable");
+    await this.audit.record(client, { ...input, objectType: "file", objectId: source.fileId, projectId: file.projectId });
   }
 
   private owner(row: CadArtifactRow) {
