@@ -781,7 +781,6 @@ export const JA_TEXTS: Partial<Record<TextKey, string>> = {
   "modal.code.placeholder": "例: CNBJ-20260708-0001",
   "modal.name.placeholder": "例: 中国の荷物仕分け",
   "modal.managers.any": "複数選択可",
-  "modal.managers.caption": "少なくとも1つ。複数はチェック順に表示されます（Push 136）。",
   "modal.type.aria": "プロジェクト種別を選択",
   "modal.type.placeholder": "プロジェクト種別を選択",
   "modal.type.add": "プロジェクト種別を追加",
