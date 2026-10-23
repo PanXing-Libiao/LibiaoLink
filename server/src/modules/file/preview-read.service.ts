@@ -5,6 +5,7 @@ import { AppConfig } from "../../config/config.module.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { appendOutboxIfAbsent } from "../../db/outbox.js";
 import { contentDisposition, ObjectStorage, versionFileName } from "../../storage/index.js";
+import { AuditService } from "../admin/index.js";
 import { UserService } from "../identity/index.js";
 import { PermissionService } from "../permission/index.js";
 import { FileRepository, type FileRow, type FileVersionRow } from "./file.repository.js";
@@ -58,9 +59,8 @@ const VIEWER_PERMISSIONS = {
  *
  * 权限 = 项目可见即可（Push 160 定案，同文件详情 / 版本链：不可见 / 不存在统一 404，防 IDOR）；
  * 版本 404：`versionId` 给定但不属于该文件 / 不存在（A4-06「任意历史版本可预览」，缺省 = 当前版本）。
- * **审计（Push 283 · 2026-10-12 起）**：预览**不写审计**（业务口径「操作日志中不需要记录预览的动作」—— 缩略图等
- * 高频预览不再刷屏操作日志）；原「图片直签 / 查看器 / 产物通道各写一条 `action = preview`」口径撤销，
- * `audit_logs.action = preview` 值保留供历史行回读 / 筛选（本模块不再产生新行）。
+ * **审计（2026-10-23 恢复）**：每次实际签出并返回就绪预览时写一条 `action = preview`（图片直签 / 产物通道 /
+ * ONLYOFFICE / CAD 各记一条）；未就绪、失败降级与 404 不写。缩略图等高频预览同样留痕，见 D2-07 修订。
  */
 @Injectable()
 export class PreviewReadService {
@@ -73,6 +73,7 @@ export class PreviewReadService {
     private readonly storage: ObjectStorage,
     private readonly permission: PermissionService,
     private readonly users: UserService,
+    private readonly audit: AuditService,
     private readonly config: AppConfig,
   ) {}
 
@@ -93,6 +94,7 @@ export class PreviewReadService {
     // ADR-035：旧解析器已删除。先按版本扩展名拦截，避免误报 image/Office MIME 再签出原 CAD。
     if (isCadPreviewPending({ fileName: channelName })) {
       if (cadEngineConfigured(this.config.env) && /\.(step|stp)$/i.test(channelName)) {
+        await this.recordPreview(file, version, actorId, "CAD 查看器", { viewerKind: "cad", engineVersion: CAD_ENGINE_VERSION });
         return {
           fileId: file.id, versionId: version.id, status: "ready", target: null,
           viewer: { kind: "cad", fileId: file.id, versionId: version.id, sourceSHA256: version.contentHash, engineVersion: CAD_ENGINE_VERSION },
@@ -119,7 +121,7 @@ export class PreviewReadService {
 
       const readyIndex = rows.findIndex((row) => row !== null && row.status === "ready");
       if (readyIndex >= 0) {
-        return this.serveReady(file, version, keys[readyIndex]!, rows[readyIndex]!);
+        return this.serveReady(file, version, keys[readyIndex]!, rows[readyIndex]!, actorId);
       }
 
       const failed = rows.filter((row): row is PreviewArtifactRow => row !== null && row.status === "failed");
@@ -155,7 +157,7 @@ export class PreviewReadService {
 
     // 只有扩展名与规范 MIME 完全匹配的安全位图才允许原对象直签。
     if (isRasterImageFile({ fileName: channelName, mime: version.mime })) {
-      return this.serveRasterImageDirect(file, version, channelName);
+      return this.serveRasterImageDirect(file, version, channelName, actorId);
     }
 
     // Office / 文本族 / PDF → ONLYOFFICE 查看器通道。HTML / HTM 已从查看器族移除：
@@ -190,12 +192,13 @@ export class PreviewReadService {
     return version;
   }
 
-  /** ready：短时签名（Push 283 起不写审计 —— 操作日志不记录预览动作）。 */
+  /** ready：短时签名 + preview 审计（产物通道）。 */
   private async serveReady(
     file: FileRow,
     version: FileVersionRow,
     key: PreviewArtifactKey,
     row: PreviewArtifactRow,
+    actorId: string,
   ): Promise<FilePreviewResponse> {
     if (row.objectKey === null) {
       // 库侧 CHECK（ck_preview_artifacts_ready_pair）保证 ready ⇔ object_key，这里只做不变量兜底。
@@ -213,6 +216,10 @@ export class PreviewReadService {
       expiresInSeconds: this.config.env.PREVIEW_URL_TTL_SECONDS,
       responseContentType: responseType,
       responseContentDisposition: responseDisposition,
+    });
+    await this.recordPreview(file, version, actorId, "通道 " + key.target, {
+      target: key.target,
+      pipelineVersion: key.pipelineVersion,
     });
     return {
       fileId: file.id,
@@ -232,13 +239,13 @@ export class PreviewReadService {
    * 安全位图直签 ready：原对象短时签名 —— 对齐产物通道 ready 的响应形状（契约不变）：
    * status=ready、target=image、url=短时签名；响应强制精确图片 MIME + inline，
    * 不依赖原对象在存储中的类型元数据（H1 · S2）。
-   * `pipelineVersion` / `generatedAt` 空（无产物语义 —— 直签不生成产物）；**不写审计**（Push 283 起操作日志
-   * 不记录预览动作 —— 原 D2-07「签发即写一条 preview」撤销）。
+   * `pipelineVersion` / `generatedAt` 空（无产物语义 —— 直签不生成产物）；签发成功写一条 preview 审计。
    */
   private async serveRasterImageDirect(
     file: FileRow,
     version: FileVersionRow,
     channelName: string,
+    actorId: string,
   ): Promise<FilePreviewResponse> {
     const responseType = canonicalMimeForExtension(channelName);
     if (responseType === null) {
@@ -250,6 +257,7 @@ export class PreviewReadService {
       responseContentType: responseType,
       responseContentDisposition: contentDisposition(versionFileName(file.name, version.objectKey), "inline"),
     });
+    await this.recordPreview(file, version, actorId, "图片直签", { target: "image", direct: true });
     return {
       fileId: file.id,
       versionId: version.id,
@@ -265,7 +273,7 @@ export class PreviewReadService {
   }
 
   /**
-   * 查看器通道 ready（S3 · ADR-030 / S8-2 定案）：签发只读查看器配置（含 token），**不写审计**（Push 283 起操作日志
+   * 查看器通道 ready（S3 · ADR-030 / S8-2 定案）：签发只读查看器配置（含 token），签发成功写一条 preview 审计（不记 token）。
    * `target` / `url` / `expiresAt` / `pipelineVersion` / `generatedAt` 全空（查看器不产产物、不占缓存三元组）；
    * `document.url` = 受控端点绝对 URL（C1：与校验侧同源生成、不信任 Host 头；不含任何存储凭证）；
    * `document.key` = 内容哈希（同内容同 key —— DocServer 侧会话 / 缓存复用）。
@@ -307,6 +315,10 @@ export class PreviewReadService {
       },
       secret,
     );
+    await this.recordPreview(file, version, actorId, "ONLYOFFICE 查看器", {
+      viewerKind: "onlyoffice",
+      documentType: channel.documentType,
+    });
     return {
       fileId: file.id,
       versionId: version.id,
@@ -336,6 +348,25 @@ export class PreviewReadService {
     } catch {
       return actorId;
     }
+  }
+
+  /** 预览送达留痕：只记业务定位字段，不落签名地址 / 查看器 token。 */
+  private async recordPreview(
+    file: FileRow,
+    version: FileVersionRow,
+    actorId: string,
+    channel: string,
+    metadata: Record<string, unknown>,
+  ): Promise<void> {
+    await this.audit.record(this.database.db, {
+      actorId,
+      action: "preview",
+      objectType: "file",
+      objectId: file.id,
+      projectId: file.projectId,
+      summary: "预览文件：" + file.name + "（版本 v" + version.seq + " · " + channel + "）",
+      metadata: { versionId: version.id, ...metadata },
+    });
   }
 
   /**

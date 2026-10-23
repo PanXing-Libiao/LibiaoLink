@@ -1,9 +1,9 @@
 /**
- * 站内信读面客户端（C5 · 消息中心）：GET /api/v1/notifications、PATCH /api/v1/notifications/{id}、
- * POST /api/v1/notifications/mark-all-read。
+ * 站内信客户端（C5 · 消息中心）：GET /api/v1/notifications、PATCH /api/v1/notifications/{id}、
+ * POST /api/v1/notifications/mark-all-read、DELETE /api/v1/notifications/{id}、DELETE /api/v1/notifications。
  *
  * 契约 = shared/src/modules/notifications.ts（S7-4 / M5-04 · lan 线；服务端已落：收件箱三态 / 未读角标 /
- * 全量留档 / 合并条数）。本轮只接顶栏弹窗需要的最小面 —— 列表（id 降序 = 新在前）+ 标记已读 + 全部已读；
+ * 全量留档 / 合并条数）。本轮接顶栏弹窗需要的最小面 —— 列表（id 降序 = 新在前）+ 标记已读 + 全部已读 + 单条 / 全部删除；
  * 稍后提醒（snooze）、通知偏好（prefs）与筛选分类留给消息中心整页（M5-07），此处不建。
  */
 import { apiRequest, apiSend } from "./api";
@@ -52,4 +52,27 @@ export function markInboxRead(id: number): Promise<InboxNotification> {
 /** 全部标记已读（幂等）：返回本次置位条数与置位后的未读数（恒 0；回读口径）。 */
 export function markAllInboxRead(): Promise<{ updated: number; unreadCount: number }> {
   return apiSend<{ updated: number; unreadCount: number }>("/api/v1/notifications/mark-all-read", "POST");
+}
+
+/** 单条删除结果：deleted 恒 true；unreadCount = 删除后的未读总数。 */
+export type InboxDeleteResult = {
+  id: number;
+  deleted: true;
+  unreadCount: number;
+};
+
+/** 一键删除全部结果：deleted = 本次删除条数；unreadCount = 删除后的未读总数。 */
+export type InboxDeleteAllResult = {
+  deleted: number;
+  unreadCount: number;
+};
+
+/** 删除指定站内信（软删隐藏；C5-03 留档保留；他人 / 合并子行 / 未投递行 404）。 */
+export function deleteInboxNotification(id: number): Promise<InboxDeleteResult> {
+  return apiSend<InboxDeleteResult>("/api/v1/notifications/" + String(id), "DELETE");
+}
+
+/** 一键删除全部站内信（只清本人收件箱；幂等）。 */
+export function deleteAllInboxNotifications(): Promise<InboxDeleteAllResult> {
+  return apiSend<InboxDeleteAllResult>("/api/v1/notifications", "DELETE");
 }

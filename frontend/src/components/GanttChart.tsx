@@ -4,7 +4,7 @@ import type { TintedTier } from "../backgroundTier";
 import { PROJECT_STAGES } from "../data/projects";
 import { PROGRESS_STEPS, TEMP_TASK_STAGE, daysBetweenInclusive, isCompleteStatus, isTaskDone, ownersLabel, type ProjectTask, type TaskStatus } from "../data/tasks";
 import { SearchSelect, type SearchSelectItem } from "./MemberSelect";
-import { fieldText, mdText, monthShortText, monthYearText, stageText, statusText, textOf, useLocale, useLocalizedTranslator, useT, yearText } from "../i18n";
+import { fieldText, isLocalizedLocale, mdText, monthShortText, monthYearText, stageText, statusText, textOf, useLocale, useLocalizedTranslator, useT, yearText } from "../i18n";
 import type { Locale } from "../i18n";
 import { STATUS_DOT_CLASS, TaskRow, resolveColumns, tableGridTemplate, tableMinWidth, type TaskPatch } from "./TaskBoard";
 
@@ -388,7 +388,7 @@ function buildBar(locale: Locale, task: ProjectTask): GanttBar {
   const owners = ownersLabel(task.owners);
   /** 悬停提示里的日期按「M月D日」展示（模型里存的是 ISO）。 */
   const dayText = (iso: string): string => (iso === "" ? "—" : mdText(locale, iso));
-  const gap = locale === "en" ? " · " : "　";
+  const gap = isLocalizedLocale(locale) ? " · " : "　";
   const label = [
     task.title + (task.titleEn === "" ? "" : "（" + task.titleEn + "）"),
     textOf(locale, "gantt.tip.start", { date: dayText(task.startDate) }) + gap + textOf(locale, "gantt.tip.due", { date: dayText(task.dueDate) }),
@@ -582,7 +582,7 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
   const locale = useLocale();
   const localize = useLocalizedTranslator();
   /** 手打内容（任务名）机翻显示：英文界面 titleEn 优先 → 机翻 → 原文；中文界面照旧。 */
-  const ganttTitle = (task: ProjectTask): string => (locale === "en" ? (task.titleEn !== "" ? task.titleEn : localize(task.title)) : task.title);
+  const ganttTitle = (task: ProjectTask): string => (isLocalizedLocale(locale) ? (locale === "en" && task.titleEn !== "" ? task.titleEn : localize(task.title)) : task.title);
   const t = useT();
   const today = useMemo(localToday, []);
   const [zoom, setZoom] = useState<ZoomKey>("standard");

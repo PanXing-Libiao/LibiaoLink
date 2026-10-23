@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { WORLD_MAP_COUNTRIES, WORLD_MAP_DASHLINE_PATHS, WORLD_MAP_MICRO_STATES, WORLD_MAP_NANHAI_ISLANDS, WORLD_MAP_VIEW, type WorldMapCountry, type WorldMapMicroState } from "../data/worldMap";
 import { type HubMapDistribution, type HubMapPillar } from "../data/mapProjects";
-import { projectStatusTextOf, textOf, useLocale, useLocalizedTranslator, useT, type Locale } from "../i18n";
+import { isLocalizedLocale, projectStatusTextOf, textOf, useLocale, useLocalizedTranslator, useT, type Locale } from "../i18n";
 import { buildListHash, EMPTY_LIST_QUERY } from "../useHashRoute";
 
 /**
@@ -346,7 +346,7 @@ export function HubMap({ distribution, note = "" }: { distribution: HubMapDistri
         aria-hidden={pinnedPillar === null ? "true" : undefined}
       >
         <div className="hub-map-projects__head">
-          <span className="hub-map-projects__zh">{shownPillar === null ? "" : locale === "en" ? shownPillar.name : shownPillar.nameZh}</span>
+          <span className="hub-map-projects__zh">{shownPillar === null ? "" : isLocalizedLocale(locale) ? shownPillar.name : shownPillar.nameZh}</span>
           <span className="hub-map-projects__total">{shownPillar === null ? "" : t("hm.total", { n: shownPillar.total })}</span>
           {pinnedPillar === null ? null : (
             <span className="hub-map-projects__tools">
@@ -361,7 +361,7 @@ export function HubMap({ distribution, note = "" }: { distribution: HubMapDistri
             : (pinnedPillar === null ? activePillar.projects.slice(0, PILLAR_MAX_ROWS) : activePillar.projects).map((project) => (
                 <li key={project.id} data-live-card={project.id} className="hub-map-projects__row">
                   <span className="hub-map-projects__dot" style={{ background: project.accent }} />
-                  <span className="hub-map-projects__name" title={locale === "en" ? project.name : undefined}>{localize(project.name)}</span>
+                  <span className="hub-map-projects__name" title={isLocalizedLocale(locale) ? project.name : undefined}>{localize(project.name)}</span>
                   <span className="hub-map-projects__status">{projectStatusTextOf(locale, project.status)}</span>
                 </li>
               ))}
@@ -377,7 +377,7 @@ export function HubMap({ distribution, note = "" }: { distribution: HubMapDistri
         <span className="hub-map-legend__group">
           <span className="hub-map-legend__gloss" title={t("hm.tierRule")}>{t("hm.legendCount")}</span>
           {tierBounds.map((bound, index) => (
-            <span key={bound} className="hub-map-legend__item" title={tierName(locale, index) + (locale === "en" ? ": " : "：") + tierText(locale, index, tierBounds)}>
+            <span key={bound} className="hub-map-legend__item" title={tierName(locale, index) + (isLocalizedLocale(locale) ? ": " : "：") + tierText(locale, index, tierBounds)}>
               <span className="hub-map-legend__swatch" data-tier={String(tierSlot(index + 1, tierBounds.length))} />
               {tierName(locale, index)}
             </span>

@@ -53,6 +53,9 @@ export function TrackerDots({
   return (
     <span
       className={"flex items-end gap-1" + (vivid ? " rounded-full bg-white px-2 py-1" : "")}
+      onClick={(event) => {
+        event.stopPropagation();
+      }}
       onMouseLeave={() => {
         onHoverChange(0);
       }}
@@ -180,7 +183,13 @@ export function Tracker({ progress, steps = TRACKER_STEPS, onChange, vivid = fal
   const label = progressLabelOf(locale, active);
 
   return (
-    <span className="flex shrink-0 items-center gap-2" title={textOf(locale, "tracker.overallTitle", { name: label })}>
+    <span
+      className="flex shrink-0 items-center gap-2"
+      title={textOf(locale, "tracker.overallTitle", { name: label })}
+      onClick={(event) => {
+        event.stopPropagation();
+      }}
+    >
       <span
         className={
           "w-12 text-right text-[11px] text-zinc-500 transition-opacity " + (hovered > 0 ? "opacity-100" : "opacity-0")

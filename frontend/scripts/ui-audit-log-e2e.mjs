@@ -8,7 +8,7 @@
  *   ① 头像菜单：「操作记录」在「退出登录」下方、href = #/audit（audit.view 画像在场才渲染）；
  *   ② 点入口 → 地址到 #/audit（缺省无 query）、页面就位；首屏 50 条封顶、时间倒序、右上角「共 N 条」；
  *   ③ 列口径：时间 YYYY-MM-DD HH:mm（Asia/Shanghai）、操作人姓名快照、动作 / 对象类型中文标签、结果签、项目码；
- *   ④ 筛选（地址即状态 · 多选追订「别的筛选也是同理 要支持多选」+「操作记录里面也是」）：动作 = 修改 + 新增（Push 284 起动作下拉撤「预览」—— 选项 10 项、不含「预览」）
+ *   ④ 筛选（地址即状态 · 多选追订「别的筛选也是同理 要支持多选」+「操作记录里面也是」）：动作 = 修改 + 新增（2026-10-23：下拉含「访问」「预览」、撤「推进」「回退」—— 选项 10 项）
  *      （action=update,create，再点取消）、点选不关浮层、触发器 = 筛选名称 + 浅灰数量；结果 = 越权拒绝（result=denied）→ 行全为
  *      「越权拒绝」（再累加 成功 → result=denied,succeeded）；操作人 = 潘兴（actor=<id>，叠加 result=denied）→ 行操作人全为潘兴、计数 = 交集；时间 = 今天（from / to，Asia/Shanghai 含端点，
  *      请求串里 from = 当天 00:00:00+08 的 ISO，行数 = 库内「今日 ∩ 潘兴 ∩ 越权拒绝」交集对账 —— 当天无记录时断言空态，日期无关）；
@@ -291,7 +291,7 @@ check("上一页：地址回 #/audit、请求 page=1、首行还原", backReady 
 await clickSelector("[data-audit-filter=action] button");
 await sleep(400);
 const actionOptionTexts = await ev("(function(){var p=document.querySelector(" + j("[data-select-popover]") + ");if(p===null){return null;}var os=p.querySelectorAll(" + j("[role=option]") + ");var out=[];for(var i=0;i<os.length;i+=1){out.push(String(os[i].textContent).trim());}return out;})()");
-check("④0 动作下拉撤「预览」（Push 284：服务端不写 + 存量已清）：选项 10 项、不含「预览」", actionOptionTexts !== null && actionOptionTexts.length === 10 && actionOptionTexts.indexOf("预览") === -1, JSON.stringify(actionOptionTexts));
+check("④0 动作下拉：含「访问」「预览」、撤「推进」「回退」—— 选项 10 项", actionOptionTexts !== null && actionOptionTexts.length === 10 && actionOptionTexts.indexOf("访问") !== -1 && actionOptionTexts.indexOf("预览") !== -1 && actionOptionTexts.indexOf("推进") === -1 && actionOptionTexts.indexOf("回退") === -1, JSON.stringify(actionOptionTexts));
 const pickedAction = await pickOption("修改");
 const actionReady = await waitFor("window.location.hash.indexOf(" + j("action=update") + ") !== -1 && document.querySelectorAll(" + j("[data-audit-row]") + ").length > 0", 10000);
 await sleep(1000);

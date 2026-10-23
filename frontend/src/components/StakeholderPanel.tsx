@@ -16,7 +16,7 @@ import {
   type StakeholderPatch,
 } from "../stakeholderApi";
 import { RowDeleteButton } from "./RowDeleteButton";
-import { Toast } from "./Toast";
+import { Toast, ToastConfirm } from "./Toast";
 import { RowEditButton } from "./RowEditButton";
 import { SelectMenu, type SelectOption } from "./SelectMenu";
 import { ScrollArea } from "./ScrollArea";
@@ -462,7 +462,7 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
   const [dataVersion, setDataVersion] = useState(0);
   /** 弹窗：新建 / 编辑（编辑带当行快照 —— 缺键字段在表单里禁用且不回写）。 */
   const [modal, setModal] = useState<{ mode: "create" } | { mode: "edit"; row: Stakeholder } | null>(null);
-  /** 删除二次确认（与首页删项目 / 模板 / 日报问题同一套：第一下只开口，第二下才真删）。 */
+  /** 删除二次确认（与首页删项目 / 模板 / 日报问题同一套：第一下只开顶部确认 Toast，第二下才真删）。 */
   const [pendingDelete, setPendingDelete] = useState<Stakeholder | null>(null);
   /** 键盘焦点陷阱（Push 264 追订）：删除确认条开着时焦点进条内（初始焦点不再留在行内「删除」按钮上）、Tab 在条内循环、关闭还原。 */
   const deleteConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDelete !== null);
@@ -690,37 +690,18 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
       )}
 
       {pendingDelete === null ? null : (
-        <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
-          <div
-            ref={deleteConfirmTrapRef}
-            role="dialog"
-            aria-label={t("sh.delete.aria")}
-            data-delete-confirm-strip=""
-            className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
-          >
-            <span>{t("sh.delete.text", { name: pendingDelete.name })}</span>
-            <button
-              type="button"
-              onClick={() => {
-                setPendingDelete(null);
-              }}
-              className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
-            >
-              {t("common.cancel")}
-            </button>
-            <button
-              type="button"
-              data-delete-confirm=""
-              disabled={deletePending}
-              onClick={() => {
-                void confirmDelete();
-              }}
-              className="rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95 disabled:opacity-60"
-            >
-              {t("common.delete")}
-            </button>
-          </div>
-        </div>
+        <ToastConfirm
+          text={t("sh.delete.text", { name: pendingDelete.name })}
+          ariaLabel={t("sh.delete.aria")}
+          cancelLabel={t("common.cancel")}
+          confirmLabel={t("common.delete")}
+          onCancel={() => { setPendingDelete(null); }}
+          onConfirm={() => { void confirmDelete(); }}
+          confirmDisabled={deletePending}
+          containerRef={deleteConfirmTrapRef}
+          anchor={{ name: "data-delete-confirm-strip", value: "" }}
+          confirmAnchor={{ name: "data-delete-confirm", value: "" }}
+        />
       )}
     </>
   );

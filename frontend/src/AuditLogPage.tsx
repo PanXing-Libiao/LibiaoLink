@@ -180,8 +180,8 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
 
   // 五枚筛选均为多选（2026-10-09 追订）：不再有「全部…」选项行，空选占位交给 placeholder、触发器显示筛选名称 + 浅灰数量。
   const actorOptions = directory.map((user) => ({ value: user.id, label: user.displayName }));
-  // 动作下拉撤「预览」（2026-10-12）：服务端不写入、存量已清；preview 仅保留在 auditApi 标签映射用于历史数据渲染。
-  const actionOptions = AUDIT_ACTIONS.filter((action) => action !== "preview").map((action) => ({
+  // 2026-10-23：「访问」加入、「预览」恢复；按业务口径撤「推进」「回退」筛选项（历史行 / 直链仍可读）。
+  const actionOptions = AUDIT_ACTIONS.filter((action) => action !== "advance" && action !== "rollback").map((action) => ({
     value: action,
     label: auditLabelOf(AUDIT_ACTION_LABELS, action),
   }));
@@ -216,7 +216,7 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
             <div>
               <h1 className="text-lg font-semibold text-zinc-900">操作记录</h1>
               <p className="mt-0.5 text-xs text-zinc-500">
-                全站关键操作的留痕（新增 / 修改 / 删除 / 下载 / 越权尝试……），按时间倒序；仅系统管理员可见。
+                全站关键操作的留痕（新增 / 修改 / 删除 / 访问 / 预览 / 下载 / 越权尝试……），按时间倒序；仅系统管理员可见。
               </p>
             </div>
             {state.kind === "ready" ? (

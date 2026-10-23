@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { dateOnlyText, isCompleteStatus, type TaskPriority } from "../data/tasks";
-import { fieldText, mdText, priorityText, statusText, useLocale, useT, type Locale } from "../i18n";
+import { fieldText, isLocalizedLocale, mdText, prefetchLocalizedText, priorityText, statusText, useLocale, useLocalizedTranslator, useT, type Locale } from "../i18n";
 import { displayStatusLabel, type ApiTaskListItem } from "../taskApi";
 import { docTypeCapsule } from "./DeliverablePicker";
 import { TableScrollbar } from "./TableScrollbar";
@@ -39,10 +39,13 @@ const ONTIME_CHIP_CLASS: Record<string, string> = {
 };
 
 /** 任务名展示（参考图口径：中文名后紧跟英文名，无分隔符；英文界面下有英文名就只用英文名）。 */
-function titleTextOf(task: ApiTaskListItem, locale: Locale): string {
+function titleTextOf(task: ApiTaskListItem, locale: Locale, localize: (text: string) => string): string {
   const titleEn = task.titleEn ?? "";
   if (locale === "en") {
     return titleEn === "" ? task.title : titleEn;
+  }
+  if (locale !== "zh") {
+    return localize(task.title);
   }
   return task.title + titleEn;
 }
@@ -67,6 +70,11 @@ export function HubDashDetail({ projectName, manager, tasks, onClose }: {
 }) {
   const t = useT();
   const locale = useLocale();
+  const localize = useLocalizedTranslator();
+  /** 日 / 韩详情表不采用 titleEn，任务名按当前目标语言提前预热；英文只在无自带英文名时预热。 */
+  useEffect(() => {
+    prefetchLocalizedText(tasks.filter((task) => locale === "ja" || locale === "ko" || (task.titleEn ?? "") === "").map((task) => task.title));
+  }, [tasks, locale]);
   const [keyword, setKeyword] = useState("");
   /** 表体横向滚动容器（Push 336）：底部滑块按它算溢出 / 拖动。 */
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -91,7 +99,7 @@ export function HubDashDetail({ projectName, manager, tasks, onClose }: {
     const owners = task.ownerNames.filter((name): name is string => name !== null && name !== "").join("、");
     const status = displayStatusLabel(task.displayStatus);
     const onTime = onTimeLabelOf(task);
-    const title = titleTextOf(task, locale);
+    const title = titleTextOf(task, locale, localize);
     const start = mdText(locale, task.plannedStart ?? "");
     const due = mdText(locale, task.plannedEnd ?? "");
     const done = mdText(locale, task.actualEnd ?? "");
@@ -105,11 +113,11 @@ export function HubDashDetail({ projectName, manager, tasks, onClose }: {
     /** 只读读面：列表接口理论上带全（契约 TaskListItem），缺字段时退空而不是整表崩。 */
     const changeLinks = task.changeLinks ?? [];
     const changeCount = changeLinks.length;
-    const changeTip = changeLinks.map((change) => t("board.change.tip", { date: dateOnlyText(change.appliedAt) }) + (change.reason === null || change.reason === "" ? "" : (locale === "en" ? " (" + change.reason + ")" : "（" + change.reason + "）"))).join(locale === "en" ? "; " : "；");
+    const changeTip = changeLinks.map((change) => t("board.change.tip", { date: dateOnlyText(change.appliedAt) }) + (change.reason === null || change.reason === "" ? "" : (isLocalizedLocale(locale) ? " (" + change.reason + ")" : "（" + change.reason + "）"))).join(isLocalizedLocale(locale) ? "; " : "；");
     const priorityName = priority === null ? "" : priorityText(locale, priority);
     const hay = [title, task.title, task.titleEn ?? "", owners, manager, statusText(locale, status), onTime ?? "", priorityName, task.deliverableTypes.join("、"), note, start, due, done, days, headcount].join(" ").toLowerCase();
     return { task, title, owners, status, onTime, priority, files, note, start, days, due, headcount, done, changeCount, changeTip, percent, hay };
-  }), [tasks, locale, manager, t]);
+  }), [tasks, locale, localize, manager, t]);
   const filtered = query === "" ? rows : rows.filter((row) => row.hay.includes(query));
   return createPortal(
     <div

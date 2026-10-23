@@ -10,7 +10,7 @@ import { MemberMultiSelect } from "./MemberSelect";
 import { RegionSelect } from "./RegionSelect";
 import { useFocusTrapFor } from "./useFocusTrap";
 import { PROJECT_STATUS_VALUES, projectStatusOf, type ProjectStatusValue } from "../types";
-import { fieldText, projectStatusTextOf, projectTypeText, useLocale, useT } from "../i18n";
+import { fieldText, isLocalizedLocale, projectStatusTextOf, projectTypeText, useLocale, useMachineText, useT } from "../i18n";
 import { regionNameEn } from "../data/regionPicker";
 import { fetchUsedRegions } from "../projectApi";
 
@@ -88,9 +88,11 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
   const isEdit = mode === "edit";
   const t = useT();
   const locale = useLocale();
+  /** 项目备注机翻预览：只读显示译文，textarea 始终编辑 / 保存中文原文。 */
+  const noteTranslation = useMachineText(initial?.note ?? "");
   /** 冲突摘要行的标点（中文全角 / 英文半角）。 */
-  const colon = locale === "en" ? ": " : "：";
-  const semi = locale === "en" ? "; " : "；";
+  const colon = isLocalizedLocale(locale) ? ": " : "：";
+  const semi = isLocalizedLocale(locale) ? "; " : "；";
   /** 已归档项目只读（ADR-027）：弹窗只读展示，不给保存（服务端同样 409 PROJECT_ARCHIVED）。 */
   const archivedLock = isEdit && initial?.status === "archived";
   const [code, setCode] = useState(initial?.code ?? "");
@@ -311,7 +313,6 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
               placeholder={t("drawer.manager.placeholder")}
               ariaLabel={t("drawer.manager.aria")}
             />
-            <span className="mt-1 block text-[11px] text-zinc-400">{t("modal.managers.caption")}</span>
           </div>
           <div className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-700">{t("modal.province")}</span>
@@ -368,6 +369,12 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
               maxLength={2000}
               placeholder={t("modal.note.placeholder")}
             />
+            {note === (initial?.note ?? "") && noteTranslation !== null && noteTranslation !== note ? (
+              <p className="mt-1.5 max-h-28 overflow-y-auto whitespace-pre-wrap rounded-md bg-zinc-50 px-2.5 py-1.5 text-xs leading-5 text-zinc-600">
+                <span className="mr-1.5 text-[11px] text-zinc-400">{t("ie.mtPreview")}</span>
+                {noteTranslation}
+              </p>
+            ) : null}
           </label>
 
           {isEdit ? (
@@ -467,7 +474,7 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
           )}
           {conflict === null ? null : (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-              <details><summary>{t("modal.conflict.latest")}</summary><p className="mt-2 whitespace-pre-wrap">{fieldText(locale, "项目编号")}{colon}{conflict.latest.code}<br />{fieldText(locale, "项目描述")}{colon}{conflict.latest.description}<br />{fieldText(locale, "备注")}{colon}{conflict.latest.note || "—"}<br />{fieldText(locale, "项目经理")}{colon}{conflict.latest.managerIds.map((id) => managerOptions.find((member) => member.id === id)?.name ?? id).join(locale === "en" ? ", " : "、")}<br />{fieldText(locale, "项目类型")}{colon}{projectTypeText(locale, dictLabel(dicts, "projectType", conflict.latest.projectType))}{semi}{fieldText(locale, "项目地区")}{colon}{locale === "en" ? regionNameEn(dictLabel(dicts, "region", conflict.latest.region)) || dictLabel(dicts, "region", conflict.latest.region) : dictLabel(dicts, "region", conflict.latest.region)}{semi}{fieldText(locale, "项目状态")}{colon}{projectStatusTextOf(locale, conflict.latest.status)}</p></details>
+              <details><summary>{t("modal.conflict.latest")}</summary><p className="mt-2 whitespace-pre-wrap">{fieldText(locale, "项目编号")}{colon}{conflict.latest.code}<br />{fieldText(locale, "项目描述")}{colon}{conflict.latest.description}<br />{fieldText(locale, "备注")}{colon}{conflict.latest.note || "—"}<br />{fieldText(locale, "项目经理")}{colon}{conflict.latest.managerIds.map((id) => managerOptions.find((member) => member.id === id)?.name ?? id).join(isLocalizedLocale(locale) ? ", " : "、")}<br />{fieldText(locale, "项目类型")}{colon}{projectTypeText(locale, dictLabel(dicts, "projectType", conflict.latest.projectType))}{semi}{fieldText(locale, "项目地区")}{colon}{isLocalizedLocale(locale) ? regionNameEn(dictLabel(dicts, "region", conflict.latest.region)) || dictLabel(dicts, "region", conflict.latest.region) : dictLabel(dicts, "region", conflict.latest.region)}{semi}{fieldText(locale, "项目状态")}{colon}{projectStatusTextOf(locale, conflict.latest.status)}</p></details>
               <button type="button" disabled={pending || conflict.latest.status === "archived"} className="mt-2 underline disabled:opacity-50" onClick={() => {
                 setConfirmedVersion(conflict.version);
                 setConflict(null);

@@ -8,8 +8,7 @@ import { fetchStageNodes, fetchStageTemplates, type TemplateItem } from "../temp
 import { ScrollArea } from "./ScrollArea";
 import { usePopover } from "./usePopover";
 import { useFocusTrapFor } from "./useFocusTrap";
-import { stageText, useLocale, useLocalizedTranslator, useT } from "../i18n";
-import { prefetchZhToEn } from "../translateApi";
+import { stageText, prefetchLocalizedText, useLocale, useLocalizedTranslator, useT } from "../i18n";
 
 /**
  * 插入位置（Push 111，业务口径「人员要指定位置放入」）：新加的任务放进该阶段里的哪一格 ——
@@ -304,7 +303,7 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
       try {
         const items = await fetchStageTemplates(stage);
         if (alive) {
-          prefetchZhToEn(items.map((item) => item.name));
+          prefetchLocalizedText(items.map((item) => item.name));
           setTemplates(items);
         }
       } catch (error) {
@@ -321,6 +320,10 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
       alive = false;
     };
   }, [stage, templatesRetry]);
+
+  useEffect(() => {
+    prefetchLocalizedText(templates.map((item) => item.name));
+  }, [templates, locale]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -558,7 +561,6 @@ export function StageAddCard({ stage, addedNodeKeys, addedNodeIds, onAddNode, on
           onClose={() => { setArmed(null); }}
         />
       )}
-      <p className="mt-2 shrink-0 text-[10px] leading-4 text-zinc-400">{t("sac.footnote")}</p>
     </aside>
   );
 }

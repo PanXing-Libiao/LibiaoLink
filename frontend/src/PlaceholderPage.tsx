@@ -4,7 +4,7 @@ import { useLiveRefresh } from "./useLiveRefresh";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { RowDeleteButton } from "./components/RowDeleteButton";
-import { Toast } from "./components/Toast";
+import { Toast, ToastConfirm } from "./components/Toast";
 import { useFocusTrap } from "./components/useFocusTrap";
 import { TaskNodeCard } from "./components/TaskNodeCard";
 import { PROJECT_STAGES } from "./data/projects";
@@ -24,8 +24,7 @@ import {
   type TemplateItem,
 } from "./templateApi";
 import { replaceTemplateSection, templateSectionFromParam, templateSectionHref, templateSectionSlug, type PlaceholderPage as PlaceholderPageKey } from "./useHashRoute";
-import { stageText, useLocale, useLocalizedTranslator, useT } from "./i18n";
-import { prefetchZhToEn } from "./translateApi";
+import { isLocalizedLocale, stageText, prefetchLocalizedText, useLocale, useLocalizedTranslator, useT } from "./i18n";
 import type { MeResponse } from "./types";
 
 /** 任务模板的阶段板块：与项目详情同口径（「项目总览」是汇总视图，不作为板块）。 */
@@ -306,6 +305,11 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
       alive = false;
     };
   }, [page, activeSection, nodesVersion]);
+
+  useEffect(() => {
+    prefetchLocalizedText(Object.values(templatesByStage).flat().map((item) => item.name));
+  }, [templatesByStage, locale]);
+
   // 模板取数（换板块 / 重取）：服务端是模板内容的真相 —— 逐面板合并（见 mergeStageTemplates）：
   // 只有**这一份**有未保存改动时才保留本地草稿（避免把刚拖好的顺序冲掉），其余面板照常刷新（别人的新建 / 改名 / 删除都能看到）。
   useEffect(() => {
@@ -319,7 +323,7 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
       try {
         const items = await fetchStageTemplates(activeSection);
         if (alive) {
-          prefetchZhToEn(items.map((item) => item.name));
+          prefetchLocalizedText(items.map((item) => item.name));
           setTemplatesByStage((previous) => mergeStageTemplates(previous, activeSection, items));
         }
       } catch (error) {
@@ -455,16 +459,17 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
     })();
   };
 
-  /** 删除这份模板（红胶囊第一下）：第二下在底部确认条上 —— `DELETE` 带 version，软删，面板随即消失。 */
+  /** 删除这份模板（红胶囊第一下）：第二下在顶部确认 Toast 上 —— `DELETE` 带 version，软删，面板随即消失。 */
   const removeTemplate = (templateId: string): void => {
     resetDrag();
     const draft = templates.find((item) => item.id === templateId);
     if (draft !== undefined) {
+      setPendingDeleteNode(null);
       setPendingDeleteTemplate(draft);
     }
   };
 
-  /** 确认删除（底部确认条的第二下）：软删成功 = 面板消失；失败 = 顶部 Toast（模板已在别处被删除时重取该板块，脏草稿标「库中已删除」）。 */
+  /** 确认删除（顶部确认 Toast 的第二下）：软删成功 = 面板消失；失败 = 顶部 Toast（模板已在别处被删除时重取该板块，脏草稿标「库中已删除」）。 */
   const confirmDeleteTemplate = (): void => {
     const draft = pendingDeleteTemplate;
     if (draft === null) {
@@ -523,7 +528,7 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
   const [formTitleEn, setFormTitleEn] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [formBusy, setFormBusy] = useState(false);
-  /** 待确认删除的节点（同款红胶囊的第一下：第二下在底部确认条上）+ 写入失败的提示文案。 */
+  /** 待确认删除的节点（同款红胶囊的第一下：第二下在顶部确认 Toast 上）+ 写入失败的提示文案。 */
   const [pendingDeleteNode, setPendingDeleteNode] = useState<TaskNodeItem | null>(null);
   const [nodeNotice, setNodeNotice] = useState<string | null>(null);
   /** 模板写入的本地状态：正在新建 / 正在保存哪一块、待确认删除的模板、失败提示。 */
@@ -1094,6 +1099,7 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
                           canManageBlueprint
                             ? () => {
                                 resetDrag();
+                                setPendingDeleteTemplate(null);
                                 setPendingDeleteNode(item);
                               }
                             : undefined
@@ -1150,7 +1156,7 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
                               "-mx-1 flex-1 truncate rounded px-1 font-semibold text-zinc-800 outline-none transition hover:bg-white/40 focus:bg-white/70 disabled:cursor-not-allowed " +
                               // 2026-10-13 业务口径（英文界面「模板名称省略」）：英文模板名比中文长，名字和「计数 / 保存 / 删除」抢一行 ——
                               // 用最小宽 12rem 当换行阈值：整行放不下时这一组整组换到下一行右对齐，名字（Hardware Implementation）不再被截成 Hardware Implementa…。
-                              (locale === "en" ? "min-w-[12rem]" : "min-w-0")
+                              (isLocalizedLocale(locale) ? "min-w-[12rem]" : "min-w-0")
                             }
                           />
                           {/* 「计数 / 保存 / 删除」收成一组：放得下就一行右对齐；英文面板放不下时整组换到第二行（名字优先占满第一行）。 */}
@@ -1325,62 +1331,34 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
               </div>
             </div>
           </div>
-          {/* 节点库 / 模板删除的第二下确认条（Fixed 底栏，与首页「删除项目」确认条同款 —— 非阻断）；失败提示改上方浮动 Toast（Push 261 追订） */}
-          {pendingDeleteNode === null && pendingDeleteTemplate === null ? null : (
-            <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
-              {pendingDeleteNode === null ? null : (
-                <div
-                  ref={deleteNodeConfirmTrapRef}
-                  role="dialog"
-                  aria-label={t("tpl.deleteNode.aria")}
-                  className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
-                >
-                  <span>
-                    {t("tpl.deleteNode.lead")}<span className="font-semibold">{pendingDeleteNode.title}</span>{t("tpl.deleteNode.tail", { stage: stageText(locale, activeSection) })}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => { setPendingDeleteNode(null); }}
-                    className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
-                  >
-                    {t("common.cancel")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={confirmDeleteNode}
-                    className="rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
-                  >
-                    {t("common.delete")}
-                  </button>
-                </div>
-              )}
-              {pendingDeleteTemplate === null ? null : (
-                <div
-                  ref={deleteTemplateConfirmTrapRef}
-                  role="dialog"
-                  aria-label={t("tpl.deleteTemplate.aria")}
-                  className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
-                >
-                  <span>
-                    {t("tpl.deleteTemplate.lead")}<span className="font-semibold">{pendingDeleteTemplate.name}</span>{t("tpl.deleteTemplate.tail", { stage: stageText(locale, activeSection) })}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => { setPendingDeleteTemplate(null); }}
-                    className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
-                  >
-                    {t("common.cancel")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={confirmDeleteTemplate}
-                    className="rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
-                  >
-                    {t("common.delete")}
-                  </button>
-                </div>
-              )}
-            </div>
+          {/* 节点库 / 模板删除的第二下确认（与首页「删除项目」同一套顶部常驻 Toast —— 非阻断）；失败提示沿用顶部浮动 Toast */}
+          {pendingDeleteNode === null ? null : (
+            <ToastConfirm
+              text={<>
+                {t("tpl.deleteNode.lead")}<span className="font-semibold">{pendingDeleteNode.title}</span>{t("tpl.deleteNode.tail", { stage: stageText(locale, activeSection) })}
+              </>}
+              ariaLabel={t("tpl.deleteNode.aria")}
+              cancelLabel={t("common.cancel")}
+              confirmLabel={t("common.delete")}
+              onCancel={() => { setPendingDeleteNode(null); }}
+              onConfirm={confirmDeleteNode}
+              containerRef={deleteNodeConfirmTrapRef}
+              anchor={{ name: "data-node-delete-confirm", value: "" }}
+            />
+          )}
+          {pendingDeleteTemplate === null ? null : (
+            <ToastConfirm
+              text={<>
+                {t("tpl.deleteTemplate.lead")}<span className="font-semibold">{pendingDeleteTemplate.name}</span>{t("tpl.deleteTemplate.tail", { stage: stageText(locale, activeSection) })}
+              </>}
+              ariaLabel={t("tpl.deleteTemplate.aria")}
+              cancelLabel={t("common.cancel")}
+              confirmLabel={t("common.delete")}
+              onCancel={() => { setPendingDeleteTemplate(null); }}
+              onConfirm={confirmDeleteTemplate}
+              containerRef={deleteTemplateConfirmTrapRef}
+              anchor={{ name: "data-template-delete-confirm", value: "" }}
+            />
           )}
           {nodeNotice === null ? null : (
             <Toast

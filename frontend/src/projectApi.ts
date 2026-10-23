@@ -110,6 +110,11 @@ export function fetchProject(id: string): Promise<ApiProject> {
   return apiRequest<ApiProject>("/api/v1/projects/" + encodeURIComponent(id));
 }
 
+/** 进入项目详情时记录一次访问（动作 = 访问）；同一页面内静默刷新 / 修改数据不重复写。 */
+export function recordProjectVisit(id: string): Promise<void> {
+  return apiSend<void>("/api/v1/projects/" + encodeURIComponent(id) + "/visit", "POST");
+}
+
 /**
  * 写请求字段（新建 / 编辑同一套）。
  * Push 280：`remark` = 备注（契约 `description`）—— undefined = 不发送（不改）；空串 = 新建不发送（留空）、编辑发送 null（清空）。

@@ -80,6 +80,11 @@ export class AuditService implements AuditSink {
     });
   }
 
+  /** 独立连接追加写（登录成功等无业务事务的留痕）：失败向上抛，由调用方决定响应。 */
+  async recordStandalone(input: AuditRecordInput): Promise<void> {
+    await this.record(this.database.db, input);
+  }
+
   /** 越权 / 未命中留痕（C7-03）：吞错 + 告警日志；告警推送（企微）随 M5 通知模块。 */
   async recordDenied(input: DeniedAuditInput): Promise<void> {
     try {

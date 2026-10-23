@@ -1,5 +1,5 @@
 /**
- * 翻译服务（§6.16 ㉕ ㉖ · Push 301 / 309）：手打内容英译的落库通路 —— 单条（库优先 + 引擎兜底）/ 批量查库 / 保存链路后台预热。
+ * 翻译服务（§6.16 ㉕ ㉖ · Push 301 / 309）：手打内容多语翻译的落库通路 —— 单条（库优先 + 引擎兜底）/ 批量查库 / 保存链路后台预热。
  *
  * 业务口径 2026-10-13：「现在点击切换由于项目数量多 翻译不过来会有很大延迟 所以我希望当因为手打内容为中文
  * 并且保存的时候 后台自动翻译 并且写入数据库 下次切换翻译的时候直接调用即可」。
@@ -7,7 +7,7 @@
  *  - translate：先查译文库（content_translations），命中直出；未命中调翻译通道（Push 309 起 provider 可插拔：
  *    `openai` = OpenAI 兼容 API（TRANSLATE_API_*，公司 New API 网关；可选 TRANSLATE_FALLBACK_ORIGIN 本地兜底）/
  *    `local` = 内网引擎（TRANSLATE_ORIGIN，HY-MT1.5-1.8B 薄壳））后 upsert 落库 —— 之后任何端命中即读库直出。
- *  - lookup：批量只读查库（不调引擎）—— 英文界面切页一次请求拿整页已存译文。
+ *  - lookup：批量只读查库（不调引擎）—— 多语界面切页一次请求拿整页已存译文。
  *  - warmup：保存链路（任务 / 项目控制器挂点）把新写入的手打中文文本丢进来，后台异步翻好落库；
  *    去重（同文本 5 分钟窗口）+ 限并发 2 + 从不抛错（失败静默，下次保存 / 页面到达再试）。
  *
@@ -93,7 +93,8 @@ export class TranslateService {
   }
 
   /**
-   * 保存即后台翻译（业务口径）：把一批手打文本静默翻好落库 —— 不同步、不抛错、不阻塞保存响应。
+   * 保存即后台翻译（业务口径）：把一批手打文本静默翻成英文落库 —— 不同步、不抛错、不阻塞保存响应。
+   * 日 / 韩译文由前端按当前界面语言走单条 / 批量读通道，保存链路不额外放大三倍机翻请求。
    * 只排「非空 + 含中文痕迹 + 去重窗口外」的文本；已入库的条目在后台逐条跳过。
    */
   warmup(texts: readonly string[]): void {
@@ -185,7 +186,7 @@ export class TranslateService {
 
   /** 本地引擎（LibreTranslate 兼容 POST /translate：{q, source, target, format} → {translatedText}）。失败一律 AppError INTERNAL。 */
   private async callLocalEngine(origin: string, q: string, source: TranslateLang, target: TranslateLang): Promise<string> {
-    const { protectedText, tokens } = protectGlossary(q);
+    const { protectedText, tokens } = protectGlossary(q, target);
     let response: Response;
     try {
       response = await fetch(new URL("/translate", origin), {
@@ -205,7 +206,7 @@ export class TranslateService {
     if (raw === "") {
       throw new AppError("INTERNAL", "翻译引擎响应缺少 translatedText");
     }
-    const finalText = finalizeTranslation(raw, tokens);
+    const finalText = finalizeTranslation(raw, tokens, target);
     if (finalText === "") {
       throw new AppError("INTERNAL", "翻译引擎响应规整后为空");
     }
@@ -237,7 +238,7 @@ export class TranslateService {
   /** 单次 OpenAI 兼容请求（POST {base}/chat/completions；密钥 = TRANSLATE_API_KEY 可空）。失败一律 AppError INTERNAL。 */
   private async callOpenAiModel(model: string, q: string, source: TranslateLang, target: TranslateLang): Promise<string> {
     const env = this.config.env;
-    const { protectedText, tokens } = protectGlossary(q);
+    const { protectedText, tokens } = protectGlossary(q, target);
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if ((env.TRANSLATE_API_KEY ?? "") !== "") {
       headers["Authorization"] = "Bearer " + env.TRANSLATE_API_KEY;
@@ -270,7 +271,7 @@ export class TranslateService {
     if (raw === "") {
       throw new AppError("INTERNAL", "翻译 API 响应缺少内容（模型 " + model + "）");
     }
-    const finalText = finalizeTranslation(stripWrappingQuotes(raw), tokens);
+    const finalText = finalizeTranslation(stripWrappingQuotes(raw), tokens, target);
     if (finalText === "") {
       throw new AppError("INTERNAL", "翻译 API 响应规整后为空（模型 " + model + "）");
     }
@@ -284,7 +285,7 @@ function hashOf(text: string): string {
 }
 
 /** 语言名（system prompt 用）。 */
-const LANG_NAMES: Record<TranslateLang, string> = { zh: "Simplified Chinese", en: "English" };
+const LANG_NAMES: Record<TranslateLang, string> = { zh: "Simplified Chinese", en: "English", ja: "Japanese", ko: "Korean" };
 
 /** 拼 API 基址与路径（吞掉基址尾部斜杠；基址通常已含 /v1）。 */
 function joinApiUrl(base: string, path: string): string {

@@ -101,6 +101,13 @@ export class ProjectsController {
     return this.projects.getProject(id);
   }
 
+  /** 记录访问（2026-10-23）：前端进入项目详情时调用一次；每次进入写一条 action=visit。 */
+  @Post(":id/visit")
+  @HttpCode(204)
+  async visit(@Param("id", uuidParam) id: string, @CurrentActorId() actorId: string): Promise<void> {
+    await this.projects.recordVisit(id, actorId);
+  }
+
   /** 创建（M2-01）：201；编号重复 409 PROJECT_CODE_EXISTS；seq_no 由服务端分配（不接受传入）。需 project.create。 */
   @Post()
   @RequirePermission("project.create")

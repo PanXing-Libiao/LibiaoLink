@@ -343,6 +343,52 @@ export interface paths {
         };
         trace?: never;
     };
+    "/api/v1/projects/{id}/visit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 记录项目访问（页面进入项目详情时调用；每次进入写一条 action=visit，供操作记录筛选） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 访问已记录（同一页面单次进入一条；项目不存在 / 不可见 = 404） */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/restore": {
         parameters: {
             query?: never;
@@ -8218,10 +8264,148 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        delete?: never;
+        /** 一键删除全部站内信（C5-01）：只隐藏本人已投递主行，C5-03 全量留档与管理员发送记录保留；幂等 */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 删除结果（deleted / unreadCount） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NotificationDeleteAllResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 删除指定站内信（C5-01）：仅本人已投递主行；软删隐藏，C5-03 全量留档保留；他人 / 合并子行 / 未投递行统一 404 */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 删除结果（id / deleted / unreadCount） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NotificationDeleteResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** 标记收件箱状态（C5-01 未读 / 已读 / 已处理）：幂等；仅本人可标记（他人 404 防 IDOR） */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["NotificationMarkBody"];
+                };
+            };
+            responses: {
+                /** @description 标记后的通知 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Notification"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         trace?: never;
     };
     "/api/v1/notifications/deliveries": {
@@ -8456,75 +8640,6 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
-        trace?: never;
-    };
-    "/api/v1/notifications/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /** 标记收件箱状态（C5-01 未读 / 已读 / 已处理）：幂等；仅本人可标记（他人 404 防 IDOR） */
-        patch: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: number;
-                };
-                cookie?: never;
-            };
-            requestBody?: {
-                content: {
-                    "application/json": components["schemas"]["NotificationMarkBody"];
-                };
-            };
-            responses: {
-                /** @description 标记后的通知 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Notification"];
-                    };
-                };
-                /** @description 契约校验失败（VALIDATION_FAILED） */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ApiError"];
-                    };
-                };
-                /** @description 未认证（AUTH_REQUIRED） */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ApiError"];
-                    };
-                };
-                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ApiError"];
-                    };
-                };
-            };
-        };
         trace?: never;
     };
     "/api/v1/notifications/mark-all-read": {
@@ -9239,10 +9354,10 @@ export interface components {
             traceId: string;
         };
         /**
-         * @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / archive 项目归档（ADR-027：归档动作写审计，确认越过的缺项计数记 metadata）/ preview 预览查看（**已停用 · 2026-10-12**：操作日志不再记录预览动作 —— 值保留供历史行回读 / 筛选，服务端不再产生新行） / download 离线下载（A4-10：下载受 file.download 权限点控制并写日志；对象类型 file，经 metadata 记 versionId） / deny 越权拒绝
+         * @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / archive 项目归档（ADR-027：归档动作写审计，确认越过的缺项计数记 metadata）/ visit 访问（进入项目详情时由页面调用 POST /projects/{id}/visit 记录；登录成功也记 visit + objectType=user） / preview 预览查看（2026-10-23 起每次实际签出并送达的预览记一条；含缩略图等高频预览） / download 离线下载（A4-10：下载受 file.download 权限点控制并写日志；对象类型 file，经 metadata 记 versionId） / deny 越权拒绝
          * @enum {string}
          */
-        AuditAction: "create" | "update" | "delete" | "progress" | "complete" | "advance" | "rollback" | "archive" | "preview" | "download" | "deny";
+        AuditAction: "create" | "update" | "delete" | "progress" | "complete" | "advance" | "rollback" | "archive" | "visit" | "preview" | "download" | "deny";
         /** @description 字段级修改条目（C7-02） */
         AuditChange: {
             /** @description 字段名（契约口径 camelCase） */
@@ -9290,7 +9405,7 @@ export interface components {
             windowId: number | null;
         };
         /**
-         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；预览事件自 2026-10-12 起不再写审计 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删） / wecom_dm_binding 企微绑定验证（对象 id = 机器人标识 + 掩码 open_userid；失败 / 锁定记 deny + denied，不落完整 userid 或绑定码） / automation_rule 自动化规则（对象 id = 规则 id；保存记录字段级 diff，metadata 带 code / beforeVersion / afterVersion，M5-06） / notify_delivery 发送记录（对象 id = 消息归档 id；仅管理员重发写 update + metadata.operation=resend，M5-06）
+         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；预览实际送达时写 preview 审计 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删；登录成功记 visit，metadata.operation=login） / wecom_dm_binding 企微绑定验证（对象 id = 机器人标识 + 掩码 open_userid；失败 / 锁定记 deny + denied，不落完整 userid 或绑定码） / automation_rule 自动化规则（对象 id = 规则 id；保存记录字段级 diff，metadata 带 code / beforeVersion / afterVersion，M5-06） / notify_delivery 发送记录（对象 id = 消息归档 id；仅管理员重发写 update + metadata.operation=resend，M5-06）
          * @enum {string}
          */
         AuditObjectType: "project" | "project_member" | "task" | "node" | "stage" | "dict_item" | "blueprint" | "calendar_day" | "calendar_settings" | "file" | "change" | "stakeholder" | "daily_report" | "issue" | "task_node" | "task_template" | "user" | "wecom_dm_binding" | "automation_rule" | "notify_delivery";
@@ -10471,10 +10586,10 @@ export interface components {
             photoFileIds?: components["schemas"]["Uuid"][];
         };
         /**
-         * @description 界面语言（Push 296 · 顶栏「语言 · 中文 / English」）：zh = 中文（默认）/ en = English；读侧白名单外 / 缺省一律收敛为 zh
+         * @description 界面语言（Push 296 · 顶栏「语言 · 中文 / English / 日本語 / 한국어」）：zh = 中文（默认）/ en = English / ja = 日本語 / ko = 한국어；读侧白名单外 / 缺省一律收敛为 zh
          * @enum {string}
          */
-        Locale: "zh" | "en";
+        Locale: "zh" | "en" | "ja" | "ko";
         /** @description /auth/me 响应（会话由 HttpOnly Cookie 承载） */
         MeResponse: {
             user: components["schemas"]["User"];
@@ -10582,6 +10697,25 @@ export interface components {
             snoozeUntil: components["schemas"]["DateTime"] & (string | null);
             deliveredAt: components["schemas"]["DateTime"] & unknown;
             createdAt: components["schemas"]["DateTime"] & unknown;
+        };
+        /** @description 一键删除全部站内信结果（只动本人已投递主行；C5-03 留档不删除） */
+        NotificationDeleteAllResponse: {
+            /** @description 本次从本人收件箱删除的条数（幂等；已删行不重复计数） */
+            deleted: number;
+            /** @description 删除后的未读总数（角标口径；通常为 0） */
+            unreadCount: number;
+        };
+        /** @description 删除指定站内信结果（软删隐藏；C5-03 留档不删除） */
+        NotificationDeleteResponse: {
+            /** @description 被删除的通知 id */
+            id: number;
+            /**
+             * @description 固定 true（成功从本人收件箱隐藏）
+             * @enum {boolean}
+             */
+            deleted: true;
+            /** @description 删除后的未读总数（角标口径） */
+            unreadCount: number;
         };
         /** @description 收件箱清单（含未读角标计数） */
         NotificationListResponse: {
@@ -11757,7 +11891,7 @@ export interface components {
             note?: string | null;
             version: components["schemas"]["Version"];
         };
-        /** @description 批量查库请求（英文界面切页提速；只回已存译文） */
+        /** @description 批量查库请求（切页提速；只回已存译文） */
         TranslateBatchBody: {
             qs: string[];
             source?: components["schemas"]["TranslateLang"];
@@ -11772,7 +11906,7 @@ export interface components {
                 translatedText: string;
             }[];
         };
-        /** @description 单条翻译请求：译文库优先、未命中调引擎后落库 */
+        /** @description 单条翻译请求：译文库优先、未命中调引擎后落库（支持 zh / en / ja / ko） */
         TranslateBody: {
             q: string;
             source?: components["schemas"]["TranslateLang"];
@@ -11784,11 +11918,11 @@ export interface components {
             format: "text";
         };
         /**
-         * @description 语言：zh 中文 / en 英文
+         * @description 语言：zh 中文 / en 英文 / ja 日文 / ko 韩文
          * @default zh
          * @enum {string}
          */
-        TranslateLang: "zh" | "en";
+        TranslateLang: "zh" | "en" | "ja" | "ko";
         TranslateResponse: {
             /** @description 译文（译文库命中或引擎产出后落库） */
             translatedText: string;

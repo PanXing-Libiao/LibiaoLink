@@ -6,7 +6,7 @@
  *   I1  图片预览：`GET /files/{id}/preview` = ready + target=image + url 短时签名（原对象）+ pipelineVersion / generatedAt 空；
  *   I2  字节直出：url 直取 sha256 = 上传夹具全等（非转换件）+ PNG magic + Content-Type=image/png + 非 attachment；
  *   I3  签名形状：pathname = /{bucket}/{version.objectKey} + X-Amz-Expires = PREVIEW_URL_TTL_SECONDS；
- *   I4  零预览审计（Push 283 起操作日志不记录预览动作）：action = preview 0 条；
+ *   I4  预览审计（2026-10-23 恢复）：图片直签实际送达写 action = preview 1 条；
  *   I5  零投递 / 零产物：outbox 无 preview.job 行、preview_artifacts 0 行（读取不发任务、不落产物行）；
  *   F2  追加 v2（同文件新 PNG）；I6 版本路由：缺省签 v2、?versionId=v1 签 v1（字节分别全等、不串版本）；
  *   I7  定档（P1 触发点）：finalize 后仍零投递 / 零产物行（previewTargetsFor 空表 → 预生成循环空转）；
@@ -401,14 +401,14 @@ try {
       parsed1.searchParams.has("X-Amz-Signature"),
   );
 
-  // ---------- I4：零预览审计（Push 283 起操作日志不记录预览动作） ----------
+  // ---------- I4：预览审计（2026-10-23 恢复：实际送达写一条） ----------
   const audits1 = await previewAuditsOf(project);
   check(
     "I4",
-    "零预览审计（Push 283）：图片直签读取不写 audit_logs.action = preview",
-    "0 条",
+    "预览审计（2026-10-23 恢复）：图片直签实际送达写一条 audit_logs.action = preview",
+    "1 条（versionId = v1 + direct = true）",
     short({ count: audits1.length }, 200),
-    audits1.length === 0,
+    audits1.length === 1 && audits1[0].metadata?.versionId === v1Id && audits1[0].metadata?.direct === true,
   );
 
   // ---------- I5：零投递 / 零产物行 ----------
@@ -442,13 +442,13 @@ try {
   check(
     "I6a",
     "缺省预览 = 当前版本（v2）：签 v2 原对象 + 字节全等（夹具 B）",
-    "ready + pathname 含 v2 objectKey + sha256(B) + 预览审计 0 条",
+    "ready + pathname 含 v2 objectKey + sha256(B) + 预览审计 2 条（累计）",
     short({ status: p2.body?.status, pathname: parsed2?.pathname, hash: fetched2.hash.slice(0, 12) + "…", audits: audits2.length }, 360),
     p2.body?.status === "ready" &&
       parsed2 !== null &&
       parsed2.pathname === "/" + storage.bucket + "/" + v2Key &&
       fetched2.hash === sha256(PNG_B) &&
-      audits2.length === 0,
+      audits2.length === 2,
   );
 
   const p3 = await call("GET", "/api/v1/files/" + imageFileId + "/preview?versionId=" + v1Id, undefined, admin);
@@ -458,13 +458,13 @@ try {
   check(
     "I6b",
     "历史版本（?versionId=v1）：签 v1 原对象 + 字节全等（夹具 A），版本路由不经审计断言",
-    "ready + pathname 含 v1 objectKey + sha256(A) + 预览审计 0 条",
+    "ready + pathname 含 v1 objectKey + sha256(A) + 预览审计 3 条（累计）",
     short({ status: p3.body?.status, pathname: parsed3?.pathname, hash: fetched3.hash.slice(0, 12) + "…", audits: audits3.length }, 360),
     p3.body?.status === "ready" &&
       parsed3 !== null &&
       parsed3.pathname === "/" + storage.bucket + "/" + v1Key &&
       fetched3.hash === sha256(PNG_A) &&
-      audits3.length === 0,
+      audits3.length === 3,
   );
 
   // ---------- I7：定档（P1 触发点）后仍零投递 / 零产物行 ----------
@@ -490,7 +490,7 @@ try {
   check(
     "I8",
     "PDF 对照（非图片不受影响）：ready + viewer.documentType=pdf（url / target 空 / 无产物无投递）",
-    "ready + viewer.kind=onlyoffice/pdf + url null + target null + jobs 0 + artifacts 0 + 预览审计 0 条",
+    "ready + viewer.kind=onlyoffice/pdf + url null + target null + jobs 0 + artifacts 0 + 预览审计 4 条（累计）",
     short(
       {
         status: pdfPreview.body?.status,
@@ -511,7 +511,7 @@ try {
       pdfPreview.body?.viewer?.documentType === "pdf" &&
       pdfJobs === 0 &&
       pdfArtifacts === 0 &&
-      pdfAudits.length === 0,
+      pdfAudits.length === 4,
   );
 } catch (error) {
   failures += 1;
@@ -567,7 +567,7 @@ const dirty = execFileSync("git", ["status", "--porcelain"], { cwd: serverRoot }
 const lines = [];
 lines.push("# S6-前置 回放证据（图片直通 · 原对象直签）");
 lines.push("");
-lines.push("> 卡片：ONLYOFFICE 替换实施切片 **S6-前置**（主责 lan；于本回放 PR 内代记，请 px 复核）｜口径来源：`docs/ONLYOFFICE替换执行计划(Office预览).md` §0 D6（图片 → 原对象短时签名直签）+ §4「S6-前置」出口条件（`deploy/preview` 停机状态下图片预览 + 缩略图走通 + 字节与原对象全等）｜ADR-007（缓存三元组）/ D2-04（短时签名 + 禁匿名）/ D2-07（预览审计已撤 —— Push 283 起不记录预览动作）｜契约 `FilePreviewResponse`。");
+lines.push("> 卡片：ONLYOFFICE 替换实施切片 **S6-前置**（主责 lan；于本回放 PR 内代记，请 px 复核）｜口径来源：`docs/ONLYOFFICE替换执行计划(Office预览).md` §0 D6（图片 → 原对象短时签名直签）+ §4「S6-前置」出口条件（`deploy/preview` 停机状态下图片预览 + 缩略图走通 + 字节与原对象全等）｜ADR-007（缓存三元组）/ D2-04（短时签名 + 禁匿名）/ D2-07（预览审计 2026-10-23 恢复：实际送达就绪内容写一条）｜契约 `FilePreviewResponse`。");
 lines.push("> 落点说明：`docs/` 属 px 线；本文件由 lan 随 S6-前置 切片代记（回放脚本与断言同 PR，请 px 复核）。");
 lines.push("");
 lines.push("| 项 | 值 |");
@@ -591,7 +591,7 @@ lines.push("## 汇总");
 lines.push("");
 lines.push(
   failures === 0
-    ? "- ✅ 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：停机态前置（S0b）+ 图片直签就绪形态（ready / target=image / 产物字段空）+ 字节与原对象全等（非转换件）+ 签名形状与窗口 + 零预览审计（Push 283 起操作日志不记录预览动作）+ 零投递 / 零产物行 + 版本路由（v1 / v2 不串）+ 定档后零投递 + PDF 对照（查看器通道不受影响）。"
+    ? "- ✅ 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：停机态前置（S0b）+ 图片直签就绪形态（ready / target=image / 产物字段空）+ 字节与原对象全等（非转换件）+ 签名形状与窗口 + 预览实际送达写一条审计（2026-10-23 恢复）+ 零投递 / 零产物行 + 版本路由（v1 / v2 不串）+ 定档后零投递 + PDF 对照（查看器通道不受影响）。"
     : "- ❌ 有 " + failures + " 项失败，见上方 FAIL 行。",
 );
 lines.push("");

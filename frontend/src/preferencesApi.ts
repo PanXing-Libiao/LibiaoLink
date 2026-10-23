@@ -43,7 +43,7 @@ export type UserPreferences = {
   backgroundTier: BackgroundTier;
   /** 卡片水印（Push 292 · 业务口径「增加一个水印选项 可以选择是否要水印」）：项目卡片右下角国家名水印按账号存；Push 313 起默认 false（无水印）。 */
   cardWatermark: boolean;
-  /** 界面语言（Push 296 · 业务口径「按账号记住 刷新不会回中文」）：顶栏「语言 · 中文 / English」按账号存 —— 刷新 / 换设备同账号保持；默认 zh。 */
+  /** 界面语言（Push 296 · 业务口径「按账号记住 刷新不会回中文」）：顶栏「语言 · 中文 / English / 日本語 / 한국어」按账号存 —— 刷新 / 换设备同账号保持；默认 zh。 */
   locale: Locale;
   /** 仪表盘页常驻视图（Push 332 · 业务口径「还是做路由吧 这个页面要记住 因为不同的人想常驻的页面可能不一样」）：地址不带 `?view=` 时本页落在哪个视图 —— 刷新 / 换设备同账号保持；默认 map。 */
   hubView: HubView;

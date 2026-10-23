@@ -26,6 +26,8 @@ type DateRangePickerProps = {
 
 const WEEKDAYS_ZH = ["一", "二", "三", "四", "五", "六", "日"];
 const WEEKDAYS_EN = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+const WEEKDAYS_JA = ["月", "火", "水", "木", "金", "土", "日"];
+const WEEKDAYS_KO = ["월", "화", "수", "목", "금", "토", "일"];
 
 const pad = (value: number) => String(value).padStart(2, "0");
 
@@ -44,7 +46,7 @@ export function DateRangePicker({ value, onChange, hintDate, placeholder, ariaLa
   const t = useT();
   const placeholderText = placeholder ?? t("picker.allTime");
   const ariaText = ariaLabel ?? t("picker.aria");
-  const weekdays = locale === "en" ? WEEKDAYS_EN : WEEKDAYS_ZH;
+  const weekdays = locale === "ja" ? WEEKDAYS_JA : locale === "ko" ? WEEKDAYS_KO : locale === "en" ? WEEKDAYS_EN : WEEKDAYS_ZH;
   const single = mode === "single";
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<DateRange | null>(value);

@@ -8,7 +8,7 @@ import { ExportOverviewButton } from "./components/ExportOverviewButton";
 import { GanttChart } from "./components/GanttChart";
 import { ReportIssuePanel } from "./components/ReportIssuePanel";
 import { StakeholderPanel } from "./components/StakeholderPanel";
-import { Toast } from "./components/Toast";
+import { Toast, ToastConfirm } from "./components/Toast";
 import { useFocusTrap } from "./components/useFocusTrap";
 import { TableScrollbar } from "./components/TableScrollbar";
 import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, hiddenColumnsOf, taskPatchBody, visibleColumnsFromHidden, type ColumnKey, type TaskPatch, type VisibleColumns } from "./components/TaskBoard";
@@ -17,13 +17,13 @@ import { TaskKanban, type KanbanAddContext } from "./components/TaskKanban";
 import type { StagePlacement } from "./components/StageAddCard";
 import { PROJECT_STAGES } from "./data/projects";
 import { memberNameOf, type Member } from "./data/members";
-import { TEMP_TASK_STAGE, type ProjectTask, type TaskStatus } from "./data/tasks";
+import { lockBodyScroll } from "./scrollLock";
+import { TEMP_TASK_STAGE, isTaskDone, type ProjectTask, type TaskStatus } from "./data/tasks";
 import type { TemplatePresetNode } from "./data/templatePresets";
 import { fetchTaskFiles, recycleFile, renameFile, uploadFiles, type TaskFileRef } from "./fileApi";
 import { exportProjectOverviewPdf } from "./exportOverviewPdf";
 import type { OverviewExportLanguage } from "./overviewExportShared";
-import { prefetchZhToEn } from "./translateApi";
-import { useLocale, useT, viewTabText } from "./i18n";
+import { prefetchLocalizedText, useLocale, useT, viewTabText } from "./i18n";
 import { ExportProgressOverlay, type ExportTranslateProgress } from "./components/ExportProgressOverlay";
 import { useBackgroundTier, type TintedTier } from "./backgroundTier";
 import { projectManagerText } from "./types";
@@ -112,9 +112,11 @@ type ProjectDetailProps = {
   onTaskHiddenColumnsChange?: (keys: string[]) => Promise<string | null>;
   /** 干系人写入口（Push 221 · A27）：= stakeholder.manage（画像未到时乐观放行，服务端逐请求仍是最终裁决）。 */
   canManageStakeholders: boolean;
+  /** 验收完成后设为已完成的写入口（无 project.update 权限时父层不传）；false = 写失败，父层已提示。 */
+  onSetProjectDone?: (projectId: string) => Promise<boolean>;
 };
 
-export default function ProjectDetail({ me, project, view, dailySub, members, onChangeManagers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange, canManageStakeholders }: ProjectDetailProps) {
+export default function ProjectDetail({ me, project, view, dailySub, members, onChangeManagers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange, canManageStakeholders, onSetProjectDone }: ProjectDetailProps) {
   /** 顶部视图（Push 82 / 121）：阶段标签收进「项目总览」，另两块是看板视图，最后一块是「日报及问题」；Push 154 起当前标签由地址 `?view=` 派生。 */
   const locale = useLocale();
   const t = useT();
@@ -135,10 +137,35 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   const [dataVersion, setDataVersion] = useState(0);
   const [dataLoading, setDataLoading] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
-  /** 待确认删除的任务行（Push 264 追订 · 业务口径「任务行内删除无二次确认」）：第一下只开底部确认条，第二下才真删。 */
+  /** 待确认删除的任务行（Push 264 追订 · 业务口径「任务行内删除无二次确认」）：第一下只开顶部确认 Toast，第二下才真删。 */
   const [pendingDeleteTaskId, setPendingDeleteTaskId] = useState<string | null>(null);
   /** 键盘焦点陷阱（Push 264 追订）：删除确认条开着时焦点进条内、Tab 在条内循环、关闭还原到行内删除按钮。 */
   const deleteTaskConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDeleteTaskId !== null);
+  /** 验收交付完成询问（2026-10-22）：只在本次写入让验收阶段首次全部完成时打开一次。 */
+  const [acceptanceDonePromptOpen, setAcceptanceDonePromptOpen] = useState(false);
+  const [acceptanceDonePending, setAcceptanceDonePending] = useState(false);
+  const [acceptanceDoneClosing, setAcceptanceDoneClosing] = useState(false);
+  const acceptanceDonePromptOpenRef = useRef(false);
+  const acceptanceDoneCloseTimer = useRef<number | null>(null);
+  const acceptanceDonePromptTrapRef = useFocusTrap<HTMLDivElement>(acceptanceDonePromptOpen);
+
+  /** 关闭验收完成询问（暂不 / Esc）：先播 180ms 的 toast 退出，再卸载；不改项目状态。 */
+  const closeAcceptanceDonePrompt = (): void => {
+    if (!acceptanceDonePromptOpenRef.current) {
+      return;
+    }
+    acceptanceDonePromptOpenRef.current = false;
+    setAcceptanceDoneClosing(true);
+    if (acceptanceDoneCloseTimer.current !== null) {
+      window.clearTimeout(acceptanceDoneCloseTimer.current);
+    }
+    acceptanceDoneCloseTimer.current = window.setTimeout(() => {
+      acceptanceDoneCloseTimer.current = null;
+      setAcceptanceDonePromptOpen(false);
+      setAcceptanceDoneClosing(false);
+      setAcceptanceDonePending(false);
+    }, 180);
+  };
 
   /**
    * 「日报及问题」子菜单（业务口径 2026-09-30「日报及问题页面的导航栏按钮集成到页面导航栏 如图一的效果」）：
@@ -208,7 +235,53 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     if (submenuTimer.current !== null) {
       window.clearTimeout(submenuTimer.current);
     }
+    if (acceptanceDoneCloseTimer.current !== null) {
+      window.clearTimeout(acceptanceDoneCloseTimer.current);
+    }
   }, []);
+
+  /** 换项目 / 项目已完成或归档时收起询问，避免旧项目的提示串到下一页。 */
+  useEffect(() => {
+    if (projectId === null || project?.status === "done" || project?.status === "archived") {
+      acceptanceDonePromptOpenRef.current = false;
+      if (acceptanceDoneCloseTimer.current !== null) {
+        window.clearTimeout(acceptanceDoneCloseTimer.current);
+        acceptanceDoneCloseTimer.current = null;
+      }
+      setAcceptanceDonePromptOpen(false);
+      setAcceptanceDoneClosing(false);
+      setAcceptanceDonePending(false);
+    }
+  }, [projectId, project?.status]);
+
+  /** 验收询问是模态层：打开期间锁页面滚动，避免滚轮穿透到后方的任务表。 */
+  useEffect(() => {
+    if (!acceptanceDonePromptOpen) {
+      return undefined;
+    }
+    return lockBodyScroll();
+  }, [acceptanceDonePromptOpen]);
+
+  /** Esc = 暂不；捕获阶段截住，避免同一次 Esc 又关掉后方任务抽屉；写入中只截住、不关层。 */
+  useEffect(() => {
+    if (!acceptanceDonePromptOpen) {
+      return undefined;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (!acceptanceDonePending) {
+        closeAcceptanceDonePrompt();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [acceptanceDonePromptOpen, acceptanceDonePending]);
 
   /** 整表重取（新建 / 删除 / 排序 / 版本冲突后调用；换项目由下面这个 effect 自动触发）。 */
   const reloadAll = () => {
@@ -284,19 +357,76 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
    * 「写进展描述即后台翻译」（业务口径 2026-10-13 · §6.16 ㉑）：项目数据一到 / 每次写入回写（tasks 变化 ——
    * 行内编辑、抽屉保存、进度 / 状态写入……）就把「项目名 + 全部非空进展描述」丢进译文缓存后台预热；
    * 用户写完进展描述几秒内译文就绪，导出时直接命中、不再等机器翻译（缓存与去重见 src/translateApi.ts）。
-   * 同日追订（「因为页面有些内容是手打的 我建议是提前后台机翻」）：无英文名（titleEn 空）的任务名一并预热，
-   * 语言切英文 / 列表显示机翻译文即得（有 titleEn 的任务名直接用自带英文名，不进机翻通道）。
+   * 同日追订（「因为页面有些内容是手打的 我建议是提前后台机翻」）：无英文名（titleEn 空）的任务名一并预热；日 / 韩界面不采用 titleEn，
+   * 因此全部任务名都要按目标语言预热（英文界面有 titleEn 的任务名仍不进机翻通道）。
    */
   useEffect(() => {
-    prefetchZhToEn([
+    prefetchLocalizedText([
       project === null ? "" : project.description,
+      project === null ? "" : project.remark,
       ...tasks.map((task) => task.note),
-      ...tasks.filter((task) => task.titleEn === "").map((task) => task.title),
+      ...tasks.filter((task) => task.titleEn === "" || locale === "ja" || locale === "ko").map((task) => task.title),
     ]);
-  }, [project, tasks]);
+  }, [project, tasks, locale]);
 
   /** 当前行（写入要回传它的 version / sortIndex 等）。 */
   const rowOf = (taskId: string): ProjectTask | undefined => tasks.find((task) => task.id === taskId);
+
+  /**
+   * 验收交付完成询问（2026-10-22 · 业务口径「当验收交付完成后 弹出一个弹出显示是否需要将项目设为已完成」）：
+   * 本次写入把「验收」阶段最后一颗未完成任务改成完成态时打开询问；打开 / 刷新已全部完成的项目不弹。
+   * 验收完成 = 该阶段至少有一条任务，且全部为已完成 / 提前完成；写回状态以服务端响应为准。
+   */
+  const promptAfterAcceptanceCompletion = (updated: ApiTaskListItem | ApiTask): void => {
+    if (
+      onSetProjectDone === undefined ||
+      project === null ||
+      project.status === "done" ||
+      project.status === "archived" ||
+      acceptanceDonePromptOpenRef.current
+    ) {
+      return;
+    }
+    const previous = tasks.find((task) => task.id === updated.id);
+    if (previous === undefined) {
+      return;
+    }
+    const next = toUiTask(updated, previous, (id) => memberNameOf(members, id));
+    if (next.stageKey !== "acceptance" || !isTaskDone(next)) {
+      return;
+    }
+    const acceptanceTasks = tasks.filter((task) => task.stageKey === "acceptance");
+    if (acceptanceTasks.length === 0 || acceptanceTasks.every(isTaskDone)) {
+      return;
+    }
+    if (!acceptanceTasks.every((task) => task.id === updated.id || isTaskDone(task))) {
+      return;
+    }
+    acceptanceDonePromptOpenRef.current = true;
+    if (acceptanceDoneCloseTimer.current !== null) {
+      window.clearTimeout(acceptanceDoneCloseTimer.current);
+      acceptanceDoneCloseTimer.current = null;
+    }
+    setAcceptanceDoneClosing(false);
+    setAcceptanceDonePending(false);
+    setAcceptanceDonePromptOpen(true);
+  };
+
+  /** 确认设为已完成：成功才关弹窗；失败保留弹窗供重试，错误由父层顶部 Toast 提示。 */
+  const confirmAcceptanceDonePrompt = (): void => {
+    if (acceptanceDonePending || project === null || onSetProjectDone === undefined) {
+      return;
+    }
+    const id = project.id;
+    setAcceptanceDonePending(true);
+    void (async () => {
+      const ok = await onSetProjectDone(id);
+      setAcceptanceDonePending(false);
+      if (ok) {
+        closeAcceptanceDonePrompt();
+      }
+    })();
+  };
 
   /**
    * 单行替换（PATCH / 进度写入都回单行）：文件摘要从旧行继承；
@@ -403,7 +533,9 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     }
     void (async () => {
       try {
-        replaceRow(await updateTaskProgress(projectId, taskId, { progress, version: row.version }));
+        const updated = await updateTaskProgress(projectId, taskId, { progress, version: row.version });
+        replaceRow(updated);
+        promptAfterAcceptanceCompletion(updated);
         await afterWrite();
       } catch (error) {
         reportWriteError(error);
@@ -422,7 +554,9 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     }
     void (async () => {
       try {
-        replaceRow(await updateTask(projectId, taskId, { status: statusWriteValue(status), version: row.version }));
+        const updated = await updateTask(projectId, taskId, { status: statusWriteValue(status), version: row.version });
+        replaceRow(updated);
+        promptAfterAcceptanceCompletion(updated);
         await afterWrite();
       } catch (error) {
         reportWriteError(error);
@@ -476,7 +610,9 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     void (async () => {
       try {
         const body = iso === "" ? { progress: 0.75, version: row.version } : { progress: 1, actualEnd: iso, version: row.version };
-        replaceRow(await updateTaskProgress(projectId, taskId, body));
+        const updated = await updateTaskProgress(projectId, taskId, body);
+        replaceRow(updated);
+        promptAfterAcceptanceCompletion(updated);
         await afterWrite();
       } catch (error) {
         reportWriteError(error);
@@ -539,7 +675,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     onChangeManagers?.(project.id, nextManagerIds);
   };
 
-  /** 任务表行内删除第一下（Push 141 / A25；Push 264 追订加二次确认 · 业务口径「任务行内删除无二次确认」）：只挂起这一行，第二下在底部确认条上。
+  /** 任务表行内删除第一下（Push 141 / A25；Push 264 追订加二次确认 · 业务口径「任务行内删除无二次确认」）：只挂起这一行，第二下在顶部确认 Toast 上。
    *  已定档任务的删除服务端一律 409（assertTaskMutable 覆盖 remove）—— 照定档行「点击即弹提示」的口径，不进入确认条。 */
   const requestDeleteTask = (taskId: string) => {
     const row = rowOf(taskId);
@@ -552,7 +688,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     }
     setPendingDeleteTaskId(taskId);
   };
-  /** 底部确认条的第二下：软删走接口（有变更引用时 409 TASK_HAS_REFERENCES），成功后本地摘掉这一行。 */
+  /** 顶部确认 Toast 的第二下：软删走接口（有变更引用时 409 TASK_HAS_REFERENCES），成功后本地摘掉这一行。 */
   const confirmDeleteTask = () => {
     const taskId = pendingDeleteTaskId;
     const row = taskId === null ? undefined : rowOf(taskId);
@@ -848,7 +984,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   /**
    * 导出项目总览（PDF · 业务口径 2026-10-09 · §6.16）：把页面当前的 project / tasks / summary 交给报告模块
    * （exportOverviewPdf.ts）拼 A4 横版报告，唤起系统打印窗口由用户选「另存为 PDF」；
-   * 2026-10-10 起导出前经翻译通道补「项目进展描述」列英文小字（translateApi.ts；通道不通静默降级）；导出不改数据。
+   * 2026-10-10 起导出前经翻译通道补「项目进展描述」列译文；2026-10-23 日 / 韩主体再补项目名与任务名（translateApi.ts；通道不通静默降级）；导出不改数据。
    * 2026-10-13 起译文已在「写进展描述」时后台预热（§6.16 ㉑）—— 命中缓存即取，只有未预热条目才现场翻。
    */
   const exportOverview = async (primary: OverviewExportLanguage): Promise<void> => {
@@ -887,7 +1023,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     );
   }
 
-  /** 底部确认条上的那一行（从最新任务列表里取标题 / 版本；任务已被别处删除时自动为 undefined = 不显示确认条）。 */
+  /** 顶部确认 Toast 上的那一行（从最新任务列表里取标题 / 版本；任务已被别处删除时自动为 undefined = 不显示确认）。 */
   const pendingDeleteTask = pendingDeleteTaskId === null ? undefined : rowOf(pendingDeleteTaskId);
 
   return (
@@ -1083,42 +1219,81 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
         ) : null}
       </main>
 
+      {/* 验收交付完成询问（2026-10-22 · 业务口径「当验收交付完成后 弹出一个弹出显示是否需要将项目设为已完成」）：
+          参考 react-hot-toast 的底部 toast：白色圆角卡片、无深色遮罩，自底部弹性上浮 + 轻微放大；
+          只有本次任务写入让验收阶段首次全部完成时打开，点击卡外 / 暂不 / Esc 先播退出再卸载。 */}
+      {acceptanceDonePromptOpen ? (
+        <div className="fixed inset-0 z-[80] flex items-end justify-center px-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-6">
+          <div
+            className="absolute inset-0 bg-transparent"
+            aria-hidden="true"
+            onPointerDown={acceptanceDonePending ? undefined : closeAcceptanceDonePrompt}
+          />
+          <div
+            ref={acceptanceDonePromptTrapRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="project-acceptance-done-title"
+            aria-describedby="project-acceptance-done-body"
+            aria-busy={acceptanceDonePending}
+            data-focus-container=""
+            tabIndex={-1}
+            data-project-acceptance-done-prompt=""
+            className={`ll-toast pointer-events-auto relative w-full max-w-[640px] rounded-[22px] border border-zinc-200/80 bg-white px-4 py-4 text-left shadow-[0_18px_50px_-16px_rgba(15,23,42,0.22),0_4px_12px_-4px_rgba(15,23,42,0.08)] outline-none sm:px-5 ${acceptanceDoneClosing ? "is-closing" : ""}`}
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-5">
+              <div className="min-w-0 flex-1">
+                <p id="project-acceptance-done-body" className="text-sm leading-6 text-zinc-600">
+                  <span id="project-acceptance-done-title" className="font-semibold text-zinc-900">
+                    {t("project.acceptanceDone.title")}
+                  </span>
+                  <span className="ml-1.5">{t("project.acceptanceDone.body")}</span>
+                </p>
+              </div>
+              <div className="flex shrink-0 justify-end gap-2">
+                <button
+                  type="button"
+                  data-project-acceptance-done-cancel=""
+                  disabled={acceptanceDonePending}
+                  onClick={closeAcceptanceDonePrompt}
+                  className="rounded-xl border border-zinc-200 bg-zinc-50 px-3.5 py-1.5 text-sm font-medium text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {t("project.acceptanceDone.cancel")}
+                </button>
+                <button
+                  type="button"
+                  data-project-acceptance-done-confirm=""
+                  disabled={acceptanceDonePending}
+                  onClick={confirmAcceptanceDonePrompt}
+                  className="rounded-xl bg-zinc-900 px-3.5 py-1.5 text-sm font-medium text-white shadow-[0_2px_8px_rgba(15,23,42,0.18)] transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {acceptanceDonePending ? t("project.acceptanceDone.pending") : t("project.acceptanceDone.confirm")}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {/* 导出等待浮层（§6.16 ⑳ / ㉑）：真在等（翻译 / 生成超过 250ms）才显示小车动画 + 预计秒数；打印窗口唤起前收起。 */}
       {exportOverlayVisible ? <ExportProgressOverlay progress={exportTranslateProgress} /> : null}
 
-      {/* 任务行内删除的第二下确认条（Push 264 追订 · 业务口径「任务行内删除无二次确认」）：与「删除项目 / 模板 / 日报」同款
-          非阻断固定底栏 —— 第一下只开口，第二下「删除」才真删。 */}
+      {/* 任务行内删除的第二下确认（Push 264 追订 · 业务口径「任务行内删除无二次确认」）：与「删除项目 / 模板 / 日报」同款
+          顶部常驻确认 Toast —— 第一下只开口，第二下「删除」才真删。 */}
       {pendingDeleteTask === undefined ? null : (
-        <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
-          <div
-            ref={deleteTaskConfirmTrapRef}
-            role="dialog"
-            aria-label={t("project.deleteTaskAria")}
-            data-task-delete-confirm=""
-            className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
-          >
-            <span>
-              {t("project.deleteTaskPre")}<span className="font-semibold">{pendingDeleteTask.title}</span>{t("project.deleteTaskPost")}
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                setPendingDeleteTaskId(null);
-              }}
-              className="shrink-0 whitespace-nowrap rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
-            >
-              {t("common.cancel")}
-            </button>
-            <button
-              type="button"
-              data-task-delete=""
-              onClick={confirmDeleteTask}
-              className="shrink-0 whitespace-nowrap rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
-            >
-              {t("common.delete")}
-            </button>
-          </div>
-        </div>
+        <ToastConfirm
+          text={<>
+            {t("project.deleteTaskPre")}<span className="font-semibold">{pendingDeleteTask.title}</span>{t("project.deleteTaskPost")}
+          </>}
+          ariaLabel={t("project.deleteTaskAria")}
+          cancelLabel={t("common.cancel")}
+          confirmLabel={t("common.delete")}
+          onCancel={() => { setPendingDeleteTaskId(null); }}
+          onConfirm={confirmDeleteTask}
+          containerRef={deleteTaskConfirmTrapRef}
+          anchor={{ name: "data-task-delete-confirm", value: "" }}
+          confirmAnchor={{ name: "data-task-delete", value: "" }}
+        />
       )}
     </div>
   );

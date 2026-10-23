@@ -108,6 +108,8 @@ import {
   FollowObjectTypeSchema,
 } from "./modules/follows.ts";
 import {
+  NotificationDeleteAllResponseSchema,
+  NotificationDeleteResponseSchema,
   NotificationListQuerySchema,
   NotificationListResponseSchema,
   NotificationMarkAllReadResponseSchema,
@@ -298,6 +300,18 @@ export function buildOpenApiDocument() {
     request: { params: idParams },
     responses: {
       200: { description: "项目", ...json(ProjectSchema) },
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/visit",
+    tags: ["projects"],
+    summary: "记录项目访问（页面进入项目详情时调用；每次进入写一条 action=visit，供操作记录筛选）",
+    request: { params: idParams },
+    responses: {
+      204: { description: "访问已记录（同一页面单次进入一条；项目不存在 / 不可见 = 404）" },
       404: commonErrors[404],
     },
   });
@@ -2013,6 +2027,32 @@ export function buildOpenApiDocument() {
       200: { description: "收件箱清单（含未读计数）", ...json(NotificationListResponseSchema) },
       400: commonErrors[400],
       401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "delete",
+    path: "/api/v1/notifications",
+    tags: ["notifications"],
+    summary:
+      "一键删除全部站内信（C5-01）：只隐藏本人已投递主行，C5-03 全量留档与管理员发送记录保留；幂等",
+    responses: {
+      200: { description: "删除结果（deleted / unreadCount）", ...json(NotificationDeleteAllResponseSchema) },
+      401: commonErrors[401],
+    },
+  });
+
+  registry.registerPath({
+    method: "delete",
+    path: "/api/v1/notifications/{id}",
+    tags: ["notifications"],
+    summary:
+      "删除指定站内信（C5-01）：仅本人已投递主行；软删隐藏，C5-03 全量留档保留；他人 / 合并子行 / 未投递行统一 404",
+    request: { params: notificationIdParams },
+    responses: {
+      200: { description: "删除结果（id / deleted / unreadCount）", ...json(NotificationDeleteResponseSchema) },
+      401: commonErrors[401],
+      404: commonErrors[404],
     },
   });
 

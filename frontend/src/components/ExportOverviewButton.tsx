@@ -7,14 +7,15 @@ type ExportOverviewButtonProps = {
   onExport: (primary: OverviewExportLanguage) => void;
   /** 任务数据还在取 / 重取中：置灰不给点，避免导出半份数据。 */
   disabled?: boolean;
-  /** 导出进行中（等「项目进展描述」列英译，见 §6.16 ⑯）：按钮转「生成中…」并防重复点击。 */
+  /** 导出进行中（等项目名 / 任务名 / 进展描述译文，见 §6.16）：按钮转「生成中…」并防重复点击。 */
   busy?: boolean;
 };
 
 /**
  * 「导出 PDF」按钮（项目总览工具区 · 业务口径 2026-10-09）。
  * 2026-10-21 追订：点击后先选择报告主体语言 —— 中文为主体保持当前版式；英文为主体把英文
- * 提到主文案位置、中文降为次要小字。菜单行为与 ColumnPicker 同套：点外面 / Esc 收起。
+ * 提到主文案位置、中文降为次要小字。2026-10-23 再扩日文 / 韩文主体（固定文案走四语词典，
+ * 项目名 / 任务名 / 进展描述走翻译通道）。菜单行为与 ColumnPicker 同套：点外面 / Esc 收起。
  */
 export function ExportOverviewButton({ onExport, disabled = false, busy = false }: ExportOverviewButtonProps) {
   const t = useT();
@@ -106,6 +107,26 @@ export function ExportOverviewButton({ onExport, disabled = false, busy = false 
           >
             <span className="text-sm font-medium text-zinc-800">{t("export.primary.en")}</span>
             <span className="text-xs text-zinc-400">{t("export.primary.enHint")}</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            data-export-language="ja"
+            onClick={() => choose("ja")}
+            className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 text-left transition hover:bg-zinc-50 focus-visible:bg-zinc-50 focus-visible:outline-none"
+          >
+            <span className="text-sm font-medium text-zinc-800">{t("export.primary.ja")}</span>
+            <span className="text-xs text-zinc-400">{t("export.primary.jaHint")}</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            data-export-language="ko"
+            onClick={() => choose("ko")}
+            className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 text-left transition hover:bg-zinc-50 focus-visible:bg-zinc-50 focus-visible:outline-none"
+          >
+            <span className="text-sm font-medium text-zinc-800">{t("export.primary.ko")}</span>
+            <span className="text-xs text-zinc-400">{t("export.primary.koHint")}</span>
           </button>
         </div>
       ) : null}

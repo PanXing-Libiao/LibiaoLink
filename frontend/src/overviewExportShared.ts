@@ -11,8 +11,8 @@ import type { ApiProjectSummary } from "./taskApi";
 import type { Project } from "./types";
 
 /** 导出入参（全部来自项目详情页已取到的数据，导出零新增请求）。 */
-/** 导出报告的主体语言：zh = 中文大字 + 英文小字（当前版式）；en = 英文大字 + 中文小字。 */
-export type OverviewExportLanguage = "zh" | "en";
+/** 导出报告的主体语言：zh = 中文大字 + 英文小字（当前版式）；en = 英文大字 + 中文小字；ja / ko = 日文 / 韩文大字 + 中文小字。 */
+export type OverviewExportLanguage = "zh" | "en" | "ja" | "ko";
 
 export type OverviewExportInput = {
   project: Project;

@@ -203,14 +203,18 @@ describe("用户偏好（A4 / A24）", () => {
     expect((await service.get(USER_ID)).locale).toBe("en");
     expect(repo.rows.get(USER_ID)?.prefs).toMatchObject({ locale: "en" });
     expect((await service.update(USER_ID, { focusMode: true }, AT)).locale).toBe("en");
+    expect((await service.update(USER_ID, { locale: "ja" }, AT)).locale).toBe("ja");
+    expect((await service.update(USER_ID, { locale: "ko" }, AT)).locale).toBe("ko");
     expect((await service.update(USER_ID, { locale: "zh" }, AT)).locale).toBe("zh");
     repo.rows.set(USER_ID, { userId: USER_ID, prefs: { locale: "fr" }, updatedAt: AT } as unknown as UserPreferenceRow);
     expect((await service.get(USER_ID)).locale).toBe("zh");
   });
 
-  it("界面语言契约：zh / en 通过，其它字符串 / 布尔 400", () => {
+  it("界面语言契约：zh / en / ja / ko 通过，其它字符串 / 布尔 400", () => {
     expect(UserPreferencesUpdateBodySchema.safeParse({ locale: "zh" }).success).toBe(true);
     expect(UserPreferencesUpdateBodySchema.safeParse({ locale: "en" }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ locale: "ja" }).success).toBe(true);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ locale: "ko" }).success).toBe(true);
     expect(UserPreferencesUpdateBodySchema.safeParse({ locale: "fr" }).success).toBe(false);
     expect(UserPreferencesUpdateBodySchema.safeParse({ locale: true }).success).toBe(false);
   });

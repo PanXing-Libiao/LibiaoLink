@@ -27,6 +27,8 @@
  * 0061 · M5-06-2A 追加：notify_delivery_messages（消息级发送归档 · 独立于 outbox 清理）
  * + notify_deliveries.message_id（尝试级关联；历史行允许 null）。口径见
  * database/migrations/0061_notify_delivery_messages.sql 与 docs/M5-06-实施方案与执行计划(规则管理与发送记录).md §3.4。
+ *
+ * 0065 · 站内信删除追加：notifications.deleted_at（用户收件箱软删；C5-03 全量留档保留）。
  */
 import { sql } from "drizzle-orm";
 import {
@@ -84,6 +86,8 @@ export const notifications = pgTable(
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
     /** 当前未触发的稍后提醒时刻（C5-05）：null = 未设置 / 已触发 / 已取消；触发不改写 delivered_at。 */
     snoozeUntil: timestamp("snooze_until", { withTimezone: true }),
+    /** 用户从本人收件箱删除的时刻（0065 · 软删）：非空 = 收件箱隐藏；C5-03 留档不删。 */
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

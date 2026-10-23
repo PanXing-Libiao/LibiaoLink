@@ -3,8 +3,8 @@
  * M4-05 读 API 真机回放（S7·file 预览读 API · PR-11）：
  *   证据一（not_ready + 幂等补投）：未生成的预览 → 读 API 返回 not_ready，同事务登记产物行 + 投 `preview.job`（trigger=read）；
  *             重复请求不重复登记、不重复投递（去重键 = 三元组）；not_ready **不写审计**。
- *   证据二（ready + 短时签名 · 审计已撤）：worker 转成后 → 读 API 返回 ready，附短时签名地址（可下载、形态正确）；
- *             **预览不写审计**（Push 283 起操作日志不记录预览动作）。
+ *   证据二（ready + 短时签名 · 审计恢复）：worker 转成后 → 读 API 返回 ready，附短时签名地址（可下载、形态正确）；
+ *             **ready 读预览写一条 `action = preview` 审计**（2026-10-23 恢复；实际送达才写）。
  *   证据三（A4-06 版本路由）：缺省 = 当前版本；`versionId` 指定历史版本 → 按该版本的内容哈希取三元组（不串版本）。
  *   证据四（404 与禁匿名）：版本不属于该文件 / 文件不存在 → 404（同形，防 IDOR）；无会话 → 401（D2-04 禁匿名）。
  *   证据五（failed 缓存态）：产物为 failed → 返回失败原因（降级「请下载」），**不原地重投**。
@@ -335,7 +335,7 @@ try {
   const auditAfterNotReady = await previewAuditOf(project);
   check(
     "R3",
-    "not_ready 不写审计（Push 283 起预览动作整体不再记审计）",
+    "not_ready 不写审计（只有实际送达就绪内容才写）",
     "preview 审计 0 条",
     short({ previewAudits: auditAfterNotReady.length }, 160),
     auditAfterNotReady.length === 0,
@@ -404,10 +404,10 @@ try {
   const auditsAfterReady = await previewAuditOf(project);
   check(
     "R7",
-    "ready 读预览不写审计（Push 283 起操作日志不记录预览动作）",
-    "preview 审计 0 条",
+    "ready 读预览写一条 preview 审计（2026-10-23 恢复）",
+    "preview 审计 1 条",
     short({ previewAudits: auditsAfterReady.length }, 160),
-    auditsAfterReady.length === 0,
+    auditsAfterReady.length === 1,
   );
 
   // ---------- 证据三：版本路由（A4-06） ----------
@@ -550,7 +550,7 @@ const dirty = execFileSync("git", ["status", "--porcelain"], { cwd: serverRoot }
 const lines = [];
 lines.push("# M4-05d 回放证据（S7·file 预览读 API）");
 lines.push("");
-lines.push("> 卡片：M4-05「在线预览」的读面切片（主责 lan，评审 wmj）｜口径来源：系统功能书 D2-04（短时签名 + 禁匿名）/ D2-05（失败降级「请下载」）/ D2-07（预览审计已撤 —— Push 283 起操作日志不记录预览动作）｜技术设计v0.3 §3.5（M4-05 预览：短时签名 + 审计 + 禁匿名）｜v0.2 §7.2（`PREVIEW_NOT_READY` / `PREVIEW_FAILED` 的 200 语义）｜ADR-007（缓存键三元组 / 降级不阻塞下载）｜契约 `FilePreviewResponse`。");
+lines.push("> 卡片：M4-05「在线预览」的读面切片（主责 lan，评审 wmj）｜口径来源：系统功能书 D2-04（短时签名 + 禁匿名）/ D2-05（失败降级「请下载」）/ D2-07（预览审计 2026-10-23 恢复：实际送达就绪内容写一条）｜技术设计v0.3 §3.5（M4-05 预览：短时签名 + 审计 + 禁匿名）｜v0.2 §7.2（`PREVIEW_NOT_READY` / `PREVIEW_FAILED` 的 200 语义）｜ADR-007（缓存键三元组 / 降级不阻塞下载）｜契约 `FilePreviewResponse`。");
 lines.push("> 落点说明：`docs/` 属 px 线；本文件由 lan 随 M4-05 读面卡片代记（回放脚本与断言同 PR，请 px 复核）。");
 lines.push("");
 lines.push("| 项 | 值 |");
@@ -571,7 +571,7 @@ lines.push(...report);
 lines.push("");
 lines.push("## 汇总");
 lines.push("");
-lines.push(failures === 0 ? "- ✅ 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：三态（ready / not_ready / failed）/ 读取侧幂等补投与懒生成闭环 / 短时签名与窗口 / 预览不写审计（Push 283）/ 版本路由与 404 / 禁匿名 / 判不出通道终态降级。" : "- ❌ 有 " + failures + " 项失败，见上方 FAIL 行。");
+lines.push(failures === 0 ? "- ✅ 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：三态（ready / not_ready / failed）/ 读取侧幂等补投与懒生成闭环 / 短时签名与窗口 / 预览实际送达写一条审计 / 版本路由与 404 / 禁匿名 / 判不出通道终态降级。" : "- ❌ 有 " + failures + " 项失败，见上方 FAIL 行。");
 lines.push("");
 lines.push("## 未覆盖 / 风险登记");
 lines.push("");
