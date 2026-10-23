@@ -1,5 +1,10 @@
 
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
+import { IMPORT_MAX_FILE_BYTES } from "@libiaolink/contracts";
 import { AppError } from "../src/common/errors/app-error.js";
 import type { DatabaseService } from "../src/db/database.service.js";
 import type { ObjectStorage } from "../src/storage/index.js";
@@ -354,14 +359,43 @@ function createHarness() {
     puts: [] as Array<{ objectKey: string; size: number }>,
     purged: [] as string[],
     objects: new Map<string, Buffer>(),
+    getObjectCalls: 0,
+    getObjectStreamCalls: 0,
     async putObject(input: { objectKey: string; body: Uint8Array }): Promise<{ etag: string | null }> {
       this.puts.push({ objectKey: input.objectKey, size: input.body.length });
       return { etag: null };
     },
+    async putObjectStream(input: {
+      objectKey: string;
+      body: Readable;
+      sizeBytes: number;
+      contentType: string;
+    }): Promise<void> {
+      const chunks: Buffer[] = [];
+      let total = 0;
+      for await (const chunk of input.body) {
+        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        chunks.push(bytes);
+        total += bytes.length;
+      }
+      if (total !== input.sizeBytes) throw new Error("stream size mismatch");
+      this.puts.push({ objectKey: input.objectKey, size: total });
+    },
     async getObject(objectKey: string): Promise<{ objectKey: string; bytes: Uint8Array; contentType: null; sizeBytes: number } | null> {
+      this.getObjectCalls += 1;
       const bytes = this.objects.get(objectKey);
       if (bytes === undefined) return null;
       return { objectKey, bytes, contentType: null, sizeBytes: bytes.length };
+    },
+    async getObjectStream(objectKey: string): Promise<{
+      stream: Readable;
+      sizeBytes: number;
+      contentType: null;
+    } | null> {
+      this.getObjectStreamCalls += 1;
+      const bytes = this.objects.get(objectKey);
+      if (bytes === undefined) return null;
+      return { stream: Readable.from([bytes]), sizeBytes: bytes.length, contentType: null };
     },
     purgeFailures: new Set<string>() as Set<string>,
     async purgeObject(objectKey: string): Promise<{ deletedVersions: number; deleteMarkers: number }> {
@@ -690,6 +724,28 @@ describe("ProjectImportService.preview（导入表解析预览）", () => {
     expect(preview.imagesManual[0]?.reason).toContain("手动上传");
   });
 
+  it("生产入参 sourceFile：按临时文件偏移解析并流式写入对象存储", async () => {
+    const h = createHarness();
+    const source = sampleWorkbook();
+    const prefix = Buffer.alloc(23, 0x7f);
+    const directory = await mkdtemp(join(tmpdir(), "libiaolink-import-preview-"));
+    const path = join(directory, "multipart-body.bin");
+    await writeFile(path, Buffer.concat([prefix, source]));
+    try {
+      const preview = await h.service.preview({
+        sourceFile: { path, offset: prefix.length, sizeBytes: source.length },
+        fileName: "[LBGW-20260331-1459] UK-VANILLA-AIRROB.xlsx",
+        actorId: ACTOR_ID,
+        locale: "zh",
+      });
+      expect(preview.counts.tasks).toBe(4);
+      expect(h.storage.puts).toHaveLength(1);
+      expect(h.storage.puts[0]?.size).toBe(source.length);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("提醒文案随 Accept-Language：en 出英文（同一条提醒）", async () => {
     const h = createHarness();
     const preview = await runPreview(h, "en");
@@ -978,6 +1034,8 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
     const result = await h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh");
 
     expect(result.code).toBe("LBGW-20260331-1459");
+    expect(h.storage.getObjectStreamCalls).toBe(1);
+    expect(h.storage.getObjectCalls).toBe(0);
     expect(result.name).toBe("UK-VANILLA-AIRROB");
     expect(result.counts).toEqual({ tasks: 4, reports: 2, changes: 1, changesLinked: 0, stakeholders: 0, images: 2, accountsCreated: 5, nodesAdded: 1 });
     expect(result.manualTargets).toEqual([
@@ -1257,5 +1315,26 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
     const h = createHarness();
     const preview = await runPreview(h);
     await expectCode(() => h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh"), "IMPORT_PREVIEW_EXPIRED");
+  });
+
+  it("源对象声明超限：410 且销毁已打开的读取流", async () => {
+    const h = createHarness();
+    const preview = await runPreview(h);
+    let destroyed = false;
+    const stream = new Readable({
+      read(): void {},
+      destroy(error: Error | null, callback: (error?: Error | null) => void): void {
+        destroyed = true;
+        callback(error);
+      },
+    });
+    h.storage.getObjectStream = async () => ({
+      stream,
+      sizeBytes: IMPORT_MAX_FILE_BYTES + 1,
+      contentType: null,
+    });
+
+    await expectCode(() => h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh"), "IMPORT_PREVIEW_EXPIRED");
+    expect(destroyed).toBe(true);
   });
 });

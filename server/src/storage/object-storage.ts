@@ -131,13 +131,19 @@ export interface PurgePrefixResult extends PurgeObjectResult {
 export abstract class ObjectStorage {
   abstract readonly bucket: string;
 
-  /** CAD 持久产物流式读；适配器覆盖以避免整份模型进入 API 内存。 */
+  /** 大对象流式读；生产适配器覆盖，避免整份对象进入 API 内存。 */
   async getObjectStream(objectKey: string): Promise<ObjectStreamResult | null> {
     const object = await this.getObject(objectKey);
     return object === null ? null : { stream: Readable.from([object.bytes]), sizeBytes: object.sizeBytes, contentType: object.contentType };
   }
 
-  async putObjectStream(input: { objectKey: string; body: Readable; sizeBytes: number; contentType: string }): Promise<void> {
+  async putObjectStream(input: {
+    objectKey: string;
+    body: Readable;
+    sizeBytes: number;
+    contentType: string;
+    metadata?: Record<string, string>;
+  }): Promise<void> {
     const chunks: Buffer[] = []; let size = 0;
     for await (const chunk of input.body) {
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
@@ -146,7 +152,12 @@ export abstract class ObjectStorage {
       chunks.push(bytes);
     }
     if (size !== input.sizeBytes) throw new Error("Object stream size mismatch");
-    await this.putObject({ objectKey: input.objectKey, body: Buffer.concat(chunks), contentType: input.contentType });
+    await this.putObject({
+      objectKey: input.objectKey,
+      body: Buffer.concat(chunks),
+      contentType: input.contentType,
+      metadata: input.metadata,
+    });
   }
 
   /** 创建分片上传会话（S3 CreateMultipartUpload）；分片状态不落库。 */
