@@ -61,4 +61,10 @@ CAD_TEST_ENDPOINT=http://127.0.0.1:9910 CAD_TEST_CONTAINER=libiaolink-cad-cad-1 
 
 第一组使用真实沙箱解析受控 STEP，检查权限、SHA、清单/资源、缓存、取消和 API 重连；未设置 CAD_TEST_ENDPOINT 时 native 组跳过，不能算通过。第二组仅针对本机独立 CAD，验证内核限额、禁网、只读根目录、缺限额拒绝启动、独立 OOM 探针和 namespace watchdog；会创建并删除 libiaolink-cad-probe-* 临时容器，不能指向公司环境。
 
-2026-10-21 本地最终验证：69 项接口/真实 STEP 测试与 9 项容器探针全部通过；OCP wheel 完整性和两套 native 导入通过，生产 Compose 合并配置已核对。完整证据、已修复的磁盘/镜像故障及实际边界见 [本地验证记录](../../docs/cad-platform-integration/SANDBOX_RESULTS.md)。未运行全量构建或静态测试，公司测试环境本轮尚未部署。
+2026-10-21 本地最终验证：69 项接口/真实 STEP 测试与 9 项容器探针全部通过；OCP wheel 完整性和两套 native 导入通过，生产 Compose 合并配置已核对。完整证据、已修复的磁盘/镜像故障及实际边界见 [本地验证记录](../../docs/cad-platform-integration/SANDBOX_RESULTS.md)。
+
+2026-10-23 公司测试机部署：`main` 代码基线 `c18b417e`（PR [#553](https://github.com/PanXing-Libiao/LibiaoLink/pull/553) / [#555](https://github.com/PanXing-Libiao/LibiaoLink/pull/555) / [#557](https://github.com/PanXing-Libiao/LibiaoLink/pull/557)）已部署到 `test-pm.libiaorobot.com`；生产未部署。镜像 `libiaolink/cad-sandbox:1.0.1-c18b417e@sha256:aeee8b4b072eca1aaf0b2db0d65b972f341e3da07a413aaec07d259d03a9879c`（linux/amd64，服务器解压后 1,437,769,016 B），发布件 `/srv/data/deploy-cad-c18b-20261023-0943/cad-sandbox-1.0.1-c18b417e.tar`（330,915,328 B · SHA-256 `3d3c64a61ddb4379e5c0dc592087f18e23ca158ad3d0756fac23909e4b6eb333`）。`api`、`worker`、`cad`、`web`、`postgres`、`minio`、`svg-preview` 七容器 healthy；数据库迁移 `0064_cad_artifacts.sql` 已登记（71 ms），`cad_artifacts` / `cad_views` 表存在。
+
+运行容器实测 `memory=3 GiB`、`memory.swap.max=0`、`nanoCpus=1`、`pids=64`、`network=none`、根目录只读、capabilities 全部丢弃、用户 `1000:1000`；`/tmp` 384 MiB、`/var/lib/cad` 1536 MiB、`/run/cad` 1 MiB 均为限容 tmpfs。引擎版本 `step-0.3.3/f103d1c40812b24c3864ae90a91ea707f734dfb5/gateway-1` 与 API 一致；受控箱体 UTF8 / GB 冒烟均 `completed`，另从对象存储读取真实 `限流环.STEP`（315,166 B · SHA-256 `36866774a174db2d3dc0de800f3b1b74f0c083bfb18fbe08674521d02550c228`）完成转换，manifest 37,303 B、完整性 `complete`、worker 峰值 RSS 333,180,928 B；第二次同源提交 `reused=true` 且任务 ID 相同。
+
+公网站点、`/healthz`、`/readyz`、`/cad-viewer/platform-entry.js` 均 200，缺失查看器资源 404；API / worker / CAD 近 20 分钟无 `ERROR` / `FATAL` / `Unhandled` / 模块加载错误。真实公司账号的浏览器打开、首帧、产品树、拾取、显隐/隔离/恢复仍未验收；上传预解析、持久产物与鉴权资源链路的认证后业务走查待补。部署与回滚证据见 [deploy/prod/README.md](../prod/README.md)。
