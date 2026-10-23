@@ -3,6 +3,8 @@ import {
   NOTIFICATION_SNOOZE_MAX_AHEAD_MS,
   NOTIFICATION_SNOOZE_MIN_LEAD_MS,
   type Notification,
+  type NotificationDeleteAllResponse,
+  type NotificationDeleteResponse,
   type NotificationListQuery,
   type NotificationListResponse,
   type NotificationMarkAllReadResponse,
@@ -368,7 +370,10 @@ export class NotifyService {
     if (target === null) {
       return false;
     }
-    await this.repository.attachMerged({ childId: row.id, parentId: target.id, at: now }, tx);
+    // 查目标后主行可能刚被删除 / 标读：条件落合并失败时改走正常投递，不能把新消息静默留档。
+    if (!(await this.repository.attachMerged({ childId: row.id, parentId: target.id, at: now }, tx))) {
+      return false;
+    }
     await this.archive.markMerged(messageId, target.id, now, tx);
     return true;
   }
@@ -423,6 +428,45 @@ export class NotifyService {
         await this.streamPublisher.publish(tx, { recipientId: actorId, event: "unread", data: { unreadCount } });
       }
       return { updated, unreadCount };
+    });
+  }
+
+  /**
+   * 删除指定站内信（C5-01 · 2026-10-23）：本人已投递主行软删隐藏；未读删除同步角标；
+   * 他人 / 合并子行 / 未投递 / 已删除行统一 404（与 mark 先例一致）。C5-03 留档不删。
+   */
+  async deleteOne(actorId: string, id: number): Promise<NotificationDeleteResponse> {
+    const at = this.clock.now();
+    return this.database.db.transaction(async (tx) => {
+      const existing = await this.repository.findByIdForRecipient(id, actorId, tx);
+      if (existing === null || existing.mergedIntoId !== null || existing.deliveredAt === null) {
+        throw new AppError("NOT_FOUND", "通知不存在：" + id);
+      }
+      const deleted = await this.repository.softDelete(id, actorId, at, tx);
+      if (!deleted) {
+        throw new AppError("NOT_FOUND", "通知不存在：" + id);
+      }
+      const unreadCount = await this.repository.countUnread(actorId, tx);
+      if (existing.status === "unread") {
+        await this.streamPublisher.publish(tx, { recipientId: actorId, event: "unread", data: { unreadCount } });
+      }
+      return { id, deleted: true, unreadCount };
+    });
+  }
+
+  /**
+   * 一键删除全部站内信（C5-01 · 2026-10-23）：只隐藏本人已投递主行；幂等（已删行不重复计数）。
+   * 删除的未读行 > 0 时发 unread 快照；C5-03 留档与管理员发送记录不删。
+   */
+  async deleteAll(actorId: string): Promise<NotificationDeleteAllResponse> {
+    const at = this.clock.now();
+    return this.database.db.transaction(async (tx) => {
+      const result = await this.repository.softDeleteAll(actorId, at, tx);
+      const unreadCount = await this.repository.countUnread(actorId, tx);
+      if (result.unreadDeleted > 0) {
+        await this.streamPublisher.publish(tx, { recipientId: actorId, event: "unread", data: { unreadCount } });
+      }
+      return { deleted: result.deleted, unreadCount };
     });
   }
 

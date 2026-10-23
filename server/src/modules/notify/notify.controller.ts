@@ -8,6 +8,8 @@ import {
   NotifyPrefsUpdateBodySchema,
   z,
   type Notification,
+  type NotificationDeleteAllResponse,
+  type NotificationDeleteResponse,
   type NotificationListQuery,
   type NotificationListResponse,
   type NotificationMarkAllReadResponse,
@@ -35,7 +37,7 @@ const notificationIdParam = new ZodValidationPipe(z.coerce.number().int().positi
 /**
  * 消息中心接口（S7-4 · j1 / M5-04 首刀 + S8-3 M5-04-1 SSE / M5-04-2 稍后提醒）：契约 shared/src/modules/notifications.ts。
  * 根路径 /api/v1/notifications —— 个人资源（收件箱只属收件人）：无功能权限键；读 = 会话、写 = 会话 + CSRF；不写审计。
- * 路由顺序：静态段（prefs / stream / mark-all-read）声明在 `:id` 之前（Nest 按声明顺序匹配，否则 PATCH /prefs 会被 `:id` 吞掉）；
+ * 路由顺序：静态段（prefs / stream / mark-all-read / DELETE 全部）声明在 `:id` 之前（Nest 按声明顺序匹配，否则 PATCH /prefs 会被 `:id` 吞掉）；
  * snooze 三件为 `:id/` 二级段（与静态段无冲突），与 `:id` 同级声明在后面。
  */
 @Controller("api/v1/notifications")
@@ -151,6 +153,24 @@ export class NotifyController {
   @UseGuards(CsrfGuard)
   markAllRead(@CurrentActorId() actorId: string): Promise<NotificationMarkAllReadResponse> {
     return this.notify.markAllRead(actorId);
+  }
+
+  /** 一键删除全部站内信（C5-01 · 2026-10-23）：只隐藏本人已投递主行；幂等。 */
+  @Delete()
+  @HttpCode(200)
+  @UseGuards(CsrfGuard)
+  deleteAll(@CurrentActorId() actorId: string): Promise<NotificationDeleteAllResponse> {
+    return this.notify.deleteAll(actorId);
+  }
+
+  /** 删除指定站内信（C5-01 · 2026-10-23）：本人已投递主行软删；他人 / 合并子行 / 未投递行统一 404。 */
+  @Delete(":id")
+  @UseGuards(CsrfGuard)
+  deleteOne(
+    @Param("id", notificationIdParam) id: number,
+    @CurrentActorId() actorId: string,
+  ): Promise<NotificationDeleteResponse> {
+    return this.notify.deleteOne(actorId, id);
   }
 
   /** 标记状态（未读 / 已读 / 已处理；幂等）：他人 / 合并子行 / 未投递行统一 404。 */

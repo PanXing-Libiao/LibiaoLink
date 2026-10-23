@@ -13,7 +13,7 @@ import { DateTimeSchema, PageQuerySchema, UuidSchema, paginated } from "../commo
  *   §11.3 `/notifications/stream`（SSE）；ADR-005（Outbox + PG 原生队列）、ADR-028（业务日固定 Asia/Shanghai）。
  *
  * 本切片边界（S7-4）：站内信投递（outbox 主题 `notify.message` 消费）+ 合并（同人同时段）+ 免打扰（次日补发）+
- *   每人每日上限 + 收件箱读面（列表 / 未读计数 / 标记已读·已处理 / 全部已读）+ 全量留档 + 个人通知偏好。
+ *   每人每日上限 + 收件箱读面（列表 / 未读计数 / 标记已读·已处理 / 全部已读 / 单条删除·一键删除）+ 全量留档 + 个人通知偏好。
  * S8-3 扩项（M5-04 余项 · 代 wmj 落地 · Push 210）：SSE 实时推送事件契约 + 稍后提醒契约（见本文件末两段；
  *   端点注册见 `openapi.ts`；实现随 `M5-04-1` / `M5-04-2` · lan）。
  * 余下随后续卡片：企微通道（M5-03）/ 规则生产端（i12 / i13：写 `notify.message` 的主题生产者）——
@@ -333,6 +333,32 @@ export const NotificationMarkAllReadResponseSchema = z
   })
   .openapi("NotificationMarkAllReadResponse", { description: "全部标记已读结果" });
 export type NotificationMarkAllReadResponse = z.infer<typeof NotificationMarkAllReadResponseSchema>;
+
+/**
+ * 用户删除（2026-10-23 · C5-01「一键删除 / 删除指定项」）：只从本人收件箱隐藏（库内软删），
+ * 不删除 C5-03 全量留档 / 管理员发送记录；已删除行不再参与列表、未读角标、合并与稍后提醒触发。
+ * unreadCount = 删除后的未读总数（角标回读口径），前端据此即时校准红点。
+ */
+export const NotificationDeleteResponseSchema = z
+  .object({
+    id: z.number().int().positive().openapi({ description: "被删除的通知 id" }),
+    deleted: z.literal(true).openapi({ description: "固定 true（成功从本人收件箱隐藏）" }),
+    unreadCount: z.number().int().min(0).openapi({ description: "删除后的未读总数（角标口径）" }),
+  })
+  .openapi("NotificationDeleteResponse", {
+    description: "删除指定站内信结果（软删隐藏；C5-03 留档不删除）",
+  });
+export type NotificationDeleteResponse = z.infer<typeof NotificationDeleteResponseSchema>;
+
+export const NotificationDeleteAllResponseSchema = z
+  .object({
+    deleted: z.number().int().min(0).openapi({ description: "本次从本人收件箱删除的条数（幂等；已删行不重复计数）" }),
+    unreadCount: z.number().int().min(0).openapi({ description: "删除后的未读总数（角标口径；通常为 0）" }),
+  })
+  .openapi("NotificationDeleteAllResponse", {
+    description: "一键删除全部站内信结果（只动本人已投递主行；C5-03 留档不删除）",
+  });
+export type NotificationDeleteAllResponse = z.infer<typeof NotificationDeleteAllResponseSchema>;
 
 /** 免打扰配置三态：`default` 继承缺省（env NOTIFY_QUIET_HOURS）/ `off` 关闭 / `HH:MM-HH:MM` 自定义（跨零点允许，from ≠ to）。 */
 export const NotifyQuietHoursSchema = z

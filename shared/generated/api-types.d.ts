@@ -8218,10 +8218,148 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        delete?: never;
+        /** 一键删除全部站内信（C5-01）：只隐藏本人已投递主行，C5-03 全量留档与管理员发送记录保留；幂等 */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 删除结果（deleted / unreadCount） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NotificationDeleteAllResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 删除指定站内信（C5-01）：仅本人已投递主行；软删隐藏，C5-03 全量留档保留；他人 / 合并子行 / 未投递行统一 404 */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 删除结果（id / deleted / unreadCount） */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NotificationDeleteResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** 标记收件箱状态（C5-01 未读 / 已读 / 已处理）：幂等；仅本人可标记（他人 404 防 IDOR） */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["NotificationMarkBody"];
+                };
+            };
+            responses: {
+                /** @description 标记后的通知 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Notification"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         trace?: never;
     };
     "/api/v1/notifications/deliveries": {
@@ -8456,75 +8594,6 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
-        trace?: never;
-    };
-    "/api/v1/notifications/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /** 标记收件箱状态（C5-01 未读 / 已读 / 已处理）：幂等；仅本人可标记（他人 404 防 IDOR） */
-        patch: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: number;
-                };
-                cookie?: never;
-            };
-            requestBody?: {
-                content: {
-                    "application/json": components["schemas"]["NotificationMarkBody"];
-                };
-            };
-            responses: {
-                /** @description 标记后的通知 */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Notification"];
-                    };
-                };
-                /** @description 契约校验失败（VALIDATION_FAILED） */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ApiError"];
-                    };
-                };
-                /** @description 未认证（AUTH_REQUIRED） */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ApiError"];
-                    };
-                };
-                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ApiError"];
-                    };
-                };
-            };
-        };
         trace?: never;
     };
     "/api/v1/notifications/mark-all-read": {
@@ -10582,6 +10651,25 @@ export interface components {
             snoozeUntil: components["schemas"]["DateTime"] & (string | null);
             deliveredAt: components["schemas"]["DateTime"] & unknown;
             createdAt: components["schemas"]["DateTime"] & unknown;
+        };
+        /** @description 一键删除全部站内信结果（只动本人已投递主行；C5-03 留档不删除） */
+        NotificationDeleteAllResponse: {
+            /** @description 本次从本人收件箱删除的条数（幂等；已删行不重复计数） */
+            deleted: number;
+            /** @description 删除后的未读总数（角标口径；通常为 0） */
+            unreadCount: number;
+        };
+        /** @description 删除指定站内信结果（软删隐藏；C5-03 留档不删除） */
+        NotificationDeleteResponse: {
+            /** @description 被删除的通知 id */
+            id: number;
+            /**
+             * @description 固定 true（成功从本人收件箱隐藏）
+             * @enum {boolean}
+             */
+            deleted: true;
+            /** @description 删除后的未读总数（角标口径） */
+            unreadCount: number;
         };
         /** @description 收件箱清单（含未读角标计数） */
         NotificationListResponse: {
