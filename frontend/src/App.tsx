@@ -14,7 +14,7 @@ import { ApiError, apiFetch, redirectToLogin } from "./api";
 import { applyBackgroundTier, applyCardWatermark, asBackgroundTier, asCardWatermark } from "./backgroundTier";
 import { applyLocale, asLocale, getLocale, textOf, useT, type TextKey } from "./i18n";
 import { Loader } from "./components/Loader";
-import { Toast } from "./components/Toast";
+import { Toast, ToastConfirm } from "./components/Toast";
 import { ExportProgressOverlay } from "./components/ExportProgressOverlay";
 import { useFocusTrap } from "./components/useFocusTrap";
 import { BindingGuideModal } from "./components/BindingGuideModal";
@@ -713,45 +713,26 @@ export default function App() {
 
   /**
    * 全局提示区：
-   * ① 删除项目确认条（Push 172：卡片隐式删除的第二下）—— 非阻断式确认，仍走底部固定条；
+   * ① 删除项目确认条（Push 172：卡片隐式删除的第二下）—— 非阻断式确认，统一为顶部同款确认 Toast；
    * ② 错误提示（如加载 / 删除 / 项目经理修改失败）—— 统一为**屏幕顶部居中白色 Toast**
    *   （顶部下落、2s 自动消失口径见 Toast 组件）。
    */
   const bottomBars = (
     <>
       {exportingProjectId === null ? null : <ExportProgressOverlay progress={null} variant="project-data" />}
-      <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
       {pendingDelete === null ? null : (
-        <div
-          ref={deleteConfirmTrapRef}
-          role="dialog"
-          aria-label={t("app.delete.aria")}
-          className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
-        >
-          <span>
+        <ToastConfirm
+          text={<>
             {t("app.delete.lead")} <span className="font-mono font-semibold">{pendingDelete.code}</span>{t("app.delete.tail", { name: pendingDelete.description })}
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              setPendingDelete(null);
-            }}
-            className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
-          >
-            {t("common.cancel")}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void handleConfirmDeleteProject();
-            }}
-            className="rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
-          >
-            {t("app.delete.confirm")}
-          </button>
-        </div>
+          </>}
+          ariaLabel={t("app.delete.aria")}
+          cancelLabel={t("common.cancel")}
+          confirmLabel={t("app.delete.confirm")}
+          onCancel={() => { setPendingDelete(null); }}
+          onConfirm={() => { void handleConfirmDeleteProject(); }}
+          containerRef={deleteConfirmTrapRef}
+        />
       )}
-      </div>
       {notice === null ? null : (
         <Toast
           kind="error"
