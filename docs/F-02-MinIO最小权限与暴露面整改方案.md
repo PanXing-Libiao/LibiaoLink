@@ -2,7 +2,7 @@
 
 > 来源：`LibiaoLink_安全审查报告_2026-10-21.pdf` F-02（第 4～5 页）｜严重度 High / P0｜报告验收要求：应用凭据不能管理用户 / 桶或访问其它桶；9000 / 9001 / 9443 从非授权网络不可达；轮换后旧凭据失效
 > 报告审查基线：`px @ e05535b8`｜S0 复核基线：`origin/main@6b846b2`（2026-10-23；F-02 涉及的 Compose、Nginx、存储脚本与凭据挂载配置未发生实质修复）
-> 起草：lan（后端平台 / file / storage / preview / outbox）｜拟稿日期：2026-10-22｜S0 评审冻结：2026-10-23｜状态：**S0 已冻结；S1 / S2 部署件与 S3 / S4 仓库件已合入，S5 仓库件已落地（PR [#595](https://github.com/PanXing-Libiao/LibiaoLink/pull/595) 评审中）；运行时统一待测试机部署后验证，F-02 尚未关闭**
+> 起草：lan（后端平台 / file / storage / preview / outbox）｜拟稿日期：2026-10-22｜S0 评审冻结：2026-10-23｜状态：**S0 已冻结；S1～S5 已部署公司测试机（2026-10-23，`main@1881deac` · 回填 PR [#596](https://github.com/PanXing-Libiao/LibiaoLink/pull/596)），生产未部署；F-02 未关闭，S5 验收登记（S5-T3 旧预签名 / 历史应用值、T7 压缩 / 二进制备份敏感登记待补）、认证后真实上传 / 预览浏览器验收与 S6 / S7 待收口**
 > S0 签收：px（部署 / docs）与 wmj（安全）完成复核；经用户确认三方协商后，由 lan 代录。冻结结论见 §5「S0 · 方案落档与评审冻结」。
 > 归属与评审：`docs/` 归 px 主责，落档需 px 复核；生产 Compose、Nginx、主机防火墙与部署窗口归 px 主责；MinIO 身份 / 策略、`server/` 存储脚本与凭据接线归 lan 主责；安全验收请 wmj 交叉复核。涉及安全、部署与 Secrets 的高风险变更必须取得非作者批准。
 > 变更控制：后续执行以本文件为基线。若执行中需要改变端口、身份模型、策略动作、切片顺序或验收条件，先修改本文件并写明原因、影响和回滚，再实施；已合入主干的回放证据与部署记录按不可变历史处理，不原地改写。
@@ -12,17 +12,17 @@
 | 切片 | 状态 | PR / commit | 部署与验证证据 | 备注 |
 |---|---|---|---|---|
 | S0 · 方案落档与评审冻结 | 已通过并冻结（2026-10-23） | PR [#554](https://github.com/PanXing-Libiao/LibiaoLink/pull/554)；S0 签收提交 | 本文 §5 / S0 评审记录 | px、wmj 已复核；9443 回环保留至 S6 复评 |
-| S1 · 关闭宿主端口暴露 | 部署件已合入，运行时待验证 | PR [#589](https://github.com/PanXing-Libiao/LibiaoLink/pull/589)；squash `1b24536` | 测试机未重建 minio / web；待 S1～S5 仓库实现完成后统一部署复核 `ss` | 9000 不再发布；9001 / 9443 仅回环 |
-| S2 · 主机防火墙与外部网络复核 | 部署件已合入，运行时待验证 | PR [#589](https://github.com/PanXing-Libiao/LibiaoLink/pull/589)；squash `1b24536` | 临时 apply → 二次 apply → check → remove 已通过；unit 尚未持久化，待统一部署后复核 | 待安装 unit、Docker / 主机重启与外部网络复核 |
-| S3 · MinIO 最小权限身份与策略 | 仓库件已合入，测试机部署后验证 | PR [#591](https://github.com/PanXing-Libiao/LibiaoLink/pull/591)；squash `311c738c` | 本地受控 MinIO 冒烟通过（非 F-02 验收）；测试机身份、负向权限与凭据探针待统一验证 | 不切 api / worker；运行时证据统一在测试机部署后登记 |
-| S4 · Secrets 隔离与运行时凭据切换 | 仓库件已合入，测试机部署后验证 | PR [#594](https://github.com/PanXing-Libiao/LibiaoLink/pull/594)；squash `88670d85` | 本地隔离自检通过（非 F-02 验收）；运行时挂载、凭据切换与全链路待统一验证 | api / worker 改用 service account；S4-T1～T10 待测试机部署后验证 |
-| S5 · root 凭据轮换与旧凭据失效 | 仓库件已落地，PR 评审中；测试机部署后验证 | PR [#595](https://github.com/PanXing-Libiao/LibiaoLink/pull/595) | 本地 fake / 锁定 MinIO 自检通过（非 F-02 验收）；维护窗口轮换与旧凭据失效待统一验证 | `minio-root-rotate.sh` 提供 `plan` / `check` / `rotate` / `recover` / `finalize`；不得回滚为 root 应用凭据 |
+| S1 · 关闭宿主端口暴露 | 已部署测试机（2026-10-23） | PR [#589](https://github.com/PanXing-Libiao/LibiaoLink/pull/589)；squash `1b24536` | `minio` / `web` 已重建；`9000` 不发布，`9001` / `9443` 仅回环，开发机三端口不可达；见 `deploy/prod/README.md` v2.23 | 端口复核通过；生产未部署 |
+| S2 · 主机防火墙与外部网络复核 | 已部署并持久化（2026-10-23）；重启复核待 S6 | PR [#589](https://github.com/PanXing-Libiao/LibiaoLink/pull/589)；squash `1b24536` | DOCKER-USER unit `enabled/active`，`check` 通过；见 v2.23 | Docker / 主机重启后的规则恢复待 S6 |
+| S3 · MinIO 最小权限身份与策略 | 已部署测试机（2026-10-23）；验收登记待收口 | PR [#591](https://github.com/PanXing-Libiao/LibiaoLink/pull/591)；squash `311c738c` | `apply` / `check` 通过；应用 `admin info` 与建桶均 `AccessDenied`；见 v2.23 | 运行时主路径通过；S3-T1～T9 逐项证据待 S7 登记 |
+| S4 · Secrets 隔离与运行时凭据切换 | 已部署测试机（2026-10-23）；验收登记待收口 | PR [#594](https://github.com/PanXing-Libiao/LibiaoLink/pull/594)；squash `88670d85` | `api` / `worker` 仅挂白名单单文件 Secret、UID/GID 1000；`storage:init --check` 与 `storage:it` 24/24 通过；见 v2.23 | 运行时主路径通过；S4-T9 认证后浏览器全链路与逐项证据待 S7 登记 |
+| S5 · root 凭据轮换与旧凭据失效 | 已部署测试机（2026-10-23）；验收登记待收口 | PR [#595](https://github.com/PanXing-Libiao/LibiaoLink/pull/595)；squash `1881deac` | 新 root 认证通过、旧 root 拒绝、旧口令扫描 `zero-hits`、状态目录已清理；证据 `/srv/data/backups/f02-s5-evidence/root-rotation-20261023T085110Z-success-7042.txt` | S5-T3 / T7 等逐项证据、认证后浏览器全链路与故障注入项待 S7 收口；不得回滚为 root 应用凭据 |
 | S6 · 文档、H1 兼容与全量回归 | 待执行 | 待填 | 待填 | 9443 保留时只能经 SSH 隧道 |
 | S7 · 验收回放与 F-02 关闭 | 待执行 | 待填 | 待填 | 旧凭据失效、外网不可达、证据齐全后才关闭 |
 
 执行时更新本表：开始时写「进行中」；PR 合入后填 PR / commit；测试机或生产部署后填脱敏证据位置；发生设计变更时先在正文更新决策，再改本表。
 
-> **运行时验证批次**：按 2026-10-23 决定，S1～S5 先在仓库内完成，再统一部署公司测试机并执行 S1～S5 的运行时验收。部署前不得把任何运行时项标为通过；本地临时 MinIO 结果只用于实现自检，不替代测试机证据。
+> **运行时验证批次（2026-10-23 已部署测试机）**：S1～S5 已在公司测试机部署，执行记录见 `deploy/prod/README.md` v2.23、`开发日志.md` Push 460 / 461 与 PR [#596](https://github.com/PanXing-Libiao/LibiaoLink/pull/596)。运行时主路径结果已回填；认证后真实上传 / 预览浏览器验收未执行，S5-T3 历史值 / 旧预签名、T7 压缩 / 二进制备份敏感登记与故障注入项等逐项证据仍待 S7 收口。F-02 尚未关闭，生产未部署。
 
 ## 1. 结论
 
@@ -56,7 +56,7 @@ F-02 是两个可以独立闭合、但必须同时处理的问题：
 | `deploy/prod/README.md` §2、§9 | 明确记录应用 `s3_access_key` / `s3_secret_key` 当前与 root 同值；首次部署步骤直接复制 root 文件生成应用凭据。 |
 | `deploy/prod/scripts/storage.sh:34-42` | `init` 与 `it` 使用同一组 `s3_access_key` / `s3_secret_key`。 |
 | `deploy/prod/scripts/service-entrypoint.cjs:19-45` | api / worker 从 `/opt/libiaolink/secrets` 整目录读取凭据并注入环境变量。 |
-| `server/scripts/storage-init.mjs:46`（S3 已改，运行时待测试机） | 原先把 `AccessDenied` 统一归入「存储不支持该 API」；现已移除通用降级，仅保留 MinIO 无法授予的 CORS 动作这一明确例外。 |
+| `server/scripts/storage-init.mjs:46`（S3 已改并部署测试机） | 原先把 `AccessDenied` 统一归入「存储不支持该 API」；现已移除通用降级，仅保留 MinIO 无法授予的 CORS 动作这一明确例外。 |
 | `deploy/prod/nginx/libiaolink.conf:120-143` | 443 的 `/libiaolink/` 是浏览器对象存储主通道；`proxy_pass` 到 `minio_backend`。 |
 | `deploy/prod/nginx/libiaolink.conf:197`、`:220` | 9443 仍有独立 MinIO 门面，当前仅依赖宿主绑定与网络策略限制。 |
 | `deploy/prod/server.env.example:25-27` | `S3_ENDPOINT` 保持 443 默认端口；注释仍把 9443 描述为内网备用门面，未明确回环边界。 |
@@ -311,7 +311,7 @@ S5 的 root 轮换是受控运维动作，不是直接手改业务代码：执�
 
 **目标**：先建立可重复、可验证的凭据与策略，不改变 api / worker 当前使用的 Secret。
 
-**仓库实现与运行时验收分界**：本切片先在仓库内交付策略、脚本、`storage-init` 权限分类修正和部署文档；S1～S5 仓库实现完成后再统一部署测试机，执行本切片的身份创建、凭据探针、负向权限与 `storage:init --check`。测试机部署前不得把运行时项标为通过，本地临时 MinIO 只用于实现自检。
+**仓库实现与运行时验收分界**：本切片先在仓库内交付策略、脚本、`storage-init` 权限分类修正和部署文档；2026-10-23 已统一部署测试机并执行身份创建、凭据探针、负向权限与 `storage:init --check`。逐项证据仍待 S7 收口，本地临时 MinIO 只用于实现自检。
 
 **改动文件**
 
@@ -337,33 +337,33 @@ S5 的 root 轮换是受控运维动作，不是直接手改业务代码：执�
 **验收**
 
 - `libiaolink-app-rw` 与 `libiaolink-bootstrap` 的策略内容与文件完全一致；没有 `s3:*`、`arn:aws:s3:::*` 或管理动作。
-- `storage:init --check` 使用 bootstrap 成功；CORS 的 `AccessDenied` 可按已登记能力例外告警，lifecycle / 版本控制等其它路径的权限错误必须失败。测试机部署后执行，当前不填通过。
+- `storage:init --check` 使用 bootstrap 成功；CORS 的 `AccessDenied` 可按已登记能力例外告警，lifecycle / 版本控制等其它路径的权限错误必须失败。2026-10-23 已在测试机执行；逐项证据待 S7 登记，不在本切片单独关闭 F-02。
 - 应用 service account 不能管理用户 / 策略 / 桶，不能访问 sentinel 桶；bootstrap 不能读写对象、不能创建 / 删除 sentinel 桶。
-- 现有 api / worker 尚未切换，旧 root 应用凭据仍存在，因此本切片不能宣称 F-02 关闭。
+- 部署后 api / worker 已切换到应用 service account；本切片仍不能单独宣称 F-02 关闭。
 
 **回滚**：保留 root 管理和已创建的新身份，不做对象删除；只撤销新 service account 的临时验证权限。若策略过窄，按实际 403 复现证据追加最小动作，不直接扩大为通配权限。
 
-**测试机部署后验证登记**
+**测试机部署验证登记（已执行，逐项证据待收口）**
 
 | ID | 验证项 | 方法 / 预期 | 状态 | 证据位置 |
 |---|---|---|---|---|
-| S3-T1 | 受控 `mc` 工具链 | 记录 `mc --version`、来源、SHA-256、`--help` 兼容性；`mc-toolchain.txt` 存在且权限受限 | 待测试机部署后验证 | `/srv/data/backups/f02-s3-evidence/mc-toolchain.txt` |
-| S3-T2 | 策略与仓库完全一致 | `bash scripts/minio-identity.sh check`；两份远端策略内容逐字 / 语义等于仓库文件，无 `s3:*`、无全桶 ARN | 待测试机部署后验证 | S3 `check` 输出与脱敏证据 |
-| S3-T3 | 父用户与唯一策略 | `libiaolink-app` / `libiaolink-bootstrap` 存在、启用，且策略集合精确等于各自唯一策略 | 待测试机部署后验证 | S3 `check` 输出 |
-| S3-T4 | service account 与 Secret | `libiaolink-api` / `libiaolink-storage-init` 的 parent、状态、`impliedPolicy`、有效期正确；四个 Secret 文件 `600`、目录 `700` | 待测试机部署后验证 | S3 `check` 输出与 `stat` 脱敏结果 |
-| S3-T5 | 应用只读探针 | 应用 service account `mc ls libiaolink` 成功；不产生对象读写副作用 | 待测试机部署后验证 | S3 `check` 输出 |
-| S3-T6 | 应用负向权限 | 不能管理用户 / 策略 / 桶、不能删除生产桶、不能访问 sentinel 桶；命令非零或 HTTP 403 | 待测试机部署后验证 | 负向命令 exit code / HTTP 状态 |
-| S3-T7 | bootstrap 负向权限 | 不能读写对象、不能创建 / 删除 sentinel 桶；命令非零或 HTTP 403；sentinel 由 root 创建并在验证后清理 | 待测试机部署后验证 | 负向命令 exit code / HTTP 状态 |
-| S3-T8 | `storage:init --check` | S4 完成 `storage.sh` bootstrap 接线后，使用 bootstrap 返回 0；仅登记能力告警，其余 `AccessDenied` 失败 | 待测试机部署后验证 | `storage:init --check` 输出与 exit code |
-| S3-T9 | 运行时未切换事实 | S3 完成后 api / worker 未重启，仍使用旧 root 环境值；不得据此关闭 F-02 | 待测试机部署后验证 | `docker compose ps` / 容器启动时间 / 脱敏环境核对 |
+| S3-T1 | 受控 `mc` 工具链 | 记录 `mc --version`、来源、SHA-256、`--help` 兼容性；`mc-toolchain.txt` 存在且权限受限 | 已部署；逐项证据待收口 | `/srv/data/backups/f02-s3-evidence/mc-toolchain.txt` |
+| S3-T2 | 策略与仓库完全一致 | `bash scripts/minio-identity.sh check`；两份远端策略内容逐字 / 语义等于仓库文件，无 `s3:*`、无全桶 ARN | 已部署；逐项证据待收口 | S3 `check` 输出与脱敏证据 |
+| S3-T3 | 父用户与唯一策略 | `libiaolink-app` / `libiaolink-bootstrap` 存在、启用，且策略集合精确等于各自唯一策略 | 已部署；逐项证据待收口 | S3 `check` 输出 |
+| S3-T4 | service account 与 Secret | `libiaolink-api` / `libiaolink-storage-init` 的 parent、状态、`impliedPolicy`、有效期正确；四个 Secret 文件 `600`、目录 `700` | 已部署；逐项证据待收口 | S3 `check` 输出与 `stat` 脱敏结果 |
+| S3-T5 | 应用只读探针 | 应用 service account `mc ls libiaolink` 成功；不产生对象读写副作用 | 已部署；逐项证据待收口 | S3 `check` 输出 |
+| S3-T6 | 应用负向权限 | 不能管理用户 / 策略 / 桶、不能删除生产桶、不能访问 sentinel 桶；命令非零或 HTTP 403 | 已部署；逐项证据待收口 | 负向命令 exit code / HTTP 状态 |
+| S3-T7 | bootstrap 负向权限 | 不能读写对象、不能创建 / 删除 sentinel 桶；命令非零或 HTTP 403；sentinel 由 root 创建并在验证后清理 | 已部署；逐项证据待收口 | 负向命令 exit code / HTTP 状态 |
+| S3-T8 | `storage:init --check` | S4 完成 `storage.sh` bootstrap 接线后，使用 bootstrap 返回 0；仅登记能力告警，其余 `AccessDenied` 失败 | 已部署；逐项证据待收口 | `storage:init --check` 输出与 exit code |
+| S3-T9 | 运行时未切换事实 | S3 完成后 api / worker 未重启，仍使用旧 root 环境值；不得据此关闭 F-02 | 已部署；逐项证据待收口 | `docker compose ps` / 容器启动时间 / 脱敏环境核对 |
 
-以上运行时项全部待测试机部署后验证；不得以本地 MinIO 冒烟代替。验证命令和结果不得包含 access key、secret、完整环境变量、签名 URL 或真实对象键。
+以上运行时项以测试机部署后的实际执行结果为准；逐项证据与未复验项待 S7 验收收口，不得以本地 MinIO 冒烟代替。验证命令和结果不得包含 access key、secret、完整环境变量、签名 URL 或真实对象键。
 
 ### S4 · Secrets 隔离与运行时凭据切换
 
 **目标**：让长期运行的应用只看到自己的 Secret，并实际使用最小权限 service account。
 
-**仓库实现与运行时验收分界**：本切片先在仓库内交付 Compose 单文件 Secret、entrypoint 读取边界、storage / 迁移脚本接线与部署文档；S1～S5 仓库实现完成后统一部署公司测试机，再执行挂载清单、强制失败、可选值 unset、容器健康、bootstrap / 应用凭据与完整上传链路验证。测试机部署前不得把运行时项标为通过。
+**仓库实现与运行时验收分界**：本切片先在仓库内交付 Compose 单文件 Secret、entrypoint 读取边界、storage / 迁移脚本接线与部署文档；2026-10-23 已统一部署公司测试机并执行挂载清单、强制失败、可选值 unset、容器健康与 bootstrap / 应用凭据验证。认证后真实上传链路与逐项证据仍待 S7 收口。
 
 **执行期实现说明（2026-10-23）**
 
@@ -396,34 +396,34 @@ S5 的 root 轮换是受控运维动作，不是直接手改业务代码：执�
 - `server.env` 无 access key、secret、root 值；应用日志无凭据。
 - `storage:init --check` 使用 bootstrap 返回 0；CORS 的已登记能力例外可按告警记录，lifecycle / 版本控制等其它路径的权限不足或 `AccessDenied` 返回非 0。
 - 部署机进程命令行、shell history、临时文件和 CI 日志中均不出现 access key、secret 或 root 值。
-- 旧 root 应用凭据尚未轮换，因此仍不能关闭 F-02。
+- S4 完成时旧 root 应用凭据仍可能存在，因此 S4 不能单独关闭 F-02；S5 已完成真实轮换，最终关闭仍待 S7 验收。
 
 **回滚**：如果应用启动失败，补挂缺失的单文件 Secret 或修正策略并重启；禁止恢复整目录挂载或把应用切回 root。临时应急只允许 root 在服务器本地做对象存储修复，不进入应用容器。
 
-**测试机部署后验证登记**
+**测试机部署验证登记（已执行，逐项证据待收口）**
 
 证据目录建议 `/srv/data/backups/f02-s4-evidence/`（目录 `700`、文件 `600`）；任何命令、日志与证据均不得记录 Secret 值、完整环境变量或签名 URL。
 
 | ID | 验证项 | 方法 / 预期 | 状态 | 证据位置 |
 |---|---|---|---|---|
-| S4-T1 | Compose 挂载精确 | `docker compose --profile app config` 与 `docker inspect` 核对：api / worker / tools 的 Secret 清单与“执行期实现说明”完全一致；三处均无 `./secrets` 整目录挂载 | 待测试机部署后验证 | S4 证据目录 `compose-mounts.txt` |
-| S4-T2 | 应用容器无 root / 管理面 Secret 且非 root 运行 | api / worker 的 `/run/secrets` 不含 `minio_root_*`、`pg_superuser_password`、`pg_migrator_password`、`s3_bootstrap_*`；`/opt/libiaolink/secrets` 不存在；`/proc/1/status` 的有效 Uid / Gid 均为 1000 | 待测试机部署后验证 | `runtime-boundary.txt` |
-| S4-T3 | 必需 Secret fail closed | 使用隔离 node 镜像 / 空 `/run/secrets` 运行 `service-entrypoint.cjs`；缺失首个必需 Secret 时退出 70 且不 spawn 应用 | 待测试机部署后验证 | `fail-closed.txt`（exit code 与消息类型） |
-| S4-T4 | 可选 Secret 空值 unset | 未配置企微 / 翻译时，api 的 `WECOM_APP_SECRET` / `WECOM_BOT_SECRET` 与 worker 的 `TRANSLATE_API_KEY` 不存在；配置对应文件后仅目标容器出现变量；全程不打印值 | 待测试机部署后验证 | `optional-secrets.txt` |
-| S4-T5 | 容器健康与 HTTP 门禁 | `docker compose --profile app ps` 中 api / worker（及其依赖）healthy；`/healthz` 200、`/readyz` 200 且对象存储探针全绿 | 待测试机部署后验证 | `health.txt` / 脱敏响应摘要 |
-| S4-T6 | tools 迁移 / 种子读取路径 | `docker compose --profile tools config` 仅见 `pg_migrator_password`；`db-migrate.sh --dry-run`、`db-seed.sh --dry-run` 成功；重放无漂移 / 零变更口径不变 | 待测试机部署后验证 | `tools-db.txt` |
-| S4-T7 | bootstrap `storage:init --check` | `storage.sh init --check` 返回 0；只有已登记 CORS 能力告警，lifecycle / 版本控制 / 桶路径的 `AccessDenied` 均失败 | 待测试机部署后验证 | `storage-init-check.txt` |
-| S4-T8 | 应用 service account 存储回放 | `storage.sh it` 使用 `s3_*` 返回 24 / 24；不读取 bootstrap 凭据 | 待测试机部署后验证 | `storage-it.txt` |
-| S4-T9 | 真实上传全链路 | 登录态完成上传 → 分片 / 合并 → 列表 → 预览 → 下载 → 回收站彻底删除；API / worker 的 S3 请求持续使用应用 service account，无 root 值 | 待测试机部署后验证 | 脱敏请求记录 / 对象清理证明 |
-| S4-T10 | Secret 不泄漏且 F-02 未关闭 | `docker top` 进程参数、容器日志、`server.env`、shell history、临时目录与证据扫描 access key / secret 均为 0 命中；旧 root 尚未轮换，F-02 仍为开放 | 待测试机部署后验证 | `leak-scan.txt` / `status.txt` |
+| S4-T1 | Compose 挂载精确 | `docker compose --profile app config` 与 `docker inspect` 核对：api / worker / tools 的 Secret 清单与“执行期实现说明”完全一致；三处均无 `./secrets` 整目录挂载 | 已部署；逐项证据待收口 | S4 证据目录 `compose-mounts.txt` |
+| S4-T2 | 应用容器无 root / 管理面 Secret 且非 root 运行 | api / worker 的 `/run/secrets` 不含 `minio_root_*`、`pg_superuser_password`、`pg_migrator_password`、`s3_bootstrap_*`；`/opt/libiaolink/secrets` 不存在；`/proc/1/status` 的有效 Uid / Gid 均为 1000 | 已部署；逐项证据待收口 | `runtime-boundary.txt` |
+| S4-T3 | 必需 Secret fail closed | 使用隔离 node 镜像 / 空 `/run/secrets` 运行 `service-entrypoint.cjs`；缺失首个必需 Secret 时退出 70 且不 spawn 应用 | 已部署；逐项证据待收口 | `fail-closed.txt`（exit code 与消息类型） |
+| S4-T4 | 可选 Secret 空值 unset | 未配置企微 / 翻译时，api 的 `WECOM_APP_SECRET` / `WECOM_BOT_SECRET` 与 worker 的 `TRANSLATE_API_KEY` 不存在；配置对应文件后仅目标容器出现变量；全程不打印值 | 已部署；逐项证据待收口 | `optional-secrets.txt` |
+| S4-T5 | 容器健康与 HTTP 门禁 | `docker compose --profile app ps` 中 api / worker（及其依赖）healthy；`/healthz` 200、`/readyz` 200 且对象存储探针全绿 | 已部署；逐项证据待收口 | `health.txt` / 脱敏响应摘要 |
+| S4-T6 | tools 迁移 / 种子读取路径 | `docker compose --profile tools config` 仅见 `pg_migrator_password`；`db-migrate.sh --dry-run`、`db-seed.sh --dry-run` 成功；重放无漂移 / 零变更口径不变 | 已部署；逐项证据待收口 | `tools-db.txt` |
+| S4-T7 | bootstrap `storage:init --check` | `storage.sh init --check` 返回 0；只有已登记 CORS 能力告警，lifecycle / 版本控制 / 桶路径的 `AccessDenied` 均失败 | 已部署；逐项证据待收口 | `storage-init-check.txt` |
+| S4-T8 | 应用 service account 存储回放 | `storage.sh it` 使用 `s3_*` 返回 24 / 24；不读取 bootstrap 凭据 | 已部署；逐项证据待收口 | `storage-it.txt` |
+| S4-T9 | 真实上传全链路 | 登录态完成上传 → 分片 / 合并 → 列表 → 预览 → 下载 → 回收站彻底删除；API / worker 的 S3 请求持续使用应用 service account，无 root 值 | 已部署；逐项证据待收口 | 脱敏请求记录 / 对象清理证明 |
+| S4-T10 | Secret 不泄漏且 F-02 未关闭 | `docker top` 进程参数、容器日志、`server.env`、shell history、临时目录与证据扫描 access key / secret 均为 0 命中；旧 root 尚未轮换，F-02 仍为开放 | 已部署；逐项证据待收口 | `leak-scan.txt` / `status.txt` |
 
-以上运行时项全部待测试机部署后验证；本地 Compose 渲染、`node --check` 与脚本静态检查只用于实现自检，不替代 S4-T1～T10。
+以上运行时项以测试机部署后的实际执行结果为准；逐项证据与未复验项待 S7 验收收口，本地 Compose 渲染、`node --check` 与脚本静态检查只用于实现自检，不替代 S4-T1～T10。
 
 ### S5 · root 轮换与旧凭据失效
 
 **目标**：消除当前 root 值已经与业务凭据同值的暴露，并确认旧 root、旧应用值与旧签名失效。
 
-**仓库实现与运行时验收分界**：本切片先在仓库内交付轮换脚本、状态恢复路径、残留扫描和部署 Runbook；S1～S5 仓库实现完成后统一部署公司测试机，再在维护窗口执行真实轮换。测试机部署前不得把任何运行时项标为通过；本地 fake 回放和临时 MinIO 结果只用于实现自检，不替代 S5-T1～T10。
+**仓库实现与运行时验收分界**：本切片先在仓库内交付轮换脚本、状态恢复路径、残留扫描和部署 Runbook；2026-10-23 已在公司测试机维护窗口完成真实轮换。认证后浏览器全链路、S5-T3 历史值 / 旧预签名、T7 敏感备份登记与故障注入项等逐项证据待 S7 收口；本地 fake 回放和临时 MinIO 结果只用于实现自检，不替代验收。
 
 **执行期实现说明（2026-10-23）**
 
@@ -437,22 +437,22 @@ S5 的 root 轮换是受控运维动作，不是直接手改业务代码：执�
 - 证据默认写入 `/srv/data/backups/f02-s5-evidence`（目录 `700`、文件 `600`），记录阶段、`root_username_changed=yes/no/unknown`、新 / 旧 root 认证结果、回滚结果、身份 / storage / HTTP 结果、扫描结果与 `f02_status=open`，不记录 Secret 值。残留扫描覆盖部署目录、`/srv/data/backups`、历史、临时目录以及 minio / api / worker 日志；文本扫描为 0 命中才自动清状态，压缩包 / 二进制备份必须另行按敏感备份登记和处置，不能把“未扫描到”写成“未包含”。
 - api / worker 不在本脚本中重启；轮换后它们应继续使用既有应用 service account。锁定 MinIO 镜像自检已确认：root 切换后同一数据卷、同一 service account 仍可列桶，旧 root 被拒。
 
-**测试机部署后验证登记**
+**测试机部署验证登记（已执行，逐项证据待收口）**
 
 | ID | 验证项 | 方法 / 预期 | 状态 | 证据位置 |
 |---|---|---|---|---|
-| S5-T1 | 维护窗口与可恢复备份 | 记录 MinIO 数据目录可恢复备份 / 快照路径和校验值；确认窗口、影响面和回滚联系人；备份说明不含 Secret | 待测试机部署后验证 | 备份清单 / 变更单（脱敏） |
-| S5-T2 | 轮换前基线 | `plan` / `check` 通过；minio healthy；应用与 bootstrap 凭据均不等同于当前 root；S3 / S4 对应运行项已通过 | 待测试机部署后验证 | `plan.txt` / `check.txt` |
-| S5-T3 | 新 root 生效、旧凭据失效 | `rotate` 后新 root 可认证；旧 root 被拒；若存在与旧 root 不同的历史应用值，同样做一次拒绝探针；轮换前生成的旧预签名 URL 到期前即不可用 | 待测试机部署后验证 | 脱敏认证结果 / URL 状态码 |
-| S5-T4 | 应用身份不受影响 | 应用 / bootstrap service account 的 parent、策略和状态不变；`storage:it` 24 / 24；api / worker 未因本脚本重启，业务请求继续使用应用 service account | 待测试机部署后验证 | `identity.txt` / `storage-it.txt` / 容器重启计数 |
-| S5-T5 | 轮换后全链路 | `/healthz` / `/readyz` 200，`/libiaolink/` 返回预期安全拒绝；登录态完成上传 → 分片 / 合并 → 列表 → 复制 → 预览 → 下载 → 回收站彻底删除 | 待测试机部署后验证 | `runtime.txt` / 脱敏请求记录 |
-| S5-T6 | Secret 与状态边界 | `/run/libiaolink-f02-s5` 仅轮换期间存在且为 `700/600`；成功 / 回滚后删除；两份 root Secret 始终成对且 `600`；没有临时 `mc` 配置、旧值备份或 `.f02-s5.*` 文件残留 | 待测试机部署后验证 | `state-boundary.txt` |
-| S5-T7 | 旧口令残留 | 对部署目录、`/srv/data/backups`、history、`/home`、`/tmp`、`/var/tmp`、minio / api / worker 日志做明文扫描为 0 命中；tar / 镜像 / 压缩备份标记敏感并限制访问；证据不含旧值 | 待测试机部署后验证 | `retired-secret-scan.txt` / 敏感备份登记 |
-| S5-T8 | 失败回滚边界 | 仅在启动 / 新 root 认证 / 旧 root 仍可用阶段受控验证自动恢复旧 root、状态删除和 `rolled-back` 证据；新 root 已生效后的检查失败不得自动恢复旧 root | 待测试机部署后验证 | `rollback.txt` / 证据文件 |
-| S5-T9 | 中断恢复与 finalize | 在一个可控失败场景保留状态，确认 `recover` 能恢复旧 root；在扫描命中场景清理后确认 `finalize` 只在当前 root、全链路、旧 root 拒绝和扫描均通过后删除状态 | 待测试机部署后验证 | `recover.txt` / `finalize.txt` |
-| S5-T10 | 端口不回开、F-02 未误关 | 轮换前后 `ss -lntp` 与 `DOCKER-USER` 复核一致：9000 无宿主监听，9001 / 9443 仅回环；开发机 / 办公网 / 公网探活仍不可达；证据写 `f02_status=open` | 待测试机部署后验证 | `ports.txt` / `status.txt` |
+| S5-T1 | 维护窗口与可恢复备份 | 记录 MinIO 数据目录可恢复备份 / 快照路径和校验值；确认窗口、影响面和回滚联系人；备份说明不含 Secret | 已部署；逐项证据待收口 | 备份清单 / 变更单（脱敏） |
+| S5-T2 | 轮换前基线 | `plan` / `check` 通过；minio healthy；应用与 bootstrap 凭据均不等同于当前 root；S3 / S4 对应运行项已通过 | 已部署；逐项证据待收口 | `plan.txt` / `check.txt` |
+| S5-T3 | 新 root 生效、旧凭据失效 | `rotate` 后新 root 可认证；旧 root 被拒；若存在与旧 root 不同的历史应用值，同样做一次拒绝探针；轮换前生成的旧预签名 URL 到期前即不可用 | 已部署；逐项证据待收口 | 脱敏认证结果 / URL 状态码 |
+| S5-T4 | 应用身份不受影响 | 应用 / bootstrap service account 的 parent、策略和状态不变；`storage:it` 24 / 24；api / worker 未因本脚本重启，业务请求继续使用应用 service account | 已部署；逐项证据待收口 | `identity.txt` / `storage-it.txt` / 容器重启计数 |
+| S5-T5 | 轮换后全链路 | `/healthz` / `/readyz` 200，`/libiaolink/` 返回预期安全拒绝；登录态完成上传 → 分片 / 合并 → 列表 → 复制 → 预览 → 下载 → 回收站彻底删除 | 已部署；逐项证据待收口 | `runtime.txt` / 脱敏请求记录 |
+| S5-T6 | Secret 与状态边界 | `/run/libiaolink-f02-s5` 仅轮换期间存在且为 `700/600`；成功 / 回滚后删除；两份 root Secret 始终成对且 `600`；没有临时 `mc` 配置、旧值备份或 `.f02-s5.*` 文件残留 | 已部署；逐项证据待收口 | `state-boundary.txt` |
+| S5-T7 | 旧口令残留 | 对部署目录、`/srv/data/backups`、history、`/home`、`/tmp`、`/var/tmp`、minio / api / worker 日志做明文扫描为 0 命中；tar / 镜像 / 压缩备份标记敏感并限制访问；证据不含旧值 | 已部署；逐项证据待收口 | `retired-secret-scan.txt` / 敏感备份登记 |
+| S5-T8 | 失败回滚边界 | 仅在启动 / 新 root 认证 / 旧 root 仍可用阶段受控验证自动恢复旧 root、状态删除和 `rolled-back` 证据；新 root 已生效后的检查失败不得自动恢复旧 root | 已部署；逐项证据待收口 | `rollback.txt` / 证据文件 |
+| S5-T9 | 中断恢复与 finalize | 在一个可控失败场景保留状态，确认 `recover` 能恢复旧 root；在扫描命中场景清理后确认 `finalize` 只在当前 root、全链路、旧 root 拒绝和扫描均通过后删除状态 | 已部署；逐项证据待收口 | `recover.txt` / `finalize.txt` |
+| S5-T10 | 端口不回开、F-02 未误关 | 轮换前后 `ss -lntp` 与 `DOCKER-USER` 复核一致：9000 无宿主监听，9001 / 9443 仅回环；开发机 / 办公网 / 公网探活仍不可达；证据写 `f02_status=open` | 已部署；逐项证据待收口 | `ports.txt` / `status.txt` |
 
-以上运行时项全部待测试机部署后验证；本地 `bash -n`、fake 回放、锁定 MinIO service account 存活实验和脚本自检只用于实现自检，不替代 S5-T1～T10。
+以上运行时项以测试机部署后的实际执行结果为准；逐项证据与未复验项待 S7 验收收口，本地 `bash -n`、fake 回放、锁定 MinIO service account 存活实验和脚本自检只用于实现自检，不替代 S5-T1～T10。
 
 **通过条件**
 
