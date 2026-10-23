@@ -4,7 +4,7 @@ import type { OrgDepartmentRecord, OrgDirectorySnapshot, OrgUserRecord } from ".
 
 /**
  * Casdoor 目录拉取适配器（h1 · D1-02）：管理 API → OrgDirectorySnapshot，喂给 OrgSyncService。
- * 定时调度（worker 周期拉取）随 i5 接线；本类保持「一次拉取 = 一个快照」的纯拉取语义，可被内部端点 / worker 复用。
+ * worker 启动即自动拉取并按周期持续同步；本类保持「一次拉取 = 一个快照」的纯拉取语义，可被内部端点 / worker 复用。
  * 字段映射按 Casdoor 模型（user: id / name / displayName / email / isForbidden / isDeleted；
  * group: name / displayName / parentId / isTopGroup / isDeleted）；正式环境字段核对随 g7。
  */
