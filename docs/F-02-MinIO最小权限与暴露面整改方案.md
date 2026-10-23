@@ -2,7 +2,7 @@
 
 > 来源：`LibiaoLink_安全审查报告_2026-10-21.pdf` F-02（第 4～5 页）｜严重度 High / P0｜报告验收要求：应用凭据不能管理用户 / 桶或访问其它桶；9000 / 9001 / 9443 从非授权网络不可达；轮换后旧凭据失效
 > 报告审查基线：`px @ e05535b8`｜S0 复核基线：`origin/main@6b846b2`（2026-10-23；F-02 涉及的 Compose、Nginx、存储脚本与凭据挂载配置未发生实质修复）
-> 起草：lan（后端平台 / file / storage / preview / outbox）｜拟稿日期：2026-10-22｜S0 评审冻结：2026-10-23｜状态：**S0 已冻结；S1 / S2 部署件与 S3 / S4 仓库件已合入，S5 仓库件已落地（PR 待创建）；运行时统一待测试机部署后验证，F-02 尚未关闭**
+> 起草：lan（后端平台 / file / storage / preview / outbox）｜拟稿日期：2026-10-22｜S0 评审冻结：2026-10-23｜状态：**S0 已冻结；S1 / S2 部署件与 S3 / S4 仓库件已合入，S5 仓库件已落地（PR [#595](https://github.com/PanXing-Libiao/LibiaoLink/pull/595) 评审中）；运行时统一待测试机部署后验证，F-02 尚未关闭**
 > S0 签收：px（部署 / docs）与 wmj（安全）完成复核；经用户确认三方协商后，由 lan 代录。冻结结论见 §5「S0 · 方案落档与评审冻结」。
 > 归属与评审：`docs/` 归 px 主责，落档需 px 复核；生产 Compose、Nginx、主机防火墙与部署窗口归 px 主责；MinIO 身份 / 策略、`server/` 存储脚本与凭据接线归 lan 主责；安全验收请 wmj 交叉复核。涉及安全、部署与 Secrets 的高风险变更必须取得非作者批准。
 > 变更控制：后续执行以本文件为基线。若执行中需要改变端口、身份模型、策略动作、切片顺序或验收条件，先修改本文件并写明原因、影响和回滚，再实施；已合入主干的回放证据与部署记录按不可变历史处理，不原地改写。
@@ -16,7 +16,7 @@
 | S2 · 主机防火墙与外部网络复核 | 部署件已合入，运行时待验证 | PR [#589](https://github.com/PanXing-Libiao/LibiaoLink/pull/589)；squash `1b24536` | 临时 apply → 二次 apply → check → remove 已通过；unit 尚未持久化，待统一部署后复核 | 待安装 unit、Docker / 主机重启与外部网络复核 |
 | S3 · MinIO 最小权限身份与策略 | 仓库件已合入，测试机部署后验证 | PR [#591](https://github.com/PanXing-Libiao/LibiaoLink/pull/591)；squash `311c738c` | 本地受控 MinIO 冒烟通过（非 F-02 验收）；测试机身份、负向权限与凭据探针待统一验证 | 不切 api / worker；运行时证据统一在测试机部署后登记 |
 | S4 · Secrets 隔离与运行时凭据切换 | 仓库件已合入，测试机部署后验证 | PR [#594](https://github.com/PanXing-Libiao/LibiaoLink/pull/594)；squash `88670d85` | 本地隔离自检通过（非 F-02 验收）；运行时挂载、凭据切换与全链路待统一验证 | api / worker 改用 service account；S4-T1～T10 待测试机部署后验证 |
-| S5 · root 凭据轮换与旧凭据失效 | 仓库件已落地，PR 待创建；测试机部署后验证 | 待填 | 本地 fake / 锁定 MinIO 自检通过（非 F-02 验收）；维护窗口轮换与旧凭据失效待统一验证 | `minio-root-rotate.sh` 提供 `plan` / `check` / `rotate` / `recover` / `finalize`；不得回滚为 root 应用凭据 |
+| S5 · root 凭据轮换与旧凭据失效 | 仓库件已落地，PR 评审中；测试机部署后验证 | PR [#595](https://github.com/PanXing-Libiao/LibiaoLink/pull/595) | 本地 fake / 锁定 MinIO 自检通过（非 F-02 验收）；维护窗口轮换与旧凭据失效待统一验证 | `minio-root-rotate.sh` 提供 `plan` / `check` / `rotate` / `recover` / `finalize`；不得回滚为 root 应用凭据 |
 | S6 · 文档、H1 兼容与全量回归 | 待执行 | 待填 | 待填 | 9443 保留时只能经 SSH 隧道 |
 | S7 · 验收回放与 F-02 关闭 | 待执行 | 待填 | 待填 | 旧凭据失效、外网不可达、证据齐全后才关闭 |
 
