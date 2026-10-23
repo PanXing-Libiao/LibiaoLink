@@ -10,7 +10,7 @@ export const KO_TEXTS: Partial<Record<TextKey, string>> = {
   "nav.projects": "프로젝트",
   "nav.templates": "작업 템플릿",
   "nav.workspace": "내 작업",
-  "header.brand.subtitle": "리비아오 풀체인 정보 플랫폼",
+  "header.brand.subtitle": "리비아오 시장 프로젝트 관리 플랫폼",
   "header.up": "이전 단계로 돌아가기",
   "header.seqNo": "No.",
   "header.createdAt": "생성일",
