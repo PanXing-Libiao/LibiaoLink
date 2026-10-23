@@ -37,9 +37,13 @@ class FakeNotifyRepository {
   dedupeKeys = new Set<string>();
   prefs = new Map<string, NotifyPrefsRow>();
   insertCalls: NotifyMessageInsert[] = [];
+  /** 软删行 id（库内行保留 = C5-03 留档；读面 / 写口隐藏）。 */
+  deletedIds = new Set<number>();
   delivered: number[] = [];
   postponed: { id: number; deliverAt: Date }[] = [];
   failInsert = false;
+  /** 模拟「查到主行后、落合并前主行被删除 / 标读」的条件更新失败。 */
+  mergeConflict = false;
   private seq = 0;
 
   async insertMessage(input: NotifyMessageInsert, _tx?: unknown): Promise<NotifyMessageRow | null> {
@@ -93,6 +97,7 @@ class FakeNotifyRepository {
         row.recipientId === input.recipientId &&
         row.mergeKey === input.mergeKey &&
         row.mergedIntoId === null &&
+        !this.deletedIds.has(row.id) &&
         row.status === "unread" &&
         row.createdAt.getTime() >= input.since.getTime() &&
         row.id < input.excludeId,
@@ -101,12 +106,14 @@ class FakeNotifyRepository {
     return latest;
   }
 
-  async attachMerged(input: { childId: number; parentId: number; at: Date }, _tx?: unknown): Promise<void> {
+  async attachMerged(input: { childId: number; parentId: number; at: Date }, _tx?: unknown): Promise<boolean> {
+    if (this.mergeConflict) return false;
     const child = this.rows.find((row) => row.id === input.childId);
     const parent = this.rows.find((row) => row.id === input.parentId);
     if (child === undefined || parent === undefined) throw new Error("fake attachMerged：行不存在");
     child.mergedIntoId = parent.id;
     parent.mergedCount += 1;
+    return true;
   }
 
   async markDelivered(id: number, at: Date, _tx?: unknown): Promise<void> {
@@ -135,7 +142,7 @@ class FakeNotifyRepository {
 
   async listInbox(recipientId: string, filter: NotifyInboxFilter): Promise<{ rows: NotifyMessageRow[]; total: number }> {
     const matches = this.rows
-      .filter((row) => row.recipientId === recipientId && row.mergedIntoId === null && row.deliveredAt !== null)
+      .filter((row) => row.recipientId === recipientId && row.mergedIntoId === null && row.deliveredAt !== null && !this.deletedIds.has(row.id))
       .filter((row) => filter.status === null || row.status === filter.status)
       .filter((row) => filter.type === null || row.type === filter.type)
       .filter((row) => filter.refType === null || row.refType === filter.refType)
@@ -148,12 +155,18 @@ class FakeNotifyRepository {
   async countUnread(recipientId: string, _tx?: unknown): Promise<number> {
     return this.rows.filter(
       (row) =>
-        row.recipientId === recipientId && row.mergedIntoId === null && row.status === "unread" && row.deliveredAt !== null,
+        row.recipientId === recipientId &&
+        row.mergedIntoId === null &&
+        !this.deletedIds.has(row.id) &&
+        row.status === "unread" &&
+        row.deliveredAt !== null,
     ).length;
   }
 
   async findByIdForRecipient(id: number, recipientId: string): Promise<NotifyMessageRow | null> {
-    return this.rows.find((row) => row.id === id && row.recipientId === recipientId) ?? null;
+    return this.rows.find(
+      (row) => row.id === id && row.recipientId === recipientId && !this.deletedIds.has(row.id),
+    ) ?? null;
   }
 
   async markStatus(id: number, status: string, at: Date): Promise<NotifyMessageRow> {
@@ -166,12 +179,50 @@ class FakeNotifyRepository {
   async markAllRead(recipientId: string, _at: Date): Promise<number> {
     let updated = 0;
     for (const row of this.rows) {
-      if (row.recipientId === recipientId && row.mergedIntoId === null && row.status === "unread" && row.deliveredAt !== null) {
+      if (
+        row.recipientId === recipientId &&
+        row.mergedIntoId === null &&
+        !this.deletedIds.has(row.id) &&
+        row.status === "unread" &&
+        row.deliveredAt !== null
+      ) {
         row.status = "read";
         updated += 1;
       }
     }
     return updated;
+  }
+
+  async softDelete(id: number, recipientId: string, _at: Date): Promise<boolean> {
+    const row = this.rows.find(
+      (item) =>
+        item.id === id &&
+        item.recipientId === recipientId &&
+        item.mergedIntoId === null &&
+        item.deliveredAt !== null &&
+        !this.deletedIds.has(item.id),
+    );
+    if (row === undefined) return false;
+    this.deletedIds.add(id);
+    return true;
+  }
+
+  async softDeleteAll(
+    recipientId: string,
+    _at: Date,
+  ): Promise<{ deleted: number; unreadDeleted: number }> {
+    const rows = this.rows.filter(
+      (row) =>
+        row.recipientId === recipientId &&
+        row.mergedIntoId === null &&
+        row.deliveredAt !== null &&
+        !this.deletedIds.has(row.id),
+    );
+    for (const row of rows) this.deletedIds.add(row.id);
+    return {
+      deleted: rows.length,
+      unreadDeleted: rows.filter((row) => row.status === "unread").length,
+    };
   }
 
   async getPrefs(userId: string): Promise<NotifyPrefsRow | null> {
@@ -310,6 +361,19 @@ describe("站内信投递（S7-4 · j1 / M5-04 首刀）", () => {
       attemptCount: 0,
       metadata: { mergedIntoId: 1 },
     });
+  });
+
+  it("合并并发：主行在落合并前被删除 → 新消息不挂已删行，改正常投递", async () => {
+    const repo = new FakeNotifyRepository();
+    const service = makeService(repo, DAYTIME);
+    await service.consume(claimedRow(payload({ templateCode: "A01_INBOX_MERGED" })));
+    repo.mergeConflict = true;
+    await service.consume(
+      claimedRow(payload({ title: "第二个项目未填", templateCode: "A01_INBOX_MERGED" }), { id: 2, dedupeKey: "A01:" + REF_A + ":p2" }),
+    );
+    expect(repo.rows[1]?.mergedIntoId).toBeNull();
+    expect(repo.rows[0]?.mergedCount).toBe(1);
+    expect(repo.delivered).toEqual([1, 2]);
   });
 
   it("合并：超出窗口 / 键不同 / 主行已读 → 不合并，各自成行", async () => {
@@ -498,6 +562,54 @@ describe("站内信投递（S7-4 · j1 / M5-04 首刀）", () => {
     const result = await service.markAllRead(ME);
     expect(result).toEqual({ updated: 2, unreadCount: 0 });
     expect(await service.markAllRead(ME)).toEqual({ updated: 0, unreadCount: 0 });
+  });
+
+  it("删除指定项：本人已投递主行软删隐藏、未读角标回收；留档行保留；他人 / 已删行 404", async () => {
+    const repo = new FakeNotifyRepository();
+    const publisher = new FakeStreamPublisher();
+    const service = makeService(repo, DAYTIME, {}, publisher);
+    await service.consume(claimedRow(payload({ templateCode: "R02" })));
+    await service.consume(claimedRow(payload({ templateCode: "R03" }), { id: 2, dedupeKey: "k2" }));
+    await service.consume(claimedRow(payload({ templateCode: "R04" }), { id: 3, dedupeKey: "k3" }));
+    await service.mark(ME, 2, "read");
+    publisher.published.length = 0;
+
+    const deleted = await service.deleteOne(ME, 1);
+    expect(deleted).toEqual({ id: 1, deleted: true, unreadCount: 1 });
+    expect(publisher.published).toEqual([{ recipientId: ME, event: "unread", data: { unreadCount: 1 } }]);
+    const remaining = await service.list(ME, { page: 1, limit: 50 });
+    expect(remaining.items.map((item) => item.id)).toEqual([3, 2]);
+    expect(remaining.total).toBe(2);
+    expect(remaining.unreadCount).toBe(1);
+    expect(repo.rows).toHaveLength(3);
+
+    await expect(service.deleteOne(ME, 1)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(service.deleteOne(OTHER, 2)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(service.mark(ME, 1, "read")).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(publisher.published).toHaveLength(1);
+  });
+
+  it("一键删除全部：只清本人收件箱；幂等；他人消息与库内留档不受影响", async () => {
+    const repo = new FakeNotifyRepository();
+    const publisher = new FakeStreamPublisher();
+    const service = makeService(repo, DAYTIME, {}, publisher);
+    await service.consume(claimedRow(payload({ templateCode: "R02" })));
+    await service.consume(claimedRow(payload({ templateCode: "R03" }), { id: 2, dedupeKey: "k2" }));
+    await service.consume(
+      claimedRow(payload({ recipientId: OTHER, templateCode: "R05" }), { id: 3, dedupeKey: "k3" }),
+    );
+    await service.mark(ME, 2, "read");
+    publisher.published.length = 0;
+
+    expect(await service.deleteAll(ME)).toEqual({ deleted: 2, unreadCount: 0 });
+    expect(publisher.published).toEqual([{ recipientId: ME, event: "unread", data: { unreadCount: 0 } }]);
+    expect((await service.list(ME, { page: 1, limit: 50 })).total).toBe(0);
+    expect(await service.deleteAll(ME)).toEqual({ deleted: 0, unreadCount: 0 });
+    expect(publisher.published).toHaveLength(1);
+
+    const other = await service.list(OTHER, { page: 1, limit: 50 });
+    expect(other.items.map((item) => item.id)).toEqual([3]);
+    expect(repo.rows).toHaveLength(3);
   });
 
   it("通知偏好：无行 → env 缺省生效值；三态切换与局部更新；空更新 400", async () => {

@@ -48,7 +48,7 @@ export function AppHeader({ me, project }: AppHeaderProps) {
   const [langMenuOpen, setLangMenuOpen] = useState(false);
   /** 站内信弹窗（业务口径 2026-10-16「在这个左侧增加站内信按钮 点击后出现局部弹窗用来消息通知」）。 */
   const [inboxOpen, setInboxOpen] = useState(false);
-  /** 站内信标记失败文案（标记已读 / 全部已读）：失败回滚 + 顶部 Toast；关闭即清。 */
+  /** 站内信操作失败文案（标记已读 / 全部已读 / 删除）：失败回滚 + 顶部 Toast；关闭即清。 */
   const [inboxError, setInboxError] = useState<string | null>(null);
   /** 语言保存失败文案（Push 296 · 按账号落库）：失败回滚 + 顶部 Toast；关闭即清。 */
   const [langError, setLangError] = useState<string | null>(null);

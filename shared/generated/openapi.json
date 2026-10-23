@@ -5392,6 +5392,54 @@
         ],
         "description": "收件箱条目（已投递；合并子行不进收件箱、只在库内留档）"
       },
+      "NotificationDeleteAllResponse": {
+        "type": "object",
+        "properties": {
+          "deleted": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "本次从本人收件箱删除的条数（幂等；已删行不重复计数）"
+          },
+          "unreadCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "删除后的未读总数（角标口径；通常为 0）"
+          }
+        },
+        "required": [
+          "deleted",
+          "unreadCount"
+        ],
+        "description": "一键删除全部站内信结果（只动本人已投递主行；C5-03 留档不删除）"
+      },
+      "NotificationDeleteResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "被删除的通知 id"
+          },
+          "deleted": {
+            "type": "boolean",
+            "enum": [
+              true
+            ],
+            "description": "固定 true（成功从本人收件箱隐藏）"
+          },
+          "unreadCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "删除后的未读总数（角标口径）"
+          }
+        },
+        "required": [
+          "id",
+          "deleted",
+          "unreadCount"
+        ],
+        "description": "删除指定站内信结果（软删隐藏；C5-03 留档不删除）"
+      },
       "NotificationListResponse": {
         "type": "object",
         "properties": {
@@ -21177,6 +21225,153 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "一键删除全部站内信（C5-01）：只隐藏本人已投递主行，C5-03 全量留档与管理员发送记录保留；幂等",
+        "responses": {
+          "200": {
+            "description": "删除结果（deleted / unreadCount）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationDeleteAllResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notifications/{id}": {
+      "delete": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "删除指定站内信（C5-01）：仅本人已投递主行；软删隐藏，C5-03 全量留档保留；他人 / 合并子行 / 未投递行统一 404",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "删除结果（id / deleted / unreadCount）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationDeleteResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "标记收件箱状态（C5-01 未读 / 已读 / 已处理）：幂等；仅本人可标记（他人 404 防 IDOR）",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationMarkBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "标记后的通知",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Notification"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/notifications/deliveries": {
@@ -21481,76 +21676,6 @@
           },
           "409": {
             "description": "重发状态或渠道不允许（仅 wecom_app / wecom_aibot / wecom_group 且最新状态 failed / dead）",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/notifications/{id}": {
-      "patch": {
-        "tags": [
-          "notifications"
-        ],
-        "summary": "标记收件箱状态（C5-01 未读 / 已读 / 已处理）：幂等；仅本人可标记（他人 404 防 IDOR）",
-        "parameters": [
-          {
-            "schema": {
-              "type": "integer",
-              "exclusiveMinimum": 0
-            },
-            "required": true,
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/NotificationMarkBody"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "标记后的通知",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Notification"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "契约校验失败（VALIDATION_FAILED）",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "未认证（AUTH_REQUIRED）",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
             "content": {
               "application/json": {
                 "schema": {
