@@ -19,7 +19,7 @@ export class CadPreviewController {
   @Post()
   async create(@Param("fileId", uuid) fileId: string, @Param("versionId", uuid) versionId: string,
     @Param("viewId", view) viewId: string, @CurrentActorId() actorId: string,
-    @Query("nameCodepage", new ZodValidationPipe(CadNameCodepageSchema.default("UTF8"))) nameCodepage: CadNameCodepage,
+    @Query("nameCodepage", new ZodValidationPipe(CadNameCodepageSchema.default("GB"))) nameCodepage: CadNameCodepage,
     @Res({ passthrough: true }) response: Response) {
     let disconnected = false;
     let created: Awaited<ReturnType<CadPreviewService["create"]>> | undefined;

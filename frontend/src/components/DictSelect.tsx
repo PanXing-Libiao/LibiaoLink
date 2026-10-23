@@ -5,7 +5,7 @@ import { DICT_NAME_MAX, accentOfItem, type DictAccent, type DictItem } from "../
 import { OptionList } from "./SelectMenu";
 import type { SelectOption } from "./SelectMenu";
 import { usePopover } from "./usePopover";
-import { textOf, useLocale, useT } from "../i18n";
+import { isLocalizedLocale, textOf, useLocale, useT } from "../i18n";
 
 /** 新增分支的文案（两类字典的影响范围 / 权限口径不同，由调用方给）。 */
 type DictAddText = {
@@ -136,7 +136,7 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
     return item === undefined ? code : item.name;
   };
   /** 色板名显示（Push 301）：英文界面用 nameEn（色板自身不翻译中文键）；分隔符同样按语言取。 */
-  const accentNameOf = (entry: DictAccent): string => (locale === "en" ? entry.nameEn : entry.name);
+  const accentNameOf = (entry: DictAccent): string => (isLocalizedLocale(locale) ? entry.nameEn : entry.name);
 
   /** 收起浮层并复位「添加」分支（关闭后不留残留输入 / 报错；点浮层外关掉也走这里）。 */
   const close = (): void => {
@@ -332,7 +332,7 @@ export function DictSelect({ value, items, ariaLabel, placeholder, renderContent
                           <button
                             key={entry.key}
                             type="button"
-                            aria-label={palette.label + (locale === "en" ? ": " : "：") + accentNameOf(entry)}
+                            aria-label={palette.label + (isLocalizedLocale(locale) ? ": " : "：") + accentNameOf(entry)}
                             aria-pressed={entry.key === accentKey}
                             title={accentNameOf(entry)}
                             onClick={() => {

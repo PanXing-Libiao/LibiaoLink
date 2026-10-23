@@ -6,6 +6,7 @@ import { DateRangePicker } from "./DateRangePicker";
 import { MultiOptionList, MultiSelectMenu, type SelectOption } from "./SelectMenu";
 import { SearchSelect, type SearchSelectItem } from "./MemberSelect";
 import { ImageZoomViewer } from "./ImageZoomViewer";
+import { Toast, ToastConfirm, type ToastKind } from "./Toast";
 import { InlineCell, InlineMemberCell, InlineMultiOptionCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode, TextareaHTMLAttributes } from "react";
 import { ISSUE_STATES, type DailyReport, type Issue, type IssueState, type ReportPhoto } from "../data/reports";
@@ -39,8 +40,7 @@ import { useFocusTrap } from "./useFocusTrap";
 import type { Member } from "../data/members";
 import type { MeResponse, Project } from "../types";
 import { mediumCardBorderOf, mediumCardTintOf, vividCardBorderOf, vividCardTintOf, type TintedTier } from "../backgroundTier";
-import { fieldText, fullDateText, stageText, statusText, textOf, useLocale, useLocalizedTranslator, useT, type Locale } from "../i18n";
-import { prefetchZhToEn } from "../translateApi";
+import { fieldText, fullDateText, isLocalizedLocale, stageText, statusText, textOf, prefetchLocalizedText, useLocale, useLocalizedTranslator, useT, type Locale } from "../i18n";
 
 /**
  * 项目详情「日报及问题」视图（Push 128）：页内四块子视图 —— 日报填写 / 日报记录 / 问题追踪 / 问题看板。
@@ -616,7 +616,7 @@ function cnDateOf(iso: string): string {
 
 /** 日期显示（英文界面「Sep 16, 2026」/ 中文界面「YYYY年M月D日」—— Push 301 追订：与「我的任务」问题表同一套日期样式，不再用 ISO）。 */
 function isoDateText(locale: Locale, iso: string): string {
-  return locale === "en" ? fullDateText(locale, iso) : cnDateOf(iso);
+  return isLocalizedLocale(locale) ? fullDateText(locale, iso) : cnDateOf(iso);
 }
 
 /** 当天 ISO 日期（YYYY-MM-DD）。 */
@@ -1016,7 +1016,7 @@ export function PhotoStrip({ items, onRemove, onRename, strip, size = "sm", conf
     onPreviewOpenChange?.(next !== null);
   };
   /** 移除图片二次确认（Push 224 续 · 业务口径「移除图片要加二次确认」，只开在抽屉口径）：
-   *  第一下「×」只出底部确认条（与行删除二次提示同款固定底栏），第二下「移除」才真摘。
+   *  第一下「×」只出顶部确认 Toast（与行删除二次提示同款），第二下「移除」才真摘。
    *  确认条 portal 到 body —— 抽屉壳 .drawer-panel 的入场动画会当 containing block，留在组件里会偏移。 */
   const [pendingRemove, setPendingRemove] = useState<{ at: number; name: string } | null>(null);
   /** 键盘焦点陷阱（Push 264 追订）：移除图片确认条开着时焦点进条内、Tab 在条内循环、关闭还原到缩略图删除按钮。 */
@@ -1090,34 +1090,18 @@ export function PhotoStrip({ items, onRemove, onRename, strip, size = "sm", conf
         />
       ))}
       {preview === null ? null : <PhotoPreview url={preview.url} name={preview.name} onClose={() => { setPreviewOpen(null); }} zClass={previewZClass} />}
-      {pendingRemove === null ? null : createPortal(
-        <div className="pointer-events-none fixed bottom-6 left-1/2 z-[70] flex -translate-x-1/2 flex-col items-center gap-2">
-          <div
-            ref={removeConfirmTrapRef}
-            role="dialog"
-            aria-label={t("rp.removeConfirmAria")}
-            data-remove-attachment-confirm-strip=""
-            className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
-          >
-            <span>{t("photo.removeConfirm", { name: pendingRemove.name })}</span>
-            <button
-              type="button"
-              onClick={() => { setPendingRemove(null); }}
-              className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
-            >
-              {t("common.cancel")}
-            </button>
-            <button
-              type="button"
-              data-remove-attachment-confirm=""
-              onClick={confirmPendingRemove}
-              className="rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
-            >
-              {t("photo.remove")}
-            </button>
-          </div>
-        </div>,
-        document.body,
+      {pendingRemove === null ? null : (
+        <ToastConfirm
+          text={t("photo.removeConfirm", { name: pendingRemove.name })}
+          ariaLabel={t("rp.removeConfirmAria")}
+          cancelLabel={t("common.cancel")}
+          confirmLabel={t("photo.remove")}
+          onCancel={() => { setPendingRemove(null); }}
+          onConfirm={confirmPendingRemove}
+          containerRef={removeConfirmTrapRef}
+          anchor={{ name: "data-remove-attachment-confirm-strip", value: "" }}
+          confirmAnchor={{ name: "data-remove-attachment-confirm", value: "" }}
+        />
       )}
     </div>
   );
@@ -1438,7 +1422,7 @@ function ReportList({ reports, onEdit, onPatch, onDelete }: {
                   {report.doneWork === "" ? (
                     <span className="text-zinc-300">—</span>
                   ) : (
-                    <span data-report-done="" title={locale === "en" ? report.doneWork : undefined} className="block whitespace-pre-line break-words">{localize(report.doneWork)}</span>
+                    <span data-report-done="" title={isLocalizedLocale(locale) ? report.doneWork : undefined} className="block whitespace-pre-line break-words">{localize(report.doneWork)}</span>
                   )}
                 </td>
                 <td className="min-w-[200px] whitespace-pre-line break-words border-b border-zinc-100 px-4 py-4 leading-6 text-zinc-700">
@@ -1446,7 +1430,7 @@ function ReportList({ reports, onEdit, onPatch, onDelete }: {
                   {report.plan === "" ? (
                     <span className="text-zinc-300">—</span>
                   ) : (
-                    <span data-report-plan="" title={locale === "en" ? report.plan : undefined} className="block whitespace-pre-line break-words">{localize(report.plan)}</span>
+                    <span data-report-plan="" title={isLocalizedLocale(locale) ? report.plan : undefined} className="block whitespace-pre-line break-words">{localize(report.plan)}</span>
                   )}
                 </td>
                 <td className="min-w-[440px] border-b border-zinc-100 px-4 py-4">
@@ -1523,7 +1507,7 @@ function IssueCard({ issue, onOpen, onPointerDownDrag, dragging = false, ghost =
       <span aria-hidden="true" className={CARD_NOISE} />
       <div className={CARD_BODY}>
         <Field label={fieldText(locale, "问题描述")} first>
-          <p data-issue-card-title="" title={locale === "en" ? issue.title : undefined} className="whitespace-pre-line break-words text-sm leading-5 text-zinc-900">{localize(issue.title)}</p>
+          <p data-issue-card-title="" title={isLocalizedLocale(locale) ? issue.title : undefined} className="whitespace-pre-line break-words text-sm leading-5 text-zinc-900">{localize(issue.title)}</p>
         </Field>
         <Field label={fieldText(locale, "问题归类")}>
           <CategoryTags values={issue.categories} />
@@ -1537,7 +1521,7 @@ function IssueCard({ issue, onOpen, onPointerDownDrag, dragging = false, ghost =
         </Field>
         {issue.solution === "" ? null : (
           <Field label={fieldText(locale, "解决方案或建议")}>
-            <p data-issue-card-solution="" title={locale === "en" ? issue.solution : undefined} className="whitespace-pre-line break-words text-sm leading-5 text-zinc-700">{localize(issue.solution)}</p>
+            <p data-issue-card-solution="" title={isLocalizedLocale(locale) ? issue.solution : undefined} className="whitespace-pre-line break-words text-sm leading-5 text-zinc-700">{localize(issue.solution)}</p>
           </Field>
         )}
         {issue.photos.length === 0 ? null : (
@@ -1890,7 +1874,7 @@ function IssueTable({ issues, tierTint, onEdit, onPatch, onDelete }: {
                     「问题归类」之间的空档，归类列（及其后各列）随之前移；描述 / 「提出人」小行仍按行换行，不截断。 */}
                 {/* Push 223（业务口径「文字和图片编辑要同款」）：问题描述改由行尾「编辑」弹窗落值 ——
                     表格里只做展示，不再是可点目标（点表格不进入任何编辑）。 */}
-                <span data-issue-title="" title={locale === "en" ? issue.title : undefined} className="block whitespace-pre-line break-words leading-6 text-zinc-800">{localize(issue.title)}</span>
+                <span data-issue-title="" title={isLocalizedLocale(locale) ? issue.title : undefined} className="block whitespace-pre-line break-words leading-6 text-zinc-800">{localize(issue.title)}</span>
                 <p className="mt-1 text-[11px] leading-4 text-zinc-400">{t("report.issue.reporter", { name: issue.reporter })}</p>
               </td>
               <td className="whitespace-nowrap px-4 py-4">
@@ -1918,7 +1902,7 @@ function IssueTable({ issues, tierTint, onEdit, onPatch, onDelete }: {
               </td>
               <td className="min-w-[280px] px-4 py-4">
                 {/* Push 223：解决方案或建议同上（展示only，编辑在行尾弹窗里做）。 */}
-                <span data-issue-solution="" title={locale === "en" ? issue.solution : undefined} className="block whitespace-pre-line break-words leading-6 text-zinc-600">{issue.solution === "" ? "—" : localize(issue.solution)}</span>
+                <span data-issue-solution="" title={isLocalizedLocale(locale) ? issue.solution : undefined} className="block whitespace-pre-line break-words leading-6 text-zinc-600">{issue.solution === "" ? "—" : localize(issue.solution)}</span>
               </td>
               <td className="min-w-[440px] px-4 py-4">
                 {/* 展示only（Push 223）：问题附图的增删 / 改名改由行尾「编辑」弹窗（AttachmentPicker）做（点图仍可看大图）。
@@ -2477,7 +2461,7 @@ function ReportFillForm({
         <label className="block">
           <span className={FORM_LABEL}>{fieldText(locale, "项目名称")}</span>
           <span data-field="projectName" className="mt-1 flex items-center rounded-lg border border-zinc-100 bg-zinc-50 px-2.5 py-2 text-sm text-zinc-600">
-            {localize(project.description)}{locale === "en" ? " (" + project.code + ")" : "（" + project.code + "）"}
+            {localize(project.description)}{isLocalizedLocale(locale) ? " (" + project.code + ")" : "（" + project.code + "）"}
           </span>
         </label>
         <div className="block">
@@ -2689,7 +2673,7 @@ function ReportFillForm({
           {t("report.saveDraft")}
         </button>
         <span data-fill-hint className={"text-xs " + (missing.length === 0 ? "text-zinc-400" : "text-rose-500")}>
-          {missing.length === 0 ? t("report.form.footer") : t("report.form.missing", { list: missing.join(locale === "en" ? ", " : "、") })}
+          {missing.length === 0 ? t("report.form.footer") : t("report.form.missing", { list: missing.join(isLocalizedLocale(locale) ? ", " : "、") })}
         </span>
       </div>
     </form>
@@ -2764,7 +2748,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
           value={issue.title}
           ariaLabel={t("rp.editTitleAria", { date: issue.raisedAt })}
           placeholder={t("report.placeholder.issueTitleSave")}
-          display={<span data-issue-title="" title={locale === "en" ? issue.title : undefined} className="block whitespace-pre-line break-words">{localize(issue.title)}</span>}
+          display={<span data-issue-title="" title={isLocalizedLocale(locale) ? issue.title : undefined} className="block whitespace-pre-line break-words">{localize(issue.title)}</span>}
           onSave={(text) => {
             onPatchIssue(issue.id, { title: renumberLines(text) });
           }}
@@ -2825,7 +2809,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
           value={issue.solution}
           ariaLabel={t("rp.editSolutionAria", { date: issue.raisedAt })}
           placeholder={t("report.placeholder.issueSuggestionSave")}
-          display={<span data-issue-solution="" title={locale === "en" ? issue.solution : undefined} className="block whitespace-pre-line break-words">{issue.solution === "" ? "—" : localize(issue.solution)}</span>}
+          display={<span data-issue-solution="" title={isLocalizedLocale(locale) ? issue.solution : undefined} className="block whitespace-pre-line break-words">{issue.solution === "" ? "—" : localize(issue.solution)}</span>}
           onSave={(text) => {
             onPatchIssue(issue.id, { solution: renumberLines(text) });
           }}
@@ -2868,7 +2852,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
                 value={report.doneWork}
                 ariaLabel={t("rp.editDoneAria", { date: report.date })}
                 placeholder={t("report.placeholder.doneWorkSave")}
-                display={<span data-report-done="" title={locale === "en" ? report.doneWork : undefined} className="block whitespace-pre-line break-words">{report.doneWork === "" ? "—" : localize(report.doneWork)}</span>}
+                display={<span data-report-done="" title={isLocalizedLocale(locale) ? report.doneWork : undefined} className="block whitespace-pre-line break-words">{report.doneWork === "" ? "—" : localize(report.doneWork)}</span>}
                 onSave={(text) => {
                   onPatchReport(report.id, { doneWork: renumberLines(text) });
                 }}
@@ -2894,7 +2878,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
                 value={report.plan}
                 ariaLabel={t("rp.editPlanAria", { date: report.date })}
                 placeholder={t("report.placeholder.planSave")}
-                display={<span data-report-plan="" title={locale === "en" ? report.plan : undefined} className="block whitespace-pre-line break-words">{report.plan === "" ? "—" : localize(report.plan)}</span>}
+                display={<span data-report-plan="" title={isLocalizedLocale(locale) ? report.plan : undefined} className="block whitespace-pre-line break-words">{report.plan === "" ? "—" : localize(report.plan)}</span>}
                 onSave={(text) => {
                   onPatchReport(report.id, { plan: renumberLines(text) });
                 }}
@@ -2948,7 +2932,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
               <InlineNumberCell
                 value={report.headcount ?? 0}
                 ariaLabel={t("rp.editHeadcountAria", { date: report.date })}
-                display={report.headcount === null || report.headcount === 0 ? <span className="text-zinc-300">—</span> : report.headcount + (locale === "en" ? "" : " 人")}
+                display={report.headcount === null || report.headcount === 0 ? <span className="text-zinc-300">—</span> : report.headcount + (locale === "en" ? "" : locale === "ko" ? "명" : " 人")}
                 onSave={(value) => {
                   onPatchReport(report.id, { headcount: value === 0 ? null : value });
                 }}
@@ -2996,7 +2980,10 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
     <div className="fixed inset-0 z-50">
       <div
         className={"drawer-backdrop absolute inset-0 bg-zinc-900/25" + (closing ? " is-closing" : "")}
-        onClick={requestClose}
+        onClick={(event) => {
+          if (event.target !== event.currentTarget) { return; }
+          requestClose();
+        }}
         aria-hidden="true"
       />
       <aside
@@ -3026,7 +3013,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
               </svg>
             </button>
           </div>
-          <h2 id="issue-drawer-title" title={locale === "en" ? issue.title : undefined} className="mt-3.5 whitespace-pre-line break-words text-lg font-semibold leading-7 text-zinc-900">
+          <h2 id="issue-drawer-title" title={isLocalizedLocale(locale) ? issue.title : undefined} className="mt-3.5 whitespace-pre-line break-words text-lg font-semibold leading-7 text-zinc-900">
             {localize(issue.title)}
           </h2>
           <p className="mt-1 text-xs leading-5 text-zinc-400">{t("report.drawer.raised", { date: isoDateText(locale, issue.raisedAt), reporter: issue.reporter })}</p>
@@ -3081,9 +3068,12 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
   const draftVersion = useRef<number | null>(null);
   /** 写请求防重入（提交 / 暂存）。 */
   const [saving, setSaving] = useState(false);
-  /** 操作提示（提交 / 暂存 / 删除 / 失败）。 */
-  const [notice, setNotice] = useState<string>("");
-  /** 删除二次确认（Push 218 业务口径「删除要二次提示」）：行尾红胶囊的第一下只把待删项挂到底部确认条
+  /** 瞬态操作提示（提交 / 暂存 / 删除 / 失败）；统一走顶部 Toast，常驻重试状态留在页内。 */
+  const [notice, setNotice] = useState<{ kind: ToastKind; text: string } | null>(null);
+  const notify = (kind: ToastKind, text: string) => {
+    setNotice({ kind, text });
+  };
+  /** 删除二次确认（Push 218 业务口径「删除要二次提示」）：行尾红胶囊的第一下只把待删项挂到顶部确认 Toast
    *  （与首页「删除项目」/ 模板面板同款非阻断浮条），第二下「删除」才真删 —— 成对删除的连带范围写进文案。 */
   const [pendingDelete, setPendingDelete] = useState<{ kind: "report"; report: DailyReport } | { kind: "issue"; issue: Issue } | null>(null);
   /** 键盘焦点陷阱（Push 264 追订）：删除确认条开着时焦点进条内、Tab 在条内循环、关闭还原到行尾删除按钮。 */
@@ -3109,7 +3099,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
       setLoadState("ready");
     } catch (error) {
       setLoadState("error");
-      setNotice(friendlyError(error, t("report.error.load")));
+      notify("error", friendlyError(error, t("report.error.load")));
     }
   }, [project.id]);
 
@@ -3128,20 +3118,20 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
    *  日报与问题数据一到，就把「当日完成工作 / 明日计划 / 问题描述 / 解决方案或建议」静默丢进预热队列 ——
    *  英文界面下这些列命中会话缓存直接出译文（见 translateApi.ts），不用现场等机器翻译。 */
   useEffect(() => {
-    prefetchZhToEn([
+    prefetchLocalizedText([
       ...reports.map((report) => report.doneWork),
       ...reports.map((report) => report.plan),
       ...issues.map((issue) => issue.title),
       ...issues.map((issue) => issue.solution),
     ]);
-  }, [reports, issues]);
+  }, [reports, issues, locale]);
 
   /** 行内编辑落值（Push 216 接真）：先本地乐观更新，PATCH 回包替换该行；失败提示并重取（409 乐观锁冲突同路）。
    *  日期 / 提交时间一律不碰（「编辑后时间不变」）；文字列在保存时统一过一遍自动序号（与「日报填写」提交口径一致）；
    *  「当日完成工作」是契约必填，清空会被服务端拒绝 —— 前端先拦。 */
   const patchReport = (id: string, patch: ReportPatch) => {
     if (patch.doneWork !== undefined && patch.doneWork === "") {
-      setNotice(t("report.notice.doneRequired"));
+      notify("error", t("report.notice.doneRequired"));
       return;
     }
     const current = reportsRef.current.find((item) => item.id === id);
@@ -3154,7 +3144,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
         setReports((previous) => previous.map((item) => (item.id === id ? updated : item)));
       })
       .catch((error) => {
-        setNotice(friendlyError(error, t("report.error.reportSave")));
+        notify("error", friendlyError(error, t("report.error.reportSave")));
         void reload();
       });
   };
@@ -3162,11 +3152,11 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
   /** 问题行内编辑落值（Push 216 接真）：同日报一套 —— 乐观更新 + PATCH 回包替换；提出日期不动。 */
   const patchIssue = (id: string, patch: IssuePatch) => {
     if (patch.title !== undefined && patch.title === "") {
-      setNotice(t("report.notice.titleRequired"));
+      notify("error", t("report.notice.titleRequired"));
       return;
     }
     if (patch.categories !== undefined && patch.categories.length === 0) {
-      setNotice(t("report.notice.categoryRequired"));
+      notify("error", t("report.notice.categoryRequired"));
       return;
     }
     const current = issuesRef.current.find((item) => item.id === id);
@@ -3179,7 +3169,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
         setIssues((previous) => previous.map((item) => (item.id === id ? updated : item)));
       })
       .catch((error) => {
-        setNotice(friendlyError(error, t("report.error.issueSave")));
+        notify("error", friendlyError(error, t("report.error.issueSave")));
         void reload();
       });
   };
@@ -3237,10 +3227,10 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
           return open !== undefined && open.reportId === reportId ? null : current;
         });
         // Keep the deleted draft identity so a later save cannot silently recreate it.
-        setNotice(t("report.notice.reportDeleted"));
+        notify("ok", t("report.notice.reportDeleted"));
       })
       .catch((error) => {
-        setNotice(friendlyError(error, t("report.error.reportDelete")));
+        notify("error", friendlyError(error, t("report.error.reportDelete")));
         void reload();
       });
   };
@@ -3258,10 +3248,10 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
           // Keep the deleted draft identity and its text until the user starts a new report.
         }
         setOpenIssueId((current) => (current === issue.id ? null : current));
-        setNotice(result.cascadedReportId === null ? t("report.notice.issueDeleted") : t("report.notice.issueDeletedWithReport"));
+        notify("ok", result.cascadedReportId === null ? t("report.notice.issueDeleted") : t("report.notice.issueDeletedWithReport"));
       })
       .catch((error) => {
-        setNotice(friendlyError(error, t("report.error.issueDelete")));
+        notify("error", friendlyError(error, t("report.error.issueDelete")));
         void reload();
       });
   };
@@ -3279,7 +3269,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
     setPendingDelete({ kind: "issue", issue });
   };
 
-  /** 底部确认条的第二下：先收浮条、再按待删项派发真删（成对删除都在上面两个 delete*Unit 里落库）。 */
+  /** 顶部确认 Toast 的第二下：先收浮条、再按待删项派发真删（成对删除都在上面两个 delete*Unit 里落库）。 */
   const confirmPendingDelete = () => {
     const pending = pendingDelete;
     if (pending === null) {
@@ -3371,12 +3361,12 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
     }
     const blocking = uploadBlockingMessage(draft, locale);
     if (blocking !== "") {
-      setNotice(blocking);
+      notify("error", blocking);
       return;
     }
     const body = draftWriteBody("submitted");
     if (draftId !== null && (!reportsRef.current.some((item) => item.id === draftId) || draftVersion.current === null)) {
-      setNotice(t("rp.draftGone"));
+      notify("error", t("rp.draftGone"));
       return;
     }
     const draftRow = draftId === null ? null : reportsRef.current.find((item) => item.id === draftId) ?? null;
@@ -3392,7 +3382,8 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
         setDraft(emptyDraft());
         setDraftId(null);
         draftVersion.current = null;
-        setNotice(
+        notify(
+          "ok",
           t("report.notice.submitted", { date: dateText }) +
             (issueCount > 0 ? t("report.notice.submittedIssues", { n: issueCount }) : t("report.notice.submittedEnd")),
         );
@@ -3400,7 +3391,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
         return reload();
       })
       .catch((error) => {
-        setNotice(friendlyError(error, t("report.error.submit")));
+        notify("error", friendlyError(error, t("report.error.submit")));
         void reload();
       })
       .finally(() => {
@@ -3415,17 +3406,17 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
       return;
     }
     if (renumberLines(draft.doneWork) === "") {
-      setNotice(t("report.notice.draftNeedsDone"));
+      notify("error", t("report.notice.draftNeedsDone"));
       return;
     }
     const blocking = uploadBlockingMessage(draft, locale);
     if (blocking !== "") {
-      setNotice(blocking);
+      notify("error", blocking);
       return;
     }
     const body = draftWriteBody("draft");
     if (draftId !== null && (!reportsRef.current.some((item) => item.id === draftId) || draftVersion.current === null)) {
-      setNotice(t("rp.draftGone"));
+      notify("error", t("rp.draftGone"));
       return;
     }
     const draftRow = draftId === null ? null : reportsRef.current.find((item) => item.id === draftId) ?? null;
@@ -3440,11 +3431,11 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
         if (draftRow === null) {
           setDraftId(saved.id);
         }
-        setNotice(t("report.notice.draftSaved"));
+        notify("ok", t("report.notice.draftSaved"));
         return reload();
       })
       .catch((error) => {
-        setNotice(friendlyError(error, t("report.error.draft")));
+        notify("error", friendlyError(error, t("report.error.draft")));
         void reload();
       })
       .finally(() => {
@@ -3478,10 +3469,13 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
     // 只有「日报填写」那一块在下面单独收成居中窄栏。
     <div className="w-full space-y-5">
 
-      {notice === "" ? null : (
-        <p data-subnav-notice className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-xs text-emerald-800">
-          {notice}
-        </p>
+      {notice === null ? null : (
+        <Toast
+          kind={notice.kind}
+          text={notice.text}
+          onClose={() => { setNotice(null); }}
+          anchor={{ name: "data-subnav-notice", value: notice.kind }}
+        />
       )}
 
       {subTab === "日报填写" ? (
@@ -3504,7 +3498,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
             <div data-report-draft-conflict="" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="status">
               <p>{remoteDraft === null ? t("rp.draftRemoteGone") : t("rp.draftRemoteChanged")}</p>
               {remoteDraft === null ? <button type="button" className="mt-2 underline" onClick={() => { setDraftId(null); draftVersion.current = null; }}>{t("rp.draftKeep")}</button> : (
-                <details className="mt-2"><summary>{t("rp.draftReview")}</summary><p className="whitespace-pre-wrap py-2">{remoteDraft.doneWork + "\n" + t("rp.planInline") + remoteDraft.plan}</p><button type="button" className="underline" onClick={() => { draftVersion.current = remoteDraft.version; setNotice(t("rp.draftConfirm")); }}>{t("rp.draftConfirmBtn")}</button></details>
+                <details className="mt-2"><summary>{t("rp.draftReview")}</summary><p className="whitespace-pre-wrap py-2">{remoteDraft.doneWork + "\n" + t("rp.planInline") + remoteDraft.plan}</p><button type="button" className="underline" onClick={() => { draftVersion.current = remoteDraft.version; notify("info", t("rp.draftConfirm")); }}>{t("rp.draftConfirmBtn")}</button></details>
               )}
             </div>
           ) : null}
@@ -3518,7 +3512,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
           <button
             type="button"
             onClick={() => {
-              setNotice("");
+              setNotice(null);
               void reload();
             }}
             className={BTN_SECONDARY}
@@ -3606,43 +3600,24 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
         />
       )}
 
-      {/* 删除二次确认条（Push 218 业务口径「删除要二次提示」）：与首页「删除项目」/ 模板面板同款固定底栏 ——
+      {/* 删除二次确认（Push 218 业务口径「删除要二次提示」）：与首页「删除项目」/ 模板面板同款顶部常驻 Toast ——
           非阻断（第一下只是开口，不锁页面），第二下「删除」才真删；文案把成对删除的连带范围写清。 */}
       {pendingDelete === null ? null : (
-        <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
-          <div
-            ref={deleteConfirmTrapRef}
-            role="dialog"
-            aria-label={pendingDelete.kind === "report" ? t("report.delete.ariaReport") : t("report.delete.ariaIssue")}
-            data-delete-confirm-strip=""
-            className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
-          >
-            <span>
-              {pendingDelete.kind === "report"
-                ? t("report.delete.report", { date: isoDateText(locale, pendingDelete.report.date) })
-                : pendingDelete.issue.reportId === ""
-                  ? t("report.delete.issueAlone", { date: isoDateText(locale, pendingDelete.issue.raisedAt) })
-                  : t("report.delete.issueWithReport", { date: isoDateText(locale, pendingDelete.issue.raisedAt) })}
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                setPendingDelete(null);
-              }}
-              className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
-            >
-              {t("common.cancel")}
-            </button>
-            <button
-              type="button"
-              data-delete-confirm=""
-              onClick={confirmPendingDelete}
-              className="rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
-            >
-              {t("common.delete")}
-            </button>
-          </div>
-        </div>
+        <ToastConfirm
+          text={pendingDelete.kind === "report"
+            ? t("report.delete.report", { date: isoDateText(locale, pendingDelete.report.date) })
+            : pendingDelete.issue.reportId === ""
+              ? t("report.delete.issueAlone", { date: isoDateText(locale, pendingDelete.issue.raisedAt) })
+              : t("report.delete.issueWithReport", { date: isoDateText(locale, pendingDelete.issue.raisedAt) })}
+          ariaLabel={pendingDelete.kind === "report" ? t("report.delete.ariaReport") : t("report.delete.ariaIssue")}
+          cancelLabel={t("common.cancel")}
+          confirmLabel={t("common.delete")}
+          onCancel={() => { setPendingDelete(null); }}
+          onConfirm={confirmPendingDelete}
+          containerRef={deleteConfirmTrapRef}
+          anchor={{ name: "data-delete-confirm-strip", value: "" }}
+          confirmAnchor={{ name: "data-delete-confirm", value: "" }}
+        />
       )}
     </div>
   );

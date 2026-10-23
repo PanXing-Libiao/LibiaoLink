@@ -57,7 +57,7 @@ export async function createCadFixture(paths: string[], cache: string, endpoint:
     CAD_ENGINE_SOCKET: endpoint.startsWith("/") ? endpoint : "", CAD_MAX_INPUT_MIB: 64 } as Env);
   const engine = new CadEngineClient(config);
   const cad = new CadPreviewService(repository as unknown as FileRepository, permission as unknown as PermissionService, storage as unknown as ObjectStorage, engine);
-  const previews = new PreviewReadService({} as never, repository as never, {} as never, storage as never, permission as never, {} as never, config);
+  const previews = new PreviewReadService({} as never, repository as never, {} as never, storage as never, permission as never, {} as never, { record: async () => {} } as never, config);
   const sessions = { async resolve(token: string) { if (!["cad-local-a", "cad-local-b"].includes(token)) throw new AppError("AUTH_REQUIRED", "未登录"); return { user: { id: token === "cad-local-a" ? ACTOR_A : ACTOR_B, casdoorId: "local-fixture", username: "local-fixture", displayName: "本地测试", email: null, owner: "local" } }; } };
 
   @Controller("__cad-smoke")
@@ -102,5 +102,6 @@ export async function createCadFixture(paths: string[], cache: string, endpoint:
   app.useGlobalFilters(new ApiErrorFilter());
   if (middleware !== undefined) app.use(middleware);
   await app.init();
+  if (!browser) await app.listen(0, "127.0.0.1");
   return { app, engine, cad, records, permission, storage, async close() { await app.close(); await engine.onModuleDestroy(); await Promise.all([...importedPaths].map(path => rm(path, { force: true }))); } };
 }

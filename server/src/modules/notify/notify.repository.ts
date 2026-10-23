@@ -6,7 +6,7 @@
  * snooze_until 承载稍后提醒 —— worker 触发循环按 snooze_until 到期重提醒（与投递排空语义独立）。
  */
 import { Injectable } from "@nestjs/common";
-import { and, asc, count, desc, eq, gte, isNotNull, isNull, lt, lte, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, sql, type SQL } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { notificationSnoozes, notifications, notifyPrefs } from "../../db/schema/notify.js";
@@ -178,6 +178,7 @@ export class NotifyRepository {
           eq(notifications.recipientId, input.recipientId),
           eq(notifications.mergeKey, input.mergeKey),
           isNull(notifications.mergedIntoId),
+          isNull(notifications.deletedAt),
           eq(notifications.status, "unread"),
           gte(notifications.createdAt, input.since),
           lt(notifications.id, input.excludeId),
@@ -188,20 +189,36 @@ export class NotifyRepository {
     return rows[0] ?? null;
   }
 
-  /** 合并落库：子行挂主行（留档）+ 主行 merged_count 自增（同一事务内两笔）。 */
+  /**
+   * 合并落库：主行仍可见且未读时自增 merged_count，再把子行挂主行（同一事务两笔）。
+   * 主行在「查合并目标」与「落合并」之间被删除 / 标读时返回 false，由调用方改走正常投递，
+   * 避免新消息被并入已从收件箱隐藏的主行而静默丢失。
+   */
   async attachMerged(
     input: { childId: number; parentId: number; at: Date },
     tx?: DbClient,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const db = tx ?? this.database.db;
+    const parents = await db
+      .update(notifications)
+      .set({ mergedCount: sql`${notifications.mergedCount} + 1`, updatedAt: input.at })
+      .where(
+        and(
+          eq(notifications.id, input.parentId),
+          isNull(notifications.mergedIntoId),
+          isNull(notifications.deletedAt),
+          eq(notifications.status, "unread"),
+        ),
+      )
+      .returning({ id: notifications.id });
+    if (parents.length === 0) {
+      return false;
+    }
     await db
       .update(notifications)
       .set({ mergedIntoId: input.parentId, updatedAt: input.at })
       .where(eq(notifications.id, input.childId));
-    await db
-      .update(notifications)
-      .set({ mergedCount: sql`${notifications.mergedCount} + 1`, updatedAt: input.at })
-      .where(eq(notifications.id, input.parentId));
+    return true;
   }
 
   /** 投递：置 delivered_at（收件箱可见）。 */
@@ -242,6 +259,7 @@ export class NotifyRepository {
     const conditions: SQL[] = [
       eq(notifications.recipientId, recipientId),
       isNull(notifications.mergedIntoId),
+      isNull(notifications.deletedAt),
       // 收件箱只返回**已投递**行：delay 中的行（免打扰 / 每日上限排队）不属于收件箱可见面。
       isNotNull(notifications.deliveredAt),
     ];
@@ -282,6 +300,7 @@ export class NotifyRepository {
         and(
           eq(notifications.recipientId, recipientId),
           isNull(notifications.mergedIntoId),
+          isNull(notifications.deletedAt),
           eq(notifications.status, "unread"),
           isNotNull(notifications.deliveredAt),
         ),
@@ -295,7 +314,7 @@ export class NotifyRepository {
     const rows = await db
       .select(NOTIFY_SELECT)
       .from(notifications)
-      .where(and(eq(notifications.id, id), eq(notifications.recipientId, recipientId)))
+      .where(and(eq(notifications.id, id), eq(notifications.recipientId, recipientId), isNull(notifications.deletedAt)))
       .limit(1);
     return rows[0] ?? null;
   }
@@ -325,12 +344,91 @@ export class NotifyRepository {
         and(
           eq(notifications.recipientId, recipientId),
           isNull(notifications.mergedIntoId),
+          isNull(notifications.deletedAt),
           eq(notifications.status, "unread"),
           isNotNull(notifications.deliveredAt),
         ),
       )
       .returning({ id: notifications.id });
     return rows.length;
+  }
+
+  /** 删除指定站内信（软删）：先命中本人已投递主行，再取消该行未触发的稍后提醒；返回是否命中。 */
+  async softDelete(id: number, recipientId: string, at: Date, tx?: DbClient): Promise<boolean> {
+    const db = tx ?? this.database.db;
+    const rows = await db
+      .update(notifications)
+      .set({ deletedAt: at, snoozeUntil: null, updatedAt: at })
+      .where(
+        and(
+          eq(notifications.id, id),
+          eq(notifications.recipientId, recipientId),
+          isNull(notifications.mergedIntoId),
+          isNull(notifications.deletedAt),
+          isNotNull(notifications.deliveredAt),
+        ),
+      )
+      .returning({ id: notifications.id });
+    if (rows.length === 0) {
+      return false;
+    }
+    await db
+      .update(notificationSnoozes)
+      .set({ cancelledAt: at })
+      .where(
+        and(
+          eq(notificationSnoozes.notificationId, id),
+          isNull(notificationSnoozes.triggeredAt),
+          isNull(notificationSnoozes.cancelledAt),
+        ),
+      );
+    return true;
+  }
+
+  /** 一键删除全部（软删）：只隐藏本人已投递主行；返回本次删除数与其中未读数。 */
+  async softDeleteAll(
+    recipientId: string,
+    at: Date,
+    tx?: DbClient,
+  ): Promise<{ deleted: number; unreadDeleted: number }> {
+    const db = tx ?? this.database.db;
+    const visibleIds = db
+      .select({ id: notifications.id })
+      .from(notifications)
+      .where(
+        and(
+          eq(notifications.recipientId, recipientId),
+          isNull(notifications.mergedIntoId),
+          isNull(notifications.deletedAt),
+          isNotNull(notifications.deliveredAt),
+        ),
+      );
+    await db
+      .update(notificationSnoozes)
+      .set({ cancelledAt: at })
+      .where(
+        and(
+          isNull(notificationSnoozes.triggeredAt),
+          isNull(notificationSnoozes.cancelledAt),
+          inArray(notificationSnoozes.notificationId, visibleIds),
+        ),
+      );
+    const rows = await db
+      .update(notifications)
+      .set({ deletedAt: at, snoozeUntil: null, updatedAt: at })
+      .where(
+        and(
+          eq(notifications.recipientId, recipientId),
+          isNull(notifications.mergedIntoId),
+          isNull(notifications.deletedAt),
+          isNotNull(notifications.deliveredAt),
+        ),
+      )
+      .returning({ status: notifications.status });
+    return {
+      deleted: rows.length,
+      unreadDeleted: rows.filter((row) => row.status === "unread").length,
+    };
   }
 
   /**
@@ -402,6 +500,7 @@ export class NotifyRepository {
           isNotNull(notifications.snoozeUntil),
           lte(notifications.snoozeUntil, now),
           isNull(notifications.mergedIntoId),
+          isNull(notifications.deletedAt),
           isNotNull(notifications.deliveredAt),
         ),
       )

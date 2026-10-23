@@ -1,4 +1,5 @@
 import type { ErrorCode } from "@libiaolink/contracts";
+import { Readable } from "node:stream";
 import { AppError } from "../common/errors/app-error.js";
 
 /**
@@ -42,6 +43,12 @@ export interface GetObjectResult {
   bytes: Uint8Array;
   contentType: string | null;
   sizeBytes: number;
+}
+
+export interface ObjectStreamResult {
+  stream: Readable;
+  sizeBytes: number;
+  contentType: string | null;
 }
 
 /** 只读对象前缀（文件头校验用）：字节数不超过请求上限，不暴露对象总大小。 */
@@ -123,6 +130,24 @@ export interface PurgePrefixResult extends PurgeObjectResult {
 
 export abstract class ObjectStorage {
   abstract readonly bucket: string;
+
+  /** CAD 持久产物流式读；适配器覆盖以避免整份模型进入 API 内存。 */
+  async getObjectStream(objectKey: string): Promise<ObjectStreamResult | null> {
+    const object = await this.getObject(objectKey);
+    return object === null ? null : { stream: Readable.from([object.bytes]), sizeBytes: object.sizeBytes, contentType: object.contentType };
+  }
+
+  async putObjectStream(input: { objectKey: string; body: Readable; sizeBytes: number; contentType: string }): Promise<void> {
+    const chunks: Buffer[] = []; let size = 0;
+    for await (const chunk of input.body) {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += bytes.byteLength;
+      if (size > input.sizeBytes) throw new Error("Object stream exceeds declared size");
+      chunks.push(bytes);
+    }
+    if (size !== input.sizeBytes) throw new Error("Object stream size mismatch");
+    await this.putObject({ objectKey: input.objectKey, body: Buffer.concat(chunks), contentType: input.contentType });
+  }
 
   /** 创建分片上传会话（S3 CreateMultipartUpload）；分片状态不落库。 */
   abstract createMultipartUpload(input: CreateMultipartUploadInput): Promise<MultipartUploadRef>;

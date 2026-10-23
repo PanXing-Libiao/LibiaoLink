@@ -3,6 +3,9 @@ import { ClockService } from "../../common/clock/clock.service.js";
 import { CadEngineClient } from "./cad-engine.client.js";
 import { CadPreviewService } from "./cad-preview.service.js";
 import { CadPreviewController } from "./cad-preview.controller.js";
+import { CadArchiveRepository } from "./cad-archive.repository.js";
+import { CadArchiveService } from "./cad-archive.service.js";
+import { CadArchiveWorker } from "./cad-archive.worker.js";
 import { AdminModule } from "../admin/index.js";
 import { IdentityModule } from "../identity/index.js";
 import { PermissionModule } from "../permission/index.js";
@@ -43,6 +46,9 @@ import { PreviewService } from "./preview.service.js";
   ],
   providers: [
     CadEngineClient,
+    CadArchiveRepository,
+    CadArchiveService,
+    CadArchiveWorker,
     CadPreviewService,
     FileRepository,
     FileService,
@@ -59,6 +65,6 @@ import { PreviewService } from "./preview.service.js";
     // M4-05f 下载切片：版本短时签名（attachment）+ file.download 权限 + download 审计。
     FileDownloadService,
   ],
-  exports: [FileService, ChangeService, PreviewService],
+  exports: [FileService, ChangeService, PreviewService, CadArchiveWorker],
 })
 export class FileModule {}

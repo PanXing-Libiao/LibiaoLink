@@ -1,5 +1,6 @@
 /**
  * 翻译文本加工（服务端 · Push 301 · §6.16 ㉕）：术语保护 / 回换 + 译文规整（Push 311 补「句首大写」）—— 原 frontend/src/translateApi.ts 同款逻辑搬移内聚；规整口径见 §6.16 ㉘。
+ * 2026-10-23 追订：目标语言扩到日文 / 韩文 —— 术语按目标语言回换；英文保留大小写规整，日韩只清理空白与标点。
  *
  * 为什么挪到服务端（2026-10-13 业务口径「当用户写项目进展描述时直接后台翻译 并且写入数据库」）：
  *  - 译文库键 = sha256(原文)：前端读路径（批量查库 / 单条）与保存链路预热（task / project 控制器挂点）必须同键。
@@ -11,6 +12,8 @@
  * 相邻无分隔的占位符会被引擎吞或改写，唯此形态实测原样透传（Argos 与 HY-MT1.5-1.8B 均验证通过）；
  * 匹配 = 长词优先（仓配中心 先于 仓配，避免译成「… Center Center」）；人名 / 品牌 / 产品词定稿英文后加一行即可。
  */
+
+import type { TranslateLang } from "@libiaolink/contracts";
 
 /** 常见缩写词（全大写译文规整时保留原样；小模型偶发整句大写，实测 2026-10-10）。 */
 const KEEP_UPPER = new Set([
@@ -74,23 +77,30 @@ function capitalizeSentenceStart(text: string): string {
   return first.toUpperCase() + text.slice(1);
 }
 
-/** 领域术语表（原 frontend/src/translateApi.ts 原样搬移；术语不参与机翻、固定译法回换）。 */
-const GLOSSARY: ReadonlyArray<{ zh: string; en: string }> = [
-  { zh: "基督城", en: "Christchurch" },
-  { zh: "立镖", en: "Libiao" },
-  { zh: "仓配中心", en: "Warehouse and Distribution Center" },
-  { zh: "仓配", en: "Warehouse and Distribution Center" },
-  { zh: "分拣中心", en: "Sorting Center" },
-  { zh: "分拣线", en: "Sorting Line" },
-  { zh: "分拨中心", en: "Distribution Center" },
-  { zh: "分拣", en: "Sorting" },
-  { zh: "分拨", en: "Distribution" },
-  { zh: "联调", en: "Integration Testing" },
-  { zh: "调试", en: "Commissioning" },
+/** 领域术语表（原 frontend/src/translateApi.ts 原样搬移；术语不参与机翻、按目标语言固定译法回换）。 */
+interface GlossaryEntry {
+  zh: string;
+  en: string;
+  ja: string;
+  ko: string;
+}
+
+const GLOSSARY: readonly GlossaryEntry[] = [
+  { zh: "基督城", en: "Christchurch", ja: "クライストチャーチ", ko: "크라이스트처치" },
+  { zh: "立镖", en: "Libiao", ja: "Libiao", ko: "Libiao" },
+  { zh: "仓配中心", en: "Warehouse and Distribution Center", ja: "倉庫・配送センター", ko: "창고·물류센터" },
+  { zh: "仓配", en: "Warehouse and Distribution Center", ja: "倉庫・配送", ko: "창고·물류" },
+  { zh: "分拣中心", en: "Sorting Center", ja: "仕分けセンター", ko: "분류 센터" },
+  { zh: "分拣线", en: "Sorting Line", ja: "仕分けライン", ko: "분류 라인" },
+  { zh: "分拨中心", en: "Distribution Center", ja: "配送センター", ko: "물류 센터" },
+  { zh: "分拣", en: "Sorting", ja: "仕分け", ko: "분류" },
+  { zh: "分拨", en: "Distribution", ja: "配送", ko: "물류" },
+  { zh: "联调", en: "Integration Testing", ja: "結合テスト", ko: "통합 테스트" },
+  { zh: "调试", en: "Commissioning", ja: "試運転調整", ko: "시운전" },
 ];
 
 /** 长词优先的匹配序（模块级排一次）。 */
-const GLOSSARY_SORTED: ReadonlyArray<{ zh: string; en: string }> = GLOSSARY.slice().sort((a, b) => b.zh.length - a.zh.length);
+const GLOSSARY_SORTED: readonly GlossaryEntry[] = GLOSSARY.slice().sort((a, b) => b.zh.length - a.zh.length);
 
 /** 占位符号码池（六位、无连零，实测原样透传）：一个术语固定取一枚（同文本内不重号；超池追加一位数字）。 */
 const TOKEN_NUMBERS: readonly string[] = ["8612345", "8612347", "8612361", "8612371", "8612381", "8612391", "8612412", "8612432", "8612452", "8612462", "8612472", "8612482", "8612492", "8612512", "8612532", "8612542"];
@@ -101,8 +111,8 @@ function glossaryToken(index: number): string {
   return "Xq" + base + extra + "Y";
 }
 
-/** 出引擎前：长词优先把命中术语换成占位符（空格包夹，防相邻占位符互相干扰）；返回替换表（无命中 = 空表、原文照发）。 */
-export function protectGlossary(text: string): { protectedText: string; tokens: ReadonlyMap<string, string> } {
+/** 出引擎前：长词优先把命中术语换成占位符（空格包夹，防相邻占位符互相干扰）；返回目标语言替换表（无命中 = 空表、原文照发）。 */
+export function protectGlossary(text: string, target: TranslateLang = "en"): { protectedText: string; tokens: ReadonlyMap<string, string> } {
   let out = text;
   const tokens = new Map<string, string>();
   GLOSSARY_SORTED.forEach((term, index) => {
@@ -110,7 +120,7 @@ export function protectGlossary(text: string): { protectedText: string; tokens: 
       return;
     }
     const token = glossaryToken(index);
-    tokens.set(token, term.en);
+    tokens.set(token, term[target]);
     out = out.split(term.zh).join(" " + token + " ");
   });
   if (tokens.size === 0) {
@@ -129,8 +139,16 @@ export function restoreGlossary(text: string, tokens: ReadonlyMap<string, string
   return out.replace(/\s{2,}/g, " ").replace(/\s+([,.!?;:])/g, "$1").trim();
 }
 
-/** 引擎回包 → 最终英文：先规整（全大写修形），再回换术语占位符（无术语时只规整）。 */
-export function finalizeTranslation(text: string, tokens: ReadonlyMap<string, string>): string {
-  const normalized = normalizeEnglish(text);
+/** 日文 / 韩文译文规整：仅收拢空白与标点前空格；不做英文大小写转换。 */
+export function normalizeNonEnglish(text: string): string {
+  return text
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.!?;:、。，！？；：])/g, "$1")
+    .trim();
+}
+
+/** 引擎回包 → 最终译文：英文做大小写规整；日文 / 韩文只做空白规整；最后回换目标语言术语。 */
+export function finalizeTranslation(text: string, tokens: ReadonlyMap<string, string>, target: TranslateLang = "en"): string {
+  const normalized = target === "en" ? normalizeEnglish(text) : normalizeNonEnglish(text);
   return tokens.size === 0 ? normalized : restoreGlossary(normalized, tokens);
 }

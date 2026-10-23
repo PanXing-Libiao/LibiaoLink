@@ -1,7 +1,7 @@
 /**
  * 翻译接口（§6.16 ㉕ · Push 301）：契约 shared/src/modules/translate.ts。
  * 根路径 /api/v1/translate —— 登录即可（无功能权限位：产出仅译文库缓存，不写业务数据、不写审计）；
- * POST 挂 CsrfGuard（与其它写请求同口径）；batch = 只读查库（不调引擎，英文界面切页提速）。
+ * POST 挂 CsrfGuard（与其它写请求同口径）；batch = 只读查库（不调引擎，多语界面切页提速）。
  */
 import { Body, Controller, HttpCode, Post, UseGuards } from "@nestjs/common";
 import {

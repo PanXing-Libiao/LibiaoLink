@@ -2,7 +2,7 @@ name: libiaolink-cad
 
 services:
   cad:
-    image: libiaolink/cad-sandbox:1.0.0
+    image: libiaolink/cad-sandbox:1.0.1
     platform: linux/amd64
     build:
       context: ../..
@@ -44,7 +44,7 @@ services:
 
   # macOS cannot directly share a Linux AF_UNIX socket. No native libraries load here.
   edge:
-    image: libiaolink/cad-sandbox:1.0.0
+    image: libiaolink/cad-sandbox:1.0.1
     platform: linux/amd64
     profiles: [dev]
     entrypoint: ["/opt/ocp/bin/python", "/opt/cad/edge.py"]

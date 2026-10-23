@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLiveRefresh } from "./useLiveRefresh";
-import { useT } from "./i18n";
+import { prefetchLocalizedText, useLocale, useT } from "./i18n";
 import { AppHeader } from "./components/AppHeader";
 import { HubDashboard, type HubDashboardState } from "./components/HubDashboard";
 import { HubMap } from "./components/HubMap";
@@ -95,6 +95,7 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
   onDashViewChange: (view: HubDashView) => Promise<void>;
 }) {
   const t = useT();
+  const locale = useLocale();
   /** 提示条内容（Push 301）：存结构化状态、渲染时按当前语言取词（切换语言不用等下一次取数）。 */
   const [note, setNote] = useState<HubNote>("loading");
   const [distribution, setDistribution] = useState<HubMapDistribution | null>(null);
@@ -117,6 +118,13 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
   const issuesLoadingRef = useRef(false);
   const wordsStateRef = useRef<"idle" | "loading" | "ready" | "failed">("idle");
   const wordsLoadingRef = useRef(false);
+  /** 地图里的项目名是手打文本：数据到达 / 切到日韩时按当前语言提前机翻。 */
+  useEffect(() => {
+    if (distribution === null) {
+      return;
+    }
+    prefetchLocalizedText(distribution.pillars.flatMap((pillar) => pillar.projects.map((project) => project.name)));
+  }, [distribution, locale]);
   const settleTimerRef = useRef<number | null>(null);
   const noteText = note === "loading" ? t("hub.loading") : note === "failed" ? t("hub.loadFailed") : note === "none" ? "" : t("hub.capped", { n: note.n, total: note.total });
 

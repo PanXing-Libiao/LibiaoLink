@@ -476,7 +476,13 @@ check("②d 附件清单回填文件库文件名 + 库内真落两行 files（�
 
 // ---------- ③ 提交：日报落库 + 自动生成问题 + 问题图转挂 ----------
 await clickSelector("[data-action=submit]");
+const reportSubmitToastVisible = await waitFor("(function(){var n=document.querySelector(" + j("[data-subnav-notice=ok]") + ");return n!==null&&n.getAttribute(" + j("data-toast") + ")===" + j("ok") + "&&String(n.textContent).indexOf(" + j("已提交") + ")>=0;})()", 15000);
+await sleep(420);
+const reportSubmitToastBox = await ev("(function(){var n=document.querySelector(" + j("[data-subnav-notice=ok]") + ");if(n===null){return null;}var r=n.getBoundingClientRect();return {top:Math.round(r.top),width:Math.round(r.width),centerX:Math.round(r.left+r.width/2),vw:window.innerWidth,position:getComputedStyle(n).position,cls:String(n.className||" + j("") + ")};})()");
+check("③a2 提交成功提示 = 白色圆角顶部 Toast（fixed / top ≤ 48px / 内容自适应宽度 / 2s 自动收起）", reportSubmitToastVisible === true && reportSubmitToastBox !== null && reportSubmitToastBox.position === "fixed" && reportSubmitToastBox.top >= 0 && reportSubmitToastBox.top <= 48 && reportSubmitToastBox.width > 0 && reportSubmitToastBox.width <= 640 && Math.abs(reportSubmitToastBox.centerX - reportSubmitToastBox.vw / 2) <= 40 && reportSubmitToastBox.cls.indexOf("bg-white") >= 0 && reportSubmitToastBox.cls.indexOf("rounded-[22px]") >= 0 && reportSubmitToastBox.cls.indexOf("w-fit") >= 0, JSON.stringify(reportSubmitToastBox));
 await sleep(2500);
+const reportSubmitToastGone = await waitFor("document.querySelector(" + j("[data-subnav-notice]") + ")===null", 5000);
+check("③a3 提交成功提示约 2s 后自动消失", reportSubmitToastGone === true);
 const switched = await waitFor("document.querySelector(" + j("[data-report-table]") + ")!==null", 20000);
 check("③a 提交成功 → 自动切「日报记录」并出表（服务端回包驱动，不是本地假行）", switched === true);
 const list1 = await reportsOf();
@@ -525,6 +531,8 @@ await sleep(600);
 await typeInto("[data-field=doneWork]", "回放·草稿-C1");
 await typeInto("[data-field=plan]", "回放·草稿计划-C1");
 await clickSelector("[data-action=draft]");
+const draftToastVisible = await waitFor("(function(){var n=document.querySelector(" + j("[data-subnav-notice=ok]") + ");return n!==null&&n.getAttribute(" + j("data-toast") + ")===" + j("ok") + "&&String(n.textContent).indexOf(" + j("已暂存") + ")>=0;})()", 15000);
+check("⑤a0 暂存草稿成功 = 同一枚白色顶部 Toast（不再用页内绿色横幅）", draftToastVisible === true);
 await sleep(2500);
 const list3 = await reportsOf();
 const draftRow = list3.items.filter((row) => row.state === "draft")[0];
@@ -680,12 +688,13 @@ await waitFor("(function(){var s=document.querySelector(" + j(drawerStrip) + ");
 await clickSelector(drawerStrip + " [data-action=remove-attachment]");
 const drawerConfirmShown = await waitFor("document.querySelector(" + j("[data-remove-attachment-confirm-strip]") + ")!==null", 5000);
 await sleep(500);
+const drawerConfirmPos = await ev("(function(){var el=document.querySelector(" + j("[data-remove-attachment-confirm-strip]") + ");if(el===null){return null;}var r=el.getBoundingClientRect();return {top:Math.round(r.top),cls:String(el.className)};})()");
 const drawerThumbsBefore = await ev("(function(){var s=document.querySelector(" + j(drawerStrip) + ");return s===null?null:s.querySelectorAll(" + j("[data-attachment-thumb]") + ").length;})()");
 await clickSelector("[data-remove-attachment-confirm]");
 await sleep(2000);
 const iss1Drawer = (await issuesOf()).items.filter((row) => row.id === iss1.id)[0];
 const drawerThumbsAfter = await ev("(function(){var s=document.querySelector(" + j(drawerStrip) + ");return s===null?0:s.querySelectorAll(" + j("[data-attachment-thumb]") + ").length;})()");
-check("⑥o 抽屉「移除图片」要二次确认（第一下 × 只出确认条 · 图还在；第二下「移除」才真摘并落库）", drawerOpened === true && drawerConfirmShown === true && drawerThumbsBefore === 1 && iss1Drawer.photos.length === 0 && drawerThumbsAfter === 0 && iss1Drawer.version > iss1State3.version, JSON.stringify({ opened: drawerOpened, strip: drawerConfirmShown, before: drawerThumbsBefore, after: drawerThumbsAfter, version: iss1Drawer.version }));
+check("⑥o 抽屉「移除图片」= 顶部同款确认 Toast（第一下 × 只出浮条 · 图还在；第二下「移除」才真摘并落库）", drawerOpened === true && drawerConfirmShown === true && drawerConfirmPos !== null && drawerConfirmPos.top <= 48 && String(drawerConfirmPos.cls).indexOf("ll-toast-top") >= 0 && drawerThumbsBefore === 1 && iss1Drawer.photos.length === 0 && drawerThumbsAfter === 0 && iss1Drawer.version > iss1State3.version, JSON.stringify({ opened: drawerOpened, strip: drawerConfirmShown, pos: drawerConfirmPos, before: drawerThumbsBefore, after: drawerThumbsAfter, version: iss1Drawer.version }));
 // ⑥r（Push 244）：抽屉「问题处理人 / 责任人」行内单选 —— 预填当前人，点首行「待分派」清空回缺省。
 await clickSelector("[data-issue-drawer] button[aria-label^=" + Q + "修改问题处理人 / 责任人" + Q + "]");
 const drawerOwnerOpened = await waitFor("document.querySelector(" + j("[data-inline-popover]") + ")!==null", 6000);
@@ -699,8 +708,20 @@ const headCellSel = "button[aria-label^=" + Q + "修改施工人数" + Q + "]";
 const cellStyle = await ev("(function(){var d=document.querySelector(" + j("[data-issue-drawer]") + ");if(d===null){return null;}var owner=d.querySelector(" + j(ownerCellSel) + ");var head=d.querySelector(" + j(headCellSel) + ");if(owner===null||head===null){return {ownerPresent:owner!==null,headPresent:head!==null};}var cells=d.querySelectorAll(" + j("[data-inline-cell]") + ");var bad=[];for(var i=0;i<cells.length;i++){var c=cells[i];if(c.className!==head.className||c.getAttribute(" + j("data-inline-cell") + ")!==" + j("editor") + "){bad.push(String(c.getAttribute(" + j("aria-label") + ")).slice(0,40));}}return {same:owner.className===head.className,ownerKind:owner.getAttribute(" + j("data-inline-cell") + "),headKind:head.getAttribute(" + j("data-inline-cell") + "),cells:cells.length,bad:bad,ownerText:owner.innerText.trim()};})()");
 check("⑥t 抽屉可编辑行统一为「施工人数」同款小框（Push 244 业务口径「修改的选择区域要统一 都和施工人数一致」+「关联阶段 明日计划也要同理统一」）：全部 9 行 class 全等 + data-inline-cell=editor", cellStyle !== null && cellStyle.same === true && cellStyle.ownerKind === "editor" && cellStyle.headKind === "editor" && cellStyle.cells === 9 && cellStyle.bad.length === 0, JSON.stringify(cellStyle));
 check("⑥r 抽屉行内改处理人：预填「" + userRow.display_name + "」→ 点「待分派」清空 → owner_id 归 null、灰杠回显", drawerOwnerOpened === true && drawerOwnerBefore !== null && drawerOwnerBefore.hasOwner === true && iss1Owner2.ownerId === null && iss1Owner2.ownerName === null && drawerOwnerAfter !== null && drawerOwnerAfter.hasOwner === false, JSON.stringify({ opened: drawerOwnerOpened, before: drawerOwnerBefore, after: drawerOwnerAfter, ownerId: iss1Owner2.ownerId }));
-await pressKey("Escape", "Escape", 27);
-await waitFor("document.querySelector(" + j("[data-issue-drawer]") + ")==null", 4000);
+// Push 429 续：抽屉打开时出现顶部 Toast，点 Toast「关闭」不得把抽屉一起关掉（Portal 事件隔离）。
+const titleCellSel = "[data-issue-drawer] button[aria-label^=" + Q + "修改问题描述" + Q + "]";
+await clickSelector(titleCellSel);
+const titleEditorOpened = await waitFor("document.querySelector(" + j("[data-inline-popover] textarea") + ") !== null", 6000);
+await typeInto("[data-inline-popover] textarea", " ");
+await clickSelector("[data-inline-popover] [data-inline-save]");
+const titleErrorShown = await waitFor("(function(){var n=document.querySelector(" + j("[data-subnav-notice=error]") + ");return n!==null&&String(n.textContent).indexOf(" + j("不能为空") + ")>=0;})()", 6000);
+await clickSelector("[data-subnav-notice=error] button");
+const titleErrorGone = await waitFor("document.querySelector(" + j("[data-subnav-notice=error]") + ")===null", 4000);
+const drawerAfterToastClose = await ev("document.querySelector(" + j("[data-issue-drawer]") + ")!==null");
+check("⑥u 抽屉打开时点顶部 Toast「关闭」：只收提示，抽屉仍打开、不误触遮罩", titleEditorOpened === true && titleErrorShown === true && titleErrorGone === true && drawerAfterToastClose === true, JSON.stringify({ editor: titleEditorOpened, error: titleErrorShown, toastGone: titleErrorGone, drawer: drawerAfterToastClose }));
+await clickSelector(".drawer-backdrop");
+const drawerClosedByBackdrop = await waitFor("document.querySelector(" + j("[data-issue-drawer]") + ")==null", 4000);
+check("⑥v 点抽屉遮罩本身仍能正常关闭（事件隔离不阻断遮罩直点）", drawerClosedByBackdrop === true, String(drawerClosedByBackdrop));
 await sleep(600);
 
 // ---------- ⑥p 页内搜索（日报记录 / 问题追踪各一枚 · 与项目空间右上角同款 SearchInput） ----------
@@ -747,11 +768,12 @@ check("⑥p-8 「问题追踪」点 × 清空：命中行还原（共 2 条）",
 await pickDailySub("日报记录");
 await sleep(900);
 await clickSelector(rowSel1 + " [data-report-delete-slot] button");
-// Push 218「删除要二次提示」：第一下只出底部确认条、不落删除；第二下点确认条上的「删除」才真删。
+// Push 218「删除要二次提示」：第一下只出顶部确认 Toast、不落删除；第二下点确认条上的「删除」才真删。
 const repConfirmShown = await waitFor("document.querySelector(" + j("[data-delete-confirm-strip]") + ") !== null", 5000);
 await sleep(400);
+const repConfirmPos = await ev("(function(){var el=document.querySelector(" + j("[data-delete-confirm-strip]") + ");if(el===null){return null;}var r=el.getBoundingClientRect();return {top:Math.round(r.top),cls:String(el.className)};})()");
 const repStillThere = await ev("document.querySelector(" + j(rowSel1) + ") !== null");
-check("⑦a-1 删日报第一下（行尾垃圾桶）= 只出底部确认条、不真删（二次提示）", repConfirmShown === true && repStillThere === true, JSON.stringify({ strip: repConfirmShown, row: repStillThere }));
+check("⑦a-1 删日报第一下（行尾垃圾桶）= 只出顶部同款确认 Toast、不真删", repConfirmShown === true && repConfirmPos !== null && repConfirmPos.top <= 48 && String(repConfirmPos.cls).indexOf("ll-toast-top") >= 0 && repStillThere === true, JSON.stringify({ strip: repConfirmShown, pos: repConfirmPos, row: repStillThere }));
 await clickSelector("[data-delete-confirm]");
 const repGone = await waitFor("(function(){var t=document.querySelector(" + j("[data-report-table]") + ");return t===null || t.querySelector(" + j("[data-report-row=" + Q + rep1.id + Q + "]") + ")===null;})()", 12000);
 await sleep(1200);
@@ -775,8 +797,9 @@ await sleep(1200);
 await clickSelector("[data-issue-row=" + Q + issD.id + Q + "] [data-issue-delete-slot] button");
 const issDConfirmShown = await waitFor("document.querySelector(" + j("[data-delete-confirm-strip]") + ") !== null", 5000);
 await sleep(400);
+const issDConfirmPos = await ev("(function(){var el=document.querySelector(" + j("[data-delete-confirm-strip]") + ");if(el===null){return null;}var r=el.getBoundingClientRect();return {top:Math.round(r.top),cls:String(el.className)};})()");
 const issDStillThere = await ev("document.querySelector(" + j("[data-issue-row=" + Q + issD.id + Q + "]") + ") !== null");
-check("⑦d-1 删问题第一下（行尾垃圾桶）= 只出底部确认条、不真删（二次提示）", issDConfirmShown === true && issDStillThere === true, JSON.stringify({ strip: issDConfirmShown, row: issDStillThere }));
+check("⑦d-1 删问题第一下（行尾垃圾桶）= 只出顶部同款确认 Toast、不真删", issDConfirmShown === true && issDConfirmPos !== null && issDConfirmPos.top <= 48 && String(issDConfirmPos.cls).indexOf("ll-toast-top") >= 0 && issDStillThere === true, JSON.stringify({ strip: issDConfirmShown, pos: issDConfirmPos, row: issDStillThere }));
 await clickSelector("[data-delete-confirm]");
 const issDGone = await waitFor("(function(){var t=document.querySelector(" + j("[data-issue-table]") + ");return t===null || t.querySelector(" + j("[data-issue-row=" + Q + issD.id + Q + "]") + ")===null;})()", 12000);
 await sleep(1200);

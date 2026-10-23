@@ -17,6 +17,7 @@ import {
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { Readable } from "node:stream";
 import type { Env } from "../config/env.js";
 import { SINGLE_COPY_MAX_BYTES } from "./part-plan.js";
 import {
@@ -28,6 +29,7 @@ import {
   type CreateMultipartUploadInput,
   type DownloadUrlInput,
   type GetObjectResult,
+  type ObjectStreamResult,
   type ObjectPrefixResult,
   type MultipartUploadKeyInput,
   type MultipartUploadRef,
@@ -252,6 +254,23 @@ export class S3ObjectStorage extends ObjectStorage {
       }
       throw this.fail("GetObject", error);
     }
+  }
+
+  override async getObjectStream(objectKey: string): Promise<ObjectStreamResult | null> {
+    try {
+      const output = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: objectKey }));
+      if (!output.Body) return null;
+      if (!(output.Body instanceof Readable)) throw new StorageError("unavailable", "当前运行环境不支持对象读取流");
+      return { stream: output.Body, sizeBytes: output.ContentLength ?? 0, contentType: output.ContentType ?? null };
+    } catch (error) {
+      if (isNotFound(error)) return null;
+      throw this.fail("GetObjectStream", error);
+    }
+  }
+
+  override async putObjectStream(input: { objectKey: string; body: Readable; sizeBytes: number; contentType: string }): Promise<void> {
+    await this.call("PutObjectStream", () => this.client.send(new PutObjectCommand({ Bucket: this.bucket,
+      Key: input.objectKey, Body: input.body, ContentLength: input.sizeBytes, ContentType: input.contentType })));
   }
 
   async readObjectPrefix(objectKey: string, maxBytes: number): Promise<ObjectPrefixResult | null> {

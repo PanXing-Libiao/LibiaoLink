@@ -295,24 +295,36 @@ export function formatPlanRelative(iso: string, locale: Locale = "zh", now: Date
   const hour = 60 * minute;
   const day = 24 * hour;
   if (diff < minute) {
-    return locale === "en" ? "Just now" : "刚刚";
+    return locale === "ja" ? "たった今" : locale === "ko" ? "방금" : locale === "en" ? "Just now" : "刚刚";
   }
   if (diff < hour) {
     const minutesAgo = Math.floor(diff / minute);
-    return locale === "en" ? String(minutesAgo) + " min ago" : String(minutesAgo) + " 分钟前";
+    return locale === "ja" ? String(minutesAgo) + "分前" : locale === "ko" ? String(minutesAgo) + "분 전" : locale === "en" ? String(minutesAgo) + " min ago" : String(minutesAgo) + " 分钟前";
   }
   if (diff < day) {
     const hoursAgo = Math.floor(diff / hour);
-    return locale === "en" ? String(hoursAgo) + " hr ago" : String(hoursAgo) + " 小时前";
+    return locale === "ja" ? String(hoursAgo) + "時間前" : locale === "ko" ? String(hoursAgo) + "시간 전" : locale === "en" ? String(hoursAgo) + " hr ago" : String(hoursAgo) + " 小时前";
   }
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   if (atMs >= startOfToday - day && atMs < startOfToday) {
-    return locale === "en" ? "Yesterday" : "昨天";
+    return locale === "ja" ? "昨日" : locale === "ko" ? "어제" : locale === "en" ? "Yesterday" : "昨天";
   }
   const month = String(at.getMonth() + 1);
   const dayText = String(at.getDate());
   if (at.getFullYear() === now.getFullYear()) {
+    if (locale === "ja") {
+      return month + "月" + dayText + "日";
+    }
+    if (locale === "ko") {
+      return month + "월 " + dayText + "일";
+    }
     return locale === "en" ? PLAN_MONTHS_EN[at.getMonth()] + " " + dayText : month + "月" + dayText + "日";
+  }
+  if (locale === "ja") {
+    return String(at.getFullYear()) + "年" + month + "月" + dayText + "日";
+  }
+  if (locale === "ko") {
+    return String(at.getFullYear()) + "년 " + month + "월 " + dayText + "일";
   }
   return locale === "en"
     ? PLAN_MONTHS_EN[at.getMonth()] + " " + dayText + ", " + String(at.getFullYear())
@@ -329,6 +341,12 @@ export function formatPlanFull(iso: string, locale: Locale = "zh"): string {
   if (locale === "en") {
     return PLAN_MONTHS_EN[at.getMonth()] + " " + String(at.getDate()) + ", " + String(at.getFullYear()) + " " + pad(at.getHours()) + ":" + pad(at.getMinutes());
   }
+  if (locale === "ja") {
+    return String(at.getFullYear()) + "年" + String(at.getMonth() + 1) + "月" + String(at.getDate()) + "日 " + pad(at.getHours()) + ":" + pad(at.getMinutes());
+  }
+  if (locale === "ko") {
+    return String(at.getFullYear()) + "년 " + String(at.getMonth() + 1) + "월 " + String(at.getDate()) + "일 " + pad(at.getHours()) + ":" + pad(at.getMinutes());
+  }
   return (
     String(at.getFullYear()) + "年" + String(at.getMonth() + 1) + "月" + String(at.getDate()) + "日 " +
     pad(at.getHours()) + ":" + pad(at.getMinutes())
@@ -338,6 +356,30 @@ export function formatPlanFull(iso: string, locale: Locale = "zh"): string {
 /** 时段问候（Push 266 照 MiniMemo 参考页；Push 301 按界面语言出中英）：中文 = 夜深了 / 早上好 / 中午好 / 下午好 / 晚上好；英文 = Late night / Good morning / Good afternoon / Good evening。 */
 export function planGreeting(locale: Locale = "zh", now: Date = new Date()): string {
   const hour = now.getHours();
+  if (locale === "ja") {
+    if (hour < 5) {
+      return "深夜です";
+    }
+    if (hour < 12) {
+      return "おはようございます";
+    }
+    if (hour < 18) {
+      return "こんにちは";
+    }
+    return "こんばんは";
+  }
+  if (locale === "ko") {
+    if (hour < 5) {
+      return "늦은 밤이에요";
+    }
+    if (hour < 12) {
+      return "좋은 아침이에요";
+    }
+    if (hour < 18) {
+      return "좋은 오후예요";
+    }
+    return "좋은 저녁이에요";
+  }
   if (locale === "en") {
     if (hour < 5) {
       return "Late night";

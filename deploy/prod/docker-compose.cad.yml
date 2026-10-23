@@ -16,6 +16,15 @@ services:
       - cad_socket:/run/cad:ro
     depends_on:
       cad: {condition: service_healthy}
+  worker:
+    environment:
+      CAD_ENGINE_SOCKET: /run/cad/engine.sock
+      CAD_ENGINE_URL: ""
+      CAD_MAX_INPUT_MIB: "${CAD_MAX_INPUT_MIB:-64}"
+    volumes:
+      - cad_socket:/run/cad:ro
+    depends_on:
+      cad: {condition: service_healthy}
 
 volumes:
   cad_socket:

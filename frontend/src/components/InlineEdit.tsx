@@ -9,6 +9,8 @@ import { monthYearText, useLocale, useMachineText, useT } from "../i18n";
 
 const WEEKDAYS_ZH = ["一", "二", "三", "四", "五", "六", "日"];
 const WEEKDAYS_EN = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+const WEEKDAYS_JA = ["月", "火", "水", "木", "金", "土", "日"];
+const WEEKDAYS_KO = ["월", "화", "수", "목", "금", "토", "일"];
 const pad = (value: number) => String(value).padStart(2, "0");
 const toKey = (date: Date) =>
   String(date.getFullYear()) + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate());
@@ -34,7 +36,7 @@ type InlineCellProps = {
   wrapContent?: boolean;
   /** 锁定入口（Push 264 · P1-1 定档行内联编辑；2026-10-10 业务追订「点击后显示弹出即可 不要红色的圆提示」+
    *  「都用这个即可」）：true = 单元格保留可点（不再用 disabled 属性 / 不再出 not-allowed 红色圆圈光标），
-   *  点击不弹编辑浮层、改为弹出站点同款顶部浮空 Toast（error 档 · 文案 = disabledHint）；悬停 title 仍出 disabledHint，
+   *  点击不弹编辑浮层、改为弹出站点同款底部浮空 Toast（error 档 · 文案 = disabledHint）；悬停 title 仍出 disabledHint，
    *  测试钩子照旧落 [data-inline-cell=disabled]（Toast 上另挂 data-inline-locked-hint）。 */
   disabled?: boolean;
   /** 锁定说明文案（如「任务已定档，不支持任何修改（文件修改走变更）」）：悬停 title 与点击 Toast 共用。 */
@@ -46,12 +48,12 @@ type InlineCellProps = {
 /**
  * 表格行内编辑的通用外壳（Push 64）：单元格本身是按钮，点击在被点的位置弹出浮层（portal 到 body，
  * 不被表格横向滚动裁掉），点浮层外 / Esc 关闭；浮层里的控件不冒泡到行（不会触发行选中的抽屉）。
- * Push 264（P1-1 定档锁定）：加 disabled 锁定态 —— 入口保留可点、样式与可编辑态全等，点击改为弹出站点同款顶部
+ * Push 264（P1-1 定档锁定）：加 disabled 锁定态 —— 入口保留可点、样式与可编辑态全等，点击改为弹出站点同款底部
  *  Toast（2026-10-10 业务追订「点击后显示弹出即可 不要红色的圆提示」+「都用这个即可」；见 InlineCellProps.disabled）。
  */
 export function InlineCell({ ariaLabel, title, display, width, height, triggerClassName, bare = false, wrapContent = false, disabled = false, disabledHint, render }: InlineCellProps) {
   const { open, setOpen, position, triggerRef, popoverRef } = usePopover(width, height);
-  /** 锁定说明 Toast（Push 264 续 · 2026-10-10 业务口径「都用这个即可」）：点击锁定入口 → 站点同款顶部浮空 Toast
+  /** 锁定说明 Toast（Push 264 续 · 2026-10-10 业务口径「都用这个即可」）：点击锁定入口 → 站点同款底部浮空 Toast
    *  （error 档：rose 边框 / 浅底 + 「关闭」按钮，2s 自动消失）；tick 只增不减 —— 连点同一格也以新 key 重新计时。 */
   const [lockedHintTick, setLockedHintTick] = useState(0);
   const t = useT();
@@ -437,7 +439,7 @@ function MiniCalendar({ value, onChange }: { value: string; onChange: (iso: stri
       </div>
 
       <div className="mt-2 grid grid-cols-7 gap-y-1 text-center text-[11px] text-zinc-400">
-        {(locale === "en" ? WEEKDAYS_EN : WEEKDAYS_ZH).map((day) => (
+        {(locale === "ja" ? WEEKDAYS_JA : locale === "ko" ? WEEKDAYS_KO : locale === "en" ? WEEKDAYS_EN : WEEKDAYS_ZH).map((day) => (
           <span key={day}>{day}</span>
         ))}
       </div>

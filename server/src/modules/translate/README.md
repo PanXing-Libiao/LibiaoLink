@@ -1,18 +1,20 @@
 # translate 模块（内容译文库 · §6.16 ㉕ ㉖ · Push 301 / 309 · px）
 
+> 2026-10-23：单条 / 批量 `target` 扩为 `zh / en / ja / ko`；术语表按目标语言回换，日韩跳过英文大小写规整。
+
 | 项 | 口径 |
 |---|---|
 | 类型 | 横切模块（crosscut；已登记 `server/scripts/check-boundaries.mjs` 的 `CROSSCUT_MODULES`） |
 | 契约 | `shared/src/modules/translate.ts`（POST /api/v1/translate · POST /api/v1/translate/batch） |
 | 数据 | `content_translations`（迁移 0047；键 = source_lang + target_lang + sha256(source_text)，source_text = 原文） |
 | 通道 | `TRANSLATE_PROVIDER=openai` = OpenAI 兼容 API（`TRANSLATE_API_BASE_URL` / `TRANSLATE_API_MODEL` / `TRANSLATE_API_KEY`，公司 New API 网关；Push 309 起默认接入）；`local` = 本地 / 内网引擎（`TRANSLATE_ORIGIN`，默认 `http://127.0.0.1:5008`）；`TRANSLATE_FALLBACK_ORIGIN`（可选）= 主通道失败时的本地兜底 |
-| 文本加工 | `translate.text.ts`：术语保护 / 回换（11 条词表）+ 整句全大写规整 + 句首大写规整（Push 311：小写开头 → 首字母大写；iPhone / eBay / pH 类品牌词形态不误伤）—— 原前端 translateApi.ts 逻辑内聚到服务端 |
+| 文本加工 | `translate.text.ts`：术语保护 / 回换（11 条词表，按目标语言固定译法）+ 英文整句全大写 / 句首大写规整（Push 311）+ 日韩空白与标点清理 —— 原前端 translateApi.ts 逻辑内聚到服务端 |
 | 前端 | `frontend/src/translateApi.ts`（会话缓存 L1；服务端译文库 L2；单条 L3）+ 保存链路预热挂点（task / project 控制器） |
 
 ## 行为
 
-- **单条**：库命中直出；未命中调翻译通道 → 规整 + 术语回换 → upsert 落库 → 返回最终英文（通道不可用 = 500 INTERNAL，前端静默降级跳过）。
-- **批量**：只读查库（不调通道），一次拿整页已存译文（英文界面切页提速）；未命中条目由前端走单条通道。
+- **单条**：库命中直出；未命中调翻译通道 → 规整 + 目标语言术语回换 → upsert 落库 → 返回最终译文（通道不可用 = 500 INTERNAL，前端静默降级跳过）。
+- **批量**：只读查库（不调通道），一次拿整页已存译文（英 / 日 / 韩界面切页提速）；未命中条目由前端走单条通道。
 - **预热（保存即后台翻译）**：任务（中文标题 / 进展描述 note）与项目（名称 / 描述 / 客户）写入成功后被丢进 `warmup`；
   后台去重（同文本 5 分钟窗口）+ 并发 2 静默翻好落库，从不抛错、不阻塞保存响应。
 
@@ -37,5 +39,5 @@
 
 ## 验证
 
-- `server/test/translate.test.ts`（单测 22 例：库优先短路 / 未命中落库 / 术语保护与回换 / 引擎失败 INTERNAL / 批量只读 / 预热去重与静默 / Push 309：openai 通道落库 + 兜底回落 + 未配置 INTERNAL / Push 310：主模型失败接力备用（落库 engine 按实际产出模型）+ 主成功不接力 + 两跳皆败 INTERNAL + 备用留空或同名不接力 + 两跳皆败回落本地引擎 / Push 311：小写开头 → 句首大写（品牌词不误伤 / 幂等 / 占位符小写化仍回换））；
+- `server/test/translate.test.ts`（单测 24 例：库优先短路 / 未命中落库 / 术语保护与回换 / 引擎失败 INTERNAL / 批量只读 / 预热去重与静默 / Push 309：openai 通道落库 + 兜底回落 + 未配置 INTERNAL / Push 310：主模型失败接力备用（落库 engine 按实际产出模型）+ 主成功不接力 + 两跳皆败 INTERNAL + 备用留空或同名不接力 + 两跳皆败回落本地引擎 / Push 311：小写开头 → 句首大写（品牌词不误伤 / 幂等 / 占位符小写化仍回换）/ 2026-10-23：日文・韩文术语回换、落库 targetLang、system prompt 目标语言）；
 - 真机：`node node_modules/vitest/vitest.mjs run` 全绿（73 文件 / 1058 例）+ `npm run typecheck` / `npm run build` + `check:boundaries` 全绿（247 文件 / 1087 依赖 / 0 违规）。

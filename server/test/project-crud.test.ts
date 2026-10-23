@@ -508,6 +508,27 @@ describe("ProjectService（M2-01 项目 CRUD + 项目回收站）", () => {
     await expectAppErrorAsync(() => service.getProject(UUID_A), "NOT_FOUND");
   });
 
+  it("访问：可见项目写一条 project + visit 审计；不存在 404 不写", async () => {
+    const { service, audit } = makeService([projectRow({ id: UUID_A })]);
+
+    await service.recordVisit(UUID_A, UUID_B);
+
+    expect(audit.entries).toEqual([
+      {
+        actorId: UUID_B,
+        action: "visit",
+        objectType: "project",
+        objectId: UUID_A,
+        projectId: UUID_A,
+        summary: "访问项目：CNBJ-20260708-0001（XX 客户分拣项目）",
+        metadata: { source: "page" },
+        entry: "page",
+      },
+    ]);
+    await expectAppErrorAsync(() => service.recordVisit(UUID_B, UUID_B), "NOT_FOUND");
+    expect(audit.entries).toHaveLength(1);
+  });
+
   it("更新：version 匹配则 +1 并落 updatedAt；返回更新后视图", async () => {
     const { service } = makeService([projectRow({ id: UUID_A, version: 3 })]);
     const updated = await service.updateProject(UUID_A, { name: "改名", version: 3 }, UUID_A);

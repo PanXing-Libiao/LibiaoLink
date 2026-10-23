@@ -14,7 +14,7 @@ import { ApiError, apiFetch, redirectToLogin } from "./api";
 import { applyBackgroundTier, applyCardWatermark, asBackgroundTier, asCardWatermark } from "./backgroundTier";
 import { applyLocale, asLocale, getLocale, textOf, useT, type TextKey } from "./i18n";
 import { Loader } from "./components/Loader";
-import { Toast } from "./components/Toast";
+import { Toast, ToastConfirm } from "./components/Toast";
 import { ExportProgressOverlay } from "./components/ExportProgressOverlay";
 import { useFocusTrap } from "./components/useFocusTrap";
 import { BindingGuideModal } from "./components/BindingGuideModal";
@@ -32,7 +32,7 @@ import {
   type Dicts,
 } from "./dicts";
 import { directoryMemberOptions, loadDirectory, type DirectoryUser } from "./directory";
-import { archiveProject, createProject, deleteProject, downloadProjectWorkbook, fetchProject, toUiProject, updateProject } from "./projectApi";
+import { archiveProject, createProject, deleteProject, downloadProjectWorkbook, fetchProject, recordProjectVisit, toUiProject, updateProject } from "./projectApi";
 import { loadMyPreferences, loadMyPreferencesWithLegacyMigration, saveHomeSavedFilters, saveTaskTableHiddenColumns, saveHubDashProject, saveHubDashView, saveHubView, saveWorkspaceOpenProjects, type WorkspaceOpenProjects } from "./preferencesApi";
 import type { SavedFilter } from "./savedFilters";
 import { asHubDashView, type HubDashView } from "./data/dashboardProgress";
@@ -266,6 +266,8 @@ export default function App() {
   }, [state]);
 
   const detailId = route.kind === "project" ? route.id : null;
+  /** 项目访问留痕：每次进入一个项目路由只写一条；同页静默刷新（dataVersion）不重复。 */
+  const visitedProjectId = useRef<string | null>(null);
   useLiveRefresh(["projects"], async () => {
     if (detailId === null) return () => {};
     try {
@@ -279,6 +281,7 @@ export default function App() {
   useEffect(() => {
     if (detailId === null) {
       setDetail(null);
+      visitedProjectId.current = null;
       return;
     }
     let cancelled = false;
@@ -288,6 +291,10 @@ export default function App() {
         const view = await fetchProject(detailId);
         if (!cancelled) {
           setDetail(toUiProject(view));
+          if (visitedProjectId.current !== detailId) {
+            visitedProjectId.current = detailId;
+            void recordProjectVisit(detailId).catch(() => undefined);
+          }
         }
       } catch (error: unknown) {
         if (!cancelled) {
@@ -587,6 +594,53 @@ export default function App() {
   };
 
   /**
+   * 验收交付完成后把项目设为已完成（2026-10-22 · 业务口径「当验收交付完成后 弹出一个弹出显示是否需要将项目设为已完成」）：
+   * 只改 status（project.update），保留其余字段；成功更新详情并触发列表刷新，失败沿用全局顶部 Toast。
+   * 409 时先回读最新项目：若他人已设为已完成则视为成功，否则让详情滚动到最新 version 供用户重试。
+   */
+  const handleSetProjectDone = async (id: string): Promise<boolean> => {
+    if (detail === null || detail.id !== id) {
+      return false;
+    }
+    const current = detail;
+    if (current.status === "done") {
+      return true;
+    }
+    try {
+      const view = await updateProject(
+        id,
+        {
+          code: current.code,
+          name: current.description,
+          region: current.region,
+          projectType: current.projectType,
+          managerIds: current.managerIds,
+        },
+        current.version,
+        "done",
+      );
+      setDetail(toUiProject(view));
+      setDataVersion((value) => value + 1);
+      return true;
+    } catch (error: unknown) {
+      if (error instanceof ApiError && error.code === "VERSION_CONFLICT") {
+        try {
+          const latest = toUiProject(await fetchProject(id));
+          setDetail(latest);
+          setDataVersion((value) => value + 1);
+          if (latest.status === "done") {
+            return true;
+          }
+        } catch {
+          // 回读失败仍走下面的统一错误提示
+        }
+      }
+      setNotice(errorMessageOf(error, t("app.fail.completeProject")));
+      return false;
+    }
+  };
+
+  /**
    * 任务字段被编辑（M3-07 刀 1 后半接线）：任务写入会 touch 项目 updated_at（ADR-022 ④），
    * 这里只轻量刷新项目列表（详情里那一行已由 ProjectDetail 自己回读），下次回到首页能看到新时间。
    */
@@ -666,45 +720,26 @@ export default function App() {
 
   /**
    * 全局提示区：
-   * ① 删除项目确认条（Push 172：卡片隐式删除的第二下）—— 非阻断式确认，仍走底部固定条；
-   * ② 错误提示（如加载 / 删除 / 项目经理修改失败）—— Push 261 追订改**屏幕上方居中浮空 Toast**
-   *   （3s 自动消失口径见 Toast 组件；业务口径 2026-10-09「要直接在屏幕上方浮空的 然后保持3s消失 不要在页面顶部」）。
+   * ① 删除项目确认条（Push 172：卡片隐式删除的第二下）—— 非阻断式确认，统一为顶部同款确认 Toast；
+   * ② 错误提示（如加载 / 删除 / 项目经理修改失败）—— 统一为**屏幕顶部居中白色 Toast**
+   *   （顶部下落、2s 自动消失口径见 Toast 组件）。
    */
   const bottomBars = (
     <>
       {exportingProjectId === null ? null : <ExportProgressOverlay progress={null} variant="project-data" />}
-      <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
       {pendingDelete === null ? null : (
-        <div
-          ref={deleteConfirmTrapRef}
-          role="dialog"
-          aria-label={t("app.delete.aria")}
-          className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
-        >
-          <span>
+        <ToastConfirm
+          text={<>
             {t("app.delete.lead")} <span className="font-mono font-semibold">{pendingDelete.code}</span>{t("app.delete.tail", { name: pendingDelete.description })}
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              setPendingDelete(null);
-            }}
-            className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
-          >
-            {t("common.cancel")}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void handleConfirmDeleteProject();
-            }}
-            className="rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
-          >
-            {t("app.delete.confirm")}
-          </button>
-        </div>
+          </>}
+          ariaLabel={t("app.delete.aria")}
+          cancelLabel={t("common.cancel")}
+          confirmLabel={t("app.delete.confirm")}
+          onCancel={() => { setPendingDelete(null); }}
+          onConfirm={() => { void handleConfirmDeleteProject(); }}
+          containerRef={deleteConfirmTrapRef}
+        />
       )}
-      </div>
       {notice === null ? null : (
         <Toast
           kind="error"
@@ -822,6 +857,7 @@ export default function App() {
           taskHiddenColumns={taskTableHiddenColumns}
           onTaskHiddenColumnsChange={handleSaveTaskHiddenColumns}
           canManageStakeholders={canManageStakeholders}
+          onSetProjectDone={canUpdateProject ? handleSetProjectDone : undefined}
         />
         {editModal}
         {bottomBars}
