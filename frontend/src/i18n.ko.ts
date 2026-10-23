@@ -1169,7 +1169,6 @@ export const KO_TEXTS: Partial<Record<TextKey, string>> = {
   "sac.addedTag": "추가됨",
   "sac.add": "+ 추가",
   "sac.batchHeading": "{n} 모두 추가",
-  "sac.footnote": "“작업 노드”는 노드 라이브러리에서, “템플릿”은 템플릿 API(GET /api/v1/task-nodes · task-templates, 작업 템플릿 페이지에서 관리)에서 가져옵니다. 프로젝트에 추가하면 데이터베이스에 기록됩니다(소스 노드는 M3-07 파트 3부터 포함, 일괄 추가는 템플릿 인스턴스화 API 사용). “추가됨”은 소스 노드 ID로 중복 제거되며, 이전 행은 동일한 단계 + 동일한 이름을 기준으로 중복 제거합니다.",
   "ie.clickEdit": "클릭하여 편집",
   "ie.pickMembers": "클릭하여 구성원 선택(다중)",
   "ie.pickMember": "클릭하여 구성원 선택",
