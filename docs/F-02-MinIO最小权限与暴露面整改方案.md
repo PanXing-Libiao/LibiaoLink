@@ -2,7 +2,7 @@
 
 > 来源：`LibiaoLink_安全审查报告_2026-10-21.pdf` F-02（第 4～5 页）｜严重度 High / P0｜报告验收要求：应用凭据不能管理用户 / 桶或访问其它桶；9000 / 9001 / 9443 从非授权网络不可达；轮换后旧凭据失效
 > 报告审查基线：`px @ e05535b8`｜S0 复核基线：`origin/main@6b846b2`（2026-10-23；F-02 涉及的 Compose、Nginx、存储脚本与凭据挂载配置未发生实质修复）
-> 起草：lan（后端平台 / file / storage / preview / outbox）｜拟稿日期：2026-10-22｜S0 评审冻结：2026-10-23｜状态：**S0 已通过并冻结；实施进度 1 / 7，F-02 尚未关闭**
+> 起草：lan（后端平台 / file / storage / preview / outbox）｜拟稿日期：2026-10-22｜S0 评审冻结：2026-10-23｜状态：**S0 已冻结；S1 / S2 部署件已合入，S3 仓库件已落地；运行时统一待测试机部署后验证，F-02 尚未关闭**
 > S0 签收：px（部署 / docs）与 wmj（安全）完成复核；经用户确认三方协商后，由 lan 代录。冻结结论见 §5「S0 · 方案落档与评审冻结」。
 > 归属与评审：`docs/` 归 px 主责，落档需 px 复核；生产 Compose、Nginx、主机防火墙与部署窗口归 px 主责；MinIO 身份 / 策略、`server/` 存储脚本与凭据接线归 lan 主责；安全验收请 wmj 交叉复核。涉及安全、部署与 Secrets 的高风险变更必须取得非作者批准。
 > 变更控制：后续执行以本文件为基线。若执行中需要改变端口、身份模型、策略动作、切片顺序或验收条件，先修改本文件并写明原因、影响和回滚，再实施；已合入主干的回放证据与部署记录按不可变历史处理，不原地改写。
@@ -12,15 +12,17 @@
 | 切片 | 状态 | PR / commit | 部署与验证证据 | 备注 |
 |---|---|---|---|---|
 | S0 · 方案落档与评审冻结 | 已通过并冻结（2026-10-23） | PR [#554](https://github.com/PanXing-Libiao/LibiaoLink/pull/554)；S0 签收提交 | 本文 §5 / S0 评审记录 | px、wmj 已复核；9443 回环保留至 S6 复评 |
-| S1 · 关闭宿主端口暴露 | 进行中 | 待填 | 部署件已改；测试机待 Compose 部署与 `ss` 复核 | 9000 不再发布；9001 / 9443 仅回环 |
-| S2 · 主机防火墙与外部网络复核 | 进行中 | 待填 | 测试机临时 apply → 二次 apply → check → remove 通过；443 `readyz` 200 / `/libiaolink/` 403，9000 / 9001 / 9443 开发机不可达；规则已移除 | 待安装 unit、Docker / 主机重启复核 |
-| S3 · MinIO 最小权限身份与策略 | 待执行 | 待填 | 待填 | 先创建身份与负向测试，不切运行时 |
+| S1 · 关闭宿主端口暴露 | 部署件已合入，运行时待验证 | PR [#589](https://github.com/PanXing-Libiao/LibiaoLink/pull/589)；squash `1b24536` | 测试机未重建 minio / web；待 S1～S5 仓库实现完成后统一部署复核 `ss` | 9000 不再发布；9001 / 9443 仅回环 |
+| S2 · 主机防火墙与外部网络复核 | 部署件已合入，运行时待验证 | PR [#589](https://github.com/PanXing-Libiao/LibiaoLink/pull/589)；squash `1b24536` | 临时 apply → 二次 apply → check → remove 已通过；unit 尚未持久化，待统一部署后复核 | 待安装 unit、Docker / 主机重启与外部网络复核 |
+| S3 · MinIO 最小权限身份与策略 | 仓库件已落地，测试机部署后验证 | 本次 PR 待创建 | 本地受控 MinIO 冒烟通过（非 F-02 验收）；测试机身份、负向权限与凭据探针待统一验证 | 不切 api / worker；运行时证据统一在测试机部署后登记 |
 | S4 · Secrets 隔离与运行时凭据切换 | 待执行 | 待填 | 待填 | api / worker 改用 service account |
 | S5 · root 凭据轮换与旧凭据失效 | 待执行 | 待填 | 待填 | 维护窗口执行；不得回滚为 root 应用凭据 |
 | S6 · 文档、H1 兼容与全量回归 | 待执行 | 待填 | 待填 | 9443 保留时只能经 SSH 隧道 |
 | S7 · 验收回放与 F-02 关闭 | 待执行 | 待填 | 待填 | 旧凭据失效、外网不可达、证据齐全后才关闭 |
 
 执行时更新本表：开始时写「进行中」；PR 合入后填 PR / commit；测试机或生产部署后填脱敏证据位置；发生设计变更时先在正文更新决策，再改本表。
+
+> **运行时验证批次**：按 2026-10-23 决定，S1～S5 先在仓库内完成，再统一部署公司测试机并执行 S1～S5 的运行时验收。部署前不得把任何运行时项标为通过；本地临时 MinIO 结果只用于实现自检，不替代测试机证据。
 
 ## 1. 结论
 
@@ -54,7 +56,7 @@ F-02 是两个可以独立闭合、但必须同时处理的问题：
 | `deploy/prod/README.md` §2、§9 | 明确记录应用 `s3_access_key` / `s3_secret_key` 当前与 root 同值；首次部署步骤直接复制 root 文件生成应用凭据。 |
 | `deploy/prod/scripts/storage.sh:34-42` | `init` 与 `it` 使用同一组 `s3_access_key` / `s3_secret_key`。 |
 | `deploy/prod/scripts/service-entrypoint.cjs:19-45` | api / worker 从 `/opt/libiaolink/secrets` 整目录读取凭据并注入环境变量。 |
-| `server/scripts/storage-init.mjs:46` | `AccessDenied` 被归入「存储不支持该 API」，只告警不失败；权限配置错误可能漏过部署门禁。 |
+| `server/scripts/storage-init.mjs:46`（S3 已改，运行时待测试机） | 原先把 `AccessDenied` 统一归入「存储不支持该 API」；现已移除通用降级，仅保留 MinIO 无法授予的 CORS 动作这一明确例外。 |
 | `deploy/prod/nginx/libiaolink.conf:120-143` | 443 的 `/libiaolink/` 是浏览器对象存储主通道；`proxy_pass` 到 `minio_backend`。 |
 | `deploy/prod/nginx/libiaolink.conf:197`、`:220` | 9443 仍有独立 MinIO 门面，当前仅依赖宿主绑定与网络策略限制。 |
 | `deploy/prod/server.env.example:25-27` | `S3_ENDPOINT` 保持 443 默认端口；注释仍把 9443 描述为内网备用门面，未明确回环边界。 |
@@ -76,7 +78,7 @@ F-02 是两个可以独立闭合、但必须同时处理的问题：
 - api / worker 使用的凭据必须属于专用 service account，策略只能覆盖 `libiaolink` 桶和业务实际需要的对象动作；不得拥有用户、策略、桶管理或其它桶权限。
 - root 凭据只能进入 minio 容器和受控应急运维会话；不得出现在 api / worker / web / tools 的长期容器、`server.env`、镜像、源码、日志或回放证据中。
 - `storage:init` 只能使用 bootstrap 凭据；`storage:it` 和运行时只能使用应用凭据；两组凭据不可互换。
-- `AccessDenied`、空值、缺失文件、权限不合规一律 fail closed；不能把权限错误降级成「存储不支持」告警。
+- `AccessDenied`、空值、缺失文件、权限不合规一律 fail closed；唯一例外是 MinIO IAM 不支持桶级 CORS 动作，CORS 调用可记录为能力告警，lifecycle / 版本控制等其它路径的 `AccessDenied` 仍必须失败。
 - 任何 Secret 都不得进入仓库、PR 描述、开发日志、命令输出、测试 artifact 或截图；验证只记录文件名、路径存在性、HTTP 状态和脱敏结论。
 - 轮换凭据不得删除对象、桶或版本；回滚也不得恢复为「应用使用 root」的状态。
 
@@ -121,7 +123,7 @@ F-02 是两个可以独立闭合、但必须同时处理的问题：
 | 应用父用户 `libiaolink-app` | 临时随机口令，不长期存业务文件 | 仅 root 管理操作 | 被绑定 `libiaolink-app-rw` 策略；派生 service account | 日常应用登录；管理员操作 |
 | 应用 service account `libiaolink-api` | `s3_access_key` / `s3_secret_key` | api、worker、`storage:it` | `libiaolink` 桶对象读写、列举版本、分片、彻底删除业务对象 | 用户 / 策略 / 桶创建删除；其它桶；root 权限 |
 | Bootstrap 父用户 `libiaolink-bootstrap` | 临时随机口令，不长期存业务文件 | 仅 root 管理操作 | 被绑定 `libiaolink-bootstrap` 策略；派生初始化 service account | 日常应用登录；对象读取；用户 / 策略管理 |
-| Bootstrap service account `libiaolink-storage-init` | `s3_bootstrap_access_key` / `s3_bootstrap_secret_key` | `storage:init` / `storage:init --check` | 桶存在性、创建桶、版本控制、CORS、lifecycle 初始化 | 对象内容读取 / 写入 / 删除；用户 / 策略管理；删除桶 |
+| Bootstrap service account `libiaolink-storage-init` | `s3_bootstrap_access_key` / `s3_bootstrap_secret_key` | `storage:init` / `storage:init --check` | 桶存在性、创建桶、版本控制、lifecycle 初始化；CORS 由服务端 `MINIO_API_CORS_ALLOW_ORIGIN` 配置 | 对象内容读取 / 写入 / 删除；用户 / 策略管理；删除桶；桶级 CORS IAM 动作（MinIO 不支持） |
 
 应用父用户和 bootstrap 父用户只承担策略挂载与 service account 归属。父用户口令可随机生成后丢弃；后续通过 root 重置或重建，不把父用户口令落成长驻业务 Secret。
 
@@ -171,8 +173,6 @@ F-02 是两个可以独立闭合、但必须同时处理的问题：
         "s3:ListBucket",
         "s3:GetBucketVersioning",
         "s3:PutBucketVersioning",
-        "s3:GetBucketCORS",
-        "s3:PutBucketCORS",
         "s3:GetLifecycleConfiguration",
         "s3:PutLifecycleConfiguration"
       ],
@@ -182,7 +182,7 @@ F-02 是两个可以独立闭合、但必须同时处理的问题：
 }
 ```
 
-`storage-init.mjs` 当前 CORS 在 MinIO 上返回不支持 API，只允许 `NotImplemented` / `NotSupported` / `MethodNotAllowed` 等明确能力缺失进入告警；`AccessDenied` 必须失败。CORS / lifecycle 的读取分支也不得把未知异常静默当作「未配置」：`NoSuchCORSConfiguration` / `NoSuchLifecycleConfiguration` 与明确的能力缺失分开处理，lifecycle 的 `InvalidArgument` 仍按现有能力差异处理，但权限错误不得被吞掉。
+MinIO 的 IAM 动作列表不包含 `s3:GetBucketCORS` / `s3:PutBucketCORS`，因此 bootstrap 策略不声明这两个动作；CORS 由服务端 `MINIO_API_CORS_ALLOW_ORIGIN` 配置。`storage-init.mjs` 只在 CORS 路径把 `AccessDenied` 视为该能力不可授予的告警；`NotImplemented` / `NotSupported` / `MethodNotAllowed` 仍按能力缺失处理。lifecycle、版本控制和其它路径的 `AccessDenied` 必须失败。CORS / lifecycle 的读取分支也不得把未知异常静默当作「未配置」：`NoSuchCORSConfiguration` / `NoSuchLifecycleConfiguration` 与明确的能力缺失分开处理，lifecycle 的 `InvalidArgument` 仍按现有能力差异处理。
 
 ## 4. 实施设计
 
@@ -311,32 +311,53 @@ S5 的 root 轮换是受控运维动作，不是直接手改业务代码：执�
 
 **目标**：先建立可重复、可验证的凭据与策略，不改变 api / worker 当前使用的 Secret。
 
+**仓库实现与运行时验收分界**：本切片先在仓库内交付策略、脚本、`storage-init` 权限分类修正和部署文档；S1～S5 仓库实现完成后再统一部署测试机，执行本切片的身份创建、凭据探针、负向权限与 `storage:init --check`。测试机部署前不得把运行时项标为通过，本地临时 MinIO 只用于实现自检。
+
 **改动文件**
 
 - `deploy/prod/minio/policies/libiaolink-app-rw.json`
 - `deploy/prod/minio/policies/libiaolink-bootstrap.json`
-- `deploy/prod/scripts/minio-identity.sh`（建议 `check` / `apply` / `rotate`，默认不输出 Secret）
+- `deploy/prod/scripts/minio-identity.sh`（`lint` / `apply` / `check`，默认不输出 Secret）
+- `server/scripts/storage-init.mjs`（只把 MinIO 无法授予的 CORS 动作列为能力告警，其它 `AccessDenied` 继续失败）
 - `deploy/prod/README.md`（身份清单、凭据文件与首次部署顺序）
 
-**执行步骤**
+**执行步骤（测试机部署后）**
 
 **S3 入口门禁**：修改任何 MinIO 身份前，先按 S0 冻结口径确认受控 `mc` 的版本、来源、SHA-256 与 `--help` 兼容性；没有受控 `mc` 时改用服务器本地 MinIO Console。该证据缺失时停止 S3，不得下载来源不明二进制。
 
-1. 用受控 root 会话创建父用户 `libiaolink-app`、`libiaolink-bootstrap`，分别挂载上节策略；父用户口令随机生成并在完成后从临时文件清除。
-2. 分别创建 service account `libiaolink-api`、`libiaolink-storage-init`；只把 service account 的 access key / secret 写入服务器受控 Secret 文件。
-3. 写入 `s3_access_key` / `s3_secret_key`（应用）和 `s3_bootstrap_access_key` / `s3_bootstrap_secret_key`（初始化）；文件权限 `600`，目录权限 `700`。
-4. 用 bootstrap 凭据执行 `storage:init --check`；用应用凭据执行只读对象探针；此阶段不重启 api / worker。
-5. 运行负向测试：应用凭据不能创建用户 / 策略 / 桶、不能删除生产桶、不能访问临时 sentinel 桶；bootstrap 凭据不能读写对象。sentinel 桶由受控 root 会话创建、验证后清理；不得为测试给 bootstrap 增加 `CreateBucket` / `DeleteBucket` 或跨桶权限。
-6. 记录 `mc --version`、策略文件名、策略动作与负向 HTTP / exit code；不记录 access key、secret、完整命令环境或 MinIO root 输出。
+1. 用受控 root 会话创建父用户 `libiaolink-app`、`libiaolink-bootstrap`，分别挂载上节策略；父用户口令随机生成并在完成后从临时文件清除。脚本遇到父用户带有额外策略或异常状态时必须 fail closed，不自动解除策略。
+2. 分别创建 service account `libiaolink-api`、`libiaolink-storage-init`；只把 service account 的 access key / secret 写入服务器受控 Secret 文件。凭据通过一次性 `MC_CONFIG_DIR` 和标准输入写入 `mc`，不进入命令行参数。
+3. 写入 `s3_access_key` / `s3_secret_key`（应用）和 `s3_bootstrap_access_key` / `s3_bootstrap_secret_key`（初始化）；文件权限 `600`，目录权限 `700`。此阶段不重启 api / worker。
+4. 用应用凭据执行只读对象探针；等待 S4 完成 `storage.sh` 的 bootstrap 接线后，再用 bootstrap 执行 `storage:init --check`。
+5. 运行负向测试：应用凭据不能创建用户 / 策略 / 桶、不能删除生产桶、不能访问临时 sentinel 桶；bootstrap 凭据不能读写对象、不能创建 / 删除 sentinel 桶。sentinel 桶由受控 root 会话创建、验证后清理；不得为测试给 bootstrap 增加 `CreateBucket` / `DeleteBucket` 或跨桶权限。
+6. 记录 `mc --version`、来源、SHA-256、`--help`、策略文件名、策略动作与负向 HTTP / exit code；不记录 access key、secret、完整命令环境或 MinIO root 输出。
+
+**执行期变更（2026-10-23）**：本地使用锁定镜像 `quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z` 和同镜像 `mc` 验证时，`mc admin policy create` 明确拒绝 `s3:GetBucketCORS` / `s3:PutBucketCORS`（`unsupported action`）。因此 bootstrap 策略删除这两个无法表达的 IAM 动作；CORS 继续由服务端 `MINIO_API_CORS_ALLOW_ORIGIN` 配置，bootstrap 不获得桶级 CORS 权限。`storage-init` 仅在 CORS 路径把 `AccessDenied` 记为能力告警，lifecycle、版本控制等其它路径仍 fail closed。该变更不改变身份模型、桶范围或管理边界；若未来 MinIO 支持这两个动作，须先补测试机证据再按变更控制追加，不能直接恢复旧策略。
 
 **验收**
 
 - `libiaolink-app-rw` 与 `libiaolink-bootstrap` 的策略内容与文件完全一致；没有 `s3:*`、`arn:aws:s3:::*` 或管理动作。
-- `storage:init --check` 使用 bootstrap 成功；预期 CORS / lifecycle 能力告警仍可按 MinIO 版本记录，但 `AccessDenied` 必须失败。
+- `storage:init --check` 使用 bootstrap 成功；CORS 的 `AccessDenied` 可按已登记能力例外告警，lifecycle / 版本控制等其它路径的权限错误必须失败。测试机部署后执行，当前不填通过。
 - 应用 service account 不能管理用户 / 策略 / 桶，不能访问 sentinel 桶；bootstrap 不能读写对象、不能创建 / 删除 sentinel 桶。
 - 现有 api / worker 尚未切换，旧 root 应用凭据仍存在，因此本切片不能宣称 F-02 关闭。
 
 **回滚**：保留 root 管理和已创建的新身份，不做对象删除；只撤销新 service account 的临时验证权限。若策略过窄，按实际 403 复现证据追加最小动作，不直接扩大为通配权限。
+
+**测试机部署后验证登记**
+
+| ID | 验证项 | 方法 / 预期 | 状态 | 证据位置 |
+|---|---|---|---|---|
+| S3-T1 | 受控 `mc` 工具链 | 记录 `mc --version`、来源、SHA-256、`--help` 兼容性；`mc-toolchain.txt` 存在且权限受限 | 待测试机部署后验证 | `/srv/data/backups/f02-s3-evidence/mc-toolchain.txt` |
+| S3-T2 | 策略与仓库完全一致 | `bash scripts/minio-identity.sh check`；两份远端策略内容逐字 / 语义等于仓库文件，无 `s3:*`、无全桶 ARN | 待测试机部署后验证 | S3 `check` 输出与脱敏证据 |
+| S3-T3 | 父用户与唯一策略 | `libiaolink-app` / `libiaolink-bootstrap` 存在、启用，且策略集合精确等于各自唯一策略 | 待测试机部署后验证 | S3 `check` 输出 |
+| S3-T4 | service account 与 Secret | `libiaolink-api` / `libiaolink-storage-init` 的 parent、状态、`impliedPolicy`、有效期正确；四个 Secret 文件 `600`、目录 `700` | 待测试机部署后验证 | S3 `check` 输出与 `stat` 脱敏结果 |
+| S3-T5 | 应用只读探针 | 应用 service account `mc ls libiaolink` 成功；不产生对象读写副作用 | 待测试机部署后验证 | S3 `check` 输出 |
+| S3-T6 | 应用负向权限 | 不能管理用户 / 策略 / 桶、不能删除生产桶、不能访问 sentinel 桶；命令非零或 HTTP 403 | 待测试机部署后验证 | 负向命令 exit code / HTTP 状态 |
+| S3-T7 | bootstrap 负向权限 | 不能读写对象、不能创建 / 删除 sentinel 桶；命令非零或 HTTP 403；sentinel 由 root 创建并在验证后清理 | 待测试机部署后验证 | 负向命令 exit code / HTTP 状态 |
+| S3-T8 | `storage:init --check` | S4 完成 `storage.sh` bootstrap 接线后，使用 bootstrap 返回 0；仅登记能力告警，其余 `AccessDenied` 失败 | 待测试机部署后验证 | `storage:init --check` 输出与 exit code |
+| S3-T9 | 运行时未切换事实 | S3 完成后 api / worker 未重启，仍使用旧 root 环境值；不得据此关闭 F-02 | 待测试机部署后验证 | `docker compose ps` / 容器启动时间 / 脱敏环境核对 |
+
+以上运行时项全部待测试机部署后验证；不得以本地 MinIO 冒烟代替。验证命令和结果不得包含 access key、secret、完整环境变量、签名 URL 或真实对象键。
 
 ### S4 · Secrets 隔离与运行时凭据切换
 
@@ -348,7 +369,6 @@ S5 的 root 轮换是受控运维动作，不是直接手改业务代码：执�
 - `deploy/prod/scripts/service-entrypoint.cjs`：读取根目录改为 `/run/secrets`；明确必需 / 可选 Secret；不再回退整目录。
 - `deploy/prod/scripts/storage.sh`：`init` 使用 `s3_bootstrap_*`，`it` 使用 `s3_*`；缺少对应文件直接退出；凭据不得展开到命令行参数，使用受控文件或权限 `600` 的临时 env-file 并在退出时清理。
 - `deploy/prod/scripts/db-migrate.sh`、`deploy/prod/scripts/db-seed.sh`：改为读取 `/run/secrets/pg_migrator_password`。
-- `server/scripts/storage-init.mjs`：移除 `AccessDenied` 的不支持降级；修复 CORS / lifecycle 读取分支吞掉未知异常的问题；增加权限错误回归测试（含 `--check`）。
 - `deploy/prod/README.md`：更新 Secret 清单、首次部署和运维命令。
 
 **执行步骤**
@@ -365,7 +385,7 @@ S5 的 root 轮换是受控运维动作，不是直接手改业务代码：执�
 - api / worker 运行态只使用应用 service account；`storage:it` 24 / 24，`readyz` 全绿。
 - 应用容器不存在 `/run/secrets/minio_root_user`、`/run/secrets/minio_root_password`、`pg_superuser_password`，也不存在 `/opt/libiaolink/secrets` 挂载。
 - `server.env` 无 access key、secret、root 值；应用日志无凭据。
-- `storage:init --check` 使用 bootstrap 返回 0；权限不足或 `AccessDenied` 返回非 0，不允许仅告警。
+- `storage:init --check` 使用 bootstrap 返回 0；CORS 的已登记能力例外可按告警记录，lifecycle / 版本控制等其它路径的权限不足或 `AccessDenied` 返回非 0。
 - 部署机进程命令行、shell history、临时文件和 CI 日志中均不出现 access key、secret 或 root 值。
 - 旧 root 应用凭据尚未轮换，因此仍不能关闭 F-02。
 
@@ -506,13 +526,14 @@ npm run preview:svg-e2e
 ### 7.1 发布顺序
 
 1. S0 方案评审通过；确认测试机与生产适用同一身份模型。
-2. S1 关闭 9000 / 9443 的全接口发布，完成服务器本机与开发机边界验证。
-3. S2 应用并持久化 `DOCKER-USER` 规则，完成网络 ACL 和外部探活。
-4. S3 创建 app / bootstrap 父用户、策略与 service account，完成负向权限测试；此时不切换运行时。
-5. S4 切换 api / worker 到应用 service account，切断整目录 Secret 挂载；完成上传全链路和 `storage:it`。
-6. S5 在维护窗口轮换 root，确认旧凭据失效，清理旧副本。
-7. S6 同步文档、H1 兼容说明与全量回归。
-8. S7 完成测试机 / 生产回放证据、非作者评审与开发日志，再关闭 F-02。
+2. S1 / S2 在仓库内完成端口收口、持久化防火墙件与文档，不先单独部署。
+3. S3 在仓库内完成策略、身份脚本、CORS 权限分类与验证登记，不连接测试机、不创建真实身份。
+4. S4 / S5 在仓库内完成 Secret 接线、运行时切换与 root 轮换步骤。
+5. S1～S5 仓库实现完成并通过 PR 门禁后，统一部署公司测试机；先复核 S1 / S2 端口与外部网络，再执行 S3 身份创建、正向 / 负向探针。
+6. S4 切换 api / worker 到应用 service account，切断整目录 Secret 挂载；随后执行 S3-T8 `storage:init --check`、上传全链路和 `storage:it`。
+7. S5 在维护窗口轮换 root，确认旧凭据失效，清理旧副本。
+8. S6 同步文档、H1 兼容说明与全量回归。
+9. S7 完成测试机 / 生产回放证据、非作者评审与开发日志，再关闭 F-02。
 
 ### 7.2 回滚边界
 
@@ -536,7 +557,7 @@ npm run preview:svg-e2e
 | 9443 仍保留回环 listener | 仅允许 SSH 隧道；若 S6 确认无回放需求，另开变更删除 Nginx 9443 server 与宿主映射 |
 | 应用 service account 仍可访问 `libiaolink` 桶内全部对象 | 这是文件服务的业务边界；项目 / 记录级隔离继续由应用权限与数据库控制，不在本方案伪装成桶级隔离 |
 | MinIO policy 动作与实际调用不完全一致 | 用 403 复现和负向测试定位，只追加最小动作；禁止通配 `s3:*` 或全桶 ARN 通配 |
-| CORS / lifecycle 在 MinIO 返回 NotImplemented / InvalidArgument | 按能力缺失告警并记录版本；`AccessDenied` 必须失败，不能混入能力缺失 |
+| CORS / lifecycle 在 MinIO 返回 AccessDenied / InvalidArgument | MinIO IAM 不提供桶级 CORS 动作，CORS 的 `AccessDenied` 作为唯一已登记例外告警；lifecycle / 版本控制等其它路径的 `AccessDenied` 必须失败。记录镜像与 `mc` 版本，不对 bootstrap 扩大权限 |
 | Compose Secret 切换导致启动失败 | 逐项补齐缺失文件，保持 fail closed；禁止恢复整目录挂载或环境变量回退 |
 | root 轮换造成短时不可用 | 维护窗口、确认 bind / 数据卷、先验证新身份；短暂回滚旧 root 也必须保持端口关闭并按事件记录 |
 | `DOCKER-USER` 规则不持久，宿主机重启后失效 | 使用持久化 unit / 规则文件，重启演练；`--check` 纳入部署验收 |
