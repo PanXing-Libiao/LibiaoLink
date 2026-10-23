@@ -18,8 +18,8 @@ import {
 import { applyFileChange, ensurePreviewOutcome, fetchChangeRequest, fetchDownloadUrl, fetchFileVersions, finalizeFile, previewKindOf, triggerDownload, usePhotoUrl, type ChangeRequestDetail, type FilePreviewKind, type FileVersionBrief, type PreviewViewerConfig } from "../fileApi";
 import { lockBodyScroll } from "../scrollLock";
 import { fetchTaskDetail, toUiTask, stageKeyOfName, stageNameOf, type TaskFileBrief } from "../taskApi";
-import { cachedZhToEn, translateZhToEn } from "../translateApi";
-import { fieldText, mdText, priorityText, progressLabelOf, stageText, statusText, useLocale, useLocalizedText, useT } from "../i18n";
+import { fieldText, isLocalizedLocale, mdText, priorityText, progressLabelOf, stageText, statusText, translationTargetOf, useLocale, useLocalizedText, useT } from "../i18n";
+import { cachedZhTo, translateZhTo } from "../translateApi";
 import { DateRangePicker, type DateRange } from "./DateRangePicker";
 import { ChangeDetailModal } from "./ChangeDetailModal";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
@@ -382,7 +382,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
    * 「项目进展描述」英译（业务口径 2026-10-13「抽屉里面加英文的翻译」）：{ text, en } 成对存 ——
    * text 与当前原文一致才显示，改了输入就自动隐藏到新译文回来（防旧译文配新中文）。
    */
-  const [noteEn, setNoteEn] = useState<{ text: string; en: string } | null>(null);
+  const [noteEn, setNoteEn] = useState<{ text: string; en: string; target: string } | null>(null);
   /**
    * 语言切换（Push 296 追订 · 业务口径「因为页面有些内容是手打的 我建议是提前后台机翻」）：
    * 英文界面下抽屉标题按「titleEn 优先 → 机翻 → 原文」显示、副行给中文原名对照；
@@ -392,8 +392,16 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
   const t = useT();
   const localizedTitle = useLocalizedText(task === null ? "" : task.title);
   const localizedReadNote = useLocalizedText(task === null ? "" : task.note);
-  const drawerTitleText = task === null ? "" : locale === "en" ? (task.titleEn !== "" ? task.titleEn : localizedTitle) : task.title;
-  const drawerTitleSub = task === null ? "" : locale === "en" ? (drawerTitleText === task.title ? "" : task.title) : task.titleEn;
+  const drawerTitleText = task === null
+    ? ""
+    : isLocalizedLocale(locale)
+      ? (locale === "en" && task.titleEn !== "" ? task.titleEn : localizedTitle)
+      : task.title;
+  const drawerTitleSub = task === null
+    ? ""
+    : isLocalizedLocale(locale)
+      ? (drawerTitleText === task.title ? "" : task.title)
+      : task.titleEn;
   /** 「项目进展描述」输入框（随内容自适应高度，见下面的 resize effect）。 */
   const noteFieldRef = useRef<HTMLTextAreaElement | null>(null);
   /** 预取循环读的最新快照（避免闭包拿到旧值重复取）。 */
@@ -557,26 +565,27 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
 
   /** 「项目进展描述」英译原文：编辑态取草稿、只读态取任务现值（与保存口径一致，首尾空白不参与翻译）。 */
   const noteText = task === null ? "" : (onSubmit === undefined ? task.note : draft.note).trim();
+  const noteTarget = translationTargetOf(locale);
 
   /**
    * 取「项目进展描述」英译（业务口径 2026-10-13「抽屉里面加英文的翻译」）：会话缓存命中立即显示；
    * 未命中则等输入停顿 600ms 再经译文通道取（与导出报告同一缓存，见 src/translateApi.ts）——失败 / 空文本不显示小字。
    */
   useEffect(() => {
-    if (noteText === "") {
+    if (noteText === "" || noteTarget === null) {
       return;
     }
-    const cached = cachedZhToEn(noteText);
+    const cached = cachedZhTo(noteText, noteTarget);
     if (cached !== null) {
-      setNoteEn({ text: noteText, en: cached });
+      setNoteEn({ text: noteText, en: cached, target: noteTarget });
       return;
     }
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      void translateZhToEn([noteText]).then((map) => {
+      void translateZhTo([noteText], noteTarget).then((map) => {
         const en = map.get(noteText);
         if (!cancelled && en !== undefined) {
-          setNoteEn({ text: noteText, en });
+          setNoteEn({ text: noteText, en, target: noteTarget });
         }
       });
     }, 600);
@@ -584,7 +593,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [noteText]);
+  }, [noteText, noteTarget]);
 
   // 「项目进展描述」框随内容长（业务口径 2026-10-13 追订「正下方不要空这么多」）：一行就只占一行高、
   // 多行随文字长高（超过 max-h 才出内部滚动）—— 英文小字紧跟中文，不再顶着固定 3 行高度的空白。
@@ -599,8 +608,8 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
 
   /** 「项目进展描述」译文小字（与中文同框；只读态在原文下方）：与导出报告同款灰色小字，取不到就不显示。 */
   const noteEnLine =
-    noteEn !== null && noteEn.text === noteText ? (
-      <p data-note-en="true" lang="en" className="mt-1 text-[11px] leading-4 text-zinc-400">
+    noteEn !== null && noteEn.text === noteText && noteEn.target === noteTarget ? (
+      <p data-note-en="true" lang={noteEn.target} className="mt-1 text-[11px] leading-4 text-zinc-400">
         {noteEn.en}
       </p>
     ) : null;
@@ -1382,8 +1391,8 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
         </div>
       ) : (
         <div>
-          {task.note === "" ? dash : locale === "en" ? <span title={task.note}>{localizedReadNote}</span> : task.note}
-          {locale === "en" ? null : noteEnLine}
+          {task.note === "" ? dash : isLocalizedLocale(locale) ? <span title={task.note}>{localizedReadNote}</span> : task.note}
+          {locale === "zh" ? noteEnLine : null}
         </div>
       ),
     },
@@ -2170,9 +2179,9 @@ function ChangeFileRows({ detail, versions, previewBusy, downloadBusy, onPreview
         const previewable = previewKindOf(rowName) !== null;
         return (
           <span key={row.kind} data-change-file={row.kind} className="flex min-w-0 items-center gap-1.5">
-            <span className="shrink-0 text-[11px] text-zinc-400">{locale === "en" ? fieldText(locale, row.label) + ": " : fieldText(locale, row.label) + "："}</span>
+            <span className="shrink-0 text-[11px] text-zinc-400">{isLocalizedLocale(locale) ? fieldText(locale, row.label) + ": " : fieldText(locale, row.label) + "："}</span>
             {versionId === null ? (
-              <span className="min-w-0 flex-1 truncate text-xs text-zinc-400" title={versions === null ? t("drawer.version.chainMissing") : t("drawer.version.first")}>{rowName}{locale === "en" ? " (" : "（"}{versions === null ? t("drawer.version.chainMissing") : t("drawer.version.first")}{locale === "en" ? ")" : "）"}</span>
+              <span className="min-w-0 flex-1 truncate text-xs text-zinc-400" title={versions === null ? t("drawer.version.chainMissing") : t("drawer.version.first")}>{rowName}{isLocalizedLocale(locale) ? " (" : "（"}{versions === null ? t("drawer.version.chainMissing") : t("drawer.version.first")}{isLocalizedLocale(locale) ? ")" : "）"}</span>
             ) : (
               <span className="min-w-0 flex-1 truncate text-xs text-zinc-700" title={rowName + " · v" + String(row.seq) + " · " + dateOnlyText(row.uploadedAt)}>
                 {rowName}

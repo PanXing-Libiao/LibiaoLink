@@ -23,8 +23,7 @@ import type { TemplatePresetNode } from "./data/templatePresets";
 import { fetchTaskFiles, recycleFile, renameFile, uploadFiles, type TaskFileRef } from "./fileApi";
 import { exportProjectOverviewPdf } from "./exportOverviewPdf";
 import type { OverviewExportLanguage } from "./overviewExportShared";
-import { prefetchZhToEn } from "./translateApi";
-import { useLocale, useT, viewTabText } from "./i18n";
+import { prefetchLocalizedText, useLocale, useT, viewTabText } from "./i18n";
 import { ExportProgressOverlay, type ExportTranslateProgress } from "./components/ExportProgressOverlay";
 import { useBackgroundTier, type TintedTier } from "./backgroundTier";
 import { projectManagerText } from "./types";
@@ -358,16 +357,16 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
    * 「写进展描述即后台翻译」（业务口径 2026-10-13 · §6.16 ㉑）：项目数据一到 / 每次写入回写（tasks 变化 ——
    * 行内编辑、抽屉保存、进度 / 状态写入……）就把「项目名 + 全部非空进展描述」丢进译文缓存后台预热；
    * 用户写完进展描述几秒内译文就绪，导出时直接命中、不再等机器翻译（缓存与去重见 src/translateApi.ts）。
-   * 同日追订（「因为页面有些内容是手打的 我建议是提前后台机翻」）：无英文名（titleEn 空）的任务名一并预热，
-   * 语言切英文 / 列表显示机翻译文即得（有 titleEn 的任务名直接用自带英文名，不进机翻通道）。
+   * 同日追订（「因为页面有些内容是手打的 我建议是提前后台机翻」）：无英文名（titleEn 空）的任务名一并预热；日 / 韩界面不采用 titleEn，
+   * 因此全部任务名都要按目标语言预热（英文界面有 titleEn 的任务名仍不进机翻通道）。
    */
   useEffect(() => {
-    prefetchZhToEn([
+    prefetchLocalizedText([
       project === null ? "" : project.description,
       ...tasks.map((task) => task.note),
-      ...tasks.filter((task) => task.titleEn === "").map((task) => task.title),
+      ...tasks.filter((task) => task.titleEn === "" || locale === "ja" || locale === "ko").map((task) => task.title),
     ]);
-  }, [project, tasks]);
+  }, [project, tasks, locale]);
 
   /** 当前行（写入要回传它的 version / sortIndex 等）。 */
   const rowOf = (taskId: string): ProjectTask | undefined => tasks.find((task) => task.id === taskId);

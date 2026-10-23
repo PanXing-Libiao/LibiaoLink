@@ -111,8 +111,7 @@ import { recycleFile, renameFile, uploadFiles, usePhotoUrl, type TaskFileRef } f
 import { updateProject, type ApiProject } from "./projectApi";
 import { ISSUE_STATE_NAMES, updateIssue } from "./reportApi";
 import { fetchTaskDetail, finalizeTask, stageNameOf, statusWriteValue, toUiTask, unfinalizeTask, updateTask, updateTaskProgress, type ApiTask } from "./taskApi";
-import { prefetchZhToEn } from "./translateApi";
-import { fieldText, fullDateText, stageText, useLocale, useLocalizedTranslator, useT, workspaceLabelText } from "./i18n";
+import { fieldText, fullDateText, isLocalizedLocale, stageText, prefetchLocalizedText, useLocale, useLocalizedTranslator, useT, workspaceLabelText } from "./i18n";
 import { fetchWorkspace, type ApiWorkspace, type ApiWorkspaceIssue, type ApiWorkspaceTask } from "./workspaceApi";
 import type { WorkspaceOpenProjects } from "./preferencesApi";
 import { projectViewHref, type WorkspaceIssueView, type WorkspaceTab } from "./useHashRoute";
@@ -367,7 +366,7 @@ function TaskTable({ projectId, project, items, tierTint, members, onOpenTask, r
               const fileRefs: TaskFileRef[] = task.files.map((file) => ({ id: file.id, name: file.name, status: file.status }));
               const stage = stageNameOf(task.stageKey);
               const stageLabel = stage === "" ? TEMP_TASK_STAGE : stage;
-              const subtitle = locale === "en"
+              const subtitle = isLocalizedLocale(locale)
                 ? stageText(locale, stageLabel)
                 : stageLabel + (task.titleEn === null || task.titleEn === "" ? "" : " · " + task.titleEn);
               return (
@@ -680,12 +679,12 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
    * 回填里，数据源改聚合读面后原样保留；同日追订「因为页面有些内容是手打的 我建议是提前后台机翻」：任务名一并预热）。
    */
   useEffect(() => {
-    prefetchZhToEn([
+    prefetchLocalizedText([
       ...allTasks.map((task) => task.note ?? ""),
       ...allTasks.map((task) => task.title),
       ...data.projects.map((project) => project.name),
     ]);
-  }, [data]);
+  }, [data, locale]);
 
   /** 人员目录 → 姓名（聚合读面行 / 写回响应补姓名共用）。 */
   const resolveName = (id: string): string | undefined => memberNameOf(members, id);
@@ -1000,17 +999,18 @@ function IssuesView({ view, issues, tierTint, openIds, onToggleProject, override
   // 已完成不显示（Push 260 · 第七项）：按「覆盖值 ?? 接口值」的有效状态过滤（Push 302 起 solution / photos 就在行上，过滤不再牵动取数）。
   const visibleIssues = issues.filter((issue) => (overrides.get(issue.id)?.state ?? toIssueState(issue.state)) !== "done");
   const projects = groupIssuesByProject(visibleIssues);
+  const locale = useLocale();
   const t = useT();
   const raised = view === "raised";
   /** 「我提出的问题」（Push 301 追订 · 业务口径「图二为什么有中文有英文」）：问题标题 / 解决方案 / 项目名
    *  一到就后台预热译文 —— 英文界面整块出英文，不再一半中文一半英文（未就绪仍先显示原文）。 */
   useEffect(() => {
-    prefetchZhToEn([
+    prefetchLocalizedText([
       ...issues.map((issue) => issue.title),
       ...issues.map((issue) => issue.solution ?? ""),
       ...issues.map((issue) => issue.projectName),
     ]);
-  }, [issues]);
+  }, [issues, locale]);
   return (
     <section data-workspace-issues="" data-workspace-issues-view={view} className="space-y-3">
       <div className="flex flex-wrap items-baseline gap-2">

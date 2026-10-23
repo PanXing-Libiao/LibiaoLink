@@ -4,7 +4,7 @@ import { Loader } from "./Loader";
 import { PlanNoteCard } from "./PlanNoteCard";
 import { PlanNoteEditor, type PlanNoteDraft } from "./PlanNoteEditor";
 import { RowDeleteButton } from "./RowDeleteButton";
-import { planLabelText, useLocale, useT } from "../i18n";
+import { isLocalizedLocale, planLabelText, useLocale, useT } from "../i18n";
 import { ApiError } from "../api";
 import { useLiveRefresh } from "../useLiveRefresh";
 import { keepLiveOrder } from "../liveSync";
@@ -1051,7 +1051,7 @@ export function MyPlanBoard() {
             conflict === null
               ? undefined
               : t("plan.conflictSummary", {
-                  categories: conflict.board.categories.join(locale === "en" ? ", " : "、"),
+                  categories: conflict.board.categories.join(isLocalizedLocale(locale) ? ", " : "、"),
                   bg: planLabelText(locale, planBoardBgOf(conflict.board.bg).label),
                   notes: conflict.board.notes
                     .map((note) =>

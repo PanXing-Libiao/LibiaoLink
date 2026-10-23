@@ -178,12 +178,12 @@ export const BackgroundTierSchema = z
   .openapi("BackgroundTier", { description: "背景档位 id（Push 291 · Push 313 起默认 medium）：simple = 简约 / medium = 适中（默认）/ vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 medium" });
 
 /** 界面语言 id（Push 296 · 业务口径 2026-10-13「现在我要做系统语言切换 暂时中英文」；与前端 i18n.ts 的 LOCALES 同源）：
- *  zh = 中文（默认）/ en = English。 */
-export const LOCALE_IDS = ["zh", "en"] as const;
+ *  zh = 中文（默认）/ en = English / ja = 日本語 / ko = 한국어。 */
+export const LOCALE_IDS = ["zh", "en", "ja", "ko"] as const;
 
 export const LocaleSchema = z
   .enum(LOCALE_IDS)
-  .openapi("Locale", { description: "界面语言 id（Push 296）：zh = 中文（默认）/ en = English；读侧白名单外 / 缺省一律收敛为 zh" });
+  .openapi("Locale", { description: "界面语言 id（Push 296）：zh = 中文（默认）/ en = English / ja = 日本語 / ko = 한국어；读侧白名单外 / 缺省一律收敛为 zh" });
 
 /** 仪表盘页落地视图 id（Push 332 · 业务口径 2026-10-15「还是做路由吧 这个页面要记住 因为不同的人想常驻的页面可能不一样」；
  *  与前端 useHashRoute.ts 的 HubView 同源）：map = 世界地图（默认）/ dashboard = 仪表盘大屏（Push 358 起六个图表视图：数据总览 / 项目进度 / 任务状态 / 问题 / 交付时间 / 词频图）。 */
@@ -240,7 +240,7 @@ export const UserPreferencesSchema = z
     myPlanBoard: MyPlanBoardSchema,
     revisions: z.record(z.string(), z.number().int().nonnegative()).openapi({ description: "偏好各键的基线版本；未写过的键为0" }),
     backgroundTier: BackgroundTierSchema.openapi({ description: "背景档位（Push 291 · 顶栏「背景 · 档位」；Push 313 起默认 medium）：simple = 简约 / medium = 适中（默认）/ vivid = 炫彩；读侧白名单外 / 缺省一律收敛为 medium" }),
-    locale: LocaleSchema.openapi({ description: "界面语言（Push 296 · 顶栏「语言 · 中文 / English」）：zh = 中文（默认）/ en = English；读侧白名单外 / 缺省一律收敛为 zh" }),
+    locale: LocaleSchema.openapi({ description: "界面语言（Push 296 · 顶栏「语言 · 中文 / English / 日本語 / 한국어」）：zh = 中文（默认）/ en = English / ja = 日本語 / ko = 한국어；读侧白名单外 / 缺省一律收敛为 zh" }),
     cardWatermark: z
       .boolean()
       .openapi({

@@ -89,7 +89,7 @@ function cardWatermarkOf(value: unknown): boolean {
   return value === true;
 }
 
-/** 界面语言（Push 296 · 业务口径 2026-10-13「现在我要做系统语言切换 暂时中英文」）：jsonb 里白名单外（zh / en 之外）/ 缺省一律回默认 zh（不抛错）。 */
+/** 界面语言（Push 296 · 业务口径 2026-10-13「现在我要做系统语言切换 暂时中英文」）：jsonb 里白名单外（zh / en / ja / ko 之外）/ 缺省一律回默认 zh（不抛错）。 */
 const LOCALE_SET: ReadonlySet<string> = new Set(LOCALE_IDS);
 
 function localeOf(value: unknown): Locale {

@@ -14,8 +14,9 @@ import { dictLabel, typeAccent, type Dicts } from "./dicts";
 import type { DirectoryUser } from "./directory";
 import { keepLiveOrder } from "./liveSync";
 import { useLiveRefresh } from "./useLiveRefresh";
-import { prefetchZhToEn } from "./translateApi";
 import {
+  isLocalizedLocale,
+  prefetchLocalizedText,
   projectStatusTextOf,
   projectTypeText,
   statusText,
@@ -198,7 +199,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
     fetchProjectList(EMPTY_LIST_QUERY)
       .then((payload) => {
         // Push 301：项目名（手打文本）提前后台翻好，切英文直接命中；文件名不翻译。
-        prefetchZhToEn(payload.items.map((project) => project.name));
+        prefetchLocalizedText(payload.items.map((project) => project.name));
         if (alive) {
           setProjects(payload.items);
         }
@@ -222,7 +223,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
     setProjectRecycleState((previous) => (previous.kind === "ready" ? previous : { kind: "loading" }));
     fetchRecycledProjects()
       .then((payload) => {
-        prefetchZhToEn(payload.items.map((project) => project.name));
+        prefetchLocalizedText(payload.items.map((project) => project.name));
         if (alive) {
           setProjectRecycleState({ kind: "ready", items: payload.items });
         }
@@ -324,7 +325,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
   const projectNameOf = (id: string): string => projectById.get(id)?.name ?? "—";
   const projectWatermarkOf = (regionCode: string): string => {
     const label = dictLabel(dicts, "region", regionCode);
-    return locale === "zh" ? label : regionNameEn(label) || label;
+    return isLocalizedLocale(locale) ? regionNameEn(label) || label : label;
   };
 
   const patchFilter = (patch: Partial<FilesQueryState>): void => {

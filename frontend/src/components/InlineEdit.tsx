@@ -9,6 +9,8 @@ import { monthYearText, useLocale, useMachineText, useT } from "../i18n";
 
 const WEEKDAYS_ZH = ["一", "二", "三", "四", "五", "六", "日"];
 const WEEKDAYS_EN = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+const WEEKDAYS_JA = ["月", "火", "水", "木", "金", "土", "日"];
+const WEEKDAYS_KO = ["월", "화", "수", "목", "금", "토", "일"];
 const pad = (value: number) => String(value).padStart(2, "0");
 const toKey = (date: Date) =>
   String(date.getFullYear()) + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate());
@@ -437,7 +439,7 @@ function MiniCalendar({ value, onChange }: { value: string; onChange: (iso: stri
       </div>
 
       <div className="mt-2 grid grid-cols-7 gap-y-1 text-center text-[11px] text-zinc-400">
-        {(locale === "en" ? WEEKDAYS_EN : WEEKDAYS_ZH).map((day) => (
+        {(locale === "ja" ? WEEKDAYS_JA : locale === "ko" ? WEEKDAYS_KO : locale === "en" ? WEEKDAYS_EN : WEEKDAYS_ZH).map((day) => (
           <span key={day}>{day}</span>
         ))}
       </div>

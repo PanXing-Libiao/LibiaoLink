@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import type { DictItem } from "../dicts";
 import type { RegionPickerOption } from "../data/regionPicker";
 import { buildRegionPickerOptions, groupRegionPickerOptions, regionNameEn, searchRegionPickerOptions, usedRegionPickerOptions } from "../data/regionPicker";
-import { continentText, useLocale, useT } from "../i18n";
+import { continentText, isLocalizedLocale, useLocale, useT } from "../i18n";
 import { usePopover } from "./usePopover";
 
 /**
@@ -170,7 +170,7 @@ export function RegionSelect({ value, valueLabel, items, usedRegions, onChange, 
   };
 
   /** 地区显示名（Push 301 英译）：英文界面先取候选自带英文名、再按中文名认标准国名，都认不出回退原文。 */
-  const nameOf = (option: RegionPickerOption): string => (locale === "en" ? (option.en !== "" ? option.en : regionNameEn(option.name) || option.name) : option.name);
+  const nameOf = (option: RegionPickerOption): string => (isLocalizedLocale(locale) ? (option.en !== "" ? option.en : regionNameEn(option.name) || option.name) : option.name);
   const renderRow = (option: RegionPickerOption, count: number | null) => {
     const selected = option.value === value;
     return (
@@ -215,7 +215,7 @@ export function RegionSelect({ value, valueLabel, items, usedRegions, onChange, 
         {valueLabel === "" ? (
           <span className="truncate text-zinc-400">{t("region.placeholder")}</span>
         ) : (
-          <span className="truncate font-medium text-zinc-800">{locale === "en" ? regionNameEn(valueLabel) || valueLabel : valueLabel}</span>
+          <span className="truncate font-medium text-zinc-800">{isLocalizedLocale(locale) ? regionNameEn(valueLabel) || valueLabel : valueLabel}</span>
         )}
         {/* 箭头朝右：与「贴右侧弹出」的落点同向。 */}
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="ml-auto h-4 w-4 shrink-0 -rotate-90 text-zinc-400">

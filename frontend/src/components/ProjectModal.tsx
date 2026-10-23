@@ -10,7 +10,7 @@ import { MemberMultiSelect } from "./MemberSelect";
 import { RegionSelect } from "./RegionSelect";
 import { useFocusTrapFor } from "./useFocusTrap";
 import { PROJECT_STATUS_VALUES, projectStatusOf, type ProjectStatusValue } from "../types";
-import { fieldText, projectStatusTextOf, projectTypeText, useLocale, useT } from "../i18n";
+import { fieldText, isLocalizedLocale, projectStatusTextOf, projectTypeText, useLocale, useT } from "../i18n";
 import { regionNameEn } from "../data/regionPicker";
 import { fetchUsedRegions } from "../projectApi";
 
@@ -89,8 +89,8 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
   const t = useT();
   const locale = useLocale();
   /** 冲突摘要行的标点（中文全角 / 英文半角）。 */
-  const colon = locale === "en" ? ": " : "：";
-  const semi = locale === "en" ? "; " : "；";
+  const colon = isLocalizedLocale(locale) ? ": " : "：";
+  const semi = isLocalizedLocale(locale) ? "; " : "；";
   /** 已归档项目只读（ADR-027）：弹窗只读展示，不给保存（服务端同样 409 PROJECT_ARCHIVED）。 */
   const archivedLock = isEdit && initial?.status === "archived";
   const [code, setCode] = useState(initial?.code ?? "");
@@ -467,7 +467,7 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
           )}
           {conflict === null ? null : (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-              <details><summary>{t("modal.conflict.latest")}</summary><p className="mt-2 whitespace-pre-wrap">{fieldText(locale, "项目编号")}{colon}{conflict.latest.code}<br />{fieldText(locale, "项目描述")}{colon}{conflict.latest.description}<br />{fieldText(locale, "备注")}{colon}{conflict.latest.note || "—"}<br />{fieldText(locale, "项目经理")}{colon}{conflict.latest.managerIds.map((id) => managerOptions.find((member) => member.id === id)?.name ?? id).join(locale === "en" ? ", " : "、")}<br />{fieldText(locale, "项目类型")}{colon}{projectTypeText(locale, dictLabel(dicts, "projectType", conflict.latest.projectType))}{semi}{fieldText(locale, "项目地区")}{colon}{locale === "en" ? regionNameEn(dictLabel(dicts, "region", conflict.latest.region)) || dictLabel(dicts, "region", conflict.latest.region) : dictLabel(dicts, "region", conflict.latest.region)}{semi}{fieldText(locale, "项目状态")}{colon}{projectStatusTextOf(locale, conflict.latest.status)}</p></details>
+              <details><summary>{t("modal.conflict.latest")}</summary><p className="mt-2 whitespace-pre-wrap">{fieldText(locale, "项目编号")}{colon}{conflict.latest.code}<br />{fieldText(locale, "项目描述")}{colon}{conflict.latest.description}<br />{fieldText(locale, "备注")}{colon}{conflict.latest.note || "—"}<br />{fieldText(locale, "项目经理")}{colon}{conflict.latest.managerIds.map((id) => managerOptions.find((member) => member.id === id)?.name ?? id).join(isLocalizedLocale(locale) ? ", " : "、")}<br />{fieldText(locale, "项目类型")}{colon}{projectTypeText(locale, dictLabel(dicts, "projectType", conflict.latest.projectType))}{semi}{fieldText(locale, "项目地区")}{colon}{isLocalizedLocale(locale) ? regionNameEn(dictLabel(dicts, "region", conflict.latest.region)) || dictLabel(dicts, "region", conflict.latest.region) : dictLabel(dicts, "region", conflict.latest.region)}{semi}{fieldText(locale, "项目状态")}{colon}{projectStatusTextOf(locale, conflict.latest.status)}</p></details>
               <button type="button" disabled={pending || conflict.latest.status === "archived"} className="mt-2 underline disabled:opacity-50" onClick={() => {
                 setConfirmedVersion(conflict.version);
                 setConflict(null);

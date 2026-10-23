@@ -11,7 +11,7 @@ import { StageAddCard } from "./StageAddCard";
 import { TaskDrawer } from "./TaskDrawer";
 import type { TaskEditSubmit } from "./TaskDrawer";
 import { STATUS_TAG_CLASS, type TaskPatch } from "./TaskBoard";
-import { fieldText, mdText, progressLabelOf, stageText, statusText, useLocale, useLocalizedText, useT } from "../i18n";
+import { fieldText, isLocalizedLocale, mdText, progressLabelOf, stageText, statusText, useLocale, useLocalizedText, useT } from "../i18n";
 import { trackerStep } from "./Tracker";
 
 /**
@@ -423,8 +423,8 @@ function KanbanCard({
   const locale = useLocale();
   /** 手打内容（任务名）机翻显示：英文界面 titleEn 优先 → 机翻 → 原文；副行给中文原名；中文界面照旧。 */
   const localizedTitle = useLocalizedText(task.title);
-  const titleText = locale === "en" ? (task.titleEn !== "" ? task.titleEn : localizedTitle) : task.title;
-  const subText = locale === "en" ? (titleText === task.title ? "" : task.title) : task.titleEn;
+  const titleText = isLocalizedLocale(locale) ? (locale === "en" && task.titleEn !== "" ? task.titleEn : localizedTitle) : task.title;
+  const subText = isLocalizedLocale(locale) ? (titleText === task.title ? "" : task.title) : task.titleEn;
   const t = useT();
   const status = task.status;
   /** 卡片上的负责人展示（多位按「、」连接，Push 136；2026-09-24 定案「只按名字」—— 拼音口径下线）。 */
