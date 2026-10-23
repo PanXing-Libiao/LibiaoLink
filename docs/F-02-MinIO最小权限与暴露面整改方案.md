@@ -238,14 +238,6 @@ F-02 是两个可以独立闭合、但必须同时处理的问题：
 | S6 | 文档、H1 兼容与全量回归 | px + lan / wmj | S1～S5 | README、Runbook、H1 证据、全量门禁 |
 | S7 | 测试机 / 生产验收与 F-02 关闭 | lan + px / wmj | S5、S6 | 回放证据、DoD、开发日志、关闭评审 |
 
-建议 PR 切分（按常驻分支归属，不跨人代推）：
-
-1. **PR-0（lan 常驻分支）**：仅本方案文档。px / wmj 评审；不改配置、脚本或 Secret。
-2. **PR-NET（px 常驻分支）**：S1 + S2 的 Compose、端口注释、防火墙脚本和部署说明。lan / wmj 评审；优先合入并部署，尽快缩小暴露面。
-3. **PR-PLATFORM（lan 常驻分支）**：`server/scripts/storage-init.mjs` 的 fail-closed 修正、权限错误回归与必要的 server 测试。px / wmj 评审；不直接修改 `deploy/`。
-4. **PR-DEPLOY（px 常驻分支）**：S3 / S4 的 MinIO 策略 JSON、身份脚本、Compose Secret 分文件挂载、`storage.sh` / DB 脚本和部署 README。lan 提供策略口径并评审；必须在 PR-NET 合入后基于最新 `main` 重做，避免并行改同一 Compose。
-5. **PR-EVIDENCE（按文档归属）**：部署 README / M8 Runbook 由 px 分支提交；F-02 回放证据、方案状态与本文件更新由 lan 分支提交并请 px 复核。不得代他人创建或推送常驻分支。
-
 S5 的 root 轮换是受控运维动作，不是直接手改业务代码：执行前确认对应 Runbook 已合入，执行后把脱敏证据按上述归属回填，不能把 Secret 或完整运维输出写进 PR。
 
 ### S0 · 方案落档与评审冻结
