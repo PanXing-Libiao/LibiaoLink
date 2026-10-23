@@ -211,6 +211,21 @@ jobs:
           done
           sudo tail -n 80 /tmp/h1-nginx-error.log
           exit 1
+      - name: Nginx F-06 preview-content gate and security headers
+        run: |
+          set -euo pipefail
+          url="https://localhost/api/v1/files/22222222-2222-4222-8222-222222222222/versions/66666666-6666-4666-8666-666666666666/preview-content"
+          headers="$(mktemp)"
+          status="$(curl -ksS -D "$headers" -o /dev/null -w '%{http_code}' "$url")"
+          test "$status" = "404"
+          grep -Eiq '^x-content-type-options: nosniff' "$headers"
+          grep -Eiq '^referrer-policy: no-referrer' "$headers"
+          grep -Eiq '^permissions-policy: .*camera=\(\), microphone=\(\), geolocation=\(\)' "$headers"
+          if grep -Eiq '^x-powered-by:' "$headers"; then
+            echo "公网 preview-content 泄漏 X-Powered-By"
+            cat "$headers"
+            exit 1
+          fi
       - name: Initialize object storage
         working-directory: server
         env:
@@ -244,7 +259,7 @@ jobs:
           OUTBOX_STALE_MS: "60000"
           ONLYOFFICE_JWT_SECRET: non-empty-test-secret
           ONLYOFFICE_DOCSERVER_URL: https://localhost/onlyoffice
-          ONLYOFFICE_DOCSERVER_API_BASE_URL: https://localhost
+          ONLYOFFICE_DOCSERVER_API_BASE_URL: http://127.0.0.1:3011
         run: |
           set -euo pipefail
           setsid nohup node dist/entry/api.js > /tmp/h1-api.log 2>&1 < /dev/null &
@@ -257,6 +272,35 @@ jobs:
           done
           tail -n 100 /tmp/h1-api.log
           exit 1
+      - name: API F-06 preview-content 401 and security headers
+        run: |
+          set -euo pipefail
+          url="http://127.0.0.1:3011/api/v1/files/22222222-2222-4222-8222-222222222222/versions/66666666-6666-4666-8666-666666666666/preview-content"
+          headers="$(mktemp)"
+          body="$(mktemp)"
+          status="$(curl -sS -D "$headers" -o "$body" -w '%{http_code}' "$url")"
+          test "$status" = "401"
+          grep -q '"code":"AUTH_REQUIRED"' "$body"
+          grep -Eiq '^x-content-type-options: nosniff' "$headers"
+          grep -Eiq '^referrer-policy: no-referrer' "$headers"
+          grep -Eiq '^permissions-policy: .*camera=\(\), microphone=\(\), geolocation=\(\)' "$headers"
+          if grep -Eiq '^x-powered-by:' "$headers"; then
+            echo "内部 API 泄漏 X-Powered-By"
+            cat "$headers"
+            exit 1
+          fi
+
+          proxy_headers="$(mktemp)"
+          proxy_status="$(curl -ksS -D "$proxy_headers" -o /dev/null -w '%{http_code}' https://localhost/healthz)"
+          test "$proxy_status" = "200"
+          grep -Eiq '^x-content-type-options: nosniff' "$proxy_headers"
+          grep -Eiq '^referrer-policy: no-referrer' "$proxy_headers"
+          grep -Eiq '^permissions-policy: .*camera=\(\), microphone=\(\), geolocation=\(\)' "$proxy_headers"
+          if grep -Eiq '^x-powered-by:' "$proxy_headers"; then
+            echo "经 Nginx 的 API 泄漏 X-Powered-By"
+            cat "$proxy_headers"
+            exit 1
+          fi
       - name: Start worker
         working-directory: server
         env:
@@ -277,7 +321,7 @@ jobs:
           OUTBOX_STALE_MS: "60000"
           ONLYOFFICE_JWT_SECRET: non-empty-test-secret
           ONLYOFFICE_DOCSERVER_URL: https://localhost/onlyoffice
-          ONLYOFFICE_DOCSERVER_API_BASE_URL: https://localhost
+          ONLYOFFICE_DOCSERVER_API_BASE_URL: http://127.0.0.1:3011
         run: |
           set -euo pipefail
           node dist/entry/worker.js --health-check
