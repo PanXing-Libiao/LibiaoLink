@@ -781,7 +781,6 @@ export const KO_TEXTS: Partial<Record<TextKey, string>> = {
   "modal.code.placeholder": "예: CNBJ-20260708-0001",
   "modal.name.placeholder": "예: 중국 소포 분류",
   "modal.managers.any": "복수 선택 가능",
-  "modal.managers.caption": "최소 1개; 여러 개는 체크한 순서대로 표시됩니다 (Push 136).",
   "modal.type.aria": "프로젝트 유형 선택",
   "modal.type.placeholder": "프로젝트 유형 선택",
   "modal.type.add": "프로젝트 유형 추가",
