@@ -17,6 +17,8 @@ export const EnvSchema = z
     CASDOOR_SCOPE: z.string().min(1).default("openid profile email"),
     /** 目录同步 owner（Casdoor 组织名；本地沙箱 libiaorobot，公司环境 libiaorobot.com）。 */
     CASDOOR_ORG_NAME: z.string().default(""),
+    /** Casdoor 群组 / 用户目录自动同步周期（毫秒）：worker 启动即执行一轮，之后持续轮询；默认 5 分钟。 */
+    ORG_SYNC_INTERVAL_MS: z.coerce.number().int().min(60000).max(86400000).default(300000),
     /** 会话空闲超时（分钟）：接入标准「企业内部系统」档为 30；0 仅测试用（立即超时）。 */
     SESSION_IDLE_MINUTES: z.coerce.number().int().min(0).default(30),
     /** 会话 Cookie Secure 属性：auto = 仅 production 开启（本地 http 调试不受影响）。 */

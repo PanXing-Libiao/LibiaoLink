@@ -104,7 +104,7 @@ function orderDepartments(records: readonly OrgDepartmentRecord[]): OrgDepartmen
 
 /**
  * 组织同步引擎（h1 · D1-02 / D1-07）：消费目录快照 —— 部门树 upsert + 缺失停用、用户 upsert + 离职停用 + 踢线，产出差异报告。
- * 外部拉取（Casdoor / 企微）由适配器承担，随调度卡片（i5）接入 worker；本服务保持纯领域逻辑、可单测。
+ * 外部拉取（Casdoor / 企微）由适配器承担；Casdoor 已由 worker 启动即自动同步并周期轮询，本服务保持纯领域逻辑、可单测。
  * 留痕（Push 173）：用户停用 / 启用逐条写审计（objectType = user、entry = system、actorId = null —— 系统动作）；
  * 批次运行报告仍经返回值下发（新建 / 更新计数不逐条落审计，避免首次全量同步刷屏）。
  */

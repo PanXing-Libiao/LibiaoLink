@@ -40,7 +40,7 @@ export const KO_TEXTS: Partial<Record<TextKey, string>> = {
   "access.noGroups": "일치하는 그룹 없음",
   "access.groups": "그룹",
   "access.members": "{n}명",
-  "access.noObservedGroups": "Casdoor 디렉터리에 그룹이 없습니다. 조직 동기화를 실행하거나 아래에 그룹 키를 직접 입력하세요.",
+  "access.noObservedGroups": "Casdoor 디렉터리에 아직 그룹이 없습니다. 시스템이 자동으로 동기화합니다. 아래에 그룹 키를 직접 입력할 수도 있습니다.",
   "access.addGroup": "그룹 키 직접 추가",
   "access.addGroupPlaceholder": "owner/name, 예: libiaorobot.com/Engineering",
   "access.add": "추가",
