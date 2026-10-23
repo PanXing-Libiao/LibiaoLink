@@ -6,8 +6,9 @@
 //
 // 两条实测口径（2026-09-20，MinIO RELEASE.2025-09-07T16-13-09Z）：
 // 1. CORS 在 MinIO 社区版是**服务端配置**（MINIO_API_CORS_ALLOW_ORIGIN），不是桶级 S3 API
-//    —— PutBucketCors 返回 501 NotImplemented，官方 mc cors set 同样失败。本脚本按「不支持则告警」处理，
-//    沙箱已在 deploy/minio/docker-compose.yml 里注入该变量。
+//    —— root / 旧版本实测 PutBucketCors 返回 501 NotImplemented；锁定版本的最小权限 IAM 也不提供
+//    Get/PutBucketCORS 动作，bootstrap 会得到 AccessDenied。CORS 路径按能力缺失告警，其它 API 的
+//    AccessDenied 仍失败；沙箱已在 deploy/minio/docker-compose.yml 里注入该变量。
 // 2. 未完成分片 MinIO 自带清理（`mc admin config get local api` 实测 stale_uploads_cleanup_interval=6h /
 //    stale_uploads_expiry=24h），lifecycle 规则属于「其它 S3 实现」的兜底；本脚本尝试写入，被拒时告警。
 //
@@ -43,7 +44,10 @@ const corsOrigins = (process.env.S3_CORS_ORIGINS ?? "http://localhost:5173")
 const abortIncompleteDays = Number(process.env.S3_ABORT_INCOMPLETE_DAYS ?? "30");
 
 /** 该存储是否压根不实现这个 API（不支持 -> 告警；支持但配置不对 -> 失败）。 */
-const NOT_IMPLEMENTED = new Set(["NotImplemented", "NotSupported", "MethodNotAllowed", "AccessDenied"]);
+const NOT_IMPLEMENTED = new Set(["NotImplemented", "NotSupported", "MethodNotAllowed"]);
+// MinIO 的 IAM 动作列表不包含 Get/PutBucketCORS；最小权限账号只能得到 AccessDenied。
+// 该例外仅适用于 CORS，其它 API 的 AccessDenied 仍必须失败。
+const CORS_UNSUPPORTED = new Set([...NOT_IMPLEMENTED, "AccessDenied"]);
 
 const lines = [];
 let failed = false;
@@ -101,7 +105,7 @@ if (exists) {
     corsRules = cors.CORSRules ?? [];
   } catch (error) {
     // NoSuchCORSConfiguration（未配置）与 NotImplemented（该存储不实现）要分开：前者可补配置，后者无解。
-    corsUnsupported = NOT_IMPLEMENTED.has(error?.name) ? error.name : "";
+    corsUnsupported = CORS_UNSUPPORTED.has(error?.name) ? error.name : "";
   }
   const allowed = corsRules.flatMap((rule) => rule.AllowedOrigins ?? []);
   if (corsUnsupported !== "") {
@@ -130,7 +134,7 @@ if (exists) {
       );
       record("CORS", true, corsOrigins.join(", "));
     } catch (error) {
-      if (NOT_IMPLEMENTED.has(error?.name)) {
+      if (CORS_UNSUPPORTED.has(error?.name)) {
         warn("CORS", `该存储不实现桶级 CORS（${error.name}）；MinIO 走服务端 MINIO_API_CORS_ALLOW_ORIGIN（沙箱已注入）`);
       } else {
         fail("CORS", `${error?.name ?? "未知错误"}：${error?.message ?? error}`);
