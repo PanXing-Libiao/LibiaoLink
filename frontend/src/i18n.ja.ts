@@ -10,7 +10,7 @@ export const JA_TEXTS: Partial<Record<TextKey, string>> = {
   "nav.projects": "プロジェクト",
   "nav.templates": "タスクテンプレート",
   "nav.workspace": "マイタスク",
-  "header.brand.subtitle": "立镖フルチェーン情報プラットフォーム",
+  "header.brand.subtitle": "立镖市場プロジェクト管理プラットフォーム",
   "header.up": "前の階層に戻る",
   "header.seqNo": "No.",
   "header.createdAt": "作成日",
