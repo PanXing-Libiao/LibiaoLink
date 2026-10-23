@@ -35,11 +35,16 @@
  *      正文之后不再有落款行。
  *   ⑮ 序号列表头去「#」（业务 2026-10-10「这个#号删除」）：表头首格留空，行号照常出（1…N）。
  *   ⑯ 阶段进度说明去前缀（业务 2026-10-10「按项目总览的九个这个前半段字删除」）：说明句改为「施工阶段统计完成情况」（英文小字不动）。
+ *   2026-10-23 追订（业务口径「这边导入加入 日文和韩文 也要翻译」）：主体语言扩为 zh / en / ja / ko；
+ *   固定文案走四语词典，日 / 韩主体的项目名、任务名、进展描述按 target=ja|ko 走翻译通道，中文降为小字；
+ *   报告内联 Noto Sans JP / KR，中文小字仍用 Noto Sans SC。
  */
+import notoSansJpCss from "@fontsource-variable/noto-sans-jp/index.css?inline";
+import notoSansKrCss from "@fontsource-variable/noto-sans-kr/index.css?inline";
 import notoSansScCss from "@fontsource-variable/noto-sans-sc/index.css?inline";
 import { type ProjectTask, type TaskStatus } from "./data/tasks";
 import { stageNameOf } from "./taskApi";
-import { translateZhToEn } from "./translateApi";
+import { translateZhTo } from "./translateApi";
 import { getLocale, textOf } from "./i18n";
 import { projectManagerText } from "./types";
 import {
@@ -75,76 +80,69 @@ const STATUS_TINT: Record<TaskStatus, StatusTint> = {
 const PRINT_FRAME_ID = "overview-export-print-frame";
 
 /**
- * 中英双语词典（2026-10-10 业务口径「暂时先不做页面双语吧 先导出 pdf 双语」）——
- * 报告的固定文案 / 枚举值出中英对照：可按业务选择中文或英文为主体，另一语言以一号更小的浅灰小字呈现（.secondary）；
- * 数据值（任务名、人名、编号、日期、进展描述）不翻译，任务英文名用任务自带的 titleEn（描述列副行）。
+ * 四语报告词典（2026-10-23 追订）：中文 / 英文 / 日文 / 韩文主体共用一套固定文案口径。
+ * 报告的数据值仍不在这里翻译 —— 项目名 / 任务名 / 进展描述走 translateApi.ts。
  */
-const EN_STAGE: Record<string, string> = {
-  售前规划: "Presales Planning",
-  设计开发: "Design & Development",
-  加工采购: "Processing & Procurement",
-  组装发货: "Assembly & Shipping",
-  硬件实施: "Hardware Implementation",
-  软件部署: "Software Deployment",
-  试运行: "Trial Run",
-  生产阶段: "Production",
-  验收: "Acceptance",
-  临时任务: "Temporary Tasks",
-  项目总览: "Project Overview",
+type LanguageStrings = { en: string; ja: string; ko: string };
+
+const STAGE_TEXT: Record<string, LanguageStrings> = {
+  售前规划: { en: "Presales Planning", ja: "プリセールス計画", ko: "프리세일즈 기획" },
+  设计开发: { en: "Design & Development", ja: "設計・開発", ko: "설계 및 개발" },
+  加工采购: { en: "Processing & Procurement", ja: "加工・調達", ko: "가공 및 조달" },
+  组装发货: { en: "Assembly & Shipping", ja: "組立・出荷", ko: "조립 및 출하" },
+  硬件实施: { en: "Hardware Implementation", ja: "ハードウェア実装", ko: "하드웨어 구축" },
+  软件部署: { en: "Software Deployment", ja: "ソフトウェア配備", ko: "소프트웨어 배포" },
+  试运行: { en: "Trial Run", ja: "試運転", ko: "시운전" },
+  生产阶段: { en: "Production", ja: "生産段階", ko: "생산 단계" },
+  验收: { en: "Acceptance", ja: "検収", ko: "검수" },
+  临时任务: { en: "Temporary Tasks", ja: "臨時タスク", ko: "임시 작업" },
+  项目总览: { en: "Project Overview", ja: "プロジェクト概要", ko: "프로젝트 개요" },
 };
 
-/** 任务五态英文（进度档位里的「已完成」不在此表，见 EN_PROGRESS_LABEL）。 */
-const EN_STATUS: Record<TaskStatus, string> = {
-  已完成: "Completed",
-  提前完成: "Ahead of Schedule",
-  进行中: "In Progress",
-  待开始: "Not Started",
-  已延期: "Overdue",
+const STATUS_TEXT: Record<TaskStatus, LanguageStrings> = {
+  已完成: { en: "Completed", ja: "完了", ko: "완료" },
+  提前完成: { en: "Ahead of Schedule", ja: "予定前完了", ko: "조기 완료" },
+  进行中: { en: "In Progress", ja: "進行中", ko: "진행 중" },
+  待开始: { en: "Not Started", ja: "未着手", ko: "시작 전" },
+  已延期: { en: "Overdue", ja: "遅延", ko: "지연" },
 };
 
-/** 进度四格档位英文（与 data/tasks.ts 的 PROGRESS_LABELS 一一对应）。 */
-const EN_PROGRESS_LABEL: Record<string, string> = {
-  未开始: "Not Started",
-  刚开工: "Just Started",
-  完成一半: "Halfway",
-  快完成了: "Nearly Done",
-  已完成: "Completed",
+const PROGRESS_TEXT: Record<string, LanguageStrings> = {
+  未开始: { en: "Not Started", ja: "未着手", ko: "미시작" },
+  刚开工: { en: "Just Started", ja: "着工直後", ko: "착수 직후" },
+  完成一半: { en: "Halfway", ja: "半ば完了", ko: "절반 완료" },
+  快完成了: { en: "Nearly Done", ja: "まもなく完了", ko: "거의 완료" },
+  已完成: { en: "Completed", ja: "完了", ko: "완료" },
 };
 
-function languageAttr(language: OverviewExportLanguage): string {
-  return language === "en" ? "en" : "zh-CN";
-}
-
-/** 次要语言：中文主体放英文，英文主体放中文；供固定短语和单独引用的译文使用。 */
-function secondaryText(value: string, language: OverviewExportLanguage): string {
-  return `<span class="secondary" lang="${languageAttr(language)}">${escapeHtml(value)}</span>`;
-}
-
-/** 主次双语：主体语言在前保持正文层级，另一语言在后作小字；英文缺失时回退中文。 */
-function bilingual(zh: string, english: string | undefined, primary: OverviewExportLanguage): string {
-  if (primary === "en" && english !== undefined && english !== "") {
-    return escapeHtml(english) + (zh === "" ? "" : " " + secondaryText(zh, "zh"));
-  }
-  return escapeHtml(zh) + (english === undefined || english === "" ? "" : " " + secondaryText(english, "en"));
-}
-
-/** 英文主体时用英文标点；中文主体保持既有全角冒号。 */
-function labelColon(primary: OverviewExportLanguage): string {
-  return primary === "en" ? ": " : "：";
-}
-
-/** 阶段 / 分组名双语（契约九阶段与「临时任务」查词典；历史脏值只出中文）。 */
-function stageZhEn(name: string, primary: OverviewExportLanguage): string {
-  return bilingual(name, EN_STAGE[name], primary);
-}
-
-/** 阶段文案的英文：九阶段查词典；「全部完成 / —」两个非阶段文案单独对照。 */
-function stageEnOf(text: string): string {
-  if (text === "全部完成") {
-    return "All Completed";
-  }
-  return text === "—" ? "" : (EN_STAGE[text] ?? "");
-}
+const FIXED_TEXT: Record<string, LanguageStrings> = {
+  ...STAGE_TEXT,
+  ...STATUS_TEXT,
+  ...PROGRESS_TEXT,
+  整体进度: { en: "Overall Progress", ja: "全体進捗", ko: "전체 진행률" },
+  任务总数: { en: "Total Tasks", ja: "タスク総数", ko: "전체 작업" },
+  完成: { en: "completed", ja: "完了", ko: "완료" },
+  全部完成: { en: "All Completed", ja: "すべて完了", ko: "모두 완료" },
+  暂无任务: { en: "No tasks", ja: "タスクなし", ko: "작업 없음" },
+  待分配: { en: "Unassigned", ja: "未割当", ko: "미배정" },
+  项目编号: { en: "Project Code", ja: "プロジェクト番号", ko: "프로젝트 번호" },
+  项目经理: { en: "Project Manager", ja: "プロジェクト責任者", ko: "프로젝트 관리자" },
+  阶段进度: { en: "Stage Progress", ja: "ステージ進捗", ko: "단계 진행률" },
+  施工阶段统计完成情况: { en: "Completion of the nine construction stages", ja: "9つの施工段階の完了状況", ko: "9개 시공 단계 완료 현황" },
+  任务明细: { en: "Task Details", ja: "タスク詳細", ko: "작업 상세" },
+  任务描述: { en: "Task Description", ja: "タスク内容", ko: "작업 설명" },
+  项目进展描述: { en: "Progress Description", ja: "進捗内容", ko: "진행 상세" },
+  任务负责人: { en: "Task Owners", ja: "タスク担当者", ko: "작업 담당자" },
+  任务状态: { en: "Status", ja: "ステータス", ko: "상태" },
+  开始日期: { en: "Start Date", ja: "開始日", ko: "시작일" },
+  预计完成: { en: "Planned End", ja: "完了予定", ko: "완료 예정" },
+  预计所需施工人数: { en: "Est. Headcount", ja: "必要作業人数（概算）", ko: "예상 투입 인원" },
+  进度: { en: "Progress", ja: "進捗", ko: "진행률" },
+  最慢阶段: { en: "Slowest Stage", ja: "最も遅れている段階", ko: "가장 지연된 단계" },
+  最新阶段: { en: "Latest Stage", ja: "最新ステージ", ko: "최신 단계" },
+  项目进度报告: { en: "Project Progress Report", ja: "プロジェクト進捗報告", ko: "프로젝트 진행 보고서" },
+  进度报告: { en: "Progress Report", ja: "進捗報告", ko: "진행 보고서" },
+};
 
 /** HTML 文本转义（任务名 / 负责人 / 项目名都是用户输入，一律转义后再拼进报告）。 */
 function escapeHtml(value: string): string {
@@ -156,14 +154,61 @@ function escapeHtml(value: string): string {
     .replace(/\u0027/g, "&#39;");
 }
 
+function languageAttr(language: OverviewExportLanguage): string {
+  return language === "zh" ? "zh-CN" : language;
+}
+
+/** 次要语言小字：中文主体放英文，其他主体放中文。 */
+function secondaryText(value: string, language: OverviewExportLanguage): string {
+  return `<span class="secondary" lang="${languageAttr(language)}">${escapeHtml(value)}</span>`;
+}
+
+/** 固定文案的目标语言值；缺词典时回退英文，再回退中文。 */
+function localizedValue(zh: string, primary: OverviewExportLanguage): string {
+  if (primary === "zh") {
+    return zh;
+  }
+  const strings = FIXED_TEXT[zh];
+  if (strings === undefined) {
+    return zh;
+  }
+  return strings[primary] || strings.en || zh;
+}
+
+/** 固定文案：主体语言为主文案，非中文主体的中文原文作小字；中文主体保留英文小字。 */
+function fixedText(zh: string, primary: OverviewExportLanguage): string {
+  const main = localizedValue(zh, primary);
+  if (primary === "zh") {
+    const english = FIXED_TEXT[zh]?.en ?? "";
+    return escapeHtml(main) + (english === "" ? "" : " " + secondaryText(english, "en"));
+  }
+  return escapeHtml(main) + (main === zh ? "" : " " + secondaryText(zh, "zh"));
+}
+
+/** 数据值译文：主体语言在前；非中文主体把中文原文降为小字，译文缺失时逐项回退中文。 */
+function translatedText(zh: string, translated: string | undefined, primary: OverviewExportLanguage): string {
+  if (primary === "zh") {
+    return escapeHtml(zh) + (translated === undefined || translated === "" ? "" : " " + secondaryText(translated, "en"));
+  }
+  const main = translated === undefined || translated === "" ? zh : translated;
+  return escapeHtml(main) + (main === zh ? "" : " " + secondaryText(zh, "zh"));
+}
+
+/** 英文 / 韩文用半角冒号；中文 / 日文保持全角冒号。 */
+function labelColon(primary: OverviewExportLanguage): string {
+  return primary === "zh" || primary === "ja" ? "：" : ": ";
+}
+
 /** 预计所需施工人数：页面同口径（未填 / ≤0 出「—」，否则「N 人」）。 */
 function headcountText(task: ProjectTask, primary: OverviewExportLanguage): string {
   if (task.headcount <= 0) {
     return `<span class="dim">—</span>`;
   }
-  return primary === "en"
-    ? String(task.headcount) + " people " + secondaryText("人", "zh")
-    : String(task.headcount) + " 人";
+  if (primary === "zh") {
+    return String(task.headcount) + " 人";
+  }
+  const unit = primary === "en" ? " people " : primary === "ja" ? " 名 " : "명 ";
+  return String(task.headcount) + unit + secondaryText("人", "zh");
 }
 
 /** 百分比文本：总数 0 时出「—」，避免 0 / 0 的假百分比。 */
@@ -173,58 +218,69 @@ function percentText(part: number, whole: number): string {
 
 /** 横条进度条（报告里唯一一种进度呈现：阶段进度 / 明细行进度共用）。 */
 function barHtml(pct: number, color: string, extraClass: string): string {
-  return '<div class="bar ' + extraClass + '"><span style="width: ' + String(pct) + "%; background: " + color + '"></span></div>';
+  return "<div class=\"bar " + extraClass + "\"><span style=\"width: " + String(pct) + "%; background: " + color + "\"></span></div>";
 }
 
-/** 汇总统计条里的一格（色点 + 数值 + 中英标签（占比）横排 —— 比卡片矮一半，给竖版一页让版面）。 */
-function statHtml(label: string, english: string, value: string, hint: string, dot: string, primary: OverviewExportLanguage): string {
+/** 汇总统计条里的一格（色点 + 数值 + 四语标签（占比）横排）。 */
+function statHtml(label: string, value: string, hint: string, dot: string, primary: OverviewExportLanguage): string {
+  const hintHtml = hint === "" ? "" : primary === "ko" ? " (" + hint + ")" : "（" + hint + "）";
   return (
     `<span class="stat">` +
     `<span class="stat__dot" style="background: ${dot}"></span>` +
     `<span class="stat__value">${value}</span>` +
-    bilingual(label, english, primary) +
-    (hint === "" ? "" : "（" + hint + "）") +
+    fixedText(label, primary) +
+    hintHtml +
     `</span>`
   );
 }
 
-/** 阶段进度格（九阶段按 5 列网格排、末行 4 格；「临时任务」有任务时才补一格，见调用方过滤）。空阶段出「暂无任务 / No tasks」，不出 0 / 0 的假百分比。 */
+/** 阶段进度格：九阶段按 5 列网格排、末行 4 格；空阶段出「暂无任务」。 */
 function stageCellHtml(group: StageGroup, primary: OverviewExportLanguage): string {
   const pct = group.total === 0 ? 0 : Math.round((group.done / group.total) * 100);
   const fill = group.total === 0 ? "#d4d4d8" : pct === 100 ? "#10b981" : "#18181b";
   const countText =
-    group.total === 0 ? bilingual("暂无任务", "No tasks", primary) : String(group.done) + " / " + String(group.total) + " · " + String(pct) + "%";
+    group.total === 0 ? fixedText("暂无任务", primary) : String(group.done) + " / " + String(group.total) + " · " + String(pct) + "%";
   return (
     `<div class="stage">` +
-    `<div class="stage__head"><span class="stage__name">${stageZhEn(group.name, primary)}</span>` +
+    `<div class="stage__head"><span class="stage__name">${fixedText(group.name, primary)}</span>` +
     `<span class="stage__count">${countText}</span></div>` +
     barHtml(pct, fill, "bar--stage") +
     `</div>`
   );
 }
 
-/**
- * 任务明细一行（列序 = 表头 colgroup 的顺序）。
- * 2026-10-09 追订（业务口径「紧急重要程度不需要展示 然后输出成果文件需要 项目经理也需要」）：
- * 撤「紧急重要度」列，补「项目经理」（项目级字段、逐行同值）与「输出成果文件」（deliverableTypes）。
- * 2026-10-10 追订（业务口径「pdf 导出 不需要框起来的三行 然后增加预计施工人数」+「先导出 pdf 双语」）：
- * ① 撤「是否按时交付 / 输出成果文件 / 实际完成」三列，补「预计所需施工人数」（同页面 headcount 口径）；
- * ② 状态签 / 进度档位等固定文案补英文小字；任务英文名用自带 titleEn，人名 / 编号 / 日期等数据不翻译。
- * ③ 「项目进展描述」独立成列（任务描述之后，第 3 列；2026-10-10 业务口径「项目进展描述单例一列吧 然后需要翻译」）：任务描述副行只留英文名；列数 9 → 10、列宽重排、分组头 colspan 同步；列内中文原文 + 英文小字译文（⑬ 追订接线）。
- */
+/** 任务明细一行：日 / 韩主体额外翻译任务标题；中文 / 英文主体保持原有 title / titleEn 口径。 */
 function taskRowHtml(index: number, task: ProjectTask, managerText: string, translationMap: ReadonlyMap<string, string>, primary: OverviewExportLanguage): string {
   const tint = STATUS_TINT[task.status];
-  // 中文主体：中文标题 + 英文名小字；英文主体：英文名提为主标题，中文标题降为小字。
   const hasTitleEn = task.titleEn !== "";
-  const titleMain = primary === "en" && hasTitleEn ? task.titleEn : task.title;
-  const titleSecondary = primary === "en" ? (hasTitleEn ? task.title : "") : (hasTitleEn ? task.titleEn : "");
-  const titleLang = primary === "en" && hasTitleEn ? "en" : "zh-CN";
-  const subHtml = titleSecondary === "" ? "" : `<span class="task__sub" lang="${primary === "en" ? "zh-CN" : "en"}">${escapeHtml(titleSecondary)}</span>`;
-  const noteEn = task.note === "" ? "" : (translationMap.get(task.note) ?? "");
-  const noteHtml = task.note === "" ? `<span class="dim">—</span>` : bilingual(task.note, noteEn, primary);
+  let titleMain = task.title;
+  let titleSecondary = "";
+  let titleLang = "zh-CN";
+  if (primary === "en") {
+    titleMain = hasTitleEn ? task.titleEn : task.title;
+    titleSecondary = hasTitleEn ? task.title : "";
+    titleLang = hasTitleEn ? "en" : "zh-CN";
+  } else if (primary === "ja" || primary === "ko") {
+    const translated = translationMap.get(task.title) ?? "";
+    if (translated !== "") {
+      titleMain = translated;
+      titleSecondary = task.title;
+      titleLang = primary;
+    } else if (hasTitleEn) {
+      titleMain = task.titleEn;
+      titleSecondary = task.title;
+      titleLang = "en";
+    }
+  } else if (hasTitleEn) {
+    titleSecondary = task.titleEn;
+  }
+  const secondaryLang = primary === "zh" ? "en" : "zh-CN";
+  const subHtml = titleSecondary === "" ? "" : `<span class="task__sub" lang="${secondaryLang}">${escapeHtml(titleSecondary)}</span>`;
+  const translatedNote = task.note === "" ? "" : (translationMap.get(task.note) ?? "");
+  const noteHtml = task.note === "" ? `<span class="dim">—</span>` : translatedText(task.note, translatedNote, primary);
   const ownersTextValue = ownersText(task);
   const ownersHtml = task.owners.length === 0
-    ? primary === "en" ? bilingual("待分配", "Unassigned", primary) : "待分配"
+    ? primary === "zh" ? "待分配" : fixedText("待分配", primary)
     : escapeHtml(ownersTextValue);
   const progressZh = progressLabel(task.progress);
   return (
@@ -234,11 +290,11 @@ function taskRowHtml(index: number, task: ProjectTask, managerText: string, tran
     `<td class="pnote">${noteHtml}</td>` +
     `<td class="managers"><span class="one-line">${escapeHtml(managerText)}</span></td>` +
     `<td class="owners"><span class="one-line">${ownersHtml}</span></td>` +
-    `<td class="center"><span class="chip" style="color: ${tint.text}; background: ${tint.bg}">${bilingual(task.status, EN_STATUS[task.status], primary)}</span></td>` +
+    `<td class="center"><span class="chip" style="color: ${tint.text}; background: ${tint.bg}">${fixedText(task.status, primary)}</span></td>` +
     `<td class="num center">${dateText(task.startDate)}</td>` +
     `<td class="num center">${dateText(task.dueDate)}</td>` +
     `<td class="num center">${headcountText(task, primary)}</td>` +
-    `<td class="progress">${barHtml(progressPct(task.progress), tint.bar, "bar--row")}<span class="progress__label">${bilingual(progressZh, EN_PROGRESS_LABEL[progressZh], primary)}</span></td>` +
+    `<td class="progress">${barHtml(progressPct(task.progress), tint.bar, "bar--row")}<span class="progress__label">${fixedText(progressZh, primary)}</span></td>` +
     `</tr>`
   );
 }
@@ -251,13 +307,13 @@ function groupSectionHtml(counter: { value: number }, group: StageGroup, manager
       return taskRowHtml(counter.value, task, managerText, translationMap, primary);
     })
     .join("");
-  const countText = primary === "en"
-    ? String(group.done) + " / " + String(group.total) + " completed · " + secondaryText("完成", "zh")
-    : String(group.done) + " / " + String(group.total) + " 完成 · " + secondaryText("completed", "en");
+  const countText =
+    String(group.done) + " / " + String(group.total) + " " + escapeHtml(localizedValue("完成", primary)) + " · " +
+    (primary === "zh" ? secondaryText("completed", "en") : secondaryText("完成", "zh"));
   return (
     `<tbody class="grp">` +
     `<tr class="grp__head"><td colspan="10">` +
-    `<span class="grp__name">${stageZhEn(group.name, primary)}</span>` +
+    `<span class="grp__name">${fixedText(group.name, primary)}</span>` +
     `<span class="grp__count">${countText}</span>` +
     `</td></tr>` +
     rows +
@@ -267,6 +323,8 @@ function groupSectionHtml(counter: { value: number }, group: StageGroup, manager
 
 /** 报告的打印样式（自包含在 iframe 文档里：不依赖站内 Tailwind，也不反向影响站内样式）。 */
 const REPORT_STYLE = `
+  ${notoSansJpCss}
+  ${notoSansKrCss}
   ${notoSansScCss}
   /* 2026-10-09 追订（先按「纸张竖着了 尽可能在一页展示」改竖版，再按「还是之前的横屏吧」回 **A4 横版**）：
      保留这轮的紧凑结构 —— 统计卡收成一条统计条、阶段进度 5 列网格、明细行英文名与进展描述并成一行小字并按
@@ -279,6 +337,9 @@ const REPORT_STYLE = `
   html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   body { margin: 0; color: #1f2329; font-size: 10px; line-height: 1.45;
     font-family: "Noto Sans SC Variable", "Source Han Sans SC", "Noto Sans SC", sans-serif; }
+  body.primary-ja { font-family: "Noto Sans JP Variable", "Noto Sans SC Variable", "Noto Sans KR Variable", sans-serif; }
+  body.primary-ko { font-family: "Noto Sans KR Variable", "Noto Sans SC Variable", "Noto Sans JP Variable", sans-serif; }
+  .secondary[lang="zh-CN"] { font-family: "Noto Sans SC Variable", "Noto Sans JP Variable", "Noto Sans KR Variable", sans-serif; }
   .head { padding-bottom: 6px; border-bottom: 2px solid #18181b; }
   .head__logo { display: block; height: 36px; width: auto; }
   .hero { display: flex; align-items: flex-start; gap: 16px; margin-top: 8px; }
@@ -364,28 +425,29 @@ export function buildOverviewReportHtml(
   const stageTextOf = (key: string | null): string => (key === null ? "—" : stageNameOf(key) || "—");
   const slowest = summary === null ? "—" : summary.total > 0 && summary.slowestStage === null ? "全部完成" : stageTextOf(summary.slowestStage);
   const latest = summary === null ? "—" : stageTextOf(summary.latestStage);
-  const slowestEn = stageEnOf(slowest);
-  const latestEn = stageEnOf(latest);
-  const nameEn = translationMap.get(project.description) ?? "";
+  const translatedName = translationMap.get(project.description) ?? "";
   const heroLabelZh = counts.total === 0 ? "整体进度" : "整体进度（已完成 " + String(counts.done) + " / " + String(counts.total) + "）";
   const heroLabelEn = counts.total === 0
     ? "Overall Progress"
     : "Overall Progress (" + String(counts.done) + " / " + String(counts.total) + " completed)";
-  const heroLabelHtml = primary === "en"
-    ? escapeHtml(heroLabelEn) + "<br />" + secondaryText(heroLabelZh, "zh")
-    : escapeHtml(heroLabelZh) + "<br />" + secondaryText("Overall Progress", "en");
-  const header = (zh: string, english: string): string => bilingual(zh, english, primary);
-  /** 占比文案：总数 0 时省略（不出 0 / 0 的假百分比）。 */
+  const heroLabelJa = counts.total === 0
+    ? "全体進捗"
+    : "全体進捗（完了 " + String(counts.done) + " / " + String(counts.total) + "）";
+  const heroLabelKo = counts.total === 0
+    ? "전체 진행률"
+    : "전체 진행률(완료 " + String(counts.done) + " / " + String(counts.total) + ")";
+  const heroLabelMain = primary === "zh" ? heroLabelZh : primary === "en" ? heroLabelEn : primary === "ja" ? heroLabelJa : heroLabelKo;
+  const heroLabelSecondary = primary === "zh" ? "Overall Progress" : heroLabelZh;
+  const heroLabelHtml = escapeHtml(heroLabelMain) + "<br />" + secondaryText(heroLabelSecondary, primary === "zh" ? "en" : "zh");
   const shareOf = (part: number): string => (counts.total === 0 ? "" : percentText(part, counts.total));
   const stats = [
-    statHtml("任务总数", "Total Tasks", String(counts.total), "", "#18181b", primary),
-    statHtml("已完成", "Completed", String(counts.done), shareOf(counts.done), "#10b981", primary),
-    statHtml("进行中", "In Progress", String(counts.active), shareOf(counts.active), "#f59e0b", primary),
-    statHtml("待开始", "Not Started", String(counts.pending), shareOf(counts.pending), "#0ea5e9", primary),
-    statHtml("已延期", "Overdue", String(counts.overdue), shareOf(counts.overdue), "#f43f5e", primary),
+    statHtml("任务总数", String(counts.total), "", "#18181b", primary),
+    statHtml("已完成", String(counts.done), shareOf(counts.done), "#10b981", primary),
+    statHtml("进行中", String(counts.active), shareOf(counts.active), "#f59e0b", primary),
+    statHtml("待开始", String(counts.pending), shareOf(counts.pending), "#0ea5e9", primary),
+    statHtml("已延期", String(counts.overdue), shareOf(counts.overdue), "#f43f5e", primary),
   ].join("");
 
-  // 阶段进度区：九个施工阶段常显；「临时任务」与契约外的分组只在有任务时出现（0 / 0 的空分组对客户没意义）
   const stageCells = groups
     .filter((group) => group.tasks.length > 0 || STAGE_NAMES.includes(group.name))
     .map((group) => stageCellHtml(group, primary))
@@ -394,14 +456,28 @@ export function buildOverviewReportHtml(
   const counter = { value: 0 };
   const managerText = projectManagerText(project);
   const detailRows = detailGroups.map((group) => groupSectionHtml(counter, group, managerText, translationMap, primary)).join("");
-  const clippedNote = counts.total > tasks.length
-    ? primary === "en"
-      ? " (list capped to " + String(tasks.length) + " · " + secondaryText("列表一次取满 " + String(tasks.length) + " 条，明细只含已取到的任务", "zh") + ")"
-      : "（列表一次取满 " + String(tasks.length) + " 条，明细只含已取到的任务 · " + secondaryText("list capped, fetched tasks only", "en") + "）"
-    : "";
-  const emptyText = primary === "en"
-    ? "No tasks in this project. " + secondaryText("本项目暂无任务。", "zh")
-    : "本项目暂无任务 · " + secondaryText("No tasks in this project.", "en");
+  const fetchedCount = String(tasks.length);
+  let clippedNote = "";
+  if (counts.total > tasks.length) {
+    const clippedZh = "列表一次取满 " + fetchedCount + " 条，明细只含已取到的任务";
+    if (primary === "zh") {
+      clippedNote = "（列表一次取满 " + fetchedCount + " 条，明细只含已取到的任务 · " + secondaryText("list capped, fetched tasks only", "en") + "）";
+    } else if (primary === "en") {
+      clippedNote = " (list capped to " + fetchedCount + " · " + secondaryText(clippedZh, "zh") + ")";
+    } else if (primary === "ja") {
+      clippedNote = "（一覧は " + fetchedCount + " 件まで取得済みのため、明細は取得済みタスクのみ · " + secondaryText(clippedZh, "zh") + "）";
+    } else {
+      clippedNote = " (" + fetchedCount + "개까지만 조회되어 상세에는 조회된 작업만 표시됩니다 · " + secondaryText(clippedZh, "zh") + ")";
+    }
+  }
+  let emptyText = "本项目暂无任务 · " + secondaryText("No tasks in this project.", "en");
+  if (primary === "en") {
+    emptyText = "No tasks in this project. " + secondaryText("本项目暂无任务。", "zh");
+  } else if (primary === "ja") {
+    emptyText = "このプロジェクトにはタスクがありません。 " + secondaryText("本项目暂无任务。", "zh");
+  } else if (primary === "ko") {
+    emptyText = "이 프로젝트에는 작업이 없습니다. " + secondaryText("本项目暂无任务。", "zh");
+  }
   const tableHtml =
     detailRows === ""
       ? `<p class="empty">${emptyText}</p>`
@@ -421,35 +497,50 @@ export function buildOverviewReportHtml(
     <thead>
       <tr>
         <th class="center"></th>
-        <th>${header("任务描述", "Task Description")}</th>
-        <th>${header("项目进展描述", "Progress Description")}</th>
-        <th>${header("项目经理", "Project Manager")}</th>
-        <th>${header("任务负责人", "Task Owners")}</th>
-        <th class="center">${header("任务状态", "Status")}</th>
-        <th class="center">${header("开始日期", "Start Date")}</th>
-        <th class="center">${header("预计完成", "Planned End")}</th>
-        <th class="center">${header("预计所需施工人数", "Est. Headcount")}</th>
-        <th class="center">${header("进度", "Progress")}</th>
+        <th>${fixedText("任务描述", primary)}</th>
+        <th>${fixedText("项目进展描述", primary)}</th>
+        <th>${fixedText("项目经理", primary)}</th>
+        <th>${fixedText("任务负责人", primary)}</th>
+        <th class="center">${fixedText("任务状态", primary)}</th>
+        <th class="center">${fixedText("开始日期", primary)}</th>
+        <th class="center">${fixedText("预计完成", primary)}</th>
+        <th class="center">${fixedText("预计所需施工人数", primary)}</th>
+        <th class="center">${fixedText("进度", primary)}</th>
       </tr>
     </thead>
     ${detailRows}
   </table>`;
 
-  const slowestLabel = bilingual("最慢阶段", "Slowest Stage", primary);
-  const latestLabel = bilingual("最新阶段", "Latest Stage", primary);
-  const heroNameZh = escapeHtml(project.description) + " · 进度报告";
-  const heroNameEn = nameEn === "" ? "" : escapeHtml(nameEn) + " · Progress Report";
-  const heroNameHtml = primary === "en"
-    ? heroNameEn === ""
-      ? heroNameZh
-      : heroNameEn + secondaryText(project.description + " · 进度报告", "zh")
-    : heroNameZh + (heroNameEn === "" ? "" : secondaryText(nameEn + " · Progress Report", "en"));
-  const docTitle = primary === "en"
-    ? (nameEn === "" ? project.description : nameEn) + " · Project Progress Report / " + project.description + " · 项目进度报告"
-    : project.description + " · 项目进度报告 Project Progress Report";
-  const tasksTotalHtml = primary === "en"
-    ? "tasks in total: " + String(counts.total) + " · " + secondaryText("共 " + String(counts.total) + " 条", "zh") + clippedNote
-    : "共 " + String(counts.total) + " 条 · " + secondaryText("tasks in total", "en") + clippedNote;
+  const slowestLabel = fixedText("最慢阶段", primary);
+  const latestLabel = fixedText("最新阶段", primary);
+  const heroNameZh = project.description + " · 进度报告";
+  const heroNameTarget = translatedName === "" ? "" : translatedName + " · " + localizedValue("进度报告", primary);
+  const heroNameEn = translatedName === "" ? "" : translatedName + " · Progress Report";
+  let heroNameHtml = escapeHtml(heroNameZh) + (heroNameEn === "" ? "" : " " + secondaryText(heroNameEn, "en"));
+  if (primary === "en") {
+    heroNameHtml = heroNameEn === "" ? escapeHtml(heroNameZh) : escapeHtml(heroNameEn) + " " + secondaryText(heroNameZh, "zh");
+  } else if (primary === "ja" || primary === "ko") {
+    heroNameHtml = heroNameTarget === "" ? escapeHtml(heroNameZh) : escapeHtml(heroNameTarget) + " " + secondaryText(heroNameZh, "zh");
+  }
+  const reportName = localizedValue("项目进度报告", primary);
+  let docTitle = project.description + " · 项目进度报告 Project Progress Report";
+  if (primary === "en") {
+    docTitle = translatedName === ""
+      ? project.description + " · 项目进度报告 Project Progress Report"
+      : translatedName + " · Project Progress Report / " + project.description + " · 项目进度报告";
+  } else if (primary === "ja" || primary === "ko") {
+    docTitle = translatedName === ""
+      ? project.description + " · " + reportName + " / " + project.description + " · 项目进度报告"
+      : translatedName + " · " + reportName + " / " + project.description + " · 项目进度报告";
+  }
+  const taskCount = String(counts.total);
+  const taskTotalMain = primary === "zh"
+    ? "共 " + taskCount + " 条"
+    : primary === "en"
+      ? "tasks in total: " + taskCount
+      : primary === "ja" ? "タスク合計: " + taskCount + " 件" : "총 작업 " + taskCount + "개";
+  const taskTotalSecondary = "共 " + taskCount + " 条";
+  const tasksTotalHtml = escapeHtml(taskTotalMain) + " · " + secondaryText(primary === "zh" ? "tasks in total" : taskTotalSecondary, primary === "zh" ? "en" : "zh") + clippedNote;
 
   return `<!doctype html>
 <html lang="${languageAttr(primary)}" data-primary-language="${primary}">
@@ -468,13 +559,13 @@ export function buildOverviewReportHtml(
       <p class="hero__pct">${String(counts.pct)}<span>%</span></p>
       <p class="hero__label">${heroLabelHtml}</p>
       ${barHtml(counts.pct, "#18181b", "bar--hero")}
-      <p class="hero__foot">${slowestLabel}${labelColon(primary)}${bilingual(slowest, slowestEn, primary)}<br />${latestLabel}${labelColon(primary)}${bilingual(latest, latestEn, primary)}</p>
+      <p class="hero__foot">${slowestLabel}${labelColon(primary)}${fixedText(slowest, primary)}<br />${latestLabel}${labelColon(primary)}${fixedText(latest, primary)}</p>
     </div>
     <div class="hero__left">
       <h1 class="hero__name">${heroNameHtml}</h1>
-      <p class="hero__code">${bilingual("项目编号", "Project Code", primary)}${labelColon(primary)}${escapeHtml(project.code)}</p>
+      <p class="hero__code">${fixedText("项目编号", primary)}${labelColon(primary)}${escapeHtml(project.code)}</p>
       <div class="hero__tags">
-        <span class="tag">${bilingual("项目经理", "Project Manager", primary)}${labelColon(primary)}${escapeHtml(projectManagerText(project))}</span>
+        <span class="tag">${fixedText("项目经理", primary)}${labelColon(primary)}${escapeHtml(projectManagerText(project))}</span>
       </div>
     </div>
   </section>
@@ -482,12 +573,12 @@ export function buildOverviewReportHtml(
   <section class="stats">${stats}</section>
 
   <section class="section">
-    <h2 class="section__title">${bilingual("阶段进度", "Stage Progress", primary)}<span class="section__note">${bilingual("施工阶段统计完成情况", "Completion of the nine construction stages", primary)}</span></h2>
+    <h2 class="section__title">${fixedText("阶段进度", primary)}<span class="section__note">${fixedText("施工阶段统计完成情况", primary)}</span></h2>
     <div class="stages">${stageCells}</div>
   </section>
 
   <section class="section">
-    <h2 class="section__title">${bilingual("任务明细", "Task Details", primary)}<span class="section__note">${tasksTotalHtml}</span></h2>
+    <h2 class="section__title">${fixedText("任务明细", primary)}<span class="section__note">${tasksTotalHtml}</span></h2>
     ${tableHtml}
   </section>
 
@@ -496,22 +587,21 @@ export function buildOverviewReportHtml(
 }
 
 /**
- * 导出项目总览为 PDF：按选择的主体语言排列中英层级；先补英文（项目名 + 「项目进展描述」列，translateApi.ts；通道不通静默降级）——
- * 2026-10-13 起译文通常在「写进展描述」时已后台预热（§6.16 ㉑），命中缓存即取、只有未预热条目才现场翻，
- * 再拼报告 HTML → 离屏 iframe → 唤起系统打印窗口（用户在窗口里选「另存为 PDF」）。
- * 异步返回：等待译文（命中缓存即时返回；未预热条目去重 + 限并发现场翻，单条 0.1–2s 量级）；
- * 落盘位置由用户在打印窗口里选，前端不接触文件系统。
- * onTranslateProgress(done, total)：译文进度回调（导出等待浮层据此显示「项目进展描述翻译中 + 预计秒数」，§6.16 ⑳）。
+ * 导出项目总览为 PDF：中文 / 英文主体沿用英文译文口径；日文 / 韩文主体额外翻译项目名、任务名与进展描述。
+ * 译文命中会话缓存 / 服务端译文库即取，未预热条目才现场翻；通道不通静默回退中文，不阻断导出。
+ * 报告 HTML 送进离屏 iframe 后唤起系统打印窗口（用户选「另存为 PDF」）。
+ * onTranslateProgress(done, total)：译文进度回调（导出等待浮层显示「报告内容翻译中 + 预计秒数」）。
  */
 export async function exportProjectOverviewPdf(
   input: OverviewExportInput,
   primary: OverviewExportLanguage = "zh",
   onTranslateProgress?: (done: number, total: number) => void,
 ): Promise<void> {
-  const translationMap = await translateZhToEn(
-    [input.project.description, ...input.tasks.map((task) => task.note)],
-    onTranslateProgress,
-  );
+  const target = primary === "ja" ? "ja" : primary === "ko" ? "ko" : "en";
+  const texts = target === "en"
+    ? [input.project.description, ...input.tasks.map((task) => task.note)]
+    : [input.project.description, ...input.tasks.flatMap((task) => [task.title, task.note])];
+  const translationMap = await translateZhTo(texts, target, onTranslateProgress);
   printHtmlDocument(buildOverviewReportHtml(input, translationMap, primary));
 }
 
