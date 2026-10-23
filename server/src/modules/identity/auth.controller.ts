@@ -6,6 +6,7 @@ import { AppError } from "../../common/errors/app-error.js";
 import { parseCookieHeader, serializeCookie } from "../../common/http/cookies.js";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { AppConfig } from "../../config/config.module.js";
+import { AuditService } from "../audit/index.js";
 import { CSRF_COOKIE, SESSION_COOKIE, TRANSIENT_COOKIE, TRANSIENT_MAX_AGE_SECONDS } from "./auth.constants.js";
 import { OidcService } from "./oidc.service.js";
 import { safeReturnTo } from "./return-to.js";
@@ -36,6 +37,7 @@ export class AuthController {
     private readonly oidc: OidcService,
     private readonly sessions: SessionService,
     private readonly users: UserService,
+    private readonly audit: AuditService,
   ) {}
 
   @Get("login")
@@ -87,6 +89,18 @@ export class AuthController {
     }
     const exp = typeof claims.exp === "number" ? claims.exp : Math.floor(Date.now() / 1000) + DEFAULT_EXPIRES_IN_SECONDS;
     const session = await this.sessions.create({ userId: user.id, idToken: tokens.idToken, expiresAtSeconds: exp });
+    await this.audit.recordStandalone({
+      actorId: user.id,
+      action: "visit",
+      objectType: "user",
+      objectId: user.id,
+      summary: "登录系统：" + user.displayName + "（" + user.username + "）",
+      metadata: {
+        operation: "login",
+        source: "sso",
+        expiresAt: new Date(exp * 1000).toISOString(),
+      },
+    });
     const maxAge = Math.max(0, exp - Math.floor(Date.now() / 1000));
     response.append(
       "Set-Cookie",
