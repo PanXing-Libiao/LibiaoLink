@@ -1,8 +1,9 @@
 # F-02 MinIO 根凭据与端口暴露整改方案与执行切片
 
 > 来源：`LibiaoLink_安全审查报告_2026-10-21.pdf` F-02（第 4～5 页）｜严重度 High / P0｜报告验收要求：应用凭据不能管理用户 / 桶或访问其它桶；9000 / 9001 / 9443 从非授权网络不可达；轮换后旧凭据失效
-> 报告审查基线：`px @ e05535b8`｜方案落档基线：`origin/main@4e5f5ba`（与 `lan@4287684` 对比，F-02 涉及的 Compose、Nginx、存储脚本与凭据挂载配置未发生实质修复）
-> 起草：lan（后端平台 / file / storage / preview / outbox）｜拟稿日期：2026-10-22｜状态：**方案已落档，待 px、wmj 复核；实施进度 0 / 7，F-02 尚未关闭**
+> 报告审查基线：`px @ e05535b8`｜S0 复核基线：`origin/main@6b846b2`（2026-10-23；F-02 涉及的 Compose、Nginx、存储脚本与凭据挂载配置未发生实质修复）
+> 起草：lan（后端平台 / file / storage / preview / outbox）｜拟稿日期：2026-10-22｜S0 评审冻结：2026-10-23｜状态：**S0 已通过并冻结；实施进度 1 / 7，F-02 尚未关闭**
+> S0 签收：px（部署 / docs）与 wmj（安全）完成复核；经用户确认三方协商后，由 lan 代录。冻结结论见 §5「S0 · 方案落档与评审冻结」。
 > 归属与评审：`docs/` 归 px 主责，落档需 px 复核；生产 Compose、Nginx、主机防火墙与部署窗口归 px 主责；MinIO 身份 / 策略、`server/` 存储脚本与凭据接线归 lan 主责；安全验收请 wmj 交叉复核。涉及安全、部署与 Secrets 的高风险变更必须取得非作者批准。
 > 变更控制：后续执行以本文件为基线。若执行中需要改变端口、身份模型、策略动作、切片顺序或验收条件，先修改本文件并写明原因、影响和回滚，再实施；已合入主干的回放证据与部署记录按不可变历史处理，不原地改写。
 
@@ -10,7 +11,7 @@
 
 | 切片 | 状态 | PR / commit | 部署与验证证据 | 备注 |
 |---|---|---|---|---|
-| S0 · 方案落档与评审冻结 | 本文件已落档，待评审 | 待填 | 待填 | 基线、归属、凭据模型和验收口径冻结 |
+| S0 · 方案落档与评审冻结 | 已通过并冻结（2026-10-23） | PR [#554](https://github.com/PanXing-Libiao/LibiaoLink/pull/554)；S0 签收提交 | 本文 §5 / S0 评审记录 | px、wmj 已复核；9443 回环保留至 S6 复评 |
 | S1 · 关闭宿主端口暴露 | 待执行 | 待填 | 待填 | 9000 不再发布；9001 / 9443 仅回环 |
 | S2 · 主机防火墙与外部网络复核 | 待执行 | 待填 | 待填 | Docker 端口不能只依赖 UFW |
 | S3 · MinIO 最小权限身份与策略 | 待执行 | 待填 | 待填 | 先创建身份与负向测试，不切运行时 |
@@ -207,6 +208,7 @@ F-02 是两个可以独立闭合、但必须同时处理的问题：
 - `tools` 只挂 `pg_migrator_password`；storage 初始化凭据由一次性 `storage.sh init` 显式注入，不长期挂给 tools。
 - 禁止整目录 `./secrets:/opt/libiaolink/secrets:ro` 挂载进入 api / worker / tools。
 - 缺失、空值、不可读或权限不合规必须 fail closed；不接受从 `server.env` 回退敏感值。
+- 一次性 storage / 迁移脚本不得把 Secret 值展开到命令行参数、shell history 或其它可被 `ps` 读取的位置；使用受控文件输入或权限 `600` 的临时 env-file，并确保退出时清理。
 
 ### 4.4 凭据切换与轮换
 
@@ -236,27 +238,21 @@ F-02 是两个可以独立闭合、但必须同时处理的问题：
 | S6 | 文档、H1 兼容与全量回归 | px + lan / wmj | S1～S5 | README、Runbook、H1 证据、全量门禁 |
 | S7 | 测试机 / 生产验收与 F-02 关闭 | lan + px / wmj | S5、S6 | 回放证据、DoD、开发日志、关闭评审 |
 
-建议 PR 切分（按常驻分支归属，不跨人代推）：
-
-1. **PR-0（lan 常驻分支）**：仅本方案文档。px / wmj 评审；不改配置、脚本或 Secret。
-2. **PR-NET（px 常驻分支）**：S1 + S2 的 Compose、端口注释、防火墙脚本和部署说明。lan / wmj 评审；优先合入并部署，尽快缩小暴露面。
-3. **PR-PLATFORM（lan 常驻分支）**：`server/scripts/storage-init.mjs` 的 fail-closed 修正、权限错误回归与必要的 server 测试。px / wmj 评审；不直接修改 `deploy/`。
-4. **PR-DEPLOY（px 常驻分支）**：S3 / S4 的 MinIO 策略 JSON、身份脚本、Compose Secret 分文件挂载、`storage.sh` / DB 脚本和部署 README。lan 提供策略口径并评审；必须在 PR-NET 合入后基于最新 `main` 重做，避免并行改同一 Compose。
-5. **PR-EVIDENCE（按文档归属）**：部署 README / M8 Runbook 由 px 分支提交；F-02 回放证据、方案状态与本文件更新由 lan 分支提交并请 px 复核。不得代他人创建或推送常驻分支。
-
 S5 的 root 轮换是受控运维动作，不是直接手改业务代码：执行前确认对应 Runbook 已合入，执行后把脱敏证据按上述归属回填，不能把 Secret 或完整运维输出写进 PR。
 
 ### S0 · 方案落档与评审冻结
 
 **目标**：让后续实现不再临场决定端口、身份边界或回滚口径。
 
-- [ ] 本文件完成 px（部署 / docs）与 wmj（安全）复核；记录评审人和日期。
-- [ ] 确认 `origin/main` 与 `lan` 在 F-02 相关文件上的差异无实质修复；若有新提交，更新「审查事实」与基线。
-- [ ] 确认 MinIO 身份操作工具链：优先复用服务器上已存在的 `mc` 二进制，记录版本、来源、sha256 和 `--help` 兼容性；不得下载来源不明的 `mc`。
-- [ ] 确认测试机与生产均适用同一 Compose / 策略模型；若只有测试机可执行，必须在证据中明确「F-02 生产未关闭」。
-- [ ] 在 PR 描述中写明：无 API / DDL / 前端行为变更；本次只改安全配置、运维脚本和文档。
+- [x] 本文件完成 px（部署 / docs）与 wmj（安全）复核；评审日期 2026-10-23。经用户确认三方协商后，由 lan 代录签收。
+- [x] 复核 `origin/main@6b846b2` 的 F-02 相关文件：9000 / 9443 宿主发布、三处整目录 `secrets` 挂载及 root 同值口径仍存在，新增提交未构成实质修复；基线已更新。
+- [x] 工具链策略冻结：不下载来源不明的新二进制；S3 首个变更动作前，必须记录受控 `mc` 的版本、来源、SHA-256 和 `--help` 兼容性；若没有受控 `mc`，只允许使用服务器本地 MinIO Console。实际工具链证据是 S3 入口门禁，缺失不得执行身份变更。
+- [x] 本轮执行范围冻结为公司测试机 `10.1.104.44`；生产未部署，S7 证据必须明确「F-02 生产未关闭」。
+- [x] 本签收 PR 仅改文档与开发日志，无 API / DDL / 前端行为变更；后续安全配置 / 运维脚本 PR 同步遵守该口径。
 
 **通过条件**：端口契约、身份矩阵、策略动作、回滚边界和评审路由无异议。**未通过不得开始 S1。**
+
+**冻结结论（2026-10-23）**：通过。9000 不发布；9001 与 9443 仅绑定回环；9443 保留为 H1 排障入口并在 S6 复评是否删除。应用 / bootstrap 身份矩阵与两段策略 JSON 冻结；策略动作已按 `S3ObjectStorage`、`storage:it` 与 `storage-init` 的实际调用核对，没有通配或管理权限。root 仅用于启动、一次性身份管理和受控应急；sentinel 跨桶负向测试由 root 创建 / 清理，不扩大 bootstrap 权限。root 轮换必须在 S4 全链路通过后的维护窗口执行，任何回滚都不得恢复应用使用 root 或重新暴露 9000 / 9443。S1 可以开始在 px 常驻分支实施。
 
 ### S1 · 关闭宿主端口暴露（最先实施）
 
@@ -324,18 +320,20 @@ S5 的 root 轮换是受控运维动作，不是直接手改业务代码：执�
 
 **执行步骤**
 
+**S3 入口门禁**：修改任何 MinIO 身份前，先按 S0 冻结口径确认受控 `mc` 的版本、来源、SHA-256 与 `--help` 兼容性；没有受控 `mc` 时改用服务器本地 MinIO Console。该证据缺失时停止 S3，不得下载来源不明二进制。
+
 1. 用受控 root 会话创建父用户 `libiaolink-app`、`libiaolink-bootstrap`，分别挂载上节策略；父用户口令随机生成并在完成后从临时文件清除。
 2. 分别创建 service account `libiaolink-api`、`libiaolink-storage-init`；只把 service account 的 access key / secret 写入服务器受控 Secret 文件。
 3. 写入 `s3_access_key` / `s3_secret_key`（应用）和 `s3_bootstrap_access_key` / `s3_bootstrap_secret_key`（初始化）；文件权限 `600`，目录权限 `700`。
 4. 用 bootstrap 凭据执行 `storage:init --check`；用应用凭据执行只读对象探针；此阶段不重启 api / worker。
-5. 运行负向测试：应用凭据不能创建用户 / 策略 / 桶、不能删除生产桶、不能访问临时 sentinel 桶；bootstrap 凭据不能读写对象。sentinel 桶与对象由 bootstrap 创建并清理，只允许删除 sentinel。
+5. 运行负向测试：应用凭据不能创建用户 / 策略 / 桶、不能删除生产桶、不能访问临时 sentinel 桶；bootstrap 凭据不能读写对象。sentinel 桶由受控 root 会话创建、验证后清理；不得为测试给 bootstrap 增加 `CreateBucket` / `DeleteBucket` 或跨桶权限。
 6. 记录 `mc --version`、策略文件名、策略动作与负向 HTTP / exit code；不记录 access key、secret、完整命令环境或 MinIO root 输出。
 
 **验收**
 
 - `libiaolink-app-rw` 与 `libiaolink-bootstrap` 的策略内容与文件完全一致；没有 `s3:*`、`arn:aws:s3:::*` 或管理动作。
 - `storage:init --check` 使用 bootstrap 成功；预期 CORS / lifecycle 能力告警仍可按 MinIO 版本记录，但 `AccessDenied` 必须失败。
-- 应用 service account 不能管理用户 / 策略 / 桶，不能访问 sentinel 桶；bootstrap 不能读取对象。
+- 应用 service account 不能管理用户 / 策略 / 桶，不能访问 sentinel 桶；bootstrap 不能读写对象、不能创建 / 删除 sentinel 桶。
 - 现有 api / worker 尚未切换，旧 root 应用凭据仍存在，因此本切片不能宣称 F-02 关闭。
 
 **回滚**：保留 root 管理和已创建的新身份，不做对象删除；只撤销新 service account 的临时验证权限。若策略过窄，按实际 403 复现证据追加最小动作，不直接扩大为通配权限。
@@ -348,7 +346,7 @@ S5 的 root 轮换是受控运维动作，不是直接手改业务代码：执�
 
 - `deploy/prod/docker-compose.yml`：api / worker 增加按文件的 Compose `secrets:`；tools 只挂 `pg_migrator_password`；移除三处整目录 `./secrets` 挂载。
 - `deploy/prod/scripts/service-entrypoint.cjs`：读取根目录改为 `/run/secrets`；明确必需 / 可选 Secret；不再回退整目录。
-- `deploy/prod/scripts/storage.sh`：`init` 使用 `s3_bootstrap_*`，`it` 使用 `s3_*`；缺少对应文件直接退出。
+- `deploy/prod/scripts/storage.sh`：`init` 使用 `s3_bootstrap_*`，`it` 使用 `s3_*`；缺少对应文件直接退出；凭据不得展开到命令行参数，使用受控文件或权限 `600` 的临时 env-file 并在退出时清理。
 - `deploy/prod/scripts/db-migrate.sh`、`deploy/prod/scripts/db-seed.sh`：改为读取 `/run/secrets/pg_migrator_password`。
 - `server/scripts/storage-init.mjs`：移除 `AccessDenied` 的不支持降级；修复 CORS / lifecycle 读取分支吞掉未知异常的问题；增加权限错误回归测试（含 `--check`）。
 - `deploy/prod/README.md`：更新 Secret 清单、首次部署和运维命令。
@@ -368,6 +366,7 @@ S5 的 root 轮换是受控运维动作，不是直接手改业务代码：执�
 - 应用容器不存在 `/run/secrets/minio_root_user`、`/run/secrets/minio_root_password`、`pg_superuser_password`，也不存在 `/opt/libiaolink/secrets` 挂载。
 - `server.env` 无 access key、secret、root 值；应用日志无凭据。
 - `storage:init --check` 使用 bootstrap 返回 0；权限不足或 `AccessDenied` 返回非 0，不允许仅告警。
+- 部署机进程命令行、shell history、临时文件和 CI 日志中均不出现 access key、secret 或 root 值。
 - 旧 root 应用凭据尚未轮换，因此仍不能关闭 F-02。
 
 **回滚**：如果应用启动失败，补挂缺失的单文件 Secret 或修正策略并重启；禁止恢复整目录挂载或把应用切回 root。临时应急只允许 root 在服务器本地做对象存储修复，不进入应用容器。
