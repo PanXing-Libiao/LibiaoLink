@@ -1,9 +1,10 @@
 # ============================================================
 # LibiaoLink 生产部署件（单机 · Docker Compose）
 # ------------------------------------------------------------
-# 现状（2026-10-14）：postgres ✅ / tools ✅ / api · worker ✅ / web ✅ / minio ✅；TLS（本切片）：80 → 301、443 应用 + 9443 MinIO 门面（ALLinSSL 下发证书）。
+# 现状（2026-10-23）：postgres ✅ / tools ✅ / api · worker ✅ / web ✅ / minio ✅；80 → 301、443 应用；9000 不发布宿主端口，9001 / 9443 仅绑定 127.0.0.1（F-02 S1）。
 # 口径：ADR-013（Compose 单机 + Nginx 唯一对外端口；生产门禁）、ADR-004（PostgreSQL 18.x，部署锁精确补丁）。
 # 密钥：一律走文件挂载（secrets/，只存在于服务器；不进仓库、不进 .env）。
+# 宿主防火墙：scripts/docker-user-firewall.sh 管理 DOCKER-USER 的 9000 / 9001 / 9443 拒绝规则（F-02 S2）。
 # 数据卷落点：系统盘 SSD（/var/lib/docker，ADR-013 磁盘分工）；PG 备份走 pg_dump（后续切片）。
 # 应用服务带 profiles: app（依赖安装 / server.env / secrets 就绪后显式启动）：
 #   docker compose --profile app up -d api worker
@@ -47,7 +48,7 @@ services:
     networks: [prod]
 
   # minio：对象存储（S3 协议；数据盘 bind /srv/data/minio；镜像 = 服务器本地构建 libiaolink/minio:RELEASE.2025-09-07T16-13-09Z（quay 已下架，见 README §9）。
-  # 9000=API（预签名直传要求浏览器直连，故对局域网发布）；9001=控制台（仅本机回环，走 SSH 隧道）。
+  # 9000=API，仅 Docker prod 网络内使用，不发布宿主端口；9001=控制台，仅绑 127.0.0.1（SSH 隧道）。
   minio:
     image: ${MINIO_IMAGE:-libiaolink/minio:RELEASE.2025-09-07T16-13-09Z}
     container_name: libiaolink-minio
@@ -62,8 +63,8 @@ services:
     volumes:
       - ${MINIO_DATA_DIR:-/srv/data/minio}:/data
       - ./scripts/minio-entrypoint.sh:/opt/libiaolink/deploy/minio-entrypoint.sh:ro
+    # F-02 S1：不发布 9000；浏览器对象存储只走 443 的 /libiaolink/ 同源门面。
     ports:
-      - "9000:9000"
       - "127.0.0.1:9001:9001"
     mem_limit: ${MINIO_MEM_LIMIT:-512m}
     cpus: ${MINIO_CPUS:-1}
@@ -241,7 +242,7 @@ services:
         max-file: "3"
     networks: [prod, preview-internal]
 
-  # web：Nginx 唯一对外入口（80 → 301；443 = 应用；9443 = MinIO https 门面 → minio:9000）。
+  # web：Nginx 唯一对外入口（80 → 301；443 = 应用；9443 = MinIO https 回环排障门面 → minio:9000）。
   # SPA 静态（frontend build 产物 → /srv/www）+ 反代 /api/v1 /auth /healthz /readyz → api:3000；/internal/** 不对外。
   # 证书：ALLinSSL（*.libiaorobot.com）下发到宿主 /etc/ssl/，单文件只读挂载（原地覆盖写入，容器可见）。
   web:
@@ -249,10 +250,11 @@ services:
     container_name: libiaolink-web
     profiles: ["app"]
     restart: unless-stopped
+    # F-02 S1：9443 只允许本机回环 / SSH 隧道，不再发布到全部接口。
     ports:
       - "80:80"
       - "443:443"
-      - "9443:9443"
+      - "127.0.0.1:9443:9443"
     volumes:
       - ./nginx/libiaolink.conf:/etc/nginx/conf.d/default.conf:ro
       - ../../frontend/dist:/srv/www:ro
