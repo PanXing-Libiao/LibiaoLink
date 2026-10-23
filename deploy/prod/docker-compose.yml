@@ -3,7 +3,8 @@
 # ------------------------------------------------------------
 # 现状（2026-10-23）：postgres ✅ / tools ✅ / api · worker ✅ / web ✅ / minio ✅；80 → 301、443 应用；9000 不发布宿主端口，9001 / 9443 仅绑定 127.0.0.1（F-02 S1）。
 # 口径：ADR-013（Compose 单机 + Nginx 唯一对外端口；生产门禁）、ADR-004（PostgreSQL 18.x，部署锁精确补丁）。
-# 密钥：一律走文件挂载（secrets/，只存在于服务器；不进仓库、不进 .env）。
+# 密钥：一律走 Compose secrets（宿主 secrets/ 只存在于服务器；不进仓库、不进 .env）。
+# F-02 S4：api / worker / tools 只挂各自需要的单文件 Secret 到 /run/secrets；禁止整目录挂载。
 # 宿主防火墙：scripts/docker-user-firewall.sh 管理 DOCKER-USER 的 9000 / 9001 / 9443 拒绝规则（F-02 S2）。
 # 数据卷落点：系统盘 SSD（/var/lib/docker，ADR-013 磁盘分工）；PG 备份走 pg_dump（后续切片）。
 # 应用服务带 profiles: app（依赖安装 / server.env / secrets 就绪后显式启动）：
@@ -145,8 +146,8 @@ services:
       - tools_node_modules:/opt/libiaolink/database/node_modules
       - server_node_modules:/opt/libiaolink/server/node_modules
       - shared_node_modules:/opt/libiaolink/shared/node_modules
-      # 只读挂载 secrets/（脚本按身份读取对应密码文件，不写回）
-      - ./secrets:/opt/libiaolink/secrets:ro
+    secrets:
+      - pg_migrator_password
     environment:
       PGHOST: postgres
       PGPORT: "5432"
@@ -180,8 +181,16 @@ services:
       - ../../shared:/opt/libiaolink/shared
       - server_node_modules:/opt/libiaolink/server/node_modules
       - shared_node_modules:/opt/libiaolink/shared/node_modules
-      - ./secrets:/opt/libiaolink/secrets:ro
       - ./scripts/service-entrypoint.cjs:/opt/libiaolink/deploy/service-entrypoint.cjs:ro
+    secrets:
+      - pg_api_password
+      - casdoor_client_id
+      - casdoor_client_secret
+      - s3_access_key
+      - s3_secret_key
+      - internal_sync_token
+      - onlyoffice_jwt_secret
+      - translate_api_key
     depends_on:
       postgres:
         condition: service_healthy
@@ -217,8 +226,17 @@ services:
       - ../../shared:/opt/libiaolink/shared
       - server_node_modules:/opt/libiaolink/server/node_modules
       - shared_node_modules:/opt/libiaolink/shared/node_modules
-      - ./secrets:/opt/libiaolink/secrets:ro
       - ./scripts/service-entrypoint.cjs:/opt/libiaolink/deploy/service-entrypoint.cjs:ro
+    secrets:
+      - pg_api_password
+      - casdoor_client_id
+      - casdoor_client_secret
+      - s3_access_key
+      - s3_secret_key
+      - internal_sync_token
+      - onlyoffice_jwt_secret
+      - wecom_app_secret
+      - wecom_bot_secret
     depends_on:
       postgres:
         condition: service_healthy
@@ -305,3 +323,25 @@ secrets:
     file: ./secrets/minio_root_user
   minio_root_password:
     file: ./secrets/minio_root_password
+  pg_migrator_password:
+    file: ./secrets/pg_migrator_password
+  pg_api_password:
+    file: ./secrets/pg_api_password
+  casdoor_client_id:
+    file: ./secrets/casdoor_client_id
+  casdoor_client_secret:
+    file: ./secrets/casdoor_client_secret
+  s3_access_key:
+    file: ./secrets/s3_access_key
+  s3_secret_key:
+    file: ./secrets/s3_secret_key
+  internal_sync_token:
+    file: ./secrets/internal_sync_token
+  onlyoffice_jwt_secret:
+    file: ./secrets/onlyoffice_jwt_secret
+  translate_api_key:
+    file: ./secrets/translate_api_key
+  wecom_app_secret:
+    file: ./secrets/wecom_app_secret
+  wecom_bot_secret:
+    file: ./secrets/wecom_bot_secret

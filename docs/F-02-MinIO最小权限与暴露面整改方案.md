@@ -2,7 +2,7 @@
 
 > 来源：`LibiaoLink_安全审查报告_2026-10-21.pdf` F-02（第 4～5 页）｜严重度 High / P0｜报告验收要求：应用凭据不能管理用户 / 桶或访问其它桶；9000 / 9001 / 9443 从非授权网络不可达；轮换后旧凭据失效
 > 报告审查基线：`px @ e05535b8`｜S0 复核基线：`origin/main@6b846b2`（2026-10-23；F-02 涉及的 Compose、Nginx、存储脚本与凭据挂载配置未发生实质修复）
-> 起草：lan（后端平台 / file / storage / preview / outbox）｜拟稿日期：2026-10-22｜S0 评审冻结：2026-10-23｜状态：**S0 已冻结；S1 / S2 部署件已合入，S3 仓库件已落地；运行时统一待测试机部署后验证，F-02 尚未关闭**
+> 起草：lan（后端平台 / file / storage / preview / outbox）｜拟稿日期：2026-10-22｜S0 评审冻结：2026-10-23｜状态：**S0 已冻结；S1 / S2 部署件与 S3 仓库件已合入，S4 仓库件已落地；运行时统一待测试机部署后验证，F-02 尚未关闭**
 > S0 签收：px（部署 / docs）与 wmj（安全）完成复核；经用户确认三方协商后，由 lan 代录。冻结结论见 §5「S0 · 方案落档与评审冻结」。
 > 归属与评审：`docs/` 归 px 主责，落档需 px 复核；生产 Compose、Nginx、主机防火墙与部署窗口归 px 主责；MinIO 身份 / 策略、`server/` 存储脚本与凭据接线归 lan 主责；安全验收请 wmj 交叉复核。涉及安全、部署与 Secrets 的高风险变更必须取得非作者批准。
 > 变更控制：后续执行以本文件为基线。若执行中需要改变端口、身份模型、策略动作、切片顺序或验收条件，先修改本文件并写明原因、影响和回滚，再实施；已合入主干的回放证据与部署记录按不可变历史处理，不原地改写。
@@ -14,8 +14,8 @@
 | S0 · 方案落档与评审冻结 | 已通过并冻结（2026-10-23） | PR [#554](https://github.com/PanXing-Libiao/LibiaoLink/pull/554)；S0 签收提交 | 本文 §5 / S0 评审记录 | px、wmj 已复核；9443 回环保留至 S6 复评 |
 | S1 · 关闭宿主端口暴露 | 部署件已合入，运行时待验证 | PR [#589](https://github.com/PanXing-Libiao/LibiaoLink/pull/589)；squash `1b24536` | 测试机未重建 minio / web；待 S1～S5 仓库实现完成后统一部署复核 `ss` | 9000 不再发布；9001 / 9443 仅回环 |
 | S2 · 主机防火墙与外部网络复核 | 部署件已合入，运行时待验证 | PR [#589](https://github.com/PanXing-Libiao/LibiaoLink/pull/589)；squash `1b24536` | 临时 apply → 二次 apply → check → remove 已通过；unit 尚未持久化，待统一部署后复核 | 待安装 unit、Docker / 主机重启与外部网络复核 |
-| S3 · MinIO 最小权限身份与策略 | 仓库件已落地，测试机部署后验证 | 本次 PR 待创建 | 本地受控 MinIO 冒烟通过（非 F-02 验收）；测试机身份、负向权限与凭据探针待统一验证 | 不切 api / worker；运行时证据统一在测试机部署后登记 |
-| S4 · Secrets 隔离与运行时凭据切换 | 待执行 | 待填 | 待填 | api / worker 改用 service account |
+| S3 · MinIO 最小权限身份与策略 | 仓库件已合入，测试机部署后验证 | PR [#591](https://github.com/PanXing-Libiao/LibiaoLink/pull/591)；squash `311c738c` | 本地受控 MinIO 冒烟通过（非 F-02 验收）；测试机身份、负向权限与凭据探针待统一验证 | 不切 api / worker；运行时证据统一在测试机部署后登记 |
+| S4 · Secrets 隔离与运行时凭据切换 | 仓库件已落地，测试机部署后验证 | 本次 PR 待创建 | 本地隔离自检通过（非 F-02 验收）；运行时挂载、凭据切换与全链路待统一验证 | api / worker 改用 service account；S4-T1～T10 待测试机部署后验证 |
 | S5 · root 凭据轮换与旧凭据失效 | 待执行 | 待填 | 待填 | 维护窗口执行；不得回滚为 root 应用凭据 |
 | S6 · 文档、H1 兼容与全量回归 | 待执行 | 待填 | 待填 | 9443 保留时只能经 SSH 隧道 |
 | S7 · 验收回放与 F-02 关闭 | 待执行 | 待填 | 待填 | 旧凭据失效、外网不可达、证据齐全后才关闭 |
@@ -363,6 +363,15 @@ S5 的 root 轮换是受控运维动作，不是直接手改业务代码：执�
 
 **目标**：让长期运行的应用只看到自己的 Secret，并实际使用最小权限 service account。
 
+**仓库实现与运行时验收分界**：本切片先在仓库内交付 Compose 单文件 Secret、entrypoint 读取边界、storage / 迁移脚本接线与部署文档；S1～S5 仓库实现完成后统一部署公司测试机，再执行挂载清单、强制失败、可选值 unset、容器健康、bootstrap / 应用凭据与完整上传链路验证。测试机部署前不得把运行时项标为通过。
+
+**执行期实现说明（2026-10-23）**
+
+- api 只挂 `pg_api_password`、`casdoor_client_id`、`casdoor_client_secret`、`s3_access_key`、`s3_secret_key`、`internal_sync_token`、`onlyoffice_jwt_secret`、`translate_api_key`；worker 只挂 `pg_api_password`、`casdoor_client_id`、`casdoor_client_secret`、`s3_access_key`、`s3_secret_key`、`internal_sync_token`、`onlyoffice_jwt_secret`、`wecom_app_secret`、`wecom_bot_secret`；tools 只挂 `pg_migrator_password`。Casdoor / internal token / OO JWT 之所以同时挂给 worker，是现有共享生产 env 校验要求，不代表 worker 新增业务用途。
+- `translate_api_key` / `wecom_app_secret` / `wecom_bot_secret` 属业务可选项：Compose 需要宿主文件存在，未配置时使用 `600` 空占位；entrypoint 将空值明确 unset，并先清空同名环境变量，禁止从 `server.env` 回退。必需 Secret 缺失、为空、非普通文件或不可读时退出 70；发现旧 `/opt/libiaolink/secrets` 挂载或 `/run/secrets` 未授权文件时同样 fail closed。
+- `storage.sh init` / `init --check` 只读 `s3_bootstrap_*`，`it` 只读 `s3_*`；凭据经 `umask 077` 的临时目录、权限 `600` 的单次 env-file 交给 `docker compose run --env-from-file`，退出时删除，不进入命令行参数。`DATABASE_URL` 只使用无密码占位值，storage 脚本不访问数据库。
+- `db-migrate.sh` / `db-seed.sh` 改读 `/run/secrets/pg_migrator_password`；`db-init.sh` 同步改为从宿主 `secrets/` 读取、校验 `600` 并经 stdin 送入 psql，避免密码进入 psql argv。该补充属于同一 Secret 卫生目标，不改变角色、DDL 或部署拓扑。
+
 **改动文件**
 
 - `deploy/prod/docker-compose.yml`：api / worker 增加按文件的 Compose `secrets:`；tools 只挂 `pg_migrator_password`；移除三处整目录 `./secrets` 挂载。
@@ -390,6 +399,25 @@ S5 的 root 轮换是受控运维动作，不是直接手改业务代码：执�
 - 旧 root 应用凭据尚未轮换，因此仍不能关闭 F-02。
 
 **回滚**：如果应用启动失败，补挂缺失的单文件 Secret 或修正策略并重启；禁止恢复整目录挂载或把应用切回 root。临时应急只允许 root 在服务器本地做对象存储修复，不进入应用容器。
+
+**测试机部署后验证登记**
+
+证据目录建议 `/srv/data/backups/f02-s4-evidence/`（目录 `700`、文件 `600`）；任何命令、日志与证据均不得记录 Secret 值、完整环境变量或签名 URL。
+
+| ID | 验证项 | 方法 / 预期 | 状态 | 证据位置 |
+|---|---|---|---|---|
+| S4-T1 | Compose 挂载精确 | `docker compose --profile app config` 与 `docker inspect` 核对：api / worker / tools 的 Secret 清单与“执行期实现说明”完全一致；三处均无 `./secrets` 整目录挂载 | 待测试机部署后验证 | S4 证据目录 `compose-mounts.txt` |
+| S4-T2 | 应用容器无 root / 管理面 Secret 且非 root 运行 | api / worker 的 `/run/secrets` 不含 `minio_root_*`、`pg_superuser_password`、`pg_migrator_password`、`s3_bootstrap_*`；`/opt/libiaolink/secrets` 不存在；`/proc/1/status` 的有效 Uid / Gid 均为 1000 | 待测试机部署后验证 | `runtime-boundary.txt` |
+| S4-T3 | 必需 Secret fail closed | 使用隔离 node 镜像 / 空 `/run/secrets` 运行 `service-entrypoint.cjs`；缺失首个必需 Secret 时退出 70 且不 spawn 应用 | 待测试机部署后验证 | `fail-closed.txt`（exit code 与消息类型） |
+| S4-T4 | 可选 Secret 空值 unset | 未配置企微 / 翻译时，api 的 `WECOM_APP_SECRET` / `WECOM_BOT_SECRET` 与 worker 的 `TRANSLATE_API_KEY` 不存在；配置对应文件后仅目标容器出现变量；全程不打印值 | 待测试机部署后验证 | `optional-secrets.txt` |
+| S4-T5 | 容器健康与 HTTP 门禁 | `docker compose --profile app ps` 中 api / worker（及其依赖）healthy；`/healthz` 200、`/readyz` 200 且对象存储探针全绿 | 待测试机部署后验证 | `health.txt` / 脱敏响应摘要 |
+| S4-T6 | tools 迁移 / 种子读取路径 | `docker compose --profile tools config` 仅见 `pg_migrator_password`；`db-migrate.sh --dry-run`、`db-seed.sh --dry-run` 成功；重放无漂移 / 零变更口径不变 | 待测试机部署后验证 | `tools-db.txt` |
+| S4-T7 | bootstrap `storage:init --check` | `storage.sh init --check` 返回 0；只有已登记 CORS 能力告警，lifecycle / 版本控制 / 桶路径的 `AccessDenied` 均失败 | 待测试机部署后验证 | `storage-init-check.txt` |
+| S4-T8 | 应用 service account 存储回放 | `storage.sh it` 使用 `s3_*` 返回 24 / 24；不读取 bootstrap 凭据 | 待测试机部署后验证 | `storage-it.txt` |
+| S4-T9 | 真实上传全链路 | 登录态完成上传 → 分片 / 合并 → 列表 → 预览 → 下载 → 回收站彻底删除；API / worker 的 S3 请求持续使用应用 service account，无 root 值 | 待测试机部署后验证 | 脱敏请求记录 / 对象清理证明 |
+| S4-T10 | Secret 不泄漏且 F-02 未关闭 | `docker top` 进程参数、容器日志、`server.env`、shell history、临时目录与证据扫描 access key / secret 均为 0 命中；旧 root 尚未轮换，F-02 仍为开放 | 待测试机部署后验证 | `leak-scan.txt` / `status.txt` |
+
+以上运行时项全部待测试机部署后验证；本地 Compose 渲染、`node --check` 与脚本静态检查只用于实现自检，不替代 S4-T1～T10。
 
 ### S5 · root 轮换与旧凭据失效
 
@@ -486,10 +514,13 @@ npm run build
 npm run check:boundaries
 
 cd ..\deploy\prod
-docker compose config --quiet
+# 本地无真实 secrets 时，在临时目录放置同名空文件后渲染；不得读取服务器 Secret
+docker compose --profile app config --quiet
+docker compose --profile tools config --quiet
 bash -n scripts/storage.sh
 bash -n scripts/db-migrate.sh
 bash -n scripts/db-seed.sh
+bash -n scripts/db-init.sh
 node --check scripts/service-entrypoint.cjs
 node --check ../../server/scripts/storage-init.mjs
 

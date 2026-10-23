@@ -19,7 +19,10 @@ docker compose --profile tools run --rm -e NPM_REGISTRY="${NPM_REGISTRY:-}" tool
 set -e
 cd /opt/libiaolink/database
 export PGUSER=libiaolink_migrator
-export PGPASSWORD="$(cat /opt/libiaolink/secrets/pg_migrator_password)"
+secret=/run/secrets/pg_migrator_password
+[ -f "$secret" ] && [ -r "$secret" ] || { echo "缺 /run/secrets/pg_migrator_password" >&2; exit 1; }
+export PGPASSWORD="$(cat "$secret")"
+[ -n "$PGPASSWORD" ] || { echo "/run/secrets/pg_migrator_password 为空" >&2; exit 1; }
 
 if [ ! -d node_modules/pg ]; then
   echo "== 首次：安装迁移器依赖（pg 包）"
