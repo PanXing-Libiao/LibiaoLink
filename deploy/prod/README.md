@@ -1,10 +1,12 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
-> **2026-10-23 F-02 S5 root 轮换与旧凭据失效仓库件已落地（PR [#595](https://github.com/PanXing-Libiao/LibiaoLink/pull/595)，未部署）**：新增 `scripts/minio-root-rotate.sh`（`plan` / `check` / `rotate` / `recover` / `finalize`），强制受控 `mc` 来源、轮换双确认、旧 root 在 tmpfs 状态目录短暂保留、双 Secret 替换失败回退、仅重建 minio、旧口令残留扫描与脱敏证据；`finalize` 会重新验证当前 root、全链路和旧 root 拒绝后才清状态。本地 fake 回放与锁定 MinIO service account 存活实验通过；**测试机未部署、未读取真实 Secret、未执行真实轮换，S5-T1～T10 待统一验证，F-02 未关闭**。运行手册见 §9.4。
+> **2026-10-23 F-02 S1～S5 已部署公司测试机（`main@1881deac` · 回填 Push 460），生产未部署**：database / server / shared / deploy 四包上传 `/srv/data/backups/` 后 SHA-256 与本地一致（114,073 B · `8b1cb651…` / 45,848,845 B · `cc16aa03…` / 353,356 B · `6e639177…` / 109,744 B · `51fdf4d4…`）。迁移 `0067_preview_version_isolation.sql` 执行 9 ms，库内 66 个迁移、复跑「已是最新、无漂移」；frontend 未重发（本批无运行时前端代码变化，v2.18 保持）。S3 已创建 `libiaolink-app` / `libiaolink-bootstrap` 与 `libiaolink-api` / `libiaolink-storage-init` service account，`apply` / `check` 通过，应用 `admin info` 与建桶负向测试均 `AccessDenied`；S4 `api` / `worker` 仅挂白名单单文件 Secret、UID/GID 1000，`storage:init --check` 通过、`storage:it` 24/24；S5 新 root 认证通过、旧 root 拒绝、旧口令扫描 `zero-hits`、状态目录已清理，证据 `/srv/data/backups/f02-s5-evidence/root-rotation-20261023T085110Z-success-7042.txt`。S1/S2 已持久化：`9000` 不发布、`9001` / `9443` 仅回环，开发机三端口均不可达，DOCKER-USER unit `enabled/active`。部署前备份 PG `/srv/data/backups/pg/libiaolink-before-0067-1881deac-20261023-1636.sql.gz`（`e21460e5…`）与 MinIO 数据目录 `/srv/data/backups/minio-before-f02-s5-20261023-1647`（4,640 文件 / 1,847,247,852 B；清单 `62aac728…`）。7 容器 healthy；`/` 200、`/healthz` 200、`/readyz` 200、`/libiaolink/` 403、未认证预览 401；api / worker / minio 10 分钟窗口 0 error。`mc` 锁定镜像不含 `/usr/bin/mc` 且 `dl.min.io` 已 410，本次改用 MinIO 官方 GitHub Release `RELEASE.2025-08-13T08-35-41Z`（SHA-256 `01f866e9…`），已归档 `/srv/data/images/minio/`；§9.2 已修正。**F-02 未关闭：S5 验收登记（S5-T3 旧预签名 / 历史应用值、T7 压缩 / 二进制备份敏感登记待补）与 S6 / S7 待收口；认证后真实上传 / 预览浏览器验收未执行。**
 
-> **2026-10-23 F-02 S4 Secrets 隔离与运行时凭据切换仓库件已合入 main（未部署）**：`api` / `worker` 改为按文件 Compose Secret 挂载到 `/run/secrets`，`tools` 只挂 `pg_migrator_password`，三处整目录 `secrets/` 挂载已删除。`service-entrypoint.cjs` 对必需 Secret fail closed，对空的可选 Secret 明确 unset，并拒绝旧整目录挂载或未授权 Secret 文件；`storage.sh init` 使用 bootstrap、`it` 使用应用 service account，凭据经一次性 `600` env-file 注入而不进入命令行；迁移 / 种子改读 `/run/secrets/pg_migrator_password`。**测试机未部署、未读取真实 Secret、未切换运行时、未轮换 root，F-02 未关闭**；运行时验收登记见 F-02 方案 S4。
+> **2026-10-23 F-02 S5 root 轮换与旧凭据失效已部署公司测试机（PR [#595](https://github.com/PanXing-Libiao/LibiaoLink/pull/595)）**：新增 `scripts/minio-root-rotate.sh`（`plan` / `check` / `rotate` / `recover` / `finalize`），强制受控 `mc` 来源、轮换双确认、旧 root 在 tmpfs 状态目录短暂保留、双 Secret 替换失败回退、仅重建 minio、旧口令残留扫描与脱敏证据；`finalize` 会重新验证当前 root、全链路和旧 root 拒绝后才清状态。**测试机已执行真实轮换：新 root 认证通过、旧 root 拒绝、旧口令扫描 `zero-hits`、状态目录已清理，脱敏证据见 `/srv/data/backups/f02-s5-evidence/`；F-02 未关闭，S5 验收登记与 S6 / S7 待收口**。运行手册见 §9.4。
 
-> **2026-10-23 F-02 S3 最小权限身份仓库件已落地（未部署）**：新增 `minio/policies/libiaolink-app-rw.json`、`minio/policies/libiaolink-bootstrap.json` 与 `scripts/minio-identity.sh`（`lint` / `apply` / `check`）；`storage-init` 只把 MinIO 无法授予的 CORS `AccessDenied` 记为能力告警。脚本使用一次性 `mc` 配置与标准输入承接凭据，不把 Secret 放入命令行；父用户策略、service account 状态和凭据文件均 fail closed。已用锁定 MinIO 镜像在本地临时环境完成 apply → check → 二次 apply → check、额外策略拒绝和 `storage:init --check` 自检；**测试机未部署、未创建真实身份、未读取真实 Secret，F-02 未关闭**。测试机验收登记见 F-02 方案 S3。
+> **2026-10-23 F-02 S4 Secrets 隔离与运行时凭据切换已部署公司测试机（PR [#594](https://github.com/PanXing-Libiao/LibiaoLink/pull/594)）**：`api` / `worker` 改为按文件 Compose Secret 挂载到 `/run/secrets`，`tools` 只挂 `pg_migrator_password`，三处整目录 `secrets/` 挂载已删除。`service-entrypoint.cjs` 对必需 Secret fail closed，对空的可选 Secret 明确 unset，并拒绝旧整目录挂载或未授权 Secret 文件；`storage.sh init` 使用 bootstrap、`it` 使用应用 service account，凭据经一次性 `600` env-file 注入而不进入命令行；迁移 / 种子改读 `/run/secrets/pg_migrator_password`。**测试机已切换运行时：api / worker 仅挂白名单 Secret、进程 UID/GID 1000，`storage:init --check` 与 `storage:it` 24/24 通过；F-02 未关闭，S5 验收登记与 S6 / S7 待收口**。
+
+> **2026-10-23 F-02 S3 最小权限身份已部署公司测试机（PR [#591](https://github.com/PanXing-Libiao/LibiaoLink/pull/591)）**：新增 `minio/policies/libiaolink-app-rw.json`、`minio/policies/libiaolink-bootstrap.json` 与 `scripts/minio-identity.sh`（`lint` / `apply` / `check`）；`storage-init` 只把 MinIO 无法授予的 CORS `AccessDenied` 记为能力告警。脚本使用一次性 `mc` 配置与标准输入承接凭据，不把 Secret 放入命令行；父用户策略、service account 状态和凭据文件均 fail closed。**测试机已创建真实身份并通过 `apply` / `check`；应用负向权限测试 `admin info` 与建桶均 `AccessDenied`；F-02 未关闭，S5 验收登记与 S6 / S7 待收口**。
 
 > **2026-10-23 F-06 preview-content 公网收口与 API 安全头已部署公司测试机（code `03ae712a`），生产未部署**：server 包 `server-f06-03ae712-20261023-1359.tar.gz`（883,269 B · SHA-256 `6cd9a65832dfa37b38f020fd53c67d2f745dfee5530ab2992ec9dff1b587731d`）、nginx 包 `nginx-f06-03ae712-20261023-1359.tar.gz`（4,934 B · `9afc27082addb0cd16d234e90d6e166a9f99568d341422ad50bc64761174afd5`）；部署前备份 `server-before-f06-20261023-1359.tar.gz`（883,292 B · `32e309271d9913538c591be72a0b69290a9abcad5589a59909b75abdfd6124ae`）与 `nginx-before-f06-20261023-1359.tar.gz`（4,516 B · `5bb8aa7f1bc1822102686da5f33437ba40dcc7025bcfc0bff0be674b3e2ce47d`）。`/opt/libiaolink/server/dist` 已替换并修正权限（`entry/api.js` `c32b9e01…`、`common/http/security-headers.js` `1c7da1d1…`），Nginx 配置哈希 `d9d5b98b…`、`nginx -t` 通过并重启 web；`ONLYOFFICE_DOCSERVER_API_BASE_URL=http://api:3000` 已确认。公网 `preview-content` 404，HSTS / `nosniff` / `Referrer-Policy` / `Permissions-Policy` 每项 1 条、`X-Powered-By` 0 条；`/` / `/healthz` / `/readyz` 200，`/libiaolink/` 403 但安全头完整；DocServer → `http://api:3000/healthz` 200；api / worker / web / postgres / minio / cad / svg-preview 七容器 healthy；staging 已清理、备份保留。无前端 / 契约 / DDL / 迁移 / compose / env / Secret 变化。
 
@@ -44,8 +46,8 @@
 | api / worker | ✅ 部署件已交付（本切片） | `profiles: app`；node 24 双锁；entrypoint 降权（容器进程非 root）；依赖装进命名卷；外部依赖（SSO / 对象存储）以占位值先行，见 §2 / §7 |
 | svg-preview（SVG 安全栅格化） | ✅ 测试机已部署（H1 S4） | internal-only `libiaolink-svg-preview-internal`；不发布宿主端口；镜像 tag + digest 双锁；worker 经 `svg-preview:9900` 调用 |
 | CAD native runtime（OCP / Gmsh） | ✅ 测试机已部署（2026-10-21） | `libiaolink/runtime:24.20.0-cad-20261021-1538`；OCP 7.8.1.1 + Gmsh 4.15.2；API 4 GiB / worker 1 GiB；真实公司账号浏览器验收待完成，生产未部署 |
-| web（Nginx） | ✅ TLS 已接入（v1.8）· 对象存储同源门面（v1.13） | 80 → 301 / 443 应用（含 `/libiaolink/` 对象存储同源门面）/ 9443 MinIO 回环排障门面（仅 SSH 隧道；F-02 S1 部署件已改，待测试机复核）；SPA 静态 + `/api/v1` 反代（SPA 已上线 2026-10-14） |
-| minio（对象存储） | ✅ 服务器实测收口（本切片） | 本机自建；镜像 = 本地构建（锚点 sha256:165271c0…）；数据盘 bind `/srv/data/minio`；init + --check + it 24/24、readyz 全绿；S3 走 https 同源门面（443 `/libiaolink/`）；F-02 S1 部署件已收口 9000 发布与 9443 回环，待测试机复核；见 §9 |
+| web（Nginx） | ✅ TLS 已接入（v1.8）· 对象存储同源门面（v1.13） | 80 → 301 / 443 应用（含 `/libiaolink/` 对象存储同源门面）/ 9443 MinIO 回环排障门面（仅 SSH 隧道；F-02 S1 已部署并复核）；SPA 静态 + `/api/v1` 反代（SPA 已上线 2026-10-14） |
+| minio（对象存储） | ✅ 服务器实测收口（本切片） | 本机自建；镜像 = 本地构建（锚点 sha256:165271c0…）；数据盘 bind `/srv/data/minio`；init + --check + it 24/24、readyz 全绿；S3 走 https 同源门面（443 `/libiaolink/`）；F-02 S1/S2 已部署并复核（9000 不发布、9001/9443 仅回环）；见 §9 |
 | onlyoffice（文档服务器） | ✅ 生产上线（本切片 · v1.14） | 独立 compose 项目 `libiaolink-onlyoffice`（不发布公网端口；8001 回环排障）；443 子路径 `/onlyoffice/` 门面（DS 9.4 原生子路径支持）；镜像离线下发并归档 `/srv/data/images/oo_docs_9.4.0.1.tar`；JWT 与 api 同值；真实 64MB xlsx 端到端渲染 ready；见 `deploy/onlyoffice/README.md` §6 |
 | 备份（PG 每 12h 加密） | 待办 | 落 `/srv/data/backups/pg` + 异地 |
 
@@ -393,10 +395,10 @@ cd /opt/libiaolink/deploy/prod
 docker compose --profile app up -d minio
 docker compose --profile app ps       # minio (healthy)
 
-# 按 §9.2 提取受控 mc 并执行 minio-identity.sh apply / check。
+# 按 §9.2 校验受控 mc 并执行 minio-identity.sh apply / check。
 # apply 完成前不得启动 / 重建 api / worker（Compose 不会接受缺失的 s3_* 文件）。
 MC_BIN=/usr/local/bin/mc \
-MC_SOURCE='libiaolink/minio:RELEASE.2025-09-07T16-13-09Z:/usr/bin/mc' \
+MC_SOURCE='github.com/minio/mc@RELEASE.2025-08-13T08-35-41Z:mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z;sha256=01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891' \
   bash scripts/minio-identity.sh apply
 
 docker compose --profile app up -d --force-recreate api worker
@@ -477,20 +479,21 @@ bash scripts/docker-user-firewall.sh --remove
 
 本文件 S1 / S2 不改变 MinIO 根凭据与业务凭据；F-02 的 S3～S5 仍须完成最小权限身份、Secret 隔离与 root 轮换后才能关闭。
 
-### 9.2 MinIO 最小权限身份（F-02 S3 · 仓库件，测试机部署后验证）
+### 9.2 MinIO 最小权限身份（F-02 S3 · 已部署测试机）
 
-**状态与边界**：仓库已交付应用 / bootstrap 策略和 `scripts/minio-identity.sh`，但尚未在测试机创建真实身份，也未读取或轮换真实 Secret。S1～S5 仓库实现完成后再统一部署；S3 的运行时验收按 F-02 方案「测试机部署后验证登记」执行，本节的本地自检不能替代测试机证据。
+**状态与边界**：2026-10-23 已在测试机创建真实应用 / bootstrap 身份并完成 `apply` / `check`；应用只绑定 `libiaolink-app-rw`、bootstrap 只绑定 `libiaolink-bootstrap`，两套 service account 均为 `impliedPolicy` 且永久有效。`storage:init --check`、`storage:it` 和应用负向权限测试已通过；F-02 仍待 S6 / S7 收口。
 
 **受控 `mc` 工具链**
 
-优先从服务器已有的本地 MinIO 镜像提取 `mc`，不下载来源不明的二进制：
+2026-10-23 实测锁定 MinIO 镜像只有 `minio` 服务端，**不含 `/usr/bin/mc`**；官方 `dl.min.io` 同路径已返回 410。改用 MinIO 官方 GitHub Release，二进制与 `.sha256sum` / `.minisig` / `.asc` 已归档 `/srv/data/images/minio/`：
 
 ```bash
-docker create --name libiaolink-f02-mc \
-  libiaolink/minio:RELEASE.2025-09-07T16-13-09Z
-docker cp libiaolink-f02-mc:/usr/bin/mc /usr/local/bin/mc
-docker rm libiaolink-f02-mc
-chmod 0555 /usr/local/bin/mc
+cd /srv/data/images/minio
+MCREL=RELEASE.2025-08-13T08-35-41Z
+# 已归档时直接复核；缺失时从 https://github.com/minio/mc/releases/download/$MCREL/mc.linux-amd64.$MCREL 下载
+printf '01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891  mc.linux-amd64.%s\n' "$MCREL" | sha256sum -c -
+install -m 0555 -o root -g root "mc.linux-amd64.$MCREL" /usr/local/bin/mc
+/usr/local/bin/mc --version
 sha256sum /usr/local/bin/mc
 python3 --version
 ```
@@ -506,11 +509,11 @@ chmod 600 secrets/minio_root_user secrets/minio_root_password
 bash scripts/minio-identity.sh lint
 
 MC_BIN=/usr/local/bin/mc \
-MC_SOURCE='libiaolink/minio:RELEASE.2025-09-07T16-13-09Z:/usr/bin/mc' \
+MC_SOURCE='github.com/minio/mc@RELEASE.2025-08-13T08-35-41Z:mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z;sha256=01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891' \
 bash scripts/minio-identity.sh apply
 
 MC_BIN=/usr/local/bin/mc \
-MC_SOURCE='libiaolink/minio:RELEASE.2025-09-07T16-13-09Z:/usr/bin/mc' \
+MC_SOURCE='github.com/minio/mc@RELEASE.2025-08-13T08-35-41Z:mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z;sha256=01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891' \
 bash scripts/minio-identity.sh check
 ```
 
@@ -522,11 +525,11 @@ bash scripts/minio-identity.sh check
 
 **CORS 能力例外**：锁定 MinIO 版本不接受 `s3:GetBucketCORS` / `s3:PutBucketCORS` IAM 动作，bootstrap 策略不声明这两个动作；CORS 由 `MINIO_API_CORS_ALLOW_ORIGIN` 配置。`storage-init` 仅在 CORS 路径把 `AccessDenied` 记为能力告警，lifecycle、版本控制等其它路径的权限错误仍会失败。此例外不得扩展到其它 S3 动作。
 
-**测试机暂不执行**：本切片不在测试机运行 `storage:init --check`、不做负向权限回放、不重启 api / worker、不轮换 root。`storage:init --check` 需等 S4 完成 `storage.sh` 的 bootstrap 接线后在测试机执行；负向权限和 sentinel 桶验证按 F-02 S3-T6 / T7 执行并由 root 清理 sentinel。本地临时 MinIO 的 `storage:init --check` 只用于实现自检，不替代测试机验收。S3 完成不等于 F-02 关闭。
+**测试机部署结果（2026-10-23）**：`lint` / `apply` / `check` 通过，已创建 `libiaolink-app` / `libiaolink-bootstrap` 父用户与 `libiaolink-api` / `libiaolink-storage-init` service account；`storage:init --check` 通过、`storage:it` 24/24；应用凭据执行 `mc admin info` 与建桶均返回 `AccessDenied`，bootstrap 仅用于 init / check。F-02 仍待 S6 / S7。
 
-### 9.3 Secrets 隔离与运行时切换（F-02 S4 · 仓库件，测试机部署后验证）
+### 9.3 Secrets 隔离与运行时切换（F-02 S4 · 已部署测试机）
 
-**状态与边界**：仓库已切到 Compose 单文件 Secret，但测试机尚未部署、未重启 api / worker、未读取真实 Secret，也未轮换 root。S1～S5 仓库实现完成后统一部署；运行时项按 F-02 方案「S4 测试机部署后验证登记」执行，本地静态检查不能替代测试机证据。
+**状态与边界**：2026-10-23 已完成测试机运行时切换。`api` / `worker` 分别只挂载白名单单文件 Secret，旧整目录挂载已移除，进程 UID/GID 为 1000；`storage:init --check` 与 `storage:it` 24/24 通过。下方运行时切换命令保留为后续维护窗口的重放步骤。
 
 **挂载矩阵**
 
@@ -592,9 +595,9 @@ bash scripts/storage.sh it
 
 **回滚**：启动失败时只补挂缺失的单文件 Secret、修正 `600` 权限或修复 service account 策略后重试。禁止恢复 `./secrets:/opt/libiaolink/secrets:ro`、把 root 值复制给应用或把 Secret 写回 `server.env`。root 轮换属于 S5，S4 不执行。
 
-### 9.4 MinIO root 轮换与旧凭据失效（F-02 S5 · 仓库件，测试机部署后验证）
+### 9.4 MinIO root 轮换与旧凭据失效（F-02 S5 · 已部署测试机）
 
-**状态与边界**：仓库已交付 `scripts/minio-root-rotate.sh`，但测试机尚未部署、未读取真实 Secret、未执行真实轮换。必须等 S3 身份和 S4 应用凭据切换的运行时检查通过后，才可在维护窗口执行；运行时项按 F-02 方案 S5-T1～T10 登记，本地自检不替代测试机证据。
+**状态与边界**：`scripts/minio-root-rotate.sh` 已于 2026-10-23 在测试机真实执行并通过：新 root 认证通过、旧 root 拒绝、旧口令扫描 `zero-hits`、状态目录已清理；脱敏证据为 `/srv/data/backups/f02-s5-evidence/root-rotation-20261023T085110Z-success-7042.txt`。轮换前 MinIO 数据目录备份为 `/srv/data/backups/minio-before-f02-s5-20261023-1647`（4,640 文件 / 1,847,247,852 B，清单 `62aac728…`）。F-02 仍待 S6 / S7 收口。
 
 脚本只重建 `minio`，不重启 `api` / `worker`；不删除对象、桶、版本或数据目录；不修改 S1 / S2 的端口与 `DOCKER-USER` 规则。旧 root 仅在 `/run/libiaolink-f02-s5`（目录 `700`、文件 `600`，tmpfs）短暂保留用于失败恢复。
 
@@ -602,7 +605,7 @@ bash scripts/storage.sh it
 
 - 已完成 S3 `apply` / `check` 和 S4 运行时切换，应用 / bootstrap 凭据均不是 root；`storage:init --check`、`storage:it`、`readyz` 已通过。
 - 已记录 MinIO 数据目录的可恢复备份 / 快照路径与校验值；备份说明、工单和聊天记录不含 Secret。
-- 已从锁定 MinIO 镜像提取并校验 `mc`，按 §9.2 设置 `MC_BIN` 与 `MC_SOURCE`；不得下载来源不明的二进制。
+- 使用 §9.2 已归档并校验的 `mc`（锁定镜像只含服务端，不含 `mc`），按 §9.2 设置 `MC_BIN` 与 `MC_SOURCE`；不得下载来源不明的二进制。
 - `secrets/` 为 `700`，`minio_root_*`、`s3_*`、`s3_bootstrap_*` 与可选空占位均为 `600`；不存在未完成的 `/run/libiaolink-f02-s5`。
 
 **只读预检**
@@ -614,7 +617,7 @@ chmod 700 secrets
 chmod 600 secrets/*
 
 export MC_BIN=/usr/local/bin/mc
-export MC_SOURCE='libiaolink/minio:RELEASE.2025-09-07T16-13-09Z:/usr/bin/mc'
+export MC_SOURCE='github.com/minio/mc@RELEASE.2025-08-13T08-35-41Z:mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z;sha256=01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891'
 
 bash scripts/minio-root-rotate.sh plan   # 不生成凭据、不写 Secret、不重启容器
 bash scripts/minio-root-rotate.sh check  # 复核 root / S3 / storage / HTTP 并写脱敏证据
@@ -670,7 +673,7 @@ bash scripts/minio-root-rotate.sh finalize
 
 ## 10. 后续切片（登记）
 
-- web（Nginx）：TLS 接入 ✅（2026-10-14，443 应用 + 对象存储同源门面 + ALLinSSL 自动下发）；9443 已收口为回环排障口（F-02 S1）；浏览器流量已全部走 443 同源门面，待确认 H1 不再依赖后再评估删除；`/internal/**` / `/example/` 显式 404 加固（SPA 产物 2026-10-14 已上线）；备份脚本（PG 12h → `/srv/data/backups/pg`）；监控告警接线；MinIO 运维面：镜像离线固化（quay 2026-10-13 实测下架，已改服务器本地构建；`docker save` 归档待办）、SeaweedFS 迁移评估、S3 专用账号最小权限（F-02 S3 仓库件已落地）、Secret 隔离（F-02 S4 仓库件已合入，运行时待统一部署验证）与 root 轮换（F-02 S5 仓库件已落地，PR [#595](https://github.com/PanXing-Libiao/LibiaoLink/pull/595) 评审中，运行时待统一验证）；
+- web（Nginx）：TLS 接入 ✅（2026-10-14，443 应用 + 对象存储同源门面 + ALLinSSL 自动下发）；9443 已收口为回环排障口（F-02 S1）；浏览器流量已全部走 443 同源门面，待确认 H1 不再依赖后再评估删除；`/internal/**` / `/example/` 显式 404 加固（SPA 产物 2026-10-14 已上线）；备份脚本（PG 12h → `/srv/data/backups/pg`）；监控告警接线；MinIO 运维面：镜像离线固化（quay 2026-10-13 实测下架，已改服务器本地构建；`docker save` 归档待办）、SeaweedFS 迁移评估、F-02 S3～S5 已部署测试机（见 v2.23），F-02 尚未关闭（S5 验收登记与 S6 / S7 待收口）；
 - onlyoffice（文档服务器）：生产上线 ✅（2026-10-14，离线镜像 + 443 子路径门面 + 真实 64MB xlsx 端到端；见 `deploy/onlyoffice/README.md` §6）；剩余：升级 / 重建后按回归五项 + §6.3 表复验、缓存盘 7 天清理 cron、正式环境容量评估与 CVE 跟踪；
 - SSO：测试环境（authtest 应用 `LibiaoLink`）已按接入标准接通（2026-10-14）；正式环境应用 `libiaolink` 创建 + 企微登录方式挂接待 SSO 管理员（M8 §3-B）。
 - M5-03-5 单聊改智能机器人（绑定码链路）部署**待执行**（项目组 2026-10-16 决定暂缓）：迁移 `0055` → `server/dist` 重传 → `server.env` 回填非敏感 `WECOM_BOT_ID`、`secrets/wecom_bot_secret` 写入凭据 → 重建 worker → 真机复跑 **BC-1 ~ BC-4**（口径 §12）；执行前先备份 PG（`0055` 含不可回滚清理）。
@@ -680,10 +683,11 @@ bash scripts/minio-root-rotate.sh finalize
 
 | 版本 | 日期 | 变更 | 人 |
 |---|---|---|---|
-| v2.22 · deploy（未部署） | 2026-10-23 | F-02 S5 root 轮换仓库件（PR [#595](https://github.com/PanXing-Libiao/LibiaoLink/pull/595)）：新增 `scripts/minio-root-rotate.sh`（`plan` / `check` / `rotate` / `recover` / `finalize`），强制受控 `mc` 来源、双确认、tmpfs 旧 root 状态、双 Secret 替换失败回退、仅重建 minio、旧口令明文扫描、脱敏证据与 `finalize` 复验；§9.4 补维护窗口、失败边界与残留处置。本地 fake 回放、双 Secret 替换失败回退、锁定 MinIO root 切换后 service account 存活 / 旧 root 拒绝自检通过；**未连接测试机、未读取真实 Secret、未执行真实轮换，S5-T1～T10 待统一部署后验证，F-02 未关闭** | lan |
-| v2.21 · deploy（未部署） | 2026-10-23 | F-02 S4 Secrets 隔离仓库件（PR [#594](https://github.com/PanXing-Libiao/LibiaoLink/pull/594)）：api / worker / tools 改 Compose 单文件 Secret 并移除整目录挂载；entrypoint 改读 `/run/secrets`、必需项 fail closed、可选项空值 unset、拒绝旧目录与未授权 Secret；`storage.sh` 按 init / it 选择 bootstrap / 应用凭据并经一次性 `600` env-file 注入；db-migrate / seed 改读 `/run/secrets/pg_migrator_password`，db-init 改经 stdin 且校验 `600`；§2 / §7 / §9 同步部署顺序与运行时检查。静态自检通过；**未连接测试机、未读取真实 Secret、未切换 api / worker、未轮换 root，S4-T1～T10 待统一部署后验证，F-02 未关闭** | lan |
-| v2.20 · deploy（未部署） | 2026-10-23 | F-02 S3 仓库件：新增应用 / bootstrap 策略与 `scripts/minio-identity.sh`（`lint` / `apply` / `check`，受控 `mc` 门禁、一次性配置、凭据文件原子写入与 fail-closed 校验）；`storage-init` 仅对 CORS 的 MinIO IAM 能力例外保留 `AccessDenied` 告警，其它权限错误继续失败；§2 / §9.2 同步 Secret 与执行边界。本地锁定 MinIO 临时环境完成 apply → check → 二次 apply → check、额外策略拒绝与 bootstrap `storage:init --check` 自检；**未连接测试机、未创建真实身份、未读取真实 Secret、未切换 api / worker，运行时验收待统一部署后登记** | lan |
-| v2.19 · deploy（未持久化部署） | 2026-10-23 | F-02 S1 / S2 部署件：minio 删除 `9000:9000`、web 将 `9443` 收口到 `127.0.0.1`；新增 `scripts/docker-user-firewall.sh`（`--check` / `--apply` / `--remove`，IPv4 / IPv6，仅管理自有标记规则）与 `systemd/libiaolink-docker-user-firewall.service`；§9.1 补端口契约、复核与回滚。测试机临时 `apply → 二次 apply → check → remove` 通过：443 `/readyz` 200、`/libiaolink/` 403、9000 / 9001 / 9443 从开发机不可达；规则已移除，**未安装 unit、未重建 minio / web，F-02 S3～S5 未做** | px |
+| v2.23 · deploy（已部署） | 2026-10-23 | F-02 S1～S5 测试机部署（`main@1881deac` · 回填 Push 460；生产未部署）：database / server / shared / deploy 四包上传后哈希一致；`0067_preview_version_isolation.sql` 执行 9 ms，66 个迁移复跑无漂移；S3 identity `apply` / `check` 与应用负向权限通过；S4 单文件 Secret、UID/GID 1000、`storage:init --check` 与 `storage:it` 24/24；S5 新 root 接受、旧 root 拒绝、残留扫描 zero-hits、状态已清理；S1/S2 的 9000 / 9001 / 9443 外网不可达，systemd unit enabled/active；PG 备份 `libiaolink-before-0067-1881deac-20261023-1636.sql.gz`，MinIO 备份 4,640 文件 / 1,847,247,852 B（清单 `62aac728…`）；7 容器 healthy，`/healthz` / `/readyz` 200、未认证预览 401、10 分钟日志 0 error；`mc` 改用官方 GitHub Release 并登记 SHA-256；认证后真实上传 / 预览浏览器验收未执行；F-02 未关闭，S5 验收登记（S5-T3 / T7 待补）与 S6 / S7 待收口 | px |
+| v2.22 · deploy（已部署，见 v2.23） | 2026-10-23 | F-02 S5 root 轮换仓库件（PR [#595](https://github.com/PanXing-Libiao/LibiaoLink/pull/595)）：新增 `scripts/minio-root-rotate.sh`（`plan` / `check` / `rotate` / `recover` / `finalize`），强制受控 `mc` 来源、双确认、tmpfs 旧 root 状态、双 Secret 替换失败回退、仅重建 minio、旧口令明文扫描、脱敏证据与 `finalize` 复验；§9.4 补维护窗口、失败边界与残留处置。本地 fake 回放、双 Secret 替换失败回退、锁定 MinIO root 切换后 service account 存活 / 旧 root 拒绝自检通过；**实现时自检记录；后续已随 v2.23 在测试机执行真实轮换并通过；F-02 未关闭，S5 验收登记与 S6 / S7 待收口** | lan |
+| v2.21 · deploy（已部署，见 v2.23） | 2026-10-23 | F-02 S4 Secrets 隔离仓库件（PR [#594](https://github.com/PanXing-Libiao/LibiaoLink/pull/594)）：api / worker / tools 改 Compose 单文件 Secret 并移除整目录挂载；entrypoint 改读 `/run/secrets`、必需项 fail closed、可选项空值 unset、拒绝旧目录与未授权 Secret；`storage.sh` 按 init / it 选择 bootstrap / 应用凭据并经一次性 `600` env-file 注入；db-migrate / seed 改读 `/run/secrets/pg_migrator_password`，db-init 改经 stdin 且校验 `600`；§2 / §7 / §9 同步部署顺序与运行时检查。静态自检通过；**实现时自检记录；后续已随 v2.23 完成运行时切换并通过 Secret 边界检查；F-02 未关闭，S5 验收登记与 S6 / S7 待收口** | lan |
+| v2.20 · deploy（已部署，见 v2.23） | 2026-10-23 | F-02 S3 仓库件：新增应用 / bootstrap 策略与 `scripts/minio-identity.sh`（`lint` / `apply` / `check`，受控 `mc` 门禁、一次性配置、凭据文件原子写入与 fail-closed 校验）；`storage-init` 仅对 CORS 的 MinIO IAM 能力例外保留 `AccessDenied` 告警，其它权限错误继续失败；§2 / §9.2 同步 Secret 与执行边界。本地锁定 MinIO 临时环境完成 apply → check → 二次 apply → check、额外策略拒绝与 bootstrap `storage:init --check` 自检；**实现时自检记录；后续已随 v2.23 在测试机创建真实身份并通过 apply / check；F-02 未关闭，S5 验收登记与 S6 / S7 待收口** | lan |
+| v2.19 · deploy（已部署，见 v2.23） | 2026-10-23 | F-02 S1 / S2 部署件：minio 删除 `9000:9000`、web 将 `9443` 收口到 `127.0.0.1`；新增 `scripts/docker-user-firewall.sh`（`--check` / `--apply` / `--remove`，IPv4 / IPv6，仅管理自有标记规则）与 `systemd/libiaolink-docker-user-firewall.service`；§9.1 补端口契约、复核与回滚。测试机临时 `apply → 二次 apply → check → remove` 通过：443 `/readyz` 200、`/libiaolink/` 403、9000 / 9001 / 9443 从开发机不可达；后续已随 v2.23 持久化（unit 已安装并 enabled/active、minio / web 已重建、S3～S5 已部署、验收登记待收口） | px |
 | v2.18 · frontend | 2026-10-23 | 产品名称改为「立镖市场项目管理平台」测试机前端部署（Push 450 / 451 · PR [#582](https://github.com/PanXing-Libiao/LibiaoLink/pull/582) · PR CI [39908280966](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39908280966) 5 / 5 · squash `eb443b44` · main CI [39908553712](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39908553712) 5 / 5）：使用隔离前端源 `eb72d1aa` 构建，避开同期审计 UI 与未执行迁移 `0066`；frontend-only 包 14,868,805 B · `086260e0…` 上传 `/srv/data/backups/` 并远端对账一致；staging 386 文件 / 18,413,514 B / 0 preview；部署前备份 14,873,600 B · `9bbdc345…`；`rsync -a --delete` 覆盖并修正读权限，web 未重启；公网 index / JS / CSS（`23afceec…` / `41262d2f…` / `32bd4553…`）与本地逐字节一致，新名称 1 命中、旧名称 0 命中，`/` / `/nginx-health` / `/healthz` / `/readyz` 200，7 容器 healthy，staging 已清理；无接口 / 依赖 / DDL / 迁移 / Secret 变化，生产未部署。 | px |
 | v2.17 · database + shared + server + frontend | 2026-10-23 | 站内信单条 / 一键删除测试机部署（Push 444 → 回填 446 · PR [#577](https://github.com/PanXing-Libiao/LibiaoLink/pull/577) · PR CI [39903193662](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39903193662) 5 / 5 · squash `0e21360b` · main CI [39903450869](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39903450869) 5 / 5）：PG 备份 842,484 B · `516da28d…`；dry-run 仅 `0065`，执行 3 ms，复跑 64 个迁移无漂移；database 113,133 B · `6ddf423f…` / server 45,846,279 B · `c535394c…` / shared 352,608 B · `d78173f3…` / frontend 14,868,826 B · `0e8aeb28…` 上传后哈希一致；api / worker 重启 healthy，7 容器 healthy，`/nginx-health` / `/healthz` / `/readyz` 正常，未认证单删 / 全删 DELETE 均 401；frontend 386 文件 / 18,413,489 B，公网 index / JS / CSS `6aac4a64…` / `88b19b07…` / `32bd4553…` 与本地逐字节一致，「确认删除全部」/「删除这条站内信」线上 JS 各 1 命中；staging 已清理（本次全栈 frontend 覆盖同版本 frontend-only 部署 · Push 445）；真实账号浏览器验收待补，生产未部署。| px |
 | v2.17 · frontend | 2026-10-23 | 项目经理辅助说明删除测试机前端部署（Push 443 / 445 · 同一改动随 PR [#577](https://github.com/PanXing-Libiao/LibiaoLink/pull/577) squash `0e21360b` 进入 main；隔离发布源 `07fbc3e3` · PR [#578](https://github.com/PanXing-Libiao/LibiaoLink/pull/578) 按重复覆盖关闭 · PR CI [39903282634](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39903282634) 5 / 5）：从隔离前端源运行 `frontend/npm run typecheck` / `npm run build`，frontend-only 包 `output/frontend-v2.17-07fbc3e3-20261023-1305.tar.gz`（14,868,123 B · SHA-256 `1787383cb8395609424648cdc7e0d4423a89684771e76dcfd80228058b6e8c02`）上传 `/srv/data/backups/` 且哈希一致；staging 核验 386 文件 / 18,409,424 B / 0 preview；部署前备份 `frontend-before-v2.17-07fbc3e3-20261023-1305.tar.gz`（14,873,680 B · `89e8e5483d1ec3ebd5b54017a8e570b74ab341321aa9f18e1297379fccdd7d09`）；`rsync -a --delete` 覆盖并修正读权限，web 未重启；公网 `index.html` / `index-DtdFPwwL.js` / `index-Clo2AvdS.css` 逐字节一致（`4d5f20a3…` / `ccaaeadc…` / `8d09df45…`），旧文案与旧键 0 命中，`/` / `/nginx-health` / `/healthz` / `/readyz` 均 200，八容器 healthy；staging 已清理；无接口 / 依赖 / DDL / 迁移 / compose / env / Secret 变化，本次未部署 main 同期站内信功能，生产未部署。 | px |
