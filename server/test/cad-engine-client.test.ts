@@ -96,4 +96,13 @@ describe("CAD sandbox boundary", () => {
     disconnect = false;
     expect(await engine.lookup(identity)).toBeNull();
   });
+
+  it("仅将沙箱明确的配额拒绝识别为 busy，其他错误仍受控且有界", async () => {
+    let body = JSON.stringify({ code: "busy" });
+    const engine = await fixture((_request, response) => { response.statusCode = 503; response.end(body); });
+    await expect(engine.lookup(identity)).rejects.toMatchObject({ name: "CadEngineBusyError", status: 503 });
+    for (body of [JSON.stringify({ code: "unavailable" }), "invalid-json", " ".repeat(64 * 1024 + 1)]) {
+      await expect(engine.lookup(identity)).rejects.toMatchObject({ name: "ServiceUnavailableException", status: 503 });
+    }
+  });
 });

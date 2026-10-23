@@ -323,6 +323,15 @@ describe("DictService（字典 C9）", () => {
 // ---------- 审计写入与检索（C7-01 / C7-04） ----------
 
 describe("AuditService（审计 C7）", () => {
+  it("事务内写审计时用同一连接读取操作人快照，不额外占用连接池", async () => {
+    const { service, repo } = makeAuditService();
+    const transaction = {} as never;
+    repo.findUserDisplayName = async (_id: string, client?: unknown) => client === transaction ? "事务内姓名" : "旧姓名";
+    await service.record(transaction, { actorId: UUID_ACTOR, action: "update", objectType: "file",
+      objectId: UUID_PROJECT, summary: "取消 CAD 预览窗口" });
+    expect(repo.inserted[0]?.actorName).toBe("事务内姓名");
+  });
+
   it("record：补全 occurredAt / result / entry 与操作人姓名快照", async () => {
     const { service, repo } = makeAuditService();
     await service.record({} as never, {

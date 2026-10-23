@@ -12,6 +12,8 @@
 
 ## 出口
 
+CAD 异常与取消（2026-10-23，F-03）复用 `file` / `update`，详细语义见 [file 模块](../file/README.md)。状态更新与审计追加由 CAD 仓储在同一事务内完成；`record(client, input)` 的操作人姓名查询也沿用传入的连接，避免冷缓存、并发状态更新时占满连接池后等待另一条连接。独立登录 / 越权留痕继续使用各自既有连接与失败策略。
+
 - AuditModule（providers: AuditRepository / AuditService；exports: AuditService）；
 - admin/index.ts re-export 本模块出口 —— 既有调用方零改动；新调用方可直接走 audit/index.ts（identity 采用后者，避免 admin 与 identity 成环）。
 
