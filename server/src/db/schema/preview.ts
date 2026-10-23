@@ -3,11 +3,8 @@ import { check, index, pgTable, text, timestamp, unique, uuid } from "drizzle-or
 import { fileVersions, files } from "./files.js";
 import { PREVIEW_STATUS_KEYS, PREVIEW_TARGET_KEYS, sqlValueList } from "./literals.js";
 
-/**
- * preview_artifacts（M4-05 预览管道 · 数据层 · migration 0027）。
- * 三元组缓存键 = content_hash + pipeline_version + target（ADR-007 / v0.2 §5.4，D2-06 同一内容只转换一次）；
- * file_id / version_id = 首次生成该产物的版本（登记 + 引用判定），读面按三元组命中、不按版本命中。
- * 状态值集与契约 PREVIEW_STATUSES 同值（not_ready = 已请求未就绪，生成任务由 outbox 重试兜底）。
+/** preview_artifacts：版本 ID + 管线版本 + 通道唯一（迁移 0067）。
+ * content_hash 绑定源版本；file_id / version_id 始终属于本产物，不再向相同申报哈希的版本转移归属。
  */
 export const previewArtifacts = pgTable(
   "preview_artifacts",
@@ -30,7 +27,7 @@ export const previewArtifacts = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    unique("uq_preview_artifacts_cache_key").on(table.contentHash, table.pipelineVersion, table.target),
+    unique("uq_preview_artifacts_cache_key").on(table.versionId, table.pipelineVersion, table.target),
     index("ix_preview_artifacts_version").on(table.versionId, table.target),
     index("ix_preview_artifacts_file").on(table.fileId),
     check("ck_preview_artifacts_target", sql`${table.target} in ${sql.raw(sqlValueList(PREVIEW_TARGET_KEYS))}`),

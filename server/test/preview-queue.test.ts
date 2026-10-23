@@ -29,7 +29,7 @@ const HASH = sha256Hex(SOURCE_BYTES);
 const NOW = new Date("2026-09-23T08:00:00Z");
 const OUTBOX_ID = 4242;
 const SOURCE_KEY = `projects/${PROJECT}/files/${FILE}/v1/${HASH}.svg`;
-const ARTIFACT_KEY = `previews/${HASH}/2.0.0/image`;
+const ARTIFACT_KEY = `previews/versions/${VERSION}/${HASH}/2.0.0/image`;
 const VALID_PNG = makePng(1600, 900);
 
 const ENV = {
@@ -123,7 +123,7 @@ function makeJobRow(overrides: Partial<OutboxClaimedRow> = {}): OutboxClaimedRow
   return {
     id: OUTBOX_ID,
     topic: "preview.job",
-    dedupeKey: previewJobDedupeKey({ contentHash: HASH, pipelineVersion: "2.0.0", target: "image" }),
+    dedupeKey: previewJobDedupeKey({ versionId: VERSION, contentHash: HASH, pipelineVersion: "2.0.0", target: "image" }),
     payload: buildPreviewJobPayload({
       projectId: PROJECT,
       fileId: FILE,
@@ -387,11 +387,11 @@ describe("previewTargetsFor / 类型判定 / preview.job（投递侧映射）", 
   });
 
   it("去重键 = 三元组：内容 / 管线版本 / 通道 任一不同即不同任务", () => {
-    const base = previewJobDedupeKey({ contentHash: HASH, pipelineVersion: "1.0.0", target: "pdf" });
-    expect(base).toBe("preview.job:" + HASH + ":1.0.0:pdf");
-    expect(previewJobDedupeKey({ contentHash: HASH, pipelineVersion: "1.0.1", target: "pdf" })).not.toBe(base);
-    expect(previewJobDedupeKey({ contentHash: HASH, pipelineVersion: "1.0.0", target: "image" })).not.toBe(base);
-    expect(previewJobDedupeKey({ contentHash: "b".repeat(64), pipelineVersion: "1.0.0", target: "pdf" })).not.toBe(base);
+    const base = previewJobDedupeKey({ versionId: VERSION, contentHash: HASH, pipelineVersion: "1.0.0", target: "pdf" });
+    expect(base).toBe("preview.job:version:" + VERSION + ":" + HASH + ":1.0.0:pdf");
+    expect(previewJobDedupeKey({ versionId: VERSION, contentHash: HASH, pipelineVersion: "1.0.1", target: "pdf" })).not.toBe(base);
+    expect(previewJobDedupeKey({ versionId: VERSION, contentHash: HASH, pipelineVersion: "1.0.0", target: "image" })).not.toBe(base);
+    expect(previewJobDedupeKey({ versionId: VERSION, contentHash: "b".repeat(64), pipelineVersion: "1.0.0", target: "pdf" })).not.toBe(base);
   });
 
   it("载荷解析：非法（缺字段 / 通道不在值集 / 非字符串）一律 null，不兜底默认值", () => {
@@ -421,6 +421,7 @@ class FakePreviewRepository {
     return (
       this.rows.find(
         (row) =>
+          row.versionId === key.versionId &&
           row.contentHash === key.contentHash &&
           row.pipelineVersion === key.pipelineVersion &&
           row.target === key.target,
@@ -569,7 +570,7 @@ describe("PreviewService.consume（M4-05c 预览队列消费 · S7-1 收敛为�
       "preview-png-height": "900",
     });
 
-    expect(h.previews.ready[0]!.key).toEqual({ contentHash: HASH, pipelineVersion: "2.0.0", target: "image" });
+    expect(h.previews.ready[0]!.key).toEqual({ versionId: VERSION, contentHash: HASH, pipelineVersion: "2.0.0", target: "image" });
     expect(h.previews.ready[0]!.input.objectKey).toBe(ARTIFACT_KEY);
     expect(h.previews.ready[0]!.input.generatedAt).toBe(NOW);
   });
@@ -583,7 +584,7 @@ describe("PreviewService.consume（M4-05c 预览队列消费 · S7-1 收敛为�
 
     expect(outcome).toEqual({ outcome: "done" });
     expect(h.converter.calls).toHaveLength(1);
-    expect(h.previews.ready[0]!.key).toEqual({ contentHash: HASH, pipelineVersion: "2.0.0", target: "image" });
+    expect(h.previews.ready[0]!.key).toEqual({ versionId: VERSION, contentHash: HASH, pipelineVersion: "2.0.0", target: "image" });
     expect(h.previews.ready[0]!.input.objectKey).toBe(ARTIFACT_KEY);
   });
 
@@ -782,7 +783,7 @@ describe("PreviewService.consume（M4-05c 预览队列消费 · S7-1 收敛为�
 
     await h.service.onDead(makeJobRow(), "SVG 栅格化失败：文件已损坏");
     expect(h.previews.failed[0]).toMatchObject({
-      key: { contentHash: HASH, pipelineVersion: "2.0.0", target: "image" },
+      key: { versionId: VERSION, contentHash: HASH, pipelineVersion: "2.0.0", target: "image" },
       input: { error: "SVG 栅格化失败：文件已损坏", updatedAt: NOW },
     });
 

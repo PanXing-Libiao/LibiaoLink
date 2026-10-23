@@ -10911,7 +10911,7 @@ export interface components {
          */
         PlanBoardFont: "sans" | "serif" | "mono";
         /**
-         * @description 预览状态：ready 产物就绪（附短时签名 URL）或 viewer 入口可用（CAD 的模型转换状态另由 CadJob 判定） / not_ready 尚未生成（产物通道幂等补投、按三元组去重） / failed 转换失败（记原因并降级「请下载」）
+         * @description 预览状态：ready 产物就绪（附短时签名 URL）或 viewer 入口可用（CAD 的模型转换状态另由 CadJob 判定） / not_ready 尚未生成（产物通道幂等补投、按版本、管线版本和通道去重） / failed 转换失败（记原因并降级「请下载」）
          * @enum {string}
          */
         PreviewStatus: "ready" | "not_ready" | "failed";

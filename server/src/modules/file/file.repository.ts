@@ -590,28 +590,6 @@ export class FileRepository {
     return rows[0] ?? null;
   }
 
-  /**
-   * 同内容哈希的其它版本（M4-05 收口：彻底删除 / 到期清理时判预览产物缓存是否还有引用）。
-   * 排除本次要删除的版本 id；命中即把产物缓存行**归属转移**过去 —— 否则行随版本级联消失、
-   * 下次读重转，违背 D2-06「同一文件只转换一次」（迁移 `0027` 口径 3 的引用反查）。
-   */
-  async findVersionByContentHash(
-    contentHash: string,
-    excludeVersionIds: readonly string[],
-    client: DbClient = this.database.db,
-  ): Promise<{ id: string; fileId: string } | null> {
-    const where =
-      excludeVersionIds.length === 0
-        ? eq(fileVersions.contentHash, contentHash)
-        : and(eq(fileVersions.contentHash, contentHash), notInArray(fileVersions.id, [...excludeVersionIds]));
-    const rows = await client
-      .select({ id: fileVersions.id, fileId: fileVersions.fileId })
-      .from(fileVersions)
-      .where(where)
-      .limit(1);
-    return rows[0] ?? null;
-  }
-
   /** 回收站到期文件（worker 清理入口；按到期时间升序先进先出）。 */
   async listExpiredRecycledFiles(
     now: Date,

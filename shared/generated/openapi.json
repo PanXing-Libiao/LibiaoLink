@@ -6170,7 +6170,7 @@
           "not_ready",
           "failed"
         ],
-        "description": "预览状态：ready 产物就绪（附短时签名 URL）或 viewer 入口可用（CAD 的模型转换状态另由 CadJob 判定） / not_ready 尚未生成（产物通道幂等补投、按三元组去重） / failed 转换失败（记原因并降级「请下载」）"
+        "description": "预览状态：ready 产物就绪（附短时签名 URL）或 viewer 入口可用（CAD 的模型转换状态另由 CadJob 判定） / not_ready 尚未生成（产物通道幂等补投、按版本、管线版本和通道去重） / failed 转换失败（记原因并降级「请下载」）"
       },
       "PreviewTarget": {
         "type": [
@@ -10172,7 +10172,7 @@
                 "$ref": "#/components/schemas/Sha256"
               },
               {
-                "description": "完成时回传；与 init 提供值不一致返回 422 FILE_HASH_MISMATCH"
+                "description": "完成时回传；与 init 提供值或服务端计算的实际字节 SHA-256 不一致返回 422 FILE_HASH_MISMATCH"
               }
             ]
           }

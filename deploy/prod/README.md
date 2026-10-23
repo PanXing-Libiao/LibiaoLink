@@ -1,6 +1,11 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
+> **2026-10-23 F-02 S5 root 轮换与旧凭据失效仓库件已落地（PR [#595](https://github.com/PanXing-Libiao/LibiaoLink/pull/595)，未部署）**：新增 `scripts/minio-root-rotate.sh`（`plan` / `check` / `rotate` / `recover` / `finalize`），强制受控 `mc` 来源、轮换双确认、旧 root 在 tmpfs 状态目录短暂保留、双 Secret 替换失败回退、仅重建 minio、旧口令残留扫描与脱敏证据；`finalize` 会重新验证当前 root、全链路和旧 root 拒绝后才清状态。本地 fake 回放与锁定 MinIO service account 存活实验通过；**测试机未部署、未读取真实 Secret、未执行真实轮换，S5-T1～T10 待统一验证，F-02 未关闭**。运行手册见 §9.4。
+
+> **2026-10-23 F-02 S4 Secrets 隔离与运行时凭据切换仓库件已合入 main（未部署）**：`api` / `worker` 改为按文件 Compose Secret 挂载到 `/run/secrets`，`tools` 只挂 `pg_migrator_password`，三处整目录 `secrets/` 挂载已删除。`service-entrypoint.cjs` 对必需 Secret fail closed，对空的可选 Secret 明确 unset，并拒绝旧整目录挂载或未授权 Secret 文件；`storage.sh init` 使用 bootstrap、`it` 使用应用 service account，凭据经一次性 `600` env-file 注入而不进入命令行；迁移 / 种子改读 `/run/secrets/pg_migrator_password`。**测试机未部署、未读取真实 Secret、未切换运行时、未轮换 root，F-02 未关闭**；运行时验收登记见 F-02 方案 S4。
+
 > **2026-10-23 大文件预览 / 导入内存峰值修复已部署公司测试机（server · PR #592，生产未部署）**：分支 codex/preview-import-memory，提交 df093de3。server 发布包 server-preview-import-memory-df093de3-20261023-1524.tar.gz（45,859,825 B · SHA-256 f9ee861560b9e1d1e70296a79909beb6aa6fd6e5944bbf15475a692c104d70bf）上传 /srv/data/backups/ 后哈希一致；部署前备份 server-before-preview-import-memory-20261023-1524.tar.gz（45,878,267 B · SHA-256 38dc4c1dcd41faa36a04352a8cc0d25b9517c4b2d54ce8b96363b3e16886ba6a）。staging 解包 679 文件并核验 dist/entry/api.js、dist/common/http/import-temp.js、scripts/import-memory-smoke.mjs；仅停 api / worker，同步 server/dist / scripts / package 文件后重启。api / worker healthy、测试机 7 容器 healthy，容器内与公网 /healthz、/readyz 均 200，公网 preview-content 404。API 容器 /tmp 为 overlay（40 GB / 可用 12 GB，不是 tmpfs）。测试机当前 API_MEM_LIMIT=4g，未改运行配置；另用同产物在 memory=768m、memory-swap=768m 隔离容器复验：导入 200 万格 / 58.24 MiB 样本 maxRSS 221.0 MiB / cgroup peak 343.1 MiB，预览 2 GiB × 2 并发 maxRSS 226.5 MiB，两轮 memory.events 的 max / oom / oom_kill 均为 0。PR #592 的 server / shared / frontend / database CI 已通过，svg-preview-e2e 以远端实际结果为准，合并仍等待评审。无前端 / 契约 / DDL / 迁移 / 依赖 / compose / env / Secret 变化；staging 与临时压测容器已清理，备份保留，生产未部署。
+
 > **2026-10-23 F-02 S3 最小权限身份仓库件已落地（未部署）**：新增 `minio/policies/libiaolink-app-rw.json`、`minio/policies/libiaolink-bootstrap.json` 与 `scripts/minio-identity.sh`（`lint` / `apply` / `check`）；`storage-init` 只把 MinIO 无法授予的 CORS `AccessDenied` 记为能力告警。脚本使用一次性 `mc` 配置与标准输入承接凭据，不把 Secret 放入命令行；父用户策略、service account 状态和凭据文件均 fail closed。已用锁定 MinIO 镜像在本地临时环境完成 apply → check → 二次 apply → check、额外策略拒绝和 `storage:init --check` 自检；**测试机未部署、未创建真实身份、未读取真实 Secret，F-02 未关闭**。测试机验收登记见 F-02 方案 S3。
 
 > **2026-10-23 F-06 preview-content 公网收口与 API 安全头已部署公司测试机（code `03ae712a`），生产未部署**：server 包 `server-f06-03ae712-20261023-1359.tar.gz`（883,269 B · SHA-256 `6cd9a65832dfa37b38f020fd53c67d2f745dfee5530ab2992ec9dff1b587731d`）、nginx 包 `nginx-f06-03ae712-20261023-1359.tar.gz`（4,934 B · `9afc27082addb0cd16d234e90d6e166a9f99568d341422ad50bc64761174afd5`）；部署前备份 `server-before-f06-20261023-1359.tar.gz`（883,292 B · `32e309271d9913538c591be72a0b69290a9abcad5589a59909b75abdfd6124ae`）与 `nginx-before-f06-20261023-1359.tar.gz`（4,516 B · `5bb8aa7f1bc1822102686da5f33437ba40dcc7025bcfc0bff0be674b3e2ce47d`）。`/opt/libiaolink/server/dist` 已替换并修正权限（`entry/api.js` `c32b9e01…`、`common/http/security-headers.js` `1c7da1d1…`），Nginx 配置哈希 `d9d5b98b…`、`nginx -t` 通过并重启 web；`ONLYOFFICE_DOCSERVER_API_BASE_URL=http://api:3000` 已确认。公网 `preview-content` 404，HSTS / `nosniff` / `Referrer-Policy` / `Permissions-Policy` 每项 1 条、`X-Powered-By` 0 条；`/` / `/healthz` / `/readyz` 200，`/libiaolink/` 403 但安全头完整；DocServer → `http://api:3000/healthz` 200；api / worker / web / postgres / minio / cad / svg-preview 七容器 healthy；staging 已清理、备份保留。无前端 / 契约 / DDL / 迁移 / compose / env / Secret 变化。
@@ -72,18 +77,18 @@
 | 文件 | 用途 | 消费方 | 现状 |
 |---|---|---|---|
 | `pg_superuser_password` | `postgres` 超级用户 | compose secret（`POSTGRES_PASSWORD_FILE`） | ✅ 已生成 |
-| `pg_migrator_password` | 迁移 / 种子 | db-init + tools | ✅ 已生成 |
-| `pg_api_password` | 应用角色（api / worker） | entrypoint → `DATABASE_URL` | ✅ 已生成 |
+| `pg_migrator_password` | 迁移 / 种子 | `tools` Compose Secret → `/run/secrets/pg_migrator_password` | ✅ 已生成 |
+| `pg_api_password` | 应用角色（api / worker） | api / worker Compose Secret → entrypoint → `DATABASE_URL` | ✅ 已生成 |
 | `pg_readonly_password` | 只读（排查 / 报表） | psql 排查 | ✅ 已生成 |
 | `internal_sync_token` | 内部作业凭证（`X-Internal-Token`） | entrypoint → `INTERNAL_SYNC_TOKEN` | 随本切片生成 |
 | `onlyoffice_jwt_secret` | 查看器 JWT（与 DocServer 同值） | entrypoint → `ONLYOFFICE_JWT_SECRET` | ✅ 已生成（2026-10-14 DocServer 上线同批复核） |
-| `translate_api_key` | 翻译 API Key（New API 网关） | entrypoint → `TRANSLATE_API_KEY` | ✅ 已回填（2026-10-14，51 B；2026-10-23 日 / 韩直连 2 / 2） |
-| `casdoor_client_id` / `casdoor_client_secret` | SSO 应用（Casdoor） | entrypoint → `CASDOOR_CLIENT_ID` / `CASDOOR_CLIENT_SECRET` | ✅ 已回填（2026-10-14，测试环境 authtest 应用 clientId `41e162…`；正式环境应用创建后替换） |
-| `s3_access_key` / `s3_secret_key` | 对象存储（MinIO 应用 service account） | entrypoint → `S3_ACCESS_KEY` / `S3_SECRET_KEY` | ⚠ 当前仍与 root 同值；S3 仓库件已落地，测试机部署后由 `minio-identity.sh apply` 替换，S4 才切换运行时 |
-| `s3_bootstrap_access_key` / `s3_bootstrap_secret_key` | 对象存储初始化（bootstrap service account） | `storage:init` / `storage:init --check`（S4 接线） | S3 脚本生成；测试机部署后验证，当前不存在 |
-| `wecom_app_secret` / `wecom_bot_secret` | 企微通道 | entrypoint → `WECOM_APP_SECRET` / `WECOM_BOT_SECRET` | 待业务侧开通后补 |
+| `translate_api_key` | 翻译 API Key（New API 网关） | **仅 api** Compose Secret → `TRANSLATE_API_KEY` | ✅ 已回填（2026-10-14；未配置时用空占位文件） |
+| `casdoor_client_id` / `casdoor_client_secret` | SSO 应用（Casdoor） | api / worker Compose Secret → `CASDOOR_CLIENT_ID` / `CASDOOR_CLIENT_SECRET`（worker 当前由共享生产 env 校验要求） | ✅ 已回填（2026-10-14，测试环境 authtest 应用 clientId `41e162…`；正式环境应用创建后替换） |
+| `s3_access_key` / `s3_secret_key` | 对象存储（MinIO 应用 service account） | api / worker Compose Secret → `S3_ACCESS_KEY` / `S3_SECRET_KEY` | S3 `apply` 生成；存在后 S4 才重建 api / worker |
+| `s3_bootstrap_access_key` / `s3_bootstrap_secret_key` | 对象存储初始化（bootstrap service account） | `storage.sh init` / `init --check` 一次性 env-file → `S3_*` | S3 `apply` 生成；不挂载给长期运行容器 |
+| `wecom_app_secret` / `wecom_bot_secret` | 企微通道 | **仅 worker** Compose Secret → `WECOM_APP_SECRET` / `WECOM_BOT_SECRET` | 待业务侧开通；未开通时保留空占位文件 |
 
-生成（服务器上，root）：`openssl rand -hex 24 > <文件名>`（JWT 用 -hex 32），随后 `chmod 600 *password` 覆盖全部密钥文件。**不要预创建 `s3_access_key` / `s3_secret_key` / `s3_bootstrap_access_key` / `s3_bootstrap_secret_key`**：S3 身份脚本只接受“成对不存在”、有效 service account 或可识别的 legacy root 文件；未知或单边文件会 fail closed。
+生成（服务器上，root）：`openssl rand -hex 24 > <文件名>`（JWT 用 -hex 32），随后 `chmod 700 secrets && chmod 600 secrets/*`。**不要预创建 `s3_access_key` / `s3_secret_key` / `s3_bootstrap_access_key` / `s3_bootstrap_secret_key`**：S3 身份脚本只接受“成对不存在”、有效 service account 或可识别的 legacy root 文件；未知或单边文件会 fail closed。`translate_api_key` / `wecom_app_secret` / `wecom_bot_secret` 未配置时应创建 `600` 空占位文件（Compose 需要文件存在；entrypoint 把空值视为未配置并 unset，绝不从 `server.env` 回退）。
 
 ## 3. 同步与首次部署（postgres）
 
@@ -181,13 +186,19 @@ docker compose --profile tools run --rm tools -c 'cd /opt/libiaolink/shared && n
 ```bash
 cp server.env.example server.env          # 按注释回填 SSO / 对象存储 / ONLYOFFICE / 企微 真实值
 cd secrets
-for n in casdoor_client_id casdoor_client_secret s3_access_key s3_secret_key; do echo "placeholder-until-configured" > "$n"; done
+for n in translate_api_key wecom_app_secret wecom_bot_secret; do
+  [ -e "$n" ] || install -m 600 /dev/null "$n"
+done
+chmod 700 .
 chmod 600 *
+cd ..
+# F-02 S4：旧值或其他环境变量中的 Secret 不再是回退来源；部署机必须删除此行。
+sed -i '/^WECOM_BOT_SECRET=/d' server.env
 ```
 
-> 占位值仅供「先起服务、后回填」的过度期使用；真值到位后覆盖文件并 `docker compose --profile app restart api worker`。
+> 空占位仅表示“该可选通道未配置”；真值到位后覆盖对应文件并重建 api / worker。`casdoor_client_id` / `casdoor_client_secret` / `pg_api_password` 等必需项不得使用占位值；`s3_*` 必须先由 S3 `minio-identity.sh apply` 生成，再启动 / 重建应用。
 
-> **智能机器人（群 + 单聊 · M5-03-5）**：`server.env` 需回填 `WECOM_BOT_ID` / `WECOM_BOT_SECRET`（成对；Secret 不进仓库）。换机器人 = 改此二值即视为新机器人 —— 新 `bot_id` 下无绑定行，单聊不发帧 + `dead` + 站内信降级（D4 话术），已绑定用户需重新绑定一次；回填后 `docker compose --profile app restart api worker`（长连接由 worker 建立）。
+> **智能机器人（群 + 单聊 · M5-03-5）**：`server.env` 只回填非敏感 `WECOM_BOT_ID`；`WECOM_BOT_SECRET` 只写 `secrets/wecom_bot_secret`（`600`），不得留在 `server.env`。换机器人 = 同时更换这两个值即视为新机器人 —— 新 `bot_id` 下无绑定行，单聊不发帧 + `dead` + 站内信降级（D4 话术），已绑定用户需重新绑定一次；文件到位后 `docker compose --profile app up -d --force-recreate worker`（长连接由 worker 建立）。
 
 **启动与验证：**
 
@@ -345,7 +356,7 @@ PR 与 main 的独立 `svg-preview-e2e` job 会从本生产配置派生 CI Nginx
 
 - 数据落数据盘：bind `/srv/data/minio`（HDD；默认 docker volume 会落系统盘，禁用）；
 - 端口：`9000` = S3 API，仅 Docker `libiaolink-prod` 网络内使用，不发布宿主端口；`9001` 控制台与 `9443` MinIO 备用门面均只绑 `127.0.0.1`（SSH 隧道访问）；浏览器对象存储只走 443 `/libiaolink/`；
-- 凭据：`secrets/minio_root_user`、`secrets/minio_root_password`（`scripts/minio-entrypoint.sh` 注入）；应用侧 `secrets/s3_access_key` / `s3_secret_key`（当前与根口令同值；专用账号最小权限列为待办）；
+- 凭据：`secrets/minio_root_user`、`secrets/minio_root_password` 只通过 minio 容器的 Compose Secret 注入；应用侧使用 `s3_access_key` / `s3_secret_key`（`libiaolink-api` service account），初始化使用 `s3_bootstrap_*`（`libiaolink-storage-init`），四件均由 S3 `apply` 生成，不复制 root 值；
 - CORS：MinIO 社区版走服务端变量 `MINIO_API_CORS_ALLOW_ORIGIN`（compose 默认 `http://10.1.104.44`；换域名 / TLS 后同步更新并重建容器）。
 
 **首次部署与验证（服务器）：**
@@ -356,8 +367,10 @@ mkdir -p /srv/data/minio
 cd secrets
 echo "libiaolink" > minio_root_user
 openssl rand -hex 24 > minio_root_password
-cp minio_root_user s3_access_key
-cp minio_root_password s3_secret_key
+for n in translate_api_key wecom_app_secret wecom_bot_secret; do
+  [ -e "$n" ] || install -m 600 /dev/null "$n"
+done
+chmod 700 .
 chmod 600 *
 cd ..
 # server.env 已存在（v1.2 切片创建）→ 只回填 S3 段；新机首部署才 cp server.env.example server.env
@@ -377,8 +390,18 @@ cd /srv/data/images/minio
 echo "7c5bd8512c6e966455b1d198209358b2d191c77a83ab377c4073281065fb855f  minio.linux-amd64.RELEASE.2025-09-07T16-13-09Z" | sha256sum -c -
 docker build -f /opt/libiaolink/deploy/prod/minio/Dockerfile -t libiaolink/minio:RELEASE.2025-09-07T16-13-09Z /srv/data/images/minio
 cd /opt/libiaolink/deploy/prod
-docker compose --profile app up -d --force-recreate api worker minio web
+
+# S4：api / worker 依赖应用与 bootstrap Secret；这段窗口只先启动 minio。
+docker compose --profile app up -d minio
 docker compose --profile app ps       # minio (healthy)
+
+# 按 §9.2 提取受控 mc 并执行 minio-identity.sh apply / check。
+# apply 完成前不得启动 / 重建 api / worker（Compose 不会接受缺失的 s3_* 文件）。
+MC_BIN=/usr/local/bin/mc \
+MC_SOURCE='libiaolink/minio:RELEASE.2025-09-07T16-13-09Z:/usr/bin/mc' \
+  bash scripts/minio-identity.sh apply
+
+docker compose --profile app up -d --force-recreate api worker
 bash scripts/storage.sh init          # 建桶 + 版本控制（CORS / 分片清理按 MinIO 能力面告警）
 bash scripts/storage.sh init --check  # 只读门禁（部署验收）
 bash scripts/storage.sh it            # 真机回放 24 项断言
@@ -503,18 +526,164 @@ bash scripts/minio-identity.sh check
 
 **测试机暂不执行**：本切片不在测试机运行 `storage:init --check`、不做负向权限回放、不重启 api / worker、不轮换 root。`storage:init --check` 需等 S4 完成 `storage.sh` 的 bootstrap 接线后在测试机执行；负向权限和 sentinel 桶验证按 F-02 S3-T6 / T7 执行并由 root 清理 sentinel。本地临时 MinIO 的 `storage:init --check` 只用于实现自检，不替代测试机验收。S3 完成不等于 F-02 关闭。
 
+### 9.3 Secrets 隔离与运行时切换（F-02 S4 · 仓库件，测试机部署后验证）
+
+**状态与边界**：仓库已切到 Compose 单文件 Secret，但测试机尚未部署、未重启 api / worker、未读取真实 Secret，也未轮换 root。S1～S5 仓库实现完成后统一部署；运行时项按 F-02 方案「S4 测试机部署后验证登记」执行，本地静态检查不能替代测试机证据。
+
+**挂载矩阵**
+
+| 容器 | `/run/secrets` 可见项 | 说明 |
+|---|---|---|
+| api | `pg_api_password`、`casdoor_client_id`、`casdoor_client_secret`、`s3_access_key`、`s3_secret_key`、`internal_sync_token`、`onlyoffice_jwt_secret`、`translate_api_key` | 不挂企微、migrator、root、superuser Secret |
+| worker | `pg_api_password`、`casdoor_client_id`、`casdoor_client_secret`、`s3_access_key`、`s3_secret_key`、`internal_sync_token`、`onlyoffice_jwt_secret`、`wecom_app_secret`、`wecom_bot_secret` | 不挂 translate、migrator、root、superuser Secret；Casdoor / internal token / OO JWT 当前由共享生产 env 校验要求 |
+| tools | `pg_migrator_password` | S3 初始化凭据由 `storage.sh` 一次性 env-file 注入，不长期挂载 |
+| minio | `minio_root_user`、`minio_root_password` | root 值只能进入 minio 容器 |
+
+`service-entrypoint.cjs` 启动时先清空所有受管环境变量，再从 `/run/secrets` 读取；必需项缺失 / 为空 / 不可读 fail closed，可选文件为空则明确 unset。发现 `/opt/libiaolink/secrets` 旧整目录挂载或 `/run/secrets` 中出现未声明文件时直接退出 70。
+
+**运行时切换（测试机，维护窗口）**
+
+```bash
+cd /opt/libiaolink/deploy/prod
+
+# 1. 前置：S3 apply 已生成四件 s3_*；可选 Secret 为空时必须保留 600 空占位。
+install -d -m 700 secrets
+for n in translate_api_key wecom_app_secret wecom_bot_secret; do
+  [ -e "secrets/$n" ] || install -m 600 /dev/null "secrets/$n"
+done
+chmod 600 secrets/*
+sed -i '/^WECOM_BOT_SECRET=/d' server.env
+
+# 2. Compose 解析 + 重建（配置输出不含 Secret 值）。
+docker compose --profile app config >/dev/null
+docker compose --profile app up -d --force-recreate api worker
+docker compose --profile app ps
+
+# 3. 健康与挂载边界（只打印文件名 / 权限，不打印 Secret 值）。
+curl -fsS https://test-pm.libiaorobot.com/healthz
+curl -fsS https://test-pm.libiaorobot.com/readyz
+for c in libiaolink-api libiaolink-worker; do
+  docker exec "$c" sh -c 'ls -1 /run/secrets | sort'
+  docker exec "$c" sh -c 'test ! -e /opt/libiaolink/secrets'
+  docker exec "$c" sh -c 'grep -E "^(Uid|Gid):" /proc/1/status'
+done
+docker exec libiaolink-api sh -c '
+  for f in minio_root_user minio_root_password pg_superuser_password pg_migrator_password s3_bootstrap_access_key s3_bootstrap_secret_key; do
+    test ! -e "/run/secrets/$f" || exit 1
+  done
+'
+docker exec libiaolink-worker sh -c '
+  for f in minio_root_user minio_root_password pg_superuser_password pg_migrator_password s3_bootstrap_access_key s3_bootstrap_secret_key; do
+    test ! -e "/run/secrets/$f" || exit 1
+  done
+'
+
+# 4. 禁止 server.env 携带 Secret；未配置的企微 / 翻译变量必须被 entrypoint unset。
+! grep -E '^(DATABASE_URL|CASDOOR_CLIENT_SECRET|INTERNAL_SYNC_TOKEN|S3_ACCESS_KEY|S3_SECRET_KEY|ONLYOFFICE_JWT_SECRET|TRANSLATE_API_KEY|WECOM_APP_SECRET|WECOM_BOT_SECRET)=' server.env
+docker exec libiaolink-api sh -c '! printenv WECOM_BOT_SECRET >/dev/null 2>&1'
+docker exec libiaolink-worker sh -c '! printenv TRANSLATE_API_KEY >/dev/null 2>&1'
+
+# 5. S3 / 存储链路：bootstrap 跑只读门禁，应用 service account 跑完整回放。
+bash scripts/storage.sh init --check
+bash scripts/storage.sh it
+```
+
+- 迁移 / 种子：`bash scripts/db-migrate.sh --dry-run`、`bash scripts/db-seed.sh --dry-run` 必须只经 tools 的 `/run/secrets/pg_migrator_password` 读取密码；`db-init.sh` 还要求三件 `pg_*_password` 权限严格为 `600`，密码经 stdin 送入 psql，不出现在 psql argv。
+- 未配置企微时，worker 应记录群通道未启用 / 单聊凭据未配置的结构化告警，不得启动伪连接；配置后覆盖 `wecom_*` 文件并只重建 worker。
+- 进程命令行、日志、shell history、证据文件和 CI 输出不得出现 access key / secret；应用容器不得出现 root 或 superuser Secret。
+
+**回滚**：启动失败时只补挂缺失的单文件 Secret、修正 `600` 权限或修复 service account 策略后重试。禁止恢复 `./secrets:/opt/libiaolink/secrets:ro`、把 root 值复制给应用或把 Secret 写回 `server.env`。root 轮换属于 S5，S4 不执行。
+
+### 9.4 MinIO root 轮换与旧凭据失效（F-02 S5 · 仓库件，测试机部署后验证）
+
+**状态与边界**：仓库已交付 `scripts/minio-root-rotate.sh`，但测试机尚未部署、未读取真实 Secret、未执行真实轮换。必须等 S3 身份和 S4 应用凭据切换的运行时检查通过后，才可在维护窗口执行；运行时项按 F-02 方案 S5-T1～T10 登记，本地自检不替代测试机证据。
+
+脚本只重建 `minio`，不重启 `api` / `worker`；不删除对象、桶、版本或数据目录；不修改 S1 / S2 的端口与 `DOCKER-USER` 规则。旧 root 仅在 `/run/libiaolink-f02-s5`（目录 `700`、文件 `600`，tmpfs）短暂保留用于失败恢复。
+
+**前置**
+
+- 已完成 S3 `apply` / `check` 和 S4 运行时切换，应用 / bootstrap 凭据均不是 root；`storage:init --check`、`storage:it`、`readyz` 已通过。
+- 已记录 MinIO 数据目录的可恢复备份 / 快照路径与校验值；备份说明、工单和聊天记录不含 Secret。
+- 已从锁定 MinIO 镜像提取并校验 `mc`，按 §9.2 设置 `MC_BIN` 与 `MC_SOURCE`；不得下载来源不明的二进制。
+- `secrets/` 为 `700`，`minio_root_*`、`s3_*`、`s3_bootstrap_*` 与可选空占位均为 `600`；不存在未完成的 `/run/libiaolink-f02-s5`。
+
+**只读预检**
+
+```bash
+cd /opt/libiaolink/deploy/prod
+set +o history 2>/dev/null || true
+chmod 700 secrets
+chmod 600 secrets/*
+
+export MC_BIN=/usr/local/bin/mc
+export MC_SOURCE='libiaolink/minio:RELEASE.2025-09-07T16-13-09Z:/usr/bin/mc'
+
+bash scripts/minio-root-rotate.sh plan   # 不生成凭据、不写 Secret、不重启容器
+bash scripts/minio-root-rotate.sh check  # 复核 root / S3 / storage / HTTP 并写脱敏证据
+```
+
+`plan` / `check` 也要求 `MC_SOURCE`，因为脚本会校验受控 `mc` 的版本、SHA-256 和必需子命令。任何 Secret 权限、数据目录、容器健康或基线检查失败都必须停在轮换前。
+
+**维护窗口轮换**
+
+```bash
+# 仅在备份 / 快照已核实后设置第二个确认
+F02_S5_CONFIRM=ROTATE_MINIO_ROOT \
+F02_S5_BACKUP_CONFIRMED=YES \
+bash scripts/minio-root-rotate.sh rotate
+```
+
+脚本会依次完成：基线全链路检查、暂存旧 root、生成新 root、替换两份 Secret、只重建 minio、新 root 认证、旧 root 拒绝、S3 身份 / bootstrap / `storage:it` / HTTP 复核、旧口令明文扫描、删除状态并写证据。任一步失败时按证据中的 `stage` 和 `rollback` 处理，不得手工拼接新旧用户 / 口令文件。
+
+**成功核对**
+
+```bash
+test ! -e /run/libiaolink-f02-s5
+stat -c '%a %n' secrets/minio_root_user secrets/minio_root_password
+find secrets -maxdepth 1 -name '*.f02-s5.*' -print
+find /srv/data/backups/f02-s5-evidence -maxdepth 1 -type f -printf '%m %f\n' | sort
+```
+
+预期：状态目录已删除；两份 root Secret 为 `600`；没有 `.f02-s5.*` 临时 / 备份文件；证据目录为 `700`、证据文件为 `600`，且文件内容不含 Secret。证据中 `root_username_changed=yes`、`new_root_auth=accepted`、`retired_root_auth=rejected`、`f02_status=open`。
+
+**失败与中断**
+
+- **自动回滚边界**：仅新 root 启动失败、新 root 认证失败或旧 root 仍被接受时，脚本恢复旧 root、重建 minio、确认旧 root 可用并写 `rolled-back` 证据。恢复后 F-02 仍开放，必须按事件处置并重新轮换。
+- **新 root 已生效后的失败**：身份、storage、HTTP 复核失败，旧 root 探针不确定，或旧口令扫描命中时，脚本不回滚到旧 root，保留新 root 与 `/run/libiaolink-f02-s5`，写 `failed` 证据并退出 1。
+- **中断后禁止直接重跑 `rotate`**：状态目录存在时脚本会拒绝。先确认证据与状态目录权限；需要恢复旧 root 时执行 `recover`，确认新 root 应继续生效并处置完旧值副本后再执行 `finalize`。
+
+```bash
+# 回滚到状态目录中的旧 root（会重建 minio；之后必须重新轮换）
+F02_S5_CONFIRM=RESTORE_PREVIOUS_ROOT \
+bash scripts/minio-root-rotate.sh recover
+
+# 新 root 已生效、残留已清理：重新校验当前 root / 全链路 / 旧 root 拒绝 / 扫描后再清状态
+F02_S5_CONFIRM=FINALIZE_ROOT_ROTATION \
+bash scripts/minio-root-rotate.sh finalize
+```
+
+`finalize` 不是“强制删状态”命令：当前 root 不可用、仍与待退休值相同、运行时检查失败、旧 root 仍可用或扫描有命中时都会保留状态。不得手工 `rm -rf` 状态目录绕过检查。
+
+**旧 Secret 残留**
+
+脚本的明文扫描覆盖部署目录、`/srv/data/backups`、`/root/.bash_history`、`/home`、`/tmp`、`/var/tmp` 及 minio / api / worker 日志；命中或不可读都会阻止自动清状态。tar / 镜像 / 压缩备份无法用文本 `grep` 证明“未包含”，必须按敏感备份限制访问、登记处置结论，必要时重新打包或销毁；不能把“未扫描到”写成“未包含”。
+
+轮换完成不等于 F-02 关闭：仍须完成 S5-T3 旧预签名 / 历史应用值失效验证、S5-T7 残留处置、S5-T10 端口复核，以及 S6 / S7 的文档与回放证据。不得为了排障恢复 `0.0.0.0:9000` / `0.0.0.0:9443`，也不得把 api / worker 改回 root。
+
 ## 10. 后续切片（登记）
 
-- web（Nginx）：TLS 接入 ✅（2026-10-14，443 应用 + 对象存储同源门面 + ALLinSSL 自动下发）；9443 已收口为回环排障口（F-02 S1）；浏览器流量已全部走 443 同源门面，待确认 H1 不再依赖后再评估删除；`/internal/**` / `/example/` 显式 404 加固（SPA 产物 2026-10-14 已上线）；备份脚本（PG 12h → `/srv/data/backups/pg`）；监控告警接线；MinIO 运维面：镜像离线固化（quay 2026-10-13 实测下架，已改服务器本地构建；`docker save` 归档待办）、SeaweedFS 迁移评估、S3 专用账号最小权限（F-02 S3 仓库件已落地，测试机统一部署后验证）与 root 轮换（F-02 S4～S5 待执行）；
+- web（Nginx）：TLS 接入 ✅（2026-10-14，443 应用 + 对象存储同源门面 + ALLinSSL 自动下发）；9443 已收口为回环排障口（F-02 S1）；浏览器流量已全部走 443 同源门面，待确认 H1 不再依赖后再评估删除；`/internal/**` / `/example/` 显式 404 加固（SPA 产物 2026-10-14 已上线）；备份脚本（PG 12h → `/srv/data/backups/pg`）；监控告警接线；MinIO 运维面：镜像离线固化（quay 2026-10-13 实测下架，已改服务器本地构建；`docker save` 归档待办）、SeaweedFS 迁移评估、S3 专用账号最小权限（F-02 S3 仓库件已落地）、Secret 隔离（F-02 S4 仓库件已合入，运行时待统一部署验证）与 root 轮换（F-02 S5 仓库件已落地，PR [#595](https://github.com/PanXing-Libiao/LibiaoLink/pull/595) 评审中，运行时待统一验证）；
 - onlyoffice（文档服务器）：生产上线 ✅（2026-10-14，离线镜像 + 443 子路径门面 + 真实 64MB xlsx 端到端；见 `deploy/onlyoffice/README.md` §6）；剩余：升级 / 重建后按回归五项 + §6.3 表复验、缓存盘 7 天清理 cron、正式环境容量评估与 CVE 跟踪；
 - SSO：测试环境（authtest 应用 `LibiaoLink`）已按接入标准接通（2026-10-14）；正式环境应用 `libiaolink` 创建 + 企微登录方式挂接待 SSO 管理员（M8 §3-B）。
-- M5-03-5 单聊改智能机器人（绑定码链路）部署**待执行**（项目组 2026-10-16 决定暂缓）：迁移 `0055` → `server/dist` 重传 → `server.env` 回填 `WECOM_BOT_ID` / `WECOM_BOT_SECRET` → `restart api worker` → 真机复跑 **BC-1 ~ BC-4**（口径 §12）；执行前先备份 PG（`0055` 含不可回滚清理）。
+- M5-03-5 单聊改智能机器人（绑定码链路）部署**待执行**（项目组 2026-10-16 决定暂缓）：迁移 `0055` → `server/dist` 重传 → `server.env` 回填非敏感 `WECOM_BOT_ID`、`secrets/wecom_bot_secret` 写入凭据 → 重建 worker → 真机复跑 **BC-1 ~ BC-4**（口径 §12）；执行前先备份 PG（`0055` 含不可回滚清理）。
 - 完成项在 `docs/M8-部署Runbook与上线检查单(单机).md` 勾选；推送时随 `开发日志.md` 记录。
 
 ## 11. 变更记录
 
 | 版本 | 日期 | 变更 | 人 |
 |---|---|---|---|
+| v2.22 · deploy（未部署） | 2026-10-23 | F-02 S5 root 轮换仓库件（PR [#595](https://github.com/PanXing-Libiao/LibiaoLink/pull/595)）：新增 `scripts/minio-root-rotate.sh`（`plan` / `check` / `rotate` / `recover` / `finalize`），强制受控 `mc` 来源、双确认、tmpfs 旧 root 状态、双 Secret 替换失败回退、仅重建 minio、旧口令明文扫描、脱敏证据与 `finalize` 复验；§9.4 补维护窗口、失败边界与残留处置。本地 fake 回放、双 Secret 替换失败回退、锁定 MinIO root 切换后 service account 存活 / 旧 root 拒绝自检通过；**未连接测试机、未读取真实 Secret、未执行真实轮换，S5-T1～T10 待统一部署后验证，F-02 未关闭** | lan |
+| v2.21 · deploy（未部署） | 2026-10-23 | F-02 S4 Secrets 隔离仓库件（PR [#594](https://github.com/PanXing-Libiao/LibiaoLink/pull/594)）：api / worker / tools 改 Compose 单文件 Secret 并移除整目录挂载；entrypoint 改读 `/run/secrets`、必需项 fail closed、可选项空值 unset、拒绝旧目录与未授权 Secret；`storage.sh` 按 init / it 选择 bootstrap / 应用凭据并经一次性 `600` env-file 注入；db-migrate / seed 改读 `/run/secrets/pg_migrator_password`，db-init 改经 stdin 且校验 `600`；§2 / §7 / §9 同步部署顺序与运行时检查。静态自检通过；**未连接测试机、未读取真实 Secret、未切换 api / worker、未轮换 root，S4-T1～T10 待统一部署后验证，F-02 未关闭** | lan |
 | v2.20 · deploy（未部署） | 2026-10-23 | F-02 S3 仓库件：新增应用 / bootstrap 策略与 `scripts/minio-identity.sh`（`lint` / `apply` / `check`，受控 `mc` 门禁、一次性配置、凭据文件原子写入与 fail-closed 校验）；`storage-init` 仅对 CORS 的 MinIO IAM 能力例外保留 `AccessDenied` 告警，其它权限错误继续失败；§2 / §9.2 同步 Secret 与执行边界。本地锁定 MinIO 临时环境完成 apply → check → 二次 apply → check、额外策略拒绝与 bootstrap `storage:init --check` 自检；**未连接测试机、未创建真实身份、未读取真实 Secret、未切换 api / worker，运行时验收待统一部署后登记** | lan |
 | v2.19 · deploy（未持久化部署） | 2026-10-23 | F-02 S1 / S2 部署件：minio 删除 `9000:9000`、web 将 `9443` 收口到 `127.0.0.1`；新增 `scripts/docker-user-firewall.sh`（`--check` / `--apply` / `--remove`，IPv4 / IPv6，仅管理自有标记规则）与 `systemd/libiaolink-docker-user-firewall.service`；§9.1 补端口契约、复核与回滚。测试机临时 `apply → 二次 apply → check → remove` 通过：443 `/readyz` 200、`/libiaolink/` 403、9000 / 9001 / 9443 从开发机不可达；规则已移除，**未安装 unit、未重建 minio / web，F-02 S3～S5 未做** | px |
 | v2.18 · frontend | 2026-10-23 | 产品名称改为「立镖市场项目管理平台」测试机前端部署（Push 450 / 451 · PR [#582](https://github.com/PanXing-Libiao/LibiaoLink/pull/582) · PR CI [39908280966](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39908280966) 5 / 5 · squash `eb443b44` · main CI [39908553712](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39908553712) 5 / 5）：使用隔离前端源 `eb72d1aa` 构建，避开同期审计 UI 与未执行迁移 `0066`；frontend-only 包 14,868,805 B · `086260e0…` 上传 `/srv/data/backups/` 并远端对账一致；staging 386 文件 / 18,413,514 B / 0 preview；部署前备份 14,873,600 B · `9bbdc345…`；`rsync -a --delete` 覆盖并修正读权限，web 未重启；公网 index / JS / CSS（`23afceec…` / `41262d2f…` / `32bd4553…`）与本地逐字节一致，新名称 1 命中、旧名称 0 命中，`/` / `/nginx-health` / `/healthz` / `/readyz` 200，7 容器 healthy，staging 已清理；无接口 / 依赖 / DDL / 迁移 / Secret 变化，生产未部署。 | px |

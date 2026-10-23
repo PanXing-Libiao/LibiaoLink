@@ -5,23 +5,16 @@ import { DatabaseService } from "../../db/database.service.js";
 import { previewArtifacts } from "../../db/schema/preview.js";
 import type { PreviewTarget } from "./preview.job.js";
 
-/**
- * preview_artifacts 数据访问（M4-05c · ADR-007：三元组缓存键 = content_hash + pipeline_version + target）。
- *
- * 读面按三元组命中（不按版本命中）：内容相同（跨文件 / 回溯 / 变更）就复用同一行；
- * `file_id` / `version_id` = **首次生成**该产物的版本，登记后不因后来者改写（引用判定以首登为准）。
- * 状态机 not_ready → ready / failed（值集与契约 PREVIEW_STATUSES 同值，README「五」数据层口径）。
+/** 预览缓存按 version_id + pipeline_version + target 隔离（迁移 0067）。
+ * contentHash 仅绑定该不可变版本，不作为跨文件或跨项目的读取凭据。
+ * ready / failed 仅可由 not_ready 转入，过期失败任务不能降级已就绪产物。
  */
 
 export type PreviewArtifactRow = typeof previewArtifacts.$inferSelect;
 
-/**
- * 三元组缓存键（三个字段一起唯一：uq_preview_artifacts_cache_key）。
- *
- * `target` 用契约通道联合类型（不是裸 string）：键的持有者直接拿去拼任务载荷 / 写响应，
- * 在这里就挡住「写进一个不存在的通道」—— 库侧 CHECK ck_preview_artifacts_target 只是最后一道。
- */
+/** 版本缓存键；contentHash 同时参与读写条件，防止版本元数据不一致时复用产物。 */
 export interface PreviewArtifactKey {
+  versionId: string;
   contentHash: string;
   pipelineVersion: string;
   target: PreviewTarget;
@@ -37,7 +30,7 @@ export class PreviewRepository {
   }
 
   /**
-   * 首次请求登记（not_ready）：同三元组已存在（含并发插入）**不覆盖**，原样返回既有行 ——
+   * 首次请求登记（not_ready）：同版本缓存键已存在（含并发插入）**不覆盖**，原样返回既有行 ——
    * 调用方据此判断「已有 ready 就复用 / 已有 failed 就按缓存态处理，不做原地重试」。
    */
   async ensureRequested(
@@ -55,7 +48,7 @@ export class PreviewRepository {
         status: "not_ready",
       })
       .onConflictDoNothing({
-        target: [previewArtifacts.contentHash, previewArtifacts.pipelineVersion, previewArtifacts.target],
+        target: [previewArtifacts.versionId, previewArtifacts.pipelineVersion, previewArtifacts.target],
       })
       .returning();
     if (inserted[0] !== undefined) {
@@ -63,12 +56,12 @@ export class PreviewRepository {
     }
     const existing = await this.findByKey(input, client);
     if (existing === null) {
-      throw new Error("预览产物登记失败：三元组写入后读不到行（并发删除？）");
+      throw new Error("预览产物登记失败：版本缓存键写入后读不到行（并发删除？）");
     }
     return existing;
   }
 
-  /** 产物就绪：object_key / generated_at 成对写入（ck_preview_artifacts_ready_pair），并清掉旧失败原因。 */
+  /** 产物就绪：object_key / generated_at 成对写入（ck_preview_artifacts_ready_pair），失败原因保持为空。 */
   async markReady(
     key: PreviewArtifactKey,
     input: { objectKey: string; generatedAt: Date },
@@ -83,7 +76,7 @@ export class PreviewRepository {
         error: null,
         updatedAt: input.generatedAt,
       })
-      .where(this.keyWhere(key));
+      .where(and(this.keyWhere(key), eq(previewArtifacts.status, "not_ready")));
   }
 
   /**
@@ -104,7 +97,7 @@ export class PreviewRepository {
         generatedAt: null,
         updatedAt: input.updatedAt,
       })
-      .where(this.keyWhere(key));
+      .where(and(this.keyWhere(key), eq(previewArtifacts.status, "not_ready")));
   }
 
   /**
@@ -122,24 +115,9 @@ export class PreviewRepository {
       .where(and(inArray(previewArtifacts.versionId, [...versionIds]), eq(previewArtifacts.status, "ready")));
   }
 
-  /**
-   * 缓存行**归属转移**（原登记版本被彻底删除、但同内容仍有存活版本）：保住 ready 行与产物对象，
-   * 不让「删掉一份重复文件」把共享缓存打回 not_ready —— 读面按三元组命中，不按版本命中，转移无副作用。
-   */
-  async reassignOwner(
-    id: string,
-    input: { fileId: string; versionId: string },
-    at: Date,
-    client: DbClient = this.database.db,
-  ): Promise<void> {
-    await client
-      .update(previewArtifacts)
-      .set({ fileId: input.fileId, versionId: input.versionId, updatedAt: at })
-      .where(eq(previewArtifacts.id, id));
-  }
-
   private keyWhere(key: PreviewArtifactKey) {
     return and(
+      eq(previewArtifacts.versionId, key.versionId),
       eq(previewArtifacts.contentHash, key.contentHash),
       eq(previewArtifacts.pipelineVersion, key.pipelineVersion),
       eq(previewArtifacts.target, key.target),
