@@ -10,7 +10,7 @@ import { MemberMultiSelect } from "./MemberSelect";
 import { RegionSelect } from "./RegionSelect";
 import { useFocusTrapFor } from "./useFocusTrap";
 import { PROJECT_STATUS_VALUES, projectStatusOf, type ProjectStatusValue } from "../types";
-import { fieldText, isLocalizedLocale, projectStatusTextOf, projectTypeText, useLocale, useT } from "../i18n";
+import { fieldText, isLocalizedLocale, projectStatusTextOf, projectTypeText, useLocale, useMachineText, useT } from "../i18n";
 import { regionNameEn } from "../data/regionPicker";
 import { fetchUsedRegions } from "../projectApi";
 
@@ -88,6 +88,8 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
   const isEdit = mode === "edit";
   const t = useT();
   const locale = useLocale();
+  /** 项目备注机翻预览：只读显示译文，textarea 始终编辑 / 保存中文原文。 */
+  const noteTranslation = useMachineText(initial?.note ?? "");
   /** 冲突摘要行的标点（中文全角 / 英文半角）。 */
   const colon = isLocalizedLocale(locale) ? ": " : "：";
   const semi = isLocalizedLocale(locale) ? "; " : "；";
@@ -368,6 +370,12 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
               maxLength={2000}
               placeholder={t("modal.note.placeholder")}
             />
+            {note === (initial?.note ?? "") && noteTranslation !== null && noteTranslation !== note ? (
+              <p className="mt-1.5 max-h-28 overflow-y-auto whitespace-pre-wrap rounded-md bg-zinc-50 px-2.5 py-1.5 text-xs leading-5 text-zinc-600">
+                <span className="mr-1.5 text-[11px] text-zinc-400">{t("ie.mtPreview")}</span>
+                {noteTranslation}
+              </p>
+            ) : null}
           </label>
 
           {isEdit ? (

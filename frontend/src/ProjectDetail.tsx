@@ -363,6 +363,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   useEffect(() => {
     prefetchLocalizedText([
       project === null ? "" : project.description,
+      project === null ? "" : project.remark,
       ...tasks.map((task) => task.note),
       ...tasks.filter((task) => task.titleEn === "" || locale === "ja" || locale === "ko").map((task) => task.title),
     ]);
