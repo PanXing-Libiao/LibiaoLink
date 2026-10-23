@@ -945,6 +945,9 @@ async function overlayImageReady() {
 async function runB1(normal, preview) {
   await resetBrowserSignals();
   await openTaskDrawer();
+  // 项目进入会触发一次访问上报，其 CSRF 头需要读取前端自身 Cookie；页面稳定后重置监测基线，
+  // 再验证预览交互期间没有恶意 SVG 读取 Cookie 或发起非预期写请求。
+  await resetBrowserSignals();
   const thumb = await thumbnailReady(normal.name);
   assertNoSvgPreviewUrl(preview, "B1 正常 SVG");
   assert(/\/previews\/[a-f0-9]{64}\/2\.0\.0\/image$/.test(new URL(thumb.src).pathname), "B1 缩略图不是 PNG 产物");
