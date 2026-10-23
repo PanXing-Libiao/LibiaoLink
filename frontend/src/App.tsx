@@ -32,7 +32,7 @@ import {
   type Dicts,
 } from "./dicts";
 import { directoryMemberOptions, loadDirectory, type DirectoryUser } from "./directory";
-import { archiveProject, createProject, deleteProject, downloadProjectWorkbook, fetchProject, toUiProject, updateProject } from "./projectApi";
+import { archiveProject, createProject, deleteProject, downloadProjectWorkbook, fetchProject, recordProjectVisit, toUiProject, updateProject } from "./projectApi";
 import { loadMyPreferences, loadMyPreferencesWithLegacyMigration, saveHomeSavedFilters, saveTaskTableHiddenColumns, saveHubDashProject, saveHubDashView, saveHubView, saveWorkspaceOpenProjects, type WorkspaceOpenProjects } from "./preferencesApi";
 import type { SavedFilter } from "./savedFilters";
 import { asHubDashView, type HubDashView } from "./data/dashboardProgress";
@@ -266,6 +266,8 @@ export default function App() {
   }, [state]);
 
   const detailId = route.kind === "project" ? route.id : null;
+  /** 项目访问留痕：每次进入一个项目路由只写一条；同页静默刷新（dataVersion）不重复。 */
+  const visitedProjectId = useRef<string | null>(null);
   useLiveRefresh(["projects"], async () => {
     if (detailId === null) return () => {};
     try {
@@ -279,6 +281,7 @@ export default function App() {
   useEffect(() => {
     if (detailId === null) {
       setDetail(null);
+      visitedProjectId.current = null;
       return;
     }
     let cancelled = false;
@@ -288,6 +291,10 @@ export default function App() {
         const view = await fetchProject(detailId);
         if (!cancelled) {
           setDetail(toUiProject(view));
+          if (visitedProjectId.current !== detailId) {
+            visitedProjectId.current = detailId;
+            void recordProjectVisit(detailId).catch(() => undefined);
+          }
         }
       } catch (error: unknown) {
         if (!cancelled) {

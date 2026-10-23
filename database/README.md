@@ -1,6 +1,7 @@
 # database/ · 数据库基线（g3 · S5）
 
 > CAD（2026-10-22）：新增 `0064_cad_artifacts.sql`，按版本/引擎/编码唯一的持久队列与产物索引，以及窗口授权/租期；几何文件保存到私有对象存储，应用不在启动时改结构。先迁移，再同步 API / worker。见 [ADR-037](../docs/adr/ADR-037-CAD产物持久化与上传预解析.md)。
+> 审计（2026-10-23）：新增 `0066_audit_visit_action.sql`，`audit_logs.action` 增 `visit`（项目访问 / 登录成功），保留 `preview` 并在实际送达预览时恢复写入；动作下拉另行隐藏推进 / 回退，不改历史值。
 
 PostgreSQL 基线的唯一来源：只追加的迁移脚本、最小权限角色、带 advisory lock 与漂移校验的迁移器。
 对应《技术设计v0.2-架构与数据模型.md》§2.3（DDL 草案）与 `CONTRIBUTING.md` §14（生成物与不可变历史）；
@@ -71,6 +72,7 @@ PostgreSQL 基线的唯一来源：只追加的迁移脚本、最小权限角色
 | `migrations/0062_todos.sql` | 自定义待办（M5-06-3 · A14 · 2026-10-20 · lan，**高风险 DDL 请 wmj 复核**）：新建 `todos`（标题 / 内容 / 关联项目或任务 / 首次提醒时刻 / `repeat_rule` = none / daily / weekly / monthly / `repeat_until` / `reminder_user_ids` / 状态 / 完成时刻 / 版本）；项目 / 任务删除时关联置空；重复截止日不早于首次提醒业务日；`done` 与 `completed_at` 成对；待办归属人级联删除，提醒对象数组元素由读面过滤已删用户。只追加、无存量回填；回滚语句入头注。 |
 | `migrations/0063_wecom_dm_messages_enabled.sql` | 企微单聊消息开关（2026-10-20）：`wecom_aibot_dm_activations` 增 `messages_enabled boolean not null default true`，绑定 / 换绑默认开启；关闭后停止外发并转站内信留档；站内信写库成功即按 outbox done 收口。只追加、存量绑定行由默认值回填为开启；回滚语句入头注。 |
 | `migrations/0065_notification_inbox_delete.sql` | 站内信删除（2026-10-23）：`notifications` 增 `deleted_at timestamptz`（可空）= 用户从本人收件箱删除时刻；读面 / 未读计数 / 合并目标 / 稍后提醒扫描 / 标记与删除写口过滤 `deleted_at is null`。只软删隐藏，不物理删行，C5-03 全量留档、合并子行与 `notify_delivery_messages` 保留；每日投递上限历史计数不变。只追加、无存量回填；回滚语句入头注。 |
+| `migrations/0066_audit_visit_action.sql` | 审计动作访问（2026-10-23）：`ck_audit_logs_action` 由十一值扩为十二值，新增 `visit`（紧随 `archive`，再保留 `preview` / `download` / `deny`）；项目详情进入与登录成功记 `visit`，预览实际送达恢复写 `preview`。只追加、无存量回填；回滚语句入头注。 |
 | `seeds/README.md` | 种子数据规格（M0-03 · Push 73）：可重跑、幂等、与迁移分离 |
 | `seeds/roles.mjs` / `seeds/index.mjs` | 种子 #6a：一期六个内置角色（h1 · Push 74）；index 为按序注册表，新种子追加到末尾 |
 | `seeds/blueprint.mjs` | 种子 #7：default 蓝图模板（9 阶段 19 节点 + 版本 1，h3 · Push 83）；节点清单待业务补全，库内已修订时不覆盖 |

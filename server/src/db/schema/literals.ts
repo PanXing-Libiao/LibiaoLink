@@ -55,10 +55,10 @@ export const DATA_SCOPE_KEYS = [
 ] as const;
 
 /**
- * 审计动作（audit_logs.action，h7 · C7 + M4-05）：新增 / 修改 / 删除 / 进度 / 完成 / 推进 / 回退 / 预览查看 / 离线下载 / 越权拒绝。
- * 预览查看自 Push 283 起不再产生新行（操作日志不记录预览动作），值保留供历史行回读 / 筛选。
+ * 审计动作（audit_logs.action，h7 · C7 + M4-05）：新增 / 修改 / 删除 / 进度 / 完成 / 推进 / 回退 / 归档 / 访问 / 预览查看 / 离线下载 / 越权拒绝。
+ * 2026-10-23：项目访问与登录成功记 visit；实际送达的就绪预览恢复写 preview。
  * 与 shared/src/modules/audits.ts 的 AUDIT_ACTIONS 同序同值 —— 一致性由 test/schema-literals-parity.test.ts 守护
- * （check:db-schema 只比 CHECK 约束名、不比取值）；preview（D2-07）与 download（Push 160 定案 · A4-10）随 M4-05 一次补齐；archive（M7-04 · ADR-027 归档）随 0036 补齐。
+ * （check:db-schema 只比 CHECK 约束名、不比取值）；preview（D2-07）与 download（Push 160 定案 · A4-10）随 M4-05 一次补齐；archive（M7-04 · ADR-027 归档）随 0036 补齐；visit 随 0066 补齐。
  */
 export const AUDIT_ACTION_KEYS = [
   "create",
@@ -69,6 +69,7 @@ export const AUDIT_ACTION_KEYS = [
   "advance",
   "rollback",
   "archive",
+  "visit",
   "preview",
   "download",
   "deny",

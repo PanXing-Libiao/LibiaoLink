@@ -8,12 +8,13 @@ import type { FileRepository, FileRow, FileVersionRow } from "../src/modules/fil
 import { PreviewReadService } from "../src/modules/file/preview-read.service.js";
 import type { PreviewArtifactKey, PreviewArtifactRow, PreviewRepository } from "../src/modules/file/preview.repository.js";
 import type { UserService } from "../src/modules/identity/index.js";
+import type { AuditService } from "../src/modules/admin/index.js";
 import type { PermissionService } from "../src/modules/permission/index.js";
 import { contentDisposition, type DownloadUrlInput, type ObjectStorage, type SignedUrl } from "../src/storage/index.js";
 
 /**
  * M4-05 读 API 门禁（不连库、不连对象存储）：`GET /files/{id}/preview` 的通道语义。
- * ① 图片直签（S6-前置 · D6）—— 原对象短时签名（TTL 与内联语义）+ **不写审计**（Push 283 起操作日志不记录预览动作）；
+ * ① 图片直签（S6-前置 · D6）—— 原对象短时签名（TTL 与内联语义）+ 写一条 preview 审计（2026-10-23 恢复）；
  *    不查 / 不落产物行、不投任务；存量产物行（ready / not_ready / failed）一律不参与；指定历史版本签该版本原对象；
  * ② 终态降级 —— 判不出通道 / 无版本两类（不落表不投递）；
  * ③ 404 —— 文件不存在 / 项目不可见 / 版本不属于该文件（同形，防 IDOR）。
@@ -249,6 +250,7 @@ function makeService(env: Partial<Env> = {}): Harness {
     storage as unknown as ObjectStorage,
     permission as unknown as PermissionService,
     users as unknown as UserService,
+    audit as unknown as AuditService,
     config,
   );
   return { service, repo, previews, storage, permission, users, audit, database };
@@ -284,6 +286,26 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
       expect(h.database.transactions).toBe(0);
     },
   );
+
+  it("启用 CAD 运行环境时 STEP ready 签独立查看器并写 preview 审计", async () => {
+    const h = makeService({ CAD_ENGINE_URL: "http://127.0.0.1:9910" });
+    h.repo.file = makeFileRow({ name: "模型.step" });
+    h.repo.versions.set(VERSION, makeVersionRow({ mime: null, objectKey: sourceKeyOf("step") }));
+
+    const result = await h.service.getPreview(FILE, null, ACTOR);
+
+    expect(result).toMatchObject({ status: "ready", viewer: { kind: "cad", versionId: VERSION } });
+    expect(h.audit.entries).toHaveLength(1);
+    expect(h.audit.entries[0]).toMatchObject({
+      actorId: ACTOR,
+      action: "preview",
+      objectType: "file",
+      objectId: FILE,
+      projectId: PROJECT,
+      summary: "预览文件：模型.step（版本 v1 · CAD 查看器）",
+      metadata: { versionId: VERSION, viewerKind: "cad" },
+    });
+  });
 
   it.each(["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"])(
     "CAD 不因误报的 Office/PDF MIME（%s）进入查看器",
@@ -333,7 +355,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     expect(h.previews.queries).toHaveLength(0);
   });
 
-  it("图片直签（缺省当前版本 · S6-前置 D6）：原对象短时签名 + 不写审计 + 产物字段全空", async () => {
+  it("图片直签（缺省当前版本 · S6-前置 D6）：原对象短时签名 + preview 审计 + 产物字段全空", async () => {
     const h = makeService();
 
     const result = await h.service.getPreview(FILE, null, ACTOR);
@@ -358,7 +380,17 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
         responseContentDisposition: contentDisposition("机械设计图纸.png", "inline"),
       },
     ]);
-    expect(h.audit.entries).toHaveLength(0);
+    expect(h.audit.entries).toEqual([
+      {
+        actorId: ACTOR,
+        action: "preview",
+        objectType: "file",
+        objectId: FILE,
+        projectId: PROJECT,
+        summary: "预览文件：机械设计图纸.png（版本 v1 · 图片直签）",
+        metadata: { versionId: VERSION, target: "image", direct: true },
+      },
+    ]);
     // 不查产物（findByKey 0 次）/ 不登记 / 不投递 / 不开事务（S6-前置 起无 not_ready 轮询路径）。
     expect(h.previews.queries).toHaveLength(0);
     expect(h.previews.ensured).toHaveLength(0);
@@ -387,7 +419,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     ]);
   });
 
-  it("图片直签指定历史版本（A4-06）：签该版本原对象，不写审计", async () => {
+  it("图片直签指定历史版本（A4-06）：签该版本原对象，审计记该版本", async () => {
     const h = makeService();
     h.repo.versions.set(
       HISTORY,
@@ -412,7 +444,17 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
         responseContentDisposition: contentDisposition("机械设计图纸.png", "inline"),
       },
     ]);
-    expect(h.audit.entries).toHaveLength(0);
+    expect(h.audit.entries).toEqual([
+      {
+        actorId: ACTOR,
+        action: "preview",
+        objectType: "file",
+        objectId: FILE,
+        projectId: PROJECT,
+        summary: "预览文件：机械设计图纸.png（版本 v2 · 图片直签）",
+        metadata: { versionId: HISTORY, target: "image", direct: true },
+      },
+    ]);
     expect(h.previews.queries).toHaveLength(0);
   });
 
@@ -536,6 +578,17 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
         expiresInSeconds: 300,
         responseContentType: "image/png",
         responseContentDisposition: contentDisposition("preview.png", "inline"),
+      },
+    ]);
+    expect(h.audit.entries).toEqual([
+      {
+        actorId: ACTOR,
+        action: "preview",
+        objectType: "file",
+        objectId: FILE,
+        projectId: PROJECT,
+        summary: "预览文件：矢量图.svg（版本 v1 · 通道 image）",
+        metadata: { versionId: VERSION, target: "image", pipelineVersion: "2.0.0" },
       },
     ]);
   });
@@ -667,7 +720,7 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
     expect(h.storage.signed).toHaveLength(0);
   });
 
-  it("PDF 并入查看器通道（2026-10-08 业务口径「统一用onlyoffice」）：ready + viewer（documentType / fileType = pdf）、不查产物 / 不投递", async () => {
+  it("PDF 并入查看器通道（2026-10-08 业务口径「统一用onlyoffice」）：ready + viewer（documentType / fileType = pdf）、不查产物 / 不投递 / 写 preview 审计", async () => {
     const h = makeService();
     // 默认 fixture 为 png（产物通道用例）；这里显式改回 PDF，锁定「PDF 不再走源直通产物」的新口径。
     h.repo.file = makeFileRow({ name: "机械设计图纸.pdf" });
@@ -685,10 +738,20 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
     expect(h.previews.ensured).toHaveLength(0);
     expect(h.database.outbox).toHaveLength(0);
     expect(h.storage.signed).toHaveLength(0);
-    expect(h.audit.entries).toHaveLength(0);
+    expect(h.audit.entries).toEqual([
+      {
+        actorId: ACTOR,
+        action: "preview",
+        objectType: "file",
+        objectId: FILE,
+        projectId: PROJECT,
+        summary: "预览文件：机械设计图纸.pdf（版本 v1 · ONLYOFFICE 查看器）",
+        metadata: { versionId: VERSION, viewerKind: "onlyoffice", documentType: "pdf" },
+      },
+    ]);
   });
 
-  it("Office（docx）→ ready + viewer 非空：不查产物 / 不投递 / 不签名 / 不写审计（Push 283 起操作日志不记录预览动作）", async () => {
+  it("Office（docx）→ ready + viewer 非空：不查产物 / 不投递 / 不签名 / 写 preview 审计", async () => {
     const h = makeService();
     h.repo.file = makeFileRow({ name: "方案.docx" });
     h.repo.versions.set(
@@ -727,7 +790,17 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
     expect(h.previews.ensured).toHaveLength(0);
     expect(h.database.outbox).toHaveLength(0);
     expect(h.storage.signed).toHaveLength(0);
-    expect(h.audit.entries).toHaveLength(0);
+    expect(h.audit.entries).toEqual([
+      {
+        actorId: ACTOR,
+        action: "preview",
+        objectType: "file",
+        objectId: FILE,
+        projectId: PROJECT,
+        summary: "预览文件：方案.docx（版本 v1 · ONLYOFFICE 查看器）",
+        metadata: { versionId: VERSION, viewerKind: "onlyoffice", documentType: "word" },
+      },
+    ]);
   });
 
   it("viewer token：HS256 逐字签发（permissions 嵌 document · Push 258 错层修正）+ iat/exp（TTL = ONLYOFFICE_JWT_TTL_SECONDS），document.url 不含存储凭证", async () => {

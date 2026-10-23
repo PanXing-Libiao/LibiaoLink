@@ -11,7 +11,7 @@
  *   证据 C（200MB 级 · PoC-1 续传演示）：分片并发直传 → 中断（只传部分）→ 会话状态报缺 → 只补缺片 → complete
  *           （哈希一致 + 回读逐字节一致）→ 秒传命中；转换侧 = 超 `PREVIEW_CONVERT_MAX_SOURCE_MB` 的**确定性降级**
  *           （failed + outbox dead + download-url 可用），**不占成功率分母**。
- *   证据 D（读面并发）：/preview + /download-url 混合并发读 → 时延分位与审计口径（Push 283 起预览不计审计、download 一条一次）。
+ *   证据 D（读面并发）：/preview + /download-url 混合并发读 → 时延分位与审计口径（2026-10-23 起预览 / download 均一条一次）。
  *   证据 E（长跑与内存曲线）：循环小样本 + 周期采样 api / worker（宿主进程 RSS）与转换器容器（docker stats）；
  *           断言无重启 / 无 OOM、峰值不越限额、尾段无泄漏趋势。
  *   证据 F（对账与零残留）：preview_artifacts 行数 = 唯一三元组数；outbox 无 stuck；清理后项目 / 对象 / 会话零残留。
@@ -1082,9 +1082,9 @@ try {
   check("D1", "读面并发 200（100 /preview + 100 /download-url）：全 200 且 p95 ≤ 1000 ms", "200/200 + p95 ≤ 1000 ms",
     short({ ok: evidence.read.ok + "/200", previewP50: evidence.read.preview.p50, previewP95: evidence.read.preview.p95, downloadP50: evidence.read.download.p50, downloadP95: evidence.read.download.p95 }, 300),
     evidence.read.ok === 200 && (evidence.read.preview.p95 ?? 9999) <= 1000 && (evidence.read.download.p95 ?? 9999) <= 1000);
-  check("D2", "审计口径（C7）：200 次读 → preview 0 条（Push 283 起不记录预览动作）+ download 100 条（一条一次）", "preview Δ=0 + download Δ=100",
+  check("D2", "审计口径（C7）：200 次读 → preview 100 条 + download 100 条（各一条一次）", "preview Δ=100 + download Δ=100",
     short({ previewDelta: evidence.read.previewAuditDelta, downloadDelta: evidence.read.downloadAuditDelta }, 200),
-    evidence.read.previewAuditDelta === 0 && evidence.read.downloadAuditDelta === 100);
+    evidence.read.previewAuditDelta === 100 && evidence.read.downloadAuditDelta === 100);
   // ---------- 证据 E：长跑 + 内存曲线 ----------
   if (args.skipLongRun !== true && LONG_RUN_MIN > 0) {
     const longRunSamples = [];
@@ -1269,7 +1269,7 @@ lines.push(...report);
 lines.push("");
 lines.push("## 汇总");
 lines.push("");
-lines.push(failures === 0 ? "- ✅ 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：配置与限额登记 / 串行基线 / 并发背压（inflight / queued 采样）/ 三元组幂等 / 沙箱边界 503 / 200MB 续传与秒传与降级与读回一致 / 读面并发与审计不放大 / 长跑内存曲线 / 对账与零残留。" : "- ❌ 有 " + failures + " 项失败，见上方 FAIL 行。");
+lines.push(failures === 0 ? "- ✅ 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：配置与限额登记 / 串行基线 / 并发背压（inflight / queued 采样）/ 三元组幂等 / 沙箱边界 503 / 200MB 续传与秒传与降级与读回一致 / 读面并发与审计一条一次 / 长跑内存曲线 / 对账与零残留。" : "- ❌ 有 " + failures + " 项失败，见上方 FAIL 行。");
 lines.push("");
 lines.push("## 关键读数");
 lines.push("");

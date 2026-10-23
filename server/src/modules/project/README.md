@@ -9,7 +9,7 @@
 
 ## 已实现（h2 第一批）
 
-- 路由（契约 `shared/src/modules/projects.ts`，OpenAPI tags=projects）：全部挂 `SessionGuard + CsrfGuard`（读要登录、写要 `X-CSRF-Token`）。注册顺序上 `GET /facets` 在 `GET /:id` 之前（否则被 `:id` 吃掉）；`id` 走 `UuidSchema` 校验（非法 400 VALIDATION_FAILED）。
+- 路由（契约 `shared/src/modules/projects.ts`，OpenAPI tags=projects）：全部挂 `SessionGuard + CsrfGuard`（读要登录、写要 `X-CSRF-Token`）。注册顺序上 `GET /facets` 在 `GET /:id` 之前（否则被 `:id` 吃掉）；`id` 走 `UuidSchema` 校验（非法 400 VALIDATION_FAILED）。`POST /api/v1/projects/{id}/visit` 记录项目详情访问（`action=visit` / `entry=page`；不存在 / 不可见 404 不写）。
 - M2-01 项目 CRUD：
   - 创建 `POST /api/v1/projects` → 201；`seq_no` 由服务端在事务内分配“当前最小可用正整数”（请求不接受 `seqNo`；彻底删除后的空号由下一次创建复用，并发创建用事务级 advisory lock 串行化）；`code` 唯一由约束兜底，23505 + `projects_code_key` → 409 `PROJECT_CODE_EXISTS`；缺省 `stageKey = presale`。
   - 更新 `PATCH /api/v1/projects/{id}`：乐观锁（正文回传 `version`，命中则 `version + 1` 并刷新 `updated_at`）；不匹配 409 `VERSION_CONFLICT`；期间被删 → 404。
@@ -22,7 +22,7 @@
 - 排序（A9 · **Push 175 缺省修订**）：白名单 `updatedAt` / `createdAt` / `seqNo`，方向 `asc|desc`；**缺省 `createdAt:desc`（最近创建的在前；原 `updatedAt:desc` 作废）** —— 前端 TIME = 「维度 × 方向」（创建时间 / 更新时间 × 降序 / 升序）；仓储补 `asc(seq_no)` 稳定 tie-breaker，分页不跳行。
 - 可见性（A5）：普通列表 / 详情 / facets 统一 `deleted_at is null`，项目回收站显式 `filter[recycled]=true`；`code` / `seq_no` 在回收站期间仍唯一且占用，彻底删除后释放（`seq_no` 由下一次创建取最小空号）。索引见 `0056_project_recycle_bin.sql`（回收站 updated_at）与 `0057_project_recycle_retention.sql`（deleted_at 到期扫描）。
 - 触点：`ProjectRepository.touch(id, at)` 为 ADR-022「项目 updated_at 触发集」的单点入口（阶段推进 / 任务变更等聚合视图变更调用；文件 / 日报 / 系统调度不调用）；本批 CRUD 自身由 `updateWithVersion` 一并刷新。
-- 单测：`test/project-crud.test.ts` —— 筛选解析（多值 / 非法枚举 400 / 上海时区日界 / 区间反向 400）、排序白名单、行 → 契约视图映射、创建缺省阶段与撞号 409、乐观锁冲突、归档写保护、软删可见性与操作人透传、唯一约束违例解包、彻底删除后 seq_no 空号复用、30 天到期清理边界与系统审计（32 例，不连库）；真 PG 回放见 `scripts/project-recycle-retention-replay.mjs`（编号复用 / 并发唯一 / 满 30 天自动清理 / 未满保留，7 项断言）。
+- 单测：`test/project-crud.test.ts` —— 筛选解析（多值 / 非法枚举 400 / 上海时区日界 / 区间反向 400）、排序白名单、行 → 契约视图映射、创建缺省阶段与撞号 409、乐观锁冲突、归档写保护、软删可见性与操作人透传、唯一约束违例解包、彻底删除后 seq_no 空号复用、30 天到期清理边界与系统审计、访问留痕 / 不存在 404 不写（34 例，不连库）；真 PG 回放见 `scripts/project-recycle-retention-replay.mjs`（编号复用 / 并发唯一 / 满 30 天自动清理 / 未满保留，7 项断言）。
 
 ## 已实现（h2 第二批 · M2-05 名册 + 分类字段口径）
 
