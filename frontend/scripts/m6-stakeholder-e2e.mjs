@@ -369,8 +369,9 @@ check("④c 表格行同步：职务新值 + 微信占位「—」+ 干系人角
 await clickSelector("[data-stakeholder-row=" + Q + bing.id + Q + "] [data-stakeholder-delete-slot] button");
 const stripShown = await waitFor("document.querySelector(" + j("[data-delete-confirm-strip]") + ") !== null", 5000);
 await sleep(400);
+const stripPos = await ev("(function(){var el=document.querySelector(" + j("[data-delete-confirm-strip]") + ");if(el===null){return null;}var r=el.getBoundingClientRect();return {top:Math.round(r.top),cls:String(el.className)};})()");
 const stillThere = await ev("document.querySelector(" + j("[data-stakeholder-row=" + Q + bing.id + Q + "]") + ") !== null");
-check("⑤a 第一下删除 = 只出底部确认条、不真删", stripShown === true && stillThere === true, JSON.stringify({ strip: stripShown, row: stillThere }));
+check("⑤a 第一下删除 = 只出顶部同款确认 Toast、不真删", stripShown === true && stripPos !== null && stripPos.top <= 48 && String(stripPos.cls).indexOf("ll-toast-top") >= 0 && stillThere === true, JSON.stringify({ strip: stripShown, pos: stripPos, row: stillThere }));
 await clickSelector("[data-delete-confirm]");
 const rowGone = await waitFor("document.querySelector(" + j("[data-stakeholder-row=" + Q + bing.id + Q + "]") + ") === null", 12000);
 const goneRead = await api("/api/v1/stakeholders/" + bing.id);

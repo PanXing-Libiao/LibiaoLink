@@ -6,7 +6,7 @@ import { DateRangePicker } from "./DateRangePicker";
 import { MultiOptionList, MultiSelectMenu, type SelectOption } from "./SelectMenu";
 import { SearchSelect, type SearchSelectItem } from "./MemberSelect";
 import { ImageZoomViewer } from "./ImageZoomViewer";
-import { Toast, type ToastKind } from "./Toast";
+import { Toast, ToastConfirm, type ToastKind } from "./Toast";
 import { InlineCell, InlineMemberCell, InlineMultiOptionCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode, TextareaHTMLAttributes } from "react";
 import { ISSUE_STATES, type DailyReport, type Issue, type IssueState, type ReportPhoto } from "../data/reports";
@@ -1017,7 +1017,7 @@ export function PhotoStrip({ items, onRemove, onRename, strip, size = "sm", conf
     onPreviewOpenChange?.(next !== null);
   };
   /** 移除图片二次确认（Push 224 续 · 业务口径「移除图片要加二次确认」，只开在抽屉口径）：
-   *  第一下「×」只出底部确认条（与行删除二次提示同款固定底栏），第二下「移除」才真摘。
+   *  第一下「×」只出顶部确认 Toast（与行删除二次提示同款），第二下「移除」才真摘。
    *  确认条 portal 到 body —— 抽屉壳 .drawer-panel 的入场动画会当 containing block，留在组件里会偏移。 */
   const [pendingRemove, setPendingRemove] = useState<{ at: number; name: string } | null>(null);
   /** 键盘焦点陷阱（Push 264 追订）：移除图片确认条开着时焦点进条内、Tab 在条内循环、关闭还原到缩略图删除按钮。 */
@@ -1091,34 +1091,18 @@ export function PhotoStrip({ items, onRemove, onRename, strip, size = "sm", conf
         />
       ))}
       {preview === null ? null : <PhotoPreview url={preview.url} name={preview.name} onClose={() => { setPreviewOpen(null); }} zClass={previewZClass} />}
-      {pendingRemove === null ? null : createPortal(
-        <div className="pointer-events-none fixed bottom-6 left-1/2 z-[70] flex -translate-x-1/2 flex-col items-center gap-2">
-          <div
-            ref={removeConfirmTrapRef}
-            role="dialog"
-            aria-label={t("rp.removeConfirmAria")}
-            data-remove-attachment-confirm-strip=""
-            className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
-          >
-            <span>{t("photo.removeConfirm", { name: pendingRemove.name })}</span>
-            <button
-              type="button"
-              onClick={() => { setPendingRemove(null); }}
-              className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
-            >
-              {t("common.cancel")}
-            </button>
-            <button
-              type="button"
-              data-remove-attachment-confirm=""
-              onClick={confirmPendingRemove}
-              className="rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
-            >
-              {t("photo.remove")}
-            </button>
-          </div>
-        </div>,
-        document.body,
+      {pendingRemove === null ? null : (
+        <ToastConfirm
+          text={t("photo.removeConfirm", { name: pendingRemove.name })}
+          ariaLabel={t("rp.removeConfirmAria")}
+          cancelLabel={t("common.cancel")}
+          confirmLabel={t("photo.remove")}
+          onCancel={() => { setPendingRemove(null); }}
+          onConfirm={confirmPendingRemove}
+          containerRef={removeConfirmTrapRef}
+          anchor={{ name: "data-remove-attachment-confirm-strip", value: "" }}
+          confirmAnchor={{ name: "data-remove-attachment-confirm", value: "" }}
+        />
       )}
     </div>
   );
@@ -3090,7 +3074,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
   const notify = (kind: ToastKind, text: string) => {
     setNotice({ kind, text });
   };
-  /** 删除二次确认（Push 218 业务口径「删除要二次提示」）：行尾红胶囊的第一下只把待删项挂到底部确认条
+  /** 删除二次确认（Push 218 业务口径「删除要二次提示」）：行尾红胶囊的第一下只把待删项挂到顶部确认 Toast
    *  （与首页「删除项目」/ 模板面板同款非阻断浮条），第二下「删除」才真删 —— 成对删除的连带范围写进文案。 */
   const [pendingDelete, setPendingDelete] = useState<{ kind: "report"; report: DailyReport } | { kind: "issue"; issue: Issue } | null>(null);
   /** 键盘焦点陷阱（Push 264 追订）：删除确认条开着时焦点进条内、Tab 在条内循环、关闭还原到行尾删除按钮。 */
@@ -3286,7 +3270,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
     setPendingDelete({ kind: "issue", issue });
   };
 
-  /** 底部确认条的第二下：先收浮条、再按待删项派发真删（成对删除都在上面两个 delete*Unit 里落库）。 */
+  /** 顶部确认 Toast 的第二下：先收浮条、再按待删项派发真删（成对删除都在上面两个 delete*Unit 里落库）。 */
   const confirmPendingDelete = () => {
     const pending = pendingDelete;
     if (pending === null) {
@@ -3617,43 +3601,24 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
         />
       )}
 
-      {/* 删除二次确认条（Push 218 业务口径「删除要二次提示」）：与首页「删除项目」/ 模板面板同款固定底栏 ——
+      {/* 删除二次确认（Push 218 业务口径「删除要二次提示」）：与首页「删除项目」/ 模板面板同款顶部常驻 Toast ——
           非阻断（第一下只是开口，不锁页面），第二下「删除」才真删；文案把成对删除的连带范围写清。 */}
       {pendingDelete === null ? null : (
-        <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
-          <div
-            ref={deleteConfirmTrapRef}
-            role="dialog"
-            aria-label={pendingDelete.kind === "report" ? t("report.delete.ariaReport") : t("report.delete.ariaIssue")}
-            data-delete-confirm-strip=""
-            className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
-          >
-            <span>
-              {pendingDelete.kind === "report"
-                ? t("report.delete.report", { date: isoDateText(locale, pendingDelete.report.date) })
-                : pendingDelete.issue.reportId === ""
-                  ? t("report.delete.issueAlone", { date: isoDateText(locale, pendingDelete.issue.raisedAt) })
-                  : t("report.delete.issueWithReport", { date: isoDateText(locale, pendingDelete.issue.raisedAt) })}
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                setPendingDelete(null);
-              }}
-              className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
-            >
-              {t("common.cancel")}
-            </button>
-            <button
-              type="button"
-              data-delete-confirm=""
-              onClick={confirmPendingDelete}
-              className="rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
-            >
-              {t("common.delete")}
-            </button>
-          </div>
-        </div>
+        <ToastConfirm
+          text={pendingDelete.kind === "report"
+            ? t("report.delete.report", { date: isoDateText(locale, pendingDelete.report.date) })
+            : pendingDelete.issue.reportId === ""
+              ? t("report.delete.issueAlone", { date: isoDateText(locale, pendingDelete.issue.raisedAt) })
+              : t("report.delete.issueWithReport", { date: isoDateText(locale, pendingDelete.issue.raisedAt) })}
+          ariaLabel={pendingDelete.kind === "report" ? t("report.delete.ariaReport") : t("report.delete.ariaIssue")}
+          cancelLabel={t("common.cancel")}
+          confirmLabel={t("common.delete")}
+          onCancel={() => { setPendingDelete(null); }}
+          onConfirm={confirmPendingDelete}
+          containerRef={deleteConfirmTrapRef}
+          anchor={{ name: "data-delete-confirm-strip", value: "" }}
+          confirmAnchor={{ name: "data-delete-confirm", value: "" }}
+        />
       )}
     </div>
   );

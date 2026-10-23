@@ -15,7 +15,7 @@ import { FilePreviewOverlay } from "./components/FilePreviewOverlay";
 import { ImportProjectPanel } from "./components/ImportProjectPanel";
 import { ProjectModal, type ProjectDraft } from "./components/ProjectModal";
 import { SearchInput } from "./components/SearchInput";
-import { Toast } from "./components/Toast";
+import { Toast, ToastConfirm } from "./components/Toast";
 import { useFocusTrap } from "./components/useFocusTrap";
 import { dictLabel, typeAccent, type Dicts } from "./dicts";
 import { directoryMemberOptions, directoryName, type DirectoryUser } from "./directory";
@@ -129,7 +129,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   // 常用筛选（Push 138；Push 169 起按账号存服务端）：组合由父层持有（同账号换设备可见），点一下套用到当前筛选
   // 「哪组正在生效」由条件比较派生，不另存状态；保存 / 删除失败的提示条见 savedFilterError
   const [savedFilterError, setSavedFilterError] = useState<string | null>(null);
-  // 待确认删除的常用筛选（Push 264 追订）：第一下只开底部确认条（与删除项目 / 模板同款非阻断），第二下才真删
+  // 待确认删除的常用筛选（Push 264 追订）：第一下只开顶部确认 Toast（与删除项目 / 模板同款非阻断），第二下才真删
   const [pendingDeleteFilter, setPendingDeleteFilter] = useState<SavedFilter | null>(null);
   /** 键盘焦点陷阱（Push 264 追订）：删除确认条开着时焦点进条内、Tab 在条内循环、关闭还原到胶囊行的删除按钮。 */
   const deleteFilterConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDeleteFilter !== null);
@@ -411,11 +411,11 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   const deleteSavedFilter = (id: string) => {
     void persistSavedFilters(savedFilters.filter((item) => item.id !== id));
   };
-  /** 常用筛选删除第一下：只挂起（不落库），等底部确认条的第二下（业务口径 2026-10-10「删除常用筛选无二次确认」）。 */
+  /** 常用筛选删除第一下：只挂起（不落库），等顶部确认 Toast 的第二下（业务口径 2026-10-10「删除常用筛选无二次确认」）。 */
   const requestDeleteSavedFilter = (filter: SavedFilter) => {
     setPendingDeleteFilter(filter);
   };
-  /** 底部确认条的第二下：真删（整体替换 PATCH —— 失败仍走 savedFilterError 提示条，不静默吞）。 */
+  /** 顶部确认 Toast 的第二下：真删（整体替换 PATCH —— 失败仍走 savedFilterError 提示条，不静默吞）。 */
   const confirmDeleteSavedFilter = () => {
     const filter = pendingDeleteFilter;
     if (filter === null) {
@@ -853,39 +853,22 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
         />
       )}
 
-      {/* 常用筛选删除的第二下确认条（Push 264 追订 · 业务口径「删除常用筛选无二次确认」）：与「删除项目 / 模板」同款
-          非阻断固定底栏 —— 第一下只开口，第二下「删除」才落库。 */}
+      {/* 常用筛选删除的第二下确认（Push 264 追订 · 业务口径「删除常用筛选无二次确认」）：与「删除项目 / 模板」同款
+          顶部常驻 Toast —— 第一下只开口，第二下「删除」才落库。 */}
       {pendingDeleteFilter === null ? null : (
-        <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
-          <div
-            ref={deleteFilterConfirmTrapRef}
-            role="dialog"
-            aria-label={t("home.deleteFilter.aria")}
-            data-saved-filter-delete-confirm=""
-            className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
-          >
-            <span>
-              {t("home.deleteFilter.pre")}<span className="font-semibold">{pendingDeleteFilter.name}</span>{t("home.deleteFilter.post")}
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                setPendingDeleteFilter(null);
-              }}
-              className="shrink-0 whitespace-nowrap rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
-            >
-              {t("home.cancel")}
-            </button>
-            <button
-              type="button"
-              data-saved-filter-delete=""
-              onClick={confirmDeleteSavedFilter}
-              className="shrink-0 whitespace-nowrap rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
-            >
-              {t("home.delete")}
-            </button>
-          </div>
-        </div>
+        <ToastConfirm
+          text={<>
+            {t("home.deleteFilter.pre")}<span className="font-semibold">{pendingDeleteFilter.name}</span>{t("home.deleteFilter.post")}
+          </>}
+          ariaLabel={t("home.deleteFilter.aria")}
+          cancelLabel={t("home.cancel")}
+          confirmLabel={t("home.delete")}
+          onCancel={() => { setPendingDeleteFilter(null); }}
+          onConfirm={confirmDeleteSavedFilter}
+          containerRef={deleteFilterConfirmTrapRef}
+          anchor={{ name: "data-saved-filter-delete-confirm", value: "" }}
+          confirmAnchor={{ name: "data-saved-filter-delete", value: "" }}
+        />
       )}
     </div>
   );
