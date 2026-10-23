@@ -53,7 +53,7 @@ type CategoryFilterSidebarProps = {
   onToggleStatus: (status: string) => void;
   onDateRangeChange: (range: DateRange | null) => void;
   onApplySavedFilter: (filter: SavedFilter) => void;
-  /** 删除入口只「开口」：整组交给父层出底部确认条，第二下才真删（Push 264 追订 · 业务口径「删除常用筛选无二次确认」）。 */
+  /** 删除入口只「开口」：整组交给父层出顶部确认 Toast，第二下才真删（Push 264 追订 · 业务口径「删除常用筛选无二次确认」）。 */
   onRequestDeleteSavedFilter: (filter: SavedFilter) => void;
   onSaveSavedFilter: (input: { id: string | null; name: string; criteria: FilterCriteria }) => void;
   onReset: () => void;

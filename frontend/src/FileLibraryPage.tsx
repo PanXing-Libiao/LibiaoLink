@@ -8,7 +8,7 @@ import { FileTypeIcon } from "./components/FileTypeIcon";
 import { Loader } from "./components/Loader";
 import { SearchInput } from "./components/SearchInput";
 import { SearchSelect } from "./components/SearchSelect";
-import { Toast } from "./components/Toast";
+import { Toast, ToastConfirm } from "./components/Toast";
 import { regionNameEn } from "./data/regionPicker";
 import { dictLabel, typeAccent, type Dicts } from "./dicts";
 import type { DirectoryUser } from "./directory";
@@ -337,7 +337,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
     if (tab === query.tab) {
       return;
     }
-    // 换栏保留项目 / 关键字 / 上传人，状态清掉（只在系统现有文件栏有语义）；两处彻底删除确认条一并收起。
+    // 换栏保留项目 / 关键字 / 上传人，状态清掉（只在系统现有文件栏有语义）；两处彻底删除确认一并收起。
     setPurgeConfirmId(null);
     setProjectPurgeConfirmId(null);
     onChangeQuery({ ...query, tab, statuses: [], page: 1 });
@@ -470,7 +470,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
     }
   };
 
-  /** 彻底删除第一下：只挂确认条，不直接调用接口。 */
+  /** 彻底删除第一下：只挂顶部确认 Toast，不直接调用接口。 */
   const requestPurgeProject = (project: ApiProject): void => {
     if (actionBusy !== null) {
       return;
@@ -943,40 +943,21 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
         </div>
       </main>
       {projectPurgeTarget === null ? null : (
-        <div className="pointer-events-none fixed bottom-6 left-1/2 z-[70] flex w-full max-w-3xl -translate-x-1/2 justify-center px-4">
-          <div
-            role="alertdialog"
-            aria-label={t("lib.projectPurge.aria")}
-            data-project-purge-dialog={projectPurgeTarget.id}
-            className="pointer-events-auto flex flex-wrap items-center justify-center gap-3 rounded-xl border border-rose-200 bg-white px-4 py-2.5 text-sm text-zinc-700 shadow-lg"
-          >
-            <span>
-              {t("lib.projectPurge.lead")}
-              {t("lib.projectPurge.tail", { code: projectPurgeTarget.code, name: projectPurgeTarget.name })}
-            </span>
-            <button
-              type="button"
-              data-project-purge-cancel={projectPurgeTarget.id}
-              onClick={() => {
-                setProjectPurgeConfirmId(null);
-              }}
-              className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
-            >
-              {t("common.cancel")}
-            </button>
-            <button
-              type="button"
-              data-project-purge-confirm={projectPurgeTarget.id}
-              disabled={actionBusy !== null}
-              onClick={() => {
-                void confirmPurgeRecycledProject();
-              }}
-              className="rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {actionBusy === projectPurgeTarget.id ? t("lib.projectPurge.busy") : t("lib.projectPurge.confirm")}
-            </button>
-          </div>
-        </div>
+        <ToastConfirm
+          text={<>
+            {t("lib.projectPurge.lead")}
+            {t("lib.projectPurge.tail", { code: projectPurgeTarget.code, name: projectPurgeTarget.name })}
+          </>}
+          ariaLabel={t("lib.projectPurge.aria")}
+          cancelLabel={t("common.cancel")}
+          confirmLabel={actionBusy === projectPurgeTarget.id ? t("lib.projectPurge.busy") : t("lib.projectPurge.confirm")}
+          onCancel={() => { setProjectPurgeConfirmId(null); }}
+          onConfirm={() => { void confirmPurgeRecycledProject(); }}
+          confirmDisabled={actionBusy !== null}
+          anchor={{ name: "data-project-purge-dialog", value: projectPurgeTarget.id }}
+          cancelAnchor={{ name: "data-project-purge-cancel", value: projectPurgeTarget.id }}
+          confirmAnchor={{ name: "data-project-purge-confirm", value: projectPurgeTarget.id }}
+        />
       )}
       {preview === null ? null : (
         <FilePreviewOverlay

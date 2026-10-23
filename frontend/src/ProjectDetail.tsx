@@ -8,7 +8,7 @@ import { ExportOverviewButton } from "./components/ExportOverviewButton";
 import { GanttChart } from "./components/GanttChart";
 import { ReportIssuePanel } from "./components/ReportIssuePanel";
 import { StakeholderPanel } from "./components/StakeholderPanel";
-import { Toast } from "./components/Toast";
+import { Toast, ToastConfirm } from "./components/Toast";
 import { useFocusTrap } from "./components/useFocusTrap";
 import { TableScrollbar } from "./components/TableScrollbar";
 import { DEFAULT_VISIBLE_COLUMNS, ProjectSummary, TaskBoard, hiddenColumnsOf, taskPatchBody, visibleColumnsFromHidden, type ColumnKey, type TaskPatch, type VisibleColumns } from "./components/TaskBoard";
@@ -138,7 +138,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   const [dataVersion, setDataVersion] = useState(0);
   const [dataLoading, setDataLoading] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
-  /** 待确认删除的任务行（Push 264 追订 · 业务口径「任务行内删除无二次确认」）：第一下只开底部确认条，第二下才真删。 */
+  /** 待确认删除的任务行（Push 264 追订 · 业务口径「任务行内删除无二次确认」）：第一下只开顶部确认 Toast，第二下才真删。 */
   const [pendingDeleteTaskId, setPendingDeleteTaskId] = useState<string | null>(null);
   /** 键盘焦点陷阱（Push 264 追订）：删除确认条开着时焦点进条内、Tab 在条内循环、关闭还原到行内删除按钮。 */
   const deleteTaskConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDeleteTaskId !== null);
@@ -675,7 +675,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     onChangeManagers?.(project.id, nextManagerIds);
   };
 
-  /** 任务表行内删除第一下（Push 141 / A25；Push 264 追订加二次确认 · 业务口径「任务行内删除无二次确认」）：只挂起这一行，第二下在底部确认条上。
+  /** 任务表行内删除第一下（Push 141 / A25；Push 264 追订加二次确认 · 业务口径「任务行内删除无二次确认」）：只挂起这一行，第二下在顶部确认 Toast 上。
    *  已定档任务的删除服务端一律 409（assertTaskMutable 覆盖 remove）—— 照定档行「点击即弹提示」的口径，不进入确认条。 */
   const requestDeleteTask = (taskId: string) => {
     const row = rowOf(taskId);
@@ -688,7 +688,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     }
     setPendingDeleteTaskId(taskId);
   };
-  /** 底部确认条的第二下：软删走接口（有变更引用时 409 TASK_HAS_REFERENCES），成功后本地摘掉这一行。 */
+  /** 顶部确认 Toast 的第二下：软删走接口（有变更引用时 409 TASK_HAS_REFERENCES），成功后本地摘掉这一行。 */
   const confirmDeleteTask = () => {
     const taskId = pendingDeleteTaskId;
     const row = taskId === null ? undefined : rowOf(taskId);
@@ -1023,7 +1023,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
     );
   }
 
-  /** 底部确认条上的那一行（从最新任务列表里取标题 / 版本；任务已被别处删除时自动为 undefined = 不显示确认条）。 */
+  /** 顶部确认 Toast 上的那一行（从最新任务列表里取标题 / 版本；任务已被别处删除时自动为 undefined = 不显示确认）。 */
   const pendingDeleteTask = pendingDeleteTaskId === null ? undefined : rowOf(pendingDeleteTaskId);
 
   return (
@@ -1278,39 +1278,22 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
       {/* 导出等待浮层（§6.16 ⑳ / ㉑）：真在等（翻译 / 生成超过 250ms）才显示小车动画 + 预计秒数；打印窗口唤起前收起。 */}
       {exportOverlayVisible ? <ExportProgressOverlay progress={exportTranslateProgress} /> : null}
 
-      {/* 任务行内删除的第二下确认条（Push 264 追订 · 业务口径「任务行内删除无二次确认」）：与「删除项目 / 模板 / 日报」同款
-          非阻断固定底栏 —— 第一下只开口，第二下「删除」才真删。 */}
+      {/* 任务行内删除的第二下确认（Push 264 追订 · 业务口径「任务行内删除无二次确认」）：与「删除项目 / 模板 / 日报」同款
+          顶部常驻确认 Toast —— 第一下只开口，第二下「删除」才真删。 */}
       {pendingDeleteTask === undefined ? null : (
-        <div className="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
-          <div
-            ref={deleteTaskConfirmTrapRef}
-            role="dialog"
-            aria-label={t("project.deleteTaskAria")}
-            data-task-delete-confirm=""
-            className="pointer-events-auto flex items-center gap-3 rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700 shadow-lg"
-          >
-            <span>
-              {t("project.deleteTaskPre")}<span className="font-semibold">{pendingDeleteTask.title}</span>{t("project.deleteTaskPost")}
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                setPendingDeleteTaskId(null);
-              }}
-              className="shrink-0 whitespace-nowrap rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
-            >
-              {t("common.cancel")}
-            </button>
-            <button
-              type="button"
-              data-task-delete=""
-              onClick={confirmDeleteTask}
-              className="shrink-0 whitespace-nowrap rounded-lg bg-red-500 px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-95"
-            >
-              {t("common.delete")}
-            </button>
-          </div>
-        </div>
+        <ToastConfirm
+          text={<>
+            {t("project.deleteTaskPre")}<span className="font-semibold">{pendingDeleteTask.title}</span>{t("project.deleteTaskPost")}
+          </>}
+          ariaLabel={t("project.deleteTaskAria")}
+          cancelLabel={t("common.cancel")}
+          confirmLabel={t("common.delete")}
+          onCancel={() => { setPendingDeleteTaskId(null); }}
+          onConfirm={confirmDeleteTask}
+          containerRef={deleteTaskConfirmTrapRef}
+          anchor={{ name: "data-task-delete-confirm", value: "" }}
+          confirmAnchor={{ name: "data-task-delete", value: "" }}
+        />
       )}
     </div>
   );

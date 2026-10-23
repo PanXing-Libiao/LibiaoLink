@@ -688,12 +688,13 @@ await waitFor("(function(){var s=document.querySelector(" + j(drawerStrip) + ");
 await clickSelector(drawerStrip + " [data-action=remove-attachment]");
 const drawerConfirmShown = await waitFor("document.querySelector(" + j("[data-remove-attachment-confirm-strip]") + ")!==null", 5000);
 await sleep(500);
+const drawerConfirmPos = await ev("(function(){var el=document.querySelector(" + j("[data-remove-attachment-confirm-strip]") + ");if(el===null){return null;}var r=el.getBoundingClientRect();return {top:Math.round(r.top),cls:String(el.className)};})()");
 const drawerThumbsBefore = await ev("(function(){var s=document.querySelector(" + j(drawerStrip) + ");return s===null?null:s.querySelectorAll(" + j("[data-attachment-thumb]") + ").length;})()");
 await clickSelector("[data-remove-attachment-confirm]");
 await sleep(2000);
 const iss1Drawer = (await issuesOf()).items.filter((row) => row.id === iss1.id)[0];
 const drawerThumbsAfter = await ev("(function(){var s=document.querySelector(" + j(drawerStrip) + ");return s===null?0:s.querySelectorAll(" + j("[data-attachment-thumb]") + ").length;})()");
-check("⑥o 抽屉「移除图片」要二次确认（第一下 × 只出确认条 · 图还在；第二下「移除」才真摘并落库）", drawerOpened === true && drawerConfirmShown === true && drawerThumbsBefore === 1 && iss1Drawer.photos.length === 0 && drawerThumbsAfter === 0 && iss1Drawer.version > iss1State3.version, JSON.stringify({ opened: drawerOpened, strip: drawerConfirmShown, before: drawerThumbsBefore, after: drawerThumbsAfter, version: iss1Drawer.version }));
+check("⑥o 抽屉「移除图片」= 顶部同款确认 Toast（第一下 × 只出浮条 · 图还在；第二下「移除」才真摘并落库）", drawerOpened === true && drawerConfirmShown === true && drawerConfirmPos !== null && drawerConfirmPos.top <= 48 && String(drawerConfirmPos.cls).indexOf("ll-toast-top") >= 0 && drawerThumbsBefore === 1 && iss1Drawer.photos.length === 0 && drawerThumbsAfter === 0 && iss1Drawer.version > iss1State3.version, JSON.stringify({ opened: drawerOpened, strip: drawerConfirmShown, pos: drawerConfirmPos, before: drawerThumbsBefore, after: drawerThumbsAfter, version: iss1Drawer.version }));
 // ⑥r（Push 244）：抽屉「问题处理人 / 责任人」行内单选 —— 预填当前人，点首行「待分派」清空回缺省。
 await clickSelector("[data-issue-drawer] button[aria-label^=" + Q + "修改问题处理人 / 责任人" + Q + "]");
 const drawerOwnerOpened = await waitFor("document.querySelector(" + j("[data-inline-popover]") + ")!==null", 6000);
@@ -767,11 +768,12 @@ check("⑥p-8 「问题追踪」点 × 清空：命中行还原（共 2 条）",
 await pickDailySub("日报记录");
 await sleep(900);
 await clickSelector(rowSel1 + " [data-report-delete-slot] button");
-// Push 218「删除要二次提示」：第一下只出底部确认条、不落删除；第二下点确认条上的「删除」才真删。
+// Push 218「删除要二次提示」：第一下只出顶部确认 Toast、不落删除；第二下点确认条上的「删除」才真删。
 const repConfirmShown = await waitFor("document.querySelector(" + j("[data-delete-confirm-strip]") + ") !== null", 5000);
 await sleep(400);
+const repConfirmPos = await ev("(function(){var el=document.querySelector(" + j("[data-delete-confirm-strip]") + ");if(el===null){return null;}var r=el.getBoundingClientRect();return {top:Math.round(r.top),cls:String(el.className)};})()");
 const repStillThere = await ev("document.querySelector(" + j(rowSel1) + ") !== null");
-check("⑦a-1 删日报第一下（行尾垃圾桶）= 只出底部确认条、不真删（二次提示）", repConfirmShown === true && repStillThere === true, JSON.stringify({ strip: repConfirmShown, row: repStillThere }));
+check("⑦a-1 删日报第一下（行尾垃圾桶）= 只出顶部同款确认 Toast、不真删", repConfirmShown === true && repConfirmPos !== null && repConfirmPos.top <= 48 && String(repConfirmPos.cls).indexOf("ll-toast-top") >= 0 && repStillThere === true, JSON.stringify({ strip: repConfirmShown, pos: repConfirmPos, row: repStillThere }));
 await clickSelector("[data-delete-confirm]");
 const repGone = await waitFor("(function(){var t=document.querySelector(" + j("[data-report-table]") + ");return t===null || t.querySelector(" + j("[data-report-row=" + Q + rep1.id + Q + "]") + ")===null;})()", 12000);
 await sleep(1200);
@@ -795,8 +797,9 @@ await sleep(1200);
 await clickSelector("[data-issue-row=" + Q + issD.id + Q + "] [data-issue-delete-slot] button");
 const issDConfirmShown = await waitFor("document.querySelector(" + j("[data-delete-confirm-strip]") + ") !== null", 5000);
 await sleep(400);
+const issDConfirmPos = await ev("(function(){var el=document.querySelector(" + j("[data-delete-confirm-strip]") + ");if(el===null){return null;}var r=el.getBoundingClientRect();return {top:Math.round(r.top),cls:String(el.className)};})()");
 const issDStillThere = await ev("document.querySelector(" + j("[data-issue-row=" + Q + issD.id + Q + "]") + ") !== null");
-check("⑦d-1 删问题第一下（行尾垃圾桶）= 只出底部确认条、不真删（二次提示）", issDConfirmShown === true && issDStillThere === true, JSON.stringify({ strip: issDConfirmShown, row: issDStillThere }));
+check("⑦d-1 删问题第一下（行尾垃圾桶）= 只出顶部同款确认 Toast、不真删", issDConfirmShown === true && issDConfirmPos !== null && issDConfirmPos.top <= 48 && String(issDConfirmPos.cls).indexOf("ll-toast-top") >= 0 && issDStillThere === true, JSON.stringify({ strip: issDConfirmShown, pos: issDConfirmPos, row: issDStillThere }));
 await clickSelector("[data-delete-confirm]");
 const issDGone = await waitFor("(function(){var t=document.querySelector(" + j("[data-issue-table]") + ");return t===null || t.querySelector(" + j("[data-issue-row=" + Q + issD.id + Q + "]") + ")===null;})()", 12000);
 await sleep(1200);
