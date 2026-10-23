@@ -2997,7 +2997,10 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
     <div className="fixed inset-0 z-50">
       <div
         className={"drawer-backdrop absolute inset-0 bg-zinc-900/25" + (closing ? " is-closing" : "")}
-        onClick={requestClose}
+        onClick={(event) => {
+          if (event.target !== event.currentTarget) { return; }
+          requestClose();
+        }}
         aria-hidden="true"
       />
       <aside
@@ -3082,7 +3085,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
   const draftVersion = useRef<number | null>(null);
   /** 写请求防重入（提交 / 暂存）。 */
   const [saving, setSaving] = useState(false);
-  /** 瞬态操作提示（提交 / 暂存 / 删除 / 失败）；统一走底部 Toast，常驻重试状态留在页内。 */
+  /** 瞬态操作提示（提交 / 暂存 / 删除 / 失败）；统一走顶部 Toast，常驻重试状态留在页内。 */
   const [notice, setNotice] = useState<{ kind: ToastKind; text: string } | null>(null);
   const notify = (kind: ToastKind, text: string) => {
     setNotice({ kind, text });

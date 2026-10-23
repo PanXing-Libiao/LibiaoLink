@@ -77,7 +77,7 @@ import { EMPTY_FILES_QUERY, EMPTY_LIST_QUERY, type FilesQueryState, type FilesTa
  *【2026-10-09 追订】「类型」列与筛选整条撤除（业务口径「文件类型不需要 因为没有明确的绑定机制」—— 库内文件
  * 没有类型绑定点（files.doc_type 全空）、列恒「—」；任务侧「输出成果文件」是任务字段，不受影响）。
  * 操作列按钮定宽（预览 / 下载换忙碌文案不重排 auto layout 表格 = 点预览不再抖表）；写口反馈走上方浮动 Toast
- * （components/Toast.tsx：屏幕底部居中、停留 2s 自动消失）。
+ * （components/Toast.tsx：屏幕顶部居中、停留 2s 自动消失）。
  * 预览走 S4 两通道裁决（ensurePreviewOutcome：viewer = ONLYOFFICE 外壳 / url = 产物浮层）；下载 = 原文件
  * attachment 短时签名 + Blob 落盘（fetchDownloadUrl + triggerDownload，服务端写 download 审计）。
  * 失败口径：本页只读 + 两个回收站写口，写失败给一行提示（VERSION_CONFLICT = 数据已被他人更新）。

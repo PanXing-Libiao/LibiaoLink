@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useT } from "../i18n";
 
-/** 全局浮动提示（2026-10-22 统一为 react-hot-toast 风格底部 toast）：
- *  - 白色圆角卡片、无深色遮罩、浅投影，自屏幕底部弹性上浮并轻微放大，停留 2s 后下收淡出；
+/** 全局瞬态提示（2026-10-23 普通提示改为 react-hot-toast 风格顶部 toast）：
+ *  - 白色圆角卡片、无深色遮罩、浅投影，自屏幕顶部弹性下落并轻微放大，停留 2s 后向上收拢淡出；
+ *  - 验收交付完成确认仍单独固定底部，普通成功 / 失败 / 信息提示统一走本组件；
  *  - 成功 / 错误 / 信息统一材质，仅左侧图标与语义不同；右侧「关闭」可立即收起；
  *  - createPortal 挂 body，不被页面容器裁剪，也不吃滚动位置。
  *
@@ -91,7 +92,7 @@ export function Toast(props: {
 
   const anchorAttr = props.anchor === undefined ? {} : { [props.anchor.name]: props.anchor.value };
   const meta = KIND_META[props.kind];
-  const className = "ll-toast pointer-events-auto fixed inset-x-0 bottom-[max(1.25rem,env(safe-area-inset-bottom))] z-[90] mx-auto flex w-[min(92vw,640px)] items-center gap-3 rounded-[22px] border border-zinc-200/80 bg-white px-4 py-3 text-sm text-zinc-700 shadow-[0_18px_50px_-16px_rgba(15,23,42,0.22),0_4px_12px_-4px_rgba(15,23,42,0.08)] outline-none sm:px-5" + (closing ? " is-closing" : "");
+  const className = "ll-toast ll-toast-top pointer-events-auto fixed inset-x-0 top-[max(1.25rem,env(safe-area-inset-top))] z-[90] mx-auto flex w-fit max-w-[min(92vw,640px)] items-center gap-3 rounded-[22px] border border-zinc-200/80 bg-white px-4 py-3 text-base text-zinc-800 shadow-[0_18px_50px_-16px_rgba(15,23,42,0.22),0_4px_12px_-4px_rgba(15,23,42,0.08)] outline-none sm:px-5" + (closing ? " is-closing" : "");
 
   return createPortal(
     <div
@@ -101,6 +102,9 @@ export function Toast(props: {
       aria-busy={closing}
       className={className}
       data-toast={props.kind}
+      onPointerDown={(event) => { event.stopPropagation(); }}
+      onMouseDown={(event) => { event.stopPropagation(); }}
+      onClick={(event) => { event.stopPropagation(); }}
     >
       <span aria-hidden="true" className={"flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-white " + meta.bg}>
         <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none">
@@ -108,7 +112,7 @@ export function Toast(props: {
           {props.kind === "info" ? <circle cx="10" cy="5.9" r="1.15" fill="currentColor" /> : null}
         </svg>
       </span>
-      <span className="min-w-0 flex-1 leading-6">{props.text}</span>
+      <span className="min-w-0 flex-1 font-semibold leading-6">{props.text}</span>
       <button
         type="button"
         onClick={() => { beginCloseRef.current(); }}

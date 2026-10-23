@@ -114,7 +114,7 @@ type DeliverableCellProps = {
   onChange: (next: string[]) => void;
   /** 全量摊开（抽屉行用：色签折行全显）；缺省 = 首枚 + 「+N」（任务表列用，窄列单行）。 */
   all?: boolean;
-  /** 锁定入口（Push 264 · P1-1 定档锁定）：透传 InlineCell —— 定档任务的行内入口不弹编辑浮层，点击改弹站点同款底部 Toast。 */
+  /** 锁定入口（Push 264 · P1-1 定档锁定）：透传 InlineCell —— 定档任务的行内入口不弹编辑浮层，点击改弹站点同款顶部 Toast。 */
   disabled?: boolean;
   /** 锁定说明文案（定档口径同 409 TASK_FINALIZED 提示文案；悬停 title 与点击 Toast 共用）。 */
   disabledHint?: string;

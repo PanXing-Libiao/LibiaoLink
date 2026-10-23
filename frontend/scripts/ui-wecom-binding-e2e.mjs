@@ -289,7 +289,7 @@ async function click(selector) {
 const hashOf = () => ev("String(window.location.hash)");
 const panelState = (scope) => "(function(){var root=" + (scope === undefined ? "document" : "document.querySelector(" + j(scope) + ")") + ";if(root===null){return null;}var el=root.querySelector(" + j("[data-wecom-binding]") + ");return el===null?null:el.getAttribute(" + j("data-wecom-binding") + ");})()";
 const textOf = (selector) => "(function(){var el=document.querySelector(" + j(selector) + ");return el===null?null:String(el.textContent||" + j("") + ").trim();})()";
-const successToastExpr = "(function(){var el=document.querySelector(" + j("[data-toast=ok]") + ");if(el===null){return null;}return {text:String(el.textContent||" + j("") + ").trim(),cls:String(el.className||" + j("") + ")};})()";
+const successToastExpr = "(function(){var el=document.querySelector(" + j("[data-toast=ok]") + ");if(el===null){return null;}var r=el.getBoundingClientRect();var copy=el.children[1];var cs=getComputedStyle(copy);return {text:String(el.textContent||" + j("") + ").trim(),width:Math.round(r.width),fontSize:parseFloat(cs.fontSize),fontWeight:Number(cs.fontWeight),cls:String(el.className||" + j("") + ")};})()";
 const insertBindingFixture = () => db.query("insert into wecom_aibot_dm_activations (bot_id, wecom_userid, user_id, first_activated_at, last_message_at, bound_at, created_at, updated_at) values ($1, $2, $3, now() - interval '2 hours', now() - interval '2 hours', now() - interval '90 minutes', now() - interval '2 hours', now() - interval '90 minutes') on conflict (bot_id, wecom_userid) do update set user_id = excluded.user_id, last_message_at = excluded.last_message_at, bound_at = excluded.bound_at, messages_enabled = true, updated_at = excluded.updated_at", [BOT_ID, openUserid, userRow.id]);
 const removeBindingFixture = () => db.query("delete from wecom_aibot_dm_activations where bot_id = $1 and wecom_userid = $2", [BOT_ID, openUserid]);
 
@@ -325,15 +325,15 @@ check("10 秒后自动消失、页面可继续用；自动消失不写跳过位"
 await reload("[data-topnav]");
 check("未绑定时刷新会再次提醒", (await waitFor(exists("[data-wecom-binding-guide]"), 12000)) === true);
 
-// ①a 自动轮询绑定成功（Push 260）：绑定行落库 → 卡片先切「已绑定」→ 关闭 → 白色底部「绑定成功」2 秒
+// ①a 自动轮询绑定成功（Push 260）：绑定行落库 → 卡片先切「已绑定」→ 关闭 → 白色顶部「绑定成功」2 秒
 await insertBindingFixture();
 const autoGuideBound = await waitFor(panelState("[data-wecom-binding-guide]") + " === " + j("bound"), 15000);
 const autoGuideClosed = await waitFor("document.querySelector(" + j("[data-wecom-binding-guide]") + ") === null", 4000);
 const autoGuideToast = await ev(successToastExpr);
 check("绑定行落库后不点刷新：卡片自动切「已绑定」", autoGuideBound === true, String(await ev(panelState("[data-wecom-binding-guide]"))));
 check(
-  "自动检测绑定后卡片关闭并弹白色底部「绑定成功」",
-  autoGuideClosed === true && autoGuideToast !== null && String(autoGuideToast.text).indexOf("绑定成功") >= 0 && String(autoGuideToast.cls).indexOf("fixed") >= 0 && String(autoGuideToast.cls).indexOf("bg-white") >= 0 && String(autoGuideToast.cls).indexOf("rounded-[22px]") >= 0,
+  "自动检测绑定后卡片关闭并弹白色顶部「绑定成功」",
+  autoGuideClosed === true && autoGuideToast !== null && String(autoGuideToast.text).indexOf("绑定成功") >= 0 && String(autoGuideToast.cls).indexOf("fixed") >= 0 && String(autoGuideToast.cls).indexOf("bg-white") >= 0 && String(autoGuideToast.cls).indexOf("rounded-[22px]") >= 0 && String(autoGuideToast.cls).indexOf("ll-toast-top") >= 0 && String(autoGuideToast.cls).indexOf("top-[max(1.25rem,env(safe-area-inset-top))]") >= 0 && String(autoGuideToast.cls).indexOf("w-fit") >= 0 && Number(autoGuideToast.width) > 0 && Number(autoGuideToast.width) < 480 && Number(autoGuideToast.fontSize) >= 16 && Number(autoGuideToast.fontWeight) >= 600,
   JSON.stringify({ closed: autoGuideClosed, toast: autoGuideToast }),
 );
 shots.push(await shot("wecom-guide-auto-bound-success-1a"));
@@ -509,7 +509,7 @@ await reload("[data-settings-card=wecom-binding]");
 const guideBack = await waitFor(exists("[data-wecom-binding-guide]"), 12000);
 check("解绑后引导恢复（未绑定 + 未跳过 → 再弹一次）", guideBack === true);
 
-// ⑦a 手动刷新绑定成功（Push 260）：点「刷新绑定状态」→ 卡片先切「已绑定」→ 关闭 → 白色底部「绑定成功」
+// ⑦a 手动刷新绑定成功（Push 260）：点「刷新绑定状态」→ 卡片先切「已绑定」→ 关闭 → 白色顶部「绑定成功」
 await insertBindingFixture();
 const manualRefreshClick = await click("[data-wecom-binding-refresh]");
 const manualGuideBound = await waitFor(panelState("[data-wecom-binding-guide]") + " === " + j("bound"), 10000);
@@ -517,8 +517,8 @@ const manualGuideClosed = await waitFor("document.querySelector(" + j("[data-wec
 const manualGuideToast = await ev(successToastExpr);
 check("手点「刷新绑定状态」：卡片面板先切「已绑定」", manualRefreshClick !== null && manualGuideBound === true, String(await ev(panelState("[data-wecom-binding-guide]"))));
 check(
-  "手动刷新绑定后卡片关闭并弹白色底部「绑定成功」",
-  manualGuideClosed === true && manualGuideToast !== null && String(manualGuideToast.text).indexOf("绑定成功") >= 0 && String(manualGuideToast.cls).indexOf("fixed") >= 0 && String(manualGuideToast.cls).indexOf("bg-white") >= 0 && String(manualGuideToast.cls).indexOf("rounded-[22px]") >= 0,
+  "手动刷新绑定后卡片关闭并弹白色顶部「绑定成功」",
+  manualGuideClosed === true && manualGuideToast !== null && String(manualGuideToast.text).indexOf("绑定成功") >= 0 && String(manualGuideToast.cls).indexOf("fixed") >= 0 && String(manualGuideToast.cls).indexOf("bg-white") >= 0 && String(manualGuideToast.cls).indexOf("rounded-[22px]") >= 0 && String(manualGuideToast.cls).indexOf("ll-toast-top") >= 0 && String(manualGuideToast.cls).indexOf("top-[max(1.25rem,env(safe-area-inset-top))]") >= 0 && String(manualGuideToast.cls).indexOf("w-fit") >= 0 && Number(manualGuideToast.width) > 0 && Number(manualGuideToast.width) < 480 && Number(manualGuideToast.fontSize) >= 16 && Number(manualGuideToast.fontWeight) >= 600,
   JSON.stringify({ closed: manualGuideClosed, toast: manualGuideToast }),
 );
 shots.push(await shot("wecom-guide-manual-bound-success-7a"));
