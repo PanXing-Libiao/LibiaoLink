@@ -23,9 +23,7 @@ import { isSvgFile } from "./preview.targets.js";
  *
  * 切片边界（Push 160 定案）：本服务只做**消费与分类**；领取、重试退避与 dead 落库 / 告警统一在 S7-1 的
  * OutboxDispatcher（`consume` 返回 done / retry / dead，`onDead` 负责终态降级留痕），**不含规则 / 通知编排**。
- * 三元组幂等（D2-06「同一内容只转一次」）在三处合围：
- * ① 投递侧去重键 = 三元组（同三元组只落一条任务）；② 消费侧先查 preview_artifacts（ready 直接复用，failed 不原地重试）；
- * ③ 对象键由三元组构造（换内容 / 换管线版本 / 换通道 = 新键，不覆盖旧产物）。
+ * 缓存、任务与对象键均按版本隔离；仅同一版本的同一管线 / 通道可复用。
  *
  * 失败处置（deploy/svg-preview/README.md 错误面）：可重试（503 / 504 / 连接错误 / 存储抖动）返回 retry，由 dispatcher 按
  * `PREVIEW_CONVERT_BACKOFF_MS` 指数退避、到 `PREVIEW_CONVERT_MAX_ATTEMPTS` 次写 failed + outbox dead；
@@ -49,7 +47,7 @@ export class PreviewService {
     private readonly clock: ClockService,
   ) {}
 
-  /** 本实例期望的转换管线版本（进三元组缓存键；与镜像标签同值，deploy/svg-preview/README.md）。 */
+  /** 本实例期望的转换管线版本（进版本缓存键；与镜像标签同值，deploy/svg-preview/README.md）。 */
   get pipelineVersion(): string {
     return this.config.env.PREVIEW_PIPELINE_VERSION;
   }
@@ -84,6 +82,7 @@ export class PreviewService {
 
     // 缓存键以**库内版本行的 contentHash** 为准（payload 里那份只作排障参照，不参与构造）。
     const key: PreviewArtifactKey = {
+      versionId: version.id,
       contentHash: version.contentHash,
       pipelineVersion: this.pipelineVersion,
       target: job.target,
@@ -94,12 +93,12 @@ export class PreviewService {
     try {
       const existing = await this.previews.findByKey(key);
       if (existing !== null && existing.status !== "not_ready") {
-        // ready = 同三元组已转成，直接复用；failed = 缓存态失败，等 pipeline_version 递增才失效（不做原地重试）。
+        // ready = 同版本缓存已转成，直接复用；failed = 缓存态失败，等 pipeline_version 递增才失效（不做原地重试）。
         this.logger.log("预览任务命中既有产物（" + existing.status + "），复用不重转：" + row.dedupeKey);
         return { outcome: "done" };
       }
 
-      const artifact = existing ?? (await this.previews.ensureRequested({ fileId: job.fileId, versionId: job.versionId, ...key }));
+      const artifact = existing ?? (await this.previews.ensureRequested({ fileId: job.fileId, ...key }));
       if (artifact.status !== "not_ready") {
         // 并发窗口：另一实例（或上一轮）刚把这一行转成了。
         return { outcome: "done" };
@@ -227,7 +226,7 @@ export class PreviewService {
     }
     try {
       await this.previews.markFailed(
-        { contentHash: version.contentHash, pipelineVersion: this.pipelineVersion, target: job.target },
+        { versionId: version.id, contentHash: version.contentHash, pipelineVersion: this.pipelineVersion, target: job.target },
         { error, updatedAt: this.clock.now() },
       );
     } catch (markError) {

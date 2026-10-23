@@ -40,7 +40,6 @@ import {
   buildUploadStagingKey,
   missingPartNumbers,
   ObjectStorage,
-  type ObjectPrefixResult,
   planUpload,
   toApiError,
 } from "../../storage/index.js";
@@ -60,6 +59,7 @@ import { OCTET_STREAM_MIME, normalizeMime, validateUploadFileType } from "./file
 import { PreviewRepository } from "./preview.repository.js";
 import { buildPreviewJobPayload, PREVIEW_JOB_TOPIC, previewJobDedupeKey } from "./preview.job.js";
 import { previewTargetsFor } from "./preview.targets.js";
+import { inspectUploadedObject } from "./upload-integrity.js";
 
 type UploadCreateBody = z.infer<typeof UploadCreateBodySchema>;
 type UploadPartsBody = z.infer<typeof UploadPartsBodySchema>;
@@ -125,7 +125,7 @@ export const RECYCLE_SWEEP_BATCH = 100;
  * 口径（ADR-006 定案 2026-09-21，PR-4 实施）：
  * - 会话先写**暂存键** `…/staging/{sessionId}`，complete 校验后由服务端复制（CopyObject）到
  *   **契约键** `…/v{seq}/{contentHash}.{ext}`，再按版本清理暂存对象；落库 `file_versions.object_key` 始终是契约键；
- * - `contentHash` 在 init 可选（命中即回秒传提示）、complete 必填；与 init 声明不一致 → 422 `FILE_HASH_MISMATCH`（不省）；
+ * - `contentHash` 在 init 可选（命中即回秒传提示）、complete 必填；与 init 声明或服务端流式计算的实际 SHA-256 不一致 → 422 `FILE_HASH_MISMATCH`；
  * - 分片状态以对象存储 ListParts 为唯一真相（不落 `upload_parts` 表）；大小以合并后 HEAD 为准（不信客户端声明）；
  * - 会话过期：访问时惰性判定（410，契约 `UPLOAD_SESSION_EXPIRED`）+ worker 定时清理（中止分片 + 清暂存 + 置 expired）；
  * - 文件上传**不触发** `projects.updated_at`（ADR-022 明示「不触发」：文件与变更各有自身时间字段）。
@@ -441,10 +441,10 @@ export class FileService {
         { code: "size_mismatch", message: "sizeBytes 不一致", path: "sizeBytes", meta: { declared: session.sizeBytes, actual: head.sizeBytes } },
       ]);
     }
-    const contentHash = body.contentHash.toLowerCase();
-    if (session.contentHash !== null && session.contentHash.toLowerCase() !== contentHash) {
+    const declaredHash = body.contentHash.toLowerCase();
+    if (session.contentHash !== null && session.contentHash.toLowerCase() !== declaredHash) {
       throw new AppError("FILE_HASH_MISMATCH", "内容哈希与发起上传时的声明不一致", [
-        { code: "hash_mismatch", message: "contentHash 不一致", path: "contentHash", meta: { declared: session.contentHash, actual: contentHash } },
+        { code: "hash_mismatch", message: "contentHash 不一致", path: "contentHash", meta: { declared: session.contentHash, actual: declaredHash } },
       ]);
     }
 
@@ -454,16 +454,8 @@ export class FileService {
     // 事务内的 files.name 全部随新名称（扩展名随之上新）；历史版本对象键不动，按各自扩展名预览 / 下载（preview-read / download 同口径）。
     const changePayload = isChange ? readChangePayload(session.changePayload) : null;
     const effectiveName = changePayload?.fileName ?? file.name;
-    let prefix: ObjectPrefixResult | null;
-    try {
-      prefix = await this.storage.readObjectPrefix(stagingKey, Math.min(MIME_SNIFF_BYTES, head.sizeBytes));
-    } catch (error) {
-      throw toApiError(error);
-    }
-    if (prefix === null) {
-      throw new AppError("UPLOAD_INCOMPLETE", "合并结果在对象存储侧不可读取，请重新上传");
-    }
-    const type = validateUploadFileType({ fileName: effectiveName, mime: session.mime, bytes: prefix.bytes });
+    const inspected = await inspectUploadedObject(this.storage, stagingKey, head.sizeBytes, MIME_SNIFF_BYTES);
+    const type = validateUploadFileType({ fileName: effectiveName, mime: session.mime, bytes: inspected.prefix });
     if (!type.ok) {
       throw new AppError("VALIDATION_FAILED", type.message, [
         {
@@ -474,6 +466,12 @@ export class FileService {
         },
       ]);
     }
+    if (inspected.contentHash !== declaredHash) {
+      throw new AppError("FILE_HASH_MISMATCH", "实际文件内容 SHA-256 与申报不一致", [
+        { code: "hash_mismatch", message: "实际文件内容与 contentHash 不一致", path: "contentHash" },
+      ]);
+    }
+    const contentHash = inspected.contentHash;
     const versionMime = type.mime;
     const seq = await this.repository.nextVersionSeq(fileId);
     const objectKey = buildObjectKey({ projectId: file.projectId, fileId, seq, contentHash, fileName: effectiveName });
@@ -1337,14 +1335,15 @@ export class FileService {
       // 定档预生成（P1 · ADR-007「定档文件预生成，其余按需懒生成」）：只投当前版本、只投一期真能出产物的通道。
       // H1 · S4 起 `previewTargetsFor` 对 SVG 恢复投递 `target=image`（图片仍原对象直签、其余走查看器）；
       // 本循环是定档预生成的唯一投递点，去重与唤醒语义不变。
-      // 用 appendOutboxIfAbsent：去重键 = 三元组（内容 + 管线版本 + 通道）—— 同三元组已有任务不重复插入、
-      // 只有 dead 才唤醒；普通 insert 会在「恢复 → 再定档」「两个文件同内容」时撞唯一约束，把整个定档事务打回 500。
+      // 用 appendOutboxIfAbsent：去重键绑定当前版本、内容、管线版本与通道 —— 同一版本已有任务不重复插入、
+      // 只有 dead 才唤醒；普通 insert 会在「恢复 → 再定档」「同一版本重复定档」时撞唯一约束，把整个定档事务打回 500。
       const currentVersion = versions.find((item) => item.id === locked.currentVersionId) ?? null;
       if (currentVersion !== null) {
         for (const target of previewTargetsFor({ fileName: locked.name, mime: currentVersion.mime })) {
           await appendOutboxIfAbsent(tx, {
             topic: PREVIEW_JOB_TOPIC,
             dedupeKey: previewJobDedupeKey({
+              versionId: currentVersion.id,
               contentHash: currentVersion.contentHash,
               pipelineVersion: this.config.env.PREVIEW_PIPELINE_VERSION,
               target,
@@ -1509,21 +1508,13 @@ export class FileService {
         return null;
       }
       const versions = await this.repository.listVersions(file.id, tx);
-      // M4-05 收口：预览产物按 content_hash 反查引用（迁移 `0027` 口径 3）—— 还有存活版本引用就把缓存行
-      // 归属转移过去（行不随级联消失、对象保留）；无引用才清对象。与版本对象同序：清对象在删行之前、失败即回滚。
+      // 预览产物按版本隔离，无共享归属；与源版本一起清理，不按客户端曾申报的哈希转移给其他文件。
       const versionIds = versions.map((version) => version.id);
       await this.cadArchive?.purge(file.id, file.projectId);
       const artifactRows = await this.previews.listReadyByVersionIds(versionIds, tx);
       const artifactKeys: string[] = [];
-      let artifactsReassigned = 0;
       for (const row of artifactRows) {
         if (row.objectKey === null) continue;
-        const survivor = await this.repository.findVersionByContentHash(row.contentHash, versionIds, tx);
-        if (survivor !== null) {
-          await this.previews.reassignOwner(row.id, { fileId: survivor.fileId, versionId: survivor.id }, at, tx);
-          artifactsReassigned += 1;
-          continue;
-        }
         artifactKeys.push(row.objectKey);
       }
       for (const version of versions) {
@@ -1563,7 +1554,6 @@ export class FileService {
           reason: options.reason,
           deletedVersions,
           previewArtifactsPurged: artifactKeys.length,
-          previewArtifactsReassigned: artifactsReassigned,
           purgedAt: at.toISOString(),
           objectKeys: versions.map((version) => version.objectKey),
         },

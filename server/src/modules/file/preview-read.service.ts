@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { createHash } from "node:crypto";
 import { FilePreviewResponseSchema, z } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import { AppConfig } from "../../config/config.module.js";
@@ -46,8 +47,8 @@ const VIEWER_PERMISSIONS = {
  *
  * **产物通道三态（M4-05d · H1 S4 起 SVG 可达）**：SVG 恢复 `target=image` 的 PNG 产物投递；图片仍走原对象直签，
  * 其余类型按查看器 / 降级处理。structured 二期启用投递时复用同一段：
- * - `ready`：三元组命中产物 → 短时签名地址；
- * - `not_ready`：**同事务**登记产物行（首次）+ 幂等补投 `preview.job`（去重键 = 三元组）→ 前端轮询；
+ * - `ready`：版本缓存键命中产物 → 短时签名地址；
+ * - `not_ready`：**同事务**登记产物行（首次）+ 幂等补投 `preview.job`（去重键 = 版本缓存键）→ 前端轮询；
  * - `failed`：返回 `preview_artifacts.error`（≤ 500 字）供前端降级「请下载查看」（D2-05），**不原地重试**
  *   （缓存态：管线修复靠 `PREVIEW_PIPELINE_VERSION` 递增失效）。
  *
@@ -107,9 +108,10 @@ export class PreviewReadService {
     // H1 · S2：SVG 永远先走目标产物通道，绝不落入下面的原对象直签分支。
     const targets = previewTargetsFor({ fileName: channelName, mime: version.mime });
     if (targets.length > 0) {
-      // 缓存键 = 三元组（内容哈希 + 管线版本 + 通道）；同一内容可有多个通道，逐个查已有产物。
+      // 按版本 ID + 管线版本 + 通道查产物；不同版本不因相同内容哈希而共用缓存。
       const pipelineVersion = this.config.env.PREVIEW_PIPELINE_VERSION;
       const keys: PreviewArtifactKey[] = targets.map((target) => ({
+        versionId: version.id,
         contentHash: version.contentHash,
         pipelineVersion,
         target,
@@ -274,9 +276,9 @@ export class PreviewReadService {
 
   /**
    * 查看器通道 ready（S3 · ADR-030 / S8-2 定案）：签发只读查看器配置（含 token），签发成功写一条 preview 审计（不记 token）。
-   * `target` / `url` / `expiresAt` / `pipelineVersion` / `generatedAt` 全空（查看器不产产物、不占缓存三元组）；
+   * `target` / `url` / `expiresAt` / `pipelineVersion` / `generatedAt` 全空（查看器不生成预览产物缓存）；
    * `document.url` = 受控端点绝对 URL（C1：与校验侧同源生成、不信任 Host 头；不含任何存储凭证）；
-   * `document.key` = 内容哈希（同内容同 key —— DocServer 侧会话 / 缓存复用）。
+   * `document.key` 绑定服务实例、项目、文件和版本；相同申报哈希不能跨文档复用 DocServer 缓存。
    */
   private async serveViewer(
     file: FileRow,
@@ -294,7 +296,10 @@ export class PreviewReadService {
       title: file.name,
       url: buildPreviewContentUrl(this.config.env.ONLYOFFICE_DOCSERVER_API_BASE_URL, file.id, version.id),
       fileType: channel.fileType,
-      key: version.contentHash,
+      key: createHash("sha256").update(JSON.stringify([
+        "libiaolink-onlyoffice-v2", this.config.env.ONLYOFFICE_DOCSERVER_API_BASE_URL,
+        file.projectId, file.id, version.id, version.contentHash,
+      ])).digest("hex"),
       // Push 258 错层修正：权限段嵌 document（ONLYOFFICE 只认该位置；token 与响应体同源，逐字一致）。
       permissions: { ...VIEWER_PERMISSIONS },
     };
@@ -376,7 +381,7 @@ export class PreviewReadService {
    * - `failed` 行：跳过（缓存态失败不原地重试，等管线版本递增）；
    * - `ready` 行：不会走到这里（上游已返回）。
    * 补投唤醒（Push 226 续）：补投一律连 `done` 的历史投递一并唤醒 —— 走到这里 = 产物行 `not_ready`：
-   * 若同三元组的投递记录已 done，要么产物行是删除后重新登记（缓存无从复用），要么旧投递被源缺失跳过，
+   * 若同版本缓存键的投递记录已 done，要么产物行是删除后重新登记（缓存无从复用），要么旧投递被源缺失跳过，
    * 都说明「done 的记录背后没有可复用产物」，必须重新转一次；重投后记录转 pending / processing，后续读取不再重复投。
    */
   private async dispatch(
@@ -393,7 +398,7 @@ export class PreviewReadService {
           continue;
         }
         if (existing === null) {
-          await this.previews.ensureRequested({ fileId: file.id, versionId: version.id, ...key }, tx);
+          await this.previews.ensureRequested({ fileId: file.id, ...key }, tx);
         }
         await appendOutboxIfAbsent(
           tx,
@@ -410,7 +415,7 @@ export class PreviewReadService {
             }),
           },
           // 补投一律唤醒 done（Push 226 续）：产物 not_ready + 历史投递 done = 没有可复用产物
-          // （产物行被彻底删除后同内容重传 / 旧投递被源缺失跳过）—— 不唤醒会永远停在 not_ready。
+          // （产物行被清理或旧投递被源缺失跳过）—— 不唤醒会永远停在 not_ready。
           { reviveDone: true },
         );
       }

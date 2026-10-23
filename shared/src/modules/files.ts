@@ -245,7 +245,7 @@ export const UploadSessionViewSchema = UploadSessionSchema.extend({
 
 export const UploadCompleteBodySchema = z
   .object({
-    contentHash: Sha256Schema.openapi({ description: "完成时回传；与 init 提供值不一致返回 422 FILE_HASH_MISMATCH" }),
+    contentHash: Sha256Schema.openapi({ description: "完成时回传；与 init 提供值或服务端计算的实际字节 SHA-256 不一致返回 422 FILE_HASH_MISMATCH" }),
   })
   .openapi("UploadCompleteBody");
 
@@ -323,7 +323,7 @@ export const FileDownloadUrlResponseSchema = z
 
 /**
  * 预览目标（渲染通道口径 · wmj 评审定案 · PR #103）：按前端渲染方式定义，不按文件格式；格式差异由产物 MIME 表达。
- * 缓存键 = 内容哈希 + pipelineVersion + target（ADR-007 / v0.2 §5.4 三元组）。
+ * 缓存键 = versionId + pipelineVersion + target；不同版本即使内容哈希相同也隔离（迁移 0067）。
  * pdf = PDF 查看器通道（PDF 直通；Office 改走查看器通道 viewer、不产转换产物 —— 历史 LibreOffice 转出口径随 S3 收口；CAD 接入另见 ADR-035，不占既有图片/PDF 通道）；image = 图片查看器通道（图片直出、图片型兜底、含矢量 SVG）；structured = 结构化表格渲染通道（一期未启用时 xlsx 走 pdf）。
  */
 export const PREVIEW_TARGETS = ["pdf", "image", "structured"] as const;
@@ -339,7 +339,7 @@ export const PreviewTargetSchema = z.enum(PREVIEW_TARGETS).openapi("PreviewTarge
 export const PREVIEW_STATUSES = ["ready", "not_ready", "failed"] as const;
 export const PreviewStatusSchema = z.enum(PREVIEW_STATUSES).openapi("PreviewStatus", {
   description:
-    "预览状态：ready 产物就绪（附短时签名 URL）或 viewer 入口可用（CAD 的模型转换状态另由 CadJob 判定） / not_ready 尚未生成（产物通道幂等补投、按三元组去重） / failed 转换失败（记原因并降级「请下载」）",
+    "预览状态：ready 产物就绪（附短时签名 URL）或 viewer 入口可用（CAD 的模型转换状态另由 CadJob 判定） / not_ready 尚未生成（产物通道幂等补投、按版本、管线版本和通道去重） / failed 转换失败（记原因并降级「请下载」）",
 });
 
 /** 预览查询参数（A4-06：任意历史版本可预览与下载；缺省 = 当前版本；不属于该文件 / 不存在 → 404）。 */
