@@ -378,9 +378,9 @@ try {
       officeObjectKey === "projects/" + project + "/files/" + office.fileId + "/v1/" + sha256(SAMPLE_DOCX) + ".docx",
   );
 
-  const decoyObjectKey = storageModule.buildPreviewArtifactKey({ contentHash: office.contentHash, pipelineVersion: previewPipelineVersion, target: "pdf" });
+  const decoyObjectKey = storageModule.buildPreviewArtifactKey({ versionId: officeVersionId, contentHash: office.contentHash, pipelineVersion: previewPipelineVersion, target: "pdf" });
   await storage.putObject({ objectKey: decoyObjectKey, body: DECOY_PDF, contentType: "application/pdf", metadata: { "preview-replay-decoy": "1" } });
-  cleanup.previewPrefixes.push("previews/" + office.contentHash + "/");
+  cleanup.previewPrefixes.push("previews/versions/" + officeVersionId + "/");
   const decoyHead = await storage.headObject(decoyObjectKey);
 
   const officeSigned = await downloadUrl(office.fileId, officeVersionId);

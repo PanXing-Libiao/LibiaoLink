@@ -47,7 +47,7 @@ const CHROME_PATH = process.env.CHROME_PATH ?? (process.platform === "win32"
   : "google-chrome");
 
 const results = { B1: [], B2: [], B3: [], B4: [], B5: [], B6: [], B7: [] };
-const created = { projectId: null, taskId: null, userId: null, sessionId: null, hashes: new Set() };
+const created = { projectId: null, taskId: null, userId: null, sessionId: null, versionIds: new Set() };
 const BACKGROUND_TRANSLATE_WRITES = new Set(["/api/v1/translate", "/api/v1/translate/batch"]);
 // 2026-10-23：项目详情进入会显式写一条访问审计；仅放行该受控路径，恶意 SVG 对 /api/v1/projects 的写仍须被捕获。
 const PROJECT_VISIT_WRITE = /^\/api\/v1\/projects\/[0-9a-f-]{36}\/visit$/i;
@@ -211,7 +211,7 @@ async function cleanup() {
   if (s3 === null) s3 = createS3Client();
   const prefixes = [];
   if (created.projectId !== null) prefixes.push("projects/" + created.projectId + "/");
-  for (const hash of created.hashes) prefixes.push("previews/" + hash + "/");
+  for (const versionId of created.versionIds) prefixes.push("previews/versions/" + versionId + "/");
   for (const prefix of prefixes) await purgeS3Prefix(prefix).catch(() => 0);
   if (db === null) return;
   await db.query("begin");
@@ -319,7 +319,6 @@ async function createProjectTask(actorId) {
 async function uploadFile(input) {
   const bytes = Buffer.from(input.bytes);
   const contentHash = sha256(bytes);
-  created.hashes.add(contentHash);
   const body = {
     projectId: created.projectId,
     name: input.name,
@@ -358,6 +357,7 @@ async function uploadFile(input) {
     if (error !== null && typeof error === "object") error.uploadAttempt = { fileId, uploadId };
     throw error;
   }
+  created.versionIds.add(completed.version.id);
   return {
     id: fileId,
     versionId: completed.version.id,
@@ -410,7 +410,7 @@ async function previewUntil(fileId, versionId, expected = "ready", timeoutMs = 2
   );
 }
 
-function assertNoSvgPreviewUrl(preview, label) {
+function assertNoSvgPreviewUrl(preview, item, label) {
   if (preview.status === "failed") {
     assert(preview.url === null, label + "：failed 状态不得回退签名 URL");
     assert(typeof preview.reason === "string" && preview.reason.length > 0, label + "：failed 应带降级原因");
@@ -419,7 +419,8 @@ function assertNoSvgPreviewUrl(preview, label) {
   assert(preview.status === "ready", label + "：预览状态应为 ready 或 failed，实际 " + preview.status);
   assert(typeof preview.url === "string" && preview.url !== "", label + "：ready 应返回 URL");
   const url = new URL(preview.url);
-  assert(/^\/[^/]+\/previews\/[a-f0-9]{64}\/2\.0\.0\/image$/.test(url.pathname), label + "：SVG 预览必须指向 2.0.0 PNG 产物，实际 " + safeLocation(preview.url));
+  const expectedPath = "/" + S3_BUCKET + "/previews/versions/" + item.versionId + "/" + item.contentHash + "/2.0.0/image";
+  assert(url.pathname === expectedPath, label + "：SVG 预览必须指向当前版本的 2.0.0 PNG 产物，实际 " + safeLocation(preview.url));
   assert(!url.pathname.toLowerCase().includes(".svg"), label + "：预览路径不得含 .svg");
   assert(!url.pathname.includes("/projects/"), label + "：预览不得指向原对象");
   assert(preview.target === "image", label + "：target 应为 image");
@@ -446,8 +447,8 @@ function assertPngBytes(bytes, label) {
 }
 
 /** SVG 只允许 ready=PNG 产物或 failed=无 URL；两种情况都不得泄漏原对象直签。 */
-async function assertSvgTerminalClosed(preview, label) {
-  const state = assertNoSvgPreviewUrl(preview, label);
+async function assertSvgTerminalClosed(preview, item, label) {
+  const state = assertNoSvgPreviewUrl(preview, item, label);
   if (state === "ready") {
     const artifact = await fetchBytes(preview.url);
     assert(artifact.contentType.toLowerCase().startsWith("image/png"), label + "：产物 Content-Type 不是 image/png");
@@ -458,7 +459,7 @@ async function assertSvgTerminalClosed(preview, label) {
 
 async function inspectSvgTerminal(item, label) {
   const preview = await previewUntil(item.id, item.versionId, "terminal");
-  const state = await assertSvgTerminalClosed(preview, label);
+  const state = await assertSvgTerminalClosed(preview, item, label);
   return { preview, state };
 }
 
@@ -949,13 +950,12 @@ async function runB1(normal, preview) {
   // 再验证预览交互期间没有恶意 SVG 读取 Cookie 或发起非预期写请求。
   await resetBrowserSignals();
   const thumb = await thumbnailReady(normal.name);
-  assertNoSvgPreviewUrl(preview, "B1 正常 SVG");
-  assert(/\/previews\/[a-f0-9]{64}\/2\.0\.0\/image$/.test(new URL(thumb.src).pathname), "B1 缩略图不是 PNG 产物");
+  assertNoSvgPreviewUrl(preview, normal, "B1 正常 SVG");
+  assert(new URL(thumb.src).pathname === new URL(preview.url).pathname, "B1 缩略图未使用当前版本的 PNG 产物");
   record("B1", "40×40 SVG 缩略图真实加载", "naturalWidth=" + String(thumb.naturalWidth));
   await clickFileControl(normal.name, true);
   await waitOverlay("image");
   const image = await overlayImageReady();
-  assertNoSvgPreviewUrl(preview, "B1 浮层");
   assert(new URL(image.src).pathname === new URL(preview.url).pathname, "B1 浮层图片未使用预览 API 的 PNG 产物");
   record("B1", "浮层图片加载", "naturalWidth=" + String(image.naturalWidth));
   const before = Number(await evaluate("document.querySelector('[data-image-zoom-viewer]')?.getAttribute('data-image-zoom') || '1'"));
@@ -980,7 +980,7 @@ async function runB2(malicious, preview, downloadUrl) {
     assert(exposedPreview === false, "B2 恶意 SVG failed 时不应打开预览浮层");
     record("B2", "恶意 SVG 预览 fail closed", "status=failed; url=null; reason=" + preview.reason.slice(0, 120));
   } else {
-    await assertSvgTerminalClosed(preview, "B2 恶意 SVG ready");
+    await assertSvgTerminalClosed(preview, malicious, "B2 恶意 SVG ready");
     const response = await fetchBytes(preview.url);
     assert(response.contentType.toLowerCase().startsWith("image/png"), "B2 恶意 SVG ready 时必须返回 PNG");
     if (exposedPreview) {

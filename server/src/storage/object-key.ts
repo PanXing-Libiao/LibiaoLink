@@ -71,7 +71,9 @@ export function buildObjectKey(input: ObjectKeyInput): string {
 }
 
 export interface PreviewArtifactKeyInput {
-  /** 内容哈希（SHA-256 十六进制）：三元组第一项，同一内容不重复转换（ADR-007）。 */
+  /** 服务端分配的文件版本 ID，隔离不同文档与历史版本。 */
+  versionId: string;
+  /** 该版本的内容哈希（SHA-256 十六进制），不跨版本复用。 */
   contentHash: string;
   /** 转换管线版本（`PREVIEW_PIPELINE_VERSION`，与镜像标签同值）：进键 = 换管线自动失效、旧产物不被读到。 */
   pipelineVersion: string;
@@ -83,12 +85,13 @@ export interface PreviewArtifactKeyInput {
 const KEY_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 /**
- * 预览产物键（ADR-007）：`previews/{contentHash}/{pipelineVersion}/{target}`。
+ * 预览产物键（ADR-007）：`previews/versions/{versionId}/{contentHash}/{pipelineVersion}/{target}`。
  *
- * 三元组都在键里 = 缓存 / 失效全靠键本身：换内容、换管线版本、换通道都不会读到旧产物，也不需要原地覆盖。
+ * 版本与管线 / 通道均进键：不同文件、版本或项目即使申报相同哈希，也不能共享对象。
  * 转换器不接触对象存储（字节流进 / 流出），键由本函数构造、由 worker 落 `preview_artifacts.object_key`。
  */
 export function buildPreviewArtifactKey(input: PreviewArtifactKeyInput): string {
+  assertUuid(input.versionId, "versionId");
   if (!SHA256_HEX.test(input.contentHash)) {
     throw new Error("预览产物键构造失败：contentHash 必须是 SHA-256 十六进制");
   }
@@ -98,7 +101,7 @@ export function buildPreviewArtifactKey(input: PreviewArtifactKeyInput): string 
   if (!KEY_SEGMENT.test(input.target)) {
     throw new Error("预览产物键构造失败：target 只允许字母 / 数字 / . _ -（最长 64）");
   }
-  return `previews/${input.contentHash.toLowerCase()}/${input.pipelineVersion}/${input.target}`;
+  return `previews/versions/${input.versionId}/${input.contentHash.toLowerCase()}/${input.pipelineVersion}/${input.target}`;
 }
 
 /** 上传会话（未定版）的暂存键：同一文件可并发多个会话，按会话 id 隔离。 */
