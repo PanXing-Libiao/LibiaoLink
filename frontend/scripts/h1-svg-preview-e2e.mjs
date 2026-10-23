@@ -49,6 +49,8 @@ const CHROME_PATH = process.env.CHROME_PATH ?? (process.platform === "win32"
 const results = { B1: [], B2: [], B3: [], B4: [], B5: [], B6: [], B7: [] };
 const created = { projectId: null, taskId: null, userId: null, sessionId: null, hashes: new Set() };
 const BACKGROUND_TRANSLATE_WRITES = new Set(["/api/v1/translate", "/api/v1/translate/batch"]);
+// 2026-10-23：项目详情进入会显式写一条访问审计；仅放行该受控路径，恶意 SVG 对 /api/v1/projects 的写仍须被捕获。
+const PROJECT_VISIT_WRITE = /^\/api\/v1\/projects\/[0-9a-f-]{36}\/visit$/i;
 let db = null;
 let s3 = null;
 let chrome = null;
@@ -847,7 +849,7 @@ async function assertNoUnsafeSignals(label) {
   const apiWrites = signals.requests.filter((item) => {
     const pathname = safeLocation(item.url).replace(ORIGIN, "");
     if (!pathname.startsWith("/api/v1/") || ["GET", "HEAD", "OPTIONS"].includes(item.method)) return false;
-    return !(item.method === "POST" && BACKGROUND_TRANSLATE_WRITES.has(pathname));
+    return !(item.method === "POST" && (BACKGROUND_TRANSLATE_WRITES.has(pathname) || PROJECT_VISIT_WRITE.test(pathname)));
   });
   const securityLogs = signals.logs.filter((item) => item.source === "security");
   assert(signals.exceptions.length === 0, label + "：出现未捕获异常 " + signals.exceptions.join(" | "));
