@@ -220,12 +220,21 @@ class FakeSessionRepository {
   }
 }
 
+class FakeAuditService {
+  readonly entries: Array<Record<string, unknown>> = [];
+
+  async recordStandalone(input: Record<string, unknown>): Promise<void> {
+    this.entries.push(input);
+  }
+}
+
 // ---------- 应用装配 ----------
 
 interface TestContext {
   agent: ReturnType<typeof request>;
   fakeUsers: FakeUserRepository;
   fakeSessions: FakeSessionRepository;
+  fakeAudit: FakeAuditService;
   close(): Promise<void>;
 }
 
@@ -243,6 +252,7 @@ async function createApp(idleMinutes: number): Promise<TestContext> {
   });
   const fakeUsers = new FakeUserRepository();
   const fakeSessions = new FakeSessionRepository(fakeUsers);
+  const fakeAudit = new FakeAuditService();
   const moduleRef = await Test.createTestingModule({
     imports: [AppConfigModule.forRoot(env), IdentityModule],
     providers: [{ provide: APP_FILTER, useClass: ApiErrorFilter }],
@@ -269,11 +279,7 @@ async function createApp(idleMinutes: number): Promise<TestContext> {
     .overrideProvider(AuditRepository)
     .useValue({})
     .overrideProvider(AuditService)
-    .useValue({
-      record: async (): Promise<never> => { throw new Error("auth e2e：审计写入未接线"); },
-      recordDenied: async (): Promise<never> => { throw new Error("auth e2e：越权留痕未接线"); },
-      list: async (): Promise<never> => { throw new Error("auth e2e：审计查询未接线"); },
-    })
+    .useValue(fakeAudit)
     .overrideProvider(InternalUserService)
     .useValue({})
     .compile();
@@ -284,6 +290,7 @@ async function createApp(idleMinutes: number): Promise<TestContext> {
     agent: request(app.getHttpServer()),
     fakeUsers,
     fakeSessions,
+    fakeAudit,
     close: () => app.close(),
   };
 }
@@ -390,6 +397,16 @@ describe("会话后端化 /auth/*（g6 验收：可登录 / 可登出 / 超时�
     expect(rows).toHaveLength(1);
     expect(rows[0]?.tokenHash).not.toBe(session);
     expect(rows[0]?.tokenHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(context.fakeAudit.entries).toHaveLength(1);
+    expect(context.fakeAudit.entries[0]).toMatchObject({
+      actorId: rows[0]?.userId,
+      action: "visit",
+      objectType: "user",
+      objectId: rows[0]?.userId,
+      summary: "登录系统：张三（A0001）",
+      metadata: { operation: "login", source: "sso", expiresAt: expect.any(String) },
+    });
+    expect(JSON.stringify(context.fakeAudit.entries[0])).not.toContain("id_token");
 
     const me = await context.agent.get("/auth/me").set("Cookie", cookieHeader({ ll_sid: session })).expect(200);
     expect(csrf.length).toBeGreaterThan(10);

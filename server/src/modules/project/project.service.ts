@@ -121,6 +121,24 @@ export class ProjectService {
     return toProjectView(view);
   }
 
+  /** 进入项目详情时显式记录访问：由前端每次进入项目路由调用一次，避免详情轮询 / 静默刷新反复写行。 */
+  async recordVisit(id: string, actorId: string): Promise<void> {
+    const view = await this.projects.findViewById(id);
+    if (view === null) {
+      throw new AppError("NOT_FOUND", "项目不存在或不可见");
+    }
+    await this.audit.record(this.database.db, {
+      actorId,
+      action: "visit",
+      objectType: "project",
+      objectId: id,
+      projectId: id,
+      summary: "访问项目：" + view.project.code + "（" + view.project.name + "）",
+      metadata: { source: "page" },
+      entry: "page",
+    });
+  }
+
   /**
    * 创建（M2-01 + M2-02 导入快照 · 单事务）：
    * 1) code 唯一由数据库唯一约束兜底（23505 → 409）、seq_no 由序列分配；

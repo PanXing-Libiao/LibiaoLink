@@ -27,13 +27,13 @@ import {
 } from "../src/db/schema/literals.js";
 
 describe("库侧枚举字面量与契约一致（schema literals ↔ contracts）", () => {
-  it("审计动作：AUDIT_ACTION_KEYS = AUDIT_ACTIONS（含 M4-05 的 preview / download）", () => {
+  it("审计动作：AUDIT_ACTION_KEYS = AUDIT_ACTIONS（含 visit / preview / download）", () => {
     expect([...AUDIT_ACTION_KEYS]).toEqual([...AUDIT_ACTIONS]);
   });
 
-  it("扩值：archive（M7-04）/ preview / download 均在库侧值集内，且顺序紧随 rollback", () => {
+  it("扩值：archive（M7-04）/ visit / preview / download 均在库侧值集内，且顺序紧随 rollback", () => {
     const keys: readonly string[] = [...AUDIT_ACTION_KEYS];
-    expect(keys.slice(keys.indexOf("rollback") + 1, keys.indexOf("deny"))).toEqual(["archive", "preview", "download"]);
+    expect(keys.slice(keys.indexOf("rollback") + 1, keys.indexOf("deny"))).toEqual(["archive", "visit", "preview", "download"]);
   });
 
   it("预览渲染通道：PREVIEW_TARGET_KEYS = PREVIEW_TARGETS", () => {

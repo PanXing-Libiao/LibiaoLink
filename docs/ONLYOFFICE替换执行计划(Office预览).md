@@ -14,9 +14,9 @@
 | D1 | 形态 = 在线查看器（`editorConfig.mode="view"`）；**不做在线编辑**；不采用 Conversion API 形态 | lan，2026-09-30 |
 | D2 | 镜像 `onlyoffice/documentserver:9.4.0.1`（digest `sha256:3ab6ebc7c605e5a32b7ae3ff19daed4925090245acc8100ce2230bd766c88212`，pin；回退规则 9.3.1.2 未触发） | lan，2026-09-30 |
 | D3 | 合规：自托管满足「不经第三方软件」；AGPL 社区版获法务 / 采购接受 | 业务 / 法务，2026-09-30 |
-| D4 | 范围：仅 Office 文档预览链路；PDF / 图片直通、下载链（仍签原始对象 + download 审计）、CAD、审计口径不动；**移动端不在业务范围（不做）**。**业务修订（2026-10-08）：PDF 并入 ONLYOFFICE 查看器通道（撤「PDF 直通」）；图片直通 / 下载链 / CAD / 审计口径仍不动；图片直通载体迁移（S6 前置）见 D6**【Push 283 修订（2026-10-12）：预览不再计入操作日志 —— 本行「审计口径不动」的预览一项撤销，见 v1.18】** | 业务，2026-09-30；PDF 并入 2026-10-08 |
+| D4 | 范围：仅 Office 文档预览链路；PDF / 图片直通、下载链（仍签原始对象 + download 审计）、CAD、审计口径不动；**移动端不在业务范围（不做）**。**业务修订（2026-10-08）：PDF 并入 ONLYOFFICE 查看器通道（撤「PDF 直通」）；图片直通 / 下载链 / CAD / 审计口径仍不动；图片直通载体迁移（S6 前置）见 D6**【2026-10-23 修订：预览恢复实际送达写审计，见 v1.19】** | 业务，2026-09-30；PDF 并入 2026-10-08 |
 | D5 | 兜底：`deploy/preview`（LibreOffice）不退役，与 ONLYOFFICE 并存至切换完成；失败降级「请下载」保留 | lan，2026-09-30 |
-| D6 | 图片直通迁移（S6 前置）：图片预览改**原对象短时签名直签**（不投转换任务、不落产物行、不经 `deploy/preview`）；显示 / 审计（一条 `action = preview`）【Push 283 起撤销：预览不写审计，见 v1.18】/ 下载链口径不变；完成后 `deploy/preview` 归零消费者，S6 退役方可执行 | lan，2026-10-08 |
+| D6 | 图片直通迁移（S6 前置）：图片预览改**原对象短时签名直签**（不投转换任务、不落产物行、不经 `deploy/preview`）；显示 / 审计（一条 `action = preview`）【2026-10-23 恢复：实际送达一条 `action = preview`，见 v1.19】/ 下载链口径不变；完成后 `deploy/preview` 归零消费者，S6 退役方可执行 | lan，2026-10-08 |
 
 ## 1. 路线总览（状态机）
 
@@ -107,3 +107,4 @@
 | v1.16 | 2026-10-08 | **S6 退役 LibreOffice（lan 代做（px 线）· 请 px 复核 · Push 203）**：退役评审通过（证据 `docs/s6-退役评审(LibreOffice转换栈).md`）—— 消费者归零核查（投递面空表 / 图片直签 / 查看器承接 Office·文本族·PDF / 下载链独立 / CI 不构建本栈）+ 环境停用（`docker compose down`：容器与网络移除、镜像保留）+ 回滚方案（栈可一键重建、产物段代码未删）；`deploy/preview/README.md` 退役状态行 + `server/README.md` / `server/.env.example` 注记 + §5 R4 / R5 收口；实施切片 S1~S6 全收官（业务确认 = px 侧五类预览验证）。**Push 202 回填**（PR #273 → squash `26db48a`；双 CI 四 job 全绿） | lan |
 | v1.17 | 2026-10-08 | **Push 203 回填 + S2 状态同步（lan 线 · Push 204）**：① Push 203 回填 —— PR #274 / squash `4cd2fd3`（2026-10-08 15:57 +08:00）/ 双 CI 四 job 全绿（PR 37745838996（头 `9cf66c6`）/ main 37746631459）；② §4 实施切片 **S2 行补 ✅** + 出口判据收口（依据：PR #250 已合并 · 2026-09-30 · squash `3c74300` —— v1.7 已登记交付，§4 表行遗漏同步）；无口径变更。 | lan |
 | v1.18 | 2026-10-12 | **预览不再计入操作日志（px 线 · Push 283 · 业务口径「操作日志中不需要记录预览的动作」）**：服务端读取侧三路径（产物通道 `ready` 签名 / 图片直签 `serveImageDirect` / ONLYOFFICE 查看器签发 `serveViewer`）不再写 `action = preview` 审计 —— D4「审计口径不动」的预览一项撤销（见 D4 / D6 修订标记）；S6-前置 与 S4 / S8-2 / M4-05d 回放中「审计恰一条 / 签发即写一条」仅存历史记录，现行回放断言 = preview 0 条（`s6-pre-image-direct-replay.mjs` / `s8-2-preview-content-replay.mjs` / `m4-preview-read-replay.mjs` / `m4-05-stress.mjs` / `s4-onlyoffice-preview-e2e.mjs`）；`audit_logs.action` 的 `preview` 值 / 契约 `AUDIT_ACTIONS` / 库侧 `ck_audit_logs_action` 一律保留（历史行回读 / 筛选兼容）；下载（A4-10）与越权留痕不变。同步：`系统功能书.md` C7-01 / D2-07、`技术设计v0.3` §3.5、`技术设计v0.1` / `v0.2`（修订表 v0.1.12 / v0.2.25）、`ADR-011` 不变量 4、`shared/README.md`、`server/README.md`、`server/src/modules/file/README.md`、`前端功能需求.md` §8。 | px |
+| v1.19 | 2026-10-23 | **预览审计恢复 + 访问动作**（业务口径「访问某一个项目也要有日志记录 在操作记录里面新加动作 访问 预览」「登录也要」）：D4 / D6 的停写口径撤销 —— 图片直签 / 产物通道 / ONLYOFFICE / CAD 实际送达就绪内容时各写一条 `action = preview`（metadata 记 versionId 与通道，不落签名地址 / token；未就绪 / 失败 / 404 不写）；新增 `visit` 记录项目详情进入与登录成功（迁移 `0066`）；操作记录动作筛选恢复「预览」、新增「访问」，撤「推进」「回退」；`advance` / `rollback` 值保留且历史行 / 直链可读。回放脚本断言同步（待有全套本地依赖重跑）。 | px |

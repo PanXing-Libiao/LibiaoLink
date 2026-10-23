@@ -9,9 +9,9 @@ import { apiRequest } from "./api";
 
 /**
  * 审计动作（与契约 AUDIT_ACTIONS 同口径；中文标签见 AUDIT_ACTION_LABELS）。
- * preview（预览）自 2026-10-12 起停用：服务端不再写入、筛选下拉不再提供、库内存量行已清理（清理前已备份）—— 值保留：兼容历史导出数据与直链 ?action=preview 的解析 / 标签渲染。
+ * 2026-10-23：新增 visit（访问，项目详情进入 / 登录成功）；preview（预览）恢复写入与筛选。
  */
-export const AUDIT_ACTIONS = ["create", "update", "delete", "progress", "complete", "advance", "rollback", "archive", "preview", "download", "deny"];
+export const AUDIT_ACTIONS = ["create", "update", "delete", "progress", "complete", "advance", "rollback", "archive", "visit", "preview", "download", "deny"];
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
 /** 审计对象类型（与契约 AUDIT_OBJECT_TYPES 同口径）。 */
@@ -31,6 +31,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   advance: "推进",
   rollback: "回退",
   archive: "归档",
+  visit: "访问",
   preview: "预览",
   download: "下载",
   deny: "越权拒绝",

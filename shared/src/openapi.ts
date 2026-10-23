@@ -305,6 +305,18 @@ export function buildOpenApiDocument() {
   });
 
   registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/visit",
+    tags: ["projects"],
+    summary: "记录项目访问（页面进入项目详情时调用；每次进入写一条 action=visit，供操作记录筛选）",
+    request: { params: idParams },
+    responses: {
+      204: { description: "访问已记录（同一页面单次进入一条；项目不存在 / 不可见 = 404）" },
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
     method: "patch",
     path: "/api/v1/projects/{id}",
     tags: ["projects"],
