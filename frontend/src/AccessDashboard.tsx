@@ -220,15 +220,15 @@ function DistributionRow({ row, total, projectNames, delay, onOpen }: {
       type="button"
       data-access-department-row={row.group.groupKey}
       onClick={onOpen}
-      className="group grid w-full grid-cols-[minmax(88px,128px)_minmax(0,1fr)_auto] items-center gap-3 rounded-lg px-2 py-2.5 text-left transition duration-200 hover:bg-blue-50/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400"
+      className="group grid w-full grid-cols-[minmax(88px,120px)_minmax(0,1fr)_auto] items-center gap-3 rounded-lg px-2 py-1.5 text-left transition duration-200 hover:bg-blue-50/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400"
       title={scopeText + (projectNames.length > 0 ? " · " + projectNames.join(" / ") : "")}
     >
       <span className="min-w-0">
-        <span className="block truncate text-[12px] font-medium text-zinc-700 transition-colors group-hover:text-blue-800">{row.group.groupName}</span>
+        <span className="block truncate text-[11px] font-medium text-zinc-700 transition-colors group-hover:text-blue-800">{row.group.groupName}</span>
         {showPath ? <span className="mt-0.5 block truncate text-[9px] text-zinc-400">{row.path.slice(0, -1).join(" / ")}</span> : null}
       </span>
       <span
-        className="flex h-4 min-w-0 overflow-hidden rounded-sm bg-zinc-100 ring-1 ring-inset ring-zinc-100 transition-transform duration-200 group-hover:scale-y-110"
+        className="flex h-3 min-w-0 overflow-hidden rounded-sm bg-zinc-100 ring-1 ring-inset ring-zinc-100 transition-transform duration-200 group-hover:scale-y-110"
         aria-label={t("access.dashboard.operate") + " " + String(row.levelCounts.operate) + ", " + t("access.dashboard.viewOnly") + " " + String(row.levelCounts.view) + ", " + t("access.dashboard.loginOnly") + " " + String(row.levelCounts.login)}
       >
         {total === 0 ? null : segments.map((segment) => segment.count === 0 ? null : (
@@ -239,7 +239,7 @@ function DistributionRow({ row, total, projectNames, delay, onOpen }: {
           />
         ))}
       </span>
-      <span className="w-7 text-right text-[12px] font-medium tabular-nums text-zinc-700">{row.subtreeMemberCount}</span>
+      <span className="w-7 text-right text-[11px] font-medium tabular-nums text-zinc-700">{row.subtreeMemberCount}</span>
     </button>
   );
 }
@@ -305,7 +305,7 @@ export function AccessDashboard({
         </div>
 
         <section className="access-dash-distribution overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
-          <header className="flex items-center justify-between gap-3 border-b border-zinc-100 px-4 py-3">
+          <header className="flex items-center justify-between gap-3 border-b border-zinc-100 px-4 py-2.5">
             <div className="min-w-0">
               <h2 className="text-sm font-semibold text-zinc-800">{t("access.dashboard.distributionTitle")}</h2>
               <p className="mt-0.5 text-[10px] text-zinc-400">{distributionLabel}</p>
@@ -316,7 +316,7 @@ export function AccessDashboard({
               <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-[3px] bg-[#cbd2dc]" />{t("access.dashboard.loginOnly")}</span>
             </div>
           </header>
-          <div className="scrollbar-hidden max-h-[480px] overflow-y-auto px-2 py-2">
+          <div className="scrollbar-hidden max-h-[300px] overflow-y-auto px-2 py-1.5 sm:max-h-[320px]">
             {visibleRows.length === 0 ? (
               <p className="px-3 py-10 text-center text-xs text-zinc-400">{t("access.dashboard.emptyDepartments")}</p>
             ) : visibleRows.map((row, index) => (
@@ -330,7 +330,7 @@ export function AccessDashboard({
               />
             ))}
           </div>
-          <footer className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-zinc-100 px-3 py-2.5">
+          <footer className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-zinc-100 px-3 py-2">
             <span className="text-[10px] text-zinc-400">{t("access.dashboard.viewLabel")}</span>
             {VIEW_OPTIONS.map((option) => {
               const active = view === option.value;
