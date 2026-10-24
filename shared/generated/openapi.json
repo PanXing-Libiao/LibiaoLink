@@ -4563,6 +4563,14 @@
         ],
         "description": "部门人员（姓名 / 工号 / 邮箱 / 状态）"
       },
+      "GroupAccessMemberScope": {
+        "type": "string",
+        "enum": [
+          "all",
+          "selected"
+        ],
+        "description": "部门规则适用人员：all 全部门 / selected 仅勾选人员"
+      },
       "GroupAccessOverview": {
         "type": "object",
         "properties": {
@@ -4668,6 +4676,15 @@
               "$ref": "#/components/schemas/Uuid"
             }
           },
+          "memberScope": {
+            "$ref": "#/components/schemas/GroupAccessMemberScope"
+          },
+          "memberUserIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
           "updatedAt": {
             "$ref": "#/components/schemas/DateTime"
           }
@@ -4678,9 +4695,11 @@
           "allowedPages",
           "projectScope",
           "projectIds",
+          "memberScope",
+          "memberUserIds",
           "updatedAt"
         ],
-        "description": "群组访问规则（projectIds 仅 selected 时有值）"
+        "description": "群组访问规则（projectIds 仅项目 selected 时有值；memberUserIds 仅人员 selected 时有值）"
       },
       "GroupAccessRuleInput": {
         "type": "object",
@@ -4713,6 +4732,25 @@
             },
             "maxItems": 2000,
             "default": []
+          },
+          "memberScope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GroupAccessMemberScope"
+              },
+              {
+                "description": "all = 全部门；selected = 仅 memberUserIds"
+              }
+            ]
+          },
+          "memberUserIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "maxItems": 2000,
+            "default": [],
+            "description": "selected 时生效的直属人员 user id"
           }
         },
         "required": [
@@ -4720,7 +4758,7 @@
           "allowedPages",
           "projectScope"
         ],
-        "description": "保存群组访问规则：页面集合 + 项目范围 + 指定项目（selected 时生效）"
+        "description": "保存群组访问规则：页面集合 + 项目范围 + 指定项目 + 适用人员（selected 时生效）"
       },
       "GroupAccessRuleResponse": {
         "type": "object",

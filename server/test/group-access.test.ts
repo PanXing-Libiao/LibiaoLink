@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GROUP_ACCESS_PAGE_KEYS, PERMISSION_KEYS } from "@libiaolink/contracts";
+import { GROUP_ACCESS_PAGE_KEYS, PERMISSION_KEYS, type GroupAccessRuleInput } from "@libiaolink/contracts";
 import { AppConfig } from "../src/config/config.module.js";
 import type { Env } from "../src/config/env.js";
 import type { ActorAuthorization, RoleService } from "../src/modules/identity/index.js";
@@ -11,6 +11,7 @@ import {
   intersectProjectIds,
   parseGroupAccessAdminKeys,
   resolveGroupAccess,
+  ruleAppliesToMember,
   type GroupAccessRuleData,
 } from "../src/modules/permission/group-access.rules.js";
 import { GroupAccessService } from "../src/modules/permission/group-access.service.js";
@@ -22,7 +23,14 @@ const PROJECT_B = "22222222-2222-4222-8222-222222222222";
 const PROJECT_C = "33333333-3333-4333-8333-333333333333";
 
 function rule(partial: Partial<GroupAccessRuleData> & { groupKey: string }): GroupAccessRuleData {
-  return { allowedPages: ["projects"], projectScope: "none", projectIds: [], ...partial };
+  return {
+    allowedPages: ["projects"],
+    projectScope: "none",
+    projectIds: [],
+    memberScope: "all",
+    memberUserIds: [],
+    ...partial,
+  };
 }
 
 describe("Casdoor 群组键", () => {
@@ -112,6 +120,13 @@ describe("群组访问规则", () => {
       ],
     });
     expect(all.projectIds).toBeNull();
+  });
+
+  it("人员范围 selected 仅匹配勾选人员；空选择不放行任何人", () => {
+    expect(ruleAppliesToMember(rule({ groupKey: "g" }), PROJECT_A)).toBe(true);
+    expect(ruleAppliesToMember(rule({ groupKey: "g", memberScope: "selected", memberUserIds: [PROJECT_A] }), PROJECT_A)).toBe(true);
+    expect(ruleAppliesToMember(rule({ groupKey: "g", memberScope: "selected", memberUserIds: [PROJECT_B] }), PROJECT_A)).toBe(false);
+    expect(ruleAppliesToMember(rule({ groupKey: "g", memberScope: "selected", memberUserIds: [] }), PROJECT_A)).toBe(false);
   });
 
   it("开启开关但群组无规则：默认拒绝", () => {
@@ -216,6 +231,46 @@ describe("GroupAccessService 部门通讯录", () => {
       },
     ]);
   });
+
+  it("保存 selected 人员范围，并拒绝不在当前部门的成员", async () => {
+    let savedArgs: unknown[] | null = null;
+    const repository = {
+      findRuleMetadata: async () => null,
+      listExistingProjectIds: async () => [],
+      listGroupMemberIds: async () => [PROJECT_A],
+      upsertGroupAccessRule: async (...args: unknown[]) => { savedArgs = args; },
+    };
+    const permission = {
+      canManageGroupAccess: async () => true,
+      invalidate: () => undefined,
+    };
+    const service = new GroupAccessService(
+      permission as never,
+      repository as never,
+      { recordStandalone: async () => undefined } as never,
+      {} as never,
+      new AppConfig({ CASDOOR_ORG_NAME: "libiaorobot.com" } as Env),
+    );
+    const input: GroupAccessRuleInput = {
+      groupKey: "libiaorobot.com/QA",
+      groupName: "Quality",
+      allowedPages: ["projects"],
+      projectScope: "none",
+      projectIds: [],
+      memberScope: "selected",
+      memberUserIds: [PROJECT_A],
+    };
+
+    const saved = await service.save(PROJECT_A, input);
+    expect(saved.rule.memberScope).toBe("selected");
+    expect(saved.rule.memberUserIds).toEqual([PROJECT_A]);
+    expect(savedArgs?.[5]).toBe("selected");
+    expect(savedArgs?.[6]).toEqual([PROJECT_A]);
+
+    await expect(
+      service.save(PROJECT_A, { ...input, memberUserIds: [PROJECT_B] }),
+    ).rejects.toThrow("所选人员已不在该部门");
+  });
 });
 
 class FakeRoleService {
@@ -283,6 +338,30 @@ describe("PermissionService 群组接入", () => {
     expect(await service.projectScope(PROJECT_A)).toEqual({ kind: "ids", ids: [PROJECT_A] });
     expect(await service.resolveProjectAccess(PROJECT_A, PROJECT_A)).toMatchObject({ projectId: PROJECT_A });
     expect(await service.resolveProjectAccess(PROJECT_A, PROJECT_B)).toBeNull();
+  });
+
+  it("selected 人员范围在权限画像入口过滤，不匹配人员按无规则处理", async () => {
+    const denied = serviceWith({
+      groupKeys: ["libiaorobot.com/项目部"],
+      rules: [rule({
+        groupKey: "libiaorobot.com/项目部",
+        allowedPages: ["projects"],
+        memberScope: "selected",
+        memberUserIds: [PROJECT_B],
+      })],
+    });
+    expect(await denied.service.canAccessPage(PROJECT_A, "projects")).toBe(false);
+
+    const allowed = serviceWith({
+      groupKeys: ["libiaorobot.com/项目部"],
+      rules: [rule({
+        groupKey: "libiaorobot.com/项目部",
+        allowedPages: ["projects"],
+        memberScope: "selected",
+        memberUserIds: [PROJECT_A],
+      })],
+    });
+    expect(await allowed.service.canAccessPage(PROJECT_A, "projects")).toBe(true);
   });
 
   it("页面画像来自规则；管理员群组绕过并拿到全量页面", async () => {

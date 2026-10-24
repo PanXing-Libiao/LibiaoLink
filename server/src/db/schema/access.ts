@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { check, index, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { users } from "./identity.js";
 import {
+  GROUP_ACCESS_MEMBER_SCOPE_KEYS,
   GROUP_ACCESS_PAGE_KEYS,
   GROUP_ACCESS_PROJECT_SCOPE_KEYS,
   sqlArrayLiteral,
@@ -45,6 +46,8 @@ export const groupAccessRules = pgTable(
     groupName: text("group_name").notNull(),
     allowedPages: text("allowed_pages").array().notNull().default(sql.raw("array[]::text[]")),
     projectScope: text("project_scope").notNull().default("none"),
+    memberScope: text("member_scope").notNull().default("all"),
+    memberUserIds: uuid("member_user_ids").array().notNull().default(sql.raw("array[]::uuid[]")),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -71,6 +74,16 @@ export const groupAccessRules = pgTable(
     check(
       "ck_group_access_rules_scope",
       sql.raw(table.projectScope.name + " in " + sqlValueList(GROUP_ACCESS_PROJECT_SCOPE_KEYS)),
+    ),
+    check(
+      "ck_group_access_rules_member_scope",
+      sql.raw(table.memberScope.name + " in " + sqlValueList(GROUP_ACCESS_MEMBER_SCOPE_KEYS)),
+    ),
+    check(
+      "ck_group_access_rules_members",
+      sql.raw(
+        "cardinality(" + table.memberUserIds.name + ") <= 2000 and array_position(" + table.memberUserIds.name + ", null::uuid) is null and (" + table.memberScope.name + " <> 'all' or cardinality(" + table.memberUserIds.name + ") = 0)",
+      ),
     ),
   ],
 );

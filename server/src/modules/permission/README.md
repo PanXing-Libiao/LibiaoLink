@@ -24,11 +24,17 @@
 
 - **权限判定开关（Push 178 · 一期「不判权限」）**：画像入口 `RoleService.getActorAuthorization()` 在 `PERMISSION_ENFORCED=false`（默认）时返回**等效管理员**（`roleCodes=[admin]` + `dataScopes=[all]` + 契约全量权限位）—— 本模块判定链（`can` / `projectScopeSpec` / `FIELD_POLICIES` / `assertCan` / 五出口）**零改动即整体放开**，记录级不再裁剪、字段级不再隐藏、导出不再单独授权；`true`（二期）回到 ADR-011 判定。画像缓存（TTL 10s + `invalidate`）与 404 / 403 语义不变（开关只决定画像内容）。
 
+## 部门访问规则（0068 / 0069）
+
+- `user_group_memberships` 保存 Casdoor 群组直属成员；权限画像入口按当前账号的群组键读取 `group_access_rules`，群组页面取并集、项目 `all` 优先、否则 `selected` 取并集，无规则默认拒绝（`GROUP_ACCESS_ENFORCED=false` 时不裁决，仅保存）。
+- 0069 增 `member_scope` / `member_user_ids`：`all` 让部门规则对全体直属成员生效（后续加入该部门的人员自动覆盖）；`selected` 只对勾选人员生效，空选择不放行任何人。保存 `selected` 时校验每个 user id 都来自该部门当前直属成员，防止伪造。
+- 权限页的「部门文件夹全选」只作用于该部门直属人员，子部门按各自规则独立配置；人员勾选状态随规则保存，不做实时同步按钮。
+
 ## 与其它模块的边界
 
 - 依赖方向：permission → identity（角色画像）。project / task / blueprint 反向依赖本模块（守卫与策略出口），**本模块不 import project / task**（可见性判定直接读名册与节点表，避免循环；check:boundaries 无违规）。
 - 名册维护（增删改）与节点维护仍属 project 模块；本模块只读这两张表做判定。
-- 一期不做的事：临时授权（C3-06）、授权管理界面与权限自检报告（C3-09 · u12）。越权尝试留痕已随 h7 落地（403 / 项目域 404 → `audit_logs` 的 `result=denied` 行，检索 `GET /api/v1/audit-logs?result=denied`）；告警推送随 M5 通知模块。
+- C3-09 当前已落地部门访问规则页（页面 / 项目范围 / 适用人员，规则可保存；`GROUP_ACCESS_ENFORCED` 默认关闭），角色模板与权限自检报告仍待做；临时授权（C3-06）不做。越权尝试留痕已随 h7 落地（403 / 项目域 404 → `audit_logs` 的 `result=denied` 行，检索 `GET /api/v1/audit-logs?result=denied`）；告警推送随 M5 通知模块。
 
 ## 差异与后续（待复核）
 
