@@ -1,6 +1,6 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
-> **2026-10-24 18:43 权限页滚动条隐藏、只读提示下架与任务模板管理员门禁（前端-only，已部署测试机 · PR 待建，生产未部署）**：按业务口径「滚动条做成隐藏的 然后图二的话不显示 任务模板也不可见没有权限的话」，权限页三处滚动容器改用 `scrollbar-hidden`（保留滚轮 / 触控滚动、隐藏原生滚动条），右侧黄色「部门访问为只读」提示整体下架；任务模板改为系统管理员专属，顶部导航与 `#/templates` 直链共用 `groupAccessAdmin` 门禁。普通账号仍保留仪表盘 / 项目空间 / 我的任务入口，拦截页文案改为「当前账号无权访问此页面」并同步中 / 英 / 日 / 韩。
+> **2026-10-24 18:43 权限页滚动条隐藏、只读提示下架与任务模板管理员门禁（前端-only，已部署测试机 · PR [#618](https://github.com/PanXing-Libiao/LibiaoLink/pull/618)，生产未部署）**：按业务口径「滚动条做成隐藏的 然后图二的话不显示 任务模板也不可见没有权限的话」，权限页三处滚动容器改用 `scrollbar-hidden`（保留滚轮 / 触控滚动、隐藏原生滚动条），右侧黄色「部门访问为只读」提示整体下架；任务模板改为系统管理员专属，顶部导航与 `#/templates` 直链共用 `groupAccessAdmin` 门禁。普通账号仍保留仪表盘 / 项目空间 / 我的任务入口，拦截页文案改为「当前账号无权访问此页面」并同步中 / 英 / 日 / 韩。
 >
 > 终版发布包 `access-template-gate-20261024-1843.tar.gz`（14,880,839 B · SHA-256 `bd7e8421b4274483d0be48298aa35a6aee54208b4108ff8a1b1180f882343da2`）上传并核对哈希；staging 386 文件，index / JS / CSS 与本地一致并已清理。部署前原始前端备份为 `/srv/data/backups/access-template-gate-20261024-1841/frontend-dist-before.tar.gz`（SHA-256 `4368443e...`），终版前再次备份至 `/srv/data/backups/access-template-gate-20261024-1843/frontend-dist-before.tar.gz`（SHA-256 `e1b37866...`）。终版以 rsync 原地更新，保持 web 容器的 bind mount；首次整目录替换曾使运行中的 web 挂旧 inode 返回 404，`docker restart libiaolink-web` 后恢复 healthy，终版未再重启。未改 server / database / compose / `server.env` / Secret / 依赖。公网 index / JS / CSS SHA-256 分别为 `8389706c...` / `ee28e81e...` / `2ed23e5b...`。
 >
