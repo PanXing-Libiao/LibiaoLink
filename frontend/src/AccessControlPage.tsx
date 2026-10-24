@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   assignGroupAccessAdmin,
   deleteGroupAccessRule,
@@ -12,9 +12,11 @@ import {
   type GroupAccessOverview,
   type GroupAccessProjectScope,
 } from "./accessApi";
+import { AccessDashboard, AccessDashboardSkeleton } from "./AccessDashboard";
+import { buildAccessDashboardModel } from "./accessDashboardModel";
 import { AppHeader } from "./components/AppHeader";
 import { Toast, type ToastKind } from "./components/Toast";
-import { useT, type TextKey } from "./i18n";
+import { useLocale, useT, type TextKey } from "./i18n";
 import { loadMyPermissions } from "./permissions";
 import type { MeResponse } from "./types";
 
@@ -24,6 +26,7 @@ type LoadState =
   | { kind: "error"; message: string };
 
 type Notice = { kind: ToastKind; text: string };
+type AccessView = "dashboard" | "rules";
 type Translate = (key: TextKey, params?: Record<string, string | number>) => string;
 type DepartmentTreeNode = { group: GroupAccessGroup; children: DepartmentTreeNode[] };
 
@@ -329,7 +332,18 @@ function DepartmentTree({
  */
 export function AccessControlPage({ me }: { me: MeResponse }) {
   const t = useT();
+  const locale = useLocale();
+  const tRef = useRef(t);
+  tRef.current = t;
   const [state, setState] = useState<LoadState>({ kind: "loading" });
+  const [accessView, setAccessView] = useState<AccessView>("dashboard");
+  const [scopeGroupKey, setScopeGroupKey] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const [refreshSeq, setRefreshSeq] = useState(0);
+  const [reload, setReload] = useState(0);
+  const hasDataRef = useRef(false);
+  const requestIdRef = useRef(0);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [projectScope, setProjectScope] = useState<GroupAccessProjectScope>("none");
   const [projectIds, setProjectIds] = useState<string[]>([]);
@@ -342,23 +356,55 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
   const [deleting, setDeleting] = useState(false);
   const [adminBusyUserId, setAdminBusyUserId] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
-  const [reload, setReload] = useState(0);
+
+  const loadAccessData = useCallback(async (): Promise<boolean> => {
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    if (hasDataRef.current) setRefreshing(true);
+    else setState({ kind: "loading" });
+    try {
+      const next = await fetchAccessOverview();
+      if (requestId !== requestIdRef.current) return false;
+      hasDataRef.current = true;
+      setState({ kind: "ready", data: next });
+      setLastSyncedAt(new Date());
+      setRefreshSeq((value) => value + 1);
+      return true;
+    } catch (error: unknown) {
+      if (requestId !== requestIdRef.current) return false;
+      const message = error instanceof Error ? error.message : String(error);
+      if (hasDataRef.current) {
+        setNotice({ kind: "error", text: tRef.current("access.loadFailed", { message }) });
+      } else {
+        setState({ kind: "error", message });
+      }
+      return false;
+    } finally {
+      if (requestId === requestIdRef.current) setRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    setState({ kind: "loading" });
-    void fetchAccessOverview()
-      .then((data) => {
-        if (cancelled) return;
-        setState({ kind: "ready", data });
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) setState({ kind: "error", message: error instanceof Error ? error.message : String(error) });
-      });
+    void loadAccessData();
     return () => {
-      cancelled = true;
+      requestIdRef.current += 1;
     };
-  }, [reload]);
+  }, [loadAccessData, reload]);
+
+  useEffect(() => {
+    const refreshIfVisible = (): void => {
+      if (document.visibilityState === "visible") setReload((value) => value + 1);
+    };
+    const timer = window.setInterval(refreshIfVisible, 30_000);
+    const onVisibilityChange = (): void => {
+      if (document.visibilityState === "visible") refreshIfVisible();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, []);
 
   const data = state.kind === "ready" ? state.data : null;
   useEffect(() => {
@@ -404,6 +450,22 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
   const selectedPath = selectedKey === null ? [] : departmentPathOf(selectedKey, groupByKey);
   const query = projectQuery.trim().toLowerCase();
   const projects = data === null ? [] : query === "" ? data.projects : data.projects.filter((project) => (project.code + " " + project.name).toLowerCase().includes(query));
+  const dashboardModel = useMemo(() => data === null ? null : buildAccessDashboardModel(data, scopeGroupKey), [data, scopeGroupKey]);
+  const scopeOptions = useMemo(() => {
+    if (data === null) return [] as Array<{ groupKey: string; pathText: string }>;
+    const byKey = new Map(data.groups.map((group) => [group.groupKey, group] as const));
+    return data.groups
+      .map((group) => ({ groupKey: group.groupKey, pathText: departmentPathOf(group.groupKey, byKey).join(" / ") || group.groupName }))
+      .sort((left, right) => left.pathText.localeCompare(right.pathText, "zh-Hans-CN"));
+  }, [data]);
+  const syncTime = lastSyncedAt === null
+    ? "—"
+    : new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : locale, { hour: "2-digit", minute: "2-digit", hour12: false }).format(lastSyncedAt);
+
+  useEffect(() => {
+    if (scopeGroupKey === null || data === null) return;
+    if (!data.groups.some((group) => group.groupKey === scopeGroupKey)) setScopeGroupKey(null);
+  }, [data, scopeGroupKey]);
 
   function applyGroup(group: GroupAccessGroup): void {
     setProjectScope(group.rule?.projectScope ?? "none");
@@ -503,6 +565,12 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
     }
   }
 
+  async function handleAccessChanged(): Promise<boolean> {
+    const ok = await loadAccessData();
+    if (ok) void loadMyPermissions(true);
+    return ok;
+  }
+
   async function handleToggleAdmin(member: GroupAccessMember): Promise<void> {
     if (adminBusyUserId !== null) return;
     const admin = adminByUserId.get(member.userId);
@@ -529,16 +597,110 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
     <>
       <AppHeader me={me} />
       <main className="w-full px-4 pb-10 pt-3 sm:px-6">
-        <div data-access-control="" className="mx-auto w-full max-w-screen-2xl space-y-4">
-          <header>
-            <h1 className="text-lg font-semibold text-zinc-900">{t("access.title")}</h1>
-            <p className="mt-0.5 text-xs text-zinc-500">{t("access.subtitle")}</p>
+        <div data-access-control="" data-access-view={accessView} className="mx-auto w-full max-w-screen-2xl space-y-4">
+          <header className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <p className="flex items-center gap-1.5 text-[10px] font-medium tracking-wide text-zinc-400">
+                <span>{t("header.access")}</span>
+                <span aria-hidden="true">/</span>
+                <span className="text-zinc-500">{accessView === "dashboard" ? t("access.dashboard.breadcrumb") : t("access.viewRules")}</span>
+              </p>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <h1 className="text-xl font-semibold tracking-tight text-zinc-900">{accessView === "dashboard" ? t("access.dashboard.title") : t("access.title")}</h1>
+                {accessView === "dashboard" ? (
+                  <label className="relative inline-flex items-center">
+                    <span className="sr-only">{t("access.dashboard.departmentScope")}</span>
+                    <select
+                      data-access-scope=""
+                      value={scopeGroupKey ?? ""}
+                      disabled={data === null}
+                      onChange={(event) => { setScopeGroupKey(event.target.value === "" ? null : event.target.value); }}
+                      className="max-w-[260px] appearance-none truncate rounded-full border border-zinc-200 bg-white py-1 pl-2.5 pr-7 text-[10px] font-medium text-zinc-600 shadow-sm transition hover:border-blue-200 hover:text-blue-700 focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:opacity-50"
+                    >
+                      <option value="">{t("access.dashboard.allDepartments")}</option>
+                      {scopeOptions.map((option) => <option key={option.groupKey} value={option.groupKey}>{option.pathText}</option>)}
+                    </select>
+                    <svg viewBox="0 0 16 16" aria-hidden="true" className="pointer-events-none absolute right-2.5 h-3 w-3 text-zinc-400"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  </label>
+                ) : null}
+              </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-zinc-400">
+                <span className={"inline-flex items-center gap-1.5 " + (refreshing ? "text-blue-600" : "text-emerald-600")}>
+                  <span className={"h-1.5 w-1.5 rounded-full " + (refreshing ? "animate-pulse bg-blue-500" : "bg-emerald-500")} />
+                  {refreshing ? t("access.dashboard.syncing") : t("access.dashboard.autoSync")}
+                </span>
+                <span aria-hidden="true">·</span>
+                <span className="tabular-nums">{syncTime}</span>
+                {data === null || dashboardModel === null ? null : (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span>{t("access.dashboard.summary", { departments: dashboardModel.topDepartmentCount, members: dashboardModel.globalMemberCount })}</span>
+                  </>
+                )}
+                <button
+                  type="button"
+                  data-access-refresh="true"
+                  disabled={refreshing || data === null}
+                  onClick={() => { setReload((value) => value + 1); }}
+                  aria-label={t("access.dashboard.refresh")}
+                  title={t("access.dashboard.refresh")}
+                  className="ml-0.5 flex h-5 w-5 items-center justify-center rounded-md text-zinc-400 transition hover:bg-blue-50 hover:text-blue-600 disabled:cursor-default disabled:opacity-50"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true" className={"h-3.5 w-3.5 " + (refreshing ? "access-refresh-spin" : "")}>
+                    <path d="M18.5 8.5A7.5 7.5 0 1 0 19.2 13" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                    <path d="M18.5 4.5v4h-4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 self-start">
+              {data === null ? null : (
+                <span data-access-rule-state={data.enforced ? "enforced" : "draft"} className={"inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-medium " + (data.enforced ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700")}>
+                  <span className={"h-1.5 w-1.5 rounded-full " + (data.enforced ? "bg-emerald-500" : "bg-amber-500")} />
+                  {data.enforced ? t("access.dashboard.ruleLive") : t("access.dashboard.ruleDraft")}
+                </span>
+              )}
+              <div data-access-view-toggle="" role="tablist" aria-label={t("access.viewAria")} className="inline-flex rounded-xl bg-zinc-100 p-0.5 ring-1 ring-inset ring-zinc-200">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={accessView === "dashboard"}
+                  data-access-view="dashboard"
+                  onClick={() => { setAccessView("dashboard"); }}
+                  className={"rounded-[10px] px-3 py-1.5 text-[11px] font-medium transition " + (accessView === "dashboard" ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800")}
+                >
+                  {t("access.viewDashboard")}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={accessView === "rules"}
+                  data-access-view="rules"
+                  onClick={() => { setAccessView("rules"); }}
+                  className={"rounded-[10px] px-3 py-1.5 text-[11px] font-medium transition " + (accessView === "rules" ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800")}
+                >
+                  {t("access.viewRules")}
+                </button>
+              </div>
+            </div>
           </header>
 
-          {state.kind === "loading" ? <p className="rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-500">{t("access.loading")}</p> : null}
+          {state.kind === "loading" && accessView === "dashboard" ? <AccessDashboardSkeleton /> : null}
+          {state.kind === "loading" && accessView === "rules" ? <p className="rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-500">{t("access.loading")}</p> : null}
           {state.kind === "error" ? <p className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{t("access.loadFailed", { message: state.message })}</p> : null}
 
-          {data === null ? null : (
+          {data === null ? null : accessView === "dashboard" ? (
+            dashboardModel === null ? null : (
+              <AccessDashboard
+                data={data}
+                model={dashboardModel}
+                refreshSeq={refreshSeq}
+                refreshing={refreshing}
+                onChanged={handleAccessChanged}
+                onNotify={(kind, text) => { setNotice({ kind, text }); }}
+              />
+            )
+          ) : (
             <>
               <section className={"rounded-xl border px-4 py-3 text-xs " + (data.enforced ? "border-amber-200 bg-amber-50 text-amber-800" : "border-zinc-200 bg-white text-zinc-600")}>
                 <p className="font-medium">{data.enforced ? t("access.enforcedOn") : t("access.enforcedOff")}</p>

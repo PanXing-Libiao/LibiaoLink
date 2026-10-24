@@ -2681,3 +2681,129 @@ body {
     animation: none;
   }
 }
+
+
+/* 权限看板（2026-10-24 · 业务口径「可以开始做了」）：图表入场、刷新反馈、卡片与部门行悬停；
+   动效只在入场阶段执行（backwards），结束后把 transform 交还给 hover，避免动画锁死悬停位移。 */
+@keyframes ll-access-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes ll-access-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes ll-access-number-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes ll-access-bar-in {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+
+@keyframes ll-access-segment-in {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@keyframes ll-access-donut-in {
+  from {
+    opacity: 0;
+    transform: rotate(-18deg) scale(0.88);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(0) scale(1);
+  }
+}
+
+@keyframes ll-access-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes ll-access-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.access-dash-card {
+  animation: ll-access-card-in 380ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+.access-dash-donut {
+  animation: ll-access-donut-in 520ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+.access-dash-number,
+.access-dash-bar-number {
+  animation: ll-access-number-in 300ms ease-out 150ms backwards;
+}
+
+.access-dash-admin {
+  animation: ll-access-fade-in 280ms ease-out backwards;
+}
+
+.access-dash-bar {
+  transform-origin: center bottom;
+  animation: ll-access-bar-in 520ms cubic-bezier(0.22, 1, 0.36, 1) 120ms backwards;
+}
+
+.access-dash-segment {
+  transform-origin: left center;
+  animation: ll-access-segment-in 480ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+.access-refresh-spin {
+  animation: ll-access-spin 700ms linear infinite;
+}
+
+.access-modal-backdrop {
+  animation: ll-access-fade-in 160ms ease-out both;
+}
+
+.access-modal-panel {
+  animation: ll-access-modal-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .access-dash-card,
+  .access-dash-donut,
+  .access-dash-number,
+  .access-dash-bar-number,
+  .access-dash-admin,
+  .access-dash-bar,
+  .access-dash-segment,
+  .access-refresh-spin,
+  .access-modal-backdrop,
+  .access-modal-panel {
+    animation: none;
+  }
+
+  .access-dash-card,
+  .access-dash-bar,
+  .access-dash-segment {
+    transition: none;
+  }
+}
