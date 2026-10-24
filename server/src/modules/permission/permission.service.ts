@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import type { ActorPermissions, GroupAccessPage, PermissionKey } from "@libiaolink/contracts";
+import { GROUP_ACCESS_UNGROUPED_KEY, type ActorPermissions, type GroupAccessPage, type PermissionKey } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import { AppConfig } from "../../config/config.module.js";
 import { RoleService, type ActorAuthorization } from "../identity/index.js";
@@ -88,12 +88,13 @@ export class PermissionService {
     const authorization = await this.getAuthorization(actorId);
     const entry = this.cache.get(actorId);
     if (entry !== undefined && entry.groupAccess !== undefined) return entry.groupAccess;
-    const [groupKeys, manualAdmin] = this.config === undefined
+    const [memberGroupKeys, manualAdmin] = this.config === undefined
       ? [[] as string[], false] as const
       : await Promise.all([
           this.repository.listUserGroupKeys(actorId),
           this.repository.isManualGroupAccessAdmin(actorId),
         ]);
+    const groupKeys = memberGroupKeys.length === 0 ? [GROUP_ACCESS_UNGROUPED_KEY] : memberGroupKeys;
     const enforced = this.config?.env.GROUP_ACCESS_ENFORCED === "true";
     const permissionEnforced = this.config?.env.PERMISSION_ENFORCED === "true";
     const permissionAdmin = authorization.permissionKeys.includes("access.manage");
