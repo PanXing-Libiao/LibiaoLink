@@ -1,6 +1,10 @@
 import { Injectable } from "@nestjs/common";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
-import type { GroupAccessPage, GroupAccessProjectScope, GroupAccessRuleInput } from "@libiaolink/contracts";
+import type {
+  GroupAccessMemberScope,
+  GroupAccessPage,
+  GroupAccessProjectScope,
+} from "@libiaolink/contracts";
 import { DatabaseService } from "../../db/database.service.js";
 import { groupAccessRules, projectGroupAccess, userGroupMemberships } from "../../db/schema/access.js";
 import { users } from "../../db/schema/identity.js";
@@ -130,6 +134,8 @@ export class PermissionRepository {
         groupKey: groupAccessRules.groupKey,
         allowedPages: groupAccessRules.allowedPages,
         projectScope: groupAccessRules.projectScope,
+        memberScope: groupAccessRules.memberScope,
+        memberUserIds: groupAccessRules.memberUserIds,
       })
       .from(groupAccessRules)
       .where(inArray(groupAccessRules.groupKey, groupKeys));
@@ -151,6 +157,8 @@ export class PermissionRepository {
       allowedPages: row.allowedPages as GroupAccessPage[],
       projectScope: row.projectScope as GroupAccessProjectScope,
       projectIds: projectIdsByGroup.get(row.groupKey) ?? [],
+      memberScope: row.memberScope as GroupAccessMemberScope,
+      memberUserIds: row.memberUserIds,
     }));
   }
 
@@ -175,12 +183,23 @@ export class PermissionRepository {
     }));
   }
 
+  /** 规则保存校验：该部门当前直属成员的 user id。 */
+  async listGroupMemberIds(groupKey: string): Promise<string[]> {
+    const rows = await this.database.db
+      .select({ userId: userGroupMemberships.userId })
+      .from(userGroupMemberships)
+      .where(eq(userGroupMemberships.groupKey, groupKey));
+    return rows.map((row) => row.userId);
+  }
+
   async listAccessRules(): Promise<GroupAccessRuleData[]> {
     const rows = await this.database.db
       .select({
         groupKey: groupAccessRules.groupKey,
         allowedPages: groupAccessRules.allowedPages,
         projectScope: groupAccessRules.projectScope,
+        memberScope: groupAccessRules.memberScope,
+        memberUserIds: groupAccessRules.memberUserIds,
       })
       .from(groupAccessRules)
       .orderBy(asc(groupAccessRules.groupKey));
@@ -198,6 +217,8 @@ export class PermissionRepository {
       allowedPages: row.allowedPages as GroupAccessPage[],
       projectScope: row.projectScope as GroupAccessProjectScope,
       projectIds: projectIdsByGroup.get(row.groupKey) ?? [],
+      memberScope: row.memberScope as GroupAccessMemberScope,
+      memberUserIds: row.memberUserIds,
     }));
   }
 
@@ -224,15 +245,32 @@ export class PermissionRepository {
     allowedPages: readonly GroupAccessPage[],
     projectScope: GroupAccessProjectScope,
     projectIds: readonly string[],
+    memberScope: GroupAccessMemberScope,
+    memberUserIds: readonly string[],
     at: Date,
   ): Promise<void> {
     await this.database.db.transaction(async (tx) => {
       await tx
         .insert(groupAccessRules)
-        .values({ groupKey, groupName, allowedPages: [...allowedPages], projectScope, updatedAt: at })
+        .values({
+          groupKey,
+          groupName,
+          allowedPages: [...allowedPages],
+          projectScope,
+          memberScope,
+          memberUserIds: [...memberUserIds],
+          updatedAt: at,
+        })
         .onConflictDoUpdate({
           target: groupAccessRules.groupKey,
-          set: { groupName, allowedPages: [...allowedPages], projectScope, updatedAt: at },
+          set: {
+            groupName,
+            allowedPages: [...allowedPages],
+            projectScope,
+            memberScope,
+            memberUserIds: [...memberUserIds],
+            updatedAt: at,
+          },
         });
       await tx.delete(projectGroupAccess).where(eq(projectGroupAccess.groupKey, groupKey));
       if (projectScope === "selected" && projectIds.length > 0) {

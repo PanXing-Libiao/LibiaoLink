@@ -10678,6 +10678,11 @@ export interface components {
             email: string | null;
             status: components["schemas"]["UserStatus"];
         };
+        /**
+         * @description 部门规则适用人员：all 全部门 / selected 仅勾选人员
+         * @enum {string}
+         */
+        GroupAccessMemberScope: "all" | "selected";
         /** @description 权限管理页数据：开关状态、当前账号部门、可配置部门树与项目 */
         GroupAccessOverview: {
             enforced: boolean;
@@ -10702,16 +10707,18 @@ export interface components {
          * @enum {string}
          */
         GroupAccessProjectScope: "all" | "selected" | "none";
-        /** @description 群组访问规则（projectIds 仅 selected 时有值） */
+        /** @description 群组访问规则（projectIds 仅项目 selected 时有值；memberUserIds 仅人员 selected 时有值） */
         GroupAccessRule: {
             groupKey: string;
             groupName: string;
             allowedPages: components["schemas"]["GroupAccessPage"][];
             projectScope: components["schemas"]["GroupAccessProjectScope"];
             projectIds: components["schemas"]["Uuid"][];
+            memberScope: components["schemas"]["GroupAccessMemberScope"];
+            memberUserIds: components["schemas"]["Uuid"][];
             updatedAt: components["schemas"]["DateTime"];
         } | null;
-        /** @description 保存群组访问规则：页面集合 + 项目范围 + 指定项目（selected 时生效） */
+        /** @description 保存群组访问规则：页面集合 + 项目范围 + 指定项目 + 适用人员（selected 时生效） */
         GroupAccessRuleInput: {
             /** @example libiaorobot.com/项目部 */
             groupKey: string;
@@ -10720,6 +10727,12 @@ export interface components {
             projectScope: components["schemas"]["GroupAccessProjectScope"];
             /** @default [] */
             projectIds: components["schemas"]["Uuid"][];
+            memberScope?: components["schemas"]["GroupAccessMemberScope"] & unknown;
+            /**
+             * @description selected 时生效的直属人员 user id
+             * @default []
+             */
+            memberUserIds: components["schemas"]["Uuid"][];
         };
         /** @description 保存后的群组访问规则 */
         GroupAccessRuleResponse: {

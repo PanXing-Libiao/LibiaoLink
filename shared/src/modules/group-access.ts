@@ -24,6 +24,14 @@ export const GroupAccessProjectScopeSchema = z
 
 export type GroupAccessProjectScope = z.infer<typeof GroupAccessProjectScopeSchema>;
 
+export const GROUP_ACCESS_MEMBER_SCOPES = ["all", "selected"] as const;
+
+export const GroupAccessMemberScopeSchema = z
+  .enum(GROUP_ACCESS_MEMBER_SCOPES)
+  .openapi("GroupAccessMemberScope", { description: "部门规则适用人员：all 全部门 / selected 仅勾选人员" });
+
+export type GroupAccessMemberScope = z.infer<typeof GroupAccessMemberScopeSchema>;
+
 /** 部门人员：权限页通讯录展示用；来源 = 已同步的 Casdoor 群组成员关系 + 系统用户。 */
 export const GroupAccessMemberSchema = z
   .object({
@@ -44,8 +52,10 @@ export const GroupAccessRuleInputSchema = z
     allowedPages: z.array(GroupAccessPageSchema).max(GROUP_ACCESS_PAGE_KEYS.length),
     projectScope: GroupAccessProjectScopeSchema,
     projectIds: z.array(UuidSchema).max(2000).default([]),
+    memberScope: GroupAccessMemberScopeSchema.default("all").openapi({ description: "all = 全部门；selected = 仅 memberUserIds" }),
+    memberUserIds: z.array(UuidSchema).max(2000).default([]).openapi({ description: "selected 时生效的直属人员 user id" }),
   })
-  .openapi("GroupAccessRuleInput", { description: "保存群组访问规则：页面集合 + 项目范围 + 指定项目（selected 时生效）" });
+  .openapi("GroupAccessRuleInput", { description: "保存群组访问规则：页面集合 + 项目范围 + 指定项目 + 适用人员（selected 时生效）" });
 
 export type GroupAccessRuleInput = z.infer<typeof GroupAccessRuleInputSchema>;
 
@@ -56,9 +66,11 @@ export const GroupAccessRuleSchema = z
     allowedPages: z.array(GroupAccessPageSchema),
     projectScope: GroupAccessProjectScopeSchema,
     projectIds: z.array(UuidSchema),
+    memberScope: GroupAccessMemberScopeSchema,
+    memberUserIds: z.array(UuidSchema),
     updatedAt: DateTimeSchema,
   })
-  .openapi("GroupAccessRule", { description: "群组访问规则（projectIds 仅 selected 时有值）" });
+  .openapi("GroupAccessRule", { description: "群组访问规则（projectIds 仅项目 selected 时有值；memberUserIds 仅人员 selected 时有值）" });
 
 export type GroupAccessRule = z.infer<typeof GroupAccessRuleSchema>;
 

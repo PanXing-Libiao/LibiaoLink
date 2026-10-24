@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   deleteGroupAccessRule,
   fetchAccessOverview,
   saveGroupAccessRule,
   type GroupAccessGroup,
   type GroupAccessMember,
+  type GroupAccessMemberScope,
   type GroupAccessOverview,
   type GroupAccessProjectScope,
 } from "./accessApi";
@@ -133,6 +134,64 @@ function MemberRow({ member, depth, t }: { member: GroupAccessMember; depth: num
   );
 }
 
+function SelectionCheckbox({
+  checked,
+  indeterminate,
+  disabled = false,
+  onChange,
+}: {
+  checked: boolean;
+  indeterminate: boolean;
+  disabled?: boolean;
+  onChange: () => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current !== null) ref.current.indeterminate = indeterminate;
+  }, [indeterminate]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={checked}
+      disabled={disabled}
+      onChange={onChange}
+      className="h-4 w-4 shrink-0 cursor-pointer rounded border-zinc-300 accent-blue-600 disabled:cursor-not-allowed disabled:opacity-40"
+    />
+  );
+}
+
+function SelectableMemberRow({
+  member,
+  checked,
+  t,
+  onToggle,
+}: {
+  member: GroupAccessMember;
+  checked: boolean;
+  t: Translate;
+  onToggle: () => void;
+}) {
+  const detail = [member.username, member.email ?? ""].filter((item) => item !== "").join(" · ");
+  return (
+    <label className="flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 hover:bg-blue-50/60">
+      <SelectionCheckbox checked={checked} indeterminate={false} onChange={onToggle} />
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-50 text-xs font-semibold text-blue-700">
+        {memberInitial(member)}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate text-sm font-medium text-zinc-800">{member.displayName}</span>
+          {member.status === "disabled" ? (
+            <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500">{t("access.memberDisabled")}</span>
+          ) : null}
+        </span>
+        <span className="mt-0.5 block truncate text-[11px] text-zinc-400">{detail}</span>
+      </span>
+    </label>
+  );
+}
+
 function DepartmentTree({
   nodes,
   depth,
@@ -240,6 +299,8 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
   const [allowedPages, setAllowedPages] = useState<GroupAccessPage[]>([]);
   const [projectScope, setProjectScope] = useState<GroupAccessProjectScope>("none");
   const [projectIds, setProjectIds] = useState<string[]>([]);
+  const [memberScope, setMemberScope] = useState<GroupAccessMemberScope>("all");
+  const [memberUserIds, setMemberUserIds] = useState<string[]>([]);
   const [projectQuery, setProjectQuery] = useState("");
   const [directoryQuery, setDirectoryQuery] = useState("");
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set());
@@ -297,6 +358,13 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
   const totalMemberCount = new Set(allGroups.flatMap((group) => group.members.map((member) => member.userId))).size;
   const selectedGroup = selectedKey === null ? null : groupByKey.get(selectedKey) ?? null;
   const selectedRule = selectedGroup?.rule ?? null;
+  const selectedGroupMembers = selectedGroup?.members ?? [];
+  const selectedMemberIdSet = new Set(
+    memberScope === "all" ? selectedGroupMembers.map((member) => member.userId) : memberUserIds,
+  );
+  const selectedMemberCount = selectedGroupMembers.filter((member) => selectedMemberIdSet.has(member.userId)).length;
+  const allMembersSelected = selectedGroupMembers.length > 0 && selectedMemberCount === selectedGroupMembers.length;
+  const someMembersSelected = selectedMemberCount > 0 && !allMembersSelected;
   const selectedPath = selectedKey === null ? [] : departmentPathOf(selectedKey, groupByKey);
   const query = projectQuery.trim().toLowerCase();
   const projects = data === null ? [] : query === "" ? data.projects : data.projects.filter((project) => (project.code + " " + project.name).toLowerCase().includes(query));
@@ -305,6 +373,9 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
     setAllowedPages(group.rule?.allowedPages ?? []);
     setProjectScope(group.rule?.projectScope ?? "none");
     setProjectIds(group.rule?.projectIds ?? []);
+    const currentMemberIds = new Set(group.members.map((member) => member.userId));
+    setMemberScope(group.rule?.memberScope ?? "all");
+    setMemberUserIds((group.rule?.memberUserIds ?? []).filter((userId) => currentMemberIds.has(userId)));
     setProjectQuery("");
   }
 
@@ -334,6 +405,8 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
     setAllowedPages([]);
     setProjectScope("none");
     setProjectIds([]);
+    setMemberScope("all");
+    setMemberUserIds([]);
     setProjectQuery("");
     setManualKey("");
   }
@@ -346,6 +419,30 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
     setProjectIds((current) => (current.includes(projectId) ? current.filter((id) => id !== projectId) : current.concat(projectId)));
   }
 
+  function toggleAllMembers(): void {
+    if (selectedGroupMembers.length === 0) return;
+    if (allMembersSelected) {
+      setMemberScope("selected");
+      setMemberUserIds([]);
+      return;
+    }
+    setMemberScope("all");
+    setMemberUserIds([]);
+  }
+
+  function toggleMember(userId: string): void {
+    const next = new Set(selectedMemberIdSet);
+    if (next.has(userId)) next.delete(userId);
+    else next.add(userId);
+    if (selectedGroupMembers.length > 0 && selectedGroupMembers.every((member) => next.has(member.userId))) {
+      setMemberScope("all");
+      setMemberUserIds([]);
+      return;
+    }
+    setMemberScope("selected");
+    setMemberUserIds(selectedGroupMembers.filter((member) => next.has(member.userId)).map((member) => member.userId));
+  }
+
   async function handleSave(): Promise<void> {
     if (selectedKey === null || saving) return;
     setSaving(true);
@@ -355,6 +452,8 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
         allowedPages,
         projectScope,
         projectIds: projectScope === "selected" ? projectIds : [],
+        memberScope,
+        memberUserIds: memberScope === "selected" ? memberUserIds : [],
       });
       setNotice({ kind: "ok", text: t("access.saved") });
       void loadMyPermissions(true);
@@ -377,6 +476,8 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
       setAllowedPages([]);
       setProjectScope("none");
       setProjectIds([]);
+      setMemberScope("all");
+      setMemberUserIds([]);
       void loadMyPermissions(true);
       setReload((value) => value + 1);
     } catch (error: unknown) {
@@ -511,6 +612,45 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
                             {selectedRule === null ? t("access.unconfigured") : t("access.configured")}
                           </span>
                         </div>
+
+                        <h3 className="mt-5 text-sm font-semibold text-zinc-800">{t("access.memberRuleTitle")}</h3>
+                        <p className="mt-0.5 text-xs text-zinc-500">{t("access.memberRuleHint")}</p>
+                        <div className="mt-3 overflow-hidden rounded-xl border border-zinc-200">
+                          <label className="flex cursor-pointer items-center gap-2.5 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5">
+                            <SelectionCheckbox
+                              checked={allMembersSelected}
+                              indeterminate={someMembersSelected}
+                              disabled={selectedGroupMembers.length === 0}
+                              onChange={toggleAllMembers}
+                            />
+                            <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5 shrink-0 text-blue-500">
+                              <path d="M3.5 6.5A2.5 2.5 0 0 1 6 4h4.1l2 2.2H18A2.5 2.5 0 0 1 20.5 8.7v8.8A2.5 2.5 0 0 1 18 20H6a2.5 2.5 0 0 1-2.5-2.5v-11Z" fill="currentColor" />
+                              <path d="M3.8 9h16.4" stroke="white" strokeOpacity="0.55" strokeWidth="1.2" />
+                            </svg>
+                            <span className="min-w-0 flex-1 truncate text-sm font-semibold text-zinc-800">{selectedGroup?.groupName ?? selectedKey}</span>
+                            <span className="shrink-0 text-[11px] text-zinc-500">
+                              {t("access.memberSelectionCount", { selected: selectedMemberCount, total: selectedGroupMembers.length })}
+                            </span>
+                          </label>
+                          {selectedGroupMembers.length === 0 ? (
+                            <p className="px-3 py-3 text-xs text-zinc-400">{t("access.noMembers")}</p>
+                          ) : (
+                            <div className="p-1.5">
+                              {selectedGroupMembers.map((member) => (
+                                <SelectableMemberRow
+                                  key={member.userId}
+                                  member={member}
+                                  checked={selectedMemberIdSet.has(member.userId)}
+                                  t={t}
+                                  onToggle={() => { toggleMember(member.userId); }}
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        {memberScope === "selected" && selectedMemberCount === 0 && selectedGroupMembers.length > 0 ? (
+                          <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">{t("access.memberSelectionEmpty")}</p>
+                        ) : null}
 
                         <h3 className="mt-5 text-sm font-semibold text-zinc-800">{t("access.pagesTitle")}</h3>
                         <p className="mt-0.5 text-xs text-zinc-500">{t("access.pagesHint")}</p>

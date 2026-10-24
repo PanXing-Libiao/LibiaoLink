@@ -1,5 +1,6 @@
 import {
   GROUP_ACCESS_PAGE_KEYS,
+  type GroupAccessMemberScope,
   type GroupAccessPage,
   type GroupAccessProjectScope,
 } from "@libiaolink/contracts";
@@ -10,6 +11,8 @@ export interface GroupAccessRuleData {
   allowedPages: GroupAccessPage[];
   projectScope: GroupAccessProjectScope;
   projectIds: string[];
+  memberScope: GroupAccessMemberScope;
+  memberUserIds: string[];
 }
 
 export interface GroupAccessProfile {
@@ -19,6 +22,11 @@ export interface GroupAccessProfile {
   pages: GroupAccessPage[];
   /** null = 不额外收窄项目；数组（含空数组）= 群组白名单。 */
   projectIds: string[] | null;
+}
+
+/** 规则是否适用于该账号：all = 部门全体；selected = 仅勾选人员。 */
+export function ruleAppliesToMember(rule: GroupAccessRuleData, userId: string): boolean {
+  return rule.memberScope === "all" || rule.memberUserIds.includes(userId);
 }
 
 /** 管理员群组配置：逗号分隔，去空白、去重、保序。 */

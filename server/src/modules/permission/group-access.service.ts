@@ -128,10 +128,27 @@ export class GroupAccessService {
         throw new AppError("VALIDATION_FAILED", "项目不存在或已进入回收站，请刷新后重新选择");
       }
     }
+    const memberUserIds = input.memberScope === "selected" ? Array.from(new Set(input.memberUserIds)) : [];
+    if (memberUserIds.length > 0) {
+      const currentMemberIds = new Set(await this.repository.listGroupMemberIds(input.groupKey));
+      const unknownMemberIds = memberUserIds.filter((userId) => !currentMemberIds.has(userId));
+      if (unknownMemberIds.length > 0) {
+        throw new AppError("VALIDATION_FAILED", "所选人员已不在该部门，请刷新后重新选择");
+      }
+    }
     const groupName = input.groupName ?? before?.groupName ?? casdoorGroupName(input.groupKey) ?? input.groupKey;
     const allowedPages = Array.from(new Set(input.allowedPages));
     const at = new Date();
-    await this.repository.upsertGroupAccessRule(input.groupKey, groupName, allowedPages, input.projectScope, projectIds, at);
+    await this.repository.upsertGroupAccessRule(
+      input.groupKey,
+      groupName,
+      allowedPages,
+      input.projectScope,
+      projectIds,
+      input.memberScope,
+      memberUserIds,
+      at,
+    );
     await this.audit.recordStandalone({
       actorId,
       action: before === null ? "create" : "update",
@@ -143,6 +160,8 @@ export class GroupAccessService {
         allowedPages,
         projectScope: input.projectScope,
         projectIds,
+        memberScope: input.memberScope,
+        memberUserIds,
       },
     });
     this.permission.invalidate();
@@ -153,6 +172,8 @@ export class GroupAccessService {
         allowedPages,
         projectScope: input.projectScope,
         projectIds,
+        memberScope: input.memberScope,
+        memberUserIds,
         updatedAt: at.toISOString(),
       },
     };
@@ -187,6 +208,8 @@ function toRule(rule: GroupAccessRuleData, groupName: string, updatedAt: Date): 
     allowedPages: rule.allowedPages,
     projectScope: rule.projectScope,
     projectIds: rule.projectIds,
+    memberScope: rule.memberScope,
+    memberUserIds: rule.memberUserIds,
     updatedAt: updatedAt.toISOString(),
   };
 }
