@@ -2,8 +2,8 @@ import { Controller, Get, Query, UseGuards } from "@nestjs/common";
 import { AuditLogListQuerySchema, z } from "@libiaolink/contracts";
 import type { AuditLogListQuery, AuditLogListResponse } from "@libiaolink/contracts";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
-import { CsrfGuard, SessionGuard } from "../identity/index.js";
-import { GroupAccessGuard, ProjectAccessGuard, RequireAccessPage, RequirePermission } from "../permission/index.js";
+import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
+import { GroupAccessGuard, PermissionService, ProjectAccessGuard, RequireAccessPage, RequirePermission } from "../permission/index.js";
 import { AuditService } from "../audit/index.js";
 
 /**
@@ -14,12 +14,19 @@ import { AuditService } from "../audit/index.js";
 @UseGuards(SessionGuard, CsrfGuard, GroupAccessGuard, ProjectAccessGuard)
 @RequireAccessPage("audit")
 export class AuditLogsController {
-  constructor(private readonly audits: AuditService) {}
+  constructor(
+    private readonly audits: AuditService,
+    private readonly permission: PermissionService,
+  ) {}
 
-  /** 审计列表：occurredAt 降序（同毫秒按 id 降序）。 */
+  /** 审计列表：occurredAt 降序（同毫秒按 id 降序）；部门限制开启时按可见项目裁剪。 */
   @Get()
   @RequirePermission("audit.view")
-  list(@Query(new ZodValidationPipe(AuditLogListQuerySchema)) query: AuditLogListQuery): Promise<AuditLogListResponse> {
-    return this.audits.list(query);
+  async list(
+    @Query(new ZodValidationPipe(AuditLogListQuerySchema)) query: AuditLogListQuery,
+    @CurrentActorId() actorId: string,
+  ): Promise<AuditLogListResponse> {
+    const scope = await this.permission.projectScope(actorId);
+    return this.audits.list(query, scope.kind === "all" ? null : scope.ids);
   }
 }
