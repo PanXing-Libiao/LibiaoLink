@@ -107,6 +107,8 @@ export type ApiTaskTemplate = {
   name: string;
   stageKey: string;
   nodes: { nodeId: string; seq: number; title: string; titleEn: string | null }[];
+  createdBy: string | null;
+  createdByName: string | null;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -117,6 +119,8 @@ export type TemplateItem = {
   id: string;
   name: string;
   nodes: TaskNodeItem[];
+  createdBy: string | null;
+  createdByName: string | null;
   version: number;
 };
 
@@ -130,6 +134,8 @@ export function toTemplateItem(template: ApiTaskTemplate): TemplateItem {
       titleEn: node.titleEn ?? "",
       version: 0,
     })),
+    createdBy: template.createdBy,
+    createdByName: template.createdByName,
     version: template.version,
   };
 }

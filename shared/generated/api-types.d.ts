@@ -9527,6 +9527,8 @@ export interface components {
             groupAccessEnforced?: boolean;
             /** @description 当前账号是否可进入群组权限管理页 */
             groupAccessAdmin?: boolean;
+            /** @description 群组访问限制下当前账号是否只读；页面仍全部可见，但业务写接口一律 403 */
+            groupReadOnly?: boolean;
         };
         /** @description 统一错误信封（技术设计v0.2 §7.2） */
         ApiError: {
@@ -10692,7 +10694,7 @@ export interface components {
             projects: components["schemas"]["GroupAccessProject"][];
         };
         /**
-         * @description 可按群组收敛的页面：dashboard 仪表盘 / projects 项目空间 / templates 任务模板 / workspace 我的任务 / files 文件库 / audit 操作记录
+         * @description 页面键（旧客户端兼容）：dashboard / projects / templates / workspace / files / audit；群组规则恒放行全部页面
          * @enum {string}
          */
         GroupAccessPage: "dashboard" | "projects" | "templates" | "workspace" | "files" | "audit";
@@ -10703,14 +10705,15 @@ export interface components {
             name: string;
         };
         /**
-         * @description 群组项目范围：all 角色可见项目全放行 / selected 仅指定项目 / none 不可见任何项目
+         * @description 群组项目范围：all 角色可见项目全放行 / own 仅本人负责或参与的项目 / selected 仅指定项目 / none 不可见任何项目
          * @enum {string}
          */
-        GroupAccessProjectScope: "all" | "selected" | "none";
-        /** @description 群组访问规则（projectIds 仅项目 selected 时有值；memberUserIds 仅人员 selected 时有值） */
+        GroupAccessProjectScope: "all" | "own" | "selected" | "none";
+        /** @description 群组访问规则（只读；projectIds 仅项目 selected 时有值；memberUserIds 仅人员 selected 时有值） */
         GroupAccessRule: {
             groupKey: string;
             groupName: string;
+            /** @description 旧客户端兼容字段；恒返回全部页面 */
             allowedPages: components["schemas"]["GroupAccessPage"][];
             projectScope: components["schemas"]["GroupAccessProjectScope"];
             projectIds: components["schemas"]["Uuid"][];
@@ -10718,11 +10721,21 @@ export interface components {
             memberUserIds: components["schemas"]["Uuid"][];
             updatedAt: components["schemas"]["DateTime"];
         } | null;
-        /** @description 保存群组访问规则：页面集合 + 项目范围 + 指定项目 + 适用人员（selected 时生效） */
+        /** @description 保存群组访问规则：项目范围 + 指定项目 + 适用人员（selected 时生效）；allowedPages 兼容旧客户端且不再产生页面限制 */
         GroupAccessRuleInput: {
             /** @example libiaorobot.com/项目部 */
             groupKey: string;
             groupName?: string;
+            /**
+             * @default [
+             *       "dashboard",
+             *       "projects",
+             *       "templates",
+             *       "workspace",
+             *       "files",
+             *       "audit"
+             *     ]
+             */
             allowedPages: components["schemas"]["GroupAccessPage"][];
             projectScope: components["schemas"]["GroupAccessProjectScope"];
             /** @default [] */
@@ -12082,7 +12095,7 @@ export interface components {
          * @enum {string}
          */
         TaskTableColumnKey: "manager" | "owner" | "status" | "priority" | "onTime" | "deliverable" | "files" | "note" | "start" | "days" | "due" | "headcount" | "doneDate" | "change";
-        /** @description 任务模板（名称 + 阶段 + 节点顺序；A1-16 / A1-17 的落点） */
+        /** @description 任务模板（名称 + 阶段 + 节点顺序 + 填写人；A1-16 / A1-17 的落点） */
         TaskTemplate: {
             id: components["schemas"]["Uuid"];
             /**
@@ -12093,6 +12106,9 @@ export interface components {
             stageKey: components["schemas"]["StageKey"];
             /** @description 节点顺序 = 数组顺序；同一模板内按 nodeId 去重 */
             nodes: components["schemas"]["TaskTemplateNode"][];
+            createdBy: components["schemas"]["Uuid"] & (string | null);
+            /** @description 填写人姓名（users.display_name）；为空时界面显示系统 */
+            createdByName: string | null;
             version: components["schemas"]["Version"];
             createdAt: components["schemas"]["DateTime"];
             updatedAt: components["schemas"]["DateTime"];

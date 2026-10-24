@@ -366,7 +366,7 @@ function BoardEmpty({ title, text, onNew }: { title: string; text: string; onNew
  * 点卡片进编辑弹窗（PlanNoteEditor —— 便签底色整卡铺底 + 顶栏关闭 X / 7 色圆点 / 字体 Aa 分段器 + 大标题 / 记录区 + 分类胶囊 +
  * 底栏「更新于」+ 删除 + 保存）；完成 / 恢复 = 拖拽（Push 269：便签拖进「完成」区 / 「已完成」里拖回「全部便签」）。不做导出 / 导入（业务口径 2026-10-10「导出导入功能不要」）。
  */
-export function MyPlanBoard() {
+export function MyPlanBoard({ readOnly = false }: { readOnly?: boolean }) {
   const t = useT();
   const locale = useLocale();
   const [board, setBoard] = useState<PlanBoard | null>(null);
@@ -415,6 +415,10 @@ export function MyPlanBoard() {
         }
         const remote = prefs.myPlanBoard;
         revision.current = prefs.revisions?.myPlanBoard ?? 0;
+        if (readOnly) {
+          setBoard(remote.updatedAt === null ? seedPlanBoard() : { notes: remote.notes, categories: remote.categories, bg: planBoardBgOf(remote.bg).id });
+          return;
+        }
         const legacy = readLegacyPlanBoard();
         if (legacy !== null) {
           const shouldMigrate = remote.updatedAt === null || (remote.notes.length === 0 && legacy.notes.length > 0);
@@ -471,7 +475,7 @@ export function MyPlanBoard() {
     return () => {
       alive = false;
     };
-  }, [reloadToken]);
+  }, [reloadToken, readOnly]);
 
   useLiveRefresh(["preferences"], async () => {
     const prefs = await loadMyPreferences();
@@ -483,6 +487,9 @@ export function MyPlanBoard() {
 
   /** Failed queued writes remain dirty; only an explicit conflict decision advances their baseline. */
   const commit = (next: PlanBoard, okText?: string): Promise<boolean> => {
+    if (readOnly) {
+      return Promise.resolve(false);
+    }
     setBoard(next);
     setUnsaved(true);
     pendingSaves.current += 1;
@@ -770,12 +777,9 @@ export function MyPlanBoard() {
     >
       <div className="mx-auto w-full max-w-[1240px]">
         <div className="flex flex-wrap items-center gap-3">
-          <BackgroundSwitcher
-            value={board.bg}
-            onChange={handleSwitchBg}
-          />
+          {readOnly ? null : <BackgroundSwitcher value={board.bg} onChange={handleSwitchBg} />}
           <BoardSearch value={keyword} onChange={setKeyword} />
-          <span className="flex items-center gap-2">
+          {readOnly ? null : <span className="flex items-center gap-2">
             <button
               type="button"
               data-plan-new=""
@@ -788,7 +792,7 @@ export function MyPlanBoard() {
               <PlusIcon />
               {t("plan.newNote")}
             </button>
-          </span>
+          </span>}
         </div>
 
         <div className="mt-6 grid gap-6 lg:grid-cols-[252px_minmax(0,1fr)]">
@@ -877,13 +881,13 @@ export function MyPlanBoard() {
                     setDoneOnly(false);
                     setCategory(category === item ? null : item);
                   }}
-                  onDelete={() => {
+                  onDelete={readOnly ? undefined : () => {
                     requestDeleteCategory(item);
                   }}
                 />
               );
             })}
-            {addingCategory ? (
+            {readOnly ? null : addingCategory ? (
               <input
                 autoFocus
                 data-plan-category-new=""
@@ -954,7 +958,7 @@ export function MyPlanBoard() {
               <BoardEmpty
                 title={t("plan.empty.title")}
                 text={t("plan.empty.text")}
-                onNew={() => {
+                onNew={readOnly ? undefined : () => {
                   createdNoteId.current = null;
                   setEditor({ note: null });
                 }}
@@ -965,7 +969,7 @@ export function MyPlanBoard() {
               <BoardEmpty
                 title={t("plan.emptySearch.title")}
                 text={t("plan.emptySearch.text")}
-                onNew={() => {
+                onNew={readOnly ? undefined : () => {
                   createdNoteId.current = null;
                   setEditor({ note: null });
                 }}
@@ -979,13 +983,8 @@ export function MyPlanBoard() {
                       <PlanNoteCard
                         note={note}
                         lifted={lifted}
-                        onOpen={() => {
-                          if (Date.now() - suppressOpenAtRef.current < 350) {
-                            return;
-                          }
-                          setEditor({ note });
-                        }}
-                        onPointerDown={(event) => {
+                        onOpen={() => {}}
+                        onPointerDown={readOnly ? undefined : (event) => {
                           handleNotePointerDown(note, event);
                         }}
                       />

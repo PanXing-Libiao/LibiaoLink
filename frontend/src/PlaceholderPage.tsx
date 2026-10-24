@@ -45,6 +45,8 @@ type TemplateDraft = {
   name: string;
   /** 这份模板里已选的节点，顺序即模板里的顺序 */
   nodes: TemplateNode[];
+  createdBy: string | null;
+  createdByName: string | null;
   /** 上次「保存 / 加载」时的样子（服务端当前值；用来判断有没有未保存的改动） */
   saved: string;
   /** 乐观锁版本（服务端下发；保存 / 删除原样回传，过期 = 409 VERSION_CONFLICT） */
@@ -77,6 +79,8 @@ function toTemplateDraft(template: TemplateItem): TemplateDraft {
     id: template.id,
     name,
     nodes,
+    createdBy: template.createdBy,
+    createdByName: template.createdByName,
     saved: snapshotOf({ name, nodes }),
     version: template.version,
     baseline: { name, nodes: nodes.slice(), version: template.version },
@@ -1198,6 +1202,9 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
                             ) : null}
                           </span>
                         </div>
+                        <p data-template-creator={template.id} className="mt-1 truncate text-[11px] text-zinc-500" title={template.createdByName ?? t("tpl.creatorSystem")}>
+                          {t("tpl.creator", { name: template.createdByName ?? t("tpl.creatorSystem") })}
+                        </p>
                         {/* 提示行固定高度：出现 / 消失都不顶动下方列表（否则拖拽时会跟着抖）；
                             不拖拽时这一行留给「未保存 / 冲突」状态 + 「放弃改动」出路（Push 264 追订） */}
                         <div className="flex h-4 items-center gap-1.5 text-xs">

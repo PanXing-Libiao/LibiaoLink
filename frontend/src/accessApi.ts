@@ -2,13 +2,13 @@
 import { apiRequest, apiSend } from "./api";
 import type { GroupAccessPage } from "./permissions";
 
-export type GroupAccessProjectScope = "all" | "selected" | "none";
+export type GroupAccessProjectScope = "all" | "own" | "selected" | "none";
 export type GroupAccessMemberScope = "all" | "selected";
 
 export type GroupAccessRule = {
   groupKey: string;
   groupName: string;
-  allowedPages: GroupAccessPage[];
+  allowedPages?: GroupAccessPage[];
   projectScope: GroupAccessProjectScope;
   projectIds: string[];
   memberScope: GroupAccessMemberScope;
@@ -46,7 +46,6 @@ export type GroupAccessOverview = {
 export type GroupAccessRuleInput = {
   groupKey: string;
   groupName?: string;
-  allowedPages: GroupAccessPage[];
   projectScope: GroupAccessProjectScope;
   projectIds: string[];
   memberScope: GroupAccessMemberScope;

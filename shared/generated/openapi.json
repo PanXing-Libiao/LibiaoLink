@@ -158,6 +158,10 @@
           "groupAccessAdmin": {
             "type": "boolean",
             "description": "当前账号是否可进入群组权限管理页"
+          },
+          "groupReadOnly": {
+            "type": "boolean",
+            "description": "群组访问限制下当前账号是否只读；页面仍全部可见，但业务写接口一律 403"
           }
         },
         "required": [
@@ -4618,7 +4622,7 @@
           "files",
           "audit"
         ],
-        "description": "可按群组收敛的页面：dashboard 仪表盘 / projects 项目空间 / templates 任务模板 / workspace 我的任务 / files 文件库 / audit 操作记录"
+        "description": "页面键（旧客户端兼容）：dashboard / projects / templates / workspace / files / audit；群组规则恒放行全部页面"
       },
       "GroupAccessProject": {
         "type": "object",
@@ -4644,10 +4648,11 @@
         "type": "string",
         "enum": [
           "all",
+          "own",
           "selected",
           "none"
         ],
-        "description": "群组项目范围：all 角色可见项目全放行 / selected 仅指定项目 / none 不可见任何项目"
+        "description": "群组项目范围：all 角色可见项目全放行 / own 仅本人负责或参与的项目 / selected 仅指定项目 / none 不可见任何项目"
       },
       "GroupAccessRule": {
         "type": [
@@ -4665,7 +4670,8 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/GroupAccessPage"
-            }
+            },
+            "description": "旧客户端兼容字段；恒返回全部页面"
           },
           "projectScope": {
             "$ref": "#/components/schemas/GroupAccessProjectScope"
@@ -4699,7 +4705,7 @@
           "memberUserIds",
           "updatedAt"
         ],
-        "description": "群组访问规则（projectIds 仅项目 selected 时有值；memberUserIds 仅人员 selected 时有值）"
+        "description": "群组访问规则（只读；projectIds 仅项目 selected 时有值；memberUserIds 仅人员 selected 时有值）"
       },
       "GroupAccessRuleInput": {
         "type": "object",
@@ -4720,7 +4726,15 @@
             "items": {
               "$ref": "#/components/schemas/GroupAccessPage"
             },
-            "maxItems": 6
+            "maxItems": 6,
+            "default": [
+              "dashboard",
+              "projects",
+              "templates",
+              "workspace",
+              "files",
+              "audit"
+            ]
           },
           "projectScope": {
             "$ref": "#/components/schemas/GroupAccessProjectScope"
@@ -4755,10 +4769,9 @@
         },
         "required": [
           "groupKey",
-          "allowedPages",
           "projectScope"
         ],
-        "description": "保存群组访问规则：页面集合 + 项目范围 + 指定项目 + 适用人员（selected 时生效）"
+        "description": "保存群组访问规则：项目范围 + 指定项目 + 适用人员（selected 时生效）；allowedPages 兼容旧客户端且不再产生页面限制"
       },
       "GroupAccessRuleResponse": {
         "type": "object",
@@ -10082,6 +10095,27 @@
             },
             "description": "节点顺序 = 数组顺序；同一模板内按 nodeId 去重"
           },
+          "createdBy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "填写人 user id；存量种子 / 系统导入为空"
+              }
+            ]
+          },
+          "createdByName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "填写人姓名（users.display_name）；为空时界面显示系统"
+          },
           "version": {
             "$ref": "#/components/schemas/Version"
           },
@@ -10097,11 +10131,13 @@
           "name",
           "stageKey",
           "nodes",
+          "createdBy",
+          "createdByName",
           "version",
           "createdAt",
           "updatedAt"
         ],
-        "description": "任务模板（名称 + 阶段 + 节点顺序；A1-16 / A1-17 的落点）"
+        "description": "任务模板（名称 + 阶段 + 节点顺序 + 填写人；A1-16 / A1-17 的落点）"
       },
       "TaskTemplateCreateBody": {
         "type": "object",

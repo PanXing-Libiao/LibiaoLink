@@ -183,7 +183,7 @@ export class TemplateService {
     const name = normalizeTemplateName(body.name);
     const created = await this.database.db.transaction(async (tx) => {
       await this.assertNodesSameStage(body.stageKey, body.nodeIds, tx);
-      const row = await this.templates.insert({ name, stageKey: body.stageKey }, tx);
+      const row = await this.templates.insert({ name, stageKey: body.stageKey, createdBy: actorId }, tx);
       await this.templates.replaceNodes(row.id, body.nodeIds, tx);
       const refs = await this.templates.nodeRefsOf([row.id], tx);
       await this.audit.record(tx, {
@@ -197,7 +197,8 @@ export class TemplateService {
       });
       return { row, refs };
     });
-    return toTemplateContract(created.row, created.refs);
+    const persisted = await this.templates.findById(created.row.id);
+    return toTemplateContract(persisted ?? created.row, created.refs);
   }
 
   /**
@@ -239,7 +240,8 @@ export class TemplateService {
       });
       return { row, refs };
     });
-    return toTemplateContract(updated.row, updated.refs);
+    const persisted = await this.templates.findById(updated.row.id);
+    return toTemplateContract(persisted ?? updated.row, updated.refs);
   }
 
   /**
@@ -334,6 +336,8 @@ function toTemplateContract(row: TaskTemplateRow, refs: TaskTemplateNodeRef[]): 
       title: ref.title,
       titleEn: ref.titleEn,
     })),
+    createdBy: row.createdBy,
+    createdByName: row.createdByName,
     version: row.version,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

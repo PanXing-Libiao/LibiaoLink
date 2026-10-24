@@ -73,11 +73,13 @@ export const TaskTemplateSchema = z
     name: z.string().openapi({ example: "英国订单", description: "模板名称（列头可直接改名）" }),
     stageKey: StageKeySchema,
     nodes: z.array(TaskTemplateNodeSchema).openapi({ description: "节点顺序 = 数组顺序；同一模板内按 nodeId 去重" }),
+    createdBy: UuidSchema.nullable().openapi({ description: "填写人 user id；存量种子 / 系统导入为空" }),
+    createdByName: z.string().nullable().openapi({ description: "填写人姓名（users.display_name）；为空时界面显示系统" }),
     version: VersionSchema,
     createdAt: DateTimeSchema,
     updatedAt: DateTimeSchema,
   })
-  .openapi("TaskTemplate", { description: "任务模板（名称 + 阶段 + 节点顺序；A1-16 / A1-17 的落点）" });
+  .openapi("TaskTemplate", { description: "任务模板（名称 + 阶段 + 节点顺序 + 填写人；A1-16 / A1-17 的落点）" });
 
 export const TaskTemplateListQuerySchema = z.object({
   stage: StageKeySchema.optional().openapi({ description: "按阶段过滤；缺省 = 全部阶段" }),

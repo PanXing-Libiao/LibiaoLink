@@ -3,24 +3,25 @@ import { z } from "../zod.ts";
 import { UserStatusSchema } from "./users.ts";
 
 /**
- * 部门（Casdoor 群组）访问规则（2026-10-23；2026-10-24 权限页按通讯录展示）：
- * 部门键统一为 owner/name（例如 libiaorobot.com/项目部），页面权限按部门并集，
- * 项目权限按规则并集后再与角色可见范围取交集。规则不存在 = 该部门不额外放行；
- * GROUP_ACCESS_ENFORCED=true 时未配置部门会落到空集合。
+ * 部门（Casdoor 群组）访问规则（2026-10-23；2026-10-24 调整为只读数据范围）：
+ * 部门键统一为 owner/name（例如 libiaorobot.com/项目部）。群组限制开启后，所有登录账号都可以
+ * 进入页面，但受部门规则约束的账号一律只读；项目范围按规则并集（all / own / selected / none）
+ * 再与角色可见范围取交集。allowedPages 仅保留为旧客户端兼容字段，裁决时恒为全部页面。
  */
+/** 页面键保留用于旧客户端兼容；2026-10-24 起群组规则不再限制页面入口。 */
 export const GROUP_ACCESS_PAGE_KEYS = ["dashboard", "projects", "templates", "workspace", "files", "audit"] as const;
 
 export const GroupAccessPageSchema = z
   .enum(GROUP_ACCESS_PAGE_KEYS)
-  .openapi("GroupAccessPage", { description: "可按群组收敛的页面：dashboard 仪表盘 / projects 项目空间 / templates 任务模板 / workspace 我的任务 / files 文件库 / audit 操作记录" });
+  .openapi("GroupAccessPage", { description: "页面键（旧客户端兼容）：dashboard / projects / templates / workspace / files / audit；群组规则恒放行全部页面" });
 
 export type GroupAccessPage = z.infer<typeof GroupAccessPageSchema>;
 
-export const GROUP_ACCESS_PROJECT_SCOPES = ["all", "selected", "none"] as const;
+export const GROUP_ACCESS_PROJECT_SCOPES = ["all", "own", "selected", "none"] as const;
 
 export const GroupAccessProjectScopeSchema = z
   .enum(GROUP_ACCESS_PROJECT_SCOPES)
-  .openapi("GroupAccessProjectScope", { description: "群组项目范围：all 角色可见项目全放行 / selected 仅指定项目 / none 不可见任何项目" });
+  .openapi("GroupAccessProjectScope", { description: "群组项目范围：all 角色可见项目全放行 / own 仅本人负责或参与的项目 / selected 仅指定项目 / none 不可见任何项目" });
 
 export type GroupAccessProjectScope = z.infer<typeof GroupAccessProjectScopeSchema>;
 
@@ -49,13 +50,13 @@ export const GroupAccessRuleInputSchema = z
   .object({
     groupKey: z.string().trim().min(1).max(200).openapi({ example: "libiaorobot.com/项目部" }),
     groupName: z.string().trim().min(1).max(200).optional(),
-    allowedPages: z.array(GroupAccessPageSchema).max(GROUP_ACCESS_PAGE_KEYS.length),
+    allowedPages: z.array(GroupAccessPageSchema).max(GROUP_ACCESS_PAGE_KEYS.length).optional().default([...GROUP_ACCESS_PAGE_KEYS]),
     projectScope: GroupAccessProjectScopeSchema,
     projectIds: z.array(UuidSchema).max(2000).default([]),
     memberScope: GroupAccessMemberScopeSchema.default("all").openapi({ description: "all = 全部门；selected = 仅 memberUserIds" }),
     memberUserIds: z.array(UuidSchema).max(2000).default([]).openapi({ description: "selected 时生效的直属人员 user id" }),
   })
-  .openapi("GroupAccessRuleInput", { description: "保存群组访问规则：页面集合 + 项目范围 + 指定项目 + 适用人员（selected 时生效）" });
+  .openapi("GroupAccessRuleInput", { description: "保存群组访问规则：项目范围 + 指定项目 + 适用人员（selected 时生效）；allowedPages 兼容旧客户端且不再产生页面限制" });
 
 export type GroupAccessRuleInput = z.infer<typeof GroupAccessRuleInputSchema>;
 
@@ -63,14 +64,14 @@ export const GroupAccessRuleSchema = z
   .object({
     groupKey: z.string(),
     groupName: z.string(),
-    allowedPages: z.array(GroupAccessPageSchema),
+    allowedPages: z.array(GroupAccessPageSchema).openapi({ description: "旧客户端兼容字段；恒返回全部页面" }),
     projectScope: GroupAccessProjectScopeSchema,
     projectIds: z.array(UuidSchema),
     memberScope: GroupAccessMemberScopeSchema,
     memberUserIds: z.array(UuidSchema),
     updatedAt: DateTimeSchema,
   })
-  .openapi("GroupAccessRule", { description: "群组访问规则（projectIds 仅项目 selected 时有值；memberUserIds 仅人员 selected 时有值）" });
+  .openapi("GroupAccessRule", { description: "群组访问规则（只读；projectIds 仅项目 selected 时有值；memberUserIds 仅人员 selected 时有值）" });
 
 export type GroupAccessRule = z.infer<typeof GroupAccessRuleSchema>;
 

@@ -38,7 +38,7 @@ export const userGroupMemberships = pgTable(
   ],
 );
 
-/** group_access_rules（0068）：一个 Casdoor 群组一行；allowed_pages 与项目范围共同裁定。 */
+/** group_access_rules（0068 · 0070）：一个 Casdoor 群组一行；allowed_pages 为旧客户端兼容字段（裁决恒全放行），实际只按项目范围与人员范围裁剪数据。 */
 export const groupAccessRules = pgTable(
   "group_access_rules",
   {

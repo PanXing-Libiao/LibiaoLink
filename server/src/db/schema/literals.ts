@@ -129,7 +129,7 @@ export const NOTIFICATION_STATUS_KEYS = ["unread", "read", "handled"] as const;
 export const GROUP_ACCESS_PAGE_KEYS = ["dashboard", "projects", "templates", "workspace", "files", "audit"] as const;
 
 /** 群组项目范围（group_access_rules.project_scope）：全部 / 指定 / 不可见。 */
-export const GROUP_ACCESS_PROJECT_SCOPE_KEYS = ["all", "selected", "none"] as const;
+export const GROUP_ACCESS_PROJECT_SCOPE_KEYS = ["all", "own", "selected", "none"] as const;
 
 /** 部门规则适用人员（group_access_rules.member_scope）：全部直属人员 / 仅勾选人员。 */
 export const GROUP_ACCESS_MEMBER_SCOPE_KEYS = ["all", "selected"] as const;

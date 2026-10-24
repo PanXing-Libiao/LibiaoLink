@@ -12,7 +12,7 @@ import {
 import { AppHeader } from "./components/AppHeader";
 import { Toast, type ToastKind } from "./components/Toast";
 import { useT, type TextKey } from "./i18n";
-import { GROUP_ACCESS_PAGE_KEYS, loadMyPermissions, type GroupAccessPage } from "./permissions";
+import { loadMyPermissions } from "./permissions";
 import type { MeResponse } from "./types";
 
 type LoadState =
@@ -24,17 +24,9 @@ type Notice = { kind: ToastKind; text: string };
 type Translate = (key: TextKey, params?: Record<string, string | number>) => string;
 type DepartmentTreeNode = { group: GroupAccessGroup; children: DepartmentTreeNode[] };
 
-const PAGE_LABEL_KEYS: Record<GroupAccessPage, TextKey> = {
-  dashboard: "access.page.dashboard",
-  projects: "access.page.projects",
-  templates: "access.page.templates",
-  workspace: "access.page.workspace",
-  files: "access.page.files",
-  audit: "access.page.audit",
-};
-
 const SCOPE_OPTIONS: Array<{ value: GroupAccessProjectScope; labelKey: TextKey }> = [
   { value: "all", labelKey: "access.scope.all" },
+  { value: "own", labelKey: "access.scope.own" },
   { value: "selected", labelKey: "access.scope.selected" },
   { value: "none", labelKey: "access.scope.none" },
 ];
@@ -296,7 +288,6 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
   const t = useT();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [allowedPages, setAllowedPages] = useState<GroupAccessPage[]>([]);
   const [projectScope, setProjectScope] = useState<GroupAccessProjectScope>("none");
   const [projectIds, setProjectIds] = useState<string[]>([]);
   const [memberScope, setMemberScope] = useState<GroupAccessMemberScope>("all");
@@ -304,7 +295,6 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
   const [projectQuery, setProjectQuery] = useState("");
   const [directoryQuery, setDirectoryQuery] = useState("");
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set());
-  const [manualKey, setManualKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -370,7 +360,6 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
   const projects = data === null ? [] : query === "" ? data.projects : data.projects.filter((project) => (project.code + " " + project.name).toLowerCase().includes(query));
 
   function applyGroup(group: GroupAccessGroup): void {
-    setAllowedPages(group.rule?.allowedPages ?? []);
     setProjectScope(group.rule?.projectScope ?? "none");
     setProjectIds(group.rule?.projectIds ?? []);
     const currentMemberIds = new Set(group.members.map((member) => member.userId));
@@ -396,23 +385,6 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
 
   function toggleAllExpanded(): void {
     setExpandedKeys(allExpanded ? new Set() : new Set(allDepartmentKeys));
-  }
-
-  function openManualGroup(): void {
-    const key = manualKey.trim();
-    if (key === "") return;
-    setSelectedKey(key);
-    setAllowedPages([]);
-    setProjectScope("none");
-    setProjectIds([]);
-    setMemberScope("all");
-    setMemberUserIds([]);
-    setProjectQuery("");
-    setManualKey("");
-  }
-
-  function togglePage(page: GroupAccessPage): void {
-    setAllowedPages((current) => (current.includes(page) ? current.filter((item) => item !== page) : current.concat(page)));
   }
 
   function toggleProject(projectId: string): void {
@@ -449,7 +421,6 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
     try {
       await saveGroupAccessRule({
         groupKey: selectedKey,
-        allowedPages,
         projectScope,
         projectIds: projectScope === "selected" ? projectIds : [],
         memberScope,
@@ -473,7 +444,6 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
       await deleteGroupAccessRule(selectedKey);
       setNotice({ kind: "ok", text: t("access.deleted") });
       setSelectedKey(null);
-      setAllowedPages([]);
       setProjectScope("none");
       setProjectIds([]);
       setMemberScope("all");
@@ -564,24 +534,6 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
                       />
                     )}
                   </div>
-
-                  <details className="border-t border-zinc-200 px-4 py-3">
-                    <summary className="cursor-pointer list-none text-[11px] font-medium text-zinc-500 hover:text-zinc-700">
-                      {t("access.manualTitle")}
-                    </summary>
-                    <p className="mt-1 text-[11px] text-zinc-400">{t("access.manualHint")}</p>
-                    <label className="mt-2 block text-[11px] text-zinc-500" htmlFor="access-manual-group">{t("access.addGroup")}</label>
-                    <input
-                      id="access-manual-group"
-                      value={manualKey}
-                      onChange={(event) => { setManualKey(event.target.value); }}
-                      placeholder={t("access.addGroupPlaceholder")}
-                      className="mt-1 w-full rounded-lg border border-zinc-200 px-2.5 py-2 text-xs outline-none focus:border-zinc-400"
-                    />
-                    <button type="button" onClick={openManualGroup} className="mt-2 w-full rounded-lg bg-zinc-100 px-2.5 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-200">
-                      {t("access.add")}
-                    </button>
-                  </details>
                 </aside>
 
                 <section className="space-y-4">
@@ -601,7 +553,7 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
                             <div className="min-w-0">
                               <h2 className="truncate text-base font-semibold text-zinc-900">{selectedGroup?.groupName ?? selectedKey}</h2>
                               <p className="mt-0.5 truncate text-[11px] text-zinc-400">
-                                {selectedPath.length > 0 ? selectedPath.join(" / ") : t("access.manualDepartment")}
+                                {selectedPath.length > 0 ? selectedPath.join(" / ") : selectedKey}
                               </p>
                               {selectedGroup === null ? null : (
                                 <p className="mt-1 text-[11px] text-zinc-500">{t("access.members", { n: selectedGroup.memberCount })}</p>
@@ -651,21 +603,14 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
                         {memberScope === "selected" && selectedMemberCount === 0 && selectedGroupMembers.length > 0 ? (
                           <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">{t("access.memberSelectionEmpty")}</p>
                         ) : null}
-
-                        <h3 className="mt-5 text-sm font-semibold text-zinc-800">{t("access.pagesTitle")}</h3>
-                        <p className="mt-0.5 text-xs text-zinc-500">{t("access.pagesHint")}</p>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                          {GROUP_ACCESS_PAGE_KEYS.map((page) => (
-                            <label key={page} className="flex cursor-pointer items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50">
-                              <input type="checkbox" checked={allowedPages.includes(page)} onChange={() => { togglePage(page); }} className="h-4 w-4 accent-zinc-900" />
-                              {t(PAGE_LABEL_KEYS[page])}
-                            </label>
-                          ))}
+                        <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
+                          <p className="font-medium">{t("access.readOnlyTitle")}</p>
+                          <p className="mt-0.5 leading-5">{t("access.readOnlyHint")}</p>
                         </div>
 
                         <h3 className="mt-6 text-sm font-semibold text-zinc-800">{t("access.projectsTitle")}</h3>
                         <p className="mt-0.5 text-xs text-zinc-500">{t("access.projectsHint")}</p>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                           {SCOPE_OPTIONS.map((option) => (
                             <label key={option.value} className="flex cursor-pointer items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50">
                               <input type="radio" name="access-project-scope" checked={projectScope === option.value} onChange={() => { setProjectScope(option.value); }} className="h-4 w-4 accent-zinc-900" />
