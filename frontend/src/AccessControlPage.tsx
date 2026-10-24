@@ -564,7 +564,7 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
                           {t("access.adminSummary", { n: admins.length })}
                         </span>
                       </div>
-                      <div className="mt-2 max-h-[620px] space-y-1 overflow-auto">
+                      <div className="scrollbar-hidden mt-2 max-h-[620px] space-y-1 overflow-auto">
                         {admins.length === 0 ? (
                           <p className="rounded-lg bg-white px-2.5 py-2 text-center text-[11px] text-zinc-400">{t("access.adminEmpty")}</p>
                         ) : admins.map((admin) => (
@@ -629,7 +629,7 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
                       </label>
                     </div>
 
-                    <div className="max-h-[620px] overflow-auto p-2">
+                    <div className="scrollbar-hidden max-h-[620px] overflow-auto p-2">
                       {filteredTree.length === 0 ? (
                         <p className="px-2 py-6 text-center text-xs text-zinc-400">
                           {normalizedDirectoryQuery === "" ? t("access.noObservedGroups") : t("access.directoryNoMatch")}
@@ -721,11 +721,6 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
                         {memberScope === "selected" && selectedMemberCount === 0 && selectedGroupMembers.length > 0 ? (
                           <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">{t("access.memberSelectionEmpty")}</p>
                         ) : null}
-                        <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
-                          <p className="font-medium">{t("access.readOnlyTitle")}</p>
-                          <p className="mt-0.5 leading-5">{t("access.readOnlyHint")}</p>
-                        </div>
-
                         <h3 className="mt-6 text-sm font-semibold text-zinc-800">{t("access.projectsTitle")}</h3>
                         <p className="mt-0.5 text-xs text-zinc-500">{t("access.projectsHint")}</p>
                         <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
@@ -748,7 +743,7 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
                               />
                               <span className="text-xs text-zinc-500">{t("access.selectedCount", { n: projectIds.length })}</span>
                             </div>
-                            <div className="max-h-64 overflow-auto p-2">
+                            <div className="scrollbar-hidden max-h-64 overflow-auto p-2">
                               {projects.length === 0 ? <p className="px-2 py-3 text-xs text-zinc-500">{t("access.noProjects")}</p> : null}
                               {projects.map((project) => (
                                 <label key={project.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50">

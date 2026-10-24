@@ -1,5 +1,11 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
+> **2026-10-24 18:43 权限页滚动条隐藏、只读提示下架与任务模板管理员门禁（前端-only，已部署测试机 · PR 待建，生产未部署）**：按业务口径「滚动条做成隐藏的 然后图二的话不显示 任务模板也不可见没有权限的话」，权限页三处滚动容器改用 `scrollbar-hidden`（保留滚轮 / 触控滚动、隐藏原生滚动条），右侧黄色「部门访问为只读」提示整体下架；任务模板改为系统管理员专属，顶部导航与 `#/templates` 直链共用 `groupAccessAdmin` 门禁。普通账号仍保留仪表盘 / 项目空间 / 我的任务入口，拦截页文案改为「当前账号无权访问此页面」并同步中 / 英 / 日 / 韩。
+>
+> 终版发布包 `access-template-gate-20261024-1843.tar.gz`（14,880,839 B · SHA-256 `bd7e8421b4274483d0be48298aa35a6aee54208b4108ff8a1b1180f882343da2`）上传并核对哈希；staging 386 文件，index / JS / CSS 与本地一致并已清理。部署前原始前端备份为 `/srv/data/backups/access-template-gate-20261024-1841/frontend-dist-before.tar.gz`（SHA-256 `4368443e...`），终版前再次备份至 `/srv/data/backups/access-template-gate-20261024-1843/frontend-dist-before.tar.gz`（SHA-256 `e1b37866...`）。终版以 rsync 原地更新，保持 web 容器的 bind mount；首次整目录替换曾使运行中的 web 挂旧 inode 返回 404，`docker restart libiaolink-web` 后恢复 healthy，终版未再重启。未改 server / database / compose / `server.env` / Secret / 依赖。公网 index / JS / CSS SHA-256 分别为 `8389706c...` / `ee28e81e...` / `2ed23e5b...`。
+>
+> 真实账号验收：`panxing` 的 `groupAccessAdmin=true`，顶部保留任务模板且 `#/templates` 可达；`wmj` 的 `groupAccessAdmin=false`，导航仅仪表盘 / 项目空间 / 我的任务、直链任务模板落 403，模板内容 DOM 0；管理员权限页无黄色提示，两个滚动容器 computed `scrollbar-width: none` 且 WebKit `display: none`，browser exceptions / console errors 0。8 容器 healthy，`/healthz` 正常、`/readyz` 200，`GROUP_ACCESS_ENFORCED=false` 未改；生产未部署。
+
 > **2026-10-24 18:23 权限页改为独立三列，系统管理员移到真正最左一列（前端-only，已部署测试机 · PR [#616](https://github.com/PanXing-Libiao/LibiaoLink/pull/616)，生产未部署）**：按业务追订「我让你放在最左侧的空白页面，不是现在的位置」，系统管理员不再叠在部门通讯录顶部，而是独立第一列；宽屏顺序固定为「系统管理员 → 部门通讯录 → 规则详情」，`lg` 为两列、窄屏纵向，页面最大宽度放宽到 `screen-2xl`。人员行「设为管理员 / 取消管理员」与管理员增删接口保持不变。
 >
 > 前端发布包 `access-admins-left-column-20261024-1825.tar.gz`（14,882,998 B · SHA-256 `2ea176b5f1dae463338831d411a162a8abe4a2a82012cc4499b14b80835d3d48`）上传并核对哈希；staging 386 文件，index / JS / CSS 与本地一致并已清理。部署前 `/opt/libiaolink/frontend/dist` 备份至 `/srv/data/backups/access-admins-left-column-20261024-1825/frontend-dist-before.tar.gz`（SHA-256 `bc65a1ec...`）；仅替换前端静态目录，未改 server / shared / database / compose / `server.env` / Secret / 依赖，未重启容器。公网 index / JS / CSS SHA-256 分别为 `17add78f...` / `eb3e1483...` / `2ed23e5b...`。

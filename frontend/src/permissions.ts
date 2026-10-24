@@ -82,9 +82,11 @@ export function hasPermission(permissions: MyPermissions | null, key: string): b
 }
 
 /**
- * 页面是否放行：2026-10-24 起群组规则不再限制页面入口，所有登录账号都可进入；
- * 保留签名供现有路由与导航复用，服务端数据范围与只读裁决仍是最终边界。
+ * 页面是否放行：部门规则不再限制业务页面入口；
+ * 任务模板属于系统维护配置，仅系统管理员可见（导航与直链同一口径）。
+ * 服务端数据范围与只读裁决仍是最终边界。
  */
-export function hasPageAccess(_permissions: MyPermissions | null, _page: GroupAccessPage): boolean {
+export function hasPageAccess(permissions: MyPermissions | null, page: GroupAccessPage): boolean {
+  if (page === "templates") return permissions?.groupAccessAdmin === true;
   return true;
 }
