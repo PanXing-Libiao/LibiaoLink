@@ -1,10 +1,8 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
-> **2026-10-24 19:01 权限页新增「规则配置 / 权限看板」切换（前端-only，已部署测试机，生产未部署）**：按业务口径「做一个切换按钮 切换后是权限看板可以清晰的看到权限分配」，权限页标题区新增两段式切换，默认「规则配置」；权限看板复用 `GET /api/v1/access`，展示部门总数、已配置规则、规则适用人员、系统管理员、项目范围分布、管理员名单和全部部门规则明细。明细含部门路径、直属人数、状态、适用人员、项目范围、更新时间与查看规则入口；指定人员按当前直属成员求交集，未配置部门明确默认无项目数据。统计口径是部门规则范围，实际数据仍与角色权限取交集。无接口、契约、DDL、环境变量改动。
+> **2026-10-24 19:15 权限看板改动取消并回滚测试机（PR [#620](https://github.com/PanXing-Libiao/LibiaoLink/pull/620) 已关闭，未合并，生产未部署）**：按业务口径「取消这个数据看板的改动」，前端权限页恢复为发布前版本，不再提供「规则配置 / 权限看板」切换、看板指标、范围分布与分配明细；本次改动未进入 `main`。
 >
-> 发布包 `access-dashboard-20261024-1901.tar.gz`（14,887,634 B · SHA-256 `a81618c442b8471435c9276e71110802c8965c7431eb1e9ea1441b7c56c897ef`）上传并核对哈希；staging 386 文件，index / JS / CSS 与本地一致并已清理。部署前 `/opt/libiaolink/frontend/dist` 备份为 `/srv/data/backups/frontend-before-access-dashboard-20261024-1901.tar.gz`（14,890,045 B · SHA-256 `978bb7ef6ce9b92c25f7733e6dc0314052a83bdc2de01611fc407ba04f009352`）。以 rsync 原地更新，未重启容器；未改 server / shared / database / compose / `server.env` / Secret / 依赖。公网 index / JS / CSS SHA-256 分别为 `f55b9a17f9c943073a7d9c052f44a87dcc7c7da8720405d9f752e8999150796f` / `41852cdd659a99601a041f310bc0f666333706e4c2c19827bda12440e25645f7` / `31880f6bc8281f30122e0ba7878391319a35f15b284acd776a2792b89c436947`。
->
-> 真实管理员 `panxing` 浏览器验收：默认规则视图，切换后 14 / 14 个部门进入看板；接口与页面均为 1 个已配置规则、13 个未配置、6 个项目、1 名系统管理员；搜索区域与「查看规则」回到对应部门正常；1440 / 900 / 390 看板内容无横向溢出（390 为权限页内容口径），browser exceptions / console errors 0，临时会话残留 0。8 个容器 healthy，`/healthz` / `/readyz` 正常，`GROUP_ACCESS_ENFORCED=false` 未改。PR 待建，CI 待回填；生产未部署。
+> 回滚使用部署前备份 `/srv/data/backups/frontend-before-access-dashboard-20261024-1901.tar.gz`（14,890,045 B · SHA-256 `978bb7ef6ce9b92c25f7733e6dc0314052a83bdc2de01611fc407ba04f009352`），staging 386 文件后以 rsync 原地更新，未重启容器。公网 index / JS / CSS SHA-256 恢复为 `8389706cc76032e3281582e3a80b5fda9c01d6fd59ed3590ea039b2332a19434` / `ee28e81e5fcfa5eb0e8819e4a58a4fd3c6917c2267409b4456d64bfd09e2473e` / `2ed23e5b17fd827b64f619b04e4eb7f33421ab5367cd711e6e8cf42a6d14e779`；线上 JS「权限看板 / 项目范围分布」均为 0 命中。8 个容器 healthy，`/healthz` / `/readyz` 正常，`GROUP_ACCESS_ENFORCED=false` 未改。回滚 staging 已清理，发布前备份与看板发布包保留。
 
 > **2026-10-24 18:43 权限页滚动条隐藏、只读提示下架与任务模板管理员门禁（前端-only，已部署测试机 · PR [#618](https://github.com/PanXing-Libiao/LibiaoLink/pull/618)，生产未部署）**：按业务口径「滚动条做成隐藏的 然后图二的话不显示 任务模板也不可见没有权限的话」，权限页三处滚动容器改用 `scrollbar-hidden`（保留滚轮 / 触控滚动、隐藏原生滚动条），右侧黄色「部门访问为只读」提示整体下架；任务模板改为系统管理员专属，顶部导航与 `#/templates` 直链共用 `groupAccessAdmin` 门禁。普通账号仍保留仪表盘 / 项目空间 / 我的任务入口，拦截页文案改为「当前账号无权访问此页面」并同步中 / 英 / 日 / 韩。
 >

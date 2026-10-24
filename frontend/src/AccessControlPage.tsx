@@ -12,7 +12,6 @@ import {
   type GroupAccessOverview,
   type GroupAccessProjectScope,
 } from "./accessApi";
-import { AccessDashboard } from "./AccessDashboard";
 import { AppHeader } from "./components/AppHeader";
 import { Toast, type ToastKind } from "./components/Toast";
 import { useT, type TextKey } from "./i18n";
@@ -25,7 +24,6 @@ type LoadState =
   | { kind: "error"; message: string };
 
 type Notice = { kind: ToastKind; text: string };
-type AccessView = "rules" | "dashboard";
 type Translate = (key: TextKey, params?: Record<string, string | number>) => string;
 type DepartmentTreeNode = { group: GroupAccessGroup; children: DepartmentTreeNode[] };
 
@@ -332,7 +330,6 @@ function DepartmentTree({
 export function AccessControlPage({ me }: { me: MeResponse }) {
   const t = useT();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
-  const [accessView, setAccessView] = useState<AccessView>("rules");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [projectScope, setProjectScope] = useState<GroupAccessProjectScope>("none");
   const [projectIds, setProjectIds] = useState<string[]>([]);
@@ -532,39 +529,10 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
     <>
       <AppHeader me={me} />
       <main className="w-full px-4 pb-10 pt-3 sm:px-6">
-        <div data-access-control="" data-access-view={accessView} className="mx-auto w-full max-w-screen-2xl space-y-4">
-          <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0">
-              <h1 className="text-lg font-semibold text-zinc-900">{t("access.title")}</h1>
-              <p className="mt-0.5 text-xs text-zinc-500">{t("access.subtitle")}</p>
-            </div>
-            <div
-              data-access-view-toggle=""
-              role="tablist"
-              aria-label={t("access.viewAria")}
-              className="inline-flex w-full shrink-0 rounded-xl border border-zinc-200 bg-white p-1 shadow-sm sm:w-auto"
-            >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={accessView === "rules"}
-                data-access-view="rules"
-                onClick={() => { setAccessView("rules"); }}
-                className={"flex-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors sm:flex-none " + (accessView === "rules" ? "bg-zinc-900 text-white shadow-sm" : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800")}
-              >
-                {t("access.viewRules")}
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={accessView === "dashboard"}
-                data-access-view="dashboard"
-                onClick={() => { setAccessView("dashboard"); }}
-                className={"flex-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors sm:flex-none " + (accessView === "dashboard" ? "bg-zinc-900 text-white shadow-sm" : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800")}
-              >
-                {t("access.viewDashboard")}
-              </button>
-            </div>
+        <div data-access-control="" className="mx-auto w-full max-w-screen-2xl space-y-4">
+          <header>
+            <h1 className="text-lg font-semibold text-zinc-900">{t("access.title")}</h1>
+            <p className="mt-0.5 text-xs text-zinc-500">{t("access.subtitle")}</p>
           </header>
 
           {state.kind === "loading" ? <p className="rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-500">{t("access.loading")}</p> : null}
@@ -577,15 +545,6 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
                 <p className="mt-1">{t("access.currentGroups")}: {currentDepartmentNames.length === 0 ? t("access.noGroups") : currentDepartmentNames.join(" · ")}</p>
               </section>
 
-              {accessView === "dashboard" ? (
-                <AccessDashboard
-                  data={data}
-                  onOpenGroup={(group) => {
-                    setAccessView("rules");
-                    openGroup(group);
-                  }}
-                />
-              ) : (
               <div className="grid gap-4 xl:grid-cols-[minmax(220px,260px)_minmax(300px,360px)_minmax(0,1fr)]">
                 <div className="grid gap-4 lg:grid-cols-[minmax(300px,360px)_minmax(0,1fr)] xl:contents">
                   <aside data-access-admin-column="" className="self-start overflow-hidden rounded-2xl border border-zinc-200 bg-white">
@@ -812,7 +771,6 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
                   )}
                 </section>
               </div>
-              )}
             </>
           )}
         </div>
