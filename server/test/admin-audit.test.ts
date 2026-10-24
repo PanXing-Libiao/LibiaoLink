@@ -424,6 +424,36 @@ describe("AuditService（审计 C7）", () => {
     });
   });
 
+  it("list：部门可见项目范围收窄审计查询；范围为空直接返回空页", async () => {
+    const { service, repo } = makeAuditService();
+    repo.rows = [
+      {
+        id: 8,
+        occurredAt: AT,
+        actorId: UUID_ACTOR,
+        actorName: "张三",
+        action: "update",
+        objectType: "project",
+        objectId: UUID_PROJECT,
+        projectId: UUID_PROJECT,
+        result: "succeeded",
+        entry: "api",
+        summary: "修改项目",
+        changes: null,
+        metadata: {},
+      },
+    ];
+    const page = await service.list({ page: 1, limit: 50 }, [UUID_PROJECT]);
+    expect(repo.lastFilter?.projectIds).toEqual([UUID_PROJECT]);
+    expect(page.total).toBe(1);
+    await service.list({ projectId: UUID_PROJECT, page: 1, limit: 50 }, [UUID_PROJECT]);
+    expect(repo.lastFilter?.projectIds).toEqual([UUID_PROJECT]);
+    const disjoint = await service.list({ projectId: "33333333-3333-4333-8333-333333333333", page: 1, limit: 50 }, [UUID_PROJECT]);
+    expect(disjoint).toMatchObject({ items: [], total: 0, windowId: null });
+    const empty = await service.list({ page: 1, limit: 50 }, []);
+    expect(empty).toMatchObject({ items: [], total: 0, windowId: null });
+  });
+
   it("list：多值筛选（2026-10-09 追订 · 操作记录里面也是）—— 逗号分隔 + 去重保序 + 逐值白名单，非法值 400", async () => {
     const { service, repo } = makeAuditService();
     await service.list({

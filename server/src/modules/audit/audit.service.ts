@@ -107,17 +107,29 @@ export class AuditService implements AuditSink {
     }
   }
 
-  /** 审计检索（C7-04 的服务端口径：多条件筛选；导出随 u12）。 */
-  async list(query: AuditListQueryInput): Promise<AuditLogListResponse> {
+  /**
+   * 审计检索（C7-04 的服务端口径：多条件筛选；导出随 u12）。
+   * visibleProjectIds 非 null 时 = 部门规则收窄后的项目白名单；空数组直接返回空页。
+   * 同时排除无 projectId 的全局日志，避免通过操作记录绕过项目范围。
+   */
+  async list(query: AuditListQueryInput, visibleProjectIds: readonly string[] | null = null): Promise<AuditLogListResponse> {
     const keyword = query.q?.trim() ?? "";
     const multi = parseAuditListFilters(query);
+    const projectIds = visibleProjectIds === null
+      ? multi.projectIds
+      : multi.projectIds === undefined
+        ? [...visibleProjectIds]
+        : multi.projectIds.filter((projectId) => visibleProjectIds.includes(projectId));
+    if (projectIds !== undefined && projectIds.length === 0) {
+      return { items: [], page: query.page, limit: query.limit, total: 0, windowId: null };
+    }
     const filter: AuditListFilter = {
       objectTypes: multi.objectTypes,
       objectId: query.objectId,
       actorIds: multi.actorIds,
       actions: multi.actions,
       results: multi.results,
-      projectIds: multi.projectIds,
+      projectIds,
       keyword: keyword === "" ? undefined : keyword,
       from: query.from === undefined ? undefined : new Date(query.from),
       to: query.to === undefined ? undefined : new Date(query.to),
