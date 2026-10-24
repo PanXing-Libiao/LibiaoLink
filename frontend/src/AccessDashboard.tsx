@@ -75,7 +75,7 @@ function DashboardCard({
       data-access-dashboard-card={kind}
       onClick={onClick}
       style={{ animationDelay: delay + "ms" }}
-      className="access-dash-card group flex min-h-[270px] w-full flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white p-4 text-left shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-[0_12px_28px_rgba(39,100,231,0.12)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 active:translate-y-0"
+      className="access-dash-card group flex min-h-[220px] sm:min-h-[240px] w-full flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white p-4 text-left shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-[0_12px_28px_rgba(39,100,231,0.12)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 active:translate-y-0"
     >
       <span className="flex items-center justify-between gap-3">
         <span className="min-w-0 truncate text-sm font-semibold text-zinc-800">{title}</span>
@@ -156,8 +156,8 @@ function ProjectScopeChart({ model }: { model: AccessDashboardModel }) {
       </span>
       <span className="mt-2 grid grid-cols-4 gap-1 sm:gap-2">
         {values.map((item) => (
-          <span key={item.key} className="min-w-0 text-center text-[9px] leading-4 text-zinc-500 sm:text-[10px]">
-            <span className="block truncate" title={t(item.labelKey)}>{t(item.labelKey)}</span>
+          <span key={item.key} className="min-w-0 text-center text-[9px] leading-3 text-zinc-500 sm:text-[10px] sm:leading-4">
+            <span className="block text-balance">{t(item.labelKey)}</span>
           </span>
         ))}
       </span>
@@ -273,8 +273,8 @@ export function AccessDashboard({
 
   return (
     <>
-      <div key={refreshSeq + ":" + String(model.scopeGroupKey ?? "all")} data-access-dashboard="" className={"space-y-4 transition-opacity duration-200 " + (refreshing ? "opacity-80" : "opacity-100")}>
-        <div className="grid gap-4 lg:grid-cols-3">
+      <div key={refreshSeq + ":" + String(model.scopeGroupKey ?? "all")} data-access-dashboard="" className={"space-y-3 transition-opacity duration-200 " + (refreshing ? "opacity-80" : "opacity-100")}>
+        <div className="grid gap-3 lg:grid-cols-3">
           <DashboardCard
             kind="members"
             title={t("access.dashboard.membersTitle")}
@@ -305,20 +305,38 @@ export function AccessDashboard({
         </div>
 
         <section className="access-dash-distribution overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
-          <header className="flex items-center justify-between gap-3 border-b border-zinc-100 px-4 py-2.5">
-            <div className="min-w-0">
+          <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-zinc-100 px-3 py-2.5 sm:px-4">
+            <div className="min-w-0 flex-1 basis-[140px]">
               <h2 className="text-sm font-semibold text-zinc-800">{t("access.dashboard.distributionTitle")}</h2>
-              <p className="mt-0.5 text-[10px] text-zinc-400">{distributionLabel}</p>
+              <p className="mt-0.5 truncate text-[10px] text-zinc-400">{distributionLabel}</p>
             </div>
-            <div className="hidden items-center gap-3 text-[10px] text-zinc-500 sm:flex">
-              <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-[3px] bg-[#2764e7]" />{t("access.dashboard.operate")}</span>
-              <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-[3px] bg-[#18a474]" />{t("access.dashboard.viewOnly")}</span>
-              <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-[3px] bg-[#cbd2dc]" />{t("access.dashboard.loginOnly")}</span>
+            <div className="flex min-w-0 max-w-full items-center gap-3">
+              <div className="hidden items-center gap-3 text-[10px] text-zinc-500 lg:flex">
+                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-[3px] bg-[#2764e7]" />{t("access.dashboard.operate")}</span>
+                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-[3px] bg-[#18a474]" />{t("access.dashboard.viewOnly")}</span>
+                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-[3px] bg-[#cbd2dc]" />{t("access.dashboard.loginOnly")}</span>
+              </div>
+              <div role="group" aria-label={t("access.dashboard.viewLabel")} className="scrollbar-hidden flex max-w-full items-center gap-0.5 overflow-x-auto rounded-lg bg-zinc-100 p-0.5 ring-1 ring-inset ring-zinc-200">
+                {VIEW_OPTIONS.map((option) => {
+                  const active = view === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => { setView(option.value); }}
+                      className={"shrink-0 rounded-md px-2 py-1 text-[10px] font-medium transition duration-200 " + (active ? "bg-white text-blue-700 shadow-sm" : "text-zinc-500 hover:bg-white/60 hover:text-zinc-800")}
+                    >
+                      {t(option.labelKey)}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </header>
-          <div className="scrollbar-hidden max-h-[300px] overflow-y-auto px-2 py-1.5 sm:max-h-[320px]">
+          <div className="scrollbar-hidden grid max-h-[272px] grid-cols-1 gap-x-4 gap-y-0.5 overflow-y-auto px-2 py-1.5 sm:max-h-[260px] md:max-h-[288px] md:grid-cols-2 xl:max-h-[236px] xl:grid-cols-3">
             {visibleRows.length === 0 ? (
-              <p className="px-3 py-10 text-center text-xs text-zinc-400">{t("access.dashboard.emptyDepartments")}</p>
+              <p className="col-span-full px-3 py-10 text-center text-xs text-zinc-400">{t("access.dashboard.emptyDepartments")}</p>
             ) : visibleRows.map((row, index) => (
               <DistributionRow
                 key={row.group.groupKey}
@@ -330,26 +348,6 @@ export function AccessDashboard({
               />
             ))}
           </div>
-          <footer className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-zinc-100 px-3 py-2">
-            <span className="text-[10px] text-zinc-400">{t("access.dashboard.viewLabel")}</span>
-            {VIEW_OPTIONS.map((option) => {
-              const active = view === option.value;
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => { setView(option.value); }}
-                  className={"inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[11px] transition-colors " + (active ? "text-blue-700" : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800")}
-                >
-                  <span className={"flex h-4 w-4 items-center justify-center rounded-[4px] border transition-all " + (active ? "border-blue-600 bg-blue-600 text-white shadow-sm" : "border-zinc-300 bg-white text-transparent")}>
-                    <svg viewBox="0 0 16 16" aria-hidden="true" className="h-3 w-3"><path d="m3.2 8.2 3 3 6.6-6.4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                  </span>
-                  {t(option.labelKey)}
-                </button>
-              );
-            })}
-          </footer>
         </section>
       </div>
 
@@ -369,10 +367,10 @@ export function AccessDashboard({
 
 export function AccessDashboardSkeleton() {
   return (
-    <div data-access-dashboard-skeleton="" className="space-y-4 motion-safe:animate-pulse motion-reduce:animate-none">
-      <div className="grid gap-4 lg:grid-cols-3">
+    <div data-access-dashboard-skeleton="" className="space-y-3 motion-safe:animate-pulse motion-reduce:animate-none">
+      <div className="grid gap-3 lg:grid-cols-3">
         {[0, 1, 2].map((index) => (
-          <div key={index} className="min-h-[270px] rounded-2xl border border-zinc-200 bg-white p-4">
+          <div key={index} className="min-h-[220px] sm:min-h-[240px] rounded-2xl border border-zinc-200 bg-white p-4">
             <div className="h-4 w-28 rounded bg-zinc-100" />
             <div className="mt-8 flex items-center gap-5">
               <div className="h-[132px] w-[132px] rounded-full bg-zinc-100" />
@@ -387,11 +385,8 @@ export function AccessDashboardSkeleton() {
       </div>
       <div className="rounded-2xl border border-zinc-200 bg-white p-4">
         <div className="h-4 w-32 rounded bg-zinc-100" />
-        <div className="mt-6 grid gap-4">
-          <div className="h-4 rounded bg-zinc-100" />
-          <div className="h-4 rounded bg-zinc-100" />
-          <div className="h-4 rounded bg-zinc-100" />
-          <div className="h-4 rounded bg-zinc-100" />
+        <div className="mt-5 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+          {[0, 1, 2, 3, 4, 5].map((index) => <div key={index} className="h-7 rounded bg-zinc-100" />)}
         </div>
       </div>
     </div>
