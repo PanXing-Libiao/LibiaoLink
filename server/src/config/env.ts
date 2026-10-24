@@ -37,8 +37,10 @@ export const EnvSchema = z
      * false（默认）= 规则只可配置、不参与裁定，避免 Group 声明尚未下发时锁死全员。
      */
     GROUP_ACCESS_ENFORCED: z.enum(["true", "false"]).default("false"),
-    /** 权限管理员群组键（逗号分隔；例 libiaorobot.com/系统管理员）。开启 GROUP_ACCESS_ENFORCED 时必填。 */
+    /** 权限管理员群组键（逗号分隔；例 libiaorobot.com/系统管理员）。与 GROUP_ACCESS_ADMIN_USER_IDS 至少配置一项。 */
     GROUP_ACCESS_ADMIN_GROUP_KEYS: z.string().default(""),
+    /** 权限管理员用户 ID 白名单（逗号分隔；用于不属于管理员部门的指定账号，如 panxing）。 */
+    GROUP_ACCESS_ADMIN_USER_IDS: z.string().default(""),
     // ---- 对象存储（ADR-006：S3 协议抽象 + 一期 MinIO 单节点；本地沙箱见 deploy/minio/） ----
     S3_ENDPOINT: z.string().min(1).default("http://127.0.0.1:9000"),
     S3_REGION: z.string().min(1).default("us-east-1"),
@@ -308,10 +310,14 @@ export const EnvSchema = z
         });
       }
     }
-    if (value.GROUP_ACCESS_ENFORCED === "true" && value.GROUP_ACCESS_ADMIN_GROUP_KEYS.trim() === "") {
+    if (
+      value.GROUP_ACCESS_ENFORCED === "true" &&
+      value.GROUP_ACCESS_ADMIN_GROUP_KEYS.trim() === "" &&
+      value.GROUP_ACCESS_ADMIN_USER_IDS.trim() === ""
+    ) {
       context.addIssue({
         code: "custom",
-        message: "开启 GROUP_ACCESS_ENFORCED 时必须配置 GROUP_ACCESS_ADMIN_GROUP_KEYS（否则无人能进入权限管理）",
+        message: "开启 GROUP_ACCESS_ENFORCED 时必须配置 GROUP_ACCESS_ADMIN_GROUP_KEYS 或 GROUP_ACCESS_ADMIN_USER_IDS（否则无人能进入权限管理）",
         path: ["GROUP_ACCESS_ADMIN_GROUP_KEYS"],
       });
     }

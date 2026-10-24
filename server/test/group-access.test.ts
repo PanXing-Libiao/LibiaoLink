@@ -336,6 +336,9 @@ function serviceWith(options: {
   groupKeys: string[];
   rules: GroupAccessRuleData[];
   adminGroups?: string;
+  groupEnforced?: boolean;
+  permissionEnforced?: boolean;
+  adminUserIds?: string;
 }): { service: PermissionService; repository: FakeGroupRepository } {
   const repository = new FakeGroupRepository();
   repository.groupKeys = options.groupKeys;
@@ -347,9 +350,10 @@ function serviceWith(options: {
     permissionKeys: [...PERMISSION_KEYS],
   } satisfies ActorAuthorization;
   const config = new AppConfig({
-    GROUP_ACCESS_ENFORCED: "true",
+    GROUP_ACCESS_ENFORCED: options.groupEnforced === false ? "false" : "true",
     GROUP_ACCESS_ADMIN_GROUP_KEYS: options.adminGroups ?? "libiaorobot.com/系统管理员",
-    PERMISSION_ENFORCED: "false",
+    GROUP_ACCESS_ADMIN_USER_IDS: options.adminUserIds ?? "",
+    PERMISSION_ENFORCED: options.permissionEnforced === true ? "true" : "false",
   } as Env);
   const service = new PermissionService(
     new FakeRoleService(authorization) as unknown as RoleService,
@@ -421,6 +425,45 @@ describe("PermissionService 群组接入", () => {
     expect(await admin.service.can(PROJECT_A, "task.update")).toBe(true);
     await expect(admin.service.assertWritable(PROJECT_A)).resolves.toBeUndefined();
     expect((await admin.service.permissionsOf(PROJECT_A)).groupReadOnly).toBe(false);
+  });
+
+  it("权限判定关闭时不把等效管理员画像当成部门管理员", async () => {
+    const regular = serviceWith({
+      groupKeys: ["libiaorobot.com/项目部"],
+      rules: [],
+      groupEnforced: false,
+      permissionEnforced: false,
+    });
+    const regularProfile = await regular.service.permissionsOf(PROJECT_A);
+    expect(regularProfile.groupAccessEnforced).toBe(false);
+    expect(regularProfile.groupReadOnly).toBe(false);
+    expect(regularProfile.groupAccessAdmin).toBe(false);
+    expect(await regular.service.canManageGroupAccess(PROJECT_A)).toBe(false);
+
+    const explicitAdmin = serviceWith({
+      groupKeys: ["libiaorobot.com/系统管理员"],
+      rules: [],
+      groupEnforced: false,
+      permissionEnforced: false,
+    });
+    expect((await explicitAdmin.service.permissionsOf(PROJECT_A)).groupAccessAdmin).toBe(true);
+
+    const userIdAdmin = serviceWith({
+      groupKeys: ["libiaorobot.com/项目部"],
+      rules: [],
+      groupEnforced: false,
+      permissionEnforced: false,
+      adminUserIds: PROJECT_A,
+    });
+    expect((await userIdAdmin.service.permissionsOf(PROJECT_A)).groupAccessAdmin).toBe(true);
+
+    const roleAdmin = serviceWith({
+      groupKeys: ["libiaorobot.com/项目部"],
+      rules: [],
+      groupEnforced: false,
+      permissionEnforced: true,
+    });
+    expect((await roleAdmin.service.permissionsOf(PROJECT_A)).groupAccessAdmin).toBe(true);
   });
 
   it("own 项目范围展开为本人负责或进入名册的项目", async () => {
