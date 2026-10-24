@@ -14,6 +14,7 @@ import {
 import { PermissionRepository, type ProjectAccessContext } from "./permission.repository.js";
 import {
   can,
+  isGroupReadOnlyDeniedKey,
   isProjectVisible,
   projectScopeSpec,
   type ProjectResourceContext,
@@ -78,10 +79,11 @@ export class PermissionService {
       pageKeys: groupAccess.pages,
       groupAccessEnforced: groupAccess.enforced,
       groupAccessAdmin: groupAccess.admin,
+      groupReadOnly: groupAccess.readOnly,
     };
   }
 
-  /** 群组访问画像（与角色画像同一 10s 缓存）：页面 + 项目白名单。 */
+  /** 群组访问画像（与角色画像同一 10s 缓存）：页面 + 项目白名单 + 只读标志。 */
   async groupAccessOf(actorId: string): Promise<GroupAccessProfile> {
     const authorization = await this.getAuthorization(actorId);
     const entry = this.cache.get(actorId);
@@ -116,7 +118,9 @@ export class PermissionService {
   }
 
   async can(actorId: string, key: PermissionKey, context?: ProjectResourceContext): Promise<boolean> {
-    return can(await this.getAuthorization(actorId), key, context);
+    if (!can(await this.getAuthorization(actorId), key, context)) return false;
+    const groupAccess = await this.groupAccessOf(actorId);
+    return !(groupAccess.readOnly && isGroupReadOnlyDeniedKey(key));
   }
 
   /** 403：资源可见但缺少功能权限位（不可见资源的 404 由 assertProjectVisible 负责）。 */
@@ -130,12 +134,24 @@ export class PermissionService {
     throw new AppError("FORBIDDEN", message ?? "无权限：" + key);
   }
 
+  /** 业务写入口兜底：部门规则开启且非管理员一律拒绝；用于未挂功能权限键的写接口。 */
+  async assertWritable(actorId: string, message?: string): Promise<void> {
+    if (!(await this.groupAccessOf(actorId)).readOnly) return;
+    throw new AppError("FORBIDDEN", message ?? "当前部门为只读，不能新增、修改或删除业务数据");
+  }
+
   /** 可见项目过滤（列表 / facets 用）：all = 不裁剪；ids 空集 = 无可见项目。 */
   async projectScope(actorId: string): Promise<ProjectScopeFilter> {
     const spec = projectScopeSpec(await this.getAuthorization(actorId));
     const groupAccess = await this.groupAccessOf(actorId);
     const roleIds = spec.all ? null : await this.repository.listVisibleProjectIds(actorId, spec);
-    const ids = intersectProjectIds(roleIds, groupAccess.projectIds);
+    const groupIds = groupAccess.projectIds === null || !groupAccess.ownProjects
+      ? groupAccess.projectIds
+      : uniqueIds([
+          ...groupAccess.projectIds,
+          ...(await this.repository.listVisibleProjectIds(actorId, { all: false, managed: false, member: true })),
+        ]);
+    const ids = intersectProjectIds(roleIds, groupIds);
     return ids === null ? { kind: "all" } : { kind: "ids", ids };
   }
 
@@ -158,7 +174,11 @@ export class PermissionService {
       managerOfRecord,
       rosterProjectManager: membershipRole === "project_manager",
     });
-    const groupVisible = groupAccess.projectIds === null || groupAccess.projectIds.includes(projectId);
+    const ownProject = managerOfRecord || rosterMember;
+    const groupVisible =
+      groupAccess.projectIds === null ||
+      groupAccess.projectIds.includes(projectId) ||
+      (groupAccess.ownProjects && ownProject);
     if (!visible || !groupVisible) return null;
     return { projectId, member: rosterMember || managerOfRecord, projectManager };
   }
@@ -178,4 +198,8 @@ export class PermissionService {
   projectIdOfNode(nodeId: string): Promise<string | null> {
     return this.repository.findNodeProjectId(nodeId);
   }
+}
+
+function uniqueIds(ids: readonly string[]): string[] {
+  return Array.from(new Set(ids));
 }

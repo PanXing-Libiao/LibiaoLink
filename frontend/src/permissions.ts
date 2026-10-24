@@ -24,6 +24,8 @@ export type MyPermissions = {
   pageKeys: GroupAccessPage[];
   groupAccessEnforced: boolean;
   groupAccessAdmin: boolean;
+  /** 群组限制开启且非管理员：页面可进、业务数据按项目范围裁剪、所有写入口关闭。 */
+  groupReadOnly: boolean;
 };
 
 type PermissionMeResponse = {
@@ -36,6 +38,7 @@ type PermissionMeResponse = {
     pageKeys?: GroupAccessPage[];
     groupAccessEnforced?: boolean;
     groupAccessAdmin?: boolean;
+    groupReadOnly?: boolean;
   };
 };
 
@@ -60,6 +63,7 @@ export function loadMyPermissions(refresh = false): Promise<MyPermissions> {
         pageKeys: payload.permissions.pageKeys ?? [...GROUP_ACCESS_PAGE_KEYS],
         groupAccessEnforced: payload.permissions.groupAccessEnforced === true,
         groupAccessAdmin: payload.permissions.groupAccessAdmin === true,
+        groupReadOnly: payload.permissions.groupReadOnly === true,
       };
       for (const listener of listeners) listener();
       return snapshot;
@@ -77,7 +81,10 @@ export function hasPermission(permissions: MyPermissions | null, key: string): b
   return permissions !== null && permissions.permissionKeys.includes(key);
 }
 
-/** 页面是否放行：画像未到时乐观放行（服务端逐请求仍是最终裁决）。 */
-export function hasPageAccess(permissions: MyPermissions | null, page: GroupAccessPage): boolean {
-  return permissions === null || permissions.pageKeys.includes(page);
+/**
+ * 页面是否放行：2026-10-24 起群组规则不再限制页面入口，所有登录账号都可进入；
+ * 保留签名供现有路由与导航复用，服务端数据范围与只读裁决仍是最终边界。
+ */
+export function hasPageAccess(_permissions: MyPermissions | null, _page: GroupAccessPage): boolean {
+  return true;
 }

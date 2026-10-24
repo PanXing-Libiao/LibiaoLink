@@ -114,14 +114,17 @@ type ProjectDetailProps = {
   canManageStakeholders: boolean;
   /** 验收完成后设为已完成的写入口（无 project.update 权限时父层不传）；false = 写失败，父层已提示。 */
   onSetProjectDone?: (projectId: string) => Promise<boolean>;
+  /** 部门群组只读：页面可进，但本页全部业务写入口（任务 / 文件 / 日报 / 问题 / 干系人）关闭。 */
+  readOnly?: boolean;
 };
 
-export default function ProjectDetail({ me, project, view, dailySub, members, onChangeManagers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange, canManageStakeholders, onSetProjectDone }: ProjectDetailProps) {
+export default function ProjectDetail({ me, project, view, dailySub, members, onChangeManagers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange, canManageStakeholders, onSetProjectDone, readOnly = false }: ProjectDetailProps) {
   /** 顶部视图（Push 82 / 121）：阶段标签收进「项目总览」，另两块是看板视图，最后一块是「日报及问题」；Push 154 起当前标签由地址 `?view=` 派生。 */
   const locale = useLocale();
   const t = useT();
   const activeView = VIEW_TABS.find((tab) => VIEW_KEYS[tab] === view) ?? VIEW_TABS[0];
   const projectId = project?.id ?? null;
+  const writeEnabled = !readOnly;
 
   /**
    * 任务数据（M3-07 刀 1 后半接线）：列表与汇总卡全部来自服务端任务接口（GET /projects/{id}/tasks 与 /summary）。
@@ -1161,15 +1164,15 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             <>
               {/* 汇总卡（M3-07 刀 1 后半）：最慢 / 最新阶段由服务端按任务聚合（GET /projects/{id}/summary） */}
               <ProjectSummary summary={summary} />
-              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} onCreateTempTask={(values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values)} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onRenameTask={handleRenameTask} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={requestDeleteTask} onUploadFiles={handleUploadTaskFiles} onDeleteFile={handleDeleteTaskFile} onRenameFile={handleRenameTaskFile} onFinalize={handleFinalizeTask} onUnfinalize={handleUnfinalizeTask} onChanged={reloadAll} actorName={me.user.displayName ?? ""} filesByTask={taskFiles} projectId={project.id} tierTint={tintRows} />
+              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={writeEnabled ? handleSetProgress : undefined} onSetStatus={writeEnabled ? handleSetStatus : undefined} onSetActualEnd={writeEnabled ? handleSetActualEnd : undefined} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={writeEnabled ? handleAddNode : undefined} onAddNodes={writeEnabled ? handleAddNodes : undefined} onCreateTempTask={writeEnabled ? (values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values) : undefined} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={writeEnabled ? handleSubmitTaskEdit : undefined} onRenameTask={writeEnabled ? handleRenameTask : undefined} onPatchTask={writeEnabled ? handlePatchTask : undefined} onChangeManagers={writeEnabled ? handleBoardManagerChange : undefined} onDeleteTask={writeEnabled ? requestDeleteTask : undefined} onUploadFiles={writeEnabled ? handleUploadTaskFiles : undefined} onDeleteFile={writeEnabled ? handleDeleteTaskFile : undefined} onRenameFile={writeEnabled ? handleRenameTaskFile : undefined} onFinalize={writeEnabled ? handleFinalizeTask : undefined} onUnfinalize={writeEnabled ? handleUnfinalizeTask : undefined} onChanged={reloadAll} actorName={me.user.displayName ?? ""} filesByTask={taskFiles} projectId={project.id} tierTint={tintRows} />
             </>
           ) : activeView === "甘特图" ? (
             // 甘特图（Push 142）：与项目总览同一份任务数据（服务端任务接口）；拖动改期 / 改进度走同一套写入口径
-            <GanttChart tasks={tasks} members={members} managers={managers} tierTint={tintRows} onPatchTask={handlePatchTask} onSetProgress={handleSetProgress} />
+            <GanttChart tasks={tasks} members={members} managers={managers} tierTint={tintRows} onPatchTask={writeEnabled ? handlePatchTask : undefined} onSetProgress={writeEnabled ? handleSetProgress : undefined} />
           ) : activeView === "日报及问题" ? (
             // key = 项目 id：换项目时把日报 / 问题与填写草稿一起复位（原型内存态，见 ReportIssuePanel.tsx）
             // Push 290：背景档位「适中」透传给「问题追踪」做表格呈现（原醒目模式挂点，随功能下架改吃档位）；失败提示沿用同一条 toolError
-            <ReportIssuePanel key={project.id} project={project} me={me} members={members} tierTint={tintRows} sub={dailySub} onChangeSub={(next) => { replaceProjectSubView(project.id, next); }} />
+            <ReportIssuePanel key={project.id} project={project} me={me} members={members} tierTint={tintRows} sub={dailySub} readOnly={readOnly} onChangeSub={(next) => { replaceProjectSubView(project.id, next); }} />
           ) : activeView === "干系人" ? (
             // 干系人（Push 221 · A27 前端接线）：表格形态与「项目总览」同一套（表头固定 + CSS grid 行 + 共用底部滑块）
             <StakeholderPanel projectId={project.id} canManage={canManageStakeholders} scrollRef={tableScrollRef} />
@@ -1180,20 +1183,20 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
               managers={managers}
               managerIds={project.managerIds}
               members={members}
-              onAddTask={handleQuickAdd}
-              onAddStageTask={handleKanbanAddNode}
-              onSubmitTaskEdit={handleSubmitTaskEdit}
-              onRenameTask={handleRenameTask}
-              onPatchTask={handlePatchTask}
-              onSetStatus={handleSetStatus}
-              onSetActualEnd={handleSetActualEnd}
-              onReorderTask={handleReorderTask}
-              onSetProgress={handleSetProgress}
-              onUploadFiles={handleUploadTaskFiles}
-              onDeleteFile={handleDeleteTaskFile}
-              onRenameFile={handleRenameTaskFile}
-              onFinalize={handleFinalizeTask}
-              onUnfinalize={handleUnfinalizeTask}
+              onAddTask={writeEnabled ? handleQuickAdd : undefined}
+              onAddStageTask={writeEnabled ? handleKanbanAddNode : undefined}
+              onSubmitTaskEdit={writeEnabled ? handleSubmitTaskEdit : undefined}
+              onRenameTask={writeEnabled ? handleRenameTask : undefined}
+              onPatchTask={writeEnabled ? handlePatchTask : undefined}
+              onSetStatus={writeEnabled ? handleSetStatus : undefined}
+              onSetActualEnd={writeEnabled ? handleSetActualEnd : undefined}
+              onReorderTask={writeEnabled ? handleReorderTask : undefined}
+              onSetProgress={writeEnabled ? handleSetProgress : undefined}
+              onUploadFiles={writeEnabled ? handleUploadTaskFiles : undefined}
+              onDeleteFile={writeEnabled ? handleDeleteTaskFile : undefined}
+              onRenameFile={writeEnabled ? handleRenameTaskFile : undefined}
+              onFinalize={writeEnabled ? handleFinalizeTask : undefined}
+              onUnfinalize={writeEnabled ? handleUnfinalizeTask : undefined}
               onChanged={reloadAll}
               actorName={me.user.displayName ?? ""}
               projectId={project.id}

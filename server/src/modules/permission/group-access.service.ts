@@ -1,11 +1,12 @@
 import { Injectable } from "@nestjs/common";
-import type {
-  GroupAccessGroup,
-  GroupAccessMember,
-  GroupAccessOverview,
-  GroupAccessRule,
-  GroupAccessRuleInput,
-  GroupAccessRuleResponse,
+import {
+  GROUP_ACCESS_PAGE_KEYS,
+  type GroupAccessGroup,
+  type GroupAccessMember,
+  type GroupAccessOverview,
+  type GroupAccessRule,
+  type GroupAccessRuleInput,
+  type GroupAccessRuleResponse,
 } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import { AppConfig } from "../../config/config.module.js";
@@ -137,7 +138,7 @@ export class GroupAccessService {
       }
     }
     const groupName = input.groupName ?? before?.groupName ?? casdoorGroupName(input.groupKey) ?? input.groupKey;
-    const allowedPages = Array.from(new Set(input.allowedPages));
+    const allowedPages = [...GROUP_ACCESS_PAGE_KEYS];
     const at = new Date();
     await this.repository.upsertGroupAccessRule(
       input.groupKey,
@@ -205,7 +206,7 @@ function toRule(rule: GroupAccessRuleData, groupName: string, updatedAt: Date): 
   return {
     groupKey: rule.groupKey,
     groupName,
-    allowedPages: rule.allowedPages,
+    allowedPages: [...GROUP_ACCESS_PAGE_KEYS],
     projectScope: rule.projectScope,
     projectIds: rule.projectIds,
     memberScope: rule.memberScope,

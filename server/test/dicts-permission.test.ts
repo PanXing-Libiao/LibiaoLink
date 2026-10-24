@@ -26,7 +26,17 @@ class FakeDictService {
 /** 替身：无权限的账号 assertCan 抛 FORBIDDEN（与 PermissionService 同形）。 */
 class FakePermissionService {
   calls: { actorId: string; key: string }[] = [];
-  constructor(private readonly allowed: boolean) {}
+  writableCalls: string[] = [];
+  constructor(
+    private readonly allowed: boolean,
+    private readonly readOnly = false,
+  ) {}
+  async assertWritable(actorId: string): Promise<void> {
+    this.writableCalls.push(actorId);
+    if (this.readOnly) {
+      throw new AppError("FORBIDDEN", "当前部门为只读，不能新增字典条目");
+    }
+  }
   async assertCan(actorId: string, key: string): Promise<void> {
     this.calls.push({ actorId, key });
     if (!this.allowed) {
@@ -35,13 +45,13 @@ class FakePermissionService {
   }
 }
 
-function makeController(allowed: boolean): {
+function makeController(allowed: boolean, readOnly = false): {
   controller: DictsController;
   dicts: FakeDictService;
   permission: FakePermissionService;
 } {
   const dicts = new FakeDictService();
-  const permission = new FakePermissionService(allowed);
+  const permission = new FakePermissionService(allowed, readOnly);
   const controller = new DictsController(
     dicts as unknown as DictService,
     permission as unknown as PermissionService,
@@ -76,6 +86,16 @@ describe("字典新增按类型分权（C9-02 修订）", () => {
     await controller.createItem("projectType", REGION_BODY, ACTOR_ID);
     expect(permission.calls).toEqual([{ actorId: ACTOR_ID, key: "dict.manage" }]);
     expect(dicts.calls).toHaveLength(1);
+  });
+
+  it("部门只读：region / projectType 都在分类型判定前拒绝，且不落库", async () => {
+    for (const type of ["region", "projectType"]) {
+      const { controller, dicts, permission } = makeController(true, true);
+      await expect(controller.createItem(type, REGION_BODY, ACTOR_ID)).rejects.toMatchObject({ code: "FORBIDDEN" });
+      expect(permission.writableCalls).toEqual([ACTOR_ID]);
+      expect(permission.calls).toEqual([]);
+      expect(dicts.calls).toEqual([]);
+    }
   });
 
   it("未知类型：非管理员先撞 403（不泄漏类型是否存在），管理员才走到服务层 404", async () => {

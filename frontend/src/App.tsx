@@ -710,28 +710,29 @@ export default function App() {
   };
 
   /** 权限分叉（Push 172）：字典治理 = dict.manage；删项目 = project.delete（服务端逐请求仍是最终裁决）。 */
-  const canManageDicts = hasPermission(permissions, "dict.manage");
-  const canDeleteProject = hasPermission(permissions, "project.delete");
+  const groupReadOnly = permissions?.groupReadOnly === true;
+  const canManageDicts = !groupReadOnly && hasPermission(permissions, "dict.manage");
+  const canDeleteProject = !groupReadOnly && hasPermission(permissions, "project.delete");
   /**
    * 建 / 改项目（Push 173）：画像**未到时乐观放行**（网络抖动不该把有权限的账号挡在门外；服务端仍是最终裁决），
    * 已知缺位才收敛入口 —— 首页「新建项目」出禁用观感 + 提示条、卡片编辑入口不渲染。
    */
-  const canCreateProject = permissions === null || hasPermission(permissions, "project.create");
-  const canUpdateProject = permissions === null || hasPermission(permissions, "project.update");
+  const canCreateProject = !groupReadOnly && (permissions === null || hasPermission(permissions, "project.create"));
+  const canUpdateProject = !groupReadOnly && (permissions === null || hasPermission(permissions, "project.update"));
   const canExportProject = permissions === null || hasPermission(permissions, "project.export");
   /** 归档权（Push 262 · M7-04 前端接线一部分）：决定编辑弹窗「已归档」选项是否可选（服务端逐请求仍是最终裁决）。 */
-  const canArchiveProject = permissions === null || hasPermission(permissions, "project.archive");
+  const canArchiveProject = !groupReadOnly && (permissions === null || hasPermission(permissions, "project.archive"));
   /**
    * 任务模板页的维护权（左列节点库的新增 / 编辑 / 删除 + 右侧模板的新建 / 保存 / 删除 / 拖拽改内容）= blueprint.manage
    * （Push 181 起节点库、Push 182 起模板；服务端逐请求仍是最终裁决 —— 无权 = 403 FORBIDDEN）。
    */
-  const canManageBlueprint = hasPermission(permissions, "blueprint.manage");
+  const canManageBlueprint = !groupReadOnly && hasPermission(permissions, "blueprint.manage");
   /**
    * 干系人写入口（Push 221 · A27）：新建 / 编辑 / 删除 = stakeholder.manage。与 project.create / project.update
    * 同一口径：画像未到时乐观放行（服务端逐请求仍是最终裁决），已知缺位才收起写入口 —— 读列表 = stakeholder.view
    * 全部角色都有，标签本身不收敛。
    */
-  const canManageStakeholders = permissions === null || hasPermission(permissions, "stakeholder.manage");
+  const canManageStakeholders = !groupReadOnly && (permissions === null || hasPermission(permissions, "stakeholder.manage"));
 
   if (state.kind === "loading") {
     return (
@@ -876,6 +877,7 @@ export default function App() {
       <>
         <WorkspacePage
           me={state.me}
+          readOnly={groupReadOnly}
           members={directoryMemberOptions(directory)}
           tab={route.tab}
           onChangeTab={replaceWorkspaceTab}
@@ -919,6 +921,7 @@ export default function App() {
           taskHiddenColumns={taskTableHiddenColumns}
           onTaskHiddenColumnsChange={handleSaveTaskHiddenColumns}
           canManageStakeholders={canManageStakeholders}
+          readOnly={groupReadOnly}
           onSetProjectDone={canUpdateProject ? handleSetProjectDone : undefined}
         />
         {editModal}

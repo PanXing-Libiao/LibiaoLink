@@ -128,6 +128,36 @@ export function isKnownPermissionKey(value: string): value is PermissionKey {
   return (PERMISSION_KEYS as readonly string[]).includes(value);
 }
 
+/** 部门只读画像下禁止的功能权限键：覆盖新增 / 修改 / 删除 / 上传 / 推进等业务写操作。 */
+export const GROUP_READ_ONLY_DENIED_KEYS: readonly PermissionKey[] = [
+  "project.create",
+  "project.update",
+  "project.delete",
+  "project.archive",
+  "member.manage",
+  "task.create",
+  "task.update",
+  "task.progress",
+  "report.fill",
+  "issue.manage",
+  "node.create",
+  "node.delete",
+  "node.complete",
+  "node.advance",
+  "node.rollback",
+  "blueprint.manage",
+  "file.upload",
+  "stakeholder.manage",
+  "dict.manage",
+  "calendar.manage",
+  "automation.manage",
+  "notify.resend",
+];
+
+export function isGroupReadOnlyDeniedKey(key: PermissionKey): boolean {
+  return GROUP_READ_ONLY_DENIED_KEYS.includes(key);
+}
+
 /**
  * 权限判定（ADR-011）：三个来源取并集 ——
  * 1) 全局功能权限位（role_permissions，随角色下发）；

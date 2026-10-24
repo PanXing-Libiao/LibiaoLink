@@ -18,10 +18,14 @@ export interface GroupAccessRuleData {
 export interface GroupAccessProfile {
   enforced: boolean;
   admin: boolean;
+  /** 群组限制开启且非管理员：所有页面可进，但业务写操作一律拒绝。 */
+  readOnly: boolean;
   groupKeys: string[];
   pages: GroupAccessPage[];
   /** null = 不额外收窄项目；数组（含空数组）= 群组白名单。 */
   projectIds: string[] | null;
+  /** 规则包含 own：需在服务层把本人负责 / 参与项目并入 projectIds。 */
+  ownProjects: boolean;
 }
 
 /** 规则是否适用于该账号：all = 部门全体；selected = 仅勾选人员。 */
@@ -44,8 +48,9 @@ export function isGroupAccessAdmin(groupKeys: readonly string[], adminGroupKeys:
 }
 
 /**
- * 多群组取并集：页面取并集；项目规则任意 all 即不额外收窄，否则 selected 项目并集，
- * none 不贡献项目。没有任何有效规则 = 空页面 / 空项目（默认拒绝，防止漏配越权）。
+ * 多群组取并集：所有页面恒放行；项目规则任意 all 即不额外收窄，否则 selected 项目并集，
+ * own 由服务层展开后并入，none 不贡献项目。没有任何有效规则 = 空项目（默认拒绝，防止漏配越权）。
+ * 群组限制开启且非管理员 = 只读；管理员与开关关闭时保留原有写能力。
  */
 export function resolveGroupAccess(input: {
   enforced: boolean;
@@ -53,44 +58,41 @@ export function resolveGroupAccess(input: {
   groupKeys: readonly string[];
   rules: readonly GroupAccessRuleData[];
 }): GroupAccessProfile {
-  const pages = new Set<GroupAccessPage>();
   let projectIds: string[] | null = [];
+  let ownProjects = false;
   let hasRule = false;
   for (const rule of input.rules) {
     hasRule = true;
-    for (const page of rule.allowedPages) pages.add(page);
     if (rule.projectScope === "all") {
       projectIds = null;
+      ownProjects = false;
+    } else if (rule.projectScope === "own") {
+      if (projectIds !== null) ownProjects = true;
     } else if (rule.projectScope === "selected" && projectIds !== null) {
       for (const id of rule.projectIds) {
         if (!projectIds.includes(id)) projectIds.push(id);
       }
     }
   }
-  if (!input.enforced) {
+  if (!input.enforced || input.admin) {
     return {
-      enforced: false,
+      enforced: input.enforced,
       admin: input.admin,
+      readOnly: false,
       groupKeys: [...input.groupKeys],
       pages: [...GROUP_ACCESS_PAGE_KEYS],
       projectIds: null,
-    };
-  }
-  if (input.admin) {
-    return {
-      enforced: true,
-      admin: true,
-      groupKeys: [...input.groupKeys],
-      pages: [...GROUP_ACCESS_PAGE_KEYS],
-      projectIds: null,
+      ownProjects: false,
     };
   }
   return {
     enforced: true,
     admin: false,
+    readOnly: true,
     groupKeys: [...input.groupKeys],
-    pages: [...pages],
+    pages: [...GROUP_ACCESS_PAGE_KEYS],
     projectIds: hasRule ? projectIds : [],
+    ownProjects,
   };
 }
 

@@ -68,6 +68,7 @@ export class DictsController {
     @Body(new ZodValidationPipe(DictItemCreateBodySchema)) body: DictItemCreateBody,
     @CurrentActorId() actorId: string,
   ): Promise<Dict> {
+    await this.permission.assertWritable(actorId, "当前部门为只读，不能新增字典条目");
     if (type !== "region") {
       await this.permission.assertCan(actorId, "dict.manage", undefined, "新增该字典条目需要 dict.manage");
     }
