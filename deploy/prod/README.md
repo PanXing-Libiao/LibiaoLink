@@ -4,7 +4,7 @@
 >
 > 前端发布包 `access-admins-left-column-20261024-1825.tar.gz`（14,882,998 B · SHA-256 `2ea176b5f1dae463338831d411a162a8abe4a2a82012cc4499b14b80835d3d48`）上传并核对哈希；staging 386 文件，index / JS / CSS 与本地一致并已清理。部署前 `/opt/libiaolink/frontend/dist` 备份至 `/srv/data/backups/access-admins-left-column-20261024-1825/frontend-dist-before.tar.gz`（SHA-256 `bc65a1ec...`）；仅替换前端静态目录，未改 server / shared / database / compose / `server.env` / Secret / 依赖，未重启容器。公网 index / JS / CSS SHA-256 分别为 `17add78f...` / `eb3e1483...` / `2ed23e5b...`。
 >
-> 浏览器验收：1440px 三列顺序成立（系统管理员 24–284 / 部门通讯录 300–660 / 规则详情 676–1394），2048px 同样成立（256–516 / 532–892 / 908–1792），900px 自动纵向；各宽度均无横向溢出，browser exceptions / console errors 0。当前管理员名单正确显示 `configured` 与 `manual` 两种来源，人员行「设为管理员」按钮可见。8 容器保持 healthy，`GROUP_ACCESS_ENFORCED=false`；PR #616 CI 与合并待回填，生产未部署。
+> 浏览器验收：1440px 三列顺序成立（系统管理员 24–284 / 部门通讯录 300–660 / 规则详情 676–1394），2048px 同样成立（256–516 / 532–892 / 908–1792），900px 自动纵向；各宽度均无横向溢出，browser exceptions / console errors 0。当前管理员名单正确显示 `configured` 与 `manual` 两种来源，人员行「设为管理员」按钮可见。8 容器保持 healthy，`GROUP_ACCESS_ENFORCED=false`；PR CI [40085795699](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40085795699) 5 / 5；合并与 main CI 待回填，生产未部署。
 
 > **2026-10-24 18:18 权限页系统管理员名单与手工授权，已部署公司测试机（main `c0e39413` · PR [#615](https://github.com/PanXing-Libiao/LibiaoLink/pull/615)，生产未部署）**：权限页左栏顶部展示当前生效的系统管理员（环境配置 / 手工添加 / 角色授权，按 user id 去重），环境配置与角色来源只读；部门「适用人员」行新增「设为管理员 / 取消管理员」，手工变更仅权限管理员可调用并写审计 `group_access_admin`，至少保留一名管理员。PR CI [40084475009](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40084475009) 5 / 5、main CI [40084756558](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40084756558) 5 / 5，squash `c0e39413`。
 >
