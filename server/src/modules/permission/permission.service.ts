@@ -92,9 +92,11 @@ export class PermissionService {
     const enforced = this.config?.env.GROUP_ACCESS_ENFORCED === "true";
     const permissionEnforced = this.config?.env.PERMISSION_ENFORCED === "true";
     const permissionAdmin = authorization.permissionKeys.includes("access.manage");
+    const adminUserIds = parseGroupAccessAdminKeys(this.config?.env.GROUP_ACCESS_ADMIN_USER_IDS ?? "");
     const admin =
+      adminUserIds.includes(actorId) ||
       isGroupAccessAdmin(groupKeys, parseGroupAccessAdminKeys(this.config?.env.GROUP_ACCESS_ADMIN_GROUP_KEYS ?? "")) ||
-      (permissionAdmin && (!enforced || permissionEnforced));
+      (permissionAdmin && permissionEnforced);
     const rules = enforced && !admin
       ? (await this.repository.listGroupAccessRules(groupKeys)).filter((rule) => ruleAppliesToMember(rule, actorId))
       : [];
@@ -103,7 +105,7 @@ export class PermissionService {
     return profile;
   }
 
-  /** 权限管理页入口：独立于 PERMISSION_ENFORCED 的群组管理员判定。 */
+  /** 权限管理页入口：显式部门管理员恒可进入；角色 access.manage 仅在 PERMISSION_ENFORCED=true 时计入。 */
   async canManageGroupAccess(actorId: string): Promise<boolean> {
     return (await this.groupAccessOf(actorId)).admin;
   }

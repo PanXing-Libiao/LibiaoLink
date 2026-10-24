@@ -27,6 +27,7 @@
 ## 部门访问规则（0068 / 0069 / 0070）
 
 - `user_group_memberships` 保存 Casdoor 群组直属成员；权限画像入口按当前账号的群组键读取 `group_access_rules`。2026-10-24 起页面不再按部门裁剪：所有登录账号的页面集合恒为 `GROUP_ACCESS_PAGE_KEYS`，`allowed_pages` 仅为旧客户端兼容字段，保存时恒写全量、裁决时忽略。
+- **权限管理入口（Push 480）**：`GROUP_ACCESS_ADMIN_GROUP_KEYS` 命中的部门管理员、`GROUP_ACCESS_ADMIN_USER_IDS` 显式用户白名单恒可进入；角色 `access.manage` 仅在 `PERMISSION_ENFORCED=true` 时计入。`PERMISSION_ENFORCED=false` 的等效管理员画像不再自动放大入口，避免全员进入权限管理。
 - 开关 `GROUP_ACCESS_ENFORCED=true` 且非部门管理员时，画像下发 `groupReadOnly=true`；所有业务写权限键（项目 / 成员 / 任务 / 日报 / 问题 / 节点 / 蓝图 / 文件 / 干系人 / 字典 / 日历 / 自动化 / 重发）经 `can` 一律返回 false，未挂功能权限键的写入口可用 `assertWritable` 兜底拒绝。读接口保持可用，任务模板与节点配置仍可查看。
 - 项目范围支持 `all` / `own` / `selected` / `none`：多群组规则取并集，任一 `all` 取消收窄；`own` 展开为 `projects.manager_ids` 含本人或 `project_members` 名册包含本人的项目；没有有效规则 = 项目空集（默认拒绝数据）。项目空集直接使项目卡片、仪表盘、工作台与文件库返回空结果，不做前端假隐藏。
 - 0069 增 `member_scope` / `member_user_ids`：`all` 让部门规则对全体直属成员生效（后续加入该部门的人员自动覆盖）；`selected` 只对勾选人员生效，空选择不放行任何人。保存 `selected` 时校验每个 user id 都来自该部门当前直属成员，防止伪造；权限画像按当前账号过滤 `selected` 规则。

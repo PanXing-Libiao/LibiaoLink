@@ -33,7 +33,7 @@ export function ruleAppliesToMember(rule: GroupAccessRuleData, userId: string): 
   return rule.memberScope === "all" || rule.memberUserIds.includes(userId);
 }
 
-/** 管理员群组配置：逗号分隔，去空白、去重、保序。 */
+/** 权限管理员配置（部门键或用户 ID）：逗号分隔，去空白、去重、保序。 */
 export function parseGroupAccessAdminKeys(value: string): string[] {
   const keys: string[] = [];
   for (const piece of value.split(",")) {
