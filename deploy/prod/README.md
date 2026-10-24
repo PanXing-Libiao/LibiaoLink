@@ -1,5 +1,11 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
+> **2026-10-24 18:23 权限页改为独立三列，系统管理员移到真正最左一列（前端-only，已部署测试机 · PR [#616](https://github.com/PanXing-Libiao/LibiaoLink/pull/616)，生产未部署）**：按业务追订「我让你放在最左侧的空白页面，不是现在的位置」，系统管理员不再叠在部门通讯录顶部，而是独立第一列；宽屏顺序固定为「系统管理员 → 部门通讯录 → 规则详情」，`lg` 为两列、窄屏纵向，页面最大宽度放宽到 `screen-2xl`。人员行「设为管理员 / 取消管理员」与管理员增删接口保持不变。
+>
+> 前端发布包 `access-admins-left-column-20261024-1825.tar.gz`（14,882,998 B · SHA-256 `2ea176b5f1dae463338831d411a162a8abe4a2a82012cc4499b14b80835d3d48`）上传并核对哈希；staging 386 文件，index / JS / CSS 与本地一致并已清理。部署前 `/opt/libiaolink/frontend/dist` 备份至 `/srv/data/backups/access-admins-left-column-20261024-1825/frontend-dist-before.tar.gz`（SHA-256 `bc65a1ec...`）；仅替换前端静态目录，未改 server / shared / database / compose / `server.env` / Secret / 依赖，未重启容器。公网 index / JS / CSS SHA-256 分别为 `17add78f...` / `eb3e1483...` / `2ed23e5b...`。
+>
+> 浏览器验收：1440px 三列顺序成立（系统管理员 24–284 / 部门通讯录 300–660 / 规则详情 676–1394），2048px 同样成立（256–516 / 532–892 / 908–1792），900px 自动纵向；各宽度均无横向溢出，browser exceptions / console errors 0。当前管理员名单正确显示 `configured` 与 `manual` 两种来源，人员行「设为管理员」按钮可见。8 容器保持 healthy，`GROUP_ACCESS_ENFORCED=false`；PR #616 CI 与合并待回填，生产未部署。
+
 > **2026-10-24 18:18 权限页系统管理员名单与手工授权，已部署公司测试机（main `c0e39413` · PR [#615](https://github.com/PanXing-Libiao/LibiaoLink/pull/615)，生产未部署）**：权限页左栏顶部展示当前生效的系统管理员（环境配置 / 手工添加 / 角色授权，按 user id 去重），环境配置与角色来源只读；部门「适用人员」行新增「设为管理员 / 取消管理员」，手工变更仅权限管理员可调用并写审计 `group_access_admin`，至少保留一名管理员。PR CI [40084475009](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40084475009) 5 / 5、main CI [40084756558](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40084756558) 5 / 5，squash `c0e39413`。
 >
 > 发布包 `access-admins-c0e39413-20261024-1814.tar.gz`（16,344,440 B · SHA-256 `3991aea30652eb6a8ffb20e793751cae80fdbbb1bcaa2f6d807caee1c7744d65`）上传 `/srv/data/backups/` 后哈希一致；staging 核验 1,180 文件，`permission.service.js` / `group-access.controller.js` / 0072 / `group-access.js` / 前端 index / JS / CSS 关键 SHA-256 与本地一致，staging 已清理。部署前备份至 `/srv/data/backups/deploy-access-admins-c0e39413-20261024-1814/`：PG dump 836K · `2e389bcd...`、server 44M · `dab51409...`、shared 380K · `5cb9f30b...`、frontend 52M · `36bbfa31...`、database 120K · `ab713616...`。更新 database 后迁移 71 → 72（0072 13 ms），复跑无漂移；同步 server / shared / frontend，短暂重建 api / worker，未改 compose / `server.env` / Secret / 依赖。
