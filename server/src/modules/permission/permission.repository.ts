@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, notExists, sql } from "drizzle-orm";
 import type {
   GroupAccessAccessLevel,
   GroupAccessMemberScope,
@@ -28,10 +28,8 @@ export interface ProjectAccessContext {
   projectManager: boolean;
 }
 
-/** 权限页部门人员：直属成员 + 用户展示字段。 */
-export interface GroupAccessMemberRecord {
-  groupKey: string;
-  groupName: string;
+/** 权限页用户展示字段。 */
+export interface GroupAccessUserRecord {
   userId: string;
   username: string;
   displayName: string;
@@ -39,14 +37,14 @@ export interface GroupAccessMemberRecord {
   status: "active" | "disabled";
 }
 
-/** 系统管理员候选用户：环境配置 / 手工授予 / 角色授权的共同展示字段。 */
-export interface GroupAccessAdminUserRecord {
-  userId: string;
-  username: string;
-  displayName: string;
-  email: string | null;
-  status: "active" | "disabled";
+/** 权限页部门人员：直属成员 + 用户展示字段。 */
+export interface GroupAccessMemberRecord extends GroupAccessUserRecord {
+  groupKey: string;
+  groupName: string;
 }
+
+/** 系统管理员候选用户：环境配置 / 手工授予 / 角色授权的共同展示字段。 */
+export interface GroupAccessAdminUserRecord extends GroupAccessUserRecord {}
 
 /** 手工管理员记录：额外保留授予时间，供后续审计扩展。 */
 export interface GroupAccessManualAdminRecord extends GroupAccessAdminUserRecord {
@@ -312,6 +310,29 @@ export class PermissionRepository {
       .from(userGroupMemberships)
       .innerJoin(users, eq(users.id, userGroupMemberships.userId))
       .orderBy(asc(userGroupMemberships.groupKey), asc(users.displayName), asc(users.username));
+    return rows.map((row) => ({
+      ...row,
+      status: row.status === "disabled" ? "disabled" : "active",
+    }));
+  }
+
+  /** 权限页虚拟「未分组」：当前没有任何部门成员关系的账号（含停用，排除已删除）。 */
+  async listUngroupedUsers(): Promise<GroupAccessUserRecord[]> {
+    const memberships = this.database.db
+      .select({ userId: userGroupMemberships.userId })
+      .from(userGroupMemberships)
+      .where(eq(userGroupMemberships.userId, users.id));
+    const rows = await this.database.db
+      .select({
+        userId: users.id,
+        username: users.username,
+        displayName: users.displayName,
+        email: users.email,
+        status: users.status,
+      })
+      .from(users)
+      .where(and(isNull(users.removedAt), notExists(memberships)))
+      .orderBy(asc(users.displayName), asc(users.username));
     return rows.map((row) => ({
       ...row,
       status: row.status === "disabled" ? "disabled" : "active",

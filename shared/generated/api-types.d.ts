@@ -10821,7 +10821,7 @@ export interface components {
          * @enum {string}
          */
         GroupAccessAdminSource: "configured" | "manual" | "role";
-        /** @description 可配置部门：层级、直属人员与已保存规则 */
+        /** @description 可配置部门：层级、直属人员与已保存规则；groupKey=__ungrouped__ 为虚拟未分组节点，仅聚合无部门成员关系的账号 */
         GroupAccessGroup: {
             groupKey: string;
             groupName: string;
@@ -10847,7 +10847,7 @@ export interface components {
          * @enum {string}
          */
         GroupAccessMemberScope: "all" | "selected";
-        /** @description 权限管理页数据：开关状态、当前账号部门、系统管理员、可配置部门树与项目 */
+        /** @description 权限管理页数据：开关状态、当前账号部门、系统管理员、可配置部门树与项目；无部门账号汇总在虚拟未分组节点 */
         GroupAccessOverview: {
             enforced: boolean;
             admin: boolean;

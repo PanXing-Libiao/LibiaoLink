@@ -1,6 +1,8 @@
 import { Injectable } from "@nestjs/common";
 import {
   GROUP_ACCESS_PAGE_KEYS,
+  GROUP_ACCESS_UNGROUPED_KEY,
+  GROUP_ACCESS_UNGROUPED_NAME,
   type GroupAccessAdmin,
   type GroupAccessAdminResponse,
   type GroupAccessGroup,
@@ -31,8 +33,9 @@ export class GroupAccessService {
 
   async overview(actorId: string): Promise<GroupAccessOverview> {
     await this.assertAdmin(actorId);
-    const [memberships, directory, rules, projects, groupAccess, admins] = await Promise.all([
+    const [memberships, ungroupedUsers, directory, rules, projects, groupAccess, admins] = await Promise.all([
       this.repository.listGroupMembers(),
+      this.repository.listUngroupedUsers(),
       this.departments.listDepartments(),
       this.repository.listAccessRules(),
       this.repository.listAccessProjects(),
@@ -91,6 +94,23 @@ export class GroupAccessService {
       groups.set(groupKey, {
         groupKey,
         groupName: membershipNameByKey.get(groupKey) ?? casdoorGroupName(groupKey),
+        parentGroupKey: null,
+        memberCount: members.length,
+        members,
+        rule: null,
+      });
+    }
+    if (ungroupedUsers.length > 0) {
+      const members: GroupAccessMember[] = ungroupedUsers.map((user) => ({
+        userId: user.userId,
+        username: user.username,
+        displayName: user.displayName,
+        email: user.email,
+        status: user.status,
+      }));
+      groups.set(GROUP_ACCESS_UNGROUPED_KEY, {
+        groupKey: GROUP_ACCESS_UNGROUPED_KEY,
+        groupName: GROUP_ACCESS_UNGROUPED_NAME,
         parentGroupKey: null,
         memberCount: members.length,
         members,
@@ -220,13 +240,19 @@ export class GroupAccessService {
     }
     const memberUserIds = input.memberScope === "selected" ? Array.from(new Set(input.memberUserIds)) : [];
     if (memberUserIds.length > 0) {
-      const currentMemberIds = new Set(await this.repository.listGroupMemberIds(input.groupKey));
+      const currentMemberIds = new Set(
+        input.groupKey === GROUP_ACCESS_UNGROUPED_KEY
+          ? (await this.repository.listUngroupedUsers()).map((user) => user.userId)
+          : await this.repository.listGroupMemberIds(input.groupKey),
+      );
       const unknownMemberIds = memberUserIds.filter((userId) => !currentMemberIds.has(userId));
       if (unknownMemberIds.length > 0) {
         throw new AppError("VALIDATION_FAILED", "所选人员已不在该部门，请刷新后重新选择");
       }
     }
-    const groupName = input.groupName ?? before?.groupName ?? casdoorGroupName(input.groupKey) ?? input.groupKey;
+    const groupName = input.groupKey === GROUP_ACCESS_UNGROUPED_KEY
+      ? GROUP_ACCESS_UNGROUPED_NAME
+      : input.groupName ?? before?.groupName ?? casdoorGroupName(input.groupKey) ?? input.groupKey;
     const allowedPages = [...GROUP_ACCESS_PAGE_KEYS];
     const at = new Date();
     await this.repository.upsertGroupAccessRule(

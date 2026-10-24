@@ -12,6 +12,11 @@ import { UserStatusSchema } from "./users.ts";
 /** 页面键保留用于旧客户端兼容；2026-10-24 起群组规则不再限制页面入口。 */
 export const GROUP_ACCESS_PAGE_KEYS = ["dashboard", "projects", "templates", "workspace", "files", "audit"] as const;
 
+/** 虚拟「未分组」节点：仅聚合当前没有任何部门成员关系的账号，不是 Casdoor 群组。 */
+export const GROUP_ACCESS_UNGROUPED_KEY = "__ungrouped__";
+
+export const GROUP_ACCESS_UNGROUPED_NAME = "未分组";
+
 export const GroupAccessPageSchema = z
   .enum(GROUP_ACCESS_PAGE_KEYS)
   .openapi("GroupAccessPage", { description: "页面键（旧客户端兼容）：dashboard / projects / templates / workspace / files / audit；群组规则恒放行全部页面" });
@@ -95,7 +100,7 @@ export const GroupAccessGroupSchema = z
     members: z.array(GroupAccessMemberSchema).openapi({ description: "部门直属人员（按姓名 / 工号排序）" }),
     rule: GroupAccessRuleSchema.nullable(),
   })
-  .openapi("GroupAccessGroup", { description: "可配置部门：层级、直属人员与已保存规则" });
+  .openapi("GroupAccessGroup", { description: "可配置部门：层级、直属人员与已保存规则；groupKey=__ungrouped__ 为虚拟未分组节点，仅聚合无部门成员关系的账号" });
 
 export type GroupAccessGroup = z.infer<typeof GroupAccessGroupSchema>;
 
@@ -153,7 +158,7 @@ export const GroupAccessOverviewSchema = z
     groups: z.array(GroupAccessGroupSchema),
     projects: z.array(GroupAccessProjectSchema),
   })
-  .openapi("GroupAccessOverview", { description: "权限管理页数据：开关状态、当前账号部门、系统管理员、可配置部门树与项目" });
+  .openapi("GroupAccessOverview", { description: "权限管理页数据：开关状态、当前账号部门、系统管理员、可配置部门树与项目；无部门账号汇总在虚拟未分组节点" });
 
 export type GroupAccessOverview = z.infer<typeof GroupAccessOverviewSchema>;
 

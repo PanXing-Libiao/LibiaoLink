@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GROUP_ACCESS_PAGE_KEYS, PERMISSION_KEYS, type GroupAccessRuleInput } from "@libiaolink/contracts";
+import { GROUP_ACCESS_PAGE_KEYS, GROUP_ACCESS_UNGROUPED_KEY, PERMISSION_KEYS, type GroupAccessRuleInput } from "@libiaolink/contracts";
 import { AppConfig } from "../src/config/config.module.js";
 import type { Env } from "../src/config/env.js";
 import type { ActorAuthorization, RoleService } from "../src/modules/identity/index.js";
@@ -22,6 +22,7 @@ import { PermissionService } from "../src/modules/permission/permission.service.
 const PROJECT_A = "11111111-1111-4111-8111-111111111111";
 const PROJECT_B = "22222222-2222-4222-8222-222222222222";
 const PROJECT_C = "33333333-3333-4333-8333-333333333333";
+const PROJECT_D = "44444444-4444-4444-8444-444444444444";
 
 function rule(partial: Partial<GroupAccessRuleData> & { groupKey: string }): GroupAccessRuleData {
   return {
@@ -191,6 +192,13 @@ describe("群组访问规则", () => {
 describe("GroupAccessService 部门通讯录", () => {
   it("返回部门层级和直属人员，并合并既有规则与观察到的额外部门", async () => {
     const repository = {
+      listUngroupedUsers: async () => [{
+        userId: PROJECT_D,
+        username: "1004",
+        displayName: "Dana",
+        email: "dana@libiaorobot.com",
+        status: "active" as const,
+      }],
       listGroupMembers: async () => [
         {
           groupKey: "libiaorobot.com/QA",
@@ -268,10 +276,18 @@ describe("GroupAccessService 部门通讯录", () => {
       members: group.memberCount,
       pages: group.rule?.allowedPages ?? [],
     }))).toEqual([
+      { key: GROUP_ACCESS_UNGROUPED_KEY, parent: null, members: 1, pages: [] },
       { key: "libiaorobot.com/Extra", parent: null, members: 1, pages: [] },
       { key: "libiaorobot.com/QA", parent: "libiaorobot.com/RD", members: 2, pages: [...GROUP_ACCESS_PAGE_KEYS] },
       { key: "libiaorobot.com/RD", parent: null, members: 0, pages: [] },
     ]);
+    const ungrouped = overview.groups.find((group) => group.groupKey === GROUP_ACCESS_UNGROUPED_KEY);
+    expect(ungrouped).toMatchObject({
+      groupName: "未分组",
+      parentGroupKey: null,
+      memberCount: 1,
+      members: [{ userId: PROJECT_D, username: "1004", displayName: "Dana", status: "active" }],
+    });
     expect(overview.admins).toEqual([
       {
         userId: PROJECT_A,
@@ -386,6 +402,58 @@ describe("GroupAccessService 部门通讯录", () => {
     expect(savedArgs?.[4]).toBe("view");
   });
 
+  it("未分组节点可保存指定人员规则，成员校验只接受当前未分组账号", async () => {
+    let savedArgs: unknown[] | null = null;
+    const repository = {
+      findRuleMetadata: async () => null,
+      listExistingProjectIds: async () => [],
+      listGroupMemberIds: async () => {
+        throw new Error("未分组不应读取真实群组成员");
+      },
+      listUngroupedUsers: async () => [
+        { userId: PROJECT_C, username: "1003", displayName: "Carol", email: null, status: "active" as const },
+        { userId: PROJECT_D, username: "1004", displayName: "Dana", email: "dana@libiaorobot.com", status: "active" as const },
+      ],
+      upsertGroupAccessRule: async (...args: unknown[]) => { savedArgs = args; },
+    };
+    const permission = {
+      canManageGroupAccess: async () => true,
+      invalidate: () => undefined,
+    };
+    const service = new GroupAccessService(
+      permission as never,
+      repository as never,
+      { recordStandalone: async () => undefined } as never,
+      {} as never,
+      new AppConfig({ CASDOOR_ORG_NAME: "libiaorobot.com" } as Env),
+    );
+    const input: GroupAccessRuleInput = {
+      groupKey: GROUP_ACCESS_UNGROUPED_KEY,
+      allowedPages: ["projects"],
+      projectScope: "own",
+      accessLevel: "view",
+      projectIds: [],
+      memberScope: "selected",
+      memberUserIds: [PROJECT_D],
+    };
+
+    const saved = await service.save(PROJECT_A, input);
+    expect(saved.rule).toMatchObject({
+      groupKey: GROUP_ACCESS_UNGROUPED_KEY,
+      groupName: "未分组",
+      projectScope: "own",
+      memberScope: "selected",
+      memberUserIds: [PROJECT_D],
+    });
+    expect(savedArgs?.[0]).toBe(GROUP_ACCESS_UNGROUPED_KEY);
+    expect(savedArgs?.[1]).toBe("未分组");
+    expect(savedArgs?.[7]).toEqual([PROJECT_D]);
+
+    await expect(
+      service.save(PROJECT_A, { ...input, memberUserIds: [PROJECT_A] }),
+    ).rejects.toThrow("所选人员已不在该部门");
+  });
+
   it("手工授予 / 撤销系统管理员，环境配置管理员不可撤销", async () => {
     const configuredAdmin = {
       userId: PROJECT_A,
@@ -464,8 +532,9 @@ class FakeGroupRepository {
   async listUserGroupKeys(): Promise<string[]> {
     return [...this.groupKeys];
   }
-  async listGroupAccessRules(): Promise<GroupAccessRuleData[]> {
-    return [...this.rules];
+  async listGroupAccessRules(groupKeys: readonly string[]): Promise<GroupAccessRuleData[]> {
+    const allowed = new Set(groupKeys);
+    return this.rules.filter((item) => allowed.has(item.groupKey));
   }
   async isManualGroupAccessAdmin(userId: string): Promise<boolean> {
     return this.manualAdminUserIds.includes(userId);
@@ -532,6 +601,35 @@ describe("PermissionService 群组接入", () => {
     expect(await service.projectScope(PROJECT_A)).toEqual({ kind: "ids", ids: [PROJECT_A] });
     expect(await service.resolveProjectAccess(PROJECT_A, PROJECT_A)).toMatchObject({ projectId: PROJECT_A });
     expect(await service.resolveProjectAccess(PROJECT_A, PROJECT_B)).toBeNull();
+  });
+
+  it("无部门账号映射为未分组并应用未分组规则；已有部门不注入", async () => {
+    const ungrouped = serviceWith({
+      groupKeys: [],
+      rules: [rule({
+        groupKey: GROUP_ACCESS_UNGROUPED_KEY,
+        projectScope: "selected",
+        accessLevel: "edit",
+        projectIds: [PROJECT_A],
+        memberScope: "selected",
+        memberUserIds: [PROJECT_A],
+      })],
+    });
+    expect(await ungrouped.service.groupAccessOf(PROJECT_A)).toMatchObject({
+      groupKeys: [GROUP_ACCESS_UNGROUPED_KEY],
+      readOnly: false,
+      projectIds: [PROJECT_A],
+    });
+
+    const grouped = serviceWith({
+      groupKeys: ["libiaorobot.com/项目部"],
+      rules: [rule({ groupKey: GROUP_ACCESS_UNGROUPED_KEY, projectScope: "all", accessLevel: "edit" })],
+    });
+    expect(await grouped.service.groupAccessOf(PROJECT_A)).toMatchObject({
+      groupKeys: ["libiaorobot.com/项目部"],
+      readOnly: true,
+      projectIds: [],
+    });
   });
 
   it("selected 人员范围在权限画像入口过滤，不匹配人员按无规则处理", async () => {

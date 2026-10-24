@@ -32,6 +32,7 @@
 - **编辑 / 仅浏览（0073）**：`group_access_rules.access_level = edit | view`，edit 隐含浏览；多部门规则取并集，任一适用 edit 才解除只读。`projectScope=none` 保存时强制 view，数据库同时以 CHECK 拒绝 none + edit。开关 `GROUP_ACCESS_ENFORCED=true`、非部门管理员且无任何适用 edit 时，画像下发 `groupReadOnly=true`；所有业务写权限键（项目 / 成员 / 任务 / 日报 / 问题 / 节点 / 蓝图 / 文件 / 干系人 / 字典 / 日历 / 自动化 / 重发）经 `can` 一律返回 false，未挂功能权限键的写入口可用 `assertWritable` 兜底拒绝。读接口保持可用。**edit 是账号级写能力**：任一适用规则命中后，该账号可在其全部可见项目内写，不按项目逐一拆分。
 - 项目范围支持 `all` / `own` / `selected` / `none`：多群组规则取并集，任一 `all` 取消收窄；`own` 展开为 `projects.manager_ids` 含本人或 `project_members` 名册包含本人的项目；没有有效规则 = 项目空集（默认拒绝数据）。项目空集直接使项目卡片、仪表盘、工作台与文件库返回空结果，不做前端假隐藏。
 - 0069 增 `member_scope` / `member_user_ids`：`all` 让部门规则对全体直属成员生效（后续加入该部门的人员自动覆盖）；`selected` 只对勾选人员生效，空选择不放行任何人。保存 `selected` 时校验每个 user id 都来自该部门当前直属成员，防止伪造；权限画像按当前账号过滤 `selected` 规则。
+- **虚拟未分组（Push 497）**：没有 `user_group_memberships` 记录的未删除账号（含停用）在权限通讯录 / 看板聚合为根级虚拟部门「未分组」（固定键 `__ungrouped__`，不写 `departments`）；无账号时不返回空节点。该节点可保存 / 删除规则，`selected` 人员范围只校验当前未分组账号；权限画像把无部门账号的 `groupKeys` 映射为 `__ungrouped__`，进入任一真实部门后自动退出。
 - 权限页的「部门文件夹全选」只作用于该部门直属人员，子部门按各自规则独立配置；人员勾选状态随规则保存，不做实时同步按钮。手工部门键入口已删除，部门目录完全来自 Casdoor 自动同步。
 
 ## 与其它模块的边界
