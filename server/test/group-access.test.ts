@@ -134,12 +134,37 @@ describe("群组访问规则", () => {
   });
 });
 
-describe("GroupAccessService 群组目录", () => {
-  it("展示 Casdoor 目录全量群组，并合并成员计数、既有规则与观察到的额外群组", async () => {
+describe("GroupAccessService 部门通讯录", () => {
+  it("返回部门层级和直属人员，并合并既有规则与观察到的额外部门", async () => {
     const repository = {
-      listGroupMembershipCounts: async () => [
-        { groupKey: "libiaorobot.com/QA", groupName: "Quality", memberCount: 2 },
-        { groupKey: "libiaorobot.com/Extra", groupName: "Extra", memberCount: 1 },
+      listGroupMembers: async () => [
+        {
+          groupKey: "libiaorobot.com/QA",
+          groupName: "Quality",
+          userId: PROJECT_A,
+          username: "1001",
+          displayName: "Alice",
+          email: "alice@libiaorobot.com",
+          status: "active",
+        },
+        {
+          groupKey: "libiaorobot.com/QA",
+          groupName: "Quality",
+          userId: PROJECT_B,
+          username: "1002",
+          displayName: "Bob",
+          email: null,
+          status: "disabled",
+        },
+        {
+          groupKey: "libiaorobot.com/Extra",
+          groupName: "Extra",
+          userId: PROJECT_C,
+          username: "1003",
+          displayName: "Carol",
+          email: "carol@libiaorobot.com",
+          status: "active",
+        },
       ],
       listAccessRules: async () => [rule({ groupKey: "libiaorobot.com/QA", allowedPages: ["files"] })],
       listAccessProjects: async () => [],
@@ -151,8 +176,8 @@ describe("GroupAccessService 群组目录", () => {
     };
     const departments = {
       listDepartments: async () => [
-        { sourceId: "RD", name: "R&D" },
-        { sourceId: "QA", name: "Quality" },
+        { id: PROJECT_A, parentId: null, sourceId: "RD", name: "R&D" },
+        { id: PROJECT_B, parentId: PROJECT_A, sourceId: "QA", name: "Quality" },
       ],
     };
     const service = new GroupAccessService(
@@ -163,10 +188,32 @@ describe("GroupAccessService 群组目录", () => {
       new AppConfig({ CASDOOR_ORG_NAME: "libiaorobot.com" } as Env),
     );
     const overview = await service.overview(PROJECT_A);
-    expect(overview.groups.map((group) => ({ key: group.groupKey, members: group.memberCount, pages: group.rule?.allowedPages ?? [] }))).toEqual([
-      { key: "libiaorobot.com/Extra", members: 1, pages: [] },
-      { key: "libiaorobot.com/QA", members: 2, pages: ["files"] },
-      { key: "libiaorobot.com/RD", members: 0, pages: [] },
+    expect(overview.groups.map((group) => ({
+      key: group.groupKey,
+      parent: group.parentGroupKey,
+      members: group.memberCount,
+      pages: group.rule?.allowedPages ?? [],
+    }))).toEqual([
+      { key: "libiaorobot.com/Extra", parent: null, members: 1, pages: [] },
+      { key: "libiaorobot.com/QA", parent: "libiaorobot.com/RD", members: 2, pages: ["files"] },
+      { key: "libiaorobot.com/RD", parent: null, members: 0, pages: [] },
+    ]);
+    const qa = overview.groups.find((group) => group.groupKey === "libiaorobot.com/QA");
+    expect(qa?.members).toEqual([
+      {
+        userId: PROJECT_A,
+        username: "1001",
+        displayName: "Alice",
+        email: "alice@libiaorobot.com",
+        status: "active",
+      },
+      {
+        userId: PROJECT_B,
+        username: "1002",
+        displayName: "Bob",
+        email: null,
+        status: "disabled",
+      },
     ]);
   });
 });

@@ -38,6 +38,6 @@ export class GroupAccessAdminGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<RequestWithUser>();
     if (request.actorId === undefined) throw new AppError("AUTH_REQUIRED", "未登录");
     if (await this.permission.canManageGroupAccess(request.actorId)) return true;
-    throw new AppError("FORBIDDEN", "仅群组权限管理员可以管理页面与项目权限");
+    throw new AppError("FORBIDDEN", "仅部门权限管理员可以管理页面与项目权限");
   }
 }

@@ -10657,14 +10657,28 @@ export interface components {
          * @enum {string}
          */
         FollowObjectType: "project" | "task";
-        /** @description 可配置群组：当前目录观察到的人数 + 已保存规则 */
+        /** @description 可配置部门：层级、直属人员与已保存规则 */
         GroupAccessGroup: {
             groupKey: string;
             groupName: string;
+            /** @description 上级部门键；null = 根部门 */
+            parentGroupKey: string | null;
             memberCount: number;
+            /** @description 部门直属人员（按姓名 / 工号排序） */
+            members: components["schemas"]["GroupAccessMember"][];
             rule: components["schemas"]["GroupAccessRule"];
         };
-        /** @description 权限管理页数据：开关状态、当前账号群组、可配置群组与项目 */
+        /** @description 部门人员（姓名 / 工号 / 邮箱 / 状态） */
+        GroupAccessMember: {
+            userId: components["schemas"]["Uuid"];
+            /** @description 工号（users.username） */
+            username: string;
+            /** @description 姓名（users.display_name） */
+            displayName: string;
+            email: string | null;
+            status: components["schemas"]["UserStatus"];
+        };
+        /** @description 权限管理页数据：开关状态、当前账号部门、可配置部门树与项目 */
         GroupAccessOverview: {
             enforced: boolean;
             admin: boolean;

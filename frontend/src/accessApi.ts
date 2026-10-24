@@ -13,10 +13,20 @@ export type GroupAccessRule = {
   updatedAt: string;
 };
 
+export type GroupAccessMember = {
+  userId: string;
+  username: string;
+  displayName: string;
+  email: string | null;
+  status: "active" | "disabled";
+};
+
 export type GroupAccessGroup = {
   groupKey: string;
   groupName: string;
+  parentGroupKey: string | null;
   memberCount: number;
+  members: GroupAccessMember[];
   rule: GroupAccessRule | null;
 };
 

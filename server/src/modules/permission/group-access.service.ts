@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import type {
   GroupAccessGroup,
+  GroupAccessMember,
   GroupAccessOverview,
   GroupAccessRule,
   GroupAccessRuleInput,
@@ -27,8 +28,8 @@ export class GroupAccessService {
 
   async overview(actorId: string): Promise<GroupAccessOverview> {
     await this.assertAdmin(actorId);
-    const [membershipCounts, directory, rules, projects, groupAccess] = await Promise.all([
-      this.repository.listGroupMembershipCounts(),
+    const [memberships, directory, rules, projects, groupAccess] = await Promise.all([
+      this.repository.listGroupMembers(),
       this.departments.listDepartments(),
       this.repository.listAccessRules(),
       this.repository.listAccessProjects(),
@@ -42,25 +43,53 @@ export class GroupAccessService {
         }),
       ),
     );
-    const membershipByKey = new Map(membershipCounts.map((item) => [item.groupKey, item] as const));
+    const membersByKey = new Map<string, GroupAccessMember[]>();
+    const membershipNameByKey = new Map<string, string>();
+    for (const membership of memberships) {
+      const members = membersByKey.get(membership.groupKey) ?? [];
+      members.push({
+        userId: membership.userId,
+        username: membership.username,
+        displayName: membership.displayName,
+        email: membership.email,
+        status: membership.status,
+      });
+      membersByKey.set(membership.groupKey, members);
+      if (!membershipNameByKey.has(membership.groupKey)) {
+        membershipNameByKey.set(membership.groupKey, membership.groupName);
+      }
+    }
+    const sourceIdByDepartmentId = new Map<string, string>();
+    for (const department of directory) {
+      if (department.sourceId !== null) sourceIdByDepartmentId.set(department.id, department.sourceId);
+    }
     const groups = new Map<string, GroupAccessGroup>();
     for (const department of directory) {
       if (department.sourceId === null) continue;
       const groupKey = casdoorGroupKey(this.config.env.CASDOOR_ORG_NAME, department.sourceId);
       if (groupKey === "") continue;
+      const parentSourceId =
+        department.parentId === null ? null : sourceIdByDepartmentId.get(department.parentId) ?? null;
+      const parentGroupKey =
+        parentSourceId === null ? null : casdoorGroupKey(this.config.env.CASDOOR_ORG_NAME, parentSourceId) || null;
+      const members = membersByKey.get(groupKey) ?? [];
       groups.set(groupKey, {
         groupKey,
         groupName: department.name,
-        memberCount: membershipByKey.get(groupKey)?.memberCount ?? 0,
+        parentGroupKey,
+        memberCount: members.length,
+        members,
         rule: null,
       });
     }
-    for (const item of membershipCounts) {
-      if (groups.has(item.groupKey)) continue;
-      groups.set(item.groupKey, {
-        groupKey: item.groupKey,
-        groupName: item.groupName,
-        memberCount: item.memberCount,
+    for (const [groupKey, members] of membersByKey) {
+      if (groups.has(groupKey)) continue;
+      groups.set(groupKey, {
+        groupKey,
+        groupName: membershipNameByKey.get(groupKey) ?? casdoorGroupName(groupKey),
+        parentGroupKey: null,
+        memberCount: members.length,
+        members,
         rule: null,
       });
     }
@@ -70,8 +99,14 @@ export class GroupAccessService {
       groups.set(rule.groupKey, {
         groupKey: rule.groupKey,
         groupName: meta?.groupName ?? current?.groupName ?? casdoorGroupName(rule.groupKey),
+        parentGroupKey: current?.parentGroupKey ?? null,
         memberCount: current?.memberCount ?? 0,
-        rule: toRule(rule, meta?.groupName ?? current?.groupName ?? casdoorGroupName(rule.groupKey), meta?.updatedAt ?? new Date(0)),
+        members: current?.members ?? [],
+        rule: toRule(
+          rule,
+          meta?.groupName ?? current?.groupName ?? casdoorGroupName(rule.groupKey),
+          meta?.updatedAt ?? new Date(0),
+        ),
       });
     }
     return {
@@ -126,14 +161,14 @@ export class GroupAccessService {
   async remove(actorId: string, groupKey: string): Promise<void> {
     await this.assertAdmin(actorId);
     const before = await this.repository.findRuleMetadata(groupKey);
-    if (before === null) throw new AppError("NOT_FOUND", "群组访问规则不存在");
+    if (before === null) throw new AppError("NOT_FOUND", "部门访问规则不存在");
     await this.repository.deleteGroupAccessRule(groupKey);
     await this.audit.recordStandalone({
       actorId,
       action: "delete",
       objectType: "group_access_rule",
       objectId: groupKey,
-      summary: "删除群组访问规则：" + before.groupName + "（" + groupKey + "）",
+      summary: "删除部门访问规则：" + before.groupName + "（" + groupKey + "）",
       metadata: { groupKey },
     });
     this.permission.invalidate();
@@ -141,7 +176,7 @@ export class GroupAccessService {
 
   private async assertAdmin(actorId: string): Promise<void> {
     if (await this.permission.canManageGroupAccess(actorId)) return;
-    throw new AppError("FORBIDDEN", "仅群组权限管理员可以管理页面与项目权限");
+    throw new AppError("FORBIDDEN", "仅部门权限管理员可以管理页面与项目权限");
   }
 }
 
