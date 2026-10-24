@@ -134,6 +134,9 @@ export const GROUP_ACCESS_PROJECT_SCOPE_KEYS = ["all", "own", "selected", "none"
 /** 部门规则适用人员（group_access_rules.member_scope）：全部直属人员 / 仅勾选人员。 */
 export const GROUP_ACCESS_MEMBER_SCOPE_KEYS = ["all", "selected"] as const;
 
+/** 部门规则权限档位（group_access_rules.access_level）：编辑 / 仅浏览。 */
+export const GROUP_ACCESS_ACCESS_LEVEL_KEYS = ["edit", "view"] as const;
+
 /** 数组字面量（CHECK 用：`<@ array[… ]::text[]`）；sqlValueList 只服务 `in (…)`。 */
 export function sqlArrayLiteral(values: readonly string[]): string {
   const quote = String.fromCharCode(39);

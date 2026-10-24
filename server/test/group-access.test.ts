@@ -27,6 +27,7 @@ function rule(partial: Partial<GroupAccessRuleData> & { groupKey: string }): Gro
   return {
     allowedPages: ["projects"],
     projectScope: "none",
+    accessLevel: "view",
     projectIds: [],
     memberScope: "all",
     memberUserIds: [],
@@ -131,6 +132,31 @@ describe("群组访问规则", () => {
     expect(all.projectIds).toBeNull();
     expect(all.ownProjects).toBe(false);
     expect(all.readOnly).toBe(true);
+  });
+
+  it("任一适用 edit 规则才解除只读，view / 无规则继续只读", () => {
+    const view = resolveGroupAccess({
+      enforced: true,
+      admin: false,
+      groupKeys: ["g1", "g2"],
+      rules: [
+        rule({ groupKey: "g1", projectScope: "all", accessLevel: "view" }),
+        rule({ groupKey: "g2", projectScope: "selected", projectIds: [PROJECT_A], accessLevel: "view" }),
+      ],
+    });
+    expect(view.readOnly).toBe(true);
+
+    const edit = resolveGroupAccess({
+      enforced: true,
+      admin: false,
+      groupKeys: ["g1", "g2"],
+      rules: [
+        rule({ groupKey: "g1", projectScope: "own", accessLevel: "view" }),
+        rule({ groupKey: "g2", projectScope: "selected", projectIds: [PROJECT_A], accessLevel: "edit" }),
+      ],
+    });
+    expect(edit.readOnly).toBe(false);
+    expect(edit.projectIds).toEqual([PROJECT_A]);
   });
 
   it("人员范围 selected 仅匹配勾选人员；空选择不放行任何人", () => {
@@ -300,6 +326,7 @@ describe("GroupAccessService 部门通讯录", () => {
       groupName: "Quality",
       allowedPages: ["projects"],
       projectScope: "none",
+      accessLevel: "view",
       projectIds: [],
       memberScope: "selected",
       memberUserIds: [PROJECT_A],
@@ -309,12 +336,54 @@ describe("GroupAccessService 部门通讯录", () => {
     expect(saved.rule.allowedPages).toEqual([...GROUP_ACCESS_PAGE_KEYS]);
     expect(saved.rule.memberScope).toBe("selected");
     expect(saved.rule.memberUserIds).toEqual([PROJECT_A]);
-    expect(savedArgs?.[5]).toBe("selected");
-    expect(savedArgs?.[6]).toEqual([PROJECT_A]);
+    expect(savedArgs?.[4]).toBe("view");
+    expect(savedArgs?.[6]).toBe("selected");
+    expect(savedArgs?.[7]).toEqual([PROJECT_A]);
 
     await expect(
       service.save(PROJECT_A, { ...input, memberUserIds: [PROJECT_B] }),
     ).rejects.toThrow("所选人员已不在该部门");
+  });
+
+  it("保存编辑档位；不显示项目数据时强制仅浏览", async () => {
+    let savedArgs: unknown[] | null = null;
+    const repository = {
+      findRuleMetadata: async () => null,
+      listExistingProjectIds: async () => [],
+      listGroupMemberIds: async () => [],
+      upsertGroupAccessRule: async (...args: unknown[]) => { savedArgs = args; },
+    };
+    const permission = {
+      canManageGroupAccess: async () => true,
+      invalidate: () => undefined,
+    };
+    const service = new GroupAccessService(
+      permission as never,
+      repository as never,
+      { recordStandalone: async () => undefined } as never,
+      {} as never,
+      new AppConfig({ CASDOOR_ORG_NAME: "libiaorobot.com" } as Env),
+    );
+    const base: GroupAccessRuleInput = {
+      groupKey: "libiaorobot.com/QA",
+      groupName: "Quality",
+      allowedPages: ["projects"],
+      projectScope: "all",
+      accessLevel: "edit",
+      projectIds: [],
+      memberScope: "all",
+      memberUserIds: [],
+    };
+
+    const saved = await service.save(PROJECT_A, base);
+    expect(saved.rule.accessLevel).toBe("edit");
+    expect(savedArgs?.[3]).toBe("all");
+    expect(savedArgs?.[4]).toBe("edit");
+
+    const normalized = await service.save(PROJECT_A, { ...base, projectScope: "none", accessLevel: "edit" });
+    expect(normalized.rule.accessLevel).toBe("view");
+    expect(savedArgs?.[3]).toBe("none");
+    expect(savedArgs?.[4]).toBe("view");
   });
 
   it("手工授予 / 撤销系统管理员，环境配置管理员不可撤销", async () => {

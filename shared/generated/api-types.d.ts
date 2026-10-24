@@ -10792,6 +10792,11 @@ export interface components {
          * @enum {string}
          */
         FollowObjectType: "project" | "task";
+        /**
+         * @description 部门权限档位：edit 可编辑并浏览 / view 仅浏览；edit 隐含 view，存量规则默认 view
+         * @enum {string}
+         */
+        GroupAccessAccessLevel: "edit" | "view";
         /** @description 系统管理员名单项（姓名 / 工号 / 邮箱 / 来源 / 是否可撤销） */
         GroupAccessAdmin: {
             userId: components["schemas"]["Uuid"];
@@ -10868,19 +10873,20 @@ export interface components {
          * @enum {string}
          */
         GroupAccessProjectScope: "all" | "own" | "selected" | "none";
-        /** @description 群组访问规则（只读；projectIds 仅项目 selected 时有值；memberUserIds 仅人员 selected 时有值） */
+        /** @description 群组访问规则：accessLevel = edit / view；projectIds 仅项目 selected 时有值；memberUserIds 仅人员 selected 时有值 */
         GroupAccessRule: {
             groupKey: string;
             groupName: string;
             /** @description 旧客户端兼容字段；恒返回全部页面 */
             allowedPages: components["schemas"]["GroupAccessPage"][];
             projectScope: components["schemas"]["GroupAccessProjectScope"];
+            accessLevel: components["schemas"]["GroupAccessAccessLevel"];
             projectIds: components["schemas"]["Uuid"][];
             memberScope: components["schemas"]["GroupAccessMemberScope"];
             memberUserIds: components["schemas"]["Uuid"][];
             updatedAt: components["schemas"]["DateTime"];
         } | null;
-        /** @description 保存群组访问规则：项目范围 + 指定项目 + 适用人员（selected 时生效）；allowedPages 兼容旧客户端且不再产生页面限制 */
+        /** @description 保存群组访问规则：项目范围 + 编辑/仅浏览 + 指定项目 + 适用人员（selected 时生效）；allowedPages 兼容旧客户端且不再产生页面限制 */
         GroupAccessRuleInput: {
             /** @example libiaorobot.com/项目部 */
             groupKey: string;
@@ -10897,6 +10903,7 @@ export interface components {
              */
             allowedPages: components["schemas"]["GroupAccessPage"][];
             projectScope: components["schemas"]["GroupAccessProjectScope"];
+            accessLevel?: components["schemas"]["GroupAccessAccessLevel"] & unknown;
             /** @default [] */
             projectIds: components["schemas"]["Uuid"][];
             memberScope?: components["schemas"]["GroupAccessMemberScope"] & unknown;

@@ -210,6 +210,7 @@ export class GroupAccessService {
   async save(actorId: string, input: GroupAccessRuleInput): Promise<GroupAccessRuleResponse> {
     await this.assertAdmin(actorId);
     const before = await this.repository.findRuleMetadata(input.groupKey);
+    const accessLevel = input.projectScope === "none" ? "view" : input.accessLevel;
     const projectIds = input.projectScope === "selected" ? Array.from(new Set(input.projectIds)) : [];
     if (projectIds.length > 0) {
       const existing = await this.repository.listExistingProjectIds(projectIds);
@@ -233,6 +234,7 @@ export class GroupAccessService {
       groupName,
       allowedPages,
       input.projectScope,
+      accessLevel,
       projectIds,
       input.memberScope,
       memberUserIds,
@@ -248,6 +250,7 @@ export class GroupAccessService {
         groupKey: input.groupKey,
         allowedPages,
         projectScope: input.projectScope,
+        accessLevel,
         projectIds,
         memberScope: input.memberScope,
         memberUserIds,
@@ -260,6 +263,7 @@ export class GroupAccessService {
         groupName,
         allowedPages,
         projectScope: input.projectScope,
+        accessLevel,
         projectIds,
         memberScope: input.memberScope,
         memberUserIds,
@@ -286,7 +290,7 @@ export class GroupAccessService {
 
   private async assertAdmin(actorId: string): Promise<void> {
     if (await this.permission.canManageGroupAccess(actorId)) return;
-    throw new AppError("FORBIDDEN", "仅部门权限管理员可以管理页面与项目权限");
+    throw new AppError("FORBIDDEN", "仅部门权限管理员可以管理编辑 / 仅浏览权限");
   }
 }
 
@@ -296,6 +300,7 @@ function toRule(rule: GroupAccessRuleData, groupName: string, updatedAt: Date): 
     groupName,
     allowedPages: [...GROUP_ACCESS_PAGE_KEYS],
     projectScope: rule.projectScope,
+    accessLevel: rule.accessLevel,
     projectIds: rule.projectIds,
     memberScope: rule.memberScope,
     memberUserIds: rule.memberUserIds,

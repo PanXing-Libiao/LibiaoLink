@@ -4494,6 +4494,14 @@
         ],
         "description": "关注对象类型：project 项目 / task 任务"
       },
+      "GroupAccessAccessLevel": {
+        "type": "string",
+        "enum": [
+          "edit",
+          "view"
+        ],
+        "description": "部门权限档位：edit 可编辑并浏览 / view 仅浏览；edit 隐含 view，存量规则默认 view"
+      },
       "GroupAccessAdmin": {
         "type": "object",
         "properties": {
@@ -4758,6 +4766,9 @@
           "projectScope": {
             "$ref": "#/components/schemas/GroupAccessProjectScope"
           },
+          "accessLevel": {
+            "$ref": "#/components/schemas/GroupAccessAccessLevel"
+          },
           "projectIds": {
             "type": "array",
             "items": {
@@ -4782,12 +4793,13 @@
           "groupName",
           "allowedPages",
           "projectScope",
+          "accessLevel",
           "projectIds",
           "memberScope",
           "memberUserIds",
           "updatedAt"
         ],
-        "description": "群组访问规则（只读；projectIds 仅项目 selected 时有值；memberUserIds 仅人员 selected 时有值）"
+        "description": "群组访问规则：accessLevel = edit / view；projectIds 仅项目 selected 时有值；memberUserIds 仅人员 selected 时有值"
       },
       "GroupAccessRuleInput": {
         "type": "object",
@@ -4821,6 +4833,16 @@
           "projectScope": {
             "$ref": "#/components/schemas/GroupAccessProjectScope"
           },
+          "accessLevel": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GroupAccessAccessLevel"
+              },
+              {
+                "description": "edit = 可编辑并浏览；view = 仅浏览。projectScope=none 时恒为 view"
+              }
+            ]
+          },
           "projectIds": {
             "type": "array",
             "items": {
@@ -4853,7 +4875,7 @@
           "groupKey",
           "projectScope"
         ],
-        "description": "保存群组访问规则：项目范围 + 指定项目 + 适用人员（selected 时生效）；allowedPages 兼容旧客户端且不再产生页面限制"
+        "description": "保存群组访问规则：项目范围 + 编辑/仅浏览 + 指定项目 + 适用人员（selected 时生效）；allowedPages 兼容旧客户端且不再产生页面限制"
       },
       "GroupAccessRuleResponse": {
         "type": "object",

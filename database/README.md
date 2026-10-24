@@ -78,6 +78,7 @@ PostgreSQL 基线的唯一来源：只追加的迁移脚本、最小权限角色
 | `migrations/0070_group_access_own_scope.sql` | 部门项目范围新增 `own`（2026-10-24）：仅调整 `group_access_rules.project_scope` CHECK 为 `all` / `own` / `selected` / `none`；`own` = 本人负责（`projects.manager_ids`）或进入项目名册。页面字段 `allowed_pages` 保留兼容但不再裁决；只追加 DDL，应用角色随 roles/0001 default privileges 自动授权，迁移由 `libiaolink_migrator` 执行。 |
 | `migrations/0071_task_template_creator.sql` | 任务模板填写人（2026-10-24）：`task_templates` 增 `created_by uuid references users(id)` 与 `ix_task_templates_created_by`（仅未软删行）；新建模板写当前账号，存量 / 种子为空并由界面显示「系统」。只追加 DDL，应用角色随 roles/0001 default privileges 自动授权。 |
 | `migrations/0072_group_access_admins.sql` | 系统管理员名单（2026-10-24）：新增 `group_access_admins`（`user_id` 主键 → `users.id` 级联、`granted_by` → `users.id`、`created_at`）。只保存权限页手工授予的管理员；环境变量与角色来源不落表。只追加 DDL，应用角色随 roles/0001 default privileges 自动授权，回滚语句入头注。 |
+| `migrations/0073_group_access_access_level.sql` | 部门权限档位（2026-10-24 · **高风险 DDL / 权限，请 wmj 复核** · CONTRIBUTING §15）：`group_access_rules` 增 `access_level text not null default 'view'`（`edit` / `view`）；存量规则回填 view，升级不自动放权；`project_scope=none` 只能 view。两枚 CHECK 分别限定枚举与 none + edit；应用角色随 roles/0001 default privileges 自动授权，回滚语句入头注。 |
 | `seeds/README.md` | 种子数据规格（M0-03 · Push 73）：可重跑、幂等、与迁移分离 |
 | `seeds/roles.mjs` / `seeds/index.mjs` | 种子 #6a：一期六个内置角色（h1 · Push 74）；index 为按序注册表，新种子追加到末尾 |
 | `seeds/blueprint.mjs` | 种子 #7：default 蓝图模板（9 阶段 19 节点 + 版本 1，h3 · Push 83）；节点清单待业务补全，库内已修订时不覆盖 |
@@ -215,5 +216,6 @@ seed: 完成，本次执行 4 个种子
 - **2026-10-20 0060 复算**：55 表 / **554 列** / 175 索引（含唯一）/ **196 CHECK**（0060 = 新表 `automation_rules` 14 列 + `automation_runs` 17 列 + `jobs.dedupe_key` 1 列；本机 Docker PostgreSQL 18 @55432 空库迁移 `0001~0060`（59 件）+ 幂等复跑无漂移，`check:db-schema` 通过；`m5-06-1a-replay.mjs` 10/10）。
 - **2026-10-20 0062 复算**：57 表 / **592 列** / 187 索引（含唯一）/ **220 CHECK**（0062 = 新表 `todos` 15 列 + 主键 / 3 显式索引 + 8 CHECK；本机 Docker PostgreSQL 18 @55432 空库迁移 `0001~0062`（61 件）+ 幂等复跑无漂移，`check:db-schema` 通过；`m5-06-3-replay.mjs` 8/8）。**2026-10-20 0063 复算**：57 表 / **593 列** / 187 索引（含唯一）/ **220 CHECK**（0063 = `wecom_aibot_dm_activations` +1 列；本机 Docker PostgreSQL 18 @55433 空库迁移 `0001~0063` + 幂等复跑无漂移，`check:db-schema` 通过）。
 - **2026-10-20 0060 seed 复算**：`automation-rules` 首跑 `rulesInserted 10 / jobsInserted 7`，二跑 `rulesUnchanged 10 / jobsUnchanged 7`（零插入 / 零更新）；启用集仍为 R02 / R03 / R05，7 个 schedule job 状态与规则 enabled 一致。
+- **2026-10-24 0073 复算**：63 表 / **645 列** / 201 索引（含唯一）/ **235 CHECK**（临时 PostgreSQL 18 从 0001 依次执行至 0073；存量规则回填 view、非法枚举与 none + edit 均被约束拒绝，`check:db-schema` 通过）。
 - **Drizzle 对齐**：`server` 构建后跑 `npm run check:db-schema`（比对表 / 列类型 / 可空性 / 索引 / CHECK 名称）。
 - **已合入迁移不可变**：改文件 / 删文件 / 中间插队三种情形均退出码 1，并给出中文原因（`scripts/migrate.mjs` 的 `verifyNoDrift`）。

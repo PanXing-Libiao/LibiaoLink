@@ -5,6 +5,7 @@ import {
   fetchAccessOverview,
   revokeGroupAccessAdmin,
   saveGroupAccessRule,
+  type GroupAccessAccessLevel,
   type GroupAccessAdmin,
   type GroupAccessGroup,
   type GroupAccessMember,
@@ -14,7 +15,9 @@ import {
 } from "./accessApi";
 import { AccessDashboard, AccessDashboardSkeleton } from "./AccessDashboard";
 import { buildAccessDashboardModel } from "./accessDashboardModel";
+import { AccessScopePicker } from "./AccessScopePicker";
 import { AppHeader } from "./components/AppHeader";
+import { SelectMenu } from "./components/SelectMenu";
 import { Toast, type ToastKind } from "./components/Toast";
 import { useLocale, useT, type TextKey } from "./i18n";
 import { loadMyPermissions } from "./permissions";
@@ -29,13 +32,6 @@ type Notice = { kind: ToastKind; text: string };
 type AccessView = "dashboard" | "rules";
 type Translate = (key: TextKey, params?: Record<string, string | number>) => string;
 type DepartmentTreeNode = { group: GroupAccessGroup; children: DepartmentTreeNode[] };
-
-const SCOPE_OPTIONS: Array<{ value: GroupAccessProjectScope; labelKey: TextKey }> = [
-  { value: "all", labelKey: "access.scope.all" },
-  { value: "own", labelKey: "access.scope.own" },
-  { value: "selected", labelKey: "access.scope.selected" },
-  { value: "none", labelKey: "access.scope.none" },
-];
 
 function memberSearchText(member: GroupAccessMember): string {
   return (member.displayName + " " + member.username + " " + (member.email ?? "")).toLowerCase();
@@ -343,9 +339,12 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
   const [refreshSeq, setRefreshSeq] = useState(0);
   const [reload, setReload] = useState(0);
   const hasDataRef = useRef(false);
+  const dataSignatureRef = useRef<string | null>(null);
+  const inFlightRef = useRef(false);
   const requestIdRef = useRef(0);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [projectScope, setProjectScope] = useState<GroupAccessProjectScope>("none");
+  const [accessLevel, setAccessLevel] = useState<GroupAccessAccessLevel>("view");
   const [projectIds, setProjectIds] = useState<string[]>([]);
   const [memberScope, setMemberScope] = useState<GroupAccessMemberScope>("all");
   const [memberUserIds, setMemberUserIds] = useState<string[]>([]);
@@ -357,22 +356,32 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
   const [adminBusyUserId, setAdminBusyUserId] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
 
-  const loadAccessData = useCallback(async (): Promise<boolean> => {
+  const loadAccessData = useCallback(async (options?: { background?: boolean }): Promise<boolean> => {
+    const background = options?.background === true;
+    if (background && inFlightRef.current) return true;
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
-    if (hasDataRef.current) setRefreshing(true);
-    else setState({ kind: "loading" });
+    inFlightRef.current = true;
+    if (!background) {
+      if (hasDataRef.current) setRefreshing(true);
+      else setState({ kind: "loading" });
+    }
     try {
       const next = await fetchAccessOverview();
       if (requestId !== requestIdRef.current) return false;
       hasDataRef.current = true;
-      setState({ kind: "ready", data: next });
-      setLastSyncedAt(new Date());
-      setRefreshSeq((value) => value + 1);
+      const nextSignature = JSON.stringify(next);
+      if (nextSignature !== dataSignatureRef.current) {
+        dataSignatureRef.current = nextSignature;
+        setState({ kind: "ready", data: next });
+        setLastSyncedAt(new Date());
+        setRefreshSeq((value) => value + 1);
+      }
       return true;
     } catch (error: unknown) {
       if (requestId !== requestIdRef.current) return false;
       const message = error instanceof Error ? error.message : String(error);
+      if (background) return false;
       if (hasDataRef.current) {
         setNotice({ kind: "error", text: tRef.current("access.loadFailed", { message }) });
       } else {
@@ -380,7 +389,10 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
       }
       return false;
     } finally {
-      if (requestId === requestIdRef.current) setRefreshing(false);
+      if (requestId === requestIdRef.current) {
+        inFlightRef.current = false;
+        if (!background) setRefreshing(false);
+      }
     }
   }, []);
 
@@ -393,7 +405,7 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
 
   useEffect(() => {
     const refreshIfVisible = (): void => {
-      if (document.visibilityState === "visible") setReload((value) => value + 1);
+      if (document.visibilityState === "visible") void loadAccessData({ background: true });
     };
     const timer = window.setInterval(refreshIfVisible, 30_000);
     const onVisibilityChange = (): void => {
@@ -404,7 +416,7 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, []);
+  }, [loadAccessData]);
 
   const data = state.kind === "ready" ? state.data : null;
   useEffect(() => {
@@ -469,6 +481,7 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
 
   function applyGroup(group: GroupAccessGroup): void {
     setProjectScope(group.rule?.projectScope ?? "none");
+    setAccessLevel(group.rule?.accessLevel ?? "view");
     setProjectIds(group.rule?.projectIds ?? []);
     const currentMemberIds = new Set(group.members.map((member) => member.userId));
     setMemberScope(group.rule?.memberScope ?? "all");
@@ -493,6 +506,11 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
 
   function toggleAllExpanded(): void {
     setExpandedKeys(allExpanded ? new Set() : new Set(allDepartmentKeys));
+  }
+
+  function changeScope(next: { projectScope: GroupAccessProjectScope; accessLevel: GroupAccessAccessLevel }): void {
+    setProjectScope(next.projectScope);
+    setAccessLevel(next.projectScope === "none" ? "view" : next.accessLevel);
   }
 
   function toggleProject(projectId: string): void {
@@ -530,6 +548,7 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
       await saveGroupAccessRule({
         groupKey: selectedKey,
         projectScope,
+        accessLevel: projectScope === "none" ? "view" : accessLevel,
         projectIds: projectScope === "selected" ? projectIds : [],
         memberScope,
         memberUserIds: memberScope === "selected" ? memberUserIds : [],
@@ -553,6 +572,7 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
       setNotice({ kind: "ok", text: t("access.deleted") });
       setSelectedKey(null);
       setProjectScope("none");
+      setAccessLevel("view");
       setProjectIds([]);
       setMemberScope("all");
       setMemberUserIds([]);
@@ -608,20 +628,18 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
               <div className="mt-1 flex flex-wrap items-center gap-2">
                 <h1 className="text-xl font-semibold tracking-tight text-zinc-900">{accessView === "dashboard" ? t("access.dashboard.title") : t("access.title")}</h1>
                 {accessView === "dashboard" ? (
-                  <label className="relative inline-flex items-center">
-                    <span className="sr-only">{t("access.dashboard.departmentScope")}</span>
-                    <select
-                      data-access-scope=""
+                  <div data-access-scope="" className="w-[220px] min-w-[180px] max-w-[260px]">
+                    <SelectMenu
                       value={scopeGroupKey ?? ""}
+                      options={[
+                        { value: "", label: t("access.dashboard.allDepartments") },
+                        ...scopeOptions.map((option) => ({ value: option.groupKey, label: option.pathText })),
+                      ]}
+                      onChange={(value) => { setScopeGroupKey(value === "" ? null : value); }}
+                      ariaLabel={t("access.dashboard.departmentScope")}
                       disabled={data === null}
-                      onChange={(event) => { setScopeGroupKey(event.target.value === "" ? null : event.target.value); }}
-                      className="max-w-[260px] appearance-none truncate rounded-full border border-zinc-200 bg-white py-1 pl-2.5 pr-7 text-[10px] font-medium text-zinc-600 shadow-sm transition hover:border-blue-200 hover:text-blue-700 focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:opacity-50"
-                    >
-                      <option value="">{t("access.dashboard.allDepartments")}</option>
-                      {scopeOptions.map((option) => <option key={option.groupKey} value={option.groupKey}>{option.pathText}</option>)}
-                    </select>
-                    <svg viewBox="0 0 16 16" aria-hidden="true" className="pointer-events-none absolute right-2.5 h-3 w-3 text-zinc-400"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                  </label>
+                    />
+                  </div>
                 ) : null}
               </div>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-zinc-400">
@@ -828,7 +846,14 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
                               </svg>
                             </span>
                             <div className="min-w-0">
-                              <h2 className="truncate text-base font-semibold text-zinc-900">{selectedGroup?.groupName ?? selectedKey}</h2>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h2 className="truncate text-base font-semibold text-zinc-900">{selectedGroup?.groupName ?? selectedKey}</h2>
+                                {selectedRule === null || selectedRule.projectScope === "none" ? null : (
+                                  <span className={"rounded-full px-2 py-0.5 text-[10px] font-medium " + (selectedRule.accessLevel === "edit" ? "bg-indigo-50 text-indigo-700" : "bg-emerald-50 text-emerald-700")}>
+                                    {t(selectedRule.accessLevel === "edit" ? "access.dashboard.operate" : "access.dashboard.viewOnly")}
+                                  </span>
+                                )}
+                              </div>
                               <p className="mt-0.5 truncate text-[11px] text-zinc-400">
                                 {selectedPath.length > 0 ? selectedPath.join(" / ") : selectedKey}
                               </p>
@@ -885,13 +910,12 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
                         ) : null}
                         <h3 className="mt-6 text-sm font-semibold text-zinc-800">{t("access.projectsTitle")}</h3>
                         <p className="mt-0.5 text-xs text-zinc-500">{t("access.projectsHint")}</p>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                          {SCOPE_OPTIONS.map((option) => (
-                            <label key={option.value} className="flex cursor-pointer items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50">
-                              <input type="radio" name="access-project-scope" checked={projectScope === option.value} onChange={() => { setProjectScope(option.value); }} className="h-4 w-4 accent-zinc-900" />
-                              {t(option.labelKey)}
-                            </label>
-                          ))}
+                        <div className="mt-3">
+                          <AccessScopePicker
+                            projectScope={projectScope}
+                            accessLevel={accessLevel}
+                            onChange={changeScope}
+                          />
                         </div>
 
                         {projectScope === "selected" ? (

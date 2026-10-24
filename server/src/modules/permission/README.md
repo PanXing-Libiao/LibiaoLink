@@ -24,12 +24,12 @@
 
 - **权限判定开关（Push 178 · 一期「不判权限」）**：画像入口 `RoleService.getActorAuthorization()` 在 `PERMISSION_ENFORCED=false`（默认）时返回**等效管理员**（`roleCodes=[admin]` + `dataScopes=[all]` + 契约全量权限位）—— 本模块判定链（`can` / `projectScopeSpec` / `FIELD_POLICIES` / `assertCan` / 五出口）**零改动即整体放开**，记录级不再裁剪、字段级不再隐藏、导出不再单独授权；`true`（二期）回到 ADR-011 判定。画像缓存（TTL 10s + `invalidate`）与 404 / 403 语义不变（开关只决定画像内容）。
 
-## 部门访问规则与系统管理员（0068 / 0069 / 0070 / 0072）
+## 部门访问规则与系统管理员（0068 / 0069 / 0070 / 0072 / 0073）
 
 - `user_group_memberships` 保存 Casdoor 群组直属成员；权限画像入口按当前账号的群组键读取 `group_access_rules`。2026-10-24 起页面不再按部门裁剪：所有登录账号的页面集合恒为 `GROUP_ACCESS_PAGE_KEYS`，`allowed_pages` 仅为旧客户端兼容字段，保存时恒写全量、裁决时忽略。
 - **权限管理入口（Push 480）**：`GROUP_ACCESS_ADMIN_GROUP_KEYS` 命中的部门管理员、`GROUP_ACCESS_ADMIN_USER_IDS` 显式用户白名单恒可进入；角色 `access.manage` 仅在 `PERMISSION_ENFORCED=true` 时计入。`PERMISSION_ENFORCED=false` 的等效管理员画像不再自动放大入口，避免全员进入权限管理。
 - **系统管理员名单（Push 482 · 0072）**：权限页左栏展示当前生效的管理员，来源合并 `GROUP_ACCESS_ADMIN_USER_IDS`、`GROUP_ACCESS_ADMIN_GROUP_KEYS`、启用 `PERMISSION_ENFORCED` 后持有 `access.manage` 的角色管理员，以及 `group_access_admins` 手工授权；按 user id 去重，环境配置 / 角色来源不可在页面撤销。`POST /api/v1/access/admins` / `DELETE /api/v1/access/admins` 仅权限管理员可调用，手工变更写审计 `group_access_admin` 并立即清空权限画像缓存；至少保留一名管理员。
-- 开关 `GROUP_ACCESS_ENFORCED=true` 且非部门管理员时，画像下发 `groupReadOnly=true`；所有业务写权限键（项目 / 成员 / 任务 / 日报 / 问题 / 节点 / 蓝图 / 文件 / 干系人 / 字典 / 日历 / 自动化 / 重发）经 `can` 一律返回 false，未挂功能权限键的写入口可用 `assertWritable` 兜底拒绝。读接口保持可用，任务模板与节点配置仍可查看。
+- **编辑 / 仅浏览（0073）**：`group_access_rules.access_level = edit | view`，edit 隐含浏览；多部门规则取并集，任一适用 edit 才解除只读。`projectScope=none` 保存时强制 view，数据库同时以 CHECK 拒绝 none + edit。开关 `GROUP_ACCESS_ENFORCED=true`、非部门管理员且无任何适用 edit 时，画像下发 `groupReadOnly=true`；所有业务写权限键（项目 / 成员 / 任务 / 日报 / 问题 / 节点 / 蓝图 / 文件 / 干系人 / 字典 / 日历 / 自动化 / 重发）经 `can` 一律返回 false，未挂功能权限键的写入口可用 `assertWritable` 兜底拒绝。读接口保持可用。**edit 是账号级写能力**：任一适用规则命中后，该账号可在其全部可见项目内写，不按项目逐一拆分。
 - 项目范围支持 `all` / `own` / `selected` / `none`：多群组规则取并集，任一 `all` 取消收窄；`own` 展开为 `projects.manager_ids` 含本人或 `project_members` 名册包含本人的项目；没有有效规则 = 项目空集（默认拒绝数据）。项目空集直接使项目卡片、仪表盘、工作台与文件库返回空结果，不做前端假隐藏。
 - 0069 增 `member_scope` / `member_user_ids`：`all` 让部门规则对全体直属成员生效（后续加入该部门的人员自动覆盖）；`selected` 只对勾选人员生效，空选择不放行任何人。保存 `selected` 时校验每个 user id 都来自该部门当前直属成员，防止伪造；权限画像按当前账号过滤 `selected` 规则。
 - 权限页的「部门文件夹全选」只作用于该部门直属人员，子部门按各自规则独立配置；人员勾选状态随规则保存，不做实时同步按钮。手工部门键入口已删除，部门目录完全来自 Casdoor 自动同步。
@@ -38,7 +38,7 @@
 
 - 依赖方向：permission → identity（角色画像）。project / task / blueprint 反向依赖本模块（守卫与策略出口），**本模块不 import project / task**（可见性判定直接读名册与节点表，避免循环；check:boundaries 无违规）。
 - 名册维护（增删改）与节点维护仍属 project 模块；本模块只读这两张表做判定。
-- C3-09 当前已落地部门访问规则页（项目范围 / 适用人员，规则可保存；页面恒全开、开关开启时非管理员只读；`GROUP_ACCESS_ENFORCED` 默认关闭），角色模板与权限自检报告仍待做；临时授权（C3-06）不做。越权尝试留痕已随 h7 落地（403 / 项目域 404 → `audit_logs` 的 `result=denied` 行，检索 `GET /api/v1/audit-logs?result=denied`）；告警推送随 M5 通知模块。
+- C3-09 当前已落地部门访问规则页（项目范围 / 适用人员 / 编辑或仅浏览，规则可保存；页面恒全开，开关开启时无适用 edit 的非管理员只读；`GROUP_ACCESS_ENFORCED` 默认关闭），角色模板与权限自检报告仍待做；临时授权（C3-06）不做。越权尝试留痕已随 h7 落地（403 / 项目域 404 → `audit_logs` 的 `result=denied` 行，检索 `GET /api/v1/audit-logs?result=denied`）；告警推送随 M5 通知模块。
 
 ## 差异与后续（待复核）
 
