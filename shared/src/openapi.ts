@@ -188,6 +188,8 @@ import {
 } from "./modules/calendar.ts";
 import { PermissionMeResponseSchema } from "./modules/permissions.ts";
 import {
+  GroupAccessAdminInputSchema,
+  GroupAccessAdminResponseSchema,
   GroupAccessOverviewSchema,
   GroupAccessRuleInputSchema,
   GroupAccessRuleResponseSchema,
@@ -1399,7 +1401,7 @@ export function buildOpenApiDocument() {
     method: "get",
     path: "/api/v1/access",
     tags: ["access"],
-    summary: "群组权限管理概览（仅群组管理员）：开关、当前账号群组、可配置群组与项目",
+    summary: "部门权限管理概览（仅权限管理员）：开关、当前账号部门、系统管理员、可配置部门与项目",
     responses: {
       200: { description: "群组权限概览", ...json(GroupAccessOverviewSchema) },
       401: commonErrors[401],
@@ -1429,6 +1431,36 @@ export function buildOpenApiDocument() {
     request: { query: z.object({ groupKey: z.string().trim().min(1).max(200) }) },
     responses: {
       204: { description: "已删除" },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/access/admins",
+    tags: ["access"],
+    summary: "手工授予系统管理员（仅权限管理员；环境配置与角色来源不可重复授予）",
+    request: { body: json(GroupAccessAdminInputSchema) },
+    responses: {
+      200: { description: "当前生效的系统管理员", ...json(GroupAccessAdminResponseSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "delete",
+    path: "/api/v1/access/admins",
+    tags: ["access"],
+    summary: "撤销手工授予的系统管理员（仅权限管理员；环境配置与角色来源不可撤销）",
+    request: { query: z.object({ userId: UuidSchema }) },
+    responses: {
+      204: { description: "已撤销" },
       400: commonErrors[400],
       401: commonErrors[401],
       403: commonErrors[403],

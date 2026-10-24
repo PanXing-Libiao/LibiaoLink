@@ -1,6 +1,8 @@
 import { Injectable } from "@nestjs/common";
 import {
   GROUP_ACCESS_PAGE_KEYS,
+  type GroupAccessAdmin,
+  type GroupAccessAdminResponse,
   type GroupAccessGroup,
   type GroupAccessMember,
   type GroupAccessOverview,
@@ -12,7 +14,7 @@ import { AppError } from "../../common/errors/app-error.js";
 import { AppConfig } from "../../config/config.module.js";
 import { AuditService } from "../audit/index.js";
 import { casdoorGroupKey, casdoorGroupName, DepartmentService } from "../identity/index.js";
-import type { GroupAccessRuleData } from "./group-access.rules.js";
+import { parseGroupAccessAdminKeys, type GroupAccessRuleData } from "./group-access.rules.js";
 import { PermissionRepository } from "./permission.repository.js";
 import { PermissionService } from "./permission.service.js";
 
@@ -29,12 +31,13 @@ export class GroupAccessService {
 
   async overview(actorId: string): Promise<GroupAccessOverview> {
     await this.assertAdmin(actorId);
-    const [memberships, directory, rules, projects, groupAccess] = await Promise.all([
+    const [memberships, directory, rules, projects, groupAccess, admins] = await Promise.all([
       this.repository.listGroupMembers(),
       this.departments.listDepartments(),
       this.repository.listAccessRules(),
       this.repository.listAccessProjects(),
       this.permission.groupAccessOf(actorId),
+      this.listAdmins(),
     ]);
     const metadata = new Map(
       await Promise.all(
@@ -114,9 +117,94 @@ export class GroupAccessService {
       enforced: groupAccess.enforced,
       admin: groupAccess.admin,
       currentGroupKeys: groupAccess.groupKeys,
+      admins,
       groups: Array.from(groups.values()).sort((left, right) => left.groupKey.localeCompare(right.groupKey)),
       projects,
     };
+  }
+
+  async assignAdmin(actorId: string, userId: string): Promise<GroupAccessAdminResponse> {
+    await this.assertAdmin(actorId);
+    const user = await this.repository.findActiveGroupAccessUser(userId);
+    if (user === null) throw new AppError("NOT_FOUND", "用户不存在、已停用或已离职");
+    const existing = (await this.listAdmins()).find((admin) => admin.userId === userId);
+    if (existing !== undefined && existing.source !== "manual") return { admin: existing };
+    const at = new Date();
+    const inserted = await this.repository.grantGroupAccessAdmin(userId, actorId, at);
+    if (inserted) {
+      await this.audit.recordStandalone({
+        actorId,
+        action: "create",
+        objectType: "group_access_admin",
+        objectId: userId,
+        summary: "新增系统管理员：" + user.displayName + "（" + user.username + "）",
+        metadata: { userId, source: "manual" },
+      });
+    }
+    this.permission.invalidate();
+    const admin = (await this.listAdmins()).find((item) => item.userId === userId);
+    if (admin === undefined) throw new AppError("INTERNAL", "系统管理员授权后未能读取名单");
+    return { admin };
+  }
+
+  async removeAdmin(actorId: string, userId: string): Promise<void> {
+    await this.assertAdmin(actorId);
+    const admins = await this.listAdmins();
+    const target = admins.find((admin) => admin.userId === userId);
+    if (target === undefined) throw new AppError("NOT_FOUND", "该账号不是系统管理员");
+    if (!target.removable) {
+      throw new AppError("VALIDATION_FAILED", "环境配置或角色授权的管理员不能在此撤销");
+    }
+    if (admins.length <= 1) {
+      throw new AppError("VALIDATION_FAILED", "至少需要保留一名系统管理员");
+    }
+    const removed = await this.repository.revokeGroupAccessAdmin(userId);
+    if (!removed) throw new AppError("NOT_FOUND", "该账号不是手工添加的系统管理员");
+    await this.audit.recordStandalone({
+      actorId,
+      action: "delete",
+      objectType: "group_access_admin",
+      objectId: userId,
+      summary: "移除系统管理员：" + target.displayName + "（" + target.username + "）",
+      metadata: { userId, source: "manual" },
+    });
+    this.permission.invalidate();
+  }
+
+  private async listAdmins(): Promise<GroupAccessAdmin[]> {
+    const configuredGroupKeys = parseGroupAccessAdminKeys(this.config.env.GROUP_ACCESS_ADMIN_GROUP_KEYS ?? "");
+    const configuredUserIds = parseGroupAccessAdminKeys(this.config.env.GROUP_ACCESS_ADMIN_USER_IDS ?? "");
+    const roleAdmins = this.config.env.PERMISSION_ENFORCED === "true"
+      ? this.repository.listRoleGroupAccessAdmins()
+      : Promise.resolve([]);
+    const [configuredUsers, groupUsers, manualAdmins, roleUsers] = await Promise.all([
+      this.repository.listActiveUsersByIds(configuredUserIds),
+      this.repository.listGroupAdminUsersByGroupKeys(configuredGroupKeys),
+      this.repository.listManualGroupAccessAdmins(),
+      roleAdmins,
+    ]);
+    const admins = new Map<string, GroupAccessAdmin>();
+    const put = (user: { userId: string; username: string; displayName: string; email: string | null; status: "active" | "disabled" }, source: GroupAccessAdmin["source"]): void => {
+      const rank = { manual: 0, role: 1, configured: 2 } as const;
+      const current = admins.get(user.userId);
+      if (current !== undefined && rank[current.source] > rank[source]) return;
+      admins.set(user.userId, {
+        userId: user.userId,
+        username: user.username,
+        displayName: user.displayName,
+        email: user.email,
+        status: user.status,
+        source,
+        removable: source === "manual",
+      });
+    };
+    for (const user of manualAdmins) put(user, "manual");
+    for (const user of roleUsers) put(user, "role");
+    for (const user of groupUsers) put(user, "configured");
+    for (const user of configuredUsers) put(user, "configured");
+    return [...admins.values()].sort((left, right) =>
+      left.displayName.localeCompare(right.displayName, "zh-Hans-CN") || left.username.localeCompare(right.username),
+    );
   }
 
   async save(actorId: string, input: GroupAccessRuleInput): Promise<GroupAccessRuleResponse> {

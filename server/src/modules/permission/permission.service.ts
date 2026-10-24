@@ -83,17 +83,23 @@ export class PermissionService {
     };
   }
 
-  /** 群组访问画像（与角色画像同一 10s 缓存）：页面 + 项目白名单 + 只读标志。 */
+  /** 群组访问画像（与角色画像同一 10s 缓存）：管理员、页面 + 项目白名单 + 只读标志。 */
   async groupAccessOf(actorId: string): Promise<GroupAccessProfile> {
     const authorization = await this.getAuthorization(actorId);
     const entry = this.cache.get(actorId);
     if (entry !== undefined && entry.groupAccess !== undefined) return entry.groupAccess;
-    const groupKeys = this.config === undefined ? [] : await this.repository.listUserGroupKeys(actorId);
+    const [groupKeys, manualAdmin] = this.config === undefined
+      ? [[] as string[], false] as const
+      : await Promise.all([
+          this.repository.listUserGroupKeys(actorId),
+          this.repository.isManualGroupAccessAdmin(actorId),
+        ]);
     const enforced = this.config?.env.GROUP_ACCESS_ENFORCED === "true";
     const permissionEnforced = this.config?.env.PERMISSION_ENFORCED === "true";
     const permissionAdmin = authorization.permissionKeys.includes("access.manage");
     const adminUserIds = parseGroupAccessAdminKeys(this.config?.env.GROUP_ACCESS_ADMIN_USER_IDS ?? "");
     const admin =
+      manualAdmin ||
       adminUserIds.includes(actorId) ||
       isGroupAccessAdmin(groupKeys, parseGroupAccessAdminKeys(this.config?.env.GROUP_ACCESS_ADMIN_GROUP_KEYS ?? "")) ||
       (permissionAdmin && permissionEnforced);

@@ -1,4 +1,4 @@
-/** 群组权限管理接口（GET /api/v1/access · PUT /api/v1/access/rules）。 */
+/** 部门权限管理接口（GET /api/v1/access · 规则保存 / 删除 · 系统管理员授予 / 撤销）。 */
 import { apiRequest, apiSend } from "./api";
 import type { GroupAccessPage } from "./permissions";
 
@@ -33,12 +33,25 @@ export type GroupAccessGroup = {
   rule: GroupAccessRule | null;
 };
 
+export type GroupAccessAdminSource = "configured" | "manual" | "role";
+
+export type GroupAccessAdmin = {
+  userId: string;
+  username: string;
+  displayName: string;
+  email: string | null;
+  status: "active" | "disabled";
+  source: GroupAccessAdminSource;
+  removable: boolean;
+};
+
 export type GroupAccessProject = { id: string; code: string; name: string };
 
 export type GroupAccessOverview = {
   enforced: boolean;
   admin: boolean;
   currentGroupKeys: string[];
+  admins: GroupAccessAdmin[];
   groups: GroupAccessGroup[];
   projects: GroupAccessProject[];
 };
@@ -62,4 +75,12 @@ export function saveGroupAccessRule(input: GroupAccessRuleInput): Promise<{ rule
 
 export function deleteGroupAccessRule(groupKey: string): Promise<void> {
   return apiSend<void>("/api/v1/access/rules?groupKey=" + encodeURIComponent(groupKey), "DELETE");
+}
+
+export function assignGroupAccessAdmin(userId: string): Promise<{ admin: GroupAccessAdmin }> {
+  return apiSend<{ admin: GroupAccessAdmin }>("/api/v1/access/admins", "POST", { userId });
+}
+
+export function revokeGroupAccessAdmin(userId: string): Promise<void> {
+  return apiSend<void>("/api/v1/access/admins?userId=" + encodeURIComponent(userId), "DELETE");
 }

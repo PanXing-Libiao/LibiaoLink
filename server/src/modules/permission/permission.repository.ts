@@ -6,8 +6,8 @@ import type {
   GroupAccessProjectScope,
 } from "@libiaolink/contracts";
 import { DatabaseService } from "../../db/database.service.js";
-import { groupAccessRules, projectGroupAccess, userGroupMemberships } from "../../db/schema/access.js";
-import { users } from "../../db/schema/identity.js";
+import { groupAccessAdmins, groupAccessRules, projectGroupAccess, userGroupMemberships } from "../../db/schema/access.js";
+import { rolePermissions, userRoles, users } from "../../db/schema/identity.js";
 import { projectNodes } from "../../db/schema/flow.js";
 import { projectMembers, projects } from "../../db/schema/projects.js";
 import type { GroupAccessRuleData } from "./group-access.rules.js";
@@ -36,6 +36,20 @@ export interface GroupAccessMemberRecord {
   displayName: string;
   email: string | null;
   status: "active" | "disabled";
+}
+
+/** 系统管理员候选用户：环境配置 / 手工授予 / 角色授权的共同展示字段。 */
+export interface GroupAccessAdminUserRecord {
+  userId: string;
+  username: string;
+  displayName: string;
+  email: string | null;
+  status: "active" | "disabled";
+}
+
+/** 手工管理员记录：额外保留授予时间，供后续审计扩展。 */
+export interface GroupAccessManualAdminRecord extends GroupAccessAdminUserRecord {
+  grantedAt: Date;
 }
 
 /**
@@ -114,6 +128,124 @@ export class PermissionRepository {
       .where(eq(projectNodes.id, nodeId))
       .limit(1);
     return rows[0]?.projectId ?? null;
+  }
+
+  // ---------- 系统管理员（0072） ----------
+
+  /** 环境变量用户白名单：只取启用且未离职的账号，避免失效账号出现在管理员名单。 */
+  async listActiveUsersByIds(userIds: readonly string[]): Promise<GroupAccessAdminUserRecord[]> {
+    if (userIds.length === 0) return [];
+    const rows = await this.database.db
+      .select({
+        userId: users.id,
+        username: users.username,
+        displayName: users.displayName,
+        email: users.email,
+        status: users.status,
+      })
+      .from(users)
+      .where(and(inArray(users.id, [...userIds]), eq(users.status, "active"), isNull(users.removedAt)))
+      .orderBy(asc(users.displayName), asc(users.username));
+    return rows.map(normalizeAdminUser);
+  }
+
+  /** 环境变量管理员部门的直属成员。 */
+  async listGroupAdminUsersByGroupKeys(groupKeys: readonly string[]): Promise<GroupAccessAdminUserRecord[]> {
+    if (groupKeys.length === 0) return [];
+    const rows = await this.database.db
+      .selectDistinct({
+        userId: users.id,
+        username: users.username,
+        displayName: users.displayName,
+        email: users.email,
+        status: users.status,
+      })
+      .from(userGroupMemberships)
+      .innerJoin(users, eq(users.id, userGroupMemberships.userId))
+      .where(and(inArray(userGroupMemberships.groupKey, [...groupKeys]), eq(users.status, "active"), isNull(users.removedAt)))
+      .orderBy(asc(users.displayName), asc(users.username));
+    return rows.map(normalizeAdminUser);
+  }
+
+  /** 权限页手工添加的管理员（停用账号仍保留在名单，便于撤销）。 */
+  async listManualGroupAccessAdmins(): Promise<GroupAccessManualAdminRecord[]> {
+    const rows = await this.database.db
+      .select({
+        userId: users.id,
+        username: users.username,
+        displayName: users.displayName,
+        email: users.email,
+        status: users.status,
+        grantedAt: groupAccessAdmins.createdAt,
+      })
+      .from(groupAccessAdmins)
+      .innerJoin(users, eq(users.id, groupAccessAdmins.userId))
+      .orderBy(asc(users.displayName), asc(users.username));
+    return rows.map((row) => ({ ...normalizeAdminUser(row), grantedAt: row.grantedAt }));
+  }
+
+  /** 启用 PERMISSION_ENFORCED 时，持有 access.manage 的角色管理员。 */
+  async listRoleGroupAccessAdmins(): Promise<GroupAccessAdminUserRecord[]> {
+    const rows = await this.database.db
+      .selectDistinct({
+        userId: users.id,
+        username: users.username,
+        displayName: users.displayName,
+        email: users.email,
+        status: users.status,
+      })
+      .from(userRoles)
+      .innerJoin(rolePermissions, eq(rolePermissions.roleId, userRoles.roleId))
+      .innerJoin(users, eq(users.id, userRoles.userId))
+      .where(and(eq(rolePermissions.permission, "access.manage"), eq(users.status, "active"), isNull(users.removedAt)))
+      .orderBy(asc(users.displayName), asc(users.username));
+    return rows.map(normalizeAdminUser);
+  }
+
+  /** 权限画像快速判定：手工管理员必须仍是启用且未离职账号。 */
+  async isManualGroupAccessAdmin(userId: string): Promise<boolean> {
+    const rows = await this.database.db
+      .select({ userId: groupAccessAdmins.userId })
+      .from(groupAccessAdmins)
+      .innerJoin(users, eq(users.id, groupAccessAdmins.userId))
+      .where(and(eq(groupAccessAdmins.userId, userId), eq(users.status, "active"), isNull(users.removedAt)))
+      .limit(1);
+    return rows.length > 0;
+  }
+
+  /** 手工授权目标必须存在、启用且未离职。 */
+  async findActiveGroupAccessUser(userId: string): Promise<GroupAccessAdminUserRecord | null> {
+    const rows = await this.database.db
+      .select({
+        userId: users.id,
+        username: users.username,
+        displayName: users.displayName,
+        email: users.email,
+        status: users.status,
+      })
+      .from(users)
+      .where(and(eq(users.id, userId), eq(users.status, "active"), isNull(users.removedAt)))
+      .limit(1);
+    return rows[0] === undefined ? null : normalizeAdminUser(rows[0]);
+  }
+
+  /** 幂等授予；返回是否实际插入。 */
+  async grantGroupAccessAdmin(userId: string, grantedBy: string, at: Date): Promise<boolean> {
+    const rows = await this.database.db
+      .insert(groupAccessAdmins)
+      .values({ userId, grantedBy, createdAt: at })
+      .onConflictDoNothing()
+      .returning({ userId: groupAccessAdmins.userId });
+    return rows.length > 0;
+  }
+
+  /** 撤销手工授予；返回是否存在并删除。 */
+  async revokeGroupAccessAdmin(userId: string): Promise<boolean> {
+    const rows = await this.database.db
+      .delete(groupAccessAdmins)
+      .where(eq(groupAccessAdmins.userId, userId))
+      .returning({ userId: groupAccessAdmins.userId });
+    return rows.length > 0;
   }
 
   // ---------- 群组访问（0068） ----------
@@ -300,4 +432,11 @@ export class PermissionRepository {
       .limit(1);
     return rows[0] ?? null;
   }
+}
+
+function normalizeAdminUser(row: Omit<GroupAccessAdminUserRecord, "status"> & { status: string }): GroupAccessAdminUserRecord {
+  return {
+    ...row,
+    status: row.status === "disabled" ? "disabled" : "active",
+  };
 }

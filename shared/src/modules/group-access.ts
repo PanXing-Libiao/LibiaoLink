@@ -98,15 +98,51 @@ export const GroupAccessProjectSchema = z
 
 export type GroupAccessProject = z.infer<typeof GroupAccessProjectSchema>;
 
+/** 系统管理员来源：configured = 环境变量（部门 / 用户白名单），manual = 权限页手工添加，role = 启用角色权限后的 access.manage。 */
+export const GROUP_ACCESS_ADMIN_SOURCES = ["configured", "manual", "role"] as const;
+
+export const GroupAccessAdminSourceSchema = z
+  .enum(GROUP_ACCESS_ADMIN_SOURCES)
+  .openapi("GroupAccessAdminSource", { description: "管理员来源：configured 环境配置 / manual 手工添加 / role 角色授权" });
+
+export type GroupAccessAdminSource = z.infer<typeof GroupAccessAdminSourceSchema>;
+
+export const GroupAccessAdminSchema = z
+  .object({
+    userId: UuidSchema,
+    username: z.string(),
+    displayName: z.string(),
+    email: z.string().nullable(),
+    status: UserStatusSchema,
+    source: GroupAccessAdminSourceSchema,
+    removable: z.boolean().openapi({ description: "仅手工添加的管理员可在权限页撤销" }),
+  })
+  .openapi("GroupAccessAdmin", { description: "系统管理员名单项（姓名 / 工号 / 邮箱 / 来源 / 是否可撤销）" });
+
+export type GroupAccessAdmin = z.infer<typeof GroupAccessAdminSchema>;
+
+export const GroupAccessAdminInputSchema = z
+  .object({ userId: UuidSchema })
+  .openapi("GroupAccessAdminInput", { description: "将系统用户设为权限管理员" });
+
+export type GroupAccessAdminInput = z.infer<typeof GroupAccessAdminInputSchema>;
+
+export const GroupAccessAdminResponseSchema = z
+  .object({ admin: GroupAccessAdminSchema })
+  .openapi("GroupAccessAdminResponse", { description: "当前生效的系统管理员" });
+
+export type GroupAccessAdminResponse = z.infer<typeof GroupAccessAdminResponseSchema>;
+
 export const GroupAccessOverviewSchema = z
   .object({
     enforced: z.boolean(),
     admin: z.boolean(),
     currentGroupKeys: z.array(z.string()),
+    admins: z.array(GroupAccessAdminSchema).openapi({ description: "当前生效的系统管理员名单（环境配置 / 手工添加 / 角色授权）" }),
     groups: z.array(GroupAccessGroupSchema),
     projects: z.array(GroupAccessProjectSchema),
   })
-  .openapi("GroupAccessOverview", { description: "权限管理页数据：开关状态、当前账号部门、可配置部门树与项目" });
+  .openapi("GroupAccessOverview", { description: "权限管理页数据：开关状态、当前账号部门、系统管理员、可配置部门树与项目" });
 
 export type GroupAccessOverview = z.infer<typeof GroupAccessOverviewSchema>;
 
