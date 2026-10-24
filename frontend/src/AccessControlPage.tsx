@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   deleteGroupAccessRule,
   fetchAccessOverview,
   saveGroupAccessRule,
   type GroupAccessGroup,
+  type GroupAccessMember,
   type GroupAccessOverview,
   type GroupAccessProjectScope,
 } from "./accessApi";
@@ -19,6 +20,8 @@ type LoadState =
   | { kind: "error"; message: string };
 
 type Notice = { kind: ToastKind; text: string };
+type Translate = (key: TextKey, params?: Record<string, string | number>) => string;
+type DepartmentTreeNode = { group: GroupAccessGroup; children: DepartmentTreeNode[] };
 
 const PAGE_LABEL_KEYS: Record<GroupAccessPage, TextKey> = {
   dashboard: "access.page.dashboard",
@@ -35,9 +38,200 @@ const SCOPE_OPTIONS: Array<{ value: GroupAccessProjectScope; labelKey: TextKey }
   { value: "none", labelKey: "access.scope.none" },
 ];
 
+function memberSearchText(member: GroupAccessMember): string {
+  return (member.displayName + " " + member.username + " " + (member.email ?? "")).toLowerCase();
+}
+
+function departmentMatches(group: GroupAccessGroup, query: string): boolean {
+  return query === "" || (group.groupName + " " + group.groupKey).toLowerCase().includes(query);
+}
+
+function filterDepartmentTree(nodes: readonly DepartmentTreeNode[], query: string): DepartmentTreeNode[] {
+  if (query === "") return [...nodes];
+  const result: DepartmentTreeNode[] = [];
+  for (const node of nodes) {
+    if (departmentMatches(node.group, query)) {
+      result.push(node);
+      continue;
+    }
+    const children = filterDepartmentTree(node.children, query);
+    const hasMember = node.group.members.some((member) => memberSearchText(member).includes(query));
+    if (children.length > 0 || hasMember) {
+      result.push({ group: node.group, children });
+    }
+  }
+  return result;
+}
+
+function buildDepartmentTree(groups: readonly GroupAccessGroup[]): DepartmentTreeNode[] {
+  const nodes = new Map<string, DepartmentTreeNode>();
+  for (const group of groups) nodes.set(group.groupKey, { group, children: [] });
+  const roots: DepartmentTreeNode[] = [];
+  for (const node of nodes.values()) {
+    const parentKey = node.group.parentGroupKey ?? null;
+    const parent = parentKey === null || parentKey === node.group.groupKey ? undefined : nodes.get(parentKey);
+    if (parent === undefined) {
+      roots.push(node);
+    } else {
+      parent.children.push(node);
+    }
+  }
+  const sort = (items: DepartmentTreeNode[]): void => {
+    items.sort((left, right) => left.group.groupName.localeCompare(right.group.groupName, "zh-Hans-CN"));
+    for (const item of items) sort(item.children);
+  };
+  sort(roots);
+  return roots;
+}
+
+function collectDepartmentKeys(nodes: readonly DepartmentTreeNode[]): string[] {
+  const keys: string[] = [];
+  for (const node of nodes) {
+    keys.push(node.group.groupKey);
+    keys.push(...collectDepartmentKeys(node.children));
+  }
+  return keys;
+}
+
+function departmentPathOf(groupKey: string, groups: ReadonlyMap<string, GroupAccessGroup>): string[] {
+  const path: string[] = [];
+  const seen = new Set<string>();
+  let current = groups.get(groupKey);
+  while (current !== undefined && !seen.has(current.groupKey)) {
+    path.unshift(current.groupName);
+    seen.add(current.groupKey);
+    const parentKey = current.parentGroupKey ?? null;
+    current = parentKey === null ? undefined : groups.get(parentKey);
+  }
+  return path;
+}
+
+function memberInitial(member: GroupAccessMember): string {
+  const chars = Array.from(member.displayName.trim());
+  return chars.length === 0 ? "?" : chars[0] ?? "?";
+}
+
+function MemberRow({ member, depth, t }: { member: GroupAccessMember; depth: number; t: Translate }) {
+  const detail = [member.username, member.email ?? ""].filter((item) => item !== "").join(" · ");
+  return (
+    <div style={{ paddingLeft: String(32 + depth * 14) + "px" }} className="pr-2">
+      <div className="flex items-start gap-2 rounded-lg px-2 py-1.5 hover:bg-zinc-50" title={member.email ?? member.username}>
+        <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-xs font-semibold text-zinc-600">
+          {memberInitial(member)}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate text-xs font-medium text-zinc-700">{member.displayName}</span>
+            {member.status === "disabled" ? (
+              <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500">{t("access.memberDisabled")}</span>
+            ) : null}
+          </span>
+          <span className="mt-0.5 block truncate text-[11px] text-zinc-400">{detail}</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function DepartmentTree({
+  nodes,
+  depth,
+  selectedKey,
+  expandedKeys,
+  currentGroupKeys,
+  query,
+  t,
+  onSelect,
+  onToggle,
+}: {
+  nodes: readonly DepartmentTreeNode[];
+  depth: number;
+  selectedKey: string | null;
+  expandedKeys: ReadonlySet<string>;
+  currentGroupKeys: ReadonlySet<string>;
+  query: string;
+  t: Translate;
+  onSelect: (group: GroupAccessGroup) => void;
+  onToggle: (groupKey: string) => void;
+}) {
+  return (
+    <>
+      {nodes.map((node) => {
+        const group = node.group;
+        const selfMatch = query !== "" && departmentMatches(group, query);
+        const members = query === "" || selfMatch
+          ? group.members
+          : group.members.filter((member) => memberSearchText(member).includes(query));
+        const expanded = query !== "" || expandedKeys.has(group.groupKey);
+        const hasContent = group.members.length > 0 || node.children.length > 0;
+        const selected = group.groupKey === selectedKey;
+        return (
+          <div key={group.groupKey} style={{ paddingLeft: String(depth * 14) + "px" }}>
+            <div className={"group flex items-stretch rounded-lg " + (selected ? "bg-blue-50 text-blue-950 ring-1 ring-inset ring-blue-200" : "text-zinc-700 hover:bg-zinc-50")}>
+              <button
+                type="button"
+                onClick={() => { onToggle(group.groupKey); }}
+                disabled={!hasContent}
+                aria-expanded={hasContent ? expanded : undefined}
+                aria-label={expanded ? t("access.collapseDepartment") : t("access.expandDepartment")}
+                className={"flex w-7 shrink-0 items-center justify-center rounded-l-lg " + (hasContent ? "cursor-pointer" : "cursor-default opacity-0")}
+              >
+                <svg viewBox="0 0 20 20" aria-hidden="true" className={"h-3.5 w-3.5 transition-transform " + (expanded ? "rotate-90" : "")}>
+                  <path d="M7 4.5 12.5 10 7 15.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              <button type="button" onClick={() => { onSelect(group); }} className="flex min-w-0 flex-1 items-center gap-2 py-2 pr-2 text-left">
+                <svg viewBox="0 0 24 24" aria-hidden="true" className={"h-5 w-5 shrink-0 " + (selected ? "text-blue-500" : "text-blue-400")}>
+                  <path d="M3.5 6.5A2.5 2.5 0 0 1 6 4h4.1l2 2.2H18A2.5 2.5 0 0 1 20.5 8.7v8.8A2.5 2.5 0 0 1 18 20H6a2.5 2.5 0 0 1-2.5-2.5v-11Z" fill="currentColor" opacity="0.95" />
+                  <path d="M3.8 9h16.4" stroke="white" strokeOpacity="0.55" strokeWidth="1.2" />
+                </svg>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">{group.groupName}</span>
+                  <span className={"mt-0.5 block truncate text-[11px] " + (selected ? "text-blue-600" : "text-zinc-400")}>
+                    {t("access.members", { n: group.memberCount })}
+                    {" · "}
+                    {group.rule === null ? t("access.unconfigured") : t("access.configured")}
+                  </span>
+                </span>
+                {currentGroupKeys.has(group.groupKey) ? (
+                  <span title={t("access.currentDepartment")} className="h-2 w-2 shrink-0 rounded-full bg-blue-500" />
+                ) : null}
+              </button>
+            </div>
+            {expanded ? (
+              <div className="pb-1 pt-0.5">
+                {members.map((member) => (
+                  <MemberRow key={member.userId} member={member} depth={depth} t={t} />
+                ))}
+                {group.members.length === 0 && node.children.length === 0 ? (
+                  <p style={{ paddingLeft: String(34 + depth * 14) + "px" }} className="py-1 pr-2 text-[11px] text-zinc-400">
+                    {t("access.noMembers")}
+                  </p>
+                ) : null}
+                <DepartmentTree
+                  nodes={node.children}
+                  depth={depth + 1}
+                  selectedKey={selectedKey}
+                  expandedKeys={expandedKeys}
+                  currentGroupKeys={currentGroupKeys}
+                  query={query}
+                  t={t}
+                  onSelect={onSelect}
+                  onToggle={onToggle}
+                />
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 /**
- * 权限管理页（2026-10-23 · 头像菜单入口）：按 Casdoor 群组配置页面与项目范围。
- * 本页只做配置；真实裁决在服务端 PermissionService，关闭 GROUP_ACCESS_ENFORCED 时规则仅保存不生效。
+ * 部门权限页（2026-10-23 上线；2026-10-24 改通讯录式部门树）：
+ * 部门层级与直属人员来自 Casdoor 自动同步；右侧只做页面 / 项目范围配置。
+ * 本页不改裁决开关：GROUP_ACCESS_ENFORCED=false 时规则仍只保存、不限制账号。
  */
 export function AccessControlPage({ me }: { me: MeResponse }) {
   const t = useT();
@@ -47,6 +241,8 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
   const [projectScope, setProjectScope] = useState<GroupAccessProjectScope>("none");
   const [projectIds, setProjectIds] = useState<string[]>([]);
   const [projectQuery, setProjectQuery] = useState("");
+  const [directoryQuery, setDirectoryQuery] = useState("");
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set());
   const [manualKey, setManualKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -60,13 +256,6 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
       .then((data) => {
         if (cancelled) return;
         setState({ kind: "ready", data });
-        setSelectedKey((current) => {
-          if (current !== null) return current;
-          const first = data.groups[0];
-          if (first === undefined) return null;
-          applyGroup(first);
-          return first.groupKey;
-        });
       })
       .catch((error: unknown) => {
         if (!cancelled) setState({ kind: "error", message: error instanceof Error ? error.message : String(error) });
@@ -75,6 +264,42 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
       cancelled = true;
     };
   }, [reload]);
+
+  const data = state.kind === "ready" ? state.data : null;
+  useEffect(() => {
+    if (selectedKey !== null || data === null || data.groups.length === 0) return;
+    const byKey = new Map(data.groups.map((group) => [group.groupKey, group] as const));
+    const initial = data.groups.find((group) => data.currentGroupKeys.includes(group.groupKey)) ?? data.groups[0];
+    if (initial === undefined) return;
+    const branch = new Set<string>();
+    let current: GroupAccessGroup | undefined = initial;
+    while (current !== undefined && !branch.has(current.groupKey)) {
+      branch.add(current.groupKey);
+      current = current.parentGroupKey === null ? undefined : byKey.get(current.parentGroupKey);
+    }
+    setSelectedKey(initial.groupKey);
+    setExpandedKeys((keys) => new Set([...keys, ...branch]));
+    applyGroup(initial);
+  }, [data, selectedKey]);
+
+  const allGroups = data?.groups ?? [];
+  const normalizedDirectoryQuery = directoryQuery.trim().toLowerCase();
+  const departmentTree = useMemo(() => buildDepartmentTree(allGroups), [allGroups]);
+  const filteredTree = useMemo(
+    () => filterDepartmentTree(departmentTree, normalizedDirectoryQuery),
+    [departmentTree, normalizedDirectoryQuery],
+  );
+  const allDepartmentKeys = useMemo(() => collectDepartmentKeys(departmentTree), [departmentTree]);
+  const allExpanded = allDepartmentKeys.length > 0 && allDepartmentKeys.every((key) => expandedKeys.has(key));
+  const groupByKey = new Map(allGroups.map((group) => [group.groupKey, group] as const));
+  const currentGroupKeys = new Set(data?.currentGroupKeys ?? []);
+  const currentDepartmentNames = (data?.currentGroupKeys ?? []).map((key) => groupByKey.get(key)?.groupName ?? key);
+  const totalMemberCount = new Set(allGroups.flatMap((group) => group.members.map((member) => member.userId))).size;
+  const selectedGroup = selectedKey === null ? null : groupByKey.get(selectedKey) ?? null;
+  const selectedRule = selectedGroup?.rule ?? null;
+  const selectedPath = selectedKey === null ? [] : departmentPathOf(selectedKey, groupByKey);
+  const query = projectQuery.trim().toLowerCase();
+  const projects = data === null ? [] : query === "" ? data.projects : data.projects.filter((project) => (project.code + " " + project.name).toLowerCase().includes(query));
 
   function applyGroup(group: GroupAccessGroup): void {
     setAllowedPages(group.rule?.allowedPages ?? []);
@@ -85,7 +310,21 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
 
   function openGroup(group: GroupAccessGroup): void {
     setSelectedKey(group.groupKey);
+    setExpandedKeys((current) => new Set(current).add(group.groupKey));
     applyGroup(group);
+  }
+
+  function toggleExpanded(groupKey: string): void {
+    setExpandedKeys((current) => {
+      const next = new Set(current);
+      if (next.has(groupKey)) next.delete(groupKey);
+      else next.add(groupKey);
+      return next;
+    });
+  }
+
+  function toggleAllExpanded(): void {
+    setExpandedKeys(allExpanded ? new Set() : new Set(allDepartmentKeys));
   }
 
   function openManualGroup(): void {
@@ -147,12 +386,6 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
     }
   }
 
-  const data = state.kind === "ready" ? state.data : null;
-  const selectedGroup = data?.groups.find((group) => group.groupKey === selectedKey) ?? null;
-  const selectedRule = selectedGroup?.rule ?? null;
-  const query = projectQuery.trim().toLowerCase();
-  const projects = data === null ? [] : query === "" ? data.projects : data.projects.filter((project) => (project.code + " " + project.name).toLowerCase().includes(query));
-
   return (
     <>
       <AppHeader me={me} />
@@ -170,42 +403,84 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
             <>
               <section className={"rounded-xl border px-4 py-3 text-xs " + (data.enforced ? "border-amber-200 bg-amber-50 text-amber-800" : "border-zinc-200 bg-white text-zinc-600")}>
                 <p className="font-medium">{data.enforced ? t("access.enforcedOn") : t("access.enforcedOff")}</p>
-                <p className="mt-1">{t("access.currentGroups")}: {data.currentGroupKeys.length === 0 ? t("access.noGroups") : data.currentGroupKeys.join(" · ")}</p>
+                <p className="mt-1">{t("access.currentGroups")}: {currentDepartmentNames.length === 0 ? t("access.noGroups") : currentDepartmentNames.join(" · ")}</p>
               </section>
 
-              <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
-                <aside className="rounded-2xl border border-zinc-200 bg-white p-3">
-                  <h2 className="px-2 pb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">{t("access.groups")}</h2>
-                  <div className="max-h-[420px] space-y-1 overflow-auto">
-                    {data.groups.map((group) => (
-                      <button
-                        key={group.groupKey}
-                        type="button"
-                        onClick={() => openGroup(group)}
-                        className={"w-full rounded-lg px-2.5 py-2 text-left transition " + (group.groupKey === selectedKey ? "bg-zinc-900 text-white" : "text-zinc-700 hover:bg-zinc-100")}
-                      >
-                        <span className="block truncate text-sm font-medium">{group.groupName}</span>
-                        <span className={"mt-0.5 block truncate text-[11px] " + (group.groupKey === selectedKey ? "text-zinc-300" : "text-zinc-400")}>{group.groupKey}</span>
-                        <span className={"mt-1 block text-[11px] " + (group.groupKey === selectedKey ? "text-zinc-300" : "text-zinc-500")}>
-                          {t("access.members", { n: group.memberCount })} · {group.rule === null ? t("access.unconfigured") : group.rule.allowedPages.length + " " + t("access.pages")}
-                        </span>
-                      </button>
-                    ))}
-                    {data.groups.length === 0 ? <p className="px-2 py-3 text-xs text-zinc-500">{t("access.noObservedGroups")}</p> : null}
+              <div className="grid gap-4 lg:grid-cols-[minmax(320px,380px)_minmax(0,1fr)]">
+                <aside className="overflow-hidden rounded-2xl border border-zinc-200 bg-white">
+                  <div className="border-b border-zinc-200 px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <h2 className="text-sm font-semibold text-zinc-900">{t("access.directoryTitle")}</h2>
+                        <p className="mt-0.5 truncate text-[11px] text-zinc-400">
+                          {t("access.directorySummary", { departments: allGroups.length, members: totalMemberCount })}
+                        </p>
+                      </div>
+                      {normalizedDirectoryQuery === "" && allDepartmentKeys.length > 0 ? (
+                        <button type="button" onClick={toggleAllExpanded} className="shrink-0 rounded-lg px-2 py-1 text-[11px] font-medium text-blue-600 hover:bg-blue-50">
+                          {allExpanded ? t("access.collapseAll") : t("access.expandAll")}
+                        </button>
+                      ) : null}
+                    </div>
+                    <label className="mt-3 flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50/60 px-2.5 py-2 focus-within:border-blue-300 focus-within:bg-white">
+                      <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4 shrink-0 text-zinc-400">
+                        <circle cx="8.5" cy="8.5" r="5" fill="none" stroke="currentColor" strokeWidth="1.7" />
+                        <path d="m12.2 12.2 4 4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                      </svg>
+                      <input
+                        value={directoryQuery}
+                        onChange={(event) => { setDirectoryQuery(event.target.value); }}
+                        placeholder={t("access.directorySearch")}
+                        aria-label={t("access.directorySearch")}
+                        className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-zinc-400"
+                      />
+                      {directoryQuery === "" ? null : (
+                        <button type="button" onClick={() => { setDirectoryQuery(""); }} aria-label={t("access.clearSearch")} className="shrink-0 rounded p-0.5 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-600">
+                          <svg viewBox="0 0 20 20" aria-hidden="true" className="h-3.5 w-3.5">
+                            <path d="m5 5 10 10M15 5 5 15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                          </svg>
+                        </button>
+                      )}
+                    </label>
                   </div>
-                  <div className="mt-3 border-t border-zinc-200 pt-3">
-                    <label className="mb-1 block text-xs text-zinc-500" htmlFor="access-manual-group">{t("access.addGroup")}</label>
+
+                  <div className="max-h-[620px] overflow-auto p-2">
+                    {filteredTree.length === 0 ? (
+                      <p className="px-2 py-6 text-center text-xs text-zinc-400">
+                        {normalizedDirectoryQuery === "" ? t("access.noObservedGroups") : t("access.directoryNoMatch")}
+                      </p>
+                    ) : (
+                      <DepartmentTree
+                        nodes={filteredTree}
+                        depth={0}
+                        selectedKey={selectedKey}
+                        expandedKeys={expandedKeys}
+                        currentGroupKeys={currentGroupKeys}
+                        query={normalizedDirectoryQuery}
+                        t={t}
+                        onSelect={openGroup}
+                        onToggle={toggleExpanded}
+                      />
+                    )}
+                  </div>
+
+                  <details className="border-t border-zinc-200 px-4 py-3">
+                    <summary className="cursor-pointer list-none text-[11px] font-medium text-zinc-500 hover:text-zinc-700">
+                      {t("access.manualTitle")}
+                    </summary>
+                    <p className="mt-1 text-[11px] text-zinc-400">{t("access.manualHint")}</p>
+                    <label className="mt-2 block text-[11px] text-zinc-500" htmlFor="access-manual-group">{t("access.addGroup")}</label>
                     <input
                       id="access-manual-group"
                       value={manualKey}
                       onChange={(event) => { setManualKey(event.target.value); }}
                       placeholder={t("access.addGroupPlaceholder")}
-                      className="w-full rounded-lg border border-zinc-200 px-2.5 py-2 text-xs outline-none focus:border-zinc-400"
+                      className="mt-1 w-full rounded-lg border border-zinc-200 px-2.5 py-2 text-xs outline-none focus:border-zinc-400"
                     />
                     <button type="button" onClick={openManualGroup} className="mt-2 w-full rounded-lg bg-zinc-100 px-2.5 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-200">
                       {t("access.add")}
                     </button>
-                  </div>
+                  </details>
                 </aside>
 
                 <section className="space-y-4">
@@ -215,9 +490,22 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
                     <>
                       <div className="rounded-2xl border border-zinc-200 bg-white p-5">
                         <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <h2 className="truncate text-base font-semibold text-zinc-900">{selectedGroup?.groupName ?? selectedKey}</h2>
-                            <p className="mt-0.5 truncate font-mono text-[11px] text-zinc-400">{selectedKey}</p>
+                          <div className="flex min-w-0 items-start gap-3">
+                            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-500">
+                              <svg viewBox="0 0 24 24" aria-hidden="true" className="h-6 w-6">
+                                <path d="M3.5 6.5A2.5 2.5 0 0 1 6 4h4.1l2 2.2H18A2.5 2.5 0 0 1 20.5 8.7v8.8A2.5 2.5 0 0 1 18 20H6a2.5 2.5 0 0 1-2.5-2.5v-11Z" fill="currentColor" />
+                                <path d="M3.8 9h16.4" stroke="white" strokeOpacity="0.55" strokeWidth="1.2" />
+                              </svg>
+                            </span>
+                            <div className="min-w-0">
+                              <h2 className="truncate text-base font-semibold text-zinc-900">{selectedGroup?.groupName ?? selectedKey}</h2>
+                              <p className="mt-0.5 truncate text-[11px] text-zinc-400">
+                                {selectedPath.length > 0 ? selectedPath.join(" / ") : t("access.manualDepartment")}
+                              </p>
+                              {selectedGroup === null ? null : (
+                                <p className="mt-1 text-[11px] text-zinc-500">{t("access.members", { n: selectedGroup.memberCount })}</p>
+                              )}
+                            </div>
                           </div>
                           <span className={"rounded-full px-2.5 py-1 text-[11px] font-medium " + (selectedRule === null ? "bg-zinc-100 text-zinc-500" : "bg-emerald-50 text-emerald-700")}>
                             {selectedRule === null ? t("access.unconfigured") : t("access.configured")}
@@ -277,9 +565,6 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
                             {deleting ? t("access.deleting") : t("access.deleteRule")}
                           </button>
                         )}
-                        <button type="button" onClick={() => { setReload((value) => value + 1); }} className="rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-50">
-                          {t("access.refresh")}
-                        </button>
                         <button type="button" onClick={() => { void handleSave(); }} disabled={saving} className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50">
                           {saving ? t("access.saving") : t("access.save")}
                         </button>

@@ -4498,9 +4498,23 @@
           "groupName": {
             "type": "string"
           },
+          "parentGroupKey": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "上级部门键；null = 根部门"
+          },
           "memberCount": {
             "type": "integer",
             "minimum": 0
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupAccessMember"
+            },
+            "description": "部门直属人员（按姓名 / 工号排序）"
           },
           "rule": {
             "$ref": "#/components/schemas/GroupAccessRule"
@@ -4509,10 +4523,45 @@
         "required": [
           "groupKey",
           "groupName",
+          "parentGroupKey",
           "memberCount",
+          "members",
           "rule"
         ],
-        "description": "可配置群组：当前目录观察到的人数 + 已保存规则"
+        "description": "可配置部门：层级、直属人员与已保存规则"
+      },
+      "GroupAccessMember": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "username": {
+            "type": "string",
+            "description": "工号（users.username）"
+          },
+          "displayName": {
+            "type": "string",
+            "description": "姓名（users.display_name）"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/UserStatus"
+          }
+        },
+        "required": [
+          "userId",
+          "username",
+          "displayName",
+          "email",
+          "status"
+        ],
+        "description": "部门人员（姓名 / 工号 / 邮箱 / 状态）"
       },
       "GroupAccessOverview": {
         "type": "object",
@@ -4549,7 +4598,7 @@
           "groups",
           "projects"
         ],
-        "description": "权限管理页数据：开关状态、当前账号群组、可配置群组与项目"
+        "description": "权限管理页数据：开关状态、当前账号部门、可配置部门树与项目"
       },
       "GroupAccessPage": {
         "type": "string",

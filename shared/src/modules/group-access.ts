@@ -1,10 +1,12 @@
 import { DateTimeSchema, UuidSchema } from "../common/conventions.ts";
 import { z } from "../zod.ts";
+import { UserStatusSchema } from "./users.ts";
 
 /**
- * Casdoor 群组访问规则（2026-10-23）：群组键统一为 owner/name（例如 libiaorobot.com/项目部），
- * 页面权限按群组并集，项目权限按规则并集后再与角色可见范围取交集。
- * 规则不存在 = 该群组不额外放行；GROUP_ACCESS_ENFORCED=true 时未配置群组会落到空集合。
+ * 部门（Casdoor 群组）访问规则（2026-10-23；2026-10-24 权限页按通讯录展示）：
+ * 部门键统一为 owner/name（例如 libiaorobot.com/项目部），页面权限按部门并集，
+ * 项目权限按规则并集后再与角色可见范围取交集。规则不存在 = 该部门不额外放行；
+ * GROUP_ACCESS_ENFORCED=true 时未配置部门会落到空集合。
  */
 export const GROUP_ACCESS_PAGE_KEYS = ["dashboard", "projects", "templates", "workspace", "files", "audit"] as const;
 
@@ -21,6 +23,19 @@ export const GroupAccessProjectScopeSchema = z
   .openapi("GroupAccessProjectScope", { description: "群组项目范围：all 角色可见项目全放行 / selected 仅指定项目 / none 不可见任何项目" });
 
 export type GroupAccessProjectScope = z.infer<typeof GroupAccessProjectScopeSchema>;
+
+/** 部门人员：权限页通讯录展示用；来源 = 已同步的 Casdoor 群组成员关系 + 系统用户。 */
+export const GroupAccessMemberSchema = z
+  .object({
+    userId: UuidSchema,
+    username: z.string().openapi({ description: "工号（users.username）" }),
+    displayName: z.string().openapi({ description: "姓名（users.display_name）" }),
+    email: z.string().nullable(),
+    status: UserStatusSchema,
+  })
+  .openapi("GroupAccessMember", { description: "部门人员（姓名 / 工号 / 邮箱 / 状态）" });
+
+export type GroupAccessMember = z.infer<typeof GroupAccessMemberSchema>;
 
 export const GroupAccessRuleInputSchema = z
   .object({
@@ -51,10 +66,12 @@ export const GroupAccessGroupSchema = z
   .object({
     groupKey: z.string(),
     groupName: z.string(),
+    parentGroupKey: z.string().nullable().openapi({ description: "上级部门键；null = 根部门" }),
     memberCount: z.number().int().min(0),
+    members: z.array(GroupAccessMemberSchema).openapi({ description: "部门直属人员（按姓名 / 工号排序）" }),
     rule: GroupAccessRuleSchema.nullable(),
   })
-  .openapi("GroupAccessGroup", { description: "可配置群组：当前目录观察到的人数 + 已保存规则" });
+  .openapi("GroupAccessGroup", { description: "可配置部门：层级、直属人员与已保存规则" });
 
 export type GroupAccessGroup = z.infer<typeof GroupAccessGroupSchema>;
 
@@ -76,7 +93,7 @@ export const GroupAccessOverviewSchema = z
     groups: z.array(GroupAccessGroupSchema),
     projects: z.array(GroupAccessProjectSchema),
   })
-  .openapi("GroupAccessOverview", { description: "权限管理页数据：开关状态、当前账号群组、可配置群组与项目" });
+  .openapi("GroupAccessOverview", { description: "权限管理页数据：开关状态、当前账号部门、可配置部门树与项目" });
 
 export type GroupAccessOverview = z.infer<typeof GroupAccessOverviewSchema>;
 

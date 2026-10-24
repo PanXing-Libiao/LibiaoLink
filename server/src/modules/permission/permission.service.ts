@@ -109,7 +109,7 @@ export class PermissionService {
 
   async assertPageAccess(actorId: string, page: GroupAccessPage): Promise<void> {
     if (await this.canAccessPage(actorId, page)) return;
-    throw new AppError("FORBIDDEN", "当前群组无权访问该页面：" + page);
+    throw new AppError("FORBIDDEN", "当前部门无权访问该页面：" + page);
   }
 
   async can(actorId: string, key: PermissionKey, context?: ProjectResourceContext): Promise<boolean> {

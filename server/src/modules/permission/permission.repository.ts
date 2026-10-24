@@ -3,6 +3,7 @@ import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { GroupAccessPage, GroupAccessProjectScope, GroupAccessRuleInput } from "@libiaolink/contracts";
 import { DatabaseService } from "../../db/database.service.js";
 import { groupAccessRules, projectGroupAccess, userGroupMemberships } from "../../db/schema/access.js";
+import { users } from "../../db/schema/identity.js";
 import { projectNodes } from "../../db/schema/flow.js";
 import { projectMembers, projects } from "../../db/schema/projects.js";
 import type { GroupAccessRuleData } from "./group-access.rules.js";
@@ -20,6 +21,17 @@ export interface ProjectAccessContext {
   projectId: string;
   member: boolean;
   projectManager: boolean;
+}
+
+/** 权限页部门人员：直属成员 + 用户展示字段。 */
+export interface GroupAccessMemberRecord {
+  groupKey: string;
+  groupName: string;
+  userId: string;
+  username: string;
+  displayName: string;
+  email: string | null;
+  status: "active" | "disabled";
 }
 
 /**
@@ -142,24 +154,25 @@ export class PermissionRepository {
     }));
   }
 
-  /** 群组成员计数：只作为目录群组的成员提示，不决定权限管理页能看到哪些群组。 */
-  async listGroupMembershipCounts(): Promise<Array<{ groupKey: string; groupName: string; memberCount: number }>> {
+  /** 权限页通讯录：每个部门的直属人员（含停用账号，供管理员核对目录）。 */
+  async listGroupMembers(): Promise<GroupAccessMemberRecord[]> {
     const rows = await this.database.db
       .select({
         groupKey: userGroupMemberships.groupKey,
         groupName: userGroupMemberships.groupName,
-        userId: userGroupMemberships.userId,
+        userId: users.id,
+        username: users.username,
+        displayName: users.displayName,
+        email: users.email,
+        status: users.status,
       })
-      .from(userGroupMemberships);
-    const byKey = new Map<string, { groupName: string; users: Set<string> }>();
-    for (const row of rows) {
-      const entry = byKey.get(row.groupKey) ?? { groupName: row.groupName, users: new Set<string>() };
-      entry.users.add(row.userId);
-      byKey.set(row.groupKey, entry);
-    }
-    return Array.from(byKey.entries())
-      .map(([groupKey, entry]) => ({ groupKey, groupName: entry.groupName, memberCount: entry.users.size }))
-      .sort((left, right) => left.groupKey.localeCompare(right.groupKey));
+      .from(userGroupMemberships)
+      .innerJoin(users, eq(users.id, userGroupMemberships.userId))
+      .orderBy(asc(userGroupMemberships.groupKey), asc(users.displayName), asc(users.username));
+    return rows.map((row) => ({
+      ...row,
+      status: row.status === "disabled" ? "disabled" : "active",
+    }));
   }
 
   async listAccessRules(): Promise<GroupAccessRuleData[]> {

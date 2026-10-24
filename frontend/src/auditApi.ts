@@ -58,7 +58,7 @@ export const AUDIT_OBJECT_TYPE_LABELS: Record<string, string> = {
   wecom_dm_binding: "企微绑定验证",
   automation_rule: "自动化规则",
   notify_delivery: "发送记录",
-  group_access_rule: "群组权限规则",
+  group_access_rule: "部门权限规则",
 };
 
 export const AUDIT_RESULT_LABELS: Record<string, string> = {
