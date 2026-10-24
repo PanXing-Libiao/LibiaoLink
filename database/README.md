@@ -77,6 +77,7 @@ PostgreSQL 基线的唯一来源：只追加的迁移脚本、最小权限角色
 | `migrations/0069_group_access_member_scope.sql` | 部门规则人员范围（2026-10-24 · **高风险 DDL / 权限，请 wmj 复核** · CONTRIBUTING §15）：`group_access_rules` 增 `member_scope`（`all` = 部门全部直属人员 / `selected` = 仅勾选人员）与 `member_user_ids uuid[]`（最多 2000、不得含 null；`all` 时必须为空）；存量规则回填 `all`，保持原行为。保存时由服务层校验人员属于该部门直属成员；权限画像按账号过滤 `selected` 规则。只追加、应用角色随 roles/0001 default privileges 自动授权；回滚语句入头注。 |
 | `migrations/0070_group_access_own_scope.sql` | 部门项目范围新增 `own`（2026-10-24）：仅调整 `group_access_rules.project_scope` CHECK 为 `all` / `own` / `selected` / `none`；`own` = 本人负责（`projects.manager_ids`）或进入项目名册。页面字段 `allowed_pages` 保留兼容但不再裁决；只追加 DDL，应用角色随 roles/0001 default privileges 自动授权，迁移由 `libiaolink_migrator` 执行。 |
 | `migrations/0071_task_template_creator.sql` | 任务模板填写人（2026-10-24）：`task_templates` 增 `created_by uuid references users(id)` 与 `ix_task_templates_created_by`（仅未软删行）；新建模板写当前账号，存量 / 种子为空并由界面显示「系统」。只追加 DDL，应用角色随 roles/0001 default privileges 自动授权。 |
+| `migrations/0072_group_access_admins.sql` | 系统管理员名单（2026-10-24）：新增 `group_access_admins`（`user_id` 主键 → `users.id` 级联、`granted_by` → `users.id`、`created_at`）。只保存权限页手工授予的管理员；环境变量与角色来源不落表。只追加 DDL，应用角色随 roles/0001 default privileges 自动授权，回滚语句入头注。 |
 | `seeds/README.md` | 种子数据规格（M0-03 · Push 73）：可重跑、幂等、与迁移分离 |
 | `seeds/roles.mjs` / `seeds/index.mjs` | 种子 #6a：一期六个内置角色（h1 · Push 74）；index 为按序注册表，新种子追加到末尾 |
 | `seeds/blueprint.mjs` | 种子 #7：default 蓝图模板（9 阶段 19 节点 + 版本 1，h3 · Push 83）；节点清单待业务补全，库内已修订时不覆盖 |

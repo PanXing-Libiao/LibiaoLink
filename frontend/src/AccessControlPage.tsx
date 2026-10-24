@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  assignGroupAccessAdmin,
   deleteGroupAccessRule,
   fetchAccessOverview,
+  revokeGroupAccessAdmin,
   saveGroupAccessRule,
+  type GroupAccessAdmin,
   type GroupAccessGroup,
   type GroupAccessMember,
   type GroupAccessMemberScope,
@@ -99,9 +102,15 @@ function departmentPathOf(groupKey: string, groups: ReadonlyMap<string, GroupAcc
   return path;
 }
 
-function memberInitial(member: GroupAccessMember): string {
+function memberInitial(member: Pick<GroupAccessMember, "displayName">): string {
   const chars = Array.from(member.displayName.trim());
   return chars.length === 0 ? "?" : chars[0] ?? "?";
+}
+
+function adminSourceKey(source: GroupAccessAdmin["source"]): TextKey {
+  if (source === "manual") return "access.adminSourceManual";
+  if (source === "role") return "access.adminSourceRole";
+  return "access.adminSourceConfigured";
 }
 
 function MemberRow({ member, depth, t }: { member: GroupAccessMember; depth: number; t: Translate }) {
@@ -156,31 +165,65 @@ function SelectionCheckbox({
 function SelectableMemberRow({
   member,
   checked,
+  admin,
+  adminBusy,
   t,
   onToggle,
+  onToggleAdmin,
 }: {
   member: GroupAccessMember;
   checked: boolean;
+  admin: GroupAccessAdmin | undefined;
+  adminBusy: boolean;
   t: Translate;
   onToggle: () => void;
+  onToggleAdmin: () => void;
 }) {
   const detail = [member.username, member.email ?? ""].filter((item) => item !== "").join(" · ");
   return (
-    <label className="flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 hover:bg-blue-50/60">
-      <SelectionCheckbox checked={checked} indeterminate={false} onChange={onToggle} />
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-50 text-xs font-semibold text-blue-700">
-        {memberInitial(member)}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate text-sm font-medium text-zinc-800">{member.displayName}</span>
-          {member.status === "disabled" ? (
-            <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500">{t("access.memberDisabled")}</span>
-          ) : null}
+    <div className="flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-blue-50/60">
+      <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
+        <SelectionCheckbox checked={checked} indeterminate={false} onChange={onToggle} />
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-50 text-xs font-semibold text-blue-700">
+          {memberInitial(member)}
         </span>
-        <span className="mt-0.5 block truncate text-[11px] text-zinc-400">{detail}</span>
-      </span>
-    </label>
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate text-sm font-medium text-zinc-800">{member.displayName}</span>
+            {member.status === "disabled" ? (
+              <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500">{t("access.memberDisabled")}</span>
+            ) : null}
+            {admin === undefined ? null : (
+              <span className="shrink-0 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">{t("access.adminBadge")}</span>
+            )}
+          </span>
+          <span className="mt-0.5 block truncate text-[11px] text-zinc-400">{detail}</span>
+        </span>
+      </label>
+      {admin === undefined ? (
+        <button
+          type="button"
+          onClick={onToggleAdmin}
+          disabled={adminBusy}
+          className="shrink-0 whitespace-nowrap rounded-lg border border-zinc-200 px-2.5 py-1.5 text-[11px] font-medium text-zinc-600 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 disabled:opacity-50"
+        >
+          {adminBusy ? t("access.adminBusy") : t("access.makeAdmin")}
+        </button>
+      ) : admin.removable ? (
+        <button
+          type="button"
+          onClick={onToggleAdmin}
+          disabled={adminBusy}
+          className="shrink-0 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+        >
+          {adminBusy ? t("access.adminBusy") : t("access.removeAdmin")}
+        </button>
+      ) : (
+        <span title={t("access.adminImmutable")} className="shrink-0 whitespace-nowrap rounded-full bg-zinc-100 px-2 py-1 text-[10px] text-zinc-500">
+          {t(adminSourceKey(admin.source))}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -297,6 +340,7 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set());
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [adminBusyUserId, setAdminBusyUserId] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [reload, setReload] = useState(0);
 
@@ -343,6 +387,8 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
   const allDepartmentKeys = useMemo(() => collectDepartmentKeys(departmentTree), [departmentTree]);
   const allExpanded = allDepartmentKeys.length > 0 && allDepartmentKeys.every((key) => expandedKeys.has(key));
   const groupByKey = new Map(allGroups.map((group) => [group.groupKey, group] as const));
+  const admins = data?.admins ?? [];
+  const adminByUserId = new Map(admins.map((admin) => [admin.userId, admin] as const));
   const currentGroupKeys = new Set(data?.currentGroupKeys ?? []);
   const currentDepartmentNames = (data?.currentGroupKeys ?? []).map((key) => groupByKey.get(key)?.groupName ?? key);
   const totalMemberCount = new Set(allGroups.flatMap((group) => group.members.map((member) => member.userId))).size;
@@ -457,6 +503,28 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
     }
   }
 
+  async function handleToggleAdmin(member: GroupAccessMember): Promise<void> {
+    if (adminBusyUserId !== null) return;
+    const admin = adminByUserId.get(member.userId);
+    if (admin !== undefined && !admin.removable) return;
+    setAdminBusyUserId(member.userId);
+    try {
+      if (admin === undefined) {
+        await assignGroupAccessAdmin(member.userId);
+        setNotice({ kind: "ok", text: t("access.adminAssigned", { name: member.displayName }) });
+      } else {
+        await revokeGroupAccessAdmin(member.userId);
+        setNotice({ kind: "ok", text: t("access.adminRemoved", { name: member.displayName }) });
+      }
+      void loadMyPermissions(true);
+      setReload((value) => value + 1);
+    } catch (error: unknown) {
+      setNotice({ kind: "error", text: t("access.adminChangeFailed", { message: error instanceof Error ? error.message : String(error) }) });
+    } finally {
+      setAdminBusyUserId(null);
+    }
+  }
+
   return (
     <>
       <AppHeader me={me} />
@@ -479,6 +547,48 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
 
               <div className="grid gap-4 lg:grid-cols-[minmax(320px,380px)_minmax(0,1fr)]">
                 <aside className="overflow-hidden rounded-2xl border border-zinc-200 bg-white">
+                  <div data-access-admins="" className="border-b border-zinc-200 bg-zinc-50/80 px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4">
+                          <path d="M12 3.5 19 6v5.1c0 4.3-2.8 7.8-7 9.4-4.2-1.6-7-5.1-7-9.4V6l7-2.5Z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+                          <path d="m8.7 12 2.1 2.1 4.5-4.5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <h2 className="text-sm font-semibold text-zinc-900">{t("access.adminTitle")}</h2>
+                        <p className="mt-0.5 text-[11px] text-zinc-400">{t("access.adminHint")}</p>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-medium text-zinc-500 ring-1 ring-inset ring-zinc-200">
+                        {t("access.adminSummary", { n: admins.length })}
+                      </span>
+                    </div>
+                    <div className="mt-2 max-h-44 space-y-1 overflow-auto">
+                      {admins.length === 0 ? (
+                        <p className="rounded-lg bg-white px-2.5 py-2 text-center text-[11px] text-zinc-400">{t("access.adminEmpty")}</p>
+                      ) : admins.map((admin) => (
+                        <div key={admin.userId} data-access-admin={admin.userId} className="flex items-start gap-2 rounded-lg bg-white px-2.5 py-2 ring-1 ring-inset ring-zinc-100">
+                          <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-[11px] font-semibold text-emerald-700">
+                            {memberInitial(admin)}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              <span className="truncate text-xs font-semibold text-zinc-800">{admin.displayName}</span>
+                              {admin.status === "disabled" ? (
+                                <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500">{t("access.memberDisabled")}</span>
+                              ) : null}
+                            </span>
+                            <span className="mt-0.5 block truncate text-[10px] text-zinc-400">
+                              {[admin.username, admin.email ?? ""].filter((item) => item !== "").join(" · ")}
+                            </span>
+                          </span>
+                          <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+                            {t(adminSourceKey(admin.source))}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                   <div className="border-b border-zinc-200 px-4 py-3">
                     <div className="flex items-center justify-between gap-3">
                       <div className="min-w-0">
@@ -593,8 +703,11 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
                                   key={member.userId}
                                   member={member}
                                   checked={selectedMemberIdSet.has(member.userId)}
+                                  admin={adminByUserId.get(member.userId)}
+                                  adminBusy={adminBusyUserId === member.userId}
                                   t={t}
                                   onToggle={() => { toggleMember(member.userId); }}
+                                  onToggleAdmin={() => { void handleToggleAdmin(member); }}
                                 />
                               ))}
                             </div>

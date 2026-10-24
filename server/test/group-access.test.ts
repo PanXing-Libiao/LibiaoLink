@@ -197,6 +197,15 @@ describe("GroupAccessService 部门通讯录", () => {
       listAccessRules: async () => [rule({ groupKey: "libiaorobot.com/QA", allowedPages: ["files"] })],
       listAccessProjects: async () => [],
       findRuleMetadata: async () => ({ groupName: "Quality", updatedAt: new Date("2026-10-23T00:00:00Z") }),
+      listActiveUsersByIds: async (userIds: readonly string[]) => userIds.includes(PROJECT_A) ? [{
+        userId: PROJECT_A,
+        username: "1001",
+        displayName: "Alice",
+        email: "alice@libiaorobot.com",
+        status: "active" as const,
+      }] : [],
+      listGroupAdminUsersByGroupKeys: async () => [],
+      listManualGroupAccessAdmins: async () => [],
     };
     const permission = {
       canManageGroupAccess: async () => true,
@@ -221,7 +230,10 @@ describe("GroupAccessService 部门通讯录", () => {
       repository as never,
       { recordStandalone: async () => undefined } as never,
       departments as never,
-      new AppConfig({ CASDOOR_ORG_NAME: "libiaorobot.com" } as Env),
+      new AppConfig({
+        CASDOOR_ORG_NAME: "libiaorobot.com",
+        GROUP_ACCESS_ADMIN_USER_IDS: PROJECT_A,
+      } as Env),
     );
     const overview = await service.overview(PROJECT_A);
     expect(overview.groups.map((group) => ({
@@ -233,6 +245,17 @@ describe("GroupAccessService 部门通讯录", () => {
       { key: "libiaorobot.com/Extra", parent: null, members: 1, pages: [] },
       { key: "libiaorobot.com/QA", parent: "libiaorobot.com/RD", members: 2, pages: [...GROUP_ACCESS_PAGE_KEYS] },
       { key: "libiaorobot.com/RD", parent: null, members: 0, pages: [] },
+    ]);
+    expect(overview.admins).toEqual([
+      {
+        userId: PROJECT_A,
+        username: "1001",
+        displayName: "Alice",
+        email: "alice@libiaorobot.com",
+        status: "active",
+        source: "configured",
+        removable: false,
+      },
     ]);
     const qa = overview.groups.find((group) => group.groupKey === "libiaorobot.com/QA");
     expect(qa?.members).toEqual([
@@ -293,6 +316,66 @@ describe("GroupAccessService 部门通讯录", () => {
       service.save(PROJECT_A, { ...input, memberUserIds: [PROJECT_B] }),
     ).rejects.toThrow("所选人员已不在该部门");
   });
+
+  it("手工授予 / 撤销系统管理员，环境配置管理员不可撤销", async () => {
+    const configuredAdmin = {
+      userId: PROJECT_A,
+      username: "1001",
+      displayName: "Alice",
+      email: "alice@libiaorobot.com",
+      status: "active" as const,
+    };
+    const managedAdmin = {
+      userId: PROJECT_B,
+      username: "1002",
+      displayName: "Bob",
+      email: null,
+      status: "active" as const,
+    };
+    let manual: Array<typeof managedAdmin & { grantedAt: Date }> = [];
+    const auditActions: string[] = [];
+    let invalidations = 0;
+    const repository = {
+      listActiveUsersByIds: async (userIds: readonly string[]) => userIds.includes(PROJECT_A) ? [configuredAdmin] : [],
+      listGroupAdminUsersByGroupKeys: async () => [],
+      listManualGroupAccessAdmins: async () => [...manual],
+      listRoleGroupAccessAdmins: async () => [],
+      findActiveGroupAccessUser: async (userId: string) => userId === PROJECT_B ? managedAdmin : null,
+      grantGroupAccessAdmin: async (userId: string, _grantedBy: string, at: Date) => {
+        if (manual.some((item) => item.userId === userId)) return false;
+        manual = [...manual, { ...managedAdmin, grantedAt: at }];
+        return true;
+      },
+      revokeGroupAccessAdmin: async (userId: string) => {
+        const before = manual.length;
+        manual = manual.filter((item) => item.userId !== userId);
+        return manual.length < before;
+      },
+    };
+    const permission = {
+      canManageGroupAccess: async () => true,
+      invalidate: () => { invalidations += 1; },
+    };
+    const service = new GroupAccessService(
+      permission as never,
+      repository as never,
+      { recordStandalone: async (entry: { action: string }) => { auditActions.push(entry.action); } } as never,
+      {} as never,
+      new AppConfig({
+        CASDOOR_ORG_NAME: "libiaorobot.com",
+        GROUP_ACCESS_ADMIN_USER_IDS: PROJECT_A,
+      } as Env),
+    );
+
+    const assigned = await service.assignAdmin(PROJECT_A, PROJECT_B);
+    expect(assigned.admin).toMatchObject({ userId: PROJECT_B, source: "manual", removable: true });
+    expect(invalidations).toBe(1);
+    await expect(service.removeAdmin(PROJECT_A, PROJECT_A)).rejects.toThrow("环境配置或角色授权");
+    await service.removeAdmin(PROJECT_A, PROJECT_B);
+    expect(auditActions).toEqual(["create", "delete"]);
+    expect(invalidations).toBe(2);
+    expect(manual).toEqual([]);
+  });
 });
 
 class FakeRoleService {
@@ -307,12 +390,16 @@ class FakeGroupRepository {
   rules: GroupAccessRuleData[] = [];
   refs = new Map<string, { managerIds: string[]; deletedAt: Date | null }>();
   memberships = new Map<string, string>();
+  manualAdminUserIds: string[] = [];
 
   async listUserGroupKeys(): Promise<string[]> {
     return [...this.groupKeys];
   }
   async listGroupAccessRules(): Promise<GroupAccessRuleData[]> {
     return [...this.rules];
+  }
+  async isManualGroupAccessAdmin(userId: string): Promise<boolean> {
+    return this.manualAdminUserIds.includes(userId);
   }
   async listVisibleProjectIds(actorId: string, spec: ProjectScopeSpec): Promise<string[]> {
     const ids = new Set<string>();
@@ -339,10 +426,12 @@ function serviceWith(options: {
   groupEnforced?: boolean;
   permissionEnforced?: boolean;
   adminUserIds?: string;
+  manualAdminUserIds?: string[];
 }): { service: PermissionService; repository: FakeGroupRepository } {
   const repository = new FakeGroupRepository();
   repository.groupKeys = options.groupKeys;
   repository.rules = options.rules;
+  repository.manualAdminUserIds = options.manualAdminUserIds ?? [];
   const authorization = {
     userId: PROJECT_A,
     roleCodes: ["admin"],
@@ -464,6 +553,20 @@ describe("PermissionService 群组接入", () => {
       permissionEnforced: true,
     });
     expect((await roleAdmin.service.permissionsOf(PROJECT_A)).groupAccessAdmin).toBe(true);
+  });
+
+  it("权限页手工添加的管理员获得权限管理入口与完整写能力", async () => {
+    const manual = serviceWith({
+      groupKeys: ["libiaorobot.com/项目部"],
+      rules: [],
+      groupEnforced: false,
+      permissionEnforced: false,
+      manualAdminUserIds: [PROJECT_A],
+    });
+    const profile = await manual.service.permissionsOf(PROJECT_A);
+    expect(profile.groupAccessAdmin).toBe(true);
+    expect(profile.groupReadOnly).toBe(false);
+    expect(await manual.service.canManageGroupAccess(PROJECT_A)).toBe(true);
   });
 
   it("own 项目范围展开为本人负责或进入名册的项目", async () => {

@@ -88,6 +88,21 @@ export const groupAccessRules = pgTable(
   ],
 );
 
+/** group_access_admins（0072 · 2026-10-24）：权限页手工授予的系统管理员；环境变量与角色来源不落本表。 */
+export const groupAccessAdmins = pgTable(
+  "group_access_admins",
+  {
+    userId: uuid("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    grantedBy: uuid("granted_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  () => [],
+);
+
 /** project_group_access（0068）：selected 规则下的项目白名单；多群组取并集。 */
 export const projectGroupAccess = pgTable(
   "project_group_access",
