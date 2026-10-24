@@ -529,7 +529,7 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
     <>
       <AppHeader me={me} />
       <main className="w-full px-4 pb-10 pt-3 sm:px-6">
-        <div data-access-control="" className="mx-auto w-full max-w-6xl space-y-4">
+        <div data-access-control="" className="mx-auto w-full max-w-screen-2xl space-y-4">
           <header>
             <h1 className="text-lg font-semibold text-zinc-900">{t("access.title")}</h1>
             <p className="mt-0.5 text-xs text-zinc-500">{t("access.subtitle")}</p>
@@ -545,106 +545,111 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
                 <p className="mt-1">{t("access.currentGroups")}: {currentDepartmentNames.length === 0 ? t("access.noGroups") : currentDepartmentNames.join(" · ")}</p>
               </section>
 
-              <div className="grid gap-4 lg:grid-cols-[minmax(320px,380px)_minmax(0,1fr)]">
-                <aside className="overflow-hidden rounded-2xl border border-zinc-200 bg-white">
-                  <div data-access-admins="" className="border-b border-zinc-200 bg-zinc-50/80 px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
-                        <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4">
-                          <path d="M12 3.5 19 6v5.1c0 4.3-2.8 7.8-7 9.4-4.2-1.6-7-5.1-7-9.4V6l7-2.5Z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
-                          <path d="m8.7 12 2.1 2.1 4.5-4.5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <h2 className="text-sm font-semibold text-zinc-900">{t("access.adminTitle")}</h2>
-                        <p className="mt-0.5 text-[11px] text-zinc-400">{t("access.adminHint")}</p>
-                      </div>
-                      <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-medium text-zinc-500 ring-1 ring-inset ring-zinc-200">
-                        {t("access.adminSummary", { n: admins.length })}
-                      </span>
-                    </div>
-                    <div className="mt-2 max-h-44 space-y-1 overflow-auto">
-                      {admins.length === 0 ? (
-                        <p className="rounded-lg bg-white px-2.5 py-2 text-center text-[11px] text-zinc-400">{t("access.adminEmpty")}</p>
-                      ) : admins.map((admin) => (
-                        <div key={admin.userId} data-access-admin={admin.userId} className="flex items-start gap-2 rounded-lg bg-white px-2.5 py-2 ring-1 ring-inset ring-zinc-100">
-                          <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-[11px] font-semibold text-emerald-700">
-                            {memberInitial(admin)}
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="flex min-w-0 items-center gap-1.5">
-                              <span className="truncate text-xs font-semibold text-zinc-800">{admin.displayName}</span>
-                              {admin.status === "disabled" ? (
-                                <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500">{t("access.memberDisabled")}</span>
-                              ) : null}
-                            </span>
-                            <span className="mt-0.5 block truncate text-[10px] text-zinc-400">
-                              {[admin.username, admin.email ?? ""].filter((item) => item !== "").join(" · ")}
-                            </span>
-                          </span>
-                          <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
-                            {t(adminSourceKey(admin.source))}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="border-b border-zinc-200 px-4 py-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <h2 className="text-sm font-semibold text-zinc-900">{t("access.directoryTitle")}</h2>
-                        <p className="mt-0.5 truncate text-[11px] text-zinc-400">
-                          {t("access.directorySummary", { departments: allGroups.length, members: totalMemberCount })}
-                        </p>
-                      </div>
-                      {normalizedDirectoryQuery === "" && allDepartmentKeys.length > 0 ? (
-                        <button type="button" onClick={toggleAllExpanded} className="shrink-0 rounded-lg px-2 py-1 text-[11px] font-medium text-blue-600 hover:bg-blue-50">
-                          {allExpanded ? t("access.collapseAll") : t("access.expandAll")}
-                        </button>
-                      ) : null}
-                    </div>
-                    <label className="mt-3 flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50/60 px-2.5 py-2 focus-within:border-blue-300 focus-within:bg-white">
-                      <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4 shrink-0 text-zinc-400">
-                        <circle cx="8.5" cy="8.5" r="5" fill="none" stroke="currentColor" strokeWidth="1.7" />
-                        <path d="m12.2 12.2 4 4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-                      </svg>
-                      <input
-                        value={directoryQuery}
-                        onChange={(event) => { setDirectoryQuery(event.target.value); }}
-                        placeholder={t("access.directorySearch")}
-                        aria-label={t("access.directorySearch")}
-                        className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-zinc-400"
-                      />
-                      {directoryQuery === "" ? null : (
-                        <button type="button" onClick={() => { setDirectoryQuery(""); }} aria-label={t("access.clearSearch")} className="shrink-0 rounded p-0.5 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-600">
-                          <svg viewBox="0 0 20 20" aria-hidden="true" className="h-3.5 w-3.5">
-                            <path d="m5 5 10 10M15 5 5 15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+              <div className="grid gap-4 xl:grid-cols-[minmax(220px,260px)_minmax(300px,360px)_minmax(0,1fr)]">
+                <div className="grid gap-4 lg:grid-cols-[minmax(300px,360px)_minmax(0,1fr)] xl:contents">
+                  <aside data-access-admin-column="" className="self-start overflow-hidden rounded-2xl border border-zinc-200 bg-white">
+                    <div data-access-admins="" className="border-b border-zinc-200 bg-zinc-50/80 px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+                          <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4">
+                            <path d="M12 3.5 19 6v5.1c0 4.3-2.8 7.8-7 9.4-4.2-1.6-7-5.1-7-9.4V6l7-2.5Z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+                            <path d="m8.7 12 2.1 2.1 4.5-4.5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
                           </svg>
-                        </button>
-                      )}
-                    </label>
-                  </div>
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <h2 className="text-sm font-semibold text-zinc-900">{t("access.adminTitle")}</h2>
+                          <p className="mt-0.5 text-[11px] text-zinc-400">{t("access.adminHint")}</p>
+                        </div>
+                        <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-medium text-zinc-500 ring-1 ring-inset ring-zinc-200">
+                          {t("access.adminSummary", { n: admins.length })}
+                        </span>
+                      </div>
+                      <div className="mt-2 max-h-[620px] space-y-1 overflow-auto">
+                        {admins.length === 0 ? (
+                          <p className="rounded-lg bg-white px-2.5 py-2 text-center text-[11px] text-zinc-400">{t("access.adminEmpty")}</p>
+                        ) : admins.map((admin) => (
+                          <div key={admin.userId} data-access-admin={admin.userId} className="flex items-start gap-2 rounded-lg bg-white px-2.5 py-2 ring-1 ring-inset ring-zinc-100">
+                            <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-[11px] font-semibold text-emerald-700">
+                              {memberInitial(admin)}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="flex min-w-0 items-center gap-1.5">
+                                <span className="truncate text-xs font-semibold text-zinc-800">{admin.displayName}</span>
+                                {admin.status === "disabled" ? (
+                                  <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500">{t("access.memberDisabled")}</span>
+                                ) : null}
+                              </span>
+                              <span className="mt-0.5 block truncate text-[10px] text-zinc-400">
+                                {[admin.username, admin.email ?? ""].filter((item) => item !== "").join(" · ")}
+                              </span>
+                            </span>
+                            <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+                              {t(adminSourceKey(admin.source))}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </aside>
 
-                  <div className="max-h-[620px] overflow-auto p-2">
-                    {filteredTree.length === 0 ? (
-                      <p className="px-2 py-6 text-center text-xs text-zinc-400">
-                        {normalizedDirectoryQuery === "" ? t("access.noObservedGroups") : t("access.directoryNoMatch")}
-                      </p>
-                    ) : (
-                      <DepartmentTree
-                        nodes={filteredTree}
-                        depth={0}
-                        selectedKey={selectedKey}
-                        expandedKeys={expandedKeys}
-                        currentGroupKeys={currentGroupKeys}
-                        query={normalizedDirectoryQuery}
-                        t={t}
-                        onSelect={openGroup}
-                        onToggle={toggleExpanded}
-                      />
-                    )}
-                  </div>
-                </aside>
+                  <aside className="overflow-hidden rounded-2xl border border-zinc-200 bg-white">
+                    <div className="border-b border-zinc-200 px-4 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <h2 className="text-sm font-semibold text-zinc-900">{t("access.directoryTitle")}</h2>
+                          <p className="mt-0.5 truncate text-[11px] text-zinc-400">
+                            {t("access.directorySummary", { departments: allGroups.length, members: totalMemberCount })}
+                          </p>
+                        </div>
+                        {normalizedDirectoryQuery === "" && allDepartmentKeys.length > 0 ? (
+                          <button type="button" onClick={toggleAllExpanded} className="shrink-0 rounded-lg px-2 py-1 text-[11px] font-medium text-blue-600 hover:bg-blue-50">
+                            {allExpanded ? t("access.collapseAll") : t("access.expandAll")}
+                          </button>
+                        ) : null}
+                      </div>
+                      <label className="mt-3 flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50/60 px-2.5 py-2 focus-within:border-blue-300 focus-within:bg-white">
+                        <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4 shrink-0 text-zinc-400">
+                          <circle cx="8.5" cy="8.5" r="5" fill="none" stroke="currentColor" strokeWidth="1.7" />
+                          <path d="m12.2 12.2 4 4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                        </svg>
+                        <input
+                          value={directoryQuery}
+                          onChange={(event) => { setDirectoryQuery(event.target.value); }}
+                          placeholder={t("access.directorySearch")}
+                          aria-label={t("access.directorySearch")}
+                          className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-zinc-400"
+                        />
+                        {directoryQuery === "" ? null : (
+                          <button type="button" onClick={() => { setDirectoryQuery(""); }} aria-label={t("access.clearSearch")} className="shrink-0 rounded p-0.5 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-600">
+                            <svg viewBox="0 0 20 20" aria-hidden="true" className="h-3.5 w-3.5">
+                              <path d="m5 5 10 10M15 5 5 15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                            </svg>
+                          </button>
+                        )}
+                      </label>
+                    </div>
+
+                    <div className="max-h-[620px] overflow-auto p-2">
+                      {filteredTree.length === 0 ? (
+                        <p className="px-2 py-6 text-center text-xs text-zinc-400">
+                          {normalizedDirectoryQuery === "" ? t("access.noObservedGroups") : t("access.directoryNoMatch")}
+                        </p>
+                      ) : (
+                        <DepartmentTree
+                          nodes={filteredTree}
+                          depth={0}
+                          selectedKey={selectedKey}
+                          expandedKeys={expandedKeys}
+                          currentGroupKeys={currentGroupKeys}
+                          query={normalizedDirectoryQuery}
+                          t={t}
+                          onSelect={openGroup}
+                          onToggle={toggleExpanded}
+                        />
+                      )}
+                    </div>
+                  </aside>
+                </div>
 
                 <section className="space-y-4">
                   {selectedKey === null ? (
