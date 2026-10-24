@@ -1,5 +1,11 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
+> **2026-10-24 20:28 权限看板重排并重新上线测试机（前端-only · PR [#621](https://github.com/PanXing-Libiao/LibiaoLink/pull/621) · 生产未部署）**：按业务口径「排版重新排一下」，总览卡片桌面收至 240px / 手机 220px，部门权限分布改为三栏 / 双栏 / 单栏，视图筛选并入标题栏，项目范围长标签改为换行。完整浏览器回归 12 组通过，1440 / 1024 / 390 权限内容与弹窗无横向溢出。
+>
+> PR CI [40093747498](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40093747498) 5 / 5 · squash `45bd1dea` · main CI [40093934451](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40093934451) 5 / 5。发布包 `output/access-dashboard-layout-45bd1dea-20261024-2027.tar.gz`（14,896,873 B · SHA-256 `553d41f5014c4e6f1c0dc087837f2518d5cba0d006f57632b434dfafe3b56520`）上传 `/srv/data/backups/` 后核对一致；staging 386 文件 / 18,541,784 B，与线上 `diff -qr` 0 差异后以 `rsync -a --delete` 原地更新（未替换目录 inode、未重启容器），staging 已清理。
+>
+> 部署前备份 `/srv/data/backups/access-dashboard-layout-45bd1dea-20261024-2027/frontend-dist-before.tar.gz`（14,888,711 B · SHA-256 `2e32889f75c49d5d15647a3eb82a4ecc7753158910eeb900ec9dcfd5cd42eb10`）。公网 `index.html` / `index-4_gqp7Zc.js` / `index-DbMSLm6d.css` SHA-256 为 `6e1c202c797bf98126d2bb7449293647e4c07dea1dc4a1e2352b50400f07bfd9` / `b95882302fd920f60318efc726ca17b6a3f69f5a2e463faf38bd9a5acef07e5a` / `7b2786e35d45d4b1609f7973c0b4cbefe9d571ef2046b6c59bff8a58a8426fdb`，均与 staging / 本地逐字节一致。7 容器 healthy，`/healthz` / `/readyz` 200，`GROUP_ACCESS_ENFORCED=false` 未改；未改 server / database / compose / `server.env` / Secret / 依赖。真实公司账号浏览器复验待补，生产未部署。
+
 > **2026-10-24 19:15 权限看板改动取消并回滚测试机（PR [#620](https://github.com/PanXing-Libiao/LibiaoLink/pull/620) 已关闭，未合并，生产未部署）**：按业务口径「取消这个数据看板的改动」，前端权限页恢复为发布前版本，不再提供「规则配置 / 权限看板」切换、看板指标、范围分布与分配明细；本次改动未进入 `main`。
 >
 > 回滚使用部署前备份 `/srv/data/backups/frontend-before-access-dashboard-20261024-1901.tar.gz`（14,890,045 B · SHA-256 `978bb7ef6ce9b92c25f7733e6dc0314052a83bdc2de01611fc407ba04f009352`），staging 386 文件后以 rsync 原地更新，未重启容器。公网 index / JS / CSS SHA-256 恢复为 `8389706cc76032e3281582e3a80b5fda9c01d6fd59ed3590ea039b2332a19434` / `ee28e81e5fcfa5eb0e8819e4a58a4fd3c6917c2267409b4456d64bfd09e2473e` / `2ed23e5b17fd827b64f619b04e4eb7f33421ab5367cd711e6e8cf42a6d14e779`；线上 JS「权限看板 / 项目范围分布」均为 0 命中。8 个容器 healthy，`/healthz` / `/readyz` 正常，`GROUP_ACCESS_ENFORCED=false` 未改。回滚 staging 已清理，发布前备份与看板发布包保留。
