@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { check, index, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { users } from "./identity.js";
 import {
+  GROUP_ACCESS_ACCESS_LEVEL_KEYS,
   GROUP_ACCESS_MEMBER_SCOPE_KEYS,
   GROUP_ACCESS_PAGE_KEYS,
   GROUP_ACCESS_PROJECT_SCOPE_KEYS,
@@ -38,7 +39,7 @@ export const userGroupMemberships = pgTable(
   ],
 );
 
-/** group_access_rules（0068 · 0070）：一个 Casdoor 群组一行；allowed_pages 为旧客户端兼容字段（裁决恒全放行），实际只按项目范围与人员范围裁剪数据。 */
+/** group_access_rules（0068 · 0070 · 0073）：一个 Casdoor 群组一行；allowed_pages 为旧客户端兼容字段（裁决恒全放行），实际按项目范围、编辑/仅浏览与人员范围裁剪数据。 */
 export const groupAccessRules = pgTable(
   "group_access_rules",
   {
@@ -46,6 +47,7 @@ export const groupAccessRules = pgTable(
     groupName: text("group_name").notNull(),
     allowedPages: text("allowed_pages").array().notNull().default(sql.raw("array[]::text[]")),
     projectScope: text("project_scope").notNull().default("none"),
+    accessLevel: text("access_level").notNull().default("view"),
     memberScope: text("member_scope").notNull().default("all"),
     memberUserIds: uuid("member_user_ids").array().notNull().default(sql.raw("array[]::uuid[]")),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -74,6 +76,14 @@ export const groupAccessRules = pgTable(
     check(
       "ck_group_access_rules_scope",
       sql.raw(table.projectScope.name + " in " + sqlValueList(GROUP_ACCESS_PROJECT_SCOPE_KEYS)),
+    ),
+    check(
+      "ck_group_access_rules_access_level",
+      sql.raw(table.accessLevel.name + " in " + sqlValueList(GROUP_ACCESS_ACCESS_LEVEL_KEYS)),
+    ),
+    check(
+      "ck_group_access_rules_none_access",
+      sql.raw(table.projectScope.name + " <> 'none' or " + table.accessLevel.name + " = 'view'"),
     ),
     check(
       "ck_group_access_rules_member_scope",

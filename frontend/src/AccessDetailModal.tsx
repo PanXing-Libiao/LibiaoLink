@@ -5,6 +5,7 @@ import {
   deleteGroupAccessRule,
   revokeGroupAccessAdmin,
   saveGroupAccessRule,
+  type GroupAccessAccessLevel,
   type GroupAccessAdmin,
   type GroupAccessGroup,
   type GroupAccessMember,
@@ -18,6 +19,7 @@ import {
   type AccessLevel,
   type AccessPersonSummary,
 } from "./accessDashboardModel";
+import { AccessScopePicker } from "./AccessScopePicker";
 import { useT, type TextKey } from "./i18n";
 import { lockBodyScroll } from "./scrollLock";
 import { useFocusTrap } from "./components/useFocusTrap";
@@ -32,7 +34,7 @@ export type AccessDetailView =
 
 type Notify = (kind: ToastKind, text: string) => void;
 
-const SCOPE_OPTIONS: Array<{ value: GroupAccessProjectScope; labelKey: TextKey }> = [
+const FILTER_SCOPE_OPTIONS: Array<{ value: GroupAccessProjectScope; labelKey: TextKey }> = [
   { value: "all", labelKey: "access.scope.all" },
   { value: "own", labelKey: "access.scope.own" },
   { value: "selected", labelKey: "access.scope.selected" },
@@ -83,6 +85,16 @@ function scopeClass(group: GroupAccessGroup): string {
   if (group.rule.projectScope === "own") return "bg-sky-50 text-sky-700 ring-sky-100";
   if (group.rule.projectScope === "selected") return "bg-amber-50 text-amber-700 ring-amber-100";
   return "bg-zinc-100 text-zinc-600 ring-zinc-200";
+}
+
+function accessLevelKey(group: GroupAccessGroup): TextKey {
+  return group.rule?.accessLevel === "edit" ? "access.dashboard.operate" : "access.dashboard.viewOnly";
+}
+
+function accessLevelClass(group: GroupAccessGroup): string {
+  return group.rule?.accessLevel === "edit"
+    ? "bg-indigo-50 text-indigo-700 ring-indigo-100"
+    : "bg-emerald-50 text-emerald-700 ring-emerald-100";
 }
 
 function titleOf(view: AccessDetailView): TextKey {
@@ -180,9 +192,28 @@ function MembersView({ model, onOpenDepartment }: { model: AccessDashboardModel;
 
 function PersonDetailRow({ person, onOpenDepartment }: { person: AccessPersonSummary; onOpenDepartment: (groupKey: string) => void }) {
   const t = useT();
+  const primaryGroup = person.groups[0] ?? null;
+
+  function openPrimary(): void {
+    if (primaryGroup !== null) onOpenDepartment(primaryGroup.groupKey);
+  }
+
   return (
-    <div data-access-member-row={person.member.userId} className="group flex items-start gap-3 rounded-xl border border-transparent px-3 py-2.5 transition duration-200 hover:border-blue-100 hover:bg-blue-50/50">
-      <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-50 text-xs font-semibold text-blue-700 ring-1 ring-blue-100 transition-transform duration-200 group-hover:scale-105">
+    <div
+      data-access-member-row={person.member.userId}
+      role={primaryGroup === null ? undefined : "button"}
+      tabIndex={primaryGroup === null ? undefined : 0}
+      aria-label={primaryGroup === null ? undefined : t("access.detail.openDepartment") + " " + primaryGroup.groupName}
+      title={primaryGroup === null ? undefined : t("access.detail.openDepartment")}
+      onClick={openPrimary}
+      onKeyDown={(event) => {
+        if (primaryGroup === null || event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+        event.preventDefault();
+        openPrimary();
+      }}
+      className={"group flex items-start gap-3 rounded-xl border border-transparent px-3 py-3 transition duration-200 hover:border-blue-100 hover:bg-blue-50/50 focus-visible:border-blue-300 focus-visible:bg-blue-50/40 focus-visible:outline-none " + (primaryGroup === null ? "" : "cursor-pointer")}
+    >
+      <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-50 text-xs font-semibold text-blue-700 ring-1 ring-blue-100 transition-transform duration-200 group-hover:scale-105">
         {memberInitial(person.member)}
       </span>
       <span className="min-w-0 flex-1">
@@ -193,14 +224,15 @@ function PersonDetailRow({ person, onOpenDepartment }: { person: AccessPersonSum
           {person.isAdmin ? <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[9px] font-medium text-blue-700 ring-1 ring-inset ring-blue-100">{t("access.adminBadge")}</span> : null}
         </span>
         <span className="mt-1 block truncate text-[10px] text-zinc-400">{[person.member.username, person.member.email ?? ""].filter((item) => item !== "").join(" · ")}</span>
-        <span className="mt-1.5 flex flex-wrap gap-1">
+        <span className="mt-2 flex flex-wrap gap-1.5">
           {person.groups.length === 0 ? <span className="text-[10px] text-zinc-400">{t("access.adminTitle")}</span> : person.groups.map((group) => (
             <button
               key={group.groupKey}
               type="button"
-              onClick={() => { onOpenDepartment(group.groupKey); }}
+              onClick={(event) => { event.stopPropagation(); onOpenDepartment(group.groupKey); }}
               title={group.pathText}
-              className="max-w-full truncate rounded-md bg-white px-1.5 py-0.5 text-[9px] text-zinc-500 ring-1 ring-inset ring-zinc-200 transition hover:bg-blue-50 hover:text-blue-700 hover:ring-blue-200"
+              aria-label={t("access.detail.openDepartment") + " " + group.pathText}
+              className="max-w-full truncate rounded-lg bg-white px-2.5 py-1 text-[11px] font-medium text-zinc-600 ring-1 ring-inset ring-zinc-200 transition hover:-translate-y-0.5 hover:bg-blue-50 hover:text-blue-700 hover:ring-blue-200 hover:shadow-sm"
             >
               {group.pathText}
             </button>
@@ -229,7 +261,7 @@ function ProjectsView({ model, onOpenDepartment }: { model: AccessDashboardModel
         <SearchBox value={query} onChange={setQuery} placeholder={t("access.detail.searchDepartments")} />
         <div className="flex flex-wrap gap-1.5">
           <FilterChip active={scope === "all"} onClick={() => { setScope("all"); }}>{t("access.detail.all")}</FilterChip>
-          {SCOPE_OPTIONS.map((option) => (
+          {FILTER_SCOPE_OPTIONS.map((option) => (
             <FilterChip key={option.value} active={scope === option.value} onClick={() => { setScope(option.value); }}>{t(option.labelKey)}</FilterChip>
           ))}
         </div>
@@ -238,22 +270,32 @@ function ProjectsView({ model, onOpenDepartment }: { model: AccessDashboardModel
         {rows.length === 0 ? <EmptyState>{t("access.detail.noMatch")}</EmptyState> : rows.map((row) => {
           const names = projectNamesOf(row.group, model.projectsById);
           return (
-            <div key={row.group.groupKey} data-access-project-row={row.group.groupKey} className="group flex items-start gap-3 rounded-xl border border-transparent px-3 py-2.5 transition hover:border-blue-100 hover:bg-blue-50/50">
-              <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600 ring-1 ring-blue-100">
-                <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4"><path d="M3.5 6.5A2.5 2.5 0 0 1 6 4h4.1l2 2.2H18A2.5 2.5 0 0 1 20.5 8.7v8.8A2.5 2.5 0 0 1 18 20H6a2.5 2.5 0 0 1-2.5-2.5v-11Z" fill="currentColor" /></svg>
+            <button
+              key={row.group.groupKey}
+              type="button"
+              data-access-project-row={row.group.groupKey}
+              onClick={() => { onOpenDepartment(row.group.groupKey); }}
+              title={t("access.detail.openDepartment")}
+              className="group flex w-full items-start gap-3 rounded-xl border border-transparent px-3 py-3 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-100 hover:bg-blue-50/60 hover:shadow-sm focus-visible:border-blue-300 focus-visible:bg-blue-50/40 focus-visible:outline-none"
+            >
+              <span className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 ring-1 ring-blue-100 transition-transform duration-200 group-hover:scale-105">
+                <svg viewBox="0 0 24 24" aria-hidden="true" className="h-6 w-6"><path d="M3.5 6.5A2.5 2.5 0 0 1 6 4h4.1l2 2.2H18A2.5 2.5 0 0 1 20.5 8.7v8.8A2.5 2.5 0 0 1 18 20H6a2.5 2.5 0 0 1-2.5-2.5v-11Z" fill="currentColor" /></svg>
               </span>
-              <span className="min-w-0 flex-1">
+              <span className="min-w-0 flex-1 py-0.5">
                 <span className="flex flex-wrap items-center gap-2">
                   <span className="truncate text-[13px] font-semibold text-zinc-800">{row.group.groupName}</span>
                   <span className={"rounded-full px-2 py-0.5 text-[9px] font-medium ring-1 ring-inset " + scopeClass(row.group)}>{t(scopeKey(row.group))}</span>
+                  {row.group.rule === null || row.group.rule.projectScope === "none" ? null : (
+                    <span className={"rounded-full px-2 py-0.5 text-[9px] font-medium ring-1 ring-inset " + accessLevelClass(row.group)}>{t(accessLevelKey(row.group))}</span>
+                  )}
                 </span>
-                <span className="mt-0.5 block truncate text-[10px] text-zinc-400">{row.pathText}</span>
+                {row.path.length <= 1 ? null : <span className="mt-0.5 block truncate text-[10px] text-zinc-400">{row.path.slice(0, -1).join(" / ")}</span>}
                 <span className="mt-1 block truncate text-[10px] text-zinc-500">{names.length === 0 ? t("access.detail.noProjectNames") : names.slice(0, 3).join(" · ") + (names.length > 3 ? " · +" + String(names.length - 3) : "")}</span>
               </span>
-              <button type="button" onClick={() => { onOpenDepartment(row.group.groupKey); }} className="shrink-0 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-[10px] font-medium text-zinc-600 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700">
-                {t("access.detail.editRule")}
-              </button>
-            </div>
+              <span className="mt-3 shrink-0 text-zinc-300 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-blue-500">
+                <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4"><path d="m7 4.5 5.5 5.5L7 15.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              </span>
+            </button>
           );
         })}
       </div>
@@ -367,19 +409,22 @@ function DepartmentsView({ model, onOpenDepartment }: { model: AccessDashboardMo
             type="button"
             data-access-department-list-row={row.group.groupKey}
             onClick={() => { onOpenDepartment(row.group.groupKey); }}
-            className="group flex w-full items-center gap-3 rounded-xl border border-transparent px-3 py-2.5 text-left transition hover:border-blue-100 hover:bg-blue-50/50"
+            className="group flex w-full items-center gap-3 rounded-xl border border-transparent px-3 py-3 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-100 hover:bg-blue-50/60 hover:shadow-sm"
           >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600 ring-1 ring-blue-100">
-              <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4"><path d="M3.5 6.5A2.5 2.5 0 0 1 6 4h4.1l2 2.2H18A2.5 2.5 0 0 1 20.5 8.7v8.8A2.5 2.5 0 0 1 18 20H6a2.5 2.5 0 0 1-2.5-2.5v-11Z" fill="currentColor" /></svg>
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 ring-1 ring-blue-100 transition-transform duration-200 group-hover:scale-105">
+              <svg viewBox="0 0 24 24" aria-hidden="true" className="h-6 w-6"><path d="M3.5 6.5A2.5 2.5 0 0 1 6 4h4.1l2 2.2H18A2.5 2.5 0 0 1 20.5 8.7v8.8A2.5 2.5 0 0 1 18 20H6a2.5 2.5 0 0 1-2.5-2.5v-11Z" fill="currentColor" /></svg>
             </span>
             <span className="min-w-0 flex-1">
               <span className="flex flex-wrap items-center gap-2">
                 <span className="truncate text-[13px] font-semibold text-zinc-800">{row.group.groupName}</span>
                 <span className={"rounded-full px-2 py-0.5 text-[9px] font-medium ring-1 ring-inset " + scopeClass(row.group)}>{t(scopeKey(row.group))}</span>
+                {row.group.rule === null || row.group.rule.projectScope === "none" ? null : (
+                  <span className={"rounded-full px-2 py-0.5 text-[9px] font-medium ring-1 ring-inset " + accessLevelClass(row.group)}>{t(accessLevelKey(row.group))}</span>
+                )}
                 <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[9px] text-zinc-500">{t("access.members", { n: row.subtreeMemberCount })}</span>
                 {row.adminCount > 0 ? <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[9px] text-blue-700">{t("access.detail.adminCount", { n: row.adminCount })}</span> : null}
               </span>
-              <span className="mt-0.5 block truncate text-[10px] text-zinc-400">{row.pathText}</span>
+              {row.path.length <= 1 ? null : <span className="mt-0.5 block truncate text-[10px] text-zinc-400">{row.path.slice(0, -1).join(" / ")}</span>}
             </span>
             <span className="shrink-0 text-zinc-300 transition-transform group-hover:translate-x-0.5 group-hover:text-blue-500">
               <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4"><path d="m7 4.5 5.5 5.5L7 15.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -408,6 +453,7 @@ function DepartmentEditor({ group, data, onChanged, onNotify, onClose }: {
 }) {
   const t = useT();
   const [projectScope, setProjectScope] = useState<GroupAccessProjectScope>(group.rule?.projectScope ?? "none");
+  const [accessLevel, setAccessLevel] = useState<GroupAccessAccessLevel>(group.rule?.accessLevel ?? "view");
   const [projectIds, setProjectIds] = useState<string[]>(group.rule?.projectIds ?? []);
   const [memberScope, setMemberScope] = useState<GroupAccessMemberScope>(group.rule?.memberScope ?? "all");
   const [memberUserIds, setMemberUserIds] = useState<string[]>(group.rule?.memberUserIds ?? []);
@@ -420,6 +466,7 @@ function DepartmentEditor({ group, data, onChanged, onNotify, onClose }: {
 
   useEffect(() => {
     setProjectScope(group.rule?.projectScope ?? "none");
+    setAccessLevel(group.rule?.accessLevel ?? "view");
     setProjectIds(group.rule?.projectIds ?? []);
     setMemberScope(group.rule?.memberScope ?? "all");
     setMemberUserIds(group.rule?.memberUserIds ?? []);
@@ -462,6 +509,11 @@ function DepartmentEditor({ group, data, onChanged, onNotify, onClose }: {
     setMemberUserIds(members.filter((member) => next.has(member.userId)).map((member) => member.userId));
   }
 
+  function changeScope(next: { projectScope: GroupAccessProjectScope; accessLevel: GroupAccessAccessLevel }): void {
+    setProjectScope(next.projectScope);
+    setAccessLevel(next.projectScope === "none" ? "view" : next.accessLevel);
+  }
+
   function toggleProject(projectId: string): void {
     setProjectIds((current) => current.includes(projectId) ? current.filter((id) => id !== projectId) : current.concat(projectId));
   }
@@ -473,6 +525,7 @@ function DepartmentEditor({ group, data, onChanged, onNotify, onClose }: {
       await saveGroupAccessRule({
         groupKey: group.groupKey,
         projectScope,
+        accessLevel: projectScope === "none" ? "view" : accessLevel,
         projectIds: projectScope === "selected" ? projectIds : [],
         memberScope,
         memberUserIds: memberScope === "selected" ? memberUserIds : [],
@@ -534,6 +587,9 @@ function DepartmentEditor({ group, data, onChanged, onNotify, onClose }: {
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="truncate text-base font-semibold text-zinc-900">{group.groupName}</h3>
               <span className={"rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset " + scopeClass(group)}>{t(scopeKey(group))}</span>
+              {group.rule === null || group.rule.projectScope === "none" ? null : (
+                <span className={"rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset " + accessLevelClass(group)}>{t(accessLevelKey(group))}</span>
+              )}
             </div>
             <p className="mt-0.5 truncate text-[10px] text-blue-900/50">{group.groupKey}</p>
             <p className="mt-1 text-[11px] text-zinc-500">{t("access.detail.directMembers", { n: group.memberCount })}</p>
@@ -602,13 +658,12 @@ function DepartmentEditor({ group, data, onChanged, onNotify, onClose }: {
             <SectionHeading title={t("access.projectsTitle")} detail={t("access.detail.projectCount", { n: projectScope === "selected" ? projectIds.length : 0 })} />
             <p className="mt-1 text-[10px] leading-4 text-zinc-400">{t("access.projectsHint")}</p>
           </div>
-          <div className="grid gap-1.5 border-b border-zinc-100 p-3 sm:grid-cols-2">
-            {SCOPE_OPTIONS.map((option) => (
-              <label key={option.value} className={"flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-[11px] transition " + (projectScope === option.value ? "border-blue-300 bg-blue-50 text-blue-800 shadow-sm" : "border-zinc-200 text-zinc-600 hover:border-blue-200 hover:bg-blue-50/40")}>
-                <input type="radio" name={"access-project-scope-" + group.groupKey} checked={projectScope === option.value} onChange={() => { setProjectScope(option.value); }} className="h-3.5 w-3.5 accent-blue-600" />
-                {t(option.labelKey)}
-              </label>
-            ))}
+          <div className="border-b border-zinc-100 p-3">
+            <AccessScopePicker
+              projectScope={projectScope}
+              accessLevel={accessLevel}
+              onChange={changeScope}
+            />
           </div>
           {projectScope === "selected" ? (
             <div className="flex min-h-0 flex-1 flex-col">

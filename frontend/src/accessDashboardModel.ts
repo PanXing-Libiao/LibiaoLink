@@ -113,7 +113,7 @@ function projectLevelOf(person: {
   member: GroupAccessMember;
   groups: readonly AccessPersonGroup[];
   isAdmin: boolean;
-}, rules: ReadonlyMap<string, { projectScope: GroupAccessProjectScope; projectIds: string[]; memberScope: "all" | "selected"; memberUserIds: string[] }>): AccessProjectLevel {
+}, rules: ReadonlyMap<string, { projectScope: GroupAccessProjectScope; accessLevel: "edit" | "view"; projectIds: string[]; memberScope: "all" | "selected"; memberUserIds: string[] }>): AccessProjectLevel {
   if (person.isAdmin) return "all";
   let hasRule = false;
   let hasOwn = false;
@@ -133,9 +133,25 @@ function projectLevelOf(person: {
   return "login";
 }
 
-function levelOf(projectLevel: AccessProjectLevel, isAdmin: boolean): AccessLevel {
+function hasEditAccessOf(person: {
+  member: GroupAccessMember;
+  groups: readonly AccessPersonGroup[];
+  isAdmin: boolean;
+}, rules: ReadonlyMap<string, { projectScope: GroupAccessProjectScope; accessLevel: "edit" | "view"; projectIds: string[]; memberScope: "all" | "selected"; memberUserIds: string[] }>): boolean {
+  if (person.isAdmin) return true;
+  for (const membership of person.groups) {
+    const rule = rules.get(membership.groupKey);
+    if (rule === undefined) continue;
+    if (rule.memberScope === "selected" && !rule.memberUserIds.includes(person.member.userId)) continue;
+    if (rule.projectScope !== "none" && rule.accessLevel === "edit") return true;
+  }
+  return false;
+}
+
+function levelOf(projectLevel: AccessProjectLevel, isAdmin: boolean, hasEditAccess: boolean): AccessLevel {
   if (isAdmin) return "operate";
-  return projectLevel === "login" ? "login" : "view";
+  if (projectLevel === "login") return "login";
+  return hasEditAccess ? "operate" : "view";
 }
 
 function subtreeKeysOf(groupKey: string, groups: ReadonlyMap<string, GroupAccessGroup>): string[] {
@@ -169,9 +185,9 @@ function pathTextOf(path: readonly string[], groupKey: string): string {
 /**
  * 权限看板统计口径：
  * - 人与部门均来自 GET /api/v1/access；跨部门按 userId 去重。
- * - 系统管理员始终归入可操作，项目范围按全部项目计。
+ * - 系统管理员始终归入编辑，项目范围按全部项目计。
  * - 普通账号取所属部门全部适用规则的并集：任一 all 即全部；否则 own 优先，其次有项目的 selected；
- *   没有适用规则、仅 none 或 selected 为空 = 仅登录。与 resolveGroupAccess 的服务端口径一致。
+ *   任一适用规则为 edit 且项目范围不是 none 才归编辑，否则为仅浏览；没有适用数据规则 = 仅登录。
  * - 看板只统计启用账号；停用账号仍在详情名单中展示，但不计入权限分布。
  */
 export function buildAccessDashboardModel(data: GroupAccessOverview, scopeGroupKey: string | null): AccessDashboardModel {
@@ -222,11 +238,12 @@ export function buildAccessDashboardModel(data: GroupAccessOverview, scopeGroupK
     }
   }
 
-  const ruleByGroup = new Map<string, { projectScope: GroupAccessProjectScope; projectIds: string[]; memberScope: "all" | "selected"; memberUserIds: string[] }>();
+  const ruleByGroup = new Map<string, { projectScope: GroupAccessProjectScope; accessLevel: "edit" | "view"; projectIds: string[]; memberScope: "all" | "selected"; memberUserIds: string[] }>();
   for (const group of data.groups) {
     if (group.rule === null) continue;
     ruleByGroup.set(group.groupKey, {
       projectScope: group.rule.projectScope,
+      accessLevel: group.rule.accessLevel,
       projectIds: group.rule.projectIds,
       memberScope: group.rule.memberScope,
       memberUserIds: group.rule.memberUserIds,
@@ -238,7 +255,7 @@ export function buildAccessDashboardModel(data: GroupAccessOverview, scopeGroupK
     const admin = adminById.get(person.member.userId) ?? null;
     const isAdmin = admin !== null;
     const projectLevel = projectLevelOf({ member: person.member, groups: person.groups, isAdmin }, ruleByGroup);
-    const level = levelOf(projectLevel, isAdmin);
+    const level = levelOf(projectLevel, isAdmin, hasEditAccessOf({ member: person.member, groups: person.groups, isAdmin }, ruleByGroup));
     const searchParts = [person.member.displayName, person.member.username, person.member.email ?? "", ...person.groups.map((group) => group.pathText)];
     allPeople.push({
       member: person.member,

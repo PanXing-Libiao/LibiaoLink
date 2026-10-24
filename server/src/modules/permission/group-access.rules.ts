@@ -1,5 +1,6 @@
 import {
   GROUP_ACCESS_PAGE_KEYS,
+  type GroupAccessAccessLevel,
   type GroupAccessMemberScope,
   type GroupAccessPage,
   type GroupAccessProjectScope,
@@ -10,6 +11,7 @@ export interface GroupAccessRuleData {
   groupKey: string;
   allowedPages: GroupAccessPage[];
   projectScope: GroupAccessProjectScope;
+  accessLevel: GroupAccessAccessLevel;
   projectIds: string[];
   memberScope: GroupAccessMemberScope;
   memberUserIds: string[];
@@ -18,7 +20,7 @@ export interface GroupAccessRuleData {
 export interface GroupAccessProfile {
   enforced: boolean;
   admin: boolean;
-  /** 群组限制开启且非管理员：所有页面可进，但业务写操作一律拒绝。 */
+  /** 群组限制开启且非管理员、无任何适用 edit 规则时为 true：页面可进，但业务写操作一律拒绝。 */
   readOnly: boolean;
   groupKeys: string[];
   pages: GroupAccessPage[];
@@ -50,7 +52,7 @@ export function isGroupAccessAdmin(groupKeys: readonly string[], adminGroupKeys:
 /**
  * 多群组取并集：所有页面恒放行；项目规则任意 all 即不额外收窄，否则 selected 项目并集，
  * own 由服务层展开后并入，none 不贡献项目。没有任何有效规则 = 空项目（默认拒绝，防止漏配越权）。
- * 群组限制开启且非管理员 = 只读；管理员与开关关闭时保留原有写能力。
+ * 写能力同样取并集：只有任一适用规则为 edit 才解除只读；view / 无规则均只读。
  */
 export function resolveGroupAccess(input: {
   enforced: boolean;
@@ -61,8 +63,10 @@ export function resolveGroupAccess(input: {
   let projectIds: string[] | null = [];
   let ownProjects = false;
   let hasRule = false;
+  let hasEditAccess = false;
   for (const rule of input.rules) {
     hasRule = true;
+    if (rule.accessLevel === "edit") hasEditAccess = true;
     if (rule.projectScope === "all") {
       projectIds = null;
       ownProjects = false;
@@ -88,7 +92,7 @@ export function resolveGroupAccess(input: {
   return {
     enforced: true,
     admin: false,
-    readOnly: true,
+    readOnly: !hasEditAccess,
     groupKeys: [...input.groupKeys],
     pages: [...GROUP_ACCESS_PAGE_KEYS],
     projectIds: hasRule ? projectIds : [],

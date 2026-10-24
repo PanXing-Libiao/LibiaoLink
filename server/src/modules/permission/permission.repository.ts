@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type {
+  GroupAccessAccessLevel,
   GroupAccessMemberScope,
   GroupAccessPage,
   GroupAccessProjectScope,
@@ -266,6 +267,7 @@ export class PermissionRepository {
         groupKey: groupAccessRules.groupKey,
         allowedPages: groupAccessRules.allowedPages,
         projectScope: groupAccessRules.projectScope,
+        accessLevel: groupAccessRules.accessLevel,
         memberScope: groupAccessRules.memberScope,
         memberUserIds: groupAccessRules.memberUserIds,
       })
@@ -288,6 +290,7 @@ export class PermissionRepository {
       groupKey: row.groupKey,
       allowedPages: row.allowedPages as GroupAccessPage[],
       projectScope: row.projectScope as GroupAccessProjectScope,
+      accessLevel: row.accessLevel as GroupAccessAccessLevel,
       projectIds: projectIdsByGroup.get(row.groupKey) ?? [],
       memberScope: row.memberScope as GroupAccessMemberScope,
       memberUserIds: row.memberUserIds,
@@ -330,6 +333,7 @@ export class PermissionRepository {
         groupKey: groupAccessRules.groupKey,
         allowedPages: groupAccessRules.allowedPages,
         projectScope: groupAccessRules.projectScope,
+        accessLevel: groupAccessRules.accessLevel,
         memberScope: groupAccessRules.memberScope,
         memberUserIds: groupAccessRules.memberUserIds,
       })
@@ -348,6 +352,7 @@ export class PermissionRepository {
       groupKey: row.groupKey,
       allowedPages: row.allowedPages as GroupAccessPage[],
       projectScope: row.projectScope as GroupAccessProjectScope,
+      accessLevel: row.accessLevel as GroupAccessAccessLevel,
       projectIds: projectIdsByGroup.get(row.groupKey) ?? [],
       memberScope: row.memberScope as GroupAccessMemberScope,
       memberUserIds: row.memberUserIds,
@@ -376,6 +381,7 @@ export class PermissionRepository {
     groupName: string,
     allowedPages: readonly GroupAccessPage[],
     projectScope: GroupAccessProjectScope,
+    accessLevel: GroupAccessAccessLevel,
     projectIds: readonly string[],
     memberScope: GroupAccessMemberScope,
     memberUserIds: readonly string[],
@@ -389,6 +395,7 @@ export class PermissionRepository {
           groupName,
           allowedPages: [...allowedPages],
           projectScope,
+          accessLevel,
           memberScope,
           memberUserIds: [...memberUserIds],
           updatedAt: at,
@@ -399,6 +406,7 @@ export class PermissionRepository {
             groupName,
             allowedPages: [...allowedPages],
             projectScope,
+            accessLevel,
             memberScope,
             memberUserIds: [...memberUserIds],
             updatedAt: at,
