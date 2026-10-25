@@ -424,7 +424,7 @@ describe("AuditService（审计 C7）", () => {
     });
   });
 
-  it("list：部门可见项目范围收窄审计查询；范围为空直接返回空页", async () => {
+  it("list：普通账号仅本人；项目经理附有效管理项目；项目筛选与可见范围取交集", async () => {
     const { service, repo } = makeAuditService();
     repo.rows = [
       {
@@ -443,15 +443,26 @@ describe("AuditService（审计 C7）", () => {
         metadata: {},
       },
     ];
-    const page = await service.list({ page: 1, limit: 50 }, [UUID_PROJECT]);
-    expect(repo.lastFilter?.projectIds).toEqual([UUID_PROJECT]);
+    const page = await service.list({ page: 1, limit: 50 }, { actorId: UUID_ACTOR });
+    expect(repo.lastFilter).toMatchObject({ viewerActorId: UUID_ACTOR });
+    expect(repo.lastFilter?.viewerManagedProjectIds).toBeUndefined();
     expect(page.total).toBe(1);
-    await service.list({ projectId: UUID_PROJECT, page: 1, limit: 50 }, [UUID_PROJECT]);
-    expect(repo.lastFilter?.projectIds).toEqual([UUID_PROJECT]);
-    const disjoint = await service.list({ projectId: "33333333-3333-4333-8333-333333333333", page: 1, limit: 50 }, [UUID_PROJECT]);
-    expect(disjoint).toMatchObject({ items: [], total: 0, windowId: null });
-    const empty = await service.list({ page: 1, limit: 50 }, []);
-    expect(empty).toMatchObject({ items: [], total: 0, windowId: null });
+
+    await service.list(
+      { projectId: UUID_PROJECT, page: 1, limit: 50 },
+      { actorId: UUID_ACTOR, managedProjectIds: [UUID_PROJECT] },
+    );
+    expect(repo.lastFilter).toMatchObject({
+      projectIds: [UUID_PROJECT],
+      viewerActorId: UUID_ACTOR,
+      viewerManagedProjectIds: [UUID_PROJECT],
+    });
+
+    await service.list({ projectId: "33333333-3333-4333-8333-333333333333", page: 1, limit: 50 }, {
+      actorId: UUID_ACTOR,
+      managedProjectIds: [UUID_PROJECT],
+    });
+    expect(repo.lastFilter?.projectIds).toEqual(["33333333-3333-4333-8333-333333333333"]);
   });
 
   it("list：多值筛选（2026-10-09 追订 · 操作记录里面也是）—— 逗号分隔 + 去重保序 + 逐值白名单，非法值 400", async () => {

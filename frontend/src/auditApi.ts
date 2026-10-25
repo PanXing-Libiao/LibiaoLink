@@ -1,5 +1,5 @@
 /**
- * 操作记录（C7 审计 · 管理员查询页 · 2026-10-08）读取面：GET /api/v1/audit-logs（仅 audit.view）。
+ * 操作记录（C7 审计 · 登录账号查询页 · 2026-10-08）读取面：GET /api/v1/audit-logs（管理员全量，其余按本人 / 项目经理范围）。
  * 契约 shared/src/modules/audits.ts：occurredAt 降序（同毫秒按 id 降序）；筛选 = 关键字 q / 对象类型 / 对象 id / 操作人 /
  * 动作 / 结果 / 项目 / 时间区间（from / to 含端点）+ 分页（page / limit，上限 200）；除对象 id / 时间外均为**多选**
  * （2026-10-09 追订，逗号分隔、去重保序，服务端逐值校验白名单）。
@@ -155,7 +155,7 @@ export function buildAuditApiQuery(query: AuditApiQuery): string {
   return parts.join("&");
 }
 
-/** 审计列表（occurredAt 降序；无 audit.view → 403 FORBIDDEN）。 */
+/** 审计列表（occurredAt 降序；服务端按当前账号操作记录范围裁剪）。 */
 export function fetchAuditLogs(query: AuditApiQuery): Promise<AuditLogListResult> {
   return apiRequest<AuditLogListResult>("/api/v1/audit-logs?" + buildAuditApiQuery(query));
 }

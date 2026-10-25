@@ -28,6 +28,8 @@ export interface GroupAccessProfile {
   projectIds: string[] | null;
   /** 规则包含 own：需在服务层把本人负责 / 参与项目并入 projectIds。 */
   ownProjects: boolean;
+  /** 当前账号是否命中至少一条已启用的部门规则；用于区分「仅登录」与「有规则但无项目」。 */
+  hasRule: boolean;
 }
 
 /** 规则是否适用于该账号：all = 部门全体；selected = 仅勾选人员。 */
@@ -87,6 +89,7 @@ export function resolveGroupAccess(input: {
       pages: [...GROUP_ACCESS_PAGE_KEYS],
       projectIds: null,
       ownProjects: false,
+      hasRule: false,
     };
   }
   return {
@@ -97,6 +100,7 @@ export function resolveGroupAccess(input: {
     pages: [...GROUP_ACCESS_PAGE_KEYS],
     projectIds: hasRule ? projectIds : [],
     ownProjects,
+    hasRule,
   };
 }
 

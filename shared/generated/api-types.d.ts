@@ -2880,7 +2880,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 审计检索（对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间；仅 audit.view） */
+        /** 审计检索（对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间；管理员全量，其他账号按本人 / 项目经理范围） */
         get: {
             parameters: {
                 query?: {
@@ -9662,6 +9662,8 @@ export interface components {
             groupAccessAdmin?: boolean;
             /** @description 群组访问限制下当前账号是否只读；页面仍全部可见，但业务写接口一律 403 */
             groupReadOnly?: boolean;
+            groupProjectAccess?: components["schemas"]["GroupProjectAccess"];
+            auditScope?: components["schemas"]["AuditScope"];
         };
         /** @description 统一错误信封（技术设计v0.2 §7.2） */
         ApiError: {
@@ -9734,6 +9736,11 @@ export interface components {
          * @enum {string}
          */
         AuditResult: "succeeded" | "denied" | "failed";
+        /**
+         * @description 当前账号操作记录可见范围；所有登录账号至少可查看本人记录
+         * @enum {string}
+         */
+        AuditScope: "all" | "project_manager" | "self";
         /** @description 规则动作：notify 渠道消息（企微 / 邮件）/ notification 站内信 */
         AutomationAction: {
             kind: components["schemas"]["RuleActionKind"];
@@ -10917,6 +10924,11 @@ export interface components {
         GroupAccessRuleResponse: {
             rule: components["schemas"]["GroupAccessRule"];
         };
+        /**
+         * @description 部门项目权限三态：allowed / empty / denied；用于业务页面统一空状态
+         * @enum {string}
+         */
+        GroupProjectAccess: "allowed" | "empty" | "denied";
         /** @description 仪表盘页的常驻项目 id（Push 336 · 按账号记住；Push 358 起六个图表视图共用）：null = 全部项目（默认）；项目已不存在时界面回落全部项目，读侧非字符串 / 空串 / 超长一律收敛为 null */
         HubDashProject: string | null;
         /**

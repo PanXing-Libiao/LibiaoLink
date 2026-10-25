@@ -169,7 +169,7 @@ type PlaceholderPageProps = {
   /** 任务模板页当前板块（来自 URL 的 `?section=`；缺省 / 不认识的值回落到第一个板块） */
   section: string | null;
   /**
-   * 是否持有 blueprint.manage（节点库与任务模板的维护 = 系统管理员，ADR-019 / ADR-020）：
+   * 是否可维护节点库与任务模板（系统管理员，或部门限制开启且命中编辑规则）：
    * 决定左列「＋ 添加节点」/ 节点卡片的编辑删除、右侧「＋ 新建模板」/「保存」/ 删除模板 / 拖拽改模板渲不渲染、可不可用；
    * 服务端逐请求仍是最终裁决（无权 = 403 FORBIDDEN）。
    */
@@ -963,7 +963,7 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
             </div>
             {/*
               新建模板的入口在板块标签栏这一行：点一下 = POST 一份空模板（默认名「未命名模板」），
-              新面板插到「任务节点」右侧、原来的模板往右挪。写 = blueprint.manage，无权不渲染（服务端仍是最终裁决）。
+              新面板插到「任务节点」右侧、原来的模板往右挪。写 = 系统管理员或部门编辑规则，无权不渲染（服务端仍是最终裁决）。
             */}
             {canManageBlueprint ? (
               <button

@@ -1,5 +1,12 @@
 import { Injectable } from "@nestjs/common";
-import { GROUP_ACCESS_UNGROUPED_KEY, type ActorPermissions, type GroupAccessPage, type PermissionKey } from "@libiaolink/contracts";
+import {
+  GROUP_ACCESS_UNGROUPED_KEY,
+  type ActorPermissions,
+  type AuditScope,
+  type GroupAccessPage,
+  type GroupProjectAccess,
+  type PermissionKey,
+} from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import { AppConfig } from "../../config/config.module.js";
 import { RoleService, type ActorAuthorization } from "../identity/index.js";
@@ -20,6 +27,12 @@ import {
   type ProjectResourceContext,
   type ProjectScopeFilter,
 } from "./permission.rules.js";
+
+/** 操作记录服务端可见范围：管理员全量；项目经理附有效管理项目；其余仅本人。 */
+export interface AuditAccess {
+  scope: AuditScope;
+  managedProjectIds: string[];
+}
 
 /** 缓存条目：ADR-011「策略全量加载内存 + 版本号失效」的一期形态 —— 短 TTL + 显式 invalidate。 */
 interface CacheEntry {
@@ -70,6 +83,10 @@ export class PermissionService {
   async permissionsOf(actorId: string): Promise<ActorPermissions> {
     const authorization = await this.getAuthorization(actorId);
     const groupAccess = await this.groupAccessOf(actorId);
+    const projectScope = await this.projectScope(actorId);
+    const auditScope = groupAccess.admin
+      ? "all" as const
+      : (await this.auditAccessWithin(actorId, projectScope)).scope;
     return {
       userId: authorization.userId,
       roleCodes: authorization.roleCodes,
@@ -80,6 +97,8 @@ export class PermissionService {
       groupAccessEnforced: groupAccess.enforced,
       groupAccessAdmin: groupAccess.admin,
       groupReadOnly: groupAccess.readOnly,
+      groupProjectAccess: await this.groupProjectAccessOf(groupAccess, projectScope),
+      auditScope,
     };
   }
 
@@ -143,6 +162,17 @@ export class PermissionService {
     throw new AppError("FORBIDDEN", message ?? "无权限：" + key);
   }
 
+  /** 任务模板 / 节点库维护：系统管理员，或已开启部门限制且命中任一编辑规则的账号。 */
+  async canManageBlueprint(actorId: string): Promise<boolean> {
+    const groupAccess = await this.groupAccessOf(actorId);
+    return groupAccess.admin || (groupAccess.enforced && !groupAccess.readOnly);
+  }
+
+  async assertCanManageBlueprint(actorId: string, message?: string): Promise<void> {
+    if (await this.canManageBlueprint(actorId)) return;
+    throw new AppError("FORBIDDEN", message ?? "维护任务模板需要编辑权限");
+  }
+
   /** 业务写入口兜底：部门规则开启且非管理员一律拒绝；用于未挂功能权限键的写接口。 */
   async assertWritable(actorId: string, message?: string): Promise<void> {
     if (!(await this.groupAccessOf(actorId)).readOnly) return;
@@ -151,8 +181,9 @@ export class PermissionService {
 
   /** 可见项目过滤（列表 / facets 用）：all = 不裁剪；ids 空集 = 无可见项目。 */
   async projectScope(actorId: string): Promise<ProjectScopeFilter> {
-    const spec = projectScopeSpec(await this.getAuthorization(actorId));
     const groupAccess = await this.groupAccessOf(actorId);
+    if (groupAccess.admin) return { kind: "all" };
+    const spec = projectScopeSpec(await this.getAuthorization(actorId));
     const roleIds = spec.all ? null : await this.repository.listVisibleProjectIds(actorId, spec);
     const groupIds = groupAccess.projectIds === null || !groupAccess.ownProjects
       ? groupAccess.projectIds
@@ -178,7 +209,7 @@ export class PermissionService {
     const rosterMember = membershipRole !== null;
     const managerOfRecord = ref.managerIds.includes(actorId);
     const projectManager = managerOfRecord || membershipRole === "project_manager";
-    const visible = isProjectVisible(spec, {
+    const visible = groupAccess.admin || isProjectVisible(spec, {
       rosterMember,
       managerOfRecord,
       rosterProjectManager: membershipRole === "project_manager",
@@ -206,6 +237,39 @@ export class PermissionService {
   /** 节点 → 项目（/api/v1/nodes/* 的可见性判定用）。 */
   projectIdOfNode(nodeId: string): Promise<string | null> {
     return this.repository.findNodeProjectId(nodeId);
+  }
+
+  /** 操作记录可见范围：管理员全量；项目经理含有效管理项目，否则仅本人。 */
+  async auditAccessOf(actorId: string): Promise<AuditAccess> {
+    const groupAccess = await this.groupAccessOf(actorId);
+    if (groupAccess.admin) return { scope: "all", managedProjectIds: [] };
+    return this.auditAccessWithin(actorId, await this.projectScope(actorId));
+  }
+
+  private async auditAccessWithin(actorId: string, projectScope: ProjectScopeFilter): Promise<AuditAccess> {
+    const managerIds = uniqueIds([
+      ...(await this.repository.listOwnedProjectIds(actorId)),
+      ...(await this.repository.listManagedRosterProjectIds(actorId)),
+    ]);
+    const scopedManagerIds = projectScope.kind === "all"
+      ? managerIds
+      : managerIds.filter((projectId) => projectScope.ids.includes(projectId));
+    const managedProjectIds = await this.repository.listActiveProjectIds(scopedManagerIds);
+    return managedProjectIds.length > 0
+      ? { scope: "project_manager", managedProjectIds }
+      : { scope: "self", managedProjectIds: [] };
+  }
+
+  private async groupProjectAccessOf(
+    groupAccess: GroupAccessProfile,
+    projectScope: ProjectScopeFilter,
+  ): Promise<GroupProjectAccess> {
+    if (!groupAccess.enforced || groupAccess.admin) return "allowed";
+    const hasActiveProject = projectScope.kind === "all"
+      ? await this.repository.hasActiveProject()
+      : (await this.repository.listActiveProjectIds(projectScope.ids)).length > 0;
+    if (hasActiveProject) return "allowed";
+    return groupAccess.hasRule ? "empty" : "denied";
   }
 }
 

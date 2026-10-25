@@ -22,7 +22,7 @@ import { useFocusTrap } from "./components/useFocusTrap";
 import { BindingGuideModal } from "./components/BindingGuideModal";
 import { ProjectModal, type ProjectDraft, type ProjectSubmitResult } from "./components/ProjectModal";
 import type { DictTools } from "./dictTools";
-import { hasPageAccess, hasPermission, loadMyPermissions, useMyPermissions, type GroupAccessPage } from "./permissions";
+import { canEditTaskTemplates, hasPermission, loadMyPermissions, useMyPermissions } from "./permissions";
 import { firstAllowedHref } from "./accessRoutes";
 import {
   createDictItem,
@@ -41,7 +41,6 @@ import type { SavedFilter } from "./savedFilters";
 import { asHubDashView, type HubDashView } from "./data/dashboardProgress";
 import {
   asHubView,
-  initialRouteFromRoot,
   replaceAuditQuery,
   replaceFilesQuery,
   replaceWorkspaceSub,
@@ -58,15 +57,9 @@ type ViewState =
   | { kind: "signed-in"; me: MeResponse }
   | { kind: "error"; message: string };
 
-/** 地址 → 所属群组页面。项目详情算项目空间内，设置页与权限管理另判。 */
-function groupPageOfRoute(route: Route): GroupAccessPage | null {
-  if (route.kind === "hub") return "dashboard";
-  if (route.kind === "list" || route.kind === "project") return "projects";
-  if (route.kind === "placeholder") return "templates";
-  if (route.kind === "workspace") return "workspace";
-  if (route.kind === "files") return "files";
-  if (route.kind === "audit") return "audit";
-  return null;
+/** 需要项目数据的业务页；仅登录 / 无可浏览项目时在这些页面统一显示说明。 */
+function needsBusinessData(route: Route): boolean {
+  return route.kind === "hub" || route.kind === "list" || route.kind === "project" || route.kind === "workspace" || route.kind === "files";
 }
 
 /** 直链无权限时的明确落点；菜单隐藏只是呈现层，这里仍以服务端画像为准。 */
@@ -83,6 +76,33 @@ function PageAccessDenied({ me, backHref }: { me: MeResponse; backHref: string }
           <a href={backHref} className="mt-5 inline-flex rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800">
             {t("access.denied.back")}
           </a>
+        </div>
+      </main>
+    </>
+  );
+}
+
+/** 业务数据不可用：仅登录 = 权限不足；有规则但当前无项目 = 空项目提示。 */
+function BusinessAccessState({ me, kind }: { me: MeResponse; kind: "denied" | "empty" }) {
+  const t = useT();
+  const denied = kind === "denied";
+  return (
+    <>
+      <AppHeader me={me} />
+      <main className="w-full px-4 pb-10 pt-3 sm:px-6">
+        <div data-business-access-state={kind} className="mx-auto mt-12 max-w-xl rounded-2xl border border-zinc-200 bg-white p-8 text-center shadow-sm">
+          <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-amber-50 text-amber-600">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" className="h-5 w-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 3.5 4.5 6.8v5.4c0 4.4 3 8.1 7.5 9.3 4.5-1.2 7.5-4.9 7.5-9.3V6.8L12 3.5Z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8.5v4.2m0 3.1h.01" />
+            </svg>
+          </div>
+          <h1 className="mt-4 text-lg font-semibold text-zinc-900">
+            {t(denied ? "access.insufficient.title" : "access.noProjects.title")}
+          </h1>
+          <p className="mt-2 text-sm leading-6 text-zinc-500">
+            {t(denied ? "access.insufficient.desc" : "access.noProjects.desc")}
+          </p>
         </div>
       </main>
     </>
@@ -192,17 +212,6 @@ export default function App() {
   /** 键盘焦点陷阱（Push 264 追订）：删除确认条开着时焦点进条内（初始焦点不再留在背景卡片）、Tab 在条内循环、关闭还原。 */
   const deleteConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDelete !== null);
   const route = useHashRoute();
-  /** 登录回跳 / 直入域名的裸根入口：群组画像到达后，默认项目空间无权时自动落到首个可访问页面；显式深链仍保留 403。 */
-  const initialLandingSettled = useRef(false);
-  useEffect(() => {
-    if (state.kind !== "signed-in" || permissions === null || initialLandingSettled.current || !initialRouteFromRoot()) return;
-    initialLandingSettled.current = true;
-    const requiredPage = groupPageOfRoute(route);
-    if (requiredPage === null || hasPageAccess(permissions, requiredPage)) return;
-    const href = firstAllowedHref(permissions);
-    if (href !== window.location.hash) window.location.hash = href.slice(1);
-  }, [permissions, route, state.kind]);
-
   const signedIn = state.kind === "signed-in";
   /** 站内信红点（Push 352）：登录后先按读面补拉一次角标（SSE 未连上也有数），随后由 unread 快照驱动；
    *  open（含自动重连；服务端重连不补发）再补拉一次对齐；notification 只推进弹窗补拉版本号。 */
@@ -723,10 +732,10 @@ export default function App() {
   /** 归档权（Push 262 · M7-04 前端接线一部分）：决定编辑弹窗「已归档」选项是否可选（服务端逐请求仍是最终裁决）。 */
   const canArchiveProject = !groupReadOnly && (permissions === null || hasPermission(permissions, "project.archive"));
   /**
-   * 任务模板页的维护权（左列节点库的新增 / 编辑 / 删除 + 右侧模板的新建 / 保存 / 删除 / 拖拽改内容）= blueprint.manage
-   * （Push 181 起节点库、Push 182 起模板；服务端逐请求仍是最终裁决 —— 无权 = 403 FORBIDDEN）。
+   * 任务模板页维护权（节点库 + 模板写操作）= 系统管理员或部门编辑规则。
+   * 所有登录账号都能查看模板；服务端逐请求仍是最终裁决 —— 无权 = 403 FORBIDDEN。
    */
-  const canManageBlueprint = !groupReadOnly && hasPermission(permissions, "blueprint.manage");
+  const canManageBlueprint = canEditTaskTemplates(permissions);
   /**
    * 干系人写入口（Push 221 · A27）：新建 / 编辑 / 删除 = stakeholder.manage。与 project.create / project.update
    * 同一口径：画像未到时乐观放行（服务端逐请求仍是最终裁决），已知缺位才收起写入口 —— 读列表 = stakeholder.view
@@ -773,12 +782,12 @@ export default function App() {
     );
   }
 
-  const requiredPage = groupPageOfRoute(route);
-  const pageDenied = requiredPage !== null && !hasPageAccess(permissions, requiredPage);
   const accessDenied = route.kind === "access" && permissions !== null && !permissions.groupAccessAdmin;
-  const auditDenied = route.kind === "audit" && permissions !== null && !hasPermission(permissions, "audit.view");
-  if (pageDenied || accessDenied || auditDenied) {
+  if (accessDenied) {
     return <PageAccessDenied me={state.me} backHref={firstAllowedHref(permissions)} />;
+  }
+  if (permissions !== null && needsBusinessData(route) && permissions.groupProjectAccess !== "allowed") {
+    return <BusinessAccessState me={state.me} kind={permissions.groupProjectAccess} />;
   }
 
   /**
@@ -942,7 +951,7 @@ export default function App() {
   }
 
   if (route.kind === "audit") {
-    // 操作记录（C7-04 管理员查询页 · u12）：入口 = 头像菜单「操作记录」（AppHeader · audit.view）；
+    // 操作记录（C7-04 · u12）：入口 = 头像菜单「操作记录」，所有登录账号可读，服务端按 auditScope 收敛；
     // 数据 = GET /api/v1/audit-logs（AuditLogPage + auditApi）；筛选态走地址（replaceAuditQuery，地址即状态）。
     return (
       <>

@@ -95,6 +95,10 @@ class FakePermissionService {
     this.lastKey = key;
     if (!this.allowed) throw new AppError("FORBIDDEN", message ?? "无权限：" + key);
   }
+  async assertCanManageBlueprint(_actorId: string, message?: string): Promise<void> {
+    this.lastKey = "blueprint.manage";
+    if (!this.allowed) throw new AppError("FORBIDDEN", message ?? "维护任务模板需要编辑权限");
+  }
 }
 
 class FakeAuditService {
