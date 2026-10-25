@@ -740,6 +740,27 @@ bash scripts/minio-root-rotate.sh finalize
 
 轮换完成不等于 F-02 关闭：仍须完成 S5-T3 旧预签名 / 历史应用值失效验证、S5-T7 残留处置、S5-T10 端口复核，以及 S6 / S7 的文档与回放证据。不得为了排障恢复 `0.0.0.0:9000` / `0.0.0.0:9443`，也不得把 api / worker 改回 root。
 
+### 9.5 RustFS 1.0.3 隔离 POC（仓库件 · 本地已验，测试机未部署）
+
+**状态与边界**：新增 `docker-compose.rustfs-poc.yml`、`rustfs-poc/` 与 `scripts/rustfs-poc.sh`，用独立 profile 在 `libiaolink-prod` 网络内启动 RustFS 1.0.3 与专用 Nginx。POC 不接 `api` / `worker`，不读 MinIO / 应用 Secret，不替换 `minio`，不改 443 门面；宿主只发布 `127.0.0.1:9445`，SSH 隧道用于同源口径验收。RustFS 控制台关闭，数据 / 日志落独立目录，桶名 `rustfs-poc`。
+
+镜像按 tag + digest 双锁：RustFS `1.0.3@sha256:9ca95595…`；管理客户端 `rustfs/rc@sha256:ab024bfe…`（实测 0.1.36，无独立 tag）。健康检查固定 `/health/ready`。操作顺序：
+
+```bash
+cd /opt/libiaolink/deploy/prod
+bash scripts/rustfs-poc.sh prepare
+bash scripts/rustfs-poc.sh up
+bash scripts/rustfs-poc.sh apply
+bash scripts/rustfs-poc.sh check
+bash scripts/rustfs-poc.sh it
+```
+
+脚本自动生成 `secrets/rustfs_poc_*`（`600`），创建 `libiaolink-poc-app` / `libiaolink-poc-bootstrap` 两个 service account，并复用现有 `storage:init` / `storage:it`。`check` 额外验证应用账号不能建桶、bootstrap 账号不能读对象；`down` 保留数据，`purge` 需 `RUSTFS_POC_CONFIRM=PURGE_RUSTFS_POC`。
+
+**RustFS IAM 口径**：策略动作名为 `s3:GetBucketCors` / `s3:PutBucketCors` / `s3:GetBucketLifecycle` / `s3:PutBucketLifecycle`，不能直接复用 MinIO / AWS 常见的 `s3:GetBucketCORS` / `s3:GetLifecycleConfiguration`。详细边界、SSH 隧道与测试机门禁见 `rustfs-poc/README.md`。
+
+**本地 POC 证据（2026-10-26）**：健康检查 200；`storage:init` 全通过；应用最小权限、经 Nginx 同源代理、容器重启后 `storage:it` 均 24 / 24；允许 Origin 返回 ACAO / 非法 Origin 不回 ACAO、匿名对象 GET 403；应用账号不能创建 / 删除桶、bootstrap 账号不能读写对象均 403；`_FILE` Secret 直接可用。临时容器、数据卷、策略文件与测试凭据已清理。**未连接测试机、未读取真实 Secret、未部署 POC；不代表生产选型。**
+
 ## 10. 后续切片（登记）
 
 - web（Nginx）：TLS 接入 ✅（2026-10-14，443 应用 + 对象存储同源门面 + ALLinSSL 自动下发）；9443 已收口为回环排障口（F-02 S1）；浏览器流量已全部走 443 同源门面，待确认 H1 不再依赖后再评估删除；`/internal/**` / `/example/` 显式 404 加固（SPA 产物 2026-10-14 已上线）；备份脚本（PG 12h → `/srv/data/backups/pg`）；监控告警接线；MinIO 运维面：镜像离线固化（quay 2026-10-13 实测下架，已改服务器本地构建；`docker save` 归档待办）、SeaweedFS 迁移评估、S3 专用账号最小权限（F-02 S3 仓库件已落地）、Secret 隔离（F-02 S4 仓库件已合入，运行时待统一部署验证）与 root 轮换（F-02 S5 仓库件已落地，PR [#595](https://github.com/PanXing-Libiao/LibiaoLink/pull/595) 评审中，运行时待统一验证）；
@@ -752,6 +773,7 @@ bash scripts/minio-root-rotate.sh finalize
 
 | 版本 | 日期 | 变更 | 人 |
 |---|---|---|---|
+| v2.29 · deploy（未部署） | 2026-10-26 | RustFS 1.0.3 隔离 POC 仓库件（PR 待创建）：新增独立 Compose profile / 专用 Nginx / 应用与 bootstrap 策略 / `scripts/rustfs-poc.sh`，支持 prepare / up / apply / check / it / down / purge；RustFS API 不发布宿主端口、控制台关闭、凭据与数据独立、SSH 隧道验收 9445，不改 MinIO / api / worker / 443。本地锁定镜像完成健康检查、初始化、应用最小权限 / 同源代理 / 重启后 storage:it 均 24 / 24、CORS 允许 / 拒绝头口径与权限负向 403；临时资源已清理。**测试机尚未部署，不代表生产选型**。 | px |
 | v2.28 · deploy（测试机） | 2026-10-25 | 部门项目访问三态、模板全员可读与写入门禁、操作记录分层部署测试机（PR [#627](https://github.com/PanXing-Libiao/LibiaoLink/pull/627) · PR CI [40206785543](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40206785543) 5 / 5 · squash `f582a8a6` · main CI [40206933490](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40206933490) 5 / 5）：发布包 `access-data-scope-f582a8a6-20261025-2329.tar.gz`（61,157,452 B · `96a58af5...`）上传后哈希一致；部署前备份 frontend / server / shared 三个 dist 包，staging 1,089 文件仅 30 个预期差异；短暂停 api / worker 后更新 frontend / server / shared，web 未重启；7 容器 healthy，公网 / /healthz / readyz 200，未登录 access 401，公网 index / JS / CSS 与线上文件一致，日志无 error；真实 panxing 会话确认 `groupProjectAccess=allowed` / `auditScope=all` / `groupAccessEnforced=false`，临时会话残留 0。无迁移 / 依赖 / env / compose 变更，`GROUP_ACCESS_ENFORCED=false`、`group_access_rules` 0 行，生产未部署 | px |
 | v2.27 · deploy（测试机） | 2026-10-24 | 部门规则人员级勾选合并并部署测试机（PR [#607](https://github.com/PanXing-Libiao/LibiaoLink/pull/607) · PR CI [40076060247](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40076060247) 5 / 5 · squash `ecc903b6` · main CI [40076309058](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40076309058) 5 / 5）：部门文件夹全选 / 取消、人员逐人勾选 / 取消与半选状态；`all` 覆盖全体直属人员，`selected` 仅覆盖勾选人员并校验部门直属关系。发布包 `access-member-ecc903b6-202610241601.tar.gz`（16,972,505 B · `92a7eead...`）上传后哈希一致；发布前备份 app / database / PG 至 `deploy-access-member-ecc903b6-20261024-1604/`。staging 685 / 97 / 386 / 84 文件逐文件一致后，仅短暂停 api / worker 更新全套运行件；迁移 67 → 68（0069），存量规则回填 `all`；`check:db-schema` 62 表 / 640 列 / 199 索引 / 233 CHECK；8 容器 healthy，公网 index / JS / CSS `1476f9d1...` / `d3c0b42e...` / `14a3d9d5...` 与部署文件一致，`/healthz` / `/readyz` 200，未登录 access 401，日志无 error；`GROUP_ACCESS_ENFORCED` 未开启，真实公司账号浏览器验收待完成，生产未部署 | px |
 | v2.25 · deploy（测试机） | 2026-10-24 | Casdoor 组织目录自动同步合并并部署测试机（PR [#603](https://github.com/PanXing-Libiao/LibiaoLink/pull/603) · PR CI [39986210686](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39986210686) 5 / 5 · squash `cb5ac17b` · main CI [39987472743](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39987472743) 5 / 5）：worker 启动即同步、之后默认每 5 分钟自动同步；发布包 `org-auto-sync-cb5ac17b-20261024-003258.tar.gz`（15,787,702 B · `e45b5157...`）上传后远端一致，备份 server / frontend dist（912,013 B · `24fd08c6...` / 14,880,331 B · `99519289...`）；staging 994 文件，短暂停 api / worker 更新两个 dist，无迁移 / compose / env / Secret 变化；8 容器 healthy，容器内与公网健康检查 200，公网 index `8bb2f747...` 与部署文件一致，新文案本地 / 线上各 1，未登录 access 401；首轮 00:35:15、次轮 00:40:13 自动同步均为 11 群组 / 37 用户 / 缺失 0，数据库 11 active 群组（含 `项目部`）/ 8 成员关系 / 1 规则，日志无 error。PR 与 main 的 `svg-preview-e2e` 各因 runner 依赖 / Chrome 启动瞬态失败一次，重跑后全绿。`GROUP_ACCESS_ENFORCED` 未开启，真实公司账号浏览器验收待完成，生产未部署 | px |
