@@ -755,7 +755,7 @@ bash scripts/rustfs-poc.sh check
 bash scripts/rustfs-poc.sh it
 ```
 
-脚本自动生成 `secrets/rustfs_poc_*`（`600`），创建 `libiaolink-poc-app` / `libiaolink-poc-bootstrap` 两个 service account，并复用现有 `storage:init` / `storage:it`。`check` 额外验证应用账号不能建桶、bootstrap 账号不能读对象；`down` 保留数据，`purge` 需 `RUSTFS_POC_CONFIRM=PURGE_RUSTFS_POC`。
+脚本自动生成 `secrets/rustfs_poc_*`（`600`，属主 `10001:10001`），创建 `libiaolink-poc-app` / `libiaolink-poc-bootstrap` 两个 service account，并复用现有 `storage:init` / `storage:it`。`check` 额外验证应用账号不能建桶、bootstrap 账号不能读对象；`down` 保留数据，`purge` 需 `RUSTFS_POC_CONFIRM=PURGE_RUSTFS_POC`。
 
 **RustFS IAM 口径**：策略动作名为 `s3:GetBucketCors` / `s3:PutBucketCors` / `s3:GetBucketLifecycle` / `s3:PutBucketLifecycle`，不能直接复用 MinIO / AWS 常见的 `s3:GetBucketCORS` / `s3:GetLifecycleConfiguration`。详细边界、SSH 隧道与测试机门禁见 `rustfs-poc/README.md`。
 

@@ -36,7 +36,7 @@ Compose 覆盖文件：`deploy/prod/docker-compose.rustfs-poc.yml`；POC 专用�
 
 - 在 `deploy/prod` 下执行；需要 root，以便把数据 / 日志目录设置为 `10001:10001`、`700`。
 - 宿主需要 `docker compose`、`openssl`、`install`、`stat`。
-- `secrets/` 必须为 `700`；所有 `rustfs_poc_*` 文件必须为 `600`、非符号链接、无换行。
+- `secrets/` 必须为 `700`；所有 `rustfs_poc_*` 文件必须为 `600`、非符号链接、无换行；POC root / service Secret 属主必须为 `10001:10001`，供 RustFS 与 `rc` 的非 root 进程读取。
 - 首次运行由脚本生成 POC 独立 Secret，不读取 MinIO / 应用 Secret：
 
 ```text
