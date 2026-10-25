@@ -1,6 +1,6 @@
 # RustFS 1.0.3 隔离 POC
 
-> 状态（2026-10-26）：仓库件与本地隔离 POC 已完成；**测试机尚未部署**。本目录不对应用提供服务，不改变现有 MinIO，也不代表 RustFS 已成为生产选型。
+> 状态（2026-10-26）：仓库件、本地隔离 POC 与测试机 POC 已完成；**生产尚未部署**。本目录不对应用提供服务，不改变现有 MinIO，也不代表 RustFS 已成为生产选型。
 
 ## 1. 目的与边界
 
@@ -113,7 +113,16 @@ RUSTFS_POC_CONFIRM=PURGE_RUSTFS_POC bash scripts/rustfs-poc.sh purge
 - `_FILE` Secret 可直接读取，不需要 MinIO 的入口转换脚本。
 - 临时容器、数据卷、策略文件与测试凭据已清理。
 
-这些是本地隔离环境证据，不等于测试机实际 bind mount、重启、隧道与现有生产容器共存验收。
+本地隔离环境证据；测试机实际 bind mount、重启、隧道与现有容器共存已在 2026-10-26 验证，见下方。
+
+### 5.1 测试机验收（2026-10-26）
+
+- 测试机 `/srv/data` 为真实 ext4 bind mount；数据 / 日志目录 `10001:10001`、`0700`，POC 容器 healthy。
+- 首次 `up` 暴露 Compose Secret 属主问题：RustFS 以 UID `10001` 运行，root 持有的 `0600` 文件不可读；将六个 `rustfs_poc_*` 文件设为 `10001:10001 0600`、`rc` 以 `10001` 运行后，`apply` 成功。
+- `check`：桶 / 版本控制 / CORS / 30 天分片清理 / 匿名拒绝全部通过；应用账号建桶与 bootstrap 读取对象均 403。
+- `storage:it`：24 / 24；重启 RustFS 后再次 `check` 与 `storage:it` 仍通过。
+- 专用 Nginx 只发布 `127.0.0.1:9445`；SSH 隧道健康 200；允许 Origin 返回 ACAO，非法 Origin 不回 ACAO，匿名对象 GET 403。
+- 测试机 MinIO 计数与 `storage:it` 未变化；现有应用容器保持 healthy，未接 POC 流量。
 
 ## 6. RustFS 兼容性注意事项
 
@@ -135,8 +144,12 @@ RustFS 1.0.3 的策略动作名与 MinIO / AWS 常见写法不同：
 - 健康检查使用 `/health/ready`。
 - 管理客户端 `rc` 的 service account 命令是 `admin service-account`；本 POC 以镜像 digest 锁定，不依赖浮动 tag。
 - 控制台默认关闭；POC 不提供图形管理面。
-- 单机 bind mount 是本轮测试机重点：必须确认宿主机目录真实归属 `10001:10001`，容器内可写，重启后数据仍在。
+- 单机 bind mount 已在测试机确认：宿主机目录真实归属 `10001:10001`，容器内可写，重启后数据仍在。
 - 单机 POC 未验证多节点、复制、故障切换、Quota、备份恢复 SLA、性能或升级路径。
+
+### 6.3 测试机 UID / Secret 属主
+
+Ubuntu 测试机上的 Compose 文件 Secret 会保留宿主属主。RustFS 以 `10001` 运行，若 Secret 为 `root:root 0600`，启动会报 `RUSTFS_ACCESS_KEY_FILE points to an unreadable file`；`rc` 临时容器在 UID 映射下也不能读取 `10001` 属主文件。POC 脚本现将全部 `rustfs_poc_*` 设为 `10001:10001 0600` 并让 `rc` 以 `10001:10001` 运行；不要用放宽到 `0644` 替代。
 
 ## 7. 测试机部署门禁
 
@@ -146,3 +159,5 @@ RustFS 1.0.3 的策略动作名与 MinIO / AWS 常见写法不同：
 4. 记录容器健康、`docker inspect`、数据目录权限、Secret 权限、`storage:init --check`、`storage:it`、权限负向、重启持久化与 SSH 隧道证据。
 5. 确认现有 MinIO 桶键数 / 应用上传下载 / `/readyz` 未变化。
 6. 任一失败：执行 `down` 停止 POC，保留日志与检查证据；不得删除 MinIO 数据，不得改应用 `server.env` 来“修复” POC。
+
+本次测试机 POC 在第 1 项完成（PR #629 合入）后执行；运行中发现 Secret 属主差异，修复已在测试机热修验证并提交 PR [#630](https://github.com/PanXing-Libiao/LibiaoLink/pull/630) 评审。
