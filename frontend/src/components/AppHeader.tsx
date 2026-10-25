@@ -4,7 +4,7 @@ import { BG_TIER_TEXT_KEYS, LOCALES, selectLocale, useLocalizedText, useLocale, 
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { clearHomePrefs } from "../homePrefs";
 import { clearLegacyPlanBoard } from "../myPlan";
-import { hasPageAccess, hasPermission, useMyPermissions } from "../permissions";
+import { hasPageAccess, useMyPermissions } from "../permissions";
 import { useInboxBadge } from "../inbox";
 import { clearBindingGuidePrefs } from "../bindingGuide";
 import { ACCESS_BASE_HASH, AUDIT_BASE_HASH, FILES_BASE_HASH, HUB_HASH, SETTINGS_BASE_HASH, goBackToList, goUpLevel, listHref, upLevelHref } from "../useHashRoute";
@@ -81,8 +81,7 @@ export function AppHeader({ me, project }: AppHeaderProps) {
   const seqNoText = project ? String(project.seqNo).padStart(2, "0") : "";
   /** 手打内容（项目名）机翻显示：英文界面显示译文（自动切换到位），悬停看中文原文。 */
   const projectNameText = useLocalizedText(project?.description ?? "");
-  /** 「操作记录」菜单项（audit.view）：管理面入口，画像未到 / 无权限不渲染。 */
-  const canViewAudit = hasPermission(permissions, "audit.view") && hasPageAccess(permissions, "audit");
+  /** 操作记录对所有登录账号开放：服务端按管理员 / 项目经理 / 本人收敛可见记录。 */
   const canViewFiles = hasPageAccess(permissions, "files");
   /** 「权限管理」菜单项：群组管理员（关闭群组限制时等价管理员亦可配置）。 */
   const canManageAccess = permissions?.groupAccessAdmin === true;
@@ -179,9 +178,6 @@ export function AppHeader({ me, project }: AppHeaderProps) {
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [inboxOpen]);
-
-  // 「操作记录」入口的权限位（audit.view · C7-04 管理员查询页）：画像未到 / 拉取失败 = 不渲染入口（服务端逐请求仍是最终裁决）。
-
 
   // 站内跳转统一拦截：带修饰键点击（新标签 / 新窗口）交给浏览器默认行为
   const interceptNav = (action: () => void) => (event: ReactMouseEvent<HTMLAnchorElement>) => {
@@ -441,19 +437,17 @@ export function AppHeader({ me, project }: AppHeaderProps) {
                     {t("header.files")}
                   </a>
                 ) : null}
-                {canViewAudit ? (
-                  <a
-                    role="menuitem"
-                    data-account-audit="true"
-                    href={AUDIT_BASE_HASH}
-                    onClick={() => {
-                      setMenuOpen(false);
-                    }}
-                    className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
-                  >
-                    {t("header.audit")}
-                  </a>
-                ) : null}
+                <a
+                  role="menuitem"
+                  data-account-audit="true"
+                  href={AUDIT_BASE_HASH}
+                  onClick={() => {
+                    setMenuOpen(false);
+                  }}
+                  className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
+                >
+                  {t("header.audit")}
+                </a>
                 {canManageAccess ? (
                   <a
                     role="menuitem"

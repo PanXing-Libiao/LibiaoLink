@@ -78,6 +78,26 @@ export class PermissionRepository {
     return rows.map((row) => row.projectId);
   }
 
+  /** 当前是否存在任一未软删项目（项目范围为 all 时的页面三态判定）。 */
+  async hasActiveProject(): Promise<boolean> {
+    const rows = await this.database.db
+      .select({ projectId: projects.id })
+      .from(projects)
+      .where(isNull(projects.deletedAt))
+      .limit(1);
+    return rows.length > 0;
+  }
+
+  /** 过滤仍有效的项目 id（排除软删项目；操作记录 / 页面三态只用有效项目）。 */
+  async listActiveProjectIds(projectIds: readonly string[]): Promise<string[]> {
+    if (projectIds.length === 0) return [];
+    const rows = await this.database.db
+      .select({ projectId: projects.id })
+      .from(projects)
+      .where(and(inArray(projects.id, [...projectIds]), isNull(projects.deletedAt)));
+    return rows.map((row) => row.projectId);
+  }
+
   /** 我在名册里是 project_manager 的项目 id（managed_projects 数据范围）。 */
   async listManagedRosterProjectIds(actorId: string): Promise<string[]> {
     const rows = await this.database.db

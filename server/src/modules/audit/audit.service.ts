@@ -25,6 +25,12 @@ export interface AuditListQueryInput {
   limit: number;
 }
 
+/** 操作记录查看范围：管理员不传；普通账号至少限本人，项目经理可附有效管理项目。 */
+export interface AuditVisibility {
+  actorId: string;
+  managedProjectIds?: readonly string[];
+}
+
 /** 业务留痕入参：业务用例只填业务语义，result / entry / 时间由本服务补全。 */
 export interface AuditRecordInput {
   actorId: string | null;
@@ -109,17 +115,13 @@ export class AuditService implements AuditSink {
 
   /**
    * 审计检索（C7-04 的服务端口径：多条件筛选；导出随 u12）。
-   * visibleProjectIds 非 null 时 = 部门规则收窄后的项目白名单；空数组直接返回空页。
-   * 同时排除无 projectId 的全局日志，避免通过操作记录绕过项目范围。
+   * visibility 缺省 = 管理员全量；传入后由仓储以「本人记录 OR 有效管理项目记录」复合过滤，
+   * 用户自己的项目 / 操作人筛选仍与可见条件取交集。
    */
-  async list(query: AuditListQueryInput, visibleProjectIds: readonly string[] | null = null): Promise<AuditLogListResponse> {
+  async list(query: AuditListQueryInput, visibility?: AuditVisibility): Promise<AuditLogListResponse> {
     const keyword = query.q?.trim() ?? "";
     const multi = parseAuditListFilters(query);
-    const projectIds = visibleProjectIds === null
-      ? multi.projectIds
-      : multi.projectIds === undefined
-        ? [...visibleProjectIds]
-        : multi.projectIds.filter((projectId) => visibleProjectIds.includes(projectId));
+    const projectIds = multi.projectIds;
     if (projectIds !== undefined && projectIds.length === 0) {
       return { items: [], page: query.page, limit: query.limit, total: 0, windowId: null };
     }
@@ -133,6 +135,8 @@ export class AuditService implements AuditSink {
       keyword: keyword === "" ? undefined : keyword,
       from: query.from === undefined ? undefined : new Date(query.from),
       to: query.to === undefined ? undefined : new Date(query.to),
+      viewerActorId: visibility?.actorId,
+      viewerManagedProjectIds: visibility?.managedProjectIds === undefined ? undefined : [...visibility.managedProjectIds],
     };
     const offset = (query.page - 1) * query.limit;
     const { items, total, windowId } = await this.repository.listPage(filter, query.limit, offset, query.beforeId);

@@ -602,7 +602,7 @@ export function parseHash(hash: string): Route {
     return { kind: "placeholder", page: "templates", section: parseSectionValue(search) };
   }
   if (path === "/audit") {
-    // 操作记录（C7-04 管理员查询页 · 头像菜单入口）：筛选态走地址（?actor=&action=&objectType=&result=&project=&from=&to=&page=），
+    // 操作记录（C7-04 · 头像菜单入口）：筛选态走地址（?actor=&action=&objectType=&result=&project=&from=&to=&page=），
     // 缺省不落参数；页面 = frontend/src/AuditLogPage.tsx，数据 = GET /api/v1/audit-logs（auditApi.ts）。
     return { kind: "audit", query: parseAuditQuery(search) };
   }

@@ -162,6 +162,12 @@
           "groupReadOnly": {
             "type": "boolean",
             "description": "群组访问限制下当前账号是否只读；页面仍全部可见，但业务写接口一律 403"
+          },
+          "groupProjectAccess": {
+            "$ref": "#/components/schemas/GroupProjectAccess"
+          },
+          "auditScope": {
+            "$ref": "#/components/schemas/AuditScope"
           }
         },
         "required": [
@@ -421,6 +427,15 @@
           "failed"
         ],
         "description": "审计结果：succeeded 成功 / denied 越权尝试（C7-03）/ failed 业务拒绝（门禁等）"
+      },
+      "AuditScope": {
+        "type": "string",
+        "enum": [
+          "all",
+          "project_manager",
+          "self"
+        ],
+        "description": "当前账号操作记录可见范围；所有登录账号至少可查看本人记录"
       },
       "AutomationAction": {
         "type": "object",
@@ -4888,6 +4903,15 @@
           "rule"
         ],
         "description": "保存后的群组访问规则"
+      },
+      "GroupProjectAccess": {
+        "type": "string",
+        "enum": [
+          "allowed",
+          "empty",
+          "denied"
+        ],
+        "description": "部门项目权限三态：allowed / empty / denied；用于业务页面统一空状态"
       },
       "HubDashProject": {
         "type": [
@@ -15407,7 +15431,7 @@
         "tags": [
           "audit"
         ],
-        "summary": "审计检索（对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间；仅 audit.view）",
+        "summary": "审计检索（对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间；管理员全量，其他账号按本人 / 项目经理范围）",
         "parameters": [
           {
             "schema": {

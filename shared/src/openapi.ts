@@ -921,7 +921,7 @@ export function buildOpenApiDocument() {
     method: "get",
     path: "/api/v1/audit-logs",
     tags: ["audit"],
-    summary: "审计检索（对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间；仅 audit.view）",
+    summary: "审计检索（对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间；管理员全量，其他账号按本人 / 项目经理范围）",
     request: { query: AuditLogListQuerySchema },
     responses: {
       200: { description: "审计列表（occurredAt 降序）", ...json(AuditLogListResponseSchema) },

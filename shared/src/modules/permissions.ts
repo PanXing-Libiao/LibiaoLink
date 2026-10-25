@@ -66,6 +66,26 @@ export const DataScopeSchema = z
 
 export type DataScope = z.infer<typeof DataScopeSchema>;
 
+export const GROUP_PROJECT_ACCESS_VALUES = ["allowed", "empty", "denied"] as const;
+
+export const GroupProjectAccessSchema = z
+  .enum(GROUP_PROJECT_ACCESS_VALUES)
+  .openapi("GroupProjectAccess", {
+    description: "部门项目权限三态：allowed 有可浏览范围 / empty 命中规则但当前无可见项目 / denied 未命中任何部门规则（仅登录）",
+  });
+
+export type GroupProjectAccess = z.infer<typeof GroupProjectAccessSchema>;
+
+export const AUDIT_SCOPE_VALUES = ["all", "project_manager", "self"] as const;
+
+export const AuditScopeSchema = z
+  .enum(AUDIT_SCOPE_VALUES)
+  .openapi("AuditScope", {
+    description: "操作记录可见范围：all 管理员 / project_manager 本人记录 + 当前有权且本人担任项目经理的项目记录 / self 仅本人记录",
+  });
+
+export type AuditScope = z.infer<typeof AuditScopeSchema>;
+
 /**
  * 授权画像（服务端 ActorAuthorization 的契约投影）：前端据此置灰按钮、显示当前身份；
  * 字段级策略不下发 —— 无权字段服务端直接不返回（ADR-011 / C3-08）。
@@ -81,6 +101,8 @@ export const ActorPermissionsSchema = z
     groupAccessEnforced: z.boolean().optional().openapi({ description: "群组访问限制是否已启用" }),
     groupAccessAdmin: z.boolean().optional().openapi({ description: "当前账号是否可进入群组权限管理页" }),
     groupReadOnly: z.boolean().optional().openapi({ description: "群组访问限制下当前账号是否只读；页面仍全部可见，但业务写接口一律 403" }),
+    groupProjectAccess: GroupProjectAccessSchema.optional().openapi({ description: "部门项目权限三态：allowed / empty / denied；用于业务页面统一空状态" }),
+    auditScope: AuditScopeSchema.optional().openapi({ description: "当前账号操作记录可见范围；所有登录账号至少可查看本人记录" }),
   })
   .openapi("ActorPermissions", { description: "当前用户授权画像（角色 + 数据范围 + 功能权限位）" });
 
