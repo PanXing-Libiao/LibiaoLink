@@ -5,7 +5,7 @@
 | 类型 | 平台模块（platform） |
 | 职责 | 规则模型 / 求值 / 回放与留痕（M5-01 内核 + M5-05 余项）+ 运行时求值入口（M5-02 接线段前置：事件 / 调度窗口 → 应发送清单）+ 规则表读取与运行记录（M5-06-1A）+ 规则管理 / 只读试运行 / 运行记录 HTTP 读面（M5-06-1B） |
 | 主责 | wmj（团队分工.md §2） |
-| 对外接口 | `BUILTIN_RULES` / `BUILTIN_MESSAGE_TEMPLATES` / `findTemplate` / `BUILTIN_RULE_SUBJECT_KINDS` / `subjectKindOf` / `SUBJECT_TEMPLATE_VARIABLES` / `MERGED_TEMPLATE_SPECS` / `findMergedSpec`、`evaluateCondition` / `evaluateOperator` / `evaluateRule`、`renderTemplate`、`resolveScheduleFire` / `mondayOf` / `isoWeekKey` / `dedupeKey`、`REPLAY_SUBJECT_KINDS`、`replayRules` / `cronTime` / `toTaskSubject`、`evaluateEventMessages` / `planWindowMessages` / `AUTOMATION_SCHEDULE_JOB_KIND`、`toReportMemberSubject` / `toProjectDaySubject` / `toProjectSubject` / `toTodoSubject` / `toStageSubject`、`AutomationRuleRepository` / `AutomationRunRepository`（运行时入口 · M5-02 前置；HTTP 面 = `automation.module.ts` 的 `AutomationModule.forRoot`，由 `app.module.ts` 直接装配，不新增 index 出口；A03 / `toIssueSubject` 随处理时限删除下线 · Push 215；规则读取 M5-06-1A 起改读表） |
+| 对外接口 | `BUILTIN_RULES` / `BUILTIN_MESSAGE_TEMPLATES` / `findTemplate` / `RECIPIENT_TEMPLATE_OVERRIDES` / `findTemplateForRecipient` / `BUILTIN_RULE_SUBJECT_KINDS` / `subjectKindOf` / `SUBJECT_TEMPLATE_VARIABLES` / `MERGED_TEMPLATE_SPECS` / `findMergedSpec`、`evaluateCondition` / `evaluateOperator` / `evaluateRule`、`renderTemplate`、`resolveScheduleFire` / `mondayOf` / `isoWeekKey` / `dedupeKey`、`REPLAY_SUBJECT_KINDS`、`replayRules` / `cronTime` / `toTaskSubject`、`evaluateEventMessages` / `planWindowMessages` / `AUTOMATION_SCHEDULE_JOB_KIND`、`toReportMemberSubject` / `toProjectDaySubject` / `toProjectSubject` / `toTodoSubject` / `toStageSubject`、`AutomationRuleRepository` / `AutomationRunRepository`（运行时入口 · M5-02 前置；HTTP 面 = `automation.module.ts` 的 `AutomationModule.forRoot`，由 `app.module.ts` 直接装配，不新增 index 出口；A03 / `toIssueSubject` 随处理时限删除下线 · Push 215；规则读取 M5-06-1A 起改读表） |
 
 ## 本切片交付
 
@@ -17,13 +17,14 @@
 - 纯函数内核（不连库、不取系统时间）：条件求值（白名单操作符）、模板逐字渲染（缺变量显性抛错）、触发窗口求值（含节假日顺延）、幂等执行键。
 - 内置规则 R02 ~ R07 定义 + 逐字文案模板（R01 无通知动作，落点 = 变更生效事务内回写，见 M4-04）。
 - 文案修订（2026-10-19，Push 371）：R02 ~ R07 正文统一为「项目行 + 相关人员 + 任务名加粗」。项目行 = `项目编号·项目名称`；R02 取 `task.completed` 载荷 `actorId` 显示实际点击完成账号人；R07 合并清单改为逐条项目 / 任务两行并以换行连接。
+- 文案修订（2026-10-26）：所有内置自动化消息标题前增加 emoji；R05 保持单动作 + 多收件人先按用户 ID 去重，再通过 `RECIPIENT_TEMPLATE_OVERRIDES` 将项目经理渲染为 `R05_WECOM_MANAGER`，负责人版本正文不变。
 - 回放器：给定规则集 + 任务数据集 + 业务日 + 日历 → 应发送清单（确定性排序、幂等去重、R07 同负责人合并）。
 - 单测 31 例（`test/automation-rules.test.ts` 16 / `test/automation-replay.test.ts` 15）。
 
 ### M5-05 余项 · A 系列（Push 163）
 
 - **主体模型**：回放不再限于任务 —— `ReplaySubject`（`kind` + `fields` + `recipients`）承载四类 → **三类主体（Push 215）**（A01 日报名册槽位 / A02 项目日报 / A14 自定义待办；A03 问题主体随处理时限删除下线）；任务经 `toTaskSubject` 映射（字段与条件口径不变，既有 31 例零改动全绿）。
-- **规则 +4 → 三条（Push 215）**：A01 日报应填未填（19:30 · 按人合并 · 站内信 + 企微）、A02 日报汇总群播报（19:00 · 群机器人）、A14 自定义待办（提醒日 09:00）；**A03 问题 SLA（09:00 · T+1 提醒责任人 / T+3 升级项目经理）随处理时限删除下线**（规则两条 + 模板 4 种同批删除）。逐字模板 +9 种（`BUILTIN_MESSAGE_TEMPLATES` 8 → 17；A03 随批删 4 种 → **Push 215 后 13**）。
+- **规则 +4 → 三条（Push 215）**：A01 日报应填未填（19:30 · 按人合并 · 站内信 + 企微）、A02 日报汇总群播报（19:00 · 群机器人）、A14 自定义待办（提醒日 09:00）；**A03 问题 SLA（09:00 · T+1 提醒责任人 / T+3 升级项目经理）随处理时限删除下线**（规则两条 + 模板 4 种同批删除）。逐字模板 +9 种（`BUILTIN_MESSAGE_TEMPLATES` 8 → 17；A03 随批删 4 种 → **Push 215 后 13**；后增 R07 合并、A08 与 R05 角色模板，**2026-10-26 当前 15**）。
 - **引擎扩项**：`RULE_SCHEDULE_WINDOWS` 增 `T_PLUS_3`、`RULE_RECIPIENTS` 增 `report.member`（契约随本片扩项；paths 74 / operations 95 / schemas 186 计数不变）；标题参与变量渲染；分组合并模板改按 `rule|channel` 查表；新增跳过原因 `subject_mismatch`；消息与明细带 `ruleName`。**Push 215：A03 同 code 两窗口删除（`ruleName` 字段保留）；`RULE_RECIPIENTS` 摘除 `issue.owner`；`T_PLUS_3` 窗口能力保留（调度器能力不动）**。
 - **文案与金标**：`docs/rules/A01-A03-A14-扩展规则文案.md`（建议稿 + 待确认清单 + 主体字段口径表；A03 节随 Push 215 标注退役）；`test/automation-a-series.test.ts` **22 → 17 例**（三条规则逐字 + 窗口互斥 + 合并 + 幂等 + 模板一致性；A03 用例随批删除）。
 - **给接线层（M5-02 ~ M5-06 · lan）的口径**：唤醒层按实体快照组主体（字段表见上述 docs/rules 文档）→ 引擎算「应发给谁 / 发什么 / 幂等键」→ 投递层负责渠道、限速、失败降级与重试；模板变量映射见 `SUBJECT_TEMPLATE_VARIABLES`（`@recipient` = 本次解析出的收件人名称）。

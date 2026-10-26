@@ -8,7 +8,7 @@
  *   A01 / A02 / A14 主体调度型（主体类型见 BUILTIN_RULE_SUBJECT_KINDS）；A03 随处理时限（due_at）删除下线（Push 215 / A3-14）。
  * 变更（M5-03-5 契约段 · 2026-10-14 · ADR-033）：R02 / R07 / A01 / A14 单聊动作渠道 `wecom_app` → `wecom_aibot`（自建应用保留备用 · 回退 = 渠道值回切）；产出接线已随 M5-03-5-4 落地（:aibot 幂等键后缀 + notify.message 消费分流）。
  */
-import type { AutomationMessageTemplate, AutomationRule } from "@libiaolink/contracts";
+import type { AutomationMessageTemplate, AutomationRule, RuleRecipient } from "@libiaolink/contracts";
 import type { ReplaySubjectKind } from "./automation.rules.js";
 
 /** R01 说明（非引擎规则：无消息文案）。 */
@@ -19,75 +19,88 @@ export const R01_NOTE =
 export const BUILTIN_MESSAGE_TEMPLATES: readonly AutomationMessageTemplate[] = [
   {
     code: "R02_INBOX",
-    title: "及时添加文件",
+    title: "📎 及时添加文件",
     body: "项目：**{项目}**\n{完成人}已点击完成任务，请为项目任务「**{任务描述}**」及时添加成果文件",
   },
   {
     code: "R02_WECOM",
-    title: "及时添加文件",
+    title: "📎 及时添加文件",
     body: "项目：**{项目}**\n{完成人}已点击完成任务，请为项目任务「**{任务描述}**」及时添加成果文件",
   },
   {
     code: "R03_WECOM",
-    title: "任务即将延期提醒",
+    title: "⏰ 任务即将延期提醒",
     body: "项目：**{项目}**\nhello，{任务负责人}，你的任务「**{任务描述}**」还有1天就要截止了，快加加油，尽快追上进度吧！",
   },
   {
     code: "R04_GROUP",
-    title: "有新任务已到启动时间",
+    title: "🚀 有新任务已到启动时间",
     body: "项目：**{项目}**\n{任务负责人}你好呀，你的任务「**{任务描述}**」已到启动时间，快查看任务详情吧~今日工作加油",
   },
   {
     code: "R05_WECOM",
-    title: "！任务超时提醒",
+    title: "🚨！任务超时提醒",
     body: "项目：**{项目}**\nhello，{任务负责人}，你的任务「**{任务描述}**」已经超时一天了，快加加油，尽快追上进度吧！",
   },
   {
+    code: "R05_WECOM_MANAGER",
+    title: "🚨！任务超时提醒",
+    body: "hello，{项目经理}，{任务负责人}的任务「**{任务描述}**」已经超时一天了，请你提醒他尽快追上进度吧！",
+  },
+  {
     code: "R06_GROUP",
-    title: "叮咚~喜报来啦！",
+    title: "🎉 叮咚~喜报来啦！",
     body: "项目：**{项目}**\n项目已全部完成，验收交付完毕。大家一起为这份成果喝彩吧",
   },
   {
     code: "R07_APP",
-    title: "重点任务提醒",
+    title: "⭐ 重点任务提醒",
     body: "{任务负责人}，以下重点任务正在进行中：\n{任务详情}\n请关注并及时推进任务~",
   },
   {
     code: "R07_APP_MERGED",
-    title: "重点任务提醒",
+    title: "⭐ 重点任务提醒",
     body: "{任务负责人}，以下重点任务正在进行中：\n{任务清单}\n请关注并及时推进任务~",
   },
   {
     code: "A01_INBOX_MERGED",
-    title: "请及时填写今日日报",
+    title: "📝 请及时填写今日日报",
     body: "你今天还有日报未提交：{项目清单}请尽快填写，辛苦啦！",
   },
   {
     code: "A01_WECOM_MERGED",
-    title: "请及时填写今日日报",
+    title: "📝 请及时填写今日日报",
     body: "你今天还有日报未提交：{项目清单}请尽快填写，辛苦啦！",
   },
   {
     code: "A02_GROUP",
-    title: "日报汇总 | {项目名}（{日期}）",
+    title: "📊 日报汇总 | {项目名}（{日期}）",
     body: "今日 {提交人数} 人已提交（应填 {应填人数} 人），发现问题 {问题数} 条。{汇总正文}",
   },
   {
     code: "A08_GROUP",
-    title: "大阶段完成通知",
+    title: "🏁 大阶段完成通知",
     body: "项目：**{项目}**\n{推进人}已完成大阶段「**{完成阶段}**」，当前项目阶段：**{下一阶段}**。",
   },
   {
     code: "A14_INBOX",
-    title: "待办提醒：{待办标题}",
+    title: "⏰ 待办提醒：{待办标题}",
     body: "{提醒对象}，你的待办「{待办标题}」已到提醒时间。{待办内容}",
   },
   {
     code: "A14_APP",
-    title: "待办提醒：{待办标题}",
+    title: "⏰ 待办提醒：{待办标题}",
     body: "{提醒对象}，你的待办「{待办标题}」已到提醒时间。{待办内容}",
   },
 ];
+
+/**
+ * 按收件角色覆盖动作模板（键 = 规则码|动作模板码|收件人）。
+ * R05 仍保留单动作 + 多收件人，先按用户 ID 去重再渲染，确保负责人兼任项目经理时只收到负责人版本。
+ */
+export const RECIPIENT_TEMPLATE_OVERRIDES: Readonly<Record<string, string>> = {
+  "R05|R05_WECOM|project.manager": "R05_WECOM_MANAGER",
+};
 /** 引擎可执行的内置规则定义（R02 ~ R07 任务类；A01 / A02 / A14 / A08 主体类；A03 随处理时限删除下线 · Push 215）；当前仅启用 R02 / R03 / R05，其余 enabled = false（Push 373）。 */
 export const BUILTIN_RULES: readonly AutomationRule[] = [
   {
@@ -240,6 +253,7 @@ export const SUBJECT_TEMPLATE_VARIABLES: Readonly<
     "项目": ["project.label"],
     "完成人": ["task.completed_by_name"],
     "任务负责人": ["task.owner_name", "task.manager_name"],
+    "项目经理": ["task.manager_name"],
   },
   project: {
     "项目": ["project.label"],
@@ -292,4 +306,14 @@ export function findMergedSpec(ruleCode: string, channel: string): MergedTemplat
 /** 模板码 → 模板（未知模板码返回 null，由回放器登记为配置错误）。 */
 export function findTemplate(code: string): AutomationMessageTemplate | null {
   return BUILTIN_MESSAGE_TEMPLATES.find((item) => item.code === code) ?? null;
+}
+
+/** 收件角色专用模板优先；未登记覆盖时回退动作默认模板。 */
+export function findTemplateForRecipient(
+  ruleCode: string,
+  templateCode: string,
+  recipient: RuleRecipient,
+): AutomationMessageTemplate | null {
+  const code = RECIPIENT_TEMPLATE_OVERRIDES[ruleCode + "|" + templateCode + "|" + recipient] ?? templateCode;
+  return findTemplate(code);
 }

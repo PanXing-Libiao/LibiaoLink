@@ -49,7 +49,7 @@ describe("R02 成果文件自动化通知（事件型 · 逐字）", () => {
     expect(report.messages.map((message) => message.channel)).toEqual(["inbox", "inbox", "wecom_aibot", "wecom_aibot"]);
     expect(report.messages.map((message) => message.recipientId)).toEqual(["u-1", "u-9", "u-1", "u-9"]);
     for (const message of report.messages) {
-      expect(message.title).toBe("及时添加文件");
+      expect(message.title).toBe("📎 及时添加文件");
       expect(message.body).toBe(`${PROJECT}\n邵晨宇已点击完成任务，请为项目任务「**安装摄像头**」及时添加成果文件`);
     }
     expect(report.messages.map((message) => message.dedupeKey)).toEqual([
@@ -100,7 +100,7 @@ describe("R03 任务即将延期提醒（T-1 · 仅负责人单聊）", () => {
     expect(report.messages).toHaveLength(1);
     const message = report.messages[0];
     expect(message?.ruleCode).toBe("R03");
-    expect(message?.title).toBe("任务即将延期提醒");
+    expect(message?.title).toBe("⏰ 任务即将延期提醒");
     expect(message?.body).toBe(`${PROJECT}\nhello，张三，你的任务「**安装摄像头**」还有1天就要截止了，快加加油，尽快追上进度吧！`);
     expect(message?.channel).toBe("wecom_aibot");
     expect(message?.recipient).toBe("task.owner");
@@ -145,7 +145,7 @@ describe("R04 任务启动提醒（当天 10:00）", () => {
   it("开始日期当天且未填实际开始日期 → 命中，标题与正文逐字", () => {
     const report = replay("2026-09-23", [task({ plannedStart: "2026-09-23", displayStatus: "pending" })]);
     expect(report.messages).toHaveLength(1);
-    expect(report.messages[0]?.title).toBe("有新任务已到启动时间");
+    expect(report.messages[0]?.title).toBe("🚀 有新任务已到启动时间");
     expect(report.messages[0]?.body).toBe(`${PROJECT}\n张三你好呀，你的任务「**安装摄像头**」已到启动时间，快查看任务详情吧~今日工作加油`);
   });
 
@@ -167,10 +167,13 @@ describe("R05 任务超时提醒（T+1 · 负责人 + 项目经理单聊）", ()
       "R05:t-1:2026-09-23:u-1",
       "R05:t-1:2026-09-23:u-9",
     ]);
-    for (const message of report.messages) {
-      expect(message.title).toBe("！任务超时提醒");
-      expect(message.body).toBe(`${PROJECT}\nhello，张三，你的任务「**安装摄像头**」已经超时一天了，快加加油，尽快追上进度吧！`);
-    }
+    const [ownerMessage, managerMessage] = report.messages;
+    expect(ownerMessage?.recipient).toBe("task.owner");
+    expect(ownerMessage?.title).toBe("🚨！任务超时提醒");
+    expect(ownerMessage?.body).toBe(`${PROJECT}\nhello，张三，你的任务「**安装摄像头**」已经超时一天了，快加加油，尽快追上进度吧！`);
+    expect(managerMessage?.recipient).toBe("project.manager");
+    expect(managerMessage?.title).toBe("🚨！任务超时提醒");
+    expect(managerMessage?.body).toBe("hello，李四，张三的任务「**安装摄像头**」已经超时一天了，请你提醒他尽快追上进度吧！");
   });
 
   it("负责人与项目经理同一人时只发一条", () => {
@@ -179,6 +182,8 @@ describe("R05 任务超时提醒（T+1 · 负责人 + 项目经理单聊）", ()
     ]);
     expect(report.messages).toHaveLength(1);
     expect(report.messages[0]?.recipientId).toBe("u-1");
+    expect(report.messages[0]?.recipient).toBe("task.owner");
+    expect(report.messages[0]?.body).toBe(`${PROJECT}\nhello，张三，你的任务「**安装摄像头**」已经超时一天了，快加加油，尽快追上进度吧！`);
     expect(report.messages[0]?.dedupeKey).toBe("R05:t-1:2026-09-23");
   });
 
@@ -203,7 +208,7 @@ describe("R06 项目完成喜报", () => {
   it("项目状态完成 → 项目群命中，文案逐字", () => {
     const report = replay("2026-09-23", [], { subjects: [project()] });
     expect(report.messages).toHaveLength(1);
-    expect(report.messages[0]?.title).toBe("叮咚~喜报来啦！");
+    expect(report.messages[0]?.title).toBe("🎉 叮咚~喜报来啦！");
     expect(report.messages[0]?.body).toBe(
       `项目：**LBUSA-20261014-002·美国仓储公司订单**\n项目已全部完成，验收交付完毕。大家一起为这份成果喝彩吧`,
     );
@@ -241,7 +246,7 @@ describe("A08 大阶段完成播报", () => {
     expect(message?.ruleCode).toBe("A08");
     expect(message?.channel).toBe("wecom_group");
     expect(message?.recipientId).toBe("p-1");
-    expect(message?.title).toBe("大阶段完成通知");
+    expect(message?.title).toBe("🏁 大阶段完成通知");
     expect(message?.body).toBe(`${PROJECT}\n邵晨宇已完成大阶段「**设计开发**」，当前项目阶段：**加工采购**。`);
     expect(message?.dedupeKey).toBe("A08:stage-1:v4");
   });
@@ -264,7 +269,7 @@ describe("R07 每周一重点任务提醒（周窗口 + 合并 + 幂等）", () 
     ]);
     const r07 = report.messages.filter((item) => item.ruleCode === "R07");
     expect(r07).toHaveLength(1);
-    expect(r07[0]?.title).toBe("重点任务提醒");
+    expect(r07[0]?.title).toBe("⭐ 重点任务提醒");
     expect(r07[0]?.body).toBe(
       `张三，以下重点任务正在进行中：\n${PROJECT}\n任务：「**安装摄像头**」\n${PROJECT}\n任务：「**调试网络**」\n请关注并及时推进任务~`,
     );

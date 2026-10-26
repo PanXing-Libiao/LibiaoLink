@@ -311,7 +311,7 @@ describe("规则事件消费（S7-4 接线 · evaluateEventMessages → notify.m
     expect(event?.event.dedupeKey).toBe("A08:stage-1:v7");
     const payload = event?.event.payload as Record<string, unknown>;
     expect(payload.projectId).toBe("p-1");
-    expect(payload.title).toBe("大阶段完成通知");
+    expect(payload.title).toBe("🏁 大阶段完成通知");
     expect(String(payload.body)).toBe("项目：**LBUSA-20261014-002·美国仓储公司订单**\n邵晨宇已完成大阶段「**设计开发**」，当前项目阶段：**加工采购**。");
     expect(payload.refType).toBe("stage");
     expect(payload.refId).toBe("stage-1");
@@ -343,7 +343,7 @@ describe("规则事件消费（S7-4 接线 · evaluateEventMessages → notify.m
     expect(event?.event.dedupeKey).toBe("R06:p-1:v4");
     const payload = event?.event.payload as Record<string, unknown>;
     expect(payload.projectId).toBe("p-1");
-    expect(payload.title).toBe("叮咚~喜报来啦！");
+    expect(payload.title).toBe("🎉 叮咚~喜报来啦！");
     expect(String(payload.body)).toBe("项目：**LBUSA-20261014-002·美国仓储公司订单**\n项目已全部完成，验收交付完毕。大家一起为这份成果喝彩吧");
     expect(payload.refType).toBe("project");
     expect(payload.refId).toBe("p-1");
@@ -440,7 +440,7 @@ describe("调度生产者（automation-schedule.job → notify.message）", () =
     const payload = event?.event.payload as Record<string, unknown>;
     expect(payload.recipientId).toBe("u-1");
     expect(payload.channel).toBe("wecom_aibot");
-    expect(payload.title).toBe("任务即将延期提醒");
+    expect(payload.title).toBe("⏰ 任务即将延期提醒");
     expect(String(payload.body)).toContain("安装摄像头");
     expect(payload.refType).toBe("task");
     expect(payload.refId).toBe("t-1");
@@ -500,7 +500,7 @@ describe("调度生产者（automation-schedule.job → notify.message）", () =
     expect(h.appended[0]?.event.topic).toBe("notify.group");
     expect(h.appended[0]?.event.dedupeKey).toBe("A02:p-1:2026-09-24");
     expect(payload.projectId).toBe("p-1");
-    expect(payload.title).toBe("日报汇总 | 临港数据中心（2026-09-24）");
+    expect(payload.title).toBe("📊 日报汇总 | 临港数据中心（2026-09-24）");
     expect(String(payload.body)).toContain("发现问题 1 条");
     expect(payload.refType).toBe("project");
     expect(payload.refId).toBe("p-1");
