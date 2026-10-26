@@ -4,7 +4,7 @@ import type { BindingNotice } from "./WecomBindingPanel";
 
 /** 机器人资料页：只提供复制按钮，不在界面直接展示完整链接。 */
 export const WECOM_BOT_PROFILE_URL =
-  "https://work.weixin.qq.com/wework_admin/common/openBotProfile/24d86e241840bad3f952d1d7bbae4058a8";
+  "https://work.weixin.qq.com/wework_admin/common/openBotProfile/246485356dc1e53520b3a6f7f5ba8bbae6";
 
 /** 首登提醒与设置页共用同一套绑定引导文案 / 操作。 */
 export function WecomBindingGuideContent(props: {
