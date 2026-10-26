@@ -1,5 +1,7 @@
 # PoC-7 回放证据（字典 C9 与审计留痕 C7）
 
+> **2026-10-26 历史证据**：本文记录旧角色权限判定；对应脚本已删除，不能按当前代码复跑。当前权限口径以部门规则为准。
+
 > 卡片：h7 · S6·admin（主责 wmj，协办 lan）｜验收口径见 团队分工.md §6：字典唯一口径 + 审计留痕（谁 / 何时 / 对什么 / 从什么改成什么），越权留痕按对象与操作人可检索。
 
 | 项 | 值 |
@@ -11,7 +13,7 @@
 | 管理员账号 | 02e76fdb-821a-4c62-9f38-3ec8d5189550 |
 | 受限账号 | a1423de5-4774-457f-a93c-268261f954b5 |
 | 回放字典条目 | region / POC7-20260923095138 |
-| 脚本 | server/scripts/poc7-replay.mjs |
+| 脚本（已删除） | server/scripts/poc7-replay.mjs |
 
 ## 断言明细
 
@@ -129,5 +131,5 @@
 - 「越权留痕（C7-03）」= D3 / D3b / D8b / D8c / D11 / A5：403 一律记 denied（含 includeDisabled 越权读、projectType 新增越权、删除越权）；普通读 404（未知类型）不写噪声行（D5b）。
 - 项目 / 任务 / 节点与阶段推进的写路径留痕由单测覆盖（`server/test/project-crud.test.ts` / `task-service.test.ts` / `flow-gate-rejection.test.ts` 的 FakeAuditService 断言 record 入参）；真机不造项目数据（回放脚本只跑字典与审计域）。
 - 「自动化用例全绿」= `cd server && node node_modules/vitest/vitest.mjs run`（`test/admin-audit.test.ts` 21 例 + 全量 484 例 / 32 文件，随 `npm test` 常跑，不连库）与 `node scripts/check-db-schema.mjs` / `check-permission-matrix.mjs`。
-- 复跑：cd server && node scripts/poc7-replay.mjs --out ../docs/PoC-7-回放证据(字典C9与审计留痕C7).md
+- 复跑：已停用（脚本于 2026-10-26 删除）。
 

@@ -8,7 +8,7 @@ import type {
 } from "@libiaolink/contracts";
 import { DatabaseService } from "../../db/database.service.js";
 import { groupAccessAdmins, groupAccessRules, projectGroupAccess, userGroupMemberships } from "../../db/schema/access.js";
-import { rolePermissions, userRoles, users } from "../../db/schema/identity.js";
+import { users } from "../../db/schema/identity.js";
 import { projectNodes } from "../../db/schema/flow.js";
 import { projectMembers, projects } from "../../db/schema/projects.js";
 import type { GroupAccessRuleData } from "./group-access.rules.js";
@@ -43,7 +43,7 @@ export interface GroupAccessMemberRecord extends GroupAccessUserRecord {
   groupName: string;
 }
 
-/** 系统管理员候选用户：环境配置 / 手工授予 / 角色授权的共同展示字段。 */
+/** 系统管理员候选用户：环境配置 / 手工授予的共同展示字段。 */
 export interface GroupAccessAdminUserRecord extends GroupAccessUserRecord {}
 
 /** 手工管理员记录：额外保留授予时间，供后续审计扩展。 */
@@ -201,24 +201,6 @@ export class PermissionRepository {
       .innerJoin(users, eq(users.id, groupAccessAdmins.userId))
       .orderBy(asc(users.displayName), asc(users.username));
     return rows.map((row) => ({ ...normalizeAdminUser(row), grantedAt: row.grantedAt }));
-  }
-
-  /** 启用 PERMISSION_ENFORCED 时，持有 access.manage 的角色管理员。 */
-  async listRoleGroupAccessAdmins(): Promise<GroupAccessAdminUserRecord[]> {
-    const rows = await this.database.db
-      .selectDistinct({
-        userId: users.id,
-        username: users.username,
-        displayName: users.displayName,
-        email: users.email,
-        status: users.status,
-      })
-      .from(userRoles)
-      .innerJoin(rolePermissions, eq(rolePermissions.roleId, userRoles.roleId))
-      .innerJoin(users, eq(users.id, userRoles.userId))
-      .where(and(eq(rolePermissions.permission, "access.manage"), eq(users.status, "active"), isNull(users.removedAt)))
-      .orderBy(asc(users.displayName), asc(users.username));
-    return rows.map(normalizeAdminUser);
   }
 
   /** 权限画像快速判定：手工管理员必须仍是启用且未离职账号。 */

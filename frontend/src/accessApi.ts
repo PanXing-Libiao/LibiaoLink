@@ -35,7 +35,7 @@ export type GroupAccessGroup = {
   rule: GroupAccessRule | null;
 };
 
-export type GroupAccessAdminSource = "configured" | "manual" | "role";
+export type GroupAccessAdminSource = "configured" | "manual";
 
 export type GroupAccessAdmin = {
   userId: string;

@@ -126,8 +126,8 @@ try {
   cleanup.syntheticUserIds.push(plainId);
   plain = await makeSession(plainId, "m2-06-replay-plain");
   const plainProjects = await call("GET", "/api/v1/projects?limit=1", undefined, plain);
-  const permissionEnforced = plainProjects.status === 200 && plainProjects.body?.total === 0;
-  check("P6", "合成复核用户（无角色）：会话可用 + 记录权限开关（PERMISSION_ENFORCED" + (permissionEnforced ? "=true（判权限态）" : "=false（一期不判权限 · Push 178）") + "）", "200（并记录开关，供 F7 分派）", plainProjects.status + " total=" + (plainProjects.body?.total ?? "-"), plainProjects.status === 200);
+  const groupAccessRestricted = plainProjects.status === 200 && plainProjects.body?.total === 0;
+  check("P6", "合成复核用户（无部门规则）：会话可用 + 部门规则状态探测", "200（并记录访问状态，供 F7 分派）", plainProjects.status + " total=" + (plainProjects.body?.total ?? "-"), plainProjects.status === 200);
 
   // ---------- 证据一：视图（A1-03 · 个人 / 公共） ----------
   const viewOne = await call("POST", "/api/v1/views", {
@@ -227,12 +227,12 @@ try {
 
   const plainFollow = await call("POST", "/api/v1/follows", { objectType: "project", objectId: projectA }, plain);
   const plainList = await call("GET", "/api/v1/follows", undefined, plain);
-  if (permissionEnforced) {
-    check("F7", "防 IDOR（PERMISSION_ENFORCED=true）：不可见项目关注 404；复核用户关注清单 0 条", "404 / 0 条", plainFollow.status + " / " + (plainList.body?.items?.length ?? "-"), plainFollow.status === 404 && plainFollow.body?.code === "NOT_FOUND" && plainList.status === 200 && plainList.body?.items?.length === 0);
+  if (groupAccessRestricted) {
+    check("F7", "防 IDOR（部门规则开启 · 无适用规则）：不可见项目关注 404；复核用户关注清单 0 条", "404 / 0 条", plainFollow.status + " / " + (plainList.body?.items?.length ?? "-"), plainFollow.status === 404 && plainFollow.body?.code === "NOT_FOUND" && plainList.status === 200 && plainList.body?.items?.length === 0);
   } else {
     const plainUnfollow = await call("DELETE", "/api/v1/follows/project/" + projectA, undefined, plain);
     const plainListAfter = await call("GET", "/api/v1/follows", undefined, plain);
-    check("F7", "关注可见性（一期不判权限 · PERMISSION_ENFORCED=false · Push 178）：全员可见 → 关注 201 / 取关 200 / 清单归零", "201 / 200 / 0 条", plainFollow.status + " / " + plainUnfollow.status + " / " + (plainListAfter.body?.items?.length ?? "-"), plainFollow.status === 201 && plainFollow.body?.created === true && plainUnfollow.status === 200 && plainUnfollow.body?.removed === true && plainListAfter.status === 200 && (plainListAfter.body?.items ?? []).length === 0);
+    check("F7", "关注可见性（部门规则关闭）：全员可见 → 关注 201 / 取关 200 / 清单归零", "201 / 200 / 0 条", plainFollow.status + " / " + plainUnfollow.status + " / " + (plainListAfter.body?.items?.length ?? "-"), plainFollow.status === 201 && plainFollow.body?.created === true && plainUnfollow.status === 200 && plainUnfollow.body?.removed === true && plainListAfter.status === 200 && (plainListAfter.body?.items ?? []).length === 0);
   }
 
   const createdB = await call("POST", "/api/v1/projects", { code: "M2RPL-ARC-" + stamp, name: "M2 回放归档项目", projectType: "default", managerIds: [adminId] });
@@ -349,7 +349,7 @@ lines.push("");
 lines.push("## 验收对照（M2-06 · A1-03 / A1-15）");
 lines.push("");
 lines.push("- A1-03（视图管理）= V1 ' V11：个人视图全字段建 / 读（个人在前 + scope 过滤）/ 局部改（空更新 400）/ 默认视图互斥（每人至多一条）/ 物理删（重复删 404）；归属：个人视图他人 404（不可见）、公共视图非创建者 403（可见无写权）、公共视图全员可见。");
-lines.push("- A1-15（关注订阅）= F1 ' F11：关注项目 / 任务（201 created=true；重复关注 200 created=false 幂等）；清单随行名称 + 时间倒序 + object 过滤；批量五态（followed / unfollowed / unchanged / failures）+ 失败 index / code；取关（未关注 404）；关注目标可见性按 `PERMISSION_ENFORCED` 开关分派（判权限态：不可见目标 404 防 IDOR；一期不判权限态：全员可见 201 + 取关清理）；归档项目不可新关注（既有关系行保留可见 —— 一期口径）；项目移入回收站 → 关注行保留（可恢复）；彻底删除路径随项目关系键清理。");
+lines.push("- A1-15（关注订阅）= F1 ' F11：关注项目 / 任务（201 created=true；重复关注 200 created=false 幂等）；清单随行名称 + 时间倒序 + object 过滤；批量五态（followed / unfollowed / unchanged / failures）+ 失败 index / code；取关（未关注 404）；关注目标可见性按部门规则状态分派（部门规则开启且无适用规则：不可见目标 404 防 IDOR；部门规则关闭：全员可见 201 + 取关清理）；归档项目不可新关注（既有关系行保留可见 —— 部门规则关闭口径）；项目移入回收站 → 关注行保留（可恢复）；彻底删除路径随项目关系键清理。");
 lines.push("- 单测回归（不连库）：server/test/view.test.ts 7 例（范围透传 / 名称收敛 / 空更新 / 归属 / 默认互斥 / 物理删）+ server/test/follow.test.ts 7 例（幂等 / 404 三态 / 清单过滤 / 批量五态 / 归档失败），随 npm test 常跑。");
 lines.push("- 差异登记：公共视图「共享给指定角色」（A1-03）未做 —— 一期公共视图 = 全员可见；关注后的关键事件通知随 M5（lan），关注动态流（A6-08）随工作台二刀。");
 lines.push("- 复跑：cd server && M2_06_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink node scripts/m2-06-replay.mjs --out ../docs/m2-06-回放证据(视图与关注).md");

@@ -483,7 +483,6 @@ describe("GroupAccessService 部门通讯录", () => {
       listActiveUsersByIds: async (userIds: readonly string[]) => userIds.includes(PROJECT_A) ? [configuredAdmin] : [],
       listGroupAdminUsersByGroupKeys: async () => [],
       listManualGroupAccessAdmins: async () => [...manual],
-      listRoleGroupAccessAdmins: async () => [],
       findActiveGroupAccessUser: async (userId: string) => userId === PROJECT_B ? managedAdmin : null,
       grantGroupAccessAdmin: async (userId: string, _grantedBy: string, at: Date) => {
         if (manual.some((item) => item.userId === userId)) return false;
@@ -514,7 +513,7 @@ describe("GroupAccessService 部门通讯录", () => {
     const assigned = await service.assignAdmin(PROJECT_A, PROJECT_B);
     expect(assigned.admin).toMatchObject({ userId: PROJECT_B, source: "manual", removable: true });
     expect(invalidations).toBe(1);
-    await expect(service.removeAdmin(PROJECT_A, PROJECT_A)).rejects.toThrow("环境配置或角色授权");
+    await expect(service.removeAdmin(PROJECT_A, PROJECT_A)).rejects.toThrow("环境配置的管理员");
     await service.removeAdmin(PROJECT_A, PROJECT_B);
     expect(auditActions).toEqual(["create", "delete"]);
     expect(invalidations).toBe(2);
@@ -581,7 +580,6 @@ function serviceWith(options: {
   rules: GroupAccessRuleData[];
   adminGroups?: string;
   groupEnforced?: boolean;
-  permissionEnforced?: boolean;
   adminUserIds?: string;
   manualAdminUserIds?: string[];
   roleCodes?: string[];
@@ -602,7 +600,6 @@ function serviceWith(options: {
     GROUP_ACCESS_ENFORCED: options.groupEnforced === false ? "false" : "true",
     GROUP_ACCESS_ADMIN_GROUP_KEYS: options.adminGroups ?? "libiaorobot.com/系统管理员",
     GROUP_ACCESS_ADMIN_USER_IDS: options.adminUserIds ?? "",
-    PERMISSION_ENFORCED: options.permissionEnforced === true ? "true" : "false",
   } as Env);
   const service = new PermissionService(
     new FakeRoleService(authorization) as unknown as RoleService,
@@ -705,12 +702,11 @@ describe("PermissionService 群组接入", () => {
     expect((await admin.service.permissionsOf(PROJECT_A)).groupReadOnly).toBe(false);
   });
 
-  it("权限判定关闭时不把等效管理员画像当成部门管理员", async () => {
+  it("旧角色权限退出授权链后，部门管理员只来自环境配置、管理员部门或手工授权", async () => {
     const regular = serviceWith({
       groupKeys: ["libiaorobot.com/项目部"],
       rules: [],
       groupEnforced: false,
-      permissionEnforced: false,
     });
     const regularProfile = await regular.service.permissionsOf(PROJECT_A);
     expect(regularProfile.groupAccessEnforced).toBe(false);
@@ -722,7 +718,6 @@ describe("PermissionService 群组接入", () => {
       groupKeys: ["libiaorobot.com/系统管理员"],
       rules: [],
       groupEnforced: false,
-      permissionEnforced: false,
     });
     expect((await explicitAdmin.service.permissionsOf(PROJECT_A)).groupAccessAdmin).toBe(true);
 
@@ -730,18 +725,9 @@ describe("PermissionService 群组接入", () => {
       groupKeys: ["libiaorobot.com/项目部"],
       rules: [],
       groupEnforced: false,
-      permissionEnforced: false,
       adminUserIds: PROJECT_A,
     });
     expect((await userIdAdmin.service.permissionsOf(PROJECT_A)).groupAccessAdmin).toBe(true);
-
-    const roleAdmin = serviceWith({
-      groupKeys: ["libiaorobot.com/项目部"],
-      rules: [],
-      groupEnforced: false,
-      permissionEnforced: true,
-    });
-    expect((await roleAdmin.service.permissionsOf(PROJECT_A)).groupAccessAdmin).toBe(true);
   });
 
   it("权限页手工添加的管理员获得权限管理入口与完整写能力", async () => {
@@ -749,7 +735,6 @@ describe("PermissionService 群组接入", () => {
       groupKeys: ["libiaorobot.com/项目部"],
       rules: [],
       groupEnforced: false,
-      permissionEnforced: false,
       manualAdminUserIds: [PROJECT_A],
     });
     const profile = await manual.service.permissionsOf(PROJECT_A);

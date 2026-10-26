@@ -6,7 +6,7 @@ import { UserStatusSchema } from "./users.ts";
  * 部门（Casdoor 群组）访问规则（2026-10-24）：
  * 部门键统一为 owner/name（例如 libiaorobot.com/项目部）。群组限制开启后，所有登录账号都可以
  * 进入页面；每条规则用 projectScope 限定数据范围，并用 accessLevel 区分编辑 / 仅浏览（edit 隐含 view）。
- * 多部门规则取并集：任一适用规则为 edit 才获得写能力，否则只读；项目范围再与角色可见范围取交集。
+ * 多部门规则取并集：任一适用规则为 edit 才获得写能力，否则只读；项目范围由部门规则裁决。
  * allowedPages 仅保留为旧客户端兼容字段，裁决时恒为全部页面。
  */
 /** 页面键保留用于旧客户端兼容；2026-10-24 起群组规则不再限制页面入口。 */
@@ -27,7 +27,7 @@ export const GROUP_ACCESS_PROJECT_SCOPES = ["all", "own", "selected", "none"] as
 
 export const GroupAccessProjectScopeSchema = z
   .enum(GROUP_ACCESS_PROJECT_SCOPES)
-  .openapi("GroupAccessProjectScope", { description: "群组项目范围：all 角色可见项目全放行 / own 仅本人负责或参与的项目 / selected 仅指定项目 / none 不可见任何项目" });
+  .openapi("GroupAccessProjectScope", { description: "部门项目范围：all 全部项目 / own 仅本人负责或参与的项目 / selected 仅指定项目 / none 不可见任何项目" });
 
 export type GroupAccessProjectScope = z.infer<typeof GroupAccessProjectScopeSchema>;
 
@@ -114,12 +114,12 @@ export const GroupAccessProjectSchema = z
 
 export type GroupAccessProject = z.infer<typeof GroupAccessProjectSchema>;
 
-/** 系统管理员来源：configured = 环境变量（部门 / 用户白名单），manual = 权限页手工添加，role = 启用角色权限后的 access.manage。 */
-export const GROUP_ACCESS_ADMIN_SOURCES = ["configured", "manual", "role"] as const;
+/** 系统管理员来源：configured = 环境变量（部门 / 用户白名单），manual = 权限页手工添加。 */
+export const GROUP_ACCESS_ADMIN_SOURCES = ["configured", "manual"] as const;
 
 export const GroupAccessAdminSourceSchema = z
   .enum(GROUP_ACCESS_ADMIN_SOURCES)
-  .openapi("GroupAccessAdminSource", { description: "管理员来源：configured 环境配置 / manual 手工添加 / role 角色授权" });
+  .openapi("GroupAccessAdminSource", { description: "管理员来源：configured 环境配置 / manual 手工添加" });
 
 export type GroupAccessAdminSource = z.infer<typeof GroupAccessAdminSourceSchema>;
 
@@ -154,7 +154,7 @@ export const GroupAccessOverviewSchema = z
     enforced: z.boolean(),
     admin: z.boolean(),
     currentGroupKeys: z.array(z.string()),
-    admins: z.array(GroupAccessAdminSchema).openapi({ description: "当前生效的系统管理员名单（环境配置 / 手工添加 / 角色授权）" }),
+    admins: z.array(GroupAccessAdminSchema).openapi({ description: "当前生效的系统管理员名单（环境配置 / 手工添加）" }),
     groups: z.array(GroupAccessGroupSchema),
     projects: z.array(GroupAccessProjectSchema),
   })

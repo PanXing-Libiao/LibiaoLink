@@ -55,7 +55,6 @@ function memberInitial(member: { displayName: string }): string {
 
 function adminSourceKey(source: GroupAccessAdmin["source"]): TextKey {
   if (source === "manual") return "access.adminSourceManual";
-  if (source === "role") return "access.adminSourceRole";
   return "access.adminSourceConfigured";
 }
 

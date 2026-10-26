@@ -173,7 +173,7 @@ export class GroupAccessService {
     const target = admins.find((admin) => admin.userId === userId);
     if (target === undefined) throw new AppError("NOT_FOUND", "该账号不是系统管理员");
     if (!target.removable) {
-      throw new AppError("VALIDATION_FAILED", "环境配置或角色授权的管理员不能在此撤销");
+      throw new AppError("VALIDATION_FAILED", "环境配置的管理员不能在此撤销");
     }
     if (admins.length <= 1) {
       throw new AppError("VALIDATION_FAILED", "至少需要保留一名系统管理员");
@@ -194,18 +194,14 @@ export class GroupAccessService {
   private async listAdmins(): Promise<GroupAccessAdmin[]> {
     const configuredGroupKeys = parseGroupAccessAdminKeys(this.config.env.GROUP_ACCESS_ADMIN_GROUP_KEYS ?? "");
     const configuredUserIds = parseGroupAccessAdminKeys(this.config.env.GROUP_ACCESS_ADMIN_USER_IDS ?? "");
-    const roleAdmins = this.config.env.PERMISSION_ENFORCED === "true"
-      ? this.repository.listRoleGroupAccessAdmins()
-      : Promise.resolve([]);
-    const [configuredUsers, groupUsers, manualAdmins, roleUsers] = await Promise.all([
+    const [configuredUsers, groupUsers, manualAdmins] = await Promise.all([
       this.repository.listActiveUsersByIds(configuredUserIds),
       this.repository.listGroupAdminUsersByGroupKeys(configuredGroupKeys),
       this.repository.listManualGroupAccessAdmins(),
-      roleAdmins,
     ]);
     const admins = new Map<string, GroupAccessAdmin>();
-    const put = (user: { userId: string; username: string; displayName: string; email: string | null; status: "active" | "disabled" }, source: GroupAccessAdmin["source"]): void => {
-      const rank = { manual: 0, role: 1, configured: 2 } as const;
+    const put = (user: { userId: string; username: string; displayName: string; email: string | null; status: "active" | "disabled" }, source: "manual" | "configured"): void => {
+      const rank = { manual: 0, configured: 2 } as const;
       const current = admins.get(user.userId);
       if (current !== undefined && rank[current.source] > rank[source]) return;
       admins.set(user.userId, {
@@ -219,7 +215,6 @@ export class GroupAccessService {
       });
     };
     for (const user of manualAdmins) put(user, "manual");
-    for (const user of roleUsers) put(user, "role");
     for (const user of groupUsers) put(user, "configured");
     for (const user of configuredUsers) put(user, "configured");
     return [...admins.values()].sort((left, right) =>

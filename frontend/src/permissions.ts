@@ -21,9 +21,9 @@ export type GroupAccessLevel = "edit" | "view";
 export type AuditScope = "all" | "project_manager" | "self";
 
 export type MyPermissions = {
-  /** 角色码（roles.code；多角色并集），排障 / 调试用。 */
+  /** 兼容旧系统管理员硬检查的固定基线，不代表 user_roles 绑定。 */
   roleCodes: string[];
-  /** 功能权限位并集（role_permissions ↔ 契约 PERMISSION_KEYS）。 */
+  /** 全量功能权限基线；写能力另由部门规则的编辑 / 仅浏览档位裁决。 */
   permissionKeys: string[];
   /** 当前账号 Casdoor 群组键（owner/name）。 */
   groupKeys: string[];

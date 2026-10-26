@@ -108,15 +108,33 @@ function memberInitial(member: Pick<GroupAccessMember, "displayName">): string {
 
 function adminSourceKey(source: GroupAccessAdmin["source"]): TextKey {
   if (source === "manual") return "access.adminSourceManual";
-  if (source === "role") return "access.adminSourceRole";
   return "access.adminSourceConfigured";
 }
 
-function MemberRow({ member, depth, t }: { member: GroupAccessMember; depth: number; t: Translate }) {
+function MemberRow({
+  member,
+  depth,
+  active,
+  t,
+  onSelect,
+}: {
+  member: GroupAccessMember;
+  depth: number;
+  active: boolean;
+  t: Translate;
+  onSelect: () => void;
+}) {
   const detail = [member.username, member.email ?? ""].filter((item) => item !== "").join(" · ");
   return (
     <div style={{ paddingLeft: String(32 + depth * 14) + "px" }} className="pr-2">
-      <div className="flex items-start gap-2 rounded-lg px-2 py-1.5 hover:bg-zinc-50" title={member.email ?? member.username}>
+      <button
+        type="button"
+        data-access-directory-member={member.userId}
+        onClick={onSelect}
+        aria-current={active ? "true" : undefined}
+        className={"flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 " + (active ? "bg-blue-50/80 ring-1 ring-inset ring-blue-200" : "hover:bg-zinc-50")}
+        title={member.email ?? member.username}
+      >
         <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-xs font-semibold text-zinc-600">
           {memberInitial(member)}
         </span>
@@ -129,7 +147,7 @@ function MemberRow({ member, depth, t }: { member: GroupAccessMember; depth: num
           </span>
           <span className="mt-0.5 block truncate text-[11px] text-zinc-400">{detail}</span>
         </span>
-      </div>
+      </button>
     </div>
   );
 }
@@ -166,6 +184,7 @@ function SelectableMemberRow({
   checked,
   admin,
   adminBusy,
+  focused,
   t,
   onToggle,
   onToggleAdmin,
@@ -174,13 +193,17 @@ function SelectableMemberRow({
   checked: boolean;
   admin: GroupAccessAdmin | undefined;
   adminBusy: boolean;
+  focused: boolean;
   t: Translate;
   onToggle: () => void;
   onToggleAdmin: () => void;
 }) {
   const detail = [member.username, member.email ?? ""].filter((item) => item !== "").join(" · ");
   return (
-    <div className="flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-blue-50/60">
+    <div
+      data-access-rule-member={member.userId}
+      className={"flex items-center gap-2 rounded-lg px-3 py-2 transition " + (focused ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : "hover:bg-blue-50/60")}
+    >
       <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
         <SelectionCheckbox checked={checked} indeterminate={false} onChange={onToggle} />
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-50 text-xs font-semibold text-blue-700">
@@ -231,21 +254,23 @@ function DepartmentTree({
   depth,
   selectedKey,
   expandedKeys,
-  currentGroupKeys,
+  activeMemberId,
   query,
   t,
   onSelect,
   onToggle,
+  onMemberSelect,
 }: {
   nodes: readonly DepartmentTreeNode[];
   depth: number;
   selectedKey: string | null;
   expandedKeys: ReadonlySet<string>;
-  currentGroupKeys: ReadonlySet<string>;
+  activeMemberId: string | null;
   query: string;
   t: Translate;
   onSelect: (group: GroupAccessGroup) => void;
   onToggle: (groupKey: string) => void;
+  onMemberSelect: (group: GroupAccessGroup, member: GroupAccessMember) => void;
 }) {
   return (
     <>
@@ -286,15 +311,19 @@ function DepartmentTree({
                     {group.rule === null ? t("access.unconfigured") : t("access.configured")}
                   </span>
                 </span>
-                {currentGroupKeys.has(group.groupKey) ? (
-                  <span title={t("access.currentDepartment")} className="h-2 w-2 shrink-0 rounded-full bg-blue-500" />
-                ) : null}
               </button>
             </div>
             {expanded ? (
               <div className="pb-1 pt-0.5">
                 {members.map((member) => (
-                  <MemberRow key={member.userId} member={member} depth={depth} t={t} />
+                  <MemberRow
+                    key={member.userId}
+                    member={member}
+                    depth={depth}
+                    active={member.userId === activeMemberId}
+                    t={t}
+                    onSelect={() => { onMemberSelect(group, member); }}
+                  />
                 ))}
                 {group.members.length === 0 && node.children.length === 0 ? (
                   <p style={{ paddingLeft: String(34 + depth * 14) + "px" }} className="py-1 pr-2 text-[11px] text-zinc-400">
@@ -306,11 +335,12 @@ function DepartmentTree({
                   depth={depth + 1}
                   selectedKey={selectedKey}
                   expandedKeys={expandedKeys}
-                  currentGroupKeys={currentGroupKeys}
+                  activeMemberId={activeMemberId}
                   query={query}
                   t={t}
                   onSelect={onSelect}
                   onToggle={onToggle}
+                  onMemberSelect={onMemberSelect}
                 />
               </div>
             ) : null}
@@ -343,6 +373,7 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
   const inFlightRef = useRef(false);
   const requestIdRef = useRef(0);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [focusedMemberId, setFocusedMemberId] = useState<string | null>(null);
   const [projectScope, setProjectScope] = useState<GroupAccessProjectScope>("none");
   const [accessLevel, setAccessLevel] = useState<GroupAccessAccessLevel>("view");
   const [projectIds, setProjectIds] = useState<string[]>([]);
@@ -447,8 +478,6 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
   const groupByKey = new Map(allGroups.map((group) => [group.groupKey, group] as const));
   const admins = data?.admins ?? [];
   const adminByUserId = new Map(admins.map((admin) => [admin.userId, admin] as const));
-  const currentGroupKeys = new Set(data?.currentGroupKeys ?? []);
-  const currentDepartmentNames = (data?.currentGroupKeys ?? []).map((key) => groupByKey.get(key)?.groupName ?? key);
   const totalMemberCount = new Set(allGroups.flatMap((group) => group.members.map((member) => member.userId))).size;
   const selectedGroup = selectedKey === null ? null : groupByKey.get(selectedKey) ?? null;
   const selectedRule = selectedGroup?.rule ?? null;
@@ -470,6 +499,15 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
       .map((group) => ({ groupKey: group.groupKey, pathText: departmentPathOf(group.groupKey, byKey).join(" / ") || group.groupName }))
       .sort((left, right) => left.pathText.localeCompare(right.pathText, "zh-Hans-CN"));
   }, [data]);
+  useEffect(() => {
+    if (focusedMemberId === null) return;
+    const frame = window.requestAnimationFrame(() => {
+      const row = document.querySelector<HTMLElement>('[data-access-rule-member="' + focusedMemberId + '"]');
+      row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+    return () => { window.cancelAnimationFrame(frame); };
+  }, [focusedMemberId, selectedKey]);
+
   const syncTime = lastSyncedAt === null
     ? "—"
     : new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : locale, { hour: "2-digit", minute: "2-digit", hour12: false }).format(lastSyncedAt);
@@ -491,8 +529,14 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
 
   function openGroup(group: GroupAccessGroup): void {
     setSelectedKey(group.groupKey);
+    setFocusedMemberId(null);
     setExpandedKeys((current) => new Set(current).add(group.groupKey));
     applyGroup(group);
+  }
+
+  function openMember(group: GroupAccessGroup, member: GroupAccessMember): void {
+    if (group.groupKey !== selectedKey) openGroup(group);
+    setFocusedMemberId(member.userId);
   }
 
   function toggleExpanded(groupKey: string): void {
@@ -720,11 +764,6 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
             )
           ) : (
             <>
-              <section className={"rounded-xl border px-4 py-3 text-xs " + (data.enforced ? "border-amber-200 bg-amber-50 text-amber-800" : "border-zinc-200 bg-white text-zinc-600")}>
-                <p className="font-medium">{data.enforced ? t("access.enforcedOn") : t("access.enforcedOff")}</p>
-                <p className="mt-1">{t("access.currentGroups")}: {currentDepartmentNames.length === 0 ? t("access.noGroups") : currentDepartmentNames.join(" · ")}</p>
-              </section>
-
               <div className="grid gap-4 xl:grid-cols-[minmax(220px,260px)_minmax(300px,360px)_minmax(0,1fr)]">
                 <div className="grid gap-4 lg:grid-cols-[minmax(300px,360px)_minmax(0,1fr)] xl:contents">
                   <aside data-access-admin-column="" className="self-start overflow-hidden rounded-2xl border border-zinc-200 bg-white">
@@ -820,11 +859,12 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
                           depth={0}
                           selectedKey={selectedKey}
                           expandedKeys={expandedKeys}
-                          currentGroupKeys={currentGroupKeys}
+                          activeMemberId={focusedMemberId}
                           query={normalizedDirectoryQuery}
                           t={t}
                           onSelect={openGroup}
                           onToggle={toggleExpanded}
+                          onMemberSelect={openMember}
                         />
                       )}
                     </div>
@@ -889,7 +929,7 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
                           {selectedGroupMembers.length === 0 ? (
                             <p className="px-3 py-3 text-xs text-zinc-400">{t("access.noMembers")}</p>
                           ) : (
-                            <div className="p-1.5">
+                            <div className="scrollbar-hidden max-h-[min(56vh,640px)] overflow-y-auto overscroll-contain p-1.5">
                               {selectedGroupMembers.map((member) => (
                                 <SelectableMemberRow
                                   key={member.userId}
@@ -897,6 +937,7 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
                                   checked={selectedMemberIdSet.has(member.userId)}
                                   admin={adminByUserId.get(member.userId)}
                                   adminBusy={adminBusyUserId === member.userId}
+                                  focused={focusedMemberId === member.userId}
                                   t={t}
                                   onToggle={() => { toggleMember(member.userId); }}
                                   onToggleAdmin={() => { void handleToggleAdmin(member); }}

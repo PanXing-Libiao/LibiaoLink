@@ -11,7 +11,7 @@ import { ProjectAccessGuard } from "./project-access.guard.js";
 
 /**
  * permission 模块（领域 · h6 · PoC-6）：ADR-011 策略服务落地形态 ——
- * can（功能权限）/ 记录级可见集 / 字段级策略与五出口投影统一出口；依赖 identity（角色画像），
+ * can（功能权限）/ 记录级可见集 / 字段级策略与五出口投影统一出口；依赖 identity（组织与全量能力基线），
  * 不依赖 project / task（可见性判定直接读 project_members / project_nodes，避免循环）。
  */
 @Module({

@@ -9638,19 +9638,19 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** @description 当前用户授权画像（角色 + 数据范围 + 功能权限位） */
+        /** @description 当前用户授权画像（全量能力基线 + 部门规则裁决结果） */
         ActorPermissions: {
             userId: components["schemas"]["Uuid"];
             /**
-             * @description 角色码（roles.code；多角色并集）
+             * @description 兼容旧系统管理员硬检查的固定基线，不读取 user_roles
              * @example [
-             *       "project_manager"
+             *       "admin"
              *     ]
              */
             roleCodes: string[];
-            /** @description 数据范围并集（由宽到窄） */
+            /** @description 固定全量数据范围基线；实际项目范围由部门规则收窄 */
             dataScopes: components["schemas"]["DataScope"][];
-            /** @description 功能权限位并集（role_permissions） */
+            /** @description 全量功能权限位基线；写能力由 groupReadOnly / 部门规则再裁决 */
             permissionKeys: components["schemas"]["PermissionKey"][];
             /** @description 当前账号的 Casdoor 群组键（owner/name；按登录或目录同步落地） */
             groupKeys?: string[];
@@ -10832,10 +10832,10 @@ export interface components {
             admin: components["schemas"]["GroupAccessAdmin"];
         };
         /**
-         * @description 管理员来源：configured 环境配置 / manual 手工添加 / role 角色授权
+         * @description 管理员来源：configured 环境配置 / manual 手工添加
          * @enum {string}
          */
-        GroupAccessAdminSource: "configured" | "manual" | "role";
+        GroupAccessAdminSource: "configured" | "manual";
         /** @description 可配置部门：层级、直属人员与已保存规则；groupKey=__ungrouped__ 为虚拟未分组节点，仅聚合无部门成员关系的账号 */
         GroupAccessGroup: {
             groupKey: string;
@@ -10867,7 +10867,7 @@ export interface components {
             enforced: boolean;
             admin: boolean;
             currentGroupKeys: string[];
-            /** @description 当前生效的系统管理员名单（环境配置 / 手工添加 / 角色授权） */
+            /** @description 当前生效的系统管理员名单（环境配置 / 手工添加） */
             admins: components["schemas"]["GroupAccessAdmin"][];
             groups: components["schemas"]["GroupAccessGroup"][];
             projects: components["schemas"]["GroupAccessProject"][];
@@ -10884,7 +10884,7 @@ export interface components {
             name: string;
         };
         /**
-         * @description 群组项目范围：all 角色可见项目全放行 / own 仅本人负责或参与的项目 / selected 仅指定项目 / none 不可见任何项目
+         * @description 部门项目范围：all 全部项目 / own 仅本人负责或参与的项目 / selected 仅指定项目 / none 不可见任何项目
          * @enum {string}
          */
         GroupAccessProjectScope: "all" | "own" | "selected" | "none";
@@ -11352,7 +11352,7 @@ export interface components {
             token: string;
         };
         /**
-         * @description 功能权限位（模块.操作）；一期取值见 PERMISSION_KEYS（种子 #6b 按角色分配）
+         * @description 功能权限位（模块.操作）；部门权限模型下作为全量能力基线
          * @enum {string}
          */
         PermissionKey: "project.view" | "project.create" | "project.update" | "project.delete" | "project.archive" | "project.export" | "member.view" | "member.manage" | "task.view" | "task.create" | "task.update" | "task.progress" | "report.view" | "report.fill" | "issue.view" | "issue.manage" | "node.view" | "node.create" | "node.delete" | "node.complete" | "node.advance" | "node.rollback" | "blueprint.view" | "blueprint.manage" | "file.upload" | "file.download" | "stakeholder.view" | "stakeholder.manage" | "stakeholder.contact.view" | "dict.manage" | "audit.view" | "calendar.manage" | "automation.view" | "automation.manage" | "notify.record.view" | "notify.resend" | "access.manage";
