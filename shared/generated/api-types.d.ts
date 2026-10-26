@@ -9752,7 +9752,7 @@ export interface components {
              * @enum {string|null}
              */
             channel?: "wecom_app" | "wecom_aibot" | "wecom_group" | "inbox" | "email" | null;
-            /** @description 收件人口径（多个 = 逐个解析，均落发送记录） */
+            /** @description 收件人口径（单个或至多 6 个；多个 = 逐个解析，均落发送记录） */
             recipient: components["schemas"]["RuleRecipient"] | components["schemas"]["RuleRecipient"][];
             /**
              * @description 消息模板码（逐字文案见 docs/rules/R01-R07-内置规则文案.md）
@@ -9973,6 +9973,7 @@ export interface components {
             /** @description 所属项目类型（ADR-019：按项目类型各一份，default 为兜底模板）；缺省 = 通用 */
             projectType?: string;
             updatedAt: components["schemas"]["DateTime"];
+            /** @description 蓝图阶段（1~9 个，键取九阶段字典） */
             stages: components["schemas"]["BlueprintStage"][];
         };
         BlueprintConstraint: components["schemas"]["BlueprintRequiredDocConstraint"] | components["schemas"]["BlueprintReservedConstraint"];
@@ -9991,7 +9992,10 @@ export interface components {
             name: string;
             /** @description 排序（建议 10/20/30 步长，便于插入） */
             seq: number;
-            /** @default [] */
+            /**
+             * @description 节点约束（≤ 20 条）
+             * @default []
+             */
             constraints: components["schemas"]["BlueprintConstraint"][];
         };
         /** @description 必交成果物（一期门禁实现的唯一约束类型） */
@@ -10019,6 +10023,7 @@ export interface components {
             key: components["schemas"]["StageKey"];
             name: string;
             seq: number;
+            /** @description 阶段节点（1~200 个） */
             nodes: components["schemas"]["BlueprintNode"][];
         };
         /**
@@ -11575,7 +11580,7 @@ export interface components {
              * @default 未分类
              */
             projectType: string;
-            /** @description 项目经理（A22 · Push 136）：至少一位、可多位；数组顺序 = 展示顺序；判空失败返回 400 VALIDATION_FAILED */
+            /** @description 项目经理（A22 · Push 136）：至少一位、可多位（≤ 200 位）；数组顺序 = 展示顺序；判空或超过上限返回 400 VALIDATION_FAILED */
             managerIds: components["schemas"]["Uuid"][];
             stageKey?: components["schemas"]["StageKey"];
             description?: string;
@@ -11758,7 +11763,7 @@ export interface components {
             customer?: string | null;
             region?: string;
             projectType?: string;
-            /** @description 项目经理（A22 · Push 136）：至少一位、可多位；不传 = 不改、传空数组 = 400；数组顺序 = 展示顺序 */
+            /** @description 项目经理（A22 · Push 136）：至少一位、可多位（≤ 200 位）；不传 = 不改、传空数组或超过上限 = 400；数组顺序 = 展示顺序 */
             managerIds?: components["schemas"]["Uuid"][];
             stageKey?: components["schemas"]["StageKey"];
             /**
@@ -11819,11 +11824,11 @@ export interface components {
             id: string;
             /** @description 组合名称（≤ 20 字） */
             name: string;
-            /** @description 地区字典码（多值任一命中） */
+            /** @description 地区字典码（多值任一命中，≤ 200 项） */
             regions: string[];
-            /** @description 项目类型字典码（多值任一命中） */
+            /** @description 项目类型字典码（多值任一命中，≤ 200 项） */
             projectTypes: string[];
-            /** @description 项目经理 id 列表（用户目录 id；多值任一命中） */
+            /** @description 项目经理 id 列表（用户目录 id；多值任一命中，≤ 200 项） */
             managerIds: string[];
             timeFrom: components["schemas"]["DateOnly"] & (string | null);
             timeTo: components["schemas"]["DateOnly"] & (string | null);
@@ -12012,7 +12017,7 @@ export interface components {
         };
         /** @description 批量变更字段（白名单；语义同单条编辑：null = 清空、缺键 = 不改；至少给一个键） */
         TaskBatchChanges: {
-            /** @description 批量指派负责人（A23）：显式 [] = 全部置为「待分配」；传数组 = 整体替换（顺序 = 展示顺序） */
+            /** @description 批量指派负责人（A23，≤ 200 位）：显式 [] = 全部置为「待分配」；传数组 = 整体替换（顺序 = 展示顺序） */
             ownerIds?: components["schemas"]["Uuid"][];
             status?: components["schemas"]["TaskStatusWrite"];
             plannedStart?: components["schemas"]["DateOnly"] & (string | null);
@@ -12097,28 +12102,28 @@ export interface components {
             titleEn?: string | null;
             taskNodeId?: components["schemas"]["Uuid"] & unknown;
             sourceNodeId?: components["schemas"]["Uuid"] & unknown;
-            /** @description 任务负责人：缺省 / 显式 [] = 「待分配」（**2026-09-24 业务口径修订**：任务添加后负责人默认为空 —— 不再兜底项目经理）；传数组 = 整体设置，数组顺序 = 展示顺序 */
+            /** @description 任务负责人：缺省 / 显式 [] = 「待分配」（**2026-09-24 业务口径修订**：任务添加后负责人默认为空 —— 不再兜底项目经理）；传数组 = 整体设置（≤ 200 位），数组顺序 = 展示顺序 */
             ownerIds?: components["schemas"]["Uuid"][];
             plannedStart?: components["schemas"]["DateOnly"] & (string | null);
             plannedEnd?: components["schemas"]["DateOnly"] & (string | null);
             estimatedDays?: number | null;
             headcount?: number | null;
             priority?: components["schemas"]["Priority"];
-            /** @description 要求输出成果文件（ADR-024 多选）：去重（首次出现保序）；缺省 / 空数组 = 不要求 */
+            /** @description 要求输出成果文件（ADR-024 多选，≤ 10 类）：去重（首次出现保序）；缺省 / 空数组 = 不要求 */
             deliverableTypes?: components["schemas"]["DocType"][];
             note?: string | null;
         };
         /** @description 从任务模板生成任务（批量；同一节点在项目里只留一份） */
         TaskCreateFromTemplateBody: {
             templateId: components["schemas"]["Uuid"];
-            /** @description 只添加模板内的部分节点（缺省 = 模板全部节点）；必须是该模板包含的节点，否则 400 */
+            /** @description 只添加模板内的部分节点（≤ 500 个；缺省 = 模板全部节点）；必须是该模板包含的节点，否则 400 */
             nodeIds?: components["schemas"]["Uuid"][];
             /**
              * @description 已存在的节点跳过并计入 skipped（默认 true）；false 时遇重复返回 409
              * @default true
              */
             skipExisting: boolean;
-            /** @description 任务负责人：缺省 = 「待分配」（2026-09-24 业务口径修订：不再兜底项目经理）；显式 [] 同义 */
+            /** @description 任务负责人（≤ 200 位）：缺省 = 「待分配」（2026-09-24 业务口径修订：不再兜底项目经理）；显式 [] 同义 */
             ownerIds?: components["schemas"]["Uuid"][];
             /** @description 起始插入位次（A20）：整批按模板内顺序依次落位（第 k 条 = sortIndex + k）；越界 / 缺省 = 追加到组尾 */
             sortIndex?: number;
@@ -12205,7 +12210,7 @@ export interface components {
             title?: string;
             /** @description 任务描述（英文；锁定项；null = 清空） */
             titleEn?: string | null;
-            /** @description 要求输出成果文件（锁定项，多选去重、首次出现保序）：修正后即刻成为完成门禁依据（有节点任务仍以节点 node_requirements 为准，本字段只作无节点任务兜底） */
+            /** @description 要求输出成果文件（锁定项，≤ 10 类，多选去重、首次出现保序）：修正后即刻成为完成门禁依据（有节点任务仍以节点 node_requirements 为准，本字段只作无节点任务兜底） */
             deliverableTypes?: components["schemas"]["DocType"][];
         };
         /** @description 任务节点库条目（任务模板的节点来源） */
@@ -12298,7 +12303,7 @@ export interface components {
             name: string;
             stageKey: components["schemas"]["StageKey"];
             /**
-             * @description 任务节点库内的节点 id，顺序即模板内顺序；允许空（新建后逐步添加）；重复 id 返回 400
+             * @description 任务节点库内的节点 id（≤ 500 个），顺序即模板内顺序；允许空（新建后逐步添加）；重复 id 返回 400
              * @default []
              */
             nodeIds: components["schemas"]["Uuid"][];
@@ -12325,7 +12330,7 @@ export interface components {
         /** @description 编辑模板（改名 / 节点全量替换；乐观锁 version 必传） */
         TaskTemplateUpdateBody: {
             name?: string;
-            /** @description 全量替换节点顺序（含增删 / 重排）；同一模板内按 id 去重，重复 id 返回 400 */
+            /** @description 全量替换节点顺序（≤ 500 个，含增删 / 重排）；同一模板内按 id 去重，重复 id 返回 400 */
             nodeIds?: components["schemas"]["Uuid"][];
             version: components["schemas"]["Version"];
         };
@@ -12339,7 +12344,7 @@ export interface components {
             title?: string;
             /** @description 任务描述（英文；Push 196）：与 title 同一门禁；null = 清空 */
             titleEn?: string | null;
-            /** @description 任务负责人（A23 · Push 136）：不传 = 不改；显式 [] = 置空为「待分配」（卡片拖进「待分配」列）；传数组 = 整体替换、顺序 = 展示顺序 */
+            /** @description 任务负责人（A23 · Push 136）：不传 = 不改；显式 [] = 置空为「待分配」（卡片拖进「待分配」列）；传数组 = 整体替换（≤ 200 位）、顺序 = 展示顺序 */
             ownerIds?: components["schemas"]["Uuid"][];
             /** @description 组内位次（A19 / A20 · Push 124）：把任务移到该组第 N 位（0 起，越界 = 组尾）—— 同组其余任务位次顺延；不传 = 不动顺序 */
             sortIndex?: number;
@@ -12349,7 +12354,7 @@ export interface components {
             estimatedDays?: number | null;
             headcount?: number | null;
             priority?: components["schemas"]["Priority"];
-            /** @description 要求输出成果文件（2026-10-08 业务口径「文件输出成果也要可以选择」）：常规编辑开放 —— 传数组 = 整体替换（去重、首次出现保序）；显式 [] = 不要求；缺省 = 不改 */
+            /** @description 要求输出成果文件（2026-10-08 业务口径「文件输出成果也要可以选择」）：常规编辑开放 —— 传数组 = 整体替换（≤ 10 类，去重、首次出现保序）；显式 [] = 不要求；缺省 = 不改 */
             deliverableTypes?: components["schemas"]["DocType"][];
             note?: string | null;
             version: components["schemas"]["Version"];

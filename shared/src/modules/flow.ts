@@ -1,6 +1,9 @@
 import { z } from "../zod.ts";
 import { DateTimeSchema, DateOnlySchema, UuidSchema, VersionSchema } from "../common/conventions.ts";
-import { BlueprintStatusSchema, DocTypeSchema, NodeOriginSchema, NodeStatusSchema, StageKeySchema, StageStatusSchema } from "../common/dicts.ts";
+import { BlueprintStatusSchema, DocTypeSchema, NodeOriginSchema, NodeStatusSchema, STAGE_KEYS, StageKeySchema, StageStatusSchema } from "../common/dicts.ts";
+
+const BLUEPRINT_STAGE_NODE_LIMIT = 200;
+const BLUEPRINT_NODE_CONSTRAINT_LIMIT = 20;
 
 /**
  * 蓝图与流程节点契约（v0.2 §3）。
@@ -32,7 +35,9 @@ export const BlueprintNodeSchema = z
     key: z.string().openapi({ example: "design.mech", description: "节点稳定键；一经发布不可改名（改名 = 新增 + 废弃）" }),
     name: z.string().openapi({ example: "机械设计图纸" }),
     seq: z.number().int().positive().openapi({ description: "排序（建议 10/20/30 步长，便于插入）" }),
-    constraints: z.array(BlueprintConstraintSchema).default([]),
+    constraints: z.array(BlueprintConstraintSchema).max(BLUEPRINT_NODE_CONSTRAINT_LIMIT).default([]).openapi({
+      description: "节点约束（≤ 20 条）",
+    }),
   })
   .openapi("BlueprintNode", { description: "每个节点至少一类约束（校验规则见 v0.2 §3.4）" });
 
@@ -41,7 +46,7 @@ export const BlueprintStageSchema = z
     key: StageKeySchema,
     name: z.string(),
     seq: z.number().int().positive(),
-    nodes: z.array(BlueprintNodeSchema).min(1),
+    nodes: z.array(BlueprintNodeSchema).min(1).max(BLUEPRINT_STAGE_NODE_LIMIT).openapi({ description: "阶段节点（1~200 个）" }),
   })
   .openapi("BlueprintStage");
 
@@ -57,7 +62,7 @@ export const BlueprintSchema = z
       .optional()
       .openapi({ description: "所属项目类型（ADR-019：按项目类型各一份，default 为兜底模板）；缺省 = 通用" }),
     updatedAt: DateTimeSchema,
-    stages: z.array(BlueprintStageSchema).min(1),
+    stages: z.array(BlueprintStageSchema).min(1).max(STAGE_KEYS.length).openapi({ description: "蓝图阶段（1~9 个，键取九阶段字典）" }),
   })
   .openapi("Blueprint", { description: "自建蓝图 JSON（v0.2 §3.2 + ADR-019）；导入校验 = schema + 引用 + 幂等" });
 
