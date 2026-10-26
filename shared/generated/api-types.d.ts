@@ -9776,10 +9776,8 @@ export interface components {
         ActorPermissions: {
             userId: components["schemas"]["Uuid"];
             /**
-             * @description 兼容旧系统管理员硬检查的固定基线，不读取 user_roles
-             * @example [
-             *       "admin"
-             *     ]
+             * @description 遗留字段，固定为空；不读取 user_roles，不参与授权或管理员判定
+             * @example []
              */
             roleCodes: string[];
             /** @description 固定全量数据范围基线；实际项目范围由部门规则收窄 */

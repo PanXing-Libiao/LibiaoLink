@@ -22,7 +22,7 @@
   - 无项目路径参数的路由（列表 / facets / 创建）→ 过滤挂到 request，由 @ProjectScope() 取用。
 - 历史矩阵种子：#6b `database/seeds/role-permissions.mjs`（六角色 × 24 键）；2026-10-26 起仅保留为历史数据，不参与业务授权。
 
-- **部门权限唯一裁定（2026-10-26）**：`RoleService.getActorAuthorization()` 固定返回全量能力基线（`roleCodes=[admin]` 兼容旧硬检查 + `dataScopes=[all]` + 契约全量权限位）；项目范围、编辑 / 仅浏览与写入口由 `GROUP_ACCESS_ENFORCED` 下的部门规则统一裁决。画像缓存（TTL 10s + `invalidate`）与 404 / 403 语义不变。
+- **部门权限唯一裁定（2026-10-26）**：`RoleService.getActorAuthorization()` 固定返回全量能力基线（遗留 `roleCodes=[]` + `dataScopes=[all]` + 契约全量权限位）；项目范围、编辑 / 仅浏览与写入口由 `GROUP_ACCESS_ENFORCED` 下的部门规则统一裁决。管理员硬闸统一调用 `PermissionService.canManageGroupAccess()`，不得再以 `roleCodes.includes("admin")` 判断。画像缓存（TTL 10s + `invalidate`）与 404 / 403 语义不变。
 
 ## 部门访问规则与系统管理员（0068 / 0069 / 0070 / 0072 / 0073 / 0074）
 
@@ -44,7 +44,7 @@
 
 - 依赖方向：permission → identity（组织与全量能力基线；部门规则在本模块内裁决）。project / task / blueprint 反向依赖本模块（守卫与策略出口），**本模块不 import project / task**（可见性判定直接读名册与节点表，避免循环；check:boundaries 无违规）。
 - 名册维护（增删改）与节点维护仍属 project 模块；本模块只读这两张表做判定。
-- C3-09 当前已落地部门访问规则页（项目范围 / 适用人员 / 编辑或仅浏览，规则可保存；页面恒全开，开关开启时无适用 edit 的非管理员只读；`GROUP_ACCESS_ENFORCED` 默认关闭），角色模板与权限自检报告仍待做；临时授权（C3-06）不做。越权尝试留痕已随 h7 落地（403 / 项目域 404 → `audit_logs` 的 `result=denied` 行，检索 `GET /api/v1/audit-logs?result=denied`）；告警推送随 M5 通知模块。
+- C3-09 当前已落地部门访问规则页（项目范围 / 适用人员 / 编辑或仅浏览，规则可保存；页面恒全开，开关开启时无适用 edit 的非管理员只读；`GROUP_ACCESS_ENFORCED` 本地默认关闭；生产环境启动时强制要求 `true`），角色模板与权限自检报告仍待做；临时授权（C3-06）不做。越权尝试留痕已随 h7 落地（403 / 项目域 404 → `audit_logs` 的 `result=denied` 行，检索 `GET /api/v1/audit-logs?result=denied`）；告警推送随 M5 通知模块。
 
 ## 差异与后续（待复核）
 

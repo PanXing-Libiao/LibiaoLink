@@ -11,7 +11,7 @@ import { RoleRepository, type RoleRow } from "./role.repository.js";
  */
 export interface ActorAuthorization {
   userId: string;
-  /** 兼容旧系统管理员硬检查；固定为 ["admin"]，不再代表 user_roles 绑定。 */
+  /** 遗留字段；固定为空，不参与任何授权或管理员判定。 */
   roleCodes: string[];
   /** 固定为 ["all"]；实际项目范围由部门规则再次收窄。 */
   dataScopes: DataScope[];
@@ -22,12 +22,12 @@ export interface ActorAuthorization {
 /**
  * 2026-10-26 部门权限收口：旧角色权限不再参与业务授权判定。
  * 画像固定为全量功能权限位 + dataScope=all，最终项目范围、编辑 / 仅浏览与资源可见性由部门规则裁决。
- * `admin` 角色码仅作为旧系统管理员硬检查的兼容标记保留；角色表 / 绑定数据不迁移、不删除。
+ * `roleCodes` 保留为空数组仅为契约兼容；系统管理员统一由部门权限画像判定，角色表 / 绑定数据不迁移、不删除。
  */
 export function fullCapabilityAuthorization(userId: string): ActorAuthorization {
   return {
     userId,
-    roleCodes: ["admin"],
+    roleCodes: [],
     dataScopes: ["all"],
     permissionKeys: [...PERMISSION_KEYS],
   };

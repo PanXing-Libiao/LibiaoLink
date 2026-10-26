@@ -877,10 +877,8 @@ export class FileService {
 
   /** 彻底删除仅系统管理员（权限模型落地前的临时口径，A4-12）。 */
   private async assertAdmin(actorId: string, action: string): Promise<void> {
-    const permissions = await this.permission.permissionsOf(actorId);
-    if (!permissions.roleCodes.includes("admin")) {
-      throw new AppError("FORBIDDEN", "仅系统管理员可" + action);
-    }
+    if (await this.permission.canManageGroupAccess(actorId)) return;
+    throw new AppError("FORBIDDEN", "仅系统管理员可" + action);
   }
 
   /**

@@ -93,7 +93,7 @@ export type AuditScope = z.infer<typeof AuditScopeSchema>;
 export const ActorPermissionsSchema = z
   .object({
     userId: UuidSchema,
-    roleCodes: z.array(z.string()).openapi({ example: ["admin"], description: "兼容旧系统管理员硬检查的固定基线，不读取 user_roles" }),
+    roleCodes: z.array(z.string()).openapi({ example: [], description: "遗留字段，固定为空；不读取 user_roles，不参与授权或管理员判定" }),
     dataScopes: z.array(DataScopeSchema).openapi({ description: "固定全量数据范围基线；实际项目范围由部门规则收窄" }),
     permissionKeys: z.array(PermissionKeySchema).openapi({ description: "全量功能权限位基线；写能力由 groupReadOnly / 部门规则再裁决" }),
     groupKeys: z.array(z.string()).optional().openapi({ description: "当前账号的 Casdoor 群组键（owner/name；按登录或目录同步落地）" }),

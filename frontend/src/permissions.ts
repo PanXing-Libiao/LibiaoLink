@@ -21,7 +21,7 @@ export type GroupAccessLevel = "edit" | "view";
 export type AuditScope = "all" | "project_manager" | "self";
 
 export type MyPermissions = {
-  /** 兼容旧系统管理员硬检查的固定基线，不代表 user_roles 绑定。 */
+  /** 遗留字段；服务端固定为空，不代表用户角色，不参与任何授权判定。 */
   roleCodes: string[];
   /** 全量功能权限基线；写能力另由部门规则的编辑 / 仅浏览档位裁决。 */
   permissionKeys: string[];

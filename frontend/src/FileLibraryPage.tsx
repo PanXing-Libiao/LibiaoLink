@@ -59,7 +59,7 @@ import { EMPTY_FILES_QUERY, EMPTY_LIST_QUERY, type FilesQueryState, type FilesTa
  *   ① 系统现有文件 = 四档在库状态（草稿 / 已定档 / 已变更 / 已归档），显式 filter[status]=draft,final,changed,archived
  *      （服务端缺省虽排除回收站，显式给全更不随口径漂移）；
  *   ② 回收站 = filter[status]=recycled，行内可就地「恢复」（回退到进入回收站前的状态）与「彻底删除」
- *      （仅系统管理员渲染入口 —— 服务端按 roleCodes=admin 硬闸，A4-12；非管理员吃 403 兜底）。
+ *      （仅系统管理员渲染入口 —— 服务端按 groupAccessAdmin 硬闸，A4-12；非管理员吃 403 兜底）。
  *
  * 数据面（一期口径 · 前端聚合）：文件列表接口只有项目维度（GET /projects/{id}/files），本页按项目列表逐项目
  * 分页取满再合并（fileApi.fetchProjectFileLibrary），关键字 / 状态筛选下沉到服务端同一套 filter（filter[status] 支持逗号多值）；
@@ -302,7 +302,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
   }, [projects, debouncedKeyword, query.tab, projectIdKey, statusKey, reloadTick]);
 
   // 权限画像（与 AppHeader 共用同一份进程内单飞缓存）：只用来裁决恢复 / 彻底删除入口的渲染 —— 服务端逐请求仍是最终裁决。
-  const isAdmin = permissions !== null && permissions.roleCodes.includes("admin");
+  const isAdmin = permissions?.groupAccessAdmin === true;
   const groupReadOnly = permissions?.groupReadOnly === true;
   const canDeleteProject = !groupReadOnly && hasPermission(permissions, "project.delete");
   const isProjectRecycle = query.tab === "project-recycled";
@@ -434,7 +434,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
     }
   };
 
-  /** 彻底删除（仅系统管理员渲染入口；服务端按 roleCodes=admin 硬闸）：行内二次确认后 POST /files/{id}/purge。 */
+  /** 彻底删除（仅系统管理员渲染入口；服务端按 groupAccessAdmin 硬闸）：行内二次确认后 POST /files/{id}/purge。 */
   const purgeItem = async (file: FileLibraryItem): Promise<void> => {
     if (actionBusy !== null) {
       return;

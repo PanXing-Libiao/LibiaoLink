@@ -9,7 +9,7 @@ import { appendOutbox } from "../../db/outbox.js";
 import { AuditService } from "../admin/index.js";
 import { BlueprintService } from "../blueprint/index.js";
 import { GateService, type StageGateMissingItem } from "../node/index.js";
-import { RoleService } from "../identity/index.js";
+import { PermissionService } from "../permission/index.js";
 import { FlowRepository, type NodeWithRequirements, type ProjectNodeRow, type ProjectStageRow } from "./flow.repository.js";
 import { ProjectMemberRepository } from "./project-member.repository.js";
 import { ProjectRepository, type ProjectViewRow } from "./project.repository.js";
@@ -40,7 +40,7 @@ export class FlowService {
     private readonly members: ProjectMemberRepository,
     private readonly blueprints: BlueprintService,
     private readonly gate: GateService,
-    private readonly roles: RoleService,
+    private readonly permission: PermissionService,
     private readonly audit: AuditService,
   ) {}
 
@@ -495,8 +495,7 @@ export class FlowService {
 
   /** 节点增删 / 阶段推进 / 项目归档的权限：项目经理（manager_ids 任一位）/ 名册项目经理 / 管理员（ADR-020 / A22 / ADR-027）；记录级 404 语义随 h6。 */
   async assertProjectManager(projectId: string, managerIds: readonly string[], actorId: string, action: string): Promise<void> {
-    const authorization = await this.roles.getActorAuthorization(actorId);
-    if (authorization.roleCodes.includes("admin")) return;
+    if (await this.permission.canManageGroupAccess(actorId)) return;
     if (managerIds.includes(actorId)) return;
     const member = await this.members.findByProjectAndUser(projectId, actorId);
     if (member !== null && member.member.roleInProject === "project_manager") return;

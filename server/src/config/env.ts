@@ -317,6 +317,13 @@ export const EnvSchema = z
     if (value.NODE_ENV !== "production") {
       return;
     }
+    if (value.GROUP_ACCESS_ENFORCED !== "true") {
+      context.addIssue({
+        code: "custom",
+        message: "生产环境必须开启 GROUP_ACCESS_ENFORCED=true（否则部门规则不参与裁决，所有登录账号都会获得全量项目范围）",
+        path: ["GROUP_ACCESS_ENFORCED"],
+      });
+    }
     if (value.CASDOOR_CLIENT_ID === "") {
       context.addIssue({ code: "custom", message: "生产环境必须配置 CASDOOR_CLIENT_ID", path: ["CASDOOR_CLIENT_ID"] });
     }

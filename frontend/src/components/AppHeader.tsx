@@ -86,7 +86,7 @@ export function AppHeader({ me, project }: AppHeaderProps) {
   /** 「权限管理」菜单项：群组管理员（关闭群组限制时等价管理员亦可配置）。 */
   const canManageAccess = permissions?.groupAccessAdmin === true;
   /** 「文件库」菜单项（Push 261）：文件库页（#/files）按群组页面权限收敛；
-   *  读面仍按项目可见性放开，「彻底删除」入口在页面内按 admin 角色收敛。 */
+   *  读面仍按项目可见性放开，「彻底删除」入口在页面内按 groupAccessAdmin 收敛。 */
 
   useEffect(() => {
     if (!menuOpen) {
