@@ -767,13 +767,24 @@ describe("PermissionService 群组接入", () => {
       auditScope: "self",
     });
 
-    const empty = serviceWith({
+    const loginOnly = serviceWith({
       groupKeys: ["libiaorobot.com/项目部"],
       rules: [rule({ groupKey: "libiaorobot.com/项目部", projectScope: "none" })],
     });
+    expect(await loginOnly.service.permissionsOf(PROJECT_A)).toMatchObject({
+      groupProjectAccess: "denied",
+      groupProjectScopes: ["none"],
+      groupAccessLevel: "view",
+      auditScope: "self",
+    });
+
+    const empty = serviceWith({
+      groupKeys: ["libiaorobot.com/项目部"],
+      rules: [rule({ groupKey: "libiaorobot.com/项目部", projectScope: "selected", projectIds: [PROJECT_A] })],
+    });
     expect(await empty.service.permissionsOf(PROJECT_A)).toMatchObject({
       groupProjectAccess: "empty",
-      groupProjectScopes: ["none"],
+      groupProjectScopes: ["selected"],
       groupAccessLevel: "view",
       auditScope: "self",
     });
@@ -858,16 +869,23 @@ describe("PermissionService 群组接入", () => {
     expect(await admin.service.canManageBlueprint(PROJECT_A)).toBe(true);
   });
 
-  it("任务节点 / 模板读取对仅登录拒绝，命中规则、管理员或限制关闭放行", async () => {
+  it("任务节点 / 模板读取仅对有项目数据范围的账号放行，管理员或限制关闭恒可读", async () => {
     const denied = serviceWith({ groupKeys: ["libiaorobot.com/项目部"], rules: [] });
     expect(await denied.service.canReadBlueprint(PROJECT_A)).toBe(false);
     await expect(denied.service.assertCanReadBlueprint(PROJECT_A)).rejects.toMatchObject({ code: "FORBIDDEN" });
 
-    const empty = serviceWith({
+    const loginOnly = serviceWith({
       groupKeys: ["libiaorobot.com/项目部"],
       rules: [rule({ groupKey: "libiaorobot.com/项目部", projectScope: "none" })],
     });
-    expect(await empty.service.canReadBlueprint(PROJECT_A)).toBe(true);
+    expect(await loginOnly.service.canReadBlueprint(PROJECT_A)).toBe(false);
+    await expect(loginOnly.service.assertCanReadBlueprint(PROJECT_A)).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    const emptyScope = serviceWith({
+      groupKeys: ["libiaorobot.com/项目部"],
+      rules: [rule({ groupKey: "libiaorobot.com/项目部", projectScope: "selected", projectIds: [PROJECT_A] })],
+    });
+    expect(await emptyScope.service.canReadBlueprint(PROJECT_A)).toBe(true);
 
     const disabled = serviceWith({
       groupKeys: ["libiaorobot.com/项目部"],

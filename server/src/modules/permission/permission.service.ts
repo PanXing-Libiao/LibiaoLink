@@ -175,10 +175,11 @@ export class PermissionService {
     throw new AppError("FORBIDDEN", message ?? "维护任务模板需要编辑权限");
   }
 
-  /** 任务节点 / 模板读取：管理员、限制关闭或命中部门规则的账号可读；仅登录账号拒绝。 */
+  /** 任务节点 / 模板读取：管理员、限制关闭或有项目数据范围的账号可读；仅登录 / none 范围拒绝。 */
   async canReadBlueprint(actorId: string): Promise<boolean> {
     const groupAccess = await this.groupAccessOf(actorId);
-    return !groupAccess.enforced || groupAccess.admin || groupAccess.hasRule;
+    if (!groupAccess.enforced || groupAccess.admin) return true;
+    return hasProjectDataScope(groupAccess);
   }
 
   async assertCanReadBlueprint(actorId: string, message?: string): Promise<void> {
@@ -278,12 +279,17 @@ export class PermissionService {
     projectScope: ProjectScopeFilter,
   ): Promise<GroupProjectAccess> {
     if (!groupAccess.enforced || groupAccess.admin) return "allowed";
+    if (!hasProjectDataScope(groupAccess)) return "denied";
     const hasActiveProject = projectScope.kind === "all"
       ? await this.repository.hasActiveProject()
       : (await this.repository.listActiveProjectIds(projectScope.ids)).length > 0;
-    if (hasActiveProject) return "allowed";
-    return groupAccess.hasRule ? "empty" : "denied";
+    return hasActiveProject ? "allowed" : "empty";
   }
+}
+
+/** 仅 none 范围（或没有规则）= 仅登录；至少一个 all / own / selected 才拥有业务数据读取范围。 */
+function hasProjectDataScope(groupAccess: GroupAccessProfile): boolean {
+  return groupAccess.projectScopes.some((scope) => scope !== "none");
 }
 
 function uniqueIds(ids: readonly string[]): string[] {

@@ -71,7 +71,7 @@ export const GROUP_PROJECT_ACCESS_VALUES = ["allowed", "empty", "denied"] as con
 export const GroupProjectAccessSchema = z
   .enum(GROUP_PROJECT_ACCESS_VALUES)
   .openapi("GroupProjectAccess", {
-    description: "部门项目权限三态：allowed 有可浏览范围 / empty 命中规则但当前无可见项目 / denied 未命中任何部门规则（仅登录）",
+    description: "部门项目权限三态：allowed 有可浏览范围 / empty 有 all、own 或 selected 数据范围但当前无可见项目 / denied 仅登录（无规则或适用规则均为 none）",
   });
 
 export type GroupProjectAccess = z.infer<typeof GroupProjectAccessSchema>;
@@ -101,7 +101,7 @@ export const ActorPermissionsSchema = z
     groupAccessEnforced: z.boolean().optional().openapi({ description: "群组访问限制是否已启用" }),
     groupAccessAdmin: z.boolean().optional().openapi({ description: "当前账号是否可进入群组权限管理页" }),
     groupReadOnly: z.boolean().optional().openapi({ description: "群组访问限制下当前账号是否只读；页面仍全部可见，但业务写接口一律 403" }),
-    groupProjectAccess: GroupProjectAccessSchema.optional().openapi({ description: "部门项目权限三态：allowed / empty / denied；用于业务页面统一空状态" }),
+    groupProjectAccess: GroupProjectAccessSchema.optional().openapi({ description: "部门项目权限三态：allowed / empty / denied；none 规则按仅登录处理，用于业务页面统一空状态" }),
     groupProjectScopes: z.array(GroupAccessProjectScopeSchema).optional().openapi({ description: "当前账号命中的部门项目范围并集：all / own / selected / none；用于空态展示当前权限" }),
     groupAccessLevel: GroupAccessAccessLevelSchema.optional().openapi({ description: "当前账号的部门权限档位：edit 可编辑并浏览 / view 仅浏览；与 groupReadOnly 同源" }),
     auditScope: AuditScopeSchema.optional().openapi({ description: "当前账号操作记录可见范围；所有登录账号至少可查看本人记录" }),
