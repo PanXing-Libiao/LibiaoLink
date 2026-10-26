@@ -91,6 +91,49 @@ export const GroupAccessRuleSchema = z
 
 export type GroupAccessRule = z.infer<typeof GroupAccessRuleSchema>;
 
+/** 部门内个人权限覆盖：命中时替代同部门默认规则，未命中时沿用默认规则。 */
+export const GroupAccessMemberRuleSchema = z
+  .object({
+    groupKey: z.string(),
+    userId: UuidSchema,
+    projectScope: GroupAccessProjectScopeSchema,
+    accessLevel: GroupAccessAccessLevelSchema,
+    projectIds: z.array(UuidSchema),
+    updatedAt: DateTimeSchema,
+  })
+  .openapi("GroupAccessMemberRule", { description: "部门内个人权限覆盖：projectIds 仅 selected 时有值；存在时优先于同部门默认规则" });
+
+export type GroupAccessMemberRule = z.infer<typeof GroupAccessMemberRuleSchema>;
+
+export const GroupAccessMemberRuleInputSchema = z
+  .object({
+    groupKey: z.string().trim().min(1).max(200).openapi({ example: "libiaorobot.com/项目部" }),
+    groupName: z.string().trim().min(1).max(200).optional(),
+    userIds: z.array(UuidSchema).min(1).max(2000),
+    projectScope: GroupAccessProjectScopeSchema,
+    accessLevel: GroupAccessAccessLevelSchema.default("view").openapi({ description: "edit = 可编辑并浏览；view = 仅浏览。projectScope=none 时恒为 view" }),
+    projectIds: z.array(UuidSchema).max(2000).default([]),
+  })
+  .openapi("GroupAccessMemberRuleInput", { description: "保存部门内个人权限覆盖：同一部门可按 userIds 批量写入相同权限，各成员仍保存为独立个人规则；不改变部门默认规则" });
+
+export type GroupAccessMemberRuleInput = z.infer<typeof GroupAccessMemberRuleInputSchema>;
+
+export const GroupAccessMemberRuleDeleteInputSchema = z
+  .object({
+    groupKey: z.string().trim().min(1).max(200),
+    groupName: z.string().trim().min(1).max(200).optional(),
+    userIds: z.array(UuidSchema).min(1).max(2000),
+  })
+  .openapi("GroupAccessMemberRuleDeleteInput", { description: "删除部门内个人权限覆盖并恢复部门默认规则" });
+
+export type GroupAccessMemberRuleDeleteInput = z.infer<typeof GroupAccessMemberRuleDeleteInputSchema>;
+
+export const GroupAccessMemberRuleResponseSchema = z
+  .object({ rules: z.array(GroupAccessMemberRuleSchema) })
+  .openapi("GroupAccessMemberRuleResponse", { description: "保存后的个人权限覆盖列表" });
+
+export type GroupAccessMemberRuleResponse = z.infer<typeof GroupAccessMemberRuleResponseSchema>;
+
 export const GroupAccessGroupSchema = z
   .object({
     groupKey: z.string(),
@@ -98,7 +141,8 @@ export const GroupAccessGroupSchema = z
     parentGroupKey: z.string().nullable().openapi({ description: "上级部门键；null = 根部门" }),
     memberCount: z.number().int().min(0),
     members: z.array(GroupAccessMemberSchema).openapi({ description: "部门直属人员（按姓名 / 工号排序）" }),
-    rule: GroupAccessRuleSchema.nullable(),
+    memberRules: z.array(GroupAccessMemberRuleSchema).openapi({ description: "部门内个人权限覆盖；同一部门不同人员可分别设置" }),
+    rule: GroupAccessRuleSchema.nullable().openapi({ description: "部门默认规则；未单独设置个人权限的成员沿用" }),
   })
   .openapi("GroupAccessGroup", { description: "可配置部门：层级、直属人员与已保存规则；groupKey=__ungrouped__ 为虚拟未分组节点，仅聚合无部门成员关系的账号" });
 

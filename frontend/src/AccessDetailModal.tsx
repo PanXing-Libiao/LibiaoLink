@@ -2,15 +2,17 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   assignGroupAccessAdmin,
+  deleteGroupAccessMemberRules,
   deleteGroupAccessRule,
   revokeGroupAccessAdmin,
+  saveGroupAccessMemberRules,
   saveGroupAccessRule,
   type GroupAccessAccessLevel,
   type GroupAccessAdmin,
   type GroupAccessGroup,
   type GroupAccessMember,
-  type GroupAccessMemberScope,
   type GroupAccessOverview,
+  type GroupAccessProject,
   type GroupAccessProjectScope,
 } from "./accessApi";
 import {
@@ -20,6 +22,7 @@ import {
   type AccessPersonSummary,
 } from "./accessDashboardModel";
 import { AccessScopePicker } from "./AccessScopePicker";
+import { effectiveMemberAccess, memberRuleOf } from "./accessRules";
 import { useT, type TextKey } from "./i18n";
 import { lockBodyScroll } from "./scrollLock";
 import { useFocusTrap } from "./components/useFocusTrap";
@@ -443,6 +446,45 @@ function SelectionCheckbox({ checked, indeterminate, disabled = false, onChange 
   return <input ref={ref} type="checkbox" checked={checked} disabled={disabled} onChange={onChange} className="h-4 w-4 shrink-0 cursor-pointer rounded border-zinc-300 accent-blue-600 disabled:cursor-not-allowed disabled:opacity-40" />;
 }
 
+function ProjectSelectionList({
+  projects,
+  query,
+  selectedIds,
+  t,
+  onQueryChange,
+  onToggle,
+}: {
+  projects: readonly GroupAccessProject[];
+  query: string;
+  selectedIds: readonly string[];
+  t: (key: TextKey, params?: Record<string, string | number>) => string;
+  onQueryChange: (value: string) => void;
+  onToggle: (projectId: string) => void;
+}) {
+  return (
+    <div className="mt-2.5 overflow-hidden rounded-xl border border-zinc-200">
+      <div className="flex items-center gap-2 border-b border-zinc-100 bg-zinc-50/70 px-2.5 py-1.5">
+        <input
+          value={query}
+          onChange={(event) => { onQueryChange(event.target.value); }}
+          placeholder={t("access.projectSearch")}
+          className="min-w-0 flex-1 bg-transparent text-[11px] outline-none placeholder:text-zinc-400"
+        />
+        <span className="shrink-0 text-[10px] text-zinc-500">{t("access.selectedCount", { n: selectedIds.length })}</span>
+      </div>
+      <div className="scrollbar-hidden max-h-40 overflow-y-auto p-1.5">
+        {projects.length === 0 ? <p className="px-2 py-3 text-[10px] text-zinc-400">{t("access.noProjects")}</p> : projects.map((project) => (
+          <label key={project.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-[11px] text-zinc-700 transition hover:bg-zinc-50">
+            <input type="checkbox" checked={selectedIds.includes(project.id)} onChange={() => { onToggle(project.id); }} className="h-3.5 w-3.5 accent-blue-600" />
+            <span className="shrink-0 font-mono text-[9px] text-zinc-400">{project.code}</span>
+            <span className="min-w-0 truncate">{project.name}</span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function DepartmentEditor({ group, data, onChanged, onNotify, onClose }: {
   group: GroupAccessGroup;
   data: GroupAccessOverview;
@@ -451,97 +493,131 @@ function DepartmentEditor({ group, data, onChanged, onNotify, onClose }: {
   onClose: () => void;
 }) {
   const t = useT();
-  const [projectScope, setProjectScope] = useState<GroupAccessProjectScope>(group.rule?.projectScope ?? "none");
-  const [accessLevel, setAccessLevel] = useState<GroupAccessAccessLevel>(group.rule?.accessLevel ?? "view");
-  const [projectIds, setProjectIds] = useState<string[]>(group.rule?.projectIds ?? []);
-  const [memberScope, setMemberScope] = useState<GroupAccessMemberScope>(group.rule?.memberScope ?? "all");
-  const [memberUserIds, setMemberUserIds] = useState<string[]>(group.rule?.memberUserIds ?? []);
+  const [departmentProjectScope, setDepartmentProjectScope] = useState<GroupAccessProjectScope>(group.rule?.projectScope ?? "none");
+  const [departmentAccessLevel, setDepartmentAccessLevel] = useState<GroupAccessAccessLevel>(group.rule?.accessLevel ?? "view");
+  const [departmentProjectIds, setDepartmentProjectIds] = useState<string[]>(group.rule?.projectIds ?? []);
+  const [personalProjectScope, setPersonalProjectScope] = useState<GroupAccessProjectScope>(group.rule?.projectScope ?? "none");
+  const [personalAccessLevel, setPersonalAccessLevel] = useState<GroupAccessAccessLevel>(group.rule?.accessLevel ?? "view");
+  const [personalProjectIds, setPersonalProjectIds] = useState<string[]>(group.rule?.projectIds ?? []);
+  const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [memberQuery, setMemberQuery] = useState("");
-  const [projectQuery, setProjectQuery] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [departmentProjectQuery, setDepartmentProjectQuery] = useState("");
+  const [personalProjectQuery, setPersonalProjectQuery] = useState("");
+  const [savingDepartment, setSavingDepartment] = useState(false);
+  const [deletingDepartment, setDeletingDepartment] = useState(false);
+  const [savingMembers, setSavingMembers] = useState(false);
+  const [restoringMembers, setRestoringMembers] = useState(false);
   const [adminBusyId, setAdminBusyId] = useState<string | null>(null);
   const adminByUserId = new Map(data.admins.map((admin) => [admin.userId, admin] as const));
+  const memberRuleSignature = group.memberRules
+    .map((rule) => [rule.userId, rule.updatedAt, rule.projectScope, rule.accessLevel, rule.projectIds.join(",")].join(":"))
+    .join("|");
 
   useEffect(() => {
-    setProjectScope(group.rule?.projectScope ?? "none");
-    setAccessLevel(group.rule?.accessLevel ?? "view");
-    setProjectIds(group.rule?.projectIds ?? []);
-    setMemberScope(group.rule?.memberScope ?? "all");
-    setMemberUserIds(group.rule?.memberUserIds ?? []);
+    setDepartmentProjectScope(group.rule?.projectScope ?? "none");
+    setDepartmentAccessLevel(group.rule?.accessLevel ?? "view");
+    setDepartmentProjectIds(group.rule?.projectIds ?? []);
+    setPersonalProjectScope(group.rule?.projectScope ?? "none");
+    setPersonalAccessLevel(group.rule?.accessLevel ?? "view");
+    setPersonalProjectIds(group.rule?.projectIds ?? []);
+    setSelectedMemberIds([]);
     setMemberQuery("");
-    setProjectQuery("");
-  }, [group.groupKey, group.rule?.updatedAt]);
+    setDepartmentProjectQuery("");
+    setPersonalProjectQuery("");
+  }, [group.groupKey, group.rule?.updatedAt, memberRuleSignature]);
 
   const members = group.members;
-  const selectedMemberIds = new Set(memberScope === "all" ? members.map((member) => member.userId) : memberUserIds);
-  const selectedMemberCount = members.filter((member) => selectedMemberIds.has(member.userId)).length;
+  const selectedMemberIdSet = new Set(selectedMemberIds.filter((userId) => members.some((member) => member.userId === userId)));
+  const selectedMemberCount = members.filter((member) => selectedMemberIdSet.has(member.userId)).length;
   const allMembersSelected = members.length > 0 && selectedMemberCount === members.length;
   const someMembersSelected = selectedMemberCount > 0 && !allMembersSelected;
+  const selectedHasPersonalRule = members.some(
+    (member) => selectedMemberIdSet.has(member.userId) && memberRuleOf(group, member.userId) !== null,
+  );
   const normalizedMemberQuery = memberQuery.trim().toLowerCase();
   const visibleMembers = members.filter((member) => normalizedMemberQuery === "" || (member.displayName + " " + member.username + " " + (member.email ?? "")).toLowerCase().includes(normalizedMemberQuery));
-  const selectedMemberNamePreview = members.filter((member) => selectedMemberIds.has(member.userId)).slice(0, 3).map((member) => member.displayName).join(" · ");
-  const normalizedProjectQuery = projectQuery.trim().toLowerCase();
-  const visibleProjects = data.projects.filter((project) => normalizedProjectQuery === "" || (project.code + " " + project.name).toLowerCase().includes(normalizedProjectQuery));
+  const normalizedDepartmentProjectQuery = departmentProjectQuery.trim().toLowerCase();
+  const visibleDepartmentProjects = data.projects.filter((project) => normalizedDepartmentProjectQuery === "" || (project.code + " " + project.name).toLowerCase().includes(normalizedDepartmentProjectQuery));
+  const normalizedPersonalProjectQuery = personalProjectQuery.trim().toLowerCase();
+  const visiblePersonalProjects = data.projects.filter((project) => normalizedPersonalProjectQuery === "" || (project.code + " " + project.name).toLowerCase().includes(normalizedPersonalProjectQuery));
+
+  function setPersonalFromDepartment(): void {
+    setPersonalProjectScope(group.rule?.projectScope ?? "none");
+    setPersonalAccessLevel(group.rule?.accessLevel ?? "view");
+    setPersonalProjectIds(group.rule?.projectIds ?? []);
+  }
+
+  function setPersonalFromEffective(userId: string): void {
+    const effective = effectiveMemberAccess(group, userId);
+    setPersonalProjectScope(effective.projectScope);
+    setPersonalAccessLevel(effective.accessLevel);
+    setPersonalProjectIds(effective.projectIds);
+  }
 
   function toggleAllMembers(): void {
     if (members.length === 0) return;
     if (allMembersSelected) {
-      setMemberScope("selected");
-      setMemberUserIds([]);
+      setSelectedMemberIds([]);
+      setPersonalFromDepartment();
       return;
     }
-    setMemberScope("all");
-    setMemberUserIds([]);
+    setSelectedMemberIds(members.map((member) => member.userId));
+    setPersonalFromEffective(members[0]?.userId ?? "");
   }
 
   function toggleMember(userId: string): void {
-    const next = new Set(selectedMemberIds);
+    const next = new Set(selectedMemberIdSet);
+    const wasEmpty = next.size === 0;
     if (next.has(userId)) next.delete(userId);
     else next.add(userId);
-    if (members.length > 0 && members.every((member) => next.has(member.userId))) {
-      setMemberScope("all");
-      setMemberUserIds([]);
-      return;
-    }
-    setMemberScope("selected");
-    setMemberUserIds(members.filter((member) => next.has(member.userId)).map((member) => member.userId));
+    setSelectedMemberIds(members.filter((member) => next.has(member.userId)).map((member) => member.userId));
+    if (next.size === 0) setPersonalFromDepartment();
+    else if (wasEmpty) setPersonalFromEffective(userId);
   }
 
-  function changeScope(next: { projectScope: GroupAccessProjectScope; accessLevel: GroupAccessAccessLevel }): void {
-    setProjectScope(next.projectScope);
-    setAccessLevel(next.projectScope === "none" ? "view" : next.accessLevel);
+  function changeDepartmentScope(next: { projectScope: GroupAccessProjectScope; accessLevel: GroupAccessAccessLevel }): void {
+    setDepartmentProjectScope(next.projectScope);
+    setDepartmentAccessLevel(next.projectScope === "none" ? "view" : next.accessLevel);
   }
 
-  function toggleProject(projectId: string): void {
-    setProjectIds((current) => current.includes(projectId) ? current.filter((id) => id !== projectId) : current.concat(projectId));
+  function changePersonalScope(next: { projectScope: GroupAccessProjectScope; accessLevel: GroupAccessAccessLevel }): void {
+    setPersonalProjectScope(next.projectScope);
+    setPersonalAccessLevel(next.projectScope === "none" ? "view" : next.accessLevel);
   }
 
-  async function handleSave(): Promise<void> {
-    if (saving || deleting) return;
-    setSaving(true);
+  function toggleDepartmentProject(projectId: string): void {
+    setDepartmentProjectIds((current) => current.includes(projectId) ? current.filter((id) => id !== projectId) : current.concat(projectId));
+  }
+
+  function togglePersonalProject(projectId: string): void {
+    setPersonalProjectIds((current) => current.includes(projectId) ? current.filter((id) => id !== projectId) : current.concat(projectId));
+  }
+
+  async function handleSaveDepartment(): Promise<void> {
+    if (savingDepartment || deletingDepartment) return;
+    setSavingDepartment(true);
     try {
       await saveGroupAccessRule({
         groupKey: group.groupKey,
-        projectScope,
-        accessLevel: projectScope === "none" ? "view" : accessLevel,
-        projectIds: projectScope === "selected" ? projectIds : [],
-        memberScope,
-        memberUserIds: memberScope === "selected" ? memberUserIds : [],
+        projectScope: departmentProjectScope,
+        accessLevel: departmentProjectScope === "none" ? "view" : departmentAccessLevel,
+        projectIds: departmentProjectScope === "selected" ? departmentProjectIds : [],
+        memberScope: "all",
+        memberUserIds: [],
       });
       onNotify("ok", t("access.saved"));
       await onChanged();
     } catch (error: unknown) {
       onNotify("error", t("access.saveFailed", { message: error instanceof Error ? error.message : String(error) }));
     } finally {
-      setSaving(false);
+      setSavingDepartment(false);
     }
   }
 
-  async function handleDelete(): Promise<void> {
-    if (saving || deleting || group.rule === null) return;
+  async function handleDeleteDepartment(): Promise<void> {
+    if (savingDepartment || deletingDepartment || group.rule === null) return;
     if (!window.confirm(t("access.confirmDelete"))) return;
-    setDeleting(true);
+    setDeletingDepartment(true);
     try {
       await deleteGroupAccessRule(group.groupKey);
       onNotify("ok", t("access.deleted"));
@@ -550,7 +626,42 @@ function DepartmentEditor({ group, data, onChanged, onNotify, onClose }: {
     } catch (error: unknown) {
       onNotify("error", t("access.deleteFailed", { message: error instanceof Error ? error.message : String(error) }));
     } finally {
-      setDeleting(false);
+      setDeletingDepartment(false);
+    }
+  }
+
+  async function handleSaveMembers(): Promise<void> {
+    if (selectedMemberIds.length === 0 || savingMembers || restoringMembers) return;
+    setSavingMembers(true);
+    try {
+      await saveGroupAccessMemberRules({
+        groupKey: group.groupKey,
+        userIds: selectedMemberIds,
+        projectScope: personalProjectScope,
+        accessLevel: personalProjectScope === "none" ? "view" : personalAccessLevel,
+        projectIds: personalProjectScope === "selected" ? personalProjectIds : [],
+      });
+      onNotify("ok", t("access.personalSaved"));
+      await onChanged();
+    } catch (error: unknown) {
+      onNotify("error", t("access.personalSaveFailed", { message: error instanceof Error ? error.message : String(error) }));
+    } finally {
+      setSavingMembers(false);
+    }
+  }
+
+  async function handleRestoreMembers(): Promise<void> {
+    if (selectedMemberIds.length === 0 || savingMembers || restoringMembers) return;
+    if (!window.confirm(t("access.confirmRestoreDepartmentDefault"))) return;
+    setRestoringMembers(true);
+    try {
+      await deleteGroupAccessMemberRules({ groupKey: group.groupKey, userIds: selectedMemberIds });
+      onNotify("ok", t("access.personalRestored"));
+      await onChanged();
+    } catch (error: unknown) {
+      onNotify("error", t("access.personalRestoreFailed", { message: error instanceof Error ? error.message : String(error) }));
+    } finally {
+      setRestoringMembers(false);
     }
   }
 
@@ -591,16 +702,47 @@ function DepartmentEditor({ group, data, onChanged, onNotify, onClose }: {
               )}
             </div>
             <p className="mt-0.5 truncate text-[10px] text-blue-900/50">{group.groupKey}</p>
-            <p className="mt-1 text-[11px] text-zinc-500">{t("access.detail.directMembers", { n: group.memberCount })}</p>
+            <p className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-zinc-500">
+              <span>{t("access.detail.directMembers", { n: group.memberCount })}</span>
+              {group.memberRules.length === 0 ? null : <span>{t("access.personalRuleCount", { n: group.memberRules.length })}</span>}
+            </p>
           </div>
         </div>
       </div>
 
+      <section data-access-department-default="true" className="rounded-2xl border border-zinc-200 bg-white p-3.5">
+        <SectionHeading title={t("access.departmentDefaultTitle")} detail={t("access.departmentDefaultBadge")} />
+        <p className="mt-1 text-[10px] leading-4 text-zinc-400">{t("access.departmentDefaultHint")}</p>
+        <div className="mt-2.5">
+          <AccessScopePicker projectScope={departmentProjectScope} accessLevel={departmentAccessLevel} onChange={changeDepartmentScope} />
+        </div>
+        {departmentProjectScope === "selected" ? (
+          <ProjectSelectionList
+            projects={visibleDepartmentProjects}
+            query={departmentProjectQuery}
+            selectedIds={departmentProjectIds}
+            t={t}
+            onQueryChange={setDepartmentProjectQuery}
+            onToggle={toggleDepartmentProject}
+          />
+        ) : null}
+        <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+          {group.rule === null ? null : (
+            <button type="button" disabled={deletingDepartment || savingDepartment} onClick={() => { void handleDeleteDepartment(); }} className="mr-auto rounded-lg px-2.5 py-1.5 text-[10px] font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-40">
+              {deletingDepartment ? t("access.deleting") : t("access.deleteDepartmentDefault")}
+            </button>
+          )}
+          <button type="button" disabled={savingDepartment || deletingDepartment} onClick={() => { void handleSaveDepartment(); }} className="rounded-lg bg-zinc-900 px-3.5 py-1.5 text-[11px] font-medium text-white transition hover:bg-zinc-800 disabled:opacity-40">
+            {savingDepartment ? t("access.saving") : t("access.saveDepartmentDefault")}
+          </button>
+        </div>
+      </section>
+
       <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-2">
-        <section className="flex min-h-[300px] flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white">
+        <section data-access-personal-editor="true" className="flex min-h-[280px] flex-col overflow-hidden rounded-2xl border border-indigo-100 bg-white">
           <div className="border-b border-zinc-100 px-3.5 py-3">
-            <SectionHeading title={t("access.memberRuleTitle")} detail={t("access.memberSelectionCount", { selected: selectedMemberCount, total: members.length })} />
-            <p className="mt-1 text-[10px] leading-4 text-zinc-400">{t("access.memberRuleHint")}</p>
+            <SectionHeading title={t("access.personalTitle")} detail={t("access.memberSelectionCount", { selected: selectedMemberCount, total: members.length })} />
+            <p className="mt-1 text-[10px] leading-4 text-zinc-400">{t("access.personalHint")}</p>
             <div className="mt-2">
               <SearchBox value={memberQuery} onChange={setMemberQuery} placeholder={t("access.detail.searchGroupMembers")} />
             </div>
@@ -608,25 +750,26 @@ function DepartmentEditor({ group, data, onChanged, onNotify, onClose }: {
           <div className="border-b border-zinc-100 bg-zinc-50/70 px-3 py-2">
             <label className="flex cursor-pointer items-center gap-2.5">
               <SelectionCheckbox checked={allMembersSelected} indeterminate={someMembersSelected} disabled={members.length === 0} onChange={toggleAllMembers} />
-              <span className="flex h-6 w-6 items-center justify-center rounded-md bg-blue-50 text-blue-600">
+              <span className="flex h-6 w-6 items-center justify-center rounded-md bg-indigo-50 text-indigo-600">
                 <svg viewBox="0 0 24 24" aria-hidden="true" className="h-3.5 w-3.5"><path d="M3.5 6.5A2.5 2.5 0 0 1 6 4h4.1l2 2.2H18A2.5 2.5 0 0 1 20.5 8.7v8.8A2.5 2.5 0 0 1 18 20H6a2.5 2.5 0 0 1-2.5-2.5v-11Z" fill="currentColor" /></svg>
               </span>
-              <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-zinc-700">{group.groupName}</span>
-              {selectedMemberNamePreview === "" ? null : <span className="max-w-[46%] truncate text-[9px] text-zinc-400">{selectedMemberNamePreview}</span>}
+              <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-zinc-700">{t("access.selectAllMembers")}</span>
             </label>
           </div>
           <div className="scrollbar-hidden min-h-0 flex-1 overflow-y-auto p-1.5">
             {visibleMembers.length === 0 ? <EmptyState>{t("access.detail.noGroupMembers")}</EmptyState> : visibleMembers.map((member) => {
               const admin = adminByUserId.get(member.userId);
+              const personal = memberRuleOf(group, member.userId);
               return (
                 <div key={member.userId} data-access-editor-member={member.userId} className="group flex items-center gap-2 rounded-lg px-2 py-2 transition hover:bg-blue-50/55">
                   <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
-                    <SelectionCheckbox checked={selectedMemberIds.has(member.userId)} indeterminate={false} onChange={() => { toggleMember(member.userId); }} />
+                    <SelectionCheckbox checked={selectedMemberIdSet.has(member.userId)} indeterminate={false} onChange={() => { toggleMember(member.userId); }} />
                     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-50 text-[10px] font-semibold text-blue-700">{memberInitial(member)}</span>
                     <span className="min-w-0 flex-1">
-                      <span className="flex min-w-0 items-center gap-1.5">
+                      <span className="flex min-w-0 flex-wrap items-center gap-1.5">
                         <span className="truncate text-[11px] font-medium text-zinc-800">{member.displayName}</span>
                         {member.status === "disabled" ? <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[8px] text-zinc-500">{t("access.memberDisabled")}</span> : null}
+                        {personal === null ? null : <span data-access-personal-badge={member.userId} className="shrink-0 rounded bg-indigo-50 px-1.5 py-0.5 text-[8px] font-medium text-indigo-700">{t("access.personalBadge")}</span>}
                         {admin === undefined ? null : <span className="shrink-0 rounded bg-emerald-50 px-1.5 py-0.5 text-[8px] font-medium text-emerald-700">{t("access.adminBadge")}</span>}
                       </span>
                       <span className="mt-0.5 block truncate text-[9px] text-zinc-400">{[member.username, member.email ?? ""].filter((item) => item !== "").join(" · ")}</span>
@@ -647,57 +790,59 @@ function DepartmentEditor({ group, data, onChanged, onNotify, onClose }: {
               );
             })}
           </div>
-          {memberScope === "selected" && selectedMemberCount === 0 && members.length > 0 ? (
-            <p className="mx-3 my-2 rounded-lg bg-amber-50 px-2.5 py-2 text-[10px] text-amber-700">{t("access.memberSelectionEmpty")}</p>
-          ) : null}
         </section>
 
-        <section className="flex min-h-[300px] flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white">
+        <section className="flex min-h-[280px] flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white">
           <div className="border-b border-zinc-100 px-3.5 py-3">
-            <SectionHeading title={t("access.projectsTitle")} detail={t("access.detail.projectCount", { n: projectScope === "selected" ? projectIds.length : 0 })} />
-            <p className="mt-1 text-[10px] leading-4 text-zinc-400">{t("access.projectsHint")}</p>
-          </div>
-          <div className="border-b border-zinc-100 p-3">
-            <AccessScopePicker
-              projectScope={projectScope}
-              accessLevel={accessLevel}
-              onChange={changeScope}
+            <SectionHeading
+              title={t("access.personalSelectedSettings", { n: selectedMemberCount })}
+              detail={selectedMemberCount === 0 ? undefined : selectedHasPersonalRule ? t("access.personalBadge") : t("access.inheritDepartmentDefault")}
             />
+            <p className="mt-1 text-[10px] leading-4 text-zinc-400">{t("access.personalHint")}</p>
           </div>
-          {projectScope === "selected" ? (
-            <div className="flex min-h-0 flex-1 flex-col">
-              <div className="px-3 pt-2.5">
-                <SearchBox value={projectQuery} onChange={setProjectQuery} placeholder={t("access.projectSearch")} />
-              </div>
-              <div className="scrollbar-hidden min-h-0 flex-1 overflow-y-auto p-2">
-                {visibleProjects.length === 0 ? <EmptyState>{t("access.noProjects")}</EmptyState> : visibleProjects.map((project) => (
-                  <label key={project.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-[11px] text-zinc-700 transition hover:bg-zinc-50">
-                    <input type="checkbox" checked={projectIds.includes(project.id)} onChange={() => { toggleProject(project.id); }} className="h-3.5 w-3.5 accent-blue-600" />
-                    <span className="shrink-0 font-mono text-[9px] text-zinc-400">{project.code}</span>
-                    <span className="min-w-0 truncate">{project.name}</span>
-                  </label>
-                ))}
-              </div>
+          {selectedMemberCount === 0 ? (
+            <div className="flex min-h-0 flex-1 items-center justify-center p-5">
+              <p className="max-w-xs text-center text-[11px] leading-5 text-zinc-400">{t("access.personalEmpty")}</p>
             </div>
           ) : (
-            <div className="flex min-h-0 flex-1 items-center justify-center p-5">
-              <p className="max-w-xs text-center text-[11px] leading-5 text-zinc-400">{t(projectScope === "all" ? "access.scope.all" : projectScope === "own" ? "access.scope.own" : "access.scope.none")}</p>
+            <div className="scrollbar-hidden min-h-0 flex-1 overflow-y-auto p-3">
+              <AccessScopePicker projectScope={personalProjectScope} accessLevel={personalAccessLevel} onChange={changePersonalScope} />
+              {personalProjectScope === "selected" ? (
+                <ProjectSelectionList
+                  projects={visiblePersonalProjects}
+                  query={personalProjectQuery}
+                  selectedIds={personalProjectIds}
+                  t={t}
+                  onQueryChange={setPersonalProjectQuery}
+                  onToggle={togglePersonalProject}
+                />
+              ) : null}
+              <div className="mt-3 flex flex-wrap items-center justify-end gap-2 border-t border-zinc-100 pt-3">
+                <button
+                  type="button"
+                  disabled={!selectedHasPersonalRule || restoringMembers || savingMembers}
+                  onClick={() => { void handleRestoreMembers(); }}
+                  className="mr-auto rounded-lg px-2.5 py-1.5 text-[10px] font-medium text-zinc-600 transition hover:bg-zinc-100 disabled:opacity-40"
+                >
+                  {restoringMembers ? t("access.restoring") : t("access.restoreDepartmentDefault")}
+                </button>
+                <button
+                  type="button"
+                  disabled={savingMembers || restoringMembers}
+                  onClick={() => { void handleSaveMembers(); }}
+                  className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-[11px] font-medium text-white transition hover:bg-indigo-700 disabled:opacity-40"
+                >
+                  {savingMembers ? t("access.saving") : t("access.savePersonalRules")}
+                </button>
+              </div>
             </div>
           )}
         </section>
       </div>
 
       <div className="flex flex-wrap items-center justify-end gap-2 border-t border-zinc-100 pt-3">
-        {group.rule === null ? null : (
-          <button type="button" disabled={deleting || saving} onClick={() => { void handleDelete(); }} className="mr-auto rounded-xl px-3 py-2 text-[11px] font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-50">
-            {deleting ? t("access.deleting") : t("access.deleteRule")}
-          </button>
-        )}
         <button type="button" onClick={onClose} className="rounded-xl border border-zinc-200 px-4 py-2 text-[11px] font-medium text-zinc-600 transition hover:bg-zinc-50">
           {t("access.detail.close")}
-        </button>
-        <button type="button" disabled={saving || deleting} onClick={() => { void handleSave(); }} className="rounded-xl bg-zinc-900 px-5 py-2 text-xs font-medium text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-zinc-800 hover:shadow-md disabled:translate-y-0 disabled:opacity-50">
-          {saving ? t("access.saving") : t("access.save")}
         </button>
       </div>
     </div>

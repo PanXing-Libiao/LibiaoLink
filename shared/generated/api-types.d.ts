@@ -5750,6 +5750,140 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/access/member-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** 保存部门内个人权限覆盖（仅权限管理员；同一部门不同人员可分别设置） */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["GroupAccessMemberRuleInput"];
+                };
+            };
+            responses: {
+                /** @description 保存后的个人权限覆盖 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GroupAccessMemberRuleResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        /** 删除部门内个人权限覆盖并恢复部门默认（仅权限管理员） */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["GroupAccessMemberRuleDeleteInput"];
+                };
+            };
+            responses: {
+                /** @description 已恢复部门默认 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/access/admins": {
         parameters: {
             query?: never;
@@ -10845,6 +10979,8 @@ export interface components {
             memberCount: number;
             /** @description 部门直属人员（按姓名 / 工号排序） */
             members: components["schemas"]["GroupAccessMember"][];
+            /** @description 部门内个人权限覆盖；同一部门不同人员可分别设置 */
+            memberRules: components["schemas"]["GroupAccessMemberRule"][];
             rule: components["schemas"]["GroupAccessRule"];
         };
         /** @description 部门人员（姓名 / 工号 / 邮箱 / 状态） */
@@ -10856,6 +10992,36 @@ export interface components {
             displayName: string;
             email: string | null;
             status: components["schemas"]["UserStatus"];
+        };
+        /** @description 部门内个人权限覆盖：projectIds 仅 selected 时有值；存在时优先于同部门默认规则 */
+        GroupAccessMemberRule: {
+            groupKey: string;
+            userId: components["schemas"]["Uuid"];
+            projectScope: components["schemas"]["GroupAccessProjectScope"];
+            accessLevel: components["schemas"]["GroupAccessAccessLevel"] & unknown;
+            projectIds: components["schemas"]["Uuid"][];
+            updatedAt: components["schemas"]["DateTime"];
+        };
+        /** @description 删除部门内个人权限覆盖并恢复部门默认规则 */
+        GroupAccessMemberRuleDeleteInput: {
+            groupKey: string;
+            groupName?: string;
+            userIds: components["schemas"]["Uuid"][];
+        };
+        /** @description 保存部门内个人权限覆盖：同一部门可按 userIds 批量写入相同权限，各成员仍保存为独立个人规则；不改变部门默认规则 */
+        GroupAccessMemberRuleInput: {
+            /** @example libiaorobot.com/项目部 */
+            groupKey: string;
+            groupName?: string;
+            userIds: components["schemas"]["Uuid"][];
+            projectScope: components["schemas"]["GroupAccessProjectScope"];
+            accessLevel?: components["schemas"]["GroupAccessAccessLevel"] & unknown;
+            /** @default [] */
+            projectIds: components["schemas"]["Uuid"][];
+        };
+        /** @description 保存后的个人权限覆盖列表 */
+        GroupAccessMemberRuleResponse: {
+            rules: components["schemas"]["GroupAccessMemberRule"][];
         };
         /**
          * @description 部门规则适用人员：all 全部门 / selected 仅勾选人员
@@ -10888,7 +11054,7 @@ export interface components {
          * @enum {string}
          */
         GroupAccessProjectScope: "all" | "own" | "selected" | "none";
-        /** @description 群组访问规则：accessLevel = edit / view；projectIds 仅项目 selected 时有值；memberUserIds 仅人员 selected 时有值 */
+        /** @description 部门默认规则；未单独设置个人权限的成员沿用 */
         GroupAccessRule: {
             groupKey: string;
             groupName: string;
@@ -10930,7 +11096,7 @@ export interface components {
         };
         /** @description 保存后的群组访问规则 */
         GroupAccessRuleResponse: {
-            rule: components["schemas"]["GroupAccessRule"];
+            rule: components["schemas"]["GroupAccessRule"] & unknown;
         };
         /**
          * @description 部门项目权限三态：allowed / empty / denied；none 规则按仅登录处理，用于业务页面统一空状态

@@ -14,8 +14,8 @@ import {
   intersectProjectIds,
   isGroupAccessAdmin,
   parseGroupAccessAdminKeys,
+  effectiveGroupAccessRules,
   resolveGroupAccess,
-  ruleAppliesToMember,
   type GroupAccessProfile,
 } from "./group-access.rules.js";
 import { PermissionRepository, type ProjectAccessContext } from "./permission.repository.js";
@@ -123,7 +123,13 @@ export class PermissionService {
       adminUserIds.includes(actorId) ||
       isGroupAccessAdmin(groupKeys, parseGroupAccessAdminKeys(this.config?.env.GROUP_ACCESS_ADMIN_GROUP_KEYS ?? ""));
     const rules = enforced && !admin
-      ? (await this.repository.listGroupAccessRules(groupKeys)).filter((rule) => ruleAppliesToMember(rule, actorId))
+      ? await (async () => {
+          const [groupRules, memberRules] = await Promise.all([
+            this.repository.listGroupAccessRules(groupKeys),
+            this.repository.listMemberAccessRulesForUser(groupKeys, actorId),
+          ]);
+          return effectiveGroupAccessRules(groupKeys, groupRules, memberRules, actorId);
+        })()
       : [];
     const profile = resolveGroupAccess({ enforced, admin, groupKeys, rules });
     if (entry !== undefined) entry.groupAccess = profile;

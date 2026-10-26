@@ -190,6 +190,9 @@ import { PermissionMeResponseSchema } from "./modules/permissions.ts";
 import {
   GroupAccessAdminInputSchema,
   GroupAccessAdminResponseSchema,
+  GroupAccessMemberRuleDeleteInputSchema,
+  GroupAccessMemberRuleInputSchema,
+  GroupAccessMemberRuleResponseSchema,
   GroupAccessOverviewSchema,
   GroupAccessRuleInputSchema,
   GroupAccessRuleResponseSchema,
@@ -1431,6 +1434,36 @@ export function buildOpenApiDocument() {
     request: { query: z.object({ groupKey: z.string().trim().min(1).max(200) }) },
     responses: {
       204: { description: "已删除" },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "put",
+    path: "/api/v1/access/member-rules",
+    tags: ["access"],
+    summary: "保存部门内个人权限覆盖（仅权限管理员；同一部门不同人员可分别设置）",
+    request: { body: json(GroupAccessMemberRuleInputSchema) },
+    responses: {
+      200: { description: "保存后的个人权限覆盖", ...json(GroupAccessMemberRuleResponseSchema) },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "delete",
+    path: "/api/v1/access/member-rules",
+    tags: ["access"],
+    summary: "删除部门内个人权限覆盖并恢复部门默认（仅权限管理员）",
+    request: { body: json(GroupAccessMemberRuleDeleteInputSchema) },
+    responses: {
+      204: { description: "已恢复部门默认" },
       400: commonErrors[400],
       401: commonErrors[401],
       403: commonErrors[403],

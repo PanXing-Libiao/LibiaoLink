@@ -4633,6 +4633,13 @@
             },
             "description": "部门直属人员（按姓名 / 工号排序）"
           },
+          "memberRules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupAccessMemberRule"
+            },
+            "description": "部门内个人权限覆盖；同一部门不同人员可分别设置"
+          },
           "rule": {
             "$ref": "#/components/schemas/GroupAccessRule"
           }
@@ -4643,6 +4650,7 @@
           "parentGroupKey",
           "memberCount",
           "members",
+          "memberRules",
           "rule"
         ],
         "description": "可配置部门：层级、直属人员与已保存规则；groupKey=__ungrouped__ 为虚拟未分组节点，仅聚合无部门成员关系的账号"
@@ -4679,6 +4687,142 @@
           "status"
         ],
         "description": "部门人员（姓名 / 工号 / 邮箱 / 状态）"
+      },
+      "GroupAccessMemberRule": {
+        "type": "object",
+        "properties": {
+          "groupKey": {
+            "type": "string"
+          },
+          "userId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "projectScope": {
+            "$ref": "#/components/schemas/GroupAccessProjectScope"
+          },
+          "accessLevel": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GroupAccessAccessLevel"
+              },
+              {
+                "description": "部门权限档位：edit 可编辑并浏览 / view 仅浏览；edit 隐含 view，存量规则默认 view"
+              }
+            ]
+          },
+          "projectIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          }
+        },
+        "required": [
+          "groupKey",
+          "userId",
+          "projectScope",
+          "accessLevel",
+          "projectIds",
+          "updatedAt"
+        ],
+        "description": "部门内个人权限覆盖：projectIds 仅 selected 时有值；存在时优先于同部门默认规则"
+      },
+      "GroupAccessMemberRuleDeleteInput": {
+        "type": "object",
+        "properties": {
+          "groupKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "groupName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "userIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "minItems": 1,
+            "maxItems": 2000
+          }
+        },
+        "required": [
+          "groupKey",
+          "userIds"
+        ],
+        "description": "删除部门内个人权限覆盖并恢复部门默认规则"
+      },
+      "GroupAccessMemberRuleInput": {
+        "type": "object",
+        "properties": {
+          "groupKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "example": "libiaorobot.com/项目部"
+          },
+          "groupName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "userIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "minItems": 1,
+            "maxItems": 2000
+          },
+          "projectScope": {
+            "$ref": "#/components/schemas/GroupAccessProjectScope"
+          },
+          "accessLevel": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GroupAccessAccessLevel"
+              },
+              {
+                "description": "edit = 可编辑并浏览；view = 仅浏览。projectScope=none 时恒为 view"
+              }
+            ]
+          },
+          "projectIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "maxItems": 2000,
+            "default": []
+          }
+        },
+        "required": [
+          "groupKey",
+          "userIds",
+          "projectScope"
+        ],
+        "description": "保存部门内个人权限覆盖：同一部门可按 userIds 批量写入相同权限，各成员仍保存为独立个人规则；不改变部门默认规则"
+      },
+      "GroupAccessMemberRuleResponse": {
+        "type": "object",
+        "properties": {
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupAccessMemberRule"
+            }
+          }
+        },
+        "required": [
+          "rules"
+        ],
+        "description": "保存后的个人权限覆盖列表"
       },
       "GroupAccessMemberScope": {
         "type": "string",
@@ -4837,7 +4981,7 @@
           "memberUserIds",
           "updatedAt"
         ],
-        "description": "群组访问规则：accessLevel = edit / view；projectIds 仅项目 selected 时有值；memberUserIds 仅人员 selected 时有值"
+        "description": "部门默认规则；未单独设置个人权限的成员沿用"
       },
       "GroupAccessRuleInput": {
         "type": "object",
@@ -4919,7 +5063,14 @@
         "type": "object",
         "properties": {
           "rule": {
-            "$ref": "#/components/schemas/GroupAccessRule"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GroupAccessRule"
+              },
+              {
+                "description": "群组访问规则：accessLevel = edit / view；projectIds 仅项目 selected 时有值；memberUserIds 仅人员 selected 时有值"
+              }
+            ]
           }
         },
         "required": [
@@ -18766,6 +18917,135 @@
         "responses": {
           "204": {
             "description": "已删除"
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/access/member-rules": {
+      "put": {
+        "tags": [
+          "access"
+        ],
+        "summary": "保存部门内个人权限覆盖（仅权限管理员；同一部门不同人员可分别设置）",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupAccessMemberRuleInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "保存后的个人权限覆盖",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupAccessMemberRuleResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "access"
+        ],
+        "summary": "删除部门内个人权限覆盖并恢复部门默认（仅权限管理员）",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupAccessMemberRuleDeleteInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "已恢复部门默认"
           },
           "400": {
             "description": "契约校验失败（VALIDATION_FAILED）",

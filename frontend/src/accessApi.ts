@@ -26,12 +26,22 @@ export type GroupAccessMember = {
   status: "active" | "disabled";
 };
 
+export type GroupAccessMemberRule = {
+  groupKey: string;
+  userId: string;
+  projectScope: GroupAccessProjectScope;
+  accessLevel: GroupAccessAccessLevel;
+  projectIds: string[];
+  updatedAt: string;
+};
+
 export type GroupAccessGroup = {
   groupKey: string;
   groupName: string;
   parentGroupKey: string | null;
   memberCount: number;
   members: GroupAccessMember[];
+  memberRules: GroupAccessMemberRule[];
   rule: GroupAccessRule | null;
 };
 
@@ -68,6 +78,15 @@ export type GroupAccessRuleInput = {
   memberUserIds: string[];
 };
 
+export type GroupAccessMemberRuleInput = {
+  groupKey: string;
+  groupName?: string;
+  userIds: string[];
+  projectScope: GroupAccessProjectScope;
+  accessLevel: GroupAccessAccessLevel;
+  projectIds: string[];
+};
+
 export function fetchAccessOverview(): Promise<GroupAccessOverview> {
   return apiRequest<GroupAccessOverview>("/api/v1/access");
 }
@@ -78,6 +97,14 @@ export function saveGroupAccessRule(input: GroupAccessRuleInput): Promise<{ rule
 
 export function deleteGroupAccessRule(groupKey: string): Promise<void> {
   return apiSend<void>("/api/v1/access/rules?groupKey=" + encodeURIComponent(groupKey), "DELETE");
+}
+
+export function saveGroupAccessMemberRules(input: GroupAccessMemberRuleInput): Promise<{ rules: GroupAccessMemberRule[] }> {
+  return apiSend<{ rules: GroupAccessMemberRule[] }>("/api/v1/access/member-rules", "PUT", input);
+}
+
+export function deleteGroupAccessMemberRules(input: { groupKey: string; groupName?: string; userIds: string[] }): Promise<void> {
+  return apiSend<void>("/api/v1/access/member-rules", "DELETE", input);
 }
 
 export function assignGroupAccessAdmin(userId: string): Promise<{ admin: GroupAccessAdmin }> {
