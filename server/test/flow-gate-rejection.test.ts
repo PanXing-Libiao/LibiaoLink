@@ -8,7 +8,7 @@ import { AppError } from "../src/common/errors/app-error.js";
 import type { DatabaseService } from "../src/db/database.service.js";
 import type { DbClient } from "../src/db/db-client.js";
 import type { BlueprintService } from "../src/modules/blueprint/index.js";
-import type { RoleService } from "../src/modules/identity/index.js";
+import type { PermissionService } from "../src/modules/permission/index.js";
 import type { AuditService } from "../src/modules/admin/index.js";
 import type { GateService } from "../src/modules/node/index.js";
 import { FlowService } from "../src/modules/project/flow.service.js";
@@ -99,6 +99,19 @@ class FakeGateService {
   }
 }
 
+class FakePermissionService {
+  admins = new Set<string>();
+  async canManageGroupAccess(actorId: string): Promise<boolean> {
+    return this.admins.has(actorId);
+  }
+}
+
+class FakeProjectMemberRepository {
+  async findByProjectAndUser(): Promise<null> {
+    return null;
+  }
+}
+
 /** 审计替身（h7）：只记录写入调用（拒绝留痕断言见 test/admin-audit.test.ts / 真机回放）。 */
 class FakeAuditService {
   entries: unknown[] = [];
@@ -107,12 +120,13 @@ class FakeAuditService {
   }
 }
 
-function makeService(): {
+function makeService(permission = new FakePermissionService()): {
   service: FlowService;
   db: FakeDatabase;
   flow: FakeFlowRepository;
   projects: FakeProjectRepository;
   gate: FakeGateService;
+  permission: FakePermissionService;
 } {
   const db = new FakeDatabase();
   const flow = new FakeFlowRepository();
@@ -122,14 +136,27 @@ function makeService(): {
     db as unknown as DatabaseService,
     flow as unknown as FlowRepository,
     projects as unknown as ProjectRepository,
-    {} as unknown as ProjectMemberRepository,
+    new FakeProjectMemberRepository() as unknown as ProjectMemberRepository,
     {} as unknown as BlueprintService,
     gate as unknown as GateService,
-    {} as unknown as RoleService,
+    permission as unknown as PermissionService,
     new FakeAuditService() as unknown as AuditService,
   );
-  return { service, db, flow, projects, gate };
+  return { service, db, flow, projects, gate, permission };
 }
+
+describe("流程管理硬闸（管理员 / 项目经理）", () => {
+  it("部门编辑账号不能凭遗留 roleCodes 获得项目经理豁免；部门权限管理员可以", async () => {
+    const permission = new FakePermissionService();
+    const { service } = makeService(permission);
+    await expect(service.assertProjectManager(PROJECT, [MANAGER], ACTOR, "增删节点")).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      httpStatus: 403,
+    });
+    permission.admins.add(ACTOR);
+    await expect(service.assertProjectManager(PROJECT, [MANAGER], ACTOR, "增删节点")).resolves.toBeUndefined();
+  });
+});
 
 describe("PoC-9 · 完成门禁拒绝（缺必交成果文件）", () => {
   it("服务端强校验：422 NODE_REQUIRED_DOC_MISSING + missing 明细，且不部分生效", async () => {

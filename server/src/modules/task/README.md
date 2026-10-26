@@ -76,7 +76,7 @@
 
 > 口径来源：系统功能书 A1-17（任务描述 / 阶段性里程 / 输出成果文件按流程节点模板生成后锁定；确需修正时由管理员修正模板 + 对当期任务例外调整，原因必填并留痕）与 C9-07；设计口径见 技术设计v0.3 §3.4（M3-05）。
 
-- 端点与权限：`PATCH /projects/{id}/tasks/{taskId}/locked-fields`（body `TaskLockedFieldsAdjustBody` = `version` + `reason` + 可选 `title` / `titleEn` / `deliverableTypes`）；控制器 `@RequirePermission(task.update)` 只作项目上下文门禁，**服务端 `assertAdmin` 复核（仅系统管理员，非管理员 403）** —— 与手工创建任务同口径（A1-13）。
+- 端点与权限：`PATCH /projects/{id}/tasks/{taskId}/locked-fields`（body `TaskLockedFieldsAdjustBody` = `version` + `reason` + 可选 `title` / `titleEn` / `deliverableTypes`）；控制器 `@RequirePermission(task.update)` 只作项目上下文门禁，**服务端 `assertAdmin` 复核（仅部门权限管理员 `groupAccessAdmin`，非管理员 403）** —— 与手工创建任务同口径（A1-13），不再读取遗留 `roleCodes`。
 - 锁定范围：`title`（任务描述）/ `titleEn`；`deliverableTypes` 2026-10-08 起常规编辑开放（常规 `PATCH …/{taskId}` 可带、去重保序；本端点 body 该字段保留 —— 例外修正通道不动）；本端点与批量 `PATCH …/batch` 均不含这三项（**Push 196 例外 / Push 197 收窄**：仅**未归入阶段**的临时任务（`stage_key` 为空且无来源节点）可在常规编辑 `PATCH …/{taskId}` 里直接改 `title` / `titleEn` —— 面向的是「手工输入、非模板生成、也未挂施工阶段」的任务；**阶段任务**（`stageKey` 非空）与节点 / 模板生成的任务保持锁定）；**「阶段性里程」一期 tasks 表无对应列**（A1-17 映射修订），本期不开放（差异登记见本 README 边界段与系统功能书）。
 - 校验：至少一个实际变化（同值 / 空调整 → 400 `VALIDATION_FAILED`，防止刷留痕）；`deliverableTypes` 走 `normalizeDocTypes`（字典内、首次出现去重保序）；乐观锁 409 `VERSION_CONFLICT`；归档项目 409 `PROJECT_ARCHIVED`；不存在 / 跨项目 / 已软删统一 404。
 - 留痕（A1-17 / C9-07）：审计 `action=update`（changes = 锁定字段 before → after；metadata = { reason, kind: locked_field_exception, adminOnly: true, fields }）+ outbox `task.locked_fields_adjusted`（dedupeKey = `task.locked_fields_adjusted:{taskId}:{version}`，payload = projectId / taskId / fields / reason / actorId / at）+ touch 项目 `updated_at`；**不写 `task_events`**（四值闭集）。
@@ -123,7 +123,7 @@
 
 ## 边界与后续（差异登记）
 
-- 已随 h6 落地：读路由记录级 404（不可见项目 / 跨项目任务统一 404）、写路由功能权限位（`task.create` / `task.update` / `task.progress` —— 项目内成员对这三项平权，见 `modules/permission/README.md`）；手工创建仅管理员的口径随 A1-13 复核；
+- 已随 h6 落地：读路由记录级 404（不可见项目 / 跨项目任务统一 404）、写路由功能权限位（`task.create` / `task.update` / `task.progress` —— 项目内成员对这三项平权，见 `modules/permission/README.md`）；手工创建仅管理员的口径随 A1-13 复核；此处「管理员」与锁定字段例外调整统一指部门权限管理员 `groupAccessAdmin`，不再读取遗留 `roleCodes`；
 - M3-07 刀 1 后半（前端接线）不在本模块：前端 `taskApi.ts` 接线与服务端零改动；刀 2（门禁三入口 / 批量 failures 消费）已随 M3-03 / M3-04 落地，**刀 3（添加任务模板化）已落 Push 183**；只剩快筛参数待后续切片。
 - 不在本卡（Push 152 后更新）：列表快捷筛选参数、门禁增强 M3-04 ~ M3-06（**M3-03 已落 Push 143**：`deliverableTypes` 多值 + 完成门禁；**M3-04 批量操作已落 Push 150**：批量指派 / 改状态 / 改期 / 批量完成 + 部分失败清单；**M3-05 软删已落 Push 152**：`DELETE …/tasks/{taskId}` + 统一 404 + 位次压缩；**锁定字段例外调整已落 Push 153**：仅管理员可执行（非管理员 403）/ 原因必填并留痕（审计 + outbox）/ 空调整 400 / 阶段性里程一期无列；模板实例化与快筛随 M3-05 其余切片、1 万行压测随 M3-06）；
 - A1-17 差异登记（Push 153）：系统功能书锁定字段含「阶段性里程」，一期 `tasks` 表无该列（A1-17 映射修订），本期只开放任务描述 / 英文描述 / 输出成果文件三项；里程碑列落地后再开；

@@ -8,7 +8,7 @@ import type { DocType } from "@libiaolink/contracts";
 import type { AuditService } from "../src/modules/admin/index.js";
 import type { DatabaseService } from "../src/db/database.service.js";
 import type { DbClient } from "../src/db/db-client.js";
-import type { RoleService } from "../src/modules/identity/index.js";
+import type { PermissionService } from "../src/modules/permission/index.js";
 import type { TaskGateRepository } from "../src/modules/task/task.gate.repository.js";
 import type {
   TaskEventInput,
@@ -160,11 +160,11 @@ class FakeAuditService {
   }
 }
 
-/** 角色替身（assertAdmin 口径）：只有显式给 admin 角色的账号可通过。 */
-class FakeRoleService {
+/** 部门权限管理员替身（assertAdmin 口径）：只有名单内账号可通过。 */
+class FakePermissionService {
   admins = new Set<string>([ADMIN]);
-  async getActorAuthorization(actorId: string): Promise<{ roleCodes: string[] }> {
-    return { roleCodes: this.admins.has(actorId) ? ["admin"] : ["project_manager"] };
+  async canManageGroupAccess(actorId: string): Promise<boolean> {
+    return this.admins.has(actorId);
   }
 }
 
@@ -175,7 +175,7 @@ function makeService(repo: FakeTaskRepository, gate: FakeTaskGateRepository = ne
     db as unknown as DatabaseService,
     repo as unknown as TaskRepository,
     gate as unknown as TaskGateRepository,
-    new FakeRoleService() as unknown as RoleService,
+    new FakePermissionService() as unknown as PermissionService,
     audit as unknown as AuditService,
     {} as unknown as TaskNodeRepository,
     {} as unknown as TemplateService,

@@ -248,12 +248,8 @@ class FakeAuditService {
 class FakePermissionService {
   constructor(private readonly adminIds: readonly string[] = []) {}
 
-  async permissionsOf(actorId: string): Promise<{ roleCodes: string[]; dataScopes: string[]; permissionKeys: string[] }> {
-    return {
-      roleCodes: this.adminIds.includes(actorId) ? ["admin"] : ["member"],
-      dataScopes: [],
-      permissionKeys: [],
-    };
+  async canManageGroupAccess(actorId: string): Promise<boolean> {
+    return this.adminIds.includes(actorId);
   }
 }
 

@@ -170,9 +170,7 @@ async function seedActor() {
       "insert into users (id, casdoor_id, username, display_name, email, status) values ($1, $2, $3, $4, null, 'active')",
       [userId, casdoorId, username, "H1 S6 Browser E2E"],
     );
-    const role = await db.query("select id from roles where code = 'admin' limit 1");
-    if (role.rowCount !== 1) fail("数据库缺少 admin 角色；先执行 database/scripts/seed.mjs");
-    await db.query("insert into user_roles (user_id, role_id) values ($1, $2)", [userId, role.rows[0].id]);
+    await db.query("insert into group_access_admins (user_id, granted_by) values ($1, $1)", [userId]);
     await db.query(
       "insert into sessions (id, token_hash, user_id, id_token, last_seen_at, expires_at) " +
         "values ($1, $2, $3, $4, now(), now() + interval '2 hours')",
@@ -238,7 +236,7 @@ async function cleanup() {
     if (userId !== null) {
       await db.query("delete from audit_logs where actor_id = $1 or project_id = $2", [userId, created.projectId]);
       await db.query("delete from sessions where user_id = $1", [userId]);
-      await db.query("delete from user_roles where user_id = $1", [userId]);
+      await db.query("delete from group_access_admins where user_id = $1", [userId]);
       await db.query("delete from user_preferences where user_id = $1", [userId]);
       await db.query("delete from users where id = $1", [userId]);
     }

@@ -764,7 +764,7 @@ function serviceWith(options: {
   repository.manualAdminUserIds = options.manualAdminUserIds ?? [];
   const authorization = {
     userId: PROJECT_A,
-    roleCodes: options.roleCodes ?? ["admin"],
+    roleCodes: options.roleCodes ?? [],
     dataScopes: options.dataScopes ?? ["all"],
     permissionKeys: options.permissionKeys ?? [...PERMISSION_KEYS],
   } satisfies ActorAuthorization;

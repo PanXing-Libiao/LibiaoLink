@@ -502,7 +502,7 @@ describe("下载签名与寻址", () => {
 
 describe("环境变量契约（对象存储）", () => {
   it("生产环境必须配置访问密钥", () => {
-    const base = { NODE_ENV: "production", DATABASE_URL: "postgres://x/y", CASDOOR_CLIENT_ID: "a", CASDOOR_CLIENT_SECRET: "b", CASDOOR_ORG_NAME: "c", INTERNAL_SYNC_TOKEN: "d" };
+    const base = { NODE_ENV: "production", DATABASE_URL: "postgres://x/y", CASDOOR_CLIENT_ID: "a", CASDOOR_CLIENT_SECRET: "b", CASDOOR_ORG_NAME: "c", INTERNAL_SYNC_TOKEN: "d", GROUP_ACCESS_ENFORCED: "true", GROUP_ACCESS_ADMIN_USER_IDS: "11111111-1111-4111-8111-111111111111" };
     expect(() => loadEnv(base)).toThrow(/S3_ACCESS_KEY/);
     expect(
       loadEnv({ ...base, S3_ACCESS_KEY: "k", S3_SECRET_KEY: "s", ONLYOFFICE_JWT_SECRET: "shared-secret" }).S3_BUCKET,
