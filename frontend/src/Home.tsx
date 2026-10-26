@@ -6,6 +6,7 @@ import { ApiError } from "./api";
 import { cardBorderOf, cardTintOf, useBackgroundTier, useCardWatermark } from "./backgroundTier";
 import type { DictTools } from "./dictTools";
 import { AppHeader } from "./components/AppHeader";
+import { ProjectAccessNotice } from "./components/ProjectAccessNotice";
 import { Card } from "./components/Card";
 import { CategoryFilterSidebar } from "./components/CategoryFilterSidebar";
 import type { FacetOption } from "./components/CategoryFilterSidebar";
@@ -455,6 +456,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   return (
     <div className="min-h-screen">
       <AppHeader me={me} />
+      <ProjectAccessNotice />
 
       <CategoryFilterSidebar
         open={filterOpen}

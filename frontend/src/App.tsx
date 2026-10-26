@@ -57,9 +57,9 @@ type ViewState =
   | { kind: "signed-in"; me: MeResponse }
   | { kind: "error"; message: string };
 
-/** 需要项目数据的业务页；仅登录 / 无可浏览项目时在这些页面统一显示说明。 */
-function needsBusinessData(route: Route): boolean {
-  return route.kind === "hub" || route.kind === "list" || route.kind === "project" || route.kind === "workspace" || route.kind === "files";
+/** 仅登录账号的页面级阻断范围；有规则但无项目的 empty 状态保留页面骨架，我的任务始终可进入。 */
+function blocksWhenLoginOnly(route: Route): boolean {
+  return route.kind === "hub" || route.kind === "list" || route.kind === "project" || route.kind === "files";
 }
 
 /** 直链无权限时的明确落点；菜单隐藏只是呈现层，这里仍以服务端画像为准。 */
@@ -786,7 +786,7 @@ export default function App() {
   if (accessDenied) {
     return <PageAccessDenied me={state.me} backHref={firstAllowedHref(permissions)} />;
   }
-  if (permissions !== null && needsBusinessData(route) && permissions.groupProjectAccess !== "allowed") {
+  if (permissions !== null && blocksWhenLoginOnly(route) && permissions.groupProjectAccess === "denied") {
     return <BusinessAccessState me={state.me} kind={permissions.groupProjectAccess} />;
   }
 

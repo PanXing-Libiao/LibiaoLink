@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLiveRefresh } from "./useLiveRefresh";
 import { prefetchLocalizedText, useLocale, useT } from "./i18n";
 import { AppHeader } from "./components/AppHeader";
+import { ProjectAccessNotice } from "./components/ProjectAccessNotice";
 import { HubDashboard, type HubDashboardState } from "./components/HubDashboard";
 import { HubMap } from "./components/HubMap";
 import type { DashboardDataset, DashboardIssueDataset, DashboardWordDataset } from "./dashboardApi";
@@ -402,6 +403,7 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden overscroll-none">
       <AppHeader me={me} />
+      <ProjectAccessNotice />
       <main className="relative min-h-0 flex-1 px-6 py-5 lg:px-10 lg:py-6">
         <section ref={deckRef} data-hub-deck="" className="relative h-full overflow-hidden">
           <div className="hub-deck__strip" data-view={stripView} data-anim={anim === null ? undefined : "true"}>
