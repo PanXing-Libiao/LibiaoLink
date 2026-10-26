@@ -20,7 +20,7 @@ import { TaskFileBriefSchema, TaskListItemSchema } from "./tasks.ts";
  * - 「我的问题」= 我处理（ownerId = 我）与我提出的（reporterId = 我）两个清单；同一问题两边都命中时两个清单都出现。
  * - 排序：任务组内按 plannedEnd 升序、同日期按 id 升序（未排期空日期置末）；问题未关闭（state != done）在前 ——
  *   按提出日期（raisedAt）升序、id 升序；已完成后置。
- * - 记录级可见性：只含对我可见的项目（ADR-011；PERMISSION_ENFORCED 关闭期等价全量）。
+ * - 记录级可见性：只含部门规则许可的项目；规则关闭时等价全量。
  *
  * 2026-10-13 全字段修订（Push 302 · px 线代改 wmj 线契约，请 wmj / lan 复核）：
  * - 「我的任务」项由 9 列抽取面扩为**任务表全字段**（= TaskListItem 全字段 + projectCode / projectName + 随行文件清单 files）——

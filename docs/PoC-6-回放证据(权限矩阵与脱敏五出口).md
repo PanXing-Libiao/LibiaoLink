@@ -1,5 +1,7 @@
 # PoC-6 回放证据（权限矩阵与脱敏五出口）
 
+> **2026-10-26 历史证据**：本文记录旧角色权限判定；对应脚本已删除，不能按当前代码复跑。当前权限口径以部门规则为准。
+
 > 卡片：h6 · S6·PoC-6（主责 wmj，协办 px）｜验收口径见 团队分工.md §6 第 6 行：字段级 / 记录级 / 导出 / 搜索 / 通知五类出口自动化用例全绿。
 
 | 项 | 值 |
@@ -9,7 +11,7 @@
 | 数据库 | postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink |
 | 代码版本 | ee76d8f |
 | 受限账号 | ea6eff88-4b3e-4df1-9ce0-02ffb14fed69 |
-| 脚本 | server/scripts/poc6-replay.mjs |
+| 脚本（已删除） | server/scripts/poc6-replay.mjs |
 
 ## 断言明细
 
@@ -101,5 +103,5 @@
 - 「导出」= X1 + 策略层用例：管理员授权画像含契约枚举全量（含 `project.export`）；导出出口额外要求 `project.export`（策略层用例覆盖「无导出权 → 出口不放行」）。
 - 「搜索」「通知」= 策略层用例：`planExit` 对 page / export / search / notify 四出口统一投影，`exitsConsistent` 断言五出口字段集一致（搜索 / 通知模块本身归 lan 线、尚未落地 —— 投影入口已就绪，模块落地后直接复用）。
 - 「自动化用例全绿」= `cd server && node node_modules/vitest/vitest.mjs run`（`test/permission-matrix.test.ts` 34 例 + 全量 169 例 / 13 文件，随 `npm test` 常跑，不连库）。
-- 复跑：cd server && node scripts/poc6-replay.mjs --out ../docs/PoC-6-回放证据(权限矩阵与脱敏五出口).md
+- 复跑：已停用（脚本于 2026-10-26 删除）。
 

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, index, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { check, foreignKey, index, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { users } from "./identity.js";
 import {
   GROUP_ACCESS_ACCESS_LEVEL_KEYS,
@@ -39,7 +39,7 @@ export const userGroupMemberships = pgTable(
   ],
 );
 
-/** group_access_rules（0068 · 0070 · 0073）：一个 Casdoor 群组一行；allowed_pages 为旧客户端兼容字段（裁决恒全放行），实际按项目范围、编辑/仅浏览与人员范围裁剪数据。 */
+/** group_access_rules（0068 · 0070 · 0073）：一个 Casdoor 群组一行，表示部门默认权限；个人覆盖见 group_access_member_rules。allowed_pages 为旧客户端兼容字段（裁决恒全放行）。 */
 export const groupAccessRules = pgTable(
   "group_access_rules",
   {
@@ -98,6 +98,41 @@ export const groupAccessRules = pgTable(
   ],
 );
 
+/** group_access_member_rules（0074 · 2026-10-26）：部门内个人权限覆盖；存在个人规则时优先于同部门默认规则。 */
+export const groupAccessMemberRules = pgTable(
+  "group_access_member_rules",
+  {
+    groupKey: text("group_key").notNull(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    projectScope: text("project_scope").notNull().default("none"),
+    accessLevel: text("access_level").notNull().default("view"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: "group_access_member_rules_pkey", columns: [table.groupKey, table.userId] }),
+    index("ix_group_access_member_rules_user").on(table.userId),
+    check(
+      "ck_group_access_member_rules_key",
+      sql.raw("char_length(btrim(" + table.groupKey.name + ")) between 1 and 200"),
+    ),
+    check(
+      "ck_group_access_member_rules_scope",
+      sql.raw(table.projectScope.name + " in " + sqlValueList(GROUP_ACCESS_PROJECT_SCOPE_KEYS)),
+    ),
+    check(
+      "ck_group_access_member_rules_access_level",
+      sql.raw(table.accessLevel.name + " in " + sqlValueList(GROUP_ACCESS_ACCESS_LEVEL_KEYS)),
+    ),
+    check(
+      "ck_group_access_member_rules_none_access",
+      sql.raw(table.projectScope.name + " <> 'none' or " + table.accessLevel.name + " = 'view'"),
+    ),
+  ],
+);
+
 /** group_access_admins（0072 · 2026-10-24）：权限页手工授予的系统管理员；环境变量与角色来源不落本表。 */
 export const groupAccessAdmins = pgTable(
   "group_access_admins",
@@ -111,6 +146,30 @@ export const groupAccessAdmins = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   () => [],
+);
+
+/** project_group_member_access（0074）：个人覆盖为 selected 时的项目白名单。 */
+export const projectGroupMemberAccess = pgTable(
+  "project_group_member_access",
+  {
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    groupKey: text("group_key").notNull(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: "project_group_member_access_pkey", columns: [table.projectId, table.groupKey, table.userId] }),
+    foreignKey({
+      name: "fk_project_group_member_access_member",
+      columns: [table.groupKey, table.userId],
+      foreignColumns: [groupAccessMemberRules.groupKey, groupAccessMemberRules.userId],
+    }).onDelete("cascade"),
+    index("ix_project_group_member_access_member").on(table.groupKey, table.userId),
+  ],
 );
 
 /** project_group_access（0068）：selected 规则下的项目白名单；多群组取并集。 */

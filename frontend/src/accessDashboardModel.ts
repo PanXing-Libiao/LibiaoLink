@@ -6,6 +6,7 @@ import type {
   GroupAccessProject,
   GroupAccessProjectScope,
 } from "./accessApi";
+import { effectiveMemberAccess } from "./accessRules";
 
 export type AccessLevel = "operate" | "view" | "login";
 export type AccessProjectLevel = "all" | "own" | "selected" | "login";
@@ -113,19 +114,20 @@ function projectLevelOf(person: {
   member: GroupAccessMember;
   groups: readonly AccessPersonGroup[];
   isAdmin: boolean;
-}, rules: ReadonlyMap<string, { projectScope: GroupAccessProjectScope; accessLevel: "edit" | "view"; projectIds: string[]; memberScope: "all" | "selected"; memberUserIds: string[] }>): AccessProjectLevel {
+}, groupsByKey: ReadonlyMap<string, GroupAccessGroup>): AccessProjectLevel {
   if (person.isAdmin) return "all";
   let hasRule = false;
   let hasOwn = false;
   let hasSelected = false;
   for (const membership of person.groups) {
-    const rule = rules.get(membership.groupKey);
-    if (rule === undefined) continue;
-    if (rule.memberScope === "selected" && !rule.memberUserIds.includes(person.member.userId)) continue;
+    const group = groupsByKey.get(membership.groupKey);
+    if (group === undefined) continue;
+    const effective = effectiveMemberAccess(group, person.member.userId);
+    if (effective.source === "none") continue;
     hasRule = true;
-    if (rule.projectScope === "all") return "all";
-    if (rule.projectScope === "own") hasOwn = true;
-    if (rule.projectScope === "selected" && rule.projectIds.length > 0) hasSelected = true;
+    if (effective.projectScope === "all") return "all";
+    if (effective.projectScope === "own") hasOwn = true;
+    if (effective.projectScope === "selected" && effective.projectIds.length > 0) hasSelected = true;
   }
   if (!hasRule) return "login";
   if (hasOwn) return "own";
@@ -137,13 +139,13 @@ function hasEditAccessOf(person: {
   member: GroupAccessMember;
   groups: readonly AccessPersonGroup[];
   isAdmin: boolean;
-}, rules: ReadonlyMap<string, { projectScope: GroupAccessProjectScope; accessLevel: "edit" | "view"; projectIds: string[]; memberScope: "all" | "selected"; memberUserIds: string[] }>): boolean {
+}, groupsByKey: ReadonlyMap<string, GroupAccessGroup>): boolean {
   if (person.isAdmin) return true;
   for (const membership of person.groups) {
-    const rule = rules.get(membership.groupKey);
-    if (rule === undefined) continue;
-    if (rule.memberScope === "selected" && !rule.memberUserIds.includes(person.member.userId)) continue;
-    if (rule.projectScope !== "none" && rule.accessLevel === "edit") return true;
+    const group = groupsByKey.get(membership.groupKey);
+    if (group === undefined) continue;
+    const effective = effectiveMemberAccess(group, person.member.userId);
+    if (effective.source !== "none" && effective.projectScope !== "none" && effective.accessLevel === "edit") return true;
   }
   return false;
 }
@@ -238,24 +240,12 @@ export function buildAccessDashboardModel(data: GroupAccessOverview, scopeGroupK
     }
   }
 
-  const ruleByGroup = new Map<string, { projectScope: GroupAccessProjectScope; accessLevel: "edit" | "view"; projectIds: string[]; memberScope: "all" | "selected"; memberUserIds: string[] }>();
-  for (const group of data.groups) {
-    if (group.rule === null) continue;
-    ruleByGroup.set(group.groupKey, {
-      projectScope: group.rule.projectScope,
-      accessLevel: group.rule.accessLevel,
-      projectIds: group.rule.projectIds,
-      memberScope: group.rule.memberScope,
-      memberUserIds: group.rule.memberUserIds,
-    });
-  }
-
   const allPeople: AccessPersonSummary[] = [];
   for (const person of peopleById.values()) {
     const admin = adminById.get(person.member.userId) ?? null;
     const isAdmin = admin !== null;
-    const projectLevel = projectLevelOf({ member: person.member, groups: person.groups, isAdmin }, ruleByGroup);
-    const level = levelOf(projectLevel, isAdmin, hasEditAccessOf({ member: person.member, groups: person.groups, isAdmin }, ruleByGroup));
+    const projectLevel = projectLevelOf({ member: person.member, groups: person.groups, isAdmin }, groupsByKey);
+    const level = levelOf(projectLevel, isAdmin, hasEditAccessOf({ member: person.member, groups: person.groups, isAdmin }, groupsByKey));
     const searchParts = [person.member.displayName, person.member.username, person.member.email ?? "", ...person.groups.map((group) => group.pathText)];
     allPeople.push({
       member: person.member,
@@ -293,8 +283,8 @@ export function buildAccessDashboardModel(data: GroupAccessOverview, scopeGroupK
       addProjectCount(projectCounts, person.projectLevel);
     }
     const subtreeRuleGroups = [...subtreeKeys].map((key) => groupsByKey.get(key)).filter((item): item is GroupAccessGroup => item !== undefined);
-    const hasProjectData = subtreeRuleGroups.some((item) => item.rule !== null && item.rule.projectScope !== "none");
-    const configured = subtreeRuleGroups.some((item) => item.rule !== null);
+    const hasProjectData = subtreeRuleGroups.some((item) => (item.rule !== null && item.rule.projectScope !== "none") || item.memberRules.some((memberRule) => memberRule.projectScope !== "none"));
+    const configured = subtreeRuleGroups.some((item) => item.rule !== null || item.memberRules.length > 0);
     const adminCount = subtreePeople.filter((person) => person.isAdmin).length;
     groupSummaries.push({
       group,

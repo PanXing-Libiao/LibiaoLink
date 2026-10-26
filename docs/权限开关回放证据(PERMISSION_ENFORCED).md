@@ -1,5 +1,7 @@
 # 权限开关回放证据（PERMISSION_ENFORCED · 一期「不判权限」）
 
+> **历史证据 · 开关已于 2026-10-26 移除**：本文记录旧角色权限开关的两态回放，仅用于追溯当时的实现；对应环境变量、运行分支和 `server/scripts/permission-switch-replay.mjs` 已删除，不能按当前代码复跑。当前权限口径以部门规则为准。
+
 > 口径：业务 2026-09-23「我们当前这个系统就不要考虑权限」；落点 = `RoleService.getActorAuthorization()`（唯一注入点）。
 
 | 项 | 值 |

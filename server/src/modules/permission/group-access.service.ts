@@ -7,6 +7,10 @@ import {
   type GroupAccessAdminResponse,
   type GroupAccessGroup,
   type GroupAccessMember,
+  type GroupAccessMemberRule,
+  type GroupAccessMemberRuleDeleteInput,
+  type GroupAccessMemberRuleInput,
+  type GroupAccessMemberRuleResponse,
   type GroupAccessOverview,
   type GroupAccessRule,
   type GroupAccessRuleInput,
@@ -16,7 +20,7 @@ import { AppError } from "../../common/errors/app-error.js";
 import { AppConfig } from "../../config/config.module.js";
 import { AuditService } from "../audit/index.js";
 import { casdoorGroupKey, casdoorGroupName, DepartmentService } from "../identity/index.js";
-import { parseGroupAccessAdminKeys, type GroupAccessRuleData } from "./group-access.rules.js";
+import { parseGroupAccessAdminKeys, type GroupAccessMemberRuleData, type GroupAccessRuleData } from "./group-access.rules.js";
 import { PermissionRepository } from "./permission.repository.js";
 import { PermissionService } from "./permission.service.js";
 
@@ -33,11 +37,12 @@ export class GroupAccessService {
 
   async overview(actorId: string): Promise<GroupAccessOverview> {
     await this.assertAdmin(actorId);
-    const [memberships, ungroupedUsers, directory, rules, projects, groupAccess, admins] = await Promise.all([
+    const [memberships, ungroupedUsers, directory, rules, memberRules, projects, groupAccess, admins] = await Promise.all([
       this.repository.listGroupMembers(),
       this.repository.listUngroupedUsers(),
       this.departments.listDepartments(),
       this.repository.listAccessRules(),
+      this.repository.listAccessMemberRules(),
       this.repository.listAccessProjects(),
       this.permission.groupAccessOf(actorId),
       this.listAdmins(),
@@ -51,6 +56,12 @@ export class GroupAccessService {
       ),
     );
     const membersByKey = new Map<string, GroupAccessMember[]>();
+    const memberRulesByKey = new Map<string, GroupAccessMemberRule[]>();
+    for (const memberRule of memberRules) {
+      const list = memberRulesByKey.get(memberRule.groupKey) ?? [];
+      list.push(toMemberRule(memberRule, memberRule.updatedAt ?? new Date(0)));
+      memberRulesByKey.set(memberRule.groupKey, list);
+    }
     const membershipNameByKey = new Map<string, string>();
     for (const membership of memberships) {
       const members = membersByKey.get(membership.groupKey) ?? [];
@@ -86,6 +97,7 @@ export class GroupAccessService {
         parentGroupKey,
         memberCount: members.length,
         members,
+        memberRules: memberRulesByKey.get(groupKey) ?? [],
         rule: null,
       });
     }
@@ -97,6 +109,7 @@ export class GroupAccessService {
         parentGroupKey: null,
         memberCount: members.length,
         members,
+        memberRules: memberRulesByKey.get(groupKey) ?? [],
         rule: null,
       });
     }
@@ -114,6 +127,7 @@ export class GroupAccessService {
         parentGroupKey: null,
         memberCount: members.length,
         members,
+        memberRules: memberRulesByKey.get(GROUP_ACCESS_UNGROUPED_KEY) ?? [],
         rule: null,
       });
     }
@@ -126,6 +140,7 @@ export class GroupAccessService {
         parentGroupKey: current?.parentGroupKey ?? null,
         memberCount: current?.memberCount ?? 0,
         members: current?.members ?? [],
+        memberRules: current?.memberRules ?? memberRulesByKey.get(rule.groupKey) ?? [],
         rule: toRule(
           rule,
           meta?.groupName ?? current?.groupName ?? casdoorGroupName(rule.groupKey),
@@ -173,7 +188,7 @@ export class GroupAccessService {
     const target = admins.find((admin) => admin.userId === userId);
     if (target === undefined) throw new AppError("NOT_FOUND", "该账号不是系统管理员");
     if (!target.removable) {
-      throw new AppError("VALIDATION_FAILED", "环境配置或角色授权的管理员不能在此撤销");
+      throw new AppError("VALIDATION_FAILED", "环境配置的管理员不能在此撤销");
     }
     if (admins.length <= 1) {
       throw new AppError("VALIDATION_FAILED", "至少需要保留一名系统管理员");
@@ -194,18 +209,14 @@ export class GroupAccessService {
   private async listAdmins(): Promise<GroupAccessAdmin[]> {
     const configuredGroupKeys = parseGroupAccessAdminKeys(this.config.env.GROUP_ACCESS_ADMIN_GROUP_KEYS ?? "");
     const configuredUserIds = parseGroupAccessAdminKeys(this.config.env.GROUP_ACCESS_ADMIN_USER_IDS ?? "");
-    const roleAdmins = this.config.env.PERMISSION_ENFORCED === "true"
-      ? this.repository.listRoleGroupAccessAdmins()
-      : Promise.resolve([]);
-    const [configuredUsers, groupUsers, manualAdmins, roleUsers] = await Promise.all([
+    const [configuredUsers, groupUsers, manualAdmins] = await Promise.all([
       this.repository.listActiveUsersByIds(configuredUserIds),
       this.repository.listGroupAdminUsersByGroupKeys(configuredGroupKeys),
       this.repository.listManualGroupAccessAdmins(),
-      roleAdmins,
     ]);
     const admins = new Map<string, GroupAccessAdmin>();
-    const put = (user: { userId: string; username: string; displayName: string; email: string | null; status: "active" | "disabled" }, source: GroupAccessAdmin["source"]): void => {
-      const rank = { manual: 0, role: 1, configured: 2 } as const;
+    const put = (user: { userId: string; username: string; displayName: string; email: string | null; status: "active" | "disabled" }, source: "manual" | "configured"): void => {
+      const rank = { manual: 0, configured: 2 } as const;
       const current = admins.get(user.userId);
       if (current !== undefined && rank[current.source] > rank[source]) return;
       admins.set(user.userId, {
@@ -219,7 +230,6 @@ export class GroupAccessService {
       });
     };
     for (const user of manualAdmins) put(user, "manual");
-    for (const user of roleUsers) put(user, "role");
     for (const user of groupUsers) put(user, "configured");
     for (const user of configuredUsers) put(user, "configured");
     return [...admins.values()].sort((left, right) =>
@@ -298,6 +308,93 @@ export class GroupAccessService {
     };
   }
 
+  async saveMemberRules(
+    actorId: string,
+    input: GroupAccessMemberRuleInput,
+  ): Promise<GroupAccessMemberRuleResponse> {
+    await this.assertAdmin(actorId);
+    const userIds = Array.from(new Set(input.userIds));
+    const accessLevel = input.projectScope === "none" ? "view" : input.accessLevel;
+    const projectIds = input.projectScope === "selected" ? Array.from(new Set(input.projectIds)) : [];
+    if (projectIds.length > 0) {
+      const existing = await this.repository.listExistingProjectIds(projectIds);
+      if (existing.length !== projectIds.length) {
+        throw new AppError("VALIDATION_FAILED", "项目不存在或已进入回收站，请刷新后重新选择");
+      }
+    }
+    const currentMemberIds = new Set(
+      input.groupKey === GROUP_ACCESS_UNGROUPED_KEY
+        ? (await this.repository.listUngroupedUsers()).map((user) => user.userId)
+        : await this.repository.listGroupMemberIds(input.groupKey),
+    );
+    const unknownMemberIds = userIds.filter((userId) => !currentMemberIds.has(userId));
+    if (unknownMemberIds.length > 0) {
+      throw new AppError("VALIDATION_FAILED", "所选人员已不在该部门，请刷新后重新选择");
+    }
+    const groupName = input.groupKey === GROUP_ACCESS_UNGROUPED_KEY
+      ? GROUP_ACCESS_UNGROUPED_NAME
+      : input.groupName ??
+        (await this.repository.findRuleMetadata(input.groupKey))?.groupName ??
+        casdoorGroupName(input.groupKey) ?? input.groupKey;
+    const existingUserIds = await this.repository.listExistingMemberRuleUserIds(input.groupKey, userIds);
+    const at = new Date();
+    await this.repository.upsertGroupAccessMemberRules(
+      input.groupKey,
+      userIds,
+      input.projectScope,
+      accessLevel,
+      projectIds,
+      at,
+    );
+    await this.audit.recordStandalone({
+      actorId,
+      action: existingUserIds.length === 0 ? "create" : "update",
+      objectType: "group_access_rule",
+      objectId: input.groupKey,
+      summary: (existingUserIds.length === 0 ? "新增" : "修改") + "部门个人权限：" + groupName + "（" + String(userIds.length) + " 人）",
+      metadata: {
+        groupKey: input.groupKey,
+        userIds,
+        projectScope: input.projectScope,
+        accessLevel,
+        projectIds,
+        target: "member",
+      },
+    });
+    this.permission.invalidate();
+    return {
+      rules: userIds.map((userId) => ({
+        groupKey: input.groupKey,
+        userId,
+        projectScope: input.projectScope,
+        accessLevel,
+        projectIds,
+        updatedAt: at.toISOString(),
+      })),
+    };
+  }
+
+  async removeMemberRules(actorId: string, input: GroupAccessMemberRuleDeleteInput): Promise<void> {
+    await this.assertAdmin(actorId);
+    const userIds = Array.from(new Set(input.userIds));
+    const groupName = input.groupKey === GROUP_ACCESS_UNGROUPED_KEY
+      ? GROUP_ACCESS_UNGROUPED_NAME
+      : input.groupName ??
+        (await this.repository.findRuleMetadata(input.groupKey))?.groupName ??
+        casdoorGroupName(input.groupKey) ?? input.groupKey;
+    const deleted = await this.repository.deleteGroupAccessMemberRules(input.groupKey, userIds);
+    if (deleted === 0) throw new AppError("NOT_FOUND", "所选人员没有个人权限规则");
+    await this.audit.recordStandalone({
+      actorId,
+      action: "delete",
+      objectType: "group_access_rule",
+      objectId: input.groupKey,
+      summary: "删除部门个人权限：" + groupName + "（" + String(deleted) + " 人）",
+      metadata: { groupKey: input.groupKey, userIds, target: "member" },
+    });
+    this.permission.invalidate();
+  }
+
   async remove(actorId: string, groupKey: string): Promise<void> {
     await this.assertAdmin(actorId);
     const before = await this.repository.findRuleMetadata(groupKey);
@@ -318,6 +415,17 @@ export class GroupAccessService {
     if (await this.permission.canManageGroupAccess(actorId)) return;
     throw new AppError("FORBIDDEN", "仅部门权限管理员可以管理编辑 / 仅浏览权限");
   }
+}
+
+function toMemberRule(rule: GroupAccessMemberRuleData, updatedAt: Date): GroupAccessMemberRule {
+  return {
+    groupKey: rule.groupKey,
+    userId: rule.userId,
+    projectScope: rule.projectScope,
+    accessLevel: rule.accessLevel,
+    projectIds: [...rule.projectIds],
+    updatedAt: updatedAt.toISOString(),
+  };
 }
 
 function toRule(rule: GroupAccessRuleData, groupName: string, updatedAt: Date): GroupAccessRule {

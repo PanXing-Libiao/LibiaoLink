@@ -31,7 +31,7 @@
 2. 跨天补跑 / 应执行清单（worker 重启按清单补发且不重复）属调度面，随 i8 / i9（依赖 i5 outbox）；提醒实际发送随 M5 通知模块。
 3. 日历视图（D5-04 展示面）与前端接入随 u 系列（px 线）。
 4. `calendar.manage` 使权限计数 26 → 27 键（矩阵 73 → 74 条），已同批同步种子与文档。
-5. 回放脚本（`scripts/poc8-replay.mjs`）依赖本地沙箱 PG + api、**不入 CI**；CI 走不连库的 29 例（calendar-rules 17 + calendar-service 12）与 `check:permission-matrix`。
+5. 原回放脚本（`scripts/poc8-replay.mjs`）已于 2026-10-26 随旧权限模型清理删除；历史证据保留，当前 CI 走不连库的 29 例（calendar-rules 17 + calendar-service 12）与 `check:permission-matrix`。
 
 ## 测试
 

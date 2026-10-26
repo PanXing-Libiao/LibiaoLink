@@ -165,20 +165,13 @@ server/
   - `POST /internal/users/disable` / `/enable` / `/delete`：离职回收（接入标准第五部分）；入参 `{"name","email"}`（name 为准、email 兜底），幂等 200（目录中不存在也成功）；disable / delete 撤销该用户全部在线会话（`affectedSessions`）；delete 为软删（`removed_at` 置位 + `status=disabled`，不物理删行）。**留痕（Push 173）**：三动作写 `audit_logs`（`entry=system`、`actorId=null`、`changes` 记 `status` / `removedAt`），状态写入 + 会话撤销 + 审计同事务（幂等无变化 `changes=null` 仍留痕）。
   - `POST /internal/org-sync/run`：手动触发一次 Casdoor 目录拉取 + 差异应用（`{"missingUserPolicy":"report|disable"}`，默认 report）；定时调度随 i5 接 worker。**留痕（Push 173）**：用户停用 / 启用 / 缺失策略逐条写审计（`entry=system`、`metadata.source=org_sync` + `reason`）。
 
-## 权限判定开关（PERMISSION_ENFORCED · 一期「不判权限」）
+## 部门业务权限（2026-10-26 收口）
 
-- 环境变量 `PERMISSION_ENFORCED`（默认 `false`，见 `.env.example` / `src/config/env.ts`）：**只影响裁定、不动数据**。
-  - `false`（默认 · 一期口径 ——「我们当前这个系统就不要考虑权限」2026-09-23 业务已定）：授权画像一律**等效管理员** ——
-    数据范围 `all` + 契约全量权限位（`PERMISSION_KEYS`，31 键）+ `admin` 角色码。四处判定一并放开：
-    功能权限（`can` / `@RequirePermission`）、记录级可见集（列表 / 详情不再按「我管的 / 我参与的」裁剪）、
-    字段级投影（干系人联系方式等不再裁剪）、角色内硬检查（任务手工创建 / 节点增删与阶段推进 / 文件彻底删除三处读 `roleCodes` 含 `admin`）。
-  - `true`（二期打开）：按 `roles` / `role_permissions` / `user_roles` 判定（ADR-011 原口径）。
-- **唯一注入点** = `src/modules/identity/role.service.ts` 的 `RoleService.getActorAuthorization()`：h6 策略服务的
-  `PermissionService.getAuthorization()` 与 task / flow 两处直调都经它（不判权限时不读库、无缓存分叉）；
-  `GET /api/v1/permissions/me` 与前端管理入口（字典治理 / 卡片删除 / 新建 / 编辑）随之自动收敛，前端零改动。
-- 用户偏好（`user_preferences`：常用筛选 / 醒目模式 / 任务表列显隐）**不随开关变化**，仍按账号各存一行。
-- 生效方式：进程启动时读一次（`AppConfig`）→ 改后**重启 api / worker** 生效。
-- 单测（不连库，随 `npm test` 常跑）：`test/identity-org.test.ts`「权限判定开关」4 例 + `test/permission-matrix.test.ts`「一期不判权限：等效管理员画像把五出口一并放开」4 例。
+- 旧角色权限开关已移除：环境变量 `PERMISSION_ENFORCED` 不再存在，`roles` / `user_roles` / `role_permissions` 也不再参与业务授权判定；历史数据不迁移、不删除。
+- `RoleService.getActorAuthorization()` 固定返回全量能力基线（`PERMISSION_KEYS` + `dataScopes=all`）；最终能看哪些项目、是否可写，由 `GROUP_ACCESS_ENFORCED` 下的部门规则统一裁决。
+- 系统管理员只来自 `GROUP_ACCESS_ADMIN_USER_IDS`、`GROUP_ACCESS_ADMIN_GROUP_KEYS` 与权限页手工授权；角色 `access.manage` 不再产生管理员。
+- 用户偏好（`user_preferences`）不参与授权，仍按账号各存一行。
+- 单测：`test/identity-org.test.ts`「部门权限基线」3 例、`test/group-access.test.ts` 管理员来源与项目范围用例。
 
 ## 项目接口（h2 · S6·project：M2-01 / M2-04 / M2-05）
 
@@ -451,37 +444,28 @@ server/
 - CI 回归（不连库）：`test/flow-gate-rejection.test.ts` 5 例 —— 拒绝 422 + `missing` 明细、`node.gate_rejected` 留痕、不部分生效、预检置灰、门禁通过对照。
 - 回放中发现并修正的契约漂移（h5）：`POST /api/v1/nodes/{id}/complete` 原先返回裸节点视图，与契约 `NodeCompleteResponse = { node }` 不一致 —— 已按契约包成 `{ node }`（`src/modules/project/nodes.controller.ts`）。
 
-## PoC-6 回放（h6 · S6·PoC-6：权限矩阵与脱敏五出口）
+## PoC-6 回放（历史归档 · h6 · S6·PoC-6：权限矩阵与脱敏五出口）
 
-- 脚本：`scripts/poc6-replay.mjs`（连真 PG + 真 api；铸管理员与受限账号两个临时会话、建 `POC6-xxx` 回放项目、临时把受限账号加入名册 —— 跑完硬删回放项目（含任务 / 节点 / 阶段 / outbox 事件）与两个会话）。
-  - 复跑：`cd server && node scripts/poc6-replay.mjs --out ../docs/PoC-6-回放证据(权限矩阵与脱敏五出口).md`；退出码 0 = 断言全过（可当门禁），`--keep` 保留回放数据、`--json <file>` 输出机器可读证据、`--actor <userId>` 指定受限账号。
+- 2026-10-26：对应旧角色权限回放脚本已删除，以下仅保留历史验收结论，不能按当前代码复跑。
 - 证据入库：`docs/PoC-6-回放证据(权限矩阵与脱敏五出口).md`（真机 24 项断言：记录级列表 / 详情 / 子资源统一 404 + 名册即刻可见 + 可见但无权限位 403 + 成员平权 200 + 出口键位数据面 + 收尾零残留）。
 - 矩阵门禁（不连库，随 `npm test` 与 CI 常跑）：`check:permission-matrix`（种子 #6b ↔ 契约枚举 ↔ 角色集三方对齐）+ `test/permission-matrix.test.ts` 34 例（五类出口的策略层用例）。
 - 差异与后续：搜索 / 通知模块（lan 线）尚未落地、投影入口已就绪；字段级真实出口随 j6 干系人；导出 / 搜索 / 通知出口的调用方接线随 i 系列与 M7 —— 明细见 `src/modules/permission/README.md` 差异 1~5。
 
-## 权限开关回放（Push 178 · PERMISSION_ENFORCED · 一期不判权限）
+## 旧权限开关回放（历史归档）
 
-- 脚本：`scripts/permission-switch-replay.mjs`（连真 PG + **两个真 api**：A = 默认 `PERMISSION_ENFORCED=false`、B = `PERMISSION_ENFORCED=true`；
-  临时清空回放账号的角色绑定再原样恢复、铸临时会话跑完删除）—— 同一个「零角色」账号、同一份数据，只有开关不同：
-  A 站画像 = 等效管理员（`admin` / `all` / 全量权限位），`audit-logs`、`stakeholders`、`dicts?includeDisabled=true` 全 200，项目列表不做裁剪；
-  B 站同一批请求：画像为空、受限读面 403、列表按名册裁剪（两站均以库内计数核对）。
-  - 复跑：`cd server && node scripts/permission-switch-replay.mjs --out ../docs/权限开关回放证据(PERMISSION_ENFORCED).md`（两个 api 的启动方式见脚本头部）。
-- 证据入库：`docs/权限开关回放证据(PERMISSION_ENFORCED).md`。
-- **既有 ADR-011 回放脚本的口径提醒**：`poc6` / `poc7` / `poc8` / `m4-lifecycle` 里的受限账号 403 与记录级 404 断言验证的是「按 ADR-011 判定」，
-  目标 api 须以 `PERMISSION_ENFORCED=true` 启动 —— 四个脚本均已加前置守卫：口径不符立即失败并给出重启指引（不会误判成回归）。
+- 2026-10-26 已移除旧角色权限开关与对应回放脚本（含 PoC-6 / PoC-7 / PoC-8 旧判定脚本）；旧证据仅保留在文档中，不再作为可复跑门禁。
+- M4 生命周期 / 下载 / 上传回放已按部门规则更新前置条件；当前权限回归以部门规则与 `GET /api/v1/permissions/me` 的 `group*` 字段为准。
 
-## PoC-7 回放（h7 · S6·admin：字典 C9 与审计留痕 C7）
+## PoC-7 回放（历史归档 · h7 · S6·admin：字典 C9 与审计留痕 C7）
 
-- 脚本：`scripts/poc7-replay.mjs`（连真 PG + 真 api；铸管理员与受限账号两个临时会话、建 `POC7-xxx` 字典条目 —— 跑完硬删字典条目与本次审计行（api 角色无权删审计，用 migrator 连接）与两个会话）。
-  - 复跑：`cd server && node scripts/poc7-replay.mjs --out ../docs/PoC-7-回放证据(字典C9与审计留痕C7).md`；退出码 0 = 断言全过（可当门禁），`--keep` 保留回放数据、`--json <file>` 输出机器可读证据、`--actor <userId>` 指定受限账号。
+- 2026-10-26：对应回放脚本已删除，以下仅保留历史验收结论，不能按当前代码复跑。
 - 证据入库：`docs/PoC-7-回放证据(字典C9与审计留痕C7).md`（真机 23 项断言：默认只下发启用项 + 管理口径 403 + 新增 / 停用 200 且同码 409 + 未知类型 404 无噪声 + 审计按对象 / 按人命中 + 越权 403 落 denied 行 + 收尾零残留）。
 - 门禁（不连库，随 `npm test` 与 CI 常跑）：`test/admin-audit.test.ts` 15 例 + `check:db-schema`（**Push 165：33 表 / 340 列 / 106 索引·唯一 / 108 CHECK**）+ `check:permission-matrix`（6 角色 / 78 条目 / 31 键）。
 - 回放中发现并修正的契约漂移（h7）：`GET /api/v1/dicts/{type}` 原先用枚举管道硬拦路径参数（未知类型 → 400），与契约「未知类型返回 404」不符 —— 已改为普通路径段校验、未知类型由服务层统一 404（`src/modules/admin/dicts.controller.ts`）；`POST /api/v1/dicts/{type}/items` 的契约响应码 200 → 201（与实际行为一致）。
 
-## PoC-8 回放（h8 · S6·工作日历：D5 日历维护 / 顺延规则 / T-1·T+1）
+## PoC-8 回放（历史归档 · h8 · S6·工作日历：D5 日历维护 / 顺延规则 / T-1·T+1）
 
-- 脚本：`scripts/poc8-replay.mjs`（连真 PG + 真 api；铸管理员与受限账号两个临时会话、在 **2099 年**合成与国庆同形的日历（10-01~10-07 放假 + 10-10 调休上班）—— 跑完硬删日历行、恢复顺延配置、删除两个会话）。
-  - 复跑：`cd server && node scripts/poc8-replay.mjs --out ../docs/PoC-8-回放证据(工作日历D5).md`；退出码 0 = 断言全过（可当门禁），`--keep` 保留回放数据、`--json <file>` 输出机器可读证据、`--actor <userId>` 指定受限账号。
+- 2026-10-26：对应回放脚本已删除，以下仅保留历史验收结论，不能按当前代码复跑。
 - 证据入库：`docs/PoC-8-回放证据(工作日历D5).md`（真机 30 项断言：读面登录即可 + 写面受限 403 + 越权落 denied 行 + 单日判定例外优先 + 顺延 forward / backward 金标 + T-1 命中不顺延 + T-7 顺延开 / 关两态 + 08:00 时刻换算 + 删除回落 + 收尾零残留）。
 - 门禁（不连库，随 `npm test` 与 CI 常跑）：`test/calendar-rules.test.ts` 17 例 + `test/calendar-service.test.ts` 12 例 + `check:db-schema`（**Push 165：33 表 / 340 列 / 106 索引·唯一 / 108 CHECK**）+ `check:permission-matrix`（6 角色 / 78 条目 / 31 键）。
 - 差异与后续：节假日 / 调休年历数据待业务回执（种子 #10）；跨天补跑随 i8 / i9（依赖 i5 outbox）；日历视图与前端接入随 u 系列 —— 明细见 `src/modules/calendar/README.md` 差异 1~5。
@@ -593,7 +577,7 @@ server/
 - 签名语义（ADR-006 禁匿名 · H1 · S2）：原文件下载固定签名 `application/octet-stream` + `Content-Disposition: attachment`（原名 URL 编码回写，浏览器落盘），不沿用对象元数据；窗口 = `S3_DOWNLOAD_URL_TTL_SECONDS` —— 与预览的 `PREVIEW_URL_TTL_SECONDS` **两键独立**。
 - 响应四字段：`url` / `fileName`（文件原名）/ `sizeBytes`（**该版本**体积）/ `expiresAt`。
 - 版本口径（A4-06）：`versionId` 是**必填路径参数**（下载不像预览那样缺省当前版本 —— 前端从详情 / 版本链拿到明确版本），任意历史版本可下载；不属于该文件 / 不存在 → 404（与读面同形，不泄漏版本归属）。
-- 权限（Push 160 定案 + A4-10）：**项目可见之上再判 `file.download`** —— 不可见 / 不存在统一 404（防 IDOR），可见但缺权限 403。注意 `file.download` 在成员 / 项目经理的**隐含权限位**内（`permission.rules.ts` 平权例外），一期六角色矩阵下「可见 ⇒ 可下载」；一期不判权限开关（`PERMISSION_ENFORCED=false`）下画像为等效管理员 —— 真机回放两态各证一条分支。
+- 权限（Push 160 定案 + A4-10）：**项目可见之上再判 `file.download`** —— 不可见 / 不存在统一 404（防 IDOR），可见但缺权限 403。注意 `file.download` 在成员 / 项目经理的**隐含权限位**内（`permission.rules.ts` 平权例外），一期六角色矩阵下「可见 ⇒ 可下载」；2026-10-26 起旧开关已移除；当前文件可见性仍先判项目可见，再由部门规则限制写能力。
 - 审计（A4-10 / C7）：`action = download` + `object_type = file` + metadata `versionId`；**先签名后审计**（地址没签发成功就不算一次「下载」），一次下载**一条**，不写 preview 行。
 - 门禁（不连库，随 `npm test` 与 CI 常跑）：`test/file-download.test.ts` **9 例**（成功签名与四字段 + 一条 download 审计 / TTL 与 attachment 语义 / 历史版本按该版本签名 / 先签名后审计 / 四类 404 与 403 不签名不审计 / 不可见优先 404）。
 - 真机回放：`scripts/m4-download-replay.mjs`（真 PG + 真对象存储 + 真 api；**14/14 通过**，退出码 0；**两态各跑一次**：默认态 14/14 · 判权限态 14/14）—— 四字段与独立窗口 / **附件投递（GET 签名地址字节逐字节一致 + Content-Disposition 原名 URL 编码）** / download 审计一条一次 / v1·v2 版本路由不串版本 / 跨文件版本 404 / 文件不存在 404 / 禁匿名 401 / 权限形态（默认态全员可下载 · 判权限态非成员 404 且不写审计）；证据见 `docs/m4-05f-回放证据(下载切片).md` 与 `docs/m4-05f-回放证据(下载切片·判权限态).md`。
@@ -657,7 +641,7 @@ server/
 ## M2-06 回放（视图 / 关注 · A1-03 / A1-15 · Push 168）
 
 - 脚本：`scripts/m2-06-replay.mjs`（真 PG + 真 api；铸临时管理员会话 + 合成复核用户（无角色，用于 404 / 全员可见对照）；建 3 个回放项目（M2RPL- 主 / ARC 归档 / DEL 硬删）+ 视图 / 关注靶子；跑完硬删 projects 全链 + `project_views` + `follows` + 合成用户）。
-- 断言组：P1 ~ P6（前置：会话 / 字典 / 用户目录 / 项目就绪）、V1 ~ V11（视图 CRUD / 归属 404 与 403 / 默认互斥 / 物理删）、F1 ~ F11（关注幂等 / 清单 / 批量逐条计数 / 取关 / 可见性按 PERMISSION_ENFORCED 分派（判权限态 404 防 IDOR / 一期全员可见态 201 + 取关清理）/ 归档不可新关注 / 项目硬删后关注行清理 2 → 0）。
+- 断言组：P1 ~ P6（前置：会话 / 字典 / 用户目录 / 项目就绪）、V1 ~ V11（视图 CRUD / 归属 404 与 403 / 默认互斥 / 物理删）、F1 ~ F11（关注幂等 / 清单 / 批量逐条计数 / 取关 / 可见性按部门规则分派（不可见 404 防 IDOR；仅登录不获得项目范围）/ 归档不可新关注 / 项目硬删后关注行清理 2 → 0）。
 - 复跑：`cd server && M2_06_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink node --env-file-if-exists=.env scripts/m2-06-replay.mjs [--base-url http://127.0.0.1:3001] [--keep]`；退出码 0 = 全过。
 - CI 接线：`.github/workflows/ci.yml` 的 `database` job（M6 回放之后追加一步）—— `.github/` 属 px 线，随本刀代记，请 px 复核（先例 Push 156 / 157）。
 - 说明：本机无 PG，真机证据以 CI `database` job 为准（不伪造）。
@@ -708,7 +692,7 @@ server/
 - h3：流程节点（蓝图版本化 / 建项目快照 / 阶段推进与回退 / 节点增删 / 完成门禁）—— 已落地（Push 83）；记录级 404 与权限矩阵随 h6，文件门禁口径随 i1（file）与 h4（task）。
 - h4：task 模块（任务列表 / 详情 / 创建 / 编辑 / 进度 / 项目总览四格 / 五态与按时交付派生）—— 已落地（Push 89）；任务侧完成门禁（M3-03 · Push 143）、批量操作（M3-04 · Push 150）、软删（M3-05 · Push 152）、锁定字段例外调整（M3-05 续卡 · Push 153）与**节点库来源 + 模板实例化（M3-07 刀 3 · Push 183）**已落；快筛与 1 万行压测（M3-06）为后续卡片，记录级 404 与权限矩阵随 h6。
 - h5：PoC-9 回放（蓝图 round-trip 与门禁拒绝的证据入库：回放脚本 + `docs/` 证据 + CI 回归测试）—— 已落地（Push 93）；任务侧完成门禁（M3-03）仍为后续卡片。
-- h6：权限矩阵与脱敏五出口（ADR-011 策略层落地：记录级可见集 / 功能权限 / 字段级策略 / 五出口投影 + ProjectAccessGuard + `GET /api/v1/permissions/me` + 种子 #6b + 真机回放）—— 已落地（Push 95）；剩余：临时授权（C3-06）、权限管理界面与权限自检报告（C3-09 · u12）、越权尝试留痕告警（h7）、干系人字段级真实出口（j6）、搜索 / 通知模块本身（lan 线）。**开关口径（Push 178）**：一期 `PERMISSION_ENFORCED=false` 默认不判权限（等效管理员画像），二期置 `true` 打开（task / flow / file 三处直调同样经 `RoleService`）。
+- h6：权限矩阵与脱敏五出口（ADR-011 策略层落地：记录级可见集 / 功能权限 / 字段级策略 / 五出口投影 + ProjectAccessGuard + `GET /api/v1/permissions/me` + 种子 #6b + 真机回放）—— 已落地（Push 95）；剩余：临时授权（C3-06）、权限管理界面与权限自检报告（C3-09 · u12）、越权尝试留痕告警（h7）、干系人字段级真实出口（j6）、搜索 / 通知模块本身（lan 线）。**权限口径（2026-10-26）**：旧角色开关已移除；部门规则是唯一业务权限来源，历史 role 表不再参与授权。
 - h7：字典 C9 与审计留痕 C7（`dict_types` / `dict_items` / `audit_logs` + 字典读写出口 + 审计写入 / 越权留痕 / 检索 + 种子 #5 + 真机回放）—— 已落地（Push 97）；剩余：前端改读字典（u12 · px 线）、审计页面与导出（u12）、告警推送（M5 通知）、按月清理（运维）。**Push 173 补口**：蓝图写路径字段级留痕 + 离职回收 / 组织同步系统动作留痕已接线；审计写入出口拆至 `modules/audit/`（admin `index.ts` re-export 兼容）。
 - h8：工作日历与顺延规则（D5-01~03：`calendar_days` / `calendar_settings` + `/api/v1/calendar/*` + ClockService + 种子 #6b 补 `calendar.manage` + 真机回放）—— 已落地（Push 99）；剩余：节假日 / 调休年历数据（业务回执后经管理端录入 · u12）、跨天补跑 / 应执行清单（i8 / i9，依赖 i5 outbox）、日历视图与前端接入（u 系列 · px 线）。
 - j6：干系人台账（S8·stakeholder：A5-01 ~ A5-04 / A5-07 —— `stakeholders` / `project_stakeholders` 数据面 + `/api/v1/stakeholders` 台账 CRUD 与项目关联 + 字段级脱敏真实出口 + 迁移 0019）—— 已落地（Push 144）；**「干系人角色」列已落地（Push 225 · 代做 wmj 线，请 wmj 复核：迁移 `0042_stakeholder_role.sql` 增 `stakeholders.role` + 契约 `Stakeholder.role` / 创建 / 更新体 + 服务端快照与 `ENTITY_FIELDS`；不登记字段级策略）**；**项目详情「干系人」面板已接线（Push 221 / 222 · px 线）**；剩余：批量导入（A5-05 · M8-01 · lan）、去重合并（A5-06 · 二期）、提醒（A5-08 · M5）、导出（A5-09 · M7-03 · lan）、独立干系人台账页（u 系列 · px 线）。
@@ -752,7 +736,7 @@ server/
 - 重发仅允许 `wecom_app` / `wecom_aibot` / `wecom_group` 且最新状态为 `failed` / `dead`；严格空请求体、必填 `Idempotency-Key`。新归档固定 `pending`，新 outbox 复用原 topic / payload 并交给既有 worker，原消息与原尝试不改写。
 - 幂等以 actor + `Idempotency-Key` 哈希写入 `source_dedupe_key`；事务内先查重发归档再做状态门禁，同 key 并发 / 重试返回同一归档，首次成功后原消息状态变化不误报 409。新归档、outbox 与 `notify_delivery.update` 审计同事务。
 - 权限沿用全仓口径（Push 274 定案）：功能权限缺失 403 `FORBIDDEN`，判定先于资源探测；功能权限通过后记录不存在或记录级不可见统一 404 `NOT_FOUND`。S8-4 第三节“无权 / 不存在统一按 404”仅指记录级。
-- 无新迁移，复用 `0061`。验证：server typecheck / build、Vitest **82 文件 / 1264 例**、boundaries 267 文件 / 1220 依赖 / 0 违规、权限矩阵 36 键、schema 56 表一致；Docker PG18 `m5-06-2b-replay.mjs` DB-only **7/7**、`PERMISSION_ENFORCED=true` 真实 API **9/9**（403 / 409 / 400 / 404、幂等、掩码与零残留）。证据见 `docs/M5-06-回放证据.md`。
+- 无新迁移，复用 `0061`。验证：server typecheck / build、Vitest **82 文件 / 1264 例**、boundaries 267 文件 / 1220 依赖 / 0 违规、权限矩阵 36 键、schema 56 表一致；Docker PG18 `m5-06-2b-replay.mjs` DB-only **7/7**、真实 API **9/9**（403 / 409 / 400 / 404、幂等、掩码与零残留）。证据见 `docs/M5-06-回放证据.md`。
 
 ## M5-06-3 · A14 待办主体与 A01 已提醒（2026-10-20 · Push 276 · lan；todos 迁移 / A01 契约请 wmj 复核）
 

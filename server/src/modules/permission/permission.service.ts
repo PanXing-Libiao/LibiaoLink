@@ -14,8 +14,8 @@ import {
   intersectProjectIds,
   isGroupAccessAdmin,
   parseGroupAccessAdminKeys,
+  effectiveGroupAccessRules,
   resolveGroupAccess,
-  ruleAppliesToMember,
   type GroupAccessProfile,
 } from "./group-access.rules.js";
 import { PermissionRepository, type ProjectAccessContext } from "./permission.repository.js";
@@ -104,9 +104,9 @@ export class PermissionService {
     };
   }
 
-  /** 群组访问画像（与角色画像同一 10s 缓存）：管理员、页面 + 项目白名单 + 只读标志。 */
+  /** 部门访问画像（与能力基线同一 10s 缓存）：管理员、页面 + 项目白名单 + 只读标志。 */
   async groupAccessOf(actorId: string): Promise<GroupAccessProfile> {
-    const authorization = await this.getAuthorization(actorId);
+    await this.getAuthorization(actorId);
     const entry = this.cache.get(actorId);
     if (entry !== undefined && entry.groupAccess !== undefined) return entry.groupAccess;
     const [memberGroupKeys, manualAdmin] = this.config === undefined
@@ -117,23 +117,26 @@ export class PermissionService {
         ]);
     const groupKeys = memberGroupKeys.length === 0 ? [GROUP_ACCESS_UNGROUPED_KEY] : memberGroupKeys;
     const enforced = this.config?.env.GROUP_ACCESS_ENFORCED === "true";
-    const permissionEnforced = this.config?.env.PERMISSION_ENFORCED === "true";
-    const permissionAdmin = authorization.permissionKeys.includes("access.manage");
     const adminUserIds = parseGroupAccessAdminKeys(this.config?.env.GROUP_ACCESS_ADMIN_USER_IDS ?? "");
     const admin =
       manualAdmin ||
       adminUserIds.includes(actorId) ||
-      isGroupAccessAdmin(groupKeys, parseGroupAccessAdminKeys(this.config?.env.GROUP_ACCESS_ADMIN_GROUP_KEYS ?? "")) ||
-      (permissionAdmin && permissionEnforced);
+      isGroupAccessAdmin(groupKeys, parseGroupAccessAdminKeys(this.config?.env.GROUP_ACCESS_ADMIN_GROUP_KEYS ?? ""));
     const rules = enforced && !admin
-      ? (await this.repository.listGroupAccessRules(groupKeys)).filter((rule) => ruleAppliesToMember(rule, actorId))
+      ? await (async () => {
+          const [groupRules, memberRules] = await Promise.all([
+            this.repository.listGroupAccessRules(groupKeys),
+            this.repository.listMemberAccessRulesForUser(groupKeys, actorId),
+          ]);
+          return effectiveGroupAccessRules(groupKeys, groupRules, memberRules, actorId);
+        })()
       : [];
     const profile = resolveGroupAccess({ enforced, admin, groupKeys, rules });
     if (entry !== undefined) entry.groupAccess = profile;
     return profile;
   }
 
-  /** 权限管理页入口：显式部门管理员恒可进入；角色 access.manage 仅在 PERMISSION_ENFORCED=true 时计入。 */
+  /** 权限管理页入口：仅环境配置、管理员部门或权限页手工授权账号可进入。 */
   async canManageGroupAccess(actorId: string): Promise<boolean> {
     return (await this.groupAccessOf(actorId)).admin;
   }

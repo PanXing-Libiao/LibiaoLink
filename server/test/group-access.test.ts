@@ -8,10 +8,12 @@ import { UserService, normalizeSsoProfile } from "../src/modules/identity/user.s
 import type { UserGroupRepository } from "../src/modules/identity/user-group.repository.js";
 import type { UserRepository } from "../src/modules/identity/user.repository.js";
 import {
+  effectiveGroupAccessRules,
   intersectProjectIds,
   parseGroupAccessAdminKeys,
   resolveGroupAccess,
   ruleAppliesToMember,
+  type GroupAccessMemberRuleData,
   type GroupAccessRuleData,
 } from "../src/modules/permission/group-access.rules.js";
 import type { ProjectScopeSpec } from "../src/modules/permission/permission.rules.js";
@@ -32,6 +34,17 @@ function rule(partial: Partial<GroupAccessRuleData> & { groupKey: string }): Gro
     projectIds: [],
     memberScope: "all",
     memberUserIds: [],
+    ...partial,
+  };
+}
+
+function memberRule(
+  partial: Partial<GroupAccessMemberRuleData> & { groupKey: string; userId: string },
+): GroupAccessMemberRuleData {
+  return {
+    projectScope: "none",
+    accessLevel: "view",
+    projectIds: [],
     ...partial,
   };
 }
@@ -171,6 +184,76 @@ describe("群组访问规则", () => {
     expect(ruleAppliesToMember(rule({ groupKey: "g", memberScope: "selected", memberUserIds: [] }), PROJECT_A)).toBe(false);
   });
 
+  it("同部门个人规则优先且互不影响；删除个人规则后恢复部门默认", () => {
+    const departmentDefault = rule({
+      groupKey: "libiaorobot.com/项目部",
+      projectScope: "own",
+      accessLevel: "view",
+    });
+    const aliceRule = memberRule({
+      groupKey: "libiaorobot.com/项目部",
+      userId: PROJECT_A,
+      projectScope: "all",
+      accessLevel: "edit",
+    });
+    const bobRule = memberRule({
+      groupKey: "libiaorobot.com/项目部",
+      userId: PROJECT_B,
+      projectScope: "selected",
+      projectIds: [PROJECT_C],
+      accessLevel: "view",
+    });
+    const memberRules = [aliceRule, bobRule];
+
+    const alice = effectiveGroupAccessRules(["libiaorobot.com/项目部"], [departmentDefault], memberRules, PROJECT_A);
+    const bob = effectiveGroupAccessRules(["libiaorobot.com/项目部"], [departmentDefault], memberRules, PROJECT_B);
+    const carol = effectiveGroupAccessRules(["libiaorobot.com/项目部"], [departmentDefault], memberRules, PROJECT_C);
+
+    expect(alice).toMatchObject([{ projectScope: "all", accessLevel: "edit", memberUserIds: [PROJECT_A] }]);
+    expect(bob).toMatchObject([{ projectScope: "selected", accessLevel: "view", projectIds: [PROJECT_C], memberUserIds: [PROJECT_B] }]);
+    expect(carol).toEqual([departmentDefault]);
+    expect(effectiveGroupAccessRules(["libiaorobot.com/项目部"], [departmentDefault], [aliceRule], PROJECT_A)).toMatchObject([
+      { accessLevel: "edit", projectScope: "all" },
+    ]);
+    expect(effectiveGroupAccessRules(["libiaorobot.com/项目部"], [departmentDefault], [], PROJECT_A)).toEqual([departmentDefault]);
+  });
+
+  it("个人 none 覆盖可以收紧部门默认，且多部门仍取并集", () => {
+    const departmentDefault = rule({
+      groupKey: "libiaorobot.com/项目部",
+      projectScope: "all",
+      accessLevel: "edit",
+    });
+    const personalNone = memberRule({
+      groupKey: "libiaorobot.com/项目部",
+      userId: PROJECT_A,
+      projectScope: "none",
+      accessLevel: "view",
+    });
+    const otherDepartment = rule({
+      groupKey: "libiaorobot.com/交付部",
+      projectScope: "selected",
+      projectIds: [PROJECT_B],
+      accessLevel: "view",
+    });
+    const effective = effectiveGroupAccessRules(
+      ["libiaorobot.com/项目部", "libiaorobot.com/交付部"],
+      [departmentDefault, otherDepartment],
+      [personalNone],
+      PROJECT_A,
+    );
+    expect(effective).toMatchObject([
+      { groupKey: "libiaorobot.com/项目部", projectScope: "none" },
+      { groupKey: "libiaorobot.com/交付部", projectScope: "selected" },
+    ]);
+    expect(resolveGroupAccess({
+      enforced: true,
+      admin: false,
+      groupKeys: ["libiaorobot.com/项目部", "libiaorobot.com/交付部"],
+      rules: effective,
+    })).toMatchObject({ projectIds: [PROJECT_B], readOnly: true });
+  });
+
   it("开启开关但群组无规则：页面全开、只读、项目为空", () => {
     const profile = resolveGroupAccess({ enforced: true, admin: false, groupKeys: ["g"], rules: [] });
     expect(profile.pages).toEqual([...GROUP_ACCESS_PAGE_KEYS]);
@@ -234,6 +317,14 @@ describe("GroupAccessService 部门通讯录", () => {
         },
       ],
       listAccessRules: async () => [rule({ groupKey: "libiaorobot.com/QA", allowedPages: ["files"] })],
+      listAccessMemberRules: async () => [memberRule({
+        groupKey: "libiaorobot.com/QA",
+        userId: PROJECT_A,
+        projectScope: "selected",
+        projectIds: [PROJECT_C],
+        accessLevel: "edit",
+        updatedAt: new Date("2026-10-26T00:00:00Z"),
+      })],
       listAccessProjects: async () => [],
       findRuleMetadata: async () => ({ groupName: "Quality", updatedAt: new Date("2026-10-23T00:00:00Z") }),
       listActiveUsersByIds: async (userIds: readonly string[]) => userIds.includes(PROJECT_A) ? [{
@@ -288,6 +379,15 @@ describe("GroupAccessService 部门通讯录", () => {
       { key: "libiaorobot.com/QA", parent: "libiaorobot.com/RD", members: 2, pages: [...GROUP_ACCESS_PAGE_KEYS] },
       { key: "libiaorobot.com/RD", parent: null, members: 0, pages: [] },
     ]);
+    const qaWithPersonalRule = overview.groups.find((group) => group.groupKey === "libiaorobot.com/QA");
+    expect(qaWithPersonalRule?.memberRules).toEqual([{
+      groupKey: "libiaorobot.com/QA",
+      userId: PROJECT_A,
+      projectScope: "selected",
+      accessLevel: "edit",
+      projectIds: [PROJECT_C],
+      updatedAt: "2026-10-26T00:00:00.000Z",
+    }]);
     const ungrouped = overview.groups.find((group) => group.groupKey === GROUP_ACCESS_UNGROUPED_KEY);
     expect(ungrouped).toMatchObject({
       groupName: "未分组",
@@ -461,6 +561,68 @@ describe("GroupAccessService 部门通讯录", () => {
     ).rejects.toThrow("所选人员已不在该部门");
   });
 
+  it("同一部门可分别保存个人权限，且不会改写部门默认规则", async () => {
+    const upserts: unknown[][] = [];
+    const deletions: unknown[][] = [];
+    const repository = {
+      findRuleMetadata: async () => null,
+      listExistingProjectIds: async () => [PROJECT_C],
+      listGroupMemberIds: async () => [PROJECT_A, PROJECT_B],
+      listExistingMemberRuleUserIds: async (_groupKey: string, userIds: readonly string[]) => userIds.filter((userId) => userId === PROJECT_A),
+      upsertGroupAccessMemberRules: async (...args: unknown[]) => { upserts.push(args); },
+      deleteGroupAccessMemberRules: async (...args: unknown[]) => { deletions.push(args); return 1; },
+      upsertGroupAccessRule: async () => { throw new Error("个人权限不应改写部门默认规则"); },
+    };
+    let invalidations = 0;
+    const permission = {
+      canManageGroupAccess: async () => true,
+      invalidate: () => { invalidations += 1; },
+    };
+    const service = new GroupAccessService(
+      permission as never,
+      repository as never,
+      { recordStandalone: async () => undefined } as never,
+      {} as never,
+      new AppConfig({ CASDOOR_ORG_NAME: "libiaorobot.com" } as Env),
+    );
+
+    await service.saveMemberRules(PROJECT_A, {
+      groupKey: "libiaorobot.com/QA",
+      groupName: "Quality",
+      userIds: [PROJECT_A],
+      projectScope: "all",
+      accessLevel: "edit",
+      projectIds: [],
+    });
+    await service.saveMemberRules(PROJECT_A, {
+      groupKey: "libiaorobot.com/QA",
+      groupName: "Quality",
+      userIds: [PROJECT_B],
+      projectScope: "selected",
+      accessLevel: "view",
+      projectIds: [PROJECT_C],
+    });
+
+    expect(upserts).toEqual([
+      ["libiaorobot.com/QA", [PROJECT_A], "all", "edit", [], expect.any(Date)],
+      ["libiaorobot.com/QA", [PROJECT_B], "selected", "view", [PROJECT_C], expect.any(Date)],
+    ]);
+    await expect(service.saveMemberRules(PROJECT_A, {
+      groupKey: "libiaorobot.com/QA",
+      userIds: [PROJECT_C],
+      projectScope: "none",
+      accessLevel: "view",
+      projectIds: [],
+    })).rejects.toThrow("所选人员已不在该部门");
+
+    await service.removeMemberRules(PROJECT_A, {
+      groupKey: "libiaorobot.com/QA",
+      userIds: [PROJECT_A],
+    });
+    expect(deletions).toEqual([["libiaorobot.com/QA", [PROJECT_A]]]);
+    expect(invalidations).toBe(3);
+  });
+
   it("手工授予 / 撤销系统管理员，环境配置管理员不可撤销", async () => {
     const configuredAdmin = {
       userId: PROJECT_A,
@@ -483,7 +645,6 @@ describe("GroupAccessService 部门通讯录", () => {
       listActiveUsersByIds: async (userIds: readonly string[]) => userIds.includes(PROJECT_A) ? [configuredAdmin] : [],
       listGroupAdminUsersByGroupKeys: async () => [],
       listManualGroupAccessAdmins: async () => [...manual],
-      listRoleGroupAccessAdmins: async () => [],
       findActiveGroupAccessUser: async (userId: string) => userId === PROJECT_B ? managedAdmin : null,
       grantGroupAccessAdmin: async (userId: string, _grantedBy: string, at: Date) => {
         if (manual.some((item) => item.userId === userId)) return false;
@@ -514,7 +675,7 @@ describe("GroupAccessService 部门通讯录", () => {
     const assigned = await service.assignAdmin(PROJECT_A, PROJECT_B);
     expect(assigned.admin).toMatchObject({ userId: PROJECT_B, source: "manual", removable: true });
     expect(invalidations).toBe(1);
-    await expect(service.removeAdmin(PROJECT_A, PROJECT_A)).rejects.toThrow("环境配置或角色授权");
+    await expect(service.removeAdmin(PROJECT_A, PROJECT_A)).rejects.toThrow("环境配置的管理员");
     await service.removeAdmin(PROJECT_A, PROJECT_B);
     expect(auditActions).toEqual(["create", "delete"]);
     expect(invalidations).toBe(2);
@@ -532,6 +693,7 @@ class FakeRoleService {
 class FakeGroupRepository {
   groupKeys: string[] = [];
   rules: GroupAccessRuleData[] = [];
+  memberRules: GroupAccessMemberRuleData[] = [];
   refs = new Map<string, { managerIds: string[]; deletedAt: Date | null }>();
   memberships = new Map<string, string>();
   manualAdminUserIds: string[] = [];
@@ -542,6 +704,13 @@ class FakeGroupRepository {
   async listGroupAccessRules(groupKeys: readonly string[]): Promise<GroupAccessRuleData[]> {
     const allowed = new Set(groupKeys);
     return this.rules.filter((item) => allowed.has(item.groupKey));
+  }
+  async listMemberAccessRulesForUser(
+    groupKeys: readonly string[],
+    userId: string,
+  ): Promise<GroupAccessMemberRuleData[]> {
+    const allowed = new Set(groupKeys);
+    return this.memberRules.filter((item) => item.userId === userId && allowed.has(item.groupKey));
   }
   async isManualGroupAccessAdmin(userId: string): Promise<boolean> {
     return this.manualAdminUserIds.includes(userId);
@@ -579,9 +748,9 @@ class FakeGroupRepository {
 function serviceWith(options: {
   groupKeys: string[];
   rules: GroupAccessRuleData[];
+  memberRules?: GroupAccessMemberRuleData[];
   adminGroups?: string;
   groupEnforced?: boolean;
-  permissionEnforced?: boolean;
   adminUserIds?: string;
   manualAdminUserIds?: string[];
   roleCodes?: string[];
@@ -591,6 +760,7 @@ function serviceWith(options: {
   const repository = new FakeGroupRepository();
   repository.groupKeys = options.groupKeys;
   repository.rules = options.rules;
+  repository.memberRules = options.memberRules ?? [];
   repository.manualAdminUserIds = options.manualAdminUserIds ?? [];
   const authorization = {
     userId: PROJECT_A,
@@ -602,7 +772,6 @@ function serviceWith(options: {
     GROUP_ACCESS_ENFORCED: options.groupEnforced === false ? "false" : "true",
     GROUP_ACCESS_ADMIN_GROUP_KEYS: options.adminGroups ?? "libiaorobot.com/系统管理员",
     GROUP_ACCESS_ADMIN_USER_IDS: options.adminUserIds ?? "",
-    PERMISSION_ENFORCED: options.permissionEnforced === true ? "true" : "false",
   } as Env);
   const service = new PermissionService(
     new FakeRoleService(authorization) as unknown as RoleService,
@@ -680,6 +849,56 @@ describe("PermissionService 群组接入", () => {
     expect(await allowed.service.canAccessPage(PROJECT_A, "projects")).toBe(true);
   });
 
+  it("权限画像优先应用同部门个人覆盖，未被覆盖的人继续沿用部门默认", async () => {
+    const departmentDefault = rule({
+      groupKey: "libiaorobot.com/项目部",
+      projectScope: "all",
+      accessLevel: "edit",
+    });
+    const personalNone = serviceWith({
+      groupKeys: ["libiaorobot.com/项目部"],
+      rules: [departmentDefault],
+      memberRules: [memberRule({
+        groupKey: "libiaorobot.com/项目部",
+        userId: PROJECT_A,
+        projectScope: "none",
+        accessLevel: "view",
+      })],
+    });
+    expect(await personalNone.service.groupAccessOf(PROJECT_A)).toMatchObject({
+      readOnly: true,
+      projectIds: [],
+      projectScopes: ["none"],
+    });
+
+    const personalSelected = serviceWith({
+      groupKeys: ["libiaorobot.com/项目部"],
+      rules: [departmentDefault],
+      memberRules: [memberRule({
+        groupKey: "libiaorobot.com/项目部",
+        userId: PROJECT_A,
+        projectScope: "selected",
+        projectIds: [PROJECT_A],
+        accessLevel: "view",
+      })],
+    });
+    expect(await personalSelected.service.groupAccessOf(PROJECT_A)).toMatchObject({
+      readOnly: true,
+      projectIds: [PROJECT_A],
+      projectScopes: ["selected"],
+    });
+
+    const inherited = serviceWith({
+      groupKeys: ["libiaorobot.com/项目部"],
+      rules: [departmentDefault],
+    });
+    expect(await inherited.service.groupAccessOf(PROJECT_A)).toMatchObject({
+      readOnly: false,
+      projectIds: null,
+      projectScopes: ["all"],
+    });
+  });
+
   it("非管理员页面恒全量且只读；管理员群组绕过只读", async () => {
     const { service } = serviceWith({
       groupKeys: ["libiaorobot.com/项目部"],
@@ -705,12 +924,11 @@ describe("PermissionService 群组接入", () => {
     expect((await admin.service.permissionsOf(PROJECT_A)).groupReadOnly).toBe(false);
   });
 
-  it("权限判定关闭时不把等效管理员画像当成部门管理员", async () => {
+  it("旧角色权限退出授权链后，部门管理员只来自环境配置、管理员部门或手工授权", async () => {
     const regular = serviceWith({
       groupKeys: ["libiaorobot.com/项目部"],
       rules: [],
       groupEnforced: false,
-      permissionEnforced: false,
     });
     const regularProfile = await regular.service.permissionsOf(PROJECT_A);
     expect(regularProfile.groupAccessEnforced).toBe(false);
@@ -722,7 +940,6 @@ describe("PermissionService 群组接入", () => {
       groupKeys: ["libiaorobot.com/系统管理员"],
       rules: [],
       groupEnforced: false,
-      permissionEnforced: false,
     });
     expect((await explicitAdmin.service.permissionsOf(PROJECT_A)).groupAccessAdmin).toBe(true);
 
@@ -730,18 +947,9 @@ describe("PermissionService 群组接入", () => {
       groupKeys: ["libiaorobot.com/项目部"],
       rules: [],
       groupEnforced: false,
-      permissionEnforced: false,
       adminUserIds: PROJECT_A,
     });
     expect((await userIdAdmin.service.permissionsOf(PROJECT_A)).groupAccessAdmin).toBe(true);
-
-    const roleAdmin = serviceWith({
-      groupKeys: ["libiaorobot.com/项目部"],
-      rules: [],
-      groupEnforced: false,
-      permissionEnforced: true,
-    });
-    expect((await roleAdmin.service.permissionsOf(PROJECT_A)).groupAccessAdmin).toBe(true);
   });
 
   it("权限页手工添加的管理员获得权限管理入口与完整写能力", async () => {
@@ -749,7 +957,6 @@ describe("PermissionService 群组接入", () => {
       groupKeys: ["libiaorobot.com/项目部"],
       rules: [],
       groupEnforced: false,
-      permissionEnforced: false,
       manualAdminUserIds: [PROJECT_A],
     });
     const profile = await manual.service.permissionsOf(PROJECT_A);

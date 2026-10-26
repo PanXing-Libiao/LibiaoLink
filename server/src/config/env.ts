@@ -26,14 +26,7 @@ export const EnvSchema = z
     /** 内部作业接口凭证（请求头 X-Internal-Token；docs/开发者接入注意事项(SSO接入标准).md 第五部分）。 */
     INTERNAL_SYNC_TOKEN: z.string().default(""),
     /**
-     * 权限判定开关（一期口径「我们当前这个系统就不要考虑权限」，2026-09-23 业务已定）：
-     * `false`（默认）= **不判权限** —— 授权画像一律等效管理员（数据范围 all + 契约全量权限位 + admin 角色码），
-     * 功能权限 / 记录级可见性 / 字段级投影 / 角色内硬检查全部放开；`true` = 按 ADR-011 判定（二期打开）。
-     * 只影响**裁定**，不动数据：用户偏好（常用筛选 / 醒目模式 / 任务表列显隐）仍按账号各存一行（user_preferences）。
-     */
-    PERMISSION_ENFORCED: z.enum(["true", "false"]).default("false"),
-    /**
-     * 群组访问限制（2026-10-23）：独立于 PERMISSION_ENFORCED。true = 按 Casdoor 群组规则收敛页面与项目；
+     * 群组访问限制（2026-10-23）：部门规则是唯一业务权限来源。true = 按 Casdoor 群组规则收敛项目与写能力；
      * false（默认）= 规则只可配置、不参与裁定，避免 Group 声明尚未下发时锁死全员。
      */
     GROUP_ACCESS_ENFORCED: z.enum(["true", "false"]).default("false"),

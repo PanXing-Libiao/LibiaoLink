@@ -7,11 +7,11 @@ import type {
   GroupAccessProjectScope,
 } from "@libiaolink/contracts";
 import { DatabaseService } from "../../db/database.service.js";
-import { groupAccessAdmins, groupAccessRules, projectGroupAccess, userGroupMemberships } from "../../db/schema/access.js";
-import { rolePermissions, userRoles, users } from "../../db/schema/identity.js";
+import { groupAccessAdmins, groupAccessMemberRules, groupAccessRules, projectGroupAccess, projectGroupMemberAccess, userGroupMemberships } from "../../db/schema/access.js";
+import { users } from "../../db/schema/identity.js";
 import { projectNodes } from "../../db/schema/flow.js";
 import { projectMembers, projects } from "../../db/schema/projects.js";
-import type { GroupAccessRuleData } from "./group-access.rules.js";
+import type { GroupAccessMemberRuleData, GroupAccessRuleData } from "./group-access.rules.js";
 import { visibleProjectIds, type ProjectScopeSpec } from "./permission.rules.js";
 
 /** 项目数据面引用：可见性解析需要的项目主数据字段（不做软删过滤，由调用方判定）。 */
@@ -43,7 +43,7 @@ export interface GroupAccessMemberRecord extends GroupAccessUserRecord {
   groupName: string;
 }
 
-/** 系统管理员候选用户：环境配置 / 手工授予 / 角色授权的共同展示字段。 */
+/** 系统管理员候选用户：环境配置 / 手工授予的共同展示字段。 */
 export interface GroupAccessAdminUserRecord extends GroupAccessUserRecord {}
 
 /** 手工管理员记录：额外保留授予时间，供后续审计扩展。 */
@@ -201,24 +201,6 @@ export class PermissionRepository {
       .innerJoin(users, eq(users.id, groupAccessAdmins.userId))
       .orderBy(asc(users.displayName), asc(users.username));
     return rows.map((row) => ({ ...normalizeAdminUser(row), grantedAt: row.grantedAt }));
-  }
-
-  /** 启用 PERMISSION_ENFORCED 时，持有 access.manage 的角色管理员。 */
-  async listRoleGroupAccessAdmins(): Promise<GroupAccessAdminUserRecord[]> {
-    const rows = await this.database.db
-      .selectDistinct({
-        userId: users.id,
-        username: users.username,
-        displayName: users.displayName,
-        email: users.email,
-        status: users.status,
-      })
-      .from(userRoles)
-      .innerJoin(rolePermissions, eq(rolePermissions.roleId, userRoles.roleId))
-      .innerJoin(users, eq(users.id, userRoles.userId))
-      .where(and(eq(rolePermissions.permission, "access.manage"), eq(users.status, "active"), isNull(users.removedAt)))
-      .orderBy(asc(users.displayName), asc(users.username));
-    return rows.map(normalizeAdminUser);
   }
 
   /** 权限画像快速判定：手工管理员必须仍是启用且未离职账号。 */
@@ -398,6 +380,139 @@ export class PermissionRepository {
       memberScope: row.memberScope as GroupAccessMemberScope,
       memberUserIds: row.memberUserIds,
     }));
+  }
+
+  async listAccessMemberRules(): Promise<GroupAccessMemberRuleData[]> {
+    return this.listAccessMemberRulesBy();
+  }
+
+  async listMemberAccessRulesForUser(
+    groupKeys: readonly string[],
+    userId: string,
+  ): Promise<GroupAccessMemberRuleData[]> {
+    if (groupKeys.length === 0) return [];
+    return this.listAccessMemberRulesBy(groupKeys, userId);
+  }
+
+  private async listAccessMemberRulesBy(
+    groupKeys?: readonly string[],
+    userId?: string,
+  ): Promise<GroupAccessMemberRuleData[]> {
+    const filters = [];
+    const mappingFilters = [];
+    if (groupKeys !== undefined) {
+      if (groupKeys.length === 0) return [];
+      filters.push(inArray(groupAccessMemberRules.groupKey, [...groupKeys]));
+      mappingFilters.push(inArray(projectGroupMemberAccess.groupKey, [...groupKeys]));
+    }
+    if (userId !== undefined) {
+      filters.push(eq(groupAccessMemberRules.userId, userId));
+      mappingFilters.push(eq(projectGroupMemberAccess.userId, userId));
+    }
+    const condition = and(...filters);
+    const mappingCondition = and(...mappingFilters);
+    const ruleQuery = this.database.db
+      .select({
+        groupKey: groupAccessMemberRules.groupKey,
+        userId: groupAccessMemberRules.userId,
+        projectScope: groupAccessMemberRules.projectScope,
+        accessLevel: groupAccessMemberRules.accessLevel,
+        updatedAt: groupAccessMemberRules.updatedAt,
+      })
+      .from(groupAccessMemberRules)
+      .orderBy(asc(groupAccessMemberRules.groupKey), asc(groupAccessMemberRules.userId));
+    const mappingQuery = this.database.db
+      .select({
+        groupKey: projectGroupMemberAccess.groupKey,
+        userId: projectGroupMemberAccess.userId,
+        projectId: projectGroupMemberAccess.projectId,
+      })
+      .from(projectGroupMemberAccess);
+    const [rows, mappings] = await Promise.all([
+      condition === undefined ? ruleQuery : ruleQuery.where(condition),
+      mappingCondition === undefined ? mappingQuery : mappingQuery.where(mappingCondition),
+    ]);
+    const projectIdsByMember = new Map<string, string[]>();
+    for (const mapping of mappings) {
+      const key = mapping.groupKey + "\u0000" + mapping.userId;
+      const ids = projectIdsByMember.get(key) ?? [];
+      ids.push(mapping.projectId);
+      projectIdsByMember.set(key, ids);
+    }
+    return rows.map((row) => ({
+      groupKey: row.groupKey,
+      userId: row.userId,
+      projectScope: row.projectScope as GroupAccessProjectScope,
+      accessLevel: row.accessLevel as GroupAccessAccessLevel,
+      projectIds: projectIdsByMember.get(row.groupKey + "\u0000" + row.userId) ?? [],
+      updatedAt: row.updatedAt,
+    }));
+  }
+
+  async listExistingMemberRuleUserIds(
+    groupKey: string,
+    userIds: readonly string[],
+  ): Promise<string[]> {
+    if (userIds.length === 0) return [];
+    const rows = await this.database.db
+      .select({ userId: groupAccessMemberRules.userId })
+      .from(groupAccessMemberRules)
+      .where(and(
+        eq(groupAccessMemberRules.groupKey, groupKey),
+        inArray(groupAccessMemberRules.userId, [...userIds]),
+      ));
+    return rows.map((row) => row.userId);
+  }
+
+  async upsertGroupAccessMemberRules(
+    groupKey: string,
+    userIds: readonly string[],
+    projectScope: GroupAccessProjectScope,
+    accessLevel: GroupAccessAccessLevel,
+    projectIds: readonly string[],
+    at: Date,
+  ): Promise<void> {
+    await this.database.db.transaction(async (tx) => {
+      await tx
+        .insert(groupAccessMemberRules)
+        .values(userIds.map((userId) => ({
+          groupKey,
+          userId,
+          projectScope,
+          accessLevel,
+          updatedAt: at,
+        })))
+        .onConflictDoUpdate({
+          target: [groupAccessMemberRules.groupKey, groupAccessMemberRules.userId],
+          set: { projectScope, accessLevel, updatedAt: at },
+        });
+      await tx.delete(projectGroupMemberAccess).where(and(
+        eq(projectGroupMemberAccess.groupKey, groupKey),
+        inArray(projectGroupMemberAccess.userId, [...userIds]),
+      ));
+      if (projectScope === "selected" && projectIds.length > 0) {
+        await tx.insert(projectGroupMemberAccess).values(
+          userIds.flatMap((userId) => projectIds.map((projectId) => ({ projectId, groupKey, userId }))),
+        );
+      }
+    });
+  }
+
+  async deleteGroupAccessMemberRules(groupKey: string, userIds: readonly string[]): Promise<number> {
+    return this.database.db.transaction(async (tx) => {
+      await tx.delete(projectGroupMemberAccess).where(and(
+        eq(projectGroupMemberAccess.groupKey, groupKey),
+        inArray(projectGroupMemberAccess.userId, [...userIds]),
+      ));
+      const deleted = await tx
+        .delete(groupAccessMemberRules)
+        .where(and(
+          eq(groupAccessMemberRules.groupKey, groupKey),
+          inArray(groupAccessMemberRules.userId, [...userIds]),
+        ))
+        .returning({ userId: groupAccessMemberRules.userId });
+      return deleted.length;
+    });
   }
 
   async listAccessProjects(): Promise<Array<{ id: string; code: string; name: string }>> {

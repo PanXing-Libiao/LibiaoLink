@@ -6,7 +6,7 @@ import { UserStatusSchema } from "./users.ts";
  * 部门（Casdoor 群组）访问规则（2026-10-24）：
  * 部门键统一为 owner/name（例如 libiaorobot.com/项目部）。群组限制开启后，所有登录账号都可以
  * 进入页面；每条规则用 projectScope 限定数据范围，并用 accessLevel 区分编辑 / 仅浏览（edit 隐含 view）。
- * 多部门规则取并集：任一适用规则为 edit 才获得写能力，否则只读；项目范围再与角色可见范围取交集。
+ * 多部门规则取并集：任一适用规则为 edit 才获得写能力，否则只读；项目范围由部门规则裁决。
  * allowedPages 仅保留为旧客户端兼容字段，裁决时恒为全部页面。
  */
 /** 页面键保留用于旧客户端兼容；2026-10-24 起群组规则不再限制页面入口。 */
@@ -27,7 +27,7 @@ export const GROUP_ACCESS_PROJECT_SCOPES = ["all", "own", "selected", "none"] as
 
 export const GroupAccessProjectScopeSchema = z
   .enum(GROUP_ACCESS_PROJECT_SCOPES)
-  .openapi("GroupAccessProjectScope", { description: "群组项目范围：all 角色可见项目全放行 / own 仅本人负责或参与的项目 / selected 仅指定项目 / none 不可见任何项目" });
+  .openapi("GroupAccessProjectScope", { description: "部门项目范围：all 全部项目 / own 仅本人负责或参与的项目 / selected 仅指定项目 / none 不可见任何项目" });
 
 export type GroupAccessProjectScope = z.infer<typeof GroupAccessProjectScopeSchema>;
 
@@ -91,6 +91,49 @@ export const GroupAccessRuleSchema = z
 
 export type GroupAccessRule = z.infer<typeof GroupAccessRuleSchema>;
 
+/** 部门内个人权限覆盖：命中时替代同部门默认规则，未命中时沿用默认规则。 */
+export const GroupAccessMemberRuleSchema = z
+  .object({
+    groupKey: z.string(),
+    userId: UuidSchema,
+    projectScope: GroupAccessProjectScopeSchema,
+    accessLevel: GroupAccessAccessLevelSchema,
+    projectIds: z.array(UuidSchema),
+    updatedAt: DateTimeSchema,
+  })
+  .openapi("GroupAccessMemberRule", { description: "部门内个人权限覆盖：projectIds 仅 selected 时有值；存在时优先于同部门默认规则" });
+
+export type GroupAccessMemberRule = z.infer<typeof GroupAccessMemberRuleSchema>;
+
+export const GroupAccessMemberRuleInputSchema = z
+  .object({
+    groupKey: z.string().trim().min(1).max(200).openapi({ example: "libiaorobot.com/项目部" }),
+    groupName: z.string().trim().min(1).max(200).optional(),
+    userIds: z.array(UuidSchema).min(1).max(2000),
+    projectScope: GroupAccessProjectScopeSchema,
+    accessLevel: GroupAccessAccessLevelSchema.default("view").openapi({ description: "edit = 可编辑并浏览；view = 仅浏览。projectScope=none 时恒为 view" }),
+    projectIds: z.array(UuidSchema).max(2000).default([]),
+  })
+  .openapi("GroupAccessMemberRuleInput", { description: "保存部门内个人权限覆盖：同一部门可按 userIds 批量写入相同权限，各成员仍保存为独立个人规则；不改变部门默认规则" });
+
+export type GroupAccessMemberRuleInput = z.infer<typeof GroupAccessMemberRuleInputSchema>;
+
+export const GroupAccessMemberRuleDeleteInputSchema = z
+  .object({
+    groupKey: z.string().trim().min(1).max(200),
+    groupName: z.string().trim().min(1).max(200).optional(),
+    userIds: z.array(UuidSchema).min(1).max(2000),
+  })
+  .openapi("GroupAccessMemberRuleDeleteInput", { description: "删除部门内个人权限覆盖并恢复部门默认规则" });
+
+export type GroupAccessMemberRuleDeleteInput = z.infer<typeof GroupAccessMemberRuleDeleteInputSchema>;
+
+export const GroupAccessMemberRuleResponseSchema = z
+  .object({ rules: z.array(GroupAccessMemberRuleSchema) })
+  .openapi("GroupAccessMemberRuleResponse", { description: "保存后的个人权限覆盖列表" });
+
+export type GroupAccessMemberRuleResponse = z.infer<typeof GroupAccessMemberRuleResponseSchema>;
+
 export const GroupAccessGroupSchema = z
   .object({
     groupKey: z.string(),
@@ -98,7 +141,8 @@ export const GroupAccessGroupSchema = z
     parentGroupKey: z.string().nullable().openapi({ description: "上级部门键；null = 根部门" }),
     memberCount: z.number().int().min(0),
     members: z.array(GroupAccessMemberSchema).openapi({ description: "部门直属人员（按姓名 / 工号排序）" }),
-    rule: GroupAccessRuleSchema.nullable(),
+    memberRules: z.array(GroupAccessMemberRuleSchema).openapi({ description: "部门内个人权限覆盖；同一部门不同人员可分别设置" }),
+    rule: GroupAccessRuleSchema.nullable().openapi({ description: "部门默认规则；未单独设置个人权限的成员沿用" }),
   })
   .openapi("GroupAccessGroup", { description: "可配置部门：层级、直属人员与已保存规则；groupKey=__ungrouped__ 为虚拟未分组节点，仅聚合无部门成员关系的账号" });
 
@@ -114,12 +158,12 @@ export const GroupAccessProjectSchema = z
 
 export type GroupAccessProject = z.infer<typeof GroupAccessProjectSchema>;
 
-/** 系统管理员来源：configured = 环境变量（部门 / 用户白名单），manual = 权限页手工添加，role = 启用角色权限后的 access.manage。 */
-export const GROUP_ACCESS_ADMIN_SOURCES = ["configured", "manual", "role"] as const;
+/** 系统管理员来源：configured = 环境变量（部门 / 用户白名单），manual = 权限页手工添加。 */
+export const GROUP_ACCESS_ADMIN_SOURCES = ["configured", "manual"] as const;
 
 export const GroupAccessAdminSourceSchema = z
   .enum(GROUP_ACCESS_ADMIN_SOURCES)
-  .openapi("GroupAccessAdminSource", { description: "管理员来源：configured 环境配置 / manual 手工添加 / role 角色授权" });
+  .openapi("GroupAccessAdminSource", { description: "管理员来源：configured 环境配置 / manual 手工添加" });
 
 export type GroupAccessAdminSource = z.infer<typeof GroupAccessAdminSourceSchema>;
 
@@ -154,7 +198,7 @@ export const GroupAccessOverviewSchema = z
     enforced: z.boolean(),
     admin: z.boolean(),
     currentGroupKeys: z.array(z.string()),
-    admins: z.array(GroupAccessAdminSchema).openapi({ description: "当前生效的系统管理员名单（环境配置 / 手工添加 / 角色授权）" }),
+    admins: z.array(GroupAccessAdminSchema).openapi({ description: "当前生效的系统管理员名单（环境配置 / 手工添加）" }),
     groups: z.array(GroupAccessGroupSchema),
     projects: z.array(GroupAccessProjectSchema),
   })

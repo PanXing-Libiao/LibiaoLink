@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { PERMISSION_KEYS, type PermissionKey } from "@libiaolink/contracts";
 import { AppError } from "../src/common/errors/app-error.js";
 import type { ActorAuthorization, RoleService } from "../src/modules/identity/index.js";
-import { equivalentAdminAuthorization } from "../src/modules/identity/role.service.js";
+import { fullCapabilityAuthorization } from "../src/modules/identity/role.service.js";
 import type { PermissionRepository } from "../src/modules/permission/permission.repository.js";
 import { PermissionService } from "../src/modules/permission/permission.service.js";
 import {
@@ -263,10 +263,10 @@ describe("五出口：页面 / 导出 / 搜索 / 通知同源（C3-08 不变量�
   });
 });
 
-// ---------- 权限判定开关（PERMISSION_ENFORCED=false · 一期不判权限，业务口径 2026-09-23） ----------
+// ---------- 部门权限基线（2026-10-26） ----------
 
-describe("一期不判权限：等效管理员画像把五出口一并放开", () => {
-  const admin = equivalentAdminAuthorization(ACTOR_ID);
+describe("全量能力基线把五出口一并放开，项目范围由部门规则再次收窄", () => {
+  const admin = fullCapabilityAuthorization(ACTOR_ID);
 
   it("画像：admin 角色码 + 数据范围 all + 契约全量权限位", () => {
     expect(admin).toEqual({
@@ -277,7 +277,7 @@ describe("一期不判权限：等效管理员画像把五出口一并放开", (
     });
   });
 
-  it("功能权限：全键放行（含「导出单独授权」的 project.export，不因二期口径被拦）", () => {
+  it("功能权限：全键放行（含 project.export）；写能力在服务层按部门规则再裁决", () => {
     for (const key of PERMISSION_KEYS) {
       expect(can(admin, key)).toBe(true);
     }

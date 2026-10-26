@@ -17,6 +17,16 @@ export interface GroupAccessRuleData {
   memberUserIds: string[];
 }
 
+/** 个人权限覆盖（按 group_key + user_id 唯一）：存在时替代同部门默认规则。 */
+export interface GroupAccessMemberRuleData {
+  groupKey: string;
+  userId: string;
+  projectScope: GroupAccessProjectScope;
+  accessLevel: GroupAccessAccessLevel;
+  projectIds: string[];
+  updatedAt?: Date;
+}
+
 export interface GroupAccessProfile {
   enforced: boolean;
   admin: boolean;
@@ -37,6 +47,38 @@ export interface GroupAccessProfile {
 /** 规则是否适用于该账号：all = 部门全体；selected = 仅勾选人员。 */
 export function ruleAppliesToMember(rule: GroupAccessRuleData, userId: string): boolean {
   return rule.memberScope === "all" || rule.memberUserIds.includes(userId);
+}
+
+/** 每个部门先取个人覆盖，否则取适用于该成员的部门默认规则；多部门结果再交给 resolveGroupAccess 取并集。 */
+export function effectiveGroupAccessRules(
+  groupKeys: readonly string[],
+  groupRules: readonly GroupAccessRuleData[],
+  memberRules: readonly GroupAccessMemberRuleData[],
+  userId: string,
+): GroupAccessRuleData[] {
+  const groupRuleByKey = new Map(groupRules.map((item) => [item.groupKey, item] as const));
+  const memberRuleByKey = new Map(
+    memberRules.filter((item) => item.userId === userId).map((item) => [item.groupKey, item] as const),
+  );
+  const result: GroupAccessRuleData[] = [];
+  for (const groupKey of groupKeys) {
+    const personal = memberRuleByKey.get(groupKey);
+    if (personal !== undefined) {
+      result.push({
+        groupKey: personal.groupKey,
+        allowedPages: [...GROUP_ACCESS_PAGE_KEYS],
+        projectScope: personal.projectScope,
+        accessLevel: personal.accessLevel,
+        projectIds: [...personal.projectIds],
+        memberScope: "selected",
+        memberUserIds: [userId],
+      });
+      continue;
+    }
+    const groupRule = groupRuleByKey.get(groupKey);
+    if (groupRule !== undefined && ruleAppliesToMember(groupRule, userId)) result.push(groupRule);
+  }
+  return result;
 }
 
 /** 权限管理员配置（部门键或用户 ID）：逗号分隔，去空白、去重、保序。 */

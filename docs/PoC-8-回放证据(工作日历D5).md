@@ -1,5 +1,7 @@
 # PoC-8 回放证据（工作日历 D5）
 
+> **2026-10-26 历史证据**：本文记录旧角色权限判定；对应脚本已删除，不能按当前代码复跑。当前权限口径以部门规则为准。
+
 > 卡片：h8 · S6·工作日历（主责 wmj，协办 lan / px）｜验收口径：顺延与 T-1/T+1 有金标用例（配合 PoC-3 规则时间语义 i9）。
 
 | 项 | 值 |
@@ -11,7 +13,7 @@
 | 管理员账号 | caa8d763-4b6a-4967-9b26-7d1086272c9c |
 | 受限账号 | ea6eff88-4b3e-4df1-9ce0-02ffb14fed69 |
 | 合成日历 | 2099-10-01 ~ 10-07 放假 + 2099-10-10 调休上班（回放后硬删） |
-| 脚本 | server/scripts/poc8-replay.mjs |
+| 脚本（已删除） | server/scripts/poc8-replay.mjs |
 
 ## 断言明细
 
@@ -127,5 +129,5 @@
 - 「审计留痕（h7 复用）」= A1 ~ A4：calendar_day（对象 id = 业务日期）与 calendar_settings（对象 id = default）的 create / update / delete 字段级留痕可按对象检索；越权 403 落 denied 且对象与成功写同形（K2b）。
 - 「规则时间语义金标（PoC-3 · i9）」= 本脚本的 K6 ~ K13b 即日期语义金标；跨天补跑（worker 重启）按应执行清单补发且不重复属调度面，随 i8 / i9 落地（依赖 lan 线 i5 outbox）。
 - 「自动化用例全绿」= server 目录 node node_modules/vitest/vitest.mjs run（新增 test/calendar-rules.test.ts + test/calendar-service.test.ts 29 例）与 node scripts/check-db-schema.mjs / check-permission-matrix.mjs / check-boundaries.mjs。
-- 复跑：cd server && node scripts/poc8-replay.mjs --out ../docs/PoC-8-回放证据(工作日历D5).md
+- 复跑：已停用（脚本于 2026-10-26 删除）。
 
