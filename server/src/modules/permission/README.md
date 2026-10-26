@@ -26,7 +26,7 @@
 
 ## 部门访问规则与系统管理员（0068 / 0069 / 0070 / 0072 / 0073 / 0074）
 
-- `user_group_memberships` 保存 Casdoor 群组直属成员；权限画像入口按当前账号的群组键读取 `group_access_rules`。2026-10-24 起页面不再按部门裁剪：所有登录账号的页面集合恒为 `GROUP_ACCESS_PAGE_KEYS`，`allowed_pages` 仅为旧客户端兼容字段，保存时恒写全量、裁决时忽略。
+- `user_group_memberships` 保存 Casdoor 组织部门直属成员；权限画像入口按当前账号的有效部门键读取 `group_access_rules`。2026-10-26 起只识别含 Physical 组的组织树（组织根 / 父节点即使 Casdoor `type=Virtual` 也保留），与组织树并列的 `Group Access` 应用访问虚拟组在目录同步、成员关系、权限画像和通讯录四层都不再出现。2026-10-24 起页面不再按部门裁剪：所有登录账号的页面集合恒为 `GROUP_ACCESS_PAGE_KEYS`，`allowed_pages` 仅为旧客户端兼容字段，保存时恒写全量、裁决时忽略。
 - **权限管理入口**：仅 `GROUP_ACCESS_ADMIN_GROUP_KEYS` 命中的部门管理员、`GROUP_ACCESS_ADMIN_USER_IDS` 显式用户白名单，以及权限页手工授权账号可进入；角色 `access.manage` 不再产生管理员。
 - **系统管理员名单（0072）**：权限页左栏展示当前生效的管理员，来源合并 `GROUP_ACCESS_ADMIN_USER_IDS`、`GROUP_ACCESS_ADMIN_GROUP_KEYS` 与 `group_access_admins` 手工授权；按 user id 去重，环境配置来源不可在页面撤销。`POST /api/v1/access/admins` / `DELETE /api/v1/access/admins` 仅权限管理员可调用，手工变更写审计 `group_access_admin` 并立即清空权限画像缓存；至少保留一名管理员。
 - **编辑 / 仅浏览（0073）**：`group_access_rules.access_level = edit | view`，edit 隐含浏览；多部门规则取并集，任一适用 edit 才解除只读。`projectScope=none` 保存时强制 view，数据库同时以 CHECK 拒绝 none + edit。开关 `GROUP_ACCESS_ENFORCED=true`、非部门管理员且无任何适用 edit 时，画像下发 `groupReadOnly=true`；所有业务写权限键（项目 / 成员 / 任务 / 日报 / 问题 / 节点 / 蓝图 / 文件 / 干系人 / 字典 / 日历 / 自动化 / 重发）经 `can` 一律返回 false，未挂功能权限键的写入口可用 `assertWritable` 兜底拒绝。读接口保持可用。**edit 是账号级写能力**：任一适用规则命中后，该账号可在其全部可见项目内写，不按项目逐一拆分。
@@ -37,7 +37,7 @@
 - **操作记录范围**：`auditAccessOf` 返回 `all` / `project_manager` / `self`；项目经理的管理项目集合 = 主数据项目经理 ∪ 名册项目经理，再与当前部门有效项目范围取交集并排除软删项目，防止关闭部门范围后从操作记录旁路。
 - **部门默认（0069 兼容保留）**：`group_access_rules.member_scope` / `member_user_ids` 保留用于旧客户端与升级迁移。权限页保存部门默认时固定写 `member_scope=all`、`member_user_ids=[]`；`all` 对部门全体直属成员生效，后续加入者自动继承。存量 `selected` 部门行由 0074 拆成个人规则后删除，不再作为新配置入口。
 - **部门内个人覆盖（0074）**：`group_access_member_rules` 以 `group_key + user_id` 为主键保存个人项目范围 / 编辑或仅浏览，`project_group_member_access` 保存 `selected` 项目白名单并以组合外键级联到个人规则。同一部门内个人规则优先，未设置者继承部门默认；不同人员互不影响，多部门仍按各自有效规则取并集。新增 `PUT /api/v1/access/member-rules`（批量写入相同权限或各自调用）与 `DELETE /api/v1/access/member-rules`（JSON body，删除所选人员覆盖并恢复部门默认）；仅权限管理员可调用，保存 / 删除写审计 `group_access_rule`（`metadata.target=member`）并清空画像缓存。
-- **虚拟未分组（Push 497）**：没有 `user_group_memberships` 记录的未删除账号（含停用）在权限通讯录 / 看板聚合为根级虚拟部门「未分组」（固定键 `__ungrouped__`，不写 `departments`）；无账号时不返回空节点。该节点可保存 / 删除规则，`selected` 人员范围只校验当前未分组账号；权限画像把无部门账号的 `groupKeys` 映射为 `__ungrouped__`，进入任一真实部门后自动退出。
+- **虚拟未分组（Push 497）**：没有任何在编部门成员关系的未删除账号（含停用；仅有应用访问虚拟组也算）在权限通讯录 / 看板聚合为根级虚拟部门「未分组」（固定键 `__ungrouped__`，不写 `departments`）；无账号时不返回空节点。该节点可保存 / 删除规则，`selected` 人员范围只校验当前未分组账号；权限画像把无部门账号的 `groupKeys` 映射为 `__ungrouped__`，进入任一真实部门后自动退出。规则列表同样只展示在编部门与未分组，历史虚拟组规则不再回填。
 - 权限页的「部门文件夹全选」只作用于该部门直属人员，子部门按各自规则独立配置；部门默认与个人覆盖分块保存，选中人员只表示本次个人权限目标，不再表示部门规则适用范围。个人行显示「个人权限」标识，点击姓名会打开所属部门并载入该人员有效权限；恢复默认会删除其个人覆盖。手工部门键入口已删除，部门目录完全来自 Casdoor 自动同步。
 
 ## 与其它模块的边界

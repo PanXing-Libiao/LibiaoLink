@@ -37,19 +37,22 @@ export class GroupAccessService {
 
   async overview(actorId: string): Promise<GroupAccessOverview> {
     await this.assertAdmin(actorId);
-    const [memberships, ungroupedUsers, directory, rules, memberRules, projects, groupAccess, admins] = await Promise.all([
+    const { directory, activeGroupKeys } = await this.activeDirectory();
+    const [memberships, ungroupedUsers, rules, memberRules, projects, groupAccess, admins] = await Promise.all([
       this.repository.listGroupMembers(),
-      this.repository.listUngroupedUsers(),
-      this.departments.listDepartments(),
+      this.repository.listUngroupedUsers([...activeGroupKeys]),
       this.repository.listAccessRules(),
       this.repository.listAccessMemberRules(),
       this.repository.listAccessProjects(),
       this.permission.groupAccessOf(actorId),
       this.listAdmins(),
     ]);
+    const effectiveRules = rules.filter(
+      (rule) => activeGroupKeys.has(rule.groupKey) || rule.groupKey === GROUP_ACCESS_UNGROUPED_KEY,
+    );
     const metadata = new Map(
       await Promise.all(
-        rules.map(async (rule) => {
+        effectiveRules.map(async (rule) => {
           const meta = await this.repository.findRuleMetadata(rule.groupKey);
           return [rule.groupKey, meta] as const;
         }),
@@ -58,12 +61,13 @@ export class GroupAccessService {
     const membersByKey = new Map<string, GroupAccessMember[]>();
     const memberRulesByKey = new Map<string, GroupAccessMemberRule[]>();
     for (const memberRule of memberRules) {
+      if (!activeGroupKeys.has(memberRule.groupKey)) continue;
       const list = memberRulesByKey.get(memberRule.groupKey) ?? [];
       list.push(toMemberRule(memberRule, memberRule.updatedAt ?? new Date(0)));
       memberRulesByKey.set(memberRule.groupKey, list);
     }
-    const membershipNameByKey = new Map<string, string>();
     for (const membership of memberships) {
+      if (!activeGroupKeys.has(membership.groupKey)) continue;
       const members = membersByKey.get(membership.groupKey) ?? [];
       members.push({
         userId: membership.userId,
@@ -73,9 +77,6 @@ export class GroupAccessService {
         status: membership.status,
       });
       membersByKey.set(membership.groupKey, members);
-      if (!membershipNameByKey.has(membership.groupKey)) {
-        membershipNameByKey.set(membership.groupKey, membership.groupName);
-      }
     }
     const sourceIdByDepartmentId = new Map<string, string>();
     for (const department of directory) {
@@ -101,18 +102,6 @@ export class GroupAccessService {
         rule: null,
       });
     }
-    for (const [groupKey, members] of membersByKey) {
-      if (groups.has(groupKey)) continue;
-      groups.set(groupKey, {
-        groupKey,
-        groupName: membershipNameByKey.get(groupKey) ?? casdoorGroupName(groupKey),
-        parentGroupKey: null,
-        memberCount: members.length,
-        members,
-        memberRules: memberRulesByKey.get(groupKey) ?? [],
-        rule: null,
-      });
-    }
     if (ungroupedUsers.length > 0) {
       const members: GroupAccessMember[] = ungroupedUsers.map((user) => ({
         userId: user.userId,
@@ -131,7 +120,7 @@ export class GroupAccessService {
         rule: null,
       });
     }
-    for (const rule of rules) {
+    for (const rule of effectiveRules) {
       const meta = metadata.get(rule.groupKey) ?? null;
       const current = groups.get(rule.groupKey);
       groups.set(rule.groupKey, {
@@ -206,12 +195,31 @@ export class GroupAccessService {
     this.permission.invalidate();
   }
 
+  private async activeDirectory(): Promise<{
+    directory: Awaited<ReturnType<DepartmentService["listDepartments"]>>;
+    activeGroupKeys: Set<string>;
+  }> {
+    const directory = await this.departments.listDepartments();
+    const activeGroupKeys = new Set<string>();
+    for (const department of directory) {
+      if (department.sourceId === null) continue;
+      const groupKey = casdoorGroupKey(this.config.env.CASDOOR_ORG_NAME, department.sourceId);
+      if (groupKey !== "") activeGroupKeys.add(groupKey);
+    }
+    return { directory, activeGroupKeys };
+  }
+
   private async listAdmins(): Promise<GroupAccessAdmin[]> {
     const configuredGroupKeys = parseGroupAccessAdminKeys(this.config.env.GROUP_ACCESS_ADMIN_GROUP_KEYS ?? "");
     const configuredUserIds = parseGroupAccessAdminKeys(this.config.env.GROUP_ACCESS_ADMIN_USER_IDS ?? "");
+    let effectiveGroupKeys: string[] = [];
+    if (configuredGroupKeys.length > 0) {
+      const { activeGroupKeys } = await this.activeDirectory();
+      effectiveGroupKeys = configuredGroupKeys.filter((groupKey) => activeGroupKeys.has(groupKey));
+    }
     const [configuredUsers, groupUsers, manualAdmins] = await Promise.all([
       this.repository.listActiveUsersByIds(configuredUserIds),
-      this.repository.listGroupAdminUsersByGroupKeys(configuredGroupKeys),
+      this.repository.listGroupAdminUsersByGroupKeys(effectiveGroupKeys),
       this.repository.listManualGroupAccessAdmins(),
     ]);
     const admins = new Map<string, GroupAccessAdmin>();

@@ -7,6 +7,7 @@ import type { DbClient } from "../src/db/db-client.js";
 import type { AuditRecordInput, AuditService } from "../src/modules/audit/index.js";
 import {
   CasdoorDirectorySource,
+  filterCasdoorOrganizationGroups,
   normalizeCasdoorGroup,
   normalizeCasdoorUser,
 } from "../src/modules/identity/casdoor-directory.source.js";
@@ -335,12 +336,13 @@ describe("CasdoorDirectorySource（h1 目录适配器）", () => {
     expect(snapshot.users).toHaveLength(103);
     expect(snapshot.users[102]?.status).toBe("disabled");
     expect(snapshot.departments).toEqual([]);
-    const first = stub.calls[0];
-    expect(first?.searchParams.get("owner")).toBe("libiaorobot");
-    expect(first?.searchParams.get("pageSize")).toBe("100");
-    expect(first?.searchParams.get("clientId")).toBe("client-id");
-    expect(first?.searchParams.get("clientSecret")).toBe("client-secret");
-    expect(stub.calls.map((url) => url.searchParams.get("p"))).toEqual(["1", "2", null]);
+    expect(stub.calls[0]?.pathname).toBe("/api/get-groups");
+    const firstUser = stub.calls.find((url) => url.pathname === "/api/get-users");
+    expect(firstUser?.searchParams.get("owner")).toBe("libiaorobot");
+    expect(firstUser?.searchParams.get("pageSize")).toBe("100");
+    expect(firstUser?.searchParams.get("clientId")).toBe("client-id");
+    expect(firstUser?.searchParams.get("clientSecret")).toBe("client-secret");
+    expect(stub.calls.filter((url) => url.pathname === "/api/get-users").map((url) => url.searchParams.get("p"))).toEqual(["1", "2"]);
   });
 
   it("服务端忽略分页（重复页）时去重并停页，不进入死循环", async () => {
@@ -362,24 +364,38 @@ describe("CasdoorDirectorySource（h1 目录适配器）", () => {
     expect(snapshot.users.map((user) => user.casdoorId)).toEqual(["uuid-1"]);
   });
 
-  it("群组归一化：isTopGroup 归根、parentId 解析、isDeleted 跳过", async () => {
+  it("只保留组织实体树：虚拟应用访问组跳过，组织根和父节点即使 Virtual 也保留", async () => {
     const stub = makeFetch((url) => {
       if (url.pathname === "/api/get-groups") {
         return jsonResponse({
           status: "ok",
           data: [
-            { name: "libiaorobot", displayName: "镭标机器人", isTopGroup: true },
-            { name: "rd", displayName: "研发部", parentId: "libiaorobot" },
-            { name: "hr", displayName: "人事部", parentId: "libiaorobot", isDeleted: true },
+            { name: "LIBIAOROBOT", displayName: "立镖机器人", type: "Virtual", isTopGroup: true, parentId: "libiaorobot" },
+            { name: "RD Dept", displayName: "研发部", type: "Virtual", parentId: "LIBIAOROBOT" },
+            { name: "Hardware Team", displayName: "硬件组", type: "Physical", parentId: "RD Dept" },
+            { name: "Pm Group Access", displayName: "Pm Group Access", type: "Virtual", isTopGroup: true, parentId: "libiaorobot" },
+            { name: "HR Dept", displayName: "人力资源部", type: "Physical", parentId: "LIBIAOROBOT", isDeleted: true },
           ],
+        });
+      }
+      if (url.pathname === "/api/get-users") {
+        return jsonResponse({
+          status: "ok",
+          data: [casdoorUser(1, { groups: ["LIBIAOROBOT", "RD Dept", "Hardware Team", "Pm Group Access"] })],
         });
       }
       return jsonResponse({ status: "ok", data: [] });
     });
     const snapshot = await directorySource(stub).pull();
     expect(snapshot.departments).toEqual([
-      { sourceId: "libiaorobot", name: "镭标机器人", parentSourceId: null, status: "active" },
-      { sourceId: "rd", name: "研发部", parentSourceId: "libiaorobot", status: "active" },
+      { sourceId: "LIBIAOROBOT", name: "立镖机器人", parentSourceId: null, status: "active" },
+      { sourceId: "RD Dept", name: "研发部", parentSourceId: "LIBIAOROBOT", status: "active" },
+      { sourceId: "Hardware Team", name: "硬件组", parentSourceId: "RD Dept", status: "active" },
+    ]);
+    expect(snapshot.users[0]?.groups).toEqual([
+      "libiaorobot/LIBIAOROBOT",
+      "libiaorobot/RD Dept",
+      "libiaorobot/Hardware Team",
     ]);
   });
 
@@ -411,7 +427,17 @@ describe("CasdoorDirectorySource（h1 目录适配器）", () => {
       parentSourceId: "root",
       status: "active",
     });
+    expect(normalizeCasdoorGroup({ name: "rd", parentId: "owner/root", type: "Virtual" })).toMatchObject({
+      sourceId: "rd",
+      parentSourceId: "root",
+    });
     expect(normalizeCasdoorGroup({ name: "rd", isDeleted: true })).toBeNull();
+    expect(filterCasdoorOrganizationGroups([
+      { name: "root", type: "Virtual", isTopGroup: true },
+      { name: "rd", type: "Virtual", parentId: "root" },
+      { name: "hw", type: "Physical", parentId: "rd" },
+      { name: "Pm Group Access", type: "Virtual", isTopGroup: true },
+    ]).map((group) => (group as { name: string }).name)).toEqual(["root", "rd", "hw"]);
   });
 });
 
