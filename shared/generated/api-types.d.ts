@@ -10933,7 +10933,7 @@ export interface components {
             rule: components["schemas"]["GroupAccessRule"];
         };
         /**
-         * @description 部门项目权限三态：allowed / empty / denied；用于业务页面统一空状态
+         * @description 部门项目权限三态：allowed / empty / denied；none 规则按仅登录处理，用于业务页面统一空状态
          * @enum {string}
          */
         GroupProjectAccess: "allowed" | "empty" | "denied";

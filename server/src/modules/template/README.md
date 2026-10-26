@@ -11,7 +11,7 @@
 
 - **契约**：`shared/src/modules/templates.ts` —— `TaskNodeSchema` / `TaskNodeListQuerySchema` / `TaskNodeCreateBodySchema` / `TaskNodeUpdateBodySchema` / `TaskNodeDeleteResponseSchema`；`shared/src/openapi.ts` 新增 `POST /api/v1/task-nodes`、`PATCH /api/v1/task-nodes/{id}`、`DELETE /api/v1/task-nodes/{id}`。
 - **数据**：迁移 `database/migrations/0032_task_nodes.sql`（`task_nodes`：九阶段 CHECK / `seq` 正数 / 同阶段同名唯一 `uq_task_nodes_stage_title` / 读序索引 `ix_task_nodes_stage_seq`）+ 种子 #8（九阶段 52 条）。
-- **读**：`GET /api/v1/task-nodes?stage=`（登录且命中部门规则 / 系统管理员；限制关闭时放行；仅登录账号 403；缺省全部阶段）—— 排序 = 九阶段顺序 → `seq` → `id`；`total` 与 `items` 同步。
+- **读**：`GET /api/v1/task-nodes?stage=`（登录且至少一个部门项目范围为 all / own / selected，或系统管理员；限制关闭时放行；仅登录 / 适用规则均为 none 403；缺省全部阶段）—— 排序 = 九阶段顺序 → `seq` → `id`；`total` 与 `items` 同步。
 - **写**（服务层 `assertCanManageBlueprint` 复核：系统管理员，或部门限制开启且命中编辑规则；其余 403 `FORBIDDEN`）：
   - `POST /api/v1/task-nodes`：`title` trim 后落库、`titleEn` 空串 → null；同阶段同名 409 `NODE_ALREADY_EXISTS`（不落库不留痕）；缺省 `seq` = 该阶段末位 + 10；
   - `PATCH /api/v1/task-nodes/{id}`：只改传入字段（`titleEn` 传 null / 空串 = 清空）；`version` 必传 —— 过期 409 `VERSION_CONFLICT`；改名撞同阶段已有名 409 `NODE_ALREADY_EXISTS`（排除自身）；不存在 404 `NOT_FOUND`；

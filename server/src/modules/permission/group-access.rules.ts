@@ -28,7 +28,7 @@ export interface GroupAccessProfile {
   projectIds: string[] | null;
   /** 规则包含 own：需在服务层把本人负责 / 参与项目并入 projectIds。 */
   ownProjects: boolean;
-  /** 当前账号是否命中至少一条已启用的部门规则；用于区分「仅登录」与「有规则但无项目」。 */
+  /** 当前账号是否命中至少一条已启用的部门规则；仅用于画像 / 排障，不单独代表业务数据读取权限。 */
   hasRule: boolean;
   /** 当前账号命中的项目范围并集（保留规则原意，供权限画像展示）。 */
   projectScopes: GroupAccessProjectScope[];
