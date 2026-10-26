@@ -1,5 +1,11 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
+> **2026-10-26 10:35 无可见项目空态修复已部署公司测试机（PR [#637](https://github.com/PanXing-Libiao/LibiaoLink/pull/637) · 生产未部署）**：按业务口径「有可编辑权限就不能这样拦死 他要编辑新建的呀 然后不能这样全部都是空页面」「地图 仪表盘 框架是可以查看的 但是没有数据 上面显示当前账号没有可浏览/编辑 的项目」「我的任务应该也要打开」，`groupProjectAccess=empty` 不再整页替换；仪表盘 / 地图、项目空间、任务模板、文件库、我的任务保留页面骨架和非阻断提示，`edit` 可新建首个项目，`view` 的新建 / 导入置灰，`denied` 仍显示权限不足。页面放行不代表接口放行，服务端逐请求鉴权不变。
+>
+> PR 最终 HEAD `fc77c685`，PR CI [40259139140](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40259139140) 5 / 5 · squash `a2b0631e` · main CI [40259298991](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40259298991) 5 / 5。frontend-only 包 `output/frontend-access-empty-a2b0631e-20261026-1029.tar.gz`（14,899,840 B · SHA-256 `6003c7c5f86f203feb1a1ff90bf0643e19543214b819a23db19bb4a4d14851e6`）上传 `/srv/data/backups/` 后哈希一致；staging 386 文件 / 18,553,270 B / 0 preview，内容差异仅 5 项。部署前备份 `/srv/data/backups/frontend-before-access-empty-20261026-1029.tar.gz`（14,905,546 B · SHA-256 `0ab4ed6c35bb5982f07648cd90884a6e9fd73e82f237807352c996eebf871a23`），回滚即恢复该包。
+>
+> 仅覆盖 `/opt/libiaolink/frontend/dist/` 并修正读权限，web / api / worker 未重启；公网 `index.html` / `index-CIluyw8n.js` / `index-CsxpiNiP.css` 与本地逐字节一致（`af306ff0…` / `6e620a22…` / `b63f5ba1…`），`/` / `/index.html` / `/nginx-health` / `/healthz` / `/readyz` 均 200，web / api / worker healthy。临时 `zhangsan` 会话画像为 `empty` / 只读 / 项目 0；测试机浏览器回放 9 / 9 通过，临时会话清理为 0，远端 staging 已清理。部门规则保持「测试部 own/view/selected（张三）」「项目部 all/view/all」。无接口、依赖、DDL、迁移、compose、env 或 Secret 变化，生产未部署。
+
 > **2026-10-26 10:06 部门权限规则已在公司测试机执行（生产未部署）**：按业务负责人口径「执行规则吧 / 直接全部执行吧」，测试机打开 `GROUP_ACCESS_ENFORCED=true`；`PERMISSION_ENFORCED=false` 保持一期不判角色权限，`GROUP_ACCESS_ADMIN_USER_IDS` 仅 `80f59621-71a7-4205-869e-d7db13ae3c89`（panxing），`GROUP_ACCESS_ADMIN_GROUP_KEYS` 为空。所有登录账号仍可进入全部业务页；实际项目数据 / 写能力按适用部门规则收敛：无适用规则为「仅登录」（项目 0、写 403），`view` 为只读，`edit` 可在可见项目内写；页面进入和数据三态由应用统一判定。未自动新建或覆盖任何部门规则，规则以权限管理页保存结果为准。
 >
 > 变更前备份 `/srv/data/backups/access-enforce-20261026-015729/`：`server.env.before` SHA-256 `1a479203fe2e6453ee8d4ff647a9631f02a36287a410a7185fa615b4591f94b1`，`group-rules.before.sql` `9983dfc1bd3eadaa1f952b6521e64f1117f72d2ae1c1303b218afd5407a72d11`；当前 `server.env` SHA-256 `86cceb10c0d7b57c40a08aa3403f7c5ce105492cfc969e60f6e9a989fb01b930`。09:57 强制重建 `api` / `worker`，未改代码、迁移、依赖、compose 或 frontend。
