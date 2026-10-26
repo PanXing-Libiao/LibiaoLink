@@ -57,9 +57,9 @@ type ViewState =
   | { kind: "signed-in"; me: MeResponse }
   | { kind: "error"; message: string };
 
-/** 仅登录账号的页面级阻断范围；有规则但无项目的 empty 状态保留页面骨架，我的任务始终可进入。 */
+/** 仅登录账号的页面级阻断范围；任务模板与项目数据同权，有规则但无项目的 empty 状态保留页面骨架，我的任务始终可进入。 */
 function blocksWhenLoginOnly(route: Route): boolean {
-  return route.kind === "hub" || route.kind === "list" || route.kind === "project" || route.kind === "files";
+  return route.kind === "hub" || route.kind === "list" || route.kind === "project" || route.kind === "placeholder" || route.kind === "files";
 }
 
 /** 直链无权限时的明确落点；菜单隐藏只是呈现层，这里仍以服务端画像为准。 */
@@ -198,6 +198,8 @@ export default function App() {
   /** 首落闸门（Push 354 · 业务口径 2026-10-16「仪表盘页面重新登录点击刷新后 会触发页面转场动画效果」）：账号记忆（prefs）落定前，
    *  仪表盘页 #/（无 ?view=）先不渲染卡面 —— 落哪一屏由记忆决定，记忆没到就落屏必出「先地图、后滑屏」的假转场。 */
   const [hubPrefsSettled, setHubPrefsSettled] = useState(false);
+  /** 权限画像首次读取是否已结算：业务页在画像就绪前不挂载，避免仅登录账号先发数据请求再被拦截。 */
+  const [permissionsSettled, setPermissionsSettled] = useState(false);
   /** 仪表盘常驻项目（Push 336 · 业务口径「选择的项目也要记住 不随刷新变动而回到全部项目」）：按账号记住选中的项目；null = 全部项目。 */
   const [hubDashProject, setHubDashProject] = useState<string | null>(null);
   /** 仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」）：按账号记住选中视图 —— 数据总览 / 项目进度 / 任务状态 / 问题 / 交付时间 / 词频图。 */
@@ -286,6 +288,7 @@ export default function App() {
         if (cancelled) {
           return;
         }
+        setPermissionsSettled(true);
         if (dictResult.status === "fulfilled") {
           setDicts(dictResult.value);
         }
@@ -778,6 +781,14 @@ export default function App() {
             </button>
           </p>
         </div>
+      </main>
+    );
+  }
+
+  if (permissions === null && !permissionsSettled && (blocksWhenLoginOnly(route) || route.kind === "access")) {
+    return (
+      <main className="page">
+        <Loader />
       </main>
     );
   }
