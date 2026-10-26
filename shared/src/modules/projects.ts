@@ -2,6 +2,8 @@ import { z } from "../zod.ts";
 import { DateTimeSchema, DateOnlySchema, PageQuerySchema, SortQuerySchema, UuidSchema, VersionSchema } from "../common/conventions.ts";
 import { ProjectStatusSchema, StageKeySchema } from "../common/dicts.ts";
 
+const PROJECT_MANAGER_IDS_LIMIT = 200;
+
 /** 项目主数据（projects 表；API 字段 camelCase 与 DDL snake_case 的映射见 shared/README.md）。 */
 export const ProjectSchema = z
   .object({
@@ -133,8 +135,8 @@ export const ProjectCreateBodySchema = z
       .max(100)
       .default("未分类")
       .openapi({ description: "项目类型（字典 project_type）；未填写归入「未分类」（A1-12 定档）" }),
-    managerIds: z.array(UuidSchema).min(1).openapi({
-      description: "项目经理（A22 · Push 136）：至少一位、可多位；数组顺序 = 展示顺序；判空失败返回 400 VALIDATION_FAILED",
+    managerIds: z.array(UuidSchema).min(1).max(PROJECT_MANAGER_IDS_LIMIT).openapi({
+      description: "项目经理（A22 · Push 136）：至少一位、可多位（≤ 200 位）；数组顺序 = 展示顺序；判空或超过上限返回 400 VALIDATION_FAILED",
     }),
     stageKey: StageKeySchema.optional(),
     description: z.string().max(2000).optional(),
@@ -150,8 +152,8 @@ export const ProjectUpdateBodySchema = z
     customer: z.string().max(200).nullable().optional(),
     region: z.string().min(1).max(100).optional(),
     projectType: z.string().min(1).max(100).optional(),
-    managerIds: z.array(UuidSchema).min(1).optional().openapi({
-      description: "项目经理（A22 · Push 136）：至少一位、可多位；不传 = 不改、传空数组 = 400；数组顺序 = 展示顺序",
+    managerIds: z.array(UuidSchema).min(1).max(PROJECT_MANAGER_IDS_LIMIT).optional().openapi({
+      description: "项目经理（A22 · Push 136）：至少一位、可多位（≤ 200 位）；不传 = 不改、传空数组或超过上限 = 400；数组顺序 = 展示顺序",
     }),
     stageKey: StageKeySchema.optional(),
     status: z

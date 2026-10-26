@@ -2,6 +2,8 @@ import { z } from "../zod.ts";
 import { DateTimeSchema, UuidSchema, VersionSchema } from "../common/conventions.ts";
 import { StageKeySchema } from "../common/dicts.ts";
 
+const TASK_TEMPLATE_NODE_IDS_LIMIT = 500;
+
 /**
  * 任务节点库与任务模板契约（系统功能书 A1-16 / A1-17；2026-09-19 定案，对齐项 A11）。
  * - 任务节点库（TaskNode）：一条「可生成任务的定义」——阶段 + 中英文名称 + 库内排序；是任务模板的节点来源。
@@ -95,8 +97,9 @@ export const TaskTemplateCreateBodySchema = z
     stageKey: StageKeySchema,
     nodeIds: z
       .array(UuidSchema)
+      .max(TASK_TEMPLATE_NODE_IDS_LIMIT)
       .default([])
-      .openapi({ description: "任务节点库内的节点 id，顺序即模板内顺序；允许空（新建后逐步添加）；重复 id 返回 400" }),
+      .openapi({ description: "任务节点库内的节点 id（≤ 500 个），顺序即模板内顺序；允许空（新建后逐步添加）；重复 id 返回 400" }),
   })
   .openapi("TaskTemplateCreateBody");
 
@@ -105,8 +108,9 @@ export const TaskTemplateUpdateBodySchema = z
     name: z.string().min(1).max(100).optional(),
     nodeIds: z
       .array(UuidSchema)
+      .max(TASK_TEMPLATE_NODE_IDS_LIMIT)
       .optional()
-      .openapi({ description: "全量替换节点顺序（含增删 / 重排）；同一模板内按 id 去重，重复 id 返回 400" }),
+      .openapi({ description: "全量替换节点顺序（≤ 500 个，含增删 / 重排）；同一模板内按 id 去重，重复 id 返回 400" }),
     version: VersionSchema,
   })
   .openapi("TaskTemplateUpdateBody", { description: "编辑模板（改名 / 节点全量替换；乐观锁 version 必传）" });
