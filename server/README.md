@@ -123,6 +123,7 @@ server/
 - 错误信封（唯一结构）：`code` / `message` / `details` / `traceId`（契约包 `ApiError`）；`AppError` 的 HTTP 状态取自 `HTTP_STATUS_BY_ERROR_CODE`，不手写映射。
 - 校验失败统一 `VALIDATION_FAILED`（字段明细进 `details`）。
 - 日志：Pino JSON（nestjs-pino）；请求日志含 `req.id`（透传或生成 `X-Request-Id` 并回写响应头），字段 `time` / `level` / `context` / `msg`。
+- 请求体编码（2026-10-26 · GHSA-27r3-jxmh-p828）：api 关闭 Nest 默认 JSON / URL-encoded parser，只注册 `inflate:false` 的 JSON parser（`limit: 4mb`），并在入口拒绝所有非 `identity` 的 `Content-Encoding`（415）；压缩请求体不属于 API 契约，响应 gzip 不受影响。`body-parser@2.4.0` 锁文件升级由独立 Dependabot PR #632 承接，本安全策略不依赖其先合入；回归见 `test/request-body-security.test.ts`。
 - HTTP 安全头（F-06 · 2026-10-23）：api 入口关闭 `X-Powered-By`，所有响应（含 401 / 404 / 500）统一写入 `X-Content-Type-Options: nosniff` / `Referrer-Policy: no-referrer` / `Permissions-Policy`；HSTS 只由 TLS 终止的 Nginx 下发。`/preview-content` 公网由 Nginx 直接 404，DocServer 走容器内 `http://api:3000`。
 - 全局过滤器在 `AppModule` 注册（`APP_FILTER`），api 与测试行为一致。
 
