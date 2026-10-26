@@ -22,6 +22,7 @@ import {
   BUILTIN_RULES,
   findMergedSpec,
   findTemplate,
+  findTemplateForRecipient,
   subjectKindOf,
   SUBJECT_TEMPLATE_VARIABLES,
 } from "./builtin-rules.js";
@@ -323,8 +324,7 @@ export function evaluateBusinessDate(input: BusinessDateEvaluationInput): Busine
       let skip: ReplaySkipReason | null = null;
 
       for (const action of rule.actions) {
-        const template = findTemplate(action.template);
-        if (template === null) {
+        if (findTemplate(action.template) === null) {
           skip = skip ?? "template_missing";
           continue;
         }
@@ -343,6 +343,11 @@ export function evaluateBusinessDate(input: BusinessDateEvaluationInput): Busine
         const actionMessages: ReplayMessage[] = [];
         const baseDedupeKey = dedupeKey(rule.code, subject.id, windowKey);
         for (const { kind: recipientKind, recipient } of resolvedRecipients) {
+          const template = findTemplateForRecipient(rule.code, action.template, recipientKind);
+          if (template === null) {
+            skip = skip ?? "template_missing";
+            continue;
+          }
           const variables = subjectVariables(subject, recipient.name);
           // 合并清单变量先按本主体的清单值注入（单条形态），合并步再按 bucket 重渲染全量清单。
           if (spec !== null) variables[spec.listVariable] = variableValue(subject, [spec.listField], recipient.name);

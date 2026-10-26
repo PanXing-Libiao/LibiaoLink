@@ -672,9 +672,9 @@ function buildEnv(overrides = {}) {
     check(
       "S1c",
       "R02 文案渲染：模板标题 / 正文含任务描述（引擎按主体快照渲染）",
-      "标题=及时添加文件 / 正文含「安装摄像头」",
+      "标题=📎 及时添加文件 / 正文含「安装摄像头」",
       short({ title: payload1.title, body: payload1.body }),
-      payload1.title === "及时添加文件" && String(payload1.body).includes("安装摄像头"),
+      payload1.title === "📎 及时添加文件" && String(payload1.body).includes("安装摄像头"),
     );
     const drain2 = await dispatcher.drainOnce();
     const notification1 = await db.query(
