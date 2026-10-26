@@ -778,7 +778,7 @@ export async function restoreFile(fileId: string): Promise<void> {
   await apiSend<{ id: string }>("/api/v1/files/" + encodeURIComponent(fileId) + "/restore", "POST", { version: detail.version });
 }
 
-/** 彻底删除（Push 261 · 文件库「回收站」栏 · 仅系统管理员 —— 服务端按 roleCodes=admin 硬闸，A4-12）：
+/** 彻底删除（Push 261 · 文件库「回收站」栏 · 仅系统管理员 —— 服务端按 groupAccessAdmin 硬闸，A4-12）：
  *  POST /files/{id}/purge —— 对象与元数据一并清理、操作留痕；仅回收站中的文件可彻底删除；乐观锁 version 先读详情取回。 */
 export async function purgeFile(fileId: string): Promise<void> {
   const detail = await apiRequest<{ version: number }>("/api/v1/files/" + encodeURIComponent(fileId));

@@ -623,8 +623,8 @@ class FakePreviewRepository {
 class FakePermissionService {
   visible = true;
   canUpload = true;
-  /** 彻底删除（purge）仅系统管理员：默认非管理员，用例按需提到 admin。 */
-  roleCodes: string[] = ["project_member"];
+  /** 彻底删除（purge）仅部门权限管理员：默认非管理员，用例按需放行。 */
+  groupAccessAdmin = false;
 
   async assertProjectVisible(_actorId: string, projectId: string): Promise<{ projectId: string; member: boolean; projectManager: boolean }> {
     if (!this.visible) throw new Error("fake: 项目不可见");
@@ -635,8 +635,8 @@ class FakePermissionService {
     if (!this.canUpload) throw new Error("fake: 无权限");
   }
 
-  async permissionsOf(actorId: string): Promise<{ userId: string; roleCodes: string[]; dataScopes: unknown[]; permissionKeys: string[] }> {
-    return { userId: actorId, roleCodes: this.roleCodes, dataScopes: [], permissionKeys: [] };
+  async canManageGroupAccess(): Promise<boolean> {
+    return this.groupAccessAdmin;
   }
 }
 
@@ -1651,7 +1651,7 @@ describe("FileService.purgeFile（彻底删除 · 仅管理员）", () => {
 
   it("管理员 + 回收站文件：按版本清对象 + 清 current_version_id + 删版本与文件行 + 留痕", async () => {
     const h = recycledHarness();
-    h.permission.roleCodes = ["admin"];
+    h.permission.groupAccessAdmin = true;
     const result = await h.service.purgeFile(FILE, { version: 7, reason: "合规要求" }, ACTOR);
 
     expect(result).toEqual({ fileId: FILE, purgedAt: NOW.toISOString() });
@@ -1670,7 +1670,7 @@ describe("FileService.purgeFile（彻底删除 · 仅管理员）", () => {
 
   it("非回收站 → 409 FILE_STATE_INVALID；乐观锁不匹配 → 409（不清对象）", async () => {
     const h = recycledHarness();
-    h.permission.roleCodes = ["admin"];
+    h.permission.groupAccessAdmin = true;
     h.repo.file = makeFileRow({ status: "final", version: 2 });
     await expect(h.service.purgeFile(FILE, { version: 2 }, ACTOR)).rejects.toMatchObject({
       code: "FILE_STATE_INVALID",
@@ -1678,7 +1678,7 @@ describe("FileService.purgeFile（彻底删除 · 仅管理员）", () => {
     });
 
     const h2 = recycledHarness();
-    h2.permission.roleCodes = ["admin"];
+    h2.permission.groupAccessAdmin = true;
     await expect(h2.service.purgeFile(FILE, { version: 6 }, ACTOR)).rejects.toMatchObject({
       code: "VERSION_CONFLICT",
       httpStatus: 409,
@@ -1689,7 +1689,7 @@ describe("FileService.purgeFile（彻底删除 · 仅管理员）", () => {
 
   it("对象清理失败 → 映射契约错误且元数据不删（重试收敛）", async () => {
     const h = recycledHarness();
-    h.permission.roleCodes = ["admin"];
+    h.permission.groupAccessAdmin = true;
     h.storage.purgeObject = async () => {
       throw new StorageError("unavailable", "S3 不可用");
     };
@@ -1720,7 +1720,7 @@ describe("FileService 预览产物清理（版本隔离）", () => {
       makeVersionRow({ id: VERSION_A, seq: 1, objectKey: CONTRACT_KEY, contentHash: HASH }),
       makeVersionRow({ id: VERSION_B, seq: 2, objectKey: CONTRACT_KEY_V2, contentHash: OTHER_HASH }),
     ];
-    h.permission.roleCodes = ["admin"];
+    h.permission.groupAccessAdmin = true;
     return h;
   }
 

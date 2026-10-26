@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import type { AuditService } from "../src/modules/admin/index.js";
 import type { DatabaseService } from "../src/db/database.service.js";
 import type { DbClient } from "../src/db/db-client.js";
-import type { RoleService } from "../src/modules/identity/index.js";
+import type { PermissionService } from "../src/modules/permission/index.js";
 import type { TaskCompletionTargetRow, TaskFileSummaryCounts, TaskListRow, TaskRow, TaskUpdatePatch } from "../src/modules/task/task.repository.js";
 import type { TaskRepository } from "../src/modules/task/task.repository.js";
 import type { TaskGateRepository } from "../src/modules/task/task.gate.repository.js";
@@ -169,7 +169,7 @@ function makeService(repo: FakeTaskRepository, gate: FakeTaskGateRepository): {
     db as unknown as DatabaseService,
     repo as unknown as TaskRepository,
     gate as unknown as TaskGateRepository,
-    {} as unknown as RoleService,
+    {} as unknown as PermissionService,
     audit as unknown as AuditService,
     {} as unknown as TaskNodeRepository,
     {} as unknown as TemplateService,

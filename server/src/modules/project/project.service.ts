@@ -330,10 +330,8 @@ export class ProjectService {
 
   /** 项目彻底删除仅系统管理员（与文件彻底删除同一权限口径）。 */
   private async assertAdmin(actorId: string): Promise<void> {
-    const permissions = await this.permission.permissionsOf(actorId);
-    if (!permissions.roleCodes.includes("admin")) {
-      throw new AppError("FORBIDDEN", "仅系统管理员可彻底删除项目");
-    }
+    if (await this.permission.canManageGroupAccess(actorId)) return;
+    throw new AppError("FORBIDDEN", "仅系统管理员可彻底删除项目");
   }
 
   /**

@@ -268,10 +268,10 @@ describe("五出口：页面 / 导出 / 搜索 / 通知同源（C3-08 不变量�
 describe("全量能力基线把五出口一并放开，项目范围由部门规则再次收窄", () => {
   const admin = fullCapabilityAuthorization(ACTOR_ID);
 
-  it("画像：admin 角色码 + 数据范围 all + 契约全量权限位", () => {
+  it("画像：遗留角色码为空 + 数据范围 all + 契约全量权限位", () => {
     expect(admin).toEqual({
       userId: ACTOR_ID,
-      roleCodes: ["admin"],
+      roleCodes: [],
       dataScopes: ["all"],
       permissionKeys: [...PERMISSION_KEYS],
     });

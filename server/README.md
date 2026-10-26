@@ -168,7 +168,7 @@ server/
 ## 部门业务权限（2026-10-26 收口）
 
 - 旧角色权限开关已移除：环境变量 `PERMISSION_ENFORCED` 不再存在，`roles` / `user_roles` / `role_permissions` 也不再参与业务授权判定；历史数据不迁移、不删除。
-- `RoleService.getActorAuthorization()` 固定返回全量能力基线（`PERMISSION_KEYS` + `dataScopes=all`）；最终能看哪些项目、是否可写，由 `GROUP_ACCESS_ENFORCED` 下的部门规则统一裁决。
+- `RoleService.getActorAuthorization()` 固定返回全量能力基线（`PERMISSION_KEYS` + `dataScopes=all`，遗留 `roleCodes` 固定为空）；最终能看哪些项目、是否可写，由 `GROUP_ACCESS_ENFORCED` 下的部门规则统一裁决。项目 / 文件彻底删除、手工任务、锁定字段例外调整与流程项目经理豁免统一以 `PermissionService.canManageGroupAccess()`（即 `groupAccessAdmin`）判断，不再读取 `roleCodes`。
 - 系统管理员只来自 `GROUP_ACCESS_ADMIN_USER_IDS`、`GROUP_ACCESS_ADMIN_GROUP_KEYS` 与权限页手工授权；角色 `access.manage` 不再产生管理员。
 - 用户偏好（`user_preferences`）不参与授权，仍按账号各存一行。
 - 单测：`test/identity-org.test.ts`「部门权限基线」3 例、`test/group-access.test.ts` 管理员来源与项目范围用例。

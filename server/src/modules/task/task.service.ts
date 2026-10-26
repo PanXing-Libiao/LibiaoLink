@@ -36,7 +36,7 @@ import type { DbClient } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { appendOutbox } from "../../db/outbox.js";
 import { AuditService, diffRecords } from "../admin/index.js";
-import { RoleService } from "../identity/index.js";
+import { PermissionService } from "../permission/index.js";
 import { TaskNodeRepository, TemplateService } from "../template/index.js";
 import { clampSortIndex } from "./task.order.js";
 import { parseTaskListFilter, parseTaskSort, type TaskListQueryInput } from "./task.query.js";
@@ -126,7 +126,7 @@ export class TaskService {
     private readonly database: DatabaseService,
     private readonly repository: TaskRepository,
     private readonly gate: TaskGateRepository,
-    private readonly roles: RoleService,
+    private readonly permission: PermissionService,
     private readonly audit: AuditService,
     private readonly nodes: TaskNodeRepository,
     private readonly templates: TemplateService,
@@ -1258,10 +1258,8 @@ export class TaskService {
 
   /** 手工创建非标准任务仅管理员（系统功能书 A1-13）。 */
   private async assertAdmin(actorId: string, action: string): Promise<void> {
-    const authorization = await this.roles.getActorAuthorization(actorId);
-    if (!authorization.roleCodes.includes("admin")) {
-      throw new AppError("FORBIDDEN", "仅管理员可" + action + "（系统功能书 A1-13）");
-    }
+    if (await this.permission.canManageGroupAccess(actorId)) return;
+    throw new AppError("FORBIDDEN", "仅管理员可" + action + "（系统功能书 A1-13）");
   }
 }
 

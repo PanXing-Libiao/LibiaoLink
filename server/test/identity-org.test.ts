@@ -234,13 +234,13 @@ function buildRoleService(fake: FakeRoleRepository): RoleService {
 }
 
 describe("部门权限基线（2026-10-26 旧角色权限退出授权链）", () => {
-  it("无论角色绑定如何，画像固定为全量能力基线", async () => {
+  it("无论角色绑定如何，画像固定为无角色特权的全量能力基线", async () => {
     const fake = new FakeRoleRepository();
     fake.bound.set("user-1", ["viewer"]);
     const auth = await buildRoleService(fake).getActorAuthorization("user-1");
     expect(auth).toEqual({
       userId: "user-1",
-      roleCodes: ["admin"],
+      roleCodes: [],
       dataScopes: ["all"],
       permissionKeys: [...PERMISSION_KEYS],
     });
@@ -249,7 +249,7 @@ describe("部门权限基线（2026-10-26 旧角色权限退出授权链）", ()
   it("授权入口不依赖任何角色仓库数据", async () => {
     const service = new RoleService({} as RoleRepository);
     await expect(service.getActorAuthorization("user-anon")).resolves.toMatchObject({
-      roleCodes: ["admin"],
+      roleCodes: [],
       dataScopes: ["all"],
       permissionKeys: [...PERMISSION_KEYS],
     });
