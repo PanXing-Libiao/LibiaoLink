@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { ApiError } from "./api";
 import { cardBorderOf, cardTintOf, useBackgroundTier, useCardWatermark } from "./backgroundTier";
 import { AppHeader } from "./components/AppHeader";
-import { ProjectAccessNotice } from "./components/ProjectAccessNotice";
 import { Card } from "./components/Card";
 import { FilePreviewOverlay } from "./components/FilePreviewOverlay";
 import { FileTypeIcon } from "./components/FileTypeIcon";
@@ -523,7 +522,6 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
   return (
     <div className="min-h-screen">
       <AppHeader me={me} />
-      <ProjectAccessNotice />
       <main className="@container w-full px-6 pb-10 pt-3">
         <div data-file-library="" className="w-full space-y-4">
           <header className="flex flex-wrap items-end justify-between gap-3">

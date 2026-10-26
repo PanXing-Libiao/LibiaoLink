@@ -98,6 +98,8 @@ export class PermissionService {
       groupAccessAdmin: groupAccess.admin,
       groupReadOnly: groupAccess.readOnly,
       groupProjectAccess: await this.groupProjectAccessOf(groupAccess, projectScope),
+      groupProjectScopes: [...groupAccess.projectScopes],
+      groupAccessLevel: groupAccess.readOnly ? "view" : "edit",
       auditScope,
     };
   }

@@ -88,6 +88,7 @@ describe("群组访问规则", () => {
     expect(profile.readOnly).toBe(false);
     expect(profile.projectIds).toBeNull();
     expect(profile.ownProjects).toBe(false);
+    expect(profile.projectScopes).toEqual(["all"]);
   });
 
   it("管理员群组：绕过页面与项目限制", () => {
@@ -101,6 +102,7 @@ describe("群组访问规则", () => {
     expect(profile.readOnly).toBe(false);
     expect(profile.projectIds).toBeNull();
     expect(profile.ownProjects).toBe(false);
+    expect(profile.projectScopes).toEqual(["all"]);
   });
 
   it("所有页面恒放行；项目 selected 取并集，own 仅标记本人范围；任意 all 取消项目收窄", () => {
@@ -119,6 +121,7 @@ describe("群组访问规则", () => {
     expect(selected.readOnly).toBe(true);
     expect(selected.projectIds).toEqual([PROJECT_A, PROJECT_B]);
     expect(selected.ownProjects).toBe(true);
+    expect(selected.projectScopes).toEqual(["selected", "none", "own"]);
 
     const all = resolveGroupAccess({
       enforced: true,
@@ -133,6 +136,7 @@ describe("群组访问规则", () => {
     expect(all.projectIds).toBeNull();
     expect(all.ownProjects).toBe(false);
     expect(all.readOnly).toBe(true);
+    expect(all.projectScopes).toEqual(["selected", "own", "all"]);
   });
 
   it("任一适用 edit 规则才解除只读，view / 无规则继续只读", () => {
@@ -173,6 +177,7 @@ describe("群组访问规则", () => {
     expect(profile.readOnly).toBe(true);
     expect(profile.projectIds).toEqual([]);
     expect(profile.ownProjects).toBe(false);
+    expect(profile.projectScopes).toEqual([]);
   });
 
   it("角色可见集与群组白名单取交集", () => {
@@ -252,6 +257,7 @@ describe("GroupAccessService 部门通讯录", () => {
         projectIds: null,
         ownProjects: false,
         hasRule: false,
+        projectScopes: ["all"],
       }),
     };
     const departments = {
@@ -756,6 +762,8 @@ describe("PermissionService 群组接入", () => {
     const denied = serviceWith({ groupKeys: ["libiaorobot.com/项目部"], rules: [] });
     expect(await denied.service.permissionsOf(PROJECT_A)).toMatchObject({
       groupProjectAccess: "denied",
+      groupProjectScopes: [],
+      groupAccessLevel: "view",
       auditScope: "self",
     });
 
@@ -765,16 +773,23 @@ describe("PermissionService 群组接入", () => {
     });
     expect(await empty.service.permissionsOf(PROJECT_A)).toMatchObject({
       groupProjectAccess: "empty",
+      groupProjectScopes: ["none"],
+      groupAccessLevel: "view",
       auditScope: "self",
     });
 
     const allowed = serviceWith({
       groupKeys: ["libiaorobot.com/项目部"],
-      rules: [rule({ groupKey: "libiaorobot.com/项目部", projectScope: "selected", projectIds: [PROJECT_A] })],
+      rules: [rule({ groupKey: "libiaorobot.com/项目部", projectScope: "selected", projectIds: [PROJECT_A], accessLevel: "edit" })],
     });
     allowed.repository.refs.set(PROJECT_A, { managerIds: [PROJECT_A], deletedAt: null });
     const profile = await allowed.service.permissionsOf(PROJECT_A);
-    expect(profile).toMatchObject({ groupProjectAccess: "allowed", auditScope: "project_manager" });
+    expect(profile).toMatchObject({
+      groupProjectAccess: "allowed",
+      groupProjectScopes: ["selected"],
+      groupAccessLevel: "edit",
+      auditScope: "project_manager",
+    });
     expect(await allowed.service.auditAccessOf(PROJECT_A)).toEqual({
       scope: "project_manager",
       managedProjectIds: [PROJECT_A],

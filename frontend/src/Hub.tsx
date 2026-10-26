@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLiveRefresh } from "./useLiveRefresh";
 import { prefetchLocalizedText, useLocale, useT } from "./i18n";
 import { AppHeader } from "./components/AppHeader";
-import { ProjectAccessNotice } from "./components/ProjectAccessNotice";
 import { HubDashboard, type HubDashboardState } from "./components/HubDashboard";
 import { HubMap } from "./components/HubMap";
 import type { DashboardDataset, DashboardIssueDataset, DashboardWordDataset } from "./dashboardApi";
@@ -67,12 +66,20 @@ function detailDialogOpen(): boolean {
   return document.querySelector("[data-hub-detail-dialog]") !== null;
 }
 
-/** 转场只吃「页面级」滚轮：落点上游有可滚动祖先（例如钉住的「项目梳理」清单）时放行给内部滚动。 */
-function scrollableAncestorWithin(target: EventTarget | null, boundary: HTMLElement): boolean {
+/** 转场只吃「页面级」滚轮：仅当落点上游存在真实可滚区，且当前滚动方向仍有余量时，才放行给内部滚动。
+ *  overflow-hidden 的裁切容器虽然 scrollHeight 会超出，但滚轮并不能滚动它，不能据此吞掉地图 ⇄ 仪表盘转场。 */
+function scrollableAncestorWithin(target: EventTarget | null, boundary: HTMLElement, deltaY: number): boolean {
   let node = target instanceof HTMLElement ? target : null;
   while (node !== null && node !== boundary) {
-    if (node.scrollHeight > node.clientHeight + 1 || node.scrollWidth > node.clientWidth + 1) {
-      return true;
+    const style = window.getComputedStyle(node);
+    const scrollableY = style.overflowY === "auto" || style.overflowY === "scroll" || style.overflowY === "overlay";
+    if (scrollableY) {
+      const maxScrollTop = node.scrollHeight - node.clientHeight;
+      const canScrollDown = deltaY > 0 && node.scrollTop < maxScrollTop - 1;
+      const canScrollUp = deltaY < 0 && node.scrollTop > 1;
+      if (maxScrollTop > 1 && (canScrollDown || canScrollUp)) {
+        return true;
+      }
     }
     node = node.parentElement;
   }
@@ -297,15 +304,15 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
       return undefined;
     }
     const onWheel = (event: WheelEvent) => {
-      if (detailDialogOpen() || scrollableAncestorWithin(event.target, deck)) {
+      if (detailDialogOpen()) {
+        return;
+      }
+      const delta = event.deltaY;
+      if (Math.abs(delta) < 8 || scrollableAncestorWithin(event.target, deck, delta)) {
         return;
       }
       event.preventDefault();
       if (animRef.current !== null) {
-        return;
-      }
-      const delta = event.deltaY;
-      if (Math.abs(delta) < 8) {
         return;
       }
       if (delta > 0 && viewRef.current === "map") {
@@ -403,7 +410,6 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden overscroll-none">
       <AppHeader me={me} />
-      <ProjectAccessNotice />
       <main className="relative min-h-0 flex-1 px-6 py-5 lg:px-10 lg:py-6">
         <section ref={deckRef} data-hub-deck="" className="relative h-full overflow-hidden">
           <div className="hub-deck__strip" data-view={stripView} data-anim={anim === null ? undefined : "true"}>

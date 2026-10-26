@@ -166,6 +166,16 @@
           "groupProjectAccess": {
             "$ref": "#/components/schemas/GroupProjectAccess"
           },
+          "groupProjectScopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupAccessProjectScope"
+            },
+            "description": "当前账号命中的部门项目范围并集：all / own / selected / none；用于空态展示当前权限"
+          },
+          "groupAccessLevel": {
+            "$ref": "#/components/schemas/GroupAccessAccessLevel"
+          },
           "auditScope": {
             "$ref": "#/components/schemas/AuditScope"
           }
@@ -4515,7 +4525,7 @@
           "edit",
           "view"
         ],
-        "description": "部门权限档位：edit 可编辑并浏览 / view 仅浏览；edit 隐含 view，存量规则默认 view"
+        "description": "当前账号的部门权限档位：edit 可编辑并浏览 / view 仅浏览；与 groupReadOnly 同源"
       },
       "GroupAccessAdmin": {
         "type": "object",
@@ -4782,7 +4792,14 @@
             "$ref": "#/components/schemas/GroupAccessProjectScope"
           },
           "accessLevel": {
-            "$ref": "#/components/schemas/GroupAccessAccessLevel"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GroupAccessAccessLevel"
+              },
+              {
+                "description": "部门权限档位：edit 可编辑并浏览 / view 仅浏览；edit 隐含 view，存量规则默认 view"
+              }
+            ]
           },
           "projectIds": {
             "type": "array",
