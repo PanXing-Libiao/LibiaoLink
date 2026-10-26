@@ -1,6 +1,6 @@
 import { z } from "../zod.ts";
 import { UuidSchema } from "../common/conventions.ts";
-import { GroupAccessPageSchema } from "./group-access.ts";
+import { GroupAccessAccessLevelSchema, GroupAccessPageSchema, GroupAccessProjectScopeSchema } from "./group-access.ts";
 
 /**
  * 功能权限位（模块.操作）—— 本数组是唯一来源：数据库 role_permissions.permission 的 CHECK 同形
@@ -102,6 +102,8 @@ export const ActorPermissionsSchema = z
     groupAccessAdmin: z.boolean().optional().openapi({ description: "当前账号是否可进入群组权限管理页" }),
     groupReadOnly: z.boolean().optional().openapi({ description: "群组访问限制下当前账号是否只读；页面仍全部可见，但业务写接口一律 403" }),
     groupProjectAccess: GroupProjectAccessSchema.optional().openapi({ description: "部门项目权限三态：allowed / empty / denied；用于业务页面统一空状态" }),
+    groupProjectScopes: z.array(GroupAccessProjectScopeSchema).optional().openapi({ description: "当前账号命中的部门项目范围并集：all / own / selected / none；用于空态展示当前权限" }),
+    groupAccessLevel: GroupAccessAccessLevelSchema.optional().openapi({ description: "当前账号的部门权限档位：edit 可编辑并浏览 / view 仅浏览；与 groupReadOnly 同源" }),
     auditScope: AuditScopeSchema.optional().openapi({ description: "当前账号操作记录可见范围；所有登录账号至少可查看本人记录" }),
   })
   .openapi("ActorPermissions", { description: "当前用户授权画像（角色 + 数据范围 + 功能权限位）" });

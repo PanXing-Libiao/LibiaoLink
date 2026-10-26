@@ -30,6 +30,8 @@ export interface GroupAccessProfile {
   ownProjects: boolean;
   /** 当前账号是否命中至少一条已启用的部门规则；用于区分「仅登录」与「有规则但无项目」。 */
   hasRule: boolean;
+  /** 当前账号命中的项目范围并集（保留规则原意，供权限画像展示）。 */
+  projectScopes: GroupAccessProjectScope[];
 }
 
 /** 规则是否适用于该账号：all = 部门全体；selected = 仅勾选人员。 */
@@ -66,8 +68,10 @@ export function resolveGroupAccess(input: {
   let ownProjects = false;
   let hasRule = false;
   let hasEditAccess = false;
+  const projectScopes: GroupAccessProjectScope[] = [];
   for (const rule of input.rules) {
     hasRule = true;
+    if (!projectScopes.includes(rule.projectScope)) projectScopes.push(rule.projectScope);
     if (rule.accessLevel === "edit") hasEditAccess = true;
     if (rule.projectScope === "all") {
       projectIds = null;
@@ -90,6 +94,7 @@ export function resolveGroupAccess(input: {
       projectIds: null,
       ownProjects: false,
       hasRule: false,
+      projectScopes: ["all"],
     };
   }
   return {
@@ -101,6 +106,7 @@ export function resolveGroupAccess(input: {
     projectIds: hasRule ? projectIds : [],
     ownProjects,
     hasRule,
+    projectScopes,
   };
 }
 

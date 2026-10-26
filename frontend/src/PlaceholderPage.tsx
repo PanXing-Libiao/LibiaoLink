@@ -3,7 +3,6 @@ import { subscribeLiveHints, keepLiveOrder } from "./liveSync";
 import { useLiveRefresh } from "./useLiveRefresh";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { AppHeader } from "./components/AppHeader";
-import { ProjectAccessNotice } from "./components/ProjectAccessNotice";
 import { RowDeleteButton } from "./components/RowDeleteButton";
 import { Toast, ToastConfirm } from "./components/Toast";
 import { useFocusTrap } from "./components/useFocusTrap";
@@ -934,7 +933,6 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
     return (
       <div className="min-h-screen">
         <AppHeader me={me} />
-        <ProjectAccessNotice />
         <main className="w-full px-6 pb-10 pt-3">
           {/* 板块标签栏吸顶（Push 235 业务口径「任务模版和我的任务都要做吸顶效果」）：与项目详情主标签栏同一套口径 ——
               滚动时停在应用顶栏（h-16 = 64px）正下方，站灰底 + 毛玻璃兜住滚动内容；

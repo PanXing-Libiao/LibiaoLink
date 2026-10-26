@@ -14,6 +14,10 @@ export const GROUP_ACCESS_PAGE_KEYS = ["dashboard", "projects", "templates", "wo
 export type GroupAccessPage = (typeof GROUP_ACCESS_PAGE_KEYS)[number];
 
 export type GroupProjectAccess = "allowed" | "empty" | "denied";
+/** 部门规则的项目范围；多个部门命中时按并集展示。 */
+export type GroupAccessProjectScope = "all" | "own" | "selected" | "none";
+/** 编辑 = 可写并浏览；仅浏览 = 只读。 */
+export type GroupAccessLevel = "edit" | "view";
 export type AuditScope = "all" | "project_manager" | "self";
 
 export type MyPermissions = {
@@ -31,6 +35,10 @@ export type MyPermissions = {
   groupReadOnly: boolean;
   /** 部门项目权限三态：allowed 正常进入 / empty 无可见项目 / denied 仅登录。 */
   groupProjectAccess: GroupProjectAccess;
+  /** 命中的项目范围并集，用于空态说明当前权限。 */
+  groupProjectScopes: GroupAccessProjectScope[];
+  /** 当前部门权限档位。 */
+  groupAccessLevel: GroupAccessLevel;
   /** 操作记录可见范围：管理员 / 项目经理 / 仅本人。 */
   auditScope: AuditScope;
 };
@@ -47,6 +55,8 @@ type PermissionMeResponse = {
     groupAccessAdmin?: boolean;
     groupReadOnly?: boolean;
     groupProjectAccess?: GroupProjectAccess;
+    groupProjectScopes?: GroupAccessProjectScope[];
+    groupAccessLevel?: GroupAccessLevel;
     auditScope?: AuditScope;
   };
 };
@@ -68,6 +78,7 @@ export function loadMyPermissions(refresh = false): Promise<MyPermissions> {
       const groupAccessEnforced = payload.permissions.groupAccessEnforced === true;
       const groupAccessAdmin = payload.permissions.groupAccessAdmin === true;
       const groupReadOnly = payload.permissions.groupReadOnly === true;
+      const groupProjectAccess = payload.permissions.groupProjectAccess ?? (groupAccessEnforced && !groupAccessAdmin ? "denied" : "allowed");
       snapshot = {
         roleCodes: payload.permissions.roleCodes,
         permissionKeys: payload.permissions.permissionKeys,
@@ -76,7 +87,9 @@ export function loadMyPermissions(refresh = false): Promise<MyPermissions> {
         groupAccessEnforced,
         groupAccessAdmin,
         groupReadOnly,
-        groupProjectAccess: payload.permissions.groupProjectAccess ?? (groupAccessEnforced && !groupAccessAdmin ? "denied" : "allowed"),
+        groupProjectAccess,
+        groupProjectScopes: payload.permissions.groupProjectScopes ?? (groupAccessEnforced && !groupAccessAdmin ? [] : ["all"]),
+        groupAccessLevel: payload.permissions.groupAccessLevel ?? (groupReadOnly ? "view" : "edit"),
         auditScope: payload.permissions.auditScope ?? (groupAccessAdmin ? "all" : "self"),
       };
       for (const listener of listeners) listener();

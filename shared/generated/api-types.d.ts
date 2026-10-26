@@ -9663,6 +9663,9 @@ export interface components {
             /** @description 群组访问限制下当前账号是否只读；页面仍全部可见，但业务写接口一律 403 */
             groupReadOnly?: boolean;
             groupProjectAccess?: components["schemas"]["GroupProjectAccess"];
+            /** @description 当前账号命中的部门项目范围并集：all / own / selected / none；用于空态展示当前权限 */
+            groupProjectScopes?: components["schemas"]["GroupAccessProjectScope"][];
+            groupAccessLevel?: components["schemas"]["GroupAccessAccessLevel"];
             auditScope?: components["schemas"]["AuditScope"];
         };
         /** @description 统一错误信封（技术设计v0.2 §7.2） */
@@ -10800,7 +10803,7 @@ export interface components {
          */
         FollowObjectType: "project" | "task";
         /**
-         * @description 部门权限档位：edit 可编辑并浏览 / view 仅浏览；edit 隐含 view，存量规则默认 view
+         * @description 当前账号的部门权限档位：edit 可编辑并浏览 / view 仅浏览；与 groupReadOnly 同源
          * @enum {string}
          */
         GroupAccessAccessLevel: "edit" | "view";
@@ -10887,7 +10890,7 @@ export interface components {
             /** @description 旧客户端兼容字段；恒返回全部页面 */
             allowedPages: components["schemas"]["GroupAccessPage"][];
             projectScope: components["schemas"]["GroupAccessProjectScope"];
-            accessLevel: components["schemas"]["GroupAccessAccessLevel"];
+            accessLevel: components["schemas"]["GroupAccessAccessLevel"] & unknown;
             projectIds: components["schemas"]["Uuid"][];
             memberScope: components["schemas"]["GroupAccessMemberScope"];
             memberUserIds: components["schemas"]["Uuid"][];

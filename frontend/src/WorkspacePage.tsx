@@ -95,7 +95,6 @@ import { createPortal } from "react-dom";
 import type { CSSProperties, ReactNode } from "react";
 import { ApiError } from "./api";
 import { AppHeader } from "./components/AppHeader";
-import { ProjectAccessNotice } from "./components/ProjectAccessNotice";
 import { Toast } from "./components/Toast";
 import { useFocusTrap } from "./components/useFocusTrap";
 import { ImageZoomViewer } from "./components/ImageZoomViewer";
@@ -1262,7 +1261,6 @@ export default function WorkspacePage({ me, members, tab, onChangeTab, sub, onCh
   return (
     <div className="min-h-screen">
       <AppHeader me={me} />
-      <ProjectAccessNotice />
       <main className="w-full px-6 pb-10 pt-3">
         <div data-workspace-page="" className="w-full space-y-5">
           {/* 标签导航栏（Push 230：与任务模板页的下划线标签栏同一套材质 —— 文字 + 选中下划线）。
