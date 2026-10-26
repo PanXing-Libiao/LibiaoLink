@@ -1,5 +1,11 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
+> **2026-10-26 12:32 Zod 4.6.7 安全依赖补部署公司测试机（生产未部署）**：Zod P1 内存耗尽 DoS 的部署缺口收口，`shared/package.json` 由 `^4.6.5` 更新为 `^4.6.6`，锁文件解析 `zod 4.6.7`，与 `main@a45797ad` 一致；api / worker 容器内均为 `4.6.7`，`body-parser` 保持 `2.4.0`。
+
+> 部署前备份 `/srv/data/backups/before-zod-467-20261026T043045Z/shared-node-modules.tar.gz`（7.4 MB · SHA-256 `7b0681e67a58f5fa56fdc8206e7083f25ef9f8f95986c34a9d8922e250aa9568`）；tools 容器 `npm ci --include=dev` 安装 37 包。短暂停 `api` / `worker` 后恢复，无 DDL、迁移、compose、env、Secret 或生产变更。
+
+> 验收：10 个容器 healthy，`/`、`/healthz`、`/readyz` 均 200；压缩请求体仍返回 415；api / worker 近 10 分钟 error / exception / fatal 计数 0；证据目录 `before-zod-467-20261026T043045Z`，部署后清单哈希与本地一致。
+
 > **2026-10-26 12:08 none 部门范围按仅登录拦截模板已部署公司测试机（PR [#646](https://github.com/PanXing-Libiao/LibiaoLink/pull/646) · 生产未部署）**：按业务口径「张三是仅登录的号为什么还能看」，`project_scope=none` 不再视为「命中可读规则」；权限画像中无规则或适用规则全部为 `none` 时 `groupProjectAccess=denied`，任务节点 / 模板列表与详情均 403。至少一个 `all` / `own` / `selected` 才保留模板可读；有数据范围但当前无项目仍为 `empty`。PR 最终 HEAD `234ebdd6`，PR CI [40267020268](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40267020268) 5 / 5 · squash `38af3344` · main CI [40267174234](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40267174234) 5 / 5。
 
 > 服务端包 `access-none-login-38af3344.tar.gz`（1,283,363 B · SHA-256 `67c4a8e82dbe97df473f6ef47de925632891772a70df1bdc5845a2a221447ea1`）；staging 核验 server dist 610 / shared dist 93 / shared generated 2 文件，`permission.service.js` 与 `shared/modules/permissions.js` 哈希均与本地一致；部署前备份 `/srv/data/backups/before-access-none-login-38af3344-20261026-1208/server-shared-dist.tar.gz`（SHA-256 `31ec195cf1c18624e6f7574b51acce49777a97bbbf4a9d75f4f21a2a4c908b63`）。staging 已清理。
@@ -452,7 +458,7 @@ PR 与 main 的独立 `svg-preview-e2e` job 会从本生产配置派生 CI Nginx
 - Nginx 是唯一对外入口（80 / 443 / 9443；80 仅探活 + 301；443 含对象存储同源门面 `/libiaolink/`；9443 = MinIO 备用门面）；
 - 证书：ALLinSSL 自动下发 `*.libiaorobot.com` → 宿主 `/etc/ssl/libiaorobot.com.pem|.key`（只读挂载进 web 容器 `/etc/nginx/ssl/`）；续签经 SSH 自动覆盖 + `sudo /usr/local/bin/allinssl-reload`（容器内 nginx 重载）；若续签后证书未生效 → `docker compose --profile app restart web`（单文件 bind mount 兜底）；
 - 反代口径（与前端开发代理一致）：`/api/v1`、`/auth`、`/healthz`、`/readyz`；`/internal/**` 不对外；
-- 请求体编码（P1 · GHSA-27r3-jxmh-p828 · 仓库件，测试机 / 生产均未部署）：上述四个 `proxy_pass http://api_backend` 入口对非 `identity` 的 `Content-Encoding` 直接返回 415；不得用 `proxy_set_header Content-Encoding ""` 剥离编码头（请求体仍是压缩字节，只会转成上游解析错误）。应用侧同时关闭默认 parser、仅注册 `inflate:false` 的 JSON parser，作为绕过 Nginx 时的纵深防御；
+- 请求体编码（P1 · GHSA-27r3-jxmh-p828 · 2026-10-26 测试机已部署，生产未部署）：上述四个 `proxy_pass http://api_backend` 入口对非 `identity` 的 `Content-Encoding` 直接返回 415；不得用 `proxy_set_header Content-Encoding ""` 剥离编码头（请求体仍是压缩字节，只会转成上游解析错误）。应用侧同时关闭默认 parser、仅注册 `inflate:false` 的 JSON parser，作为绕过 Nginx 时的纵深防御；
 - api / minio 容器**重建**（换镜像等）后 nginx 自动跟随新 IP（2026-10-14 起：`resolver 127.0.0.11 valid=10s` + `upstream … resolve` 动态解析；重建回归通过，不再需要 `restart web`）；若遇极端仍 502 → `docker compose --profile app restart web` 兜底；
 - 生产 cookie 为 `Secure`（`SESSION_COOKIE_SECURE=auto` + `NODE_ENV=production`）→ TLS 已就绪（2026-10-14）；
 - SSO（2026-10-14 测试环境接通）：`/auth/login` 302 → `https://authtest.libiaorobot.com/login/oauth/authorize`（client_id / redirect_uri 精确匹配、PKCE S256）；应用侧标准配置见《实测报告(SSO接入验证)》§四；正式环境应用（auth.libiaorobot.com）待 SSO 管理员创建（M8 §3-B）。
@@ -828,6 +834,7 @@ bash scripts/rustfs-poc.sh it
 
 | 版本 | 日期 | 变更 | 人 |
 |---|---|---|---|
+| v2.34 · deploy（测试机） | 2026-10-26 | Zod P1 内存耗尽 DoS 依赖补部署：`shared/package.json` 同步为 `zod ^4.6.6`（锁文件 `4.6.7`），api / worker 内均为 `4.6.7`；tools 安装 37 包，短暂停后 10 容器 healthy，`/` / `/healthz` / `/readyz` 200，压缩请求仍 415，日志 0 error；备份 `/srv/data/backups/before-zod-467-20261026T043045Z/shared-node-modules.tar.gz`（SHA-256 `7b0681e6…`）；无 DDL / compose / env / Secret 变更，生产未部署 | px |
 | v2.33 · deploy（仓库件，未部署） | 2026-10-26 | P1 请求体解压崩溃防护（GHSA-27r3-jxmh-p828 · CVE-2026-111181，PR [#638](https://github.com/PanXing-Libiao/LibiaoLink/pull/638)）：api 关闭 Nest 默认 JSON / URL-encoded parser，仅注册 `inflate:false` JSON parser，并在入口拒绝所有非 `identity` 请求编码；Nginx 四个 API 反代入口同步返回 415，不剥离 `Content-Encoding`。`body-parser@2.4.0` 锁文件升级按 §13 另由 [#632](https://github.com/PanXing-Libiao/LibiaoLink/pull/632) 独立评审，本部署件不夹带依赖变更。锁文件 `2.3.0` 下定向回归 4 / 4，`typecheck` / `build` / `check:boundaries` 通过；Nginx 语法待部署前 `nginx -t`，测试机与生产均未部署。deploy 属 px 线，待 px 复核 | lan |
 | v2.32 · deploy（文档） | 2026-10-26 | 存储定调：新增 ADR-038（MinIO 自维护、RustFS POC 冻结）；ADR-006 标注部分取代；新增 `deploy/prod/minio/MAINTENANCE.md`；同步 ADR 索引、沙箱 README、生产 README §9.5 / §9.6、RustFS POC README 与技术选型文档。纯文档变更，未部署、未改测试机、未读取 Secret。PR [#635](https://github.com/PanXing-Libiao/LibiaoLink/pull/635) | px |
 | v2.31 · deploy（RustFS POC 测试机） | 2026-10-26 | RustFS 1.0.3 隔离 POC 部署测试机（PR [#630](https://github.com/PanXing-Libiao/LibiaoLink/pull/630)）：首次启动发现 Compose Secret `0:0 0600` 与 RustFS UID `10001` 不匹配，修复为 `rustfs_poc_*` 属主 `10001:10001`、`rc` 以 `10001` 运行；真实 `/srv/data` ext4 bind mount，POC 两容器 healthy，API 9000 不发布宿主端口、仅 `127.0.0.1:9445`；`apply` / `check` / `storage:it` 通过，重启后再次通过；SSH 隧道健康 200、CORS 允许 / 拒绝口径正确；MinIO 2,085 objects / 1,277,851,593 B 与 `storage:it` 24 / 24 均未变化。测试机 POC 已完成，生产未部署。 | px |
