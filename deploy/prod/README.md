@@ -1,5 +1,11 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
+> **2026-10-26 10:06 部门权限规则已在公司测试机执行（生产未部署）**：按业务负责人口径「执行规则吧 / 直接全部执行吧」，测试机打开 `GROUP_ACCESS_ENFORCED=true`；`PERMISSION_ENFORCED=false` 保持一期不判角色权限，`GROUP_ACCESS_ADMIN_USER_IDS` 仅 `80f59621-71a7-4205-869e-d7db13ae3c89`（panxing），`GROUP_ACCESS_ADMIN_GROUP_KEYS` 为空。所有登录账号仍可进入全部业务页；实际项目数据 / 写能力按适用部门规则收敛：无适用规则为「仅登录」（项目 0、写 403），`view` 为只读，`edit` 可在可见项目内写；页面进入和数据三态由应用统一判定。未自动新建或覆盖任何部门规则，规则以权限管理页保存结果为准。
+>
+> 变更前备份 `/srv/data/backups/access-enforce-20261026-015729/`：`server.env.before` SHA-256 `1a479203fe2e6453ee8d4ff647a9631f02a36287a410a7185fa615b4591f94b1`，`group-rules.before.sql` `9983dfc1bd3eadaa1f952b6521e64f1117f72d2ae1c1303b218afd5407a72d11`；当前 `server.env` SHA-256 `86cceb10c0d7b57c40a08aa3403f7c5ce105492cfc969e60f6e9a989fb01b930`。09:57 强制重建 `api` / `worker`，未改代码、迁移、依赖、compose 或 frontend。
+>
+> 验收：`panxing` 仍为部门管理员（`groupAccessAdmin=true`、`auditScope=all`、项目 6 条）；`wmj` 命中「项目部」`all/view`（`groupProjectAccess=allowed`、项目 6 条、`groupReadOnly=true`）；`renjinxing` 无适用规则（`groupProjectAccess=denied`、项目 0 条）；临时模拟 `none/view` 规则返回 `empty` 且项目 0 条。临时用户 / 规则 / 会话均清理为 0。公网 `/` / `/healthz` / `/readyz` 200，`api` / `worker` healthy，日志未见 ERROR / exception / fatal。回滚：恢复 `server.env.before` 后重建 `api` / `worker`。生产未部署。
+
 > **2026-10-25 23:31 部门数据范围三态与操作记录分层已部署公司测试机（PR [#627](https://github.com/PanXing-Libiao/LibiaoLink/pull/627) · 生产未部署）**：按业务口径「每个人都可以看到页面 但是不能操作 看不到数据」「仅限看自己的项目」「任务模板都可以看 但是要有可编辑权限」「操作记录只能看到自己的 项目经理可以看到自己项目的所有记录」，业务页统一改为可进入但按 `groupProjectAccess` 三态收敛数据：`denied` 显示权限不足，`empty` 显示当前没有可浏览的项目，`allowed` 才加载业务数据；任务节点 / 模板全员可读，写权限仅系统管理员或部门编辑规则；操作记录对登录账号开放并按管理员全量 / 项目经理有效管理项目 + 本人 / 其他账号仅本人收敛。
 >
 > PR 最终 HEAD `cc9dfb18`，PR CI [40206785543](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40206785543) 5 / 5 · squash `f582a8a6` · main CI [40206933490](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40206933490) 5 / 5。发布包 `output/access-data-scope-f582a8a6-20261025-2329.tar.gz`（61,157,452 B · SHA-256 `96a58af5cebbe310855bc7a55dbe4af00f810bc70516cfebd7dc6a7c294a4ab6`）上传 `/srv/data/backups/` 后核对一致；部署前备份 `/srv/data/backups/access-data-scope-f582a8a6-20261025-2329/`（frontend 14,906,188 B / server 921,852 B / shared 383,008 B，三份 tar.gz 均留 SHA-256）。staging 1,089 文件与线上一致，rsync 差异仅 30 个预期文件（frontend 3 / server 20 / shared 7）；`server/assets`、`server/scripts`、两套 `package*.json` 与线上无差异。
