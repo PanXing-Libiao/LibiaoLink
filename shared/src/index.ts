@@ -13,6 +13,7 @@ export * from "./modules/users.ts";
 export * from "./modules/dicts.ts";
 export * from "./modules/audits.ts";
 export * from "./modules/calendar.ts";
+export * from "./modules/group-access.ts";
 export * from "./modules/permissions.ts";
 export * from "./modules/stakeholders.ts";
 export * from "./modules/reports.ts";

@@ -8,6 +8,7 @@ import { Injectable } from "@nestjs/common";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
+import { users } from "../../db/schema/identity.js";
 import { taskNodes, taskTemplateNodes, taskTemplates } from "../../db/schema/templates.js";
 
 /** 模板行（契约转换在服务层做）。 */
@@ -16,6 +17,8 @@ export interface TaskTemplateRow {
   name: string;
   stageKey: string;
   version: number;
+  createdBy: string | null;
+  createdByName: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -51,8 +54,20 @@ export class TaskTemplateRepository {
     const db = tx ?? this.database.db;
     const where = stageKey === null ? isNull(taskTemplates.deletedAt) : and(isNull(taskTemplates.deletedAt), eq(taskTemplates.stageKey, stageKey));
     const rows = await db
-      .select()
+      .select({
+        id: taskTemplates.id,
+        name: taskTemplates.name,
+        stageKey: taskTemplates.stageKey,
+        version: taskTemplates.version,
+        createdBy: taskTemplates.createdBy,
+        createdByName: users.displayName,
+        createdAt: taskTemplates.createdAt,
+        updatedAt: taskTemplates.updatedAt,
+        deletedAt: taskTemplates.deletedAt,
+        deletedBy: taskTemplates.deletedBy,
+      })
       .from(taskTemplates)
+      .leftJoin(users, eq(users.id, taskTemplates.createdBy))
       .where(where)
       .orderBy(STAGE_RANK, desc(taskTemplates.createdAt), asc(taskTemplates.id));
     return rows.map(toRow);
@@ -62,11 +77,24 @@ export class TaskTemplateRepository {
   async findById(id: string, tx?: DbClient): Promise<TaskTemplateRow | null> {
     const db = tx ?? this.database.db;
     const rows = await db
-      .select()
+      .select({
+        id: taskTemplates.id,
+        name: taskTemplates.name,
+        stageKey: taskTemplates.stageKey,
+        version: taskTemplates.version,
+        createdBy: taskTemplates.createdBy,
+        createdByName: users.displayName,
+        createdAt: taskTemplates.createdAt,
+        updatedAt: taskTemplates.updatedAt,
+        deletedAt: taskTemplates.deletedAt,
+        deletedBy: taskTemplates.deletedBy,
+      })
       .from(taskTemplates)
+      .leftJoin(users, eq(users.id, taskTemplates.createdBy))
       .where(and(eq(taskTemplates.id, id), isNull(taskTemplates.deletedAt)))
       .limit(1);
-    return rows.length === 0 ? null : toRow(rows[0] as typeof taskTemplates.$inferSelect);
+    const row = rows[0];
+    return row === undefined ? null : toRow(row);
   }
 
   /** 一批模板的节点引用：模板内按 seq → node_id 升序（调用方按 templateId 分发）。 */
@@ -96,13 +124,14 @@ export class TaskTemplateRepository {
     }));
   }
 
-  async insert(input: { name: string; stageKey: string }, tx?: DbClient): Promise<TaskTemplateRow> {
+  async insert(input: { name: string; stageKey: string; createdBy: string }, tx?: DbClient): Promise<TaskTemplateRow> {
     const db = tx ?? this.database.db;
     const rows = await db
       .insert(taskTemplates)
-      .values({ name: input.name, stageKey: input.stageKey })
+      .values({ name: input.name, stageKey: input.stageKey, createdBy: input.createdBy })
       .returning();
-    return toRow(rows[0] as typeof taskTemplates.$inferSelect);
+    const row = rows[0] as typeof taskTemplates.$inferSelect;
+    return toRow({ ...row, createdByName: null });
   }
 
   /** 节点全量替换：先清空再按数组顺序写回（seq = (下标 + 1) × 10）—— 调用方在同一事务内调用。 */
@@ -131,7 +160,9 @@ export class TaskTemplateRepository {
       .set({ ...patch, version: sql`${taskTemplates.version} + 1`, updatedAt: at })
       .where(and(eq(taskTemplates.id, id), eq(taskTemplates.version, expectedVersion), isNull(taskTemplates.deletedAt)))
       .returning();
-    return rows.length === 0 ? null : toRow(rows[0] as typeof taskTemplates.$inferSelect);
+    if (rows.length === 0) return null;
+    const row = rows[0] as typeof taskTemplates.$inferSelect;
+    return toRow({ ...row, createdByName: null });
   }
 
   /** 软删（置 deleted_at / deleted_by + version + 1）：version 不匹配返回 null；引用行随之物理清掉。 */
@@ -153,7 +184,9 @@ export class TaskTemplateRepository {
       })
       .where(and(eq(taskTemplates.id, id), eq(taskTemplates.version, expectedVersion), isNull(taskTemplates.deletedAt)))
       .returning();
-    return rows.length === 0 ? null : toRow(rows[0] as typeof taskTemplates.$inferSelect);
+    if (rows.length === 0) return null;
+    const row = rows[0] as typeof taskTemplates.$inferSelect;
+    return toRow({ ...row, createdByName: null });
   }
 
   /** 某节点被多少份未删模板引用（删节点前算影响面，写审计 metadata）。 */
@@ -168,12 +201,16 @@ export class TaskTemplateRepository {
   }
 }
 
-function toRow(row: typeof taskTemplates.$inferSelect): TaskTemplateRow {
+type TaskTemplateRowSource = typeof taskTemplates.$inferSelect & { createdByName: string | null };
+
+function toRow(row: TaskTemplateRowSource): TaskTemplateRow {
   return {
     id: row.id,
     name: row.name,
     stageKey: row.stageKey,
     version: row.version,
+    createdBy: row.createdBy,
+    createdByName: row.createdByName,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

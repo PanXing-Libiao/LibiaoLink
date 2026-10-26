@@ -1,6 +1,9 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { deflateRawSync } from "node:zlib";
-import { parseWorkbook } from "../src/modules/project-import/xlsx.js";
+import { parseWorkbook, parseWorkbookFile } from "../src/modules/project-import/xlsx.js";
 
 interface ZipEntryInput {
   name: string;
@@ -144,6 +147,43 @@ describe("xlsx parser resource limits", () => {
     const parsed = parseWorkbook(bytes, { maxMediaBytes: 100, maxMediaTotalBytes: 10 });
     expect(parsed.readMedia("a.jpg")?.length).toBe(6);
     expect(() => parsed.readMedia("b.jpg")).toThrowError(/图片总量超过上限/);
+  });
+
+  it("rejects cumulative cell text beyond the workbook text budget", () => {
+    const bytes = workbook(rowXml(cellXml("A1", "abcdef")));
+    expect(() => parseWorkbook(bytes, { maxTextChars: 3 })).toThrowError(/文本总量超过上限/);
+  });
+
+  it("keeps sparse rows sparse instead of rectangularizing the sheet", () => {
+    const bytes = workbook(rowXml(cellXml("A1", "head")) + rowXml(cellXml("A500", "tail")));
+    const parsed = parseWorkbook(bytes);
+    expect(parsed.sheets[0]?.rows[1]).toBeUndefined();
+    expect(parsed.sheets[0]?.rows[499]?.[0]).toBe("tail");
+  });
+});
+
+describe("xlsx parser file ranges", () => {
+  it("parses a workbook from a bounded disk range without loading the container first", async () => {
+    const bytes = workbook(rowXml(cellXml("A1", "from-file")));
+    const prefix = Buffer.alloc(37, 0xcc);
+    const directory = await mkdtemp(join(tmpdir(), "libiaolink-xlsx-range-"));
+    const path = join(directory, "multipart-body.bin");
+    await writeFile(path, Buffer.concat([prefix, bytes, Buffer.from("ignored-tail", "utf8")]));
+    let closed = 0;
+    const parsed = parseWorkbookFile(path, {
+      offset: prefix.length,
+      length: bytes.length,
+      onClose: () => {
+        closed += 1;
+      },
+    });
+    try {
+      expect(parsed.sheets[0]?.rows[0]?.[0]).toBe("from-file");
+    } finally {
+      parsed.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+    expect(closed).toBe(1);
   });
 });
 

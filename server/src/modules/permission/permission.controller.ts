@@ -11,7 +11,7 @@ type PermissionMeResponse = z.infer<typeof PermissionMeResponseSchema>;
 export class PermissionController {
   constructor(private readonly permission: PermissionService) {}
 
-  /** 当前用户授权画像：角色码 + 数据范围 + 功能权限位（角色调整后由策略缓存 TTL / invalidate 刷新）。 */
+  /** 当前用户授权画像：全量能力基线 + 部门规则裁决结果（规则调整后由策略缓存 TTL / invalidate 刷新）。 */
   @Get("me")
   async me(@CurrentActorId() actorId: string): Promise<PermissionMeResponse> {
     return { permissions: await this.permission.permissionsOf(actorId) };

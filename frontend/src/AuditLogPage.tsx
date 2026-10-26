@@ -1,4 +1,4 @@
-import { hasPermission, useMyPermissions } from "./permissions";
+import { useMyPermissions } from "./permissions";
 import { useEffect, useRef, useState } from "react";
 import { useLiveRefresh } from "./useLiveRefresh";
 import { keepLiveOrder } from "./liveSync";
@@ -32,13 +32,13 @@ import { EMPTY_AUDIT_QUERY, EMPTY_LIST_QUERY, type AuditQueryState } from "./use
 import type { MeResponse } from "./types";
 
 /**
- * 操作记录页（C7-04「管理员查询页」· u12 · 2026-10-08）。
- * 入口 = 右上角头像菜单「操作记录」（AppHeader；仅 audit.view 渲染，服务端逐请求仍是最终裁决）。
+ * 操作记录页（C7-04 · u12 · 2026-10-08；2026-10-25 起对登录账号开放）。
+ * 入口 = 右上角头像菜单「操作记录」（所有登录账号可见；服务端逐请求按 auditScope 决定范围）。
  * 口径：全站关键操作留痕（谁 / 何时 / 动作 / 对象 / 摘要 / 结果），occurredAt 倒序、分页 50；
  * 筛选 = 关键字（Push 260 搜索：操作内容 / 操作人姓名，250ms 防抖）/ 操作人 / 动作 / 对象类型 / 结果 / 项目 / 时间区间 ——
  * 与首页列表同一套「地址即状态」（useHashRoute 的 AuditQueryState，可分享 / 可收藏 / 刷新不丢）。
  * 越权尝试（result=denied）在结果列一眼可见（C7-03）。
- * 失败口径：403 = 无 audit.view（菜单本不渲染，直链访问兜底提示）；其余错误给「重试」。
+ * 失败口径：403 = 当前会话无权读取（页面给兜底提示）；其余错误给「重试」。
  */
 
 type AuditPageState =
@@ -54,14 +54,12 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
   directory: readonly DirectoryUser[];
 }) {
   const permissions = useMyPermissions();
+  const auditScope = permissions?.auditScope ?? "self";
+  const isAdminAudit = auditScope === "all";
   const [state, setState] = useState<AuditPageState>({ kind: "loading" });
   const [reloadTick, setReloadTick] = useState(0);
   const windowId = useRef<number | undefined>(undefined);
   const [projects, setProjects] = useState<ApiProject[]>([]);
-
-  useEffect(() => {
-    if (state.kind === "error" && state.forbidden && hasPermission(permissions, "audit.view")) setReloadTick((value) => value + 1);
-  }, [permissions]);
 
   // 关键字防抖（Push 260 · 与首页列表同口径）：输入时不每个字符打一次接口（250ms 内的最后一次生效）
   const [debouncedKeyword, setDebouncedKeyword] = useState(query.keyword ?? "");
@@ -95,20 +93,25 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
 
   // 多选筛选键（2026-10-09 追订「别的筛选也是同理 要支持多选」+「操作记录里面也是」）：数组引用每次解析都会变，
   // 用逗号串当依赖键，防误触发重复取数。
-  const actorKey = query.actorIds.join(",");
+  const queryActorIds = permissions === null || isAdminAudit ? query.actorIds : [];
+  const actorKey = queryActorIds.join(",");
   const actionKey = query.actions.join(",");
   const objectTypeKey = query.objectTypes.join(",");
   const resultKey = query.results.join(",");
   const projectKey = query.projectIds.join(",");
 
   useEffect(() => {
+    if (permissions !== null && !isAdminAudit && query.actorIds.length > 0) {
+      onChangeQuery({ ...query, actorIds: [], page: 1 });
+      return;
+    }
     let alive = true;
     windowId.current = undefined;
     setState({ kind: "loading" });
     const keyword = debouncedKeyword.trim();
     fetchAuditLogs({
       keyword: keyword === "" ? null : keyword,
-      actorIds: query.actorIds,
+      actorIds: queryActorIds,
       actions: query.actions,
       objectTypes: query.objectTypes,
       results: query.results,
@@ -128,7 +131,7 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
           return;
         }
         if (error instanceof ApiError && error.status === 403) {
-          setState({ kind: "error", message: "没有权限查看操作记录（需要 audit.view）。", forbidden: true });
+          setState({ kind: "error", message: "当前账号无权查看操作记录。", forbidden: true });
           return;
         }
         setState({
@@ -140,14 +143,14 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
     return () => {
       alive = false;
     };
-  }, [debouncedKeyword, actorKey, actionKey, objectTypeKey, resultKey, projectKey, query.from, query.to, query.page, reloadTick]);
+  }, [debouncedKeyword, isAdminAudit, actorKey, actionKey, objectTypeKey, resultKey, projectKey, query.from, query.to, query.page, onChangeQuery, reloadTick]);
 
   useLiveRefresh(["audit", "projects", "permissions"], async () => {
     const readingHistory = query.page > 1 || window.scrollY > 160;
     try {
       const keyword = debouncedKeyword.trim();
       const [result, projectList] = await Promise.all([
-        fetchAuditLogs({ keyword: keyword === "" ? null : keyword, actorIds: query.actorIds, actions: query.actions, objectTypes: query.objectTypes, results: query.results, projectIds: query.projectIds, from: query.from, to: query.to, page: query.page, beforeId: readingHistory ? windowId.current : undefined }),
+        fetchAuditLogs({ keyword: keyword === "" ? null : keyword, actorIds: queryActorIds, actions: query.actions, objectTypes: query.objectTypes, results: query.results, projectIds: query.projectIds, from: query.from, to: query.to, page: query.page, beforeId: readingHistory ? windowId.current : undefined }),
         fetchProjectList(EMPTY_LIST_QUERY),
       ]);
       return () => {
@@ -156,10 +159,10 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
         setProjects((previous) => keepLiveOrder(previous, projectList.items));
       };
     } catch (error) {
-      if (error instanceof ApiError && error.status === 403) return () => setState({ kind: "error", message: "没有权限查看操作记录（需要 audit.view）。", forbidden: true });
+      if (error instanceof ApiError && error.status === 403) return () => setState({ kind: "error", message: "当前账号无权查看操作记录。", forbidden: true });
       throw error;
     }
-  }, [debouncedKeyword, actorKey, actionKey, objectTypeKey, resultKey, projectKey, query.from, query.to, query.page].join(":"), state.kind === "ready", { readOnly: true });
+  }, [auditScope, debouncedKeyword, actorKey, actionKey, objectTypeKey, resultKey, projectKey, query.from, query.to, query.page].join(":"), state.kind === "ready", { readOnly: true });
 
   const patchFilter = (patch: Partial<AuditQueryState>): void => {
     onChangeQuery({ ...query, ...patch, page: 1 });
@@ -216,7 +219,11 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
             <div>
               <h1 className="text-lg font-semibold text-zinc-900">操作记录</h1>
               <p className="mt-0.5 text-xs text-zinc-500">
-                全站关键操作的留痕（新增 / 修改 / 删除 / 访问 / 预览 / 下载 / 越权尝试……），按时间倒序；仅系统管理员可见。
+                {auditScope === "all"
+                  ? "全站关键操作的留痕（新增 / 修改 / 删除 / 访问 / 预览 / 下载 / 越权尝试……），按时间倒序。"
+                  : auditScope === "project_manager"
+                    ? "显示您本人的全部操作，以及由您担任项目经理且当前有权查看的项目的全部操作。"
+                    : "仅显示您本人的操作记录，按时间倒序。"}
               </p>
             </div>
             {state.kind === "ready" ? (
@@ -237,24 +244,26 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
                 className="w-full"
               />
             </span>
-            <span data-audit-filter="actor" className="w-36 shrink-0">
-              <SearchSelect
-                mode="multi"
-                ariaLabel="按操作人筛选"
-                values={query.actorIds}
-                options={actorOptions}
-                placeholder="全部操作人"
-                searchPlaceholder="搜索姓名"
-                label="操作人"
-                onToggle={(value) => {
-                  patchFilter({
-                    actorIds: query.actorIds.includes(value)
-                      ? query.actorIds.filter((id) => id !== value)
-                      : query.actorIds.concat(value),
-                  });
-                }}
-              />
-            </span>
+            {isAdminAudit ? (
+              <span data-audit-filter="actor" className="w-36 shrink-0">
+                <SearchSelect
+                  mode="multi"
+                  ariaLabel="按操作人筛选"
+                  values={query.actorIds}
+                  options={actorOptions}
+                  placeholder="全部操作人"
+                  searchPlaceholder="搜索姓名"
+                  label="操作人"
+                  onToggle={(value) => {
+                    patchFilter({
+                      actorIds: query.actorIds.includes(value)
+                        ? query.actorIds.filter((id) => id !== value)
+                        : query.actorIds.concat(value),
+                    });
+                  }}
+                />
+              </span>
+            ) : null}
             <span data-audit-filter="action" className="w-28 shrink-0">
               <SearchSelect
                 mode="multi"

@@ -45,6 +45,8 @@ type TemplateDraft = {
   name: string;
   /** 这份模板里已选的节点，顺序即模板里的顺序 */
   nodes: TemplateNode[];
+  createdBy: string | null;
+  createdByName: string | null;
   /** 上次「保存 / 加载」时的样子（服务端当前值；用来判断有没有未保存的改动） */
   saved: string;
   /** 乐观锁版本（服务端下发；保存 / 删除原样回传，过期 = 409 VERSION_CONFLICT） */
@@ -77,6 +79,8 @@ function toTemplateDraft(template: TemplateItem): TemplateDraft {
     id: template.id,
     name,
     nodes,
+    createdBy: template.createdBy,
+    createdByName: template.createdByName,
     saved: snapshotOf({ name, nodes }),
     version: template.version,
     baseline: { name, nodes: nodes.slice(), version: template.version },
@@ -165,7 +169,7 @@ type PlaceholderPageProps = {
   /** 任务模板页当前板块（来自 URL 的 `?section=`；缺省 / 不认识的值回落到第一个板块） */
   section: string | null;
   /**
-   * 是否持有 blueprint.manage（节点库与任务模板的维护 = 系统管理员，ADR-019 / ADR-020）：
+   * 是否可维护节点库与任务模板（系统管理员，或部门限制开启且命中编辑规则）：
    * 决定左列「＋ 添加节点」/ 节点卡片的编辑删除、右侧「＋ 新建模板」/「保存」/ 删除模板 / 拖拽改模板渲不渲染、可不可用；
    * 服务端逐请求仍是最终裁决（无权 = 403 FORBIDDEN）。
    */
@@ -959,7 +963,7 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
             </div>
             {/*
               新建模板的入口在板块标签栏这一行：点一下 = POST 一份空模板（默认名「未命名模板」），
-              新面板插到「任务节点」右侧、原来的模板往右挪。写 = blueprint.manage，无权不渲染（服务端仍是最终裁决）。
+              新面板插到「任务节点」右侧、原来的模板往右挪。写 = 系统管理员或部门编辑规则，无权不渲染（服务端仍是最终裁决）。
             */}
             {canManageBlueprint ? (
               <button
@@ -1198,6 +1202,9 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
                             ) : null}
                           </span>
                         </div>
+                        <p data-template-creator={template.id} className="mt-1 truncate text-[11px] text-zinc-500" title={template.createdByName ?? t("tpl.creatorSystem")}>
+                          {t("tpl.creator", { name: template.createdByName ?? t("tpl.creatorSystem") })}
+                        </p>
                         {/* 提示行固定高度：出现 / 消失都不顶动下方列表（否则拖拽时会跟着抖）；
                             不拖拽时这一行留给「未保存 / 冲突」状态 + 「放弃改动」出路（Push 264 追订） */}
                         <div className="flex h-4 items-center gap-1.5 text-xs">

@@ -29,6 +29,7 @@ import { PROJECT_STATUS_VALUES, projectManagerText } from "./types";
 import { isLocalizedLocale, projectStatusTextOf, projectTypeText, prefetchLocalizedText, useLocale, useT } from "./i18n";
 import type { Locale } from "./i18n";
 import { regionNameEn } from "./data/regionPicker";
+import { useMyPermissions } from "./permissions";
 import type { MeResponse, Project } from "./types";
 
 type HomeProps = {
@@ -115,6 +116,7 @@ type LoadError =
 export default function Home({ me, dicts, directory, dictTools, canManageDicts, canDeleteProject, canCreateProject, canUpdateProject, canExportProject, onExportProject, exportingProjectId, onDeleteProject, onCreate, onEdit, refreshToken, savedFilters, onSavedFiltersChange }: HomeProps) {
   const t = useT();
   const locale = useLocale();
+  const permissions = useMyPermissions();
   /** 无建项目权限提示（Push 173 口径；文案随语言切换）。 */
   const noCreatePermission = t("home.noCreatePermission");
 
@@ -176,6 +178,22 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   const query = activeFilters.q;
   const keyword = query.trim();
   const hasFilters = hasListFilters(activeFilters);
+  const permissionEmpty = !hasFilters && keyword === "" && permissions?.groupProjectAccess === "empty";
+  const permissionScopeText = (permissions?.groupProjectScopes ?? [])
+    .map((scope) => scope === "all"
+      ? t("access.scope.all")
+      : scope === "own"
+        ? t("access.scope.own")
+        : scope === "selected"
+          ? t("access.scope.selected")
+          : t("access.scope.none"))
+    .join(" / ");
+  const currentPermissionText = permissionScopeText === ""
+    ? null
+    : t("access.currentPermission", {
+      scope: permissionScopeText,
+      level: permissions?.groupAccessLevel === "edit" ? t("access.level.edit") : t("access.level.view"),
+    });
   const sortDesc = activeFilters.sortDesc;
   const dateRange: DateRange | null =
     activeFilters.timeFrom !== null && activeFilters.timeTo !== null
@@ -720,10 +738,19 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
 
         {!loading && items.length === 0 && loadError === null ? (
           <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-6 py-16 text-center">
-            <p className="text-sm text-zinc-500">
-              {keyword === "" ? t("home.empty.filtered") : t("home.empty.keyword", { kw: keyword })}
-            </p>
-            <div className="mt-4 flex items-center justify-center gap-3">
+            {permissionEmpty ? (
+              <>
+                <p className="text-sm font-medium text-zinc-700">{t("access.noProjects.title")}</p>
+                {currentPermissionText === null ? null : (
+                  <p className="mt-2 text-xs text-zinc-500">{currentPermissionText}</p>
+                )}
+              </>
+            ) : (
+              <p className="text-sm text-zinc-500">
+                {keyword === "" ? t("home.empty.filtered") : t("home.empty.keyword", { kw: keyword })}
+              </p>
+            )}
+            {(keyword !== "" || hasFilters) && <div className="mt-4 flex items-center justify-center gap-3">
               {keyword !== "" && (
                 <button
                   type="button"
@@ -744,7 +771,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                   {t("home.clearFilters")}
                 </button>
               )}
-            </div>
+            </div>}
           </div>
         ) : null}
 

@@ -181,7 +181,9 @@ export const AutomationActionSchema = z
   .object({
     kind: RuleActionKindSchema,
     channel: NotifyChannelSchema.nullable().optional().openapi({ description: "notify 型必填：投递渠道" }),
-    recipient: z.union([RuleRecipientSchema, z.array(RuleRecipientSchema)]).openapi({ description: "收件人口径（多个 = 逐个解析，均落发送记录）" }),
+    recipient: z
+      .union([RuleRecipientSchema, z.array(RuleRecipientSchema).max(RULE_RECIPIENTS.length)])
+      .openapi({ description: "收件人口径（单个或至多 6 个；多个 = 逐个解析，均落发送记录）" }),
     template: z.string().min(1).max(64).openapi({ example: "R04_GROUP", description: "消息模板码（逐字文案见 docs/rules/R01-R07-内置规则文案.md）" }),
     groupBy: z.array(z.string()).max(3).optional().openapi({ description: "合并维度字段（可选；同一维度值合并为一条消息）" }),
   })

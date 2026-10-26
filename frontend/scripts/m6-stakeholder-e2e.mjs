@@ -7,7 +7,6 @@
  *   2. api：cd server && npm run start:api（默认 3001）
  *   3. 数据库：本地沙箱 PG（默认 127.0.0.1:5433/libiaolink）
  *   4. 本机装了 Chrome（脚本 headless 起一个调试实例；路径可用 CHROME_PATH 覆盖）
- *   5. 已构建的服务端 dist（⑥ 组会自起 api :3013 = PERMISSION_ENFORCED=true 与 vite dev :3002 做脱敏 / 收敛回放）
  *
  * 用法：node scripts/m6-stakeholder-e2e.mjs
  *   可覆盖的环境变量：FRONTEND_BASE / API_BASE / DATABASE_URL / CHROME_PATH / CDP_PORT / REPLAY_USER / PG_MODULE
@@ -19,8 +18,7 @@
  *   ③ 新建（UI 表单）：落库 + 自动关联本项目（A5-03 projectIds）；
  *   ④ 编辑（PATCH 部分更新）：改职务 + 清空微信（null 落库）；
  *   ⑤ 删除二次确认（第一下只开口）→ 软删（deleted_at 置位 + 读面 404 + 行消失）；
- *   ⑥ 字段级脱敏（A5-07 · C3-08）：任务负责人画像下 phone / wechat / email **键不存在** → 表格渲染「—」、无写入口、表单不出现；
- *   ⑦ 收尾：物理删临时项目 / 撤销两个会话 / 硬删测试行（含临时用户）→ 零残留。
+ *   ⑥ 收尾：物理删临时项目 / 撤销会话 / 硬删测试行 → 零残留。
  * 证据：docs/m6-回放证据(干系人台账·前端).md
  */
 
@@ -110,9 +108,6 @@ check("夹具：filter[projectId] 只回本项目关联的 1 位（甲出现 / �
 
 // ---------- 无头 Chrome（CDP）：真机浏览器里点标签 / 填表单 / 点按钮 ----------
 const profile = mkdtempSync(join(tmpdir(), "pxm6sh-"));
-/** 判权限备用栈（⑥ 组用；跑完 / 中止都要杀掉）。 */
-let auxApi = null;
-let auxVite = null;
 const chrome = spawn(CHROME, ["--headless=new", "--remote-debugging-port=" + PORT, "--user-data-dir=" + profile, "--no-first-run", "--no-default-browser-check", "--disable-gpu", "about:blank"], { stdio: "ignore" });
 
 async function waitTarget() {
@@ -240,8 +235,6 @@ async function bail(message) {
   checks.push(false);
   try { page.ws.close(); } catch (error) { /* 忽略 */ }
   chrome.kill();
-  try { if (auxApi !== null) auxApi.kill(); } catch (error) { /* 忽略 */ }
-  try { if (auxVite !== null) auxVite.kill(); } catch (error) { /* 忽略 */ }
   await db.end();
   process.exit(1);
 }
@@ -379,60 +372,8 @@ const softRow = (await db.query("select deleted_at from stakeholders where id = 
 check("⑤b 第二下真删：行消失 + 读面 404 + 库内软删（deleted_at 置位）", rowGone === true && goneRead.status === 404 && softRow !== undefined && softRow.deleted_at !== null, JSON.stringify({ gone: goneRead.status, deletedAt: String(softRow === undefined ? null : softRow.deleted_at) }));
 const tableAfterDelete = await ev(TABLE_PROBE);
 check("⑤c 删除后表格回到 1 行、计数 1", tableAfterDelete.rowCount === 1 && tableAfterDelete.total === "1", JSON.stringify({ rows: tableAfterDelete.rowCount, total: tableAfterDelete.total }));
-// ---------- ⑥ 字段级脱敏（A5-07 · C3-08）+ 写入口收敛：临时「任务负责人」画像 ----------
-// 沙箱 api 默认 PERMISSION_ENFORCED=false（不判权限、全员等效管理员），脱敏 / 收敛跑不出来 —— 本组另起一套**真实栈**：
-// api :3013（PERMISSION_ENFORCED=true）+ vite dev :3002（BACKEND_ORIGIN 指向它），同一浏览器换临时任务负责人 cookie 真机打开。
-const AUX_API_PORT = Number(process.env.PERM_API_PORT ?? 3013);
-const FRONTEND_AUX = process.env.PERM_FRONTEND_BASE ?? "http://localhost:3002";
-const AUX_API = "http://127.0.0.1:" + String(AUX_API_PORT);
-const spawnAux = (command, args, cwd, extraEnv) => spawn(command, args, { cwd, env: Object.assign({}, process.env, extraEnv), stdio: "ignore" });
-auxApi = spawnAux(process.execPath, ["--env-file-if-exists=.env", "dist/entry/api.js"], "../server", { PORT: String(AUX_API_PORT), PERMISSION_ENFORCED: "true" });
-auxVite = spawnAux(process.execPath, ["node_modules/vite/bin/vite.js", "--port", String(Number(process.env.PERM_FRONTEND_PORT ?? 3002)), "--strictPort"], ".", { BACKEND_ORIGIN: AUX_API });
-async function waitHttp(url, timeoutMs = 60000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(url);
-      if (res.status < 500) return true;
-    } catch (error) { /* 未就绪 */ }
-    await sleep(600);
-  }
-  return false;
-}
-const auxReady = (await waitHttp(AUX_API + "/healthz")) === true && (await waitHttp(FRONTEND_AUX + "/")) === true;
-check("⑥0 判权限备用栈就绪（api :3013 强制判定 + vite :3002 代理到它）", auxReady === true, AUX_API + " / " + FRONTEND_AUX);
 
-const ownerUsername = "pxm6sh_owner_" + randomBytes(2).toString("hex");
-const ownerUser = (await db.query("insert into users (casdoor_id, username, display_name, email, status) values ($1, $2, $3, $4, $5) returning id", ["replay-" + ownerUsername, ownerUsername, "回放·任务负责人", ownerUsername + "@example.com", "active"])).rows[0];
-await db.query("insert into user_roles (user_id, role_id) select $1, id from roles where code = $2", [ownerUser.id, "task_owner"]);
-await db.query("insert into project_members (project_id, user_id, role_in_project) values ($1, $2, $3)", [projectId, ownerUser.id, "project_member"]);
-const ownerToken = "pxm6sh-owner-" + randomBytes(16).toString("hex");
-const ownerCsrf = randomBytes(16).toString("hex");
-await db.query("insert into sessions (token_hash, user_id, id_token, expires_at) values ($1, $2, $3, now() + make_interval(mins => 30))", [sha256(ownerToken), ownerUser.id, "px-m6-stakeholder-e2e-owner"]);
-
-const ownerMe = await apiOn(AUX_API, cookieOf(ownerToken, ownerCsrf), ownerCsrf, "/api/v1/permissions/me");
-const ownerKeys = ownerMe.json === null ? [] : ownerMe.json.permissions.permissionKeys;
-check("⑥a 画像复核：任务负责人有 stakeholder.view、无 stakeholder.manage / contact.view", ownerMe.status === 200 && ownerKeys.includes("stakeholder.view") === true && ownerKeys.includes("stakeholder.manage") === false && ownerKeys.includes("stakeholder.contact.view") === false, JSON.stringify(ownerKeys.join(",")));
-
-const ownerList = await apiOn(AUX_API, cookieOf(ownerToken, ownerCsrf), ownerCsrf, "/api/v1/stakeholders?filter[projectId]=" + projectId + "&limit=200");
-const ownerJia = ownerList.json === null ? undefined : ownerList.json.items.filter((row) => row.id === jia.id)[0];
-check("⑥b 脱敏（接口层）：记录可见，phone / wechat / email 三键不存在（不是 null）；干系人角色未登记字段级策略 = 恒返回",
-  ownerList.status === 200 && ownerJia !== undefined && ("phone" in ownerJia) === false && ("wechat" in ownerJia) === false && ("email" in ownerJia) === false && ("role" in ownerJia) === true && ownerJia.role === "决策人" && ownerJia.company === "立镖机器人（回放）",
-  JSON.stringify({ status: ownerList.status, keys: ownerJia === undefined ? null : Object.keys(ownerJia).join(",") }));
-
-await setCookie(ownerToken, ownerCsrf);
-await openStakeholders(FRONTEND_AUX);
-const ownerTable = await ev(TABLE_PROBE);
-const ownerRowProbe = await ev(rowProbe(jia.id));
-check("⑥c 脱敏（页面层）：无「新建干系人」入口、行不可编辑（无 role / 无行尾动作）",
-  ownerTable.newButton === false && ownerRowProbe.role === null && ownerRowProbe.edit === false && ownerRowProbe.del === false,
-  JSON.stringify({ newButton: ownerTable.newButton, role: ownerRowProbe.role, edit: ownerRowProbe.edit, del: ownerRowProbe.del }));
-check("⑥d 脱敏（页面层）：电话 / 微信 / 邮箱渲染「—」，姓名 / 职务 / 公司 / 干系人角色照常",
-  ownerRowProbe.phone === "—" && ownerRowProbe.wechat === "—" && ownerRowProbe.email === "—" && ownerRowProbe.name === "回放·干系人甲" && ownerRowProbe.title === "现场项目经理" && ownerRowProbe.roleText === "决策人",
-  JSON.stringify({ phone: ownerRowProbe.phone, wechat: ownerRowProbe.wechat, email: ownerRowProbe.email, name: ownerRowProbe.name, title: ownerRowProbe.title, roleText: ownerRowProbe.roleText }));
-await setCookie(token, csrf);
-
-// ---------- ⑦ 收尾：物理删临时项目 + 撤销两个会话 + 硬删测试行 → 零残留 ----------
+// ---------- ⑦ 收尾：物理删临时项目 + 撤销会话 + 硬删测试行 → 零残留 ----------
 const projRow = await api("/api/v1/projects/" + projectId);
 const delProj = await api("/api/v1/projects/" + projectId, "DELETE", undefined, { "If-Match": String(projRow.json.version) });
 check("⑦a 删临时项目（物理删 · 200 / 204）", delProj.status === 200 || delProj.status === 204, String(delProj.status) + " " + delProj.text.slice(0, 120));
@@ -440,24 +381,16 @@ const projGone = await api("/api/v1/projects/" + projectId);
 check("⑦b 项目读面 404（物理删、行不存在）", projGone.status === 404, String(projGone.status));
 
 const createdIds = [jia.id, yi.id, bing.id];
-const tokenHashes = [sha256(token), sha256(ownerToken)];
+const tokenHashes = [sha256(token)];
 await db.query("delete from project_stakeholders where stakeholder_id = any($1::uuid[])", [createdIds]);
 await db.query("delete from stakeholders where id = any($1::uuid[])", [createdIds]);
 await db.query("update sessions set revoked_at = now() where token_hash = $1", [sha256(token)]);
-// 临时用户整行清掉（先删它的会话行：sessions.user_id FK → users）；audit_logs 只读不动（api 角色也无 DELETE 权）。
-await db.query("delete from sessions where token_hash = $1", [sha256(ownerToken)]);
-await db.query("delete from project_members where user_id = $1", [ownerUser.id]);
-await db.query("delete from user_roles where user_id = $1", [ownerUser.id]);
-await db.query("delete from users where id = $1", [ownerUser.id]);
+// audit_logs 只读不动（api 角色也无 DELETE 权）。
 
-const residue = (await db.query("select (select count(*)::int from stakeholders where id = any($1::uuid[])) as stakeholders, (select count(*)::int from project_stakeholders where project_id = $2) as links, (select count(*)::int from projects where id = $2) as projects, (select count(*)::int from sessions where token_hash = any($3::text[]) and revoked_at is null) as sessions, (select count(*)::int from users where id = $4) as users", [createdIds, projectId, tokenHashes, ownerUser.id])).rows[0];
-check("⑦c 零残留：测试干系人 / 项目关联 / 项目 / 会话 / 临时用户全 0 行",
-  Number(residue.stakeholders) === 0 && Number(residue.links) === 0 && Number(residue.projects) === 0 && Number(residue.sessions) === 0 && Number(residue.users) === 0,
+const residue = (await db.query("select (select count(*)::int from stakeholders where id = any($1::uuid[])) as stakeholders, (select count(*)::int from project_stakeholders where project_id = $2) as links, (select count(*)::int from projects where id = $2) as projects, (select count(*)::int from sessions where token_hash = any($3::text[]) and revoked_at is null) as sessions", [createdIds, projectId, tokenHashes])).rows[0];
+check("⑦c 零残留：测试干系人 / 项目关联 / 项目 / 会话全 0 行",
+  Number(residue.stakeholders) === 0 && Number(residue.links) === 0 && Number(residue.projects) === 0 && Number(residue.sessions) === 0,
   JSON.stringify(residue));
-
-// 判权限备用栈收工（api :3013 / vite :3002）
-try { if (auxApi !== null) auxApi.kill(); } catch (error) { /* 忽略 */ }
-try { if (auxVite !== null) auxVite.kill(); } catch (error) { /* 忽略 */ }
 
 // ---------- 收尾 ----------
 const failed = checks.filter((ok) => ok !== true).length;

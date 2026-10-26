@@ -1,0 +1,86 @@
+# ============================================================
+# LibiaoLink RustFS 1.0.3 隔离 POC 覆盖编排
+# ------------------------------------------------------------
+# 用法：
+#   docker compose -f docker-compose.yml -f docker-compose.rustfs-poc.yml \
+#     --profile rustfs-poc up -d rustfs-poc rustfs-poc-web
+#
+# 隔离边界：
+#   - 不接 api / worker / server.env，不替换 minio，不改 443 门面；
+#   - RustFS API 只在 libiaolink-prod 容器网络内可达；
+#   - 9445 代理仅绑定 127.0.0.1，供 SSH 隧道做同源口径验收；
+#   - 控制台关闭；数据 / 日志使用独立宿主机目录。
+# ============================================================
+
+services:
+  rustfs-poc:
+    image: ${RUSTFS_POC_IMAGE:-rustfs/rustfs:1.0.3@sha256:9ca9559533b537d10482fe923288b676ad08f92a7069d9a17327fbae3cab688b}
+    container_name: libiaolink-rustfs-poc
+    profiles: ["rustfs-poc"]
+    restart: unless-stopped
+    environment:
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_VOLUMES: "/data"
+      RUSTFS_CONSOLE_ENABLE: "false"
+      RUSTFS_ACCESS_KEY_FILE: /run/secrets/rustfs_poc_root_access_key
+      RUSTFS_SECRET_KEY_FILE: /run/secrets/rustfs_poc_root_secret_key
+      RUSTFS_CORS_ALLOWED_ORIGINS: ${RUSTFS_POC_CORS_ALLOWED_ORIGINS:-http://127.0.0.1:9445}
+    secrets:
+      - rustfs_poc_root_access_key
+      - rustfs_poc_root_secret_key
+    volumes:
+      - ${RUSTFS_POC_DATA_DIR:-/srv/data/rustfs-poc}:/data
+      - ${RUSTFS_POC_LOG_DIR:-/srv/data/rustfs-poc-logs}:/logs
+    mem_limit: ${RUSTFS_POC_MEM_LIMIT:-1g}
+    cpus: ${RUSTFS_POC_CPUS:-1}
+    pids_limit: 512
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/health/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    networks: [prod]
+
+  rustfs-poc-web:
+    image: ${NGINX_IMAGE:-nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94}
+    container_name: libiaolink-rustfs-poc-web
+    profiles: ["rustfs-poc"]
+    restart: unless-stopped
+    depends_on:
+      rustfs-poc:
+        condition: service_healthy
+    volumes:
+      - ./rustfs-poc/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "127.0.0.1:${RUSTFS_POC_PORT:-9445}:80"
+    mem_limit: ${RUSTFS_POC_WEB_MEM_LIMIT:-64m}
+    cpus: ${RUSTFS_POC_WEB_CPUS:-0.25}
+    pids_limit: 64
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/nginx-health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    networks: [prod]
+
+secrets:
+  rustfs_poc_root_access_key:
+    file: ./secrets/rustfs_poc_root_access_key
+  rustfs_poc_root_secret_key:
+    file: ./secrets/rustfs_poc_root_secret_key

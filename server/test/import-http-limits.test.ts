@@ -1,10 +1,11 @@
+import { access, readFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
 import type { Response } from "express";
 import type { IncomingMessage } from "node:http";
 import type { ProjectImportPreview, ProjectImportResult } from "@libiaolink/contracts";
 import { AppError } from "../src/common/errors/app-error.js";
-import { parseMultipart, readRequestBody } from "../src/common/http/multipart.js";
+import { parseMultipart, readMultipartFile, readRequestBody } from "../src/common/http/multipart.js";
 import { ProjectImportController } from "../src/modules/project-import/project-import.controller.js";
 import type { ProjectImportService } from "../src/modules/project-import/project-import.service.js";
 
@@ -44,6 +45,41 @@ describe("import HTTP body budgets", () => {
     expect(parts[0]?.bytes.buffer).toBe(read.buffer);
   });
 
+  it("streams multipart file to a temporary disk range without buffering the whole body", async () => {
+    const fileBytes = Buffer.alloc(2 * 1024 * 1024 + 37, 0x5a);
+    const body = multipartBody(fileBytes);
+    const upload = await readMultipartFile(
+      requestOf([body.subarray(0, 1), body.subarray(1, 70_001), body.subarray(70_001)], body.length),
+      "multipart/form-data; boundary=" + BOUNDARY,
+      "file",
+      fileBytes.length,
+    );
+    expect(upload).not.toBeNull();
+    if (upload === null) return;
+    try {
+      const bodyOnDisk = await readFile(upload.path);
+      expect(bodyOnDisk.equals(body)).toBe(true);
+      expect(upload.sizeBytes).toBe(fileBytes.length);
+      expect(bodyOnDisk.subarray(upload.offset, upload.offset + upload.sizeBytes).equals(fileBytes)).toBe(true);
+    } finally {
+      await upload.cleanup();
+    }
+    await expect(access(upload.path)).rejects.toBeDefined();
+  });
+
+  it("rejects an oversized streamed multipart file and removes its temporary directory", async () => {
+    const fileBytes = Buffer.alloc(17, 1);
+    const body = multipartBody(fileBytes);
+    const upload = await readMultipartFile(
+      requestOf([body], body.length),
+      "multipart/form-data; boundary=" + BOUNDARY,
+      "file",
+      16,
+    ).catch((caught: unknown) => caught);
+    expect(upload).toBeInstanceOf(AppError);
+    expect((upload as AppError).code).toBe("IMPORT_FILE_INVALID");
+  });
+
   it("rejects an oversized Content-Length as IMPORT_FILE_INVALID", async () => {
     const error = await readRequestBody(requestOf([], 11), 10).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(AppError);
@@ -54,6 +90,7 @@ describe("import HTTP body budgets", () => {
 class DeferredImportService {
   previewCalls = 0;
   commitCalls = 0;
+  lastPreviewInput: unknown = null;
   entered!: () => void;
   releasePreview!: () => void;
   readonly enteredPreview = new Promise<void>((resolve) => {
@@ -63,8 +100,9 @@ class DeferredImportService {
     this.releasePreview = resolve;
   });
 
-  async preview(): Promise<ProjectImportPreview> {
+  async preview(input: unknown): Promise<ProjectImportPreview> {
     this.previewCalls += 1;
+    this.lastPreviewInput = input;
     this.entered();
     await this.previewGate;
     return { previewId: "preview-1" } as ProjectImportPreview;
@@ -112,5 +150,8 @@ describe("ProjectImportController import gate", () => {
     imports.releasePreview();
     await first;
     expect(imports.previewCalls).toBe(1);
+    expect(imports.lastPreviewInput).toMatchObject({ fileName: "book.xlsx", actorId: ACTOR_ID });
+    expect(imports.lastPreviewInput).not.toHaveProperty("bytes");
+    expect(imports.lastPreviewInput).toHaveProperty("sourceFile");
   });
 });

@@ -1,7 +1,7 @@
 /**
  * 任务节点库 / 任务模板接口封装（M3-05 余 · 第一段接线 + 第二段模板落库）：契约 shared/src/modules/templates.ts。
  * - 列表 GET /api/v1/task-nodes?stage=<九阶段 key>（任务模板页左列与「添加任务」卡片的「任务节点」标签同源）
- * - 新增 POST /api/v1/task-nodes（写 = blueprint.manage：仅系统管理员；同阶段同名 409 NODE_ALREADY_EXISTS）
+ * - 新增 POST /api/v1/task-nodes（写 = 系统管理员 / 部门编辑账号；同阶段同名 409 NODE_ALREADY_EXISTS）
  * - 编辑 PATCH /api/v1/task-nodes/{id}（写 = blueprint.manage；乐观锁 version 必传：过期 409 VERSION_CONFLICT）
  * - 删除 DELETE /api/v1/task-nodes/{id}（写 = blueprint.manage；物理删行 + 审计留痕；已生成的项目任务不受影响）
  * 任务模板（第二段 · Push 182）：GET/POST /api/v1/task-templates、PATCH/DELETE /api/v1/task-templates/{id}
@@ -85,7 +85,7 @@ export function nodeWriteMessage(error: { code: string; message: string }): stri
     return "该阶段已有同名节点，换个名字试试";
   }
   if (error.code === "FORBIDDEN") {
-    return "只有系统管理员能维护节点库";
+    return "维护节点库需要编辑权限";
   }
   if (error.code === "VERSION_CONFLICT") {
     return "这个节点刚被别人改过，刷新后再试";
@@ -107,6 +107,8 @@ export type ApiTaskTemplate = {
   name: string;
   stageKey: string;
   nodes: { nodeId: string; seq: number; title: string; titleEn: string | null }[];
+  createdBy: string | null;
+  createdByName: string | null;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -117,6 +119,8 @@ export type TemplateItem = {
   id: string;
   name: string;
   nodes: TaskNodeItem[];
+  createdBy: string | null;
+  createdByName: string | null;
   version: number;
 };
 
@@ -130,6 +134,8 @@ export function toTemplateItem(template: ApiTaskTemplate): TemplateItem {
       titleEn: node.titleEn ?? "",
       version: 0,
     })),
+    createdBy: template.createdBy,
+    createdByName: template.createdByName,
     version: template.version,
   };
 }
@@ -176,7 +182,7 @@ export async function deleteTaskTemplate(id: string, version: number): Promise<{
 /** 模板写入失败的统一文案（409 VERSION_CONFLICT / 403 FORBIDDEN 等；服务端仍是最终裁决）。 */
 export function templateWriteMessage(error: { code: string; message: string }): string {
   if (error.code === "FORBIDDEN") {
-    return "只有系统管理员能维护任务模板";
+    return "维护任务模板需要编辑权限";
   }
   if (error.code === "VERSION_CONFLICT") {
     return "此份模板已被他人改过";

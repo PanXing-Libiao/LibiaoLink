@@ -2,6 +2,8 @@ import { z } from "../zod.ts";
 import { DateTimeSchema, UuidSchema, VersionSchema } from "../common/conventions.ts";
 import { StageKeySchema } from "../common/dicts.ts";
 
+const TASK_TEMPLATE_NODE_IDS_LIMIT = 500;
+
 /**
  * 任务节点库与任务模板契约（系统功能书 A1-16 / A1-17；2026-09-19 定案，对齐项 A11）。
  * - 任务节点库（TaskNode）：一条「可生成任务的定义」——阶段 + 中英文名称 + 库内排序；是任务模板的节点来源。
@@ -73,11 +75,13 @@ export const TaskTemplateSchema = z
     name: z.string().openapi({ example: "英国订单", description: "模板名称（列头可直接改名）" }),
     stageKey: StageKeySchema,
     nodes: z.array(TaskTemplateNodeSchema).openapi({ description: "节点顺序 = 数组顺序；同一模板内按 nodeId 去重" }),
+    createdBy: UuidSchema.nullable().openapi({ description: "填写人 user id；存量种子 / 系统导入为空" }),
+    createdByName: z.string().nullable().openapi({ description: "填写人姓名（users.display_name）；为空时界面显示系统" }),
     version: VersionSchema,
     createdAt: DateTimeSchema,
     updatedAt: DateTimeSchema,
   })
-  .openapi("TaskTemplate", { description: "任务模板（名称 + 阶段 + 节点顺序；A1-16 / A1-17 的落点）" });
+  .openapi("TaskTemplate", { description: "任务模板（名称 + 阶段 + 节点顺序 + 填写人；A1-16 / A1-17 的落点）" });
 
 export const TaskTemplateListQuerySchema = z.object({
   stage: StageKeySchema.optional().openapi({ description: "按阶段过滤；缺省 = 全部阶段" }),
@@ -93,8 +97,9 @@ export const TaskTemplateCreateBodySchema = z
     stageKey: StageKeySchema,
     nodeIds: z
       .array(UuidSchema)
+      .max(TASK_TEMPLATE_NODE_IDS_LIMIT)
       .default([])
-      .openapi({ description: "任务节点库内的节点 id，顺序即模板内顺序；允许空（新建后逐步添加）；重复 id 返回 400" }),
+      .openapi({ description: "任务节点库内的节点 id（≤ 500 个），顺序即模板内顺序；允许空（新建后逐步添加）；重复 id 返回 400" }),
   })
   .openapi("TaskTemplateCreateBody");
 
@@ -103,8 +108,9 @@ export const TaskTemplateUpdateBodySchema = z
     name: z.string().min(1).max(100).optional(),
     nodeIds: z
       .array(UuidSchema)
+      .max(TASK_TEMPLATE_NODE_IDS_LIMIT)
       .optional()
-      .openapi({ description: "全量替换节点顺序（含增删 / 重排）；同一模板内按 id 去重，重复 id 返回 400" }),
+      .openapi({ description: "全量替换节点顺序（≤ 500 个，含增删 / 重排）；同一模板内按 id 去重，重复 id 返回 400" }),
     version: VersionSchema,
   })
   .openapi("TaskTemplateUpdateBody", { description: "编辑模板（改名 / 节点全量替换；乐观锁 version 必传）" });

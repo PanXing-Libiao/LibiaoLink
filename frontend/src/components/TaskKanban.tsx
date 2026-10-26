@@ -227,12 +227,12 @@ type TaskKanbanProps = {
    * 列底「添加 → 临时任务」：标题由用户自己填（英文名可空）；负责人 / 状态按所在列给、阶段留空。
    * 返回 = 新建任务的 id（失败 = null）—— Push 196 起建完由看板直接打开它的任务详情抽屉，补时间等细节。
    */
-  onAddTask: (context: KanbanAddContext, values: { title: string; titleEn: string }) => Promise<string | null>;
+  onAddTask?: (context: KanbanAddContext, values: { title: string; titleEn: string }) => Promise<string | null>;
   /**
    * 列底「添加 → 阶段任务」：从该阶段节点池 / 模板挑的节点加进项目，并带上所在列的负责人 / 状态。
    * Push 111：`nodes` 支持一次多个（「整套添加」按列表顺序整段插入），`placement` = 该阶段内的插入位置（业务口径「人员要指定位置放入」）。
    */
-  onAddStageTask: (context: KanbanAddContext, stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement, templateId?: string) => void;
+  onAddStageTask?: (context: KanbanAddContext, stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement, templateId?: string) => void;
   /** 任务编辑保存（与表格共用同一张覆盖表）。 */
   onSubmitTaskEdit?: (values: TaskEditSubmit) => Promise<number | null>;
   /** 任务描述改名（Push 196）：抽屉里改临时任务名（节点 / 模板生成的任务由抽屉按锁定口径自行只读）。 */
@@ -577,8 +577,8 @@ function KanbanColumn({
   /** 卡片按下（Push 108）：交给 TaskKanban 统一判「点一下 / 拖动」；不传 = 这张卡片不可拖。 */
   onPointerDownDrag?: (taskId: string, node: HTMLElement, event: ReactPointerEvent<HTMLDivElement>) => void;
   /** 建完临时任务返回新任务 id（Push 196：TaskKanban 拿到后直接打开它的详情抽屉）。 */
-  onAddTask: (context: KanbanAddContext, values: { title: string; titleEn: string }) => Promise<string | null>;
-  onAddStageTask: (context: KanbanAddContext, stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement, templateId?: string) => void;
+  onAddTask?: (context: KanbanAddContext, values: { title: string; titleEn: string }) => Promise<string | null>;
+  onAddStageTask?: (context: KanbanAddContext, stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement, templateId?: string) => void;
   /** 该阶段现有任务（Push 111）：给「插入位置」当锚点 —— 顺序 = 项目总览里这些任务的先后。 */
   stageTasksOf: (stage: string) => readonly { id: string; title: string }[];
 }) {
@@ -604,6 +604,7 @@ function KanbanColumn({
   const isOwnColumn = draggingId !== null && group.items.some((task) => task.id === draggingId);
 
   /** 新建任务带上所在列的上下文：负责人看板给负责人、进展看板给状态（与旧「+ 添加」口径一致）。 */
+  const canAdd = onAddTask !== undefined || onAddStageTask !== undefined;
   const context: KanbanAddContext = {
     ownerIds: mode === "owner" && group.ownerId !== null ? [group.ownerId] : [],
     status: mode === "status" ? group.status : "待开始",
@@ -746,7 +747,7 @@ function KanbanColumn({
                   return;
                 }
                 // Push 196：建完由上层拿到新任务 id 并直接打开它的详情抽屉（不阻塞浮层关闭）
-                void onAddTask(context, { title: title.trim(), titleEn: titleEn.trim() });
+                void onAddTask?.(context, { title: title.trim(), titleEn: titleEn.trim() });
                 closePanels();
               }}
             >
@@ -773,7 +774,7 @@ function KanbanColumn({
             </div>
           ) : null}
 
-          <button
+          {canAdd ? <button
             type="button"
             onClick={() => { openPanel(panel === "none" ? "menu" : "none"); }}
             aria-label={t("kanban.add.aria", { name: groupLabel })}
@@ -785,17 +786,17 @@ function KanbanColumn({
               <path d="M12 8.5v7M8.5 12h7" strokeLinecap="round" />
             </svg>
             {t("kanban.add.confirm")}
-          </button>
+          </button> : null}
         </div>
       </div>
 
-      {templateStage === null ? null : (
+      {templateStage === null || onAddStageTask === undefined ? null : (
         <StageAddCard
           stage={templateStage}
           addedNodeKeys={addedNodeKeys}
           addedNodeIds={addedNodeIds}
           placement={{ tasks: stageTasksOf(templateStage) }}
-          onAddNodes={(stage, nodes, placement, templateId) => { onAddStageTask(context, stage, nodes, placement, templateId); }}
+          onAddNodes={(stage, nodes, placement, templateId) => { onAddStageTask?.(context, stage, nodes, placement, templateId); }}
           // Push 207 撤（业务口径「临时任务不应该存在于阶段里面新建」）：阶段卡片不再收「临时任务」入口 ——
           // 建临时任务走列底「添加 → 临时任务」（原链路照旧）
           onClose={() => {
@@ -1142,6 +1143,7 @@ export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTa
    * 表单提交那一刻先关浮层，创建成功（拿到 id）再开抽屉；新建行随列表刷新回来即渲染。
    */
   const addTaskAndOpen = async (context: KanbanAddContext, values: { title: string; titleEn: string }): Promise<string | null> => {
+    if (onAddTask === undefined) return null;
     const createdId = await onAddTask(context, values);
     if (createdId !== null) {
       setSelectedTaskId(createdId);

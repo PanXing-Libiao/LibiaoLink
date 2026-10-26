@@ -29,7 +29,8 @@ shared/
 ├── scripts/
 │   ├── lib.mjs                 渲染 OpenAPI 文档与客户端类型
 │   ├── generate.mjs            写生成物（npm run generate）
-│   └── check-drift.mjs         漂移校验（npm run check）
+│   ├── check-drift.mjs         漂移校验（npm run check）
+│   └── check-request-array-bounds.mjs  请求数组 maxItems 校验（npm run check）
 └── generated/                  生成物（提交进仓库，禁止手改 —— CONTRIBUTING §14）
     ├── openapi.json
     └── api-types.d.ts
@@ -42,10 +43,12 @@ cd shared
 npm install          # 首次或依赖变更后（锁文件 package-lock.json 必须同步提交）
 npm run typecheck    # tsc 严格模式
 npm run generate     # 生成 generated/openapi.json 与 generated/api-types.d.ts
-npm run check        # 漂移校验：生成结果与仓库内生成物一致才算通过
+npm run check        # 漂移校验 + 请求数组 maxItems 校验，全部通过才算成功
+npm run check:request-array-bounds  # 单独扫描请求体 / 参数中的数组是否声明 maxItems
 ```
 
 生成链路：修改 src 下的 Zod schema → `npm run generate` → 提交生成物（源与生成物同一 PR）。
+请求体与参数中的每个数组都必须声明 `.max()`；`npm run check` 会扫描 OpenAPI 请求面，缺少 `maxItems` 时失败，避免无界数组在校验错误对象中放大内存占用（GHSA-mrhx-c7xc-m3w5 / CVE-2023-54404 回归门禁）。
 CI 已接入本检查（阶段 5 · CI 扩展任务）：PR / main 推送由 `.github/workflows/ci.yml` 的 `shared` job 自动执行 `npm run typecheck` + `npm run check`；本地推送前仍建议手动执行。
 
 ## 已定案口径（契约层）
