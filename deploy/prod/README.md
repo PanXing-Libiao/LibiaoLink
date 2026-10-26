@@ -743,7 +743,9 @@ bash scripts/minio-root-rotate.sh finalize
 
 轮换完成不等于 F-02 关闭：仍须完成 S5-T3 旧预签名 / 历史应用值失效验证、S5-T7 残留处置、S5-T10 端口复核，以及 S6 / S7 的文档与回放证据。不得为了排障恢复 `0.0.0.0:9000` / `0.0.0.0:9443`，也不得把 api / worker 改回 root。
 
-### 9.5 RustFS 1.0.3 隔离 POC（测试机 POC 已验，生产未部署）
+### 9.5 RustFS 1.0.3 隔离 POC（已冻结，不接生产）
+
+**2026-10-26 定调（ADR-038）**：RustFS 不 fork、不改源码、不接生产；本 POC 仅保留复现与 benchmark 证据。测试机 POC 可在确认后执行 `down` / `purge`，不再作为生产候选。
 
 **状态与边界**：新增 `docker-compose.rustfs-poc.yml`、`rustfs-poc/` 与 `scripts/rustfs-poc.sh`，用独立 profile 在 `libiaolink-prod` 网络内启动 RustFS 1.0.3 与专用 Nginx。POC 不接 `api` / `worker`，不读 MinIO / 应用 Secret，不替换 `minio`，不改 443 门面；宿主只发布 `127.0.0.1:9445`，SSH 隧道用于同源口径验收。RustFS 控制台关闭，数据 / 日志落独立目录，桶名 `rustfs-poc`。
 
@@ -762,13 +764,24 @@ bash scripts/rustfs-poc.sh it
 
 **RustFS IAM 口径**：策略动作名为 `s3:GetBucketCors` / `s3:PutBucketCors` / `s3:GetBucketLifecycle` / `s3:PutBucketLifecycle`，不能直接复用 MinIO / AWS 常见的 `s3:GetBucketCORS` / `s3:GetLifecycleConfiguration`。详细边界、SSH 隧道与测试机门禁见 `rustfs-poc/README.md`。
 
-**本地 POC 证据（2026-10-26）**：健康检查 200；`storage:init` 全通过；应用最小权限、经 Nginx 同源代理、容器重启后 `storage:it` 均 24 / 24；允许 Origin 返回 ACAO / 非法 Origin 不回 ACAO、匿名对象 GET 403；应用账号不能创建 / 删除桶、bootstrap 账号不能读写对象均 403；`_FILE` Secret 直接可用。临时容器、数据卷、策略文件与测试凭据已清理。Windows 本地未完整执行 apply（Git Bash 下 chmod / install 与 Docker /bin/sh 路径转换受限），等价步骤已逐项手动验证；测试机已从 prepare 起完整执行。**测试机 POC 已完成，生产未部署；不代表生产选型。**
+**本地 POC 证据（2026-10-26）**：健康检查 200；`storage:init` 全通过；应用最小权限、经 Nginx 同源代理、容器重启后 `storage:it` 均 24 / 24；允许 Origin 返回 ACAO / 非法 Origin 不回 ACAO、匿名对象 GET 403；应用账号不能创建 / 删除桶、bootstrap 账号不能读写对象均 403；`_FILE` Secret 直接可用。临时容器、数据卷、策略文件与测试凭据已清理。Windows 本地未完整执行 apply（Git Bash 下 chmod / install 与 Docker /bin/sh 路径转换受限），等价步骤已逐项手动验证；测试机已从 prepare 起完整执行。**测试机 POC 已完成，生产未部署；已按 ADR-038 冻结，不作为生产选型。**
 
-**测试机 POC 证据（2026-10-26 · 10.1.104.44）**：真实 bind mount `/srv/data`（ext4）；数据 / 日志目录 `10001:10001 0700`；POC `rustfs-poc` / `rustfs-poc-web` 均 healthy；POC API 9000 不发布宿主端口，仅 `127.0.0.1:9445`；`apply` 初始化通过；`check` 与 `storage:it` 均通过，`storage:it` 为 24 / 24；重启后再次 `check` / `storage:it` 均通过。SSH 隧道健康检查 200；允许 Origin 返回 ACAO，非法 Origin 不回 ACAO，匿名对象请求 403。测试机 MinIO 基线 / 复测均为 2,085 objects / 1,277,851,593 B，`storage:init --check` / `storage:it` 均为 24 / 24；现有 api / worker / web / postgres / minio / svg-preview / CAD 容器保持 healthy；未接应用流量、未迁移对象、未改 443 门面。
+**测试机 POC 证据（2026-10-26 · 10.1.104.44）**：真实 bind mount `/srv/data`（ext4）；数据 / 日志目录 `10001:10001 0700`；POC `rustfs-poc` / `rustfs-poc-web` 均 healthy；POC API 9000 不发布宿主端口，仅 `127.0.0.1:9445`；`apply` 初始化通过；`check` 与 `storage:it` 均通过，`storage:it` 为 24 / 24；重启后再次 `check` / `storage:it` 均通过。SSH 隧道健康检查 200；允许 Origin 返回 ACAO，非法 Origin 不回 ACAO，匿名对象请求 403。测试机 MinIO 基线 / 复测均为 2,085 objects / 1,277,851,593 B，`storage:init --check` / `storage:it` 均为 24 / 24；现有 api / worker / web / postgres / minio / svg-preview / CAD 容器保持 healthy；未接应用流量、未迁移对象、未改 443 门面。RustFS 已冻结，生产对象存储按 ADR-038 继续使用自维护 MinIO。
+
+### 9.6 MinIO 自维护基线（ADR-038）
+
+生产对象存储采用自维护 MinIO，基线为 `RELEASE.2025-09-07T16-13-09Z`（commit `07c3a429bfed433e49018cb0f78a52145d4bedeb`）。维护范围、补丁流程、CVE 节奏、回归矩阵、备份恢复与 AGPL 边界见 `deploy/prod/minio/MAINTENANCE.md`。当前 S3 同源门面、端口收口、Secret 与桶策略不变；RustFS POC 不接生产。
+
+当前必须遵守：
+
+- 只做安全 / 依赖 / 关键正确性补丁，不做功能分叉；
+- 每次重建 / 升级前备份数据库 + 对象数据，保留上一版镜像 digest；
+- `storage:init --check` 与 `storage:it` 24 / 24 是发布门禁；
+- 未取得责任人、补丁记录和回滚证据的变更不得进入生产。
 
 ## 10. 后续切片（登记）
 
-- web（Nginx）：TLS 接入 ✅（2026-10-14，443 应用 + 对象存储同源门面 + ALLinSSL 自动下发）；9443 已收口为回环排障口（F-02 S1）；浏览器流量已全部走 443 同源门面，待确认 H1 不再依赖后再评估删除；`/internal/**` / `/example/` 显式 404 加固（SPA 产物 2026-10-14 已上线）；备份脚本（PG 12h → `/srv/data/backups/pg`）；监控告警接线；MinIO 运维面：镜像离线固化（quay 2026-10-13 实测下架，已改服务器本地构建；`docker save` 归档待办）、SeaweedFS 迁移评估、F-02 S3～S5 已部署测试机（见 v2.30），F-02 尚未关闭（S5 验收登记与 S6 / S7 待收口）；
+- web（Nginx）：TLS 接入 ✅（2026-10-14，443 应用 + 对象存储同源门面 + ALLinSSL 自动下发）；9443 已收口为回环排障口（F-02 S1）；浏览器流量已全部走 443 同源门面，待确认 H1 不再依赖后再评估删除；`/internal/**` / `/example/` 显式 404 加固（SPA 产物 2026-10-14 已上线）；备份脚本（PG 12h → `/srv/data/backups/pg`）；监控告警接线；MinIO 运维面：ADR-038 定案自维护；镜像离线固化（quay 2026-10-13 实测下架，已改服务器本地构建；`docker save` 归档待办）、自维护清单见 `deploy/prod/minio/MAINTENANCE.md`、SeaweedFS / 内网 S3 仅保留切换评估；F-02 S3～S5 已部署测试机（见 v2.30），F-02 尚未关闭（S5 验收登记与 S6 / S7 待收口）；
 - onlyoffice（文档服务器）：生产上线 ✅（2026-10-14，离线镜像 + 443 子路径门面 + 真实 64MB xlsx 端到端；见 `deploy/onlyoffice/README.md` §6）；剩余：升级 / 重建后按回归五项 + §6.3 表复验、缓存盘 7 天清理 cron、正式环境容量评估与 CVE 跟踪；
 - SSO：测试环境（authtest 应用 `LibiaoLink`）已按接入标准接通（2026-10-14）；正式环境应用 `libiaolink` 创建 + 企微登录方式挂接待 SSO 管理员（M8 §3-B）。
 - M5-03-5 单聊改智能机器人（绑定码链路）部署**待执行**（项目组 2026-10-16 决定暂缓）：迁移 `0055` → `server/dist` 重传 → `server.env` 回填非敏感 `WECOM_BOT_ID`、`secrets/wecom_bot_secret` 写入凭据 → 重建 worker → 真机复跑 **BC-1 ~ BC-4**（口径 §12）；执行前先备份 PG（`0055` 含不可回滚清理）。
