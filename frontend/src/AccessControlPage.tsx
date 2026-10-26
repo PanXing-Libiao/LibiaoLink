@@ -366,6 +366,18 @@ function DepartmentTree({
             </div>
             {expanded ? (
               <div className="pb-1 pt-0.5">
+                <DepartmentTree
+                  nodes={node.children}
+                  depth={depth + 1}
+                  selectedKey={selectedKey}
+                  expandedKeys={expandedKeys}
+                  activeMemberId={activeMemberId}
+                  query={query}
+                  t={t}
+                  onSelect={onSelect}
+                  onToggle={onToggle}
+                  onMemberSelect={onMemberSelect}
+                />
                 {members.map((member) => (
                   <MemberRow
                     key={member.userId}
@@ -381,18 +393,6 @@ function DepartmentTree({
                     {t("access.noMembers")}
                   </p>
                 ) : null}
-                <DepartmentTree
-                  nodes={node.children}
-                  depth={depth + 1}
-                  selectedKey={selectedKey}
-                  expandedKeys={expandedKeys}
-                  activeMemberId={activeMemberId}
-                  query={query}
-                  t={t}
-                  onSelect={onSelect}
-                  onToggle={onToggle}
-                  onMemberSelect={onMemberSelect}
-                />
               </div>
             ) : null}
           </div>
