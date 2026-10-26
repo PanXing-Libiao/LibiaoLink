@@ -45,6 +45,10 @@
       "description": "权限画像与策略出口（ADR-011；PoC-6 权限矩阵与脱敏五出口）"
     },
     {
+      "name": "access",
+      "description": "群组访问规则（Casdoor Groups）：页面与项目范围配置，仅群组管理员"
+    },
+    {
       "name": "dicts",
       "description": "数据字典下发（A3；region / projectType，含主题色元数据）"
     },
@@ -132,6 +136,38 @@
               "$ref": "#/components/schemas/PermissionKey"
             },
             "description": "功能权限位并集（role_permissions）"
+          },
+          "groupKeys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "当前账号的 Casdoor 群组键（owner/name；按登录或目录同步落地）"
+          },
+          "pageKeys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupAccessPage"
+            },
+            "description": "GROUP_ACCESS_ENFORCED=true 时当前账号可进入的页面；管理员为全量"
+          },
+          "groupAccessEnforced": {
+            "type": "boolean",
+            "description": "群组访问限制是否已启用"
+          },
+          "groupAccessAdmin": {
+            "type": "boolean",
+            "description": "当前账号是否可进入群组权限管理页"
+          },
+          "groupReadOnly": {
+            "type": "boolean",
+            "description": "群组访问限制下当前账号是否只读；页面仍全部可见，但业务写接口一律 403"
+          },
+          "groupProjectAccess": {
+            "$ref": "#/components/schemas/GroupProjectAccess"
+          },
+          "auditScope": {
+            "$ref": "#/components/schemas/AuditScope"
           }
         },
         "required": [
@@ -377,9 +413,11 @@
           "user",
           "wecom_dm_binding",
           "automation_rule",
-          "notify_delivery"
+          "notify_delivery",
+          "group_access_rule",
+          "group_access_admin"
         ],
-        "description": "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；预览实际送达时写 preview 审计 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删；登录成功记 visit，metadata.operation=login） / wecom_dm_binding 企微绑定验证（对象 id = 机器人标识 + 掩码 open_userid；失败 / 锁定记 deny + denied，不落完整 userid 或绑定码） / automation_rule 自动化规则（对象 id = 规则 id；保存记录字段级 diff，metadata 带 code / beforeVersion / afterVersion，M5-06） / notify_delivery 发送记录（对象 id = 消息归档 id；仅管理员重发写 update + metadata.operation=resend，M5-06）"
+        "description": "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；预览实际送达时写 preview 审计 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删；登录成功记 visit，metadata.operation=login） / wecom_dm_binding 企微绑定验证（对象 id = 机器人标识 + 掩码 open_userid；失败 / 锁定记 deny + denied，不落完整 userid 或绑定码） / automation_rule 自动化规则（对象 id = 规则 id；保存记录字段级 diff，metadata 带 code / beforeVersion / afterVersion，M5-06） / notify_delivery 发送记录（对象 id = 消息归档 id；仅管理员重发写 update + metadata.operation=resend，M5-06） / group_access_rule 部门访问规则（对象 id = 群组键；保存 / 删除写审计，2026-10-23） / group_access_admin 系统管理员（对象 id = users.id；手工授予 / 撤销写审计，2026-10-24）"
       },
       "AuditResult": {
         "type": "string",
@@ -389,6 +427,15 @@
           "failed"
         ],
         "description": "审计结果：succeeded 成功 / denied 越权尝试（C7-03）/ failed 业务拒绝（门禁等）"
+      },
+      "AuditScope": {
+        "type": "string",
+        "enum": [
+          "all",
+          "project_manager",
+          "self"
+        ],
+        "description": "当前账号操作记录可见范围；所有登录账号至少可查看本人记录"
       },
       "AutomationAction": {
         "type": "object",
@@ -4462,6 +4509,410 @@
         ],
         "description": "关注对象类型：project 项目 / task 任务"
       },
+      "GroupAccessAccessLevel": {
+        "type": "string",
+        "enum": [
+          "edit",
+          "view"
+        ],
+        "description": "部门权限档位：edit 可编辑并浏览 / view 仅浏览；edit 隐含 view，存量规则默认 view"
+      },
+      "GroupAccessAdmin": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "username": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/UserStatus"
+          },
+          "source": {
+            "$ref": "#/components/schemas/GroupAccessAdminSource"
+          },
+          "removable": {
+            "type": "boolean",
+            "description": "仅手工添加的管理员可在权限页撤销"
+          }
+        },
+        "required": [
+          "userId",
+          "username",
+          "displayName",
+          "email",
+          "status",
+          "source",
+          "removable"
+        ],
+        "description": "系统管理员名单项（姓名 / 工号 / 邮箱 / 来源 / 是否可撤销）"
+      },
+      "GroupAccessAdminInput": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "$ref": "#/components/schemas/Uuid"
+          }
+        },
+        "required": [
+          "userId"
+        ],
+        "description": "将系统用户设为权限管理员"
+      },
+      "GroupAccessAdminResponse": {
+        "type": "object",
+        "properties": {
+          "admin": {
+            "$ref": "#/components/schemas/GroupAccessAdmin"
+          }
+        },
+        "required": [
+          "admin"
+        ],
+        "description": "当前生效的系统管理员"
+      },
+      "GroupAccessAdminSource": {
+        "type": "string",
+        "enum": [
+          "configured",
+          "manual",
+          "role"
+        ],
+        "description": "管理员来源：configured 环境配置 / manual 手工添加 / role 角色授权"
+      },
+      "GroupAccessGroup": {
+        "type": "object",
+        "properties": {
+          "groupKey": {
+            "type": "string"
+          },
+          "groupName": {
+            "type": "string"
+          },
+          "parentGroupKey": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "上级部门键；null = 根部门"
+          },
+          "memberCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupAccessMember"
+            },
+            "description": "部门直属人员（按姓名 / 工号排序）"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/GroupAccessRule"
+          }
+        },
+        "required": [
+          "groupKey",
+          "groupName",
+          "parentGroupKey",
+          "memberCount",
+          "members",
+          "rule"
+        ],
+        "description": "可配置部门：层级、直属人员与已保存规则；groupKey=__ungrouped__ 为虚拟未分组节点，仅聚合无部门成员关系的账号"
+      },
+      "GroupAccessMember": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "username": {
+            "type": "string",
+            "description": "工号（users.username）"
+          },
+          "displayName": {
+            "type": "string",
+            "description": "姓名（users.display_name）"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/UserStatus"
+          }
+        },
+        "required": [
+          "userId",
+          "username",
+          "displayName",
+          "email",
+          "status"
+        ],
+        "description": "部门人员（姓名 / 工号 / 邮箱 / 状态）"
+      },
+      "GroupAccessMemberScope": {
+        "type": "string",
+        "enum": [
+          "all",
+          "selected"
+        ],
+        "description": "部门规则适用人员：all 全部门 / selected 仅勾选人员"
+      },
+      "GroupAccessOverview": {
+        "type": "object",
+        "properties": {
+          "enforced": {
+            "type": "boolean"
+          },
+          "admin": {
+            "type": "boolean"
+          },
+          "currentGroupKeys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "admins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupAccessAdmin"
+            },
+            "description": "当前生效的系统管理员名单（环境配置 / 手工添加 / 角色授权）"
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupAccessGroup"
+            }
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupAccessProject"
+            }
+          }
+        },
+        "required": [
+          "enforced",
+          "admin",
+          "currentGroupKeys",
+          "admins",
+          "groups",
+          "projects"
+        ],
+        "description": "权限管理页数据：开关状态、当前账号部门、系统管理员、可配置部门树与项目；无部门账号汇总在虚拟未分组节点"
+      },
+      "GroupAccessPage": {
+        "type": "string",
+        "enum": [
+          "dashboard",
+          "projects",
+          "templates",
+          "workspace",
+          "files",
+          "audit"
+        ],
+        "description": "页面键（旧客户端兼容）：dashboard / projects / templates / workspace / files / audit；群组规则恒放行全部页面"
+      },
+      "GroupAccessProject": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "code": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "name"
+        ],
+        "description": "群组规则可选项目（未进入回收站）"
+      },
+      "GroupAccessProjectScope": {
+        "type": "string",
+        "enum": [
+          "all",
+          "own",
+          "selected",
+          "none"
+        ],
+        "description": "群组项目范围：all 角色可见项目全放行 / own 仅本人负责或参与的项目 / selected 仅指定项目 / none 不可见任何项目"
+      },
+      "GroupAccessRule": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "groupKey": {
+            "type": "string"
+          },
+          "groupName": {
+            "type": "string"
+          },
+          "allowedPages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupAccessPage"
+            },
+            "description": "旧客户端兼容字段；恒返回全部页面"
+          },
+          "projectScope": {
+            "$ref": "#/components/schemas/GroupAccessProjectScope"
+          },
+          "accessLevel": {
+            "$ref": "#/components/schemas/GroupAccessAccessLevel"
+          },
+          "projectIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          "memberScope": {
+            "$ref": "#/components/schemas/GroupAccessMemberScope"
+          },
+          "memberUserIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          }
+        },
+        "required": [
+          "groupKey",
+          "groupName",
+          "allowedPages",
+          "projectScope",
+          "accessLevel",
+          "projectIds",
+          "memberScope",
+          "memberUserIds",
+          "updatedAt"
+        ],
+        "description": "群组访问规则：accessLevel = edit / view；projectIds 仅项目 selected 时有值；memberUserIds 仅人员 selected 时有值"
+      },
+      "GroupAccessRuleInput": {
+        "type": "object",
+        "properties": {
+          "groupKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "example": "libiaorobot.com/项目部"
+          },
+          "groupName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "allowedPages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupAccessPage"
+            },
+            "maxItems": 6,
+            "default": [
+              "dashboard",
+              "projects",
+              "templates",
+              "workspace",
+              "files",
+              "audit"
+            ]
+          },
+          "projectScope": {
+            "$ref": "#/components/schemas/GroupAccessProjectScope"
+          },
+          "accessLevel": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GroupAccessAccessLevel"
+              },
+              {
+                "description": "edit = 可编辑并浏览；view = 仅浏览。projectScope=none 时恒为 view"
+              }
+            ]
+          },
+          "projectIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "maxItems": 2000,
+            "default": []
+          },
+          "memberScope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GroupAccessMemberScope"
+              },
+              {
+                "description": "all = 全部门；selected = 仅 memberUserIds"
+              }
+            ]
+          },
+          "memberUserIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "maxItems": 2000,
+            "default": [],
+            "description": "selected 时生效的直属人员 user id"
+          }
+        },
+        "required": [
+          "groupKey",
+          "projectScope"
+        ],
+        "description": "保存群组访问规则：项目范围 + 编辑/仅浏览 + 指定项目 + 适用人员（selected 时生效）；allowedPages 兼容旧客户端且不再产生页面限制"
+      },
+      "GroupAccessRuleResponse": {
+        "type": "object",
+        "properties": {
+          "rule": {
+            "$ref": "#/components/schemas/GroupAccessRule"
+          }
+        },
+        "required": [
+          "rule"
+        ],
+        "description": "保存后的群组访问规则"
+      },
+      "GroupProjectAccess": {
+        "type": "string",
+        "enum": [
+          "allowed",
+          "empty",
+          "denied"
+        ],
+        "description": "部门项目权限三态：allowed / empty / denied；用于业务页面统一空状态"
+      },
       "HubDashProject": {
         "type": [
           "string",
@@ -6108,7 +6559,8 @@
           "automation.view",
           "automation.manage",
           "notify.record.view",
-          "notify.resend"
+          "notify.resend",
+          "access.manage"
         ],
         "description": "功能权限位（模块.操作）；一期取值见 PERMISSION_KEYS（种子 #6b 按角色分配）"
       },
@@ -6170,7 +6622,7 @@
           "not_ready",
           "failed"
         ],
-        "description": "预览状态：ready 产物就绪（附短时签名 URL）或 viewer 入口可用（CAD 的模型转换状态另由 CadJob 判定） / not_ready 尚未生成（产物通道幂等补投、按三元组去重） / failed 转换失败（记原因并降级「请下载」）"
+        "description": "预览状态：ready 产物就绪（附短时签名 URL）或 viewer 入口可用（CAD 的模型转换状态另由 CadJob 判定） / not_ready 尚未生成（产物通道幂等补投、按版本、管线版本和通道去重） / failed 转换失败（记原因并降级「请下载」）"
       },
       "PreviewTarget": {
         "type": [
@@ -9771,6 +10223,27 @@
             },
             "description": "节点顺序 = 数组顺序；同一模板内按 nodeId 去重"
           },
+          "createdBy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "填写人 user id；存量种子 / 系统导入为空"
+              }
+            ]
+          },
+          "createdByName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "填写人姓名（users.display_name）；为空时界面显示系统"
+          },
           "version": {
             "$ref": "#/components/schemas/Version"
           },
@@ -9786,11 +10259,13 @@
           "name",
           "stageKey",
           "nodes",
+          "createdBy",
+          "createdByName",
           "version",
           "createdAt",
           "updatedAt"
         ],
-        "description": "任务模板（名称 + 阶段 + 节点顺序；A1-16 / A1-17 的落点）"
+        "description": "任务模板（名称 + 阶段 + 节点顺序 + 填写人；A1-16 / A1-17 的落点）"
       },
       "TaskTemplateCreateBody": {
         "type": "object",
@@ -10172,7 +10647,7 @@
                 "$ref": "#/components/schemas/Sha256"
               },
               {
-                "description": "完成时回传；与 init 提供值不一致返回 422 FILE_HASH_MISMATCH"
+                "description": "完成时回传；与 init 提供值或服务端计算的实际字节 SHA-256 不一致返回 422 FILE_HASH_MISMATCH"
               }
             ]
           }
@@ -14956,7 +15431,7 @@
         "tags": [
           "audit"
         ],
-        "summary": "审计检索（对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间；仅 audit.view）",
+        "summary": "审计检索（对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间；管理员全量，其他账号按本人 / 项目经理范围）",
         "parameters": [
           {
             "schema": {
@@ -18124,6 +18599,299 @@
           },
           "401": {
             "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/access": {
+      "get": {
+        "tags": [
+          "access"
+        ],
+        "summary": "部门权限管理概览（仅权限管理员）：开关、当前账号部门、系统管理员、可配置部门与项目",
+        "responses": {
+          "200": {
+            "description": "群组权限概览",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupAccessOverview"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/access/rules": {
+      "put": {
+        "tags": [
+          "access"
+        ],
+        "summary": "保存群组页面与项目规则（仅群组管理员；projectScope=selected 时写项目白名单）",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupAccessRuleInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "保存后的规则",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupAccessRuleResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "access"
+        ],
+        "summary": "删除群组访问规则（仅群组管理员；规则不存在 404）",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "required": true,
+            "name": "groupKey",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "已删除"
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/access/admins": {
+      "post": {
+        "tags": [
+          "access"
+        ],
+        "summary": "手工授予系统管理员（仅权限管理员；环境配置与角色来源不可重复授予）",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupAccessAdminInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "当前生效的系统管理员",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupAccessAdminResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "access"
+        ],
+        "summary": "撤销手工授予的系统管理员（仅权限管理员；环境配置与角色来源不可撤销）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "userId",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "已撤销"
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
             "content": {
               "application/json": {
                 "schema": {

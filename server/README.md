@@ -47,6 +47,7 @@ server/
   scripts/m4-preview-cleanup-replay.mjs # M4-05e 预览产物清理真机回放（同口径：共享缓存 / 归属转移 / 无引用清对象）
   scripts/m4-download-replay.mjs # M4-05f 下载切片真机回放（同口径：附件投递 / download 审计 / 版本路由 / 权限双态）
   scripts/m4-05-stress.mjs       # M4-05g 压测真机回放（PoC-1 出口验证：成功率 / 200MB 续传 / 并发背压 / 长跑内存；真 PG + 真对象存储 + 真 api + 真 worker ×N + 真转换沙箱；断言全过退出码 0）
+  scripts/import-memory-smoke.mjs # 导入解析 / 受控预览端点内存冒烟（生成 200 万单元格 xlsx；2 GiB 合成对象流；受限 V8 堆 + 峰值 RSS 断言，退出码 0 = 通过）
   scripts/m3-06-stress.mjs    # M3-06 压测真机回放（1 万行任务数据集 + 索引调优评估；真 PG + 真 api；断言全过退出码 0）
   scripts/m3-07-replay.mjs    # M3-07 刀 1 真机回放（五态可写 + 汇总卡「最慢 / 最新阶段」+ 紧急重要度三档；真 PG + 真 api；断言全过退出码 0）
   scripts/m6-replay.mjs         # M6 日报 / 问题 + M6-01 收口 + M6-05 工作台 + M7-04 归档真机回放（Push 215 口径：草稿写库 / 同日多条 / 附图转挂 / 三态多值 / 成对删除 / A3-08 停用 + A2-01 引用守卫（仅 issue_ref）+ A7-01 / A7-05 + A6-01 / A6-03 + 归档 A1 ~ A7；57 项全 PASS）

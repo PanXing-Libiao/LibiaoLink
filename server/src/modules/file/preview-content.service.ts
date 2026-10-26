@@ -1,5 +1,6 @@
 import { BadGatewayException, Injectable, Logger, ServiceUnavailableException } from "@nestjs/common";
 import type { Response } from "express";
+import { pipeline } from "node:stream/promises";
 import { AppError } from "../../common/errors/app-error.js";
 import { AppConfig } from "../../config/config.module.js";
 import { ObjectStorage, StorageError } from "../../storage/index.js";
@@ -68,9 +69,9 @@ export class PreviewContentService {
     }
 
     // ③ 服务端凭据直读对象（不签发预签名地址；对象缺失按「不可读」404 同形）。
-    let object: Awaited<ReturnType<ObjectStorage["getObject"]>>;
+    let object: Awaited<ReturnType<ObjectStorage["getObjectStream"]>>;
     try {
-      object = await this.storage.getObject(version.objectKey);
+      object = await this.storage.getObjectStream(version.objectKey);
     } catch (error) {
       if (error instanceof StorageError && error.code === "unavailable") {
         this.logger.error("preview-content 503：存储不可用 file=" + file.id + " version=" + version.id);
@@ -88,22 +89,34 @@ export class PreviewContentService {
       throw this.notFound(input, "object_missing");
     }
 
-    // ④ 字节流直写（无重定向、无回退预签名）。
+    // ④ 有界流式直写（无重定向、无回退预签名）：不再把整份原文件读入 API 堆内存。
+    // 对象流由 S3 SDK 直接产出，pipeline 负责背压；客户端断开时随流销毁，避免泄漏。
     const responseType = safePreviewContentType(version.mime);
     input.response.setHeader("Content-Type", responseType.contentType);
-    input.response.setHeader("Content-Length", object.bytes.byteLength);
+    input.response.setHeader("Content-Length", object.sizeBytes);
     input.response.setHeader("Content-Disposition", responseType.disposition);
     input.response.setHeader("Cache-Control", "no-store");
     input.response.setHeader("X-Content-Type-Options", "nosniff");
     input.response.status(200);
-    input.response.end(object.bytes);
+    try {
+      await pipeline(object.stream, input.response);
+    } catch (error) {
+      // 响应头已发送后无法再改成 502；主动销毁连接让查看器看到截断，而不是把不完整文件当成功。
+      this.logger.warn(
+        "preview-content 传输中断：file=" + file.id + " version=" + version.id + " error=" + messageOf(error),
+      );
+      if (!input.response.destroyed) {
+        input.response.destroy(error instanceof Error ? error : undefined);
+      }
+      return;
+    }
     this.logger.log(
       "preview-content 200：file=" +
         file.id +
         " version=" +
         version.id +
         " bytes=" +
-        object.bytes.byteLength +
+        object.sizeBytes +
         " ms=" +
         (Date.now() - startedAt),
     );
@@ -116,6 +129,10 @@ export class PreviewContentService {
     );
     return new AppError("NOT_FOUND", "文件或版本不存在或不可用");
   }
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** `Authorization: Bearer <JWT>` 提取（大小写不敏感；形状不符 → null）。 */

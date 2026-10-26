@@ -1,10 +1,90 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
+> **2026-10-25 23:31 部门数据范围三态与操作记录分层已部署公司测试机（PR [#627](https://github.com/PanXing-Libiao/LibiaoLink/pull/627) · 生产未部署）**：按业务口径「每个人都可以看到页面 但是不能操作 看不到数据」「仅限看自己的项目」「任务模板都可以看 但是要有可编辑权限」「操作记录只能看到自己的 项目经理可以看到自己项目的所有记录」，业务页统一改为可进入但按 `groupProjectAccess` 三态收敛数据：`denied` 显示权限不足，`empty` 显示当前没有可浏览的项目，`allowed` 才加载业务数据；任务节点 / 模板全员可读，写权限仅系统管理员或部门编辑规则；操作记录对登录账号开放并按管理员全量 / 项目经理有效管理项目 + 本人 / 其他账号仅本人收敛。
+>
+> PR 最终 HEAD `cc9dfb18`，PR CI [40206785543](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40206785543) 5 / 5 · squash `f582a8a6` · main CI [40206933490](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40206933490) 5 / 5。发布包 `output/access-data-scope-f582a8a6-20261025-2329.tar.gz`（61,157,452 B · SHA-256 `96a58af5cebbe310855bc7a55dbe4af00f810bc70516cfebd7dc6a7c294a4ab6`）上传 `/srv/data/backups/` 后核对一致；部署前备份 `/srv/data/backups/access-data-scope-f582a8a6-20261025-2329/`（frontend 14,906,188 B / server 921,852 B / shared 383,008 B，三份 tar.gz 均留 SHA-256）。staging 1,089 文件与线上一致，rsync 差异仅 30 个预期文件（frontend 3 / server 20 / shared 7）；`server/assets`、`server/scripts`、两套 `package*.json` 与线上无差异。
+>
+> 短暂停 `api` / `worker` 后原位更新 `frontend/dist`、`server/dist`、`shared/dist`、`shared/generated`，web 未重启；7 容器 healthy，公网 `/` / `/healthz` / `/readyz` 200，未登录 `GET /api/v1/access` 401，公网 `index.html` / `index-DVQURrQd.js` / `index-BCcSnWVD.css` 与线上文件逐字节一致；api / worker 近期日志无 error / exception / fatal。真实 `panxing` 临时会话返回 `groupAccessAdmin=true`、`groupProjectAccess=allowed`、`auditScope=all`、`groupAccessEnforced=false`，访问接口 200、操作记录全量 873 条；会话清理后残留 0。无迁移 / 依赖 / env / compose 变更，`GROUP_ACCESS_ENFORCED=false` 与 `group_access_rules` 0 行保持不变，远端 staging 已清理，生产未部署。
+
+> **2026-10-24 22:53 权限通讯录新增虚拟「未分组」并部署公司测试机（PR [#625](https://github.com/PanXing-Libiao/LibiaoLink/pull/625) · 生产未部署）**：按业务口径「未分组的人要在未分组的里面展现」，权限通讯录与权限看板新增根级虚拟部门「未分组」（固定键 `__ungrouped__`），聚合当前无任何部门成员关系且未删除的账号（含停用）；不新增表 / 列 / 迁移，不写 `departments`。未分组节点可保存 / 删除规则，人员范围 `selected` 只校验当前未分组账号；权限画像对完全无部门账号注入 `__ungrouped__`，进入任一真实部门后自动退出，已有部门账号不叠加。
+>
+> 最终 PR HEAD `06b5f04d`，PR CI [40103456553](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40103456553) 5 / 5（`svg-preview-e2e` 首次因 apt 依赖安装 300s 超时，单独重跑通过）· squash `9ce2e021` · main CI [40104134884](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40104134884) 5 / 5。发布包 `access-ungrouped-9ce2e021-20261024-2249.tar.gz`（1,278,151 B · SHA-256 `aa383d71269166b48ac22e39a9b6f1c41334dbfd020ecec436b340441f5d1d5c`）上传 `/srv/data/backups/` 后哈希一致；部署前备份 `before.tar.gz`（1,303,981 B）与 703 文件哈希清单。staging 703 文件与线上一致，diff 仅 11 个预期文件，关键 JS / 契约哈希逐字节一致；短暂停 `api` / `worker` 后原位更新 `server/dist`、`shared/dist`、`shared/generated`，frontend 未变，7 容器 healthy。
+>
+> 公网 `/` / `/healthz` / `/readyz` 200，未登录 `GET /api/v1/access` 401；数据库 37 个未删除账号（37 启用）/ 27 个无部门账号 / 13 条成员关系。真实 `panxing` 临时会话 `GET /api/v1/access` 返回 15 个部门节点（14 真实 + 虚拟未分组）/ 未分组 27 人 / 与真实部门成员重叠 0；权限看板行、部门弹窗与通讯录树均显示未分组人员，截图见 `tmp/access-ungrouped-live-check/`。临时会话残留 0，`group_access_rules` 仍 0 行；`GROUP_ACCESS_ENFORCED=false` 保持关闭，远端 staging 已清理，生产未部署。
+
+> **2026-10-24 22:25 部门权限编辑 / 仅浏览档位已部署公司测试机（PR [#623](https://github.com/PanXing-Libiao/LibiaoLink/pull/623) · 生产未部署）**：按业务负责人明确授权「直接批准 我允许」，squash `d65a369f` 已合入 `main` 并发布测试机；最终 PR HEAD `8a0f8c9a`，PR CI [40100590224](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40100590224) 5 / 5 · main CI [40101400166](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40101400166) 5 / 5。发布包 `output/access-levels-d65a369f-20261024-2217.tar.gz`（61,270,044 B · SHA-256 `df38ee1de9443392990ff7d105332b281e7921b6a08c2e3d9fe066660da8c87c`）上传 `/srv/data/backups/` 后核对一致；staging 核验 frontend 386 / server dist 608 / shared dist+generated 95 / database 88，关键文件与本地逐字节一致，`server/assets` / `server/scripts` 与线上无差异；部署前备份 `/srv/data/backups/access-levels-d65a369f-20261024-2217/`（frontend `2b67c43a…` / server `818cfef5…` / shared `06548e82…` / database `1aa7c1cd…` / PG dump `d5a886bb…`），staging 已清理。
+>
+> 迁移前确认 `GROUP_ACCESS_ENFORCED=false` 且 `group_access_rules` 为 0 行；0073 于 2026-10-24 14:15:01 UTC 实执行（6 ms），`schema_migrations` 最新为 `0073_group_access_access_level.sql`，`access_level` 默认 `view` 及 `ck_group_access_rules_access_level` / `ck_group_access_rules_none_access` 均在库。短暂停 api / worker 后以 rsync 原位更新 frontend / server dist / shared，web 未重启；7 容器 healthy，公网 `/` / `/healthz` / `/readyz` 200，未登录 `GET /api/v1/access` 401，公网 `index.html` / `index-BpEt0MNp.js` / `index-BCcSnWVD.css` SHA-256 为 `c4f2e8df…` / `f3c2ea04…` / `7d5bf9d0…`，均与本地逐字节一致；api / worker 近期日志无 error / exception / fatal。
+>
+> 真实 `panxing` 临时会话验收：`/api/v1/permissions/me` 200 且 `groupAccessAdmin=true`，`GET /api/v1/access` 返回 14 个部门 / 6 个项目 / 1 名管理员；权限修改 / 保存修改 / 编辑 / 仅浏览文案、四档项目范围联动、整行进入部门详情、权限看板卡片与行点击弹窗、1440 / 390 权限内容布局均正常，console 无异常，临时会话删除后残留 0。未保存任何规则，规则表仍 0 行；仅观察到全站页头在 390px 的既有横向溢出，未计入本次权限页验收。`GROUP_ACCESS_ENFORCED=false` 保持关闭，生产未部署。
+
+> **2026-10-24 20:28 权限看板重排并重新上线测试机（前端-only · PR [#621](https://github.com/PanXing-Libiao/LibiaoLink/pull/621) · 生产未部署）**：按业务口径「排版重新排一下」，总览卡片桌面收至 240px / 手机 220px，部门权限分布改为三栏 / 双栏 / 单栏，视图筛选并入标题栏，项目范围长标签改为换行。完整浏览器回归 12 组通过，1440 / 1024 / 390 权限内容与弹窗无横向溢出。
+>
+> PR CI [40093747498](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40093747498) 5 / 5 · squash `45bd1dea` · main CI [40093934451](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40093934451) 5 / 5。发布包 `output/access-dashboard-layout-45bd1dea-20261024-2027.tar.gz`（14,896,873 B · SHA-256 `553d41f5014c4e6f1c0dc087837f2518d5cba0d006f57632b434dfafe3b56520`）上传 `/srv/data/backups/` 后核对一致；staging 386 文件 / 18,541,784 B，与线上 `diff -qr` 0 差异后以 `rsync -a --delete` 原地更新（未替换目录 inode、未重启容器），staging 已清理。
+>
+> 部署前备份 `/srv/data/backups/access-dashboard-layout-45bd1dea-20261024-2027/frontend-dist-before.tar.gz`（14,888,711 B · SHA-256 `2e32889f75c49d5d15647a3eb82a4ecc7753158910eeb900ec9dcfd5cd42eb10`）。公网 `index.html` / `index-4_gqp7Zc.js` / `index-DbMSLm6d.css` SHA-256 为 `6e1c202c797bf98126d2bb7449293647e4c07dea1dc4a1e2352b50400f07bfd9` / `b95882302fd920f60318efc726ca17b6a3f69f5a2e463faf38bd9a5acef07e5a` / `7b2786e35d45d4b1609f7973c0b4cbefe9d571ef2046b6c59bff8a58a8426fdb`，均与 staging / 本地逐字节一致。7 容器 healthy，`/healthz` / `/readyz` 200，`GROUP_ACCESS_ENFORCED=false` 未改；未改 server / database / compose / `server.env` / Secret / 依赖。真实公司账号浏览器复验待补，生产未部署。
+
+> **2026-10-24 19:15 权限看板改动取消并回滚测试机（PR [#620](https://github.com/PanXing-Libiao/LibiaoLink/pull/620) 已关闭，未合并，生产未部署）**：按业务口径「取消这个数据看板的改动」，前端权限页恢复为发布前版本，不再提供「规则配置 / 权限看板」切换、看板指标、范围分布与分配明细；本次改动未进入 `main`。
+>
+> 回滚使用部署前备份 `/srv/data/backups/frontend-before-access-dashboard-20261024-1901.tar.gz`（14,890,045 B · SHA-256 `978bb7ef6ce9b92c25f7733e6dc0314052a83bdc2de01611fc407ba04f009352`），staging 386 文件后以 rsync 原地更新，未重启容器。公网 index / JS / CSS SHA-256 恢复为 `8389706cc76032e3281582e3a80b5fda9c01d6fd59ed3590ea039b2332a19434` / `ee28e81e5fcfa5eb0e8819e4a58a4fd3c6917c2267409b4456d64bfd09e2473e` / `2ed23e5b17fd827b64f619b04e4eb7f33421ab5367cd711e6e8cf42a6d14e779`；线上 JS「权限看板 / 项目范围分布」均为 0 命中。8 个容器 healthy，`/healthz` / `/readyz` 正常，`GROUP_ACCESS_ENFORCED=false` 未改。回滚 staging 已清理，发布前备份与看板发布包保留。
+
+> **2026-10-24 18:43 权限页滚动条隐藏、只读提示下架与任务模板管理员门禁（前端-only，已部署测试机 · PR [#618](https://github.com/PanXing-Libiao/LibiaoLink/pull/618)，生产未部署）**：按业务口径「滚动条做成隐藏的 然后图二的话不显示 任务模板也不可见没有权限的话」，权限页三处滚动容器改用 `scrollbar-hidden`（保留滚轮 / 触控滚动、隐藏原生滚动条），右侧黄色「部门访问为只读」提示整体下架；任务模板改为系统管理员专属，顶部导航与 `#/templates` 直链共用 `groupAccessAdmin` 门禁。普通账号仍保留仪表盘 / 项目空间 / 我的任务入口，拦截页文案改为「当前账号无权访问此页面」并同步中 / 英 / 日 / 韩。
+>
+> 终版发布包 `access-template-gate-20261024-1843.tar.gz`（14,880,839 B · SHA-256 `bd7e8421b4274483d0be48298aa35a6aee54208b4108ff8a1b1180f882343da2`）上传并核对哈希；staging 386 文件，index / JS / CSS 与本地一致并已清理。部署前原始前端备份为 `/srv/data/backups/access-template-gate-20261024-1841/frontend-dist-before.tar.gz`（SHA-256 `4368443e...`），终版前再次备份至 `/srv/data/backups/access-template-gate-20261024-1843/frontend-dist-before.tar.gz`（SHA-256 `e1b37866...`）。终版以 rsync 原地更新，保持 web 容器的 bind mount；首次整目录替换曾使运行中的 web 挂旧 inode 返回 404，`docker restart libiaolink-web` 后恢复 healthy，终版未再重启。未改 server / database / compose / `server.env` / Secret / 依赖。公网 index / JS / CSS SHA-256 分别为 `8389706c...` / `ee28e81e...` / `2ed23e5b...`。
+>
+> 真实账号验收：`panxing` 的 `groupAccessAdmin=true`，顶部保留任务模板且 `#/templates` 可达；`wmj` 的 `groupAccessAdmin=false`，导航仅仪表盘 / 项目空间 / 我的任务、直链任务模板落 403，模板内容 DOM 0；管理员权限页无黄色提示，两个滚动容器 computed `scrollbar-width: none` 且 WebKit `display: none`，browser exceptions / console errors 0。8 容器 healthy，`/healthz` 正常、`/readyz` 200，`GROUP_ACCESS_ENFORCED=false` 未改。PR CI [40087218170](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40087218170) 5 / 5，squash `a6974d2c`，main CI [40087343944](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40087343944) 5 / 5；生产未部署。
+
+> **2026-10-24 18:23 权限页改为独立三列，系统管理员移到真正最左一列（前端-only，已部署测试机 · PR [#616](https://github.com/PanXing-Libiao/LibiaoLink/pull/616)，生产未部署）**：按业务追订「我让你放在最左侧的空白页面，不是现在的位置」，系统管理员不再叠在部门通讯录顶部，而是独立第一列；宽屏顺序固定为「系统管理员 → 部门通讯录 → 规则详情」，`lg` 为两列、窄屏纵向，页面最大宽度放宽到 `screen-2xl`。人员行「设为管理员 / 取消管理员」与管理员增删接口保持不变。
+>
+> 前端发布包 `access-admins-left-column-20261024-1825.tar.gz`（14,882,998 B · SHA-256 `2ea176b5f1dae463338831d411a162a8abe4a2a82012cc4499b14b80835d3d48`）上传并核对哈希；staging 386 文件，index / JS / CSS 与本地一致并已清理。部署前 `/opt/libiaolink/frontend/dist` 备份至 `/srv/data/backups/access-admins-left-column-20261024-1825/frontend-dist-before.tar.gz`（SHA-256 `bc65a1ec...`）；仅替换前端静态目录，未改 server / shared / database / compose / `server.env` / Secret / 依赖，未重启容器。公网 index / JS / CSS SHA-256 分别为 `17add78f...` / `eb3e1483...` / `2ed23e5b...`。
+>
+> 浏览器验收：1440px 三列顺序成立（系统管理员 24–284 / 部门通讯录 300–660 / 规则详情 676–1394），2048px 同样成立（256–516 / 532–892 / 908–1792），900px 自动纵向；各宽度均无横向溢出，browser exceptions / console errors 0。当前管理员名单正确显示 `configured` 与 `manual` 两种来源，人员行「设为管理员」按钮可见。8 容器保持 healthy，`GROUP_ACCESS_ENFORCED=false`；PR CI [40085795699](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40085795699) 5 / 5，squash `e46beaea`，main CI [40086087225](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40086087225) 5 / 5；生产未部署。
+
+> **2026-10-24 18:18 权限页系统管理员名单与手工授权，已部署公司测试机（main `c0e39413` · PR [#615](https://github.com/PanXing-Libiao/LibiaoLink/pull/615)，生产未部署）**：权限页左栏顶部展示当前生效的系统管理员（环境配置 / 手工添加 / 角色授权，按 user id 去重），环境配置与角色来源只读；部门「适用人员」行新增「设为管理员 / 取消管理员」，手工变更仅权限管理员可调用并写审计 `group_access_admin`，至少保留一名管理员。PR CI [40084475009](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40084475009) 5 / 5、main CI [40084756558](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40084756558) 5 / 5，squash `c0e39413`。
+>
+> 发布包 `access-admins-c0e39413-20261024-1814.tar.gz`（16,344,440 B · SHA-256 `3991aea30652eb6a8ffb20e793751cae80fdbbb1bcaa2f6d807caee1c7744d65`）上传 `/srv/data/backups/` 后哈希一致；staging 核验 1,180 文件，`permission.service.js` / `group-access.controller.js` / 0072 / `group-access.js` / 前端 index / JS / CSS 关键 SHA-256 与本地一致，staging 已清理。部署前备份至 `/srv/data/backups/deploy-access-admins-c0e39413-20261024-1814/`：PG dump 836K · `2e389bcd...`、server 44M · `dab51409...`、shared 380K · `5cb9f30b...`、frontend 52M · `36bbfa31...`、database 120K · `ab713616...`。更新 database 后迁移 71 → 72（0072 13 ms），复跑无漂移；同步 server / shared / frontend，短暂重建 api / worker，未改 compose / `server.env` / Secret / 依赖。
+>
+> 真实账号验收：`panxing` 的 `groupAccessAdmin=true`、`GET /api/v1/access` 200，名单显示来源 `configured`、`removable=false`；`wmj` / `renjinxing` 均 `false` / 403。临时把 `wmj` 设为手工管理员后，名单新增 `manual`、`/permissions/me` 为 true、权限页 200；`DELETE` 204 后立即恢复 false / 403，手工管理员行与临时会话均 0 残留。前端公网 index / JS / CSS SHA-256 分别为 `3cd086aa...` / `9f67ab05...` / `03e76d73...`。浏览器验收：桌面 1440 与 900px 窄屏均无横向溢出，左栏顶部显示系统管理员名单、人员行显示「设为管理员」，browser exceptions / console errors 0。8 容器 healthy，公网 `/healthz` / `/readyz` 200，api / worker 日志无 error / exception / fatal。`GROUP_ACCESS_ENFORCED=false`、`GROUP_ACCESS_ADMIN_USER_IDS` 仅 `panxing`、`GROUP_ACCESS_ADMIN_GROUP_KEYS=`，普通账号项目列表 6 条；生产未部署。
+
+> **2026-10-24 17:43 权限管理入口收紧并指定 panxing 为管理员，已部署测试机（main `cb964431` · PR [#613](https://github.com/PanXing-Libiao/LibiaoLink/pull/613)，生产未部署）**：`PERMISSION_ENFORCED=false` 时不再把等效管理员画像放大为 `groupAccessAdmin`；权限管理入口只认显式管理员部门、`GROUP_ACCESS_ADMIN_USER_IDS` 用户白名单，或启用角色权限后的 `access.manage`。测试机 `GROUP_ACCESS_ENFORCED=false`、`GROUP_ACCESS_ADMIN_GROUP_KEYS` 为空、`GROUP_ACCESS_ADMIN_USER_IDS=80f59621-71a7-4205-869e-d7db13ae3c89`（`panxing`），不再使用临时 `SSLVPN Group`。PR CI [40082756678](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40082756678) 5 / 5、main CI [40082889339](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40082889339) 5 / 5，squash `cb964431`。
+>
+> 发布包 `access-admin-gate-cb964431-20261024-1748.tar.gz`（914,432 B · SHA-256 `73bc34a92a2b3b67d0d18c2ea3d7fa93de61249a9e62815a56f692c01c5b019f`）上传 `/srv/data/backups/` 后哈希一致；部署前 server dist（917,021 B · `c1c34ace...`）与 `server.env`（3,254 B · `a6b62111...`）备份至 `/srv/data/backups/deploy-access-admin-gate-cb964431-20261024-1748/`。staging 核验 608 文件，`env.js` / `permission.service.js` / `group-access.rules.js` 及 map 共 6 个关键哈希与本地一致；仅替换 `/opt/libiaolink/server/dist` 并重建 api / worker，staging 已清理。真实账号验收：`panxing` 权限管理 200 / `groupAccessAdmin=true`；`wmj` / `renjinxing` 均 403 / `false`；三人项目列表仍为 6 条，临时会话 0 残留。8 容器 healthy，公网 `/healthz` / `/readyz` 200，api / worker 日志无 error / exception / fatal。生产未部署。
+
+> **2026-10-24 17:25 已收回测试机全局强制，恢复全员正常查看（`GROUP_ACCESS_ENFORCED=false`，生产未部署）**：按业务要求「现在只是做小范围测试 不要这么快让所有人看不了页面」，关闭全局部门限制并重建 api / worker，保留已部署代码、迁移、部门规则与操作记录裁剪。原 `server.env` 备份至 `/srv/data/backups/server.env.before-small-scope-20261024-172525`。真实账号 `wmj` 复验 `/permissions/me` 为 `groupAccessEnforced=false`、`groupReadOnly=false`，项目列表恢复 6 条、操作记录 718 条，临时会话已清理；8 容器 healthy，公网 `/healthz` / `/readyz` 200，api / worker 近期日志无 error / exception / fatal。后续仅使用专用测试账号或隔离环境验证，不在共享测试机对全员开启后再扩大范围。
+
+> **2026-10-24 部门页面全开 + 非管理员只读 + 本人项目，已合并并部署公司测试机（main `3cdc412d` / `9f88b665` · PR #609 / #610，生产未部署）**：所有登录账号始终进入全部业务页；`GROUP_ACCESS_ENFORCED=true` 时非部门管理员画像 `groupReadOnly=true`，项目 / 任务 / 文件 / 日报 / 问题 / 干系人 / 字典 / 蓝图 / 模板 / 日历 / 自动化写入口在前端关闭、服务端拒绝，任务节点与模板仍可读，模板卡显示填写人。项目范围新增 `own`（项目负责人或项目名册本人），可与指定项目并集，`all` 优先；无规则 / `none` 时项目、仪表盘、工作台、文件库与详情均为空。操作记录在 PR #610 补按可见项目裁剪，空范围返回 `total=0`，无 `projectId` 的全局日志不向收窄账号返回。PR [#609](https://github.com/PanXing-Libiao/LibiaoLink/pull/609) CI [40079901689](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40079901689) 5 / 5、main CI [40080034513](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40080034513) 5 / 5，squash `3cdc412d`；PR [#610](https://github.com/PanXing-Libiao/LibiaoLink/pull/610) CI [40081188986](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40081188986) 5 / 5、main CI [40081388087](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40081388087) 5 / 5，squash `9f88b665`。
+>
+> 发布包 `group-readonly-3cdc412d-202610241705.tar.gz`（16,345,478 B · SHA-256 `fa5be168af1050478ae653439117b87fcfab8533f5bc8070e129de600ebaccbd`）与 `audit-scope-4f019d2b-20261024-1718.tar.gz`（5,289 B · SHA-256 `9612120e516f8ddd615cebe4403b23c67ac1ebaa6ab09ff482efa2ae49bbaf1e`）上传 `/srv/data/backups/` 后哈希一致。部署前备份：`deploy-group-readonly-3cdc412d-20261024-1705/`（server 915,012 B · `41e20266...`、shared 378,744 B · `18a7be75...`、frontend 14,887,051 B · `5dc35be2...`、database 118,063 B · `b5242784...`、PG dump 1,086,761 B · `e0606342...`）与 `deploy-audit-scope-4f019d2b-20261024-1718/server-dist-before.tar.gz`（916,553 B · `68f58ba8...`）。主发布 staging 核验后更新 server / shared / frontend / database，仅短暂停 api / worker；迁移 68 → 70（0070 5 ms / 0071 7 ms）。审计修复 staging 的 `audit.service.js` / `audit.controller.js` 与 map 逐字节核对后覆盖 `/opt/libiaolink/server/dist` 并重启 api / worker；两轮 staging 已清理。
+>
+> 真实账号浏览器验收 49 / 49 通过，browser exceptions 0、console errors 0。非管理员 `wmj` 六个业务页均可进入，项目 / 仪表盘 / 文件库 / 工作台 / 操作记录均无业务数据，新建 / 导入禁用，模板显示「填写人：系统」且标为只读；权限接口 403，字典写探针 403 且未落库。管理员 `renjinxing` 权限页可见 14 个部门、6 个项目候选与「仅限自己的项目」，项目部 2 人。测试机 8 容器 healthy（含 onlyoffice / CAD），公网 `/healthz` / `/readyz` 200，api / worker 近 30 分钟日志无 error / exception / fatal。
+>
+> **测试机配置与上线前动作（已更新）**：`GROUP_ACCESS_ENFORCED=false`；管理员为 `GROUP_ACCESS_ADMIN_USER_IDS` 中的 `panxing`（`80f59621-71a7-4205-869e-d7db13ae3c89`），`GROUP_ACCESS_ADMIN_GROUP_KEYS` 已清空，不再依赖临时 `SSLVPN Group`。测试库没有 `user_roles`，角色画像等效管理员，但权限管理入口不再据此放开。项目部规则仍为 `project_scope=none`、`member_scope=all`，刘安楠、吴孟杰在全员开关开启时会看到空数据；后续小范围测试时由管理员在权限页保存「仅限自己的项目」或勾选明确项目，并同步配置项目负责人 / 名册。生产未部署。
+
+> **2026-10-24 部门规则支持人员级勾选，已合并并部署公司测试机（main `ecc903b6` · PR #607，生产未部署）**：权限页可按部门一键全选 / 取消直属人员，也可逐人勾选 / 取消，半选与人数实时显示；`memberScope=all` 覆盖部门全体直属人员，`selected` 仅覆盖勾选人员，保存校验部门直属关系。PR CI [40076060247](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40076060247) 5 / 5、main CI [40076309058](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40076309058) 5 / 5，squash `ecc903b6`。发布包 `access-member-ecc903b6-202610241601.tar.gz`（16,972,505 B · SHA-256 `92a7eeadf872b982cc4c207ad9e6294a59214f45747bd342a9c6afebf403230e`）上传 `/srv/data/backups/` 后远端哈希一致；部署前备份 `app-before.tar.gz`（16,181,210 B · `2a212656...`）、`database-before.tar.gz`（117,470 B · `73d33735...`）与 `postgres.dump`（1,085,775 B · `601fce93...`）至 `/srv/data/backups/deploy-access-member-ecc903b6-20261024-1604/`。staging 核验 server / shared / frontend / database 各 685 / 97 / 386 / 84 文件，关键 index / JS / CSS、权限仓储、契约与 0069 迁移哈希与本地一致；仅短暂停 api / worker，更新 server dist、shared dist / generated、frontend dist 与 database 后启动，未改 compose / server.env / Secret / 依赖，web 未重启。数据库迁移 67 → 68（`0069_group_access_member_scope.sql`），存量 1 条规则回填 `member_scope=all`；`check:db-schema` 62 表 / 640 列 / 199 索引 / 233 CHECK 一致。8 容器 healthy（含 onlyoffice / CAD），公网 `/healthz`、`/readyz` 200，未登录 `/api/v1/access` 401；公网 index / JS / CSS 与部署文件逐字节一致（`1476f9d1...` / `d3c0b42e...` / `14a3d9d5...`），API 契约可解析 `all` / `selected`，api / worker 近 10 分钟日志无 error / exception / fatal，staging 已清理。**`GROUP_ACCESS_ENFORCED` 仍未配置；真实公司账号登录后的浏览器勾选验收待完成，生产未部署。**
+
+> **2026-10-24 权限管理通讯录式部门目录已合并并部署公司测试机（main `65fa6f8e` · PR #605，生产未部署）**：权限页左侧改为多级部门通讯录，默认展开当前账号部门及上级，支持展开 / 收起全部与部门 / 姓名 / 工号 / 邮箱搜索；人员行显示姓名、工号、邮箱与停用态，右侧保留页面 / 项目范围配置。`GroupAccessGroup` 增 `parentGroupKey` / `members`，后端从部门层级与成员关系生成；不改变访问裁决。发布包 `access-directory-65fa6f8e-20261024-1525.tar.gz`（16,144,735 B · SHA-256 `2462a25b981e64ffa8c0fdc804d00d65ff9e7ae5c7c8cbf4388f97ccaa35c540`）上传 `/srv/data/backups/` 后远端哈希一致；部署前备份 server / shared / frontend 三个 dist tar 至 `/srv/data/backups/deploy-access-directory-65fa6f8e-20261024-1525/`。staging 核验 608 / 95 / 386 文件并逐文件比对后，仅短暂停 api / worker 更新 server dist、shared dist / generated 与 frontend dist；未迁移数据库、未改 server.env / compose / Secret / 依赖、web 未重启，staging 已清理。8 容器 healthy，容器内与公网 `/healthz` / `/readyz` 均 200；公网 index 与部署文件 SHA-256 `b1976e4b...` 一致，JS / CSS 200 且哈希 `17be9e3f...` / `f17532be...`，未登录 `/api/v1/access` 401；数据库 13 个 active 部门、13 条成员关系、1 条既有规则，近期日志无 error / exception / fatal。**本次未配置 `GROUP_ACCESS_ENFORCED`；真实公司账号浏览器验收待完成，生产未部署。**
+
+> **2026-10-24 Casdoor 组织目录自动同步已合并并部署公司测试机（main `cb5ac17b` · PR #603，生产未部署）**：worker 启动即拉取一轮，之后默认每 5 分钟自动同步群组 / 用户 / 成员关系（`ORG_SYNC_INTERVAL_MS`，最小 60 秒），页面无同步按钮。发布包 `org-auto-sync-cb5ac17b-20261024-003258.tar.gz`（15,787,702 B · SHA-256 `e45b51579e66f290e857960fa4679d095a5e2def2863eb3d3f2028fd24c971eb`）上传 `/srv/data/backups/` 后远端哈希一致；部署前备份 server dist（912,013 B · `24fd08c67d132813b974b6068c9984a9a76f803dfeb26cdadea1ac60ee04d495`）与 frontend dist（14,880,331 B · `9951928963a4894eebe281c53c2fb7331fadbe2a4d672089032810cae6092f01`）。staging 核验 994 文件并确认 worker 自动同步代码与前端新文案后，仅短暂停 api / worker 更新两个 dist，未迁移数据库、未改 compose / env / Secret / 依赖、web 未重启；8 容器 healthy，容器内与公网 `/healthz`、`/readyz` 均 200；公网 index 与部署文件 SHA-256 `8bb2f747c6342ae8d616f7012784a338e51f6e7e6e8d409c3f006852f56ac7a3` 一致，新文案「系统会自动同步」本地 / 线上各 1，未登录 `/api/v1/access` 401；worker 启动约 2 秒完成首轮（11 群组 / 37 用户 / 缺失 0），约 5 分钟后第二轮自动完成（同规模），api / worker 10 分钟日志无 error；数据库 11 个 active 群组（含 `项目部`）、8 条成员关系、既有 1 条群组规则保留。**本次未开启 `GROUP_ACCESS_ENFORCED`；真实公司账号浏览器验收待完成，生产未部署。**
+
+> **2026-10-23 群组访问控制（Casdoor Groups）已合并并部署公司测试机（main `9c43d2de` · PR #592，生产未部署）**：发布包 `release-group-access-9c43d2de-20261023-2245.tar.gz`（61,232,656 B · SHA-256 `77d28d3ad458b2f410f995ddf229bcd742b592993712936e62bbb8e57f5fa35c`）上传 `/srv/data/backups/` 后远端哈希一致；部署前备份 `postgres.dump`（1,072,427 B · SHA-256 `364a3da4937de710b36a88f8874162198aed117b72b1aedefc9b65afe7054ccb`）与 `app-before.tar.gz`（100,255,705 B · SHA-256 `8d3aaeb58e7f5de93182970acd449a4f80e6f71e91e1615f207cd73091ace505`）。staging 解包并核验 0068、群组守卫与前端 index 后，同步 database / server / shared / frontend；仅短暂停 api / worker，未改 compose / server.env / Secret / 依赖。数据库迁移 66 → 67（`0068_group_access.sql`），`role-permissions` 首次插入 5、复跑 0 变更；`user_group_memberships` / `group_access_rules` / `project_group_access` 已存在，`access.manage` 仅授予 admin。api / worker 重启后 7 容器 healthy，容器内与公网 `/healthz`、`/readyz` 均 200；公网 index 与本地 SHA-256 一致，`index-rMJWrG_T.js`（1,834,559 B）与 `index-DT4WL_DJ.css`（157,311 B）均 200；未登录 `/api/v1/access` 为 401，容器内契约可解析 8 个 `GroupAccess*Schema`。服务器 695 个 server 文件、97 个 shared 文件、386 个 frontend 文件与 staging 逐文件比对一致；staging 已清理，发布包与备份保留。**本次未开启 `GROUP_ACCESS_ENFORCED`（server.env 未配置，代码默认 false）**；启用前需在 Casdoor 应用 Token Fields 勾选 `Groups`、让账号重新登录，并配置 `GROUP_ACCESS_ADMIN_GROUP_KEYS`。真实公司账号的登录后群组规则浏览器验收待完成，生产未部署。
+
+> **2026-10-23 大文件预览 / 导入内存修复已合并最新主线并部署公司测试机（code `9a1f1165` · PR #592，生产未部署）**：分支 codex/preview-import-memory 合并 main `1881deac` 后，server 发布包 server-preview-import-memory-9a1f116-20261023-1918.tar.gz（45,862,169 B · SHA-256 18b00df088223f28c75b25900a94f343f3be2cc16981a328dfaed4d46d6c0fe0）上传 /srv/data/backups/ 后哈希一致；部署前备份 server-before-preview-import-memory-9a1f116-20261023-1918.tar.gz（45,890,119 B · SHA-256 3ec17812fc1238c52ee292a3ad4e270a7fe280665c85b925e3e79a868f473d4d）。staging 解包 681 文件并核验 dist/entry/api.js、dist/modules/file/upload-integrity.js、dist/common/http/import-temp.js、scripts/import-memory-smoke.mjs；仅停 api / worker，切换 server dist / assets / scripts / package 后重启，未改 compose / env / Secret / 依赖。数据库已执行 66 个迁移（含 0067），本次未执行迁移。api / worker healthy、测试机七容器 healthy；容器内与公网 /healthz、/readyz 均 200，公网 /api/v1/files/<id>/versions/<id>/preview-content 及尾斜杠、大小写变体均 404。服务器实际 679 个运行时文件与 staging 一致，upload-integrity.js / import-temp.js 哈希分别为 cd514a41949b68f0fba9d8384ce1b79be668eca177841e59a42659fab5c9ee12 / 2a1286950bffab0bc26e00ea0c72e9b033a9ce02c3c9aab313ac137812c8248c；旧目录与 staging 已清理，备份保留。Push 460 的 server / shared / frontend / database CI 已通过，svg-preview-e2e 与回填后的最终 CI 以远端实际结果为准；PR #592 后续最终 head CI 5 / 5 并已 squash 合并 main `9c43d2de`（群组访问部署见上条），生产未部署。
+
+> **2026-10-23 F-02 S1～S5 已部署公司测试机（`main@1881deac` · 回填 Push 460 / 461 · PR [#596](https://github.com/PanXing-Libiao/LibiaoLink/pull/596)），生产未部署**：database / server / shared / deploy 四包上传 `/srv/data/backups/` 后 SHA-256 与本地一致（114,073 B · `8b1cb651…` / 45,848,845 B · `cc16aa03…` / 353,356 B · `6e639177…` / 109,744 B · `51fdf4d4…`）。迁移 `0067_preview_version_isolation.sql` 执行 9 ms，库内 66 个迁移、复跑「已是最新、无漂移」；frontend 未重发（本批无运行时前端代码变化，v2.18 保持）。S3 已创建 `libiaolink-app` / `libiaolink-bootstrap` 与 `libiaolink-api` / `libiaolink-storage-init` service account，`apply` / `check` 通过，应用 `admin info` 与建桶负向测试均 `AccessDenied`；S4 `api` / `worker` 仅挂白名单单文件 Secret、UID/GID 1000，`storage:init --check` 通过、`storage:it` 24/24；S5 新 root 认证通过、旧 root 拒绝、旧口令扫描 `zero-hits`、状态目录已清理，证据 `/srv/data/backups/f02-s5-evidence/root-rotation-20261023T085110Z-success-7042.txt`。S1/S2 已持久化：`9000` 不发布、`9001` / `9443` 仅回环，开发机三端口均不可达，DOCKER-USER unit `enabled/active`。部署前备份 PG `/srv/data/backups/pg/libiaolink-before-0067-1881deac-20261023-1636.sql.gz`（`e21460e5…`）与 MinIO 数据目录 `/srv/data/backups/minio-before-f02-s5-20261023-1647`（4,640 文件 / 1,847,247,852 B；清单 `62aac728…`）。7 容器 healthy；`/` 200、`/healthz` 200、`/readyz` 200、`/libiaolink/` 403、未认证预览 401；api / worker / minio 10 分钟窗口 0 error。`mc` 锁定镜像不含 `/usr/bin/mc` 且 `dl.min.io` 已 410，本次改用 MinIO 官方 GitHub Release `RELEASE.2025-08-13T08-35-41Z`（SHA-256 `01f866e9…`），已归档 `/srv/data/images/minio/`；§9.2 已修正。**F-02 未关闭：S5 验收登记（S5-T3 旧预签名 / 历史应用值、T7 压缩 / 二进制备份敏感登记待补）与 S6 / S7 待收口；认证后真实上传 / 预览浏览器验收未执行。**
+
+> **2026-10-23 F-02 S5 root 轮换与旧凭据失效已部署公司测试机（PR [#595](https://github.com/PanXing-Libiao/LibiaoLink/pull/595)）**：新增 `scripts/minio-root-rotate.sh`（`plan` / `check` / `rotate` / `recover` / `finalize`），强制受控 `mc` 来源、轮换双确认、旧 root 在 tmpfs 状态目录短暂保留、双 Secret 替换失败回退、仅重建 minio、旧口令残留扫描与脱敏证据；`finalize` 会重新验证当前 root、全链路和旧 root 拒绝后才清状态。**测试机已执行真实轮换：新 root 认证通过、旧 root 拒绝、旧口令扫描 `zero-hits`、状态目录已清理，脱敏证据见 `/srv/data/backups/f02-s5-evidence/`；F-02 未关闭，S5 验收登记与 S6 / S7 待收口**。运行手册见 §9.4。
+
+> **2026-10-23 F-02 S4 Secrets 隔离与运行时凭据切换已部署公司测试机（PR [#594](https://github.com/PanXing-Libiao/LibiaoLink/pull/594)）**：`api` / `worker` 改为按文件 Compose Secret 挂载到 `/run/secrets`，`tools` 只挂 `pg_migrator_password`，三处整目录 `secrets/` 挂载已删除。`service-entrypoint.cjs` 对必需 Secret fail closed，对空的可选 Secret 明确 unset，并拒绝旧整目录挂载或未授权 Secret 文件；`storage.sh init` 使用 bootstrap、`it` 使用应用 service account，凭据经一次性 `600` env-file 注入而不进入命令行；迁移 / 种子改读 `/run/secrets/pg_migrator_password`。**测试机已切换运行时：api / worker 仅挂白名单 Secret、进程 UID/GID 1000，`storage:init --check` 与 `storage:it` 24/24 通过；F-02 未关闭，S5 验收登记与 S6 / S7 待收口**。
+
+> **2026-10-23 F-02 S3 最小权限身份已部署公司测试机（PR [#591](https://github.com/PanXing-Libiao/LibiaoLink/pull/591)）**：新增 `minio/policies/libiaolink-app-rw.json`、`minio/policies/libiaolink-bootstrap.json` 与 `scripts/minio-identity.sh`（`lint` / `apply` / `check`）；`storage-init` 只把 MinIO 无法授予的 CORS `AccessDenied` 记为能力告警。脚本使用一次性 `mc` 配置与标准输入承接凭据，不把 Secret 放入命令行；父用户策略、service account 状态和凭据文件均 fail closed。**测试机已创建真实身份并通过 `apply` / `check`；应用负向权限测试 `admin info` 与建桶均 `AccessDenied`；F-02 未关闭，S5 验收登记与 S6 / S7 待收口**。
+
+> **2026-10-23 大文件预览 / 导入内存峰值修复已部署公司测试机（server · PR #592，生产未部署）**：分支 codex/preview-import-memory，提交 df093de3。server 发布包 server-preview-import-memory-df093de3-20261023-1524.tar.gz（45,859,825 B · SHA-256 f9ee861560b9e1d1e70296a79909beb6aa6fd6e5944bbf15475a692c104d70bf）上传 /srv/data/backups/ 后哈希一致；部署前备份 server-before-preview-import-memory-20261023-1524.tar.gz（45,878,267 B · SHA-256 38dc4c1dcd41faa36a04352a8cc0d25b9517c4b2d54ce8b96363b3e16886ba6a）。staging 解包 679 文件并核验 dist/entry/api.js、dist/common/http/import-temp.js、scripts/import-memory-smoke.mjs；仅停 api / worker，同步 server/dist / scripts / package 文件后重启。api / worker healthy、测试机 7 容器 healthy，容器内与公网 /healthz、/readyz 均 200，公网 preview-content 404。API 容器 /tmp 为 overlay（40 GB / 可用 12 GB，不是 tmpfs）。测试机当前 API_MEM_LIMIT=4g，未改运行配置；另用同产物在 memory=768m、memory-swap=768m 隔离容器复验：导入 200 万格 / 58.24 MiB 样本 maxRSS 221.0 MiB / cgroup peak 343.1 MiB，预览 2 GiB × 2 并发 maxRSS 226.5 MiB，两轮 memory.events 的 max / oom / oom_kill 均为 0。PR #592 的 server / shared / frontend / database CI 已通过，svg-preview-e2e 以远端实际结果为准，合并仍等待评审。无前端 / 契约 / DDL / 迁移 / 依赖 / compose / env / Secret 变化；staging 与临时压测容器已清理，备份保留，生产未部署。
+
 > **2026-10-23 F-06 preview-content 公网收口与 API 安全头已部署公司测试机（code `03ae712a`），生产未部署**：server 包 `server-f06-03ae712-20261023-1359.tar.gz`（883,269 B · SHA-256 `6cd9a65832dfa37b38f020fd53c67d2f745dfee5530ab2992ec9dff1b587731d`）、nginx 包 `nginx-f06-03ae712-20261023-1359.tar.gz`（4,934 B · `9afc27082addb0cd16d234e90d6e166a9f99568d341422ad50bc64761174afd5`）；部署前备份 `server-before-f06-20261023-1359.tar.gz`（883,292 B · `32e309271d9913538c591be72a0b69290a9abcad5589a59909b75abdfd6124ae`）与 `nginx-before-f06-20261023-1359.tar.gz`（4,516 B · `5bb8aa7f1bc1822102686da5f33437ba40dcc7025bcfc0bff0be674b3e2ce47d`）。`/opt/libiaolink/server/dist` 已替换并修正权限（`entry/api.js` `c32b9e01…`、`common/http/security-headers.js` `1c7da1d1…`），Nginx 配置哈希 `d9d5b98b…`、`nginx -t` 通过并重启 web；`ONLYOFFICE_DOCSERVER_API_BASE_URL=http://api:3000` 已确认。公网 `preview-content` 404，HSTS / `nosniff` / `Referrer-Policy` / `Permissions-Policy` 每项 1 条、`X-Powered-By` 0 条；`/` / `/healthz` / `/readyz` 200，`/libiaolink/` 403 但安全头完整；DocServer → `http://api:3000/healthz` 200；api / worker / web / postgres / minio / cad / svg-preview 七容器 healthy；staging 已清理、备份保留。无前端 / 契约 / DDL / 迁移 / compose / env / Secret 变化。
 
 > **2026-10-23 项目访问 / 登录留痕与预览审计已部署公司测试机（v2.19 最终组合 · database + shared + server + frontend），生产未部署**：PR [#581](https://github.com/PanXing-Libiao/LibiaoLink/pull/581)（head `cb7c97da` · PR CI [39907256453](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39907256453) 5 / 5 · squash `6b846b2f`）完成后，品牌改名 PR [#582](https://github.com/PanXing-Libiao/LibiaoLink/pull/582) 于同日进入 main；为避免审计后端与品牌前端各自半套，最终从 main `72b47bc9` 重建前端并统一覆盖。测试机 database / shared / server 来自 `6b846b2f`，最终代码状态与 `main@72b47bc9` 等价；main CI [39908553712](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39908553712) 5 / 5（`6b846b2f` 首轮 run [39907462506](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39907462506) 在 4 / 5 后被后续 main 推送并发取消）。迁移前 PG 备份 `pg/libiaolink-before-0066-6b846b2f-20261023-1350.sql.gz`（829,342 B · `0d892de6…`）；`0066` 执行 7 ms，复跑「65 个迁移，无漂移」，动作约束为 12 值且含 `visit`。最终前端包 `libiaolink-frontend-v2.19-72b47bc9-20261023-1406.tar.gz`（14,868,972 B · `b950d853…`）上传后哈希一致；覆盖前前端备份 14,875,469 B · `bdfe78cf…`。覆盖后 7 个容器 healthy，`/` / `/nginx-health` / `/healthz` / `/readyz` 均 200，未认证访问上报 401；前端 386 文件 / 18,413,752 B，公网 index / JS / CSS（`37730877…` / `2991e3b5…` / `32bd4553…`）与本地逐字节一致，新名称 1 命中、旧名称 0 命中、`/visit` 1 命中。真实公司账号登录 / 项目访问 / 预览 / 筛选浏览器验收待补；PR #581 缺非作者批准记录，流程偏差见 `开发日志.md` Push 453；生产未部署。
 
-> **2026-10-23 产品名称改为「立镖市场项目管理平台」已部署公司测试机（v2.18 · frontend），生产未部署**：PR [#582](https://github.com/PanXing-Libiao/LibiaoLink/pull/582)（PR CI [39908280966](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39908280966) 5 / 5、squash `eb443b44`、main CI [39908553712](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39908553712) 5 / 5）。为不把同期合入 main 的审计 UI 与尚未执行的迁移 `0066` 带入本次发布，v2.18 使用隔离前端源 `eb72d1aa` 构建；`frontend/npm run typecheck` / `npm run build` 通过。frontend-only 包 `output/frontend-v2.18-eb72d1aa-20261023-1358.tar.gz`（14,868,805 B · SHA-256 `086260e0c9f93ce78ed5dd71f81c6ae24b4025fbd8a34259b15d026d5b038b9e`）上传 `/srv/data/backups/` 后哈希一致；staging 核验 386 文件 / 18,413,514 B / 0 preview，index / JS / CSS 与本地一致；部署前备份 `frontend-before-v2.18-eb72d1aa-20261023-1358.tar.gz`（14,873,600 B · `9bbdc3450106244ed6e1aef864b81add8537e24cd9b213228223c307c85aee42`）；`rsync -a --delete` 原位覆盖 `/opt/libiaolink/frontend/dist/` 并修正读权限，web 未重启。公网 `index.html` 502 B · `23afceec6d3884daf96dd1ef9d5548db788defd95e47c2e50a55677a842db53f` / `index-CUPeO48q.js` 1,810,413 B · `41262d2f5e4158158d7bc1e11d9305f9f5e32c049001d144e6ba6bb0b1f56d98` / `index-B_ePvmT8.css` 157,072 B · `32bd4553b5a3ce0e8f89fae225eae5f050cca24080ace5a64f9d376c9abf9b34` 与本地逐字节一致；页签为「LibiaoLink 立镖市场项目管理平台」，线上 JS 新名称 1 命中、旧名称 0 命中；`/` / `/nginx-health` / `/healthz` / `/readyz` 均 200，7 个容器 healthy；staging 已清理。无接口 / 依赖 / DDL / 迁移 / compose / env / Secret 变化；该记录保留为 v2.18 隔离前端发布事实，随后由 v2.19 统一前端覆盖，测试机迁移 `0066` 与审计功能均已确认部署（见上），生产未部署。
+> **2026-10-23 产品名称改为「立镖市场项目管理平台」已部署公司测试机（v2.18 · frontend），生产未部署**：PR [#582](https://github.com/PanXing-Libiao/LibiaoLink/pull/582)（PR CI [39908280966](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39908280966) 5 / 5、squash `eb443b44`、main CI [39908553712](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39908553712) 5 / 5）。为不把同期合入 main 的审计 UI 与尚未执行的迁移 `0066` 带入本次发布，v2.18 使用隔离前端源 `eb72d1aa` 构建；`frontend/npm run typecheck` / `npm run build` 通过。frontend-only 包 `output/frontend-v2.18-eb72d1aa-20261023-1358.tar.gz`（14,868,805 B · SHA-256 `086260e0c9f93ce78ed5dd71f81c6ae24b4025fbd8a34259b15d026d5b038b9e`）上传 `/srv/data/backups/` 后哈希一致；staging 核验 386 文件 / 18,413,514 B / 0 preview，index / JS / CSS 与本地一致；部署前备份 `frontend-before-v2.18-eb72d1aa-20261023-1358.tar.gz`（14,873,600 B · `9bbdc3450106244ed6e1aef864b81add8537e24cd9b213228223c307c85aee42`）；`rsync -a --delete` 原位覆盖 `/opt/libiaolink/frontend/dist/` 并修正读权限，web 未重启。公网 `index.html` 502 B · `23afceec6d3884daf96dd1ef9d5548db788defd95e47c2e50a55677a842db53f` / `index-CUPeO48q.js` 1,810,413 B · `41262d2f5e4158158d7bc1e11d9305f9f5e32c049001d144e6ba6bb0b1f56d98` / `index-B_ePvmT8.css` 157,072 B · `32bd4553b5a3ce0e8f89fae225eae5f050cca24080ace5a64f9d376c9abf9b34` 与本地逐字节一致；页签为「LibiaoLink 立镖市场项目管理平台」，线上 JS 新名称 1 命中、旧名称 0 命中；`/` / `/nginx-health` / `/healthz` / `/readyz` 均 200，7 个容器 healthy；staging 已清理。无接口 / 依赖 / DDL / 迁移 / compose / env / Secret 变化；审计功能与迁移 `0066` 仍未在测试机部署，生产未部署。
 
 > **2026-10-23 站内信单条 / 一键删除已部署公司测试机（v2.17 · database + shared + server + frontend），生产未部署**：main `0e21360b` 经 PR [#577](https://github.com/PanXing-Libiao/LibiaoLink/pull/577)（PR CI [39903193662](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39903193662) 5 / 5、main CI [39903450869](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39903450869) 5 / 5）部署到 `test-pm.libiaorobot.com`。迁移前 PG 备份 `pg/libiaolink-before-0065-0e21360b-20261023-1305.sql.gz`（842,484 B · `516da28d…`）；`0065` 执行 3 ms，复跑 64 个迁移无漂移。database / server / shared / frontend 四件上传 `/srv/data/backups/` 后哈希一致；api / worker 重启后 7 个容器 healthy，`/nginx-health` ok、`/healthz` 200、`/readyz` 200，未认证单删 / 全删 DELETE 均 401。frontend 386 文件 / 18,413,489 B，公网 index / JS / CSS（`6aac4a64…` / `88b19b07…` / `32bd4553…`）与本地逐字节一致；真实公司账号登录后的删除 / 角标浏览器验收待补。本次全栈 frontend 已覆盖 13:05 的 v2.17 frontend-only 部署（Push 445）；合并评审流程偏差见 `开发日志.md` Push 446。
 
@@ -40,8 +120,8 @@
 | api / worker | ✅ 部署件已交付（本切片） | `profiles: app`；node 24 双锁；entrypoint 降权（容器进程非 root）；依赖装进命名卷；外部依赖（SSO / 对象存储）以占位值先行，见 §2 / §7 |
 | svg-preview（SVG 安全栅格化） | ✅ 测试机已部署（H1 S4） | internal-only `libiaolink-svg-preview-internal`；不发布宿主端口；镜像 tag + digest 双锁；worker 经 `svg-preview:9900` 调用 |
 | CAD native runtime（OCP / Gmsh） | ✅ 测试机已部署（2026-10-21） | `libiaolink/runtime:24.20.0-cad-20261021-1538`；OCP 7.8.1.1 + Gmsh 4.15.2；API 4 GiB / worker 1 GiB；真实公司账号浏览器验收待完成，生产未部署 |
-| web（Nginx） | ✅ TLS 已接入（v1.8）· 对象存储同源门面（v1.13） | 80 → 301 / 443 应用（含 `/libiaolink/` 对象存储同源门面）/ 9443 MinIO 回环排障门面（仅 SSH 隧道；F-02 S1 部署件已改，待测试机复核）；SPA 静态 + `/api/v1` 反代（SPA 已上线 2026-10-14） |
-| minio（对象存储） | ✅ 服务器实测收口（本切片） | 本机自建；镜像 = 本地构建（锚点 sha256:165271c0…）；数据盘 bind `/srv/data/minio`；init + --check + it 24/24、readyz 全绿；S3 走 https 同源门面（443 `/libiaolink/`）；F-02 S1 部署件已收口 9000 发布与 9443 回环，待测试机复核；见 §9 |
+| web（Nginx） | ✅ TLS 已接入（v1.8）· 对象存储同源门面（v1.13） | 80 → 301 / 443 应用（含 `/libiaolink/` 对象存储同源门面）/ 9443 MinIO 回环排障门面（仅 SSH 隧道；F-02 S1 已部署并复核）；SPA 静态 + `/api/v1` 反代（SPA 已上线 2026-10-14） |
+| minio（对象存储） | ✅ 服务器实测收口（本切片） | 本机自建；镜像 = 本地构建（锚点 sha256:165271c0…）；数据盘 bind `/srv/data/minio`；init + --check + it 24/24、readyz 全绿；S3 走 https 同源门面（443 `/libiaolink/`）；F-02 S1/S2 已部署并复核（9000 不发布、9001/9443 仅回环）；见 §9 |
 | onlyoffice（文档服务器） | ✅ 生产上线（本切片 · v1.14） | 独立 compose 项目 `libiaolink-onlyoffice`（不发布公网端口；8001 回环排障）；443 子路径 `/onlyoffice/` 门面（DS 9.4 原生子路径支持）；镜像离线下发并归档 `/srv/data/images/oo_docs_9.4.0.1.tar`；JWT 与 api 同值；真实 64MB xlsx 端到端渲染 ready；见 `deploy/onlyoffice/README.md` §6 |
 | 备份（PG 每 12h 加密） | 待办 | 落 `/srv/data/backups/pg` + 异地 |
 
@@ -71,17 +151,18 @@
 | 文件 | 用途 | 消费方 | 现状 |
 |---|---|---|---|
 | `pg_superuser_password` | `postgres` 超级用户 | compose secret（`POSTGRES_PASSWORD_FILE`） | ✅ 已生成 |
-| `pg_migrator_password` | 迁移 / 种子 | db-init + tools | ✅ 已生成 |
-| `pg_api_password` | 应用角色（api / worker） | entrypoint → `DATABASE_URL` | ✅ 已生成 |
+| `pg_migrator_password` | 迁移 / 种子 | `tools` Compose Secret → `/run/secrets/pg_migrator_password` | ✅ 已生成 |
+| `pg_api_password` | 应用角色（api / worker） | api / worker Compose Secret → entrypoint → `DATABASE_URL` | ✅ 已生成 |
 | `pg_readonly_password` | 只读（排查 / 报表） | psql 排查 | ✅ 已生成 |
 | `internal_sync_token` | 内部作业凭证（`X-Internal-Token`） | entrypoint → `INTERNAL_SYNC_TOKEN` | 随本切片生成 |
 | `onlyoffice_jwt_secret` | 查看器 JWT（与 DocServer 同值） | entrypoint → `ONLYOFFICE_JWT_SECRET` | ✅ 已生成（2026-10-14 DocServer 上线同批复核） |
-| `translate_api_key` | 翻译 API Key（New API 网关） | entrypoint → `TRANSLATE_API_KEY` | ✅ 已回填（2026-10-14，51 B；2026-10-23 日 / 韩直连 2 / 2） |
-| `casdoor_client_id` / `casdoor_client_secret` | SSO 应用（Casdoor） | entrypoint → `CASDOOR_CLIENT_ID` / `CASDOOR_CLIENT_SECRET` | ✅ 已回填（2026-10-14，测试环境 authtest 应用 clientId `41e162…`；正式环境应用创建后替换） |
-| `s3_access_key` / `s3_secret_key` | 对象存储（MinIO 应用侧） | entrypoint → `S3_ACCESS_KEY` / `S3_SECRET_KEY` | ✅ 已生成（当前与根口令同值；专用最小权限账号列待办） |
-| `wecom_app_secret` / `wecom_bot_secret` | 企微通道 | entrypoint → `WECOM_APP_SECRET` / `WECOM_BOT_SECRET` | 待业务侧开通后补 |
+| `translate_api_key` | 翻译 API Key（New API 网关） | **仅 api** Compose Secret → `TRANSLATE_API_KEY` | ✅ 已回填（2026-10-14；未配置时用空占位文件） |
+| `casdoor_client_id` / `casdoor_client_secret` | SSO 应用（Casdoor） | api / worker Compose Secret → `CASDOOR_CLIENT_ID` / `CASDOOR_CLIENT_SECRET`（worker 当前由共享生产 env 校验要求） | ✅ 已回填（2026-10-14，测试环境 authtest 应用 clientId `41e162…`；正式环境应用创建后替换） |
+| `s3_access_key` / `s3_secret_key` | 对象存储（MinIO 应用 service account） | api / worker Compose Secret → `S3_ACCESS_KEY` / `S3_SECRET_KEY` | S3 `apply` 生成；存在后 S4 才重建 api / worker |
+| `s3_bootstrap_access_key` / `s3_bootstrap_secret_key` | 对象存储初始化（bootstrap service account） | `storage.sh init` / `init --check` 一次性 env-file → `S3_*` | S3 `apply` 生成；不挂载给长期运行容器 |
+| `wecom_app_secret` / `wecom_bot_secret` | 企微通道 | **仅 worker** Compose Secret → `WECOM_APP_SECRET` / `WECOM_BOT_SECRET` | 待业务侧开通；未开通时保留空占位文件 |
 
-生成（服务器上，root）：`openssl rand -hex 24 > <文件名>`（JWT 用 -hex 32），随后 `chmod 600 *password` 覆盖全部密钥文件。
+生成（服务器上，root）：`openssl rand -hex 24 > <文件名>`（JWT 用 -hex 32），随后 `chmod 700 secrets && chmod 600 secrets/*`。**不要预创建 `s3_access_key` / `s3_secret_key` / `s3_bootstrap_access_key` / `s3_bootstrap_secret_key`**：S3 身份脚本只接受“成对不存在”、有效 service account 或可识别的 legacy root 文件；未知或单边文件会 fail closed。`translate_api_key` / `wecom_app_secret` / `wecom_bot_secret` 未配置时应创建 `600` 空占位文件（Compose 需要文件存在；entrypoint 把空值视为未配置并 unset，绝不从 `server.env` 回退）。
 
 ## 3. 同步与首次部署（postgres）
 
@@ -134,7 +215,7 @@ docker compose exec -T postgres psql -U postgres -d libiaolink -c "\du"
 docker compose --profile tools pull tools
 ```
 
-迁移（以 `libiaolink_migrator` 身份；服务器水位 2026-10-23 = `0066`（v2.19 · Push 453）—— 已执行 65 个迁移，无漂移；仓库迁移件同水位）：
+迁移（以 `libiaolink_migrator` 身份；服务器水位 2026-10-19 = `0057`（v1.71 · Push 366）—— 已执行 56 个迁移，无漂移；仓库迁移件同水位）：
 
 ```bash
 bash scripts/db-migrate.sh
@@ -179,13 +260,19 @@ docker compose --profile tools run --rm tools -c 'cd /opt/libiaolink/shared && n
 ```bash
 cp server.env.example server.env          # 按注释回填 SSO / 对象存储 / ONLYOFFICE / 企微 真实值
 cd secrets
-for n in casdoor_client_id casdoor_client_secret s3_access_key s3_secret_key; do echo "placeholder-until-configured" > "$n"; done
+for n in translate_api_key wecom_app_secret wecom_bot_secret; do
+  [ -e "$n" ] || install -m 600 /dev/null "$n"
+done
+chmod 700 .
 chmod 600 *
+cd ..
+# F-02 S4：旧值或其他环境变量中的 Secret 不再是回退来源；部署机必须删除此行。
+sed -i '/^WECOM_BOT_SECRET=/d' server.env
 ```
 
-> 占位值仅供「先起服务、后回填」的过度期使用；真值到位后覆盖文件并 `docker compose --profile app restart api worker`。
+> 空占位仅表示“该可选通道未配置”；真值到位后覆盖对应文件并重建 api / worker。`casdoor_client_id` / `casdoor_client_secret` / `pg_api_password` 等必需项不得使用占位值；`s3_*` 必须先由 S3 `minio-identity.sh apply` 生成，再启动 / 重建应用。
 
-> **智能机器人（群 + 单聊 · M5-03-5）**：`server.env` 需回填 `WECOM_BOT_ID` / `WECOM_BOT_SECRET`（成对；Secret 不进仓库）。换机器人 = 改此二值即视为新机器人 —— 新 `bot_id` 下无绑定行，单聊不发帧 + `dead` + 站内信降级（D4 话术），已绑定用户需重新绑定一次；回填后 `docker compose --profile app restart api worker`（长连接由 worker 建立）。
+> **智能机器人（群 + 单聊 · M5-03-5）**：`server.env` 只回填非敏感 `WECOM_BOT_ID`；`WECOM_BOT_SECRET` 只写 `secrets/wecom_bot_secret`（`600`），不得留在 `server.env`。换机器人 = 同时更换这两个值即视为新机器人 —— 新 `bot_id` 下无绑定行，单聊不发帧 + `dead` + 站内信降级（D4 话术），已绑定用户需重新绑定一次；文件到位后 `docker compose --profile app up -d --force-recreate worker`（长连接由 worker 建立）。
 
 **启动与验证：**
 
@@ -343,7 +430,7 @@ PR 与 main 的独立 `svg-preview-e2e` job 会从本生产配置派生 CI Nginx
 
 - 数据落数据盘：bind `/srv/data/minio`（HDD；默认 docker volume 会落系统盘，禁用）；
 - 端口：`9000` = S3 API，仅 Docker `libiaolink-prod` 网络内使用，不发布宿主端口；`9001` 控制台与 `9443` MinIO 备用门面均只绑 `127.0.0.1`（SSH 隧道访问）；浏览器对象存储只走 443 `/libiaolink/`；
-- 凭据：`secrets/minio_root_user`、`secrets/minio_root_password`（`scripts/minio-entrypoint.sh` 注入）；应用侧 `secrets/s3_access_key` / `s3_secret_key`（当前与根口令同值；专用账号最小权限列为待办）；
+- 凭据：`secrets/minio_root_user`、`secrets/minio_root_password` 只通过 minio 容器的 Compose Secret 注入；应用侧使用 `s3_access_key` / `s3_secret_key`（`libiaolink-api` service account），初始化使用 `s3_bootstrap_*`（`libiaolink-storage-init`），四件均由 S3 `apply` 生成，不复制 root 值；
 - CORS：MinIO 社区版走服务端变量 `MINIO_API_CORS_ALLOW_ORIGIN`（compose 默认 `http://10.1.104.44`；换域名 / TLS 后同步更新并重建容器）。
 
 **首次部署与验证（服务器）：**
@@ -354,8 +441,10 @@ mkdir -p /srv/data/minio
 cd secrets
 echo "libiaolink" > minio_root_user
 openssl rand -hex 24 > minio_root_password
-cp minio_root_user s3_access_key
-cp minio_root_password s3_secret_key
+for n in translate_api_key wecom_app_secret wecom_bot_secret; do
+  [ -e "$n" ] || install -m 600 /dev/null "$n"
+done
+chmod 700 .
 chmod 600 *
 cd ..
 # server.env 已存在（v1.2 切片创建）→ 只回填 S3 段；新机首部署才 cp server.env.example server.env
@@ -375,8 +464,18 @@ cd /srv/data/images/minio
 echo "7c5bd8512c6e966455b1d198209358b2d191c77a83ab377c4073281065fb855f  minio.linux-amd64.RELEASE.2025-09-07T16-13-09Z" | sha256sum -c -
 docker build -f /opt/libiaolink/deploy/prod/minio/Dockerfile -t libiaolink/minio:RELEASE.2025-09-07T16-13-09Z /srv/data/images/minio
 cd /opt/libiaolink/deploy/prod
-docker compose --profile app up -d --force-recreate api worker minio web
+
+# S4：api / worker 依赖应用与 bootstrap Secret；这段窗口只先启动 minio。
+docker compose --profile app up -d minio
 docker compose --profile app ps       # minio (healthy)
+
+# 按 §9.2 校验受控 mc 并执行 minio-identity.sh apply / check。
+# apply 完成前不得启动 / 重建 api / worker（Compose 不会接受缺失的 s3_* 文件）。
+MC_BIN=/usr/local/bin/mc \
+MC_SOURCE='github.com/minio/mc@RELEASE.2025-08-13T08-35-41Z:mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z;sha256=01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891' \
+  bash scripts/minio-identity.sh apply
+
+docker compose --profile app up -d --force-recreate api worker
 bash scripts/storage.sh init          # 建桶 + 版本控制（CORS / 分片清理按 MinIO 能力面告警）
 bash scripts/storage.sh init --check  # 只读门禁（部署验收）
 bash scripts/storage.sh it            # 真机回放 24 项断言
@@ -454,21 +553,244 @@ bash scripts/docker-user-firewall.sh --remove
 
 本文件 S1 / S2 不改变 MinIO 根凭据与业务凭据；F-02 的 S3～S5 仍须完成最小权限身份、Secret 隔离与 root 轮换后才能关闭。
 
+### 9.2 MinIO 最小权限身份（F-02 S3 · 已部署测试机）
+
+**状态与边界**：2026-10-23 已在测试机创建真实应用 / bootstrap 身份并完成 `apply` / `check`；应用只绑定 `libiaolink-app-rw`、bootstrap 只绑定 `libiaolink-bootstrap`，两套 service account 均为 `impliedPolicy` 且永久有效。`storage:init --check`、`storage:it` 和应用负向权限测试已通过；F-02 仍待 S6 / S7 收口。
+
+**受控 `mc` 工具链**
+
+2026-10-23 实测锁定 MinIO 镜像只有 `minio` 服务端，**不含 `/usr/bin/mc`**；官方 `dl.min.io` 同路径已返回 410。改用 MinIO 官方 GitHub Release，二进制与 `.sha256sum` / `.minisig` / `.asc` 已归档 `/srv/data/images/minio/`：
+
+```bash
+cd /srv/data/images/minio
+MCREL=RELEASE.2025-08-13T08-35-41Z
+# 已归档时直接复核；缺失时从 https://github.com/minio/mc/releases/download/$MCREL/mc.linux-amd64.$MCREL 下载
+printf '01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891  mc.linux-amd64.%s\n' "$MCREL" | sha256sum -c -
+install -m 0555 -o root -g root "mc.linux-amd64.$MCREL" /usr/local/bin/mc
+/usr/local/bin/mc --version
+sha256sum /usr/local/bin/mc
+python3 --version
+```
+
+`--help` 兼容性、版本、来源和 SHA-256 会在 `apply` / `check` 前置门禁中再校验；不支持的命令或缺少 Python 3 时直接停止。
+
+**静态门禁与身份创建**
+
+```bash
+cd /opt/libiaolink/deploy/prod
+chmod 700 secrets
+chmod 600 secrets/minio_root_user secrets/minio_root_password
+bash scripts/minio-identity.sh lint
+
+MC_BIN=/usr/local/bin/mc \
+MC_SOURCE='github.com/minio/mc@RELEASE.2025-08-13T08-35-41Z:mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z;sha256=01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891' \
+bash scripts/minio-identity.sh apply
+
+MC_BIN=/usr/local/bin/mc \
+MC_SOURCE='github.com/minio/mc@RELEASE.2025-08-13T08-35-41Z:mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z;sha256=01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891' \
+bash scripts/minio-identity.sh check
+```
+
+- `apply` 创建两份策略、父用户 `libiaolink-app` / `libiaolink-bootstrap`、service account `libiaolink-api` / `libiaolink-storage-init`，并写入 `s3_*` 与 `s3_bootstrap_*`；**不重启 api / worker**，运行进程仍使用旧环境值。
+- `check` 要求远端策略与仓库文件语义一致、父用户只绑定唯一预期策略且启用、service account 的 parent / 状态 / `impliedPolicy` / 有效期正确；随后分别用两套凭据执行 `mc ls libiaolink` 只读探针。
+- 凭据通过一次性 `MC_CONFIG_DIR` 和标准输入写入 `mc` 配置，不进入命令行参数、日志或证据；脚本退出时删除临时配置。
+- 工具链证据默认写入 `/srv/data/backups/f02-s3-evidence/mc-toolchain.txt`（目录 `700`、文件 `600`），不记录 access key / secret。
+- 若父用户带有额外策略、已存在未知应用 Secret、策略内容漂移或 service account 不满足条件，脚本 fail closed；不得自动解除策略、覆盖未知凭据或放宽为通配权限。
+
+**CORS 能力例外**：锁定 MinIO 版本不接受 `s3:GetBucketCORS` / `s3:PutBucketCORS` IAM 动作，bootstrap 策略不声明这两个动作；CORS 由 `MINIO_API_CORS_ALLOW_ORIGIN` 配置。`storage-init` 仅在 CORS 路径把 `AccessDenied` 记为能力告警，lifecycle、版本控制等其它路径的权限错误仍会失败。此例外不得扩展到其它 S3 动作。
+
+**测试机部署结果（2026-10-23）**：`lint` / `apply` / `check` 通过，已创建 `libiaolink-app` / `libiaolink-bootstrap` 父用户与 `libiaolink-api` / `libiaolink-storage-init` service account；`storage:init --check` 通过、`storage:it` 24/24；应用凭据执行 `mc admin info` 与建桶均返回 `AccessDenied`，bootstrap 仅用于 init / check。F-02 仍待 S6 / S7。
+
+### 9.3 Secrets 隔离与运行时切换（F-02 S4 · 已部署测试机）
+
+**状态与边界**：2026-10-23 已完成测试机运行时切换。`api` / `worker` 分别只挂载白名单单文件 Secret，旧整目录挂载已移除，进程 UID/GID 为 1000；`storage:init --check` 与 `storage:it` 24/24 通过。下方运行时切换命令保留为后续维护窗口的重放步骤。
+
+**挂载矩阵**
+
+| 容器 | `/run/secrets` 可见项 | 说明 |
+|---|---|---|
+| api | `pg_api_password`、`casdoor_client_id`、`casdoor_client_secret`、`s3_access_key`、`s3_secret_key`、`internal_sync_token`、`onlyoffice_jwt_secret`、`translate_api_key` | 不挂企微、migrator、root、superuser Secret |
+| worker | `pg_api_password`、`casdoor_client_id`、`casdoor_client_secret`、`s3_access_key`、`s3_secret_key`、`internal_sync_token`、`onlyoffice_jwt_secret`、`wecom_app_secret`、`wecom_bot_secret` | 不挂 translate、migrator、root、superuser Secret；Casdoor / internal token / OO JWT 当前由共享生产 env 校验要求 |
+| tools | `pg_migrator_password` | S3 初始化凭据由 `storage.sh` 一次性 env-file 注入，不长期挂载 |
+| minio | `minio_root_user`、`minio_root_password` | root 值只能进入 minio 容器 |
+
+`service-entrypoint.cjs` 启动时先清空所有受管环境变量，再从 `/run/secrets` 读取；必需项缺失 / 为空 / 不可读 fail closed，可选文件为空则明确 unset。发现 `/opt/libiaolink/secrets` 旧整目录挂载或 `/run/secrets` 中出现未声明文件时直接退出 70。
+
+**运行时切换（测试机，维护窗口）**
+
+```bash
+cd /opt/libiaolink/deploy/prod
+
+# 1. 前置：S3 apply 已生成四件 s3_*；可选 Secret 为空时必须保留 600 空占位。
+install -d -m 700 secrets
+for n in translate_api_key wecom_app_secret wecom_bot_secret; do
+  [ -e "secrets/$n" ] || install -m 600 /dev/null "secrets/$n"
+done
+chmod 600 secrets/*
+sed -i '/^WECOM_BOT_SECRET=/d' server.env
+
+# 2. Compose 解析 + 重建（配置输出不含 Secret 值）。
+docker compose --profile app config >/dev/null
+docker compose --profile app up -d --force-recreate api worker
+docker compose --profile app ps
+
+# 3. 健康与挂载边界（只打印文件名 / 权限，不打印 Secret 值）。
+curl -fsS https://test-pm.libiaorobot.com/healthz
+curl -fsS https://test-pm.libiaorobot.com/readyz
+for c in libiaolink-api libiaolink-worker; do
+  docker exec "$c" sh -c 'ls -1 /run/secrets | sort'
+  docker exec "$c" sh -c 'test ! -e /opt/libiaolink/secrets'
+  docker exec "$c" sh -c 'grep -E "^(Uid|Gid):" /proc/1/status'
+done
+docker exec libiaolink-api sh -c '
+  for f in minio_root_user minio_root_password pg_superuser_password pg_migrator_password s3_bootstrap_access_key s3_bootstrap_secret_key; do
+    test ! -e "/run/secrets/$f" || exit 1
+  done
+'
+docker exec libiaolink-worker sh -c '
+  for f in minio_root_user minio_root_password pg_superuser_password pg_migrator_password s3_bootstrap_access_key s3_bootstrap_secret_key; do
+    test ! -e "/run/secrets/$f" || exit 1
+  done
+'
+
+# 4. 禁止 server.env 携带 Secret；未配置的企微 / 翻译变量必须被 entrypoint unset。
+! grep -E '^(DATABASE_URL|CASDOOR_CLIENT_SECRET|INTERNAL_SYNC_TOKEN|S3_ACCESS_KEY|S3_SECRET_KEY|ONLYOFFICE_JWT_SECRET|TRANSLATE_API_KEY|WECOM_APP_SECRET|WECOM_BOT_SECRET)=' server.env
+docker exec libiaolink-api sh -c '! printenv WECOM_BOT_SECRET >/dev/null 2>&1'
+docker exec libiaolink-worker sh -c '! printenv TRANSLATE_API_KEY >/dev/null 2>&1'
+
+# 5. S3 / 存储链路：bootstrap 跑只读门禁，应用 service account 跑完整回放。
+bash scripts/storage.sh init --check
+bash scripts/storage.sh it
+```
+
+- 迁移 / 种子：`bash scripts/db-migrate.sh --dry-run`、`bash scripts/db-seed.sh --dry-run` 必须只经 tools 的 `/run/secrets/pg_migrator_password` 读取密码；`db-init.sh` 还要求三件 `pg_*_password` 权限严格为 `600`，密码经 stdin 送入 psql，不出现在 psql argv。
+- 未配置企微时，worker 应记录群通道未启用 / 单聊凭据未配置的结构化告警，不得启动伪连接；配置后覆盖 `wecom_*` 文件并只重建 worker。
+- 进程命令行、日志、shell history、证据文件和 CI 输出不得出现 access key / secret；应用容器不得出现 root 或 superuser Secret。
+
+**回滚**：启动失败时只补挂缺失的单文件 Secret、修正 `600` 权限或修复 service account 策略后重试。禁止恢复 `./secrets:/opt/libiaolink/secrets:ro`、把 root 值复制给应用或把 Secret 写回 `server.env`。root 轮换属于 S5，S4 不执行。
+
+### 9.4 MinIO root 轮换与旧凭据失效（F-02 S5 · 已部署测试机）
+
+**状态与边界**：`scripts/minio-root-rotate.sh` 已于 2026-10-23 在测试机真实执行并通过：新 root 认证通过、旧 root 拒绝、旧口令扫描 `zero-hits`、状态目录已清理；脱敏证据为 `/srv/data/backups/f02-s5-evidence/root-rotation-20261023T085110Z-success-7042.txt`。轮换前 MinIO 数据目录备份为 `/srv/data/backups/minio-before-f02-s5-20261023-1647`（4,640 文件 / 1,847,247,852 B，清单 `62aac728…`）。F-02 仍待 S6 / S7 收口。
+
+脚本只重建 `minio`，不重启 `api` / `worker`；不删除对象、桶、版本或数据目录；不修改 S1 / S2 的端口与 `DOCKER-USER` 规则。旧 root 仅在 `/run/libiaolink-f02-s5`（目录 `700`、文件 `600`，tmpfs）短暂保留用于失败恢复。
+
+**前置**
+
+- 已完成 S3 `apply` / `check` 和 S4 运行时切换，应用 / bootstrap 凭据均不是 root；`storage:init --check`、`storage:it`、`readyz` 已通过。
+- 已记录 MinIO 数据目录的可恢复备份 / 快照路径与校验值；备份说明、工单和聊天记录不含 Secret。
+- 使用 §9.2 已归档并校验的 `mc`（锁定镜像只含服务端，不含 `mc`），按 §9.2 设置 `MC_BIN` 与 `MC_SOURCE`；不得下载来源不明的二进制。
+- `secrets/` 为 `700`，`minio_root_*`、`s3_*`、`s3_bootstrap_*` 与可选空占位均为 `600`；不存在未完成的 `/run/libiaolink-f02-s5`。
+
+**只读预检**
+
+```bash
+cd /opt/libiaolink/deploy/prod
+set +o history 2>/dev/null || true
+chmod 700 secrets
+chmod 600 secrets/*
+
+export MC_BIN=/usr/local/bin/mc
+export MC_SOURCE='github.com/minio/mc@RELEASE.2025-08-13T08-35-41Z:mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z;sha256=01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891'
+
+bash scripts/minio-root-rotate.sh plan   # 不生成凭据、不写 Secret、不重启容器
+bash scripts/minio-root-rotate.sh check  # 复核 root / S3 / storage / HTTP 并写脱敏证据
+```
+
+`plan` / `check` 也要求 `MC_SOURCE`，因为脚本会校验受控 `mc` 的版本、SHA-256 和必需子命令。任何 Secret 权限、数据目录、容器健康或基线检查失败都必须停在轮换前。
+
+**维护窗口轮换**
+
+```bash
+# 仅在备份 / 快照已核实后设置第二个确认
+F02_S5_CONFIRM=ROTATE_MINIO_ROOT \
+F02_S5_BACKUP_CONFIRMED=YES \
+bash scripts/minio-root-rotate.sh rotate
+```
+
+脚本会依次完成：基线全链路检查、暂存旧 root、生成新 root、替换两份 Secret、只重建 minio、新 root 认证、旧 root 拒绝、S3 身份 / bootstrap / `storage:it` / HTTP 复核、旧口令明文扫描、删除状态并写证据。任一步失败时按证据中的 `stage` 和 `rollback` 处理，不得手工拼接新旧用户 / 口令文件。
+
+**成功核对**
+
+```bash
+test ! -e /run/libiaolink-f02-s5
+stat -c '%a %n' secrets/minio_root_user secrets/minio_root_password
+find secrets -maxdepth 1 -name '*.f02-s5.*' -print
+find /srv/data/backups/f02-s5-evidence -maxdepth 1 -type f -printf '%m %f\n' | sort
+```
+
+预期：状态目录已删除；两份 root Secret 为 `600`；没有 `.f02-s5.*` 临时 / 备份文件；证据目录为 `700`、证据文件为 `600`，且文件内容不含 Secret。证据中 `root_username_changed=yes`、`new_root_auth=accepted`、`retired_root_auth=rejected`、`f02_status=open`。
+
+**失败与中断**
+
+- **自动回滚边界**：仅新 root 启动失败、新 root 认证失败或旧 root 仍被接受时，脚本恢复旧 root、重建 minio、确认旧 root 可用并写 `rolled-back` 证据。恢复后 F-02 仍开放，必须按事件处置并重新轮换。
+- **新 root 已生效后的失败**：身份、storage、HTTP 复核失败，旧 root 探针不确定，或旧口令扫描命中时，脚本不回滚到旧 root，保留新 root 与 `/run/libiaolink-f02-s5`，写 `failed` 证据并退出 1。
+- **中断后禁止直接重跑 `rotate`**：状态目录存在时脚本会拒绝。先确认证据与状态目录权限；需要恢复旧 root 时执行 `recover`，确认新 root 应继续生效并处置完旧值副本后再执行 `finalize`。
+
+```bash
+# 回滚到状态目录中的旧 root（会重建 minio；之后必须重新轮换）
+F02_S5_CONFIRM=RESTORE_PREVIOUS_ROOT \
+bash scripts/minio-root-rotate.sh recover
+
+# 新 root 已生效、残留已清理：重新校验当前 root / 全链路 / 旧 root 拒绝 / 扫描后再清状态
+F02_S5_CONFIRM=FINALIZE_ROOT_ROTATION \
+bash scripts/minio-root-rotate.sh finalize
+```
+
+`finalize` 不是“强制删状态”命令：当前 root 不可用、仍与待退休值相同、运行时检查失败、旧 root 仍可用或扫描有命中时都会保留状态。不得手工 `rm -rf` 状态目录绕过检查。
+
+**旧 Secret 残留**
+
+脚本的明文扫描覆盖部署目录、`/srv/data/backups`、`/root/.bash_history`、`/home`、`/tmp`、`/var/tmp` 及 minio / api / worker 日志；命中或不可读都会阻止自动清状态。tar / 镜像 / 压缩备份无法用文本 `grep` 证明“未包含”，必须按敏感备份限制访问、登记处置结论，必要时重新打包或销毁；不能把“未扫描到”写成“未包含”。
+
+轮换完成不等于 F-02 关闭：仍须完成 S5-T3 旧预签名 / 历史应用值失效验证、S5-T7 残留处置、S5-T10 端口复核，以及 S6 / S7 的文档与回放证据。不得为了排障恢复 `0.0.0.0:9000` / `0.0.0.0:9443`，也不得把 api / worker 改回 root。
+
+### 9.5 RustFS 1.0.3 隔离 POC（仓库件 · 本地已验，测试机未部署）
+
+**状态与边界**：新增 `docker-compose.rustfs-poc.yml`、`rustfs-poc/` 与 `scripts/rustfs-poc.sh`，用独立 profile 在 `libiaolink-prod` 网络内启动 RustFS 1.0.3 与专用 Nginx。POC 不接 `api` / `worker`，不读 MinIO / 应用 Secret，不替换 `minio`，不改 443 门面；宿主只发布 `127.0.0.1:9445`，SSH 隧道用于同源口径验收。RustFS 控制台关闭，数据 / 日志落独立目录，桶名 `rustfs-poc`。
+
+镜像按 tag + digest 双锁：RustFS `1.0.3@sha256:9ca95595…`；管理客户端 `rustfs/rc@sha256:ab024bfe…`（实测 0.1.36，无独立 tag）。健康检查固定 `/health/ready`。操作顺序：
+
+```bash
+cd /opt/libiaolink/deploy/prod
+bash scripts/rustfs-poc.sh prepare
+bash scripts/rustfs-poc.sh up
+bash scripts/rustfs-poc.sh apply
+bash scripts/rustfs-poc.sh check
+bash scripts/rustfs-poc.sh it
+```
+
+脚本自动生成 `secrets/rustfs_poc_*`（`600`），创建 `libiaolink-poc-app` / `libiaolink-poc-bootstrap` 两个 service account，并复用现有 `storage:init` / `storage:it`。`check` 额外验证应用账号不能建桶、bootstrap 账号不能读对象；`down` 保留数据，`purge` 需 `RUSTFS_POC_CONFIRM=PURGE_RUSTFS_POC`。
+
+**RustFS IAM 口径**：策略动作名为 `s3:GetBucketCors` / `s3:PutBucketCors` / `s3:GetBucketLifecycle` / `s3:PutBucketLifecycle`，不能直接复用 MinIO / AWS 常见的 `s3:GetBucketCORS` / `s3:GetLifecycleConfiguration`。详细边界、SSH 隧道与测试机门禁见 `rustfs-poc/README.md`。
+
+**本地 POC 证据（2026-10-26）**：健康检查 200；`storage:init` 全通过；应用最小权限、经 Nginx 同源代理、容器重启后 `storage:it` 均 24 / 24；允许 Origin 返回 ACAO / 非法 Origin 不回 ACAO、匿名对象 GET 403；应用账号不能创建 / 删除桶、bootstrap 账号不能读写对象均 403；`_FILE` Secret 直接可用。临时容器、数据卷、策略文件与测试凭据已清理。Windows 本地未完整执行 apply（Git Bash 下 chmod / install 与 Docker /bin/sh 路径转换受限），等价步骤已逐项手动验证；测试机须从 prepare 起完整执行。**未连接测试机、未读取真实 Secret、未部署 POC；不代表生产选型。**
+
 ## 10. 后续切片（登记）
 
-- web（Nginx）：TLS 接入 ✅（2026-10-14，443 应用 + 对象存储同源门面 + ALLinSSL 自动下发）；9443 已收口为回环排障口（F-02 S1）；浏览器流量已全部走 443 同源门面，待确认 H1 不再依赖后再评估删除；`/internal/**` / `/example/` 显式 404 加固（SPA 产物 2026-10-14 已上线）；备份脚本（PG 12h → `/srv/data/backups/pg`）；监控告警接线；MinIO 运维面：镜像离线固化（quay 2026-10-13 实测下架，已改服务器本地构建；`docker save` 归档待办）、SeaweedFS 迁移评估、S3 专用账号最小权限与 root 轮换（F-02 S3～S5 待执行）；
+- web（Nginx）：TLS 接入 ✅（2026-10-14，443 应用 + 对象存储同源门面 + ALLinSSL 自动下发）；9443 已收口为回环排障口（F-02 S1）；浏览器流量已全部走 443 同源门面，待确认 H1 不再依赖后再评估删除；`/internal/**` / `/example/` 显式 404 加固（SPA 产物 2026-10-14 已上线）；备份脚本（PG 12h → `/srv/data/backups/pg`）；监控告警接线；MinIO 运维面：镜像离线固化（quay 2026-10-13 实测下架，已改服务器本地构建；`docker save` 归档待办）、SeaweedFS 迁移评估、F-02 S3～S5 已部署测试机（见 v2.30），F-02 尚未关闭（S5 验收登记与 S6 / S7 待收口）；
 - onlyoffice（文档服务器）：生产上线 ✅（2026-10-14，离线镜像 + 443 子路径门面 + 真实 64MB xlsx 端到端；见 `deploy/onlyoffice/README.md` §6）；剩余：升级 / 重建后按回归五项 + §6.3 表复验、缓存盘 7 天清理 cron、正式环境容量评估与 CVE 跟踪；
 - SSO：测试环境（authtest 应用 `LibiaoLink`）已按接入标准接通（2026-10-14）；正式环境应用 `libiaolink` 创建 + 企微登录方式挂接待 SSO 管理员（M8 §3-B）。
-- M5-03-5 单聊改智能机器人（绑定码链路）部署**待执行**（项目组 2026-10-16 决定暂缓）：迁移 `0055` → `server/dist` 重传 → `server.env` 回填 `WECOM_BOT_ID` / `WECOM_BOT_SECRET` → `restart api worker` → 真机复跑 **BC-1 ~ BC-4**（口径 §12）；执行前先备份 PG（`0055` 含不可回滚清理）。
+- M5-03-5 单聊改智能机器人（绑定码链路）部署**待执行**（项目组 2026-10-16 决定暂缓）：迁移 `0055` → `server/dist` 重传 → `server.env` 回填非敏感 `WECOM_BOT_ID`、`secrets/wecom_bot_secret` 写入凭据 → 重建 worker → 真机复跑 **BC-1 ~ BC-4**（口径 §12）；执行前先备份 PG（`0055` 含不可回滚清理）。
 - 完成项在 `docs/M8-部署Runbook与上线检查单(单机).md` 勾选；推送时随 `开发日志.md` 记录。
 
 ## 11. 变更记录
 
 | 版本 | 日期 | 变更 | 人 |
 |---|---|---|---|
-| v2.19 · deploy（未持久化部署） | 2026-10-23 | F-02 S1 / S2 部署件：minio 删除 `9000:9000`、web 将 `9443` 收口到 `127.0.0.1`；新增 `scripts/docker-user-firewall.sh`（`--check` / `--apply` / `--remove`，IPv4 / IPv6，仅管理自有标记规则）与 `systemd/libiaolink-docker-user-firewall.service`；§9.1 补端口契约、复核与回滚。测试机临时 `apply → 二次 apply → check → remove` 通过：443 `/readyz` 200、`/libiaolink/` 403、9000 / 9001 / 9443 从开发机不可达；规则已移除，**未安装 unit、未重建 minio / web，F-02 S3～S5 未做** | px |
+| v2.30 · deploy（已部署） | 2026-10-23 | F-02 S1～S5 测试机部署（`main@1881deac` · 回填 Push 460 / 461 · PR [#596](https://github.com/PanXing-Libiao/LibiaoLink/pull/596)；生产未部署）：database / server / shared / deploy 四包上传后哈希一致；`0067_preview_version_isolation.sql` 执行 9 ms，66 个迁移复跑无漂移；S3 identity `apply` / `check` 与应用负向权限通过；S4 单文件 Secret、UID/GID 1000、`storage:init --check` 与 `storage:it` 24/24；S5 新 root 接受、旧 root 拒绝、残留扫描 zero-hits、状态已清理；S1/S2 的 9000 / 9001 / 9443 外网不可达，systemd unit enabled/active；PG 备份 `libiaolink-before-0067-1881deac-20261023-1636.sql.gz`，MinIO 备份 4,640 文件 / 1,847,247,852 B（清单 `62aac728…`）；7 容器 healthy，`/healthz` / `/readyz` 200、未认证预览 401、10 分钟日志 0 error；`mc` 改用官方 GitHub Release 并登记 SHA-256；认证后真实上传 / 预览浏览器验收未执行；F-02 未关闭，S5 验收登记（S5-T3 / T7 待补）与 S6 / S7 待收口 | px |
+| v2.29 · deploy（未部署） | 2026-10-26 | RustFS 1.0.3 隔离 POC 仓库件（PR [#629](https://github.com/PanXing-Libiao/LibiaoLink/pull/629) · PR CI [40210831514](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40210831514) 5 / 5）：新增独立 Compose profile / 专用 Nginx / 应用与 bootstrap 策略 / `scripts/rustfs-poc.sh`，支持 prepare / up / apply / check / it / down / purge；RustFS API 不发布宿主端口、控制台关闭、凭据与数据独立、SSH 隧道验收 9445，不改 MinIO / api / worker / 443。本地锁定镜像完成健康检查、初始化、应用最小权限 / 同源代理 / 重启后 storage:it 均 24 / 24、CORS 允许 / 拒绝头口径与权限负向 403；临时资源已清理。**测试机尚未部署，不代表生产选型**。 | px |
+| v2.28 · deploy（测试机） | 2026-10-25 | 部门项目访问三态、模板全员可读与写入门禁、操作记录分层部署测试机（PR [#627](https://github.com/PanXing-Libiao/LibiaoLink/pull/627) · PR CI [40206785543](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40206785543) 5 / 5 · squash `f582a8a6` · main CI [40206933490](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40206933490) 5 / 5）：发布包 `access-data-scope-f582a8a6-20261025-2329.tar.gz`（61,157,452 B · `96a58af5...`）上传后哈希一致；部署前备份 frontend / server / shared 三个 dist 包，staging 1,089 文件仅 30 个预期差异；短暂停 api / worker 后更新 frontend / server / shared，web 未重启；7 容器 healthy，公网 / /healthz / readyz 200，未登录 access 401，公网 index / JS / CSS 与线上文件一致，日志无 error；真实 panxing 会话确认 `groupProjectAccess=allowed` / `auditScope=all` / `groupAccessEnforced=false`，临时会话残留 0。无迁移 / 依赖 / env / compose 变更，`GROUP_ACCESS_ENFORCED=false`、`group_access_rules` 0 行，生产未部署 | px |
+| v2.27 · deploy（测试机） | 2026-10-24 | 部门规则人员级勾选合并并部署测试机（PR [#607](https://github.com/PanXing-Libiao/LibiaoLink/pull/607) · PR CI [40076060247](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40076060247) 5 / 5 · squash `ecc903b6` · main CI [40076309058](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40076309058) 5 / 5）：部门文件夹全选 / 取消、人员逐人勾选 / 取消与半选状态；`all` 覆盖全体直属人员，`selected` 仅覆盖勾选人员并校验部门直属关系。发布包 `access-member-ecc903b6-202610241601.tar.gz`（16,972,505 B · `92a7eead...`）上传后哈希一致；发布前备份 app / database / PG 至 `deploy-access-member-ecc903b6-20261024-1604/`。staging 685 / 97 / 386 / 84 文件逐文件一致后，仅短暂停 api / worker 更新全套运行件；迁移 67 → 68（0069），存量规则回填 `all`；`check:db-schema` 62 表 / 640 列 / 199 索引 / 233 CHECK；8 容器 healthy，公网 index / JS / CSS `1476f9d1...` / `d3c0b42e...` / `14a3d9d5...` 与部署文件一致，`/healthz` / `/readyz` 200，未登录 access 401，日志无 error；`GROUP_ACCESS_ENFORCED` 未开启，真实公司账号浏览器验收待完成，生产未部署 | px |
+| v2.25 · deploy（测试机） | 2026-10-24 | Casdoor 组织目录自动同步合并并部署测试机（PR [#603](https://github.com/PanXing-Libiao/LibiaoLink/pull/603) · PR CI [39986210686](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39986210686) 5 / 5 · squash `cb5ac17b` · main CI [39987472743](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39987472743) 5 / 5）：worker 启动即同步、之后默认每 5 分钟自动同步；发布包 `org-auto-sync-cb5ac17b-20261024-003258.tar.gz`（15,787,702 B · `e45b5157...`）上传后远端一致，备份 server / frontend dist（912,013 B · `24fd08c6...` / 14,880,331 B · `99519289...`）；staging 994 文件，短暂停 api / worker 更新两个 dist，无迁移 / compose / env / Secret 变化；8 容器 healthy，容器内与公网健康检查 200，公网 index `8bb2f747...` 与部署文件一致，新文案本地 / 线上各 1，未登录 access 401；首轮 00:35:15、次轮 00:40:13 自动同步均为 11 群组 / 37 用户 / 缺失 0，数据库 11 active 群组（含 `项目部`）/ 8 成员关系 / 1 规则，日志无 error。PR 与 main 的 `svg-preview-e2e` 各因 runner 依赖 / Chrome 启动瞬态失败一次，重跑后全绿。`GROUP_ACCESS_ENFORCED` 未开启，真实公司账号浏览器验收待完成，生产未部署 | px |
+| v2.24 · deploy（测试机） | 2026-10-23 | 权限管理展示 Casdoor 全量群组并部署测试机（PR [#599](https://github.com/PanXing-Libiao/LibiaoLink/pull/599) · PR CI [39980810421](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39980810421) 5 / 5 · squash `dcc3f700` · main CI [39981133111](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39981133111) 5 / 5）：从合并后 main 同源构建 server / frontend；发布包 `group-directory-dcc3f700-20261023-2347.tar.gz`（15,786,865 B · `c8ffb6c1...`）上传后哈希一致；备份 server dist（911,615 B · `8df414b5...`）与 frontend dist（14,881,911 B · `68a0e7e6...`）；staging 核验 server 608 + frontend 386 文件，仅短暂停 api / worker 更新两个 dist，未迁移数据库、未改 compose / env / 依赖、web 未重启；8 容器 healthy，容器内与公网 /healthz、/readyz 200，公网 index / JS / CSS 与本地逐字节一致，部署后执行受保护组织同步补入 `项目部`（created 1，users 0 变更），数据库 active 群组 10 → 11、memberships 0 → 7，未登录 /api/v1/access 401，日志无 error；`GROUP_ACCESS_ENFORCED` 未开启，真实公司账号浏览器勾选验收待完成，生产未部署 | px |
+| v2.23 · deploy（测试机） | 2026-10-23 | 群组访问控制（Casdoor Groups）合并并部署测试机（PR [#592](https://github.com/PanXing-Libiao/LibiaoLink/pull/592) · squash `9c43d2de` · main CI [39972074152](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39972074152) 5 / 5）：备份 PG 与四个运行目录后，迁移 66 → 67（0068）、角色权限种子幂等，切换 server / shared / frontend；7 容器 healthy，容器内与公网 /healthz、/readyz 200，公网 index 与本地哈希一致，未登录 /api/v1/access 401。未开启 GROUP_ACCESS_ENFORCED，Casdoor Token Fields / 管理员群组与真实账号浏览器验收待完成，生产未部署 | px |
+| v2.22 · deploy（已部署，见 v2.30） | 2026-10-23 | F-02 S5 root 轮换仓库件（PR [#595](https://github.com/PanXing-Libiao/LibiaoLink/pull/595)）：新增 `scripts/minio-root-rotate.sh`（`plan` / `check` / `rotate` / `recover` / `finalize`），强制受控 `mc` 来源、双确认、tmpfs 旧 root 状态、双 Secret 替换失败回退、仅重建 minio、旧口令明文扫描、脱敏证据与 `finalize` 复验；§9.4 补维护窗口、失败边界与残留处置。本地 fake 回放、双 Secret 替换失败回退、锁定 MinIO root 切换后 service account 存活 / 旧 root 拒绝自检通过；**实现时自检记录；后续已随 v2.30 在测试机执行真实轮换并通过；F-02 未关闭，S5 验收登记与 S6 / S7 待收口** | lan |
+| v2.21 · deploy（已部署，见 v2.30） | 2026-10-23 | F-02 S4 Secrets 隔离仓库件（PR [#594](https://github.com/PanXing-Libiao/LibiaoLink/pull/594)）：api / worker / tools 改 Compose 单文件 Secret 并移除整目录挂载；entrypoint 改读 `/run/secrets`、必需项 fail closed、可选项空值 unset、拒绝旧目录与未授权 Secret；`storage.sh` 按 init / it 选择 bootstrap / 应用凭据并经一次性 `600` env-file 注入；db-migrate / seed 改读 `/run/secrets/pg_migrator_password`，db-init 改经 stdin 且校验 `600`；§2 / §7 / §9 同步部署顺序与运行时检查。静态自检通过；**实现时自检记录；后续已随 v2.30 完成运行时切换并通过 Secret 边界检查；F-02 未关闭，S5 验收登记与 S6 / S7 待收口** | lan |
+| v2.20 · deploy（已部署，见 v2.30） | 2026-10-23 | F-02 S3 仓库件：新增应用 / bootstrap 策略与 `scripts/minio-identity.sh`（`lint` / `apply` / `check`，受控 `mc` 门禁、一次性配置、凭据文件原子写入与 fail-closed 校验）；`storage-init` 仅对 CORS 的 MinIO IAM 能力例外保留 `AccessDenied` 告警，其它权限错误继续失败；§2 / §9.2 同步 Secret 与执行边界。本地锁定 MinIO 临时环境完成 apply → check → 二次 apply → check、额外策略拒绝与 bootstrap `storage:init --check` 自检；**实现时自检记录；后续已随 v2.30 在测试机创建真实身份并通过 apply / check；F-02 未关闭，S5 验收登记与 S6 / S7 待收口** | lan |
+| v2.19 · deploy（已部署，见 v2.30） | 2026-10-23 | F-02 S1 / S2 部署件：minio 删除 `9000:9000`、web 将 `9443` 收口到 `127.0.0.1`；新增 `scripts/docker-user-firewall.sh`（`--check` / `--apply` / `--remove`，IPv4 / IPv6，仅管理自有标记规则）与 `systemd/libiaolink-docker-user-firewall.service`；§9.1 补端口契约、复核与回滚。测试机临时 `apply → 二次 apply → check → remove` 通过：443 `/readyz` 200、`/libiaolink/` 403、9000 / 9001 / 9443 从开发机不可达；后续已随 v2.30 持久化（unit 已安装并 enabled/active、minio / web 已重建、S3～S5 已部署、验收登记待收口） | px |
 | v2.19 · 最终组合（frontend 统一覆盖） | 2026-10-23 | 品牌 + 审计统一前端覆盖测试机部署（Push 453 · PR [#581](https://github.com/PanXing-Libiao/LibiaoLink/pull/581) · PR CI [39907256453](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39907256453) 5 / 5 · squash `6b846b2f` · main CI [39908553712](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39908553712) 5 / 5 on `72b47bc9`）：database / shared / server 来自 `6b846b2f`，最终前端从 main `72b47bc9` 重建，品牌改名与访问 / 预览 UI 同包；测试机最终代码状态与 main 等价。PG 备份 `pg/libiaolink-before-0066-6b846b2f-20261023-1350.sql.gz`（829,342 B · `0d892de6…`）；`0066` 执行 7 ms，复跑「65 个迁移，无漂移」，动作约束 12 值含 `visit`。最终前端包 `libiaolink-frontend-v2.19-72b47bc9-20261023-1406.tar.gz`（14,868,972 B · `b950d853…`）远端哈希一致，staging 386 文件 / 18,413,752 B；覆盖前备份 14,875,469 B · `bdfe78cf…`。`rsync -a --delete` 覆盖并修正读权限，web 未重启；7 个容器 healthy，`/` / `/nginx-health` / `/healthz` / `/readyz` 均 200，未认证访问上报 401；公网 index 502 B · `37730877…` / JS 1,810,651 B · `2991e3b5…` / CSS 157,072 B · `32bd4553…` 与本地逐字节一致，新名称 1 / 旧名称 0 / `/visit` 1 命中。真实公司账号登录 / 项目访问 / 预览 / 筛选浏览器验收待补；staging 已清理，生产未部署。 | px |
-| v2.18 · frontend | 2026-10-23 | 产品名称改为「立镖市场项目管理平台」测试机前端部署（Push 450 / 451 · PR [#582](https://github.com/PanXing-Libiao/LibiaoLink/pull/582) · PR CI [39908280966](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39908280966) 5 / 5 · squash `eb443b44` · main CI [39908553712](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39908553712) 5 / 5）：使用隔离前端源 `eb72d1aa` 构建，避开同期审计 UI 与未执行迁移 `0066`；frontend-only 包 14,868,805 B · `086260e0…` 上传 `/srv/data/backups/` 并远端对账一致；staging 386 文件 / 18,413,514 B / 0 preview；部署前备份 14,873,600 B · `9bbdc345…`；`rsync -a --delete` 覆盖并修正读权限，web 未重启；公网 index / JS / CSS（`23afceec…` / `41262d2f…` / `32bd4553…`）与本地逐字节一致，新名称 1 命中、旧名称 0 命中，`/` / `/nginx-health` / `/healthz` / `/readyz` 200，7 容器 healthy，staging 已清理；无接口 / 依赖 / DDL / 迁移 / Secret 变化，生产未部署。该前端随后由 v2.19 统一前端覆盖（审计 + 品牌同包）。 | px |
+| v2.18 · frontend | 2026-10-23 | 产品名称改为「立镖市场项目管理平台」测试机前端部署（Push 450 / 451 · PR [#582](https://github.com/PanXing-Libiao/LibiaoLink/pull/582) · PR CI [39908280966](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39908280966) 5 / 5 · squash `eb443b44` · main CI [39908553712](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39908553712) 5 / 5）：使用隔离前端源 `eb72d1aa` 构建，避开同期审计 UI 与未执行迁移 `0066`；frontend-only 包 14,868,805 B · `086260e0…` 上传 `/srv/data/backups/` 并远端对账一致；staging 386 文件 / 18,413,514 B / 0 preview；部署前备份 14,873,600 B · `9bbdc345…`；`rsync -a --delete` 覆盖并修正读权限，web 未重启；公网 index / JS / CSS（`23afceec…` / `41262d2f…` / `32bd4553…`）与本地逐字节一致，新名称 1 命中、旧名称 0 命中，`/` / `/nginx-health` / `/healthz` / `/readyz` 200，7 容器 healthy，staging 已清理；无接口 / 依赖 / DDL / 迁移 / Secret 变化，生产未部署。 | px |
 | v2.17 · database + shared + server + frontend | 2026-10-23 | 站内信单条 / 一键删除测试机部署（Push 444 → 回填 446 · PR [#577](https://github.com/PanXing-Libiao/LibiaoLink/pull/577) · PR CI [39903193662](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39903193662) 5 / 5 · squash `0e21360b` · main CI [39903450869](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39903450869) 5 / 5）：PG 备份 842,484 B · `516da28d…`；dry-run 仅 `0065`，执行 3 ms，复跑 64 个迁移无漂移；database 113,133 B · `6ddf423f…` / server 45,846,279 B · `c535394c…` / shared 352,608 B · `d78173f3…` / frontend 14,868,826 B · `0e8aeb28…` 上传后哈希一致；api / worker 重启 healthy，7 容器 healthy，`/nginx-health` / `/healthz` / `/readyz` 正常，未认证单删 / 全删 DELETE 均 401；frontend 386 文件 / 18,413,489 B，公网 index / JS / CSS `6aac4a64…` / `88b19b07…` / `32bd4553…` 与本地逐字节一致，「确认删除全部」/「删除这条站内信」线上 JS 各 1 命中；staging 已清理（本次全栈 frontend 覆盖同版本 frontend-only 部署 · Push 445）；真实账号浏览器验收待补，生产未部署。| px |
 | v2.17 · frontend | 2026-10-23 | 项目经理辅助说明删除测试机前端部署（Push 443 / 445 · 同一改动随 PR [#577](https://github.com/PanXing-Libiao/LibiaoLink/pull/577) squash `0e21360b` 进入 main；隔离发布源 `07fbc3e3` · PR [#578](https://github.com/PanXing-Libiao/LibiaoLink/pull/578) 按重复覆盖关闭 · PR CI [39903282634](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39903282634) 5 / 5）：从隔离前端源运行 `frontend/npm run typecheck` / `npm run build`，frontend-only 包 `output/frontend-v2.17-07fbc3e3-20261023-1305.tar.gz`（14,868,123 B · SHA-256 `1787383cb8395609424648cdc7e0d4423a89684771e76dcfd80228058b6e8c02`）上传 `/srv/data/backups/` 且哈希一致；staging 核验 386 文件 / 18,409,424 B / 0 preview；部署前备份 `frontend-before-v2.17-07fbc3e3-20261023-1305.tar.gz`（14,873,680 B · `89e8e5483d1ec3ebd5b54017a8e570b74ab341321aa9f18e1297379fccdd7d09`）；`rsync -a --delete` 覆盖并修正读权限，web 未重启；公网 `index.html` / `index-DtdFPwwL.js` / `index-Clo2AvdS.css` 逐字节一致（`4d5f20a3…` / `ccaaeadc…` / `8d09df45…`），旧文案与旧键 0 命中，`/` / `/nginx-health` / `/healthz` / `/readyz` 均 200，八容器 healthy；staging 已清理；无接口 / 依赖 / DDL / 迁移 / compose / env / Secret 变化，本次未部署 main 同期站内信功能，生产未部署。 | px |
 | v2.16 · frontend | 2026-10-23 | 删除「添加到项目」卡片底部说明测试机前端部署（Push 441 / 442 · PR [#575](https://github.com/PanXing-Libiao/LibiaoLink/pull/575) · PR CI [39901097418](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39901097418) 5 / 5 · squash `30b8a920` · main CI [39901335459](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39901335459) 5 / 5）：从合并后 main 的独立干净工作树运行 `frontend/npm run typecheck` / `npm run build`，frontend-only 包 `output/frontend-v2.16-30b8a920-20261023-1240.tar.gz`（14,868,135 B · SHA-256 `207546cafe329dcdc0dc4ff7ab5bebcc292a2036db48104612e7d4b2f0896315`）上传 `/srv/data/backups/` 且哈希一致；staging 核验 386 文件 / 18,409,923 B / 0 preview；部署前备份 `frontend-before-v2.16-30b8a920-20261023-1240.tar.gz`（14,874,375 B · `aa44cd7eace297f8a7726cbda967363309fb45c06d90057c78995caa3e1f6289`）；`rsync -a --delete` 覆盖并修正读权限，web 未重启；公网 `index.html` / `index-70JoE-eE.js` / `index-Clo2AvdS.css` 逐字节一致（`7fe15d2d…` / `daf29c03…` / `8d09df45…`），被删文案 0 命中，`/` / `/nginx-health` / `/healthz` / `/readyz` 均 200，八容器 healthy；staging 已清理；无接口 / 依赖 / DDL / 迁移 / compose / env / Secret 变化，生产未部署。 | px |

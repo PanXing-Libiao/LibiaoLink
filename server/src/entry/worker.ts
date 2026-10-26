@@ -4,6 +4,7 @@ import { Logger } from "nestjs-pino";
 import { OUTBOX_SCHEDULER } from "@libiaolink/contracts";
 import { loadEnv } from "../config/env.js";
 import { DatabaseService } from "../db/database.service.js";
+import { CasdoorDirectorySource, OrgSyncService } from "../modules/identity/index.js";
 import { CadArchiveWorker, FileService, PreviewService, RECYCLE_SWEEP_BATCH as FILE_RECYCLE_SWEEP_BATCH } from "../modules/file/index.js";
 import { PROJECT_RECYCLE_SWEEP_BATCH, ProjectService } from "../modules/project/index.js";
 import { IMPORT_PREVIEW_SWEEP_INTERVAL_MS, ProjectImportService } from "../modules/project-import/index.js";
@@ -27,6 +28,8 @@ async function bootstrap(): Promise<void> {
   app.enableShutdownHooks();
 
   const database = app.get(DatabaseService);
+  const directory = app.get(CasdoorDirectorySource);
+  const orgSync = app.get(OrgSyncService);
   const files = app.get(FileService);
   const previews = app.get(PreviewService);
   const cadArchive = app.get(CadArchiveWorker);
@@ -55,9 +58,38 @@ async function bootstrap(): Promise<void> {
   }
 
   logger.log(
-    "worker 已启动（上传会话过期清理 / 文件回收站到期清理 / 项目回收站 30 天到期清理 / 导入表票据过期清理 / Outbox 运行时：已注册主题领取消费（含无业务订阅主题的 drain-only 收敛）· 未消费主题 / 积压 / 死信告警 · done 行保留期清理 · 调度 tick（每分钟：cron 领取 + last_run_at 补发 + 单活锁；注册表为空 = 只存不跑）· 通知延迟投递排空（免打扰 / 每日上限）· 稍后提醒到点触发（C5-05））",
+    "worker 已启动（Casdoor 组织目录自动同步 / 上传会话过期清理 / 文件回收站到期清理 / 项目回收站 30 天到期清理 / 导入表票据过期清理 / Outbox 运行时：已注册主题领取消费（含无业务订阅主题的 drain-only 收敛）· 未消费主题 / 积压 / 死信告警 · done 行保留期清理 · 调度 tick（每分钟：cron 领取 + last_run_at 补发 + 单活锁；注册表为空 = 只存不跑）· 通知延迟投递排空（免打扰 / 每日上限）· 稍后提醒到点触发（C5-05））",
   );
   const heartbeat = setInterval(() => logger.log("worker heartbeat"), HEARTBEAT_MS);
+
+  // 组织目录自动同步（2026-10-24）：启动立即拉取一次，此后按 ORG_SYNC_INTERVAL_MS 持续同步 Casdoor
+  // 群组 / 用户 / 成员关系；不需要页面按钮。missingUserPolicy=report 只在报告中记录快照缺失用户，
+  // 避免 Casdoor 短时异常把用户批量停用；目录内明确 isForbidden / isDeleted 的停用语义不变。
+  // 上轮未完成不叠加（防重入）；失败只记日志，下一轮自动重试。
+  let orgSyncing = false;
+  const syncOrganization = async (): Promise<void> => {
+    if (orgSyncing) {
+      return;
+    }
+    orgSyncing = true;
+    try {
+      const snapshot = await directory.pull();
+      const report = await orgSync.applySnapshot(snapshot, { missingUserPolicy: "report" });
+      logger.log(
+        "自动组织同步完成：群组 " + snapshot.departments.length + " 个（新增 " + report.departments.created +
+          " / 更新 " + report.departments.updated + " / 停用 " + report.departments.disabled + "）；用户 " +
+          snapshot.users.length + " 个（新增 " + report.users.created + " / 更新 " + report.users.updated +
+          " / 停用 " + report.users.disabled + " / 复职 " + report.users.enabled + "）；缺失用户 " +
+          report.missing.casdoorIds.length + " 个（仅报告，不停用）",
+      );
+    } catch (error) {
+      logger.error("自动组织同步失败，等待下轮重试：" + messageOf(error));
+    } finally {
+      orgSyncing = false;
+    }
+  };
+  const orgSyncTimer = setInterval(() => void syncOrganization(), env.ORG_SYNC_INTERVAL_MS);
+  void syncOrganization();
   // CAD has its own durable queue so long native jobs never block notification outbox handling.
   const drainCad = () => { void cadArchive.drainOnce().catch(() => logger.error("CAD 后台队列本轮领取失败，等待下轮重试")); };
   const cadPoll = setInterval(drainCad, 2000);
@@ -326,6 +358,7 @@ async function bootstrap(): Promise<void> {
 
   const shutdown = async (signal: string): Promise<void> => {
     clearInterval(heartbeat);
+    clearInterval(orgSyncTimer);
     clearInterval(cadPoll);
     await cadArchive.onApplicationShutdown();
     clearInterval(sweep);

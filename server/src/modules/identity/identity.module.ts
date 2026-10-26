@@ -18,6 +18,7 @@ import { SessionRepository } from "./session.repository.js";
 import { SessionService } from "./session.service.js";
 import { UserPreferenceRepository } from "./user-preference.repository.js";
 import { UserPreferenceService } from "./user-preference.service.js";
+import { UserGroupRepository } from "./user-group.repository.js";
 import { UserRepository } from "./user.repository.js";
 import { UserService } from "./user.service.js";
 import { UsersController } from "./users.controller.js";
@@ -36,6 +37,7 @@ import { UsersController } from "./users.controller.js";
     UserPreferenceRepository,
     SessionRepository,
     UserRepository,
+    UserGroupRepository,
     SessionGuard,
     CsrfGuard,
     DepartmentRepository,
@@ -60,6 +62,7 @@ import { UsersController } from "./users.controller.js";
   exports: [
     SessionService,
     UserService,
+    UserGroupRepository,
     SessionGuard,
     CsrfGuard,
     DepartmentService,

@@ -109,8 +109,8 @@ jobs:
         run: npm ci
       - name: Install integration runtime packages
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq nginx fonts-noto-cjk postgresql-client
+          sudo timeout --kill-after=15s 90s apt-get -o Acquire::ForceIPv4=true update -qq || true
+          sudo timeout --kill-after=15s 300s apt-get -o Acquire::ForceIPv4=true -o DPkg::Lock::Timeout=60 install -y -qq nginx fonts-noto-cjk postgresql-client
           sudo systemctl stop nginx 2>/dev/null || true
           test -x /usr/bin/google-chrome
       - name: Generate localhost TLS certificate
@@ -562,6 +562,11 @@ jobs:
         env:
           DATABASE_URL: postgresql://libiaolink_api@127.0.0.1:5432/libiaolink
         run: npm run check:db-schema
+      - name: Preview version isolation regression (PostgreSQL)
+        working-directory: server
+        env:
+          PREVIEW_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/libiaolink
+        run: node node_modules/vitest/vitest.mjs run test/preview-isolation.integration.test.ts
       # ---- 真机回放（M3-06 压测 / M6 日报与问题）：空库种子 + 起 api + 脚本自证（报告逐行落 CI 日志） ----
       - name: Seed base data (roles / dicts / blueprint)
         working-directory: database

@@ -1,3 +1,4 @@
+import { Readable, Writable } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { BadGatewayException, MethodNotAllowedException, ServiceUnavailableException } from "@nestjs/common";
 import type { Request, Response } from "express";
@@ -115,22 +116,56 @@ class FakeFileRepository {
 class FakeStorage {
   object: GetObjectResult | null = makeObjectResult();
   error: Error | null = null;
+  streamError: Error | null = null;
+  getObjectCalls = 0;
+  streamCalls = 0;
   readonly requested: string[] = [];
 
   async getObject(objectKey: string): Promise<GetObjectResult | null> {
+    this.getObjectCalls += 1;
+    this.requested.push(objectKey);
+    throw new Error("preview-content 必须走 getObjectStream，不得整读 getObject");
+  }
+
+  async getObjectStream(objectKey: string): Promise<{
+    stream: Readable;
+    sizeBytes: number;
+    contentType: string | null;
+  } | null> {
+    this.streamCalls += 1;
     this.requested.push(objectKey);
     if (this.error !== null) {
       throw this.error;
     }
-    return this.object;
+    if (this.object === null) {
+      return null;
+    }
+    const bytes = this.object.bytes;
+    const stream = this.streamError === null
+      ? Readable.from([bytes.subarray(0, 3), bytes.subarray(3)])
+      : new Readable({
+          read() {
+            this.destroy(new Error("stream interrupted"));
+          },
+        });
+    return { stream, sizeBytes: this.object.sizeBytes, contentType: this.object.contentType };
   }
 }
 
-class FakeResponse {
+class FakeResponse extends Writable {
   readonly headers = new Map<string, string | number>();
   statusCode: number | null = null;
-  body: Uint8Array | null = null;
+  readonly chunks: Buffer[] = [];
   redirectCalls = 0;
+
+  get body(): Uint8Array | null {
+    return this.chunks.length === 0 ? null : Buffer.concat(this.chunks);
+  }
+
+  override _write(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null) => void): void {
+    this.chunks.push(Buffer.from(chunk));
+    callback();
+  }
 
   setHeader(name: string, value: string | number): void {
     this.headers.set(name, value);
@@ -139,10 +174,6 @@ class FakeResponse {
   status(code: number): this {
     this.statusCode = code;
     return this;
-  }
-
-  end(chunk?: Uint8Array): void {
-    this.body = chunk ?? null;
   }
 
   redirect(): void {
@@ -204,7 +235,10 @@ describe("PreviewContentService.serve（S3 · 受控端点 · 安全定稿 §3.2
     await serve(h);
 
     expect(h.storage.requested).toEqual([OBJECT_KEY]);
+    expect(h.storage.streamCalls).toBe(1);
+    expect(h.storage.getObjectCalls).toBe(0);
     expect(h.response.statusCode).toBe(200);
+    expect(h.response.chunks).toHaveLength(2);
     expect(h.response.body).not.toBeNull();
     expect(Buffer.from(h.response.body!)).toEqual(Buffer.from(OBJECT_BYTES));
     expect(h.response.headers.get("Content-Type")).toBe("application/pdf");
@@ -214,6 +248,16 @@ describe("PreviewContentService.serve（S3 · 受控端点 · 安全定稿 §3.2
     expect(h.response.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(h.response.headers.has("Location")).toBe(false);
     expect(h.response.redirectCalls).toBe(0);
+  });
+
+  it("对象流中途断开：不把截断内容当成功，销毁响应连接", async () => {
+    const h = makeService();
+    h.storage.streamError = new Error("stream interrupted");
+
+    await expect(serve(h)).resolves.toBeUndefined();
+
+    expect(h.response.statusCode).toBe(200);
+    expect(h.response.destroyed).toBe(true);
   });
 
   it("只有精确白名单类型可 inline；SVG / HTML / 非法或缺失 MIME → octet-stream + attachment", async () => {

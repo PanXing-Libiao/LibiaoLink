@@ -1,5 +1,5 @@
 /**
- * 操作记录（C7 审计 · 管理员查询页 · 2026-10-08）读取面：GET /api/v1/audit-logs（仅 audit.view）。
+ * 操作记录（C7 审计 · 登录账号查询页 · 2026-10-08）读取面：GET /api/v1/audit-logs（管理员全量，其余按本人 / 项目经理范围）。
  * 契约 shared/src/modules/audits.ts：occurredAt 降序（同毫秒按 id 降序）；筛选 = 关键字 q / 对象类型 / 对象 id / 操作人 /
  * 动作 / 结果 / 项目 / 时间区间（from / to 含端点）+ 分页（page / limit，上限 200）；除对象 id / 时间外均为**多选**
  * （2026-10-09 追订，逗号分隔、去重保序，服务端逐值校验白名单）。
@@ -15,7 +15,7 @@ export const AUDIT_ACTIONS = ["create", "update", "delete", "progress", "complet
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
 /** 审计对象类型（与契约 AUDIT_OBJECT_TYPES 同口径）。 */
-export const AUDIT_OBJECT_TYPES = ["project", "project_member", "task", "node", "stage", "dict_item", "blueprint", "calendar_day", "calendar_settings", "file", "change", "stakeholder", "daily_report", "issue", "task_node", "task_template", "user", "wecom_dm_binding"];
+export const AUDIT_OBJECT_TYPES = ["project", "project_member", "task", "node", "stage", "dict_item", "blueprint", "calendar_day", "calendar_settings", "file", "change", "stakeholder", "daily_report", "issue", "task_node", "task_template", "user", "wecom_dm_binding", "automation_rule", "notify_delivery", "group_access_rule", "group_access_admin"];
 export type AuditObjectType = (typeof AUDIT_OBJECT_TYPES)[number];
 
 /** 审计结果：成功 / 越权拒绝（C7-03）/ 失败（门禁拒绝等）。 */
@@ -56,6 +56,10 @@ export const AUDIT_OBJECT_TYPE_LABELS: Record<string, string> = {
   task_template: "任务模板",
   user: "系统用户",
   wecom_dm_binding: "企微绑定验证",
+  automation_rule: "自动化规则",
+  notify_delivery: "发送记录",
+  group_access_rule: "部门权限规则",
+  group_access_admin: "系统管理员",
 };
 
 export const AUDIT_RESULT_LABELS: Record<string, string> = {
@@ -151,7 +155,7 @@ export function buildAuditApiQuery(query: AuditApiQuery): string {
   return parts.join("&");
 }
 
-/** 审计列表（occurredAt 降序；无 audit.view → 403 FORBIDDEN）。 */
+/** 审计列表（occurredAt 降序；服务端按当前账号操作记录范围裁剪）。 */
 export function fetchAuditLogs(query: AuditApiQuery): Promise<AuditLogListResult> {
   return apiRequest<AuditLogListResult>("/api/v1/audit-logs?" + buildAuditApiQuery(query));
 }

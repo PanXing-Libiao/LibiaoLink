@@ -1,7 +1,7 @@
 /**
  * 任务模板接口（M3-05 余 · 第二段；契约 shared/src/modules/templates.ts · A1-16 / A1-17）。
  * 读（列表 / 详情）= 登录即可 —— 任务模板页右侧模板面板与「项目总览 → 添加任务」卡片的模板来源；
- * 写（新建 / 编辑 / 删除）= 服务层 `blueprint.manage` 复核（仅系统管理员，ADR-019 / ADR-020），每次变更写审计留痕；
+ * 写（新建 / 编辑 / 删除）= 服务层 `assertCanManageBlueprint` 复核（系统管理员或部门编辑账号），每次变更写审计留痕；
  * 删除 = 软删（deleted_at），已按该模板生成的项目任务不受影响；`version` 乐观锁：编辑 / 删除都要带。
  */
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
@@ -46,7 +46,7 @@ export class TaskTemplateController {
     return this.templates.getTemplate(id);
   }
 
-  /** 新建模板（name + stageKey + nodeIds）：重复 id / 未知节点 / 跨阶段节点 400；非管理员 403。 */
+  /** 新建模板（name + stageKey + nodeIds）：重复 id / 未知节点 / 跨阶段节点 400；无编辑权限 403。 */
   @Post()
   @HttpCode(201)
   create(

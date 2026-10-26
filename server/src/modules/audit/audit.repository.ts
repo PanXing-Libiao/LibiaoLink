@@ -37,6 +37,10 @@ export interface AuditListFilter {
   keyword?: string;
   from?: Date;
   to?: Date;
+  /** 当前查看者：非管理员时至少只能看到本人记录。 */
+  viewerActorId?: string;
+  /** 当前查看者有效管理项目：与本人记录取 OR，允许看到这些项目的全部记录。 */
+  viewerManagedProjectIds?: string[];
 }
 
 export interface AuditRow {
@@ -144,6 +148,13 @@ function buildAuditWhere(filter: AuditListFilter): SQL | undefined {
   }
   if (filter.from !== undefined) conditions.push(gte(auditLogs.occurredAt, filter.from));
   if (filter.to !== undefined) conditions.push(lte(auditLogs.occurredAt, filter.to));
+  if (filter.viewerActorId !== undefined) {
+    const self = eq(auditLogs.actorId, filter.viewerActorId);
+    const managedIds = filter.viewerManagedProjectIds ?? [];
+    const managed = managedIds.length > 0 ? inArray(auditLogs.projectId, managedIds) : undefined;
+    const visibility = managed === undefined ? self : or(self, managed);
+    if (visibility !== undefined) conditions.push(visibility);
+  }
   if (conditions.length === 0) return undefined;
   return and(...conditions);
 }

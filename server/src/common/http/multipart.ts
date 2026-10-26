@@ -1,5 +1,12 @@
+import { createWriteStream } from "node:fs";
+import { promises as fs } from "node:fs";
+import type { FileHandle } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
+import { join } from "node:path";
+import { Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { AppError } from "../errors/app-error.js";
+import { createImportTempDirectory, isNoSpaceError, temporaryStorageError } from "./import-temp.js";
 
 /**
  * 最小 multipart/form-data 解析（导入表导入预览用 —— 项目此前没有服务端收文件路径：
@@ -163,8 +170,8 @@ function assertPartSize(part: MultipartFilePart, maxBytes: number): void {
 }
 
 /**
- * 读流 + 解析：按字段取文件 part（缺失 = null；空文件 / 超限 400 IMPORT_FILE_INVALID）。
- * 整包上限 = 字段数 ×（单文件上限 + 1 MB）。
+ * 兼容入口：整包读流后按字段取文件 part（缺失 = null；空文件 / 超限 400 IMPORT_FILE_INVALID）。
+ * 生产导入预览必须走 readMultipartFile，避免把 256 MB 请求体放进 API 堆内存。
  */
 export async function readMultipartParts(
   req: IncomingMessage,
@@ -186,4 +193,210 @@ export async function readMultipartParts(
     result.set(field, target);
   }
   return result;
+}
+
+
+/** 导入文件的临时盘上视图：path 指向本次请求的 multipart 请求体，offset / sizeBytes 是文件 part 的字节区间。 */
+export interface MultipartTempFile {
+  field: string;
+  fileName: string;
+  contentType: string | null;
+  path: string;
+  offset: number;
+  sizeBytes: number;
+  /** 删除本次请求的临时目录；幂等，必须由调用方在解析 / 上传结束后执行。 */
+  cleanup(): Promise<void>;
+}
+
+const MULTIPART_CHUNK_BYTES = 256 * 1024;
+const MULTIPART_HEADER_LIMIT_BYTES = 64 * 1024;
+const MULTIPART_PREAMBLE_LIMIT_BYTES = 1024 * 1024;
+const HEADER_END_MARKER = Buffer.from(String.fromCharCode(13, 10, 13, 10));
+
+/**
+ * 导入预览专用：把 multipart 请求体流式落到 0600 临时文件，再在盘上定位目标文件 part。
+ *
+ * 与 readMultipartParts 的整包 Buffer 口径不同，本函数不把上传文件读进 API 堆内存；返回的区间可直接交给
+ * ZipArchive.openFile / createReadStream。请求体仍受单文件上限 + 1 MB multipart 头尾开销约束。
+ */
+export async function readMultipartFile(
+  req: IncomingMessage,
+  contentType: string | null,
+  field: string,
+  maxBytes: number,
+): Promise<MultipartTempFile | null> {
+  const boundary = boundaryOf(contentType);
+  if (boundary === null) {
+    throw new AppError("IMPORT_FILE_INVALID", "请求不是 multipart/form-data（字段 " + field + "）");
+  }
+  const maxBodyBytes = maxBytes + 1024 * 1024;
+  const header = req.headers["content-length"];
+  const declared = typeof header === "string" ? Number(header) : Number.NaN;
+  if (Number.isSafeInteger(declared) && declared > maxBodyBytes) {
+    throw fileTooLarge(maxBytes);
+  }
+
+  const requiredBytes = Number.isSafeInteger(declared) && declared >= 0 ? Math.min(declared, maxBodyBytes) : maxBodyBytes;
+  const root = await createImportTempDirectory(requiredBytes);
+  const bodyPath = join(root, "multipart-body.bin");
+  let cleaned = false;
+  const cleanup = async (): Promise<void> => {
+    if (cleaned) return;
+    cleaned = true;
+    await fs.rm(root, { recursive: true, force: true });
+  };
+
+  try {
+    let total = 0;
+    const limiter = new Transform({
+      transform(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null, data?: Buffer) => void): void {
+        total += chunk.length;
+        if (total > maxBodyBytes) {
+          callback(fileTooLarge(maxBytes));
+          return;
+        }
+        callback(null, chunk);
+      },
+    });
+    try {
+      await pipeline(req, limiter, createWriteStream(bodyPath, { flags: "wx", mode: 0o600 }));
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      if (isNoSpaceError(error)) throw temporaryStorageError();
+      throw new AppError("IMPORT_FILE_INVALID", "上传请求中断或临时文件写入失败");
+    }
+    if (Number.isSafeInteger(declared) && total !== declared) {
+      throw new AppError("IMPORT_FILE_INVALID", "请求体长度与 Content-Length 不一致");
+    }
+
+    const handle = await fs.open(bodyPath, "r");
+    let located: Omit<MultipartTempFile, "path" | "cleanup"> | null;
+    try {
+      located = await locateMultipartFilePart(handle, total, boundary, field, maxBytes);
+    } finally {
+      await handle.close();
+    }
+    if (located === null) {
+      await cleanup();
+      return null;
+    }
+    return { ...located, path: bodyPath, cleanup };
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+}
+
+async function locateMultipartFilePart(
+  handle: FileHandle,
+  fileSize: number,
+  boundary: string,
+  field: string,
+  maxBytes: number,
+): Promise<Omit<MultipartTempFile, "path" | "cleanup"> | null> {
+  const delimiter = Buffer.from("--" + boundary);
+  const contentEndMarker = Buffer.from(String.fromCharCode(13, 10) + "--" + boundary);
+  let cursor = await findInFile(handle, fileSize, 0, delimiter, MULTIPART_PREAMBLE_LIMIT_BYTES);
+  if (cursor < 0) {
+    throw invalidMultipart();
+  }
+
+  while (cursor < fileSize) {
+    const afterDelimiter = cursor + delimiter.length;
+    const suffix = await readExactly(handle, afterDelimiter, 2);
+    if (suffix[0] === 45 && suffix[1] === 45) break;
+    if (suffix[0] !== 13 || suffix[1] !== 10) {
+      throw invalidMultipart();
+    }
+    cursor = afterDelimiter + 2;
+
+    const headerEnd = await findInFile(
+      handle,
+      fileSize,
+      cursor,
+      HEADER_END_MARKER,
+      MULTIPART_HEADER_LIMIT_BYTES,
+    );
+    if (headerEnd < 0) {
+      throw invalidMultipart();
+    }
+    const headerBytes = await readExactly(handle, cursor, headerEnd - cursor);
+    const headerText = headerBytes.toString("utf8");
+    const disposition = dispositionOf(headerText);
+    const contentStart = headerEnd + HEADER_END_MARKER.length;
+    const next = await findInFile(handle, fileSize, contentStart, contentEndMarker);
+    if (next < 0) {
+      throw invalidMultipart();
+    }
+    const sizeBytes = next - contentStart;
+    if (disposition.field === field && disposition.fileName !== "") {
+      if (sizeBytes === 0) {
+        throw new AppError("IMPORT_FILE_INVALID", "上传文件为空（multipart 字段 " + field + "）");
+      }
+      if (sizeBytes > maxBytes) {
+        throw fileTooLarge(maxBytes);
+      }
+      return {
+        field: disposition.field,
+        fileName: disposition.fileName,
+        contentType: headerValue(headerText, "content-type"),
+        offset: contentStart,
+        sizeBytes,
+      };
+    }
+    cursor = next + 2 + delimiter.length;
+  }
+  return null;
+}
+
+async function findInFile(
+  handle: FileHandle,
+  fileSize: number,
+  start: number,
+  needle: Buffer,
+  maxScanBytes: number = fileSize - start,
+): Promise<number> {
+  const end = Math.min(fileSize, start + Math.max(0, maxScanBytes));
+  let position = start;
+  let carry = Buffer.alloc(0);
+  while (position < end) {
+    const length = Math.min(MULTIPART_CHUNK_BYTES, end - position);
+    const chunk = Buffer.allocUnsafe(length);
+    const { bytesRead } = await handle.read(chunk, 0, length, position);
+    if (bytesRead <= 0) break;
+    const current = chunk.subarray(0, bytesRead);
+    const haystack = carry.length === 0 ? current : Buffer.concat([carry, current]);
+    const found = haystack.indexOf(needle);
+    if (found >= 0) {
+      return position - carry.length + found;
+    }
+    const keep = Math.min(needle.length - 1, haystack.length);
+    carry = Buffer.from(haystack.subarray(haystack.length - keep));
+    position += bytesRead;
+  }
+  return -1;
+}
+
+async function readExactly(handle: FileHandle, offset: number, length: number): Promise<Buffer> {
+  const buffer = Buffer.allocUnsafe(length);
+  let read = 0;
+  while (read < length) {
+    const result = await handle.read(buffer, read, length - read, offset + read);
+    if (result.bytesRead === 0) {
+      throw invalidMultipart();
+    }
+    read += result.bytesRead;
+  }
+  return buffer;
+}
+
+function invalidMultipart(): AppError {
+  return new AppError("IMPORT_FILE_INVALID", "multipart 请求格式不完整");
+}
+
+function fileTooLarge(maxBytes: number): AppError {
+  return new AppError(
+    "IMPORT_FILE_INVALID",
+    "文件超过上限（" + Math.floor(maxBytes / 1024 / 1024) + " MB），请拆分后再导入",
+  );
 }
