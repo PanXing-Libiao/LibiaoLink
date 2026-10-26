@@ -108,7 +108,7 @@ export function hasPermission(permissions: MyPermissions | null, key: string): b
   return permissions !== null && permissions.permissionKeys.includes(key);
 }
 
-/** 页面入口恒放行：业务数据由页面级空状态与服务端数据范围收敛，模板 / 操作记录对登录账号开放。 */
+/** 页面入口恒放行：业务数据由页面级空状态与服务端数据范围收敛；模板读取跟随部门规则，操作记录对登录账号开放。 */
 export function hasPageAccess(_permissions: MyPermissions | null, _page: GroupAccessPage): boolean {
   return true;
 }

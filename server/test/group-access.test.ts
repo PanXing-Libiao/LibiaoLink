@@ -858,6 +858,28 @@ describe("PermissionService 群组接入", () => {
     expect(await admin.service.canManageBlueprint(PROJECT_A)).toBe(true);
   });
 
+  it("任务节点 / 模板读取对仅登录拒绝，命中规则、管理员或限制关闭放行", async () => {
+    const denied = serviceWith({ groupKeys: ["libiaorobot.com/项目部"], rules: [] });
+    expect(await denied.service.canReadBlueprint(PROJECT_A)).toBe(false);
+    await expect(denied.service.assertCanReadBlueprint(PROJECT_A)).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    const empty = serviceWith({
+      groupKeys: ["libiaorobot.com/项目部"],
+      rules: [rule({ groupKey: "libiaorobot.com/项目部", projectScope: "none" })],
+    });
+    expect(await empty.service.canReadBlueprint(PROJECT_A)).toBe(true);
+
+    const disabled = serviceWith({
+      groupKeys: ["libiaorobot.com/项目部"],
+      rules: [],
+      groupEnforced: false,
+    });
+    expect(await disabled.service.canReadBlueprint(PROJECT_A)).toBe(true);
+
+    const admin = serviceWith({ groupKeys: ["libiaorobot.com/系统管理员"], rules: [] });
+    expect(await admin.service.canReadBlueprint(PROJECT_A)).toBe(true);
+  });
+
   it("own 项目范围展开为本人负责或进入名册的项目", async () => {
     const { service, repository } = serviceWith({
       groupKeys: ["libiaorobot.com/项目部"],

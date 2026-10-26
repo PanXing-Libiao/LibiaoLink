@@ -175,6 +175,17 @@ export class PermissionService {
     throw new AppError("FORBIDDEN", message ?? "维护任务模板需要编辑权限");
   }
 
+  /** 任务节点 / 模板读取：管理员、限制关闭或命中部门规则的账号可读；仅登录账号拒绝。 */
+  async canReadBlueprint(actorId: string): Promise<boolean> {
+    const groupAccess = await this.groupAccessOf(actorId);
+    return !groupAccess.enforced || groupAccess.admin || groupAccess.hasRule;
+  }
+
+  async assertCanReadBlueprint(actorId: string, message?: string): Promise<void> {
+    if (await this.canReadBlueprint(actorId)) return;
+    throw new AppError("FORBIDDEN", message ?? "当前账号仅可登录，不能查看任务节点与模板");
+  }
+
   /** 业务写入口兜底：部门规则开启且非管理员一律拒绝；用于未挂功能权限键的写接口。 */
   async assertWritable(actorId: string, message?: string): Promise<void> {
     if (!(await this.groupAccessOf(actorId)).readOnly) return;

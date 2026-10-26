@@ -33,6 +33,7 @@
 - 项目范围支持 `all` / `own` / `selected` / `none`：多群组规则取并集，任一 `all` 取消收窄；`own` 展开为 `projects.manager_ids` 含本人或 `project_members` 名册包含本人的项目；没有有效规则 = 项目空集（默认拒绝数据）。系统管理员不受角色数据范围限制，恒为全部项目。
 - **画像三态与业务页空状态**：`ActorPermissions.groupProjectAccess` = `allowed`（有可浏览范围）/ `empty`（命中规则但当前无可见项目）/ `denied`（未命中任何规则，仅登录）；前端对仪表盘、项目空间、项目详情、我的任务、文件库统一显示「权限不足」或「当前没有可浏览的项目」，接口仍以服务端空范围兜底。2026-10-26 起画像另下发 `groupProjectScopes`（命中规则的项目范围并集）与 `groupAccessLevel`（edit / view），用于项目空间空态解释当前权限；两者均由既有规则派生，不新增表或迁移。
 - **任务模板维护**：`canManageBlueprint` 仅系统管理员，或 `GROUP_ACCESS_ENFORCED=true` 且命中任一编辑规则的账号为 true；开关关闭时普通账号不再因 `PERMISSION_ENFORCED=false` 的等效管理员画像获得模板写权限。
+- **任务节点 / 模板读取**：`canReadBlueprint` / `assertCanReadBlueprint` 在 `GROUP_ACCESS_ENFORCED=true` 时仅放行系统管理员或命中任一部门规则的账号；仅登录账号（`denied`）读取节点 / 模板列表与详情均 403。命中规则但当前无可见项目的 `empty` 仍可读模板，管理员与限制关闭时恒可读。
 - **操作记录范围**：`auditAccessOf` 返回 `all` / `project_manager` / `self`；项目经理的管理项目集合 = 主数据项目经理 ∪ 名册项目经理，再与当前角色 / 部门有效项目范围取交集并排除软删项目，防止关闭部门范围后从操作记录旁路。
 - 0069 增 `member_scope` / `member_user_ids`：`all` 让部门规则对全体直属成员生效（后续加入该部门的人员自动覆盖）；`selected` 只对勾选人员生效，空选择不放行任何人。保存 `selected` 时校验每个 user id 都来自该部门当前直属成员，防止伪造；权限画像按当前账号过滤 `selected` 规则。
 - **虚拟未分组（Push 497）**：没有 `user_group_memberships` 记录的未删除账号（含停用）在权限通讯录 / 看板聚合为根级虚拟部门「未分组」（固定键 `__ungrouped__`，不写 `departments`）；无账号时不返回空节点。该节点可保存 / 删除规则，`selected` 人员范围只校验当前未分组账号；权限画像把无部门账号的 `groupKeys` 映射为 `__ungrouped__`，进入任一真实部门后自动退出。

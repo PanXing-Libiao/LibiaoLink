@@ -36,10 +36,10 @@ function nodeSnapshot(row: TaskNodeRow): Record<string, unknown> {
 
 /**
  * 任务模板域用例（M3-05 余 · 第一段：任务节点库）。
- * - 读（GET /api/v1/task-nodes）：登录即可 —— 任务模板页左列与「项目总览 → 添加任务」卡片的节点来源；
+ * - 读（GET /api/v1/task-nodes）：登录且命中部门规则 —— 任务模板页左列与「项目总览 → 添加任务」卡片的节点来源；仅登录账号 403；
  * - 写（POST / PATCH / DELETE）：系统管理员，或已开启部门限制且命中编辑规则的账号；
  * - 留痕：新增 / 编辑 / 删除各写一条审计（对象类型 task_node；编辑写字段级 changes、删除为物理删行快照进 changes）；不写 outbox（与字典维护同口径）。
- * 第二段（任务模板 TaskTemplate）沿用同一套口径：读 = 登录即可、写 = 系统管理员 / 部门编辑账号、留痕 objectType = task_template、不写 outbox；
+ * 第二段（任务模板 TaskTemplate）沿用同一套口径：读 = 登录且命中部门规则、写 = 系统管理员 / 部门编辑账号、留痕 objectType = task_template、不写 outbox；
  * 差异只有一处 —— 模板删除是**软删**（deleted_at / deleted_by，契约返回 deletedAt），节点库是物理删行。
  */
 @Injectable()
