@@ -18,7 +18,8 @@
  *      触发器口径（追订「不要这样显示太丑了 可以只显现这个筛选的名称 然后数量淡灰色的」）：只显筛选名称 +
  *      浅灰数量（data-select-trigger-label / -count），空选无数量；
  *   ⑤ 关键字搜索：输入唯一文件名 → 防抖后地址 / 请求同步 q=（page=1）、1 行命中、状态 = 草稿、上传人 = 潘兴、
- *      项目 = 项目码；清空（×）→ 地址回 #/files、行还原；操作列按钮定宽（忙碌文案不改宽 —— 点预览不抖表）。
+ *      项目 = 项目码；清空（×）→ 地址回 #/files、行还原；列表不再有「预览」按钮，行可聚焦 / 手型即预览入口
+ *      （真实行点击开预览由 ui-image-zoom-e2e 覆盖）；保留下载按钮定宽（忙碌文案不改宽）。
  *      【2026-10-09 追订】「类型」列与筛选整条撤除（业务口径「文件类型不需要 因为没有明确的绑定机制」），
  *      本脚本不再断言类型列 / 类型筛选（库内 files.doc_type 全空，无绑定机制）；
  *   ⑥ 回收站栏（?tab=recycled）：标签切换 + 地址同步 + 行状态签全 = 回收站 + 计数 / 行序与库内 recycled 对账；
@@ -29,7 +30,7 @@
  *   ⑧ 控制台零报错；跑完会话撤销、文件 / 版本零残留（上传会话行是历史台账，保留）。
  *   ⑨ 提示口径（2026-10-23 分层）：普通写口反馈 = 屏幕顶部居中浮空 Toast（position=fixed / top ≤ 48px / 水平居中），
  *      白色圆角卡片自顶部下落，停留 2s 后自动向上收起（无需手动关闭）；验收交付确认仍在底部；
- *      操作列按钮定宽（预览 / 下载忙碌文案不再把自动布局的表格重排 = 抖动）。
+ *      操作列仅保留写口按钮；下载按钮定宽（忙碌文案不再把自动布局的表格重排 = 抖动），预览由整行点击触发。
  *
  * 前置（都在本机跑着）：前端 dev :3000 / api :3001 / 本地沙箱 PG :5433 / MinIO :9000 / 本机 Chrome。
  * 用法：node scripts/ui-file-library-e2e.mjs
@@ -535,9 +536,9 @@ const byKeyword = await ev(rowExpr);
 check("⑤ 关键字搜索：防抖后地址 / 请求同步 q=、1 行命中",
   kwReady === true && byKeyword.hash.indexOf("q=" + fileNameEnc) !== -1 && lastFileReq().indexOf("q=" + fileNameEnc) !== -1 && byKeyword.rowCount === 1 && byKeyword.rows[0].id === fileId,
   JSON.stringify({ hash: byKeyword.hash, rows: byKeyword.rowCount, req: lastFileReq().slice(0, 200) }));
-const previewWidth = await ev("(function(){var b=document.querySelector(" + j("[data-file-preview]") + ");if(b===null){return null;}var w0=Math.round(b.getBoundingClientRect().width*100)/100;var t=b.textContent;b.textContent=" + j("打开中") + ";var w1=Math.round(b.getBoundingClientRect().width*100)/100;b.textContent=t;return {w0:w0,w1:w1};})()");
+const previewEntry = await ev("(function(){var r=document.querySelector(" + j("[data-file-row=" + j(fileId) + "]") + ");return {buttonCount:document.querySelectorAll(" + j("[data-file-preview]") + ").length,row:r!==null,tabIndex:r===null?null:r.tabIndex,cursor:r===null?null:getComputedStyle(r).cursor};})()");
 const downloadWidth = await ev("(function(){var b=document.querySelector(" + j("[data-file-download]") + ");if(b===null){return null;}var w0=Math.round(b.getBoundingClientRect().width*100)/100;var t=b.textContent;b.textContent=" + j("下载中") + ";var w1=Math.round(b.getBoundingClientRect().width*100)/100;b.textContent=t;return {w0:w0,w1:w1};})()");
-check("⑤b1 操作列定宽：预览 / 下载按钮换忙碌文案后宽度不变（点击预览不再把整表抖一下）", previewWidth !== null && downloadWidth !== null && previewWidth.w0 === previewWidth.w1 && downloadWidth.w0 === downloadWidth.w1, JSON.stringify({ preview: previewWidth, download: downloadWidth }));
+check("⑤b1 列表不再有预览按钮，行可聚焦 / 手型；下载按钮换忙碌文案宽度不变", previewEntry.buttonCount === 0 && previewEntry.row === true && previewEntry.tabIndex === 0 && previewEntry.cursor === "pointer" && downloadWidth !== null && downloadWidth.w0 === downloadWidth.w1, JSON.stringify({ previewEntry: previewEntry, download: downloadWidth }));
 check("⑤b 命中行口径：状态 = 草稿、上传人 = 潘兴、项目列 = 编号 + 名字",
   byKeyword.rows[0].status === "draft" && byKeyword.rows[0].statusText === "草稿" && byKeyword.rows[0].uploader === userRow.display_name && byKeyword.rows[0].projectCode === project.code && byKeyword.rows[0].projectName === project.name,
   JSON.stringify(byKeyword.rows[0] ?? null));
