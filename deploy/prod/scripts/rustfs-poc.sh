@@ -118,6 +118,8 @@ ensure_root_secrets() {
   install -d -m 0700 "$SECRETS_DIR"
   ensure_secret "$SECRETS_DIR/rustfs_poc_root_access_key" "LIBIAOLINKPOCROOT" access
   ensure_secret "$SECRETS_DIR/rustfs_poc_root_secret_key" "rustfs_poc_root_secret_key" secret
+  chown 10001:10001 "$SECRETS_DIR/rustfs_poc_root_access_key" "$SECRETS_DIR/rustfs_poc_root_secret_key"
+  chmod 600 "$SECRETS_DIR/rustfs_poc_root_access_key" "$SECRETS_DIR/rustfs_poc_root_secret_key"
 }
 
 ensure_service_secrets() {
@@ -126,6 +128,8 @@ ensure_service_secrets() {
   ensure_secret "$SECRETS_DIR/rustfs_poc_app_secret_key" "rustfs_poc_app_secret_key" secret
   ensure_secret "$SECRETS_DIR/rustfs_poc_bootstrap_access_key" "LIBPOCBOOT" access
   ensure_secret "$SECRETS_DIR/rustfs_poc_bootstrap_secret_key" "rustfs_poc_bootstrap_secret_key" secret
+  chown 10001:10001 "$SECRETS_DIR"/rustfs_poc_*
+  chmod 600 "$SECRETS_DIR"/rustfs_poc_*
 }
 
 prepare() {
@@ -169,7 +173,7 @@ rc_shell() {
   local script="$1"
   docker run --rm \
     --network "container:${RUSTFS_POC_CONTAINER}" \
-    --user 0:0 \
+    --user 10001:10001 \
     --read-only \
     --cap-drop ALL \
     --security-opt no-new-privileges:true \

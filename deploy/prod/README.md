@@ -743,7 +743,7 @@ bash scripts/minio-root-rotate.sh finalize
 
 轮换完成不等于 F-02 关闭：仍须完成 S5-T3 旧预签名 / 历史应用值失效验证、S5-T7 残留处置、S5-T10 端口复核，以及 S6 / S7 的文档与回放证据。不得为了排障恢复 `0.0.0.0:9000` / `0.0.0.0:9443`，也不得把 api / worker 改回 root。
 
-### 9.5 RustFS 1.0.3 隔离 POC（仓库件 · 本地已验，测试机未部署）
+### 9.5 RustFS 1.0.3 隔离 POC（测试机 POC 已验，生产未部署）
 
 **状态与边界**：新增 `docker-compose.rustfs-poc.yml`、`rustfs-poc/` 与 `scripts/rustfs-poc.sh`，用独立 profile 在 `libiaolink-prod` 网络内启动 RustFS 1.0.3 与专用 Nginx。POC 不接 `api` / `worker`，不读 MinIO / 应用 Secret，不替换 `minio`，不改 443 门面；宿主只发布 `127.0.0.1:9445`，SSH 隧道用于同源口径验收。RustFS 控制台关闭，数据 / 日志落独立目录，桶名 `rustfs-poc`。
 
@@ -758,11 +758,13 @@ bash scripts/rustfs-poc.sh check
 bash scripts/rustfs-poc.sh it
 ```
 
-脚本自动生成 `secrets/rustfs_poc_*`（`600`），创建 `libiaolink-poc-app` / `libiaolink-poc-bootstrap` 两个 service account，并复用现有 `storage:init` / `storage:it`。`check` 额外验证应用账号不能建桶、bootstrap 账号不能读对象；`down` 保留数据，`purge` 需 `RUSTFS_POC_CONFIRM=PURGE_RUSTFS_POC`。
+脚本自动生成 `secrets/rustfs_poc_*`（`600`，属主 `10001:10001`），创建 `libiaolink-poc-app` / `libiaolink-poc-bootstrap` 两个 service account，并复用现有 `storage:init` / `storage:it`。`check` 额外验证应用账号不能建桶、bootstrap 账号不能读对象；`down` 保留数据，`purge` 需 `RUSTFS_POC_CONFIRM=PURGE_RUSTFS_POC`。
 
 **RustFS IAM 口径**：策略动作名为 `s3:GetBucketCors` / `s3:PutBucketCors` / `s3:GetBucketLifecycle` / `s3:PutBucketLifecycle`，不能直接复用 MinIO / AWS 常见的 `s3:GetBucketCORS` / `s3:GetLifecycleConfiguration`。详细边界、SSH 隧道与测试机门禁见 `rustfs-poc/README.md`。
 
-**本地 POC 证据（2026-10-26）**：健康检查 200；`storage:init` 全通过；应用最小权限、经 Nginx 同源代理、容器重启后 `storage:it` 均 24 / 24；允许 Origin 返回 ACAO / 非法 Origin 不回 ACAO、匿名对象 GET 403；应用账号不能创建 / 删除桶、bootstrap 账号不能读写对象均 403；`_FILE` Secret 直接可用。临时容器、数据卷、策略文件与测试凭据已清理。Windows 本地未完整执行 apply（Git Bash 下 chmod / install 与 Docker /bin/sh 路径转换受限），等价步骤已逐项手动验证；测试机须从 prepare 起完整执行。**未连接测试机、未读取真实 Secret、未部署 POC；不代表生产选型。**
+**本地 POC 证据（2026-10-26）**：健康检查 200；`storage:init` 全通过；应用最小权限、经 Nginx 同源代理、容器重启后 `storage:it` 均 24 / 24；允许 Origin 返回 ACAO / 非法 Origin 不回 ACAO、匿名对象 GET 403；应用账号不能创建 / 删除桶、bootstrap 账号不能读写对象均 403；`_FILE` Secret 直接可用。临时容器、数据卷、策略文件与测试凭据已清理。Windows 本地未完整执行 apply（Git Bash 下 chmod / install 与 Docker /bin/sh 路径转换受限），等价步骤已逐项手动验证；测试机已从 prepare 起完整执行。**测试机 POC 已完成，生产未部署；不代表生产选型。**
+
+**测试机 POC 证据（2026-10-26 · 10.1.104.44）**：真实 bind mount `/srv/data`（ext4）；数据 / 日志目录 `10001:10001 0700`；POC `rustfs-poc` / `rustfs-poc-web` 均 healthy；POC API 9000 不发布宿主端口，仅 `127.0.0.1:9445`；`apply` 初始化通过；`check` 与 `storage:it` 均通过，`storage:it` 为 24 / 24；重启后再次 `check` / `storage:it` 均通过。SSH 隧道健康检查 200；允许 Origin 返回 ACAO，非法 Origin 不回 ACAO，匿名对象请求 403。测试机 MinIO 基线 / 复测均为 2,085 objects / 1,277,851,593 B，`storage:init --check` / `storage:it` 均为 24 / 24；现有 api / worker / web / postgres / minio / svg-preview / CAD 容器保持 healthy；未接应用流量、未迁移对象、未改 443 门面。
 
 ## 10. 后续切片（登记）
 
@@ -776,6 +778,7 @@ bash scripts/rustfs-poc.sh it
 
 | 版本 | 日期 | 变更 | 人 |
 |---|---|---|---|
+| v2.31 · deploy（RustFS POC 测试机） | 2026-10-26 | RustFS 1.0.3 隔离 POC 部署测试机（PR [#630](https://github.com/PanXing-Libiao/LibiaoLink/pull/630)）：首次启动发现 Compose Secret `0:0 0600` 与 RustFS UID `10001` 不匹配，修复为 `rustfs_poc_*` 属主 `10001:10001`、`rc` 以 `10001` 运行；真实 `/srv/data` ext4 bind mount，POC 两容器 healthy，API 9000 不发布宿主端口、仅 `127.0.0.1:9445`；`apply` / `check` / `storage:it` 通过，重启后再次通过；SSH 隧道健康 200、CORS 允许 / 拒绝口径正确；MinIO 2,085 objects / 1,277,851,593 B 与 `storage:it` 24 / 24 均未变化。测试机 POC 已完成，生产未部署。 | px |
 | v2.30 · deploy（已部署） | 2026-10-23 | F-02 S1～S5 测试机部署（`main@1881deac` · 回填 Push 460 / 461 · PR [#596](https://github.com/PanXing-Libiao/LibiaoLink/pull/596)；生产未部署）：database / server / shared / deploy 四包上传后哈希一致；`0067_preview_version_isolation.sql` 执行 9 ms，66 个迁移复跑无漂移；S3 identity `apply` / `check` 与应用负向权限通过；S4 单文件 Secret、UID/GID 1000、`storage:init --check` 与 `storage:it` 24/24；S5 新 root 接受、旧 root 拒绝、残留扫描 zero-hits、状态已清理；S1/S2 的 9000 / 9001 / 9443 外网不可达，systemd unit enabled/active；PG 备份 `libiaolink-before-0067-1881deac-20261023-1636.sql.gz`，MinIO 备份 4,640 文件 / 1,847,247,852 B（清单 `62aac728…`）；7 容器 healthy，`/healthz` / `/readyz` 200、未认证预览 401、10 分钟日志 0 error；`mc` 改用官方 GitHub Release 并登记 SHA-256；认证后真实上传 / 预览浏览器验收未执行；F-02 未关闭，S5 验收登记（S5-T3 / T7 待补）与 S6 / S7 待收口 | px |
 | v2.29 · deploy（未部署） | 2026-10-26 | RustFS 1.0.3 隔离 POC 仓库件（PR [#629](https://github.com/PanXing-Libiao/LibiaoLink/pull/629) · PR CI [40210831514](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40210831514) 5 / 5）：新增独立 Compose profile / 专用 Nginx / 应用与 bootstrap 策略 / `scripts/rustfs-poc.sh`，支持 prepare / up / apply / check / it / down / purge；RustFS API 不发布宿主端口、控制台关闭、凭据与数据独立、SSH 隧道验收 9445，不改 MinIO / api / worker / 443。本地锁定镜像完成健康检查、初始化、应用最小权限 / 同源代理 / 重启后 storage:it 均 24 / 24、CORS 允许 / 拒绝头口径与权限负向 403；临时资源已清理。**测试机尚未部署，不代表生产选型**。 | px |
 | v2.28 · deploy（测试机） | 2026-10-25 | 部门项目访问三态、模板全员可读与写入门禁、操作记录分层部署测试机（PR [#627](https://github.com/PanXing-Libiao/LibiaoLink/pull/627) · PR CI [40206785543](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40206785543) 5 / 5 · squash `f582a8a6` · main CI [40206933490](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40206933490) 5 / 5）：发布包 `access-data-scope-f582a8a6-20261025-2329.tar.gz`（61,157,452 B · `96a58af5...`）上传后哈希一致；部署前备份 frontend / server / shared 三个 dist 包，staging 1,089 文件仅 30 个预期差异；短暂停 api / worker 后更新 frontend / server / shared，web 未重启；7 容器 healthy，公网 / /healthz / readyz 200，未登录 access 401，公网 index / JS / CSS 与线上文件一致，日志无 error；真实 panxing 会话确认 `groupProjectAccess=allowed` / `auditScope=all` / `groupAccessEnforced=false`，临时会话残留 0。无迁移 / 依赖 / env / compose 变更，`GROUP_ACCESS_ENFORCED=false`、`group_access_rules` 0 行，生产未部署 | px |
