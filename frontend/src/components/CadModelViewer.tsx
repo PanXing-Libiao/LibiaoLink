@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CadNameCodepage, CadPreviewViewerConfig } from "../fileApi";
 import { apiFetch } from "../api";
+import { useT } from "../i18n";
 
 function savedNameCodepage(key: string): CadNameCodepage {
   try { return sessionStorage.getItem(key) === "UTF8" ? "UTF8" : "GB"; } catch { return "GB"; }
@@ -14,16 +15,18 @@ export function CadModelViewer({ viewer, name, onClose, onDownload, onRetry }: {
   onDownload: () => void;
   onRetry: () => void;
 }) {
+  const t = useT();
   const frame = useRef<HTMLIFrameElement>(null);
   const startedAt = useRef(performance.now());
   const [readyMs, setReadyMs] = useState<number | null>(null);
+  const [frameLoaded, setFrameLoaded] = useState(false);
   const [exportError, setExportError] = useState(false);
   const nameKey = `ll.cad.nameCodepage:${viewer.fileId}:${viewer.versionId}`;
   const [nameChoice, setNameChoice] = useState<{ key: string; value: CadNameCodepage } | null>(null);
   const nameCodepage = nameChoice?.key === nameKey ? nameChoice.value : savedNameCodepage(nameKey);
   const viewId = useMemo(() => Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join(""), [viewer.fileId, viewer.versionId, nameCodepage]);
   const query = new URLSearchParams({ platform: "1", autoload: "0", fileId: viewer.fileId, versionId: viewer.versionId, viewId, engineVersion: viewer.engineVersion, nameCodepage });
-  useEffect(() => { startedAt.current = performance.now(); setReadyMs(null); }, [viewId]);
+  useEffect(() => { startedAt.current = performance.now(); setReadyMs(null); setFrameLoaded(false); }, [viewId]);
   const sendContext = () => frame.current?.contentWindow?.postMessage({ type: "cad-context", name }, window.location.origin);
   useEffect(() => {
     const exportReport = async (report: unknown, name: string) => {
@@ -61,9 +64,21 @@ export function CadModelViewer({ viewer, name, onClose, onDownload, onRetry }: {
   return <div data-cad-ready-ms={readyMs} className="relative" onClick={(event) => event.stopPropagation()}>
     <iframe ref={frame} title={name} data-file-preview-cad="true" tabIndex={0}
     src={"/cad-viewer/index.html?" + query}
-    onLoad={sendContext}
+    onLoad={() => { setFrameLoaded(true); sendContext(); }}
     className="block h-[92dvh] w-[min(1440px,96vw)] rounded-xl border-0 bg-white shadow-2xl max-sm:h-[96dvh] max-sm:w-[98vw] max-sm:rounded-lg"
     />
+    {frameLoaded ? null : (
+      <div
+        data-cad-viewer-loading="true"
+        role="status"
+        aria-live="polite"
+        className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 rounded-xl bg-white text-sm text-zinc-500 shadow-2xl max-sm:rounded-lg"
+      >
+        <span aria-hidden="true" className="h-8 w-8 animate-spin rounded-full border-2 border-zinc-200 border-t-emerald-600" />
+        <span>{t("common.loading")}</span>
+        <span className="max-w-[min(28rem,80vw)] truncate px-6 text-xs text-zinc-400">{name}</span>
+      </div>
+    )}
     {exportError ? <p role="alert" className="absolute bottom-3 left-3 rounded bg-white px-3 py-2 text-sm text-red-700">清单导出失败，请确认文件访问权限后重试。</p> : null}
   </div>;
 }

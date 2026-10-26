@@ -1505,7 +1505,7 @@ export const KO_TEXTS: Partial<Record<TextKey, string>> = {
   "oov.errorCode": "뷰어가 파일을 열지 못했습니다(오류 코드 {code})",
   "oov.unavailable": "현재 뷰어를 사용할 수 없습니다. 다시 시도하거나 원본 파일을 다운로드해 주세요.",
   "oov.notMounted": "뷰어 스크립트는 로드되었지만 DocsAPI가 마운트되지 않았습니다",
-  "oov.loading": "뷰어 로드 중…",
+  "oov.loading": "뷰어 로드 중(처음 열 때 시간이 더 걸릴 수 있음)…",
   "oov.timeout": "온라인 미리보기 시간 초과",
   "oov.noPreview": "온라인 미리보기 없음",
   "tt.formAria": "새 임시 작업",
