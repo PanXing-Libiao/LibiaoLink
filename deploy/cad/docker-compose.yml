@@ -42,7 +42,8 @@ services:
       driver: json-file
       options: {max-size: "5m", max-file: "2"}
 
-  # macOS cannot directly share a Linux AF_UNIX socket. No native libraries load here.
+  # A host-side dev API cannot directly share this Docker-managed Linux AF_UNIX socket.
+  # The relay is used by local macOS / Windows WSL2 runs; no native libraries load here.
   edge:
     image: libiaolink/cad-sandbox:1.0.1
     platform: linux/amd64

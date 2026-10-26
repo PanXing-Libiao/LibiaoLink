@@ -331,9 +331,11 @@ const user = {
 
 ---
 
-## 十、本地参考实现（当前 Docker 环境）
+## 十、本地参考实现（当前 WSL2 + Docker 环境）
 
 完整配置快照、常用命令与常见问题见 **[本地沙箱说明](./本地沙箱(LibiaoLink%20演练环境).md)**。三条登录路径：
+
+> Windows 本地必须使用 WSL2 Ubuntu 内的原生 Docker Engine，不使用 Docker Desktop；安装与验收见 [Windows 本地开发环境](本地开发环境(Windows-WSL2-Docker).md)。
 
 | 路径 | 入口 | 账号 |
 |---|---|---|

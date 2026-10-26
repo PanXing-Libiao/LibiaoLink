@@ -39,6 +39,9 @@ services:
     ports:
       # 绑定地址默认只发到回环；局域网协作沙箱在 .env 覆盖 OO_BIND_IP=0.0.0.0
       - "${OO_BIND_IP:-127.0.0.1}:${OO_PORT:-8001}:80"
+    extra_hosts:
+      # Native Docker (Linux/WSL2) has no Docker Desktop-style automatic alias.
+      - "host.docker.internal:host-gateway"
     mem_limit: ${OO_MEM_LIMIT:-4g}
     cpus: ${OO_CPUS:-2}
     tmpfs:

@@ -2,6 +2,7 @@
 
 > 归属：px（部署 / 交付）· 2026-09-30。唯一执行口径：docs/ONLYOFFICE替换执行计划(Office预览).md；本目录按其 S2（部署清单 + 回滚步骤 + 升级回归项）交付，配置口径来源 docs/PoC-10-部署前置定稿(F1-R3·R6).md（N3）。
 > 决策依据：ADR-030（Office 预览改由 ONLYOFFICE 承接）· 决策 D2 = 镜像 pin `onlyoffice/documentserver:9.4.0.1`（digest 固化见 Dockerfile）。
+> Windows 开发机按 [WSL2 + Docker Engine](../../docs/本地开发环境(Windows-WSL2-Docker).md) 运行；dev compose 已把 `host.docker.internal` 映射到 `host-gateway`，不依赖 Docker Desktop 的自动别名。
 
 ## 0. 文件一览
 

@@ -122,7 +122,7 @@ curl -fsS http://127.0.0.1:9900/healthz
 
 ## 6. 镜像与供应链台账（S3 构建）
 
-构建主机：Docker Desktop，`linux/amd64`；构建时间：2026-10-21 09:12:44 +08:00。
+构建主机（历史记录，当时使用 Docker Desktop）：`linux/amd64`；构建时间：2026-10-21 09:12:44 +08:00。当前 Windows 环境按 [WSL2 + Docker Engine](../../docs/本地开发环境(Windows-WSL2-Docker).md) 执行。
 
 | 项 | 值 |
 |---|---|

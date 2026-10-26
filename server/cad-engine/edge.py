@@ -1,4 +1,4 @@
-"""Development-only loopback relay across Docker Desktop's Unix socket boundary."""
+"""Development-only loopback relay between a host process and the CAD container socket."""
 import select
 import socket
 import socketserver

@@ -38,6 +38,12 @@
 - SSH 登录：开发机 `ssh root@10.1.104.44`；**登录口令不落仓库**（CONTRIBUTING §12）—— 由 px 持有；开发机上的未跟踪备忘 = `deploy/prod/服务器登录.local.md`（已被 `.gitignore` 忽略，新会话可直接读该文件续接）。
 - 铁律：不得修改 root 密码；服务器只跑不改 —— 代码 / 配置变更走本仓常驻分支（`px` / `wmj` / `lan`）→ PR → 部署件同步；禁止在服务器上直接手改业务代码，临时热修必须回灌仓库。
 
+## 本地开发环境（Windows）
+
+- 公司不允许 Docker Desktop。Windows 本地容器统一使用 **WSL2 + Ubuntu + 原生 Docker Engine（docker-ce）**，安装 / 验收 / 排障见 `docs/本地开发环境(Windows-WSL2-Docker).md`。
+- Docker、Compose、Node、npm、迁移与回放命令在 WSL Ubuntu 内执行；仓库放在 WSL 文件系统，不以 `/mnt/d` 作为长期构建目录，不在 PowerShell 中调用 Docker。
+- 历史实测记录中的 Docker Desktop 仅保留当时环境事实，不作为当前方案或新验收依据。
+
 ## 完整规则
 
 - 仓库协作与开发规则见根目录 `CONTRIBUTING.md`（《通用开发规则》第 5、11–17 节落地版）；与本文件冲突时，以更严格者为准。

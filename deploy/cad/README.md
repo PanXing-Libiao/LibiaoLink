@@ -17,9 +17,13 @@ ADR-037 增加上传静默预解析与持久产物：平台 worker 通过同一 
 
 tmpfs 用量计入同一容器的内存预算，各项上限不能理解为可同时全部占满的额外容量。RSS 2 GiB 采样停止阈值仍保留作为提前止损；内核 memory.max 覆盖所有解析后代，不依赖该采样。另有 PID 1 watchdog，在主 worker 超过约 605 秒仍未退出时退出整个 PID namespace；对主 worker 结束后残留、脱离进程组的孤儿进程，PID 1 检测后终止整个 namespace 并回收孤儿僵尸。无活动的非 loopback 链路和出站路由；运行身份 1000:1000、根目录只读、capabilities 全部丢弃、禁止提权、默认 seccomp。服务启动检查实际 cgroup v2、挂载和进程状态，缺项拒绝运行；禁止用不受限 Python 替代。
 
-原生包保持固定版本，OCP 与 Gmsh 安装在不同 Python 环境，不改 CAD core/source.json。固定 OCP/Gmsh 的 Linux wheel 为 x86_64，因此当前镜像明确使用 linux/amd64；arm64 Docker Desktop 通过已有仿真运行，不能将该耗时当作公司 x86 服务器性能。OCP 的 vtk 依赖通过既有 cadquery-vtk 分发提供；使用 --no-deps 避免混装没有 cp313 wheel 的 vtk==9.3.1。镜像构建必须实际验证两套 native import。
+原生包保持固定版本，OCP 与 Gmsh 安装在不同 Python 环境，不改 CAD core/source.json。固定 OCP/Gmsh 的 Linux wheel 为 x86_64，因此当前镜像明确使用 linux/amd64；arm64 开发机通过已有仿真运行，不能将该耗时当作公司 x86 服务器性能。OCP 的 vtk 依赖通过既有 cadquery-vtk 分发提供；使用 --no-deps 避免混装没有 cp313 wheel 的 vtk==9.3.1。镜像构建必须实际验证两套 native import。
 
 ## 本地运行
+
+### Windows 开发机（WSL2）
+
+公司不允许 Docker Desktop。Windows 必须先按 [Windows 本地开发环境](../../docs/本地开发环境(Windows-WSL2-Docker).md) 安装 WSL2 Ubuntu 与原生 Docker Engine；仓库放在 WSL 文件系统，以下命令全部在该 Ubuntu 终端执行，PowerShell 不参与 Docker 操作。WSL2 x86_64 原生运行本镜像的 linux/amd64，不经过 Desktop 的跨平台层。
 
 从仓库根目录运行，仅构建 CAD 镜像：
 
