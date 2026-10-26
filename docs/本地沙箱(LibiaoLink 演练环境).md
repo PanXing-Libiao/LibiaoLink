@@ -1,8 +1,9 @@
 # 本地沙箱说明（LibiaoLink 演练环境）
 
-> 这份文档只讲**本机 Docker 里那一套 Casdoor**（`deploy/casdoor/`）的现状与用法。
+> 这份文档只讲**本机 Linux 容器里那一套 Casdoor**（`deploy/casdoor/`）的现状与用法；Windows 通过 WSL2 Ubuntu，macOS 使用本地 Docker Engine。
 > 它与公司环境（正式 `auth.libiaorobot.com` / 测试 `authtest.libiaorobot.com`）是**两套完全独立的用户库** —— 同名同邮箱也不是同一个人。
-> 最后更新：2026-09-23
+> Windows 开发机使用 WSL2 Ubuntu 内的原生 Docker Engine，禁止 Docker Desktop；安装与验收见 [Windows 本地开发环境](本地开发环境(Windows-WSL2-Docker).md)。
+> 最后更新：2026-10-26
 
 ## 一、用途与边界
 
@@ -13,8 +14,10 @@
 
 ## 二、起停
 
-```powershell
-cd D:\LibiaoLink\deploy\casdoor
+Windows 在 WSL Ubuntu 终端执行（仓库按标准放在 WSL 文件系统），macOS 在普通终端执行；路径按本机实际情况调整：
+
+```bash
+cd ~/LibiaoLink/deploy/casdoor
 docker compose up -d      # 启动（casdoor / mysql / redis 三个容器）
 docker compose ps         # 状态，三个都应是 healthy
 docker compose logs -f casdoor
@@ -144,15 +147,17 @@ POST http://localhost:8000/api/login   # 口令见 deploy/casdoor/.env.local
 
 `frontend/` 是 LibiaoLink 业务前端（React + Vite + TypeScript，严格模式）；登录与会话自 k6 起由后端 `server/`（identity 模块）承载，本地由 Vite 把 `/auth/*` 代理到后端：
 
-```powershell
+Windows 在 WSL Ubuntu 终端执行，macOS 在普通终端执行：
+
+```bash
 # 1. 后端（新窗口）：server/.env 指向本沙箱，PORT=3001（前端占 3000）
-cd shared; npm ci; npm run build
+cd ~/LibiaoLink/shared; npm ci; npm run build
 cd ../server; npm ci; npm run build; npm run start:api
 
 # 2. 前端（新窗口）
-cd frontend
+cd ~/LibiaoLink/frontend
 npm install
-copy .env.example .env.local      # BACKEND_ORIGIN 默认已指向 http://127.0.0.1:3001
+cp .env.example .env.local        # BACKEND_ORIGIN 默认已指向 http://127.0.0.1:3001
 npm run dev                       # http://localhost:3000
 ```
 

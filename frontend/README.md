@@ -9,20 +9,22 @@ LibiaoLink 业务前端：项目空间（首页筛选 / 排序 / 记忆）、项
 
 STEP 联调已有无需全量构建的完整系统启动入口，见 [本地完整系统](../server/cad-engine/README.md#本地完整系统)。它运行当前分支的实际前后端，并使用独立本地登录、数据库和文件存储；可直接从任务附件与文件库打开新版 CAD。`3013/tools/cad-platform.html` 仍是单独试用页。
 
+> Windows 开发机不使用 Docker Desktop：先在 WSL2 Ubuntu 内安装原生 Docker Engine，全部命令在 Ubuntu 终端执行，见 [Windows 本地开发环境](../docs/本地开发环境(Windows-WSL2-Docker).md)。
+
 前置：
 1. 本地 Casdoor 沙箱：`cd deploy/casdoor && docker compose up -d`（见沙箱文档）
 2. PostgreSQL 18 与空库迁移：见 `database/README.md`（`npm run migrate`）
 3. `server/.env`：`PORT=3001`（前端占 3000，必须错开）、`DATABASE_URL=...`、`CASDOOR_*` 指向本地沙箱（`CASDOOR_REDIRECT_URI=http://localhost:3000/auth/callback`）
 
-```powershell
+```bash
 # 1. 后端（新窗口）
-cd shared; npm ci; npm run build
+cd ~/LibiaoLink/shared; npm ci; npm run build
 cd ../server; npm ci; npm run build; npm run start:api   # http://127.0.0.1:3001/healthz
 
 # 2. 前端（新窗口）
-cd frontend
+cd ~/LibiaoLink/frontend
 npm install
-copy .env.example .env.local   # BACKEND_ORIGIN 默认 http://127.0.0.1:3001；TEST_* 供冒烟测试
+cp .env.example .env.local     # BACKEND_ORIGIN 默认 http://127.0.0.1:3001；TEST_* 供冒烟测试
 npm run dev                    # http://localhost:3000
 ```
 

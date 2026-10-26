@@ -1,6 +1,7 @@
 # Casdoor 对接实测报告（LibiaoLink SSO）
 
 > 2026-09-15 ｜ Windows + Docker Desktop 29.7.2 ｜ 镜像 `casbin/casdoor:4.4.0` + `mysql:8.0.36` + `redis:7-alpine`
+> 上述是本报告的历史执行环境。公司禁用 Docker Desktop 后，Windows 本地环境统一为 WSL2 + Docker Engine，见 [Windows 本地开发环境](本地开发环境(Windows-WSL2-Docker).md)；历史结果不据此改写。
 > 本文件汇总多轮实测：**本地沙箱**（`deploy/casdoor/`，入口 `http://localhost:8000`）→ **公司测试环境** → **公司正式环境**。
 > 本地登录入口是 Casdoor 自托管的带 Logo 登录页，不依赖额外进程；早期用来验证链路的示例业务系统（`examples/oidc-node`）已从仓库移除，下文凡称「示例应用 / 业务系统」均指它，仅作历史记录。
 > 公司环境只做只读核对，或在测试环境用管理员账号做演练，**未改动正式环境任何配置**。

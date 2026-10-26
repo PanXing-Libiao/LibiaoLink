@@ -4,7 +4,7 @@
 
 ## 准备运行环境
 
-CAD 解析已迁移到独立 Linux 容器，不再由 API 启动 Python。先按 [CAD 沙箱部署手册](../../deploy/cad/README.md) 仅构建 CAD 镜像并启动沙箱；macOS 本地使用开发中继，生产 API 直接连接 Unix socket。
+CAD 解析已迁移到独立 Linux 容器，不再由 API 启动 Python。先按 [CAD 沙箱部署手册](../../deploy/cad/README.md) 仅构建 CAD 镜像并启动沙箱；macOS 与 Windows/WSL2 的本地 API 使用开发中继，生产 API 直接连接 Unix socket。
 
 | API 参数 | 含义 |
 | --- | --- |
@@ -40,7 +40,9 @@ CAD 内部临时缓存仍受限于 tmpfs 和 24 小时保留；已完成的模�
 
 无需先合入 main。`local-system.mjs` 直接运行当前分支的实际 `AppModule` 与完整前端，登录走本地 Casdoor 的 authorization code + PKCE；项目、任务、文件版本写入独立 PostgreSQL 18，文件经原有分片上传链路写入私有 MinIO。它不注册试用夹具的登录/导入接口，不连接公司数据。
 
-复用已有 Node 24、PostgreSQL 18 Docker 镜像与单独启动的 CAD 沙箱。官方本地程序放在被忽略的 `server/cad-engine/.runtime/`：MinIO `RELEASE.2025-09-07T16-13-09Z` 的 macOS arm64 二进制保存为 `.runtime/minio`；Casdoor `v4.4.0` macOS arm64 发行包解压至 `.runtime/local-system/casdoor/`，保留 `casdoor`、`web/build` 与 `conf/`。下载后按官方 release 的 SHA-256 校验，不复制或重建 CAD native 环境。
+复用已有 Node 24、PostgreSQL 18 Docker 镜像与单独启动的 CAD 沙箱。官方本地程序放在被忽略的 `server/cad-engine/.runtime/`：MinIO `RELEASE.2025-09-07T16-13-09Z` 按开发机平台选择 Linux amd64 或 macOS arm64 二进制，保存为 `.runtime/minio`；Casdoor `v4.4.0` 选择 `casdoor_Linux_x86_64.tar.gz` 或 macOS arm64 发行包，解压至 `.runtime/local-system/casdoor/`，保留 `casdoor`、`web/build` 与 `conf/`。下载后按官方 release 的 SHA-256 校验，并在 Linux/WSL 执行 `chmod 700 server/cad-engine/.runtime/minio server/cad-engine/.runtime/local-system/casdoor/casdoor`；不复制或重建 CAD native 环境。
+
+> **Windows 开发机**：公司不允许 Docker Desktop。先按 [WSL2 + Docker Engine 安装说明](../../docs/本地开发环境(Windows-WSL2-Docker).md) 把仓库和全部运行命令放进 WSL Ubuntu；本地 Casdoor/MinIO 使用上面的 Linux amd64 程序，不要下载 Windows `.exe`。
 
 在 `server/` 运行：
 

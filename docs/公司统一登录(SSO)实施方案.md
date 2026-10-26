@@ -57,7 +57,7 @@ AD/LDAP 先只做认证源（provider），跑通后再开定时同步（sync）
 ### 3.1 前置条件
 
 - 一台 Linux 服务器（生产建议 2C4G 起，磁盘按日志量给）
-- Docker + Docker Compose v2
+- Docker + Docker Compose v2（Windows 开发机使用 WSL2 Ubuntu 内的原生 Docker Engine，不使用 Docker Desktop；见 [Windows 本地开发环境](本地开发环境(Windows-WSL2-Docker).md)）
 - 一个域名，例如 `auth.libiaorobot.com`，并准备好 HTTPS 证书
 - 数据库：MySQL 8 / PostgreSQL（生产不要用 SQLite）
 - Redis：**可选，但多副本必须用**（会话、缓存）
