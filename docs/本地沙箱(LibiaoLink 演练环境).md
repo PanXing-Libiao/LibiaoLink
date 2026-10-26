@@ -168,33 +168,22 @@ npm run dev                       # http://localhost:3000
 
 > 本地前端只对接本地 Casdoor；验证公司账号走登录页下方「公司统一登录（测试环境）」（第五节），上线时把 `server/.env` 换成公司环境地址与正式应用凭据。
 
-## 十、用户角色（写操作 403 的常见原因）
+## 十、部门权限（写操作 403 / 数据不可见的常见原因）
 
-从公司 SSO 联邦进来的账号，本地 Casdoor 会自动建号；但业务库里的角色（`user_roles`）**不会自动分配** —— **打开权限判定时**（`PERMISSION_ENFORCED=true`）权限位为空即写接口 403、列表按「我管的 / 我参与的」裁剪（服务端是最终裁决）。
+从公司 SSO 联邦进来的账号由 Casdoor 建立并同步到 `users`；部门归属来自 Casdoor Group，同步到 `user_group_memberships`。业务权限不再来自 `roles` / `user_roles` / `role_permissions`，这三张表只保留历史数据。
 
-**当前阶段口径（业务已定：「我们当前这个系统就不要考虑权限」）= 服务端开关 `PERMISSION_ENFORCED` 默认 `false`（Push 178 起）**：授权画像一律**等效管理员**（数据范围 `all` + 契约全量权限位 + `admin` 角色码）—— 与 `user_roles` 有没有绑定无关：新账号从公司 SSO 登进来**直接用，不必再执行任何 SQL**（服务端不再读角色，本机 / 沙箱 / 生产同口径）。
+**当前口径（2026-10-26 收口）**：部门规则是唯一业务权限来源。管理员在权限管理页按部门配置：
 
-下面的绑定 SQL 仍然有用 —— 它现在是**打开开关（`PERMISSION_ENFORCED=true`，即回到 ADR-011 判定）时**给账号配权限（或本地复现「受限账号」场景）的手段：
+- 项目范围：`all` / `own`（本人负责或参与）/ `selected`（指定项目）/ `none`；多部门规则取并集。
+- 权限档位：`edit`（可编辑并浏览）或 `view`（仅浏览）；`none` 只允许登录，不显示项目数据。
+- 适用人员：部门全体直属成员，或勾选的部分成员。
 
-```sql
--- 全员管理员（打开判定 PERMISSION_ENFORCED=true 时给账号配全权）：全量可见 + 全权限
-insert into user_roles (user_id, role_id)
-select u.id, r.id from users u cross join roles r
-where r.code = 'admin' and u.status = 'active' and u.removed_at is null
-on conflict do nothing;
+所有登录账号都能进入业务页面；有规则但当前无可见项目时显示「账户暂无可浏览/编辑的项目」，完全无规则或规则为 `none` 时显示权限不足。服务端仍逐请求裁决，前端空态不能替代接口权限。
 
--- 只给单人 / 换别的角色（例：项目经理 = 只看得见自己管的项目 + 建改删项目）
-insert into user_roles (user_id, role_id)
-select u.id, r.id from users u, roles r
-where u.username = 'zhangsan' and r.code = 'project_manager'
-on conflict do nothing;
+- 本地开关：`GROUP_ACCESS_ENFORCED=false`（默认）= 规则只可配置、不参与裁定；`true` = 执行部门规则。开启后必须同时配置 `GROUP_ACCESS_ADMIN_GROUP_KEYS` 或 `GROUP_ACCESS_ADMIN_USER_IDS`，否则服务拒绝启动。
+- 管理员只来自上述环境变量命中的部门 / 用户，以及权限管理页手工添加；角色 `access.manage` 不再产生管理员。
+- 权限画像有 10 秒缓存；保存部门规则或修改管理员后会清理缓存，刷新页面即可看到最新结果。
+- 查询当前部门成员：`select u.username, m.group_key from user_group_memberships m join users u on u.id = m.user_id order by 1, 2;`（直连串见 `database/README.md`）。
+- 不要再用 `user_roles` 绑定来调试权限；它不会改变页面、项目范围或写入口。
 
--- 撤销某人的全部角色
-delete from user_roles where user_id = (select id from users where username = 'zhangsan');
-```
-
-- 直连串：`postgres://libiaolink_migrator@127.0.0.1:5433/libiaolink`（见 `database/README.md`）；查现有绑定：`select u.username, r.code from user_roles ur join users u on u.id = ur.user_id join roles r on r.id = ur.role_id order by 1;`
-- 权限画像有 10 秒缓存：改完角色**刷新页面**即可生效（最迟 10 秒）。
-- 角色集与权限位（`project.create` / `project.update` / `project.delete` / `dict.manage` 等）由种子维护（`database/seeds/roles.mjs` / `role-permissions.mjs`）；**分配角色的管理界面还没做**（成员管理 u3 / u12 待建）。
-- **「全员全权」的落点（Push 178 定案）**= 服务端开关（一期默认 `false`，无需改数据）；二期打开 `PERMISSION_ENFORCED=true` 恢复按角色判定时，再走 ① identity 建号流程落默认角色 / ② 角色管理界面（u12）两条路。
-- 想在本机验「按 ADR-011 判定」：以 `PERMISSION_ENFORCED=true` 重启 api（`server/.env` 或进程环境变量，重启生效），再按上面的 SQL 给账号配角色；两态对照证据见 `docs/权限开关回放证据(PERMISSION_ENFORCED).md`（A 站默认 / B 站 true，同一账号同一份数据）。
+旧角色开关的回放证据仅用于历史追溯；从本版本起不再提供对应运行开关或回放脚本。
