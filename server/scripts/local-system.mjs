@@ -19,6 +19,7 @@ if (process.env.LOCAL_SYSTEM_CONFIG) {
   Object.assign(process.env, privateConfig.api);
 }
 const { AppModule } = await import("../src/app.module.ts");
+const { API_BODY_PARSER_OPTIONS, applyApiRequestBodyPolicy } = await import("../src/common/http/request-body.ts");
 const { loadEnv } = await import("../src/config/env.ts");
 const env = loadEnv();
 if (env.NODE_ENV === "production") throw new Error("local-system is development only");
@@ -40,8 +41,8 @@ try {
   await s3.send(new PutBucketVersioningCommand({ Bucket: env.S3_BUCKET, VersioningConfiguration: { Status: "Enabled" } }));
 } finally { s3.destroy(); }
 
-const app = await NestFactory.create(AppModule.forRoot(env), { bufferLogs: true });
-app.useBodyParser("json", { limit: "4mb" });
+const app = await NestFactory.create(AppModule.forRoot(env), { bufferLogs: true, ...API_BODY_PARSER_OPTIONS });
+applyApiRequestBodyPolicy(app);
 app.useLogger(app.get(Logger));
 await app.listen(env.PORT, "127.0.0.1");
 const cadWorker = spawn(process.execPath, [fileURLToPath(new URL("./local-cad-worker.mjs", import.meta.url))],
