@@ -2,7 +2,7 @@
 
 更新：2026-10-23。CAD 主责 wmj，共享 file/preview/outbox 由 lan 协办，通用 UI 与部署由 px 协办。
 
-本文统一替代 LibiaoLink 原 CAD 选型、浏览器解析和工程测量实施计划。用户已批准接入及旧实现清理。独立 CAD 沙箱、持久产物与上传预解析已部署公司测试机，并通过容器、真实对象存储与复用验证；生产环境尚未部署，真实公司账号浏览器验收待完成。决策见 [ADR-035](adr/ADR-035-CAD接入独立能力工程.md)。
+本文统一替代 LibiaoLink 原 CAD 选型、浏览器解析和工程测量实施计划。用户已批准接入及旧实现清理。独立 CAD 沙箱、持久产物与上传预解析已部署公司测试机，并通过容器、真实对象存储与复用验证；2026-10-26 又完成正式生产 API/worker 接线和真实公司账号浏览器首轮验收（64 项零件），详见 §10。决策见 [ADR-035](adr/ADR-035-CAD接入独立能力工程.md)。
 
 ## 1. 已有能力与唯一基线
 
@@ -21,7 +21,7 @@ CAD 能力以独立工程 `CAD逆向` 的 STEP v0.3.3（几何基线 `0911573`�
 
 ## 2. 已接入的链路
 
-以下描述 ADR-037 的持久化与上传预解析代码链路；相关变更已由 PR [#555](https://github.com/PanXing-Libiao/LibiaoLink/pull/555) / [#557](https://github.com/PanXing-Libiao/LibiaoLink/pull/557) 合并，并以代码基线 `c18b417e` 部署公司测试机，生产未部署。
+以下描述 ADR-037 的持久化与上传预解析代码链路；相关变更已由 PR [#555](https://github.com/PanXing-Libiao/LibiaoLink/pull/555) / [#557](https://github.com/PanXing-Libiao/LibiaoLink/pull/557) 合并，并以代码基线 `c18b417e` 部署公司测试机；正式生产于 2026-10-26 完成运行接线与首轮验收，见 §10。
 
 `上传完成 → 事务登记后台任务 → 沙箱解析/校验 → 持久 manifest/buffers → 文件预览复用 → 鉴权资源 → 独立 ViewerSession`。
 
@@ -99,7 +99,7 @@ shared 已定义 CadPreviewViewer、CadJob 及创建响应，OpenAPI/客户端�
 
 W01/N02/N03 的平台打开、可交互、产品树、拾取、显隐/隔离/恢复与明细已验证；外部引用文件 S03 明确拒收。实际 HTTP/native 测试与旧预览/下载回归共 52 项通过，原工程 2 项任务生命周期测试通过；未做全量构建。逐文件耗时、bytes、RSS、缺失清单及截图见 [本地结果](cad-platform-integration/RESULTS.md)。运行与迁移方式见 [runtime README](../server/cad-engine/README.md)。
 
-该本地轮次保留了测试身份/存储夹具的明确标识，没有把本地夹具等同公司 SSO、数据库或对象存储；后续推送、合并与测试机部署见 §8，生产仍未部署。
+该本地轮次保留了测试身份/存储夹具的明确标识，没有把本地夹具等同公司 SSO、数据库或对象存储；后续推送、合并与测试机部署见 §8，正式生产部署与验收见 §10。
 
 ## 8. 公司测试机部署记录（2026-10-21）
 
@@ -113,17 +113,26 @@ W01/N02/N03 的平台打开、可交互、产品树、拾取、显隐/隔离/恢
 - 静态一致性：公网 `index.html`（499 B，SHA-256 `df3850d7258ae2b68f0476eba948bb5250b11bb1768ddc6de214de4571925286`）、`index-DDGlw1NP.js`（1,411,015 B，SHA-256 `e588e6680889c48383a830377c9e16054ef68062f21853113d351b52fad73f3c`）、`index-mUvOZioE.css`（154,503 B，SHA-256 `40ac2ec42b0b3ae525a85257cad7735b5ea425b87fdb27aeb74bbc2d78f812b0`）与本地构建一致；`/cad-viewer/platform-entry.js` 为 `c70bf2923ee3da76c90c8b5b300ee8a4948f3ad30f2214c5cd9967a2a51ac87b`，`/server/cad-engine/bridge.py` 为 `d48d96b0e22a7483fb112e8c332b818fca74f70a0cedaf094b2ca5855ff0017e`。
 - 验证结果：旁路真实 STEP 集成测试 12/12 通过；生产 API 容器内 native bridge 使用受控箱体夹具返回 `completed`，输入 15,416 B、artifact 15,187 B、manifest 15,447 B，worker 峰值 RSS 326,103,040 B、耗时 3.263387 秒。该夹具不代表真实业务文件或浏览器验收。API / worker 近 10 分钟无 `ERROR`、`FATAL`、`SIGILL`、`Unhandled` 或模块加载错误。
 - Gmsh 运行库说明：Gmsh wheel 的 `libgmsh.so` 即使无头运行仍声明 `libXcursor`、`libXft`、`libXss` 等动态依赖；安装这些库只为满足动态装载器，不启动桌面服务、不开放 X 服务。macOS 开发机通常由系统与桌面环境直接提供同类库，因此同事在 Mac 上使用时不需单独补装。
-- 待完成：使用真实公司账号在浏览器打开真实业务 STEP 文件，完成打开、首帧、产品树、拾取、显隐/隔离/恢复走查；生产环境未部署。
+- 待完成：使用真实公司账号在浏览器打开真实业务 STEP 文件，完成打开、首帧、产品树、拾取、显隐/隔离/恢复走查；该轮完成时生产环境尚未部署，后续正式接线见 §10。
 
 ## 9. 独立沙箱与持久产物部署（2026-10-23）
 
 本节补充 §8 的既有 STEP 接入；容器与旁路冒烟不等于真实公司账号、业务文件与浏览器的完整验收。
 
-- 来源与目标：main 代码基线 `c18b417e`，包含 PR [#553](https://github.com/PanXing-Libiao/LibiaoLink/pull/553) 的独立禁网沙箱、[#555](https://github.com/PanXing-Libiao/LibiaoLink/pull/555) 的持久产物 / 上传静默预解析与 [#557](https://github.com/PanXing-Libiao/LibiaoLink/pull/557) 的续租后读取；部署到 `10.1.104.44`（`libiao-vm`）的 [test-pm.libiaorobot.com](https://test-pm.libiaorobot.com)。main 后续 `5e721dbe`（文档）与 `3243dd44`（前端 UI）均未改 CAD 链路，生产未部署。
+- 来源与目标：main 代码基线 `c18b417e`，包含 PR [#553](https://github.com/PanXing-Libiao/LibiaoLink/pull/553) 的独立禁网沙箱、[#555](https://github.com/PanXing-Libiao/LibiaoLink/pull/555) 的持久产物 / 上传静默预解析与 [#557](https://github.com/PanXing-Libiao/LibiaoLink/pull/557) 的续租后读取；部署到 `10.1.104.44`（`libiao-vm`）的 [test-pm.libiaorobot.com](https://test-pm.libiaorobot.com)。main 后续 `5e721dbe`（文档）与 `3243dd44`（前端 UI）均未改 CAD 链路；该轮完成时生产未部署。
 - 发布件：`/srv/data/deploy-cad-c18b-20261023-0943/`，CAD 镜像归档 `cad-sandbox-1.0.1-c18b417e.tar`（330,915,328 B · SHA-256 `3d3c64a61ddb4379e5c0dc592087f18e23ca158ad3d0756fac23909e4b6eb333`）、`server-cad-c18b417e-20261023-0943.tar.gz`（45,840,767 B · `fc2f1faa1aa5882fc3d8c52bf57a1358ed095db4003f5f10dae664ecc4baf858`）、`shared-cad-c18b417e-20261023-0943.tar.gz`（349,990 B · `bb4e4a9c7b650b0f5256e9069be038fc5e2945a140327270a54ddf98ff720b65`）、`deploy-cad-c18b417e-20261023-0943.tar.gz`（8,423 B · `bb54ced10e77257e5f052a9141fa249760f91acd5fc2c63568822af2742d265a`）与迁移 `0064_cad_artifacts.sql`（2,447 B · `a763cf0dbdc705a45e6733fad39277d2a76749e5fea7ae00dc99afc9a1a58e41`），远端逐项哈希一致。
 - 备份：`/srv/data/backups/` 下 server 107,220,111 B · `9ae581e37b6b3217aad3b63065cb33c4812c84ab4a2d84600a9264ebfce66f3f`、shared 767,779 B · `c2f11499214ed9ec33c87e66447f14d899a6147b908484a900486abb8c9a7ecf`、数据库目录 114,298 B · `7965bfb802daa7a29077fd6d644bb44992bf65aea91af4daf00b4df64864381b`、CAD 配置 5,963 B · `5f232e6ce95d42cfa9e9db689b580c671a613cecf5a44ec1ec74461a193e6233`、DB dump 1,010,081 B · `260a39ab2556d8e01206027a2bae1b3dbb88f4dc453784a61efde545cc17ca39`。
 - 数据库：`0064_cad_artifacts.sql` 先 dry-run，实际执行 71 ms；`schema_migrations` 已登记，`cad_artifacts` / `cad_views` 表存在，外键与约束按迁移落地。认证后的上传预解析 / 持久产物业务走查尚未执行，表内没有本轮应用层夹具。
 - 运行边界：CAD 镜像 `libiaolink/cad-sandbox:1.0.1-c18b417e@sha256:aeee8b4b072eca1aaf0b2db0d65b972f341e3da07a413aaec07d259d03a9879c`（linux/amd64，服务器解压后 1,437,769,016 B）；容器 `network=none`、根目录只读、capabilities 全丢、`no-new-privileges`、用户 `1000:1000`，内存 3 GiB、swap 0、1 核、64 PIDs；`/tmp` 384 MiB、`/var/lib/cad` 1536 MiB、`/run/cad` 1 MiB 均为限容 tmpfs。API / worker 通过只读 Unix socket 挂载访问，不使用旧 Python 路径或 CAD TCP 地址。
 - 容器与接口：`api`、`worker`、`cad`、`web`、`postgres`、`minio`、`svg-preview` 七容器 healthy；公网站点、`/healthz`、`/readyz`、`/cad-viewer/platform-entry.js` 200，缺失查看器资源 404。引擎版本 `step-0.3.3/f103d1c40812b24c3864ae90a91ea707f734dfb5/gateway-1` 与 API 一致。
 - 冒烟：受控箱体 UTF8 / GB 各一次 `completed`；另从私有对象存储读取真实 `限流环.STEP`（315,166 B · SHA-256 `36866774a174db2d3dc0de800f3b1b74f0c083bfb18fbe08674521d02550c228`）完成转换，manifest 37,303 B、完整性 `complete`、worker 峰值 RSS 333,180,928 B；同源第二次提交 `reused=true` 且任务 ID 相同。API / worker / CAD 近 20 分钟无 `ERROR` / `FATAL` / `Unhandled` / 模块加载错误。
-- 待完成：真实公司账号在浏览器打开真实业务 STEP，完成首帧、产品树、拾取、显隐/隔离/恢复；从上传静默预解析到 `cad_artifacts` 完成、鉴权 manifest / buffers 与跨重启复用的认证后业务走查。生产环境未部署。
+- 待完成：真实公司账号在浏览器打开真实业务 STEP，完成首帧、产品树、拾取、显隐/隔离/恢复；从上传静默预解析到 `cad_artifacts` 完成、鉴权 manifest / buffers 与跨重启复用的认证后业务走查。该轮完成时生产环境尚未部署，后续正式接线见 §10。
+
+## 10. 正式生产部署与浏览器验收（2026-10-26）
+
+本节记录 `pm.libiaorobot.com` 的正式生产接线与首轮真实账号浏览器验收；不把首帧 / 产品树验收等同拾取、显隐 / 隔离 / 恢复或跨重启复用的完整验收。
+
+- 代码与静态资源：正式前端升级为 `main@7be763d6`（PR [#658](https://github.com/PanXing-Libiao/LibiaoLink/pull/658)），包含 ONLYOFFICE 60 秒冷启动等待与 CAD iframe 宿主加载卡；后端源码与 CAD 镜像未替换。公网 `index.html`、JS、CSS、`/cad-viewer/index.html` 及三个查看器静态模块均 200，哈希与本地构建一致。
+- 运行接线：正式机原已存在 `libiaolink/cad-sandbox:1.0.1-c18b417e@sha256:aeee8b4b072eca1aaf0b2db0d65b972f341e3da07a413aaec07d259d03a9879c` 容器与 `0064_cad_artifacts.sql` 迁移，但 API/worker 未加载 `docker-compose.cad.yml`，`server.env` 的 `CAD_ENGINE_SOCKET` 为空，预览接口返回 `cadPending`。备份 `/srv/data/backups/before-cad-enable-20261026-210321/` 后，以已评审 overlay 强制重建 API/worker；二者只读挂载 `cad_socket`，使用 `/run/cad/engine.sock`。未重跑迁移、未改源码、未改镜像，七个容器均 healthy。
+- 浏览器验收：真实公司账号在 Chrome 打开 `pdf3d_sample_2.pdf`，ONLYOFFICE 正常显示 82 页；打开 `pythonocc_as1_pe_203.stp` 后显示导入进度，`data-cad-ready-ms=2977`，零件结构 64 项，三维模型正常，浏览器 console error 0。数据库 `cad_artifacts` 为 `completed`（139,752 B，SHA-256 `e14f7a52b3f0…`），引擎版本 `step-0.3.3/f103d1c40812b24c3864ae90a91ea707f734dfb5/gateway-1`。
+- 边界 / 回滚：拾取、显隐 / 隔离 / 恢复、跨重启复用及非 STEP 通道仍待专项验收。CAD 回滚恢复上述备份配置并以基础 compose 重建 API/worker（同时停 CAD）；完整发布包、前端备份和验收证据见 [deploy/prod/README.md](../../deploy/prod/README.md) 顶部记录。
