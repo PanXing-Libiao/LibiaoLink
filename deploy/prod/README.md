@@ -1,5 +1,13 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
+> **2026-10-26 14:13 同一部门按人员独立权限已部署公司测试机（PR [#650](https://github.com/PanXing-Libiao/LibiaoLink/pull/650) · main@8af19fa5 · 生产未部署）**：按业务口径「同一个部门不同人员我要赋予不同权限」「选中了一个人的修改了 整个部门都变了」，`group_access_rules` 保留部门默认，新增 `group_access_member_rules`（`group_key + user_id`）保存个人覆盖与 `project_group_member_access` 个人 `selected` 白名单；个人规则优先、未设置者继承部门默认，多部门仍取并集。PR 最终 HEAD `4b0a5195`，PR CI [40277796353](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40277796353) 5 / 5 · squash `8af19fa5` · main CI [40278015184](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40278015184) 5 / 5。
+
+> 发布包 `output/access-member-rules-8af19fa5-20261026-1411-lean.tar.gz`（16,289,203 B · SHA-256 `a107acfbd45a30534a5f221f0551e89219735afa2d71caf211a8d0c862602e9f`）；部署前备份 `/srv/data/backups/before-access-member-rules-8af19fa5-20261026-1411`：`libiaolink-before.dump`（`f3dcf087…`）、`frontend-server-shared.tar.gz`（`67445f39…`）、`server.env`（`86cceb10…`）。staging 核验 frontend 386 / server 610 / shared 93 / generated 2 文件；`group-access.service.js`、`permission.service.js`、`shared/modules/group-access.js`、`frontend/dist/index.html` 哈希均与本地一致，staging 已清理。
+
+> 迁移 `0074_group_access_member_rules.sql` dry-run 检测 1 项后执行成功，幂等复跑输出「已执行 73 个迁移，无漂移」；已移除失效的 `PERMISSION_ENFORCED=false`，保留 `GROUP_ACCESS_ENFORCED=true`。api / worker 重建 healthy，10 个容器均 healthy，站点 / `healthz` / `readyz` 均 200；schema 65 表 / 655 列 / 205 索引 / 239 CHECK，api / worker 近 5 分钟 error / exception / fatal 计数 0；前端 bind mount 更新，web 未重启。
+
+> 真实 API 回归：同一「测试部」内，张三保持既有 `own / view` 个人规则与有效权限；仅给陈建波保存 `selected / view` 后，部门默认和张三规则均未变化，陈建波有效范围变为 `selected`；删除陈建波个人规则后权限恢复部门默认。Headless Chrome 点选陈建波后显示「已选 1 人」，页面保存只新增陈建波「个人权限」标识，张三规则不变；清理后标识消失，console error / exception 均为 0。临时会话与陈建波个人规则均清零；无 Secret 或生产变更。
+
 > **2026-10-26 12:32 Zod 4.6.7 安全依赖补部署公司测试机（生产未部署）**：Zod P1 内存耗尽 DoS 的部署缺口收口，`shared/package.json` 由 `^4.6.5` 更新为 `^4.6.6`，锁文件解析 `zod 4.6.7`，与 `main@a45797ad` 一致；api / worker 容器内均为 `4.6.7`，`body-parser` 保持 `2.4.0`。
 
 > 部署前备份 `/srv/data/backups/before-zod-467-20261026T043045Z/shared-node-modules.tar.gz`（7.4 MB · SHA-256 `7b0681e67a58f5fa56fdc8206e7083f25ef9f8f95986c34a9d8922e250aa9568`）；tools 容器 `npm ci --include=dev` 安装 37 包。短暂停 `api` / `worker` 后恢复，无 DDL、迁移、compose、env、Secret 或生产变更。
