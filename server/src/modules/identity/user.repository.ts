@@ -13,6 +13,8 @@ export interface DirectoryUserProfile {
   displayName: string;
   email: string | null;
   status: "active" | "disabled";
+  /** 目录快照中的群组键（可选；缺省 = 本次不更新群组关系）。 */
+  groups?: string[];
 }
 
 export interface SsoProfile {
@@ -21,6 +23,8 @@ export interface SsoProfile {
   displayName: string;
   email: string | null;
   owner: string | null;
+  /** 令牌 groups 声明归一化结果；null = 令牌未下发该声明，不清空已同步关系。 */
+  groups: string[] | null;
 }
 
 /** users 数据访问（SSO 为准；登录时按键 casdoor_id upsert）。 */

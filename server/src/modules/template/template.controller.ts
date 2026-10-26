@@ -10,7 +10,7 @@ const idParam = new ZodValidationPipe(UuidSchema);
 /**
  * 任务节点库接口（M3-05 余 · 第一段；契约 shared/src/modules/templates.ts · A1-16 / A1-17）。
  * 读 = 登录即可（任务模板页左列 / 「项目总览 → 添加任务」卡片的节点来源）；
- * 写（新增 / 编辑 / 删除）= 服务层 `blueprint.manage` 复核（仅系统管理员，ADR-019 / ADR-020），每次变更写审计留痕。
+ * 写（新增 / 编辑 / 删除）= 服务层 `assertCanManageBlueprint` 复核（系统管理员或部门编辑账号），每次变更写审计留痕。
  * 删除 = 物理删行（与字典条目硬删同口径，Push 173）；已按该节点生成的项目任务不受影响。
  * 模板（TaskTemplate）的读写随本域第二段落，本控制器暂不含。
  */
@@ -35,7 +35,7 @@ export class TemplateController {
     return this.templates.createNode(body, actorId);
   }
 
-  /** 编辑节点（改名 / 英文名，乐观锁 version 必传）：不存在 404；版本过期 / 同阶段同名 409；非管理员 403。 */
+  /** 编辑节点（改名 / 英文名，乐观锁 version 必传）：不存在 404；版本过期 / 同阶段同名 409；无编辑权限 403。 */
   @Patch(":id")
   update(
     @Param("id", idParam) id: string,
@@ -45,7 +45,7 @@ export class TemplateController {
     return this.templates.updateNode(id, body, actorId);
   }
 
-  /** 删除节点（物理删行）：不存在 404；非管理员 403。 */
+  /** 删除节点（物理删行）：不存在 404；无编辑权限 403。 */
   @Delete(":id")
   remove(@Param("id", idParam) id: string, @CurrentActorId() actorId: string): Promise<TaskNodeDeleteResponse> {
     return this.templates.deleteNode(id, actorId);

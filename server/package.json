@@ -19,7 +19,10 @@
     "check:permission-matrix": "node scripts/check-permission-matrix.mjs",
     "storage:init": "node --env-file-if-exists=.env scripts/storage-init.mjs",
     "storage:it": "node --env-file-if-exists=.env scripts/storage-it.mjs",
-    "wecom:image:smoke": "npm run build && node scripts/wecom-image-smoke.mjs"
+    "wecom:image:smoke": "npm run build && node scripts/wecom-image-smoke.mjs",
+    "memory:smoke": "npm run build && node scripts/import-memory-smoke.mjs --mode import && node scripts/import-memory-smoke.mjs --mode preview --concurrency 2",
+    "memory:smoke:import": "npm run build && node scripts/import-memory-smoke.mjs --mode import",
+    "memory:smoke:preview": "npm run build && node scripts/import-memory-smoke.mjs --mode preview --concurrency 2"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1136.0",

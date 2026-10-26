@@ -303,7 +303,8 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
 
   // 权限画像（与 AppHeader 共用同一份进程内单飞缓存）：只用来裁决恢复 / 彻底删除入口的渲染 —— 服务端逐请求仍是最终裁决。
   const isAdmin = permissions !== null && permissions.roleCodes.includes("admin");
-  const canDeleteProject = hasPermission(permissions, "project.delete");
+  const groupReadOnly = permissions?.groupReadOnly === true;
+  const canDeleteProject = !groupReadOnly && hasPermission(permissions, "project.delete");
   const isProjectRecycle = query.tab === "project-recycled";
   const recycledProjects = projectRecycleState.kind === "ready" ? projectRecycleState.items : [];
 
@@ -773,7 +774,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
                               </button>
                             ) : (
                               <>
-                                <button
+                                {groupReadOnly ? null : <button
                                   type="button"
                                   data-file-restore={file.id}
                                   disabled={actionBusy !== null}
@@ -783,8 +784,8 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
                                   className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-300"
                                 >
                                   {t("lib.restore")}
-                                </button>
-                                {isAdmin ? (
+                                </button>}
+                                {isAdmin && !groupReadOnly ? (
                                   purgeConfirmId === file.id ? (
                                     <>
                                       <span className="text-[11px] text-rose-600">{t("lib.purge.note")}</span>

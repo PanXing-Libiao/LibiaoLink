@@ -41,6 +41,7 @@ export const taskTemplates = pgTable(
     name: text("name").notNull(),
     stageKey: text("stage_key").notNull(),
     version: integer("version").notNull().default(0),
+    createdBy: uuid("created_by").references(() => users.id),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     deletedBy: uuid("deleted_by").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -48,6 +49,7 @@ export const taskTemplates = pgTable(
   },
   (table) => [
     index("ix_task_templates_active_stage").on(table.stageKey, table.createdAt, table.id).where(sql`deleted_at is null`),
+    index("ix_task_templates_created_by").on(table.createdBy).where(sql`deleted_at is null`),
     check("ck_task_templates_stage_key", sql`${table.stageKey} in ${sql.raw(sqlValueList(STAGE_KEYS))}`),
     check("ck_task_templates_name", sql`char_length(btrim(${table.name})) between 1 and 100`),
     check("ck_task_templates_version", sql`${table.version} >= 0`),

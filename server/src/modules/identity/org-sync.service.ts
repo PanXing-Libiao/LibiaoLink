@@ -4,6 +4,7 @@ import { DatabaseService } from "../../db/database.service.js";
 import { AuditService } from "../audit/index.js";
 import { DepartmentRepository } from "./department.repository.js";
 import { SessionService } from "./session.service.js";
+import { UserGroupRepository } from "./user-group.repository.js";
 import { UserRepository } from "./user.repository.js";
 
 /** 目录记录：同步适配器（企微 / Casdoor）归一化后的输入；本服务不直接访问外部系统。 */
@@ -20,6 +21,8 @@ export interface OrgUserRecord {
   displayName: string;
   email: string | null;
   status: "active" | "disabled";
+  /** 目录群组键；undefined = 本次快照未提供群组字段（不更新已有关系）。 */
+  groups?: string[];
 }
 
 /** 一次目录快照（拉取时间为调用方给定；ClockService 随 worker 卡片接入）。 */
@@ -101,7 +104,7 @@ function orderDepartments(records: readonly OrgDepartmentRecord[]): OrgDepartmen
 
 /**
  * 组织同步引擎（h1 · D1-02 / D1-07）：消费目录快照 —— 部门树 upsert + 缺失停用、用户 upsert + 离职停用 + 踢线，产出差异报告。
- * 外部拉取（Casdoor / 企微）由适配器承担，随调度卡片（i5）接入 worker；本服务保持纯领域逻辑、可单测。
+ * 外部拉取（Casdoor / 企微）由适配器承担；Casdoor 已由 worker 启动即自动同步并周期轮询，本服务保持纯领域逻辑、可单测。
  * 留痕（Push 173）：用户停用 / 启用逐条写审计（objectType = user、entry = system、actorId = null —— 系统动作）；
  * 批次运行报告仍经返回值下发（新建 / 更新计数不逐条落审计，避免首次全量同步刷屏）。
  */
@@ -113,6 +116,7 @@ export class OrgSyncService {
     private readonly sessions: SessionService,
     private readonly audit: AuditService,
     private readonly database: DatabaseService,
+    private readonly groups?: UserGroupRepository,
   ) {}
 
   async applySnapshot(snapshot: OrgDirectorySnapshot, options: OrgSyncOptions = {}): Promise<OrgSyncReport> {
@@ -207,6 +211,9 @@ export class OrgSyncService {
     for (const record of records) {
       const before = byCasdoorId.get(record.casdoorId);
       const row = await this.users.upsertFromDirectory(record, at);
+      if (this.groups !== undefined && record.groups !== undefined) {
+        await this.groups.replaceForUser(row.id, record.groups, at);
+      }
       if (before === undefined) {
         created += 1;
         continue;

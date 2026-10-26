@@ -47,7 +47,7 @@ export class InternalUsersController {
   }
 }
 
-/** 目录同步作业入口（h1 · D1-02）：手动触发一次 Casdoor 拉取 + 差异应用；定时调度随 i5 接 worker。 */
+/** 目录同步作业入口（h1 · D1-02）：保留为运维手动补偿；常态由 worker 启动即自动同步并周期轮询，前端不提供同步按钮。 */
 @Controller("internal/org-sync")
 @UseGuards(InternalTokenGuard)
 export class InternalOrgSyncController {

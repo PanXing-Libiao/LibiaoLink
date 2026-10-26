@@ -17,12 +17,12 @@
   - h7 已接线写路径：项目创建 / 修改 / 归档（project）、名册增删（project_member）、任务创建 / 修改 / 进度（task）、节点新增 / 删除 / 完成与阶段推进 / 回退（node / stage）；门禁拒绝在 catch 内补写 `result=failed`。**Push 173 补口**：蓝图保存草稿 / 导入 / 发布（blueprint）+ 身份侧系统动作 —— 离职回收三动作、组织同步停用 / 启用 / 缺失策略（user · `entry=system`）。
   - 实现位置（Push 173）：`AuditService` / `AuditRepository` 迁至 `src/modules/audit/` —— admin 依赖 identity 守卫、identity 又要写审计，独立模块断环；`admin/index.ts` re-export 兼容，既有调用方零改动。
 - 越权留痕（C7-03）：全局异常过滤器（`common/errors/api-error.filter.ts`）在 403 与项目域 404 时经 `AUDIT_SINK` 令牌调用 `recordDenied()`（异步、失败只告警、不影响响应），落 `action=deny` + `result=denied`；路径 → 对象解析在 `common/audit/audit-path.ts`（纯函数，单测直测）。告警推送（企微）随 M5 通知模块。
-- 审计检索（C7-04 服务端）：GET /api/v1/audit-logs，仅 audit.view；按 objectType + objectId（按对象）、actorId（按人）、action / result / projectId / 时间区间筛选，occurredAt 降序（同毫秒按 id 降序）；`result=denied` 即越权尝试筛法。页面与导出随 u12（px 线）。
-- 权限：`dict.manage` / `audit.view` 入契约 `PERMISSION_KEYS`（现 26 键）；种子 `database/seeds/role-permissions.mjs` 给 admin 补两键（admin 26 键 = 契约全量）。
+- 审计检索（C7-04 服务端）：GET /api/v1/audit-logs，所有登录账号可读；管理员全量，普通账号仅本人记录，项目经理另可见当前有效范围内本人担任项目经理的项目记录；按 objectType + objectId（按对象）、actorId（按人）、action / result / projectId / 时间区间筛选，occurredAt 降序（同毫秒按 id 降序）；`result=denied` 即越权尝试筛法。页面与导出随 u12（px 线）。
+- 权限：`dict.manage` 继续按功能权限位判定；`audit.view` 保留为契约兼容键，但操作记录接口不再依赖它，改由登录身份 + 服务端 `auditScope` 收敛。种子 `role-permissions.mjs` 的历史授权不变。
 
 ## 与其它模块的边界
 
-- 依赖方向：admin → identity（会话 / CSRF 守卫）、permission（dict.manage / audit.view 的统一判定出口）；**审计出口（Push 173）**：admin → audit，identity → audit（离职回收 / 组织同步写审计）—— audit 无业务依赖，断 admin ↔ identity 环；平台模块不反依赖业务模块 —— 业务模块反向 import `AuditService`（`admin/index.ts` 或 `audit/index.ts`）注入留痕；common 不依赖 modules（越权留痕经 `AUDIT_SINK` 令牌 + useExisting 接线）。
+- 依赖方向：admin → identity（会话 / CSRF 守卫）、permission（字典与审计范围的统一判定出口）；**审计出口（Push 173）**：admin → audit，identity → audit（离职回收 / 组织同步写审计）—— audit 无业务依赖，断 admin ↔ identity 环；平台模块不反依赖业务模块 —— 业务模块反向 import `AuditService`（`admin/index.ts` 或 `audit/index.ts`）注入留痕；common 不依赖 modules（越权留痕经 `AUDIT_SINK` 令牌 + useExisting 接线）。
 - 审计仓储直读 `users.displayName` 取操作人姓名快照（platform → identity 表的只读引用，不经 identity 业务出口；check:boundaries 无违规）。
 - 蓝图（blueprint）写路径留痕**已接线（Push 173）**：草稿保存 / 导入 / 发布同事务写审计；`assertAdmin` 的 403 仍由全局过滤器记 denied。
 

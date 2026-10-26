@@ -512,9 +512,13 @@ export function IssueStateCell({ state, tierTint = false, ariaLabel, onPick }: {
   /** 背景档位铺色档（适中 / 炫彩 · 整行已铺行色）：色签收口成只留深色字 —— 同追踪表口径。 */
   tierTint?: TintedTier | false;
   ariaLabel: string;
-  onPick: (next: IssueState) => void;
+  /** 不传 = 只读：只渲染色签，不渲染下拉入口。 */
+  onPick?: (next: IssueState) => void;
 }) {
   const locale = useLocale();
+  if (onPick === undefined) {
+    return <IssueStateTag state={state} tierTint={tierTint} />;
+  }
   return (
     <InlineOptionCell
       bare
@@ -1336,10 +1340,10 @@ const REPORT_COLUMNS: readonly string[] = [
 function ReportList({ reports, onEdit, onPatch, onDelete }: {
   reports: readonly DailyReport[];
   /** 行尾「编辑」按钮（Push 223）：打开日报编辑弹窗 —— 文字两列 + 现场工作附图（关联阶段是下拉口径，保持行内）。 */
-  onEdit: (report: DailyReport) => void;
-  /** 行内编辑落值（Push 208 口径保留）：本表只剩「关联阶段」一列。 */
-  onPatch: (id: string, patch: ReportPatch) => void;
-  onDelete: (id: string) => void;
+  onEdit?: (report: DailyReport) => void;
+  /** 行内编辑落值（Push 208 口径保留）：本表只剩「关联阶段」一列；不传 = 只读展示。 */
+  onPatch?: (id: string, patch: ReportPatch) => void;
+  onDelete?: (id: string) => void;
 }) {
   const locale = useLocale();
   const localize = useLocalizedTranslator();
@@ -1395,26 +1399,28 @@ function ReportList({ reports, onEdit, onPatch, onDelete }: {
                       浮层 = 与表单同款九阶段勾选清单；显示态 = StageTags 色签组（逐枚出签、与浮层共用一张色表）。
                       Push 223 续（业务口径 2026-09-29「阴影太大了」）：触发器 hover 底色改**贴色签**（CELL_EDIT_CHIP ——
                       不再 w-full 铺满整列），只有色签四周那圈 2px 亮起。 */}
-                  <InlineCell
-                    ariaLabel={t("rp.stagesAria", { date: report.date })}
-                    title={t("rp.pickMultiTitle")}
-                    width={220}
-                    height={REPORT_STAGES.length * 30 + 12}
-                    bare
-                    triggerClassName={CELL_EDIT_CHIP}
-                    display={<StageTags names={report.stageNames} />}
-                    render={() => (
-                      <MultiOptionList
-                        values={report.stageNames}
-                        options={REPORT_STAGES}
-                        ariaLabel={t("rp.stagesAria", { date: report.date })}
-                        onChange={(next) => {
-                          onPatch(report.id, { stageNames: next });
-                        }}
-                        renderLabel={(name) => stageChip(name, locale)}
-                      />
-                    )}
-                  />
+                  {onPatch === undefined ? <StageTags names={report.stageNames} /> : (
+                    <InlineCell
+                      ariaLabel={t("rp.stagesAria", { date: report.date })}
+                      title={t("rp.pickMultiTitle")}
+                      width={220}
+                      height={REPORT_STAGES.length * 30 + 12}
+                      bare
+                      triggerClassName={CELL_EDIT_CHIP}
+                      display={<StageTags names={report.stageNames} />}
+                      render={() => (
+                        <MultiOptionList
+                          values={report.stageNames}
+                          options={REPORT_STAGES}
+                          ariaLabel={t("rp.stagesAria", { date: report.date })}
+                          onChange={(next) => {
+                            onPatch(report.id, { stageNames: next });
+                          }}
+                          renderLabel={(name) => stageChip(name, locale)}
+                        />
+                      )}
+                    />
+                  )}
                 </td>
                 <td className="min-w-[240px] whitespace-pre-line break-words border-b border-zinc-100 px-4 py-4 leading-6 text-zinc-800">
                   {/* Push 223（业务口径「文字和图片编辑要同款」）：当日完成工作改由行尾「编辑」弹窗落值 ——
@@ -1442,24 +1448,26 @@ function ReportList({ reports, onEdit, onPatch, onDelete }: {
                       幽灵态 24px → 悬停 48px **只在槽内长大**；槽容器固定 78px（48 展开 + 6 间距 + 24 静止），
                       单元格内容宽不变 ⇒ 表格列宽 / 表宽一格不动（业务反馈「鼠标触碰表格会动」）。
                       px-4(16×2) + 78 = 110 = w-[110px]，列宽正好对上表头。 */}
-                  <span className="flex h-6 w-[78px] shrink-0 items-center justify-end gap-1.5">
-                    <span data-report-edit-slot="">
-                      <RowEditButton
-                        label={t("report.row.editReport", { date: report.date })}
-                        onEdit={() => {
-                          onEdit(report);
-                        }}
-                      />
+                  {onEdit === undefined && onDelete === undefined ? null : (
+                    <span className="flex h-6 w-[78px] shrink-0 items-center justify-end gap-1.5">
+                      {onEdit === undefined ? null : <span data-report-edit-slot="">
+                        <RowEditButton
+                          label={t("report.row.editReport", { date: report.date })}
+                          onEdit={() => {
+                            onEdit(report);
+                          }}
+                        />
+                      </span>}
+                      {onDelete === undefined ? null : <span data-report-delete-slot="">
+                        <RowDeleteButton
+                          label={t("report.row.deleteReport", { date: report.date })}
+                          onDelete={() => {
+                            onDelete(report.id);
+                          }}
+                        />
+                      </span>}
                     </span>
-                    <span data-report-delete-slot="">
-                      <RowDeleteButton
-                        label={t("report.row.deleteReport", { date: report.date })}
-                        onDelete={() => {
-                          onDelete(report.id);
-                        }}
-                      />
-                    </span>
-                  </span>
+                  )}
                 </td>
               </tr>
             );
@@ -1555,7 +1563,8 @@ type PendingIssueDrag = {
  */
 function IssueBoard({ issues, onPatch, onOpen }: {
   issues: readonly Issue[];
-  onPatch: (id: string, patch: IssuePatch) => void;
+  /** 不传 = 只读：卡片仍可打开详情，但不能拖动改状态。 */
+  onPatch?: (id: string, patch: IssuePatch) => void;
   onOpen: (id: string) => void;
 }) {
   const locale = useLocale();
@@ -1689,7 +1698,7 @@ function IssueBoard({ issues, onPatch, onOpen }: {
       if (!wasDragging || target === null) {
         return;
       }
-      patchRef.current(pending.issueId, { state: target });
+      patchRef.current?.(pending.issueId, { state: target });
     };
     const handleCancel = () => {
       endDrag();
@@ -1792,7 +1801,7 @@ function IssueBoard({ issues, onPatch, onOpen }: {
                         openIssueCard(issue.id);
                       }}
                       dragging={draggingId === issue.id}
-                      onPointerDownDrag={beginCardDrag}
+                      onPointerDownDrag={onPatch === undefined ? undefined : beginCardDrag}
                     />
                   ))
                 )}
@@ -1840,9 +1849,9 @@ function IssueTable({ issues, tierTint, onEdit, onPatch, onDelete }: {
   issues: readonly Issue[];
   tierTint: TintedTier | false;
   /** 行尾「编辑」按钮（Push 223）：打开问题编辑弹窗 —— 文字两列 + 问题附图（归类 / 状态是下拉口径，保持行内）。 */
-  onEdit: (issue: Issue) => void;
-  onPatch: (id: string, patch: IssuePatch) => void;
-  onDelete: (issue: Issue) => void;
+  onEdit?: (issue: Issue) => void;
+  onPatch?: (id: string, patch: IssuePatch) => void;
+  onDelete?: (issue: Issue) => void;
 }) {
   const locale = useLocale();
   const localize = useLocalizedTranslator();
@@ -1881,19 +1890,21 @@ function IssueTable({ issues, tierTint, onEdit, onPatch, onDelete }: {
                 {/* Push 208：问题归类行内可改 —— 浮层 = 表单侧同款多选（绿勾 · 点选不收浮层），落值按「、」连接 */}
                 {/* Push 217 续③（业务口径「会出现截断的问题」）：wrapContent —— 撤包裹层 truncate 裁剪：窄窗 / 列被挤到
                     最小时色签不再被裁掉一角（色签折行 / 触发器内衬等其他表现不变，壳档位见 InlineCell）。 */}
-                <InlineMultiOptionCell
-                  bare
-                  wrapContent
-                  values={issue.categories}
-                  options={ISSUE_CATEGORIES}
-                  ariaLabel={t("rp.catAria", { date: issue.raisedAt })}
-                  renderLabel={(name) => categoryChip(name, locale)}
-                  triggerClassName={CELL_EDIT_CHIP}
-                  display={<CategoryTags values={issue.categories} />}
-                  onChange={(values) => {
-                    onPatch(issue.id, { categories: values });
-                  }}
-                />
+                {onPatch === undefined ? <CategoryTags values={issue.categories} /> : (
+                  <InlineMultiOptionCell
+                    bare
+                    wrapContent
+                    values={issue.categories}
+                    options={ISSUE_CATEGORIES}
+                    ariaLabel={t("rp.catAria", { date: issue.raisedAt })}
+                    renderLabel={(name) => categoryChip(name, locale)}
+                    triggerClassName={CELL_EDIT_CHIP}
+                    display={<CategoryTags values={issue.categories} />}
+                    onChange={(values) => {
+                      onPatch(issue.id, { categories: values });
+                    }}
+                  />
+                )}
               </td>
               <td className="min-w-[110px] whitespace-nowrap px-4 py-4 text-zinc-700">
                 {/* Push 243（业务口径「图三图四增加列 问题处理人 / 责任人」）：展示only —— 问题记录生成时随内联问题
@@ -1919,7 +1930,7 @@ function IssueTable({ issues, tierTint, onEdit, onPatch, onDelete }: {
                   state={issue.state}
                   tierTint={tierTint}
                   ariaLabel={t("rp.stateAria", { date: issue.raisedAt })}
-                  onPick={(next) => {
+                  onPick={onPatch === undefined ? undefined : (next) => {
                     onPatch(issue.id, { state: next });
                   }}
                 />
@@ -1928,24 +1939,26 @@ function IssueTable({ issues, tierTint, onEdit, onPatch, onDelete }: {
                 {/* 行尾动作槽位（Push 223 · 干系人同款两枚：编辑 + 删除）—— 槽容器固定 78px（48 展开 + 6 间距 + 24 静止），
                     幽灵态 24px → 悬停 48px 只在槽内长大，不推挤左侧列（业务反馈「问题追踪的没做好 鼠标触碰表格会动」）。
                     px-4(16×2) + 78 = 110 = w-[110px]（与「日报记录」同槽位）。 */}
-                <span className="flex h-6 w-[78px] shrink-0 items-center justify-end gap-1.5">
-                  <span data-issue-edit-slot="">
-                    <RowEditButton
-                      label={t("report.row.editIssue", { date: issue.raisedAt })}
-                      onEdit={() => {
-                        onEdit(issue);
-                      }}
-                    />
+                {onEdit === undefined && onDelete === undefined ? null : (
+                  <span className="flex h-6 w-[78px] shrink-0 items-center justify-end gap-1.5">
+                    {onEdit === undefined ? null : <span data-issue-edit-slot="">
+                      <RowEditButton
+                        label={t("report.row.editIssue", { date: issue.raisedAt })}
+                        onEdit={() => {
+                          onEdit(issue);
+                        }}
+                      />
+                    </span>}
+                    {onDelete === undefined ? null : <span data-issue-delete-slot="">
+                      <RowDeleteButton
+                        label={t("report.row.deleteIssue", { date: issue.raisedAt })}
+                        onDelete={() => {
+                          onDelete(issue);
+                        }}
+                      />
+                    </span>}
                   </span>
-                  <span data-issue-delete-slot="">
-                    <RowDeleteButton
-                      label={t("report.row.deleteIssue", { date: issue.raisedAt })}
-                      onDelete={() => {
-                        onDelete(issue);
-                      }}
-                    />
-                  </span>
-                </span>
+                )}
               </td>
             </tr>
           ))}
@@ -3032,7 +3045,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
   );
 }
 
-export function ReportIssuePanel({ project, me, members, tierTint, sub, onChangeSub }: {
+export function ReportIssuePanel({ project, me, members, tierTint, sub, onChangeSub, readOnly = false }: {
   project: Project;
   me: MeResponse;
   /** 项目成员（Push 243：问题处理人 / 责任人下拉的候选）。 */
@@ -3044,6 +3057,8 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
   sub: DailySubView;
   /** 切页内子视图（写回地址 · replace，不新增历史条目）。 */
   onChangeSub: (sub: DailySubView) => void;
+  /** 部门群组只读：查看历史数据，但不渲染填写 / 编辑 / 删除 / 拖拽等写入入口。 */
+  readOnly?: boolean;
 }) {
   const locale = useLocale();
   const t = useT();
@@ -3130,6 +3145,9 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
    *  日期 / 提交时间一律不碰（「编辑后时间不变」）；文字列在保存时统一过一遍自动序号（与「日报填写」提交口径一致）；
    *  「当日完成工作」是契约必填，清空会被服务端拒绝 —— 前端先拦。 */
   const patchReport = (id: string, patch: ReportPatch) => {
+    if (readOnly) {
+      return;
+    }
     if (patch.doneWork !== undefined && patch.doneWork === "") {
       notify("error", t("report.notice.doneRequired"));
       return;
@@ -3151,6 +3169,9 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
 
   /** 问题行内编辑落值（Push 216 接真）：同日报一套 —— 乐观更新 + PATCH 回包替换；提出日期不动。 */
   const patchIssue = (id: string, patch: IssuePatch) => {
+    if (readOnly) {
+      return;
+    }
     if (patch.title !== undefined && patch.title === "") {
       notify("error", t("report.notice.titleRequired"));
       return;
@@ -3258,6 +3279,9 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
 
   /** 行尾删除的第一下（日报记录表）：只记下待删日报 —— 派生问题的连带删除语义见 deleteReportUnit。 */
   const requestDeleteReport = (reportId: string) => {
+    if (readOnly) {
+      return;
+    }
     const report = reportsRef.current.find((item) => item.id === reportId);
     if (report !== undefined) {
       setPendingDelete({ kind: "report", report });
@@ -3266,6 +3290,9 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
 
   /** 行尾删除的第一下（问题追踪表）：只记下待删问题 —— 来源日报的连带删除语义见 deleteIssueUnit。 */
   const requestDeleteIssue = (issue: Issue) => {
+    if (readOnly) {
+      return;
+    }
     setPendingDelete({ kind: "issue", issue });
   };
 
@@ -3356,7 +3383,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
   /** 提交（已提交）：写库（有本表单草稿 = PATCH 把草稿提交，否则新建）→ 服务端按 A3-09 自动生成问题（幂等）；
    *  成功后重取两表、表单复位并切「日报记录」。 */
   const handleSubmit = () => {
-    if (saving) {
+    if (readOnly || saving) {
       return;
     }
     const blocking = uploadBlockingMessage(draft, locale);
@@ -3402,7 +3429,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
   /** 暂存草稿（Push 216 接真 · 业务口径「接真后草稿到底写不写库 写」）：写库 state=draft（同日多条不设限；
    *  已有本表单草稿 = 更新那一条）；契约「当日完成工作」必填 —— 暂存同样先填，否则服务端 400。 */
   const handleSaveDraft = () => {
-    if (saving) {
+    if (readOnly || saving) {
       return;
     }
     if (renumberLines(draft.doneWork) === "") {
@@ -3480,6 +3507,9 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
 
       {subTab === "日报填写" ? (
         /* 日报填写 = 居中窄栏（max-w-3xl = 768px，像一张表单）；其余三块子视图仍是全宽 */
+        readOnly ? (
+          <EmptyCard text={t("access.readOnlyTitle")} hint={t("access.readOnlyHint")} />
+        ) : (
         <div className="mx-auto w-full max-w-3xl">
           <ReportFillForm
             project={project}
@@ -3503,6 +3533,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
             </div>
           ) : null}
         </div>
+        )
       ) : loadState === "loading" ? (
         /* Push 216 接真：三个列表子视图共用同一份首屏加载态 */
         <EmptyCard text={t("common.loading")} hint={t("report.loading.hint")} />
@@ -3540,7 +3571,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
           ) : visibleReports.length === 0 ? (
             <EmptyCard text={t("report.records.emptyMatch", { kw: recordKeyword.trim() })} hint={t("report.emptyHint")} />
           ) : (
-            <ReportList reports={visibleReports} onEdit={(report) => { setEditModal({ kind: "report", id: report.id }); }} onPatch={patchReport} onDelete={requestDeleteReport} />
+            <ReportList reports={visibleReports} onEdit={readOnly ? undefined : (report) => { setEditModal({ kind: "report", id: report.id }); }} onPatch={readOnly ? undefined : patchReport} onDelete={readOnly ? undefined : requestDeleteReport} />
           )}
         </section>
       ) : subTab === "问题追踪" ? (
@@ -3564,7 +3595,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
           ) : visibleIssues.length === 0 ? (
             <EmptyCard text={t("report.issues.emptyMatch", { kw: issueKeyword.trim() })} hint={t("report.emptyHint")} />
           ) : (
-            <IssueTable issues={visibleIssues} tierTint={tierRows} onEdit={(issue) => { setEditModal({ kind: "issue", id: issue.id }); }} onPatch={patchIssue} onDelete={requestDeleteIssue} />
+            <IssueTable issues={visibleIssues} tierTint={tierRows} onEdit={readOnly ? undefined : (issue) => { setEditModal({ kind: "issue", id: issue.id }); }} onPatch={readOnly ? undefined : patchIssue} onDelete={readOnly ? undefined : requestDeleteIssue} />
           )}
         </section>
       ) : (
@@ -3573,13 +3604,13 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
           {issues.length === 0 ? (
             <EmptyCard text={t("report.issues.empty")} hint={t("report.issues.emptyHint")} />
           ) : (
-            <IssueBoard issues={issues} onPatch={patchIssue} onOpen={(id) => { setOpenIssueId(id); }} />
+            <IssueBoard issues={issues} onPatch={readOnly ? undefined : patchIssue} onOpen={(id) => { if (!readOnly) setOpenIssueId(id); }} />
           )}
         </section>
       )}
 
       {/* 问题详情抽屉（Push 209）：点看板卡片打开，Esc / 点遮罩关闭 */}
-      {openIssue === null ? null : <IssueDrawer projectId={project.id} members={members} issue={openIssue} report={openIssueReport} onPatchIssue={patchIssue} onPatchReport={patchReport} onClose={() => { setOpenIssueId(null); }} />}
+      {openIssue === null || readOnly ? null : <IssueDrawer projectId={project.id} members={members} issue={openIssue} report={openIssueReport} onPatchIssue={patchIssue} onPatchReport={patchReport} onClose={() => { setOpenIssueId(null); }} />}
 
       {/* 行编辑弹窗（Push 223）：日报 / 问题各一枚 —— 与「干系人」弹窗同款；取消 / Esc / 点遮罩关闭，保存成功才关 */}
       {editingReport === null ? null : (

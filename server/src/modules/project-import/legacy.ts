@@ -451,7 +451,7 @@ export function convertStakeholders(
 export function sniffYear(sheets: SheetGrid[]): number | null {
   for (const sheet of sheets) {
     for (const row of sheet.rows) {
-      for (const cell of row) {
+      for (const cell of row ?? []) {
         const match = clean(cell).match(/([0-9]{4})年/);
         if (match !== null && match[1] !== undefined) return Number(match[1]);
       }
@@ -511,7 +511,7 @@ export function convertLegacyWorkbook(workbook: ParsedWorkbook, fileName: string
   let year: number | null = null;
   if (reportSheet !== null) {
     outer: for (const row of reportSheet.sheet.rows) {
-      for (const cell of row) {
+      for (const cell of row ?? []) {
         const text = clean(cell);
         const match = text.match(/([0-9]{4})年/);
         if (match !== null) {

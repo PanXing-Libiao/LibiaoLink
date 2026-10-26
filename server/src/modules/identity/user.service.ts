@@ -1,5 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { AppError } from "../../common/errors/app-error.js";
+import { readCasdoorGroupKeys } from "./casdoor-groups.js";
+import { UserGroupRepository } from "./user-group.repository.js";
 import { UserRepository, type SsoProfile, type UserRow } from "./user.repository.js";
 
 /** claims → users 的归一化口径（ADR-010：JWT-Custom 的 name=工号、displayName=姓名）。 */
@@ -10,12 +12,14 @@ export function normalizeSsoProfile(claims: Record<string, unknown>): SsoProfile
   }
   const username = firstString(claims.name) ?? casdoorId;
   const displayName = firstString(claims.displayName) ?? username;
+  const owner = firstString(claims.owner);
   return {
     casdoorId,
     username,
     displayName,
     email: firstString(claims.email),
-    owner: firstString(claims.owner),
+    owner,
+    groups: readCasdoorGroupKeys(claims.groups, owner),
   };
 }
 
@@ -48,10 +52,18 @@ export interface UserDirectoryPage {
 /** 用户用例：登录 upsert（不重新启用已禁用账号）+ 对外 getUser 与用户目录（h1）。 */
 @Injectable()
 export class UserService {
-  constructor(private readonly users: UserRepository) {}
+  constructor(
+    private readonly users: UserRepository,
+    private readonly groups?: UserGroupRepository,
+  ) {}
 
   async upsertFromClaims(claims: Record<string, unknown>): Promise<UserRow> {
-    return this.users.upsert(normalizeSsoProfile(claims));
+    const profile = normalizeSsoProfile(claims);
+    const row = await this.users.upsert(profile);
+    if (this.groups !== undefined && profile.groups !== null) {
+      await this.groups.replaceForUser(row.id, profile.groups, new Date());
+    }
+    return row;
   }
 
   async getUser(userId: string): Promise<UserRow> {

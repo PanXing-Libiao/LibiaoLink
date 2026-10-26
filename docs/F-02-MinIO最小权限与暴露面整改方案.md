@@ -12,17 +12,17 @@
 | 切片 | 状态 | PR / commit | 部署与验证证据 | 备注 |
 |---|---|---|---|---|
 | S0 · 方案落档与评审冻结 | 已通过并冻结（2026-10-23） | PR [#554](https://github.com/PanXing-Libiao/LibiaoLink/pull/554)；S0 签收提交 | 本文 §5 / S0 评审记录 | px、wmj 已复核；9443 回环保留至 S6 复评 |
-| S1 · 关闭宿主端口暴露 | 已部署测试机（2026-10-23） | PR [#589](https://github.com/PanXing-Libiao/LibiaoLink/pull/589)；squash `1b24536` | `minio` / `web` 已重建；`9000` 不发布，`9001` / `9443` 仅回环，开发机三端口不可达；见 `deploy/prod/README.md` v2.23 | 端口复核通过；生产未部署 |
-| S2 · 主机防火墙与外部网络复核 | 已部署并持久化（2026-10-23）；重启复核待 S6 | PR [#589](https://github.com/PanXing-Libiao/LibiaoLink/pull/589)；squash `1b24536` | DOCKER-USER unit `enabled/active`，`check` 通过；见 v2.23 | Docker / 主机重启后的规则恢复待 S6 |
-| S3 · MinIO 最小权限身份与策略 | 已部署测试机（2026-10-23）；验收登记待收口 | PR [#591](https://github.com/PanXing-Libiao/LibiaoLink/pull/591)；squash `311c738c` | `apply` / `check` 通过；应用 `admin info` 与建桶均 `AccessDenied`；见 v2.23 | 运行时主路径通过；S3-T1～T9 逐项证据待 S7 登记 |
-| S4 · Secrets 隔离与运行时凭据切换 | 已部署测试机（2026-10-23）；验收登记待收口 | PR [#594](https://github.com/PanXing-Libiao/LibiaoLink/pull/594)；squash `88670d85` | `api` / `worker` 仅挂白名单单文件 Secret、UID/GID 1000；`storage:init --check` 与 `storage:it` 24/24 通过；见 v2.23 | 运行时主路径通过；S4-T9 认证后浏览器全链路与逐项证据待 S7 登记 |
+| S1 · 关闭宿主端口暴露 | 已部署测试机（2026-10-23） | PR [#589](https://github.com/PanXing-Libiao/LibiaoLink/pull/589)；squash `1b24536` | `minio` / `web` 已重建；`9000` 不发布，`9001` / `9443` 仅回环，开发机三端口不可达；见 `deploy/prod/README.md` v2.30 | 端口复核通过；生产未部署 |
+| S2 · 主机防火墙与外部网络复核 | 已部署并持久化（2026-10-23）；重启复核待 S6 | PR [#589](https://github.com/PanXing-Libiao/LibiaoLink/pull/589)；squash `1b24536` | DOCKER-USER unit `enabled/active`，`check` 通过；见 v2.30 | Docker / 主机重启后的规则恢复待 S6 |
+| S3 · MinIO 最小权限身份与策略 | 已部署测试机（2026-10-23）；验收登记待收口 | PR [#591](https://github.com/PanXing-Libiao/LibiaoLink/pull/591)；squash `311c738c` | `apply` / `check` 通过；应用 `admin info` 与建桶均 `AccessDenied`；见 v2.30 | 运行时主路径通过；S3-T1～T9 逐项证据待 S7 登记 |
+| S4 · Secrets 隔离与运行时凭据切换 | 已部署测试机（2026-10-23）；验收登记待收口 | PR [#594](https://github.com/PanXing-Libiao/LibiaoLink/pull/594)；squash `88670d85` | `api` / `worker` 仅挂白名单单文件 Secret、UID/GID 1000；`storage:init --check` 与 `storage:it` 24/24 通过；见 v2.30 | 运行时主路径通过；S4-T9 认证后浏览器全链路与逐项证据待 S7 登记 |
 | S5 · root 凭据轮换与旧凭据失效 | 已部署测试机（2026-10-23）；验收登记待收口 | PR [#595](https://github.com/PanXing-Libiao/LibiaoLink/pull/595)；squash `1881deac` | 新 root 认证通过、旧 root 拒绝、旧口令扫描 `zero-hits`、状态目录已清理；证据 `/srv/data/backups/f02-s5-evidence/root-rotation-20261023T085110Z-success-7042.txt` | S5-T3 / T7 等逐项证据、认证后浏览器全链路与故障注入项待 S7 收口；不得回滚为 root 应用凭据 |
 | S6 · 文档、H1 兼容与全量回归 | 待执行 | 待填 | 待填 | 9443 保留时只能经 SSH 隧道 |
 | S7 · 验收回放与 F-02 关闭 | 待执行 | 待填 | 待填 | 旧凭据失效、外网不可达、证据齐全后才关闭 |
 
 执行时更新本表：开始时写「进行中」；PR 合入后填 PR / commit；测试机或生产部署后填脱敏证据位置；发生设计变更时先在正文更新决策，再改本表。
 
-> **运行时验证批次（2026-10-23 已部署测试机）**：S1～S5 已在公司测试机部署，执行记录见 `deploy/prod/README.md` v2.23、`开发日志.md` Push 460 / 461 与 PR [#596](https://github.com/PanXing-Libiao/LibiaoLink/pull/596)。运行时主路径结果已回填；认证后真实上传 / 预览浏览器验收未执行，S5-T3 历史值 / 旧预签名、T7 压缩 / 二进制备份敏感登记与故障注入项等逐项证据仍待 S7 收口。F-02 尚未关闭，生产未部署。
+> **运行时验证批次（2026-10-23 已部署测试机）**：S1～S5 已在公司测试机部署，执行记录见 `deploy/prod/README.md` v2.30、`开发日志.md` Push 460 / 461 与 PR [#596](https://github.com/PanXing-Libiao/LibiaoLink/pull/596)。运行时主路径结果已回填；认证后真实上传 / 预览浏览器验收未执行，S5-T3 历史值 / 旧预签名、T7 压缩 / 二进制备份敏感登记与故障注入项等逐项证据仍待 S7 收口。F-02 尚未关闭，生产未部署。
 
 ## 1. 结论
 

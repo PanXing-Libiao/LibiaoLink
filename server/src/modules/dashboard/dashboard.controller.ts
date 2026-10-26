@@ -5,6 +5,7 @@ import type {
   DashboardProgressResponse,
 } from "@libiaolink/contracts";
 import { CurrentActorId, SessionGuard } from "../identity/index.js";
+import { GroupAccessGuard, RequireAccessPage } from "../permission/index.js";
 import { DashboardService } from "./dashboard.service.js";
 
 /**
@@ -12,7 +13,8 @@ import { DashboardService } from "./dashboard.service.js";
  * 根路径 /api/v1/dashboard；仅会话守卫，不做功能权限位，数据按项目可见性过滤。
  */
 @Controller("api/v1/dashboard")
-@UseGuards(SessionGuard)
+@UseGuards(SessionGuard, GroupAccessGuard)
+@RequireAccessPage("dashboard")
 export class DashboardController {
   constructor(private readonly dashboard: DashboardService) {}
 

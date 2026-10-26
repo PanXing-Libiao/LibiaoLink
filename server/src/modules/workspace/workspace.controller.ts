@@ -1,6 +1,7 @@
 import { Controller, Get, UseGuards } from "@nestjs/common";
 import type { WorkspaceResponse } from "@libiaolink/contracts";
 import { CurrentActorId, SessionGuard } from "../identity/index.js";
+import { GroupAccessGuard, RequireAccessPage } from "../permission/index.js";
 import { WorkspaceService } from "./workspace.service.js";
 
 /**
@@ -8,7 +9,8 @@ import { WorkspaceService } from "./workspace.service.js";
  * 根路径 /api/v1/workspace（无项目路径参数）—— 个人读面：仅会话；不做功能权限位，数据按项目可见性过滤。
  */
 @Controller("api/v1/workspace")
-@UseGuards(SessionGuard)
+@UseGuards(SessionGuard, GroupAccessGuard)
+@RequireAccessPage("workspace")
 export class WorkspaceController {
   constructor(private readonly workspace: WorkspaceService) {}
 
