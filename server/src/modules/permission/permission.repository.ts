@@ -318,12 +318,22 @@ export class PermissionRepository {
     }));
   }
 
-  /** 权限页虚拟「未分组」：当前没有任何部门成员关系的账号（含停用，排除已删除）。 */
-  async listUngroupedUsers(): Promise<GroupAccessUserRecord[]> {
-    const memberships = this.database.db
-      .select({ userId: userGroupMemberships.userId })
-      .from(userGroupMemberships)
-      .where(eq(userGroupMemberships.userId, users.id));
+  /** 权限页虚拟「未分组」：当前没有任何有效部门成员关系的账号（含停用，排除已删除）。 */
+  async listUngroupedUsers(activeGroupKeys?: readonly string[]): Promise<GroupAccessUserRecord[]> {
+    const membershipWhere = activeGroupKeys !== undefined
+      ? activeGroupKeys.length === 0
+        ? null
+        : and(
+            eq(userGroupMemberships.userId, users.id),
+            inArray(userGroupMemberships.groupKey, [...activeGroupKeys]),
+          )
+      : eq(userGroupMemberships.userId, users.id);
+    const memberships = membershipWhere === null
+      ? null
+      : this.database.db
+          .select({ userId: userGroupMemberships.userId })
+          .from(userGroupMemberships)
+          .where(membershipWhere);
     const rows = await this.database.db
       .select({
         userId: users.id,
@@ -333,7 +343,7 @@ export class PermissionRepository {
         status: users.status,
       })
       .from(users)
-      .where(and(isNull(users.removedAt), notExists(memberships)))
+      .where(memberships === null ? isNull(users.removedAt) : and(isNull(users.removedAt), notExists(memberships)))
       .orderBy(asc(users.displayName), asc(users.username));
     return rows.map((row) => ({
       ...row,

@@ -3,6 +3,14 @@ import { createPortal } from "react-dom";
 import { usePopover } from "./usePopover";
 import { useT } from "../i18n";
 
+const SELECT_MENU_MAX_HEIGHT = 320;
+const SELECT_MENU_OPTION_ROW_HEIGHT = 34;
+
+/** 长列表只露一屏，浮层定位按截断后的高度计算，避免整张菜单翻到触发框上方。 */
+function selectMenuPopoverHeight(optionCount: number): number {
+  return Math.min(optionCount * SELECT_MENU_OPTION_ROW_HEIGHT + 12, SELECT_MENU_MAX_HEIGHT);
+}
+
 /** 选项文案：普通枚举用字符串，带色标签的枚举（如任务状态）直接用 ReactNode。 */
 export type SelectOption = {
   value: string;
@@ -132,7 +140,7 @@ type SelectMenuProps = {
 
 /** 普通下拉（不可搜索）：状态 / 紧急重要度这类枚举字段。 */
 export function SelectMenu({ value, options, onChange, placeholder: placeholderProp, ariaLabel, disabled = false }: SelectMenuProps) {
-  const { open, setOpen, position, triggerRef, popoverRef } = usePopover(160, options.length * 34 + 12);
+  const { open, setOpen, position, triggerRef, popoverRef } = usePopover(160, selectMenuPopoverHeight(options.length));
   const t = useT();
   const placeholder = placeholderProp ?? t("sel.placeholder");
   const selected = options.find((option) => option.value === value) ?? null;
@@ -177,15 +185,17 @@ export function SelectMenu({ value, options, onChange, placeholder: placeholderP
               className="fixed z-50 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.18)]"
               style={{ top: position.top, left: position.left, width: position.width }}
             >
-              <OptionList
-                options={options}
-                value={value}
-                ariaLabel={ariaLabel}
-                onPick={(next) => {
-                  onChange(next);
-                  setOpen(false);
-                }}
-              />
+              <div data-select-scroll="true" className="overflow-y-auto overscroll-contain" style={{ maxHeight: SELECT_MENU_MAX_HEIGHT }}>
+                <OptionList
+                  options={options}
+                  value={value}
+                  ariaLabel={ariaLabel}
+                  onPick={(next) => {
+                    onChange(next);
+                    setOpen(false);
+                  }}
+                />
+              </div>
             </div>,
             document.body,
           )

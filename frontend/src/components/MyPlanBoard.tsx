@@ -15,6 +15,7 @@ import {
   PLAN_CATEGORY_NAME_MAX,
   PLAN_NOTE_LIMIT,
   clearLegacyPlanBoard,
+  emptyPlanBoard,
   filterPlanNotes,
   newPlanNoteId,
   normalizePlanCategoryName,
@@ -22,7 +23,6 @@ import {
   planBoardBgOf,
   planGreeting,
   readLegacyPlanBoard,
-  seedPlanBoard,
   type PlanBoard,
   type PlanBoardBgId,
   type PlanNote,
@@ -36,7 +36,7 @@ import {
  * 228px 起跳的 auto-fill 网格 + 198 高圆角卡片（配色 = 同一套 7 色 hex 调色板）；工具条 = 搜索 + 新建便签（排序已下架；不做导出 / 导入）。
  *
  * 存储（Push 268 起 · 账号落库）：整面便签墙按账号存服务端偏好（user_preferences.prefs.myPlanBoard，见 preferencesApi.ts）——
- * 首次打开（账号里从未保存）预置 6 条示例并上云；本机旧键（libiaolink.plan.board.v1）自动迁移上云再清键（迁移失败保留旧键、本机数据兜底、下轮重试）。
+ * 首次打开（账号里从未保存）为空便签墙，不预写示例数据；本机旧键（libiaolink.plan.board.v1）自动迁移上云再清键（迁移失败保留旧键、本机数据兜底、下轮重试）。
  * 保存 = 乐观更新 + 单键 PATCH（串行）；失败保留界面改动并出提示（刷新回滚到账号里最后一次保存）。
  * 完成态（Push 269 改拖拽 · 业务口径 2026-10-10「不要这个完成 在这个分类旁边增加完成区域 拖动便签到完成区域则完成」）：
  * 编辑弹窗不再有完成键 —— 侧栏分类卡下方新增「完成」拖放区：把便签拖进去即完成；「已完成」视图里的便签拖回「全部便签」即恢复。
@@ -400,7 +400,7 @@ export function MyPlanBoard({ readOnly = false }: { readOnly?: boolean }) {
   const suppressOpenAtRef = useRef(0);
 
   /**
-   * 打开读面：GET 偏好 → 首次（账号里从未保存）预置示例上云；本机旧键（Push ≤ 267 的 localStorage）
+   * 打开读面：GET 偏好 → 首次（账号里从未保存）显示空便签墙；本机旧键（Push ≤ 267 的 localStorage）
    * 在账号没数据（或账号为空板而旧键有便签）时迁移上云再清键；迁移失败保留旧键、本机数据兜底展示、下轮打开重试。
    */
   useEffect(() => {
@@ -416,7 +416,7 @@ export function MyPlanBoard({ readOnly = false }: { readOnly?: boolean }) {
         const remote = prefs.myPlanBoard;
         revision.current = prefs.revisions?.myPlanBoard ?? 0;
         if (readOnly) {
-          setBoard(remote.updatedAt === null ? seedPlanBoard() : { notes: remote.notes, categories: remote.categories, bg: planBoardBgOf(remote.bg).id });
+          setBoard(remote.updatedAt === null ? emptyPlanBoard() : { notes: remote.notes, categories: remote.categories, bg: planBoardBgOf(remote.bg).id });
           return;
         }
         const legacy = readLegacyPlanBoard();
@@ -452,17 +452,7 @@ export function MyPlanBoard({ readOnly = false }: { readOnly?: boolean }) {
           return;
         }
         if (remote.updatedAt === null) {
-          const seeded = seedPlanBoard();
-          setBoard(seeded);
-          try {
-            const saved = await saveMyPlanBoard(seeded, revision.current);
-            revision.current = saved.revisions?.myPlanBoard ?? revision.current + 1;
-          } catch (error) {
-            if (error instanceof ApiError && error.status === 409) {
-              const latest = await loadMyPreferences();
-              if (alive) { revision.current = latest.revisions?.myPlanBoard ?? 0; setBoard(latest.myPlanBoard); }
-            } else { failed.current = true; setUnsaved(true); }
-          }
+          setBoard(emptyPlanBoard());
           return;
         }
         setBoard({ notes: remote.notes, categories: remote.categories, bg: planBoardBgOf(remote.bg).id });
