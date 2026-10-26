@@ -3,7 +3,7 @@
  * 前端 · 回放：图片预览缩放（Push 273 · 业务口径 2026-10-10「图片预览要有缩放功能」）
  *
  * 全站三处图片大图预览共用组件 ImageZoomViewer，本脚本逐处真机验（无头 Chrome + CDP）：
- *   A 文件库预览浮层（FilePreviewOverlay 图片分支）：100% 起、缩放条齐全、点图不关（留给缩放 / 拖动）、
+ *   A 文件库预览浮层（FilePreviewOverlay 图片分支）：点列表行打开（无行内预览按钮）、100% 起、缩放条齐全、点图不关（留给缩放 / 拖动）、
  *     ＋ = 125%、滚轮以光标为锚点缩放且背景页不跟着滚、放大后拖动平移（含边界夹取）、百分比钮回 100%、
  *     缩小下限 25%、双击 100% ↔ 200%、Esc / 点遮罩关闭、800% 不撑出页面滚动条；
  *   B 项目页「日报及问题 → 问题追踪」附图（ReportIssuePanel.PhotoPreview）：核心口径同上；
@@ -317,7 +317,7 @@ const maxOffsetOf = (probe) => ({
 const percentOf = (probe) => (probe === null || probe === undefined || probe.percent === null ? -1 : Number(String(probe.percent).replace("%", "")));
 
 // ---------- A 文件库：预览浮层（FilePreviewOverlay 图片分支） ----------
-/** 浮层本体选择器：文件库行里的预览按钮也带 data-file-preview（值是 fileId）—— 必须叠 data-file-preview-kind 才锁到浮层。 */
+/** 浮层本体选择器：列表入口为 data-file-row；浮层本体才带 data-file-preview-kind。 */
 const A_OVERLAY = "[data-file-preview][data-file-preview-kind]";
 const fileNameEnc = encodeURIComponent(PNG_NAME);
 await page.send("Page.navigate", { url: FRONTEND + "/#/files?q=" + fileNameEnc });
@@ -328,12 +328,13 @@ await ev("window.scrollTo(0, 260)");
 await sleep(400);
 const docSize0 = await ev("({w:document.documentElement.scrollWidth,h:document.documentElement.scrollHeight})");
 const scrollAtOpen = await ev("Math.round(window.scrollY)");
-const previewClick = await clickSelector("[data-file-preview=" + Q + fileId + Q + "]");
+const noPreviewButton = await ev("document.querySelector(" + j("[data-file-preview=" + Q + fileId + Q + "]") + ") === null");
+const previewClick = await clickSelector("[data-file-row=" + Q + fileId + Q + "]");
 const overlayReady = await waitFor("document.querySelector(" + j(A_OVERLAY) + ")!==null&&document.querySelector(" + j("[data-file-preview-kind=image]") + ")!==null", 30000);
 const aLoaded = await waitFor("(function(){var p=" + viewerProbe(A_OVERLAY) + ";return p!==null&&p.loaded===true;})()", 30000);
 const a1 = await ev(viewerProbe(A_OVERLAY));
 if (a1 === null || a1 === undefined || a1.viewer !== true) await bail("文件库预览浮层里没有缩放视图（ImageZoomViewer 没挂上）");
-check("A1 图片预览浮层：缩放条 / ＋ − / 提示齐全、图已加载、初始 100%", previewClick === true && overlayReady === true && aLoaded === true && a1 !== null && a1.viewer === true && a1.hasBar === true && a1.hasOut === true && a1.hasIn === true && a1.hasHint === true && a1.percent === "100%" && a1.zoom === 1, JSON.stringify({click: previewClick, ready: overlayReady, loaded: aLoaded, percent: a1 === null ? null : a1.percent}));
+check("A1 点击文件库行打开图片预览：无行内预览按钮、缩放条 / ＋ − / 提示齐全、图已加载、初始 100%", noPreviewButton === true && previewClick === true && overlayReady === true && aLoaded === true && a1 !== null && a1.viewer === true && a1.hasBar === true && a1.hasOut === true && a1.hasIn === true && a1.hasHint === true && a1.percent === "100%" && a1.zoom === 1, JSON.stringify({noPreviewButton: noPreviewButton, click: previewClick, ready: overlayReady, loaded: aLoaded, percent: a1 === null ? null : a1.percent}));
 await shot("push273-a1-文件库预览-100");
 await clickAt(a1.point);
 const keptOpen = await waitFor("document.querySelector(" + j(A_OVERLAY) + ")===null", 1200) === false;
@@ -380,12 +381,13 @@ await shot("push273-a11-文件库预览-800");
 await pressKey("Escape", "Escape", 27);
 const escClosed = await waitFor("document.querySelector(" + j(A_OVERLAY) + ")===null", 8000);
 check("A12 Esc 关闭预览浮层", escClosed === true, String(escClosed));
-await clickSelector("[data-file-preview=" + Q + fileId + Q + "]");
+const rowFocused = await ev("(function(){var row=document.querySelector(" + j("[data-file-row=" + Q + fileId + Q + "]") + ");if(row===null){return false;}row.focus();return document.activeElement===row;})()");
+await pressKey("Enter", "Enter", 13);
 const reopened = await waitFor("document.querySelector(" + j(A_OVERLAY) + ")!==null", 20000);
 const backClick = await ev("(function(){var o=document.querySelector(" + j(A_OVERLAY) + ");if(o===null){return null;}var r=o.getBoundingClientRect();return {x:Math.round(r.left+12),y:Math.round(r.top+12)};})()");
 if (backClick !== null && backClick !== undefined) await clickAt(backClick);
 const backClosed = await waitFor("document.querySelector(" + j(A_OVERLAY) + ")===null", 8000);
-check("A13 重开 → 点遮罩（浮层角落）关闭", reopened === true && backClick !== null && backClosed === true, JSON.stringify({reopened: reopened, closed: backClosed}));
+check("A13 聚焦行按 Enter 重开 → 点遮罩（浮层角落）关闭", rowFocused === true && reopened === true && backClick !== null && backClosed === true, JSON.stringify({focused: rowFocused, reopened: reopened, closed: backClosed}));
 
 // ---------- B 项目页「日报及问题 → 问题追踪」附图（ReportIssuePanel.PhotoPreview） ----------
 await page.send("Page.navigate", { url: FRONTEND + "/#/project/" + projectId + "?view=daily&sub=issues" });

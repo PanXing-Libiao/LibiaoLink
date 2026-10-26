@@ -219,15 +219,15 @@ function DistributionRow({ row, total, projectNames, delay, onOpen }: {
       type="button"
       data-access-department-row={row.group.groupKey}
       onClick={onOpen}
-      className="group grid w-full grid-cols-[minmax(88px,120px)_minmax(0,1fr)_auto] items-center gap-3 rounded-lg px-2 py-1.5 text-left transition duration-200 hover:bg-blue-50/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400"
+      className="group grid w-full grid-cols-[minmax(104px,150px)_minmax(0,1fr)_auto] items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition duration-200 hover:bg-blue-50/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400"
       title={scopeText + (projectNames.length > 0 ? " · " + projectNames.join(" / ") : "")}
     >
       <span className="min-w-0">
-        <span className="block truncate text-[11px] font-medium text-zinc-700 transition-colors group-hover:text-blue-800">{row.group.groupName}</span>
-        {showPath ? <span className="mt-0.5 block truncate text-[9px] text-zinc-400">{row.path.slice(0, -1).join(" / ")}</span> : null}
+        <span className="block truncate text-xs font-medium text-zinc-700 transition-colors group-hover:text-blue-800">{row.group.groupName}</span>
+        {showPath ? <span className="mt-0.5 block truncate text-[10px] text-zinc-400">{row.path.slice(0, -1).join(" / ")}</span> : null}
       </span>
       <span
-        className="flex h-3 min-w-0 overflow-hidden rounded-sm bg-zinc-100 ring-1 ring-inset ring-zinc-100 transition-transform duration-200 group-hover:scale-y-110"
+        className="flex h-3.5 min-w-0 overflow-hidden rounded-sm bg-zinc-100 ring-1 ring-inset ring-zinc-100 transition-transform duration-200 group-hover:scale-y-110"
         aria-label={t("access.dashboard.operate") + " " + String(row.levelCounts.operate) + ", " + t("access.dashboard.viewOnly") + " " + String(row.levelCounts.view) + ", " + t("access.dashboard.loginOnly") + " " + String(row.levelCounts.login)}
       >
         {total === 0 ? null : segments.map((segment) => segment.count === 0 ? null : (
@@ -238,7 +238,7 @@ function DistributionRow({ row, total, projectNames, delay, onOpen }: {
           />
         ))}
       </span>
-      <span className="w-7 text-right text-[11px] font-medium tabular-nums text-zinc-700">{row.subtreeMemberCount}</span>
+      <span className="w-9 text-right text-xs font-medium tabular-nums text-zinc-700">{row.subtreeMemberCount}</span>
     </button>
   );
 }
@@ -304,13 +304,13 @@ export function AccessDashboard({
         </div>
 
         <section className="access-dash-distribution overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
-          <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-zinc-100 px-3 py-2.5 sm:px-4">
+          <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-zinc-100 px-4 py-3 sm:px-5">
             <div className="min-w-0 flex-1 basis-[140px]">
-              <h2 className="text-sm font-semibold text-zinc-800">{t("access.dashboard.distributionTitle")}</h2>
-              <p className="mt-0.5 truncate text-[10px] text-zinc-400">{distributionLabel}</p>
+              <h2 className="text-base font-semibold text-zinc-800">{t("access.dashboard.distributionTitle")}</h2>
+              <p className="mt-0.5 truncate text-[11px] text-zinc-400">{distributionLabel}</p>
             </div>
             <div className="flex min-w-0 max-w-full items-center gap-3">
-              <div className="hidden items-center gap-3 text-[10px] text-zinc-500 lg:flex">
+              <div className="hidden items-center gap-3 text-[11px] text-zinc-500 lg:flex">
                 <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-[3px] bg-[#2764e7]" />{t("access.dashboard.operate")}</span>
                 <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-[3px] bg-[#18a474]" />{t("access.dashboard.viewOnly")}</span>
                 <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-[3px] bg-[#cbd2dc]" />{t("access.dashboard.loginOnly")}</span>
@@ -324,7 +324,7 @@ export function AccessDashboard({
                       type="button"
                       aria-pressed={active}
                       onClick={() => { setView(option.value); }}
-                      className={"shrink-0 rounded-md px-2 py-1 text-[10px] font-medium transition duration-200 " + (active ? "bg-white text-blue-700 shadow-sm" : "text-zinc-500 hover:bg-white/60 hover:text-zinc-800")}
+                      className={"shrink-0 rounded-md px-2.5 py-1.5 text-[11px] font-medium transition duration-200 " + (active ? "bg-white text-blue-700 shadow-sm" : "text-zinc-500 hover:bg-white/60 hover:text-zinc-800")}
                     >
                       {t(option.labelKey)}
                     </button>
@@ -333,9 +333,9 @@ export function AccessDashboard({
               </div>
             </div>
           </header>
-          <div className="scrollbar-hidden grid max-h-[272px] grid-cols-1 gap-x-4 gap-y-0.5 overflow-y-auto px-2 py-1.5 sm:max-h-[260px] md:max-h-[288px] md:grid-cols-2 xl:max-h-[236px] xl:grid-cols-3">
+          <div className="grid max-h-[min(52vh,480px)] grid-cols-1 gap-x-5 gap-y-1 overflow-y-auto px-3 py-2 pr-2.5 sm:px-4 md:grid-cols-2 xl:grid-cols-3">
             {visibleRows.length === 0 ? (
-              <p className="col-span-full px-3 py-10 text-center text-xs text-zinc-400">{t("access.dashboard.emptyDepartments")}</p>
+              <p className="col-span-full px-3 py-12 text-center text-sm text-zinc-400">{t("access.dashboard.emptyDepartments")}</p>
             ) : visibleRows.map((row, index) => (
               <DistributionRow
                 key={row.group.groupKey}

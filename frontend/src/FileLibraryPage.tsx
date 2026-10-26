@@ -77,7 +77,7 @@ import { EMPTY_FILES_QUERY, EMPTY_LIST_QUERY, type FilesQueryState, type FilesTa
  * 时间（Asia/Shanghai，YYYY-MM-DD HH:mm）/ 操作；回收站栏第 5 列改「移入回收站」（时间 · 人）、操作列 = 恢复 / 彻底删除。
  *【2026-10-09 追订】「类型」列与筛选整条撤除（业务口径「文件类型不需要 因为没有明确的绑定机制」—— 库内文件
  * 没有类型绑定点（files.doc_type 全空）、列恒「—」；任务侧「输出成果文件」是任务字段，不受影响）。
- * 操作列按钮定宽（预览 / 下载换忙碌文案不重排 auto layout 表格 = 点预览不再抖表）；写口反馈走上方浮动 Toast
+ * 操作列仅保留下载 / 回收站写口（下载忙碌文案不重排 auto layout 表格）；预览改为整行点击或 Enter / Space，行内按钮不触发预览；写口反馈走上方浮动 Toast
  * （components/Toast.tsx：屏幕顶部居中、停留 2s 自动消失）。
  * 预览走 S4 两通道裁决（ensurePreviewOutcome：viewer = ONLYOFFICE 外壳 / url = 产物浮层）；下载 = 原文件
  * attachment 短时签名 + Blob 落盘（fetchDownloadUrl + triggerDownload，服务端写 download 审计）。
@@ -704,7 +704,25 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
                   </thead>
                   <tbody>
                     {pageItems.map((file) => (
-                      <tr key={file.id} data-file-row={file.id} className="transition hover:bg-zinc-50/70">
+                      <tr
+                        key={file.id}
+                        data-file-row={file.id}
+                        tabIndex={0}
+                        aria-label={t("lib.preview") + " " + file.name}
+                        aria-busy={previewBusy === file.id}
+                        onClick={(event) => {
+                          const target = event.target;
+                          if (target instanceof Element && target.closest("button, a, input, select, textarea, [role=button]") !== null) return;
+                          void openPreview(file);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.target !== event.currentTarget) return;
+                          if (event.key !== "Enter" && event.key !== " ") return;
+                          event.preventDefault();
+                          void openPreview(file);
+                        }}
+                        className="cursor-pointer transition hover:bg-zinc-50/70 focus-visible:bg-blue-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400"
+                      >
                         <td className="align-middle border-b border-zinc-100 px-4 py-3">
                           <span className="flex items-center gap-2.5">
                             <FileTypeIcon name={file.name} className="h-5 w-5" />
@@ -749,17 +767,6 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
                         </td>
                         <td className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3">
                           <span className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              data-file-preview={file.id}
-                              disabled={previewBusy !== null}
-                              onClick={() => {
-                                void openPreview(file);
-                              }}
-                              className="inline-flex w-16 items-center justify-center rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-300"
-                            >
-                              {previewBusy === file.id ? t("lib.preview.busy") : t("lib.preview")}
-                            </button>
                             {query.tab === "current" ? (
                               <button
                                 type="button"

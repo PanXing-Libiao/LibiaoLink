@@ -366,6 +366,18 @@ function DepartmentTree({
             </div>
             {expanded ? (
               <div className="pb-1 pt-0.5">
+                <DepartmentTree
+                  nodes={node.children}
+                  depth={depth + 1}
+                  selectedKey={selectedKey}
+                  expandedKeys={expandedKeys}
+                  activeMemberId={activeMemberId}
+                  query={query}
+                  t={t}
+                  onSelect={onSelect}
+                  onToggle={onToggle}
+                  onMemberSelect={onMemberSelect}
+                />
                 {members.map((member) => (
                   <MemberRow
                     key={member.userId}
@@ -381,18 +393,6 @@ function DepartmentTree({
                     {t("access.noMembers")}
                   </p>
                 ) : null}
-                <DepartmentTree
-                  nodes={node.children}
-                  depth={depth + 1}
-                  selectedKey={selectedKey}
-                  expandedKeys={expandedKeys}
-                  activeMemberId={activeMemberId}
-                  query={query}
-                  t={t}
-                  onSelect={onSelect}
-                  onToggle={onToggle}
-                  onMemberSelect={onMemberSelect}
-                />
               </div>
             ) : null}
           </div>
@@ -815,7 +815,7 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
               <div className="mt-1 flex flex-wrap items-center gap-2">
                 <h1 className="text-xl font-semibold tracking-tight text-zinc-900">{accessView === "dashboard" ? t("access.dashboard.title") : t("access.title")}</h1>
                 {accessView === "dashboard" ? (
-                  <div data-access-scope="" className="w-[220px] min-w-[180px] max-w-[260px]">
+                  <div data-access-scope="" className="w-[260px] min-w-[220px] max-w-[320px]">
                     <SelectMenu
                       value={scopeGroupKey ?? ""}
                       options={[

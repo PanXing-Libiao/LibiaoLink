@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { GROUP_ACCESS_PAGE_KEYS, GROUP_ACCESS_UNGROUPED_KEY, PERMISSION_KEYS, type GroupAccessRuleInput } from "@libiaolink/contracts";
 import { AppConfig } from "../src/config/config.module.js";
 import type { Env } from "../src/config/env.js";
-import type { ActorAuthorization, RoleService } from "../src/modules/identity/index.js";
+import type { ActorAuthorization, DepartmentService, RoleService } from "../src/modules/identity/index.js";
 import { casdoorGroupKey, readCasdoorGroupKeys } from "../src/modules/identity/index.js";
 import { UserService, normalizeSsoProfile } from "../src/modules/identity/user.service.js";
 import type { UserGroupRepository } from "../src/modules/identity/user-group.repository.js";
@@ -278,7 +278,7 @@ describe("群组访问规则", () => {
 });
 
 describe("GroupAccessService 部门通讯录", () => {
-  it("返回部门层级和直属人员，并合并既有规则与观察到的额外部门", async () => {
+  it("返回有效部门层级和直属人员，忽略没有目录记录的虚拟组成员关系", async () => {
     const repository = {
       listUngroupedUsers: async () => [{
         userId: PROJECT_D,
@@ -307,8 +307,8 @@ describe("GroupAccessService 部门通讯录", () => {
           status: "disabled",
         },
         {
-          groupKey: "libiaorobot.com/Extra",
-          groupName: "Extra",
+          groupKey: "libiaorobot.com/Pm Group Access",
+          groupName: "Pm Group Access",
           userId: PROJECT_C,
           username: "1003",
           displayName: "Carol",
@@ -375,7 +375,6 @@ describe("GroupAccessService 部门通讯录", () => {
       pages: group.rule?.allowedPages ?? [],
     }))).toEqual([
       { key: GROUP_ACCESS_UNGROUPED_KEY, parent: null, members: 1, pages: [] },
-      { key: "libiaorobot.com/Extra", parent: null, members: 1, pages: [] },
       { key: "libiaorobot.com/QA", parent: "libiaorobot.com/RD", members: 2, pages: [...GROUP_ACCESS_PAGE_KEYS] },
       { key: "libiaorobot.com/RD", parent: null, members: 0, pages: [] },
     ]);
@@ -821,6 +820,33 @@ describe("PermissionService 群组接入", () => {
       readOnly: true,
       projectIds: [],
     });
+  });
+
+  it("虚拟应用访问组不进入权限画像", async () => {
+    const repository = new FakeGroupRepository();
+    repository.groupKeys = ["libiaorobot.com/QA", "libiaorobot.com/Pm Group Access"];
+    const config = new AppConfig({
+      CASDOOR_ORG_NAME: "libiaorobot.com",
+      GROUP_ACCESS_ENFORCED: "true",
+      GROUP_ACCESS_ADMIN_GROUP_KEYS: "",
+      GROUP_ACCESS_ADMIN_USER_IDS: "",
+    } as Env);
+    const departments = {
+      listDepartments: async () => [{ id: PROJECT_A, parentId: null, sourceId: "QA", name: "Quality" }],
+    };
+    const service = new PermissionService(
+      new FakeRoleService({
+        userId: PROJECT_A,
+        roleCodes: [],
+        dataScopes: ["all"],
+        permissionKeys: [...PERMISSION_KEYS],
+      }) as unknown as RoleService,
+      repository as unknown as PermissionRepository,
+      config,
+      departments as unknown as DepartmentService,
+    );
+    const profile = await service.groupAccessOf(PROJECT_A);
+    expect(profile.groupKeys).toEqual(["libiaorobot.com/QA"]);
   });
 
   it("selected 人员范围在权限画像入口过滤，不匹配人员按无规则处理", async () => {

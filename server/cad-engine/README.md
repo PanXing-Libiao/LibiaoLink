@@ -18,7 +18,7 @@ CAD 解析已迁移到独立 Linux 容器，不再由 API 启动 Python。先按
 
 CAD 内部临时缓存仍受限于 tmpfs 和 24 小时保留；已完成的模型另按 [ADR-037](../../docs/adr/ADR-037-CAD产物持久化与上传预解析.md) 持久化：数据库保存队列、状态、窗口和产物索引，私有对象存储保存完整 manifest / buffers。API/worker/CAD 重启后直接读取完成产物，无需 native 重算；新版本、固定引擎版本或名称编码分别生成，缺失/损坏撤销完成态并排队重建。缓存先按文件版本隔离，不能把上传声明的 SHA 当作跨文件复用的可信凭据。沙箱仍禁网且不持有存储凭据，不增加持久宿主挂载。
 
-浏览器使用 HTTPS，本地 loopback 可验证 Web Crypto。生产镜像、server/shared 和同版本 `/cad-viewer/` 静态资源须按部署流程同步；API 的原内存预算与 CAD 独立核算。本次持久化与预解析变更仍待部署验收。运行边界与研究依据见 [ADR-036](../../docs/adr/ADR-036-CAD解析沙箱与资源硬限额.md)。
+浏览器使用 HTTPS，本地 loopback 可验证 Web Crypto。生产镜像、server/shared 和同版本 `/cad-viewer/` 静态资源须按部署流程同步；API 的原内存预算与 CAD 独立核算。持久化与预解析已在公司测试机和正式生产部署；正式生产首轮打开、产品树与真实文件转换已验收。运行边界与研究依据见 [ADR-036](../../docs/adr/ADR-036-CAD解析沙箱与资源硬限额.md)。
 
 名称默认使用 OCCT GB 中文旧编码，不自动猜编码；需要标准编码时，在“模型信息”切换 UTF8 并重新读取。选择在当前标签页按文件版本记忆，并传入任务参数 `nameCodepage`；不同码页隔离缓存，检查记录保留本次选择。源文件无需修改。
 
@@ -97,6 +97,6 @@ python3 server/cad-engine/sync-source.py /path/to/CAD-source EXACT_COMMIT
 
 ## 部署边界
 
-本次持久化与预解析尚未部署；既有 STEP 接入的部署状态见[接入基线](../../docs/CAD平台接入基线与迁移任务.md)。native runtime 已从 API 移到独立 glibc CAD 镜像，API 的 768 MiB 预算不包含 CAD；启用须叠加独立沙箱部署件并取得实际镜像 digest。API 无受限外的 Python 回退；测试与迁移见 [部署手册](../../deploy/cad/README.md)。
+持久化与预解析已在公司测试机和正式生产部署，正式生产于 2026-10-26 完成 API/worker Unix socket 接线；完整部署状态见[接入基线](../../docs/CAD平台接入基线与迁移任务.md) §10。native runtime 已从 API 移到独立 glibc CAD 镜像，API 的 768 MiB 预算不包含 CAD；启用须叠加独立沙箱部署件并取得实际镜像 digest。API 无受限外的 Python 回退；测试与迁移见 [部署手册](../../deploy/cad/README.md)。
 
 仅开放 STEP；外部引用、多文件资源解析、EASM/DXF 平台入口与工程测量不在本轮范围。S03 继续明确失败。大文件耗时沿用实测口径，P01 既有独立结果约 71.8 秒，不能称为秒开，本轮未重复测量它。

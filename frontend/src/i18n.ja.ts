@@ -1505,7 +1505,7 @@ export const JA_TEXTS: Partial<Record<TextKey, string>> = {
   "oov.errorCode": "ビューアでファイルを開けませんでした（エラーコード {code}）",
   "oov.unavailable": "現在ビューアを利用できません。再試行するか、元のファイルをダウンロードしてください。",
   "oov.notMounted": "ビューアスクリプトは読み込まれましたが、DocsAPI がマウントされていません",
-  "oov.loading": "ビューアを読み込み中…",
+  "oov.loading": "ビューアを読み込み中（初回は時間がかかる場合があります）…",
   "oov.timeout": "オンラインプレビューがタイムアウトしました",
   "oov.noPreview": "オンラインプレビューはありません",
   "tt.formAria": "新規一時タスク",

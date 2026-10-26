@@ -18,7 +18,7 @@
  *   「这个也不需要（排序）· 背景换成白色 · 数据接入数据库 · 新增完成按钮 · 完成后只显示在已完成里面」
  *   （Push 268：页面底改纯白、排序下架；便签墙整面按账号存 user_preferences.prefs.myPlanBoard（跨设备可见）；
  *   旧 localStorage 键首次打开自动迁移上云；编辑弹窗底栏加「完成 / 恢复」+ 侧栏「已完成」视图（完成后只出现在其中）；
- *   本脚本「⑪」段另含 落库 / 首次预置 / 旧键迁移 / 完成态 对账）。
+ *   本脚本「⑪」段另含 落库 / 首次空态 / 旧键迁移 / 完成态 对账）。
  *   「不要这个完成 在这个分类旁边增加完成区域 拖动便签到完成区域则完成」
  *   （Push 269：编辑弹窗底栏撤「完成 / 恢复」（改拖拽完成）；侧栏分类卡下方新增「完成」拖放区 —— 把便签拖进去即完成（拖动中悬浮小卡 + 落点高亮）；
  *   「已完成」视图里的便签拖回「全部便签」即恢复；本脚本「⑪」段含 拖拽完成 / 拖拽恢复 对账）。
@@ -80,7 +80,7 @@
  *       「ui直接照搬可以吗 背景颜色也搬过去 卡片的尺寸也要」+「导出导入功能不要」→「填写也要一样」（Push 267 编辑（填写）弹窗照搬）→
  *       Push 268「这个也不需要（排序）· 背景换成白色 · 数据接入数据库 · 新增完成按钮 · 完成后只显示在已完成里面」）：
  *      第三枚标签在导航栏 → 点击写回 `?tab=plan` + 选中态转移 → 页内 = 便签墙（照 MiniMemo 参考页照搬：Push 268 起纯白背景 +
- *      左侧分类栏（全部便签 / 已完成 / 各分类）/ 198 高圆角卡片 / 7 色 hex 调色板；账号落库 —— 首次进入预置 6 条示例并上云，
+ *      左侧分类栏（全部便签 / 已完成 / 各分类）/ 198 高圆角卡片 / 7 色 hex 调色板；账号落库 —— 首次进入为空便签墙（不预写偏好），
  *      旧 localStorage 键首次打开自动迁移上云）：照搬口径对账（白底 / 卡片尺寸 / 网格 / 无排序）→ 新建（标题与
  *      内容都空时保存置灰）/ 编辑 / 搜索 / 分类过滤 / 完成 →「已完成」（只显示在这里）/ 恢复 / 删除（二次确认）/
  *      刷新持久化（GET preferences 对账）/ 首次预置 / 旧键迁移 → 深链 `#/my-tasks?tab=plan` 直接打开仍停在该标签 →
@@ -1373,20 +1373,15 @@ await clickSelector("[data-workspace-tab=" + Q + "tasks" + Q + "]");
 const headPlan3 = await ev(headExpr());
 check("⑪q 点回「我的任务」→ 地址回到不带参数的 #/my-tasks（原口径不变）", headPlan3 !== null && headPlan3.hash === "#/my-tasks" && headPlan3.tabs[0].current === "page", headPlan3 === null ? "null" : JSON.stringify([headPlan3.hash, headPlan3.tabs.map((item) => item.current)]));
 
-// ⑪r 首次进入（账号里从未保存过 myPlanBoard）：SQL 摘键 → 重开页 → 预置 6 条示例并上云（updatedAt 非 null）、本机不落旧键
+// ⑪r 首次进入（账号里从未保存过 myPlanBoard）：SQL 摘键 → 重开页 → 空便签墙（不预写偏好，updatedAt 仍为 null）、本机不落旧键
 await db.query("update user_preferences set prefs = prefs - 'myPlanBoard' where user_id = $1", [me.id]);
 await open("#/my-tasks?tab=plan", "[data-workspace-plan]");
 await waitFor("document.querySelector(" + j("[data-plan-grid]") + ") !== null", 15000);
 const planFresh = await ev(planExpr());
-let freshPrefs = null;
-for (let i = 0; i < 20; i += 1) {
-  const res = await api("/api/v1/users/me/preferences");
-  freshPrefs = res.json === null ? null : res.json.myPlanBoard;
-  if (freshPrefs !== null && freshPrefs.updatedAt !== null) break;
-  await sleep(300);
-}
+const freshRes = await api("/api/v1/users/me/preferences");
+const freshPrefs = freshRes.json === null ? null : freshRes.json.myPlanBoard;
 const legacyAfterFresh = await ev("window.localStorage.getItem(" + j(LEGACY_PLAN_KEY) + ")");
-check("⑪r 首次进入（账号里从未保存）：预置 6 条示例并上云（updatedAt 非 null / 6 条）+ 本机不落旧键", planFresh !== null && planFresh.cards.length === 6 && freshPrefs !== null && freshPrefs.updatedAt !== null && freshPrefs.notes.length === 6 && legacyAfterFresh === null, JSON.stringify([planFresh === null ? null : planFresh.cards.length, freshPrefs === null ? null : freshPrefs.updatedAt]));
+check("⑪r 首次进入（账号里从未保存）：空便签墙（0 条 / empty=true）+ 不预写偏好（updatedAt null）+ 本机不落旧键", planFresh !== null && planFresh.cards.length === 0 && planFresh.empty === true && freshPrefs !== null && freshPrefs.updatedAt === null && freshPrefs.notes.length === 0 && legacyAfterFresh === null, JSON.stringify([planFresh === null ? null : planFresh.cards.length, planFresh === null ? null : planFresh.empty, freshPrefs === null ? null : freshPrefs.updatedAt]));
 // ⑪s 本机旧键（Push ≤ 267 的 localStorage）迁移：SQL 摘键 + 往页面 localStorage 塞 2 条旧便签 → 重开页 → 迁移上云、旧键清除、页面 = 迁移后 2 条
 const legacyBoard = {
   v: 1,

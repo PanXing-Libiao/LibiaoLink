@@ -2,8 +2,9 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { OnlyOfficePreviewViewerConfig } from "../fileApi";
 import { getLocale, textOf, useT } from "../i18n";
 
-/** 查看器就绪超时（计划 S4 · R5）：api.js 加载 + DocEditor 建会话后超过此时长仍未 onDocumentReady → 降级（重试 / 下载）。 */
-const READY_TIMEOUT_MS = 20_000;
+/** 查看器就绪超时（计划 S4 · R5）：api.js 加载 + DocEditor 新建并预热会话后超过此时长仍未 onDocumentReady → 降级（重试 / 下载）。
+ *  生产 5 MB / 82 页 PDF 首次转换实测超过 20 秒；20 秒会先销毁会话并误报超时，重试才命中热会话。 */
+const READY_TIMEOUT_MS = 60_000;
 
 type DocEditorInstance = { destroyEditor: () => void };
 type DocsApiConstructor = new (placeholderId: string, config: Record<string, unknown>) => DocEditorInstance;

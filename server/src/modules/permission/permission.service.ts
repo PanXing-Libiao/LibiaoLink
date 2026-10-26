@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import {
   GROUP_ACCESS_UNGROUPED_KEY,
   type ActorPermissions,
@@ -9,7 +9,7 @@ import {
 } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import { AppConfig } from "../../config/config.module.js";
-import { RoleService, type ActorAuthorization } from "../identity/index.js";
+import { casdoorGroupKey, DepartmentService, RoleService, type ActorAuthorization } from "../identity/index.js";
 import {
   intersectProjectIds,
   isGroupAccessAdmin,
@@ -56,6 +56,7 @@ export class PermissionService {
     private readonly roles: RoleService,
     private readonly repository: PermissionRepository,
     private readonly config?: AppConfig,
+    @Optional() private readonly departments?: DepartmentService,
   ) {}
 
   /** 授权画像（带缓存）：同一请求内多处判定只查一次库。 */
@@ -112,7 +113,7 @@ export class PermissionService {
     const [memberGroupKeys, manualAdmin] = this.config === undefined
       ? [[] as string[], false] as const
       : await Promise.all([
-          this.repository.listUserGroupKeys(actorId),
+          this.activeGroupKeys(actorId),
           this.repository.isManualGroupAccessAdmin(actorId),
         ]);
     const groupKeys = memberGroupKeys.length === 0 ? [GROUP_ACCESS_UNGROUPED_KEY] : memberGroupKeys;
@@ -134,6 +135,20 @@ export class PermissionService {
     const profile = resolveGroupAccess({ enforced, admin, groupKeys, rules });
     if (entry !== undefined) entry.groupAccess = profile;
     return profile;
+  }
+
+  /** 只认当前在编部门；登录令牌或历史成员关系里的虚拟应用访问组不进入权限裁定。 */
+  private async activeGroupKeys(actorId: string): Promise<string[]> {
+    const groupKeys = await this.repository.listUserGroupKeys(actorId);
+    if (this.config === undefined || this.departments === undefined || groupKeys.length === 0) return groupKeys;
+    const directory = await this.departments.listDepartments();
+    const activeKeys = new Set(
+      directory
+        .filter((department) => department.sourceId !== null)
+        .map((department) => casdoorGroupKey(this.config?.env.CASDOOR_ORG_NAME ?? "", department.sourceId ?? ""))
+        .filter((groupKey) => groupKey !== ""),
+    );
+    return groupKeys.filter((groupKey) => activeKeys.has(groupKey));
   }
 
   /** 权限管理页入口：仅环境配置、管理员部门或权限页手工授权账号可进入。 */
