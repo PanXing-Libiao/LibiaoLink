@@ -1,6 +1,6 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
-> **2026-10-26 11:28 仅登录账号任务节点 / 模板读取门禁已部署公司测试机（PR [#643](https://github.com/PanXing-Libiao/LibiaoLink/pull/643) · 生产未部署）**：按业务口径「仅登录的话这里也看不到」，`#/templates` 纳入仅登录业务页拦截，权限画像就绪前不挂载业务页；服务端新增 `canReadBlueprint` / `assertCanReadBlueprint`，`GET /api/v1/task-nodes`、`GET /api/v1/task-templates` 与模板详情在 `GROUP_ACCESS_ENFORCED=true` 时要求命中部门规则或系统管理员，仅登录账号 403。命中规则但当前无可见项目的 `empty` 仍可查看模板；管理员与限制关闭时保持可读。
+> **2026-10-26 11:28 仅登录账号任务节点 / 模板读取门禁已部署公司测试机（PR [#643](https://github.com/PanXing-Libiao/LibiaoLink/pull/643) · 生产未部署）**：按业务口径「仅登录的话这里也看不到」，`#/templates` 纳入仅登录业务页拦截，权限画像就绪前不挂载业务页；服务端新增 `canReadBlueprint` / `assertCanReadBlueprint`，`GET /api/v1/task-nodes`、`GET /api/v1/task-templates` 与模板详情在 `GROUP_ACCESS_ENFORCED=true` 时要求命中部门规则或系统管理员，仅登录账号 403。命中规则但当前无可见项目的 `empty` 仍可查看模板；管理员与限制关闭时保持可读。 PR 最终 HEAD `2aa5524d`，PR CI [40265263526](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40265263526) 5 / 5 · squash `4dfbcf1d` · main CI [40265505487](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40265505487) 5 / 5。
 
 > frontend `typecheck` / `build` 通过；server `typecheck` / `build` / `check:boundaries` / `check:permission-matrix` 通过，定向 `group-access` / `template-nodes` / `template-templates` 63 / 63。仅登录测试账号 `user1` 浏览器回放 5 / 5：业务态 `denied`、显示权限不足、模板面板 0、无节点 / 填写人、console error 0；API `/permissions/me` 为 `denied`，节点与模板接口均 403。`zhangsan` 的 `empty/view` 仍可看到模板。
 
