@@ -1,3 +1,9 @@
+> **2026-10-27 22:16 日报海报行序号统一浅灰已部署公司测试机（px@13357653 · server-only · 生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）的日报「今日完成 / 明日计划」两栏行序号统一为浅灰底 `#E4E0D5`，章节编号与品牌装饰保留黄色；问题专报橙色问题编号不变。
+
+> 发布包 `output/server-daily-poster-gray-13357653-20261027-221248.tar.gz`（958,472 B · SHA-256 `ed14f8d432e22dae8199d3293720c2a5809e77ab1c77ab3206c5ffcf4591185a`）上传后远端一致；staging 614 个 dist 文件并核对海报产物哈希后清理。manifest = `test-20261027-daily-poster-gray-13357653`（1,706 B · `161062e99331e275ee35b5defb7a5a3beaa23157fe7fb1e597bc073bdf0ed130`）。备份 `/srv/data/backups/before-daily-poster-gray-20261027-221248/`：`server-dist-before.tar.gz` 960,002 B · `1919353ac6a12384760e9193ab497bc6367a938ffef303e44ea7ac244c3220cb`，原 manifest 1,708 B · `a243b13f2edf2d2d4f9c15789b9cbc43272346687060743fb214fa522b9b6ec4`。
+
+> 验收：10 / 10 容器 healthy，API / worker 重启计数 0，近期日志无 ERROR / FATAL；启动窗口短暂 502，worker 健康后 `healthz / readyz` 复测 200。未发送真实企业微信群消息，正式机 `10.1.103.44` 未触碰；无 DDL / 迁移、依赖、Compose / env / Secret 变更。PR [#682](https://github.com/PanXing-Libiao/LibiaoLink/pull/682) CI 5 / 5（run [40518954557](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40518954557)），尚未合并。
+
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
 > **2026-10-27 21:49 日报海报序号与双栏配色修复已部署公司测试机（px@c9db0b34 · server-only · 生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）的日报条目与问题标题会在渲染前清洗重复行首枚举号，避免出现 `01 1: 1 …`；`1拖4`、日期和数量保留。日报「今日完成 / 明日计划」两栏序号统一为品牌黄。同步仍按「日报已就绪」文字 → 日报海报 → 有问题时的现场问题专报发送，无问题不发空专报。
