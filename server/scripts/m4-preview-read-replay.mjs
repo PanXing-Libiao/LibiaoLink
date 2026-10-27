@@ -4,7 +4,7 @@
  *   证据一（not_ready + 幂等补投）：未生成的预览 → 读 API 返回 not_ready，同事务登记产物行 + 投 `preview.job`（trigger=read）；
  *             重复请求不重复登记、不重复投递（去重键 = 三元组）；not_ready **不写审计**。
  *   证据二（ready + 短时签名 · 审计恢复）：worker 转成后 → 读 API 返回 ready，附短时签名地址（可下载、形态正确）；
- *             **ready 读预览写一条 `action = preview` 审计**（2026-10-23 恢复；实际送达才写）。
+ *             **显式 `recordView=true` 且 ready 的预览写一条 `action = preview` 审计**（2026-10-27 收口；缺省签名不写）。
  *   证据三（A4-06 版本路由）：缺省 = 当前版本；`versionId` 指定历史版本 → 按该版本的内容哈希取三元组（不串版本）。
  *   证据四（404 与禁匿名）：版本不属于该文件 / 文件不存在 → 404（同形，防 IDOR）；无会话 → 401（D2-04 禁匿名）。
  *   证据五（failed 缓存态）：产物为 failed → 返回失败原因（降级「请下载」），**不原地重投**。
@@ -96,7 +96,7 @@ async function call(method, path, body, session, extraHeaders = {}) {
 }
 
 const preview = (fileId, versionId, session = admin) =>
-  call("GET", "/api/v1/files/" + fileId + "/preview" + (versionId === null || versionId === undefined ? "" : "?versionId=" + versionId), undefined, session);
+  call("GET", "/api/v1/files/" + fileId + "/preview?" + (versionId === null || versionId === undefined ? "" : "versionId=" + versionId + "&") + "recordView=true", undefined, session);
 
 function check(id, title, expected, actual, ok, note = "") {
   if (!ok) failures += 1;
@@ -335,7 +335,7 @@ try {
   const auditAfterNotReady = await previewAuditOf(project);
   check(
     "R3",
-    "not_ready 不写审计（只有实际送达就绪内容才写）",
+    "not_ready 不写审计（只有用户显式查看且实际送达就绪内容才写）",
     "preview 审计 0 条",
     short({ previewAudits: auditAfterNotReady.length }, 160),
     auditAfterNotReady.length === 0,
@@ -404,7 +404,7 @@ try {
   const auditsAfterReady = await previewAuditOf(project);
   check(
     "R7",
-    "ready 读预览写一条 preview 审计（2026-10-23 恢复）",
+    "显式 recordView=true 的 ready 读预览写一条 preview 审计（2026-10-27 收口）",
     "preview 审计 1 条",
     short({ previewAudits: auditsAfterReady.length }, 160),
     auditsAfterReady.length === 1,

@@ -60,8 +60,9 @@ const VIEWER_PERMISSIONS = {
  *
  * 权限 = 项目可见即可（Push 160 定案，同文件详情 / 版本链：不可见 / 不存在统一 404，防 IDOR）；
  * 版本 404：`versionId` 给定但不属于该文件 / 不存在（A4-06「任意历史版本可预览」，缺省 = 当前版本）。
- * **审计（2026-10-23 恢复）**：每次实际签出并返回就绪预览时写一条 `action = preview`（图片直签 / 产物通道 /
- * ONLYOFFICE / CAD 各记一条）；未就绪、失败降级与 404 不写。缩略图等高频预览同样留痕，见 D2-07 修订。
+ * **审计（2026-10-23 恢复 · 2026-10-27 收口）**：仅当调用方显式传 `recordView=true`（用户点开具体预览）且实际签出
+ * 就绪预览时写一条 `action = preview`（图片直签 / 产物通道 / ONLYOFFICE / CAD 各记一条）；缩略图签名、未就绪、
+ * 失败降级与 404 不写，避免打开日报记录时一次性铺开全部图片的预览审计。
  */
 @Injectable()
 export class PreviewReadService {
@@ -78,8 +79,9 @@ export class PreviewReadService {
     private readonly config: AppConfig,
   ) {}
 
-  /** `GET /files/{id}/preview`：文件可见性 → 目标版本 → 通道判定（SVG 产物 / 图片直签 / 查看器 / 降级）。 */
-  async getPreview(fileId: string, versionId: string | null, actorId: string): Promise<FilePreviewResponse> {
+  /** `GET /files/{id}/preview`：文件可见性 → 目标版本 → 通道判定（SVG 产物 / 图片直签 / 查看器 / 降级）。
+   *  `recordView` = true 仅用于用户实际点开具体预览；缩略图加载保持 false。 */
+  async getPreview(fileId: string, versionId: string | null, actorId: string, recordView = false): Promise<FilePreviewResponse> {
     const file = await this.loadVisibleFile(fileId, actorId);
     const version = await this.resolveVersion(file, versionId);
     if (version === null) {
@@ -95,7 +97,9 @@ export class PreviewReadService {
     // ADR-035：旧解析器已删除。先按版本扩展名拦截，避免误报 image/Office MIME 再签出原 CAD。
     if (isCadPreviewPending({ fileName: channelName })) {
       if (cadEngineConfigured(this.config.env) && /\.(step|stp)$/i.test(channelName)) {
-        await this.recordPreview(file, version, actorId, "CAD 查看器", { viewerKind: "cad", engineVersion: CAD_ENGINE_VERSION });
+        if (recordView) {
+          await this.recordPreview(file, version, actorId, "CAD 查看器", { viewerKind: "cad", engineVersion: CAD_ENGINE_VERSION });
+        }
         return {
           fileId: file.id, versionId: version.id, status: "ready", target: null,
           viewer: { kind: "cad", fileId: file.id, versionId: version.id, sourceSHA256: version.contentHash, engineVersion: CAD_ENGINE_VERSION },
@@ -123,7 +127,7 @@ export class PreviewReadService {
 
       const readyIndex = rows.findIndex((row) => row !== null && row.status === "ready");
       if (readyIndex >= 0) {
-        return this.serveReady(file, version, keys[readyIndex]!, rows[readyIndex]!, actorId);
+        return this.serveReady(file, version, keys[readyIndex]!, rows[readyIndex]!, actorId, recordView);
       }
 
       const failed = rows.filter((row): row is PreviewArtifactRow => row !== null && row.status === "failed");
@@ -159,14 +163,14 @@ export class PreviewReadService {
 
     // 只有扩展名与规范 MIME 完全匹配的安全位图才允许原对象直签。
     if (isRasterImageFile({ fileName: channelName, mime: version.mime })) {
-      return this.serveRasterImageDirect(file, version, channelName, actorId);
+      return this.serveRasterImageDirect(file, version, channelName, actorId, recordView);
     }
 
     // Office / 文本族 / PDF → ONLYOFFICE 查看器通道。HTML / HTM 已从查看器族移除：
     // 主动内容不得通过应用源以可执行文档类型返回。
     const viewerChannel = viewerChannelFor({ fileName: channelName, mime: version.mime });
     if (viewerChannel !== null) {
-      return this.serveViewer(file, version, viewerChannel, actorId);
+      return this.serveViewer(file, version, viewerChannel, actorId, recordView);
     }
     return this.degrade(file.id, version.id, "该文件类型暂不支持在线预览，请下载查看");
   }
@@ -194,13 +198,14 @@ export class PreviewReadService {
     return version;
   }
 
-  /** ready：短时签名 + preview 审计（产物通道）。 */
+  /** ready：短时签名；仅在用户实际查看（recordView=true）时写 preview 审计（产物通道）。 */
   private async serveReady(
     file: FileRow,
     version: FileVersionRow,
     key: PreviewArtifactKey,
     row: PreviewArtifactRow,
     actorId: string,
+    recordView: boolean,
   ): Promise<FilePreviewResponse> {
     if (row.objectKey === null) {
       // 库侧 CHECK（ck_preview_artifacts_ready_pair）保证 ready ⇔ object_key，这里只做不变量兜底。
@@ -219,10 +224,12 @@ export class PreviewReadService {
       responseContentType: responseType,
       responseContentDisposition: responseDisposition,
     });
-    await this.recordPreview(file, version, actorId, "通道 " + key.target, {
-      target: key.target,
-      pipelineVersion: key.pipelineVersion,
-    });
+    if (recordView) {
+      await this.recordPreview(file, version, actorId, "通道 " + key.target, {
+        target: key.target,
+        pipelineVersion: key.pipelineVersion,
+      });
+    }
     return {
       fileId: file.id,
       versionId: version.id,
@@ -241,13 +248,14 @@ export class PreviewReadService {
    * 安全位图直签 ready：原对象短时签名 —— 对齐产物通道 ready 的响应形状（契约不变）：
    * status=ready、target=image、url=短时签名；响应强制精确图片 MIME + inline，
    * 不依赖原对象在存储中的类型元数据（H1 · S2）。
-   * `pipelineVersion` / `generatedAt` 空（无产物语义 —— 直签不生成产物）；签发成功写一条 preview 审计。
+   * `pipelineVersion` / `generatedAt` 空（无产物语义 —— 直签不生成产物）；仅在用户实际查看时写一条 preview 审计。
    */
   private async serveRasterImageDirect(
     file: FileRow,
     version: FileVersionRow,
     channelName: string,
     actorId: string,
+    recordView: boolean,
   ): Promise<FilePreviewResponse> {
     const responseType = canonicalMimeForExtension(channelName);
     if (responseType === null) {
@@ -259,7 +267,9 @@ export class PreviewReadService {
       responseContentType: responseType,
       responseContentDisposition: contentDisposition(versionFileName(file.name, version.objectKey), "inline"),
     });
-    await this.recordPreview(file, version, actorId, "图片直签", { target: "image", direct: true });
+    if (recordView) {
+      await this.recordPreview(file, version, actorId, "图片直签", { target: "image", direct: true });
+    }
     return {
       fileId: file.id,
       versionId: version.id,
@@ -275,7 +285,7 @@ export class PreviewReadService {
   }
 
   /**
-   * 查看器通道 ready（S3 · ADR-030 / S8-2 定案）：签发只读查看器配置（含 token），签发成功写一条 preview 审计（不记 token）。
+   * 查看器通道 ready（S3 · ADR-030 / S8-2 定案）：签发只读查看器配置（含 token）；仅在用户实际查看时写一条 preview 审计（不记 token）。
    * `target` / `url` / `expiresAt` / `pipelineVersion` / `generatedAt` 全空（查看器不生成预览产物缓存）；
    * `document.url` = 受控端点绝对 URL（C1：与校验侧同源生成、不信任 Host 头；不含任何存储凭证）；
    * `document.key` 绑定服务实例、项目、文件和版本；相同申报哈希不能跨文档复用 DocServer 缓存。
@@ -285,6 +295,7 @@ export class PreviewReadService {
     version: FileVersionRow,
     channel: ViewerChannel,
     actorId: string,
+    recordView: boolean,
   ): Promise<FilePreviewResponse> {
     const secret = this.config.env.ONLYOFFICE_JWT_SECRET;
     if (secret === "") {
@@ -320,10 +331,12 @@ export class PreviewReadService {
       },
       secret,
     );
-    await this.recordPreview(file, version, actorId, "ONLYOFFICE 查看器", {
-      viewerKind: "onlyoffice",
-      documentType: channel.documentType,
-    });
+    if (recordView) {
+      await this.recordPreview(file, version, actorId, "ONLYOFFICE 查看器", {
+        viewerKind: "onlyoffice",
+        documentType: channel.documentType,
+      });
+    }
     return {
       fileId: file.id,
       versionId: version.id,

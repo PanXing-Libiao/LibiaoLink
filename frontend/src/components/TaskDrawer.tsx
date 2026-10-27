@@ -15,7 +15,7 @@ import {
   type TaskPriority,
   type TaskStatus,
 } from "../data/tasks";
-import { applyFileChange, ensurePreviewOutcome, fetchChangeRequest, fetchDownloadUrl, fetchFileVersions, finalizeFile, previewKindOf, triggerDownload, usePhotoUrl, type ChangeRequestDetail, type FilePreviewKind, type FileVersionBrief, type PreviewViewerConfig } from "../fileApi";
+import { applyFileChange, ensurePreviewOutcome, fetchChangeRequest, fetchDownloadUrl, fetchFileVersions, finalizeFile, previewKindOf, recordPreviewView, triggerDownload, usePhotoUrl, type ChangeRequestDetail, type FilePreviewKind, type FileVersionBrief, type PreviewViewerConfig } from "../fileApi";
 import { lockBodyScroll } from "../scrollLock";
 import { fetchTaskDetail, toUiTask, stageKeyOfName, stageNameOf, type TaskFileBrief } from "../taskApi";
 import { fieldText, isLocalizedLocale, mdText, priorityText, progressLabelOf, stageText, statusText, translationTargetOf, useLocale, useLocalizedText, useT } from "../i18n";
@@ -763,7 +763,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
     });
   };
 
-  /** 预览（Push 226 续 · S4 两通道裁决）：点开才懒取 —— 早先预览读取会写「查看」审计，不该随清单一开就铺开申请；Push 283 起预览不再写审计（操作日志不记录预览动作），懒取仍保留（不随清单铺开无谓的签发请求）。
+  /** 预览（Push 226 续 · S4 两通道裁决）：点开才懒取 —— 预览只在实际点开具体文件时写「查看」审计；缩略图 / 清单挂载只懒取签名，不写审计；2026-10-27 起由 recordPreviewView 在点开后显式补记。
    *  viewer = ONLYOFFICE 查看器外壳（Office / 文本族）；url = 产物浮层（图片大图 / PDF iframe）；
    *  unavailable = 确定性降级（failed / 判不出通道 —— 服务端 reason 或「请下载查看」口径）。 */
   const openPreview = async (fileId: string, name: string, versionId?: string) => {
@@ -779,6 +779,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
       setPreviewNote(outcome.reason ?? t("drawer.preview.unavailable"));
       return;
     }
+    void recordPreviewView(fileId, versionId);
     if (outcome.kind === "viewer") {
       setPreview({ pane: { mode: "viewer", viewer: outcome.viewer }, name, kind, fileId, versionId: versionId ?? null, nonce: 0 });
       return;
@@ -1513,18 +1514,19 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
         }}
         aria-hidden="true"
       />
-      <aside
-        ref={drawerRef}
-        key={task.id}
-        role="dialog"
-        data-live-sync-readonly={protectingDraft ? "false" : "true"}
-        aria-modal="true"
-        aria-labelledby="task-drawer-title"
-        className={
-          "drawer-panel absolute right-0 top-0 flex h-full w-[460px] max-w-[94vw] flex-col bg-white shadow-[-24px_0_60px_rgba(15,23,42,0.18)]" +
-          (closing ? " is-closing" : "")
-        }
-      >
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
+        <aside
+          ref={drawerRef}
+          key={task.id}
+          role="dialog"
+          data-live-sync-readonly={protectingDraft ? "false" : "true"}
+          aria-modal="true"
+          aria-labelledby="task-drawer-title"
+          className={
+            "drawer-panel pointer-events-auto relative flex h-[min(78vh,800px)] max-h-[calc(100vh-2rem)] w-[min(92vw,980px)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl bg-white shadow-[0_24px_80px_rgba(15,23,42,0.24)]" +
+            (closing ? " is-closing" : "")
+          }
+        >
         <header className="border-b border-zinc-100 px-6 pb-5 pt-5">
           <div className="flex items-start justify-between gap-4">
             <div className="flex flex-wrap items-center gap-2">
@@ -2112,7 +2114,8 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
             <p className="text-[11px] text-zinc-400">{t("drawer.save.autosave")}</p>
           ) : null}
         </footer>
-      </aside>
+        </aside>
+      </div>
       {preview === null ? null : (
         <FilePreviewOverlay
           pane={preview.pane}

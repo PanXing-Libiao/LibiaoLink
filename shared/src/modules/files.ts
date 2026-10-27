@@ -346,6 +346,13 @@ export const PreviewStatusSchema = z.enum(PREVIEW_STATUSES).openapi("PreviewStat
 export const FilePreviewQuerySchema = z
   .object({
     versionId: UuidSchema.optional().openapi({ description: "指定历史版本（A4-06）；缺省 = 当前版本；不属于该文件 / 不存在 → 404" }),
+    /**
+     * 是否把本次送达计入预览审计。缺省 / false = 只取缩略图或预览签名，不写操作记录；
+     * true = 用户已点开具体图片 / 文件，由前端显式请求一次预览并写一条 `action=preview`。
+     */
+    recordView: z.enum(["true", "false"]).optional().openapi({
+      description: "是否记录用户实际查看（缺省 false）；缩略图挂载必须省略，点开具体预览时传 true",
+    }),
   })
   .openapi("FilePreviewQuery");
 

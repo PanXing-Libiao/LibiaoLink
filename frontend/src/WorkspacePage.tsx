@@ -107,7 +107,7 @@ import { TaskRow, resolveColumns, tableGridTemplate, tableMinWidth, taskPatchBod
 import { TEMP_TASK_STAGE, type ProjectTask, type TaskStatus } from "./data/tasks";
 import { memberNameOf, type Member } from "./data/members";
 import type { IssueState, ReportPhoto } from "./data/reports";
-import { recycleFile, renameFile, uploadFiles, usePhotoUrl, type TaskFileRef } from "./fileApi";
+import { recordPreviewView, recycleFile, renameFile, uploadFiles, usePhotoUrl, type TaskFileRef } from "./fileApi";
 import { updateProject, type ApiProject } from "./projectApi";
 import { ISSUE_STATE_NAMES, updateIssue } from "./reportApi";
 import { fetchTaskDetail, finalizeTask, stageNameOf, statusWriteValue, toUiTask, unfinalizeTask, updateTask, updateTaskProgress, type ApiTask } from "./taskApi";
@@ -482,6 +482,7 @@ function IssuePhotoTile({ photo, onPreview }: { photo: ReportPhoto; onPreview: (
       title={photo.name}
       aria-label={t("ws.previewNamed", { name: photo.name })}
       onClick={() => {
+        void recordPreviewView(photo.fileId);
         onPreview(url, photo.name);
       }}
       className="shrink-0 rounded-lg transition hover:opacity-80"

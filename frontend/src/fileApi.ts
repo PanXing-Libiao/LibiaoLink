@@ -638,11 +638,23 @@ export function ensurePreviewOutcome(fileId: string, versionId?: string): Promis
   return promise;
 }
 
+/** 预览端点：`recordView` 只在用户真正点开某个图片 / 文件时追加；缩略图一律省略。 */
+function previewRequestPath(fileId: string, versionId?: string, recordView = false): string {
+  const params = new URLSearchParams();
+  if (versionId !== undefined) {
+    params.set("versionId", versionId);
+  }
+  if (recordView) {
+    params.set("recordView", "true");
+  }
+  const query = params.toString();
+  return "/api/v1/files/" + encodeURIComponent(fileId) + "/preview" + (query === "" ? "" : "?" + query);
+}
+
 async function readPreviewOutcome(fileId: string, versionId?: string): Promise<PreviewOpenOutcome> {
   const key = previewCacheKey(fileId, versionId);
   const epoch = previewEpoch;
-  const endpoint =
-    "/api/v1/files/" + encodeURIComponent(fileId) + "/preview" + (versionId === undefined ? "" : "?versionId=" + encodeURIComponent(versionId));
+  const endpoint = previewRequestPath(fileId, versionId);
   try {
     for (let attempt = 0; attempt < 40; attempt += 1) {
       const preview = await apiRequest<FilePreviewResponse>(endpoint);
@@ -678,13 +690,35 @@ async function readPreviewOutcome(fileId: string, versionId?: string): Promise<P
   }
 }
 
-/** 取预览签名（带缓存；产物通道专用 —— 图片缩略图 / 附图懒取、PDF 浮层）。查看器通道走 ensurePreviewOutcome。 */
+/** 取预览签名（带缓存；缩略图专用 —— 不写预览审计）。查看器通道走 ensurePreviewOutcome。 */
 export async function ensurePreviewUrl(fileId: string): Promise<string | null> {
   const outcome = await ensurePreviewOutcome(fileId);
   return outcome.kind === "url" ? outcome.url : null;
 }
 
-/** 附图展示地址：本地 blob（会话内刚贴的图）优先，否则懒取服务端预览签名并订阅缓存变化。 */
+/** 用户真正点开具体预览后，显式补一次「查看」审计（同一文件 / 版本的并发请求合并）。
+ *  不复用缩略图缓存：缓存命中时也要让服务端知道这一次是用户主动打开，而不是页面挂载时的批量签名。 */
+const previewViewRecords = new Map<string, Promise<void>>();
+export function recordPreviewView(fileId: string, versionId?: string): Promise<void> {
+  if (fileId === "") {
+    return Promise.resolve();
+  }
+  const key = previewCacheKey(fileId, versionId);
+  const pending = previewViewRecords.get(key);
+  if (pending !== undefined) {
+    return pending;
+  }
+  const request = apiRequest<FilePreviewResponse>(previewRequestPath(fileId, versionId, true))
+    .then(() => undefined, () => undefined)
+    .finally(() => {
+      previewViewRecords.delete(key);
+    });
+  previewViewRecords.set(key, request);
+  return request;
+}
+
+/** 附图缩略图展示地址：本地 blob（会话内刚贴的图）优先，否则懒取服务端预览签名并订阅缓存变化。
+ *  2026-10-27：缩略图只取签名、不写审计；`recordPreviewView` 在大图真正打开时补记一次。 */
 export function usePhotoUrl(fileId: string, localUrl: string | null): string | null {
   const remote = useSyncExternalStore(subscribePreview, () => (fileId === "" ? null : previewUrls.get(fileId) ?? null));
   useEffect(() => {
