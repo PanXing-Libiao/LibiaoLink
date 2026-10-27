@@ -133,7 +133,7 @@
             "items": {
               "$ref": "#/components/schemas/PermissionKey"
             },
-            "description": "全量功能权限位基线；写能力由 groupReadOnly / 部门规则再裁决"
+            "description": "全量功能权限位基线；业务写能力另由部门编辑范围 / 项目 groupAccessLevel 裁决"
           },
           "groupKeys": {
             "type": "array",
@@ -159,7 +159,7 @@
           },
           "groupReadOnly": {
             "type": "boolean",
-            "description": "群组访问限制下当前账号是否只读；页面仍全部可见，但业务写接口一律 403"
+            "description": "兼容摘要：账号没有任何编辑范围时为 true；项目级写能力以项目 groupAccessLevel 为准，全局写能力以 groupAllEdit 为准"
           },
           "groupProjectAccess": {
             "$ref": "#/components/schemas/GroupProjectAccess"
@@ -172,7 +172,33 @@
             "description": "当前账号命中的部门项目范围并集：all / own / selected / none；用于空态展示当前权限"
           },
           "groupAccessLevel": {
-            "$ref": "#/components/schemas/GroupAccessAccessLevel"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GroupAccessAccessLevel"
+              },
+              {
+                "description": "旧客户端兼容摘要：任一范围可编辑 = edit，否则 view；项目级写权限以项目 groupAccessLevel 为准"
+              }
+            ]
+          },
+          "groupScopePermissions": {
+            "$ref": "#/components/schemas/GroupAccessScopePermissions"
+          },
+          "groupAnyEdit": {
+            "type": "boolean",
+            "description": "当前账号是否至少在一个项目范围拥有编辑权限（任务模板 / 节点库写入口）"
+          },
+          "groupAllEdit": {
+            "type": "boolean",
+            "description": "当前账号是否拥有全部项目编辑权限（字典 / 日历 / 自动化等全局写入口）"
+          },
+          "groupOwnEdit": {
+            "type": "boolean",
+            "description": "当前账号是否拥有自己的项目编辑权限（可用于新建项目）"
+          },
+          "groupSelectedEdit": {
+            "type": "boolean",
+            "description": "当前账号是否拥有指定项目编辑权限"
           },
           "auditScope": {
             "$ref": "#/components/schemas/AuditScope"
@@ -4530,7 +4556,7 @@
           "edit",
           "view"
         ],
-        "description": "当前账号的部门权限档位：edit 可编辑并浏览 / view 仅浏览；与 groupReadOnly 同源"
+        "description": "当前登录账号对该项目的部门权限：edit 可写 / view 仅浏览；由服务端按所有命中范围取最高权限后随项目下发"
       },
       "GroupAccessAdmin": {
         "type": "object",
@@ -4603,6 +4629,15 @@
           "manual"
         ],
         "description": "管理员来源：configured 环境配置 / manual 手工添加"
+      },
+      "GroupAccessDataProjectScope": {
+        "type": "string",
+        "enum": [
+          "all",
+          "own",
+          "selected"
+        ],
+        "description": "可授予数据权限的项目范围：all 全部项目 / own 仅自己的项目 / selected 仅指定项目"
       },
       "GroupAccessGroup": {
         "type": "object",
@@ -4695,8 +4730,25 @@
           "userId": {
             "$ref": "#/components/schemas/Uuid"
           },
+          "scopePermissions": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GroupAccessScopePermissions"
+              },
+              {
+                "description": "个人多范围权限；存在个人规则时整体覆盖同部门默认规则"
+              }
+            ]
+          },
           "projectScope": {
-            "$ref": "#/components/schemas/GroupAccessProjectScope"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GroupAccessProjectScope"
+              },
+              {
+                "description": "旧客户端兼容摘要：优先 all，其次 own，再次 selected；无范围 = none"
+              }
+            ]
           },
           "accessLevel": {
             "allOf": [
@@ -4704,7 +4756,7 @@
                 "$ref": "#/components/schemas/GroupAccessAccessLevel"
               },
               {
-                "description": "部门权限档位：edit 可编辑并浏览 / view 仅浏览；edit 隐含 view，存量规则默认 view"
+                "description": "旧客户端兼容摘要：projectScope 对应范围的权限档位；无范围 = view"
               }
             ]
           },
@@ -4721,12 +4773,13 @@
         "required": [
           "groupKey",
           "userId",
+          "scopePermissions",
           "projectScope",
           "accessLevel",
           "projectIds",
           "updatedAt"
         ],
-        "description": "部门内个人权限覆盖：projectIds 仅 selected 时有值；存在时优先于同部门默认规则"
+        "description": "部门内个人权限覆盖：scopePermissions 为裁决口径；projectIds 仅 selected 时有值；整体覆盖同部门默认规则"
       },
       "GroupAccessMemberRuleDeleteInput": {
         "type": "object",
@@ -4778,18 +4831,34 @@
             "minItems": 1,
             "maxItems": 2000
           },
-          "projectScope": {
-            "$ref": "#/components/schemas/GroupAccessProjectScope"
-          },
-          "accessLevel": {
+          "scopePermissions": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/GroupAccessAccessLevel"
+                "$ref": "#/components/schemas/GroupAccessScopePermissions"
               },
               {
-                "description": "edit = 可编辑并浏览；view = 仅浏览。projectScope=none 时恒为 view"
+                "description": "个人多范围权限（新口径）；空数组 = 不显示项目数据"
               }
             ]
+          },
+          "projectScope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GroupAccessProjectScope"
+              },
+              {
+                "description": "旧客户端兼容字段；未传 scopePermissions 时规范化为单范围"
+              }
+            ]
+          },
+          "accessLevel": {
+            "type": "string",
+            "enum": [
+              "edit",
+              "view"
+            ],
+            "default": "view",
+            "description": "旧客户端兼容档位；scopePermissions 存在时忽略"
           },
           "projectIds": {
             "type": "array",
@@ -4797,15 +4866,15 @@
               "$ref": "#/components/schemas/Uuid"
             },
             "maxItems": 2000,
-            "default": []
+            "default": [],
+            "description": "selected 范围的项目白名单"
           }
         },
         "required": [
           "groupKey",
-          "userIds",
-          "projectScope"
+          "userIds"
         ],
-        "description": "保存部门内个人权限覆盖：同一部门可按 userIds 批量写入相同权限，各成员仍保存为独立个人规则；不改变部门默认规则"
+        "description": "保存部门内个人权限覆盖：多范围可分别设置编辑 / 仅浏览；同一部门可按 userIds 批量写入，各成员仍保存为独立规则"
       },
       "GroupAccessMemberRuleResponse": {
         "type": "object",
@@ -4936,8 +5005,25 @@
             },
             "description": "旧客户端兼容字段；恒返回全部页面"
           },
+          "scopePermissions": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GroupAccessScopePermissions"
+              },
+              {
+                "description": "多范围权限；空数组 = 不显示项目数据"
+              }
+            ]
+          },
           "projectScope": {
-            "$ref": "#/components/schemas/GroupAccessProjectScope"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GroupAccessProjectScope"
+              },
+              {
+                "description": "旧客户端兼容摘要：优先 all，其次 own，再次 selected；无范围 = none"
+              }
+            ]
           },
           "accessLevel": {
             "allOf": [
@@ -4945,7 +5031,7 @@
                 "$ref": "#/components/schemas/GroupAccessAccessLevel"
               },
               {
-                "description": "部门权限档位：edit 可编辑并浏览 / view 仅浏览；edit 隐含 view，存量规则默认 view"
+                "description": "旧客户端兼容摘要：projectScope 对应范围的权限档位；无范围 = view"
               }
             ]
           },
@@ -4953,7 +5039,8 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Uuid"
-            }
+            },
+            "description": "selected 范围项目白名单"
           },
           "memberScope": {
             "$ref": "#/components/schemas/GroupAccessMemberScope"
@@ -4972,6 +5059,7 @@
           "groupKey",
           "groupName",
           "allowedPages",
+          "scopePermissions",
           "projectScope",
           "accessLevel",
           "projectIds",
@@ -5010,18 +5098,34 @@
               "audit"
             ]
           },
-          "projectScope": {
-            "$ref": "#/components/schemas/GroupAccessProjectScope"
-          },
-          "accessLevel": {
+          "scopePermissions": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/GroupAccessAccessLevel"
+                "$ref": "#/components/schemas/GroupAccessScopePermissions"
               },
               {
-                "description": "edit = 可编辑并浏览；view = 仅浏览。projectScope=none 时恒为 view"
+                "description": "多范围权限（新口径）：all / own / selected 可多选，各带 edit / view；空数组 = 不显示项目数据"
               }
             ]
+          },
+          "projectScope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GroupAccessProjectScope"
+              },
+              {
+                "description": "旧客户端兼容字段：未传 scopePermissions 时规范化为单范围；none = 不显示项目数据"
+              }
+            ]
+          },
+          "accessLevel": {
+            "type": "string",
+            "enum": [
+              "edit",
+              "view"
+            ],
+            "default": "view",
+            "description": "旧客户端兼容档位；scopePermissions 存在时忽略"
           },
           "projectIds": {
             "type": "array",
@@ -5029,7 +5133,8 @@
               "$ref": "#/components/schemas/Uuid"
             },
             "maxItems": 2000,
-            "default": []
+            "default": [],
+            "description": "selected 范围的项目白名单；不存在 selected 时忽略"
           },
           "memberScope": {
             "allOf": [
@@ -5052,10 +5157,9 @@
           }
         },
         "required": [
-          "groupKey",
-          "projectScope"
+          "groupKey"
         ],
-        "description": "保存群组访问规则：项目范围 + 编辑/仅浏览 + 指定项目 + 适用人员（selected 时生效）；allowedPages 兼容旧客户端且不再产生页面限制"
+        "description": "保存群组访问规则：可多选全部 / 自己的 / 指定项目并分别设置编辑或仅浏览；不显示项目数据为互斥清空项；旧 projectScope / accessLevel 继续兼容"
       },
       "GroupAccessRuleResponse": {
         "type": "object",
@@ -5066,7 +5170,7 @@
                 "$ref": "#/components/schemas/GroupAccessRule"
               },
               {
-                "description": "群组访问规则：accessLevel = edit / view；projectIds 仅项目 selected 时有值；memberUserIds 仅人员 selected 时有值"
+                "description": "群组访问规则：scopePermissions 为裁决口径；projectScope / accessLevel 仅为旧客户端摘要"
               }
             ]
           }
@@ -5075,6 +5179,37 @@
           "rule"
         ],
         "description": "保存后的群组访问规则"
+      },
+      "GroupAccessScopePermission": {
+        "type": "object",
+        "properties": {
+          "projectScope": {
+            "$ref": "#/components/schemas/GroupAccessDataProjectScope"
+          },
+          "accessLevel": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GroupAccessAccessLevel"
+              },
+              {
+                "description": "部门权限档位：edit 可编辑并浏览 / view 仅浏览；edit 隐含 view，存量规则默认 view"
+              }
+            ]
+          }
+        },
+        "required": [
+          "projectScope",
+          "accessLevel"
+        ],
+        "description": "一个项目范围的权限档位：编辑 / 仅浏览"
+      },
+      "GroupAccessScopePermissions": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/GroupAccessScopePermission"
+        },
+        "maxItems": 3,
+        "description": "当前账号命中的多范围权限（多部门 / 个人覆盖取并集后，同一范围取最高权限）；空数组 = 不显示项目数据"
       },
       "GroupProjectAccess": {
         "type": "string",
@@ -7009,6 +7144,9 @@
           "status": {
             "$ref": "#/components/schemas/ProjectStatus"
           },
+          "groupAccessLevel": {
+            "$ref": "#/components/schemas/GroupAccessAccessLevel"
+          },
           "description": {
             "type": [
               "string",
@@ -7093,6 +7231,7 @@
           "managerNames",
           "stageKey",
           "status",
+          "groupAccessLevel",
           "description",
           "version",
           "createdAt",

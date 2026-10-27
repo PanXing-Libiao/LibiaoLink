@@ -1,6 +1,6 @@
 import { z } from "../zod.ts";
 import { UuidSchema } from "../common/conventions.ts";
-import { GroupAccessAccessLevelSchema, GroupAccessPageSchema, GroupAccessProjectScopeSchema } from "./group-access.ts";
+import { GroupAccessAccessLevelSchema, GroupAccessPageSchema, GroupAccessProjectScopeSchema, GroupAccessScopePermissionsSchema } from "./group-access.ts";
 
 /**
  * 功能权限位（模块.操作）—— 本数组是唯一来源。
@@ -95,15 +95,20 @@ export const ActorPermissionsSchema = z
     userId: UuidSchema,
     roleCodes: z.array(z.string()).openapi({ example: [], description: "遗留字段，固定为空；不读取 user_roles，不参与授权或管理员判定" }),
     dataScopes: z.array(DataScopeSchema).openapi({ description: "固定全量数据范围基线；实际项目范围由部门规则收窄" }),
-    permissionKeys: z.array(PermissionKeySchema).openapi({ description: "全量功能权限位基线；写能力由 groupReadOnly / 部门规则再裁决" }),
+    permissionKeys: z.array(PermissionKeySchema).openapi({ description: "全量功能权限位基线；业务写能力另由部门编辑范围 / 项目 groupAccessLevel 裁决" }),
     groupKeys: z.array(z.string()).optional().openapi({ description: "当前账号的 Casdoor 群组键（owner/name；按登录或目录同步落地）" }),
     pageKeys: z.array(GroupAccessPageSchema).optional().openapi({ description: "GROUP_ACCESS_ENFORCED=true 时当前账号可进入的页面；管理员为全量" }),
     groupAccessEnforced: z.boolean().optional().openapi({ description: "群组访问限制是否已启用" }),
     groupAccessAdmin: z.boolean().optional().openapi({ description: "当前账号是否可进入群组权限管理页" }),
-    groupReadOnly: z.boolean().optional().openapi({ description: "群组访问限制下当前账号是否只读；页面仍全部可见，但业务写接口一律 403" }),
+    groupReadOnly: z.boolean().optional().openapi({ description: "兼容摘要：账号没有任何编辑范围时为 true；项目级写能力以项目 groupAccessLevel 为准，全局写能力以 groupAllEdit 为准" }),
     groupProjectAccess: GroupProjectAccessSchema.optional().openapi({ description: "部门项目权限三态：allowed / empty / denied；none 规则按仅登录处理，用于业务页面统一空状态" }),
     groupProjectScopes: z.array(GroupAccessProjectScopeSchema).optional().openapi({ description: "当前账号命中的部门项目范围并集：all / own / selected / none；用于空态展示当前权限" }),
-    groupAccessLevel: GroupAccessAccessLevelSchema.optional().openapi({ description: "当前账号的部门权限档位：edit 可编辑并浏览 / view 仅浏览；与 groupReadOnly 同源" }),
+    groupAccessLevel: GroupAccessAccessLevelSchema.optional().openapi({ description: "旧客户端兼容摘要：任一范围可编辑 = edit，否则 view；项目级写权限以项目 groupAccessLevel 为准" }),
+    groupScopePermissions: GroupAccessScopePermissionsSchema.optional().openapi({ description: "当前账号命中的多范围权限（多部门 / 个人覆盖取并集后，同一范围取最高权限）；空数组 = 不显示项目数据" }),
+    groupAnyEdit: z.boolean().optional().openapi({ description: "当前账号是否至少在一个项目范围拥有编辑权限（任务模板 / 节点库写入口）" }),
+    groupAllEdit: z.boolean().optional().openapi({ description: "当前账号是否拥有全部项目编辑权限（字典 / 日历 / 自动化等全局写入口）" }),
+    groupOwnEdit: z.boolean().optional().openapi({ description: "当前账号是否拥有自己的项目编辑权限（可用于新建项目）" }),
+    groupSelectedEdit: z.boolean().optional().openapi({ description: "当前账号是否拥有指定项目编辑权限" }),
     auditScope: AuditScopeSchema.optional().openapi({ description: "当前账号操作记录可见范围；所有登录账号至少可查看本人记录" }),
   })
   .openapi("ActorPermissions", { description: "当前用户授权画像（全量能力基线 + 部门规则裁决结果）" });

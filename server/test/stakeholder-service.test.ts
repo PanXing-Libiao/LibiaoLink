@@ -7,6 +7,7 @@
  * 真机口径见 server/README.md「干系人（j6）」；策略纯函数回归见 test/stakeholder-rules.test.ts。
  */
 import { describe, expect, it } from "vitest";
+import { AppError } from "../src/common/errors/app-error.js";
 import type { AuditRecordInput } from "../src/modules/admin/index.js";
 import type { AuditService } from "../src/modules/admin/index.js";
 import type { DatabaseService } from "../src/db/database.service.js";
@@ -152,15 +153,46 @@ class FakeStakeholderRepository {
 }
 
 class FakePermissionService {
+  globalWritable = true;
+  projectLevels = new Map<string, "edit" | "view">();
+
   constructor(
     public authorization: ActorAuthorization,
     public scope: ProjectScopeFilter,
+    private readonly knownProjects: ReadonlySet<string>,
   ) {}
   async getAuthorization(): Promise<ActorAuthorization> {
     return this.authorization;
   }
   async projectScope(): Promise<ProjectScopeFilter> {
     return this.scope;
+  }
+  async assertProjectVisible(_actorId: string, projectId: string): Promise<{
+    projectId: string;
+    member: boolean;
+    projectManager: boolean;
+    groupAccessLevel: "edit" | "view";
+  }> {
+    if (!this.knownProjects.has(projectId)) {
+      throw new AppError("NOT_FOUND", "项目不存在或已删除：" + projectId);
+    }
+    return {
+      projectId,
+      member: true,
+      projectManager: false,
+      groupAccessLevel: this.projectLevels.get(projectId) ?? "edit",
+    };
+  }
+  async assertCan(_actorId: string, key: string, context?: { groupAccessLevel?: "edit" | "view" }): Promise<void> {
+    if (!this.authorization.permissionKeys.includes(key as never)) {
+      throw new AppError("FORBIDDEN", "无权限：" + key);
+    }
+    if (context?.groupAccessLevel === "view") {
+      throw new AppError("FORBIDDEN", "当前项目仅浏览");
+    }
+  }
+  async assertWritable(): Promise<void> {
+    if (!this.globalWritable) throw new AppError("FORBIDDEN", "该操作需要全部项目编辑权限");
   }
 }
 
@@ -177,13 +209,14 @@ function makeService(
   repo = new FakeStakeholderRepository(),
 ) {
   const audit = new FakeAuditService();
+  const permission = new FakePermissionService(authorization, scope, repo.projects);
   const service = new StakeholderService(
     new FakeDatabase() as unknown as DatabaseService,
     repo as unknown as StakeholderRepository,
-    new FakePermissionService(authorization, scope) as unknown as PermissionService,
+    permission as unknown as PermissionService,
     audit as unknown as AuditService,
   );
-  return { service, repo, audit };
+  return { service, repo, audit, permission };
 }
 
 const LIST_QUERY = { page: 1, limit: 50 } as const;
@@ -276,6 +309,45 @@ describe("记录级可见集（A5-03 / A5-04）", () => {
     expect((await service.list({ ...LIST_QUERY, "filter[projectId]": PROJECT }, ME)).total).toBe(1);
     expect((await service.list({ ...LIST_QUERY, q: "张三" }, ME)).total).toBe(1);
     expect((await service.list({ ...LIST_QUERY, q: "无此人" }, ME)).total).toBe(0);
+  });
+});
+
+describe("写权限按项目裁决", () => {
+  it("未关联项目：仅自己的项目可编辑也不能新建未关联台账", async () => {
+    const { service, audit, permission } = makeService(SALES);
+    permission.globalWritable = false;
+    await expect(service.create({ name: "李四", companyType: "supplier" }, ME)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(audit.records).toHaveLength(0);
+  });
+
+  it("新建时目标项目仅浏览：403 且不落库、不写审计", async () => {
+    const { service, repo, audit, permission } = makeService(SALES);
+    permission.projectLevels.set(PROJECT, "view");
+    const before = repo.rows.length;
+    await expect(
+      service.create({ name: "李四", companyType: "supplier", projectIds: [PROJECT] }, ME),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(repo.rows).toHaveLength(before);
+    expect(audit.records).toHaveLength(0);
+  });
+
+  it("更新 / 删除共享台账：任一关联项目仅浏览即 403", async () => {
+    const { service, repo, permission } = makeService(SALES);
+    repo.links = [
+      { stakeholderId: STAKEHOLDER, projectId: PROJECT },
+      { stakeholderId: STAKEHOLDER, projectId: STRANGER_PROJECT },
+    ];
+    permission.projectLevels.set(STRANGER_PROJECT, "view");
+    await expect(service.update(STAKEHOLDER, { phone: "13900000000" }, ME)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(service.remove(STAKEHOLDER, ME)).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("关联 / 解除关联：目标项目仅浏览即 403", async () => {
+    const { service, repo, permission } = makeService(SALES);
+    permission.projectLevels.set(PROJECT, "view");
+    await expect(service.linkProject(STAKEHOLDER, PROJECT, ME)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    repo.links = [{ stakeholderId: STAKEHOLDER, projectId: PROJECT }];
+    await expect(service.unlinkProject(STAKEHOLDER, PROJECT, ME)).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });
 

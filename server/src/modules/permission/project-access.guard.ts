@@ -76,6 +76,7 @@ export class ProjectAccessGuard implements CanActivate {
         await this.permission.assertCan(actorId, required, {
           member: access.member,
           projectManager: access.projectManager,
+          groupAccessLevel: access.groupAccessLevel,
         });
       }
       return true;

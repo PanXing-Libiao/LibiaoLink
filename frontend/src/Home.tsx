@@ -42,11 +42,11 @@ type HomeProps = {
   dictTools: DictTools;
   /** 是否持有 dict.manage（Push 172）：决定「＋ 添加项目类型」与两类条目删除入口的呈现。 */
   canManageDicts: boolean;
-  /** 是否持有 project.delete（Push 172）：决定卡片上删除项目入口的呈现（服务端仍是最终裁决）。 */
+  /** 是否持有 project.delete：功能位门槛；卡片再叠加当前项目的 groupAccessLevel === "edit"（服务端仍是最终裁决）。 */
   canDeleteProject: boolean;
-  /** 是否持有 project.create（Push 173）：无权限时「新建项目」出禁用观感、点击给提示条（服务端仍是最终裁决）。 */
+  /** 是否具备新建项目能力（功能位 + 全部 / 自己的项目编辑）：无权限时「新建项目」出禁用观感、点击给提示条。 */
   canCreateProject: boolean;
-  /** 是否持有 project.update（Push 173）：无权限时卡片编辑入口不渲染（与删除同款收敛口径）。 */
+  /** 是否持有 project.update：功能位门槛；卡片再叠加当前项目的 groupAccessLevel === "edit"（服务端仍是最终裁决）。 */
   canUpdateProject: boolean;
   /** 是否持有 project.export：无权限时卡片导出入口不渲染（服务端仍是最终裁决）。 */
   canExportProject: boolean;
@@ -179,20 +179,20 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   const keyword = query.trim();
   const hasFilters = hasListFilters(activeFilters);
   const permissionEmpty = !hasFilters && keyword === "" && permissions?.groupProjectAccess === "empty";
-  const permissionScopeText = (permissions?.groupProjectScopes ?? [])
-    .map((scope) => scope === "all"
-      ? t("access.scope.all")
-      : scope === "own"
-        ? t("access.scope.own")
-        : scope === "selected"
-          ? t("access.scope.selected")
-          : t("access.scope.none"))
-    .join(" / ");
-  const currentPermissionText = permissionScopeText === ""
+  const currentPermissionText = permissions === null || permissions.groupScopePermissions.length === 0
     ? null
-    : t("access.currentPermission", {
-      scope: permissionScopeText,
-      level: permissions?.groupAccessLevel === "edit" ? t("access.level.edit") : t("access.level.view"),
+    : t("access.currentPermissionScopes", {
+      scopes: permissions.groupScopePermissions
+        .map((permission) => {
+          const scope = permission.projectScope === "all"
+            ? t("access.scope.all")
+            : permission.projectScope === "own"
+              ? t("access.scope.own")
+              : t("access.scope.selected");
+          const level = permission.accessLevel === "edit" ? t("access.level.edit") : t("access.level.view");
+          return scope + " · " + level;
+        })
+        .join(t("access.permissionSeparator")),
     });
   const sortDesc = activeFilters.sortDesc;
   const dateRange: DateRange | null =
@@ -809,7 +809,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                 managerNames={projectManagerText(project)}
                 time={project.createdAt}
                 onEdit={
-                  canUpdateProject
+                  canUpdateProject && project.groupAccessLevel === "edit"
                     ? () => {
                         onEdit(project);
                       }
@@ -824,7 +824,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                 }
                 exporting={exportingProjectId === project.id}
                 onDelete={
-                  canDeleteProject
+                  canDeleteProject && project.groupAccessLevel === "edit"
                     ? () => {
                         onDeleteProject(project);
                       }

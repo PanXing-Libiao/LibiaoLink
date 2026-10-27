@@ -101,6 +101,8 @@ export const JA_TEXTS: Partial<Record<TextKey, string>> = {
   "access.scope.selected": "指定プロジェクトのみ",
   "access.scope.none": "プロジェクトデータを非表示",
   "access.currentPermission": "現在の権限：{scope} · {level}",
+  "access.currentPermissionScopes": "現在の権限：{scopes}",
+  "access.permissionSeparator": "；",
   "access.level.edit": "編集 / 閲覧",
   "access.level.view": "閲覧のみ",
   "access.noProjects.title": "現在のアカウントには閲覧/編集できるプロジェクトがありません",

@@ -133,8 +133,6 @@ type WorkspacePageProps = {
   workspaceOpenProjects?: WorkspaceOpenProjects | null;
   /** 保存展开态（单键 PATCH）；返回 null = 成功，返回文案 = 失败提示。不传 = 不做服务端记忆（展开态仅本页内存）。 */
   onWorkspaceOpenProjectsChange?: (value: WorkspaceOpenProjects) => Promise<string | null>;
-  /** 部门群组只读：页面可进，但任务 / 问题 / 计划的所有写入口关闭。 */
-  readOnly?: boolean;
 };
 
 /** 工作台三态（首屏加载 / 失败 / 就绪）—— 与「日报及问题」三个列表子视图同一套口径。 */
@@ -644,7 +642,7 @@ function sameMemberIds(left: readonly string[], right: readonly string[]): boole
  *  Push 278：任务行**点击开任务抽屉**（业务口径「做我的任务页面也可以点击编辑即可 编辑行 也在右侧出现抽屉」）——
  *  抽屉 = 项目页同款 TaskDrawer（全能力即时保存）；数据源 = 聚合读面全字段行（Push 302；带 version，打开零新增请求）；
  *  写后防抖静默刷新聚合读面（抽屉不打断：task 用写回响应就地更新、version 滚动前进）。 */
-function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorName, onReload, readOnly }: { data: ApiWorkspace; tierTint: TintedTier | false; openIds: ReadonlySet<string>; onToggleProject: (projectId: string) => void; members: readonly Member[]; actorName: string; onReload: () => void; readOnly: boolean }) {
+function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorName, onReload }: { data: ApiWorkspace; tierTint: TintedTier | false; openIds: ReadonlySet<string>; onToggleProject: (projectId: string) => void; members: readonly Member[]; actorName: string; onReload: () => void }) {
   const t = useT();
   const locale = useLocale();
   const projects = groupTasksByProject(data);
@@ -653,6 +651,8 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
   const allTasks = [...data.myTasks.overdue, ...data.myTasks.today, ...data.myTasks.upcoming, ...data.myTasks.unscheduled];
   const taskById = new Map(allTasks.map((task) => [task.id, task]));
   const projectById = new Map(data.projects.map((project) => [project.id, project]));
+  /** 项目级部门权限：行内编辑、任务抽屉与项目字段回写都只对当前项目可编辑时开放。 */
+  const canWriteProject = (projectId: string): boolean => projectById.get(projectId)?.groupAccessLevel === "edit";
 
   /** 抽屉里的当前任务（含 version；null = 抽屉关着）：写回响应就地更新 —— version 滚动前进，连续编辑不撞旧值。 */
   const [drawerTask, setDrawerTask] = useState<{ task: ProjectTask; projectId: string } | null>(null);
@@ -924,6 +924,7 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
   };
 
   const drawerProject = drawerTask === null ? undefined : projectById.get(drawerTask.projectId);
+  const drawerWritable = drawerProject?.groupAccessLevel === "edit";
   const drawerManagers = (drawerProject?.managerNames ?? []).filter((name): name is string => name !== null && name !== "").join("、");
 
   return (
@@ -951,7 +952,7 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
                 onToggleProject(project.projectId);
               }}
             >
-              <TaskTable projectId={project.projectId} project={projectById.get(project.projectId)} items={project.items} tierTint={tierTint} members={members} onOpenTask={openTask} rowOf={rowOf} handlers={readOnly ? undefined : rowHandlers} />
+              <TaskTable projectId={project.projectId} project={projectById.get(project.projectId)} items={project.items} tierTint={tierTint} members={members} onOpenTask={openTask} rowOf={rowOf} handlers={canWriteProject(project.projectId) ? rowHandlers : undefined} />
             </ProjectPanel>
           ))}
         </div>
@@ -961,17 +962,17 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
         managers={drawerManagers}
         managerIds={drawerProject?.managerIds ?? []}
         members={members}
-        onSubmit={readOnly ? undefined : handleDrawerSubmit}
-        onRename={readOnly ? undefined : handleDrawerRename}
-        onProgress={readOnly ? undefined : handleDrawerProgress}
-        onSetStatus={readOnly ? undefined : handleDrawerStatus}
-        onSetActualEnd={readOnly ? undefined : handleDrawerActualEnd}
-        onFinalize={readOnly ? undefined : handleDrawerFinalize}
-        onUnfinalize={readOnly ? undefined : handleDrawerUnfinalize}
-        onUploadFiles={readOnly ? undefined : handleDrawerUploadFiles}
-        onDeleteFile={readOnly ? undefined : handleDrawerDeleteFile}
-        onRenameFile={readOnly ? undefined : handleDrawerRenameFile}
-        onChanged={readOnly ? undefined : handleDrawerChanged}
+        onSubmit={drawerWritable ? handleDrawerSubmit : undefined}
+        onRename={drawerWritable ? handleDrawerRename : undefined}
+        onProgress={drawerWritable ? handleDrawerProgress : undefined}
+        onSetStatus={drawerWritable ? handleDrawerStatus : undefined}
+        onSetActualEnd={drawerWritable ? handleDrawerActualEnd : undefined}
+        onFinalize={drawerWritable ? handleDrawerFinalize : undefined}
+        onUnfinalize={drawerWritable ? handleDrawerUnfinalize : undefined}
+        onUploadFiles={drawerWritable ? handleDrawerUploadFiles : undefined}
+        onDeleteFile={drawerWritable ? handleDrawerDeleteFile : undefined}
+        onRenameFile={drawerWritable ? handleDrawerRenameFile : undefined}
+        onChanged={drawerWritable ? handleDrawerChanged : undefined}
         actorName={actorName}
         projectId={drawerTask?.projectId}
         onClose={() => {
@@ -998,7 +999,7 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorN
  *  - 表 / 归类色签两栏完全同构（业务口径「我处理的问题就是提出问题里面分类的问题」—— 同一套「问题归类」，不另立分类）；
  *  - 「进入项目」落点两栏一致 = 该项目「问题追踪」（`?view=daily&sub=issues`；Push 253 口径）；折叠面板展开态两栏共用
  *  同一组「已展开项目」记忆（openedIds，见页面级说明）。 */
-function IssuesView({ view, issues, tierTint, openIds, onToggleProject, overrides, onChangeState }: { view: WorkspaceIssueView; issues: readonly ApiWorkspaceIssue[]; tierTint: TintedTier | false; openIds: ReadonlySet<string>; onToggleProject: (projectId: string) => void; overrides: ReadonlyMap<string, IssueStateOverride>; onChangeState?: (issue: ApiWorkspaceIssue, next: IssueState) => void }) {
+function IssuesView({ view, issues, tierTint, openIds, onToggleProject, overrides, onChangeState, editableProjectIds }: { view: WorkspaceIssueView; issues: readonly ApiWorkspaceIssue[]; tierTint: TintedTier | false; openIds: ReadonlySet<string>; onToggleProject: (projectId: string) => void; overrides: ReadonlyMap<string, IssueStateOverride>; onChangeState?: (issue: ApiWorkspaceIssue, next: IssueState) => void; editableProjectIds: ReadonlySet<string> }) {
   // 已完成不显示（Push 260 · 第七项）：按「覆盖值 ?? 接口值」的有效状态过滤（Push 302 起 solution / photos 就在行上，过滤不再牵动取数）。
   const visibleIssues = issues.filter((issue) => (overrides.get(issue.id)?.state ?? toIssueState(issue.state)) !== "done");
   const projects = groupIssuesByProject(visibleIssues);
@@ -1049,7 +1050,7 @@ function IssuesView({ view, issues, tierTint, openIds, onToggleProject, override
                 onToggleProject(project.projectId);
               }}
             >
-              <IssueTable issues={project.issues} tierTint={tierTint} overrides={overrides} onChangeState={onChangeState} />
+              <IssueTable issues={project.issues} tierTint={tierTint} overrides={overrides} onChangeState={editableProjectIds.has(project.projectId) ? onChangeState : undefined} />
             </ProjectPanel>
           ))}
         </div>
@@ -1070,7 +1071,7 @@ function IssuesView({ view, issues, tierTint, openIds, onToggleProject, override
  *  Push 260：「我提出的问题」标签下再分两枚子标签（我提出的问题 / 待我处理的问题，`?sub=`，见 ISSUE_VIEW_TABS）——
  *  两枚子标签共用同一份读面（myIssues.raised / myIssues.handling）与同一组展开态记忆，只换数据栏与标题；
  *  展示口径 = 「已完成不显示」（Push 260 第七项 —— 见 IssuesView 的 visibleIssues 过滤）。 */
-export default function WorkspacePage({ me, members, tab, onChangeTab, sub, onChangeSub, workspaceOpenProjects, onWorkspaceOpenProjectsChange, readOnly = false }: WorkspacePageProps) {
+export default function WorkspacePage({ me, members, tab, onChangeTab, sub, onChangeSub, workspaceOpenProjects, onWorkspaceOpenProjectsChange }: WorkspacePageProps) {
   const [state, setState] = useState<WorkspaceState>({ kind: "loading" });
   /** 重新加载令牌：bump 一次重新取数（错误态的「重新加载」用）。 */
   const [reloadToken, setReloadToken] = useState(0);
@@ -1111,6 +1112,9 @@ export default function WorkspacePage({ me, members, tab, onChangeTab, sub, onCh
   /** 状态改动失败文案（null = 无提示）：失败已回滚，这里只出提示条。 */
   const [issueError, setIssueError] = useState<string | null>(null);
   const handleChangeIssueState = (issue: ApiWorkspaceIssue, next: IssueState): void => {
+    if (state.kind !== "ready" || state.data.projects.find((project) => project.id === issue.projectId)?.groupAccessLevel !== "edit") {
+      return;
+    }
     const known = issueOverrides.get(issue.id);
     const from = known ?? { state: toIssueState(issue.state), version: issue.version };
     if (from.state === next) {
@@ -1362,7 +1366,7 @@ export default function WorkspacePage({ me, members, tab, onChangeTab, sub, onCh
           )}
 
           {tab === "plan" ? (
-            <MyPlanBoard readOnly={readOnly} />
+            <MyPlanBoard />
           ) : state.kind === "loading" ? (
             <EmptyCard text={t("common.loading")} hint={t("ws.loading.hint")} />
           ) : state.kind === "error" ? (
@@ -1389,11 +1393,11 @@ export default function WorkspacePage({ me, members, tab, onChangeTab, sub, onCh
                 handleToggleProject("raised", projectId);
               }}
               overrides={issueOverrides}
-              onChangeState={readOnly ? undefined : handleChangeIssueState}
+              onChangeState={handleChangeIssueState}
+              editableProjectIds={new Set(state.data.projects.filter((project) => project.groupAccessLevel === "edit").map((project) => project.id))}
             />
           ) : (
             <MyTasksView
-              readOnly={readOnly}
               data={state.data}
               tierTint={tierTint}
               openIds={taskOpenIds}

@@ -11,6 +11,7 @@ import {
   effectiveGroupAccessRules,
   intersectProjectIds,
   parseGroupAccessAdminKeys,
+  projectGroupAccessLevelOf,
   resolveGroupAccess,
   ruleAppliesToMember,
   type GroupAccessMemberRuleData,
@@ -26,11 +27,21 @@ const PROJECT_B = "22222222-2222-4222-8222-222222222222";
 const PROJECT_C = "33333333-3333-4333-8333-333333333333";
 const PROJECT_D = "44444444-4444-4444-8444-444444444444";
 
+function scopePermissionsOf(
+  projectScope: GroupAccessRuleData["projectScope"],
+  accessLevel: GroupAccessRuleData["accessLevel"],
+): GroupAccessRuleData["scopePermissions"] {
+  return projectScope === "none" ? [] : [{ projectScope, accessLevel }];
+}
+
 function rule(partial: Partial<GroupAccessRuleData> & { groupKey: string }): GroupAccessRuleData {
+  const projectScope = partial.projectScope ?? "none";
+  const accessLevel = partial.accessLevel ?? "view";
   return {
     allowedPages: ["projects"],
-    projectScope: "none",
-    accessLevel: "view",
+    scopePermissions: scopePermissionsOf(projectScope, accessLevel),
+    projectScope,
+    accessLevel,
     projectIds: [],
     memberScope: "all",
     memberUserIds: [],
@@ -41,9 +52,12 @@ function rule(partial: Partial<GroupAccessRuleData> & { groupKey: string }): Gro
 function memberRule(
   partial: Partial<GroupAccessMemberRuleData> & { groupKey: string; userId: string },
 ): GroupAccessMemberRuleData {
+  const projectScope = partial.projectScope ?? "none";
+  const accessLevel = partial.accessLevel ?? "view";
   return {
-    projectScope: "none",
-    accessLevel: "view",
+    scopePermissions: scopePermissionsOf(projectScope, accessLevel),
+    projectScope,
+    accessLevel,
     projectIds: [],
     ...partial,
   };
@@ -147,9 +161,87 @@ describe("群组访问规则", () => {
       ],
     });
     expect(all.projectIds).toBeNull();
-    expect(all.ownProjects).toBe(false);
+    expect(all.ownProjects).toBe(true);
     expect(all.readOnly).toBe(true);
     expect(all.projectScopes).toEqual(["selected", "own", "all"]);
+  });
+
+  it("多范围取并集：全部仅浏览 + 自己的项目编辑", () => {
+    const profile = resolveGroupAccess({
+      enforced: true,
+      admin: false,
+      groupKeys: ["g"],
+      rules: [rule({
+        groupKey: "g",
+        scopePermissions: [
+          { projectScope: "all", accessLevel: "view" },
+          { projectScope: "own", accessLevel: "edit" },
+        ],
+      })],
+    });
+    expect(profile).toMatchObject({
+      readOnly: false,
+      allEdit: false,
+      ownEdit: true,
+      selectedEdit: false,
+      anyEdit: true,
+      projectIds: null,
+      ownProjects: true,
+    });
+    expect(profile.scopePermissions).toEqual([
+      { projectScope: "all", accessLevel: "view" },
+      { projectScope: "own", accessLevel: "edit" },
+    ]);
+    expect(projectGroupAccessLevelOf(profile, PROJECT_A, true)).toBe("edit");
+    expect(projectGroupAccessLevelOf(profile, PROJECT_B, false)).toBe("view");
+  });
+
+  it("同一项目命中多个范围取最高权限：全部编辑 + 指定项目仅浏览不降权", () => {
+    const profile = resolveGroupAccess({
+      enforced: true,
+      admin: false,
+      groupKeys: ["g"],
+      rules: [rule({
+        groupKey: "g",
+        projectIds: [PROJECT_A],
+        scopePermissions: [
+          { projectScope: "all", accessLevel: "edit" },
+          { projectScope: "selected", accessLevel: "view" },
+        ],
+      })],
+    });
+    expect(profile.allEdit).toBe(true);
+    expect(profile.selectedEdit).toBe(false);
+    expect(profile.projectIds).toBeNull();
+    expect(projectGroupAccessLevelOf(profile, PROJECT_A, false)).toBe("edit");
+  });
+
+  it("多部门并集：全部仅浏览 + 指定项目编辑", () => {
+    const profile = resolveGroupAccess({
+      enforced: true,
+      admin: false,
+      groupKeys: ["g1", "g2"],
+      rules: [
+        rule({ groupKey: "g1", projectScope: "all", accessLevel: "view" }),
+        rule({ groupKey: "g2", projectScope: "selected", projectIds: [PROJECT_A], accessLevel: "edit" }),
+      ],
+    });
+    expect(profile.projectIds).toBeNull();
+    expect(projectGroupAccessLevelOf(profile, PROJECT_A, false)).toBe("edit");
+    expect(projectGroupAccessLevelOf(profile, PROJECT_B, false)).toBe("view");
+  });
+
+  it("显式空 scopePermissions = 不显示项目数据", () => {
+    const profile = resolveGroupAccess({
+      enforced: true,
+      admin: false,
+      groupKeys: ["g"],
+      rules: [rule({ groupKey: "g", scopePermissions: [] })],
+    });
+    expect(profile.projectIds).toEqual([]);
+    expect(profile.projectScopes).toEqual(["none"]);
+    expect(profile.anyEdit).toBe(false);
+    expect(profile.readOnly).toBe(true);
   });
 
   it("任一适用 edit 规则才解除只读，view / 无规则继续只读", () => {
@@ -382,6 +474,7 @@ describe("GroupAccessService 部门通讯录", () => {
     expect(qaWithPersonalRule?.memberRules).toEqual([{
       groupKey: "libiaorobot.com/QA",
       userId: PROJECT_A,
+      scopePermissions: [{ projectScope: "selected", accessLevel: "edit" }],
       projectScope: "selected",
       accessLevel: "edit",
       projectIds: [PROJECT_C],
@@ -458,9 +551,9 @@ describe("GroupAccessService 部门通讯录", () => {
     expect(saved.rule.allowedPages).toEqual([...GROUP_ACCESS_PAGE_KEYS]);
     expect(saved.rule.memberScope).toBe("selected");
     expect(saved.rule.memberUserIds).toEqual([PROJECT_A]);
-    expect(savedArgs?.[4]).toBe("view");
-    expect(savedArgs?.[6]).toBe("selected");
-    expect(savedArgs?.[7]).toEqual([PROJECT_A]);
+    expect(savedArgs?.[3]).toEqual([]);
+    expect(savedArgs?.[5]).toBe("selected");
+    expect(savedArgs?.[6]).toEqual([PROJECT_A]);
 
     await expect(
       service.save(PROJECT_A, { ...input, memberUserIds: [PROJECT_B] }),
@@ -499,13 +592,13 @@ describe("GroupAccessService 部门通讯录", () => {
 
     const saved = await service.save(PROJECT_A, base);
     expect(saved.rule.accessLevel).toBe("edit");
-    expect(savedArgs?.[3]).toBe("all");
-    expect(savedArgs?.[4]).toBe("edit");
+    expect(savedArgs?.[3]).toEqual([{ projectScope: "all", accessLevel: "edit" }]);
+    expect(savedArgs?.[4]).toEqual([]);
 
     const normalized = await service.save(PROJECT_A, { ...base, projectScope: "none", accessLevel: "edit" });
     expect(normalized.rule.accessLevel).toBe("view");
-    expect(savedArgs?.[3]).toBe("none");
-    expect(savedArgs?.[4]).toBe("view");
+    expect(savedArgs?.[3]).toEqual([]);
+    expect(savedArgs?.[4]).toEqual([]);
   });
 
   it("未分组节点可保存指定人员规则，成员校验只接受当前未分组账号", async () => {
@@ -553,7 +646,7 @@ describe("GroupAccessService 部门通讯录", () => {
     });
     expect(savedArgs?.[0]).toBe(GROUP_ACCESS_UNGROUPED_KEY);
     expect(savedArgs?.[1]).toBe("未分组");
-    expect(savedArgs?.[7]).toEqual([PROJECT_D]);
+    expect(savedArgs?.[6]).toEqual([PROJECT_D]);
 
     await expect(
       service.save(PROJECT_A, { ...input, memberUserIds: [PROJECT_A] }),
@@ -603,8 +696,8 @@ describe("GroupAccessService 部门通讯录", () => {
     });
 
     expect(upserts).toEqual([
-      ["libiaorobot.com/QA", [PROJECT_A], "all", "edit", [], expect.any(Date)],
-      ["libiaorobot.com/QA", [PROJECT_B], "selected", "view", [PROJECT_C], expect.any(Date)],
+      ["libiaorobot.com/QA", [PROJECT_A], [{ projectScope: "all", accessLevel: "edit" }], [], expect.any(Date)],
+      ["libiaorobot.com/QA", [PROJECT_B], [{ projectScope: "selected", accessLevel: "view" }], [PROJECT_C], expect.any(Date)],
     ]);
     await expect(service.saveMemberRules(PROJECT_A, {
       groupKey: "libiaorobot.com/QA",
@@ -847,6 +940,48 @@ describe("PermissionService 群组接入", () => {
     );
     const profile = await service.groupAccessOf(PROJECT_A);
     expect(profile.groupKeys).toEqual(["libiaorobot.com/QA"]);
+  });
+
+  it("多范围能力分界：自己的项目可编辑可建项目，但全局字典仍只认全部项目编辑", async () => {
+    const { service } = serviceWith({
+      groupKeys: ["libiaorobot.com/项目部"],
+      rules: [rule({
+        groupKey: "libiaorobot.com/项目部",
+        scopePermissions: [
+          { projectScope: "all", accessLevel: "view" },
+          { projectScope: "own", accessLevel: "edit" },
+        ],
+      })],
+    });
+    expect(await service.can(PROJECT_A, "task.update", { member: true, projectManager: false, groupAccessLevel: "edit" })).toBe(true);
+    expect(await service.can(PROJECT_A, "task.update", { member: true, projectManager: false, groupAccessLevel: "view" })).toBe(false);
+    expect(await service.can(PROJECT_A, "dict.manage")).toBe(false);
+    expect(await service.can(PROJECT_A, "project.create")).toBe(true);
+    expect(await service.canManageBlueprint(PROJECT_A)).toBe(true);
+    expect(await service.permissionsOf(PROJECT_A)).toMatchObject({
+      groupAllEdit: false,
+      groupOwnEdit: true,
+      groupAnyEdit: true,
+    });
+  });
+
+  it("批量项目权限随行下发：自己的项目 edit，其余可见项目 view", async () => {
+    const { service, repository } = serviceWith({
+      groupKeys: ["libiaorobot.com/项目部"],
+      rules: [rule({
+        groupKey: "libiaorobot.com/项目部",
+        scopePermissions: [
+          { projectScope: "all", accessLevel: "view" },
+          { projectScope: "own", accessLevel: "edit" },
+        ],
+      })],
+    });
+    repository.refs.set(PROJECT_A, { managerIds: [PROJECT_A], deletedAt: null });
+    repository.refs.set(PROJECT_B, { managerIds: [PROJECT_B], deletedAt: null });
+    expect(await service.projectGroupAccessLevelsOf(PROJECT_A, [PROJECT_A, PROJECT_B])).toEqual(new Map([
+      [PROJECT_A, "edit"],
+      [PROJECT_B, "view"],
+    ]));
   });
 
   it("selected 人员范围在权限画像入口过滤，不匹配人员按无规则处理", async () => {

@@ -114,7 +114,7 @@ type ProjectDetailProps = {
   canManageStakeholders: boolean;
   /** 验收完成后设为已完成的写入口（无 project.update 权限时父层不传）；false = 写失败，父层已提示。 */
   onSetProjectDone?: (projectId: string) => Promise<boolean>;
-  /** 部门群组只读：页面可进，但本页全部业务写入口（任务 / 文件 / 日报 / 问题 / 干系人）关闭。 */
+  /** 当前项目仅浏览：页面可进，但本项目全部业务写入口（任务 / 文件 / 日报 / 问题 / 干系人）关闭。 */
   readOnly?: boolean;
 };
 
@@ -1175,7 +1175,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             <ReportIssuePanel key={project.id} project={project} me={me} members={members} tierTint={tintRows} sub={dailySub} readOnly={readOnly} onChangeSub={(next) => { replaceProjectSubView(project.id, next); }} />
           ) : activeView === "干系人" ? (
             // 干系人（Push 221 · A27 前端接线）：表格形态与「项目总览」同一套（表头固定 + CSS grid 行 + 共用底部滑块）
-            <StakeholderPanel projectId={project.id} canManage={canManageStakeholders} scrollRef={tableScrollRef} />
+            <StakeholderPanel projectId={project.id} canManage={canManageStakeholders && writeEnabled} scrollRef={tableScrollRef} />
           ) : (
             <TaskKanban
               mode={activeView === "人员任务分配" ? "owner" : "status"}

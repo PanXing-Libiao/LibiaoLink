@@ -3,6 +3,7 @@ import {
   GROUP_ACCESS_UNGROUPED_KEY,
   type ActorPermissions,
   type AuditScope,
+  type GroupAccessAccessLevel,
   type GroupAccessPage,
   type GroupProjectAccess,
   type PermissionKey,
@@ -15,13 +16,13 @@ import {
   isGroupAccessAdmin,
   parseGroupAccessAdminKeys,
   effectiveGroupAccessRules,
+  projectGroupAccessLevelOf,
   resolveGroupAccess,
   type GroupAccessProfile,
 } from "./group-access.rules.js";
 import { PermissionRepository, type ProjectAccessContext } from "./permission.repository.js";
 import {
   can,
-  isGroupReadOnlyDeniedKey,
   isProjectVisible,
   projectScopeSpec,
   type ProjectResourceContext,
@@ -46,6 +47,34 @@ interface CacheEntry {
  * 供 Manager Guard（HTTP 入口）、project 模块（列表裁剪）与后续导出 / 搜索 / 通知复用。
  * 判定只在服务端执行（ADR-011 不变量 1）；不可见资源统一 404、无功能权限 403。
  */
+/** 项目内业务写操作：必须命中该项目的 edit 权限。 */
+const PROJECT_GROUP_WRITE_KEYS: readonly PermissionKey[] = [
+  "project.update",
+  "project.delete",
+  "project.archive",
+  "member.manage",
+  "task.create",
+  "task.update",
+  "task.progress",
+  "report.fill",
+  "issue.manage",
+  "node.create",
+  "node.delete",
+  "node.complete",
+  "node.advance",
+  "node.rollback",
+  "file.upload",
+  "stakeholder.manage",
+];
+
+/** 无项目上下文的全局业务写操作：仅全部项目编辑或系统管理员可写。 */
+const GLOBAL_GROUP_WRITE_KEYS: readonly PermissionKey[] = [
+  "dict.manage",
+  "calendar.manage",
+  "automation.manage",
+  "notify.resend",
+];
+
 @Injectable()
 export class PermissionService {
   private static readonly CACHE_TTL_MS = 10_000;
@@ -100,12 +129,17 @@ export class PermissionService {
       groupReadOnly: groupAccess.readOnly,
       groupProjectAccess: await this.groupProjectAccessOf(groupAccess, projectScope),
       groupProjectScopes: [...groupAccess.projectScopes],
-      groupAccessLevel: groupAccess.readOnly ? "view" : "edit",
+      groupAccessLevel: groupAccess.anyEdit ? "edit" : "view",
+      groupScopePermissions: groupAccess.scopePermissions,
+      groupAnyEdit: groupAccess.anyEdit,
+      groupAllEdit: groupAccess.allEdit,
+      groupOwnEdit: groupAccess.ownEdit,
+      groupSelectedEdit: groupAccess.selectedEdit,
       auditScope,
     };
   }
 
-  /** 部门访问画像（与能力基线同一 10s 缓存）：管理员、页面 + 项目白名单 + 只读标志。 */
+  /** 部门访问画像（与能力基线同一 10s 缓存）：管理员、页面 + 项目白名单 + 多范围编辑能力与兼容只读摘要。 */
   async groupAccessOf(actorId: string): Promise<GroupAccessProfile> {
     await this.getAuthorization(actorId);
     const entry = this.cache.get(actorId);
@@ -168,7 +202,14 @@ export class PermissionService {
   async can(actorId: string, key: PermissionKey, context?: ProjectResourceContext): Promise<boolean> {
     if (!can(await this.getAuthorization(actorId), key, context)) return false;
     const groupAccess = await this.groupAccessOf(actorId);
-    return !(groupAccess.readOnly && isGroupReadOnlyDeniedKey(key));
+    if (!groupAccess.enforced || groupAccess.admin) return true;
+    if (PROJECT_GROUP_WRITE_KEYS.includes(key)) {
+      return context?.groupAccessLevel === "edit";
+    }
+    if (GLOBAL_GROUP_WRITE_KEYS.includes(key)) return groupAccess.allEdit;
+    if (key === "blueprint.manage") return groupAccess.anyEdit;
+    if (key === "project.create") return groupAccess.allEdit || groupAccess.ownEdit;
+    return true;
   }
 
   /** 403：资源可见但缺少功能权限位（不可见资源的 404 由 assertProjectVisible 负责）。 */
@@ -182,10 +223,10 @@ export class PermissionService {
     throw new AppError("FORBIDDEN", message ?? "无权限：" + key);
   }
 
-  /** 任务模板 / 节点库维护：系统管理员，或已开启部门限制且命中任一编辑规则的账号。 */
+  /** 任务模板 / 节点库维护：系统管理员，或已开启部门限制且任一范围拥有编辑权限的账号。 */
   async canManageBlueprint(actorId: string): Promise<boolean> {
     const groupAccess = await this.groupAccessOf(actorId);
-    return groupAccess.admin || (groupAccess.enforced && !groupAccess.readOnly);
+    return groupAccess.admin || (groupAccess.enforced && groupAccess.anyEdit);
   }
 
   async assertCanManageBlueprint(actorId: string, message?: string): Promise<void> {
@@ -205,10 +246,33 @@ export class PermissionService {
     throw new AppError("FORBIDDEN", message ?? "当前账号仅可登录，不能查看任务节点与模板");
   }
 
-  /** 业务写入口兜底：部门规则开启且非管理员一律拒绝；用于未挂功能权限键的写接口。 */
+  /** 全局写入口兜底（无项目上下文）：部门规则开启时仅全部项目编辑 / 管理员可写。 */
   async assertWritable(actorId: string, message?: string): Promise<void> {
-    if (!(await this.groupAccessOf(actorId)).readOnly) return;
-    throw new AppError("FORBIDDEN", message ?? "当前部门为只读，不能新增、修改或删除业务数据");
+    const groupAccess = await this.groupAccessOf(actorId);
+    if (!groupAccess.enforced || groupAccess.admin || groupAccess.allEdit) return;
+    throw new AppError("FORBIDDEN", message ?? "该操作需要全部项目编辑权限");
+  }
+
+  /** 批量裁决项目级部门权限；用于项目列表 / 工作台项目卡随行下发，避免逐项目查库。 */
+  async projectGroupAccessLevelsOf(
+    actorId: string,
+    projectIds: readonly string[],
+  ): Promise<Map<string, GroupAccessAccessLevel>> {
+    const levels = new Map<string, GroupAccessAccessLevel>();
+    const groupAccess = await this.groupAccessOf(actorId);
+    let ownProjectIds = new Set<string>();
+    if (groupAccess.enforced && !groupAccess.admin && groupAccess.ownProjects) {
+      ownProjectIds = new Set(
+        await this.repository.listVisibleProjectIds(actorId, { all: false, managed: false, member: true }),
+      );
+    }
+    for (const projectId of projectIds) {
+      levels.set(
+        projectId,
+        projectGroupAccessLevelOf(groupAccess, projectId, ownProjectIds.has(projectId)) ?? "view",
+      );
+    }
+    return levels;
   }
 
   /** 可见项目过滤（列表 / facets 用）：all = 不裁剪；ids 空集 = 无可见项目。 */
@@ -247,12 +311,14 @@ export class PermissionService {
       rosterProjectManager: membershipRole === "project_manager",
     });
     const ownProject = managerOfRecord || rosterMember;
-    const groupVisible =
-      groupAccess.projectIds === null ||
-      groupAccess.projectIds.includes(projectId) ||
-      (groupAccess.ownProjects && ownProject);
-    if (!visible || !groupVisible) return null;
-    return { projectId, member: rosterMember || managerOfRecord, projectManager };
+    const groupAccessLevel = projectGroupAccessLevelOf(groupAccess, projectId, ownProject);
+    if (!visible || groupAccessLevel === null) return null;
+    return {
+      projectId,
+      member: rosterMember || managerOfRecord,
+      projectManager,
+      groupAccessLevel,
+    };
   }
 
   /** 记录级门禁：不可见 → 404（防 IDOR，ADR-011 不变量 3）；includeDeleted 仅供项目回收站恢复 / 彻底删除。 */
@@ -305,9 +371,9 @@ export class PermissionService {
   }
 }
 
-/** 仅 none 范围（或没有规则）= 仅登录；至少一个 all / own / selected 才拥有业务数据读取范围。 */
+/** 没有任何数据范围（或只有 none 规则）= 仅登录；至少一个 all / own / selected 才有业务数据读取范围。 */
 function hasProjectDataScope(groupAccess: GroupAccessProfile): boolean {
-  return groupAccess.projectScopes.some((scope) => scope !== "none");
+  return groupAccess.scopePermissions.length > 0;
 }
 
 function uniqueIds(ids: readonly string[]): string[] {

@@ -1,6 +1,9 @@
 /** 部门权限管理接口（GET /api/v1/access · 规则保存 / 删除 · 系统管理员授予 / 撤销）。 */
 import { apiRequest, apiSend } from "./api";
-import type { GroupAccessPage } from "./permissions";
+import type {
+  GroupAccessPage,
+  GroupAccessScopePermission,
+} from "./permissions";
 
 export type GroupAccessProjectScope = "all" | "own" | "selected" | "none";
 export type GroupAccessAccessLevel = "edit" | "view";
@@ -10,6 +13,7 @@ export type GroupAccessRule = {
   groupKey: string;
   groupName: string;
   allowedPages?: GroupAccessPage[];
+  scopePermissions?: GroupAccessScopePermission[];
   projectScope: GroupAccessProjectScope;
   accessLevel: GroupAccessAccessLevel;
   projectIds: string[];
@@ -29,6 +33,7 @@ export type GroupAccessMember = {
 export type GroupAccessMemberRule = {
   groupKey: string;
   userId: string;
+  scopePermissions?: GroupAccessScopePermission[];
   projectScope: GroupAccessProjectScope;
   accessLevel: GroupAccessAccessLevel;
   projectIds: string[];
@@ -59,6 +64,7 @@ export type GroupAccessAdmin = {
 
 export type GroupAccessProject = { id: string; code: string; name: string };
 
+
 export type GroupAccessOverview = {
   enforced: boolean;
   admin: boolean;
@@ -71,8 +77,10 @@ export type GroupAccessOverview = {
 export type GroupAccessRuleInput = {
   groupKey: string;
   groupName?: string;
-  projectScope: GroupAccessProjectScope;
-  accessLevel: GroupAccessAccessLevel;
+  scopePermissions?: GroupAccessScopePermission[];
+  /** 旧客户端兼容字段；新界面只发送 scopePermissions。 */
+  projectScope?: GroupAccessProjectScope;
+  accessLevel?: GroupAccessAccessLevel;
   projectIds: string[];
   memberScope: GroupAccessMemberScope;
   memberUserIds: string[];
@@ -82,8 +90,10 @@ export type GroupAccessMemberRuleInput = {
   groupKey: string;
   groupName?: string;
   userIds: string[];
-  projectScope: GroupAccessProjectScope;
-  accessLevel: GroupAccessAccessLevel;
+  scopePermissions?: GroupAccessScopePermission[];
+  /** 旧客户端兼容字段；新界面只发送 scopePermissions。 */
+  projectScope?: GroupAccessProjectScope;
+  accessLevel?: GroupAccessAccessLevel;
   projectIds: string[];
 };
 

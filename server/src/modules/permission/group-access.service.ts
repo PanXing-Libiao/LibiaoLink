@@ -20,7 +20,14 @@ import { AppError } from "../../common/errors/app-error.js";
 import { AppConfig } from "../../config/config.module.js";
 import { AuditService } from "../audit/index.js";
 import { casdoorGroupKey, casdoorGroupName, DepartmentService } from "../identity/index.js";
-import { parseGroupAccessAdminKeys, type GroupAccessMemberRuleData, type GroupAccessRuleData } from "./group-access.rules.js";
+import {
+  mergeScopePermissions,
+  normalizeScopePermissions,
+  parseGroupAccessAdminKeys,
+  summarizeScopePermissions,
+  type GroupAccessMemberRuleData,
+  type GroupAccessRuleData,
+} from "./group-access.rules.js";
 import { PermissionRepository } from "./permission.repository.js";
 import { PermissionService } from "./permission.service.js";
 
@@ -248,8 +255,10 @@ export class GroupAccessService {
   async save(actorId: string, input: GroupAccessRuleInput): Promise<GroupAccessRuleResponse> {
     await this.assertAdmin(actorId);
     const before = await this.repository.findRuleMetadata(input.groupKey);
-    const accessLevel = input.projectScope === "none" ? "view" : input.accessLevel;
-    const projectIds = input.projectScope === "selected" ? Array.from(new Set(input.projectIds)) : [];
+    const scopePermissions = normalizeScopePermissions(input.scopePermissions, input.projectScope, input.accessLevel);
+    const summary = summarizeScopePermissions(scopePermissions);
+    const hasSelected = scopePermissions.some((permission) => permission.projectScope === "selected");
+    const projectIds = hasSelected ? Array.from(new Set(input.projectIds)) : [];
     if (projectIds.length > 0) {
       const existing = await this.repository.listExistingProjectIds(projectIds);
       if (existing.length !== projectIds.length) {
@@ -277,8 +286,7 @@ export class GroupAccessService {
       input.groupKey,
       groupName,
       allowedPages,
-      input.projectScope,
-      accessLevel,
+      scopePermissions,
       projectIds,
       input.memberScope,
       memberUserIds,
@@ -293,8 +301,9 @@ export class GroupAccessService {
       metadata: {
         groupKey: input.groupKey,
         allowedPages,
-        projectScope: input.projectScope,
-        accessLevel,
+        scopePermissions,
+        projectScope: summary.projectScope,
+        accessLevel: summary.accessLevel,
         projectIds,
         memberScope: input.memberScope,
         memberUserIds,
@@ -306,8 +315,9 @@ export class GroupAccessService {
         groupKey: input.groupKey,
         groupName,
         allowedPages,
-        projectScope: input.projectScope,
-        accessLevel,
+        scopePermissions,
+        projectScope: summary.projectScope,
+        accessLevel: summary.accessLevel,
         projectIds,
         memberScope: input.memberScope,
         memberUserIds,
@@ -322,8 +332,10 @@ export class GroupAccessService {
   ): Promise<GroupAccessMemberRuleResponse> {
     await this.assertAdmin(actorId);
     const userIds = Array.from(new Set(input.userIds));
-    const accessLevel = input.projectScope === "none" ? "view" : input.accessLevel;
-    const projectIds = input.projectScope === "selected" ? Array.from(new Set(input.projectIds)) : [];
+    const scopePermissions = normalizeScopePermissions(input.scopePermissions, input.projectScope, input.accessLevel);
+    const summary = summarizeScopePermissions(scopePermissions);
+    const hasSelected = scopePermissions.some((permission) => permission.projectScope === "selected");
+    const projectIds = hasSelected ? Array.from(new Set(input.projectIds)) : [];
     if (projectIds.length > 0) {
       const existing = await this.repository.listExistingProjectIds(projectIds);
       if (existing.length !== projectIds.length) {
@@ -349,8 +361,7 @@ export class GroupAccessService {
     await this.repository.upsertGroupAccessMemberRules(
       input.groupKey,
       userIds,
-      input.projectScope,
-      accessLevel,
+      scopePermissions,
       projectIds,
       at,
     );
@@ -363,8 +374,9 @@ export class GroupAccessService {
       metadata: {
         groupKey: input.groupKey,
         userIds,
-        projectScope: input.projectScope,
-        accessLevel,
+        scopePermissions,
+        projectScope: summary.projectScope,
+        accessLevel: summary.accessLevel,
         projectIds,
         target: "member",
       },
@@ -374,8 +386,9 @@ export class GroupAccessService {
       rules: userIds.map((userId) => ({
         groupKey: input.groupKey,
         userId,
-        projectScope: input.projectScope,
-        accessLevel,
+        scopePermissions,
+        projectScope: summary.projectScope,
+        accessLevel: summary.accessLevel,
         projectIds,
         updatedAt: at.toISOString(),
       })),
@@ -426,23 +439,29 @@ export class GroupAccessService {
 }
 
 function toMemberRule(rule: GroupAccessMemberRuleData, updatedAt: Date): GroupAccessMemberRule {
+  const scopePermissions = mergeScopePermissions(rule.scopePermissions);
+  const summary = summarizeScopePermissions(scopePermissions);
   return {
     groupKey: rule.groupKey,
     userId: rule.userId,
-    projectScope: rule.projectScope,
-    accessLevel: rule.accessLevel,
+    scopePermissions,
+    projectScope: summary.projectScope,
+    accessLevel: summary.accessLevel,
     projectIds: [...rule.projectIds],
     updatedAt: updatedAt.toISOString(),
   };
 }
 
 function toRule(rule: GroupAccessRuleData, groupName: string, updatedAt: Date): GroupAccessRule {
+  const scopePermissions = mergeScopePermissions(rule.scopePermissions);
+  const summary = summarizeScopePermissions(scopePermissions);
   return {
     groupKey: rule.groupKey,
     groupName,
     allowedPages: [...GROUP_ACCESS_PAGE_KEYS],
-    projectScope: rule.projectScope,
-    accessLevel: rule.accessLevel,
+    scopePermissions,
+    projectScope: summary.projectScope,
+    accessLevel: summary.accessLevel,
     projectIds: rule.projectIds,
     memberScope: rule.memberScope,
     memberUserIds: rule.memberUserIds,

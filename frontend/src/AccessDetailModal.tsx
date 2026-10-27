@@ -7,7 +7,6 @@ import {
   revokeGroupAccessAdmin,
   saveGroupAccessMemberRules,
   saveGroupAccessRule,
-  type GroupAccessAccessLevel,
   type GroupAccessAdmin,
   type GroupAccessGroup,
   type GroupAccessMember,
@@ -22,8 +21,9 @@ import {
   type AccessPersonSummary,
 } from "./accessDashboardModel";
 import { AccessScopePicker } from "./AccessScopePicker";
-import { effectiveMemberAccess, memberRuleOf } from "./accessRules";
+import { effectiveMemberAccess, memberRuleOf, scopePermissionsOf } from "./accessRules";
 import { useT, type TextKey } from "./i18n";
+import type { GroupAccessScopePermission } from "./permissions";
 import { lockBodyScroll } from "./scrollLock";
 import { useFocusTrap } from "./components/useFocusTrap";
 import type { ToastKind } from "./components/Toast";
@@ -73,30 +73,42 @@ function levelClass(level: AccessLevel): string {
   return "bg-zinc-100 text-zinc-600 ring-zinc-200";
 }
 
-function scopeKey(group: GroupAccessGroup): TextKey {
-  if (group.rule === null) return "access.unconfigured";
-  if (group.rule.projectScope === "all") return "access.scope.all";
-  if (group.rule.projectScope === "own") return "access.scope.own";
-  if (group.rule.projectScope === "selected") return "access.scope.selected";
-  return "access.scope.none";
+function scopesOf(group: GroupAccessGroup): GroupAccessScopePermission[] {
+  if (group.rule === null) return [];
+  return scopePermissionsOf(group.rule.scopePermissions, group.rule.projectScope, group.rule.accessLevel);
 }
 
-function scopeClass(group: GroupAccessGroup): string {
-  if (group.rule === null) return "bg-zinc-100 text-zinc-500 ring-zinc-200";
-  if (group.rule.projectScope === "all") return "bg-blue-50 text-blue-700 ring-blue-100";
-  if (group.rule.projectScope === "own") return "bg-sky-50 text-sky-700 ring-sky-100";
-  if (group.rule.projectScope === "selected") return "bg-amber-50 text-amber-700 ring-amber-100";
+function ruleHasScope(group: GroupAccessGroup, scope: GroupAccessProjectScope): boolean {
+  const permissions = scopesOf(group);
+  if (scope === "none") return group.rule !== null && permissions.length === 0;
+  return permissions.some((permission) => permission.projectScope === scope);
+}
+
+function scopeClassOf(scope: GroupAccessProjectScope): string {
+  if (scope === "all") return "bg-blue-50 text-blue-700 ring-blue-100";
+  if (scope === "own") return "bg-sky-50 text-sky-700 ring-sky-100";
+  if (scope === "selected") return "bg-amber-50 text-amber-700 ring-amber-100";
   return "bg-zinc-100 text-zinc-600 ring-zinc-200";
 }
 
-function accessLevelKey(group: GroupAccessGroup): TextKey {
-  return group.rule?.accessLevel === "edit" ? "access.dashboard.operate" : "access.dashboard.viewOnly";
-}
-
-function accessLevelClass(group: GroupAccessGroup): string {
-  return group.rule?.accessLevel === "edit"
-    ? "bg-indigo-50 text-indigo-700 ring-indigo-100"
-    : "bg-emerald-50 text-emerald-700 ring-emerald-100";
+function RuleScopeBadges({ group, size = "sm" }: { group: GroupAccessGroup; size?: "sm" | "md" }) {
+  const t = useT();
+  const permissions = scopesOf(group);
+  const sizeClass = size === "md" ? "text-[10px]" : "text-[9px]";
+  if (group.rule === null) {
+    return <span className={"rounded-full bg-zinc-100 px-2 py-0.5 font-medium text-zinc-500 ring-1 ring-inset ring-zinc-200 " + sizeClass}>{t("access.unconfigured")}</span>;
+  }
+  if (permissions.length === 0) {
+    return <span className={"rounded-full bg-zinc-100 px-2 py-0.5 font-medium text-zinc-600 ring-1 ring-inset ring-zinc-200 " + sizeClass}>{t("access.scope.none")}</span>;
+  }
+  return <>{permissions.map((permission) => (
+    <span
+      key={permission.projectScope}
+      className={"rounded-full px-2 py-0.5 font-medium ring-1 ring-inset " + sizeClass + " " + scopeClassOf(permission.projectScope) + (permission.accessLevel === "edit" ? " font-semibold" : "")}
+    >
+      {t(("access.scope." + permission.projectScope) as TextKey)} · {t(permission.accessLevel === "edit" ? "access.dashboard.operate" : "access.dashboard.viewOnly")}
+    </span>
+  ))}</>;
 }
 
 function titleOf(view: AccessDetailView): TextKey {
@@ -254,7 +266,7 @@ function ProjectsView({ model, onOpenDepartment }: { model: AccessDashboardModel
   const [scope, setScope] = useState<"all" | GroupAccessProjectScope>("all");
   const normalized = query.trim().toLowerCase();
   const rows = model.groups.filter((row) => {
-    if (scope === "all" ? false : row.group.rule === null || row.group.rule.projectScope !== scope) return false;
+    if (scope === "all" ? false : !ruleHasScope(row.group, scope)) return false;
     return normalized === "" || row.searchText.includes(normalized);
   });
   return (
@@ -286,10 +298,7 @@ function ProjectsView({ model, onOpenDepartment }: { model: AccessDashboardModel
               <span className="min-w-0 flex-1 py-0.5">
                 <span className="flex flex-wrap items-center gap-2">
                   <span className="truncate text-[13px] font-semibold text-zinc-800">{row.group.groupName}</span>
-                  <span className={"rounded-full px-2 py-0.5 text-[9px] font-medium ring-1 ring-inset " + scopeClass(row.group)}>{t(scopeKey(row.group))}</span>
-                  {row.group.rule === null || row.group.rule.projectScope === "none" ? null : (
-                    <span className={"rounded-full px-2 py-0.5 text-[9px] font-medium ring-1 ring-inset " + accessLevelClass(row.group)}>{t(accessLevelKey(row.group))}</span>
-                  )}
+                  <RuleScopeBadges group={row.group} />
                 </span>
                 {row.path.length <= 1 ? null : <span className="mt-0.5 block truncate text-[10px] text-zinc-400">{row.path.slice(0, -1).join(" / ")}</span>}
                 <span className="mt-1 block truncate text-[10px] text-zinc-500">{names.length === 0 ? t("access.detail.noProjectNames") : names.slice(0, 3).join(" · ") + (names.length > 3 ? " · +" + String(names.length - 3) : "")}</span>
@@ -419,10 +428,7 @@ function DepartmentsView({ model, onOpenDepartment }: { model: AccessDashboardMo
             <span className="min-w-0 flex-1">
               <span className="flex flex-wrap items-center gap-2">
                 <span className="truncate text-[13px] font-semibold text-zinc-800">{row.group.groupName}</span>
-                <span className={"rounded-full px-2 py-0.5 text-[9px] font-medium ring-1 ring-inset " + scopeClass(row.group)}>{t(scopeKey(row.group))}</span>
-                {row.group.rule === null || row.group.rule.projectScope === "none" ? null : (
-                  <span className={"rounded-full px-2 py-0.5 text-[9px] font-medium ring-1 ring-inset " + accessLevelClass(row.group)}>{t(accessLevelKey(row.group))}</span>
-                )}
+                <RuleScopeBadges group={row.group} />
                 <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[9px] text-zinc-500">{t("access.members", { n: row.subtreeMemberCount })}</span>
                 {row.adminCount > 0 ? <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[9px] text-blue-700">{t("access.detail.adminCount", { n: row.adminCount })}</span> : null}
               </span>
@@ -493,11 +499,13 @@ function DepartmentEditor({ group, data, onChanged, onNotify, onClose }: {
   onClose: () => void;
 }) {
   const t = useT();
-  const [departmentProjectScope, setDepartmentProjectScope] = useState<GroupAccessProjectScope>(group.rule?.projectScope ?? "none");
-  const [departmentAccessLevel, setDepartmentAccessLevel] = useState<GroupAccessAccessLevel>(group.rule?.accessLevel ?? "view");
+  const [departmentScopePermissions, setDepartmentScopePermissions] = useState<GroupAccessScopePermission[]>(
+    scopePermissionsOf(group.rule?.scopePermissions, group.rule?.projectScope ?? "none", group.rule?.accessLevel ?? "view"),
+  );
   const [departmentProjectIds, setDepartmentProjectIds] = useState<string[]>(group.rule?.projectIds ?? []);
-  const [personalProjectScope, setPersonalProjectScope] = useState<GroupAccessProjectScope>(group.rule?.projectScope ?? "none");
-  const [personalAccessLevel, setPersonalAccessLevel] = useState<GroupAccessAccessLevel>(group.rule?.accessLevel ?? "view");
+  const [personalScopePermissions, setPersonalScopePermissions] = useState<GroupAccessScopePermission[]>(
+    scopePermissionsOf(group.rule?.scopePermissions, group.rule?.projectScope ?? "none", group.rule?.accessLevel ?? "view"),
+  );
   const [personalProjectIds, setPersonalProjectIds] = useState<string[]>(group.rule?.projectIds ?? []);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [memberQuery, setMemberQuery] = useState("");
@@ -510,15 +518,17 @@ function DepartmentEditor({ group, data, onChanged, onNotify, onClose }: {
   const [adminBusyId, setAdminBusyId] = useState<string | null>(null);
   const adminByUserId = new Map(data.admins.map((admin) => [admin.userId, admin] as const));
   const memberRuleSignature = group.memberRules
-    .map((rule) => [rule.userId, rule.updatedAt, rule.projectScope, rule.accessLevel, rule.projectIds.join(",")].join(":"))
+    .map((rule) => JSON.stringify([rule.userId, rule.updatedAt, rule.scopePermissions, rule.projectScope, rule.accessLevel, rule.projectIds]))
     .join("|");
 
   useEffect(() => {
-    setDepartmentProjectScope(group.rule?.projectScope ?? "none");
-    setDepartmentAccessLevel(group.rule?.accessLevel ?? "view");
+    setDepartmentScopePermissions(
+      scopePermissionsOf(group.rule?.scopePermissions, group.rule?.projectScope ?? "none", group.rule?.accessLevel ?? "view"),
+    );
     setDepartmentProjectIds(group.rule?.projectIds ?? []);
-    setPersonalProjectScope(group.rule?.projectScope ?? "none");
-    setPersonalAccessLevel(group.rule?.accessLevel ?? "view");
+    setPersonalScopePermissions(
+      scopePermissionsOf(group.rule?.scopePermissions, group.rule?.projectScope ?? "none", group.rule?.accessLevel ?? "view"),
+    );
     setPersonalProjectIds(group.rule?.projectIds ?? []);
     setSelectedMemberIds([]);
     setMemberQuery("");
@@ -542,15 +552,15 @@ function DepartmentEditor({ group, data, onChanged, onNotify, onClose }: {
   const visiblePersonalProjects = data.projects.filter((project) => normalizedPersonalProjectQuery === "" || (project.code + " " + project.name).toLowerCase().includes(normalizedPersonalProjectQuery));
 
   function setPersonalFromDepartment(): void {
-    setPersonalProjectScope(group.rule?.projectScope ?? "none");
-    setPersonalAccessLevel(group.rule?.accessLevel ?? "view");
+    setPersonalScopePermissions(
+      scopePermissionsOf(group.rule?.scopePermissions, group.rule?.projectScope ?? "none", group.rule?.accessLevel ?? "view"),
+    );
     setPersonalProjectIds(group.rule?.projectIds ?? []);
   }
 
   function setPersonalFromEffective(userId: string): void {
     const effective = effectiveMemberAccess(group, userId);
-    setPersonalProjectScope(effective.projectScope);
-    setPersonalAccessLevel(effective.accessLevel);
+    setPersonalScopePermissions(effective.scopePermissions);
     setPersonalProjectIds(effective.projectIds);
   }
 
@@ -575,14 +585,12 @@ function DepartmentEditor({ group, data, onChanged, onNotify, onClose }: {
     else if (wasEmpty) setPersonalFromEffective(userId);
   }
 
-  function changeDepartmentScope(next: { projectScope: GroupAccessProjectScope; accessLevel: GroupAccessAccessLevel }): void {
-    setDepartmentProjectScope(next.projectScope);
-    setDepartmentAccessLevel(next.projectScope === "none" ? "view" : next.accessLevel);
+  function changeDepartmentScope(next: GroupAccessScopePermission[]): void {
+    setDepartmentScopePermissions(next);
   }
 
-  function changePersonalScope(next: { projectScope: GroupAccessProjectScope; accessLevel: GroupAccessAccessLevel }): void {
-    setPersonalProjectScope(next.projectScope);
-    setPersonalAccessLevel(next.projectScope === "none" ? "view" : next.accessLevel);
+  function changePersonalScope(next: GroupAccessScopePermission[]): void {
+    setPersonalScopePermissions(next);
   }
 
   function toggleDepartmentProject(projectId: string): void {
@@ -599,9 +607,10 @@ function DepartmentEditor({ group, data, onChanged, onNotify, onClose }: {
     try {
       await saveGroupAccessRule({
         groupKey: group.groupKey,
-        projectScope: departmentProjectScope,
-        accessLevel: departmentProjectScope === "none" ? "view" : departmentAccessLevel,
-        projectIds: departmentProjectScope === "selected" ? departmentProjectIds : [],
+        scopePermissions: departmentScopePermissions,
+        projectIds: departmentScopePermissions.some((permission) => permission.projectScope === "selected")
+          ? departmentProjectIds
+          : [],
         memberScope: "all",
         memberUserIds: [],
       });
@@ -637,9 +646,10 @@ function DepartmentEditor({ group, data, onChanged, onNotify, onClose }: {
       await saveGroupAccessMemberRules({
         groupKey: group.groupKey,
         userIds: selectedMemberIds,
-        projectScope: personalProjectScope,
-        accessLevel: personalProjectScope === "none" ? "view" : personalAccessLevel,
-        projectIds: personalProjectScope === "selected" ? personalProjectIds : [],
+        scopePermissions: personalScopePermissions,
+        projectIds: personalScopePermissions.some((permission) => permission.projectScope === "selected")
+          ? personalProjectIds
+          : [],
       });
       onNotify("ok", t("access.personalSaved"));
       await onChanged();
@@ -696,10 +706,7 @@ function DepartmentEditor({ group, data, onChanged, onNotify, onClose }: {
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="truncate text-base font-semibold text-zinc-900">{group.groupName}</h3>
-              <span className={"rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset " + scopeClass(group)}>{t(scopeKey(group))}</span>
-              {group.rule === null || group.rule.projectScope === "none" ? null : (
-                <span className={"rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset " + accessLevelClass(group)}>{t(accessLevelKey(group))}</span>
-              )}
+              <RuleScopeBadges group={group} size="md" />
             </div>
             <p className="mt-0.5 truncate text-[10px] text-blue-900/50">{group.groupKey}</p>
             <p className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-zinc-500">
@@ -714,9 +721,9 @@ function DepartmentEditor({ group, data, onChanged, onNotify, onClose }: {
         <SectionHeading title={t("access.departmentDefaultTitle")} detail={t("access.departmentDefaultBadge")} />
         <p className="mt-1 text-[10px] leading-4 text-zinc-400">{t("access.departmentDefaultHint")}</p>
         <div className="mt-2.5">
-          <AccessScopePicker projectScope={departmentProjectScope} accessLevel={departmentAccessLevel} onChange={changeDepartmentScope} />
+          <AccessScopePicker scopePermissions={departmentScopePermissions} onChange={changeDepartmentScope} />
         </div>
-        {departmentProjectScope === "selected" ? (
+        {departmentScopePermissions.some((permission) => permission.projectScope === "selected") ? (
           <ProjectSelectionList
             projects={visibleDepartmentProjects}
             query={departmentProjectQuery}
@@ -806,8 +813,8 @@ function DepartmentEditor({ group, data, onChanged, onNotify, onClose }: {
             </div>
           ) : (
             <div className="scrollbar-hidden min-h-0 flex-1 overflow-y-auto p-3">
-              <AccessScopePicker projectScope={personalProjectScope} accessLevel={personalAccessLevel} onChange={changePersonalScope} />
-              {personalProjectScope === "selected" ? (
+              <AccessScopePicker scopePermissions={personalScopePermissions} onChange={changePersonalScope} />
+              {personalScopePermissions.some((permission) => permission.projectScope === "selected") ? (
                 <ProjectSelectionList
                   projects={visiblePersonalProjects}
                   query={personalProjectQuery}
