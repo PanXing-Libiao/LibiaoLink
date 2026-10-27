@@ -213,17 +213,19 @@ describe("maskChatid / toProjectGroupView（读面最小暴露）", () => {
   });
 
   it("未绑定 → bound:false 全 null；已绑定 → 掩码 + activated + ISO 时间", () => {
-    expect(toProjectGroupView(UUID_A, null)).toEqual({
+    expect(toProjectGroupView(UUID_A, null, false)).toEqual({
       projectId: UUID_A,
       bound: false,
       name: null,
       chatidMasked: null,
       activated: false,
+      canManage: false,
       updatedAt: null,
     });
     const view = toProjectGroupView(
       UUID_A,
       groupRow({ projectId: UUID_A, chatid: CHATID, name: "项目群", activatedAt: AT }),
+      true,
     );
     expect(view).toEqual({
       projectId: UUID_A,
@@ -231,6 +233,7 @@ describe("maskChatid / toProjectGroupView（读面最小暴露）", () => {
       name: "项目群",
       chatidMasked: "****v-12",
       activated: true,
+      canManage: true,
       updatedAt: AT.toISOString(),
     });
   });
@@ -241,16 +244,19 @@ describe("maskChatid / toProjectGroupView（读面最小暴露）", () => {
 describe("ProjectGroupService.getGroup", () => {
   it("未绑定 → bound:false；已绑定 → 掩码回显", async () => {
     const { service, groups } = makeService([projectRow({ id: UUID_A })]);
-    expect((await service.getGroup(UUID_A)).bound).toBe(false);
+    const unbound = await service.getGroup(UUID_A, true);
+    expect(unbound.bound).toBe(false);
+    expect(unbound.canManage).toBe(true);
     groups.rows.set(UUID_A, groupRow({ projectId: UUID_A, chatid: CHATID, name: "项目群" }));
-    const bound = await service.getGroup(UUID_A);
+    const bound = await service.getGroup(UUID_A, false);
     expect(bound.bound).toBe(true);
     expect(bound.chatidMasked).toBe("****v-12");
+    expect(bound.canManage).toBe(false);
   });
 
   it("项目不存在 / 已软删 → 404 NOT_FOUND", async () => {
     const { service } = makeService([projectRow({ id: UUID_A, deletedAt: AT })]);
-    await expectAppErrorAsync(() => service.getGroup(UUID_A), "NOT_FOUND");
+    await expectAppErrorAsync(() => service.getGroup(UUID_A, true), "NOT_FOUND");
   });
 });
 
@@ -397,6 +403,7 @@ describe("ProjectGroupService.deleteGroup", () => {
       name: null,
       chatidMasked: null,
       activated: false,
+      canManage: true,
       updatedAt: null,
     });
     expect(groups.rows.size).toBe(0);

@@ -354,6 +354,7 @@ export const ProjectGroupBindingSchema = z
     name: z.string().nullable().openapi({ description: "群名 / 备注（绑定维护用）；未绑定 = null" }),
     chatidMasked: z.string().nullable().openapi({ description: "绑定 chatid 掩码（只回末 4 位）；未绑定 = null" }),
     activated: z.boolean().openapi({ description: "会话已激活（群内有人给机器人发过消息）；未绑定 = false" }),
+    canManage: z.boolean().openapi({ description: "当前访问者是否为项目经理：决定是否显示项目群维护与日报同步入口；由服务端按内部 actor 身份裁决" }),
     updatedAt: DateTimeSchema.nullable().openapi({ description: "绑定 / 换绑 / 解绑时点；未绑定 = null" }),
   })
   .openapi("ProjectGroupBinding", { description: "项目群绑定状态（GET 恒 200；未绑定 = bound:false）" });

@@ -25,9 +25,9 @@ import {
 import { AppError } from "../../common/errors/app-error.js";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
-import { AllowDeletedProjectAccess, ProjectAccess, ProjectAccessGuard, ProjectScope, RequirePermission } from "../permission/index.js";
+import { AllowDeletedProjectAccess, CurrentProjectAccess, ProjectAccess, ProjectAccessGuard, ProjectScope, RequirePermission } from "../permission/index.js";
 import { TranslateService } from "../translate/index.js";
-import type { ProjectScopeFilter } from "../permission/index.js";
+import type { ProjectAccessContext, ProjectScopeFilter } from "../permission/index.js";
 import { ProjectGroupService } from "./project-group.service.js";
 import type { ProjectGroupBindingView, ProjectGroupCandidateList } from "./project-group.service.js";
 import { ProjectMemberService } from "./project-member.service.js";
@@ -211,8 +211,11 @@ export class ProjectsController {
 
   /** 项目群绑定状态（M5-03-2 接线段）：GET 恒 200；未绑定 = bound:false；chatid 只回末 4 位掩码。 */
   @Get(":id/group")
-  getGroup(@Param("id", uuidParam) id: string): Promise<ProjectGroupBindingView> {
-    return this.groups.getGroup(id);
+  getGroup(
+    @Param("id", uuidParam) id: string,
+    @CurrentProjectAccess() access: ProjectAccessContext,
+  ): Promise<ProjectGroupBindingView> {
+    return this.groups.getGroup(id, access.projectManager);
   }
 
   /** 绑定 / 换绑（B3 定案：project.update 权限档）：PUT 覆盖语义；chatid 变更 = 换绑（重置会话激活态）；归档 409。 */

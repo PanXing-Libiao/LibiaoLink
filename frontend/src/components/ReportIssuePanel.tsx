@@ -3239,13 +3239,12 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
    *  （行内下拉改过之后，弹窗里也始终是最新值）；编辑只走行尾「编辑」按钮，点行体不进入编辑。 */
   const [editModal, setEditModal] = useState<{ kind: "report"; id: string } | { kind: "issue"; id: string } | null>(null);
 
-  /** 项目群同步（2026-10-27）：只有项目经理能看到入口；绑定状态按项目预取，提交 / 编辑时复用。 */
-  const isProjectManager = me.user.id !== null && me.user.id !== "" && project.managerIds.includes(me.user.id);
+  /** 项目群同步（2026-10-27）：项目经理身份由服务端随绑定状态下发（SSO user.id 与内部 managerIds 不同口径）。 */
   const [projectGroup, setProjectGroup] = useState<ProjectGroupSyncState>({ status: "loading" });
   const projectGroupRequestRef = useRef(0);
   const [groupSyncPrompt, setGroupSyncPrompt] = useState<GroupSyncPromptState | null>(null);
   const loadProjectGroupBinding = useCallback(async (): Promise<ProjectGroupBinding | null> => {
-    if (!isProjectManager || readOnly) {
+    if (readOnly) {
       return null;
     }
     const requestId = ++projectGroupRequestRef.current;
@@ -3262,16 +3261,18 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
       }
       return null;
     }
-  }, [isProjectManager, project.id, readOnly]);
+  }, [project.id, readOnly]);
 
   useEffect(() => {
-    if (isProjectManager && !readOnly) {
+    if (!readOnly) {
       void loadProjectGroupBinding();
     }
     return () => {
       projectGroupRequestRef.current += 1;
     };
-  }, [isProjectManager, loadProjectGroupBinding, readOnly]);
+  }, [loadProjectGroupBinding, readOnly]);
+
+  const isProjectManager = projectGroup.status === "ready" && projectGroup.binding.canManage;
 
   const groupSyncDisabledReason = (report: DailyReport): string | null => {
     if (report.state === "draft") {
@@ -3630,12 +3631,12 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
         );
         onChangeSub("records");
         void reload();
-        if (isProjectManager) {
+        if (!readOnly) {
           const bindingPromise = projectGroup.status === "ready"
             ? Promise.resolve(projectGroup.binding)
             : loadProjectGroupBinding();
           void bindingPromise.then((binding) => {
-            if (binding !== null && binding.bound) {
+            if (binding !== null && binding.canManage && binding.bound) {
               setGroupSyncPrompt({
                 reportId: saved.id,
                 groupName: binding.name ?? t("report.groupSync.groupFallback"),

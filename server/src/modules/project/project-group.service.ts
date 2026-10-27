@@ -43,9 +43,9 @@ export function toProjectGroupCandidateView(row: WecomGroupCandidateRow): Projec
 }
 
 /** 绑定行 → 契约视图；未绑定（含解绑后）由 null 分支构造 bound:false 形态。 */
-export function toProjectGroupView(projectId: string, row: WecomGroupRow | null): ProjectGroupBindingView {
+export function toProjectGroupView(projectId: string, row: WecomGroupRow | null, canManage: boolean): ProjectGroupBindingView {
   if (row === null) {
-    return { projectId, bound: false, name: null, chatidMasked: null, activated: false, updatedAt: null };
+    return { projectId, bound: false, name: null, chatidMasked: null, activated: false, canManage, updatedAt: null };
   }
   return {
     projectId,
@@ -53,6 +53,7 @@ export function toProjectGroupView(projectId: string, row: WecomGroupRow | null)
     name: row.name,
     chatidMasked: maskChatid(row.chatid),
     activated: row.activatedAt !== null,
+    canManage,
     updatedAt: row.updatedAt.toISOString(),
   };
 }
@@ -72,10 +73,10 @@ export class ProjectGroupService {
     private readonly audit: AuditService,
   ) {}
 
-  async getGroup(projectId: string): Promise<ProjectGroupBindingView> {
+  async getGroup(projectId: string, canManage: boolean): Promise<ProjectGroupBindingView> {
     await this.requireProject(projectId);
     const row = await this.groups.findByProject(projectId);
-    return toProjectGroupView(projectId, row);
+    return toProjectGroupView(projectId, row, canManage);
   }
 
   /** 自动发现候选：最近 30 天活跃、最多 50 条；已绑定群不进入列表。 */
@@ -136,7 +137,7 @@ export class ProjectGroupService {
       });
       return saved;
     });
-    return toProjectGroupView(projectId, row);
+    return toProjectGroupView(projectId, row, true);
   }
 
   /** 解绑（幂等）：未绑定不落审计 / 不触 updatedAt；解绑后读面恒 bound:false。 */
@@ -173,7 +174,7 @@ export class ProjectGroupService {
         metadata: { bound: false },
       });
     });
-    return toProjectGroupView(projectId, null);
+    return toProjectGroupView(projectId, null, true);
   }
 
   private bindSummary(previous: WecomGroupRow | null, chatid: string): string {

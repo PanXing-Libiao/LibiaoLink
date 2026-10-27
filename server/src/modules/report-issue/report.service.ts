@@ -321,7 +321,7 @@ export class ReportService {
     if (!projectManager) {
       throw new AppError("FORBIDDEN", "仅项目经理可同步日报到项目群");
     }
-    const group = await this.projectGroups.getGroup(projectId);
+    const group = await this.projectGroups.getGroup(projectId, projectManager);
     if (!group.bound) {
       throw new AppError("REPORT_GROUP_NOT_BOUND", "项目尚未绑定企业微信群，请先在项目设置中完成绑定");
     }

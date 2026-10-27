@@ -11931,6 +11931,8 @@ export interface components {
             chatidMasked: string | null;
             /** @description 会话已激活（群内有人给机器人发过消息）；未绑定 = false */
             activated: boolean;
+            /** @description 当前访问者是否为项目经理：决定是否显示项目群维护与日报同步入口；由服务端按内部 actor 身份裁决 */
+            canManage: boolean;
             updatedAt: components["schemas"]["DateTime"] & (string | null);
         };
         /** @description 自动发现但尚未绑定的项目群候选 */
