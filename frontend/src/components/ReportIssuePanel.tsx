@@ -2040,13 +2040,9 @@ function RecordEditModal({ label, hint, submitLabel, pending, canSubmit, error, 
                 disabled={secondaryAction.disabled}
                 title={secondaryAction.title}
                 data-record-edit-group-sync=""
-                className="inline-flex items-center gap-2 rounded-lg border border-zinc-900 bg-white px-3 py-2 text-sm font-medium text-zinc-900 transition hover:bg-zinc-900 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-white disabled:hover:text-zinc-900"
+                className="rounded-lg bg-zinc-100 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-zinc-100"
               >
-                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-4 w-4 shrink-0">
-                  <path d="m22 2-7 20-4-9-9-4 20-7Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                  <path d="M22 2 11 13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                <span>{secondaryAction.pending ? secondaryAction.pendingLabel : secondaryAction.label}</span>
+                {secondaryAction.pending ? secondaryAction.pendingLabel : secondaryAction.label}
               </button>
             )}
             <div className="ml-auto flex gap-3">
