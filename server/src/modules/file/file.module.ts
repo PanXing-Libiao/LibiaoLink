@@ -6,6 +6,7 @@ import { CadPreviewController } from "./cad-preview.controller.js";
 import { CadArchiveRepository } from "./cad-archive.repository.js";
 import { CadArchiveService } from "./cad-archive.service.js";
 import { CadArchiveWorker } from "./cad-archive.worker.js";
+import { CadInputService } from "./cad-inputs.js";
 import { AdminModule } from "../admin/index.js";
 import { IdentityModule } from "../identity/index.js";
 import { PermissionModule } from "../permission/index.js";
@@ -46,6 +47,7 @@ import { PreviewService } from "./preview.service.js";
   ],
   providers: [
     CadEngineClient,
+    CadInputService,
     CadArchiveRepository,
     CadArchiveService,
     CadArchiveWorker,

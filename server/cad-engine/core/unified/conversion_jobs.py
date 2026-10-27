@@ -23,8 +23,9 @@ from .transport import read_worker_buffers
 from .input_policy import step_job_input_bytes
 from .compact_transport import WORKER,VERSION,unpack_metadata
 from .step_name_encoding import name_codepage as check_name_codepage
+from . import dxf_resources
 
-TERMINAL={'completed','failed','cancelled','timed-out'}
+TERMINAL={'completed','partial','failed','cancelled','timed-out'}
 POLICY={'version':'local-step-job/3','workerWallSeconds':600,'queueWallSeconds':900,'workerRSSBytes':2*1024**3,
         'concurrency':1,'maxQueued':8,'sourceBytes':256*1024**2,'artifactBytes':512*1024**2,
         'resultBytes':256*1024**2,'stderrBytes':8*1024**2,'logBytes':64*1024**2,'maxStoredJobs':1024,'retentionSeconds':86400,
@@ -35,9 +36,10 @@ POLICY={'version':'local-step-job/3','workerWallSeconds':600,'queueWallSeconds':
 class JobLimit(ValueError):pass
 
 class ConversionJobs:
-    def __init__(self,root,app,gate,stop_worker,rule_version,interpreter,policy=None):
+    def __init__(self,root,app,gate,stop_worker,rule_version,interpreter,policy=None,dxf_interpreter=None):
         self.root=Path(root);self.app=Path(app);self.gate=gate;self.stop_worker=stop_worker
         self.rule_version=rule_version;self.interpreter=interpreter;self.policy={**POLICY,'inputBytes':step_job_input_bytes(),**(policy or {})}
+        self.dxf_interpreter=dxf_interpreter
         self.binary=os.environ.get('CAD_STEP_JOB_BINARY','1')!='0'
         self.compact=self.binary and os.environ.get('CAD_STEP_JOB_COMPACT','1')!='0'
         self.upload_reserved=0
@@ -58,7 +60,8 @@ class ConversionJobs:
                 if pid and row.get('workerProcessIdentity'):
                     observed=subprocess.run(['ps','-o','lstart=','-o','command=','-p',str(pid)],capture_output=True,text=True).stdout.strip()
                     birth=subprocess.run(['ps','-o','lstart=','-p',str(pid)],capture_output=True,text=True).stdout.strip()
-                    same_process=observed==row['workerProcessIdentity'] or (row.get('workerBirth')==birth and str(self.app/'step_convert.py') in observed)
+                    worker='dxf_convert.py' if row.get('sourceFormat')=='DXF' else 'step_convert.py'
+                    same_process=observed==row['workerProcessIdentity'] or (row.get('workerBirth')==birth and str(self.app/worker) in observed)
                     if same_process:
                         try:os.killpg(pid,signal.SIGKILL)
                         except ProcessLookupError:pass
@@ -90,7 +93,7 @@ class ConversionJobs:
         cutoff=time.time()-self.policy['retentionSeconds']
         self.db.execute("DELETE FROM jobs WHERE state NOT IN ('queued','running') AND updated<?",(cutoff,));self.db.commit()
         rows=[json.loads(r[0]) for r in self.db.execute('SELECT record FROM jobs')]
-        sources={r['sourceSHA256'] for r in rows};artifacts={r.get('artifactSHA256') for r in rows}
+        sources={r.get('inputSHA256',r['sourceSHA256']) for r in rows};artifacts={r.get('artifactSHA256') for r in rows}
         buffers={sha for r in rows for sha in r.get('artifactBufferSHA256',[])}
         for directory,keep in [('sources',sources),('artifacts',artifacts),('buffers',buffers)]:
             for f in (self.root/directory).iterdir():
@@ -106,9 +109,12 @@ class ConversionJobs:
         # Host integration isolates deduplication/cancellation between users and
         # file versions. This changes job ownership, never source CAD identities.
         name_codepage=check_name_codepage(name_codepage)
+        is_dxf=Path(name).suffix.lower()=='.dxf'
+        maximum=min(self.policy['inputBytes'],dxf_resources.MAX_BYTES)+dxf_resources.MAX_HEADER+12 if is_dxf else self.policy['inputBytes']
         if namespace is not None and not re.fullmatch(r'[a-f0-9]{64}',namespace):raise ValueError('invalid job namespace')
-        if not 0<length<=self.policy['inputBytes']:raise ValueError('STEP input exceeds the job input budget')
-        if Path(name).name!=name or Path(name).suffix.lower() not in ('.step','.stp'):raise ValueError('jobs accept STEP only')
+        if not 0<length<=maximum:raise ValueError('CAD input exceeds the job input budget')
+        if Path(name).name!=name or Path(name).suffix.lower() not in ('.step','.stp','.dxf'):raise ValueError('jobs accept STEP or DXF only')
+        if is_dxf and not self.dxf_interpreter:raise ValueError('missing-dxf-runtime: DXF job interpreter is not configured')
         with self.lock:
             if self.closed:raise JobLimit('job service is stopping')
             self._prune()
@@ -133,10 +139,21 @@ class ConversionJobs:
             with self.lock:self.upload_reserved-=length
 
     def _submit_source(self,temporary,sha,length,name,partial,request_id,request_trace,namespace=None,name_codepage='UTF8'):
+        is_dxf=Path(name).suffix.lower()=='.dxf'
+        extra={}
+        if is_dxf:
+            package=dxf_resources.decode_package(temporary.read_bytes())
+            main=package['files'][package['main']]
+            if Path(package['main']).name!=name or sum(map(len,package['files'].values()))>min(self.policy['inputBytes'],dxf_resources.MAX_BYTES):
+                raise ValueError('DXF package main or byte budget mismatch')
+            extra={'inputSHA256':sha,'resourceFingerprint':dxf_resources.fingerprint(package)}
+            sha=hashlib.sha256(main).hexdigest();length=len(main);name_codepage='UTF8'
         identity={'sourceSHA256':sha,'sourceByteLength':length,'name':name,'partial':bool(partial),'reader':'cadquery-ocp/7.8.1.1',
                   'rules':self.rule_version,'schema':'2.0.0','policy':self.policy['version'],'nameCodepage':name_codepage,
                   'artifactTransport':'binary' if self.binary else 'base64',
-                  'artifactMetadata':VERSION if self.compact else 'full'}
+                  'artifactMetadata':VERSION if self.compact and not is_dxf else 'full'}
+        identity.update(sourceFormat='DXF' if is_dxf else 'STEP',**extra)
+        if is_dxf:identity['reader']='ezdxf/1.4.2'
         if namespace is not None:identity['namespace']=namespace
         key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
         with self.lock:
@@ -151,11 +168,11 @@ class ConversionJobs:
                         requests.append(request_id);self._update(row)
                     if request_id in self.cancelled_requests:self.cancel(row['id'])
                     return self._public(row),True
-                if row['state']=='completed' and self._artifact(row) is not None:return self._public(row),True
+                if row['state'] in ('completed','partial') and self._artifact(row) is not None:return self._public(row),True
             queued=self.db.execute("SELECT count(*) FROM jobs WHERE state IN ('queued','running')").fetchone()[0]
             if queued>=self.policy['maxQueued']:raise JobLimit('conversion queue quota exceeded')
             if self.db.execute('SELECT count(*) FROM jobs').fetchone()[0]>=self.policy['maxStoredJobs']:raise JobLimit('stored job quota exceeded')
-            source=self.root/'sources'/sha
+            source=self.root/'sources'/extra.get('inputSHA256',sha)
             if not source.exists():
                 size=sum(f.stat().st_size for f in source.parent.iterdir())
                 if size+length>self.policy['sourceBytes']:raise JobLimit('source storage quota exceeded')
@@ -192,7 +209,7 @@ class ConversionJobs:
                             if digest.hexdigest()!=key:raise ValueError('artifact buffer hash mismatch')
                     return raw
                 except (OSError,ValueError):pass
-        if row['state']=='completed':self._update(row,state='failed',error={'code':'cache-integrity-failed','error':'已验证产物缺失或已损坏，需重新转换'})
+        if row['state'] in ('completed','partial'):self._update(row,state='failed',error={'code':'cache-integrity-failed','error':'已验证产物缺失或已损坏，需重新转换'})
         return None
 
     def _buffer_path(self,definition):
@@ -215,7 +232,7 @@ class ConversionJobs:
         with self.lock:
             row=self._get(jid)
             if not row:return None,None
-            raw=self._artifact(row) if row['state']=='completed' else None
+            raw=self._artifact(row) if row['state'] in ('completed','partial') else None
             return self._public(row),raw
 
     def cancel(self,jid):
@@ -253,7 +270,9 @@ class ConversionJobs:
                 row=self._get(jid)
                 if self.closed or row['state'] in TERMINAL:return
                 event(row,'queueExited');self._update(row,state='running',phase='worker-starting')
-            source=self.root/'sources'/row['sourceSHA256']
+            is_dxf=row.get('sourceFormat')=='DXF'
+            source=self.root/'sources'/row.get('inputSHA256',row['sourceSHA256'])
+            worker_seconds=min(self.policy['workerWallSeconds'],60) if is_dxf else self.policy['workerWallSeconds']
             if sum(f.stat().st_size for f in (self.root/'logs').iterdir())+self.policy['stderrBytes']>self.policy['logBytes']:raise JobLimit('log storage quota exceeded')
             with tempfile.TemporaryDirectory(dir=self.root/'temporary') as folder:
                 folder=Path(folder);out=folder/'result.json';trace=folder/'trace.json'
@@ -261,14 +280,27 @@ class ConversionJobs:
                 env=dict(os.environ);env.pop('CAD_BINARY_DIR',None);env.pop('CAD_PROFILE_STAGES',None)
                 if self.binary:env['CAD_BINARY_DIR']=str(binary_dir)
                 env.pop('CAD_COMPACT_METADATA',None)
-                if self.compact:env['CAD_COMPACT_METADATA']='1'
+                if self.compact and not is_dxf:env['CAD_COMPACT_METADATA']='1'
                 env['CAD_TRACE_FILE']=str(trace);env['CAD_TRACE_LIVE']='1'
                 env['CAD_STEP_INPUT_BYTES']=str(self.policy['inputBytes'])
                 env['CAD_STEP_NAME_CODEPAGE']=row.get('nameCodepage','UTF8')
                 if row['partial']:env['CAD_PARTIAL_PREVIEW']='1'
                 else:env.pop('CAD_PARTIAL_PREVIEW',None)
+                env.pop('CAD_DXF_RESOURCES',None)
+                worker_source=source
+                allowed_sources={row['sourceSHA256']:row['sourceByteLength']}
+                if is_dxf:
+                    package_raw=source.read_bytes()
+                    if hashlib.sha256(package_raw).hexdigest()!=row['inputSHA256']:
+                        raise ValueError('DXF package source integrity mismatch')
+                    package=dxf_resources.decode_package(package_raw)
+                    if dxf_resources.fingerprint(package)!=row['resourceFingerprint']:
+                        raise ValueError('DXF package integrity mismatch')
+                    env['CAD_DXF_RESOURCES']=dxf_resources.write_manifest(package,folder)
+                    worker_source=folder/'main.dxf';worker_source.write_bytes(package['files'][package['main']])
+                    allowed_sources={hashlib.sha256(raw).hexdigest():len(raw) for raw in package['files'].values()}
                 wall=time.perf_counter();peak_rss=0
-                with source.open('rb') as stdin,out.open('wb') as stdout,(self.root/'logs'/(jid+'.log')).open('wb') as stderr:
+                with worker_source.open('rb') as stdin,out.open('wb') as stdout,(self.root/'logs'/(jid+'.log')).open('wb') as stderr:
                     digest=hashlib.sha256()
                     for chunk in iter(lambda:stdin.read(1024*1024),b''):digest.update(chunk)
                     if digest.hexdigest()!=row['sourceSHA256']:raise ValueError('source integrity mismatch')
@@ -276,7 +308,8 @@ class ConversionJobs:
                     with self.lock:
                         row=self._get(jid)
                         if row['state'] in TERMINAL:return
-                        proc=subprocess.Popen([self.interpreter,str(self.app/'step_convert.py'),row['name'],'[]'],
+                        proc=subprocess.Popen([self.dxf_interpreter if is_dxf else self.interpreter,
+                                              str(self.app/('dxf_convert.py' if is_dxf else 'step_convert.py')),row['name'],'[]'],
                                               stdin=stdin,stdout=stdout,stderr=stderr,start_new_session=True,env=env)
                         self.active[jid]=proc;event(row,'workerStarted')
                         process_identity=subprocess.run(['ps','-o','lstart=','-o','command=','-p',str(proc.pid)],capture_output=True,text=True).stdout.strip()
@@ -286,7 +319,7 @@ class ConversionJobs:
                         with self.lock:
                             row=self._get(jid)
                             if self.closed or row['state']=='cancelled':self.stop_worker(proc);return
-                        if time.perf_counter()-wall>self.policy['workerWallSeconds']:
+                        if time.perf_counter()-wall>worker_seconds:
                             self.stop_worker(proc);fail('timed-out','job-timeout','转换超过后台任务计算预算');return
                         size=out.stat().st_size+sum(f.stat().st_size for f in binary_dir.iterdir())
                         if size>self.policy['resultBytes'] or stderr.tell()>self.policy['stderrBytes']:
@@ -304,7 +337,7 @@ class ConversionJobs:
                                     if current['state']=='running' and current.get('workerTrace')!=progress:self._update(current,workerTrace=progress,phase=next(reversed(progress['events'])))
                         time.sleep(.2)
                 if out.stat().st_size+sum(f.stat().st_size for f in binary_dir.iterdir())>self.policy['resultBytes']:raise JobLimit('result output quota exceeded')
-                if time.perf_counter()-wall>self.policy['workerWallSeconds']:
+                if time.perf_counter()-wall>worker_seconds:
                     fail('timed-out','job-timeout','转换超过后台任务计算预算');return
                 raw=out.read_bytes();envelope=json.loads(raw)
                 with self.lock:
@@ -318,15 +351,23 @@ class ConversionJobs:
                     return
                 wire_envelope=envelope;envelope=unpack_metadata(wire_envelope)
                 document=envelope['document'];sources=document['sources']
-                if len(sources)!=1 or sources[0]['sha256']!=row['sourceSHA256'] or sources[0]['format']!='STEP' or sources[0]['name']!=row['name'] or sources[0]['byteLength']!=row['sourceByteLength']:
+                main=next((item for item in sources if item['sha256']==row['sourceSHA256'] and item['name']==row['name']),None)
+                if main is None or main['format']!=('DXF' if is_dxf else 'STEP') or main['byteLength']!=row['sourceByteLength'] or (not is_dxf and len(sources)!=1):
                     raise ValueError('worker source identity mismatch')
-                if document['adapter']['id']!='occt-xde-step' or {'name':'cadquery-ocp','version':'7.8.1.1'} not in document['adapter']['dependencies']:
+                if any(allowed_sources.get(item['sha256'])!=item['byteLength'] for item in sources):
+                    raise ValueError('worker companion identity mismatch')
+                adapter,dependency=('ezdxf-dxf',{'name':'ezdxf','version':'1.4.2'}) if is_dxf else ('occt-xde-step',{'name':'cadquery-ocp','version':'7.8.1.1'})
+                if document['adapter']['id']!=adapter or dependency not in document['adapter']['dependencies']:
                     raise ValueError('worker reader identity mismatch')
-                if not row['partial'] and envelope['snapshot']['completeness']!='complete':raise ValueError('strict job requires complete geometry')
+                completeness=envelope['snapshot']['completeness']
+                if is_dxf and completeness not in ('complete','partial'):raise ValueError('DXF job has no installable artifact')
+                if is_dxf and document['extensions']['org.cad-preview.drawing-coverage/1']['displayGeometry']['withDisplayGeometry']<1:
+                    raise ValueError('DXF has no display geometry')
+                if not is_dxf and not row['partial'] and completeness!='complete':raise ValueError('strict job requires complete geometry')
                 blobs={}
                 if self.binary:
                     if envelope.get('transportProfile')!='ucd-worker-binary/1':raise ValueError('binary worker transport mismatch')
-                    if self.compact and wire_envelope.get('transportProfile')!=WORKER:raise ValueError('compact worker transport mismatch')
+                    if self.compact and not is_dxf and wire_envelope.get('transportProfile')!=WORKER:raise ValueError('compact worker transport mismatch')
                     entries=envelope.get('bufferResources',[])
                     definitions=document['buffers']
                     if len(entries)!=len(definitions) or {e['id'] for e in entries}!=set(definitions):raise ValueError('worker buffer inventory mismatch')
@@ -356,7 +397,7 @@ class ConversionJobs:
                         temporary.replace(self.root/'buffers'/key)
                     target=self.root/'artifacts'/sha;out.replace(target)
                     event(current,'artifactCommitted')
-                    self._update(current,state='completed',phase='verified-artifact',artifactSHA256=sha,
+                    self._update(current,state='partial' if is_dxf and completeness=='partial' else 'completed',phase='verified-artifact',artifactSHA256=sha,
                                  artifactBufferSHA256=list(unique),
                                  documentRevision=envelope['document']['revision'],completeness=envelope['snapshot']['completeness'],
                                  artifactBytes=len(raw)+sum(map(len,unique.values())),manifestBytes=len(raw),

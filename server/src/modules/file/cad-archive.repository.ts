@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { and, eq, gt, lt, or } from "drizzle-orm";
+import { and, eq, gt, lt, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
@@ -8,10 +8,11 @@ import { files } from "../../db/schema/files.js";
 import { AuditService, type AuditRecordInput } from "../admin/index.js";
 import { CAD_ENGINE_VERSION } from "./cad-release.js";
 import type { CadNameCodepage } from "@libiaolink/contracts";
+import { cadInputs, type CadArchiveSource } from "./cad-inputs.js";
+export type { CadArchiveSource } from "./cad-inputs.js";
 
 export type CadArtifactRow = typeof cadArtifacts.$inferSelect;
 export type CadViewRow = typeof cadViews.$inferSelect;
-export type CadArchiveSource = { fileId: string; versionId: string; sourceSHA256: string; sourceBytes: number; sourceName: string };
 export type CadFailureContext = { nativeJobId?: string; terminalState?: "failed" | "timed-out" | "cancelled" };
 
 const TIMEOUT_CODES = new Set(["job-timeout", "job-queue-timeout", "conversion-timeout"]);
@@ -22,10 +23,13 @@ export class CadArchiveRepository {
   constructor(private readonly database: DatabaseService, private readonly audit: AuditService) {}
 
   async request(source: CadArchiveSource, codepage: CadNameCodepage, client: DbClient = this.database.db): Promise<CadArtifactRow> {
-    const inserted = await client.insert(cadArtifacts).values({ ...source, engineVersion: CAD_ENGINE_VERSION, nameCodepage: codepage })
-      .onConflictDoNothing({ target: [cadArtifacts.versionId, cadArtifacts.engineVersion, cadArtifacts.nameCodepage] }).returning();
+    const input = cadInputs(source);
+    codepage = input.sourceFormat === "DXF" ? "UTF8" : codepage;
+    const inserted = await client.insert(cadArtifacts).values({ ...input, engineVersion: CAD_ENGINE_VERSION, nameCodepage: codepage })
+      .onConflictDoNothing({ target: [cadArtifacts.versionId, cadArtifacts.engineVersion, cadArtifacts.nameCodepage, cadArtifacts.resourceSetHash] }).returning();
     const row = inserted[0] ?? (await client.select().from(cadArtifacts).where(and(eq(cadArtifacts.versionId, source.versionId),
-      eq(cadArtifacts.engineVersion, CAD_ENGINE_VERSION), eq(cadArtifacts.nameCodepage, codepage))).limit(1))[0];
+      eq(cadArtifacts.engineVersion, CAD_ENGINE_VERSION), eq(cadArtifacts.nameCodepage, codepage),
+      eq(cadArtifacts.resourceSetHash, input.resourceSetHash))).limit(1))[0];
     if (!row || row.fileId !== source.fileId || row.sourceSHA256 !== source.sourceSHA256 || row.sourceBytes !== source.sourceBytes) {
       throw new Error("CAD version identity mismatch");
     }
@@ -67,11 +71,11 @@ export class CadArchiveRepository {
     });
   }
 
-  async rejectInput(source: CadArchiveSource, actorId: string, viewId: string, codepage: CadNameCodepage, limitBytes: number): Promise<void> {
+  async rejectInput(source: CadArchiveSource, actorId: string, viewId: string, codepage: CadNameCodepage, limitBytes: number, inputSetBytes = source.sourceBytes): Promise<void> {
     await this.recordAudit(this.database.db, source, {
       actorId, action: "update", result: "failed", entry: "api", summary: "CAD 输入大小超出处理限制",
       metadata: { operation: "cad.limit_exceeded", errorCode: "input-limit", versionId: source.versionId,
-        engineVersion: CAD_ENGINE_VERSION, nameCodepage: codepage, viewId, sourceBytes: source.sourceBytes, limitBytes },
+        engineVersion: CAD_ENGINE_VERSION, nameCodepage: codepage, viewId, sourceBytes: source.sourceBytes, inputSetBytes, limitBytes },
     });
   }
   async lease(id: string, release = false): Promise<void> {
@@ -117,8 +121,9 @@ export class CadArchiveRepository {
     return rows.length > 0;
   }
 
-  async publish(row: CadArtifactRow, result: Pick<CadArtifactRow, "objectPrefix" | "manifestSHA256" | "manifestBytes" | "resourceLease" | "buffers" | "artifactBytes">): Promise<boolean> {
-    const rows = await this.database.db.update(cadArtifacts).set({ ...result, state: "completed", phase: "completed",
+  async publish(row: CadArtifactRow, result: Pick<CadArtifactRow, "objectPrefix" | "manifestSHA256" | "manifestBytes" | "resourceLease" | "buffers" | "artifactBytes">,
+    state: "completed" | "partial" = "completed"): Promise<boolean> {
+    const rows = await this.database.db.update(cadArtifacts).set({ ...result, state, phase: state,
       claimToken: null, claimUntil: null, error: null, errorCode: null, updatedAt: new Date() })
       .where(this.owner(row)).returning({ id: cadArtifacts.id });
     return rows.length > 0;
@@ -137,6 +142,12 @@ export class CadArchiveRepository {
 
   async clearExpiredViews(): Promise<void> {
     await this.database.db.delete(cadViews).where(lt(cadViews.expiresAt, new Date()));
+  }
+
+  async purgeInputs(fileId: string, client: DbClient = this.database.db): Promise<string[]> {
+    const rows = await client.delete(cadArtifacts).where(or(eq(cadArtifacts.fileId, fileId),
+      sql`${cadArtifacts.companions} @> ${JSON.stringify([{ fileId }])}::jsonb`)).returning({ prefix: cadArtifacts.objectPrefix });
+    return rows.flatMap((row) => row.prefix ? [row.prefix] : []);
   }
 
   private async recordFailure(client: DbClient, row: CadArtifactRow, code: string, retry: boolean, context: CadFailureContext = {}) {

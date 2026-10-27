@@ -78,11 +78,23 @@ export type CadNameCodepage = "UTF8" | "GB";
 
 export type CadPreviewViewerConfig = {
   kind: "cad";
+  format: "STEP" | "DXF";
+  sourceName: string;
+  projectId: string;
   fileId: string;
   versionId: string;
   sourceSHA256: string;
   engineVersion: string;
 };
+export type CadCompanion = { fileId: string; versionId: string; path: string };
+export type CadInputSelection = { mainPath?: string; companions: CadCompanion[] };
+
+/** Freeze the selected current version; later replacements never silently change the DXF input set. */
+export async function fetchCadCompanionVersion(fileId: string): Promise<{ id: string; sizeBytes: number }> {
+  const detail = await apiRequest<{ currentVersion: { id: string; sizeBytes: number } | null }>("/api/v1/files/" + encodeURIComponent(fileId));
+  if (!detail.currentVersion) throw new Error("此文件还没有可用版本");
+  return detail.currentVersion;
+}
 export type PreviewViewerConfig = OnlyOfficePreviewViewerConfig | CadPreviewViewerConfig;
 
 /** 预览状态响应（契约 FilePreviewResponse 子集）：ready 才有签名地址 / 查看器配置（两通道互斥）。 */

@@ -11,6 +11,7 @@ import math
 import re
 import struct
 from pathlib import Path
+from .canonical import canonical_sha256
 
 SCHEMA = json.loads((Path(__file__).parent/'schema/ucd-1.0.schema.json').read_text())
 SCHEMA_V2 = json.loads((Path(__file__).parent/'schema/ucd-2.0.schema.json').read_text())
@@ -278,7 +279,7 @@ def _validate_core(envelope,version,schema,max_decoded,raw=None):
         require(not(a['component'].startswith('f') and a['normalized']),'invalid-buffer',key,'Float normalization')
     for key,g in d['geometries'].items():
         require(g['id']==key and 'POSITION' in g['attributes'],'invalid-geometry',key,'Missing POSITION or wrong identity')
-        require(set(g['attributes'].values())<=set(d['accessors']),'invalid-reference',key,'Missing attribute accessor')
+        require(all(aid in d['accessors'] for aid in g['attributes'].values()),'invalid-reference',key,'Missing attribute accessor')
         position=d['accessors'][g['attributes']['POSITION']]
         require(position['component'] in ('f32','f64') and position['components']==3 and not position['normalized'] and position['count']>0,'invalid-geometry',key,'Invalid POSITION')
         low,high=g['bounds']['min'],g['bounds']['max']
@@ -315,7 +316,7 @@ def _validate_core(envelope,version,schema,max_decoded,raw=None):
         require(r['id']==key and len({b['id'] for b in r['bindings']})==len(r['bindings']),'invalid-reference',key,'Representation identity/binding collision')
         for b in r['bindings']:
             affine(b['localFromRepresentation'],key)
-            require(b['geometryId'] in d['geometries'] and set(b['materialSlots'].values())<=set(d['materials']),'invalid-reference',key,'Missing geometry/material')
+            require(b['geometryId'] in d['geometries'] and all(mid in d['materials'] for mid in b['materialSlots'].values()),'invalid-reference',key,'Missing geometry/material')
             for p in d['geometries'][b['geometryId']]['primitives']:
                 if 'materialSlot' in p:require(p['materialSlot'] in b['materialSlots'],'invalid-reference',key,'Unbound material slot')
     active=set();stack=list(s['sceneRoots'])
@@ -350,9 +351,8 @@ def _validate_core(envelope,version,schema,max_decoded,raw=None):
             while node is not None:chain.add(node);node=d['sceneOccurrences'][node]['parentId']
             require(bool(anchors & chain),'invalid-reference','ownership','Draw must descend from an owner scene anchor')
     validate_drawing(d)
-    canonical=lambda obj:json.dumps(obj,sort_keys=True,ensure_ascii=False,separators=(',',':'),allow_nan=False).encode()
-    require(d['revision']==hashlib.sha256(canonical({k:v for k,v in d.items() if k!='revision'})).hexdigest(),'invalid-revision','document','Revision does not bind content')
-    require(s['id']=='snapshot-'+hashlib.sha256(canonical({k:v for k,v in s.items() if k!='id'})).hexdigest(),'invalid-revision','snapshot','Snapshot identity does not bind content')
+    require(d['revision']==canonical_sha256({k:v for k,v in d.items() if k!='revision'}),'invalid-revision','document','Revision does not bind content')
+    require(s['id']=='snapshot-'+canonical_sha256({k:v for k,v in s.items() if k!='id'}),'invalid-revision','snapshot','Snapshot identity does not bind content')
     return raw
 
 def validate_drawing_projection(d,projection):
@@ -396,6 +396,9 @@ def validate_drawing_projection(d,projection):
         require(draw['itemId'] in (entities if draw['kind']=='entity' else annotations),'invalid-reference',draw_id,'Missing draw item')
         require(draw['localToSpace'],'invalid-reference',draw_id,'Missing transform')
         affine(draw['localToSpace'],draw_id)
+        visibility_layers=draw.get('visibilityLayerIds',[])
+        require(set(visibility_layers)<=layers and len(set(visibility_layers))==len(visibility_layers),
+                'invalid-reference',draw_id,'Unknown or duplicate visibility layer')
         if 'viewportId' in draw:
             require(draw['viewportId'] in projection['viewports'],'invalid-reference',draw_id,'Unknown viewport')
             require(layout_id is not None,'invalid-reference',draw_id,'Model projection must not carry a viewport')
@@ -403,7 +406,15 @@ def validate_drawing_projection(d,projection):
             item=entities[draw['itemId']]
             expected='unsupported' if item['geometry']['type']=='unsupported' else draw['availability']
             require(expected=='unsupported' or expected in ('ready','missing-reference'),'invalid-reference',draw_id,'Availability contradicts geometry')
-            if item['geometry']['type']=='unsupported':require(draw['availability']=='unsupported','invalid-reference',draw_id,'Unsupported geometry must be marked unsupported')
+            if item['geometry']['type']=='unsupported' and draw['availability']!='unsupported':
+                # Analytic LEADER semantics are outside Entity's union. Only a
+                # complete, explicit display derivative can make that draw ready.
+                entry=d.get('extensions',{}).get('org.cad-preview.annotation-presentation/1',{}).get('items',{}).get(draw['itemId'],{})
+                require(draw['availability']=='ready' and entry.get('status')=='ready' and entry.get('parts'),
+                        'invalid-reference',draw_id,'Unsupported geometry has no complete presentation')
+                for part in entry['parts']:
+                    require(part.get('representationId') in d['representations'] or valid_infinite_part(part,entry),
+                            'invalid-reference',draw_id,'Missing annotation presentation part')
         else:
             require(draw['availability']!='unsupported','invalid-reference',draw_id,'Mapped annotation cannot be unsupported')
         if 'displayRepresentationId' in draw:
@@ -412,12 +423,26 @@ def validate_drawing_projection(d,projection):
         style=draw['style']
         if 'lineTypeId' in style:require(style['lineTypeId'] in m['lineTypes'],'invalid-reference',draw_id,'Unknown line type')
         if 'fontResourceId' in style:require(style['fontResourceId'] in d['resources'],'invalid-reference',draw_id,'Unknown font resource')
-        owner_space=space['id']
+        owner_space=(projection['viewports'][draw['viewportId']]['sourceSpaceId']
+                     if 'viewportId' in draw else space['id'])
         for depth,step in enumerate(draw['blockPath']):
             require(step['instanceId'] in instances,'invalid-reference',draw_id,'Unknown block instance')
             instance=instances[step['instanceId']]
             require(instance['ownerSpaceId']==owner_space,'invalid-reference',draw_id,'Block path does not follow block spaces')
+            array=instance.get('array')
+            rows=array['rows'] if array and any(array['rowOffset']) else 1
+            columns=array['columns'] if array and any(array['columnOffset']) else 1
+            require(0<=step['row']<rows and 0<=step['column']<columns,'invalid-reference',draw_id,'Array placement is outside its instance')
             owner_space=m['blocks'][instance['definitionId']]['spaceId']
+        item=(entities if draw['kind']=='entity' else annotations)[draw['itemId']]
+        owner=item.get('ownerBlockInstanceId')
+        if owner:
+            require(bool(draw['blockPath']) and draw['blockPath'][-1]['instanceId']==owner,
+                    'invalid-reference',draw_id,'Attached annotation path omits its instance owner')
+            require(item['ownerSpaceId']==instances[owner]['ownerSpaceId'],
+                    'invalid-reference',draw_id,'Attached annotation has the wrong coordinate space')
+        else:
+            require(item['ownerSpaceId']==owner_space,'invalid-reference',draw_id,'Draw item does not belong to its block path')
     def items_of(space_id):
         row=m['spaces'][space_id]
         return set(row['entityIds'])|set(row['annotationIds'])|set(row['blockInstanceIds'])
@@ -431,8 +456,8 @@ def validate_drawing_projection(d,projection):
     if layout_id is None:
         walk(space['id'],covered,set())
     else:
-        viewports=projection['viewports']
-        if viewports:walk(drawing['modelSpaceId'],covered,set())
+        for viewport in projection['viewports'].values():
+            if viewport['enabled']:walk(viewport['sourceSpaceId'],covered,set())
         walk(space['id'],covered,set())
     drawn={draw['itemId'] for draw in projection['draws'].values()}
     # Only entity/annotation items can be draw items; every space member must be represented.
@@ -440,32 +465,126 @@ def validate_drawing_projection(d,projection):
     require(members<=drawn,'invalid-reference','drawingProjection.draws','Projection omits space members')
     require(drawn<=covered,'invalid-reference','drawingProjection.draws','Draw item is not reachable from the target space')
 
+def valid_infinite_part(part,entry):
+    if entry.get('mode')!='view-dependent' or part.get('role')!='infinite' or 'representationId' in part:
+        return False
+    line=part.get('line',{})
+    def vector(value):
+        return isinstance(value,list) and len(value)==3 and all(isinstance(v,(int,float)) and math.isfinite(v) for v in value)
+    return (entry.get('sourceKind') in ('RAY','XLINE') and line.get('kind')==entry['sourceKind'].lower() and vector(line.get('origin'))
+            and vector(line.get('direction')) and sum(v*v for v in line['direction'])>1e-24)
+
 def validate_drawing(d):
     """Referential checks for the 2D contract, not a DXF/DWG parser."""
     m=d['drawing']
+    fills=d.get('extensions',{}).get('org.cad-preview.fill/1',{}).get('fills',{})
+    for item_id,fill in fills.items():
+        if 'rings' in fill:
+            require(item_id in m['entities'] and m['entities'][item_id]['geometry']['type']=='hatch',
+                    'invalid-reference',item_id,'Retained fill has no hatch')
+            require(fill.get('fillRule') in ('even-odd','nonzero') and len(fill['rings'])>0,
+                    'invalid-geometry',item_id,'Invalid retained fill rule/rings')
+            require(all(len(ring)>=3 and all(len(point)==3 and all(type(v) in (int,float) and math.isfinite(v) for v in point)
+                    for point in ring) for ring in fill['rings']), 'invalid-geometry',item_id,'Invalid retained fill coordinates')
+        gradient=fill.get('gradient')
+        if gradient is None:continue
+        require(item_id in m['entities'] and m['entities'][item_id]['geometry']['type']=='hatch',
+                'invalid-reference',item_id,'Gradient has no hatch')
+        require(gradient.get('profile')=='truedxf-gradient-field/1' and gradient.get('shift') in (0,1)
+                and gradient.get('name') in ('LINEAR','CYLINDER','INVCYLINDER','SPHERICAL','INVSPHERICAL',
+                                               'HEMISPHERICAL','INVHEMISPHERICAL','CURVED','INVCURVED'),
+                'invalid-geometry',item_id,'Unknown gradient field')
+        colors=gradient.get('colors',[])
+        require(len(colors)==2 and all(len(c)==3 and all(type(v)==int and 0<=v<=255 for v in c) for c in colors),
+                'invalid-geometry',item_id,'Invalid gradient stops')
+        for field in ('domain','frameBounds'):
+            bounds=gradient.get(field,[])
+            require(len(bounds)==4 and all(type(v) in (int,float) and math.isfinite(v) for v in bounds)
+                    and bounds[0]<bounds[2] and bounds[1]<bounds[3], 'invalid-geometry',item_id,'Invalid gradient bounds')
+        require(type(gradient.get('angleRadians')) in (int,float) and math.isfinite(gradient['angleRadians']),
+                'invalid-geometry',item_id,'Invalid gradient angle')
+        require(len(gradient.get('localToOwner',[]))==16,'invalid-matrix',item_id,'Missing gradient basis')
+        affine(gradient['localToOwner'],item_id)
+    presentations=d.get('extensions',{}).get('org.cad-preview.annotation-presentation/1',{}).get('items',{})
+    for item_id,entry in presentations.items():
+        require(item_id in m['entities'] or item_id in m['annotations'],'invalid-reference',item_id,'Missing annotation source item')
+        require(entry.get('status') in ('ready','missing'),'invalid-reference',item_id,'Unknown annotation presentation status')
+        parts=entry.get('parts',[])
+        require(bool(parts)==(entry['status']=='ready'),'invalid-reference',item_id,'Incomplete annotation presentation')
+        for context in entry.get('scaleVariants',[]):
+            require(context.get('status') in ('ready','missing'),'invalid-reference',item_id,'Unknown annotation context status')
+            require(bool(context.get('parts'))==(context['status']=='ready'),'invalid-reference',item_id,'Incomplete annotation context presentation')
+            require(type(context.get('drawingPerPaper')) in (int,float) and context['drawingPerPaper']>0,'invalid-geometry',item_id,'Invalid annotation scale')
+        parts=parts+[part for context in entry.get('scaleVariants',[]) for part in context.get('parts',[])]
+        seen_parts=set()
+        for part in parts:
+            require(part['id'] not in seen_parts,'invalid-reference',item_id,'Duplicate annotation part');seen_parts.add(part['id'])
+            representation=d['representations'].get(part.get('representationId'))
+            require((representation is not None and representation['kind']=='drawing') or valid_infinite_part(part,entry),
+                    'invalid-reference',item_id,'Missing annotation representation')
+            if 'fillRule' in part:
+                require(part['fillRule'] in ('evenodd','nonzero'),'invalid-geometry',item_id,'Unknown presentation fill rule')
+            for clip in part.get('clipRegions',[]):
+                boundary=clip.get('boundary',[])
+                require(type(clip.get('inverted'))==bool and 3<=len(boundary)<=16384,
+                        'invalid-geometry',item_id,'Invalid presentation clip')
+                require(all(len(point)==2 and all(type(v) in (int,float) and math.isfinite(v) for v in point) for point in boundary),
+                        'invalid-geometry',item_id,'Invalid presentation clip points')
+            for context in part.get('plotVariants',{}).values():
+                for variant in context.values():
+                    require(variant.get('status') in ('ready','missing'),'invalid-reference',item_id,'Unknown plot presentation status')
+                    require(variant['status']=='ready' or not variant.get('parts'),'invalid-reference',item_id,'Failed plot variant has geometry')
+                    for child in variant.get('parts',[]):
+                        require(child.get('representationId') in d['representations'],'invalid-reference',item_id,'Missing plot representation')
+            variants=list(part.get('lineTypeVariants',{}).items())+[(variant.get('lineTypeId'),variant) for variant in part.get('drawVariants',{}).values()]
+            for line_type,variant in variants:
+                require(line_type in m['lineTypes'],'invalid-reference',item_id,'Missing presentation linetype')
+                require(variant.get('status') in ('ready','missing'),'invalid-reference',item_id,'Unknown linetype presentation status')
+                require(variant['status']=='ready' or not variant.get('parts'),'invalid-reference',item_id,'Failed linetype has geometry')
+                for child in variant.get('parts',[]):
+                    require(child.get('representationId') in d['representations'],'invalid-reference',item_id,'Missing linetype representation')
+                    require(child.get('fillRule','evenodd') in ('evenodd','nonzero'),'invalid-geometry',item_id,'Unknown linetype fill rule')
+            for row in [part]+part['ancestors']:
+                require(row['layerId'] in m['layers'],'invalid-reference',item_id,'Missing annotation part layer')
+                validate_style(row['style'],m,item_id)
     for table in m.values():
         for key,row in table.items():require(key==row['id'],'invalid-reference','drawing','Identity mismatch')
     for drawing in m['drawings'].values():
         require(drawing['modelSpaceId'] in m['spaces'] and m['spaces'][drawing['modelSpaceId']]['kind']=='model','invalid-reference','drawing','Missing model space')
         for field,tab in [('sheetIds','sheets'),('layoutIds','layouts'),('layerIds','layers')]:require(set(drawing[field])<=set(m[tab]),'invalid-reference','drawing','Missing '+tab)
+    member_tables={tab:set(m[tab]) for tab in ('entities','annotations','blockInstances')}
+    space_members={}
     for space in m['spaces'].values():
         require(space['drawingId'] in m['drawings'],'invalid-reference','space','Missing drawing')
+        members=space_members[space['id']]={}
         for field,tab in [('entityIds','entities'),('annotationIds','annotations'),('blockInstanceIds','blockInstances')]:
-            require(set(space[field])<=set(m[tab]) and len(space[field])==len(set(space[field])),'invalid-reference','space','Missing/duplicate members')
+            members[field]=set(space[field])
+            require(members[field]<=member_tables[tab] and len(space[field])==len(members[field]),'invalid-reference','space','Missing/duplicate members')
             require(all(m[tab][key]['ownerSpaceId']==space['id'] for key in space[field]),'invalid-reference','space','Wrong member owner')
     for tab in ('entities','annotations','blockInstances'):
         for item in m[tab].values():
             owner=item['ownerSpaceId'];require(owner in m['spaces'] and item['layerId'] in m['layers'],'invalid-reference',tab,'Missing owner/layer')
             field={'entities':'entityIds','annotations':'annotationIds','blockInstances':'blockInstanceIds'}[tab]
-            require(item['id'] in m['spaces'][owner][field] and m['layers'][item['layerId']]['drawingId']==m['spaces'][owner]['drawingId'],'invalid-reference',tab,'Wrong drawing/member relation')
+            require(item['id'] in space_members[owner][field] and m['layers'][item['layerId']]['drawingId']==m['spaces'][owner]['drawingId'],'invalid-reference',tab,'Wrong drawing/member relation')
             if tab=='entities':
                 require(item['drawingId']==m['spaces'][owner]['drawingId'],'invalid-reference',tab,'Wrong drawing');affine(item['localFromOwner'],item['id'])
                 g=item['geometry'];t=g['type']
-                if t=='polyline':require(len(g['bulges'])==(len(g['points']) if g['closed'] else len(g['points'])-1),'invalid-geometry',item['id'],'Bulge segment count')
+                if t=='polyline':
+                    count=len(g['points']) if g['closed'] else len(g['points'])-1
+                    require(len(g['bulges'])==count,'invalid-geometry',item['id'],'Bulge segment count')
+                    if 'widths' in g:
+                        require(len(g['widths'])==count and all(len(pair)==2 and all(type(v) in (int,float) and math.isfinite(v) and v>=0 for v in pair) for pair in g['widths']),
+                                'invalid-geometry',item['id'],'Invalid segment widths')
                 if t=='spline':require(g['degree']<len(g['controlPoints']) and len(g['weights'])==len(g['controlPoints']) and len(g['knots'])==len(g['controlPoints'])+g['degree']+1 and g['knots']==sorted(g['knots']),'invalid-geometry',item['id'],'Spline dimensions/knots')
-                if t=='hatch':require(set(g['boundaryEntityIds'])<=set(m['entities']),'invalid-reference',item['id'],'Missing hatch boundary')
+                if t=='hatch':require(set(g['boundaryEntityIds'])<=member_tables['entities'],'invalid-reference',item['id'],'Missing hatch boundary')
                 if t=='image':require(g['resourceId'] in d['resources'],'invalid-reference',item['id'],'Missing image')
-            elif tab=='annotations':require(set(item['associativeEntityIds']+item['presentationEntityIds'])<=set(m['entities']),'invalid-reference',item['id'],'Missing annotation entities')
+            elif tab=='annotations':
+                require(set(item['associativeEntityIds']+item['presentationEntityIds'])<=member_tables['entities'],'invalid-reference',item['id'],'Missing annotation entities')
+                instance_id=item.get('ownerBlockInstanceId')
+                if instance_id:
+                    instance=m['blockInstances'].get(instance_id)
+                    require(instance is not None and instance['ownerSpaceId']==owner,
+                            'invalid-reference',item['id'],'Attached annotation must share its instance owner space')
             else:
                 require(item['definitionId'] in m['blocks'],'invalid-reference',item['id'],'Missing block');affine(item['localFromBlock'],item['id'])
             if 'style' in item:validate_style(item['style'],m,item['id'])

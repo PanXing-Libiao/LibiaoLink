@@ -12,6 +12,7 @@ function fixture(state: CadJob["state"], code?: string) {
   const body = Buffer.from("abc"), sha = createHash("sha256").update(body).digest("hex");
   const row: CadArtifactRow = { id: "11111111-1111-4111-8111-111111111111", fileId: "22222222-2222-4222-8222-222222222222",
     versionId: "33333333-3333-4333-8333-333333333333", sourceSHA256: sha, sourceBytes: 3, sourceName: "box.step",
+    sourceFormat: "STEP", mainPath: "box.step", companions: [], resourceSetHash: "0".repeat(64),
     engineVersion: "fixture", nameCodepage: "GB", state: "running", phase: "reading", attempts: 1,
     availableAt: new Date(), claimToken: "44444444-4444-4444-8444-444444444444", claimUntil: new Date(),
     objectPrefix: null, manifestSHA256: null, manifestBytes: null, resourceLease: null, buffers: null, artifactBytes: 0,
@@ -34,7 +35,8 @@ function fixture(state: CadJob["state"], code?: string) {
     findVersionById: async () => ({ id: row.versionId, contentHash: sha, sizeBytes: 3, objectKey: "source.step" }) };
   const storage = { getObject: async () => ({ bytes: body }), purgePrefix: async () => {}, putObject: async () => {} };
   const worker = new CadArchiveWorker(repository as unknown as CadArchiveRepository, files as unknown as FileRepository,
-    engine as unknown as CadEngineClient, storage as unknown as ObjectStorage);
+    engine as unknown as CadEngineClient, storage as unknown as ObjectStorage,
+    { assertAvailable: async () => {}, payload: async () => body } as never);
   return { worker, engine, repository, failures, job };
 }
 

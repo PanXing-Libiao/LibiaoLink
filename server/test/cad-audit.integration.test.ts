@@ -137,11 +137,21 @@ describe.skipIf(!databaseUrl)("CAD audit transactions with PostgreSQL", () => {
 
   it("oversized input is audited without creating a conversion task", async () => {
     const input = { ...await source(), sourceBytes: engine.inputLimit + 1 };
-    const archive = new CadArchiveService(repository, {} as ObjectStorage, engine);
+    const archive = new CadArchiveService(repository, {} as ObjectStorage, engine, { assertAvailable: async () => {} } as never);
     await expect(archive.create(input, actorId, "6".repeat(32), "GB")).rejects.toMatchObject({ status: 503 });
     expect((await database.pool.query("select id from cad_artifacts where version_id=$1", [input.versionId])).rows).toHaveLength(0);
     expect(await events(input.fileId)).toMatchObject([{ actor_id: actorId, entry: "api", result: "failed",
       metadata: { operation: "cad.limit_exceeded", errorCode: "input-limit", versionId: input.versionId,
         sourceBytes: input.sourceBytes, limitBytes: engine.inputLimit } }]);
+  });
+
+  it("DXF companions count toward the audited input limit before a task is created", async () => {
+    const input = { ...await source(), sourceName: "main.dxf", sourceBytes: 1,
+      companions: [{ fileId: randomUUID(), versionId: randomUUID(), path: "refs/detail.dxf", sourceSHA256: "f".repeat(64), sourceBytes: engine.inputLimit }] };
+    const archive = new CadArchiveService(repository, {} as ObjectStorage, engine, { assertAvailable: async () => {} } as never);
+    await expect(archive.create(input, actorId, "7".repeat(32), "GB")).rejects.toMatchObject({ status: 503 });
+    expect((await database.pool.query("select id from cad_artifacts where version_id=$1", [input.versionId])).rows).toHaveLength(0);
+    expect(await events(input.fileId)).toMatchObject([{ actor_id: actorId, metadata: { operation: "cad.limit_exceeded",
+      sourceBytes: 1, inputSetBytes: engine.inputLimit + 1, limitBytes: engine.inputLimit, nameCodepage: "UTF8" } }]);
   });
 });

@@ -162,3 +162,4 @@ body[data-cad-state="unsupported"] #error { width: min(500px, 100%); max-width: 
   *, *::before, *::after { transition: none !important; animation: none !important; }
   .progress-indicator { left: 25%; opacity: .7; }
 }
+#drawingLimitations:not([hidden]) { margin: 0; padding: 10px 16px; border-bottom: 1px solid #e3c574; background: #fff8e5; color: #754b0e; font-size: 12px; line-height: 1.5; }

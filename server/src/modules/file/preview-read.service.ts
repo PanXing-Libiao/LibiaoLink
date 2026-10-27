@@ -94,11 +94,12 @@ export class PreviewReadService {
 
     // ADR-035：旧解析器已删除。先按版本扩展名拦截，避免误报 image/Office MIME 再签出原 CAD。
     if (isCadPreviewPending({ fileName: channelName })) {
-      if (cadEngineConfigured(this.config.env) && /\.(step|stp)$/i.test(channelName)) {
+      if (cadEngineConfigured(this.config.env) && /\.(step|stp|dxf)$/i.test(channelName)) {
         await this.recordPreview(file, version, actorId, "CAD 查看器", { viewerKind: "cad", engineVersion: CAD_ENGINE_VERSION });
         return {
           fileId: file.id, versionId: version.id, status: "ready", target: null,
-          viewer: { kind: "cad", fileId: file.id, versionId: version.id, sourceSHA256: version.contentHash, engineVersion: CAD_ENGINE_VERSION },
+          viewer: { kind: "cad", format: /\.dxf$/i.test(channelName) ? "DXF" : "STEP", projectId: file.projectId,
+            sourceName: channelName, fileId: file.id, versionId: version.id, sourceSHA256: version.contentHash, engineVersion: CAD_ENGINE_VERSION },
           url: null, expiresAt: null, pipelineVersion: null, generatedAt: null, reason: null,
         };
       }

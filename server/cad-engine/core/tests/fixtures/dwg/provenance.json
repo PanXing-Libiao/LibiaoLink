@@ -1,0 +1,20 @@
+{
+  "fixtures": [
+    {
+      "fixture": "line-r2000.dwg",
+      "source": "line.add (original test drawing authored in this repository)",
+      "generator": "dwgadd 0.13.3 --as r2000",
+      "sha256": "a03aa040dbd577a56f512bfe01d81fe8717820da1c888ad53c124e579ab1963c",
+      "byteLength": 3100,
+      "expected": "One LINE (0,0,0) to (20,0,0), original handle 27"
+    },
+    {
+      "fixture": "nested-r2000.dwg",
+      "source": "create-nested.c (original test drawing authored in this repository)",
+      "generator": "LibreDWG 0.13.3 original fixture generator",
+      "sha256": "4f9df997c79fc26a8a1704ab2e9d29bc62950ee3767406a625dcfb8502487933",
+      "byteLength": 3266,
+      "expected": "One LINE and one Detail XREF at (5,0), relative ../detail.dxf"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "reader": "ACadSharp",
+  "version": "3.8.30",
+  "commit": "760bd909c384b8f1a47c29acd1777ea8e3fe7cfe",
+  "license": "MIT",
+  "source": {
+    "url": "https://codeload.github.com/DomCR/ACadSharp/tar.gz/refs/tags/v3.8.30",
+    "sha256": "18bf17701f0d8f1bda730ed75b2d33543a50abf42afabf8ffb06e85e94311101"
+  },
+  "csutilities": {
+    "commit": "a6505ab24bb45eac91e912179b2049136b7e88af",
+    "url": "https://codeload.github.com/DomCR/CSUtilities/tar.gz/a6505ab24bb45eac91e912179b2049136b7e88af",
+    "sha256": "a9ab65129173c6bd7f428cb59b1d947999907d2916fb2cdacad928a5c9f55c84"
+  },
+  "patch": "Separate native INTERSECTIONCOLOR short from INTERFERECOLOR CMC. Preserve unrepresented values; no Color clamping or failsafe read.",
+  "runtime": "net10.0"
+}

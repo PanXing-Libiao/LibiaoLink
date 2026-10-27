@@ -1,0 +1,26 @@
+{
+  "files": {
+    "affine.py": "3ac78b704c1310d64ee8b8e5423b149fddcaf576a1b50edf9a59d423a23bb391",
+    "binary.py": "fa8036200a1b09f62e447ad0ace49ca7964ad168c51ff6bb52387fbbb65f8075",
+    "containers.py": "2e391975c700516441a30cd9df8eb61f16e4169fb2ac829ae2dd6cea4ee4cc45",
+    "edgebreaker.py": "34f510874b79473864b1c73b9f7ba8fd0426994a373f2450d887dc8febe05f37",
+    "glb.py": "cbbfc214ff350b17563b9c58f9c3bc0f7246c4361f2872a2d1d7edb665dcb824",
+    "hsf.py": "de3ca465a088c6db04f95dd23bba681c6957fab802af195d3add266f756d85d4"
+  },
+  "upstream_snapshot_hashes": {
+    "affine.py": "3ac78b704c1310d64ee8b8e5423b149fddcaf576a1b50edf9a59d423a23bb391",
+    "binary.py": "fa8036200a1b09f62e447ad0ace49ca7964ad168c51ff6bb52387fbbb65f8075",
+    "containers.py": "2e391975c700516441a30cd9df8eb61f16e4169fb2ac829ae2dd6cea4ee4cc45",
+    "edgebreaker.py": "34f510874b79473864b1c73b9f7ba8fd0426994a373f2450d887dc8febe05f37",
+    "glb.py": "c876d2ad6874944b8722bb1eba7900f0208b8e63f4510cf9f1db139a0e9a79c6",
+    "hsf.py": "165aa46828e286e5f461ad9659860debaf85cd2ae72db7140e634380cf2b8ddc"
+  },
+  "lineage": "pre-ucd-baseline retains the previous stale manifest and complete runtime",
+  "note": "Refreshed to the exact current parser bytes; hsf/glb behavior was not changed in phase A/B/C. Hash integrity is not native semantic acceptance. See native-version-coverage and REVIEW_RESPONSE F06 for bounds.",
+  "origin": "09_跨文件验证/independent-candidate",
+  "source": "10_独立解析查看器/parser (exact current runtime snapshot)",
+  "upstream_differences": [
+    "glb.py",
+    "hsf.py"
+  ]
+}

@@ -1,4 +1,4 @@
-import {loadPlatformModel,inspectionRecord} from './core/app.js';
+import {loadPlatformModel,inspectionRecord} from './core/app.js?v=dxf-0.15.0';
 import {unpackMetadata} from './core/compact-transport.js';
 import {hydrateBinary} from './core/binary-transport.js';
 import {missingFaceManifest} from './core/nonmeshable-ui.js';
@@ -12,10 +12,17 @@ const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const valid=uuid.test(fileId||'')&&uuid.test(versionId||'')&&/^[a-f0-9]{32}$/.test(viewId||'');
 const base=valid?`/api/v1/files/${fileId}/versions/${versionId}/cad/views/${viewId}/jobs`:null;
 const nameCodepage=query.get('nameCodepage')==='UTF8'?'UTF8':'GB';
+const isDrawing=query.get('format')==='DXF';
+let resolveContext;
+const contextReady=new Promise(resolve=>{resolveContext=resolve;});
 let currentJob=null,jobBase=null,delivered=false,cancelled=false,loadedEnvelope=null;
 const ui=new ImportUI({fileId,versionId,engineVersion:query.get('engineVersion')||'unknown'});
 const nameSelect=document.getElementById('nameCodepage'),reloadNames=document.getElementById('reloadNames');
 nameSelect.value=nameCodepage;
+document.querySelector('.name-encoding').hidden=isDrawing;
+const resourcesButton=document.getElementById('drawingResources');
+resourcesButton.hidden=!isDrawing;
+resourcesButton.onclick=()=>parent.postMessage({type:'cad-resources'},location.origin);
 nameSelect.onchange=()=>{reloadNames.disabled=!delivered||nameSelect.value===nameCodepage;};
 reloadNames.onclick=()=>{
  if(delivered&&['UTF8','GB'].includes(nameSelect.value)&&nameSelect.value!==nameCodepage){
@@ -26,6 +33,7 @@ reloadNames.onclick=()=>{
 window.addEventListener('message',event=>{
  if(event.origin!==location.origin||event.source!==parent||event.data?.type!=='cad-context')return;
  ui.context(event.data.name);
+ resolveContext(event.data.selection||{companions:[]});
 });
 parent.postMessage({type:'cad-context-request'},location.origin);
 
@@ -121,7 +129,7 @@ document.addEventListener('click',event=>{
  const report=inspection?inspectionRecord():missing?missingFaceManifest(loadedEnvelope):repairManifest(loadedEnvelope);
  if(!report)return;
  const name=inspection?'CAD检查记录.json':(loadedEnvelope.presentation.name||'STEP').replace(/\.(step|stp)$/i,'')+(missing?'.missing-faces.json':'.display-repairs.json');
- parent.postMessage({type:'cad-export',name,report},location.origin);
+ parent.postMessage({type:'cad-export',name,report,jobId:currentJob?.id},location.origin);
 },true);
 
 function csrf(){
@@ -146,7 +154,7 @@ function delay(signal){
  });
 }
 function cancelJob(){
- if(jobBase&&currentJob&&!['completed','failed','cancelled','timed-out'].includes(currentJob.state)){
+ if(jobBase&&currentJob&&!['completed','partial','failed','cancelled','timed-out'].includes(currentJob.state)){
   request(jobBase+'/cancel',{method:'POST',keepalive:true}).catch(()=>{});
  }
 }
@@ -183,12 +191,15 @@ loadPlatformModel(async({signal,progress})=>{
  const active=controller.signal;
  try{
   active.throwIfAborted();progress('正在读取模型任务…');
-  const created=await json(await request(base+'?'+new URLSearchParams({nameCodepage}),{method:'POST',signal:active}));
+  const selection=isDrawing?await Promise.race([contextReady,new Promise((_,reject)=>active.addEventListener('abort',()=>reject(active.reason),{once:true}))]):{companions:[]};
+  active.throwIfAborted();
+  const created=await json(await request(base+'?'+new URLSearchParams({nameCodepage:isDrawing?'UTF8':nameCodepage}),{method:'POST',signal:active,
+   headers:{'Content-Type':'application/json'},body:JSON.stringify(selection)}));
   currentJob=created.job;
   if(!/^[a-f0-9]{32}$/.test(currentJob?.id||''))throw new Error('模型任务响应无效');
   jobBase=base+'/'+currentJob.id;
   active.throwIfAborted();
-  while(currentJob.state!=='completed'){
+  while(!['completed','partial'].includes(currentJob.state)){
    if(['failed','cancelled','timed-out'].includes(currentJob.state))throw new Error(failureMessage(currentJob));
    if(!['queued','running'].includes(currentJob.state))throw new Error('模型任务状态无效');
    progress(currentJob.state==='queued'?'正在排队处理模型…':'正在处理模型…');
@@ -200,7 +211,9 @@ loadPlatformModel(async({signal,progress})=>{
   progress('正在读取已校验模型…');
   const response=await request(jobBase+'/manifest',{signal:active});
   let packet=unpackMetadata(await json(response));
-  if(packet.presentation?.sourceSHA256!==currentJob.sourceSHA256||packet.snapshot?.completeness!=='complete')throw new Error('模型来源或完整性检查未通过');
+  const expected=currentJob.state==='partial'?'partial':'complete';
+  if(packet.presentation?.sourceSHA256!==currentJob.sourceSHA256||packet.snapshot?.completeness!==expected
+    ||currentJob.state==='partial'&&(!isDrawing||currentJob.format!=='DXF'))throw new Error('模型来源或完整性检查未通过');
   const lease=packet.resourceLease;
   const fetcher=async(url,options={})=>{
    const match=/^\/api\/resources\/([a-f0-9]{48})(?:\/([a-f0-9]{64}))?$/.exec(url);
@@ -222,7 +235,21 @@ loadPlatformModel(async({signal,progress})=>{
  const ready=delivered&&document.getElementById('error').hidden;
  if(ready){
   ui.update(3,'模型已就绪');
-  requestAnimationFrame(()=>requestAnimationFrame(()=>{ui.stop('ready');filterParts();parent.postMessage({type:'cad-ready',viewId},location.origin);}));
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+   ui.stop('ready');
+   if(isDrawing){
+    document.querySelector('.treehead strong').textContent='图纸内容';
+    document.getElementById('partsSidebar').setAttribute('aria-label','图纸内容');
+    for(const id of ['sidebarScrim','closeSidebar'])document.getElementById(id).setAttribute('aria-label','收起图纸内容');
+    document.querySelector('#toggleSidebar span').textContent='图纸内容';
+    document.querySelector('.hint').textContent='拖动平移 · 滚轮缩放 · 单击选中 · Shift 多选 · Esc 关闭';
+    const warning=document.getElementById('drawingLimitations');
+    warning.hidden=currentJob.state!=='partial';
+    warning.textContent='部分显示：有内容缺失或暂不支持。请查看图纸覆盖清单，必要时补充配套文件；本视图不能作为加工或验收依据。';
+    if(currentJob.state==='partial')document.getElementById('sessionStatus').textContent='部分显示';
+   }else filterParts();
+   parent.postMessage({type:'cad-ready',viewId},location.origin);
+  }));
  }else{
   const unsupported=!cancelled&&unsupportedPreview(currentJob);
   ui.stop(cancelled?'cancelled':unsupported?'unsupported':'failed',{retryable:!unsupported});

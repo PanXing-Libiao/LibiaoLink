@@ -9,10 +9,15 @@
 !server/cad-engine/service.py
 !server/cad-engine/sandbox.py
 !server/cad-engine/edge.py
-!server/cad-engine/requirements-step.txt
-!server/cad-engine/requirements-step-mesher.txt
+!server/cad-engine/release.py
+!server/cad-engine/requirements-*.txt
 !deploy/
 !deploy/cad/
 !deploy/cad/healthcheck.py
 **/__pycache__/
 **/*.pyc
+server/cad-engine/core/tests/
+server/cad-engine/core/vendor/ezdxf/build/
+**/*.egg-info/
+**/*.so
+**/acc/*.c

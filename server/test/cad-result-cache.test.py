@@ -98,6 +98,18 @@ class ResultCacheTests(unittest.TestCase):
         self.assertTrue(self.cache.allows('f' * 64, self.row['id']))
         self.assertEqual(self.row['state'], 'completed')
 
+    def test_dxf_partial_reuse_requires_the_same_explicit_resource_fingerprint(self):
+        self.request.update(name='main.dxf', resourceFingerprint='1' * 64)
+        self.row.update(self.request, sourceFormat='DXF', state='partial')
+        self.jobs.raw = json.dumps({'snapshot': {'completeness': 'partial'}, 'transportProfile': 'ucd-worker-binary/1'}).encode()
+        self.cache.remember(self.request, self.row)
+        self.assertEqual(self.cache.lookup({**self.request, 'namespace': 'e' * 64})['id'], self.row['id'])
+        self.assertIsNone(self.cache.lookup({**self.request, 'resourceFingerprint': '2' * 64}))
+        with self.assertRaises(ValueError):
+            self.cache.lookup({**self.request, 'nameCodepage': 'GB'})
+        self.row['sourceFormat'] = 'STEP'
+        self.assertIsNone(self.cache.lookup(self.request))
+
 
 if __name__ == '__main__':
     unittest.main()

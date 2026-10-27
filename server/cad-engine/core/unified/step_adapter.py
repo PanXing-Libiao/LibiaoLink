@@ -107,16 +107,25 @@ def read_step(path,sink=None,partial=False,name_codepage='UTF8'):
         blob=struct.pack('<'+('f' if component=='f32' else 'I')*len(vals),*vals);h=hashlib.sha256(blob).hexdigest();bid='buffer-'+h
         d['buffers'][bid]={'id':bid,'sha256':h,'byteLength':len(blob),'endianness':'little','alignment':4,'storage':{'kind':'resource','resourceId':bid}};sink.put(bid,blob)
         a={'bufferId':bid,'byteOffset':0,'byteLength':len(blob),'component':component,'components':n,'count':len(vals)//n,'normalized':False};aid=identity('accessor',a);d['accessors'][aid]=a;return aid
+    from .step_color_lookup import ColorLabels
+    color_labels=ColorLabels(st)
     def color(shape):
         # OCCT ColorTool::GetColor(shape,type) repeats ShapeTool::Search for each
         # type. Resolve that exact label once; preserve Surf-before-Gen priority.
-        color_label=TDF_Label()
-        if not st.Search(shape,color_label):return None
+        color_label=color_labels.find(shape)
+        if color_label is None or color_label.IsNull():return None
         c=Quantity_ColorRGBA()
         for typ in (XCAFDoc_ColorSurf,XCAFDoc_ColorGen):
             if ct.GetColor_s(color_label,typ,c):
                 rgb=c.GetRGB();return [rgb.Red(),rgb.Green(),rgb.Blue(),c.Alpha()]
         return None
+    profile=stageprof.profiler()
+    if profile is not None:
+        lookup_color=color
+        def color(shape):
+            started=time.perf_counter()
+            try:return lookup_color(shape)
+            finally:profile.bump('extract-color',time.perf_counter()-started)
     material_cache={}
     def material(rgba):
         cache_key=(tuple(rgba) if rgba is not None else None)
@@ -147,7 +156,9 @@ def read_step(path,sink=None,partial=False,name_codepage='UTF8'):
             if tri is None or tri.NbTriangles()==0:
                 from .step_missing_faces import recover_missing_face,classify_missing_face,is_accepted_nonmeshable
                 attempt_start=len(external_mesh.attempts)
+                repair_start=time.perf_counter() if profile is not None else None
                 fallback=recover_missing_face(face,external_mesh)
+                if profile is not None:profile.bump('extract-repair',time.perf_counter()-repair_start)
                 attempts=external_mesh.attempts[attempt_start:]
                 if fallback is not None:
                     offset=len(positions)//3;first=len(indices)
@@ -183,14 +194,18 @@ def read_step(path,sink=None,partial=False,name_codepage='UTF8'):
                 missing.append(record);missing_geometry.append(record);faceindex+=1;ex.Next();continue
             offset=len(positions)//3;first=len(indices)
             transform=loc.Transformation();identity_location=loc.IsIdentity();reversed_face=face.Orientation()==TopAbs_REVERSED
+            node_start=time.perf_counter() if profile is not None else None
             for i in range(1,tri.NbNodes()+1):
                 pt=tri.Node(i)
                 if not identity_location:pt=pt.Transformed(transform)
                 positions.extend(pt.Coord())
+            if profile is not None:profile.bump('extract-nodes',time.perf_counter()-node_start,tri.NbNodes())
+            index_start=time.perf_counter() if profile is not None else None
             for i in range(1,tri.NbTriangles()+1):
                 a,b,c=tri.Triangle(i).Get()
                 if reversed_face:b,c=c,b
                 indices.extend([offset+a-1,offset+b-1,offset+c-1])
+            if profile is not None:profile.bump('extract-indices',time.perf_counter()-index_start,tri.NbTriangles())
             slot=str(faceindex);slots[slot]=material(color(face) or shape_color);primitives.append({'id':'face-'+slot,'topology':'triangles','range':{'first':first,'count':len(indices)-first},'materialSlot':slot});faceindex+=1;ex.Next()
         stageprof.mark('mesh-extract-leaves',faces=faceindex,vertices=len(positions)//3,triangles=len(indices)//3,seconds=round(time.perf_counter()-t0,4))
         if excluded:
@@ -291,4 +306,7 @@ def read_step(path,sink=None,partial=False,name_codepage='UTF8'):
     else:validate_binary_envelope(d,s,e['presentation'],sink.get)
     sink.finish(e);stageprof.mark('validate-envelope')
     worker_trace.mark('validationCompleted')
+    # Inner-loop totals overlap mesh-extract-leaves; they are attribution, not
+    # additional stages to add to total wall time. Profiling remains opt-in.
+    if profile is not None:profile.flush()
     return e

@@ -1,4 +1,4 @@
-"""Filled-entity support for the DXF adapter (SOLID and solid HATCH).
+"""Filled-entity support for the DXF adapter (SOLID, TRACE and HATCH).
 
 Two separate concerns, deliberately kept apart:
 
@@ -8,12 +8,13 @@ Two separate concerns, deliberately kept apart:
 * Display geometry: boundaries are flattened with the adapter's documented sagitta
   policy and triangulated with the even-odd rule; the triangles are display-only.
 
-Only the solid-fill subset is handled here. Pattern fills and gradient fills are
-distinct refusals (a gradient has solid_fill=1 in DXF but group 450 kind=1), as are
-associative boundary recomputation and unsupported hatch boundary styles; none are
-approximated.
+Pattern strokes use the stored, already scaled/rotated DXF definition and ezdxf's
+even-odd polygon clipping, over the same flattened boundaries as solid fills.
+Gradient appearance is handled by dxf_gradients in the adapter. Associative
+boundary recomputation and unsupported boundary styles are never guessed.
 """
 import math
+import time
 
 from ezdxf.entities.boundary_paths import EdgePath, PolylinePath
 from ezdxf.math.triangulation import mapbox_earcut_2d
@@ -34,6 +35,69 @@ SOLID_PATTERNS = ('SOLID', 'SOLID,_O')
 # DXF group code 75 (HATCH hatch style). Only the values that can be represented
 # without guessing are accepted; see hatch_style_name().
 HATCH_STYLE_NAMES = {0: 'odd-parity', 1: 'outer', 2: 'ignore'}
+MAX_PATTERN_SEGMENTS = 50000
+PATTERN_SECONDS = 2.0
+
+
+def pattern_strokes(entity, rings, max_segments=MAX_PATTERN_SEGMENTS):
+    """Display-only strokes, in WCS, with the source pattern phase unchanged.
+
+    Autodesk HATCH groups 53/43/44/45/46/49 describe effective line definitions.
+    ezdxf 1.4.2 pattern_baselines() must NOT apply group 41/52 a second time.
+    No random origin jiggle, density substitution, or solid-fill fallback is used.
+    Empty/over-budget patterns are explicitly refused, never partially published.
+    """
+    from ezdxf.math import Vec2
+    from ezdxf.render.hatching import pattern_baselines, hatch_polygons, HatchingError
+    if entity.pattern is None or not entity.pattern.lines:
+        raise ValueError('hatch-pattern-definition-missing')
+    if entity.dxf.pattern_double:
+        raise ValueError('hatch-pattern-double-unsupported')
+    for line in entity.pattern.lines:
+        values = [line.angle, *line.base_point, *line.offset, *line.dash_length_items]
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError('hatch-pattern-nonfinite')
+        if line.dash_length_items and sum(abs(value) for value in line.dash_length_items) < 1e-9:
+            raise ValueError('hatch-pattern-degenerate-dashes')
+    for ring in rings:
+        analytic = ring['analytic']
+        if analytic['type'] == 'polyline' and not analytic['closed']:
+            vertices = analytic['vertices']
+            if not vertices or math.dist(vertices[0][:2], vertices[-1][:2]) > ENDPOINT_TOLERANCE:
+                raise ValueError('hatch-boundary-discontinuous')
+    polygons = [[Vec2(point) for point in ring['points2d']] for ring in rings]
+    ocs = entity.ocs()
+    elevation = float(entity.dxf.elevation.z)
+    deadline = time.perf_counter() + PATTERN_SECONDS
+    points, segments = [], []
+
+    def terminate():
+        # Raise: ezdxf's True return otherwise silently yields a truncated hatch.
+        if time.perf_counter() > deadline:
+            raise ValueError('hatch-pattern-time-budget')
+        return False
+
+    try:
+        for baseline in pattern_baselines(entity, jiggle_origin=False):
+            terminate()
+            for line in hatch_polygons(baseline, polygons, terminate=terminate):
+                renderer = baseline.pattern_renderer(line.distance)
+                for a, b in renderer.render(line.start, line.end):
+                    terminate()
+                    if len(segments) >= min(max_segments, MAX_PATTERN_SEGMENTS):
+                        raise ValueError('hatch-pattern-segment-budget')
+                    first = len(points)
+                    # Zero-length strokes encode source dots; Canvas uses round
+                    # caps, not the unrelated POINT entity's cross marker.
+                    points.extend([list(ocs.to_wcs((p.x, p.y, elevation))) for p in (a, b)])
+                    segments.append((first, first + 1))
+    except HatchingError as error:
+        raise ValueError('hatch-pattern-unrenderable:' + type(error).__name__) from error
+    if not segments:
+        raise ValueError('hatch-pattern-empty')
+    if not all(math.isfinite(value) for point in points for value in point):
+        raise ValueError('hatch-pattern-nonfinite')
+    return points, segments
 
 
 def is_solid_hatch(entity):
@@ -84,28 +148,15 @@ def hatch_style_name(value):
 
 
 def solid_polygon(entity):
-    """Return the filled polygon of a SOLID entity (WCS points and OCS plane points).
+    """Return a SOLID/TRACE polygon, preserving its OCS vertex elevations.
 
     DXF SOLID corner order is 1, 2, 4, 3 (third and fourth corners are swapped
     relative to the drawing order), so the boundary must be reordered before it is
     used as a polygon.
     """
-    ocs = entity.ocs()
-    elevation = float(entity.dxf.get('elevation', 0.0) or 0.0)
-    corners = []
-    plane = []
-    for name in ('vtx0', 'vtx1', 'vtx2', 'vtx3'):
-        value = entity.dxf.get(name, None)
-        if value is None:
-            continue
-        x, y = float(value.x), float(value.y)
-        corners.append(tuple(ocs.to_wcs((x, y, elevation))))
-        plane.append((x, y))
-    if len(corners) < 3:
-        raise ValueError('solid-degenerate')
-    if len(corners) == 4:
-        corners = [corners[0], corners[1], corners[3], corners[2]]
-        plane = [plane[0], plane[1], plane[3], plane[2]]
+    vertices = entity.vertices()
+    corners = list(entity.ocs().points_to_wcs(vertices))
+    plane = [(float(p.x), float(p.y)) for p in vertices]
     if _distance(corners[0], corners[-1]) < 1e-9:
         corners.pop()
         plane.pop()
@@ -286,7 +337,7 @@ def boundary_paths(entity):
     documented sagitta flattening (as for edge paths).
     """
     ocs = entity.ocs()
-    elevation = float(entity.dxf.get('elevation').z)
+    elevation = float(entity.dxf.elevation.z)
     raw = []
     skipped_textbox = 0
     style_code = hatch_style(entity)

@@ -63,7 +63,8 @@ describe("CAD sandbox boundary", () => {
     const bytes = Uint8Array.of(0, 97, 98, 99, 0).subarray(1, 4);
     expect((await engine.submit({ ...identity, bytes })).job.id).toBe(job.id);
     expect(body?.toString()).toBe("abc");
-    expect(metadata).toEqual({ action: "submit", ...identity });
+    expect(metadata).toEqual({ action: "submit", ...identity, payloadByteLength: 3,
+      payloadSHA256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" });
   });
 
   it("产物从响应流读取，不接受沙箱返回的本机路径", async () => {

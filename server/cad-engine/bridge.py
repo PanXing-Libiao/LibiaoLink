@@ -18,7 +18,9 @@ BASE = Path(__file__).resolve().parent
 CORE = BASE / 'core'
 sys.path.insert(0, str(CORE))
 from unified.conversion_jobs import ConversionJobs, JobLimit
+from unified import dxf_resources
 from result_cache import ResultCache, CacheLimit
+from release import load_release
 
 
 def stop_worker(proc):
@@ -43,18 +45,13 @@ class Gateway:
         self.manifests.mkdir(parents=True, exist_ok=True)
         self.incoming = (self.root / 'incoming').resolve()
         self.incoming.mkdir(parents=True, exist_ok=True)
-        release = json.loads((BASE / 'source.json').read_text())
+        release = load_release()
         digest = hashlib.sha256()
-        digest.update(release['sourceCommit'].encode())
-        for name, expected in sorted(release['engineFiles'].items()):
-            raw = (CORE / name).read_bytes()
-            if hashlib.sha256(raw).hexdigest() != expected:
-                raise ValueError('CAD engine release mismatch')
-            digest.update(name.encode()); digest.update(raw)
-        digest.update(b'libiaolink-cad-gateway/1')
+        digest.update(release['releaseDigest'].encode())
         digest.update(os.environ.get('CAD_STEP_MESHER_PYTHON', '').encode())
         self.jobs = ConversionJobs(self.root / 'jobs', CORE, threading.Lock(), stop_worker,
-                                   digest.hexdigest(), sys.executable)
+                                   digest.hexdigest(), sys.executable,
+                                   dxf_interpreter=os.environ.get('CAD_DXF_PYTHON'))
         self.results = ResultCache(self.root / 'result-cache.sqlite3', self.jobs)
         self.leases = {}
         for path in self.manifests.iterdir():
@@ -74,6 +71,7 @@ class Gateway:
     def public(self, row):
         result = {key: row[key] for key in ('id', 'state', 'phase', 'sourceSHA256', 'sourceByteLength',
                   'artifactBytes', 'createdAt', 'updatedAt', 'workerPeakRSSBytes', 'workerWallSeconds', 'nameCodepage') if key in row}
+        result['format']=row.get('sourceFormat','STEP')
         error = row.get('error')
         if error:
             message = str(error.get('error', '转换失败'))
@@ -98,7 +96,7 @@ class Gateway:
     def retire(self, row, namespace):
         # Only the owning archival task may retire its result, after durable publication.
         # Existing views/aliases keep their temporary resources until released or expired.
-        if row.get('namespace') != namespace or row['state'] != 'completed':
+        if row.get('namespace') != namespace or row['state'] not in ('completed','partial'):
             return
         if any(lease['jobId'] == row['id'] for lease in self.leases.values()):
             return
@@ -106,7 +104,7 @@ class Gateway:
                                    (row['id'], time.time())).fetchone():
             return
         with self.jobs.lock:
-            self.jobs.db.execute("DELETE FROM jobs WHERE id=? AND state='completed'", (row['id'],))
+            self.jobs.db.execute("DELETE FROM jobs WHERE id=? AND state IN ('completed','partial')", (row['id'],))
             self.jobs.db.commit()
             self.jobs._prune()
         self.results.db.execute('DELETE FROM results WHERE job_id=?', (row['id'],))
@@ -124,15 +122,20 @@ class Gateway:
             path = Path(request['path'])
             if not re.fullmatch(r'[a-f0-9]{64}', namespace) or path.is_symlink() or path.resolve().parent != self.incoming:
                 raise ValueError('Invalid source reference')
-            if path.stat().st_size != request['sourceByteLength']:
+            is_dxf=Path(request['name']).suffix.lower()=='.dxf'
+            if path.stat().st_size != request.get('payloadByteLength',request['sourceByteLength']):
                 raise ValueError('Source size mismatch')
+            if is_dxf:
+                package=dxf_resources.decode_package(path.read_bytes())
+                if dxf_resources.fingerprint(package)!=request['resourceFingerprint']:
+                    raise ValueError('DXF resource identity mismatch')
             cached = self.results.lookup(request)
             if cached:
                 return {'job': self.public(cached), 'reused': True}
             with path.open('rb') as source:
                 row, reused = self.jobs.submit_stream(source, path.stat().st_size, request['name'], False,
                                                      secrets.token_hex(16), namespace=namespace, name_codepage=request.get('nameCodepage', 'UTF8'))
-            if row['sourceSHA256'] != request['sourceSHA256']:
+            if row['sourceSHA256'] != request['sourceSHA256'] or row['sourceByteLength'] != request['sourceByteLength']:
                 self.jobs.cancel(row['id'])
                 raise ValueError('Source hash mismatch')
             self.results.remember(request, row)
@@ -141,7 +144,7 @@ class Gateway:
         if action == 'status':
             return self.public(row)
         if action == 'cancel':
-            if row['state'] == 'completed' and row.get('namespace') != request['namespace']:
+            if row['state'] in ('completed','partial') and row.get('namespace') != request['namespace']:
                 self.results.revoke(request['namespace'], row['id'])
                 return self.public(row)
             return self.public(self.jobs.cancel(row['id']))
@@ -150,8 +153,9 @@ class Gateway:
             if raw is None:
                 raise ValueError('No verified artifact')
             packet = json.loads(raw)
-            if packet['snapshot']['completeness'] != 'complete':
-                raise ValueError('Partial artifacts are not accepted')
+            completeness=packet['snapshot']['completeness']
+            if completeness!='complete' and not (row.get('sourceFormat')=='DXF' and completeness=='partial'):
+                raise ValueError('Artifact completeness is not accepted for this format')
             profile = packet.get('transportProfile')
             if profile not in ('ucd-worker-binary/1', 'ucd-worker-binary-compact/1'):
                 raise ValueError('Expected binary artifact')

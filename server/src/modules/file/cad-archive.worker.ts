@@ -8,12 +8,14 @@ import { FileRepository } from "./file.repository.js";
 import { CadEngineBusyError, CadEngineClient } from "./cad-engine.client.js";
 import { CadArchiveRepository, type CadFailureContext } from "./cad-archive.repository.js";
 import { CAD_ARTIFACT_LIMIT, CAD_BUFFER_LIMIT, checkedCadStream, readCadManifest } from "./cad-archive.integrity.js";
+import { CadInputService, CadInputIntegrityError, cadInputs, cadResourceFingerprint } from "./cad-inputs.js";
+import { AppError } from "../../common/errors/app-error.js";
 
 const definition = z.object({ sha256: z.string().regex(/^[a-f0-9]{64}$/), byteLength: z.number().int().nonnegative().max(CAD_BUFFER_LIMIT) });
 const archiveManifest = z.object({
   resourceLease: z.string().regex(/^[a-f0-9]{48}$/),
   presentation: z.object({ sourceSHA256: z.string() }),
-  snapshot: z.object({ completeness: z.literal("complete") }),
+  snapshot: z.object({ completeness: z.enum(["complete", "partial"]) }),
   document: z.object({ buffers: z.record(z.string(), definition).refine((value) => Object.keys(value).length <= 4096) }),
   bufferResources: z.record(z.string(), definition.extend({ url: z.string() })),
 });
@@ -30,7 +32,7 @@ export class CadArchiveWorker implements OnApplicationShutdown {
   private abort?: AbortController;
   private readonly streams = new Set<Readable>();
   constructor(private readonly repository: CadArchiveRepository, private readonly files: FileRepository,
-    private readonly engine: CadEngineClient, private readonly storage: ObjectStorage) {}
+    private readonly engine: CadEngineClient, private readonly storage: ObjectStorage, private readonly inputs: CadInputService) {}
 
   async drainOnce(): Promise<void> {
     if (!this.engine.enabled || this.running) return;
@@ -54,21 +56,21 @@ export class CadArchiveWorker implements OnApplicationShutdown {
     heartbeat.unref();
     try {
       const file = await this.files.findFileById(row.fileId);
-      const version = await this.files.findVersionById(row.fileId, row.versionId);
-      if (!file || file.status === "recycled" || !version || version.contentHash !== row.sourceSHA256 || version.sizeBytes !== row.sourceBytes) {
+      if (!file || file.status === "recycled") {
         throw new CadArchiveFailure("source-unavailable", "原文件版本已不可用，请重新上传", false);
       }
       prefix = `projects/${file.projectId}/files/${row.fileId}/cad/${row.id}/${row.claimToken}/`;
-      const source = await this.storage.getObject(version.objectKey);
-      if (!source || source.bytes.byteLength !== row.sourceBytes || row.sourceBytes > this.engine.inputLimit
-        || createHash("sha256").update(source.bytes).digest("hex") !== row.sourceSHA256) {
+      const source = cadInputs(row);
+      if (row.sourceBytes > this.engine.inputLimit) {
         throw new CadArchiveFailure("source-integrity-failed", "原文件完整性检查未通过，请重新上传或下载核对", false);
       }
-      const cacheScope = createHash("sha256").update(JSON.stringify([row.fileId, row.versionId, row.sourceSHA256])).digest("hex");
+      await this.inputs.assertAvailable(source, null);
+      const cacheScope = createHash("sha256").update(JSON.stringify([row.fileId, row.versionId, row.sourceSHA256, source.resourceSetHash])).digest("hex");
       const identity = { name: row.sourceName, namespace, cacheScope, sourceSHA256: row.sourceSHA256,
-        sourceByteLength: row.sourceBytes, nameCodepage: CadNameCodepageSchema.parse(row.nameCodepage) };
+        sourceByteLength: row.sourceBytes, nameCodepage: CadNameCodepageSchema.parse(row.nameCodepage),
+        ...(source.sourceFormat === "DXF" ? { resourceFingerprint: cadResourceFingerprint(source) } : {}) };
       abort.signal.throwIfAborted();
-      let job = (await this.engine.lookup(identity) ?? await this.engine.submit({ ...identity, bytes: source.bytes })).job;
+      let job = (await this.engine.lookup(identity) ?? await this.engine.submit({ ...identity, bytes: await this.inputs.payload(source) })).job;
       nativeId = job.id;
       const deadline = Date.now() + 26 * 60_000;
       while (job.state === "queued" || job.state === "running") {
@@ -80,8 +82,8 @@ export class CadArchiveWorker implements OnApplicationShutdown {
         await delay(500, undefined, { signal: abort.signal });
         job = await this.engine.status({ namespace, jobId: nativeId });
       }
-      if (job.state !== "completed") {
-        terminalState = job.state;
+      if (job.state !== "completed" && !(source.sourceFormat === "DXF" && job.state === "partial")) {
+        if (["failed", "timed-out", "cancelled"].includes(job.state)) terminalState = job.state as CadFailureContext["terminalState"];
         throw new CadArchiveFailure(job.error?.code ?? (job.state === "timed-out" ? "job-timeout" : "conversion-failed"),
           job.error?.error ?? "CAD 后台解析未完成，请下载原文件查看", false);
       }
@@ -93,6 +95,7 @@ export class CadArchiveWorker implements OnApplicationShutdown {
       const packet = archiveManifest.parse(JSON.parse(raw.toString("utf8")));
       activeLease = packet.resourceLease;
       if (packet.presentation.sourceSHA256 !== row.sourceSHA256) throw new Error("CAD manifest source mismatch");
+      if (packet.snapshot.completeness !== (job.state === "partial" ? "partial" : "complete")) throw new Error("CAD completeness mismatch");
       const buffers = new Map<string, { sha256: string; byteLength: number; objectKey: string }>();
       let total = raw.byteLength;
       for (const [id, buffer] of Object.entries(packet.document.buffers)) {
@@ -118,15 +121,18 @@ export class CadArchiveWorker implements OnApplicationShutdown {
         finally { checked.destroy(); this.streams.delete(checked); }
       }
       abort.signal.throwIfAborted();
+      await this.inputs.assertAvailable(source, null);
       await this.storage.putObject({ objectKey: prefix + "manifest.json", body: raw, contentType: "application/json" });
       const published = await this.repository.publish(row, { objectPrefix: prefix, manifestSHA256: createHash("sha256").update(raw).digest("hex"),
-        manifestBytes: raw.byteLength, resourceLease: activeLease, buffers: [...buffers.values()], artifactBytes: total });
+        manifestBytes: raw.byteLength, resourceLease: activeLease, buffers: [...buffers.values()], artifactBytes: total }, job.state);
       if (!published) throw new Error("CAD claim no longer owned");
       archived = true;
       if (row.objectPrefix && row.objectPrefix !== prefix) await this.storage.purgePrefix(row.objectPrefix).catch(() => {});
     } catch (error) {
       if (prefix) await this.storage.purgePrefix(prefix).catch(() => {});
       const failure = error instanceof CadArchiveFailure ? error
+        : error instanceof CadInputIntegrityError ? new CadArchiveFailure("source-integrity-failed", error.message, false)
+        : error instanceof AppError && error.code === "NOT_FOUND" ? new CadArchiveFailure("source-unavailable", "主图或配套版本已不可用，请重新选择文件", false)
         : error instanceof CadEngineBusyError ? new CadArchiveFailure("engine-busy", "CAD 转换服务繁忙，请稍后重试", true)
         : new CadArchiveFailure("archive-unavailable", "CAD 后台解析或保存暂不可用，请稍后重试", true);
       await this.repository.fail(row, failure.code, failure.message, failure.retryable, {

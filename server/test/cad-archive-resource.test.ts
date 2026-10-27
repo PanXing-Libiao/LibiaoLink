@@ -17,6 +17,7 @@ function fixture() {
   const artifact: CadArtifactRow = {
     id: "11111111-1111-4111-8111-111111111111", fileId: "22222222-2222-4222-8222-222222222222",
     versionId: "33333333-3333-4333-8333-333333333333", sourceSHA256: "1".repeat(64), sourceBytes: 3,
+    sourceFormat: "STEP", mainPath: "box.step", companions: [], resourceSetHash: "0".repeat(64),
     sourceName: "box.step", engineVersion: CAD_ENGINE_VERSION, nameCodepage: "GB", state: "completed", phase: "completed",
     attempts: 1, availableAt: now, claimToken: null, claimUntil: null, objectPrefix: "projects/test/files/test/cad/test/",
     manifestSHA256: createHash("sha256").update(body).digest("hex"), manifestBytes: body.byteLength,
@@ -38,7 +39,7 @@ function fixture() {
     }),
   };
   const service = new CadArchiveService(repository as unknown as CadArchiveRepository, storage as unknown as ObjectStorage,
-    {} as CadEngineClient);
+    {} as CadEngineClient, { assertAvailable: async () => {} } as never);
   const source = { fileId: artifact.fileId, versionId: artifact.versionId, sourceSHA256: artifact.sourceSHA256,
     sourceBytes: artifact.sourceBytes, sourceName: artifact.sourceName };
   const manifest = () => service.resource("manifest", source, view.actorId, view.viewId, view.id.replaceAll("-", ""));
