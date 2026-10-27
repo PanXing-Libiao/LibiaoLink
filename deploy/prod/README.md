@@ -1,5 +1,11 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
+> **2026-10-27 19:18 日报同步按钮终稿已部署公司测试机（px@118e5109 · frontend-only · 生产未部署）**：按业务口径去掉「同步到项目群」按钮的发送图标和深色描边，改为无边框浅灰底文字按钮；品牌黄仍只保留给「保存修改」。发布包 `output/frontend-report-sync-button-118e5109-20261027-1916.tar.gz`（14,903,167 B · SHA-256 `d3851bb0b4909f4064b8d84659ab7004d5e1569558780201d8e89474b056255b`）上传后远端一致，staging 386 文件 / 18,575,330 B 全部通过 `SHA256SUMS`；`rsync -a --delete` 原位覆盖 `/opt/libiaolink/frontend/dist`，web 未重启。
+>
+> 备份：`/srv/data/backups/frontend-before-report-sync-button-118e5109-20261027-1916.tar.gz`（14,911,452 B · `ba112dc2f9069ab33d47e21d7e3e964a5bdcf2e42571aa7067113659aab6a1b1`）；旧 manifest 备份 `/srv/data/backups/RELEASE_MANIFEST.before-report-sync-button-118e5109.json`（`5da3fcc2…99fd`），新 manifest = `test-20261027-118e5109`（`2d981eedba344ccdc2c7c49f2e0cb87a787a2f6f5eb50e1a3160b4edf8dbdab1`）。
+>
+> 验收：old / new `index.html` SHA-256 = `4930cd61…6cd7` → `92bb75d5900dfc3e9c3e0da4878237bf4e4f3964f942771d4611b3f0d7ae8dbc`，公网同哈希；JS `index-Ds2eRPcH.js` = `d44b08b5…c86b`、CSS `index-C2faEFXI.css` = `ace95be5…daba`，均与本地构建逐字节一致。主 Compose 9 / 9 容器 healthy，`healthz` / `readyz` 200；真实登录新开页确认无图标、无描边的浅灰底按钮，未点击同步、未发企业微信消息。无依赖 / 接口 / 数据 / DDL / 迁移 / Compose / env / Secret 变更；正式机 `10.1.103.44` 未触碰。
+
 > **2026-10-27 19:13 日报同步按钮视觉修复已部署公司测试机（px@6e8987b9 · frontend-only · 生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）将日报记录编辑弹窗左侧「同步到项目群」由黄色描边 / 淡黄底改为白底深色描边 + 发送图标，品牌黄只保留给「保存修改」；同步权限、确认框与投递逻辑未改。发布包 `output/frontend-report-sync-button-6e8987b9-20261027-1910.tar.gz`（14,903,008 B · SHA-256 `789c54e243b7e736581af2613d0d75dae79d519c451a0f55d4eb0738875ae808`）上传后远端一致，staging 386 文件 / 18,575,815 B 全部通过 `SHA256SUMS`；`rsync -a --delete` 原位覆盖 `/opt/libiaolink/frontend/dist`，web 静态 bind-mount 即时生效、未重启容器。
 >
 > 备份：`/srv/data/backups/frontend-before-report-sync-button-6e8987b9-20261027-1910.tar.gz`（14,910,499 B · `ca210a4f6b3ff2be594f70cf7db12a3b9240c363683730fb0d3ce99f3866e4b6`）；旧 manifest 备份 `/srv/data/backups/RELEASE_MANIFEST.before-report-sync-button-6e8987b9.json`（`de59298c…4b01`），新 manifest = `test-20261027-6e8987b9`（`5da3fcc2d66e3741cd17926db61c202a14b5c7df9d109a60be007a3bbcca99fd`）。
