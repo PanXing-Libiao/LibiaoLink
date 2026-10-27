@@ -105,7 +105,7 @@ const FIELD_LABELS: Record<string, string> = {
 
 /** 按对象类型的字段特例（同名字段在不同对象上叫法不同）。 */
 const OBJECT_FIELD_LABELS: Record<string, Record<string, string>> = {
-  project: { code: "项目编号", name: "项目名称", description: "项目描述", stageKey: "项目阶段" },
+  project: { code: "项目编号", name: "项目名称", description: "备注", stageKey: "项目阶段" },
   project_member: { userId: "成员", roleInProject: "项目角色" },
   task: { title: "任务名称", stageKey: "所属阶段", ownerIds: "任务负责人" },
   task_node: { title: "节点名称", stageKey: "所属阶段", seq: "节点序号" },

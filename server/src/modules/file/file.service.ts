@@ -44,7 +44,7 @@ import {
   toApiError,
 } from "../../storage/index.js";
 import { AuditService } from "../admin/index.js";
-import { PermissionService } from "../permission/index.js";
+import { PermissionService, canManageTaskFinalization } from "../permission/index.js";
 import {
   FileRepository,
   type FileLinkInsertInput,
@@ -1266,6 +1266,7 @@ export class FileService {
    */
   async finalizeFile(fileId: string, body: FileFinalizeBody, actorId: string): Promise<FileView> {
     const file = await this.loadFileForWrite(fileId, actorId);
+    const access = await this.permission.assertProjectVisible(actorId, file.projectId);
     const at = this.clock.now();
     return this.database.db.transaction(async (tx) => {
       const locked = await this.lockFileOr404(tx, fileId);
@@ -1281,6 +1282,12 @@ export class FileService {
         throw new AppError("VALIDATION_FAILED", "文件没有任何版本，不能定档；请先完成一次上传", [
           { code: "no_version", message: "定档至少需要 1 个版本", path: "version" },
         ]);
+      }
+      if (locked.taskId !== null) {
+        const task = await this.repository.findTaskBrief(locked.taskId, tx);
+        if (task !== null && !canManageTaskFinalization(actorId, task.ownerIds, access.projectManager)) {
+          throw new AppError("FORBIDDEN", "仅任务负责人或项目经理可定档文件");
+        }
       }
       const updated = await this.repository.updateFileState(
         fileId,

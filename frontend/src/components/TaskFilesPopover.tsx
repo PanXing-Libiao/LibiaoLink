@@ -28,7 +28,7 @@ import { useT } from "../i18n";
  *  - 上传 / 进度 / 删除确认都托管在本组件：关掉下拉后台上传继续、重开还在；预览打开时收起下拉；
  *  - 点击冒泡（2026-10-08 修正 · 业务口径「点击这部分内容现在抽屉也会出来 是bug」）：portal 的 click 按 **React 树**冒泡 ——
  *    根节点拦一道 stopPropagation，点下拉里的空白 / 图标 / 提示条不再冒到任务行（行点击 = 开详情抽屉）。 */
-export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete, taskFinalized = false, children }: {
+export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete, taskFinalized = false, canFinalize = false, children }: {
   taskId: string;
   taskTitle: string;
   files: readonly TaskFileRef[];
@@ -37,6 +37,8 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
   /** 任务定档（Push 249 · 业务口径「若是则上传文件后该任务定档不支持任何修改」）：true = 该任务已定档 ——
    *  两个添加入口关闭（服务端 409 TASK_FINALIZED），下拉顶出常驻提示。 */
   taskFinalized?: boolean;
+  /** 仅任务负责人 / 项目经理可定档：false 时不渲染「添加定档文件」入口。 */
+  canFinalize?: boolean;
   children: ReactNode;
 }) {
   const t = useT();
@@ -83,6 +85,9 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
   const beginAddFlow = (finalize: boolean) => {
     setPreviewNote(null);
     setPendingDelete(null);
+    if (finalize && !canFinalize) {
+      return;
+    }
     if (taskFinalized) {
       setFinalizeNote(t("files.finalizedNote"));
       return;
@@ -202,16 +207,18 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
             >
               {t("files.add")}
             </button>
-            <button
-              type="button"
-              data-task-files-add-finalize="true"
-              onClick={() => { beginAddFlow(true); }}
-              disabled={uploading !== null}
-              title={t("files.addFinalTitle")}
-              className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:text-zinc-400 disabled:hover:bg-transparent"
-            >
-              {t("files.addFinal")}
-            </button>
+            {canFinalize ? (
+              <button
+                type="button"
+                data-task-files-add-finalize="true"
+                onClick={() => { beginAddFlow(true); }}
+                disabled={uploading !== null}
+                title={t("files.addFinalTitle")}
+                className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:text-zinc-400 disabled:hover:bg-transparent"
+              >
+                {t("files.addFinal")}
+              </button>
+            ) : null}
             {uploading === null ? null : (
               <span className="ml-auto text-[11px] tabular-nums text-zinc-400">
                 {uploading.done === 0 ? t("drawer.files.uploading") : t("drawer.files.uploadingCount", { done: uploading.done, total: uploading.total })}

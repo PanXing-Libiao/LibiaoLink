@@ -11,6 +11,7 @@ export type { ProjectAccessSource, RequestWithProjectAccess } from "./project-ac
 export type { ProjectAccessContext } from "./permission.repository.js";
 export {
   can,
+  canManageTaskFinalization,
   canSeeField,
   exitsConsistent,
   hiddenFields,

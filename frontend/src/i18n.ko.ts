@@ -1494,7 +1494,7 @@ export const KO_TEXTS: Partial<Record<TextKey, string>> = {
   "fpv.cadPending": "CAD 미리보기가 업그레이드 중이라 현재 사용할 수 없습니다. 원본 파일을 다운로드하여 확인해 주세요.",
   "ms.search": "멤버 검색",
   "ms.noMatch": "일치하는 멤버 없음",
-  "ms.footer": "{n} 멤버 · 이름/병음으로 검색 · 데모 멤버만",
+  "ms.footer": "{n} 멤버 · 이름/병음으로 검색",
   "ms.remove": "{name} 제거",
   "ms.more": "더 추가",
   "ms.choose": "멤버 선택",

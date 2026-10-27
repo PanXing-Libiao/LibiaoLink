@@ -36,6 +36,8 @@ export interface FileNodeBriefRow {
 export interface FileTaskBriefRow {
   id: string;
   projectId: string;
+  /** 任务当前负责人：文件定档会联动任务定档，权限必须与任务定档入口同口径。 */
+  ownerIds: string[];
   /** 任务定档时间（非空 = 已定档：直接修改一律 409 TASK_FINALIZED；修改走变更，A4-13）。 */
   finalizedAt: Date | null;
 }
@@ -230,7 +232,7 @@ export class FileRepository {
 
   async findTaskBrief(taskId: string, client: DbClient = this.database.db): Promise<FileTaskBriefRow | null> {
     const rows = await client
-      .select({ id: tasks.id, projectId: tasks.projectId, finalizedAt: tasks.finalizedAt })
+      .select({ id: tasks.id, projectId: tasks.projectId, ownerIds: tasks.ownerIds, finalizedAt: tasks.finalizedAt })
       .from(tasks)
       .where(eq(tasks.id, taskId))
       .limit(1);

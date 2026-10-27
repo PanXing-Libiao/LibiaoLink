@@ -24,9 +24,9 @@ export type Project = {
   /** 项目序号（契约 seqNo ↔ projects.seq_no）：服务端创建时分配，全库唯一、不可修改；彻底删除后的空号由下一次创建复用；卡片两位补零展示。 */
   seqNo: number;
   code: string;
-  /** 前端「项目描述」= 契约 name（唯一展示名）；备注长文本是契约 description（Push 280 起表单采集，见下 remark）。 */
+  /** 前端「项目名称」= 契约 name（唯一展示名）；备注长文本是契约 description（Push 280 起表单采集，见下 remark）。 */
   description: string;
-  /** 备注（契约 description，与前端「项目描述」= name 不是一回事）：Push 280 起新建 / 编辑弹窗采集；空串 = 未填写（新建不发送、编辑清空发 null）。 */
+  /** 备注（契约 description，与前端「项目名称」= name 不是一回事）：Push 280 起新建 / 编辑弹窗采集；空串 = 未填写（新建不发送、编辑清空发 null）。 */
   remark: string;
   /** 项目地区：契约 projects.region 存字典 region 的码；显示名走 dictLabel（已删除条目的存量值回落码本身）。 */
   region: string;

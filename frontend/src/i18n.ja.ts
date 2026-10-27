@@ -1494,7 +1494,7 @@ export const JA_TEXTS: Partial<Record<TextKey, string>> = {
   "fpv.cadPending": "CAD プレビューはアップグレード中のため現在利用できません。元のファイルをダウンロードして表示してください。",
   "ms.search": "メンバーを検索",
   "ms.noMatch": "一致するメンバーがありません",
-  "ms.footer": "{n} メンバー · 名前 / ピンインで検索 · デモメンバーのみ",
+  "ms.footer": "{n} メンバー · 名前 / ピンインで検索",
   "ms.remove": "{name} を削除",
   "ms.more": "さらに追加",
   "ms.choose": "メンバーを選択",

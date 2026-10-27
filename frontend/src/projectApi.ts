@@ -4,7 +4,7 @@
  * - 分类计数 GET /api/v1/projects/facets（与列表同一套参数，禁止两套口径；《前端功能需求》§3.2）
  * - 新建 POST /api/v1/projects、编辑 PATCH /api/v1/projects/{id}（乐观锁 version）、删除 DELETE /api/v1/projects/{id}（移入项目回收站，If-Match 版本）
  * - 项目回收站 GET /api/v1/projects?filter[recycled]=true、恢复 POST /api/v1/projects/{id}/restore、彻底删除 POST /api/v1/projects/{id}/purge
- * 契约 shared/src/modules/projects.ts；UI 模型见 types.ts（前端「项目描述」= 契约 name）。
+ * 契约 shared/src/modules/projects.ts；UI 模型见 types.ts（前端「项目名称」= 契约 name）。
  */
 import { apiDownload, apiRequest, apiSend, readAllPages } from "./api";
 import { EMPTY_LIST_QUERY, type ListQueryState } from "./useHashRoute";
@@ -248,7 +248,7 @@ export function formatDateTime(iso: string): string {
   return pick("year") + "-" + pick("month") + "-" + pick("day") + " " + pick("hour") + ":" + pick("minute");
 }
 
-/** API 视图 → UI 模型：前端「项目描述」= 契约 name；经理姓名随行下发（卡片 / 详情不再查演示目录）。 */
+/** API 视图 → UI 模型：前端「项目名称」= 契约 name；经理姓名随行下发（卡片 / 详情不再查演示目录）。 */
 export function toUiProject(view: ApiProject): Project {
   return {
     id: view.id,

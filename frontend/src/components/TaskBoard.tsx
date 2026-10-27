@@ -323,6 +323,8 @@ type TaskBoardProps = {
   managers?: string;
   /** 项目经理 id 名单（项目级字段：行内多选下拉的当前选中项，Push 136）。 */
   managerIds?: string[];
+  /** 当前账号是否可对指定任务定档 / 取消定档：由任务负责人与项目经理名单共同裁决。 */
+  canFinalizeTask?: (task: ProjectTask) => boolean;
   /** 任务编辑保存：负责人 / 日期（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述 + 项目经理 id。 */
   onSubmitTaskEdit?: (values: TaskEditSubmit) => Promise<number | null>;
   /** 任务描述改名（Push 196：抽屉里改临时任务名；阶段任务与节点 / 模板生成的任务由抽屉按锁定口径自行只读）。 */
@@ -405,7 +407,7 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
  *  （onSetStatus）/ 紧急重要度与成果文件与进展描述（onPatch）/ 「文件」列下拉（onUploadFiles + onDeleteFile）/
  *  三段日期与人数（onPatch）；天数不单开编辑（随日期联动写回，与项目页同口径）。点行 = onSelect（开抽屉）；**onSelect 不传 = 整行不可点**（不出「点击查看任务详情」提示、不出 pointer 光标、不占键盘 Tab 焦点；行内各列仍按回调照常只读 / 可编辑 —— 甘特图「画不出时间轴」的兜底列表这样用，Push 294）。
  *  subtitle 缺省 = 英文名小行（项目页口径）；工作台传「阶段 / 临时任务 · 英文名」保持自己那张表的副行。 */
-export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, onDeleteFile, files, tierTint, subtitle }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect?: () => void; onProgress?: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; tierTint?: TintedTier | false; subtitle?: string }) {
+export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, canFinalize = false, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, onDeleteFile, files, tierTint, subtitle }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect?: () => void; onProgress?: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; canFinalize?: boolean; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; tierTint?: TintedTier | false; subtitle?: string }) {
   const locale = useLocale();
   const t = useT();
   /** 手打内容机翻显示（业务口径 2026-10-13「因为页面有些内容是手打的 我建议是提前后台机翻」）：
@@ -660,6 +662,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
             onUpload={onUploadFiles}
             onDelete={onDeleteFile}
             taskFinalized={task.finalizedAt !== null}
+            canFinalize={canFinalize}
           >
             {fileCellContent}
           </TaskFilesPopover>
@@ -903,7 +906,7 @@ export function ProjectSummary({ summary }: { summary: ApiProjectSummary | null 
   );
 }
 
-export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, filesByTask, projectId, tierTint }: TaskBoardProps) {
+export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, canFinalizeTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, filesByTask, projectId, tierTint }: TaskBoardProps) {
   const t = useT();
   const locale = useLocale();
   /**
@@ -1262,6 +1265,7 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
                         }
                         managers={managers ?? ""}
                         managerIds={managerIds ?? []}
+                        canFinalize={canFinalizeTask?.(task) === true}
                         members={members}
                         onSetStatus={onSetStatus === undefined ? undefined : (status) => onSetStatus(task.id, status)}
                         onSetActualEnd={onSetActualEnd === undefined ? undefined : (iso) => onSetActualEnd(task.id, iso)}
@@ -1335,6 +1339,7 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
         task={drawerTask}
         managers={managers ?? ""}
         managerIds={managerIds ?? []}
+        canFinalize={drawerTask !== null && canFinalizeTask?.(drawerTask) === true}
         members={members}
         onSubmit={onSubmitTaskEdit}
         onRename={onRenameTask}
