@@ -33,7 +33,7 @@ export function MemberAvatar({ member }: { member: Member }) {
   );
 }
 
-/** 通用搜索下拉的选项：成员行（头像 + 姓名 + 拼音 + 角色）或普通行（首字圆底 + 名称 + 右侧说明，如筛选用的「全部」「待分配」）。 */
+/** 通用搜索下拉的选项：成员行（头像 + 姓名 + 拼音）或普通行（首字圆底 + 名称 + 右侧说明，如筛选用的「全部」「待分配」）。 */
 export type SearchSelectItem =
   | { kind: "member"; value: string; member: Member }
   | { kind: "plain"; value: string; name: string; hint: string };
@@ -43,10 +43,10 @@ function itemName(item: SearchSelectItem): string {
   return item.kind === "member" ? item.member.name : item.name;
 }
 
-/** 搜索匹配：成员按姓名 / 拼音 / 角色，普通行按名称 / 说明（大小写不敏感）。 */
+/** 搜索匹配：成员按姓名 / 拼音，普通行按名称 / 说明（大小写不敏感）。 */
 function itemMatches(item: SearchSelectItem, keyword: string): boolean {
   const lower = keyword.toLowerCase();
-  const fields = item.kind === "member" ? [item.member.name, item.member.handle, item.member.role] : [item.name, item.hint];
+  const fields = item.kind === "member" ? [item.member.name, item.member.handle] : [item.name, item.hint];
   return fields.some((field) => field.includes(keyword) || field.toLowerCase().includes(lower));
 }
 
@@ -61,7 +61,7 @@ function CheckMark() {
 
 type SearchRowProps = { item: SearchSelectItem; selected: boolean; active: boolean; onHover: () => void; onPick: () => void };
 
-/** 选项行：成员行 = 头像 + 姓名 + 拼音 + 角色；普通行 = 首字圆底 + 名称 + 右侧说明；选中态右侧绿勾。 */
+/** 选项行：成员行 = 头像 + 姓名 + 拼音；普通行 = 首字圆底 + 名称 + 右侧说明；选中态右侧绿勾。 */
 function SearchRow({ item, selected, active, onHover, onPick }: SearchRowProps) {
   return (
     <button
@@ -81,7 +81,7 @@ function SearchRow({ item, selected, active, onHover, onPick }: SearchRowProps) 
       )}
       <span className="truncate text-sm text-zinc-800">{itemName(item)}</span>
       {item.kind === "member" ? <span className="truncate text-xs text-zinc-400">{item.member.handle}</span> : null}
-      <span className="ml-auto shrink-0 pl-2 text-[11px] text-zinc-400">{item.kind === "member" ? item.member.role : item.hint}</span>
+      {item.kind === "plain" ? <span className="ml-auto shrink-0 pl-2 text-[11px] text-zinc-400">{item.hint}</span> : null}
       {selected ? <CheckMark /> : null}
     </button>
   );

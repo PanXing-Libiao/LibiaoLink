@@ -125,6 +125,19 @@ export const PROJECT_MANAGER_IMPLIED_KEYS: readonly PermissionKey[] = [
   "stakeholder.contact.view",
 ];
 
+/**
+ * 任务定档 / 取消定档的唯一角色口径（2026-10-27）：仅任务当前负责人或项目经理。
+ * 项目经理来自 ProjectAccessContext（主数据 managerIds 或项目名册 project_manager）；
+ * 该规则同时供任务接口与文件定档联动任务定档的旁路复用，避免两套判定漂移。
+ */
+export function canManageTaskFinalization(
+  actorId: string,
+  taskOwnerIds: readonly string[],
+  projectManager: boolean,
+): boolean {
+  return projectManager || taskOwnerIds.includes(actorId);
+}
+
 /** 策略层用到的全部权限键必须落在契约枚举内（防手写错字；用例覆盖）。 */
 export function isKnownPermissionKey(value: string): value is PermissionKey {
   return (PERMISSION_KEYS as readonly string[]).includes(value);
