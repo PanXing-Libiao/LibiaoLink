@@ -36,7 +36,7 @@ import { NotifyGroupRepository } from "./notify.group.repository.js";
 import { NotifyService } from "./notify.service.js";
 import type { AibotIncomingMessage, AibotSendResult } from "./wecom.aibot.js";
 import { aibotImageMimeFromFileName, WecomAibotClient } from "./wecom.aibot.js";
-import { renderDailyReportPoster } from "./daily-report.poster.js";
+import { renderDailyReportIssuePoster, renderDailyReportPoster } from "./daily-report.poster.js";
 import { renderR06Poster } from "./r06.poster.js";
 import { describeWecomFailure } from "./wecom.errors.js";
 import { applyMarkdownHardBreaks, truncateUtf8Bytes } from "./wecom.text.js";
@@ -444,8 +444,8 @@ export class NotifyGroupService {
   }
 
   /**
-   * 日报群同步：文字「日报已就绪」送达后，再按真实日报数据生成并追加 1080×1120 PNG 海报。
-   * 图片属增强项：数据 / 字体 / 对象读取 / 绘制 / 发送任一失败都只留日志，不重排已送达文字。
+   * 日报群同步：文字「日报已就绪」送达后，依次追加日报海报与现场问题专报（有问题时）。
+   * 两张图均为 1440px 宽、按内容动态增高；正文与图片不省略，任一图片失败只留日志，不重发文字。
    */
   private async sendDailyReportPoster(input: {
     message: NotifyGroupMessagePayload;
@@ -475,12 +475,11 @@ export class NotifyGroupService {
       return 0;
     }
 
-    // 渲染器只消费前 3 张现场图 + 前 3 条问题各首图；只读这些对象，避免把长附件全量载入内存。
-    const photos = [
-      ...data.photos.slice(0, 3),
-      ...data.issues.slice(0, 3).flatMap((issue) => issue.photos.slice(0, 1)),
+    // 终稿口径：现场图与问题图全部进入海报；同一 objectKey 只读取一次，单张坏图仅影响自身片位。
+    const photos = [...data.photos, ...data.issues.flatMap((issue) => issue.photos)];
+    const objectKeys = [
+      ...new Set(photos.map((photo) => photo.objectKey).filter((key): key is string => key !== null)),
     ];
-    const objectKeys = [...new Set(photos.map((photo) => photo.objectKey).filter((key): key is string => key !== null))];
     const objectBytes = new Map<string, Buffer>();
     await Promise.all(
       objectKeys.map(async (objectKey) => {
@@ -502,36 +501,57 @@ export class NotifyGroupService {
       }
     }
 
-    let content: Buffer;
-    try {
-      content = await renderDailyReportPoster(data, images);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      this.logger.warn("日报海报生成失败，已跳过图片（文字已发送）：" + input.dedupeKey + " —— " + detail);
-      return 0;
-    }
+    let attempts = 0;
+    const projectCode = data.projectCode.replace(/[^A-Za-z0-9._-]+/gu, "-");
+    const sendPoster = async (
+      label: string,
+      fileName: string,
+      render: () => Promise<Buffer>,
+    ): Promise<void> => {
+      let content: Buffer;
+      try {
+        content = await render();
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        this.logger.warn(label + "生成失败，已跳过图片（文字已发送）：" + input.dedupeKey + " —— " + detail);
+        return;
+      }
+      const result = await this.aibot.sendGroupImage({
+        chatid: input.chatid,
+        content,
+        fileName,
+        mime: "image/png",
+        groupActivated: input.groupActivated,
+      });
+      attempts += result.attempts;
+      if (!result.ok) {
+        this.logger.warn(
+          label +
+            "未送达（文字已发送）：" +
+            input.dedupeKey +
+            " · chatid " +
+            input.masked +
+            " —— " +
+            describeAibotFailure(result),
+        );
+        return;
+      }
+      this.logger.log(label + "已送达：" + input.dedupeKey + " · chatid " + input.masked);
+    };
 
-    const fileName = "DAILY-" + data.reportDate + "-" + data.projectCode.replace(/[^A-Za-z0-9._-]+/gu, "-") + ".png";
-    const result = await this.aibot.sendGroupImage({
-      chatid: input.chatid,
-      content,
-      fileName,
-      mime: "image/png",
-      groupActivated: input.groupActivated,
-    });
-    if (!result.ok) {
-      this.logger.warn(
-        "日报海报未送达（文字已发送）：" +
-          input.dedupeKey +
-          " · chatid " +
-          input.masked +
-          " —— " +
-          describeAibotFailure(result),
+    await sendPoster(
+      "日报海报",
+      "DAILY-" + data.reportDate + "-" + projectCode + ".png",
+      () => renderDailyReportPoster(data, images),
+    );
+    if (data.issues.length > 0) {
+      await sendPoster(
+        "现场问题专报",
+        "ISSUE-" + data.reportDate + "-" + projectCode + ".png",
+        () => renderDailyReportIssuePoster(data, images),
       );
-      return result.attempts;
     }
-    this.logger.log("日报海报已送达：" + input.dedupeKey + " · chatid " + input.masked);
-    return result.attempts;
+    return attempts;
   }
 
   /**

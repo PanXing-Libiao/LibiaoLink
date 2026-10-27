@@ -13,10 +13,11 @@ export interface DailyReportPosterIssue {
   categories: string[];
   ownerName: string | null;
   state: string;
+  solution: string | null;
   photos: DailyReportPosterPhoto[];
 }
 
-/** worker 渲染一张日报海报所需的完整快照；图片字节由 service 按 objectKey 读取后另行传入。 */
+/** 群海报渲染所需的完整快照；图片字节由 service 按 objectKey 读取后另行传入。 */
 export interface DailyReportPosterData {
   projectId: string;
   projectCode: string;

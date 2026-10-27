@@ -1,5 +1,11 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
+> **2026-10-27 21:49 日报海报序号与双栏配色修复已部署公司测试机（px@c9db0b34 · server-only · 生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）的日报条目与问题标题会在渲染前清洗重复行首枚举号，避免出现 `01 1: 1 …`；`1拖4`、日期和数量保留。日报「今日完成 / 明日计划」两栏序号统一为品牌黄。同步仍按「日报已就绪」文字 → 日报海报 → 有问题时的现场问题专报发送，无问题不发空专报。
+>
+> 发布包 `output/server-daily-poster-polish-c9db0b34-20261027-214519.tar.gz`（958,474 B · SHA-256 `4042a7a42bb7955df0e71d02021b9a68eed4ae07161675a949bc4025b2dea1b0`）上传后远端一致，staging 614 个 dist 文件；manifest = `test-20261027-daily-poster-polish-c9db0b34`（`a243b13f2edf2d2d4f9c15789b9cbc43272346687060743fb214fa522b9b6ec4`）。部署前备份 `/srv/data/backups/before-daily-poster-polish-20261027-214519/`：`server-dist-before.tar.gz` 959,149 B（`1ea623ef…b568`）、原 manifest 1,736 B（`6178c38d…4131`）；远端 staging 已清理。
+>
+> 验收：10 / 10 容器 healthy，API / worker 重启计数 0，近 5 分钟异常日志 0；站点 / `healthz` / `readyz` 均 200。容器内海报烟测 1440×1040 / 1440×649，`1拖4` 保留，部署文件 SHA-256 `7e6ceae7…0f29` 与本地一致。未发送真实企业微信群消息；正式机 `10.1.103.44` 未触碰。无 DDL / 迁移、依赖、Compose / env / Secret 变更。PR [#679](https://github.com/PanXing-Libiao/LibiaoLink/pull/679) 仍等待非作者评审，未合并。
+
 > **2026-10-27 21:18 站内信深链已部署公司测试机（codex/inbox-deep-link@699fe143 + origin/px@ebc2061d → 集成 64474442 · 生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）的站内信条目可直达关联内容：项目进入项目总览，任务自动打开任务抽屉，日报滚动并高亮记录行，问题打开问题详情抽屉，文件进入文件库项目筛选；关联对象已删除时仍可置读、不跳空页。服务端按 `refType/refId` 批量派生 `projectId`，通知列表 / 标记 / 稍后提醒 / SSE 统一返回，不写回通知表、零 DDL。
 >
 > 发布包 `output/test-sync-inbox-deeplink-64474442-20261027-2110.tar.gz`（89,141,476 B · SHA-256 `ebeaa1af589074566158cf9b44b9463a042d89d367cb7c31a7f579beae7b680c`）上传后远端一致；staging 1,180 项 `SHA256SUMS` 全部 OK（1,181 文件 / 113,846,799 B），核验后已清理。manifest = `test-20261027-inbox-deeplink-64474442`，`sourceCommit` = `64474442431bee357fa4328ca7a73d7050534962`（实际集成基线 `origin/px@ebc2061d` + 功能 `699fe143`；manifest 的 `sourceRef` 保留旧标签 `origin/px@9514d3ac`，代码树一致）。
@@ -7,6 +13,12 @@
 > 备份 `/srv/data/backups/before-inbox-deeplink-20261027-2110/`：frontend `e763c4f83e7b4bee0982574695f64a7e89019136211683e246b7ac5d38d86b86`、server `99ba6ea1c1c1fffe6b63dfed005c18a9c05953c2c3f44d803d9b28af629feea5`、shared `60aa7212eacc4e94b5bc568dc55e372d6a36fcc98ca0f87080febf225807abc4`、原 manifest `ea60fa5d1cf2ed4cf0f5a2356475ec28527e1539fd16ecbb97917a377fb4ff4c`。
 >
 > 验收：10 / 10 容器 healthy，API / worker 重启计数 0；站点 / `healthz` / `readyz` 均 200，新前端 `index-BW97SWST.js` / `index-C2faEFXI.css` 已生效。真实账号用 4 条临时提醒逐条点击项目、任务、日报、问题，四个落点及各精确参数均正确，四条均成功置读；临时通知已全部删除（残留 0），未发送真实企业微信消息。无依赖 / DDL / 迁移 / Compose / env / Secret 变更；正式机 `10.1.103.44` 未触碰。PR [#680](https://github.com/PanXing-Libiao/LibiaoLink/pull/680) 仍等待非作者评审，未合并。
+
+> **2026-10-27 20:38 日报双海报已部署公司测试机（px@9514d3ac · server-only · 生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）发布最终确认的双海报方案：日报海报含项目、日期、今日完成、明日计划与全部现场图，不显示报送人和问题；现场问题专报含全部问题、分类、责任人、状态、处理记录及全部问题附图。两图固定 1440 px 宽并按内容动态增高，文字自动换行不截断，图片全量入版，字体固定为随包思源黑体 SC Regular / Bold。机器人按「日报已就绪」文字 → 日报海报 → 问题专报发送；无问题时不发空专报，单张失败独立处理并继续。
+
+> 发布包 `output/server-daily-posters-9514d3ac-20261027-203823.tar.gz`（956,787 B · SHA-256 `0e8cf34fcfb1bc7e335d1e81df5352d2854b22d93b5888a9d9414004814f12c5`）上传后远端一致；manifest = `test-20261027-9514d3ac`（`ea60fa5d1cf2ed4cf0f5a2356475ec28527e1539fd16ecbb97917a377fb4ff4c`）。部署前备份 `/srv/data/backups/before-daily-posters-20261027-203823/`：`server-dist-before.tar.gz` 955,812 B（`e3183c00…8e1f`）、原 manifest 1,688 B（`2d981eed…dab1`）；旧 dist 目录 `/opt/libiaolink/server/dist.bak.20261027-203823`。远端 staging 已清理。
+
+> 验收：API / worker healthy、重启计数 0，5 分钟异常日志 0；主 Compose 9 / 9、全部 10 个容器 healthy；站点 / `healthz` / `readyz` 均 200。容器内真实渲染烟测为 1440×1040 / 1440×649，仓库样张为 1440×1238 / 1440×856。未发送真实企业微信群消息；正式机 `10.1.103.44` 未触碰。无 DDL / 迁移、依赖、Compose / env / Secret 变更。PR [#679](https://github.com/PanXing-Libiao/LibiaoLink/pull/679) 等待非作者评审，未合并。
 
 > **2026-10-27 19:18 日报同步按钮终稿已部署公司测试机（px@118e5109 · frontend-only · 生产未部署）**：按业务口径去掉「同步到项目群」按钮的发送图标和深色描边，改为无边框浅灰底文字按钮；品牌黄仍只保留给「保存修改」。发布包 `output/frontend-report-sync-button-118e5109-20261027-1916.tar.gz`（14,903,167 B · SHA-256 `d3851bb0b4909f4064b8d84659ab7004d5e1569558780201d8e89474b056255b`）上传后远端一致，staging 386 文件 / 18,575,330 B 全部通过 `SHA256SUMS`；`rsync -a --delete` 原位覆盖 `/opt/libiaolink/frontend/dist`，web 未重启。
 >

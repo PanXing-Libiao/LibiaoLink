@@ -206,7 +206,7 @@ export class NotifyGroupRepository {
   }
 
   /**
-   * 日报群同步海报快照：项目 / 提交人 / 项目经理 / 日报正文 / 关联阶段 / 现场图 / 派生问题及问题图。
+   * 日报群同步海报快照：项目 / 项目经理 / 日报正文 / 关联阶段 / 全部现场图 / 派生问题、处理记录及全部问题图。
    *
    * 边界同文件头注：notify 是平台模块，直接读 report-issue 所需表，不 import 领域模块。
    * 图片只返回 objectKey；worker 用 ObjectStorage 读字节后交给纯渲染器。
@@ -259,6 +259,7 @@ export class NotifyGroupRepository {
         title: issues.title,
         categories: issues.categories,
         state: issues.state,
+        solution: issues.solution,
         ownerName: users.displayName,
       })
       .from(issues)
@@ -321,6 +322,7 @@ export class NotifyGroupRepository {
       categories: row.categories,
       ownerName: row.ownerName,
       state: row.state,
+      solution: row.solution,
       photos: photosByIssue.get(row.id) ?? [],
     }));
     const stageNames = STAGE_NAMES as Record<string, string>;

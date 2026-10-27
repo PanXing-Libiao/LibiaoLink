@@ -1,9 +1,11 @@
 /**
- * 日报群同步海报（1080 x 1120 PNG）。
+ * 日报群同步海报（1440px 宽，高度随内容增长）。
  *
- * 设计口径（2026-10-27 业务确认）：工程现场简报风、米白纸面、黑黄品牌色；
- * 标题 / 日期 / 项目信息 / 今日完成 / 现场照片 / 明日计划 / 现场问题一屏收口。
- * 不使用 R06 喜报版式，不依赖系统字体 —— 服务端随包发布思源黑体 SC（SIL OFL 1.1）。
+ * 设计口径（2026-10-27 业务终稿）：
+ * - 两类独立图片：日报海报（项目 / 日期 / 今日完成 / 明日计划 / 全部现场图）与现场问题专报（全部问题 / 处理记录 / 全部问题附图）。
+ * - 正文与图片不省略、不截取；长文本自动换行，图片按数量自适应单列、双列或三列画册。
+ * - 页眉使用深色底，项目名称直接进入页眉，项目信息使用三张色块卡，不使用报送人和装饰图标。
+ * - 随包字体固定为思源黑体 SC Regular / Bold（SIL OFL 1.1），不依赖系统字体或 Noto。
  */
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -23,18 +25,18 @@ export type {
   DailyReportPosterPhoto,
 } from "./daily-report.poster.types.js";
 
-const WIDTH = 1080;
-const HEIGHT = 1120;
-const MARGIN = 54;
-const CONTENT_RIGHT = 1026;
-const CONTENT_W = CONTENT_RIGHT - MARGIN;
-const PAPER = "#f0eee7";
-const SURFACE = "#faf9f4";
-const INK = "#10110f";
-const YELLOW = "#feca04";
-const MUTED = "#6e706a";
-const LINE = "#c7c5bc";
-const ISSUE = "#ff5c35";
+const WIDTH = 1440;
+const MARGIN = 80;
+const CONTENT_WIDTH = WIDTH - MARGIN * 2;
+const PROJECT_TITLE_WIDTH = 940;
+const PAPER = "#F3F0E7";
+const INK = "#080D0E";
+const NAVY = "#0A171C";
+const YELLOW = "#FFC928";
+const ORANGE = "#FF673B";
+const MUTED = "#4D5754";
+const MUTED_LIGHT = "#A7B1AF";
+const WHITE = "#FFFFFF";
 const FONT_REGULAR = "LibiaoLink Daily Source Han Sans";
 const FONT_BOLD = "LibiaoLink Daily Source Han Sans Bold";
 const BUNDLED_FONT = "SourceHanSansSC-Regular.otf";
@@ -42,6 +44,7 @@ const BUNDLED_FONT_BOLD = "SourceHanSansSC-Bold.otf";
 const CANVAS_MODULE = "@napi-rs/canvas";
 
 type NapiCanvas = typeof import("@napi-rs/canvas");
+
 let canvasApiPromise: Promise<NapiCanvas> | null = null;
 let fontRegistration = "";
 
@@ -80,14 +83,6 @@ function ensureFonts(globalFonts: NapiCanvas["GlobalFonts"], paths?: DailyReport
   fontRegistration = key;
 }
 
-function rgba(hex: string, alpha: number): string {
-  const value = hex.replace("#", "");
-  const r = Number.parseInt(value.slice(0, 2), 16);
-  const g = Number.parseInt(value.slice(2, 4), 16);
-  const b = Number.parseInt(value.slice(4, 6), 16);
-  return "rgba(" + String(r) + "," + String(g) + "," + String(b) + "," + String(alpha) + ")";
-}
-
 function setFont(ctx: SKRSContext2D, bold: boolean, size: number): void {
   ctx.font = String(size) + "px " + (bold ? FONT_BOLD : FONT_REGULAR);
 }
@@ -96,31 +91,12 @@ function textWidth(ctx: SKRSContext2D, text: string): number {
   return ctx.measureText(text).width;
 }
 
-function fitFontSize(
-  ctx: SKRSContext2D,
-  bold: boolean,
-  text: string,
-  maxWidth: number,
-  start: number,
-  min: number,
-): number {
-  let size = start;
-  while (size > min) {
-    setFont(ctx, bold, size);
-    if (textWidth(ctx, text) <= maxWidth) {
-      break;
-    }
-    size -= 1;
-  }
-  return size;
-}
-
 function spacedWidth(ctx: SKRSContext2D, text: string, spacing: number): number {
-  let width = 0;
+  let total = 0;
   for (const char of Array.from(text)) {
-    width += ctx.measureText(char).width + spacing;
+    total += ctx.measureText(char).width + spacing;
   }
-  return Math.max(0, width - spacing);
+  return Math.max(0, total - spacing);
 }
 
 function drawSpaced(
@@ -129,10 +105,12 @@ function drawSpaced(
   x: number,
   y: number,
   spacing: number,
+  color: string,
   align: "left" | "center" | "right" = "left",
 ): number {
   const width = spacedWidth(ctx, text, spacing);
   let cursor = align === "right" ? x - width : align === "center" ? x - width / 2 : x;
+  ctx.fillStyle = color;
   for (const char of Array.from(text)) {
     ctx.fillText(char, cursor, y);
     cursor += ctx.measureText(char).width + spacing;
@@ -140,433 +118,166 @@ function drawSpaced(
   return width;
 }
 
-function ellipsize(ctx: SKRSContext2D, text: string, maxWidth: number): string {
-  if (textWidth(ctx, text) <= maxWidth) {
-    return text;
-  }
-  const chars = Array.from(text);
-  while (chars.length > 0) {
-    chars.pop();
-    const candidate = chars.join("").trimEnd() + "…";
-    if (textWidth(ctx, candidate) <= maxWidth) {
-      return candidate;
+function wrapText(ctx: SKRSContext2D, text: string, maxWidth: number): string[] {
+  const paragraphs = String(text ?? "").replace(/\r/g, "").split("\n");
+  const lines: string[] = [];
+  const forbidden = "，。！？；：、）】》」』％%";
+  for (const paragraph of paragraphs) {
+    const clean = paragraph.trim();
+    if (clean.length === 0) {
+      if (lines.length > 0 && lines[lines.length - 1] !== "") {
+        lines.push("");
+      }
+      continue;
+    }
+    let line = "";
+    for (const char of Array.from(clean)) {
+      const candidate = line + char;
+      if (line.length > 0 && textWidth(ctx, candidate) > maxWidth) {
+        if (forbidden.includes(char)) {
+          lines.push(candidate);
+          line = "";
+        } else {
+          lines.push(line);
+          line = char;
+        }
+      } else {
+        line = candidate;
+      }
+    }
+    if (line.length > 0) {
+      lines.push(line);
     }
   }
-  return "…";
+  return lines.length > 0 ? lines : ["未填写"];
 }
 
-function wrapText(ctx: SKRSContext2D, text: string, maxWidth: number, maxLines: number): string[] {
-  const normalized = text.replace(/\s+/gu, " ").trim();
-  if (normalized === "" || maxLines <= 0) {
-    return [];
+function wrapTextBalanced(ctx: SKRSContext2D, text: string, maxWidth: number): string[] {
+  const original = wrapText(ctx, text, maxWidth);
+  if (original.length <= 1) {
+    return original;
   }
-  const chars = Array.from(normalized);
-  const lines: string[] = [];
-  let start = 0;
-  while (start < chars.length && lines.length < maxLines) {
-    let count = 0;
-    let measured = "";
-    while (start + count < chars.length) {
-      const candidate = measured + (chars[start + count] ?? "");
-      if (count > 0 && textWidth(ctx, candidate) > maxWidth) {
-        break;
-      }
-      measured = candidate;
-      count += 1;
-    }
-    if (count === 0) {
-      count = 1;
-    }
-    const remaining = chars.length - start;
-    if (lines.length === maxLines - 1 && count < remaining) {
-      const partial = chars.slice(start, start + count).join("").trimEnd();
-      lines.push(ellipsize(ctx, partial + chars.slice(start + count).join(""), maxWidth));
+  let best = original;
+  for (let shrink = 8; shrink < maxWidth * 0.32; shrink += 8) {
+    const candidate = wrapText(ctx, text, maxWidth - shrink);
+    if (candidate.length !== original.length) {
       break;
     }
-    lines.push(chars.slice(start, start + count).join("").trim());
-    start += count;
-    while (start < chars.length && chars[start] === " ") {
-      start += 1;
-    }
+    best = candidate;
   }
-  return lines.filter((line) => line !== "");
+  return best;
 }
 
-function clipOneLine(ctx: SKRSContext2D, text: string, maxWidth: number): string {
-  return ellipsize(ctx, text.replace(/\s+/gu, " ").trim(), maxWidth);
+/**
+ * 海报行首编号清洗：日报输入框会自动写「1: 」，用户粘贴或再次输入带号文本时会出现
+ * 「1: 1 …」/「2: 2 …」。海报已自己画 01 / 02 徽标，正文只保留业务文字。
+ * 只清行首的枚举标记，不动句中数量、日期和纯数字内容。
+ */
+const DELIMITED_LIST_MARKER =
+  /^(?:[（(]\s*(\d{1,2})\s*[)）]|(\d{1,2})\s*[:：.、．)）]|[①-⑳]|[•·]|[-—–])\s*/u;
+const BARE_LIST_MARKER = /^([1-9])(?=\s)/u;
+
+export function stripPosterListMarkers(line: string): string {
+  let text = line.trim();
+  let ordinal: string | null = null;
+  let stripped = false;
+  for (let guard = 0; guard < 12 && text !== ""; guard += 1) {
+    const marked = DELIMITED_LIST_MARKER.exec(text);
+    if (marked !== null) {
+      ordinal ??= marked[1] ?? marked[2] ?? null;
+      text = text.slice(marked[0].length).trimStart();
+      stripped = true;
+      continue;
+    }
+    if (ordinal !== null) {
+      const repeated = new RegExp("^" + ordinal + "(?=\\s)", "u");
+      if (repeated.test(text)) {
+        text = text.slice(ordinal.length).trimStart();
+        stripped = true;
+        continue;
+      }
+      break;
+    }
+    const bare = BARE_LIST_MARKER.exec(text);
+    if (bare === null) {
+      break;
+    }
+    ordinal = bare[1] ?? null;
+    text = text.slice(bare[0].length).trimStart();
+    stripped = true;
+  }
+  return stripped ? text : line.trim();
 }
 
-function listItems(text: string, maxItems: number): string[] {
-  return text
-    .split(/\r?\n/u)
-    .map((line) => line.replace(/^\s*(?:\d+)[:：.、)]\s*/u, "").trim())
-    .filter((line) => line !== "")
-    .slice(0, maxItems);
+function parseItems(text: string | null): string[] {
+  const lines = String(text ?? "")
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const cleaned = lines.map(stripPosterListMarkers).filter((line) => line.length > 0);
+  return cleaned.length > 0 ? cleaned : ["未填写"];
 }
 
-function countListItems(text: string): number {
-  return text.split(/\r?\n/u).filter((line) => line.trim() !== "").length;
+function pad2(value: number): string {
+  return String(value).padStart(2, "0");
 }
 
-function shanghaiTime(iso: string | null): string {
-  if (iso === null) {
+function reportWeekday(reportDate: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(reportDate);
+  if (match === null) {
     return "";
   }
-  const date = new Date(iso);
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
   if (!Number.isFinite(date.getTime())) {
     return "";
   }
-  return new Intl.DateTimeFormat("zh-CN", {
-    timeZone: "Asia/Shanghai",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(date);
+  return new Intl.DateTimeFormat("zh-CN", { weekday: "short", timeZone: "UTC" }).format(date);
 }
 
-function isoWeek(year: number, month: number, day: number): string {
-  const date = new Date(Date.UTC(year, month - 1, day));
-  const weekday = date.getUTCDay() || 7;
-  date.setUTCDate(date.getUTCDate() + 4 - weekday);
-  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
-  return String(Math.ceil(((date.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7)).padStart(2, "0");
-}
-
-function dateInfo(reportDate: string): {
-  year: string;
-  monthDay: string;
-  nextMonthDay: string;
-  weekdayEn: string;
-  weekdayZh: string;
-  week: string;
-} {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(reportDate);
-  if (match === null) {
-    return {
-      year: reportDate.slice(0, 4),
-      monthDay: "--.--",
-      nextMonthDay: "--.--",
-      weekdayEn: "",
-      weekdayZh: "",
-      week: "",
-    };
+function issueStateLabel(state: string): string {
+  if (state === "open") {
+    return "待处理";
   }
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  const next = new Date(date.getTime() + 86_400_000);
-  const weekdayEn = new Intl.DateTimeFormat("en-US", {
-    weekday: "long",
-    timeZone: "UTC",
-  }).format(date).toUpperCase();
-  const weekdayZh = new Intl.DateTimeFormat("zh-CN", {
-    weekday: "short",
-    timeZone: "UTC",
-  }).format(date);
-  return {
-    year: String(year),
-    monthDay: match[2] + "." + match[3],
-    nextMonthDay: String(next.getUTCMonth() + 1).padStart(2, "0") + "." + String(next.getUTCDate()).padStart(2, "0"),
-    weekdayEn,
-    weekdayZh,
-    week: isoWeek(year, month, day),
-  };
-}
-
-function drawBackground(ctx: SKRSContext2D): void {
-  ctx.fillStyle = PAPER;
-  ctx.fillRect(0, 0, WIDTH, HEIGHT);
-  ctx.lineWidth = 1;
-  for (let x = 80; x < WIDTH; x += 80) {
-    ctx.strokeStyle = "rgba(16,17,15,0.032)";
-    ctx.beginPath();
-    ctx.moveTo(x + 0.5, 0);
-    ctx.lineTo(x + 0.5, HEIGHT);
-    ctx.stroke();
+  if (state === "in_progress") {
+    return "处理中";
   }
-  for (let y = 80; y < HEIGHT; y += 80) {
-    ctx.strokeStyle = "rgba(16,17,15,0.028)";
-    ctx.beginPath();
-    ctx.moveTo(0, y + 0.5);
-    ctx.lineTo(WIDTH, y + 0.5);
-    ctx.stroke();
+  if (state === "done") {
+    return "已完成";
   }
+  return state || "未标记";
 }
 
-function drawDateCard(ctx: SKRSContext2D, data: DailyReportPosterData): void {
-  const info = dateInfo(data.reportDate);
-  const x = 782;
-  const y = 43;
-  const width = 258;
-  const height = 236;
-  ctx.fillStyle = YELLOW;
-  ctx.fillRect(x, y, width, height);
-  ctx.strokeStyle = "rgba(16,17,15,0.24)";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x + 9.5, y + 9.5, width - 19, height - 19);
-
-  setFont(ctx, true, 12);
-  ctx.fillStyle = INK;
-  drawSpaced(ctx, info.weekdayEn, x + 21, y + 31, 2.4);
-  drawSpaced(ctx, "WEEK " + info.week, x + width - 21, y + 32, 1.4, "right");
-
-  const dateSize = fitFontSize(ctx, true, info.monthDay, 215, 101, 72);
-  setFont(ctx, true, dateSize);
-  ctx.fillText(info.monthDay, x + 19, y + 154);
-
-  setFont(ctx, true, 23);
-  ctx.fillText(info.year, x + 21, y + 209);
-  const time = shanghaiTime(data.submittedAt);
-  setFont(ctx, true, 12);
-  ctx.textAlign = "right";
-  drawSpaced(ctx, info.weekdayZh + (time === "" ? "" : " / " + time), x + width - 21, y + 208, 1.5, "right");
-  ctx.textAlign = "left";
+function photoCount(issues: readonly DailyReportPosterIssue[]): number {
+  return issues.reduce((sum, issue) => sum + issue.photos.length, 0);
 }
 
-function drawEyebrow(ctx: SKRSContext2D): void {
-  setFont(ctx, true, 15);
-  ctx.fillStyle = "#4c4e49";
-  drawSpaced(ctx, "PROJECT DAILY", MARGIN, 65, 3.2);
-  const width = spacedWidth(ctx, "PROJECT DAILY", 3.2);
-  setFont(ctx, true, 15);
-  ctx.fillStyle = ISSUE;
-  ctx.fillText("/", MARGIN + width + 11, 65);
-  ctx.fillStyle = "#4c4e49";
-  drawSpaced(ctx, "项目日报", MARGIN + width + 29, 65, 2.4);
-}
-
-function splitTitle(ctx: SKRSContext2D, text: string, maxWidth: number): string[] {
-  const chars = Array.from(text.trim());
-  if (chars.length <= 1) {
-    return [chars.join("")];
-  }
-  const target = Math.max(1, Math.min(chars.length - 1, Math.round(chars.length * 0.58)));
-  for (let offset = 0; offset < chars.length; offset += 1) {
-    const lower = target - offset;
-    const upper = target + offset;
-    for (const split of offset === 0 ? [target] : [lower, upper]) {
-      if (split < 1 || split >= chars.length) continue;
-      const first = chars.slice(0, split).join("").trim();
-      const second = chars.slice(split).join("").trim();
-      if (first === "" || second === "") continue;
-      if (textWidth(ctx, first) <= maxWidth && textWidth(ctx, second) <= maxWidth) {
-        return [first, second];
+async function preparePhotoImages(
+  canvasApi: NapiCanvas,
+  photos: readonly DailyReportPosterPhoto[],
+  buffers: ReadonlyMap<string, Buffer>,
+): Promise<Map<string, CanvasImage>> {
+  const decoded = new Map<string, CanvasImage>();
+  await Promise.all(
+    photos.map(async (photo) => {
+      if (decoded.has(photo.fileId)) {
+        return;
       }
-    }
-  }
-  const first = wrapText(ctx, text, maxWidth, 1)[0] ?? chars.slice(0, 1).join("");
-  return [first, ellipsize(ctx, chars.slice(Array.from(first).length).join(""), maxWidth)];
-}
-
-function drawProjectTitle(ctx: SKRSContext2D, data: DailyReportPosterData): void {
-  const maxWidth = 664;
-  const chars = Array.from(data.projectName.trim());
-  let size = 40;
-  let lines: string[] = [data.projectName.trim()];
-  for (let candidate = 55; candidate >= 40; candidate -= 1) {
-    setFont(ctx, true, candidate);
-    if (chars.length <= 8 && textWidth(ctx, data.projectName.trim()) <= maxWidth) {
-      size = candidate;
-      lines = [data.projectName.trim()];
-      break;
-    }
-    const pair = splitTitle(ctx, data.projectName, maxWidth);
-    if (pair.length === 2 && pair.every((line) => line !== "" && textWidth(ctx, line) <= maxWidth)) {
-      size = candidate;
-      lines = pair;
-      break;
-    }
-  }
-  const lineHeight = Math.round(size * 1.13);
-  const firstBaseline = lines.length === 1 ? 166 : 146;
-  lines.forEach((line, index) => {
-    const baseline = firstBaseline + index * lineHeight;
-    setFont(ctx, true, size);
-    if (index === lines.length - 1) {
-      const width = textWidth(ctx, line);
-      ctx.fillStyle = YELLOW;
-      ctx.beginPath();
-      ctx.moveTo(MARGIN - 3, baseline + 8);
-      ctx.lineTo(MARGIN + width + 5, baseline + 8);
-      ctx.lineTo(MARGIN + width + 10, baseline - 8);
-      ctx.lineTo(MARGIN + 1, baseline - 8);
-      ctx.closePath();
-      ctx.fill();
-    }
-    setFont(ctx, true, size);
-    ctx.fillStyle = INK;
-    ctx.fillText(line, MARGIN, baseline);
-  });
-}
-
-function drawMeta(ctx: SKRSContext2D, data: DailyReportPosterData): void {
-  const labelY = 262;
-  const valueY = 289;
-  const columns = [
-    { x: MARGIN, width: 176, label: "PROJECT CODE", value: data.projectCode, size: 18 },
-    {
-      x: 274,
-      width: 222,
-      label: "PROJECT MANAGER",
-      value: data.managers.length === 0 ? "待定" : data.managers.join("、"),
-      size: 19,
-    },
-    {
-      x: 555,
-      width: 450,
-      label: "SUBMITTED BY",
-      value: (data.authorName ?? "—") + (shanghaiTime(data.submittedAt) === "" ? "" : " · " + shanghaiTime(data.submittedAt)),
-      size: 19,
-    },
-  ];
-  for (const column of columns) {
-    setFont(ctx, true, 10);
-    ctx.fillStyle = MUTED;
-    drawSpaced(ctx, column.label, column.x, labelY, 1.7);
-    const valueSize = fitFontSize(ctx, true, column.value, column.width, column.size, 13);
-    setFont(ctx, true, valueSize);
-    ctx.fillStyle = INK;
-    ctx.fillText(clipOneLine(ctx, column.value, column.width), column.x, valueY);
-  }
-  ctx.strokeStyle = LINE;
-  ctx.lineWidth = 1;
-  for (const x of [248, 526]) {
-    ctx.beginPath();
-    ctx.moveTo(x + 0.5, 246);
-    ctx.lineTo(x + 0.5, 304);
-    ctx.stroke();
-  }
-  ctx.strokeStyle = INK;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(MARGIN, 318.5);
-  ctx.lineTo(CONTENT_RIGHT, 318.5);
-  ctx.stroke();
-}
-
-function drawStats(ctx: SKRSContext2D, data: DailyReportPosterData): void {
-  const issuePhotoCount = data.issues.reduce((sum, issue) => sum + issue.photos.length, 0);
-  const stageText = data.stages.length === 0 ? "未关联阶段" : data.stages.slice(0, 2).join(" / ");
-  const stats = [
-    { x: MARGIN, width: 210, label: "SITE HEADCOUNT", value: String(data.headcount ?? 0), unit: "人" },
-    { x: 282, width: 302, label: "CURRENT STAGE", value: stageText, unit: "" },
-    { x: 601, width: 191, label: "OPEN ISSUES", value: String(data.issues.length).padStart(2, "0"), unit: "项" },
-    {
-      x: 815,
-      width: 211,
-      label: "PHOTO EVIDENCE",
-      value: String(data.photos.length + issuePhotoCount).padStart(2, "0"),
-      unit: "张",
-    },
-  ];
-  setFont(ctx, true, 10);
-  for (const stat of stats) {
-    ctx.fillStyle = MUTED;
-    drawSpaced(ctx, stat.label, stat.x, 344, 1.8);
-  }
-  for (const [index, stat] of stats.entries()) {
-    setFont(ctx, true, 40);
-    ctx.fillStyle = INK;
-    if (index === 1) {
-      setFont(ctx, true, 19);
-      const lines = wrapText(ctx, stat.value, stat.width, 1);
-      ctx.fillText(lines[0] ?? "—", stat.x, 389);
-      setFont(ctx, false, 10);
-      ctx.fillStyle = MUTED;
-      ctx.fillText(data.stages.length === 0 ? "未关联阶段" : String(data.stages.length) + " 个关联阶段", stat.x, 416);
-    } else {
-      ctx.fillText(stat.value, stat.x, 394);
-      const numberWidth = textWidth(ctx, stat.value);
-      setFont(ctx, true, 12);
-      ctx.fillStyle = "#4f514c";
-      ctx.fillText(stat.unit, stat.x + numberWidth + 7, 391);
-      if (index === 3) {
-        setFont(ctx, false, 10);
-        ctx.fillStyle = MUTED;
-        ctx.fillText(
-          "现场 " + String(data.photos.length) + " / 问题 " + String(issuePhotoCount),
-          stat.x,
-          416,
-        );
+      const buffer = buffers.get(photo.fileId);
+      if (buffer === undefined) {
+        return;
       }
-    }
-  }
-  ctx.strokeStyle = LINE;
-  ctx.lineWidth = 1;
-  for (const x of [270, 590, 803]) {
-    ctx.beginPath();
-    ctx.moveTo(x + 0.5, 331);
-    ctx.lineTo(x + 0.5, 423);
-    ctx.stroke();
-  }
-  ctx.strokeStyle = INK;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(MARGIN, 435.5);
-  ctx.lineTo(CONTENT_RIGHT, 435.5);
-  ctx.stroke();
-  ctx.lineWidth = 5;
-  ctx.beginPath();
-  ctx.moveTo(MARGIN, 472.5);
-  ctx.lineTo(CONTENT_RIGHT, 472.5);
-  ctx.stroke();
-}
-
-function drawSectionHeading(ctx: SKRSContext2D, index: string, title: string, right: string): void {
-  setFont(ctx, true, 14);
-  ctx.fillStyle = ISSUE;
-  drawSpaced(ctx, index + " /", MARGIN, 505, 1.6);
-  setFont(ctx, true, 30);
-  ctx.fillStyle = INK;
-  ctx.fillText(title, 124, 509);
-  setFont(ctx, true, 9.5);
-  ctx.fillStyle = MUTED;
-  drawSpaced(ctx, right, CONTENT_RIGHT, 496, 2.2, "right");
-}
-
-function drawWork(ctx: SKRSContext2D, data: DailyReportPosterData): void {
-  const allItems = listItems(data.doneWork, 99);
-  const items = allItems.slice(0, 4);
-  const extra = Math.max(allItems.length, countListItems(data.doneWork)) - items.length;
-  drawSectionHeading(
-    ctx,
-    "01",
-    "今日完成",
-    extra > 0 ? "WORK COMPLETED TODAY · +" + String(extra) + " MORE" : "WORK COMPLETED TODAY",
+      try {
+        decoded.set(photo.fileId, await canvasApi.loadImage(buffer));
+      } catch {
+        // 缺图 / 坏图只留占位片，不阻断整张海报。
+      }
+    }),
   );
-  if (items.length === 0) {
-    setFont(ctx, false, 17);
-    ctx.fillStyle = MUTED;
-    ctx.fillText("今日完成工作待补充", MARGIN, 563);
-    return;
-  }
-  const columnWidth = 472;
-  const gap = 28;
-  const rowGap = 58;
-  items.forEach((item, index) => {
-    const column = index % 2;
-    const row = Math.floor(index / 2);
-    const x = MARGIN + column * (columnWidth + gap);
-    const top = 526 + row * rowGap;
-    ctx.fillStyle = INK;
-    ctx.fillRect(x, top, 30, 30);
-    setFont(ctx, true, 15);
-    ctx.fillStyle = YELLOW;
-    ctx.fillText(String(index + 1).padStart(2, "0"), x + 6, top + 22);
-    const textX = x + 41;
-    const textMax = columnWidth - 41;
-    setFont(ctx, true, 18);
-    ctx.fillStyle = INK;
-    const lines = wrapText(ctx, item, textMax, 2);
-    lines.forEach((line, lineIndex) => {
-      setFont(ctx, true, 18);
-      ctx.fillText(line, textX, top + 22 + lineIndex * 23);
-    });
-  });
+  return decoded;
 }
 
-function drawCoverImage(
+function drawImageCover(
   ctx: SKRSContext2D,
   image: CanvasImage,
   x: number,
@@ -575,304 +286,440 @@ function drawCoverImage(
   height: number,
 ): void {
   const scale = Math.max(width / image.width, height / image.height);
-  const drawWidth = image.width * scale;
-  const drawHeight = image.height * scale;
+  const sourceWidth = width / scale;
+  const sourceHeight = height / scale;
+  const sourceX = Math.max(0, (image.width - sourceWidth) / 2);
+  const sourceY = Math.max(0, (image.height - sourceHeight) / 2);
+  ctx.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, x, y, width, height);
+}
+
+function drawImagePlaceholder(
+  ctx: SKRSContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  label: string,
+): void {
+  ctx.fillStyle = "#D9DDD8";
+  ctx.fillRect(x, y, width, height);
+  setFont(ctx, false, 16);
+  ctx.fillStyle = MUTED;
+  ctx.textAlign = "center";
+  ctx.fillText(label, x + width / 2, y + height / 2 + 6);
+  ctx.textAlign = "left";
+}
+
+function drawPhoto(
+  ctx: SKRSContext2D,
+  image: CanvasImage | undefined,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  label: string,
+  index: number,
+  accent: string,
+): void {
   ctx.save();
   ctx.beginPath();
   ctx.rect(x, y, width, height);
   ctx.clip();
-  ctx.drawImage(image, x + (width - drawWidth) / 2, y + (height - drawHeight) / 2, drawWidth, drawHeight);
+  if (image === undefined) {
+    drawImagePlaceholder(ctx, x, y, width, height, "图片未能载入");
+  } else {
+    drawImageCover(ctx, image, x, y, width, height);
+  }
+  ctx.fillStyle = "rgba(8,13,14,0.72)";
+  ctx.fillRect(x, y + height - 42, width, 42);
+  setFont(ctx, true, 12);
+  drawSpaced(ctx, "PHOTO " + pad2(index), x + 16, y + height - 16, 1.4, accent, "left");
+  setFont(ctx, false, 13);
+  ctx.fillStyle = WHITE;
+  ctx.textAlign = "right";
+  ctx.fillText(label, x + width - 16, y + height - 15);
+  ctx.textAlign = "left";
   ctx.restore();
 }
 
-function drawPhotoPlaceholder(ctx: SKRSContext2D, x: number, y: number, width: number, height: number): void {
-  const gradient = ctx.createLinearGradient(x, y, x + width, y + height);
-  gradient.addColorStop(0, "#7d817c");
-  gradient.addColorStop(0.5, "#4d534e");
-  gradient.addColorStop(1, "#252a26");
-  ctx.fillStyle = gradient;
-  ctx.fillRect(x, y, width, height);
-  ctx.strokeStyle = "rgba(254,202,4,0.34)";
-  ctx.lineWidth = 3;
-  for (let offset = -height; offset < width; offset += 34) {
-    ctx.beginPath();
-    ctx.moveTo(x + offset, y + height);
-    ctx.lineTo(x + offset + height, y);
-    ctx.stroke();
-  }
+function drawDateBlock(
+  ctx: SKRSContext2D,
+  x: number,
+  y: number,
+  width: number,
+  fullDate: string,
+  weekday: string,
+  accent: string,
+): void {
+  ctx.textAlign = "right";
+  setFont(ctx, true, 11);
+  drawSpaced(ctx, "日报日期 / REPORT DATE", x + width, y + 17, 1.4, MUTED_LIGHT, "right");
+  setFont(ctx, true, 42);
+  ctx.fillStyle = WHITE;
+  ctx.fillText(fullDate, x + width, y + 76);
+  setFont(ctx, true, 14);
+  drawSpaced(ctx, weekday, x + width, y + 105, 2.2, accent, "right");
+  ctx.textAlign = "left";
 }
 
-function drawPhotos(
+interface PosterHeaderLayout {
+  projectLines: string[];
+  headerHeight: number;
+}
+
+function layoutPosterHeader(ctx: SKRSContext2D, data: DailyReportPosterData): PosterHeaderLayout {
+  setFont(ctx, true, 34);
+  const projectLines = wrapText(ctx, data.projectName, PROJECT_TITLE_WIDTH);
+  return {
+    projectLines,
+    headerHeight: 214 + (projectLines.length - 1) * 40,
+  };
+}
+
+interface MetaCard {
+  label: string;
+  value: string;
+  fill: string;
+  labelColor: string;
+  valueColor: string;
+  stat: boolean;
+}
+
+interface MetaBandOptions {
+  accent: string;
+  darkCard?: string;
+  headcountLabel?: string;
+  headcountValue?: string;
+}
+
+interface MetaBandLayout {
+  cards: MetaCard[];
+  widths: number[];
+  valueLineSets: string[][];
+  cardHeight: number;
+  chips: { text: string; x: number; y: number; width: number }[];
+  height: number;
+}
+
+const META_GAP = 14;
+const CHIP_HEIGHT = 34;
+const CHIP_GAP = 8;
+
+function layoutMetaBand(
   ctx: SKRSContext2D,
   data: DailyReportPosterData,
-  images: ReadonlyMap<string, CanvasImage>,
-): boolean {
-  const photos = data.photos.slice(0, 3);
-  if (photos.length === 0) {
-    return false;
-  }
-  const top = 642;
-  const height = 174;
-  const gap = 8;
-  const ratios = photos.length === 1 ? [1] : photos.length === 2 ? [1, 1] : [1.25, 1, 1];
-  const ratioTotal = ratios.reduce((sum, ratio) => sum + ratio, 0);
-  const usable = CONTENT_W - gap * (photos.length - 1);
-  let x = MARGIN;
-  photos.forEach((photo, index) => {
-    const width = usable * (ratios[index] ?? 1) / ratioTotal;
-    ctx.fillStyle = "#d3d4cd";
-    ctx.fillRect(x, top, width, height);
-    const image = images.get(photo.fileId);
-    if (image === undefined) {
-      drawPhotoPlaceholder(ctx, x, top, width, height);
-    } else {
-      drawCoverImage(ctx, image, x, top, width, height);
+  options: MetaBandOptions,
+): MetaBandLayout {
+  const accent = options.accent;
+  const darkCard = options.darkCard ?? "#0E191C";
+  const softCard = "#E2E5DF";
+  const availableWidth = CONTENT_WIDTH - META_GAP * 2;
+  const widths = [0.32, 0.4, 0.28].map((ratio) => availableWidth * ratio);
+  const cards: MetaCard[] = [
+    {
+      label: "PROJECT CODE / 项目编号",
+      value: data.projectCode,
+      fill: darkCard,
+      labelColor: "#E4ECEC",
+      valueColor: WHITE,
+      stat: false,
+    },
+    {
+      label: "PROJECT MANAGER / 项目经理",
+      value: data.managers.join(" / "),
+      fill: softCard,
+      labelColor: "#26302D",
+      valueColor: INK,
+      stat: false,
+    },
+    {
+      label: options.headcountLabel ?? "SITE HEADCOUNT / 现场人数",
+      value: options.headcountValue ?? (data.headcount === null ? "— 人" : String(data.headcount) + " 人"),
+      fill: accent,
+      labelColor: "rgba(16,22,23,0.86)",
+      valueColor: "#101617",
+      stat: true,
+    },
+  ];
+
+  setFont(ctx, true, 22);
+  const valueLineSets = cards.map((card, index) =>
+    card.stat ? [card.value] : wrapText(ctx, card.value, (widths[index] ?? 0) - 36),
+  );
+  const maxLines = Math.max(...valueLineSets.map((lines) => lines.length));
+  const cardHeight = Math.max(104, 62 + maxLines * 28);
+  const chipTop = cardHeight + 24;
+  const stages = data.stages.length > 0 ? data.stages : ["未关联"];
+  const chips: MetaBandLayout["chips"] = [];
+  let chipX = MARGIN + 220;
+  let chipY = chipTop;
+  const maxX = MARGIN + CONTENT_WIDTH;
+  for (const stage of stages) {
+    setFont(ctx, true, 14);
+    const chipWidth = textWidth(ctx, stage) + 30;
+    if (chipX > MARGIN + 220 && chipX + chipWidth > maxX) {
+      chipX = MARGIN + 220;
+      chipY += CHIP_HEIGHT + CHIP_GAP;
     }
-    const shade = ctx.createLinearGradient(0, top + height - 74, 0, top + height);
-    shade.addColorStop(0, "rgba(0,0,0,0)");
-    shade.addColorStop(1, "rgba(0,0,0,0.76)");
-    ctx.fillStyle = shade;
-    ctx.fillRect(x, top + height - 74, width, 74);
-    ctx.strokeStyle = "#b9bab4";
-    ctx.lineWidth = 1;
-    ctx.strokeRect(x + 0.5, top + 0.5, width - 1, height - 1);
-    ctx.fillStyle = YELLOW;
-    ctx.fillRect(x + width - 46, top + 11, 35, 22);
-    setFont(ctx, true, 10);
-    ctx.fillStyle = INK;
-    drawSpaced(ctx, String(index + 1).padStart(2, "0"), x + width - 38, top + 26, 1.2);
-    setFont(ctx, true, 10.5);
-    ctx.fillStyle = "#ffffff";
-    drawSpaced(ctx, "现场工作 / " + String(index + 1).padStart(2, "0"), x + 13, top + height - 13, 1.2);
-    x += width + gap;
-  });
-  return true;
+    chips.push({ text: stage, x: chipX, y: chipY, width: chipWidth });
+    chipX += chipWidth + CHIP_GAP;
+  }
+  return {
+    cards,
+    widths,
+    valueLineSets,
+    cardHeight,
+    chips,
+    height: cardHeight + 24 + CHIP_HEIGHT + (chipY - chipTop) + 2,
+  };
 }
 
-function drawNoPhotosNotice(ctx: SKRSContext2D): void {
-  ctx.strokeStyle = LINE;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(MARGIN, 642.5);
-  ctx.lineTo(CONTENT_RIGHT, 642.5);
-  ctx.stroke();
-  setFont(ctx, true, 9.5);
-  ctx.fillStyle = MUTED;
-  drawSpaced(ctx, "SITE PHOTO EVIDENCE", MARGIN, 665, 1.8);
-  setFont(ctx, false, 14);
-  ctx.fillStyle = MUTED;
-  ctx.fillText("今日未上传现场工作照片，工作记录以 LibiaoLink 为准。", MARGIN, 688);
-}
-
-function drawPlanCard(
+function drawMetaBand(
   ctx: SKRSContext2D,
   data: DailyReportPosterData,
-  x: number,
   y: number,
-  width: number,
-  height: number,
-): void {
-  ctx.fillStyle = SURFACE;
-  ctx.fillRect(x, y, width, height);
-  ctx.strokeStyle = LINE;
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1);
-  const info = dateInfo(data.reportDate);
-  setFont(ctx, true, 22);
-  ctx.fillStyle = INK;
-  ctx.fillText("明日计划", x + 20, y + 39);
-  setFont(ctx, true, 9.5);
-  ctx.fillStyle = MUTED;
-  drawSpaced(ctx, "NEXT / " + info.nextMonthDay, x + width - 20, y + 36, 1.5, "right");
-  ctx.strokeStyle = LINE;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(x + 20, y + 53.5);
-  ctx.lineTo(x + width - 20, y + 53.5);
-  ctx.stroke();
+  options: MetaBandOptions,
+): number {
+  const layout = layoutMetaBand(ctx, data, options);
+  let x = MARGIN;
+  for (let index = 0; index < layout.cards.length; index += 1) {
+    const card = layout.cards[index];
+    const width = layout.widths[index] ?? 0;
+    if (card === undefined) {
+      continue;
+    }
+    ctx.fillStyle = card.fill;
+    ctx.fillRect(x, y, width, layout.cardHeight);
+    setFont(ctx, true, 11);
+    drawSpaced(ctx, card.label, x + 18, y + 27, 0.6, card.labelColor, "left");
+    if (card.stat) {
+      const match = /^([0-9.,]+)\s*(.*)$/u.exec(card.value);
+      if (match !== null) {
+        const number = match[1] ?? "";
+        const unit = match[2] ?? "";
+        setFont(ctx, true, 42);
+        ctx.fillStyle = card.valueColor;
+        ctx.fillText(number, x + 18, y + 81);
+        const numberWidth = textWidth(ctx, number);
+        setFont(ctx, true, 15);
+        ctx.fillText(unit, x + 26 + numberWidth, y + 80);
+      } else {
+        setFont(ctx, true, 22);
+        ctx.fillStyle = card.valueColor;
+        ctx.fillText(card.value, x + 18, y + 76);
+      }
+    } else {
+      setFont(ctx, true, 22);
+      ctx.fillStyle = card.valueColor;
+      (layout.valueLineSets[index] ?? []).forEach((line, lineIndex) => {
+        ctx.fillText(line, x + 18, y + 61 + lineIndex * 28);
+      });
+    }
+    x += width + META_GAP;
+  }
 
-  const allItems = listItems(data.plan ?? "", 99);
-  const rowHeight = height < 300 ? 46 : 48;
-  const maxVisible = Math.max(1, Math.min(5, Math.floor((height - 86) / rowHeight)));
-  const items = allItems.slice(0, maxVisible);
-  if (items.length === 0) {
-    setFont(ctx, false, 14);
-    ctx.fillStyle = MUTED;
-    ctx.fillText("明日计划待补充", x + 21, y + 91);
-    return;
+  setFont(ctx, true, 10.5);
+  const stageLabelY = y + (layout.chips[0]?.y ?? layout.cardHeight + 24) + 23;
+  drawSpaced(ctx, "RELATED STAGE / 关联阶段", MARGIN, stageLabelY, 0.8, INK, "left");
+  for (const chip of layout.chips) {
+    ctx.fillStyle = "#1B2021";
+    ctx.fillRect(chip.x, y + chip.y, chip.width, CHIP_HEIGHT);
+    setFont(ctx, true, 14);
+    ctx.fillStyle = WHITE;
+    ctx.fillText(chip.text, chip.x + 15, y + chip.y + 22);
   }
-  items.forEach((item, index) => {
-    const top = y + 68 + index * rowHeight;
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 1.2;
-    ctx.strokeRect(x + 21.5, top + 3.5, 14, 14);
-    ctx.strokeStyle = YELLOW;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(x + 25, top + 7.5);
-    ctx.lineTo(x + 32, top + 7.5);
-    ctx.stroke();
-    setFont(ctx, true, 15.5);
-    ctx.fillStyle = INK;
-    ctx.fillText(clipOneLine(ctx, item, width - 72), x + 47, top + 16);
-  });
-  const extra = allItems.length - items.length;
-  if (extra > 0) {
-    setFont(ctx, false, 10);
-    ctx.fillStyle = MUTED;
-    ctx.fillText("另有 " + String(extra) + " 项，详见 LibiaoLink", x + 21, y + height - 14);
-  }
+  return layout.height;
 }
 
-function drawIssueThumb(
+function drawSectionHeader(
   ctx: SKRSContext2D,
-  issue: DailyReportPosterIssue,
-  image: CanvasImage | undefined,
-  x: number,
   y: number,
-): void {
-  const width = 68;
-  const height = 62;
-  ctx.fillStyle = "#3b423c";
-  ctx.fillRect(x, y, width, height);
-  if (image === undefined) {
-    const gradient = ctx.createLinearGradient(x, y, x + width, y + height);
-    gradient.addColorStop(0, "#737970");
-    gradient.addColorStop(1, "#252b26");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(x, y, width, height);
-  } else {
-    drawCoverImage(ctx, image, x, y, width, height);
+  index: string,
+  title: string,
+  english: string,
+  accent: string,
+  darkText: string,
+  layout: { x: number; width: number },
+): number {
+  const box = 40;
+  ctx.fillStyle = accent;
+  ctx.fillRect(layout.x, y, box, box);
+  setFont(ctx, true, 19);
+  ctx.fillStyle = darkText;
+  ctx.textAlign = "center";
+  ctx.fillText(index, layout.x + box / 2, y + 27);
+  ctx.textAlign = "left";
+  setFont(ctx, true, 30);
+  ctx.fillStyle = INK;
+  ctx.fillText(title, layout.x + 56, y + 30);
+  setFont(ctx, false, 10);
+  drawSpaced(ctx, english, layout.x + layout.width, y + 26, 1.8, MUTED, "right");
+  return y + 64;
+}
+
+function measureItemsHeight(ctx: SKRSContext2D, items: readonly string[], width: number): number {
+  let height = 0;
+  for (const item of items) {
+    setFont(ctx, false, 26);
+    const lines = wrapText(ctx, item, width - 48);
+    height += lines.length * 40 + 18;
   }
-  ctx.strokeStyle = "rgba(254,202,4,0.72)";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1);
+  return height;
+}
+
+function drawItems(
+  ctx: SKRSContext2D,
+  items: readonly string[],
+  y: number,
+  accent: string,
+  layout: { x: number; width: number },
+): number {
+  let cursor = y;
+  for (let index = 0; index < items.length; index += 1) {
+    setFont(ctx, false, 26);
+    const lines = wrapText(ctx, items[index] ?? "", layout.width - 48);
+    const rowHeight = lines.length * 40 + 18;
+    ctx.fillStyle = accent;
+    ctx.fillRect(layout.x, cursor + 2, 28, 28);
+    setFont(ctx, true, 14);
+    ctx.fillStyle = "#101617";
+    ctx.textAlign = "center";
+    ctx.fillText(pad2(index + 1), layout.x + 14, cursor + 22);
+    ctx.textAlign = "left";
+    setFont(ctx, false, 26);
+    ctx.fillStyle = INK;
+    lines.forEach((line, lineIndex) => {
+      ctx.fillText(line, layout.x + 46, cursor + 24 + lineIndex * 40);
+    });
+    cursor += rowHeight;
+  }
+  return cursor;
+}
+
+function dailyGalleryHeight(count: number): number {
+  if (count === 0) {
+    return 220;
+  }
+  if (count === 1) {
+    return 500;
+  }
+  if (count === 2) {
+    return 360;
+  }
+  const rows = Math.ceil(count / 3);
+  return rows * 260 + Math.max(0, rows - 1) * 16;
+}
+
+function drawDailyGallery(
+  ctx: SKRSContext2D,
+  images: readonly (CanvasImage | undefined)[],
+  y: number,
+): number {
+  const count = images.length;
+  if (count === 0) {
+    ctx.fillStyle = "#DDE1DC";
+    ctx.fillRect(MARGIN, y, CONTENT_WIDTH, 220);
+    setFont(ctx, true, 22);
+    ctx.fillStyle = INK;
+    ctx.fillText("今日未上传现场照片", MARGIN + 26, y + 92);
+    setFont(ctx, false, 15);
+    ctx.fillStyle = MUTED;
+    ctx.fillText("日报文字内容已完整保留，现场影像可在 LibiaoLink 中查看。", MARGIN + 26, y + 128);
+    return y + 220;
+  }
+  if (count === 1) {
+    drawPhoto(ctx, images[0], MARGIN, y, CONTENT_WIDTH, 500, "现场照片 01", 1, YELLOW);
+    return y + 500;
+  }
+  if (count === 2) {
+    const gap = 16;
+    const width = (CONTENT_WIDTH - gap) / 2;
+    drawPhoto(ctx, images[0], MARGIN, y, width, 360, "现场照片 01", 1, YELLOW);
+    drawPhoto(ctx, images[1], MARGIN + width + gap, y, width, 360, "现场照片 02", 2, YELLOW);
+    return y + 360;
+  }
+  const columns = 3;
+  const gap = 16;
+  const width = (CONTENT_WIDTH - gap * (columns - 1)) / columns;
+  const height = 260;
+  let cursor = y;
+  for (let index = 0; index < images.length; index += columns) {
+    for (let column = 0; column < columns; column += 1) {
+      const imageIndex = index + column;
+      if (imageIndex >= images.length) {
+        break;
+      }
+      drawPhoto(
+        ctx,
+        images[imageIndex],
+        MARGIN + column * (width + gap),
+        cursor,
+        width,
+        height,
+        "现场照片 " + pad2(imageIndex + 1),
+        imageIndex + 1,
+        YELLOW,
+      );
+    }
+    cursor += height + (index + columns < images.length ? 16 : 0);
+  }
+  return cursor;
+}
+
+function drawBottomStripe(ctx: SKRSContext2D, height: number, color: string): void {
+  ctx.fillStyle = color;
+  ctx.fillRect(0, height - 14, WIDTH, 14);
+}
+
+function drawDailyHeader(ctx: SKRSContext2D, data: DailyReportPosterData, layout: PosterHeaderLayout): void {
+  ctx.fillStyle = NAVY;
+  ctx.fillRect(0, 0, WIDTH, layout.headerHeight);
   ctx.fillStyle = YELLOW;
-  ctx.fillRect(x + width - 21, y, 21, 17);
-  setFont(ctx, true, 10);
-  ctx.fillStyle = INK;
-  drawSpaced(ctx, String(issue.photos.length), x + width - 15, y + 12, 0.4);
-  setFont(ctx, false, 7);
-  ctx.fillStyle = "#ffffff";
-  ctx.fillText("问题附图", x + 5, y + height - 5);
-}
+  ctx.fillRect(0, 0, WIDTH, 8);
 
-function drawIssueCard(
-  ctx: SKRSContext2D,
-  data: DailyReportPosterData,
-  images: ReadonlyMap<string, CanvasImage>,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-): void {
-  ctx.fillStyle = INK;
-  ctx.fillRect(x, y, width, height);
-  setFont(ctx, true, 22);
-  ctx.fillStyle = "#ffffff";
-  ctx.fillText("现场问题", x + 20, y + 39);
-  const issuePhotoCount = data.issues.reduce((sum, issue) => sum + issue.photos.length, 0);
-  setFont(ctx, true, 9.5);
-  ctx.fillStyle = "#9b9d95";
+  setFont(ctx, true, 13);
+  const brandWidth = drawSpaced(ctx, "LIBIAOLINK", MARGIN, 32, 3.2, YELLOW, "left");
+  setFont(ctx, false, 12);
   drawSpaced(
     ctx,
-    "OPEN " + String(data.issues.length).padStart(2, "0") + " / IMG " + String(issuePhotoCount).padStart(2, "0"),
-    x + width - 20,
-    y + 36,
-    1.2,
-    "right",
+    "/ PROJECT FIELD REPORT",
+    MARGIN + brandWidth + 16,
+    32,
+    1.8,
+    MUTED_LIGHT,
+    "left",
   );
-  ctx.strokeStyle = "#3a3b36";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(x + 20, y + 53.5);
-  ctx.lineTo(x + width - 20, y + 53.5);
-  ctx.stroke();
 
-  if (data.issues.length === 0) {
-    setFont(ctx, true, 18);
-    ctx.fillStyle = "#ffffff";
-    ctx.fillText("今日无新增现场问题", x + 20, y + 98);
-    setFont(ctx, false, 10);
-    ctx.fillStyle = "#9b9d95";
-    ctx.fillText("现场问题与整改跟踪以 LibiaoLink 为准。", x + 20, y + height - 20);
-    return;
-  }
+  setFont(ctx, true, 46);
+  ctx.fillStyle = WHITE;
+  ctx.fillText("现场日报", MARGIN, 88);
+  setFont(ctx, false, 12.5);
+  drawSpaced(ctx, "DAILY FIELD REPORT", MARGIN, 111, 3.2, "#93A5AA", "left");
 
-  const available = height < 300 ? 2 : 3;
-  const visible = data.issues.slice(0, available);
-  const footer = 33;
-  const contentTop = y + 61;
-  const rowHeight = Math.min(104, Math.max(58, (height - 61 - footer - 4) / visible.length));
-  visible.forEach((issue, index) => {
-    const top = contentTop + index * rowHeight;
-    ctx.fillStyle = index === 0 ? ISSUE : YELLOW;
-    ctx.fillRect(x + 20, top, 3, Math.min(62, rowHeight - 8));
-    const image = issue.photos[0] === undefined ? undefined : images.get(issue.photos[0].fileId);
-    const hasThumb = issue.photos.length > 0;
-    const copyWidth = width - 49 - (hasThumb ? 82 : 0);
-    setFont(ctx, true, 9);
-    ctx.fillStyle = YELLOW;
-    const category = issue.categories.length === 0 ? "未分类" : issue.categories.join(" / ");
-    const meta = clipOneLine(ctx, category, copyWidth * 0.49);
-    ctx.fillText(meta, x + 32, top + 10);
-    setFont(ctx, false, 9);
-    ctx.fillStyle = "#b9bbb3";
-    ctx.textAlign = "right";
-    ctx.fillText(
-      clipOneLine(ctx, "责任人 · " + (issue.ownerName ?? "待分派"), copyWidth * 0.48),
-      x + 32 + copyWidth,
-      top + 10,
-    );
-    ctx.textAlign = "left";
-    setFont(ctx, true, 14);
-    ctx.fillStyle = "#f2f2ed";
-    const lines = wrapText(ctx, issue.title, copyWidth, 2);
-    lines.forEach((line, lineIndex) => {
-      setFont(ctx, true, 14);
-      ctx.fillText(line, x + 32, top + 29 + lineIndex * 18);
-    });
-    if (hasThumb) {
-      drawIssueThumb(ctx, issue, image, x + width - 88, top + 3);
-    }
+  setFont(ctx, false, 10.5);
+  drawSpaced(ctx, "PROJECT / 项目", MARGIN, 151, 1.8, YELLOW, "left");
+  setFont(ctx, true, 34);
+  ctx.fillStyle = WHITE;
+  layout.projectLines.forEach((line, index) => {
+    setFont(ctx, true, 34);
+    ctx.fillStyle = WHITE;
+    ctx.fillText(line, MARGIN, 184 + index * 40);
   });
-  ctx.strokeStyle = "#3a3b36";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(x + 20, y + height - footer + 0.5);
-  ctx.lineTo(x + width - 20, y + height - footer + 0.5);
-  ctx.stroke();
-  setFont(ctx, false, 9);
-  ctx.fillStyle = "#b6b8af";
-  const hidden = data.issues.length - visible.length;
-  const footerText = hidden > 0
-    ? "另有 " + String(hidden) + " 项问题可在 LibiaoLink 查看，处理进展以系统记录为准。"
-    : "问题与附图已进入 LibiaoLink 追踪，处理进展以系统记录为准。";
-  ctx.fillText(clipOneLine(ctx, footerText, width - 40), x + 20, y + height - 12);
-}
 
-async function prepareImages(
-  canvasApi: NapiCanvas,
-  data: DailyReportPosterData,
-  buffers: ReadonlyMap<string, Buffer>,
-): Promise<Map<string, CanvasImage>> {
-  const photos = [...data.photos.slice(0, 3), ...data.issues.slice(0, 3).flatMap((issue) => issue.photos.slice(0, 1))];
-  const decoded = new Map<string, CanvasImage>();
-  await Promise.all(
-    photos.map(async (photo) => {
-      const buffer = buffers.get(photo.fileId);
-      if (buffer === undefined) return;
-      try {
-        decoded.set(photo.fileId, await canvasApi.loadImage(buffer));
-      } catch {
-        // 坏图只留占位片，不阻断整张海报。
-      }
-    }),
+  drawDateBlock(
+    ctx,
+    WIDTH - MARGIN - 280,
+    30,
+    280,
+    data.reportDate.replaceAll("-", "."),
+    reportWeekday(data.reportDate),
+    YELLOW,
   );
-  return decoded;
+  ctx.fillStyle = YELLOW;
+  ctx.fillRect(0, layout.headerHeight - 7, WIDTH, 7);
 }
 
-/** 渲染入口：images = fileId -> 原图字节；缺图 / 坏图只留占位片，不抛整张海报。 */
+/** 日报海报：只含项目信息、今日完成、明日计划与全部现场图；问题另发专报。 */
 export async function renderDailyReportPoster(
   data: DailyReportPosterData,
   images: ReadonlyMap<string, Buffer> = new Map(),
@@ -880,23 +727,496 @@ export async function renderDailyReportPoster(
 ): Promise<Buffer> {
   const canvasApi = await loadCanvasApi();
   ensureFonts(canvasApi.GlobalFonts, fonts);
-  const canvas = canvasApi.createCanvas(WIDTH, HEIGHT);
+
+  const measureCanvas = canvasApi.createCanvas(WIDTH, 1);
+  const measureContext = measureCanvas.getContext("2d");
+  const header = layoutPosterHeader(measureContext, data);
+  const meta = layoutMetaBand(measureContext, data, { accent: YELLOW });
+  const doneItems = parseItems(data.doneWork);
+  const planItems = parseItems(data.plan);
+  const columnGap = 56;
+  const columnWidth = (CONTENT_WIDTH - columnGap) / 2;
+  const doneHeight = measureItemsHeight(measureContext, doneItems, columnWidth);
+  const planHeight = measureItemsHeight(measureContext, planItems, columnWidth);
+  const galleryHeight = dailyGalleryHeight(data.photos.length);
+  const finalHeight = Math.ceil(
+    header.headerHeight +
+      34 +
+      meta.height +
+      48 +
+      64 +
+      Math.max(doneHeight, planHeight) +
+      58 +
+      64 +
+      galleryHeight +
+      58,
+  );
+
+  const canvas = canvasApi.createCanvas(WIDTH, finalHeight);
   const ctx = canvas.getContext("2d");
-  drawBackground(ctx);
-  drawEyebrow(ctx);
-  drawDateCard(ctx, data);
-  drawProjectTitle(ctx, data);
-  drawMeta(ctx, data);
-  drawStats(ctx, data);
-  drawWork(ctx, data);
-  const decoded = await prepareImages(canvasApi, data, images);
-  const hasPhotos = drawPhotos(ctx, data, decoded);
-  if (!hasPhotos) {
-    drawNoPhotosNotice(ctx);
+  ctx.fillStyle = PAPER;
+  ctx.fillRect(0, 0, WIDTH, finalHeight);
+  drawDailyHeader(ctx, data, header);
+
+  let y = header.headerHeight + 34;
+  y += drawMetaBand(ctx, data, y, { accent: YELLOW }) + 48;
+
+  const rightColumnX = MARGIN + columnWidth + columnGap;
+  drawSectionHeader(
+    ctx,
+    y,
+    "01",
+    "今日完成",
+    "WORK COMPLETED TODAY",
+    YELLOW,
+    INK,
+    { x: MARGIN, width: columnWidth },
+  );
+  const doneBottom = drawItems(ctx, doneItems, y + 64, YELLOW, {
+    x: MARGIN,
+    width: columnWidth,
+  });
+  drawSectionHeader(
+    ctx,
+    y,
+    "02",
+    "明日计划",
+    "NEXT DAY PLAN",
+    YELLOW,
+    INK,
+    { x: rightColumnX, width: columnWidth },
+  );
+  const planBottom = drawItems(ctx, planItems, y + 64, YELLOW, {
+    x: rightColumnX,
+    width: columnWidth,
+  });
+  y = Math.max(doneBottom, planBottom) + 58;
+
+  const decoded = await preparePhotoImages(canvasApi, data.photos, images);
+  const galleryImages = data.photos.map((photo) => decoded.get(photo.fileId));
+  y = drawSectionHeader(
+    ctx,
+    y,
+    "03",
+    "现场纪实",
+    "SITE PHOTO EVIDENCE / " + pad2(data.photos.length),
+    YELLOW,
+    INK,
+    { x: MARGIN, width: CONTENT_WIDTH },
+  );
+  drawDailyGallery(ctx, galleryImages, y);
+  drawBottomStripe(ctx, finalHeight, YELLOW);
+  return canvas.toBuffer("image/png");
+}
+
+function issuePhotosHeight(count: number): number {
+  if (count === 0) {
+    return 150;
   }
-  const lowerTop = hasPhotos ? 840 : 720;
-  const lowerHeight = 1082 - lowerTop;
-  drawPlanCard(ctx, data, MARGIN, lowerTop, 495, lowerHeight);
-  drawIssueCard(ctx, data, decoded, 567, lowerTop, 459, lowerHeight);
+  if (count === 1) {
+    return 320;
+  }
+  if (count === 2) {
+    return 180;
+  }
+  const rows = Math.ceil((count - 1) / 2);
+  return 280 + 14 + rows * 180 + Math.max(0, rows - 1) * 14;
+}
+
+function drawIssuePhotos(
+  ctx: SKRSContext2D,
+  images: readonly (CanvasImage | undefined)[],
+  x: number,
+  y: number,
+  width: number,
+): number {
+  if (images.length === 0) {
+    ctx.fillStyle = "#E8E1D9";
+    ctx.fillRect(x, y, width, 150);
+    setFont(ctx, false, 15);
+    ctx.fillStyle = MUTED;
+    ctx.fillText("该问题未上传附图", x + 20, y + 84);
+    return y + 150;
+  }
+  if (images.length === 1) {
+    drawPhoto(ctx, images[0], x, y, width, 320, "问题附图 01", 1, ORANGE);
+    return y + 320;
+  }
+  if (images.length === 2) {
+    const gap = 14;
+    const cellWidth = (width - gap) / 2;
+    drawPhoto(ctx, images[0], x, y, cellWidth, 180, "问题附图 01", 1, ORANGE);
+    drawPhoto(ctx, images[1], x + cellWidth + gap, y, cellWidth, 180, "问题附图 02", 2, ORANGE);
+    return y + 180;
+  }
+  drawPhoto(ctx, images[0], x, y, width, 280, "问题附图 01", 1, ORANGE);
+  let cursor = y + 280 + 14;
+  const rest = images.slice(1);
+  const gap = 14;
+  const cellWidth = (width - gap) / 2;
+  for (let index = 0; index < rest.length; index += 2) {
+    drawPhoto(
+      ctx,
+      rest[index],
+      x,
+      cursor,
+      cellWidth,
+      180,
+      "问题附图 " + pad2(index + 2),
+      index + 2,
+      ORANGE,
+    );
+    if (rest[index + 1] !== undefined) {
+      drawPhoto(
+        ctx,
+        rest[index + 1],
+        x + cellWidth + gap,
+        cursor,
+        cellWidth,
+        180,
+        "问题附图 " + pad2(index + 3),
+        index + 3,
+        ORANGE,
+      );
+    }
+    cursor += 180 + (index + 2 < rest.length ? 14 : 0);
+  }
+  return cursor;
+}
+
+function issueEvidenceHeight(
+  ctx: SKRSContext2D,
+  issue: DailyReportPosterIssue,
+  width: number,
+  allowSideBySide: boolean,
+): number {
+  const hasSolution = typeof issue.solution === "string" && issue.solution.trim().length > 0;
+  if (!hasSolution) {
+    return issuePhotosHeight(issue.photos.length);
+  }
+  setFont(ctx, false, 20);
+  if (!allowSideBySide) {
+    const solutionLines = wrapText(ctx, issue.solution ?? "", width);
+    return 44 + solutionLines.length * 29 + 14 + issuePhotosHeight(issue.photos.length);
+  }
+  const gap = 28;
+  const solutionWidth = Math.floor((width - gap) * 0.42);
+  const solutionLines = wrapText(ctx, issue.solution ?? "", solutionWidth);
+  const solutionBottom = 45 + Math.max(0, solutionLines.length - 1) * 30 + 14;
+  const photoRows = Math.ceil(issue.photos.length / 2);
+  const photoBottom = photoRows === 0 ? 22 : 36 + photoRows * 190 + Math.max(0, photoRows - 1) * 14;
+  return Math.max(solutionBottom, photoBottom);
+}
+
+async function drawIssueEvidence(
+  ctx: SKRSContext2D,
+  issue: DailyReportPosterIssue,
+  images: readonly (CanvasImage | undefined)[],
+  x: number,
+  y: number,
+  width: number,
+  allowSideBySide: boolean,
+): Promise<number> {
+  const hasSolution = typeof issue.solution === "string" && issue.solution.trim().length > 0;
+  if (!hasSolution) {
+    return drawIssuePhotos(ctx, images, x, y, width);
+  }
+  if (!allowSideBySide) {
+    setFont(ctx, true, 10.5);
+    drawSpaced(ctx, "PROGRESS / 处理记录", x, y + 15, 1.5, ORANGE, "left");
+    setFont(ctx, false, 20);
+    const solutionLines = wrapText(ctx, issue.solution ?? "", width);
+    solutionLines.forEach((line, index) => {
+      setFont(ctx, false, 20);
+      ctx.fillStyle = INK;
+      ctx.fillText(line, x, y + 44 + index * 29);
+    });
+    const photoTop = y + 44 + solutionLines.length * 29 + 14;
+    return drawIssuePhotos(ctx, images, x, photoTop, width);
+  }
+
+  const gap = 28;
+  const solutionWidth = Math.floor((width - gap) * 0.42);
+  const photoWidth = width - gap - solutionWidth;
+  setFont(ctx, true, 10.5);
+  drawSpaced(ctx, "PROGRESS / 处理记录", x, y + 15, 1.5, ORANGE, "left");
+  setFont(ctx, false, 20);
+  const solutionLines = wrapText(ctx, issue.solution ?? "", solutionWidth);
+  solutionLines.forEach((line, index) => {
+    setFont(ctx, false, 20);
+    ctx.fillStyle = INK;
+    ctx.fillText(line, x, y + 45 + index * 30);
+  });
+  const solutionBottom = y + 45 + Math.max(0, solutionLines.length - 1) * 30 + 14;
+
+  const photoX = x + solutionWidth + gap;
+  setFont(ctx, true, 10.5);
+  drawSpaced(ctx, "ATTACHMENTS / 问题附图", photoX, y + 15, 1.5, ORANGE, "left");
+  const photoGap = 14;
+  const cellWidth = (photoWidth - photoGap) / 2;
+  const cellHeight = 190;
+  let cursor = y + 36;
+  for (let index = 0; index < images.length; index += 2) {
+    drawPhoto(
+      ctx,
+      images[index],
+      photoX,
+      cursor,
+      cellWidth,
+      cellHeight,
+      "问题附图 " + pad2(index + 1),
+      index + 1,
+      ORANGE,
+    );
+    if (images[index + 1] !== undefined) {
+      drawPhoto(
+        ctx,
+        images[index + 1],
+        photoX + cellWidth + photoGap,
+        cursor,
+        cellWidth,
+        cellHeight,
+        "问题附图 " + pad2(index + 2),
+        index + 2,
+        ORANGE,
+      );
+    }
+    cursor += cellHeight + 14;
+  }
+  const photoBottom = cursor - 14;
+  return Math.max(solutionBottom, photoBottom);
+}
+
+/** 问题标题的首个非空行已有橙色 ISSUE 编号徽标，清掉数据自带的「1: / 2、」前缀；后续行原样保留。 */
+export function normalizePosterIssueTitle(title: string): string {
+  const lines = String(title ?? "").replace(/\r/g, "").split("\n");
+  const first = lines.findIndex((line) => line.trim() !== "");
+  if (first >= 0) {
+    lines[first] = stripPosterListMarkers(lines[first] ?? "");
+  }
+  return lines.join("\n");
+}
+
+function issueTitleLines(
+  ctx: SKRSContext2D,
+  issue: DailyReportPosterIssue,
+  contentWidth: number,
+): string[] {
+  setFont(ctx, true, 27);
+  return wrapTextBalanced(ctx, normalizePosterIssueTitle(issue.title), contentWidth);
+}
+
+function measureIssueBlockHeight(
+  ctx: SKRSContext2D,
+  issue: DailyReportPosterIssue,
+  contentWidth: number,
+  allowSideBySide: boolean,
+): number {
+  const titleLines = issueTitleLines(ctx, issue, contentWidth);
+  const titleBottom = 58 + Math.max(0, titleLines.length - 1) * 40 + 26;
+  return titleBottom + issueEvidenceHeight(ctx, issue, contentWidth, allowSideBySide);
+}
+
+async function drawIssueBlock(
+  ctx: SKRSContext2D,
+  issue: DailyReportPosterIssue,
+  index: number,
+  decoded: ReadonlyMap<string, CanvasImage>,
+  x: number,
+  rowY: number,
+  issueWidth: number,
+  allowSideBySide: boolean,
+): Promise<number> {
+  const contentX = x + 100;
+  const contentWidth = issueWidth - 100;
+  setFont(ctx, true, 64);
+  ctx.fillStyle = ORANGE;
+  ctx.fillText(pad2(index + 1), x, rowY + 52);
+  setFont(ctx, false, 9.5);
+  drawSpaced(ctx, "ISSUE", x + 2, rowY + 73, 2.4, MUTED, "left");
+
+  setFont(ctx, true, 13);
+  const category = issue.categories.length > 0 ? issue.categories.join("  /  ") : "未分类";
+  drawSpaced(ctx, category, contentX, rowY + 16, 1.2, ORANGE, "left");
+  setFont(ctx, false, 12);
+  ctx.fillStyle = MUTED;
+  ctx.textAlign = "right";
+  ctx.fillText(
+    "责任人  " + (issue.ownerName ?? "待分派") + "    状态  " + issueStateLabel(issue.state),
+    x + issueWidth,
+    rowY + 16,
+  );
+  ctx.textAlign = "left";
+
+  const titleLines = issueTitleLines(ctx, issue, contentWidth);
+  titleLines.forEach((line, lineIndex) => {
+    setFont(ctx, true, 27);
+    ctx.fillStyle = INK;
+    ctx.fillText(line, contentX, rowY + 58 + lineIndex * 40);
+  });
+  const issueBottom = rowY + 58 + Math.max(0, titleLines.length - 1) * 40 + 26;
+  const issueImages = issue.photos.map((photo) => decoded.get(photo.fileId));
+  return await drawIssueEvidence(
+    ctx,
+    issue,
+    issueImages,
+    contentX,
+    issueBottom,
+    contentWidth,
+    allowSideBySide,
+  );
+}
+
+function drawIssueHeader(
+  ctx: SKRSContext2D,
+  data: DailyReportPosterData,
+  layout: PosterHeaderLayout,
+): void {
+  const totalPhotoCount = photoCount(data.issues);
+  ctx.fillStyle = "#0B0E0E";
+  ctx.fillRect(0, 0, WIDTH, layout.headerHeight);
+  ctx.fillStyle = ORANGE;
+  ctx.fillRect(0, 0, WIDTH, 8);
+
+  setFont(ctx, true, 13);
+  const brandWidth = drawSpaced(ctx, "LIBIAOLINK", MARGIN, 32, 3.2, ORANGE, "left");
+  setFont(ctx, false, 12);
+  drawSpaced(ctx, "/ SITE ISSUE BRIEF", MARGIN + brandWidth + 16, 32, 1.8, MUTED_LIGHT, "left");
+  setFont(ctx, false, 11);
+  drawSpaced(
+    ctx,
+    "ISSUE LOG / " + data.reportDate.replaceAll("-", "."),
+    WIDTH - MARGIN,
+    32,
+    1.6,
+    MUTED_LIGHT,
+    "right",
+  );
+
+  setFont(ctx, true, 48);
+  ctx.fillStyle = WHITE;
+  ctx.fillText("现场问题专报", MARGIN, 88);
+  setFont(ctx, false, 12.5);
+  drawSpaced(ctx, "FIELD ISSUE REPORT", MARGIN, 111, 3.2, "#BEAAA1", "left");
+
+  ctx.textAlign = "right";
+  setFont(ctx, false, 10.5);
+  drawSpaced(ctx, "OPEN ISSUES", WIDTH - MARGIN, 65, 2.2, MUTED_LIGHT, "right");
+  setFont(ctx, true, 68);
+  ctx.fillStyle = ORANGE;
+  ctx.fillText(pad2(data.issues.length), WIDTH - MARGIN, 127);
+  setFont(ctx, false, 11);
+  drawSpaced(ctx, pad2(totalPhotoCount) + " PHOTOS", WIDTH - MARGIN, 147, 2.1, MUTED_LIGHT, "right");
+  ctx.textAlign = "left";
+
+  setFont(ctx, false, 10.5);
+  drawSpaced(ctx, "PROJECT / 项目", MARGIN, 151, 1.8, ORANGE, "left");
+  layout.projectLines.forEach((line, index) => {
+    setFont(ctx, true, 34);
+    ctx.fillStyle = WHITE;
+    ctx.fillText(line, MARGIN, 184 + index * 40);
+  });
+
+  ctx.fillStyle = ORANGE;
+  ctx.fillRect(0, layout.headerHeight - 7, WIDTH, 7);
+}
+
+/** 现场问题专报：全部问题、处理记录和问题附图；无问题时 service 不发送此图。 */
+export async function renderDailyReportIssuePoster(
+  data: DailyReportPosterData,
+  images: ReadonlyMap<string, Buffer> = new Map(),
+  fonts?: DailyReportPosterFontPaths,
+): Promise<Buffer> {
+  const canvasApi = await loadCanvasApi();
+  ensureFonts(canvasApi.GlobalFonts, fonts);
+
+  const measureCanvas = canvasApi.createCanvas(WIDTH, 1);
+  const measureContext = measureCanvas.getContext("2d");
+  const header = layoutPosterHeader(measureContext, data);
+  const meta = layoutMetaBand(measureContext, data, {
+    accent: ORANGE,
+    darkCard: "#0B0E0E",
+    headcountLabel: "ISSUE PHOTOS / 问题附图",
+    headcountValue: String(photoCount(data.issues)) + " 张",
+  });
+  const issueGap = 52;
+  const issueColumns = data.issues.length === 1 ? 1 : 2;
+  const issueWidth = issueColumns === 1 ? CONTENT_WIDTH : (CONTENT_WIDTH - issueGap) / 2;
+  const contentWidth = issueWidth - 100;
+  let y = header.headerHeight + 34 + meta.height + 48;
+  if (data.issues.length === 0) {
+    y += 190 + 46;
+  } else {
+    for (let rowStart = 0; rowStart < data.issues.length; rowStart += issueColumns) {
+      let rowHeight = 0;
+      for (let column = 0; column < issueColumns; column += 1) {
+        const issue = data.issues[rowStart + column];
+        if (issue === undefined) {
+          break;
+        }
+        rowHeight = Math.max(
+          rowHeight,
+          measureIssueBlockHeight(measureContext, issue, contentWidth, issueColumns === 1),
+        );
+      }
+      y += rowHeight + (rowStart + issueColumns < data.issues.length ? 58 : 0);
+    }
+    y += 46;
+  }
+  const finalHeight = Math.ceil(y);
+
+  const canvas = canvasApi.createCanvas(WIDTH, finalHeight);
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = PAPER;
+  ctx.fillRect(0, 0, WIDTH, finalHeight);
+  drawIssueHeader(ctx, data, header);
+
+  y = header.headerHeight + 34;
+  y += drawMetaBand(ctx, data, y, {
+    accent: ORANGE,
+    darkCard: "#0B0E0E",
+    headcountLabel: "ISSUE PHOTOS / 问题附图",
+    headcountValue: String(photoCount(data.issues)) + " 张",
+  }) + 48;
+
+  if (data.issues.length === 0) {
+    ctx.fillStyle = "#E8E1D9";
+    ctx.fillRect(MARGIN, y, CONTENT_WIDTH, 190);
+    setFont(ctx, true, 24);
+    ctx.fillStyle = INK;
+    ctx.fillText("本日报未关联现场问题", MARGIN + 28, y + 86);
+    setFont(ctx, false, 15);
+    ctx.fillStyle = MUTED;
+    ctx.fillText("问题处理进展以 LibiaoLink 系统记录为准。", MARGIN + 28, y + 121);
+  } else {
+    const allIssuePhotos = data.issues.flatMap((issue) => issue.photos);
+    const decoded = await preparePhotoImages(canvasApi, allIssuePhotos, images);
+    for (let rowStart = 0; rowStart < data.issues.length; rowStart += issueColumns) {
+      const rowY = y;
+      let rowBottom = rowY;
+      for (let column = 0; column < issueColumns; column += 1) {
+        const index = rowStart + column;
+        const issue = data.issues[index];
+        if (issue === undefined) {
+          break;
+        }
+        const x = MARGIN + column * (issueWidth + issueGap);
+        const bottom = await drawIssueBlock(
+          ctx,
+          issue,
+          index,
+          decoded,
+          x,
+          rowY,
+          issueWidth,
+          issueColumns === 1,
+        );
+        rowBottom = Math.max(rowBottom, bottom);
+      }
+      y = rowBottom + (rowStart + issueColumns < data.issues.length ? 58 : 0);
+    }
+  }
+
+  drawBottomStripe(ctx, finalHeight, ORANGE);
   return canvas.toBuffer("image/png");
 }
