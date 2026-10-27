@@ -1,5 +1,13 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
+> **2026-10-27 16:21 Push 544 / PR [#674](https://github.com/PanXing-Libiao/LibiaoLink/pull/674) 正式发布（main@ef03d594）**：正式环境 `https://pm.libiaorobot.com`（`10.1.103.44`）发布成员目录去角色、任务 / 文件定档权限、项目名称标签与导入说明 PDF 同源浮层。PR CI [40470495612](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40470495612) 5 / 5，squash `ef03d594fe8d10c9dbfedd930493a348e9617aca`；main CI [40471640931](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40471640931) 5 / 5。
+>
+> 发布 / 备份：修正发布包 `output/release-ef03d594-20261027-1629.tar.gz`（16,879,916 B · SHA-256 `de3cf0421bc4b9dd2f36c170680014747643ecf2c651fd14ee8e0f2849acf667`）上传后远端哈希一致；staging 1,165 文件通过 `SHA256SUMS`（前端 386 / server/dist 610 / server/scripts 71 / shared/dist 93 / shared/generated 2）。部署前备份 `/srv/data/backups/before-push544-ef03d594-20261027-1616/`：代码 16,890,734 B（`39c4f56a…`）、manifest 1,709 B（`f8ba190b…`）、`server.env` / `deploy.env`、数据库 dump 509,046 B（`afcb15c4…` · 617 项可读）。
+>
+> 部署 / 验收：覆盖产物并更新 `RELEASE_MANIFEST.json` = `prod-20261027-ef03d594`；API / worker 强制重建，7 / 7 容器 healthy、重启计数 0、启动日志无 error / fatal；`/healthz` 200、`/readyz` 200 且四探针全 true。公网 `index.html` 502 B / `36594f1e…`、JS 1,949,650 B / `7bbaa8dd…`、CSS 169,323 B / `285d3f01…`、PDF 189,881 B / `b54d9171…` 均与本地逐字节一致；PDF 200、无 `X-Frame-Options: DENY`、CSP 为仅本站可嵌入、`Content-Disposition: inline`。真实 Chrome 验证导入说明浮层正常渲染 2 页 PDF、项目编辑弹窗显示「项目名称」、成员多选仅姓名 / 拼音且无演示页脚。
+>
+> 域名漂移处置：仓库配置原先只声明 `test-pm.libiaorobot.com`，首次覆盖正式机时公网短暂落入 443 兜底（444）；已立即从上述备份恢复并确认 200。随后最终配置在 443 / 9443 同时声明正式 / 测试域名，80 跳转走显式 allowlist，未知 Host 直接 444；正式机配置 SHA-256 = `e1bd7264…802eba`，与修正发布包一致，回灌 PR 待合入。
+
 > **2026-10-27 15:45 公司测试机同步至正式版 `be0e2696`（Push 542）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）由 `main@0d790c32` 同步到 `main@be0e2696`，补齐 21 个提交（10 个功能 / 修复提交），并对齐正式机已验证产物：前端 386 文件、`server/dist` 610 文件、`server/scripts` 71 文件、`shared/dist` 93 文件、`shared/generated` 2 文件，服务端四棵产物树哈希与正式机一致。新增 `RELEASE_MANIFEST.json` = `test-20261027-be0e2696`，target `test-pm.libiaorobot.com / 10.1.104.44`。
 >
 > 迁移 / 备份：停 API / worker 后执行 `0075_group_access_scope_permissions.sql`（37 ms；`schema_migrations` 73 → 74，MAX `0075`；部门范围 2 行、个人范围 7 行）。部署前备份 `/srv/data/backups/before-test-sync-be0e2696-20261027-1540/`：`code-before.tar.gz`（16,953,880 B · SHA-256 `0a94a7d4…`）、`server.env.before`（3,264 B · `9c3f8a57…`）、`libiaolink-before.dump`（1,152,529 B · `f5d94706…` · `pg_restore -l` 620 项）。原测试机无 release manifest，已登记 `MANIFEST_ABSENT`。
