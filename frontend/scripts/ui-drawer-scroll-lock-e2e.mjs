@@ -170,7 +170,7 @@ function metrics() {
   }
   var panel = document.querySelector("aside[role=dialog]");
   var rect = function (el) { if (el === null || el === undefined) { return null; } var b = el.getBoundingClientRect(); return { left: Math.round(b.left), right: Math.round(b.right), width: Math.round(b.width), top: Math.round(b.top), height: Math.round(b.height) }; };
-  return { innerW: window.innerWidth, clientW: doc.clientWidth, sb: window.innerWidth - doc.clientWidth, scrollH: doc.scrollHeight, clientH: doc.clientHeight, scrollable: doc.scrollHeight > doc.clientHeight, scrollY: window.scrollY, bodyOverflow: document.body.style.overflow, bodyPaddingRight: document.body.style.paddingRight, board: rect(board), head: rect(head), row: rect(row), panel: rect(panel) };
+  return { innerW: window.innerWidth, innerH: window.innerHeight, clientW: doc.clientWidth, sb: window.innerWidth - doc.clientWidth, scrollH: doc.scrollHeight, clientH: doc.clientHeight, scrollable: doc.scrollHeight > doc.clientHeight, scrollY: window.scrollY, bodyOverflow: document.body.style.overflow, bodyPaddingRight: document.body.style.paddingRight, board: rect(board), head: rect(head), row: rect(row), panel: rect(panel) };
 }
 function drawerOpen() { return document.querySelector("aside[role=dialog]") !== null; }
 function closePoint() { var el = document.querySelector("[aria-label=关闭任务详情]"); if (el === null) { return null; } var b = el.getBoundingClientRect(); return { x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2) }; }
@@ -206,7 +206,7 @@ check("③ 打开时按滚动条实测宽度补了等宽内边距", opened.bodyP
 check("④ 打开后表格宽度逐像素不变（不再被撑开 15px）", opened.board.width === before.board.width && opened.board.left === before.board.left, "宽 " + String(before.board.width) + " -> " + String(opened.board.width) + "; 左 " + String(before.board.left) + " -> " + String(opened.board.left));
 check("⑤ 打开后任务行左边缘 / 宽度不变", opened.row.left === before.row.left && opened.row.width === before.row.width, "左 " + String(before.row.left) + " -> " + String(opened.row.left) + "; 宽 " + String(before.row.width) + " -> " + String(opened.row.width));
 check("⑥ 打开后阶段分组头宽度不变", opened.head.width === before.head.width, String(before.head.width) + " -> " + String(opened.head.width));
-check("⑦ 抽屉面板仍贴视口右边（浮层按视口定位，不受内边距影响）", opened.panel !== null && opened.panel !== undefined && Math.abs(opened.panel.right - opened.innerW) <= 1, "panel.right=" + (opened.panel ? String(opened.panel.right) : "无面板") + " innerW=" + String(opened.innerW));
+check("⑦ 抽屉面板居中、增宽且低于视口（2026-10-27 布局）", opened.panel !== null && opened.panel !== undefined && Math.abs((opened.panel.left + opened.panel.width / 2) - opened.innerW / 2) <= 2 && opened.panel.width >= 900 && opened.panel.height <= opened.innerH - 32, "panel=" + JSON.stringify(opened.panel) + " inner=" + String(opened.innerW) + "x" + String(opened.innerH));
 
 // ---------- ② 关闭抽屉：表格不许抖回来 ----------
 const close = await ev(CLOSE);

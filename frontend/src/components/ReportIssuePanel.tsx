@@ -26,7 +26,7 @@ import {
   type ReportWriteInput,
 } from "../reportApi";
 import { ApiError } from "../api";
-import { uploadPhoto, usePhotoUrl } from "../fileApi";
+import { recordPreviewView, uploadPhoto, usePhotoUrl } from "../fileApi";
 import { stageKeyOfName } from "../taskApi";
 import { PROJECT_STAGES } from "../data/projects";
 import { lockBodyScroll } from "../scrollLock";
@@ -911,6 +911,7 @@ function PhotoTile({ item, index, isLarge, isThumb, editingAt, editingText, edit
             // Push 217 续④：看板卡片整卡可点（开抽屉），缩略图的预览点击若冒泡 = 「预览层 + 抽屉」同时打开、
             // 两层预览叠着（业务截图）；这里止住冒泡，点图只出预览层。
             event.stopPropagation();
+            void recordPreviewView(item.fileId);
             onPreview(url, item.name);
           }}
           className="shrink-0 rounded-md transition hover:opacity-80"

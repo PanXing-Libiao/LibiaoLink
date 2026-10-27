@@ -33,6 +33,7 @@ import {
   fetchProjectFileLibrary,
   previewKindOf,
   purgeFile,
+  recordPreviewView,
   restoreFile,
   triggerDownload,
   type FileLibraryItem,
@@ -369,6 +370,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
       setNotice({ kind: "error", text: outcome.reason ?? t("drawer.preview.unavailable") });
       return;
     }
+    void recordPreviewView(file.id);
     const kind = previewKindOf(file.name) ?? "image";
     if (outcome.kind === "viewer") {
       setPreview({ pane: { mode: "viewer", viewer: outcome.viewer }, name: file.name, kind, fileId: file.id, nonce: 0 });

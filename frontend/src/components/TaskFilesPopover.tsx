@@ -1,6 +1,6 @@
 import { useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { ensurePreviewOutcome, fetchDownloadUrl, previewKindOf, triggerDownload, type FilePreviewKind, type PreviewViewerConfig, type TaskFileRef } from "../fileApi";
+import { ensurePreviewOutcome, fetchDownloadUrl, previewKindOf, recordPreviewView, triggerDownload, type FilePreviewKind, type PreviewViewerConfig, type TaskFileRef } from "../fileApi";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { RowDeleteButton } from "./RowDeleteButton";
@@ -105,6 +105,7 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
       setPreviewNote(outcome.reason ?? t("drawer.preview.unavailable"));
       return;
     }
+    void recordPreviewView(fileId);
     const kind = previewKindOf(name) ?? "image";
     setPreview(outcome.kind === "viewer"
       ? { pane: { mode: "viewer", viewer: outcome.viewer }, name, kind, fileId, nonce: 0 }

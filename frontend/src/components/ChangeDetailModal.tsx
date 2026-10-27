@@ -8,6 +8,7 @@ import {
   fetchChangeRequest,
   fetchDownloadUrl,
   previewKindOf,
+  recordPreviewView,
   triggerDownload,
   type ChangeRequestDetail,
   type FilePreviewKind,
@@ -145,6 +146,7 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
       setPreviewNote(outcome.reason ?? t("drawer.preview.unavailable"));
       return;
     }
+    void recordPreviewView(detail.file.id, detail.versionId);
     const fileName = detail.file.name;
     setPreview((previous) => ({
       pane: outcome.kind === "viewer" ? { mode: "viewer", viewer: outcome.viewer } : { mode: "url", url: outcome.url },

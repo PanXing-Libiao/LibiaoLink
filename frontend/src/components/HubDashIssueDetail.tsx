@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { DailyReport, Issue, ReportPhoto } from "../data/reports";
-import { usePhotoUrl } from "../fileApi";
+import { recordPreviewView, usePhotoUrl } from "../fileApi";
 import { fieldText, useLocale, useT } from "../i18n";
 import { ISSUE_CATEGORY_CLASS } from "./ReportIssuePanel";
 import { TableScrollbar } from "./TableScrollbar";
@@ -79,7 +79,7 @@ function PhotoTile({ photo, onPreview }: { readonly photo: ReportPhoto; readonly
       data-issue-photo={photo.name}
       title={photo.name}
       aria-label={t("ws.previewNamed", { name: photo.name })}
-      onClick={() => { onPreview(url, photo.name); }}
+      onClick={() => { void recordPreviewView(photo.fileId); onPreview(url, photo.name); }}
       className="shrink-0 rounded-md transition hover:opacity-80"
     >
       <img src={url} alt={photo.name} className="h-11 w-14 rounded-md border border-zinc-200 object-cover" />
