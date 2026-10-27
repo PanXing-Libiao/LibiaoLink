@@ -1,43 +1,29 @@
-#!/usr/bin/env node
 /**
- * LibiaoLink 前端 · 回放：企微单聊绑定（D5 首登引导弹窗 + 设置页补绑 / 解绑 + 未绑定提示 · Push 250）
+ * LibiaoLink 前端 · 回放：企微单聊绑定（站内信未绑定红点 + 设置页绑定 / 解绑 · Push 250 / 540）
  *
- * 业务口径（2026-10-16）：「在点击用户右上角头像后的列表中添加一个设置页」+ 项目组定案：D5 首登引导弹窗
- * （取码 → 在与机器人的单聊里发码 · **可跳过**）+ D6 设置页绑定态（掩码 + 时刻）/ 解绑 + 未绑定提示；
- * D4 未绑定降级话术终稿 =「当前用户未绑定企业微信，请前往设置补绑」。
+ * 最新业务口径（2026-10-27）：取消登录后自动浮卡；未绑定时顶栏「站内信」显示无数字红点，
+ * 点开后由弹窗底部「当前用户未绑定企业微信」+「前往企微绑定」承接，绑定 / 解绑后红点即时收口。
+ *
  * 契约 = shared/src/modules/notifications.ts 末段「企业微信单聊绑定」；口径 = docs/M5-03-5-绑定码方案设计口径(企微单聊).md
  * v1.4 §3 / §6 / §9 / §10（D2 · D3 · D5 · D6）。
  *
  * 本脚本用真机浏览器（无头 Chrome + CDP）验：
- *   ① 首登绑定提醒：未绑定 + 本机未跳过 → 右侧垂直居中半透明卡出现（非模态 / 无遮罩 / 标题与两步指引 / 420ms 轻弹入场）；
- *      10 秒自动收起且不落跳过位；刷新再次提醒；绑定行落库后自动切「已绑定」→ 关闭 → 浅绿「绑定成功」2 秒；
- *      关闭 X → 落跳过位、刷新不再显示且不误弹成功提示
- *      （跳过位按账号分记 —— 账号键 = `/auth/me` 的 `user.id`（= 库内 `casdoor_id`）· 退出登录清除）；
- *   ② 头像菜单首项 = 「企微绑定」（文案 + `#/settings` 落点），点它 → 地址到 `#/settings`、设置页渲染（`data-settings`）；
- *   ③ 未绑定态：设置页出与提醒同款标题 / 副标题 / 两步指引 / 复制机器人链接；点「获取绑定码」→ 6 位码 + 倒计时递减 + 库内落 pending 行；
- *   ③-诊断（Push 255）：机器人诊断块显示 server/.env 的 bot_id / secret（默认掩码，点「显示」切明文）+ 最近回调统计；
- *   ③b 复制通道（Push 253）：点「复制」→ 成功提示（`navigator.clipboard`，非安全上下文回退 `execCommand`）；
- *      码面可全选（`data-wecom-binding-code-text` + `select-all`）；
- *   ④ 频率口径（D3 修订 v1.8）：连取 5 次（每次作废旧码 —— 库内 5 行 = 4 expired + 1 pending）→ 第 6 次 429：
- *      按钮置灰 +「N 分 N 秒后可再次获取」倒计时（`details[].meta.retryAt`，最长 ≤ 3 分钟）、库内不增行；
- *   ④b 刷新不丢状态（Push 254 · 读面回填）：取码后刷新 → 码面与倒计时按读面 `bindingCode` 原样恢复；
- *      429 后刷新 → 罚时按读面 `retryAt` 恢复（按钮仍置灰 + 倒计时续算）—— 码失效提醒 toast 需等满 TTL，
- *      回放不覆盖（由码面文案 + 单元口径承担）；
- *   ⑤ 已绑定（夹具落绑定行）：**不刷新页面**、靠面板 5 秒轮询自动切「已绑定」（Push 253 修「企微已回执绑定成功、
- *      设置页仍显示未绑定」）；设置页「已绑定」= 掩码末 4 位 + 绑定时间，页面里不出现完整 open_userid（§9 最小暴露）；
- *      已绑定 = 不弹引导（清掉本机跳过位后刷新仍不弹）；
- *      消息开关（v2.1）：绑定后默认开启 → 关闭落库 → 刷新仍关闭 → 重新开启落库（关闭仅停外发、不解除绑定）；
- *   ⑥ 解绑：二次确认（取消 = 仍是已绑定、确认 = 回未绑定）+ 库内绑定行去址（`bound_at` / `user_id` 置空、行仍在）
- *      + `audit_logs` 恰一条（objectType user / action delete / summary 与 changes 只带掩码）；
- *   ⑦ 解绑后提醒恢复（未绑定 + 未跳过 → 再显示）；手点「刷新绑定状态」绑定成功同样先切「已绑定」→ 关闭 →
- *      浅绿「绑定成功」；随后点「前往设置」→ 地址到 `#/settings`；
- *   ⑧ 未绑定提示：站内信弹窗底部「当前用户未绑定企业微信」+「前往设置补绑」→ 点它落 `#/settings`；
+ *   ① 未绑定：登录后不出现任何企微绑定浮卡，顶栏站内信出现无数字红点；
+ *   ② 头像菜单「企微绑定」→ #/settings；设置页标题 / 步骤 / 复制机器人链接；
+ *   ③ 未绑定态取码：6 位码 + 倒计时递减 + 库内 pending 行；诊断块与复制通道回放；
+ *   ④ 频率口径（D3 修订 v1.8）：连取 5 次 → 第 6 次 429：按钮置灰 + 罚时倒计时，库内不增行；
+ *   ④b 刷新不丢取码 / 罚时状态（读面回填）；
+ *   ⑤ 已绑定夹具：面板 5 秒轮询切「已绑定」、掩码 + 绑定时间、页面不出现完整 open_userid、
+ *      顶栏不再显示绑定提示红点；消息开关默认开启且可关闭 / 恢复；
+ *   ⑥ 解绑：二次确认 + 库内绑定行去址 + 操作记录恰一条且只带掩码；顶栏绑定红点恢复；
+ *   ⑦ 设置页手点「刷新绑定状态」读入绑定夹具后：面板切「已绑定」+ 顶栏红点消失；移除夹具后恢复；
+ *   ⑧ 未绑定提示：站内信弹窗底部「当前用户未绑定企业微信」+「前往设置补绑」→ 点它落 #/settings；
  *   ⑨ 控制台零报错；跑完撤销会话 / 清绑定码行 / 清绑定夹具行
  *      （audit_logs 只读留痕 —— api 角色无 DELETE 权，同 m6-stakeholder 先例，不算残留）。
  *
  * 前置（三件都在本机跑着）：
  *   1. 前端 dev：cd frontend && npm run dev（默认 3000）
- *   2. api：cd server && npm run start:api（默认 3001，需先 npm run build；本刀含消息开关接口）
+ *   2. api：cd server && npm run start:api（默认 3001，需先 npm run build）
  *   3. 数据库：本地沙箱 PG
  *   4. 本机装了 Chrome（脚本 headless 起一个调试实例；路径可用 CHROME_PATH 覆盖）
  *
@@ -45,9 +31,9 @@
  *   可覆盖的环境变量：FRONTEND_BASE / DATABASE_URL / CHROME_PATH / CDP_PORT / REPLAY_USER / PG_MODULE / SHOT_DIR / WECOM_BOT_ID
  *
  * 夹具：一条临时会话（跑完撤销）+ 一条绑定行（跑完清掉）+ 绑定码行走真实取码接口（跑完清掉）。
- * 环境限制：本地沙箱没有内网翻译引擎 → 页面自动翻译的 `POST /api/v1/translate` 会 500（既有环境限制，与本刀无关），
+ * 环境限制：本地沙箱没有内网翻译引擎 → 页面自动翻译的 POST /api/v1/translate 会 500（既有环境限制，与本刀无关），
  * 断言里按 URL 放行这一类；CDP 端口默认取系统空闲端口并杀整棵浏览器进程树（残留实例会被下一轮误连）。
- * 机器人维度（bot_id）默认读 `server/.env` 的 WECOM_BOT_ID —— 绑定态判定与解绑都按当前机器人成立（口径 §8）。
+ * 机器人维度（bot_id）默认读 server/.env 的 WECOM_BOT_ID —— 绑定态判定与解绑都按当前机器人成立（口径 §8）。
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -68,7 +54,7 @@ const EXPLICIT_CDP_PORT = process.env.CDP_PORT === undefined || process.env.CDP_
 const DB = process.env.DATABASE_URL ?? "postgres://libiaolink_api@127.0.0.1:5433/libiaolink";
 const REPLAY_USER = process.env.REPLAY_USER ?? "px-replay";
 const SHOTS = process.env.SHOT_DIR ?? join(tmpdir(), "px-wecom-binding-shots");
-const GUIDE_KEY = "libiaolink.wecom.binding.guide.v1";
+
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
 const j = (value) => JSON.stringify(value);
 const checks = [];
@@ -100,7 +86,7 @@ if (BOT_ID === "") {
 /**
  * CDP 端口：默认取系统空闲端口。
  * 踩坑（本刀实测）：固定端口 + 无头浏览器残留（Edge 的 launcher 退出后子进程仍在监听固定端口）会让下一轮直接连到
- * **上一轮那个实例**（profile 里已存跳过位 / 已改绑定态）→ 首登引导等断言会假失败。故：默认空闲端口 + 显式端口占用即报错退出。
+ * **上一轮那个实例**（profile 里已存绑定态）→ 红点 / 设置页断言会假失败。故：默认空闲端口 + 显式端口占用即报错退出。
  */
 async function pickCdpPort() {
   if (EXPLICIT_CDP_PORT !== null) { return EXPLICIT_CDP_PORT; }
@@ -289,67 +275,26 @@ async function click(selector) {
 const hashOf = () => ev("String(window.location.hash)");
 const panelState = (scope) => "(function(){var root=" + (scope === undefined ? "document" : "document.querySelector(" + j(scope) + ")") + ";if(root===null){return null;}var el=root.querySelector(" + j("[data-wecom-binding]") + ");return el===null?null:el.getAttribute(" + j("data-wecom-binding") + ");})()";
 const textOf = (selector) => "(function(){var el=document.querySelector(" + j(selector) + ");return el===null?null:String(el.textContent||" + j("") + ").trim();})()";
-const successToastExpr = "(function(){var el=document.querySelector(" + j("[data-toast=ok]") + ");if(el===null){return null;}var r=el.getBoundingClientRect();var copy=el.children[1];var cs=getComputedStyle(copy);return {text:String(el.textContent||" + j("") + ").trim(),width:Math.round(r.width),fontSize:parseFloat(cs.fontSize),fontWeight:Number(cs.fontWeight),cls:String(el.className||" + j("") + ")};})()";
+const inboxBindingUiExpr = "(function(){var trigger=document.querySelector(" + j("[data-inbox-trigger]") + ");if(trigger===null){return null;}var badge=trigger.querySelector(" + j(".inbox-badge") + ");var dot=badge===null?null:badge.querySelector(" + j(".inbox-badge-dot") + ");return {hint:trigger.getAttribute(" + j("data-inbox-binding-hint") + "),open:badge===null?null:badge.getAttribute(" + j("data-open") + "),kind:badge===null?null:badge.getAttribute(" + j("data-kind") + "),shape:dot===null?null:dot.getAttribute(" + j("data-shape") + "),text:dot===null?null:String(dot.textContent||" + j("") + ").trim()};})()";
 const insertBindingFixture = () => db.query("insert into wecom_aibot_dm_activations (bot_id, wecom_userid, user_id, first_activated_at, last_message_at, bound_at, created_at, updated_at) values ($1, $2, $3, now() - interval '2 hours', now() - interval '2 hours', now() - interval '90 minutes', now() - interval '2 hours', now() - interval '90 minutes') on conflict (bot_id, wecom_userid) do update set user_id = excluded.user_id, last_message_at = excluded.last_message_at, bound_at = excluded.bound_at, messages_enabled = true, updated_at = excluded.updated_at", [BOT_ID, openUserid, userRow.id]);
 const removeBindingFixture = () => db.query("delete from wecom_aibot_dm_activations where bot_id = $1 and wecom_userid = $2", [BOT_ID, openUserid]);
 
 await page.send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 1000, deviceScaleFactor: 1, mobile: false });
 const shots = [];
 
-// ── ① 首登右侧悬浮提醒（未绑定 + 本机未跳过 → 显示；10 秒自动收起；关闭 X 落跳过位）──────────────
+// ── ① 未绑定：不自动浮卡；站内信图标显示无数字绑定红点 ───────────────────────────────────────
 await goto("#/projects", "[data-topnav]");
-await waitFor(exists("[data-wecom-binding-guide]"), 15000);
-await sleep(500);
-check("首登绑定提醒出现（未绑定 + 本机未跳过 · 口径 §10 D5）", (await ev(exists("[data-wecom-binding-guide]"))) === true);
-const guideStateExpr = "(function(){var el=document.querySelector(" + j("[data-wecom-binding-guide]") + ");if(el===null){return null;}var r=el.getBoundingClientRect();var cs=window.getComputedStyle(el);var copy=el.querySelector(" + j("[data-wecom-binding-guide-copy-link]") + ");var close=el.querySelector(" + j("[data-wecom-binding-guide-skip]") + ");var go=el.querySelector(" + j("[data-wecom-binding-guide-goto]") + ");var panel=el.querySelector(" + j("[data-wecom-binding]") + ");var outside=document.elementFromPoint(5,5);return {role:el.getAttribute(" + j("role") + "),modal:el.getAttribute(" + j("aria-modal") + "),position:cs.position,animationName:cs.animationName,animationDuration:cs.animationDuration,rightGap:Math.round(window.innerWidth-r.right),centerGap:Math.round(Math.abs((r.top+r.bottom)/2-window.innerHeight/2)),width:Math.round(r.width),background:String(cs.backgroundColor),backdrop:String(cs.backdropFilter||cs.webkitBackdropFilter||" + j("") + "),text:String(el.textContent||" + j("") + ").trim(),copyText:copy===null?null:String(copy.textContent||" + j("") + ").trim(),closeLabel:close===null?null:close.getAttribute(" + j("aria-label") + "),goText:go===null?null:String(go.textContent||" + j("") + ").trim(),panel:panel===null?null:panel.getAttribute(" + j("data-wecom-binding") + "),overlayHit:outside===null?null:(el.contains(outside)?" + j("guide") + ":" + j("page") + ")};})()";
-const guideState = await ev(guideStateExpr);
-check("引导为非模态 region（无 aria-modal）且内含未绑定面板", guideState !== null && guideState.role === "region" && guideState.modal === null && guideState.panel === "unbound", JSON.stringify(guideState));
-check("右侧垂直居中悬浮（fixed、右边距 16–32px、中心偏差 ≤ 3px）", guideState !== null && guideState.position === "fixed" && guideState.rightGap >= 16 && guideState.rightGap <= 32 && guideState.centerGap <= 3 && guideState.width <= 400, JSON.stringify(guideState === null ? null : {rightGap:guideState.rightGap,centerGap:guideState.centerGap,width:guideState.width}));
-check("登录提醒有弹出效果（ll-guide-pop-in · 420ms）", guideState !== null && String(guideState.animationName).indexOf("ll-guide-pop-in") >= 0 && guideState.animationDuration === "0.42s", JSON.stringify(guideState === null ? null : {name:guideState.animationName,duration:guideState.animationDuration}));
-check("半透明磨砂材质（非纯白背景 + backdrop blur）", guideState !== null && guideState.background !== "rgb(255, 255, 255)" && String(guideState.backdrop).indexOf("blur") >= 0, guideState === null ? "null" : JSON.stringify({background:guideState.background,backdrop:guideState.backdrop}));
-check("页面不被遮罩拦截（左上角命中页面，而非引导卡）", guideState !== null && guideState.overlayHit === "page", guideState === null ? "null" : guideState.overlayHit);
-const guideText = String(guideState === null ? "" : guideState.text);
-check("引导文案 = 标题「绑定企微」+ 副标题「帮助你及时收到/跟进相关任务」+ 取码指引", guideText.indexOf("绑定企微") >= 0 && guideText.indexOf("帮助你及时收到/跟进相关任务") >= 0 && guideText.indexOf("获取绑定码") >= 0 && guideText.indexOf("企微任意对话框发送给机器人") >= 0, guideText.slice(0, 200));
-check("机器人链接不直接展示，只提供「复制机器人链接」按钮", guideState !== null && guideState.copyText === "复制机器人链接" && guideText.indexOf("work.weixin.qq.com") < 0, JSON.stringify(guideState === null ? null : {copyText:guideState.copyText,hasUrl:guideText.indexOf("work.weixin.qq.com") >= 0}));
-check("右上关闭 X + 「前往企微绑定」入口", guideState !== null && guideState.closeLabel === "关闭" && guideState.goText === "前往企微绑定", JSON.stringify(guideState === null ? null : {closeLabel:guideState.closeLabel,goText:guideState.goText}));
-check("引导内不再显示重复的「未绑定」状态行与轮询提示", guideText.indexOf("当前用户未绑定企业微信，请前往设置补绑。") < 0 && guideText.indexOf("每 5 秒检查一次") < 0, guideText.slice(0, 220));
-shots.push(await shot("wecom-guide-1"));
-await click("[data-wecom-binding-guide-copy-link]");
-const linkCopyToast = await waitFor("(function(){var el=document.querySelector(" + j("[data-toast]") + ");return el!==null && String(el.textContent||" + j("") + ").indexOf(" + j("机器人链接已复制") + ") >= 0;})()", 6000);
-check("点「复制机器人链接」→ 成功提示（链接本体不出现在页面文案）", linkCopyToast === true);
-const autoDismissMs = Number(await ev("(function(){var el=document.querySelector(" + j("[data-wecom-binding-guide]") + ");return el===null?null:el.getAttribute(" + j("data-wecom-binding-guide-auto-dismiss") + ");})()"));
-check("自动收起时长 = 10 秒", autoDismissMs === 10000, String(autoDismissMs));
-const autoDismissed = await waitFor("document.querySelector(" + j("[data-wecom-binding-guide]") + ") === null", 12000);
-const storedAfterAutoDismiss = String(await ev("String(window.localStorage.getItem(" + j(GUIDE_KEY) + "))"));
-check("10 秒后自动消失、页面可继续用；自动消失不写跳过位", autoDismissed === true && (await ev(exists("[data-topnav]"))) === true && storedAfterAutoDismiss.indexOf(userRow.casdoor_id) < 0, storedAfterAutoDismiss);
-await reload("[data-topnav]");
-check("未绑定时刷新会再次提醒", (await waitFor(exists("[data-wecom-binding-guide]"), 12000)) === true);
-
-// ①a 自动轮询绑定成功（Push 260）：绑定行落库 → 卡片先切「已绑定」→ 关闭 → 白色顶部「绑定成功」2 秒
-await insertBindingFixture();
-const autoGuideBound = await waitFor(panelState("[data-wecom-binding-guide]") + " === " + j("bound"), 15000);
-const autoGuideClosed = await waitFor("document.querySelector(" + j("[data-wecom-binding-guide]") + ") === null", 4000);
-const autoGuideToast = await ev(successToastExpr);
-check("绑定行落库后不点刷新：卡片自动切「已绑定」", autoGuideBound === true, String(await ev(panelState("[data-wecom-binding-guide]"))));
+const initialBindingHintReady = await waitFor("(function(){var el=document.querySelector(" + j("[data-inbox-trigger]") + ");return el!==null && el.getAttribute(" + j("data-inbox-binding-hint") + ") === " + j("true") + ";})()", 15000);
+await sleep(1200);
+const initialGuideGone = await ev(exists("[data-wecom-binding-guide]"));
+const initialBindingUi = await ev(inboxBindingUiExpr);
+check("登录后不再自动弹出企微绑定浮卡", initialGuideGone === false);
 check(
-  "自动检测绑定后卡片关闭并弹白色顶部「绑定成功」",
-  autoGuideClosed === true && autoGuideToast !== null && String(autoGuideToast.text).indexOf("绑定成功") >= 0 && String(autoGuideToast.cls).indexOf("fixed") >= 0 && String(autoGuideToast.cls).indexOf("bg-white") >= 0 && String(autoGuideToast.cls).indexOf("rounded-[22px]") >= 0 && String(autoGuideToast.cls).indexOf("ll-toast-top") >= 0 && String(autoGuideToast.cls).indexOf("top-[max(1.25rem,env(safe-area-inset-top))]") >= 0 && String(autoGuideToast.cls).indexOf("w-fit") >= 0 && Number(autoGuideToast.width) > 0 && Number(autoGuideToast.width) < 480 && Number(autoGuideToast.fontSize) >= 16 && Number(autoGuideToast.fontWeight) >= 600,
-  JSON.stringify({ closed: autoGuideClosed, toast: autoGuideToast }),
+  "未绑定时站内信显示无数字绑定红点（若另有未读则保留未读数字角标）",
+  initialBindingHintReady === true && initialBindingUi !== null && initialBindingUi.hint === "true" && initialBindingUi.open === "true" && (initialBindingUi.kind === "binding" ? initialBindingUi.shape === "dot" && initialBindingUi.text === "" : initialBindingUi.kind === "unread" && initialBindingUi.shape === "count"),
+  JSON.stringify(initialBindingUi),
 );
-shots.push(await shot("wecom-guide-auto-bound-success-1a"));
-const autoGuideToastGone = await waitFor("document.querySelector(" + j("[data-toast=ok]") + ") === null", 3500);
-check("绑定成功提示短暂浮层按默认 2 秒消失", autoGuideToastGone === true);
-await removeBindingFixture();
-await ev("window.localStorage.removeItem(" + j(GUIDE_KEY) + ")");
-await reload("[data-wecom-binding-guide]");
-
-await click("[data-wecom-binding-guide-skip]");
-check("点关闭 X → 提醒关闭、页面可继续用且不误弹成功提示", (await waitFor("document.querySelector(" + j("[data-wecom-binding-guide]") + ") === null", 8000)) === true && (await ev(exists("[data-topnav]"))) === true && (await ev(exists("[data-toast=ok]"))) === false);
-const storedGuide = String(await ev("String(window.localStorage.getItem(" + j(GUIDE_KEY) + "))"));
-check("关闭 X 落本机跳过位（按账号分记 · 账号键 = /auth/me 的 user.id = 库内 casdoor_id）", storedGuide.indexOf(userRow.casdoor_id) >= 0, storedGuide);
-await reload("[data-topnav]");
-await sleep(2000);
-check("跳过位生效：刷新后不再显示引导", (await ev(exists("[data-wecom-binding-guide]"))) === false);
+shots.push(await shot("wecom-inbox-binding-dot-1"));
 
 // ── ② 头像菜单首项「企微绑定」→ #/settings ────────────────────────────────────────────────────────────────
 const avatarSel = "(function(){var list=document.querySelectorAll(" + j("button[aria-haspopup=menu]") + ");if(list.length===0){return null;}var el=list[list.length-1];var r=el.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),label:el.getAttribute(" + j("aria-label") + ")};})()";
@@ -372,7 +317,7 @@ await reload("[data-settings-card=wecom-binding]");
 check("设置页地址即状态：直接刷新 #/settings 仍在设置页", String(await hashOf()) === "#/settings" && (await ev(exists("[data-settings-card=wecom-binding]"))) === true, String(await hashOf()));
 
 // ── ③ 未绑定态 + 取码（6 位 / TTL 倒计时 / 库内 pending 行）────────────────────────────────────────────
-check("未绑定态：面板 = unbound（设置页改走与提醒同款引导）", (await ev(panelState())) === "unbound", String(await ev(panelState())));
+check("未绑定态：设置页面板 = unbound（共用两步绑定引导）", (await ev(panelState())) === "unbound", String(await ev(panelState())));
 const settingsGuideExpr = "(function(){var card=document.querySelector(" + j("[data-settings-card=wecom-binding]") + ");var intro=card===null?null:card.querySelector(" + j("[data-wecom-binding-guide-content]") + ");var steps=intro===null?[]:Array.prototype.slice.call(intro.querySelectorAll(" + j("[data-wecom-binding-step]") + "));var copy=card===null?null:card.querySelector(" + j("[data-wecom-binding-guide-copy-link]") + ");var notesGone=card===null?false:card.querySelector(" + j("[data-settings-binding-notes]") + ")===null;return {intro:intro!==null,text:intro===null?null:String(intro.textContent||" + j("") + ").trim(),steps:steps.length,tops:steps.map(function(el){return Math.round(el.getBoundingClientRect().top);}),copy:copy===null?null:String(copy.textContent||" + j("") + ").trim(),notesGone:notesGone};})()";
 const settingsGuide = await ev(settingsGuideExpr);
 check("设置页绑定卡与提醒同款：标题 / 副标题 / 2 条步骤 / 复制机器人链接，且无底部说明块", settingsGuide !== null && settingsGuide.intro === true && settingsGuide.steps === 2 && settingsGuide.tops[1] - settingsGuide.tops[0] > 10 && settingsGuide.copy === "复制机器人链接" && settingsGuide.notesGone === true && settingsGuide.text.indexOf("绑定企微") >= 0 && settingsGuide.text.indexOf("帮助你及时收到/跟进相关任务") >= 0 && settingsGuide.text.indexOf("work.weixin.qq.com") < 0 && settingsGuide.text.indexOf("当前用户未绑定企业微信") < 0, JSON.stringify(settingsGuide));
@@ -455,7 +400,7 @@ await insertBindingFixture();
 // ⑤-a 自动刷新（Push 253 修「企微已回执绑定成功、设置页仍显示未绑定」）：**不刷新页面** —— 面板 5 秒轮询自行切态
 const autoBound = await waitFor("(function(){var el=document.querySelector(" + j("[data-wecom-binding]") + ");return el!==null && el.getAttribute(" + j("data-wecom-binding") + ") === " + j("bound") + ";})()", 15000);
 check("绑定行落库后不刷新页面 → 面板轮询自动切「已绑定」（Push 253 修）", autoBound === true, String(await ev(panelState())));
-await ev("window.localStorage.removeItem(" + j(GUIDE_KEY) + ")");
+
 await reload("[data-wecom-binding]");
 const boundWaited = await waitFor("(function(){var el=document.querySelector(" + j("[data-wecom-binding]") + ");return el!==null && el.getAttribute(" + j("data-wecom-binding") + ") === " + j("bound") + ";})()", 12000);
 const boundText = String(await ev(textOf("[data-wecom-binding]")) ?? "");
@@ -476,7 +421,8 @@ const toggleOnRow = (await db.query("select messages_enabled from wecom_aibot_dm
 check("重新开启消息开关：界面开启 + 落库 messages_enabled=true", toggleOn === true && toggleOnRow !== undefined && toggleOnRow.messages_enabled === true, JSON.stringify(toggleOnRow));
 const pageHtml = String(await ev("String(document.body.innerHTML)"));
 check("最小暴露（§9）：设置页不出现完整密文 open_userid（只有掩码）", pageHtml.indexOf(openUserid) < 0 && pageHtml.indexOf(openUseridMasked) >= 0, "含掩码 " + String(pageHtml.indexOf(openUseridMasked) >= 0) + " / 含完整值 " + String(pageHtml.indexOf(openUserid) >= 0));
-check("已绑定 = 不弹引导（清掉本机跳过位后刷新仍不弹）", (await ev(exists("[data-wecom-binding-guide]"))) === false);
+const boundHintGone = await waitFor("(function(){var el=document.querySelector(" + j("[data-inbox-trigger]") + ");return el!==null && el.getAttribute(" + j("data-inbox-binding-hint") + ") === " + j("false") + ";})()", 15000);
+check("已绑定 = 顶栏站内信不再显示绑定提示红点，且始终无自动浮卡", boundHintGone === true && (await ev(exists("[data-wecom-binding-guide]"))) === false, JSON.stringify(await ev(inboxBindingUiExpr)));
 shots.push(await shot("wecom-bound-6"));
 
 // ── ⑥ 解绑：二次确认（取消不回退 / 确认回未绑定）+ 库内去址 + audit_logs 一条（只带掩码）───────────────
@@ -504,39 +450,33 @@ check("操作记录只带掩码（§9）：summary 含掩码、changes.from = �
 check("操作记录不含完整密文 open_userid（最小暴露）", auditRow !== undefined && JSON.stringify(auditRow).indexOf(openUserid) < 0, String(auditRow !== undefined && JSON.stringify(auditRow).indexOf(openUserid) >= 0));
 shots.push(await shot("wecom-unbound-after-8"));
 
-// ── ⑦ 解绑后引导恢复 + 手动刷新绑定成功 + 「前往设置」落 #/settings ────────────────────────────────
+// ── ⑦ 解绑后红点恢复 + 设置页手动刷新绑定成功 ─────────────────────────────────────────────────────
 await reload("[data-settings-card=wecom-binding]");
-const guideBack = await waitFor(exists("[data-wecom-binding-guide]"), 12000);
-check("解绑后引导恢复（未绑定 + 未跳过 → 再弹一次）", guideBack === true);
+const unboundAfterReload = await waitFor(panelState() + " === " + j("unbound"), 12000);
+const unboundHintRestored = await waitFor("(function(){var el=document.querySelector(" + j("[data-inbox-trigger]") + ");return el!==null && el.getAttribute(" + j("data-inbox-binding-hint") + ") === " + j("true") + ";})()", 12000);
+const unboundUi = await ev(inboxBindingUiExpr);
+check("解绑后站内信绑定提示红点恢复（仍无自动浮卡）", unboundAfterReload === true && unboundHintRestored === true && (await ev(exists("[data-wecom-binding-guide]"))) === false, JSON.stringify(unboundUi));
 
-// ⑦a 手动刷新绑定成功（Push 260）：点「刷新绑定状态」→ 卡片先切「已绑定」→ 关闭 → 白色顶部「绑定成功」
 await insertBindingFixture();
 const manualRefreshClick = await click("[data-wecom-binding-refresh]");
-const manualGuideBound = await waitFor(panelState("[data-wecom-binding-guide]") + " === " + j("bound"), 10000);
-const manualGuideClosed = await waitFor("document.querySelector(" + j("[data-wecom-binding-guide]") + ") === null", 4000);
-const manualGuideToast = await ev(successToastExpr);
-check("手点「刷新绑定状态」：卡片面板先切「已绑定」", manualRefreshClick !== null && manualGuideBound === true, String(await ev(panelState("[data-wecom-binding-guide]"))));
-check(
-  "手动刷新绑定后卡片关闭并弹白色顶部「绑定成功」",
-  manualGuideClosed === true && manualGuideToast !== null && String(manualGuideToast.text).indexOf("绑定成功") >= 0 && String(manualGuideToast.cls).indexOf("fixed") >= 0 && String(manualGuideToast.cls).indexOf("bg-white") >= 0 && String(manualGuideToast.cls).indexOf("rounded-[22px]") >= 0 && String(manualGuideToast.cls).indexOf("ll-toast-top") >= 0 && String(manualGuideToast.cls).indexOf("top-[max(1.25rem,env(safe-area-inset-top))]") >= 0 && String(manualGuideToast.cls).indexOf("w-fit") >= 0 && Number(manualGuideToast.width) > 0 && Number(manualGuideToast.width) < 480 && Number(manualGuideToast.fontSize) >= 16 && Number(manualGuideToast.fontWeight) >= 600,
-  JSON.stringify({ closed: manualGuideClosed, toast: manualGuideToast }),
-);
-shots.push(await shot("wecom-guide-manual-bound-success-7a"));
-await waitFor("document.querySelector(" + j("[data-toast=ok]") + ") === null", 3500);
+const manualBound = await waitFor(panelState() + " === " + j("bound"), 10000);
+const manualBoundHintGone = await waitFor("(function(){var el=document.querySelector(" + j("[data-inbox-trigger]") + ");return el!==null && el.getAttribute(" + j("data-inbox-binding-hint") + ") === " + j("false") + ";})()", 10000);
+check("手点「刷新绑定状态」：设置页切「已绑定」且顶栏绑定红点消失", manualRefreshClick !== null && manualBound === true && manualBoundHintGone === true && (await ev(exists("[data-wecom-binding-guide]"))) === false, JSON.stringify(await ev(inboxBindingUiExpr)));
+shots.push(await shot("wecom-settings-manual-bound-7a"));
 await removeBindingFixture();
-await ev("window.localStorage.removeItem(" + j(GUIDE_KEY) + ")");
-await reload("[data-wecom-binding-guide]");
-
-const goClick = await click("[data-wecom-binding-guide-goto]");
-const gotoHash = await waitFor("window.location.hash === " + j("#/settings"), 8000);
-check("点「前往企微绑定」→ 地址到 #/settings、引导关闭（跳过位同时落记）", goClick !== null && gotoHash === true && (await ev(exists("[data-wecom-binding-guide]"))) === false, String(await hashOf()));
+await reload("[data-settings-card=wecom-binding]");
+const unboundRestored = await waitFor(panelState() + " === " + j("unbound"), 12000);
+const hintRestored = await waitFor("(function(){var el=document.querySelector(" + j("[data-inbox-trigger]") + ");return el!==null && el.getAttribute(" + j("data-inbox-binding-hint") + ") === " + j("true") + ";})()", 12000);
+check("移除绑定夹具后站内信绑定红点再次恢复", unboundRestored === true && hintRestored === true, JSON.stringify(await ev(inboxBindingUiExpr)));
 
 // ── ⑧ 未绑定提示：站内信弹窗底部提示 + 「前往企微绑定」────────────────────────────────────────────────
 await goto("#/projects", "[data-topnav]");
+await waitFor("(function(){var el=document.querySelector(" + j("[data-inbox-trigger]") + ");return el!==null && el.getAttribute(" + j("data-inbox-binding-hint") + ") === " + j("true") + ";})()", 12000);
+const inboxUiBeforeOpen = await ev(inboxBindingUiExpr);
 await click("[data-inbox-trigger]");
 const inboxHint = await waitFor(exists("[data-inbox-wecom-unbound]"), 12000);
 const inboxText = String(await ev(textOf("[data-inbox-wecom-unbound]")) ?? "");
-check("站内信弹窗出未绑定提示（D6）：「当前用户未绑定企业微信」+「前往企微绑定」", inboxHint === true && inboxText.indexOf("当前用户未绑定企业微信") >= 0 && inboxText.indexOf("前往企微绑定") >= 0, inboxText);
+check("点站内信红点后出未绑定提示（D6）：「当前用户未绑定企业微信」+「前往企微绑定」", inboxUiBeforeOpen !== null && inboxUiBeforeOpen.open === "true" && inboxHint === true && inboxText.indexOf("当前用户未绑定企业微信") >= 0 && inboxText.indexOf("前往企微绑定") >= 0, JSON.stringify({ ui: inboxUiBeforeOpen, text: inboxText }));
 shots.push(await shot("wecom-inbox-unbound-9"));
 await click("[data-inbox-wecom-settings]");
 check("点「前往企微绑定」→ 落 #/settings", (await waitFor("window.location.hash === " + j("#/settings"), 8000)) === true && (await waitFor(exists("[data-settings-card=wecom-binding]"), 8000)) === true, String(await hashOf()));

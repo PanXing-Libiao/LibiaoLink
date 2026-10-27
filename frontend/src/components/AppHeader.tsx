@@ -6,7 +6,7 @@ import { clearHomePrefs } from "../homePrefs";
 import { clearLegacyPlanBoard } from "../myPlan";
 import { hasPageAccess, useMyPermissions } from "../permissions";
 import { useInboxBadge } from "../inbox";
-import { clearBindingGuidePrefs } from "../bindingGuide";
+import { resetWecomBindingStatus, useWecomBindingBound } from "../wecomBindingStatus";
 import { ACCESS_BASE_HASH, AUDIT_BASE_HASH, FILES_BASE_HASH, HUB_HASH, SETTINGS_BASE_HASH, goBackToList, goUpLevel, listHref, upLevelHref } from "../useHashRoute";
 import { firstAllowedHref } from "../accessRoutes";
 import { TopNav } from "./TopNav";
@@ -24,7 +24,8 @@ import type { MeResponse, Project } from "../types";
  * 站内信（业务口径 2026-10-16「在这个左侧增加站内信按钮 点击后出现局部弹窗用来消息通知」）：「语言」胶囊左侧
  *  新增铃铛按钮 + 未读红点（Transitions.dev「Notification badge」样张：滑入 + 弹性放大、读完后缩小消散，
  *  app.css 的 .inbox-badge 等价还原），点击 = 局部弹窗（最近 8 条 + 全部已读；见 ./InboxPanel）；
- *  红点 = ../inbox 模块级 store（登录后读面补拉 + SSE unread 快照，切页不丢）。
+ *  红点 = ../inbox 模块级 store（登录后读面补拉 + SSE unread 快照，切页不丢）；未绑定企微时
+ *  未读为 0 也亮无数字红点，并由弹窗底部提示直达设置页（Push 540 起取消登录后自动浮卡）。
  * 设置页入口（业务口径 2026-10-16「在点击用户右上角头像后的列表中添加一个设置页」· Push 250）：账号菜单第三项（Push 400 顺序调整）
  *  「企微绑定」（#/settings · 全账号可见），落点 = 账号级设置（单聊 D5 / D6 + 项目群绑定）；菜单顺序 = 文件库 /〔操作记录〕/〔权限管理〕/ 企微绑定 / 退出登录；权限管理仅群组管理员可见。 */
 
@@ -62,9 +63,22 @@ export function AppHeader({ me, project }: AppHeaderProps) {
   const inboxMenuRef = useRef<HTMLDivElement | null>(null);
   const localeLabel = LOCALES.find((item) => item.key === locale)?.label ?? "中文";
   const bgTierLabel = t(BG_TIER_TEXT_KEYS[bgTier]);
-  /** 未读角标（../inbox：登录后读面补拉 + SSE unread 快照；顶栏每页渲染，切页不丢）。 */
+  /** 顶栏站内信提示：../inbox 给未读数，../wecomBindingStatus 给未绑定态；切页不丢。 */
   const inboxBadge = useInboxBadge();
+  const wecomBound = useWecomBindingBound();
+  const inboxWecomUnbound = wecomBound === false;
+  const inboxHasUnread = inboxBadge.unreadCount > 0;
+  const inboxBadgeVisible = inboxHasUnread || inboxWecomUnbound;
+  const inboxBadgeKind = inboxHasUnread ? "unread" : inboxWecomUnbound ? "binding" : "none";
   const inboxUnreadText = inboxBadge.unreadCount > 99 ? "99+" : String(inboxBadge.unreadCount);
+  const inboxTitle = inboxWecomUnbound
+    ? t("header.inbox.title") + " · " + t("inbox.unbound.hint")
+    : t("header.inbox.title");
+  const inboxAriaLabel = inboxWecomUnbound
+    ? (inboxHasUnread ? t("header.inbox.unreadAria", { count: inboxBadge.unreadCount }) : t("header.inbox.title")) + " · " + t("inbox.unbound.hint")
+    : inboxHasUnread
+      ? t("header.inbox.unreadAria", { count: inboxBadge.unreadCount })
+      : t("header.inbox.title");
   const homeHref = listHref();
   const defaultUpHref = upLevelHref();
   /** Logo 缺省回仪表盘；群组未开通仪表盘时落首个可访问页面，避免点 Logo 直接吃 403。 */
@@ -221,14 +235,15 @@ export function AppHeader({ me, project }: AppHeaderProps) {
         ) : null}
         <div className="ml-auto flex shrink-0 items-center gap-2">
           {/* 站内信（业务口径 2026-10-16「在这个左侧增加站内信按钮 点击后出现局部弹窗用来消息通知」）：
-              位置 =「语言」胶囊左侧；未读红点样式借 Transitions.dev「Notification badge」样张（app.css 的
-              .inbox-badge 等价还原）；弹窗与语言 / 背景 / 账号菜单同一套交互（点外 / Esc / 再点触发钮收起）且互斥。 */}
+              位置 =「语言」胶囊左侧；未读 / 未绑定企微提示共用一枚红点（app.css 的 .inbox-badge）；
+              弹窗与语言 / 背景 / 账号菜单同一套交互（点外 / Esc / 再点触发钮收起）且互斥。 */}
           <div ref={inboxMenuRef} className="relative">
             <button
               type="button"
               data-inbox-trigger="true"
-              title={t("header.inbox.title")}
-              aria-label={inboxBadge.unreadCount > 0 ? t("header.inbox.unreadAria", { count: inboxBadge.unreadCount }) : t("header.inbox.title")}
+              data-inbox-binding-hint={inboxWecomUnbound ? "true" : "false"}
+              title={inboxTitle}
+              aria-label={inboxAriaLabel}
               aria-haspopup="dialog"
               aria-expanded={inboxOpen}
               onClick={() => {
@@ -242,8 +257,10 @@ export function AppHeader({ me, project }: AppHeaderProps) {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" className="h-4 w-4">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
               </svg>
-              <span className="inbox-badge" data-open={inboxBadge.unreadCount > 0 ? "true" : "false"} aria-hidden="true">
-                <span className="inbox-badge-dot">{inboxUnreadText}</span>
+              <span className="inbox-badge" data-open={inboxBadgeVisible ? "true" : "false"} data-kind={inboxBadgeKind} aria-hidden="true">
+                <span className="inbox-badge-dot" data-shape={inboxHasUnread ? "count" : "dot"}>
+                  {inboxHasUnread ? inboxUnreadText : null}
+                </span>
               </span>
             </button>
             {inboxOpen ? (
@@ -480,8 +497,8 @@ export function AppHeader({ me, project }: AppHeaderProps) {
                     clearHomePrefs();
                     // 「我的计划」便签墙：数据在账号里（Push 268 起）；这里只清尚未迁移上云的本机旧键，不带给下一位用户
                     clearLegacyPlanBoard();
-                    // 「绑定企业微信」引导的跳过位（Push 250）：本机记忆按账号分记，退出登录一并清 —— 换人登录照常引导
-                    clearBindingGuidePrefs();
+                    // 清空会话内的企微绑定提示态，避免共用设备时把上一位用户的红点状态带给下一位
+                    resetWecomBindingStatus();
                   }}
                   className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
                 >
