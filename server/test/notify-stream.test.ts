@@ -118,6 +118,7 @@ function notificationOf(overrides: Partial<Notification> = {}): Notification {
     status: "unread",
     refType: null,
     refId: null,
+    projectId: null,
     templateCode: null,
     mergedCount: 1,
     snoozeUntil: null,

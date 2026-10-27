@@ -41,6 +41,7 @@ import type { SavedFilter } from "./savedFilters";
 import { asHubDashView, type HubDashView } from "./data/dashboardProgress";
 import {
   asHubView,
+  clearProjectFocus,
   replaceAuditQuery,
   replaceFilesQuery,
   replaceWorkspaceSub,
@@ -937,6 +938,8 @@ export default function App() {
           project={detail}
           view={route.view}
           dailySub={route.sub}
+          focus={route.focus}
+          onClearFocus={clearProjectFocus}
           members={directoryMemberOptions(directory)}
           onChangeManagers={handleChangeManagers}
           onTaskEdited={handleTaskEdited}

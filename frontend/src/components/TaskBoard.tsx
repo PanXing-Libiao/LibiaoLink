@@ -301,6 +301,10 @@ const PRIORITY_VALUES: TaskPriority[] = ["高", "中", "低"];
 
 type TaskBoardProps = {
   tasks: ProjectTask[];
+  /** 站内信深链：任务所属项目打开后自动选中该任务并打开详情抽屉。 */
+  focusTaskId?: string | null;
+  /** 关闭深链抽屉后回写地址，去掉 `?task=`。 */
+  onFocusClosed?: () => void;
   onSetProgress?: (taskId: string, progress: number) => void;
   /** 任务状态下拉（五态）：进度与完成日期的联动由服务端裁决（不传 = 状态列只读）。 */
   onSetStatus?: (taskId: string, status: TaskStatus) => void;
@@ -906,7 +910,7 @@ export function ProjectSummary({ summary }: { summary: ApiProjectSummary | null 
   );
 }
 
-export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, canFinalizeTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, filesByTask, projectId, tierTint }: TaskBoardProps) {
+export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, canFinalizeTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, filesByTask, projectId, tierTint }: TaskBoardProps) {
   const t = useT();
   const locale = useLocale();
   /**
@@ -914,6 +918,19 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
    * （与看板 Push 196 同一口径）；行内点选走同一个入口。
    */
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  /** 深链只自动打开一次：任务列表后续刷新 / 手动关掉抽屉时不被重新弹开；地址清空后可再次响应同一目标。 */
+  const focusedTaskRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (focusTaskId === null) {
+      focusedTaskRef.current = null;
+      return;
+    }
+    if (focusedTaskRef.current === focusTaskId || !tasks.some((task) => task.id === focusTaskId)) {
+      return;
+    }
+    focusedTaskRef.current = focusTaskId;
+    setSelectedTaskId(focusTaskId);
+  }, [focusTaskId, tasks]);
   /** 右侧「任务节点 / 模板」卡片停在哪个阶段（点阶段标签打开）。 */
   const [cardStage, setCardStage] = useState<string | null>(null);
   /** 底部「临时任务」分组头的新建表单开着没有（Push 197；与阶段卡片互斥）。 */
@@ -925,7 +942,10 @@ export function TaskBoard({ tasks, onSetProgress, onSetStatus, onSetActualEnd, m
   const boardWrapRef = useRef<HTMLDivElement | null>(null);
   const boardCardRef = useRef<HTMLDivElement | null>(null);
   const headerRowRef = useRef<HTMLDivElement | null>(null);
-  const closeDrawer = () => setSelectedTaskId(null);
+  const closeDrawer = () => {
+    setSelectedTaskId(null);
+    onFocusClosed?.();
+  };
   /** 抽屉里的任务按 id 取当前值（Push 98）：抽屉里点四格进度、卡片上改实际完成日期后，抽屉要立刻跟着变 ——
    *  不能拿点击那一刻的任务快照，否则父级刷新后抽屉还显示旧进度。Push 197 起选中的是 id：新建的临时任务
    *  先落 id、列表重取回来才找得到行（找得到才开抽屉）。 */

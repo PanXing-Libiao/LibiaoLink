@@ -11460,6 +11460,7 @@ export interface components {
             /** @description 关联对象类型（可空） */
             refType: string | null;
             refId: components["schemas"]["Uuid"] & (string | null);
+            projectId: components["schemas"]["Uuid"] & (string | null);
             /** @description 模板码（可空） */
             templateCode: string | null;
             /** @description 合并条数：同期同合并键的消息条数（未合并 = 1） */
