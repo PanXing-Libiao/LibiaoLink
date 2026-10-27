@@ -12,7 +12,7 @@
 >
 > 部署 / 验收：覆盖产物并更新 `RELEASE_MANIFEST.json` = `prod-20261027-ef03d594`；API / worker 强制重建，7 / 7 容器 healthy、重启计数 0、启动日志无 error / fatal；`/healthz` 200、`/readyz` 200 且四探针全 true。公网 `index.html` 502 B / `36594f1e…`、JS 1,949,650 B / `7bbaa8dd…`、CSS 169,323 B / `285d3f01…`、PDF 189,881 B / `b54d9171…` 均与本地逐字节一致；PDF 200、无 `X-Frame-Options: DENY`、CSP 为仅本站可嵌入、`Content-Disposition: inline`。真实 Chrome 验证导入说明浮层正常渲染 2 页 PDF、项目编辑弹窗显示「项目名称」、成员多选仅姓名 / 拼音且无演示页脚。
 >
-> 域名漂移处置：仓库配置原先只声明 `test-pm.libiaorobot.com`，首次覆盖正式机时公网短暂落入 443 兜底（444）；已立即从上述备份恢复并确认 200。随后最终配置在 443 / 9443 同时声明正式 / 测试域名，80 跳转走显式 allowlist，未知 Host 直接 444；正式机配置 SHA-256 = `e1bd7264…802eba`，与修正发布包一致，回灌 PR 待合入。
+> 域名漂移处置：仓库配置原先只声明 `test-pm.libiaorobot.com`，首次覆盖正式机时公网短暂落入 443 兜底（444）；已立即从上述备份恢复并确认 200。随后最终配置在 443 / 9443 同时声明正式 / 测试域名，80 跳转走显式 allowlist，未知 Host 直接 444；正式机配置 SHA-256 = `e1bd7264…802eba`，与修正发布包一致。回灌 [PR #675](https://github.com/PanXing-Libiao/LibiaoLink/pull/675) 已合入 `main@3f16b31a9754618404fdac997834cf96bc1b60d4`：PR CI [40475378687](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40475378687) 5 / 5，main CI [40476565977](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40476565977) 第 2 次尝试 5 / 5（首轮 e2e 安装集成运行时依赖 5 分钟超时，重跑通过）；正式机无需重新部署。合并时 GitHub reviews = 0、人工 Approve = 0，高风险部署配置评审要求未在平台留痕。
 
 > **2026-10-27 15:45 公司测试机同步至正式版 `be0e2696`（Push 542）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）由 `main@0d790c32` 同步到 `main@be0e2696`，补齐 21 个提交（10 个功能 / 修复提交），并对齐正式机已验证产物：前端 386 文件、`server/dist` 610 文件、`server/scripts` 71 文件、`shared/dist` 93 文件、`shared/generated` 2 文件，服务端四棵产物树哈希与正式机一致。新增 `RELEASE_MANIFEST.json` = `test-20261027-be0e2696`，target `test-pm.libiaorobot.com / 10.1.104.44`。
 >
