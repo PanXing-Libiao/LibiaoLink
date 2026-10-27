@@ -9,7 +9,12 @@ import { Injectable } from "@nestjs/common";
 import { and, asc, count, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, sql, type SQL } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
+import { files } from "../../db/schema/files.js";
+import { projectNodes } from "../../db/schema/flow.js";
 import { notificationSnoozes, notifications, notifyPrefs } from "../../db/schema/notify.js";
+import { projectStages } from "../../db/schema/projects.js";
+import { dailyReports, issues } from "../../db/schema/reports.js";
+import { tasks } from "../../db/schema/tasks.js";
 
 /** 通知行（写路径读回与读面共用；契约转换在服务层）。 */
 export interface NotifyMessageRow {
@@ -67,6 +72,12 @@ export interface NotifyInboxFilter {
   to: Date | null;
   page: number;
   limit: number;
+}
+
+/** 站内信关联对象（点击目标解析输入）。 */
+export interface NotifyReference {
+  refType: string | null;
+  refId: string | null;
 }
 
 /** 通知偏好行（可空列 = 继承 env 缺省）。 */
@@ -247,6 +258,76 @@ export class NotifyRepository {
         ),
       );
     return Number(rows[0]?.value ?? 0);
+  }
+
+  /**
+   * 站内信点击目标的项目 id：project 直接回填；task / stage / node / report / issue / file 按对象读回所属项目。
+   * 只读解析，不复制到 notifications；查不到 / 已删对象 = null（前端仍可置读，不跳空页）。
+   */
+  async resolveProjectIds(refs: readonly NotifyReference[], tx?: DbClient): Promise<Map<string, string>> {
+    const db = tx ?? this.database.db;
+    const result = new Map<string, string>();
+    const idsByType = new Map<string, Set<string>>();
+    for (const ref of refs) {
+      if (ref.refType === null || ref.refId === null) continue;
+      const key = ref.refType + ":" + ref.refId;
+      if (result.has(key)) continue;
+      if (ref.refType === "project") {
+        result.set(key, ref.refId);
+        continue;
+      }
+      const bucket = idsByType.get(ref.refType) ?? new Set<string>();
+      bucket.add(ref.refId);
+      idsByType.set(ref.refType, bucket);
+    }
+    const addRows = (refType: string, rows: readonly { id: string; projectId: string }[]): void => {
+      for (const row of rows) result.set(refType + ":" + row.id, row.projectId);
+    };
+    const taskIds = [...(idsByType.get("task") ?? [])];
+    if (taskIds.length > 0) {
+      addRows(
+        "task",
+        await db.select({ id: tasks.id, projectId: tasks.projectId }).from(tasks).where(inArray(tasks.id, taskIds)),
+      );
+    }
+    const stageIds = [...(idsByType.get("stage") ?? [])];
+    if (stageIds.length > 0) {
+      addRows(
+        "stage",
+        await db.select({ id: projectStages.id, projectId: projectStages.projectId }).from(projectStages).where(inArray(projectStages.id, stageIds)),
+      );
+    }
+    const nodeIds = [...(idsByType.get("node") ?? [])];
+    if (nodeIds.length > 0) {
+      addRows(
+        "node",
+        await db.select({ id: projectNodes.id, projectId: projectNodes.projectId }).from(projectNodes).where(inArray(projectNodes.id, nodeIds)),
+      );
+    }
+    const reportIds = new Set<string>([...(idsByType.get("report") ?? []), ...(idsByType.get("daily_report") ?? [])]);
+    if (reportIds.size > 0) {
+      const rows = await db
+        .select({ id: dailyReports.id, projectId: dailyReports.projectId })
+        .from(dailyReports)
+        .where(inArray(dailyReports.id, [...reportIds]));
+      addRows("report", rows);
+      addRows("daily_report", rows);
+    }
+    const issueIds = [...(idsByType.get("issue") ?? [])];
+    if (issueIds.length > 0) {
+      addRows(
+        "issue",
+        await db.select({ id: issues.id, projectId: issues.projectId }).from(issues).where(inArray(issues.id, issueIds)),
+      );
+    }
+    const fileIds = [...(idsByType.get("file") ?? [])];
+    if (fileIds.length > 0) {
+      addRows(
+        "file",
+        await db.select({ id: files.id, projectId: files.projectId }).from(files).where(inArray(files.id, fileIds)),
+      );
+    }
+    return result;
   }
 
   /** 收件箱：过滤 + 分页（id 降序 = 新消息在前）+ 总数。 */

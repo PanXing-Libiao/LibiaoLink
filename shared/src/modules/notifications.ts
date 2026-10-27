@@ -277,6 +277,9 @@ export const NotificationSchema = z
     status: NotificationStatusSchema,
     refType: z.string().nullable().openapi({ description: "关联对象类型（可空）" }),
     refId: UuidSchema.nullable().openapi({ description: "关联对象 id（可空；与 refType 成对）" }),
+    projectId: UuidSchema.nullable().openapi({
+      description: "关联对象所属项目 id（读面按 refType / refId 解析；站内信点击直达关联项目；无法解析 = null）",
+    }),
     templateCode: z.string().nullable().openapi({ description: "模板码（可空）" }),
     mergedCount: z.number().int().min(1).openapi({ description: "合并条数：同期同合并键的消息条数（未合并 = 1）" }),
     snoozeUntil: DateTimeSchema.nullable().openapi({
