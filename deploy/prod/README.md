@@ -1,5 +1,11 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
+> **2026-10-27 18:40 日报项目群同步与项目经理权限修复已部署公司测试机（px@1ff8ede4 · 生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）包含 Push 548 的日报群同步 / 海报纸能力与 Push 549 的 PM 权限修复。根因是 SSO `user.id` 与项目内部 `managerIds` 分属外部 / 内部标识，前端直接比较导致按钮不出现；现由 `GET /api/v1/projects/{id}/group` 下发服务端裁定的 `canManage`，同步 POST 仍二次校验项目经理。发布包 `output/report-group-1ff8ede4-20261027-1835.tar.gz`（89,203,845 B · SHA-256 `4a311ffecd4a5567467acaa3879c78f7ba3dee279be1b562e66d4b0583f41fe7`）上传后远端一致，staging 1,184 文件全部通过 `SHA256SUMS`。
+>
+> 备份：`/srv/data/backups/before-report-group-1ff8ede4-20261027-1835/`，代码 89,141,202 B（`5d920f67…`）、数据库 dump 1,161,040 B（`07ed9a7e…`）、原 manifest（`4cecf80a…`）及 `server.env` / `deploy.env`。更新 manifest = `test-20261027-1ff8ede4`；覆盖 frontend / server dist + assets + scripts / shared dist + generated，API / worker 以三份 Compose 配置强制重建。测试机 10 / 10 容器 healthy，站点 / `healthz` / `readyz` 200 且四探针全 true；包内含并可注册思源黑体 SC Regular / Bold，海报链路不使用 Noto。
+>
+> 浏览器验收：测试项目 `LBtest-20261022-001` 已绑定「测试群2」；日报记录编辑弹窗显示且启用「同步到项目群」；提交 2026-10-27 测试日报后出现「同步到项目群？」确认框，选择「暂不同步」关闭，未发企业微信消息。测试库保留该条日报供人工复核。无 DDL / 迁移、Compose / env / Secret / 依赖变更；正式机 `10.1.103.44` 未触碰。
+
 > **2026-10-27 17:02 公司测试机同步至 main@3f16b31a（Push 546）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）由 `main@be0e2696` 同步到 `main@3f16b31a`，补齐 PR [#674](https://github.com/PanXing-Libiao/LibiaoLink/pull/674) 应用修复与 PR [#675](https://github.com/PanXing-Libiao/LibiaoLink/pull/675) 正式 / 测试共用域名配置。发布包 `output/test-sync-3f16b31a-20261027-1659.tar.gz`（16,880,050 B · SHA-256 `99e43f34…7a113`）上传后远端哈希一致；staging 1,165 文件通过 `SHA256SUMS`（前端 386 / server/dist 610 / server/scripts 71 / shared/dist 93 / shared/generated 2），应用产物与正式机 `ef03d594` 发布包逐文件哈希一致。新增 `RELEASE_MANIFEST.json` = `test-20261027-3f16b31a`，target `test-pm.libiaorobot.com / 10.1.104.44`；配置 SHA-256 = `e1bd7264…802eba`。
 >
 > 备份：`/srv/data/backups/before-test-sync-3f16b31a-20261027-1659/`，代码 16,889,836 B（`6c569d56…`）、原 manifest（`46311c41…`）、`server.env`（`9c3f8a57…`）/ `deploy.env`（`6811ba14…`）、数据库 dump 1,159,676 B（`2beb6158…` · `pg_restore -l` 632 项）。应用产物采用 checksum 全树覆盖，API / worker 强制重建；数据库迁移水位保持 74 / `0075_group_access_scope_permissions.sql`，无新增 DDL。
