@@ -2669,6 +2669,43 @@
         ],
         "description": "日报删除（成对删除派生问题）"
       },
+      "DailyReportGroupSyncResponse": {
+        "type": "object",
+        "properties": {
+          "reportId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "version": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Version"
+              },
+              {
+                "description": "发起同步时的日报版本；同版本重复点击由 outbox dedupeKey 幂等收口"
+              }
+            ]
+          },
+          "queued": {
+            "type": "boolean",
+            "enum": [
+              true
+            ],
+            "description": "已受理并写入 outbox；最终送达状态以通知投递记录为准"
+          },
+          "message": {
+            "type": "string",
+            "example": "已提交同步",
+            "description": "面向用户的受理提示（不宣称已送达）"
+          }
+        },
+        "required": [
+          "reportId",
+          "version",
+          "queued",
+          "message"
+        ],
+        "description": "日报同步项目群受理结果（机器人文字 + 海报由 worker 异步发送）"
+      },
       "DailyReportListResponse": {
         "type": "object",
         "properties": {
@@ -3673,6 +3710,7 @@
           "TASK_HAS_REFERENCES",
           "TASK_FINALIZED",
           "REPORT_ALREADY_EXISTS",
+          "REPORT_GROUP_NOT_BOUND",
           "BLUEPRINT_SCHEMA_INVALID",
           "BLUEPRINT_REF_UNKNOWN",
           "FILE_STATE_INVALID",
@@ -7803,6 +7841,10 @@
             "type": "boolean",
             "description": "会话已激活（群内有人给机器人发过消息）；未绑定 = false"
           },
+          "canManage": {
+            "type": "boolean",
+            "description": "当前访问者是否为项目经理：决定是否显示项目群维护与日报同步入口；由服务端按内部 actor 身份裁决"
+          },
           "updatedAt": {
             "allOf": [
               {
@@ -7824,6 +7866,7 @@
           "name",
           "chatidMasked",
           "activated",
+          "canManage",
           "updatedAt"
         ],
         "description": "项目群绑定状态（GET 恒 200；未绑定 = bound:false）"
@@ -20935,6 +20978,86 @@
           },
           "404": {
             "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/reports/{reportId}/group-sync": {
+      "post": {
+        "tags": [
+          "reports"
+        ],
+        "summary": "同步日报到项目群（仅项目经理）：已提交日报 + 已绑定项目群；受理后机器人先发「日报已就绪」，worker 再发送包含现场图与问题附图的日报海报",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "reportId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "已受理同步（queued=true；最终送达以通知投递记录为准）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DailyReportGroupSyncResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
             "content": {
               "application/json": {
                 "schema": {

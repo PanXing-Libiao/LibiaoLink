@@ -6,6 +6,7 @@ export { ProjectRepository } from "./project.repository.js";
 export { ProjectMemberRepository } from "./project-member.repository.js";
 export type { ProjectView, ProjectListResult, ProjectFacetsResult } from "./project.service.js";
 export { ProjectMemberService, toProjectMemberView } from "./project-member.service.js";
+export { ProjectGroupService } from "./project-group.service.js";
 export type { ProjectMemberView, ProjectMemberListResult } from "./project-member.service.js";
 export { FlowService } from "./flow.service.js";
 export type { ProjectFlow, StageListResponse, ProjectNodeView } from "./flow.service.js";

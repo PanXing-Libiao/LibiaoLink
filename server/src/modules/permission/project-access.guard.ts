@@ -40,6 +40,17 @@ export const ProjectScope = createParamDecorator((_data: unknown, context: Execu
   return request.projectScope;
 });
 
+/** 参数装饰器：取守卫解析出的项目访问上下文（项目经理标记 / 可见性 / 部门权限）。 */
+export const CurrentProjectAccess = createParamDecorator(
+  (_data: unknown, context: ExecutionContext): ProjectAccessContext => {
+    const request = context.switchToHttp().getRequest<RequestWithProjectAccess>();
+    if (request.projectAccess === undefined) {
+      throw new AppError("INTERNAL", "项目访问上下文未就绪（当前路由未命中项目）");
+    }
+    return request.projectAccess;
+  },
+);
+
 /**
  * 项目访问守卫（h6 · 记录级 + 功能权限的统一入口）：
  * 1) 记录级：路径 :id（node 来源时先解析到项目）不可见 → 404 NOT_FOUND（防 IDOR，ADR-011 不变量 3）；

@@ -1,5 +1,23 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
+> **2026-10-27 19:18 日报同步按钮终稿已部署公司测试机（px@118e5109 · frontend-only · 生产未部署）**：按业务口径去掉「同步到项目群」按钮的发送图标和深色描边，改为无边框浅灰底文字按钮；品牌黄仍只保留给「保存修改」。发布包 `output/frontend-report-sync-button-118e5109-20261027-1916.tar.gz`（14,903,167 B · SHA-256 `d3851bb0b4909f4064b8d84659ab7004d5e1569558780201d8e89474b056255b`）上传后远端一致，staging 386 文件 / 18,575,330 B 全部通过 `SHA256SUMS`；`rsync -a --delete` 原位覆盖 `/opt/libiaolink/frontend/dist`，web 未重启。
+>
+> 备份：`/srv/data/backups/frontend-before-report-sync-button-118e5109-20261027-1916.tar.gz`（14,911,452 B · `ba112dc2f9069ab33d47e21d7e3e964a5bdcf2e42571aa7067113659aab6a1b1`）；旧 manifest 备份 `/srv/data/backups/RELEASE_MANIFEST.before-report-sync-button-118e5109.json`（`5da3fcc2…99fd`），新 manifest = `test-20261027-118e5109`（`2d981eedba344ccdc2c7c49f2e0cb87a787a2f6f5eb50e1a3160b4edf8dbdab1`）。
+>
+> 验收：old / new `index.html` SHA-256 = `4930cd61…6cd7` → `92bb75d5900dfc3e9c3e0da4878237bf4e4f3964f942771d4611b3f0d7ae8dbc`，公网同哈希；JS `index-Ds2eRPcH.js` = `d44b08b5…c86b`、CSS `index-C2faEFXI.css` = `ace95be5…daba`，均与本地构建逐字节一致。主 Compose 9 / 9 容器 healthy，`healthz` / `readyz` 200；真实登录新开页确认无图标、无描边的浅灰底按钮，未点击同步、未发企业微信消息。无依赖 / 接口 / 数据 / DDL / 迁移 / Compose / env / Secret 变更；正式机 `10.1.103.44` 未触碰。
+
+> **2026-10-27 19:13 日报同步按钮视觉修复已部署公司测试机（px@6e8987b9 · frontend-only · 生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）将日报记录编辑弹窗左侧「同步到项目群」由黄色描边 / 淡黄底改为白底深色描边 + 发送图标，品牌黄只保留给「保存修改」；同步权限、确认框与投递逻辑未改。发布包 `output/frontend-report-sync-button-6e8987b9-20261027-1910.tar.gz`（14,903,008 B · SHA-256 `789c54e243b7e736581af2613d0d75dae79d519c451a0f55d4eb0738875ae808`）上传后远端一致，staging 386 文件 / 18,575,815 B 全部通过 `SHA256SUMS`；`rsync -a --delete` 原位覆盖 `/opt/libiaolink/frontend/dist`，web 静态 bind-mount 即时生效、未重启容器。
+>
+> 备份：`/srv/data/backups/frontend-before-report-sync-button-6e8987b9-20261027-1910.tar.gz`（14,910,499 B · `ca210a4f6b3ff2be594f70cf7db12a3b9240c363683730fb0d3ce99f3866e4b6`）；旧 manifest 备份 `/srv/data/backups/RELEASE_MANIFEST.before-report-sync-button-6e8987b9.json`（`de59298c…4b01`），新 manifest = `test-20261027-6e8987b9`（`5da3fcc2d66e3741cd17926db61c202a14b5c7df9d109a60be007a3bbcca99fd`）。
+>
+> 验收：old / new `index.html` SHA-256 = `f4fb5e7f…83c8` → `4930cd6126781b286224d7ac862a733553f9dea9e0cb91977cc37d90e2936cd7`，公网同哈希；JS `index-B2gC_Y6X.js` = `9eed19e1…733d`、CSS `index-BxJq6Ors.css` = `b0d9902b…1c7c`，远端与本地逐字节一致。主 Compose 9 / 9 容器 healthy，站点 / `healthz` / `readyz` 200；真实登录新开页确认新版按钮，未点击同步、未发企业微信消息。无依赖 / 接口 / 数据 / DDL / 迁移 / Compose / env / Secret 变更；正式机 `10.1.103.44` 未触碰。
+
+> **2026-10-27 18:40 日报项目群同步与项目经理权限修复已部署公司测试机（px@1ff8ede4 · 生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）包含 Push 548 的日报群同步 / 海报纸能力与 Push 549 的 PM 权限修复。根因是 SSO `user.id` 与项目内部 `managerIds` 分属外部 / 内部标识，前端直接比较导致按钮不出现；现由 `GET /api/v1/projects/{id}/group` 下发服务端裁定的 `canManage`，同步 POST 仍二次校验项目经理。发布包 `output/report-group-1ff8ede4-20261027-1835.tar.gz`（89,203,845 B · SHA-256 `4a311ffecd4a5567467acaa3879c78f7ba3dee279be1b562e66d4b0583f41fe7`）上传后远端一致，staging 1,184 文件全部通过 `SHA256SUMS`。
+>
+> 备份：`/srv/data/backups/before-report-group-1ff8ede4-20261027-1835/`，代码 89,141,202 B（`5d920f67…`）、数据库 dump 1,161,040 B（`07ed9a7e…`）、原 manifest（`4cecf80a…`）及 `server.env` / `deploy.env`。更新 manifest = `test-20261027-1ff8ede4`；覆盖 frontend / server dist + assets + scripts / shared dist + generated，API / worker 以三份 Compose 配置强制重建。测试机 10 / 10 容器 healthy，站点 / `healthz` / `readyz` 200 且四探针全 true；包内含并可注册思源黑体 SC Regular / Bold，海报链路不使用 Noto。
+>
+> 浏览器验收：测试项目 `LBtest-20261022-001` 已绑定「测试群2」；日报记录编辑弹窗显示且启用「同步到项目群」；提交 2026-10-27 测试日报后出现「同步到项目群？」确认框，选择「暂不同步」关闭，未发企业微信消息。测试库保留该条日报供人工复核。无 DDL / 迁移、Compose / env / Secret / 依赖变更；正式机 `10.1.103.44` 未触碰。
+
 > **2026-10-27 17:02 公司测试机同步至 main@3f16b31a（Push 546）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）由 `main@be0e2696` 同步到 `main@3f16b31a`，补齐 PR [#674](https://github.com/PanXing-Libiao/LibiaoLink/pull/674) 应用修复与 PR [#675](https://github.com/PanXing-Libiao/LibiaoLink/pull/675) 正式 / 测试共用域名配置。发布包 `output/test-sync-3f16b31a-20261027-1659.tar.gz`（16,880,050 B · SHA-256 `99e43f34…7a113`）上传后远端哈希一致；staging 1,165 文件通过 `SHA256SUMS`（前端 386 / server/dist 610 / server/scripts 71 / shared/dist 93 / shared/generated 2），应用产物与正式机 `ef03d594` 发布包逐文件哈希一致。新增 `RELEASE_MANIFEST.json` = `test-20261027-3f16b31a`，target `test-pm.libiaorobot.com / 10.1.104.44`；配置 SHA-256 = `e1bd7264…802eba`。
 >
 > 备份：`/srv/data/backups/before-test-sync-3f16b31a-20261027-1659/`，代码 16,889,836 B（`6c569d56…`）、原 manifest（`46311c41…`）、`server.env`（`9c3f8a57…`）/ `deploy.env`（`6811ba14…`）、数据库 dump 1,159,676 B（`2beb6158…` · `pg_restore -l` 632 项）。应用产物采用 checksum 全树覆盖，API / worker 强制重建；数据库迁移水位保持 74 / `0075_group_access_scope_permissions.sql`，无新增 DDL。

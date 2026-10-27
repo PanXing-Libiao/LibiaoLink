@@ -186,6 +186,16 @@ export const DailyReportListResponseSchema = z
   })
   .openapi("DailyReportListResponse", { description: "日报列表（项目内成员可见）" });
 
+/** 日报同步到项目群（2026-10-27）：PM 确认后落 outbox notify.group；文字先发「日报已就绪」，worker 再追加动态海报。 */
+export const DailyReportGroupSyncResponseSchema = z
+  .object({
+    reportId: UuidSchema,
+    version: VersionSchema.openapi({ description: "发起同步时的日报版本；同版本重复点击由 outbox dedupeKey 幂等收口" }),
+    queued: z.literal(true).openapi({ description: "已受理并写入 outbox；最终送达状态以通知投递记录为准" }),
+    message: z.string().openapi({ example: "已提交同步", description: "面向用户的受理提示（不宣称已送达）" }),
+  })
+  .openapi("DailyReportGroupSyncResponse", { description: "日报同步项目群受理结果（机器人文字 + 海报由 worker 异步发送）" });
+
 /** 日报当日查询（A7-01 汇总 / A7-05 应填未填共用）：日期缺省 = 今天（Asia/Shanghai）；未来日期 400（与 A3-04 同口径）。 */
 export const DailyReportDayQuerySchema = z
   .object({

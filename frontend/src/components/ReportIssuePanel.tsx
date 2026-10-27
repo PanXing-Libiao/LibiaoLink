@@ -18,6 +18,7 @@ import {
   deleteReport,
   fetchProjectIssues,
   fetchProjectReports,
+  syncReportToProjectGroup,
   updateIssue,
   updateReport,
   type IssueUpdateInput,
@@ -28,6 +29,7 @@ import {
 import { ApiError } from "../api";
 import { recordPreviewView, uploadPhoto, usePhotoUrl } from "../fileApi";
 import { stageKeyOfName } from "../taskApi";
+import { fetchProjectGroup, type ProjectGroupBinding } from "../projectGroupApi";
 import { PROJECT_STAGES } from "../data/projects";
 import { lockBodyScroll } from "../scrollLock";
 import type { DailySubView } from "../useHashRoute";
@@ -1971,7 +1973,17 @@ function IssueTable({ issues, tierTint, onEdit, onPatch, onDelete }: {
 
 /** 「日报记录 / 问题追踪」行编辑弹窗外壳（Push 223 · 与「干系人」新建 / 编辑弹窗同款：遮罩 + max-w-md 圆角白卡 + 品牌黄主按钮
  *  + Esc / 点遮罩关闭；内容超高时表单区自己滚动、页脚按钮不跟着滚）。 */
-function RecordEditModal({ label, hint, submitLabel, pending, canSubmit, error, onClose, onSubmit, children }: {
+type RecordEditSecondaryAction = {
+  label: string;
+  pendingLabel: string;
+  pending: boolean;
+  disabled: boolean;
+  /** 禁用原因（同时作为按钮 title）。 */
+  title?: string;
+  onClick: () => void;
+};
+
+function RecordEditModal({ label, hint, submitLabel, pending, canSubmit, error, onClose, onSubmit, secondaryAction, children }: {
   label: string;
   hint: string;
   submitLabel: string;
@@ -1982,6 +1994,8 @@ function RecordEditModal({ label, hint, submitLabel, pending, canSubmit, error, 
   error: string | null;
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  /** 左侧次操作（日报 = 同步到项目群）；问题弹窗不传。 */
+  secondaryAction?: RecordEditSecondaryAction;
   children: ReactNode;
 }) {
   const t = useT();
@@ -2018,22 +2032,36 @@ function RecordEditModal({ label, hint, submitLabel, pending, canSubmit, error, 
               {error}
             </p>
           )}
-          <div className="mt-5 flex justify-end gap-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100"
-            >
-              {t("common.cancel")}
-            </button>
-            <button
-              type="submit"
-              data-record-edit-submit=""
-              disabled={!canSubmit}
-              className="rounded-lg bg-[#feca04] px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {pending ? t("report.modal.saving") : submitLabel}
-            </button>
+          <div className={"mt-5 flex flex-wrap items-center gap-3 " + (secondaryAction === undefined ? "justify-end" : "justify-between")}>
+            {secondaryAction === undefined ? null : (
+              <button
+                type="button"
+                onClick={secondaryAction.onClick}
+                disabled={secondaryAction.disabled}
+                title={secondaryAction.title}
+                data-record-edit-group-sync=""
+                className="rounded-lg bg-zinc-100 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-zinc-100"
+              >
+                {secondaryAction.pending ? secondaryAction.pendingLabel : secondaryAction.label}
+              </button>
+            )}
+            <div className="ml-auto flex gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100"
+              >
+                {t("common.cancel")}
+              </button>
+              <button
+                type="submit"
+                data-record-edit-submit=""
+                disabled={!canSubmit}
+                className="rounded-lg bg-[#feca04] px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {pending ? t("report.modal.saving") : submitLabel}
+              </button>
+            </div>
           </div>
         </form>
       </div>
@@ -2041,16 +2069,98 @@ function RecordEditModal({ label, hint, submitLabel, pending, canSubmit, error, 
   );
 }
 
+/** 日报提交后的「是否同步到项目群」确认（2026-10-27）：仅 PM + 已绑定群时出现。 */
+function GroupSyncConfirmModal({ groupName, pending, error, onCancel, onConfirm }: {
+  groupName: string;
+  pending: boolean;
+  error: string | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const t = useT();
+  const trapRef = useFocusTrap<HTMLDivElement>();
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !pending) {
+        event.preventDefault();
+        onCancel();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onCancel, pending]);
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-zinc-900/45" onClick={() => { if (!pending) onCancel(); }} />
+      <div
+        ref={trapRef}
+        role="alertdialog"
+        aria-modal="true"
+        aria-label={t("report.groupSync.confirmAria")}
+        data-group-sync-confirm=""
+        className="relative w-full max-w-sm rounded-2xl bg-white p-6 shadow-[0_24px_60px_rgba(0,0,0,0.28)]"
+      >
+        <div className="flex items-start gap-3">
+          <span aria-hidden="true" className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#fff2ad] text-base font-bold text-zinc-900">群</span>
+          <div>
+            <h2 className="text-lg font-bold text-zinc-900">{t("report.groupSync.confirmTitle")}</h2>
+            <p className="mt-2 text-sm leading-6 text-zinc-600">{t("report.groupSync.confirmBody", { group: groupName })}</p>
+          </div>
+        </div>
+        {error === null ? null : (
+          <p role="alert" className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>
+        )}
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={pending}
+            data-group-sync-cancel=""
+            className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {t("report.groupSync.confirmNo")}
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={pending}
+            data-group-sync-submit=""
+            className="rounded-lg bg-[#feca04] px-4 py-2 text-sm font-semibold text-zinc-900 shadow-sm transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {pending ? t("report.groupSync.confirmPending") : t("report.groupSync.confirmYes")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type ProjectGroupSyncState =
+  | { status: "loading" }
+  | { status: "ready"; binding: ProjectGroupBinding }
+  | { status: "error" };
+
+type GroupSyncPromptState = {
+  reportId: string;
+  groupName: string;
+  pending: boolean;
+  error: string | null;
+};
+
 /** 「日报记录」行编辑弹窗（Push 223 · 业务口径「日报记录 … 这个编辑也要和干系人同款」+「文字和图片编辑要同款」）：
  *  只收**文字 + 图片**两类字段 —— 当日完成工作 / 明日计划 / 现场工作附图；「关联阶段」是下拉口径，
  *  按业务要求**保持原来的行内编辑**，不进弹窗。
  *  PATCH 合并语义与「干系人」弹窗一致：只提交改动过的键（文字保存前统一过自动序号 renumberLines）。 */
-function ReportEditModal({ projectId, row, onClose, onSubmit }: {
+function ReportEditModal({ projectId, row, onClose, onSubmit, sync }: {
   projectId: string;
   row: DailyReport;
   onClose: () => void;
   /** 提交：返回 null = 成功（父层关窗）；返回文案 = 失败提示，窗口保持打开。 */
   onSubmit: (patch: ReportPatch) => Promise<string | null>;
+  /** 仅项目经理显示：先保存未落库修改，再提交项目群同步；disable 原因同时作为按钮 title。 */
+  sync?: { disabledReason: string | null; onSync: (patch: ReportPatch) => Promise<string | null> };
 }) {
   const locale = useLocale();
   const t = useT();
@@ -2058,6 +2168,7 @@ function ReportEditModal({ projectId, row, onClose, onSubmit }: {
   const [plan, setPlan] = useState(row.plan);
   const [photos, setPhotos] = useState<ReportPhoto[]>(row.photos);
   const [pending, setPending] = useState(false);
+  const [syncPending, setSyncPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** 保存前统一过一遍自动序号（与表格行内编辑 / 「日报填写」提交同一口径）。 */
   const nextDoneWork = renumberLines(doneWork);
@@ -2065,7 +2176,8 @@ function ReportEditModal({ projectId, row, onClose, onSubmit }: {
   /** 图片还在上传 / 上传失败先拦住（复用「日报填写」提交那套文案）。 */
   const uploadBlocked = uploadBlockingMessage({ ...emptyDraft(), photos }, locale);
   /** 「当日完成工作」是契约必填 —— 清空不允许保存（与行内编辑同口径）。 */
-  const canSubmit = nextDoneWork !== "" && uploadBlocked === "" && !pending;
+  const canSubmit = nextDoneWork !== "" && uploadBlocked === "" && !pending && !syncPending;
+  const canSync = sync !== undefined && sync.disabledReason === null && nextDoneWork !== "" && uploadBlocked === "" && !pending && !syncPending;
   /** 只提交改动过的键（与干系人弹窗的 PATCH 合并语义一致）；无改动 = 空 patch（父层直接关窗）。 */
   const changedPatch = (): ReportPatch => {
     const patch: ReportPatch = {};
@@ -2094,6 +2206,19 @@ function ReportEditModal({ projectId, row, onClose, onSubmit }: {
       }
     });
   };
+  const handleSync = () => {
+    if (sync === undefined || !canSync) {
+      return;
+    }
+    setSyncPending(true);
+    setError(null);
+    void sync.onSync(changedPatch()).then((message) => {
+      setSyncPending(false);
+      if (message !== null) {
+        setError(message);
+      }
+    });
+  };
   return (
     <RecordEditModal
       label={t("report.modal.report.title")}
@@ -2104,6 +2229,14 @@ function ReportEditModal({ projectId, row, onClose, onSubmit }: {
       error={error}
       onClose={onClose}
       onSubmit={handleSubmit}
+      secondaryAction={sync === undefined ? undefined : {
+        label: t("report.groupSync.button"),
+        pendingLabel: t("report.groupSync.syncPending"),
+        pending: syncPending,
+        disabled: !canSync,
+        title: sync.disabledReason ?? undefined,
+        onClick: handleSync,
+      }}
     >
       <label className="block">
         <span className="mb-1.5 block text-sm font-medium text-zinc-700">
@@ -3106,6 +3239,59 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
    *  （行内下拉改过之后，弹窗里也始终是最新值）；编辑只走行尾「编辑」按钮，点行体不进入编辑。 */
   const [editModal, setEditModal] = useState<{ kind: "report"; id: string } | { kind: "issue"; id: string } | null>(null);
 
+  /** 项目群同步（2026-10-27）：项目经理身份由服务端随绑定状态下发（SSO user.id 与内部 managerIds 不同口径）。 */
+  const [projectGroup, setProjectGroup] = useState<ProjectGroupSyncState>({ status: "loading" });
+  const projectGroupRequestRef = useRef(0);
+  const [groupSyncPrompt, setGroupSyncPrompt] = useState<GroupSyncPromptState | null>(null);
+  const loadProjectGroupBinding = useCallback(async (): Promise<ProjectGroupBinding | null> => {
+    if (readOnly) {
+      return null;
+    }
+    const requestId = ++projectGroupRequestRef.current;
+    setProjectGroup({ status: "loading" });
+    try {
+      const binding = await fetchProjectGroup(project.id);
+      if (requestId === projectGroupRequestRef.current) {
+        setProjectGroup({ status: "ready", binding });
+      }
+      return binding;
+    } catch {
+      if (requestId === projectGroupRequestRef.current) {
+        setProjectGroup({ status: "error" });
+      }
+      return null;
+    }
+  }, [project.id, readOnly]);
+
+  useEffect(() => {
+    if (!readOnly) {
+      void loadProjectGroupBinding();
+    }
+    return () => {
+      projectGroupRequestRef.current += 1;
+    };
+  }, [loadProjectGroupBinding, readOnly]);
+
+  const isProjectManager = projectGroup.status === "ready" && projectGroup.binding.canManage;
+
+  const groupSyncDisabledReason = (report: DailyReport): string | null => {
+    if (report.state === "draft") {
+      return t("report.groupSync.blockedDraft");
+    }
+    if (projectGroup.status === "loading") {
+      return t("report.groupSync.blockedLoading");
+    }
+    if (projectGroup.status === "error") {
+      return t("report.groupSync.blockedError");
+    }
+    return projectGroup.binding.bound ? null : t("report.groupSync.blockedUnbound");
+  };
+
+  const groupSyncErrorText = (error: unknown): string =>
+    error instanceof ApiError && error.code === "REPORT_GROUP_NOT_BOUND"
+      ? t("report.groupSync.blockedUnbound")
+      : friendlyError(error, t("report.groupSync.error"));
+
   /** 拉取两份列表（首屏 / 写失败后重取）。 */
   const reload = useCallback(async () => {
     try {
@@ -3216,6 +3402,34 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
     }
   };
 
+
+  /** 编辑弹窗同步：先保存未落库修改，再用回包的最新版本提交项目群；保存失败不继续同步。 */
+  const syncReportEdit = async (row: DailyReport, patch: ReportPatch): Promise<string | null> => {
+    let target = row;
+    if (Object.keys(patch).length > 0) {
+      setReports((previous) => previous.map((item) => (item.id === row.id ? { ...item, ...patch } : item)));
+      try {
+        target = await updateReport(project.id, row.id, reportUpdateBody(row, patch));
+        setReports((previous) => previous.map((item) => (item.id === row.id ? target : item)));
+      } catch (error) {
+        void reload();
+        return friendlyError(error, t("report.error.reportSave"));
+      }
+    }
+    try {
+      await syncReportToProjectGroup(project.id, target.id);
+      setEditModal(null);
+      notify("ok", t("report.groupSync.noticeQueued"));
+      return null;
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "REPORT_GROUP_NOT_BOUND") {
+        setProjectGroup((previous) => previous.status === "ready"
+          ? { status: "ready", binding: { ...previous.binding, bound: false } }
+          : previous);
+      }
+      return groupSyncErrorText(error);
+    }
+  };
 
   /** 问题编辑弹窗落值（Push 223）：同日报一套（同样把失败文案还给弹窗）。 */
   const submitIssueEdit = async (row: Issue, patch: IssuePatch): Promise<string | null> => {
@@ -3406,7 +3620,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
         ? createReport(project.id, createBody(body))
         : updateReport(project.id, draftRow.id, { ...withoutDate(body), version: draftVersion.current ?? draftRow.version });
     write
-      .then(() => {
+      .then((saved) => {
         setDraft(emptyDraft());
         setDraftId(null);
         draftVersion.current = null;
@@ -3416,7 +3630,22 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
             (issueCount > 0 ? t("report.notice.submittedIssues", { n: issueCount }) : t("report.notice.submittedEnd")),
         );
         onChangeSub("records");
-        return reload();
+        void reload();
+        if (!readOnly) {
+          const bindingPromise = projectGroup.status === "ready"
+            ? Promise.resolve(projectGroup.binding)
+            : loadProjectGroupBinding();
+          void bindingPromise.then((binding) => {
+            if (binding !== null && binding.canManage && binding.bound) {
+              setGroupSyncPrompt({
+                reportId: saved.id,
+                groupName: binding.name ?? t("report.groupSync.groupFallback"),
+                pending: false,
+                error: null,
+              });
+            }
+          });
+        }
       })
       .catch((error) => {
         notify("error", friendlyError(error, t("report.error.submit")));
@@ -3424,6 +3653,34 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
       })
       .finally(() => {
         setSaving(false);
+      });
+  };
+
+  /** 提交后的确认框：只有「是」才落 outbox；「否」只关闭，不做任何外发。 */
+  const dismissGroupSyncPrompt = () => {
+    setGroupSyncPrompt((current) => (current === null || current.pending ? current : null));
+  };
+
+  const confirmGroupSyncPrompt = () => {
+    const current = groupSyncPrompt;
+    if (current === null || current.pending) {
+      return;
+    }
+    setGroupSyncPrompt({ ...current, pending: true, error: null });
+    void syncReportToProjectGroup(project.id, current.reportId)
+      .then(() => {
+        setGroupSyncPrompt(null);
+        notify("ok", t("report.groupSync.noticeQueued"));
+      })
+      .catch((error: unknown) => {
+        if (error instanceof ApiError && error.code === "REPORT_GROUP_NOT_BOUND") {
+          setProjectGroup((previous) => previous.status === "ready"
+            ? { status: "ready", binding: { ...previous.binding, bound: false } }
+            : previous);
+        }
+        setGroupSyncPrompt((previous) => previous === null
+          ? previous
+          : { ...previous, pending: false, error: groupSyncErrorText(error) });
       });
   };
 
@@ -3614,12 +3871,25 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
       {openIssue === null || readOnly ? null : <IssueDrawer projectId={project.id} members={members} issue={openIssue} report={openIssueReport} onPatchIssue={patchIssue} onPatchReport={patchReport} onClose={() => { setOpenIssueId(null); }} />}
 
       {/* 行编辑弹窗（Push 223）：日报 / 问题各一枚 —— 与「干系人」弹窗同款；取消 / Esc / 点遮罩关闭，保存成功才关 */}
+      {groupSyncPrompt === null ? null : (
+        <GroupSyncConfirmModal
+          groupName={groupSyncPrompt.groupName}
+          pending={groupSyncPrompt.pending}
+          error={groupSyncPrompt.error}
+          onCancel={dismissGroupSyncPrompt}
+          onConfirm={confirmGroupSyncPrompt}
+        />
+      )}
       {editingReport === null ? null : (
         <ReportEditModal
           projectId={project.id}
           row={editingReport}
           onClose={() => { setEditModal(null); }}
           onSubmit={(patch) => submitReportEdit(editingReport, patch)}
+          sync={isProjectManager && !readOnly ? {
+            disabledReason: groupSyncDisabledReason(editingReport),
+            onSync: (patch) => syncReportEdit(editingReport, patch),
+          } : undefined}
         />
       )}
       {editingIssue === null ? null : (

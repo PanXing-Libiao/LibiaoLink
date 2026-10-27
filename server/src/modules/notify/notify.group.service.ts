@@ -24,6 +24,7 @@ import {
 } from "@libiaolink/contracts";
 import { ClockService } from "../../common/clock/clock.service.js";
 import { AppConfig } from "../../config/config.module.js";
+import { ObjectStorage } from "../../storage/index.js";
 import type { OutboxClaimedRow } from "../../db/outbox.store.js";
 import type { OutboxHandleOutcome } from "../../outbox/handler.js";
 import {
@@ -35,6 +36,7 @@ import { NotifyGroupRepository } from "./notify.group.repository.js";
 import { NotifyService } from "./notify.service.js";
 import type { AibotIncomingMessage, AibotSendResult } from "./wecom.aibot.js";
 import { aibotImageMimeFromFileName, WecomAibotClient } from "./wecom.aibot.js";
+import { renderDailyReportPoster } from "./daily-report.poster.js";
 import { renderR06Poster } from "./r06.poster.js";
 import { describeWecomFailure } from "./wecom.errors.js";
 import { applyMarkdownHardBreaks, truncateUtf8Bytes } from "./wecom.text.js";
@@ -168,6 +170,7 @@ export class NotifyGroupService {
     private readonly notify: NotifyService,
     private readonly clock: ClockService,
     private readonly config: AppConfig,
+    private readonly storage: ObjectStorage,
   ) {}
 
   /**
@@ -367,6 +370,13 @@ export class NotifyGroupService {
         masked,
         dedupeKey: row.dedupeKey,
       });
+      const dailyReportPosterAttempts = await this.sendDailyReportPoster({
+        message,
+        chatid: binding.chatid,
+        groupActivated: binding.activatedAt !== null,
+        masked,
+        dedupeKey: row.dedupeKey,
+      });
       const sentAt = this.clock.now();
       await this.archive.recordAttempt({
         messageId: archived.id,
@@ -375,7 +385,7 @@ export class NotifyGroupService {
         target: binding.chatid,
         recipientLabel: "project:" + message.projectId + " · " + masked,
         state: "sent",
-        attempts: result.attempts + rocketAttempts + posterAttempts,
+        attempts: result.attempts + rocketAttempts + posterAttempts + dailyReportPosterAttempts,
         error: null,
         sentAt,
         at: sentAt,
@@ -431,6 +441,97 @@ export class NotifyGroupService {
     });
     this.logger.warn("群播报确定性失败（转 dead）：" + row.dedupeKey + " · chatid " + masked + " —— " + error);
     return await this.deadWithDegrade(row, message, error);
+  }
+
+  /**
+   * 日报群同步：文字「日报已就绪」送达后，再按真实日报数据生成并追加 1080×1120 PNG 海报。
+   * 图片属增强项：数据 / 字体 / 对象读取 / 绘制 / 发送任一失败都只留日志，不重排已送达文字。
+   */
+  private async sendDailyReportPoster(input: {
+    message: NotifyGroupMessagePayload;
+    chatid: string;
+    groupActivated: boolean;
+    masked: string;
+    dedupeKey: string;
+  }): Promise<number> {
+    const reportId = input.message.refId;
+    if (input.message.templateCode !== "DAILY_REPORT_GROUP" || reportId === null || reportId === undefined) {
+      return 0;
+    }
+    let data: Awaited<ReturnType<NotifyGroupRepository["findDailyReportPosterData"]>>;
+    try {
+      data = await this.repository.findDailyReportPosterData(input.message.projectId, reportId);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.warn("日报海报数据读取失败，已跳过图片（文字已发送）：" + input.dedupeKey + " —— " + detail);
+      return 0;
+    }
+    if (data === null) {
+      this.logger.warn("日报海报数据不存在，已跳过图片（文字已发送）：" + input.dedupeKey);
+      return 0;
+    }
+    if (data.state === "draft") {
+      this.logger.warn("草稿日报不生成群海报，已跳过图片（文字已发送）：" + input.dedupeKey);
+      return 0;
+    }
+
+    // 渲染器只消费前 3 张现场图 + 前 3 条问题各首图；只读这些对象，避免把长附件全量载入内存。
+    const photos = [
+      ...data.photos.slice(0, 3),
+      ...data.issues.slice(0, 3).flatMap((issue) => issue.photos.slice(0, 1)),
+    ];
+    const objectKeys = [...new Set(photos.map((photo) => photo.objectKey).filter((key): key is string => key !== null))];
+    const objectBytes = new Map<string, Buffer>();
+    await Promise.all(
+      objectKeys.map(async (objectKey) => {
+        try {
+          const object = await this.storage.getObject(objectKey);
+          if (object !== null) {
+            objectBytes.set(objectKey, Buffer.from(object.bytes));
+          }
+        } catch {
+          // 单张附件读取失败只影响该片位；海报其余文字 / 图片继续生成。
+        }
+      }),
+    );
+    const images = new Map<string, Buffer>();
+    for (const photo of photos) {
+      const bytes = photo.objectKey === null ? undefined : objectBytes.get(photo.objectKey);
+      if (bytes !== undefined) {
+        images.set(photo.fileId, bytes);
+      }
+    }
+
+    let content: Buffer;
+    try {
+      content = await renderDailyReportPoster(data, images);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.warn("日报海报生成失败，已跳过图片（文字已发送）：" + input.dedupeKey + " —— " + detail);
+      return 0;
+    }
+
+    const fileName = "DAILY-" + data.reportDate + "-" + data.projectCode.replace(/[^A-Za-z0-9._-]+/gu, "-") + ".png";
+    const result = await this.aibot.sendGroupImage({
+      chatid: input.chatid,
+      content,
+      fileName,
+      mime: "image/png",
+      groupActivated: input.groupActivated,
+    });
+    if (!result.ok) {
+      this.logger.warn(
+        "日报海报未送达（文字已发送）：" +
+          input.dedupeKey +
+          " · chatid " +
+          input.masked +
+          " —— " +
+          describeAibotFailure(result),
+      );
+      return result.attempts;
+    }
+    this.logger.log("日报海报已送达：" + input.dedupeKey + " · chatid " + input.masked);
+    return result.attempts;
   }
 
   /**

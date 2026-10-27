@@ -1,8 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import {
   DailyReportCreateBodySchema,
   DailyReportDeleteResponseSchema,
   DailyReportDayQuerySchema,
+  DailyReportGroupSyncResponseSchema,
   DailyReportListQuerySchema,
   DailyReportListResponseSchema,
   DailyReportMissingResponseSchema,
@@ -19,7 +20,7 @@ import {
 } from "@libiaolink/contracts";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
-import { ProjectAccessGuard, RequirePermission } from "../permission/index.js";
+import { CurrentProjectAccess, ProjectAccessGuard, RequirePermission, type ProjectAccessContext } from "../permission/index.js";
 import { IssueService } from "./issue.service.js";
 import { ReportService } from "./report.service.js";
 import { ReportSummaryService } from "./report-summary.service.js";
@@ -27,6 +28,7 @@ import { ReportSummaryService } from "./report-summary.service.js";
 type DailyReport = z.infer<typeof DailyReportSchema>;
 type DailyReportCreateBody = z.infer<typeof DailyReportCreateBodySchema>;
 type DailyReportDeleteResponse = z.infer<typeof DailyReportDeleteResponseSchema>;
+type DailyReportGroupSyncResponse = z.infer<typeof DailyReportGroupSyncResponseSchema>;
 type DailyReportDayQuery = z.infer<typeof DailyReportDayQuerySchema>;
 type DailyReportListQuery = z.infer<typeof DailyReportListQuerySchema>;
 type DailyReportListResponse = z.infer<typeof DailyReportListResponseSchema>;
@@ -94,6 +96,19 @@ export class ReportController {
     @CurrentActorId() actorId: string,
   ): Promise<DailyReport> {
     return this.reports.create(id, body, actorId);
+  }
+
+  /** 同步日报到项目群（2026-10-27）：仅项目经理；已提交 + 已绑定项目群；受理后 outbox 先发文字再发动态海报。 */
+  @Post(":id/reports/:reportId/group-sync")
+  @HttpCode(HttpStatus.ACCEPTED)
+  @RequirePermission("project.update")
+  syncGroup(
+    @Param("id", uuidParam) id: string,
+    @Param("reportId", uuidParam) reportId: string,
+    @CurrentActorId() actorId: string,
+    @CurrentProjectAccess() access: ProjectAccessContext,
+  ): Promise<DailyReportGroupSyncResponse> {
+    return this.reports.syncToProjectGroup(id, reportId, actorId, access.projectManager);
   }
 
   /** 日报详情（A3-01 全字段 + 关联阶段名与附图）。 */
