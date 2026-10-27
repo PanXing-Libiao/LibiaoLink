@@ -1,5 +1,11 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
+> **2026-10-27 20:38 日报双海报已部署公司测试机（px@9514d3ac · server-only · 生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）发布最终确认的双海报方案：日报海报含项目、日期、今日完成、明日计划与全部现场图，不显示报送人和问题；现场问题专报含全部问题、分类、责任人、状态、处理记录及全部问题附图。两图固定 1440 px 宽并按内容动态增高，文字自动换行不截断，图片全量入版，字体固定为随包思源黑体 SC Regular / Bold。机器人按「日报已就绪」文字 → 日报海报 → 问题专报发送；无问题时不发空专报，单张失败独立处理并继续。
+
+> 发布包 `output/server-daily-posters-9514d3ac-20261027-203823.tar.gz`（956,787 B · SHA-256 `0e8cf34fcfb1bc7e335d1e81df5352d2854b22d93b5888a9d9414004814f12c5`）上传后远端一致；manifest = `test-20261027-9514d3ac`（`ea60fa5d1cf2ed4cf0f5a2356475ec28527e1539fd16ecbb97917a377fb4ff4c`）。部署前备份 `/srv/data/backups/before-daily-posters-20261027-203823/`：`server-dist-before.tar.gz` 955,812 B（`e3183c00…8e1f`）、原 manifest 1,688 B（`2d981eed…dab1`）；旧 dist 目录 `/opt/libiaolink/server/dist.bak.20261027-203823`。远端 staging 已清理。
+
+> 验收：API / worker healthy、重启计数 0，5 分钟异常日志 0；主 Compose 9 / 9、全部 10 个容器 healthy；站点 / `healthz` / `readyz` 均 200。容器内真实渲染烟测为 1440×1040 / 1440×649，仓库样张为 1440×1238 / 1440×856。未发送真实企业微信群消息；正式机 `10.1.103.44` 未触碰。无 DDL / 迁移、依赖、Compose / env / Secret 变更。PR [#679](https://github.com/PanXing-Libiao/LibiaoLink/pull/679) 等待非作者评审，未合并。
+
 > **2026-10-27 19:18 日报同步按钮终稿已部署公司测试机（px@118e5109 · frontend-only · 生产未部署）**：按业务口径去掉「同步到项目群」按钮的发送图标和深色描边，改为无边框浅灰底文字按钮；品牌黄仍只保留给「保存修改」。发布包 `output/frontend-report-sync-button-118e5109-20261027-1916.tar.gz`（14,903,167 B · SHA-256 `d3851bb0b4909f4064b8d84659ab7004d5e1569558780201d8e89474b056255b`）上传后远端一致，staging 386 文件 / 18,575,330 B 全部通过 `SHA256SUMS`；`rsync -a --delete` 原位覆盖 `/opt/libiaolink/frontend/dist`，web 未重启。
 >
 > 备份：`/srv/data/backups/frontend-before-report-sync-button-118e5109-20261027-1916.tar.gz`（14,911,452 B · `ba112dc2f9069ab33d47e21d7e3e964a5bdcf2e42571aa7067113659aab6a1b1`）；旧 manifest 备份 `/srv/data/backups/RELEASE_MANIFEST.before-report-sync-button-118e5109.json`（`5da3fcc2…99fd`），新 manifest = `test-20261027-118e5109`（`2d981eedba344ccdc2c7c49f2e0cb87a787a2f6f5eb50e1a3160b4edf8dbdab1`）。
