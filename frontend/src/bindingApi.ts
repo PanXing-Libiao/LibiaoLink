@@ -12,6 +12,7 @@
  * （同收件箱 / 通知偏好先例）；安全（口径 §9）：界面只展示掩码（末 4 位），前端不缓存 / 不落日志企微标识。
  */
 import { ApiError, apiRequest, apiSend } from "./api";
+import { applyWecomBindingBound } from "./wecomBindingStatus";
 
 /** 绑定态（`WecomDmBindingState` 契约同形）：掩码与绑定时刻只在已绑定时有值；v1.8 另带读面回填。 */
 export type WecomDmBindingState = {
@@ -63,9 +64,20 @@ export type WecomDmBotDiagnostics = {
   serverTime: string;
 };
 
-/** 读绑定态（设置页 / 首登引导弹窗 / 站内信未绑定提示共用同一读面）。 */
-export function loadWecomDmBinding(): Promise<WecomDmBindingState> {
-  return apiRequest<WecomDmBindingState>("/api/v1/wecom-dm-binding");
+/** 读绑定态（设置页 / 站内信未绑定提示共用同一读面；同时同步顶栏提示态）。 */
+export async function loadWecomDmBinding(): Promise<WecomDmBindingState> {
+  const state = await apiRequest<WecomDmBindingState>("/api/v1/wecom-dm-binding");
+  applyWecomBindingBound(state.bound);
+  return state;
+}
+
+/** 登录后补拉绑定态：失败静默，不亮绑定红点，也不影响站内信。 */
+export async function refreshWecomDmBindingStatus(): Promise<void> {
+  try {
+    await loadWecomDmBinding();
+  } catch {
+    // 绑定态未知时保持静默；打开站内信 / 设置页会再次对齐
+  }
 }
 
 /** 取绑定码：重复取码会作废上一条未用码 —— 前端一律以最新响应为准；频率到顶 = 429 `RATE_LIMITED`。 */
@@ -79,13 +91,17 @@ export function fetchWecomDmBotDiagnostics(): Promise<WecomDmBotDiagnostics> {
 }
 
 /** 更新企微单聊消息开关：关闭后停止外发，任务提醒仍按 C5-04 转站内信留档。 */
-export function updateWecomDmMessagesEnabled(messagesEnabled: boolean): Promise<WecomDmBindingState> {
-  return apiSend<WecomDmBindingState>("/api/v1/wecom-dm-binding", "PATCH", { messagesEnabled });
+export async function updateWecomDmMessagesEnabled(messagesEnabled: boolean): Promise<WecomDmBindingState> {
+  const state = await apiSend<WecomDmBindingState>("/api/v1/wecom-dm-binding", "PATCH", { messagesEnabled });
+  applyWecomBindingBound(state.bound);
+  return state;
 }
 
 /** 解绑（幂等）：成功回未绑定态；服务端同事务写审计（对象类型「用户」/ 动作「删除」，只带掩码）。 */
-export function unbindWecomDm(): Promise<WecomDmBindingState> {
-  return apiSend<WecomDmBindingState>("/api/v1/wecom-dm-binding", "DELETE");
+export async function unbindWecomDm(): Promise<WecomDmBindingState> {
+  const state = await apiSend<WecomDmBindingState>("/api/v1/wecom-dm-binding", "DELETE");
+  applyWecomBindingBound(state.bound);
+  return state;
 }
 
 /** 429 限流的可重试时刻（`details[].meta.retryAt`，ISO）；非限流 / 解析不出 = null。 */

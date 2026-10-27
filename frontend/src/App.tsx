@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { startLiveSync } from "./liveSync";
 import { applyInboxUnread, noteInboxNotification, refreshInboxUnread } from "./inbox";
+import { refreshWecomDmBindingStatus } from "./bindingApi";
 import { useLiveRefresh } from "./useLiveRefresh";
 import { AccessControlPage } from "./AccessControlPage";
 import { AuditLogPage } from "./AuditLogPage";
@@ -19,7 +20,6 @@ import { Loader } from "./components/Loader";
 import { Toast, ToastConfirm } from "./components/Toast";
 import { ExportProgressOverlay } from "./components/ExportProgressOverlay";
 import { useFocusTrap } from "./components/useFocusTrap";
-import { BindingGuideModal } from "./components/BindingGuideModal";
 import { ProjectModal, type ProjectDraft, type ProjectSubmitResult } from "./components/ProjectModal";
 import type { DictTools } from "./dictTools";
 import { canEditTaskTemplates, hasPermission, loadMyPermissions, useMyPermissions } from "./permissions";
@@ -222,6 +222,7 @@ export default function App() {
       return undefined;
     }
     void refreshInboxUnread();
+    void refreshWecomDmBindingStatus();
     return startLiveSync({
       onUnread: applyInboxUnread,
       onNotification: noteInboxNotification,
@@ -835,8 +836,6 @@ export default function App() {
           }}
         />
       )}
-      {/* 首登「绑定企业微信」引导（D5 · Push 250）：未绑定且本机未跳过才弹；已绑定 / 已跳过 = 静默不渲染。 */}
-      <BindingGuideModal me={state.me} />
     </>
   );
 

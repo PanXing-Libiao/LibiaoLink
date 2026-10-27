@@ -17,8 +17,8 @@ import { formatDateTime } from "../projectApi";
 /**
  * 企业微信绑定操作面板（D5 / D6 · M5-03-5-6 绑定码链路前端 · Push 250）。
  *
- * 两处复用：设置页「企业微信绑定」卡片（variant = page）与首登引导弹窗（variant = guide）。
- * 面板只做「状态 + 取码 / 倒计时 / 复制 + 解绑」，引导文案与外壳由宿主给（见 SettingsPage / BindingGuideModal）。
+ * 设置页「企业微信绑定」卡片使用；面板只做「状态 + 取码 / 倒计时 / 复制 + 解绑」，
+ * 引导文案与外壳由宿主给（见 SettingsPage / WecomBindingGuideContent）。
  *
  * 取码：`POST /wecom-dm-binding/codes` → 6 位码 + `expiresInSeconds` 倒计时（重复取码作废旧码，
  *  一律以最新响应为准）；频率到顶 = 429 `RATE_LIMITED` → 按 `details[].meta.retryAt` 置灰按钮 + 倒计时。
@@ -38,7 +38,7 @@ export type BindingNotice = { kind: "ok" | "error"; text: string };
 
 /** 未绑定时的绑定态轮询间隔（5 秒）。 */
 const BINDING_POLL_INTERVAL_MS = 5_000;
-/** 轮询上限（15 分钟）：到点停表，改由「刷新绑定状态」按钮手动读（避免开着的引导弹窗长期空转）。 */
+/** 轮询上限（15 分钟）：到点停表，改由「刷新绑定状态」按钮手动读（避免设置页长期空转）。 */
 const BINDING_POLL_MAX_MS = 15 * 60_000;
 
 /** 频率等待时长口径（把「2000 多秒」写成「33 分 20 秒」：Push 253 可读性修订）。 */
@@ -52,9 +52,7 @@ function formatWait(seconds: number): string {
 }
 
 export function WecomBindingPanel(props: {
-  variant: "page" | "guide";
   onNotice: (notice: BindingNotice) => void;
-  onBoundChange?: (bound: boolean) => void;
 }) {
   const t = useT();
   const [state, setState] = useState<WecomDmBindingState | null>(null);
@@ -77,7 +75,6 @@ export function WecomBindingPanel(props: {
     setState(next);
     setCode(next.bindingCode);
     setRetryAt(next.retryAt);
-    props.onBoundChange?.(next.bound);
   };
 
   const reload = (): void => {
@@ -118,12 +115,9 @@ export function WecomBindingPanel(props: {
   };
 
   useEffect(() => {
-    if (props.variant !== "page") {
-      return;
-    }
     void loadDiagnostics();
-    // 只在挂载 / 变体切换时读一次；后续由「刷新绑定状态」手动联动（避免每 5 秒轮询多打两笔统计查询）
-  }, [props.variant]);
+    // 只在挂载时读一次；后续由「刷新绑定状态」手动联动（避免每 5 秒轮询多打两笔统计查询）
+  }, []);
 
   /** 手动「刷新绑定状态」：按钮置忙，读毕复位（同时刷新机器人诊断 —— 发消息后点一下即可看回调计数）。 */
   const manualRefresh = async (): Promise<void> => {
@@ -313,7 +307,7 @@ export function WecomBindingPanel(props: {
     );
 
   const diagnosticsBlock =
-    props.variant !== "page" || diagnostics === null || !diagnostics.enabled ? null : (
+    diagnostics === null || !diagnostics.enabled ? null : (
       <section
         data-wecom-binding-diagnostics={String(diagnostics.inboundCount)}
         className="mt-4 rounded-xl border border-dashed border-amber-300 bg-amber-50/50 p-3"
@@ -422,7 +416,7 @@ export function WecomBindingPanel(props: {
 
   if (state.bound) {
     return (
-      <div data-wecom-binding="bound" className={props.variant === "guide" ? "" : "space-y-1"}>
+      <div data-wecom-binding="bound" className="space-y-1">
         <p className="flex flex-wrap items-center gap-2 text-sm text-zinc-800">
           <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
             {t("settings.bind.bound")}
