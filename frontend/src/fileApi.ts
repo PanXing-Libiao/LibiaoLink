@@ -145,7 +145,11 @@ async function putPartWithRetry(
       }
     }
     try {
-      const response = await fetch(url, { method: "PUT", body: slice });
+      const response = await fetch(url, {
+        method: "PUT",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: slice,
+      });
       if (response.ok) {
         return;
       }
