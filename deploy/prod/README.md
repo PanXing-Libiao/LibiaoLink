@@ -1,3 +1,11 @@
+> **2026-10-27 23:39 文件上传小车动画与未完成上传隔离已部署公司测试机（px@c71025e7 · frontend + server · 生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）的任务文件列下拉与任务详情抽屉复用导出 / 导入品牌小车路面动画，上传期间显示份数与进度并锁定滚动；分片失败尽力 `abort`，上传失败 / 取消 / 刷新留下的无版本空文件不再进入文件栏、文件数或门禁计数。
+>
+> 发布包 `output/frontend-file-upload-c71025e7-20261027-2339.tar.gz`（14,904,015 B · SHA-256 `5c336e873d107ce6ac51a2fd5b4026d237ac5934b1e7c1733c47c06109eacba5`）+ `output/server-file-upload-c71025e7-20261027-2339.tar.gz`（958,612 B · SHA-256 `51e44540f6ba51cf3957815eaf2c6a7f955179b9794cc2d664bee666c4727222`）上传后远端一致；staging 386 + 614 文件全部核对后清理。manifest = `test-20261027-file-upload-c71025e7`（1,700 B · `1ed20f0d406559b5cd0c660821fe05c2e1a68c22ce739e7c8ea4ebb42ed5850b`）。
+>
+> 备份 `/srv/data/backups/before-file-upload-c71025e7-20261027-2339/`：frontend `3166f2f0ec2e0b1ece11076e22dd3fcf23c0d6e6f19513bea7ad34b8c47a7dfd`（14,914,818 B）、server `7a2815f0ba10f19e22b6f1dca571927a475273e6f5f3b5c2e835dc554f63019f`（960,144 B）、原 manifest `161062e99331e275ee35b5defb7a5a3beaa23157fe7fb1e597bc073bdf0ed130`（1,706 B）。
+>
+> 验收：PR [#682](https://github.com/PanXing-Libiao/LibiaoLink/pull/682) CI 5 / 5（run [40533133696](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40533133696)）；10 / 10 容器 healthy，API / worker 重启计数 0 且近 10 分钟错误日志 0；`healthz / readyz` 200，公网 JS / CSS 与本地逐字节一致。库内文件 247 / 可见 243 / 隐藏空上传 4；任务「软件开发」库内 2 条空上传、可见文件 0，刷新后抽屉仍为「暂无文件」；真实上传期间出现「正在上传文件」小车浮层，刷新后消失，既有完成文件正常展示。未发送企业微信群消息；无 DDL / 迁移、依赖、Compose / env / Secret 变更，正式机 `10.1.103.44` 未触碰。
+
 > **2026-10-27 22:16 日报海报行序号统一浅灰已部署公司测试机（px@13357653 · server-only · 生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）的日报「今日完成 / 明日计划」两栏行序号统一为浅灰底 `#E4E0D5`，章节编号与品牌装饰保留黄色；问题专报橙色问题编号不变。
 
 > 发布包 `output/server-daily-poster-gray-13357653-20261027-221248.tar.gz`（958,472 B · SHA-256 `ed14f8d432e22dae8199d3293720c2a5809e77ab1c77ab3206c5ffcf4591185a`）上传后远端一致；staging 614 个 dist 文件并核对海报产物哈希后清理。manifest = `test-20261027-daily-poster-gray-13357653`（1,706 B · `161062e99331e275ee35b5defb7a5a3beaa23157fe7fb1e597bc073bdf0ed130`）。备份 `/srv/data/backups/before-daily-poster-gray-20261027-221248/`：`server-dist-before.tar.gz` 960,002 B · `1919353ac6a12384760e9193ab497bc6367a938ffef303e44ea7ac244c3220cb`，原 manifest 1,708 B · `a243b13f2edf2d2d4f9c15789b9cbc43272346687060743fb214fa522b9b6ec4`。
