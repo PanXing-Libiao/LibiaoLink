@@ -12,7 +12,7 @@ import Home from "./Home";
 import PlaceholderPage from "./PlaceholderPage";
 import ProjectDetail from "./ProjectDetail";
 import WorkspacePage from "./WorkspacePage";
-import { ApiError, apiFetch, redirectToLogin } from "./api";
+import { ApiError, apiFetch, redirectToLogin, rememberCsrfToken } from "./api";
 import { applyBackgroundTier, applyCardWatermark, asBackgroundTier, asCardWatermark } from "./backgroundTier";
 import { applyLocale, asLocale, getLocale, textOf, useT, type TextKey } from "./i18n";
 import { AppHeader } from "./components/AppHeader";
@@ -279,6 +279,7 @@ export default function App() {
         if (cancelled) {
           return;
         }
+        rememberCsrfToken(me.csrfToken);
         setState({ kind: "signed-in", me });
         const [dictResult, directoryResult, prefsResult] = await Promise.allSettled([
           loadDicts(),
