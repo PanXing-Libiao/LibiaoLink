@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { and, count, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { and, count, eq, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { files } from "../../db/schema/files.js";
@@ -59,7 +59,7 @@ export class TaskGateRepository {
     const rows = await client
       .select({ docType: files.docType, present: count() })
       .from(files)
-      .where(and(scopeCondition(scope), eq(files.status, "draft")))
+      .where(and(scopeCondition(scope), eq(files.status, "draft"), isNotNull(files.currentVersionId)))
       .groupBy(files.docType);
     return toDocCountRows(rows);
   }

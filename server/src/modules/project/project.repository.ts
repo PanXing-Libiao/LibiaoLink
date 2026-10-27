@@ -382,7 +382,7 @@ export class ProjectRepository {
         reports: sql<number>`(select count(*)::int from ${dailyReports} where ${dailyReports.projectId} = ${id})`,
         issues: sql<number>`(select count(*)::int from ${issues} where ${issues.projectId} = ${id})`,
         changeRequests: sql<number>`(select count(*)::int from ${changeRequests} where ${changeRequests.projectId} = ${id})`,
-        files: sql<number>`(select count(*)::int from ${files} where ${files.projectId} = ${id})`,
+        files: sql<number>`(select count(*)::int from ${files} where ${files.projectId} = ${id} and ${files.currentVersionId} is not null)`,
       })
       .from(projects)
       .where(eq(projects.id, id))

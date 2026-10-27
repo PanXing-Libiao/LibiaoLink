@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { and, asc, count, desc, eq, ilike, inArray, isNull, lt, lte, ne, notInArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, inArray, isNotNull, isNull, lt, lte, ne, notInArray, or, sql, type SQL } from "drizzle-orm";
 import type { DbClient, DbTransaction } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { changeRequests } from "../../db/schema/change.js";
@@ -782,9 +782,9 @@ function changeRequestOrderBy(sorts: readonly ChangeRequestSort[]): SQL[] {
   return clauses;
 }
 
-/** 文件库列表条件（M4-03）：默认排除回收站（显式给出 statuses 时以给出为准）。 */
+/** 文件库列表条件（M4-03）：默认排除回收站（显式给出 statuses 时以给出为准）；未完成上传没有版本，不对外展示。 */
 function fileLibraryConditions(projectId: string, filter: FileListFilter): SQL[] {
-  const conditions: SQL[] = [eq(files.projectId, projectId)];
+  const conditions: SQL[] = [eq(files.projectId, projectId), isNotNull(files.currentVersionId)];
   if (filter.nodeId !== null) conditions.push(eq(files.nodeId, filter.nodeId));
   if (filter.taskId !== null) conditions.push(eq(files.taskId, filter.taskId));
   if (filter.statuses !== null) conditions.push(inArray(files.status, filter.statuses));
