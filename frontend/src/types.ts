@@ -10,6 +10,8 @@ export type MeResponse = {
   user: User;
   claims: Record<string, unknown>;
   expiresAt: number | null;
+  /** 写请求 X-CSRF-Token；由 /auth/me 随会话下发，兼容 WAF 将 ll_csrf 改写为 HttpOnly。 */
+  csrfToken: string;
 };
 
 /**

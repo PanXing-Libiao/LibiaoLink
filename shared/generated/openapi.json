@@ -3650,6 +3650,7 @@
           "AUTH_REQUIRED",
           "AUTH_CALLBACK_FAILED",
           "FORBIDDEN",
+          "CSRF_FAILED",
           "NOT_FOUND",
           "VERSION_CONFLICT",
           "PROJECT_CODE_EXISTS",
@@ -5748,14 +5749,21 @@
             ],
             "example": 1758182400,
             "description": "ID Token 到期时间（Unix 秒，UTC）；null = 未知"
+          },
+          "csrfToken": {
+            "type": "string",
+            "minLength": 1,
+            "example": "Q2xvdWQtQ1NSRi10b2tlbi0xNg",
+            "description": "写请求 X-CSRF-Token 同步值（与 ll_csrf Cookie 一致；响应禁止缓存）"
           }
         },
         "required": [
           "user",
           "claims",
-          "expiresAt"
+          "expiresAt",
+          "csrfToken"
         ],
-        "description": "/auth/me 响应（会话由 HttpOnly Cookie 承载）"
+        "description": "/auth/me 响应（会话由 HttpOnly Cookie 承载；CSRF token 随响应下发）"
       },
       "MyPlanBoard": {
         "allOf": [
@@ -19460,7 +19468,7 @@
         "tags": [
           "auth"
         ],
-        "summary": "当前登录用户（会话无效 / 超时返回 401，前端据此重新走 SSO）",
+        "summary": "当前登录用户与 CSRF token（禁止缓存；会话无效 / 超时返回 401，前端据此重新走 SSO）",
         "responses": {
           "200": {
             "description": "已登录用户",

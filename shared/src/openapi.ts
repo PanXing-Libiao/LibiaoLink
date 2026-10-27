@@ -1527,7 +1527,7 @@ export function buildOpenApiDocument() {
     method: "get",
     path: "/auth/me",
     tags: ["auth"],
-    summary: "当前登录用户（会话无效 / 超时返回 401，前端据此重新走 SSO）",
+    summary: "当前登录用户与 CSRF token（禁止缓存；会话无效 / 超时返回 401，前端据此重新走 SSO）",
     responses: {
       200: { description: "已登录用户", ...json(MeResponseSchema) },
       401: commonErrors[401],

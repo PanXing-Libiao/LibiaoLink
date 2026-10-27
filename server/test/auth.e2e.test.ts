@@ -233,6 +233,7 @@ class FakeAuditService {
 
 interface TestContext {
   agent: ReturnType<typeof request>;
+  server: Parameters<typeof request>[0];
   fakeUsers: FakeUserRepository;
   fakeSessions: FakeSessionRepository;
   fakeAudit: FakeAuditService;
@@ -292,6 +293,7 @@ async function createApp(idleMinutes: number): Promise<TestContext> {
   await app.init();
   return {
     agent: request(app.getHttpServer()),
+    server: app.getHttpServer(),
     fakeUsers,
     fakeSessions,
     fakeAudit,
@@ -412,7 +414,7 @@ describe("会话后端化 /auth/*（g6 验收：可登录 / 可登出 / 超时�
     });
     expect(JSON.stringify(context.fakeAudit.entries[0])).not.toContain("id_token");
 
-    const me = await context.agent.get("/auth/me").set("Cookie", cookieHeader({ ll_sid: session })).expect(200);
+    const me = await context.agent.get("/auth/me").set("Cookie", cookieHeader({ ll_sid: session, ll_csrf: csrf })).expect(200);
     expect(csrf.length).toBeGreaterThan(10);
     expect(me.body.user).toEqual({
       id: "casdoor-user-1",
@@ -423,6 +425,24 @@ describe("会话后端化 /auth/*（g6 验收：可登录 / 可登出 / 超时�
     });
     expect(me.body.claims.id).toBe("casdoor-user-1");
     expect(typeof me.body.expiresAt).toBe("number");
+    expect(me.body.csrfToken).toBe(csrf);
+    expect(me.headers["cache-control"]).toBe("no-store");
+    await context.close();
+  });
+
+  it("GET /auth/me 在 ll_csrf 缺失时下发新 token，并禁止缓存", async () => {
+    const context = await createApp(30);
+    const { session, csrf } = await completeLogin(context);
+    const response = await request(context.server)
+      .get("/auth/me")
+      .set("Cookie", cookieHeader({ ll_sid: session }))
+      .expect(200);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(typeof response.body.csrfToken).toBe("string");
+    expect(response.body.csrfToken).not.toBe(csrf);
+    const cookies = setCookiesOf(response);
+    expect(cookieValue(cookies, "ll_csrf")).toBe(response.body.csrfToken);
+    expect(cookies.some((cookie) => cookie.startsWith("ll_csrf=") && !cookie.includes("HttpOnly"))).toBe(true);
     await context.close();
   });
 
@@ -534,7 +554,15 @@ describe("会话后端化 /auth/*（g6 验收：可登录 / 可登出 / 超时�
     const contextOf = (method: string, headers: Record<string, unknown>): ExecutionContext =>
       ({ switchToHttp: () => ({ getRequest: () => ({ method, headers }) }) }) as unknown as ExecutionContext;
     expect(guard.canActivate(contextOf("GET", {}))).toBe(true);
-    expect(() => guard.canActivate(contextOf("POST", { cookie: "ll_csrf=abc" }))).toThrowError();
+    const failure = (() => {
+      try {
+        guard.canActivate(contextOf("POST", { cookie: "ll_csrf=abc" }));
+        return null;
+      } catch (error) {
+        return error;
+      }
+    })();
+    expect(failure).toMatchObject({ code: "CSRF_FAILED" });
     expect(guard.canActivate(contextOf("POST", { cookie: "ll_csrf=abc", "x-csrf-token": "abc" }))).toBe(true);
   });
 });

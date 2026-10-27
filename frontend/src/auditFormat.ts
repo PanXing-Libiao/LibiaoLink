@@ -250,9 +250,12 @@ function formatValue(field: string, value: unknown, ctx: AuditFormatContext): st
   return formatScalar(field, value, ctx);
 }
 
-/** 摘要成句：越权尝试把 API 路径 / 错误码换成「尝试越权访问 X：原因」；结尾错误码一律去掉。 */
+/** 摘要成句：越权尝试把 API 路径 / 错误码换成「尝试越权访问 X：原因」；CSRF 凭证失配另作过期提示；结尾错误码一律去掉。 */
 export function auditSummaryText(item: AuditLogItem): string {
   const raw = item.summary.trim();
+  if (raw.includes("CSRF_FAILED") || raw.includes("CSRF 校验失败")) {
+    return "页面凭证已过期，请刷新重试";
+  }
   const api = API_SUMMARY_RE.exec(raw);
   if (api !== null) {
     let reason = api[1].trim().replace(ERROR_CODE_RE, "").replace(TRAILING_UUID_RE, "").trim();
