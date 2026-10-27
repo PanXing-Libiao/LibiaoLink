@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import {
   DailyReportCreateBodySchema,
   DailyReportDeleteResponseSchema,
+  DailyReportGroupSyncResponseSchema,
   DailyReportListQuerySchema,
   DailyReportListResponseSchema,
   DailyReportSchema,
@@ -13,8 +14,9 @@ import {
 import { AppError } from "../../common/errors/app-error.js";
 import type { DbClient } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
-import { appendOutbox } from "../../db/outbox.js";
+import { appendOutbox, appendOutboxIfAbsent } from "../../db/outbox.js";
 import { AuditService, diffRecords } from "../admin/index.js";
+import { ProjectGroupService } from "../project/index.js";
 import { shanghaiToday } from "../task/index.js";
 import { IssueRepository, type IssueRow } from "./issue.repository.js";
 import { ReportRepository, type DailyReportPatch, type DailyReportRow } from "./report.repository.js";
@@ -38,6 +40,7 @@ import {
 
 type DailyReport = z.infer<typeof DailyReportSchema>;
 type DailyReportDeleteResponse = z.infer<typeof DailyReportDeleteResponseSchema>;
+type DailyReportGroupSyncResponse = z.infer<typeof DailyReportGroupSyncResponseSchema>;
 type DailyReportListQuery = z.infer<typeof DailyReportListQuerySchema>;
 type DailyReportListResponse = z.infer<typeof DailyReportListResponseSchema>;
 type DailyReportCreateBody = z.infer<typeof DailyReportCreateBodySchema>;
@@ -136,6 +139,7 @@ export class ReportService {
     private readonly reports: ReportRepository,
     private readonly issues: IssueRepository,
     private readonly audit: AuditService,
+    private readonly projectGroups: ProjectGroupService,
   ) {}
 
   /** GET /api/v1/projects/{id}/reports：日期区间 / 状态 / 提交人 + 分页，日期倒序。 */
@@ -298,6 +302,65 @@ export class ReportService {
       if (after.state !== "draft") await this.afterSubmit(tx, after, actorId, at);
     });
     return this.detail(projectId, reportId);
+  }
+
+
+  /**
+   * POST /api/v1/projects/{id}/reports/{reportId}/group-sync（2026-10-27）：
+   * 仅项目经理；已提交日报 + 已绑定项目群才可受理。审计与 outbox 同事务落库，
+   * 文字「日报已就绪」先发，worker 消费时再按日报快照生成海报。
+   * 幂等键按日报版本收口 —— 同版本重复点击不重复投递；dead 行可被下一次点击唤醒。
+   */
+  async syncToProjectGroup(
+    projectId: string,
+    reportId: string,
+    actorId: string,
+    projectManager: boolean,
+  ): Promise<DailyReportGroupSyncResponse> {
+    await this.loadProjectForWrite(projectId);
+    if (!projectManager) {
+      throw new AppError("FORBIDDEN", "仅项目经理可同步日报到项目群");
+    }
+    const group = await this.projectGroups.getGroup(projectId);
+    if (!group.bound) {
+      throw new AppError("REPORT_GROUP_NOT_BOUND", "项目尚未绑定企业微信群，请先在项目设置中完成绑定");
+    }
+    const at = new Date();
+    let version = 0;
+    await this.database.db.transaction(async (tx) => {
+      const row = await this.requireReport(projectId, reportId, tx);
+      if (row.state === "draft") {
+        throw new AppError("VALIDATION_FAILED", "草稿日报不可同步到项目群，请先提交日报");
+      }
+      version = row.version;
+      await this.audit.record(tx, {
+        actorId,
+        action: "update",
+        objectType: "daily_report",
+        objectId: row.id,
+        projectId,
+        summary: "同步日报到项目群：" + row.reportDate,
+        changes: null,
+        metadata: {
+          templateCode: "DAILY_REPORT_GROUP",
+          reportVersion: row.version,
+          groupName: group.name,
+        },
+      });
+      await appendOutboxIfAbsent(tx, {
+        topic: "notify.group",
+        dedupeKey: "report.group-sync:" + row.id + ":v" + String(row.version),
+        payload: {
+          projectId,
+          title: null,
+          body: "日报已就绪",
+          refType: "report",
+          refId: row.id,
+          templateCode: "DAILY_REPORT_GROUP",
+        },
+      });
+    });
+    return { reportId, version, queued: true, message: "已提交同步" };
   }
 
   /**
