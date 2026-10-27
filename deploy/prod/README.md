@@ -1,5 +1,13 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
+> **2026-10-27 21:18 站内信深链已部署公司测试机（codex/inbox-deep-link@699fe143 + origin/px@ebc2061d → 集成 64474442 · 生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）的站内信条目可直达关联内容：项目进入项目总览，任务自动打开任务抽屉，日报滚动并高亮记录行，问题打开问题详情抽屉，文件进入文件库项目筛选；关联对象已删除时仍可置读、不跳空页。服务端按 `refType/refId` 批量派生 `projectId`，通知列表 / 标记 / 稍后提醒 / SSE 统一返回，不写回通知表、零 DDL。
+>
+> 发布包 `output/test-sync-inbox-deeplink-64474442-20261027-2110.tar.gz`（89,141,476 B · SHA-256 `ebeaa1af589074566158cf9b44b9463a042d89d367cb7c31a7f579beae7b680c`）上传后远端一致；staging 1,180 项 `SHA256SUMS` 全部 OK（1,181 文件 / 113,846,799 B），核验后已清理。manifest = `test-20261027-inbox-deeplink-64474442`，`sourceCommit` = `64474442431bee357fa4328ca7a73d7050534962`（实际集成基线 `origin/px@ebc2061d` + 功能 `699fe143`；manifest 的 `sourceRef` 保留旧标签 `origin/px@9514d3ac`，代码树一致）。
+>
+> 备份 `/srv/data/backups/before-inbox-deeplink-20261027-2110/`：frontend `e763c4f83e7b4bee0982574695f64a7e89019136211683e246b7ac5d38d86b86`、server `99ba6ea1c1c1fffe6b63dfed005c18a9c05953c2c3f44d803d9b28af629feea5`、shared `60aa7212eacc4e94b5bc568dc55e372d6a36fcc98ca0f87080febf225807abc4`、原 manifest `ea60fa5d1cf2ed4cf0f5a2356475ec28527e1539fd16ecbb97917a377fb4ff4c`。
+>
+> 验收：10 / 10 容器 healthy，API / worker 重启计数 0；站点 / `healthz` / `readyz` 均 200，新前端 `index-BW97SWST.js` / `index-C2faEFXI.css` 已生效。真实账号用 4 条临时提醒逐条点击项目、任务、日报、问题，四个落点及各精确参数均正确，四条均成功置读；临时通知已全部删除（残留 0），未发送真实企业微信消息。无依赖 / DDL / 迁移 / Compose / env / Secret 变更；正式机 `10.1.103.44` 未触碰。PR [#680](https://github.com/PanXing-Libiao/LibiaoLink/pull/680) 仍等待非作者评审，未合并。
+
 > **2026-10-27 19:18 日报同步按钮终稿已部署公司测试机（px@118e5109 · frontend-only · 生产未部署）**：按业务口径去掉「同步到项目群」按钮的发送图标和深色描边，改为无边框浅灰底文字按钮；品牌黄仍只保留给「保存修改」。发布包 `output/frontend-report-sync-button-118e5109-20261027-1916.tar.gz`（14,903,167 B · SHA-256 `d3851bb0b4909f4064b8d84659ab7004d5e1569558780201d8e89474b056255b`）上传后远端一致，staging 386 文件 / 18,575,330 B 全部通过 `SHA256SUMS`；`rsync -a --delete` 原位覆盖 `/opt/libiaolink/frontend/dist`，web 未重启。
 >
 > 备份：`/srv/data/backups/frontend-before-report-sync-button-118e5109-20261027-1916.tar.gz`（14,911,452 B · `ba112dc2f9069ab33d47e21d7e3e964a5bdcf2e42571aa7067113659aab6a1b1`）；旧 manifest 备份 `/srv/data/backups/RELEASE_MANIFEST.before-report-sync-button-118e5109.json`（`5da3fcc2…99fd`），新 manifest = `test-20261027-118e5109`（`2d981eedba344ccdc2c7c49f2e0cb87a787a2f6f5eb50e1a3160b4edf8dbdab1`）。
