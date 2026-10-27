@@ -1,5 +1,11 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
+> **2026-10-27 21:49 日报海报序号与双栏配色修复已部署公司测试机（px@c9db0b34 · server-only · 生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）的日报条目与问题标题会在渲染前清洗重复行首枚举号，避免出现 `01 1: 1 …`；`1拖4`、日期和数量保留。日报「今日完成 / 明日计划」两栏序号统一为品牌黄。同步仍按「日报已就绪」文字 → 日报海报 → 有问题时的现场问题专报发送，无问题不发空专报。
+>
+> 发布包 `output/server-daily-poster-polish-c9db0b34-20261027-214519.tar.gz`（958,474 B · SHA-256 `4042a7a42bb7955df0e71d02021b9a68eed4ae07161675a949bc4025b2dea1b0`）上传后远端一致，staging 614 个 dist 文件；manifest = `test-20261027-daily-poster-polish-c9db0b34`（`a243b13f2edf2d2d4f9c15789b9cbc43272346687060743fb214fa522b9b6ec4`）。部署前备份 `/srv/data/backups/before-daily-poster-polish-20261027-214519/`：`server-dist-before.tar.gz` 959,149 B（`1ea623ef…b568`）、原 manifest 1,736 B（`6178c38d…4131`）；远端 staging 已清理。
+>
+> 验收：10 / 10 容器 healthy，API / worker 重启计数 0，近 5 分钟异常日志 0；站点 / `healthz` / `readyz` 均 200。容器内海报烟测 1440×1040 / 1440×649，`1拖4` 保留，部署文件 SHA-256 `7e6ceae7…0f29` 与本地一致。未发送真实企业微信群消息；正式机 `10.1.103.44` 未触碰。无 DDL / 迁移、依赖、Compose / env / Secret 变更。PR [#679](https://github.com/PanXing-Libiao/LibiaoLink/pull/679) 仍等待非作者评审，未合并。
+
 > **2026-10-27 21:18 站内信深链已部署公司测试机（codex/inbox-deep-link@699fe143 + origin/px@ebc2061d → 集成 64474442 · 生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）的站内信条目可直达关联内容：项目进入项目总览，任务自动打开任务抽屉，日报滚动并高亮记录行，问题打开问题详情抽屉，文件进入文件库项目筛选；关联对象已删除时仍可置读、不跳空页。服务端按 `refType/refId` 批量派生 `projectId`，通知列表 / 标记 / 稍后提醒 / SSE 统一返回，不写回通知表、零 DDL。
 >
 > 发布包 `output/test-sync-inbox-deeplink-64474442-20261027-2110.tar.gz`（89,141,476 B · SHA-256 `ebeaa1af589074566158cf9b44b9463a042d89d367cb7c31a7f579beae7b680c`）上传后远端一致；staging 1,180 项 `SHA256SUMS` 全部 OK（1,181 文件 / 113,846,799 B），核验后已清理。manifest = `test-20261027-inbox-deeplink-64474442`，`sourceCommit` = `64474442431bee357fa4328ca7a73d7050534962`（实际集成基线 `origin/px@ebc2061d` + 功能 `699fe143`；manifest 的 `sourceRef` 保留旧标签 `origin/px@9514d3ac`，代码树一致）。
