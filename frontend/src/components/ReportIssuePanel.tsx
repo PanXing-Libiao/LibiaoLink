@@ -1340,8 +1340,10 @@ const REPORT_COLUMNS: readonly string[] = [
  *  Push 223（业务口径 2026-09-29「日报记录 … 这个编辑也要和干系人同款」+「文字和图片编辑要同款 下拉框的保持原来的」）：
  *  行尾补一枚干系人同款「编辑」按钮 —— 文字两列 / 现场工作附图改走编辑弹窗（ReportEditModal）落值
  *  （表格里只做展示），「关联阶段」是下拉口径、保持原来的行内多选。 */
-function ReportList({ reports, onEdit, onPatch, onDelete }: {
+function ReportList({ reports, focusReportId = null, onEdit, onPatch, onDelete }: {
   reports: readonly DailyReport[];
+  /** 站内信深链：滚动到对应日报并高亮（记录表没有抽屉）。 */
+  focusReportId?: string | null;
   /** 行尾「编辑」按钮（Push 223）：打开日报编辑弹窗 —— 文字两列 + 现场工作附图（关联阶段是下拉口径，保持行内）。 */
   onEdit?: (report: DailyReport) => void;
   /** 行内编辑落值（Push 208 口径保留）：本表只剩「关联阶段」一列；不传 = 只读展示。 */
@@ -1351,6 +1353,12 @@ function ReportList({ reports, onEdit, onPatch, onDelete }: {
   const locale = useLocale();
   const localize = useLocalizedTranslator();
   const t = useT();
+  const focusRowRef = useRef<HTMLTableRowElement | null>(null);
+  useEffect(() => {
+    if (focusReportId !== null) {
+      focusRowRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [focusReportId, reports]);
   return (
     <div data-report-table="" className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
       <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
@@ -1372,7 +1380,16 @@ function ReportList({ reports, onEdit, onPatch, onDelete }: {
         <tbody>
           {reports.map((report) => {
             return (
-              <tr key={report.id} data-report-row={report.id} className="group align-top transition hover:bg-zinc-50/70">
+              <tr
+                key={report.id}
+                ref={report.id === focusReportId ? focusRowRef : undefined}
+                data-report-row={report.id}
+                data-report-focused={report.id === focusReportId ? "true" : undefined}
+                className={
+                  "group align-top transition " +
+                  (report.id === focusReportId ? "bg-amber-50/80" : "hover:bg-zinc-50/70")
+                }
+              >
                 <td className="whitespace-nowrap border-b border-zinc-100 px-4 py-4">
                   {/* Push 202：时间列只留年月日（业务口径「时间格式也要年月日 具体提交时间不需要 已提交状态也不要」）——
                       状态签与「提交 HH:MM」小字一并下架（state 字段仍保留在数据模型里） */}
@@ -3179,7 +3196,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
   );
 }
 
-export function ReportIssuePanel({ project, me, members, tierTint, sub, onChangeSub, readOnly = false }: {
+export function ReportIssuePanel({ project, me, members, tierTint, sub, focusReportId = null, focusIssueId = null, onFocusClosed, onChangeSub, readOnly = false }: {
   project: Project;
   me: MeResponse;
   /** 项目成员（Push 243：问题处理人 / 责任人下拉的候选）。 */
@@ -3189,6 +3206,11 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
   tierTint?: TintedTier | false;
   /** 当前页内子视图（Push 214 起由地址 `?view=daily&sub=` 派生：form = 日报填写（缺省）/ records / issues / board）。 */
   sub: DailySubView;
+  /** 站内信深链：日报记录定位行 / 问题追踪自动打开详情抽屉。 */
+  focusReportId?: string | null;
+  focusIssueId?: string | null;
+  /** 问题抽屉关闭后清掉地址里的精确落点。 */
+  onFocusClosed?: () => void;
   /** 切页内子视图（写回地址 · replace，不新增历史条目）。 */
   onChangeSub: (sub: DailySubView) => void;
   /** 部门群组只读：查看历史数据，但不渲染填写 / 编辑 / 删除 / 拖拽等写入入口。 */
@@ -3230,6 +3252,26 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
   /** 问题详情抽屉（Push 209 · 业务口径「点击要出现抽屉 是关于这个问题的日报内容」）：存打开的问题 id，
    *  渲染时现找问题与来源日报 —— 行内编辑改过之后抽屉里也始终是最新值。 */
   const [openIssueId, setOpenIssueId] = useState<string | null>(null);
+  /** 深链目标优先展示，不受本页已有搜索词遮挡。 */
+  useEffect(() => {
+    if (focusReportId !== null) {
+      setRecordKeyword("");
+    }
+  }, [focusReportId]);
+  /** 站内信深链只自动打开一次；数据异步到达后再落点，地址清空后可再次响应同一目标。 */
+  const focusedIssueRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (focusIssueId === null) {
+      focusedIssueRef.current = null;
+      return;
+    }
+    if (readOnly || focusedIssueRef.current === focusIssueId || !issues.some((issue) => issue.id === focusIssueId)) {
+      return;
+    }
+    focusedIssueRef.current = focusIssueId;
+    setIssueKeyword("");
+    setOpenIssueId(focusIssueId);
+  }, [focusIssueId, issues, readOnly]);
   /** 页内搜索（业务口径 2026-09-30「给日报记录 / 问题追踪增加搜索功能，搜索的组件和项目空间右上角的相同」）：
    *  两枚关键词各管一张表（客户端过滤 —— 列表一次取满 limit 200，无需回服务端）；换项目随组件 key 复位。 */
   const [recordKeyword, setRecordKeyword] = useState("");
@@ -3829,7 +3871,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
           ) : visibleReports.length === 0 ? (
             <EmptyCard text={t("report.records.emptyMatch", { kw: recordKeyword.trim() })} hint={t("report.emptyHint")} />
           ) : (
-            <ReportList reports={visibleReports} onEdit={readOnly ? undefined : (report) => { setEditModal({ kind: "report", id: report.id }); }} onPatch={readOnly ? undefined : patchReport} onDelete={readOnly ? undefined : requestDeleteReport} />
+            <ReportList reports={visibleReports} focusReportId={focusReportId} onEdit={readOnly ? undefined : (report) => { setEditModal({ kind: "report", id: report.id }); }} onPatch={readOnly ? undefined : patchReport} onDelete={readOnly ? undefined : requestDeleteReport} />
           )}
         </section>
       ) : subTab === "问题追踪" ? (
@@ -3868,7 +3910,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, onChange
       )}
 
       {/* 问题详情抽屉（Push 209）：点看板卡片打开，Esc / 点遮罩关闭 */}
-      {openIssue === null || readOnly ? null : <IssueDrawer projectId={project.id} members={members} issue={openIssue} report={openIssueReport} onPatchIssue={patchIssue} onPatchReport={patchReport} onClose={() => { setOpenIssueId(null); }} />}
+      {openIssue === null || readOnly ? null : <IssueDrawer projectId={project.id} members={members} issue={openIssue} report={openIssueReport} onPatchIssue={patchIssue} onPatchReport={patchReport} onClose={() => { setOpenIssueId(null); onFocusClosed?.(); }} />}
 
       {/* 行编辑弹窗（Push 223）：日报 / 问题各一枚 —— 与「干系人」弹窗同款；取消 / Esc / 点遮罩关闭，保存成功才关 */}
       {groupSyncPrompt === null ? null : (

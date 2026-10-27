@@ -6134,6 +6134,20 @@
               }
             ]
           },
+          "projectId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "关联对象所属项目 id（读面按 refType / refId 解析；站内信点击直达关联项目；无法解析 = null）"
+              }
+            ]
+          },
           "templateCode": {
             "type": [
               "string",
@@ -6189,6 +6203,7 @@
           "status",
           "refType",
           "refId",
+          "projectId",
           "templateCode",
           "mergedCount",
           "snoozeUntil",
