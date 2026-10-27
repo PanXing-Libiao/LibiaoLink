@@ -5,8 +5,10 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  normalizePosterIssueTitle,
   renderDailyReportIssuePoster,
   renderDailyReportPoster,
+  stripPosterListMarkers,
   type DailyReportPosterData,
 } from "../src/modules/notify/daily-report.poster.js";
 
@@ -73,6 +75,27 @@ function pngSize(buffer: Buffer): { width: number; height: number } {
   expect(buffer.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
   return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
 }
+
+describe("海报编号清洗", () => {
+  it("去掉行首重复枚举号，保留业务内容与数量", () => {
+    expect(stripPosterListMarkers("1: 1 wms与wes联调")).toBe("wms与wes联调");
+    expect(stripPosterListMarkers("2: 2 周转箱上架 2500箱")).toBe("周转箱上架 2500箱");
+    expect(stripPosterListMarkers("1 1 工作站组装 25%")).toBe("工作站组装 25%");
+    expect(stripPosterListMarkers("（2）复测完成")).toBe("复测完成");
+    expect(stripPosterListMarkers("3: 500 箱到货")).toBe("500 箱到货");
+    expect(stripPosterListMarkers("3D 分拣异常")).toBe("3D 分拣异常");
+    expect(stripPosterListMarkers("10月9日现场检查")).toBe("10月9日现场检查");
+    expect(stripPosterListMarkers("24小时连续运行")).toBe("24小时连续运行");
+    expect(stripPosterListMarkers("1拖4 kvm转换器")).toBe("1拖4 kvm转换器");
+    expect(stripPosterListMarkers("1  1拖4 kvm转换器")).toBe("1拖4 kvm转换器");
+    expect(stripPosterListMarkers("1: 1拖4 kvm转换器")).toBe("1拖4 kvm转换器");
+  });
+
+  it("问题标题只清首个有效行的外层编号，后续行保留", () => {
+    expect(normalizePosterIssueTitle("1: 1 网口异常\n2 更换主板后复查")).toBe("网口异常\n2 更换主板后复查");
+    expect(normalizePosterIssueTitle("1  1拖4 kvm转换器 出现频闪 无法使用")).toBe("1拖4 kvm转换器 出现频闪 无法使用");
+  });
+});
 
 describe("日报群同步双海报", () => {
   it("日报海报固定 1440px 宽，无现场图也完整输出动态高度 PNG", async () => {

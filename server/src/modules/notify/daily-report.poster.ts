@@ -168,19 +168,54 @@ function wrapTextBalanced(ctx: SKRSContext2D, text: string, maxWidth: number): s
   return best;
 }
 
+/**
+ * 海报行首编号清洗：日报输入框会自动写「1: 」，用户粘贴或再次输入带号文本时会出现
+ * 「1: 1 …」/「2: 2 …」。海报已自己画 01 / 02 徽标，正文只保留业务文字。
+ * 只清行首的枚举标记，不动句中数量、日期和纯数字内容。
+ */
+const DELIMITED_LIST_MARKER =
+  /^(?:[（(]\s*(\d{1,2})\s*[)）]|(\d{1,2})\s*[:：.、．)）]|[①-⑳]|[•·]|[-—–])\s*/u;
+const BARE_LIST_MARKER = /^([1-9])(?=\s)/u;
+
+export function stripPosterListMarkers(line: string): string {
+  let text = line.trim();
+  let ordinal: string | null = null;
+  let stripped = false;
+  for (let guard = 0; guard < 12 && text !== ""; guard += 1) {
+    const marked = DELIMITED_LIST_MARKER.exec(text);
+    if (marked !== null) {
+      ordinal ??= marked[1] ?? marked[2] ?? null;
+      text = text.slice(marked[0].length).trimStart();
+      stripped = true;
+      continue;
+    }
+    if (ordinal !== null) {
+      const repeated = new RegExp("^" + ordinal + "(?=\\s)", "u");
+      if (repeated.test(text)) {
+        text = text.slice(ordinal.length).trimStart();
+        stripped = true;
+        continue;
+      }
+      break;
+    }
+    const bare = BARE_LIST_MARKER.exec(text);
+    if (bare === null) {
+      break;
+    }
+    ordinal = bare[1] ?? null;
+    text = text.slice(bare[0].length).trimStart();
+    stripped = true;
+  }
+  return stripped ? text : line.trim();
+}
+
 function parseItems(text: string | null): string[] {
   const lines = String(text ?? "")
     .replace(/\r/g, "")
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
-  const cleaned = lines
-    .map((line) =>
-      line
-        .replace(/^(?:\d{1,2}[.、．)）]|\d{1,2}\s+|[①-⑳]|[（(]\d{1,2}[)）]|[•·]|[-—])\s*/u, "")
-        .trim(),
-    )
-    .filter((line) => line.length > 0);
+  const cleaned = lines.map(stripPosterListMarkers).filter((line) => line.length > 0);
   return cleaned.length > 0 ? cleaned : ["未填写"];
 }
 
@@ -537,7 +572,6 @@ function drawItems(
   items: readonly string[],
   y: number,
   accent: string,
-  variant: "done" | "plan",
   layout: { x: number; width: number },
 ): number {
   let cursor = y;
@@ -545,10 +579,10 @@ function drawItems(
     setFont(ctx, false, 26);
     const lines = wrapText(ctx, items[index] ?? "", layout.width - 48);
     const rowHeight = lines.length * 40 + 18;
-    ctx.fillStyle = variant === "plan" ? "#E4E0D5" : accent;
+    ctx.fillStyle = accent;
     ctx.fillRect(layout.x, cursor + 2, 28, 28);
     setFont(ctx, true, 14);
-    ctx.fillStyle = variant === "plan" ? INK : "#101617";
+    ctx.fillStyle = "#101617";
     ctx.textAlign = "center";
     ctx.fillText(pad2(index + 1), layout.x + 14, cursor + 22);
     ctx.textAlign = "left";
@@ -738,7 +772,7 @@ export async function renderDailyReportPoster(
     INK,
     { x: MARGIN, width: columnWidth },
   );
-  const doneBottom = drawItems(ctx, doneItems, y + 64, YELLOW, "done", {
+  const doneBottom = drawItems(ctx, doneItems, y + 64, YELLOW, {
     x: MARGIN,
     width: columnWidth,
   });
@@ -752,7 +786,7 @@ export async function renderDailyReportPoster(
     INK,
     { x: rightColumnX, width: columnWidth },
   );
-  const planBottom = drawItems(ctx, planItems, y + 64, YELLOW, "plan", {
+  const planBottom = drawItems(ctx, planItems, y + 64, YELLOW, {
     x: rightColumnX,
     width: columnWidth,
   });
@@ -953,13 +987,23 @@ async function drawIssueEvidence(
   return Math.max(solutionBottom, photoBottom);
 }
 
+/** 问题标题的首个非空行已有橙色 ISSUE 编号徽标，清掉数据自带的「1: / 2、」前缀；后续行原样保留。 */
+export function normalizePosterIssueTitle(title: string): string {
+  const lines = String(title ?? "").replace(/\r/g, "").split("\n");
+  const first = lines.findIndex((line) => line.trim() !== "");
+  if (first >= 0) {
+    lines[first] = stripPosterListMarkers(lines[first] ?? "");
+  }
+  return lines.join("\n");
+}
+
 function issueTitleLines(
   ctx: SKRSContext2D,
   issue: DailyReportPosterIssue,
   contentWidth: number,
 ): string[] {
   setFont(ctx, true, 27);
-  return wrapTextBalanced(ctx, issue.title, contentWidth);
+  return wrapTextBalanced(ctx, normalizePosterIssueTitle(issue.title), contentWidth);
 }
 
 function measureIssueBlockHeight(
