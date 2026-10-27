@@ -137,7 +137,7 @@ describe("evaluateEventMessages 事件形态（R02 金标等价 + 冷启动保�
       channel: "wecom_group",
       recipientId: "p-1",
       dedupeKey: "R06:p-1:v4",
-      title: "叮咚~喜报来啦！",
+      title: "🎉 叮咚~喜报来啦！",
     });
     expect(runtime.messages[0]?.body).toBe(
       `项目：**LBUSA-20261014-002·美国仓储公司订单**\n项目已全部完成，验收交付完毕。大家一起为这份成果喝彩吧`,
@@ -203,7 +203,7 @@ describe("evaluateEventMessages 阶段事件（A08）", () => {
       ruleCode: "A08",
       channel: "wecom_group",
       recipientId: "p-1",
-      title: "大阶段完成通知",
+      title: "🏁 大阶段完成通知",
       dedupeKey: "A08:stage-1:v7",
     });
     expect(runtime.messages[0]?.body).toBe(`${PROJECT}\n邵晨宇已完成大阶段「**设计开发**」，当前项目阶段：**加工采购**。`);

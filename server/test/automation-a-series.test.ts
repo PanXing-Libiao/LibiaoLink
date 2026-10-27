@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { calendarWindow } from "../src/modules/calendar/index.js";
 import {
+  BUILTIN_MESSAGE_TEMPLATES,
   BUILTIN_RULES,
   SUBJECT_TEMPLATE_VARIABLES,
   dedupeKey,
   findMergedSpec,
-  findTemplate,
+  findTemplateForRecipient,
   replayRules,
   resolveScheduleFire,
   subjectKindOf,
@@ -112,7 +113,7 @@ describe("A01 日报应填未填提醒（工作日 19:30 · 个人提醒双渠�
     const a01 = report.messages.filter((message) => message.ruleCode === "A01");
     expect(a01.map((message) => message.channel)).toEqual(["inbox", "wecom_aibot"]);
     for (const message of a01) {
-      expect(message.title).toBe("请及时填写今日日报");
+      expect(message.title).toBe("📝 请及时填写今日日报");
       expect(message.body).toBe("你今天还有日报未提交：临港数据中心请尽快填写，辛苦啦！");
       expect(message.recipientId).toBe("u-1");
       expect(message.recipientName).toBe("张三");
@@ -182,7 +183,7 @@ describe("A02 日报每日汇总群播报（19:00 · 项目群）", () => {
     expect(message?.channel).toBe("wecom_group");
     expect(message?.recipient).toBe("project.group");
     expect(message?.recipientId).toBe("g-1");
-    expect(message?.title).toBe("日报汇总 | 临港数据中心（2026-09-24）");
+    expect(message?.title).toBe("📊 日报汇总 | 临港数据中心（2026-09-24）");
     expect(message?.body).toBe("今日 3 人已提交（应填 12 人），发现问题 1 条。张三：安装摄像头 3 台；李四：现场勘查完毕。");
     expect(message?.dedupeKey).toBe(dedupeKey("A02", "p-1", BUSINESS_DAY));
   });
@@ -206,7 +207,7 @@ describe("A14 自定义待办提醒（提醒日 09:00 · 站内信 + 企微）",
     expect(report.messages).toHaveLength(2);
     for (const message of report.messages) {
       expect(message.ruleCode).toBe("A14");
-      expect(message.title).toBe("待办提醒：复核无人机交付清单");
+      expect(message.title).toBe("⏰ 待办提醒：复核无人机交付清单");
       expect(message.body).toBe("张三，你的待办「复核无人机交付清单」已到提醒时间。与供应商核对机号与电池序列号。");
       expect(message.recipientId).toBe("u-1");
     }
@@ -279,16 +280,25 @@ describe("引擎扩项（M5-05 余项：主体类型 / T_PLUS_3 / 契约与文�
     for (const rule of BUILTIN_RULES) {
       const kindVariables = Object.keys(SUBJECT_TEMPLATE_VARIABLES[subjectKindOf(rule.code)]);
       for (const action of rule.actions) {
-        const template = findTemplate(action.template);
-        expect(template, rule.code + " / " + action.template).not.toBeNull();
-        const spec = findMergedSpec(rule.code, action.channel ?? "inbox");
-        const names = new Set([...kindVariables, ...(spec === null ? [] : [spec.listVariable])]);
-        for (const text of [template?.title ?? "", template?.body ?? ""]) {
-          for (const match of text.matchAll(/\{([^}]+)\}/g)) {
-            expect(names.has(match[1] ?? ""), rule.code + " 未登记变量 " + match[1]).toBe(true);
+        const recipientKinds = Array.isArray(action.recipient) ? action.recipient : [action.recipient];
+        for (const recipientKind of recipientKinds) {
+          const template = findTemplateForRecipient(rule.code, action.template, recipientKind);
+          expect(template, rule.code + " / " + action.template + " / " + recipientKind).not.toBeNull();
+          const spec = findMergedSpec(rule.code, action.channel ?? "inbox");
+          const names = new Set([...kindVariables, ...(spec === null ? [] : [spec.listVariable])]);
+          for (const text of [template?.title ?? "", template?.body ?? ""]) {
+            for (const match of text.matchAll(/\{([^}]+)\}/g)) {
+              expect(names.has(match[1] ?? ""), rule.code + " 未登记变量 " + match[1]).toBe(true);
+            }
           }
         }
       }
+    }
+  });
+
+  it("所有内置消息标题均带 emoji", () => {
+    for (const template of BUILTIN_MESSAGE_TEMPLATES) {
+      expect(template.title ?? "", template.code).toMatch(/\p{Extended_Pictographic}/u);
     }
   });
 });
