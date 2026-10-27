@@ -25,6 +25,12 @@ import {
   ProjectUpdateBodySchema,
 } from "./modules/projects.ts";
 import {
+  ProjectSummaryConfirmBodySchema,
+  ProjectSummaryLatestResponseSchema,
+  ProjectSummaryUpdateBodySchema,
+  ProjectSummaryViewSchema,
+} from "./modules/project-summaries.ts";
+import {
   TaskCanCompleteResponseSchema,
   TaskCompleteBodySchema,
   TaskCompleteResponseSchema,
@@ -240,6 +246,7 @@ const commonErrors = {
   409: errorResponse("冲突（VERSION_CONFLICT / 状态不允许当前操作）"),
   410: errorResponse("上传会话已过期（UPLOAD_SESSION_EXPIRED，需重新发起上传）"),
   422: errorResponse("业务校验未通过（门禁 / 蓝图校验，含明细）"),
+  429: errorResponse("请求过于频繁（RATE_LIMITED）"),
 } as const;
 
 const idParams = z.object({ id: UuidSchema });
@@ -514,6 +521,68 @@ export function buildOpenApiDocument() {
     responses: {
       200: { description: "总览统计", ...json(ProjectSummarySchema) },
       404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/projects/{id}/project-summaries/latest",
+    tags: ["projects"],
+    summary: "项目总结最新版本（优先最近草稿；无草稿时取最新已确认；事实包 + 叙述）",
+    request: { params: idParams },
+    responses: {
+      200: { description: "最新总结；从未生成 = item:null", ...json(ProjectSummaryLatestResponseSchema) },
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/project-summaries",
+    tags: ["projects"],
+    summary: "生成项目总结草稿（仅项目经理 / 管理员；脚本事实包 + AI 叙述，AI 失败自动回落规则模板）",
+    request: { params: idParams },
+    responses: {
+      201: { description: "生成的项目总结草稿", ...json(ProjectSummaryViewSchema) },
+      403: commonErrors[403],
+      404: commonErrors[404],
+      429: commonErrors[429],
+    },
+  });
+
+  registry.registerPath({
+    method: "patch",
+    path: "/api/v1/projects/{id}/project-summaries/{summaryId}",
+    tags: ["projects"],
+    summary: "保存项目总结叙述草稿（仅项目经理 / 管理员；事实包不可修改）",
+    request: {
+      params: z.object({ id: UuidSchema, summaryId: UuidSchema }),
+      body: json(ProjectSummaryUpdateBodySchema),
+    },
+    responses: {
+      200: { description: "保存后的草稿", ...json(ProjectSummaryViewSchema) },
+      400: commonErrors[400],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/project-summaries/{summaryId}/confirm",
+    tags: ["projects"],
+    summary: "确认项目总结草稿（仅项目经理 / 管理员；上一确认版与其余草稿自动转 superseded）",
+    request: {
+      params: z.object({ id: UuidSchema, summaryId: UuidSchema }),
+      body: json(ProjectSummaryConfirmBodySchema),
+    },
+    responses: {
+      200: { description: "已确认的项目总结", ...json(ProjectSummaryViewSchema) },
+      400: commonErrors[400],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: commonErrors[409],
     },
   });
 

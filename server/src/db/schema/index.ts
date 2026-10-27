@@ -1,4 +1,5 @@
 export * from "./projects.js";
+export * from "./summaries.js";
 export * from "./blueprint.js";
 export * from "./identity.js";
 export * from "./access.js";

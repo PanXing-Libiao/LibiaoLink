@@ -2787,3 +2787,66 @@ body {
     transition: none;
   }
 }
+
+
+/* 项目总结打印：只输出总结正文，隐藏遮罩、标题栏、操作栏与滚动裁切。 */
+@media print {
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+
+  body {
+    background: #fff !important;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  [data-project-summary-print],
+  [data-project-summary-print] * {
+    visibility: visible !important;
+  }
+
+  [data-project-summary-overlay] {
+    position: static !important;
+    padding: 0 !important;
+    background: #fff !important;
+    backdrop-filter: none !important;
+  }
+
+  [data-project-summary-dialog] {
+    max-height: none !important;
+    overflow: visible !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: #fff !important;
+    box-shadow: none !important;
+  }
+
+  [data-project-summary-scroll] {
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
+  [data-project-summary-print] {
+    width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  [data-project-summary-print] * {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  [data-project-summary-print] section,
+  [data-project-summary-print] article {
+    break-inside: avoid;
+  }
+
+  [data-project-summary-toolbar] {
+    display: none !important;
+  }
+}

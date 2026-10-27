@@ -21,6 +21,7 @@ import { Toast, ToastConfirm } from "./components/Toast";
 import { ExportProgressOverlay } from "./components/ExportProgressOverlay";
 import { useFocusTrap } from "./components/useFocusTrap";
 import { ProjectModal, type ProjectDraft, type ProjectSubmitResult } from "./components/ProjectModal";
+import { ProjectSummaryModal } from "./components/ProjectSummaryModal";
 import type { DictTools } from "./dictTools";
 import { canEditTaskTemplates, hasPermission, loadMyPermissions, useMyPermissions } from "./permissions";
 import { firstAllowedHref } from "./accessRoutes";
@@ -188,6 +189,8 @@ export default function App() {
   /** 工作台折叠面板展开态（A31 · Push 233 · 业务口径「这个下拉要有记忆」）：按标签分记已展开的项目 id；null = 偏好尚未取到（按全收起渲染，不回写）。 */
   const [workspaceOpenProjects, setWorkspaceOpenProjects] = useState<WorkspaceOpenProjects | null>(null);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
+  /** 项目总结弹窗只承载当前业务项目，不是平台开发复盘。 */
+  const [summaryProject, setSummaryProject] = useState<Project | null>(null);
   // 详情页数据（GET /projects/{id}）：列表分页外的项目也能直接打开
   const [detail, setDetail] = useState<Project | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -1010,6 +1013,7 @@ export default function App() {
         canUpdateProject={canUpdateProject}
         canExportProject={canExportProject}
         exportingProjectId={exportingProjectId}
+        onOpenProjectSummary={setSummaryProject}
         onExportProject={(project) => {
           void handleExportProject(project);
         }}
@@ -1023,6 +1027,14 @@ export default function App() {
         refreshToken={dataVersion}
       />
       {editModal}
+      {summaryProject === null ? null : (
+        <ProjectSummaryModal
+          project={summaryProject}
+          onClose={() => {
+            setSummaryProject(null);
+          }}
+        />
+      )}
       {bottomBars}
     </>
   );

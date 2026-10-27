@@ -429,6 +429,7 @@
         "type": "string",
         "enum": [
           "project",
+          "project_summary",
           "project_member",
           "task",
           "node",
@@ -451,7 +452,7 @@
           "group_access_rule",
           "group_access_admin"
         ],
-        "description": "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；仅用户点开具体预览（recordView=true）且实际送达时写 preview 审计，缩略图不写 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删；登录成功记 visit，metadata.operation=login） / wecom_dm_binding 企微绑定验证（对象 id = 机器人标识 + 掩码 open_userid；失败 / 锁定记 deny + denied，不落完整 userid 或绑定码） / automation_rule 自动化规则（对象 id = 规则 id；保存记录字段级 diff，metadata 带 code / beforeVersion / afterVersion，M5-06） / notify_delivery 发送记录（对象 id = 消息归档 id；仅管理员重发写 update + metadata.operation=resend，M5-06） / group_access_rule 部门访问规则（对象 id = 群组键；保存 / 删除写审计，2026-10-23） / group_access_admin 系统管理员（对象 id = users.id；手工授予 / 撤销写审计，2026-10-24）"
+        "description": "审计对象类型：project 项目 / project_summary 项目总结（事实包 + 叙述存档、确认发布） / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；仅用户点开具体预览（recordView=true）且实际送达时写 preview 审计，缩略图不写 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删；登录成功记 visit，metadata.operation=login） / wecom_dm_binding 企微绑定验证（对象 id = 机器人标识 + 掩码 open_userid；失败 / 锁定记 deny + denied，不落完整 userid 或绑定码） / automation_rule 自动化规则（对象 id = 规则 id；保存记录字段级 diff，metadata 带 code / beforeVersion / afterVersion，M5-06） / notify_delivery 发送记录（对象 id = 消息归档 id；仅管理员重发写 update + metadata.operation=resend，M5-06） / group_access_rule 部门访问规则（对象 id = 群组键；保存 / 删除写审计，2026-10-23） / group_access_admin 系统管理员（对象 id = users.id；手工授予 / 撤销写审计，2026-10-24）"
       },
       "AuditResult": {
         "type": "string",
@@ -8525,6 +8526,963 @@
         ],
         "description": "项目总览汇总卡统计（任务派生；口径见 v0.2 §2.4 与前端功能需求 §3.4）"
       },
+      "ProjectSummaryConfirmBody": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "description": "确认发布草稿；同项目上一版 confirmed 与其余草稿自动转 superseded"
+      },
+      "ProjectSummaryCounts": {
+        "type": "object",
+        "properties": {
+          "tasksTotal": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tasksDone": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tasksActive": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tasksPending": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tasksOverdue": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tasksUnassigned": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reportsTotal": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reportsDraft": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reportsSubmitted": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reportsSupplement": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lastReportDate": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
+          },
+          "issuesTotal": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "issuesResolved": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "issuesUnresolved": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "issuesInProgress": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "issuesClosedWithoutEvidence": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "filesTotal": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "filesDraft": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "filesFinal": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "filesChanged": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "filesArchived": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "changesTotal": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "deliverablesRequired": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "deliverablesFinalized": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "deliverablesMissing": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stagesTotal": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stagesDone": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stagesActive": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tasksTotal",
+          "tasksDone",
+          "tasksActive",
+          "tasksPending",
+          "tasksOverdue",
+          "tasksUnassigned",
+          "reportsTotal",
+          "reportsDraft",
+          "reportsSubmitted",
+          "reportsSupplement",
+          "lastReportDate",
+          "issuesTotal",
+          "issuesResolved",
+          "issuesUnresolved",
+          "issuesInProgress",
+          "issuesClosedWithoutEvidence",
+          "filesTotal",
+          "filesDraft",
+          "filesFinal",
+          "filesChanged",
+          "filesArchived",
+          "changesTotal",
+          "deliverablesRequired",
+          "deliverablesFinalized",
+          "deliverablesMissing",
+          "stagesTotal",
+          "stagesDone",
+          "stagesActive"
+        ],
+        "description": "固定规则统计；AI 只读不得改写"
+      },
+      "ProjectSummaryDataQuality": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "$ref": "#/components/schemas/ProjectSummarySeverity"
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "severity",
+          "message"
+        ],
+        "description": "数据口径提醒；不改变业务状态"
+      },
+      "ProjectSummaryEvidenceCounts": {
+        "type": "object",
+        "properties": {
+          "tasks": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reports": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "issues": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "files": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "changes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stages": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tasks",
+          "reports",
+          "issues",
+          "files",
+          "changes",
+          "stages"
+        ],
+        "description": "本次汇总读取的证据条数"
+      },
+      "ProjectSummaryFacts": {
+        "type": "object",
+        "properties": {
+          "generatedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "dataCutoff": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "project": {
+            "$ref": "#/components/schemas/ProjectSummaryProjectFacts"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/ProjectSummaryCounts"
+          },
+          "stages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectSummaryStageFact"
+            },
+            "maxItems": 50
+          },
+          "timeline": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectSummaryTimelineEvent"
+            },
+            "maxItems": 200
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectSummaryIssueFact"
+            },
+            "maxItems": 500
+          },
+          "gaps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectSummaryGap"
+            },
+            "maxItems": 500
+          },
+          "handover": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectSummaryHandover"
+            },
+            "maxItems": 100
+          },
+          "dataQuality": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectSummaryDataQuality"
+            },
+            "maxItems": 50
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/ProjectSummaryEvidenceCounts"
+          }
+        },
+        "required": [
+          "generatedAt",
+          "dataCutoff",
+          "project",
+          "counts",
+          "stages",
+          "timeline",
+          "issues",
+          "gaps",
+          "handover",
+          "dataQuality",
+          "evidence"
+        ],
+        "description": "脚本事实包；统计、问题结论、缺件和接手人全部在此定稿"
+      },
+      "ProjectSummaryGap": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ProjectSummaryGapKind"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/ProjectSummarySeverity"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "owner": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "action": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "severity",
+          "title",
+          "detail",
+          "owner",
+          "action"
+        ],
+        "description": "遗漏 / 待整改项（固定规则生成，含建议接手人）"
+      },
+      "ProjectSummaryGapKind": {
+        "type": "string",
+        "enum": [
+          "unresolved_issue",
+          "issue_evidence",
+          "overdue_task",
+          "unassigned_task",
+          "missing_deliverable",
+          "status_mismatch",
+          "stale_reports",
+          "missing_baseline"
+        ],
+        "description": "遗漏 / 待整改类型：unresolved_issue 未解决问题 / issue_evidence 关闭证据缺失 / overdue_task 逾期任务 / unassigned_task 未分配任务 / missing_deliverable 成果缺件 / status_mismatch 项目状态与事实不一致 / stale_reports 日报长期未更新 / missing_baseline 项目基础数据缺失"
+      },
+      "ProjectSummaryHandover": {
+        "type": "object",
+        "properties": {
+          "owner": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "owner",
+          "items"
+        ],
+        "description": "按接手人分组的待办（由 gaps / 未解决问题按规则合并）"
+      },
+      "ProjectSummaryIssueFact": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "in_progress",
+              "done"
+            ]
+          },
+          "stateName": {
+            "type": "string"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20
+          },
+          "raisedAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
+          },
+          "reporterName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ownerName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ownerDepartment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "solution": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "closedAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "resolution": {
+            "$ref": "#/components/schemas/ProjectSummaryIssueResolution"
+          },
+          "followUpOwner": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "state",
+          "stateName",
+          "categories",
+          "raisedAt",
+          "reporterName",
+          "ownerName",
+          "ownerDepartment",
+          "solution",
+          "closedAt",
+          "updatedAt",
+          "resolution",
+          "followUpOwner"
+        ],
+        "description": "问题及脚本判定结论；followUpOwner = 责任人 → 责任部门 → 项目经理 → 项目部"
+      },
+      "ProjectSummaryIssueResolution": {
+        "type": "string",
+        "enum": [
+          "resolved",
+          "unresolved",
+          "needs_evidence"
+        ],
+        "description": "问题结论（脚本判定）：resolved 已完成且有解决方案与关闭记录 / unresolved 未解决或处理中 / needs_evidence 已完成但解决方案或关闭记录缺失"
+      },
+      "ProjectSummaryLatestResponse": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/ProjectSummaryView"
+          },
+          "canEdit": {
+            "type": "boolean",
+            "description": "当前访问者是否有权生成 / 编辑总结；即使 item:null 也可据此显示生成入口"
+          }
+        },
+        "required": [
+          "item",
+          "canEdit"
+        ],
+        "description": "最新项目总结：优先最近草稿（便于继续编辑），无草稿时取最新已确认版本；无记录 = item:null；canEdit 由服务端裁决"
+      },
+      "ProjectSummaryNarrative": {
+        "type": "object",
+        "properties": {
+          "overview": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000,
+            "description": "项目概况"
+          },
+          "process": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000,
+            "description": "项目全过程概述"
+          },
+          "issues": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000,
+            "description": "问题及处理情况概述"
+          },
+          "result": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000,
+            "description": "项目结果概述"
+          },
+          "handover": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000,
+            "description": "后续接手安排概述"
+          },
+          "risks": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000,
+            "description": "风险与建议概述"
+          }
+        },
+        "required": [
+          "overview",
+          "process",
+          "issues",
+          "result",
+          "handover",
+          "risks"
+        ],
+        "description": "项目总结六段叙述；不重复统计数字，项目经理可编辑后保存为草稿"
+      },
+      "ProjectSummaryProjectFacts": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "code": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "customer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "region": {
+            "type": "string"
+          },
+          "projectType": {
+            "type": "string"
+          },
+          "stageKey": {
+            "$ref": "#/components/schemas/StageKey"
+          },
+          "stageName": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProjectStatus"
+          },
+          "statusName": {
+            "type": "string"
+          },
+          "managerNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "archivedAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "name",
+          "customer",
+          "region",
+          "projectType",
+          "stageKey",
+          "stageName",
+          "status",
+          "statusName",
+          "managerNames",
+          "description",
+          "createdAt",
+          "archivedAt"
+        ],
+        "description": "项目主数据快照（不含联系方式）"
+      },
+      "ProjectSummarySeverity": {
+        "type": "string",
+        "enum": [
+          "high",
+          "medium",
+          "low"
+        ],
+        "description": "遗漏项风险级别（由固定规则给出）"
+      },
+      "ProjectSummaryStageFact": {
+        "type": "object",
+        "properties": {
+          "stageKey": {
+            "$ref": "#/components/schemas/StageKey"
+          },
+          "name": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "status": {
+            "$ref": "#/components/schemas/StageStatus"
+          },
+          "nodeTotal": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "nodeDone": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "taskTotal": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "taskDone": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "plannedStart": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
+          },
+          "plannedEnd": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
+          },
+          "actualStart": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
+          },
+          "actualEnd": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateOnly"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "业务日期 YYYY-MM-DD（不携带时区）"
+              }
+            ]
+          }
+        },
+        "required": [
+          "stageKey",
+          "name",
+          "seq",
+          "status",
+          "nodeTotal",
+          "nodeDone",
+          "taskTotal",
+          "taskDone",
+          "plannedStart",
+          "plannedEnd",
+          "actualStart",
+          "actualEnd"
+        ],
+        "description": "阶段推进快照"
+      },
+      "ProjectSummaryStatus": {
+        "type": "string",
+        "enum": [
+          "draft",
+          "confirmed",
+          "superseded"
+        ],
+        "description": "总结状态：draft 草稿 / confirmed 已确认 / superseded 被后续确认版本替代"
+      },
+      "ProjectSummaryTimelineEvent": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ProjectSummaryTimelineKind"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "actorNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50
+          }
+        },
+        "required": [
+          "date",
+          "kind",
+          "title",
+          "detail",
+          "actorNames"
+        ],
+        "description": "项目过程时间线（脚本按时间正序汇总）"
+      },
+      "ProjectSummaryTimelineKind": {
+        "type": "string",
+        "enum": [
+          "project",
+          "stage",
+          "task",
+          "report",
+          "issue",
+          "change",
+          "file"
+        ],
+        "description": "过程时间线事件类型"
+      },
+      "ProjectSummaryUpdateBody": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "narrative": {
+            "$ref": "#/components/schemas/ProjectSummaryNarrative"
+          }
+        },
+        "required": [
+          "version",
+          "narrative"
+        ],
+        "description": "保存叙述草稿；事实包不可修改，乐观锁 version 防止覆盖他人编辑"
+      },
+      "ProjectSummaryView": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "projectId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "dataCutoff": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProjectSummaryStatus"
+          },
+          "facts": {
+            "$ref": "#/components/schemas/ProjectSummaryFacts"
+          },
+          "narrative": {
+            "$ref": "#/components/schemas/ProjectSummaryNarrative"
+          },
+          "engine": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "生成引擎：openai-compatible:<model> / rule-template"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          },
+          "promptVersion": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "fallbackReason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 1000,
+            "description": "AI 不可用或校验失败而回落规则模板的原因；成功 = null"
+          },
+          "generatedBy": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "generatedByName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "generatedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "confirmedBy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "confirmedByName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "confirmedAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DateTime"
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/DateTime"
+          },
+          "canEdit": {
+            "type": "boolean",
+            "description": "当前访问者是否可保存 / 确认（项目经理或系统管理员，服务端裁决）"
+          }
+        },
+        "required": [
+          "id",
+          "projectId",
+          "dataCutoff",
+          "status",
+          "facts",
+          "narrative",
+          "engine",
+          "model",
+          "promptVersion",
+          "fallbackReason",
+          "generatedBy",
+          "generatedByName",
+          "generatedAt",
+          "confirmedBy",
+          "confirmedByName",
+          "confirmedAt",
+          "version",
+          "createdAt",
+          "updatedAt",
+          "canEdit"
+        ],
+        "description": "项目总结（事实包 + 叙述 + 生成 / 确认审计信息）"
+      },
       "ProjectUpdateBody": {
         "type": "object",
         "properties": {
@@ -13767,6 +14725,286 @@
           },
           "404": {
             "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/project-summaries/latest": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "项目总结最新版本（优先最近草稿；无草稿时取最新已确认；事实包 + 叙述）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "最新总结；从未生成 = item:null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectSummaryLatestResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/project-summaries": {
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "生成项目总结草稿（仅项目经理 / 管理员；脚本事实包 + AI 叙述，AI 失败自动回落规则模板）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "生成的项目总结草稿",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectSummaryView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁（RATE_LIMITED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/project-summaries/{summaryId}": {
+      "patch": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "保存项目总结叙述草稿（仅项目经理 / 管理员；事实包不可修改）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "summaryId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectSummaryUpdateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "保存后的草稿",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectSummaryView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/project-summaries/{summaryId}/confirm": {
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "确认项目总结草稿（仅项目经理 / 管理员；上一确认版与其余草稿自动转 superseded）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "summaryId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectSummaryConfirmBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "已确认的项目总结",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectSummaryView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
             "content": {
               "application/json": {
                 "schema": {

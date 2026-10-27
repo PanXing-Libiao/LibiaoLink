@@ -54,6 +54,8 @@ type HomeProps = {
   onExportProject: (project: Project) => void;
   /** 正在导出的项目 id：null = 没有进行中的导出。 */
   exportingProjectId: string | null;
+  /** 打开某业务项目的项目总结弹窗（读 / 写权限由接口与项目经理身份裁决）。 */
+  onOpenProjectSummary: (project: Project) => void;
   /** 卡片删除项目（硬删；二次确认由 App 层的提示条承担）：确认后由父层调接口并刷新列表。 */
   onDeleteProject: (project: Project) => void;
   /** 新建项目：返回 null = 成功（父层刷新列表）；返回文案 = 失败提示（弹窗保持打开）。 */
@@ -113,7 +115,7 @@ type LoadError =
   | { kind: "network" }
   | { kind: "api"; message: string; code: string };
 
-export default function Home({ me, dicts, directory, dictTools, canManageDicts, canDeleteProject, canCreateProject, canUpdateProject, canExportProject, onExportProject, exportingProjectId, onDeleteProject, onCreate, onEdit, refreshToken, savedFilters, onSavedFiltersChange }: HomeProps) {
+export default function Home({ me, dicts, directory, dictTools, canManageDicts, canDeleteProject, canCreateProject, canUpdateProject, canExportProject, onExportProject, exportingProjectId, onOpenProjectSummary, onDeleteProject, onCreate, onEdit, refreshToken, savedFilters, onSavedFiltersChange }: HomeProps) {
   const t = useT();
   const locale = useLocale();
   const permissions = useMyPermissions();
@@ -823,6 +825,9 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                     : undefined
                 }
                 exporting={exportingProjectId === project.id}
+                onSummary={() => {
+                  onOpenProjectSummary(project);
+                }}
                 onDelete={
                   canDeleteProject && project.groupAccessLevel === "edit"
                     ? () => {

@@ -25,7 +25,7 @@ if (configFile.error) {
 const parsed = ts.parseJsonConfigFileContent(configFile.config, ts.sys, dirname(configPath));
 const options = parsed.options;
 
-const DOMAIN_MODULES = ["identity", "project", "project-export", "blueprint", "node", "task", "report-issue", "stakeholder", "workspace", "view", "follow"];
+const DOMAIN_MODULES = ["identity", "project", "project-export", "project-summary", "blueprint", "node", "task", "report-issue", "stakeholder", "workspace", "view", "follow"];
 const PLATFORM_MODULES = ["file", "notify", "search", "dashboard", "automation", "admin", "audit"];
 // 横切模块：领域与平台都可依赖，不参与「平台不得反依赖领域」判定（都不在两个列表里即豁免）。
 //   permission —— 权限策略层（h6）；calendar —— 工作日历（h8：平台侧 i8 规则引擎与领域侧任务提醒共用同一出口）。
