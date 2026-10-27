@@ -1,5 +1,13 @@
 # deploy/prod/ · LibiaoLink 生产部署件（单机 · Docker Compose）
 
+> **2026-10-27 11:40 企微绑定提醒收口为站内信红点正式发布（PR [#669](https://github.com/PanXing-Libiao/LibiaoLink/pull/669) · main@e41ff8b8）**：正式环境 `https://pm.libiaorobot.com`（`10.1.103.44`）取消登录后自动弹出的「绑定企微单聊」浮卡，改为未绑定时在顶栏「站内信」显示无数字红点；有未读时仍优先显示数字角标，绑定 / 解绑后即时同步。站内信内保留「当前用户未绑定企业微信」与「前往企微绑定」入口。
+>
+> 合并 / CI：PR CI [40444201611](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40444201611) 5 / 5，squash `e41ff8b827cce79f9cbdf72ce6e07f1a35d747f7`；main CI [40444399977](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40444399977) 首次仅 `svg-preview-e2e` 因 apt 安装 `nginx / fonts-noto-cjk / postgresql-client` 超时失败，原作业重跑后 5 / 5。
+>
+> 发布 / 备份：发布包 `output/wecom-inbox-binding-e41ff8b8-20261027-1137.tar.gz`（14,901,406 B · SHA-256 `5ba0e5480d7cd9b9d5b369ff8054679699db401b8d6c5d9cedf0c4760dca3949`）上传 `/srv/data/backups/wecom-inbox-binding-e41ff8b8-20261027-1137.tar.gz` 后远端哈希一致。部署前备份 `/srv/data/backups/before-wecom-inbox-binding-e41ff8b8-20261027-1137/`：`frontend-dist-before.tar.gz`（14,910,523 B · `77d70bc7448a1e39d5884f7de7e5ddf583dbf6c66b08a08442e315e211b9e63b`）、`RELEASE_MANIFEST.before.json`（1,709 B · `f585dbf93f1a13bfcb7bc51752c67642a22982612a9cb88444fec8a83092a317`）。
+>
+> 部署 / 验收：从 `d82ad559` 独立工作树构建 frontend 386 文件 / 18,563,632 B；staging 核验 386 文件 / 0 preview，index / JS / CSS 哈希一致后以 checksum rsync 原位覆盖 `/opt/libiaolink/frontend/dist/`，web 未重启；`RELEASE_MANIFEST.json` 为 `prod-20261027-e41ff8b8`。公网 `index.html` 502 B / `e6c6349f56005971bd0dc1917e77a4f02bc3dfe4cb53c39ba8dc16a007624b27`、`assets/index-DNMoNHLh.js` 1,948,280 B / `0ec420d7c07987f1c1da3179fdb281ab4af279f4ab363bc065cdab86a57a2e62`、`assets/index-CRxCNsG1.css` 169,323 B / `285d3f01379471e3f256bb7e9e3250b8d45d1136e39df60aca14fcd0ac7fea24`，均与本地逐字节一致；公网 JS 新标记 1 次，旧浮卡标记 0 次。8 / 8 容器 healthy，站点 / `healthz` / `readyz` 200 且四探针全 true。真实登录浏览器复核：管理员潘兴账号未绑定企微，刷新后无自动浮卡、站内信显示红点，展开可见未绑定说明与绑定按钮。远端 staging 已清理，发布包与备份保留；无接口、DDL、迁移、依赖、compose、env 或 Secret 变化。
+
 > **2026-10-27 11:03 多范围部门权限与逐项目写权限正式发布（PR [#667](https://github.com/PanXing-Libiao/LibiaoLink/pull/667) · main@473ce778）**：正式环境 `https://pm.libiaorobot.com`（`10.1.103.44`）已发布部门默认 / 个人覆盖的多范围项目权限：全部项目、仅自己的项目、指定项目可分别选择编辑或仅浏览，空数组不显示项目数据；可见范围取并集，同一项目取最高 `edit > view`，不支持降权例外。项目写入口按当前项目 `groupAccessLevel` 收敛，任务模板 / 节点库按 `groupAnyEdit`，字典 / 日历 / 自动化 / 通知重发按 `groupAllEdit`，新建 / 导入项目按 `groupAllEdit || groupOwnEdit`。
 >
 > 合并 / CI：PR CI [40440794628](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40440794628) 5 / 5，squash `473ce778adeba017c50ff9628a88c2f19ae520d4`；main CI [40441006712](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/40441006712) 首次仅 `svg-preview-e2e` 因 Chrome DevTools 端点 `fetch failed` 失败，原作业重跑后 5 / 5。
