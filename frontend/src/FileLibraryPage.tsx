@@ -302,10 +302,10 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
     };
   }, [projects, debouncedKeyword, query.tab, projectIdKey, statusKey, reloadTick]);
 
-  // 权限画像（与 AppHeader 共用同一份进程内单飞缓存）：只用来裁决恢复 / 彻底删除入口的渲染 —— 服务端逐请求仍是最终裁决。
+  // 权限画像（与 AppHeader 共用同一份进程内单飞缓存）：功能位 + 项目级 groupAccessLevel 共同收敛恢复 / 删除入口。
+  // 服务端逐请求仍是最终裁决；系统管理员绕过部门项目范围限制。
   const isAdmin = permissions?.groupAccessAdmin === true;
-  const groupReadOnly = permissions?.groupReadOnly === true;
-  const canDeleteProject = !groupReadOnly && hasPermission(permissions, "project.delete");
+  const canDeleteProject = hasPermission(permissions, "project.delete");
   const isProjectRecycle = query.tab === "project-recycled";
   const recycledProjects = projectRecycleState.kind === "ready" ? projectRecycleState.items : [];
 
@@ -321,6 +321,10 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
   const page = Math.min(query.page, totalPages);
   const pageItems = visibleItems.slice((page - 1) * PAGE_LIMIT, page * PAGE_LIMIT);
   const projectById = new Map((projects ?? []).map((project) => [project.id, project] as const));
+  const canEditProject = (projectId: string): boolean =>
+    isAdmin || projectById.get(projectId)?.groupAccessLevel === "edit";
+  const canRestoreProject = (project: ApiProject): boolean =>
+    canDeleteProject && (isAdmin || project.groupAccessLevel === "edit");
   const userNameById = new Map(directory.map((user) => [user.id, user.displayName] as const));
   const userNameOf = (id: string | null): string => (id === null ? "—" : userNameById.get(id) ?? id);
   const projectCodeOf = (id: string): string => projectById.get(id)?.code ?? "—";
@@ -418,7 +422,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
 
   /** 回收站恢复（A4-12）：回退到进入回收站前的状态；成功后重取当前栏。 */
   const restoreItem = async (file: FileLibraryItem): Promise<void> => {
-    if (actionBusy !== null) {
+    if (actionBusy !== null || !canEditProject(file.projectId)) {
       return;
     }
     setActionBusy(file.id);
@@ -438,7 +442,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
 
   /** 彻底删除（仅系统管理员渲染入口；服务端按 groupAccessAdmin 硬闸）：行内二次确认后 POST /files/{id}/purge。 */
   const purgeItem = async (file: FileLibraryItem): Promise<void> => {
-    if (actionBusy !== null) {
+    if (actionBusy !== null || !isAdmin) {
       return;
     }
     setActionBusy(file.id);
@@ -457,7 +461,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
 
   /** 项目回收站恢复：项目数据与图片原样保留，成功后从项目回收站列表移除。 */
   const restoreRecycledProject = async (project: ApiProject): Promise<void> => {
-    if (actionBusy !== null) {
+    if (actionBusy !== null || !canRestoreProject(project)) {
       return;
     }
     setActionBusy(project.id);
@@ -489,7 +493,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
       projectPurgeConfirmId === null
         ? undefined
         : recycledProjects.find((item) => item.id === projectPurgeConfirmId);
-    if (project === undefined || actionBusy !== null) {
+    if (project === undefined || actionBusy !== null || !isAdmin) {
       return;
     }
     setActionBusy(project.id);
@@ -783,7 +787,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
                               </button>
                             ) : (
                               <>
-                                {groupReadOnly ? null : <button
+                                {canEditProject(file.projectId) && <button
                                   type="button"
                                   data-file-restore={file.id}
                                   disabled={actionBusy !== null}
@@ -794,7 +798,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
                                 >
                                   {t("lib.restore")}
                                 </button>}
-                                {isAdmin && !groupReadOnly ? (
+                                {isAdmin ? (
                                   purgeConfirmId === file.id ? (
                                     <>
                                       <span className="text-[11px] text-rose-600">{t("lib.purge.note")}</span>
@@ -928,7 +932,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
                           managerNames={project.managerNames.map((name) => (name === null || name === "" ? "—" : name)).join("、")}
                           time={formatDateTime(project.deletedAt ?? project.updatedAt)}
                           onRestore={
-                            canDeleteProject
+                            canRestoreProject(project)
                               ? () => {
                                   void restoreRecycledProject(project);
                                 }

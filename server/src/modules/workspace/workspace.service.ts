@@ -33,7 +33,7 @@ export class WorkspaceService {
     for (const row of taskRows) {
       myTasks[taskGroupOf(row.plannedEnd, today)].push(toTaskItem(row, today));
     }
-    const projects = await this.loadProjects(taskRows, issueRows);
+    const projects = await this.loadProjects(taskRows, issueRows, actorId);
     return {
       today,
       myTasks,
@@ -46,7 +46,11 @@ export class WorkspaceService {
   }
 
   /** 聚合涉及的项目卡：按任务组顺序 → 问题栏顺序的首次出现去重；取不到的 id 跳过（项目已被软删）。 */
-  private async loadProjects(taskRows: readonly WorkspaceTaskRow[], issueRows: readonly WorkspaceIssueRow[]): Promise<WorkspaceProject[]> {
+  private async loadProjects(
+    taskRows: readonly WorkspaceTaskRow[],
+    issueRows: readonly WorkspaceIssueRow[],
+    actorId: string,
+  ): Promise<WorkspaceProject[]> {
     const projectIds: string[] = [];
     const seen = new Set<string>();
     for (const projectId of [...taskRows.map((row) => row.projectId), ...issueRows.map((row) => row.projectId)]) {
@@ -55,11 +59,14 @@ export class WorkspaceService {
       projectIds.push(projectId);
     }
     const rows = await this.repository.listProjects(projectIds);
+    const levels = await this.permission.projectGroupAccessLevelsOf(actorId, rows.map((row) => row.id));
     const byId = new Map(rows.map((row) => [row.id, row]));
     const projects: WorkspaceProject[] = [];
     for (const projectId of projectIds) {
       const row = byId.get(projectId);
-      if (row !== undefined) projects.push(toProjectItem(row));
+      if (row !== undefined) {
+        projects.push(toProjectItem(row, levels.get(row.id) ?? "view"));
+      }
     }
     return projects;
   }
@@ -138,8 +145,11 @@ function toIssueItem(row: WorkspaceIssueRow): WorkspaceIssueItem {
   };
 }
 
-/** 行 → 契约项目卡（ProjectSchema + managerNames；时间戳转 ISO8601）。 */
-function toProjectItem(row: WorkspaceProjectRow): WorkspaceProject {
+/** 行 → 契约项目卡（ProjectSchema + managerNames；时间戳转 ISO8601；权限按当前登录人裁决）。 */
+function toProjectItem(
+  row: WorkspaceProjectRow,
+  groupAccessLevel: WorkspaceProject["groupAccessLevel"],
+): WorkspaceProject {
   return {
     id: row.id,
     code: row.code,
@@ -152,6 +162,7 @@ function toProjectItem(row: WorkspaceProjectRow): WorkspaceProject {
     managerNames: row.managerNames ?? [],
     stageKey: row.stageKey as WorkspaceProject["stageKey"],
     status: row.status as WorkspaceProject["status"],
+    groupAccessLevel,
     description: row.description,
     version: row.version,
     createdAt: row.createdAt.toISOString(),

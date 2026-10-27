@@ -101,6 +101,8 @@ export const KO_TEXTS: Partial<Record<TextKey, string>> = {
   "access.scope.selected": "지정한 프로젝트만",
   "access.scope.none": "프로젝트 데이터 숨김",
   "access.currentPermission": "현재 권한: {scope} · {level}",
+  "access.currentPermissionScopes": "현재 권한: {scopes}",
+  "access.permissionSeparator": "; ",
   "access.level.edit": "편집 / 열람",
   "access.level.view": "열람 전용",
   "access.noProjects.title": "현재 계정에 열람/편집 가능한 프로젝트가 없습니다",

@@ -5,9 +5,9 @@ import { UserStatusSchema } from "./users.ts";
 /**
  * 部门（Casdoor 群组）访问规则（2026-10-24）：
  * 部门键统一为 owner/name（例如 libiaorobot.com/项目部）。群组限制开启后，所有登录账号都可以
- * 进入页面；每条规则用 projectScope 限定数据范围，并用 accessLevel 区分编辑 / 仅浏览（edit 隐含 view）。
- * 多部门规则取并集：任一适用规则为 edit 才获得写能力，否则只读；项目范围由部门规则裁决。
- * allowedPages 仅保留为旧客户端兼容字段，裁决时恒为全部页面。
+ * 进入页面；每条规则可同时配置 all / own / selected 多个数据范围，每个范围独立区分编辑 / 仅浏览
+ * （edit 隐含 view）。多部门与个人覆盖取可见范围并集，同一项目命中多个范围时取最高权限；
+ * 项目内写操作必须命中该项目的 edit。allowedPages 仅保留为旧客户端兼容字段，裁决时恒为全部页面。
  */
 /** 页面键保留用于旧客户端兼容；2026-10-24 起群组规则不再限制页面入口。 */
 export const GROUP_ACCESS_PAGE_KEYS = ["dashboard", "projects", "templates", "workspace", "files", "audit"] as const;
@@ -39,6 +39,41 @@ export const GroupAccessAccessLevelSchema = z
 
 export type GroupAccessAccessLevel = z.infer<typeof GroupAccessAccessLevelSchema>;
 
+/** 可授予数据权限的项目范围（none 不写入 scopePermissions；空数组 = 不显示项目数据）。 */
+export const GROUP_ACCESS_DATA_PROJECT_SCOPES = ["all", "own", "selected"] as const;
+
+export const GroupAccessDataProjectScopeSchema = z
+  .enum(GROUP_ACCESS_DATA_PROJECT_SCOPES)
+  .openapi("GroupAccessDataProjectScope", { description: "可授予数据权限的项目范围：all 全部项目 / own 仅自己的项目 / selected 仅指定项目" });
+
+export type GroupAccessDataProjectScope = z.infer<typeof GroupAccessDataProjectScopeSchema>;
+
+/** 单个项目范围的权限档位；多范围取并集，同一项目命中多范围时取最高权限（edit > view）。 */
+export const GroupAccessScopePermissionSchema = z
+  .object({
+    projectScope: GroupAccessDataProjectScopeSchema,
+    accessLevel: GroupAccessAccessLevelSchema,
+  })
+  .openapi("GroupAccessScopePermission", { description: "一个项目范围的权限档位：编辑 / 仅浏览" });
+
+export type GroupAccessScopePermission = z.infer<typeof GroupAccessScopePermissionSchema>;
+
+export const GroupAccessScopePermissionsSchema = z
+  .array(GroupAccessScopePermissionSchema)
+  .max(GROUP_ACCESS_DATA_PROJECT_SCOPES.length)
+  .superRefine((value, ctx) => {
+    const seen = new Set<string>();
+    for (const [index, item] of value.entries()) {
+      if (seen.has(item.projectScope)) {
+        ctx.addIssue({ code: "custom", message: "同一项目范围只能配置一次", path: [index, "projectScope"] });
+      }
+      seen.add(item.projectScope);
+    }
+  })
+  .openapi("GroupAccessScopePermissions", {
+    description: "多范围权限：各范围先去重，再取可见范围并集；同一项目命中多个范围时取最高权限；空数组 = 不显示项目数据",
+  });
+
 export const GROUP_ACCESS_MEMBER_SCOPES = ["all", "selected"] as const;
 
 export const GroupAccessMemberScopeSchema = z
@@ -65,13 +100,22 @@ export const GroupAccessRuleInputSchema = z
     groupKey: z.string().trim().min(1).max(200).openapi({ example: "libiaorobot.com/项目部" }),
     groupName: z.string().trim().min(1).max(200).optional(),
     allowedPages: z.array(GroupAccessPageSchema).max(GROUP_ACCESS_PAGE_KEYS.length).optional().default([...GROUP_ACCESS_PAGE_KEYS]),
-    projectScope: GroupAccessProjectScopeSchema,
-    accessLevel: GroupAccessAccessLevelSchema.default("view").openapi({ description: "edit = 可编辑并浏览；view = 仅浏览。projectScope=none 时恒为 view" }),
-    projectIds: z.array(UuidSchema).max(2000).default([]),
+    scopePermissions: GroupAccessScopePermissionsSchema.optional().openapi({ description: "多范围权限（新口径）：all / own / selected 可多选，各带 edit / view；空数组 = 不显示项目数据" }),
+    projectScope: GroupAccessProjectScopeSchema.optional().openapi({ description: "旧客户端兼容字段：未传 scopePermissions 时规范化为单范围；none = 不显示项目数据" }),
+    accessLevel: GroupAccessAccessLevelSchema.optional().default("view").openapi({ description: "旧客户端兼容档位；scopePermissions 存在时忽略" }),
+    projectIds: z.array(UuidSchema).max(2000).default([]).openapi({ description: "selected 范围的项目白名单；不存在 selected 时忽略" }),
     memberScope: GroupAccessMemberScopeSchema.default("all").openapi({ description: "all = 全部门；selected = 仅 memberUserIds" }),
     memberUserIds: z.array(UuidSchema).max(2000).default([]).openapi({ description: "selected 时生效的直属人员 user id" }),
   })
-  .openapi("GroupAccessRuleInput", { description: "保存群组访问规则：项目范围 + 编辑/仅浏览 + 指定项目 + 适用人员（selected 时生效）；allowedPages 兼容旧客户端且不再产生页面限制" });
+  .superRefine((value, ctx) => {
+    if (value.scopePermissions === undefined && value.projectScope === undefined) {
+      ctx.addIssue({ code: "custom", message: "scopePermissions 与 projectScope 至少提供一个", path: ["scopePermissions"] });
+    }
+    if (value.scopePermissions === undefined && value.projectScope === "none" && value.accessLevel === "edit") {
+      ctx.addIssue({ code: "custom", message: "不显示项目数据时只能为仅浏览", path: ["accessLevel"] });
+    }
+  })
+  .openapi("GroupAccessRuleInput", { description: "保存群组访问规则：可多选全部 / 自己的 / 指定项目并分别设置编辑或仅浏览；不显示项目数据为互斥清空项；旧 projectScope / accessLevel 继续兼容" });
 
 export type GroupAccessRuleInput = z.infer<typeof GroupAccessRuleInputSchema>;
 
@@ -80,14 +124,15 @@ export const GroupAccessRuleSchema = z
     groupKey: z.string(),
     groupName: z.string(),
     allowedPages: z.array(GroupAccessPageSchema).openapi({ description: "旧客户端兼容字段；恒返回全部页面" }),
-    projectScope: GroupAccessProjectScopeSchema,
-    accessLevel: GroupAccessAccessLevelSchema,
-    projectIds: z.array(UuidSchema),
+    scopePermissions: GroupAccessScopePermissionsSchema.openapi({ description: "多范围权限；空数组 = 不显示项目数据" }),
+    projectScope: GroupAccessProjectScopeSchema.openapi({ description: "旧客户端兼容摘要：优先 all，其次 own，再次 selected；无范围 = none" }),
+    accessLevel: GroupAccessAccessLevelSchema.openapi({ description: "旧客户端兼容摘要：projectScope 对应范围的权限档位；无范围 = view" }),
+    projectIds: z.array(UuidSchema).openapi({ description: "selected 范围项目白名单" }),
     memberScope: GroupAccessMemberScopeSchema,
     memberUserIds: z.array(UuidSchema),
     updatedAt: DateTimeSchema,
   })
-  .openapi("GroupAccessRule", { description: "群组访问规则：accessLevel = edit / view；projectIds 仅项目 selected 时有值；memberUserIds 仅人员 selected 时有值" });
+  .openapi("GroupAccessRule", { description: "群组访问规则：scopePermissions 为裁决口径；projectScope / accessLevel 仅为旧客户端摘要" });
 
 export type GroupAccessRule = z.infer<typeof GroupAccessRuleSchema>;
 
@@ -96,12 +141,13 @@ export const GroupAccessMemberRuleSchema = z
   .object({
     groupKey: z.string(),
     userId: UuidSchema,
-    projectScope: GroupAccessProjectScopeSchema,
-    accessLevel: GroupAccessAccessLevelSchema,
+    scopePermissions: GroupAccessScopePermissionsSchema.openapi({ description: "个人多范围权限；存在个人规则时整体覆盖同部门默认规则" }),
+    projectScope: GroupAccessProjectScopeSchema.openapi({ description: "旧客户端兼容摘要：优先 all，其次 own，再次 selected；无范围 = none" }),
+    accessLevel: GroupAccessAccessLevelSchema.openapi({ description: "旧客户端兼容摘要：projectScope 对应范围的权限档位；无范围 = view" }),
     projectIds: z.array(UuidSchema),
     updatedAt: DateTimeSchema,
   })
-  .openapi("GroupAccessMemberRule", { description: "部门内个人权限覆盖：projectIds 仅 selected 时有值；存在时优先于同部门默认规则" });
+  .openapi("GroupAccessMemberRule", { description: "部门内个人权限覆盖：scopePermissions 为裁决口径；projectIds 仅 selected 时有值；整体覆盖同部门默认规则" });
 
 export type GroupAccessMemberRule = z.infer<typeof GroupAccessMemberRuleSchema>;
 
@@ -110,11 +156,20 @@ export const GroupAccessMemberRuleInputSchema = z
     groupKey: z.string().trim().min(1).max(200).openapi({ example: "libiaorobot.com/项目部" }),
     groupName: z.string().trim().min(1).max(200).optional(),
     userIds: z.array(UuidSchema).min(1).max(2000),
-    projectScope: GroupAccessProjectScopeSchema,
-    accessLevel: GroupAccessAccessLevelSchema.default("view").openapi({ description: "edit = 可编辑并浏览；view = 仅浏览。projectScope=none 时恒为 view" }),
-    projectIds: z.array(UuidSchema).max(2000).default([]),
+    scopePermissions: GroupAccessScopePermissionsSchema.optional().openapi({ description: "个人多范围权限（新口径）；空数组 = 不显示项目数据" }),
+    projectScope: GroupAccessProjectScopeSchema.optional().openapi({ description: "旧客户端兼容字段；未传 scopePermissions 时规范化为单范围" }),
+    accessLevel: GroupAccessAccessLevelSchema.optional().default("view").openapi({ description: "旧客户端兼容档位；scopePermissions 存在时忽略" }),
+    projectIds: z.array(UuidSchema).max(2000).default([]).openapi({ description: "selected 范围的项目白名单" }),
   })
-  .openapi("GroupAccessMemberRuleInput", { description: "保存部门内个人权限覆盖：同一部门可按 userIds 批量写入相同权限，各成员仍保存为独立个人规则；不改变部门默认规则" });
+  .superRefine((value, ctx) => {
+    if (value.scopePermissions === undefined && value.projectScope === undefined) {
+      ctx.addIssue({ code: "custom", message: "scopePermissions 与 projectScope 至少提供一个", path: ["scopePermissions"] });
+    }
+    if (value.scopePermissions === undefined && value.projectScope === "none" && value.accessLevel === "edit") {
+      ctx.addIssue({ code: "custom", message: "不显示项目数据时只能为仅浏览", path: ["accessLevel"] });
+    }
+  })
+  .openapi("GroupAccessMemberRuleInput", { description: "保存部门内个人权限覆盖：多范围可分别设置编辑 / 仅浏览；同一部门可按 userIds 批量写入，各成员仍保存为独立规则" });
 
 export type GroupAccessMemberRuleInput = z.infer<typeof GroupAccessMemberRuleInputSchema>;
 

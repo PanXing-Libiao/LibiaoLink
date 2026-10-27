@@ -1,6 +1,7 @@
 import { z } from "../zod.ts";
 import { DateTimeSchema, DateOnlySchema, PageQuerySchema, SortQuerySchema, UuidSchema, VersionSchema } from "../common/conventions.ts";
 import { ProjectStatusSchema, StageKeySchema } from "../common/dicts.ts";
+import { GroupAccessAccessLevelSchema } from "./group-access.ts";
 
 const PROJECT_MANAGER_IDS_LIMIT = 200;
 
@@ -22,6 +23,7 @@ export const ProjectSchema = z
     }),
     stageKey: StageKeySchema,
     status: ProjectStatusSchema,
+    groupAccessLevel: GroupAccessAccessLevelSchema.openapi({ description: "当前登录账号对该项目的部门权限：edit 可写 / view 仅浏览；由服务端按所有命中范围取最高权限后随项目下发" }),
     description: z.string().nullable(),
     version: VersionSchema,
     createdAt: DateTimeSchema,

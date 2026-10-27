@@ -7,6 +7,7 @@ import {
   type AccessDepartmentSummary,
   type AccessProjectLevel,
 } from "./accessDashboardModel";
+import { scopePermissionsOf } from "./accessRules";
 import { useT, type TextKey } from "./i18n";
 import type { ToastKind } from "./components/Toast";
 
@@ -213,7 +214,18 @@ function DistributionRow({ row, total, projectNames, delay, onOpen }: {
     { key: "login", count: row.levelCounts.login },
   ];
   const showPath = row.path.length > 1;
-  const scopeText = row.group.rule === null ? t("access.unconfigured") : t(scopeTextKey(row.group.rule.projectScope));
+  const scopePermissions = row.group.rule === null
+    ? []
+    : scopePermissionsOf(row.group.rule.scopePermissions, row.group.rule.projectScope, row.group.rule.accessLevel);
+  const scopeText = row.group.rule === null
+    ? t("access.unconfigured")
+    : scopePermissions.length === 0
+      ? t(scopeTextKey("none"))
+      : scopePermissions
+        .map((permission) =>
+          t(scopeTextKey(permission.projectScope)) + " · " +
+          t(permission.accessLevel === "edit" ? "access.dashboard.operate" : "access.dashboard.viewOnly"))
+        .join(t("access.permissionSeparator"));
   return (
     <button
       type="button"

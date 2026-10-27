@@ -82,8 +82,9 @@ export class ProjectsController {
   list(
     @Query(new ZodValidationPipe(ProjectListQuerySchema)) query: ProjectListQuery,
     @ProjectScope() scope: ProjectScopeFilter,
+    @CurrentActorId() actorId: string,
   ): Promise<ProjectListResult> {
-    return this.projects.listProjects(query, scope);
+    return this.projects.listProjects(query, scope, actorId);
   }
 
   /** 首页分类计数（A6）：与列表同一筛选口径（禁止两套 SQL）。 */
@@ -97,8 +98,8 @@ export class ProjectsController {
 
   /** 详情：软删 / 不存在统一 404 NOT_FOUND。 */
   @Get(":id")
-  detail(@Param("id", uuidParam) id: string): Promise<ProjectView> {
-    return this.projects.getProject(id);
+  detail(@Param("id", uuidParam) id: string, @CurrentActorId() actorId: string): Promise<ProjectView> {
+    return this.projects.getProject(id, actorId);
   }
 
   /** 记录访问（2026-10-23）：前端进入项目详情时调用一次；每次进入写一条 action=visit。 */

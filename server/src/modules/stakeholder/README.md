@@ -11,13 +11,14 @@
 
 - 契约 `shared/src/modules/stakeholders.ts`（tags=stakeholders）：`StakeholderSchema` / `StakeholderCreateBodySchema` / `StakeholderUpdateBodySchema` / `StakeholderListQuerySchema` / `StakeholderListResponseSchema` / `StakeholderProjectLinkBodySchema` / `StakeholderDeleteResponseSchema`；`AUDIT_OBJECT_TYPES` 增 `stakeholder`。OpenAPI 7 条路由：GET / POST `/api/v1/stakeholders`、GET / PATCH / DELETE `/api/v1/stakeholders/{stakeholderId}`、POST `/api/v1/stakeholders/{stakeholderId}/projects`、DELETE `/api/v1/stakeholders/{stakeholderId}/projects/{projectId}`。
 - 数据面（迁移 0019 + 0042）：`stakeholders`（全库台账，不挂项目）+ `project_stakeholders`（多对多）。台账字段 = name / company_type（四值 libiao / supplier / general_contractor / customer）/ company / title / phone / wechat / email / remark / role（干系人角色 · Push 225 代做 wmj 线增列）+ created_by（录入人）+ created_at / updated_at + 软删 deleted_at / deleted_by。
-- 四层：`stakeholder.controller.ts`（7 条路由；SessionGuard + CsrfGuard + ProjectAccessGuard；读 `stakeholder.view` / 写 `stakeholder.manage`；POST 201）、`stakeholder.service.ts`（用例 + 记录级 404 + 字段级裁剪 + 审计）、`stakeholder.repository.ts`（列表 / 详情 / 增删改 / 关联 / 批量反查项目；restricted 空集短路）、`stakeholder.rules.ts`（stakeholderVisibility / buildStakeholderFilter / parseStakeholderSort / matchesKeyword，纯函数）。
+- 四层：`stakeholder.controller.ts`（7 条路由；SessionGuard + CsrfGuard + ProjectAccessGuard；读 `stakeholder.view`；写由服务层叠加 `stakeholder.manage` 与目标项目 `groupAccessLevel=edit`；POST 201）、`stakeholder.service.ts`（用例 + 记录级 404 + 字段级裁剪 + 项目级写权限 + 审计）、`stakeholder.repository.ts`（列表 / 详情 / 增删改 / 关联 / 批量反查项目；restricted 空集短路）、`stakeholder.rules.ts`（stakeholderVisibility / buildStakeholderFilter / parseStakeholderSort / matchesKeyword，纯函数）。
 
-## 口径（三条硬约束）
+## 口径（四条硬约束）
 
 1. **记录级**：可见集 = 「我录入的（own_stakeholders 一期形态）」∪「关联项目落在我的可见项目内」；ownId 恒为本人 = 记录级兜底（有角色不会反而看得更少）。不可见 / 不存在 / 已软删**统一 404**（防 IDOR，与项目域同口径）。
 2. **字段级**（A5-07 / C3-08）：直接复用 permission 的 `FIELD_POLICIES` + `projectFields`，无权字段**键不存在**（不落 null、不做前端打码）—— phone / wechat / email → `stakeholder.contact.view`；company / title → `stakeholder.view`；remark → `stakeholder.manage`；name / companyType / role / createdBy / projects 未登记字段级策略 = 恒可见（有权但值为空才是 null）。
 3. **留痕**：建 / 改 / 删 / 关联 / 解绑都在**同一事务**写审计（`objectType = stakeholder`、`objectId` = 干系人 id）；重复关联幂等且不重复留痕；关联不存在的项目 404 且不写审计。
+4. **写权限（0075）**：有项目关联时，更新 / 删除要求全部关联项目可编辑，关联 / 解除关联要求目标项目可编辑；无关联项目的共享台账写操作要求 `groupAllEdit + stakeholder.manage`。只读项目仍可查看台账，但写入口由服务端拒绝。
 
 ## 验收与门禁（本卡）
 

@@ -10,6 +10,7 @@ import type { DatabaseService } from "../src/db/database.service.js";
 import type { ObjectStorage } from "../src/storage/index.js";
 import type { AuditService } from "../src/modules/admin/index.js";
 import type { UserRow } from "../src/modules/identity/index.js";
+import type { PermissionService } from "../src/modules/permission/index.js";
 import type { FlowService, ProjectMemberRepository, ProjectRepository } from "../src/modules/project/index.js";
 import type { TaskNodeRepository } from "../src/modules/template/index.js";
 import type { TranslateService } from "../src/modules/translate/index.js";
@@ -418,6 +419,13 @@ function createHarness() {
     },
   };
 
+  const permission = {
+    groupAccess: { enforced: false, admin: false, allEdit: true, ownEdit: true },
+    async groupAccessOf(): Promise<{ enforced: boolean; admin: boolean; allEdit: boolean; ownEdit: boolean }> {
+      return this.groupAccess;
+    },
+  };
+
   const database = {
     db: {
       transaction: async (fn: (tx: unknown) => Promise<unknown>): Promise<unknown> => fn({}),
@@ -430,13 +438,14 @@ function createHarness() {
     projects as unknown as ProjectRepository,
     members as unknown as ProjectMemberRepository,
     flow as unknown as FlowService,
+    permission as unknown as PermissionService,
     nodes as unknown as TaskNodeRepository,
     audit as unknown as AuditService,
     storage as unknown as ObjectStorage,
     translate as unknown as TranslateService,
   );
 
-  return { service, previews, projects, members, nodes, audit, storage, translate, flow };
+  return { service, previews, projects, members, nodes, audit, storage, translate, flow, permission };
 }
 
 /** 导入表三种 sheet 的表头（与真实导入表同列名；列顺序可乱，按表头定位）。 */
@@ -1246,6 +1255,18 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
     // 其余负责人（高云 / 赵纯德 / 张亚庆）仍不在库 → 照常提醒，不阻断
     const ownerIssue = result.issues.find((issue) => issue.code === "OWNER_MISSING");
     expect(ownerIssue?.subject).toContain("高云");
+  });
+
+  it("仅自己的项目编辑：导入项目时自动把创建人加入项目经理", async () => {
+    const h = createHarness();
+    h.previews.users = [{ id: "user-jia", username: "jiahaiyang", displayName: "贾海洋" }];
+    const preview = await runPreview(h);
+    h.storage.objects.set(h.previews.row === null ? "" : h.previews.row.objectKey, mediaZip("image1.png", "image2.png"));
+    h.permission.groupAccess = { enforced: true, admin: false, allEdit: false, ownEdit: true };
+
+    await h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh");
+    expect(h.projects.inserted[0]?.managerIds).toEqual(["user-jia", ACTOR_ID]);
+    expect(h.members.upserts.map((item) => item.userId)).toEqual(["user-jia", ACTOR_ID]);
   });
 
   it("不勾选补节点：任务按文件原名导入（taskNodeId 为空），节点库不动", async () => {

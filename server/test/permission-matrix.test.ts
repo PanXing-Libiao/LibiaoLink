@@ -398,6 +398,7 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
       projectId: PROJECT_ID,
       member: true,
       projectManager: true,
+      groupAccessLevel: "edit",
     });
 
     const rosterOnly = new FakePermissionRepository();
@@ -408,6 +409,7 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
       projectId: PROJECT_ID,
       member: true,
       projectManager: false,
+      groupAccessLevel: "edit",
     });
 
     const owner = new FakePermissionRepository();
@@ -417,6 +419,7 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
       projectId: PROJECT_ID,
       member: true,
       projectManager: true,
+      groupAccessLevel: "edit",
     });
     // A22 · Push 136：multi-manager —— 责任人是第二位经理同样命中（任意一位）。
     const secondManager = new FakePermissionRepository();
@@ -426,6 +429,7 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
       projectId: PROJECT_ID,
       member: true,
       projectManager: true,
+      groupAccessLevel: "edit",
     });
   });
 

@@ -50,9 +50,13 @@ class FakeWorkspaceRepository {
 
 class FakePermissionService {
   scope: ProjectScopeFilter = { kind: "all" };
+  levels = new Map<string, "edit" | "view">();
 
   async projectScope(): Promise<ProjectScopeFilter> {
     return this.scope;
+  }
+  async projectGroupAccessLevelsOf(_actorId: string, projectIds: readonly string[]): Promise<Map<string, "edit" | "view">> {
+    return new Map(projectIds.map((projectId) => [projectId, this.levels.get(projectId) ?? "edit"]));
   }
 }
 
@@ -280,9 +284,12 @@ describe("工作台服务（M6-05）", () => {
       makeProject({ id: PROJECT }),
       makeProject({ id: PROJECT_B, code: "P-002", name: "二号项目", managerNames: [ME] }),
     ];
-    const response = await makeService(repo, new FakePermissionService()).get(ME);
+    const permission = new FakePermissionService();
+    permission.levels.set(PROJECT_B, "view");
+    const response = await makeService(repo, permission).get(ME);
     expect(repo.lastProjectIds).toEqual([PROJECT, PROJECT_B]);
     expect(response.projects.map((project) => project.id)).toEqual([PROJECT, PROJECT_B]);
+    expect(response.projects.map((project) => project.groupAccessLevel)).toEqual(["edit", "view"]);
     expect(response.projects[0]?.managerNames).toEqual(["我", "他人"]);
     expect(response.projects[0]?.managerIds).toEqual([ME, OTHER]);
     expect(response.projects[0]?.version).toBe(4);

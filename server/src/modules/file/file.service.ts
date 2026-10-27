@@ -182,6 +182,7 @@ export class FileService {
     await this.permission.assertCan(actorId, "file.upload", {
       member: access.member,
       projectManager: access.projectManager,
+      groupAccessLevel: access.groupAccessLevel,
     });
     // 目标文件（Push 130 定案；M4-02 放开 version、M4-04 放开 change）：
     // version 给出 fileId = 对既有 draft 文件替换 / 追加版本；change 必填 fileId = 对已定档（final / changed）文件发起变更。
@@ -823,7 +824,7 @@ export class FileService {
       throw new AppError("NOT_FOUND", "文件不存在");
     }
     const access = await this.permission.assertProjectVisible(actorId, file.projectId);
-    await this.permission.assertCan(actorId, "file.upload", { member: access.member, projectManager: access.projectManager });
+    await this.permission.assertCan(actorId, "file.upload", { member: access.member, projectManager: access.projectManager, groupAccessLevel: access.groupAccessLevel });
     return file;
   }
 
@@ -1378,7 +1379,7 @@ export class FileService {
       throw new AppError("NOT_FOUND", "目标文件不存在或不可见");
     }
     const access = await this.permission.assertProjectVisible(actorId, file.projectId);
-    await this.permission.assertCan(actorId, "file.upload", { member: access.member, projectManager: access.projectManager });
+    await this.permission.assertCan(actorId, "file.upload", { member: access.member, projectManager: access.projectManager, groupAccessLevel: access.groupAccessLevel });
     if (file.projectId !== body.projectId) {
       throw new AppError("VALIDATION_FAILED", "目标文件不属于该项目（projectId 与目标文件不一致）", [
         { code: "invalid_file", message: "fileId 与 projectId 不一致", path: "fileId" },
@@ -1442,7 +1443,7 @@ export class FileService {
     }
     const access = await this.permission.assertProjectVisible(actorId, file.projectId);
     if (permission !== null) {
-      await this.permission.assertCan(actorId, permission, { member: access.member, projectManager: access.projectManager });
+      await this.permission.assertCan(actorId, permission, { member: access.member, projectManager: access.projectManager, groupAccessLevel: access.groupAccessLevel });
     }
     const session = await this.repository.findSessionById(uploadId);
     if (session === null || session.fileId !== fileId) {

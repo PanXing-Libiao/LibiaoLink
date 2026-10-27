@@ -1,11 +1,12 @@
 import type { GroupAccessAccessLevel, GroupAccessProjectScope } from "./accessApi";
+import { mergeScopePermissions } from "./accessRules";
+import type { GroupAccessDataProjectScope, GroupAccessScopePermission } from "./permissions";
 import { useT, type TextKey } from "./i18n";
 
-const SCOPE_OPTIONS: Array<{ value: GroupAccessProjectScope; labelKey: TextKey }> = [
+const DATA_SCOPE_OPTIONS: Array<{ value: GroupAccessDataProjectScope; labelKey: TextKey }> = [
   { value: "all", labelKey: "access.scope.all" },
   { value: "own", labelKey: "access.scope.own" },
   { value: "selected", labelKey: "access.scope.selected" },
-  { value: "none", labelKey: "access.scope.none" },
 ];
 
 function ParentDot({ active }: { active: boolean }) {
@@ -66,45 +67,37 @@ function AccessLevelButton({
 }
 
 export function AccessScopePicker({
-  projectScope,
-  accessLevel,
+  scopePermissions,
   onChange,
 }: {
-  projectScope: GroupAccessProjectScope;
-  accessLevel: GroupAccessAccessLevel;
-  onChange: (next: { projectScope: GroupAccessProjectScope; accessLevel: GroupAccessAccessLevel }) => void;
+  scopePermissions: GroupAccessScopePermission[];
+  onChange: (next: GroupAccessScopePermission[]) => void;
 }) {
   const t = useT();
+  const normalized = mergeScopePermissions(scopePermissions);
+  const levelOf = (scope: GroupAccessDataProjectScope): GroupAccessAccessLevel | null =>
+    normalized.find((permission) => permission.projectScope === scope)?.accessLevel ?? null;
 
-  function toggleScope(option: GroupAccessProjectScope): void {
-    if (projectScope === option) {
-      onChange({ projectScope: "none", accessLevel: "view" });
-      return;
-    }
-    onChange({ projectScope: option, accessLevel: option === "none" ? "view" : "edit" });
+  function setScope(scope: GroupAccessDataProjectScope, accessLevel: GroupAccessAccessLevel | null): void {
+    const next = normalized.filter((permission) => permission.projectScope !== scope);
+    if (accessLevel !== null) next.push({ projectScope: scope, accessLevel });
+    onChange(mergeScopePermissions(next));
   }
 
-  function toggleEdit(option: GroupAccessProjectScope): void {
-    if (projectScope !== option) {
-      onChange({ projectScope: option, accessLevel: "edit" });
-      return;
-    }
-    onChange({ projectScope: option, accessLevel: accessLevel === "edit" ? "view" : "edit" });
+  function toggleScope(scope: GroupAccessDataProjectScope): void {
+    const current = levelOf(scope);
+    setScope(scope, current === null ? "edit" : null);
   }
 
-  function toggleView(option: GroupAccessProjectScope): void {
-    if (projectScope !== option) {
-      onChange({ projectScope: option, accessLevel: "view" });
-      return;
-    }
-    onChange({ projectScope: "none", accessLevel: "view" });
+  function setLevel(scope: GroupAccessDataProjectScope, accessLevel: GroupAccessAccessLevel): void {
+    setScope(scope, accessLevel);
   }
 
   return (
     <div data-access-scope-picker="true" className="grid gap-2 sm:grid-cols-2">
-      {SCOPE_OPTIONS.map((option) => {
-        const active = projectScope === option.value;
-        const dataScope = option.value !== "none";
+      {DATA_SCOPE_OPTIONS.map((option) => {
+        const level = levelOf(option.value);
+        const active = level !== null;
         return (
           <div
             key={option.value}
@@ -123,27 +116,42 @@ export function AccessScopePicker({
               <ParentDot active={active} />
               <span className="min-w-0 flex-1 truncate">{t(option.labelKey)}</span>
             </button>
-            {dataScope ? (
-              <div className="flex flex-wrap items-center gap-1.5 border-t border-blue-100/70 px-3 pb-2 pt-1.5">
-                <AccessLevelButton
-                  checked={active && accessLevel === "edit"}
-                  tone="edit"
-                  optionKey={option.value}
-                  label={t("access.dashboard.operate")}
-                  onClick={() => { toggleEdit(option.value); }}
-                />
-                <AccessLevelButton
-                  checked={active}
-                  tone="view"
-                  optionKey={option.value}
-                  label={t("access.dashboard.viewOnly")}
-                  onClick={() => { toggleView(option.value); }}
-                />
-              </div>
-            ) : null}
+            <div className="flex flex-wrap items-center gap-1.5 border-t border-blue-100/70 px-3 pb-2 pt-1.5">
+              <AccessLevelButton
+                checked={level === "edit"}
+                tone="edit"
+                optionKey={option.value}
+                label={t("access.dashboard.operate")}
+                onClick={() => { setLevel(option.value, "edit"); }}
+              />
+              <AccessLevelButton
+                checked={level === "view"}
+                tone="view"
+                optionKey={option.value}
+                label={t("access.dashboard.viewOnly")}
+                onClick={() => { setLevel(option.value, "view"); }}
+              />
+            </div>
           </div>
         );
       })}
+      <div
+        className={
+          "flex min-h-[70px] flex-col overflow-hidden rounded-xl border transition-all duration-200 sm:col-span-2 " +
+          (normalized.length === 0 ? "border-amber-300 bg-amber-50/70 shadow-sm" : "border-zinc-200 bg-white hover:border-amber-200 hover:bg-amber-50/30")
+        }
+      >
+        <button
+          type="button"
+          data-access-scope-option={"none" satisfies GroupAccessProjectScope}
+          aria-pressed={normalized.length === 0}
+          onClick={() => { onChange([]); }}
+          className="flex min-h-10 w-full flex-1 items-center gap-2.5 px-3 py-2.5 text-left text-[11px] font-medium text-zinc-700 transition-colors hover:text-amber-800"
+        >
+          <ParentDot active={normalized.length === 0} />
+          <span className="min-w-0 flex-1">{t("access.scope.none")}</span>
+        </button>
+      </div>
     </div>
   );
 }

@@ -9784,7 +9784,7 @@ export interface components {
             roleCodes: string[];
             /** @description 固定全量数据范围基线；实际项目范围由部门规则收窄 */
             dataScopes: components["schemas"]["DataScope"][];
-            /** @description 全量功能权限位基线；写能力由 groupReadOnly / 部门规则再裁决 */
+            /** @description 全量功能权限位基线；业务写能力另由部门编辑范围 / 项目 groupAccessLevel 裁决 */
             permissionKeys: components["schemas"]["PermissionKey"][];
             /** @description 当前账号的 Casdoor 群组键（owner/name；按登录或目录同步落地） */
             groupKeys?: string[];
@@ -9794,12 +9794,21 @@ export interface components {
             groupAccessEnforced?: boolean;
             /** @description 当前账号是否可进入群组权限管理页 */
             groupAccessAdmin?: boolean;
-            /** @description 群组访问限制下当前账号是否只读；页面仍全部可见，但业务写接口一律 403 */
+            /** @description 兼容摘要：账号没有任何编辑范围时为 true；项目级写能力以项目 groupAccessLevel 为准，全局写能力以 groupAllEdit 为准 */
             groupReadOnly?: boolean;
             groupProjectAccess?: components["schemas"]["GroupProjectAccess"];
             /** @description 当前账号命中的部门项目范围并集：all / own / selected / none；用于空态展示当前权限 */
             groupProjectScopes?: components["schemas"]["GroupAccessProjectScope"][];
-            groupAccessLevel?: components["schemas"]["GroupAccessAccessLevel"];
+            groupAccessLevel?: components["schemas"]["GroupAccessAccessLevel"] & unknown;
+            groupScopePermissions?: components["schemas"]["GroupAccessScopePermissions"];
+            /** @description 当前账号是否至少在一个项目范围拥有编辑权限（任务模板 / 节点库写入口） */
+            groupAnyEdit?: boolean;
+            /** @description 当前账号是否拥有全部项目编辑权限（字典 / 日历 / 自动化等全局写入口） */
+            groupAllEdit?: boolean;
+            /** @description 当前账号是否拥有自己的项目编辑权限（可用于新建项目） */
+            groupOwnEdit?: boolean;
+            /** @description 当前账号是否拥有指定项目编辑权限 */
+            groupSelectedEdit?: boolean;
             auditScope?: components["schemas"]["AuditScope"];
         };
         /** @description 统一错误信封（技术设计v0.2 §7.2） */
@@ -10942,7 +10951,7 @@ export interface components {
          */
         FollowObjectType: "project" | "task";
         /**
-         * @description 当前账号的部门权限档位：edit 可编辑并浏览 / view 仅浏览；与 groupReadOnly 同源
+         * @description 当前登录账号对该项目的部门权限：edit 可写 / view 仅浏览；由服务端按所有命中范围取最高权限后随项目下发
          * @enum {string}
          */
         GroupAccessAccessLevel: "edit" | "view";
@@ -10970,6 +10979,11 @@ export interface components {
          * @enum {string}
          */
         GroupAccessAdminSource: "configured" | "manual";
+        /**
+         * @description 可授予数据权限的项目范围：all 全部项目 / own 仅自己的项目 / selected 仅指定项目
+         * @enum {string}
+         */
+        GroupAccessDataProjectScope: "all" | "own" | "selected";
         /** @description 可配置部门：层级、直属人员与已保存规则；groupKey=__ungrouped__ 为虚拟未分组节点，仅聚合无部门成员关系的账号 */
         GroupAccessGroup: {
             groupKey: string;
@@ -10993,11 +11007,12 @@ export interface components {
             email: string | null;
             status: components["schemas"]["UserStatus"];
         };
-        /** @description 部门内个人权限覆盖：projectIds 仅 selected 时有值；存在时优先于同部门默认规则 */
+        /** @description 部门内个人权限覆盖：scopePermissions 为裁决口径；projectIds 仅 selected 时有值；整体覆盖同部门默认规则 */
         GroupAccessMemberRule: {
             groupKey: string;
             userId: components["schemas"]["Uuid"];
-            projectScope: components["schemas"]["GroupAccessProjectScope"];
+            scopePermissions: components["schemas"]["GroupAccessScopePermissions"] & unknown;
+            projectScope: components["schemas"]["GroupAccessProjectScope"] & unknown;
             accessLevel: components["schemas"]["GroupAccessAccessLevel"] & unknown;
             projectIds: components["schemas"]["Uuid"][];
             updatedAt: components["schemas"]["DateTime"];
@@ -11008,15 +11023,24 @@ export interface components {
             groupName?: string;
             userIds: components["schemas"]["Uuid"][];
         };
-        /** @description 保存部门内个人权限覆盖：同一部门可按 userIds 批量写入相同权限，各成员仍保存为独立个人规则；不改变部门默认规则 */
+        /** @description 保存部门内个人权限覆盖：多范围可分别设置编辑 / 仅浏览；同一部门可按 userIds 批量写入，各成员仍保存为独立规则 */
         GroupAccessMemberRuleInput: {
             /** @example libiaorobot.com/项目部 */
             groupKey: string;
             groupName?: string;
             userIds: components["schemas"]["Uuid"][];
-            projectScope: components["schemas"]["GroupAccessProjectScope"];
-            accessLevel?: components["schemas"]["GroupAccessAccessLevel"] & unknown;
-            /** @default [] */
+            scopePermissions?: components["schemas"]["GroupAccessScopePermissions"] & unknown;
+            projectScope?: components["schemas"]["GroupAccessProjectScope"] & unknown;
+            /**
+             * @description 旧客户端兼容档位；scopePermissions 存在时忽略
+             * @default view
+             * @enum {string}
+             */
+            accessLevel: "edit" | "view";
+            /**
+             * @description selected 范围的项目白名单
+             * @default []
+             */
             projectIds: components["schemas"]["Uuid"][];
         };
         /** @description 保存后的个人权限覆盖列表 */
@@ -11060,14 +11084,16 @@ export interface components {
             groupName: string;
             /** @description 旧客户端兼容字段；恒返回全部页面 */
             allowedPages: components["schemas"]["GroupAccessPage"][];
-            projectScope: components["schemas"]["GroupAccessProjectScope"];
+            scopePermissions: components["schemas"]["GroupAccessScopePermissions"] & unknown;
+            projectScope: components["schemas"]["GroupAccessProjectScope"] & unknown;
             accessLevel: components["schemas"]["GroupAccessAccessLevel"] & unknown;
+            /** @description selected 范围项目白名单 */
             projectIds: components["schemas"]["Uuid"][];
             memberScope: components["schemas"]["GroupAccessMemberScope"];
             memberUserIds: components["schemas"]["Uuid"][];
             updatedAt: components["schemas"]["DateTime"];
         } | null;
-        /** @description 保存群组访问规则：项目范围 + 编辑/仅浏览 + 指定项目 + 适用人员（selected 时生效）；allowedPages 兼容旧客户端且不再产生页面限制 */
+        /** @description 保存群组访问规则：可多选全部 / 自己的 / 指定项目并分别设置编辑或仅浏览；不显示项目数据为互斥清空项；旧 projectScope / accessLevel 继续兼容 */
         GroupAccessRuleInput: {
             /** @example libiaorobot.com/项目部 */
             groupKey: string;
@@ -11083,9 +11109,18 @@ export interface components {
              *     ]
              */
             allowedPages: components["schemas"]["GroupAccessPage"][];
-            projectScope: components["schemas"]["GroupAccessProjectScope"];
-            accessLevel?: components["schemas"]["GroupAccessAccessLevel"] & unknown;
-            /** @default [] */
+            scopePermissions?: components["schemas"]["GroupAccessScopePermissions"] & unknown;
+            projectScope?: components["schemas"]["GroupAccessProjectScope"] & unknown;
+            /**
+             * @description 旧客户端兼容档位；scopePermissions 存在时忽略
+             * @default view
+             * @enum {string}
+             */
+            accessLevel: "edit" | "view";
+            /**
+             * @description selected 范围的项目白名单；不存在 selected 时忽略
+             * @default []
+             */
             projectIds: components["schemas"]["Uuid"][];
             memberScope?: components["schemas"]["GroupAccessMemberScope"] & unknown;
             /**
@@ -11098,6 +11133,13 @@ export interface components {
         GroupAccessRuleResponse: {
             rule: components["schemas"]["GroupAccessRule"] & unknown;
         };
+        /** @description 一个项目范围的权限档位：编辑 / 仅浏览 */
+        GroupAccessScopePermission: {
+            projectScope: components["schemas"]["GroupAccessDataProjectScope"];
+            accessLevel: components["schemas"]["GroupAccessAccessLevel"] & unknown;
+        };
+        /** @description 当前账号命中的多范围权限（多部门 / 个人覆盖取并集后，同一范围取最高权限）；空数组 = 不显示项目数据 */
+        GroupAccessScopePermissions: components["schemas"]["GroupAccessScopePermission"][];
         /**
          * @description 部门项目权限三态：allowed / empty / denied；none 规则按仅登录处理，用于业务页面统一空状态
          * @enum {string}
@@ -11624,6 +11666,7 @@ export interface components {
             managerNames: (string | null)[];
             stageKey: components["schemas"]["StageKey"];
             status: components["schemas"]["ProjectStatus"];
+            groupAccessLevel: components["schemas"]["GroupAccessAccessLevel"];
             description: string | null;
             version: components["schemas"]["Version"];
             createdAt: components["schemas"]["DateTime"];

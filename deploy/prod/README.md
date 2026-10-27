@@ -211,15 +211,16 @@
     └── secrets/         # 只存在于服务器（本机生成、chmod 600、不进仓库）
 ```
 
-### 1.1 服务器登录（开发机 → 测试机）
+### 1.1 服务器登录（开发机 → 正式机 / 测试机）
 
-- 测试机：`10.1.104.44`（主机名 `libiao-vm`，Ubuntu 26.04 LTS；对外域名 `test-pm.libiaorobot.com`）；`10.1.103.44` = ALLinSSL 证书下发接收端（同口令），仅证书用途、不作为部署目标。
-- 登录方式：开发机 PowerShell 直接 `ssh root@10.1.104.44`（首次连接接受指纹即可）。
-- **登录口令不落仓库**（CONTRIBUTING §12）：由 px 持有；开发机上的未跟踪备忘 = `deploy/prod/服务器登录.local.md`（`.gitignore` 已忽略，AI / 新会话可直接读该文件续接）。
-- 登录后入口：`cd /opt/libiaolink/deploy/prod`（`docker compose --profile app ps` 应见 postgres / api / worker / svg-preview / web / minio 六容器）。
+- 正式机：`10.1.103.44`，对外域名 `pm.libiaorobot.com`；发布清单 `/opt/libiaolink/RELEASE_MANIFEST.json` 的 `target.host` 必须为 `10.1.103.44`。
+- 测试机：`10.1.104.44`（主机名 `libiao-vm`，对外域名 `test-pm.libiaorobot.com`）。`10.1.103.44` 不是“仅证书接收端”，它同时承载正式环境；不得把测试发布或回滚误推到正式机。
+- 登录方式：开发机已配置 SSH 密钥；正式机使用 `ssh libiaolink-prod`，测试机使用 `id_ed25519_libiao` 对 `root@10.1.104.44` 登录。首次连接接受指纹。
+- **登录凭据不落仓库**（CONTRIBUTING §12）：由 px 持有；开发机上的未跟踪备忘 = `deploy/prod/服务器登录.local.md`（`.gitignore` 已忽略）。备忘中的旧口令可能过期，以 SSH 密钥 / IT 登记为准。
+- 登录后入口：两台均为 `cd /opt/libiaolink/deploy/prod`；部署前先核对 `RELEASE_MANIFEST.json` 的 target host 与站点域名。
 - 铁律：**不得修改 root 密码**；普通用户 `libiao` 未经许可不动；服务器只跑不改 —— 代码 / 配置变更一律走本仓 → 常驻分支 → PR → 部署件同步（§3 ~ §9），禁止在服务器上手改业务代码，临时热修必须回灌仓库。
-- MinIO 控制台 / 备用门面（运维排查）：`ssh -L 9001:127.0.0.1:9001 -L 9443:127.0.0.1:9443 root@10.1.104.44` 后浏览器开 `http://127.0.0.1:9001`；9443 仅经隧道访问（同 §9）。
-- 证书：ALLinSSL 自动下发 `*.libiaorobot.com` → 宿主 `/etc/ssl/libiaorobot.com.pem|.key`（SSH 通道自动覆盖 + reload）；未使用 1Panel。
+- MinIO 控制台 / 备用门面（运维排查）：按目标机执行 `ssh -L 9001:127.0.0.1:9001 -L 9443:127.0.0.1:9443 <目标机>` 后浏览器开 `http://127.0.0.1:9001`；9443 仅经隧道访问（同 §9）。
+- 证书：ALLinSSL 自动下发 `*.libiaorobot.com` → 宿主 `/etc/ssl/libiaorobot.com.pem` / `.key`（SSH 通道自动覆盖 + reload）；未使用 1Panel。
 
 ## 2. 密钥清单（`secrets/`）
 

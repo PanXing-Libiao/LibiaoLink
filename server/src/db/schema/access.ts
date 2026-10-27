@@ -3,6 +3,7 @@ import { check, foreignKey, index, pgTable, primaryKey, text, timestamp, uuid } 
 import { users } from "./identity.js";
 import {
   GROUP_ACCESS_ACCESS_LEVEL_KEYS,
+  GROUP_ACCESS_DATA_PROJECT_SCOPE_KEYS,
   GROUP_ACCESS_MEMBER_SCOPE_KEYS,
   GROUP_ACCESS_PAGE_KEYS,
   GROUP_ACCESS_PROJECT_SCOPE_KEYS,
@@ -129,6 +130,63 @@ export const groupAccessMemberRules = pgTable(
     check(
       "ck_group_access_member_rules_none_access",
       sql.raw(table.projectScope.name + " <> 'none' or " + table.accessLevel.name + " = 'view'"),
+    ),
+  ],
+);
+
+/** group_access_scope_permissions（0075 · 2026-10-27）：部门默认规则的多范围权限；每个项目范围一行。 */
+export const groupAccessScopePermissions = pgTable(
+  "group_access_scope_permissions",
+  {
+    groupKey: text("group_key")
+      .notNull()
+      .references(() => groupAccessRules.groupKey, { onDelete: "cascade" }),
+    projectScope: text("project_scope").notNull(),
+    accessLevel: text("access_level").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: "group_access_scope_permissions_pkey", columns: [table.groupKey, table.projectScope] }),
+    check(
+      "ck_group_access_scope_permissions_scope",
+      sql.raw(table.projectScope.name + " in " + sqlValueList(GROUP_ACCESS_DATA_PROJECT_SCOPE_KEYS)),
+    ),
+    check(
+      "ck_group_access_scope_permissions_access_level",
+      sql.raw(table.accessLevel.name + " in " + sqlValueList(GROUP_ACCESS_ACCESS_LEVEL_KEYS)),
+    ),
+  ],
+);
+
+/** group_access_member_scope_permissions（0075）：个人覆盖的多范围权限；存在个人规则时整体覆盖同部门默认规则。 */
+export const groupAccessMemberScopePermissions = pgTable(
+  "group_access_member_scope_permissions",
+  {
+    groupKey: text("group_key").notNull(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    projectScope: text("project_scope").notNull(),
+    accessLevel: text("access_level").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: "group_access_member_scope_permissions_pkey", columns: [table.groupKey, table.userId, table.projectScope] }),
+    foreignKey({
+      name: "fk_group_access_member_scope_permissions_member",
+      columns: [table.groupKey, table.userId],
+      foreignColumns: [groupAccessMemberRules.groupKey, groupAccessMemberRules.userId],
+    }).onDelete("cascade"),
+    index("ix_group_access_member_scope_permissions_user").on(table.userId),
+    check(
+      "ck_group_access_member_scope_permissions_scope",
+      sql.raw(table.projectScope.name + " in " + sqlValueList(GROUP_ACCESS_DATA_PROJECT_SCOPE_KEYS)),
+    ),
+    check(
+      "ck_group_access_member_scope_permissions_access_level",
+      sql.raw(table.accessLevel.name + " in " + sqlValueList(GROUP_ACCESS_ACCESS_LEVEL_KEYS)),
     ),
   ],
 );
