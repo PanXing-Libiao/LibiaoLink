@@ -4,7 +4,7 @@
 
 当前为 `0.1.0-local`，未开放平台 DWG 主图上传、任务、缓存、部署或生产格式开关。已有上传版本绑定和权限边界不变。
 
-换机续接与最后一次实验状态以 [DWG_HANDOFF.md](../DWG_HANDOFF.md) 为准。公开样本本机复验为 `partial`（865 源句柄、11 未找回、45 项损失、3 个布局视口未映射，布局无可见内容）；XLINE/RAY 已按无限线契约映射，默认 LEADER 箭头已按 `ArrowSize`/方向填充，未显示原生对象为 22。正式大图已在当前查看器再次打开约 147.8 万个绘制项，图层开关与句柄 `13EB13` 定位通过，布局仍为空。阶段 A 发现的默认视图问题已修复：读取器保留 `$EXTMIN/$EXTMAX`，查看器默认按模型源范围适应视图，主体恢复可读；`fitAll` 仍可查看含 x≈2.44M 远处对象的全图。状态表和证据见交接文档。
+换机续接与最后一次实验状态以 [DWG_HANDOFF.md](../DWG_HANDOFF.md) 为准。公开样本本机复验为 `partial`（865 源句柄、11 未找回、29 项损失、3 个布局视口未映射，布局无可见内容）；XLINE/RAY、默认 LEADER 箭头、WIPEOUT 和默认 MULTILEADER 子实体已映射，未显示原生对象为 21。正式大图已在当前查看器再次打开约 147.8 万个绘制项，图层开关与句柄 `13EB13` 定位通过，布局仍为空。阶段 A 发现的默认视图问题已修复：读取器保留 `$EXTMIN/$EXTMAX`，查看器默认按模型源范围适应视图，主体恢复可读；`fitAll` 仍可查看含 x≈2.44M 远处对象的全图。状态表和证据见交接文档。
 
 ## 固定依赖
 
@@ -16,6 +16,8 @@
 - ACadSharp 3.8.30 对控制多边形远离原点的周期 SPLINE 可能把首顶点求值为 `(0,0,0)`，显示时形成一条原点至样条的假线。读取器只在该首点为零且控制多边形不在原点时丢弃它；`--self-test` 同时覆盖零起点和合法原点起点，避免误删真实的原点样条。
 - 原生 XLINE/RAY 保留参数 `origin/direction` 和源句柄，不再记为未显示对象；适配器输出 `org.cad-preview.annotation-presentation/1` 的 `role:'infinite'` part，查看器按当前视图裁剪、排除出有限 fit 范围。零方向明确失败，不伪造有限线段。适配器单元测试见 `server/test/dwg-infinite-line.test.py`。
 - LEADER 的默认箭头（`LeaderArrow=None`、`ArrowHeadEnabled=True`）按 `ArrowSize` 和首段方向生成闭合填充三角（长=size、半宽=size/6），作为 leader 的派生 polyline+fill，源引用仍指回 leader；自定义箭头块、无第二顶点或零尺寸保留 `leader-arrow-presentation` 损失。自检覆盖默认形状和零尺寸拒绝。
+- WIPEOUT 按 DXF/ezdxf 的图像边界公式（`insert + u/2 - v/2`，裁剪顶点为像素坐标）生成白色预览遮罩，源句柄保留；这是覆盖绘制而不是查看器 mask part，不拦截拾取。IMAGE/PDFUNDERLAY 仍需要外部资源，不在本映射内。
+- MULTILEADER 代理按出现顺序维护 `SubentLayer/SubentLineType/SubentThickness/SubentPlotStyleName` 状态：默认图层/线型/零厚度/ByLayer 打印样式不再误报，具体可解析的索引应用；非零厚度、越界索引或具体打印样式仍保留损失。
 - 文字转义与换行选择性采用 MIT 的 ACadSharp.Image 方法；见 `CommunityText.cs`、前端 `vendor/cad-text-layout.js` 及随附许可。只复用相关代码，不包含该应用或 SixLabors 栅格依赖。原配套字体缺失、行内富文本格式等仍有明确限制。
 
 ## 本机构建与查看

@@ -24,14 +24,14 @@
 | 默认适应视图 | 已修复（本机验证） | 原生读取器保留 `$EXTMIN/$EXTMAX` 模型范围，查看器模型空间默认 `fit()` 采用；正式图源范围 `x=[258909,902704]`、`y=[-70776,286355]`，默认比例 0.002237，几何全图比例 0.000661（约 3.39 倍），主体可读；`fitAll()` 仍显示含 x≈2.44M 远处对象的全图。 |
 | 中文/换行/字体 | 可用但近似 + 未验证 | 使用替代字体；主体区域中文可见，但密集处有重叠；未逐区域对照原 CAD，不能称为排版通过。 |
 | 尺寸文字/标注 | 可用但近似 | 复用已存标注图形块；1491 个文字、1919 个标注项；未逐项核对测量值与箭头。 |
-| 引线/多重引线 | 已修复默认箭头 + 代理样式近似 | 真实图 60 个默认 LEADER 箭头已按 `ArrowSize/方向` 映射为实心三角，leader-arrow 损失为 0；18 项 MULTILEADER 仅子实体样式缺失，文字/引线几何在；自定义箭头块/无方向仍保留损失（本图 0）。见 2026-10-28 LEADER 默认箭头映射。 |
+| 引线/多重引线 | 已验证（默认箭头/代理默认） | 60 个默认 LEADER 箭头已映射，leader-arrow 损失 0；18 个 MULTILEADER 的默认子实体状态（图层 0/线型 32767/厚度 0/打印样式 ByLayer）已按顺序处理，proxy 损失 0；非默认子实体状态仍保留逐句柄损失（本图 0）。 |
 | 块/属性 | 未验证 | 427 个可达块、6287 个实例；属性文字未逐项对照，非零基点/属性放置仍未验证。 |
-| 遮罩/图片/PDF 底图 | 部分缺失 | 公开样本的 WIPEOUT、IMAGE、PDFUNDERLAY 在 24 项未显示原生对象内；真实图未提供这些组合的有效覆盖。查看器已有 WIPEOUT/媒体绘制能力，缺口在原生映射。 |
+| 遮罩/图片/PDF 底图 | 部分缺失 | 公开样本 WIPEOUT `44D` 已按边界生成白色预览遮罩（不是 mask part，不拦截拾取）；IMAGE、PDFUNDERLAY 仍缺外部资源和原生映射；真实图未提供这些组合。 |
 | HATCH/多环/渐变 | 部分缺失 + 未验证 | 真实图 169 个可达填充；公开样本 2 项渐变未映射；多环、Outer 与孔洞未逐区域对照。真实图默认视图中的横向黑带和文字黑底尚未逐对象确认，可能是源黑色 SOLID/填充或遮罩在白底上的显示；FastView 黑底不可见，不能仅凭两边截图判为缺陷，需原 CAD 白底对照。 |
 | 布局视口 | 部分缺失 | 公开样本 3 个布局无可见内容，对应 3 项 `layout-viewport-unmapped`；业务是否需要布局仍未确认。 |
 | REGION/MLINE/XLINE/MESH/3DFACE 等 | 部分缺失 | 真实图修复前 22 项未显示原生对象；XLINE 已按通用映射修复（`738AAE` 红色无限线），当前 21 项：20 个 REGION 在“百特立柱（一小段）”块内且有 2D 弧/多段线轮廓，1 个 MLINE 在货架块内缺一条线；见 2026-10-28 代理/未显示对象逐句柄节。公开样本 XLINE/RAY 映射后未显示原生对象 24→22；保留源句柄、原载荷和损失，不伪造几何。 |
 | 样条显示 | 已修复一个上游求值缺陷（本机） | ACadSharp 3.8.30 对控制多边形远离原点的周期 SPLINE 可能把首顶点求值为 `(0,0,0)`，形成原点至样条的假线并遮挡主体；读取器仅在该首点为零且控制多边形不在原点时丢弃，`--self-test` 同时覆盖零起点与合法原点起点。`dwg-formal-windows-04` 复验：句柄 `272226` 首点回到样条本身，默认视图黑带消失；缓冲区比上一产物少 3,936 B，多处周期样条的零起点一并清理。 |
-| 读取账本 | 已验证账本 | 真实图 902,137 个源句柄、0 未找回；公开样本 865 个中 11 个未找回、45 项损失（XLINE/RAY 与默认 LEADER 箭头映射后）。句柄找回不是字段、几何或工程语义完整，也不是漏绘百分比。 |
+| 读取账本 | 已验证账本 | 真实图 902,137 个源句柄、0 未找回；公开样本 865 个中 11 个未找回、29 项损失（XLINE/RAY、默认 LEADER 箭头、WIPEOUT、默认 MULTILEADER 子实体映射后）。句柄找回不是字段、几何或工程语义完整，也不是漏绘百分比。 |
 | 容量 | 本机观察 | 本次无头 Chrome 8.3–8.5 秒就绪、JS 堆约 757 MB、manifest 253.5 MiB；WSL 沙箱读取 22.6 秒/2274 MiB、组装 93.5 秒/1531 MiB。都不是生产资源验收。 |
 | 平台接入 | 未接入 | DWG 主图开关仍关闭；本机页只作验证，不接 file/preview、任务或缓存。 |
 
@@ -82,11 +82,11 @@
 
 ## 2026-10-28 代理与未显示对象逐句柄影响（本机，未部署）
 
-来源（修复前）：`dwg-formal-windows-04/native/losses.jsonl` 的 40 条 `proxy-primitive-unmapped`/`unsupported-native-presentation`，加一次只读 ACadSharp 句柄探针（仓库外 `D:\LibiaoLink-verify\handle-probe`）。40 条完整覆盖 18 个 MULTILEADER、20 个 REGION、1 个 MLINE、1 个 XLINE；没有其他未列出的句柄。XLINE 已在 XLINE/RAY 映射节修复，60 条默认 LEADER 箭头已在 LEADER 映射节修复；这两类不计入这 40 条。`dwg-formal-windows-06` 当前为 40 条总损失（21 未显示 + 18 代理 + 1 头字段）。
+来源（修复前）：`dwg-formal-windows-04/native/losses.jsonl` 的 40 条 `proxy-primitive-unmapped`/`unsupported-native-presentation`，加一次只读 ACadSharp 句柄探针（仓库外 `D:\LibiaoLink-verify\handle-probe`）。40 条完整覆盖 18 个 MULTILEADER、20 个 REGION、1 个 MLINE、1 个 XLINE；没有其他未列出的句柄。XLINE 已在 XLINE/RAY 映射节修复，60 条默认 LEADER 箭头已在 LEADER 映射节修复，18 个 MULTILEADER 的默认子实体状态已在 WIPEOUT/子实体节处理；`dwg-formal-windows-07` 当前为 22 条总损失（21 未显示 + 1 头字段）。
 
 ### 18 个 MULTILEADER（代理子实体样式）
 
-全部在模型空间、图层 `0`。文字和引线代理几何都在 UCD 中，损失是子实体的 `SubentLayer/SubentLineType/SubentThickness/SubentPlotStyleName`，不是整条标注缺失。它们承载的是安装说明，内容存在且可读；线型/线宽/打印样式与源图可能不同。
+全部在模型空间、图层 `0`。文字和引线代理几何都在 UCD 中；本轮已把默认子实体状态（图层 0、线型 32767、厚度 0、打印样式 ByLayer）按顺序处理，当前 `proxy-primitive-unmapped` 损失为 0；非默认子实体状态仍会保留损失。它们承载的是安装说明，内容存在且可读。
 
 | 句柄 | 文字（模型坐标） |
 |---|---|
@@ -125,7 +125,7 @@
 
 ### 本轮结论
 
-- 18 个代理对象：文字/引线几何存在，损失是子实体样式，属于“可用但近似”。
+- 18 个代理对象：默认子实体状态已处理，当前 proxy 损失为 0；非默认状态仍会保留。
 - 20 个 REGION：块内 2D 弧/多段线轮廓存在，ACIS 实体未显示；不宣称填充/3D 完整，按业务需要升级。
 - 1 个 MLINE：货架块内缺一条线，影响局部，待确认。
 - 1 个 XLINE：修复前 x=643784 的竖直构造线确实缺失；已按通用 XLINE/RAY 映射修复，见下节。
@@ -159,6 +159,27 @@
 - 正式图 `dwg-formal-windows-06`：损失 100→40（引线箭头 60→0；其余 21 未显示原生对象 + 18 代理 + 1 头字段）；公开样本 `dwg-public-small-07` 46→45（样本引线 1→0）。built 1,476,220→1,476,280，presentationParts 162,338→162,398，fills 673→733（792 rings），paintCalls 41,362→41,469，uniqueSourceDraws 162,880→163,000；默认源范围和 fit 比例不变。
 - Racks 两条 LEADER `7385E8`/`7385E9` 的箭头已显示为红色实心三角（`leader-racks.png`）；FastView 的青色引线/箭头颜色差异仍在，属于样式而非缺箭头。
 - 读取器重建于 `dwg-build-windows-06`，DLL SHA-256 `4eb9b1a6ba41103a1f1a0933746494f2123921de0e54c8b8efb0ff026f7fba26`；正式图 manifest 265,971,008 B validated，组装 84.37 s，原生读取 7.63 s / 总计 12.99 s。只改读取器，无适配器、查看器、`source.json` 或版本变化。
+
+
+## 2026-10-28 WIPEOUT 与 MULTILEADER 子实体样式（本机，未部署）
+
+### WIPEOUT 遮罩
+
+- 读取器新增 `Wipeout` 分支：按 DXF/ezdxf 的图像边界公式（`insert + u/2 - v/2`，裁剪顶点为像素坐标，`y` 从顶部计）计算 WCS 多边形；有裁剪边界用裁剪多边形，两点按矩形展开，无裁剪用整幅图像边界。输出为白色填充多边形，源句柄仍指回 WIPEOUT。
+- 这是**预览遮罩**：在白色背景上盖住下面的图形，不是查看器的 mask part，因此不拦截拾取；有非零裁剪/无图像尺寸/边界不足时记 `wipeout-boundary-invalid`，不猜。
+- 公开样本 WIPEOUT `44D`：4 点多边形 `(271.921,3.988)…(272.677,35.696)`，损失 45→44（`unsupported-native-presentation` 22→21）。正式图没有 WIPEOUT，不受影响。IMAGE/PDFUNDERLAY 仍缺外部资源，不冒充已支持。
+
+### MULTILEADER 子实体样式
+
+- 读取器不再把这四类代理记录一律当失败，而是按出现顺序维护 layer/line-type/thickness/plot-style 状态，应用到后续代理图元：
+  - `SubentLayer`：按文档图层索引解析，越界才记损失；
+  - `SubentLineType`：`ByLayer/ByBlock` 和 16 位默认值 `0x7FFF` 保留图元原样式；具体索引可解析则应用，越界才记损失；
+  - `SubentThickness`：本图观察值全为 0，零为无操作；非零在 2D UCD 没有厚度通道，仍记损失；
+  - `SubentPlotStyleName`：`ByLayer/ByBlock` 或索引 0 为无操作，具体打印样式仍记损失。
+- 真实 18 个 MULTILEADER 的代理序列都是默认状态（图层 0、线型 32767、厚度 0、打印样式 ByLayer），因此 `proxy-primitive-unmapped` 18→0，文字/引线/位置不变；公开样本同样的 15 条代理损失消失。未来文件如果出现非默认子实体状态，能解的就应用，不能解的仍保留逐句柄损失。
+- 读取器重建于 `dwg-build-windows-08`，DLL SHA-256 `b525832151849051DD982456AA6C22E601389932946D194EA5E7150EB9A04DDF`。
+- 当前损失：正式图 `dwg-formal-windows-07` 22 条（21 未显示 + 1 头字段；代理、引线、XLINE 均 0）；公开样本 `dwg-public-small-09` 29 条（21 未显示 + 2 渐变 + 1 特殊多行文字 + 1 原生失败 + 3 布局 + 1 缺句柄）。正式图 manifest 265,963,894 B validated，组装 85.62 s，原生读取 7.58 s / 总计 12.64 s；样本 manifest 805,005 B validated。
+- 只有读取器变化，无适配器、查看器、`source.json` 或版本变化。
 
 
 ## 代码责任与入口

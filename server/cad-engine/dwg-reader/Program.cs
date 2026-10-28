@@ -149,6 +149,37 @@ static class Program
         EntityRow(e,space,arrowId,Poly(points,true),Closed(points),original:original);
         Emit("fills",arrowId,new{rings=new[]{points.Select(P).ToArray()},fillRule="even-odd"});
     }
+    static void WipeoutMask(Entity e,string space,string id,Wipeout wipeout,CadObject original)
+    {
+        if(!wipeout.ShowImage)return;
+        var u=wipeout.UVector;var v=wipeout.VVector;var size=wipeout.Size;
+        if(size.X<=0||size.Y<=0||(u.X==0&&u.Y==0)||(v.X==0&&v.Y==0)){
+            Loss(original,"wipeout-boundary-invalid","Wipeout has no usable image size or U/V vectors");return;
+        }
+        // DXF/EZDXF image boundary: clipping vertices are in pixel coordinates,
+        // the image origin is insert + u/2 - v/2 and y is measured from the top.
+        var origin=new XYZ(wipeout.InsertPoint.X+u.X*0.5-v.X*0.5,
+            wipeout.InsertPoint.Y+u.Y*0.5-v.Y*0.5,
+            wipeout.InsertPoint.Z+u.Z*0.5-v.Z*0.5);
+        var clips=wipeout.ClippingState?wipeout.ClipBoundaryVertices:new List<XY>();
+        List<XY> pixels;
+        if(clips.Count>=3) pixels=clips.ToList();
+        else if(clips.Count==2){
+            var p0=clips[0];var p1=clips[1];
+            pixels=new List<XY>{p0,new XY(p1.X,p0.Y),p1,new XY(p0.X,p1.Y)};
+        }else pixels=new List<XY>{new XY(-0.5,-0.5),new XY(size.X-0.5,-0.5),
+            new XY(size.X-0.5,size.Y-0.5),new XY(-0.5,size.Y-0.5)};
+        // A wipeout is a preview mask: a white filled polygon over the source.
+        // It is not a viewer mask part, so hit testing is not occluded.
+        var points=pixels.Select(p=>new XYZ(
+            origin.X+u.X*p.X+v.X*(size.Y-p.Y),
+            origin.Y+u.Y*p.X+v.Y*(size.Y-p.Y),
+            origin.Z+u.Z*p.X+v.Z*(size.Y-p.Y))).ToArray();
+        if(points.Length<3){Loss(original,"wipeout-boundary-invalid","Wipeout boundary has fewer than three vertices");return;}
+        var mask=new Polyline3D(points){Layer=e.Layer,Color=new Color(255,255,255),LineType=e.LineType};
+        EntityRow(mask,space,id,Poly(points,true),Closed(points),original:original);
+        Emit("fills",id,new{rings=new[]{points.Select(P).ToArray()},fillRule="even-odd"});
+    }
     static void Text(Entity e, IText text, string space, string id, CadObject? original=null)
     {
         original ??=e;
@@ -268,6 +299,8 @@ static class Program
             case Leader leader:
                 EntityRow(e,space,id,Poly(leader.Vertices),leader.Vertices,original:original);
                 LeaderArrow(e,space,id,leader,original);return;
+            case Wipeout wipeout:
+                WipeoutMask(e,space,id,wipeout,original);return;
             case MultiLeader multi when multi.HasProxyGeometries:
                 MapProxy(multi,space,id);return;
             default:
@@ -313,8 +346,39 @@ static class Program
     static void MapProxy(MultiLeader entity,string space,string id)
     {
         int i=0; var failed=new List<string>();
+        var document=entity.Document;
+        var currentLayer=entity.Layer;
+        var currentLineType=entity.LineType;
         foreach(var proxy in entity.ProxyGeometries) {
-            string child=id+"-proxy-"+i++; Entity? presentation=proxy switch {
+            string child=id+"-proxy-"+i++;
+            if(proxy is ProxySubentLayer subLayer) {
+                if(document is not null && subLayer.LayerIndex>=0 && subLayer.LayerIndex<document.Layers.Count())
+                    currentLayer=document.Layers.ElementAt(subLayer.LayerIndex);
+                else failed.Add("SubentLayer");
+                continue;
+            }
+            if(proxy is ProxySubentLineType subLineType) {
+                // 0x7FFF is the 16-bit proxy default seen in this drawing; it does
+                // not identify a real line type and leaves the entity style intact.
+                if(!subLineType.IsByLayer && !subLineType.IsByBlock && subLineType.LineTypeIndex!=0x7FFF) {
+                    if(document is not null && (long)subLineType.LineTypeIndex<document.LineTypes.Count())
+                        currentLineType=document.LineTypes.ElementAt((int)subLineType.LineTypeIndex);
+                    else failed.Add("SubentLineType");
+                }
+                continue;
+            }
+            if(proxy is ProxySubentThickness subThickness) {
+                // The UCD 2D display has no thickness channel; zero is the
+                // observed default and is a no-op, any other value stays a loss.
+                if(subThickness.Thickness!=0) failed.Add("SubentThickness");
+                continue;
+            }
+            if(proxy is ProxySubentPlotStyleName subPlotStyle) {
+                if(subPlotStyle.PlotStyleIndex!=0 && subPlotStyle.Type.ToString() is not ("ByLayer" or "ByBlock"))
+                    failed.Add("SubentPlotStyleName");
+                continue;
+            }
+            Entity? presentation=proxy switch {
                 ProxyPolyline p=>new Polyline3D(p.Points),
                 ProxyPolygon p when p.Points.Count==3=>new Solid{FirstCorner=p.Points[0],SecondCorner=p.Points[1],ThirdCorner=p.Points[2],FourthCorner=p.Points[2]},
                 ProxyPolygon p=>new Polyline3D(Closed(p.Points)),
@@ -326,7 +390,7 @@ static class Program
                 _=>null
             };
             if(presentation is not null) {
-                presentation.Layer=entity.Layer;presentation.Color=entity.Color;presentation.LineType=entity.LineType;
+                presentation.Layer=currentLayer;presentation.Color=entity.Color;presentation.LineType=currentLineType;
                 Map(presentation,space,child,entity);
             } else if(proxy is not (ProxyExtents or ProxySubentColor or ProxySubentTrueColor or ProxySubentLineWeight or ProxySubentFillon or ProxySubentMarker or ProxySubentLineTypeScale)) failed.Add(proxy.GraphicsType.ToString());
         }
