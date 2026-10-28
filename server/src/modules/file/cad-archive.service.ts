@@ -14,14 +14,18 @@ export class CadArchiveService {
     private readonly engine: CadEngineClient, private readonly inputs: CadInputService) {}
 
   async uploaded(source: CadArchiveSource, client?: DbClient): Promise<void> {
-    if (!this.engine.enabled || !/\.(step|stp|dxf)$/i.test(source.sourceName)
-      || source.sourceBytes > Math.min(this.engine.inputLimit, /\.dxf$/i.test(source.sourceName) ? 64 * 1024 ** 2 : Infinity)) return;
-    await this.repository.request(source, "GB", client);
+    if (!this.engine.enabled || !/\.(step|stp|dxf|dwg)$/i.test(source.sourceName)
+      || source.sourceBytes > Math.min(this.engine.inputLimit, /\.dxf$/i.test(source.sourceName) ? 64 * 1024 ** 2 : Infinity)
+      || (/\.dwg$/i.test(source.sourceName) && !this.engine.dwgEnabled)) return;
+    await this.repository.request(source, /\.dwg$/i.test(source.sourceName) ? "UTF8" : "GB", client);
   }
 
   async create(source: CadArchiveSource, actorId: string, viewId: string, codepage: CadNameCodepage) {
     const input = cadInputs(source);
-    if (input.sourceFormat === "DXF") codepage = "UTF8";
+    if (input.sourceFormat === "DXF" || input.sourceFormat === "DWG") codepage = "UTF8";
+    if (input.sourceFormat === "DWG" && !this.engine.dwgEnabled) {
+      throw new ServiceUnavailableException("DWG 预览尚未启用，请下载原文件查看");
+    }
     await this.inputs.assertAvailable(input, actorId);
     if (!this.engine.enabled) throw new ServiceUnavailableException("CAD 转换服务未启用，请下载原文件查看");
     const totalBytes = input.sourceBytes + input.companions.reduce((sum, row) => sum + row.sourceBytes, 0);

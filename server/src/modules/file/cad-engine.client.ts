@@ -11,7 +11,7 @@ import { CAD_ENGINE_VERSION } from "./cad-release.js";
 export { CAD_ENGINE_VERSION, CAD_VIEWER_VERSION, CAD_FORMAT_VERSIONS, cadFormatVersion } from "./cad-release.js";
 
 const JSON_LIMIT = 64 * 1024;
-const RESOURCE_LIMIT = 256 * 1024 * 1024;
+const RESOURCE_LIMIT = 512 * 1024 * 1024;
 type Identity = { name: string; sourceSHA256: string; sourceByteLength: number; namespace: string; cacheScope: string; nameCodepage: CadNameCodepage; resourceFingerprint?: string };
 export type CadJob = z.infer<typeof CadJobSchema>;
 export type CadResource = { stream: Readable; bytes: number; artifactBytes?: number };
@@ -32,6 +32,7 @@ export class CadEngineClient implements OnModuleDestroy {
   constructor(private readonly config: AppConfig) {}
 
   get enabled(): boolean { return cadEngineConfigured(this.config.env); }
+  get dwgEnabled(): boolean { return this.config.env.CAD_DWG_ENABLED === "true"; }
   get inputLimit(): number { return (this.config.env.CAD_MAX_INPUT_MIB ?? 64) * 1024 * 1024; }
 
   private open(action: string, input: Record<string, unknown>, source?: Uint8Array): Promise<IncomingMessage> {
@@ -49,7 +50,7 @@ export class CadEngineClient implements OnModuleDestroy {
       }
     }
     const metadata = Buffer.from(JSON.stringify({ action, ...input }));
-    const wireLimit = typeof input.name === "string" && /\.dxf$/i.test(input.name)
+    const wireLimit = typeof input.name === "string" && /\.(dxf|dwg)$/i.test(input.name)
       ? Math.min(this.inputLimit, 64 * 1024 ** 2) + 128 * 1024 + 12 : this.inputLimit;
     if (metadata.byteLength > 6 * 1024 || (source !== undefined && (source.byteLength === 0 || source.byteLength > wireLimit))) {
       throw new ServiceUnavailableException("CAD 请求超过处理限制");

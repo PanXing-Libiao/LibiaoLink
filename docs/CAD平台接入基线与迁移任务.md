@@ -1,5 +1,7 @@
 # CAD 平台接入基线与迁移任务
 
+> **2026-10-28 DWG 平台第一片（本地未部署）**：DWG 已加入 shared CAD 格式、API 输入/预览/任务、产物仓库和 `core/dwg_platform_convert.py` worker；迁移 `0070_cad_dwg_format.sql`，DWG 只接受主图、结果固定为 `partial`。`CAD_DWG_ENABLED` 默认关闭，原生运行时由 `CAD_DWG_PYTHON`、`CAD_DWG_READER`、`CAD_DWG_DOTNET` 提供，缺少时明确失败、不回退 DXF。公开样本 worker 已跑通；正式大图约 2.7 GiB 托管内存/266 MB manifest 未在 Linux 沙箱验证，当前不开放测试机或生产。STEP/DXF 原链路与格式键不变。
+
 > **2026-10-28 二维显示治理本地收敛**：宿主侧阶段 A–D 已完成（基线/能力矩阵、裁剪、文本、图案、媒体/布局切片与分支收敛），验证与未完成项见 [阶段 D 交付检查](CAD二维显示结构治理-阶段D交付检查.md)。版本按 [ADR-039](adr/ADR-039-CAD版本拆分与缓存键.md) 拆为 engineVersion / formatVersion / viewerVersion，迁移 `0069` 改变产物唯一键；当前仅本地 `wmj`，未推送、未部署；真实账号验收和生产部署仍待办。线上开放范围不因本记录扩大。
 
 > **2026-10-27 本地实现更新**：二维 DXF v0.15.0 继续选择性适配已登记社区规则，加入源属性对象图、只读内置 FIELD、注释比例/文字上下文、代理裁剪/外参、平面 REGION、SHIFT、OLE 缓存、二维 DWF/V7 DGN 及 CTB/STB 屏幕预览。文件版本、原字节摘要、UCD 派生、裁剪与拾取沿用平台链路。DGN/DWF 轻量读取器仍为早期版本，复杂字形/未知源记录和原 CAD 精度校验按实际边界报告；不宣称完整 CAD 求解器。当前版本与依赖由 `source.json` 内容指纹确定。此轮未提交、推送或部署，现有线上开放范围不扩大。

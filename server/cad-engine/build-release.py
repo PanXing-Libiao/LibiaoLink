@@ -6,15 +6,17 @@ from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
 ENTRY_POINTS = ('convert.py', 'states.py', 'provenance.py', 'parser-provenance.json',
-                'evidence-index.json', 'step_convert.py', 'dxf_convert.py', 'ucd_convert.py')
+                'evidence-index.json', 'step_convert.py', 'dxf_convert.py', 'dwg_convert.py',
+                'dwg_platform_convert.py', 'ucd_convert.py')
 RUNTIME_FILES = ('bridge.py', 'result_cache.py', 'service.py', 'sandbox.py', 'edge.py',
                  'release.py', 'requirements-step.txt', 'requirements-step-mesher.txt',
-                 'requirements-dxf.txt', 'requirements-dxf-build.txt')
+                 'requirements-dxf.txt', 'requirements-dxf-build.txt', 'requirements-dwg.txt')
 IMPORTED_COMMIT = '337bfc0d185a82cc3e269afaff879ccfc67a2e57'
-FORMAT_RELEASES = {'STEP': '0.3.3', 'DXF': '0.15.0'}
+FORMAT_RELEASES = {'STEP': '0.3.3', 'DXF': '0.15.0', 'DWG': '0.1.0'}
 FORMAT_RUNTIME = {
     'STEP': ('requirements-step.txt', 'requirements-step-mesher.txt'),
     'DXF': ('requirements-dxf.txt', 'requirements-dxf-build.txt'),
+    'DWG': ('requirements-dwg.txt',),
 }
 
 
@@ -33,17 +35,17 @@ def hashes(paths, root):
 
 def format_of(name):
     """Keep format-specific code out of the other format's cache identity."""
-    if (name.startswith(('parser/', 'unified/step_', 'vendor/cadcraft-display/'))
-            or name in ('step_convert.py', 'parser-provenance.json', 'evidence-index.json')):
-        return 'STEP'
-    if (name.startswith(('unified/dxf_', 'vendor/ezdxf/')) or name == 'dxf_convert.py'):
-        return 'DXF'
-    # LibreDWG decodes DWG external references inside the DXF path and its
-    # version/spec is part of that output, so it must key DXF artifacts too.
     if name == 'unified/dwg-reader.json':
         return 'DXF'
-    if name == 'unified/dwg_adapter.py':
+    if name.startswith(('parser/', 'unified/step_', 'vendor/cadcraft-display/')) \
+            or name in ('step_convert.py', 'parser-provenance.json', 'evidence-index.json'):
+        return 'STEP'
+    if name.startswith(('unified/dxf_', 'vendor/ezdxf/')) or name == 'dxf_convert.py':
+        return 'DXF'
+    if name in ('dwg_convert.py', 'dwg_platform_convert.py', 'unified/dwg_adapter.py'):
         return 'DWG'
+    # LibreDWG decodes DWG external references inside the DXF path and its
+    # version/spec is part of that output, so it must key DXF artifacts too.
     return 'SHARED'
 
 
@@ -81,7 +83,7 @@ def describe(base, browser):
             'gatewayProtocol': 'libiaolink-cad-gateway/1',
             'files': {**shared, **runtime_shared, **format_files[format_name], **runtime_format[format_name]},
         }
-        prefix = 'step-' if format_name == 'STEP' else 'dxf-'
+        prefix = {'STEP': 'step-', 'DXF': 'dxf-', 'DWG': 'dwg-'}[format_name]
         format_versions[format_name] = prefix + release + '/' + digest(identity) + '/gateway-1'
 
     engine_digest = digest({

@@ -9718,8 +9718,8 @@ export interface components {
             path: components["schemas"]["CadLogicalPath"];
         };
         /** @enum {string} */
-        CadFormat: "STEP" | "DXF";
-        /** @description CAD 查看任务，产物可持久复用；窗口取消不取消共享后台任务。completed 发布完整产物；partial 仅用于有校验产物及缺失说明的 DXF，页面必须明确展示限制。STEP 保持完整性接收规则。 */
+        CadFormat: "STEP" | "DXF" | "DWG";
+        /** @description CAD 查看任务，产物可持久复用；窗口取消不取消共享后台任务。completed 发布完整产物；partial 用于有校验产物及缺失说明的 DXF 或 DWG，页面必须明确展示限制。STEP 保持完整性接收规则。 */
         CadJob: {
             id: string;
             /** @enum {string} */
@@ -9739,7 +9739,7 @@ export interface components {
                 error: string;
             };
         };
-        /** @description DXF 主图与当前项目中明确选择的配套文件版本；缺省仅使用主图。STEP 不接受配套文件。资源选择变化创建独立产物身份。 */
+        /** @description DXF 主图与当前项目中明确选择的配套文件版本；缺省仅使用主图。STEP 和 DWG 不接受配套文件（DWG 也不接受主图相对路径）。资源选择变化创建独立产物身份。 */
         CadJobCreateBody: {
             mainPath?: components["schemas"]["CadLogicalPath"];
             /** @default [] */
@@ -9756,7 +9756,7 @@ export interface components {
          * @enum {string}
          */
         CadNameCodepage: "UTF8" | "GB";
-        /** @description STEP / 二维 DXF 查看入口；模型就绪由 CAD 任务判定。每次读取重新校验主图与全部配套版本权限，不包含原文件签名。 */
+        /** @description STEP / DXF / DWG 查看入口；模型就绪由 CAD 任务判定。每次读取重新校验主图与全部配套版本权限，不包含原文件签名。 */
         CadPreviewViewer: {
             /** @enum {string} */
             kind: "cad";

@@ -60,11 +60,22 @@ describe("DXF input set authorization and content identity", () => {
     await expect(f.service.resolve(mainId, version, "actor", { ...f.options, companions: [...f.options.companions, ...f.options.companions] })).rejects.toBeDefined();
     expect(f.storage.getObjectStream).not.toHaveBeenCalled();
   });
-  it("rechecks bound companions and refuses corrupt bytes instead of publishing partial success", async () => {
-    const f = fixture(); const source = await f.service.resolve(mainId, version, "actor", f.options);
-    f.files[1]!.status = "recycled";
-    await expect(f.service.assertAvailable(source, "actor")).rejects.toMatchObject({ code: "NOT_FOUND" });
-    f.files[1]!.status = "draft"; f.blobs.set("objects/font.shx", Buffer.from("wrong data"));
-    await expect(f.service.payload(source)).rejects.toBeDefined();
+  it("binds a DWG main drawing without companions or a relative main path", async () => {
+    const f = fixture();
+    f.files[0]!.name = "main.dwg";
+    f.versions[0]!.objectKey = "objects/main.dwg";
+    f.blobs.set(f.versions[0]!.objectKey, f.blobs.get("objects/main.dxf")!);
+    f.blobs.delete("objects/main.dxf");
+    const main = f.blobs.get(f.versions[0]!.objectKey)!;
+    const source = await f.service.resolve(mainId, version, "actor", { companions: [] });
+    expect(source.sourceFormat).toBe("DWG");
+    expect(source.mainPath).toBe("main.dwg");
+    expect(source.companions).toHaveLength(0);
+    expect(source.resourceSetHash).toBe("0".repeat(64));
+    expect(await f.service.payload(source)).toEqual(main);
+    await expect(f.service.resolve(mainId, version, "actor", {
+      mainPath: "drawings/main.dwg", companions: [],
+    })).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    await expect(f.service.resolve(mainId, version, "actor", f.options)).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
   });
 });

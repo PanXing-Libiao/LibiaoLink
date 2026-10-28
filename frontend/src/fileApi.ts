@@ -78,7 +78,7 @@ export type CadNameCodepage = "UTF8" | "GB";
 
 export type CadPreviewViewerConfig = {
   kind: "cad";
-  format: "STEP" | "DXF";
+  format: "STEP" | "DXF" | "DWG";
   sourceName: string;
   projectId: string;
   fileId: string;

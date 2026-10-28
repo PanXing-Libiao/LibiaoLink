@@ -6,7 +6,7 @@ export const CadNameCodepageSchema = z.enum(["UTF8", "GB"]).openapi("CadNameCode
 });
 export type CadNameCodepage = z.infer<typeof CadNameCodepageSchema>;
 
-export const CadFormatSchema = z.enum(["STEP", "DXF"]).openapi("CadFormat");
+export const CadFormatSchema = z.enum(["STEP", "DXF", "DWG"]).openapi("CadFormat");
 export type CadFormat = z.infer<typeof CadFormatSchema>;
 
 export const CadLogicalPathSchema = z.string().min(1).max(1024)
@@ -26,7 +26,7 @@ export const CadJobCreateBodySchema = z.object({
   if (new Set(paths).size !== paths.length || value.mainPath && paths.includes(value.mainPath)) {
     ctx.addIssue({ code: "custom", message: "主图与配套文件路径不能重复" });
   }
-}).openapi("CadJobCreateBody", { description: "DXF 主图与当前项目中明确选择的配套文件版本；缺省仅使用主图。STEP 不接受配套文件。资源选择变化创建独立产物身份。" });
+}).openapi("CadJobCreateBody", { description: "DXF 主图与当前项目中明确选择的配套文件版本；缺省仅使用主图。STEP 和 DWG 不接受配套文件（DWG 也不接受主图相对路径）。资源选择变化创建独立产物身份。" });
 export type CadJobCreateBody = z.infer<typeof CadJobCreateBodySchema>;
 
 export const CadPreviewViewerSchema = z.object({
@@ -39,7 +39,7 @@ export const CadPreviewViewerSchema = z.object({
   format: CadFormatSchema,
   projectId: UuidSchema,
 }).openapi("CadPreviewViewer", {
-  description: "STEP / 二维 DXF 查看入口；模型就绪由 CAD 任务判定。每次读取重新校验主图与全部配套版本权限，不包含原文件签名。",
+  description: "STEP / DXF / DWG 查看入口；模型就绪由 CAD 任务判定。每次读取重新校验主图与全部配套版本权限，不包含原文件签名。",
 });
 
 export const CadJobSchema = z.object({
@@ -57,7 +57,7 @@ export const CadJobSchema = z.object({
   workerWallSeconds: z.number().nonnegative().optional(),
   error: z.object({ code: z.string(), error: z.string().max(500) }).optional(),
 }).openapi("CadJob", {
-  description: "CAD 查看任务，产物可持久复用；窗口取消不取消共享后台任务。completed 发布完整产物；partial 仅用于有校验产物及缺失说明的 DXF，页面必须明确展示限制。STEP 保持完整性接收规则。",
+  description: "CAD 查看任务，产物可持久复用；窗口取消不取消共享后台任务。completed 发布完整产物；partial 用于有校验产物及缺失说明的 DXF 或 DWG，页面必须明确展示限制。STEP 保持完整性接收规则。",
 });
 
 export const CadJobCreateResponseSchema = z.object({ job: CadJobSchema, reused: z.boolean() }).openapi("CadJobCreateResponse");

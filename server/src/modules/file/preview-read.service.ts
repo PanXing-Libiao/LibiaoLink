@@ -94,8 +94,10 @@ export class PreviewReadService {
 
     // ADR-035：旧解析器已删除。先按版本扩展名拦截，避免误报 image/Office MIME 再签出原 CAD。
     if (isCadPreviewPending({ fileName: channelName })) {
-      if (cadEngineConfigured(this.config.env) && /\.(step|stp|dxf)$/i.test(channelName)) {
-        const format = /\.dxf$/i.test(channelName) ? "DXF" : "STEP";
+      const isDwg = /\.dwg$/i.test(channelName);
+      if (cadEngineConfigured(this.config.env) && /\.(step|stp|dxf|dwg)$/i.test(channelName)
+        && (!isDwg || this.config.env.CAD_DWG_ENABLED === "true")) {
+        const format = isDwg ? "DWG" : /\.dxf$/i.test(channelName) ? "DXF" : "STEP";
         await this.recordPreview(file, version, actorId, "CAD 查看器", {
           viewerKind: "cad", format, engineVersion: CAD_ENGINE_VERSION,
           viewerVersion: CAD_VIEWER_VERSION, formatVersion: cadFormatVersion(format),

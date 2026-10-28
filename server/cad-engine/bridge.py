@@ -51,7 +51,8 @@ class Gateway:
         digest.update(os.environ.get('CAD_STEP_MESHER_PYTHON', '').encode())
         self.jobs = ConversionJobs(self.root / 'jobs', CORE, threading.Lock(), stop_worker,
                                    digest.hexdigest(), sys.executable,
-                                   dxf_interpreter=os.environ.get('CAD_DXF_PYTHON'))
+                                   dxf_interpreter=os.environ.get('CAD_DXF_PYTHON'),
+                                   dwg_interpreter=os.environ.get('CAD_DWG_PYTHON'))
         self.results = ResultCache(self.root / 'result-cache.sqlite3', self.jobs)
         self.leases = {}
         for path in self.manifests.iterdir():

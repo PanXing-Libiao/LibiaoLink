@@ -26,7 +26,10 @@ export class CadPreviewService {
 
   async create(fileId: string, versionId: string, viewId: string, actorId: string, nameCodepage: CadNameCodepage = "GB", options: CadJobCreateBody = { companions: [] }) {
     const context = await this.context(fileId, versionId, viewId, actorId, options);
-    if (context.source.sourceFormat === "DXF") nameCodepage = "UTF8";
+    if (context.source.sourceFormat === "DXF" || context.source.sourceFormat === "DWG") nameCodepage = "UTF8";
+    if (context.source.sourceFormat === "DWG" && !this.engine.dwgEnabled) {
+      throw new ServiceUnavailableException("DWG 预览尚未启用，请下载原文件查看");
+    }
     if (this.archive) {
       return this.archive.create(context.source, actorId, viewId, nameCodepage);
     }
@@ -35,6 +38,9 @@ export class CadPreviewService {
     if (pending !== undefined) return pending;
     if (!this.engine.enabled) throw new ServiceUnavailableException("CAD 转换服务未启用，请下载原文件查看");
     if (context.source.companions.length || options.mainPath) throw new ServiceUnavailableException("配套文件需要启用 CAD 持久任务服务");
+    if (context.source.sourceFormat === "DWG" && !this.archive) {
+      throw new ServiceUnavailableException("DWG 需要启用 CAD 持久任务服务");
+    }
     if (context.source.sourceBytes <= 0 || context.source.sourceBytes > this.engine.inputLimit) {
       throw new ServiceUnavailableException("文件超过当前 CAD 处理大小限制，请下载原文件查看");
     }

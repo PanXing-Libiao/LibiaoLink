@@ -221,6 +221,15 @@
 - 回归：`drawing-text-avoidance.test.mjs` 2/2、`drawing-text.test.mjs` 9/9、绘图测试 50/50；`npm run typecheck`、`npm run build` 通过。`viewerVersion = viewer-5c952e5d…`、`releaseDigest = 27d94661…`；`engineVersion`、STEP/DXF 格式键不变。
 
 
+## 2026-10-28 DWG 平台接入第一片（本机，未部署）
+
+- 平台契约新增 `DWG`：shared `CadFormat`、`cad-inputs`、CAD worker/仓库/预览入口、`cad_artifacts` 与迁移 `0070_cad_dwg_format.sql`。DWG 不接受配套文件或主图相对路径，结果始终为带明确损失说明的 `partial`。
+- 新增 `core/dwg_platform_convert.py` 平台 worker：从 stdin 接收原字节，调用固定 ACadSharp 读取器与既有 `assemble_native`，再通过 `FileSink` 输出现有 UCD 二进制传输。运行时由 CAD 沙箱提供 `CAD_DWG_PYTHON`、`CAD_DWG_READER`、`CAD_DWG_DOTNET`；未配置时明确失败，不静默退回 DXF。
+- 平台特性开关 `CAD_DWG_ENABLED` 默认 `false`，本机只验证代码路径；未启用时预览仍显示暂不可用并保留下载。已在公开样本上跑通 worker 输出（805,623 B manifest / 171,216 B buffer）；正式大图尚未在平台沙箱调度，原生读取约 2.7 GiB 托管内存、manifest 约 266 MB，目标 Linux 资源档位仍需验收。
+- 资源/门禁：DWG worker RSS 采样档 3 GiB、结果/产物上限 512 MiB、manifest 读取上限 512 MiB、沙箱单文件上限 512 MiB；这些是首版预算，不能当作生产容量结论。
+- 版本：`engineVersion = step-0.3.3/c579bb86…/gateway-1`、`formatVersions.DWG = dwg-0.1.0/1171f7ec…/gateway-1`、`releaseDigest = 8699aea7…`，`viewerVersion = viewer-5c952e5d…`；STEP/DXF 格式键以 `source.json` 为准。未推送、未部署。
+
+
 ## 代码责任与入口
 
 | 层 | 位置 | 当前行为 |

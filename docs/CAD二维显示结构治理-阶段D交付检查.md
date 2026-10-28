@@ -78,12 +78,13 @@ cd server && python3 test/cad-release.test.py
 
 - 已按 [ADR-039](adr/ADR-039-CAD版本拆分与缓存键.md) 拆分版本：`engineVersion` 只含服务器引擎/运行时，`formatVersion` 按 STEP/DXF 独立计算并作为 `cad_artifacts` 缓存键，`viewerVersion` 记录浏览器文件；`bridge.py` 的本地任务恢复摘要改用 `engineDigest`。
 - 本文件所在提交的 `source.json`/`cad-release.ts` 记录 `engineDigest`、`viewerDigest`、`formatVersions` 和 `viewerVersion`；当前值为：
-  - `engineVersion = step-0.3.3/4cc8fc50a196831a9ec1cd76aac5fb22c673898d077b59745dcb337561e65de3/gateway-1`（DWG 适配器平面 REGION 映射后更新）
+  - `engineVersion = step-0.3.3/c579bb8684f3e97d77aa23f668f8d791e4f16827269079c262ac5cdb3051115e/gateway-1`（DWG 平台第一片后更新）
   - `viewerVersion = viewer-5c952e5df6aeb78cda85a404e9a28164706a54e1c6d22c0374adbd4814e3c571`（原生文字排版与显示避让后更新）
-  - `formatVersions.STEP = step-0.3.3/59b471708acfac401d9c7381a8ef32b4856f0def5ea7df74045d8f0a2f8dd4a9/gateway-1`（未变）
-  - `formatVersions.DXF = dxf-0.15.0/556c616e28de73ad28a22386b4cb8bae923752df8cfd082cbfd59c47e801e542/gateway-1`（未变）
-  - `releaseDigest = 27d946614487cafe101bed4614b4355445e841d87cd322ce08bfaf9730e1b23f`
-  迁移 `0069` 为旧产物回填旧 `engine_version` 作为 `format_version`，首次访问新格式版本时重建一次；之后浏览器或单一格式改动不会触发另一格式重建。本轮只改 DWG 适配器和读取器/本机工具，engineVersion 变化，STEP/DXF 格式键不变；读取器仍不进入 engineDigest。平面 REGION 的 ezdxf 导入依赖见 `requirements-dwg.txt`，未改 `dxf_region.py`，因此 DXF 格式键不因 ACIS 解析而变化。原生多行文字排版修复和显示级注释避让只改浏览器 `drawing-text.js`/`cad-text-layout.js`/`drawing-text-avoidance.js`，`viewerVersion` 与 `releaseDigest` 更新，engineVersion、STEP/DXF 不变。
+  - `formatVersions.STEP = step-0.3.3/9c2fd68e29931c1a97b346da1946092ce0e264e78a9866ea3c0129bd5630d68a/gateway-1`
+  - `formatVersions.DXF = dxf-0.15.0/16bd1e881b1bc326266fb94d682e2d5321da691e3f71b6da8c52e7cd1fedb57d/gateway-1`
+  - `formatVersions.DWG = dwg-0.1.0/1171f7ec8954f67c245defa384cb37a1ab197ae9e1e3fbf4b932bc30f275b8ed/gateway-1`
+  - `releaseDigest = 8699aea78551a312a32502efa5e43a9fca7b4fd10a086c52df170f3220a53d07`
+  迁移 `0069` 为旧产物回填旧 `engine_version` 作为 `format_version`，首次访问新格式版本时重建一次；之后浏览器或单一格式改动不会触发另一格式重建。DWG 平台第一片新增 `DWG` 格式、`0070` 迁移和原生 worker；engineVersion/releaseDigest 更新，viewerVersion 不变；STEP/DXF 格式键以 `source.json` 当前值为准。读取器仍不进入 engineDigest；原生读取器路径由沙箱环境提供。平面 REGION 的 ezdxf 导入依赖见 `requirements-dwg.txt`，未改 `dxf_region.py`。原生多行文字排版修复和显示级注释避让只改浏览器文件，不改变 engineVersion。
 - 迁移 `0069` 改变唯一键，必须先停止 API/worker 再迁移并整体升级；不能只回退镜像。
 - 回滚：本批提交未推送、未部署；本地回滚到 `8e7b6a4` 可回到平面 REGION 修复前，回滚到 `b5b24fd` 可回到 XLINE/RAY 修复前，回滚到 `5c980c0` 可回到默认视图修复前，回滚到 `8fe3784` 可回到评审修复前（版本拆分已包含在该提交），阶段 C 前为 `fff7428`。若已部署，需停 API/worker，恢复 `engine_version` 唯一键、移除 `format_version`，再回退 API/worker/CAD 镜像与 `/cad-viewer/` 静态资源；不要只回滚前端，避免 manifest/引擎版本不一致。
 - 未执行：真实公司账号浏览器验收、生产部署。

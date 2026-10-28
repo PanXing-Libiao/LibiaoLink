@@ -82,7 +82,7 @@ export class CadArchiveWorker implements OnApplicationShutdown {
         await delay(500, undefined, { signal: abort.signal });
         job = await this.engine.status({ namespace, jobId: nativeId });
       }
-      if (job.state !== "completed" && !(source.sourceFormat === "DXF" && job.state === "partial")) {
+      if (job.state !== "completed" && !((source.sourceFormat === "DXF" || source.sourceFormat === "DWG") && job.state === "partial")) {
         if (["failed", "timed-out", "cancelled"].includes(job.state)) terminalState = job.state as CadFailureContext["terminalState"];
         throw new CadArchiveFailure(job.error?.code ?? (job.state === "timed-out" ? "job-timeout" : "conversion-failed"),
           job.error?.error ?? "CAD 后台解析未完成，请下载原文件查看", false);

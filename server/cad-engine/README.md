@@ -2,7 +2,7 @@
 
 换机续接原生 DWG 工作先读 [DWG_HANDOFF.md](DWG_HANDOFF.md)：列出已跑通的原型、最新版未通过项、正式图身份、私有证据迁移和逐步复现命令。
 
-二维 DXF v0.15.0 已接到同一平台任务和查看器，代码仍在本地，未部署。先停止旧 API/worker，再执行数据库迁移 `0068`、`0069`，随后同步更新 CAD 镜像、API 与 worker；只设置旧环境变量或只更新浏览器不构成接入。`0069` 把产物缓存键从 `engine_version` 拆到格式独立的 `format_version`（ADR-039）；旧产物第一次访问会按新格式版本重建，之后浏览器或单一格式改动不再触发另一格式重建。STEP 继续要求完整产物，DXF 可发布带覆盖证据的 `partial`，空白/损坏文件不得伪装成成功结果。DWG 主图继续提示下载。
+二维 DXF v0.15.0 已接到同一平台任务和查看器，代码仍在本地，未部署。先停止旧 API/worker，再执行数据库迁移 `0068`、`0069`、`0070`，随后同步更新 CAD 镜像、API 与 worker；只设置旧环境变量或只更新浏览器不构成接入。`0069` 把产物缓存键从 `engine_version` 拆到格式独立的 `format_version`（ADR-039）；旧产物第一次访问会按新格式版本重建，之后浏览器或单一格式改动不再触发另一格式重建。STEP 继续要求完整产物，DXF 可发布带覆盖证据的 `partial`，DWG 平台路径已加入但由 `CAD_DWG_ENABLED` 默认关闭，尚未在目标沙箱调度或部署；空白/损坏文件不得伪装成成功结果。
 
 DXF 上传后可静默预解析主图；查看器中的“配套文件”选择同项目文件的具体版本，并指定资源包内路径，例如主图 `drawings/main.dxf`、外参 `drawings/refs/detail.dxf`。系统只使用明确选择的版本，不猜测同名文件，不访问源文件路径、系统字体目录或网络。支持资源类型 `.dxf/.dwg/.shx/.shp/.ttf/.otf/.dgn/.dwf/.dwfx/.ctb/.stb`、常见位图与 PDF；DWG 外参由固定 LibreDWG CLI 独立解码，原件身份和嵌套相对路径保留；缺少解码器或文件损坏时明确未加载，解码警告保留为部分结果。主图加配套最多 128 份、合计 64 MiB。补齐、调整路径或选择新版本会创建独立产物身份；原来的部分结果不会被当成完整结果复用。每次状态、清单、资源和释放请求均检查主图及配套的实时可见性，配套被回收时拒绝读取，彻底删除时清除相关派生产物。
 
@@ -178,6 +178,6 @@ CLI 是独立 GPL-3.0-or-later 程序，未链接进 Python 解释器。镜像�
 编译容器差异参考[固定 truedxf SHX 解析器](https://github.com/tth05/truedxf/blob/019c2e504738965c17818a5780097fef0e7a52f4/packages/fonts/src/shx/parse.ts)；flow 3 的分栏推进方向参考 [Autodesk setColumnFlowReversed](https://help.autodesk.com/cloudhelp/2019/ENU/OARX-RefGuide/files/OREF-AcDbMText__setColumnFlowReversed_bool.html)。复杂竖排的单元测试和浏览器检查验证本项目排版/显示契约，不能替代源 CAD 对照，因此 `org.cad-preview.dxf-mtext/1` v1.1 独立记录 `verticalLayout`、`layoutWarnings` 与 `approximateLayouts`。
 
 
-## DWG 主图原生本机验证（2026-10-27）
+## DWG 主图原生接入（2026-10-28 第一片）
 
-新增独立 ACadSharp → UCD 本机链路，直接读取 DWG，不经过 DXF。使用现有 UCD 查看器；未开放生产上传、任务和部署开关。构建、读取协议、源账本及已知限制见 [dwg-reader/README.md](dwg-reader/README.md)，后续业务接入门禁见 [DWG 原生计划](../../docs/superpowers/plans/2026-10-27-dwg-native-ucd.md)。正式原图及其产物只保留在忽略目录。换机检查点及最新版尚未完成的序列化 / 视觉核验见 [交接文档](DWG_HANDOFF.md)。默认 .NET 堆接近现有容器 3 GiB 硬限额；worker 2 GiB RSS 采样阈值和整体 Linux 沙箱均未验证达标，不能用 macOS RSS 或本机页面打开代替。
+原生 ACadSharp → UCD 链路已加入平台代码：shared 格式 `DWG`、迁移 `0070`、API 输入/预览/任务/仓库和 `core/dwg_platform_convert.py` 已接线，但 `CAD_DWG_ENABLED` 默认关闭，当前只在本机完成 worker 样本验证，未在 Linux 沙箱调度、未部署公司测试机或生产。DWG 没有配套文件/主图相对路径，结果始终是带明确损失说明的 `partial`；需要 `CAD_DWG_PYTHON`、`CAD_DWG_READER`、`CAD_DWG_DOTNET` 和固定 ACadSharp 读取器，缺少时明确失败，不回退 DXF。构建、读取协议、源账本及已知限制见 [dwg-reader/README.md](dwg-reader/README.md)，交接状态见 [DWG_HANDOFF.md](DWG_HANDOFF.md)。正式大图的约 2.7 GiB 托管内存和约 266 MB manifest 尚未在目标沙箱验证；首版平台预算为 3 GiB worker RSS / 512 MiB 产物，不构成生产容量承诺。

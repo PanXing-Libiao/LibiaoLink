@@ -25,6 +25,7 @@ export type CadInputSource = CadArchiveSource & {
 export function cadFormat(name: string): CadFormat {
   if (/\.(step|stp)$/i.test(name)) return "STEP";
   if (/\.dxf$/i.test(name)) return "DXF";
+  if (/\.dwg$/i.test(name)) return "DWG";
   throw new AppError("NOT_FOUND", "该版本暂无 CAD 在线查看能力");
 }
 
@@ -33,12 +34,17 @@ export function cadInputs(source: CadArchiveSource): CadInputSource {
   const companions = z.array(boundCompanion).max(127).parse(source.companions ?? []);
   const mainPath = source.mainPath ?? source.sourceName;
   if (format === "STEP" && companions.length) throw new AppError("VALIDATION_FAILED", "STEP 暂不接受配套文件");
+  if (format === "DWG") {
+    if (companions.length || (source.mainPath && source.mainPath !== source.sourceName)) {
+      throw new AppError("VALIDATION_FAILED", "DWG 暂不接受配套文件或主图相对路径");
+    }
+  }
   if (format === "DXF") {
     CadJobCreateBodySchema.parse({ mainPath, companions: companions.map(({ fileId, versionId, path }) => ({ fileId, versionId, path })) });
     if (mainPath.split("/").at(-1) !== source.sourceName) throw new AppError("VALIDATION_FAILED", "主图相对路径须保留原文件名");
   }
   companions.sort((a, b) => Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)));
-  const resourceSetHash = format === "STEP" ? CAD_EMPTY_RESOURCE_SET
+  const resourceSetHash = format === "STEP" || format === "DWG" ? CAD_EMPTY_RESOURCE_SET
     : digest(JSON.stringify([mainPath, companions.map((row) => [row.path, row.fileId, row.versionId, row.sourceSHA256, row.sourceBytes])]));
   if (source.sourceFormat && source.sourceFormat !== format || source.resourceSetHash && source.resourceSetHash !== resourceSetHash) {
     throw new Error("CAD input set identity mismatch");
@@ -76,6 +82,7 @@ export class CadInputService {
     });
     const sourceName = versionFileName(main.file.name, main.version.objectKey);
     if (cadFormat(sourceName) === "STEP" && (selected.mainPath || companions.length)) throw new AppError("VALIDATION_FAILED", "STEP 暂不接受配套路径或文件");
+    if (cadFormat(sourceName) === "DWG" && (selected.mainPath || companions.length)) throw new AppError("VALIDATION_FAILED", "DWG 暂不接受配套路径或文件");
     return cadInputs({ fileId, versionId, sourceName, sourceSHA256: main.version.contentHash,
       sourceBytes: main.version.sizeBytes, ...(selected.mainPath ? { mainPath: selected.mainPath } : {}), companions });
   }
@@ -112,7 +119,7 @@ export class CadInputService {
         } finally { object.stream.destroy(); }
       })));
     }
-    if (input.sourceFormat === "STEP") return blobs[0]!;
+    if (input.sourceFormat === "STEP" || input.sourceFormat === "DWG") return blobs[0]!;
     const header = Buffer.from(JSON.stringify({ version: "dxf-resources/1", main: input.mainPath,
       files: entries.map((entry) => ({ path: entry.path, byteLength: entry.sourceBytes })) }));
     if (header.byteLength > 128 * 1024) throw new Error("CAD input metadata exceeds budget");
