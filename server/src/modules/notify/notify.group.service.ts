@@ -33,6 +33,10 @@ import {
   type NotifyDeliveryMessageRow,
 } from "./notify.delivery-archive.repository.js";
 import { NotifyGroupRepository } from "./notify.group.repository.js";
+import {
+  projectGroupDeliverability,
+  ProjectGroupDeliveryAlertService,
+} from "./project-group-delivery-alert.service.js";
 import { NotifyService } from "./notify.service.js";
 import type { AibotIncomingMessage, AibotSendResult } from "./wecom.aibot.js";
 import { aibotImageMimeFromFileName, WecomAibotClient } from "./wecom.aibot.js";
@@ -171,6 +175,7 @@ export class NotifyGroupService {
     private readonly clock: ClockService,
     private readonly config: AppConfig,
     private readonly storage: ObjectStorage,
+    private readonly deliveryAlerts: ProjectGroupDeliveryAlertService,
   ) {}
 
   /**
@@ -293,18 +298,21 @@ export class NotifyGroupService {
     const binding = await this.repository.findGroupByProject(message.projectId);
     if (binding === null) {
       // 无绑定：notify_deliveries.target NOT NULL 无值可落 —— 不写尝试行，消息级归档置 dead + 日志（差异登记②）；
-      // 运营可见性由 outbox 死信告警承担（项目群绑定维护 = M5-07 前端入口 / PUT 接口）；
+      // 专用即时告警按项目 + 原因去重；通用 outbox.dead 仅进日报，避免同一故障双报。
       // 降级（B4）= 项目经理站内信（正文含原文）。
       const error = "群未绑定（project " + message.projectId + "）：" + row.dedupeKey;
       if (!terminalDead) {
         await this.archive.markState({ messageId: archived.id, state: "dead", at: this.clock.now(), error });
       }
+      const projectName = (await this.repository.findProjectName(message.projectId)) ?? "项目名称未登记";
+      this.deliveryAlerts.reportUnavailable(message.projectId, projectName, "unbound");
       this.logger.warn(
         "群未绑定（确定性失败转 dead）：outbox#" + row.id + " · project=" + message.projectId + " · " + row.dedupeKey,
       );
-      return await this.deadWithDegrade(row, message, terminalDead ? (archived.lastError ?? error) : error);
+      return await this.deadWithDegrade(row, message, terminalDead ? (archived.lastError ?? error) : error, "digest");
     }
     const masked = maskChatid(binding.chatid);
+    // 停用是历史兼容态：保留既有 dead + 降级路径，但不并入「项目群不可投递」专用告警。
     if (!binding.enabled) {
       const error = "群绑定已停用（chatid " + masked + "）";
       if (!terminalDead) {
@@ -326,6 +334,36 @@ export class NotifyGroupService {
         row,
         message,
         terminalDead ? (archived.lastError ?? error) : error + "：" + row.dedupeKey,
+      );
+    }
+    const deliverability = projectGroupDeliverability({
+      bound: true,
+      activated: binding.activatedAt !== null,
+    });
+    if (!deliverability.deliverable) {
+      const error = "已绑定，但机器人尚未激活（chatid " + masked + "）";
+      if (!terminalDead) {
+        await this.archive.recordAttempt({
+          messageId: archived.id,
+          outboxId: row.id,
+          channel: "wecom_group",
+          target: binding.chatid,
+          recipientLabel: "project:" + message.projectId + " · " + masked,
+          state: "dead",
+          attempts: 0,
+          error,
+          sentAt: null,
+          at: this.clock.now(),
+        });
+      }
+      const projectName = (await this.repository.findProjectName(message.projectId)) ?? "项目名称未登记";
+      this.deliveryAlerts.reportUnavailable(message.projectId, projectName, "not_activated");
+      this.logger.warn("项目群已绑定但机器人未激活（确定性失败转 dead）：outbox#" + row.id + " · chatid " + masked);
+      return await this.deadWithDegrade(
+        row,
+        message,
+        terminalDead ? (archived.lastError ?? error) : error + "：" + row.dedupeKey,
+        "digest",
       );
     }
     if (terminalDead) {
@@ -391,6 +429,7 @@ export class NotifyGroupService {
         at: sentAt,
       });
       this.logger.log("群播报已受理：" + row.dedupeKey + " · chatid " + masked + (truncated ? "（截断发送）" : ""));
+      this.deliveryAlerts.reportAvailable(message.projectId);
       return { outcome: "done" };
     }
 
@@ -768,11 +807,12 @@ export class NotifyGroupService {
     row: OutboxClaimedRow,
     message: NotifyGroupMessagePayload,
     error: string,
+    deadAlert: "immediate" | "digest" = "immediate",
   ): Promise<OutboxHandleOutcome> {
     const managerId = await this.repository.findProjectManagerId(message.projectId);
     if (managerId === null) {
       this.logger.warn("群失败降级：项目经理解析不到（跳过站内信）：" + row.dedupeKey + " · project=" + message.projectId);
-      return { outcome: "dead", error };
+      return deadAlert === "digest" ? { outcome: "dead", error, deadAlert } : { outcome: "dead", error };
     }
     try {
       await this.notify.deliverInboxCopy(
@@ -790,7 +830,7 @@ export class NotifyGroupService {
         row.dedupeKey + ":c504",
       );
       this.logger.warn("群失败已降级项目经理站内信（manager " + managerId + "）：" + row.dedupeKey + " —— " + error);
-      return { outcome: "dead", error };
+      return deadAlert === "digest" ? { outcome: "dead", error, deadAlert } : { outcome: "dead", error };
     } catch (degradeError) {
       const detail = degradeError instanceof Error ? degradeError.message : String(degradeError);
       this.logger.error("群失败降级站内信失败（按可重试收敛）：" + row.dedupeKey + " —— " + detail);
