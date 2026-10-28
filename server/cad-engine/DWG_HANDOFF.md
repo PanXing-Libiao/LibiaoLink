@@ -208,9 +208,17 @@
 
 - 问题：`drawing-text.js` 的原生 CAD 分支先调用 `measureTextLines`，把返回的整段行框高度（`size × 1.25 × 行数`）当成 `cadTextEm`/`cadLineHeight` 的输入；字体和行距随行数放大。正式图 `157EE0` 的 18 行英文被排成 348 行，`7C927` 的 6 段中英文膨胀到 90 行，造成局部注释大面积重叠。
 - 修复：原生分支直接按源单行高度计算 `cadTextEm`（×4/3）和 `cadLineHeight`（×5/3），不再使用整段测量高度，也不额外乘 1.25 行框；`rectangleWidth` 仍是换行上限。`cad-text-layout.js` 为无空格中文长句增加按字形的断行机会，避免整段中文超出 `rectangleWidth`。
-- 结果：`7C927` 从 90 行回到 19 行、`157EE0` 从 348 行回到 25 行、`1576F2` 回到 18 行；正式图文字仍为 1,491 项、built 1,476,320，默认视图和 `fitAll` 比例不变。放大到注释区后字号/行距不再随行数膨胀，文字恢复可读；源图中相邻的 `7C927` 与 `1576F2` 文本块仍有位置重叠，这是源注释锚点/框重叠，继续调字号会改变原图语义，不能用这种方式消除。
+- 结果：`7C927` 从 90 行回到 19 行、`157EE0` 从 348 行回到 25 行、`1576F2` 回到 18 行；正式图文字仍为 1,491 项、built 1,476,320，默认视图和 `fitAll` 比例不变。放大到注释区后字号/行距不再随行数膨胀，文字恢复可读；源图中相邻的 `7C927` 与 `1576F2` 文本块仍有源位置重叠，本节的字号修复不移动任何源锚点，显示级避让见下一节。
 - FastView 能打开正式图，`Racks positioning reference` 在 FastView 和各查看器中均正常分行；本轮注释块没有完成同区域 FastView 导航（其启动页登录/VIP 遮挡），所以不以 FastView 通过作为验收结论。源 UCD 的 `7C927`、`1576F2`、`157EE0`、`157F8F` 等文本、高度、宽度和锚点已逐条核对，证据截图在仓库外 `D:\LibiaoLink-verify\cad-samples\review\formal-notes-close-final.png`。
-- 回归：`drawing-text.test.mjs` 8/8（新增多行和中文断行用例）、绘图测试 47/47、`check_retained_text_slice.mjs` 与 `check_drawing_instances.mjs` 通过；`npm run typecheck`、`npm run build` 通过。`viewerVersion = viewer-c7f7eae0…`、`releaseDigest = e15c1bbd…`；`engineVersion`、STEP/DXF 格式键不变。
+- 回归：`drawing-text.test.mjs` 9/9（新增多行、中文断行和显示框用例）、绘图测试 50/50、`check_retained_text_slice.mjs` 与 `check_drawing_instances.mjs` 通过；`npm run typecheck`、`npm run build` 通过。`viewerVersion = viewer-5c952e5d…`、`releaseDigest = 27d94661…`；`engineVersion`、STEP/DXF 格式键不变。
+
+
+## 2026-10-28 注释显示避让（本机，未部署）
+
+- 仅对原生 DWG 的原始注释文字生效，源 UCD、源句柄、`annotation.position` 全部不变；查看器在绘制阶段给文字增加 `displayX/displayY`，最大文本框保持原位，较小的重叠文本框按最小位移移到最近的空边。
+- 每个被移动的文本框从源锚点画一条灰色虚线引线和小圆点回到原位置；源位置仍可定位，移动只影响画面。命中/选择框使用显示框，`setTextAvoidance(false)` 可关闭避让并恢复源位置；DXF 不启用该策略。
+- `drawing-text-avoidance.js` 采用最大面积优先、确定性排序和候选边搜索；`textDisplayBox` 把多行行距计入碰撞框，不再只用单行 em 框。正式图 `7C927`/`1576F2` 的局部重叠在显示上分离，源图仍保持原锚点；证据 `D:\LibiaoLink-verify\cad-samples\review\formal-avoid-notes.png`。
+- 回归：`drawing-text-avoidance.test.mjs` 2/2、`drawing-text.test.mjs` 9/9、绘图测试 50/50；`npm run typecheck`、`npm run build` 通过。`viewerVersion = viewer-5c952e5d…`、`releaseDigest = 27d94661…`；`engineVersion`、STEP/DXF 格式键不变。
 
 
 ## 代码责任与入口

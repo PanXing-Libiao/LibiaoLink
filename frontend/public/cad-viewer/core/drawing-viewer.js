@@ -8,7 +8,8 @@ import {drawingClips, compileClips, triangulateRings, insideRing} from './drawin
 import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.15.0';
 import {estimateDrawingDraws, projectInstances, shouldProjectInstances, recordVisibleBounds, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, I} from './drawing-instances.js';
 import Flatbush from './vendor/flatbush.js';
-import {TEXT_FONT, layoutAnnotationText, textOffsets, textWorldCorners} from './drawing-text.js?v=dxf-0.15.0';
+import {TEXT_FONT, layoutAnnotationText, textOffsets, textWorldCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.15.0';
+import {resolveTextAvoidance} from './drawing-text-avoidance.js?v=dxf-0.15.0';
 import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentation} from './drawing-pattern.js?v=dxf-0.15.0';
 import {mediaItemFor, rasterRecord} from './drawing-media.js?v=dxf-0.15.0';
 
@@ -50,8 +51,10 @@ export function mountDrawingViewer(envelope) {
   let presentationStyles = {};
   // ?instances=1 forces the retained-instance path so small fixtures can
   // regression-test layout/presentation/media semantics without a 400k-draw file.
+  const nativeTextLayout = !!ucd.extensions?.['org.libiaolink.dwg/1'];
   const forceInstances = typeof location !== 'undefined' && new URLSearchParams(location.search).get('instances') === '1';
   let spaceTarget = null, projection = null, built = [], texts = [], pointMarks = [];
+  let textAvoidance = true;
   let instancePlan = null, instanceLayerKey = '', instanceSelected = null;
   let scale = 1, tx = 0, ty = 0, dpr = 1, cssW = 800, cssH = 600;
   let mode = 'display';
@@ -321,6 +324,39 @@ export function mountDrawingViewer(envelope) {
     built.push(rec);
     if(instancePlan)instancePlan.drawGroups.get(rec.draw).records.push(rec);
   }
+  function applyTextAvoidance() {
+    if (!textAvoidance || !nativeTextLayout) return;
+    const entries = [], seen = new Set();
+    for (const rec of built) {
+      const entry = rec.textEntry;
+      if (!entry || seen.has(entry) || !drawVisible(rec)) continue;
+      seen.add(entry);
+      const box = textDisplayBox(entry);
+      if (!box) continue;
+      entries.push({id: entry.itemId + '@' + entries.length, box, entry, rec});
+    }
+    if (!entries.length) return;
+    const resolved = resolveTextAvoidance(entries.map(({id, box}) => ({id, box})), {gap: 0});
+    for (const item of entries) {
+      const choice = resolved.get(item.id);
+      if (!choice) continue;
+      const entry = item.entry;
+      entry.sourceBox = entry.sourceBox || entry.box;
+      entry.sourceX = entry.sourceX ?? entry.x;
+      entry.sourceY = entry.sourceY ?? entry.y;
+      entry.displayX = entry.x + choice.dx;
+      entry.displayY = entry.y + choice.dy;
+      entry.displayBox = choice.box;
+      entry.box = choice.box;
+      entry.avoidance = choice.dx || choice.dy
+        ? {dx: choice.dx, dy: choice.dy, sourceX: entry.sourceX, sourceY: entry.sourceY}
+        : null;
+      item.rec.textBox = choice.box;
+      item.rec.bbox = choice.box;
+      if (item.rec.visibleGeometry) item.rec.visibleGeometry.bounds = choice.box;
+    }
+  }
+
   function rebuild() {
     built = []; texts = []; pointMarks = [];
     if(instancePlan)for(const group of instancePlan.groups)group.records=[];
@@ -492,7 +528,7 @@ export function mountDrawingViewer(envelope) {
         if (!annotation) continue;
         const layout = layoutAnnotationText(annotation, draw, {
           measure: measureReference,
-          nativeLayout: !!ucd.extensions?.['org.libiaolink.dwg/1'],
+          nativeLayout: nativeTextLayout,
           color: rec.color
         });
         rec.bbox = { minX: layout.anchor[0], minY: layout.anchor[1],
@@ -506,6 +542,7 @@ export function mountDrawingViewer(envelope) {
         addRecord(rec);
       }
     }
+    applyTextAvoidance();
     if(instancePlan)buildInstanceIndexes();
     draw();
     updateStats();
@@ -618,10 +655,11 @@ export function mountDrawingViewer(envelope) {
         if(rec.pointMark){const p=rec.pointMark;ctx.strokeStyle=rec.color;ctx.lineWidth=1/localScale;ctx.beginPath();ctx.moveTo(p.x-2.5/localScale,p.y);ctx.lineTo(p.x+2.5/localScale,p.y);ctx.moveTo(p.x,p.y-2.5/localScale);ctx.lineTo(p.x,p.y+2.5/localScale);ctx.stroke();}
         if(rec.textEntry){
           const t=rec.textEntry;
+          drawTextLeader(t);
           // Match the ordinary path: raw annotations keep a legible minimum
           // screen size, while presentation glyph parts stay at source scale.
           const screen=Math.max(t.nativeLayout?0.7:5,Math.min(220,t.size*localScale));
-          ctx.save();ctx.translate(t.x,t.y);ctx.rotate(t.angle);ctx.scale(1,-1);ctx.fillStyle=t.color;ctx.font=(screen/localScale)+'px '+TEXT_FONT;ctx.textBaseline='alphabetic';
+          ctx.save();ctx.translate(t.displayX??t.x,t.displayY??t.y);ctx.rotate(t.angle);ctx.scale(1,-1);ctx.fillStyle=t.color;ctx.font=(screen/localScale)+'px '+TEXT_FONT;ctx.textBaseline='alphabetic';
           const off=textOffsets(t);for(let i=0;i<t.lines.length;i++)ctx.fillText(t.lines[i],off.dx,off.dy+i*(t.lineHeight||t.height*1.25));ctx.restore();
         }
         ctx.restore();
@@ -818,9 +856,27 @@ export function mountDrawingViewer(envelope) {
     ctx.restore();
     return width;
   }
+  function drawTextLeader(t) {
+    const a = t.avoidance;
+    if (!a) return;
+    const ax = a.sourceX * scale + tx, ay = -a.sourceY * scale + ty;
+    const bx = (t.displayX ?? t.x) * scale + tx, by = -(t.displayY ?? t.y) * scale + ty;
+    if (Math.hypot(bx - ax, by - ay) < 1) return;
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.strokeStyle = 'rgba(95,95,95,0.62)';
+    ctx.fillStyle = 'rgba(95,95,95,0.82)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath(); ctx.arc(ax, ay, 1.6, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
   function drawText(t) {
+    drawTextLeader(t);
     const size = Math.max(t.nativeLayout ? 0.7 : 5, Math.min(220, t.size * scale));
-    const sx = t.x * scale + tx, sy = -t.y * scale + ty;
+    const sx = (t.displayX ?? t.x) * scale + tx, sy = -(t.displayY ?? t.y) * scale + ty;
     if (sx < -400 || sy < -400 || sx > cssW + 400 || sy > cssH + 400) return;
     ctx.save();
     ctx.translate(sx, sy); ctx.rotate(-t.angle);
@@ -1419,6 +1475,8 @@ export function mountDrawingViewer(envelope) {
     setSpace,
     setMode(next) { mode = next; panel.querySelectorAll('input[name=dmode]').forEach(i => { i.checked = i.value === next; }); analyticCache.clear(); rebuild(); fit(); },
     setPlotPreview(enabled) {plotPreview=!!enabled;rebuild();renderPlotControls();draw();},
+    setTextAvoidance(enabled) { textAvoidance=!!enabled; rebuild(); return textAvoidance; },
+    textAvoidance: () => textAvoidance,
     setLayerVisible(name, visible) {
       const layer = Object.values(drawing.layers).find(l => l.name === name);
       if (!layer) return false;

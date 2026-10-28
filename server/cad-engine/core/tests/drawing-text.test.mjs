@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  TEXT_FONT, layoutAnnotationText, layoutTextRun, textOffsets, textWorldBox, textWorldCorners
+  TEXT_FONT, layoutAnnotationText, layoutTextRun, textOffsets, textWorldBox, textWorldCorners, textDisplayBox
 } from '../../../../frontend/public/cad-viewer/core/drawing-text.js';
 
 const IDENTITY = [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
@@ -73,6 +73,15 @@ test('native CJK text can break between glyphs to honour rectangleWidth', () => 
   }), draw(), {measure, nativeLayout:true}).run;
   assert.ok(native.lines.length > 1);
   assert.ok(native.widths.every((width) => width <= 10 + 1e-12));
+});
+
+test('display box includes every painted line, not just the em box', () => {
+  const run = {
+    x: 0, y: 0, angle: 0, size: 2, height: 2, width: 10, lineHeight: 3,
+    kind: 'text', halign: 0, valign: 0, attachment: 1,
+    text: 'A\nB\nC', lines: ['A', 'B', 'C'], widths: [10, 10, 10],
+  };
+  assert.deepEqual(textDisplayBox(run), {minX: 0, minY: -8, maxX: 10, maxY: 0});
 });
 
 test('MTEXT attachment and TEXT alignment offsets are shared helpers', () => {

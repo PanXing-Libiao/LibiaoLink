@@ -113,3 +113,18 @@ export function textWorldBox(t, offsets) {
   }
   return {minX, minY, maxX, maxY};
 }
+
+// The run box is deliberately one em high for the published fit/pick contract.
+// Collision resolution needs the full painted block, including every line's
+// advance, without changing that public contract.
+export function textDisplayHeight(t) {
+  const size = Number(t.size || t.height || 0);
+  const lineCount = Math.max(1, Array.isArray(t.lines) ? t.lines.length : String(t.text || '').split('\n').length);
+  const lineHeight = Number(t.lineHeight) || size * 1.25;
+  return Math.max(size, (lineCount - 1) * lineHeight + size);
+}
+
+export function textDisplayBox(t, x = t.x, y = t.y) {
+  const box = textWorldBox({...t, x, y, height: textDisplayHeight(t)}, textOffsets(t));
+  return Number.isFinite(box.minX) && Number.isFinite(box.minY) ? box : null;
+}
