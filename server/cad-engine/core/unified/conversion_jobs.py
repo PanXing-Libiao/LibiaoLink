@@ -384,7 +384,7 @@ class ConversionJobs:
                 blobs={}
                 if self.binary:
                     if envelope.get('transportProfile')!='ucd-worker-binary/1':raise ValueError('binary worker transport mismatch')
-                    if self.compact and not is_dxf and wire_envelope.get('transportProfile')!=WORKER:raise ValueError('compact worker transport mismatch')
+                    if self.compact and not is_dxf and not is_dwg and wire_envelope.get('transportProfile')!=WORKER:raise ValueError('compact worker transport mismatch')
                     entries=envelope.get('bufferResources',[])
                     definitions=document['buffers']
                     if len(entries)!=len(definitions) or {e['id'] for e in entries}!=set(definitions):raise ValueError('worker buffer inventory mismatch')

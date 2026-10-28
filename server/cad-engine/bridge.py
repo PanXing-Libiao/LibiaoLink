@@ -155,7 +155,7 @@ class Gateway:
                 raise ValueError('No verified artifact')
             packet = json.loads(raw)
             completeness=packet['snapshot']['completeness']
-            if completeness!='complete' and not (row.get('sourceFormat')=='DXF' and completeness=='partial'):
+            if completeness!='complete' and not (row.get('sourceFormat') in ('DXF','DWG') and completeness=='partial'):
                 raise ValueError('Artifact completeness is not accepted for this format')
             profile = packet.get('transportProfile')
             if profile not in ('ucd-worker-binary/1', 'ucd-worker-binary-compact/1'):

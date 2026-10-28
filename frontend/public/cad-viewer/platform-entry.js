@@ -12,7 +12,9 @@ const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const valid=uuid.test(fileId||'')&&uuid.test(versionId||'')&&/^[a-f0-9]{32}$/.test(viewId||'');
 const base=valid?`/api/v1/files/${fileId}/versions/${versionId}/cad/views/${viewId}/jobs`:null;
 const nameCodepage=query.get('nameCodepage')==='UTF8'?'UTF8':'GB';
-const isDrawing=query.get('format')==='DXF';
+const format=query.get('format');
+const isDrawing=format==='DXF'||format==='DWG';
+const hasResources=format==='DXF';
 let resolveContext;
 const contextReady=new Promise(resolve=>{resolveContext=resolve;});
 let currentJob=null,jobBase=null,delivered=false,cancelled=false,loadedEnvelope=null;
@@ -21,7 +23,7 @@ const nameSelect=document.getElementById('nameCodepage'),reloadNames=document.ge
 nameSelect.value=nameCodepage;
 document.querySelector('.name-encoding').hidden=isDrawing;
 const resourcesButton=document.getElementById('drawingResources');
-resourcesButton.hidden=!isDrawing;
+resourcesButton.hidden=!hasResources;
 resourcesButton.onclick=()=>parent.postMessage({type:'cad-resources'},location.origin);
 nameSelect.onchange=()=>{reloadNames.disabled=!delivered||nameSelect.value===nameCodepage;};
 reloadNames.onclick=()=>{
@@ -212,8 +214,9 @@ loadPlatformModel(async({signal,progress})=>{
   const response=await request(jobBase+'/manifest',{signal:active});
   let packet=unpackMetadata(await json(response));
   const expected=currentJob.state==='partial'?'partial':'complete';
+  const partialFormat=currentJob.format==='DXF'||currentJob.format==='DWG';
   if(packet.presentation?.sourceSHA256!==currentJob.sourceSHA256||packet.snapshot?.completeness!==expected
-    ||currentJob.state==='partial'&&(!isDrawing||currentJob.format!=='DXF'))throw new Error('模型来源或完整性检查未通过');
+    ||currentJob.state==='partial'&&!partialFormat)throw new Error('模型来源或完整性检查未通过');
   const lease=packet.resourceLease;
   const fetcher=async(url,options={})=>{
    const match=/^\/api\/resources\/([a-f0-9]{48})(?:\/([a-f0-9]{64}))?$/.exec(url);

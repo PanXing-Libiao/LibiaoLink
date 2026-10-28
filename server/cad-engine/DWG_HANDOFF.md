@@ -227,8 +227,11 @@
 - 新增 `core/dwg_platform_convert.py` 平台 worker：从 stdin 接收原字节，调用固定 ACadSharp 读取器与既有 `assemble_native`，再通过 `FileSink` 输出现有 UCD 二进制传输。运行时由 CAD 沙箱提供 `CAD_DWG_PYTHON`、`CAD_DWG_READER`、`CAD_DWG_DOTNET`；未配置时明确失败，不静默退回 DXF。
 - 平台特性开关 `CAD_DWG_ENABLED` 默认 `false`，本机只验证代码路径；未启用时预览仍显示暂不可用并保留下载。已在公开样本上跑通 worker 输出（805,623 B manifest / 171,216 B buffer）；正式大图尚未在平台沙箱调度，原生读取约 2.7 GiB 托管内存、manifest 约 266 MB，目标 Linux 资源档位仍需验收。
 - 资源/门禁：DWG worker RSS 采样档 3 GiB、结果/产物上限 512 MiB、manifest 读取上限 512 MiB、沙箱单文件上限 512 MiB；这些是首版预算，不能当作生产容量结论。
-- 2026-10-29 本机完整系统验证尝试：`server/scripts/local-system-prepare.mjs` 在本机 Docker 检查处退出（当前环境没有 Docker，也没有 `.runtime` 的 PostgreSQL/MinIO/Casdoor 与 CAD 沙箱）；上传、任务、产物归档和查看器全链路没有执行，不能记为通过。只完成了平台 worker 的公开样本输出和 API/CAD 定向测试；后续需先启动本机 Docker/本地服务与原生运行时，再重跑全链路。
-- 版本：`engineVersion = step-0.3.3/c579bb86…/gateway-1`、`formatVersions.DWG = dwg-0.1.0/1171f7ec…/gateway-1`、`releaseDigest = 8699aea7…`，`viewerVersion = viewer-5c952e5d…`；STEP/DXF 格式键以 `source.json` 为准。未推送、未部署。
+- 2026-10-29 本机完整系统全链路通过：WSL Docker（PostgreSQL 18、Casdoor、SeaweedFS S3）+ 本机 API/Vite + 本机 CAD 引擎（9910），`CAD_DWG_ENABLED=true`。真实浏览器登录 Casdoor 后创建项目与任务，分片上传公开样本 `sample_AC1027.dwg`（1,091,959 B / SHA-256 `4c63508d…`），文件绑定任务（`files.task_id`）；`GET /files/{id}/preview` 返回 `viewer.kind=cad`、`format=DWG`。平台任务 `partial`，产物 976,948 B（manifest 806,068 B + 1 个 buffer 170,880 B），`cad_artifacts` 行 `state=partial`、`format_version=dwg-0.1.0/81d2cbf7…`，S3 前缀下 manifest/buffer 均存在。文件库点「预览」打开真实 DWG 查看器：canvas 1382×825、`data-cad-ready-ms=424`、`state=ready`，模型空间/图层/布局与「部分显示」提示正常；证据在仓库外 `D:\LibiaoLink-verify\local-engine\shots\`。
+- 本轮发现并修复查看器门禁：`platform-entry.js` 原先把 `partial` 只允许给 DXF，DWG 的 partial 快照被「模型来源或完整性检查未通过」拒绝；现在 DXF/DWG 均可接受 partial，DWG 按图纸处理（名称走 UTF8、隐藏名称编码切换），配套资源按钮仍仅 DXF。该文件不在 `viewerVersion` 摘要范围内（摘要只覆盖 `cad-viewer/core`），本机验证使用全新浏览器配置；旧缓存升级路径未验证。
+- 本机验证环境的 S3 代理（仓库外 harness）曾把 HEAD 响应的 `Content-Length` 改写为 0，导致上传完成校验读成 0 字节；修正代理后分片合并与全链路通过。这是本机验证工具问题，不是平台代码缺陷。
+- 版本：`engineVersion = step-0.3.3/750b3fbe…/gateway-1`、`formatVersions.DWG = dwg-0.1.0/81d2cbf7…/gateway-1`、`releaseDigest = 52d72fc3…`，`viewerVersion = viewer-5c952e5d…`；STEP/DXF 格式键以 `source.json` 为准。未推送、未部署。
+- 仍未验证：正式大图（34,385,320 B）经平台完整链路、Linux 沙箱资源档位、测试机/生产部署与真实公司账号浏览器验收。
 
 
 ## 代码责任与入口
@@ -243,7 +246,7 @@
 | 现有查看器 | 前端 `drawing-viewer.js`、`drawing-projection.js`、`drawing-instances.js` | 大模型保留块实例、共享几何、Flatbush 索引和连续笔画批绘；原普通投影仍共用样式/身份契约 |
 | 社区文字/索引 | 前端 `core/vendor/` | 选定 ACadSharp.Image 文字规则，Flatbush/Flatqueue；来源、内容摘要和许可随代码保留 |
 | 本机页面 | `dev/dwg-local.py` | 回环地址加载已验证 UCD，复用同一 `mountDrawingViewer`；不提供原图下载，不接业务上传 |
-| 尚未接入 | 平台 file/preview、任务、缓存、CAD 镜像 | DWG 主图开关仍关闭；已有 DWG 外参 CLI 不参与这条链路 |
+| 平台接入 | 平台 file/preview、任务、归档 worker、缓存；前端文件库查看入口 | 第一片已接线，`CAD_DWG_ENABLED` 默认关闭；本机完整系统全链路已通过，测试机/生产未部署 |
 
 原源身份是完整 DWG SHA-256、保存版本及字节数；`source-0`、`buffer-0` 等只是 UCD 文档内外键，未截断原文件/缓冲摘要。`SourceRef.objectKey` 保留原句柄；代理派生零件仍指回原对象。未引用块不展开进场景，不能因此算作解码漏读；它们保留在原 DWG 和源账本中。
 

@@ -26,7 +26,7 @@ class ResultCache:
             if not re.fullmatch(r'[a-f0-9]{64}', request.get(field, '')):
                 raise ValueError('Invalid cache identity')
         name, length = request.get('name'), request.get('sourceByteLength')
-        if not isinstance(name, str) or Path(name).name != name or Path(name).suffix.lower() not in ('.step', '.stp', '.dxf'):
+        if not isinstance(name, str) or Path(name).name != name or Path(name).suffix.lower() not in ('.step', '.stp', '.dxf', '.dwg'):
             raise ValueError('Invalid cache source name')
         if type(length) is not int or not 0 < length <= self.jobs.policy['inputBytes']:
             raise ValueError('Invalid cache source length')
@@ -94,7 +94,7 @@ class ResultCache:
                 continue
             packet = json.loads(raw)
             completeness=packet.get('snapshot',{}).get('completeness')
-            acceptable=completeness=='complete' or (row.get('sourceFormat')=='DXF' and completeness=='partial')
+            acceptable=completeness=='complete' or (row.get('sourceFormat') in ('DXF','DWG') and completeness=='partial')
             if not acceptable or packet.get('transportProfile') not in (
                     'ucd-worker-binary/1', 'ucd-worker-binary-compact/1'):
                 continue

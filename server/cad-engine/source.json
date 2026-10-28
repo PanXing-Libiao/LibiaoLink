@@ -26,7 +26,7 @@
     "unified/build_schema_v2.py": "7ae95c01ccdee17d894222f03e932c2752be1418e0cd4eebe98923687a28016b",
     "unified/canonical.py": "135a3a66e738bb5db122f3df7d03bb4cb1abe2bed333430e9336181514ccd843",
     "unified/compact_transport.py": "4c1a09e511b863a20295c63f553c8c067e8e2b51d9cd103178325f2b62418bd3",
-    "unified/conversion_jobs.py": "dc6d80c2d40d8f979e11ad17578a631cbad78083c033ae27f0b2025a47f46910",
+    "unified/conversion_jobs.py": "ecf078751b00911245abe0451ac31d7ca6a1adededacd45cde1f392606dcb3d1",
     "unified/dwg-reader.json": "80327cfad2181ed90eef19fc78e9db65c94ca9a39a74bb4b0bde96b582d16fdc",
     "unified/dwg_adapter.py": "7757c5f7e1df33cf5ef0ca31b3440579f3cd7fa2d8a623130ea9324f38d1d702",
     "unified/dxf_adapter.py": "600bb35351ed1133dada431e35e7702291753b13a4166827cf0c6caf332c08b3",
@@ -511,7 +511,7 @@
     "viewer-session.js": "54e44e94a0cb0c1b56923f1f5a7c46bdfc44d8b25ec32df02e528a65af96d496"
   },
   "runtimeFiles": {
-    "bridge.py": "d5fa867ae629edbe755d1bf3ca67a40d2cc36deb124bfc68ea7cbf3df07ce5f9",
+    "bridge.py": "031d4f86ad1cbaaca8c4f2956d7f5546d2efc1a82d21bd63a534367312417fef",
     "edge.py": "1f52a447e4e245fce4a298f39192b02d8d4364945fe1b890137d2626e39dd961",
     "release.py": "093212bc868f0578688e90ecfdf34daf11e0ccfb732f74da0c643cdd0285330f",
     "requirements-dwg.txt": "b21e61c20eda27f0c62ecbb04972cc8ff0a3d3c0e1e9f30477870f17bbc6e061",
@@ -519,18 +519,18 @@
     "requirements-dxf.txt": "d2d31f5523d562eae266b9d002b27b7df7dfab8b38f58a8b435a91d6cfab5a12",
     "requirements-step-mesher.txt": "ed84873ed3b2dde7a0fc74d36293cd0ce9f6d55379482b223c74cdf2a37b764b",
     "requirements-step.txt": "26e1bdac6f380003e318c1d65f3c07d330bebfc4ebd1f9a2b1553691cf14fd01",
-    "result_cache.py": "7ac23d81c47550eb0ff62ea04716c23121d6eec84eeee4f84ccd27989cb563fa",
+    "result_cache.py": "da631878a0769fe31bd6e4ed0503a336c5af250024cf7fe76347a096c4f68455",
     "sandbox.py": "cf35807a2e751574b7646ba47e1a7f766bc7d4d2d8d70e19730b62a60489a149",
     "service.py": "bbf51e8fb0c72e096b6ced2bc1104a1542de1571ebbbe434c6f78b3aab2ea909"
   },
   "formatVersions": {
-    "STEP": "step-0.3.3/9c2fd68e29931c1a97b346da1946092ce0e264e78a9866ea3c0129bd5630d68a/gateway-1",
-    "DXF": "dxf-0.15.0/16bd1e881b1bc326266fb94d682e2d5321da691e3f71b6da8c52e7cd1fedb57d/gateway-1",
-    "DWG": "dwg-0.1.0/1171f7ec8954f67c245defa384cb37a1ab197ae9e1e3fbf4b932bc30f275b8ed/gateway-1"
+    "STEP": "step-0.3.3/999e8bfcaed0e2c60752c7b555cd8a7134b916d5280321d604e40e3c8222e407/gateway-1",
+    "DXF": "dxf-0.15.0/4ca6f03893a0740e0de01d0581be91b525caeb289f7eeca94bdf15ad49cadd6b/gateway-1",
+    "DWG": "dwg-0.1.0/81d2cbf751f0fe444066a7bd8ae4fe9ffded64f4e4dcdc318ef505d9722f9745/gateway-1"
   },
-  "engineDigest": "c579bb8684f3e97d77aa23f668f8d791e4f16827269079c262ac5cdb3051115e",
+  "engineDigest": "750b3fbe87babd2237604619502453f90b57a20f355eaacdbb08acefb8c6f2ec",
   "viewerDigest": "5c952e5df6aeb78cda85a404e9a28164706a54e1c6d22c0374adbd4814e3c571",
-  "releaseDigest": "8699aea78551a312a32502efa5e43a9fca7b4fd10a086c52df170f3220a53d07",
-  "engineVersion": "step-0.3.3/c579bb8684f3e97d77aa23f668f8d791e4f16827269079c262ac5cdb3051115e/gateway-1",
+  "releaseDigest": "52d72fc36c3fba04d324e657b38fce86431b988f0ac9d312f661018ef2925ec3",
+  "engineVersion": "step-0.3.3/750b3fbe87babd2237604619502453f90b57a20f355eaacdbb08acefb8c6f2ec/gateway-1",
   "viewerVersion": "viewer-5c952e5df6aeb78cda85a404e9a28164706a54e1c6d22c0374adbd4814e3c571"
 }

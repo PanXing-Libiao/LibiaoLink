@@ -80,7 +80,7 @@ describe("CAD sandbox boundary", () => {
     let mode = "json";
     const engine = await fixture((_request, response) => {
       if (mode === "json") response.end(" ".repeat(64 * 1024 + 1));
-      else if (mode === "resource") { response.setHeader("Content-Length", 256 * 1024 * 1024 + 1); response.flushHeaders(); }
+      else if (mode === "resource") { response.setHeader("Content-Length", 512 * 1024 * 1024 + 1); response.flushHeaders(); }
       else { response.setHeader("X-CAD-Engine-Version", "wrong-version"); response.end("null"); }
     });
     await expect(engine.lookup(identity)).rejects.toMatchObject({ status: 503 });

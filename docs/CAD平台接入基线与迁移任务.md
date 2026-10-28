@@ -1,5 +1,7 @@
 # CAD 平台接入基线与迁移任务
 
+> **2026-10-29 DWG 本机完整系统全链路（本地未部署）**：WSL Docker + PostgreSQL 18 + Casdoor + SeaweedFS S3 + 真实 API/Vite + 本机 CAD 引擎，`CAD_DWG_ENABLED=true`；真实浏览器登录后建项目/任务、分片上传公开样本 `sample_AC1027.dwg`（1,091,959 B），文件绑定任务；`GET /files/{id}/preview` 返回 `viewer.kind=cad`、`format=DWG`；平台任务 `partial`，产物 976,948 B（manifest 806,068 B + buffer 170,880 B），`cad_artifacts.state=partial` 且对象存储 manifest/buffer 存在；文件库「预览」打开 DWG 查看器（canvas 1382×825、`state=ready`、部分显示提示正常）。修复查看器只允许 DXF partial 的门禁（`platform-entry.js`；DWG partial 现可打开，按图纸走 UTF8、不显示配套资源按钮）。未验证正式大图、Linux 沙箱资源、测试机/生产；`CAD_DWG_ENABLED` 默认仍关闭。版本 `engineVersion=750b3fbe…`、`formatVersions.DWG=dwg-0.1.0/81d2cbf7…`、`releaseDigest=52d72fc3…`。
+
 > **2026-10-28 DWG 平台第一片（本地未部署）**：DWG 已加入 shared CAD 格式、API 输入/预览/任务、产物仓库和 `core/dwg_platform_convert.py` worker；迁移 `0070_cad_dwg_format.sql`，DWG 只接受主图、结果固定为 `partial`。`CAD_DWG_ENABLED` 默认关闭，原生运行时由 `CAD_DWG_PYTHON`、`CAD_DWG_READER`、`CAD_DWG_DOTNET` 提供，缺少时明确失败、不回退 DXF。公开样本 worker 已跑通；正式大图约 2.7 GiB 托管内存/266 MB manifest 未在 Linux 沙箱验证，当前不开放测试机或生产。STEP/DXF 原链路与格式键不变。
 
 > **2026-10-28 二维显示治理本地收敛**：宿主侧阶段 A–D 已完成（基线/能力矩阵、裁剪、文本、图案、媒体/布局切片与分支收敛），验证与未完成项见 [阶段 D 交付检查](CAD二维显示结构治理-阶段D交付检查.md)。版本按 [ADR-039](adr/ADR-039-CAD版本拆分与缓存键.md) 拆为 engineVersion / formatVersion / viewerVersion，迁移 `0069` 改变产物唯一键；当前仅本地 `wmj`，未推送、未部署；真实账号验收和生产部署仍待办。线上开放范围不因本记录扩大。
@@ -23,7 +25,7 @@ CAD 能力以本仓库登记的 STEP v0.3.3 和已验证能力记录为准。后
 | 模型与传输 | UCD 2.0 文档/快照、manifest、二进制几何、ID 字典、gzip | 已接入版本/权限/窗口隔离任务、gzip manifest、二进制几何与资源释放 |
 | EASM | 仅能力矩阵中已验证范围；语义须有 eDrawings 原生逆向依据 | 待接入；不依赖 eDrawings 运行时交付 |
 | DXF | 仅能力矩阵中已验证的实体、样式、布局与诊断范围 | 待接入；不等同任意二维 CAD 支持 |
-| DWG / IGES / 3MF 等 | 不由历史白名单推定支持 | 识别为 CAD 待接入提示不等于支持解析 |
+| DWG / IGES / 3MF 等 | 原生 DWG 已登记（固定 ACadSharp 提交；只读主图、结果固定 partial）；IGES / 3MF 等不由历史白名单推定支持 | DWG 本机完整系统全链路通过，`CAD_DWG_ENABLED` 默认关闭；测试机/生产未部署。IGES / 3MF 仍为待接入提示 |
 | 工程尺寸依据、PMI、公差 | 不作为当前交付能力 | 旧测量计划撤回，另按业务需要立项 |
 
 CAD 文件打开成功不等于平台联调成功。测试机已覆盖版本、任务、资源权限和交互，并完成受控箱体夹具的容器内 native 冒烟；真实公司账号、业务文件与浏览器完整交互仍需另行验收。
