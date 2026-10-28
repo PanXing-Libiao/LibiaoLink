@@ -7,10 +7,14 @@
 export function cadTextTokens(paragraph){
  const tokens=[];let start=0,index=0;
  const breaking=value=>value===' '||value==='\t';
+ const cjk=value=>/[⺀-鿿豈-﫿︰-﹏＀-￯]/.test(value);
  while(index<paragraph.length){
   const current=paragraph[index];
   if(breaking(current)){while(index<paragraph.length&&breaking(paragraph[index]))index++;}
   else if((current==='-'||current==='/')&&index+1<paragraph.length&&!breaking(paragraph[index+1]))index++;
+  // CAD sources commonly contain unspaced CJK runs; keep each glyph a break
+  // opportunity so rectangleWidth still bounds the displayed paragraph.
+  else if(cjk(current)){index++;tokens.push(paragraph.slice(start,index));start=index;continue;}
   else {index++;continue;}
   tokens.push(paragraph.slice(start,index));start=index;
  }

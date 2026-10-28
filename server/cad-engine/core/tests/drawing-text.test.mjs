@@ -45,14 +45,34 @@ test('native CAD layout applies cadTextEm, line spacing, wrapping and em box hei
   }), draw(), {measure, nativeLayout:true}).run;
   assert.equal(native.nativeLayout, true);
   assert.equal(native.layout, 'cad-em');
-  assert.ok(Math.abs(native.size - (2.5 * 1.25) * 4 / 3) < 1e-12);
-  assert.ok(Math.abs(native.lineHeight - (2.5 * 1.25) * 5 / 3) < 1e-12);
+  assert.ok(Math.abs(native.size - 2.5 * 4 / 3) < 1e-12);
+  assert.ok(Math.abs(native.lineHeight - 2.5 * 5 / 3) < 1e-12);
   assert.deepEqual(native.lines, ['ABCD','EFGH']);
   assert.ok(Math.abs(native.width - 4 * 50 * native.size / 100) < 1e-12);
   assert.ok(Math.abs(native.height - native.size) < 1e-12);
   assert.ok(Math.abs(native.box.maxY - 20) < 1e-9);
   assert.ok(Math.abs(native.box.minY - (20 - native.size)) < 1e-9);
   assert.deepEqual(native.approximations, ['substituted-font','cad-em-layout']);
+});
+
+test('native multi-line text keeps one-line metrics instead of multiplying by line count', () => {
+  const native = layoutAnnotationText(annotation({
+    text:'AB\nCD\nEF', semantic:{height:{value:2.5}, lineSpacing:{value:1}, rectangleWidth:{value:10},
+      halign:{value:0}, valign:{value:0}, attachmentPoint:{value:1}}
+  }), draw(), {measure, nativeLayout:true}).run;
+  assert.equal(native.size, 2.5 * 4 / 3);
+  assert.equal(native.lineHeight, 2.5 * 5 / 3);
+  assert.deepEqual(native.lines, ['AB','CD','EF']);
+  assert.ok(Math.abs(native.height - native.size) < 1e-12);
+});
+
+test('native CJK text can break between glyphs to honour rectangleWidth', () => {
+  const native = layoutAnnotationText(annotation({
+    text:'这是很长的中文注释', semantic:{height:{value:2.5}, lineSpacing:{value:1}, rectangleWidth:{value:10},
+      halign:{value:0}, valign:{value:0}, attachmentPoint:{value:1}}
+  }), draw(), {measure, nativeLayout:true}).run;
+  assert.ok(native.lines.length > 1);
+  assert.ok(native.widths.every((width) => width <= 10 + 1e-12));
 });
 
 test('MTEXT attachment and TEXT alignment offsets are shared helpers', () => {

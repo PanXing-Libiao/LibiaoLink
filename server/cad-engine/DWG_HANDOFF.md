@@ -204,6 +204,15 @@
 - MLINE 1 条：STANDARD 样式、`ScaleFactor=20`、两个元素偏移 ±0.5（约 ±10 世界单位），中心线 3 顶点；没有完整 miter/接头求值就不画中心线，保留明确损失。
 
 
+## 2026-10-28 原生文字多行排版修复（本机，未部署）
+
+- 问题：`drawing-text.js` 的原生 CAD 分支先调用 `measureTextLines`，把返回的整段行框高度（`size × 1.25 × 行数`）当成 `cadTextEm`/`cadLineHeight` 的输入；字体和行距随行数放大。正式图 `157EE0` 的 18 行英文被排成 348 行，`7C927` 的 6 段中英文膨胀到 90 行，造成局部注释大面积重叠。
+- 修复：原生分支直接按源单行高度计算 `cadTextEm`（×4/3）和 `cadLineHeight`（×5/3），不再使用整段测量高度，也不额外乘 1.25 行框；`rectangleWidth` 仍是换行上限。`cad-text-layout.js` 为无空格中文长句增加按字形的断行机会，避免整段中文超出 `rectangleWidth`。
+- 结果：`7C927` 从 90 行回到 19 行、`157EE0` 从 348 行回到 25 行、`1576F2` 回到 18 行；正式图文字仍为 1,491 项、built 1,476,320，默认视图和 `fitAll` 比例不变。放大到注释区后字号/行距不再随行数膨胀，文字恢复可读；源图中相邻的 `7C927` 与 `1576F2` 文本块仍有位置重叠，这是源注释锚点/框重叠，继续调字号会改变原图语义，不能用这种方式消除。
+- FastView 能打开正式图，`Racks positioning reference` 在 FastView 和各查看器中均正常分行；本轮注释块没有完成同区域 FastView 导航（其启动页登录/VIP 遮挡），所以不以 FastView 通过作为验收结论。源 UCD 的 `7C927`、`1576F2`、`157EE0`、`157F8F` 等文本、高度、宽度和锚点已逐条核对，证据截图在仓库外 `D:\LibiaoLink-verify\cad-samples\review\formal-notes-close-final.png`。
+- 回归：`drawing-text.test.mjs` 8/8（新增多行和中文断行用例）、绘图测试 47/47、`check_retained_text_slice.mjs` 与 `check_drawing_instances.mjs` 通过；`npm run typecheck`、`npm run build` 通过。`viewerVersion = viewer-c7f7eae0…`、`releaseDigest = e15c1bbd…`；`engineVersion`、STEP/DXF 格式键不变。
+
+
 ## 代码责任与入口
 
 | 层 | 位置 | 当前行为 |

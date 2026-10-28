@@ -28,11 +28,14 @@ export function layoutTextRun(input) {
     attachment: input.attachment || 1, color: input.color,
     fontFamily: input.fontFamily || TEXT_FONT
   };
-  Object.assign(run, measureTextLines(run.text, run.size, input.measure));
   const approximations = ['substituted-font'];
   if (input.nativeLayout) {
-    run.size = cadTextEm(run.height);
-    run.lineHeight = cadLineHeight(run.height, input.lineSpacing ?? 1);
+    // Native metrics are a one-line cap-height contract. Using the measured
+    // multi-line box height here would multiply em and line advance by the
+    // source line count, so wrapped notes grow every time they gain a line.
+    const capHeight = Number(input.height);
+    run.size = cadTextEm(capHeight);
+    run.lineHeight = cadLineHeight(capHeight, input.lineSpacing ?? 1);
     const width = Number(input.rectangleWidth || 0) * Number(input.matrixScale || 1);
     const lines = wrapCadText(run.text, width, run.size, input.measure);
     Object.assign(run, measureTextLines(lines.join('\n'), run.size, input.measure));
@@ -42,6 +45,7 @@ export function layoutTextRun(input) {
     run.nativeLayout = true;
     approximations.push('cad-em-layout');
   } else {
+    Object.assign(run, measureTextLines(run.text, run.size, input.measure));
     approximations.push('canvas-text-layout');
   }
   run.offsets = textOffsets(run);

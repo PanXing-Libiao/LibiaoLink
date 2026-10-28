@@ -47,7 +47,7 @@
 
 ```text
 node --test server/cad-engine/core/tests/drawing-*.test.mjs
-# 43/43 pass
+# 47/47 pass
 
 node server/cad-engine/core/tests/check_drawing_instances.mjs
 node server/cad-engine/core/tests/check_retained_clip_slice.mjs
@@ -79,11 +79,11 @@ cd server && python3 test/cad-release.test.py
 - 已按 [ADR-039](adr/ADR-039-CAD版本拆分与缓存键.md) 拆分版本：`engineVersion` 只含服务器引擎/运行时，`formatVersion` 按 STEP/DXF 独立计算并作为 `cad_artifacts` 缓存键，`viewerVersion` 记录浏览器文件；`bridge.py` 的本地任务恢复摘要改用 `engineDigest`。
 - 本文件所在提交的 `source.json`/`cad-release.ts` 记录 `engineDigest`、`viewerDigest`、`formatVersions` 和 `viewerVersion`；当前值为：
   - `engineVersion = step-0.3.3/4cc8fc50a196831a9ec1cd76aac5fb22c673898d077b59745dcb337561e65de3/gateway-1`（DWG 适配器平面 REGION 映射后更新）
-  - `viewerVersion = viewer-94f3042a38a1b4b6a262d2f77c586d01f82377a076bfc015e4dfc88ee15ff0f3`（默认视图按源范围；本轮未改浏览器文件）
+  - `viewerVersion = viewer-c7f7eae02e3faf39950a70f8edd3d53d34495e125900443a03ce2bf4df06573e`（原生多行文字排版修复后更新）
   - `formatVersions.STEP = step-0.3.3/59b471708acfac401d9c7381a8ef32b4856f0def5ea7df74045d8f0a2f8dd4a9/gateway-1`（未变）
   - `formatVersions.DXF = dxf-0.15.0/556c616e28de73ad28a22386b4cb8bae923752df8cfd082cbfd59c47e801e542/gateway-1`（未变）
-  - `releaseDigest = 5bed9677975b79335c193a094be56dae64ea3eb5264f4f248555e6caa9afa87d`
-  迁移 `0069` 为旧产物回填旧 `engine_version` 作为 `format_version`，首次访问新格式版本时重建一次；之后浏览器或单一格式改动不会触发另一格式重建。本轮只改 DWG 适配器和读取器/本机工具，engineVersion 变化，STEP/DXF 格式键不变；读取器仍不进入 engineDigest。平面 REGION 的 ezdxf 导入依赖见 `requirements-dwg.txt`，未改 `dxf_region.py`，因此 DXF 格式键不因 ACIS 解析而变化。
+  - `releaseDigest = e15c1bbddbfd1fc0cf5f8953f955a1a01d928ca80e0ffabbfe66582b106840b9`
+  迁移 `0069` 为旧产物回填旧 `engine_version` 作为 `format_version`，首次访问新格式版本时重建一次；之后浏览器或单一格式改动不会触发另一格式重建。本轮只改 DWG 适配器和读取器/本机工具，engineVersion 变化，STEP/DXF 格式键不变；读取器仍不进入 engineDigest。平面 REGION 的 ezdxf 导入依赖见 `requirements-dwg.txt`，未改 `dxf_region.py`，因此 DXF 格式键不因 ACIS 解析而变化。原生多行文字排版修复只改浏览器 `drawing-text.js`/`cad-text-layout.js`，`viewerVersion` 与 `releaseDigest` 更新，engineVersion、STEP/DXF 不变。
 - 迁移 `0069` 改变唯一键，必须先停止 API/worker 再迁移并整体升级；不能只回退镜像。
 - 回滚：本批提交未推送、未部署；本地回滚到 `8e7b6a4` 可回到平面 REGION 修复前，回滚到 `b5b24fd` 可回到 XLINE/RAY 修复前，回滚到 `5c980c0` 可回到默认视图修复前，回滚到 `8fe3784` 可回到评审修复前（版本拆分已包含在该提交），阶段 C 前为 `fff7428`。若已部署，需停 API/worker，恢复 `engine_version` 唯一键、移除 `format_version`，再回退 API/worker/CAD 镜像与 `/cad-viewer/` 静态资源；不要只回滚前端，避免 manifest/引擎版本不一致。
 - 未执行：真实公司账号浏览器验收、生产部署、独立 `CAD逆向` 工程能力矩阵同步（该工程不在本仓库）。

@@ -479,7 +479,7 @@
     "drawing-pattern.js": "697b993b210b16d24b195babecef1a95d8eac6b96c585fb1a490ac6c83b2ef56",
     "drawing-plot-styles.js": "a2c3888311ccdaac04b38f108ab7175cd171a43f0fb82fdb9356e9431819b243",
     "drawing-projection.js": "0a501669718907a7422ba6f6a803bbfaee5e3d7d2c4393ba816710c3a3313363",
-    "drawing-text.js": "14fac01104de961edb5e4cc00ed089cf814360978a347b43f5b42a3a138b7e4d",
+    "drawing-text.js": "27153425517a47896f8823e83607a027dc9e4babb355515888bf74a905c04f82",
     "drawing-viewer.js": "00120af07e062598e5091ef60836e0b3f2b06a57de1c0f70be5ce8f6b791d7c0",
     "dxf-resources.js": "219569569cc22deca979ec3f6693031bfbfe050c30eb8fe419962f4e3dab5c2c",
     "highlight.js": "31754dabcf90e0c71a67123e7e03f9e39614f02021fdd35d18b61e688c734099",
@@ -493,7 +493,7 @@
     "vendor/LICENSE.acadsharp-image": "c384ac354a6221dba41e4a60c9b77afae74544e78673afd23a00ce4866e98180",
     "vendor/LICENSE.flatbush": "dc7eb9382df00d99375257818fec5071416a01e6258db19f6daaf916ee155356",
     "vendor/LICENSE.flatqueue": "2ccec93b0757d77993721230bf39eefc7cc47508579e953dfda3102b5c1a64f4",
-    "vendor/cad-text-layout.js": "a37f88e57ce11a198699810700793e9f51f1020eaa37f71a03cacc507cbf41ce",
+    "vendor/cad-text-layout.js": "44c37a0a7aa495c1f01fa6f19465d6d4893fd5be2be8211f579def1afbd3ab5e",
     "vendor/controls/OrbitControls.js": "3d79d07ecb686b4e5d93232eedab255331c1beef711e13164eaa1f68655a5f2b",
     "vendor/drawing-index-dependencies.json": "ecef4dcd2c3138dd64785a6d421003c0ebdd2e627d93b9b7fe8a3f1b32a76117",
     "vendor/flatbush.js": "26dab0d5b1794e22cac7127b2c09051156141d1518b7382013412ab9de596a5b",
@@ -524,8 +524,8 @@
     "DXF": "dxf-0.15.0/556c616e28de73ad28a22386b4cb8bae923752df8cfd082cbfd59c47e801e542/gateway-1"
   },
   "engineDigest": "4cc8fc50a196831a9ec1cd76aac5fb22c673898d077b59745dcb337561e65de3",
-  "viewerDigest": "94f3042a38a1b4b6a262d2f77c586d01f82377a076bfc015e4dfc88ee15ff0f3",
-  "releaseDigest": "5bed9677975b79335c193a094be56dae64ea3eb5264f4f248555e6caa9afa87d",
+  "viewerDigest": "c7f7eae02e3faf39950a70f8edd3d53d34495e125900443a03ce2bf4df06573e",
+  "releaseDigest": "e15c1bbddbfd1fc0cf5f8953f955a1a01d928ca80e0ffabbfe66582b106840b9",
   "engineVersion": "step-0.3.3/4cc8fc50a196831a9ec1cd76aac5fb22c673898d077b59745dcb337561e65de3/gateway-1",
-  "viewerVersion": "viewer-94f3042a38a1b4b6a262d2f77c586d01f82377a076bfc015e4dfc88ee15ff0f3"
+  "viewerVersion": "viewer-c7f7eae02e3faf39950a70f8edd3d53d34495e125900443a03ce2bf4df06573e"
 }
