@@ -28,7 +28,9 @@ try {
  document.querySelector('.name-encoding').hidden=true;document.querySelector('.treehead').hidden=true;
  const viewer=mountDrawingViewer(envelope);stages.mountedMs=performance.now()-started;
  document.getElementById('fit').onclick=()=>viewer.fit();document.getElementById('focus').onclick=()=>viewer.fitSelection();
- for(const id of ['showAll','reset'])document.getElementById(id).onclick=()=>{for(const layer of Object.values(envelope.document.drawing.layers))viewer.setLayerVisible(layer.name,true);viewer.fit();};
+ const showAllLayers=()=>{for(const layer of Object.values(envelope.document.drawing.layers))viewer.setLayerVisible(layer.name,true);};
+ document.getElementById('showAll').onclick=()=>{showAllLayers();viewer.fitAll();};
+ document.getElementById('reset').onclick=()=>{showAllLayers();viewer.fit();};
  for(const id of ['fit','showAll','reset','export'])document.getElementById(id).disabled=false;
  document.getElementById('export').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify({source:envelope.document.sources,counts:viewer.counts(),losses:envelope.document.extensions['org.libiaolink.dwg/1'].lossCounts},null,2)],{type:'application/json'}));a.download='DWG本机检查.json';a.click();};
  document.getElementById('filename').textContent=envelope.presentation.name;
@@ -81,6 +83,11 @@ def main():
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self,*a,**kw):super().__init__(*a,directory=str(VIEWER),**kw)
         def log_message(self,*a):pass
+        def end_headers(self):
+            # Modules under /core/ otherwise keep their old bytes in the browser
+            # cache after an edit, so local verification can run a stale viewer.
+            self.send_header('Cache-Control','no-store')
+            super().end_headers()
         def do_POST(self):
             if self.headers.get('Host') not in (f'127.0.0.1:{self.server.server_port}',f'localhost:{self.server.server_port}') or self.headers.get('Origin')!=f'http://{self.headers.get("Host")}':return self.send_error(403)
             path=urlsplit(self.path).path
@@ -112,7 +119,7 @@ def main():
                 return
             elif path.startswith('/core/') or path=='/platform.css':return super().do_GET()
             else:return self.send_error(404)
-            self.send_response(200);self.send_header('Content-Type',kind);self.send_header('Cache-Control','no-store');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+            self.send_response(200);self.send_header('Content-Type',kind);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
     server=ThreadingHTTPServer(('127.0.0.1',args.port),Handler)
     print(f'http://127.0.0.1:{server.server_port}',flush=True)
     server.serve_forever()

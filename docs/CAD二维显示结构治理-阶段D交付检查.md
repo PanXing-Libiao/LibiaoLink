@@ -78,14 +78,14 @@ cd server && python3 test/cad-release.test.py
 
 - 已按 [ADR-039](adr/ADR-039-CAD版本拆分与缓存键.md) 拆分版本：`engineVersion` 只含服务器引擎/运行时，`formatVersion` 按 STEP/DXF 独立计算并作为 `cad_artifacts` 缓存键，`viewerVersion` 记录浏览器文件；`bridge.py` 的本地任务恢复摘要改用 `engineDigest`。
 - 本文件所在提交的 `source.json`/`cad-release.ts` 记录 `engineDigest`、`viewerDigest`、`formatVersions` 和 `viewerVersion`；当前值为：
-  - `engineVersion = step-0.3.3/be95badeb7e489afc0d9fb7d8b2c6d3ccab8a5b9e28fea962d1d493b96c68941/gateway-1`（两轮评审修复均未变）
-  - `viewerVersion = viewer-1a2157aec07fd2aa765559ccf54bd6d62b3c59812813defce3270d2df5681883`
+  - `engineVersion = step-0.3.3/be95badeb7e489afc0d9fb7d8b2c6d3ccab8a5b9e28fea962d1d493b96c68941/gateway-1`（保留实例与默认视图修复均未变）
+  - `viewerVersion = viewer-94f3042a38a1b4b6a262d2f77c586d01f82377a076bfc015e4dfc88ee15ff0f3`（默认视图按源范围）
   - `formatVersions.STEP = step-0.3.3/59b471708acfac401d9c7381a8ef32b4856f0def5ea7df74045d8f0a2f8dd4a9/gateway-1`（未变）
-  - `formatVersions.DXF = dxf-0.15.0/556c616e28de73ad28a22386b4cb8bae923752df8cfd082cbfd59c47e801e542/gateway-1`（因 `dwg-reader.json` 进入 DXF 身份而变化）
-  - `releaseDigest = 75dcc91f3da059e322bcd6ba3f6eb394b0d5609b2cc972ac69fff6ae687ce4de`
-  迁移 `0069` 为旧产物回填旧 `engine_version` 作为 `format_version`，首次访问新格式版本时重建一次；之后浏览器或单一格式改动不会触发另一格式重建。DXF 键本次再次变化，DXF 产物会按 `format_version` 重建一次，旧产物保留。
+  - `formatVersions.DXF = dxf-0.15.0/556c616e28de73ad28a22386b4cb8bae923752df8cfd082cbfd59c47e801e542/gateway-1`（未变）
+  - `releaseDigest = 46faaf5fec16708da2f2da4eb4a50d771d79dc99b216fc05c4921bbd0075301d`
+  迁移 `0069` 为旧产物回填旧 `engine_version` 作为 `format_version`，首次访问新格式版本时重建一次；之后浏览器或单一格式改动不会触发另一格式重建。本次只改浏览器文件和 DWG 读取器/本机工具，engine 与 STEP/DXF 格式键均未变，不触发产物重建。
 - 迁移 `0069` 改变唯一键，必须先停止 API/worker 再迁移并整体升级；不能只回退镜像。
-- 回滚：本批提交未推送、未部署；本地回滚到 `8fe3784` 即可恢复到评审修复前（版本拆分已包含在该提交），阶段 C 前为 `fff7428`。若已部署，需停 API/worker，恢复 `engine_version` 唯一键、移除 `format_version`，再回退 API/worker/CAD 镜像与 `/cad-viewer/` 静态资源；不要只回滚前端，避免 manifest/引擎版本不一致。
+- 回滚：本批提交未推送、未部署；本地回滚到 `5c980c0` 可回到默认视图修复前，回滚到 `8fe3784` 可回到评审修复前（版本拆分已包含在该提交），阶段 C 前为 `fff7428`。若已部署，需停 API/worker，恢复 `engine_version` 唯一键、移除 `format_version`，再回退 API/worker/CAD 镜像与 `/cad-viewer/` 静态资源；不要只回滚前端，避免 manifest/引擎版本不一致。
 - 未执行：真实公司账号浏览器验收、生产部署、独立 `CAD逆向` 工程能力矩阵同步（该工程不在本仓库）。
 
 ## 5. 未完成与后续任务

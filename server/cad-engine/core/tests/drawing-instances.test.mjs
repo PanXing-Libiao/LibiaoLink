@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {projectInstances, estimateDrawingDraws, shouldProjectInstances, recordVisibleBounds, multiply, transformPoint, INSTANCE_DRAW_THRESHOLD} from '../../../../frontend/public/cad-viewer/core/drawing-instances.js';
+import {projectInstances, estimateDrawingDraws, shouldProjectInstances, recordVisibleBounds, multiply, transformPoint, sourceExtentsFromHeader, fitExtentsCandidate, INSTANCE_DRAW_THRESHOLD} from '../../../../frontend/public/cad-viewer/core/drawing-instances.js';
 import {drawingClips} from '../../../../frontend/public/cad-viewer/core/drawing-clipping.js';
 import {projectDrawing, identity} from '../../../../frontend/public/cad-viewer/core/drawing-projection.js';
 
@@ -520,4 +520,33 @@ test('plot variants also split array copies per instance path', () => {
   const target = {kind:'model', spaceId:'root'};
   assert.equal(projectInstances(doc, target).groups.length, 3,
     'plot variants can differ per copy, so the projection keeps one group per path');
+});
+
+test('source model extents require finite positive header bounds', () => {
+  assert.equal(sourceExtentsFromHeader(null), null);
+  assert.equal(sourceExtentsFromHeader({}), null);
+  assert.equal(sourceExtentsFromHeader({modelSpaceExtMin:[0,0,0]}), null);
+  assert.deepEqual(
+    sourceExtentsFromHeader({modelSpaceExtMin:[1,2,0], modelSpaceExtMax:[3,4,0]}),
+    {minX:1, minY:2, maxX:3, maxY:4});
+  assert.equal(sourceExtentsFromHeader({modelSpaceExtMin:[3,2], modelSpaceExtMax:[1,4]}), null);
+  assert.equal(sourceExtentsFromHeader({modelSpaceExtMin:['x',2], modelSpaceExtMax:[3,4]}), null);
+  assert.equal(sourceExtentsFromHeader({modelSpaceExtMin:[0,0], modelSpaceExtMax:[Infinity,4]}), null);
+  assert.deepEqual(
+    sourceExtentsFromHeader({modelSpaceExtMin:[-5,-6], modelSpaceExtMax:[7,8],
+      paperSpaceExtMin:[0,0], paperSpaceExtMax:[1,1]}),
+    {minX:-5, minY:-6, maxX:7, maxY:8},
+    'only the model-space header extents seed the model default view');
+});
+
+test('header extents seed the default view only when they cover the drawing', () => {
+  const computed = {minX:0, minY:0, maxX:1000, maxY:1000};
+  const source = {minX:0, minY:0, maxX:100, maxY:100};
+  assert.equal(fitExtentsCandidate(source, computed, 0.49), null,
+    'a stale sliver must fall back to computed extents');
+  assert.deepEqual(fitExtentsCandidate(source, computed, 0.5), source);
+  assert.equal(fitExtentsCandidate({minX:-5000, minY:0, maxX:0, maxY:1000}, computed, 1), null,
+    'a header box dwarfing the geometry is not a usable default');
+  assert.equal(fitExtentsCandidate(null, computed, 1), null);
+  assert.deepEqual(fitExtentsCandidate(computed, computed, 1), computed);
 });

@@ -12,6 +12,26 @@ export function inverse2D(m){const det=m[0]*m[5]-m[1]*m[4];if(Math.abs(det)<1e-2
 export function transformBounds(b,m){if(!b)return null;const pts=[[b.minX,b.minY],[b.maxX,b.minY],[b.maxX,b.maxY],[b.minX,b.maxY]].map(p=>transformPoint(m,...p));return {minX:Math.min(...pts.map(p=>p[0])),minY:Math.min(...pts.map(p=>p[1])),maxX:Math.max(...pts.map(p=>p[0])),maxY:Math.max(...pts.map(p=>p[1]))};}
 export function union(a,b){if(!b)return a;if(!a)return {...b};return {minX:Math.min(a.minX,b.minX),minY:Math.min(a.minY,b.minY),maxX:Math.max(a.maxX,b.maxX),maxY:Math.max(a.maxY,b.maxY)};}
 
+// DWG headers keep the model-space EXTENTS the source application last saved.
+// A valid header box is only a candidate for the default view: the viewer
+// additionally checks that it covers most of the visible drawing before using
+// it, so stale or never-set header extents fall back to computed geometry.
+export function sourceExtentsFromHeader(header){
+ const min=header?.modelSpaceExtMin,max=header?.modelSpaceExtMax;
+ if(!Array.isArray(min)||!Array.isArray(max)||min.length<2||max.length<2)return null;
+ const box={minX:Number(min[0]),minY:Number(min[1]),maxX:Number(max[0]),maxY:Number(max[1])};
+ if(!Number.isFinite(box.minX)||!Number.isFinite(box.minY)||!Number.isFinite(box.maxX)||!Number.isFinite(box.maxY))return null;
+ if(!(box.maxX>box.minX&&box.maxY>box.minY))return null;
+ return box;
+}
+export function fitExtentsCandidate(source,computed,coverage){
+ if(!source||!computed)return null;
+ const sw=source.maxX-source.minX,sh=source.maxY-source.minY;
+ const cw=computed.maxX-computed.minX,ch=computed.maxY-computed.minY;
+ if(!(sw>0&&sh>0)||sw>cw*4||sh>ch*4)return null;
+ return coverage>=0.5?source:null;
+}
+
 export const INSTANCE_DRAW_THRESHOLD=400000;
 export function shouldProjectInstances(target,count,force=false){
  return (target.kind==='model'||target.kind==='layout')&&(force||count>INSTANCE_DRAW_THRESHOLD);

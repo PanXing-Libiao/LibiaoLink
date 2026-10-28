@@ -400,7 +400,11 @@ static class Program
             if(doc.Header.IntersectionColorIndex<0 || doc.Header.IntersectionColorIndex>257) Loss(null,"unrepresented-header-color","INTERSECTIONCOLOR raw value retained without assigning a source Color");
             File.WriteAllText(Path.Combine(output,"native-summary.json"),JsonSerializer.Serialize(new{
                 reader="ACadSharp",readerVersion="3.8.30+intersection-field-separation",readerSha256,readMemory,source=new{path=input,name=Path.GetFileName(input),sha256=sha,byteLength=inputStream.Length,format="DWG",detectedVersion=version},
-                header=new{intersectionColorRaw=doc.Header.IntersectionColorIndex,interfereColor=new{index=doc.Header.InterfereColor.Index,trueColor=doc.Header.InterfereColor.TrueColor},codePage=doc.Header.CodePage.ToString(),insUnits=doc.Header.InsUnits.ToString()},
+                header=new{intersectionColorRaw=doc.Header.IntersectionColorIndex,interfereColor=new{index=doc.Header.InterfereColor.Index,trueColor=doc.Header.InterfereColor.TrueColor},codePage=doc.Header.CodePage.ToString(),insUnits=doc.Header.InsUnits.ToString(),
+                    modelSpaceExtMin=new[]{doc.Header.ModelSpaceExtMin.X,doc.Header.ModelSpaceExtMin.Y,doc.Header.ModelSpaceExtMin.Z},
+                    modelSpaceExtMax=new[]{doc.Header.ModelSpaceExtMax.X,doc.Header.ModelSpaceExtMax.Y,doc.Header.ModelSpaceExtMax.Z},
+                    paperSpaceExtMin=new[]{doc.Header.PaperSpaceExtMin.X,doc.Header.PaperSpaceExtMin.Y,doc.Header.PaperSpaceExtMin.Z},
+                    paperSpaceExtMax=new[]{doc.Header.PaperSpaceExtMax.X,doc.Header.PaperSpaceExtMax.Y,doc.Header.PaperSpaceExtMax.Z}},
                 modelSpaceId=spaces[doc.ModelSpace.Handle],readSeconds,totalSeconds=time.Elapsed.TotalSeconds,sourceHandles=handles.Count,missingHandles=missing,
                 mappedObjects=ids.Count,mappedSourceObjects=mappedSource,sourceEntityRecords=sourceEntities,sourceTypes,reachableBlocks=reachable.Count,totalBlocks=doc.BlockRecords.Count,counts,lossCount=lost,
                 derivativePolicy="Native parameters + ACadSharp evaluated display curves; original source is authoritative; no completeness claim"}));

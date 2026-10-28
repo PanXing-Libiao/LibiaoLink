@@ -6,7 +6,7 @@ import {projectDrawing, projectBlock} from './drawing-projection.js?v=dxf-0.15.0
 import {clipInfiniteLine, gradientField, triangleBoundarySegments, traceStrokeSegments} from './drawing-2d.js?v=dxf-2d-0.5.0';
 import {drawingClips, compileClips, triangulateRings, insideRing} from './drawing-clipping.js?v=dxf-0.15.0';
 import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.15.0';
-import {estimateDrawingDraws, projectInstances, shouldProjectInstances, recordVisibleBounds, multiply, transformPoint, inverse2D, transformBounds, union, I} from './drawing-instances.js';
+import {estimateDrawingDraws, projectInstances, shouldProjectInstances, recordVisibleBounds, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, I} from './drawing-instances.js';
 import Flatbush from './vendor/flatbush.js';
 import {TEXT_FONT, layoutAnnotationText, textOffsets, textWorldCorners} from './drawing-text.js?v=dxf-0.15.0';
 import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentation} from './drawing-pattern.js?v=dxf-0.15.0';
@@ -887,10 +887,41 @@ export function mountDrawingViewer(envelope) {
     }
     return { minX, minY, maxX, maxY };
   }
+  function overlaps(a,b){return !!a&&!!b&&a.minX<=b.maxX&&a.maxX>=b.minX&&a.minY<=b.maxY&&a.maxY>=b.minY;}
+  // The header box is only a default-view candidate: it must cover most of the
+  // visible drawing (not a stale sliver) and must not dwarf the geometry.
+  function modelCoverage(box){
+    let inside=0,total=0;
+    if(instancePlan){
+      for(const node of instancePlan.roots){
+        const b=transformBounds(node.group.bounds,node.matrix),n=node.group.visibleCount;
+        total+=n;
+        if(overlaps(b,box))inside+=n;
+      }
+    }else{
+      for(const rec of built){
+        if(!drawVisible(rec))continue;
+        const b=rec.infinite?rec.navigationBounds:rec.visibleGeometry?.bounds;
+        total+=1;
+        if(overlaps(b,box))inside+=1;
+      }
+    }
+    return total?inside/total:0;
+  }
+  function sourceExtentsForFit(computed){
+    if(spaceTarget?.kind!=='model')return null;
+    const source=sourceExtentsFromHeader(ucd.extensions?.['org.libiaolink.dwg/1']?.header);
+    if(!source)return null;
+    return fitExtentsCandidate(source,computed,modelCoverage(source));
+  }
   let fitted = false;
   function fit(bbox) {
     fitted = true;
-    const b = bbox || extents();
+    let b = bbox;
+    if (!b) {
+      const computed = extents();
+      b = sourceExtentsForFit(computed) || computed;
+    }
     if (!b) return;
     const dx = Math.max(b.maxX - b.minX, 1e-9), dy = Math.max(b.maxY - b.minY, 1e-9);
     scale = Math.min((cssW * 0.9) / dx, (cssH * 0.9) / dy);
@@ -1405,6 +1436,8 @@ export function mountDrawingViewer(envelope) {
         sourceVisible: layerSourceVisible(l.id), userVisible: userLayers.has(l.id) ? userLayers.get(l.id) : true }));
     },
     fit,
+    fitAll: () => fit(extents()),
+    sourceExtents: () => sourceExtentsForFit(extents()),
     zoomAt,
     scale: () => scale,
     extents,
@@ -1541,6 +1574,8 @@ export function mountDrawingViewer(envelope) {
     },
     selection: () => [...selected],
     fit: () => fit(),
+    fitAll: () => fit(extents()),
+    sourceExtents: () => sourceExtentsForFit(extents()),
     zoom: (factor) => zoomAt(cssW / 2, cssH / 2, factor),
     worldToScreen: (x, y) => ({ x: x * scale + tx, y: -y * scale + ty }),
     extents: () => extents(),
