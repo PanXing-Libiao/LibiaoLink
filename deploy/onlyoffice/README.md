@@ -163,7 +163,9 @@ docker compose --profile app up -d --force-recreate api web
 
 （升级 / 重建回归五项与缓存巡检口径仍以 §2 为准；每次升级 / 重建后按 §6.3 表格复核。）
 
-### 6.5 2026-10-28 移动端预览镜像发布（待发布）
+### 6.5 2026-10-28 移动端预览镜像发布（已发布）
+
+> **2026-10-28 13:56 正式发布结果（prod-20261028-mobile-preview-cdb6eb5d）**：正式机 `10.1.103.44` 已切换为 `libiaolink/onlyoffice-docs:9.4.0.1-libiaolink.2`（image ID `sha256:4dc8a7e48620532e5e6f32615008158d054e3fe52ad44c0ad71dbceea82ba7d9`）；selfcheck `PASS`，四套编辑器模板均为 `120s`，中文字体检查通过。
 
 > 变更只动 DocServer 编辑器模板的内建超时，不改基座 digest、JWT、受控端点或数据卷。必须与前端 / API 的 PDF 直签改动同批验证。
 
