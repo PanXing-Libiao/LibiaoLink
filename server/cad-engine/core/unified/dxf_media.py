@@ -172,6 +172,9 @@ class Resources:
             from PIL import Image
             image = Image.fromarray(data.image)
         matrix = data.flip_matrix() * data.transform
+        # UCD numbers are JSON floats; ezdxf matrices expose numpy.float64,
+        # which the schema validator intentionally rejects.
+        matrix = [float(value) for value in matrix]
         return image, matrix, {**details, 'on': bool(entity.dxf.flags & entity.SHOW_IMAGE),
             'displayAdjustments':{'brightness':entity.dxf.brightness,'contrast':entity.dxf.contrast,
                 'fade':entity.dxf.fade,'fidelity':'ezdxf Frontend screen approximation; original settings retained'},
