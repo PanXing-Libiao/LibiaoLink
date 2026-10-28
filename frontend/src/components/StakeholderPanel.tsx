@@ -390,24 +390,24 @@ function StakeholderRow({
       className="group grid items-center border-b border-zinc-100 px-5 py-2.5 transition-colors last:border-b-0 hover:bg-zinc-50/80"
       style={{ gridTemplateColumns: GRID_TEMPLATE }}
     >
-      <div data-stakeholder-cell="name" className="min-w-0 pr-3">
+      <div data-stakeholder-cell="name" data-mobile-label={fieldLabel(locale, "干系人姓名")} className="min-w-0 pr-3">
         <p className="truncate text-sm font-medium text-zinc-800" title={row.name}>
           {row.name}
         </p>
       </div>
-      <div data-stakeholder-cell="phone" className="flex min-w-0 items-center justify-center">
+      <div data-stakeholder-cell="phone" data-mobile-label={fieldLabel(locale, "电话 / WhatsApp")} className="flex min-w-0 items-center justify-center">
         <CellText value={phone} />
       </div>
-      <div data-stakeholder-cell="wechat" className="flex min-w-0 items-center justify-center">
+      <div data-stakeholder-cell="wechat" data-mobile-label={fieldLabel(locale, "微信")} className="flex min-w-0 items-center justify-center">
         <CellText value={wechat} />
       </div>
-      <div data-stakeholder-cell="email" className="flex min-w-0 items-center justify-center">
+      <div data-stakeholder-cell="email" data-mobile-label={fieldLabel(locale, "邮箱 Email")} className="flex min-w-0 items-center justify-center">
         <CellText value={email} />
       </div>
-      <div data-stakeholder-cell="title" className="flex min-w-0 items-center justify-center">
+      <div data-stakeholder-cell="title" data-mobile-label={fieldLabel(locale, "职务 / 责任板块")} className="flex min-w-0 items-center justify-center">
         <CellText value={title} />
       </div>
-      <div data-stakeholder-cell="company" className="flex min-w-0 items-center justify-center">
+      <div data-stakeholder-cell="company" data-mobile-label={fieldLabel(locale, "所属公司")} className="flex min-w-0 items-center justify-center">
         <span className="flex min-w-0 items-center gap-2">
           <span className={"inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 text-[11px] font-medium " + stakeholderCompanyTypeBadge(row.companyType)}>
             {fieldLabel(locale, stakeholderCompanyTypeName(row.companyType))}
@@ -416,12 +416,12 @@ function StakeholderRow({
           {missingKey(row, "company") || (typeof row.company === "string" && row.company.trim() !== "") ? <CellText value={company} /> : null}
         </span>
       </div>
-      <div data-stakeholder-cell="createdBy" className="flex min-w-0 items-center justify-center">
+      <div data-stakeholder-cell="createdBy" data-mobile-label={fieldLabel(locale, "填写者")} className="flex min-w-0 items-center justify-center">
         <span className="truncate text-sm text-zinc-600" title={row.createdByName ?? undefined}>
           {row.createdByName === null || row.createdByName === "" ? "—" : row.createdByName}
         </span>
       </div>
-      <div data-stakeholder-cell="role" className="flex min-w-0 items-center justify-center">
+      <div data-stakeholder-cell="role" data-mobile-label={fieldLabel(locale, "干系人角色")} className="flex min-w-0 items-center justify-center">
         <span className="truncate text-sm text-zinc-600" title={role === "" ? undefined : role}>
           {role === "" ? "—" : role}
         </span>

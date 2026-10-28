@@ -811,6 +811,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
     <>
       <div
         role={onSelect === undefined ? undefined : "button"}
+        data-task-row={task.id}
         data-task-finalized-row={task.finalizedAt === null ? undefined : task.id}
         data-live-row={task.id}
         tabIndex={onSelect === undefined ? -1 : 0}
@@ -854,7 +855,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
               // 单元格内容一律居中于列标题（Push 67 业务口径）；任务描述列保持左对齐（内含四格进度条 + 铅笔）。
               // 左右各留 4px 内衬（业务口径 2026-09-30「这个触碰到了 要优化一下」）：满宽内容（文件名胶囊 / 进展描述胶囊）
               // 与相邻列不再贴边 —— 两格相邻时天然留出 8px 空隙；内容居中口径不变。
-              <div data-column={column.key} className="flex min-w-0 items-center justify-center self-stretch px-1">{cells[column.key]}</div>
+              <div data-column={column.key} data-label={fieldText(locale, column.label)} className="flex min-w-0 items-center justify-center self-stretch px-1">{cells[column.key]}</div>
             )}
           </Fragment>
         ))}

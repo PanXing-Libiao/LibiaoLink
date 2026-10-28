@@ -1182,6 +1182,7 @@ export function TaskKanban({ mode, tasks, focusTaskId = null, onFocusClosed, man
     <>
       <div
         ref={boardRef}
+        data-kanban-board=""
         className={boardPanning ? "cursor-grabbing select-none" : "cursor-grab"}
         onPointerDown={beginBoardPan}
         onPointerMove={moveBoardPan}

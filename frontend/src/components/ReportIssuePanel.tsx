@@ -1390,7 +1390,7 @@ function ReportList({ reports, focusReportId = null, onEdit, onPatch, onDelete }
                   (report.id === focusReportId ? "bg-amber-50/80" : "hover:bg-zinc-50/70")
                 }
               >
-                <td className="whitespace-nowrap border-b border-zinc-100 px-4 py-4">
+                <td data-mobile-label={fieldText(locale, "时间")} className="whitespace-nowrap border-b border-zinc-100 px-4 py-4">
                   {/* Push 202：时间列只留年月日（业务口径「时间格式也要年月日 具体提交时间不需要 已提交状态也不要」）——
                       状态签与「提交 HH:MM」小字一并下架（state 字段仍保留在数据模型里） */}
                   {/* Push 207 同批追加：时间列**去加粗**（业务口径「问题追踪里面的时间不用加粗」· 业务样 = 图里日报记录时间列）
@@ -1408,13 +1408,13 @@ function ReportList({ reports, focusReportId = null, onEdit, onPatch, onDelete }
                     </span>
                   )}
                 </td>
-                <td className="whitespace-nowrap border-b border-zinc-100 px-4 py-4">
+                <td data-mobile-label={fieldText(locale, "填写者")} className="whitespace-nowrap border-b border-zinc-100 px-4 py-4">
                   <span className="flex min-w-0 items-center gap-1.5">
                     <InitialAvatar name={report.author} />
                     <span className="truncate text-zinc-700">{report.author}</span>
                   </span>
                 </td>
-                <td className="min-w-[150px] border-b border-zinc-100 px-4 py-4 leading-6 text-zinc-700">
+                <td data-mobile-label={fieldText(locale, "关联阶段")} className="min-w-[150px] border-b border-zinc-100 px-4 py-4 leading-6 text-zinc-700">
                   {/* Push 208 追加（业务口径「这个也要可以编辑筛选选择」+ 同日追加「显示也要有颜色」）：关联阶段行内可改 ——
                       浮层 = 与表单同款九阶段勾选清单；显示态 = StageTags 色签组（逐枚出签、与浮层共用一张色表）。
                       Push 223 续（业务口径 2026-09-29「阴影太大了」）：触发器 hover 底色改**贴色签**（CELL_EDIT_CHIP ——
@@ -1442,7 +1442,7 @@ function ReportList({ reports, focusReportId = null, onEdit, onPatch, onDelete }
                     />
                   )}
                 </td>
-                <td className="min-w-[240px] whitespace-pre-line break-words border-b border-zinc-100 px-4 py-4 leading-6 text-zinc-800">
+                <td data-mobile-label={fieldText(locale, "当日完成工作")} className="min-w-[240px] whitespace-pre-line break-words border-b border-zinc-100 px-4 py-4 leading-6 text-zinc-800">
                   {/* Push 223（业务口径「文字和图片编辑要同款」）：当日完成工作改由行尾「编辑」弹窗落值 ——
                       表格里只做展示，不再是可点目标（点表格不进入任何编辑）。 */}
                   {report.doneWork === "" ? (
@@ -1451,7 +1451,7 @@ function ReportList({ reports, focusReportId = null, onEdit, onPatch, onDelete }
                     <span data-report-done="" title={isLocalizedLocale(locale) ? report.doneWork : undefined} className="block whitespace-pre-line break-words">{localize(report.doneWork)}</span>
                   )}
                 </td>
-                <td className="min-w-[200px] whitespace-pre-line break-words border-b border-zinc-100 px-4 py-4 leading-6 text-zinc-700">
+                <td data-mobile-label={fieldText(locale, "明日计划")} className="min-w-[200px] whitespace-pre-line break-words border-b border-zinc-100 px-4 py-4 leading-6 text-zinc-700">
                   {/* Push 223：明日计划同上（展示only，编辑在行尾弹窗里做）。 */}
                   {report.plan === "" ? (
                     <span className="text-zinc-300">—</span>
@@ -1459,11 +1459,11 @@ function ReportList({ reports, focusReportId = null, onEdit, onPatch, onDelete }
                     <span data-report-plan="" title={isLocalizedLocale(locale) ? report.plan : undefined} className="block whitespace-pre-line break-words">{localize(report.plan)}</span>
                   )}
                 </td>
-                <td className="min-w-[440px] border-b border-zinc-100 px-4 py-4">
+                <td data-mobile-label={fieldText(locale, "现场工作附图")} className="min-w-[440px] border-b border-zinc-100 px-4 py-4">
                   {/* 展示only（Push 223）：现场工作附图的增删 / 改名改由行尾「编辑」弹窗（AttachmentPicker）做（点图仍可看大图）。 */}
                   {report.photos.length === 0 ? <span className="text-zinc-400">—</span> : <PhotoStrip items={report.photos} size="lg" />}
                 </td>
-                <td className="w-[110px] border-b border-zinc-100 px-4 py-4 align-top" data-report-delete-cell="">
+                <td data-mobile-label={t("rp.actions")} className="w-[110px] border-b border-zinc-100 px-4 py-4 align-top" data-report-delete-cell="">
                   {/* 行尾动作槽位（Push 223 · 干系人同款两枚：编辑 + 删除）——
                       幽灵态 24px → 悬停 48px **只在槽内长大**；槽容器固定 78px（48 展开 + 6 间距 + 24 静止），
                       单元格内容宽不变 ⇒ 表格列宽 / 表宽一格不动（业务反馈「鼠标触碰表格会动」）。
@@ -1897,8 +1897,8 @@ function IssueTable({ issues, tierTint, onEdit, onPatch, onDelete }: {
         <tbody className="divide-y divide-zinc-100">
           {issues.map((issue) => (
             <tr key={issue.id} data-issue-row={issue.id} className={"group align-top transition-colors " + (tierTint ? "issue-row-tint" + (tierTint === "vivid" ? " tint-vivid" : "") : "hover:bg-zinc-50/80")} style={tierTint ? ({ "--row-tint": (tierTint === "vivid" ? ISSUE_ROW_TINT_VIVID : ISSUE_ROW_TINT)[issue.state].tint, "--row-tint-hover": (tierTint === "vivid" ? ISSUE_ROW_TINT_VIVID : ISSUE_ROW_TINT)[issue.state].hover } as CSSProperties) : undefined}>
-              <td className="whitespace-nowrap px-4 py-4 text-zinc-700">{isoDateText(locale, issue.raisedAt)}</td>
-              <td className="min-w-[240px] px-4 py-4">
+              <td data-mobile-label={fieldText(locale, "日期")} className="whitespace-nowrap px-4 py-4 text-zinc-700">{isoDateText(locale, issue.raisedAt)}</td>
+              <td data-mobile-label={fieldText(locale, "问题描述")} className="min-w-[240px] px-4 py-4">
                 {/* Push 217 续（业务口径「问题归类去左侧一些这个间距不协调」）：min-w 320 → 240 —— 收窄本列与
                     「问题归类」之间的空档，归类列（及其后各列）随之前移；描述 / 「提出人」小行仍按行换行，不截断。 */}
                 {/* Push 223（业务口径「文字和图片编辑要同款」）：问题描述改由行尾「编辑」弹窗落值 ——
@@ -1906,7 +1906,7 @@ function IssueTable({ issues, tierTint, onEdit, onPatch, onDelete }: {
                 <span data-issue-title="" title={isLocalizedLocale(locale) ? issue.title : undefined} className="block whitespace-pre-line break-words leading-6 text-zinc-800">{localize(issue.title)}</span>
                 <p className="mt-1 text-[11px] leading-4 text-zinc-400">{t("report.issue.reporter", { name: issue.reporter })}</p>
               </td>
-              <td className="whitespace-nowrap px-4 py-4">
+              <td data-mobile-label={fieldText(locale, "问题归类")} className="whitespace-nowrap px-4 py-4">
                 {/* Push 208：问题归类行内可改 —— 浮层 = 表单侧同款多选（绿勾 · 点选不收浮层），落值按「、」连接 */}
                 {/* Push 217 续③（业务口径「会出现截断的问题」）：wrapContent —— 撤包裹层 truncate 裁剪：窄窗 / 列被挤到
                     最小时色签不再被裁掉一角（色签折行 / 触发器内衬等其他表现不变，壳档位见 InlineCell）。 */}
@@ -1926,22 +1926,22 @@ function IssueTable({ issues, tierTint, onEdit, onPatch, onDelete }: {
                   />
                 )}
               </td>
-              <td className="min-w-[110px] whitespace-nowrap px-4 py-4 text-zinc-700">
+              <td data-mobile-label={fieldText(locale, "问题处理人 / 责任人")} className="min-w-[110px] whitespace-nowrap px-4 py-4 text-zinc-700">
                 {/* Push 243（业务口径「图三图四增加列 问题处理人 / 责任人」）：展示only —— 问题记录生成时随内联问题
                     清单的处理人 ownerId 落库；空（旧数据 / 无人）出灰杠，与看板卡 / 抽屉同一口径。 */}
                 <span data-issue-owner="">{issue.owner === "" ? <span className="text-zinc-300">—</span> : issue.owner}</span>
               </td>
-              <td className="min-w-[280px] px-4 py-4">
+              <td data-mobile-label={fieldText(locale, "解决方案或建议")} className="min-w-[280px] px-4 py-4">
                 {/* Push 223：解决方案或建议同上（展示only，编辑在行尾弹窗里做）。 */}
                 <span data-issue-solution="" title={isLocalizedLocale(locale) ? issue.solution : undefined} className="block whitespace-pre-line break-words leading-6 text-zinc-600">{issue.solution === "" ? "—" : localize(issue.solution)}</span>
               </td>
-              <td className="min-w-[440px] px-4 py-4">
+              <td data-mobile-label={fieldText(locale, "问题附图")} className="min-w-[440px] px-4 py-4">
                 {/* 展示only（Push 223）：问题附图的增删 / 改名改由行尾「编辑」弹窗（AttachmentPicker）做（点图仍可看大图）。
                     Push 217 续（业务口径「这比例完全不一样啊 包括图片」）：图幅 md（40×40）→ lg（约 128×96 大图瓦片、
                     多张自动折行、只出图不带文件名 —— 与「日报记录 → 现场工作附图」同一档），列宽同口径 min-w-[440px]。 */}
                 {issue.photos.length === 0 ? <span className="text-zinc-400">—</span> : <PhotoStrip items={issue.photos} size="lg" />}
               </td>
-              <td className="whitespace-nowrap px-4 py-4 text-center">
+              <td data-mobile-label={fieldText(locale, "问题是否处理")} className="whitespace-nowrap px-4 py-4 text-center">
                 {/* Push 217 续（业务口径「这个在表格里面始终居中」）：text-center —— 触发器是行内级盒（inline-flex），
                     状态色签在列内**始终水平居中**（三态 / 适中档 / 行内改后同款；列宽再变也不贴左沿）。 */}
                 {/* Push 208：问题是否处理行内可改 —— 单态下拉（业务样 = 项目总览状态列那枚）。
@@ -1955,7 +1955,7 @@ function IssueTable({ issues, tierTint, onEdit, onPatch, onDelete }: {
                   }}
                 />
               </td>
-              <td className="w-[110px] px-4 py-4" data-issue-delete-cell="">
+              <td data-mobile-label={t("rp.actions")} className="w-[110px] px-4 py-4" data-issue-delete-cell="">
                 {/* 行尾动作槽位（Push 223 · 干系人同款两枚：编辑 + 删除）—— 槽容器固定 78px（48 展开 + 6 间距 + 24 静止），
                     幽灵态 24px → 悬停 48px 只在槽内长大，不推挤左侧列（业务反馈「问题追踪的没做好 鼠标触碰表格会动」）。
                     px-4(16×2) + 78 = 110 = w-[110px]（与「日报记录」同槽位）。 */}

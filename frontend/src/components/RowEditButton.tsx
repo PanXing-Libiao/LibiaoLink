@@ -12,6 +12,7 @@ export function RowEditButton({ onEdit, label }: { onEdit: () => void; label?: s
   return (
     <button
       type="button"
+      data-row-edit=""
       aria-label={text}
       title={text}
       onClick={(event) => {

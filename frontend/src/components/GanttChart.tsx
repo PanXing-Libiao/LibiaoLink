@@ -1282,9 +1282,9 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
 
   /** 工具条（常驻，空态 ② / ③ 也在）：图例 + 粒度 / 缩放 / 折叠 / 回到今天 + 甘特内筛选 + 两行操作提示。 */
   const toolbarBlock = (
-    <div className="rounded-xl border border-zinc-200 bg-white px-4 py-2.5">
+    <div data-gantt-toolbar="" className="rounded-xl border border-zinc-200 bg-white px-4 py-2.5">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <ul className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-zinc-500">
+        <ul data-gantt-legend="" className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-zinc-500">
           <li className="flex items-center gap-1.5">
             <span className={"h-2.5 w-4 rounded-[3px] " + BAR_DONE_CLASS} aria-hidden="true" />
             {t("gantt.legend.done")}
@@ -1424,7 +1424,7 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
           </>
         ) : null}
       </div>
-      <p className="mt-2 border-t border-zinc-100 pt-2 text-[11px] leading-4 text-zinc-400">
+      <p data-gantt-help="" className="mt-2 border-t border-zinc-100 pt-2 text-[11px] leading-4 text-zinc-400">
         {t("gantt.hint.barOps")}
       </p>
     </div>
@@ -1718,6 +1718,7 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
               <div className="relative">
         <div
           ref={scrollRef}
+          data-gantt-scroll=""
           data-live-date-origin={model === null ? undefined : model.rangeStart}
           data-live-date-width={dayWidth}
           className={

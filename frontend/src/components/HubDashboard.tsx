@@ -570,15 +570,16 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, w
   );
   if (progress.totalTasks === 0) {
     return (
-      <div ref={wrapRef} className="hub-dash-wrap">
+      <div ref={wrapRef} data-hub-dash-view={view} className="hub-dash-wrap">
         {head}
         <div className="hub-dash-state">{t("hub.dash.empty")}</div>
       </div>
     );
   }
   return (
-    <div ref={wrapRef} className="hub-dash-wrap">
+    <div ref={wrapRef} data-hub-dash-view={view} className="hub-dash-wrap">
       {head}
+      <div className="hub-dash-viewport" data-hub-dash-viewport="">
       {view === "overview" ? (
         <HubDashOverview
           progress={progress}
@@ -674,6 +675,7 @@ export function HubDashboard({ data, state, issues, issuesState, onNeedIssues, w
           <Loader />
         </div>
       )}
+      </div>
       <div className="hub-dash-switch">
         <DashViewSwitch view="overview" checked={view === "overview"} label={t("hub.dash.overview.title")} onSelect={() => switchView("overview")} />
         <DashViewSwitch view="progress" checked={view === "progress"} label={t("hub.dash.title")} onSelect={() => switchView("progress")} />
