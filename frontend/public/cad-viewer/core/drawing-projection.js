@@ -1,5 +1,6 @@
 // UCD drawing projection. Source adapters supply UCD ownership and appearance;
 // model/layout switching uses these same rules for every drawing format.
+import {layoutViewports} from './drawing-layout.js';
 const IDENTITY = [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
 const K = new Uint32Array([
  0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
@@ -259,9 +260,7 @@ export function projectDrawing(document,target,effectiveLayers=null,presentation
   }
  }
  if(layoutId){
-  for(const vid of m.layouts[layoutId].viewportIds){
-   const viewport=m.viewports[vid];
-   if(!viewport.enabled)continue;
+  for(const viewport of layoutViewports(document,layoutId)){
    walk(viewport.sourceSpaceId,viewport.modelToPaper,[],viewport,[]);
   }
   walk(spaceId,IDENTITY,[],null,[]);

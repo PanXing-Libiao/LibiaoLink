@@ -11,6 +11,7 @@ import {estimateDrawingDraws, projectInstances, shouldProjectInstances, multiply
 import Flatbush from './vendor/flatbush.js';
 import {TEXT_FONT, layoutAnnotationText, textOffsets, textWorldCorners} from './drawing-text.js?v=dxf-0.15.0';
 import {hatchFillKind, lineDashFor, fillGeometryFor, patternStrokeSegments} from './drawing-pattern.js?v=dxf-0.15.0';
+import {mediaItemFor, rasterRecord} from './drawing-media.js?v=dxf-0.15.0';
 
 const ACCENT = '#d9426f';
 
@@ -282,7 +283,6 @@ export function mountDrawingViewer(envelope) {
 
   // ----- build ------------------------------------------------------------
   function apply(m, p) { return [m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12], m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13]]; }
-  function apply3(m,p) { return [...apply(m,p),m[2]*p[0]+m[6]*p[1]+m[10]*p[2]+m[14]]; }
   function matrixScale(m) { return Math.hypot(m[0], m[1]) || 1; }
   function lineWidthPx(mm) { return Math.max(0.6, Math.min(4.0, 0.75 + (Number(mm || 0.25) - 0.25) * 1.1)); }
   function dashFor(style, itemId) {
@@ -420,12 +420,10 @@ export function mountDrawingViewer(envelope) {
         const entity = drawing.entities[draw.itemId];
         if (!entity || entity.geometry.type === 'unsupported') continue;
         if (entity.geometry.type === 'image') {
-          const geometry=entity.geometry,[w,h]=geometry.pixelSize;
-          const point=(x,y)=>apply(draw.localToSpace,apply3(geometry.imageToEntity,[x,y,0]));
-          const corners=[[0,0],[w,0],[w,h],[0,h]].map(([x,y])=>point(x,y));
-          rec.raster={resourceId:geometry.resourceId,corners,w,h};
-          rec.bbox={minX:Math.min(...corners.map(p=>p[0])),maxX:Math.max(...corners.map(p=>p[0])),
-            minY:Math.min(...corners.map(p=>p[1])),maxY:Math.max(...corners.map(p=>p[1]))};
+          const raster = rasterRecord(entity, draw, mediaItemFor(ucd, draw.itemId));
+          if (!raster) continue;
+          rec.raster={resourceId:raster.resourceId,corners:raster.corners,w:raster.w,h:raster.h,opacity:raster.opacity};
+          rec.bbox=raster.bbox;
           addRecord(rec);continue;
         }
         const patternHatch = hatchFillKind(entity, fillExt.fills?.[draw.itemId]) === 'pattern';
@@ -757,11 +755,13 @@ export function mountDrawingViewer(envelope) {
     const image=rasterCache.get(rec.raster.resourceId);if(!image)return;
     const {o,ax,ay,bx,by}=rasterBasis(rec);
     ctx.save();
-    ctx.globalAlpha=rec.draw.style.opacity??1;
+    ctx.globalAlpha=rec.raster.opacity ?? rec.draw.style.opacity ?? 1;
     ctx.transform(ax,ay,bx,by,o[0],o[1]);ctx.drawImage(image,0,0);ctx.restore();
   }
   function rasterHit(rec,x,y) {
-    const image=rasterCache.get(rec.raster.resourceId);if(!image||(rec.draw.style.opacity??1)<=0)return false;
+    const image=rasterCache.get(rec.raster.resourceId);
+    const opacity=rec.raster.opacity ?? rec.draw.style.opacity ?? 1;
+    if(!image||opacity<=0)return false;
     const {o,ax,ay,bx,by}=rasterBasis(rec),det=ax*by-ay*bx;if(Math.abs(det)<1e-20)return false;
     const px=((x-o[0])*by-(y-o[1])*bx)/det,py=(ax*(y-o[1])-ay*(x-o[0]))/det;
     if(px<0||py<0||px>=image.width||py>=image.height)return false;

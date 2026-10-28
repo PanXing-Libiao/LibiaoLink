@@ -4,6 +4,7 @@
 // projection contract; only the space-local clip boundary is re-expressed so
 // retained geometry can be repainted under each instance matrix.
 import {projectDrawing, canonical, identity} from './drawing-projection.js';
+import {layoutSpacePlan} from './drawing-layout.js';
 export const I=[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
 export function multiply(a,b){const out=new Array(16);for(let c=0;c<4;c++)for(let r=0;r<4;r++){let v=0;for(let k=0;k<4;k++)v+=a[k*4+r]*b[c*4+k];out[c*4+r]=v;}return out;}
 export function transformPoint(m,x,y){return [m[0]*x+m[4]*y+m[12],m[1]*x+m[5]*y+m[13]];}
@@ -30,7 +31,9 @@ export function estimateDrawingDraws(document,target){
   active.delete(id);memo.set(id,n);return n;
  }
  if(target.kind==='model')return count(target.spaceId);
- const layout=m.layouts[target.layoutId];return count(layout.paperSpaceId)+layout.viewportIds.reduce((n,id)=>n+(m.viewports[id].enabled?count(m.viewports[id].sourceSpaceId):0),0);
+ const plan=layoutSpacePlan(document,target.layoutId);
+ if(!plan)throw new Error('layout-missing');
+ return count(plan.paperSpaceId)+plan.viewports.reduce((n,viewport)=>n+count(viewport.sourceSpaceId),0);
 }
 
 export function projectInstances(document,target,presentationStyles=null){

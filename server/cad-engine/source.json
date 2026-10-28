@@ -473,12 +473,14 @@
     "drawing-2d.js": "25a6dca759f304976752e6d2ca4d17667d7e934348435425e28d960a8591ed83",
     "drawing-clipping.js": "2c7437a8ca77ee40da95e2be1290d01641bd36f2c58e627631ab54d3841f1469",
     "drawing-display.js": "349e32fb91e7fc55bf1309eecc229a6d44f733a58de5e4c446749a2bacfaf937",
-    "drawing-instances.js": "ae8915fec05200eb3f7e56c245a86aa991aa2630378115848f3784f734e8fafa",
+    "drawing-instances.js": "8a2060ed4883e4ec1a60bd142b08db4383b45cb5e3da5b32e234c30375793d07",
+    "drawing-layout.js": "9a611425b8d5151225a8bf06cc9b4b950ec8d1ba138be31cf627c14c5d5ab68b",
+    "drawing-media.js": "3b9558eb5ee8dc3031f6b6c823b65c1ef58f3d4cfc676a477798bb6f10ed6a27",
     "drawing-pattern.js": "8141790d0b1a11d8d72ca92e29564fe7ffaa04b83f91d65b9c6eec3435c211d0",
     "drawing-plot-styles.js": "a2c3888311ccdaac04b38f108ab7175cd171a43f0fb82fdb9356e9431819b243",
-    "drawing-projection.js": "d8d6ab2ff5e364161ea0b299365a521fe4e4899a896b4dc5a2823794fb3675ca",
+    "drawing-projection.js": "182da2c3b703bce0d29add969cb783d55c917f532204e955799613f17324d618",
     "drawing-text.js": "14fac01104de961edb5e4cc00ed089cf814360978a347b43f5b42a3a138b7e4d",
-    "drawing-viewer.js": "df79b8869a7079cac0a9e2e766d2f56c4b49090f11cc4533915376556d688b7c",
+    "drawing-viewer.js": "6646f922b0bed13801d24052993648d61f2298dae714fdfc5cf1c2baa55d04be",
     "dxf-resources.js": "219569569cc22deca979ec3f6693031bfbfe050c30eb8fe419962f4e3dab5c2c",
     "highlight.js": "31754dabcf90e0c71a67123e7e03f9e39614f02021fdd35d18b61e688c734099",
     "mesh-repair-ui.js": "8750dc2c2a63d9ba10bada090fb2938a9cd9a593125f5d2f31e0e0d4e7c02aaf",
@@ -517,6 +519,6 @@
     "sandbox.py": "87ee6844090ce0e6e894325cf284e085c37cdfe6ef7a43a669cf0d37b8f392f0",
     "service.py": "406bb4abec3203ea4e2918c15a8882faf0e9f4b866e4923e4f23a0d6f9245260"
   },
-  "releaseDigest": "5f042fe22170a2cf21528f29f82d1ee015260cfc9c137e931e922bf77fcb90fa",
-  "engineVersion": "step-0.3.3/5f042fe22170a2cf21528f29f82d1ee015260cfc9c137e931e922bf77fcb90fa/gateway-1"
+  "releaseDigest": "6cc0978ac9315839ae1c4c68ec3d14c2f29eb86b0f033e8f0d3bfe302ddd9101",
+  "engineVersion": "step-0.3.3/6cc0978ac9315839ae1c4c68ec3d14c2f29eb86b0f033e8f0d3bfe302ddd9101/gateway-1"
 }
