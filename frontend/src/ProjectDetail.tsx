@@ -1040,7 +1040,7 @@ export default function ProjectDetail({ me, project, view, dailySub, focus, onCl
   const pendingDeleteTask = pendingDeleteTaskId === null ? undefined : rowOf(pendingDeleteTaskId);
 
   return (
-    <div className="min-h-screen">
+    <div data-project-page="" className="min-h-screen">
       <AppHeader me={me} project={project} />
       <main className="w-full px-6 pb-10 pt-3">
         {/* 主标签栏吸顶（Push 201 业务口径「这个也做吸顶效果吧」）：滚动时停在应用顶栏（h-16 = 64px）正下方，
@@ -1108,7 +1108,7 @@ export default function ProjectDetail({ me, project, view, dailySub, focus, onCl
             {/* 标签栏右侧工具区（Push 290 起「醒目模式」已下架、观感统一走顶栏背景档位）：只剩「导出 PDF」+ 列显隐，
                 两枚都按原口径只在「项目总览」出现 —— 原「日报及问题」视图最右侧那枚醒目模式开关随功能一并删除。 */}
             {activeView === "项目总览" ? (
-              <div className="flex shrink-0 items-center gap-4">
+              <div data-project-tools="" className="flex shrink-0 items-center gap-4">
                 {/* 导出 PDF（业务口径 2026-10-09 · §6.16）：数据 = 页面已取到的 project / tasks / summary，
                     生成 A4 横版报告后在系统打印窗口里另存为 PDF；
                     任务数据加载中 / 加载失败时置灰 —— 导出的报告必须和页面数据一致，宁可不给点。 */}

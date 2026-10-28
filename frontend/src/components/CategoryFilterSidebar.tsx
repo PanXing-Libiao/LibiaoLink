@@ -307,6 +307,7 @@ export function CategoryFilterSidebar({
   return (
     <>
       <div
+        data-category-filter-backdrop=""
         aria-hidden="true"
         onClick={onClose}
         className={
@@ -325,7 +326,19 @@ export function CategoryFilterSidebar({
         <ScrollArea viewportClassName="min-h-0 flex-1" className="space-y-6 px-5 py-5" ariaLabel={t("filter.scrollAria")}>
           <section>
             <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold tracking-wide text-zinc-700">{t("filter.saved")}</p>
+              <button
+                type="button"
+                data-filter-close=""
+                aria-label={t("filter.close")}
+                title={t("filter.close")}
+                onClick={onClose}
+                className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-full border border-zinc-200 bg-white/85 text-zinc-500 shadow-sm transition hover:bg-white hover:text-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
+              >
+                <svg viewBox="0 0 24 24" fill="none" className="h-3.5 w-3.5" aria-hidden="true">
+                  <path d="m6 6 12 12M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              </button>
+              <p className="min-w-0 flex-1 text-sm font-semibold tracking-wide text-zinc-700">{t("filter.saved")}</p>
               <button
                 type="button"
                 onClick={() => {

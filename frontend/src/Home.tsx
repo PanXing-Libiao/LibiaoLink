@@ -528,8 +528,8 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
         }}
       />
 
-      <main className={"@container w-full pt-0 pb-10 pr-6 pl-6 transition-[padding-left] duration-300 ease-out " + (filterOpen ? "md:pl-[304px]" : "")}>
-        <div className="sticky top-16 z-10 -mx-6 mb-6 flex flex-wrap items-center gap-3 bg-[#f5f6f8] px-6 pt-4 pb-2">
+      <main data-project-list-main="" className={"@container w-full pt-0 pb-10 pr-6 pl-6 transition-[padding-left] duration-300 ease-out " + (filterOpen ? "md:pl-[304px]" : "")}>
+        <div data-project-list-toolbar="" className="sticky top-16 z-10 -mx-6 mb-6 flex flex-wrap items-center gap-3 bg-[#f5f6f8] px-6 pt-4 pb-2">
           <CategorySwitch
             checked={filterOpen}
             onChange={(next) => {
@@ -585,7 +585,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
           <span className="text-sm text-zinc-400">
             {keyword === "" && !hasFilters ? t("home.count.total", { n: total }) : t("home.count.found", { n: total })}
           </span>
-          <div className="ml-auto flex w-full flex-col items-start gap-3 sm:w-auto sm:flex-row sm:items-center">
+          <div data-project-actions="" className="ml-auto flex w-full flex-col items-start gap-3 sm:w-auto sm:flex-row sm:items-center">
             {/* 导入项目（Push 316 待推）：新建项目左侧 —— 点开原生文件选择（.xlsx / .xlsm），选完在页内大屏面板里解析 / 校验 / 导入 */}
             {/* 导入说明（Push 328 追订 · 2026-10-15）：不常显 —— 悬停 / 键盘聚焦「导入项目」时按钮下方浮出入口（业务口径「鼠标触碰导入项目再上下显示」）；点击「导入说明」= 系统内浮层预览（Push 329 起：复用文件预览浮层 · iframe 浏览器内置 PDF 渲染 · Esc / 点遮罩关闭 · 浮层内可下载原文件），静态件随构建发布（public/docs/import-guide.pdf） */}
             <div className="group relative">
@@ -663,6 +663,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
             ) : null}
             <button
               type="button"
+              data-project-create=""
               aria-disabled={canCreateProject ? undefined : true}
               title={canCreateProject ? undefined : noCreatePermission}
               onClick={() => {
@@ -684,14 +685,16 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
               </svg>
               {t("home.create")}
             </button>
-            <SearchInput
-              value={query}
-              onChange={(value) => {
-                updateFilters({ q: value });
-              }}
-              placeholder={t("home.search.placeholder")}
-              className="w-full sm:w-72"
-            />
+            <div data-project-search="" className="w-full sm:w-auto">
+              <SearchInput
+                value={query}
+                onChange={(value) => {
+                  updateFilters({ q: value });
+                }}
+                placeholder={t("home.search.placeholder")}
+                className="w-full sm:w-72"
+              />
+            </div>
           </div>
         </div>
 

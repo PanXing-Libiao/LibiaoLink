@@ -1517,7 +1517,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
         }}
         aria-hidden="true"
       />
-      <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
+      <div data-task-drawer-layer="" className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
         <aside
           ref={drawerRef}
           key={task.id}
@@ -1676,7 +1676,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
 
         {tab === "detail" ? (
           <>
-            <div className="border-b border-zinc-100 px-6 py-4">
+            <div data-drawer-progress="" className="border-b border-zinc-100 px-6 py-4">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-zinc-500">{fieldText(locale, "项目进度")}</span>
                 <span className="text-sm font-semibold text-zinc-900">{progressText}</span>

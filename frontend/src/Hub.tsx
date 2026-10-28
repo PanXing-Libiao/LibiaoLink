@@ -408,9 +408,9 @@ export default function Hub({ me, routeView, rememberedView, onViewChange, remem
   const deckCellClass = "hub-deck__cell overflow-hidden rounded-[28px] border border-zinc-200/80 bg-white/80 p-3 shadow-[0_24px_60px_-42px_rgba(15,23,42,0.45)]";
 
   return (
-    <div className="flex h-[100dvh] flex-col overflow-hidden overscroll-none">
+    <div data-hub-page="" className="flex h-[100dvh] flex-col overflow-hidden overscroll-none">
       <AppHeader me={me} />
-      <main className="relative min-h-0 flex-1 px-6 py-5 lg:px-10 lg:py-6">
+      <main data-hub-main="" className="relative min-h-0 flex-1 px-6 py-5 lg:px-10 lg:py-6">
         <section ref={deckRef} data-hub-deck="" className="relative h-full overflow-hidden">
           <div className="hub-deck__strip" data-view={stripView} data-anim={anim === null ? undefined : "true"}>
             <div data-view="map" data-hub-deck-cell="map" className={deckCellClass + " " + mapSideClass}>

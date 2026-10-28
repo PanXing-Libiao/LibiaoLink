@@ -394,7 +394,7 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
 
           {state.kind === "ready" && state.result.items.length > 0 ? (
             <>
-              <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
+              <div data-audit-table="" className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
                 <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
                   <thead className="bg-zinc-50 text-zinc-500">
                     <tr>
@@ -412,9 +412,9 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
                       const changeLines = auditChangeLines(item, formatContext);
                       return (
                       <tr key={item.id} data-live-row={String(item.id)} data-audit-row={String(item.id)} className="align-top transition hover:bg-zinc-50/70">
-                        <td className="whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-700">{formatDateTime(item.occurredAt)}</td>
-                        <td className="whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-700">{item.actorName ?? "系统"}</td>
-                        <td className="whitespace-nowrap border-b border-zinc-100 px-4 py-3">
+                        <td data-mobile-label="时间" className="whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-700">{formatDateTime(item.occurredAt)}</td>
+                        <td data-mobile-label="操作人" className="whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-700">{item.actorName ?? "系统"}</td>
+                        <td data-mobile-label="动作" className="whitespace-nowrap border-b border-zinc-100 px-4 py-3">
                           <span
                             data-audit-action={item.action}
                             className={
@@ -425,10 +425,10 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
                             {auditLabelOf(AUDIT_ACTION_LABELS, item.action)}
                           </span>
                         </td>
-                        <td className="whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-600">
+                        <td data-mobile-label="对象" className="whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-600">
                           {auditObjectText(item, formatContext)}
                         </td>
-                        <td className="border-b border-zinc-100 px-4 py-3">
+                        <td data-mobile-label="操作内容" className="border-b border-zinc-100 px-4 py-3">
                           <p className="text-zinc-700">{auditSummaryText(item)}</p>
                           {changeLines.length === 0 ? null : (
                             <ul className="mt-1.5 space-y-0.5">
@@ -464,7 +464,7 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
                             </ul>
                           )}
                         </td>
-                        <td className="whitespace-nowrap border-b border-zinc-100 px-4 py-3">
+                        <td data-mobile-label="结果" className="whitespace-nowrap border-b border-zinc-100 px-4 py-3">
                           <span
                             data-audit-result={item.result}
                             className={
@@ -481,7 +481,7 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
                             {auditLabelOf(AUDIT_RESULT_LABELS, item.result)}
                           </span>
                         </td>
-                        <td className="border-b border-zinc-100 px-4 py-3">
+                        <td data-mobile-label="项目" className="border-b border-zinc-100 px-4 py-3">
                           {item.projectId === null ? (
                             <span className="text-zinc-400">—</span>
                           ) : (

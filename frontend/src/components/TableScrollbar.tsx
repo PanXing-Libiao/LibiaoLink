@@ -179,7 +179,7 @@ export function TableScrollbar({ scrollRef, onOverflowChange, controlsId = "task
   };
 
   return (
-    <div ref={trackRef} className="pointer-events-none relative h-6 w-full select-none">
+    <div ref={trackRef} data-table-scrollbar="" className="pointer-events-none relative h-6 w-full select-none">
       <div
         className={
           "absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full transition-colors " +

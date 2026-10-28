@@ -968,12 +968,14 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
             {canManageBlueprint ? (
               <button
                 type="button"
+                data-template-new=""
+                aria-label={t("tpl.new.title")}
                 onClick={startNewTemplate}
                 disabled={newTemplateBusy}
                 title={t("tpl.new.title")}
                 className="shrink-0 rounded-lg border border-white/80 bg-white/70 px-3 py-1.5 text-sm font-medium text-zinc-700 shadow-[0_2px_10px_rgba(15,23,42,0.08)] transition hover:bg-white hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {newTemplateBusy ? t("tpl.new.busy") : t("tpl.new")}
+                <span className="template-tabs__new-label">{newTemplateBusy ? t("tpl.new.busy") : t("tpl.new")}</span>
               </button>
             ) : null}
           </div>
