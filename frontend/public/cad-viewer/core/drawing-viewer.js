@@ -3,13 +3,14 @@
 // re-reads DXF. Analytic source curves (Entity.geometry) and the discretized display
 // representation (Representation kind=drawing) are selectable, separate paths.
 import {projectDrawing, projectBlock} from './drawing-projection.js?v=dxf-0.15.0';
-import {clipInfiniteLine, gradientField, triangleBoundarySegments, lineDashPattern, traceStrokeSegments} from './drawing-2d.js?v=dxf-2d-0.5.0';
+import {clipInfiniteLine, gradientField, triangleBoundarySegments, traceStrokeSegments} from './drawing-2d.js?v=dxf-2d-0.5.0';
 import {drawingClips, compileClips, triangulateRings, insideRing} from './drawing-clipping.js?v=dxf-0.15.0';
 import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.15.0';
 import {normalizeLineRange} from './drawing-display.js?v=dxf-0.15.0';
 import {estimateDrawingDraws, projectInstances, shouldProjectInstances, multiply, transformPoint, inverse2D, transformBounds, union, I} from './drawing-instances.js';
 import Flatbush from './vendor/flatbush.js';
 import {TEXT_FONT, layoutAnnotationText, textOffsets, textWorldCorners} from './drawing-text.js?v=dxf-0.15.0';
+import {hatchFillKind, lineDashFor, fillGeometryFor, patternStrokeSegments} from './drawing-pattern.js?v=dxf-0.15.0';
 
 const ACCENT = '#d9426f';
 
@@ -233,52 +234,27 @@ export function mountDrawingViewer(envelope) {
   const fillExt = (ucd.extensions && ucd.extensions['org.cad-preview.fill/1']) || {};
 
   function fillPathFor(draw, entity, tolerance) {
-    const toWorld = point => apply(draw.localToSpace, point);
-    const retainedRings=fillExt.fills?.[draw.itemId]?.rings;
-    if(retainedRings){
-      const rings=retainedRings.map(ring=>ring.map(toWorld)),path=new Path2D();let bbox=null;
-      for(const ring of rings){if(!ring.length)continue;path.moveTo(...ring[0]);for(const p of ring.slice(1))path.lineTo(...p);path.closePath();
-        for(const [x,y]of ring)bbox=union(bbox,{minX:x,minY:y,maxX:x,maxY:y});}
-      return bbox?{path,rings,bbox}:null;
-    }
-    if (mode === 'display') {
-      const rep = representationGeometry(draw.displayRepresentationId);
-      if (!rep || rep.topology !== 'triangles' || !rep.indices) return null;
-      const positions = rep.positions, indices = rep.indices, path = new Path2D(), triangles = [];
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (let i = 0; i + 2 < indices.length; i += 3) {
-        const tri = [];
-        for (let k = 0; k < 3; k++) {
-          const at = indices[i + k] * 3;
-          const p = toWorld([positions[at], positions[at + 1], positions[at + 2]]);
-          tri.push(p);
-          minX = Math.min(minX, p[0]); minY = Math.min(minY, p[1]);
-          maxX = Math.max(maxX, p[0]); maxY = Math.max(maxY, p[1]);
-        }
-        path.moveTo(tri[0][0], tri[0][1]); path.lineTo(tri[1][0], tri[1][1]); path.lineTo(tri[2][0], tri[2][1]); path.closePath();
-        triangles.push(tri);
-      }
-      if (!triangles.length) return null;
-      return { path, triangles, bbox: { minX, minY, maxX, maxY } };
-    }
-    const rings = [], ids = entity.geometry.boundaryEntityIds || [];
-    for (const id of ids) {
-      const boundary = drawing.entities[id];
-      if (!boundary) return null;
-      const pts = analyticFor(id + ':boundary', boundary.geometry, tolerance);
-      if (!pts || pts.length < 2) return null;
-      rings.push(pts.map(toWorld));
-    }
-    if (!rings.length) return null;
+    const fill = fillGeometryFor({
+      draw, entity, fillEntry:fillExt.fills?.[draw.itemId], mode, tolerance,
+      representationGeometry, analyticFor,
+      toWorld:point => apply(draw.localToSpace, point),
+      boundaryGeometry:id => drawing.entities[id] && drawing.entities[id].geometry
+    });
+    if (!fill || !fill.bbox) return null;
     const path = new Path2D();
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const ring of rings) {
-      path.moveTo(ring[0][0], ring[0][1]);
-      for (let i = 1; i < ring.length; i++) path.lineTo(ring[i][0], ring[i][1]);
-      path.closePath();
-      for (const p of ring) { minX = Math.min(minX, p[0]); minY = Math.min(minY, p[1]); maxX = Math.max(maxX, p[0]); maxY = Math.max(maxY, p[1]); }
+    if (fill.kind === 'triangles') {
+      for (const triangle of fill.triangles) {
+        path.moveTo(...triangle[0]); path.lineTo(...triangle[1]); path.lineTo(...triangle[2]); path.closePath();
+      }
+      return {path, triangles:fill.triangles, bbox:fill.bbox};
     }
-    return { path, rings, bbox: { minX, minY, maxX, maxY } };
+    for (const ring of fill.rings) {
+      if (!ring.length) continue;
+      path.moveTo(...ring[0]);
+      for (const point of ring.slice(1)) path.lineTo(...point);
+      path.closePath();
+    }
+    return {path, rings:fill.rings, bbox:fill.bbox};
   }
   function pointInRing(x, y, ring) {
     let inside = false;
@@ -310,10 +286,7 @@ export function mountDrawingViewer(envelope) {
   function matrixScale(m) { return Math.hypot(m[0], m[1]) || 1; }
   function lineWidthPx(mm) { return Math.max(0.6, Math.min(4.0, 0.75 + (Number(mm || 0.25) - 0.25) * 1.1)); }
   function dashFor(style, itemId) {
-    if (!style.lineTypeId) return null;
-    const lt = drawing.lineTypes[style.lineTypeId];
-    const compiled = styleExt.lineTypePatterns?.[style.lineTypeId];
-    return lineDashPattern(lt, compiled, styleExt.entityState?.[itemId]?.lineTypeScale ?? 1);
+    return lineDashFor(style, itemId, {lineTypes:drawing.lineTypes, styleExt});
   }
   function itemLayer(draw) { return draw.kind === 'entity' ? drawing.entities[draw.itemId].layerId : drawing.annotations[draw.itemId].layerId; }
   // Layer-0 inheritance is resolved once in drawing projection: each draw publishes
@@ -455,7 +428,7 @@ export function mountDrawingViewer(envelope) {
             minY:Math.min(...corners.map(p=>p[1])),maxY:Math.max(...corners.map(p=>p[1]))};
           addRecord(rec);continue;
         }
-        const patternHatch = entity.geometry.type === 'hatch' && !!entity.geometry.patternId;
+        const patternHatch = hatchFillKind(entity, fillExt.fills?.[draw.itemId]) === 'pattern';
         if (entity.geometry.type === 'hatch' && !patternHatch) {
           const fill = fillPathFor(draw, entity, tolerance);
           if (!fill) continue;
@@ -470,8 +443,32 @@ export function mountDrawingViewer(envelope) {
         const extend = (x, y) => { if (x < minX) minX = x; if (y < minY) minY = y; if (x > maxX) maxX = x; if (y > maxY) maxY = y; };
         // Pattern strokes already encode their own dashes/dots. Keep them in
         // both display modes; drawing boundary polygons would solid-fill holes.
-        if (patternHatch) rec.dash = [];
-        if (mode === 'display' || patternHatch) {
+        if (patternHatch) {
+          rec.dash = [];
+          const stroke = patternStrokeSegments(representationGeometry(draw.displayRepresentationId),
+            point => apply(draw.localToSpace, point));
+          if (!stroke) continue;
+          if (stroke.invalidRange) {
+            if (!warnedDisplayTopologies.has('invalid-lines')) {
+              warnedDisplayTopologies.add('invalid-lines');
+              console.warn('忽略非索引线段范围：顶点数或 range 不合法', draw.displayRepresentationId);
+            }
+            continue;
+          }
+          if (stroke.unsupported) {
+            if (!warnedDisplayTopologies.has(stroke.unsupported)) {
+              warnedDisplayTopologies.add(stroke.unsupported);
+              console.warn('忽略未接入的显示拓扑', stroke.unsupported, draw.displayRepresentationId);
+            }
+            continue;
+          }
+          segments.push(...stroke.segments);
+          if (stroke.points.length) {
+            const p = stroke.points[0];
+            rec.pointMark = {x: p[0], y: p[1]}; pointMarks.push(rec.pointMark);
+          }
+          if (stroke.bbox) { extend(stroke.bbox.minX, stroke.bbox.minY); extend(stroke.bbox.maxX, stroke.bbox.maxY); }
+        } else if (mode === 'display') {
           const rep = representationGeometry(draw.displayRepresentationId);
           if (!rep) continue;
           const pos = rep.positions;

@@ -31,8 +31,8 @@
 | 反向/嵌套/孔洞裁剪 | 已验证 | 部分 | 同一裁剪栈 | 普通路径有区域代数测试；保留实例有反向/嵌套单元夹具，未做浏览器差分 |
 | 文字：简单、替换字体 | 已验证 | 已验证 | 注释局部 → 模型 → 屏幕 | `drawing-text.test.mjs`、`check_retained_text_slice.mjs`；SHX presentation 与原始文字样本普通/实例画布逐像素 0 差异 |
 | 文字：竖排、镜像、堆叠、MTEXT 分栏 | 部分 | 部分 | 适配器排版 + part 局部 | 竖排/分栏由适配器生成 presentation parts；原始文字回退明确标 `substituted-font`/`canvas-text-layout`；保留实例没有同场景浏览器差分 |
-| 实心/渐变/图案 hatch | 已验证 | 部分 | 实体局部 / fill rings | `semantics-fixture`、`gradient-only`、真实图 A–D；复杂图案相位未验证 |
-| 复杂线型/相位 | 部分 | 未验证 | 样式编译 + 描边 | 适配器有编译与 presentation 测试；保留实例只消费已展开 part，没有相位差分 |
+| 实心/渐变/图案 hatch | 已验证 | 已验证 | 实体局部 / fill rings | `drawing-pattern.test.mjs`、`check_retained_pattern_slice.mjs`；`semantics-fixture` 与真实图样本；图案相位仍部分 |
+| 复杂线型/相位 | 部分 | 部分 | 样式编译 + 描边 | 适配器有编译与 presentation 测试；`drawing-pattern.js` 统一 dash 解析，复杂相位仍无浏览器差分 |
 | 图片/PDF/DWF/DGN/OLE | 部分 | 部分 | 实体局部 + 裁剪 | 图片 model/layout 普通/实例样本通过；PDF/DWF/DGN 只有普通路径测试，保留实例未验证 |
 | 布局/视口/纸面 | 已验证（样本） | 已验证（样本） | 模型 → `modelToPaper` → 纸面 | 11 视口 + 5 图片样本；真实图两个布局为空，不能代表全部布局 |
 | 打印样式预览 | 已验证 | 部分 | 纸面/图层 + pen | 普通路径有 `dxf-plot-styles`；`drawInstances` 未完整覆盖 pen 填充图案 |
@@ -53,6 +53,7 @@
 | 执行计划（组、实例矩阵、保留几何、裁剪） | `drawing-instances.js` | 运行时 `groups/roots/draws` | `drawInstances`、拾取、统计 | 是否需要持久化待定 |
 | 屏幕记录（records、textEntry、fillPath、clipRegion） | 查看器 `rebuild` | 运行时 | `draw`、命中、适应视图 | 是否把文字测量上移待定 |
 | 原始文字回退（测量、行框、对齐、包围盒） | `drawing-text.js` | 运行时 run + `approximations` | `rebuild`、`drawText`、`drawInstances`、`texts()` | 竖排/分栏仍由适配器 presentation parts 负责 |
+| 图案（hatch 种类、填充几何、dash、图案线段） | `drawing-pattern.js` | 运行时 fill/stroke 结果 + bbox | `rebuild`、`drawInstances` | 复杂线型相位/打印样式仍有部分边界 |
 | 诊断与损失 | 源适配 + 查看器 | coverage/loss、`plotErrors`、控制台告警 | UI、测试 | 统一诊断契约待定 |
 
 ## 4. 空间与矩阵契约
@@ -114,6 +115,16 @@ PASS: projection parity and 799,999 instance draws retain three unique source le
 - 视觉回归：文本样本与图片样本的普通/实例画布与迁移前逐像素 `0` 差异。
 - 竖排/镜像/堆叠/MTEXT 分栏仍由适配器生成 presentation parts；本次没有把这些排版算法上移，状态保持“部分”。
 
+### 图案切片
+
+产物：`frontend/public/cad-viewer/core/drawing-pattern.js`、`drawing-pattern.test.mjs`、`check_retained_pattern_slice.mjs`。
+
+- `hatchFillKind` 统一模式判断（图案优先于渐变、渐变优先于实心），`fillGeometryFor` 统一返回 rings/triangles 与 bbox，`patternStrokeSegments` 统一图案 hatch 的索引/非索引线段、点、非法 range 与未知拓扑，`lineDashFor` 统一编译线型、item scale 与 dash 结果。
+- 查看器不再自己决定图案 hatch 分支、填充 triangles/rings 或 dash 解析；Path2D 仅由后端根据契约结果构建。
+- `check_retained_pattern_slice.mjs` 用块阵列中的实心/渐变/图案 hatch 验证：普通 6 个绘制项、保留实例 3 个唯一源绘制项；两条路径的 rings、triangles、pattern segments、bbox 在 `1e-9` 内一致。
+- 视觉回归：wipeout/渐变样本与文本样本普通/实例画布与迁移前逐像素 `0` 差异。
+- 复杂线型相位、打印样式 pen 填充 tiles、非等比块缩放的图案相位仍标“部分”；没有因为本切片通过就宣称全部图案能力完成。
+
 ## 8. 验证记录
 
 | 检查 | 结果 |
@@ -121,15 +132,17 @@ PASS: projection parity and 799,999 instance draws retain three unique source le
 | `node tests/check_drawing_instances.mjs` | PASS（普通/保留投影一致；799,999 项保留 3 个源叶） |
 | `node tests/check_retained_clip_slice.mjs` | PASS（裁剪、顺序、变换、身份、可见性） |
 | `node tests/check_retained_text_slice.mjs` | PASS（文字锚点、角度、字号、行框、包围盒） |
+| `node tests/check_retained_pattern_slice.mjs` | PASS（实心/渐变 rings、图案线段、bbox） |
 | `node --test tests/drawing-instances.test.mjs` | 7/7 |
 | `node --test tests/drawing-text.test.mjs` | 6/6 |
+| `node --test tests/drawing-pattern.test.mjs` | 5/5 |
 | `node --test tests/drawing-clipping.test.mjs tests/drawing-display.test.mjs` | 11/11（既有） |
-| 浏览器样本（仓库外，仅参考） | 文本/图片样本普通/实例与迁移前逐像素 0 差异；SHX 文本先前 0 差异；布局图片 0.17%（仅文字抗锯齿）；真实图 fit 0.25% |
+| 浏览器样本（仓库外，仅参考） | 文本/图片/wipeout 渐变样本普通/实例与迁移前逐像素 0 差异；布局图片 0.17%（仅文字抗锯齿）；真实图 fit 0.25% |
 | `npm run typecheck` / `npm run build` | 通过（2026-10-28，本次治理提交前） |
 
 浏览器样本不是 CI 契约测试；矩阵中未列为“已验证”的组合仍按“部分/未验证”处理。
 
 ## 9. 后续阶段
 
-- C 已开始：文本原始回退已收口到 `drawing-text.js`，裁剪切片已完成。下一步按顺序迁移图案，再覆盖媒体/布局；竖排/镜像/堆叠/MTEXT 分栏的排版仍在适配器，需要单独证据后才能标为双路径已验证。
+- C 已开始：文本原始回退已收口到 `drawing-text.js`，图案已收口到 `drawing-pattern.js`，裁剪切片已完成。下一步覆盖媒体/布局；竖排/镜像/堆叠/MTEXT 分栏、复杂线型相位、打印样式 pen 仍保持“部分”，需要单独证据后才能标为双路径已验证。
 - D：移除被替代分支、更新独立工程能力矩阵与 `source.json` 指纹、同步 `前端功能需求.md`/字段文档，并按仓库规则部署。
