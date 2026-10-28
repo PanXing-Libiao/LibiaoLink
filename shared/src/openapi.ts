@@ -1826,7 +1826,7 @@ export function buildOpenApiDocument() {
     path: "/api/v1/projects/{id}/reports/{reportId}/group-sync",
     tags: ["reports"],
     summary:
-      "同步日报到项目群（仅项目经理）：已提交日报 + 已绑定项目群；受理后机器人先发「日报已就绪」，worker 再发送包含现场图与问题附图的日报海报",
+      "同步日报到项目群（仅项目经理）：已提交日报 + 已绑定项目群；受理后机器人先发「日报已送达」及具体日报记录纯文字链接，worker 再发送包含现场图与问题附图的日报海报",
     request: { params: z.object({ id: UuidSchema, reportId: UuidSchema }) },
     responses: {
       202: { description: "已受理同步（queued=true；最终送达以通知投递记录为准）", ...json(DailyReportGroupSyncResponseSchema) },

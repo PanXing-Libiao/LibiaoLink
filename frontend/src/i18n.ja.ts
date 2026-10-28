@@ -592,7 +592,7 @@ export const JA_TEXTS: Partial<Record<TextKey, string>> = {
   "report.groupSync.blockedUnbound": "このプロジェクトには WeCom グループが未連携です",
   "report.groupSync.blockedLoading": "プロジェクトグループの連携状態を確認中…",
   "report.groupSync.blockedError": "グループ連携状態を取得できませんでした。更新して再試行してください",
-  "report.groupSync.noticeQueued": "同期を受け付けました。ボットが「日報の準備ができました」と日報ポスターを送信します。",
+  "report.groupSync.noticeQueued": "同期を受け付けました。ボットが「日報を送信しました」、日報リンク、日報ポスターを送信します。",
   "report.groupSync.error": "プロジェクトグループへの同期に失敗しました。",
   "report.groupSync.groupFallback": "プロジェクトグループ",
   "report.members.footer": "{n} のメンバー · 名前 / ピンインで検索",
