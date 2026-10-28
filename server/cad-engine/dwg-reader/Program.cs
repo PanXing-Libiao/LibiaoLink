@@ -126,6 +126,29 @@ static class Program
         EntityRow(e,space,id,R(("type","unsupported"),("sourceType",kind.ToUpperInvariant()),
             ("reason","Parametric infinite line; view-dependent presentation")),null,original:original);
     }
+    static XYZ[] DefaultLeaderArrowPoints(XYZ tip,XYZ next,double size)
+    {
+        if(!(size>0)||!double.IsFinite(size))throw new InvalidDataException("leader arrow size is invalid");
+        double dx=next.X-tip.X,dy=next.Y-tip.Y,length=Math.Sqrt(dx*dx+dy*dy);
+        if(length<1e-12)throw new InvalidDataException("leader arrow direction is zero");
+        double ux=dx/length,uy=dy/length,half=size/6.0;
+        var basePoint=new XYZ(tip.X+ux*size,tip.Y+uy*size,tip.Z);
+        return new[]{tip,
+            new XYZ(basePoint.X-uy*half,basePoint.Y+ux*half,tip.Z),
+            new XYZ(basePoint.X+uy*half,basePoint.Y-ux*half,tip.Z)};
+    }
+    static void LeaderArrow(Entity e,string space,string id,Leader leader,CadObject original)
+    {
+        if(!leader.ArrowHeadEnabled)return;
+        if(leader.Vertices.Count<2){Loss(original,"leader-arrow-presentation","Leader has no segment for arrowhead placement");return;}
+        if(leader.Style?.LeaderArrow is not null){Loss(original,"leader-arrow-presentation","Custom leader arrow block retained; no accepted placement mapping");return;}
+        XYZ[] points;
+        try{points=DefaultLeaderArrowPoints(leader.Vertices[0],leader.Vertices[1],leader.Style?.ArrowSize??0);}
+        catch(InvalidDataException error){Loss(original,"leader-arrow-presentation",error.Message);return;}
+        string arrowId=id+"-leader-arrow";
+        EntityRow(e,space,arrowId,Poly(points,true),Closed(points),original:original);
+        Emit("fills",arrowId,new{rings=new[]{points.Select(P).ToArray()},fillRule="even-odd"});
+    }
     static void Text(Entity e, IText text, string space, string id, CadObject? original=null)
     {
         original ??=e;
@@ -244,7 +267,7 @@ static class Program
                 MapHatch(hatch,space,id);return;
             case Leader leader:
                 EntityRow(e,space,id,Poly(leader.Vertices),leader.Vertices,original:original);
-                Loss(e,"leader-arrow-presentation","Native leader vertices retained; stored arrowhead and associated annotation need separate fidelity verification.");return;
+                LeaderArrow(e,space,id,leader,original);return;
             case MultiLeader multi when multi.HasProxyGeometries:
                 MapProxy(multi,space,id);return;
             default:
@@ -359,7 +382,15 @@ static class Program
         var kept=CleanSplineDisplayPoints(new List<XYZ>{XYZ.Zero,new XYZ(10,10,0)},new List<XYZ>{XYZ.Zero});
         if(kept.Count!=2)
             throw new InvalidDataException("a spline that starts at the origin must keep its first vertex");
-        Console.WriteLine("PASS: native DWG header fields remain independent, including raw -1; no interchange format; spline zero vertex guard.");
+        var arrow=DefaultLeaderArrowPoints(XYZ.Zero,new XYZ(100,0,0),10);
+        if(Math.Abs(arrow[1].X-10)>1e-9 || Math.Abs(arrow[1].Y-10.0/6.0)>1e-9
+            || Math.Abs(arrow[2].Y+10.0/6.0)>1e-9)
+            throw new InvalidDataException("default leader arrow geometry changed");
+        bool zeroArrowRejected=false;
+        try{DefaultLeaderArrowPoints(XYZ.Zero,new XYZ(100,0,0),0);}
+        catch(InvalidDataException){zeroArrowRejected=true;}
+        if(!zeroArrowRejected)throw new InvalidDataException("zero-size leader arrow was accepted");
+        Console.WriteLine("PASS: native DWG header fields remain independent, including raw -1; no interchange format; spline zero vertex guard; default leader arrow guard.");
     }
     static int Main(string[] args)
     {
