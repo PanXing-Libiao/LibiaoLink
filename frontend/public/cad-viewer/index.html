@@ -99,6 +99,15 @@
       error.textContent = '页面运行异常：' + (event.message || '页面资源读取失败，请重新打开');
     }, true);
   </script>
+  <script>
+    (function () {
+      var viewId = new URLSearchParams(location.search).get("viewId");
+      function mounted() { parent.postMessage({ type: "cad-mounted", viewId: viewId }, location.origin); }
+      mounted();
+      setTimeout(mounted, 100);
+      window.addEventListener("load", mounted, { once: true });
+    })();
+  </script>
   <script type="module" src="platform-entry.js"></script>
 </body>
 </html>

@@ -2,6 +2,7 @@ import { useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ensurePreviewOutcome, fetchDownloadUrl, previewKindOf, recordPreviewView, triggerDownload, type FilePreviewKind, type PreviewViewerConfig, type TaskFileRef } from "../fileApi";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
+import { mobileFilePreviewMustDownload } from "../mobilePreviewPolicy";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { RowDeleteButton } from "./RowDeleteButton";
 import { UploadProgressOverlay } from "./UploadProgressOverlay";
@@ -101,6 +102,10 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
   /** 点文件名 = 预览（两通道裁决同详情抽屉；取不到 → 下拉内一行灰字降级，不弹浮层）。 */
   const openPreview = async (fileId: string, name: string) => {
     if (previewing !== null) {
+      return;
+    }
+    if (mobileFilePreviewMustDownload(name)) {
+      await downloadFile(fileId);
       return;
     }
     setPreviewing(fileId);
@@ -265,7 +270,7 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
                         data-task-files-preview="true"
                         onClick={() => { void openPreview(file.id, file.name); }}
                         disabled={previewingThis}
-                        title={t("files.previewTitle", { name: file.name })}
+                        title={mobileFilePreviewMustDownload(file.name) ? t("drawer.file.downloadTitle") : t("files.previewTitle", { name: file.name })}
                         className="min-w-0 flex-1 truncate rounded px-1 py-0.5 text-left text-xs text-zinc-700 transition-colors hover:text-zinc-900 disabled:text-zinc-400"
                       >
                         {file.name}
