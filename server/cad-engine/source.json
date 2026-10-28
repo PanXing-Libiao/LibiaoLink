@@ -473,14 +473,14 @@
     "drawing-2d.js": "25a6dca759f304976752e6d2ca4d17667d7e934348435425e28d960a8591ed83",
     "drawing-clipping.js": "2c7437a8ca77ee40da95e2be1290d01641bd36f2c58e627631ab54d3841f1469",
     "drawing-display.js": "349e32fb91e7fc55bf1309eecc229a6d44f733a58de5e4c446749a2bacfaf937",
-    "drawing-instances.js": "d4e7b82c94e75e14cd2debfc8fa51a19b905c7455be1c1dd175949af5cf1fa72",
+    "drawing-instances.js": "cfcd1d2625ad125e64e8c0cc8707b10c7c1d80814b477c2f7384973af4e48e44",
     "drawing-layout.js": "9a611425b8d5151225a8bf06cc9b4b950ec8d1ba138be31cf627c14c5d5ab68b",
     "drawing-media.js": "3b9558eb5ee8dc3031f6b6c823b65c1ef58f3d4cfc676a477798bb6f10ed6a27",
     "drawing-pattern.js": "697b993b210b16d24b195babecef1a95d8eac6b96c585fb1a490ac6c83b2ef56",
     "drawing-plot-styles.js": "a2c3888311ccdaac04b38f108ab7175cd171a43f0fb82fdb9356e9431819b243",
     "drawing-projection.js": "4f0be63a74cbebddd455f7c01a50ee3e9776565949a42378a58275365375eefe",
     "drawing-text.js": "14fac01104de961edb5e4cc00ed089cf814360978a347b43f5b42a3a138b7e4d",
-    "drawing-viewer.js": "f56d713d5c66be3941dc2fcd4b7acdc29b5f0b8974ef655b8ef56af096d509fb",
+    "drawing-viewer.js": "051274b87596ed6634445b30ab781e97d2227fdb433f2cba293fa72e122e4137",
     "dxf-resources.js": "219569569cc22deca979ec3f6693031bfbfe050c30eb8fe419962f4e3dab5c2c",
     "highlight.js": "31754dabcf90e0c71a67123e7e03f9e39614f02021fdd35d18b61e688c734099",
     "mesh-repair-ui.js": "8750dc2c2a63d9ba10bada090fb2938a9cd9a593125f5d2f31e0e0d4e7c02aaf",
@@ -524,8 +524,8 @@
     "DXF": "dxf-0.15.0/556c616e28de73ad28a22386b4cb8bae923752df8cfd082cbfd59c47e801e542/gateway-1"
   },
   "engineDigest": "be95badeb7e489afc0d9fb7d8b2c6d3ccab8a5b9e28fea962d1d493b96c68941",
-  "viewerDigest": "77b7f5ec21a63fc51f1c76bb37095977855f85ebe8569920092a71632dcad183",
-  "releaseDigest": "c63abd4364f0cfdec504ab40f69103b86e2267af81c087ff6e8ab96c7f02bbd3",
+  "viewerDigest": "475859e7052a65776a264536a07e3c1741c17564f8f368f35e760b6d0a123ea1",
+  "releaseDigest": "5df5882b7e1571ebdc8120b6dfb0fde24e2166dfcd1d7b2fa538514593a216b2",
   "engineVersion": "step-0.3.3/be95badeb7e489afc0d9fb7d8b2c6d3ccab8a5b9e28fea962d1d493b96c68941/gateway-1",
-  "viewerVersion": "viewer-77b7f5ec21a63fc51f1c76bb37095977855f85ebe8569920092a71632dcad183"
+  "viewerVersion": "viewer-475859e7052a65776a264536a07e3c1741c17564f8f368f35e760b6d0a123ea1"
 }

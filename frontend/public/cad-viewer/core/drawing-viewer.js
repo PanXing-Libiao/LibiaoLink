@@ -331,7 +331,10 @@ export function mountDrawingViewer(envelope) {
     for (const [drawId, draw] of ordered) {
       const layerId = effectiveLayer(draw);
       const plotContext=spaceTarget.kind==='layout'?spaceTarget.layoutId:'model';
-      const plotEntry=plotPreview?plotStyles?.resolved?.[plotContext]?.[drawId]:null;
+      // Retained draws carry a group-qualified key; plot styles are resolved by
+      // the source draw id, which the retained path reconstructs from its path.
+      const plotDrawId=instancePlan?instancePlan.identity(draw,draw.blockPath):drawId;
+      const plotEntry=plotPreview?plotStyles?.resolved?.[plotContext]?.[plotDrawId]:null;
       let rootStyle=draw.style;
       try {rootStyle=plotAppearance(rootStyle,plotEntry?.root);} catch(error) {plotErrors.add(error.message);continue;}
       const rec = { id: drawId, draw, layerId, clipRegion:compileClips(drawingClips(draw,projection.viewports)), path: null, segments: null, fillPath: null, fillTriangles: null, fillRings: null, width: lineWidthPx(draw.style.lineWeight && draw.style.lineWeight.value), dash: dashFor(draw.style, draw.itemId), color: rgba(draw.style), bbox: null };
@@ -348,7 +351,7 @@ export function mountDrawingViewer(envelope) {
             if (!resolved) continue;
             const pen=plotEntry?.parts?.[part.id];
             let style,parts;
-            try {style=plotAppearance(resolved.style,pen);parts=plotParts(part,resolved.presentationParts,pen,plotContext,drawId);}
+            try {style=plotAppearance(resolved.style,pen);parts=plotParts(part,resolved.presentationParts,pen,plotContext,plotDrawId);}
             catch(error) {plotErrors.add(error.message);continue;}
             for (const renderedPart of parts) {
               const partDraw = { ...draw, style: resolved.style, visibility: resolved.visibility,
@@ -592,8 +595,14 @@ export function mountDrawingViewer(envelope) {
           updateInfinite(rec,inverse?transformBounds(view,inverse):view);
           if(!rec.path)continue;
           calls++;
-          setMatrix(matrix);ctx.setLineDash(rec.dash||[]);ctx.strokeStyle=rec.color;ctx.lineWidth=rec.width/localScale;
+          setMatrix(matrix);
+          ctx.save();
+          // The view window only bounds the parametric line; the source clip
+          // still cuts the painted stroke, matching the ordinary path.
+          if(rec.clipRegion.active){const bounds=localClipBounds(matrix);if(bounds)rec.clipRegion.apply(ctx,bounds);}
+          ctx.setLineDash(rec.dash||[]);ctx.strokeStyle=rec.color;ctx.lineWidth=rec.width/localScale;
           ctx.stroke(rec.path);
+          ctx.restore();
           continue;
         }
         setMatrix(matrix);calls++;

@@ -396,3 +396,115 @@ test('retained bounds read infinite lines from their navigation window', () => {
   assert.deepEqual(recordVisibleBounds({visibleGeometry:{bounds:navigationBounds}}), navigationBounds);
   assert.equal(recordVisibleBounds({}), null);
 });
+
+// --- review fixes: attached-attribute clips and per-copy variant state ---
+
+function attributeClipDocument(){
+  return {
+    extensions:{'org.cad-preview.style-inheritance/1':{
+      blockClips:{bi:{boundary:[[0,0],[10,0],[10,10],[0,10]], inverted:false}}
+    }},
+    drawing:{
+      drawings:{d:{id:'d', modelSpaceId:'root'}},
+      spaces:{root:space('root', [], ['bi']), block:space('block', ['e1'])},
+      entities:{e1:{id:'e1', layerId:'l0', localFromOwner:IDENTITY, geometry:{type:'line'},
+        style, sourceRefs:[{recordOffset:0}]}},
+      annotations:{att:{id:'att', layerId:'l0', ownerBlockInstanceId:'bi',
+        position:[0,0,0], direction:[1,0,0], text:'A', kind:'text',
+        semantic:{height:{value:2.5}}, sourceRefs:[{recordOffset:1}]}},
+      layouts:{}, viewports:{},
+      blockInstances:{bi:{id:'bi', definitionId:'B', layerId:'l0',
+        localFromBlock:translate(100,0), style}},
+      blocks:{B:{spaceId:'block'}},
+      layers:{l0:{id:'l0', drawingId:'d', visible:true, frozen:false, plot:true, defaultStyle:style}},
+      lineTypes:{}
+    }
+  };
+}
+
+test('retained block attributes keep their own block clip', () => {
+  const doc = attributeClipDocument();
+  doc.drawing.spaces.root.annotationIds.push('att');
+  const target = {kind:'model', spaceId:'root'};
+  const normal = projectDrawing(doc, target);
+  const plan = projectInstances(doc, target);
+  const expected = Object.values(normal.draws).find(draw => draw.kind === 'annotation');
+  const actual = Object.values(plan.projection.draws).find(draw => draw.kind === 'annotation');
+  assert.ok(expected && actual, 'attribute draw is projected in both paths');
+  assert.equal(actual.clipRegions.length, 1,
+    'the enclosing root group must not erase the attribute block clip');
+  for(let point=0; point<expected.clipRegions[0].boundary.length; point++)
+    assert.ok(closePoint(actual.clipRegions[0].boundary[point], expected.clipRegions[0].boundary[point]));
+  assert.ok(close(actual.clipRegions[0].boundary[0][0], 100));
+  assert.ok(closeMatrix(actual.localToSpace, expected.localToSpace));
+  assert.equal(plan.identity(actual, actual.blockPath),
+    identity('drawing-draw', ['d','annotation','att',[{instanceId:'bi',row:0,column:0}],'']));
+});
+
+function arrayVariantDocument(){
+  const row = index => [{instanceId:'bi', row:index, column:0}];
+  const drawId = index => identity('drawing-draw', ['d','entity','e1',row(index),'']);
+  return {
+    extensions:{
+      'org.cad-preview.style-inheritance/1':{lineTypePatterns:{special:[0,1,0,-1]}},
+      'org.cad-preview.annotation-presentation/1':{items:{
+        e1:{status:'ready', sourceKind:'LINE', parts:[{
+          id:'p1', layerId:'l0', ancestors:[],
+          style:{...style, lineTypeId:'special'},
+          patternedStroke:true,
+          drawVariants:{
+            [drawId(0)]:{status:'ready', lineTypeId:'special',
+              parts:[{representationId:'rep-special', role:'display', fillRule:'nonzero'}]},
+            [drawId(1)]:{status:'missing', lineTypeId:'special', parts:[], reason:'test-budget'}
+          }
+        }]}
+      }}
+    },
+    drawing:{
+      drawings:{d:{id:'d', modelSpaceId:'root'}},
+      spaces:{root:space('root', [], ['bi']), block:space('block', ['e1'])},
+      entities:{e1:{id:'e1', layerId:'l0', localFromOwner:IDENTITY, geometry:{type:'line'},
+        style:{...style, lineTypeId:'special'}, sourceRefs:[{recordOffset:0}]}},
+      annotations:{}, layouts:{}, viewports:{},
+      blockInstances:{bi:{id:'bi', definitionId:'B', layerId:'l0',
+        localFromBlock:translate(10,20), style,
+        array:{rows:2, columns:1, rowOffset:[0,10,0], columnOffset:[0,0,0]}}},
+      blocks:{B:{spaceId:'block'}},
+      layers:{l0:{id:'l0', drawingId:'d', visible:true, frozen:false, plot:true, defaultStyle:style}},
+      lineTypes:{}
+    }
+  };
+}
+
+test('array copies resolve their own draw variant state', () => {
+  const doc = arrayVariantDocument();
+  const target = {kind:'model', spaceId:'root'};
+  const normal = projectDrawing(doc, target);
+  const plan = projectInstances(doc, target);
+  const expected = Object.values(normal.draws), actual = Object.values(plan.projection.draws);
+  assert.equal(expected.length, 2);
+  assert.equal(actual.length, 2,
+    'the second copy must not reuse the first copy\'s ready variant');
+  assert.deepEqual(actual.map(draw => draw.availability).sort(), ['ready','unsupported']);
+  assert.deepEqual(actual.map(draw => draw.availability).sort(),
+    expected.map(draw => draw.availability).sort());
+  assert.equal(plan.groups.length, 3, 'root group plus one group per array copy');
+  const ordinaryKeys = new Set(Object.keys(normal.draws));
+  for(const draw of actual)
+    assert.ok(ordinaryKeys.has(plan.identity(draw, draw.blockPath)),
+      'retained path must reconstruct the source draw id used by plot styles');
+});
+
+test('plot variants also split array copies per instance path', () => {
+  const row = index => [{instanceId:'bi', row:index, column:0}];
+  const drawId = index => identity('drawing-draw', ['d','entity','e1',row(index),'']);
+  const doc = arrayVariantDocument();
+  delete doc.extensions['org.cad-preview.annotation-presentation/1'].items.e1.parts[0].drawVariants;
+  doc.extensions['org.cad-preview.annotation-presentation/1'].items.e1.parts[0].plotVariants = {model:{
+    [drawId(0)]:{status:'ready', parts:[{representationId:'plot-0', role:'display', fillRule:'nonzero'}]},
+    [drawId(1)]:{status:'ready', parts:[{representationId:'plot-1', role:'display', fillRule:'nonzero'}]}
+  }};
+  const target = {kind:'model', spaceId:'root'};
+  assert.equal(projectInstances(doc, target).groups.length, 3,
+    'plot variants can differ per copy, so the projection keeps one group per path');
+});

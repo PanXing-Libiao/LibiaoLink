@@ -47,6 +47,31 @@ export function projectInstances(document,target,presentationStyles=null){
  const ext=document.extensions?.['org.cad-preview.style-inheritance/1']||{};
  const groups=[],cache=new Map(),roots=[],drawGroups=new WeakMap(),layers=new WeakMap(),draws={};let current=null,currentSpace=null;
  const seenViewports=new WeakSet();
+ // drawVariants and plotVariants are keyed by the complete draw id and may differ
+ // per array copy, e.g. when a derivative budget ran out. Such spaces keep one
+ // group per instance path instead of sharing the first copy's resolved variant
+ // with every copy. Plot variants count even while preview is off because the
+ // viewer can enable preview without re-projecting.
+ const presentationItems=document.extensions?.['org.cad-preview.annotation-presentation/1']?.items||{};
+ const pathVariants=new Map(),sensing=new Set();
+ function pathVariantItem(itemId){
+  const entry=presentationItems[itemId];if(!entry)return false;
+  const parts=[...(entry.parts||[]),...(entry.scaleVariants||[]).flatMap(variant=>variant.parts||[])];
+  return parts.some(part=>Object.keys(part.drawVariants||{}).length||
+   Object.values(part.plotVariants||{}).some(context=>Object.keys(context||{}).length));
+ }
+ function pathVariantSpace(spaceId){
+  if(pathVariants.has(spaceId))return pathVariants.get(spaceId);
+  if(sensing.has(spaceId))return true;
+  sensing.add(spaceId);
+  const m=document.drawing,space=m.spaces[spaceId];
+  let value=!!space&&(space.entityIds.some(pathVariantItem)||space.annotationIds.some(pathVariantItem));
+  if(!value&&space)for(const id of space.blockInstanceIds){
+   const instance=m.blockInstances[id],definition=instance&&m.blocks[instance.definitionId];
+   if(definition&&pathVariantSpace(definition.spaceId)){value=true;break;}
+  }
+  sensing.delete(spaceId);pathVariants.set(spaceId,value);return value;
+ }
  const projection=projectDrawing(document,target,null,presentationStyles,{
   space(context,visit){
    const {spaceId,transform,path,viewport,chain,inheritedHidden,clips}=context;
@@ -71,7 +96,7 @@ export function projectInstances(document,target,presentationStyles=null){
    const effective=viewportClip?localClips.concat([viewportClip]):localClips;
    const key=canonical([spaceId,viewport?.id||null,chain.map(([style,layer,id])=>[style,layer,ext.modes?.[id]||{},
     {opacityMode:ext.entityState?.[id]?.opacityMode,opacity:ext.entityState?.[id]?.opacity}]),!!inheritedHidden,
-    effective.length?effective:null]);
+    effective.length?effective:null,pathVariantSpace(spaceId)?path:null]);
    const parent=current;let group=cache.get(key);
    if(!group){group={id:'group-'+groups.length,spaceId,entries:[],records:[],count:0,bounds:null};cache.set(key,group);groups.push(group);
     current=group;const previousSpace=currentSpace;currentSpace={clips:effective,viewport:!!viewport,path};visit(effective);currentSpace=previousSpace;current=parent;
@@ -81,9 +106,11 @@ export function projectInstances(document,target,presentationStyles=null){
    if(parent)parent.entries.push(node);else roots.push(node);
   },
   draw(sourceDrawId,draw,layer){
-   const clips=currentSpace?currentSpace.clips:[];
-   if(clips.length)draw.clipRegions=clips;else delete draw.clipRegions;
-   if(currentSpace?.viewport)draw.viewportClipLocal=true;else delete draw.viewportClipLocal;
+   // Attached block attributes arrive with their own child clip set (inherited
+   // clips plus the block clip). Keep it instead of replacing it with the
+   // enclosing group's list.
+   if(!draw.clipRegions?.length&&currentSpace?.clips?.length)draw.clipRegions=currentSpace.clips;
+   if(currentSpace?.viewport)draw.viewportClipLocal=true;
    const id=current.id+':'+sourceDrawId;draws[id]=draw;current.entries.push({kind:'draw',id,draw});drawGroups.set(draw,current);layers.set(draw,layer);
   }
  });
