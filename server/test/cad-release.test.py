@@ -53,11 +53,15 @@ class ReleaseTest(unittest.TestCase):
             dwg = release.describe(base, browser)
             self.assertNotEqual(dxf_dependency['engineVersion'], dwg['engineVersion'])
             self.assertEqual(dxf_dependency['formatVersions'], dwg['formatVersions'])
+            (base / 'core/unified/dwg-reader.json').write_text('{"version": "0.13.3"}')
+            dwg_spec = release.describe(base, browser)
+            self.assertNotEqual(dwg['formatVersions']['DXF'], dwg_spec['formatVersions']['DXF'])
+            self.assertEqual(dwg['formatVersions']['STEP'], dwg_spec['formatVersions']['STEP'])
             (base / 'core/__pycache__').mkdir()
             (base / 'core/__pycache__/local.pyc').write_bytes(b'cache')
             (base / 'core/tests').mkdir()
             (base / 'core/tests/test_local.py').write_text('test only')
-            self.assertEqual(dwg, release.describe(base, browser))
+            self.assertEqual(dwg_spec, release.describe(base, browser))
 
 
 if __name__ == '__main__':

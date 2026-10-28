@@ -4,7 +4,7 @@
 - 负责人：wmj
 - 分支：`wmj`
 - 阶段基线：[阶段 A 基线与裁剪切片](CAD二维显示结构治理-阶段A基线.md)；方案：[治理方案](CAD二维显示结构治理方案.md)
-- 本文件所在提交为阶段 D 收敛提交；阶段 C 最后提交 `d22685d`。
+- 本文件所在提交为阶段 D 收敛提交；阶段 C 最后提交 `d22685d`。§1.1 为同日评审修复，仍在本地 `wmj`，未推送、未部署。
 
 ## 1. 已收敛的分支
 
@@ -19,11 +19,23 @@
 
 仍保留的差异是**渲染后端**而非语义：普通路径在屏幕坐标绘制文字，保留实例在局部矩阵下绘制文字；两者共用 `drawing-text.js` 的排版结果。GPU 原型仍在仓库外，未接入，不参与本轮收敛。
 
+## 1.1 评审修复（2026-10-28）
+
+| 问题 | 修复 | 证据 |
+| --- | --- | --- |
+| 嵌套块的继承裁剪被重复变换：保留实例进入子组时重置局部变换，却仍把外层坐标的裁剪交给子组矩阵求逆 | `projectDrawing.walk` 的 visitor 回调改为把 visitor 换算后的空间局部裁剪传给 `visit`；视口 paper 边界只在所属源空间引入一次，再作为继承裁剪向下传递 | `drawing-instances.test.mjs` 的嵌套块裁剪用例（外层平移 100、内层平移 3，普通/保留均为 `[100,110]`）与嵌套视口用例 |
+| 保留实例丢失按具体实例生成的 `drawVariants`：visitor 把实例路径清空，投影用空路径查表 | visitor 保留完整实例路径用于 draw id；组节点只保存相对父组的路径，阵列复制仍共用同一组 | `drawing-instances.test.mjs` 的 per-instance variant 用例 |
+| 无限线进入保留实例路径时索引读取不存在的 `visibleGeometry` | 新增 `recordVisibleBounds`：有裁剪窗口时用 `navigationBounds`，无窗口的无限线标记为 unbounded，按帧裁剪绘制；适应视图保留无限线锚点回退 | `drawing-instances.test.mjs` 的 `recordVisibleBounds` 用例；浏览器 harness 未在本轮重跑 |
+| DXF 格式缓存键遗漏 DWG 外参解码器描述：`dwg-reader.json` 被归入不生成格式版本的 DWG 集合 | `build-release.py` 把 `unified/dwg-reader.json` 归入 DXF 身份（`dxf_dwg.py` 读取它解码 DXF 外参）；`dwg_adapter.py` 仍只在 engineDigest | `cad-release.test.py` 新增 DXF-only 变化断言 |
+| 单个超过 40 万项的阵列被普通投影上限拒绝，即使估算器已选择保留实例路径 | 普通投影保留 `maxDraws`；visitor 模式跳过单阵列上限，仅保留安全整数检查 | `drawing-instances.test.mjs` 的阵列预算用例 |
+
+评审修复后的已知边界：保留实例中的无裁剪无限线不进入 Flatbush 索引（可绘制，但本帧拾取不命中）；适配器端的 `MAX_PROJECTION_DRAWS` 仍会拒绝转换期展开超过 40 万项的单个阵列；同一保留组按首个阵列复制的 `drawVariants` 选择变体（同一阵列复制的线型度量相同，非等比缩放的独立实例仍按各自链路分组）。
+
 ## 2. 交付检查
 
 ```text
 node --test server/cad-engine/core/tests/drawing-*.test.mjs
-# 34/34 pass
+# 39/39 pass
 
 node server/cad-engine/core/tests/check_drawing_instances.mjs
 node server/cad-engine/core/tests/check_retained_clip_slice.mjs
@@ -54,19 +66,20 @@ cd server && python3 test/cad-release.test.py
 
 - 已按 [ADR-039](adr/ADR-039-CAD版本拆分与缓存键.md) 拆分版本：`engineVersion` 只含服务器引擎/运行时，`formatVersion` 按 STEP/DXF 独立计算并作为 `cad_artifacts` 缓存键，`viewerVersion` 记录浏览器文件；`bridge.py` 的本地任务恢复摘要改用 `engineDigest`。
 - 本文件所在提交的 `source.json`/`cad-release.ts` 记录 `engineDigest`、`viewerDigest`、`formatVersions` 和 `viewerVersion`；当前值为：
-  - `engineVersion = step-0.3.3/be95badeb7e489afc0d9fb7d8b2c6d3ccab8a5b9e28fea962d1d493b96c68941/gateway-1`
-  - `viewerVersion = viewer-2dad7eb8d44cb5e614e54a0b42410272be80d8e9996e65f8276f17d9ff36b45f`
-  - `formatVersions.STEP = step-0.3.3/59b471708acfac401d9c7381a8ef32b4856f0def5ea7df74045d8f0a2f8dd4a9/gateway-1`
-  - `formatVersions.DXF = dxf-0.15.0/cada2ab45c53d1857908bea15b2873535b278320f4cdb3f8bb16ea2fb645b8e0/gateway-1`
-  迁移 `0069` 为旧产物回填旧 `engine_version` 作为 `format_version`，首次访问新格式版本时重建一次；之后浏览器或单一格式改动不会触发另一格式重建。
+  - `engineVersion = step-0.3.3/be95badeb7e489afc0d9fb7d8b2c6d3ccab8a5b9e28fea962d1d493b96c68941/gateway-1`（本次未变）
+  - `viewerVersion = viewer-77b7f5ec21a63fc51f1c76bb37095977855f85ebe8569920092a71632dcad183`
+  - `formatVersions.STEP = step-0.3.3/59b471708acfac401d9c7381a8ef32b4856f0def5ea7df74045d8f0a2f8dd4a9/gateway-1`（本次未变）
+  - `formatVersions.DXF = dxf-0.15.0/556c616e28de73ad28a22386b4cb8bae923752df8cfd082cbfd59c47e801e542/gateway-1`（因 `dwg-reader.json` 进入 DXF 身份而变化）
+  - `releaseDigest = c63abd4364f0cfdec504ab40f69103b86e2267af81c087ff6e8ab96c7f02bbd3`
+  迁移 `0069` 为旧产物回填旧 `engine_version` 作为 `format_version`，首次访问新格式版本时重建一次；之后浏览器或单一格式改动不会触发另一格式重建。DXF 键本次再次变化，DXF 产物会按 `format_version` 重建一次，旧产物保留。
 - 迁移 `0069` 改变唯一键，必须先停止 API/worker 再迁移并整体升级；不能只回退镜像。
-- 回滚：本批提交未推送、未部署；本地回滚到 `fff7428` 即可恢复阶段 C 前的二维行为。若已部署，需停 API/worker，恢复 `engine_version` 唯一键、移除 `format_version`，再回退 API/worker/CAD 镜像与 `/cad-viewer/` 静态资源；不要只回滚前端，避免 manifest/引擎版本不一致。
+- 回滚：本批提交未推送、未部署；本地回滚到 `8fe3784` 即可恢复到评审修复前（版本拆分已包含在该提交），阶段 C 前为 `fff7428`。若已部署，需停 API/worker，恢复 `engine_version` 唯一键、移除 `format_version`，再回退 API/worker/CAD 镜像与 `/cad-viewer/` 静态资源；不要只回滚前端，避免 manifest/引擎版本不一致。
 - 未执行：真实公司账号浏览器验收、生产部署、独立 `CAD逆向` 工程能力矩阵同步（该工程不在本仓库）。
 
 ## 5. 未完成与后续任务
 
 1. 独立工程登记：阶段 A/B/C/D 的能力矩阵、提交和证据需在 `CAD逆向` 工程同步；本仓库只记录宿主基线与指纹。
-2. 版本拆分/缓存策略：把引擎、浏览器、格式版本拆开，避免二维改动触发 STEP 重建。
-3. 剩余能力：竖排/镜像/堆叠、复杂线型相位、打印样式 pen、PDF/DWF/DGN 的双路径证据。
+2. 版本拆分/缓存策略：已完成（ADR-039）；本次评审修复再次变更 DXF 格式键，部署时 DXF 产物重建一次。
+3. 剩余能力：竖排/镜像/堆叠、复杂线型相位、打印样式 pen、PDF/DWF/DGN 的双路径证据；无裁剪无限线在保留路径可绘制但暂不进入空间索引；适配器转换期仍拒绝展开后超过 40 万项的单个阵列。
 4. 目标设备/WebView 实测与真实公司账号验收。
 5. 部署窗口：迁移、API、worker、CAD 镜像、静态资源、source.json 必须同批发布，并先跑 STEP 冒烟。

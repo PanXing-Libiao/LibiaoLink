@@ -211,8 +211,11 @@ export function projectDrawing(document,target,effectiveLayers=null,presentation
  }
  function walk(spaceId,transform,path,viewport,chain,inheritedHidden,clips=[]){
   if(visitor?.space){
-   visitor.space({spaceId,transform,path,viewport,chain,inheritedHidden,clips},()=>{
-    visit(members(m.spaces[spaceId]),IDENTITY,[],viewport,chain,inheritedHidden,clips);
+   // Retained groups repaint space-local geometry under each instance matrix.
+   // The visitor returns the inherited clips re-expressed in this space's frame;
+   // keeping the parent-frame clips here would re-apply the child matrix to them.
+   visitor.space({spaceId,transform,path,viewport,chain,inheritedHidden,clips},localClips=>{
+    visit(members(m.spaces[spaceId]),IDENTITY,path,viewport,chain,inheritedHidden,localClips??clips);
    });
   }else visit(members(m.spaces[spaceId]),transform,path,viewport,chain,inheritedHidden,clips);
  }
@@ -245,7 +248,12 @@ export function projectDrawing(document,target,effectiveLayers=null,presentation
     const array=item.array;
     const rowOffset=array?.rowOffset||[0,0,0],columnOffset=array?.columnOffset||[0,0,0];
     const rows=array&&rowOffset.some(v=>v!==0)?array.rows:1,columns=array&&columnOffset.some(v=>v!==0)?array.columns:1;
-    if(rows*columns>MAX)throw new Error('drawing-projection-over-limit');
+    const copies=rows*columns;
+    if(!Number.isSafeInteger(copies))throw new Error('drawing-instance-count-overflow');
+    // The ordinary projector pays for every expanded draw. Retained projection
+    // keeps one source copy per unique chain/clip group, so a single array may
+    // legitimately exceed the ordinary draw budget.
+    if(!visitor&&copies>MAX)throw new Error('drawing-projection-over-limit');
     const hidden=inheritedHidden||entityVisibility(itemId,layerId,viewport)==='hidden';
     const childChain=chain.concat([[item.style,layerId,itemId]]);
     for(let row=0;row<rows;row++)for(let column=0;column<columns;column++){

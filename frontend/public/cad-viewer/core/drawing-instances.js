@@ -16,6 +16,13 @@ export const INSTANCE_DRAW_THRESHOLD=400000;
 export function shouldProjectInstances(target,count,force=false){
  return (target.kind==='model'||target.kind==='layout')&&(force||count>INSTANCE_DRAW_THRESHOLD);
 }
+// Infinite source lines have no finite visible geometry until the current view
+// is known. Retained indexing uses a clipped navigation window when one exists
+// and paints unbounded lines per frame instead of reading visibleGeometry.
+export function recordVisibleBounds(rec){
+ if(rec.infinite)return rec.navigationBounds||null;
+ return rec.visibleGeometry?.bounds||null;
+}
 
 export function estimateDrawingDraws(document,target){
  const m=document.drawing,memo=new Map(),active=new Set(),attached=new Map();
@@ -39,9 +46,13 @@ export function estimateDrawingDraws(document,target){
 export function projectInstances(document,target,presentationStyles=null){
  const ext=document.extensions?.['org.cad-preview.style-inheritance/1']||{};
  const groups=[],cache=new Map(),roots=[],drawGroups=new WeakMap(),layers=new WeakMap(),draws={};let current=null,currentSpace=null;
+ const seenViewports=new WeakSet();
  const projection=projectDrawing(document,target,null,presentationStyles,{
   space(context,visit){
    const {spaceId,transform,path,viewport,chain,inheritedHidden,clips}=context;
+   // Group nodes carry the path relative to their parent group; the visitor's
+   // draw ids keep the absolute path so per-instance variants still resolve.
+   const parentPath=currentSpace?.path||[];
    // Block clips and viewport boundaries arrive in the parent/paper coordinate
    // system; retained draws are space-local, so store the inverse-mapped form.
    const inverse=inverse2D(transform);
@@ -49,22 +60,30 @@ export function projectInstances(document,target,presentationStyles=null){
     throw new Error('instanced-projection-clip-transform-not-invertible');
    const localClips=clips.map(clip=>({...clip,
     boundary:inverse?clip.boundary.map(point=>transformPoint(inverse,...point)):clip.boundary}));
-   const viewportClip=viewport?.clipBoundary?.length?{boundary:(inverse?viewport.clipBoundary.map(point=>transformPoint(inverse,...point)):viewport.clipBoundary),inverted:false}:null;
+   // The paper viewport boundary is introduced once, in its source space, then
+   // inherited like a block clip. Re-mapping it at every nested group would clip
+   // in the wrong frame; nested spaces only convert the already-local boundary.
+   let viewportClip=null;
+   if(viewport?.clipBoundary?.length&&!seenViewports.has(viewport)){
+    seenViewports.add(viewport);
+    viewportClip={boundary:(inverse?viewport.clipBoundary.map(point=>transformPoint(inverse,...point)):viewport.clipBoundary),inverted:false};
+   }
+   const effective=viewportClip?localClips.concat([viewportClip]):localClips;
    const key=canonical([spaceId,viewport?.id||null,chain.map(([style,layer,id])=>[style,layer,ext.modes?.[id]||{},
     {opacityMode:ext.entityState?.[id]?.opacityMode,opacity:ext.entityState?.[id]?.opacity}]),!!inheritedHidden,
-    localClips.length?localClips:null]);
+    effective.length?effective:null]);
    const parent=current;let group=cache.get(key);
    if(!group){group={id:'group-'+groups.length,spaceId,entries:[],records:[],count:0,bounds:null};cache.set(key,group);groups.push(group);
-    current=group;const previousSpace=currentSpace;currentSpace={clips:localClips,viewportClip};visit();currentSpace=previousSpace;current=parent;
+    current=group;const previousSpace=currentSpace;currentSpace={clips:effective,viewport:!!viewport,path};visit(effective);currentSpace=previousSpace;current=parent;
     for(const entry of group.entries){entry.order=group.count;group.count+=entry.kind==='group'?entry.group.count:1;}
    }
-   const node={kind:'group',group,matrix:transform,path};
+   const node={kind:'group',group,matrix:transform,path:path.slice(parentPath.length)};
    if(parent)parent.entries.push(node);else roots.push(node);
   },
   draw(sourceDrawId,draw,layer){
-   const clips=currentSpace?[...currentSpace.clips,...(currentSpace.viewportClip?[currentSpace.viewportClip]:[])]:[];
+   const clips=currentSpace?currentSpace.clips:[];
    if(clips.length)draw.clipRegions=clips;else delete draw.clipRegions;
-   if(currentSpace?.viewportClip)draw.viewportClipLocal=true;
+   if(currentSpace?.viewport)draw.viewportClipLocal=true;else delete draw.viewportClipLocal;
    const id=current.id+':'+sourceDrawId;draws[id]=draw;current.entries.push({kind:'draw',id,draw});drawGroups.set(draw,current);layers.set(draw,layer);
   }
  });

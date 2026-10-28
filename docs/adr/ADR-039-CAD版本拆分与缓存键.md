@@ -13,7 +13,7 @@
 - **engineVersion**：服务器引擎 bundle，只由引擎文件（`core/`）和运行时文件、`stepRelease`/`dxfRelease`/网关协议计算，**不含浏览器文件**。继续作为 CAD 服务 `X-CAD-Engine-Version` 和 `cad_artifacts.engine_version` 的部署/审计身份。
 - **formatVersion**：每个格式独立，由共享引擎/运行时 + 该格式专属文件计算：
   - STEP：`parser/`、`unified/step_*`、`vendor/cadcraft-display/`、STEP 入口与依赖；
-  - DXF：`unified/dxf_*`、`vendor/ezdxf/`、DXF 入口与依赖；
+  - DXF：`unified/dxf_*`、`vendor/ezdxf/`、DXF 入口与依赖，以及 `unified/dwg-reader.json`（DXF 外参解码读取其版本/来源描述，属于 DXF 输出身份）；`unified/dwg_adapter.py` 仍只进入 engineDigest，未开放的原生 DWG 不生成格式版本；
   - 共享文件（validation/canonical/schema/transport/queue 等）变化会同时改变两个格式版本，这是保守且有意的。
   `cad_artifacts.format_version` 成为产物唯一键的一部分；`engine_version` 只保留部署/审计含义，不再参与唯一键。
 - **viewerVersion**：只由 `frontend/public/cad-viewer/core/` 计算，写入 `source.json`/`cad-release.ts`，用于部署追溯与静态资源版本核对；不进入引擎或格式缓存键。当前不改 `CadViewer` API 契约；如后续需要浏览器灰度，再单独增加可选字段。
@@ -33,6 +33,6 @@
 
 ## 验证
 
-- `server/test/cad-release.test.py`：浏览器改动只改 viewerVersion/releaseDigest；STEP-only 改动只改 STEP formatVersion；DXF-only 改动只改 DXF formatVersion；STEP/DXF 依赖分别只影响各自格式；共享运行时改动影响全部。
+- `server/test/cad-release.test.py`：浏览器改动只改 viewerVersion/releaseDigest；STEP-only 改动只改 STEP formatVersion；DXF-only 改动只改 DXF formatVersion；STEP/DXF 依赖分别只影响各自格式；`dwg-reader.json` 变化只改 DXF formatVersion；共享运行时改动影响全部。
 - `cad-archive-*` 定向测试、服务端 typecheck、`build-release.py --check`。
 - 迁移 0069 的回填/唯一键行为需在测试库执行后再部署；当前没有生产数据变更。

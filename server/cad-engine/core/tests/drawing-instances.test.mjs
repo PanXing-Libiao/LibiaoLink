@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {projectInstances, estimateDrawingDraws, shouldProjectInstances, INSTANCE_DRAW_THRESHOLD} from '../../../../frontend/public/cad-viewer/core/drawing-instances.js';
+import {projectInstances, estimateDrawingDraws, shouldProjectInstances, recordVisibleBounds, multiply, transformPoint, INSTANCE_DRAW_THRESHOLD} from '../../../../frontend/public/cad-viewer/core/drawing-instances.js';
 import {drawingClips} from '../../../../frontend/public/cad-viewer/core/drawing-clipping.js';
-import {identity} from '../../../../frontend/public/cad-viewer/core/drawing-projection.js';
+import {projectDrawing, identity} from '../../../../frontend/public/cad-viewer/core/drawing-projection.js';
 
 const IDENTITY = [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
 const translate = (x, y) => [1,0,0,0,0,1,0,0,0,0,1,0,x,y,0,1];
@@ -190,4 +190,209 @@ test('layer, viewport and part opacity combine through the retained projection',
   assert.equal(draw.style.opacity, 0.25);
   assert.deepEqual(draw.presentationStyles.map(row => row.style.opacity), [0.4,0.4]);
   assert.deepEqual(draw.presentationStyles[1].visibilityLayerIds, ['l1','l0','l2']);
+});
+
+// --- review fixes: nested clip frames, per-instance variants, limits ---
+
+const close = (a,b) => Math.abs(a-b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+const closePoint = (a,b) => close(a[0],b[0]) && close(a[1],b[1]);
+const closeMatrix = (a,b) => a.every((value,index)=>close(value,b[index]));
+const style = paint();
+const space = (id, entityIds=[], blockInstanceIds=[]) =>
+  ({id, drawingId:'d', entityIds, annotationIds:[], blockInstanceIds});
+
+function flatten(plan){
+  const out = {};
+  let order = 0;
+  function visit(node, parentMatrix, parentPath){
+    const matrix = multiply(parentMatrix, node.matrix);
+    const path = parentPath.concat(node.path);
+    for(const entry of node.group.entries){
+      if(entry.kind === 'group'){ visit(entry, matrix, path); continue; }
+      const draw = {...entry.draw, blockPath:path,
+        localToSpace:multiply(matrix, entry.draw.localToSpace), drawOrder:order++};
+      if(entry.draw.clipRegions) draw.clipRegions = entry.draw.clipRegions.map(clip=>({
+        ...clip, boundary:clip.boundary.map(point=>transformPoint(matrix, ...point))}));
+      out[identity('drawing-draw',['d',draw.kind,draw.itemId,path,draw.viewportId||''])] = draw;
+    }
+  }
+  for(const root of plan.roots) visit(root, IDENTITY, []);
+  return out;
+}
+
+function nestedClipDocument(){
+  return {
+    extensions:{'org.cad-preview.style-inheritance/1':{
+      // The clip boundary lives in the instanced block, so this maps to
+      // [100,110] in model space once the outer INSERT is applied.
+      blockClips:{outer:{boundary:[[0,0],[10,0],[10,10],[0,10]], inverted:false}}
+    }},
+    drawing:{
+      drawings:{d:{id:'d', modelSpaceId:'root'}},
+      spaces:{root:space('root', [], ['outer']), outerSpace:space('outerSpace', [], ['inner']),
+        leaf:space('leaf', ['e1'])},
+      entities:{e1:{id:'e1', layerId:'l0', localFromOwner:IDENTITY, geometry:{type:'line'},
+        style, sourceRefs:[{recordOffset:0}]}},
+      annotations:{}, layouts:{}, viewports:{},
+      blockInstances:{
+        outer:{id:'outer', definitionId:'A', layerId:'l0', localFromBlock:translate(100,0), style},
+        inner:{id:'inner', definitionId:'B', layerId:'l0', localFromBlock:translate(3,0), style}
+      },
+      blocks:{A:{spaceId:'outerSpace'}, B:{spaceId:'leaf'}},
+      layers:{l0:{id:'l0', drawingId:'d', visible:true, frozen:false, plot:true, defaultStyle:style}},
+      lineTypes:{}
+    }
+  };
+}
+
+test('nested retained groups inherit a block clip in its own local frame', () => {
+  const doc = nestedClipDocument();
+  const target = {kind:'model', spaceId:'root'};
+  const normal = projectDrawing(doc, target);
+  const plan = projectInstances(doc, target);
+  const flattened = flatten(plan);
+  const keys = Object.keys(normal.draws);
+  assert.deepEqual(Object.keys(flattened).sort(), keys.sort());
+  for(const key of keys){
+    const expected = normal.draws[key], actual = flattened[key];
+    assert.ok(closeMatrix(actual.localToSpace, expected.localToSpace));
+    assert.equal(actual.clipRegions.length, expected.clipRegions.length);
+    for(let index=0; index<expected.clipRegions.length; index++){
+      const a = expected.clipRegions[index], b = actual.clipRegions[index];
+      for(let point=0; point<a.boundary.length; point++)
+        assert.ok(closePoint(b.boundary[point], a.boundary[point]));
+    }
+    // Ordinary clip is [100,110]; the double-mapped retained clip was [200,210].
+    assert.ok(close(expected.clipRegions[0].boundary[0][0], 100));
+    assert.ok(close(actual.clipRegions[0].boundary[0][0], 100));
+  }
+});
+
+function nestedViewportDocument(){
+  return {
+    extensions:{'org.cad-preview.style-inheritance/1':{}},
+    drawing:{
+      drawings:{d:{id:'d', modelSpaceId:'root'}},
+      spaces:{root:space('root', [], ['outer']), outerSpace:space('outerSpace', ['e1']),
+        paper:space('paper')},
+      entities:{e1:{id:'e1', layerId:'l0', localFromOwner:IDENTITY, geometry:{type:'line'},
+        style, sourceRefs:[{recordOffset:0}]}},
+      annotations:{},
+      blockInstances:{outer:{id:'outer', definitionId:'A', layerId:'l0',
+        localFromBlock:translate(10,0), style}},
+      blocks:{A:{spaceId:'outerSpace'}},
+      layers:{l0:{id:'l0', drawingId:'d', visible:true, frozen:false, plot:true, defaultStyle:style}},
+      layouts:{lay1:{id:'lay1', drawingId:'d', paperSpaceId:'paper', viewportIds:['vp1']}},
+      viewports:{vp1:{id:'vp1', enabled:true, sourceSpaceId:'root',
+        modelToPaper:translate(50,0), annotationScale:1,
+        clipBoundary:[[50,0],[60,0],[60,10],[50,10]], frozenLayerIds:[]}},
+      lineTypes:{}
+    }
+  };
+}
+
+test('nested retained groups inherit the paper viewport clip without re-mapping it', () => {
+  const doc = nestedViewportDocument();
+  const target = {kind:'layout', layoutId:'lay1'};
+  const normal = projectDrawing(doc, target);
+  const plan = projectInstances(doc, target);
+  const flattened = flatten(plan);
+  const keys = Object.keys(normal.draws);
+  assert.deepEqual(Object.keys(flattened).sort(), keys.sort());
+  for(const key of keys){
+    const expected = normal.draws[key], actual = flattened[key];
+    const expectedClips = drawingClips(expected, normal.viewports);
+    const actualClips = drawingClips(actual, plan.projection.viewports);
+    assert.equal(actualClips.length, expectedClips.length);
+    for(let index=0; index<expectedClips.length; index++)
+      for(let point=0; point<expectedClips[index].boundary.length; point++)
+        assert.ok(closePoint(actualClips[index].boundary[point], expectedClips[index].boundary[point]));
+    assert.equal(actual.viewportClipLocal, true);
+  }
+});
+
+function variantDocument(){
+  const drawId = identity('drawing-draw', ['d','entity','e1',[{instanceId:'bi', row:0, column:0}],'']);
+  return {
+    extensions:{
+      'org.cad-preview.style-inheritance/1':{lineTypePatterns:{special:[0,1,0,-1]}},
+      'org.cad-preview.annotation-presentation/1':{items:{
+        e1:{status:'ready', sourceKind:'LINE', parts:[{
+          id:'p1', layerId:'l0', ancestors:[],
+          style:{...style, lineTypeId:'special'},
+          patternedStroke:true,
+          drawVariants:{[drawId]:{status:'ready', lineTypeId:'special',
+            parts:[{representationId:'rep-special', role:'display', fillRule:'nonzero'}]}}
+        }]}
+      }}
+    },
+    drawing:{
+      drawings:{d:{id:'d', modelSpaceId:'root'}},
+      spaces:{root:space('root', [], ['bi']), block:space('block', ['e1'])},
+      entities:{e1:{id:'e1', layerId:'l0', localFromOwner:IDENTITY, geometry:{type:'line'},
+        style:{...style, lineTypeId:'special'}, sourceRefs:[{recordOffset:0}]}},
+      annotations:{}, layouts:{}, viewports:{},
+      blockInstances:{bi:{id:'bi', definitionId:'B', layerId:'l0',
+        localFromBlock:translate(10,20), style}},
+      blocks:{B:{spaceId:'block'}},
+      layers:{l0:{id:'l0', drawingId:'d', visible:true, frozen:false, plot:true, defaultStyle:style}},
+      lineTypes:{}
+    }
+  };
+}
+
+test('retained groups resolve per-instance draw variants from the instance path', () => {
+  const doc = variantDocument();
+  const target = {kind:'model', spaceId:'root'};
+  const normal = projectDrawing(doc, target);
+  const plan = projectInstances(doc, target);
+  const expected = Object.values(normal.draws);
+  const actual = Object.values(plan.projection.draws);
+  assert.equal(expected.length, 1);
+  assert.equal(actual.length, 1);
+  const selected = identity('representation', ['e1','linetype',['rep-special']]);
+  assert.equal(expected[0].displayRepresentationId, selected);
+  assert.equal(actual[0].displayRepresentationId, selected,
+    'a retained draw must not lose the variant keyed by its full instance path');
+  assert.deepEqual(actual[0].presentationStyles[0].presentationParts,
+    [{representationId:'rep-special', role:'display', fillRule:'nonzero'}]);
+});
+
+function arrayDocument(maxDraws){
+  return {
+    extensions:{'org.cad-preview.style-inheritance/1':{projectionLimits:{maxDraws}}},
+    drawing:{
+      drawings:{d:{id:'d', modelSpaceId:'root'}},
+      spaces:{root:space('root', [], ['bi']), block:space('block', ['e1'])},
+      entities:{e1:{id:'e1', layerId:'l0', localFromOwner:IDENTITY, geometry:{type:'line'},
+        style, sourceRefs:[{recordOffset:0}]}},
+      annotations:{}, layouts:{}, viewports:{},
+      blockInstances:{bi:{id:'bi', definitionId:'B', layerId:'l0',
+        localFromBlock:translate(10,20), style,
+        array:{rows:3, columns:1, rowOffset:[0,1,0], columnOffset:[0,0,0]}}},
+      blocks:{B:{spaceId:'block'}},
+      layers:{l0:{id:'l0', drawingId:'d', visible:true, frozen:false, plot:true, defaultStyle:style}},
+      lineTypes:{}
+    }
+  };
+}
+
+test('a single array above the ordinary draw budget stays on the retained path', () => {
+  const doc = arrayDocument(2);
+  const target = {kind:'model', spaceId:'root'};
+  assert.throws(()=>projectDrawing(doc, target), /drawing-projection-over-limit/);
+  assert.equal(estimateDrawingDraws(doc, target), 3);
+  const plan = projectInstances(doc, target);
+  assert.equal(plan.count, 3);
+  assert.equal(Object.keys(plan.projection.draws).length, 1,
+    'all array copies share one source draw');
+  assert.equal(plan.groups.length, 2, 'root group plus one retained block group');
+});
+
+test('retained bounds read infinite lines from their navigation window', () => {
+  const navigationBounds = {minX:0, minY:0, maxX:10, maxY:10};
+  assert.equal(recordVisibleBounds({infinite:{kind:'xline'}, navigationBounds:null}), null);
+  assert.deepEqual(recordVisibleBounds({infinite:{kind:'xline'}, navigationBounds}), navigationBounds);
+  assert.deepEqual(recordVisibleBounds({visibleGeometry:{bounds:navigationBounds}}), navigationBounds);
+  assert.equal(recordVisibleBounds({}), null);
 });

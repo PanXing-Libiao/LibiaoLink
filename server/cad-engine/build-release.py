@@ -38,7 +38,11 @@ def format_of(name):
         return 'STEP'
     if (name.startswith(('unified/dxf_', 'vendor/ezdxf/')) or name == 'dxf_convert.py'):
         return 'DXF'
-    if name in ('unified/dwg_adapter.py', 'unified/dwg-reader.json'):
+    # LibreDWG decodes DWG external references inside the DXF path and its
+    # version/spec is part of that output, so it must key DXF artifacts too.
+    if name == 'unified/dwg-reader.json':
+        return 'DXF'
+    if name == 'unified/dwg_adapter.py':
         return 'DWG'
     return 'SHARED'
 

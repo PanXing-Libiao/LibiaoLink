@@ -100,7 +100,7 @@ python3 server/cad-engine/build-release.py
 python3 server/cad-engine/build-release.py --check
 ```
 
-从 LibiaoLink 根目录运行。Python 唯一源码位于 `core/`，浏览器唯一源码位于 `frontend/public/cad-viewer/core/`；直接在本仓修改并验证，随后生成 `source.json` 与 `cad-release.ts`。源提交只作导入来源记录，发布版本按实际源码、固定依赖及网关内容生成；修改后必须重新生成，`--check` 检查漂移。`source.json` 现在分别记录 `engineDigest`（服务器引擎/运行时）、`viewerDigest`（浏览器）和 `formatVersions.STEP/DXF`；`cad_artifacts.format_version` 只随对应格式的共享/专属源码及依赖变化，浏览器改动不会使任何产物缓存失效。
+从 LibiaoLink 根目录运行。Python 唯一源码位于 `core/`，浏览器唯一源码位于 `frontend/public/cad-viewer/core/`；直接在本仓修改并验证，随后生成 `source.json` 与 `cad-release.ts`。源提交只作导入来源记录，发布版本按实际源码、固定依赖及网关内容生成；修改后必须重新生成，`--check` 检查漂移。`source.json` 现在分别记录 `engineDigest`（服务器引擎/运行时）、`viewerDigest`（浏览器）和 `formatVersions.STEP/DXF`；`cad_artifacts.format_version` 只随对应格式的共享/专属源码及依赖变化，浏览器改动不会使任何产物缓存失效。DXF 外参解码读取的 `core/unified/dwg-reader.json` 属于 DXF 格式身份；原生 DWG 适配器 `dwg_adapter.py` 只进入 `engineDigest`。
 
 本机多格式工作台同样使用上述源码：
 

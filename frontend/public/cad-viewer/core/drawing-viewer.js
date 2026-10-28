@@ -6,7 +6,7 @@ import {projectDrawing, projectBlock} from './drawing-projection.js?v=dxf-0.15.0
 import {clipInfiniteLine, gradientField, triangleBoundarySegments, traceStrokeSegments} from './drawing-2d.js?v=dxf-2d-0.5.0';
 import {drawingClips, compileClips, triangulateRings, insideRing} from './drawing-clipping.js?v=dxf-0.15.0';
 import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.15.0';
-import {estimateDrawingDraws, projectInstances, shouldProjectInstances, multiply, transformPoint, inverse2D, transformBounds, union, I} from './drawing-instances.js';
+import {estimateDrawingDraws, projectInstances, shouldProjectInstances, recordVisibleBounds, multiply, transformPoint, inverse2D, transformBounds, union, I} from './drawing-instances.js';
 import Flatbush from './vendor/flatbush.js';
 import {TEXT_FONT, layoutAnnotationText, textOffsets, textWorldCorners} from './drawing-text.js?v=dxf-0.15.0';
 import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentation} from './drawing-pattern.js?v=dxf-0.15.0';
@@ -516,14 +516,16 @@ export function mountDrawingViewer(envelope) {
   function buildInstanceIndexes(){
     if(!instancePlan)return;
     const active=new Set(),done=new Set();
-    function compile(group){
+    instancePlan.infiniteAnchor=null;
+    function compile(group,matrix){
       if(done.has(group))return;if(active.has(group))throw new Error('cyclic-instance-plan');active.add(group);
       const byId=new Map();for(const rec of group.records){const rows=byId.get(rec.id)||[];rows.push(rec);byId.set(rec.id,rows);}
-      group.bounds=null;group.paint=[];group.hits=[];group.visibleCount=0;group.byKind={entity:0,annotation:0};let batch=null;
+      group.bounds=null;group.unbounded=false;group.paint=[];group.hits=[];group.visibleCount=0;group.byKind={entity:0,annotation:0};let batch=null;
       for(const entry of group.entries){
         if(entry.kind==='group'){
-          compile(entry.group);entry.bounds=transformBounds(entry.group.bounds,entry.matrix);
-          group.bounds=union(group.bounds,entry.bounds);group.paint.push(entry);if(entry.bounds)group.hits.push(entry);batch=null;
+          compile(entry.group,multiply(matrix,entry.matrix));entry.bounds=transformBounds(entry.group.bounds,entry.matrix);
+          group.bounds=union(group.bounds,entry.bounds);group.unbounded=group.unbounded||entry.group.unbounded;
+          group.paint.push(entry);if(entry.bounds)group.hits.push(entry);batch=null;
           group.visibleCount+=entry.group.visibleCount;
           for(const kind of ['entity','annotation'])group.byKind[kind]+=entry.group.byKind[kind];
           continue;
@@ -531,14 +533,21 @@ export function mountDrawingViewer(envelope) {
         const visible=[];
         for(const rec of byId.get(entry.id)||[]){
           if(!drawVisible(rec))continue;
-          const box=rec.visibleGeometry.bounds;if(!box)continue;
+          // Infinite lines get a finite navigation box only when a clip window
+          // bounds them; unbounded ones are painted per frame and stay unindexed.
+          const box=recordVisibleBounds(rec);
+          if(!box&&!rec.infinite)continue;
+          if(!box&&!instancePlan.infiniteAnchor)
+            instancePlan.infiniteAnchor=transformPoint(matrix,...rec.infinite.origin);
           visible.push([rec,box]);
         }
         if(visible.length){group.visibleCount++;group.byKind[visible[0][0].draw.kind]++;}
         for(const [rec,box] of visible){
-          rec.instanceOrder=entry.order;group.bounds=union(group.bounds,box);group.hits.push({kind:'record',rec,bounds:box,order:entry.order});
+          rec.instanceOrder=entry.order;
+          if(box)group.bounds=union(group.bounds,box);else group.unbounded=true;
+          if(box)group.hits.push({kind:'record',rec,bounds:box,order:entry.order});
           const opaque=(rec.draw.style.opacity??1)===1;
-          if(rec.path&&!rec.fillPath&&!rec.textEntry&&!rec.pointMark&&!rec.infinite&&!rec.raster&&!rec.clipRegion.active&&opaque){
+          if(box&&rec.path&&!rec.fillPath&&!rec.textEntry&&!rec.pointMark&&!rec.infinite&&!rec.raster&&!rec.clipRegion.active&&opaque){
             const key=JSON.stringify([rec.color,rec.width,rec.dash]);
             if(!batch||batch.key!==key||batch.count>=8192){batch={kind:'stroke',key,path:new Path2D(),color:rec.color,width:rec.width,dash:rec.dash,bounds:null,count:0};group.paint.push(batch);}
             batch.path.addPath(rec.path);batch.bounds=union(batch.bounds,box);batch.count++;
@@ -549,7 +558,7 @@ export function mountDrawingViewer(envelope) {
       if(group.index){for(const row of group.hits){const b=row.bounds;group.index.add(b.minX,b.minY,b.maxX,b.maxY);}group.index.finish();}
       active.delete(group);done.add(group);
     }
-    for(const node of instancePlan.roots)compile(node.group);
+    for(const node of instancePlan.roots)compile(node.group,node.matrix);
     instanceLayerKey=JSON.stringify([...userLayers]);
   }
   function refreshInstanceLayers(){if(instancePlan&&instanceLayerKey!==JSON.stringify([...userLayers]))buildInstanceIndexes();}
@@ -565,11 +574,11 @@ export function mountDrawingViewer(envelope) {
     function localClipBounds(matrix){const inverse=inverse2D(matrix);return inverse?transformBounds(view,inverse):null;}
     function paint(node,parent){
       const matrix=multiply(parent,node.matrix);
-      if(!intersects(transformBounds(node.group.bounds,matrix)))return;
+      if(!node.group.unbounded&&!intersects(transformBounds(node.group.bounds,matrix)))return;
       const localScale=scale*Math.max(Math.hypot(matrix[0],matrix[1]),Math.hypot(matrix[4],matrix[5]),1e-15);
       for(const entry of node.group.paint){
         if(entry.kind==='group'){paint(entry,matrix);continue;}
-        if(!intersects(transformBounds(entry.bounds,matrix)))continue;
+        if(entry.bounds&&!intersects(transformBounds(entry.bounds,matrix)))continue;
         if(entry.kind==='stroke'){
           setMatrix(matrix);calls++;
           ctx.strokeStyle=entry.color;ctx.lineWidth=entry.width/localScale;ctx.lineJoin='round';ctx.lineCap=entry.dash?.length?'round':'butt';ctx.setLineDash(entry.dash||[]);ctx.stroke(entry.path);continue;
@@ -577,11 +586,14 @@ export function mountDrawingViewer(envelope) {
         const rec=entry.rec;
         if(rec.infinite){
           // Infinite construction lines stay clipped to the visible window; the
-          // retained line is expressed in this group's local coordinates.
+          // retained line is expressed in this group's local coordinates. An
+          // unbounded line has no index box, so it is painted every frame.
           const inverse=inverse2D(matrix);
-          updateInfinite(rec,inverse?transformBounds(view,inverse):view);calls++;
+          updateInfinite(rec,inverse?transformBounds(view,inverse):view);
+          if(!rec.path)continue;
+          calls++;
           setMatrix(matrix);ctx.setLineDash(rec.dash||[]);ctx.strokeStyle=rec.color;ctx.lineWidth=rec.width/localScale;
-          if(rec.path)ctx.stroke(rec.path);
+          ctx.stroke(rec.path);
           continue;
         }
         setMatrix(matrix);calls++;
@@ -628,7 +640,7 @@ export function mountDrawingViewer(envelope) {
         let hit=!!rec.textBox||!!(rec.fillPath&&fillHit(rec,...point));
         if(rec.raster)hit=rasterHit(rec,...point);
         if(rec.pointMark)hit=Math.hypot(...transformPoint(matrix,rec.pointMark.x,rec.pointMark.y).map((v,k)=>v-world[k]))<=worldTolerance;
-        const segments=rec.visibleGeometry.segments;
+        const segments=rec.visibleGeometry?.segments||[];
         for(let i=0;!hit&&i<segments.length;i+=4){const a=transformPoint(matrix,segments[i],segments[i+1]),b=transformPoint(matrix,segments[i+2],segments[i+3]);hit=segmentDistance(...world,...a,...b)<=worldTolerance;}
         if(hit){const draw={...rec.draw,blockPath:nextPath,localToSpace:multiply(matrix,rec.draw.localToSpace),drawOrder:baseOrder+entry.order};
           return {...rec,id:instancePlan.identity(draw,nextPath),draw,bbox:transformBounds(rec.bbox,matrix),instance:{record:rec,matrix}};}
@@ -840,7 +852,16 @@ export function mountDrawingViewer(envelope) {
 
   // ----- extents / navigation --------------------------------------------
   function extents() {
-    if(instancePlan){refreshInstanceLayers();return instancePlan.roots.reduce((box,node)=>union(box,transformBounds(node.group.bounds,node.matrix)),null);}
+    if(instancePlan){
+      refreshInstanceLayers();
+      const box=instancePlan.roots.reduce((bounds,node)=>union(bounds,transformBounds(node.group.bounds,node.matrix)),null);
+      if(box)return box;
+      // Mirror the ordinary infinite-only fallback: retained groups carry no
+      // finite extent for an unbounded construction line.
+      const anchor=instancePlan.infiniteAnchor;
+      if(!anchor)return null;
+      return {minX:anchor[0]-50,minY:anchor[1]-50,maxX:anchor[0]+50,maxY:anchor[1]+50};
+    }
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const rec of built) {
       if (!drawVisible(rec)) continue;
