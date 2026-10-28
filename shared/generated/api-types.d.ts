@@ -3804,7 +3804,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 项目文件库列表（按类型 / 节点 / 任务 / 状态 / 上传人筛选） */
+        /** 项目文件库列表（按类型 / 节点 / 任务 / 状态 / 上传人筛选；行随附上传人姓名） */
         get: {
             parameters: {
                 query?: {
@@ -10882,8 +10882,13 @@ export interface components {
         FileFinalizeBody: {
             version: components["schemas"]["Version"];
         };
+        /** @description 文件（v0.2 §5.2；定档后不可覆盖，修改必须走变更） */
+        FileLibraryItem: components["schemas"]["File"] & {
+            /** @description 上传人姓名（users.display_name）；停用 / 离职历史账号仍返回姓名；用户行不存在时为空，前端回退用户 id */
+            createdByName: string | null;
+        };
         FileListResponse: {
-            items: components["schemas"]["File"][];
+            items: components["schemas"]["FileLibraryItem"][];
             page: number;
             limit: number;
             total: number;

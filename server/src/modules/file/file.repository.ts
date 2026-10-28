@@ -5,6 +5,7 @@ import { DatabaseService } from "../../db/database.service.js";
 import { changeRequests } from "../../db/schema/change.js";
 import { fileLinks, files, fileVersions, uploadSessions } from "../../db/schema/files.js";
 import { projectNodes } from "../../db/schema/flow.js";
+import { users } from "../../db/schema/identity.js";
 import { projectStages, projects } from "../../db/schema/projects.js";
 import { tasks } from "../../db/schema/tasks.js";
 import type { ChangeRequestListFilter, ChangeRequestSort } from "./change.query.js";
@@ -46,6 +47,12 @@ export type FileRow = typeof files.$inferSelect;
 export type FileVersionRow = typeof fileVersions.$inferSelect;
 export type UploadSessionRow = typeof uploadSessions.$inferSelect;
 export type ChangeRequestRow = typeof changeRequests.$inferSelect;
+
+/** 文件库列表行：文件本体 + 创建者姓名（停用 / 离职用户保留，用户行缺失时为空）。 */
+export interface FileLibraryRow {
+  file: FileRow;
+  createdByName: string | null;
+}
 
 /**
  * 变更记录读面行（M4-04 读面）：变更本体 + 由 `file_versions.change_request_id` 反查的变更后文件 / 版本。
@@ -627,11 +634,12 @@ export class FileRepository {
     limit: number,
     offset: number,
     client: DbClient = this.database.db,
-  ): Promise<{ items: FileRow[]; total: number }> {
+  ): Promise<{ items: FileLibraryRow[]; total: number }> {
     const where = and(...fileLibraryConditions(projectId, filter));
     const items = await client
-      .select()
+      .select({ file: files, createdByName: users.displayName })
       .from(files)
+      .leftJoin(users, eq(users.id, files.createdBy))
       .where(where)
       .orderBy(...fileLibraryOrderBy(sorts))
       .limit(limit)

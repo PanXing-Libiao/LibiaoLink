@@ -1189,7 +1189,12 @@ export class FileService {
     const sorts = parseFileListSort(query.sort);
     const offset = (query.page - 1) * query.limit;
     const { items, total } = await this.repository.listProjectFiles(projectId, filter, sorts, query.limit, offset);
-    return { items: items.map(toFileView), page: query.page, limit: query.limit, total };
+    return {
+      items: items.map(({ file, createdByName }) => ({ ...toFileView(file), createdByName })),
+      page: query.page,
+      limit: query.limit,
+      total,
+    };
   }
 
   /**

@@ -75,7 +75,8 @@ import { EMPTY_FILES_QUERY, EMPTY_LIST_QUERY, type FilesQueryState, type FilesTa
  * 《前端功能需求》§3.8 对齐清单（wmj / lan 复核后由服务端接手，前端聚合作一期过渡）。
  *
  * 列口径（六列）：文件名（类型图标 + 名字）/ 状态（与站内文件状态签 / 定档开关同一套颜色）/ 项目（**名字 + 编号两行**：
- * 上行项目名、下行项目编号 —— 追订「项目名称要编号和名字都写在表格里面注意排版」+「中文和编号的位置反一下」）/ 上传人（用户目录姓名，离线兜底 id）/
+ * 上行项目名、下行项目编号 —— 追订「项目名称要编号和名字都写在表格里面注意排版」+「中文和编号的位置反一下」）/ 上传人
+ * （文件列表行随附 users.display_name；停用 / 离职历史账号仍显示姓名，用户行缺失时依次回退目录姓名 / id）/
  * 时间（Asia/Shanghai，YYYY-MM-DD HH:mm）/ 操作；回收站栏第 5 列改「移入回收站」（时间 · 人）、操作列 = 恢复 / 彻底删除。
  *【2026-10-09 追订】「类型」列与筛选整条撤除（业务口径「文件类型不需要 因为没有明确的绑定机制」—— 库内文件
  * 没有类型绑定点（files.doc_type 全空）、列恒「—」；任务侧「输出成果文件」是任务字段，不受影响）。
@@ -168,6 +169,8 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
   /** 手打内容（项目名）机翻显示：英文界面取译文，未就绪回退原文；文件名不翻译（业务口径 2026-10-13）。 */
   const localize = useLocalizedTranslator();
   const [state, setState] = useState<LibraryState>({ kind: "loading" });
+  /** 已见上传人姓名缓存：筛选切换后已选停用账号即使零命中，也保留可读姓名供取消选择。 */
+  const uploaderNameCacheRef = useRef<Map<string, string>>(new Map());
   const [projects, setProjects] = useState<ApiProject[] | null>(null);
   const liveProjectsRef = useRef<ApiProject[] | null>(null);
   const [projectRecycleState, setProjectRecycleState] = useState<ProjectRecycleState>({ kind: "loading" });
@@ -182,6 +185,21 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [purgeConfirmId, setPurgeConfirmId] = useState<string | null>(null);
   const [projectPurgeConfirmId, setProjectPurgeConfirmId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (state.kind !== "ready") {
+      return;
+    }
+    const directoryNames = new Map(directory.map((user) => [user.id, user.displayName] as const));
+    const next = new Map(uploaderNameCacheRef.current);
+    for (const item of state.items) {
+      next.set(
+        item.createdBy,
+        item.createdByName ?? directoryNames.get(item.createdBy) ?? item.createdBy,
+      );
+    }
+    uploaderNameCacheRef.current = next;
+  }, [state, directory]);
 
   // 关键字防抖（与首页列表 / 操作记录页同口径）：输入时不每敲一个字打一次接口，250ms 内的最后一次生效
   const [debouncedKeyword, setDebouncedKeyword] = useState(query.keyword ?? "");
@@ -360,7 +378,25 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
   const projectOptions = (projects ?? []).map((project) => ({ value: project.id, label: project.code + " · " + localize(project.name) }));
   // 状态 / 上传人筛选同为多选（2026-10-09 追订二）：不再有「全部…」选项行，空选占位交给 placeholder。
   const statusOptions = CURRENT_STATUSES.map((status) => ({ value: status, label: statusText(locale, FILE_STATUS_LABELS[status] ?? status) }));
-  const uploaderOptions = directory.map((user) => ({ value: user.id, label: user.displayName }));
+  // 上传人候选 = 当前筛选结果（尚未应用上传人自身过滤的 state.items）中去重后的 createdBy；
+  // 必须用 state.items 而不是 visibleItems，否则选中一人后其他候选会消失。已选但当前零命中的 id 也并入，保证可取消。
+  const uploaderNameById = new Map<string, string>(uploaderNameCacheRef.current);
+  if (state.kind === "ready") {
+    for (const item of state.items) {
+      uploaderNameById.set(
+        item.createdBy,
+        item.createdByName ?? userNameById.get(item.createdBy) ?? item.createdBy,
+      );
+    }
+  }
+  for (const id of query.uploaderIds) {
+    if (!uploaderNameById.has(id)) {
+      uploaderNameById.set(id, userNameById.get(id) ?? id);
+    }
+  }
+  const uploaderOptions = [...uploaderNameById]
+    .map(([value, label]) => ({ value, label }))
+    .sort((left, right) => left.label.localeCompare(right.label, locale));
 
   /** 预览（与任务抽屉同一套 S4 两通道裁决）：点开才懒取；unavailable = 一行提示（reason 或「请下载查看」口径）。 */
   const openPreview = async (file: FileLibraryItem): Promise<void> => {
@@ -768,7 +804,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
                             <span className="whitespace-nowrap text-xs text-zinc-500">{projectCodeOf(file.projectId)}</span>
                           </div>
                         </td>
-                        <td data-mobile-label={t("lib.col.uploader")} className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-700">{userNameOf(file.createdBy)}</td>
+                        <td data-mobile-label={t("lib.col.uploader")} className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-700">{file.createdByName ?? userNameOf(file.createdBy)}</td>
                         <td data-mobile-label={query.tab === "recycled" ? t("lib.col.recycledAt") : t("lib.col.createdAt")} className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-600">
                           {query.tab === "recycled"
                             ? file.recycledAt === null
