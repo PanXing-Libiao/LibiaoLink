@@ -1,0 +1,10 @@
+# Optional planar REGION boundary parser for the native DWG adapter.
+# The adapter imports the checked-in ezdxf source at core/vendor/ezdxf/src;
+# these are the import-time dependencies needed by that source and its ACIS
+# SAT/SAB reader. Without them REGION keeps an explicit loss. This is a planar
+# boundary reader, not an ACIS kernel; non-planar/3D regions remain unsupported.
+numpy==2.5.4
+typing_extensions==4.16.0
+pyparsing==3.3.3
+fonttools==4.67.0
+Pillow==13.0.0

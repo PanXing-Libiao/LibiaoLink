@@ -29,9 +29,9 @@
 | 遮罩/图片/PDF 底图 | 部分缺失 | 公开样本 WIPEOUT `44D` 已按边界生成白色预览遮罩（不是 mask part，不拦截拾取）；IMAGE、PDFUNDERLAY 仍缺外部资源和原生映射；真实图未提供这些组合。 |
 | HATCH/多环/渐变 | 部分缺失 + 未验证 | 真实图 169 个可达填充；公开样本 2 项渐变未映射；多环、Outer 与孔洞未逐区域对照。真实图默认视图中的横向黑带和文字黑底尚未逐对象确认，可能是源黑色 SOLID/填充或遮罩在白底上的显示；FastView 黑底不可见，不能仅凭两边截图判为缺陷，需原 CAD 白底对照。 |
 | 布局视口 | 部分缺失 | 公开样本 3 个布局无可见内容，对应 3 项 `layout-viewport-unmapped`；业务是否需要布局仍未确认。 |
-| REGION/MLINE/XLINE/MESH/3DFACE 等 | 部分缺失 | 真实图修复前 22 项未显示原生对象；XLINE 已按通用映射修复（`738AAE` 红色无限线），当前 21 项：20 个 REGION 在“百特立柱（一小段）”块内且有 2D 弧/多段线轮廓，1 个 MLINE 在货架块内缺一条线；见 2026-10-28 代理/未显示对象逐句柄节。公开样本 XLINE/RAY 映射后未显示原生对象 24→22；保留源句柄、原载荷和损失，不伪造几何。 |
+| REGION/MLINE/XLINE/MESH/3DFACE 等 | 部分缺失 | 真实图修复前 22 项未显示原生对象；XLINE 已按通用映射修复，20 个 REGION 已按平面 ACIS 边界映射（见平面 REGION 节），当前仅 1 个 MLINE 未显示。公开样本 XLINE/RAY 映射后未显示原生对象 22；保留源句柄、原载荷和损失，不伪造几何。 |
 | 样条显示 | 已修复一个上游求值缺陷（本机） | ACadSharp 3.8.30 对控制多边形远离原点的周期 SPLINE 可能把首顶点求值为 `(0,0,0)`，形成原点至样条的假线并遮挡主体；读取器仅在该首点为零且控制多边形不在原点时丢弃，`--self-test` 同时覆盖零起点与合法原点起点。`dwg-formal-windows-04` 复验：句柄 `272226` 首点回到样条本身，默认视图黑带消失；缓冲区比上一产物少 3,936 B，多处周期样条的零起点一并清理。 |
-| 读取账本 | 已验证账本 | 真实图 902,137 个源句柄、0 未找回；公开样本 865 个中 11 个未找回、29 项损失（XLINE/RAY、默认 LEADER 箭头、WIPEOUT、默认 MULTILEADER 子实体映射后）。句柄找回不是字段、几何或工程语义完整，也不是漏绘百分比。 |
+| 读取账本 | 已验证账本 | 真实图 902,137 个源句柄、0 未找回、2 项损失（1 MLINE + 1 头字段）；公开样本 865 个中 11 个未找回、29 项损失（XLINE/RAY、默认 LEADER、WIPEOUT、默认 MULTILEADER 子实体映射后）。句柄找回不是字段、几何或工程语义完整，也不是漏绘百分比。 |
 | 容量 | 本机观察 | 本次无头 Chrome 8.3–8.5 秒就绪、JS 堆约 757 MB、manifest 253.5 MiB；WSL 沙箱读取 22.6 秒/2274 MiB、组装 93.5 秒/1531 MiB。都不是生产资源验收。 |
 | 平台接入 | 未接入 | DWG 主图开关仍关闭；本机页只作验证，不接 file/preview、任务或缓存。 |
 
@@ -82,7 +82,7 @@
 
 ## 2026-10-28 代理与未显示对象逐句柄影响（本机，未部署）
 
-来源（修复前）：`dwg-formal-windows-04/native/losses.jsonl` 的 40 条 `proxy-primitive-unmapped`/`unsupported-native-presentation`，加一次只读 ACadSharp 句柄探针（仓库外 `D:\LibiaoLink-verify\handle-probe`）。40 条完整覆盖 18 个 MULTILEADER、20 个 REGION、1 个 MLINE、1 个 XLINE；没有其他未列出的句柄。XLINE 已在 XLINE/RAY 映射节修复，60 条默认 LEADER 箭头已在 LEADER 映射节修复，18 个 MULTILEADER 的默认子实体状态已在 WIPEOUT/子实体节处理；`dwg-formal-windows-07` 当前为 22 条总损失（21 未显示 + 1 头字段）。
+来源（修复前）：`dwg-formal-windows-04/native/losses.jsonl` 的 40 条 `proxy-primitive-unmapped`/`unsupported-native-presentation`，加一次只读 ACadSharp 句柄探针（仓库外 `D:\LibiaoLink-verify\handle-probe`）。40 条完整覆盖 18 个 MULTILEADER、20 个 REGION、1 个 MLINE、1 个 XLINE；没有其他未列出的句柄。XLINE、默认 LEADER、默认 MULTILEADER 子实体和 20 个平面 REGION 都已分别处理；`dwg-formal-region-02` 当前为 2 条总损失（1 MLINE + 1 头字段）。
 
 ### 18 个 MULTILEADER（代理子实体样式）
 
@@ -143,13 +143,13 @@
 - 20 个 REGION 和 1 个 MLINE 仍按原结论保留；XLINE/RAY 不再计入未显示对象。60 条引线箭头不变。
 
 
-## 2026-10-28 REGION/MLINE 条件升级判定（本机，未部署）
+## 2026-10-28 MLINE 条件升级判定（REGION 已另补）
 
-按计划 §6 的升级触发逐项核对，结论是**本轮不升级**，保留明确的部分说明；不新增 ACIS 内核、不引入 DXF 的 ezdxf/ACIS 依赖，也不拿中心线近似冒充多线。
+按计划 §6 的升级触发逐项核对：REGION 已由用户接受 ACIS 依赖后在“平面 REGION 边界”节补上；本节只保留 MLINE 的不升级判定，不新增 MLINE 内核或中心线近似。
 
-- **20 个 REGION**：都在块 `百特立柱（一小段）`、图层 `粗实线`，ACIS 载荷是 `ACIS BinaryFile`（2,470/3,051 B）。块内另有 20 个圆弧和 1 个多段线，放大到世界 `(729900..732300, -23300..-22900)` 可以看到该细部的轮廓、尺寸和 `M5*13平头拉铆螺母` 文字已经完整显示；REGION 的 ACIS 载荷没有求值，但没有在上面形成可见的 2D 缺口。要解析 SAB 需要接入现有 DXF 的 ezdxf/ACIS 解析链，而 DWG 组装目前只要求标准库；计划也不允许自研 ACIS 内核。触发条件（业务图主体/关键标注无法辨认，或明确需要 REGION 的实体/3D 语义）未出现。证据：仓库外 `region-zoom.png`。
+- **20 个 REGION**：已由用户接受 ACIS/ezdxf 依赖后在“平面 REGION 边界”节补上，20 个都解析为 6 条平面边界线；本节原先的不升级判定已被覆盖。
 - **1 个 MLINE**：句柄 `6B891A` 在货架行块 `35435.00_600.00_7053…` 内，是一条 3 顶点线，位于货架区域，没有关联文字或面积；DXF 路径同样没有映射 MLINE。用中心线近似会丢掉多线样式的偏移、接头和线型，属于伪造几何；计划要求有存储图形或可靠求值再适配。触发条件（影响主体或关键标注）未出现。
-- 结果：未显示原生对象仍为 21（20 REGION + 1 MLINE），总损失 100；本轮没有代码或版本变化。若后续业务图把某个 REGION 的实体语义或某条 MLINE 当作关键边界，需要先接受相应依赖/求值方案，再重开这两个条目。
+- 结果：真实图当前 2 条损失（1 MLINE + 1 头字段），20 个 REGION 已不再计入；REGION 的 ACIS 原载荷仍保留在 `native/opaque-*.bin`，平面的 3D/实体语义仍未支持。
 
 
 ## 2026-10-28 LEADER 默认箭头映射（本机，未部署）
@@ -180,6 +180,19 @@
 - 读取器重建于 `dwg-build-windows-08`，DLL SHA-256 `b525832151849051DD982456AA6C22E601389932946D194EA5E7150EB9A04DDF`。
 - 当前损失：正式图 `dwg-formal-windows-07` 22 条（21 未显示 + 1 头字段；代理、引线、XLINE 均 0）；公开样本 `dwg-public-small-09` 29 条（21 未显示 + 2 渐变 + 1 特殊多行文字 + 1 原生失败 + 3 布局 + 1 缺句柄）。正式图 manifest 265,963,894 B validated，组装 85.62 s，原生读取 7.58 s / 总计 12.64 s；样本 manifest 805,005 B validated。
 - 只有读取器变化，无适配器、查看器、`source.json` 或版本变化。
+
+
+## 2026-10-28 平面 REGION 边界（本机，未部署）
+
+用户接受 ACIS/ezdxf 依赖后，按第三优先级补上：
+
+- 20 个 REGION 的 ACIS `BinaryFile` 载荷全部通过既有 `dxf_region` 的平面 SAT/SAB 读取器解析，每个得到 6 条 LINE 边界；`dxf_region.py` 本身未改动，DXF 格式键仍为 `dxf-0.15.0/556c616e…`，不需要重建 DXF。
+- DWG 适配器把边界线段追加到现有 `positions.bin`（每个点 f64、每段 u32 索引），生成 20 个 REGION presentation item、120 个 `geometry` parts；原 UCD 实体仍保留 `unsupported` 源几何和 `sourceRefs`，20 个 ACIS 原载荷继续在 `native/opaque-*.bin`。
+- 成功解析的 REGION 不再计入 `unsupported-native-presentation`；解析失败（非平面、未知曲线、依赖缺失）保留原损失，并加 `region-acis-boundary-unavailable` 诊断，不猜边界。
+- 正式图 `dwg-formal-region-02`：损失 **22→2**（仅 1 个 MLINE + 1 个头字段）；manifest 266,135,331 B validated，buffer 76,063,992 B，组装 82.42 s；built 1,476,280→1,476,320，presentationParts 162,398→162,518，paintCalls 41,469→41,505；fitScale/fitAll 不变。放大到 `(729900,-23300..732300,-22900)` 时 REGION 六条边与既有 2D 弧/多段线重合，不新增可见缺口（`region-final2.png`）。
+- 依赖：`server/cad-engine/requirements-dwg.txt`（numpy 2.5.4、typing_extensions 4.16.0、pyparsing 3.3.3、fonttools 4.67.0、Pillow 13.0.0）；适配器从仓库 `core/vendor/ezdxf/src` 导入 ezdxf 1.4.2，不安装另一份 ezdxf。本机验证用 Python 3.13 + 这套 Windows wheel；没有依赖时 REGION 继续是显式损失，不影响其他类型。
+- 这是**平面边界**读取，不是 ACIS 内核：不做布尔、3D、体积或非平面曲面；REGION 的 3D/实体语义仍未支持。公开样本没有 REGION，损失仍为 29。
+- 适配器改动使 `engineVersion` 变为 `step-0.3.3/4cc8fc50…/gateway-1`、`releaseDigest` 为 `5bed9677…`；STEP/DXF 格式键和 `viewerVersion` 不变。
 
 
 ## 代码责任与入口
@@ -280,7 +293,7 @@ Git 中有全部代码、固定依赖信息、许可、合成测试与本文；*
 
 ### 1. 拉取与准备
 
-获取 `wmj` 本次检查点；若目标目录已有修改，先检查状态，不重置或覆盖。准备 **Python 3.13、.NET 10 SDK**（旧机 SDK 10.0.403）。DWG 的 Python 组装仅使用标准库，不要求安装 DXF 或 OCP 环境。前端/服务端校验另按各自锁文件准备 Node；旧机本次实际使用 Node 22.23.3，仓库 server/shared 的声明为 Node >=24，正式环境仍按项目声明准备。
+获取 `wmj` 本次检查点；若目标目录已有修改，先检查状态，不重置或覆盖。准备 **Python 3.13、.NET 10 SDK**（旧机 SDK 10.0.403）。DWG 的基础组装使用 Python 标准库；平面 REGION 额外需要 `requirements-dwg.txt` 的 ezdxf 导入依赖（numpy、typing_extensions、pyparsing、fonttools、Pillow），不要求完整的 DXF 或 OCP 环境；缺少依赖时 REGION 保留明确损失。前端/服务端校验另按各自锁文件准备 Node；旧机本次实际使用 Node 22.23.3，仓库 server/shared 的声明为 Node >=24，正式环境仍按项目声明准备。
 
 把 `CAD_DWG_DOTNET` 设为 SDK 中 dotnet 可执行文件的绝对路径；把 `DWG_SOURCE` 设为新机器上同一原 DWG 的绝对路径。不要复用旧机器的个人路径。先在仓库根目录执行身份检查：
 

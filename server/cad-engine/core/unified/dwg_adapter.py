@@ -9,6 +9,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import struct
 import sys
 import time
 
@@ -86,6 +87,46 @@ def infinite_presentation_items(rows, entities):
     return items
 
 
+VENDOR_EZDXF = Path(__file__).resolve().parent.parent / 'vendor/ezdxf/src'
+
+
+def region_boundary_leaves(raw):
+    """Parse retained ACIS bytes through the same planar SAT/SAB reader as DXF.
+    Returns (leaves, error); without the optional ACIS stack the caller keeps the
+    source loss instead of guessing a boundary."""
+    try:
+        if str(VENDOR_EZDXF) not in sys.path and VENDOR_EZDXF.is_dir():
+            sys.path.insert(0, str(VENDOR_EZDXF))
+        from . import dxf_region
+        class Source:
+            has_binary_data = True
+            sab = raw
+            @staticmethod
+            def graphic_properties():
+                return {}
+        return list(dxf_region.primitives(Source())), None
+    except Exception as error:
+        return None, type(error).__name__ + ': ' + str(error)
+
+
+def region_leaf_pairs(leaf):
+    """Flatten one planar ACIS boundary curve into a flat list of line pairs."""
+    kind = leaf.dxftype()
+    if kind == 'LINE':
+        points = [leaf.dxf.start, leaf.dxf.end]
+    elif kind in ('ELLIPSE', 'SPLINE'):
+        points = list(leaf.flattening(0.01))
+        if getattr(leaf, 'closed', False) and points and points[0] != points[-1]:
+            points.append(points[0])
+    else:
+        return []
+    pairs = []
+    for start, end in zip(points, points[1:]):
+        pairs.extend([(float(start.x), float(start.y), float(start.z)),
+                      (float(end.x), float(end.y), float(end.z))])
+    return pairs
+
+
 def assemble_native(folder, original, output):
     started=time.perf_counter()
     def phase(name):print(f'DWG UCD {name}: {time.perf_counter()-started:.3f}s',file=sys.stderr,flush=True)
@@ -157,10 +198,8 @@ def assemble_native(folder, original, output):
         'modelSpaceId':summary['modelSpaceId'], 'sheetIds':[], 'layoutIds':list(drawing['layouts']),
         'layerIds':list(drawing['layers']), 'units':doc['coordinates']['lengthUnit']}
     buffer_path = folder/'positions.bin'
-    sha = hashlib.file_digest(buffer_path.open('rb'),'sha256').hexdigest()
     bid = 'buffer-0'
-    doc['buffers'][bid] = {'id':bid, 'sha256':sha, 'byteLength':buffer_path.stat().st_size,
-        'endianness':'little', 'alignment':8, 'storage':{'kind':'resource','resourceId':bid}}
+    buffer_bytes = bytearray(buffer_path.read_bytes())
     for key,row in displays.items():
         aid, gid = 'a-'+key, 'g-'+key
         doc['accessors'][aid] = {'bufferId':bid, 'byteOffset':row['offset'], 'byteLength':row['byteLength'],
@@ -171,6 +210,61 @@ def assemble_native(folder, original, output):
         rid = 'representation-'+digest([key])
         doc['representations'][rid] = {'id':rid, 'kind':'drawing', 'bindings':[{'id':'b','geometryId':gid,
             'localFromRepresentation':IDENTITY, 'materialSlots':{}}], 'sourceRefs':row['sourceRefs']}
+    region_items = {}
+    region_handles = set()
+    region_errors = []
+    for key,meta in extras.get('opaque',{}).items():
+        entity = drawing['entities'].get(key)
+        if not entity or (entity.get('geometry') or {}).get('sourceType')!='REGION':
+            continue
+        opaque_path = folder/('opaque-'+str(meta.get('handle'))+'.bin')
+        if not opaque_path.is_file():
+            continue
+        leaves,error = region_boundary_leaves(opaque_path.read_bytes())
+        if leaves is None:
+            region_errors.append((entity,error))
+            continue
+        parts = []
+        for index,leaf in enumerate(leaves):
+            pairs = region_leaf_pairs(leaf)
+            if not pairs or not all(math.isfinite(value) for point in pairs for value in point):
+                continue
+            xs = [point[0] for point in pairs]; ys = [point[1] for point in pairs]; zs = [point[2] for point in pairs]
+            offset = len(buffer_bytes)
+            for point in pairs:
+                buffer_bytes.extend(struct.pack('<3d',*point))
+            index_offset = len(buffer_bytes)
+            indices = list(range(len(pairs)))
+            for value in indices:
+                buffer_bytes.extend(struct.pack('<I',value))
+            while len(buffer_bytes)%8:
+                buffer_bytes.append(0)
+            aid = 'a-'+key+'-region-'+str(index)
+            iaid = 'i-'+key+'-region-'+str(index)
+            gid = 'g-'+key+'-region-'+str(index)
+            rid = 'representation-'+digest([key,'region',index])
+            doc['accessors'][aid] = {'bufferId':bid, 'byteOffset':offset, 'byteLength':len(pairs)*24,
+                'component':'f64', 'components':3, 'count':len(pairs), 'normalized':False}
+            doc['accessors'][iaid] = {'bufferId':bid, 'byteOffset':index_offset, 'byteLength':len(indices)*4,
+                'component':'u32', 'components':1, 'count':len(indices), 'normalized':False}
+            doc['geometries'][gid] = {'id':gid, 'coordinateSpace':'geometry-local', 'attributes':{'POSITION':aid},
+                'primitives':[{'id':'p','topology':'lines','indices':iaid,'range':{'first':0,'count':len(indices)}}],
+                'bounds':{'min':[min(xs),min(ys),min(zs)],'max':[max(xs),max(ys),max(zs)]},
+                'normalOrigin':'absent', 'sourceRefs':entity.get('sourceRefs') or []}
+            doc['representations'][rid] = {'id':rid, 'kind':'drawing', 'bindings':[{'id':'b','geometryId':gid,
+                'localFromRepresentation':IDENTITY, 'materialSlots':{}}], 'sourceRefs':entity.get('sourceRefs') or []}
+            parts.append({'id':key+'-region-'+str(index), 'representationId':rid, 'role':'geometry',
+                'layerId':entity.get('layerId'),
+                'style':entity.get('style') or {'color':{'mode':'by-layer'},'plot':True}, 'ancestors':[]})
+        if parts:
+            region_items[key] = {'status':'ready', 'sourceKind':'REGION',
+                'sourceRefs':entity.get('sourceRefs') or [], 'mode':'geometry', 'parts':parts}
+            region_handles.add(str(meta.get('handle')))
+    if region_handles:
+        buffer_path.write_bytes(buffer_bytes)
+    sha = hashlib.sha256(buffer_bytes).hexdigest()
+    doc['buffers'][bid] = {'id':bid, 'sha256':sha, 'byteLength':len(buffer_bytes),
+        'endianness':'little', 'alignment':8, 'storage':{'kind':'resource','resourceId':bid}}
     inheritance = {key:True for key,row in drawing['layers'].items() if row['name']=='0'}
     for state in extras.get('entityState',{}).values():
         if 'visible' in state:state['invisible']=not state.pop('visible')
@@ -187,11 +281,17 @@ def assemble_native(folder, original, output):
         'drawOrder':{key:state['drawOrder'] for key,state in extras.get('entityState',{}).items() if 'drawOrder' in state},
         'entityState':extras.get('entityState',{}), 'annotationStyles':extras.get('annotationStyles',{})}
     infinite_items = infinite_presentation_items(extras.get('infiniteLines',{}),drawing['entities'])
-    if infinite_items:
+    presentation_items = {**infinite_items, **region_items}
+    if presentation_items:
         doc['extensions']['org.cad-preview.annotation-presentation/1'] = {
-            'schemaVersion':'1.3.0','items':infinite_items}
+            'schemaVersion':'1.3.0','items':presentation_items}
     doc['extensions']['org.cad-preview.fill/1'] = {'fills':extras.get('fills',{})}
     raw_losses = [json.loads(line) for line in (folder/'losses.jsonl').open()]
+    if region_handles:
+        raw_losses = [row for row in raw_losses
+            if not (row.get('code')=='unsupported-native-presentation'
+                    and row.get('sourceType')=='REGION'
+                    and str(row.get('handle')) in region_handles)]
     by_loss = Counter(row['code'] for row in raw_losses)
     for code,count in by_loss.items():
         refs = [{'sourceId':sid,'objectKey':row['handle']} for row in raw_losses if row['code']==code and row['handle']]
@@ -204,6 +304,9 @@ def assemble_native(folder, original, output):
                 'message':row['Message'], 'sourceRefs':[]})
     doc['diagnostics'].append({'code':'source-fonts-not-provided','severity':'warning','stage':'presentation',
         'message':'Original font companions were not supplied. Native Unicode and font requests are retained; browser text is explicitly substituted, with no original glyph/layout fidelity claim.', 'sourceRefs':[]})
+    for entity,error in region_errors:
+        doc['diagnostics'].append({'code':'region-acis-boundary-unavailable','severity':'warning','stage':'mapping',
+            'message':error, 'sourceRefs':entity.get('sourceRefs') or []})
     ledger = folder/'source-handles.tsv'
     doc['extensions']['org.libiaolink.dwg/1'] = {
         'header':summary['header'], 'nativeGeometry':extras.get('nativeGeometry',{}),
@@ -219,7 +322,7 @@ def assemble_native(folder, original, output):
         'scope':'All native source handles audited; model and layout reachable definitions mapped; unreferenced definitions remain in original source/ledger.',
         'curveDisplay':{'library':'ACadSharp','circleVertices':80,'ellipseVertices':64,'splineVertices':48,
             'policy':'Sampled display is a derivative, not an engineering tolerance guarantee.'}}
-    ready = len(displays) + len(drawing['annotations']) + len(extras.get('fills',{})) + len(infinite_items)
+    ready = len(displays) + len(drawing['annotations']) + len(extras.get('fills',{})) + len(infinite_items) + len(region_items)
     doc['extensions']['org.cad-preview.drawing-coverage/1'] = {
         'sourceRead':{'status':'partial' if summary['missingHandles'] else 'read-with-warnings','sourceRecords':summary.get('sourceEntityRecords',summary['sourceHandles'])},
         'displayGeometry':{'status':'partial','withDisplayGeometry':ready,'sourceRecords':summary['mappedObjects']},
@@ -234,7 +337,7 @@ def assemble_native(folder, original, output):
     presentation = {'name':identity['name'],'view':None,'unit':'mm' if summary['header']['insUnits']=='Millimeters' else 'unknown',
         'sourceSHA256':identity['sha256'],'candidate':True,
         'quality':'partial','note':'Native DWG → UCD; source handles preserved. See explicit decoder/mapping/font losses.',
-        'stats':{'sourceHandles':summary['sourceHandles'],'mappedSourceObjects':summary.get('mappedSourceObjects',summary['mappedObjects']),'displayGeometry':len(displays)+len(infinite_items)}}
+        'stats':{'sourceHandles':summary['sourceHandles'],'mappedSourceObjects':summary.get('mappedSourceObjects',summary['mappedObjects']),'displayGeometry':len(displays)+len(infinite_items)+len(region_items)}}
     validate_binary_envelope(doc,snapshot,presentation,lambda key:buffer_path.read_bytes())
     phase('contract and binary validated')
     envelope = {'transportProfile':'ucd-worker-binary/1','document':doc,'snapshot':snapshot,
