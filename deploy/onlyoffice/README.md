@@ -12,7 +12,8 @@
 | `docker-compose.yml` | dev 沙箱形态（dev 端口回环 / 资源限额 / 健康检查 / 独立网络） |
 | `docker-compose.prod.yml` | 生产形态编排（测试机：不发布公网端口 / 挂 `libiaolink-prod`(external) / 8001 回环排障 / 镜像离线下发） |
 | `service/entrypoint.sh` | 入口包装：原入口 → 等就绪 → 固化 local.json（F1/R3）→ 只重启 `ds:docservice` → 自检 → 守候 |
-| `service/selfcheck.sh` | 启动后自检（配置三键 / 中文字体 / 示例 app 关闭）；同时用作 healthcheck |
+| `service/patch-client-timeout.py` | 构建期把四个编辑器模板的内建 30 秒硬超时改为 120 秒；形状不符或重复执行均幂等 / 失败可见 |
+| `service/selfcheck.sh` | 启动后自检（配置三键 / 中文字体 / 示例 app 关闭 / 查看器模板 120 秒超时）；同时用作 healthcheck |
 | `.env.example` | 环境变量示例（唯一秘密 = `OO_JWT_SECRET`，生成方式见文件内注释） |
 
 ## 1. 部署清单（生产形态）
@@ -63,6 +64,7 @@
 | ③ | 中文字体 | `docker compose exec docs fc-list :lang=zh` + `AllFonts.js` 断言（selfcheck 已含） | 字体在位、无乱码（N1 样本冷开） |
 | ④ | 受控端点 401 基线 | 无 token / 篡改 token 打 `/preview-content`（S3 上线后） | 401（N2 §7 C4）；S3 前以 JWT 拒绝基线代替（无 token 拒 / 形状错拒） |
 | ⑤ | 示例 app 关闭 | 网关侧 `GET /example/` 非 200；直连容器 502（关闭态） | 不出现示例页面 / 文档会话 |
+| ⑥ | 查看器模板超时 | `docs /usr/local/bin/libiaolink-selfcheck.sh`（2026-10-28 起） | 四套编辑器均含 `waitSeconds: 120` 与 `}, 120000);` |
 
 > 回归留痕：结果记部署日志（升级记录）；异常即回滚上次可用镜像（§3）。
 
@@ -110,6 +112,7 @@ dev 沙箱接线（供 S3 联调）：`docker network connect libiaolink-onlyoff
 | tag | base | digest（base） | 构建日期 | 说明 / 决策 |
 |---|---|---|---|---|
 | `libiaolink/onlyoffice-docs:9.4.0.1` | `onlyoffice/documentserver:9.4.0.1` | `sha256:3ab6ebc7c605e5a32b7ae3ff19daed4925090245acc8100ce2230bd766c88212` | 2026-09-30 | S2 首版；D2（回退规则 9.3.1.2 未触发） |
+| `libiaolink/onlyoffice-docs:9.4.0.1-libiaolink.2` | `onlyoffice/documentserver:9.4.0.1` | `sha256:3ab6ebc7c605e5a32b7ae3ff19daed4925090245acc8100ce2230bd766c88212` | 2026-10-28 | 移动端冷启动修订：四编辑器内建硬超时 30s → 120s；基座 digest 不变 |
 
 ## 6. 生产部署（测试机 10.1.104.44 · 2026-10-14 上线）
 
@@ -160,9 +163,20 @@ docker compose --profile app up -d --force-recreate api web
 
 （升级 / 重建回归五项与缓存巡检口径仍以 §2 为准；每次升级 / 重建后按 §6.3 表格复核。）
 
+### 6.5 2026-10-28 移动端预览镜像发布（待发布）
+
+> 变更只动 DocServer 编辑器模板的内建超时，不改基座 digest、JWT、受控端点或数据卷。必须与前端 / API 的 PDF 直签改动同批验证。
+
+1. 开发机在 `deploy/onlyoffice/` 构建新 tag：`docker compose build`（默认 `OO_TAG=9.4.0.1-libiaolink.2`）。构建结束时若任一模板不匹配，`patch-client-timeout.py` 会使构建失败。
+2. 导出并传输：`docker save -o oo_docs_9.4.0.1-libiaolink.2.tar libiaolink/onlyoffice-docs:9.4.0.1-libiaolink.2` → `scp` 到目标机 `/srv/data/images/`。
+3. 目标机 `cd /opt/libiaolink/deploy/onlyoffice`，把 `.env` 的 `OO_TAG` 更新为 `9.4.0.1-libiaolink.2`（秘密值不落仓），再执行 `docker load -i /srv/data/images/oo_docs_9.4.0.1-libiaolink.2.tar`、`docker compose -f docker-compose.prod.yml up -d --force-recreate docs`。
+4. 执行 `docker compose -f docker-compose.prod.yml exec docs /usr/local/bin/libiaolink-selfcheck.sh`，必须看到「查看器冷启动超时 OK（120s）」及 PASS；随后用移动端冷缓存打开 Word / Excel / PPT 各一份，确认不再出现 30 秒英文弹窗。
+5. 回滚：把 `OO_TAG` 改回上一可用 tag、`up -d --force-recreate docs`，再跑 selfcheck；前端可独立回滚到旧 PDF 通道。
+
 ## 7. 变更记录
 
 | 版本 | 日期 | 变更 | 人 |
 |---|---|---|---|
 | v1.0 | 2026-09-30 | 首版：部署清单（配置键 / 字体 / 网络网关 / 安全基线）+ 升级回归五项 + 回滚步骤 + dev 沙箱实测记录 + 镜像台账 | px |
 | v1.1 | 2026-10-14 | 生产部署上线（测试机 10.1.104.44）：离线镜像下发（save/load）+ 生产编排 + 443 子路径 /onlyoffice/ 网关 + 密钥同值接线 + 回归五项与端到端实测（64MB xlsx 渲染 / WS 101 / 匿名 401）；新增 §6 | px |
+| v1.2 | 2026-10-28 | 移动端冷启动：四编辑器内建硬超时 30s → 120s（构建期 patch + healthcheck 校验）；新 tag `9.4.0.1-libiaolink.2`；补发布 / 回滚步骤 §6.5 | px |

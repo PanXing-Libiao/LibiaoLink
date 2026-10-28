@@ -23,7 +23,7 @@ name: libiaolink-onlyoffice
 
 services:
   docs:
-    image: "${OO_IMAGE:-libiaolink/onlyoffice-docs}:${OO_TAG:-9.4.0.1}"
+    image: "${OO_IMAGE:-libiaolink/onlyoffice-docs}:${OO_TAG:-9.4.0.1-libiaolink.2}"
     build:
       context: .
       dockerfile: Dockerfile

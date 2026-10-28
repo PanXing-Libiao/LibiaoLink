@@ -13,7 +13,7 @@ import { FileRepository, type FileRow, type FileVersionRow } from "./file.reposi
 import { buildPreviewContentUrl, signHs256Jwt } from "./onlyoffice.jwt.js";
 import { buildPreviewJobPayload, PREVIEW_JOB_TOPIC, previewJobDedupeKey, type PreviewTarget } from "./preview.job.js";
 import { PreviewRepository, type PreviewArtifactKey, type PreviewArtifactRow } from "./preview.repository.js";
-import { isCadPreviewPending, isRasterImageFile, previewTargetsFor, viewerChannelFor, type ViewerChannel } from "./preview.targets.js";
+import { isCadPreviewPending, isPdfFile, isRasterImageFile, previewTargetsFor, viewerChannelFor, type ViewerChannel } from "./preview.targets.js";
 import { CAD_ENGINE_VERSION, cadEngineConfigured } from "./cad-engine.client.js";
 import { canonicalMimeForExtension, OCTET_STREAM_MIME } from "./file-mime.js";
 
@@ -42,7 +42,8 @@ const VIEWER_PERMISSIONS = {
  * - **安全位图直签**（H1 S2）：`isRasterImageFile` → 原对象**短时签名直出**（D2-04：对象存储禁匿名读取）——
  *   status=ready、target=image、`pipelineVersion` / `generatedAt` 空（无产物语义）；不查 / 不落产物行、
  *   不投转换任务、不经栅格化器（字节 = 原对象）。
- * - **查看器通道**（S3 · ADR-030；PDF 2026-10-08 并入）：Office / 文本族 / PDF → `viewer` 非空、`target` / `url` 空，
+ * - **PDF 直签通道**（2026-10-28）：`isPdfFile` → 原对象短时签名 `application/pdf` + inline；status=ready、target=pdf、viewer / pipelineVersion 空，前端 PDF.js 本地分页渲染。
+ * - **查看器通道**（S3 · ADR-030）：Office / 文本族 → `viewer` 非空、`target` / `url` 空，
  *   与产物通道互斥（契约 FilePreviewResponse.viewer）；不走产物表、不投递转换任务，就绪即签发只读查看器配置。
  *
  * **产物通道三态（M4-05d · H1 S4 起 SVG 可达）**：SVG 恢复 `target=image` 的 PNG 产物投递；图片仍走原对象直签，
@@ -161,12 +162,16 @@ export class PreviewReadService {
       };
     }
 
+    if (isPdfFile({ fileName: channelName, mime: version.mime })) {
+      return this.servePdfDirect(file, version, channelName, actorId, recordView);
+    }
+
     // 只有扩展名与规范 MIME 完全匹配的安全位图才允许原对象直签。
     if (isRasterImageFile({ fileName: channelName, mime: version.mime })) {
       return this.serveRasterImageDirect(file, version, channelName, actorId, recordView);
     }
 
-    // Office / 文本族 / PDF → ONLYOFFICE 查看器通道。HTML / HTM 已从查看器族移除：
+    // Office / 文本族 → ONLYOFFICE 查看器通道。HTML / HTM 已从查看器族移除：
     // 主动内容不得通过应用源以可执行文档类型返回。
     const viewerChannel = viewerChannelFor({ fileName: channelName, mime: version.mime });
     if (viewerChannel !== null) {
@@ -275,6 +280,40 @@ export class PreviewReadService {
       versionId: version.id,
       status: "ready",
       target: "image",
+      viewer: null,
+      url: signed.url,
+      expiresAt: signed.expiresAt.toISOString(),
+      pipelineVersion: null,
+      reason: null,
+      generatedAt: null,
+    };
+  }
+
+  /**
+   * PDF 直签 ready：固定返回 application/pdf + inline 的原件短时签名。
+   * 浏览器由 PDF.js 本地分页渲染，不再请求 ONLYOFFICE 文档会话。
+   */
+  private async servePdfDirect(
+    file: FileRow,
+    version: FileVersionRow,
+    channelName: string,
+    actorId: string,
+    recordView: boolean,
+  ): Promise<FilePreviewResponse> {
+    const signed = await this.storage.signDownloadUrl({
+      objectKey: version.objectKey,
+      expiresInSeconds: this.config.env.PREVIEW_URL_TTL_SECONDS,
+      responseContentType: "application/pdf",
+      responseContentDisposition: contentDisposition(versionFileName(file.name, version.objectKey), "inline"),
+    });
+    if (recordView) {
+      await this.recordPreview(file, version, actorId, "PDF 直签", { target: "pdf", direct: true });
+    }
+    return {
+      fileId: file.id,
+      versionId: version.id,
+      status: "ready",
+      target: "pdf",
       viewer: null,
       url: signed.url,
       expiresAt: signed.expiresAt.toISOString(),

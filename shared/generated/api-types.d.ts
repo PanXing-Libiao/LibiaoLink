@@ -11645,7 +11645,7 @@ export interface components {
         };
         /** @description 免打扰配置（三态）：default 继承缺省（env NOTIFY_QUIET_HOURS，缺省 22:00-08:00）/ off 关闭 / HH:MM-HH:MM 自定义（Asia/Shanghai，跨零点允许） */
         NotifyQuietHours: string;
-        /** @description 在线查看器配置（ONLYOFFICE 查看通道；替代「转换产物 + 短时签名 URL」路径 —— 预览链全程无预签名） */
+        /** @description 在线查看器配置（ONLYOFFICE 查看通道；Office / 文本族专用，PDF 与图片走短时签名 URL） */
         OnlyOfficePreviewViewer: {
             /** @enum {string} */
             kind: "onlyoffice";
@@ -11705,10 +11705,10 @@ export interface components {
             permissions: components["schemas"]["PreviewViewerPermissions"];
         };
         /**
-         * @description 文档大类（word 文档 / cell 表格 / slide 演示 / pdf 文档；由文件类型映射）
+         * @description 文档大类（word 文档 / cell 表格 / slide 演示；PDF 不走 ONLYOFFICE，改由前端 PDF.js 本地渲染）
          * @enum {string}
          */
-        PreviewViewerDocumentType: "word" | "cell" | "slide" | "pdf";
+        PreviewViewerDocumentType: "word" | "cell" | "slide";
         PreviewViewerEditorConfig: {
             /**
              * @description 固定 view（只读；与 permissions 行为面 + 服务端受控端点双重约束）

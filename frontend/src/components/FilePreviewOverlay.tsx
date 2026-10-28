@@ -1,19 +1,20 @@
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import type { FilePreviewKind, PreviewViewerConfig } from "../fileApi";
-import { ImageZoomViewer } from "./ImageZoomViewer";
+import { FileImagePreview } from "./FileImagePreview";
+import { PdfViewer } from "./PdfViewer";
 import { OnlyOfficeViewer } from "./OnlyOfficeViewer";
 import { CadModelViewer } from "./CadModelViewer";
 import { useFocusTrap } from "./useFocusTrap";
 import { useT } from "../i18n";
 
 /** 预览浮层（Push 226 续 / 续三 · S4 · Push 246 起任务列表「文件」列下拉与详情抽屉共用）：
- *  图片 = 大图（img）、PDF = 浏览器内置查看器（iframe）、Office / 文本族 = ONLYOFFICE 查看器外壳
+ *  图片 = 取签名字节后本地大图、PDF = PDF.js 本地分页查看、Office / 文本族 = ONLYOFFICE 查看器外壳
  *  （OnlyOfficeViewer；加载 → 就绪 / 超时 / 失败降级，重试自增 nonce 重建）。
  *  短时签名地址（D2-04 禁止匿名读取）。Esc / 点浮层关闭；capture 阶段拦 keydown，避免同一按 Esc
  *  连带把外层（详情抽屉 / 文件下拉）关掉（「Esc 先关内层」口径）。
  *  Push 226 续四：caption 挂「下载原文件」—— 查看器自带的下载拿的是**转换产物**，这里直取原文件。
- *  Push 273（业务口径 2026-10-10「图片预览要有缩放功能」）：图片分支改挂共享组件 ImageZoomViewer（滚轮以光标为锚点
+ *  Push 273（业务口径 2026-10-10「图片预览要有缩放功能」）：图片分支改挂共享缩放组件（滚轮以光标为锚点
  *  缩放 / ＋− 按钮 1.25 步进 / 双击 100% ↔ 200% / 放大后拖动平移，25% ~ 800%）；口径收紧为「点遮罩关浮层」——
  *  图片上的点击留给缩放 / 拖动，点图不再关（原「Esc / 点浮层关闭」里的点图分支下架）。
  *  ADR-035：CAD viewer 配置进入独立 ViewerSession；未启用或旧就绪响应只提示暂不可预览。
@@ -89,14 +90,9 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
         ) : pane.mode === "viewer" && pane.viewer.kind === "onlyoffice" ? (
           <OnlyOfficeViewer key={nonce} viewer={pane.viewer} onRetry={onRetry} />
         ) : pane.mode === "url" && kind === "pdf" ? (
-          <iframe
-            src={pane.url}
-            title={name}
-            data-file-preview-frame="true"
-            className="h-[80vh] w-[min(90vw,calc(100vw-3rem))] rounded-xl bg-white shadow-2xl"
-          />
+          <PdfViewer key={"pdf:" + String(nonce)} src={pane.url} name={name} onRetry={onRetry} />
         ) : pane.mode === "url" ? (
-          <ImageZoomViewer src={pane.url} alt={name} />
+          <FileImagePreview key={"image:" + String(nonce)} src={pane.url} alt={name} onRetry={onRetry} />
         ) : null}
         {pane.mode === "viewer" && pane.viewer.kind === "cad" ? null : <figcaption className="relative z-10 mt-2 flex items-center gap-3 rounded-md bg-zinc-900/35 px-2 py-1 text-xs text-white/80 backdrop-blur-sm">
           <span>{name}</span>

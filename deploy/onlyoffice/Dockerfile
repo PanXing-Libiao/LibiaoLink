@@ -30,6 +30,8 @@ RUN apt-get update \
 # F1/R3 入口包装 + 启动后自检
 COPY service/entrypoint.sh /usr/local/bin/libiaolink-entrypoint.sh
 COPY service/selfcheck.sh   /usr/local/bin/libiaolink-selfcheck.sh
-RUN chmod 0755 /usr/local/bin/libiaolink-entrypoint.sh /usr/local/bin/libiaolink-selfcheck.sh
+COPY service/patch-client-timeout.py /usr/local/bin/libiaolink-patch-client-timeout.py
+RUN chmod 0755 /usr/local/bin/libiaolink-entrypoint.sh /usr/local/bin/libiaolink-selfcheck.sh /usr/local/bin/libiaolink-patch-client-timeout.py \
+ && python3 /usr/local/bin/libiaolink-patch-client-timeout.py
 
 ENTRYPOINT ["/usr/local/bin/libiaolink-entrypoint.sh"]
