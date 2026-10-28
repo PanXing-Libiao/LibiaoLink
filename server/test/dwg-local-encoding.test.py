@@ -26,6 +26,12 @@ class PageEncodingTest(unittest.TestCase):
         self.assertIn('/dwg-local.js', source)
         self.assertNotIn('platform-entry.js', source)
 
+    def test_page_states_partial_preview_and_specific_losses(self):
+        self.assertIn('当前为二维部分预览', harness.BOOT)
+        self.assertIn('必要时请下载原文件查看', harness.BOOT)
+        self.assertIn('本图记录：', harness.BOOT)
+        self.assertNotIn('完整预览', harness.BOOT)
+
 
 if __name__ == '__main__':
     unittest.main()

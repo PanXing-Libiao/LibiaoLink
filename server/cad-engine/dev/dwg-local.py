@@ -38,14 +38,14 @@ try {
  const losses=envelope.document.extensions['org.libiaolink.dwg/1'].lossCounts;
  const limitations=document.getElementById('drawingLimitations');limitations.hidden=false;
  const labels={'leader-arrow-presentation':'引线箭头待验证','proxy-primitive-unmapped':'代理图形或样式待验证','unrepresented-header-color':'头字段原值已保留','unsupported-native-presentation':'未显示的原生对象','mtext-special-layout-unmapped':'特殊多行文字布局未显示','hatch-gradient-unmapped':'渐变填充待验证'};
- limitations.textContent='部分可预览：原配套字体未提供，文字使用替代字体。'+Object.entries(losses).map(([k,v])=>(labels[k]||k)+' × '+v).join('；');
+ limitations.textContent='当前为二维部分预览；缺少原配套字体或资源，文字使用替代字体，未支持对象可能影响显示，必要时请下载原文件查看。'+(Object.keys(losses).length?'本图记录：'+Object.entries(losses).map(([k,v])=>(labels[k]||k)+' × '+v).join('；'):'');
  document.getElementById('busy').hidden=true;document.getElementById('error').hidden=true;
  document.getElementById('sessionStatus').textContent='已打开 · 部分可预览';document.body.dataset.cadState='ready';document.body.dataset.sidebar='open';
  document.getElementById('viewport').setAttribute('aria-busy','false');
  document.getElementById('toggleSidebar').onclick=()=>{document.body.dataset.sidebar=document.body.dataset.sidebar==='open'?'closed':'open';};
  document.getElementById('closeSidebar').onclick=()=>{document.body.dataset.sidebar='closed';};
  await viewer.ready;await new Promise(requestAnimationFrame);stages.readyMs=performance.now()-started;
- window.__dwgLocal={stages,source:envelope.document.sources[0],counts:viewer.counts()};
+ window.__dwgLocal={stages,source:envelope.document.sources[0],counts:viewer.counts(),viewer};
  const details=document.createElement('details'),summary=document.createElement('summary');summary.textContent='本机验证';details.append(summary);
  const record=document.createElement('pre');record.id='dwgLocalEvidence';record.style.cssText='white-space:pre-wrap;font-size:10px;max-height:220px;overflow:auto';
  const update=()=>{record.textContent=JSON.stringify({stages,source:envelope.document.sources[0],counts:viewer.counts(),extents:viewer.extents(),selected:document.getElementById('selected').textContent},null,2);};update();
