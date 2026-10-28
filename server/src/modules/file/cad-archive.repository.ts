@@ -1,14 +1,14 @@
 import { Injectable } from "@nestjs/common";
-import { and, eq, gt, lt, or, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { cadArtifacts, cadViews } from "../../db/schema/cad.js";
 import { files } from "../../db/schema/files.js";
 import { AuditService, type AuditRecordInput } from "../admin/index.js";
-import { CAD_ENGINE_VERSION } from "./cad-release.js";
+import { CAD_ENGINE_VERSION, CAD_FORMAT_VERSIONS, cadFormatVersion } from "./cad-release.js";
 import type { CadNameCodepage } from "@libiaolink/contracts";
-import { cadInputs, type CadArchiveSource } from "./cad-inputs.js";
+import { cadFormat, cadInputs, type CadArchiveSource } from "./cad-inputs.js";
 export type { CadArchiveSource } from "./cad-inputs.js";
 
 export type CadArtifactRow = typeof cadArtifacts.$inferSelect;
@@ -25,10 +25,11 @@ export class CadArchiveRepository {
   async request(source: CadArchiveSource, codepage: CadNameCodepage, client: DbClient = this.database.db): Promise<CadArtifactRow> {
     const input = cadInputs(source);
     codepage = input.sourceFormat === "DXF" ? "UTF8" : codepage;
-    const inserted = await client.insert(cadArtifacts).values({ ...input, engineVersion: CAD_ENGINE_VERSION, nameCodepage: codepage })
-      .onConflictDoNothing({ target: [cadArtifacts.versionId, cadArtifacts.engineVersion, cadArtifacts.nameCodepage, cadArtifacts.resourceSetHash] }).returning();
+    const formatVersion = cadFormatVersion(input.sourceFormat);
+    const inserted = await client.insert(cadArtifacts).values({ ...input, engineVersion: CAD_ENGINE_VERSION, formatVersion, nameCodepage: codepage })
+      .onConflictDoNothing({ target: [cadArtifacts.versionId, cadArtifacts.formatVersion, cadArtifacts.nameCodepage, cadArtifacts.resourceSetHash] }).returning();
     const row = inserted[0] ?? (await client.select().from(cadArtifacts).where(and(eq(cadArtifacts.versionId, source.versionId),
-      eq(cadArtifacts.engineVersion, CAD_ENGINE_VERSION), eq(cadArtifacts.nameCodepage, codepage),
+      eq(cadArtifacts.formatVersion, formatVersion), eq(cadArtifacts.nameCodepage, codepage),
       eq(cadArtifacts.resourceSetHash, input.resourceSetHash))).limit(1))[0];
     if (!row || row.fileId !== source.fileId || row.sourceSHA256 !== source.sourceSHA256 || row.sourceBytes !== source.sourceBytes) {
       throw new Error("CAD version identity mismatch");
@@ -47,11 +48,12 @@ export class CadArchiveRepository {
   async view(jobId: string, source: CadArchiveSource, actorId: string, viewId: string) {
     if (!/^[a-f0-9]{32}$/.test(jobId)) return null;
     const id = jobId.replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
+    const formatVersion = cadFormatVersion(source.sourceFormat ?? cadFormat(source.sourceName));
     const rows = await this.database.db.select({ view: cadViews, artifact: cadArtifacts }).from(cadViews)
       .innerJoin(cadArtifacts, eq(cadArtifacts.id, cadViews.artifactId)).where(and(eq(cadViews.id, id),
         eq(cadViews.actorId, actorId), eq(cadViews.viewId, viewId), gt(cadViews.expiresAt, new Date()),
         eq(cadArtifacts.versionId, source.versionId), eq(cadArtifacts.fileId, source.fileId),
-        eq(cadArtifacts.engineVersion, CAD_ENGINE_VERSION), eq(cadArtifacts.sourceSHA256, source.sourceSHA256))).limit(1);
+        eq(cadArtifacts.formatVersion, formatVersion), eq(cadArtifacts.sourceSHA256, source.sourceSHA256))).limit(1);
     return rows[0] ?? null;
   }
 
@@ -65,17 +67,18 @@ export class CadArchiveRepository {
       await this.recordAudit(tx, artifact, {
         actorId: view.actorId, action: "update", result: "succeeded", entry: "api", summary: "取消 CAD 预览窗口",
         metadata: { operation: "cad.cancelled", versionId: artifact.versionId, artifactId: artifact.id,
-          engineVersion: artifact.engineVersion, nameCodepage: artifact.nameCodepage,
+          engineVersion: artifact.engineVersion, formatVersion: artifact.formatVersion, nameCodepage: artifact.nameCodepage,
           viewId: view.viewId, viewJobId: view.id.replaceAll("-", "") },
       });
     });
   }
 
   async rejectInput(source: CadArchiveSource, actorId: string, viewId: string, codepage: CadNameCodepage, limitBytes: number, inputSetBytes = source.sourceBytes): Promise<void> {
+    const formatVersion = cadFormatVersion(source.sourceFormat ?? cadFormat(source.sourceName));
     await this.recordAudit(this.database.db, source, {
       actorId, action: "update", result: "failed", entry: "api", summary: "CAD 输入大小超出处理限制",
       metadata: { operation: "cad.limit_exceeded", errorCode: "input-limit", versionId: source.versionId,
-        engineVersion: CAD_ENGINE_VERSION, nameCodepage: codepage, viewId, sourceBytes: source.sourceBytes, inputSetBytes, limitBytes },
+        engineVersion: CAD_ENGINE_VERSION, formatVersion, nameCodepage: codepage, viewId, sourceBytes: source.sourceBytes, inputSetBytes, limitBytes },
     });
   }
   async lease(id: string, release = false): Promise<void> {
@@ -93,7 +96,8 @@ export class CadArchiveRepository {
   async claim(): Promise<CadArtifactRow | null> {
     return this.database.db.transaction(async (tx) => {
       const now = new Date();
-      const row = (await tx.select().from(cadArtifacts).where(and(eq(cadArtifacts.engineVersion, CAD_ENGINE_VERSION),
+      const row = (await tx.select().from(cadArtifacts).where(and(
+        inArray(cadArtifacts.formatVersion, Object.values(CAD_FORMAT_VERSIONS)),
         or(and(eq(cadArtifacts.state, "queued"), lt(cadArtifacts.availableAt, now)),
           and(eq(cadArtifacts.state, "running"), lt(cadArtifacts.claimUntil, now)))))
         .orderBy(cadArtifacts.availableAt).limit(1).for("update", { skipLocked: true }))[0];
@@ -157,7 +161,8 @@ export class CadArchiveRepository {
       actorId: null, action: "update", result: "failed", entry: "system",
       summary: timedOut ? "CAD 解析超时" : limited ? "CAD 解析资源超限" : "CAD 后台任务失败",
       metadata: { operation: timedOut ? "cad.timed_out" : limited ? "cad.limit_exceeded" : "cad.failed",
-        versionId: row.versionId, artifactId: row.id, engineVersion: row.engineVersion, nameCodepage: row.nameCodepage,
+        versionId: row.versionId, artifactId: row.id, engineVersion: row.engineVersion,
+        formatVersion: row.formatVersion, nameCodepage: row.nameCodepage,
         attempt: row.attempts, errorCode: code, retryScheduled: retry, ...context },
     });
   }

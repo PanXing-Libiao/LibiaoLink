@@ -14,7 +14,7 @@ import { buildPreviewContentUrl, signHs256Jwt } from "./onlyoffice.jwt.js";
 import { buildPreviewJobPayload, PREVIEW_JOB_TOPIC, previewJobDedupeKey, type PreviewTarget } from "./preview.job.js";
 import { PreviewRepository, type PreviewArtifactKey, type PreviewArtifactRow } from "./preview.repository.js";
 import { isCadPreviewPending, isRasterImageFile, previewTargetsFor, viewerChannelFor, type ViewerChannel } from "./preview.targets.js";
-import { CAD_ENGINE_VERSION, cadEngineConfigured } from "./cad-engine.client.js";
+import { CAD_ENGINE_VERSION, CAD_VIEWER_VERSION, cadFormatVersion, cadEngineConfigured } from "./cad-engine.client.js";
 import { canonicalMimeForExtension, OCTET_STREAM_MIME } from "./file-mime.js";
 
 type FilePreviewResponse = z.infer<typeof FilePreviewResponseSchema>;
@@ -95,10 +95,14 @@ export class PreviewReadService {
     // ADR-035：旧解析器已删除。先按版本扩展名拦截，避免误报 image/Office MIME 再签出原 CAD。
     if (isCadPreviewPending({ fileName: channelName })) {
       if (cadEngineConfigured(this.config.env) && /\.(step|stp|dxf)$/i.test(channelName)) {
-        await this.recordPreview(file, version, actorId, "CAD 查看器", { viewerKind: "cad", engineVersion: CAD_ENGINE_VERSION });
+        const format = /\.dxf$/i.test(channelName) ? "DXF" : "STEP";
+        await this.recordPreview(file, version, actorId, "CAD 查看器", {
+          viewerKind: "cad", format, engineVersion: CAD_ENGINE_VERSION,
+          viewerVersion: CAD_VIEWER_VERSION, formatVersion: cadFormatVersion(format),
+        });
         return {
           fileId: file.id, versionId: version.id, status: "ready", target: null,
-          viewer: { kind: "cad", format: /\.dxf$/i.test(channelName) ? "DXF" : "STEP", projectId: file.projectId,
+          viewer: { kind: "cad", format, projectId: file.projectId,
             sourceName: channelName, fileId: file.id, versionId: version.id, sourceSHA256: version.contentHash, engineVersion: CAD_ENGINE_VERSION },
           url: null, expiresAt: null, pipelineVersion: null, generatedAt: null, reason: null,
         };

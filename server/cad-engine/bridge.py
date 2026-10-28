@@ -47,7 +47,7 @@ class Gateway:
         self.incoming.mkdir(parents=True, exist_ok=True)
         release = load_release()
         digest = hashlib.sha256()
-        digest.update(release['releaseDigest'].encode())
+        digest.update((release.get('engineDigest') or release['releaseDigest']).encode())
         digest.update(os.environ.get('CAD_STEP_MESHER_PYTHON', '').encode())
         self.jobs = ConversionJobs(self.root / 'jobs', CORE, threading.Lock(), stop_worker,
                                    digest.hexdigest(), sys.executable,

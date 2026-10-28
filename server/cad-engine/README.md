@@ -2,7 +2,7 @@
 
 换机续接原生 DWG 工作先读 [DWG_HANDOFF.md](DWG_HANDOFF.md)：列出已跑通的原型、最新版未通过项、正式图身份、私有证据迁移和逐步复现命令。
 
-二维 DXF v0.15.0 已接到同一平台任务和查看器，代码仍在本地，未部署。先停止旧 API/worker，再执行数据库迁移 `0068`，随后同步更新 CAD 镜像、API 与 worker；只设置旧环境变量或只更新浏览器不构成接入。STEP 继续要求完整产物，DXF 可发布带覆盖证据的 `partial`，空白/损坏文件不得伪装成成功结果。DWG 主图继续提示下载。
+二维 DXF v0.15.0 已接到同一平台任务和查看器，代码仍在本地，未部署。先停止旧 API/worker，再执行数据库迁移 `0068`、`0069`，随后同步更新 CAD 镜像、API 与 worker；只设置旧环境变量或只更新浏览器不构成接入。`0069` 把产物缓存键从 `engine_version` 拆到格式独立的 `format_version`（ADR-039）；旧产物第一次访问会按新格式版本重建，之后浏览器或单一格式改动不再触发另一格式重建。STEP 继续要求完整产物，DXF 可发布带覆盖证据的 `partial`，空白/损坏文件不得伪装成成功结果。DWG 主图继续提示下载。
 
 DXF 上传后可静默预解析主图；查看器中的“配套文件”选择同项目文件的具体版本，并指定资源包内路径，例如主图 `drawings/main.dxf`、外参 `drawings/refs/detail.dxf`。系统只使用明确选择的版本，不猜测同名文件，不访问源文件路径、系统字体目录或网络。支持资源类型 `.dxf/.dwg/.shx/.shp/.ttf/.otf/.dgn/.dwf/.dwfx/.ctb/.stb`、常见位图与 PDF；DWG 外参由固定 LibreDWG CLI 独立解码，原件身份和嵌套相对路径保留；缺少解码器或文件损坏时明确未加载，解码警告保留为部分结果。主图加配套最多 128 份、合计 64 MiB。补齐、调整路径或选择新版本会创建独立产物身份；原来的部分结果不会被当成完整结果复用。每次状态、清单、资源和释放请求均检查主图及配套的实时可见性，配套被回收时拒绝读取，彻底删除时清除相关派生产物。
 
@@ -100,7 +100,7 @@ python3 server/cad-engine/build-release.py
 python3 server/cad-engine/build-release.py --check
 ```
 
-从 LibiaoLink 根目录运行。Python 唯一源码位于 `core/`，浏览器唯一源码位于 `frontend/public/cad-viewer/core/`；直接在本仓修改并验证，随后生成 `source.json` 与 `cad-release.ts`。源提交只作导入来源记录，发布版本按实际源码、固定依赖及网关内容生成；修改后必须重新生成，`--check` 检查漂移。
+从 LibiaoLink 根目录运行。Python 唯一源码位于 `core/`，浏览器唯一源码位于 `frontend/public/cad-viewer/core/`；直接在本仓修改并验证，随后生成 `source.json` 与 `cad-release.ts`。源提交只作导入来源记录，发布版本按实际源码、固定依赖及网关内容生成；修改后必须重新生成，`--check` 检查漂移。`source.json` 现在分别记录 `engineDigest`（服务器引擎/运行时）、`viewerDigest`（浏览器）和 `formatVersions.STEP/DXF`；`cad_artifacts.format_version` 只随对应格式的共享/专属源码及依赖变化，浏览器改动不会使任何产物缓存失效。
 
 本机多格式工作台同样使用上述源码：
 

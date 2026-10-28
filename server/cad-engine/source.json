@@ -508,7 +508,7 @@
     "viewer-session.js": "54e44e94a0cb0c1b56923f1f5a7c46bdfc44d8b25ec32df02e528a65af96d496"
   },
   "runtimeFiles": {
-    "bridge.py": "812642eb932f7e1fc0aa16fb3ef2812e87c195ca61c3e8dc1e4b143b06cae154",
+    "bridge.py": "f683322e32c84c79c7acdbf4bde9f96f446bdea2b963f6e48bfe44e46a7356f8",
     "edge.py": "8d51dd80ce5bfe850413a730a7532a7cf6a138246fe43f441fc81be457717459",
     "release.py": "093212bc868f0578688e90ecfdf34daf11e0ccfb732f74da0c643cdd0285330f",
     "requirements-dxf-build.txt": "16775c2dd88b4872fd5796ab27b5692050a1fb1a8da8f45c722c685bbefe20ea",
@@ -519,6 +519,13 @@
     "sandbox.py": "87ee6844090ce0e6e894325cf284e085c37cdfe6ef7a43a669cf0d37b8f392f0",
     "service.py": "406bb4abec3203ea4e2918c15a8882faf0e9f4b866e4923e4f23a0d6f9245260"
   },
-  "releaseDigest": "4a19b7056a92c355990238d3a127875b6b3d29fcac81d35b1ea514886c7fcc8e",
-  "engineVersion": "step-0.3.3/4a19b7056a92c355990238d3a127875b6b3d29fcac81d35b1ea514886c7fcc8e/gateway-1"
+  "formatVersions": {
+    "STEP": "step-0.3.3/59b471708acfac401d9c7381a8ef32b4856f0def5ea7df74045d8f0a2f8dd4a9/gateway-1",
+    "DXF": "dxf-0.15.0/cada2ab45c53d1857908bea15b2873535b278320f4cdb3f8bb16ea2fb645b8e0/gateway-1"
+  },
+  "engineDigest": "be95badeb7e489afc0d9fb7d8b2c6d3ccab8a5b9e28fea962d1d493b96c68941",
+  "viewerDigest": "2dad7eb8d44cb5e614e54a0b42410272be80d8e9996e65f8276f17d9ff36b45f",
+  "releaseDigest": "5ab274ad645fb0cc937fa39a43cd8dbafa1f472f9264bd53cc2775a5791472a1",
+  "engineVersion": "step-0.3.3/be95badeb7e489afc0d9fb7d8b2c6d3ccab8a5b9e28fea962d1d493b96c68941/gateway-1",
+  "viewerVersion": "viewer-2dad7eb8d44cb5e614e54a0b42410272be80d8e9996e65f8276f17d9ff36b45f"
 }

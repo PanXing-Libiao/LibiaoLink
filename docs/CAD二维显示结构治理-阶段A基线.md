@@ -85,7 +85,7 @@
 3. 统一诊断契约：适配器 loss、投影失败、查看器 `plotErrors` 与浏览器告警的边界。
 4. 大图资源预算与路径阈值是否随真实图纸调整；阈值调整必须同时更新本文件和测试。
 5. GPU 原型不在仓库、不参与契约；若未来接入，必须消费同一执行计划，不能另定义语义。
-6. **版本耦合（部署前必须决策）**：`build-release.py` 把 `engineFiles`、`runtimeFiles` 和 `browserFiles` 一起算入 `releaseDigest`/`engineVersion`。本次二维引擎与浏览器改动已重新生成 `source.json`，`engineVersion` 因此变化；按当前缓存键，部署会使 STEP 已完成产物按新版本重建。需要拆分引擎/浏览器/格式版本，或明确接受一次 STEP 重建；在此之前不部署。
+6. **版本拆分（已实施，ADR-039）**：`engineVersion` 只含服务器引擎/运行时，`formatVersion` 按 STEP/DXF 独立计算并作为 `cad_artifacts` 缓存键，`viewerVersion` 记录浏览器文件。迁移 `0069` 回填旧产物后首次访问会重建一次；之后浏览器或单一格式改动不再触发另一格式重建。部署仍需 API/worker/CAD 镜像与静态资源同批发布。
 
 ## 7. 阶段 B 裁剪纵向切片与阶段 C 文本切片
 

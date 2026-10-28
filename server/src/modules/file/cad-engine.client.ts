@@ -8,7 +8,7 @@ import { AppConfig } from "../../config/config.module.js";
 import type { Env } from "../../config/env.js";
 import { AppError } from "../../common/errors/app-error.js";
 import { CAD_ENGINE_VERSION } from "./cad-release.js";
-export { CAD_ENGINE_VERSION } from "./cad-release.js";
+export { CAD_ENGINE_VERSION, CAD_VIEWER_VERSION, CAD_FORMAT_VERSIONS, cadFormatVersion } from "./cad-release.js";
 
 const JSON_LIMIT = 64 * 1024;
 const RESOURCE_LIMIT = 256 * 1024 * 1024;

@@ -18,6 +18,7 @@ export const cadArtifacts = pgTable("cad_artifacts", {
   companions: jsonb("companions").$type<CadBoundCompanion[]>().notNull().default([]),
   resourceSetHash: text("resource_set_hash").notNull().default("0".repeat(64)),
   engineVersion: text("engine_version").notNull(),
+  formatVersion: text("format_version").notNull().default(""),
   nameCodepage: text("name_codepage").notNull().default("GB"),
   state: text("state").notNull().default("queued"),
   phase: text("phase").notNull().default("queued"),
@@ -36,12 +37,13 @@ export const cadArtifacts = pgTable("cad_artifacts", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
-  unique("uq_cad_artifacts_input_set").on(t.versionId, t.engineVersion, t.nameCodepage, t.resourceSetHash),
+  unique("uq_cad_artifacts_input_set").on(t.versionId, t.formatVersion, t.nameCodepage, t.resourceSetHash),
   index("ix_cad_artifacts_queue").on(t.state, t.availableAt),
   index("ix_cad_artifacts_file").on(t.fileId),
   check("ck_cad_artifacts_state", sql`${t.state} in ('queued','running','completed','partial','failed','timed-out')`),
   check("ck_cad_artifacts_input_set", sql`${t.sourceFormat} in ('STEP','DXF') and ${t.resourceSetHash} ~ '^[a-f0-9]{64}$' and length(coalesce(${t.mainPath},${t.sourceName})) between 1 and 1024 and jsonb_typeof(${t.companions}) = 'array' and jsonb_array_length(${t.companions}) <= 127 and ((${t.sourceFormat} = 'DXF' and ${t.mainPath} is not null) or (${t.sourceFormat} = 'STEP' and ${t.state} <> 'partial' and ${t.companions} = '[]'::jsonb and ${t.resourceSetHash} = repeat('0',64)))`),
   check("ck_cad_artifacts_encoding", sql`${t.nameCodepage} in ('GB','UTF8')`),
+  check("ck_cad_artifacts_format_version", sql`length(${t.formatVersion}) between 1 and 512`),
   check("ck_cad_artifacts_source", sql`${t.sourceSHA256} ~ '^[a-f0-9]{64}$' and ${t.sourceBytes} > 0`),
   check("ck_cad_artifacts_ready", sql`${t.state} not in ('completed','partial') or (${t.objectPrefix} is not null and ${t.manifestSHA256} is not null and ${t.manifestSHA256} ~ '^[a-f0-9]{64}$' and ${t.manifestBytes} is not null and ${t.manifestBytes} > 0 and ${t.resourceLease} is not null and ${t.resourceLease} ~ '^[a-f0-9]{48}$' and ${t.buffers} is not null)`),
 ]);

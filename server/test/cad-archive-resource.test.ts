@@ -6,7 +6,7 @@ import type { ObjectStorage } from "../src/storage/object-storage.js";
 import type { CadArchiveRepository, CadArtifactRow, CadViewRow } from "../src/modules/file/cad-archive.repository.js";
 import type { CadEngineClient } from "../src/modules/file/cad-engine.client.js";
 import { CadArchiveService } from "../src/modules/file/cad-archive.service.js";
-import { CAD_ENGINE_VERSION } from "../src/modules/file/cad-release.js";
+import { CAD_ENGINE_VERSION, CAD_FORMAT_VERSIONS } from "../src/modules/file/cad-release.js";
 
 const opened = new Set<Readable>();
 afterEach(() => { for (const stream of opened) stream.destroy(); opened.clear(); });
@@ -18,7 +18,8 @@ function fixture() {
     id: "11111111-1111-4111-8111-111111111111", fileId: "22222222-2222-4222-8222-222222222222",
     versionId: "33333333-3333-4333-8333-333333333333", sourceSHA256: "1".repeat(64), sourceBytes: 3,
     sourceFormat: "STEP", mainPath: "box.step", companions: [], resourceSetHash: "0".repeat(64),
-    sourceName: "box.step", engineVersion: CAD_ENGINE_VERSION, nameCodepage: "GB", state: "completed", phase: "completed",
+    sourceName: "box.step", engineVersion: CAD_ENGINE_VERSION, formatVersion: CAD_FORMAT_VERSIONS.STEP,
+    nameCodepage: "GB", state: "completed", phase: "completed",
     attempts: 1, availableAt: now, claimToken: null, claimUntil: null, objectPrefix: "projects/test/files/test/cad/test/",
     manifestSHA256: createHash("sha256").update(body).digest("hex"), manifestBytes: body.byteLength,
     resourceLease: "4".repeat(48), buffers: [], artifactBytes: body.byteLength, errorCode: null, error: null,

@@ -52,9 +52,15 @@ cd server && python3 test/cad-release.test.py
 
 ## 4. 版本、缓存与回滚
 
-- 本次重新生成了 `server/cad-engine/source.json` 与 `server/src/modules/file/cad-release.ts`；阶段 D 最终 `engineVersion` 为 `step-0.3.3/4a19b7056a92c355990238d3a127875b6b3d29fcac81d35b1ea514886c7fcc8e/gateway-1`。
-- 当前 `build-release.py` 将 `engineFiles`、`runtimeFiles`、`browserFiles` 一起算入 `releaseDigest`；**部署这批二维/浏览器改动会改变 `engineVersion`，STEP 已完成产物会按新版本重建**。这是阶段 A 已登记的待决项；在拆分引擎/浏览器/格式版本或明确接受重建之前不部署。
-- 回滚：本批提交未推送、未部署；本地回滚到 `fff7428` 即可恢复阶段 C 前的二维行为。若已部署，需同时回滚 API/worker/CAD 镜像与 `/cad-viewer/` 静态资源，并按旧 `engineVersion` 复用/重建 `cad_artifacts`；不要只回滚前端，避免 manifest/引擎版本不一致。
+- 已按 [ADR-039](adr/ADR-039-CAD版本拆分与缓存键.md) 拆分版本：`engineVersion` 只含服务器引擎/运行时，`formatVersion` 按 STEP/DXF 独立计算并作为 `cad_artifacts` 缓存键，`viewerVersion` 记录浏览器文件；`bridge.py` 的本地任务恢复摘要改用 `engineDigest`。
+- 本文件所在提交的 `source.json`/`cad-release.ts` 记录 `engineDigest`、`viewerDigest`、`formatVersions` 和 `viewerVersion`；当前值为：
+  - `engineVersion = step-0.3.3/be95badeb7e489afc0d9fb7d8b2c6d3ccab8a5b9e28fea962d1d493b96c68941/gateway-1`
+  - `viewerVersion = viewer-2dad7eb8d44cb5e614e54a0b42410272be80d8e9996e65f8276f17d9ff36b45f`
+  - `formatVersions.STEP = step-0.3.3/59b471708acfac401d9c7381a8ef32b4856f0def5ea7df74045d8f0a2f8dd4a9/gateway-1`
+  - `formatVersions.DXF = dxf-0.15.0/cada2ab45c53d1857908bea15b2873535b278320f4cdb3f8bb16ea2fb645b8e0/gateway-1`
+  迁移 `0069` 为旧产物回填旧 `engine_version` 作为 `format_version`，首次访问新格式版本时重建一次；之后浏览器或单一格式改动不会触发另一格式重建。
+- 迁移 `0069` 改变唯一键，必须先停止 API/worker 再迁移并整体升级；不能只回退镜像。
+- 回滚：本批提交未推送、未部署；本地回滚到 `fff7428` 即可恢复阶段 C 前的二维行为。若已部署，需停 API/worker，恢复 `engine_version` 唯一键、移除 `format_version`，再回退 API/worker/CAD 镜像与 `/cad-viewer/` 静态资源；不要只回滚前端，避免 manifest/引擎版本不一致。
 - 未执行：真实公司账号浏览器验收、生产部署、独立 `CAD逆向` 工程能力矩阵同步（该工程不在本仓库）。
 
 ## 5. 未完成与后续任务
