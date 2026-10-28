@@ -36,7 +36,7 @@
     "unified/dxf_fill.py": "f19d07212a59cdc7d35bbe917de070b949d810314ca5b5e363e821eadd10d9a6",
     "unified/dxf_gradients.py": "ea78ed46ffb2c50c885ecaba841d1942b478a0a2db50e1b4e55250b746f31c6c",
     "unified/dxf_linetype.py": "a52e365c6740406e4b1f05edc4056c6c9fb2d8180cdc53fa577807c47ff4307b",
-    "unified/dxf_media.py": "f38a9f5d747ced1ddc5c9f8da3e6b2ddab1eec3f14fec5ab586968038de9a997",
+    "unified/dxf_media.py": "35a36e5f0fc5537425430d58535bdd0a98743a66c36df326e1db6bdb7eb8600d",
     "unified/dxf_mtext.py": "274ad04c3362a51991988ca37fe27c1bac220da8b913ea18a2af83a443f9358f",
     "unified/dxf_ole.py": "45bfd3388ec394d330ff365a252850e7d5fbb722ddfd309f691f3066df0d5dc4",
     "unified/dxf_plotstyles.py": "62c215ff40189e815b4fc9d644058927e5e9fc7421ef4045c25dc04fd29f7776",
@@ -471,11 +471,12 @@
     "conversion-jobs.js": "05be087b3ceb9017e8d21f078b6922f297a0bf709e0f39c63c414646bfa938d0",
     "direct-projection.js": "0d7a95890aea9b431d7e86f651e83a33b904ee50c27bcffd5d38a7eb53e9b36d",
     "drawing-2d.js": "25a6dca759f304976752e6d2ca4d17667d7e934348435425e28d960a8591ed83",
-    "drawing-clipping.js": "cf40ff08ffd2b6584411a26a1385a3459985ae115c5d46f440b20c40c234638b",
-    "drawing-instances.js": "1cdebc74050409eba3169aa3677e8c23e63598d48f06169be0ccd6ce855d4acc",
+    "drawing-clipping.js": "2c7437a8ca77ee40da95e2be1290d01641bd36f2c58e627631ab54d3841f1469",
+    "drawing-display.js": "349e32fb91e7fc55bf1309eecc229a6d44f733a58de5e4c446749a2bacfaf937",
+    "drawing-instances.js": "ae8915fec05200eb3f7e56c245a86aa991aa2630378115848f3784f734e8fafa",
     "drawing-plot-styles.js": "a2c3888311ccdaac04b38f108ab7175cd171a43f0fb82fdb9356e9431819b243",
-    "drawing-projection.js": "95fbcfeb26bd9830e8434d9c5730a173caea82af94123bc0cabb5e500ebb133f",
-    "drawing-viewer.js": "1b2bb1054c1a8e1d1b24990557a1220bf8e6974f3bfd104196f1aca6cc92c133",
+    "drawing-projection.js": "d8d6ab2ff5e364161ea0b299365a521fe4e4899a896b4dc5a2823794fb3675ca",
+    "drawing-viewer.js": "412b2aafd1c422bb5dd4d04626fec9c3aca508bda429200385620b477f191300",
     "dxf-resources.js": "219569569cc22deca979ec3f6693031bfbfe050c30eb8fe419962f4e3dab5c2c",
     "highlight.js": "31754dabcf90e0c71a67123e7e03f9e39614f02021fdd35d18b61e688c734099",
     "mesh-repair-ui.js": "8750dc2c2a63d9ba10bada090fb2938a9cd9a593125f5d2f31e0e0d4e7c02aaf",
@@ -514,6 +515,6 @@
     "sandbox.py": "87ee6844090ce0e6e894325cf284e085c37cdfe6ef7a43a669cf0d37b8f392f0",
     "service.py": "406bb4abec3203ea4e2918c15a8882faf0e9f4b866e4923e4f23a0d6f9245260"
   },
-  "releaseDigest": "0a97e06c885a60974b6859d4959262f1fbb0db5ec4f330eee4dec716f6835013",
-  "engineVersion": "step-0.3.3/0a97e06c885a60974b6859d4959262f1fbb0db5ec4f330eee4dec716f6835013/gateway-1"
+  "releaseDigest": "e16af35b98ff0edfa645d7aa09869b630e97dfa5f6a67f8578c6a4a38c1c84cf",
+  "engineVersion": "step-0.3.3/e16af35b98ff0edfa645d7aa09869b630e97dfa5f6a67f8578c6a4a38c1c84cf/gateway-1"
 }

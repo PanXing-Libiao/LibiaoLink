@@ -7,7 +7,7 @@ import {clipInfiniteLine, gradientField, triangleBoundarySegments, lineDashPatte
 import {drawingClips, compileClips, triangulateRings, insideRing} from './drawing-clipping.js?v=dxf-0.15.0';
 import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.15.0';
 import {normalizeLineRange} from './drawing-display.js?v=dxf-0.15.0';
-import {estimateDrawingDraws, projectInstances, multiply, transformPoint, inverse2D, transformBounds, union, I} from './drawing-instances.js';
+import {estimateDrawingDraws, projectInstances, shouldProjectInstances, multiply, transformPoint, inverse2D, transformBounds, union, I} from './drawing-instances.js';
 import Flatbush from './vendor/flatbush.js';
 import {wrapCadText,cadTextEm,cadLineHeight} from './vendor/cad-text-layout.js';
 
@@ -1328,7 +1328,7 @@ export function mountDrawingViewer(envelope) {
     const layerMap = {};
     presentationStyles = {};
     instancePlan=null;instanceSelected=null;
-    if((target.kind==='model'||target.kind==='layout')&&(forceInstances||estimateDrawingDraws(ucd,target)>400000)){
+    if((target.kind==='model'||target.kind==='layout')&&shouldProjectInstances(target,forceInstances?0:estimateDrawingDraws(ucd,target),forceInstances)){
       instancePlan=projectInstances(ucd,target,presentationStyles);projection=instancePlan.projection;effectiveLayers=instancePlan.layers;
     }else{
     projection = target.kind === 'block-preview'

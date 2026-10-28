@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {projectInstances, estimateDrawingDraws} from '../../../../frontend/public/cad-viewer/core/drawing-instances.js';
+import {projectInstances, estimateDrawingDraws, shouldProjectInstances, INSTANCE_DRAW_THRESHOLD} from '../../../../frontend/public/cad-viewer/core/drawing-instances.js';
 import {drawingClips} from '../../../../frontend/public/cad-viewer/core/drawing-clipping.js';
 import {identity} from '../../../../frontend/public/cad-viewer/core/drawing-projection.js';
 
@@ -44,6 +44,30 @@ function entity(id, layerId = 'l0'){
 function find(plan, itemId){
   return Object.values(plan.projection.draws).find(draw => draw.itemId === itemId);
 }
+
+test('instance path is selected only above the registered draw threshold', () => {
+  assert.equal(INSTANCE_DRAW_THRESHOLD, 400000);
+  const model = {kind:'model', spaceId:'s1'};
+  for (const [count, expected] of [[399999,false],[400000,false],[400001,true]])
+    assert.equal(shouldProjectInstances(model, count), expected, String(count));
+  assert.equal(shouldProjectInstances({kind:'layout', layoutId:'l1'}, 400001), true);
+  assert.equal(shouldProjectInstances({kind:'block-preview', blockId:'b1'}, 999999), false);
+  assert.equal(shouldProjectInstances(model, 0, true), true);
+});
+
+test('a non-invertible clip placement is reported instead of silently unclipped', () => {
+  const doc = document();
+  doc.drawing.spaces.s1.blockInstanceIds.push('bi1');
+  doc.drawing.blocks.b1 = {id:'b1', spaceId:'bs1', drawingId:'d1', name:'B'};
+  doc.drawing.spaces.bs1 = {id:'bs1', drawingId:'d1', entityIds:['be1'], annotationIds:[], blockInstanceIds:[]};
+  doc.drawing.blockInstances.bi1 = {id:'bi1', ownerSpaceId:'s1', definitionId:'b1', layerId:'l0',
+    localFromBlock:[0,0,0,0, 0,0,0,0, 0,0,1,0, 10,20,0,1], style:paint(), sourceRefs:[{recordOffset:0}]};
+  doc.drawing.entities.be1 = entity('be1');
+  doc.extensions['org.cad-preview.style-inheritance/1'].blockClips = {
+    bi1:{boundary:[[0,0],[10,0],[10,10],[0,10]], inverted:false}};
+  assert.throws(() => projectInstances(doc, {kind:'model',spaceId:'s1'}),
+    /instanced-projection-clip-transform-not-invertible/);
+});
 
 test('presentation text and mask parts resolve inside retained groups', () => {
   const doc = document();

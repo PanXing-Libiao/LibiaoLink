@@ -11,6 +11,11 @@ export function inverse2D(m){const det=m[0]*m[5]-m[1]*m[4];if(Math.abs(det)<1e-2
 export function transformBounds(b,m){if(!b)return null;const pts=[[b.minX,b.minY],[b.maxX,b.minY],[b.maxX,b.maxY],[b.minX,b.maxY]].map(p=>transformPoint(m,...p));return {minX:Math.min(...pts.map(p=>p[0])),minY:Math.min(...pts.map(p=>p[1])),maxX:Math.max(...pts.map(p=>p[0])),maxY:Math.max(...pts.map(p=>p[1]))};}
 export function union(a,b){if(!b)return a;if(!a)return {...b};return {minX:Math.min(a.minX,b.minX),minY:Math.min(a.minY,b.minY),maxX:Math.max(a.maxX,b.maxX),maxY:Math.max(a.maxY,b.maxY)};}
 
+export const INSTANCE_DRAW_THRESHOLD=400000;
+export function shouldProjectInstances(target,count,force=false){
+ return (target.kind==='model'||target.kind==='layout')&&(force||count>INSTANCE_DRAW_THRESHOLD);
+}
+
 export function estimateDrawingDraws(document,target){
  const m=document.drawing,memo=new Map(),active=new Set(),attached=new Map();
  for(const a of Object.values(m.annotations))if(a.ownerBlockInstanceId)attached.set(a.ownerBlockInstanceId,(attached.get(a.ownerBlockInstanceId)||0)+1);
@@ -37,6 +42,8 @@ export function projectInstances(document,target,presentationStyles=null){
    // Block clips and viewport boundaries arrive in the parent/paper coordinate
    // system; retained draws are space-local, so store the inverse-mapped form.
    const inverse=inverse2D(transform);
+   if((clips.length||viewport?.clipBoundary?.length)&&!inverse)
+    throw new Error('instanced-projection-clip-transform-not-invertible');
    const localClips=clips.map(clip=>({...clip,
     boundary:inverse?clip.boundary.map(point=>transformPoint(inverse,...point)):clip.boundary}));
    const viewportClip=viewport?.clipBoundary?.length?{boundary:(inverse?viewport.clipBoundary.map(point=>transformPoint(inverse,...point)):viewport.clipBoundary),inverted:false}:null;
