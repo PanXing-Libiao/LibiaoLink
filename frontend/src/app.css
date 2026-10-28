@@ -4139,3 +4139,11 @@ body {
     display: inline-flex !important;
   }
 }
+
+/* ONLYOFFICE 移动版 iframe 默认 fixed 到视口；约束在预览卡片内，保留遮罩点击关闭与原文件下载栏。 */
+[data-onlyoffice-mobile="true"] iframe {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+}

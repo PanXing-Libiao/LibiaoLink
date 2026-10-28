@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import type { FilePreviewKind, PreviewViewerConfig } from "../fileApi";
 import { FileImagePreview } from "./FileImagePreview";
 import { PdfViewer } from "./PdfViewer";
-import { OnlyOfficeViewer } from "./OnlyOfficeViewer";
+import { isMobileOnlyOfficeEditor, OnlyOfficeViewer } from "./OnlyOfficeViewer";
 import { CadModelViewer } from "./CadModelViewer";
 import { useFocusTrap } from "./useFocusTrap";
 import { useT } from "../i18n";
@@ -34,6 +34,7 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
   onClose: () => void;
 }) {
   const t = useT();
+  const onlyOfficeMobile = pane.mode === "viewer" && pane.viewer.kind === "onlyoffice" && isMobileOnlyOfficeEditor();
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -59,10 +60,10 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
         event.stopPropagation();
         onClose();
       }}
-      className={"fixed inset-0 " + zClass + " flex items-center justify-center bg-zinc-900/60 " + (kind === "cad" ? "p-1 sm:p-3" : "p-6")}
+      className={"fixed inset-0 " + zClass + " flex items-center justify-center bg-zinc-900/60 " + (kind === "cad" ? "p-1 sm:p-3" : onlyOfficeMobile ? "p-2" : "p-6")}
     >
       <figure className="relative flex max-h-full max-w-full flex-col items-center">
-        {kind !== "cad" && pane.mode === "viewer" && pane.viewer.kind === "onlyoffice" ? (
+        {kind !== "cad" && pane.mode === "viewer" && pane.viewer.kind === "onlyoffice" && !onlyOfficeMobile ? (
           <button
             type="button"
             data-file-preview-native-download="true"
