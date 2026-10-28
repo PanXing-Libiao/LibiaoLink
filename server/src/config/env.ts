@@ -6,6 +6,8 @@ export const EnvSchema = z
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
     PORT: z.coerce.number().int().min(1).max(65535).default(3000),
     DATABASE_URL: z.string().min(1),
+    /** 站外深链基址（日报群消息等项目页面链接）；本地域名暂不配置，缺省 = 生产站点。 */
+    PUBLIC_APP_BASE_URL: z.string().url().default("https://pm.libiaorobot.com"),
     LOG_LEVEL: z
       .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
       .default("info"),

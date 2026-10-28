@@ -186,7 +186,7 @@ export const DailyReportListResponseSchema = z
   })
   .openapi("DailyReportListResponse", { description: "日报列表（项目内成员可见）" });
 
-/** 日报同步到项目群（2026-10-27）：PM 确认后落 outbox notify.group；文字先发「日报已就绪」，worker 再追加动态海报。 */
+/** 日报同步到项目群（2026-10-27 / 2026-10-28 修订）：PM 确认后落 outbox notify.group；文字先发「日报已送达」及具体日报纯文字深链，worker 再追加动态海报。 */
 export const DailyReportGroupSyncResponseSchema = z
   .object({
     reportId: UuidSchema,

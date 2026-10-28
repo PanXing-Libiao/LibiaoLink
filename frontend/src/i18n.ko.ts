@@ -592,7 +592,7 @@ export const KO_TEXTS: Partial<Record<TextKey, string>> = {
   "report.groupSync.blockedUnbound": "이 프로젝트에 WeCom 그룹이 연결되지 않았습니다",
   "report.groupSync.blockedLoading": "프로젝트 그룹 연결 상태 확인 중…",
   "report.groupSync.blockedError": "그룹 연결 상태를 확인하지 못했습니다. 새로 고친 후 다시 시도하세요",
-  "report.groupSync.noticeQueued": "동기화 요청을 접수했습니다. 봇이 “일일 보고서 준비 완료”와 일일 보고서 포스터를 보냅니다.",
+  "report.groupSync.noticeQueued": "동기화 요청을 접수했습니다. 봇이 “일일 보고서 전달 완료”, 일일 보고서 링크와 포스터를 보냅니다.",
   "report.groupSync.error": "프로젝트 그룹 동기화에 실패했습니다.",
   "report.groupSync.groupFallback": "프로젝트 그룹",
   "report.members.footer": "{n} 멤버 · 이름 / 병음으로 검색",

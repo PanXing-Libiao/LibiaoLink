@@ -172,10 +172,13 @@ export class ReportRepository {
     return rows.length > 0;
   }
 
-  /** 项目上下文（写路径用）：软删 / 不存在 = null（记录级 404）；status 供归档写保护判定（ADR-027）。 */
-  async findProject(projectId: string, client: DbClient = this.database.db): Promise<{ id: string; status: string } | null> {
+  /** 项目上下文（写路径用）：软删 / 不存在 = null（记录级 404）；status 供归档写保护判定（ADR-027），name 供群播报深链文案。 */
+  async findProject(
+    projectId: string,
+    client: DbClient = this.database.db,
+  ): Promise<{ id: string; status: string; name: string } | null> {
     const rows = await client
-      .select({ id: projects.id, status: projects.status })
+      .select({ id: projects.id, status: projects.status, name: projects.name })
       .from(projects)
       .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)))
       .limit(1);

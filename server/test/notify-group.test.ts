@@ -36,6 +36,14 @@ const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const PROJECT_2 = "22222222-2222-4222-8222-222222222222";
 const CHATID = "AbcDefGhiJkLmNoPqrStUv-12";
 
+function dailyReportGroupBody(reportId: string): string {
+  return (
+    "日报已送达\n" +
+    "[新能源汽车总装输送线项目2026-10-27的日报记录]" +
+    "(https://pm.libiaorobot.com/#/project/" + PROJECT_ID + "?view=daily&report=" + reportId + ")"
+  );
+}
+
 function groupRow(overrides: Partial<WecomGroupRow> & { projectId: string; chatid: string }): WecomGroupRow {
   return {
     id: 1,
@@ -387,7 +395,7 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
     expect(archive.attempts[0]).toMatchObject({ messageId: archive.messages[0]!.id, channel: "wecom_group" });
   });
 
-  it("DAILY_REPORT_GROUP：文字「日报已就绪」送达后追加日报海报与现场问题专报", async () => {
+  it("DAILY_REPORT_GROUP：日报送达文字与纯文字深链保真后，追加日报海报与现场问题专报", async () => {
     const { service, repo, aibot, archive } = makeService();
     repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
     const reportId = "33333333-3333-4333-8333-333333333333";
@@ -421,7 +429,7 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
 
     const outcome = await service.consume(claimedRow(payload({
       title: null,
-      body: "日报已就绪",
+      body: dailyReportGroupBody(reportId),
       refType: "report",
       refId: reportId,
       templateCode: "DAILY_REPORT_GROUP",
@@ -429,7 +437,14 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
 
     expect(outcome).toEqual({ outcome: "done" });
     expect(aibot.events).toEqual(["markdown", "image", "image"]);
-    expect(aibot.sends[0]).toMatchObject({ chatid: CHATID, content: "日报已就绪" });
+    expect(aibot.sends[0]).toEqual({
+      chatid: CHATID,
+      content:
+        "日报已送达  \n" +
+        "[新能源汽车总装输送线项目2026-10-27的日报记录]" +
+        "(https://pm.libiaorobot.com/#/project/" + PROJECT_ID + "?view=daily&report=" + reportId + ")",
+      groupActivated: true,
+    });
     expect(aibot.imageSends).toHaveLength(2);
     for (const image of aibot.imageSends) {
       expect(image.content.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
@@ -467,7 +482,7 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
 
     const outcome = await service.consume(claimedRow(payload({
       title: null,
-      body: "日报已就绪",
+      body: dailyReportGroupBody(reportId),
       refType: "report",
       refId: reportId,
       templateCode: "DAILY_REPORT_GROUP",
@@ -523,7 +538,7 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
 
     const outcome = await service.consume(claimedRow(payload({
       title: null,
-      body: "日报已就绪",
+      body: dailyReportGroupBody(reportId),
       refType: "report",
       refId: reportId,
       templateCode: "DAILY_REPORT_GROUP",

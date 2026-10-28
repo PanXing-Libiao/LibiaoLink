@@ -124,3 +124,29 @@ export function parseIssueFilter(query: IssueListQuery): IssueFilter {
   };
 }
 
+/**
+ * 日报群同步正文：首行状态 + 次行纯文字 Markdown 链接（企业微信只显示链接文字，不显示 URL）。
+ * 深链沿用前端 `projectFocusHref` 口径：必须带 `report` 参数才能在「日报记录」中定位到该条日报。
+ */
+export function buildDailyReportGroupBody(input: {
+  publicBaseUrl: string;
+  projectId: string;
+  projectName: string;
+  reportId: string;
+  reportDate: string;
+}): string {
+  const base = input.publicBaseUrl.trim().replace(/\/+$/u, "");
+  if (base === "") throw new Error("PUBLIC_APP_BASE_URL 不能为空");
+  const label = (input.projectName.replace(/\s+/gu, " ").trim() + input.reportDate + "的日报记录")
+    .replace(/\\/gu, "\\\\")
+    .replace(/\[/gu, "\\[")
+    .replace(/\]/gu, "\\]");
+  const url =
+    base +
+    "/#/project/" +
+    encodeURIComponent(input.projectId) +
+    "?view=daily&report=" +
+    encodeURIComponent(input.reportId);
+  return "日报已送达\n[" + label + "](" + url + ")";
+}
+

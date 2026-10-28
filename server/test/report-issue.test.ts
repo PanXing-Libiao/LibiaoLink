@@ -10,10 +10,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DailyReportCreateBodySchema, DailyReportUpdateBodySchema } from "@libiaolink/contracts";
 import type { AuditService } from "../src/modules/admin/index.js";
+import { AppConfig } from "../src/config/config.module.js";
+import { loadEnv } from "../src/config/env.js";
 import type { DatabaseService } from "../src/db/database.service.js";
 import type { DbClient } from "../src/db/db-client.js";
 import type { IssueRepository, IssueRow } from "../src/modules/report-issue/issue.repository.js";
 import { IssueService } from "../src/modules/report-issue/issue.service.js";
+import { buildDailyReportGroupBody } from "../src/modules/report-issue/report-issue.rules.js";
 import type { DailyReportRow, ReportRepository } from "../src/modules/report-issue/report.repository.js";
 import type { ProjectGroupService } from "../src/modules/project/index.js";
 import { ReportService } from "../src/modules/report-issue/report.service.js";
@@ -148,7 +151,11 @@ function makeIssue(id: string, overrides: Partial<IssueRow> = {}): IssueRow {
 
 /** 日报仓储替身：镜像真仓储的读面过滤（项目 + 筛选）、插入与乐观锁（同日多条 —— 无唯一键判重）。 */
 class FakeReportRepository {
-  project: { id: string; status: string } | null = { id: PROJECT, status: "active" };
+  project: { id: string; status: string; name: string } | null = {
+    id: PROJECT,
+    status: "active",
+    name: "新能源汽车总装输送线项目",
+  };
   reports = new Map<string, DailyReportRow>();
   inserted: DailyReportRow[] = [];
   reportIds = [REPORT_1, REPORT_2, "c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3", "c4c4c4c4-c4c4-4c4c-8c4c-c4c4c4c4c4c4"];
@@ -194,7 +201,7 @@ class FakeReportRepository {
     return true;
   }
 
-  async findProject(projectId: string): Promise<{ id: string; status: string } | null> {
+  async findProject(projectId: string): Promise<{ id: string; status: string; name: string } | null> {
     return this.project !== null && this.project.id === projectId ? this.project : null;
   }
 }
@@ -284,6 +291,7 @@ function makeReportService(
     issues as unknown as IssueRepository,
     audit as unknown as AuditService,
     group as unknown as ProjectGroupService,
+    new AppConfig(loadEnv({ NODE_ENV: "test", DATABASE_URL: "postgres://test/test" })),
   );
 }
 
@@ -310,6 +318,42 @@ beforeEach(() => {
 
 /** 当天（Asia/Shanghai，与 service 同口径）：用真实 now 求值，避免用例随日期推移失真。 */
 const NOW_DAY = shanghaiToday(new Date());
+
+describe("日报项目群正文", () => {
+  const input = {
+    publicBaseUrl: "https://pm.libiaorobot.com/",
+    projectId: PROJECT,
+    projectName: "新能源汽车总装输送线项目",
+    reportId: REPORT_1,
+    reportDate: "2026-10-27",
+  };
+
+  it("标题写「日报已送达」，次行用项目名 + 日期作为纯文字链接", () => {
+    expect(buildDailyReportGroupBody(input)).toBe(
+      "日报已送达\n" +
+        "[新能源汽车总装输送线项目2026-10-27的日报记录]" +
+        "(https://pm.libiaorobot.com/#/project/" + PROJECT + "?view=daily&report=" + REPORT_1 + ")",
+    );
+  });
+
+  it("归一基址尾部斜杠并转义项目名中的 Markdown 与换行", () => {
+    expect(
+      buildDailyReportGroupBody({
+        ...input,
+        publicBaseUrl: "https://preview.example.com/base/",
+        projectName: " A\\B [一期]\n 项目 ",
+      }),
+    ).toBe(
+      "日报已送达\n" +
+        "[A\\\\B \\[一期\\] 项目2026-10-27的日报记录]" +
+        "(https://preview.example.com/base/#/project/" + PROJECT + "?view=daily&report=" + REPORT_1 + ")",
+    );
+  });
+
+  it("空基址直接失败，避免生成不可点击的相对链接", () => {
+    expect(() => buildDailyReportGroupBody({ ...input, publicBaseUrl: "  " })).toThrow(/PUBLIC_APP_BASE_URL/);
+  });
+});
 
 describe("日报（M6-01 / M6-02 · A3-01 ~ A3-09）", () => {
   function seed() {
@@ -653,7 +697,7 @@ describe("日报（M6-01 / M6-02 · A3-01 ~ A3-09）", () => {
 
   it("归档项目：写入口一律 409 PROJECT_ARCHIVED（ADR-027）", async () => {
     const { reports, issues, service } = seed();
-    reports.project = { id: PROJECT, status: "archived" };
+    reports.project = { id: PROJECT, status: "archived", name: "新能源汽车总装输送线项目" };
     issues.project = { id: PROJECT, status: "archived" };
     await expect(
       service.create(PROJECT, { date: NOW_DAY, state: "submitted", doneWork: "归档后" }, ACTOR),
@@ -743,7 +787,10 @@ describe("日报（M6-01 / M6-02 · A3-01 ~ A3-09）", () => {
         payload: {
           projectId: PROJECT,
           title: null,
-          body: "日报已就绪",
+          body:
+            "日报已送达\n" +
+            "[新能源汽车总装输送线项目2026-10-27的日报记录]" +
+            "(https://pm.libiaorobot.com/#/project/" + PROJECT + "?view=daily&report=" + REPORT_1 + ")",
           refType: "report",
           refId: REPORT_1,
           templateCode: "DAILY_REPORT_GROUP",

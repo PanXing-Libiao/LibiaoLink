@@ -36,7 +36,7 @@ report-issue/
 | GET | `/api/v1/projects/{id}/reports/{reportId}` | `report.view` | 详情（A3-01 全字段 + 关联阶段 `stageKeys` / `stageNames` 同下标 + 现场 / 问题两栏附图） |
 | PATCH | `/api/v1/projects/{id}/reports/{reportId}` | `report.fill` | 编辑 / 提交（乐观锁；`date` 不可改；已提交不允许退回草稿；附图整体替换 —— 已生成问题时问题图改挂问题侧） |
 | DELETE | `/api/v1/projects/{id}/reports/{reportId}` | `report.fill` | **成对删除（Push 215）**：删日报 = 连它派生的全部问题 + 两侧附图链（响应回 `cascadedIssueIds`） |
-| POST | `/api/v1/projects/{id}/reports/{reportId}/group-sync` | `project.update` + 项目经理 | **同步项目群（2026-10-27）**：日报非草稿且群已绑定；202 仅表示 outbox 已受理；写 `daily_report` 审计与 `notify.group`（正文「日报已就绪」、模板 `DAILY_REPORT_GROUP`），去重键按日报版本 |
+| POST | `/api/v1/projects/{id}/reports/{reportId}/group-sync` | `project.update` + 项目经理 | **同步项目群（2026-10-27 / 2026-10-28 文案与深链修订）**：日报非草稿且群已绑定；202 仅表示 outbox 已受理；写 `daily_report` 审计与 `notify.group`（正文首行「日报已送达」、次行 `{项目名称}{日期}的日报记录` 纯文字 Markdown 链接，指向生产站点具体日报记录页；模板 `DAILY_REPORT_GROUP`），去重键按日报版本 |
 | GET | `/api/v1/projects/{id}/issues` | `issue.view` | 列表（三态 / 多值归类（命中任一即入选）/ 任务 / 来源日报 + 关键字 + 分页） |
 | GET | `/api/v1/projects/{id}/issues/{issueId}` | `issue.view` | 详情（问题 + 处理过程留痕，时间正序） |
 | PATCH | `/api/v1/projects/{id}/issues/{issueId}` | `issue.manage` | 状态流转 / 解决方案 / 分派 / 描述 / 归类（Push 208 / 212 扩项）；每次**实际变化**写一条事件 |
@@ -44,7 +44,7 @@ report-issue/
 
 ## 口径（差异登记一并列出）
 
-- **同步项目群（2026-10-27）**：`syncToProjectGroup` 先校验项目可写、项目经理、群绑定与日报非草稿，再在同一事务写审计和 outbox；同版本重复点击由 `report.group-sync:{reportId}:v{version}` 去重，dead 行可由下一次点击唤醒。接口只承诺受理，不承诺企微送达。
+- **同步项目群（2026-10-27 / 2026-10-28 修订）**：`syncToProjectGroup` 先校验项目可写、项目经理、群绑定与日报非草稿，再在同一事务写审计和 outbox；正文在入队时生成，首行「日报已送达」，次行是 `[{项目名称}{YYYY-MM-DD}的日报记录](https://pm.libiaorobot.com/#/project/{id}?view=daily&report={reportId})` 形式的 Markdown 超链接（企业微信只显示链接文字，不显示裸 URL）；基址取 `PUBLIC_APP_BASE_URL`，缺省生产站点，本地不另配域名。同版本重复点击由 `report.group-sync:{reportId}:v{version}` 去重，dead 行可由下一次点击唤醒。接口只承诺受理，不承诺企微送达。
 
 - **同人同项目同日可多条（Push 215）**：原「一人一天一条」唯一约束 `uq_daily_reports_author_date` 与重复 409 `REPORT_ALREADY_EXISTS` 随批删除 —— 同日多条按创建时间区分；**草稿写库**（`state=draft` 落行、`submitted_at` 为空，可 PATCH 到提交 / 补填）。一期不做日报版本历史 —— 「补填保留原始提交记录」以状态 `supplement` + `submittedAt` 表达（差异登记）。
 - **补填由服务端推导**：`state` 只接受 `draft` / `submitted`；提交过去日期 → `supplement`，提交当天 → `submitted`；未来日期 400（A3-04）。已提交 / 补填行不允许退回草稿。

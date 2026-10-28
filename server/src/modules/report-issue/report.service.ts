@@ -12,6 +12,7 @@ import {
   z,
 } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
+import { AppConfig } from "../../config/config.module.js";
 import type { DbClient } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { appendOutbox, appendOutboxIfAbsent } from "../../db/outbox.js";
@@ -32,6 +33,7 @@ import {
 } from "./report-issue.links.js";
 import {
   assertReportStateWrite,
+  buildDailyReportGroupBody,
   departmentOfCategories,
   isFutureDate,
   parseReportFilter,
@@ -140,6 +142,7 @@ export class ReportService {
     private readonly issues: IssueRepository,
     private readonly audit: AuditService,
     private readonly projectGroups: ProjectGroupService,
+    private readonly config: AppConfig,
   ) {}
 
   /** GET /api/v1/projects/{id}/reports：日期区间 / 状态 / 提交人 + 分页，日期倒序。 */
@@ -308,7 +311,7 @@ export class ReportService {
   /**
    * POST /api/v1/projects/{id}/reports/{reportId}/group-sync（2026-10-27）：
    * 仅项目经理；已提交日报 + 已绑定项目群才可受理。审计与 outbox 同事务落库，
-   * 文字「日报已就绪」先发，worker 消费时再按日报快照生成海报。
+   * 文字「日报已送达」及其项目日报深链先发，worker 消费时再按日报快照生成海报。
    * 幂等键按日报版本收口 —— 同版本重复点击不重复投递；dead 行可被下一次点击唤醒。
    */
   async syncToProjectGroup(
@@ -317,7 +320,7 @@ export class ReportService {
     actorId: string,
     projectManager: boolean,
   ): Promise<DailyReportGroupSyncResponse> {
-    await this.loadProjectForWrite(projectId);
+    const project = await this.loadProjectForWrite(projectId);
     if (!projectManager) {
       throw new AppError("FORBIDDEN", "仅项目经理可同步日报到项目群");
     }
@@ -353,7 +356,13 @@ export class ReportService {
         payload: {
           projectId,
           title: null,
-          body: "日报已就绪",
+          body: buildDailyReportGroupBody({
+            publicBaseUrl: this.config.env.PUBLIC_APP_BASE_URL,
+            projectId,
+            projectName: project.name,
+            reportId: row.id,
+            reportDate: row.reportDate,
+          }),
           refType: "report",
           refId: row.id,
           templateCode: "DAILY_REPORT_GROUP",
@@ -507,9 +516,10 @@ export class ReportService {
   }
 
   /** 日报写入口：归档项目一律 409 PROJECT_ARCHIVED（ADR-027）。 */
-  private async loadProjectForWrite(projectId: string): Promise<void> {
+  private async loadProjectForWrite(projectId: string): Promise<{ id: string; status: string; name: string }> {
     const project = await this.reports.findProject(projectId);
     if (project === null) throw new AppError("NOT_FOUND", "项目不存在或不可见");
     if (project.status === "archived") throw new AppError("PROJECT_ARCHIVED", "项目已归档，禁止填报日报");
+    return project;
   }
 }

@@ -16,6 +16,10 @@ const PRODUCTION_BASE = {
 } as const;
 
 describe("生产环境部门权限开关", () => {
+  it("站外深链默认生产域名，本地无需配置", () => {
+    expect(loadEnv({ DATABASE_URL: "postgres://test/test" }).PUBLIC_APP_BASE_URL).toBe("https://pm.libiaorobot.com");
+  });
+
   it("生产缺省或 false 均拒绝启动，避免部门规则静默失效", () => {
     const withoutSwitch: Record<string, string | undefined> = { ...PRODUCTION_BASE };
     delete withoutSwitch.GROUP_ACCESS_ENFORCED;
