@@ -372,13 +372,16 @@ async function main() {
       deadTotal: 0,
       byTopic: [],
       deadByTopic: [{ topic: "preview.job", count: 1 }],
-      recoveries: [{ code: "outbox.queue_stalled.recovered", message: "队列恢复", at: "2026-10-19T04:50:00.000Z" }],
+      recoveries: [
+        { code: "outbox.queue_stalled.recovered", message: "队列恢复", at: "2026-10-19T04:50:00.000Z" },
+        { code: "notify.project_group.recovered", message: "项目群恢复可投递：总装项目（原因为项目群未绑定）", at: "2026-10-19T04:51:00.000Z" },
+      ],
       activeAlerts: [],
     });
     await flush();
     assertTrue(
-      "W6 outbox 日报：与即时告警共用同一管理员告警群，恢复项只在日报出现",
-      aibot.sends.length === 1 && aibot.sends[0].chatid === ALERT_CHATID && String(aibot.sends[0].content).includes("【LibiaoLink 日报】outbox") && String(aibot.sends[0].content).includes("outbox.queue_stalled.recovered") && String(aibot.sends[0].content).includes("新增死信主题：preview.job 1 条") && fallback.digests.length === 0,
+      "W6 outbox 日报：与即时告警共用同一管理员告警群，恢复项只在日报出现且展示可读正文",
+      aibot.sends.length === 1 && aibot.sends[0].chatid === ALERT_CHATID && String(aibot.sends[0].content).includes("【LibiaoLink 日报】outbox") && String(aibot.sends[0].content).includes("已恢复：队列恢复") && String(aibot.sends[0].content).includes("项目群恢复可投递：总装项目") && String(aibot.sends[0].content).includes("新增死信主题：preview.job 1 条") && fallback.digests.length === 0,
     );
   }
 

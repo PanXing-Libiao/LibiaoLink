@@ -6,6 +6,10 @@ import type { Env } from "../src/config/env.js";
 import type { OutboxStatsSnapshot, OutboxStore } from "../src/db/outbox.store.js";
 import type { OutboxTopicBacklog } from "../src/db/outbox.store.js";
 import type { AibotSendResult, WecomAibotClient } from "../src/modules/notify/wecom.aibot.js";
+import type {
+  ProjectGroupDeliveryRecovery,
+  ProjectGroupDeliveryAlertService,
+} from "../src/modules/notify/project-group-delivery-alert.service.js";
 import {
   evaluateOutboxAlerts,
   type OutboxAlert,
@@ -130,7 +134,10 @@ class FakeAlertSink implements OutboxAlertSink {
 
 const START_MS = Date.parse("2026-10-19T00:00:00Z");
 
-function makeProbe(options: { registeredTopics?: readonly OutboxTopic[] } = {}): {
+function makeProbe(options: {
+  registeredTopics?: readonly OutboxTopic[];
+  projectGroupRecoveries?: ProjectGroupDeliveryRecovery[];
+} = {}): {
   probe: OutboxAlertProbe;
   store: FakeStatsStore;
   sink: FakeAlertSink;
@@ -145,7 +152,24 @@ function makeProbe(options: { registeredTopics?: readonly OutboxTopic[] } = {}):
   const registry = new Map<OutboxTopic, OutboxTopicHandler>(
     (options.registeredTopics ?? OUTBOX_TOPICS).map((topic): [OutboxTopic, OutboxTopicHandler] => [topic, handler]),
   );
-  const probe = new OutboxAlertProbe(store as unknown as OutboxStore, sink, new AppConfig(ENV), registry, clock);
+  const projectGroupAlerts =
+    options.projectGroupRecoveries === undefined
+      ? undefined
+      : ({
+          drainRecoveries: () => {
+            const result = options.projectGroupRecoveries ?? [];
+            options.projectGroupRecoveries = [];
+            return result;
+          },
+        } as unknown as ProjectGroupDeliveryAlertService);
+  const probe = new OutboxAlertProbe(
+    store as unknown as OutboxStore,
+    sink,
+    new AppConfig(ENV),
+    registry,
+    clock,
+    projectGroupAlerts,
+  );
   return { probe, store, sink, setNowMs: (value: number) => (nowMs = value) };
 }
 
@@ -256,6 +280,29 @@ describe("OutboxAlertProbe（可执行即时告警 + 日报）", () => {
     const { probe, sink } = makeProbe();
     expect(await probe.digestOnce()).toBeNull();
     expect(sink.digests).toEqual([]);
+  });
+
+  it("项目群恢复并入同一日报，读取后不重复", async () => {
+    const { probe, sink } = makeProbe({
+      projectGroupRecoveries: [
+        {
+          code: "notify.project_group.recovered",
+          message: "项目群恢复可投递：总装项目（原因为项目群未绑定）",
+          at: "2026-10-28T00:00:00.000Z",
+        },
+      ],
+    });
+
+    const report = await probe.digestOnce();
+    expect(report?.recoveries).toEqual([
+      {
+        code: "notify.project_group.recovered",
+        message: "项目群恢复可投递：总装项目（原因为项目群未绑定）",
+        at: "2026-10-28T00:00:00.000Z",
+      },
+    ]);
+    expect(sink.digests).toHaveLength(1);
+    expect(await probe.digestOnce()).toBeNull();
   });
 });
 
@@ -409,7 +456,7 @@ describe("WecomAlertSink（单一管理员告警群）", () => {
     });
 
     expect(composeDigestText(report)).toContain("【LibiaoLink 日报】outbox");
-    expect(composeDigestText(report)).toContain("已恢复：outbox.queue_stalled.recovered");
+    expect(composeDigestText(report)).toContain("已恢复：队列恢复");
     expect(composeDigestText(report)).toContain("仍未恢复：outbox.unconsumed_topic");
     expect(composeDigestText(report)).toContain("新增死信主题：preview.job 2 条");
     sink.emitDigest(report);

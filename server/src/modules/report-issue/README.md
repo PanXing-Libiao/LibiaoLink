@@ -36,7 +36,7 @@ report-issue/
 | GET | `/api/v1/projects/{id}/reports/{reportId}` | `report.view` | 详情（A3-01 全字段 + 关联阶段 `stageKeys` / `stageNames` 同下标 + 现场 / 问题两栏附图） |
 | PATCH | `/api/v1/projects/{id}/reports/{reportId}` | `report.fill` | 编辑 / 提交（乐观锁；`date` 不可改；已提交不允许退回草稿；附图整体替换 —— 已生成问题时问题图改挂问题侧） |
 | DELETE | `/api/v1/projects/{id}/reports/{reportId}` | `report.fill` | **成对删除（Push 215）**：删日报 = 连它派生的全部问题 + 两侧附图链（响应回 `cascadedIssueIds`） |
-| POST | `/api/v1/projects/{id}/reports/{reportId}/group-sync` | `project.update` + 项目经理 | **同步项目群（2026-10-27 / 2026-10-28 文案与深链修订）**：日报非草稿且群已绑定；202 仅表示 outbox 已受理；写 `daily_report` 审计与 `notify.group`（正文首行「日报已送达」、次行 `{项目名称}{日期}的日报记录` 纯文字 Markdown 链接，指向生产站点具体日报记录页；模板 `DAILY_REPORT_GROUP`），去重键按日报版本 |
+| POST | `/api/v1/projects/{id}/reports/{reportId}/group-sync` | `project.update` + 项目经理 | **同步项目群（2026-10-27 / 2026-10-28 文案、统一可投递与深链修订）**：日报非草稿且项目群可投递（绑定存在且机器人已激活）；未绑定 / 未激活均 409 `REPORT_GROUP_NOT_BOUND` 并分别提示处置；202 仅表示 outbox 已受理；写 `daily_report` 审计与 `notify.group`（正文首行「日报已送达」、次行 `{项目名称}{日期}的日报记录` 纯文字 Markdown 链接，指向生产站点具体日报记录页；模板 `DAILY_REPORT_GROUP`），去重键按日报版本 |
 | GET | `/api/v1/projects/{id}/issues` | `issue.view` | 列表（三态 / 多值归类（命中任一即入选）/ 任务 / 来源日报 + 关键字 + 分页） |
 | GET | `/api/v1/projects/{id}/issues/{issueId}` | `issue.view` | 详情（问题 + 处理过程留痕，时间正序） |
 | PATCH | `/api/v1/projects/{id}/issues/{issueId}` | `issue.manage` | 状态流转 / 解决方案 / 分派 / 描述 / 归类（Push 208 / 212 扩项）；每次**实际变化**写一条事件 |
@@ -44,7 +44,7 @@ report-issue/
 
 ## 口径（差异登记一并列出）
 
-- **同步项目群（2026-10-27 / 2026-10-28 修订）**：`syncToProjectGroup` 先校验项目可写、项目经理、群绑定与日报非草稿，再在同一事务写审计和 outbox；正文在入队时生成，首行「日报已送达」，次行是 `[{项目名称}{YYYY-MM-DD}的日报记录](https://pm.libiaorobot.com/#/project/{id}?view=daily&report={reportId})` 形式的 Markdown 超链接（企业微信只显示链接文字，不显示裸 URL）；基址取 `PUBLIC_APP_BASE_URL`，缺省生产站点，本地不另配域名。同版本重复点击由 `report.group-sync:{reportId}:v{version}` 去重，dead 行可由下一次点击唤醒。接口只承诺受理，不承诺企微送达。
+- **同步项目群（2026-10-27 / 2026-10-28 修订）**：`syncToProjectGroup` 先校验项目可写、项目经理、项目群可投递与日报非草稿，再在同一事务写审计和 outbox；**可投递统一判定 = 绑定存在且机器人已激活**，未绑定 / 已绑定未激活均返回 409 `REPORT_GROUP_NOT_BOUND`，正文分别提示绑定或激活处置。正文在入队时生成，首行「日报已送达」，次行是 `[{项目名称}{YYYY-MM-DD}的日报记录](https://pm.libiaorobot.com/#/project/{id}?view=daily&report={reportId})` 形式的 Markdown 超链接（企业微信只显示链接文字，不显示裸 URL）；基址取 `PUBLIC_APP_BASE_URL`，缺省生产站点，本地不另配域名。同版本重复点击由 `report.group-sync:{reportId}:v{version}` 去重，dead 行可由下一次点击唤醒。接口只承诺受理，不承诺企微送达。
 
 - **同人同项目同日可多条（Push 215）**：原「一人一天一条」唯一约束 `uq_daily_reports_author_date` 与重复 409 `REPORT_ALREADY_EXISTS` 随批删除 —— 同日多条按创建时间区分；**草稿写库**（`state=draft` 落行、`submitted_at` 为空，可 PATCH 到提交 / 补填）。一期不做日报版本历史 —— 「补填保留原始提交记录」以状态 `supplement` + `submittedAt` 表达（差异登记）。
 - **补填由服务端推导**：`state` 只接受 `draft` / `submitted`；提交过去日期 → `supplement`，提交当天 → `submitted`；未来日期 400（A3-04）。已提交 / 补填行不允许退回草稿。
@@ -63,7 +63,7 @@ report-issue/
 
 ## 测试与门禁
 
-- `server/test/report-issue.test.ts`：**39 例**（2026-10-27 增 3 例：非 PM 403 / 未绑定 409 / 草稿 400 / 成功审计与 outbox 载荷和去重键；Push 243 增：多条生成 / 草稿携带清单 PATCH 提交 / 重新提交幂等 / 契约互斥按内容判定）（日报 20 + 问题 12 · Push 215 整文件重写）—— 日报：创建与提交 / **草稿写库** / **同日多条（无 409 判重）** / 补填推导 / 未来日期 400 / 问题生成与自动分派 / 原因类不分派 / A3-09 幂等 / **附图校验与整体替换 + 转挂** / 草稿 → 提交 / 已提交不可退回 / 编辑后缺归类 400 / 乐观锁 409 / 归档 409 / 跨项目与不存在 404 / 列表筛选 / **成对删除**；问题：状态流转事件 / 三态回退清关闭字段 / 分派 / **描述与多值归类 PATCH** / **附图整体替换** / 空更新 400 / 乐观锁 409 / 归档 409 / 404 / 详情留痕正序 / 列表同源 / **成对删除**。另 `server/test/task-remove.test.ts` 11 例覆盖删除引用守卫（Push 215 起仅 `issue_ref`；`report_ref` 随关联阶段删除）。
+- `server/test/report-issue.test.ts`：**40 例**（2026-10-27 增 3 例：非 PM 403 / 未绑定 409 / 草稿 400 / 成功审计与 outbox 载荷和去重键；2026-10-28 增 1 例：已绑定未激活 409 且分别提示原因 / 激活处置；Push 243 增：多条生成 / 草稿携带清单 PATCH 提交 / 重新提交幂等 / 契约互斥按内容判定）（日报 20 + 问题 12 · Push 215 整文件重写）—— 日报：创建与提交 / **草稿写库** / **同日多条（无 409 判重）** / 补填推导 / 未来日期 400 / 问题生成与自动分派 / 原因类不分派 / A3-09 幂等 / **附图校验与整体替换 + 转挂** / 草稿 → 提交 / 已提交不可退回 / 编辑后缺归类 400 / 乐观锁 409 / 归档 409 / 跨项目与不存在 404 / 列表筛选 / **成对删除**；问题：状态流转事件 / 三态回退清关闭字段 / 分派 / **描述与多值归类 PATCH** / **附图整体替换** / 空更新 400 / 乐观锁 409 / 归档 409 / 404 / 详情留痕正序 / 列表同源 / **成对删除**。另 `server/test/task-remove.test.ts` 11 例覆盖删除引用守卫（Push 215 起仅 `issue_ref`；`report_ref` 随关联阶段删除）。
 - `server/test/report-summary.test.ts`（**Push 162 · 14 例 → M5-06-3 · 15 例**；Push 215 注入 DatabaseService + 附图替身）：当日汇总 7（只算已提交 / 人数合计与问题计数（空白串不算）/ 提交时刻升序 + 同刻作者兜底 / 契约形态 stageKeys / stageNames 同下标 + 附图随行（Push 215）/ 缺省日期 = 今天 / 只取当日 / 未来日期 400 且不读库）+ 应填未填 8（草稿未提交仍计未填 / 逐行状态与 reportId / **A01 已提醒回读** / missingUserIds 顺序同名册 / 非工作日整列为空 / 名册为空 / 名册外提交不扩大应填范围 / 未来日期 400）—— 日历 / 名册 / 仓储 / 发送归档替身，不连库。全量：**M5-06-3 合并 main 后 83 文件 / 1288 例全绿**。
 - 随 `npm test` 常跑；`check:boundaries` 覆盖跨模块 import（本模块只进口对端 `index.ts`；新增 calendar / project 两条出口依赖）。
 - 真机回放（真 PG + 真 api）随 M3-06 压测 / 联调卡；M6 回放脚本已补 A7-01 / A7-05 断言（`server/scripts/m6-replay.mjs` 证据五 S0 ~ S6），由 CI `database` job 真机执行 —— **本片已执行（CI run `35946672352`）S0 ~ S6 全 PASS**。**Push 215 整文件重写脚本并本机真机重跑：57 项断言全 PASS（P / R / I / T / E / G / S / W / A 全链）—— 证据 `docs/m6-回放证据(日报与问题+工作台).md`（+ 同名 .json）**。

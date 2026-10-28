@@ -107,6 +107,16 @@ export class NotifyGroupRepository {
     return rows[0] ?? null;
   }
 
+  /** 项目名（告警正文只展示名称；项目不存在 / 已软删 = null）。 */
+  async findProjectName(projectId: string, client: DbClient = this.database.db): Promise<string | null> {
+    const rows = await client
+      .select({ name: projects.name })
+      .from(projects)
+      .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)))
+      .limit(1);
+    return rows[0]?.name ?? null;
+  }
+
   /**
    * 群失败降级（C5-04 / B4 定案）读项目经理：projects.manager_ids[0]（软删 / 不存在 = null）。
    * 边界同文件头注：直接读表，不 import project 模块。

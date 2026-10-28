@@ -60,7 +60,7 @@ export function composeDigestText(report: OutboxDailyDigest): string {
     lines.push(breakdown);
   }
   if (report.recoveries.length > 0) {
-    lines.push("已恢复：" + report.recoveries.map((item) => item.code).join(" · "));
+    lines.push("已恢复：" + report.recoveries.map((item) => item.message).join(" · "));
   }
   if (report.activeAlerts.length > 0) {
     lines.push("仍未恢复：" + report.activeAlerts.join(" · "));

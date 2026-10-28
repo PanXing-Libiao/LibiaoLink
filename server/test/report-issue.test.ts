@@ -86,6 +86,7 @@ class FakeAuditService {
 
 class FakeProjectGroupService {
   bound = false;
+  activated = true;
   name: string | null = "交付项目群";
 
   async getGroup(projectId: string) {
@@ -94,7 +95,7 @@ class FakeProjectGroupService {
       bound: this.bound,
       name: this.bound ? this.name : null,
       chatidMasked: this.bound ? "****abcd" : null,
-      activated: this.bound,
+      activated: this.bound && this.activated,
       updatedAt: null,
     };
   }
@@ -754,6 +755,24 @@ describe("日报（M6-01 / M6-02 · A3-01 ~ A3-09）", () => {
     await expect(service.syncToProjectGroup(PROJECT, REPORT_1, ACTOR, true)).rejects.toMatchObject({
       code: "VALIDATION_FAILED",
       httpStatus: 400,
+    });
+    expect(audit.entries).toEqual([]);
+    expect(db.outbox).toEqual([]);
+  });
+
+  it("同步项目群：已绑定但机器人未激活 → 409，提示原因与激活处置，不写审计 / outbox", async () => {
+    const { db, reports, audit, group, service } = seed();
+    reports.reports.set(REPORT_1, makeReport(REPORT_1));
+    group.bound = true;
+    group.activated = false;
+
+    await expect(service.syncToProjectGroup(PROJECT, REPORT_1, ACTOR, true)).rejects.toMatchObject({
+      code: "REPORT_GROUP_NOT_BOUND",
+      httpStatus: 409,
+      message: expect.stringContaining("已绑定，但机器人尚未激活"),
+    });
+    await expect(service.syncToProjectGroup(PROJECT, REPORT_1, ACTOR, true)).rejects.toMatchObject({
+      message: expect.stringContaining("请在项目群内 @LibiaoLink 发送一条消息完成激活"),
     });
     expect(audit.entries).toEqual([]);
     expect(db.outbox).toEqual([]);

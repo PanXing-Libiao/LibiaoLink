@@ -29,6 +29,10 @@ import {
   truncateGroupMarkdown,
 } from "../src/modules/notify/notify.group.service.js";
 import type { AibotIncomingMessage, AibotSendResult, WecomAibotClient } from "../src/modules/notify/wecom.aibot.js";
+import type {
+  ProjectGroupDeliveryAlertPort,
+  ProjectGroupUnavailableReason,
+} from "../src/modules/notify/project-group-delivery-alert.service.js";
 import { FakeNotifyDeliveryArchive } from "./fakes/notify-delivery-archive.fake.js";
 
 const AT = new Date("2026-10-12T06:00:00.000Z");
@@ -49,7 +53,7 @@ function groupRow(overrides: Partial<WecomGroupRow> & { projectId: string; chati
     id: 1,
     name: null,
     enabled: true,
-    activatedAt: null,
+    activatedAt: AT,
     createdAt: AT,
     updatedAt: AT,
     ...overrides,
@@ -67,6 +71,7 @@ class FakeGroupRepository {
   candidates: WecomGroupCandidateRow[] = [];
   observeCalls: { chatid: string; name: string | null; at: Date }[] = [];
   managers = new Map<string, string>();
+  projectNames = new Map<string, string>([[PROJECT_ID, "总装输送线项目"]]);
   allTasksOnTime = false;
   projectCompleted = true;
   r06PosterData: R06PosterData | null = null;
@@ -124,6 +129,10 @@ class FakeGroupRepository {
 
   async findProjectManagerId(projectId: string): Promise<string | null> {
     return this.managers.get(projectId) ?? null;
+  }
+
+  async findProjectName(projectId: string): Promise<string | null> {
+    return this.projectNames.get(projectId) ?? null;
   }
 
   async areProjectTasksAllOnTime(): Promise<boolean> {
@@ -213,6 +222,19 @@ class FakeNotifyInbox {
   }
 }
 
+class FakeDeliveryAlerts implements ProjectGroupDeliveryAlertPort {
+  unavailable: { projectId: string; projectName: string; reason: ProjectGroupUnavailableReason }[] = [];
+  available: string[] = [];
+
+  reportUnavailable(projectId: string, projectName: string, reason: ProjectGroupUnavailableReason): void {
+    this.unavailable.push({ projectId, projectName, reason });
+  }
+
+  reportAvailable(projectId: string): void {
+    this.available.push(projectId);
+  }
+}
+
 function makeService(
   r06ImagePath = "",
   r06OnTimeImagePath = "",
@@ -225,10 +247,12 @@ function makeService(
   aibot: FakeAibot;
   inbox: FakeNotifyInbox;
   archive: FakeNotifyDeliveryArchive;
+  deliveryAlerts: FakeDeliveryAlerts;
 } {
   const repo = new FakeGroupRepository();
   const aibot = new FakeAibot();
   const inbox = new FakeNotifyInbox();
+  const deliveryAlerts = new FakeDeliveryAlerts();
   const clock = new ClockService();
   clock.setSource(() => AT);
   const service = new NotifyGroupService(
@@ -251,8 +275,9 @@ function makeService(
       },
     } as never,
     {} as never,
+    deliveryAlerts as never,
   );
-  return { service, repo, aibot, inbox, archive: repo.archive };
+  return { service, repo, aibot, inbox, archive: repo.archive, deliveryAlerts };
 }
 
 function claimedRow(payload: Record<string, unknown>, overrides: Partial<OutboxClaimedRow> = {}): OutboxClaimedRow {
@@ -371,7 +396,7 @@ describe("parseGroupNameCommand（群内群名命令）", () => {
 
 describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分类）", () => {
   it("ok：发送受理 → done + sent 行（sentAt 非空 / error 为空 / attempts=1）", async () => {
-    const { service, repo, aibot, archive } = makeService();
+    const { service, repo, aibot, archive, deliveryAlerts } = makeService();
     repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
 
     const outcome = await service.consume(claimedRow(payload({ title: null })));
@@ -393,6 +418,7 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
       sentAt: AT,
     });
     expect(archive.attempts[0]).toMatchObject({ messageId: archive.messages[0]!.id, channel: "wecom_group" });
+    expect(deliveryAlerts.available).toEqual([PROJECT_ID]);
   });
 
   it("DAILY_REPORT_GROUP：日报送达文字与纯文字深链保真后，追加日报海报与现场问题专报", async () => {
@@ -623,19 +649,20 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
     expect(repo.deliveries[0]).toMatchObject({ state: "failed", attempts: 0, sentAt: null });
   });
 
-  it("permanent（846607 未激活）：dead 行 + dead + B4 降级项目经理站内信（播报类型 + 幂等键后缀）", async () => {
-    const { service, repo, aibot, inbox } = makeService();
-    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID }));
+  it("未激活：发送前置判定转 dead（digest 告警）、不发帧 + B4 降级项目经理站内信", async () => {
+    const { service, repo, aibot, inbox, deliveryAlerts } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: null }));
     repo.managers.set(PROJECT_ID, PROJECT_2);
     aibot.result = { ok: false, kind: "permanent", errcode: 846607, errmsg: "send msg not allowed", retryAt: null, attempts: 1, state: "subscribed" };
 
     const outcome = await service.consume(claimedRow(payload({ templateCode: "A02_GROUP" })));
 
-    expect(outcome).toMatchObject({ outcome: "dead" });
-    if (outcome.outcome === "dead") {
-      expect(outcome.error).toContain("846607");
-    }
-    expect(repo.deliveries[0]).toMatchObject({ state: "dead", attempts: 1, sentAt: null });
+    expect(outcome).toMatchObject({ outcome: "dead", deadAlert: "digest" });
+    expect(aibot.sends).toEqual([]);
+    expect(repo.deliveries[0]).toMatchObject({ state: "dead", attempts: 0, sentAt: null });
+    expect(deliveryAlerts.unavailable).toEqual([
+      { projectId: PROJECT_ID, projectName: "总装输送线项目", reason: "not_activated" },
+    ]);
     expect(inbox.copies).toHaveLength(1);
     expect(inbox.copies[0]!.topic).toBe("notify.group");
     expect(inbox.copies[0]!.dedupeKey).toBe("R03:t-1:2026-09-24:c504");
@@ -644,20 +671,23 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
   });
 
   it("无绑定：dead + 不写投递行（target NOT NULL 无值可落 · 差异登记②）+ B4 降级项目经理站内信", async () => {
-    const { service, repo, aibot, inbox } = makeService();
+    const { service, repo, aibot, inbox, deliveryAlerts } = makeService();
     repo.managers.set(PROJECT_ID, PROJECT_2);
 
     const outcome = await service.consume(claimedRow(payload()));
 
-    expect(outcome).toMatchObject({ outcome: "dead" });
+    expect(outcome).toMatchObject({ outcome: "dead", deadAlert: "digest" });
     expect(repo.deliveries).toEqual([]);
     expect(aibot.sends).toEqual([]);
     expect(inbox.copies).toHaveLength(1);
     expect(inbox.copies[0]!.message).toMatchObject({ recipientId: PROJECT_2, type: "reminder" });
+    expect(deliveryAlerts.unavailable).toEqual([
+      { projectId: PROJECT_ID, projectName: "总装输送线项目", reason: "unbound" },
+    ]);
   });
 
   it("绑定停用：dead 行（target=chatid）+ dead，不发送 + B4 降级", async () => {
-    const { service, repo, aibot, inbox } = makeService();
+    const { service, repo, aibot, inbox, deliveryAlerts } = makeService();
     repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, enabled: false }));
     repo.managers.set(PROJECT_ID, PROJECT_2);
 
@@ -667,6 +697,8 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
     expect(repo.deliveries[0]).toMatchObject({ state: "dead", target: CHATID, attempts: 0 });
     expect(aibot.sends).toEqual([]);
     expect(inbox.copies).toHaveLength(1);
+    expect(deliveryAlerts.unavailable).toEqual([]);
+    expect(deliveryAlerts.available).toEqual([]);
   });
 
   it("降级：PM 解析不到（项目软删 / 不存在）→ 跳过站内信，仍 dead", async () => {
@@ -1126,7 +1158,7 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
 describe("NotifyGroupService.activateFromCallback（群回调 ingest）", () => {
   it("未激活绑定：置位（activated_at = 回调时刻），不写候选", async () => {
     const { service, repo } = makeService();
-    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID }));
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: null }));
 
     await service.activateFromCallback(incoming());
 
@@ -1208,7 +1240,7 @@ describe("NotifyGroupService.activateFromCallback（群回调 ingest）", () => 
 
   it("已绑定未激活 + 群名命令：激活并更新名称", async () => {
     const { service, repo } = makeService();
-    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID }));
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: null }));
 
     await service.activateFromCallback(incoming({ msgtype: "text", text: "群名：新名称" }));
 
