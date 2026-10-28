@@ -6,7 +6,7 @@ import { AppConfig } from "../config/config.module.js";
 import type { Env } from "../config/env.js";
 import { OutboxStore, type OutboxClaimedRow } from "../db/outbox.store.js";
 import { OUTBOX_ALERT_SINK, type OutboxAlertSink } from "./alert.js";
-import type { OutboxHandleOutcome, OutboxTopicHandler } from "./handler.js";
+import type { OutboxDeadAlertOverride, OutboxHandleOutcome, OutboxTopicHandler } from "./handler.js";
 import { backoffDelayMs, defaultTopicPolicy, type OutboxTopicPolicy } from "./policy.js";
 
 /** 注入令牌：消费者注册表（topic → handler）由组合根装配（OutboxModule.forRoot）。 */
@@ -126,7 +126,7 @@ export class OutboxDispatcher {
     const attempts = row.attempts + 1;
     if (outcome.outcome === "dead") {
       const deadAlert = outcome.deadAlert === "digest" ? "digest" : "immediate";
-      await this.declareDead(topic, handler, policy, row, attempts, error, deadAlert, stats);
+      await this.declareDead(topic, handler, policy, row, attempts, error, deadAlert, stats, outcome.alert);
       return;
     }
     if (attempts < policy.maxAttempts) {
@@ -171,6 +171,7 @@ export class OutboxDispatcher {
     error: string,
     deadAlert: "immediate" | "digest",
     stats: OutboxDrainStats,
+    alertOverride?: OutboxDeadAlertOverride,
   ): Promise<void> {
     if (handler.onDead !== undefined) {
       try {
@@ -195,16 +196,27 @@ export class OutboxDispatcher {
       );
       return;
     }
+    const detail = alertOverride?.detail ?? {
+      topic,
+      id: row.id,
+      dedupeKey: row.dedupeKey,
+      attempts,
+      maxAttempts: policy.maxAttempts,
+    };
     this.alerts.emit({
       code: "outbox.dead",
       level: "error",
-      message: "outbox 死信：" + topic + "#" + row.id + "（" + row.dedupeKey + "）—— " + error,
-      impact: "该消息不会继续重试；关联通知、预览或规则动作可能未完成。",
+      message: alertOverride?.message ?? "outbox 死信：" + topic + "#" + row.id + "（" + row.dedupeKey + "）—— " + error,
+      impact:
+        alertOverride === undefined
+          ? "该消息不会继续重试；关联通知、预览或规则动作可能未完成。"
+          : (alertOverride.impact ?? undefined),
       action:
+        alertOverride?.action ??
         "查看 worker 日志与 outbox_events#" +
-        row.id +
-        " 的 last_error；修复根因后重置为 pending 重放，永久错误则确认忽略并留档。",
-      detail: { topic, id: row.id, dedupeKey: row.dedupeKey, attempts, maxAttempts: policy.maxAttempts },
+          row.id +
+          " 的 last_error；修复根因后重置为 pending 重放，永久错误则确认忽略并留档。",
+      detail,
     });
   }
 }

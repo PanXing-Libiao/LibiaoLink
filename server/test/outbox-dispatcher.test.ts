@@ -313,6 +313,36 @@ describe("OutboxDispatcher.drainOnce（S7-1 分派与收敛）", () => {
     expect(h.alerts.emitted[0]!.code).toBe("outbox.dead");
   });
 
+  it("确定性 dead：可带专用告警文案并省略影响段", async () => {
+    const h = makeDispatcher({
+      registry: new Map<OutboxTopic, OutboxTopicHandler>([
+        [
+          TOPIC_A,
+          handlerOf(async () => ({
+            outcome: "dead",
+            error: "收件人未绑定企业微信（张三，无可投递地址）",
+            alert: {
+              message: "消息类型：⏰ 任务即将延期提醒\n未绑定企业微信的收件人：张三",
+              impact: null,
+              action: "请提醒相关收件人及时绑定企业微信",
+            },
+          })),
+        ],
+      ]),
+    });
+    h.store.byTopic.set(TOPIC_A, [makeRow(TOPIC_A, 10)]);
+
+    await h.dispatcher.drainOnce();
+
+    expect(h.alerts.emitted[0]).toMatchObject({
+      code: "outbox.dead",
+      level: "error",
+      message: "消息类型：⏰ 任务即将延期提醒\n未绑定企业微信的收件人：张三",
+      impact: undefined,
+      action: "请提醒相关收件人及时绑定企业微信",
+    });
+  });
+
   it("deadAlert=digest：预览确定性拒绝仍落 dead / onDead，但只写结构化日志、不发即时告警", async () => {
     const warn = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => {});
     const deadHooks: { id: number; error: string }[] = [];
