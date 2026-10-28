@@ -332,6 +332,24 @@ describe("WecomAlertSink（单一管理员告警群）", () => {
     expect(fallback.emitted).toHaveLength(0);
   });
 
+  it("未绑定企微专用告警：只显示消息类型、收件人与绑定处置，不显示影响段", () => {
+    const alert = actionable({
+      code: "outbox.dead",
+      message: "消息类型：⏰ 任务即将延期提醒\n未绑定企业微信的收件人：张三",
+      impact: undefined,
+      action: "请提醒相关收件人及时绑定企业微信",
+    });
+
+    const text = composeAlertText(alert);
+
+    expect(text).toBe(
+      "【LibiaoLink 告警】outbox.dead\n消息类型：⏰ 任务即将延期提醒\n未绑定企业微信的收件人：张三\n处置：请提醒相关收件人及时绑定企业微信",
+    );
+    expect(text).not.toContain("影响：");
+    expect(text).not.toContain("notify.message#");
+    expect(text).not.toContain("e9dd0db6");
+  });
+
   it("主题明细随即时告警发送（前 5 条）", () => {
     const alert = actionable({
       detail: { byTopic: [backlog("task.created", 7, 1000), backlog("report.weekly", 3, 900)] },
