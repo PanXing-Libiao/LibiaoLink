@@ -92,20 +92,29 @@ class FakeAuditRepository {
   inserted: AuditInsertInput[] = [];
   rows: AuditRow[] = [];
   lastFilter: AuditListFilter | null = null;
+  projectSnapshots = new Map<string, { code: string; name: string }>();
+  projectSnapshotLookups: string[] = [];
+  projectSnapshotClients: unknown[] = [];
 
   async insert(_client: unknown, input: AuditInsertInput): Promise<void> {
     this.inserted.push(input);
   }
 
-  async listPage(filter: AuditListFilter, limit: number, offset: number): Promise<{ items: AuditRow[]; total: number }> {
+  async listPage(filter: AuditListFilter, limit: number, offset: number): Promise<{ items: AuditRow[]; total: number; windowId: number | null }> {
     this.lastFilter = filter;
     void limit;
     void offset;
-    return { items: this.rows, total: this.rows.length };
+    return { items: this.rows, total: this.rows.length, windowId: null };
   }
 
-  async findUserDisplayName(userId: string): Promise<string | null> {
+  async findUserDisplayName(userId: string, _client?: unknown): Promise<string | null> {
     return userId === UUID_ACTOR ? "张三" : null;
+  }
+
+  async findProjectSnapshot(projectId: string, client?: unknown): Promise<{ code: string; name: string } | null> {
+    this.projectSnapshotLookups.push(projectId);
+    this.projectSnapshotClients.push(client);
+    return this.projectSnapshots.get(projectId) ?? null;
   }
 }
 
@@ -353,8 +362,42 @@ describe("AuditService（审计 C7）", () => {
     expect(repo.inserted[0]?.occurredAt).toBeInstanceOf(Date);
   });
 
+  it("record：用同一事务读取并写入所属项目编号 / 名称快照", async () => {
+    const { service, repo } = makeAuditService();
+    const transaction = {} as never;
+    repo.projectSnapshots.set(UUID_PROJECT, { code: "P-001", name: "一号项目" });
+    await service.record(transaction, {
+      actorId: UUID_ACTOR,
+      action: "update",
+      objectType: "task",
+      objectId: UUID_ACTOR,
+      projectId: UUID_PROJECT,
+      summary: "更新任务",
+    });
+    expect(repo.projectSnapshotLookups).toEqual([UUID_PROJECT]);
+    expect(repo.projectSnapshotClients[0]).toBe(transaction);
+    expect(repo.inserted[0]).toMatchObject({ projectCode: "P-001", projectName: "一号项目" });
+  });
+
+  it("record：调用方显式提供快照时不再回查项目行（覆盖项目已彻底删除）", async () => {
+    const { service, repo } = makeAuditService();
+    await service.record({} as never, {
+      actorId: UUID_ACTOR,
+      action: "delete",
+      objectType: "project",
+      objectId: UUID_PROJECT,
+      projectId: UUID_PROJECT,
+      projectCode: "P-DELETED",
+      projectName: "已彻底删除项目",
+      summary: "彻底删除项目",
+    });
+    expect(repo.projectSnapshotLookups).toEqual([]);
+    expect(repo.inserted[0]).toMatchObject({ projectCode: "P-DELETED", projectName: "已彻底删除项目" });
+  });
+
   it("recordDenied：result=denied / action=deny；写库失败只记日志不抛（不阻塞响应）", async () => {
     const healthy = makeAuditService();
+    healthy.repo.projectSnapshots.set(UUID_PROJECT, { code: "P-001", name: "一号项目" });
     await healthy.service.recordDenied({
       actorId: UUID_ACTOR,
       actorName: null,
@@ -364,7 +407,13 @@ describe("AuditService（审计 C7）", () => {
       summary: "PATCH /api/v1/projects/x → FORBIDDEN",
       metadata: { errorCode: "FORBIDDEN" },
     });
-    expect(healthy.repo.inserted[0]).toMatchObject({ action: "deny", result: "denied", entry: "api" });
+    expect(healthy.repo.inserted[0]).toMatchObject({
+      action: "deny",
+      result: "denied",
+      entry: "api",
+      projectCode: "P-001",
+      projectName: "一号项目",
+    });
 
     const broken = makeAuditService(new ExplodingAuditRepository());
     await expect(
@@ -392,6 +441,8 @@ describe("AuditService（审计 C7）", () => {
         objectType: "project",
         objectId: UUID_PROJECT,
         projectId: UUID_PROJECT,
+        projectCode: null,
+        projectName: null,
         result: "succeeded",
         entry: "api",
         summary: "修改项目",
@@ -437,6 +488,8 @@ describe("AuditService（审计 C7）", () => {
         objectType: "project",
         objectId: UUID_PROJECT,
         projectId: UUID_PROJECT,
+        projectCode: "P-001",
+        projectName: "一号项目",
         result: "succeeded",
         entry: "api",
         summary: "修改项目",
@@ -494,7 +547,7 @@ describe("AuditService（审计 C7）", () => {
     expect(repo.lastFilter?.keyword).toBeUndefined();
   });
 
-  it("toAuditLog：changes 缺省为 null（无字段级变化）", () => {
+  it("toAuditLog：项目编号 / 名称快照透传，changes 缺省为 null（无字段级变化）", () => {
     const view = toAuditLog({
       id: 1,
       occurredAt: AT,
@@ -503,7 +556,9 @@ describe("AuditService（审计 C7）", () => {
       action: "deny",
       objectType: "node",
       objectId: UUID_PROJECT,
-      projectId: null,
+      projectId: UUID_PROJECT,
+      projectCode: "P-001",
+      projectName: "一号项目",
       result: "denied",
       entry: "api",
       summary: "拒绝",
@@ -512,5 +567,7 @@ describe("AuditService（审计 C7）", () => {
     });
     expect(view.changes).toBeNull();
     expect(view.actorId).toBeNull();
+    expect(view.projectCode).toBe("P-001");
+    expect(view.projectName).toBe("一号项目");
   });
 });

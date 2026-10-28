@@ -344,6 +344,20 @@
               }
             ]
           },
+          "projectCode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "所属项目编号：优先当前项目数据（含回收站），项目彻底删除后回退审计写入快照"
+          },
+          "projectName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "所属项目名称：优先当前项目数据（含回收站），项目彻底删除后回退审计写入快照"
+          },
           "result": {
             "$ref": "#/components/schemas/AuditResult"
           },
@@ -379,6 +393,8 @@
           "objectType",
           "objectId",
           "projectId",
+          "projectCode",
+          "projectName",
           "result",
           "entry",
           "summary",

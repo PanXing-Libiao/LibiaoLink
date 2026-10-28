@@ -78,6 +78,12 @@ export const AuditLogSchema = z
     objectType: AuditObjectTypeSchema,
     objectId: z.string().openapi({ description: "对象 id（uuid 或字典码等业务键）" }),
     projectId: UuidSchema.nullable().openapi({ description: "所属项目（非项目对象为 null）" }),
+    projectCode: z.string().nullable().openapi({
+      description: "所属项目编号：优先当前项目数据（含回收站），项目彻底删除后回退审计写入快照",
+    }),
+    projectName: z.string().nullable().openapi({
+      description: "所属项目名称：优先当前项目数据（含回收站），项目彻底删除后回退审计写入快照",
+    }),
     result: AuditResultSchema,
     entry: AuditEntrySchema,
     summary: z.string().openapi({ description: "可读摘要（列表直接展示）" }),

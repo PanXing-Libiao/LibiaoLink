@@ -275,8 +275,8 @@ export function auditSummaryText(item: AuditLogItem): string {
 export function auditObjectText(item: AuditLogItem, ctx: AuditFormatContext): string {
   const label = auditLabelOf(AUDIT_OBJECT_TYPE_LABELS, item.objectType);
   if (item.objectType === "project") {
-    const code = ctx.projectCodeById.get(item.objectId);
-    if (code !== undefined) {
+    const code = item.projectCode ?? ctx.projectCodeById.get(item.objectId);
+    if (code !== undefined && code !== null) {
       return label + " · " + code;
     }
   }

@@ -38,6 +38,9 @@ export interface AuditRecordInput {
   objectType: AuditObjectType;
   objectId: string;
   projectId?: string | null;
+  /** 已在业务事务内删除项目行时显式传入；缺省由 AuditService 从 projects 表读取。 */
+  projectCode?: string | null;
+  projectName?: string | null;
   result?: AuditResult;
   summary: string;
   changes?: AuditChangeEntry[] | null;
@@ -70,6 +73,7 @@ export class AuditService implements AuditSink {
 
   /** 追加写（业务事务内调用：与业务写入同事务，C7-01）。 */
   async record(client: DbClient, input: AuditRecordInput): Promise<void> {
+    const project = await this.projectSnapshot(input, client);
     await this.repository.insert(client, {
       occurredAt: new Date(),
       actorId: input.actorId,
@@ -78,6 +82,8 @@ export class AuditService implements AuditSink {
       objectType: input.objectType,
       objectId: input.objectId,
       projectId: input.projectId ?? null,
+      projectCode: project.code,
+      projectName: project.name,
       result: input.result ?? "succeeded",
       entry: input.entry ?? "api",
       summary: input.summary,
@@ -94,6 +100,7 @@ export class AuditService implements AuditSink {
   /** 越权 / 未命中留痕（C7-03）：吞错 + 告警日志；告警推送（企微）随 M5 通知模块。 */
   async recordDenied(input: DeniedAuditInput): Promise<void> {
     try {
+      const project = input.projectId === null ? null : await this.repository.findProjectSnapshot(input.projectId);
       await this.repository.insert(this.database.db, {
         occurredAt: new Date(),
         actorId: input.actorId,
@@ -102,6 +109,8 @@ export class AuditService implements AuditSink {
         objectType: input.objectType,
         objectId: input.objectId,
         projectId: input.projectId,
+        projectCode: project?.code ?? null,
+        projectName: project?.name ?? null,
         result: "denied",
         entry: "api",
         summary: input.summary,
@@ -153,6 +162,21 @@ export class AuditService implements AuditSink {
     this.actorNames.set(actorId, { name, at: now });
     return name;
   }
+
+  /** 审计项目快照：显式值优先（项目硬删后调用方已无法回查），否则按 projectId 读取当前行（含回收站）。 */
+  private async projectSnapshot(
+    input: Pick<AuditRecordInput, "projectId" | "projectCode" | "projectName">,
+    client: DbClient,
+  ): Promise<{ code: string | null; name: string | null }> {
+    let code = input.projectCode ?? null;
+    let name = input.projectName ?? null;
+    if (input.projectId != null && (code === null || name === null)) {
+      const current = await this.repository.findProjectSnapshot(input.projectId, client);
+      code = code ?? current?.code ?? null;
+      name = name ?? current?.name ?? null;
+    }
+    return { code, name };
+  }
 }
 
 /** 行 → 契约（Date → ISO；changes / metadata 原样下发）。 */
@@ -166,6 +190,8 @@ export function toAuditLog(row: AuditRow): AuditLog {
     objectType: row.objectType as AuditLog["objectType"],
     objectId: row.objectId,
     projectId: row.projectId,
+    projectCode: row.projectCode,
+    projectName: row.projectName,
     result: row.result as AuditLog["result"],
     entry: row.entry as AuditLog["entry"],
     summary: row.summary,
