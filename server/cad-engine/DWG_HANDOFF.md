@@ -10,6 +10,8 @@
 
 这台电脑物理内存 8 GiB。换大内存电脑有助于排除系统内存压力，但不会自动解决读取器内存、清单大小、排版或生产沙箱问题。建议用 32 GiB 或以上的开发机继续实验，这是开发便利建议，不是已测得的最低配置或部署预算。
 
+> **2026-10-28 本地补充（未部署）**：查看器已修复非索引 `topology:'lines'` 被当成单点绘制的问题，真实正式图点标记 160,173→844、paint 调用 1,476,219→41,970。用 WSL systemd 复刻生产沙箱（3 GiB、无 swap、1 核、64 tasks、tmpfs 1536/384 MiB、单文件 256 MiB、禁网、只读根）完整跑通真实图：读取 22.6 s、峰值 VmRSS 2274 MiB；组装 93.5 s、峰值 1531 MiB；manifest 253.5 MiB validated，无 OOM。生产 2 GiB RSS 采样会在读取 8.1 s 中止；建议 DWG 读取档 2.5 GiB、组装 2 GiB。12 GiB 测试主机加 CAD 3 GiB 的整机预算仍未决策。沙箱位置：`D:\LibiaoLink-verify\sandbox`，报告：`D:\LibiaoLink-verify\RESULTS.md`。
+
 ## 代码责任与入口
 
 | 层 | 位置 | 当前行为 |

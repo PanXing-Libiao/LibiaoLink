@@ -6,6 +6,7 @@ import {projectDrawing, projectBlock} from './drawing-projection.js?v=dxf-0.15.0
 import {clipInfiniteLine, gradientField, triangleBoundarySegments, lineDashPattern, traceStrokeSegments} from './drawing-2d.js?v=dxf-2d-0.5.0';
 import {drawingClips, compileClips, triangulateRings, insideRing} from './drawing-clipping.js?v=dxf-0.15.0';
 import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.15.0';
+import {normalizeLineRange} from './drawing-display.js?v=dxf-0.15.0';
 import {estimateDrawingDraws, projectInstances, multiply, transformPoint, inverse2D, transformBounds, union, I} from './drawing-instances.js';
 import Flatbush from './vendor/flatbush.js';
 import {wrapCadText,cadTextEm,cadLineHeight} from './vendor/cad-text-layout.js';
@@ -58,6 +59,7 @@ export function mountDrawingViewer(envelope) {
   const gradientCache = new Map();
   const rasterCache = new Map();
   const rasterProbes = new Map();
+  const warnedDisplayTopologies = new Set();
 
   // ----- envelope buffers --------------------------------------------------
   function base64Bytes(text) {
@@ -114,6 +116,7 @@ export function mountDrawingViewer(envelope) {
       positions: accessorView(geo.attributes.POSITION),
       indices: primitive.indices ? accessorView(primitive.indices) : null,
       topology: primitive.topology,
+      range: primitive.range,
       localFromRepresentation: rep.bindings[0].localFromRepresentation
     };
     repCache.set(repId, result); return result;
@@ -472,10 +475,30 @@ export function mountDrawingViewer(envelope) {
               const p2 = apply(draw.localToSpace, [pos[idx[i + 1] * 3], pos[idx[i + 1] * 3 + 1], pos[idx[i + 1] * 3 + 2]]);
               segments.push(p1[0], p1[1], p2[0], p2[1]); extend(p1[0], p1[1]); extend(p2[0], p2[1]);
             }
-          } else {
+          } else if (rep.topology === 'lines') {
+            const lineRange = normalizeLineRange(rep.range, Math.floor(pos.length / 3));
+            if (!lineRange) {
+              if (!warnedDisplayTopologies.has('invalid-lines')) {
+                warnedDisplayTopologies.add('invalid-lines');
+                console.warn('忽略非索引线段范围：顶点数或 range 不合法', draw.displayRepresentationId, rep.range);
+              }
+              continue;
+            }
+            for (let i = lineRange.first; i < lineRange.first + lineRange.count; i += 2) {
+              const p1 = apply(draw.localToSpace, [pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]]);
+              const p2 = apply(draw.localToSpace, [pos[(i + 1) * 3], pos[(i + 1) * 3 + 1], pos[(i + 1) * 3 + 2]]);
+              segments.push(p1[0], p1[1], p2[0], p2[1]); extend(p1[0], p1[1]); extend(p2[0], p2[1]);
+            }
+          } else if (rep.topology === 'points') {
             const p = apply(draw.localToSpace, [pos[0], pos[1], pos[2]]);
             rec.pointMark = {x: p[0], y: p[1]}; pointMarks.push(rec.pointMark);
             extend(p[0], p[1]);
+          } else {
+            if (!warnedDisplayTopologies.has(rep.topology)) {
+              warnedDisplayTopologies.add(rep.topology);
+              console.warn('忽略未接入的显示拓扑', rep.topology, draw.displayRepresentationId);
+            }
+            continue;
           }
         } else {
           const pts = analyticFor(draw.itemId, entity.geometry, tolerance);
@@ -577,6 +600,8 @@ export function mountDrawingViewer(envelope) {
   }
   function refreshInstanceLayers(){if(instancePlan&&instanceLayerKey!==JSON.stringify([...userLayers]))buildInstanceIndexes();}
   function drawInstances(){
+    const profile = typeof window !== 'undefined' && window.__CAD_VIEWER_PROFILE__ === true;
+    const paintStarted = profile ? performance.now() : 0;
     refreshInstanceLayers();
     ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle='#fff';ctx.fillRect(0,0,cssW,cssH);
     const view={minX:-tx/scale,maxX:(cssW-tx)/scale,minY:(ty-cssH)/scale,maxY:ty/scale};
@@ -607,6 +632,7 @@ export function mountDrawingViewer(envelope) {
     }
     for(const root of instancePlan.roots)paint(root,I);
     instancePlan.lastPaintCalls=calls;
+    if(profile){canvas.dataset.lastPaintMs=(performance.now()-paintStarted).toFixed(1);canvas.dataset.lastPaintCalls=String(calls);}
     if(instanceSelected){
       const {record:rec,matrix}=instanceSelected.instance;setMatrix(matrix);ctx.setLineDash([]);ctx.strokeStyle=ACCENT;ctx.lineWidth=2.4/(scale*Math.max(matrixScale(matrix),1e-15));
       if(rec.path)ctx.stroke(rec.path);else if(rec.fillPath)ctx.stroke(rec.fillPath);else if(rec.bbox){const b=rec.bbox;ctx.strokeRect(b.minX,b.minY,b.maxX-b.minX,b.maxY-b.minY);}
@@ -1052,7 +1078,7 @@ export function mountDrawingViewer(envelope) {
     const details=document.createElement('details'),summary=document.createElement('summary');summary.textContent='查看源属性与关联记录';details.append(summary);
     const pre=document.createElement('pre');pre.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere;max-height:280px;overflow:auto;font-size:11px';
     const record={attributes:facts.attributes,...Object.fromEntries(['attributeStatus','attributeDecodeError','tagStatus','dimension','blockState','xdata','extensionDictionary','entries'].filter(key=>key in facts).map(key=>[key,facts[key]]))};
-    if(source.customProperties?.length)record.documentCustomProperties=source.customProperties;
+    if(source?.customProperties?.length)record.documentCustomProperties=source.customProperties;
     const text=JSON.stringify(record,null,2);pre.textContent=text.length>65536?text.slice(0,65536)+'\n…界面节选；完整记录保留在解析产物中。':text;
     details.append(pre);host.append(details);
   }
