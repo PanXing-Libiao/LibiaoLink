@@ -9,6 +9,7 @@ import { useInboxBadge } from "../inbox";
 import { resetWecomBindingStatus, useWecomBindingBound } from "../wecomBindingStatus";
 import { ACCESS_BASE_HASH, AUDIT_BASE_HASH, FILES_BASE_HASH, HUB_HASH, SETTINGS_BASE_HASH, goBackToList, goUpLevel, listHref, upLevelHref } from "../useHashRoute";
 import { firstAllowedHref } from "../accessRoutes";
+import { MobileNav } from "./MobileNav";
 import { TopNav } from "./TopNav";
 import { InboxPanel } from "./InboxPanel";
 import { Toast } from "./Toast";
@@ -202,12 +203,19 @@ export function AppHeader({ me, project }: AppHeaderProps) {
     action();
   };
 
-  return (
-    <header className="sticky top-0 z-30 border-b border-zinc-200 bg-white/90 backdrop-blur">
-      <div className="flex h-16 items-center gap-3 px-6">
-        <a href={upHref} onClick={interceptNav(goUp)} title={t("header.up")} className="flex shrink-0 items-center gap-3">
-          <img src="/libiaolink-logo.svg" alt="LibiaoLink" className="h-11 w-auto" />
-          <div className="leading-tight">
+  useEffect(() => {
+    document.body.dataset.appShell = "true";
+    return () => {
+      delete document.body.dataset.appShell;
+    };
+  }, []);
+
+  const header = (
+    <header data-app-header="" className="app-header sticky top-0 z-30 border-b border-zinc-200 bg-white/90 backdrop-blur">
+      <div className="app-header__inner flex h-16 items-center gap-3 px-6">
+        <a href={upHref} onClick={interceptNav(goUp)} title={t("header.up")} className="app-header__brand flex shrink-0 items-center gap-3">
+          <img src="/libiaolink-logo.svg" alt="LibiaoLink" className="app-header__logo h-11 w-auto" />
+          <div className="app-header__brand-copy leading-tight">
             <p className="text-base font-semibold text-zinc-900">LibiaoLink</p>
             <p className="text-xs text-zinc-500">{t("header.brand.subtitle")}</p>
           </div>
@@ -233,7 +241,7 @@ export function AppHeader({ me, project }: AppHeaderProps) {
             </p>
           </div>
         ) : null}
-        <div className="ml-auto flex shrink-0 items-center gap-2">
+        <div className="app-header__actions ml-auto flex shrink-0 items-center gap-2">
           {/* 站内信（业务口径 2026-10-16「在这个左侧增加站内信按钮 点击后出现局部弹窗用来消息通知」）：
               位置 =「语言」胶囊左侧；未读 / 未绑定企微提示共用一枚红点（app.css 的 .inbox-badge）；
               弹窗与语言 / 背景 / 账号菜单同一套交互（点外 / Esc / 再点触发钮收起）且互斥。 */}
@@ -252,7 +260,7 @@ export function AppHeader({ me, project }: AppHeaderProps) {
                 setBgMenuOpen(false);
                 setLangMenuOpen(false);
               }}
-              className="relative inline-flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-600 transition hover:border-zinc-300 hover:text-zinc-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
+              className="app-header__icon-button relative inline-flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-600 transition hover:border-zinc-300 hover:text-zinc-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" className="h-4 w-4">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
@@ -298,9 +306,12 @@ export function AppHeader({ me, project }: AppHeaderProps) {
                 setBgMenuOpen(false);
                 setInboxOpen(false);
               }}
-              className="inline-flex h-9 items-center gap-1 rounded-full border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:text-zinc-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
+              className="app-header__pill inline-flex h-9 items-center gap-1 rounded-full border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:text-zinc-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
             >
-              {t("header.lang.label")} · {localeLabel}
+              <span className="app-header__control-text">
+                <span className="app-header__control-prefix">{t("header.lang.label")} · </span>
+                <span className="app-header__control-value">{localeLabel}</span>
+              </span>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" className="h-3 w-3 text-zinc-400">
                 <path strokeLinecap="round" strokeLinejoin="round" d="m6 9 6 6 6-6" />
               </svg>
@@ -355,9 +366,12 @@ export function AppHeader({ me, project }: AppHeaderProps) {
                 setMenuOpen(false);
                 setInboxOpen(false);
               }}
-              className="inline-flex h-9 items-center gap-1 rounded-full border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:text-zinc-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
+              className="app-header__pill inline-flex h-9 items-center gap-1 rounded-full border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:text-zinc-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
             >
-              {t("header.bg.label")} · {bgTierLabel}
+              <span className="app-header__control-text">
+                <span className="app-header__control-prefix">{t("header.bg.label")} · </span>
+                <span className="app-header__control-value">{bgTierLabel}</span>
+              </span>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" className="h-3 w-3 text-zinc-400">
                 <path strokeLinecap="round" strokeLinejoin="round" d="m6 9 6 6 6-6" />
               </svg>
@@ -432,7 +446,7 @@ export function AppHeader({ me, project }: AppHeaderProps) {
                 setLangMenuOpen(false);
                 setInboxOpen(false);
               }}
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-zinc-100 text-sm font-medium text-zinc-700 transition hover:bg-zinc-200 hover:text-zinc-900 hover:shadow-[0_6px_18px_rgba(15,23,42,0.18)] active:shadow-[0_2px_8px_rgba(15,23,42,0.16)] focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
+              className="app-header__icon-button flex h-9 w-9 items-center justify-center rounded-full bg-zinc-100 text-sm font-medium text-zinc-700 transition hover:bg-zinc-200 hover:text-zinc-900 hover:shadow-[0_6px_18px_rgba(15,23,42,0.18)] active:shadow-[0_2px_8px_rgba(15,23,42,0.16)] focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
             >
               {initial}
             </button>
@@ -519,5 +533,12 @@ export function AppHeader({ me, project }: AppHeaderProps) {
         <Toast kind="error" text={inboxError} onClose={() => { setInboxError(null); }} anchor={{ name: "data-inbox-error", value: "" }} />
       )}
     </header>
+  );
+
+  return (
+    <>
+      {header}
+      <MobileNav />
+    </>
   );
 }

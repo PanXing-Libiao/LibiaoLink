@@ -154,7 +154,7 @@ export function Card({
       </div>
       <h1 className="font-mono text-xl font-bold tracking-tight">{code}</h1>
       <p className="text-lg text-zinc-500 leading-7" title={localizedDescription === description ? undefined : description}>{localizedDescription}</p>
-      <div className="flex items-center gap-3">
+      <div data-card-actions="" className="flex items-center gap-3">
         {onRestore !== undefined || onEdit !== undefined ? (
           <button
             type="button"

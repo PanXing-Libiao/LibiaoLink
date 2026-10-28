@@ -239,10 +239,11 @@ function ProjectPanel({ projectId, projectCode, projectName, summary, href, open
   const localize = useLocalizedTranslator();
   return (
     <section data-workspace-panel={projectId} data-open={open ? "true" : "false"} className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
-      <div className="flex items-center gap-3 py-3 pl-4 pr-3 transition hover:bg-zinc-50">
+      <div data-workspace-panel-head="" className="flex items-center gap-3 py-3 pl-4 pr-3 transition hover:bg-zinc-50">
         <button
           type="button"
           data-workspace-panel-toggle=""
+          data-workspace-panel-main=""
           aria-expanded={open}
           onClick={onToggle}
           className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
@@ -252,11 +253,12 @@ function ProjectPanel({ projectId, projectCode, projectName, summary, href, open
           </svg>
           <span className="min-w-0 truncate text-sm font-semibold text-zinc-900">{localize(projectName)}</span>
           <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] font-medium text-zinc-600">{projectCode}</span>
-          <span className="ml-auto flex shrink-0 items-center gap-2">{summary}</span>
+          <span data-workspace-panel-summary="" className="ml-auto flex shrink-0 items-center gap-2">{summary}</span>
         </button>
         <a
           href={href}
           data-workspace-project-link={projectId}
+          data-workspace-panel-link=""
           title={t("ws.openProject.title", { name: localize(projectName), code: projectCode })}
           className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900"
         >
@@ -279,15 +281,15 @@ function TaskPanelSummary({ items }: { items: ProjectTasks["items"] }) {
   const unscheduled = items.filter((item) => item.group === "unscheduled").length;
   return (
     <>
-      <span className="text-xs font-normal text-zinc-400">{t("ws.count.items", { n: items.length })}</span>
+      <span className="shrink-0 whitespace-nowrap text-xs font-normal text-zinc-400">{t("ws.count.items", { n: items.length })}</span>
       {overdue === 0 ? null : (
-        <span className={"rounded px-1.5 py-0.5 text-[11px] font-medium " + TASK_GROUP_CHIP.overdue}>{t("ws.chip.overdue", { n: overdue })}</span>
+        <span className={"shrink-0 whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-medium " + TASK_GROUP_CHIP.overdue}>{t("ws.chip.overdue", { n: overdue })}</span>
       )}
       {today === 0 ? null : (
-        <span className={"rounded px-1.5 py-0.5 text-[11px] font-medium " + TASK_GROUP_CHIP.today}>{t("ws.chip.today", { n: today })}</span>
+        <span className={"shrink-0 whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-medium " + TASK_GROUP_CHIP.today}>{t("ws.chip.today", { n: today })}</span>
       )}
       {unscheduled === 0 ? null : (
-        <span className={"rounded px-1.5 py-0.5 text-[11px] font-medium " + TASK_GROUP_CHIP.unscheduled}>{t("ws.chip.unscheduled", { n: unscheduled })}</span>
+        <span className={"shrink-0 whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-medium " + TASK_GROUP_CHIP.unscheduled}>{t("ws.chip.unscheduled", { n: unscheduled })}</span>
       )}
     </>
   );
@@ -573,28 +575,28 @@ function IssueTable({ issues, tierTint, overrides, onChangeState }: { issues: re
             const state = issueStateOf(overrides.get(issue.id)?.state ?? toIssueState(issue.state), tierTint);
             return (
               <tr key={issue.id} data-workspace-issue={issue.id} className={"align-top transition-colors " + (tierTint ? "issue-row-tint" + (tierTint === "vivid" ? " tint-vivid" : "") : "hover:bg-zinc-50/80")} style={tierTint && state.tint !== null ? ({ "--row-tint": state.tint.tint, "--row-tint-hover": state.tint.hover } as CSSProperties) : undefined}>
-                <td className="whitespace-nowrap px-4 py-3 text-zinc-700">{fullDateText(locale, issue.raisedAt)}</td>
-                <td className="px-4 py-3">
+                <td data-mobile-label={fieldText(locale, "日期")} className="whitespace-nowrap px-4 py-3 text-zinc-700">{fullDateText(locale, issue.raisedAt)}</td>
+                <td data-mobile-label={fieldText(locale, "问题描述")} className="px-4 py-3">
                   <span className="block whitespace-pre-line break-words leading-6 text-zinc-800">{localize(issue.title)}</span>
                 </td>
-                <td className="px-4 py-3">
+                <td data-mobile-label={fieldText(locale, "问题归类")} className="px-4 py-3">
                   <CategoryTags values={issue.categories} />
                 </td>
-                <td className="px-4 py-3 text-zinc-700">
+                <td data-mobile-label={fieldText(locale, "问题处理人 / 责任人")} className="px-4 py-3 text-zinc-700">
                   {/* Push 260：问题处理人 / 责任人（ownerName；空 = 灰杠「—」，与「问题追踪」同列） */}
                   <span data-workspace-issue-owner="" className="block break-words">
                     {issue.ownerName === null || issue.ownerName === "" ? <span className="text-zinc-300">—</span> : issue.ownerName}
                   </span>
                 </td>
-                <td className="px-4 py-3">
+                <td data-mobile-label={fieldText(locale, "解决方案或建议")} className="px-4 py-3">
                   <span data-workspace-issue-solution="" className="block whitespace-pre-line break-words leading-6 text-zinc-600">
                     {issue.solution === null || issue.solution === "" ? "—" : localize(issue.solution)}
                   </span>
                 </td>
-                <td className="px-4 py-3">
+                <td data-mobile-label={fieldText(locale, "问题附图")} className="px-4 py-3">
                   <IssuePhotos photos={photosOf(issue)} />
                 </td>
-                <td className="whitespace-nowrap px-4 py-3 text-center">
+                <td data-mobile-label={fieldText(locale, "问题是否处理")} className="whitespace-nowrap px-4 py-3 text-center">
                   {/* Push 260：状态列行内可改（业务口径「我提出 我处理的问题这里的状态都要和项目内部一样可以点击」）——
                       与项目页「问题追踪」同一枚 IssueStateCell（点色签弹三态下拉、选中即落库）；显示器仍是 IssueStateTag，
                       列内水平居中口径不变。 */}

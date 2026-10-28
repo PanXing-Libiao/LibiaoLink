@@ -696,7 +696,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
 
           {state.kind === "ready" && total > 0 ? (
             <>
-              <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
+              <div data-file-table="" className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
                 <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
                   <thead className="bg-zinc-50 text-zinc-500">
                     <tr>
@@ -729,7 +729,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
                         }}
                         className="cursor-pointer transition hover:bg-zinc-50/70 focus-visible:bg-blue-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400"
                       >
-                        <td className="align-middle border-b border-zinc-100 px-4 py-3">
+                        <td data-mobile-label={t("lib.col.file")} className="align-middle border-b border-zinc-100 px-4 py-3">
                           <span className="flex items-center gap-2.5">
                             <FileTypeIcon name={file.name} className="h-5 w-5" />
                             <span className="truncate text-base text-zinc-800" title={file.name}>
@@ -737,7 +737,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
                             </span>
                           </span>
                         </td>
-                        <td className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3">
+                        <td data-mobile-label={t("lib.col.status")} className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3">
                           <span
                             data-file-status={file.status}
                             title={
@@ -750,7 +750,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
                             {statusText(locale, FILE_STATUS_LABELS[file.status] ?? file.status)}
                           </span>
                         </td>
-                        <td className="align-middle border-b border-zinc-100 px-4 py-3">
+                        <td data-mobile-label={t("lib.col.project")} className="align-middle border-b border-zinc-100 px-4 py-3">
                           <div
                             data-file-project={file.projectId}
                             data-file-project-code={projectCodeOf(file.projectId)}
@@ -763,15 +763,15 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
                             <span className="whitespace-nowrap text-xs text-zinc-500">{projectCodeOf(file.projectId)}</span>
                           </div>
                         </td>
-                        <td className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-700">{userNameOf(file.createdBy)}</td>
-                        <td className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-600">
+                        <td data-mobile-label={t("lib.col.uploader")} className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-700">{userNameOf(file.createdBy)}</td>
+                        <td data-mobile-label={query.tab === "recycled" ? t("lib.col.recycledAt") : t("lib.col.createdAt")} className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-600">
                           {query.tab === "recycled"
                             ? file.recycledAt === null
                               ? "—"
                               : formatDateTime(file.recycledAt) + " · " + userNameOf(file.recycledBy)
                             : formatDateTime(file.createdAt)}
                         </td>
-                        <td className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3">
+                        <td data-mobile-label={t("lib.col.actions")} className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3">
                           <span className="flex items-center gap-2">
                             {query.tab === "current" ? (
                               <button

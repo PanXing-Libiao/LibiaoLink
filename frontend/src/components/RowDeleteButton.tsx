@@ -36,6 +36,7 @@ export function RowDeleteButton({
   return (
     <button
       type="button"
+      data-row-delete=""
       aria-label={ariaLabel}
       title={ariaLabel}
       onClick={(event) => {
