@@ -533,21 +533,19 @@ const uploaderZeroReady = await waitFor("window.location.hash.indexOf(" + j("q="
 await clickSelector("[data-file-filter=uploader] button");
 await waitFor("document.querySelector(" + j("[data-search-select-list]") + ") !== null", 8000);
 const uploaderZeroOptions = await ev("(function(){var box=document.querySelector(" + j("[data-search-select-list]") + ");if(box===null){return null;}return Array.from(box.querySelectorAll(" + j("[role=option]") + ")).map(function(o){return String(o.textContent).trim();}).sort();})()");
+const creatorBUnpick = await pickOption(String(creatorB.display_name));
+const uploaderZeroCancelled = await waitFor("window.location.hash.indexOf(" + j("uploadedBy=") + ") === -1 && document.querySelector(" + j("[data-file-count]") + ").textContent === " + j("共 0 条"), 20000);
 check("④d3b 已选上传人零命中仍保留在候选并显示原姓名，可再次点击取消",
-  uploaderZeroReady === true && uploaderZeroOptions !== null && uploaderZeroOptions.length === 1 && uploaderZeroOptions[0] === creatorB.display_name,
-  JSON.stringify({ ui: uploaderZeroOptions, expected: creatorB.display_name }));
+  uploaderZeroReady === true && uploaderZeroOptions !== null && uploaderZeroOptions.length === 1 && uploaderZeroOptions[0] === creatorB.display_name && creatorBUnpick === true && uploaderZeroCancelled === true,
+  JSON.stringify({ ui: uploaderZeroOptions, expected: creatorB.display_name, picked: creatorBUnpick, hash: await ev("window.location.hash") }));
 await clickSelector("[data-file-filter=uploader] button");
 await waitFor("document.querySelector(" + j("[data-select-popover]") + ") === null", 8000);
 await clickSelector("[data-file-filter=keyword] button");
-const creatorBFilterBack = await waitFor("window.location.hash === " + j("#/files?uploadedBy=" + creatorB.id) + " && document.querySelector(" + j("[data-file-count]") + ").textContent === " + j("共 " + String(expectCreatorBIds.length) + " 条"), 40000);
-const creatorBUnpick = await pickOption(String(creatorB.display_name));
 const uploaderAllBack = await waitFor("window.location.hash === " + j("#/files") + " && document.querySelector(" + j("[data-file-count]") + ") !== null && document.querySelector(" + j("[data-file-count]") + ").textContent === " + j("共 " + String(expectCurrentIds.length) + " 条"), 20000);
 await sleep(600);
-check("④d4 再点 " + creatorB.display_name + " = 清空上传人筛选：地址回 #/files、计数还原",
-  creatorBFilterBack === true && creatorBUnpick === true && uploaderAllBack === true,
-  JSON.stringify({ picked: creatorBUnpick }));
-await clickSelector("[data-file-filter=uploader] button");
-await waitFor("document.querySelector(" + j("[data-select-popover]") + ") === null", 8000);
+check("④d4 清空零命中关键字 = 地址回 #/files、计数还原",
+  uploaderAllBack === true,
+  JSON.stringify({ hash: await ev("window.location.hash"), count: await ev("document.querySelector(" + j("[data-file-count]") + ").textContent") }));
 await sleep(600);
 
 // ---------- ⑤ 关键字搜索 ----------
