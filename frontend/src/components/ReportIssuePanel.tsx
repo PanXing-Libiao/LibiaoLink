@@ -2086,85 +2086,10 @@ function RecordEditModal({ label, hint, submitLabel, pending, canSubmit, error, 
   );
 }
 
-/** 日报提交后的「是否同步到项目群」确认（2026-10-27）：仅 PM + 已绑定群时出现。 */
-function GroupSyncConfirmModal({ groupName, pending, error, onCancel, onConfirm }: {
-  groupName: string;
-  pending: boolean;
-  error: string | null;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  const t = useT();
-  const trapRef = useFocusTrap<HTMLDivElement>();
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !pending) {
-        event.preventDefault();
-        onCancel();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [onCancel, pending]);
-  return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-zinc-900/45" onClick={() => { if (!pending) onCancel(); }} />
-      <div
-        ref={trapRef}
-        role="alertdialog"
-        aria-modal="true"
-        aria-label={t("report.groupSync.confirmAria")}
-        data-group-sync-confirm=""
-        className="relative w-full max-w-sm rounded-2xl bg-white p-6 shadow-[0_24px_60px_rgba(0,0,0,0.28)]"
-      >
-        <div className="flex items-start gap-3">
-          <span aria-hidden="true" className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#fff2ad] text-base font-bold text-zinc-900">群</span>
-          <div>
-            <h2 className="text-lg font-bold text-zinc-900">{t("report.groupSync.confirmTitle")}</h2>
-            <p className="mt-2 text-sm leading-6 text-zinc-600">{t("report.groupSync.confirmBody", { group: groupName })}</p>
-          </div>
-        </div>
-        {error === null ? null : (
-          <p role="alert" className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>
-        )}
-        <div className="mt-6 flex justify-end gap-3">
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={pending}
-            data-group-sync-cancel=""
-            className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {t("report.groupSync.confirmNo")}
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            disabled={pending}
-            data-group-sync-submit=""
-            className="rounded-lg bg-[#feca04] px-4 py-2 text-sm font-semibold text-zinc-900 shadow-sm transition hover:brightness-95 active:brightness-90 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {pending ? t("report.groupSync.confirmPending") : t("report.groupSync.confirmYes")}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 type ProjectGroupSyncState =
   | { status: "loading" }
   | { status: "ready"; binding: ProjectGroupBinding }
   | { status: "error" };
-
-type GroupSyncPromptState = {
-  reportId: string;
-  groupName: string;
-  pending: boolean;
-  error: string | null;
-};
 
 /** 「日报记录」行编辑弹窗（Push 223 · 业务口径「日报记录 … 这个编辑也要和干系人同款」+「文字和图片编辑要同款」）：
  *  只收**文字 + 图片**两类字段 —— 当日完成工作 / 明日计划 / 现场工作附图；「关联阶段」是下拉口径，
@@ -2498,6 +2423,7 @@ function ReportFillForm({
   onRemoveIssue,
   onSubmit,
   onSaveDraft,
+  groupSync,
 }: {
   project: Project;
   author: string;
@@ -2515,6 +2441,12 @@ function ReportFillForm({
   onRemoveIssue: (index: number) => void;
   onSubmit: () => void;
   onSaveDraft: () => void;
+  /** 项目群同步复选框：仅项目经理 + 已绑定群时传入，默认不勾选。 */
+  groupSync?: {
+    checked: boolean;
+    groupName: string;
+    onChange: (checked: boolean) => void;
+  };
 }) {
   const locale = useLocale();
   const localize = useLocalizedTranslator();
@@ -2836,6 +2768,22 @@ function ReportFillForm({
         <button type="button" data-action="draft" onClick={onSaveDraft} disabled={draft.dateIso === "" || submitting} className={BTN_SECONDARY}>
           {t("report.saveDraft")}
         </button>
+        {groupSync === undefined ? null : (
+          <label
+            title={t("report.groupSync.submitTitle", { group: groupSync.groupName })}
+            className={"inline-flex items-center gap-2 text-sm text-zinc-700 " + (submitting ? "cursor-not-allowed opacity-60" : "cursor-pointer")}
+          >
+            <input
+              type="checkbox"
+              checked={groupSync.checked}
+              onChange={(event) => { groupSync.onChange(event.target.checked); }}
+              disabled={submitting}
+              data-action="group-sync"
+              className="h-4 w-4 shrink-0 accent-zinc-900 disabled:cursor-not-allowed"
+            />
+            <span>{t("report.groupSync.button")}</span>
+          </label>
+        )}
         <span data-fill-hint className={"text-xs " + (missing.length === 0 ? "text-zinc-400" : "text-rose-500")}>
           {missing.length === 0 ? t("report.form.footer") : t("report.form.missing", { list: missing.join(isLocalizedLocale(locale) ? ", " : "、") })}
         </span>
@@ -3284,7 +3232,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, focusRep
   /** 项目群同步（2026-10-27）：项目经理身份由服务端随绑定状态下发（SSO user.id 与内部 managerIds 不同口径）。 */
   const [projectGroup, setProjectGroup] = useState<ProjectGroupSyncState>({ status: "loading" });
   const projectGroupRequestRef = useRef(0);
-  const [groupSyncPrompt, setGroupSyncPrompt] = useState<GroupSyncPromptState | null>(null);
+  const [syncToGroup, setSyncToGroup] = useState(false);
   const loadProjectGroupBinding = useCallback(async (): Promise<ProjectGroupBinding | null> => {
     if (readOnly) {
       return null;
@@ -3315,6 +3263,13 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, focusRep
   }, [loadProjectGroupBinding, readOnly]);
 
   const isProjectManager = projectGroup.status === "ready" && projectGroup.binding.canManage;
+  const groupSyncOption = isProjectManager && projectGroup.status === "ready" && projectGroup.binding.bound
+    ? {
+      checked: syncToGroup,
+      groupName: projectGroup.binding.name ?? t("report.groupSync.groupFallback"),
+      onChange: setSyncToGroup,
+    }
+    : undefined;
 
   const groupSyncDisabledReason = (report: DailyReport): string | null => {
     if (report.state === "draft") {
@@ -3656,37 +3611,37 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, focusRep
     const draftRow = draftId === null ? null : reportsRef.current.find((item) => item.id === draftId) ?? null;
     const dateText = isoDateText(locale, draft.dateIso);
     const issueCount = body.issues?.length ?? 0;
+    const shouldSyncToGroup = syncToGroup && groupSyncOption !== undefined;
     setSaving(true);
     const write =
       draftRow === null
         ? createReport(project.id, createBody(body))
         : updateReport(project.id, draftRow.id, { ...withoutDate(body), version: draftVersion.current ?? draftRow.version });
     write
-      .then((saved) => {
+      .then(async (saved) => {
         setDraft(emptyDraft());
         setDraftId(null);
         draftVersion.current = null;
-        notify(
-          "ok",
+        setSyncToGroup(false);
+        const submittedNotice =
           t("report.notice.submitted", { date: dateText }) +
-            (issueCount > 0 ? t("report.notice.submittedIssues", { n: issueCount }) : t("report.notice.submittedEnd")),
-        );
+          (issueCount > 0 ? t("report.notice.submittedIssues", { n: issueCount }) : t("report.notice.submittedEnd"));
         onChangeSub("records");
         void reload();
-        if (!readOnly) {
-          const bindingPromise = projectGroup.status === "ready"
-            ? Promise.resolve(projectGroup.binding)
-            : loadProjectGroupBinding();
-          void bindingPromise.then((binding) => {
-            if (binding !== null && binding.canManage && binding.bound) {
-              setGroupSyncPrompt({
-                reportId: saved.id,
-                groupName: binding.name ?? t("report.groupSync.groupFallback"),
-                pending: false,
-                error: null,
-              });
-            }
-          });
+        if (!shouldSyncToGroup) {
+          notify("ok", submittedNotice);
+          return;
+        }
+        try {
+          await syncReportToProjectGroup(project.id, saved.id);
+          notify("ok", submittedNotice + " " + t("report.groupSync.noticeQueued"));
+        } catch (error) {
+          if (error instanceof ApiError && error.code === "REPORT_GROUP_NOT_BOUND") {
+            setProjectGroup((previous) => previous.status === "ready"
+              ? { status: "ready", binding: { ...previous.binding, bound: false } }
+              : previous);
+          }
+          notify("error", t("report.notice.submittedGroupSyncFailed", { reason: groupSyncErrorText(error) }));
         }
       })
       .catch((error) => {
@@ -3695,34 +3650,6 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, focusRep
       })
       .finally(() => {
         setSaving(false);
-      });
-  };
-
-  /** 提交后的确认框：只有「是」才落 outbox；「否」只关闭，不做任何外发。 */
-  const dismissGroupSyncPrompt = () => {
-    setGroupSyncPrompt((current) => (current === null || current.pending ? current : null));
-  };
-
-  const confirmGroupSyncPrompt = () => {
-    const current = groupSyncPrompt;
-    if (current === null || current.pending) {
-      return;
-    }
-    setGroupSyncPrompt({ ...current, pending: true, error: null });
-    void syncReportToProjectGroup(project.id, current.reportId)
-      .then(() => {
-        setGroupSyncPrompt(null);
-        notify("ok", t("report.groupSync.noticeQueued"));
-      })
-      .catch((error: unknown) => {
-        if (error instanceof ApiError && error.code === "REPORT_GROUP_NOT_BOUND") {
-          setProjectGroup((previous) => previous.status === "ready"
-            ? { status: "ready", binding: { ...previous.binding, bound: false } }
-            : previous);
-        }
-        setGroupSyncPrompt((previous) => previous === null
-          ? previous
-          : { ...previous, pending: false, error: groupSyncErrorText(error) });
       });
   };
 
@@ -3823,6 +3750,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, focusRep
             onRemoveIssue={removeDraftIssue}
             onSubmit={handleSubmit}
             onSaveDraft={handleSaveDraft}
+            groupSync={groupSyncOption}
           />
           {draftChanged ? (
             <div data-report-draft-conflict="" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="status">
@@ -3913,15 +3841,6 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, focusRep
       {openIssue === null || readOnly ? null : <IssueDrawer projectId={project.id} members={members} issue={openIssue} report={openIssueReport} onPatchIssue={patchIssue} onPatchReport={patchReport} onClose={() => { setOpenIssueId(null); onFocusClosed?.(); }} />}
 
       {/* 行编辑弹窗（Push 223）：日报 / 问题各一枚 —— 与「干系人」弹窗同款；取消 / Esc / 点遮罩关闭，保存成功才关 */}
-      {groupSyncPrompt === null ? null : (
-        <GroupSyncConfirmModal
-          groupName={groupSyncPrompt.groupName}
-          pending={groupSyncPrompt.pending}
-          error={groupSyncPrompt.error}
-          onCancel={dismissGroupSyncPrompt}
-          onConfirm={confirmGroupSyncPrompt}
-        />
-      )}
       {editingReport === null ? null : (
         <ReportEditModal
           projectId={project.id}
