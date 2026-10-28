@@ -59,6 +59,13 @@ try {
 '''
 
 
+def page_source():
+    # The viewer HTML contains UTF-8 Chinese. Reading it with the Windows ANSI
+    # code page raises before the page can be served, so never rely on locale.
+    html=(VIEWER/'index.html').read_text(encoding='utf-8')
+    return re.sub(r'<script type="module" src="platform-entry[^\"]*"></script>','<script type="module" src="/dwg-local.js"></script>',html)
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('artifact')
@@ -88,10 +95,9 @@ def main():
                 return self.send_error(403)
             path=urlsplit(self.path).path
             if path in ('/','/index.html'):
-                html=(VIEWER/'index.html').read_text()
-                html=re.sub(r'<script type="module" src="platform-entry[^\"]*"></script>','<script type="module" src="/dwg-local.js"></script>',html)
-                data=html.encode();kind='text/html; charset=utf-8'
-            elif path=='/dwg-local.js':data=BOOT.encode();kind='text/javascript; charset=utf-8'
+                html=page_source()
+                data=html.encode('utf-8');kind='text/html; charset=utf-8'
+            elif path=='/dwg-local.js':data=BOOT.encode('utf-8');kind='text/javascript; charset=utf-8'
             elif path=='/manifest.json':
                 self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Encoding','gzip');self.send_header('Content-Length',str(compressed.stat().st_size));self.end_headers()
                 with compressed.open('rb') as stream:
