@@ -973,7 +973,12 @@ export function MyPlanBoard({ readOnly = false }: { readOnly?: boolean }) {
                       <PlanNoteCard
                         note={note}
                         lifted={lifted}
-                        onOpen={() => {}}
+                        onOpen={() => {
+                          if (readOnly || Date.now() - suppressOpenAtRef.current < 350) {
+                            return;
+                          }
+                          setEditor({ note });
+                        }}
                         onPointerDown={readOnly ? undefined : (event) => {
                           handleNotePointerDown(note, event);
                         }}
