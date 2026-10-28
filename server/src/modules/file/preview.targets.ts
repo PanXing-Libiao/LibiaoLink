@@ -9,14 +9,14 @@ export { isRasterImageFile, isSvgFile };
  *
  * - **安全位图直签**（`isRasterImageFile`）：仅扩展名与规范 MIME 精确一致时签原对象；不投转换任务。
  * - **SVG 产物通道**（`previewTargetsFor`）：SVG 只投 `target=image`，浏览器最终只能拿到 PNG 产物。
+ * - **PDF 直签通道**（`isPdfFile`）：原件短时签名 `application/pdf` + inline，前端 PDF.js 本地渲染；不创建 DocServer 会话。
  * - **查看器通道**（`viewerChannelFor`）：Office（含宏变体 docm / xlsm / pptm）+ 文本族（txt / csv）
- *   + PDF（2026-10-08 业务口径「统一用onlyoffice」）→ ONLYOFFICE 文档大类（word / cell / slide / pdf）+
- *   文件类型（扩展名小写；无扩展名时按 MIME 反推）—— 查看器配置 `documentType` / `document.fileType` 的输入
+ *   → ONLYOFFICE 文档大类（word / cell / slide）与文件类型（扩展名小写；无扩展名时按 MIME 反推）—— 查看器配置 `documentType` / `document.fileType` 的输入
  *   （S8-2 三补 1：文本族按 word / cell 映射）。
  *
  * ADR-035：读取侧先判 CAD，启用时 STEP 返回独立查看器，其余降级，防止误报 MIME 绕进图片/Office。
  * H1 · S2 起图片不再看 `image/*` 前缀：只有精确位图组合允许原对象直签；SVG 只进 PNG 产物通道。
- * 判定优先级：CAD → SVG 产物通道 → 安全位图 → 查看器；判不出类型按确定性降级「请下载」。
+ * 判定优先级：CAD → SVG 产物通道 → PDF 直签 → 安全位图 → 查看器；判不出类型按确定性降级「请下载」。
  */
 
 /**
@@ -39,9 +39,19 @@ export function previewTargetsFor(input: { fileName: string; mime: string | null
   return isSvgFile(input) ? ["image"] : [];
 }
 
+/** PDF 直签原件的通道判定：扩展名与规范 MIME 一致，或无扩展名时由 MIME 反推。 */
+export function isPdfFile(input: { fileName: string; mime: string | null }): boolean {
+  const extension = extensionOf(input.fileName);
+  const mime = normalizeMime(input.mime);
+  if (extension === "pdf") {
+    return mime === null || mime === canonicalMimeForExtension(input.fileName);
+  }
+  return mime === "application/pdf";
+}
+
 /** 查看器通道输出：ONLYOFFICE documentType / document.fileType 的判定输入。 */
 export interface ViewerChannel {
-  documentType: "word" | "cell" | "slide" | "pdf";
+  documentType: "word" | "cell" | "slide";
   fileType: string;
 }
 
@@ -62,8 +72,6 @@ const VIEWER_EXTENSION_TYPES: Record<string, ViewerChannel> = {
   pptx: { documentType: "slide", fileType: "pptx" },
   pptm: { documentType: "slide", fileType: "pptm" },
   odp: { documentType: "slide", fileType: "odp" },
-  // PDF（2026-10-08 业务口径「统一用onlyoffice」）：预览走查看器（documentType = pdf）。
-  pdf: { documentType: "pdf", fileType: "pdf" },
 };
 
 /** MIME → 查看器通道（无扩展名 / 扩展名判不出时的反推；宏变体 MIME 以 DocServer 实际注册的小写形态比对）。 */
@@ -95,11 +103,10 @@ const VIEWER_MIME_TYPES: readonly { mime: string; channel: ViewerChannel }[] = [
     channel: { documentType: "slide", fileType: "pptm" },
   },
   { mime: "application/vnd.oasis.opendocument.presentation", channel: { documentType: "slide", fileType: "odp" } },
-  { mime: "application/pdf", channel: { documentType: "pdf", fileType: "pdf" } },
 ];
 
 /**
- * 查看器通道判定（S3 · ADR-030；PDF 2026-10-08 并入）：Office / 文本族 / PDF → `{ documentType, fileType }`；
+ * 查看器通道判定（S3 · ADR-030）：Office / 文本族 → `{ documentType, fileType }`；
  * 其余 null（含图片 —— 先经 `previewTargetsFor` 走产物通道）。扩展名优先、MIME 兜底（与历史判定优先级一致）。
  */
 export function viewerChannelFor(input: { fileName: string; mime: string | null }): ViewerChannel | null {

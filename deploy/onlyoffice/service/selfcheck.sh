@@ -45,5 +45,20 @@ else
   rc=1
 fi
 
+# ④ 查看器冷启动硬超时（2026-10-28 移动端修订：宿主 90 秒先裁决，内嵌模板不得在 30 秒弹窗重载）
+timeout_ok=1
+for relative in documenteditor/main/index.html spreadsheeteditor/main/index.html presentationeditor/main/index.html pdfeditor/main/index.html; do
+  file="/var/www/onlyoffice/documentserver/web-apps/apps/$relative"
+  if ! grep -q "waitSeconds: 120" "$file" 2>/dev/null || ! grep -q "}, 120000);" "$file" 2>/dev/null; then
+    timeout_ok=0
+  fi
+done
+if [ "$timeout_ok" = "1" ]; then
+  say "查看器冷启动超时 OK（120s）"
+else
+  say "查看器冷启动超时 FAIL（DocServer 模板仍为 30s）"
+  rc=1
+fi
+
 if [ "$rc" -eq 0 ]; then say "PASS"; else say "FAIL（rc=$rc）"; fi
 exit "$rc"

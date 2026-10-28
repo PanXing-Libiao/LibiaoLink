@@ -321,7 +321,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
   /** 上传中的份数进度（null = 没有上传）。 */
   const [uploading, setUploading] = useState<{ done: number; total: number } | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
-  /** 预览浮层（Push 226 续 / 续三 · S4 两通道）：点清单里的图片 / PDF → 产物浮层（大图 / 内置查看器 iframe）；
+  /** 预览浮层（Push 226 续 / 续三 · S4 两通道）：点清单里的图片 / PDF → 预览浮层（图片 Blob 大图 / PDF.js 本地分页）；
    *  Office / 文本族 → ONLYOFFICE 查看器外壳（viewer 配置逐字下发）。nonce = 重试自增，强制重建查看器（重取 token）。null = 未开。 */
   const [preview, setPreview] = useState<{
     pane: { mode: "url"; url: string } | { mode: "viewer"; viewer: PreviewViewerConfig };
@@ -767,7 +767,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
   };
 
   /** 预览（Push 226 续 · S4 两通道裁决）：点开才懒取 —— 预览只在实际点开具体文件时写「查看」审计；缩略图 / 清单挂载只懒取签名，不写审计；2026-10-27 起由 recordPreviewView 在点开后显式补记。
-   *  viewer = ONLYOFFICE 查看器外壳（Office / 文本族）；url = 产物浮层（图片大图 / PDF iframe）；
+   *  viewer = ONLYOFFICE 查看器外壳（Office / 文本族）；url = 直签浮层（图片 Blob 大图 / PDF.js 本地分页）；
    *  unavailable = 确定性降级（failed / 判不出通道 —— 服务端 reason 或「请下载查看」口径）。 */
   const openPreview = async (fileId: string, name: string, versionId?: string) => {
     if (previewBusy !== null) {
@@ -817,7 +817,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
 
   /** 下载原文件（Push 226 续四 · 业务口径「下载为什么都是pdf 你是不是签名调用错了」）：取当前版本的
    *  attachment 短时签名（原文件字节 + 原文件名；服务端写 download 审计），再触发浏览器落盘 ——
-   *  与预览区分（S4）：Office / 文本族走 ONLYOFFICE 查看器渲染、图片 / PDF 走产物浮层；下载始终拿原文件。 */
+   *  与预览区分（S4）：Office / 文本族走 ONLYOFFICE 查看器渲染、图片 / PDF 走直签浮层；下载始终拿原文件。 */
   const downloadFile = async (fileId: string, versionId?: string) => {
     if (downloadBusy !== null) {
       return;

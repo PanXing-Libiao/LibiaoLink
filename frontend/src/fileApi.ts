@@ -17,7 +17,8 @@ import { RefreshQueue, liveReadPaused, subscribeLiveHints } from "./liveSync";
  *   非安全源、crypto.subtle 为 undefined，取哈希抛错会让上传表现为「点了没反应」；回退输出与 WebCrypto 一致。
  * S4（ONLYOFFICE 查看器外壳 · 计划 S4 / R5）：Office / 文本族改走**查看器通道** —— ensurePreviewOutcome 按响应裁决
  *   （viewer 非空 = 查看器外壳；url 非空 = 产物浮层）；previewKindOf 增 "office"（名单与 server viewerChannelFor 对齐）。
- * 2026-10-08：PDF 并入查看器通道（业务口径「统一用onlyoffice」）—— 服务端返回 viewer，本文件按响应裁决、无分支。
+ * 2026-10-08：PDF 曾并入查看器通道（业务口径「统一用onlyoffice」）。
+ * 2026-10-28 移动端修订：PDF 改服务端直签 + 前端 PDF.js；viewer 非空仍按查看器裁决，url 非空按直签浮层裁决。
  * 2026-10-08 续：文件替换（replaceFileContent —— 业务口径「增加一个替换按钮 点击替换则选择新文件代替」）：
  *   未定档（draft）直替 = intent=version + fileId（版本链追加、名称 / 归属不变）；已定档 / 已变更 = intent=change
  *   + change.reason 必填（A4-13 申请即通过，完成上传时同事务生效）。
@@ -61,7 +62,7 @@ type UploadCompleteResponse = { file: { id: string; name: string } };
 export type OnlyOfficePreviewViewerConfig = {
   kind: "onlyoffice";
   docServerUrl: string;
-  documentType: "word" | "cell" | "slide" | "pdf";
+  documentType: "word" | "cell" | "slide";
   document: {
     title: string;
     url: string;
@@ -438,18 +439,18 @@ export function isImageFileName(name: string): boolean {
   return IMAGE_EXTENSIONS.some((extension) => lower.endsWith(extension));
 }
 
-/** PDF 查看器族（Push 226 续三 · 业务口径「这个pdf我也打不开啊」）：PDF 源直通（S4 起 Office / 文本族
- *  不再经转换器出 PDF —— 改走 ONLYOFFICE 查看器通道，这里只剩 PDF 源本身）。 */
+/** PDF 查看器族（2026-10-28 移动端修订）：API 直签原件，前端 PDF.js 本地分页渲染；
+ *  不再创建 ONLYOFFICE 文档会话，也不再依赖移动浏览器内置 PDF 插件。 */
 const PDF_PREVIEW_EXTENSIONS = [".pdf"];
 
 /** ONLYOFFICE 查看器族（S4 · 名单与 server preview.targets.ts 的 viewerChannelFor 对齐）：Office（含宏变体）
- *  + 文本族（txt / csv / html / htm）。服务端负责最终通道裁决；判不出的文件前端不出预览入口。 */
-const OFFICE_VIEWER_EXTENSIONS = [".doc", ".docx", ".docm", ".odt", ".rtf", ".txt", ".html", ".htm", ".xls", ".xlsx", ".xlsm", ".ods", ".csv", ".ppt", ".pptx", ".pptm", ".odp"];
+ *  + 文本族（txt / csv）。HTML / HTM 是主动内容，服务端已移出查看器通道，前端也不出预览入口。 */
+const OFFICE_VIEWER_EXTENSIONS = [".doc", ".docx", ".docm", ".odt", ".rtf", ".txt", ".xls", ".xlsx", ".xlsm", ".ods", ".csv", ".ppt", ".pptx", ".pptm", ".odp"];
 
 /** CAD 暂不可预览提示名单（ADR-035，与 server isCadPreviewPending 对齐）。仅分类，不声明解析支持。 */
 const CAD_PREVIEW_EXTENSIONS = [".step", ".stp", ".iges", ".igs", ".stl", ".3mf", ".obj", ".gltf", ".glb", ".easm", ".dxf", ".dwg"];
 
-/** 可视预览通道：image = 浏览器直渲染（40×40 缩略图 + img 浮层）；pdf = 浏览器内置查看器（iframe 浮层）；
+/** 可视预览通道：image = 取签名字节后由 img 浮层渲染（40×40 缩略图仍直取签名）；pdf = PDF.js 本地分页渲染；
  *  office = ONLYOFFICE 查看器外壳（S4：api.js + DocEditor，超时 / 重试 / 降级「请下载」）；
  *  cad = 接入准备提示，不加载模型；判不出 = null（抽屉里没有预览入口，只有改名 / 删除）。 */
 export type FilePreviewKind = "image" | "pdf" | "office" | "cad";
