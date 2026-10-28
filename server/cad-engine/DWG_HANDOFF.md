@@ -37,6 +37,8 @@
 
 本次实现：`Program.cs` 的 `native-summary.json` `header` 新增 `modelSpaceExtMin/Max` 与 `paperSpaceExtMin/Max`；适配器原样带入 `org.libiaolink.dwg/1.header`；查看器模型空间默认 `fit()` 采用源范围，要求有限、正向、不超过计算范围 4 倍且覆盖 ≥50% 可见绘制，否则回退，新增 `fitAll()` 取计算全图。读取器重建于 `dwg-build-windows-03`，DLL SHA-256 `4e5a81104bb18418ae9b29d649f14f9f8373cbdcaefdaa005720fbae64ec4c9c`；公开样本 `dwg-public-small-04` 校验通过；正式图 `dwg-formal-windows-04` 重新原生读取（7.25 s / 总计 12.45 s，托管提交 2.79 GB）并组装（83.64 s），manifest 265,834,804 B 校验通过；默认视图与 `fitAll` 证据在仓库外 `review` 目录。本机页静态模块改用 `Cache-Control: no-store`，避免编辑后浏览器使用旧模块。
 
+读取器源码/二进制目前不进入 `build-release.py` 的 `engineDigest`（`Program.cs` 位于 `dwg-reader/`，不在 `core/` 哈希集）；每次产物在 `native-summary.json`/UCD 记录 `readerSha256`，本次为 `4e5a8110…`。DWG 格式/缓存身份和读取器版本键按计划留到阶段 D，不能把当前产物只追溯到 `releaseDigest`。
+
 首批待办（按计划 §4）：
 
 - **必须处理候选**：业务确认需要布局后，只做二维矩形俯视视口。默认适应视图已按源范围修复并通过正式图复验。
