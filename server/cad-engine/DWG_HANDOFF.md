@@ -227,6 +227,7 @@
 - 新增 `core/dwg_platform_convert.py` 平台 worker：从 stdin 接收原字节，调用固定 ACadSharp 读取器与既有 `assemble_native`，再通过 `FileSink` 输出现有 UCD 二进制传输。运行时由 CAD 沙箱提供 `CAD_DWG_PYTHON`、`CAD_DWG_READER`、`CAD_DWG_DOTNET`；未配置时明确失败，不静默退回 DXF。
 - 平台特性开关 `CAD_DWG_ENABLED` 默认 `false`，本机只验证代码路径；未启用时预览仍显示暂不可用并保留下载。已在公开样本上跑通 worker 输出（805,623 B manifest / 171,216 B buffer）；正式大图尚未在平台沙箱调度，原生读取约 2.7 GiB 托管内存、manifest 约 266 MB，目标 Linux 资源档位仍需验收。
 - 资源/门禁：DWG worker RSS 采样档 3 GiB、结果/产物上限 512 MiB、manifest 读取上限 512 MiB、沙箱单文件上限 512 MiB；这些是首版预算，不能当作生产容量结论。
+- 2026-10-29 本机完整系统验证尝试：`server/scripts/local-system-prepare.mjs` 在本机 Docker 检查处退出（当前环境没有 Docker，也没有 `.runtime` 的 PostgreSQL/MinIO/Casdoor 与 CAD 沙箱）；上传、任务、产物归档和查看器全链路没有执行，不能记为通过。只完成了平台 worker 的公开样本输出和 API/CAD 定向测试；后续需先启动本机 Docker/本地服务与原生运行时，再重跑全链路。
 - 版本：`engineVersion = step-0.3.3/c579bb86…/gateway-1`、`formatVersions.DWG = dwg-0.1.0/1171f7ec…/gateway-1`、`releaseDigest = 8699aea7…`，`viewerVersion = viewer-5c952e5d…`；STEP/DXF 格式键以 `source.json` 为准。未推送、未部署。
 
 
