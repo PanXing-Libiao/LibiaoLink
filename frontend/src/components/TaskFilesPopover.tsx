@@ -4,6 +4,7 @@ import { ensurePreviewOutcome, fetchDownloadUrl, previewKindOf, recordPreviewVie
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { RowDeleteButton } from "./RowDeleteButton";
+import { UploadProgressOverlay } from "./UploadProgressOverlay";
 import { usePopover } from "./usePopover";
 import { useT } from "../i18n";
 
@@ -317,6 +318,7 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
           onClose={() => { setPreview(null); }}
         />
       )}
+      <UploadProgressOverlay progress={uploading} />
     </>
   );
 }

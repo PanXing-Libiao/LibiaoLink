@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { STAGE_KEYS } from "@libiaolink/contracts";
-import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, ilike, inArray, isNotNull, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { changeRequests } from "../../db/schema/change.js";
@@ -245,12 +245,12 @@ export class TaskRepository {
     return links;
   }
 
-  /** 详情文件清单：排除回收站（recycled），按创建时间倒序。 */
+  /** 详情文件清单：排除回收站（recycled）与没有完成版本的空上传，按创建时间倒序。 */
   async listFiles(taskId: string, client: DbClient = this.database.db): Promise<TaskFileBriefRow[]> {
     return client
       .select({ id: files.id, name: files.name, status: files.status, docType: files.docType })
       .from(files)
-      .where(and(eq(files.taskId, taskId), inArray(files.status, FILE_STATUS_FOR_SUMMARY)))
+      .where(and(eq(files.taskId, taskId), inArray(files.status, FILE_STATUS_FOR_SUMMARY), isNotNull(files.currentVersionId)))
       .orderBy(desc(files.createdAt));
   }
 
@@ -261,7 +261,7 @@ export class TaskRepository {
     const rows = await client
       .select({ taskId: files.taskId, status: files.status, value: count() })
       .from(files)
-      .where(and(inArray(files.taskId, [...taskIds]), inArray(files.status, FILE_STATUS_FOR_SUMMARY)))
+      .where(and(inArray(files.taskId, [...taskIds]), inArray(files.status, FILE_STATUS_FOR_SUMMARY), isNotNull(files.currentVersionId)))
       .groupBy(files.taskId, files.status);
     for (const row of rows) {
       if (row.taskId === null) continue;

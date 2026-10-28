@@ -29,7 +29,7 @@
 ## 2026-10-13 全字段修订（Push 302 · px 线代改 wmj 线契约，请 wmj / lan 复核）
 
 - **背景**：工作台「我的任务」页刷新卡顿、字段与 UI 分批出现 —— 根因是聚合读面只带 9 列，前端须逐项目回打 `GET /projects/{id}/tasks`（limit 200）+ `GET /projects/{id}` + 问题源接口三路补齐。
-- **契约**：`WorkspaceTaskItem` = `TaskListItem` 全字段 + `projectCode` / `projectName` + `files`（`TaskFileBrief[]`，排除回收站、创建时间倒序）；`WorkspaceIssueItem` 补 `solution` / `photos`（`FilePhotoRef[]`，插入序）；`WorkspaceResponse` 新增 `projects`（聚合涉及项目卡，按任务组 → 问题栏首次出现去重，含 `managerIds` / `managerNames` / `version`）。生成物重出、零漂移（paths 95 / schemas 261）。
+- **契约**：`WorkspaceTaskItem` = `TaskListItem` 全字段 + `projectCode` / `projectName` + `files`（`TaskFileBrief[]`，排除回收站与无完成版本的空上传、创建时间倒序）；`WorkspaceIssueItem` 补 `solution` / `photos`（`FilePhotoRef[]`，插入序）；`WorkspaceResponse` 新增 `projects`（聚合涉及项目卡，按任务组 → 问题栏首次出现去重，含 `managerIds` / `managerNames` / `version`）。生成物重出、零漂移（paths 95 / schemas 261）。
 - **服务端读面**：任务行取全 15 列数据源（`ownerNames` / `fileSummary` / `changeLinks` / 随行 `files` / `estimatedDays` / `headcount` / `deliverableTypes` / `note` / `finalizedAt` / `finalizedBy` / `version` 等）；问题行取 `solution` / `photos`；项目卡随盘下发。SQL 块（负责人 / 项目经理 / 变更关联）与 task / project 线同源切片复用；仍只读、无新表、无迁移。
 - **测试**：`server/test/workspace.test.ts` 13 例（全字段随行 / onTime 派生 / projects 去重 / solution + photos）；`server/scripts/m6-replay.mjs` 新增 W6b 全字段随行断言（本机无 DB，未重跑 —— 登记）。
 - **前端**：`WorkspacePage.tsx` 删除 `useTaskFull` / `useIssueFull` / `fallbackTaskOf` 与逐项目回填，点行开抽屉零请求（px 线）。

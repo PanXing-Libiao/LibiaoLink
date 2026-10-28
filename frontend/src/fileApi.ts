@@ -196,6 +196,15 @@ async function transferChunks(
   );
 }
 
+/** 上传中途失败时尽力取消会话；页面刷新等来不及发请求的未完成会话由服务端读面隐藏并由过期清扫兜底。 */
+async function abortCreatedUpload(fileId: string, uploadId: string): Promise<void> {
+  try {
+    await apiSend<unknown>("/api/v1/files/" + encodeURIComponent(fileId) + "/uploads/" + encodeURIComponent(uploadId) + "/abort", "POST");
+  } catch {
+    // 取消是失败后的收尾：不覆盖原始上传错误；已完成或已过期会话无需再次处理。
+  }
+}
+
 /** 同内容在途上传合并表（key = 项目 + 哈希 + 任务）：连点 / 一次粘贴多份同一张图只发一次上传链路。 */
 const inFlightUploads = new Map<string, Promise<string>>();
 
@@ -221,7 +230,12 @@ export async function uploadFile(projectId: string, file: Blob, name: string, op
     if (created.reused || created.upload === null) {
       return created.file.id;
     }
-    await transferChunks(created.file.id, created.upload, buffer, contentHash);
+    try {
+      await transferChunks(created.file.id, created.upload, buffer, contentHash);
+    } catch (error) {
+      await abortCreatedUpload(created.file.id, created.upload.id);
+      throw error;
+    }
     if (options.finalize === true) {
       await finalizeFile(created.file.id);
     }

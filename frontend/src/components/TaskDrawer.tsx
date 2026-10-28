@@ -27,6 +27,7 @@ import { FileTypeIcon } from "./FileTypeIcon";
 import { InlineDateCell } from "./InlineEdit";
 import { MemberMultiSelect } from "./MemberSelect";
 import { RowDeleteButton } from "./RowDeleteButton";
+import { UploadProgressOverlay } from "./UploadProgressOverlay";
 import { DeliverableCell, docTypeChip } from "./DeliverablePicker";
 import { ScrollArea } from "./ScrollArea";
 import { SelectMenu, type SelectOption } from "./SelectMenu";
@@ -2139,6 +2140,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
           onClose={() => { setChangeModalId(null); }}
         />
       )}
+      <UploadProgressOverlay progress={uploading} />
     </div>
   );
 }

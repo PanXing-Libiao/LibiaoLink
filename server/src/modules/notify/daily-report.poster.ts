@@ -36,6 +36,7 @@ const YELLOW = "#FFC928";
 const ORANGE = "#FF673B";
 const MUTED = "#4D5754";
 const MUTED_LIGHT = "#A7B1AF";
+const BADGE_GRAY = "#E4E0D5";
 const WHITE = "#FFFFFF";
 const FONT_REGULAR = "LibiaoLink Daily Source Han Sans";
 const FONT_BOLD = "LibiaoLink Daily Source Han Sans Bold";
@@ -571,7 +572,6 @@ function drawItems(
   ctx: SKRSContext2D,
   items: readonly string[],
   y: number,
-  accent: string,
   layout: { x: number; width: number },
 ): number {
   let cursor = y;
@@ -579,7 +579,7 @@ function drawItems(
     setFont(ctx, false, 26);
     const lines = wrapText(ctx, items[index] ?? "", layout.width - 48);
     const rowHeight = lines.length * 40 + 18;
-    ctx.fillStyle = accent;
+    ctx.fillStyle = BADGE_GRAY;
     ctx.fillRect(layout.x, cursor + 2, 28, 28);
     setFont(ctx, true, 14);
     ctx.fillStyle = "#101617";
@@ -772,7 +772,7 @@ export async function renderDailyReportPoster(
     INK,
     { x: MARGIN, width: columnWidth },
   );
-  const doneBottom = drawItems(ctx, doneItems, y + 64, YELLOW, {
+  const doneBottom = drawItems(ctx, doneItems, y + 64, {
     x: MARGIN,
     width: columnWidth,
   });
@@ -786,7 +786,7 @@ export async function renderDailyReportPoster(
     INK,
     { x: rightColumnX, width: columnWidth },
   );
-  const planBottom = drawItems(ctx, planItems, y + 64, YELLOW, {
+  const planBottom = drawItems(ctx, planItems, y + 64, {
     x: rightColumnX,
     width: columnWidth,
   });
