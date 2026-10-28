@@ -126,8 +126,8 @@
 ### 本轮结论
 
 - 18 个代理对象：默认子实体状态已处理，当前 proxy 损失为 0；非默认状态仍会保留。
-- 20 个 REGION：块内 2D 弧/多段线轮廓存在，ACIS 实体未显示；不宣称填充/3D 完整，按业务需要升级。
-- 1 个 MLINE：货架块内缺一条线，影响局部，待确认。
+- 20 个 REGION：块内 2D 弧/多段线轮廓存在，当时 ACIS 实体未显示；已由后续“平面 REGION 边界”节按平面 ACIS 边界补上，填充/3D 语义仍不完整。
+- 1 个 MLINE：STANDARD 样式、`ScaleFactor=20`、两个元素偏移 ±0.5（约 ±10 世界单位），中心线 3 顶点；完整显示需要 miter/接头求值，中心线近似会漏掉两条元素线，保留明确损失。
 - 1 个 XLINE：修复前 x=643784 的竖直构造线确实缺失；已按通用 XLINE/RAY 映射修复，见下节。
 - 没有新的整对象/整段文字缺失；上述结论只覆盖这 40 个句柄，不代表其他未列对象。
 
@@ -140,7 +140,7 @@
 - 适配器 `dwg_adapter.py` 把 `infiniteLines` 映射到 `org.cad-preview.annotation-presentation/1` 的 `role:'infinite'` part（与 DXF 同一契约）；查看器无需改渲染，继续按当前视图裁剪、排除出 fit 范围、按锚点回退。
 - 样本 `dwg-public-small-05`：2 个 XLINE/RAY item，损失 48→46，`unsupported-native-presentation` 24→22；`dwg-formal-windows-05`：1 个 XLINE item（`entity-738AAE`，origin `(643784.4,43284.4)`，direction `(0,1)`，源色红），损失 101→100，未显示原生对象 22→21。正式图默认视图屏幕 x≈940.9 的 7×1 像素带在 y=0..200000 由全白变为红色抗锯齿 `[255,133,133]`/`[255,186,186]`；built 1,476,219→1,476,220、presentationParts 162,337→162,338、paintCalls 41,361→41,362；fitScale 0.002237、fitAll 0.000661 不变，说明无限线未进入有限范围。
 - 读取器重建 `dwg-build-windows-04`，DLL SHA-256 `62d95952c7896b1eaca5a8336af407bbc68e8528602dd9783a1a5e4926a7021c`；正式图 manifest 265,835,098 B validated，组装 81.02 s，原生读取 7.75 s / 总计 13.00 s；样本 manifest 806,102 B validated。适配器单元测试 `server/test/dwg-infinite-line.test.py` 2/2。
-- 20 个 REGION 和 1 个 MLINE 仍按原结论保留；XLINE/RAY 不再计入未显示对象。60 条引线箭头不变。
+- 本节时 20 个 REGION 和 1 个 MLINE 仍保留；REGION 已由后续“平面 REGION 边界”节补上，MLINE 见“MLINE 条件升级判定”节。60 条默认引线箭头也已由后续 LEADER 节处理。
 
 
 ## 2026-10-28 MLINE 条件升级判定（REGION 已另补）
@@ -148,7 +148,7 @@
 按计划 §6 的升级触发逐项核对：REGION 已由用户接受 ACIS 依赖后在“平面 REGION 边界”节补上；本节只保留 MLINE 的不升级判定，不新增 MLINE 内核或中心线近似。
 
 - **20 个 REGION**：已由用户接受 ACIS/ezdxf 依赖后在“平面 REGION 边界”节补上，20 个都解析为 6 条平面边界线；本节原先的不升级判定已被覆盖。
-- **1 个 MLINE**：句柄 `6B891A` 在货架行块 `35435.00_600.00_7053…` 内，是一条 3 顶点线，位于货架区域，没有关联文字或面积；DXF 路径同样没有映射 MLINE。用中心线近似会丢掉多线样式的偏移、接头和线型，属于伪造几何；计划要求有存储图形或可靠求值再适配。触发条件（影响主体或关键标注）未出现。
+- **1 个 MLINE**：句柄 `6B891A` 在货架行块 `35435.00_600.00_7053…` 内，是 STANDARD 样式、`ScaleFactor=20`、两个元素偏移 ±0.5（世界约 ±10）的多线，中心线 3 个顶点；没有关联文字或面积。只画中心线会漏掉两条元素线，完整显示需要 miter/接头/端帽求值，DXF 路径同样没有映射 MLINE；本轮不做近似，保留说明。触发条件（影响主体或关键标注）未出现。
 - 结果：真实图当前 2 条损失（1 MLINE + 1 头字段），20 个 REGION 已不再计入；REGION 的 ACIS 原载荷仍保留在 `native/opaque-*.bin`，平面的 3D/实体语义仍未支持。
 
 
@@ -195,6 +195,15 @@
 - 适配器改动使 `engineVersion` 变为 `step-0.3.3/4cc8fc50…/gateway-1`、`releaseDigest` 为 `5bed9677…`；STEP/DXF 格式键和 `viewerVersion` 不变。
 
 
+## 2026-10-28 阶段 B 收口（本机，未部署）
+
+- 正式图 `dwg-formal-region-02`：**2 条损失**（1 个 MLINE + 1 个头字段颜色）；代理、默认 LEADER 箭头、XLINE/RAY、20 个平面 REGION 均已映射。公开样本 `dwg-public-small-09`：29 条损失（21 未显示 + 2 渐变 + 1 特殊多行文字 + 1 原生失败 + 3 布局 + 1 缺句柄）。
+- 已验证可用：模型主体、默认源范围视图、图层显隐、句柄定位、文字/标注、默认 LEADER 箭头、实心填充、XLINE/RAY、平面 REGION 边界、WIPEOUT 预览遮罩、默认 MULTILEADER 子实体状态；正式图约 147.8 万展开绘制项，viewer built 1,476,320。
+- 可用但近似：替代字体和复杂 MTEXT 排版、自定义 LEADER 箭头、非默认代理子实体样式、WIPEOUT 是白色预览遮罩而非可拦截拾取的 mask part。
+- 未验证或条件项：原 CAD 逐区域尺寸/排版；布局视口（业务未确认）；IMAGE/PDFUNDERLAY（缺外部资源）；非平面/3D REGION；平台 file/preview/任务/缓存与目标环境部署（按用户要求停在本地）。
+- MLINE 1 条：STANDARD 样式、`ScaleFactor=20`、两个元素偏移 ±0.5（约 ±10 世界单位），中心线 3 顶点；没有完整 miter/接头求值就不画中心线，保留明确损失。
+
+
 ## 代码责任与入口
 
 | 层 | 位置 | 当前行为 |
@@ -220,7 +229,7 @@
 - [ACadSharp.Image](https://github.com/slaveOftime/ACadSharp.Image) 的选定 MIT 文字方法用于转义与纯文本换行。C# 与 Canvas 端有改写，原字体、富文本等价性仍未成立；未引入整个应用或 SixLabors 后端。其 `main` 的提交未独立解析成功，当前采用源码内容 SHA-256 固定，见 `drawing-index-dependencies.json`，不可写成固定上游提交。
 - [Flatbush 4.5.0](https://github.com/mourner/flatbush/tree/v4.5.0)、[Flatqueue 3.0.0](https://github.com/mourner/flatqueue/tree/v3.0.0)，ISC。只引入索引实现与许可。
 
-后续遇到问题继续先查这些项目的源码、issue/discussion 和消费者。已见 ACadSharp discussion #975（动态块偏移）、#1003/#1017（属性放置）等相似问题；没有据此宣称本图已修复这些情况。REGION 的 ACIS 原载荷读取不等于具备 ACIS 二维边界求值器。
+后续遇到问题继续先查这些项目的源码、issue/discussion 和消费者。已见 ACadSharp discussion #975（动态块偏移）、#1003/#1017（属性放置）等相似问题；没有据此宣称本图已修复这些情况。20 个 REGION 的 ACIS 原载荷已能读出平面边界；这不等于具备 ACIS 内核，非平面/3D 曲面、布尔和体积语义仍未支持。
 
 ## 正式样本身份与逐类状态
 
@@ -243,14 +252,14 @@
 | 块 / 属性 | INSERT 13950、ATTRIB 377、ATTDEF 5；存在动态块参数/动作 | 当前保存状态与实例/属性映射；不重新评价动态块。正式图可达块基点均为 0，非零基点叠加旋转的社区变换行为未验证，不得外推 |
 | 文字 / 中文 / 字体 | TEXT 1053、MTEXT 1028；码页 gb2312，源字体样式存在 | 可达 TEXT 计数 859 含 58 个代理文字；MTEXT 629。新版有 Unicode/转义/宽度换行，但缺原字体、富文本和复杂竖排/分栏仍为呈现损失；不能把旧页面长文字当成新版排版验收 |
 | 标注 | DIMENSION 411，可达 280 | 复用已存标注图形块，不自行生成尺寸图；`dimensionSemantics.measurement` 当前来自 ACadSharp 的计算 getter，不能称作原始存储值或工程验收值，后续需要明确字段来源 |
-| 引线 / 多重引线 | LEADER 68、MULTILEADER 19，可达 60 / 18 | 普通引线顶点可取得，60 项箭头未还原；多重引线选用原生代理图形，18 项仍有未映射代理原语/样式损失 |
+| 引线 / 多重引线 | LEADER 68、MULTILEADER 19，可达 60 / 18 | 60 条 LEADER 的默认箭头已按 `ArrowSize`/首段方向生成；自定义箭头块仍保留损失。18 项多重引线默认子实体状态已映射，非默认样式仍保留 |
 | 填充 / 实心面 | HATCH 567，可达 169；SOLID 1007 | 169 个可达填充中 104 Outer、65 Normal。当前社区 `ExplodePattern` 的 HatchStyle / 多环语义未关闭，重点核对孔洞/外层样式；渐变/部分样式有损失。SOLID 可达计数 519 含 18 个代理箭头派生 |
-| REGION / 多线 / 构造线 | REGION 94，可达 20；MLINE / XLINE 各 1 | REGION 保留 ACIS 原载荷，未映射二维边界；MLINE/XLINE 缺显示。这是映射缺口，不能统称三维范围外 |
+| REGION / 多线 / 构造线 | REGION 94，可达 20；MLINE / XLINE 各 1 | 20 个可达 REGION 已按平面 ACIS 边界映射，非平面/3D 仍不支持；XLINE 已映射为无限线；MLINE 保留明确损失。这是映射缺口，不能统称三维范围外 |
 | 表格 / 未知非图形 | TABLESTYLE 1，未发现 TABLE 实体；有 CELLSTYLEMAP 和文字上下文类 | 未知类仅取得基础记录，不冒充完整专有字段；保留源句柄、通知及原文件 |
 | 外参 / 图片 / 底图 / OLE | 本轮原生清点未发现外参路径、IMAGE/底图/OLE 实体 | 这张图不能验证上述资源接入；原字体等配套仍未提供。不得按图纸内任意路径读取本机/网络 |
 | Z / 三维 | 独立源清点有 14 条 LINE 的端点 Z 不同，另有大量恒定非零 Z；未发现 3DSOLID/MESH/3DFACE | 原坐标含 Z 保留，当前查看器作俯视二维投影；不能称纯 XY，也不扩展为三维编辑或求解 |
 
-最新版原生通知 33 条（27 Warning、6 None）；其中有未知非图形类、缺 reactor、字体样式引用及动态块通知。映射损失 101 条：引线箭头 60、原生显示不支持 22、代理原语未映射 18、原头颜色无法表示 1。这些记录不覆盖尚未识别的所有视觉偏差，不能据数量反推完整性。全部结果保持 `partial`。
+最新版原生通知 33 条（27 Warning、6 None）；其中有未知非图形类、缺 reactor、字体样式引用及动态块通知。当前映射损失 2 条：MLINE 1、原头颜色 1；60 条默认引线箭头、XLINE/RAY、默认 MULTILEADER 子实体和 20 个平面 REGION 已分别处理。这些记录不覆盖尚未识别的所有视觉偏差，不能据数量反推完整性。全部结果保持 `partial`。
 
 ## 实验记录：已通过与未通过分开
 
