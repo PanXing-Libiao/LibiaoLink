@@ -17,6 +17,7 @@ import {
 import { lockBodyScroll } from "../scrollLock";
 import { stageNameOf } from "../taskApi";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
+import { mobileFilePreviewMustDownload } from "../mobilePreviewPolicy";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { PhotoStrip } from "./ReportIssuePanel";
 import { useFocusTrap } from "./useFocusTrap";
@@ -136,6 +137,10 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
   /** 打开「变更后文件」预览（版本态 A4-06；失败灰字 + 可重试）。 */
   const openFilePreview = async () => {
     if (detail === null || detail.file === null || detail.versionId === null || previewBusy) {
+      return;
+    }
+    if (mobileFilePreviewMustDownload(detail.file.name)) {
+      await downloadPreviewFile();
       return;
     }
     setPreviewBusy(true);
@@ -264,7 +269,7 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
                           type="button"
                           data-change-modal-file-card="true"
                           data-change-modal-file-open="true"
-                          title={t("drawer.file.previewTitle")}
+                          title={mobileFilePreviewMustDownload(detail.file.name) ? t("drawer.file.downloadTitle") : t("drawer.file.previewTitle")}
                           disabled={previewBusy}
                           onClick={() => { void openFilePreview(); }}
                           className="inline-flex w-[120px] flex-col items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 transition hover:border-amber-300 hover:bg-amber-50 disabled:cursor-progress"

@@ -23,6 +23,7 @@ import { cachedZhTo, translateZhTo } from "../translateApi";
 import { DateRangePicker, type DateRange } from "./DateRangePicker";
 import { ChangeDetailModal } from "./ChangeDetailModal";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
+import { mobileFilePreviewMustDownload } from "../mobilePreviewPolicy";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { InlineDateCell } from "./InlineEdit";
 import { MemberMultiSelect } from "./MemberSelect";
@@ -773,6 +774,10 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
     if (previewBusy !== null) {
       return;
     }
+    if (mobileFilePreviewMustDownload(name)) {
+      await downloadFile(fileId, versionId);
+      return;
+    }
     setPreviewBusy(fileId);
     setPreviewNote(null);
     const outcome = await ensurePreviewOutcome(fileId, versionId);
@@ -1271,11 +1276,12 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
             <ul className="flex flex-col gap-1">
               {files.map((file) => {
                 const previewKind = previewKindOf(file.name);
+                const downloadOnMobile = mobileFilePreviewMustDownload(file.name);
                 const previewing = previewBusy === file.id;
                 const confirming = pendingDelete === file.id;
                 return (
                   <li key={file.id} data-drawer-file-item="true" className="group flex min-w-0 items-center gap-2 rounded-lg border border-zinc-100 bg-zinc-50/70 px-2.5 py-1.5 transition-colors hover:bg-zinc-100">
-                    {previewKind === "image" ? <FileThumb fileId={file.id} name={file.name} onOpen={() => { void openPreview(file.id, file.name); }} /> : <FileTypeIcon name={file.name} />}
+                    {previewKind === "image" && !downloadOnMobile ? <FileThumb fileId={file.id} name={file.name} onOpen={() => { void openPreview(file.id, file.name); }} /> : <FileTypeIcon name={file.name} />}
                     {renamingId === file.id ? (
                       <span className="flex min-w-0 flex-1 items-center gap-0.5">
                         <input
@@ -1306,7 +1312,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
                           data-file-preview-open="true"
                           onClick={() => { void openPreview(file.id, file.name); }}
                           disabled={previewing}
-                          title={t("drawer.file.previewTitle")}
+                          title={downloadOnMobile ? t("drawer.file.downloadTitle") : t("drawer.file.previewTitle")}
                           className="min-w-0 flex-1 truncate text-left text-xs text-zinc-700 transition-colors hover:text-zinc-900 disabled:text-zinc-400"
                         >
                           {file.name}
@@ -1332,7 +1338,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
                       </span>
                     )}
                     {previewing && previewKind === "image" ? <span className="shrink-0 text-[10px] text-zinc-400">{t("drawer.file.previewing")}</span> : null}
-                    {previewKind !== null && previewKind !== "image" ? (
+                    {previewKind !== null && previewKind !== "image" && !downloadOnMobile ? (
                       <button
                         type="button"
                         data-file-preview-open="true"
@@ -2183,7 +2189,7 @@ function ChangeFileRows({ detail, versions, previewBusy, downloadBusy, onPreview
         const versionId = row.versionId;
         // 行名 / 可预览性都按「该版本自己的名称」判：变更前 = 更名前名称（各版本扩展名随版本对象键）。
         const rowName = row.kind === "before" ? beforeName : name;
-        const previewable = previewKindOf(rowName) !== null;
+        const previewable = previewKindOf(rowName) !== null && !mobileFilePreviewMustDownload(rowName);
         return (
           <span key={row.kind} data-change-file={row.kind} className="flex min-w-0 items-center gap-1.5">
             <span className="shrink-0 text-[11px] text-zinc-400">{isLocalizedLocale(locale) ? fieldText(locale, row.label) + ": " : fieldText(locale, row.label) + "："}</span>

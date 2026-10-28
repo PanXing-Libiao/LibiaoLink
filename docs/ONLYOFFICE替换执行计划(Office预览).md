@@ -1,6 +1,6 @@
 # ONLYOFFICE 替换执行计划（Office 预览 · 首关 → 切换）
 
-> **2026-10-28 移动端预览修订**：PDF 撤出 ONLYOFFICE 查看器通道，改「服务端直签原件 + 前端 PDF.js 本地分页」；Word / Excel / PPT / 文本族仍由 ONLYOFFICE 承接。DocServer 四个编辑器模板内建 30 秒硬超时随镜像延长至 120 秒，宿主 90 秒先降级；移动端纳入本链路验收。
+> **2026-10-28 移动端预览修订（已发布）**：PDF 撤出 ONLYOFFICE 查看器通道，改「服务端直签原件 + 前端 PDF.js 本地分页」；Word / Excel / PPT / 文本族仍由 ONLYOFFICE 承接。DocServer 四个编辑器模板内建 30 秒硬超时随镜像延长至 120 秒，宿主 90 秒先降级；2026-10-28 13:56 已随 `prod-20261028-mobile-preview-cdb6eb5d` 发布正式环境，移动端纳入本链路验收。
 
 > **2026-10-21 CAD 边界更新**：本计划“CAD 不动”为历史 Office 替换边界；CAD 后续由 [ADR-035](adr/ADR-035-CAD接入独立能力工程.md) 和 [接入基线](CAD平台接入基线与迁移任务.md) 承接，旧实现撤下、平台暂不可预览并保留下载。Office 路线不变。
 

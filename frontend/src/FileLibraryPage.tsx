@@ -4,6 +4,7 @@ import { cardBorderOf, cardTintOf, useBackgroundTier, useCardWatermark } from ".
 import { AppHeader } from "./components/AppHeader";
 import { Card } from "./components/Card";
 import { FilePreviewOverlay } from "./components/FilePreviewOverlay";
+import { mobileFilePreviewMustDownload } from "./mobilePreviewPolicy";
 import { FileTypeIcon } from "./components/FileTypeIcon";
 import { Loader } from "./components/Loader";
 import { SearchInput } from "./components/SearchInput";
@@ -366,6 +367,10 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
     if (previewBusy !== null) {
       return;
     }
+    if (mobileFilePreviewMustDownload(file.name)) {
+      await downloadFile(file);
+      return;
+    }
     setPreviewBusy(file.id);
     setNotice(null);
     const outcome = await ensurePreviewOutcome(file.id);
@@ -714,7 +719,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
                         key={file.id}
                         data-file-row={file.id}
                         tabIndex={0}
-                        aria-label={t("lib.preview") + " " + file.name}
+                        aria-label={(mobileFilePreviewMustDownload(file.name) ? t("lib.download") : t("lib.preview")) + " " + file.name}
                         aria-busy={previewBusy === file.id}
                         onClick={(event) => {
                           const target = event.target;
