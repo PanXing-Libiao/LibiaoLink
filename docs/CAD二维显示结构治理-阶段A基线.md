@@ -160,4 +160,4 @@ PASS: projection parity and 799,999 instance draws retain three unique source le
 ## 9. 后续阶段
 
 - C 已完成文本、图案、媒体/布局切片：文本原始回退收口到 `drawing-text.js`，图案收口到 `drawing-pattern.js`，布局/图片收口到 `drawing-layout.js`/`drawing-media.js`，裁剪切片此前已完成。竖排/镜像/堆叠/MTEXT 分栏、复杂线型相位、打印样式 pen、PDF/DWF/DGN 仍保持“部分”，需要单独证据后才能标为双路径已验证。
-- D 宿主侧已完成：移除普通/图案重复线段分支、统一 fill/media/layout 入口，并完成交付检查；独立工程矩阵同步、版本拆分/缓存策略、目标设备与真实账号验收、部署仍待办。详见 [阶段 D 交付检查](CAD二维显示结构治理-阶段D交付检查.md)。
+- D 宿主侧已完成：移除普通/图案重复线段分支、统一 fill/media/layout 入口，并完成交付检查；版本拆分/缓存策略、目标设备与真实账号验收、部署仍待办。详见 [阶段 D 交付检查](CAD二维显示结构治理-阶段D交付检查.md)。

@@ -86,12 +86,11 @@ cd server && python3 test/cad-release.test.py
   迁移 `0069` 为旧产物回填旧 `engine_version` 作为 `format_version`，首次访问新格式版本时重建一次；之后浏览器或单一格式改动不会触发另一格式重建。本轮只改 DWG 适配器和读取器/本机工具，engineVersion 变化，STEP/DXF 格式键不变；读取器仍不进入 engineDigest。平面 REGION 的 ezdxf 导入依赖见 `requirements-dwg.txt`，未改 `dxf_region.py`，因此 DXF 格式键不因 ACIS 解析而变化。原生多行文字排版修复和显示级注释避让只改浏览器 `drawing-text.js`/`cad-text-layout.js`/`drawing-text-avoidance.js`，`viewerVersion` 与 `releaseDigest` 更新，engineVersion、STEP/DXF 不变。
 - 迁移 `0069` 改变唯一键，必须先停止 API/worker 再迁移并整体升级；不能只回退镜像。
 - 回滚：本批提交未推送、未部署；本地回滚到 `8e7b6a4` 可回到平面 REGION 修复前，回滚到 `b5b24fd` 可回到 XLINE/RAY 修复前，回滚到 `5c980c0` 可回到默认视图修复前，回滚到 `8fe3784` 可回到评审修复前（版本拆分已包含在该提交），阶段 C 前为 `fff7428`。若已部署，需停 API/worker，恢复 `engine_version` 唯一键、移除 `format_version`，再回退 API/worker/CAD 镜像与 `/cad-viewer/` 静态资源；不要只回滚前端，避免 manifest/引擎版本不一致。
-- 未执行：真实公司账号浏览器验收、生产部署、独立 `CAD逆向` 工程能力矩阵同步（该工程不在本仓库）。
+- 未执行：真实公司账号浏览器验收、生产部署。
 
 ## 5. 未完成与后续任务
 
-1. 独立工程登记：阶段 A/B/C/D 的能力矩阵、提交和证据需在 `CAD逆向` 工程同步；本仓库只记录宿主基线与指纹。
-2. 版本拆分/缓存策略：已完成（ADR-039）；本次评审修复再次变更 DXF 格式键，部署时 DXF 产物重建一次。
-3. 剩余能力：竖排/镜像/堆叠、复杂线型相位、打印样式 pen、PDF/DWF/DGN 的双路径证据；无裁剪无限线在保留路径可绘制但暂不进入空间索引；适配器转换期仍拒绝展开后超过 40 万项的单个阵列；逐副本变体空间按路径分组，牺牲该子树的跨副本保留；保留路径不再套用普通 `maxDraws`，资源约束由实例总数承担。
-4. 目标设备/WebView 实测与真实公司账号验收。
-5. 部署窗口：迁移、API、worker、CAD 镜像、静态资源、source.json 必须同批发布，并先跑 STEP 冒烟。
+1. 版本拆分/缓存策略：已完成（ADR-039）；本次评审修复再次变更 DXF 格式键，部署时 DXF 产物重建一次。
+2. 剩余能力：竖排/镜像/堆叠、复杂线型相位、打印样式 pen、PDF/DWF/DGN 的双路径证据；无裁剪无限线在保留路径可绘制但暂不进入空间索引；适配器转换期仍拒绝展开后超过 40 万项的单个阵列；逐副本变体空间按路径分组，牺牲该子树的跨副本保留；保留路径不再套用普通 `maxDraws`，资源约束由实例总数承担。
+3. 目标设备/WebView 实测与真实公司账号验收。
+4. 部署窗口：迁移、API、worker、CAD 镜像、静态资源、source.json 必须同批发布，并先跑 STEP 冒烟。

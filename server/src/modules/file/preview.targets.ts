@@ -21,7 +21,7 @@ export { isRasterImageFile, isSvgFile };
 
 /**
  * CAD 接入准备名单（ADR-035）：只用于暂不可预览提示，不是已支持格式清单。
- * 后续以独立工程能力矩阵接入模型资源；此处不得恢复原文件图片直签。
+ * 后续按 CAD 能力矩阵接入模型资源；此处不得恢复原文件图片直签。
  */
 const CAD_EXTENSIONS = new Set(["step", "stp", "iges", "igs", "stl", "3mf", "obj", "gltf", "glb", "easm", "dxf", "dwg"]);
 

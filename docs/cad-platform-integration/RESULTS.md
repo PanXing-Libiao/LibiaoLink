@@ -2,7 +2,7 @@
 
 2026-10-21。STEP 已从 LibiaoLink 的文件版本预览入口进入独立 CAD 转换和 ViewerSession；W01、N02、N03 均显示首帧并可交互，产品树、表面拾取、隐藏、隔离、恢复及完整性信息保留。三类 JSON（检查记录、缺失、显示修复）已实际下载，保留原记录并附平台版本/SHA。S03 外部引用明确拒收。
 
-交付源码固定为独立工程 `38135e606ae560d6b808c7544f25c0a592df7311`，几何/补面/接收规则仍是 STEP v0.3.3 基线 `0911573`。新增的 namespace、宿主加载和检查记录接口只改变工程接入。
+交付源码固定为 CAD 平台 `38135e606ae560d6b808c7544f25c0a592df7311`，几何/补面/接收规则仍是 STEP v0.3.3 基线 `0911573`。新增的 namespace、宿主加载和检查记录接口只改变工程接入。
 
 ## 提示展示追订
 
@@ -81,7 +81,7 @@ MB = 1,000,000 bytes。[原始字节/来源/任务记录 JSON](files.json) · [C
 
 实际 SessionGuard/CSRF、PreviewReadService、CAD 控制器及 native 转换的 8 项 HTTP 测试通过：版本来源和 SHA、完整二进制/gzip 产物、跨用户/窗口/文件版本借用拒绝、权限撤销、buffer SHA 与 lease 释放、输入破坏拒收、取消与进程重启后的产物重验。原文件读取期间断开窗口也会取消尚未返回编号的任务。
 
-另有既有预览/下载 44 项通过，共 **52 项**；独立工程的 namespace/CAD 身份不变、缓存模式/重启两项测试通过。浏览器还实际验证 N03 取消提示、任务进入 cancelled、关闭后重新打开；W01/N02/N03 的正常打开和 JSON 下载如上。未运行全量构建或无必要静态检查，shared OpenAPI/客户端已重新生成。
+另有既有预览/下载 44 项通过，共 **52 项**；CAD 平台的 namespace/CAD 身份不变、缓存模式/重启两项测试通过。浏览器还实际验证 N03 取消提示、任务进入 cancelled、关闭后重新打开；W01/N02/N03 的正常打开和 JSON 下载如上。未运行全量构建或无必要静态检查，shared OpenAPI/客户端已重新生成。
 
 运行入口为 `http://127.0.0.1:3013/tools/cad-platform.html`，本地服务已保留；可复现方式见 [运行说明](../../server/cad-engine/README.md)。缓存和输入清单不进 Git，新增 native 环境没有在本机重复安装。
 
@@ -97,7 +97,7 @@ MB = 1,000,000 bytes。[原始字节/来源/任务记录 JSON](files.json) · [C
 
 已同步独立源码 `37d520c`，在“模型信息”提供标准 UTF8 / 中文旧编码 GB，重新读取后使用新窗口任务；当前标签页按文件版本记忆，切换文件仍使用各自选择。参数经过会话/CSRF 和枚举校验，进入 worker、缓存键、规则摘要及检查记录。源字节和几何参数沿用原值。
 
-定向检查：独立工程 `tests/test_step_name_encoding.py` **2 项通过**，涵盖原始 GBK、UTF-8、STEP 转义中文与英文混合名称、GB 后恢复默认、buffer SHA 一致和无效选项；`JobTests.test_name_codepage_isolates_cache_and_reaches_worker` **1 项通过**。平台使用实际 native worker 执行 `node node_modules/vitest/vitest.mjs run --config test/cad.vitest.config.ts test/cad-platform.test.ts`（设置 `CAD_TEST_PYTHON`），**9 项通过**，含原有权限、资源、取消/恢复与新增码页隔离检查。首次误用默认 Vitest 配置读到旧构建契约而未运行测试，已按项目既有源码配置重跑通过；未为此全量构建。
+定向检查：CAD 平台 `tests/test_step_name_encoding.py` **2 项通过**，涵盖原始 GBK、UTF-8、STEP 转义中文与英文混合名称、GB 后恢复默认、buffer SHA 一致和无效选项；`JobTests.test_name_codepage_isolates_cache_and_reaches_worker` **1 项通过**。平台使用实际 native worker 执行 `node node_modules/vitest/vitest.mjs run --config test/cad.vitest.config.ts test/cad-platform.test.ts`（设置 `CAD_TEST_PYTHON`），**9 项通过**，含原有权限、资源、取消/恢复与新增码页隔离检查。首次误用默认 Vitest 配置读到旧构建契约而未运行测试，已按项目既有源码配置重跑通过；未为此全量构建。
 
 内置浏览器实际切换后中文名称已恢复，关闭重开保留 GB；另一文件仍默认 UTF8，外部引用拒收界面保持原行为。业务文件名称、几何、逐文件数值与页面图像只保存在本机忽略目录 `server/var/cad-browser-smoke/`，不提交到仓库。完整产物与修复前对比几何 buffers、draw、产品/实例身份均一致，缺面计数保留原值。shared OpenAPI 与客户端类型由原生成器更新。
 
@@ -105,7 +105,7 @@ MB = 1,000,000 bytes。[原始字节/来源/任务记录 JSON](files.json) · [C
 
 已同步独立源码 `5707e1d`：定位小零件后，整机范围仍可缩放查看；相机 near/far 在旋转、缩放、平移时更新。原实现允许镜头缩小到约 200 倍选中半径，却只保留约 100 倍的远裁切距离，会将模型裁掉；固定在小零件尺度的 near 也损失缩小后的深度精度。现在远裁切面覆盖整机包围球，near 随目标距离变化并保留微小面目标。只调整浏览器相机，解析器、源几何、面身份与显隐策略保持原值。
 
-独立工程执行 `node --experimental-loader ./tests/three-loader.mjs --test tests/camera-framing.test.mjs`，**4 项通过**，涵盖偏心小零件、超过旧 far 的缩放、多方向/尺度与平移、空选择及微小面定位。内置浏览器用本机业务模型复现“定位→连续缩小→空白”；修复后同样操作能显示整机，继续旋转、重新定位、隔离与恢复均可操作。业务画面只保存在本机忽略目录，未提交模型、名称或截图；未运行全量构建和无必要静态检查。
+CAD 平台执行 `node --experimental-loader ./tests/three-loader.mjs --test tests/camera-framing.test.mjs`，**4 项通过**，涵盖偏心小零件、超过旧 far 的缩放、多方向/尺度与平移、空选择及微小面定位。内置浏览器用本机业务模型复现“定位→连续缩小→空白”；修复后同样操作能显示整机，继续旋转、重新定位、隔离与恢复均可操作。业务画面只保存在本机忽略目录，未提交模型、名称或截图；未运行全量构建和无必要静态检查。
 
 “定位选中”仍保留其它零件的真实遮挡，单独检查用“仅显示选中”。该修复不宣称任意材质的深度冲突均已消除。
 
@@ -156,4 +156,4 @@ MB = 1,000,000 bytes。[原始字节/来源/任务记录 JSON](files.json) · [C
 
 本轮使用页面明示的测试身份、文件记录和 ObjectStorage，实际守卫/服务/转换/查看器是真实代码。公司 SSO、数据库、真实对象存储、下载整链和正式部署仍需公司测试环境验收；检查页的原文件下载按钮仅验证回调。当前生产 Alpine/768 MiB API 环境需要另配 native runtime、内存和隔离，不能直接开启。尚未推送、合并或部署。
 
-只开放 STEP，外部资源解析与 EASM/DXF 平台入口未加入。每次新窗口当前仍重新转换；P01 本轮未重跑，不据本表宣称大文件提速。独立工程原有外部组 18/19、新增组 20/20、工程夹具 2/2、另一批外部组 19/20 保持分组记录，本轮没有重跑它们，也不把三个集成样本换算为总体支持率。
+只开放 STEP，外部资源解析与 EASM/DXF 平台入口未加入。每次新窗口当前仍重新转换；P01 本轮未重跑，不据本表宣称大文件提速。CAD 平台原有外部组 18/19、新增组 20/20、工程夹具 2/2、另一批外部组 19/20 保持分组记录，本轮没有重跑它们，也不把三个集成样本换算为总体支持率。
