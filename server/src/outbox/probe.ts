@@ -3,6 +3,7 @@ import type { OutboxTopic } from "@libiaolink/contracts";
 import { ClockService } from "../common/clock/clock.service.js";
 import { AppConfig } from "../config/config.module.js";
 import { OutboxStore, type OutboxStatsSnapshot } from "../db/outbox.store.js";
+import { ProjectGroupDeliveryAlertService } from "../modules/notify/project-group-delivery-alert.service.js";
 import {
   evaluateOutboxAlerts,
   outboxAlertThresholdsFromEnv,
@@ -53,6 +54,7 @@ export class OutboxAlertProbe {
     private readonly config: AppConfig,
     @Inject(OUTBOX_REGISTRY) private readonly registry: ReadonlyMap<OutboxTopic, OutboxTopicHandler>,
     private readonly clock: ClockService,
+    private readonly projectGroupAlerts?: ProjectGroupDeliveryAlertService,
   ) {}
 
   /** 一轮探测：读快照 → 判定信号 → 仅发送可执行即时告警；其余写结构化日志。 */
@@ -131,7 +133,10 @@ export class OutboxAlertProbe {
       progressWindowMs: env.OUTBOX_ALERT_PROGRESS_WINDOW_MS,
     });
     const activeAlerts = [...this.lastActiveAlertAt.keys()].sort();
-    const recoveries = [...this.digestRecoveries];
+    const recoveries = [
+      ...this.digestRecoveries,
+      ...(this.projectGroupAlerts?.drainRecoveries() ?? []),
+    ];
     if (snapshot.deadRecent === 0 && recoveries.length === 0 && activeAlerts.length === 0) {
       this.logger.log("outbox 日报无异常，不推送");
       return null;

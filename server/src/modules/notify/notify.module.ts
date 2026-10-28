@@ -11,6 +11,7 @@ import { NotifyDmRepository } from "./notify.dm.repository.js";
 import { NotifyDmService } from "./notify.dm.service.js";
 import { NotifyGroupRepository } from "./notify.group.repository.js";
 import { NotifyGroupService } from "./notify.group.service.js";
+import { ProjectGroupDeliveryAlertService } from "./project-group-delivery-alert.service.js";
 import { NotifyController } from "./notify.controller.js";
 import { NotifyDeliveryArchiveRepository } from "./notify.delivery-archive.repository.js";
 import { NotifyDeliveryReadRepository } from "./notify.delivery-read.repository.js";
@@ -62,6 +63,7 @@ import { PgRateWindowStore } from "./wecom.rate.pg.js";
     { provide: RESOURCE_CHANGE_SINK, useExisting: ResourceChangePublisher },
     NotifyGroupRepository,
     NotifyGroupService,
+    ProjectGroupDeliveryAlertService,
     NotifyAppRepository,
     NotifyAppService,
     NotifyDmRepository,
@@ -89,6 +91,7 @@ import { PgRateWindowStore } from "./wecom.rate.pg.js";
     NotifyDeliveryService,
     NotifyDeliveryReadRepository,
     NotifyGroupService,
+    ProjectGroupDeliveryAlertService,
     NotifyAppService,
     NotifyDmService,
     WecomAibotClient,

@@ -12,6 +12,21 @@ export {
 } from "./notify.group.service.js";
 export { NotifyGroupRepository } from "./notify.group.repository.js";
 export {
+  composeProjectGroupUnavailableAlert,
+  projectGroupBindingDeliverability,
+  projectGroupDeliverability,
+  projectGroupUnavailableAction,
+  projectGroupUnavailableReasonText,
+  ProjectGroupDeliveryAlertService,
+} from "./project-group-delivery-alert.service.js";
+export type {
+  ProjectGroupDeliverability,
+  ProjectGroupDeliveryAlertPort,
+  ProjectGroupDeliveryBinding,
+  ProjectGroupDeliveryRecovery,
+  ProjectGroupUnavailableReason,
+} from "./project-group-delivery-alert.service.js";
+export {
   APP_DEGRADE_PREFIX,
   APP_TEXT_MAX_BYTES,
   APP_TRUNCATION_SUFFIX,

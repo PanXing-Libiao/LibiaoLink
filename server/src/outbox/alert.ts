@@ -26,9 +26,12 @@ export interface OutboxAlert {
   detail?: Record<string, unknown>;
 }
 
+/** 日报恢复条目的来源：outbox 自身告警恢复 + notify 项目群投递恢复。 */
+export type OutboxRecoveryCode = OutboxAlertCode | "notify.project_group.recovered";
+
 /** 日报中的恢复条目：恢复不再即时推送，积攒到日报统一展示。 */
 export interface OutboxDailyDigestRecovery {
-  code: OutboxAlertCode;
+  code: OutboxRecoveryCode;
   message: string;
   at: string;
 }

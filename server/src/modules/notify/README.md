@@ -1,5 +1,14 @@
 # notify 模块（S7·outbox · S7-4 · 通知投递内核 j1 / M5-04 首刀 · Push 178 + 接线段渠道护栏 · Push 180） + S8-3 契约落地（SSE 实时流 / 稍后提醒）· Push 210 + M5-04-1 SSE 实现 · Push 211 + M5-04-2 稍后提醒实现 · Push 212 + M5-04 收口 · Push 213 + M5-03-1 企微适配器内核 · Push 215 + M5-03-2 契约段 · Push 221 + 群通道迁移 0046 · Push 222 + M5-03-2 智能机器人长连接客户端（webhook 面退役）· Push 223 + M5-03-2 接线段（群绑定读写 + notify.group 消费 + 回调 ingest）· Push 224 + M5-03-3 应用消息 + C5-04 降级 + 告警出口 · Push 226 + M5-03-4 开工（T3-6 收官 · 93001 锁定 · PoC-2 证据骨架）· Push 227 + M5-03-4 T5 反向修复（告警复报去重）· Push 229 + M5-03-4 告警 / 失败文案收敛（核心语义口径）· Push 230 + M5-03-5-3 单聊 aibot 实现段（sendUserMarkdown + 限速 single + NotifyDmService + 激活仓储 + 回放）· Push 237 + M5-03-5-4 单聊 aibot 接线段（outbox 路由分流 + `:aibot` 产出接线 + worker 回调分流 + 集成回放）· Push 238 + M5-03-5-6 绑定码链路（迁移 0055 · 单聊 ingest 绑定 + 密文 open_userid 寻址 + D4 话术）· Push 247 + M5-03-5-6 契约刀（取码 / 查绑定态 / 解绑 + `audit_logs` + 生成客户端）· Push 249 + outbox 告警可执行化与恢复日报 · Push 257 + 单聊 enter_chat 欢迎语 · Push 261
 
+## 项目群可投递统一判定（2026-10-28）
+
+- **唯一判定**：`projectGroupDeliverability` —— `绑定存在 && activated_at != null` 才是可投递；未绑定与已绑定未激活统一归为「项目群不可投递」，分别返回 `unbound` / `not_activated`。群播报消费、自动化 `project.group` 收件人解析、日报同步接口共用本判定。
+- **即时告警**：同一项目同一原因只发一次；原因变化（未绑定 → 未激活或反向）重新发一次。正文只展示项目名、原因、影响与处置，不含项目 UUID / chatid / outbox 行号。未绑定处置 = 项目设置完成绑定；未激活处置 = 在项目群内 @LibiaoLink 发送一条消息完成激活。
+- **与死信告警的关系**：项目群不可投递导致的群消息 dead 使用 `deadAlert=digest`，由上述专用告警负责即时可见性，通用 `outbox.dead` 不双报；项目经理站内信降级保持不变。
+- **恢复**：恢复为可投递后不即时推送，记录 `notify.project_group.recovered` 并并入下一次 outbox 日报；读取后清空，避免重复。
+- **停用兼容**：`wecom_groups.enabled=false` 是历史兼容态（当前系统不存在），保留既有 dead + 降级路径，不进入专用告警，也不进入 `project.group` 收件人集。
+- **测试**：`server/test/project-group-delivery-alert.test.ts` 覆盖三态判定、两种文案、同因去重、原因变化、恢复入日报、正文脱敏与发送失败不阻断；`notify-group` / `automation-subjects` / `report-issue` / `outbox-alert` 覆盖各接线点。
+
 | 字段 | 内容 |
 |---|---|
 | 类型 | 平台模块（platform · check-boundaries 的 PLATFORM_MODULES） |

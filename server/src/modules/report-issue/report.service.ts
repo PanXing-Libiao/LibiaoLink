@@ -17,6 +17,11 @@ import type { DbClient } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { appendOutbox, appendOutboxIfAbsent } from "../../db/outbox.js";
 import { AuditService, diffRecords } from "../admin/index.js";
+import {
+  projectGroupBindingDeliverability,
+  projectGroupUnavailableAction,
+  projectGroupUnavailableReasonText,
+} from "../notify/index.js";
 import { ProjectGroupService } from "../project/index.js";
 import { shanghaiToday } from "../task/index.js";
 import { IssueRepository, type IssueRow } from "./issue.repository.js";
@@ -325,8 +330,15 @@ export class ReportService {
       throw new AppError("FORBIDDEN", "仅项目经理可同步日报到项目群");
     }
     const group = await this.projectGroups.getGroup(projectId, projectManager);
-    if (!group.bound) {
-      throw new AppError("REPORT_GROUP_NOT_BOUND", "项目尚未绑定企业微信群，请先在项目设置中完成绑定");
+    const deliverability = projectGroupBindingDeliverability(group);
+    if (!deliverability.deliverable) {
+      throw new AppError(
+        "REPORT_GROUP_NOT_BOUND",
+        "项目群不可投递：" +
+          projectGroupUnavailableReasonText(deliverability.reason) +
+          "；" +
+          projectGroupUnavailableAction(deliverability.reason),
+      );
     }
     const at = new Date();
     let version = 0;
