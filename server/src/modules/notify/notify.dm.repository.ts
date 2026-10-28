@@ -23,6 +23,7 @@ import { notifyDeliveries, wecomAibotDmActivations, wecomIdBindingCodes } from "
 /** 单聊收件人（用户生命周期判定用；发送地址不在此结构 —— 见绑定行）。 */
 export interface WecomDmContact {
   id: string;
+  displayName: string;
   status: string;
   removedAt: Date | null;
 }
@@ -80,7 +81,12 @@ export class NotifyDmRepository {
   /** 读收件人（不存在 = null；停用 / 软删由服务层判定）。 */
   async findContact(userId: string, client: DbClient = this.database.db): Promise<WecomDmContact | null> {
     const rows = await client
-      .select({ id: users.id, status: users.status, removedAt: users.removedAt })
+      .select({
+        id: users.id,
+        displayName: users.displayName,
+        status: users.status,
+        removedAt: users.removedAt,
+      })
       .from(users)
       .where(eq(users.id, userId))
       .limit(1);

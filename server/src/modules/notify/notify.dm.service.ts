@@ -51,7 +51,7 @@ import { ClockService } from "../../common/clock/clock.service.js";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import type { OutboxClaimedRow } from "../../db/outbox.store.js";
-import type { OutboxHandleOutcome } from "../../outbox/handler.js";
+import type { OutboxDeadAlertOverride, OutboxHandleOutcome } from "../../outbox/handler.js";
 import { AuditService } from "../audit/index.js";
 import { maskUserid } from "./notify.app.service.js";
 import { parseNotifyMessage } from "./notify.delivery.js";
@@ -90,6 +90,11 @@ export const DM_DISABLED_DEGRADE_PREFIX = "【企微单聊提醒已关闭，已�
 
 /** 单聊 userid 字符集（同激活表 CHECK `^[A-Za-z0-9_.@-]{1,64}$`）—— 回调脏数据防御，不替代 DB 约束。 */
 const DM_USERID_PATTERN = /^[A-Za-z0-9_.@-]{1,64}$/;
+
+function alertLineText(value: string, maxChars: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return Array.from(normalized).slice(0, maxChars).join("");
+}
 
 /** 绑定码形态（D3 定案：6 位数字）—— 与迁移 0055 CHECK `^[0-9]{6}$` 同口径。 */
 export const DM_BINDING_CODE_PATTERN = /^[0-9]{6}$/;
@@ -876,7 +881,8 @@ export class NotifyDmService {
 
     // 未绑定企微（无绑定行 / 绑定行未带 user_id）：不发帧，按 permanent 收口 + D4 绑定指引降级（口径 §6）。
     if (binding === null) {
-      const error = "收件人未绑定企业微信（无可投递地址）";
+      const recipientName = alertLineText(contact.displayName, 64) || "姓名未登记";
+      const error = "收件人未绑定企业微信（" + recipientName + "，无可投递地址）";
       if (!terminalDead) {
         await this.archive.recordAttempt({
           messageId: archived.id,
@@ -897,6 +903,15 @@ export class NotifyDmService {
         row,
         terminalDead ? (archived.lastError ?? error) : error,
         DM_BINDING_DEGRADE_PREFIX,
+        {
+          message:
+            "消息类型：" +
+            alertLineText(message.title, 80) +
+            "\n未绑定企业微信的收件人：" +
+            recipientName,
+          impact: null,
+          action: "请提醒相关收件人及时绑定企业微信",
+        },
       );
     }
     if (!binding.messagesEnabled) {
@@ -1064,6 +1079,7 @@ export class NotifyDmService {
     row: OutboxClaimedRow,
     error: string,
     prefix: string,
+    alert?: OutboxDeadAlertOverride,
   ): Promise<OutboxHandleOutcome> {
     try {
       await this.notify.deliverInboxCopy(
@@ -1072,7 +1088,7 @@ export class NotifyDmService {
         row.dedupeKey + ":c504",
       );
       this.logger.warn("单聊消息失败已降级站内信：" + row.dedupeKey + " —— " + error);
-      return { outcome: "dead", error };
+      return alert === undefined ? { outcome: "dead", error } : { outcome: "dead", error, alert };
     } catch (degradeError) {
       const detail = messageOf(degradeError);
       this.logger.error("单聊消息降级站内信失败（按可重试收敛）：" + row.dedupeKey + " —— " + detail);

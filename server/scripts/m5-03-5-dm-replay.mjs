@@ -293,7 +293,7 @@ async function main() {
   const clock = new ClockService();
   clock.setSource(() => AT);
 
-  const contact = (overrides = {}) => ({ id: USER_ID, username: USERID, status: "active", removedAt: null, ...overrides });
+  const contact = (overrides = {}) => ({ id: USER_ID, displayName: "张三", username: USERID, status: "active", removedAt: null, ...overrides });
   const payload = (overrides = {}) => ({
     recipientId: USER_ID,
     type: "reminder",
@@ -861,6 +861,13 @@ async function main() {
         String(inbox.copies[0].message.body).startsWith(dm.DM_BINDING_DEGRADE_PREFIX) &&
         String(inbox.copies[0].message.body).includes("当前用户未绑定企业微信，请前往设置补绑") &&
         !String(inbox.copies[0].message.body).includes("私发任意消息"),
+    );
+    assertTrue(
+      "S17 未绑定告警：专用正文显示消息类型与收件人姓名，不显示行号 / 幂等键 / 影响段",
+      outcome.alert?.message === "消息类型：任务节点完成\n未绑定企业微信的收件人：张三" &&
+        outcome.alert.impact === null &&
+        outcome.alert.action === "请提醒相关收件人及时绑定企业微信" &&
+        !outcome.alert.message.includes("R02:t-1:v5:aibot"),
     );
   }
 

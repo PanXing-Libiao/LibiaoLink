@@ -1,5 +1,13 @@
 import type { OutboxClaimedRow } from "../db/outbox.store.js";
 
+/** 死信即时告警的专用文案覆盖；未提供时由 dispatcher 使用通用死信文案。 */
+export interface OutboxDeadAlertOverride {
+  message: string;
+  impact: string | null;
+  action: string;
+  detail?: Record<string, unknown>;
+}
+
 /**
  * 单条消费的结果（S7-1；deferred 随 M5-03-2 接线段扩）：dispatcher 据此收敛 outbox 状态 ——
  *   done     = 处理完成（含「业务上无需处理，消费掉」）；
@@ -21,6 +29,8 @@ export type OutboxHandleOutcome =
        * 仅用于「重试也不会变好、管理员也无处置动作」的确定性拒绝，避免告警群反复收到噪音。
        */
       deadAlert?: "immediate" | "digest";
+      /** 即时死信告警的专用文案；`deadAlert=digest` 时不生效。 */
+      alert?: OutboxDeadAlertOverride;
     };
 
 /** 主题消费者（worker 注册表的一项）。 */
