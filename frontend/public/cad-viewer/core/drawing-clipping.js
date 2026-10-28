@@ -3,6 +3,10 @@
 import {ShapeUtils, Vector2} from './vendor/three.core.js';
 
 export function drawingClips(draw, viewports) {
+  // Instanced projection stores the viewport boundary in the retained draw's
+  // space-local coordinates; resolving the paper boundary again would clip a
+  // second time under a different basis.
+  if (draw.viewportClipLocal) return draw.clipRegions || [];
   const viewport = viewports[draw.viewportId];
   return (viewport ? [{boundary: viewport.clipBoundary, inverted: false}] : []).concat(draw.clipRegions || []);
 }

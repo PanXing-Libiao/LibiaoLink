@@ -1,5 +1,8 @@
 // Shared UCD instance planning: reuse the ordinary projection's ownership,
 // ordering and style resolver, retaining repeated block geometry once.
+// Presentation parts, layout viewports and image/media draws keep the same
+// projection contract; only the space-local clip boundary is re-expressed so
+// retained geometry can be repainted under each instance matrix.
 import {projectDrawing, canonical, identity} from './drawing-projection.js';
 export const I=[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
 export function multiply(a,b){const out=new Array(16);for(let c=0;c<4;c++)for(let r=0;r<4;r++){let v=0;for(let k=0;k<4;k++)v+=a[k*4+r]*b[c*4+k];out[c*4+r]=v;}return out;}
@@ -25,28 +28,35 @@ export function estimateDrawingDraws(document,target){
  const layout=m.layouts[target.layoutId];return count(layout.paperSpaceId)+layout.viewportIds.reduce((n,id)=>n+(m.viewports[id].enabled?count(m.viewports[id].sourceSpaceId):0),0);
 }
 
-export function projectInstances(document,target){
+export function projectInstances(document,target,presentationStyles=null){
  const ext=document.extensions?.['org.cad-preview.style-inheritance/1']||{};
- // Parts with per-expanded-draw overrides and clipping require their ordinary
- // projection contract. Reject explicitly until the retained graph carries it.
- if(Object.keys(document.extensions?.['org.cad-preview.annotation-presentation/1']?.items||{}).length
-   ||Object.keys(ext.blockClips||{}).length||target.kind!=='model')throw new Error('instanced-projection-feature-not-supported');
- const groups=[],cache=new Map(),roots=[],drawGroups=new WeakMap(),layers=new WeakMap(),draws={};let current=null;
- const projection=projectDrawing(document,target,null,null,{
+ const groups=[],cache=new Map(),roots=[],drawGroups=new WeakMap(),layers=new WeakMap(),draws={};let current=null,currentSpace=null;
+ const projection=projectDrawing(document,target,null,presentationStyles,{
   space(context,visit){
    const {spaceId,transform,path,viewport,chain,inheritedHidden,clips}=context;
-   if(clips.length||viewport)throw new Error('instanced-projection-clipping-not-supported');
-   const key=canonical([spaceId,chain.map(([style,layer,id])=>[style,layer,ext.modes?.[id]||{},
-    {opacityMode:ext.entityState?.[id]?.opacityMode,opacity:ext.entityState?.[id]?.opacity}]),!!inheritedHidden]);
+   // Block clips and viewport boundaries arrive in the parent/paper coordinate
+   // system; retained draws are space-local, so store the inverse-mapped form.
+   const inverse=inverse2D(transform);
+   const localClips=clips.map(clip=>({...clip,
+    boundary:inverse?clip.boundary.map(point=>transformPoint(inverse,...point)):clip.boundary}));
+   const viewportClip=viewport?.clipBoundary?.length?{boundary:(inverse?viewport.clipBoundary.map(point=>transformPoint(inverse,...point)):viewport.clipBoundary),inverted:false}:null;
+   const key=canonical([spaceId,viewport?.id||null,chain.map(([style,layer,id])=>[style,layer,ext.modes?.[id]||{},
+    {opacityMode:ext.entityState?.[id]?.opacityMode,opacity:ext.entityState?.[id]?.opacity}]),!!inheritedHidden,
+    localClips.length?localClips:null]);
    const parent=current;let group=cache.get(key);
    if(!group){group={id:'group-'+groups.length,spaceId,entries:[],records:[],count:0,bounds:null};cache.set(key,group);groups.push(group);
-    current=group;visit();current=parent;
+    current=group;const previousSpace=currentSpace;currentSpace={clips:localClips,viewportClip};visit();currentSpace=previousSpace;current=parent;
     for(const entry of group.entries){entry.order=group.count;group.count+=entry.kind==='group'?entry.group.count:1;}
    }
    const node={kind:'group',group,matrix:transform,path};
    if(parent)parent.entries.push(node);else roots.push(node);
   },
-  draw(sourceDrawId,draw,layer){const id=current.id+':'+sourceDrawId;draws[id]=draw;current.entries.push({kind:'draw',id,draw});drawGroups.set(draw,current);layers.set(draw,layer);}
+  draw(sourceDrawId,draw,layer){
+   const clips=currentSpace?[...currentSpace.clips,...(currentSpace.viewportClip?[currentSpace.viewportClip]:[])]:[];
+   if(clips.length)draw.clipRegions=clips;else delete draw.clipRegions;
+   if(currentSpace?.viewportClip)draw.viewportClipLocal=true;
+   const id=current.id+':'+sourceDrawId;draws[id]=draw;current.entries.push({kind:'draw',id,draw});drawGroups.set(draw,current);layers.set(draw,layer);
+  }
  });
  projection.draws=draws;
  const count=roots.reduce((n,node)=>n+node.group.count,0);

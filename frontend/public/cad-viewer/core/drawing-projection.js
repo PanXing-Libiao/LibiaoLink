@@ -143,6 +143,7 @@ export function projectDrawing(document,target,effectiveLayers=null,presentation
   if(visitor?.draw)visitor.draw(drawId,draw,layerId);
   else draws[drawId]=draw;
   if(effectiveLayers)effectiveLayers[drawId]=layerId;
+  return draw;
  }
  function members(space){
   const rows=[];
@@ -174,13 +175,13 @@ export function projectDrawing(document,target,effectiveLayers=null,presentation
   return false;
  };
  const entityVisibility=(itemId,layerId,viewport)=>hiddenByLayer(layerId,viewport)?'hidden':((flags[itemId]||{}).invisible?'hidden':'shown');
- function resolvePresentation(itemId,sourceStyle,layerId,chain,path,viewport,visibility,kind){
+ function resolvePresentation(itemId,sourceStyle,layerId,chain,path,viewport,visibility,kind,draw){
   const entry=annotationItems[itemId];
   if(entry?.status!=='ready')return;
   const drawId=identity('drawing-draw',[drawingId,kind,itemId,path,viewport?viewport.id:'']);
   const chosen=annotationForScale(document,entry,viewport,layoutId),parts=chosen.entry.parts;
-  if(chosen.hidden){visibility='hidden';draws[drawId].visibility='hidden';}
-  if(chosen.entry.status!=='ready'){draws[drawId].availability=kind==='annotation'?'missing-reference':'unsupported';delete draws[drawId].displayRepresentationId;if(presentationStyles)presentationStyles[drawId]=[];return;}
+  if(chosen.hidden){visibility='hidden';draw.visibility='hidden';}
+  if(chosen.entry.status!=='ready'){draw.availability=kind==='annotation'?'missing-reference':'unsupported';delete draw.displayRepresentationId;if(presentationStyles)presentationStyles[drawId]=[];if(visitor)draw.presentationStyles=[];return;}
   if(!presentationStyles&&!entry.scaleVariants?.length&&!parts.some(part=>part.patternedStroke||part.patternContinuation))return;
   let patternGap=false;
   const rows=parts.map(part=>{
@@ -189,19 +190,23 @@ export function projectDrawing(document,target,effectiveLayers=null,presentation
    const partLayer=effectiveLayer(part.layerId,partChain);
    const style=resolve(part.style,partLayer,partChain,part.id,viewport);
    const row={id:part.id,layerId:partLayer,style,
-    visibility:visibility==='hidden'?'hidden':entityVisibility(part.id,partLayer,viewport)};
+    visibility:visibility==='hidden'?'hidden':entityVisibility(part.id,partLayer,viewport),
+    visibilityLayerIds:[...new Set([partLayer,...partChain.map(parent=>parent[1])])]};
    const contextVariant=part.drawVariants?.[drawId];
    const variant=contextVariant?.lineTypeId===style.lineTypeId?contextVariant:part.lineTypeVariants?.[style.lineTypeId];
    if(variant){row.presentationParts=variant.parts;if(variant.status!=='ready')patternGap=true;}
    else if((part.patternedStroke||part.patternContinuation)&&(styleExt.lineTypePatterns?.[style.lineTypeId]?.length||styleExt.complexLineTypeIds?.includes(style.lineTypeId))){row.presentationParts=[];patternGap=true;}
    return row;
   });
-  if(patternGap){draws[drawId].availability=kind==='annotation'?'missing-reference':'unsupported';delete draws[drawId].displayRepresentationId;}
+  if(patternGap){draw.availability=kind==='annotation'?'missing-reference':'unsupported';delete draw.displayRepresentationId;}
   else if(entry.scaleVariants?.length||rows.some(row=>row.presentationParts)){
    const selected=rows.flatMap((row,index)=>(row.presentationParts||[parts[index]]).map(part=>part.representationId));
-   draws[drawId].displayRepresentationId=identity('representation',[itemId,'linetype',selected]);
+   draw.displayRepresentationId=identity('representation',[itemId,'linetype',selected]);
   }
   if(presentationStyles)presentationStyles[drawId]=rows;
+  // Instanced projection stores the resolved parts on the retained draw: its
+  // group-qualified draw ids cannot address the viewer's presentation map.
+  if(visitor)draw.presentationStyles=rows;
  }
  function walk(spaceId,transform,path,viewport,chain,inheritedHidden,clips=[]){
   if(visitor?.space){
@@ -219,9 +224,9 @@ export function projectDrawing(document,target,effectiveLayers=null,presentation
     const availability=flags[itemId]?.presentationGeometry==='missing'||presentation?.status==='missing'||item.geometry&&item.geometry.type==='unsupported'&&presentation?.status!=='ready'?'unsupported':'ready';
     const style=resolve(item.style,layerId,chain,itemId,viewport);
     const local=mul(transform,item.localFromOwner);
-    addDraw('entity',itemId,path,local,visibility,availability,style,
+    const draw=addDraw('entity',itemId,path,local,visibility,availability,style,
      item.displayRepresentationId||(availability==='ready'&&annotationItems[itemId]?.mode!=='view-dependent'?identity('representation',[itemId]):null),viewport?viewport.id:null,layerId,clips,chain);
-    resolvePresentation(itemId,item.style,layerId,chain,path,viewport,visibility,'entity');
+    resolvePresentation(itemId,item.style,layerId,chain,path,viewport,visibility,'entity',draw);
    }else if(kind==='annotation'){
     const info=flags[itemId]||{};
     const layerId=effectiveLayer(item.layerId,chain);
@@ -230,9 +235,9 @@ export function projectDrawing(document,target,effectiveLayers=null,presentation
     const sourceStyle=annotationStyles[itemId]||{color:{mode:'by-layer'},plot:true};
     const style=resolve(sourceStyle,layerId,chain,itemId,viewport);
     if(item.fontResourceId)style.fontResourceId=item.fontResourceId;
-    addDraw('annotation',itemId,path,transform,visibility,availability,style,
+    const draw=addDraw('annotation',itemId,path,transform,visibility,availability,style,
      annotationItems[itemId]?.status==='ready'?identity('representation',[itemId]):null,viewport?viewport.id:null,layerId,clips,chain);
-    resolvePresentation(itemId,sourceStyle,layerId,chain,path,viewport,visibility,'annotation');
+    resolvePresentation(itemId,sourceStyle,layerId,chain,path,viewport,visibility,'annotation',draw);
    }else{
     const definition=m.blocks[item.definitionId];
     const layerId=effectiveLayer(item.layerId,chain);

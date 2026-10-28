@@ -47,6 +47,9 @@ export function mountDrawingViewer(envelope) {
 
   let effectiveLayers = new WeakMap();
   let presentationStyles = {};
+  // ?instances=1 forces the retained-instance path so small fixtures can
+  // regression-test layout/presentation/media semantics without a 400k-draw file.
+  const forceInstances = typeof location !== 'undefined' && new URLSearchParams(location.search).get('instances') === '1';
   let spaceTarget = null, projection = null, built = [], texts = [], pointMarks = [];
   let instancePlan = null, instanceLayerKey = '', instanceSelected = null;
   let scale = 1, tx = 0, ty = 0, dpr = 1, cssW = 800, cssH = 600;
@@ -368,7 +371,7 @@ export function mountDrawingViewer(envelope) {
         // One source identity/selection, many library-generated presentation parts.
         // A failed derivative never falls back to unformatted, misleading text.
         if (annotationDisplay.status === 'ready') {
-          const styles = new Map((presentationStyles[drawId] || []).map(row => [row.id, row]));
+          const styles = new Map((presentationStyles[drawId] || draw.presentationStyles || []).map(row => [row.id, row]));
           const sourceParts=[annotationDisplay,...(annotationDisplay.scaleVariants||[])].flatMap(entry=>entry.parts);
           for (const part of sourceParts) {
             const resolved = styles.get(part.id);
@@ -378,7 +381,11 @@ export function mountDrawingViewer(envelope) {
             try {style=plotAppearance(resolved.style,pen);parts=plotParts(part,resolved.presentationParts,pen,plotContext,drawId);}
             catch(error) {plotErrors.add(error.message);continue;}
             for (const renderedPart of parts) {
-              const partDraw = { ...draw, style: resolved.style, visibility: resolved.visibility };
+              const partDraw = { ...draw, style: resolved.style, visibility: resolved.visibility,
+                visibilityLayerIds: resolved.visibilityLayerIds || draw.visibilityLayerIds };
+              // Retained draws carry group-qualified ids; presentation parts must
+              // stay in the same retained group as their source draw.
+              if(instancePlan)instancePlan.drawGroups.set(partDraw,instancePlan.drawGroups.get(draw));
               const child = { ...rec, draw: partDraw, layerId: resolved.layerId,
                 width: lineWidthPx(resolved.style.lineWeight?.value), dash: resolved.presentationParts ? [] : dashFor(resolved.style, part.id), color: rgba(resolved.style), fillRule: renderedPart.fillRule || 'evenodd' };
               child.width=lineWidthPx(style.lineWeight?.value);child.color=rgba(style);child.plotPen=pen?.style;
@@ -578,13 +585,17 @@ export function mountDrawingViewer(envelope) {
           for(const kind of ['entity','annotation'])group.byKind[kind]+=entry.group.byKind[kind];
           continue;
         }
+        const visible=[];
         for(const rec of byId.get(entry.id)||[]){
           if(!drawVisible(rec))continue;
           const box=rec.visibleGeometry.bounds;if(!box)continue;
+          visible.push([rec,box]);
+        }
+        if(visible.length){group.visibleCount++;group.byKind[visible[0][0].draw.kind]++;}
+        for(const [rec,box] of visible){
           rec.instanceOrder=entry.order;group.bounds=union(group.bounds,box);group.hits.push({kind:'record',rec,bounds:box,order:entry.order});
-          group.visibleCount++;group.byKind[rec.draw.kind]++;
           const opaque=(rec.draw.style.opacity??1)===1;
-          if(rec.path&&!rec.fillPath&&!rec.textEntry&&!rec.pointMark&&!rec.infinite&&!rec.raster&&opaque){
+          if(rec.path&&!rec.fillPath&&!rec.textEntry&&!rec.pointMark&&!rec.infinite&&!rec.raster&&!rec.clipRegion.active&&opaque){
             const key=JSON.stringify([rec.color,rec.width,rec.dash]);
             if(!batch||batch.key!==key||batch.count>=8192){batch={kind:'stroke',key,path:new Path2D(),color:rec.color,width:rec.width,dash:rec.dash,bounds:null,count:0};group.paint.push(batch);}
             batch.path.addPath(rec.path);batch.bounds=union(batch.bounds,box);batch.count++;
@@ -608,6 +619,7 @@ export function mountDrawingViewer(envelope) {
     let calls=0;
     const intersects=b=>b&&b.minX<=view.maxX&&b.maxX>=view.minX&&b.minY<=view.maxY&&b.maxY>=view.minY;
     function setMatrix(m){ctx.setTransform(dpr*scale*m[0],-dpr*scale*m[1],dpr*scale*m[4],-dpr*scale*m[5],dpr*(tx+scale*m[12]),dpr*(ty-scale*m[13]));}
+    function localClipBounds(matrix){const inverse=inverse2D(matrix);return inverse?transformBounds(view,inverse):null;}
     function paint(node,parent){
       const matrix=multiply(parent,node.matrix);
       if(!intersects(transformBounds(node.group.bounds,matrix)))return;
@@ -615,19 +627,40 @@ export function mountDrawingViewer(envelope) {
       for(const entry of node.group.paint){
         if(entry.kind==='group'){paint(entry,matrix);continue;}
         if(!intersects(transformBounds(entry.bounds,matrix)))continue;
-        setMatrix(matrix);calls++;
         if(entry.kind==='stroke'){
+          setMatrix(matrix);calls++;
           ctx.strokeStyle=entry.color;ctx.lineWidth=entry.width/localScale;ctx.lineJoin='round';ctx.lineCap=entry.dash?.length?'round':'butt';ctx.setLineDash(entry.dash||[]);ctx.stroke(entry.path);continue;
         }
-        const rec=entry.rec;ctx.setLineDash([]);
-        if(rec.fillPath){ctx.fillStyle=rec.color;ctx.fill(rec.fillPath,rec.fillRule||'evenodd');}
+        const rec=entry.rec;
+        if(rec.infinite){
+          // Infinite construction lines stay clipped to the visible window; the
+          // retained line is expressed in this group's local coordinates.
+          const inverse=inverse2D(matrix);
+          updateInfinite(rec,inverse?transformBounds(view,inverse):view);calls++;
+          setMatrix(matrix);ctx.setLineDash(rec.dash||[]);ctx.strokeStyle=rec.color;ctx.lineWidth=rec.width/localScale;
+          if(rec.path)ctx.stroke(rec.path);
+          continue;
+        }
+        setMatrix(matrix);calls++;
+        ctx.save();
+        if(rec.clipRegion.active){const bounds=localClipBounds(matrix);if(bounds)rec.clipRegion.apply(ctx,bounds);}
+        ctx.setLineDash([]);
+        if(rec.raster)drawRaster(rec);
+        if(rec.fillPath){
+          if(rec.gradient)drawGradient(rec);
+          else {ctx.fillStyle=rec.mask?'#ffffff':rec.color;ctx.fill(rec.fillPath,rec.fillRule||'evenodd');}
+        }
         if(rec.path){ctx.strokeStyle=rec.color;ctx.lineWidth=rec.width/localScale;ctx.setLineDash(rec.dash||[]);ctx.stroke(rec.path);}
         if(rec.pointMark){const p=rec.pointMark;ctx.strokeStyle=rec.color;ctx.lineWidth=1/localScale;ctx.beginPath();ctx.moveTo(p.x-2.5/localScale,p.y);ctx.lineTo(p.x+2.5/localScale,p.y);ctx.moveTo(p.x,p.y-2.5/localScale);ctx.lineTo(p.x,p.y+2.5/localScale);ctx.stroke();}
         if(rec.textEntry){
-          const t=rec.textEntry;if(t.height*localScale<.7)continue;
-          ctx.save();ctx.translate(t.x,t.y);ctx.rotate(t.angle);ctx.scale(1,-1);ctx.fillStyle=t.color;ctx.font=t.size+'px '+TEXT_FONT;ctx.textBaseline='alphabetic';
+          const t=rec.textEntry;
+          // Match the ordinary path: raw annotations keep a legible minimum
+          // screen size, while presentation glyph parts stay at source scale.
+          const screen=Math.max(t.nativeLayout?0.7:5,Math.min(220,t.size*localScale));
+          ctx.save();ctx.translate(t.x,t.y);ctx.rotate(t.angle);ctx.scale(1,-1);ctx.fillStyle=t.color;ctx.font=(screen/localScale)+'px '+TEXT_FONT;ctx.textBaseline='alphabetic';
           const off=textOffsets(t);for(let i=0;i<t.lines.length;i++)ctx.fillText(t.lines[i],off.dx,off.dy+i*(t.lineHeight||t.height*1.25));ctx.restore();
         }
+        ctx.restore();
       }
     }
     for(const root of instancePlan.roots)paint(root,I);
@@ -648,7 +681,9 @@ export function mountDrawingViewer(envelope) {
       const nextPath=path.concat(node.path);
       for(const entry of candidates){
         if(entry.kind==='group'){const hit=query(entry,matrix,nextPath,baseOrder+entry.order);if(hit)return hit;continue;}
-        const rec=entry.rec;let hit=!!rec.textBox||!!(rec.fillPath&&fillHit(rec,...point));
+        const rec=entry.rec;if(rec.clipRegion.active&&!rec.clipRegion.contains(...point))continue;
+        let hit=!!rec.textBox||!!(rec.fillPath&&fillHit(rec,...point));
+        if(rec.raster)hit=rasterHit(rec,...point);
         if(rec.pointMark)hit=Math.hypot(...transformPoint(matrix,rec.pointMark.x,rec.pointMark.y).map((v,k)=>v-world[k]))<=worldTolerance;
         const segments=rec.visibleGeometry.segments;
         for(let i=0;!hit&&i<segments.length;i+=4){const a=transformPoint(matrix,segments[i],segments[i+1]),b=transformPoint(matrix,segments[i+2],segments[i+3]);hit=segmentDistance(...world,...a,...b)<=worldTolerance;}
@@ -800,9 +835,8 @@ export function mountDrawingViewer(envelope) {
     ctx.transform(ax, ay, bx, by, o[0], o[1]);
     ctx.drawImage(texture, x, y, width, height); ctx.restore();
   }
-  function updateInfinite(rec) {
-    const bounds = {minX: -tx / scale, maxX: (cssW - tx) / scale,
-      minY: (ty - cssH) / scale, maxY: ty / scale};
+  function updateInfinite(rec, bounds = {minX: -tx / scale, maxX: (cssW - tx) / scale,
+      minY: (ty - cssH) / scale, maxY: ty / scale}) {
     rec.segments = clipInfiniteLine(rec.infinite, bounds);
     rec.visibleGeometry=rec.clipRegion.geometry({segments:rec.segments||[]});
     rec.path = null;
@@ -1294,8 +1328,8 @@ export function mountDrawingViewer(envelope) {
     const layerMap = {};
     presentationStyles = {};
     instancePlan=null;instanceSelected=null;
-    if(target.kind==='model'&&estimateDrawingDraws(ucd,target)>400000){
-      instancePlan=projectInstances(ucd,target);projection=instancePlan.projection;effectiveLayers=instancePlan.layers;
+    if((target.kind==='model'||target.kind==='layout')&&(forceInstances||estimateDrawingDraws(ucd,target)>400000)){
+      instancePlan=projectInstances(ucd,target,presentationStyles);projection=instancePlan.projection;effectiveLayers=instancePlan.layers;
     }else{
     projection = target.kind === 'block-preview'
       ? projectBlock(ucd, target.blockId, layerMap, presentationStyles)
