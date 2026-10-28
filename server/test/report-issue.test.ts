@@ -15,6 +15,7 @@ import type { DbClient } from "../src/db/db-client.js";
 import type { IssueRepository, IssueRow } from "../src/modules/report-issue/issue.repository.js";
 import { IssueService } from "../src/modules/report-issue/issue.service.js";
 import type { DailyReportRow, ReportRepository } from "../src/modules/report-issue/report.repository.js";
+import type { ProjectGroupService } from "../src/modules/project/index.js";
 import { ReportService } from "../src/modules/report-issue/report.service.js";
 import { shanghaiToday } from "../src/modules/task/task.rules.js";
 
@@ -52,6 +53,7 @@ interface AuditEntry {
   objectId: string;
   projectId: string | null;
   changes: unknown;
+  metadata?: Record<string, unknown>;
 }
 
 class FakeDatabase {
@@ -60,7 +62,9 @@ class FakeDatabase {
     insert: () => ({
       values: (value: OutboxRow) => {
         this.outbox.push(value);
-        return Promise.resolve();
+        return {
+          onConflictDoUpdate: async () => undefined,
+        };
       },
     }),
   } as unknown as DbClient;
@@ -75,6 +79,22 @@ class FakeAuditService {
   record = async (_client: DbClient, input: AuditEntry): Promise<void> => {
     this.entries.push(input);
   };
+}
+
+class FakeProjectGroupService {
+  bound = false;
+  name: string | null = "交付项目群";
+
+  async getGroup(projectId: string) {
+    return {
+      projectId,
+      bound: this.bound,
+      name: this.bound ? this.name : null,
+      chatidMasked: this.bound ? "****abcd" : null,
+      activated: this.bound,
+      updatedAt: null,
+    };
+  }
 }
 
 function makeReport(id: string, overrides: Partial<DailyReportRow> = {}): DailyReportRow {
@@ -256,12 +276,14 @@ function makeReportService(
   reports: FakeReportRepository,
   issues: FakeIssueRepository,
   audit: FakeAuditService,
+  group: FakeProjectGroupService = new FakeProjectGroupService(),
 ): ReportService {
   return new ReportService(
     db as unknown as DatabaseService,
     reports as unknown as ReportRepository,
     issues as unknown as IssueRepository,
     audit as unknown as AuditService,
+    group as unknown as ProjectGroupService,
   );
 }
 
@@ -295,8 +317,9 @@ describe("日报（M6-01 / M6-02 · A3-01 ~ A3-09）", () => {
     const reports = new FakeReportRepository();
     const issues = new FakeIssueRepository();
     const audit = new FakeAuditService();
+    const group = new FakeProjectGroupService();
     wireLinks(reports, issues);
-    return { db, reports, issues, audit, service: makeReportService(db, reports, issues, audit) };
+    return { db, reports, issues, audit, group, service: makeReportService(db, reports, issues, audit, group) };
   }
 
   it("提交当天日报：state=submitted；submittedAt 落库；审计 create + outbox report.submitted；无现场问题不生成问题", async () => {
@@ -658,6 +681,75 @@ describe("日报（M6-01 / M6-02 · A3-01 ~ A3-09）", () => {
       code: "NOT_FOUND",
       httpStatus: 404,
     });
+  });
+
+  it("同步项目群：非项目经理 403，不写审计 / outbox", async () => {
+    const { db, reports, audit, group, service } = seed();
+    reports.reports.set(REPORT_1, makeReport(REPORT_1));
+    group.bound = true;
+
+    await expect(service.syncToProjectGroup(PROJECT, REPORT_1, ACTOR, false)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      httpStatus: 403,
+    });
+    expect(audit.entries).toEqual([]);
+    expect(db.outbox).toEqual([]);
+  });
+
+  it("同步项目群：未绑定 409、草稿 400，均不写审计 / outbox", async () => {
+    const { db, reports, audit, group, service } = seed();
+    reports.reports.set(REPORT_1, makeReport(REPORT_1));
+
+    await expect(service.syncToProjectGroup(PROJECT, REPORT_1, ACTOR, true)).rejects.toMatchObject({
+      code: "REPORT_GROUP_NOT_BOUND",
+      httpStatus: 409,
+    });
+
+    group.bound = true;
+    reports.reports.set(REPORT_1, makeReport(REPORT_1, { state: "draft", submittedAt: null }));
+    await expect(service.syncToProjectGroup(PROJECT, REPORT_1, ACTOR, true)).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      httpStatus: 400,
+    });
+    expect(audit.entries).toEqual([]);
+    expect(db.outbox).toEqual([]);
+  });
+
+  it("同步项目群：PM + 已提交 + 已绑定 → 202 受理；审计与 outbox 载荷 / 去重键按日报版本收口", async () => {
+    const { db, reports, audit, group, service } = seed();
+    reports.reports.set(REPORT_1, makeReport(REPORT_1, { reportDate: "2026-10-27", version: 7 }));
+    group.bound = true;
+    group.name = "总装项目交付群";
+
+    await expect(service.syncToProjectGroup(PROJECT, REPORT_1, ACTOR, true)).resolves.toEqual({
+      reportId: REPORT_1,
+      version: 7,
+      queued: true,
+      message: "已提交同步",
+    });
+    expect(audit.entries).toHaveLength(1);
+    expect(audit.entries[0]).toMatchObject({
+      action: "update",
+      objectType: "daily_report",
+      objectId: REPORT_1,
+      projectId: PROJECT,
+      metadata: { templateCode: "DAILY_REPORT_GROUP", reportVersion: 7, groupName: "总装项目交付群" },
+    });
+    expect(db.outbox).toEqual([
+      {
+        topic: "notify.group",
+        dedupeKey: "report.group-sync:" + REPORT_1 + ":v7",
+        status: "pending",
+        payload: {
+          projectId: PROJECT,
+          title: null,
+          body: "日报已就绪",
+          refType: "report",
+          refId: REPORT_1,
+          templateCode: "DAILY_REPORT_GROUP",
+        },
+      },
+    ]);
   });
 
   it("列表：日期区间与状态筛选 + 日期倒序；dateFrom > dateTo 400", async () => {

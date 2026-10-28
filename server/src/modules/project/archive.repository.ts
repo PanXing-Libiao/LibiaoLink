@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { and, asc, count, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, count, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { changeRequests } from "../../db/schema/change.js";
@@ -91,7 +91,7 @@ export class ArchiveRepository {
     return client
       .select({ id: files.id, name: files.name, docType: files.docType, status: files.status })
       .from(files)
-      .where(and(eq(files.projectId, projectId), eq(files.status, "draft")))
+      .where(and(eq(files.projectId, projectId), eq(files.status, "draft"), isNotNull(files.currentVersionId)))
       .orderBy(asc(files.name), asc(files.id));
   }
 
@@ -130,7 +130,7 @@ export class ArchiveRepository {
         latestUploadedAt: sql<Date | null>`(select max(${fileVersions.uploadedAt}) from ${fileVersions} where ${fileVersions.fileId} = ${files.id})`,
       })
       .from(files)
-      .where(eq(files.projectId, projectId))
+      .where(and(eq(files.projectId, projectId), isNotNull(files.currentVersionId)))
       .orderBy(asc(files.name), asc(files.id));
   }
 

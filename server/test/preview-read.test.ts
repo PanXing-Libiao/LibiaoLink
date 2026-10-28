@@ -14,7 +14,7 @@ import { contentDisposition, type DownloadUrlInput, type ObjectStorage, type Sig
 
 /**
  * M4-05 读 API 门禁（不连库、不连对象存储）：`GET /files/{id}/preview` 的通道语义。
- * ① 图片直签（S6-前置 · D6）—— 原对象短时签名（TTL 与内联语义）+ 写一条 preview 审计（2026-10-23 恢复）；
+ * ① 图片直签（S6-前置 · D6）—— 原对象短时签名（TTL 与内联语义）+ 仅在 recordView=true 时写一条 preview 审计；缺省缩略图不写；
  *    不查 / 不落产物行、不投任务；存量产物行（ready / not_ready / failed）一律不参与；指定历史版本签该版本原对象；
  * ② 终态降级 —— 判不出通道 / 无版本两类（不落表不投递）；
  * ③ 404 —— 文件不存在 / 项目不可见 / 版本不属于该文件（同形，防 IDOR）。
@@ -266,7 +266,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
       h.repo.versions.set(VERSION, makeVersionRow({ mime: "image/png", objectKey: sourceKeyOf(extension) }));
       h.previews.rows = [makeArtifactRow({ status: "ready", objectKey: ARTIFACT_KEY })];
 
-      const result = await h.service.getPreview(FILE, null, ACTOR);
+      const result = await h.service.getPreview(FILE, null, ACTOR, true);
 
       expect(result).toEqual({
         fileId: FILE,
@@ -293,7 +293,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     h.repo.file = makeFileRow({ name: "模型.step" });
     h.repo.versions.set(VERSION, makeVersionRow({ mime: null, objectKey: sourceKeyOf("step") }));
 
-    const result = await h.service.getPreview(FILE, null, ACTOR);
+    const result = await h.service.getPreview(FILE, null, ACTOR, true);
 
     expect(result).toMatchObject({ status: "ready", viewer: { kind: "cad", versionId: VERSION } });
     expect(h.audit.entries).toHaveLength(1);
@@ -314,7 +314,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
       const h = makeService();
       h.repo.versions.set(VERSION, makeVersionRow({ mime, objectKey: sourceKeyOf("STEP") }));
 
-      const result = await h.service.getPreview(FILE, null, ACTOR);
+      const result = await h.service.getPreview(FILE, null, ACTOR, true);
 
       expect(result.status).toBe("failed");
       expect(result.viewer).toBeNull();
@@ -327,14 +327,14 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     h.repo.file = makeFileRow({ name: "更名后的模型.png" });
     h.repo.versions.set(HISTORY, makeVersionRow({ id: HISTORY, mime: null, objectKey: sourceKeyOf("step") }));
 
-    const cad = await h.service.getPreview(FILE, HISTORY, ACTOR);
+    const cad = await h.service.getPreview(FILE, HISTORY, ACTOR, true);
 
     expect(cad).toMatchObject({ versionId: HISTORY, status: "failed", url: null, viewer: null });
     expect(cad.reason).toContain("CAD 在线预览正在升级");
     expect(h.storage.signed).toHaveLength(0);
 
     h.repo.file = makeFileRow({ name: "更名后的模型.step" });
-    const image = await h.service.getPreview(FILE, VERSION, ACTOR);
+    const image = await h.service.getPreview(FILE, VERSION, ACTOR, true);
 
     expect(image).toMatchObject({ versionId: VERSION, status: "ready", target: "image" });
     expect(h.storage.signed).toEqual([{
@@ -351,7 +351,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     h.repo.versions.set(VERSION, makeVersionRow({ objectKey: sourceKeyOf("step"), mime: null }));
     h.permission.visible = false;
 
-    await expect(h.service.getPreview(FILE, null, ACTOR)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(h.service.getPreview(FILE, null, ACTOR, true)).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(h.storage.signed).toHaveLength(0);
     expect(h.previews.queries).toHaveLength(0);
   });
@@ -359,7 +359,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
   it("图片直签（缺省当前版本 · S6-前置 D6）：原对象短时签名 + preview 审计 + 产物字段全空", async () => {
     const h = makeService();
 
-    const result = await h.service.getPreview(FILE, null, ACTOR);
+    const result = await h.service.getPreview(FILE, null, ACTOR, true);
 
     expect(result).toEqual({
       fileId: FILE,
@@ -399,10 +399,31 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     expect(h.database.transactions).toBe(0);
   });
 
+  it("缩略图只取签名不写审计：recordView 缺省 false；用户点开并显式传 true 才写一条", async () => {
+    const h = makeService();
+
+    const thumbnail = await h.service.getPreview(FILE, null, ACTOR);
+    expect(thumbnail).toMatchObject({ status: "ready", target: "image", url: expect.any(String) });
+    expect(h.audit.entries).toHaveLength(0);
+
+    await h.service.getPreview(FILE, null, ACTOR, true);
+    expect(h.audit.entries).toEqual([
+      {
+        actorId: ACTOR,
+        action: "preview",
+        objectType: "file",
+        objectId: FILE,
+        projectId: PROJECT,
+        summary: "预览文件：机械设计图纸.png（版本 v1 · 图片直签）",
+        metadata: { versionId: VERSION, target: "image", direct: true },
+      },
+    ]);
+  });
+
   it("图片直签签名参数：TTL 取 PREVIEW_URL_TTL_SECONDS，响应类型 / inline disposition 由服务端显式覆盖", async () => {
     const h = makeService({ PREVIEW_URL_TTL_SECONDS: 120 });
 
-    await h.service.getPreview(FILE, null, ACTOR);
+    await h.service.getPreview(FILE, null, ACTOR, true);
 
     expect(h.storage.signed).toEqual([
       {
@@ -427,7 +448,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
       makeVersionRow({ id: HISTORY, seq: 2, contentHash: HASH_HISTORY, objectKey: SOURCE_KEY_HISTORY }),
     );
 
-    const result = await h.service.getPreview(FILE, HISTORY, ACTOR);
+    const result = await h.service.getPreview(FILE, HISTORY, ACTOR, true);
 
     expect(result).toMatchObject({
       versionId: HISTORY,
@@ -465,7 +486,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
       makeArtifactRow({ status: "ready", objectKey: ARTIFACT_KEY, generatedAt: new Date("2026-09-23T07:00:00Z") }),
     ];
 
-    const result = await h.service.getPreview(FILE, null, ACTOR);
+    const result = await h.service.getPreview(FILE, null, ACTOR, true);
 
     expect(result.url).toBe("https://minio.local/" + SOURCE_KEY + "?sig=1");
     expect(result.url).not.toContain("previews/");
@@ -477,7 +498,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
   it("存量 not_ready / failed 产物行：图片仍直签（不补投、不被缓存态失败阻塞）", async () => {
     const pending = makeService();
     pending.previews.rows = [makeArtifactRow({ status: "not_ready" })];
-    const pendingResult = await pending.service.getPreview(FILE, null, ACTOR);
+    const pendingResult = await pending.service.getPreview(FILE, null, ACTOR, true);
     expect(pendingResult.status).toBe("ready");
     expect(pendingResult.url).toBe("https://minio.local/" + SOURCE_KEY + "?sig=1");
     expect(pending.previews.ensured).toHaveLength(0);
@@ -487,7 +508,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     failed.previews.rows = [
       makeArtifactRow({ status: "failed", error: "转换失败：UNSUPPORTED_MEDIA（该扩展名暂不支持）" }),
     ];
-    const failedResult = await failed.service.getPreview(FILE, null, ACTOR);
+    const failedResult = await failed.service.getPreview(FILE, null, ACTOR, true);
     expect(failedResult.status).toBe("ready");
     expect(failedResult.reason).toBeNull();
     expect(failed.storage.signed).toEqual([
@@ -509,7 +530,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
       makeVersionRow({ mime: "IMAGE/SVG+XML; charset=utf-8", objectKey: sourceKeyOf("svg") }),
     );
 
-    const result = await h.service.getPreview(FILE, null, ACTOR);
+    const result = await h.service.getPreview(FILE, null, ACTOR, true);
     const imageKey: PreviewArtifactKey = { versionId: VERSION, contentHash: HASH, pipelineVersion: "2.0.0", target: "image" };
 
     expect(result).toMatchObject({
@@ -540,7 +561,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
       }),
     ];
 
-    const result = await h.service.getPreview(FILE, null, ACTOR);
+    const result = await h.service.getPreview(FILE, null, ACTOR, true);
 
     expect(result).toMatchObject({ status: "not_ready", pipelineVersion: "2.0.0" });
     expect(h.storage.signed).toHaveLength(0);
@@ -565,7 +586,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
       generatedAt: status === "ready" ? NOW : null, error: status === "failed" ? "另一版本的失败" : null,
     })];
 
-    const result = await h.service.getPreview(FILE, null, ACTOR);
+    const result = await h.service.getPreview(FILE, null, ACTOR, true);
 
     expect(result).toMatchObject({ status: "not_ready", url: null, reason: null, versionId: VERSION });
     expect(h.storage.signed).toHaveLength(0);
@@ -580,7 +601,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     const generatedAt = new Date("2026-09-23T07:00:00Z");
     h.previews.rows = [makeArtifactRow({ status: "ready", objectKey: ARTIFACT_KEY, generatedAt })];
 
-    const result = await h.service.getPreview(FILE, null, ACTOR);
+    const result = await h.service.getPreview(FILE, null, ACTOR, true);
 
     expect(result).toMatchObject({
       status: "ready",
@@ -616,7 +637,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     const pngKeySvgMime = makeService();
     pngKeySvgMime.repo.file = makeFileRow({ name: "冲突.png" });
     pngKeySvgMime.repo.versions.set(VERSION, makeVersionRow({ mime: "image/svg+xml", objectKey: sourceKeyOf("png") }));
-    const pngResult = await pngKeySvgMime.service.getPreview(FILE, null, ACTOR);
+    const pngResult = await pngKeySvgMime.service.getPreview(FILE, null, ACTOR, true);
     expect(pngResult.status).toBe("failed");
     expect(pngResult.reason).toContain("请下载查看");
     expect(pngKeySvgMime.storage.signed).toHaveLength(0);
@@ -625,7 +646,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     const svgKeyPngMime = makeService();
     svgKeyPngMime.repo.file = makeFileRow({ name: "冲突.svg" });
     svgKeyPngMime.repo.versions.set(VERSION, makeVersionRow({ mime: "image/png", objectKey: sourceKeyOf("svg") }));
-    const svgResult = await svgKeyPngMime.service.getPreview(FILE, null, ACTOR);
+    const svgResult = await svgKeyPngMime.service.getPreview(FILE, null, ACTOR, true);
     expect(svgResult.status).toBe("failed");
     expect(svgResult.reason).toContain("请下载查看");
     expect(svgKeyPngMime.storage.signed).toHaveLength(0);
@@ -646,7 +667,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
       }),
     );
 
-    const result = await h.service.getPreview(FILE, HISTORY, ACTOR);
+    const result = await h.service.getPreview(FILE, HISTORY, ACTOR, true);
 
     expect(result.status).toBe("ready");
     expect(result.url).toBe("https://minio.local/" + SOURCE_KEY_HISTORY + "?sig=1");
@@ -662,7 +683,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     h.repo.file = makeFileRow({ name: "资料包.zip" });
     h.repo.versions.set(VERSION, makeVersionRow({ mime: "application/zip", objectKey: sourceKeyOf("zip") }));
 
-    const result = await h.service.getPreview(FILE, null, ACTOR);
+    const result = await h.service.getPreview(FILE, null, ACTOR, true);
 
     expect(result.status).toBe("failed");
     expect(result.versionId).toBe(VERSION);
@@ -679,7 +700,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     h.repo.file = makeFileRow({ status: "draft", currentVersionId: null });
     h.repo.versions.delete(VERSION);
 
-    const result = await h.service.getPreview(FILE, null, ACTOR);
+    const result = await h.service.getPreview(FILE, null, ACTOR, true);
 
     expect(result).toEqual({
       fileId: FILE,
@@ -700,7 +721,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     const h = makeService();
     h.repo.versions.set(HISTORY, makeVersionRow({ id: HISTORY, fileId: "33333333-3333-4333-8333-333333333333" }));
 
-    await expect(h.service.getPreview(FILE, HISTORY, ACTOR)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(h.service.getPreview(FILE, HISTORY, ACTOR, true)).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(h.previews.queries).toHaveLength(0);
     expect(h.storage.signed).toHaveLength(0);
   });
@@ -709,7 +730,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     const h = makeService();
     h.repo.file = null;
 
-    await expect(h.service.getPreview(FILE, null, ACTOR)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(h.service.getPreview(FILE, null, ACTOR, true)).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(h.permission.calls).toHaveLength(0);
   });
 
@@ -717,7 +738,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     const h = makeService();
     h.permission.visible = false;
 
-    await expect(h.service.getPreview(FILE, null, ACTOR)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(h.service.getPreview(FILE, null, ACTOR, true)).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(h.previews.queries).toHaveLength(0);
     expect(h.database.outbox).toHaveLength(0);
     expect(h.storage.signed).toHaveLength(0);
@@ -730,11 +751,11 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
     const h = makeService();
     h.repo.file = makeFileRow({ name: "第一份.docx" });
     h.repo.versions.set(VERSION, makeVersionRow({ mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", objectKey: sourceKeyOf("docx") }));
-    const first = await h.service.getPreview(FILE, null, ACTOR);
+    const first = await h.service.getPreview(FILE, null, ACTOR, true);
     const otherFile = "99999999-9999-4999-8999-999999999999";
     h.repo.file = makeFileRow({ id: otherFile, name: "第二份.docx", currentVersionId: HISTORY });
     h.repo.versions.set(HISTORY, makeVersionRow({ id: HISTORY, fileId: otherFile, objectKey: `projects/${PROJECT}/files/${otherFile}/v1/${HASH}.docx`, mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }));
-    const second = await h.service.getPreview(otherFile, null, ACTOR);
+    const second = await h.service.getPreview(otherFile, null, ACTOR, true);
 
     if (first.viewer?.kind !== "onlyoffice" || second.viewer?.kind !== "onlyoffice") throw new Error("Expected ONLYOFFICE viewers");
     expect(first.viewer.document.key).not.toBe(second.viewer.document.key);
@@ -746,7 +767,7 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
     h.repo.file = makeFileRow({ name: "说明.html" });
     h.repo.versions.set(VERSION, makeVersionRow({ mime: "text/html", objectKey: sourceKeyOf("html") }));
 
-    const result = await h.service.getPreview(FILE, null, ACTOR);
+    const result = await h.service.getPreview(FILE, null, ACTOR, true);
 
     expect(result.status).toBe("failed");
     expect(result.reason).toContain("请下载查看");
@@ -760,7 +781,7 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
     h.repo.file = makeFileRow({ name: "机械设计图纸.pdf" });
     h.repo.versions.set(VERSION, makeVersionRow({ mime: "application/pdf", objectKey: sourceKeyOf("pdf") }));
 
-    const result = await h.service.getPreview(FILE, null, ACTOR);
+    const result = await h.service.getPreview(FILE, null, ACTOR, true);
 
     expect(result).toMatchObject({
       status: "ready",
@@ -793,7 +814,7 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
       makeVersionRow({ mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", objectKey: sourceKeyOf("docx") }),
     );
 
-    const result = await h.service.getPreview(FILE, null, ACTOR);
+    const result = await h.service.getPreview(FILE, null, ACTOR, true);
 
     expect(result).toMatchObject({
       fileId: FILE,
@@ -842,7 +863,7 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
     h.repo.file = makeFileRow({ name: "说明.txt" });
     h.repo.versions.set(VERSION, makeVersionRow({ mime: "text/plain", objectKey: sourceKeyOf("txt") }));
 
-    const result = await h.service.getPreview(FILE, null, ACTOR);
+    const result = await h.service.getPreview(FILE, null, ACTOR, true);
 
     if (result.viewer?.kind !== "onlyoffice") throw new Error("Expected ONLYOFFICE viewer");
     const token = result.viewer.token;
@@ -875,13 +896,13 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
     const csv = makeService();
     csv.repo.file = makeFileRow({ name: "清单.csv" });
     csv.repo.versions.set(VERSION, makeVersionRow({ mime: "text/csv", objectKey: sourceKeyOf("csv") }));
-    const csvResult = await csv.service.getPreview(FILE, null, ACTOR);
+    const csvResult = await csv.service.getPreview(FILE, null, ACTOR, true);
     expect(csvResult.viewer).toMatchObject({ documentType: "cell", document: { fileType: "csv" } });
 
     const byMime = makeService();
     byMime.repo.file = makeFileRow({ name: "无扩展名" });
     byMime.repo.versions.set(VERSION, makeVersionRow({ mime: "application/vnd.ms-excel", objectKey: "projects/" + PROJECT + "/files/" + FILE + "/v1/" + HASH + ".bin" }));
-    const byMimeResult = await byMime.service.getPreview(FILE, null, ACTOR);
+    const byMimeResult = await byMime.service.getPreview(FILE, null, ACTOR, true);
     expect(byMimeResult.viewer).toMatchObject({ documentType: "cell", document: { fileType: "xls" } });
   });
 
@@ -900,13 +921,13 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
       makeVersionRow({ id: HISTORY, seq: 1, contentHash: HASH_HISTORY, mime: "application/vnd.ms-excel", objectKey: "projects/" + PROJECT + "/files/" + FILE + "/v1/" + HASH_HISTORY + ".xls" }),
     );
 
-    const current = await h.service.getPreview(FILE, null, ACTOR);
+    const current = await h.service.getPreview(FILE, null, ACTOR, true);
     expect(current.viewer).toMatchObject({
       documentType: "slide",
       document: { title: "回放-变更后.pptx", fileType: "pptx" },
     });
 
-    const history = await h.service.getPreview(FILE, HISTORY, ACTOR);
+    const history = await h.service.getPreview(FILE, HISTORY, ACTOR, true);
     expect(history.viewer).toMatchObject({
       documentType: "cell",
       document: { title: "回放-变更后.pptx", fileType: "xls" },
@@ -921,7 +942,7 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
       makeVersionRow({ mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", objectKey: sourceKeyOf("docx") }),
     );
 
-    await expect(h.service.getPreview(FILE, null, ACTOR)).rejects.toMatchObject({ code: "INTERNAL" });
+    await expect(h.service.getPreview(FILE, null, ACTOR, true)).rejects.toMatchObject({ code: "INTERNAL" });
     expect(h.audit.entries).toHaveLength(0);
     expect(h.previews.ensured).toHaveLength(0);
     expect(h.database.outbox).toHaveLength(0);
@@ -936,7 +957,7 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
       makeVersionRow({ mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", objectKey: sourceKeyOf("docx") }),
     );
 
-    const result = await h.service.getPreview(FILE, null, ACTOR);
+    const result = await h.service.getPreview(FILE, null, ACTOR, true);
 
     expect(result.viewer).toMatchObject({ editorConfig: { user: { id: ACTOR, name: ACTOR } } });
   });

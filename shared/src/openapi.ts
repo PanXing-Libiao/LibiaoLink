@@ -73,6 +73,7 @@ import {
   DailyReportCreateBodySchema,
   DailyReportDeleteResponseSchema,
   DailyReportDayQuerySchema,
+  DailyReportGroupSyncResponseSchema,
   DailyReportListQuerySchema,
   DailyReportListResponseSchema,
   DailyReportMissingResponseSchema,
@@ -1527,7 +1528,7 @@ export function buildOpenApiDocument() {
     method: "get",
     path: "/auth/me",
     tags: ["auth"],
-    summary: "当前登录用户（会话无效 / 超时返回 401，前端据此重新走 SSO）",
+    summary: "当前登录用户与 CSRF token（禁止缓存；会话无效 / 超时返回 401，前端据此重新走 SSO）",
     responses: {
       200: { description: "已登录用户", ...json(MeResponseSchema) },
       401: commonErrors[401],
@@ -1815,6 +1816,22 @@ export function buildOpenApiDocument() {
     responses: {
       200: { description: "更新后的日报", ...json(DailyReportSchema) },
       400: commonErrors[400],
+      404: commonErrors[404],
+      409: commonErrors[409],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/reports/{reportId}/group-sync",
+    tags: ["reports"],
+    summary:
+      "同步日报到项目群（仅项目经理）：已提交日报 + 已绑定项目群；受理后机器人先发「日报已就绪」，worker 再发送包含现场图与问题附图的日报海报",
+    request: { params: z.object({ id: UuidSchema, reportId: UuidSchema }) },
+    responses: {
+      202: { description: "已受理同步（queued=true；最终送达以通知投递记录为准）", ...json(DailyReportGroupSyncResponseSchema) },
+      400: commonErrors[400],
+      403: commonErrors[403],
       404: commonErrors[404],
       409: commonErrors[409],
     },

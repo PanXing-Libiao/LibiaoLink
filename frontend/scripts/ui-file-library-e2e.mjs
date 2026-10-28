@@ -303,11 +303,9 @@ for (let i = 0; i < 50 && hubReady !== true; i += 1) {
 }
 await sleep(1200);
 
-// 首登「绑定企业微信」引导是遮罩层，先按产品允许的「稍后再说」关闭，避免挡住头像菜单。
-const guideSkipPoint = await ev("(function(){var b=document.querySelector(" + j("[data-wecom-binding-guide-skip]") + ");if(b===null){return null;}var r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
-if (guideSkipPoint !== null && guideSkipPoint !== undefined) {
-  await clickAt(guideSkipPoint);
-  await waitFor("document.querySelector(" + j("[data-wecom-binding-guide]") + ") === null", 5000);
+// 登录后不再自动弹企微绑定浮卡；若出现即视为回归（并会挡住头像菜单）。
+if ((await ev("document.querySelector(" + j("[data-wecom-binding-guide]") + ") !== null")) === true) {
+  await bail("登录后不应再自动出现企微绑定浮卡");
 }
 
 // ---------- ① 头像菜单：「文件库」在「操作记录」下方 ----------

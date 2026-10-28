@@ -249,36 +249,10 @@ body {
   animation: ll-plan-bg-panel-in 240ms cubic-bezier(0.175, 0.885, 0.32, 1.1) both;
 }
 
-/* 登录后企微绑定提醒（Push 369）：右侧悬浮卡轻弹入场 —— 从右侧 14px + 下方 10px 处缩放淡入，
-   轻微回弹后回到垂直居中位；prefers-reduced-motion 下直接显示。 */
-@keyframes ll-guide-pop-in {
-  0% {
-    opacity: 0;
-    translate: 14px calc(10px - 50%);
-    scale: 0.96;
-  }
-  62% {
-    opacity: 1;
-    translate: 0 calc(-50% - 2px);
-    scale: 1.01;
-  }
-  100% {
-    opacity: 1;
-    translate: 0 -50%;
-    scale: 1;
-  }
-}
-
-.wecom-guide-pop {
-  transform-origin: right center;
-  will-change: translate, scale, opacity;
-  animation: ll-guide-pop-in 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-/* 顶栏「站内信」未读红点（Push 352 · 业务口径 2026-10-16「在这个左侧增加站内信按钮 点击后出现局部弹窗
+/* 顶栏「站内信」红点（Push 352 / Push 540 · 业务口径 2026-10-16「在这个左侧增加站内信按钮 点击后出现局部弹窗
    用来消息通知」）：样式借 Transitions.dev「Notification badge」样张 —— 未读出现 = 260ms 自左下角滑入
    + 弹性放大回弹（cubic-bezier(0.34,1.36,0.64,1)）；读完清零 = 180ms 缩小 + 模糊消散。
-   红点常挂按钮右上角（pointer-events:none，不抢按钮点击）。 */
+   有未读显示数字；仅未绑定企微显示无数字圆点；红点常挂按钮右上角（pointer-events:none，不抢按钮点击）。 */
 @keyframes ll-inbox-badge-slide-in {
   from { transform: translate(-8px, 12px); }
   to   { transform: translate(0, 0); }
@@ -319,6 +293,13 @@ body {
     opacity 400ms cubic-bezier(0.34, 1.36, 0.64, 1),
     filter 500ms cubic-bezier(0.34, 1.36, 0.64, 1);
   will-change: transform, opacity, filter;
+}
+
+.inbox-badge-dot[data-shape="dot"] {
+  min-width: 10px;
+  width: 10px;
+  height: 10px;
+  padding: 0;
 }
 
 .inbox-badge[data-open="false"] .inbox-badge-dot {
@@ -422,7 +403,6 @@ body {
   .menu-pop,
   .submenu-pop,
   .plan-bg-panel-pop,
-  .wecom-guide-pop,
   .ll-toast,
   .ll-toast.is-closing,
   .ll-toast-top,

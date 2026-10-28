@@ -185,8 +185,9 @@ describe("objectRefOfUrl / shouldRecordDenied（越权留痕 C7-03）", () => {
     expect(isUuidLike("华东")).toBe(false);
   });
 
-  it("403 一律记录；404 只记写请求与项目域路径", () => {
+  it("403 功能权限拒绝记录、CSRF 失配不记；404 只记写请求与项目域路径", () => {
     expect(shouldRecordDenied("GET", "/api/v1/permissions/me", "FORBIDDEN")).toBe(true);
+    expect(shouldRecordDenied("POST", "/api/v1/projects/" + UUID_PROJECT + "/visit", "CSRF_FAILED")).toBe(false);
     expect(shouldRecordDenied("GET", "/api/v1/projects/" + UUID_PROJECT, "NOT_FOUND")).toBe(true);
     expect(shouldRecordDenied("GET", "/api/v1/users", "NOT_FOUND")).toBe(false);
     expect(shouldRecordDenied("POST", "/api/v1/dicts/region/items", "NOT_FOUND")).toBe(true);

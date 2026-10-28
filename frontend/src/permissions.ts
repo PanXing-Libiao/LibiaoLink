@@ -16,8 +16,14 @@ export type GroupAccessPage = (typeof GROUP_ACCESS_PAGE_KEYS)[number];
 export type GroupProjectAccess = "allowed" | "empty" | "denied";
 /** 部门规则的项目范围；多个部门命中时按并集展示。 */
 export type GroupAccessProjectScope = "all" | "own" | "selected" | "none";
+/** 可授予数据权限的项目范围（none 不进入权限数组；空数组 = 不显示项目数据）。 */
+export type GroupAccessDataProjectScope = "all" | "own" | "selected";
 /** 编辑 = 可写并浏览；仅浏览 = 只读。 */
 export type GroupAccessLevel = "edit" | "view";
+export type GroupAccessScopePermission = {
+  projectScope: GroupAccessDataProjectScope;
+  accessLevel: GroupAccessLevel;
+};
 export type AuditScope = "all" | "project_manager" | "self";
 
 export type MyPermissions = {
@@ -31,14 +37,24 @@ export type MyPermissions = {
   pageKeys: GroupAccessPage[];
   groupAccessEnforced: boolean;
   groupAccessAdmin: boolean;
-  /** 群组限制开启且非管理员：页面可进、业务数据按项目范围裁剪、所有写入口关闭。 */
+  /** 兼容摘要：所有范围均无编辑权限时为 true；写入口以项目 groupAccessLevel / 能力布尔值为准。 */
   groupReadOnly: boolean;
   /** 部门项目权限三态：allowed 正常进入 / empty 无可见项目 / denied 仅登录。 */
   groupProjectAccess: GroupProjectAccess;
   /** 命中的项目范围并集，用于空态说明当前权限。 */
   groupProjectScopes: GroupAccessProjectScope[];
-  /** 当前部门权限档位。 */
+  /** 兼容摘要：任一范围可编辑 = edit；项目级写权限以项目 groupAccessLevel 为准。 */
   groupAccessLevel: GroupAccessLevel;
+  /** 多范围权限，同一范围取最高权限。 */
+  groupScopePermissions: GroupAccessScopePermission[];
+  /** 至少一个范围可编辑（任务模板 / 节点库）。 */
+  groupAnyEdit: boolean;
+  /** 全部项目编辑（字典 / 日历 / 自动化 / 重发）。 */
+  groupAllEdit: boolean;
+  /** 自己的项目编辑（可新建项目）。 */
+  groupOwnEdit: boolean;
+  /** 指定项目编辑（且至少选中一个项目）。 */
+  groupSelectedEdit: boolean;
   /** 操作记录可见范围：管理员 / 项目经理 / 仅本人。 */
   auditScope: AuditScope;
 };
@@ -57,6 +73,11 @@ type PermissionMeResponse = {
     groupProjectAccess?: GroupProjectAccess;
     groupProjectScopes?: GroupAccessProjectScope[];
     groupAccessLevel?: GroupAccessLevel;
+    groupScopePermissions?: GroupAccessScopePermission[];
+    groupAnyEdit?: boolean;
+    groupAllEdit?: boolean;
+    groupOwnEdit?: boolean;
+    groupSelectedEdit?: boolean;
     auditScope?: AuditScope;
   };
 };
@@ -79,6 +100,11 @@ export function loadMyPermissions(refresh = false): Promise<MyPermissions> {
       const groupAccessAdmin = payload.permissions.groupAccessAdmin === true;
       const groupReadOnly = payload.permissions.groupReadOnly === true;
       const groupProjectAccess = payload.permissions.groupProjectAccess ?? (groupAccessEnforced && !groupAccessAdmin ? "denied" : "allowed");
+      const groupAccessLevel = payload.permissions.groupAccessLevel ?? (groupReadOnly ? "view" : "edit");
+      const groupProjectScopes = payload.permissions.groupProjectScopes ?? (groupAccessEnforced && !groupAccessAdmin ? [] : ["all"]);
+      const fallbackScope = (["all", "own", "selected"] as const).find((scope) => groupProjectScopes.includes(scope));
+      const groupScopePermissions = payload.permissions.groupScopePermissions ??
+        (fallbackScope === undefined ? [] : [{ projectScope: fallbackScope, accessLevel: groupAccessLevel }]);
       snapshot = {
         roleCodes: payload.permissions.roleCodes,
         permissionKeys: payload.permissions.permissionKeys,
@@ -88,8 +114,17 @@ export function loadMyPermissions(refresh = false): Promise<MyPermissions> {
         groupAccessAdmin,
         groupReadOnly,
         groupProjectAccess,
-        groupProjectScopes: payload.permissions.groupProjectScopes ?? (groupAccessEnforced && !groupAccessAdmin ? [] : ["all"]),
-        groupAccessLevel: payload.permissions.groupAccessLevel ?? (groupReadOnly ? "view" : "edit"),
+        groupProjectScopes,
+        groupAccessLevel,
+        groupScopePermissions,
+        groupAnyEdit: payload.permissions.groupAnyEdit ??
+          (groupAccessAdmin || groupScopePermissions.some((permission) => permission.accessLevel === "edit")),
+        groupAllEdit: payload.permissions.groupAllEdit ??
+          (groupAccessAdmin || groupScopePermissions.some((permission) => permission.projectScope === "all" && permission.accessLevel === "edit")),
+        groupOwnEdit: payload.permissions.groupOwnEdit ??
+          (groupAccessAdmin || groupScopePermissions.some((permission) => permission.projectScope === "own" && permission.accessLevel === "edit")),
+        groupSelectedEdit: payload.permissions.groupSelectedEdit ??
+          (groupAccessAdmin || groupScopePermissions.some((permission) => permission.projectScope === "selected" && permission.accessLevel === "edit")),
         auditScope: payload.permissions.auditScope ?? (groupAccessAdmin ? "all" : "self"),
       };
       for (const listener of listeners) listener();
@@ -113,8 +148,8 @@ export function hasPageAccess(_permissions: MyPermissions | null, _page: GroupAc
   return true;
 }
 
-/** 任务模板维护：系统管理员恒可编辑；部门限制开启且命中编辑规则时也可编辑。 */
+/** 任务模板维护：系统管理员恒可编辑；部门限制开启且任一范围可编辑时也可编辑。 */
 export function canEditTaskTemplates(permissions: MyPermissions | null): boolean {
   if (permissions === null) return false;
-  return permissions.groupAccessAdmin || (permissions.groupAccessEnforced && !permissions.groupReadOnly);
+  return permissions.groupAccessAdmin || (permissions.groupAccessEnforced && permissions.groupAnyEdit);
 }

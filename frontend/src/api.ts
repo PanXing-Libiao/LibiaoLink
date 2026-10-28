@@ -1,6 +1,7 @@
 /**
  * 后端接口调用封装（k6 起：会话由后端 /auth/* 承载）。
- * - 写请求自动回传 CSRF 同步 token：ll_csrf（可读 Cookie）→ X-CSRF-Token（后端 CsrfGuard 校验）。
+ * - 写请求自动回传 CSRF 同步 token：优先使用 /auth/me 缓存的 token，Cookie 可读时再兜底读 ll_csrf。
+ * - 公网 WAF 可能把 ll_csrf 改写为 HttpOnly；收到 CSRF_FAILED 时刷新 /auth/me 并仅重试一次。
  * - 401 统一跳 SSO 登录，并带 returnTo 回跳当前页面。
  * 契约来源：shared/src/modules/identity.ts。
  */
@@ -10,6 +11,16 @@ import { trackLocalWrite } from "./liveSync";
 const CSRF_COOKIE = "ll_csrf";
 const CSRF_HEADER = "X-CSRF-Token";
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+let rememberedCsrfToken: string | null = null;
+let csrfTokenRefresh: Promise<string | null> | null = null;
+
+/** 缓存 /auth/me 下发的 CSRF token；运行时兼容尚未带该字段的旧服务端。 */
+export function rememberCsrfToken(token: unknown): void {
+  if (typeof token === "string" && token !== "") {
+    rememberedCsrfToken = token;
+  }
+}
 
 export function readCookie(name: string): string | null {
   for (const part of document.cookie.split(";")) {
@@ -24,20 +35,46 @@ export function readCookie(name: string): string | null {
   return null;
 }
 
-/** fetch 封装：同源 Cookie + CSRF 头 + Accept: application/json。 */
-export async function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
+function requestCsrfToken(): string | null {
+  if (rememberedCsrfToken !== null) {
+    return rememberedCsrfToken;
+  }
+  const cookieToken = readCookie(CSRF_COOKIE);
+  if (cookieToken === null || cookieToken === "") {
+    return null;
+  }
+  rememberedCsrfToken = cookieToken;
+  return cookieToken;
+}
+
+async function fetchWithCsrfHeader(input: string, init: RequestInit): Promise<Response> {
   const method = (init.method ?? "GET").toUpperCase();
   const headers = new Headers(init.headers);
   if (!headers.has("Accept")) {
     headers.set("Accept", "application/json");
   }
   if (!SAFE_METHODS.has(method)) {
-    const token = readCookie(CSRF_COOKIE);
-    if (token !== null && token !== "") {
+    const token = requestCsrfToken();
+    if (token !== null) {
       headers.set(CSRF_HEADER, token);
     }
   }
   return fetch(input, { ...init, headers, credentials: "same-origin" });
+}
+
+/** fetch 封装：同源 Cookie + CSRF 头 + Accept: application/json；CSRF_FAILED 刷新 token 后仅重试一次。 */
+export async function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const method = (init.method ?? "GET").toUpperCase();
+  const response = await fetchWithCsrfHeader(input, init);
+  if (SAFE_METHODS.has(method) || response.status !== 403) {
+    return response;
+  }
+  const error = await toApiError(response.clone());
+  if (error.code !== "CSRF_FAILED") {
+    return response;
+  }
+  const token = await refreshCsrfToken();
+  return token === null ? response : fetchWithCsrfHeader(input, init);
 }
 
 /** 跳 SSO 登录（带 returnTo，登录后回到当前页面）。 */
@@ -111,6 +148,43 @@ async function toApiError(response: Response): Promise<ApiError> {
     // 非 JSON 响应（网关 / 代理错误页）：保留上面的兜底文案
   }
   return new ApiError(response.status, code, message, details, traceId);
+}
+
+/** 重新从 /auth/me 取得当前会话的 CSRF token；并发失败请求共享同一次刷新。 */
+async function refreshCsrfToken(): Promise<string | null> {
+  if (csrfTokenRefresh !== null) {
+    return csrfTokenRefresh;
+  }
+  const refresh = (async (): Promise<string | null> => {
+    try {
+      const response = await fetch("/auth/me", {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      if (response.status === 401) {
+        rememberedCsrfToken = null;
+        redirectToLogin();
+        return null;
+      }
+      if (!response.ok) {
+        return null;
+      }
+      const payload: unknown = await response.json();
+      const token = isRecord(payload) && typeof payload.csrfToken === "string" && payload.csrfToken !== "" ? payload.csrfToken : null;
+      if (token !== null) {
+        rememberedCsrfToken = token;
+      }
+      return token;
+    } catch {
+      return null;
+    }
+  })().finally(() => {
+    csrfTokenRefresh = null;
+  });
+  csrfTokenRefresh = refresh;
+  return refresh;
 }
 
 /** 解析 Content-Disposition：优先 RFC 5987 的 filename*，其次普通 filename。 */

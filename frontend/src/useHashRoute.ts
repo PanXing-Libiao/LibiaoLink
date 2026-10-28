@@ -117,11 +117,16 @@ export type FilesQueryState = {
 
 export const EMPTY_FILES_QUERY: FilesQueryState = { tab: "current", keyword: null, projectIds: [], statuses: [], uploaderIds: [], page: 1 };
 
+export type ProjectFocus =
+  | { kind: "task"; id: string }
+  | { kind: "report"; id: string }
+  | { kind: "issue"; id: string };
+
 export type Route =
   | { kind: "hub"; view: HubView | null }
   | { kind: "workspace"; tab: WorkspaceTab; sub: WorkspaceIssueView }
   | { kind: "list"; filters: ListQueryState }
-  | { kind: "project"; id: string; view: ProjectView; sub: DailySubView }
+  | { kind: "project"; id: string; view: ProjectView; sub: DailySubView; focus: ProjectFocus | null }
   | { kind: "placeholder"; page: PlaceholderPage; section: string | null }
   | { kind: "audit"; query: AuditQueryState }
   | { kind: "access" }
@@ -334,6 +339,26 @@ function parseProjectSub(search: string): DailySubView {
   return "records";
 }
 
+const PROJECT_FOCUS_KINDS: readonly ProjectFocus["kind"][] = ["task", "report", "issue"];
+
+/** 项目深链的精确落点（`?task=` / `?report=` / `?issue=`）：只认三类，id 只做长度兜底；重复键认第一个。 */
+function parseProjectFocus(search: string): ProjectFocus | null {
+  for (const chunk of search.split("&")) {
+    if (chunk === "") {
+      continue;
+    }
+    const separator = chunk.indexOf("=");
+    const key = safeDecode(separator === -1 ? chunk : chunk.slice(0, separator));
+    const kind = PROJECT_FOCUS_KINDS.find((item) => item === key);
+    if (kind === undefined) {
+      continue;
+    }
+    const id = safeDecode(separator === -1 ? "" : chunk.slice(separator + 1)).trim();
+    return id === "" || id.length > 200 ? null : { kind, id };
+  }
+  return null;
+}
+
 /** 工作台标签的合法取值（顺序与标签栏一致）。 */
 const WORKSPACE_TAB_KEYS: readonly WorkspaceTab[] = ["tasks", "raised", "plan"];
 
@@ -448,12 +473,20 @@ export function projectViewHref(id: string, view: ProjectView, sub: DailySubView
   return base + "?view=" + view;
 }
 
+/** 站内信深链：任务落到项目总览并自动开抽屉；日报 / 问题落到日报及问题对应子视图。 */
+export function projectFocusHref(id: string, focus: ProjectFocus): string {
+  const view: ProjectView = focus.kind === "task" ? "overview" : "daily";
+  const sub: DailySubView = focus.kind === "issue" ? "issues" : "records";
+  const base = projectViewHref(id, view, sub);
+  return base + (base.includes("?") ? "&" : "?") + focus.kind + "=" + encodeURIComponent(focus.id);
+}
+
 /** 切换项目详情标签：同步渲染并写回地址（replace，不新增历史条目）；切进「日报及问题」固定落在缺省「日报记录」（子视图不跨标签记忆；Push 243 前缺省为「日报填写」）。 */
 export function replaceProjectView(id: string, view: ProjectView): void {
   if (currentRoute.kind !== "project" || currentRoute.id !== id || currentRoute.view === view) {
     return;
   }
-  currentRoute = { ...currentRoute, view, sub: "records" };
+  currentRoute = { ...currentRoute, view, sub: "records", focus: null };
   emit();
   try {
     window.history.replaceState(null, "", projectViewHref(id, view));
@@ -467,7 +500,7 @@ export function replaceProjectSubView(id: string, sub: DailySubView): void {
   if (currentRoute.kind !== "project" || currentRoute.id !== id || currentRoute.view !== "daily" || currentRoute.sub === sub) {
     return;
   }
-  currentRoute = { ...currentRoute, sub };
+  currentRoute = { ...currentRoute, sub, focus: null };
   emit();
   try {
     window.history.replaceState(null, "", projectViewHref(id, "daily", sub));
@@ -631,8 +664,10 @@ export function parseHash(hash: string): Route {
   const match = PROJECT_PATH.exec(path);
   if (match) {
     // 页内子视图只在「日报及问题」标签下有语义；其它标签一律缺省（form），地址里也不落
-    const view = parseProjectView(search);
-    return { kind: "project", id: safeDecode(match[1] ?? ""), view, sub: view === "daily" ? parseProjectSub(search) : "form" };
+    const focus = parseProjectFocus(search);
+    const view: ProjectView = focus === null ? parseProjectView(search) : focus.kind === "task" ? "overview" : "daily";
+    const sub: DailySubView = view !== "daily" ? "form" : focus?.kind === "issue" ? "issues" : focus?.kind === "report" ? "records" : parseProjectSub(search);
+    return { kind: "project", id: safeDecode(match[1] ?? ""), view, sub, focus };
   }
   return { kind: "list", filters: parseListQuery(search) };
 }
@@ -964,6 +999,21 @@ export function useHashRoute(): Route {
 /** 初始加载是否由本地记忆恢复而来（项目空间列表据此区分「书签入口」与「带参数链接」两种初始态）。 */
 export function initialRouteRestored(): boolean {
   return initial.restored;
+}
+
+/** 清掉项目深链的精确落点（抽屉关闭后回到普通项目地址；不影响当前标签 / 子视图）。 */
+export function clearProjectFocus(): void {
+  if (currentRoute.kind !== "project" || currentRoute.focus === null) {
+    return;
+  }
+  const next = { ...currentRoute, focus: null };
+  currentRoute = next;
+  emit();
+  try {
+    window.history.replaceState(null, "", projectViewHref(next.id, next.view, next.sub));
+  } catch {
+    // URL 只是当前抽屉的投影：写不进去也不影响页面
+  }
 }
 
 /** 初始地址是否为裸根（登录回跳 / 直入域名）：群组画像到达后据此改落首个可访问页面，显式深链仍保留 403。 */

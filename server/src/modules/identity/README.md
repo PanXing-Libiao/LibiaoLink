@@ -13,7 +13,7 @@
 - 会话：HttpOnly Cookie `ll_sid`（PostgreSQL `sessions` 表只存 sha256 哈希）；空闲超时 `SESSION_IDLE_MINUTES`（默认 30 分钟，接入标准「企业内部系统」档）；绝对上限取 ID Token `exp`；命中后 `last_seen_at` 按 60s 节流刷新。
 - 单点登出：撤销本地会话 + 302 到 Casdoor `/api/logout`（携 `id_token_hint`，仅存于服务端会话行）；`post_logout_redirect_uri` **复用已登记的回调地址**（站点根地址不在应用「许可跳转列表」—— 2026-10-14 test-pm 实测登出落在 Casdoor 错误 JSON；本地沙箱因 Casdoor 对 localhost 的豁免未暴露）—— 登出回跳打回 `/auth/callback`，无 code / state / error 的请求视为登出落地，302 回站点首页（未登录态由前端转登录页）。
 - 用户：登录时按 `claims.id` upsert `users`（工号 `claims.name`、姓名 `claims.displayName`）；禁用账号登录 403、已登录会话被踢（`revokeAllForUser`）。登录成功另写 `user + visit` 审计，供操作记录查看登录访问。
-- CSRF：登录下发可读 Cookie `ll_csrf`；写接口叠加 `CsrfGuard`（回传 `X-CSRF-Token`），h2 起随业务接口启用（项目接口已挂）。
+- CSRF：登录下发可读 Cookie `ll_csrf`；`GET /auth/me` 同时返回当前 `csrfToken` 且 `Cache-Control: no-store`（公网 WAF 将 Cookie 改写为 HttpOnly 时前端仍可取得）；Cookie 缺失时 `/auth/me` 补发同值 Cookie。写接口叠加 `CsrfGuard`（回传 `X-CSRF-Token`），失配返回 403 `CSRF_FAILED`，不写越权审计。
 - 请求级用户口径（h2 起）：`@CurrentUser()` 返回 `/auth/me` 同口径的用户（`id` 为 Casdoor 侧标识）；`@CurrentActorId()` 返回本库 `users.id`（uuid）—— 落库外键 / 审计字段用后者（首个使用方：项目软删 `deleted_by`）。
 - 回跳：`/auth/login?returnTo=` 仅允许同源相对路径（`safeReturnTo` 白名单，防开放重定向）。
 - 文件：`auth.controller.ts` / `oidc.service.ts` / `session.service.ts` / `user.service.ts` / `auth.guard.ts` / `csrf.guard.ts` / 两个 repository；四层结构与 index 出口约定见 `server/README.md`。

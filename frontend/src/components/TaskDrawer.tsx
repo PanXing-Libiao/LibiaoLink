@@ -15,7 +15,7 @@ import {
   type TaskPriority,
   type TaskStatus,
 } from "../data/tasks";
-import { applyFileChange, ensurePreviewOutcome, fetchChangeRequest, fetchDownloadUrl, fetchFileVersions, finalizeFile, previewKindOf, triggerDownload, usePhotoUrl, type ChangeRequestDetail, type FilePreviewKind, type FileVersionBrief, type PreviewViewerConfig } from "../fileApi";
+import { applyFileChange, ensurePreviewOutcome, fetchChangeRequest, fetchDownloadUrl, fetchFileVersions, finalizeFile, previewKindOf, recordPreviewView, triggerDownload, usePhotoUrl, type ChangeRequestDetail, type FilePreviewKind, type FileVersionBrief, type PreviewViewerConfig } from "../fileApi";
 import { lockBodyScroll } from "../scrollLock";
 import { fetchTaskDetail, toUiTask, stageKeyOfName, stageNameOf, type TaskFileBrief } from "../taskApi";
 import { fieldText, isLocalizedLocale, mdText, priorityText, progressLabelOf, stageText, statusText, translationTargetOf, useLocale, useLocalizedText, useT } from "../i18n";
@@ -27,6 +27,7 @@ import { FileTypeIcon } from "./FileTypeIcon";
 import { InlineDateCell } from "./InlineEdit";
 import { MemberMultiSelect } from "./MemberSelect";
 import { RowDeleteButton } from "./RowDeleteButton";
+import { UploadProgressOverlay } from "./UploadProgressOverlay";
 import { DeliverableCell, docTypeChip } from "./DeliverablePicker";
 import { ScrollArea } from "./ScrollArea";
 import { SelectMenu, type SelectOption } from "./SelectMenu";
@@ -215,6 +216,8 @@ type TaskDrawerProps = {
   managers?: string;
   /** 当前项目经理 id 名单（项目级字段，人员多选下拉的选中项，Push 136）。 */
   managerIds?: string[];
+  /** 当前账号是否为该任务负责人或项目经理：false 时不渲染任何定档入口（服务端同口径 403）。 */
+  canFinalize?: boolean;
   task: ProjectTask | null;
   /** 抽屉内直接改字段后的即时保存；不传 = 抽屉只读（不渲染可编辑控件）。 */
   onSubmit?: (values: TaskEditSubmit) => Promise<number | null>;
@@ -288,7 +291,7 @@ type TaskDrawerProps = {
  * 任务描述（中文 / 英文）自 Push 196 起对「临时任务」开放（**Push 197 收窄：仅未归入阶段的临时任务** —— 业务口径 2026-09-28「这个不是临时任务 不能修改」；失焦即存，中文名必填），
  * 阶段任务与节点 / 模板生成的任务仍锁定（抽屉里不出这一行，服务端同口径 400 兜底）。
  */
-export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit, onRename, onProgress, onSetStatus, onSetActualEnd, onFinalize, onUnfinalize, onChanged, actorName, onUploadFiles, onDeleteFile, onRenameFile, projectId, onClose }: TaskDrawerProps) {
+export function TaskDrawer({ task, managers, managerIds = [], canFinalize = false, members, onSubmit, onRename, onProgress, onSetStatus, onSetActualEnd, onFinalize, onUnfinalize, onChanged, actorName, onUploadFiles, onDeleteFile, onRenameFile, projectId, onClose }: TaskDrawerProps) {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
   const taskId = task === null ? null : task.id;
@@ -763,7 +766,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
     });
   };
 
-  /** 预览（Push 226 续 · S4 两通道裁决）：点开才懒取 —— 早先预览读取会写「查看」审计，不该随清单一开就铺开申请；Push 283 起预览不再写审计（操作日志不记录预览动作），懒取仍保留（不随清单铺开无谓的签发请求）。
+  /** 预览（Push 226 续 · S4 两通道裁决）：点开才懒取 —— 预览只在实际点开具体文件时写「查看」审计；缩略图 / 清单挂载只懒取签名，不写审计；2026-10-27 起由 recordPreviewView 在点开后显式补记。
    *  viewer = ONLYOFFICE 查看器外壳（Office / 文本族）；url = 产物浮层（图片大图 / PDF iframe）；
    *  unavailable = 确定性降级（failed / 判不出通道 —— 服务端 reason 或「请下载查看」口径）。 */
   const openPreview = async (fileId: string, name: string, versionId?: string) => {
@@ -779,6 +782,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
       setPreviewNote(outcome.reason ?? t("drawer.preview.unavailable"));
       return;
     }
+    void recordPreviewView(fileId, versionId);
     if (outcome.kind === "viewer") {
       setPreview({ pane: { mode: "viewer", viewer: outcome.viewer }, name, kind, fileId, versionId: versionId ?? null, nonce: 0 });
       return;
@@ -1011,7 +1015,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
    * 挂接任务随文件定档一并锁定，此后修改走变更）→ 重取文件清单 → 自动选中该文件。
    */
   const finalizeForChange = (fileId: string) => {
-    if (changeFinalizeBusy || projectId === undefined) {
+    if (!canFinalize || changeFinalizeBusy || projectId === undefined) {
       return;
     }
     setChangeFinalizeBusy(true);
@@ -1513,24 +1517,25 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
         }}
         aria-hidden="true"
       />
-      <aside
-        ref={drawerRef}
-        key={task.id}
-        role="dialog"
-        data-live-sync-readonly={protectingDraft ? "false" : "true"}
-        aria-modal="true"
-        aria-labelledby="task-drawer-title"
-        className={
-          "drawer-panel absolute right-0 top-0 flex h-full w-[460px] max-w-[94vw] flex-col bg-white shadow-[-24px_0_60px_rgba(15,23,42,0.18)]" +
-          (closing ? " is-closing" : "")
-        }
-      >
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
+        <aside
+          ref={drawerRef}
+          key={task.id}
+          role="dialog"
+          data-live-sync-readonly={protectingDraft ? "false" : "true"}
+          aria-modal="true"
+          aria-labelledby="task-drawer-title"
+          className={
+            "drawer-panel pointer-events-auto relative flex h-[min(78vh,800px)] max-h-[calc(100vh-2rem)] w-[min(92vw,980px)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl bg-white shadow-[0_24px_80px_rgba(15,23,42,0.24)]" +
+            (closing ? " is-closing" : "")
+          }
+        >
         <header className="border-b border-zinc-100 px-6 pb-5 pt-5">
           <div className="flex items-start justify-between gap-4">
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-[11px] font-medium text-zinc-500">{stageText(locale, task.stage === "" ? TEMP_TASK_STAGE : task.stage)}</span>
               <span data-task-status-chip="true" className={"rounded-full px-2.5 py-0.5 text-[11px] font-medium " + statusChipClass}>{statusText(locale, status)}</span>
-              {task.finalizedAt !== null ? (
+              {canFinalize && task.finalizedAt !== null ? (
                 <span className="flex items-center gap-1.5">
                   <span className="text-[11px] font-medium text-zinc-400">{t("drawer.finalize.label")}</span>
                   {onUnfinalize === undefined ? (
@@ -1561,7 +1566,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                     </button>
                   )}
                 </span>
-              ) : onFinalize === undefined ? null : (
+              ) : !canFinalize || onFinalize === undefined ? null : (
                 <span className="flex items-center gap-1.5">
                   <span className="text-[11px] font-medium text-zinc-400">{t("drawer.finalize.label")}</span>
                   <button
@@ -1590,7 +1595,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
               </svg>
             </button>
           </div>
-          {finalizeConfirm && task.finalizedAt === null ? (
+          {canFinalize && finalizeConfirm && task.finalizedAt === null ? (
             <div data-task-finalize-confirm="true" className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
               <p className="text-xs leading-5 text-amber-800">{t("drawer.finalize.confirm")}</p>
               <span className="flex shrink-0 items-center gap-1">
@@ -1613,7 +1618,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
               </span>
             </div>
           ) : null}
-          {unfinalizeConfirm && task.finalizedAt !== null ? (
+          {canFinalize && unfinalizeConfirm && task.finalizedAt !== null ? (
             <div data-task-unfinalize-confirm="true" className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
               <p className="text-xs leading-5 text-amber-800">{t("drawer.unfinalize.confirm")}</p>
               <span className="flex shrink-0 items-center gap-1">
@@ -1788,7 +1793,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                                 {fileStatusLabel + (selectable ? "" : t("drawer.change.file.lockedSuffix"))}
                               </span>
                             </button>
-                            {selectable || file.status !== "draft" ? null : (
+                            {!canFinalize || selectable || file.status !== "draft" ? null : (
                               <button
                                 type="button"
                                 data-change-finalize={file.id}
@@ -1803,7 +1808,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                               </button>
                             )}
                           </div>
-                          {finalizeOpen ? (
+                          {canFinalize && finalizeOpen ? (
                             <div data-change-finalize-confirm={file.id} className="mt-1.5 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2">
                               <p className="text-[11px] leading-4 text-amber-800">{t("drawer.change.file.finalizeConfirm")}</p>
                               <div className="mt-1.5 flex items-center gap-2">
@@ -2112,7 +2117,8 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
             <p className="text-[11px] text-zinc-400">{t("drawer.save.autosave")}</p>
           ) : null}
         </footer>
-      </aside>
+        </aside>
+      </div>
       {preview === null ? null : (
         <FilePreviewOverlay
           pane={preview.pane}
@@ -2134,6 +2140,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
           onClose={() => { setChangeModalId(null); }}
         />
       )}
+      <UploadProgressOverlay progress={uploading} />
     </div>
   );
 }

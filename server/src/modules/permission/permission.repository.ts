@@ -5,13 +5,29 @@ import type {
   GroupAccessMemberScope,
   GroupAccessPage,
   GroupAccessProjectScope,
+  GroupAccessScopePermission,
 } from "@libiaolink/contracts";
 import { DatabaseService } from "../../db/database.service.js";
-import { groupAccessAdmins, groupAccessMemberRules, groupAccessRules, projectGroupAccess, projectGroupMemberAccess, userGroupMemberships } from "../../db/schema/access.js";
+import {
+  groupAccessAdmins,
+  groupAccessMemberRules,
+  groupAccessMemberScopePermissions,
+  groupAccessRules,
+  groupAccessScopePermissions,
+  projectGroupAccess,
+  projectGroupMemberAccess,
+  userGroupMemberships,
+} from "../../db/schema/access.js";
 import { users } from "../../db/schema/identity.js";
 import { projectNodes } from "../../db/schema/flow.js";
 import { projectMembers, projects } from "../../db/schema/projects.js";
-import type { GroupAccessMemberRuleData, GroupAccessRuleData } from "./group-access.rules.js";
+import {
+  mergeScopePermissions,
+  normalizeScopePermissions,
+  summarizeScopePermissions,
+  type GroupAccessMemberRuleData,
+  type GroupAccessRuleData,
+} from "./group-access.rules.js";
 import { visibleProjectIds, type ProjectScopeSpec } from "./permission.rules.js";
 
 /** 项目数据面引用：可见性解析需要的项目主数据字段（不做软删过滤，由调用方判定）。 */
@@ -26,6 +42,8 @@ export interface ProjectAccessContext {
   projectId: string;
   member: boolean;
   projectManager: boolean;
+  /** 当前账号在该项目的部门权限（所有命中范围取最高）；项目内写操作必须为 edit。 */
+  groupAccessLevel: GroupAccessAccessLevel;
 }
 
 /** 权限页用户展示字段。 */
@@ -272,29 +290,56 @@ export class PermissionRepository {
         memberUserIds: groupAccessRules.memberUserIds,
       })
       .from(groupAccessRules)
-      .where(inArray(groupAccessRules.groupKey, groupKeys));
-    const selectedKeys = rows.filter((row) => row.projectScope === "selected").map((row) => row.groupKey);
-    const projectIdsByGroup = new Map<string, string[]>();
-    if (selectedKeys.length > 0) {
-      const mappings = await this.database.db
-        .select({ groupKey: projectGroupAccess.groupKey, projectId: projectGroupAccess.projectId })
-        .from(projectGroupAccess)
-        .where(inArray(projectGroupAccess.groupKey, selectedKeys));
-      for (const mapping of mappings) {
-        const ids = projectIdsByGroup.get(mapping.groupKey) ?? [];
-        ids.push(mapping.projectId);
-        projectIdsByGroup.set(mapping.groupKey, ids);
-      }
+      .where(inArray(groupAccessRules.groupKey, [...groupKeys]));
+    const scopeRows = await this.database.db
+      .select({
+        groupKey: groupAccessScopePermissions.groupKey,
+        projectScope: groupAccessScopePermissions.projectScope,
+        accessLevel: groupAccessScopePermissions.accessLevel,
+      })
+      .from(groupAccessScopePermissions)
+      .where(inArray(groupAccessScopePermissions.groupKey, [...groupKeys]));
+    const mappings = await this.database.db
+      .select({ groupKey: projectGroupAccess.groupKey, projectId: projectGroupAccess.projectId })
+      .from(projectGroupAccess)
+      .where(inArray(projectGroupAccess.groupKey, [...groupKeys]));
+    const scopePermissionsByGroup = new Map<string, GroupAccessScopePermission[]>();
+    for (const row of scopeRows) {
+      const permissions = scopePermissionsByGroup.get(row.groupKey) ?? [];
+      permissions.push({
+        projectScope: row.projectScope as GroupAccessScopePermission["projectScope"],
+        accessLevel: row.accessLevel as GroupAccessAccessLevel,
+      });
+      scopePermissionsByGroup.set(row.groupKey, permissions);
     }
-    return rows.map((row) => ({
-      groupKey: row.groupKey,
-      allowedPages: row.allowedPages as GroupAccessPage[],
-      projectScope: row.projectScope as GroupAccessProjectScope,
-      accessLevel: row.accessLevel as GroupAccessAccessLevel,
-      projectIds: projectIdsByGroup.get(row.groupKey) ?? [],
-      memberScope: row.memberScope as GroupAccessMemberScope,
-      memberUserIds: row.memberUserIds,
-    }));
+    const projectIdsByGroup = new Map<string, string[]>();
+    for (const mapping of mappings) {
+      const ids = projectIdsByGroup.get(mapping.groupKey) ?? [];
+      ids.push(mapping.projectId);
+      projectIdsByGroup.set(mapping.groupKey, ids);
+    }
+    return rows.map((row) => {
+      const scopePermissions = mergeScopePermissions(
+        scopePermissionsByGroup.get(row.groupKey) ??
+          normalizeScopePermissions(
+            undefined,
+            row.projectScope as GroupAccessProjectScope,
+            row.accessLevel as GroupAccessAccessLevel,
+          ),
+      );
+      const summary = summarizeScopePermissions(scopePermissions);
+      const hasSelected = scopePermissions.some((permission) => permission.projectScope === "selected");
+      return {
+        groupKey: row.groupKey,
+        allowedPages: row.allowedPages as GroupAccessPage[],
+        scopePermissions,
+        projectScope: summary.projectScope,
+        accessLevel: summary.accessLevel,
+        projectIds: hasSelected ? projectIdsByGroup.get(row.groupKey) ?? [] : [],
+        memberScope: row.memberScope as GroupAccessMemberScope,
+        memberUserIds: row.memberUserIds,
+      };
+    });
   }
 
   /** 权限页通讯录：每个部门的直属人员（含停用账号，供管理员核对目录）。 */
@@ -372,24 +417,53 @@ export class PermissionRepository {
       })
       .from(groupAccessRules)
       .orderBy(asc(groupAccessRules.groupKey));
+    const scopeRows = await this.database.db
+      .select({
+        groupKey: groupAccessScopePermissions.groupKey,
+        projectScope: groupAccessScopePermissions.projectScope,
+        accessLevel: groupAccessScopePermissions.accessLevel,
+      })
+      .from(groupAccessScopePermissions);
     const mappings = await this.database.db
       .select({ groupKey: projectGroupAccess.groupKey, projectId: projectGroupAccess.projectId })
       .from(projectGroupAccess);
+    const scopePermissionsByGroup = new Map<string, GroupAccessScopePermission[]>();
+    for (const row of scopeRows) {
+      const permissions = scopePermissionsByGroup.get(row.groupKey) ?? [];
+      permissions.push({
+        projectScope: row.projectScope as GroupAccessScopePermission["projectScope"],
+        accessLevel: row.accessLevel as GroupAccessAccessLevel,
+      });
+      scopePermissionsByGroup.set(row.groupKey, permissions);
+    }
     const projectIdsByGroup = new Map<string, string[]>();
     for (const mapping of mappings) {
       const ids = projectIdsByGroup.get(mapping.groupKey) ?? [];
       ids.push(mapping.projectId);
       projectIdsByGroup.set(mapping.groupKey, ids);
     }
-    return rows.map((row) => ({
-      groupKey: row.groupKey,
-      allowedPages: row.allowedPages as GroupAccessPage[],
-      projectScope: row.projectScope as GroupAccessProjectScope,
-      accessLevel: row.accessLevel as GroupAccessAccessLevel,
-      projectIds: projectIdsByGroup.get(row.groupKey) ?? [],
-      memberScope: row.memberScope as GroupAccessMemberScope,
-      memberUserIds: row.memberUserIds,
-    }));
+    return rows.map((row) => {
+      const scopePermissions = mergeScopePermissions(
+        scopePermissionsByGroup.get(row.groupKey) ??
+          normalizeScopePermissions(
+            undefined,
+            row.projectScope as GroupAccessProjectScope,
+            row.accessLevel as GroupAccessAccessLevel,
+          ),
+      );
+      const summary = summarizeScopePermissions(scopePermissions);
+      const hasSelected = scopePermissions.some((permission) => permission.projectScope === "selected");
+      return {
+        groupKey: row.groupKey,
+        allowedPages: row.allowedPages as GroupAccessPage[],
+        scopePermissions,
+        projectScope: summary.projectScope,
+        accessLevel: summary.accessLevel,
+        projectIds: hasSelected ? projectIdsByGroup.get(row.groupKey) ?? [] : [],
+        memberScope: row.memberScope as GroupAccessMemberScope,
+        memberUserIds: row.memberUserIds,
+      };
+    });
   }
 
   async listAccessMemberRules(): Promise<GroupAccessMemberRuleData[]> {
@@ -409,17 +483,21 @@ export class PermissionRepository {
     userId?: string,
   ): Promise<GroupAccessMemberRuleData[]> {
     const filters = [];
+    const scopeFilters = [];
     const mappingFilters = [];
     if (groupKeys !== undefined) {
       if (groupKeys.length === 0) return [];
       filters.push(inArray(groupAccessMemberRules.groupKey, [...groupKeys]));
+      scopeFilters.push(inArray(groupAccessMemberScopePermissions.groupKey, [...groupKeys]));
       mappingFilters.push(inArray(projectGroupMemberAccess.groupKey, [...groupKeys]));
     }
     if (userId !== undefined) {
       filters.push(eq(groupAccessMemberRules.userId, userId));
+      scopeFilters.push(eq(groupAccessMemberScopePermissions.userId, userId));
       mappingFilters.push(eq(projectGroupMemberAccess.userId, userId));
     }
     const condition = and(...filters);
+    const scopeCondition = and(...scopeFilters);
     const mappingCondition = and(...mappingFilters);
     const ruleQuery = this.database.db
       .select({
@@ -431,6 +509,14 @@ export class PermissionRepository {
       })
       .from(groupAccessMemberRules)
       .orderBy(asc(groupAccessMemberRules.groupKey), asc(groupAccessMemberRules.userId));
+    const scopeQuery = this.database.db
+      .select({
+        groupKey: groupAccessMemberScopePermissions.groupKey,
+        userId: groupAccessMemberScopePermissions.userId,
+        projectScope: groupAccessMemberScopePermissions.projectScope,
+        accessLevel: groupAccessMemberScopePermissions.accessLevel,
+      })
+      .from(groupAccessMemberScopePermissions);
     const mappingQuery = this.database.db
       .select({
         groupKey: projectGroupMemberAccess.groupKey,
@@ -438,10 +524,21 @@ export class PermissionRepository {
         projectId: projectGroupMemberAccess.projectId,
       })
       .from(projectGroupMemberAccess);
-    const [rows, mappings] = await Promise.all([
+    const [rows, scopeRows, mappings] = await Promise.all([
       condition === undefined ? ruleQuery : ruleQuery.where(condition),
+      scopeCondition === undefined ? scopeQuery : scopeQuery.where(scopeCondition),
       mappingCondition === undefined ? mappingQuery : mappingQuery.where(mappingCondition),
     ]);
+    const scopePermissionsByMember = new Map<string, GroupAccessScopePermission[]>();
+    for (const row of scopeRows) {
+      const key = row.groupKey + "\u0000" + row.userId;
+      const permissions = scopePermissionsByMember.get(key) ?? [];
+      permissions.push({
+        projectScope: row.projectScope as GroupAccessScopePermission["projectScope"],
+        accessLevel: row.accessLevel as GroupAccessAccessLevel,
+      });
+      scopePermissionsByMember.set(key, permissions);
+    }
     const projectIdsByMember = new Map<string, string[]>();
     for (const mapping of mappings) {
       const key = mapping.groupKey + "\u0000" + mapping.userId;
@@ -449,14 +546,28 @@ export class PermissionRepository {
       ids.push(mapping.projectId);
       projectIdsByMember.set(key, ids);
     }
-    return rows.map((row) => ({
-      groupKey: row.groupKey,
-      userId: row.userId,
-      projectScope: row.projectScope as GroupAccessProjectScope,
-      accessLevel: row.accessLevel as GroupAccessAccessLevel,
-      projectIds: projectIdsByMember.get(row.groupKey + "\u0000" + row.userId) ?? [],
-      updatedAt: row.updatedAt,
-    }));
+    return rows.map((row) => {
+      const key = row.groupKey + "\u0000" + row.userId;
+      const scopePermissions = mergeScopePermissions(
+        scopePermissionsByMember.get(key) ??
+          normalizeScopePermissions(
+            undefined,
+            row.projectScope as GroupAccessProjectScope,
+            row.accessLevel as GroupAccessAccessLevel,
+          ),
+      );
+      const summary = summarizeScopePermissions(scopePermissions);
+      const hasSelected = scopePermissions.some((permission) => permission.projectScope === "selected");
+      return {
+        groupKey: row.groupKey,
+        userId: row.userId,
+        scopePermissions,
+        projectScope: summary.projectScope,
+        accessLevel: summary.accessLevel,
+        projectIds: hasSelected ? projectIdsByMember.get(key) ?? [] : [],
+        updatedAt: row.updatedAt,
+      };
+    });
   }
 
   async listExistingMemberRuleUserIds(
@@ -477,30 +588,51 @@ export class PermissionRepository {
   async upsertGroupAccessMemberRules(
     groupKey: string,
     userIds: readonly string[],
-    projectScope: GroupAccessProjectScope,
-    accessLevel: GroupAccessAccessLevel,
+    scopePermissions: readonly GroupAccessScopePermission[],
     projectIds: readonly string[],
     at: Date,
   ): Promise<void> {
+    const normalized = mergeScopePermissions(scopePermissions);
+    const summary = summarizeScopePermissions(normalized);
+    const hasSelected = normalized.some((permission) => permission.projectScope === "selected");
     await this.database.db.transaction(async (tx) => {
       await tx
         .insert(groupAccessMemberRules)
         .values(userIds.map((userId) => ({
           groupKey,
           userId,
-          projectScope,
-          accessLevel,
+          projectScope: summary.projectScope,
+          accessLevel: summary.accessLevel,
           updatedAt: at,
         })))
         .onConflictDoUpdate({
           target: [groupAccessMemberRules.groupKey, groupAccessMemberRules.userId],
-          set: { projectScope, accessLevel, updatedAt: at },
+          set: {
+            projectScope: summary.projectScope,
+            accessLevel: summary.accessLevel,
+            updatedAt: at,
+          },
         });
+      await tx.delete(groupAccessMemberScopePermissions).where(and(
+        eq(groupAccessMemberScopePermissions.groupKey, groupKey),
+        inArray(groupAccessMemberScopePermissions.userId, [...userIds]),
+      ));
+      if (normalized.length > 0) {
+        await tx.insert(groupAccessMemberScopePermissions).values(
+          userIds.flatMap((userId) => normalized.map((permission) => ({
+            groupKey,
+            userId,
+            projectScope: permission.projectScope,
+            accessLevel: permission.accessLevel,
+            updatedAt: at,
+          }))),
+        );
+      }
       await tx.delete(projectGroupMemberAccess).where(and(
         eq(projectGroupMemberAccess.groupKey, groupKey),
         inArray(projectGroupMemberAccess.userId, [...userIds]),
       ));
-      if (projectScope === "selected" && projectIds.length > 0) {
+      if (hasSelected && projectIds.length > 0) {
         await tx.insert(projectGroupMemberAccess).values(
           userIds.flatMap((userId) => projectIds.map((projectId) => ({ projectId, groupKey, userId }))),
         );
@@ -546,13 +678,15 @@ export class PermissionRepository {
     groupKey: string,
     groupName: string,
     allowedPages: readonly GroupAccessPage[],
-    projectScope: GroupAccessProjectScope,
-    accessLevel: GroupAccessAccessLevel,
+    scopePermissions: readonly GroupAccessScopePermission[],
     projectIds: readonly string[],
     memberScope: GroupAccessMemberScope,
     memberUserIds: readonly string[],
     at: Date,
   ): Promise<void> {
+    const normalized = mergeScopePermissions(scopePermissions);
+    const summary = summarizeScopePermissions(normalized);
+    const hasSelected = normalized.some((permission) => permission.projectScope === "selected");
     await this.database.db.transaction(async (tx) => {
       await tx
         .insert(groupAccessRules)
@@ -560,8 +694,8 @@ export class PermissionRepository {
           groupKey,
           groupName,
           allowedPages: [...allowedPages],
-          projectScope,
-          accessLevel,
+          projectScope: summary.projectScope,
+          accessLevel: summary.accessLevel,
           memberScope,
           memberUserIds: [...memberUserIds],
           updatedAt: at,
@@ -571,15 +705,24 @@ export class PermissionRepository {
           set: {
             groupName,
             allowedPages: [...allowedPages],
-            projectScope,
-            accessLevel,
+            projectScope: summary.projectScope,
+            accessLevel: summary.accessLevel,
             memberScope,
             memberUserIds: [...memberUserIds],
             updatedAt: at,
           },
         });
+      await tx.delete(groupAccessScopePermissions).where(eq(groupAccessScopePermissions.groupKey, groupKey));
+      if (normalized.length > 0) {
+        await tx.insert(groupAccessScopePermissions).values(normalized.map((permission) => ({
+          groupKey,
+          projectScope: permission.projectScope,
+          accessLevel: permission.accessLevel,
+          updatedAt: at,
+        })));
+      }
       await tx.delete(projectGroupAccess).where(eq(projectGroupAccess.groupKey, groupKey));
-      if (projectScope === "selected" && projectIds.length > 0) {
+      if (hasSelected && projectIds.length > 0) {
         await tx.insert(projectGroupAccess).values(projectIds.map((projectId) => ({ projectId, groupKey })));
       }
     });

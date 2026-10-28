@@ -29,6 +29,7 @@ import { DatabaseService } from "../../db/database.service.js";
 import { buildObjectKey, extensionOf, ObjectStorage } from "../../storage/index.js";
 import { AuditService } from "../admin/index.js";
 import type { UserRow } from "../identity/index.js";
+import { PermissionService } from "../permission/index.js";
 import { FlowService, ProjectMemberRepository, ProjectRepository } from "../project/index.js";
 import { TaskNodeRepository } from "../template/index.js";
 import type { TaskNodeRow } from "../template/index.js";
@@ -166,6 +167,7 @@ export class ProjectImportService implements OnModuleInit {
     private readonly projects: ProjectRepository,
     private readonly members: ProjectMemberRepository,
     private readonly flow: FlowService,
+    private readonly permission: PermissionService,
     private readonly nodes: TaskNodeRepository,
     private readonly audit: AuditService,
     private readonly storage: ObjectStorage,
@@ -387,6 +389,17 @@ export class ProjectImportService implements OnModuleInit {
       extraSeeds.push(
         managerFallbackSeed(placement.managerNames.map((name) => stripParen(name))),
       );
+    }
+    const groupAccess = await this.permission.groupAccessOf(actorId);
+    if (
+      groupAccess.enforced &&
+      !groupAccess.admin &&
+      groupAccess.ownEdit &&
+      !groupAccess.allEdit &&
+      !managerIds.includes(actorId)
+    ) {
+      // 「仅自己的项目可编辑」账号新建 / 导入项目后必须仍能访问该项目：与 ProjectService 新建口径一致。
+      managerIds.push(actorId);
     }
     const unresolvedIssues = parse.reports.filter((report) => report.issue !== null && report.issue.state !== "done").length;
     if (unresolvedIssues > 0) {

@@ -55,7 +55,7 @@ Casdoor 应用 `libiaolink` 需要的配置：
 ```
 
 - 换令牌与验签都在后端：`client_secret` 只存在于 `server/.env`，不进浏览器。
-- 会话：HttpOnly `ll_sid`（DB 只存 sha256 哈希）；可读 `ll_csrf`（写接口回传 `X-CSRF-Token`）。
+- 会话：HttpOnly `ll_sid`（DB 只存 sha256 哈希）；`/auth/me` 下发 CSRF token（`Cache-Control: no-store`），写接口回传 `X-CSRF-Token`。`ll_csrf` Cookie 可读时仍兜底；WAF 强制 HttpOnly 时前端用响应中的 token，并在 `CSRF_FAILED` 后刷新重试一次。
 - 空闲超时按接入标准 30 分钟（`SESSION_IDLE_MINUTES`）；超时后 `/auth/me` 401，前端自动重新走 SSO（Casdoor 会话还在则静默续期）。
 - `src/api.ts`：统一 fetch 封装（同源 Cookie、写请求自动带 CSRF 头、401 跳登录并带 `returnTo` 回跳当前页）。
 

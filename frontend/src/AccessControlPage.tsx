@@ -7,24 +7,22 @@ import {
   revokeGroupAccessAdmin,
   saveGroupAccessMemberRules,
   saveGroupAccessRule,
-  type GroupAccessAccessLevel,
   type GroupAccessAdmin,
   type GroupAccessGroup,
   type GroupAccessMember,
   type GroupAccessMemberRule,
   type GroupAccessOverview,
   type GroupAccessProject,
-  type GroupAccessProjectScope,
 } from "./accessApi";
 import { AccessDashboard, AccessDashboardSkeleton } from "./AccessDashboard";
 import { buildAccessDashboardModel } from "./accessDashboardModel";
-import { effectiveMemberAccess, memberRuleOf } from "./accessRules";
+import { effectiveMemberAccess, memberRuleOf, scopePermissionsOf } from "./accessRules";
 import { AccessScopePicker } from "./AccessScopePicker";
 import { AppHeader } from "./components/AppHeader";
 import { SelectMenu } from "./components/SelectMenu";
 import { Toast, type ToastKind } from "./components/Toast";
 import { useLocale, useT, type TextKey } from "./i18n";
-import { loadMyPermissions } from "./permissions";
+import { loadMyPermissions, type GroupAccessScopePermission } from "./permissions";
 import type { MeResponse } from "./types";
 
 type LoadState =
@@ -425,11 +423,9 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
   const requestIdRef = useRef(0);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [focusedMemberId, setFocusedMemberId] = useState<string | null>(null);
-  const [departmentProjectScope, setDepartmentProjectScope] = useState<GroupAccessProjectScope>("none");
-  const [departmentAccessLevel, setDepartmentAccessLevel] = useState<GroupAccessAccessLevel>("view");
+  const [departmentScopePermissions, setDepartmentScopePermissions] = useState<GroupAccessScopePermission[]>([]);
   const [departmentProjectIds, setDepartmentProjectIds] = useState<string[]>([]);
-  const [personalProjectScope, setPersonalProjectScope] = useState<GroupAccessProjectScope>("none");
-  const [personalAccessLevel, setPersonalAccessLevel] = useState<GroupAccessAccessLevel>("view");
+  const [personalScopePermissions, setPersonalScopePermissions] = useState<GroupAccessScopePermission[]>([]);
   const [personalProjectIds, setPersonalProjectIds] = useState<string[]>([]);
   const [selectedMemberUserIds, setSelectedMemberUserIds] = useState<string[]>([]);
   const [departmentProjectQuery, setDepartmentProjectQuery] = useState("");
@@ -537,6 +533,9 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
   const totalMemberCount = new Set(allGroups.flatMap((group) => group.members.map((member) => member.userId))).size;
   const selectedGroup = selectedKey === null ? null : groupByKey.get(selectedKey) ?? null;
   const selectedRule = selectedGroup?.rule ?? null;
+  const selectedRuleScopes = selectedRule === null
+    ? []
+    : scopePermissionsOf(selectedRule.scopePermissions, selectedRule.projectScope, selectedRule.accessLevel);
   const selectedGroupMembers = selectedGroup?.members ?? [];
   const selectedMemberIdSet = new Set(
     selectedMemberUserIds.filter((userId) => selectedGroupMembers.some((member) => member.userId === userId)),
@@ -588,21 +587,30 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
   }, [data, scopeGroupKey]);
 
   function setDepartmentRuleFrom(group: GroupAccessGroup): void {
-    setDepartmentProjectScope(group.rule?.projectScope ?? "none");
-    setDepartmentAccessLevel(group.rule?.accessLevel ?? "view");
+    setDepartmentScopePermissions(
+      scopePermissionsOf(
+        group.rule?.scopePermissions,
+        group.rule?.projectScope ?? "none",
+        group.rule?.accessLevel ?? "view",
+      ),
+    );
     setDepartmentProjectIds(group.rule?.projectIds ?? []);
   }
 
   function setPersonalRuleFromDepartment(group: GroupAccessGroup): void {
-    setPersonalProjectScope(group.rule?.projectScope ?? "none");
-    setPersonalAccessLevel(group.rule?.accessLevel ?? "view");
+    setPersonalScopePermissions(
+      scopePermissionsOf(
+        group.rule?.scopePermissions,
+        group.rule?.projectScope ?? "none",
+        group.rule?.accessLevel ?? "view",
+      ),
+    );
     setPersonalProjectIds(group.rule?.projectIds ?? []);
   }
 
   function setPersonalRuleFromEffective(group: GroupAccessGroup, userId: string): void {
     const effective = effectiveMemberAccess(group, userId);
-    setPersonalProjectScope(effective.projectScope);
-    setPersonalAccessLevel(effective.accessLevel);
+    setPersonalScopePermissions(effective.scopePermissions);
     setPersonalProjectIds(effective.projectIds);
   }
 
@@ -645,14 +653,12 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
     setExpandedKeys(allExpanded ? new Set() : new Set(allDepartmentKeys));
   }
 
-  function changeDepartmentScope(next: { projectScope: GroupAccessProjectScope; accessLevel: GroupAccessAccessLevel }): void {
-    setDepartmentProjectScope(next.projectScope);
-    setDepartmentAccessLevel(next.projectScope === "none" ? "view" : next.accessLevel);
+  function changeDepartmentScope(next: GroupAccessScopePermission[]): void {
+    setDepartmentScopePermissions(next);
   }
 
-  function changePersonalScope(next: { projectScope: GroupAccessProjectScope; accessLevel: GroupAccessAccessLevel }): void {
-    setPersonalProjectScope(next.projectScope);
-    setPersonalAccessLevel(next.projectScope === "none" ? "view" : next.accessLevel);
+  function changePersonalScope(next: GroupAccessScopePermission[]): void {
+    setPersonalScopePermissions(next);
   }
 
   function toggleDepartmentProject(projectId: string): void {
@@ -694,9 +700,10 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
     try {
       await saveGroupAccessRule({
         groupKey: selectedKey,
-        projectScope: departmentProjectScope,
-        accessLevel: departmentProjectScope === "none" ? "view" : departmentAccessLevel,
-        projectIds: departmentProjectScope === "selected" ? departmentProjectIds : [],
+        scopePermissions: departmentScopePermissions,
+        projectIds: departmentScopePermissions.some((permission) => permission.projectScope === "selected")
+          ? departmentProjectIds
+          : [],
         memberScope: "all",
         memberUserIds: [],
       });
@@ -719,11 +726,9 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
       setNotice({ kind: "ok", text: t("access.deleted") });
       setSelectedKey(null);
       setSelectedMemberUserIds([]);
-      setDepartmentProjectScope("none");
-      setDepartmentAccessLevel("view");
+      setDepartmentScopePermissions([]);
       setDepartmentProjectIds([]);
-      setPersonalProjectScope("none");
-      setPersonalAccessLevel("view");
+      setPersonalScopePermissions([]);
       setPersonalProjectIds([]);
       void loadMyPermissions(true);
       setReload((value) => value + 1);
@@ -741,9 +746,10 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
       await saveGroupAccessMemberRules({
         groupKey: selectedKey,
         userIds: selectedMemberUserIds,
-        projectScope: personalProjectScope,
-        accessLevel: personalProjectScope === "none" ? "view" : personalAccessLevel,
-        projectIds: personalProjectScope === "selected" ? personalProjectIds : [],
+        scopePermissions: personalScopePermissions,
+        projectIds: personalScopePermissions.some((permission) => permission.projectScope === "selected")
+          ? personalProjectIds
+          : [],
       });
       setNotice({ kind: "ok", text: t("access.personalSaved") });
       void loadMyPermissions(true);
@@ -1035,11 +1041,14 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
                             <div className="min-w-0">
                               <div className="flex flex-wrap items-center gap-2">
                                 <h2 className="truncate text-base font-semibold text-zinc-900">{selectedGroup?.groupName ?? selectedKey}</h2>
-                                {selectedRule === null || selectedRule.projectScope === "none" ? null : (
-                                  <span className={"rounded-full px-2 py-0.5 text-[10px] font-medium " + (selectedRule.accessLevel === "edit" ? "bg-indigo-50 text-indigo-700" : "bg-emerald-50 text-emerald-700")}>
-                                    {t(selectedRule.accessLevel === "edit" ? "access.dashboard.operate" : "access.dashboard.viewOnly")}
+                                {selectedRuleScopes.map((permission) => (
+                                  <span
+                                    key={permission.projectScope}
+                                    className={"rounded-full px-2 py-0.5 text-[10px] font-medium " + (permission.accessLevel === "edit" ? "bg-indigo-50 text-indigo-700" : "bg-emerald-50 text-emerald-700")}
+                                  >
+                                    {t(("access.scope." + permission.projectScope) as TextKey)} · {t(permission.accessLevel === "edit" ? "access.dashboard.operate" : "access.dashboard.viewOnly")}
                                   </span>
-                                )}
+                                ))}
                               </div>
                               <p className="mt-0.5 truncate text-[11px] text-zinc-400">
                                 {selectedPath.length > 0 ? selectedPath.join(" / ") : selectedKey}
@@ -1066,12 +1075,11 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
                         </div>
                         <div className="mt-3">
                           <AccessScopePicker
-                            projectScope={departmentProjectScope}
-                            accessLevel={departmentAccessLevel}
+                            scopePermissions={departmentScopePermissions}
                             onChange={changeDepartmentScope}
                           />
                         </div>
-                        {departmentProjectScope === "selected" ? (
+                        {departmentScopePermissions.some((permission) => permission.projectScope === "selected") ? (
                           <ProjectSelectionList
                             projects={departmentProjects}
                             query={departmentProjectQuery}
@@ -1157,12 +1165,11 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
                             </div>
                             <div className="mt-3">
                               <AccessScopePicker
-                                projectScope={personalProjectScope}
-                                accessLevel={personalAccessLevel}
+                                scopePermissions={personalScopePermissions}
                                 onChange={changePersonalScope}
                               />
                             </div>
-                            {personalProjectScope === "selected" ? (
+                            {personalScopePermissions.some((permission) => permission.projectScope === "selected") ? (
                               <ProjectSelectionList
                                 projects={personalProjects}
                                 query={personalProjectQuery}

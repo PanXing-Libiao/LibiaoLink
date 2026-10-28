@@ -64,6 +64,10 @@ class FakeSnoozeRepository {
     return row;
   }
 
+  async resolveProjectIds(_refs: readonly { refType: string | null; refId: string | null }[]): Promise<Map<string, string>> {
+    return new Map();
+  }
+
   async findByIdForRecipient(id: number, recipientId: string): Promise<NotifyMessageRow | null> {
     return this.rows.find((row) => row.id === id && row.recipientId === recipientId) ?? null;
   }

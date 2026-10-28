@@ -105,7 +105,7 @@ const FIELD_LABELS: Record<string, string> = {
 
 /** 按对象类型的字段特例（同名字段在不同对象上叫法不同）。 */
 const OBJECT_FIELD_LABELS: Record<string, Record<string, string>> = {
-  project: { code: "项目编号", name: "项目名称", description: "项目描述", stageKey: "项目阶段" },
+  project: { code: "项目编号", name: "项目名称", description: "备注", stageKey: "项目阶段" },
   project_member: { userId: "成员", roleInProject: "项目角色" },
   task: { title: "任务名称", stageKey: "所属阶段", ownerIds: "任务负责人" },
   task_node: { title: "节点名称", stageKey: "所属阶段", seq: "节点序号" },
@@ -250,9 +250,12 @@ function formatValue(field: string, value: unknown, ctx: AuditFormatContext): st
   return formatScalar(field, value, ctx);
 }
 
-/** 摘要成句：越权尝试把 API 路径 / 错误码换成「尝试越权访问 X：原因」；结尾错误码一律去掉。 */
+/** 摘要成句：越权尝试把 API 路径 / 错误码换成「尝试越权访问 X：原因」；CSRF 凭证失配另作过期提示；结尾错误码一律去掉。 */
 export function auditSummaryText(item: AuditLogItem): string {
   const raw = item.summary.trim();
+  if (raw.includes("CSRF_FAILED") || raw.includes("CSRF 校验失败")) {
+    return "页面凭证已过期，请刷新重试";
+  }
   const api = API_SUMMARY_RE.exec(raw);
   if (api !== null) {
     let reason = api[1].trim().replace(ERROR_CODE_RE, "").replace(TRAILING_UUID_RE, "").trim();

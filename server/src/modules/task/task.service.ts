@@ -36,7 +36,7 @@ import type { DbClient } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { appendOutbox } from "../../db/outbox.js";
 import { AuditService, diffRecords } from "../admin/index.js";
-import { PermissionService } from "../permission/index.js";
+import { PermissionService, canManageTaskFinalization } from "../permission/index.js";
 import { TaskNodeRepository, TemplateService } from "../template/index.js";
 import { clampSortIndex } from "./task.order.js";
 import { parseTaskListFilter, parseTaskSort, type TaskListQueryInput } from "./task.query.js";
@@ -682,6 +682,15 @@ export class TaskService {
     return row;
   }
   /**
+   * 定档 / 取消定档的角色闸（2026-10-27）：仅任务当前负责人或项目经理。
+   * 必须在幂等短路之前判定，避免无权用户通过重复操作探测或维持已定档状态。
+   */
+  private assertCanManageTaskFinalization(actorId: string, task: TaskRow, projectManager: boolean): void {
+    if (canManageTaskFinalization(actorId, task.ownerIds, projectManager)) return;
+    throw new AppError("FORBIDDEN", "仅任务负责人或项目经理可定档或取消定档");
+  }
+
+  /**
    * 任务定档写口闸（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：
    * 定档后的任务不支持任何修改 —— 编辑 / 批量 / 进度 / 完成提交 / 删除 / 锁定字段例外调整一律 409 TASK_FINALIZED。
    * 唯一保留的修改通道 = 对已定档文件的变更（A2-10「定档后修改须走变更管理」，A4-13 申请即通过）。
@@ -968,10 +977,12 @@ export class TaskService {
    */
   async finalize(projectId: string, taskId: string, body: TaskFinalizeBody, actorId: string): Promise<Task> {
     await this.loadProjectForWrite(projectId);
+    const access = await this.permission.assertProjectVisible(actorId, projectId);
     const at = new Date();
     const today = shanghaiToday(at);
     const row = await this.database.db.transaction(async (tx) => {
       const before = await this.requireActiveTask(tx, projectId, taskId);
+      this.assertCanManageTaskFinalization(actorId, before, access.projectManager);
       if (before.finalizedAt !== null) {
         return before;
       }
@@ -1028,10 +1039,12 @@ export class TaskService {
    */
   async unfinalize(projectId: string, taskId: string, body: TaskUnfinalizeBody, actorId: string): Promise<Task> {
     await this.loadProjectForWrite(projectId);
+    const access = await this.permission.assertProjectVisible(actorId, projectId);
     const at = new Date();
     const today = shanghaiToday(at);
     const row = await this.database.db.transaction(async (tx) => {
       const before = await this.requireActiveTask(tx, projectId, taskId);
+      this.assertCanManageTaskFinalization(actorId, before, access.projectManager);
       if (before.finalizedAt === null) {
         return before;
       }

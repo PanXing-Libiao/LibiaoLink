@@ -40,7 +40,6 @@ export function SettingsPage({ me }: { me: MeResponse }) {
             <WecomBindingGuideContent onNotice={setNotice} />
             <div className="mt-4 border-t border-zinc-200/70 pt-4">
               <WecomBindingPanel
-                variant="page"
                 onNotice={(next) => {
                   setNotice(next);
                 }}

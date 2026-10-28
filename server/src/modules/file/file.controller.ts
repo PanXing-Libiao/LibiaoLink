@@ -61,7 +61,7 @@ const uuidParam = new ZodValidationPipe(UuidSchema);
  *
  * 权限在服务层判定（`file.upload` 需项目上下文：成员平权；读取会话状态 = 项目可见即可），
  * 因此这里只用会话 + CSRF 守卫；记录级可见性（非成员 404）在 FileService 装载文件时按项目判定。
- * 变更写入（M4-04 · 申请即通过）随上传完成 / 定档后回溯生效；预览读 API（M4-05）三态 + 短时签名（Push 283 起不写预览审计 —— 操作日志不记录预览动作）；
+ * 变更写入（M4-04 · 申请即通过）随上传完成 / 定档后回溯生效；预览读 API（M4-05）三态 + 短时签名（缺省只取签名；用户点开且传 recordView=true 时才写一条 preview 审计）；
  * 下载读 API（M4-05f）短时签名（attachment）+ `file.download` 权限 + download 审计。
  */
 @Controller("api/v1/files")
@@ -140,9 +140,10 @@ export class FileController {
   }
 
   /**
-   * 预览状态与短时签名地址（M4-05 读 API）：ready 附签名 URL（Push 283 起不写预览审计 —— 操作日志不记录预览动作）；
+   * 预览状态与短时签名地址（M4-05 读 API）：ready 附签名 URL；
    * not_ready 幂等补投生成任务；
    * failed 记原因并降级「请下载查看」；可选 `versionId` 指定历史版本（不属于该文件 / 不存在 → 404）。
+   * 预览审计只在 `recordView=true` 时写入（用户点开具体预览）；缩略图签名请求缺省不写。
    */
   @Get(":id/preview")
   preview(
@@ -150,7 +151,7 @@ export class FileController {
     @Query(new ZodValidationPipe(FilePreviewQuerySchema)) query: FilePreviewQuery,
     @CurrentActorId() actorId: string,
   ): Promise<FilePreviewResponse> {
-    return this.previews.getPreview(id, query.versionId ?? null, actorId);
+    return this.previews.getPreview(id, query.versionId ?? null, actorId, query.recordView === "true");
   }
 
   /**

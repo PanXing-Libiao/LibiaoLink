@@ -6,7 +6,7 @@
  *   I1  图片预览：`GET /files/{id}/preview` = ready + target=image + url 短时签名（原对象）+ pipelineVersion / generatedAt 空；
  *   I2  字节直出：url 直取 sha256 = 上传夹具全等（非转换件）+ PNG magic + Content-Type=image/png + 非 attachment；
  *   I3  签名形状：pathname = /{bucket}/{version.objectKey} + X-Amz-Expires = PREVIEW_URL_TTL_SECONDS；
- *   I4  预览审计（2026-10-23 恢复）：图片直签实际送达写 action = preview 1 条；
+ *   I4  预览审计（2026-10-27 收口）：图片直签仅在 recordView=true 且实际送达时写 action = preview 1 条；缺省缩略图签名不写；
  *   I5  零投递 / 零产物：outbox 无 preview.job 行、preview_artifacts 0 行（读取不发任务、不落产物行）；
  *   F2  追加 v2（同文件新 PNG）；I6 版本路由：缺省签 v2、?versionId=v1 签 v1（字节分别全等、不串版本）；
  *   I7  定档（P1 触发点）：finalize 后仍零投递 / 零产物行（previewTargetsFor 空表 → 预生成循环空转）；
@@ -323,7 +323,7 @@ try {
   v1Key = (await db.query("select object_key from file_versions where id = $1", [v1Id])).rows[0].object_key;
 
   // ---------- I1：图片预览就绪形态（ready / target=image / 产物字段空） ----------
-  const p1 = await call("GET", "/api/v1/files/" + imageFileId + "/preview", undefined, admin);
+  const p1 = await call("GET", "/api/v1/files/" + imageFileId + "/preview?recordView=true", undefined, admin);
   const url1 = typeof p1.body?.url === "string" ? p1.body.url : "";
   const parsed1 = signedPath(url1);
   const expiresAt1 = p1.body?.expiresAt === undefined || p1.body?.expiresAt === null ? null : new Date(p1.body.expiresAt).getTime();
@@ -405,7 +405,7 @@ try {
   const audits1 = await previewAuditsOf(project);
   check(
     "I4",
-    "预览审计（2026-10-23 恢复）：图片直签实际送达写一条 audit_logs.action = preview",
+    "预览审计（2026-10-27 收口）：图片直签仅在 recordView=true 且实际送达时写一条 audit_logs.action = preview",
     "1 条（versionId = v1 + direct = true）",
     short({ count: audits1.length }, 200),
     audits1.length === 1 && audits1[0].metadata?.versionId === v1Id && audits1[0].metadata?.direct === true,
@@ -435,7 +435,7 @@ try {
   );
   v2Key = (await db.query("select object_key from file_versions where id = $1", [v2Id])).rows[0].object_key;
 
-  const p2 = await call("GET", "/api/v1/files/" + imageFileId + "/preview", undefined, admin);
+  const p2 = await call("GET", "/api/v1/files/" + imageFileId + "/preview?recordView=true", undefined, admin);
   const parsed2 = signedPath(typeof p2.body?.url === "string" ? p2.body.url : "");
   const fetched2 = p2.body?.url === null || p2.body?.url === undefined ? { status: 0, hash: "", contentType: null } : await fetchSigned(p2.body.url);
   const audits2 = await previewAuditsOf(project);
@@ -451,7 +451,7 @@ try {
       audits2.length === 2,
   );
 
-  const p3 = await call("GET", "/api/v1/files/" + imageFileId + "/preview?versionId=" + v1Id, undefined, admin);
+  const p3 = await call("GET", "/api/v1/files/" + imageFileId + "/preview?versionId=" + v1Id + "&recordView=true", undefined, admin);
   const parsed3 = signedPath(typeof p3.body?.url === "string" ? p3.body.url : "");
   const fetched3 = p3.body?.url === null || p3.body?.url === undefined ? { status: 0, hash: "" } : await fetchSigned(p3.body.url);
   const audits3 = await previewAuditsOf(project);
@@ -483,7 +483,7 @@ try {
   // ---------- I8：PDF 对照（查看器通道不受影响） ----------
   const pdfUp = await uploadFile({ projectId: project, name: "回放-对照.pdf", bytes: SAMPLE_PDF, mime: "application/pdf" });
   const pdfFileId = pdfUp.fileId;
-  const pdfPreview = await call("GET", "/api/v1/files/" + pdfFileId + "/preview", undefined, admin);
+  const pdfPreview = await call("GET", "/api/v1/files/" + pdfFileId + "/preview?recordView=true", undefined, admin);
   const pdfJobs = await jobCountOf(project);
   const pdfArtifacts = await artifactCountOf(pdfFileId);
   const pdfAudits = await previewAuditsOf(project);

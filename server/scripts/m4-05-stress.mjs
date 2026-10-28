@@ -218,7 +218,7 @@ async function completeUpload(fileId, uploadId, contentHash) {
 
 const finalizeFile = (fileId, version) => call("POST", "/api/v1/files/" + fileId + "/finalize", { version }, admin);
 const previewOf = (fileId, versionId) =>
-  call("GET", "/api/v1/files/" + fileId + "/preview" + (versionId === undefined ? "" : "?versionId=" + versionId), undefined, admin);
+  call("GET", "/api/v1/files/" + fileId + "/preview?" + (versionId === undefined ? "" : "versionId=" + versionId + "&") + "recordView=true", undefined, admin);
 const downloadUrlOf = (fileId, versionId) =>
   call("GET", "/api/v1/files/" + fileId + "/versions/" + versionId + "/download-url", undefined, admin);
 

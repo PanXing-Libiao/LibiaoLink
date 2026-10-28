@@ -7,6 +7,7 @@ import {
   ProjectSchema,
   ProjectCreateBodySchema,
   ProjectUpdateBodySchema,
+  type GroupAccessAccessLevel,
   z,
 } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
@@ -43,8 +44,11 @@ export const PROJECT_RECYCLE_RETENTION_DAYS = 30;
 /** 项目到期清理单批上限：每个项目含对象前缀清理，批更小以缩短单轮耗时。 */
 export const PROJECT_RECYCLE_SWEEP_BATCH = 20;
 
-/** 行 → 契约视图（camelCase 对齐；managerNames 随行下发，A2 / A22）。 */
-export function toProjectView(view: ProjectViewRow): ProjectView {
+/** 行 → 契约视图（camelCase 对齐；managerNames 随行下发，A2 / A22；项目权限按当前登录人逐项目裁决）。 */
+export function toProjectView(
+  view: ProjectViewRow,
+  groupAccessLevel: GroupAccessAccessLevel = "view",
+): ProjectView {
   const row = view.project;
   return {
     id: row.id,
@@ -58,6 +62,7 @@ export function toProjectView(view: ProjectViewRow): ProjectView {
     managerNames: view.managerNames ?? row.managerIds.map(() => null),
     stageKey: row.stageKey as ProjectView["stageKey"],
     status: row.status as ProjectView["status"],
+    groupAccessLevel,
     description: row.description,
     version: row.version,
     createdAt: row.createdAt.toISOString(),
@@ -99,11 +104,17 @@ export class ProjectService {
   ) {}
 
   /** 列表（M2-04）：筛选 / 时间区间 / 排序与 facets 同口径；软删不可见（A5）+ 记录级可见集（h6）。 */
-  async listProjects(query: ProjectListQueryInput, scope: ProjectScopeFilter): Promise<ProjectListResult> {
+  async listProjects(query: ProjectListQueryInput, scope: ProjectScopeFilter, actorId: string): Promise<ProjectListResult> {
     const filter = buildProjectFilter(query);
     const sorts = parseProjectSort(query.sort);
     const { items, total } = await this.projects.listPage(filter, sorts, query.limit, (query.page - 1) * query.limit, scope);
-    return { items: items.map(toProjectView), page: query.page, limit: query.limit, total };
+    const levels = await this.permission.projectGroupAccessLevelsOf(actorId, items.map((item) => item.project.id));
+    return {
+      items: items.map((item) => toProjectView(item, levels.get(item.project.id) ?? "view")),
+      page: query.page,
+      limit: query.limit,
+      total,
+    };
   }
 
   /** 首页分类计数（M2-04 · A6）：五组固定返回，与列表同筛选口径。 */
@@ -113,12 +124,13 @@ export class ProjectService {
     return this.projects.facets(filter, scope);
   }
 
-  async getProject(id: string): Promise<ProjectView> {
+  async getProject(id: string, actorId: string): Promise<ProjectView> {
     const view = await this.projects.findViewById(id);
     if (view === null) {
       throw new AppError("NOT_FOUND", "项目不存在或不可见");
     }
-    return toProjectView(view);
+    const levels = await this.permission.projectGroupAccessLevelsOf(actorId, [id]);
+    return toProjectView(view, levels.get(id) ?? "view");
   }
 
   /** 进入项目详情时显式记录访问：由前端每次进入项目路由调用一次，避免详情轮询 / 静默刷新反复写行。 */
@@ -147,13 +159,22 @@ export class ProjectService {
    */
   async createProject(body: ProjectCreateBody, actorId: string): Promise<ProjectView> {
     const at = new Date();
+    const groupAccess = await this.permission.groupAccessOf(actorId);
+    const managerIds =
+      groupAccess.enforced &&
+      !groupAccess.admin &&
+      groupAccess.ownEdit &&
+      !groupAccess.allEdit &&
+      !body.managerIds.includes(actorId)
+        ? [...body.managerIds, actorId]
+        : [...body.managerIds];
     const input: ProjectInsertInput = {
       code: body.code,
       name: body.name,
       customer: body.customer ?? null,
       region: body.region,
       projectType: body.projectType,
-      managerIds: body.managerIds,
+      managerIds,
       stageKey: body.stageKey ?? DEFAULT_STAGE_KEY,
       description: body.description ?? null,
     };
@@ -190,7 +211,8 @@ export class ProjectService {
     });
     const view = await this.projects.findViewById(projectId);
     if (view === null) throw new AppError("NOT_FOUND", "项目不存在或不可见");
-    return toProjectView(view);
+    const levels = await this.permission.projectGroupAccessLevelsOf(actorId, [projectId]);
+    return toProjectView(view, levels.get(projectId) ?? "view");
   }
 
   /** 更新（M2-01）：乐观锁（version 必须回传）；归档写保护（ADR-027）；code 变更同样校验唯一性；变更写审计（字段级）。 */
@@ -249,7 +271,11 @@ export class ProjectService {
       return row;
     });
     const view = await this.projects.findViewById(id);
-    return toProjectView(view ?? { project: updated, managerNames: current.managerNames });
+    const levels = await this.permission.projectGroupAccessLevelsOf(actorId, [id]);
+    return toProjectView(
+      view ?? { project: updated, managerNames: current.managerNames },
+      levels.get(id) ?? "view",
+    );
   }
 
   /**
@@ -290,7 +316,11 @@ export class ProjectService {
       });
       return row;
     });
-    return toProjectView({ project: recycled, managerNames: current.managerNames });
+    const levels = await this.permission.projectGroupAccessLevelsOf(actorId, [id]);
+    return toProjectView(
+      { project: recycled, managerNames: current.managerNames },
+      levels.get(id) ?? "view",
+    );
   }
 
   /** POST /projects/{id}/restore：从项目回收站恢复；权限与可见性由 ProjectAccessGuard 判定。 */
@@ -325,7 +355,11 @@ export class ProjectService {
       return row;
     });
     const view = await this.projects.findViewById(id);
-    return toProjectView(view ?? { project: restored, managerNames: null });
+    const levels = await this.permission.projectGroupAccessLevelsOf(actorId, [id]);
+    return toProjectView(
+      view ?? { project: restored, managerNames: null },
+      levels.get(id) ?? "view",
+    );
   }
 
   /** 项目彻底删除仅系统管理员（与文件彻底删除同一权限口径）。 */

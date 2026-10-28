@@ -6,7 +6,7 @@ import type {
   GroupAccessProject,
   GroupAccessProjectScope,
 } from "./accessApi";
-import { effectiveMemberAccess } from "./accessRules";
+import { effectiveMemberAccess, scopePermissionsOf } from "./accessRules";
 
 export type AccessLevel = "operate" | "view" | "login";
 export type AccessProjectLevel = "all" | "own" | "selected" | "login";
@@ -125,9 +125,11 @@ function projectLevelOf(person: {
     const effective = effectiveMemberAccess(group, person.member.userId);
     if (effective.source === "none") continue;
     hasRule = true;
-    if (effective.projectScope === "all") return "all";
-    if (effective.projectScope === "own") hasOwn = true;
-    if (effective.projectScope === "selected" && effective.projectIds.length > 0) hasSelected = true;
+    for (const permission of effective.scopePermissions) {
+      if (permission.projectScope === "all") return "all";
+      if (permission.projectScope === "own") hasOwn = true;
+      if (permission.projectScope === "selected" && effective.projectIds.length > 0) hasSelected = true;
+    }
   }
   if (!hasRule) return "login";
   if (hasOwn) return "own";
@@ -145,7 +147,7 @@ function hasEditAccessOf(person: {
     const group = groupsByKey.get(membership.groupKey);
     if (group === undefined) continue;
     const effective = effectiveMemberAccess(group, person.member.userId);
-    if (effective.source !== "none" && effective.projectScope !== "none" && effective.accessLevel === "edit") return true;
+    if (effective.source !== "none" && effective.scopePermissions.some((permission) => permission.accessLevel === "edit")) return true;
   }
   return false;
 }
@@ -283,7 +285,12 @@ export function buildAccessDashboardModel(data: GroupAccessOverview, scopeGroupK
       addProjectCount(projectCounts, person.projectLevel);
     }
     const subtreeRuleGroups = [...subtreeKeys].map((key) => groupsByKey.get(key)).filter((item): item is GroupAccessGroup => item !== undefined);
-    const hasProjectData = subtreeRuleGroups.some((item) => (item.rule !== null && item.rule.projectScope !== "none") || item.memberRules.some((memberRule) => memberRule.projectScope !== "none"));
+    const hasProjectData = subtreeRuleGroups.some((item) =>
+      (item.rule !== null && scopePermissionsOf(item.rule.scopePermissions, item.rule.projectScope, item.rule.accessLevel).length > 0) ||
+      item.memberRules.some((memberRule) =>
+        scopePermissionsOf(memberRule.scopePermissions, memberRule.projectScope, memberRule.accessLevel).length > 0,
+      ),
+    );
     const configured = subtreeRuleGroups.some((item) => item.rule !== null || item.memberRules.length > 0);
     const adminCount = subtreePeople.filter((person) => person.isAdmin).length;
     groupSummaries.push({
@@ -344,7 +351,11 @@ function personGroupsOf(userId: string, people: readonly AccessPersonSummary[]):
 }
 
 export function projectNamesOf(group: GroupAccessGroup, projectsById: ReadonlyMap<string, GroupAccessProject>): string[] {
-  if (group.rule === null || group.rule.projectScope !== "selected") return [];
+  if (
+    group.rule === null ||
+    !scopePermissionsOf(group.rule.scopePermissions, group.rule.projectScope, group.rule.accessLevel)
+      .some((permission) => permission.projectScope === "selected")
+  ) return [];
   return group.rule.projectIds.map((projectId) => {
     const project = projectsById.get(projectId);
     return project === undefined ? projectId : project.code + " · " + project.name;

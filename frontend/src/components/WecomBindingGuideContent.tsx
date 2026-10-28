@@ -6,7 +6,7 @@ import type { BindingNotice } from "./WecomBindingPanel";
 export const WECOM_BOT_PROFILE_URL =
   "https://work.weixin.qq.com/wework_admin/common/openBotProfile/246485356dc1e53520b3a6f7f5ba8bbae6";
 
-/** 首登提醒与设置页共用同一套绑定引导文案 / 操作。 */
+/** 设置页使用的一套企微绑定引导文案 / 操作。 */
 export function WecomBindingGuideContent(props: {
   onNotice: (notice: BindingNotice) => void;
   reserveCloseSpace?: boolean;

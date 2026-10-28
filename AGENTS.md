@@ -32,10 +32,10 @@
 - 后端目录（`server/`、`database/`、`shared/`）尚未落地；落地前涉及后端的改动先落文档与契约（`技术设计v0.2-架构与数据模型.md`、`前端功能需求.md`）。
 - 高风险变更（CONTRIBUTING.md 第 15 节）必须取得另一名合格评审者批准；评审路由见 `.github/CODEOWNERS`。
 
-## 服务器与运维（测试机）
+## 服务器与运维（正式机 / 测试机）
 
-- 部署目标机 = `10.1.104.44`（libiao-vm；域名 `test-pm.libiaorobot.com`）；`10.1.103.44` 只是 ALLinSSL 证书下发接收端，勿作部署目标。登录 / 目录 / 部署件口径见 `deploy/prod/README.md` §1 与 §1.1。
-- SSH 登录：开发机 `ssh root@10.1.104.44`；**登录口令不落仓库**（CONTRIBUTING §12）—— 由 px 持有；开发机上的未跟踪备忘 = `deploy/prod/服务器登录.local.md`（已被 `.gitignore` 忽略，新会话可直接读该文件续接）。
+- 正式机 = `10.1.103.44`（域名 `pm.libiaorobot.com`；发布清单在 `/opt/libiaolink/RELEASE_MANIFEST.json`）；测试机 = `10.1.104.44`（主机名 `libiao-vm`，域名 `test-pm.libiaorobot.com`）。正式发布只部署 `10.1.103.44`，不得写入测试机；登录 / 目录 / 部署件口径见 `deploy/prod/README.md` §1 与 §1.1。
+- SSH 登录：开发机已配置 SSH 密钥；正式机使用 `ssh libiaolink-prod`，测试机使用 `id_ed25519_libiao` 对 `root@10.1.104.44` 登录。**登录凭据不落仓库**（CONTRIBUTING §12）——由 px 持有；开发机上的未跟踪备忘 = `deploy/prod/服务器登录.local.md`（已被 `.gitignore` 忽略，新会话可读该文件续接；过期口令以现场密钥 / IT 登记为准）。
 - 铁律：不得修改 root 密码；服务器只跑不改 —— 代码 / 配置变更走本仓常驻分支（`px` / `wmj` / `lan`）→ PR → 部署件同步；禁止在服务器上直接手改业务代码，临时热修必须回灌仓库。
 
 ## 本地开发环境（Windows）

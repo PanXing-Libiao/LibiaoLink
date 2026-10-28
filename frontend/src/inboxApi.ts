@@ -23,6 +23,8 @@ export type InboxNotification = {
   status: InboxNotificationStatus;
   refType: string | null;
   refId: string | null;
+  /** 关联对象所属项目 id：服务端按 refType / refId 解析，用于站内信点击直达项目内容。 */
+  projectId: string | null;
   templateCode: string | null;
   mergedCount: number;
   snoozeUntil: string | null;

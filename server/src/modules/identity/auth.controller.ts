@@ -118,15 +118,27 @@ export class AuthController {
   }
 
   @Get("me")
-  async me(@Req() request: Request): Promise<MeResponse> {
-    const token = parseCookieHeader(request.headers.cookie)[SESSION_COOKIE];
+  async me(@Req() request: Request, @Res({ passthrough: true }) response: Response): Promise<MeResponse> {
+    const cookies = parseCookieHeader(request.headers.cookie);
+    const token = cookies[SESSION_COOKIE];
     if (token === undefined || token === "") {
       throw new AppError("AUTH_REQUIRED", "未登录");
     }
     const resolved = await this.sessions.resolve(token);
     const claims = this.oidc.decodeClaims(resolved.session.idToken);
     const exp = typeof claims.exp === "number" ? claims.exp : Math.floor(resolved.session.expiresAt.getTime() / 1000);
-    return { user: toMeUser(resolved.user), claims, expiresAt: exp };
+    const existingCsrfToken = cookies[CSRF_COOKIE];
+    const csrfToken =
+      existingCsrfToken === undefined || existingCsrfToken === "" ? randomBytes(16).toString("base64url") : existingCsrfToken;
+    if (existingCsrfToken === undefined || existingCsrfToken === "") {
+      const maxAge = Math.max(0, exp - Math.floor(Date.now() / 1000));
+      response.append(
+        "Set-Cookie",
+        serializeCookie(CSRF_COOKIE, csrfToken, { httpOnly: false, sameSite: "Lax", secure: this.cookieSecure, maxAgeSeconds: maxAge }),
+      );
+    }
+    response.setHeader("Cache-Control", "no-store");
+    return { user: toMeUser(resolved.user), claims, expiresAt: exp, csrfToken };
   }
 
   @Get("logout")

@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { and, asc, desc, eq, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
@@ -301,14 +301,14 @@ export class WorkspaceRepository {
     return rows as WorkspaceProjectRow[];
   }
 
-  /** 随行文件清单（跨任务一次取）：排除回收站（口径与 task 模块 listFiles 同源）、创建时间倒序。 */
+  /** 随行文件清单（跨任务一次取）：排除回收站与空上传（口径与 task 模块 listFiles 同源）、创建时间倒序。 */
   private async listTaskFileBriefs(taskIds: readonly string[], client: DbClient): Promise<Map<string, TaskFileBriefRow[]>> {
     const result = new Map<string, TaskFileBriefRow[]>();
     if (taskIds.length === 0) return result;
     const rows = await client
       .select({ taskId: files.taskId, id: files.id, name: files.name, status: files.status, docType: files.docType })
       .from(files)
-      .where(and(inArray(files.taskId, [...taskIds]), inArray(files.status, FILE_STATUS_FOR_SUMMARY)))
+      .where(and(inArray(files.taskId, [...taskIds]), inArray(files.status, FILE_STATUS_FOR_SUMMARY), isNotNull(files.currentVersionId)))
       .orderBy(desc(files.createdAt));
     for (const row of rows) {
       if (row.taskId === null) continue;

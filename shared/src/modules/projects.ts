@@ -1,6 +1,7 @@
 import { z } from "../zod.ts";
 import { DateTimeSchema, DateOnlySchema, PageQuerySchema, SortQuerySchema, UuidSchema, VersionSchema } from "../common/conventions.ts";
 import { ProjectStatusSchema, StageKeySchema } from "../common/dicts.ts";
+import { GroupAccessAccessLevelSchema } from "./group-access.ts";
 
 const PROJECT_MANAGER_IDS_LIMIT = 200;
 
@@ -22,6 +23,7 @@ export const ProjectSchema = z
     }),
     stageKey: StageKeySchema,
     status: ProjectStatusSchema,
+    groupAccessLevel: GroupAccessAccessLevelSchema.openapi({ description: "当前登录账号对该项目的部门权限：edit 可写 / view 仅浏览；由服务端按所有命中范围取最高权限后随项目下发" }),
     description: z.string().nullable(),
     version: VersionSchema,
     createdAt: DateTimeSchema,
@@ -352,6 +354,7 @@ export const ProjectGroupBindingSchema = z
     name: z.string().nullable().openapi({ description: "群名 / 备注（绑定维护用）；未绑定 = null" }),
     chatidMasked: z.string().nullable().openapi({ description: "绑定 chatid 掩码（只回末 4 位）；未绑定 = null" }),
     activated: z.boolean().openapi({ description: "会话已激活（群内有人给机器人发过消息）；未绑定 = false" }),
+    canManage: z.boolean().openapi({ description: "当前访问者是否为项目经理：决定是否显示项目群维护与日报同步入口；由服务端按内部 actor 身份裁决" }),
     updatedAt: DateTimeSchema.nullable().openapi({ description: "绑定 / 换绑 / 解绑时点；未绑定 = null" }),
   })
   .openapi("ProjectGroupBinding", { description: "项目群绑定状态（GET 恒 200；未绑定 = bound:false）" });

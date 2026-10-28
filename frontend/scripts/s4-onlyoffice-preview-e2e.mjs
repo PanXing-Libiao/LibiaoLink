@@ -24,7 +24,7 @@
  *   ③d 命中层真点击 → 原文件字节落盘（原名 + sha256 = 夹具 · 无 crdownload）+ download 审计 +1；
  *   ④ 直取 GET /files/{id}/preview 复核查看器配置（Push 258 修订：permissions 嵌 document）：viewer 非空 / url 空 /
  *      document.url 无 X-Amz- / token 三段 + HS256 复算一致 + exp-iat=900 + mode=view + document.permissions.download=true（保持可见 · 点击由浮层命中层接管）；
- *   ⑤ 审计：预览实际送达写审计（2026-10-23 恢复 —— DOCX / XLSX 各两次签发 = 各 2 条 preview）；
+ *   ⑤ 审计：仅用户显式查看写预览记录（DOCX：UI + 直取 recordView=true = 2 条；XLSX：首开 1 条，重试不重复）；
  *   ⑥ 反例：无 token 直取 document.url 同路径 → 401 且无重定向；
  *   ⑦ 收尾：purge 两份文件 → 物理删项目 → 撤销会话 → 零残留；控制台无「非预期」异常。
  * 证据：docs/s4-回放证据(ONLYOFFICE查看器外壳·前端).md
@@ -390,7 +390,7 @@ check("③d 点右上角命中层 → 原文件字节落盘（原名 + sha256 �
 rmSync(DL_DIR, { recursive: true, force: true });
 
 // ---------- ④ 直取 /preview 复核查看器四段（契约 + 安全断言） ----------
-const previewRes = await api("/api/v1/files/" + docxRow.id + "/preview");
+const previewRes = await api("/api/v1/files/" + docxRow.id + "/preview?recordView=true");
 const preview = previewRes.json;
 const viewer = preview === null ? null : preview.viewer;
 check("④a 查看器签发形状：ready + viewer 非空 / url / target 空 + 只读权限（edit=false / download=true 保持可见 / protect=true）",
@@ -409,13 +409,13 @@ check("④c token 三段 JWT：HS256 复算一致 + exp-iat=900 + 逐字签发�
   parts.length === 3 && payload !== null && expectedSig !== null && expectedSig === parts[2] && payload.exp - payload.iat === 900 && payload.documentType === "word" && payload.document !== undefined && payload.document.key === contentHash && payload.document.url === docUrl && payload.document.permissions !== undefined && payload.document.permissions.download === true && payload.permissions === undefined && payload.editorConfig !== undefined && payload.editorConfig.mode === "view",
   j({ parts: parts.length, signatureMatch: expectedSig === parts[2], ttl: payload === null ? null : payload.exp - payload.iat, keyMatchesHash: payload !== null && payload.document !== undefined && payload.document.key === contentHash, secret: secret === null ? "missing" : "loaded" }));
 
-// ---------- ⑤ 审计：预览实际送达写审计（2026-10-23 恢复） ----------
+// ---------- ⑤ 审计：仅用户显式查看写预览记录（2026-10-27 收口） ----------
 const auditDocx = (await db.query("select count(*)::int as c from audit_logs where object_id = $1 and action = $2", [docxRow.id, "preview"])).rows[0];
 check("⑤a DOCX：UI 开查看器 + 直取 = 2 条 preview 审计（各签发一次）",
   Number(auditDocx.c) === 2,
   j({ count: auditDocx.c }));
 const auditXlsx = (await db.query("select count(*)::int as c from audit_logs where object_id = $1 and action = $2", [xlsxRow.id, "preview"])).rows[0];
-check("⑤b XLSX：首开 + 重试 = 2 条（每次签发各一条 preview 审计）", Number(auditXlsx.c) === 2, String(auditXlsx.c));
+check("⑤b XLSX：首开计 1 条，查看器重试不重复记录", Number(auditXlsx.c) === 1, String(auditXlsx.c));
 
 // ---------- ⑥ 受控端点反例：无 token 直取 → 401 ----------
 const docPath = new URL(String(docUrl)).pathname;

@@ -329,7 +329,7 @@ export class NotifyService {
           await this.streamPublisher.publish(tx, {
             recipientId: row.recipientId,
             event: "notification",
-            data: toContract(updated),
+            data: await this.contractOf(updated, tx),
           });
           const unreadCount = await this.repository.countUnread(row.recipientId, tx);
           await this.streamPublisher.publish(tx, {
@@ -396,7 +396,7 @@ export class NotifyService {
     };
     const { rows, total } = await this.repository.listInbox(actorId, filter);
     const unreadCount = await this.repository.countUnread(actorId);
-    return { items: rows.map(toContract), page: query.page, limit: query.limit, total, unreadCount };
+    return { items: await this.contractsOf(rows), page: query.page, limit: query.limit, total, unreadCount };
   }
 
   /** 标记状态（C5-01）：幂等；仅本人已投递主行（他人 / 合并子行 / 未投递行统一 404 防 IDOR）。 */
@@ -413,7 +413,7 @@ export class NotifyService {
       if (wasUnread !== (updated.status === "unread")) {
         await this.publishUnread(actorId, tx);
       }
-      return toContract(updated);
+      return this.contractOf(updated, tx);
     });
   }
 
@@ -495,7 +495,7 @@ export class NotifyService {
       if (wasUnread) {
         await this.publishUnread(actorId, tx);
       }
-      return toContract(updated);
+      return this.contractOf(updated, tx);
     });
   }
 
@@ -511,7 +511,7 @@ export class NotifyService {
         throw new AppError("NOT_FOUND", "通知不存在：" + id);
       }
       const updated = await this.repository.cancelSnooze(id, at, tx);
-      return toContract(updated);
+      return this.contractOf(updated, tx);
     });
   }
 
@@ -533,13 +533,32 @@ export class NotifyService {
     };
   }
 
+  /** 单条站内信 → 契约（按关联对象解析所属项目，供站内信点击直达）。 */
+  private async contractOf(row: NotifyMessageRow, tx?: DbClient): Promise<Notification> {
+    const [contract] = await this.contractsOf([row], tx);
+    if (contract === undefined) throw new Error("notify contract：行缺失");
+    return contract;
+  }
+
+  /** 批量站内信 → 契约（一次解析全部关联项目，避免逐条查库）。 */
+  private async contractsOf(rows: readonly NotifyMessageRow[], tx?: DbClient): Promise<Notification[]> {
+    const projects = await this.repository.resolveProjectIds(
+      rows.map((row) => ({ refType: row.refType, refId: row.refId })),
+      tx,
+    );
+    return rows.map((row) => {
+      const key = row.refType === null || row.refId === null ? null : row.refType + ":" + row.refId;
+      return toContract(row, key === null ? null : projects.get(key) ?? null);
+    });
+  }
+
   /** 投递广播（新投递 / 延迟补发同一口径）：`notification`（该行契约形态）+ `unread`（角标快照），同一事务内。 */
   private async publishDelivered(row: NotifyMessageRow, at: Date, tx: DbClient): Promise<void> {
     const unreadCount = await this.repository.countUnread(row.recipientId, tx);
     await this.streamPublisher.publish(tx, {
       recipientId: row.recipientId,
       event: "notification",
-      data: toContract({ ...row, deliveredAt: at }),
+      data: await this.contractOf({ ...row, deliveredAt: at }, tx),
     });
     await this.streamPublisher.publish(tx, {
       recipientId: row.recipientId,
@@ -666,7 +685,7 @@ function archiveInputOfRow(row: NotifyMessageRow): NotifyDeliveryMessageInsert {
 }
 
 /** 行 → 契约（收件箱条目；deliveredAt 在服务层已保证非空）。 */
-function toContract(row: NotifyMessageRow): Notification {
+function toContract(row: NotifyMessageRow, projectId: string | null): Notification {
   return {
     id: row.id,
     type: row.type as Notification["type"],
@@ -675,6 +694,7 @@ function toContract(row: NotifyMessageRow): Notification {
     status: row.status as Notification["status"],
     refType: row.refType,
     refId: row.refId,
+    projectId,
     templateCode: row.templateCode,
     mergedCount: row.mergedCount,
     // 当前未触发的稍后提醒时刻（C5-05）：未设置 / 已触发 / 已取消 = null。

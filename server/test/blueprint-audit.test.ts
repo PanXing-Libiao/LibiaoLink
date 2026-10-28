@@ -130,6 +130,9 @@ class FakePermission {
   async assertCan(_actorId: string, key: string, _context?: unknown, message?: string): Promise<void> {
     if (!this.allowed) throw new AppError("FORBIDDEN", message ?? "无权限：" + key);
   }
+  async assertCanManageBlueprint(_actorId: string, message?: string): Promise<void> {
+    if (!this.allowed) throw new AppError("FORBIDDEN", message ?? "无权限：blueprint.manage");
+  }
 }
 
 class FakeAuditService {

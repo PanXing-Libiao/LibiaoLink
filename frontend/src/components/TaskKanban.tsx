@@ -219,10 +219,16 @@ export type KanbanAddContext = { ownerIds: string[]; status: TaskStatus };
 type TaskKanbanProps = {
   mode: KanbanMode;
   tasks: ProjectTask[];
+  /** 站内信深链：任务所属项目打开后自动选中该任务并打开详情抽屉。 */
+  focusTaskId?: string | null;
+  /** 关闭深链抽屉后回写地址，去掉 `?task=`。 */
+  onFocusClosed?: () => void;
   /** 项目经理展示文本（项目级字段，多位按「、」连接；任务详情抽屉展示用）。 */
   managers: string;
   /** 项目经理 id 名单（任务详情抽屉里「项目经理」字段的当前选中项，Push 136）。 */
   managerIds: string[];
+  /** 当前账号是否可对指定任务定档 / 取消定档：由任务负责人与项目经理名单共同裁决。 */
+  canFinalizeTask?: (task: ProjectTask) => boolean;
   /**
    * 列底「添加 → 临时任务」：标题由用户自己填（英文名可空）；负责人 / 状态按所在列给、阶段留空。
    * 返回 = 新建任务的 id（失败 = null）—— Push 196 起建完由看板直接打开它的任务详情抽屉，补时间等细节。
@@ -810,13 +816,26 @@ function KanbanColumn({
   );
 }
 
-export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTask, onAddStageTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onSetStatus, onSetActualEnd, onReorderTask, onSetProgress, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, projectId }: TaskKanbanProps) {
+export function TaskKanban({ mode, tasks, focusTaskId = null, onFocusClosed, managers, managerIds, canFinalizeTask, members, onAddTask, onAddStageTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onSetStatus, onSetActualEnd, onReorderTask, onSetProgress, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, projectId }: TaskKanbanProps) {
   const t = useT();
   /**
    * 任务详情抽屉选中的任务 id（Push 196 由对象改存 id）：点卡片与「建完临时任务」都先落 id，抽屉按 id 从最新列表取行 ——
    * 新建的临时任务等列表刷新回来即自动打开详情，不依赖点击那一刻的快照。
    */
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  /** 深链只自动打开一次：列表刷新 / 手动关抽屉不重弹；地址清空后可再次响应同一目标。 */
+  const focusedTaskRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (focusTaskId === null) {
+      focusedTaskRef.current = null;
+      return;
+    }
+    if (focusedTaskRef.current === focusTaskId || !tasks.some((task) => task.id === focusTaskId)) {
+      return;
+    }
+    focusedTaskRef.current = focusTaskId;
+    setSelectedTaskId(focusTaskId);
+  }, [focusTaskId, tasks]);
   /**
    * 「添加」浮层（Push 118）：整块看板共用的**单值**状态 —— 业务反馈「这有bug吧 不能同时打开 点击别的应该关闭另一个吧」。
    * 原来这份状态是每列一份（列内局部 state），六列互不感知、能同时开着菜单；提到这一层之后同一时刻只会有一个。
@@ -1208,6 +1227,7 @@ export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTa
         task={drawerTask}
         managers={managers}
         managerIds={managerIds}
+        canFinalize={drawerTask !== null && canFinalizeTask?.(drawerTask) === true}
         members={members}
         onSubmit={onSubmitTaskEdit}
         onRename={onRenameTask}
@@ -1224,6 +1244,7 @@ export function TaskKanban({ mode, tasks, managers, managerIds, members, onAddTa
         projectId={projectId}
         onClose={() => {
           setSelectedTaskId(null);
+          onFocusClosed?.();
         }}
       />
     </>

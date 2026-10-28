@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { startLiveSync } from "./liveSync";
 import { applyInboxUnread, noteInboxNotification, refreshInboxUnread } from "./inbox";
+import { refreshWecomDmBindingStatus } from "./bindingApi";
 import { useLiveRefresh } from "./useLiveRefresh";
 import { AccessControlPage } from "./AccessControlPage";
 import { AuditLogPage } from "./AuditLogPage";
@@ -11,7 +12,7 @@ import Home from "./Home";
 import PlaceholderPage from "./PlaceholderPage";
 import ProjectDetail from "./ProjectDetail";
 import WorkspacePage from "./WorkspacePage";
-import { ApiError, apiFetch, redirectToLogin } from "./api";
+import { ApiError, apiFetch, redirectToLogin, rememberCsrfToken } from "./api";
 import { applyBackgroundTier, applyCardWatermark, asBackgroundTier, asCardWatermark } from "./backgroundTier";
 import { applyLocale, asLocale, getLocale, textOf, useT, type TextKey } from "./i18n";
 import { AppHeader } from "./components/AppHeader";
@@ -19,7 +20,6 @@ import { Loader } from "./components/Loader";
 import { Toast, ToastConfirm } from "./components/Toast";
 import { ExportProgressOverlay } from "./components/ExportProgressOverlay";
 import { useFocusTrap } from "./components/useFocusTrap";
-import { BindingGuideModal } from "./components/BindingGuideModal";
 import { ProjectModal, type ProjectDraft, type ProjectSubmitResult } from "./components/ProjectModal";
 import type { DictTools } from "./dictTools";
 import { canEditTaskTemplates, hasPermission, loadMyPermissions, useMyPermissions } from "./permissions";
@@ -41,6 +41,7 @@ import type { SavedFilter } from "./savedFilters";
 import { asHubDashView, type HubDashView } from "./data/dashboardProgress";
 import {
   asHubView,
+  clearProjectFocus,
   replaceAuditQuery,
   replaceFilesQuery,
   replaceWorkspaceSub,
@@ -222,6 +223,7 @@ export default function App() {
       return undefined;
     }
     void refreshInboxUnread();
+    void refreshWecomDmBindingStatus();
     return startLiveSync({
       onUnread: applyInboxUnread,
       onNotification: noteInboxNotification,
@@ -278,6 +280,7 @@ export default function App() {
         if (cancelled) {
           return;
         }
+        rememberCsrfToken(me.csrfToken);
         setState({ kind: "signed-in", me });
         const [dictResult, directoryResult, prefsResult] = await Promise.allSettled([
           loadDicts(),
@@ -721,19 +724,22 @@ export default function App() {
     onDelete: handleDictDelete,
   };
 
-  /** 权限分叉（Push 172）：字典治理 = dict.manage；删项目 = project.delete（服务端逐请求仍是最终裁决）。 */
-  const groupReadOnly = permissions?.groupReadOnly === true;
-  const canManageDicts = !groupReadOnly && hasPermission(permissions, "dict.manage");
-  const canDeleteProject = !groupReadOnly && hasPermission(permissions, "project.delete");
+  /**
+   * 功能权限 = 角色能力位；项目级写入口再叠加当前项目的 groupAccessLevel === "edit"。
+   * 全局写入（字典）要求全部项目编辑；项目内写入由项目卡 / 详情按项目逐项收敛（服务端逐请求仍是最终裁决）。
+   */
+  const canManageDicts = permissions !== null && permissions.groupAllEdit && hasPermission(permissions, "dict.manage");
+  const canDeleteProject = permissions === null || hasPermission(permissions, "project.delete");
   /**
    * 建 / 改项目（Push 173）：画像**未到时乐观放行**（网络抖动不该把有权限的账号挡在门外；服务端仍是最终裁决），
    * 已知缺位才收敛入口 —— 首页「新建项目」出禁用观感 + 提示条、卡片编辑入口不渲染。
    */
-  const canCreateProject = !groupReadOnly && (permissions === null || hasPermission(permissions, "project.create"));
-  const canUpdateProject = !groupReadOnly && (permissions === null || hasPermission(permissions, "project.update"));
+  const canCreateProject = permissions === null ||
+    (hasPermission(permissions, "project.create") && (permissions.groupAllEdit || permissions.groupOwnEdit));
+  const canUpdateProject = permissions === null || hasPermission(permissions, "project.update");
   const canExportProject = permissions === null || hasPermission(permissions, "project.export");
   /** 归档权（Push 262 · M7-04 前端接线一部分）：决定编辑弹窗「已归档」选项是否可选（服务端逐请求仍是最终裁决）。 */
-  const canArchiveProject = !groupReadOnly && (permissions === null || hasPermission(permissions, "project.archive"));
+  const canArchiveProject = permissions === null || hasPermission(permissions, "project.archive");
   /**
    * 任务模板页维护权（节点库 + 模板写操作）= 系统管理员或部门编辑规则。
    * 所有登录账号都能查看模板；服务端逐请求仍是最终裁决 —— 无权 = 403 FORBIDDEN。
@@ -744,7 +750,7 @@ export default function App() {
    * 同一口径：画像未到时乐观放行（服务端逐请求仍是最终裁决），已知缺位才收起写入口 —— 读列表 = stakeholder.view
    * 全部角色都有，标签本身不收敛。
    */
-  const canManageStakeholders = !groupReadOnly && (permissions === null || hasPermission(permissions, "stakeholder.manage"));
+  const canManageStakeholders = permissions === null || hasPermission(permissions, "stakeholder.manage");
 
   if (state.kind === "loading") {
     return (
@@ -832,8 +838,6 @@ export default function App() {
           }}
         />
       )}
-      {/* 首登「绑定企业微信」引导（D5 · Push 250）：未绑定且本机未跳过才弹；已绑定 / 已跳过 = 静默不渲染。 */}
-      <BindingGuideModal me={state.me} />
     </>
   );
 
@@ -854,7 +858,7 @@ export default function App() {
         dicts={dicts}
         dictTools={dictTools}
         canManageDicts={canManageDicts}
-        canArchive={canArchiveProject}
+        canArchive={canArchiveProject && editingProject.groupAccessLevel === "edit"}
         managerOptions={directoryMemberOptions(directory)}
         onClose={() => {
           setEditingProject(null);
@@ -897,7 +901,6 @@ export default function App() {
       <>
         <WorkspacePage
           me={state.me}
-          readOnly={groupReadOnly}
           members={directoryMemberOptions(directory)}
           tab={route.tab}
           onChangeTab={replaceWorkspaceTab}
@@ -935,14 +938,16 @@ export default function App() {
           project={detail}
           view={route.view}
           dailySub={route.sub}
+          focus={route.focus}
+          onClearFocus={clearProjectFocus}
           members={directoryMemberOptions(directory)}
           onChangeManagers={handleChangeManagers}
           onTaskEdited={handleTaskEdited}
           taskHiddenColumns={taskTableHiddenColumns}
           onTaskHiddenColumnsChange={handleSaveTaskHiddenColumns}
           canManageStakeholders={canManageStakeholders}
-          readOnly={groupReadOnly}
-          onSetProjectDone={canUpdateProject ? handleSetProjectDone : undefined}
+          readOnly={detail?.groupAccessLevel !== "edit"}
+          onSetProjectDone={canUpdateProject && detail?.groupAccessLevel === "edit" ? handleSetProjectDone : undefined}
         />
         {editModal}
         {bottomBars}
