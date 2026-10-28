@@ -13,6 +13,7 @@
 - 上游 `DwgHeaderReader` 把 `INTERSECTIONCOLOR` 的 BS 短整数和 `INTERFERECOLOR` 的 CMC 颜色写入同一属性。构建脚本只修正这个字段边界，读写分别存储；负数原值保留，不夹取成某个颜色，不启用 failsafe。
 - 读取使用 `Failsafe=false`，保留未知实体、未知非图形对象和原生代理图形。未知内容仍可能只有基础元数据，原 DWG 才是权威源。
 - 选择性复用 ACadSharp 的曲线、样条、填充图案、存储标注块和 SORTENTSTABLE。大块的排序句柄建立一次索引，避免上游逐实体线性查询。
+- ACadSharp 3.8.30 对控制多边形远离原点的周期 SPLINE 可能把首顶点求值为 `(0,0,0)`，显示时形成一条原点至样条的假线。读取器只在该首点为零且控制多边形不在原点时丢弃它；`--self-test` 同时覆盖零起点和合法原点起点，避免误删真实的原点样条。
 - 文字转义与换行选择性采用 MIT 的 ACadSharp.Image 方法；见 `CommunityText.cs`、前端 `vendor/cad-text-layout.js` 及随附许可。只复用相关代码，不包含该应用或 SixLabors 栅格依赖。原配套字体缺失、行内富文本格式等仍有明确限制。
 
 ## 本机构建与查看

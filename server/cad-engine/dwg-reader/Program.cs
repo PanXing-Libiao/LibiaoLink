@@ -207,6 +207,7 @@ static class Program
                     ("minorAxis",P(ellipse.MinorAxisEndPoint)),("startAngle",ellipse.StartParameter),("sweepAngle",ellipse.EndParameter-ellipse.StartParameter)),ellipsePoints,original:original); return;
             case Spline spline:
                 if(!spline.TryPolygonalVertexes(48,out var splinePoints)) throw new InvalidDataException("ACadSharp.TryPolygonalVertexes failed; no invented fit");
+                splinePoints=CleanSplineDisplayPoints(splinePoints,spline.ControlPoints);
                 var weights=spline.Weights.Count==0?Enumerable.Repeat(1.0,spline.ControlPoints.Count).ToArray():spline.Weights.ToArray();
                 EntityRow(e,space,id,R(("type","spline"),("degree",spline.Degree),("controlPoints",spline.ControlPoints.Select(P).ToArray()),
                     ("knots",spline.Knots.ToArray()),("weights",weights),("periodic",spline.IsPeriodic)),splinePoints,original:original); return;
@@ -314,6 +315,17 @@ static class Program
         var byEntity=table.GroupBy(s=>s.Entity.Handle).ToDictionary(g=>g.Key,g=>g.First().SortHandle);
         return block.Entities.OrderBy(e=>byEntity.GetValueOrDefault(e.Handle,e.Handle));
     }
+    static bool NearOrigin(XYZ p) => Math.Abs(p.X)<1e-9 && Math.Abs(p.Y)<1e-9 && Math.Abs(p.Z)<1e-9;
+    static List<XYZ> CleanSplineDisplayPoints(List<XYZ> points, IReadOnlyList<XYZ> controlPoints)
+    {
+        // ACadSharp 3.8.30 can evaluate a periodic spline at uStart to XYZ.Zero
+        // when the control polygon is away from the origin (zero basis sum).
+        // Dropping that single leading vertex prevents a spurious origin-to-spline
+        // segment; a spline that legitimately starts at the origin keeps its point.
+        if(points.Count>1 && NearOrigin(points[0]) && controlPoints.Count>0 && !NearOrigin(controlPoints[0]))
+            points.RemoveAt(0);
+        return points;
+    }
     static void SelfTest(string folder)
     {
         Directory.CreateDirectory(folder);
@@ -328,7 +340,13 @@ static class Program
             if(reread.Header.IntersectionColorIndex!=raw || !reread.Header.InterfereColor.Equals(document.Header.InterfereColor))
                 throw new InvalidDataException("Distinct native header fields did not roundtrip");
         }
-        Console.WriteLine("PASS: native DWG header fields remain independent, including raw -1; no interchange format.");
+        var cleaned=CleanSplineDisplayPoints(new List<XYZ>{XYZ.Zero,new XYZ(10,10,0)},new List<XYZ>{new XYZ(10,10,0)});
+        if(cleaned.Count!=1 || Math.Abs(cleaned[0].X-10)>1e-9)
+            throw new InvalidDataException("periodic spline leading zero vertex was not removed");
+        var kept=CleanSplineDisplayPoints(new List<XYZ>{XYZ.Zero,new XYZ(10,10,0)},new List<XYZ>{XYZ.Zero});
+        if(kept.Count!=2)
+            throw new InvalidDataException("a spline that starts at the origin must keep its first vertex");
+        Console.WriteLine("PASS: native DWG header fields remain independent, including raw -1; no interchange format; spline zero vertex guard.");
     }
     static int Main(string[] args)
     {
