@@ -133,8 +133,12 @@ export function projectDrawing(document,target,effectiveLayers=null,presentation
  };
  const MAX=Number(projectionLimits.maxDraws)||400000;
  function addDraw(kind,itemId,blockPath,localToSpace,visibility,availability,style,representationId,viewportId,layerId,clips,chain){
-  order+=1;drawn+=1;
-  if(drawn>MAX)throw new Error('drawing-projection-over-limit');
+  order+=1;
+  // maxDraws budgets the ordinary projector's expanded draws. Retained groups
+  // may legitimately keep one source draw per instance path (per-copy variants),
+  // so applying that budget here would fail files the retained path is meant to
+  // support. Retained projection is bounded by the instance count instead.
+  if(!visitor){drawn+=1;if(drawn>MAX)throw new Error('drawing-projection-over-limit');}
   const drawId=identity('drawing-draw',[drawingId,kind,itemId,blockPath,viewportId||'']);
   const draw={kind,itemId,blockPath,localToSpace,visibility,availability,style,drawOrder:order-1,
    visibilityLayerIds:[...new Set([layerId,...chain.map(parent=>parent[1])])]};

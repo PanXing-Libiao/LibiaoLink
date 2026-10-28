@@ -495,6 +495,19 @@ test('array copies resolve their own draw variant state', () => {
       'retained path must reconstruct the source draw id used by plot styles');
 });
 
+test('per-copy variants do not reapply the ordinary draw budget', () => {
+  const doc = arrayVariantDocument();
+  doc.drawing.blockInstances.bi.array.rows = 3;
+  doc.extensions['org.cad-preview.style-inheritance/1'].projectionLimits = {maxDraws:2};
+  const target = {kind:'model', spaceId:'root'};
+  assert.throws(() => projectDrawing(doc, target), /drawing-projection-over-limit/);
+  const plan = projectInstances(doc, target);
+  assert.equal(plan.count, 3);
+  assert.equal(plan.groups.length, 4, 'root group plus one variant group per copy');
+  assert.equal(Object.keys(plan.projection.draws).length, 3,
+    'each variant copy keeps its own source draw without hitting the expanded budget');
+});
+
 test('plot variants also split array copies per instance path', () => {
   const row = index => [{instanceId:'bi', row:index, column:0}];
   const drawId = index => identity('drawing-draw', ['d','entity','e1',row(index),'']);

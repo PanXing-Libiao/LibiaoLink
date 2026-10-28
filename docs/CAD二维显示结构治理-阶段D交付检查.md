@@ -39,14 +39,15 @@
 | 阵列副本共用首个实例的变体状态：首个副本 ready、第二项 missing 时保留路径两项都 ready | 含 `drawVariants` 的空间按完整实例路径分组；`plotVariants` 同样参与路径键（即使预览关闭，查看器可无重新投影地开启）；不敏感空间仍共享组 | `drawing-instances.test.mjs` 的逐副本变体与打印变体用例；浏览器夹具 availability `["ready","unsupported"]` |
 | 带裁剪的无限线在保留路径画到裁剪范围外 | 保留绘制分支在描边前应用 `clipRegion`，与普通路径一致；索引仍用裁剪后的可见区间 | 浏览器夹具裁剪外 `(10,0)/(90,0)` 由蓝变白 |
 | 保留路径没有应用打印样式：组前缀键查不到 `plotStyles.resolved` | 用完整实例路径重建普通 draw id 查打印样式，并把同一 ID 传给 `plotParts` | 浏览器夹具打印线由黑变红；`plan.identity(draw, draw.blockPath)` 与普通 draw id 对齐的测试 |
+| 逐副本拆组后，保留路径仍用普通 `maxDraws` 对唯一源绘制项计数，达到上限直接失败 | `addDraw` 只在普通路径执行展开绘制预算；保留路径由实例计数和最终一致性检查约束，普通路径的 `maxDraws` 不变 | `drawing-instances.test.mjs`：`maxDraws=2`、3 个带变体阵列副本时普通路径报错、保留路径生成 3 个源绘制项 |
 
-第二轮后的已知取舍：命中逐副本变体（线型 `drawVariants` 或 `plotVariants`）的阵列不再跨副本复用同一组几何；这是为避免把首个副本的派生结果套用到全部副本，未命中变体的空间仍保留原阵列复用。浏览器夹具与前后对照见仓库外 `D:\LibiaoLink-verify\cad-samples\review\RESULTS.md`。
+第二轮后的已知取舍：命中逐副本变体（线型 `drawVariants` 或 `plotVariants`）的阵列不再跨副本复用同一组几何；这是为避免把首个副本的派生结果套用到全部副本，未命中变体的空间仍保留原阵列复用。保留路径不再执行普通投影的 `maxDraws` 展开预算，资源约束转为实例总数；浏览器夹具与前后对照见仓库外 `D:\LibiaoLink-verify\cad-samples\review\RESULTS.md`。
 
 ## 2. 交付检查
 
 ```text
 node --test server/cad-engine/core/tests/drawing-*.test.mjs
-# 42/42 pass
+# 43/43 pass
 
 node server/cad-engine/core/tests/check_drawing_instances.mjs
 node server/cad-engine/core/tests/check_retained_clip_slice.mjs
@@ -78,10 +79,10 @@ cd server && python3 test/cad-release.test.py
 - 已按 [ADR-039](adr/ADR-039-CAD版本拆分与缓存键.md) 拆分版本：`engineVersion` 只含服务器引擎/运行时，`formatVersion` 按 STEP/DXF 独立计算并作为 `cad_artifacts` 缓存键，`viewerVersion` 记录浏览器文件；`bridge.py` 的本地任务恢复摘要改用 `engineDigest`。
 - 本文件所在提交的 `source.json`/`cad-release.ts` 记录 `engineDigest`、`viewerDigest`、`formatVersions` 和 `viewerVersion`；当前值为：
   - `engineVersion = step-0.3.3/be95badeb7e489afc0d9fb7d8b2c6d3ccab8a5b9e28fea962d1d493b96c68941/gateway-1`（两轮评审修复均未变）
-  - `viewerVersion = viewer-475859e7052a65776a264536a07e3c1741c17564f8f368f35e760b6d0a123ea1`
+  - `viewerVersion = viewer-1a2157aec07fd2aa765559ccf54bd6d62b3c59812813defce3270d2df5681883`
   - `formatVersions.STEP = step-0.3.3/59b471708acfac401d9c7381a8ef32b4856f0def5ea7df74045d8f0a2f8dd4a9/gateway-1`（未变）
   - `formatVersions.DXF = dxf-0.15.0/556c616e28de73ad28a22386b4cb8bae923752df8cfd082cbfd59c47e801e542/gateway-1`（因 `dwg-reader.json` 进入 DXF 身份而变化）
-  - `releaseDigest = 5df5882b7e1571ebdc8120b6dfb0fde24e2166dfcd1d7b2fa538514593a216b2`
+  - `releaseDigest = 75dcc91f3da059e322bcd6ba3f6eb394b0d5609b2cc972ac69fff6ae687ce4de`
   迁移 `0069` 为旧产物回填旧 `engine_version` 作为 `format_version`，首次访问新格式版本时重建一次；之后浏览器或单一格式改动不会触发另一格式重建。DXF 键本次再次变化，DXF 产物会按 `format_version` 重建一次，旧产物保留。
 - 迁移 `0069` 改变唯一键，必须先停止 API/worker 再迁移并整体升级；不能只回退镜像。
 - 回滚：本批提交未推送、未部署；本地回滚到 `8fe3784` 即可恢复到评审修复前（版本拆分已包含在该提交），阶段 C 前为 `fff7428`。若已部署，需停 API/worker，恢复 `engine_version` 唯一键、移除 `format_version`，再回退 API/worker/CAD 镜像与 `/cad-viewer/` 静态资源；不要只回滚前端，避免 manifest/引擎版本不一致。
@@ -91,6 +92,6 @@ cd server && python3 test/cad-release.test.py
 
 1. 独立工程登记：阶段 A/B/C/D 的能力矩阵、提交和证据需在 `CAD逆向` 工程同步；本仓库只记录宿主基线与指纹。
 2. 版本拆分/缓存策略：已完成（ADR-039）；本次评审修复再次变更 DXF 格式键，部署时 DXF 产物重建一次。
-3. 剩余能力：竖排/镜像/堆叠、复杂线型相位、打印样式 pen、PDF/DWF/DGN 的双路径证据；无裁剪无限线在保留路径可绘制但暂不进入空间索引；适配器转换期仍拒绝展开后超过 40 万项的单个阵列；逐副本变体空间按路径分组，牺牲该子树的跨副本保留。
+3. 剩余能力：竖排/镜像/堆叠、复杂线型相位、打印样式 pen、PDF/DWF/DGN 的双路径证据；无裁剪无限线在保留路径可绘制但暂不进入空间索引；适配器转换期仍拒绝展开后超过 40 万项的单个阵列；逐副本变体空间按路径分组，牺牲该子树的跨副本保留；保留路径不再套用普通 `maxDraws`，资源约束由实例总数承担。
 4. 目标设备/WebView 实测与真实公司账号验收。
 5. 部署窗口：迁移、API、worker、CAD 镜像、静态资源、source.json 必须同批发布，并先跑 STEP 冒烟。

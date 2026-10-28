@@ -478,7 +478,7 @@
     "drawing-media.js": "3b9558eb5ee8dc3031f6b6c823b65c1ef58f3d4cfc676a477798bb6f10ed6a27",
     "drawing-pattern.js": "697b993b210b16d24b195babecef1a95d8eac6b96c585fb1a490ac6c83b2ef56",
     "drawing-plot-styles.js": "a2c3888311ccdaac04b38f108ab7175cd171a43f0fb82fdb9356e9431819b243",
-    "drawing-projection.js": "4f0be63a74cbebddd455f7c01a50ee3e9776565949a42378a58275365375eefe",
+    "drawing-projection.js": "0a501669718907a7422ba6f6a803bbfaee5e3d7d2c4393ba816710c3a3313363",
     "drawing-text.js": "14fac01104de961edb5e4cc00ed089cf814360978a347b43f5b42a3a138b7e4d",
     "drawing-viewer.js": "051274b87596ed6634445b30ab781e97d2227fdb433f2cba293fa72e122e4137",
     "dxf-resources.js": "219569569cc22deca979ec3f6693031bfbfe050c30eb8fe419962f4e3dab5c2c",
@@ -524,8 +524,8 @@
     "DXF": "dxf-0.15.0/556c616e28de73ad28a22386b4cb8bae923752df8cfd082cbfd59c47e801e542/gateway-1"
   },
   "engineDigest": "be95badeb7e489afc0d9fb7d8b2c6d3ccab8a5b9e28fea962d1d493b96c68941",
-  "viewerDigest": "475859e7052a65776a264536a07e3c1741c17564f8f368f35e760b6d0a123ea1",
-  "releaseDigest": "5df5882b7e1571ebdc8120b6dfb0fde24e2166dfcd1d7b2fa538514593a216b2",
+  "viewerDigest": "1a2157aec07fd2aa765559ccf54bd6d62b3c59812813defce3270d2df5681883",
+  "releaseDigest": "75dcc91f3da059e322bcd6ba3f6eb394b0d5609b2cc972ac69fff6ae687ce4de",
   "engineVersion": "step-0.3.3/be95badeb7e489afc0d9fb7d8b2c6d3ccab8a5b9e28fea962d1d493b96c68941/gateway-1",
-  "viewerVersion": "viewer-475859e7052a65776a264536a07e3c1741c17564f8f368f35e760b6d0a123ea1"
+  "viewerVersion": "viewer-1a2157aec07fd2aa765559ccf54bd6d62b3c59812813defce3270d2df5681883"
 }
