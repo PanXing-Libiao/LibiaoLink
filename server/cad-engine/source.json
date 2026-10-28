@@ -476,7 +476,8 @@
     "drawing-instances.js": "ae8915fec05200eb3f7e56c245a86aa991aa2630378115848f3784f734e8fafa",
     "drawing-plot-styles.js": "a2c3888311ccdaac04b38f108ab7175cd171a43f0fb82fdb9356e9431819b243",
     "drawing-projection.js": "d8d6ab2ff5e364161ea0b299365a521fe4e4899a896b4dc5a2823794fb3675ca",
-    "drawing-viewer.js": "412b2aafd1c422bb5dd4d04626fec9c3aca508bda429200385620b477f191300",
+    "drawing-text.js": "14fac01104de961edb5e4cc00ed089cf814360978a347b43f5b42a3a138b7e4d",
+    "drawing-viewer.js": "28f05f45496630749e95bc6632415737acc6cc152d98b598b511e4471df843c5",
     "dxf-resources.js": "219569569cc22deca979ec3f6693031bfbfe050c30eb8fe419962f4e3dab5c2c",
     "highlight.js": "31754dabcf90e0c71a67123e7e03f9e39614f02021fdd35d18b61e688c734099",
     "mesh-repair-ui.js": "8750dc2c2a63d9ba10bada090fb2938a9cd9a593125f5d2f31e0e0d4e7c02aaf",
@@ -515,6 +516,6 @@
     "sandbox.py": "87ee6844090ce0e6e894325cf284e085c37cdfe6ef7a43a669cf0d37b8f392f0",
     "service.py": "406bb4abec3203ea4e2918c15a8882faf0e9f4b866e4923e4f23a0d6f9245260"
   },
-  "releaseDigest": "e16af35b98ff0edfa645d7aa09869b630e97dfa5f6a67f8578c6a4a38c1c84cf",
-  "engineVersion": "step-0.3.3/e16af35b98ff0edfa645d7aa09869b630e97dfa5f6a67f8578c6a4a38c1c84cf/gateway-1"
+  "releaseDigest": "f3be11998274a5c583762c331fe5a87de1feb0cfc492e4eadd03934dcb4fab54",
+  "engineVersion": "step-0.3.3/f3be11998274a5c583762c331fe5a87de1feb0cfc492e4eadd03934dcb4fab54/gateway-1"
 }

@@ -9,7 +9,7 @@ import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dx
 import {normalizeLineRange} from './drawing-display.js?v=dxf-0.15.0';
 import {estimateDrawingDraws, projectInstances, shouldProjectInstances, multiply, transformPoint, inverse2D, transformBounds, union, I} from './drawing-instances.js';
 import Flatbush from './vendor/flatbush.js';
-import {wrapCadText,cadTextEm,cadLineHeight} from './vendor/cad-text-layout.js';
+import {TEXT_FONT, layoutAnnotationText, textOffsets, textWorldCorners} from './drawing-text.js?v=dxf-0.15.0';
 
 const ACCENT = '#d9426f';
 
@@ -530,30 +530,16 @@ export function mountDrawingViewer(envelope) {
       } else {
         const annotation = drawing.annotations[draw.itemId];
         if (!annotation) continue;
-        const sem = annotation.semantic || {};
-        const anchor = apply(draw.localToSpace, annotation.position);
-        const dir = [draw.localToSpace[0] * annotation.direction[0] + draw.localToSpace[4] * annotation.direction[1],
-                     draw.localToSpace[1] * annotation.direction[0] + draw.localToSpace[5] * annotation.direction[1]];
-        const height = Number((sem.height && sem.height.value) || (sem.charHeight && sem.charHeight.value) || 2.5);
-        const text = (sem.plainText && sem.plainText.value) ? sem.plainText.value : (annotation.text || '');
-        rec.bbox = { minX: anchor[0], minY: anchor[1], maxX: anchor[0], maxY: anchor[1] };
-        if (annotation.kind !== 'dimension' && text) {
-          const entry = { x: anchor[0], y: anchor[1], text, angle: Math.atan2(dir[1], dir[0]), height: height * matrixScale(draw.localToSpace),
-            halign: Number((sem.halign && sem.halign.value) || 0), valign: Number((sem.valign && sem.valign.value) || 0),
-            attachment: Number((sem.attachmentPoint && sem.attachmentPoint.value) || 1), color: rec.color, kind: annotation.kind, draw, drawId, itemId: draw.itemId };
-          entry.size = entry.height;
-          Object.assign(entry, measureText(entry.text, entry.size));
-          if(ucd.extensions?.['org.libiaolink.dwg/1']){
-            entry.size=cadTextEm(entry.height);entry.lineHeight=cadLineHeight(entry.height,sem.lineSpacing?.value??1);
-            const width=Number(sem.rectangleWidth?.value||0)*matrixScale(draw.localToSpace);
-            ctx.save();ctx.font='100px '+TEXT_FONT;
-            const lines=wrapCadText(entry.text,width,entry.size,text=>ctx.measureText(text).width);ctx.restore();
-            Object.assign(entry,measureText(lines.join('\n'),entry.size));
-            entry.height=entry.size;entry.nativeLayout=true;
-          }
-          const box = textWorldBox(entry, textOffsets(entry));
-          entry.box = box;
-          rec.bbox = box; rec.textBox = box;
+        const layout = layoutAnnotationText(annotation, draw, {
+          measure: measureReference,
+          nativeLayout: !!ucd.extensions?.['org.libiaolink.dwg/1'],
+          color: rec.color
+        });
+        rec.bbox = { minX: layout.anchor[0], minY: layout.anchor[1],
+          maxX: layout.anchor[0], maxY: layout.anchor[1] };
+        if (layout.run) {
+          const entry = {...layout.run, draw, drawId, itemId: draw.itemId};
+          rec.bbox = entry.box; rec.textBox = entry.box;
           rec.textEntry = entry;
           texts.push(entry);
         }
@@ -845,41 +831,12 @@ export function mountDrawingViewer(envelope) {
       rec.path.lineTo(rec.segments[2], rec.segments[3]);
     }
   }
-  const TEXT_FONT = '"Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif';
-  function measureText(text, size) {
-    const lines = String(text).split('\n');
+  function measureReference(text) {
     ctx.save();
     ctx.font = '100px ' + TEXT_FONT;
-    const widths = lines.map(line => ctx.measureText(line).width * (size / 100));
+    const width = ctx.measureText(text).width;
     ctx.restore();
-    return { lines, widths, width: Math.max(0, ...widths), height: size * 1.25 * Math.max(1, lines.length) };
-  }
-  function textOffsets(t) {
-    let dx = 0, dy = 0;
-    if (t.kind === 'mtext') {
-      const a = t.attachment;
-      dx = (a === 2 || a === 5 || a === 8) ? -t.width / 2 : (a === 3 || a === 6 || a === 9) ? -t.width : 0;
-      dy = a <= 3 ? t.size : a <= 6 ? t.size * 0.35 : 0;
-    } else {
-      dx = t.halign === 1 ? -t.width / 2 : t.halign === 2 ? -t.width : 0;
-      dy = t.valign === 3 ? t.size : t.valign === 2 ? t.size * 0.35 : 0;
-    }
-    return { dx, dy };
-  }
-  // World-space text box: text-space (u right, v down in canvas) mapped by the
-  // annotation direction. Used for fit extents, text picking and selection outline.
-  function textWorldCorners(t, offsets) {
-    const cos = Math.cos(t.angle), sin = Math.sin(t.angle);
-    const corners = [[offsets.dx, offsets.dy], [offsets.dx + t.width, offsets.dy],
-      [offsets.dx + t.width, offsets.dy + t.height], [offsets.dx, offsets.dy + t.height]];
-    return corners.map(([u,v])=>[t.x+u*cos+v*sin,t.y+u*sin-v*cos]);
-  }
-  function textWorldBox(t, offsets) {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const [x,y] of textWorldCorners(t,offsets)) {
-      minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
-    }
-    return { minX, minY, maxX, maxY };
+    return width;
   }
   function drawText(t) {
     const size = Math.max(t.nativeLayout ? 0.7 : 5, Math.min(220, t.size * scale));
@@ -1516,6 +1473,7 @@ export function mountDrawingViewer(envelope) {
         return { kind: t.kind, text: String(annotation.text || t.text).slice(0, 32),
                  tag: ((annotation.semantic && annotation.semantic.tag) || {}).value || null,
                  box: t.box, anchor: [t.x, t.y], itemId: t.itemId, drawId:t.drawId,
+                 layout: t.layout, approximations: t.approximations || [],
                  visible:drawVisible({draw:t.draw,layerId:effectiveLayer(t.draw)}) };
       });
     },

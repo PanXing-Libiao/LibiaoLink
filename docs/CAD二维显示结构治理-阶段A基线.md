@@ -29,8 +29,8 @@
 | 图层颜色、线宽、透明度、打印 | 已验证（投影） | 已验证（投影） | 所属空间 + 图层/视口覆盖 | 投影测试覆盖 by-layer/by-block/opacity；打印预览仅普通路径有浏览器证据 |
 | 块/视口/part/图片/wipeout 裁剪 | 已验证 | 已验证 | 块/所属空间、纸面、part 局部 | `drawing-clipping.test.mjs`、`check_retained_clip_slice.mjs`、图片 layout 样本 |
 | 反向/嵌套/孔洞裁剪 | 已验证 | 部分 | 同一裁剪栈 | 普通路径有区域代数测试；保留实例有反向/嵌套单元夹具，未做浏览器差分 |
-| 文字：简单、替换字体 | 已验证 | 已验证 | 注释局部 → 模型 → 屏幕 | SHX presentation 样本普通/实例逐像素 0 差异；DWG 为替代字体 |
-| 竖排、镜像、堆叠、MTEXT 分栏 | 部分 | 未验证 | 适配器排版 + part 局部 | Python 适配器测试存在；保留实例没有同场景契约测试 |
+| 文字：简单、替换字体 | 已验证 | 已验证 | 注释局部 → 模型 → 屏幕 | `drawing-text.test.mjs`、`check_retained_text_slice.mjs`；SHX presentation 与原始文字样本普通/实例画布逐像素 0 差异 |
+| 文字：竖排、镜像、堆叠、MTEXT 分栏 | 部分 | 部分 | 适配器排版 + part 局部 | 竖排/分栏由适配器生成 presentation parts；原始文字回退明确标 `substituted-font`/`canvas-text-layout`；保留实例没有同场景浏览器差分 |
 | 实心/渐变/图案 hatch | 已验证 | 部分 | 实体局部 / fill rings | `semantics-fixture`、`gradient-only`、真实图 A–D；复杂图案相位未验证 |
 | 复杂线型/相位 | 部分 | 未验证 | 样式编译 + 描边 | 适配器有编译与 presentation 测试；保留实例只消费已展开 part，没有相位差分 |
 | 图片/PDF/DWF/DGN/OLE | 部分 | 部分 | 实体局部 + 裁剪 | 图片 model/layout 普通/实例样本通过；PDF/DWF/DGN 只有普通路径测试，保留实例未验证 |
@@ -52,6 +52,7 @@
 | 显示派生（glyph parts、fill rings、media buffer） | 源适配 | `annotation-presentation/1`、`fill/1`、`dxf-media/1`、representation | 查看器 | 派生身份/版本契约待定 |
 | 执行计划（组、实例矩阵、保留几何、裁剪） | `drawing-instances.js` | 运行时 `groups/roots/draws` | `drawInstances`、拾取、统计 | 是否需要持久化待定 |
 | 屏幕记录（records、textEntry、fillPath、clipRegion） | 查看器 `rebuild` | 运行时 | `draw`、命中、适应视图 | 是否把文字测量上移待定 |
+| 原始文字回退（测量、行框、对齐、包围盒） | `drawing-text.js` | 运行时 run + `approximations` | `rebuild`、`drawText`、`drawInstances`、`texts()` | 竖排/分栏仍由适配器 presentation parts 负责 |
 | 诊断与损失 | 源适配 + 查看器 | coverage/loss、`plotErrors`、控制台告警 | UI、测试 | 统一诊断契约待定 |
 
 ## 4. 空间与矩阵契约
@@ -83,7 +84,9 @@
 5. GPU 原型不在仓库、不参与契约；若未来接入，必须消费同一执行计划，不能另定义语义。
 6. **版本耦合（部署前必须决策）**：`build-release.py` 把 `engineFiles`、`runtimeFiles` 和 `browserFiles` 一起算入 `releaseDigest`/`engineVersion`。本次二维引擎与浏览器改动已重新生成 `source.json`，`engineVersion` 因此变化；按当前缓存键，部署会使 STEP 已完成产物按新版本重建。需要拆分引擎/浏览器/格式版本，或明确接受一次 STEP 重建；在此之前不部署。
 
-## 7. 阶段 B 裁剪纵向切片
+## 7. 阶段 B 裁剪纵向切片与阶段 C 文本切片
+
+### 裁剪切片
 
 产物：`server/cad-engine/core/tests/check_retained_clip_slice.mjs`。
 
@@ -101,20 +104,32 @@ PASS: retained clipping slice keeps identity, order, transform and visible membe
 PASS: projection parity and 799,999 instance draws retain three unique source leaves.
 ```
 
+### 文本切片
+
+产物：`frontend/public/cad-viewer/core/drawing-text.js`、`drawing-text.test.mjs`、`check_retained_text_slice.mjs`。
+
+- 文字提取、高度/方向、对齐/附着点、1.25 行框、DWG `cadTextEm`/`cadLineHeight`/`rectangleWidth` 换行、世界包围盒和诊断统一由 `drawing-text.js` 负责；普通与保留实例共用同一个 `layoutAnnotationText`。
+- 原始文字明确输出 `approximations: ['substituted-font', 'canvas-text-layout' | 'cad-em-layout']` 和 `layout`；缺少字体测量回调直接报 `text-measure-required`，不回退为零宽。
+- `check_retained_text_slice.mjs` 用块阵列中的原始注释验证：普通投影 2 个绘制项、保留实例 1 个唯一源绘制项，两条路径的锚点、角度、字号、宽度、行框和包围盒在 `1e-9` 内一致。
+- 视觉回归：文本样本与图片样本的普通/实例画布与迁移前逐像素 `0` 差异。
+- 竖排/镜像/堆叠/MTEXT 分栏仍由适配器生成 presentation parts；本次没有把这些排版算法上移，状态保持“部分”。
+
 ## 8. 验证记录
 
 | 检查 | 结果 |
 | --- | --- |
 | `node tests/check_drawing_instances.mjs` | PASS（普通/保留投影一致；799,999 项保留 3 个源叶） |
 | `node tests/check_retained_clip_slice.mjs` | PASS（裁剪、顺序、变换、身份、可见性） |
+| `node tests/check_retained_text_slice.mjs` | PASS（文字锚点、角度、字号、行框、包围盒） |
 | `node --test tests/drawing-instances.test.mjs` | 7/7 |
+| `node --test tests/drawing-text.test.mjs` | 6/6 |
 | `node --test tests/drawing-clipping.test.mjs tests/drawing-display.test.mjs` | 11/11（既有） |
-| 浏览器样本（仓库外，仅参考） | SHX 文本逐像素 0 差异；wipeout/渐变 0.024%；布局图片 0.17%（仅文字抗锯齿）；真实图 fit 0.25% |
+| 浏览器样本（仓库外，仅参考） | 文本/图片样本普通/实例与迁移前逐像素 0 差异；SHX 文本先前 0 差异；布局图片 0.17%（仅文字抗锯齿）；真实图 fit 0.25% |
 | `npm run typecheck` / `npm run build` | 通过（2026-10-28，本次治理提交前） |
 
 浏览器样本不是 CI 契约测试；矩阵中未列为“已验证”的组合仍按“部分/未验证”处理。
 
 ## 9. 后续阶段
 
-- C：按文本 → 裁剪 → 图案 → 媒体/布局迁移，逐项补契约测试与矩阵状态；优先处理保留实例下未验证的文字竖排、复杂线型相位、打印样式。
+- C 已开始：文本原始回退已收口到 `drawing-text.js`，裁剪切片已完成。下一步按顺序迁移图案，再覆盖媒体/布局；竖排/镜像/堆叠/MTEXT 分栏的排版仍在适配器，需要单独证据后才能标为双路径已验证。
 - D：移除被替代分支、更新独立工程能力矩阵与 `source.json` 指纹、同步 `前端功能需求.md`/字段文档，并按仓库规则部署。
