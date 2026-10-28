@@ -4,8 +4,8 @@
  *   驱动 server/dist 的群通道链路（NotifyGroupService + WecomAibotClient 端子 + OutboxDispatcher），覆盖：
  *   ① 载荷解析 / markdown 组装 / 字节截断 / 掩码（纯函数）；
  *   ② 消费三分类 —— ok → done + sent 行 / rate_limited → deferred（attempts 不消耗）/ retryable → retry +
- *      failed 行 / permanent（846607 未激活）→ dead + dead 行 + C5-04 降级（项目经理站内信 · :c504）；
- *      未绑定 / 停用同走降级；非法载荷的确定性收敛；
+ *      failed 行 / permanent（846607 发送失败）→ dead + dead 行 + C5-04 降级（项目经理站内信 · :c504）；
+ *      未绑定 / 已绑定未激活同走降级并触发专用告警，停用保持 dead + 降级；非法载荷的确定性收敛；
  *   ③ 回调 ingest（群会话激活置位 / 幂等 / 非群聊忽略）；
  *   ④ dispatcher deferred 收敛（attempts 原值回写 = 不消耗重试预算）。
  *
@@ -61,7 +61,7 @@ function groupRow(overrides = {}) {
     chatid: CHATID,
     name: null,
     enabled: true,
-    activatedAt: null,
+    activatedAt: AT,
     createdAt: AT,
     updatedAt: AT,
     ...overrides,
@@ -122,6 +122,7 @@ async function main() {
       deliveries: [],
       activateCalls: [],
       managers: new Map([[PROJECT_ID, "u-manager"]]),
+      projectNames: new Map([[PROJECT_ID, "总装输送线项目"]]),
       async findGroupByProject(projectId) {
         return this.groups.find((row) => row.projectId === projectId) ?? null;
       },
@@ -137,6 +138,9 @@ async function main() {
       },
       async findProjectManagerId(projectId) {
         return this.managers.get(projectId) ?? null;
+      },
+      async findProjectName(projectId) {
+        return this.projectNames.get(projectId) ?? null;
       },
       async insertDelivery(input) {
         this.deliveries.push(input);
@@ -163,21 +167,33 @@ async function main() {
     };
     const archive = createReplayNotifyDeliveryArchive(repo);
     const config = { env: { WECOM_R06_IMAGE_PATH: "", WECOM_R06_ON_TIME_IMAGE_PATH: "" } };
+    const deliveryAlerts = {
+      unavailable: [],
+      available: [],
+      reportUnavailable(projectId, projectName, reason) {
+        this.unavailable.push({ projectId, projectName, reason });
+      },
+      reportAvailable(projectId) {
+        this.available.push(projectId);
+      },
+    };
     return {
-      service: new group.NotifyGroupService(repo, archive, aibot, inbox, clock, config),
+      service: new group.NotifyGroupService(repo, archive, aibot, inbox, clock, config, {}, deliveryAlerts),
       repo,
       archive,
       aibot,
       inbox,
+      deliveryAlerts,
     };
   };
 
   {
-    const { service, repo, aibot } = makeService({ ok: true, attempts: 1 });
+    const { service, repo, aibot, deliveryAlerts } = makeService({ ok: true, attempts: 1 });
     const outcome = await service.consume(claimedRow(payload({ title: null })));
     assertEqual("G9 消费 ok：done", outcome.outcome, "done");
     assertEqual("G10 消费 ok：sent 行（error null / sentAt 非空）", repo.deliveries[0].state + ":" + String(repo.deliveries[0].error) + ":" + String(repo.deliveries[0].sentAt !== null), "sent:null:true");
     assertEqual("G11 消费 ok：无标题内容逐字 = 正文", aibot.sends[0].content, payload({ title: null }).body);
+    assertTrue("G11b 可投递：上报恢复（供日报消费）", deliveryAlerts.available.length === 1 && deliveryAlerts.available[0] === PROJECT_ID);
   }
 
   {
@@ -197,7 +213,7 @@ async function main() {
   {
     const { service, repo, inbox } = makeService({ ok: false, kind: "permanent", errcode: 846607, errmsg: "send msg not allowed", retryAt: null, attempts: 1, state: "subscribed" });
     const outcome = await service.consume(claimedRow(payload({ templateCode: "R03_GROUP" })));
-    assertTrue("G15 permanent（846607 未激活）：dead + dead 行（含 errcode 描述）", outcome.outcome === "dead" && outcome.error.includes("846607") && repo.deliveries[0].state === "dead");
+    assertTrue("G15 permanent（846607 发送失败）：dead + dead 行（含 errcode 描述）", outcome.outcome === "dead" && outcome.error.includes("846607") && repo.deliveries[0].state === "dead");
     assertTrue(
       "G15b permanent 降级（B4）：项目经理站内信（:c504 键 + 前缀 + R03 非播报 → reminder）",
       inbox.copies.length === 1 &&
@@ -216,11 +232,21 @@ async function main() {
   }
 
   {
-    const { service, repo, aibot, inbox } = makeService({ ok: true, attempts: 1 });
+    const { service, repo, aibot, inbox, deliveryAlerts } = makeService({ ok: true, attempts: 1 });
     repo.groups = [];
     const outcome = await service.consume(claimedRow(payload()));
     assertTrue("G16 未绑定：dead 且不写投递行、不发送（差异登记②）", outcome.outcome === "dead" && repo.deliveries.length === 0 && aibot.sends.length === 0);
     assertTrue("G16b 未绑定同样走 B4 降级：项目经理站内信（:c504）", inbox.copies.length === 1 && inbox.copies[0].dedupeKey === "R03:t-1:2026-09-24:c504");
+    assertTrue("G16b2 未绑定：deadAlert=digest + 专用告警 unbound", outcome.deadAlert === "digest" && deliveryAlerts.unavailable.length === 1 && deliveryAlerts.unavailable[0].reason === "unbound");
+  }
+
+  {
+    const { service, repo, aibot, inbox, deliveryAlerts } = makeService({ ok: true, attempts: 1 });
+    repo.groups = [groupRow({ activatedAt: null })];
+    const outcome = await service.consume(claimedRow(payload()));
+    assertTrue("G16e 已绑定未激活：dead + dead 行、不发送", outcome.outcome === "dead" && repo.deliveries[0].state === "dead" && aibot.sends.length === 0);
+    assertTrue("G16e2 已绑定未激活：deadAlert=digest + 专用告警 not_activated", outcome.deadAlert === "digest" && deliveryAlerts.unavailable.length === 1 && deliveryAlerts.unavailable[0].reason === "not_activated");
+    assertTrue("G16e3 已绑定未激活：B4 降级项目经理站内信", inbox.copies.length === 1 && inbox.copies[0].dedupeKey === "R03:t-1:2026-09-24:c504");
   }
 
   {
@@ -238,11 +264,11 @@ async function main() {
   }
 
   {
-    const { service, repo, aibot, inbox } = makeService({ ok: true, attempts: 1 });
+    const { service, repo, aibot, inbox, deliveryAlerts } = makeService({ ok: true, attempts: 1 });
     repo.groups = [groupRow({ enabled: false })];
     const outcome = await service.consume(claimedRow(payload()));
     assertTrue("G17 绑定停用：dead + dead 行（target=chatid）、不发送", outcome.outcome === "dead" && repo.deliveries[0].state === "dead" && repo.deliveries[0].target === CHATID && aibot.sends.length === 0);
-    assertTrue("G17b 绑定停用同样走 B4 降级", inbox.copies.length === 1);
+    assertTrue("G17b 绑定停用同样走 B4 降级，且不进入专用告警", inbox.copies.length === 1 && deliveryAlerts.unavailable.length === 0 && deliveryAlerts.available.length === 0);
   }
 
   {
@@ -254,6 +280,7 @@ async function main() {
   // ---- 回调 ingest ----
   {
     const { service, repo } = makeService({ ok: true, attempts: 1 });
+    repo.groups = [groupRow({ activatedAt: null })];
     await service.activateFromCallback({ cmd: "aibot_msg_callback", reqId: null, chatid: CHATID, chattype: "group", fromUserId: "u1", msgid: "m1" });
     assertEqual("G19 回调 ingest：未激活 → 置位", String(repo.groups[0].activatedAt !== null), "true");
     await service.activateFromCallback({ cmd: "aibot_msg_callback", reqId: null, chatid: CHATID, chattype: "group", fromUserId: "u1", msgid: "m2" });
