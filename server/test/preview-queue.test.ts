@@ -9,7 +9,7 @@ import { inspectPreviewPng, sha256Hex } from "../src/modules/file/preview.integr
 import { buildPreviewJobPayload, parsePreviewJob, previewJobDedupeKey } from "../src/modules/file/preview.job.js";
 import type { PreviewArtifactKey, PreviewArtifactRow, PreviewRepository } from "../src/modules/file/preview.repository.js";
 import { PreviewService } from "../src/modules/file/preview.service.js";
-import { isRasterImageFile, isSvgFile, previewTargetsFor, viewerChannelFor } from "../src/modules/file/preview.targets.js";
+import { isPdfFile, isRasterImageFile, isSvgFile, previewTargetsFor, viewerChannelFor } from "../src/modules/file/preview.targets.js";
 import { StorageError, type GetObjectResult, type PutObjectInput } from "../src/storage/index.js";
 import type { ObjectStorage } from "../src/storage/index.js";
 
@@ -366,7 +366,7 @@ describe("previewTargetsFor / 类型判定 / preview.job（投递侧映射）", 
     expect(isSvgFile({ fileName: "无扩展名", mime: "image/svg+xml" })).toBe(true);
   });
 
-  it("查看器通道映射（S3；PDF 2026-10-08 并入）：Office / 文本族 / PDF → documentType + fileType（扩展名优先、MIME 兜底）", () => {
+  it("查看器通道映射（S3）：Office / 文本族 → documentType + fileType；PDF 走本地直签，不进 DocServer", () => {
     expect(viewerChannelFor({ fileName: "方案.docx", mime: null })).toEqual({ documentType: "word", fileType: "docx" });
     expect(viewerChannelFor({ fileName: "报表.xlsm", mime: null })).toEqual({ documentType: "cell", fileType: "xlsm" });
     expect(viewerChannelFor({ fileName: "说明.txt", mime: null })).toEqual({ documentType: "word", fileType: "txt" });
@@ -380,9 +380,12 @@ describe("previewTargetsFor / 类型判定 / preview.job（投递侧映射）", 
     expect(viewerChannelFor({ fileName: "恶意.html", mime: "text/html" })).toBeNull();
     expect(viewerChannelFor({ fileName: "冲突.docx", mime: "text/html" })).toBeNull();
     expect(viewerChannelFor({ fileName: "冲突.txt", mime: "image/png" })).toBeNull();
-    // PDF（2026-10-08 业务口径「统一用onlyoffice」）：并入查看器通道（documentType = pdf）
-    expect(viewerChannelFor({ fileName: "机械设计图纸.pdf", mime: null })).toEqual({ documentType: "pdf", fileType: "pdf" });
-    expect(viewerChannelFor({ fileName: "无扩展名", mime: "application/pdf" })).toEqual({ documentType: "pdf", fileType: "pdf" });
+    expect(viewerChannelFor({ fileName: "机械设计图纸.pdf", mime: null })).toBeNull();
+    expect(viewerChannelFor({ fileName: "无扩展名", mime: "application/pdf" })).toBeNull();
+    expect(isPdfFile({ fileName: "机械设计图纸.pdf", mime: null })).toBe(true);
+    expect(isPdfFile({ fileName: "机械设计图纸.PDF", mime: "application/pdf" })).toBe(true);
+    expect(isPdfFile({ fileName: "无扩展名", mime: "application/pdf" })).toBe(true);
+    expect(isPdfFile({ fileName: "冲突.pdf", mime: "text/html" })).toBe(false);
     expect(viewerChannelFor({ fileName: "交付包.zip", mime: null })).toBeNull();
   });
 

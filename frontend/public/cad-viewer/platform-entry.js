@@ -249,6 +249,7 @@ loadPlatformModel(async({signal,progress})=>{
   ui.update(2,'正在准备模型视图');
   progress('正在读取已校验模型…');
   let packet=await requestJson(jobBase+"/manifest",{signal:active});
+  packet=unpackMetadata(packet);
   if(packet.presentation?.sourceSHA256!==currentJob.sourceSHA256||packet.snapshot?.completeness!=='complete')throw new Error('模型来源或完整性检查未通过');
   const lease=packet.resourceLease;
   const fetcher=async(url,options={})=>{

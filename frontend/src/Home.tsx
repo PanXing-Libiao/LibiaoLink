@@ -140,8 +140,9 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   // 选中文件即打开；关闭 / 导入完成清空。同一文件重复选也要能重开（onChange 里把 value 复位）。
   const [importFile, setImportFile] = useState<File | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
-  // 导入说明浮层（Push 329 · 2026-10-15）：点击「导入说明」= 系统内浮层预览（复用文件预览浮层 · iframe 浏览器内置 PDF 渲染 · Esc / 点遮罩关闭），不开新标签页。
+  // 导入说明浮层（Push 329 · 2026-10-15；2026-10-28 PDF.js 修订）：点击「导入说明」= 系统内浮层预览（复用文件预览浮层 · PDF.js 本地分页 · Esc / 点遮罩关闭），不开新标签页。
   const [guideOpen, setGuideOpen] = useState(false);
+  const [guideNonce, setGuideNonce] = useState(0);
   const onImportFileChange = (event: ChangeEvent<HTMLInputElement>): void => {
     const picked = event.target.files?.[0] ?? null;
     event.target.value = "";
@@ -587,7 +588,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
           </span>
           <div data-project-actions="" className="ml-auto flex w-full flex-col items-start gap-3 sm:w-auto sm:flex-row sm:items-center">
             {/* 导入项目（Push 316 待推）：新建项目左侧 —— 点开原生文件选择（.xlsx / .xlsm），选完在页内大屏面板里解析 / 校验 / 导入 */}
-            {/* 导入说明（Push 328 追订 · 2026-10-15）：不常显 —— 悬停 / 键盘聚焦「导入项目」时按钮下方浮出入口（业务口径「鼠标触碰导入项目再上下显示」）；点击「导入说明」= 系统内浮层预览（Push 329 起：复用文件预览浮层 · iframe 浏览器内置 PDF 渲染 · Esc / 点遮罩关闭 · 浮层内可下载原文件），静态件随构建发布（public/docs/import-guide.pdf） */}
+            {/* 导入说明（Push 328 追订 · 2026-10-15）：不常显 —— 悬停 / 键盘聚焦「导入项目」时按钮下方浮出入口（业务口径「鼠标触碰导入项目再上下显示」）；点击「导入说明」= 系统内浮层预览（Push 329 起复用文件预览浮层；2026-10-28 起由 PDF.js 本地分页，不再依赖浏览器 iframe · Esc / 点遮罩关闭 · 浮层内可下载原文件），静态件随构建发布（public/docs/import-guide.pdf） */}
             <div className="group relative">
             <button
               type="button"
@@ -646,8 +647,8 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                 pane={{ mode: "url", url: import.meta.env.BASE_URL + "docs/import-guide.pdf" }}
                 name={t("home.importGuide")}
                 kind="pdf"
-                nonce={0}
-                onRetry={() => {}}
+                nonce={guideNonce}
+                onRetry={() => setGuideNonce((value) => value + 1)}
                 onDownload={() => {
                   const link = document.createElement("a");
                   link.href = import.meta.env.BASE_URL + "docs/import-guide.pdf";

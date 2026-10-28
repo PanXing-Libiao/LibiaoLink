@@ -775,24 +775,36 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
     expect(h.storage.signed).toHaveLength(0);
   });
 
-  it("PDF 并入查看器通道（2026-10-08 业务口径「统一用onlyoffice」）：ready + viewer（documentType / fileType = pdf）、不查产物 / 不投递 / 写 preview 审计", async () => {
+  it("PDF 直签原件：ready + target=pdf + PDF.js 本地渲染，不创建 ONLYOFFICE 会话；写 preview 审计", async () => {
     const h = makeService();
-    // 默认 fixture 为 png（产物通道用例）；这里显式改回 PDF，锁定「PDF 不再走源直通产物」的新口径。
     h.repo.file = makeFileRow({ name: "机械设计图纸.pdf" });
     h.repo.versions.set(VERSION, makeVersionRow({ mime: "application/pdf", objectKey: sourceKeyOf("pdf") }));
 
     const result = await h.service.getPreview(FILE, null, ACTOR, true);
 
-    expect(result).toMatchObject({
+    expect(result).toEqual({
+      fileId: FILE,
+      versionId: VERSION,
       status: "ready",
-      target: null,
-      url: null,
-      viewer: { kind: "onlyoffice", documentType: "pdf", document: { title: "机械设计图纸.pdf", fileType: "pdf" } },
+      target: "pdf",
+      viewer: null,
+      url: "https://minio.local/" + sourceKeyOf("pdf") + "?sig=1",
+      expiresAt: "2026-09-23T08:05:00.000Z",
+      pipelineVersion: null,
+      reason: null,
+      generatedAt: null,
     });
     expect(h.previews.queries).toHaveLength(0);
     expect(h.previews.ensured).toHaveLength(0);
     expect(h.database.outbox).toHaveLength(0);
-    expect(h.storage.signed).toHaveLength(0);
+    expect(h.storage.signed).toEqual([
+      {
+        objectKey: sourceKeyOf("pdf"),
+        expiresInSeconds: 300,
+        responseContentType: "application/pdf",
+        responseContentDisposition: contentDisposition("机械设计图纸.pdf", "inline"),
+      },
+    ]);
     expect(h.audit.entries).toEqual([
       {
         actorId: ACTOR,
@@ -800,8 +812,8 @@ describe("PreviewReadService.getPreview（S3 · ONLYOFFICE 查看器通道）", 
         objectType: "file",
         objectId: FILE,
         projectId: PROJECT,
-        summary: "预览文件：机械设计图纸.pdf（版本 v1 · ONLYOFFICE 查看器）",
-        metadata: { versionId: VERSION, viewerKind: "onlyoffice", documentType: "pdf" },
+        summary: "预览文件：机械设计图纸.pdf（版本 v1 · PDF 直签）",
+        metadata: { versionId: VERSION, target: "pdf", direct: true },
       },
     ]);
   });
