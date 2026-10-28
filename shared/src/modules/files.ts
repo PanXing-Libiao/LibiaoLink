@@ -473,4 +473,11 @@ export const FileListQuerySchema = z
   })
   .openapi("FileListQuery");
 
-export const FileListResponseSchema = paginated(FileSchema).openapi("FileListResponse");
+export const FileLibraryItemSchema = FileSchema.extend({
+  createdByName: z.string().nullable().openapi({
+    description:
+      "上传人姓名（users.display_name）；停用 / 离职历史账号仍返回姓名；用户行不存在时为空，前端回退用户 id",
+  }),
+}).openapi("FileLibraryItem");
+
+export const FileListResponseSchema = paginated(FileLibraryItemSchema).openapi("FileListResponse");

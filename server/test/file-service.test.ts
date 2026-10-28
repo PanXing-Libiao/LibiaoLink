@@ -477,7 +477,7 @@ class FakeFileRepository {
   /** complete 幂等写入的关联（project 必写；node / task 有则写）。 */
   insertedLinks: FileLinkInsertInput[] = [];
   /** 文件库列表返回（SQL 条件与排序由真机回放覆盖，替身只验证解析与映射）。 */
-  libraryItems: FileRow[] = [];
+  libraryItems: { file: FileRow; createdByName: string | null }[] = [];
   libraryTotal = 0;
   libraryQueries: { projectId: string; filter: FileListFilter; sorts: FileListSort[]; limit: number; offset: number }[] = [];
 
@@ -497,7 +497,7 @@ class FakeFileRepository {
     sorts: FileListSort[],
     limit: number,
     offset: number,
-  ): Promise<{ items: FileRow[]; total: number }> {
+  ): Promise<{ items: { file: FileRow; createdByName: string | null }[]; total: number }> {
     this.libraryQueries.push({ projectId, filter, sorts, limit, offset });
     return { items: this.libraryItems.slice(offset, offset + limit), total: this.libraryTotal };
   }
@@ -2222,7 +2222,7 @@ describe("FileService.finalizeFile（定档锁版）", () => {
 describe("FileService.listProjectFiles（M4-03 文件库查询）", () => {
   it("筛选解析下推：多值状态 / 类型 + UUID + 关键字 trim + 分页 offset + 排序", async () => {
     const h = makeService();
-    h.repo.libraryItems = [makeFileRow()];
+    h.repo.libraryItems = [{ file: makeFileRow(), createdByName: "历史上传人" }];
     h.repo.libraryTotal = 7;
 
     const result = await h.service.listProjectFiles(PROJECT, {
@@ -2250,7 +2250,13 @@ describe("FileService.listProjectFiles（M4-03 文件库查询）", () => {
     expect(query.limit).toBe(50);
     expect(query.offset).toBe(0);
     expect(result).toMatchObject({ page: 1, limit: 50, total: 7 });
-    expect(result.items[0]).toMatchObject({ id: FILE, projectId: PROJECT, status: "draft", name: "机械设计图纸.pdf" });
+    expect(result.items[0]).toMatchObject({
+      id: FILE,
+      projectId: PROJECT,
+      status: "draft",
+      name: "机械设计图纸.pdf",
+      createdByName: "历史上传人",
+    });
     expect(result.items[0]!.createdAt).toBe(NOW.toISOString());
 
     // 分页 offset 下推（page 3 / limit 10 → offset = 20）
@@ -2294,6 +2300,18 @@ describe("FileService.listProjectFiles（M4-03 文件库查询）", () => {
       httpStatus: 400,
     });
     expect(h.repo.libraryQueries).toHaveLength(0);
+  });
+
+  it("列表项携带创建者姓名；用户行缺失时保留 null 供前端回退", async () => {
+    const h = makeService();
+    h.repo.libraryItems = [
+      { file: makeFileRow(), createdByName: "停用但仍有文件" },
+      { file: makeFileRow({ id: "77777777-7777-4777-8777-777777777777" }), createdByName: null },
+    ];
+
+    const result = await h.service.listProjectFiles(PROJECT, { page: 1, limit: 50 });
+
+    expect(result.items.map((item) => item.createdByName)).toEqual(["停用但仍有文件", null]);
   });
 });
 

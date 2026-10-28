@@ -3983,13 +3983,36 @@
         ],
         "description": "定档（锁版）：至少存在 1 个版本；定档后不可覆盖或替换；**挂接任务的文件定档时，同事务把该任务一并定档**（Push 249：任务定档后不支持任何修改，见 Task.finalizedAt / 409 TASK_FINALIZED）"
       },
+      "FileLibraryItem": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/File"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "createdByName": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "上传人姓名（users.display_name）；停用 / 离职历史账号仍返回姓名；用户行不存在时为空，前端回退用户 id"
+              }
+            },
+            "required": [
+              "createdByName"
+            ]
+          }
+        ],
+        "description": "文件（v0.2 §5.2；定档后不可覆盖，修改必须走变更）"
+      },
       "FileListResponse": {
         "type": "object",
         "properties": {
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/File"
+              "$ref": "#/components/schemas/FileLibraryItem"
             }
           },
           "page": {
@@ -16909,7 +16932,7 @@
         "tags": [
           "files"
         ],
-        "summary": "项目文件库列表（按类型 / 节点 / 任务 / 状态 / 上传人筛选）",
+        "summary": "项目文件库列表（按类型 / 节点 / 任务 / 状态 / 上传人筛选；行随附上传人姓名）",
         "parameters": [
           {
             "schema": {

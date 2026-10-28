@@ -765,6 +765,8 @@ export type FileLibraryItem = {
   status: string;
   version: number;
   createdBy: string;
+  /** 上传人姓名（服务端按 users.display_name 返回；停用 / 离职历史账号仍可取值，用户行缺失时为空）。 */
+  createdByName: string | null;
   createdAt: string;
   updatedAt: string;
   finalizedAt: string | null;

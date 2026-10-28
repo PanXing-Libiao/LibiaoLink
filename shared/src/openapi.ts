@@ -1113,7 +1113,7 @@ export function buildOpenApiDocument() {
     method: "get",
     path: "/api/v1/projects/{id}/files",
     tags: ["files"],
-    summary: "项目文件库列表（按类型 / 节点 / 任务 / 状态 / 上传人筛选）",
+    summary: "项目文件库列表（按类型 / 节点 / 任务 / 状态 / 上传人筛选；行随附上传人姓名）",
     request: { params: idParams, query: FileListQuerySchema },
     responses: {
       200: { description: "文件列表", ...json(FileListResponseSchema) },

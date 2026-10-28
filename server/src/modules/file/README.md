@@ -74,11 +74,12 @@ index.ts             # 唯一公开出口（跨模块只允许 import 本文件�
 | `POST /api/v1/files/{id}/recycle` | 移入回收站（任意状态可删；保留 30 天可恢复） | 200 | `file.upload` |
 | `POST /api/v1/files/{id}/restore` | 恢复（回到进入前状态） | 200 | `file.upload` |
 | `POST /api/v1/files/{id}/purge` | 彻底删除（仅管理员；仅回收站文件；对象 + 元数据一并清） | 200 / 403 | 部门权限管理员（`groupAccessAdmin`） |
-| `GET /api/v1/projects/{id}/files` | 文件库列表（筛选 / 关键字 / 白名单排序 / 分页；默认排除 recycled） | 200 | 项目可见即可 |
+| `GET /api/v1/projects/{id}/files` | 文件库列表（筛选 / 关键字 / 白名单排序 / 分页；默认排除 recycled；行随附 `createdByName`） | 200 | 项目可见即可 |
 | `GET /api/v1/projects/{id}/change-requests` | 变更记录列表（阶段 / 节点 / 变更文件 / 申请人筛选 + 关键字 + 白名单排序 + 分页） | 200 | 项目可见即可 |
 | `GET /api/v1/change-requests/{id}` | 变更详情（变更记录 + 变更后文件 + 变更后版本） | 200 | 项目可见即可（服务层判定，非成员 404） |
 
 - 实现口径（键形态 / 校验顺序 / 错误码 / 过期语义 / worker 清理）见 `server/README.md`「文件上传接口」与 `src/storage/README.md`；真机回放见 `docs/m4-01-回放证据(上传管道S7file).md`（变更回放见 `docs/m4-04-回放证据(变更申请即通过).md`）。
+- **文件库上传人姓名（2026-10-28）**：列表查询以 `files.created_by = users.id` 左连接 `users`，行内返回 `createdByName = users.display_name`。该链接**不按 `users.status` / `removed_at` 过滤**：停用或软删除账号只要仍有文件，仍返回姓名；用户行缺失时为空，由前端回退用户 id。`filter[uploadedBy]`、`total` 与分页口径不变，无 DDL / 迁移。
 - 审计：`object_type = "file"`（objectId = fileId），上传会话事件经 `metadata.uploadId` 定位；过期清理为 system 审计（actorId = null）。
 - **上传入口 `fileId` 分派（Push 130 定案 · wmj）**：`intent=version` 省略 `fileId` = 新建文件；**给出 = 对既有 draft 文件替换 / 追加版本（M4-02 已放开）**——目标 404（不存在 / 不可见）/ 与 `projectId` 不一致 400（`invalid_file`）/ `name` 与归属字段与现状不一致 400（`name_mismatch` / `doc_type_mismatch` / `node_mismatch` / `task_mismatch`）/ 非 draft 409 `FILE_STATE_INVALID`；`duplicateHint` 恒空。`intent=change`（M4-04 已放开）：目标须 final / changed，非该状态 409 `FILE_STATE_INVALID`、会话期间状态变化同样在 complete 时 409；变更载荷落 `upload_sessions.change_payload`，完成时同事务生效（错误码沿用 V0.3 既有，切片守卫已删除）。**Push 256 起（替换语义）**：`intent=change` 的 `name` 与目标文件不一致不再 400（`name_mismatch` 对 change 意图撤销）—— 变更后文件名照收，完成时把 `files.name` 更名为该名（见下「M4-04 变更口径」）。
 - **附件域秒传复用（2026-10-12 · 修「同一张图在文件库多条」）**：`intent=version` 省略 `fileId`、未给 `taskId` / `nodeId` / `docType`（纯附图）且带 `contentHash` 时，先查 `findAttachmentDuplicateByHash`（同项目、非回收站、**无任务 / 节点 / 类型归属**、**已完成版本**同哈希）—— 命中即不建文件 / 会话，直接返回既有 `file`（`reused=true`、`upload=null`、`duplicateHint` 指向既有文件）；同一内容多处引用由 `file_links` 承担。任务成果上传（带归属）不参与复用（文件按 `files.task_id` 单归属），照旧每次新建 + `duplicateHint`（A4-04 提示口径保留）。
