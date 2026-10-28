@@ -12,6 +12,7 @@ import type { FacetOption } from "./components/CategoryFilterSidebar";
 import { CategorySwitch } from "./components/CategorySwitch";
 import type { DateRange } from "./components/DateRangePicker";
 import { FilePreviewOverlay } from "./components/FilePreviewOverlay";
+import { isMobileFilePreviewDevice } from "./mobilePreviewPolicy";
 import { ImportProjectPanel } from "./components/ImportProjectPanel";
 import { ProjectModal, type ProjectDraft } from "./components/ProjectModal";
 import { SearchInput } from "./components/SearchInput";
@@ -620,6 +621,15 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                   type="button"
                   data-import-guide=""
                   onClick={() => {
+                    if (isMobileFilePreviewDevice()) {
+                      const link = document.createElement("a");
+                      link.href = import.meta.env.BASE_URL + "docs/import-guide.pdf";
+                      link.download = "LibiaoLink导入表导入规则说明.pdf";
+                      document.body.appendChild(link);
+                      link.click();
+                      link.remove();
+                      return;
+                    }
                     setGuideOpen(true);
                   }}
                   className="relative flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-600 shadow-lg transition hover:bg-zinc-50 hover:text-zinc-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50"

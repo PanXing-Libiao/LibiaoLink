@@ -1,16 +1,11 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { OnlyOfficePreviewViewerConfig } from "../fileApi";
 import { getLocale, textOf, useT } from "../i18n";
+import { isMobileFilePreviewDevice } from "../mobilePreviewPolicy";
 
-/** 移动端/窄屏使用 ONLYOFFICE mobile 编辑器：desktop 模板会动态加载数百个模块，部分手机浏览器在 require 阶段停住。 */
+/** 移动端/窄屏使用 ONLYOFFICE mobile 编辑器：与文件预览设备口径共用，桌面窄窗口仍按桌面处理。 */
 export function isMobileOnlyOfficeEditor(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  const userAgent = navigator.userAgent;
-  return /Android|iPhone|iPad|iPod|HarmonyOS|OpenHarmony/i.test(userAgent) ||
-    (navigator.maxTouchPoints > 1 && /Macintosh/i.test(userAgent)) ||
-    window.matchMedia("(max-width: 767px)").matches;
+  return isMobileFilePreviewDevice();
 }
 
 /** 查看器就绪超时（S4 · R5 / 2026-10-28 移动端修订）：api.js、DocServer 移动 UI 与文档会话全部就绪后 onDocumentReady。

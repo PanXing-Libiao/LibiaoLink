@@ -30,7 +30,7 @@ export function CadModelViewer({ viewer, name, onClose, onDownload, onRetry }: {
   useEffect(() => { startedAt.current = performance.now(); setReadyMs(null); setFrameLoaded(false); setFrameTimedOut(false); }, [viewId]);
   useEffect(() => {
     if (frameLoaded) return;
-    const timer = window.setTimeout(() => setFrameTimedOut(true), 15000);
+    const timer = window.setTimeout(() => setFrameTimedOut(true), 30000);
     return () => window.clearTimeout(timer);
   }, [frameLoaded, viewId]);
   const sendContext = () => frame.current?.contentWindow?.postMessage({ type: "cad-context", name }, window.location.origin);
@@ -55,6 +55,7 @@ export function CadModelViewer({ viewer, name, onClose, onDownload, onRetry }: {
       if (event.data.type === "cad-download") onDownload();
       if (event.data.type === "cad-retry") onRetry();
       if (event.data.type === "cad-context-request") frame.current?.contentWindow?.postMessage({ type: "cad-context", name }, window.location.origin);
+      if (event.data.type === "cad-mounted" && "viewId" in event.data && event.data.viewId === viewId) { setFrameLoaded(true); setFrameTimedOut(false); }
       if (event.data.type === "cad-ready" && "viewId" in event.data && event.data.viewId === viewId) setReadyMs(Math.round(performance.now() - startedAt.current));
       if (event.data.type === "cad-name-codepage" && "value" in event.data && (event.data.value === "UTF8" || event.data.value === "GB")) {
         try { sessionStorage.setItem(nameKey, event.data.value); } catch { /* The current preview still works without storage. */ }
@@ -84,10 +85,11 @@ export function CadModelViewer({ viewer, name, onClose, onDownload, onRetry }: {
         {frameTimedOut ? (
           <>
             <span className="font-medium text-zinc-700">预览加载超时</span>
-            <span className="max-w-[min(28rem,80vw)] text-center text-xs text-zinc-500">可能是登录状态已失效，请重新登录后再试。</span>
+            <span className="max-w-[min(28rem,80vw)] text-center text-xs text-zinc-500">可能是网络较慢或登录状态已失效，请重试；仍无法打开可下载原文件。</span>
             <span className="max-w-[min(28rem,80vw)] truncate px-6 text-xs text-zinc-400">{name}</span>
             <div className="flex flex-wrap justify-center gap-2">
               <button type="button" onClick={(event) => { event.stopPropagation(); onRetry(); }} className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white">重试</button>
+              <button type="button" onClick={(event) => { event.stopPropagation(); onDownload(); }} className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700">{t("fpv.download")}</button>
               <button type="button" onClick={(event) => { event.stopPropagation(); redirectToLogin(); }} className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700">重新登录</button>
             </div>
           </>
