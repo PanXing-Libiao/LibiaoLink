@@ -147,6 +147,7 @@ PASS: projection parity and 799,999 instance draws retain three unique source le
 | `node tests/check_retained_pattern_slice.mjs` | PASS（实心/渐变 rings、图案线段、bbox） |
 | `node tests/check_retained_media_layout_slice.mjs` | PASS（纸面/视口图片、裁剪、透明度） |
 | `node --test tests/drawing-instances.test.mjs` | 18/18 |
+| `python3 server/test/dwg-infinite-line.test.py` | 2/2 |
 | `node --test tests/drawing-text.test.mjs` | 6/6 |
 | `node --test tests/drawing-pattern.test.mjs` | 5/5 |
 | `node --test tests/drawing-layout.test.mjs tests/drawing-media.test.mjs` | 5/5 |

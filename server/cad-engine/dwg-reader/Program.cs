@@ -117,6 +117,15 @@ static class Program
         State(e,id);
         if(points is not null) Display(id,original,points,topology);
     }
+    static void Infinite(Entity e,string space,string id,string kind,XYZ origin,XYZ direction,CadObject? original=null)
+    {
+        original ??= e;
+        if(Math.Sqrt(direction.X*direction.X+direction.Y*direction.Y+direction.Z*direction.Z)<1e-12)
+            throw new InvalidDataException("Infinite line has zero direction");
+        Emit("infiniteLines",id,R(("kind",kind),("origin",P(origin)),("direction",P(direction)),("sourceRefs",Refs(original))));
+        EntityRow(e,space,id,R(("type","unsupported"),("sourceType",kind.ToUpperInvariant()),
+            ("reason","Parametric infinite line; view-dependent presentation")),null,original:original);
+    }
     static void Text(Entity e, IText text, string space, string id, CadObject? original=null)
     {
         original ??=e;
@@ -211,6 +220,10 @@ static class Program
                 var weights=spline.Weights.Count==0?Enumerable.Repeat(1.0,spline.ControlPoints.Count).ToArray():spline.Weights.ToArray();
                 EntityRow(e,space,id,R(("type","spline"),("degree",spline.Degree),("controlPoints",spline.ControlPoints.Select(P).ToArray()),
                     ("knots",spline.Knots.ToArray()),("weights",weights),("periodic",spline.IsPeriodic)),splinePoints,original:original); return;
+            case XLine xline:
+                Infinite(e,space,id,"xline",xline.FirstPoint,xline.Direction,original); return;
+            case Ray ray:
+                Infinite(e,space,id,"ray",ray.StartPoint,ray.Direction,original); return;
             case IPolyline polyline:
                 var polyPoints=polyline.GetPoints<XYZ>(64).ToList();
                 if(e is LwPolyline or Polyline2D) {

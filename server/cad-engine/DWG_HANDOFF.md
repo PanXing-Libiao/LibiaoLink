@@ -29,13 +29,13 @@
 | 遮罩/图片/PDF 底图 | 部分缺失 | 公开样本的 WIPEOUT、IMAGE、PDFUNDERLAY 在 24 项未显示原生对象内；真实图未提供这些组合的有效覆盖。查看器已有 WIPEOUT/媒体绘制能力，缺口在原生映射。 |
 | HATCH/多环/渐变 | 部分缺失 + 未验证 | 真实图 169 个可达填充；公开样本 2 项渐变未映射；多环、Outer 与孔洞未逐区域对照。真实图默认视图中的横向黑带和文字黑底尚未逐对象确认，可能是源黑色 SOLID/填充或遮罩在白底上的显示；FastView 黑底不可见，不能仅凭两边截图判为缺陷，需原 CAD 白底对照。 |
 | 布局视口 | 部分缺失 | 公开样本 3 个布局无可见内容，对应 3 项 `layout-viewport-unmapped`；业务是否需要布局仍未确认。 |
-| REGION/MLINE/XLINE/MESH/3DFACE 等 | 部分缺失 | 真实图 22 项未显示原生对象：20 个 REGION 在“百特立柱（一小段）”块内且有 2D 弧/多段线轮廓，1 个 MLINE 在货架块内缺一条线，1 个 XLINE 在 x=643784 处确实缺失；见 2026-10-28 代理/未显示对象逐句柄节。公开样本同类对象在 24 项内；保留源句柄、原载荷和损失，不伪造几何。 |
+| REGION/MLINE/XLINE/MESH/3DFACE 等 | 部分缺失 | 真实图修复前 22 项未显示原生对象；XLINE 已按通用映射修复（`738AAE` 红色无限线），当前 21 项：20 个 REGION 在“百特立柱（一小段）”块内且有 2D 弧/多段线轮廓，1 个 MLINE 在货架块内缺一条线；见 2026-10-28 代理/未显示对象逐句柄节。公开样本 XLINE/RAY 映射后未显示原生对象 24→22；保留源句柄、原载荷和损失，不伪造几何。 |
 | 样条显示 | 已修复一个上游求值缺陷（本机） | ACadSharp 3.8.30 对控制多边形远离原点的周期 SPLINE 可能把首顶点求值为 `(0,0,0)`，形成原点至样条的假线并遮挡主体；读取器仅在该首点为零且控制多边形不在原点时丢弃，`--self-test` 同时覆盖零起点与合法原点起点。`dwg-formal-windows-04` 复验：句柄 `272226` 首点回到样条本身，默认视图黑带消失；缓冲区比上一产物少 3,936 B，多处周期样条的零起点一并清理。 |
-| 读取账本 | 已验证账本 | 真实图 902,137 个源句柄、0 未找回；公开样本 865 个中 11 个未找回、48 项损失。句柄找回不是字段、几何或工程语义完整，也不是漏绘百分比。 |
+| 读取账本 | 已验证账本 | 真实图 902,137 个源句柄、0 未找回；公开样本 865 个中 11 个未找回、46 项损失（XLINE/RAY 映射后）。句柄找回不是字段、几何或工程语义完整，也不是漏绘百分比。 |
 | 容量 | 本机观察 | 本次无头 Chrome 8.3–8.5 秒就绪、JS 堆约 757 MB、manifest 253.5 MiB；WSL 沙箱读取 22.6 秒/2274 MiB、组装 93.5 秒/1531 MiB。都不是生产资源验收。 |
 | 平台接入 | 未接入 | DWG 主图开关仍关闭；本机页只作验证，不接 file/preview、任务或缓存。 |
 
-本次实现：`Program.cs` 的 `native-summary.json` `header` 新增 `modelSpaceExtMin/Max` 与 `paperSpaceExtMin/Max`；适配器原样带入 `org.libiaolink.dwg/1.header`；查看器模型空间默认 `fit()` 采用源范围，要求有限、正向、不超过计算范围 4 倍且覆盖 ≥50% 可见绘制，否则回退，新增 `fitAll()` 取计算全图。读取器重建于 `dwg-build-windows-03`，DLL SHA-256 `4e5a81104bb18418ae9b29d649f14f9f8373cbdcaefdaa005720fbae64ec4c9c`；公开样本 `dwg-public-small-04` 校验通过；正式图 `dwg-formal-windows-04` 重新原生读取（7.25 s / 总计 12.45 s，托管提交 2.79 GB）并组装（83.64 s），manifest 265,834,804 B 校验通过；默认视图与 `fitAll` 证据在仓库外 `review` 目录。本机页静态模块改用 `Cache-Control: no-store`，避免编辑后浏览器使用旧模块。
+本次实现：`Program.cs` 的 `native-summary.json` `header` 新增 `modelSpaceExtMin/Max` 与 `paperSpaceExtMin/Max`；适配器原样带入 `org.libiaolink.dwg/1.header`；查看器模型空间默认 `fit()` 采用源范围，要求有限、正向、不超过计算范围 4 倍且覆盖 ≥50% 可见绘制，否则回退，新增 `fitAll()` 取计算全图。读取器重建于 `dwg-build-windows-04`，DLL SHA-256 `62d95952c7896b1eaca5a8336af407bbc68e8528602dd9783a1a5e4926a7021c`；公开样本 `dwg-public-small-05` 校验通过；正式图 `dwg-formal-windows-05` 重新原生读取（7.75 s / 总计 13.00 s，托管提交 2.81 GB）并组装（81.02 s），manifest 265,835,098 B 校验通过；默认视图与 `fitAll` 证据在仓库外 `review` 目录。本机页静态模块改用 `Cache-Control: no-store`，避免编辑后浏览器使用旧模块。
 
 读取器源码/二进制目前不进入 `build-release.py` 的 `engineDigest`（`Program.cs` 位于 `dwg-reader/`，不在 `core/` 哈希集）；每次产物在 `native-summary.json`/UCD 记录 `readerSha256`，本次为 `4e5a8110…`。DWG 格式/缓存身份和读取器版本键按计划留到阶段 D，不能把当前产物只追溯到 `releaseDigest`。
 
@@ -52,7 +52,7 @@
 
 ## 2026-10-28 FastView 文字/尺寸/引线定性对照（本机，未部署）
 
-对照对象：正式图 `dwg-formal-windows-04`；FastView 9.10 的 `fastview-real-fit.png` 与当前查看器默认视图/局部放大。FastView 的视图带轴向旋转且缩放不同，本机也没有 AutoCAD，因此只能做定性对照，不能当作像素、位置或测量值验收。证据裁剪在仓库外 `D:\LibiaoLink-verify\cad-samples\review\`（`text-region.png`、`crop-racks-*.png`、`crop-tote-*.png`）。
+对照对象：正式图 `dwg-formal-windows-05`；FastView 9.10 的 `fastview-real-fit.png` 与当前查看器默认视图/局部放大。FastView 的视图带轴向旋转且缩放不同，本机也没有 AutoCAD，因此只能做定性对照，不能当作像素、位置或测量值验收。证据裁剪在仓库外 `D:\LibiaoLink-verify\cad-samples\review\`（`text-region.png`、`crop-racks-*.png`、`crop-tote-*.png`）。
 
 | 项目 | 观察 | 结论 |
 |---|---|---|
@@ -67,7 +67,7 @@
 
 ## 2026-10-28 普通填充与遮罩定性对照（本机，未部署）
 
-同一正式图 `dwg-formal-windows-04`。FastView 截图是另一缩放/扭转视图，填充区域不能逐块对齐；以下以 UCD 填充语义、查看器像素采样和两边可见的同类标记为准，不写成图案或颜色验收。
+同一正式图 `dwg-formal-windows-05`。FastView 截图是另一缩放/扭转视图，填充区域不能逐块对齐；以下以 UCD 填充语义、查看器像素采样和两边可见的同类标记为准，不写成图案或颜色验收。
 
 | 项目 | 观察 | 结论 |
 |---|---|---|
@@ -82,7 +82,7 @@
 
 ## 2026-10-28 代理与未显示对象逐句柄影响（本机，未部署）
 
-来源：`dwg-formal-windows-04/native/losses.jsonl` 的 40 条 `proxy-primitive-unmapped`/`unsupported-native-presentation`，加一次只读 ACadSharp 句柄探针（仓库外 `D:\LibiaoLink-verify\handle-probe`）。40 条完整覆盖 18 个 MULTILEADER、20 个 REGION、1 个 MLINE、1 个 XLINE；没有其他未列出的句柄。60 条引线箭头损失另见文字/引线对照，不重复计入这 40 条。
+来源（修复前）：`dwg-formal-windows-04/native/losses.jsonl` 的 40 条 `proxy-primitive-unmapped`/`unsupported-native-presentation`，加一次只读 ACadSharp 句柄探针（仓库外 `D:\LibiaoLink-verify\handle-probe`）。40 条完整覆盖 18 个 MULTILEADER、20 个 REGION、1 个 MLINE、1 个 XLINE；没有其他未列出的句柄。XLINE 已在下一节按通用映射修复，`dwg-formal-windows-05` 为 39 条、总损失 100。60 条引线箭头损失另见文字/引线对照，不重复计入这 40 条。
 
 ### 18 个 MULTILEADER（代理子实体样式）
 
@@ -119,17 +119,28 @@
 
 句柄 `6B891A`，块 `35435.00_600.00_7053.00_-90.00_1_Row_…`，父块 `货架立柱更新后` 在模型空间 `(503960,19677)`、`(670295,12747)`、`(742157,25227)`。MLINE 是块内一条 3 顶点线（局部起点 `(0,35462.5)`），世界位置落在货架区域；当前未绘制。没有关联文字或面积，影响限于货架详图中的一条线，按“说明即可/待业务确认”，不把它当作主体缺失。
 
-### 1 个 XLINE
+### 1 个 XLINE（修复前）
 
-句柄 `738AAE`，模型空间、图层 `0`，起点 `(643784,43284)`，方向 `(0,1,0)`，即 x=643784 的竖直构造线。默认视图在屏幕 x≈940.9 处采样 y=0..200000 的 7×1 像素带全部为白，说明它确实没有绘制，也不是被其他线覆盖。它可能是场地轴线/参考线；若业务图把它当轴线使用，应升级为必修，否则保留“未显示构造线”的说明。
+句柄 `738AAE`，模型空间、图层 `0`，起点 `(643784,43284)`，方向 `(0,1,0)`，即 x=643784 的竖直构造线。默认视图在屏幕 x≈940.9 处采样 y=0..200000 的 7×1 像素带全部为白，说明它确实没有绘制，也不是被其他线覆盖。已在下一节按通用 XLINE/RAY 映射修复；修复后该句柄为红色无限线。
 
 ### 本轮结论
 
 - 18 个代理对象：文字/引线几何存在，损失是子实体样式，属于“可用但近似”。
 - 20 个 REGION：块内 2D 弧/多段线轮廓存在，ACIS 实体未显示；不宣称填充/3D 完整，按业务需要升级。
 - 1 个 MLINE：货架块内缺一条线，影响局部，待确认。
-- 1 个 XLINE：x=643784 的竖直构造线确实缺失，列为待业务确认的最高优先级候选。
+- 1 个 XLINE：修复前 x=643784 的竖直构造线确实缺失；已按通用 XLINE/RAY 映射修复，见下节。
 - 没有新的整对象/整段文字缺失；上述结论只覆盖这 40 个句柄，不代表其他未列对象。
+
+
+## 2026-10-28 XLINE/RAY 通用映射（本机，未部署）
+
+按阶段 B 的通用方案修复，不做单句柄特例：
+
+- 读取器 `Program.cs` 新增 `XLine`/`Ray` 分支，把参数 `origin/direction` 写入 `infiniteLines`，实体行保留源句柄/图层/样式，不再记 `unsupported-native-presentation`；零方向抛 `native-presentation-failed`，不伪造有限线段。
+- 适配器 `dwg_adapter.py` 把 `infiniteLines` 映射到 `org.cad-preview.annotation-presentation/1` 的 `role:'infinite'` part（与 DXF 同一契约）；查看器无需改渲染，继续按当前视图裁剪、排除出 fit 范围、按锚点回退。
+- 样本 `dwg-public-small-05`：2 个 XLINE/RAY item，损失 48→46，`unsupported-native-presentation` 24→22；`dwg-formal-windows-05`：1 个 XLINE item（`entity-738AAE`，origin `(643784.4,43284.4)`，direction `(0,1)`，源色红），损失 101→100，未显示原生对象 22→21。正式图默认视图屏幕 x≈940.9 的 7×1 像素带在 y=0..200000 由全白变为红色抗锯齿 `[255,133,133]`/`[255,186,186]`；built 1,476,219→1,476,220、presentationParts 162,337→162,338、paintCalls 41,361→41,362；fitScale 0.002237、fitAll 0.000661 不变，说明无限线未进入有限范围。
+- 读取器重建 `dwg-build-windows-04`，DLL SHA-256 `62d95952c7896b1eaca5a8336af407bbc68e8528602dd9783a1a5e4926a7021c`；正式图 manifest 265,835,098 B validated，组装 81.02 s，原生读取 7.75 s / 总计 13.00 s；样本 manifest 806,102 B validated。适配器单元测试 `server/test/dwg-infinite-line.test.py` 2/2。
+- 20 个 REGION 和 1 个 MLINE 仍按原结论保留；XLINE/RAY 不再计入未显示对象。60 条引线箭头不变。
 
 
 ## 代码责任与入口

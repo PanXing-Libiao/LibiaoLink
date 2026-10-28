@@ -7,6 +7,7 @@ not import or invoke a DXF parser, converter, entity mapper or recovery path.
 from collections import Counter
 import hashlib
 import json
+import math
 from pathlib import Path
 import sys
 import time
@@ -45,6 +46,44 @@ def file_identity(path):
         sha = hashlib.file_digest(stream, 'sha256').hexdigest()
     return {'name':Path(path).name, 'sha256':sha, 'byteLength':Path(path).stat().st_size,
             'format':'DWG', 'detectedVersion':signature.decode('ascii')}
+
+
+def infinite_presentation_items(rows, entities):
+    """Map native XLINE/RAY parameters to the existing view-dependent infinite
+    presentation contract. The viewer clips these lines to the current view;
+    they never acquire a fabricated finite engineering extent."""
+    items = {}
+    for key, row in rows.items():
+        entity = entities.get(key)
+        if not entity:
+            continue
+        kind = str(row.get('kind') or 'xline').lower()
+        origin, direction = row.get('origin'), row.get('direction')
+        if not isinstance(origin, list) or not isinstance(direction, list):
+            continue
+        if len(origin) < 2 or len(direction) < 2:
+            continue
+        try:
+            values = [float(value) for value in (origin[:3] + direction[:3])]
+        except (TypeError, ValueError):
+            continue
+        if not all(math.isfinite(value) for value in values):
+            continue
+        if math.sqrt(sum(value * value for value in values[3:6])) < 1e-12:
+            continue
+        items[key] = {
+            'status': 'ready', 'sourceKind': kind.upper(),
+            'sourceRefs': row.get('sourceRefs') or entity.get('sourceRefs') or [],
+            'mode': 'view-dependent', 'method': 'native-DWG-parametric-view-clipping',
+            'parts': [{
+                'id': key + '-infinite', 'role': 'infinite',
+                'line': {'kind': kind, 'origin': origin, 'direction': direction},
+                'layerId': entity.get('layerId'),
+                'style': entity.get('style') or {'color': {'mode': 'by-layer'}, 'plot': True},
+                'ancestors': [],
+            }],
+        }
+    return items
 
 
 def assemble_native(folder, original, output):
@@ -147,6 +186,10 @@ def assemble_native(folder, original, output):
         'layerInheritance':inheritance, 'modes':modes,
         'drawOrder':{key:state['drawOrder'] for key,state in extras.get('entityState',{}).items() if 'drawOrder' in state},
         'entityState':extras.get('entityState',{}), 'annotationStyles':extras.get('annotationStyles',{})}
+    infinite_items = infinite_presentation_items(extras.get('infiniteLines',{}),drawing['entities'])
+    if infinite_items:
+        doc['extensions']['org.cad-preview.annotation-presentation/1'] = {
+            'schemaVersion':'1.3.0','items':infinite_items}
     doc['extensions']['org.cad-preview.fill/1'] = {'fills':extras.get('fills',{})}
     raw_losses = [json.loads(line) for line in (folder/'losses.jsonl').open()]
     by_loss = Counter(row['code'] for row in raw_losses)
@@ -176,7 +219,7 @@ def assemble_native(folder, original, output):
         'scope':'All native source handles audited; model and layout reachable definitions mapped; unreferenced definitions remain in original source/ledger.',
         'curveDisplay':{'library':'ACadSharp','circleVertices':80,'ellipseVertices':64,'splineVertices':48,
             'policy':'Sampled display is a derivative, not an engineering tolerance guarantee.'}}
-    ready = len(displays) + len(drawing['annotations']) + len(extras.get('fills',{}))
+    ready = len(displays) + len(drawing['annotations']) + len(extras.get('fills',{})) + len(infinite_items)
     doc['extensions']['org.cad-preview.drawing-coverage/1'] = {
         'sourceRead':{'status':'partial' if summary['missingHandles'] else 'read-with-warnings','sourceRecords':summary.get('sourceEntityRecords',summary['sourceHandles'])},
         'displayGeometry':{'status':'partial','withDisplayGeometry':ready,'sourceRecords':summary['mappedObjects']},
@@ -191,7 +234,7 @@ def assemble_native(folder, original, output):
     presentation = {'name':identity['name'],'view':None,'unit':'mm' if summary['header']['insUnits']=='Millimeters' else 'unknown',
         'sourceSHA256':identity['sha256'],'candidate':True,
         'quality':'partial','note':'Native DWG → UCD; source handles preserved. See explicit decoder/mapping/font losses.',
-        'stats':{'sourceHandles':summary['sourceHandles'],'mappedSourceObjects':summary.get('mappedSourceObjects',summary['mappedObjects']),'displayGeometry':len(displays)}}
+        'stats':{'sourceHandles':summary['sourceHandles'],'mappedSourceObjects':summary.get('mappedSourceObjects',summary['mappedObjects']),'displayGeometry':len(displays)+len(infinite_items)}}
     validate_binary_envelope(doc,snapshot,presentation,lambda key:buffer_path.read_bytes())
     phase('contract and binary validated')
     envelope = {'transportProfile':'ucd-worker-binary/1','document':doc,'snapshot':snapshot,
