@@ -172,9 +172,6 @@ class Resources:
             from PIL import Image
             image = Image.fromarray(data.image)
         matrix = data.flip_matrix() * data.transform
-        # UCD numbers are JSON floats; ezdxf matrices expose numpy.float64,
-        # which the schema validator intentionally rejects.
-        matrix = [float(value) for value in matrix]
         return image, matrix, {**details, 'on': bool(entity.dxf.flags & entity.SHOW_IMAGE),
             'displayAdjustments':{'brightness':entity.dxf.brightness,'contrast':entity.dxf.contrast,
                 'fade':entity.dxf.fade,'fidelity':'ezdxf Frontend screen approximation; original settings retained'},
@@ -337,7 +334,7 @@ class Resources:
                 if kind=='IMAGE': image,matrix,details=self.image_display(entity,row['_raw'])
                 elif kind=='PDFUNDERLAY': image,matrix,details=self.pdf_display(entity,row,context)
                 else: image,matrix,details=self.cad_underlay_display(entity,row,context,refs)
-            values = list(matrix)
+            values = [float(value) for value in matrix]
             finite(values)
             if abs(values[0] * values[5] - values[1] * values[4]) < 1e-20:
                 raise ValueError('media-edge-on-or-degenerate-plane-unsupported')
@@ -351,14 +348,14 @@ class Resources:
                     raise ValueError('media-document-pixel-limit')
                 self.pixels += image.width * image.height
                 self.payloads[rid] = (bid, png)
-            corners = [list(matrix.transform((x, y, 0))) for x, y in
+            corners = [[float(value) for value in matrix.transform((x, y, 0))] for x, y in
                        [(0, 0), (image.width, 0), (image.width, image.height), (0, image.height)]]
             record.update(status='ready', reason='原配套已解析为二维图片显示', bufferId=bid,
                 resourceId=rid, details=details,
-                pixelSize=list(image.size), imageToEntity=list(matrix), corners=corners)
+                pixelSize=list(image.size), imageToEntity=[float(value) for value in matrix], corners=corners)
             if kind!='OLE2FRAME': record['sourceResourceId']=row['resourceId']
             return {'type': 'image', 'resourceId': rid, 'pixelSize': list(image.size),
-                    'imageToEntity': list(matrix), 'clipBoundary': []}, corners, details['on']
+                    'imageToEntity': [float(value) for value in matrix], 'clipBoundary': []}, corners, details['on']
         except Exception as error:
             record['reason'] = type(error).__name__ + ': ' + str(error)
             return {'type': 'unsupported', 'sourceType': entity.dxftype(), 'reason': record['reason']}, [], True
