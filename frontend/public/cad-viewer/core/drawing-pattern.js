@@ -17,6 +17,10 @@ function boundsOf(points) {
   return bounds;
 }
 
+export function fillEntryFor(document, itemId) {
+  return document?.extensions?.['org.cad-preview.fill/1']?.fills?.[itemId] || null;
+}
+
 export function hatchFillKind(entity, fillEntry) {
   const geometry = entity && entity.geometry;
   if (!geometry || geometry.type !== 'hatch') return null;
@@ -68,7 +72,7 @@ export function fillGeometryFor({draw, entity, fillEntry, mode, tolerance,
   return {kind:'rings', rings, bbox:boundsOf(rings.flat())};
 }
 
-export function patternStrokeSegments(representation, toWorld) {
+export function strokeSegmentsForRepresentation(representation, toWorld) {
   if (!representation) return null;
   if (typeof toWorld !== 'function') throw new Error('pattern-to-world-required');
   const positions = representation.positions, segments = [], points = [];

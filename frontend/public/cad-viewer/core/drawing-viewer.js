@@ -6,11 +6,10 @@ import {projectDrawing, projectBlock} from './drawing-projection.js?v=dxf-0.15.0
 import {clipInfiniteLine, gradientField, triangleBoundarySegments, traceStrokeSegments} from './drawing-2d.js?v=dxf-2d-0.5.0';
 import {drawingClips, compileClips, triangulateRings, insideRing} from './drawing-clipping.js?v=dxf-0.15.0';
 import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.15.0';
-import {normalizeLineRange} from './drawing-display.js?v=dxf-0.15.0';
 import {estimateDrawingDraws, projectInstances, shouldProjectInstances, multiply, transformPoint, inverse2D, transformBounds, union, I} from './drawing-instances.js';
 import Flatbush from './vendor/flatbush.js';
 import {TEXT_FONT, layoutAnnotationText, textOffsets, textWorldCorners} from './drawing-text.js?v=dxf-0.15.0';
-import {hatchFillKind, lineDashFor, fillGeometryFor, patternStrokeSegments} from './drawing-pattern.js?v=dxf-0.15.0';
+import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentation} from './drawing-pattern.js?v=dxf-0.15.0';
 import {mediaItemFor, rasterRecord} from './drawing-media.js?v=dxf-0.15.0';
 
 const ACCENT = '#d9426f';
@@ -232,11 +231,9 @@ export function mountDrawingViewer(envelope) {
   }
 
   // ----- filled entities (SOLID / solid HATCH) ----------------------------
-  const fillExt = (ucd.extensions && ucd.extensions['org.cad-preview.fill/1']) || {};
-
   function fillPathFor(draw, entity, tolerance) {
     const fill = fillGeometryFor({
-      draw, entity, fillEntry:fillExt.fills?.[draw.itemId], mode, tolerance,
+      draw, entity, fillEntry:fillEntryFor(ucd, draw.itemId), mode, tolerance,
       representationGeometry, analyticFor,
       toWorld:point => apply(draw.localToSpace, point),
       boundaryGeometry:id => drawing.entities[id] && drawing.entities[id].geometry
@@ -426,13 +423,14 @@ export function mountDrawingViewer(envelope) {
           rec.bbox=raster.bbox;
           addRecord(rec);continue;
         }
-        const patternHatch = hatchFillKind(entity, fillExt.fills?.[draw.itemId]) === 'pattern';
+        const fillEntry = fillEntryFor(ucd, draw.itemId);
+        const patternHatch = hatchFillKind(entity, fillEntry) === 'pattern';
         if (entity.geometry.type === 'hatch' && !patternHatch) {
           const fill = fillPathFor(draw, entity, tolerance);
           if (!fill) continue;
           rec.fillPath = fill.path; rec.fillTriangles = fill.triangles; rec.fillRings = fill.rings;
           rec.bbox = fill.bbox;
-          rec.gradient = fillExt.fills?.[draw.itemId]?.gradient;
+          rec.gradient = fillEntry?.gradient;
           addRecord(rec);
           continue;
         }
@@ -441,9 +439,8 @@ export function mountDrawingViewer(envelope) {
         const extend = (x, y) => { if (x < minX) minX = x; if (y < minY) minY = y; if (x > maxX) maxX = x; if (y > maxY) maxY = y; };
         // Pattern strokes already encode their own dashes/dots. Keep them in
         // both display modes; drawing boundary polygons would solid-fill holes.
-        if (patternHatch) {
-          rec.dash = [];
-          const stroke = patternStrokeSegments(representationGeometry(draw.displayRepresentationId),
+        if (patternHatch || mode === 'display') {
+          const stroke = strokeSegmentsForRepresentation(representationGeometry(draw.displayRepresentationId),
             point => apply(draw.localToSpace, point));
           if (!stroke) continue;
           if (stroke.invalidRange) {
@@ -460,48 +457,13 @@ export function mountDrawingViewer(envelope) {
             }
             continue;
           }
+          if (patternHatch) rec.dash = [];
           segments.push(...stroke.segments);
           if (stroke.points.length) {
             const p = stroke.points[0];
             rec.pointMark = {x: p[0], y: p[1]}; pointMarks.push(rec.pointMark);
           }
           if (stroke.bbox) { extend(stroke.bbox.minX, stroke.bbox.minY); extend(stroke.bbox.maxX, stroke.bbox.maxY); }
-        } else if (mode === 'display') {
-          const rep = representationGeometry(draw.displayRepresentationId);
-          if (!rep) continue;
-          const pos = rep.positions;
-          if (rep.indices) {
-            const idx = rep.indices;
-            for (let i = 0; i + 1 < idx.length; i += 2) {
-              const p1 = apply(draw.localToSpace, [pos[idx[i] * 3], pos[idx[i] * 3 + 1], pos[idx[i] * 3 + 2]]);
-              const p2 = apply(draw.localToSpace, [pos[idx[i + 1] * 3], pos[idx[i + 1] * 3 + 1], pos[idx[i + 1] * 3 + 2]]);
-              segments.push(p1[0], p1[1], p2[0], p2[1]); extend(p1[0], p1[1]); extend(p2[0], p2[1]);
-            }
-          } else if (rep.topology === 'lines') {
-            const lineRange = normalizeLineRange(rep.range, Math.floor(pos.length / 3));
-            if (!lineRange) {
-              if (!warnedDisplayTopologies.has('invalid-lines')) {
-                warnedDisplayTopologies.add('invalid-lines');
-                console.warn('忽略非索引线段范围：顶点数或 range 不合法', draw.displayRepresentationId, rep.range);
-              }
-              continue;
-            }
-            for (let i = lineRange.first; i < lineRange.first + lineRange.count; i += 2) {
-              const p1 = apply(draw.localToSpace, [pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]]);
-              const p2 = apply(draw.localToSpace, [pos[(i + 1) * 3], pos[(i + 1) * 3 + 1], pos[(i + 1) * 3 + 2]]);
-              segments.push(p1[0], p1[1], p2[0], p2[1]); extend(p1[0], p1[1]); extend(p2[0], p2[1]);
-            }
-          } else if (rep.topology === 'points') {
-            const p = apply(draw.localToSpace, [pos[0], pos[1], pos[2]]);
-            rec.pointMark = {x: p[0], y: p[1]}; pointMarks.push(rec.pointMark);
-            extend(p[0], p[1]);
-          } else {
-            if (!warnedDisplayTopologies.has(rep.topology)) {
-              warnedDisplayTopologies.add(rep.topology);
-              console.warn('忽略未接入的显示拓扑', rep.topology, draw.displayRepresentationId);
-            }
-            continue;
-          }
         } else {
           const pts = analyticFor(draw.itemId, entity.geometry, tolerance);
           if (!pts || !pts.length) continue;
@@ -972,11 +934,11 @@ export function mountDrawingViewer(envelope) {
     if (g.sourceType === 'RAY') name = '射线';
     if (g.sourceType === 'TOLERANCE') name = '形位公差';
     if (g.sourceType === 'SHAPE') name = 'SHX 形状';
-    if (g.type === 'image') name = ({PDFUNDERLAY:'PDF 底图',DWFUNDERLAY:'DWF 底图',DGNUNDERLAY:'DGN 底图',OLE2FRAME:'OLE 内容缓存'})[media?.items[draw.itemId]?.sourceKind]||'外链图片';
+    if (g.type === 'image') name = ({PDFUNDERLAY:'PDF 底图',DWFUNDERLAY:'DWF 底图',DGNUNDERLAY:'DGN 底图',OLE2FRAME:'OLE 内容缓存'})[mediaItemFor(ucd,draw.itemId)?.sourceKind]||'外链图片';
     if (g.sourceType === 'REGION') name = '平面区域';
     if (g.type === 'arc') name = Math.abs((g.sweepAngle || 0) - Math.PI * 2) < 1e-6 ? '圆' : '圆弧';
     if (g.type === 'polyline') name = g.closed ? '闭合多段线' : '多段线';
-    if (g.type === 'hatch') name = fillExt.fills?.[draw.itemId]?.gradient ? '渐变填充' : g.patternId ? '图案填充' : '实心填充';
+    if (g.type === 'hatch') name = fillEntryFor(ucd,draw.itemId)?.gradient ? '渐变填充' : g.patternId ? '图案填充' : '实心填充';
     const path = draw.blockPath.length ? ' · 块内' : '';
     return name + ' · 图层 ' + (layer ? layer.name : '?') + path + ' · 句柄 ' + ((e.sourceRefs[0] || {}).objectKey || '?') + sourceLabel(e);
   }

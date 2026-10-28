@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  hatchFillKind, lineDashFor, fillGeometryFor, patternStrokeSegments
+  hatchFillKind, lineDashFor, fillGeometryFor, strokeSegmentsForRepresentation
 } from '../../../../frontend/public/cad-viewer/core/drawing-pattern.js';
 
 const translate = (x, y) => [1,0,0,0,0,1,0,0,0,0,1,0,x,y,0,1];
@@ -65,32 +65,33 @@ test('display triangles and analytic boundaries use the same fill contract', () 
 });
 
 test('pattern strokes handle indexed and non-indexed lines without a Path2D dependency', () => {
-  const indexed = patternStrokeSegments({
+  const indexed = strokeSegmentsForRepresentation({
     positions:new Float32Array([0,0,0, 2,0,0, 2,2,0, 0,2,0]),
     indices:new Uint32Array([0,1,2,3]), topology:'lines'
   }, point => [point[0] + 1, point[1] + 1]);
   assert.deepEqual(Array.from(indexed.segments), [1,1,3,1,3,3,1,3]);
   assert.deepEqual(indexed.bbox, {minX:1,minY:1,maxX:3,maxY:3});
 
-  const ranged = patternStrokeSegments({
+  const ranged = strokeSegmentsForRepresentation({
     positions:new Float32Array([0,0,0, 2,0,0, 2,2,0, 0,2,0]),
     topology:'lines', range:{first:0,count:4}
   }, point => [point[0], point[1]]);
   assert.deepEqual(Array.from(ranged.segments), [0,0,2,0,2,2,0,2]);
   assert.equal(ranged.invalidRange, undefined);
 
-  const invalid = patternStrokeSegments({
+  const invalid = strokeSegmentsForRepresentation({
     positions:new Float32Array([0,0,0, 2,0,0, 2,2,0]), topology:'lines', range:{first:0,count:3}
   }, point => [point[0], point[1]]);
   assert.equal(invalid.invalidRange, true);
   assert.deepEqual(Array.from(invalid.segments), []);
 
-  const points = patternStrokeSegments({
+  const points = strokeSegmentsForRepresentation({
     positions:new Float32Array([0,0,0, 4,5,0]), topology:'points'
   }, point => [point[0], point[1]]);
   assert.deepEqual(points.points, [[0,0],[4,5]]);
   assert.deepEqual(points.bbox, {minX:0,minY:0,maxX:4,maxY:5});
 
-  assert.equal(patternStrokeSegments({positions:new Float32Array(), topology:'triangles'},
+  assert.equal(strokeSegmentsForRepresentation({positions:new Float32Array(), topology:'triangles'},
     point => [point[0], point[1]]).unsupported, 'triangles');
 });
+

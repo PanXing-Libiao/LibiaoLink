@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import {projectDrawing, identity} from '../../../../frontend/public/cad-viewer/core/drawing-projection.js';
 import {projectInstances, estimateDrawingDraws, multiply, I} from '../../../../frontend/public/cad-viewer/core/drawing-instances.js';
-import {hatchFillKind, fillGeometryFor, patternStrokeSegments} from '../../../../frontend/public/cad-viewer/core/drawing-pattern.js';
+import {hatchFillKind, fillGeometryFor, strokeSegmentsForRepresentation} from '../../../../frontend/public/cad-viewer/core/drawing-pattern.js';
 
 const style = {color:{mode:'explicit', rgba:[0,0,0,1]}, plot:true};
 const affine = (a,b,c,d,e,f) => [a,b,0,0, c,d,0,0, 0,0,1,0, e,f,0,1];
@@ -102,8 +102,8 @@ for(const key of keys){
   const kind = hatchFillKind(entity, entry);
   if (expected.itemId === 'h2') {
     assert.equal(kind, 'pattern');
-    const a = patternStrokeSegments(representation, toWorld(expected));
-    const b = patternStrokeSegments(representation, toWorld(actual));
+    const a = strokeSegmentsForRepresentation(representation, toWorld(expected));
+    const b = strokeSegmentsForRepresentation(representation, toWorld(actual));
     assert.equal(a.segments.length, b.segments.length);
     for(let i=0; i<a.segments.length; i++) assert.ok(close(a.segments[i], b.segments[i]));
     for(const field of ['minX','minY','maxX','maxY']) assert.ok(close(a.bbox[field], b.bbox[field]));
@@ -119,3 +119,4 @@ for(const key of keys){
   }
 }
 console.log('PASS: retained pattern slice keeps solid/gradient fills and patterned strokes aligned.');
+
