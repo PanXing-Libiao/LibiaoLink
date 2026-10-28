@@ -14,6 +14,7 @@
  *      「应该是搜索下拉框加鼠标滑动」）；多选追订「要可以多项选择 再次点击取消选择」：点选不关浮层（再点 = 取消），
  *      地址 project=<idA>[,<idB>…]（去重保序），多选计数 = 选中项目并集，逐个取消后还原 #/files；
  *      状态 / 上传人筛选同理多选（地址 status=draft,final / uploadedBy=<id>[,<id>…]；上传人 = 前端内存过滤）；
+ *      上传人候选 = 当前筛选结果中有文件的 createdBy 去重（姓名取服务端 createdByName，停用历史账号仍显示）；选中一人后候选不自我收窄；
  *      ② 另断言项目列排版 = 编号 + 名字两行（追订「项目名称要编号和名字都写在表格里面注意排版」）；
  *      触发器口径（追订「不要这样显示太丑了 可以只显现这个筛选的名称 然后数量淡灰色的」）：只显筛选名称 +
  *      浅灰数量（data-select-trigger-label / -count），空选无数量；
@@ -483,7 +484,7 @@ await waitFor("document.querySelector(" + j("[data-select-popover]") + ") === nu
 await sleep(600);
 
 // ---------- ④d 上传人筛选 = 多选（内存过滤；点选 / 再点取消） ----------
-const creatorRows = (await db.query("select u.id, u.display_name, count(f.id)::int n from files f join users u on u.id = f.created_by where f.project_id = any($1::uuid[]) and f.status = any($2::text[]) group by u.id, u.display_name order by n desc, u.id asc", [projectIds, STATUSES_CURRENT])).rows;
+const creatorRows = (await db.query("select f.created_by id, coalesce(u.display_name, f.created_by::text) display_name, count(f.id)::int n from files f left join users u on u.id = f.created_by where f.project_id = any($1::uuid[]) and f.status = any($2::text[]) group by f.created_by, u.display_name order by n desc, f.created_by asc", [projectIds, STATUSES_CURRENT])).rows;
 const creatorA = creatorRows.find((row) => String(row.id) === userRow.id) ?? creatorRows[0];
 const creatorB = creatorRows.find((row) => String(row.id) !== String(creatorA === undefined ? "" : creatorA.id));
 if (creatorA === undefined || creatorB === undefined) { await bail("上传人多选回放需要至少两个有在库文件的创建者"); }
@@ -492,14 +493,23 @@ const expectCreatorABIds = await orderedByCreators([creatorA.id, creatorB.id]);
 const expectCreatorBIds = await orderedByCreators([creatorB.id]);
 await clickSelector("[data-file-filter=uploader] button");
 const uploaderBoxReady = await waitFor("document.querySelector(" + j("[data-search-select-input]") + ") !== null", 8000);
+const uploaderNamesBefore = await ev("(function(){var box=document.querySelector(" + j("[data-search-select-list]") + ");if(box===null){return null;}return Array.from(box.querySelectorAll(" + j("[role=option]") + ")).map(function(o){return String(o.textContent).trim();}).sort();})()");
+const expectUploaderNames = creatorRows.map((row) => String(row.display_name)).sort();
+check("④d0 上传人候选 = 当前筛选结果中有文件的上传人（不导入完整用户目录；姓名可含停用 / 离职账号）",
+  uploaderBoxReady === true && uploaderNamesBefore !== null && uploaderNamesBefore.length === expectUploaderNames.length && uploaderNamesBefore.join("|") === expectUploaderNames.join("|"),
+  JSON.stringify({ ui: uploaderNamesBefore, db: expectUploaderNames }));
 const creatorAPick = await pickOption(String(creatorA.display_name));
 const creatorAReady = await waitFor("window.location.hash === " + j("#/files?uploadedBy=" + creatorA.id) + " && document.querySelector(" + j("[data-file-count]") + ") !== null && document.querySelector(" + j("[data-file-count]") + ").textContent === " + j("共 " + String(expectCreatorAIds.length) + " 条"), 20000);
 await sleep(800);
 const byCreatorA = await ev(rowExpr);
+const uploaderNamesAfterA = await ev("(function(){var box=document.querySelector(" + j("[data-search-select-list]") + ");if(box===null){return null;}return Array.from(box.querySelectorAll(" + j("[role=option]") + ")).map(function(o){return String(o.textContent).trim();}).sort();})()");
 const uploaderMultiUi = await ev("(function(){var t=document.querySelector(" + j("[data-file-filter=uploader] button") + ");var p=document.querySelector(" + j("[data-select-popover]") + ");return {label:t===null?null:t.getAttribute(" + j("data-select-trigger-label") + "),count:t===null?null:t.getAttribute(" + j("data-select-trigger-count") + "),open:p!==null};})()");
 check("④d 上传人筛选 = 多选第一项（" + creatorA.display_name + "）：点选不关浮层 + 触发器「上传人 + 浅灰 1」、地址 uploadedBy=<id>、计数 / 行 = 该上传人在库文件（内存过滤）",
   uploaderBoxReady === true && creatorAPick === true && creatorAReady === true && uploaderMultiUi.open === true && uploaderMultiUi.label === "上传人" && uploaderMultiUi.count === "1" && byCreatorA.count === "共 " + String(expectCreatorAIds.length) + " 条" && byCreatorA.rows.map((row) => row.id).join(",") === expectCreatorAIds.slice(0, 50).join(",") && byCreatorA.rows.every((row) => row.uploader === creatorA.display_name),
   JSON.stringify({ picked: creatorAPick, hash: byCreatorA.hash, count: byCreatorA.count, db: expectCreatorAIds.length, ui: uploaderMultiUi }));
+check("④d1 选中上传人后候选集不自我收窄：其余有文件的上传人仍在选项中",
+  uploaderNamesAfterA !== null && uploaderNamesAfterA.length === expectUploaderNames.length && uploaderNamesAfterA.join("|") === expectUploaderNames.join("|"),
+  JSON.stringify({ ui: uploaderNamesAfterA, db: expectUploaderNames }));
 const creatorBPick = await pickOption(String(creatorB.display_name));
 const creatorABReady = await waitFor("window.location.hash === " + j("#/files?uploadedBy=" + creatorA.id + "," + creatorB.id) + " && document.querySelector(" + j("[data-file-count]") + ") !== null && document.querySelector(" + j("[data-file-count]") + ").textContent === " + j("共 " + String(expectCreatorABIds.length) + " 条"), 20000);
 await sleep(800);
@@ -515,11 +525,26 @@ const byCreatorB = await ev(rowExpr);
 check("④d3 再次点击 " + creatorA.display_name + " = 取消选择：地址只剩 uploadedBy=<idB>、计数 / 行回该上传人单项",
   creatorAUnpick === true && creatorBOnlyReady === true && byCreatorB.count === "共 " + String(expectCreatorBIds.length) + " 条" && byCreatorB.rows.every((row) => row.uploader === creatorB.display_name),
   JSON.stringify({ picked: creatorAUnpick, hash: byCreatorB.hash, count: byCreatorB.count, db: expectCreatorBIds.length }));
+const zeroKeyword = "回放-上传人零命中-" + stamp;
+const zeroKeywordEnc = encodeURIComponent(zeroKeyword);
+await clickSelector("[data-file-filter=keyword] input");
+await page.send("Input.insertText", { text: zeroKeyword });
+const uploaderZeroReady = await waitFor("window.location.hash.indexOf(" + j("q=" + zeroKeywordEnc) + ") !== -1 && document.querySelector(" + j("[data-file-empty]") + ") !== null && document.querySelector(" + j("[data-file-count]") + ").textContent === " + j("共 0 条"), 40000);
+await clickSelector("[data-file-filter=uploader] button");
+await waitFor("document.querySelector(" + j("[data-search-select-list]") + ") !== null", 8000);
+const uploaderZeroOptions = await ev("(function(){var box=document.querySelector(" + j("[data-search-select-list]") + ");if(box===null){return null;}return Array.from(box.querySelectorAll(" + j("[role=option]") + ")).map(function(o){return String(o.textContent).trim();}).sort();})()");
+check("④d3b 已选上传人零命中仍保留在候选并显示原姓名，可再次点击取消",
+  uploaderZeroReady === true && uploaderZeroOptions !== null && uploaderZeroOptions.length === 1 && uploaderZeroOptions[0] === creatorB.display_name,
+  JSON.stringify({ ui: uploaderZeroOptions, expected: creatorB.display_name }));
+await clickSelector("[data-file-filter=uploader] button");
+await waitFor("document.querySelector(" + j("[data-select-popover]") + ") === null", 8000);
+await clickSelector("[data-file-filter=keyword] button");
+const creatorBFilterBack = await waitFor("window.location.hash === " + j("#/files?uploadedBy=" + creatorB.id) + " && document.querySelector(" + j("[data-file-count]") + ").textContent === " + j("共 " + String(expectCreatorBIds.length) + " 条"), 40000);
 const creatorBUnpick = await pickOption(String(creatorB.display_name));
 const uploaderAllBack = await waitFor("window.location.hash === " + j("#/files") + " && document.querySelector(" + j("[data-file-count]") + ") !== null && document.querySelector(" + j("[data-file-count]") + ").textContent === " + j("共 " + String(expectCurrentIds.length) + " 条"), 20000);
 await sleep(600);
 check("④d4 再点 " + creatorB.display_name + " = 清空上传人筛选：地址回 #/files、计数还原",
-  creatorBUnpick === true && uploaderAllBack === true,
+  creatorBFilterBack === true && creatorBUnpick === true && uploaderAllBack === true,
   JSON.stringify({ picked: creatorBUnpick }));
 await clickSelector("[data-file-filter=uploader] button");
 await waitFor("document.querySelector(" + j("[data-select-popover]") + ") === null", 8000);
