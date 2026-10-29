@@ -88,6 +88,11 @@ function makeRow(id: string, overrides: Partial<TaskRow> = {}): TaskRow {
 
 /** 任务仓储替身：只实现本切片涉及的读写（含锁定字段落库）。 */
 class FakeTaskRepository {
+  async lockStageCompletion(): Promise<void> {}
+  async countStageTasks(): Promise<{ total: number; done: number; deliveryReady: number }> {
+    return { total: 0, done: 0, deliveryReady: 0 };
+  }
+
   project: TaskProjectRow = { id: PROJECT, managerIds: [], stageKey: "install", status: "active" };
   tasks = new Map<string, TaskRow>();
   events: TaskEventInput[] = [];
@@ -141,15 +146,24 @@ class FakeTaskRepository {
 }
 
 class FakeTaskGateRepository {
-  finalCounts: { docType: string; present: number }[] = [];
+  uploadedCounts: { docType: string | null; present: number }[] = [{ docType: null, present: 1 }];
   async listNodeDocRequirements(): Promise<{ docType: string; minCount: number }[]> {
     return [];
   }
-  async countFinalFiles(): Promise<{ docType: string; present: number }[]> {
-    return this.finalCounts;
+  async countUploadedFiles(): Promise<{ docType: string | null; present: number }[]> {
+    return this.uploadedCounts;
   }
   async countDraftFiles(): Promise<{ docType: string; present: number }[]> {
     return [];
+  }
+  delivery: { total: number; done: number; deliveryReady: number; issues: unknown[] } = {
+    total: 0,
+    done: 0,
+    deliveryReady: 0,
+    issues: [],
+  };
+  async evaluateDeliveryStatus() {
+    return this.delivery;
   }
 }
 
@@ -300,11 +314,11 @@ describe("M3-05 续卡 · 锁定字段例外调整（A1-17 / C9-07）", () => {
     expect(audit.entries).toEqual([]);
   });
 
-  it("输出成果文件：去重 + 非法值过滤（normalizeDocTypes）；门禁暂时下线 2026-09-30 时缺件不参与预检", async () => {
+  it("输出成果文件：去重 + 非法值过滤（normalizeDocTypes）；新增成果类型立即参与完成门禁", async () => {
     const repo = new FakeTaskRepository();
     repo.tasks.set(TASK_A, makeRow(TASK_A, { nodeId: null, deliverableTypes: ["合同"] }));
     const gate = new FakeTaskGateRepository();
-    gate.finalCounts = [{ docType: "合同", present: 1 }];
+    gate.uploadedCounts = [{ docType: "合同", present: 1 }];
     const { service } = makeService(repo, gate);
     await expect(service.canComplete(PROJECT, TASK_A)).resolves.toMatchObject({ canComplete: true, missing: [] });
     const view = await service.adjustLockedFields(
@@ -314,11 +328,10 @@ describe("M3-05 续卡 · 锁定字段例外调整（A1-17 / C9-07）", () => {
       ADMIN,
     );
     expect(view.deliverableTypes).toEqual(["验收单", "合同"]);
-    // 门禁暂时下线（2026-09-30）：新增要求不再参与拦截（恢复门禁时还原：canComplete=false + missing=[{ docType: "验收单", required: 1, present: 0 }]）
     const blocked = await service.canComplete(PROJECT, TASK_A);
-    expect(blocked.canComplete).toBe(true);
-    expect(blocked.missing).toEqual([]);
-    gate.finalCounts = [{ docType: "合同", present: 1 }, { docType: "验收单", present: 1 }];
+    expect(blocked.canComplete).toBe(false);
+    expect(blocked.missing).toEqual([{ docType: "验收单", required: 1, present: 0 }]);
+    gate.uploadedCounts = [{ docType: "合同", present: 1 }, { docType: "验收单", present: 1 }];
     await expect(service.canComplete(PROJECT, TASK_A)).resolves.toMatchObject({ canComplete: true, missing: [] });
   });
 

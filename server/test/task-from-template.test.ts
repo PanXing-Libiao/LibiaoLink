@@ -73,6 +73,11 @@ function makeRow(overrides: Partial<TaskRow> = {}): TaskRow {
 
 /** 任务仓储替身：只实现 create / createFromTemplate 用到的读与写。 */
 class FakeTaskRepository {
+  async lockStageCompletion(): Promise<void> {}
+  async countStageTasks(): Promise<{ total: number; done: number; deliveryReady: number }> {
+    return { total: 0, done: 0, deliveryReady: 0 };
+  }
+
   project: TaskProjectRow = { id: PROJECT, managerIds: [MANAGER], stageKey: "presale", status: "active" };
   /** 节点库来源判重表：sourceNodeId → 已存在任务 id。 */
   bySourceNode = new Map<string, string>();

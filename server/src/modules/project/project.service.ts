@@ -215,7 +215,10 @@ export class ProjectService {
     return toProjectView(view, levels.get(projectId) ?? "view");
   }
 
-  /** 更新（M2-01）：乐观锁（version 必须回传）；归档写保护（ADR-027）；code 变更同样校验唯一性；变更写审计（字段级）。 */
+  /**
+   * 更新（M2-01）：乐观锁（version 必须回传）；归档写保护（ADR-027）；code 变更同样校验唯一性；变更写审计（字段级）。
+   * 首次改为 done 时先过项目完成门禁：任务全部完成，且已配置成果类型的任务均有上传文件。
+   */
   async updateProject(id: string, body: ProjectUpdateBody, actorId: string): Promise<ProjectView> {
     const current = await this.projects.findViewById(id);
     if (current === null) {
@@ -236,6 +239,9 @@ export class ProjectService {
     if (body.description !== undefined) patch.description = body.description;
     const at = new Date();
     const updated = await this.database.db.transaction(async (tx) => {
+      if (body.status === "done" && current.project.status !== "done") {
+        await this.flow.assertProjectCompletionGate(tx, id);
+      }
       const row = await this.projects.updateWithVersion(id, patch, body.version, at, tx);
       if (row === null) {
         const again = await this.projects.findViewById(id);

@@ -286,7 +286,7 @@ export interface paths {
         };
         options?: never;
         head?: never;
-        /** 更新项目（乐观锁：必须回传 version） */
+        /** 更新项目（乐观锁：必须回传 version；首次改为 done 时要求任务全部完成且已配置成果文件均已上传） */
         patch: {
             parameters: {
                 query?: never;
@@ -332,6 +332,15 @@ export interface paths {
                 };
                 /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
                 409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 业务校验未通过（门禁 / 蓝图校验，含明细） */
+                422: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -1443,7 +1452,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 完成预检（门禁缺件与放行提示；UI 置灰依据，服务端仍在事务内强校验） */
+        /** 完成预检（已配置成果类型缺上传文件时提示；未配置成果类型直接放行；服务端仍在事务内强校验） */
         get: {
             parameters: {
                 query?: never;
@@ -1495,7 +1504,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 任务完成提交（事务内门禁：缺件 422 TASK_REQUIRED_DOC_MISSING；未定档放行 + warning 并触发 R02） */
+        /** 任务完成提交（事务内门禁：已配置成果类型缺上传文件 422 TASK_REQUIRED_DOC_MISSING；未配置不要求文件；draft 放行 + warning 并触发 R02） */
         post: {
             parameters: {
                 query?: never;
@@ -3629,7 +3638,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 推进阶段（服务端门禁：任务 / 节点 / 成果文件；失败 422 + 缺项明细，不部分推进） */
+        /** 推进阶段（服务端门禁：节点 / 任务完成与交付要求 / 节点定档文件；失败 422 + 缺项明细，不部分推进） */
         post: {
             parameters: {
                 query?: never;
@@ -12486,14 +12495,14 @@ export interface components {
             total: number;
             /** @description 未定档（draft）数量；>0 时完成门禁放行但返回 warning 并触发 R02 */
             draft: number;
-            /** @description 已定档（final / changed）数量；门禁按 node_requirements 逐 doc_type 统计 */
+            /** @description 已定档（final / changed）数量，仅用于文件摘要展示；完成门禁统计已上传（draft / final / changed） */
             final: number;
         };
         /** @description 任务定档提交（version = 抽屉当前行版本） */
         TaskFinalizeBody: {
             version: components["schemas"]["Version"] & unknown;
         };
-        /** @description 缺件明细：required / present 按门禁统计范围逐 doc_type 给出 */
+        /** @description 缺件明细：required / present 按已配置的成果类型逐类给出；未配置成果类型时不产生缺件 */
         TaskGateMissing: {
             docType: components["schemas"]["DocType"];
             required: number;

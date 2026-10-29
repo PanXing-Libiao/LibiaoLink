@@ -15,6 +15,7 @@ import type {
   WecomGroupRow,
 } from "../src/modules/notify/notify.group.repository.js";
 import type { DailyReportPosterData } from "../src/modules/notify/daily-report.poster.types.js";
+import type { StageCompletePosterData } from "../src/modules/notify/stage-complete.poster.types.js";
 import { areAllProjectTasksOnTime } from "../src/modules/notify/notify.group.repository.js";
 import {
   composeGroupMarkdown,
@@ -77,6 +78,7 @@ class FakeGroupRepository {
   r06PosterData: R06PosterData | null = null;
   r06PosterError = false;
   dailyReportPosterData: DailyReportPosterData | null = null;
+  stageCompletePosterData: StageCompletePosterData | null = null;
   setNameCalls: { chatid: string; name: string; at: Date }[] = [];
 
   async findGroupByProject(projectId: string): Promise<WecomGroupRow | null> {
@@ -152,6 +154,10 @@ class FakeGroupRepository {
 
   async findDailyReportPosterData(): Promise<DailyReportPosterData | null> {
     return this.dailyReportPosterData;
+  }
+
+  async findStageCompletePosterData(): Promise<StageCompletePosterData | null> {
+    return this.stageCompletePosterData;
   }
 
 }
@@ -325,6 +331,7 @@ describe("parseGroupMessage / composeGroupMarkdown / truncateGroupMarkdown（纯
       refType: "task",
       refId: PROJECT_2,
       templateCode: null,
+      stageKey: null,
     });
     expect(parseGroupMessage(payload({ title: null }))?.title).toBeNull();
   });
@@ -908,6 +915,87 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("STAGE_COMPLETE_GROUP：文字送达后按阶段真实数据生成 1280x720 海报", async () => {
+    const { service, repo, aibot } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
+    repo.stageCompletePosterData = {
+      projectCode: "LBGW-20260331-1459",
+      projectName: "新能源汽车总装输送线项目",
+      stageKey: "design",
+      completedAt: AT,
+      stages: [
+        { key: "presale", total: 4, done: 4 },
+        { key: "design", total: 5, done: 5 },
+        { key: "purchase", total: 3, done: 0 },
+        { key: "assembly", total: 6, done: 3 },
+        { key: "install", total: 19, done: 16 },
+        { key: "deploy", total: 4, done: 0 },
+        { key: "trial", total: 2, done: 0 },
+        { key: "production", total: 1, done: 0 },
+        { key: "acceptance", total: 1, done: 0 },
+      ],
+    };
+
+    const outcome = await service.consume(
+      claimedRow(
+        payload({
+          title: "阶段完成｜设计开发",
+          body: "「设计开发」阶段 5 项小任务已全部完成，阶段里程碑达成。",
+          refType: "task",
+          refId: PROJECT_2,
+          templateCode: "STAGE_COMPLETE_GROUP",
+          stageKey: "design",
+        }),
+      ),
+    );
+
+    expect(outcome).toEqual({ outcome: "done" });
+    expect(aibot.imageSends).toHaveLength(1);
+    const image = aibot.imageSends[0]!;
+    expect(image.fileName).toBe("STAGE-LBGW-20260331-1459-design.png");
+    expect(image.mime).toBe("image/png");
+    expect(image.content.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    expect(image.content.readUInt32BE(16)).toBe(1280);
+    expect(image.content.readUInt32BE(20)).toBe(720);
+    expect(repo.deliveries[0]).toMatchObject({ state: "sent", attempts: 2 });
+  });
+
+  it("STAGE_COMPLETE_GROUP：阶段键缺失或海报发送失败只留文字，不回滚已送达消息", async () => {
+    const { service, repo, aibot } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
+    let outcome = await service.consume(
+      claimedRow(payload({ templateCode: "STAGE_COMPLETE_GROUP", title: "阶段完成", body: "本阶段已全部完成" })),
+    );
+    expect(outcome).toEqual({ outcome: "done" });
+    expect(aibot.imageSends).toHaveLength(0);
+
+    aibot.imageResult = {
+      ok: false,
+      kind: "retryable",
+      errcode: null,
+      errmsg: "素材上传回执超时",
+      retryAt: null,
+      attempts: 0,
+      state: "subscribed",
+    };
+    repo.stageCompletePosterData = {
+      projectCode: "P-001",
+      projectName: "测试项目",
+      stageKey: "design",
+      completedAt: AT,
+      stages: [{ key: "design", total: 5, done: 5 }],
+    };
+    outcome = await service.consume(
+      claimedRow(
+        payload({ templateCode: "STAGE_COMPLETE_GROUP", stageKey: "design", title: "阶段完成", body: "本阶段已全部完成" }),
+        { id: 8, dedupeKey: "stage.completed:test" },
+      ),
+    );
+    expect(outcome).toEqual({ outcome: "done" });
+    expect(aibot.imageSends).toHaveLength(1);
+    expect(repo.deliveries.at(-1)).toMatchObject({ state: "sent" });
   });
 
   it("R06_GROUP：默认按真实项目数据生成 900x1350 动态海报", async () => {
