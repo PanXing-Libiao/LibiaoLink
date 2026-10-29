@@ -280,7 +280,7 @@ async function insertPlannedRunsAndCollectMessages(
  *     + ":aibot" 后缀（与 inbox / app 行并存不撞键）；
  *   - 载荷不合规（无收件人 / 正文为空；站内信另要求标题非空）：不产行，收 invalid 由调用方按确定性失败收口（模板配置问题）；
  *   - 群播报寻址：payload.projectId 取 message.recipientId —— 不变式「wecom_group 的 recipientId = 群寻址键（一期 = projectId）」，
- *     由主体读取层保证（project.group 收件人 id = 项目 id；未绑定 → 引擎已按 recipient_missing 不产出）；
+ *     由主体映射器保证（project.group 收件人 id 恒为项目 id）；绑定 / 激活由 notify.group 消费端统一判定；
  *   - 合并 / 幂等：dedupeKey = 引擎幂等键（规则 + 实体 + 窗口），站内信 mergeKey 显式取同键 —— 通知层合并
  *     （C2-09 同期合并）不参与机内产出（引擎已按收件人合并且幂等键防重），避免跨窗口误合并；群播报逐条不合并。
  */

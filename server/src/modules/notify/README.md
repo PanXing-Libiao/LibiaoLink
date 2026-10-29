@@ -2,12 +2,13 @@
 
 ## 项目群可投递统一判定（2026-10-28）
 
-- **唯一判定**：`projectGroupDeliverability` —— `绑定存在 && activated_at != null` 才是可投递；未绑定与已绑定未激活统一归为「项目群不可投递」，分别返回 `unbound` / `not_activated`。群播报消费、自动化 `project.group` 收件人解析、日报同步接口共用本判定。
+- **唯一判定**：`projectGroupDeliverability` —— `绑定存在 && activated_at != null` 才是可投递；未绑定与已绑定未激活统一归为「项目群不可投递」，分别返回 `unbound` / `not_activated`。群播报消费与日报同步接口共用本判定；自动化主体层只生成 `project.group` 投递意图（寻址键 = 项目 id），不读取群绑定、不判断可投递、不发告警。
+- **告警触发点**：仅 `NotifyGroupService.consume` 处理实际 `notify.group` 消息时判断并告警。规则条件未命中不会生成消息，因此不会告警；R03 / R05 等单聊规则不经过群消费，也不会产生项目群告警。
 - **即时告警**：同一项目同一原因只发一次；原因变化（未绑定 → 未激活或反向）重新发一次。正文只展示项目名、原因、影响与处置，不含项目 UUID / chatid / outbox 行号。未绑定处置 = 项目设置完成绑定；未激活处置 = 在项目群内 @LibiaoLink 发送一条消息完成激活。
 - **与死信告警的关系**：项目群不可投递导致的群消息 dead 使用 `deadAlert=digest`，由上述专用告警负责即时可见性，通用 `outbox.dead` 不双报；项目经理站内信降级保持不变。
 - **恢复**：恢复为可投递后不即时推送，记录 `notify.project_group.recovered` 并并入下一次 outbox 日报；读取后清空，避免重复。
-- **停用兼容**：`wecom_groups.enabled=false` 是历史兼容态（当前系统不存在），保留既有 dead + 降级路径，不进入专用告警，也不进入 `project.group` 收件人集。
-- **测试**：`server/test/project-group-delivery-alert.test.ts` 覆盖三态判定、两种文案、同因去重、原因变化、恢复入日报、正文脱敏与发送失败不阻断；`notify-group` / `automation-subjects` / `report-issue` / `outbox-alert` 覆盖各接线点。
+- **停用兼容**：`wecom_groups.enabled=false` 是历史兼容态（当前系统不存在），保留既有 dead + 降级路径，不进入专用告警；主体层仍产 `project.group` 投递意图，由消费端按停用处理。
+- **测试**：`server/test/project-group-delivery-alert.test.ts` 覆盖三态判定、两种文案、同因去重、原因变化、恢复入日报、正文脱敏与发送失败不阻断；`notify-group` 覆盖真实群消息消费失败、降级与告警，`automation-wiring` 锁定条件未命中不产出、单聊规则不产出 `notify.group`，`report-issue` / `outbox-alert` 覆盖各接线点。
 
 | 字段 | 内容 |
 |---|---|

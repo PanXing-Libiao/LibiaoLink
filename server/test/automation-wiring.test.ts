@@ -58,7 +58,6 @@ function task(overrides: Partial<ReplayTask> = {}): ReplayTask {
     projectName: "美国仓储公司订单",
     projectProgress: 50,
     completedByName: "邵晨宇",
-    projectGroupId: null,
     deliverableTypes: ["施工方案"],
     fileCount: 0,
     ...overrides,
@@ -296,7 +295,6 @@ describe("规则事件消费（S7-4 接线 · evaluateEventMessages → notify.m
         projectId: "p-1",
         projectCode: "LBUSA-20261014-002",
         projectName: "美国仓储公司订单",
-        groupId: "p-1",
       }),
     );
 
@@ -328,7 +326,6 @@ describe("规则事件消费（S7-4 接线 · evaluateEventMessages → notify.m
         projectName: "美国仓储公司订单",
         projectStatus: "done",
         projectVersion: 4,
-        groupId: "p-1",
       }),
     );
 
@@ -447,6 +444,7 @@ describe("调度生产者（automation-schedule.job → notify.message）", () =
     expect(payload.templateCode).toBe("R03_WECOM");
     expect(payload.mergeKey).toBe("R03:t-1:2026-09-24");
     expect(h.appended.some((item) => (item.event.payload as Record<string, unknown>).recipientId === "u-9")).toBe(false);
+    expect(h.appended.every((item) => item.event.topic === "notify.message")).toBe(true);
     expect(h.logs.warn.some((line) => line.includes("渠道未落地"))).toBe(false);
     expect(h.runs).toHaveLength(1);
     expect(h.runs[0]).toMatchObject({
@@ -473,7 +471,7 @@ describe("调度生产者（automation-schedule.job → notify.message）", () =
     expect(h.runs.map((run) => run.ruleCode)).toEqual(["R03"]);
   });
 
-  it("A02 项目日报命中：产出 notify.group（title 非空 / refType = project / 幂等键 = A02:项目:日期）", async () => {
+  it("A02 项目日报命中：产出 notify.group 投递意图（绑定 / 激活由消费端判定）", async () => {
     const rules = ENABLED_TEST_RULES.filter((rule) => rule.code === "A02");
     const late = new Date(atShanghaiTime("2026-09-24", "19:45"));
     const h = makeHarness({ rules: async () => [...rules], now: () => late });
@@ -486,7 +484,6 @@ describe("调度生产者（automation-schedule.job → notify.message）", () =
         headcountTotal: 12,
         issueCount: 1,
         summaryText: "张三：安装摄像头 3 台",
-        groupId: "p-1",
       }),
     ];
 
@@ -505,6 +502,31 @@ describe("调度生产者（automation-schedule.job → notify.message）", () =
     expect(payload.refType).toBe("project");
     expect(payload.refId).toBe("p-1");
     expect(payload.templateCode).toBe("A02_GROUP");
+  });
+
+  it("A02 条件未命中：不产出 notify.group，也不因项目群状态提前告警", async () => {
+    const rules = ENABLED_TEST_RULES.filter((rule) => rule.code === "A02");
+    const late = new Date(atShanghaiTime("2026-09-24", "19:45"));
+    const h = makeHarness({ rules: async () => [...rules], now: () => late });
+    h.subjects.windowSubjects = [
+      toProjectDaySubject({
+        projectId: "p-1",
+        projectName: "临港数据中心",
+        date: "2026-09-24",
+        entryCount: 0,
+        headcountTotal: 12,
+        issueCount: 0,
+        summaryText: "",
+      }),
+    ];
+
+    const result = await createAutomationScheduleHandler(h.deps).run(
+      jobContext(new Date(atShanghaiTime("2026-09-24", "18:55")), new Date(atShanghaiTime("2026-09-24", "19:40"))),
+    );
+
+    expect(result?.produced).toBe(0);
+    expect(h.appended).toEqual([]);
+    expect(h.logs.log.some((line) => line.includes("not_matched"))).toBe(true);
   });
 
   it("空主体池：零产出 + note 留痕", async () => {
