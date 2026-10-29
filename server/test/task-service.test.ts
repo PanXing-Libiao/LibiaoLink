@@ -178,8 +178,13 @@ class FakeTaskRepository {
     this.abortedTaskUploadSessions.push({ taskId, at });
     return this.abortedTaskSessionCount;
   }
-  async countStageTasks(): Promise<{ total: number; done: number }> {
-    return { total: 0, done: 0 };
+  stageCounts = { total: 0, done: 0, deliveryReady: 0 };
+  stageLocks: { projectId: string; stageKey: string }[] = [];
+  async lockStageCompletion(_client: unknown, projectId: string, stageKey: string): Promise<void> {
+    this.stageLocks.push({ projectId, stageKey });
+  }
+  async countStageTasks(): Promise<{ total: number; done: number; deliveryReady: number }> {
+    return this.stageCounts;
   }
   async findTaskBrief(): Promise<{ id: string; projectId: string; stageKey: string | null; sortIndex: number } | null> {
     return this.task === null
@@ -212,16 +217,25 @@ class FakeTaskRepository {
 /** 门禁替身（M3-03）：默认放行；用例可注入要求与计数（缺件 / draft 提示）。 */
 class FakeTaskGateRepository {
   requirements: { docType: string; minCount: number }[] = [];
-  finalCounts: { docType: string; present: number }[] = [];
+  uploadedCounts: { docType: string | null; present: number }[] = [{ docType: null, present: 1 }];
   draftCounts: { docType: string; present: number }[] = [];
   async listNodeDocRequirements(): Promise<{ docType: string; minCount: number }[]> {
     return this.requirements;
   }
-  async countFinalFiles(): Promise<{ docType: string; present: number }[]> {
-    return this.finalCounts;
+  async countUploadedFiles(): Promise<{ docType: string | null; present: number }[]> {
+    return this.uploadedCounts;
   }
   async countDraftFiles(): Promise<{ docType: string; present: number }[]> {
     return this.draftCounts;
+  }
+  delivery: { total: number; done: number; deliveryReady: number; issues: unknown[] } = {
+    total: 0,
+    done: 0,
+    deliveryReady: 0,
+    issues: [],
+  };
+  async evaluateDeliveryStatus() {
+    return this.delivery;
   }
 }
 
@@ -267,8 +281,8 @@ function makeService(
   permission: FakePermissionService = new FakePermissionService(),
   gate: FakeTaskGateRepository = new FakeTaskGateRepository(),
   audit: FakeAuditService = new FakeAuditService(),
+  database: FakeDatabase = new FakeDatabase(),
 ): TaskService {
-  const database = new FakeDatabase();
   return new TaskService(
     database as unknown as DatabaseService,
     repo as unknown as TaskRepository,
@@ -698,6 +712,73 @@ describe("变更关联多条（A1-07 / R01 · Push 144）", () => {
   });
 });
 
+
+describe("大阶段完成群通知（全部小任务完成）", () => {
+  it("本次完成使阶段全部 done：写入 STAGE_COMPLETE_GROUP 群通知，阶段判定加事务锁", async () => {
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ stageKey: "design", status: "active", progress: "0.8" });
+    const gate = new FakeTaskGateRepository();
+    gate.delivery = { total: 5, done: 5, deliveryReady: 5, issues: [] };
+    const database = new FakeDatabase();
+    const service = makeService(repo, new FakePermissionService(), gate, new FakeAuditService(), database);
+
+    await service.complete(PROJECT, TASK, { version: 3 }, ACTOR);
+
+    expect(repo.stageLocks).toEqual([{ projectId: PROJECT, stageKey: "design" }]);
+    const groupEvent = database.outbox.find(
+      (item) =>
+        typeof item === "object" &&
+        item !== null &&
+        (item as { topic?: string }).topic === "notify.group",
+    ) as
+      | { topic: string; dedupeKey: string; payload: Record<string, unknown> }
+      | undefined;
+    expect(groupEvent).toMatchObject({
+      topic: "notify.group",
+      dedupeKey: "stage.completed:" + PROJECT + ":design:" + TASK + ":v4",
+      payload: {
+        projectId: PROJECT,
+        title: "阶段完成｜设计开发",
+        body: "「设计开发」阶段 5 项小任务已全部完成，阶段里程碑达成。",
+        refType: "task",
+        refId: TASK,
+        templateCode: "STAGE_COMPLETE_GROUP",
+        stageKey: "design",
+      },
+    });
+  });
+
+  it("阶段仍有未完成任务 / 未分组任务：不发群通知", async () => {
+    const partialRepo = new FakeTaskRepository();
+    partialRepo.task = makeRow({ stageKey: "design", status: "active" });
+    const partialGate = new FakeTaskGateRepository();
+    partialGate.delivery = { total: 5, done: 4, deliveryReady: 4, issues: [] };
+    const partialDb = new FakeDatabase();
+    await makeService(
+      partialRepo,
+      new FakePermissionService(),
+      partialGate,
+      new FakeAuditService(),
+      partialDb,
+    ).complete(PROJECT, TASK, { version: 3 }, ACTOR);
+    expect(partialDb.outbox.some((item) => (item as { topic?: string }).topic === "notify.group")).toBe(false);
+
+    const ungroupedRepo = new FakeTaskRepository();
+    ungroupedRepo.task = makeRow({ stageKey: null, status: "active" });
+    const ungroupedGate = new FakeTaskGateRepository();
+    ungroupedGate.delivery = { total: 1, done: 1, deliveryReady: 1, issues: [] };
+    const ungroupedDb = new FakeDatabase();
+    await makeService(
+      ungroupedRepo,
+      new FakePermissionService(),
+      ungroupedGate,
+      new FakeAuditService(),
+      ungroupedDb,
+    ).complete(PROJECT, TASK, { version: 3 }, ACTOR);
+    expect(ungroupedRepo.stageLocks).toEqual([]);
+    expect(ungroupedDb.outbox.some((item) => (item as { topic?: string }).topic === "notify.group")).toBe(false);
+  });
+});
 
 describe("任务定档写口闸（Push 249 · 业务口径「若是则上传文件后该任务定档不支持任何修改」）", () => {
   const FINALIZED_AT = new Date("2026-10-08T02:00:00Z");

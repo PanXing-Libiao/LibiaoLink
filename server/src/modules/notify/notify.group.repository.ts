@@ -7,8 +7,8 @@
  * 未绑定群回调写入 wecom_group_candidates staging 表（0058），绑定成功后由 project 模块删除。
  */
 import { Injectable } from "@nestjs/common";
-import { STAGE_NAMES } from "@libiaolink/contracts";
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { STAGE_KEYS, STAGE_NAMES } from "@libiaolink/contracts";
+import { and, asc, count, eq, inArray, isNull, sql } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { users } from "../../db/schema/identity.js";
@@ -22,6 +22,7 @@ import type {
   DailyReportPosterIssue,
   DailyReportPosterPhoto,
 } from "./daily-report.poster.types.js";
+import type { StageCompletePosterData } from "./stage-complete.poster.types.js";
 
 export type WecomGroupRow = typeof wecomGroups.$inferSelect;
 export type WecomGroupCandidateRow = typeof wecomGroupCandidates.$inferSelect;
@@ -212,6 +213,52 @@ export class NotifyGroupRepository {
       onTimeDone: doneRows.filter((row) => isCompletedTaskOnTime(row)).length,
       startDate: starts[0] ?? null,
       plannedEnd: ends.at(-1) ?? null,
+    };
+  }
+
+  /**
+   * 阶段完成海报快照：项目编号 / 名称 + 九阶段任务完成度。
+   * 目标阶段由 outbox 载荷 stageKey 指定；任务统计含未删除任务，阶段完成判定与任务页同口径。
+   */
+  async findStageCompletePosterData(
+    projectId: string,
+    stageKey: string,
+    completedAt: Date,
+    client: DbClient = this.database.db,
+  ): Promise<StageCompletePosterData | null> {
+    const projectRows = await client
+      .select({ code: projects.code, name: projects.name })
+      .from(projects)
+      .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)))
+      .limit(1);
+    const project = projectRows[0];
+    if (project === undefined) {
+      return null;
+    }
+    const taskRows = await client
+      .select({ stageKey: tasks.stageKey, status: tasks.status, value: count() })
+      .from(tasks)
+      .where(and(eq(tasks.projectId, projectId), isNull(tasks.deletedAt)))
+      .groupBy(tasks.stageKey, tasks.status);
+    const totals = new Map<string, { total: number; done: number }>();
+    for (const row of taskRows) {
+      if (row.stageKey === null) continue;
+      const entry = totals.get(row.stageKey) ?? { total: 0, done: 0 };
+      const value = Number(row.value);
+      entry.total += value;
+      if (row.status === "done") entry.done += value;
+      totals.set(row.stageKey, entry);
+    }
+    return {
+      projectCode: project.code,
+      projectName: project.name,
+      stageKey,
+      completedAt,
+      stages: STAGE_KEYS.map((key) => ({
+        key,
+        total: totals.get(key)?.total ?? 0,
+        done: totals.get(key)?.done ?? 0,
+      })),
     };
   }
 
