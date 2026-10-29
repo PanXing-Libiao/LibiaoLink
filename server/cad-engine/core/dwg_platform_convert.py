@@ -44,7 +44,8 @@ def main():
         try:
             subprocess.run([dotnet, reader, str(source), str(native)], check=True,
                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-            manifest_path = assemble_native(native, source, result, platform=True, binary_dir=binary_dir)
+            manifest_path = assemble_native(native, source, result, platform=True,
+                                             binary_dir=binary_dir, packed=True)
             with open(manifest_path, 'rb') as manifest:
                 shutil.copyfileobj(manifest, sys.stdout.buffer)
         except Exception as error:

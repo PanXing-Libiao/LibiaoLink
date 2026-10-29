@@ -232,8 +232,9 @@
 - 本轮发现并修复查看器门禁：`platform-entry.js` 原先把 `partial` 只允许给 DXF，DWG 的 partial 快照被「模型来源或完整性检查未通过」拒绝；现在 DXF/DWG 均可接受 partial，DWG 按图纸处理（名称走 UTF8、隐藏名称编码切换），配套资源按钮仍仅 DXF。该文件不在 `viewerVersion` 摘要范围内（摘要只覆盖 `cad-viewer/core`），本机验证使用全新浏览器配置；旧缓存升级路径未验证。
 - 本机验证环境的 S3 代理（仓库外 harness）曾把 HEAD 响应的 `Content-Length` 改写为 0，导致上传完成校验读成 0 字节；修正代理后分片合并与全链路通过。这是本机验证工具问题，不是平台代码缺陷。
 - 2026-10-29 worker 传输优化：`assemble_native` 新增 platform 模式，直接把 `bufferResources` 写入最终 manifest；`dwg_platform_convert.py` 只流式输出 manifest，不再 `json.loads` + `json.dumps` 整个 265 MB 文档，也不再二次读写 76 MB buffer。正式图 worker 端到端 89.6→81.6 秒（-8%），本机平台任务 2 分 46→2 分 41 秒（-3%），峰值 RSS 约 2.68 GiB 基本不变（峰值在文档组装/校验，不在被删掉的解析段）；公开样本 0.23 秒。平台正式图全链路复验通过（artifact 341,892,958 B、manifest 265,840,390 B、viewer ready）。
-- 版本（worker 优化后）：`engineVersion = step-0.3.3/b7420fe3…/gateway-1`、`formatVersions.DWG = dwg-0.1.0/7669374c…/gateway-1`、`releaseDigest = 0013b43f…`，`viewerVersion = viewer-5c952e5d…`；STEP/DXF 格式键以 `source.json` 为准。未推送、未部署。
-- 仍未验证：目标 Linux 沙箱资源档位下经平台链路、测试机/生产部署与真实公司账号浏览器验收；旧浏览器缓存升级路径。
+- 2026-10-29 packed manifest 传输（本地已验证）：新增 `ucd-dwg-packed/1`（`dwg-table/1`），把标准 drawing 实体/显示表无损压成索引行，非标准形状原样留在回退表；正式图 manifest 265,840,262 → 69,039,306 B（**25.97%**），解包后 canonical revision 与原件一致；artifact 341,892,958 → 145,092,002 B（42.4%，manifest 69,039,434 + buffer 76,052,568）。worker 端到端 75.7 秒（比未打包 81.6 秒快 6 秒），峰值 RSS 2.54 GiB（-148 MB）；本机平台任务 2 分 20 秒（比未打包 2 分 41 秒快 21 秒），查看器 ready 12.1 秒（未打包 13.4 秒），画面与未打包一致；公开样本 manifest 475,270 B、artifact 646,277 B。引擎父进程在校验前解包、平台保存 packed 形式，查看器 `core/dwg-packed-transport.js` 解包；`conversion_jobs.py` 为共享文件，STEP/DXF 格式键随共享摘要一起更新。
+- 版本（packed 后）：`engineVersion = step-0.3.3/1667305a…/gateway-1`、`formatVersions.DWG = dwg-0.1.0/da44f3c9…/gateway-1`、`viewerVersion = viewer-cf6aafa0…`、`releaseDigest = 8db94edf…`；STEP/DXF 格式键以 `source.json` 为准（共享运行时变动会一起更新）。未推送、未部署。
+- 仍未验证：目标 Linux 沙箱资源档位下经平台链路（含父进程解包/校验峰值）、测试机/生产部署与真实公司账号浏览器验收；旧浏览器缓存升级路径。
 
 
 ## 代码责任与入口
@@ -248,7 +249,7 @@
 | 现有查看器 | 前端 `drawing-viewer.js`、`drawing-projection.js`、`drawing-instances.js` | 大模型保留块实例、共享几何、Flatbush 索引和连续笔画批绘；原普通投影仍共用样式/身份契约 |
 | 社区文字/索引 | 前端 `core/vendor/` | 选定 ACadSharp.Image 文字规则，Flatbush/Flatqueue；来源、内容摘要和许可随代码保留 |
 | 本机页面 | `dev/dwg-local.py` | 回环地址加载已验证 UCD，复用同一 `mountDrawingViewer`；不提供原图下载，不接业务上传 |
-| 平台接入 | 平台 file/preview、任务、归档 worker、缓存；前端文件库查看入口 | 第一片已接线，`CAD_DWG_ENABLED` 默认关闭；本机完整系统全链路已通过，测试机/生产未部署 |
+| 平台接入 | 平台 file/preview、任务、归档 worker、缓存；前端文件库查看入口 | 第一片已接线，`CAD_DWG_ENABLED` 默认关闭；本机完整系统全链路（含 packed manifest）已通过，测试机/生产未部署 |
 
 原源身份是完整 DWG SHA-256、保存版本及字节数；`source-0`、`buffer-0` 等只是 UCD 文档内外键，未截断原文件/缓冲摘要。`SourceRef.objectKey` 保留原句柄；代理派生零件仍指回原对象。未引用块不展开进场景，不能因此算作解码漏读；它们保留在原 DWG 和源账本中。
 

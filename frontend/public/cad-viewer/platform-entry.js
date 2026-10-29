@@ -1,5 +1,6 @@
 import {loadPlatformModel,inspectionRecord} from './core/app.js?v=dxf-0.15.0';
 import {unpackMetadata} from './core/compact-transport.js';
+import {unpackDwgPacked} from './core/dwg-packed-transport.js?v=dxf-0.15.0';
 import {hydrateBinary} from './core/binary-transport.js';
 import {missingFaceManifest} from './core/nonmeshable-ui.js';
 import {repairManifest} from './core/mesh-repair-ui.js';
@@ -212,7 +213,7 @@ loadPlatformModel(async({signal,progress})=>{
   ui.update(2,'正在准备模型视图');
   progress('正在读取已校验模型…');
   const response=await request(jobBase+'/manifest',{signal:active});
-  let packet=unpackMetadata(await json(response));
+  let packet=unpackDwgPacked(unpackMetadata(await json(response)));
   const expected=currentJob.state==='partial'?'partial':'complete';
   const partialFormat=currentJob.format==='DXF'||currentJob.format==='DWG';
   if(packet.presentation?.sourceSHA256!==currentJob.sourceSHA256||packet.snapshot?.completeness!==expected

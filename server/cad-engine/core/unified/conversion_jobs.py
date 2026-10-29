@@ -22,6 +22,7 @@ from .validation import validate_envelope,validate_binary_envelope
 from .transport import read_worker_buffers
 from .input_policy import step_job_input_bytes
 from .compact_transport import WORKER,VERSION,unpack_metadata
+from .dwg_pack import unpack_document
 from .step_name_encoding import name_codepage as check_name_codepage
 from . import dxf_resources
 
@@ -362,7 +363,11 @@ class ConversionJobs:
                         if current['state'] not in TERMINAL:self._update(current,state='failed',phase='failed',error=envelope,workerPeakRSSBytes=peak_rss)
                     return
                 wire_envelope=envelope;envelope=unpack_metadata(wire_envelope)
-                document=envelope['document'];sources=document['sources']
+                document=envelope['document']
+                if document.get('packed'):
+                    # Validate the reconstructed document, but store the packed wire form.
+                    document=unpack_document(document);envelope={**envelope,'document':document}
+                sources=document['sources']
                 main=next((item for item in sources if item['sha256']==row['sourceSHA256'] and item['name']==row['name']),None)
                 expected_format='DWG' if is_dwg else 'DXF' if is_dxf else 'STEP'
                 if main is None or main['format']!=expected_format or main['byteLength']!=row['sourceByteLength'] or (not is_dxf and not is_dwg and len(sources)!=1):
