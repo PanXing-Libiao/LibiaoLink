@@ -15,6 +15,7 @@ import time
 
 from .validation import validate_binary_envelope
 from .canonical import canonical_sha256,write_canonical
+from .payload_sink import FileSink
 
 VERSION = '0.1.0-local'
 IDENTITY = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
@@ -127,7 +128,7 @@ def region_leaf_pairs(leaf):
     return pairs
 
 
-def assemble_native(folder, original, output):
+def assemble_native(folder, original, output, platform=False, binary_dir=None):
     started=time.perf_counter()
     def phase(name):print(f'DWG UCD {name}: {time.perf_counter()-started:.3f}s',file=sys.stderr,flush=True)
     folder, output = Path(folder), Path(output)
@@ -342,6 +343,14 @@ def assemble_native(folder, original, output):
     phase('contract and binary validated')
     envelope = {'transportProfile':'ucd-worker-binary/1','document':doc,'snapshot':snapshot,
         'bufferPayloads':{bid:'native/positions.bin'},'presentation':presentation}
+    if platform:
+        # The platform worker consumes bufferResources directly. Writing them here
+        # avoids parsing and re-serialising the full manifest in the worker wrapper.
+        sink = FileSink(binary_dir or (output/'buffers'))
+        for buffer_id, relative in envelope.pop('bufferPayloads').items():
+            sink.put(buffer_id, buffer_bytes if buffer_id == bid else (output/relative).read_bytes())
+        sink.attach(envelope)
+        sink.finish(envelope)
     output.mkdir(parents=True,exist_ok=True)
     artifact = output/'manifest.json'
     pending=output/'manifest.json.tmp'

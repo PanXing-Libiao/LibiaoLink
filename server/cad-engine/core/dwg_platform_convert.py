@@ -8,13 +8,13 @@ transport. Runtime paths are supplied by the sandbox environment.
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from unified.dwg_adapter import assemble_native
-from unified.payload_sink import from_environment
 
 
 def fail(error):
@@ -27,8 +27,11 @@ def main():
     name = Path(sys.argv[1]).name
     reader = os.environ.get('CAD_DWG_READER')
     dotnet = os.environ.get('CAD_DWG_DOTNET')
+    binary_dir = os.environ.get('CAD_BINARY_DIR')
     if not reader or not dotnet:
         fail('missing-dwg-runtime: CAD_DWG_READER and CAD_DWG_DOTNET are required')
+    if not binary_dir:
+        fail('dwg-binary-transport-required: CAD_BINARY_DIR is required for the DWG platform worker')
     raw = sys.stdin.buffer.read()
     if not raw:
         fail('empty-dwg-source')
@@ -41,18 +44,9 @@ def main():
         try:
             subprocess.run([dotnet, reader, str(source), str(native)], check=True,
                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-            manifest_path = assemble_native(native, source, result)
-            envelope = json.loads(Path(manifest_path).read_text(encoding='utf-8'))
-            payloads = envelope.pop('bufferPayloads', {})
-            sink = from_environment()
-            for bid, path in payloads.items():
-                payload = Path(path)
-                if not payload.is_absolute():
-                    payload = result / payload
-                sink.put(bid, payload.read_bytes())
-            sink.attach(envelope)
-            sink.finish(envelope)
-            print(json.dumps(envelope, ensure_ascii=False, allow_nan=False, separators=(',', ':')))
+            manifest_path = assemble_native(native, source, result, platform=True, binary_dir=binary_dir)
+            with open(manifest_path, 'rb') as manifest:
+                shutil.copyfileobj(manifest, sys.stdout.buffer)
         except Exception as error:
             fail(error)
 

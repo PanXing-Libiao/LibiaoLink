@@ -6,7 +6,7 @@
   "engineFiles": {
     "convert.py": "8fc48b6f5f98c1be5b73ec32fa34127edef61ab60e8cfa8198f17f0de28447e7",
     "dwg_convert.py": "6805494f37b82793a420bf7c212980bdae564aa80a89dcbe5d9bd31ce567e082",
-    "dwg_platform_convert.py": "1f54b43d4090284b6f23902990a57bd653c95449ee900768322d6b18713ce409",
+    "dwg_platform_convert.py": "ce1ff60434947609bbc6fdac9d8f0d4776a842ba617d70833d7c22e72a4c0bcf",
     "dxf_convert.py": "15d8c5ee1b0bed208684f7b71575b79d6bb15d8c7f9d35f4254f6603ba200c74",
     "evidence-index.json": "6aa2e4a65860bd758c66e014eed29963ef6c8b196c934467b3f1c1230fd42b3a",
     "parser/affine.py": "3ac78b704c1310d64ee8b8e5423b149fddcaf576a1b50edf9a59d423a23bb391",
@@ -28,7 +28,7 @@
     "unified/compact_transport.py": "4c1a09e511b863a20295c63f553c8c067e8e2b51d9cd103178325f2b62418bd3",
     "unified/conversion_jobs.py": "ecf078751b00911245abe0451ac31d7ca6a1adededacd45cde1f392606dcb3d1",
     "unified/dwg-reader.json": "80327cfad2181ed90eef19fc78e9db65c94ca9a39a74bb4b0bde96b582d16fdc",
-    "unified/dwg_adapter.py": "7757c5f7e1df33cf5ef0ca31b3440579f3cd7fa2d8a623130ea9324f38d1d702",
+    "unified/dwg_adapter.py": "456837adab5bb7eb71e757d3f012d9a24704a55d05a1ce658144689c23428d4d",
     "unified/dxf_adapter.py": "600bb35351ed1133dada431e35e7702291753b13a4166827cf0c6caf332c08b3",
     "unified/dxf_annotations.py": "f0835f4f8e5a947b1fc6732dae7721cbd4b3d56cc0354ae4d5abf284440297d5",
     "unified/dxf_bigfont.py": "b19f3c7f858640f6f60ee5f3e70cd652d36b180dd2fbf3ac2fe7e0c71a5a715f",
@@ -526,11 +526,11 @@
   "formatVersions": {
     "STEP": "step-0.3.3/999e8bfcaed0e2c60752c7b555cd8a7134b916d5280321d604e40e3c8222e407/gateway-1",
     "DXF": "dxf-0.15.0/4ca6f03893a0740e0de01d0581be91b525caeb289f7eeca94bdf15ad49cadd6b/gateway-1",
-    "DWG": "dwg-0.1.0/81d2cbf751f0fe444066a7bd8ae4fe9ffded64f4e4dcdc318ef505d9722f9745/gateway-1"
+    "DWG": "dwg-0.1.0/7669374c818383d44e94547128ceb152d02aff468b7c092c508c5882abb15b2d/gateway-1"
   },
-  "engineDigest": "750b3fbe87babd2237604619502453f90b57a20f355eaacdbb08acefb8c6f2ec",
+  "engineDigest": "b7420fe3239661c0c3b55040e6ce42c0c777edb02b9aa2d4bd0cf6910e718379",
   "viewerDigest": "5c952e5df6aeb78cda85a404e9a28164706a54e1c6d22c0374adbd4814e3c571",
-  "releaseDigest": "52d72fc36c3fba04d324e657b38fce86431b988f0ac9d312f661018ef2925ec3",
-  "engineVersion": "step-0.3.3/750b3fbe87babd2237604619502453f90b57a20f355eaacdbb08acefb8c6f2ec/gateway-1",
+  "releaseDigest": "0013b43f61cf06a84fe30d00faf3d92ddf20aeee694f5eb463c045f9d6093c25",
+  "engineVersion": "step-0.3.3/b7420fe3239661c0c3b55040e6ce42c0c777edb02b9aa2d4bd0cf6910e718379/gateway-1",
   "viewerVersion": "viewer-5c952e5df6aeb78cda85a404e9a28164706a54e1c6d22c0374adbd4814e3c571"
 }

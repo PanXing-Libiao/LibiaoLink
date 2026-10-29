@@ -231,7 +231,8 @@
 - 2026-10-29 正式大图经平台全链路通过：`bc45921b…`（34,385,320 B）以 5 片上传并绑定任务；后台任务 2 分 46 秒完成，`state=partial`，产物 341,892,958 B（manifest 265,840,390 B + buffer 76,052,568 B），`cad_artifacts.format_version=dwg-0.1.0/81d2cbf7…`，S3 下 manifest/buffer 均存在；文件库预览打开正式图查看器，`data-cad-ready-ms=13382`、canvas 1382×825、`state=ready`，默认按源范围显示、部分显示提示正常。本机 harness 在 15 GiB WSL 中运行，未施加生产 cgroup；截图在仓库外 `D:\LibiaoLink-verify\local-engine\shots\`。
 - 本轮发现并修复查看器门禁：`platform-entry.js` 原先把 `partial` 只允许给 DXF，DWG 的 partial 快照被「模型来源或完整性检查未通过」拒绝；现在 DXF/DWG 均可接受 partial，DWG 按图纸处理（名称走 UTF8、隐藏名称编码切换），配套资源按钮仍仅 DXF。该文件不在 `viewerVersion` 摘要范围内（摘要只覆盖 `cad-viewer/core`），本机验证使用全新浏览器配置；旧缓存升级路径未验证。
 - 本机验证环境的 S3 代理（仓库外 harness）曾把 HEAD 响应的 `Content-Length` 改写为 0，导致上传完成校验读成 0 字节；修正代理后分片合并与全链路通过。这是本机验证工具问题，不是平台代码缺陷。
-- 版本：`engineVersion = step-0.3.3/750b3fbe…/gateway-1`、`formatVersions.DWG = dwg-0.1.0/81d2cbf7…/gateway-1`、`releaseDigest = 52d72fc3…`，`viewerVersion = viewer-5c952e5d…`；STEP/DXF 格式键以 `source.json` 为准。未推送、未部署。
+- 2026-10-29 worker 传输优化：`assemble_native` 新增 platform 模式，直接把 `bufferResources` 写入最终 manifest；`dwg_platform_convert.py` 只流式输出 manifest，不再 `json.loads` + `json.dumps` 整个 265 MB 文档，也不再二次读写 76 MB buffer。正式图 worker 端到端 89.6→81.6 秒（-8%），本机平台任务 2 分 46→2 分 41 秒（-3%），峰值 RSS 约 2.68 GiB 基本不变（峰值在文档组装/校验，不在被删掉的解析段）；公开样本 0.23 秒。平台正式图全链路复验通过（artifact 341,892,958 B、manifest 265,840,390 B、viewer ready）。
+- 版本（worker 优化后）：`engineVersion = step-0.3.3/b7420fe3…/gateway-1`、`formatVersions.DWG = dwg-0.1.0/7669374c…/gateway-1`、`releaseDigest = 0013b43f…`，`viewerVersion = viewer-5c952e5d…`；STEP/DXF 格式键以 `source.json` 为准。未推送、未部署。
 - 仍未验证：目标 Linux 沙箱资源档位下经平台链路、测试机/生产部署与真实公司账号浏览器验收；旧浏览器缓存升级路径。
 
 
