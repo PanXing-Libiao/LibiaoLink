@@ -54,6 +54,7 @@
 ### M5-06-1B · 规则管理 / 只读试运行 / 运行记录（Push 271 · lan 代做 wmj 线，待 wmj 复核）
 
 - **HTTP 面**：`AutomationController` 挂 6 个端点 —— `GET /api/v1/automation/rules`、`GET /rules/{code}`、`PATCH /rules/{code}`、`POST /rules/{code}/test`、`GET /runs`、`GET /runs/{id}`；读面 `automation.view`，写 / 试运行 `automation.manage`。`POST /rules/{code}/test` 固定 200（契约声明 200，不用 Nest 默认 201）。
+- **管理面权限硬闸（2026-10-29）**：`automation.view` / `automation.manage` 在 `PermissionService.can()` 中直接要求 `groupAccess.admin`，先于 `GROUP_ACCESS_ENFORCED` 与部门项目范围 / 编辑档位裁决。普通账号即使具备全部项目编辑权限，也不能查看规则 / 运行记录、启停规则或试运行；非管理员权限画像不再下发这两个无效键。
 - **规则读面**：只返回内置规则（R01 排除、停用保留、code 升序）；`AutomationRuleView` 附带 `editableFields`、`lastRunAt`、`nextRunAt`、`scheduleJobStatus`（job 行按 `jobs.dedupe_key = automation-schedule:<ruleCode>` 取）。
 - **保存**：`version` 乐观锁；只允许 `enabled` 与 `actions.channel` / `actions.recipient` 变化，动作数量 / 顺序 / kind / template / groupBy 只读；模板 / 条件 / 动作数量冲突按 S8-4 返回 **409**（错误码沿用 `VERSION_CONFLICT`，消息体写明不可修改），非法渠道 / 收件人取值 400 `VALIDATION_FAILED`。保存事务内完成规则更新、`version + 1`、审计（`automation_rule.update`）与一规则一 job reconcile。
 - **停用**：不删规则行 / job 行；job 置 `done`，规则重新启用时 job `done → pending`，`run_at = last_run_at = now`，避免补发停用前窗口。

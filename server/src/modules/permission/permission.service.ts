@@ -67,12 +67,22 @@ const PROJECT_GROUP_WRITE_KEYS: readonly PermissionKey[] = [
   "stakeholder.manage",
 ];
 
+/**
+ * M5-06 管理面四键：规则管理、运行记录、发送记录与重发仅系统管理员可用。
+ * 必须先于部门限制开关 / 项目编辑范围裁决；否则全量能力基线会让普通登录账号通过读权限，
+ * 全部项目编辑账号也会获得规则管理或重发能力。
+ */
+export const GROUP_ACCESS_ADMIN_ONLY_KEYS: readonly PermissionKey[] = [
+  "automation.view",
+  "automation.manage",
+  "notify.record.view",
+  "notify.resend",
+];
+
 /** 无项目上下文的全局业务写操作：仅全部项目编辑或系统管理员可写。 */
 const GLOBAL_GROUP_WRITE_KEYS: readonly PermissionKey[] = [
   "dict.manage",
   "calendar.manage",
-  "automation.manage",
-  "notify.resend",
 ];
 
 @Injectable()
@@ -121,7 +131,7 @@ export class PermissionService {
       userId: authorization.userId,
       roleCodes: authorization.roleCodes,
       dataScopes: authorization.dataScopes,
-      permissionKeys: authorization.permissionKeys as PermissionKey[],
+      permissionKeys: effectivePermissionKeys(authorization, groupAccess.admin),
       groupKeys: groupAccess.groupKeys,
       pageKeys: groupAccess.pages,
       groupAccessEnforced: groupAccess.enforced,
@@ -202,6 +212,7 @@ export class PermissionService {
   async can(actorId: string, key: PermissionKey, context?: ProjectResourceContext): Promise<boolean> {
     if (!can(await this.getAuthorization(actorId), key, context)) return false;
     const groupAccess = await this.groupAccessOf(actorId);
+    if (GROUP_ACCESS_ADMIN_ONLY_KEYS.includes(key)) return groupAccess.admin;
     if (!groupAccess.enforced || groupAccess.admin) return true;
     if (PROJECT_GROUP_WRITE_KEYS.includes(key)) {
       return context?.groupAccessLevel === "edit";
@@ -374,6 +385,12 @@ export class PermissionService {
 /** 没有任何数据范围（或只有 none 规则）= 仅登录；至少一个 all / own / selected 才有业务数据读取范围。 */
 function hasProjectDataScope(groupAccess: GroupAccessProfile): boolean {
   return groupAccess.scopePermissions.length > 0;
+}
+
+/** /permissions/me 只下发当前账号实际可用的功能权限键；管理员保留全量契约键。 */
+function effectivePermissionKeys(authorization: ActorAuthorization, admin: boolean): PermissionKey[] {
+  const keys = authorization.permissionKeys as PermissionKey[];
+  return admin ? keys : keys.filter((key) => !GROUP_ACCESS_ADMIN_ONLY_KEYS.includes(key));
 }
 
 function uniqueIds(ids: readonly string[]): string[] {

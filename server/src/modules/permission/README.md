@@ -24,6 +24,8 @@
 
 - **部门权限唯一裁定（2026-10-26）**：`RoleService.getActorAuthorization()` 固定返回全量能力基线（遗留 `roleCodes=[]` + `dataScopes=[all]` + 契约全量权限位）；项目范围、编辑 / 仅浏览与写入口由 `GROUP_ACCESS_ENFORCED` 下的部门规则统一裁决。管理员硬闸统一调用 `PermissionService.canManageGroupAccess()`，不得再以 `roleCodes.includes("admin")` 判断。画像缓存（TTL 10s + `invalidate`）与 404 / 403 语义不变。
 
+- **M5-06 管理面硬闸（2026-10-29）**：`automation.view` / `automation.manage` / `notify.record.view` / `notify.resend` 由 `PermissionService.can()` 直接要求 `groupAccess.admin`，先于 `GROUP_ACCESS_ENFORCED`、部门项目范围与编辑档位裁决；普通账号即使获得全量能力基线或全部项目编辑权限也不能进入规则管理 / 运行记录 / 发送记录 / 重发。非管理员在 `GET /api/v1/permissions/me` 的 `permissionKeys` 中不再收到这四个无效键，管理员保留全量契约键。
+
 ## 部门访问规则与系统管理员（0068 / 0069 / 0070 / 0072 / 0073 / 0074 / 0075）
 
 - `user_group_memberships` 保存 Casdoor 组织部门直属成员；权限画像入口按当前账号的有效部门键读取 `group_access_rules`。2026-10-26 起只识别含 Physical 组的组织树（组织根 / 父节点即使 Casdoor `type=Virtual` 也保留），与组织树并列的 `Group Access` 应用访问虚拟组在目录同步、成员关系、权限画像和通讯录四层都不再出现。2026-10-24 起页面不再按部门裁剪：所有登录账号的页面集合恒为 `GROUP_ACCESS_PAGE_KEYS`，`allowed_pages` 仅为旧客户端兼容字段，保存时恒写全量、裁决时忽略。
@@ -35,7 +37,7 @@
 - **任务模板 / 节点库维护**：`canManageBlueprint` 仅系统管理员，或 `GROUP_ACCESS_ENFORCED=true` 且任一范围有编辑权限（`groupAnyEdit`）的账号为 true；旧角色权限不再放大模板写权限。任务节点 / 模板读取仍要求系统管理员或至少一个 `all` / `own` / `selected` 数据范围；仅有 `scopePermissions=[]` 的账号不可读，有数据范围但当前无可见项目仍可读。
 
 - **操作记录范围**：`auditAccessOf` 返回 `all` / `project_manager` / `self`；项目经理的管理项目集合 = 主数据项目经理 ∪ 名册项目经理，再与当前部门有效项目范围取交集并排除软删项目，防止关闭部门范围后从操作记录旁路。
-- **项目级与全局写能力**：项目更新 / 删除 / 成员 / 任务 / 日报 / 问题 / 节点 / 文件 / 干系人写操作按当前项目的 `groupAccessLevel === edit` 放行；字典 / 日历 / 自动化 / 通知重发要求 `groupAllEdit`；新建 / 导入项目要求 `groupAllEdit || groupOwnEdit`，仅自己的项目可编辑的账号创建或导入后由服务端自动加入 `managerIds`。干系人有关联项目时逐个要求 `edit`，共享台账需全部关联项目可编辑；无关联项目时要求 `groupAllEdit + stakeholder.manage`。
+- **项目级与全局写能力**：项目更新 / 删除 / 成员 / 任务 / 日报 / 问题 / 节点 / 文件 / 干系人写操作按当前项目的 `groupAccessLevel === edit` 放行；字典 / 日历要求 `groupAllEdit`；自动化规则 / 运行记录与发送记录 / 重发仅系统管理员可用（不受 `groupAllEdit` 或部门限制开关放大）；新建 / 导入项目要求 `groupAllEdit || groupOwnEdit`，仅自己的项目可编辑的账号创建或导入后由服务端自动加入 `managerIds`。干系人有关联项目时逐个要求 `edit`，共享台账需全部关联项目可编辑；无关联项目时要求 `groupAllEdit + stakeholder.manage`。
 - **部门默认（0069 兼容保留）**：`group_access_rules.member_scope` / `member_user_ids` 保留用于旧客户端与升级迁移。权限页保存部门默认时固定写 `member_scope=all`、`member_user_ids=[]`；`all` 对部门全体直属成员生效，后续加入者自动继承。存量 `selected` 部门行由 0074 拆成个人规则后删除，不再作为新配置入口。
 - **部门内个人覆盖（0074 / 0075）**：`group_access_member_rules` 以 `group_key + user_id` 为主键保存个人规则摘要，`group_access_member_scope_permissions` 保存个人多范围权限，`project_group_member_access` 保存 `selected` 项目白名单并以组合外键级联到个人规则。同一部门内个人规则整体优先于部门默认，未设置者继承部门默认；不同人员互不影响，多部门仍按各自有效规则取并集。新增 `PUT /api/v1/access/member-rules` 与 `DELETE /api/v1/access/member-rules`；仅权限管理员可调用，保存 / 删除写审计 `group_access_rule`（`metadata.target=member`）并清空画像缓存。
 - **虚拟未分组（Push 497）**：没有任何在编部门成员关系的未删除账号（含停用；仅有应用访问虚拟组也算）在权限通讯录 / 看板聚合为根级虚拟部门「未分组」（固定键 `__ungrouped__`，不写 `departments`）；无账号时不返回空节点。该节点可保存 / 删除规则，`selected` 人员范围只校验当前未分组账号；权限画像把无部门账号的 `groupKeys` 映射为 `__ungrouped__`，进入任一真实部门后自动退出。规则列表同样只展示在编部门与未分组，历史虚拟组规则不再回填。

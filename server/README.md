@@ -736,6 +736,7 @@ server/
 - 重发仅允许 `wecom_app` / `wecom_aibot` / `wecom_group` 且最新状态为 `failed` / `dead`；严格空请求体、必填 `Idempotency-Key`。新归档固定 `pending`，新 outbox 复用原 topic / payload 并交给既有 worker，原消息与原尝试不改写。
 - 幂等以 actor + `Idempotency-Key` 哈希写入 `source_dedupe_key`；事务内先查重发归档再做状态门禁，同 key 并发 / 重试返回同一归档，首次成功后原消息状态变化不误报 409。新归档、outbox 与 `notify_delivery.update` 审计同事务。
 - 权限沿用全仓口径（Push 274 定案）：功能权限缺失 403 `FORBIDDEN`，判定先于资源探测；功能权限通过后记录不存在或记录级不可见统一 404 `NOT_FOUND`。S8-4 第三节“无权 / 不存在统一按 404”仅指记录级。
+- 管理面权限硬闸（2026-10-29）：`automation.view` / `automation.manage` / `notify.record.view` / `notify.resend` 在 `PermissionService.can()` 中直接要求 `groupAccess.admin`，不因 `GROUP_ACCESS_ENFORCED=false`、全量能力基线或 `groupAllEdit` 放行；非管理员 `permissions/me` 不再下发四键，回归覆盖限制关闭、全部项目编辑与管理员三档。
 - 无新迁移，复用 `0061`。验证：server typecheck / build、Vitest **82 文件 / 1264 例**、boundaries 267 文件 / 1220 依赖 / 0 违规、权限矩阵 36 键、schema 56 表一致；Docker PG18 `m5-06-2b-replay.mjs` DB-only **7/7**、真实 API **9/9**（403 / 409 / 400 / 404、幂等、掩码与零残留）。证据见 `docs/M5-06-回放证据.md`。
 
 ## M5-06-3 · A14 待办主体与 A01 已提醒（2026-10-20 · Push 276 · lan；todos 迁移 / A01 契约请 wmj 复核）
