@@ -225,13 +225,14 @@
 
 - 平台契约新增 `DWG`：shared `CadFormat`、`cad-inputs`、CAD worker/仓库/预览入口、`cad_artifacts` 与迁移 `0070_cad_dwg_format.sql`。DWG 不接受配套文件或主图相对路径，结果始终为带明确损失说明的 `partial`。
 - 新增 `core/dwg_platform_convert.py` 平台 worker：从 stdin 接收原字节，调用固定 ACadSharp 读取器与既有 `assemble_native`，再通过 `FileSink` 输出现有 UCD 二进制传输。运行时由 CAD 沙箱提供 `CAD_DWG_PYTHON`、`CAD_DWG_READER`、`CAD_DWG_DOTNET`；未配置时明确失败，不静默退回 DXF。
-- 平台特性开关 `CAD_DWG_ENABLED` 默认 `false`，本机只验证代码路径；未启用时预览仍显示暂不可用并保留下载。已在公开样本上跑通 worker 输出（805,623 B manifest / 171,216 B buffer）；正式大图尚未在平台沙箱调度，原生读取约 2.7 GiB 托管内存、manifest 约 266 MB，目标 Linux 资源档位仍需验收。
+- 平台特性开关 `CAD_DWG_ENABLED` 默认 `false`，本机只验证代码路径；未启用时预览仍显示暂不可用并保留下载。已在公开样本上跑通 worker 输出（805,623 B manifest / 171,216 B buffer）；当时正式大图尚未在平台沙箱调度，原生读取约 2.7 GiB 托管内存、manifest 约 266 MB，目标 Linux 资源档位仍需验收。
 - 资源/门禁：DWG worker RSS 采样档 3 GiB、结果/产物上限 512 MiB、manifest 读取上限 512 MiB、沙箱单文件上限 512 MiB；这些是首版预算，不能当作生产容量结论。
 - 2026-10-29 本机完整系统全链路通过：WSL Docker（PostgreSQL 18、Casdoor、SeaweedFS S3）+ 本机 API/Vite + 本机 CAD 引擎（9910），`CAD_DWG_ENABLED=true`。真实浏览器登录 Casdoor 后创建项目与任务，分片上传公开样本 `sample_AC1027.dwg`（1,091,959 B / SHA-256 `4c63508d…`），文件绑定任务（`files.task_id`）；`GET /files/{id}/preview` 返回 `viewer.kind=cad`、`format=DWG`。平台任务 `partial`，产物 976,948 B（manifest 806,068 B + 1 个 buffer 170,880 B），`cad_artifacts` 行 `state=partial`、`format_version=dwg-0.1.0/81d2cbf7…`，S3 前缀下 manifest/buffer 均存在。文件库点「预览」打开真实 DWG 查看器：canvas 1382×825、`data-cad-ready-ms=424`、`state=ready`，模型空间/图层/布局与「部分显示」提示正常；证据在仓库外 `D:\LibiaoLink-verify\local-engine\shots\`。
+- 2026-10-29 正式大图经平台全链路通过：`bc45921b…`（34,385,320 B）以 5 片上传并绑定任务；后台任务 2 分 46 秒完成，`state=partial`，产物 341,892,958 B（manifest 265,840,390 B + buffer 76,052,568 B），`cad_artifacts.format_version=dwg-0.1.0/81d2cbf7…`，S3 下 manifest/buffer 均存在；文件库预览打开正式图查看器，`data-cad-ready-ms=13382`、canvas 1382×825、`state=ready`，默认按源范围显示、部分显示提示正常。本机 harness 在 15 GiB WSL 中运行，未施加生产 cgroup；截图在仓库外 `D:\LibiaoLink-verify\local-engine\shots\`。
 - 本轮发现并修复查看器门禁：`platform-entry.js` 原先把 `partial` 只允许给 DXF，DWG 的 partial 快照被「模型来源或完整性检查未通过」拒绝；现在 DXF/DWG 均可接受 partial，DWG 按图纸处理（名称走 UTF8、隐藏名称编码切换），配套资源按钮仍仅 DXF。该文件不在 `viewerVersion` 摘要范围内（摘要只覆盖 `cad-viewer/core`），本机验证使用全新浏览器配置；旧缓存升级路径未验证。
 - 本机验证环境的 S3 代理（仓库外 harness）曾把 HEAD 响应的 `Content-Length` 改写为 0，导致上传完成校验读成 0 字节；修正代理后分片合并与全链路通过。这是本机验证工具问题，不是平台代码缺陷。
 - 版本：`engineVersion = step-0.3.3/750b3fbe…/gateway-1`、`formatVersions.DWG = dwg-0.1.0/81d2cbf7…/gateway-1`、`releaseDigest = 52d72fc3…`，`viewerVersion = viewer-5c952e5d…`；STEP/DXF 格式键以 `source.json` 为准。未推送、未部署。
-- 仍未验证：正式大图（34,385,320 B）经平台完整链路、Linux 沙箱资源档位、测试机/生产部署与真实公司账号浏览器验收。
+- 仍未验证：目标 Linux 沙箱资源档位下经平台链路、测试机/生产部署与真实公司账号浏览器验收；旧浏览器缓存升级路径。
 
 
 ## 代码责任与入口
