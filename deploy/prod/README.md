@@ -1,3 +1,11 @@
+> **2026-10-29 11:14 企微绑定引导三步文案已发布正式机（PR [#707](https://github.com/PanXing-Libiao/LibiaoLink/pull/707) · main@26f1b7d7）**：正式环境 `https://pm.libiaorobot.com`（`10.1.103.44`）已更新到 `main@26f1b7d7`。设置页未绑定引导显示「复制机器人链接 → 到企微任意对话框发送 → 打开机器人名片发消息发送绑定码」，黑底序号保留；测试机 `10.1.104.44` 未触碰。
+>
+> **发布包与构建**：frontend `output/frontend-wecom-binding-steps-26f1b7d7-20261029-1108.tar.gz`（15,445,285 B · SHA-256 `1772ba18…5f12` · 388 文件 / 20,422,309 B），远端 SHA-256 一致。构建直接来自 `origin/main@26f1b7d7` 独立 worktree；staging 388 文件与本地一致，公网 `index.html` / `assets/index-BDD4YAUD.js` / `assets/index-UTdnWqS6.css` 的 SHA-256 分别为 `758cd256…22c8` / `30c0fe42…bb4` / `b03722a6…68a0`，与构建逐字节一致；三步文案均存在，旧步骤文案 0 次。
+>
+> **备份 / 清单**：部署前备份 `/srv/data/backups/before-wecom-binding-steps-26f1b7d7-20261029-1108/`（frontend dist 18,953,695 B · `a0d65776…0f48`；原 manifest 35,427 B · `d62499af…7ec5`），manifest = `prod-20261029-wecom-binding-steps-26f1b7d7`（38,330 B · `4392971b…b6f`）。仅对 `frontend/dist` 做 checksum 同步并保留旧哈希资源，未重启容器。
+>
+> **验收**：8 / 8 容器 healthy，api / worker / web 重启计数 0；站点 / `healthz` / `readyz` 均 200，ready 四探针全过；新 JS 与上一版 JS 均 200（dist 共 396 文件）；近 10 分钟 api / worker error / fatal / exception 0。真实账号设置页视觉复验仍待完成。
+
 > **2026-10-29 10:30 任务模板阶段标签悬停提示修复已部署正式机（PR [#705](https://github.com/PanXing-Libiao/LibiaoLink/pull/705) · main@0b83ea1c）**：正式环境 `https://pm.libiaorobot.com`（`10.1.103.44`）已更新到 `main@0b83ea1c`。任务模板九个阶段板块标签不再把内部路由作为 `title` 暴露，悬停不再弹出 `#/templates?section=...`；按钮切换、地址栏、刷新、收藏与分享口径不变。测试机 `10.1.104.44` 未触碰。
 >
 > **发布包与构建**：frontend `output/frontend-stage-tab-hover-0b83ea1c-20261029-1028.tar.gz`（15,445,498 B · SHA-256 `c3ff2ea9…c727a` · 388 文件 / 20,422,265 B），远端 SHA-256 一致。构建来自本地合并提交 `cb2030a3`，其 git tree `0ec914db…` 与 `origin/main@0b83ea1c` 完全一致；公网 `index.html` / `assets/index-CJMlhSao.js` / `assets/index-UTdnWqS6.css` 的 SHA-256 分别为 `2eb5556f…7a60` / `e2ac8951…eb53` / `b03722a6…68a0`，与构建逐字节一致。
