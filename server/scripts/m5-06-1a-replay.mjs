@@ -102,7 +102,6 @@ function task(overrides = {}) {
     projectName: "回放项目",
     projectProgress: 50,
     completedByName: "邵晨宇",
-    projectGroupId: null,
     deliverableTypes: ["施工方案"],
     fileCount: 0,
     ...overrides,

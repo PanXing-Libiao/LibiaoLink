@@ -6,17 +6,16 @@
  *   toReportMemberSubject）在 automation 模块内（wmj 线）—— 本层只负责读库与快照组装，不算「应发给谁」。
  *
  * 读面（全部只读；接线层不写业务表）：
- *   - 任务类（R02 ~ R05 / R07）：tasks + projects（经理 / 完成度）+ users（姓名）+ files（件数）+ wecom_groups（群绑定）；
- *   - 项目完成（R06）：projects（状态 / 群绑定）—— 由 project.completed 事件触发；
+ *   - 任务类（R02 ~ R05 / R07）：tasks + projects（经理 / 完成度）+ users（姓名）+ files（件数）；
+ *   - 项目完成（R06）：projects（状态 / 版本）—— 由 project.completed 事件触发；
  *   - 日报名册槽位（A01）：projects（在办）× project_members（名册）× daily_reports（当日提交）× 工作日历；
- *   - 项目日报（A02 · 接线段 Push 224）：daily_reports（按项目 × 业务日聚合）+ projects + users（作者姓名）+ wecom_groups；
+ *   - 项目日报（A02 · 接线段 Push 224）：daily_reports（按项目 × 业务日聚合）+ projects + users（作者姓名）；
  *   - 自定义待办（A14 · M5-06-3）：todos（未完成条件由引擎求值）+ users（提醒对象姓名），按重复规则在窗口内逐日展开。
  *
  * 口径与差异（README / PR 同步登记）：
  *   - actual_start：无库列 → 恒 null（R04 的「尚未实际开始」条件据此恒真，待实际开始字段落地后收口）；
- *   - project.group：读 `wecom_groups` —— 一期寻址键 = projectId（一项目一群：投递层按项目 id 解析
- *     chatid 绑定，换绑后未投递消息仍可送出）；统一可投递 = 绑定存在且 activated_at 非空；
- *     未绑定 / 已绑定未激活 → null 并按项目 + 原因上报告警；已停用为历史兼容态，保持静默跳过；
+ *   - project.group：寻址键恒为 projectId（一项目一群）；主体层只产投递意图，不读群绑定、不判可投递、
+ *     不发业务告警。绑定 / 激活 / 失败降级与恢复统一由 notify.group 消费端处理；
  *   - project.progress：读时派生完成率（项目内未删任务 status=done 占比，四舍五入取整；无任务 = 0）—— 任务主体保留字段；
  *   - task.urgency：直接透传 tasks.priority（三档「高 / 中 / 低」）；R07 条件已按三档定案（高 + 中命中 · wmj · Push 171）；
  *   - task.file_count：与任务详情「文件摘要」同口径（draft / final / changed / archived，排除回收站）；
@@ -28,14 +27,13 @@
  * 边界：窗口主体池排除软删项目 / 任务与归档项目（归档 = 冻结，不再提醒）；事件形态按事件载荷的实体 id 直读
  * （含软删行 —— 事件发生在删除前，快照仍可求值），行不存在 → null（消费侧按确定性失败收口）。
  */
-import { Injectable, Optional } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { STAGE_NAMES, type RuleEventTopic } from "@libiaolink/contracts";
 import { and, asc, count, eq, gt, gte, inArray, isNull, lt, ne, or } from "drizzle-orm";
 import type { DbClient } from "../db/db-client.js";
 import { DatabaseService } from "../db/database.service.js";
 import { files } from "../db/schema/files.js";
 import { users } from "../db/schema/identity.js";
-import { wecomGroups } from "../db/schema/notify.js";
 import { projectMembers, projects, projectStages } from "../db/schema/projects.js";
 import { dailyReports } from "../db/schema/reports.js";
 import { tasks } from "../db/schema/tasks.js";
@@ -58,11 +56,6 @@ import {
   type CalendarException,
   type CalendarWindow,
 } from "../modules/calendar/index.js";
-import {
-  projectGroupDeliverability,
-  ProjectGroupDeliveryAlertService,
-  type ProjectGroupDeliveryAlertPort,
-} from "../modules/notify/index.js";
 import { deriveDisplayStatus, shanghaiToday } from "../modules/task/index.js";
 
 /** 文件摘要口径（与 task.repository 的 FILE_STATUS_FOR_SUMMARY 同口径）：排除回收站（recycled）。 */
@@ -71,49 +64,6 @@ const FILE_STATUS_FOR_SUMMARY = ["draft", "final", "changed", "archived"] as con
 const CALENDAR_SPAN_DAYS = 17;
 /** Asia/Shanghai 固定偏移（ADR-028：无夏令时，偏移恒为 +8）。 */
 const SHANGHAI_OFFSET_MS = 8 * 3_600_000;
-
-export interface ProjectGroupBindingRow {
-  projectId: string;
-  enabled: boolean;
-  activatedAt: Date | null;
-}
-
-/**
- * 主体扫描时的项目群可投递判定：可投递项目进入 project.group 收件人；不可投递项目按原因上报告警。
- * 停用（历史兼容态，当前系统不存在）不并入本告警，也不进入收件人集。
- */
-export function resolveDeliverableGroupProjectIds(
-  projectIds: readonly string[],
-  projectNameById: ReadonlyMap<string, string>,
-  rows: readonly ProjectGroupBindingRow[],
-  alerts?: ProjectGroupDeliveryAlertPort,
-): Set<string> {
-  const result = new Set<string>();
-  const bindingByProject = new Map(rows.map((row) => [row.projectId, row]));
-  for (const projectId of projectIds) {
-    const binding = bindingByProject.get(projectId);
-    // 停用（历史兼容态）不进入可投递集，也不触发专用告警。
-    if (binding !== undefined && !binding.enabled) {
-      continue;
-    }
-    const deliverability = projectGroupDeliverability(
-      binding === undefined
-        ? null
-        : { bound: true, activated: binding.activatedAt !== null },
-    );
-    if (deliverability.deliverable) {
-      result.add(projectId);
-      alerts?.reportAvailable(projectId);
-      continue;
-    }
-    alerts?.reportUnavailable(
-      projectId,
-      projectNameById.get(projectId) ?? "项目名称未登记",
-      deliverability.reason,
-    );
-  }
-  return result;
-}
 
 /** 上海业务日（YYYY-MM-DD）。 */
 function businessDateOf(at: Date): string {
@@ -279,7 +229,6 @@ export class AutomationSubjectReader {
   constructor(
     private readonly database: DatabaseService,
     private readonly calendar: CalendarService,
-    @Optional() private readonly projectGroupAlerts?: ProjectGroupDeliveryAlertService,
   ) {}
 
   /**
@@ -359,7 +308,7 @@ export class AutomationSubjectReader {
     return null;
   }
 
-  /** R06 项目完成事件主体：读项目状态 / 版本 / 项目群绑定，组装为 project 主体。 */
+  /** R06 项目完成事件主体：读项目状态 / 版本，组装为 project 主体。 */
   private async projectSubject(payload: Record<string, unknown>, client: DbClient): Promise<ReplaySubject | null> {
     const projectId = stringField(payload, "projectId");
     if (projectId === null) return null;
@@ -370,22 +319,16 @@ export class AutomationSubjectReader {
       .limit(1);
     const project = rows[0];
     if (project === undefined) return null;
-    const groupProjectIds = await this.enabledGroupProjectIds(
-      [projectId],
-      new Map([[project.id, project.name]]),
-      client,
-    );
     return toProjectSubject({
       projectId: project.id,
       projectCode: project.code,
       projectName: project.name,
       projectStatus: project.status,
       projectVersion: numberField(payload, "version") ?? project.version,
-      groupId: groupProjectIds.has(projectId) ? projectId : null,
     });
   }
 
-  /** A08 阶段事件主体：读阶段 / 项目 / 推进人 / 项目群绑定，组装为 stage 主体。 */
+  /** A08 阶段事件主体：读阶段 / 项目 / 推进人，组装为 stage 主体。 */
   private async stageSubject(payload: Record<string, unknown>, client: DbClient): Promise<ReplaySubject | null> {
     const projectId = stringField(payload, "projectId");
     const stageKey = stringField(payload, "stageKey");
@@ -410,11 +353,6 @@ export class AutomationSubjectReader {
     if (project === undefined) return null;
     const actorId = stringField(payload, "actorId");
     const nameById = await this.userNames(actorId === null ? [] : [actorId], client);
-    const groupProjectIds = await this.enabledGroupProjectIds(
-      [projectId],
-      new Map([[project.id, project.name]]),
-      client,
-    );
     const nextStageKey = stringField(payload, "nextStageKey");
     const stageNames = STAGE_NAMES as Record<string, string>;
     return toStageSubject({
@@ -428,7 +366,6 @@ export class AutomationSubjectReader {
       projectId: project.id,
       projectCode: project.code,
       projectName: project.name,
-      groupId: groupProjectIds.has(projectId) ? projectId : null,
     });
   }
 
@@ -540,11 +477,6 @@ export class AutomationSubjectReader {
       .from(projects)
       .where(and(inArray(projects.id, projectIds), isNull(projects.deletedAt)));
     const projectById = new Map(projectRows.map((row) => [row.id, row]));
-    const groupProjectIds = await this.enabledGroupProjectIds(
-      projectIds,
-      new Map(projectRows.map((project) => [project.id, project.name])),
-      client,
-    );
     const progressByProject = await this.projectProgress(projectIds, client);
     const nameIds = new Set<string>();
     for (const row of rows) {
@@ -591,35 +523,12 @@ export class AutomationSubjectReader {
         projectName: project.name,
         projectProgress: progressByProject.get(row.projectId) ?? 0,
         completedByName: actorId === null ? null : (nameById.get(actorId) ?? "未知用户"),
-        projectGroupId: groupProjectIds.has(row.projectId) ? row.projectId : null,
         deliverableTypes: row.deliverableTypes,
         fileCount: fileCountByTask.get(row.id) ?? 0,
       };
       result.set(row.id, toTaskSubject(snapshot));
     }
     return result;
-  }
-
-  /**
-   * 可投递的群绑定项目集（project.group 寻址键解析：一项目一群）：
-   * 未绑定 / 已绑定未激活 = 不在集内（引擎按 recipient_missing 收口），同时按项目 + 原因上报专用告警；
-   * 可投递 = 绑定存在且 activated_at 非空。已停用为历史兼容态，不并入本告警。
-   */
-  private async enabledGroupProjectIds(
-    projectIds: readonly string[],
-    projectNameById: ReadonlyMap<string, string>,
-    client: DbClient,
-  ): Promise<Set<string>> {
-    if (projectIds.length === 0) return new Set<string>();
-    const rows = await client
-      .select({
-        projectId: wecomGroups.projectId,
-        enabled: wecomGroups.enabled,
-        activatedAt: wecomGroups.activatedAt,
-      })
-      .from(wecomGroups)
-      .where(inArray(wecomGroups.projectId, [...projectIds]));
-    return resolveDeliverableGroupProjectIds(projectIds, projectNameById, rows, this.projectGroupAlerts);
   }
 
   /**
@@ -653,7 +562,6 @@ export class AutomationSubjectReader {
       .where(and(inArray(dailyReports.projectId, projectIds), inArray(dailyReports.reportDate, [...dates])));
     const submitted = rows.filter((row) => row.state !== "draft");
     if (submitted.length === 0) return subjects;
-    const groupProjectIds = await this.enabledGroupProjectIds(projectIds, nameByProject, client);
     const nameById = await this.userNames([...new Set(submitted.map((row) => row.authorId))], client);
     const buckets = new Map<string, typeof submitted>();
     for (const row of submitted) {
@@ -672,7 +580,6 @@ export class AutomationSubjectReader {
           projectName: nameByProject.get(first.projectId) ?? "",
           date: first.reportDate,
           ...summarizeProjectDay(sorted, (authorId) => nameById.get(authorId) ?? ""),
-          groupId: groupProjectIds.has(first.projectId) ? first.projectId : null,
         }),
       );
     }

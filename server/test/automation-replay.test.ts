@@ -29,7 +29,6 @@ function task(overrides: Partial<ReplayTask>): ReplayTask {
     projectName: "美国仓储公司订单",
     projectProgress: 50,
     completedByName: "邵晨宇",
-    projectGroupId: "g-1",
     deliverableTypes: ["施工方案"],
     fileCount: 1,
     ...overrides,
@@ -201,7 +200,6 @@ describe("R06 项目完成喜报", () => {
       projectName: "美国仓储公司订单",
       projectStatus: status,
       projectVersion: 4,
-      groupId: "p-1",
     });
   }
 
@@ -223,7 +221,7 @@ describe("R06 项目完成喜报", () => {
 });
 
 describe("A08 大阶段完成播报", () => {
-  function stage(groupId: string | null) {
+  function stage() {
     return toStageSubject({
       stageId: "stage-1",
       stageKey: "design",
@@ -235,12 +233,11 @@ describe("A08 大阶段完成播报", () => {
       projectId: "p-1",
       projectCode: "LBUSA-20261014-002",
       projectName: "美国仓储公司订单",
-      groupId,
     });
   }
 
   it("阶段推进完成 → 项目群播报，项目与推进人明确", () => {
-    const report = replayRules({ businessDate: "2026-09-23", subjects: [stage("p-1")], calendar: CALENDAR, shiftEnabled: false, rules: ENABLED_TEST_RULES });
+    const report = replayRules({ businessDate: "2026-09-23", subjects: [stage()], calendar: CALENDAR, shiftEnabled: false, rules: ENABLED_TEST_RULES });
     expect(report.messages).toHaveLength(1);
     const message = report.messages[0];
     expect(message?.ruleCode).toBe("A08");
@@ -249,12 +246,6 @@ describe("A08 大阶段完成播报", () => {
     expect(message?.title).toBe("🏁 大阶段完成通知");
     expect(message?.body).toBe(`${PROJECT}\n邵晨宇已完成大阶段「**设计开发**」，当前项目阶段：**加工采购**。`);
     expect(message?.dedupeKey).toBe("A08:stage-1:v4");
-  });
-
-  it("项目未绑定群 → recipient_missing，不误发", () => {
-    const report = replayRules({ businessDate: "2026-09-23", subjects: [stage(null)], calendar: CALENDAR, shiftEnabled: false, rules: ENABLED_TEST_RULES });
-    expect(report.messages).toHaveLength(0);
-    expect(report.details.find((item) => item.ruleCode === "A08")?.skipped).toBe("recipient_missing");
   });
 });
 
