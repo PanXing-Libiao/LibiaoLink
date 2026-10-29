@@ -78,6 +78,17 @@ export interface AutomationScheduleJobInput {
 
 export type AutomationScheduleJobOutcome = "inserted" | "reactivated" | "updated" | "disabled" | "unchanged";
 
+export interface FixedCronJobInput {
+  kind: string;
+  dedupeKey: string;
+  cron: string;
+  /** 首次注册 / 失败或 done 行复活后的到期时刻。正常 pending 行不重置水位。 */
+  runAt: Date;
+  payload?: Record<string, unknown>;
+}
+
+export type FixedCronJobOutcome = "inserted" | "reactivated" | "updated" | "unchanged";
+
 /**
  * 调度任务存取（S7-3 · i11 / M5-02）：到期领取（`for update skip locked` + 崩溃遗留按 locked_at 重领）、
  * 成功推进（last_run_at / run_at，与生产者产出同事务）、失败累计、运行留痕（job_runs）。
@@ -224,6 +235,79 @@ export class JobsStore {
         produced: 0,
         note: input.error,
       });
+    });
+  }
+
+  /**
+   * 系统固定 cron 任务的幂等注册（管理员日报等）：不依赖手工 seed，worker 每次启动可安全重跑。
+   * - 新行 = pending；已有 pending 行只校正 kind / cron / payload，不重置 run_at / last_run_at；
+   * - failed / done 行复活为 pending（日报必须保留下一天执行资格），并清失败计数与锁；
+   * - done 行复活时把水位放在本次 run_at 前 1ms，确保当天窗口可被枚举。
+   */
+  async ensureFixedCronJob(input: FixedCronJobInput): Promise<FixedCronJobOutcome> {
+    return this.database.db.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(jobs)
+        .values({
+          kind: input.kind,
+          payload: input.payload ?? {},
+          cron: input.cron,
+          runAt: input.runAt,
+          status: "pending",
+          dedupeKey: input.dedupeKey,
+        })
+        .onConflictDoNothing({ target: jobs.dedupeKey })
+        .returning({ id: jobs.id });
+      if (inserted[0] !== undefined) {
+        return "inserted";
+      }
+
+      const existing = (
+        await tx
+          .select({
+            id: jobs.id,
+            kind: jobs.kind,
+            payload: jobs.payload,
+            cron: jobs.cron,
+            status: jobs.status,
+            lastRunAt: jobs.lastRunAt,
+          })
+          .from(jobs)
+          .where(eq(jobs.dedupeKey, input.dedupeKey))
+          .limit(1)
+      )[0];
+      if (existing === undefined) {
+        throw new Error("固定 cron 任务冲突后未读回既有行：" + input.dedupeKey);
+      }
+
+      const restore = existing.status !== "pending";
+      const payloadUnchanged = JSON.stringify(existing.payload) === JSON.stringify(input.payload ?? {});
+      const metadataUnchanged = existing.kind === input.kind && existing.cron === input.cron && payloadUnchanged;
+      if (!restore && metadataUnchanged) {
+        return "unchanged";
+      }
+
+      await tx
+        .update(jobs)
+        .set({
+          kind: input.kind,
+          payload: input.payload ?? {},
+          cron: input.cron,
+          updatedAt: sql`now()`,
+          ...(restore
+            ? {
+                status: "pending",
+                runAt: input.runAt,
+                lastRunAt:
+                  existing.status === "done" ? new Date(input.runAt.getTime() - 1) : existing.lastRunAt,
+                attempts: 0,
+                lastError: null,
+                lockedAt: null,
+              }
+            : {}),
+        })
+        .where(eq(jobs.id, existing.id));
+      return restore ? "reactivated" : "updated";
     });
   }
 

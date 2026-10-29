@@ -34,6 +34,11 @@ export interface JobRunResult {
  * 靠 outbox 的幂等执行键（dedupe_key 唯一约束）兜底「不重发」。
  */
 export interface OutboxJobHandler {
+  /**
+   * 默认 true：run 与 jobs 水位推进同事务。需要外部副作用（例如发企微日报）的处理器可置 false，
+   * 调度器会在 run 返回后用独立短事务推进水位；此时至少一次语义，提交失败可能重复执行。
+   */
+  transactional?: boolean;
   run(context: JobRunContext): Promise<JobRunResult | void>;
 }
 
@@ -150,47 +155,32 @@ export class JobScheduler {
     }
 
     try {
-      const outcome = await this.database.db.transaction(async (tx) => {
-        const result =
+      // 外部副作用处理器不占长事务：先执行，再用短事务推进 jobs 水位；其余处理器保持原子提交。
+      let outcome: JobRunResult;
+      if (handler.transactional === false) {
+        outcome =
           (await handler.run({
             job,
             windowFrom: plan.windowFrom,
             windowTo: plan.windowTo,
             fireTimes: plan.fireTimes,
-            tx,
+            tx: this.database.db as unknown as DbTransaction,
           })) ?? {};
-        const resumeFrom = plan.pendingMore ? plan.resumeFrom : null;
-        await this.store.finishRun(tx, {
-          jobId: job.id,
-          kind: job.kind,
-          lastRunAt: resumeFrom ?? now,
-          nextRunAt: resumeFrom === null ? nextRunAt : now,
-          windowFrom: plan.windowFrom,
-          windowTo: resumeFrom ?? plan.windowTo,
-          fireCount: plan.fireTimes.length,
-          produced: result.produced ?? 0,
-          note:
-            resumeFrom === null
-              ? result.note ?? null
-              : "窗口触顶（OUTBOX_SCHEDULER_MAX_WINDOWS_PER_TICK=" +
-                this.config.env.OUTBOX_SCHEDULER_MAX_WINDOWS_PER_TICK +
-                "），剩余窗口下一轮顺延" +
-                (result.note === undefined || result.note === null || result.note === "" ? "" : "；" + result.note),
+        await this.database.db.transaction((tx) => this.finishJobRun(tx, job, plan, nextRunAt, outcome));
+      } else {
+        outcome = await this.database.db.transaction(async (tx) => {
+          const result =
+            (await handler.run({
+              job,
+              windowFrom: plan.windowFrom,
+              windowTo: plan.windowTo,
+              fireTimes: plan.fireTimes,
+              tx,
+            })) ?? {};
+          await this.finishJobRun(tx, job, plan, nextRunAt, result);
+          return result;
         });
-        if (plan.skippedFrom !== null && plan.skippedTo !== null) {
-          await this.store.recordSkipped(tx, {
-            jobId: job.id,
-            kind: job.kind,
-            windowFrom: plan.skippedFrom,
-            windowTo: plan.skippedTo,
-            note:
-              "超出补发跨度上限（OUTBOX_SCHEDULER_CATCHUP_MAX_DAYS=" +
-              this.config.env.OUTBOX_SCHEDULER_CATCHUP_MAX_DAYS +
-              " 天），只记留痕不补发",
-          });
-        }
-        return result;
-      });
+      }
       stats.executed += 1;
       stats.produced += outcome.produced ?? 0;
       if (plan.pendingMore) {
@@ -206,6 +196,54 @@ export class JobScheduler {
       }
     } catch (error) {
       await this.failJob(job, plan, stats, error);
+    }
+  }
+
+  private async finishJobRun(
+    tx: DbTransaction,
+    job: JobRow,
+    plan: {
+      windowFrom: Date;
+      windowTo: Date;
+      fireTimes: readonly Date[];
+      pendingMore: boolean;
+      resumeFrom: Date | null;
+      skippedFrom: Date | null;
+      skippedTo: Date | null;
+    },
+    nextRunAt: Date | null,
+    result: JobRunResult,
+  ): Promise<void> {
+    const now = this.clock.now();
+    const resumeFrom = plan.pendingMore ? plan.resumeFrom : null;
+    await this.store.finishRun(tx, {
+      jobId: job.id,
+      kind: job.kind,
+      lastRunAt: resumeFrom ?? now,
+      nextRunAt: resumeFrom === null ? nextRunAt : now,
+      windowFrom: plan.windowFrom,
+      windowTo: resumeFrom ?? plan.windowTo,
+      fireCount: plan.fireTimes.length,
+      produced: result.produced ?? 0,
+      note:
+        resumeFrom === null
+          ? result.note ?? null
+          : "窗口触顶（OUTBOX_SCHEDULER_MAX_WINDOWS_PER_TICK=" +
+            this.config.env.OUTBOX_SCHEDULER_MAX_WINDOWS_PER_TICK +
+            "），剩余窗口下一轮顺延" +
+            (result.note === undefined || result.note === null || result.note === "" ? "" : "；" + result.note),
+    });
+    if (plan.skippedFrom !== null && plan.skippedTo !== null) {
+      await this.store.recordSkipped(tx, {
+        jobId: job.id,
+        kind: job.kind,
+        windowFrom: plan.skippedFrom,
+        windowTo: plan.skippedTo,
+        note:
+          "超出补发跨度上限（OUTBOX_SCHEDULER_CATCHUP_MAX_DAYS=" +
+          this.config.env.OUTBOX_SCHEDULER_CATCHUP_MAX_DAYS +
+          " 天），只记留痕不补发",
+      });
     }
   }
 

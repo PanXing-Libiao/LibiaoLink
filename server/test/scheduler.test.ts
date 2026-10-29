@@ -179,6 +179,32 @@ describe("JobScheduler.tickOnce（S7-3 调度 / 补发 / 单活）", () => {
     expect(h.store.failures).toHaveLength(0);
   });
 
+  it("transactional=false：handler 在事务外执行，水位用独立短事务推进", async () => {
+    let handlerTx: unknown = null;
+    const h = makeScheduler(
+      new Map([
+        [
+          "demo.kind",
+          {
+            transactional: false,
+            run: async (context) => {
+              handlerTx = context.tx;
+              return { note: "日报已发送" };
+            },
+          },
+        ],
+      ]),
+    );
+    h.store.due = [makeJob()];
+
+    const stats = await h.scheduler.tickOnce();
+
+    expect(stats).toMatchObject({ claimed: 1, executed: 1, failed: 0 });
+    expect(handlerTx).not.toBe(TX);
+    expect(h.store.finishClients[0]).toBe(TX);
+    expect(h.store.finished[0]!.note).toBe("日报已发送");
+  });
+
   it("从未执行（last_run_at null）：窗口从首个应执行时刻前 1ms 起，首触发不丢", async () => {
     const fires: string[][] = [];
     const h = makeScheduler(

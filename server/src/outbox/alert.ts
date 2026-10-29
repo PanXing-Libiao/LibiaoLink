@@ -36,24 +36,64 @@ export interface OutboxDailyDigestRecovery {
   at: string;
 }
 
-/** outbox 日报：恢复通知 + 死信窗口统计 + 当前队列快照（同一管理员告警群）。 */
+/** 昨日通知交付结果（按逻辑消息去重；C5-04 降级副本不重复计数）。 */
+export interface OutboxDailyDigestDelivery {
+  total: number;
+  delivered: number;
+  retrying: number;
+  failed: number;
+  lateDelivered: number;
+  maxLatencyMs: number | null;
+}
+
+/** 已自动兜底、无需管理员逐条处理的降级项。 */
+export interface OutboxDailyDigestFallback {
+  label: string;
+  detail: string;
+  count: number;
+}
+
+/** 重复问题：昨日至少 2 次，或近 7 个自然日中至少 2 天出现。 */
+export interface OutboxDailyDigestRepeatedIssue {
+  label: string;
+  yesterdayCount: number;
+  previousDayCount: number;
+  consecutiveDays: number;
+  affectedMessages: number;
+  outcome: "recovered" | "retrying" | "failed" | "downgraded";
+}
+
+export interface OutboxDailyDigestRecoveryCount {
+  code: OutboxRecoveryCode;
+  count: number;
+}
+
+/** 管理员日报：昨日交付结果、自动降级、重复问题与恢复数量；不展示三类即时告警明细。 */
 export interface OutboxDailyDigest {
   generatedAt: string;
-  /** 死信统计窗口（毫秒，默认 24h）。 */
-  windowMs: number;
-  duePending: number;
-  oldestDueMs: number | null;
-  deadRecent: number;
-  deadTotal: number;
-  byTopic: OutboxStatsSnapshot["byTopic"];
-  deadByTopic: OutboxStatsSnapshot["deadByTopic"];
-  recoveries: OutboxDailyDigestRecovery[];
-  activeAlerts: OutboxAlertCode[];
+  /** 计划发送时刻（固定 08:00；补发时仍保留当日计划时刻）。 */
+  reportAt: string;
+  /** 昨日自然日 [windowFrom, windowTo)，Asia/Shanghai。 */
+  windowFrom: string;
+  windowTo: string;
+  delivery: OutboxDailyDigestDelivery;
+  automaticFallbacks: OutboxDailyDigestFallback[];
+  repeatedIssues: OutboxDailyDigestRepeatedIssue[];
+  recoveries: {
+    total: number;
+    byCode: OutboxDailyDigestRecoveryCount[];
+  };
+}
+
+/** 日报发送结果：false = 企微未送达、已回退结构化日志。 */
+export interface OutboxDailyDigestResult {
+  report: OutboxDailyDigest;
+  sent: boolean;
 }
 
 export interface OutboxAlertSink {
   emit(alert: OutboxAlert): void;
-  emitDigest(report: OutboxDailyDigest): void;
+  emitDigest(report: OutboxDailyDigest): Promise<boolean>;
 }
 
 /** 探针阈值：env 解析入口见 outboxAlertThresholdsFromEnv。 */
@@ -149,34 +189,20 @@ export class LogOutboxAlertSink implements OutboxAlertSink {
     }
   }
 
-  emitDigest(report: OutboxDailyDigest): void {
-    const recoveries = report.recoveries.length === 0
-      ? "无"
-      : report.recoveries.map((item) => item.code).join(" / ");
-    const active = report.activeAlerts.length === 0 ? "无" : report.activeAlerts.join(" / ");
-    const byTopic = report.byTopic.length === 0
-      ? "无"
-      : report.byTopic.map((item) => item.topic + " " + item.due).join(" / ");
-    const deadByTopic = report.deadByTopic.length === 0
-      ? "无"
-      : report.deadByTopic.map((item) => item.topic + " " + item.count).join(" / ");
+  async emitDigest(report: OutboxDailyDigest): Promise<boolean> {
     this.logger.log(
-      "outbox 日报：待领取 " +
-        report.duePending +
-        " / 最老 " +
-        (report.oldestDueMs === null ? "无" : Math.round(report.oldestDueMs / 1000) + "s") +
-        " / 窗口死信 " +
-        report.deadRecent +
-        "（累计 " +
-        report.deadTotal +
-        "）/ 恢复 " +
-        recoveries +
-        " / 仍未恢复 " +
-        active +
-        " / 主题 " +
-        byTopic +
-        " / 死信主题 " +
-        deadByTopic,
+      "管理员日报：" +
+        JSON.stringify({
+          reportAt: report.reportAt,
+          windowFrom: report.windowFrom,
+          windowTo: report.windowTo,
+          delivery: report.delivery,
+          automaticFallbacks: report.automaticFallbacks,
+          repeatedIssues: report.repeatedIssues,
+          recoveries: report.recoveries,
+        }),
     );
+    // 日志出口不向企微群投递；返回 false 让任务留痕明确标记「已回退结构化日志」。
+    return false;
   }
 }
