@@ -2,6 +2,7 @@ export type User = {
   name: string | null;
   displayName: string | null;
   email: string | null;
+  /** `/auth/me` 的 Casdoor 侧标识；项目 managerIds / 任务 ownerIds 是本库 users.id，两者不可直接比较。 */
   id: string | null;
   owner: string | null;
 };

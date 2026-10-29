@@ -26,6 +26,7 @@ import type { OverviewExportLanguage } from "./overviewExportShared";
 import { prefetchLocalizedText, useLocale, useT, viewTabText } from "./i18n";
 import { ExportProgressOverlay, type ExportTranslateProgress } from "./components/ExportProgressOverlay";
 import { useBackgroundTier, type TintedTier } from "./backgroundTier";
+import { useMyPermissions } from "./permissions";
 import { projectManagerText } from "./types";
 import type { MeResponse, Project } from "./types";
 import { replaceProjectSubView, replaceProjectView, type DailySubView, type ProjectFocus, type ProjectView } from "./useHashRoute";
@@ -126,14 +127,15 @@ export default function ProjectDetail({ me, project, view, dailySub, focus, onCl
   /** 顶部视图（Push 82 / 121）：阶段标签收进「项目总览」，另两块是看板视图，最后一块是「日报及问题」；Push 154 起当前标签由地址 `?view=` 派生。 */
   const locale = useLocale();
   const t = useT();
+  const currentActorId = useMyPermissions()?.userId ?? null;
   const activeView = VIEW_TABS.find((tab) => VIEW_KEYS[tab] === view) ?? VIEW_TABS[0];
   const projectId = project?.id ?? null;
   const writeEnabled = !readOnly;
-  /** 定档 / 取消定档只看角色：任务当前负责人或项目经理；只读项目不再保留可点击入口。 */
+  /** 定档 / 取消定档只看角色：任务当前负责人或项目经理；只读项目不再保留可点击入口。
+   *  角色外键是本库 users.id —— 必须取权限画像的 userId，不能拿 /auth/me 的 Casdoor id 比较。 */
   const canFinalizeTask = (task: ProjectTask): boolean => {
-    const actorId = me.user.id;
-    if (!writeEnabled || actorId === null) return false;
-    return task.ownerIds.includes(actorId) || project?.managerIds.includes(actorId) === true;
+    if (!writeEnabled || currentActorId === null) return false;
+    return task.ownerIds.includes(currentActorId) || project?.managerIds.includes(currentActorId) === true;
   };
 
   /**
