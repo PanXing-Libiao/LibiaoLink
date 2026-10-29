@@ -469,6 +469,8 @@ export class ProjectService {
         objectType: "project",
         objectId: id,
         projectId: id,
+        projectCode: result.project.code,
+        projectName: result.project.name,
         summary:
           (system ? "项目回收站到期自动清理：" : "彻底删除项目：") +
           result.project.code +

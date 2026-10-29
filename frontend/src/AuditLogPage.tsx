@@ -193,6 +193,13 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
   const projectOptions = projects.map((project) => ({ value: project.id, label: project.code + " · " + project.name }));
   const projectCodeById = new Map(projects.map((project) => [project.id, project.code] as const));
   const projectNameById = new Map(projects.map((project) => [project.id, project.name] as const));
+  if (state.kind === "ready") {
+    for (const item of state.result.items) {
+      if (item.projectId === null) continue;
+      if (item.projectCode != null && !projectCodeById.has(item.projectId)) projectCodeById.set(item.projectId, item.projectCode);
+      if (item.projectName != null && !projectNameById.has(item.projectId)) projectNameById.set(item.projectId, item.projectName);
+    }
+  }
   const userNameById = new Map(directory.map((user) => [user.id, user.displayName] as const));
   const formatContext: AuditFormatContext = { userNameById, projectCodeById };
 
@@ -410,6 +417,8 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
                   <tbody>
                     {state.result.items.map((item) => {
                       const changeLines = auditChangeLines(item, formatContext);
+                      const projectName = item.projectId === null ? null : (item.projectName ?? projectNameById.get(item.projectId) ?? null);
+                      const projectCode = item.projectId === null ? null : (item.projectCode ?? projectCodeById.get(item.projectId) ?? null);
                       return (
                       <tr key={item.id} data-live-row={String(item.id)} data-audit-row={String(item.id)} className="align-top transition hover:bg-zinc-50/70">
                         <td data-mobile-label="时间" className="whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-700">{formatDateTime(item.occurredAt)}</td>
@@ -487,14 +496,14 @@ export function AuditLogPage({ me, query, onChangeQuery, directory }: {
                           ) : (
                             <div
                               data-audit-project={item.projectId}
-                              data-audit-project-name={projectNameById.get(item.projectId) ?? ""}
-                              data-audit-project-code={projectCodeById.get(item.projectId) ?? ""}
+                              data-audit-project-name={projectName ?? ""}
+                              data-audit-project-code={projectCode ?? ""}
                               className="flex max-w-[240px] flex-col gap-0.5"
                             >
-                              <span className="truncate font-medium text-zinc-700" title={projectNameById.get(item.projectId) ?? ""}>
-                                {projectNameById.get(item.projectId) ?? "—"}
+                              <span className="truncate font-medium text-zinc-700" title={projectName ?? ""}>
+                                {projectName ?? "—"}
                               </span>
-                              <span className="whitespace-nowrap text-xs text-zinc-500">{projectCodeById.get(item.projectId) ?? "—"}</span>
+                              <span className="whitespace-nowrap text-xs text-zinc-500">{projectCode ?? "—"}</span>
                             </div>
                           )}
                         </td>
