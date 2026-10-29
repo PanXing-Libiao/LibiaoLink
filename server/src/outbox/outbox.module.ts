@@ -27,6 +27,9 @@ import {
 import { LogOutboxAlertSink, OUTBOX_ALERT_SINK } from "./alert.js";
 import { AutomationSubjectReader } from "./automation-subjects.js";
 import { createAutomationScheduleHandler, createRuleEventConsumers, type AutomationWiringDeps } from "./automation-wiring.js";
+import { OUTBOX_DAILY_DIGEST_JOB_KIND } from "./daily-digest.js";
+import { OutboxDailyDigestRepository } from "./daily-digest.repository.js";
+import { OutboxDailyDigestService } from "./daily-digest.service.js";
 import { OUTBOX_POLICIES, OUTBOX_REGISTRY, OutboxDispatcher } from "./dispatcher.js";
 import type { OutboxTopicHandler } from "./handler.js";
 import { resolveOutboxPolicies } from "./policy.js";
@@ -51,7 +54,8 @@ const registryLogger = new Logger("OutboxRegistry");
  * 事件消费当前有 preview.job（受 PREVIEW_JOB_ENABLED 开关）、notify.message（S7-4 站内信投递，受
  * NOTIFY_DELIVERY_ENABLED 开关）与规则事件主题（受 AUTOMATION_WIRING_ENABLED 开关）；
  * 其余无业务订阅的主题由 `topic-catalog.ts` 全量登记为 drain-only（领取后 done，不补发历史事件）；
- * 调度生产者当前有 automation-schedule.job（同上开关；关闭 = 「只存不跑」排障态）。
+ * 调度生产者固定包含 outbox.alert-digest（管理员日报，不受规则接线开关影响）；
+ * automation-schedule.job 受 AUTOMATION_WIRING_ENABLED 开关控制。
  */
 @Module({})
 export class OutboxModule {
@@ -120,14 +124,16 @@ export class OutboxModule {
         {
           provide: JOBS_REGISTRY,
           useFactory: (
+            dailyDigest: OutboxDailyDigestService,
             subjects: AutomationSubjectReader,
             clock: ClockService,
             calendar: CalendarService,
             database: DatabaseService,
             rules: AutomationRuleRepository,
             runs: AutomationRunRepository,
-          ) => buildJobsRegistry(env, subjects, clock, calendar, database, rules, runs),
+          ) => buildJobsRegistry(env, dailyDigest, subjects, clock, calendar, database, rules, runs),
           inject: [
+            OutboxDailyDigestService,
             AutomationSubjectReader,
             ClockService,
             CalendarService,
@@ -136,12 +142,14 @@ export class OutboxModule {
             AutomationRunRepository,
           ],
         },
+        OutboxDailyDigestRepository,
+        OutboxDailyDigestService,
         OutboxAlertProbe,
         OutboxRetention,
         OutboxDispatcher,
         JobScheduler,
       ],
-      exports: [OutboxDispatcher, OutboxAlertProbe, OutboxRetention, JobScheduler],
+      exports: [OutboxDispatcher, OutboxAlertProbe, OutboxRetention, JobScheduler, OutboxDailyDigestService],
     };
   }
 }
@@ -198,10 +206,11 @@ export function buildRegistry(
 
 /**
  * 调度生产者注册表组装：kind → handler（与 OUTBOX_REGISTRY 同形，加项即可）。
- * AUTOMATION_WIRING_ENABLED=false → 空表 = 「只存不跑」排障态（jobs 行不领取、窗口不推进）。
+ * 管理员日报始终注册；AUTOMATION_WIRING_ENABLED=false 只关闭业务规则调度，不影响平台日报。
  */
-function buildJobsRegistry(
+export function buildJobsRegistry(
   env: Env,
+  dailyDigest: OutboxJobHandler,
   subjects: AutomationSubjectReader,
   clock: ClockService,
   calendar: CalendarService,
@@ -209,7 +218,7 @@ function buildJobsRegistry(
   rules: AutomationRuleRepository,
   runs: AutomationRunRepository,
 ): Map<string, OutboxJobHandler> {
-  const registry = new Map<string, OutboxJobHandler>();
+  const registry = new Map<string, OutboxJobHandler>([[OUTBOX_DAILY_DIGEST_JOB_KIND, dailyDigest]]);
   if (env.AUTOMATION_WIRING_ENABLED === "true") {
     registry.set(
       AUTOMATION_SCHEDULE_JOB_KIND,

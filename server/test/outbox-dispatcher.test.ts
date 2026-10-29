@@ -87,7 +87,9 @@ class FakeAlertSink implements OutboxAlertSink {
     this.emitted.push(alert);
   }
 
-  emitDigest(_report: OutboxDailyDigest): void {}
+  async emitDigest(_report: OutboxDailyDigest): Promise<boolean> {
+    return true;
+  }
 }
 
 interface Harness {
