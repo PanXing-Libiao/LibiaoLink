@@ -42,6 +42,7 @@ import type { AibotIncomingMessage, AibotSendResult } from "./wecom.aibot.js";
 import { aibotImageMimeFromFileName, WecomAibotClient } from "./wecom.aibot.js";
 import { renderDailyReportIssuePoster, renderDailyReportPoster } from "./daily-report.poster.js";
 import { renderR06Poster } from "./r06.poster.js";
+import { renderStageCompletePoster } from "./stage-complete.poster.js";
 import { describeWecomFailure } from "./wecom.errors.js";
 import { applyMarkdownHardBreaks, truncateUtf8Bytes } from "./wecom.text.js";
 
@@ -80,6 +81,7 @@ export function parseGroupMessage(raw: Record<string, unknown>): NotifyGroupMess
     refType: trimOrNull(value.refType),
     refId: value.refId ?? null,
     templateCode: trimOrNull(value.templateCode),
+    stageKey: value.stageKey ?? null,
   };
 }
 
@@ -149,9 +151,9 @@ function normalizeGroupName(value: string | null | undefined): string | null {
   return Array.from(trimmed).slice(0, GROUP_NAME_MAX_CHARS).join("");
 }
 
-/** 降级站内信类型：A02 / R06 为播报（摘要群发 / 喜报），其余群播报按提醒。 */
+/** 降级站内信类型：A02 / R06 / 阶段完成为播报（摘要群发 / 喜报 / 里程碑），其余群播报按提醒。 */
 function degradeTypeOf(templateCode: string | null): "broadcast" | "reminder" {
-  return templateCode !== null && /^(A02|R06|A08)/.test(templateCode) ? "broadcast" : "reminder";
+  return templateCode !== null && /^(A02|R06|A08|STAGE_COMPLETE)/.test(templateCode) ? "broadcast" : "reminder";
 }
 
 /** 失败描述（核心语义：errcode + 白话标签 / errmsg 概要；不含 kind / state 内部态与企微机器尾巴；不含 chatid 明文）。 */
@@ -415,6 +417,13 @@ export class NotifyGroupService {
         masked,
         dedupeKey: row.dedupeKey,
       });
+      const stagePosterAttempts = await this.sendStageCompletePoster({
+        message,
+        chatid: binding.chatid,
+        groupActivated: binding.activatedAt !== null,
+        masked,
+        dedupeKey: row.dedupeKey,
+      });
       const sentAt = this.clock.now();
       await this.archive.recordAttempt({
         messageId: archived.id,
@@ -423,7 +432,7 @@ export class NotifyGroupService {
         target: binding.chatid,
         recipientLabel: "project:" + message.projectId + " · " + masked,
         state: "sent",
-        attempts: result.attempts + rocketAttempts + posterAttempts + dailyReportPosterAttempts,
+        attempts: result.attempts + rocketAttempts + posterAttempts + dailyReportPosterAttempts + stagePosterAttempts,
         error: null,
         sentAt,
         at: sentAt,
@@ -591,6 +600,68 @@ export class NotifyGroupService {
       );
     }
     return attempts;
+  }
+
+  /**
+   * 大阶段完成海报：文字通知送达后追加 1280×720 PNG。
+   * 只认 STAGE_COMPLETE_GROUP + stageKey；数据读取 / 绘制 / 发送任一失败只留日志，不重发已送达文字。
+   */
+  private async sendStageCompletePoster(input: {
+    message: NotifyGroupMessagePayload;
+    chatid: string;
+    groupActivated: boolean;
+    masked: string;
+    dedupeKey: string;
+  }): Promise<number> {
+    if (input.message.templateCode !== "STAGE_COMPLETE_GROUP" || input.message.stageKey === null || input.message.stageKey === undefined) {
+      return 0;
+    }
+    let data: Awaited<ReturnType<NotifyGroupRepository["findStageCompletePosterData"]>>;
+    try {
+      data = await this.repository.findStageCompletePosterData(
+        input.message.projectId,
+        input.message.stageKey,
+        this.clock.now(),
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.warn("阶段完成海报数据读取失败，已跳过图片（文字已发送）：" + input.dedupeKey + " —— " + detail);
+      return 0;
+    }
+    if (data === null) {
+      this.logger.warn("阶段完成海报数据不存在，已跳过图片（文字已发送）：" + input.dedupeKey);
+      return 0;
+    }
+
+    let content: Buffer;
+    try {
+      content = await renderStageCompletePoster(data);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.warn("阶段完成海报生成失败，已跳过图片（文字已发送）：" + input.dedupeKey + " —— " + detail);
+      return 0;
+    }
+    const projectCode = data.projectCode.replace(/[^A-Za-z0-9._-]+/gu, "-");
+    const result = await this.aibot.sendGroupImage({
+      chatid: input.chatid,
+      content,
+      fileName: "STAGE-" + projectCode + "-" + data.stageKey + ".png",
+      mime: "image/png",
+      groupActivated: input.groupActivated,
+    });
+    if (!result.ok) {
+      this.logger.warn(
+        "阶段完成海报未送达（文字已发送）：" +
+          input.dedupeKey +
+          " · chatid " +
+          input.masked +
+          " —— " +
+          describeAibotFailure(result),
+      );
+      return result.attempts;
+    }
+    this.logger.log("阶段完成海报已送达：" + input.dedupeKey + " · chatid " + input.masked);
+    return result.attempts;
   }
 
   /**

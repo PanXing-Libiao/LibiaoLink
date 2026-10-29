@@ -12,7 +12,7 @@
 - 路由（契约 `shared/src/modules/projects.ts`，OpenAPI tags=projects）：全部挂 `SessionGuard + CsrfGuard`（读要登录、写要 `X-CSRF-Token`）。注册顺序上 `GET /facets` 在 `GET /:id` 之前（否则被 `:id` 吃掉）；`id` 走 `UuidSchema` 校验（非法 400 VALIDATION_FAILED）。`POST /api/v1/projects/{id}/visit` 记录项目详情访问（`action=visit` / `entry=page`；不存在 / 不可见 404 不写）。
 - M2-01 项目 CRUD：
   - 创建 `POST /api/v1/projects` → 201；`seq_no` 由服务端在事务内分配“当前最小可用正整数”（请求不接受 `seqNo`；彻底删除后的空号由下一次创建复用，并发创建用事务级 advisory lock 串行化）；`code` 唯一由约束兜底，23505 + `projects_code_key` → 409 `PROJECT_CODE_EXISTS`；缺省 `stageKey = presale`。
-  - 更新 `PATCH /api/v1/projects/{id}`：乐观锁（正文回传 `version`，命中则 `version + 1` 并刷新 `updated_at`）；不匹配 409 `VERSION_CONFLICT`；期间被删 → 404。
+  - 更新 `PATCH /api/v1/projects/{id}`：乐观锁（正文回传 `version`，命中则 `version + 1` 并刷新 `updated_at`）；不匹配 409 `VERSION_CONFLICT`；期间被删 → 404。首次把 `status` 改为 `done` 时先过项目完成门禁：未删除任务必须全部 done；配置了成果类型的任务必须有对应上传文件（`draft / final / changed` 均算），未配置不要求；缺交付文件返回 422 `TASK_REQUIRED_DOC_MISSING` 与逐项明细，任务未完成返回 400。
   - 回收站 `DELETE /api/v1/projects/{id}`：`If-Match` 回传当前 `version`，只写 `deleted_at` / `deleted_by` 并 `version + 1`；普通读面立即不可见，`GET /projects?filter[recycled]=true` 可查。
   - 恢复 / 彻底删除：`POST /projects/{id}/restore`（只需 `project.delete`）清回收站标记；`POST /projects/{id}/purge`（仅 admin）先按 `projects/{id}/` 前缀清对象全部版本，再按外键序物理清 9 张聚合子表与项目行。`code` 与 `seq_no` 均在回收站期间保留，彻底删除后同时释放。
   - 30 天到期清理：worker 每 24 小时扫描 `deleted_at <= now() - 30 days` 的项目，单轮内按 ≤ 20 个一批（`PROJECT_RECYCLE_SWEEP_BATCH`）drain，直到不满批或无进展；复用彻底删除链路清理数据、文件 / 图片对象并写 `source=system` 审计；并发恢复 / 手动彻底删除在行锁内复核后跳过。

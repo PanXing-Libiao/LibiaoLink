@@ -331,13 +331,14 @@ export function buildOpenApiDocument() {
     method: "patch",
     path: "/api/v1/projects/{id}",
     tags: ["projects"],
-    summary: "更新项目（乐观锁：必须回传 version）",
+    summary: "更新项目（乐观锁：必须回传 version；首次改为 done 时要求任务全部完成且已配置成果文件均已上传）",
     request: { params: idParams, body: json(ProjectUpdateBodySchema) },
     responses: {
       200: { description: "更新后的项目", ...json(ProjectSchema) },
       400: commonErrors[400],
       404: commonErrors[404],
       409: commonErrors[409],
+      422: commonErrors[422],
     },
   });
 
@@ -562,7 +563,7 @@ export function buildOpenApiDocument() {
     method: "get",
     path: "/api/v1/projects/{id}/tasks/{taskId}/can-complete",
     tags: ["tasks"],
-    summary: "完成预检（门禁缺件与放行提示；UI 置灰依据，服务端仍在事务内强校验）",
+    summary: "完成预检（已配置成果类型缺上传文件时提示；未配置成果类型直接放行；服务端仍在事务内强校验）",
     request: { params: z.object({ id: UuidSchema, taskId: UuidSchema }) },
     responses: {
       200: { description: "预检结果（canComplete + missing + warnings）", ...json(TaskCanCompleteResponseSchema) },
@@ -574,7 +575,7 @@ export function buildOpenApiDocument() {
     method: "post",
     path: "/api/v1/projects/{id}/tasks/{taskId}/complete",
     tags: ["tasks"],
-    summary: "任务完成提交（事务内门禁：缺件 422 TASK_REQUIRED_DOC_MISSING；未定档放行 + warning 并触发 R02）",
+    summary: "任务完成提交（事务内门禁：已配置成果类型缺上传文件 422 TASK_REQUIRED_DOC_MISSING；未配置不要求文件；draft 放行 + warning 并触发 R02）",
     request: { params: z.object({ id: UuidSchema, taskId: UuidSchema }), body: json(TaskCompleteBodySchema) },
     responses: {
       200: { description: "完成结果（task + warnings）", ...json(TaskCompleteResponseSchema) },
@@ -1078,7 +1079,7 @@ export function buildOpenApiDocument() {
     method: "post",
     path: "/api/v1/projects/{id}/stages/{key}/advance",
     tags: ["flow"],
-    summary: "推进阶段（服务端门禁：任务 / 节点 / 成果文件；失败 422 + 缺项明细，不部分推进）",
+    summary: "推进阶段（服务端门禁：节点 / 任务完成与交付要求 / 节点定档文件；失败 422 + 缺项明细，不部分推进）",
     request: { params: stageParams, headers: idempotencyHeader, body: json(StageAdvanceBodySchema) },
     responses: {
       200: { description: "推进后的阶段列表", ...json(StageListResponseSchema) },

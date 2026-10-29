@@ -285,7 +285,7 @@ class FakeObjectStorage {
 
 function makeService(
   rows: ProjectRow[] = [],
-  options: { adminIds?: readonly string[] } = {},
+  options: { adminIds?: readonly string[]; completionGateError?: AppError } = {},
 ): {
   service: ProjectService;
   repo: FakeProjectRepository;
@@ -319,6 +319,9 @@ function makeService(
         nodes: 19,
         requirements: 8,
       }),
+    assertProjectCompletionGate: async () => {
+      if (options.completionGateError !== undefined) throw options.completionGateError;
+    },
   };
   return {
     service: new ProjectService(
@@ -600,6 +603,23 @@ describe("ProjectService（M2-01 项目 CRUD + 项目回收站）", () => {
 
     await service.updateProject(UUID_A, { status: "done", version: 4 }, UUID_B);
     expect(outbox).toHaveLength(1);
+  });
+
+  it("更新为已完成：完成门禁缺交付文件 → 422，项目状态与 outbox 均不写", async () => {
+    const { service, outbox } = makeService(
+      [projectRow({ id: UUID_A, version: 3, status: "active" })],
+      {
+        completionGateError: new AppError(
+          "TASK_REQUIRED_DOC_MISSING",
+          "项目无法标记为已完成 —— 有 1 项已配置成果文件尚未上传：「机械设计」CAD图纸",
+        ),
+      },
+    );
+    await expectAppErrorAsync(
+      () => service.updateProject(UUID_A, { status: "done", version: 3 }, UUID_B),
+      "TASK_REQUIRED_DOC_MISSING",
+    );
+    expect(outbox).toHaveLength(0);
   });
 
   it("更新：version 不匹配 409 VERSION_CONFLICT；期间被删则 404", async () => {

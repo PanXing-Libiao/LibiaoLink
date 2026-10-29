@@ -14,7 +14,21 @@ export interface NodeGateMissing {
 export type StageGateMissingItem =
   | { type: "node_not_done"; nodeId: string; nodeKey: string; name: string; status: string }
   | { type: "task_not_done"; total: number; done: number }
+  | { type: "task_delivery_missing"; total: number; ready: number }
   | { type: "doc_missing"; nodeId: string; nodeKey: string; docType: string; required: number; present: number };
+
+/** 项目标记完成前的任务交付缺项（FlowService 转 422 明细；缺少成果类型配置的任务不产生缺项）。 */
+export type ProjectCompletionMissingItem =
+  | { type: "task_not_done"; total: number; done: number }
+  | {
+      type: "task_delivery_missing";
+      taskId: string;
+      taskTitle: string;
+      stageKey: string | null;
+      docType: string;
+      required: number;
+      present: number;
+    };
 
 /**
  * 门禁判定唯一出口（v0.2 §3.6 / ADR-023）：节点完成与阶段推进共用同一实现，
@@ -48,7 +62,8 @@ export class GateService {
 
   /**
    * 阶段推进门禁（ADR-023）：
-   * 1) 阶段内非 deleted 节点全部 done；2) 阶段内任务全部 done；3) 节点 required_doc 逐条满足（兜底，防完成后文件被回收）。
+   * 1) 阶段内非 deleted 节点全部 done；2) 阶段内任务全部 done 且已配置成果类型均有上传文件；
+   * 3) 节点 required_doc 逐条满足（节点完成仍沿用定档口径；防完成后文件被回收）。
    */
   async evaluateStageAdvance(
     client: DbClient,
@@ -77,6 +92,31 @@ export class GateService {
     const taskCounts = await this.taskStats.countStageTasks(client, projectId, stageKey);
     if (taskCounts.done < taskCounts.total) {
       missing.push({ type: "task_not_done", total: taskCounts.total, done: taskCounts.done });
+    } else if (taskCounts.deliveryReady < taskCounts.total) {
+      missing.push({
+        type: "task_delivery_missing",
+        total: taskCounts.total,
+        ready: taskCounts.deliveryReady,
+      });
+    }
+    return { ok: missing.length === 0, missing };
+  }
+
+  /**
+   * 项目标记完成门禁：全部未删除任务 done；配置了成果类型的任务均有对应上传文件。
+   * 未配置成果类型的任务只校验状态，不额外要求文件。
+   */
+  async evaluateProjectCompletion(
+    client: DbClient,
+    projectId: string,
+  ): Promise<{ ok: boolean; missing: ProjectCompletionMissingItem[] }> {
+    const status = await this.taskStats.evaluateProjectDelivery(client, projectId);
+    const missing: ProjectCompletionMissingItem[] = [];
+    if (status.done < status.total) {
+      missing.push({ type: "task_not_done", total: status.total, done: status.done });
+    }
+    for (const issue of status.issues) {
+      missing.push({ type: "task_delivery_missing", ...issue });
     }
     return { ok: missing.length === 0, missing };
   }

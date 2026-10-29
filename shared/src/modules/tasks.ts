@@ -95,7 +95,7 @@ export const TaskFileSummarySchema = z
   .object({
     total: z.number().int().min(0),
     draft: z.number().int().min(0).openapi({ description: "未定档（draft）数量；>0 时完成门禁放行但返回 warning 并触发 R02" }),
-    final: z.number().int().min(0).openapi({ description: "已定档（final / changed）数量；门禁按 node_requirements 逐 doc_type 统计" }),
+    final: z.number().int().min(0).openapi({ description: "已定档（final / changed）数量，仅用于文件摘要展示；完成门禁统计已上传（draft / final / changed）" }),
   })
   .openapi("TaskFileSummary");
 
@@ -185,14 +185,14 @@ export const TaskProgressUpdateBodySchema = z
   })
   .openapi("TaskProgressUpdateBody");
 
-/** 任务完成门禁缺件明细（TASK_REQUIRED_DOC_MISSING 的 details.missing；与节点门禁同形同口径）。 */
+/** 任务完成门禁缺件明细（TASK_REQUIRED_DOC_MISSING 的 details.missing；按已配置成果类型逐类给出）。 */
 export const TaskGateMissingSchema = z
   .object({
     docType: DocTypeSchema,
     required: z.number().int().min(0),
     present: z.number().int().min(0),
   })
-  .openapi("TaskGateMissing", { description: "缺件明细：required / present 按门禁统计范围逐 doc_type 给出" });
+  .openapi("TaskGateMissing", { description: "缺件明细：required / present 按已配置的成果类型逐类给出；未配置成果类型时不产生缺件" });
 
 /** 完成门禁放行提示（A2-10）：存在未定档（draft）成果文件时放行，返回 warning 并触发 R02（提醒定档）。 */
 export const TaskGateWarningSchema = z

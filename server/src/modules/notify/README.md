@@ -1,5 +1,13 @@
 # notify 模块（S7·outbox · S7-4 · 通知投递内核 j1 / M5-04 首刀 · Push 178 + 接线段渠道护栏 · Push 180） + S8-3 契约落地（SSE 实时流 / 稍后提醒）· Push 210 + M5-04-1 SSE 实现 · Push 211 + M5-04-2 稍后提醒实现 · Push 212 + M5-04 收口 · Push 213 + M5-03-1 企微适配器内核 · Push 215 + M5-03-2 契约段 · Push 221 + 群通道迁移 0046 · Push 222 + M5-03-2 智能机器人长连接客户端（webhook 面退役）· Push 223 + M5-03-2 接线段（群绑定读写 + notify.group 消费 + 回调 ingest）· Push 224 + M5-03-3 应用消息 + C5-04 降级 + 告警出口 · Push 226 + M5-03-4 开工（T3-6 收官 · 93001 锁定 · PoC-2 证据骨架）· Push 227 + M5-03-4 T5 反向修复（告警复报去重）· Push 229 + M5-03-4 告警 / 失败文案收敛（核心语义口径）· Push 230 + M5-03-5-3 单聊 aibot 实现段（sendUserMarkdown + 限速 single + NotifyDmService + 激活仓储 + 回放）· Push 237 + M5-03-5-4 单聊 aibot 接线段（outbox 路由分流 + `:aibot` 产出接线 + worker 回调分流 + 集成回放）· Push 238 + M5-03-5-6 绑定码链路（迁移 0055 · 单聊 ingest 绑定 + 密文 open_userid 寻址 + D4 话术）· Push 247 + M5-03-5-6 契约刀（取码 / 查绑定态 / 解绑 + `audit_logs` + 生成客户端）· Push 249 + outbox 告警可执行化与恢复日报 · Push 257 + 单聊 enter_chat 欢迎语 · Push 261
 
+## 大阶段完成海报（2026-10-29）
+
+- **入口**：任务领域在该阶段全部小任务完成，且每个配置了成果类型的任务均已上传对应文件时写 `notify.group`（模板码 `STAGE_COMPLETE_GROUP`，载荷可选 `stageKey`）；未配置成果类型的任务不额外要求文件。与普通群播报共用绑定解析、限速、留痕与失败降级。
+- **发送顺序**：先发文字「阶段完成｜{阶段名}」，文字受理成功后追加 1280×720 PNG（`STAGE-{项目编号}-{阶段键}.png`）。图片读取 / 渲染 / 发送失败只 warn，不回滚已送达文字、不二次重发。
+- **海报数据**：项目编号 / 名称、目标阶段任务数、九阶段各自完成度与当前阶段序号；字体使用仓库内 `SourceHanSansSC-Regular/Bold.otf`，Logo 复用 `r06-brand-logo.svg`。
+- **契约 / 数据**：`NotifyGroupMessagePayload.stageKey` 为可选九阶段键；无 DDL / 迁移。阶段统计只计未删除任务。
+- **回归**：`server/test/notify-group.test.ts` 覆盖 1280×720 动态 PNG、缺阶段键跳过海报与图片失败不重发；`task-service` 覆盖触发条件与并发锁。
+
 ## 项目群可投递统一判定（2026-10-28）
 
 - **唯一判定**：`projectGroupDeliverability` —— `绑定存在 && activated_at != null` 才是可投递；未绑定与已绑定未激活统一归为「项目群不可投递」，分别返回 `unbound` / `not_activated`。群播报消费、自动化 `project.group` 收件人解析、日报同步接口共用本判定。
