@@ -23,7 +23,7 @@ import {
   type TaskNodeItem,
   type TemplateItem,
 } from "./templateApi";
-import { replaceTemplateSection, templateSectionFromParam, templateSectionHref, templateSectionSlug, type PlaceholderPage as PlaceholderPageKey } from "./useHashRoute";
+import { replaceTemplateSection, templateSectionFromParam, templateSectionSlug, type PlaceholderPage as PlaceholderPageKey } from "./useHashRoute";
 import { isLocalizedLocale, stageText, prefetchLocalizedText, useLocale, useLocalizedTranslator, useT } from "./i18n";
 import type { MeResponse } from "./types";
 
@@ -947,7 +947,6 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
                     key={stage}
                     type="button"
                     onClick={() => replaceTemplateSection(stage)}
-                    title={templateSectionHref(stage)}
                     aria-current={active ? "page" : undefined}
                     className={
                       "whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition " +

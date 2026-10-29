@@ -176,6 +176,7 @@ const TABS_RECT = RECT_OF("[data-template-tabs]");
 const LEFT_SECTION_RECT = "(function(){var ss=document.querySelectorAll(" + q("section") + ");for(var i=0;i<ss.length;i++){if((ss[i].innerText||" + q("") + ").indexOf(" + q("任务节点") + ")===0){var cs=getComputedStyle(ss[i]);var r=ss[i].getBoundingClientRect();var p=ss[i].parentElement;var pz=p===null?null:getComputedStyle(p).zIndex;return {position:cs.position,cssTop:cs.top,top:Math.round(r.top*100)/100,height:Math.round(r.height*100)/100,parentZ:pz};}}return null;})()";
 const BAR_BUTTONS = "(function(){var bs=document.querySelectorAll(" + q("[data-template-tabs] button") + ");var out=[];for(var i=0;i<bs.length;i++){out.push((bs[i].textContent||" + q("") + ").trim());}return out;})()";
 const BAR_HIT = "(function(){var bs=document.querySelectorAll(" + q("[data-template-tabs] button") + ");for(var i=0;i<bs.length;i++){if(bs[i].getAttribute(" + q("aria-current") + ")===" + q("page") + "){var r=bs[i].getBoundingClientRect();var el=document.elementFromPoint(Math.round(r.left+r.width/2),Math.round(r.top+r.height/2));return el!==null&&(el===bs[i]||bs[i].contains(el));}}return null;})()";
+const BAR_TITLE_ATTRS = "(function(){var bs=document.querySelectorAll(" + q("[data-template-tabs] button") + ");var out=[];for(var i=0;i<bs.length;i++){out.push(bs[i].getAttribute(" + q("title") + "));}return out;})()";
 const target = await waitTarget();
 const page = new Cdp(target.webSocketDebuggerUrl);
 await page.ready;
@@ -382,6 +383,8 @@ try {
   check("⑨g 层级：标签栏 z 20 > 左列容器 z 10（左列滚动时从栏下滑过、不盖住栏；真机内容里左列与右侧模板区等高、钉住位移趋近 0，口径为右侧更高时生效）", leftCol1 !== null && leftCol1.parentZ === "10" && tabsSlot1 !== null && Number(tabsSlot1.zIndex) > Number(leftCol1.parentZ), leftCol1 === null ? "null" : JSON.stringify([tabsSlot1 === null ? null : tabsSlot1.zIndex, leftCol1.parentZ]));
   const barButtons = await ev(BAR_BUTTONS);
   check("⑨h 滚动后栏内九枚板块 + 「＋ 新建模板」都在（10 枚按钮、无吞字）", barButtons !== null && barButtons.length === 10 && barButtons[0] === "售前规划" && barButtons[9].indexOf("新建模板") >= 0, barButtons === null ? "null" : JSON.stringify(barButtons));
+  const barTitleAttrs = await ev(BAR_TITLE_ATTRS);
+  check("⑨h-2 板块标签悬停不暴露内部路由（九枚阶段按钮均无 title）", barTitleAttrs !== null && barTitleAttrs.slice(0, 9).every((value) => value === null), barTitleAttrs === null ? "null" : JSON.stringify(barTitleAttrs));
   const barHit = await ev(BAR_HIT);
   check("⑨i 滚动后选中标签仍是命中元素（可点，不被任何浮层盖住）", barHit === true, String(barHit));
 } catch (error) {
