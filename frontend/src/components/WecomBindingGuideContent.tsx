@@ -49,6 +49,12 @@ export function WecomBindingGuideContent(props: {
           </span>
           <span>{t("settings.guide.step2")}</span>
         </li>
+        <li data-wecom-binding-step="3" className="flex gap-2.5">
+          <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-zinc-900 text-[10px] font-semibold text-white">
+            3
+          </span>
+          <span>{t("settings.guide.step3")}</span>
+        </li>
       </ol>
 
       <button
