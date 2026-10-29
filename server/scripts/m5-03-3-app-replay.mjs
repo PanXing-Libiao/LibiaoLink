@@ -365,23 +365,31 @@ async function main() {
     const { sink, aibot, fallback } = makeAlertSink({ ok: true, attempts: 1 });
     sink.emitDigest({
       generatedAt: "2026-10-19T05:00:00.000Z",
-      windowMs: 86_400_000,
-      duePending: 0,
-      oldestDueMs: null,
-      deadRecent: 0,
-      deadTotal: 0,
-      byTopic: [],
-      deadByTopic: [{ topic: "preview.job", count: 1 }],
-      recoveries: [
-        { code: "outbox.queue_stalled.recovered", message: "队列恢复", at: "2026-10-19T04:50:00.000Z" },
-        { code: "notify.project_group.recovered", message: "项目群恢复可投递：总装项目（原因为项目群未绑定）", at: "2026-10-19T04:51:00.000Z" },
-      ],
-      activeAlerts: [],
+      reportAt: "2026-10-19T00:00:00.000Z",
+      windowFrom: "2026-10-18T16:00:00.000Z",
+      windowTo: "2026-10-19T16:00:00.000Z",
+      delivery: { total: 1, delivered: 1, retrying: 0, failed: 0, lateDelivered: 0, maxLatencyMs: null },
+      automaticFallbacks: [{ label: "预览确定性拒绝", detail: "preview.job", count: 1 }],
+      repeatedIssues: [],
+      recoveries: {
+        total: 2,
+        byCode: [
+          { code: "outbox.queue_stalled.recovered", count: 1 },
+          { code: "outbox.unconsumed_topic.recovered", count: 1 },
+        ],
+      },
     });
     await flush();
     assertTrue(
-      "W6 outbox 日报：与即时告警共用同一管理员告警群，恢复项只在日报出现且展示可读正文",
-      aibot.sends.length === 1 && aibot.sends[0].chatid === ALERT_CHATID && String(aibot.sends[0].content).includes("【LibiaoLink 日报】outbox") && String(aibot.sends[0].content).includes("已恢复：队列恢复") && String(aibot.sends[0].content).includes("项目群恢复可投递：总装项目") && String(aibot.sends[0].content).includes("新增死信主题：preview.job 1 条") && fallback.digests.length === 0,
+      "W6 管理员日报：固定 08:00 区间、交付结果、自动降级与恢复计数同群展示",
+      aibot.sends.length === 1 &&
+        aibot.sends[0].chatid === ALERT_CHATID &&
+        String(aibot.sends[0].content).includes("【LibiaoLink 管理员日报】") &&
+        String(aibot.sends[0].content).includes("统计范围：2026-10-18 00:00–24:00（北京时间）") &&
+        String(aibot.sends[0].content).includes("送达 1 · 待重试 0 · 最终失败 0") &&
+        String(aibot.sends[0].content).includes("自动降级 1 次") &&
+        String(aibot.sends[0].content).includes("已恢复 2 项：队列停滞恢复 1 次 · 未消费主题恢复 1 次") &&
+        fallback.digests.length === 0,
     );
   }
 
