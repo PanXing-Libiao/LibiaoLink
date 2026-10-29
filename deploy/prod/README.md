@@ -1,3 +1,11 @@
+> **2026-10-29 10:30 任务模板阶段标签悬停提示修复已部署正式机（PR [#705](https://github.com/PanXing-Libiao/LibiaoLink/pull/705) · main@0b83ea1c）**：正式环境 `https://pm.libiaorobot.com`（`10.1.103.44`）已更新到 `main@0b83ea1c`。任务模板九个阶段板块标签不再把内部路由作为 `title` 暴露，悬停不再弹出 `#/templates?section=...`；按钮切换、地址栏、刷新、收藏与分享口径不变。测试机 `10.1.104.44` 未触碰。
+>
+> **发布包与构建**：frontend `output/frontend-stage-tab-hover-0b83ea1c-20261029-1028.tar.gz`（15,445,498 B · SHA-256 `c3ff2ea9…c727a` · 388 文件 / 20,422,265 B），远端 SHA-256 一致。构建来自本地合并提交 `cb2030a3`，其 git tree `0ec914db…` 与 `origin/main@0b83ea1c` 完全一致；公网 `index.html` / `assets/index-CJMlhSao.js` / `assets/index-UTdnWqS6.css` 的 SHA-256 分别为 `2eb5556f…7a60` / `e2ac8951…eb53` / `b03722a6…68a0`，与构建逐字节一致。
+>
+> **备份 / 清单**：部署前备份 `/srv/data/backups/before-stage-tab-hover-prod-0b83ea1c-20261029-1028/`（frontend dist `7cbbf0fb…d4c`；原 manifest `45238562…ff8`），manifest = `prod-20261029-stage-tab-hover-0b83ea1c`（35,427 B · `d62499af…7ec5`）。仅对 `frontend/dist` 做 checksum 同步并保留旧哈希资源，未重启容器。
+>
+> **验收**：8 / 8 容器 healthy，api / worker / web 重启计数 0；站点 / `healthz` / `readyz` 均 200，ready 四探针全过；新 JS 与上一版 JS 均 200；近 10 分钟 api / worker error / fatal / exception 0。真实账号视觉复验悬停提示仍待完成。
+
 > **2026-10-29 09:32 项目回收站期间操作记录项目名称修复已同步测试机与正式机（PR [#704](https://github.com/PanXing-Libiao/LibiaoLink/pull/704) · main@1588a5a3）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）与正式环境 `https://pm.libiaorobot.com`（`10.1.103.44`）均已更新到 `main@1588a5a3`。`audit_logs` 新增项目编号 / 名称快照，读面优先当前项目（含回收站），项目彻底删除后回退快照；操作记录页同步使用快照名称。迁移 `0076_audit_project_snapshot.sql` 只追加两个可空 text 列，不回填存量行。
 >
 > **发布包**：frontend `output/frontend-audit-snapshot-1588a5a3-20261029-0931.tar.gz`（15,445,367 B · SHA-256 `15d7079efba5a45f51131ab6509a9a7eed7b2419328d3b49c77d533f6f8bdf0d` · 388 文件 / 20,422,273 B）、server（966,709 B · `20c89074534513d638dcf68bea2122d8e0fef760a070ff42f77fbfbe73e50382` · 616 文件 / 4,233,156 B）、shared（371,278 B · `a9118f44da9cecb8e0d0b5773e1b0b1ee0b5d59e6f0eeaebc690137f3b27937c` · 95 文件 / 2,412,631 B）、database migration（713 B · `e6de80872e9605e7ab19c0a02b4bdeb967188204df73307cc3212faa1c47aaff` · 1 文件 / 1,065 B）；两台上传后远端 SHA-256 均一致。
