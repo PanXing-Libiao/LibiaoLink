@@ -4,6 +4,7 @@ import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { auditLogs, type AuditChangeEntry } from "../../db/schema/admin.js";
 import { users } from "../../db/schema/identity.js";
+import { projects } from "../../db/schema/projects.js";
 
 /** 审计写入入参（actor / result / entry 由服务层补全；字段口径 = audit_logs 表）。 */
 export interface AuditInsertInput {
@@ -14,6 +15,8 @@ export interface AuditInsertInput {
   objectType: string;
   objectId: string;
   projectId: string | null;
+  projectCode: string | null;
+  projectName: string | null;
   result: string;
   entry: string;
   summary: string;
@@ -52,6 +55,8 @@ export interface AuditRow {
   objectType: string;
   objectId: string;
   projectId: string | null;
+  projectCode: string | null;
+  projectName: string | null;
   result: string;
   entry: string;
   summary: string;
@@ -77,6 +82,8 @@ export class AuditRepository {
       objectType: input.objectType,
       objectId: input.objectId,
       projectId: input.projectId,
+      projectCode: input.projectCode,
+      projectName: input.projectName,
       result: input.result,
       entry: input.entry,
       summary: input.summary,
@@ -103,6 +110,8 @@ export class AuditRepository {
         objectType: auditLogs.objectType,
         objectId: auditLogs.objectId,
         projectId: auditLogs.projectId,
+        projectCode: sql<string | null>`coalesce(${projects.code}, ${auditLogs.projectCode})`,
+        projectName: sql<string | null>`coalesce(${projects.name}, ${auditLogs.projectName})`,
         result: auditLogs.result,
         entry: auditLogs.entry,
         summary: auditLogs.summary,
@@ -110,6 +119,7 @@ export class AuditRepository {
         metadata: auditLogs.metadata,
       })
       .from(auditLogs)
+      .leftJoin(projects, eq(projects.id, auditLogs.projectId))
       .where(and(where, lte(auditLogs.id, windowId)))
       .orderBy(desc(auditLogs.occurredAt), desc(auditLogs.id))
       .limit(limit)
@@ -125,6 +135,16 @@ export class AuditRepository {
       .where(eq(users.id, userId))
       .limit(1);
     return rows[0]?.displayName ?? null;
+  }
+
+  /** 项目编号 / 名称快照：不过滤 deleted_at，回收站项目也作为当前项目返回。 */
+  async findProjectSnapshot(projectId: string, client: DbClient = this.database.db): Promise<{ code: string; name: string } | null> {
+    const rows = await client
+      .select({ code: projects.code, name: projects.name })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    return rows[0] ?? null;
   }
 }
 

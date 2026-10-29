@@ -83,6 +83,10 @@ export type AuditLogItem = {
   objectType: string;
   objectId: string;
   projectId: string | null;
+  /** 项目编号：服务端优先当前项目（含回收站），项目彻底删除后回退写入快照。 */
+  projectCode: string | null;
+  /** 项目名称：服务端优先当前项目（含回收站），项目彻底删除后回退写入快照。 */
+  projectName: string | null;
   result: string;
   entry: string;
   summary: string;
