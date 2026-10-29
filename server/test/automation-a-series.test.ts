@@ -62,7 +62,6 @@ function projectDay(input: {
   headcount?: number;
   issues?: number;
   text?: string;
-  groupMissing?: boolean;
 }): ReplaySubject {
   return {
     kind: "project_day",
@@ -76,7 +75,7 @@ function projectDay(input: {
       "project.name": input.project ?? "临港数据中心",
     },
     recipients: {
-      "project.group": input.groupMissing === true ? null : { id: "g-1", name: null },
+      "project.group": { id: input.projectId ?? "p-1", name: null },
     },
   };
 }
@@ -182,7 +181,7 @@ describe("A02 日报每日汇总群播报（19:00 · 项目群）", () => {
     expect(message?.ruleCode).toBe("A02");
     expect(message?.channel).toBe("wecom_group");
     expect(message?.recipient).toBe("project.group");
-    expect(message?.recipientId).toBe("g-1");
+    expect(message?.recipientId).toBe("p-1");
     expect(message?.title).toBe("📊 日报汇总 | 临港数据中心（2026-09-24）");
     expect(message?.body).toBe("今日 3 人已提交（应填 12 人），发现问题 1 条。张三：安装摄像头 3 台；李四：现场勘查完毕。");
     expect(message?.dedupeKey).toBe(dedupeKey("A02", "p-1", BUSINESS_DAY));
@@ -192,12 +191,6 @@ describe("A02 日报每日汇总群播报（19:00 · 项目群）", () => {
     const report = replay(BUSINESS_DAY, [projectDay({ entries: 0, headcount: 0, issues: 0, text: "" })]);
     expect(report.messages).toHaveLength(0);
     expect(report.details.find((detail) => detail.ruleCode === "A02")?.skipped).toBe("not_matched");
-  });
-
-  it("项目未绑定群 → recipient_missing（不产出、不误发）", () => {
-    const report = replay(BUSINESS_DAY, [projectDay({ groupMissing: true })]);
-    expect(report.messages).toHaveLength(0);
-    expect(report.details.find((detail) => detail.ruleCode === "A02")?.skipped).toBe("recipient_missing");
   });
 });
 

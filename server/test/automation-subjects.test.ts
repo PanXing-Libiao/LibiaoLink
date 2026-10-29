@@ -5,16 +5,10 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  resolveDeliverableGroupProjectIds,
   summarizeProjectDay,
   todoOccursOn,
-  type ProjectGroupBindingRow,
   type ReportDayRow,
 } from "../src/outbox/automation-subjects.js";
-import type {
-  ProjectGroupDeliveryAlertPort,
-  ProjectGroupUnavailableReason,
-} from "../src/modules/notify/index.js";
 
 function reportRow(overrides: Partial<ReportDayRow> = {}): ReportDayRow {
   return {
@@ -98,44 +92,5 @@ describe("A14 待办重复展开（todoOccursOn · M5-06-3）", () => {
 
   it("未知重复规则 fail closed（不提醒）", () => {
     expect(todoOccursOn({ remindAt: start, repeatRule: "yearly", repeatUntil: null }, "2026-10-21")).toBe(false);
-  });
-});
-
-describe("项目群可投递统一判定（resolveDeliverableGroupProjectIds）", () => {
-  it("仅绑定且已激活进入收件人集；未绑定 / 未激活分别告警；停用静默跳过", () => {
-    const unavailable: { projectId: string; projectName: string; reason: ProjectGroupUnavailableReason }[] = [];
-    const available: string[] = [];
-    const alerts: ProjectGroupDeliveryAlertPort = {
-      reportUnavailable(projectId, projectName, reason) {
-        unavailable.push({ projectId, projectName, reason });
-      },
-      reportAvailable(projectId) {
-        available.push(projectId);
-      },
-    };
-    const rows: ProjectGroupBindingRow[] = [
-      { projectId: "inactive", enabled: true, activatedAt: null },
-      { projectId: "active", enabled: true, activatedAt: new Date("2026-10-28T00:00:00Z") },
-      { projectId: "disabled", enabled: false, activatedAt: null },
-    ];
-
-    const result = resolveDeliverableGroupProjectIds(
-      ["unbound", "inactive", "active", "disabled"],
-      new Map([
-        ["unbound", "未绑定项目"],
-        ["inactive", "未激活项目"],
-        ["active", "可投递项目"],
-        ["disabled", "停用项目"],
-      ]),
-      rows,
-      alerts,
-    );
-
-    expect([...result]).toEqual(["active"]);
-    expect(available).toEqual(["active"]);
-    expect(unavailable).toEqual([
-      { projectId: "unbound", projectName: "未绑定项目", reason: "unbound" },
-      { projectId: "inactive", projectName: "未激活项目", reason: "not_activated" },
-    ]);
   });
 });

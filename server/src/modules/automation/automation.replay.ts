@@ -48,7 +48,6 @@ export interface ReplayTask {
   projectName: string;
   projectProgress: number;
   completedByName: string | null;
-  projectGroupId: string | null;
   deliverableTypes: readonly string[];
   fileCount: number;
 }
@@ -200,7 +199,8 @@ export function toTaskSubject(task: ReplayTask): ReplaySubject {
             ? null
             : { id: task.managerId, name: task.managerName },
       "project.manager": task.managerId === null ? null : { id: task.managerId, name: task.managerName },
-      "project.group": task.projectGroupId === null ? null : { id: task.projectGroupId, name: null },
+      // 一期一项目一群：群播报寻址键恒为项目 id；绑定 / 激活由 notify.group 消费端判定。
+      "project.group": { id: task.projectId, name: null },
     },
   };
 }
