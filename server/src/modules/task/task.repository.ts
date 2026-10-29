@@ -532,21 +532,14 @@ export class TaskRepository {
     return { overdue: Number(row?.overdue ?? 0), done: Number(row?.done ?? 0), total: Number(row?.total ?? 0) };
   }
 
-  /** 阶段任务计数（GateService 阶段门禁 / 完成度用；h4 起由 task 模块提供，node 不再直读 tasks 表）。 */
-  async countStageTasks(client: DbClient, projectId: string, stageKey: string): Promise<{ total: number; done: number }> {
-    const rows = await client
-      .select({ status: tasks.status, value: count() })
-      .from(tasks)
-      .where(and(eq(tasks.projectId, projectId), eq(tasks.stageKey, stageKey), isNull(tasks.deletedAt)))
-      .groupBy(tasks.status);
-    let total = 0;
-    let done = 0;
-    for (const row of rows) {
-      const value = Number(row.value);
-      total += value;
-      if (row.status === "done") done += value;
-    }
-    return { total, done };
+  /**
+   * 阶段完成通知串行化：并发完成同阶段最后两项任务时，只有拿到事务锁的后一笔能判断“全完成”，
+   * 避免两边都看不到对方未提交的 done 行而漏发。锁随事务提交 / 回滚自动释放。
+   */
+  async lockStageCompletion(client: DbClient, projectId: string, stageKey: string): Promise<void> {
+    await client.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${projectId + ":" + stageKey}, 0))`,
+    );
   }
 
   /** 全项目按阶段的任务计数（GET /projects/{id}/stages 的 tasks 完成度）。 */

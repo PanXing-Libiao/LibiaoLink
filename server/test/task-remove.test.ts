@@ -100,6 +100,11 @@ function makeRow(id: string, overrides: Partial<TaskRow> = {}): TaskRow {
  * softDelete 条件带「未删」—— 重复删除返回 false（与真仓储同形）。
  */
 class FakeTaskRepository {
+  async lockStageCompletion(): Promise<void> {}
+  async countStageTasks(): Promise<{ total: number; done: number; deliveryReady: number }> {
+    return { total: 0, done: 0, deliveryReady: 0 };
+  }
+
   project: TaskProjectRow = { id: PROJECT, managerIds: [], stageKey: "install", status: "active" };
   tasks = new Map<string, TaskRow>();
   deletedCalls: { taskId: string; actorId: string }[] = [];
@@ -235,11 +240,20 @@ class FakeTaskGateRepository {
   async listNodeDocRequirements(): Promise<{ docType: string; minCount: number }[]> {
     return [];
   }
-  async countFinalFiles(): Promise<{ docType: string; present: number }[]> {
-    return [];
+  async countUploadedFiles(): Promise<{ docType: string | null; present: number }[]> {
+    return [{ docType: null, present: 1 }];
   }
   async countDraftFiles(): Promise<{ docType: string; present: number }[]> {
     return [];
+  }
+  delivery: { total: number; done: number; deliveryReady: number; issues: unknown[] } = {
+    total: 0,
+    done: 0,
+    deliveryReady: 0,
+    issues: [],
+  };
+  async evaluateDeliveryStatus() {
+    return this.delivery;
   }
 }
 

@@ -1,3 +1,35 @@
+> **2026-10-29 14:25 定档入口身份口径修复已发布正式机（PR [#711](https://github.com/PanXing-Libiao/LibiaoLink/pull/711) · main@2b9d7012）**：正式环境 `https://pm.libiaorobot.com`（`10.1.103.44`）已更新到 `main@2b9d7012`，release = `prod-20261029-finalize-actor-id-2b9d7012`。前端改用权限画像 `GET /api/v1/permissions/me` 返回的本库 `users.id`，与项目 `managerIds` / 任务 `ownerIds` 比对；项目详情与工作台「我的任务」同步收口，不再使用 `/auth/me` 的 Casdoor `user.id`，负责人 / 项目经理的「定档」入口恢复。仅同步 `frontend/dist`，未重启容器；测试机 `10.1.104.44` 未触碰。
+>
+> **发布包与构建**：frontend `output/frontend-finalize-actor-id-2b9d7012-20261029-1422.tar.gz`（15,445,287 B · SHA-256 `53879e2995ddb81a4e2392c72e480c1a2e799617b861abb254ef50d324956b9b` · 388 文件 / 20,422,375 B），远端 SHA-256 与 staging 解包逐字节一致；构建提交 `29e703da` 与 `main@2b9d7012` 的 git tree 均为 `c5b44c57a7338016dbaf12b7bb03458764163fe1`。公网 `index.html` / `assets/index-Dl2WhgHB.js` / `assets/index-UTdnWqS6.css` 的 SHA-256 分别为 `19c9bd760cf6aeccfd17495b11ef02c6d6f53348e21243496d637c4b7bc61509` / `7d9a978199343edca11e1fe5053e5e4d0f7cf7889f6ad6bad9d3ae3fd6ce50d7` / `b03722a6ed1cfe1eae8c8ec62cea507670e52c9d7798775da85fe044d7f968a0`，与构建逐字节一致；上一版 JS 仍返回 200。
+>
+> **备份 / 清单**：部署前备份 `/srv/data/backups/before-finalize-actor-id-prod-2b9d7012-20261029-1424/`（frontend dist SHA-256 `706b1ce3382da5892b75697a87d3627d689a1bbfe7d6f7b1addba969129896e7`；原 manifest SHA-256 `c8071497d2d3184cd1d1eae61e8a8da0c44ea4c6927719e91b4925ec37be1c53`），新 manifest = `prod-20261029-finalize-actor-id-2b9d7012`（SHA-256 `e6a4142f032ba2f826635a29c525ca3cc06711a4be7da13800479b7a2ede01dd`）。
+>
+> **验收 / CI**：当前 compose 服务 7 / 7 healthy，api / worker / web 重启计数均为 0；站点 / `healthz` / `readyz` 均正常，ready 四探针全过；近 15 分钟 api / worker error / fatal / unhandled / exception 均为 0。已用真实正式账号打开项目 `test_px` 的任务「布局定档」抽屉，顶部明确显示「定档」开关及其 tooltip。PR CI 5 / 5 通过；主分支 CI 首次仅 `svg-preview-e2e` 因 Chrome DevTools `fetch failed` 失败，重跑后 5 / 5 全绿（run `40827753589`）。
+
+> **2026-10-29 12:04 交付完成门禁已部署正式机（PR [#708](https://github.com/PanXing-Libiao/LibiaoLink/pull/708) · main@d7f7162f）**：正式环境 `https://pm.libiaorobot.com`（`10.1.103.44`）已更新到 `main@d7f7162f`，release = `prod-20261029-task-delivery-gate-d7f7162f`。任务仅在配置了成果类型时要求对应文件；任务完成、阶段完成群通知与项目 done 共用同一交付齐套判定，draft / final / changed 且已有当前版本均算上传，未配置成果类型不额外要求。缺件仍返回 422 并保留逐项缺失明细；测试机 `10.1.104.44` 本轮未再部署，生产群未实际触发新消息。
+>
+> **发布包与构建**：server `output/server-task-delivery-gate-d7f7162f-20261029-1158.tar.gz`（978,276 B · SHA-256 `961680ddd68f625ee7f2e858853d6c5dd5881247b7849993ef7b4a6007af2467` · 620 文件 / 4,283,710 B）、shared `output/shared-task-delivery-gate-d7f7162f-20261029-1158.tar.gz`（381,143 B · `620fd0c474e2d15e10248fabfd679f6d2aa647eba7d0d6a0b54b55b586b19c24` · 98 文件 / 2,467,600 B）；远端 SHA-256 与 staging 解包逐字节一致。最终 `main@d7f7162f` CI 5 / 5 通过；本地构建源 `HEAD@03983122` 的 `server` / `shared` git tree 与最终 main 完全一致。
+>
+> **备份 / 清单**：部署前备份 `/srv/data/backups/before-task-delivery-gate-prod-d7f7162f-20261029-1200/`（server 968,060 B · `2fef4bad…3fee`；shared 394,627 B · `344d39b3…27c15`；原 manifest 38,330 B · `4392971b…8b6f`；数据库 dump 577,656 B · `3d03fa9d…3398`，`pg_restore -l` 619 条）；manifest = `prod-20261029-task-delivery-gate-d7f7162f`（41,995 B · `c8071497…1c53`）。
+>
+> **部署 / 验收**：仅以 rsync-checksum-delete 同步 `server/dist`、`shared/dist`、`shared/generated`，并用 `docker-compose.yml + docker-compose.cad.yml`、`--profile app --no-deps --force-recreate` 重建 api / worker；无 DDL、迁移、依赖、环境变量或权限字段变化。8 / 8 容器 healthy，api / worker 重启计数 0；站点 / `healthz` / `readyz` 均 200，ready 四探针全过；CAD socket 保留；近 20 分钟 api / worker error / fatal / exception 0。只读探针：配置“安装完成证明”但缺文件 → `canComplete=false`（missing 1 / present 0），未配置成果类型 → `canComplete=true`；临时会话已删除。
+
+> **2026-10-29 11:14 企微绑定引导三步文案已发布正式机（PR [#707](https://github.com/PanXing-Libiao/LibiaoLink/pull/707) · main@26f1b7d7）**：正式环境 `https://pm.libiaorobot.com`（`10.1.103.44`）已更新到 `main@26f1b7d7`。设置页未绑定引导显示「复制机器人链接 → 到企微任意对话框发送 → 打开机器人名片发消息发送绑定码」，黑底序号保留；测试机 `10.1.104.44` 未触碰。
+>
+> **发布包与构建**：frontend `output/frontend-wecom-binding-steps-26f1b7d7-20261029-1108.tar.gz`（15,445,285 B · SHA-256 `1772ba18…5f12` · 388 文件 / 20,422,309 B），远端 SHA-256 一致。构建直接来自 `origin/main@26f1b7d7` 独立 worktree；staging 388 文件与本地一致，公网 `index.html` / `assets/index-BDD4YAUD.js` / `assets/index-UTdnWqS6.css` 的 SHA-256 分别为 `758cd256…22c8` / `30c0fe42…bb4` / `b03722a6…68a0`，与构建逐字节一致；三步文案均存在，旧步骤文案 0 次。
+>
+> **备份 / 清单**：部署前备份 `/srv/data/backups/before-wecom-binding-steps-26f1b7d7-20261029-1108/`（frontend dist 18,953,695 B · `a0d65776…0f48`；原 manifest 35,427 B · `d62499af…7ec5`），manifest = `prod-20261029-wecom-binding-steps-26f1b7d7`（38,330 B · `4392971b…b6f`）。仅对 `frontend/dist` 做 checksum 同步并保留旧哈希资源，未重启容器。
+>
+> **验收**：8 / 8 容器 healthy，api / worker / web 重启计数 0；站点 / `healthz` / `readyz` 均 200，ready 四探针全过；新 JS 与上一版 JS 均 200（dist 共 396 文件）；近 10 分钟 api / worker error / fatal / exception 0。真实账号设置页视觉复验仍待完成。
+
+> **2026-10-29 10:30 任务模板阶段标签悬停提示修复已部署正式机（PR [#705](https://github.com/PanXing-Libiao/LibiaoLink/pull/705) · main@0b83ea1c）**：正式环境 `https://pm.libiaorobot.com`（`10.1.103.44`）已更新到 `main@0b83ea1c`。任务模板九个阶段板块标签不再把内部路由作为 `title` 暴露，悬停不再弹出 `#/templates?section=...`；按钮切换、地址栏、刷新、收藏与分享口径不变。测试机 `10.1.104.44` 未触碰。
+>
+> **发布包与构建**：frontend `output/frontend-stage-tab-hover-0b83ea1c-20261029-1028.tar.gz`（15,445,498 B · SHA-256 `c3ff2ea9…c727a` · 388 文件 / 20,422,265 B），远端 SHA-256 一致。构建来自本地合并提交 `cb2030a3`，其 git tree `0ec914db…` 与 `origin/main@0b83ea1c` 完全一致；公网 `index.html` / `assets/index-CJMlhSao.js` / `assets/index-UTdnWqS6.css` 的 SHA-256 分别为 `2eb5556f…7a60` / `e2ac8951…eb53` / `b03722a6…68a0`，与构建逐字节一致。
+>
+> **备份 / 清单**：部署前备份 `/srv/data/backups/before-stage-tab-hover-prod-0b83ea1c-20261029-1028/`（frontend dist `7cbbf0fb…d4c`；原 manifest `45238562…ff8`），manifest = `prod-20261029-stage-tab-hover-0b83ea1c`（35,427 B · `d62499af…7ec5`）。仅对 `frontend/dist` 做 checksum 同步并保留旧哈希资源，未重启容器。
+>
+> **验收**：8 / 8 容器 healthy，api / worker / web 重启计数 0；站点 / `healthz` / `readyz` 均 200，ready 四探针全过；新 JS 与上一版 JS 均 200；近 10 分钟 api / worker error / fatal / exception 0。真实账号视觉复验悬停提示仍待完成。
+
 > **2026-10-29 09:32 项目回收站期间操作记录项目名称修复已同步测试机与正式机（PR [#704](https://github.com/PanXing-Libiao/LibiaoLink/pull/704) · main@1588a5a3）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）与正式环境 `https://pm.libiaorobot.com`（`10.1.103.44`）均已更新到 `main@1588a5a3`。`audit_logs` 新增项目编号 / 名称快照，读面优先当前项目（含回收站），项目彻底删除后回退快照；操作记录页同步使用快照名称。迁移 `0076_audit_project_snapshot.sql` 只追加两个可空 text 列，不回填存量行。
 >
 > **发布包**：frontend `output/frontend-audit-snapshot-1588a5a3-20261029-0931.tar.gz`（15,445,367 B · SHA-256 `15d7079efba5a45f51131ab6509a9a7eed7b2419328d3b49c77d533f6f8bdf0d` · 388 文件 / 20,422,273 B）、server（966,709 B · `20c89074534513d638dcf68bea2122d8e0fef760a070ff42f77fbfbe73e50382` · 616 文件 / 4,233,156 B）、shared（371,278 B · `a9118f44da9cecb8e0d0b5773e1b0b1ee0b5d59e6f0eeaebc690137f3b27937c` · 95 文件 / 2,412,631 B）、database migration（713 B · `e6de80872e9605e7ab19c0a02b4bdeb967188204df73307cc3212faa1c47aaff` · 1 文件 / 1,065 B）；两台上传后远端 SHA-256 均一致。
