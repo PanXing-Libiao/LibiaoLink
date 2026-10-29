@@ -264,8 +264,6 @@ export interface ProjectDaySnapshot {
   issueCount: number;
   /** 汇总正文（数据面拼装；模板 {汇总正文}）。 */
   summaryText: string;
-  /** 项目群 id（未绑定 → null = recipient_missing）。 */
-  groupId: string | null;
 }
 
 /** 主体映射器（A02）：项目日报快照 → 回放主体（收件人 = project.group = 项目群机器人）。 */
@@ -282,18 +280,18 @@ export function toProjectDaySubject(snapshot: ProjectDaySnapshot): ReplaySubject
       "project.name": snapshot.projectName,
     },
     recipients: {
-      "project.group": snapshot.groupId === null ? null : { id: snapshot.groupId, name: null },
+      // 一期一项目一群：群播报寻址键恒为项目 id；绑定 / 激活由 notify.group 消费端判定。
+      "project.group": { id: snapshot.projectId, name: null },
     },
   };
 }
-/** R06 项目完成快照（事件载荷 + 读库补齐项目 / 群绑定）。 */
+/** R06 项目完成快照（事件载荷 + 读库补齐项目）。 */
 export interface ProjectSnapshot {
   projectId: string;
   projectCode: string;
   projectName: string;
   projectStatus: string;
   projectVersion: number;
-  groupId: string | null;
 }
 
 /** 主体映射器（R06）：项目完成快照 → 回放主体（收件人 = project.group = 项目群机器人）。 */
@@ -312,12 +310,12 @@ export function toProjectSubject(snapshot: ProjectSnapshot): ReplaySubject {
       "project.status": snapshot.projectStatus,
     },
     recipients: {
-      "project.group": snapshot.groupId === null ? null : { id: snapshot.groupId, name: null },
+      "project.group": { id: snapshot.projectId, name: null },
     },
   };
 }
 
-/** A08 项目阶段推进快照（事件载荷 + 读库补齐项目 / 姓名 / 群绑定）。 */
+/** A08 项目阶段推进快照（事件载荷 + 读库补齐项目 / 姓名）。 */
 export interface StageSnapshot {
   stageId: string;
   stageKey: string;
@@ -329,7 +327,6 @@ export interface StageSnapshot {
   projectId: string;
   projectCode: string;
   projectName: string;
-  groupId: string | null;
 }
 
 /** 主体映射器（A08）：阶段推进快照 → 回放主体（收件人 = project.group = 项目群机器人）。 */
@@ -353,7 +350,7 @@ export function toStageSubject(snapshot: StageSnapshot): ReplaySubject {
       "project.label": projectLabel,
     },
     recipients: {
-      "project.group": snapshot.groupId === null ? null : { id: snapshot.groupId, name: null },
+      "project.group": { id: snapshot.projectId, name: null },
     },
   };
 }
