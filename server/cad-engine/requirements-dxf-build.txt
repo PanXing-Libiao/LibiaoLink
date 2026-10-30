@@ -1,4 +1,4 @@
 # Build tools for the editable upstream package and its optional accelerators.
-setuptools==80.9.0
+setuptools==84.1.0
 wheel==0.45.1
 Cython==3.1.2
