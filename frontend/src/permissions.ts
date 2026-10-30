@@ -27,6 +27,8 @@ export type GroupAccessScopePermission = {
 export type AuditScope = "all" | "project_manager" | "self";
 
 export type MyPermissions = {
+  /** 当前账号在本库 users.id（uuid）；项目经理 / 任务负责人等外键比较用。`/auth/me` 的 user.id 是 Casdoor 标识，不能混用。 */
+  userId: string;
   /** 遗留字段；服务端固定为空，不代表用户角色，不参与任何授权判定。 */
   roleCodes: string[];
   /** 全量功能权限基线；写能力另由部门规则的编辑 / 仅浏览档位裁决。 */
@@ -106,6 +108,7 @@ export function loadMyPermissions(refresh = false): Promise<MyPermissions> {
       const groupScopePermissions = payload.permissions.groupScopePermissions ??
         (fallbackScope === undefined ? [] : [{ projectScope: fallbackScope, accessLevel: groupAccessLevel }]);
       snapshot = {
+        userId: payload.permissions.userId,
         roleCodes: payload.permissions.roleCodes,
         permissionKeys: payload.permissions.permissionKeys,
         groupKeys: payload.permissions.groupKeys ?? [],

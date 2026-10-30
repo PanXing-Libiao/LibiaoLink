@@ -6,6 +6,7 @@ import { ColumnPicker } from "./components/ColumnPicker";
 import { DailySubMenu } from "./components/DailySubMenu";
 import { ExportOverviewButton } from "./components/ExportOverviewButton";
 import { GanttChart } from "./components/GanttChart";
+import { ProjectFilesPanel } from "./components/ProjectFilesPanel";
 import { ReportIssuePanel } from "./components/ReportIssuePanel";
 import { StakeholderPanel } from "./components/StakeholderPanel";
 import { Toast, ToastConfirm } from "./components/Toast";
@@ -22,10 +23,12 @@ import { TEMP_TASK_STAGE, isTaskDone, type ProjectTask, type TaskStatus } from "
 import type { TemplatePresetNode } from "./data/templatePresets";
 import { fetchTaskFiles, recycleFile, renameFile, uploadFiles, type TaskFileRef } from "./fileApi";
 import { exportProjectOverviewPdf } from "./exportOverviewPdf";
-import type { OverviewExportLanguage } from "./overviewExportShared";
+import { groupedByStage, type OverviewExportOptions, type OverviewExportStageOption } from "./overviewExportShared";
 import { prefetchLocalizedText, useLocale, useT, viewTabText } from "./i18n";
+import { prefetchOverviewExportTranslations } from "./translateApi";
 import { ExportProgressOverlay, type ExportTranslateProgress } from "./components/ExportProgressOverlay";
 import { useBackgroundTier, type TintedTier } from "./backgroundTier";
+import { useMyPermissions } from "./permissions";
 import { projectManagerText } from "./types";
 import type { MeResponse, Project } from "./types";
 import { replaceProjectSubView, replaceProjectView, type DailySubView, type ProjectFocus, type ProjectView } from "./useHashRoute";
@@ -78,8 +81,8 @@ function stageRankOf(stage: string): number {
  * Push 142：「项目总览」之后再加「甘特图」（口径见 components/GanttChart.tsx）；
  * Push 154：当前标签走地址 `?view=`，刷新 / 收藏 / 分享都停在同一块标签。
  */
-/** Push 221：再往后加第六个视图「干系人」（排最右侧；A27 台账前端接线，口径见 components/StakeholderPanel.tsx）。 */
-const VIEW_TABS = ["项目总览", "甘特图", "人员任务分配", "任务进展", "日报及问题", "干系人"] as const;
+/** Push 221：第六个视图「干系人」；2026-10-29：其后再加「项目文件」—— 只列阶段任务文件与变更文件，替代原全站文件库浏览入口。 */
+const VIEW_TABS = ["项目总览", "甘特图", "人员任务分配", "任务进展", "日报及问题", "干系人", "项目文件"] as const;
 type ViewTab = (typeof VIEW_TABS)[number];
 
 /** 顶部标签 ↔ 地址参数（`?view=`）：缺省「项目总览」（overview）不落参数。 */
@@ -90,6 +93,7 @@ const VIEW_KEYS: Record<ViewTab, ProjectView> = {
   "任务进展": "progress",
   "日报及问题": "daily",
   "干系人": "stakeholders",
+  "项目文件": "files",
 };
 
 
@@ -126,14 +130,15 @@ export default function ProjectDetail({ me, project, view, dailySub, focus, onCl
   /** 顶部视图（Push 82 / 121）：阶段标签收进「项目总览」，另两块是看板视图，最后一块是「日报及问题」；Push 154 起当前标签由地址 `?view=` 派生。 */
   const locale = useLocale();
   const t = useT();
+  const currentActorId = useMyPermissions()?.userId ?? null;
   const activeView = VIEW_TABS.find((tab) => VIEW_KEYS[tab] === view) ?? VIEW_TABS[0];
   const projectId = project?.id ?? null;
   const writeEnabled = !readOnly;
-  /** 定档 / 取消定档只看角色：任务当前负责人或项目经理；只读项目不再保留可点击入口。 */
+  /** 定档 / 取消定档只看角色：任务当前负责人或项目经理；只读项目不再保留可点击入口。
+   *  角色外键是本库 users.id —— 必须取权限画像的 userId，不能拿 /auth/me 的 Casdoor id 比较。 */
   const canFinalizeTask = (task: ProjectTask): boolean => {
-    const actorId = me.user.id;
-    if (!writeEnabled || actorId === null) return false;
-    return task.ownerIds.includes(actorId) || project?.managerIds.includes(actorId) === true;
+    if (!writeEnabled || currentActorId === null) return false;
+    return task.ownerIds.includes(currentActorId) || project?.managerIds.includes(currentActorId) === true;
   };
 
   /**
@@ -381,6 +386,20 @@ export default function ProjectDetail({ me, project, view, dailySub, focus, onCl
       ...tasks.filter((task) => task.titleEn === "" || locale === "ja" || locale === "ko").map((task) => task.title),
     ]);
   }, [project, tasks, locale]);
+
+  /**
+   * 导出语言的后台缓存不能只看当前界面语言：中文界面下也可能导出英 / 日 / 韩。
+   * 数据到达后稍让页面首屏，再把正式导出同一批项目名 / 任务名 / 进展描述预热到三语；
+   * 命中服务端译文库即只读回填，未命中的才在后台逐条补齐，不阻塞页面。
+   */
+  useEffect(() => {
+    if (project === null) {
+      return;
+    }
+    const texts = [project.description, ...tasks.flatMap((task) => [task.title, task.note])];
+    const timer = window.setTimeout(() => prefetchOverviewExportTranslations(texts), 600);
+    return () => window.clearTimeout(timer);
+  }, [project, tasks]);
 
   /** 当前行（写入要回传它的 version / sortIndex 等）。 */
   const rowOf = (taskId: string): ProjectTask | undefined => tasks.find((task) => task.id === taskId);
@@ -993,6 +1012,14 @@ export default function ProjectDetail({ me, project, view, dailySub, focus, onCl
   const [exportTranslateProgress, setExportTranslateProgress] = useState<ExportTranslateProgress | null>(null);
   /** 导出等待浮层可见性（§6.16 ㉑ 防闪烁）：译文全命中缓存时导出近乎瞬时，浮层迟 250ms 才出现。 */
   const [exportOverlayVisible, setExportOverlayVisible] = useState(false);
+  /** 导出面板逐阶段折叠用的同一份分组（与服务端 summary 计数同口径；默认全部展开）。 */
+  const exportStageOptions = useMemo<OverviewExportStageOption[]>(
+    () =>
+      groupedByStage(tasks)
+        .filter((group) => group.tasks.length > 0 || STAGE_NAMES.includes(group.name))
+        .map((group) => ({ name: group.name, total: group.total, done: group.done })),
+    [tasks],
+  );
 
   /**
    * 导出项目总览（PDF · 业务口径 2026-10-09 · §6.16）：把页面当前的 project / tasks / summary 交给报告模块
@@ -1000,7 +1027,7 @@ export default function ProjectDetail({ me, project, view, dailySub, focus, onCl
    * 2026-10-10 起导出前经翻译通道补「项目进展描述」列译文；2026-10-23 日 / 韩主体再补项目名与任务名（translateApi.ts；通道不通静默降级）；导出不改数据。
    * 2026-10-13 起译文已在「写进展描述」时后台预热（§6.16 ㉑）—— 命中缓存即取，只有未预热条目才现场翻。
    */
-  const exportOverview = async (primary: OverviewExportLanguage): Promise<void> => {
+  const exportOverview = async (options: OverviewExportOptions): Promise<void> => {
     if (project === null || exportingOverview) {
       return;
     }
@@ -1011,7 +1038,7 @@ export default function ProjectDetail({ me, project, view, dailySub, focus, onCl
       setExportOverlayVisible(true);
     }, 250);
     try {
-      await exportProjectOverviewPdf({ project, tasks, summary }, primary, (done, total) => {
+      await exportProjectOverviewPdf({ project, tasks, summary }, options, (done, total) => {
         setExportTranslateProgress({ done, total });
       });
     } finally {
@@ -1112,7 +1139,7 @@ export default function ProjectDetail({ me, project, view, dailySub, focus, onCl
                 {/* 导出 PDF（业务口径 2026-10-09 · §6.16）：数据 = 页面已取到的 project / tasks / summary，
                     生成 A4 横版报告后在系统打印窗口里另存为 PDF；
                     任务数据加载中 / 加载失败时置灰 —— 导出的报告必须和页面数据一致，宁可不给点。 */}
-                <ExportOverviewButton disabled={dataLoading || dataError !== null} busy={exportingOverview} onExport={(primary) => { void exportOverview(primary); }} />
+                <ExportOverviewButton input={{ project, tasks, summary }} stages={exportStageOptions} disabled={dataLoading || dataError !== null} busy={exportingOverview} onExport={(options) => { void exportOverview(options); }} />
                 <ColumnPicker visible={visibleColumns} onToggle={handleToggleColumn} onReset={resetColumns} />
               </div>
             ) : null}
@@ -1186,6 +1213,9 @@ export default function ProjectDetail({ me, project, view, dailySub, focus, onCl
           ) : activeView === "干系人" ? (
             // 干系人（Push 221 · A27 前端接线）：表格形态与「项目总览」同一套（表头固定 + CSS grid 行 + 共用底部滑块）
             <StakeholderPanel projectId={project.id} canManage={canManageStakeholders && writeEnabled} scrollRef={tableScrollRef} />
+          ) : activeView === "项目文件" ? (
+            // 项目文件（2026-10-29）：阶段任务文件 + 变更记录关联文件的并集；日报 / 问题附图不进入。
+            <ProjectFilesPanel projectId={project.id} tasks={tasks} />
           ) : (
             <TaskKanban
               mode={activeView === "人员任务分配" ? "owner" : "status"}

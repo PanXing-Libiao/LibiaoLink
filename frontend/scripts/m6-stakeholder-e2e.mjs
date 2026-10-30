@@ -13,7 +13,7 @@
  *
  * 它做什么：用一条**临时会话**（跑完撤销）+ 一个**临时项目**（跑完物理删、零残留）在真机浏览器里跑一遍
  * 「干系人」标签接真后的读写口径 ——
- *   ① 标签在项目详情导航栏**最右侧**（第 6 个）且走地址 ?view=stakeholders；
+ *   ① 项目详情导航栏共 7 个标签：「干系人」为第 6 个、其后固定为「项目文件」；「干系人」走地址 ?view=stakeholders；
  *   ② 表格口径：9 列表头（含「干系人角色」）/ 只列本项目关联（A5-03 反查；未关联的不出现）/ 电话 / 公司分类徽标 / 填写者 / 点击行体不进入编辑（Push 222：编辑只走行尾「编辑」按钮）；
  *   ③ 新建（UI 表单）：落库 + 自动关联本项目（A5-03 projectIds）；
  *   ④ 编辑（PATCH 部分更新）：改职务 + 清空微信（null 落库）；
@@ -243,7 +243,8 @@ async function bail(message) {
 const TABS_PROBE = "(function(){var tabs=document.querySelectorAll(" + j("[data-maintabs-item]") + ");"
   + "var names=[];for(var i=0;i<tabs.length;i++){names.push(tabs[i].textContent.trim());}"
   + "var last=tabs.length>0?tabs[tabs.length-1]:null;"
-  + "return {count:tabs.length,names:names.join(" + Q + "/" + Q + "),last:last===null?" + Q + Q + ":last.textContent.trim(),lastCurrent:last===null?null:last.getAttribute(" + Q + "aria-current" + Q + ")};})()";
+  + "var stakeholder=null;for(var i=0;i<tabs.length;i++){if(tabs[i].textContent.trim()===" + Q + "干系人" + Q + "){stakeholder=tabs[i];}}"
+  + "return {count:tabs.length,names:names.join(" + Q + "/" + Q + "),last:last===null?" + Q + Q + ":last.textContent.trim(),lastCurrent:last===null?null:last.getAttribute(" + Q + "aria-current" + Q + "),stakeholderCurrent:stakeholder===null?null:stakeholder.getAttribute(" + Q + "aria-current" + Q + ")};})()";
 
 /** 「干系人」表格探针：表头 / 行 / 计数 / 写入口 / 底部滑块。 */
 const TABLE_PROBE = "(function(){var t=document.querySelector(" + j("[data-stakeholder-table]") + ");"
@@ -285,17 +286,17 @@ async function clearField(selector) {
   await pressKey("Delete", "Delete", 46);
 }
 
-// ---------- ① 项目总览 → 点导航栏最右侧「干系人」标签 ----------
+// ---------- ① 项目总览 → 点第 6 个「干系人」标签（第 7 个固定为「项目文件」） ----------
 await page.send("Page.navigate", { url: "about:blank" });
 await sleep(400);
 await page.send("Page.navigate", { url: FRONTEND + "/#/project/" + projectId });
 await sleep(4800);
 const tabsBefore = await ev(TABS_PROBE);
-check("①a 导航栏共 6 个标签、「干系人」在最右侧", tabsBefore.count === 6 && tabsBefore.last === "干系人", JSON.stringify({ count: tabsBefore.count, names: tabsBefore.names }));
+check("①a 导航栏共 7 个标签、「干系人」为第 6 个、最右侧为「项目文件」", tabsBefore.count === 7 && tabsBefore.names.split("/")[5] === "干系人" && tabsBefore.last === "项目文件", JSON.stringify({ count: tabsBefore.count, names: tabsBefore.names }));
 await clickSelector("[data-maintabs-item=" + Q + "干系人" + Q + "]");
 const hashNow = await ev("window.location.hash");
 const tabsAfter = await ev(TABS_PROBE);
-check("①b 点「干系人」= 地址切到 ?view=stakeholders 且为选中态", String(hashNow).indexOf("view=stakeholders") >= 0 && tabsAfter.lastCurrent === "page", JSON.stringify({ hash: hashNow, current: tabsAfter.lastCurrent }));
+check("①b 点「干系人」= 地址切到 ?view=stakeholders 且为选中态", String(hashNow).indexOf("view=stakeholders") >= 0 && tabsAfter.stakeholderCurrent === "page", JSON.stringify({ hash: hashNow, current: tabsAfter.stakeholderCurrent }));
 const tableReady = await waitFor("document.querySelector(" + j("[data-stakeholder-table]") + ") !== null", 12000);
 if (tableReady !== true) { await bail("干系人表格没出来"); }
 

@@ -28,7 +28,7 @@ import type { MeResponse, Project } from "../types";
  *  红点 = ../inbox 模块级 store（登录后读面补拉 + SSE unread 快照，切页不丢）；未绑定企微时
  *  未读为 0 也亮无数字红点，并由弹窗底部提示直达设置页（Push 540 起取消登录后自动浮卡）。
  * 设置页入口（业务口径 2026-10-16「在点击用户右上角头像后的列表中添加一个设置页」· Push 250）：账号菜单第三项（Push 400 顺序调整）
- *  「企微绑定」（#/settings · 全账号可见），落点 = 账号级设置（单聊 D5 / D6 + 项目群绑定）；菜单顺序 = 文件库 /〔操作记录〕/〔权限管理〕/ 企微绑定 / 退出登录；权限管理仅群组管理员可见。 */
+ *  「企微绑定」（#/settings · 全账号可见），落点 = 账号级设置（单聊 D5 / D6 + 项目群绑定）；菜单顺序 = 回收站 /〔操作记录〕/〔权限管理〕/ 企微绑定 / 退出登录；权限管理仅群组管理员可见。 */
 
 type AppHeaderProps = {
   me: MeResponse;
@@ -100,7 +100,7 @@ export function AppHeader({ me, project }: AppHeaderProps) {
   const canViewFiles = hasPageAccess(permissions, "files");
   /** 「权限管理」菜单项：群组管理员（关闭群组限制时等价管理员亦可配置）。 */
   const canManageAccess = permissions?.groupAccessAdmin === true;
-  /** 「文件库」菜单项（Push 261）：文件库页（#/files）按群组页面权限收敛；
+  /** 「回收站」菜单项（Push 261）：回收站页（#/files）按群组页面权限收敛；
    *  读面仍按项目可见性放开，「彻底删除」入口在页面内按 groupAccessAdmin 收敛。 */
 
   useEffect(() => {

@@ -99,6 +99,7 @@ import { Toast } from "./components/Toast";
 import { useFocusTrap } from "./components/useFocusTrap";
 import { ImageZoomViewer } from "./components/ImageZoomViewer";
 import { useBackgroundTier, type TintedTier } from "./backgroundTier";
+import { useMyPermissions } from "./permissions";
 import { WorkspaceIssueSubMenu } from "./components/WorkspaceIssueSubMenu";
 import { MyPlanBoard } from "./components/MyPlanBoard";
 import { TaskDrawer, type TaskEditSubmit } from "./components/TaskDrawer";
@@ -1088,6 +1089,8 @@ export default function WorkspacePage({ me, members, tab, onChangeTab, sub, onCh
   const tierTint: TintedTier | false = backgroundTier === "simple" ? false : backgroundTier;
   const t = useT();
   const locale = useLocale();
+  /** 任务负责人 / 项目经理外键都是本库 users.id；`me.user.id` 是 Casdoor 标识，不能用于角色命中判断。 */
+  const currentActorId = useMyPermissions()?.userId ?? null;
 
   /** 展开态（Push 233 · 业务口径「这个下拉要有记忆」）：偏好由 App 层持有并单键 PATCH；null / 缺省 = 偏好尚未取到 → 按全收起渲染。
    *  未接 onWorkspaceOpenProjectsChange 时退回本页内存态（面板仍可展开 / 收起，只是不跨刷新）。 */
@@ -1409,7 +1412,7 @@ export default function WorkspacePage({ me, members, tab, onChangeTab, sub, onCh
               tierTint={tierTint}
               openIds={taskOpenIds}
               members={members}
-              actorId={me.user.id}
+              actorId={currentActorId}
               actorName={me.user.displayName ?? ""}
               onReload={refreshQuietly}
               onToggleProject={(projectId) => {
