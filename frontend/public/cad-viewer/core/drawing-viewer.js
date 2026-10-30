@@ -41,6 +41,14 @@ export function mountDrawingViewer(envelope) {
     overlay.innerHTML = '<div class="dchip" id="drawingSpace">模型空间</div><div class="dchip" id="drawingCoords">X — · Y —</div><div class="dchip" id="drawingPrecision">显示离散化</div>';
     viewport.append(overlay);
   }
+  // A ready drawing whose whole content is unsupported (or whose layers are all
+  // hidden) would otherwise show a silent blank canvas; explain it in place.
+  let emptyState = document.getElementById('drawingEmpty');
+  if (!emptyState) {
+    emptyState = document.createElement('div'); emptyState.id = 'drawingEmpty'; emptyState.className = 'drawingEmpty';
+    emptyState.setAttribute('role', 'status'); emptyState.hidden = true;
+    viewport.append(emptyState);
+  }
   let panel = document.getElementById('drawingPanel');
   if (!panel) {
     panel = document.createElement('section'); panel.id = 'drawingPanel'; panel.className = 'drawingPanel';
@@ -1580,6 +1588,15 @@ export function mountDrawingViewer(envelope) {
     const seen = new Set();
     for (const rec of built) { if (drawVisible(rec) && !seen.has(rec.id)) { seen.add(rec.id); shown += 1; if (rec.draw.kind === 'entity') entities += 1; else annotations += 1; } }
     if(instancePlan){refreshInstanceLayers();shown=instancePlan.roots.reduce((n,node)=>n+node.group.visibleCount,0);entities=instancePlan.roots.reduce((n,node)=>n+node.group.byKind.entity,0);annotations=instancePlan.roots.reduce((n,node)=>n+node.group.byKind.annotation,0);}
+    if (emptyState) {
+      emptyState.hidden = shown !== 0;
+      if (shown === 0) {
+        const hiddenByUser = [...userLayers.values()].some(value => value === false);
+        emptyState.textContent = hiddenByUser
+          ? '当前图层均已隐藏，请在“图层”列表中恢复显示。'
+          : '图纸内没有可显示的图形：全部内容不在支持范围内（详见“图纸覆盖清单”）。';
+      }
+    }
     const stats = document.getElementById('stats');
     if (stats) stats.textContent = '显示 ' + shown + ' / ' + total + ' 个绘制项 · ' + entities + ' 个实体 · ' + annotations + ' 个标注 · ' + Object.keys(drawing.layers).length + ' 个图层';
     const unit = document.getElementById('unit');
@@ -1826,6 +1843,7 @@ export function mountDrawingViewer(envelope) {
       canvas.removeEventListener('wheel', onWheel);
       window.removeEventListener('keydown', onKeyDown);
       canvas.hidden = true; overlay.remove(); panel.remove();
+      if (emptyState) emptyState.remove();
       canvas.remove();
     }
   };

@@ -491,7 +491,7 @@
     "drawing-projection.js": "0a501669718907a7422ba6f6a803bbfaee5e3d7d2c4393ba816710c3a3313363",
     "drawing-text-avoidance.js": "2e65f43a90f24b6a669325a3bc7687d0d1f93f22610ba937d9b8c2ae2b3e5001",
     "drawing-text.js": "1cc508f97d4d196842167e7d79b1ec50493bbff0756e89b002a58c933d02141c",
-    "drawing-viewer.js": "367067542ae32e7db92fed16dea94999c094bc4389f7302de0b10cdee1bd2cd9",
+    "drawing-viewer.js": "dd0b67d90e36e3d0f2b84bb90a5a050c44d8a2a2abb333e2f5728221dcc4bea9",
     "dwg-packed-transport.js": "7ca25caedff71fb3102f9a67489d5f1eb0b03cc250351be027abe73648279045",
     "dxf-resources.js": "219569569cc22deca979ec3f6693031bfbfe050c30eb8fe419962f4e3dab5c2c",
     "highlight.js": "31754dabcf90e0c71a67123e7e03f9e39614f02021fdd35d18b61e688c734099",
@@ -538,8 +538,8 @@
     "DWG": "dwg-0.1.0/ecb5f9278c29d51729f81eb9432a43abba5f9e966c00bc67b6fcbac8b30cfcd1/gateway-1"
   },
   "engineDigest": "fd2f6e0cfe7ffd90b9ef2866b6c9e4b8f664201f812d388bdd5412439b3d7797",
-  "viewerDigest": "256914dc83dde59f58c409829f668785f64bd396e5d138c7d37e22d472fb7360",
-  "releaseDigest": "f6ef6c355fa83f949ad6fe4b63aa5bae391262f265ae7fab033c2d8aa10cb0f9",
+  "viewerDigest": "c73c979e1a81ba8f47519b3926b45400fb158405134854399370aac5df104867",
+  "releaseDigest": "1aa7a5bcbfcbfdde1f00ec576d0aa376bfd988b9b84bc2a429159fdd4da0a79d",
   "engineVersion": "step-0.3.3/fd2f6e0cfe7ffd90b9ef2866b6c9e4b8f664201f812d388bdd5412439b3d7797/gateway-1",
-  "viewerVersion": "viewer-256914dc83dde59f58c409829f668785f64bd396e5d138c7d37e22d472fb7360"
+  "viewerVersion": "viewer-c73c979e1a81ba8f47519b3926b45400fb158405134854399370aac5df104867"
 }
