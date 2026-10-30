@@ -668,7 +668,12 @@ static class Program
         using var notifications=new StreamWriter(Path.Combine(output,"notifications.jsonl"));
         using var reader=new DwgReader(inputStream,(_,e)=>notifications.WriteLine(JsonSerializer.Serialize(new{type=e.NotificationType.ToString(),e.Message,error=e.Exception?.ToString()})));
 #pragma warning disable CS0618
-        reader.Configuration=new DwgReaderConfiguration{Failsafe=false,KeepUnknownEntities=true,KeepUnknownNonGraphicalObjects=true,IgnoreProxyGraphics=false};
+        // A single unreadable native object (e.g. an ACAD_TABLE cell value whose
+        // CadValueType has no implemented DWG layout) must not abort the whole
+        // drawing: ACadSharp's failsafe skips that object with an Error notification,
+        // the handle audit below reports it as a missing-handle loss, and every other
+        // object is still read from its own offset. Strictness lives in the loss ledger.
+        reader.Configuration=new DwgReaderConfiguration{Failsafe=true,KeepUnknownEntities=true,KeepUnknownNonGraphicalObjects=true,IgnoreProxyGraphics=false};
 #pragma warning restore CS0618
         var doc=reader.Read();double readSeconds=time.Elapsed.TotalSeconds;
         var readMemory=new{managedLiveBytes=GC.GetTotalMemory(false),managedCommittedBytes=GC.GetGCMemoryInfo().TotalCommittedBytes};

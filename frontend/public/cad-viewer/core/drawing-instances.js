@@ -36,7 +36,10 @@ export const INSTANCE_DRAW_THRESHOLD=400000;
 // Retained projection keeps one source draw per instance path and no longer
 // applies the ordinary 400k expanded-draw budget. A finite ceiling still keeps
 // pathological block arrays from freezing the viewer while it builds the plan.
-export const INSTANCE_DRAW_LIMIT=2000000;
+// Measured: a real 2.0M-expanded-draw layout DWG opened in ~24 s with a ~1.1 GB
+// JS heap and a 2.8 s fit repaint, so the ceiling leaves that class admitted
+// with headroom while still rejecting pathological expansion.
+export const INSTANCE_DRAW_LIMIT=3000000;
 export function shouldProjectInstances(target,count,force=false){
  return (target.kind==='model'||target.kind==='layout')&&(force||count>INSTANCE_DRAW_THRESHOLD);
 }

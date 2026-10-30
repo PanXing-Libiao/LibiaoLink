@@ -1206,15 +1206,20 @@ export function mountDrawingViewer(envelope) {
     if(spaceTarget?.kind!=='model')return null;
     const source=sourceExtentsFromHeader(ucd.extensions?.['org.libiaolink.dwg/1']?.header);
     if(!source)return null;
-    return fitExtentsCandidate(source,computed,modelCoverage(source));
+    const coverage=modelCoverage(source);
+    const candidate=fitExtentsCandidate(source,computed,coverage);
+    lastFit={source,computed,coverage,candidate:!!candidate};
+    return candidate;
   }
-  let fitted = false;
+  let lastFit = null, fitted = false;
   function fit(bbox) {
     fitted = true;
     let b = bbox;
     if (!b) {
       const computed = extents();
+      lastFit = { computed };
       b = sourceExtentsForFit(computed) || computed;
+      lastFit.used = b === computed ? 'computed' : 'source';
     }
     if (!b) return;
     const dx = Math.max(b.maxX - b.minX, 1e-9), dy = Math.max(b.maxY - b.minY, 1e-9);
@@ -1736,7 +1741,7 @@ export function mountDrawingViewer(envelope) {
         sourceVisible: layerSourceVisible(l.id), userVisible: userLayers.has(l.id) ? userLayers.get(l.id) : true }));
     },
     fit,
-    fitAll: () => fit(extents()),
+    fitAll: () => fit(),
     sourceExtents: () => sourceExtentsForFit(extents()),
     zoomAt,
     scale: () => scale,
@@ -1824,7 +1829,7 @@ export function mountDrawingViewer(envelope) {
   window.__drawing = api;
   window.__drawingTest = {
     debug: () => ({ space: spaceTarget, mode, scale, counts: api.counts(), fills: api.fills(),
-                    completeness: (envelope.snapshot || {}).completeness, extents: extents(), unit: presentation.unit }),
+                    completeness: (envelope.snapshot || {}).completeness, extents: extents(), unit: presentation.unit, fit: lastFit }),
     setSpace: (name) => {
       if (!name || name === 'Model') { setSpace({ kind: 'model', spaceId: drawing.drawings[Object.keys(drawing.drawings)[0]].modelSpaceId }); return true; }
       const layout = Object.values(drawing.layouts).find(l => l.name === name);
@@ -1902,7 +1907,7 @@ export function mountDrawingViewer(envelope) {
     },
     selection: () => [...selected],
     fit: () => fit(),
-    fitAll: () => fit(extents()),
+    fitAll: () => fit(),
     sourceExtents: () => sourceExtentsForFit(extents()),
     zoom: (factor) => zoomAt(cssW / 2, cssH / 2, factor),
     worldToScreen: (x, y) => ({ x: x * scale + tx, y: -y * scale + ty }),
