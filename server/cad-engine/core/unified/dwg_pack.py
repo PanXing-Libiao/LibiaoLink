@@ -148,6 +148,20 @@ def _fast_display(rep_id, rep, doc):
     }
 
 
+def _copy_geometry_accessors(geometry, document, accessors):
+    """Keep every accessor a fallback geometry references, POSITION or indices."""
+    ids = []
+    accessor_id = (geometry.get('attributes') or {}).get('POSITION')
+    if isinstance(accessor_id, str):
+        ids.append(accessor_id)
+    for primitive in geometry.get('primitives') or []:
+        if isinstance(primitive, dict) and isinstance(primitive.get('indices'), str):
+            ids.append(primitive['indices'])
+    for accessor_id in ids:
+        if accessor_id in document['accessors']:
+            accessors[accessor_id] = document['accessors'][accessor_id]
+
+
 def pack_document(document):
     """Return a packed copy of a DWG document; the input is not mutated."""
     drawing = document.get('drawing')
@@ -216,9 +230,7 @@ def pack_document(document):
                 geometry = document['geometries'].get(geometry_id)
                 if isinstance(geometry, dict):
                     geometries[geometry_id] = geometry
-                    accessor_id = (geometry.get('attributes') or {}).get('POSITION')
-                    if isinstance(accessor_id, str) and accessor_id in document['accessors']:
-                        accessors[accessor_id] = document['accessors'][accessor_id]
+                    _copy_geometry_accessors(geometry, document, accessors)
             pending.append(None)
             continue
         pending.append(fast)

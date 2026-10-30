@@ -29,7 +29,7 @@
     "unified/conversion_jobs.py": "6b2c2f33a75a2adfd72f66d7215035648b5a85c19498b22280c9a372139a8e99",
     "unified/dwg-reader.json": "80327cfad2181ed90eef19fc78e9db65c94ca9a39a74bb4b0bde96b582d16fdc",
     "unified/dwg_adapter.py": "be591313612304f4311d3991ad7a22f25b7d49c865058ebb0a5fcb30127d9496",
-    "unified/dwg_pack.py": "80f95f01219677f16990ab094c5be65c89fad38eba40cd1b95dfbe26d7438bbe",
+    "unified/dwg_pack.py": "55660bbd81fe0e28042557dcc2a207b7a017fafb1377568eae3433cfcb91dd5a",
     "unified/dxf_adapter.py": "600bb35351ed1133dada431e35e7702291753b13a4166827cf0c6caf332c08b3",
     "unified/dxf_annotations.py": "f0835f4f8e5a947b1fc6732dae7721cbd4b3d56cc0354ae4d5abf284440297d5",
     "unified/dxf_bigfont.py": "b19f3c7f858640f6f60ee5f3e70cd652d36b180dd2fbf3ac2fe7e0c71a5a715f",
@@ -467,7 +467,7 @@
   },
   "readerFiles": {
     "CommunityText.cs": "8772f4985084c216e9f1c9a1de6f6cec0a45067049838ef786f2eafcfebe4198",
-    "Program.cs": "b745b5bfeb0ee54c77d33f1cb5a320b02d693dc06294121faecd03514206ceae",
+    "Program.cs": "a98cd885fde5aabba5ec0cc20765312609a224c29e5d5b6a4ad043be0b2724ba",
     "Reader.csproj": "28dd949906cf4b8ab2ca44e02a9fbb2391c0f3e086587c7627e93d6a68f0c32d",
     "dependency.json": "2743f57992af0db961cfe4c05c78b8312d4836f939230a981c5641d01f4942bc"
   },
@@ -533,13 +533,13 @@
     "service.py": "bbf51e8fb0c72e096b6ced2bc1104a1542de1571ebbbe434c6f78b3aab2ea909"
   },
   "formatVersions": {
-    "STEP": "step-0.3.3/f9854afea2e7fd81f755ba03bb0629122a271d6f9f46a7306af342604b07c4bd/gateway-1",
-    "DXF": "dxf-0.15.0/4d7dc1f3db22bf5f2661b7ee1ac6e99b3460e79c553ab5bc6667e94a52f13e15/gateway-1",
-    "DWG": "dwg-0.1.0/7ab7f302835cf567a6bc7db04965b3534d602e5da683a336398b0b0f3c82e2ef/gateway-1"
+    "STEP": "step-0.3.3/9fd1d0f1f11e9a243d1f5bb9c36518bbced20b50243784bd9edc76b5a6e4ae8a/gateway-1",
+    "DXF": "dxf-0.15.0/cc8dcb7ba4def16a5f0ba68c19f68de7eb63de6646a88a8c072b53cab0fb9422/gateway-1",
+    "DWG": "dwg-0.1.0/07ec3c219458de1f8cf0bd37af9d8cbf4057a07a4d46ffa2ab289b7551d5e44a/gateway-1"
   },
-  "engineDigest": "8231ee620fea20663a0139e013cc75e119d482112b13a83f2983d2836c1100d9",
+  "engineDigest": "b6ad9baae843a7320ef0a54b2915847c6cd441cad820c170c597d8a0f3705c7b",
   "viewerDigest": "a9b0502f285cab775749fee7fb1b07cacc751cd0da97629505ee837aeb378eec",
-  "releaseDigest": "6301c62f409fc9d68049c062d5e7d572abb02789e49a3f9f0cabffd0d7cab2a7",
-  "engineVersion": "step-0.3.3/8231ee620fea20663a0139e013cc75e119d482112b13a83f2983d2836c1100d9/gateway-1",
+  "releaseDigest": "2a34c5da376042358d8fbb1c9c181e72a63153fbfd7b762c7e2115a959f957ad",
+  "engineVersion": "step-0.3.3/b6ad9baae843a7320ef0a54b2915847c6cd441cad820c170c597d8a0f3705c7b/gateway-1",
   "viewerVersion": "viewer-a9b0502f285cab775749fee7fb1b07cacc751cd0da97629505ee837aeb378eec"
 }

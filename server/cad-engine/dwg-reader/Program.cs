@@ -523,7 +523,10 @@ static class Program
                 ledger.WriteLine($"{pair.Key:X}\t{obj.ObjectName}\t{obj.Owner?.Handle.ToString("X")}\t{pair.Value}\t{mappedSourceHandles.Contains(obj.Handle)}\t{scope}");
             }
             if(missing>0)Loss(null,"reader-missing-handles",missing+" original handles are absent from the native registry");
-            if(doc.Header.IntersectionColorIndex<0 || doc.Header.IntersectionColorIndex>257) Loss(null,"unrepresented-header-color","INTERSECTIONCOLOR raw value retained without assigning a source Color");
+            // Negative INTERSECTIONCOLOR values mean "unset" in the DWG header and
+            // have no 2D display effect; only an out-of-range positive index is a
+            // real value this presenter cannot represent.
+            if(doc.Header.IntersectionColorIndex>257) Loss(null,"unrepresented-header-color","INTERSECTIONCOLOR raw value retained without assigning a source Color");
             File.WriteAllText(Path.Combine(output,"native-summary.json"),JsonSerializer.Serialize(new{
                 reader="ACadSharp",readerVersion="3.8.30+intersection-field-separation",readerSha256,readMemory,source=new{path=input,name=Path.GetFileName(input),sha256=sha,byteLength=inputStream.Length,format="DWG",detectedVersion=version},
                 header=new{intersectionColorRaw=doc.Header.IntersectionColorIndex,interfereColor=new{index=doc.Header.InterfereColor.Index,trueColor=doc.Header.InterfereColor.TrueColor},codePage=doc.Header.CodePage.ToString(),insUnits=doc.Header.InsUnits.ToString(),

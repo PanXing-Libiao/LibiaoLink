@@ -29,12 +29,15 @@ def display(key, indices=None):
                 'sourceRefs': [{'sourceId': 'source-0', 'objectKey': key}]}
     accessor = {'bufferId': 'buffer-0', 'byteOffset': 0, 'byteLength': 48, 'component': 'f64',
                 'components': 3, 'count': 2, 'normalized': False}
+    index_accessor = {'bufferId': 'buffer-0', 'byteOffset': 48, 'byteLength': 8, 'component': 'u32',
+                      'components': 1, 'count': 2, 'normalized': False}
     rep_id = 'representation-' + canonical_sha256([key])
     rep = {'id': rep_id, 'kind': 'drawing',
            'bindings': [{'id': 'b', 'geometryId': 'g-' + key,
                          'localFromRepresentation': IDENTITY, 'materialSlots': {}}],
            'sourceRefs': [{'sourceId': 'source-0', 'objectKey': key}]}
-    return rep_id, rep, 'g-' + key, geometry, 'a-' + key, accessor
+    extra = [('i-' + key, index_accessor)] if indices else []
+    return rep_id, rep, 'g-' + key, geometry, 'a-' + key, accessor, extra
 
 
 def fixture():
@@ -63,10 +66,12 @@ def fixture():
     geometries = {}
     accessors = {}
     for builder in (display('1'), display('2', indices=True)):
-        rep_id, rep, gid, geometry, aid, accessor = builder
+        rep_id, rep, gid, geometry, aid, accessor, extra = builder
         reps[rep_id] = rep
         geometries[gid] = geometry
         accessors[aid] = accessor
+        for accessor_id, value in extra:
+            accessors[accessor_id] = value
     document = {
         'schemaVersion': '2.0.0', 'sources': [{'id': 'source-0'}], 'adapter': {'id': 'test'},
         'buffers': {'buffer-0': {'id': 'buffer-0'}},
@@ -111,6 +116,15 @@ class PackedDwgTest(unittest.TestCase):
         self.assertEqual(unpacked['drawing']['entities']['entity-2'],
                          document['drawing']['entities']['entity-2'])
         self.assertEqual(unpacked['geometries']['g-2'], document['geometries']['g-2'])
+
+    def test_fallback_geometry_keeps_its_index_accessor(self):
+        document = fixture()
+        packed = pack_document(document)
+        self.assertIn('i-2', packed['accessors'])
+        unpacked = unpack_document(packed)
+        self.assertIn('i-2', unpacked['accessors'])
+        indices = unpacked['geometries']['g-2']['primitives'][0]['indices']
+        self.assertIn(indices, unpacked['accessors'])
 
 
 if __name__ == '__main__':
