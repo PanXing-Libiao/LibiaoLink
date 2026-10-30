@@ -9,7 +9,13 @@ import { CadArchiveWorker, FileService, PreviewService, RECYCLE_SWEEP_BATCH as F
 import { PROJECT_RECYCLE_SWEEP_BATCH, ProjectService } from "../modules/project/index.js";
 import { IMPORT_PREVIEW_SWEEP_INTERVAL_MS, ProjectImportService } from "../modules/project-import/index.js";
 import { NotifyDmService, NotifyGroupService, NotifyService, WecomAibotClient } from "../modules/notify/index.js";
-import { JobScheduler, OutboxAlertProbe, OutboxDispatcher, OutboxRetention } from "../outbox/index.js";
+import {
+  JobScheduler,
+  OutboxAlertProbe,
+  OutboxDailyDigestService,
+  OutboxDispatcher,
+  OutboxRetention,
+} from "../outbox/index.js";
 import { WorkerModule } from "../worker.module.js";
 
 const HEARTBEAT_MS = 60_000;
@@ -42,6 +48,7 @@ async function bootstrap(): Promise<void> {
   const alerts = app.get(OutboxAlertProbe);
   const retention = app.get(OutboxRetention);
   const scheduler = app.get(JobScheduler);
+  const dailyDigest = app.get(OutboxDailyDigestService);
   const aibot = app.get(WecomAibotClient);
 
   if (process.argv.includes("--health-check")) {
@@ -57,8 +64,23 @@ async function bootstrap(): Promise<void> {
     }
   }
 
+  let dailyDigestRegistered = false;
+  const ensureDailyDigest = async (): Promise<void> => {
+    if (dailyDigestRegistered) {
+      return;
+    }
+    const outcome = await dailyDigest.ensureScheduled();
+    dailyDigestRegistered = true;
+    logger.log("管理员日报任务已就绪（每天 08:00，Asia/Shanghai）：" + outcome);
+  };
+  try {
+    await ensureDailyDigest();
+  } catch (error) {
+    logger.error("管理员日报任务注册失败（本轮继续启动，调度 tick 每分钟重试）：" + messageOf(error));
+  }
+
   logger.log(
-    "worker 已启动（Casdoor 组织目录自动同步 / 上传会话过期清理 / 文件回收站到期清理 / 项目回收站 30 天到期清理 / 导入表票据过期清理 / Outbox 运行时：已注册主题领取消费（含无业务订阅主题的 drain-only 收敛）· 未消费主题 / 积压 / 死信告警 · done 行保留期清理 · 调度 tick（每分钟：cron 领取 + last_run_at 补发 + 单活锁；注册表为空 = 只存不跑）· 通知延迟投递排空（免打扰 / 每日上限）· 稍后提醒到点触发（C5-05））",
+    "worker 已启动（Casdoor 组织目录自动同步 / 上传会话过期清理 / 文件回收站到期清理 / 项目回收站 30 天到期清理 / 导入表票据过期清理 / Outbox 运行时：已注册主题领取消费（含无业务订阅主题的 drain-only 收敛）· 未消费主题 / 积压 / 死信告警 · 管理员日报（每天 08:00）· done 行保留期清理 · 调度 tick（每分钟：cron 领取 + last_run_at 补发 + 单活锁）· 通知延迟投递排空（免打扰 / 每日上限）· 稍后提醒到点触发（C5-05））",
   );
   const heartbeat = setInterval(() => logger.log("worker heartbeat"), HEARTBEAT_MS);
 
@@ -244,6 +266,13 @@ async function bootstrap(): Promise<void> {
     }
     scheduling = true;
     try {
+      // 启动时数据库短暂不可用不应让日报永久缺席：注册成功前随调度 tick 轻量重试；
+      // 重试失败只影响本任务注册，不阻断其它 jobs。
+      try {
+        await ensureDailyDigest();
+      } catch (error) {
+        logger.error("管理员日报任务注册重试失败（下一轮继续）：" + messageOf(error));
+      }
       const stats = await scheduler.tickOnce();
       if (stats.claimed > 0 || stats.failed > 0) {
         logger.log(
@@ -328,23 +357,6 @@ async function bootstrap(): Promise<void> {
     await probeAlerts();
   })();
 
-  // outbox 日报：恢复通知、死信窗口汇总与当前队列快照；没有内容时只写日志，不推群。
-  let digesting = false;
-  const flushDigest = async (): Promise<void> => {
-    if (digesting) {
-      return;
-    }
-    digesting = true;
-    try {
-      await alerts.digestOnce();
-    } catch (error) {
-      logger.error("outbox 日报生成失败：" + messageOf(error));
-    } finally {
-      digesting = false;
-    }
-  };
-  const alertDigest = setInterval(() => void flushDigest(), env.OUTBOX_ALERT_DIGEST_INTERVAL_MS);
-
   // done 行保留期清理（ADR-005 约 90 天）：分批删除，内容与条数由 OutboxRetention 自记日志。
   const sweepOutbox = async (): Promise<void> => {
     try {
@@ -369,7 +381,6 @@ async function bootstrap(): Promise<void> {
     clearInterval(notifyFlush);
     clearInterval(snoozeSweep);
     clearInterval(alertProbe);
-    clearInterval(alertDigest);
     clearInterval(retentionSweep);
     aibot.stop();
     logger.log("worker 收到 " + signal + "，正在退出");

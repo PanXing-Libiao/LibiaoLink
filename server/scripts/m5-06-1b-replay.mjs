@@ -21,7 +21,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { and, eq, like, sql } from "drizzle-orm";
+import { and, eq, inArray, like, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 
@@ -45,6 +45,9 @@ const ADMIN_ID = randomUUID();
 const HTTP_ADMIN_ID = randomUUID();
 const HTTP_SESSION_TOKEN = randomBytes(32).toString("base64url");
 const HTTP_CSRF_TOKEN = randomBytes(16).toString("base64url");
+const HTTP_MEMBER_ID = randomUUID();
+const HTTP_MEMBER_SESSION_TOKEN = randomBytes(32).toString("base64url");
+const HTTP_MEMBER_CSRF_TOKEN = randomBytes(16).toString("base64url");
 const OWNER_ID = randomUUID();
 const MANAGER_ID = randomUUID();
 const PROJECT_ID = randomUUID();
@@ -89,14 +92,6 @@ async function check(name, work) {
 
 function seedAutomationRules() {
   return execFileSync(process.execPath, [join(REPO_ROOT, "database", "scripts", "seed.mjs"), "--only=automation-rules"], {
-    cwd: join(REPO_ROOT, "database"),
-    env: { ...process.env, DATABASE_URL },
-    encoding: "utf8",
-  });
-}
-
-function seedOnly(name) {
-  return execFileSync(process.execPath, [join(REPO_ROOT, "database", "scripts", "seed.mjs"), "--only=" + name], {
     cwd: join(REPO_ROOT, "database"),
     env: { ...process.env, DATABASE_URL },
     encoding: "utf8",
@@ -513,33 +508,57 @@ async function main() {
     });
 
     if (BASE_URL !== null) {
-      await check("HTTP：管理员会话 GET rules / POST test 200，PATCH 旧 version 409，GET runs 200", async () => {
-        seedOnly("roles");
-        seedOnly("role-permissions");
-        const roleRows = await db.select({ id: roles.id }).from(roles).where(eq(roles.code, "admin"));
-        assert.equal(roleRows.length, 1);
-        await db.insert(users).values({
-          id: HTTP_ADMIN_ID,
-          casdoorId: "replay-1b-http",
-          username: "replay-1b-http",
-          displayName: "回放 HTTP 管理员",
-        });
-        await db.insert(userRoles).values({ userId: HTTP_ADMIN_ID, roleId: roleRows[0].id });
+      await check("HTTP：管理员会话 GET rules / POST test 200，PATCH 旧 version 409，GET runs 200；普通账号 GET rules 403", async () => {
+        await db.insert(users).values([
+          {
+            id: HTTP_ADMIN_ID,
+            casdoorId: "replay-1b-http-admin",
+            username: "replay-1b-http-admin",
+            displayName: "回放 HTTP 管理员",
+          },
+          {
+            id: HTTP_MEMBER_ID,
+            casdoorId: "replay-1b-http-member",
+            username: "replay-1b-http-member",
+            displayName: "回放 HTTP 普通账号",
+          },
+        ]);
         const now = new Date();
-        await db.insert(sessions).values({
-          tokenHash: createHash("sha256").update(HTTP_SESSION_TOKEN).digest("hex"),
+        await db.insert(sessions).values([
+          {
+            tokenHash: createHash("sha256").update(HTTP_SESSION_TOKEN).digest("hex"),
+            userId: HTTP_ADMIN_ID,
+            idToken: "replay-1b-http-admin",
+            lastSeenAt: now,
+            expiresAt: new Date(now.getTime() + 3_600_000),
+          },
+          {
+            tokenHash: createHash("sha256").update(HTTP_MEMBER_SESSION_TOKEN).digest("hex"),
+            userId: HTTP_MEMBER_ID,
+            idToken: "replay-1b-http-member",
+            lastSeenAt: now,
+            expiresAt: new Date(now.getTime() + 3_600_000),
+          },
+        ]);
+        await db.insert(groupAccessAdmins).values({
           userId: HTTP_ADMIN_ID,
-          idToken: "replay-1b-http",
-          lastSeenAt: now,
-          expiresAt: new Date(now.getTime() + 3_600_000),
+          grantedBy: ADMIN_ID,
+          createdAt: now,
         });
         const headers = {
           cookie: "ll_sid=" + HTTP_SESSION_TOKEN + "; ll_csrf=" + HTTP_CSRF_TOKEN,
           "x-csrf-token": HTTP_CSRF_TOKEN,
         };
+        const memberHeaders = {
+          cookie: "ll_sid=" + HTTP_MEMBER_SESSION_TOKEN + "; ll_csrf=" + HTTP_MEMBER_CSRF_TOKEN,
+          "x-csrf-token": HTTP_MEMBER_CSRF_TOKEN,
+        };
         const list = await httpJson(BASE_URL, "/api/v1/automation/rules", { headers });
         assert.equal(list.status, 200);
         assert.equal(list.body.items.length, 10);
+        const forbidden = await httpJson(BASE_URL, "/api/v1/automation/rules", { headers: memberHeaders });
+        assert.equal(forbidden.status, 403);
+        assert.equal(forbidden.body.code, "FORBIDDEN");
         const trial = await httpJson(BASE_URL, "/api/v1/automation/rules/A08/test", {
           method: "POST",
           headers: { ...headers, "content-type": "application/json" },
@@ -558,7 +577,7 @@ async function main() {
         const runsList = await httpJson(BASE_URL, "/api/v1/automation/runs?page=1&limit=20", { headers });
         assert.equal(runsList.status, 200);
         assert.ok(runsList.body.total >= 2);
-        return "GET rules 200 / POST test 200 / PATCH 409 / GET runs 200";
+        return "admin GET rules 200 / POST test 200 / PATCH 409 / GET runs 200 / member GET rules 403";
       });
     } else {
       console.log("http: 未提供 --base-url / M5_06_1B_BASE_URL，跳过 HTTP 断言");
@@ -651,21 +670,33 @@ async function cleanup(db, pool, originalRules, originalA01Job, auditBaseline) {
   await db.delete(tasks).where(eq(tasks.projectId, PROJECT_ID));
   await db.delete(projectStages).where(eq(projectStages.projectId, PROJECT_ID));
   await db.delete(projects).where(eq(projects.id, PROJECT_ID));
+  await db.delete(groupAccessAdmins).where(eq(groupAccessAdmins.userId, HTTP_ADMIN_ID));
+  await db.delete(sessions).where(eq(sessions.userId, HTTP_ADMIN_ID));
+  await db.delete(sessions).where(eq(sessions.userId, HTTP_MEMBER_ID));
+  await db.delete(users).where(eq(users.id, HTTP_ADMIN_ID));
+  await db.delete(users).where(eq(users.id, HTTP_MEMBER_ID));
   await db.delete(users).where(eq(users.id, ADMIN_ID));
   await db.delete(users).where(eq(users.id, OWNER_ID));
   await db.delete(users).where(eq(users.id, MANAGER_ID));
-  await db.delete(sessions).where(eq(sessions.userId, HTTP_ADMIN_ID));
-  await db.delete(userRoles).where(eq(userRoles.userId, HTTP_ADMIN_ID));
-  await db.delete(users).where(eq(users.id, HTTP_ADMIN_ID));
 
   const leftoverRuns = await db.select({ value: sql`count(*)::int` }).from(automationRuns).where(like(automationRuns.dedupeKey, RUN_PREFIX + "%"));
   const leftoverAudits = await db.select({ value: sql`count(*)::int` }).from(auditLogs).where(eq(auditLogs.actorId, ADMIN_ID));
   const leftoverProject = await db.select({ value: sql`count(*)::int` }).from(projects).where(eq(projects.id, PROJECT_ID));
   const leftoverUsers = await db.select({ value: sql`count(*)::int` }).from(users).where(eq(users.id, ADMIN_ID));
+  const leftoverHttpUsers = await db
+    .select({ value: sql`count(*)::int` })
+    .from(users)
+    .where(inArray(users.id, [HTTP_ADMIN_ID, HTTP_MEMBER_ID]));
+  const leftoverHttpAdmins = await db
+    .select({ value: sql`count(*)::int` })
+    .from(groupAccessAdmins)
+    .where(eq(groupAccessAdmins.userId, HTTP_ADMIN_ID));
   assert.equal(Number(leftoverRuns[0].value), 0);
   assert.equal(Number(leftoverAudits[0].value), auditBaseline);
   assert.equal(Number(leftoverProject[0].value), 0);
   assert.equal(Number(leftoverUsers[0].value), 0);
+  assert.equal(Number(leftoverHttpUsers[0].value), 0);
+  assert.equal(Number(leftoverHttpAdmins[0].value), 0);
   console.log("cleanup: 零残留（runs / audit / project / users）");
 }
 
@@ -686,14 +717,13 @@ const {
   automationRules,
   automationRuns,
   auditLogs,
+  groupAccessAdmins,
   jobs: jobsTable,
   outboxEvents,
   projectStages,
   projects,
-  roles,
   sessions,
   tasks,
-  userRoles,
   users,
   wecomGroups,
 } = schema;

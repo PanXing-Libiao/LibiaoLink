@@ -6,10 +6,6 @@ import type { Env } from "../src/config/env.js";
 import type { OutboxStatsSnapshot, OutboxStore } from "../src/db/outbox.store.js";
 import type { OutboxTopicBacklog } from "../src/db/outbox.store.js";
 import type { AibotSendResult, WecomAibotClient } from "../src/modules/notify/wecom.aibot.js";
-import type {
-  ProjectGroupDeliveryRecovery,
-  ProjectGroupDeliveryAlertService,
-} from "../src/modules/notify/project-group-delivery-alert.service.js";
 import {
   evaluateOutboxAlerts,
   type OutboxAlert,
@@ -33,7 +29,6 @@ const ENV = {
   OUTBOX_ALERT_DEAD_WINDOW_MS: 3600000,
   OUTBOX_ALERT_PROGRESS_WINDOW_MS: 900000,
   OUTBOX_ALERT_STALL_PROBES: 3,
-  OUTBOX_ALERT_DIGEST_INTERVAL_MS: 86400000,
 } as unknown as Env;
 
 const REGISTERED_TOPICS = new Set<string>(OUTBOX_TOPICS);
@@ -127,17 +122,15 @@ class FakeAlertSink implements OutboxAlertSink {
     this.emitted.push(alert);
   }
 
-  emitDigest(report: OutboxDailyDigest): void {
+  async emitDigest(report: OutboxDailyDigest): Promise<boolean> {
     this.digests.push(report);
+    return true;
   }
 }
 
 const START_MS = Date.parse("2026-10-19T00:00:00Z");
 
-function makeProbe(options: {
-  registeredTopics?: readonly OutboxTopic[];
-  projectGroupRecoveries?: ProjectGroupDeliveryRecovery[];
-} = {}): {
+function makeProbe(options: { registeredTopics?: readonly OutboxTopic[] } = {}): {
   probe: OutboxAlertProbe;
   store: FakeStatsStore;
   sink: FakeAlertSink;
@@ -152,23 +145,12 @@ function makeProbe(options: {
   const registry = new Map<OutboxTopic, OutboxTopicHandler>(
     (options.registeredTopics ?? OUTBOX_TOPICS).map((topic): [OutboxTopic, OutboxTopicHandler] => [topic, handler]),
   );
-  const projectGroupAlerts =
-    options.projectGroupRecoveries === undefined
-      ? undefined
-      : ({
-          drainRecoveries: () => {
-            const result = options.projectGroupRecoveries ?? [];
-            options.projectGroupRecoveries = [];
-            return result;
-          },
-        } as unknown as ProjectGroupDeliveryAlertService);
   const probe = new OutboxAlertProbe(
     store as unknown as OutboxStore,
     sink,
     new AppConfig(ENV),
     registry,
     clock,
-    projectGroupAlerts,
   );
   return { probe, store, sink, setNowMs: (value: number) => (nowMs = value) };
 }
@@ -217,7 +199,7 @@ describe("OutboxAlertProbe（可执行即时告警 + 日报）", () => {
     expect(sink.emitted.map((alert) => alert.code)).toEqual(["outbox.queue_stalled", "outbox.queue_stalled"]);
   });
 
-  it("队列停滞恢复：不即时推送，进入下一次日报", async () => {
+  it("队列停滞恢复：不即时推送，仅取走供日报计数", async () => {
     const { probe, store, sink } = makeProbe();
     store.current = snapshot({ duePending: 2000, oldestDueMs: 2_000_000, doneRecent: 0 });
     await probe.probeOnce();
@@ -228,9 +210,10 @@ describe("OutboxAlertProbe（可执行即时告警 + 日报）", () => {
     expect(await probe.probeOnce()).toEqual([]);
     expect(sink.emitted.map((alert) => alert.code)).toEqual(["outbox.queue_stalled"]);
 
-    const report = await probe.digestOnce();
-    expect(report?.recoveries.map((item) => item.code)).toEqual(["outbox.queue_stalled.recovered"]);
-    expect(sink.digests).toHaveLength(1);
+    expect(probe.drainDailyDigestRecoveries().map((item) => item.code)).toEqual([
+      "outbox.queue_stalled.recovered",
+    ]);
+    expect(probe.drainDailyDigestRecoveries()).toEqual([]);
   });
 
   it("未消费主题：即时告警带处置动作；恢复只进日报", async () => {
@@ -251,11 +234,12 @@ describe("OutboxAlertProbe（可执行即时告警 + 日报）", () => {
     expect(await probe.probeOnce()).toEqual([]);
     expect(sink.emitted.map((alert) => alert.code)).toEqual(["outbox.unconsumed_topic"]);
 
-    const report = await probe.digestOnce();
-    expect(report?.recoveries.map((item) => item.code)).toEqual(["outbox.unconsumed_topic.recovered"]);
+    expect(probe.drainDailyDigestRecoveries().map((item) => item.code)).toEqual([
+      "outbox.unconsumed_topic.recovered",
+    ]);
   });
 
-  it("近期死信：不再即时推送；日报汇总最近窗口死信", async () => {
+  it("近期死信：不再即时推送，留给固定日报统计", async () => {
     const { probe, store, sink } = makeProbe();
     store.current = snapshot({
       deadRecent: 2,
@@ -265,44 +249,7 @@ describe("OutboxAlertProbe（可执行即时告警 + 日报）", () => {
 
     expect(await probe.probeOnce()).toEqual([]);
     expect(sink.emitted).toEqual([]);
-
-    const report = await probe.digestOnce();
-    expect(report).toMatchObject({
-      deadRecent: 2,
-      deadTotal: 7,
-      deadByTopic: [{ topic: "preview.job", count: 2 }],
-      windowMs: 86400000,
-    });
-    expect(sink.digests).toHaveLength(1);
-  });
-
-  it("日报无异常：只写日志，不推送空消息", async () => {
-    const { probe, sink } = makeProbe();
-    expect(await probe.digestOnce()).toBeNull();
     expect(sink.digests).toEqual([]);
-  });
-
-  it("项目群恢复并入同一日报，读取后不重复", async () => {
-    const { probe, sink } = makeProbe({
-      projectGroupRecoveries: [
-        {
-          code: "notify.project_group.recovered",
-          message: "项目群恢复可投递：总装项目（原因为项目群未绑定）",
-          at: "2026-10-28T00:00:00.000Z",
-        },
-      ],
-    });
-
-    const report = await probe.digestOnce();
-    expect(report?.recoveries).toEqual([
-      {
-        code: "notify.project_group.recovered",
-        message: "项目群恢复可投递：总装项目（原因为项目群未绑定）",
-        at: "2026-10-28T00:00:00.000Z",
-      },
-    ]);
-    expect(sink.digests).toHaveLength(1);
-    expect(await probe.digestOnce()).toBeNull();
   });
 });
 
@@ -341,16 +288,21 @@ function actionable(overrides: Partial<OutboxAlert> = {}): OutboxAlert {
 
 function digest(overrides: Partial<OutboxDailyDigest> = {}): OutboxDailyDigest {
   return {
-    generatedAt: "2026-10-20T01:00:00.000Z",
-    windowMs: 86400000,
-    duePending: 0,
-    oldestDueMs: null,
-    deadRecent: 0,
-    deadTotal: 0,
-    byTopic: [],
-    deadByTopic: [],
-    recoveries: [],
-    activeAlerts: [],
+    generatedAt: "2026-10-30T00:05:00.000Z",
+    reportAt: "2026-10-30T00:00:00.000Z",
+    windowFrom: "2026-10-28T16:00:00.000Z",
+    windowTo: "2026-10-29T16:00:00.000Z",
+    delivery: {
+      total: 0,
+      delivered: 0,
+      retrying: 0,
+      failed: 0,
+      lateDelivered: 0,
+      maxLatencyMs: null,
+    },
+    automaticFallbacks: [],
+    repeatedIssues: [],
+    recoveries: { total: 0, byCode: [] },
     ...overrides,
   };
 }
@@ -439,30 +391,45 @@ describe("WecomAlertSink（单一管理员告警群）", () => {
     expect(aibot.sends).toHaveLength(3);
   });
 
-  it("日报：同一群推送恢复、死信与当前队列快照", async () => {
+  it("管理员日报：固定 08:00、昨日交付、自动降级与重复问题", async () => {
     const aibot = new FakeAibot();
     const sink = new WecomAlertSink(aibot as unknown as WecomAibotClient, ALERT_CHATID, new FakeAlertSink(), () => 0);
     const report = digest({
-      duePending: 12,
-      oldestDueMs: 120000,
-      deadRecent: 2,
-      deadTotal: 5,
-      byTopic: [backlog("notify.message", 2, 120000)],
-      deadByTopic: [{ topic: "preview.job", count: 2 }],
-      recoveries: [
-        { code: "outbox.queue_stalled.recovered", message: "队列恢复", at: "2026-10-20T00:10:00.000Z" },
+      delivery: {
+        total: 136,
+        delivered: 132,
+        retrying: 4,
+        failed: 0,
+        lateDelivered: 3,
+        maxLatencyMs: 72 * 60_000,
+      },
+      automaticFallbacks: [
+        { label: "文件预览不支持", detail: "SVG 事件属性拒绝，已提示下载查看", count: 3 },
+        { label: "文件超过预览上限", detail: "已提示下载查看", count: 1 },
       ],
-      activeAlerts: ["outbox.unconsumed_topic"],
+      repeatedIssues: [
+        {
+          label: "企业微信限速",
+          yesterdayCount: 12,
+          previousDayCount: 17,
+          consecutiveDays: 2,
+          affectedMessages: 9,
+          outcome: "recovered",
+        },
+      ],
     });
 
-    expect(composeDigestText(report)).toContain("【LibiaoLink 日报】outbox");
-    expect(composeDigestText(report)).toContain("已恢复：队列恢复");
-    expect(composeDigestText(report)).toContain("仍未恢复：outbox.unconsumed_topic");
-    expect(composeDigestText(report)).toContain("新增死信主题：preview.job 2 条");
-    sink.emitDigest(report);
+    const text = composeDigestText(report);
+    expect(text).toContain("【LibiaoLink 管理员日报】2026-10-30 08:00");
+    expect(text).toContain("统计范围：2026-10-29 00:00–24:00（北京时间）");
+    expect(text).toContain("送达 132 · 待重试 4 · 最终失败 0");
+    expect(text).toContain("自动降级 4 次（均已兜底，无需处理）");
+    expect(text).toContain("企业微信限速连续 2 天出现，昨日 12 次");
+    expect(text).not.toMatch(/[0-9a-f]{8}-[0-9a-f-]{27,}/i);
+    expect(await sink.emitDigest(report)).toBe(true);
     await flush();
     expect(aibot.sends).toHaveLength(1);
-    expect(aibot.sends[0]!.content).toContain("新增死信：2 条；累计：5 条");
+    expect(aibot.sends[0]!.content).toContain("昨日通知 136 条（按消息去重）");
   });
 
   it("发送失败 / 异常：回退日志出口（告警链不断）", async () => {
