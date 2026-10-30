@@ -155,7 +155,11 @@ export function layoutTextRun(input) {
     const capHeight = Number(input.height);
     run.size = cadTextEm(capHeight);
     run.lineHeight = cadLineHeight(capHeight, input.lineSpacing ?? 1);
-    const width = Number(input.rectangleWidth || 0) * Number(input.matrixScale || 1);
+    // The reference viewer (DWG FastView) fits about 40% more characters per
+    // line than the stored rectangle; the wrap budget carries that tolerance so
+    // notes break where users see them break in the reference application.
+    const tolerance = Number(input.wrapTolerance) > 0 ? Number(input.wrapTolerance) : 1;
+    const width = Number(input.rectangleWidth || 0) * Number(input.matrixScale || 1) * tolerance;
     if (useRuns) {
       const runLines = layoutRunLines(input.runs, run.size, measure, width);
       run.runLines = runLines;
@@ -220,7 +224,8 @@ export function layoutAnnotationText(annotation, draw, options = {}) {
     measure: options.measure,
     fontFamily: options.fontFamily,
     runs: options.runs,
-    widthFactor: options.widthFactor
+    widthFactor: options.widthFactor,
+    wrapTolerance: options.wrapTolerance
   });
   return {anchor, run};
 }

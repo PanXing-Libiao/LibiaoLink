@@ -76,6 +76,9 @@ export function mountDrawingViewer(envelope) {
   // Latin-first stacks keep a CJK fallback so mixed runs get Song glyphs from
   // the browser's per-glyph fallback instead of tofu or a wider system default.
   const FONT_STACK_LATIN = '"Arial","Liberation Sans","SimSun",sans-serif';
+  // DWG FastView fits about 40% more characters per MTEXT line than the stored
+  // rectangle; keep that reference layout instead of breaking notes earlier.
+  const MTEXT_WRAP_TOLERANCE = 1.4;
   function mapFontFamily(name) {
     if (!name) return null;
     const n = String(name).toLowerCase();
@@ -658,7 +661,8 @@ export function mountDrawingViewer(envelope) {
           color: rec.color,
           fontFamily: annotationFont.runs ? annotationFont.defaultFont : fontFamilyFor(annotation),
           runs: annotationFont.runs,
-          widthFactor
+          widthFactor,
+          wrapTolerance: MTEXT_WRAP_TOLERANCE
         });
         rec.bbox = { minX: layout.anchor[0], minY: layout.anchor[1],
           maxX: layout.anchor[0], maxY: layout.anchor[1] };

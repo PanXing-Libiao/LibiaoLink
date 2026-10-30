@@ -58,6 +58,20 @@ test('inline runs wrap on CAD tokens instead of splitting English words', () => 
   assert.deepEqual(run.lines.map(line => line.trim()), ['All power', 'lines']);
 });
 
+test('wrap tolerance fits lines the source rectangle would break', () => {
+  const measure = text => text.length * 10;
+  const strict = layoutTextRun({
+    text: 'All power lines', kind: 'mtext', x: 0, y: 0, angle: 0, height: 100, measure,
+    nativeLayout: true, rectangleWidth: 180, matrixScale: 1
+  });
+  const relaxed = layoutTextRun({
+    text: 'All power lines', kind: 'mtext', x: 0, y: 0, angle: 0, height: 100, measure,
+    nativeLayout: true, rectangleWidth: 180, matrixScale: 1, wrapTolerance: 1.4
+  });
+  assert.equal(strict.lines.length, 2);
+  assert.equal(relaxed.lines.length, 1);
+});
+
 test('style width factor narrows advances and widens the wrap budget', () => {
   const measure = text => text.length * 10;
   const wide = layoutTextRun({

@@ -484,8 +484,8 @@
     "drawing-plot-styles.js": "a2c3888311ccdaac04b38f108ab7175cd171a43f0fb82fdb9356e9431819b243",
     "drawing-projection.js": "0a501669718907a7422ba6f6a803bbfaee5e3d7d2c4393ba816710c3a3313363",
     "drawing-text-avoidance.js": "2e65f43a90f24b6a669325a3bc7687d0d1f93f22610ba937d9b8c2ae2b3e5001",
-    "drawing-text.js": "df4045066bc93114afad9c01d7e2b7a2d068d83cb436baf807537b5706a49e38",
-    "drawing-viewer.js": "7de75630842387076ad0b7d697f46e724e22fa61a34a2e251774f3b10f001f45",
+    "drawing-text.js": "55b2e422e624eeb5a506c22a9763aff6c93b94c198291fd13f18ce6e0acad4f4",
+    "drawing-viewer.js": "7a43ffba47dd93c430494c5b5fb81d41f4c200101c096c5156b6cce797c52ce7",
     "dwg-packed-transport.js": "7ca25caedff71fb3102f9a67489d5f1eb0b03cc250351be027abe73648279045",
     "dxf-resources.js": "219569569cc22deca979ec3f6693031bfbfe050c30eb8fe419962f4e3dab5c2c",
     "highlight.js": "31754dabcf90e0c71a67123e7e03f9e39614f02021fdd35d18b61e688c734099",
@@ -532,8 +532,8 @@
     "DWG": "dwg-0.1.0/7150e0b1abf3017c8106823201aa56e6d739ce451b33933476e60bfad27906ab/gateway-1"
   },
   "engineDigest": "1448a31c15b7906c01393c8a5857060d394afe80d04ef730ccbb355fbfa366a1",
-  "viewerDigest": "549b5c97de1cac56a43adbef5c215136cdfcb2559c6a1dc35c1fe9d5bbb5664f",
-  "releaseDigest": "78687fd1a771663c8ea2ace318e78f6628d46cefa696230ccfd11f075a6dae7d",
+  "viewerDigest": "a25ac2ee50e772318de5c93639bec22b820de3c2058d00521648796790a63f1d",
+  "releaseDigest": "da3358c2871b041a7b49ea7f3b0095e4e03c456d27c4949984dd57991d990c97",
   "engineVersion": "step-0.3.3/1448a31c15b7906c01393c8a5857060d394afe80d04ef730ccbb355fbfa366a1/gateway-1",
-  "viewerVersion": "viewer-549b5c97de1cac56a43adbef5c215136cdfcb2559c6a1dc35c1fe9d5bbb5664f"
+  "viewerVersion": "viewer-a25ac2ee50e772318de5c93639bec22b820de3c2058d00521648796790a63f1d"
 }
