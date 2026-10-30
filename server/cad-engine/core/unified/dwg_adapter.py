@@ -10,6 +10,7 @@ import json
 import math
 from pathlib import Path
 import struct
+import subprocess
 import sys
 import time
 
@@ -26,6 +27,24 @@ TABLES = ('drawings','spaces','sheets','layouts','viewports','entities','annotat
 
 def canonical(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
+
+
+def run_reader(dotnet, reader, source, native, stdout=subprocess.DEVNULL):
+    """Run the native reader and surface its stderr in the failure message.
+
+    A clean failure exits 70 with one structured READER-ERROR line; a SIGABRT
+    death carries an unhandled-exception trace. Either way the stderr tail names
+    the cause, so it is folded into the raised error instead of staying in a pipe
+    only the parent process log can see.
+    """
+    try:
+        subprocess.run([dotnet, reader, str(source), str(native)], check=True,
+                       stdout=stdout, stderr=subprocess.PIPE)
+    except subprocess.CalledProcessError as error:
+        text = (error.stderr or b'').decode('utf-8', 'replace')
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        tail = ' | '.join(lines[-4:])[:1200] or 'reader exited without stderr output'
+        raise RuntimeError(f'native DWG reader failed (exit {error.returncode}): {tail}') from error
 
 
 def digest(value):

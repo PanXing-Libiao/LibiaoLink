@@ -492,9 +492,11 @@ static class Program
                 }
                 Loss(original,"unsupported-native-presentation","No accepted native presentation: "+e.GetType().Name);return;
             }
-        } catch(Exception error) when(error is ArgumentException or InvalidDataException or NotImplementedException or IndexOutOfRangeException) {
-            // A failure is reported with its source handle. It is never a ready,
-            // empty geometry or a successful complete drawing.
+        } catch(Exception error) when(error is not OutOfMemoryException) {
+            // Every per-entity mapping failure — not only the expected shape errors —
+            // is a reported per-handle loss: one unanticipated exception in a mapper
+            // must not discard the whole drawing. Out-of-memory stays fatal because
+            // the process cannot be relied on to continue.
             Loss(original,"native-presentation-failed",error.ToString());
             if(!emitted.Contains(id))EntityRow(e,space,id,R(("type","unsupported"),("sourceType",original.ObjectName),("reason","Native presentation failed; see retained per-handle loss")),null,original:original);
             Emit("entityState",id,R(("presentationGeometry","missing"),("visible",!e.IsInvisible)));
@@ -651,6 +653,19 @@ static class Program
         Console.WriteLine("PASS: native DWG header fields remain independent, including raw -1; no interchange format; spline zero vertex guard; default leader arrow guard; MLine miter and round cap geometry.");
     }
     static int Main(string[] args)
+    {
+        try { return Run(args); }
+        catch(Exception error) {
+            // Single-line structured report so a conversion failure carries its cause
+            // instead of an opaque process abort; the platform appends this line to
+            // the job error message. Exit code 70 (EX_SOFTWARE) stays distinct from
+            // usage errors and from the process-abort codes used by SIGABRT deaths.
+            var frames=(error.StackTrace??"").Split('\n',StringSplitOptions.RemoveEmptyEntries).Take(6).Select(line=>line.Trim());
+            Console.Error.WriteLine("READER-ERROR "+JsonSerializer.Serialize(new{type=error.GetType().FullName,message=error.Message,stack=frames}));
+            return 70;
+        }
+    }
+    static int Run(string[] args)
     {
         if(args.Length==2&&args[0]=="--self-test"){SelfTest(args[1]);return 0;}
         if(args.Length!=2)throw new ArgumentException("DWG source path and private output folder are required");

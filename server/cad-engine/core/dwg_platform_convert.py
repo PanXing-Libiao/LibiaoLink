@@ -9,12 +9,11 @@ import json
 import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from unified.dwg_adapter import assemble_native
+from unified.dwg_adapter import assemble_native, run_reader
 
 
 def fail(error):
@@ -42,8 +41,7 @@ def main():
         result = root / 'result'
         native = result / 'native'
         try:
-            subprocess.run([dotnet, reader, str(source), str(native)], check=True,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            run_reader(dotnet, reader, source, native)
             manifest_path = assemble_native(native, source, result, platform=True,
                                              binary_dir=binary_dir, packed=True)
             with open(manifest_path, 'rb') as manifest:

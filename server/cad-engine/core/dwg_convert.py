@@ -5,8 +5,7 @@ external caller must apply process/network/resource budgets to the native read.
 """
 import argparse
 from pathlib import Path
-import subprocess
-from unified.dwg_adapter import assemble_native, file_identity
+from unified.dwg_adapter import assemble_native, file_identity, run_reader
 
 
 def main():
@@ -24,7 +23,7 @@ def main():
     if not args.assemble_only:
         if not args.reader or not args.dotnet:parser.error('--reader and --dotnet are required for the native decode')
         if native.exists():raise ValueError('Native output exists; use a new directory or explicitly reassemble retained records')
-        subprocess.run([args.dotnet,args.reader,str(source),str(native)],check=True)
+        run_reader(args.dotnet,args.reader,source,native,stdout=None)
     print(assemble_native(native,source,output))
 
 
