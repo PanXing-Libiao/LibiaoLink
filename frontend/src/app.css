@@ -3327,14 +3327,14 @@ body {
     border-top: 1px solid rgba(228, 228, 231, 0.72);
   }
 
-  /* ── HTML 宽表统一字段卡：日报 / 问题 / 文件库 / 操作记录 / 工作台问题 ── */
-  :is([data-audit-table], [data-file-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) {
+  /* ── HTML 宽表统一字段卡：日报 / 问题 / 回收站 / 项目文件 / 操作记录 / 工作台问题 ── */
+  :is([data-audit-table], [data-file-table], [data-project-files-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) {
     border: 0 !important;
     background: transparent !important;
     overflow: visible !important;
   }
 
-  :is([data-audit-table], [data-file-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table {
+  :is([data-audit-table], [data-file-table], [data-project-files-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table {
     display: block !important;
     width: 100% !important;
     min-width: 0 !important;
@@ -3343,18 +3343,18 @@ body {
     border-spacing: 0 !important;
   }
 
-  :is([data-audit-table], [data-file-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > thead,
-  :is([data-audit-table], [data-file-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > colgroup {
+  :is([data-audit-table], [data-file-table], [data-project-files-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > thead,
+  :is([data-audit-table], [data-file-table], [data-project-files-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > colgroup {
     display: none !important;
   }
 
-  :is([data-audit-table], [data-file-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > tbody {
+  :is([data-audit-table], [data-file-table], [data-project-files-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > tbody {
     display: flex !important;
     flex-direction: column;
     gap: 0.625rem;
   }
 
-  :is([data-audit-table], [data-file-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > tbody > tr {
+  :is([data-audit-table], [data-file-table], [data-project-files-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > tbody > tr {
     display: block !important;
     width: auto !important;
     padding: 0.75rem 0.875rem !important;
@@ -3365,7 +3365,7 @@ body {
     box-shadow: 0 8px 20px -18px rgba(15, 23, 42, 0.35);
   }
 
-  :is([data-audit-table], [data-file-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > tbody > tr > td {
+  :is([data-audit-table], [data-file-table], [data-project-files-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > tbody > tr > td {
     width: auto !important;
     min-width: 0 !important;
     max-width: none !important;
@@ -3380,7 +3380,7 @@ body {
     overflow-wrap: anywhere;
   }
 
-  :is([data-audit-table], [data-file-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > tbody > tr > td::before {
+  :is([data-audit-table], [data-file-table], [data-project-files-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > tbody > tr > td::before {
     content: attr(data-mobile-label);
     color: #71717a;
     font-size: 0.6875rem;
@@ -3388,13 +3388,13 @@ body {
     line-height: 1.45;
   }
 
-  :is([data-audit-table], [data-file-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > tbody > tr > td > * {
+  :is([data-audit-table], [data-file-table], [data-project-files-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > tbody > tr > td > * {
     min-width: 0;
     max-width: 100%;
   }
 
-  :is([data-audit-table], [data-file-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > tbody > tr > td > :is(span, div)[class*="inline-block"],
-  :is([data-audit-table], [data-file-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > tbody > tr > td > :is(span, div)[class*="inline-flex"] {
+  :is([data-audit-table], [data-file-table], [data-project-files-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > tbody > tr > td > :is(span, div)[class*="inline-block"],
+  :is([data-audit-table], [data-file-table], [data-project-files-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > tbody > tr > td > :is(span, div)[class*="inline-flex"] {
     width: fit-content;
     max-width: 100%;
     justify-self: start;
@@ -3417,7 +3417,8 @@ body {
 
   [data-report-table] > table > tbody > tr > td[data-report-delete-cell],
   [data-issue-table] > table > tbody > tr > td[data-issue-delete-cell],
-  [data-file-table] > table > tbody > tr > td:last-child {
+  [data-file-table] > table > tbody > tr > td:last-child,
+  [data-project-files-table] > table > tbody > tr > td:last-child {
     margin-top: 0.35rem;
     padding-top: 0.6rem !important;
     display: flex !important;
@@ -3428,11 +3429,13 @@ body {
 
   [data-report-table] > table > tbody > tr > td[data-report-delete-cell]::before,
   [data-issue-table] > table > tbody > tr > td[data-issue-delete-cell]::before,
-  [data-file-table] > table > tbody > tr > td:last-child::before {
+  [data-file-table] > table > tbody > tr > td:last-child::before,
+  [data-project-files-table] > table > tbody > tr > td:last-child::before {
     display: none;
   }
 
   [data-file-table] > table > tbody > tr > td:last-child > span,
+  [data-project-files-table] > table > tbody > tr > td:last-child > span,
   [data-report-table] td[data-report-delete-cell] > span,
   [data-issue-table] td[data-issue-delete-cell] > span {
     margin-left: auto;
@@ -3440,6 +3443,7 @@ body {
 
   /* 筛选区在竖屏按两列排，关键字 / 日期独占一行。 */
   [data-file-filter],
+  [data-project-files-filter],
   [data-audit-filter] {
     width: auto !important;
     min-width: 0;
@@ -3447,6 +3451,7 @@ body {
   }
 
   [data-file-filter="keyword"],
+  [data-project-files-filter="keyword"],
   [data-audit-filter="keyword"],
   [data-audit-filter="time"] {
     flex-basis: 100%;

@@ -38,9 +38,10 @@ import { RefreshQueue, liveReadPaused, subscribeLiveHints } from "./liveSync";
  * 预览：GET /api/v1/files/{fileId}/preview → ready 时短时签名 URL（模块级缓存 + 订阅，供附图懒取）。
  * Push 255（业务口径「文件显示 已变更 不如直接替换成变更后的啊… 变更记录也要显示 之前是什么文件 这次是什么文件… 文件可以预览在变更里面」）：
  *   变更记录行接版本链 —— fetchFileVersions（GET /files/{id}/versions）+ 版本态预览 / 下载
- *   （ensurePreviewOutcome(fileId, versionId?) / fetchDownloadUrl(fileId, versionId?)：A4-06 任意历史版本可预览与下载 * Push 261（业务口径「新增文件库 文件库里面分为 系统现有文件 回收站」）：文件库列表（fetchProjectFileLibrary —— 跨项目聚合的单项目读口，
- *   按项目分页取满；系统现有文件 = 四档在库状态、回收站 = filter[status]=recycled）与回收站两个写口（restoreFile / purgeFile）在此收口；
- *   页面见 frontend/src/FileLibraryPage.tsx。
+ *   （ensurePreviewOutcome(fileId, versionId?) / fetchDownloadUrl(fileId, versionId?)：A4-06 任意历史版本可预览与下载）。
+ * Push 261 / 2026-10-29：单项目文件读口 fetchProjectFileLibrary（按项目分页取满）同时服务项目详情「项目文件」
+ *   （四档在库状态 + taskId 过滤）与回收站「文件回收站」（filter[status]=recycled）；回收站两个写口
+ *   （restoreFile / purgeFile）也在此收口。页面见 components/ProjectFilesPanel.tsx、FileLibraryPage.tsx。
  */
 import { useEffect, useSyncExternalStore } from "react";
 import { ApiError, apiRequest, apiSend, readAllPages } from "./api";
@@ -752,8 +753,8 @@ export function usePhotoUrl(fileId: string, localUrl: string | null): string | n
 }
 
 /**
- * 文件库列表项（M4-03 读面 FileSchema 子集；Push 261「文件库（系统现有文件 / 回收站）」）。
- * 列表项不带大小（大小在版本链上：FileVersionSchema.sizeBytes）—— 文件库不展示，预览 / 下载走各自入口。
+ * 文件库列表项（M4-03 读面 FileSchema 子集；Push 261 / 2026-10-29）。
+ * 列表项不带大小（大小在版本链上：FileVersionSchema.sizeBytes）—— 项目文件 / 回收站列表不展示，预览 / 下载走各自入口。
  * 状态取值：draft（草稿）/ final（已定档）/ changed（已变更）/ archived（已归档）/ recycled（回收站）。
  */
 export type FileLibraryItem = {
@@ -777,8 +778,8 @@ export type FileLibraryItem = {
 
 /**
  * 文件库单项目查询（契约 FileListQuerySchema 子集）。
- * statuses 必给：系统现有文件栏 = 四档在库状态（draft / final / changed / archived；服务端缺省虽排除 recycled，
- * 但显式给全更不容易随口径漂移），回收站栏 = recycled（服务端显式 filter[status]=recycled 才返回回收站行）。
+ * statuses 必给：项目文件 = 四档在库状态（draft / final / changed / archived；服务端缺省虽排除 recycled，
+ * 但显式给全更不容易随口径漂移），文件回收站 = recycled（服务端显式 filter[status]=recycled 才返回回收站行）。
  */
 export type FileLibraryQuery = {
   statuses: readonly string[];

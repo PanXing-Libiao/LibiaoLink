@@ -44,7 +44,9 @@ import notoSansKrCss from "@fontsource-variable/noto-sans-kr/index.css?inline";
 import notoSansScCss from "@fontsource-variable/noto-sans-sc/index.css?inline";
 import { type ProjectTask, type TaskStatus } from "./data/tasks";
 import { stageNameOf } from "./taskApi";
-import { translateZhTo } from "./translateApi";
+import { translateZhTo, type TranslationTarget } from "./translateApi";
+import overviewPreviewPagedCss from "./overviewPreviewPaged.css?inline";
+import overviewPreviewPagedScriptUrl from "./overviewPreviewPaged.js?url";
 import { getLocale, textOf } from "./i18n";
 import { projectManagerText } from "./types";
 import {
@@ -52,15 +54,18 @@ import {
   countsOf,
   dateText,
   groupedByStage,
+  isDoneStatus,
   ownersText,
   progressLabel,
   progressPct,
+  DEFAULT_OVERVIEW_EXPORT_OPTIONS,
   type OverviewExportInput,
   type OverviewExportLanguage,
+  type OverviewExportOptions,
   type StageGroup,
 } from "./overviewExportShared";
 
-export type { OverviewExportInput, OverviewExportLanguage } from "./overviewExportShared";
+export type { OverviewExportInput, OverviewExportLanguage, OverviewExportOptions, OverviewExportStageOption } from "./overviewExportShared";
 
 /** 无译文时的缺省映射（静默降级：导出保持中文原文；容错口径见 translateApi.ts）。 */
 const EMPTY_TRANSLATIONS: ReadonlyMap<string, string> = new Map();
@@ -138,7 +143,6 @@ const FIXED_TEXT: Record<string, LanguageStrings> = {
   预计完成: { en: "Planned End", ja: "完了予定", ko: "완료 예정" },
   预计所需施工人数: { en: "Est. Headcount", ja: "必要作業人数（概算）", ko: "예상 투입 인원" },
   进度: { en: "Progress", ja: "進捗", ko: "진행률" },
-  最慢阶段: { en: "Slowest Stage", ja: "最も遅れている段階", ko: "가장 지연된 단계" },
   最新阶段: { en: "Latest Stage", ja: "最新ステージ", ko: "최신 단계" },
   项目进度报告: { en: "Project Progress Report", ja: "プロジェクト進捗報告", ko: "프로젝트 진행 보고서" },
   进度报告: { en: "Progress Report", ja: "進捗報告", ko: "진행 보고서" },
@@ -249,6 +253,23 @@ function stageCellHtml(group: StageGroup, primary: OverviewExportLanguage): stri
   );
 }
 
+/** 阶段总体状态（折叠阶段的分组汇总行实时统计）：有延期优先标记；全部完成 = 已完成；有进展 = 进行中；否则待开始。 */
+function stageOverallStatus(group: StageGroup): TaskStatus | null {
+  if (group.total === 0) {
+    return null;
+  }
+  if (group.done === group.total) {
+    return "已完成";
+  }
+  if (group.tasks.some((task) => task.status === "已延期")) {
+    return "已延期";
+  }
+  if (group.tasks.some((task) => task.status === "进行中" || isDoneStatus(task.status))) {
+    return "进行中";
+  }
+  return "待开始";
+}
+
 /** 任务明细一行：日 / 韩主体额外翻译任务标题；中文 / 英文主体保持原有 title / titleEn 口径。 */
 function taskRowHtml(index: number, task: ProjectTask, managerText: string, translationMap: ReadonlyMap<string, string>, primary: OverviewExportLanguage): string {
   const tint = STATUS_TINT[task.status];
@@ -299,25 +320,71 @@ function taskRowHtml(index: number, task: ProjectTask, managerText: string, tran
   );
 }
 
-/** 一个阶段分组 = 一条分组头 + 组内全部任务行（tbody 分组：表头 thead 每页由浏览器自动重复）。 */
-function groupSectionHtml(counter: { value: number }, group: StageGroup, managerText: string, translationMap: ReadonlyMap<string, string>, primary: OverviewExportLanguage): string {
+/** 折叠阶段日期范围：忽略空值，取组内最早开始日期与最晚预计完成日期（契约日期为 ISO，可直接做字符串比较）。 */
+function groupDateRange(group: StageGroup): { start: string; due: string } {
+  let start = "";
+  let due = "";
+  for (const task of group.tasks) {
+    if (task.startDate !== "" && (start === "" || task.startDate < start)) {
+      start = task.startDate;
+    }
+    if (task.dueDate !== "" && (due === "" || task.dueDate > due)) {
+      due = task.dueDate;
+    }
+  }
+  return { start, due };
+}
+
+/** 阶段行只改折叠头：任务表头（10 列）保持原样；折叠阶段不出任务行，完成数 / 项目经理 / 最早开始 / 最晚完成 / 状态 / 进度分别对齐原表列，任务负责人与人数留空。 */
+function groupSectionHtml(
+  counter: { value: number },
+  group: StageGroup,
+  managerText: string,
+  translationMap: ReadonlyMap<string, string>,
+  primary: OverviewExportLanguage,
+  collapsed: boolean,
+): string {
+  const countText =
+    String(group.done) + " / " + String(group.total) + " " + escapeHtml(localizedValue("完成", primary)) + " · " +
+    (primary === "zh" ? secondaryText("completed", "en") : secondaryText("完成", "zh"));
+  if (collapsed) {
+    counter.value += group.tasks.length;
+    const pct = group.total === 0 ? 0 : Math.round((group.done / group.total) * 100);
+    const status = stageOverallStatus(group);
+    const tint = status === null ? { text: "#52525b", bg: "#f4f4f5" } : STATUS_TINT[status];
+    const dateRange = groupDateRange(group);
+    const fill = group.total === 0 ? "#d4d4d8" : pct === 100 ? "#10b981" : "#18181b";
+    return (
+      '<tbody class="grp">' +
+      '<tr class="grp__head grp__head--collapsed">' +
+      '<td class="num center"></td>' +
+      '<td class="grp__name">' + fixedText(group.name, primary) + '</td>' +
+      '<td class="grp__count">' + countText + '</td>' +
+      '<td class="managers"><span class="one-line">' + escapeHtml(managerText) + '</span></td>' +
+      '<td class="owners"></td>' +
+      '<td class="grp__status center">' + '<span class="chip" style="color: ' + tint.text + '; background: ' + tint.bg + '">' + fixedText(status ?? "暂无任务", primary) + '</span></td>' +
+      '<td class="num center">' + dateText(dateRange.start) + '</td>' +
+      '<td class="num center">' + dateText(dateRange.due) + '</td>' +
+      '<td class="num center"></td>' +
+      '<td class="grp__progress-cell">' + '<span class="grp__progress">' + barHtml(pct, fill, "bar--grp") + '<span>' + (group.total === 0 ? "—" : String(pct) + "%") + '</span></span></td>' +
+      '</tr>' +
+      '</tbody>'
+    );
+  }
   const rows = group.tasks
     .map((task) => {
       counter.value += 1;
       return taskRowHtml(counter.value, task, managerText, translationMap, primary);
     })
     .join("");
-  const countText =
-    String(group.done) + " / " + String(group.total) + " " + escapeHtml(localizedValue("完成", primary)) + " · " +
-    (primary === "zh" ? secondaryText("completed", "en") : secondaryText("完成", "zh"));
   return (
-    `<tbody class="grp">` +
-    `<tr class="grp__head"><td colspan="10">` +
-    `<span class="grp__name">${fixedText(group.name, primary)}</span>` +
-    `<span class="grp__count">${countText}</span>` +
-    `</td></tr>` +
+    '<tbody class="grp">' +
+    '<tr class="grp__head"><td colspan="10">' +
+    '<span class="grp__name">' + fixedText(group.name, primary) + '</span>' +
+    '<span class="grp__count">' + countText + '</span>' +
+    '</td></tr>' +
     rows +
-    `</tbody>`
+    '</tbody>'
   );
 }
 
@@ -377,6 +444,19 @@ const REPORT_STYLE = `
   tbody.grp tr.grp__head td { padding: 3px 7px; background: #f4f4f5; border-bottom: 1px solid #e4e4e7; break-after: avoid; }
   .grp__name { font-size: 10px; font-weight: 700; }
   .grp__count { margin-left: 6px; font-size: 9px; color: #71717a; }
+  tbody.grp tr.grp__head--collapsed td { padding: 6px 5px; background: #fafafa; border: 0; border-bottom: 1px solid #e4e4e7; vertical-align: middle; }
+  tbody.grp tr.grp__head--collapsed td:first-child { padding-left: 7px; border-left: 1px solid #e4e4e7; }
+  tbody.grp tr.grp__head--collapsed td:last-child { padding-right: 7px; border-right: 1px solid #e4e4e7; }
+  tbody.grp tr.grp__head--collapsed .grp__status { padding-left: 0; padding-right: 0; }
+  tbody.grp tr.grp__head--collapsed .grp__status .chip { font-size: 8.5px; }
+  tbody.grp tr.grp__head--collapsed .grp__count { margin-left: 0; padding-left: 5px; }
+  tbody.grp tr.grp__head--collapsed .grp__progress { display: flex; justify-content: flex-start; width: 100%; min-width: 0; margin-left: 0; gap: 4px; }
+  tbody.grp tr.grp__head--collapsed .grp__progress .bar { width: 28px; }
+  .grp__meta { display: inline-flex; align-items: baseline; gap: 3px; margin-left: 7px; color: #71717a; font-size: 8.5px; }
+  .grp__meta-label { font-size: 8.5px; }
+  .grp__meta-value { max-width: 120px; color: #3f3f46; font-size: 8.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .grp__progress { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; min-width: 104px; color: #52525b; font-size: 8.5px; font-variant-numeric: tabular-nums; }
+  .grp__progress .bar { width: 72px; height: 4px; }
   .task__title { font-weight: 600; color: #18181b; }
   .task__sub { display: block; margin-top: 1px; font-size: 8.5px; color: #a1a1aa; overflow-wrap: anywhere; }
   .pnote { font-size: 8.5px; color: #52525b; overflow-wrap: anywhere; }
@@ -418,12 +498,12 @@ export function buildOverviewReportHtml(
   input: OverviewExportInput,
   translationMap: ReadonlyMap<string, string> = EMPTY_TRANSLATIONS,
   primary: OverviewExportLanguage = "zh",
+  collapsedStages: readonly string[] = [],
 ): string {
   const { project, tasks, summary } = input;
   const groups = groupedByStage(tasks);
   const counts = countsOf(tasks, summary);
   const stageTextOf = (key: string | null): string => (key === null ? "—" : stageNameOf(key) || "—");
-  const slowest = summary === null ? "—" : summary.total > 0 && summary.slowestStage === null ? "全部完成" : stageTextOf(summary.slowestStage);
   const latest = summary === null ? "—" : stageTextOf(summary.latestStage);
   const translatedName = translationMap.get(project.description) ?? "";
   const heroLabelZh = counts.total === 0 ? "整体进度" : "整体进度（已完成 " + String(counts.done) + " / " + String(counts.total) + "）";
@@ -448,14 +528,15 @@ export function buildOverviewReportHtml(
     statHtml("已延期", String(counts.overdue), shareOf(counts.overdue), "#f43f5e", primary),
   ].join("");
 
-  const stageCells = groups
-    .filter((group) => group.tasks.length > 0 || STAGE_NAMES.includes(group.name))
-    .map((group) => stageCellHtml(group, primary))
-    .join("");
+  const reportGroups = groups.filter((group) => group.tasks.length > 0 || STAGE_NAMES.includes(group.name));
+  const stageCells = reportGroups.map((group) => stageCellHtml(group, primary)).join("");
   const detailGroups = groups.filter((group) => group.tasks.length > 0);
   const counter = { value: 0 };
   const managerText = projectManagerText(project);
-  const detailRows = detailGroups.map((group) => groupSectionHtml(counter, group, managerText, translationMap, primary)).join("");
+  const collapsed = new Set(collapsedStages);
+  const detailRows = detailGroups
+    .map((group) => groupSectionHtml(counter, group, managerText, translationMap, primary, collapsed.has(group.name)))
+    .join("");
   const fetchedCount = String(tasks.length);
   let clippedNote = "";
   if (counts.total > tasks.length) {
@@ -511,27 +592,23 @@ export function buildOverviewReportHtml(
     ${detailRows}
   </table>`;
 
-  const slowestLabel = fixedText("最慢阶段", primary);
   const latestLabel = fixedText("最新阶段", primary);
+  const projectNameTarget = translatedName === "" ? project.description : translatedName;
   const heroNameZh = project.description + " · 进度报告";
-  const heroNameTarget = translatedName === "" ? "" : translatedName + " · " + localizedValue("进度报告", primary);
-  const heroNameEn = translatedName === "" ? "" : translatedName + " · Progress Report";
-  let heroNameHtml = escapeHtml(heroNameZh) + (heroNameEn === "" ? "" : " " + secondaryText(heroNameEn, "en"));
+  const heroNameEn = projectNameTarget + " · Progress Report";
+  const heroNameTarget = projectNameTarget + " · " + localizedValue("进度报告", primary);
+  let heroNameHtml = escapeHtml(heroNameZh) + " " + secondaryText(heroNameEn, "en");
   if (primary === "en") {
-    heroNameHtml = heroNameEn === "" ? escapeHtml(heroNameZh) : escapeHtml(heroNameEn) + " " + secondaryText(heroNameZh, "zh");
+    heroNameHtml = escapeHtml(heroNameEn) + " " + secondaryText(heroNameZh, "zh");
   } else if (primary === "ja" || primary === "ko") {
-    heroNameHtml = heroNameTarget === "" ? escapeHtml(heroNameZh) : escapeHtml(heroNameTarget) + " " + secondaryText(heroNameZh, "zh");
+    heroNameHtml = escapeHtml(heroNameTarget) + " " + secondaryText(heroNameZh, "zh");
   }
   const reportName = localizedValue("项目进度报告", primary);
   let docTitle = project.description + " · 项目进度报告 Project Progress Report";
   if (primary === "en") {
-    docTitle = translatedName === ""
-      ? project.description + " · 项目进度报告 Project Progress Report"
-      : translatedName + " · Project Progress Report / " + project.description + " · 项目进度报告";
+    docTitle = projectNameTarget + " · Project Progress Report / " + project.description + " · 项目进度报告";
   } else if (primary === "ja" || primary === "ko") {
-    docTitle = translatedName === ""
-      ? project.description + " · " + reportName + " / " + project.description + " · 项目进度报告"
-      : translatedName + " · " + reportName + " / " + project.description + " · 项目进度报告";
+    docTitle = projectNameTarget + " · " + reportName + " / " + project.description + " · 项目进度报告";
   }
   const taskCount = String(counts.total);
   const taskTotalMain = primary === "zh"
@@ -541,7 +618,6 @@ export function buildOverviewReportHtml(
       : primary === "ja" ? "タスク合計: " + taskCount + " 件" : "총 작업 " + taskCount + "개";
   const taskTotalSecondary = "共 " + taskCount + " 条";
   const tasksTotalHtml = escapeHtml(taskTotalMain) + " · " + secondaryText(primary === "zh" ? "tasks in total" : taskTotalSecondary, primary === "zh" ? "en" : "zh") + clippedNote;
-
   return `<!doctype html>
 <html lang="${languageAttr(primary)}" data-primary-language="${primary}">
 <head>
@@ -559,7 +635,7 @@ export function buildOverviewReportHtml(
       <p class="hero__pct">${String(counts.pct)}<span>%</span></p>
       <p class="hero__label">${heroLabelHtml}</p>
       ${barHtml(counts.pct, "#18181b", "bar--hero")}
-      <p class="hero__foot">${slowestLabel}${labelColon(primary)}${fixedText(slowest, primary)}<br />${latestLabel}${labelColon(primary)}${fixedText(latest, primary)}</p>
+      <p class="hero__foot">${latestLabel}${labelColon(primary)}${fixedText(latest, primary)}</p>
     </div>
     <div class="hero__left">
       <h1 class="hero__name">${heroNameHtml}</h1>
@@ -587,22 +663,54 @@ export function buildOverviewReportHtml(
 }
 
 /**
+ * 预览专用报告：内容与正式导出完全同源，仅额外注入屏幕分页样式与运行时。
+ * 运行时按 A4 横版打印内容区拆页、重复任务表头，并回传当前页码 / 总页数。
+ */
+export function buildOverviewPreviewHtml(
+  input: OverviewExportInput,
+  translationMap: ReadonlyMap<string, string>,
+  primary: OverviewExportLanguage,
+  collapsedStages: readonly string[] = [],
+): string {
+  return buildOverviewReportHtml(input, translationMap, primary, collapsedStages)
+    .replace("</head>", `<style>${overviewPreviewPagedCss}</style></head>`)
+    .replace("</body>", `<script data-overview-preview-runtime="" src="${escapeHtml(new URL(overviewPreviewPagedScriptUrl, window.location.origin).href)}"></script></body>`);
+}
+
+/**
+ * 预览与正式导出共用同一份译文请求（主体语言 / 折叠阶段变了也保持一致）：
+ * 中文、英文主体取英文；日文、韩文主体取对应语言。折叠阶段的任务不进请求。
+ */
+export function overviewExportTranslationRequest(
+  input: OverviewExportInput,
+  options: OverviewExportOptions,
+): { target: TranslationTarget; texts: string[] } {
+  const { primary, collapsedStages } = options;
+  const target: TranslationTarget = primary === "ja" ? "ja" : primary === "ko" ? "ko" : "en";
+  const collapsed = new Set(collapsedStages);
+  const visibleTasks = input.tasks.filter((task) => !collapsed.has(task.stage === "" ? "临时任务" : task.stage));
+  const texts = target === "en"
+    ? [input.project.description, ...visibleTasks.map((task) => task.note)]
+    : [input.project.description, ...visibleTasks.flatMap((task) => [task.title, task.note])];
+  return { target, texts };
+}
+
+/**
  * 导出项目总览为 PDF：中文 / 英文主体沿用英文译文口径；日文 / 韩文主体额外翻译项目名、任务名与进展描述。
+ * 逐阶段折叠：只为未折叠阶段的任务名 / 进展描述发起翻译；默认全部展开时沿用原全量翻译口径。
  * 译文命中会话缓存 / 服务端译文库即取，未预热条目才现场翻；通道不通静默回退中文，不阻断导出。
  * 报告 HTML 送进离屏 iframe 后唤起系统打印窗口（用户选「另存为 PDF」）。
  * onTranslateProgress(done, total)：译文进度回调（导出等待浮层显示「报告内容翻译中 + 预计秒数」）。
  */
 export async function exportProjectOverviewPdf(
   input: OverviewExportInput,
-  primary: OverviewExportLanguage = "zh",
+  options: OverviewExportOptions = DEFAULT_OVERVIEW_EXPORT_OPTIONS,
   onTranslateProgress?: (done: number, total: number) => void,
 ): Promise<void> {
-  const target = primary === "ja" ? "ja" : primary === "ko" ? "ko" : "en";
-  const texts = target === "en"
-    ? [input.project.description, ...input.tasks.map((task) => task.note)]
-    : [input.project.description, ...input.tasks.flatMap((task) => [task.title, task.note])];
+  const { primary, collapsedStages } = options;
+  const { target, texts } = overviewExportTranslationRequest(input, options);
   const translationMap = await translateZhTo(texts, target, onTranslateProgress);
-  printHtmlDocument(buildOverviewReportHtml(input, translationMap, primary));
+  printHtmlDocument(buildOverviewReportHtml(input, translationMap, primary, collapsedStages));
 }
 
 /** 把报告文档送进离屏 iframe 并唤起打印（iframe 方案不会被弹窗拦截，也不动站内 DOM / 样式）。 */

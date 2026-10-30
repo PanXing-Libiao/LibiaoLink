@@ -34,8 +34,8 @@ export const EMPTY_LIST_QUERY: ListQueryState = {
 /** 占位页（Push 230 起只剩「任务模板」）：「我的任务」已转正式页面 frontend/src/WorkspacePage.tsx。 */
 export type PlaceholderPage = "templates";
 
-/** 项目详情页顶部标签（6 视图，Push 82 / 128 / 145 / 221）在地址里的取值：`#/project/{id}?view=`。缺省「项目总览」不落参数（默认值不进 URL，与列表筛选态同一口径）。 */
-export type ProjectView = "overview" | "gantt" | "owners" | "progress" | "daily" | "stakeholders";
+/** 项目详情页顶部标签（7 视图；2026-10-29 新增「项目文件」）在地址里的取值：`#/project/{id}?view=`。缺省「项目总览」不落参数（默认值不进 URL，与列表筛选态同一口径）。 */
+export type ProjectView = "overview" | "gantt" | "owners" | "progress" | "daily" | "stakeholders" | "files";
 
 /**
  * 「日报及问题」的四块页内子视图（Push 214）在地址里的取值：`#/project/{id}?view=daily&sub=`。
@@ -87,35 +87,29 @@ export type AuditQueryState = {
 export const EMPTY_AUDIT_QUERY: AuditQueryState = { keyword: null, actorIds: [], actions: [], objectTypes: [], results: [], projectIds: [], from: null, to: null, page: 1 };
 
 /**
- * 「文件库」页（#/files · Push 261 · 头像菜单「文件库」入口）两栏在地址里的取值：`?tab=`。
- * 取值 = current（系统现有文件，缺省，不落参数）/ recycled（回收站）；与「日报及问题」`?sub=` 同一口径：
- * 缺省不落参数、不认识 / 空值回落 current。
+ * 「回收站」页（#/files · 头像菜单「回收站」入口）两栏在地址里的取值：`?tab=`。
+ * 取值 = recycled（文件回收站，缺省，不落参数）/ project-recycled（项目回收站）；与「日报及问题」`?sub=` 同一口径：
+ * 缺省不落参数，旧 `tab=current` 与不认识 / 空值一律回落文件回收站。
  */
-export type FilesTab = "current" | "recycled" | "project-recycled";
+export type FilesTab = "recycled" | "project-recycled";
 
 /**
- * 「文件库」页筛选态（Push 261 · 与首页列表 / 操作记录同一口径：地址即状态，可分享 / 可收藏 / 刷新不丢）：
- * 关键字 q（文件名，长度兜底 200）/ 项目 project=<id>[,<id>…]（**多选**：逗号分隔、去重保序，2026-10-09 追订）/
- * 状态 status=<k>[,<k>…]（**多选**；draft / final / changed / archived，只在「系统现有文件」栏有意义 ——
- * 文件回收站固定 recycled、项目回收站固定 filter[recycled]=true，该参数不落地址）/
- * 上传人 uploadedBy=<id>[,<id>…]（**多选**：逗号分隔、去重保序，2026-10-09 追订「别的筛选也是同理 要支持多选」）/
- * 页码 page；缺省（current 栏 + 无筛选 + 第 1 页）不落参数。
- *【2026-10-09 追订】类型 docType 参数整条撤除（业务口径「文件类型不需要 因为没有明确的绑定机制」—— 库内文件
- * 没有类型绑定点、列与筛选恒空；任务侧的「输出成果文件」是任务字段，不受影响）。
+ * 「回收站」页筛选态（与首页列表 / 操作记录同一口径：地址即状态，可分享 / 可收藏 / 刷新不丢）：
+ * 关键字 q（文件名，长度兜底 200）/ 项目 project=<id>[,<id>…]（**多选**：逗号分隔、去重保序）/
+ * 上传人 uploadedBy=<id>[,<id>…]（**多选**：逗号分隔、去重保序）/ 页码 page；
+ * 缺省（文件回收站 + 无筛选 + 第 1 页）不落参数。文件回收站自身状态恒为 recycled，原文件状态筛选已下线。
  */
 export type FilesQueryState = {
   tab: FilesTab;
   keyword: string | null;
   /** 多选项目 id（空数组 = 全部项目；地址里逗号分隔）。 */
   projectIds: string[];
-  /** 多选状态（空数组 = 全部状态；地址里逗号分隔）。 */
-  statuses: string[];
   /** 多选上传人 id（空数组 = 全部上传人；地址里逗号分隔）。 */
   uploaderIds: string[];
   page: number;
 };
 
-export const EMPTY_FILES_QUERY: FilesQueryState = { tab: "current", keyword: null, projectIds: [], statuses: [], uploaderIds: [], page: 1 };
+export const EMPTY_FILES_QUERY: FilesQueryState = { tab: "recycled", keyword: null, projectIds: [], uploaderIds: [], page: 1 };
 
 export type ProjectFocus =
   | { kind: "task"; id: string }
@@ -155,7 +149,7 @@ export const WORKSPACE_BASE_HASH = "#/my-tasks";
 /** 「操作记录」页地址（头像菜单「操作记录」入口；筛选态走 query，缺省不落参数）。 */
 export const AUDIT_BASE_HASH = "#/audit";
 
-/** 「文件库」页地址（头像菜单「文件库」入口；系统现有文件 / 文件回收站 / 项目回收站三栏 + 筛选态走 query）—— Push 261。 */
+/** 「回收站」页地址（头像菜单「回收站」入口；文件回收站 / 项目回收站两栏 + 筛选态走 query）—— Push 261 / 2026-10-29。 */
 export const FILES_BASE_HASH = "#/files";
 
 /** 「权限管理」页地址（头像菜单入口 · 2026-10-23）：按 Casdoor 群组配置页面与项目范围。 */
@@ -297,7 +291,7 @@ function parseHubView(search: string): HubView | null {
 }
 
 /** 项目详情标签的合法取值（顺序与标签栏一致）。 */
-const PROJECT_VIEW_KEYS: readonly ProjectView[] = ["overview", "gantt", "owners", "progress", "daily", "stakeholders"];
+const PROJECT_VIEW_KEYS: readonly ProjectView[] = ["overview", "gantt", "owners", "progress", "daily", "stakeholders", "files"];
 
 /** 项目详情标签参数（`?view=`）：只认 `PROJECT_VIEW_KEYS`，不认识的取值 / 重复键一律落回「项目总览」。 */
 function parseProjectView(search: string): ProjectView {
@@ -640,8 +634,8 @@ export function parseHash(hash: string): Route {
     return { kind: "audit", query: parseAuditQuery(search) };
   }
   if (path === "/files") {
-    // 文件库（Push 261 · 头像菜单「文件库」入口）：两栏（系统现有文件 / 回收站）+ 关键字 / 项目 / 状态 / 上传人筛选，
-    // 地址即状态（?tab=recycled&q=..&project=..&status=..&uploadedBy=..&page=N；缺省不落参数）；
+    // 回收站（Push 261 · 头像菜单「回收站」入口）：两栏（文件回收站 / 项目回收站）+ 关键字 / 项目 / 上传人筛选，
+    // 地址即状态（缺省 = 文件回收站；?tab=project-recycled&q=..&project=..&uploadedBy=..&page=N；缺省参数不落地址）；
     // 页面 = frontend/src/FileLibraryPage.tsx，数据 = 逐项目聚合 GET /projects/{id}/files（fileApi.fetchProjectFileLibrary）。
     return { kind: "files", query: parseFilesQuery(search) };
   }
@@ -777,14 +771,10 @@ export function replaceAuditQuery(query: AuditQueryState): void {
   }
 }
 
-/** 「文件库」页状态筛选白名单（四档在库状态；文件回收站固定 filter[status]=recycled，项目回收站不吃该参数）。 */
-const FILES_STATUS_KEYS: readonly string[] = ["draft", "final", "changed", "archived"];
-
 /**
- * 解析「文件库」页的 query 串（tab=project-recycled&q=图纸&project=<id>[,<id>…]&status=draft,final&uploadedBy=<id>[,<id>…]&page=2）。
- * tab=recycled 兼容为「文件回收站」，tab=project-recycled =「项目回收站」；id / 关键字 / 枚举的兜底复用操作记录页同一套
- * （trim + 长度兜底 200 / 白名单）；逗号多值逐个校验、去重保序，不认识的值一律丢弃不报错；
- * status 只在 current 栏解析（两个回收站栏恒空，地址里也不落）。
+ * 解析「回收站」页的 query 串（tab=project-recycled&q=图纸&project=<id>[,<id>…]&uploadedBy=<id>[,<id>…]&page=2）。
+ * tab=project-recycled =「项目回收站」，其余 / 缺省一律 =「文件回收站」；id / 关键字兜底复用操作记录页同一套
+ * （trim + 长度兜底 200）；逗号多值逐个校验、去重保序，不认识的值一律丢弃不报错。
  */
 export function parseFilesQuery(search: string): FilesQueryState {
   const params = new Map<string, string>();
@@ -798,15 +788,12 @@ export function parseFilesQuery(search: string): FilesQueryState {
       params.set(key, safeDecode(separator === -1 ? "" : chunk.slice(separator + 1)));
     }
   }
-  const tabParam = params.get("tab");
-  const tab: FilesTab =
-    tabParam === "project-recycled" ? "project-recycled" : tabParam === "recycled" ? "recycled" : "current";
+  const tab: FilesTab = params.get("tab") === "project-recycled" ? "project-recycled" : "recycled";
   const pageRaw = Number(params.get("page") ?? "");
   return {
     tab,
     keyword: parseAuditKeyword(params.get("q") ?? null),
     projectIds: parseAuditIdList(params.get("project") ?? null),
-    statuses: tab === "current" ? parseAuditEnumList(params.get("status") ?? null, FILES_STATUS_KEYS) : [],
     uploaderIds: parseAuditIdList(params.get("uploadedBy") ?? null),
     page: Number.isInteger(pageRaw) && pageRaw >= 1 ? pageRaw : 1,
   };
@@ -842,11 +829,11 @@ function parseAuditIdList(raw: string | null): string[] {
   return out;
 }
 
-/** 「文件库」页地址（多选参数逗号分隔、去重保序）：缺省（current 栏 + 无筛选 + 第 1 页）不落参数；
- *  参数固定序 tab → q → project → status → uploadedBy → page。 */
+/** 「回收站」页地址（多选参数逗号分隔、去重保序）：缺省（文件回收站 + 无筛选 + 第 1 页）不落参数；
+ *  参数固定序 tab → q → project → uploadedBy → page。 */
 export function buildFilesHash(query: FilesQueryState): string {
   const parts: string[] = [];
-  if (query.tab !== "current") {
+  if (query.tab !== "recycled") {
     parts.push("tab=" + query.tab);
   }
   if (query.keyword !== null) {
@@ -854,9 +841,6 @@ export function buildFilesHash(query: FilesQueryState): string {
   }
   if (query.projectIds.length > 0) {
     parts.push("project=" + query.projectIds.map((id) => encodeURIComponent(id)).join(","));
-  }
-  if (query.tab === "current" && query.statuses.length > 0) {
-    parts.push("status=" + query.statuses.map((status) => encodeURIComponent(status)).join(","));
   }
   if (query.uploaderIds.length > 0) {
     parts.push("uploadedBy=" + query.uploaderIds.map((id) => encodeURIComponent(id)).join(","));
