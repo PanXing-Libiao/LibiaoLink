@@ -97,6 +97,8 @@ export function strokeSegmentsForRepresentation(representation, toWorld, skipVer
   }
   const all = [];
   for (let i = 0; i < segments.length; i += 2) all.push([segments[i], segments[i + 1]]);
-  all.push(...points);
+  // Pattern expansion is budgeted at hundreds of thousands of points; spreading
+  // them into push() would overflow the JS stack, so copy element-wise.
+  for (let i = 0; i < points.length; i++) all.push(points[i]);
   return {segments, points, bbox:boundsOf(all)};
 }

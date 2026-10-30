@@ -486,12 +486,12 @@
     "drawing-instances.js": "a44de5a9cac9c46a86a8469f23d1d1bc5873a97f2b98fee8098b1232b5b07c50",
     "drawing-layout.js": "9a611425b8d5151225a8bf06cc9b4b950ec8d1ba138be31cf627c14c5d5ab68b",
     "drawing-media.js": "3b9558eb5ee8dc3031f6b6c823b65c1ef58f3d4cfc676a477798bb6f10ed6a27",
-    "drawing-pattern.js": "e3c9ef806f1b54e3ea0cedf503451be45a6e575e2502d57e6f8010adbca91fa0",
+    "drawing-pattern.js": "4f0aa4a0b4f6bc0d7cb0dfe477de687fa4f87d4d603db30b63c8c3e2e3c5b5b2",
     "drawing-plot-styles.js": "a2c3888311ccdaac04b38f108ab7175cd171a43f0fb82fdb9356e9431819b243",
     "drawing-projection.js": "0a501669718907a7422ba6f6a803bbfaee5e3d7d2c4393ba816710c3a3313363",
     "drawing-text-avoidance.js": "2e65f43a90f24b6a669325a3bc7687d0d1f93f22610ba937d9b8c2ae2b3e5001",
     "drawing-text.js": "1cc508f97d4d196842167e7d79b1ec50493bbff0756e89b002a58c933d02141c",
-    "drawing-viewer.js": "1c2df36f9a6ae453133ef74a6297133d738fa806199a8b459db19d3a9ce03579",
+    "drawing-viewer.js": "367067542ae32e7db92fed16dea94999c094bc4389f7302de0b10cdee1bd2cd9",
     "dwg-packed-transport.js": "7ca25caedff71fb3102f9a67489d5f1eb0b03cc250351be027abe73648279045",
     "dxf-resources.js": "219569569cc22deca979ec3f6693031bfbfe050c30eb8fe419962f4e3dab5c2c",
     "highlight.js": "31754dabcf90e0c71a67123e7e03f9e39614f02021fdd35d18b61e688c734099",
@@ -538,8 +538,8 @@
     "DWG": "dwg-0.1.0/ecb5f9278c29d51729f81eb9432a43abba5f9e966c00bc67b6fcbac8b30cfcd1/gateway-1"
   },
   "engineDigest": "fd2f6e0cfe7ffd90b9ef2866b6c9e4b8f664201f812d388bdd5412439b3d7797",
-  "viewerDigest": "0592b044ddedbf946969279175adc95856977087cee7e2f52ec8ef0c4ea7f786",
-  "releaseDigest": "925f94b2d78bdbf5fa79797a7d1f4664bf31183b75c99aa4b41b147f30137941",
+  "viewerDigest": "256914dc83dde59f58c409829f668785f64bd396e5d138c7d37e22d472fb7360",
+  "releaseDigest": "f6ef6c355fa83f949ad6fe4b63aa5bae391262f265ae7fab033c2d8aa10cb0f9",
   "engineVersion": "step-0.3.3/fd2f6e0cfe7ffd90b9ef2866b6c9e4b8f664201f812d388bdd5412439b3d7797/gateway-1",
-  "viewerVersion": "viewer-0592b044ddedbf946969279175adc95856977087cee7e2f52ec8ef0c4ea7f786"
+  "viewerVersion": "viewer-256914dc83dde59f58c409829f668785f64bd396e5d138c7d37e22d472fb7360"
 }

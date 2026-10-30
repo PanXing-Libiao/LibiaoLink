@@ -625,7 +625,10 @@ export function mountDrawingViewer(envelope) {
             continue;
           }
           if (patternHatch) rec.dash = [];
-          segments.push(...stroke.segments);
+          // Spread into push() allocates one argument per element and overflows
+          // the JS stack once a single entity carries tens of thousands of
+          // display segments; copy element-wise instead.
+          for (let i = 0; i < stroke.segments.length; i++) segments.push(stroke.segments[i]);
           if (stroke.points.length) {
             const p = stroke.points[0];
             rec.pointMark = {x: p[0], y: p[1]}; pointMarks.push(rec.pointMark);
