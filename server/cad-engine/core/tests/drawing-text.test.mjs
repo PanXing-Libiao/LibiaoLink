@@ -38,14 +38,14 @@ test('rotation follows the annotation direction and keeps the box in world space
   assert.ok(Math.abs(run.box.maxY - 22.5) < 1e-9);
 });
 
-test('native CAD layout applies cadTextEm, line spacing, wrapping and em box height', () => {
+test('native CAD layout uses the stored height as em with line spacing and wrapping', () => {
   const native = layoutAnnotationText(annotation({
     text:'ABCD EFGH', semantic:{height:{value:2.5}, lineSpacing:{value:1}, rectangleWidth:{value:10},
       halign:{value:0}, valign:{value:0}, attachmentPoint:{value:1}}
   }), draw(), {measure, nativeLayout:true}).run;
   assert.equal(native.nativeLayout, true);
   assert.equal(native.layout, 'cad-em');
-  assert.ok(Math.abs(native.size - 2.5 * 4 / 3) < 1e-12);
+  assert.ok(Math.abs(native.size - 2.5) < 1e-12);
   assert.ok(Math.abs(native.lineHeight - 2.5 * 5 / 3) < 1e-12);
   assert.deepEqual(native.lines, ['ABCD','EFGH']);
   assert.ok(Math.abs(native.width - 4 * 50 * native.size / 100) < 1e-12);
@@ -60,7 +60,7 @@ test('native multi-line text keeps one-line metrics instead of multiplying by li
     text:'AB\nCD\nEF', semantic:{height:{value:2.5}, lineSpacing:{value:1}, rectangleWidth:{value:10},
       halign:{value:0}, valign:{value:0}, attachmentPoint:{value:1}}
   }), draw(), {measure, nativeLayout:true}).run;
-  assert.equal(native.size, 2.5 * 4 / 3);
+  assert.equal(native.size, 2.5);
   assert.equal(native.lineHeight, 2.5 * 5 / 3);
   assert.deepEqual(native.lines, ['AB','CD','EF']);
   assert.ok(Math.abs(native.height - native.size) < 1e-12);

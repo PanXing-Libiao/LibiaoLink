@@ -2,7 +2,7 @@
 // parts when it can produce them; this module owns the raw-annotation fallback
 // used by both the ordinary and retained projections. It is pure apart from the
 // caller-supplied Canvas font metric callback.
-import {wrapCadText, cadTextTokens, cadTextEm, cadLineHeight} from './vendor/cad-text-layout.js';
+import {wrapCadText, cadTextTokens, cadLineHeight} from './vendor/cad-text-layout.js';
 
 export const TEXT_FONT = '"Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif';
 
@@ -153,7 +153,11 @@ export function layoutTextRun(input) {
     // multi-line box height here would multiply em and line advance by the
     // source line count, so wrapped notes grow every time they gain a line.
     const capHeight = Number(input.height);
-    run.size = cadTextEm(capHeight);
+    // The reference DWG viewer sizes TrueType text so the glyph em equals the
+    // stored text height. The ACadSharp SvgTextLayout port's 4/3 cap-height
+    // conversion made every note a third taller and wider than the reference,
+    // which wrapped notes early and grew their blocks past the source rectangle.
+    run.size = capHeight;
     run.lineHeight = cadLineHeight(capHeight, input.lineSpacing ?? 1);
     // The reference viewer (DWG FastView) fits about 40% more characters per
     // line than the stored rectangle; the wrap budget carries that tolerance so

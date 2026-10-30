@@ -53,7 +53,7 @@ test('inline runs wrap on CAD tokens instead of splitting English words', () => 
   const run = layoutTextRun({
     text: '', runs: [{text: 'All power lines', fontFamily: 'LAT'}],
     kind: 'mtext', x: 0, y: 0, angle: 0, height: 100, measure,
-    nativeLayout: true, rectangleWidth: 150, matrixScale: 1
+    nativeLayout: true, rectangleWidth: 100, matrixScale: 1
   });
   assert.deepEqual(run.lines.map(line => line.trim()), ['All power', 'lines']);
 });
@@ -62,11 +62,11 @@ test('wrap tolerance fits lines the source rectangle would break', () => {
   const measure = text => text.length * 10;
   const strict = layoutTextRun({
     text: 'All power lines', kind: 'mtext', x: 0, y: 0, angle: 0, height: 100, measure,
-    nativeLayout: true, rectangleWidth: 180, matrixScale: 1
+    nativeLayout: true, rectangleWidth: 120, matrixScale: 1
   });
   const relaxed = layoutTextRun({
     text: 'All power lines', kind: 'mtext', x: 0, y: 0, angle: 0, height: 100, measure,
-    nativeLayout: true, rectangleWidth: 180, matrixScale: 1, wrapTolerance: 1.4
+    nativeLayout: true, rectangleWidth: 120, matrixScale: 1, wrapTolerance: 1.4
   });
   assert.equal(strict.lines.length, 2);
   assert.equal(relaxed.lines.length, 1);
@@ -76,14 +76,14 @@ test('style width factor narrows advances and widens the wrap budget', () => {
   const measure = text => text.length * 10;
   const wide = layoutTextRun({
     text: 'All power lines', kind: 'mtext', x: 0, y: 0, angle: 0, height: 100, measure,
-    nativeLayout: true, rectangleWidth: 180, matrixScale: 1
+    nativeLayout: true, rectangleWidth: 120, matrixScale: 1
   });
   const narrow = layoutTextRun({
     text: 'All power lines', kind: 'mtext', x: 0, y: 0, angle: 0, height: 100, measure,
-    nativeLayout: true, rectangleWidth: 180, matrixScale: 1, widthFactor: 0.8
+    nativeLayout: true, rectangleWidth: 120, matrixScale: 1, widthFactor: 0.8
   });
   assert.equal(narrow.widthFactor, 0.8);
-  assert.equal(Math.round(narrow.width), 160);
+  assert.equal(Math.round(narrow.width), 120);
   assert.equal(wide.lines.length, 2);
   assert.equal(narrow.lines.length, 1);
 });
