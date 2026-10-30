@@ -28,7 +28,7 @@
     "unified/compact_transport.py": "4c1a09e511b863a20295c63f553c8c067e8e2b51d9cd103178325f2b62418bd3",
     "unified/conversion_jobs.py": "6b2c2f33a75a2adfd72f66d7215035648b5a85c19498b22280c9a372139a8e99",
     "unified/dwg-reader.json": "80327cfad2181ed90eef19fc78e9db65c94ca9a39a74bb4b0bde96b582d16fdc",
-    "unified/dwg_adapter.py": "b9544b6a55d7d2bb2ea447b4654dacfdb0c1a466cb4b37e0605a009447271136",
+    "unified/dwg_adapter.py": "be591313612304f4311d3991ad7a22f25b7d49c865058ebb0a5fcb30127d9496",
     "unified/dwg_pack.py": "80f95f01219677f16990ab094c5be65c89fad38eba40cd1b95dfbe26d7438bbe",
     "unified/dxf_adapter.py": "600bb35351ed1133dada431e35e7702291753b13a4166827cf0c6caf332c08b3",
     "unified/dxf_annotations.py": "f0835f4f8e5a947b1fc6732dae7721cbd4b3d56cc0354ae4d5abf284440297d5",
@@ -476,15 +476,15 @@
     "drawing-2d.js": "25a6dca759f304976752e6d2ca4d17667d7e934348435425e28d960a8591ed83",
     "drawing-clipping.js": "2c7437a8ca77ee40da95e2be1290d01641bd36f2c58e627631ab54d3841f1469",
     "drawing-display.js": "349e32fb91e7fc55bf1309eecc229a6d44f733a58de5e4c446749a2bacfaf937",
-    "drawing-instances.js": "0557c596fc92e519ab31e3ec107cc3f8696bf6e0b69d237faffee5125f661840",
+    "drawing-instances.js": "1e3e476fd2f9f73da692aecf0b0c0327d0d9db301fa309ba50de6f4d120ce20b",
     "drawing-layout.js": "9a611425b8d5151225a8bf06cc9b4b950ec8d1ba138be31cf627c14c5d5ab68b",
     "drawing-media.js": "3b9558eb5ee8dc3031f6b6c823b65c1ef58f3d4cfc676a477798bb6f10ed6a27",
-    "drawing-pattern.js": "697b993b210b16d24b195babecef1a95d8eac6b96c585fb1a490ac6c83b2ef56",
+    "drawing-pattern.js": "e3c9ef806f1b54e3ea0cedf503451be45a6e575e2502d57e6f8010adbca91fa0",
     "drawing-plot-styles.js": "a2c3888311ccdaac04b38f108ab7175cd171a43f0fb82fdb9356e9431819b243",
     "drawing-projection.js": "0a501669718907a7422ba6f6a803bbfaee5e3d7d2c4393ba816710c3a3313363",
     "drawing-text-avoidance.js": "2e65f43a90f24b6a669325a3bc7687d0d1f93f22610ba937d9b8c2ae2b3e5001",
-    "drawing-text.js": "88817695fd93cf5e1648a10e59a20e5d42c59b91c5d4bd46e698c5561554bb8e",
-    "drawing-viewer.js": "e6b70f0cede23c63a863dc270e0959cb7bf1a3414498120fc3429b84ee612fb2",
+    "drawing-text.js": "e9e2c6762795e337a818cb6f07b17e49c1135eeb7b8aa1d0fda2462c3b02a03c",
+    "drawing-viewer.js": "c571463a0c647517b037f370a65a54d2761a9ecb75dd82714b67e5e99beb13c8",
     "dwg-packed-transport.js": "7ca25caedff71fb3102f9a67489d5f1eb0b03cc250351be027abe73648279045",
     "dxf-resources.js": "219569569cc22deca979ec3f6693031bfbfe050c30eb8fe419962f4e3dab5c2c",
     "highlight.js": "31754dabcf90e0c71a67123e7e03f9e39614f02021fdd35d18b61e688c734099",
@@ -528,11 +528,11 @@
   "formatVersions": {
     "STEP": "step-0.3.3/eaeb58df0eb2f6e0055dee530b3526e627575a7cbf10b724513b36a3acf0c5f0/gateway-1",
     "DXF": "dxf-0.15.0/de012e08d5bde6c1a4fe169a74db746deead85f11b6658af6cfa6cacbb4de27d/gateway-1",
-    "DWG": "dwg-0.1.0/da44f3c98205ff007d00de6fe3e1be6de2b3b2a7dd47697111517e023d79985a/gateway-1"
+    "DWG": "dwg-0.1.0/7150e0b1abf3017c8106823201aa56e6d739ce451b33933476e60bfad27906ab/gateway-1"
   },
-  "engineDigest": "1667305a92ddef2e880c6b7c6b6f10e2d0e4adf7a523ad8589bc24db62f04bcc",
-  "viewerDigest": "cf6aafa03dd59309e19bd3d7ab42b37742105cefc743ea5e38dc1147a45d8394",
-  "releaseDigest": "8db94edf7b3292cfa84b16fe73a4cb856545d7ff111574fd85df3b27154f166c",
-  "engineVersion": "step-0.3.3/1667305a92ddef2e880c6b7c6b6f10e2d0e4adf7a523ad8589bc24db62f04bcc/gateway-1",
-  "viewerVersion": "viewer-cf6aafa03dd59309e19bd3d7ab42b37742105cefc743ea5e38dc1147a45d8394"
+  "engineDigest": "1448a31c15b7906c01393c8a5857060d394afe80d04ef730ccbb355fbfa366a1",
+  "viewerDigest": "2927694dda235dc2d725a96f5b6bbbf3c90b14a5e40abbf746a6925b63e5676b",
+  "releaseDigest": "b5beea24b4115e327ca839bc1434de46bf3987269b06c30994247f56918c359b",
+  "engineVersion": "step-0.3.3/1448a31c15b7906c01393c8a5857060d394afe80d04ef730ccbb355fbfa366a1/gateway-1",
+  "viewerVersion": "viewer-2927694dda235dc2d725a96f5b6bbbf3c90b14a5e40abbf746a6925b63e5676b"
 }

@@ -72,7 +72,7 @@ export function fillGeometryFor({draw, entity, fillEntry, mode, tolerance,
   return {kind:'rings', rings, bbox:boundsOf(rings.flat())};
 }
 
-export function strokeSegmentsForRepresentation(representation, toWorld) {
+export function strokeSegmentsForRepresentation(representation, toWorld, skipVertices = 0) {
   if (!representation) return null;
   if (typeof toWorld !== 'function') throw new Error('pattern-to-world-required');
   const positions = representation.positions, segments = [], points = [];
@@ -87,7 +87,8 @@ export function strokeSegmentsForRepresentation(representation, toWorld) {
   } else if (representation.topology === 'lines') {
     const range = normalizeLineRange(representation.range, Math.floor(positions.length / 3));
     if (!range) return {segments:[], points:[], bbox:null, invalidRange:true};
-    for (let i = range.first; i + 1 < range.first + range.count; i += 2) add(i, i + 1);
+    const start = range.first + Math.max(0, skipVertices);
+    for (let i = start; i + 1 < range.first + range.count; i += 2) add(i, i + 1);
   } else if (representation.topology === 'points') {
     for (let i = 0; i < positions.length / 3; i++)
       points.push(toWorld([positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]]));

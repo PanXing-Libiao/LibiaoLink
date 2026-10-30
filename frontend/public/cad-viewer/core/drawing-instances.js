@@ -33,6 +33,10 @@ export function fitExtentsCandidate(source,computed,coverage){
 }
 
 export const INSTANCE_DRAW_THRESHOLD=400000;
+// Retained projection keeps one source draw per instance path and no longer
+// applies the ordinary 400k expanded-draw budget. A finite ceiling still keeps
+// pathological block arrays from freezing the viewer while it builds the plan.
+export const INSTANCE_DRAW_LIMIT=2000000;
 export function shouldProjectInstances(target,count,force=false){
  return (target.kind==='model'||target.kind==='layout')&&(force||count>INSTANCE_DRAW_THRESHOLD);
 }

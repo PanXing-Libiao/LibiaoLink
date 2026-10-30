@@ -129,6 +129,42 @@ def region_leaf_pairs(leaf):
     return pairs
 
 
+def trim_spline_origin_pair(row, entity, buffer_bytes):
+    """Drop the ACadSharp periodic-spline origin pair from a paired line row.
+
+    ACadSharp 3.8.30 can evaluate a periodic spline at uStart to XYZ.Zero while
+    the control polygon sits far from the origin. The reader's display writer
+    stores consecutive vertex pairs, so the artifact appears as one bogus first
+    pair (origin -> first real point). The current reader source removes the
+    leading vertex; older engine binaries can still emit the pair, so the adapter
+    trims it here as well. This keys on the spline data shape, never a file name
+    or handle.
+    """
+    geometry = (entity or {}).get('geometry') or {}
+    if geometry.get('type') != 'spline' or row.get('topology') != 'lines':
+        return row
+    offset, count, length = row.get('offset'), row.get('count'), row.get('byteLength')
+    if not isinstance(offset, int) or not isinstance(count, int) or not isinstance(length, int):
+        return row
+    if count < 4 or offset < 0 or offset + 48 > len(buffer_bytes):
+        return row
+    first = struct.unpack_from('<3d', buffer_bytes, offset)
+    second = struct.unpack_from('<3d', buffer_bytes, offset + 24)
+    if max(abs(value) for value in first) > 1e-9:
+        return row
+    if math.hypot(second[0], second[1]) <= 1:
+        return row
+    control = geometry.get('controlPoints') or []
+    if control and abs(control[0][0]) < 1e-6 and abs(control[0][1]) < 1e-6:
+        return row
+    offset += 48
+    count -= 2
+    remaining = struct.unpack_from('<' + 'd' * (count * 3), buffer_bytes, offset)
+    xs, ys, zs = remaining[0::3], remaining[1::3], remaining[2::3]
+    return {**row, 'offset': offset, 'byteLength': length - 48, 'count': count,
+            'min': [min(xs), min(ys), min(zs)], 'max': [max(xs), max(ys), max(zs)]}
+
+
 def assemble_native(folder, original, output, platform=False, binary_dir=None, packed=False):
     started=time.perf_counter()
     def phase(name):print(f'DWG UCD {name}: {time.perf_counter()-started:.3f}s',file=sys.stderr,flush=True)
@@ -203,6 +239,7 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
     bid = 'buffer-0'
     buffer_bytes = bytearray(buffer_path.read_bytes())
     for key,row in displays.items():
+        row = trim_spline_origin_pair(row, drawing['entities'].get(key), buffer_bytes)
         aid, gid = 'a-'+key, 'g-'+key
         doc['accessors'][aid] = {'bufferId':bid, 'byteOffset':row['offset'], 'byteLength':row['byteLength'],
             'component':'f64', 'components':3, 'count':row['count'], 'normalized':False}

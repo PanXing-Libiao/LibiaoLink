@@ -6,9 +6,9 @@ import {projectDrawing, projectBlock} from './drawing-projection.js?v=dxf-0.15.0
 import {clipInfiniteLine, gradientField, triangleBoundarySegments, traceStrokeSegments} from './drawing-2d.js?v=dxf-2d-0.5.0';
 import {drawingClips, compileClips, triangulateRings, insideRing} from './drawing-clipping.js?v=dxf-0.15.0';
 import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.15.0';
-import {estimateDrawingDraws, projectInstances, shouldProjectInstances, recordVisibleBounds, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, I} from './drawing-instances.js';
+import {estimateDrawingDraws, projectInstances, shouldProjectInstances, recordVisibleBounds, INSTANCE_DRAW_LIMIT, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, I} from './drawing-instances.js';
 import Flatbush from './vendor/flatbush.js';
-import {TEXT_FONT, layoutAnnotationText, textOffsets, textWorldCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.15.0';
+import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, textOffsets, textWorldCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.15.0';
 import {resolveTextAvoidance} from './drawing-text-avoidance.js?v=dxf-0.15.0';
 import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentation} from './drawing-pattern.js?v=dxf-0.15.0';
 import {mediaItemFor, rasterRecord} from './drawing-media.js?v=dxf-0.15.0';
@@ -52,6 +52,109 @@ export function mountDrawingViewer(envelope) {
   // ?instances=1 forces the retained-instance path so small fixtures can
   // regression-test layout/presentation/media semantics without a 400k-draw file.
   const nativeTextLayout = !!ucd.extensions?.['org.libiaolink.dwg/1'];
+  // Dimension picture blocks carry their own text; display avoidance must never
+  // move it (that would put a dimension at a neighbour's place and leave its own
+  // spot empty). The reader records every dimension instance; fall back to the
+  // anonymous *D block naming when that table is absent.
+  const dimensionInstances = new Set(Object.keys(ucd.extensions?.['org.libiaolink.dwg/1']?.dimensionSemantics || {}));
+  function inDimensionBlock(draw) {
+    const path = draw.blockPath || [];
+    if (dimensionInstances.size) {
+      for (const step of path) if (dimensionInstances.has(step.instanceId)) return true;
+      return false;
+    }
+    const step = path[0];
+    if (!step) return false;
+    const instance = drawing.blockInstances[step.instanceId];
+    const block = instance && drawing.blocks[instance.definitionId];
+    return !!block && /^\*D/i.test(block.name || '');
+  }
+  // Local font-substitution experiment: honour the source text style / inline
+  // \f name and pick the closest locally available family instead of one stack.
+  const FONT_STACK_CJK = '"SimSun","Noto Serif CJK SC",serif';
+  // Latin-first stacks keep a CJK fallback so mixed runs get Song glyphs from
+  // the browser's per-glyph fallback instead of tofu or a wider system default.
+  const FONT_STACK_LATIN = '"Arial","Liberation Sans","SimSun",sans-serif';
+  function mapFontFamily(name) {
+    if (!name) return null;
+    const n = String(name).toLowerCase();
+    if (/simsun|宋体|song|fangsong|stsong/.test(n)) return FONT_STACK_CJK;
+    if (/simhei|黑体|heiti/.test(n)) return '"SimHei","Noto Sans CJK SC",sans-serif';
+    if (/msyh|yahei|pingfang/.test(n)) return '"Microsoft YaHei","Noto Sans CJK SC",sans-serif';
+    if (/swiss|arial|helvetica/.test(n)) return FONT_STACK_LATIN;
+    if (/times/.test(n)) return '"Times New Roman","Liberation Serif","SimSun",serif';
+    if (/courier/.test(n)) return '"Courier New","Liberation Mono","SimSun",monospace';
+    if (/romans|simplex|txt\.shx|gbcbig|hztxt|\.shx/.test(n)) return FONT_STACK_LATIN;
+    if (/^hy|longfang/.test(n)) return FONT_STACK_CJK;
+    return null;
+  }
+  function styleFontFamilyFor(annotation) {
+    const sem = annotation.semantic || {};
+    let name = (sem.fontFilename && sem.fontFilename.value) || '';
+    if (!name && sem.textStyleId) {
+      const key = String(sem.textStyleId.value || '').replace(/^textstyle-/, '');
+      const styles = (ucd.extensions?.['org.libiaolink.dwg/1']?.fonts) || {};
+      const row = styles[key];
+      if (row && row.Filename) name = row.Filename;
+    }
+    const mapped = mapFontFamily(name);
+    if (mapped) return mapped;
+    const bigFont = (sem.bigFontFilename && sem.bigFontFilename.value) || '';
+    if (bigFont) return FONT_STACK_CJK;
+    const text = (sem.plainText && sem.plainText.value) || annotation.text || '';
+    return /[⺀-鿿豈-﫿＀-￯]/.test(String(text)) ? FONT_STACK_CJK : FONT_STACK_LATIN;
+  }
+  function annotationRuns(annotation) {
+    const defaultFont = styleFontFamilyFor(annotation);
+    const sem = annotation.semantic || {};
+    const raw = (sem.rawText && sem.rawText.value) || '';
+    let runs = null;
+    // Font runs only when the parser reproduces the sanitized plain text; any
+    // control we do not model (e.g. stacking) falls back to the single-font path.
+    if (nativeTextLayout && /\\[fF]/.test(raw) && !/\\[sS][^;]*;/.test(raw)) {
+      const parsed = parseMtextRuns(raw, defaultFont, mapFontFamily);
+      const plain = (sem.plainText && sem.plainText.value) || annotation.text || '';
+      const norm = value => String(value).replace(/\s+/g, '');
+      if (parsed.length && norm(parsed.map(item => item.text).join('')) === norm(plain)) runs = parsed;
+    }
+    return {defaultFont, runs};
+  }
+  function fontFamilyFor(annotation) {
+    const sem = annotation.semantic || {};
+    const raw = (sem.rawText && sem.rawText.value) || '';
+    const inline = /\\f([^|;\\}]+)/.exec(raw);
+    let name = inline ? inline[1] : ((sem.fontFilename && sem.fontFilename.value) || '');
+    if (!name && sem.textStyleId) {
+      const key = String(sem.textStyleId.value || '').replace(/^textstyle-/, '');
+      const styles = (ucd.extensions?.['org.libiaolink.dwg/1']?.fonts) || {};
+      const row = styles[key];
+      if (row && row.Filename) name = row.Filename;
+    }
+    const mapped = mapFontFamily(name);
+    if (mapped) return mapped;
+    const bigFont = (sem.bigFontFilename && sem.bigFontFilename.value) || '';
+    if (bigFont) return FONT_STACK_CJK;
+    const text = (sem.plainText && sem.plainText.value) || annotation.text || '';
+    return /[⺀-鿿豈-﫿＀-￯]/.test(String(text)) ? FONT_STACK_CJK : FONT_STACK_LATIN;
+  }
+  // ACadSharp evaluates some periodic splines at uStart to XYZ.Zero; the reader's
+  // display pairs then start with (0,0) -> real point, painting a giant segment
+  // from the origin. The reader source cleans this up; stale engine binaries can
+  // still emit it, so the viewer drops that first pair when it is clearly bogus.
+  function splineOriginPair(entity, representation) {
+    const geometry = entity && entity.geometry;
+    if (!geometry || geometry.type !== 'spline' || !representation || representation.indices) return false;
+    const pos = representation.positions;
+    if (!pos || pos.length < 6) return false;
+    const near = value => Math.abs(value) < 1e-9;
+    if (!(near(pos[0]) && near(pos[1]) && near(pos[2]))) return false;
+    const control = geometry.controlPoints || [];
+    if (control.length) {
+      const first = control[0];
+      if (Math.abs(first[0]) < 1e-6 && Math.abs(first[1]) < 1e-6) return false;
+    }
+    return Math.hypot(pos[3], pos[4]) > 1;
+  }
   const forceInstances = typeof location !== 'undefined' && new URLSearchParams(location.search).get('instances') === '1';
   let spaceTarget = null, projection = null, built = [], texts = [], pointMarks = [];
   let textAvoidance = true;
@@ -62,6 +165,9 @@ export function mountDrawingViewer(envelope) {
   const selected = new Set();
   let selectedInstance = null, selectedLabel = '', selectedBlockDetails = false;
   let buildScale = 1, drag = null, moved = false, destroyed = false;
+  // Interaction preview: transformed bitmap while panning/zooming.
+  let interacting = false, interactionTimer = 0;
+  let previewCanvas = null, previewView = null, previewValid = false;
   const bufferCache = new Map(), repCache = new Map(), analyticCache = new Map();
   const gradientCache = new Map();
   const rasterCache = new Map();
@@ -329,7 +435,11 @@ export function mountDrawingViewer(envelope) {
     const entries = [], seen = new Set();
     for (const rec of built) {
       const entry = rec.textEntry;
-      if (!entry || seen.has(entry) || !drawVisible(rec)) continue;
+      // Block-internal text (dimension pictures, attributes) keeps its source
+      // position: retained instances share one record, so moving it would move
+      // every copy and can put a dimension at a neighbour's place.
+      if (!entry || seen.has(entry) || !drawVisible(rec)
+        || (rec.draw.blockPath || []).length || inDimensionBlock(rec.draw)) continue;
       seen.add(entry);
       const box = textDisplayBox(entry);
       if (!box) continue;
@@ -479,8 +589,10 @@ export function mountDrawingViewer(envelope) {
         // Pattern strokes already encode their own dashes/dots. Keep them in
         // both display modes; drawing boundary polygons would solid-fill holes.
         if (patternHatch || mode === 'display') {
-          const stroke = strokeSegmentsForRepresentation(representationGeometry(draw.displayRepresentationId),
-            point => apply(draw.localToSpace, point));
+          const representation = representationGeometry(draw.displayRepresentationId);
+          const skip = splineOriginPair(entity, representation) ? 2 : 0;
+          const stroke = strokeSegmentsForRepresentation(representation,
+            point => apply(draw.localToSpace, point), skip);
           if (!stroke) continue;
           if (stroke.invalidRange) {
             if (!warnedDisplayTopologies.has('invalid-lines')) {
@@ -526,10 +638,13 @@ export function mountDrawingViewer(envelope) {
       } else {
         const annotation = drawing.annotations[draw.itemId];
         if (!annotation) continue;
+        const annotationFont = annotationRuns(annotation);
         const layout = layoutAnnotationText(annotation, draw, {
           measure: measureReference,
           nativeLayout: nativeTextLayout,
-          color: rec.color
+          color: rec.color,
+          fontFamily: annotationFont.runs ? annotationFont.defaultFont : fontFamilyFor(annotation),
+          runs: annotationFont.runs
         });
         rec.bbox = { minX: layout.anchor[0], minY: layout.anchor[1],
           maxX: layout.anchor[0], maxY: layout.anchor[1] };
@@ -560,12 +675,19 @@ export function mountDrawingViewer(envelope) {
     function compile(group,matrix){
       if(done.has(group))return;if(active.has(group))throw new Error('cyclic-instance-plan');active.add(group);
       const byId=new Map();for(const rec of group.records){const rows=byId.get(rec.id)||[];rows.push(rec);byId.set(rec.id,rows);}
-      group.bounds=null;group.unbounded=false;group.paint=[];group.hits=[];group.visibleCount=0;group.byKind={entity:0,annotation:0};let batch=null;
+      group.bounds=null;group.unbounded=false;group.paint=[];group.hits=[];group.visibleCount=0;group.byKind={entity:0,annotation:0};
+      // Merge strokes with the same style inside each barrier segment (a barrier
+      // is any non-stroke entry: group, fill, text, raster, clipped record...).
+      // Same-style strokes may then paint in first-appearance order; strokes of
+      // different styles keep their segment order and never cross a barrier.
+      let pending=new Map();
+      const flush=()=>{for(const batch of pending.values())group.paint.push(batch);pending=new Map();};
       for(const entry of group.entries){
         if(entry.kind==='group'){
+          flush();
           compile(entry.group,multiply(matrix,entry.matrix));entry.bounds=transformBounds(entry.group.bounds,entry.matrix);
           group.bounds=union(group.bounds,entry.bounds);group.unbounded=group.unbounded||entry.group.unbounded;
-          group.paint.push(entry);if(entry.bounds)group.hits.push(entry);batch=null;
+          group.paint.push(entry);if(entry.bounds)group.hits.push(entry);
           group.visibleCount+=entry.group.visibleCount;
           for(const kind of ['entity','annotation'])group.byKind[kind]+=entry.group.byKind[kind];
           continue;
@@ -589,11 +711,13 @@ export function mountDrawingViewer(envelope) {
           const opaque=(rec.draw.style.opacity??1)===1;
           if(box&&rec.path&&!rec.fillPath&&!rec.textEntry&&!rec.pointMark&&!rec.infinite&&!rec.raster&&!rec.clipRegion.active&&opaque){
             const key=JSON.stringify([rec.color,rec.width,rec.dash]);
-            if(!batch||batch.key!==key||batch.count>=8192){batch={kind:'stroke',key,path:new Path2D(),color:rec.color,width:rec.width,dash:rec.dash,bounds:null,count:0};group.paint.push(batch);}
+            let batch=pending.get(key);
+            if(!batch){batch={kind:'stroke',key,path:new Path2D(),color:rec.color,width:rec.width,dash:rec.dash,bounds:null,count:0};pending.set(key,batch);}
             batch.path.addPath(rec.path);batch.bounds=union(batch.bounds,box);batch.count++;
-          }else{group.paint.push({kind:'record',rec,bounds:box});batch=null;}
+          }else{flush();group.paint.push({kind:'record',rec,bounds:box});}
         }
       }
+      flush();
       group.index=group.hits.length?new Flatbush(group.hits.length):null;
       if(group.index){for(const row of group.hits){const b=row.bounds;group.index.add(b.minX,b.minY,b.maxX,b.maxY);}group.index.finish();}
       active.delete(group);done.add(group);
@@ -655,12 +779,25 @@ export function mountDrawingViewer(envelope) {
         if(rec.pointMark){const p=rec.pointMark;ctx.strokeStyle=rec.color;ctx.lineWidth=1/localScale;ctx.beginPath();ctx.moveTo(p.x-2.5/localScale,p.y);ctx.lineTo(p.x+2.5/localScale,p.y);ctx.moveTo(p.x,p.y-2.5/localScale);ctx.lineTo(p.x,p.y+2.5/localScale);ctx.stroke();}
         if(rec.textEntry){
           const t=rec.textEntry;
-          drawTextLeader(t);
+          drawTextLeader(t,matrix);
           // Match the ordinary path: raw annotations keep a legible minimum
           // screen size, while presentation glyph parts stay at source scale.
           const screen=Math.max(t.nativeLayout?0.7:5,Math.min(220,t.size*localScale));
-          ctx.save();ctx.translate(t.displayX??t.x,t.displayY??t.y);ctx.rotate(t.angle);ctx.scale(1,-1);ctx.fillStyle=t.color;ctx.font=(screen/localScale)+'px '+TEXT_FONT;ctx.textBaseline='alphabetic';
-          const off=textOffsets(t);for(let i=0;i<t.lines.length;i++)ctx.fillText(t.lines[i],off.dx,off.dy+i*(t.lineHeight||t.height*1.25));ctx.restore();
+          ctx.save();ctx.translate(t.displayX??t.x,t.displayY??t.y);ctx.rotate(t.angle);ctx.scale(1,-1);ctx.fillStyle=t.color;ctx.font=(screen/localScale)+'px '+(t.fontFamily||TEXT_FONT);ctx.textBaseline='alphabetic';
+          const off=textOffsets(t);
+          if(t.runLines){
+            for(let i=0;i<t.runLines.length;i++){
+              let x=off.dx;const y=off.dy+i*(t.lineHeight||t.height*1.25);
+              for(const seg of t.runLines[i].segments){
+                if(!seg.text)continue;
+                ctx.font=(screen/localScale)+'px '+(seg.fontFamily||t.fontFamily||TEXT_FONT);
+                ctx.fillText(seg.text,x,y);x+=seg.width;
+              }
+            }
+          }else{
+            for(let i=0;i<t.lines.length;i++)ctx.fillText(t.lines[i],off.dx,off.dy+i*(t.lineHeight||t.height*1.25));
+          }
+          ctx.restore();
         }
         ctx.restore();
       }
@@ -673,6 +810,7 @@ export function mountDrawingViewer(envelope) {
       if(rec.path)ctx.stroke(rec.path);else if(rec.fillPath)ctx.stroke(rec.fillPath);else if(rec.bbox){const b=rec.bbox;ctx.strokeRect(b.minX,b.minY,b.maxX-b.minX,b.maxY-b.minY);}
     }
     ctx.setTransform(dpr,0,0,dpr,0,0);
+    cacheFullFrame();
   }
   function hitInstances(sx,sy){
     refreshInstanceLayers();const world=[(sx-tx)/scale,(ty-sy)/scale],worldTolerance=5/scale;
@@ -710,8 +848,55 @@ export function mountDrawingViewer(envelope) {
     // would use the placeholder width and leave the drawing off-centre.
     if (!fitted) fit(); else draw();
   }
+  // ----- interaction preview ---------------------------------------------
+  // While the user pans or zooms, reuse the last full frame as a transformed
+  // bitmap; the vector scene is repainted once the interaction settles. This
+  // keeps wheel/drag feedback cheap on drawings with >1M expanded draws.
+  function cacheFullFrame() {
+    if (!previewCanvas) previewCanvas = document.createElement('canvas');
+    if (previewCanvas.width !== canvas.width || previewCanvas.height !== canvas.height) {
+      previewCanvas.width = canvas.width; previewCanvas.height = canvas.height;
+    }
+    const cache = previewCanvas.getContext('2d');
+    cache.setTransform(1, 0, 0, 1, 0, 0);
+    cache.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+    cache.drawImage(canvas, 0, 0);
+    previewView = { scale, tx, ty };
+    previewValid = true;
+  }
+  function interactionSettled() {
+    if (destroyed) return;
+    if (mode === 'analytic' && (scale > buildScale * 2 || scale < buildScale / 2)) rebuild(); else draw();
+  }
+  function beginInteraction() {
+    interacting = true;
+    if (interactionTimer) clearTimeout(interactionTimer);
+    interactionTimer = setTimeout(() => {
+      interactionTimer = 0; interacting = false; interactionSettled();
+    }, 140);
+  }
+  function endInteraction() {
+    if (interactionTimer) { clearTimeout(interactionTimer); interactionTimer = 0; }
+    if (!interacting) return;
+    interacting = false;
+    interactionSettled();
+  }
+  function drawPreview() {
+    if (!previewValid || !previewCanvas || !previewView) return false;
+    if (previewCanvas.width !== canvas.width || previewCanvas.height !== canvas.height) return false;
+    const k = scale / previewView.scale;
+    if (!Number.isFinite(k) || k < 0.05 || k > 20) return false;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(k, 0, 0, k, dpr * (tx - k * previewView.tx), dpr * (ty - k * previewView.ty));
+    ctx.drawImage(previewCanvas, 0, 0);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return true;
+  }
   function draw() {
     if (destroyed) return;
+    if (interacting && drawPreview()) return;
     if(instancePlan){drawInstances();return;}
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, cssW, cssH);
@@ -767,6 +952,7 @@ export function mountDrawingViewer(envelope) {
       drawSelection(rec);
       ctx.restore();
     }
+    cacheFullFrame();
   }
   function rasterBasis(rec) {
     const {corners,w,h}=rec.raster,[o,a,,b]=corners;
@@ -849,18 +1035,24 @@ export function mountDrawingViewer(envelope) {
       rec.path.lineTo(rec.segments[2], rec.segments[3]);
     }
   }
-  function measureReference(text) {
+  function measureReference(text, fontFamily = TEXT_FONT) {
     ctx.save();
-    ctx.font = '100px ' + TEXT_FONT;
+    ctx.font = '100px ' + fontFamily;
     const width = ctx.measureText(text).width;
     ctx.restore();
     return width;
   }
-  function drawTextLeader(t) {
+  function drawTextLeader(t, matrix) {
     const a = t.avoidance;
     if (!a) return;
-    const ax = a.sourceX * scale + tx, ay = -a.sourceY * scale + ty;
-    const bx = (t.displayX ?? t.x) * scale + tx, by = -(t.displayY ?? t.y) * scale + ty;
+    // Retained draws keep group-local coordinates; apply the current instance
+    // matrix before the screen mapping, exactly like the glyph paint does.
+    const toScreen = (x, y) => {
+      const p = matrix ? transformPoint(matrix, x, y) : [x, y];
+      return [p[0] * scale + tx, -p[1] * scale + ty];
+    };
+    const [ax, ay] = toScreen(a.sourceX, a.sourceY);
+    const [bx, by] = toScreen(t.displayX ?? t.x, t.displayY ?? t.y);
     if (Math.hypot(bx - ax, by - ay) < 1) return;
     ctx.save();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -880,19 +1072,35 @@ export function mountDrawingViewer(envelope) {
     if (sx < -400 || sy < -400 || sx > cssW + 400 || sy > cssH + 400) return;
     ctx.save();
     ctx.translate(sx, sy); ctx.rotate(-t.angle);
-    ctx.font = size.toFixed(2) + 'px ' + TEXT_FONT;
+    ctx.font = size.toFixed(2) + 'px ' + (t.fontFamily || TEXT_FONT);
     ctx.fillStyle = t.color;
     const lines = t.lines || String(t.text).split('\n');
     const widths = t.widths || [t.width];
     const offsets = textOffsets(t);
     ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    const alignDx = w => t.kind === 'mtext'
+      ? ((t.attachment === 2 || t.attachment === 5 || t.attachment === 8) ? -w / 2
+        : (t.attachment === 3 || t.attachment === 6 || t.attachment === 9) ? -w : 0)
+      : (t.halign === 1 ? -w / 2 : t.halign === 2 ? -w : 0);
+    if (t.runLines) {
+      t.runLines.forEach((line, i) => {
+        const dx = alignDx(line.width * scale);
+        const y = offsets.dy * scale + i * (t.lineHeight ? t.lineHeight * scale : size * 1.25);
+        let x = dx;
+        for (const segment of line.segments) {
+          if (!segment.text) continue;
+          ctx.font = size.toFixed(2) + 'px ' + (segment.fontFamily || t.fontFamily || TEXT_FONT);
+          ctx.fillText(segment.text, x, y);
+          x += segment.width * scale;
+        }
+      });
+      ctx.restore();
+      return;
+    }
     lines.forEach((line, i) => {
       // Alignment is per line: a short centred line must not keep the longest line's offset.
       const w = (widths[i] ?? t.width) * scale;
-      const dx = t.kind === 'mtext'
-        ? ((t.attachment === 2 || t.attachment === 5 || t.attachment === 8) ? -w / 2
-          : (t.attachment === 3 || t.attachment === 6 || t.attachment === 9) ? -w : 0)
-        : (t.halign === 1 ? -w / 2 : t.halign === 2 ? -w : 0);
+      const dx = alignDx(w);
       ctx.fillText(line, dx, offsets.dy * scale + i * (t.lineHeight?t.lineHeight*scale:size*1.25));
     });
     ctx.restore();
@@ -991,7 +1199,7 @@ export function mountDrawingViewer(envelope) {
     const wx = (mx - tx) / scale, wy = (ty - my) / scale;
     scale = Math.max(1e-9, Math.min(1e12, scale * factor));
     tx = mx - wx * scale; ty = my + wy * scale;
-    if (mode === 'analytic' && (scale > buildScale * 2 || scale < buildScale / 2)) rebuild();
+    if (mode === 'analytic' && !interacting && (scale > buildScale * 2 || scale < buildScale / 2)) rebuild();
     else draw();
     updatePrecision();
   }
@@ -1361,7 +1569,10 @@ export function mountDrawingViewer(envelope) {
     const layerMap = {};
     presentationStyles = {};
     instancePlan=null;instanceSelected=null;
-    if((target.kind==='model'||target.kind==='layout')&&shouldProjectInstances(target,forceInstances?0:estimateDrawingDraws(ucd,target),forceInstances)){
+    const drawEstimate=(target.kind==='model'||target.kind==='layout')?estimateDrawingDraws(ucd,target):0;
+    if(drawEstimate>INSTANCE_DRAW_LIMIT)
+      throw new Error('drawing-instance-count-overflow: '+drawEstimate+' expanded draws exceed the retained-viewer budget');
+    if((target.kind==='model'||target.kind==='layout')&&shouldProjectInstances(target,forceInstances?0:drawEstimate,forceInstances)){
       instancePlan=projectInstances(ucd,target,presentationStyles);projection=instancePlan.projection;effectiveLayers=instancePlan.layers;
     }else{
     projection = target.kind === 'block-preview'
@@ -1407,7 +1618,7 @@ export function mountDrawingViewer(envelope) {
     if (drag) {
       const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
       if (Math.hypot(dx, dy) > 3) moved = true;
-      if (moved) { tx += dx; ty += dy; drag.x = event.clientX; drag.y = event.clientY; draw(); }
+      if (moved) { beginInteraction(); tx += dx; ty += dy; drag.x = event.clientX; drag.y = event.clientY; draw(); }
     }
   }
   function formatCoord(value) {
@@ -1420,7 +1631,7 @@ export function mountDrawingViewer(envelope) {
     const wasDragging = moved;
     drag = null;
     try { canvas.releasePointerCapture(event.pointerId); } catch {}
-    if (wasDragging) return;
+    if (wasDragging) { endInteraction(); return; }
     const p = pointerPosition(event);
     const rec = hitTest(p.x, p.y);
     select(rec, event.shiftKey);
@@ -1428,6 +1639,7 @@ export function mountDrawingViewer(envelope) {
   function onWheel(event) {
     event.preventDefault();
     const p = pointerPosition(event);
+    beginInteraction();
     zoomAt(p.x, p.y, event.deltaY < 0 ? 1.15 : 1 / 1.15);
   }
   function onKeyDown(event) {
@@ -1553,8 +1765,10 @@ export function mountDrawingViewer(envelope) {
         return { kind: t.kind, text: String(annotation.text || t.text).slice(0, 32),
                  tag: ((annotation.semantic && annotation.semantic.tag) || {}).value || null,
                  box: t.box, anchor: [t.x, t.y], itemId: t.itemId, drawId:t.drawId,
+                 displayX: t.displayX ?? t.x, displayY: t.displayY ?? t.y,
+                 avoidance: t.avoidance || null, dimension: inDimensionBlock(t.draw),
                  layout: t.layout, approximations: t.approximations || [],
-                 visible:drawVisible({draw:t.draw,layerId:effectiveLayer(t.draw)}) };
+                 visible:drawVisible({draw:t.draw,layerId:effectiveLayer(t.draw),visibleGeometry:{bounds:t.box}}) };
       });
     },
     record() {
@@ -1563,6 +1777,7 @@ export function mountDrawingViewer(envelope) {
     resize, draw, ready:rasterReady,
     destroy() {
       destroyed = true;
+      if (interactionTimer) { clearTimeout(interactionTimer); interactionTimer = 0; }
       rasterCache.clear();
       rasterProbes.clear();
       if (window.__drawing === api) { delete window.__drawing; delete window.__drawingTest; }
@@ -1593,6 +1808,31 @@ export function mountDrawingViewer(envelope) {
       itemId:rec.draw.itemId, sourceRefs:(drawing.entities[rec.draw.itemId]||drawing.annotations[rec.draw.itemId])?.sourceRefs||[],
       segmentCount:rec.segments?rec.segments.length/4:0, raster:!!rec.raster,
       itemLayer: itemLayer(rec.draw), blockPath: (rec.draw.blockPath || []).length })),
+    wideRecords: (minWidth=300, maxHeight=30) => built.map(rec => {
+      const b = rec.visibleGeometry?.bounds || rec.bbox;
+      if (!b) return null;
+      const w = (b.maxX - b.minX) * scale, h = (b.maxY - b.minY) * scale;
+      if (!(w >= minWidth && h <= maxHeight)) return null;
+      return { id: rec.id, itemId: rec.draw.itemId, layerId: rec.layerId, itemLayer: itemLayer(rec.draw),
+        width: rec.width, dash: rec.dash, bbox: b, blockPath: (rec.draw.blockPath || []).length,
+        sourceRefs: (drawing.entities[rec.draw.itemId] || drawing.annotations[rec.draw.itemId])?.sourceRefs || [] };
+    }).filter(Boolean).slice(0, 200),
+    splineAudit: () => {
+      const violations = []; let total = 0;
+      for (const draw of Object.values(projection.draws)) {
+        if (draw.kind !== 'entity') continue;
+        const entity = drawing.entities[draw.itemId];
+        if (!entity || (entity.geometry || {}).type !== 'spline') continue;
+        total += 1;
+        const rep = representationGeometry(draw.displayRepresentationId);
+        const p = rep && rep.positions;
+        if (!p || p.length < 6) continue;
+        const near = value => Math.abs(value) < 1e-9;
+        if (near(p[0]) && near(p[1]) && near(p[2]) && Math.hypot(p[3], p[4]) > 1)
+          violations.push({itemId: draw.itemId, handle: (entity.sourceRefs || [{}])[0]?.objectKey || null});
+      }
+      return {splines: total, originPairs: violations.length, samples: violations.slice(0, 10)};
+    },
     counts: () => api.counts(),
     texts: (limit) => api.texts(limit),
     fills: () => api.fills(),

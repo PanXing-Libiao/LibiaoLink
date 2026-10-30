@@ -12,12 +12,106 @@ function apply(m, p) {
 function matrixScale(m) {
   return Math.hypot(m[0], m[1]) || 1;
 }
-function measureTextLines(text, size, measure) {
+function measureTextLines(text, size, measure, fontFamily) {
   if (typeof measure !== 'function') throw new Error('text-measure-required');
   const lines = String(text).split('\n');
-  const widths = lines.map(line => measure(line) * (size / 100));
+  const widths = lines.map(line => measure(line, fontFamily) * (size / 100));
   return {lines, widths, width: Math.max(0, ...widths),
     height: size * 1.25 * Math.max(1, lines.length)};
+}
+
+// MTEXT inline formatting: split the raw source into runs that carry their own
+// font. Only font switches (\f / \F) are modelled here; other controls are
+// skipped exactly like the sanitized plain text. Grouping braces push/pop the
+// current font so a font switch inside {...} ends with the group.
+export function parseMtextRuns(raw, defaultFont, resolveFont) {
+  const source = String(raw || '');
+  const runs = [];
+  const stack = [];
+  let font = defaultFont;
+  let buffer = '';
+  const flush = () => {
+    if (!buffer) return;
+    const last = runs[runs.length - 1];
+    if (last && last.fontFamily === font) last.text += buffer;
+    else runs.push({text: buffer, fontFamily: font});
+    buffer = '';
+  };
+  let i = 0;
+  while (i < source.length) {
+    const ch = source[i];
+    if (ch === '\\') {
+      const next = source[i + 1];
+      if (next === '\\' || next === '{' || next === '}') { buffer += next; i += 2; continue; }
+      if (next === '~') { buffer += ' '; i += 2; continue; }
+      if (next === 'P') { buffer += '\n'; i += 2; continue; }
+      if (next === 'f' || next === 'F') {
+        let j = i + 2, name = '';
+        while (j < source.length && source[j] !== ';' && source[j] !== '|') { name += source[j]; j += 1; }
+        while (j < source.length && source[j] !== ';') j += 1;
+        if (j < source.length) j += 1;
+        flush();
+        font = name ? ((resolveFont && resolveFont(name)) || defaultFont) : defaultFont;
+        i = j; continue;
+      }
+      // Other controls carry their parameter before ';'. Skipping the parameter
+      // keeps the visible text that follows it.
+      let j = i + 2;
+      while (j < source.length && source[j] !== ';') j += 1;
+      i = j < source.length ? j + 1 : source.length;
+      continue;
+    }
+    if (ch === '{') { flush(); stack.push(font); i += 1; continue; }
+    if (ch === '}') { flush(); if (stack.length) font = stack.pop(); i += 1; continue; }
+    buffer += ch;
+    i += 1;
+  }
+  flush();
+  const merged = [];
+  for (const run of runs) {
+    const last = merged[merged.length - 1];
+    if (last && last.fontFamily === run.fontFamily) last.text += run.text;
+    else merged.push({...run});
+  }
+  return merged;
+}
+
+function layoutRunLines(runs, size, measure, wrapWidth) {
+  if (typeof measure !== 'function') throw new Error('text-measure-required');
+  const paragraphs = [];
+  let current = [];
+  for (const run of runs) {
+    const parts = String(run.text).split('\n');
+    parts.forEach((part, index) => {
+      if (index > 0) { paragraphs.push(current); current = []; }
+      if (part) current.push({text: part, fontFamily: run.fontFamily});
+    });
+  }
+  paragraphs.push(current);
+  const lines = [];
+  for (const paragraph of paragraphs) {
+    let segments = [], width = 0;
+    const pushSegment = (text, fontFamily, segmentWidth) => {
+      if (!text) return;
+      const last = segments[segments.length - 1];
+      if (last && last.fontFamily === fontFamily) { last.text += text; last.width += segmentWidth; }
+      else segments.push({text, fontFamily, width: segmentWidth});
+      width += segmentWidth;
+    };
+    for (const run of paragraph) {
+      const whole = measure(run.text, run.fontFamily) * (size / 100);
+      if (!wrapWidth || width + whole <= wrapWidth) { pushSegment(run.text, run.fontFamily, whole); continue; }
+      for (const ch of run.text) {
+        const w = measure(ch, run.fontFamily) * (size / 100);
+        if (wrapWidth && width + w > wrapWidth && segments.length) {
+          lines.push({segments, width}); segments = []; width = 0;
+        }
+        pushSegment(ch, run.fontFamily, w);
+      }
+    }
+    lines.push({segments, width});
+  }
+  return lines;
 }
 
 export function layoutTextRun(input) {
@@ -29,6 +123,8 @@ export function layoutTextRun(input) {
     fontFamily: input.fontFamily || TEXT_FONT
   };
   const approximations = ['substituted-font'];
+  const useRuns = Array.isArray(input.runs) && input.runs.length > 0;
+  if (useRuns) run.text = input.runs.map(item => item.text).join('');
   if (input.nativeLayout) {
     // Native metrics are a one-line cap-height contract. Using the measured
     // multi-line box height here would multiply em and line advance by the
@@ -37,17 +133,36 @@ export function layoutTextRun(input) {
     run.size = cadTextEm(capHeight);
     run.lineHeight = cadLineHeight(capHeight, input.lineSpacing ?? 1);
     const width = Number(input.rectangleWidth || 0) * Number(input.matrixScale || 1);
-    const lines = wrapCadText(run.text, width, run.size, input.measure);
-    Object.assign(run, measureTextLines(lines.join('\n'), run.size, input.measure));
+    if (useRuns) {
+      const runLines = layoutRunLines(input.runs, run.size, input.measure, width);
+      run.runLines = runLines;
+      run.lines = runLines.map(line => line.segments.map(segment => segment.text).join(''));
+      run.widths = runLines.map(line => line.width);
+      run.width = Math.max(0, ...run.widths);
+      run.height = run.size * 1.25 * Math.max(1, runLines.length);
+    } else {
+      const lines = wrapCadText(run.text, width, run.size, line => input.measure(line, run.fontFamily));
+      Object.assign(run, measureTextLines(lines.join('\n'), run.size, input.measure, run.fontFamily));
+    }
     // Preserve the published viewer contract: the fit/pick box uses the em
     // size for native CAD text, while line advance uses cadLineHeight.
     run.height = run.size;
     run.nativeLayout = true;
     approximations.push('cad-em-layout');
   } else {
-    Object.assign(run, measureTextLines(run.text, run.size, input.measure));
+    if (useRuns) {
+      const runLines = layoutRunLines(input.runs, run.size, input.measure, 0);
+      run.runLines = runLines;
+      run.lines = runLines.map(line => line.segments.map(segment => segment.text).join(''));
+      run.widths = runLines.map(line => line.width);
+      run.width = Math.max(0, ...run.widths);
+      run.height = run.size * 1.25 * Math.max(1, runLines.length);
+    } else {
+      Object.assign(run, measureTextLines(run.text, run.size, input.measure, run.fontFamily));
+    }
     approximations.push('canvas-text-layout');
   }
+  if (useRuns) approximations.push('inline-font-runs');
   run.offsets = textOffsets(run);
   run.box = textWorldBox(run, run.offsets);
   run.approximations = approximations;
@@ -64,7 +179,9 @@ export function layoutAnnotationText(annotation, draw, options = {}) {
     matrix[1] * direction[0] + matrix[5] * direction[1]];
   const height = Number((sem.height && sem.height.value) ||
     (sem.charHeight && sem.charHeight.value) || 2.5) * matrixScale(matrix);
-  const text = (sem.plainText && sem.plainText.value) ? sem.plainText.value : (annotation.text || '');
+  const semText = (sem.plainText && sem.plainText.value) ? sem.plainText.value : (annotation.text || '');
+  const text = Array.isArray(options.runs) && options.runs.length
+    ? options.runs.map(item => item.text).join('') : semText;
   if (annotation.kind === 'dimension' || !text) return {anchor, run: null};
   const run = layoutTextRun({
     text, kind: annotation.kind, x: anchor[0], y: anchor[1],
@@ -78,7 +195,8 @@ export function layoutAnnotationText(annotation, draw, options = {}) {
     rectangleWidth: Number((sem.rectangleWidth && sem.rectangleWidth.value) || 0),
     matrixScale: matrixScale(matrix),
     measure: options.measure,
-    fontFamily: options.fontFamily
+    fontFamily: options.fontFamily,
+    runs: options.runs
   });
   return {anchor, run};
 }
