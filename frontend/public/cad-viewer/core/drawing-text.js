@@ -2,7 +2,7 @@
 // parts when it can produce them; this module owns the raw-annotation fallback
 // used by both the ordinary and retained projections. It is pure apart from the
 // caller-supplied Canvas font metric callback.
-import {wrapCadText, cadTextEm, cadLineHeight} from './vendor/cad-text-layout.js';
+import {wrapCadText, cadTextTokens, cadTextEm, cadLineHeight} from './vendor/cad-text-layout.js';
 
 export const TEXT_FONT = '"Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif';
 
@@ -115,12 +115,15 @@ function layoutRunLines(runs, size, measure, wrapWidth) {
     for (const run of paragraph) {
       const whole = measure(run.text, run.fontFamily) * (size / 100);
       if (!wrapWidth || width + whole <= wrapWidth) { pushSegment(run.text, run.fontFamily, run.color, whole); continue; }
-      for (const ch of run.text) {
-        const w = measure(ch, run.fontFamily) * (size / 100);
+      // Same greedy token rule as wrapCadText: words stay whole, CJK glyphs are
+      // individual break opportunities. Per-character wrapping here used to
+      // split English words and grow the block past the source rectangle.
+      for (const token of cadTextTokens(run.text)) {
+        const w = measure(token, run.fontFamily) * (size / 100);
         if (wrapWidth && width + w > wrapWidth && segments.length) {
           lines.push({segments, width}); segments = []; width = 0;
         }
-        pushSegment(ch, run.fontFamily, run.color, w);
+        pushSegment(token, run.fontFamily, run.color, w);
       }
     }
     lines.push({segments, width});
@@ -134,10 +137,16 @@ export function layoutTextRun(input) {
     kind: input.kind || 'text', height: input.height, size: input.height,
     halign: input.halign || 0, valign: input.valign || 0,
     attachment: input.attachment || 1, color: input.color,
+    widthFactor: Number(input.widthFactor) > 0 ? Number(input.widthFactor) : 1,
     fontFamily: input.fontFamily || TEXT_FONT
   };
   const approximations = ['substituted-font'];
   const useRuns = Array.isArray(input.runs) && input.runs.length > 0;
+  // AutoCAD text styles scale advances horizontally (Width factor); applying it
+  // here keeps wrapping, line widths and painted advances on the same metric.
+  const measure = typeof input.measure === 'function' && run.widthFactor !== 1
+    ? (text, family) => input.measure(text, family) * run.widthFactor
+    : input.measure;
   if (useRuns) run.text = input.runs.map(item => item.text).join('');
   if (input.nativeLayout) {
     // Native metrics are a one-line cap-height contract. Using the measured
@@ -148,15 +157,15 @@ export function layoutTextRun(input) {
     run.lineHeight = cadLineHeight(capHeight, input.lineSpacing ?? 1);
     const width = Number(input.rectangleWidth || 0) * Number(input.matrixScale || 1);
     if (useRuns) {
-      const runLines = layoutRunLines(input.runs, run.size, input.measure, width);
+      const runLines = layoutRunLines(input.runs, run.size, measure, width);
       run.runLines = runLines;
       run.lines = runLines.map(line => line.segments.map(segment => segment.text).join(''));
       run.widths = runLines.map(line => line.width);
       run.width = Math.max(0, ...run.widths);
       run.height = run.size * 1.25 * Math.max(1, runLines.length);
     } else {
-      const lines = wrapCadText(run.text, width, run.size, line => input.measure(line, run.fontFamily));
-      Object.assign(run, measureTextLines(lines.join('\n'), run.size, input.measure, run.fontFamily));
+      const lines = wrapCadText(run.text, width, run.size, line => measure(line, run.fontFamily));
+      Object.assign(run, measureTextLines(lines.join('\n'), run.size, measure, run.fontFamily));
     }
     // Preserve the published viewer contract: the fit/pick box uses the em
     // size for native CAD text, while line advance uses cadLineHeight.
@@ -165,14 +174,14 @@ export function layoutTextRun(input) {
     approximations.push('cad-em-layout');
   } else {
     if (useRuns) {
-      const runLines = layoutRunLines(input.runs, run.size, input.measure, 0);
+      const runLines = layoutRunLines(input.runs, run.size, measure, 0);
       run.runLines = runLines;
       run.lines = runLines.map(line => line.segments.map(segment => segment.text).join(''));
       run.widths = runLines.map(line => line.width);
       run.width = Math.max(0, ...run.widths);
       run.height = run.size * 1.25 * Math.max(1, runLines.length);
     } else {
-      Object.assign(run, measureTextLines(run.text, run.size, input.measure, run.fontFamily));
+      Object.assign(run, measureTextLines(run.text, run.size, measure, run.fontFamily));
     }
     approximations.push('canvas-text-layout');
   }
@@ -210,7 +219,8 @@ export function layoutAnnotationText(annotation, draw, options = {}) {
     matrixScale: matrixScale(matrix),
     measure: options.measure,
     fontFamily: options.fontFamily,
-    runs: options.runs
+    runs: options.runs,
+    widthFactor: options.widthFactor
   });
   return {anchor, run};
 }

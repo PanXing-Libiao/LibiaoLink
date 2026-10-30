@@ -108,6 +108,14 @@ export function mountDrawingViewer(envelope) {
     const text = (sem.plainText && sem.plainText.value) || annotation.text || '';
     return /[⺀-鿿豈-﫿＀-￯]/.test(String(text)) ? FONT_STACK_CJK : FONT_STACK_LATIN;
   }
+  function styleWidthFactorFor(annotation) {
+    const sem = annotation.semantic || {};
+    if (!sem.textStyleId) return 1;
+    const key = String(sem.textStyleId.value || '').replace(/^textstyle-/, '');
+    const row = (ucd.extensions?.['org.libiaolink.dwg/1']?.fonts || {})[key];
+    const width = Number(row && row.Width);
+    return Number.isFinite(width) && width > 0.05 && width <= 10 ? width : 1;
+  }
   function annotationRuns(annotation) {
     const defaultFont = styleFontFamilyFor(annotation);
     const sem = annotation.semantic || {};
@@ -643,12 +651,14 @@ export function mountDrawingViewer(envelope) {
         const annotation = drawing.annotations[draw.itemId];
         if (!annotation) continue;
         const annotationFont = annotationRuns(annotation);
+        const widthFactor = styleWidthFactorFor(annotation);
         const layout = layoutAnnotationText(annotation, draw, {
           measure: measureReference,
           nativeLayout: nativeTextLayout,
           color: rec.color,
           fontFamily: annotationFont.runs ? annotationFont.defaultFont : fontFamilyFor(annotation),
-          runs: annotationFont.runs
+          runs: annotationFont.runs,
+          widthFactor
         });
         rec.bbox = { minX: layout.anchor[0], minY: layout.anchor[1],
           maxX: layout.anchor[0], maxY: layout.anchor[1] };
@@ -788,19 +798,20 @@ export function mountDrawingViewer(envelope) {
           // screen size, while presentation glyph parts stay at source scale.
           const screen=Math.max(t.nativeLayout?0.7:5,Math.min(220,t.size*localScale));
           ctx.save();ctx.translate(t.displayX??t.x,t.displayY??t.y);ctx.rotate(t.angle);ctx.scale(1,-1);ctx.fillStyle=t.color;ctx.font=(screen/localScale)+'px '+(t.fontFamily||TEXT_FONT);ctx.textBaseline='alphabetic';
+          const wf=t.widthFactor&&t.widthFactor!==1?t.widthFactor:1;if(wf!==1)ctx.scale(wf,1);
           const off=textOffsets(t);
           if(t.runLines){
             for(let i=0;i<t.runLines.length;i++){
-              let x=off.dx;const y=off.dy+i*(t.lineHeight||t.height*1.25);
+              let x=off.dx/wf;const y=off.dy+i*(t.lineHeight||t.height*1.25);
               for(const seg of t.runLines[i].segments){
                 if(!seg.text)continue;
                 ctx.font=(screen/localScale)+'px '+(seg.fontFamily||t.fontFamily||TEXT_FONT);
                 ctx.fillStyle=seg.color||t.color;
-                ctx.fillText(seg.text,x,y);x+=seg.width;
+                ctx.fillText(seg.text,x,y);x+=seg.width/wf;
               }
             }
           }else{
-            for(let i=0;i<t.lines.length;i++)ctx.fillText(t.lines[i],off.dx,off.dy+i*(t.lineHeight||t.height*1.25));
+            for(let i=0;i<t.lines.length;i++)ctx.fillText(t.lines[i],off.dx/wf,off.dy+i*(t.lineHeight||t.height*1.25));
           }
           ctx.restore();
         }
@@ -1077,6 +1088,8 @@ export function mountDrawingViewer(envelope) {
     if (sx < -400 || sy < -400 || sx > cssW + 400 || sy > cssH + 400) return;
     ctx.save();
     ctx.translate(sx, sy); ctx.rotate(-t.angle);
+    const wf = t.widthFactor && t.widthFactor !== 1 ? t.widthFactor : 1;
+    if (wf !== 1) ctx.scale(wf, 1);
     ctx.font = size.toFixed(2) + 'px ' + (t.fontFamily || TEXT_FONT);
     ctx.fillStyle = t.color;
     const lines = t.lines || String(t.text).split('\n');
@@ -1089,7 +1102,7 @@ export function mountDrawingViewer(envelope) {
       : (t.halign === 1 ? -w / 2 : t.halign === 2 ? -w : 0);
     if (t.runLines) {
       t.runLines.forEach((line, i) => {
-        const dx = alignDx(line.width * scale);
+        const dx = alignDx(line.width * scale) / wf;
         const y = offsets.dy * scale + i * (t.lineHeight ? t.lineHeight * scale : size * 1.25);
         let x = dx;
         for (const segment of line.segments) {
@@ -1097,7 +1110,7 @@ export function mountDrawingViewer(envelope) {
           ctx.font = size.toFixed(2) + 'px ' + (segment.fontFamily || t.fontFamily || TEXT_FONT);
           ctx.fillStyle = segment.color || t.color;
           ctx.fillText(segment.text, x, y);
-          x += segment.width * scale;
+          x += segment.width * scale / wf;
         }
       });
       ctx.restore();
@@ -1106,7 +1119,7 @@ export function mountDrawingViewer(envelope) {
     lines.forEach((line, i) => {
       // Alignment is per line: a short centred line must not keep the longest line's offset.
       const w = (widths[i] ?? t.width) * scale;
-      const dx = alignDx(w);
+      const dx = alignDx(w) / wf;
       ctx.fillText(line, dx, offsets.dy * scale + i * (t.lineHeight?t.lineHeight*scale:size*1.25));
     });
     ctx.restore();
