@@ -467,7 +467,7 @@
   },
   "readerFiles": {
     "CommunityText.cs": "8772f4985084c216e9f1c9a1de6f6cec0a45067049838ef786f2eafcfebe4198",
-    "Program.cs": "c375a01c633c683a6a2d2afaf3a652739e9b5bb251d40f20952156848c8c33e3",
+    "Program.cs": "94e3b2b65710853505a6aee0860c98320ed7be3881758f8857574e0f1997f18b",
     "Reader.csproj": "28dd949906cf4b8ab2ca44e02a9fbb2391c0f3e086587c7627e93d6a68f0c32d",
     "dependency.json": "2743f57992af0db961cfe4c05c78b8312d4836f939230a981c5641d01f4942bc"
   },
@@ -535,11 +535,11 @@
   "formatVersions": {
     "STEP": "step-0.3.3/9fd1d0f1f11e9a243d1f5bb9c36518bbced20b50243784bd9edc76b5a6e4ae8a/gateway-1",
     "DXF": "dxf-0.15.0/cc8dcb7ba4def16a5f0ba68c19f68de7eb63de6646a88a8c072b53cab0fb9422/gateway-1",
-    "DWG": "dwg-0.1.0/0d248cbf2625c1d8b2c56fdd17ecfabe0d630bb7cf232994f465a2bc0b213832/gateway-1"
+    "DWG": "dwg-0.1.0/43fb4cca055877ef67702d975453065aef307bb5f5da628a122e80557842ebac/gateway-1"
   },
-  "engineDigest": "abfcbb53dd68f29cd4f4189ebf7dba41b9675d379664e804fb1fbaff3d577a2e",
+  "engineDigest": "07b3599fa86258fa822a0fc43f3c685c7978d13a3731cb54e8bb694e7e9f45bf",
   "viewerDigest": "a9b0502f285cab775749fee7fb1b07cacc751cd0da97629505ee837aeb378eec",
-  "releaseDigest": "5b1bb23431be77a592d9b60e1c5d44d33a11d3136ef339bb656cc1c2f248ca51",
-  "engineVersion": "step-0.3.3/abfcbb53dd68f29cd4f4189ebf7dba41b9675d379664e804fb1fbaff3d577a2e/gateway-1",
+  "releaseDigest": "61d83d633005193c445c5aa4ad965c1740bd121b2518fc7eb26372508d8741ed",
+  "engineVersion": "step-0.3.3/07b3599fa86258fa822a0fc43f3c685c7978d13a3731cb54e8bb694e7e9f45bf/gateway-1",
   "viewerVersion": "viewer-a9b0502f285cab775749fee7fb1b07cacc751cd0da97629505ee837aeb378eec"
 }

@@ -8,6 +8,7 @@ using ACadSharp.Entities;
 using ACadSharp.Entities.ProxyGraphics;
 using ACadSharp.Extensions;
 using ACadSharp.IO;
+using ACadSharp.Objects;
 using ACadSharp.Tables;
 using CSMath;
 using CSMath.Extensions;
@@ -127,10 +128,83 @@ static class Program
         return length<1e-12?null:new[]{x/length,y/length};
     }
     static double[] LeftNormal(double[] direction) => new[]{-direction[1],direction[0]};
-    // MLINE presentation: one polyline per style element, offset from the vertex
-    // path along the stored miter (falling back to the segment bisector when the
-    // stored miter is degenerate). Justification puts the top/bottom element on
-    // the source path, matching AutoCAD's Top/Zero/Bottom meaning.
+    static double Dot(double[] a, double[] b) => a[0]*b[0]+a[1]*b[1];
+    // MLINE presentation. ACadSharp exposes the final per-vertex line direction,
+    // miter direction, style element offsets and (when the DWG stores them) the
+    // per-element miter lengths. Points follow AutoCAD's parametrization: the
+    // miter length is (offset + justification shift) scaled and stretched by the
+    // miter angle; style flags add square/round caps and the area fill band.
+    static List<XYZ[]> MiterPointSets(MLine mline, List<double> offsets, double scale, double shift,
+        List<double[]?> secondNormals)
+    {
+        var vertices=mline.Vertices;
+        var result=new List<XYZ[]>();
+        for(int i=0;i<vertices.Count;i++)
+        {
+            var position=vertices[i].Position;
+            double[]? previous=i>0?Unit(position.X-vertices[i-1].Position.X,position.Y-vertices[i-1].Position.Y):null;
+            double[]? next=i<vertices.Count-1?Unit(vertices[i+1].Position.X-position.X,vertices[i+1].Position.Y-position.Y):null;
+            var stored=vertices[i].Direction;
+            var direction=Unit(stored.X,stored.Y) ?? next ?? previous;
+            double[]? miterDirection=null, second=null;
+            double stretch=scale;
+            var storedMiter=Unit(vertices[i].Miter.X,vertices[i].Miter.Y);
+            if(storedMiter is not null && direction is not null && Math.Abs(Dot(storedMiter,direction))<0.5)
+            {
+                miterDirection=storedMiter;
+                double sine=Math.Abs(storedMiter[0]*direction[1]-storedMiter[1]*direction[0]);
+                stretch=sine<1e-6?1:scale/sine;
+            }
+            else if(previous is not null && next is not null)
+            {
+                var left0=LeftNormal(previous); var left1=LeftNormal(next);
+                var bisector=Unit(left0[0]+left1[0],left0[1]+left1[1]);
+                if(bisector is null)
+                {
+                    // A 180-degree turn has no bisector; carry the incoming normal
+                    // into the vertex and cap over to the outgoing side.
+                    miterDirection=left0; second=left1;
+                }
+                else {
+                    double cosine=Math.Abs(Dot(bisector,left1));
+                    stretch=scale/Math.Max(0.2,cosine);
+                    miterDirection=bisector;
+                }
+            }
+            else miterDirection=next is not null?LeftNormal(next):(previous is not null?LeftNormal(previous):new[]{0.0,0.0});
+            miterDirection ??= new[]{0.0,0.0};
+            // Stored per-element parameters already carry the final miter lengths.
+            var segments=vertices[i].Segments;
+            double[]? lengths=segments is not null && segments.Count==offsets.Count
+                ? segments.Select(segment=>segment.Parameters.Count>0?segment.Parameters[0]:double.NaN).ToArray()
+                : null;
+            var set=new XYZ[offsets.Count];
+            for(int e=0;e<offsets.Count;e++)
+            {
+                double length=lengths is not null && double.IsFinite(lengths[e]) ? lengths[e] : (offsets[e]+shift)*stretch;
+                set[e]=new XYZ(position.X+miterDirection[0]*length,position.Y+miterDirection[1]*length,position.Z);
+            }
+            result.Add(set);
+            secondNormals.Add(second);
+        }
+        return result;
+    }
+    // Half-circle between two border points, used by round caps and inner arcs.
+    static List<XYZ> ArcPoints(XYZ start, XYZ end, int segments=16)
+    {
+        double cx=(start.X+end.X)/2, cy=(start.Y+end.Y)/2;
+        double dx=start.X-cx, dy=start.Y-cy;
+        double radius=Math.Sqrt(dx*dx+dy*dy);
+        if(radius<1e-9) return new List<XYZ>{start,end};
+        double angle=Math.Atan2(dy,dx);
+        var points=new List<XYZ>(segments+1);
+        for(int i=0;i<=segments;i++)
+        {
+            double t=angle+Math.PI*i/segments;
+            points.Add(new XYZ(cx+radius*Math.Cos(t),cy+radius*Math.Sin(t),start.Z));
+        }
+        return points;
+    }
     static void MapMLine(MLine mline, string space, string id, CadObject original)
     {
         var vertices=mline.Vertices;
@@ -142,67 +216,76 @@ static class Program
             Loss(original,"unsupported-native-presentation","No accepted native presentation: MLine");
             return;
         }
-        var points=vertices.Select(v=>new[]{v.Position.X,v.Position.Y}).ToList();
         double scale=Math.Abs(mline.ScaleFactor)<1e-9?1:mline.ScaleFactor;
         var elements=mline.Style?.Elements;
         var offsets=elements is null?new List<double>():elements.Select(element=>element.Offset).ToList();
         if(offsets.Count==0) offsets.Add(0);
-        double justification=mline.Justification switch {
-            MLineJustification.Top=>offsets.Max(),
-            MLineJustification.Bottom=>offsets.Min(),
+        var ordered=Enumerable.Range(0,offsets.Count).OrderBy(index=>offsets[index]).ToArray();
+        int bottomIndex=ordered[0], topIndex=ordered[^1];
+        double shift=mline.Justification switch {
+            MLineJustification.Top=>-offsets.Max(),
+            MLineJustification.Bottom=>-offsets.Min(),
             _=>0};
-        var miters=new double[points.Count][];
-        var caps=new double[]?[points.Count];
-        for(int i=0;i<points.Count;i++)
-        {
-            double[]? previous=i>0?Unit(points[i][0]-points[i-1][0],points[i][1]-points[i-1][1]):null;
-            double[]? next=i<points.Count-1?Unit(points[i+1][0]-points[i][0],points[i+1][1]-points[i][1]):null;
-            double[]? miter=null;
-            var stored=vertices[i].Miter;
-            var direction=next ?? previous;
-            var storedUnit=Unit(stored.X,stored.Y);
-            if(storedUnit is not null && direction is not null
-                && Math.Abs(storedUnit[0]*direction[0]+storedUnit[1]*direction[1])<0.5)
-                miter=storedUnit;
-            if(miter is null && previous is not null && next is not null)
-            {
-                var left0=LeftNormal(previous); var left1=LeftNormal(next);
-                var bisector=Unit(left0[0]+left1[0],left0[1]+left1[1]);
-                if(bisector is null)
-                {
-                    // A 180-degree turn has no bisector; carry the incoming normal
-                    // into the vertex and cap over to the outgoing side.
-                    miter=left0; caps[i]=left1;
-                }
-                else {
-                    double cosine=Math.Abs(bisector[0]*left1[0]+bisector[1]*left1[1]);
-                    double stretch=1/Math.Max(0.2,cosine);
-                    miter=new[]{bisector[0]*stretch,bisector[1]*stretch};
-                }
-            }
-            miter ??= next is not null?LeftNormal(next):(previous is not null?LeftNormal(previous):new[]{0.0,0.0});
-            miters[i]=miter;
-        }
+        var secondNormals=new List<double[]?>();
+        var miterSets=MiterPointSets(mline,offsets,scale,shift,secondNormals);
+        var flags=mline.Style?.Flags ?? MLineStyleFlags.None;
         bool closed=mline.Flags.HasFlag(MLineFlags.Closed);
         var segments=new List<XYZ>();
-        foreach(double offset in offsets)
+        void AddChain(IEnumerable<XYZ> chainPoints)
         {
-            double shift=(offset-justification)*scale;
-            var element=new List<XYZ>();
-            for(int i=0;i<points.Count;i++)
-            {
-                element.Add(new XYZ(points[i][0]+miters[i][0]*shift,points[i][1]+miters[i][1]*shift,0));
-                if(caps[i] is not null)
-                    element.Add(new XYZ(points[i][0]+caps[i]![0]*shift,points[i][1]+caps[i]![1]*shift,0));
-            }
-            if(closed&&element.Count>1) element.Add(element[0]);
-            for(int i=0;i+1<element.Count;i++){segments.Add(element[i]);segments.Add(element[i+1]);}
+            var list=chainPoints.ToList();
+            if(closed&&list.Count>1) list.Add(list[0]);
+            for(int i=0;i+1<list.Count;i++){segments.Add(list[i]);segments.Add(list[i+1]);}
         }
-        var baseline=points.Select(p=>new XYZ(p[0],p[1],0)).ToArray();
+        for(int e=0;e<offsets.Count;e++)
+        {
+            var chain=new List<XYZ>();
+            for(int i=0;i<miterSets.Count;i++)
+            {
+                chain.Add(miterSets[i][e]);
+                if(secondNormals[i] is not null)
+                {
+                    double length=(offsets[e]+shift)*scale;
+                    var position=vertices[i].Position;
+                    chain.Add(new XYZ(position.X+secondNormals[i]![0]*length,position.Y+secondNormals[i]![1]*length,position.Z));
+                }
+            }
+            AddChain(chain);
+        }
+        var baseline=vertices.Select(v=>v.Position).ToArray();
         EntityRow(mline,space,id,Poly(baseline),null,original:original);
+        var startCapPoints=new List<XYZ>();
+        var endCapPoints=new List<XYZ>();
+        if(!closed)
+        {
+            var start=miterSets[0]; var end=miterSets[^1];
+            if(flags.HasFlag(MLineStyleFlags.StartSquareCap))
+            { segments.Add(start[topIndex]); segments.Add(start[bottomIndex]); }
+            if(flags.HasFlag(MLineStyleFlags.EndSquareCap))
+            { segments.Add(end[topIndex]); segments.Add(end[bottomIndex]); }
+            if(flags.HasFlag(MLineStyleFlags.StartRoundCap))
+                startCapPoints=ArcPoints(start[topIndex],start[bottomIndex]);
+            if(flags.HasFlag(MLineStyleFlags.EndRoundCap))
+                endCapPoints=ArcPoints(end[bottomIndex],end[topIndex]);
+            if(offsets.Count>3 && flags.HasFlag(MLineStyleFlags.StartInnerArcsCap))
+                startCapPoints.AddRange(ArcPoints(start[ordered[^2]],start[ordered[1]]));
+            if(offsets.Count>3 && flags.HasFlag(MLineStyleFlags.EndInnerArcsCap))
+                endCapPoints.AddRange(ArcPoints(end[ordered[1]],end[ordered[^2]]));
+            AddChain(startCapPoints);
+            AddChain(endCapPoints);
+        }
+        if(flags.HasFlag(MLineStyleFlags.FillOn))
+        {
+            // The fill band runs along the bottom border, around the end cap,
+            // back along the top border and around the start cap.
+            var ring=new List<XYZ>();
+            for(int i=0;i<miterSets.Count;i++) ring.Add(miterSets[i][bottomIndex]);
+            ring.AddRange(endCapPoints);
+            for(int i=miterSets.Count-1;i>=0;i--) ring.Add(miterSets[i][topIndex]);
+            ring.AddRange(startCapPoints);
+            if(ring.Count>=3) Emit("fills",id,new{rings=new[]{ring.Select(P).ToArray()},fillRule="even-odd"});
+        }
         DisplayPairs(id,original,segments);
-        if(mline.Style is not null && mline.Style.FillColor.Index>=0)
-            Loss(original,"mline-area-fill-unsupported","MLine area fill retained but not painted");
     }
     static void EntityRow(Entity e, string space, string id, Row geometry, IEnumerable<XYZ>? points, double[]? local=null, string topology="lines", CadObject? original=null)
     {
@@ -552,7 +635,20 @@ static class Program
         try{DefaultLeaderArrowPoints(XYZ.Zero,new XYZ(100,0,0),0);}
         catch(InvalidDataException){zeroArrowRejected=true;}
         if(!zeroArrowRejected)throw new InvalidDataException("zero-size leader arrow was accepted");
-        Console.WriteLine("PASS: native DWG header fields remain independent, including raw -1; no interchange format; spline zero vertex guard; default leader arrow guard.");
+        var testMline=new MLine{ScaleFactor=20,Justification=MLineJustification.Top};
+        testMline.Vertices.Add(new MLine.Vertex{Position=new XYZ(0,0,0),Direction=new XYZ(0,1,0),Miter=new XYZ(-1,0,0)});
+        testMline.Vertices.Add(new MLine.Vertex{Position=new XYZ(0,100,0),Direction=new XYZ(0,1,0),Miter=new XYZ(-1,0,0)});
+        var offsets=new List<double>{0.5,-0.5};
+        var seconds=new List<double[]?>();
+        var miterSets=MiterPointSets(testMline,offsets,20,-0.5,seconds);
+        if(Math.Abs(miterSets[0][0].X)>1e-9 || Math.Abs(miterSets[0][1].X-20)>1e-9
+            || Math.Abs(miterSets[1][1].Y-100)>1e-9)
+            throw new InvalidDataException("MLine miter parametrization changed");
+        var cap=ArcPoints(new XYZ(0,0,0),new XYZ(0,20,0),8);
+        if(cap.Count!=9 || Math.Abs(cap[0].Y)>1e-9 || Math.Abs(cap[^1].Y-20)>1e-9
+            || Math.Abs(Math.Abs(cap[4].X)-10)>1e-6)
+            throw new InvalidDataException("MLine round cap arc changed");
+        Console.WriteLine("PASS: native DWG header fields remain independent, including raw -1; no interchange format; spline zero vertex guard; default leader arrow guard; MLine miter and round cap geometry.");
     }
     static int Main(string[] args)
     {
