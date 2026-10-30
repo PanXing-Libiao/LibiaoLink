@@ -72,19 +72,22 @@ export function mountDrawingViewer(envelope) {
   }
   // Local font-substitution experiment: honour the source text style / inline
   // \f name and pick the closest locally available family instead of one stack.
-  const FONT_STACK_CJK = '"SimSun","Noto Serif CJK SC",serif';
+  // Bundled fallbacks (fonts/*.css) keep CJK and Latin rendering deterministic
+  // when the client lacks SimSun/SimHei/Arial; system fonts stay first so a
+  // machine that has them keeps AutoCAD-compatible metrics.
+  const FONT_STACK_CJK = '"SimSun","Libiao Serif SC","Noto Serif CJK SC",serif';
   // Latin-first stacks keep a CJK fallback so mixed runs get Song glyphs from
   // the browser's per-glyph fallback instead of tofu or a wider system default.
-  const FONT_STACK_LATIN = '"Arial","Liberation Sans","SimSun",sans-serif';
+  const FONT_STACK_LATIN = '"Arial","Libiao Sans","Liberation Sans","SimSun",sans-serif';
   function mapFontFamily(name) {
     if (!name) return null;
     const n = String(name).toLowerCase();
     if (/simsun|宋体|song|fangsong|stsong/.test(n)) return FONT_STACK_CJK;
-    if (/simhei|黑体|heiti/.test(n)) return '"SimHei","Noto Sans CJK SC",sans-serif';
-    if (/msyh|yahei|pingfang/.test(n)) return '"Microsoft YaHei","Noto Sans CJK SC",sans-serif';
+    if (/simhei|黑体|heiti/.test(n)) return '"SimHei","Libiao Sans SC","Noto Sans CJK SC",sans-serif';
+    if (/msyh|yahei|pingfang/.test(n)) return '"Microsoft YaHei","Libiao Sans SC","Noto Sans CJK SC",sans-serif';
     if (/swiss|arial|helvetica/.test(n)) return FONT_STACK_LATIN;
-    if (/times/.test(n)) return '"Times New Roman","Liberation Serif","SimSun",serif';
-    if (/courier/.test(n)) return '"Courier New","Liberation Mono","SimSun",monospace';
+    if (/times/.test(n)) return '"Times New Roman","Libiao Serif","Liberation Serif","SimSun",serif';
+    if (/courier/.test(n)) return '"Courier New","Libiao Mono","Liberation Mono","SimSun",monospace';
     if (/romans|simplex|txt\.shx|gbcbig|hztxt|\.shx/.test(n)) return FONT_STACK_LATIN;
     if (/^hy|longfang/.test(n)) return FONT_STACK_CJK;
     return null;
@@ -123,8 +126,9 @@ export function mountDrawingViewer(envelope) {
     let runs = null;
     // Inline runs only when the parser reproduces the sanitized plain text; any
     // control we do not model (e.g. stacking) falls back to the single-font path.
-    if (nativeTextLayout && /\\[fFcC]/.test(raw) && !/\\[sS][^;]*;/.test(raw)) {
-      const parsed = parseMtextRuns(raw, defaultFont, mapFontFamily, textRunColor);
+    if (nativeTextLayout && /\\[fFcCHW]/.test(raw) && !/\\[sS][^;]*;/.test(raw)) {
+      const baseHeight = Number((sem.height && sem.height.value) || 0);
+      const parsed = parseMtextRuns(raw, defaultFont, mapFontFamily, textRunColor, baseHeight);
       const plain = (sem.plainText && sem.plainText.value) || annotation.text || '';
       const norm = value => String(value).replace(/\s+/g, '');
       if (parsed.length && norm(parsed.map(item => item.text).join('')) === norm(plain)) runs = parsed;
@@ -801,14 +805,18 @@ export function mountDrawingViewer(envelope) {
           const wf=t.widthFactor&&t.widthFactor!==1?t.widthFactor:1;if(wf!==1)ctx.scale(wf,1);
           const off=textOffsets(t);
           if(t.runLines){
+            let y=off.dy;
             for(let i=0;i<t.runLines.length;i++){
-              let x=off.dx/wf;const y=off.dy+i*(t.lineHeight||t.height*1.25);
-              for(const seg of t.runLines[i].segments){
+              const line=t.runLines[i],lineAdvance=line.advance||t.lineHeight||t.height*1.25;
+              let x=off.dx/wf;
+              for(const seg of line.segments){
                 if(!seg.text)continue;
-                ctx.font=(screen/localScale)+'px '+(seg.fontFamily||t.fontFamily||TEXT_FONT);
+                const segScale=seg.size&&t.size?seg.size/t.size:1;
+                ctx.font=(seg.italic?'italic ':'')+(seg.bold?'bold ':'')+((screen*segScale)/localScale)+'px '+(seg.fontFamily||t.fontFamily||TEXT_FONT);
                 ctx.fillStyle=seg.color||t.color;
                 ctx.fillText(seg.text,x,y);x+=seg.width/wf;
               }
+              y+=lineAdvance;
             }
           }else{
             for(let i=0;i<t.lines.length;i++)ctx.fillText(t.lines[i],off.dx/wf,off.dy+i*(t.lineHeight||t.height*1.25));
@@ -1051,9 +1059,9 @@ export function mountDrawingViewer(envelope) {
       rec.path.lineTo(rec.segments[2], rec.segments[3]);
     }
   }
-  function measureReference(text, fontFamily = TEXT_FONT) {
+  function measureReference(text, fontFamily = TEXT_FONT, bold = false, italic = false) {
     ctx.save();
-    ctx.font = '100px ' + fontFamily;
+    ctx.font = (italic ? 'italic ' : '') + (bold ? 'bold ' : '') + '100px ' + fontFamily;
     const width = ctx.measureText(text).width;
     ctx.restore();
     return width;
@@ -1101,17 +1109,20 @@ export function mountDrawingViewer(envelope) {
         : (t.attachment === 3 || t.attachment === 6 || t.attachment === 9) ? -w : 0)
       : (t.halign === 1 ? -w / 2 : t.halign === 2 ? -w : 0);
     if (t.runLines) {
-      t.runLines.forEach((line, i) => {
+      let y = offsets.dy * scale;
+      t.runLines.forEach((line) => {
         const dx = alignDx(line.width * scale) / wf;
-        const y = offsets.dy * scale + i * (t.lineHeight ? t.lineHeight * scale : size * 1.25);
         let x = dx;
         for (const segment of line.segments) {
           if (!segment.text) continue;
-          ctx.font = size.toFixed(2) + 'px ' + (segment.fontFamily || t.fontFamily || TEXT_FONT);
+          const segScale = segment.size && t.size ? segment.size / t.size : 1;
+          ctx.font = (segment.italic ? 'italic ' : '') + (segment.bold ? 'bold ' : '')
+            + (size * segScale).toFixed(2) + 'px ' + (segment.fontFamily || t.fontFamily || TEXT_FONT);
           ctx.fillStyle = segment.color || t.color;
           ctx.fillText(segment.text, x, y);
           x += segment.width * scale / wf;
         }
+        y += line.advance ? line.advance * scale : (t.lineHeight ? t.lineHeight * scale : size * 1.25);
       });
       ctx.restore();
       return;

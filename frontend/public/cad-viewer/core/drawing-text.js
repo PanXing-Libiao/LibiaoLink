@@ -2,9 +2,9 @@
 // parts when it can produce them; this module owns the raw-annotation fallback
 // used by both the ordinary and retained projections. It is pure apart from the
 // caller-supplied Canvas font metric callback.
-import {wrapCadText, cadTextTokens, cadLineHeight} from './vendor/cad-text-layout.js';
+import {cadTextTokens, cadLineHeight} from './vendor/cad-text-layout.js';
 
-export const TEXT_FONT = '"Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif';
+export const TEXT_FONT = '"Helvetica Neue", "PingFang SC", "Microsoft YaHei", "Libiao Sans SC", "Libiao Sans", sans-serif';
 
 function apply(m, p) {
   return [m[0] * p[0] + m[4] * p[1] + m[12], m[1] * p[0] + m[5] * p[1] + m[13]];
@@ -21,22 +21,34 @@ function measureTextLines(text, size, measure, fontFamily) {
 }
 
 // MTEXT inline formatting: split the raw source into runs that carry their own
-// font and color. Only font switches (\f / \F) and inline colors (\C ACI index,
-// \c true color) are modelled here; other controls are skipped exactly like the
-// sanitized plain text. Grouping braces push/pop the current font and color so
-// a switch inside {...} ends with the group.
-export function parseMtextRuns(raw, defaultFont, resolveFont, resolveColor) {
+// font, color, height and width. Font switches (\f / \F, including b/i flags),
+// inline colors (\C ACI index, \c true color), heights (\H) and width factors
+// (\W) are modelled here; other controls are skipped exactly like the sanitized
+// plain text. Grouping braces push/pop the whole run state.
+export function parseMtextRuns(raw, defaultFont, resolveFont, resolveColor, baseHeight = 0) {
   const source = String(raw || '');
   const runs = [];
   const stack = [];
-  let font = defaultFont, color = null;
+  const initial = {font: defaultFont, color: null, heightFactor: 1, widthFactor: 1, bold: false, italic: false};
+  let state = {...initial};
   let buffer = '';
+  const sameState = (a, b) => (a.fontFamily ?? a.font) === (b.fontFamily ?? b.font)
+    && a.color === b.color
+    && a.heightFactor === b.heightFactor && a.widthFactor === b.widthFactor
+    && a.bold === b.bold && a.italic === b.italic;
   const flush = () => {
     if (!buffer) return;
     const last = runs[runs.length - 1];
-    if (last && last.fontFamily === font && last.color === color) last.text += buffer;
-    else runs.push({text: buffer, fontFamily: font, color});
+    if (last && sameState(last, state)) last.text += buffer;
+    else runs.push({text: buffer, fontFamily: state.font, color: state.color,
+      heightFactor: state.heightFactor, widthFactor: state.widthFactor,
+      bold: state.bold, italic: state.italic});
     buffer = '';
+  };
+  const readValue = start => {
+    let j = start, value = '';
+    while (j < source.length && source[j] !== ';') { value += source[j]; j += 1; }
+    return {value, end: j < source.length ? j + 1 : source.length};
   };
   let i = 0;
   while (i < source.length) {
@@ -47,21 +59,36 @@ export function parseMtextRuns(raw, defaultFont, resolveFont, resolveColor) {
       if (next === '~') { buffer += ' '; i += 2; continue; }
       if (next === 'P') { buffer += '\n'; i += 2; continue; }
       if (next === 'f' || next === 'F') {
-        let j = i + 2, name = '';
+        let j = i + 2, name = '', flags = '';
         while (j < source.length && source[j] !== ';' && source[j] !== '|') { name += source[j]; j += 1; }
-        while (j < source.length && source[j] !== ';') j += 1;
+        while (j < source.length && source[j] !== ';') { flags += source[j]; j += 1; }
         if (j < source.length) j += 1;
         flush();
-        font = name ? ((resolveFont && resolveFont(name)) || defaultFont) : defaultFont;
+        state = {...state,
+          font: name ? ((resolveFont && resolveFont(name)) || defaultFont) : defaultFont,
+          bold: /\|b1(?!\d)/.test(flags) ? true : (/\|b0(?!\d)/.test(flags) ? false : state.bold),
+          italic: /\|i1(?!\d)/.test(flags) ? true : (/\|i0(?!\d)/.test(flags) ? false : state.italic)};
         i = j; continue;
       }
       if (next === 'C' || next === 'c') {
-        let j = i + 2, value = '';
-        while (j < source.length && source[j] !== ';') { value += source[j]; j += 1; }
-        if (j < source.length) j += 1;
+        const {value, end} = readValue(i + 2);
         flush();
-        color = resolveColor ? resolveColor(next === 'c' ? 'true' : 'aci', value.trim()) : null;
-        i = j; continue;
+        state = {...state, color: resolveColor ? resolveColor(next === 'c' ? 'true' : 'aci', value.trim()) : null};
+        i = end; continue;
+      }
+      if (next === 'H') {
+        const {value, end} = readValue(i + 2);
+        flush();
+        const factor = parseHeightControl(value.trim(), baseHeight);
+        if (factor) state = {...state, heightFactor: factor};
+        i = end; continue;
+      }
+      if (next === 'W') {
+        const {value, end} = readValue(i + 2);
+        flush();
+        const factor = Number(value.trim());
+        if (Number.isFinite(factor) && factor > 0) state = {...state, widthFactor: factor};
+        i = end; continue;
       }
       // Other controls carry their parameter before ';'. Skipping the parameter
       // keeps the visible text that follows it.
@@ -70,11 +97,10 @@ export function parseMtextRuns(raw, defaultFont, resolveFont, resolveColor) {
       i = j < source.length ? j + 1 : source.length;
       continue;
     }
-    if (ch === '{') { flush(); stack.push({font, color}); i += 1; continue; }
+    if (ch === '{') { flush(); stack.push({...state}); i += 1; continue; }
     if (ch === '}') {
       flush();
-      const scope = stack.pop();
-      if (scope) { font = scope.font; color = scope.color; }
+      if (stack.length) state = stack.pop();
       i += 1; continue;
     }
     buffer += ch;
@@ -84,13 +110,26 @@ export function parseMtextRuns(raw, defaultFont, resolveFont, resolveColor) {
   const merged = [];
   for (const run of runs) {
     const last = merged[merged.length - 1];
-    if (last && last.fontFamily === run.fontFamily && last.color === run.color) last.text += run.text;
+    if (last && sameState(last, run)) last.text += run.text;
     else merged.push({...run});
   }
   return merged;
 }
 
-function layoutRunLines(runs, size, measure, wrapWidth) {
+// \H<value>x is a factor of the current height; a bare number is an absolute
+// height in drawing units, converted with the annotation's stored base height.
+function parseHeightControl(value, baseHeight) {
+  if (!value) return null;
+  const factor = /x$/i.test(value) ? Number(value.slice(0, -1)) : (baseHeight > 0 ? Number(value) / baseHeight : NaN);
+  return Number.isFinite(factor) && factor > 0 ? factor : null;
+}
+
+// CJK 禁则: closing punctuation must not start a line, opening punctuation must
+// not end one. Both sets are the common fullwidth and ASCII forms CAD text uses.
+const CLOSING_PUNCT = /^[，。、；：！？"”’）】》」』·…—％‰,.;:!?)\]}%]$/;
+const OPENING_PUNCT = /^[（【《「『“‘(\[{]$/;
+
+function layoutRunLines(runs, size, measure, wrapWidth, native = false, lineSpacing = 1) {
   if (typeof measure !== 'function') throw new Error('text-measure-required');
   const paragraphs = [];
   let current = [];
@@ -98,35 +137,97 @@ function layoutRunLines(runs, size, measure, wrapWidth) {
     const parts = String(run.text).split('\n');
     parts.forEach((part, index) => {
       if (index > 0) { paragraphs.push(current); current = []; }
-      if (part) current.push({text: part, fontFamily: run.fontFamily, color: run.color});
+      if (part) current.push({...run, text: part});
     });
   }
   paragraphs.push(current);
   const lines = [];
   for (const paragraph of paragraphs) {
-    let segments = [], width = 0;
-    const pushSegment = (text, fontFamily, color, segmentWidth) => {
-      if (!text) return;
-      const last = segments[segments.length - 1];
-      if (last && last.fontFamily === fontFamily && last.color === color) { last.text += text; last.width += segmentWidth; }
-      else segments.push({text, fontFamily, color, width: segmentWidth});
-      width += segmentWidth;
-    };
-    for (const run of paragraph) {
-      const whole = measure(run.text, run.fontFamily) * (size / 100);
-      if (!wrapWidth || width + whole <= wrapWidth) { pushSegment(run.text, run.fontFamily, run.color, whole); continue; }
-      // Same greedy token rule as wrapCadText: words stay whole, CJK glyphs are
-      // individual break opportunities. Per-character wrapping here used to
-      // split English words and grow the block past the source rectangle.
-      for (const token of cadTextTokens(run.text)) {
-        const w = measure(token, run.fontFamily) * (size / 100);
-        if (wrapWidth && width + w > wrapWidth && segments.length) {
-          lines.push({segments, width}); segments = []; width = 0;
+    let tokens = [];
+    let width = 0;
+    const tokenWidth = (text, entry) => measure(text, entry.fontFamily, entry.bold, entry.italic)
+      * (size * (entry.heightFactor || 1) / 100) * (entry.widthFactor || 1);
+    const pushLine = () => {
+      const segments = [];
+      let lineWidth = 0, lineSize = 0;
+      for (const token of tokens) {
+        const last = segments[segments.length - 1];
+        if (last && last.fontFamily === token.fontFamily && last.color === token.color
+          && last.bold === token.bold && last.italic === token.italic
+          && last.size === token.size) {
+          last.text += token.text; last.width += token.width;
+        } else {
+          segments.push({text: token.text, fontFamily: token.fontFamily, color: token.color,
+            bold: token.bold, italic: token.italic, size: token.size, width: token.width});
         }
-        pushSegment(token, run.fontFamily, run.color, w);
+        lineWidth += token.width;
+        lineSize = Math.max(lineSize, token.size);
+      }
+      const effSize = lineSize || size;
+      lines.push({segments, width: lineWidth, size: effSize,
+        advance: native ? cadLineHeight(effSize, lineSpacing) : effSize * 1.25});
+      tokens = []; width = 0;
+    };
+    for (const entry of paragraph) {
+      const entrySize = size * (entry.heightFactor || 1);
+      const whole = tokenWidth(entry.text, entry);
+      if (!wrapWidth || width + whole <= wrapWidth) {
+        tokens.push({text: entry.text, fontFamily: entry.fontFamily, color: entry.color,
+          bold: entry.bold, italic: entry.italic, widthFactor: entry.widthFactor,
+          size: entrySize, width: whole});
+        width += whole;
+        continue;
+      }
+      // Same greedy token rule as wrapCadText: words stay whole, CJK glyphs are
+      // individual break opportunities.
+      for (const token of cadTextTokens(entry.text)) {
+        const w = tokenWidth(token, entry);
+        if (wrapWidth && width + w > wrapWidth && tokens.length) {
+          if (!CLOSING_PUNCT.test(token)) {
+            let carry = null;
+            const last = tokens[tokens.length - 1];
+            if (last && OPENING_PUNCT.test(last.text)) { carry = tokens.pop(); width -= carry.width; }
+            pushLine();
+            if (carry) { tokens.push(carry); width += carry.width; }
+          }
+        }
+        tokens.push({text: token, fontFamily: entry.fontFamily, color: entry.color,
+          bold: entry.bold, italic: entry.italic, widthFactor: entry.widthFactor,
+          size: entrySize, width: w});
+        width += w;
       }
     }
-    lines.push({segments, width});
+    pushLine();
+  }
+  return lines;
+}
+
+// Plain (unformatted) MTEXT wrapping with the same CAD token rule and kinsoku
+// handling as the inline-run path; keeps lines as text strings.
+function wrapCadLines(text, wrapWidth, size, measure, fontFamily) {
+  const paragraphs = String(text).replace(/\r\n/g, '\n').split('\n');
+  const clean = tokens => {
+    const parts = tokens.map(token => token.text);
+    if (parts.length) parts[parts.length - 1] = parts[parts.length - 1].replace(/[ \t]+$/, '');
+    return parts.join('');
+  };
+  const lines = [];
+  for (const paragraph of paragraphs) {
+    let tokens = [], width = 0;
+    for (const token of cadTextTokens(paragraph)) {
+      const fit = measure(token.replace(/[ \t]+$/, ''), fontFamily) * (size / 100);
+      const full = measure(token, fontFamily) * (size / 100);
+      if (!wrapWidth || width + fit <= wrapWidth) { tokens.push({text: token, width: full}); width += full; continue; }
+      if (!CLOSING_PUNCT.test(token)) {
+        let carry = null;
+        const last = tokens[tokens.length - 1];
+        if (last && OPENING_PUNCT.test(last.text)) { carry = tokens.pop(); width -= carry.width; }
+        lines.push(clean(tokens)); tokens = []; width = 0;
+        if (carry) { tokens.push(carry); width += carry.width; }
+      }
+      tokens.push({text: token, width: full}); width += full;
+    }
+    lines.push(clean(tokens));
   }
   return lines;
 }
@@ -145,7 +246,7 @@ export function layoutTextRun(input) {
   // AutoCAD text styles scale advances horizontally (Width factor); applying it
   // here keeps wrapping, line widths and painted advances on the same metric.
   const measure = typeof input.measure === 'function' && run.widthFactor !== 1
-    ? (text, family) => input.measure(text, family) * run.widthFactor
+    ? (text, family, bold, italic) => input.measure(text, family, bold, italic) * run.widthFactor
     : input.measure;
   if (useRuns) run.text = input.runs.map(item => item.text).join('');
   if (input.nativeLayout) {
@@ -159,20 +260,18 @@ export function layoutTextRun(input) {
     // which wrapped notes early and grew their blocks past the source rectangle.
     run.size = capHeight;
     run.lineHeight = cadLineHeight(capHeight, input.lineSpacing ?? 1);
-    // The reference viewer (DWG FastView) fits about 40% more characters per
-    // line than the stored rectangle; the wrap budget carries that tolerance so
-    // notes break where users see them break in the reference application.
-    const tolerance = Number(input.wrapTolerance) > 0 ? Number(input.wrapTolerance) : 1;
-    const width = Number(input.rectangleWidth || 0) * Number(input.matrixScale || 1) * tolerance;
+    const width = Number(input.rectangleWidth || 0) * Number(input.matrixScale || 1);
     if (useRuns) {
-      const runLines = layoutRunLines(input.runs, run.size, measure, width);
+      const runLines = layoutRunLines(input.runs, run.size, measure, width, true, input.lineSpacing ?? 1);
       run.runLines = runLines;
       run.lines = runLines.map(line => line.segments.map(segment => segment.text).join(''));
       run.widths = runLines.map(line => line.width);
+      run.lineAdvances = runLines.map(line => line.advance);
+      run.lineSizes = runLines.map(line => line.size);
       run.width = Math.max(0, ...run.widths);
       run.height = run.size * 1.25 * Math.max(1, runLines.length);
     } else {
-      const lines = wrapCadText(run.text, width, run.size, line => measure(line, run.fontFamily));
+      const lines = wrapCadLines(run.text, width, run.size, measure, run.fontFamily);
       Object.assign(run, measureTextLines(lines.join('\n'), run.size, measure, run.fontFamily));
     }
     // Preserve the published viewer contract: the fit/pick box uses the em
@@ -182,10 +281,12 @@ export function layoutTextRun(input) {
     approximations.push('cad-em-layout');
   } else {
     if (useRuns) {
-      const runLines = layoutRunLines(input.runs, run.size, measure, 0);
+      const runLines = layoutRunLines(input.runs, run.size, measure, 0, false, 0);
       run.runLines = runLines;
       run.lines = runLines.map(line => line.segments.map(segment => segment.text).join(''));
       run.widths = runLines.map(line => line.width);
+      run.lineAdvances = runLines.map(line => line.advance);
+      run.lineSizes = runLines.map(line => line.size);
       run.width = Math.max(0, ...run.widths);
       run.height = run.size * 1.25 * Math.max(1, runLines.length);
     } else {
@@ -270,6 +371,15 @@ export function textWorldBox(t, offsets) {
 // advance, without changing that public contract.
 export function textDisplayHeight(t) {
   const size = Number(t.size || t.height || 0);
+  const runLines = Array.isArray(t.runLines) ? t.runLines : null;
+  if (runLines && runLines.length) {
+    let height = 0;
+    for (let i = 0; i < runLines.length; i++) {
+      if (i === runLines.length - 1) height += Number(runLines[i].size) || size;
+      else height += Number(runLines[i].advance) || Number(t.lineHeight) || size * 1.25;
+    }
+    return Math.max(size, height);
+  }
   const lineCount = Math.max(1, Array.isArray(t.lines) ? t.lines.length : String(t.text || '').split('\n').length);
   const lineHeight = Number(t.lineHeight) || size * 1.25;
   return Math.max(size, (lineCount - 1) * lineHeight + size);

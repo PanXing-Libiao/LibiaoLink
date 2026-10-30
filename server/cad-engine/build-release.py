@@ -8,6 +8,10 @@ BASE = Path(__file__).resolve().parent
 ENTRY_POINTS = ('convert.py', 'states.py', 'provenance.py', 'parser-provenance.json',
                 'evidence-index.json', 'step_convert.py', 'dxf_convert.py', 'dwg_convert.py',
                 'dwg_platform_convert.py', 'ucd_convert.py')
+# The pinned ACadSharp reader source and pin define the DWG binary even though the
+# compiled DLL lives outside the repository; a reader change must rebuild DWG
+# artifacts, so its sources join the DWG format identity.
+READER_FILES = ('Program.cs', 'CommunityText.cs', 'Reader.csproj', 'dependency.json')
 RUNTIME_FILES = ('bridge.py', 'result_cache.py', 'service.py', 'sandbox.py', 'edge.py',
                  'release.py', 'requirements-step.txt', 'requirements-step-mesher.txt',
                  'requirements-dxf.txt', 'requirements-dxf-build.txt', 'requirements-dwg.txt')
@@ -35,6 +39,8 @@ def hashes(paths, root):
 
 def format_of(name):
     """Keep format-specific code out of the other format's cache identity."""
+    if name.startswith('dwg-reader/'):
+        return 'DWG'
     if name == 'unified/dwg-reader.json':
         return 'DXF'
     if name.startswith(('parser/', 'unified/step_', 'vendor/cadcraft-display/')) \
@@ -59,6 +65,7 @@ def describe(base, browser):
     for directory in ('parser', 'unified', 'vendor'):
         paths.extend(source_files(core / directory))
     engine_files = hashes(paths, core)
+    reader_files = hashes([base / 'dwg-reader' / name for name in READER_FILES], base / 'dwg-reader')
     browser_files = hashes(source_files(browser), browser)
     runtime_files = hashes([base / name for name in RUNTIME_FILES], base)
 
@@ -74,6 +81,7 @@ def describe(base, browser):
                       if name not in {item for names in FORMAT_RUNTIME.values() for item in names}}
     runtime_format = {format_name: {'runtime/' + name: runtime_files[name] for name in names}
                       for format_name, names in FORMAT_RUNTIME.items()}
+    format_files['DWG'].update({'dwg-reader/' + name: value for name, value in reader_files.items()})
 
     format_versions = {}
     for format_name, release in FORMAT_RELEASES.items():
@@ -91,6 +99,7 @@ def describe(base, browser):
         'dxfRelease': FORMAT_RELEASES['DXF'],
         'gatewayProtocol': 'libiaolink-cad-gateway/1',
         'engineFiles': engine_files,
+        'readerFiles': reader_files,
         'runtimeFiles': runtime_files,
     })
     viewer_digest = digest({'browserFiles': browser_files})
@@ -106,6 +115,7 @@ def describe(base, browser):
         'dxfRelease': FORMAT_RELEASES['DXF'],
         'gatewayProtocol': 'libiaolink-cad-gateway/1',
         'engineFiles': engine_files,
+        'readerFiles': reader_files,
         'browserFiles': browser_files,
         'runtimeFiles': runtime_files,
         'formatVersions': format_versions,

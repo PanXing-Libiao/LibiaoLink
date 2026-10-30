@@ -465,6 +465,12 @@
     "vendor/truedxf-display/NOTICE": "d99e58601a94d9ca56a1180c74dffd9c01fdd1ecad2863e4e936d8aad53c6602",
     "vendor/underlay-readers/NOTICE": "2d2c791598a91aa9c1ad9820bc13bc88a6e6385b58f3d912eecb1b522c3dde93"
   },
+  "readerFiles": {
+    "CommunityText.cs": "8772f4985084c216e9f1c9a1de6f6cec0a45067049838ef786f2eafcfebe4198",
+    "Program.cs": "b745b5bfeb0ee54c77d33f1cb5a320b02d693dc06294121faecd03514206ceae",
+    "Reader.csproj": "28dd949906cf4b8ab2ca44e02a9fbb2391c0f3e086587c7627e93d6a68f0c32d",
+    "dependency.json": "2743f57992af0db961cfe4c05c78b8312d4836f939230a981c5641d01f4942bc"
+  },
   "browserFiles": {
     "app.js": "d127c0a59ba909277e7eba44bde43efe96c0ff193afee584f991b30923a25c94",
     "benchmark.js": "c81b3668354f0fc431c02f068545d5c71ce4a266bf414671341aa97674fc3e9d",
@@ -484,8 +490,8 @@
     "drawing-plot-styles.js": "a2c3888311ccdaac04b38f108ab7175cd171a43f0fb82fdb9356e9431819b243",
     "drawing-projection.js": "0a501669718907a7422ba6f6a803bbfaee5e3d7d2c4393ba816710c3a3313363",
     "drawing-text-avoidance.js": "2e65f43a90f24b6a669325a3bc7687d0d1f93f22610ba937d9b8c2ae2b3e5001",
-    "drawing-text.js": "a690428315c8b133a196c4c8bf27b3614781db9c7dfffdb9ed595f00ec677918",
-    "drawing-viewer.js": "7de75630842387076ad0b7d697f46e724e22fa61a34a2e251774f3b10f001f45",
+    "drawing-text.js": "1cc508f97d4d196842167e7d79b1ec50493bbff0756e89b002a58c933d02141c",
+    "drawing-viewer.js": "2e5e8e410c741422945f7b6b50223c7f32856e72f72ba9215815355068b5916c",
     "dwg-packed-transport.js": "7ca25caedff71fb3102f9a67489d5f1eb0b03cc250351be027abe73648279045",
     "dxf-resources.js": "219569569cc22deca979ec3f6693031bfbfe050c30eb8fe419962f4e3dab5c2c",
     "highlight.js": "31754dabcf90e0c71a67123e7e03f9e39614f02021fdd35d18b61e688c734099",
@@ -516,7 +522,7 @@
   "runtimeFiles": {
     "bridge.py": "031d4f86ad1cbaaca8c4f2956d7f5546d2efc1a82d21bd63a534367312417fef",
     "edge.py": "1f52a447e4e245fce4a298f39192b02d8d4364945fe1b890137d2626e39dd961",
-    "release.py": "093212bc868f0578688e90ecfdf34daf11e0ccfb732f74da0c643cdd0285330f",
+    "release.py": "668adb0c3bc793fd3f76a768ded722252d4f10a25f082f302500782427edcb2f",
     "requirements-dwg.txt": "b21e61c20eda27f0c62ecbb04972cc8ff0a3d3c0e1e9f30477870f17bbc6e061",
     "requirements-dxf-build.txt": "16775c2dd88b4872fd5796ab27b5692050a1fb1a8da8f45c722c685bbefe20ea",
     "requirements-dxf.txt": "d2d31f5523d562eae266b9d002b27b7df7dfab8b38f58a8b435a91d6cfab5a12",
@@ -527,13 +533,13 @@
     "service.py": "bbf51e8fb0c72e096b6ced2bc1104a1542de1571ebbbe434c6f78b3aab2ea909"
   },
   "formatVersions": {
-    "STEP": "step-0.3.3/eaeb58df0eb2f6e0055dee530b3526e627575a7cbf10b724513b36a3acf0c5f0/gateway-1",
-    "DXF": "dxf-0.15.0/de012e08d5bde6c1a4fe169a74db746deead85f11b6658af6cfa6cacbb4de27d/gateway-1",
-    "DWG": "dwg-0.1.0/7150e0b1abf3017c8106823201aa56e6d739ce451b33933476e60bfad27906ab/gateway-1"
+    "STEP": "step-0.3.3/f9854afea2e7fd81f755ba03bb0629122a271d6f9f46a7306af342604b07c4bd/gateway-1",
+    "DXF": "dxf-0.15.0/4d7dc1f3db22bf5f2661b7ee1ac6e99b3460e79c553ab5bc6667e94a52f13e15/gateway-1",
+    "DWG": "dwg-0.1.0/7ab7f302835cf567a6bc7db04965b3534d602e5da683a336398b0b0f3c82e2ef/gateway-1"
   },
-  "engineDigest": "1448a31c15b7906c01393c8a5857060d394afe80d04ef730ccbb355fbfa366a1",
-  "viewerDigest": "2558578a1999ebb5b65af4bcc0054eea310b3949785f90dcfebfb1bb70315be3",
-  "releaseDigest": "a2f40bf94a60fde25705a5df76832b4b4d39cd1e02d53bcba1808c3c83c5d9cc",
-  "engineVersion": "step-0.3.3/1448a31c15b7906c01393c8a5857060d394afe80d04ef730ccbb355fbfa366a1/gateway-1",
-  "viewerVersion": "viewer-2558578a1999ebb5b65af4bcc0054eea310b3949785f90dcfebfb1bb70315be3"
+  "engineDigest": "8231ee620fea20663a0139e013cc75e119d482112b13a83f2983d2836c1100d9",
+  "viewerDigest": "a9b0502f285cab775749fee7fb1b07cacc751cd0da97629505ee837aeb378eec",
+  "releaseDigest": "6301c62f409fc9d68049c062d5e7d572abb02789e49a3f9f0cabffd0d7cab2a7",
+  "engineVersion": "step-0.3.3/8231ee620fea20663a0139e013cc75e119d482112b13a83f2983d2836c1100d9/gateway-1",
+  "viewerVersion": "viewer-a9b0502f285cab775749fee7fb1b07cacc751cd0da97629505ee837aeb378eec"
 }

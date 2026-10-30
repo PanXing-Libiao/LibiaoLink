@@ -58,20 +58,6 @@ test('inline runs wrap on CAD tokens instead of splitting English words', () => 
   assert.deepEqual(run.lines.map(line => line.trim()), ['All power', 'lines']);
 });
 
-test('wrap tolerance fits lines the source rectangle would break', () => {
-  const measure = text => text.length * 10;
-  const strict = layoutTextRun({
-    text: 'All power lines', kind: 'mtext', x: 0, y: 0, angle: 0, height: 100, measure,
-    nativeLayout: true, rectangleWidth: 120, matrixScale: 1
-  });
-  const relaxed = layoutTextRun({
-    text: 'All power lines', kind: 'mtext', x: 0, y: 0, angle: 0, height: 100, measure,
-    nativeLayout: true, rectangleWidth: 120, matrixScale: 1, wrapTolerance: 1.4
-  });
-  assert.equal(strict.lines.length, 2);
-  assert.equal(relaxed.lines.length, 1);
-});
-
 test('style width factor narrows advances and widens the wrap budget', () => {
   const measure = text => text.length * 10;
   const wide = layoutTextRun({
@@ -86,4 +72,71 @@ test('style width factor narrows advances and widens the wrap budget', () => {
   assert.equal(Math.round(narrow.width), 120);
   assert.equal(wide.lines.length, 2);
   assert.equal(narrow.lines.length, 1);
+});
+
+test('inline \\W scales advances', () => {
+  const measure = text => text.length * 10;
+  const plain = layoutTextRun({
+    text: 'AB', kind: 'mtext', x: 0, y: 0, angle: 0, height: 100, measure,
+    nativeLayout: true, rectangleWidth: 0, matrixScale: 1
+  });
+  const run = parseMtextRuns('\\W0.5;AB', 'LAT', resolve)[0];
+  assert.equal(run.widthFactor, 0.5);
+  const narrow = layoutTextRun({
+    text: '', runs: [run], kind: 'mtext', x: 0, y: 0, angle: 0, height: 100, measure,
+    nativeLayout: true, rectangleWidth: 0, matrixScale: 1
+  });
+  assert.equal(Math.round(narrow.width), Math.round(plain.width / 2));
+});
+
+test('inline \\H changes glyph size and line advance', () => {
+  const runs = parseMtextRuns('{\\H0.5x;AB}\\PCD', 'LAT', resolve);
+  assert.deepEqual(runs.map(run => [run.text, run.heightFactor]), [['AB', 0.5], ['\nCD', 1]]);
+  const measure = text => text.length * 10;
+  const run = layoutTextRun({
+    text: '', runs, kind: 'mtext', x: 0, y: 0, angle: 0, height: 100, measure,
+    nativeLayout: true, rectangleWidth: 0, matrixScale: 1
+  });
+  assert.equal(run.runLines[0].size, 50);
+  assert.ok(Math.abs(run.runLines[0].advance - 50 * 5 / 3) < 1e-9);
+  assert.equal(run.runLines[1].size, 100);
+});
+
+test('inline font flags carry bold and italic into measurement', () => {
+  const seen = [];
+  const measure = (text, family, bold, italic) => { seen.push([family, bold, italic]); return text.length * 10; };
+  const runs = parseMtextRuns('\\fSimHei|b1|i0;AB', 'LAT', resolve);
+  assert.equal(runs[0].bold, true);
+  layoutTextRun({
+    text: '', runs, kind: 'mtext', x: 0, y: 0, angle: 0, height: 100, measure,
+    nativeLayout: true, rectangleWidth: 0, matrixScale: 1
+  });
+  assert.deepEqual(seen[0], ['LAT', true, false]);
+});
+
+test('kinsoku keeps closing punctuation off the line start', () => {
+  const measure = text => text.length * 10;
+  const run = layoutTextRun({
+    text: '甲乙丙，丁', kind: 'mtext', x: 0, y: 0, angle: 0, height: 100, measure,
+    nativeLayout: true, rectangleWidth: 30, matrixScale: 1
+  });
+  assert.deepEqual(run.lines, ['甲乙丙，', '丁']);
+});
+
+test('kinsoku moves opening punctuation off the line end', () => {
+  const measure = text => text.length * 10;
+  const run = layoutTextRun({
+    text: '甲乙（丙丁', kind: 'mtext', x: 0, y: 0, angle: 0, height: 100, measure,
+    nativeLayout: true, rectangleWidth: 30, matrixScale: 1
+  });
+  assert.deepEqual(run.lines, ['甲乙', '（丙丁']);
+});
+
+test('plain native text wrapping applies kinsoku too', () => {
+  const measure = text => text.length * 10;
+  const run = layoutTextRun({
+    text: '甲乙丙，丁', kind: 'mtext', x: 0, y: 0, angle: 0, height: 100, measure,
+    nativeLayout: true, rectangleWidth: 30, matrixScale: 1
+  });
+  assert.deepEqual(run.lines, ['甲乙丙，', '丁']);
 });
