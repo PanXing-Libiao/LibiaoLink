@@ -1,19 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CadNameCodepage, CadPreviewViewerConfig } from "../fileApi";
+import type { CadInputSelection, CadNameCodepage, CadPreviewViewerConfig } from "../fileApi";
 import { apiFetch, redirectToLogin } from "../api";
 import { useT } from "../i18n";
+import { CadResourcePicker } from "./CadResourcePicker";
 
 function savedNameCodepage(key: string): CadNameCodepage {
   try { return sessionStorage.getItem(key) === "UTF8" ? "UTF8" : "GB"; } catch { return "GB"; }
 }
 
 /** The isolated frame runs the pinned independent ViewerSession; no CAD rules live here. */
-export function CadModelViewer({ viewer, name, onClose, onDownload, onRetry }: {
+export function CadModelViewer({ viewer, name, onClose, onDownload }: {
   viewer: CadPreviewViewerConfig;
   name: string;
   onClose: () => void;
   onDownload: () => void;
-  onRetry: () => void;
 }) {
   const t = useT();
   const frame = useRef<HTMLIFrameElement>(null);
@@ -22,24 +22,30 @@ export function CadModelViewer({ viewer, name, onClose, onDownload, onRetry }: {
   const [frameLoaded, setFrameLoaded] = useState(false);
   const [frameTimedOut, setFrameTimedOut] = useState(false);
   const [exportError, setExportError] = useState(false);
+  const [resourcesOpen, setResourcesOpen] = useState(false);
+  const [selection, setSelection] = useState<CadInputSelection>({ companions: [] });
+  const [retry, setRetry] = useState(0);
+  const selectionKey = JSON.stringify(selection);
   const nameKey = `ll.cad.nameCodepage:${viewer.fileId}:${viewer.versionId}`;
   const [nameChoice, setNameChoice] = useState<{ key: string; value: CadNameCodepage } | null>(null);
   const nameCodepage = nameChoice?.key === nameKey ? nameChoice.value : savedNameCodepage(nameKey);
-  const viewId = useMemo(() => Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join(""), [viewer.fileId, viewer.versionId, nameCodepage]);
-  const query = new URLSearchParams({ platform: "1", autoload: "0", fileId: viewer.fileId, versionId: viewer.versionId, viewId, engineVersion: viewer.engineVersion, nameCodepage });
+  const viewId = useMemo(() => Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join(""), [viewer.fileId, viewer.versionId, nameCodepage, selectionKey, retry]);
+  const query = new URLSearchParams({ platform: "1", autoload: "0", format: viewer.format, fileId: viewer.fileId, versionId: viewer.versionId, viewId, engineVersion: viewer.engineVersion, nameCodepage });
   useEffect(() => { startedAt.current = performance.now(); setReadyMs(null); setFrameLoaded(false); setFrameTimedOut(false); }, [viewId]);
   useEffect(() => {
     if (frameLoaded) return;
     const timer = window.setTimeout(() => setFrameTimedOut(true), 30000);
     return () => window.clearTimeout(timer);
   }, [frameLoaded, viewId]);
-  const sendContext = () => frame.current?.contentWindow?.postMessage({ type: "cad-context", name }, window.location.origin);
+  const sendContext = () => frame.current?.contentWindow?.postMessage({ type: "cad-context", name, selection }, window.location.origin);
   useEffect(() => {
-    const exportReport = async (report: unknown, name: string) => {
-      const response = await apiFetch(`/api/v1/files/${encodeURIComponent(viewer.fileId)}/preview?versionId=${encodeURIComponent(viewer.versionId)}`);
+    const exportReport = async (report: unknown, name: string, jobId: string) => {
+      const response = await apiFetch(`/api/v1/files/${encodeURIComponent(viewer.fileId)}/versions/${encodeURIComponent(viewer.versionId)}/cad/views/${viewId}/jobs/${jobId}`);
       if (!response.ok) throw new Error("File access unavailable");
       const entry: unknown = await response.json();
-      if (typeof entry !== "object" || entry === null || !("versionId" in entry) || entry.versionId !== viewer.versionId) throw new Error("File version mismatch");
+      if (typeof entry !== "object" || entry === null || !("id" in entry) || entry.id !== jobId
+        || !("sourceSHA256" in entry) || entry.sourceSHA256 !== viewer.sourceSHA256
+        || !("state" in entry) || !["completed", "partial"].includes(String(entry.state))) throw new Error("CAD input set unavailable");
       const output = { format: "libiaolink-cad-report/1", fileId: viewer.fileId, versionId: viewer.versionId, sourceSHA256: viewer.sourceSHA256, engineVersion: viewer.engineVersion, report };
       const url = URL.createObjectURL(new Blob([JSON.stringify(output, null, 2)], { type: "application/json" }));
       const link = document.createElement("a"); link.href = url; link.download = name.split(/[\\/]/).at(-1) || "cad-report.json";
@@ -53,28 +59,32 @@ export function CadModelViewer({ viewer, name, onClose, onDownload, onRetry }: {
       if (event.data.type === "cad-close") onClose();
       if (event.data.type === "cad-auth-expired") { onClose(); redirectToLogin(); }
       if (event.data.type === "cad-download") onDownload();
-      if (event.data.type === "cad-retry") onRetry();
-      if (event.data.type === "cad-context-request") frame.current?.contentWindow?.postMessage({ type: "cad-context", name }, window.location.origin);
+      if (event.data.type === "cad-retry") setRetry((value) => value + 1);
+      if (event.data.type === "cad-resources" && viewer.format === "DXF") setResourcesOpen(true);
+      if (event.data.type === "cad-context-request") frame.current?.contentWindow?.postMessage({ type: "cad-context", name, selection }, window.location.origin);
       if (event.data.type === "cad-mounted" && "viewId" in event.data && event.data.viewId === viewId) { setFrameLoaded(true); setFrameTimedOut(false); }
       if (event.data.type === "cad-ready" && "viewId" in event.data && event.data.viewId === viewId) setReadyMs(Math.round(performance.now() - startedAt.current));
       if (event.data.type === "cad-name-codepage" && "value" in event.data && (event.data.value === "UTF8" || event.data.value === "GB")) {
         try { sessionStorage.setItem(nameKey, event.data.value); } catch { /* The current preview still works without storage. */ }
         setNameChoice({ key: nameKey, value: event.data.value });
       }
-      if (event.data.type === "cad-export" && "report" in event.data && "name" in event.data && typeof event.data.name === "string") {
-        void exportReport(event.data.report, event.data.name).catch(() => setExportError(true));
+      if (event.data.type === "cad-export" && "report" in event.data && "name" in event.data && typeof event.data.name === "string"
+        && "jobId" in event.data && typeof event.data.jobId === "string" && /^[a-f0-9]{32}$/.test(event.data.jobId)) {
+        void exportReport(event.data.report, event.data.name, event.data.jobId).catch(() => setExportError(true));
       }
     };
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);
-  }, [onClose, onDownload, onRetry, name, viewer.fileId, viewer.versionId, viewer.sourceSHA256, viewer.engineVersion, viewId, nameKey]);
+  }, [onClose, onDownload, name, viewer.fileId, viewer.versionId, viewer.sourceSHA256, viewer.engineVersion, viewer.format, viewId, nameKey, selection]);
   if (crypto.subtle === undefined) return <div role="alert" className="rounded-xl bg-white p-8 text-sm text-zinc-600">请通过 HTTPS 打开 CAD 在线预览，或下载原文件查看。</div>;
   return <div data-cad-ready-ms={readyMs} className="relative" onClick={(event) => event.stopPropagation()}>
-    <iframe ref={frame} title={name} data-file-preview-cad="true" tabIndex={0}
+    <iframe ref={frame} key={viewId} title={name} data-file-preview-cad="true" tabIndex={0}
     src={"/cad-viewer/index.html?" + query}
     onLoad={() => { setFrameLoaded(true); setFrameTimedOut(false); sendContext(); }}
     className="block h-[92dvh] w-[min(1440px,96vw)] rounded-xl border-0 bg-white shadow-2xl max-sm:h-[96dvh] max-sm:w-[98vw] max-sm:rounded-lg"
     />
+    {resourcesOpen ? <CadResourcePicker projectId={viewer.projectId} fileId={viewer.fileId} name={viewer.sourceName} selection={selection}
+      onClose={() => setResourcesOpen(false)} onApply={(value) => { setSelection(value); setResourcesOpen(false); }} /> : null}
     {frameLoaded ? null : (
       <div
         data-cad-viewer-loading="true"
@@ -88,7 +98,7 @@ export function CadModelViewer({ viewer, name, onClose, onDownload, onRetry }: {
             <span className="max-w-[min(28rem,80vw)] text-center text-xs text-zinc-500">可能是网络较慢或登录状态已失效，请重试；仍无法打开可下载原文件。</span>
             <span className="max-w-[min(28rem,80vw)] truncate px-6 text-xs text-zinc-400">{name}</span>
             <div className="flex flex-wrap justify-center gap-2">
-              <button type="button" onClick={(event) => { event.stopPropagation(); onRetry(); }} className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white">重试</button>
+              <button type="button" onClick={(event) => { event.stopPropagation(); setRetry((value) => value + 1); }} className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white">重试</button>
               <button type="button" onClick={(event) => { event.stopPropagation(); onDownload(); }} className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700">{t("fpv.download")}</button>
               <button type="button" onClick={(event) => { event.stopPropagation(); redirectToLogin(); }} className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700">重新登录</button>
             </div>

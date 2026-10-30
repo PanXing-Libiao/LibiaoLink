@@ -1,0 +1,18 @@
+{
+  "repository": "https://github.com/tth05/truedxf",
+  "commit": "019c2e504738965c17818a5780097fef0e7a52f4",
+  "upstreamDirectory": "packages/fonts/assets",
+  "license": "MIT; original upstream test glyphs, not industrial or Autodesk fonts",
+  "files": [
+    {
+      "file": "truedxf-big.shx",
+      "sha256": "8c0cc9d7d6d91d2285e8a63507f63b8bc5a091a5d869842d40b7a315403f9cfc",
+      "bytes": 635
+    },
+    {
+      "file": "truedxf-extbig.shx",
+      "sha256": "6a8016fdafa7e391e8bf67826ce6fc4375f34acd5550751d3d621bd0dc6a99b1",
+      "bytes": 277
+    }
+  ]
+}

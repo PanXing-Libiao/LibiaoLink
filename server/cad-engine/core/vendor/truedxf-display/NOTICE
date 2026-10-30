@@ -1,0 +1,44 @@
+LibiaoLink selectively adapts the A-type dash fitting and complex linetype
+placement rules documented and implemented by truedxf. It does not bundle the
+truedxf parser, renderer, application, fonts, or runtime dependencies.
+
+Pinned upstream: https://github.com/tth05/truedxf
+Commit: 019c2e504738965c17818a5780097fef0e7a52f4
+Sources: packages/geometry/src/dash.ts;
+packages/render/src/draw/complex-linetype.ts;
+research/notes/06-hatch-linetype-appearance.md (sections 2.2, 2.3, 2.6.1).
+Local adaptation: unified/dxf_linetype.py. Geometry, budgets, source references,
+uploaded font resolution and inherited representation selection use LibiaoLink's
+existing UCD contracts. Community CAD probes are upstream evidence; the local
+synthetic/browser regressions are not independent AutoCAD acceptance.
+
+MIT License
+
+Copyright (c) 2026 The truedxf authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Additional selective adaptation: packages/render/src/draw/gradient.ts (SHIFT field, calibrated radial/cylindrical/curved profiles); same pinned revision and MIT terms.
+Additional selective adaptation: packages/render/src/draw/acis.ts (explicit
+planar boundary curve interpretation), packages/plot/src/pen-linetype.ts and
+fill-style.ts (paper-unit pen patterns and device-pixel fill tiles), and
+packages/render/src/draw/underlay.ts (HLS contrast/fade/monochrome display fit).
+The adapter preserves source identities, budgets and upload-only resolution;
+no permissive chord/control-polygon, unsupported placeholder or mean-vertex
+color fallback is taken from the community previews.

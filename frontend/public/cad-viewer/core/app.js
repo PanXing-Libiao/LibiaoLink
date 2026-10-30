@@ -7,12 +7,13 @@ import { fromUnified } from './unified-viewer.js';
 import {hydrateBinary} from './binary-transport.js';
 import {unpackMetadata} from './compact-transport.js?v=step-0.3-packed';
 import {convertJob} from './conversion-jobs.js';
+import {resourcePackage,collectResources} from './dxf-resources.js?v=dxf-0.15.0';
 import {batchProjection,identityAtHit} from './render-batches.js';
 import {createHighlighter,drawsForProduct,drawsForScene} from './highlight.js';
 import {directProjection} from './direct-projection.js?v=step-0.2';
 import {appendNonMeshableUI,clearNonMeshableUI} from './nonmeshable-ui.js?v=step-combined';
 import {appendMeshRepairUI,repairManifest} from './mesh-repair-ui.js?v=step-combined';
-import {mountDrawingViewer} from './drawing-viewer.js';
+import {mountDrawingViewer} from './drawing-viewer.js?v=dxf-0.15.0';
 import {fitCameraToBox,updateCameraRange,captureCameraView,restoreCameraView} from './camera-framing.js';
 const query=new URLSearchParams(location.search),binaryMode=query.get('transport')==='binary',batchMode=query.get('batch')==='1';
 // The unified pipeline is the default entry; ?pipeline=legacy keeps the old EASM bridge for regression.
@@ -44,8 +45,9 @@ scene.add(new THREE.HemisphereLight(0xffffff,0x758797,2.2));
 const light=new THREE.DirectionalLight(0xffffff,2.4);light.position.set(3,-4,6);scene.add(light);
 let groundPicking=false,groundPlane=null;
 let sourceUpload=null;
+let dxfUpload=null;
 let model=null,entries=[],selected=null,helper=null,meta={},wire=false,loading=false,grid=null,pendingPartialFile=null;
-let loadSeq=0,activeLoad=null,loadTiming=null;
+let loadSeq=0,activeLoad=null,loadTiming=null,loadState={phase:'idle',name:null};
 function mark(name){if(loadTiming)loadTiming[name]=Math.round((performance.now()-loadTiming.t0)*10)/10;}
 const raycaster=new THREE.Raycaster();raycaster.params.Line.threshold=0.5;
 const highlighter=createHighlighter(scene);
@@ -146,9 +148,9 @@ function updateSelectionTools(){
  const focused=document.activeElement;if(focused?.disabled&&Object.hasOwn(active,focused.id))renderer.domElement.focus();
 }
 function restoreView(view){setCameraUp(view.up);restoreCameraView(camera,controls,view);render();}
-function refresh(){if(drawingViewer)return;const all=model?meshes(model):[];const shown=all.filter(effective);const idx=currentEnvelope?.snapshot?logicalIndex():null;const vis=idx?visibleLogical():null;
+function refresh(){const ready=!!(model||drawingViewer)&&!loading;for(const id of ['fit','export','ground','wire','showAll','reset','search'])$(id).disabled=!ready;updateXrefControls();if(drawingViewer)return;const all=model?meshes(model):[];const shown=all.filter(effective);const idx=currentEnvelope?.snapshot?logicalIndex():null;const vis=idx?visibleLogical():null;
 if(idx){$('stats').textContent=`显示 ${vis.draws.toLocaleString()} / ${idx.draws.toLocaleString()} 个逻辑对象 · ${vis.instances.toLocaleString()} / ${idx.instances.toLocaleString()} 个实例 · ${shown.length.toLocaleString()} / ${all.length.toLocaleString()} 个物理网格`;}
-else{const tris=shown.reduce((s,m)=>s+Math.min(m.geometry.drawRange.count,m.geometry.index?m.geometry.index.count:m.geometry.attributes.position.count)/3,0);$('stats').textContent=`显示 ${shown.length.toLocaleString()} / ${all.length.toLocaleString()} 个网格 · ${Math.round(tris).toLocaleString()} 个三角形`;}
+else{const tris=shown.reduce((s,m)=>s+Math.min(m.geometry.drawRange.count,m.geometry.index?m.geometry.index.count:m.geometry.attributes.position.count)/3,0);$('stats').textContent=model?`显示 ${shown.length.toLocaleString()} / ${all.length.toLocaleString()} 个网格 · ${Math.round(tris).toLocaleString()} 个三角形`:'当前无预览';}
 updateSelectionTools();if(helper)helper.visible=!!selected&&effective(selected.object);
 for(const e of entries){if(!e.row)continue;let total,visible;const sid=idx?e.object.userData.sourceId:null;const sub=sid?idx.subtree.get(sid):null;if(sub&&sub.draws){total=sub.draws;visible=vis.subtree.get(sid)||0;}else{const subset=meshes(e.object);total=subset.length;visible=subset.filter(effective).length;}e.check.checked=total>0&&visible===total;e.check.indeterminate=visible>0&&visible<total;e.row.classList.toggle('off',visible===0);e.row.classList.toggle('active',e===selected);e.button.setAttribute('aria-pressed',String(e===selected));}for(const row of productRows){let total,visible;const sub=idx?idx.prodSubtree.get(row.id):null;if(sub&&sub.draws){total=sub.draws;visible=vis.productSubtree.get(row.id)||0;}else{const subset=meshes(row.object);total=subset.length;visible=subset.filter(effective).length;}row.check.checked=total>0&&visible===total;row.check.indeterminate=visible>0&&visible<total;const active=selected?.object.userData.productId===row.id;row.button.setAttribute('aria-pressed',String(active));row.row.classList.toggle('active',active);}highlighter&&highlighter.syncVisibility();render();}
 function makeTree(){const target=$('tree');target.replaceChildren();const q=$('search').value.toLowerCase();for(const e of entries){e.row=null;if(q&&!e.name.toLowerCase().includes(q))continue;const row=document.createElement('div');row.className='row';row.dataset.sceneId=e.object.userData.sourceId||e.id;row.dataset.productId=e.object.userData.productId||'';row.style.paddingLeft=Math.min(e.depth,6)*12+'px';const check=document.createElement('input');check.type='checkbox';check.setAttribute('aria-label','显示 '+e.name);check.addEventListener('change',()=>{if(viewerSession){viewerSession.setShown(e.object.userData.sourceId,check.checked);syncViewer();refresh();return;}e.object.visible=check.checked;if(check.checked){e.object.traverse(o=>o.visible=true);for(let p=e.object.parent;p&&p!==scene;p=p.parent)p.visible=true;}refresh();});const button=document.createElement('button');button.className='node';button.textContent=e.name;button.title=e.name;button.addEventListener('click',()=>select(e));row.append(check,button);target.append(row);Object.assign(e,{row,check,button});}$('nodecount').textContent=`${entries.length} 节点`;refresh();}
@@ -187,11 +189,16 @@ function installDrawing(envelope,info){
  const readLine='源实体读取：'+(read.status||'unknown')+'（'+(read.sourceRecords??'?')+' 条记录）';
  const geomLine='几何显示：'+(geom.status||'unknown')+'（'+(geom.withDisplayGeometry??'?')+' / '+(geom.sourceRecords??'?')+' 条产生绘制项'
    +(geom.withoutDisplayGeometry?('，未显示 '+(geom.withoutDisplayGeometry)+(unsupportedText?'：'+unsupportedText:'')):'')+'）';
- const attrLine='工程属性覆盖：'+(attrs.status||'unknown')+'（尺寸语义未重建、MTEXT 格式保留未渲染、字体替代、图案填充未支持；与几何完整性独立）';
+ const attrLine='工程属性覆盖：'+(attrs.status||'unknown')+'（已接入多行文字排版与引线显示；尺寸关联、缺失字体仍有范围限制）';
  box.hidden=false;box.classList.toggle('incomplete',(geom.status||snap.completeness)!=='complete');
  box.textContent=readLine+' · '+geomLine+' · '+attrLine+'。';
- mark('sceneTreeReady');mark('installed');mark('viewerInstallEnd');
- window.__drawingInstalled=true;finishModelFrame();
+ mark('sceneTreeReady');
+ const installedDrawing=drawingViewer,token=loadSeq;
+ installedDrawing.ready.then(()=>{
+  if(token!==loadSeq||drawingViewer!==installedDrawing)return;
+  mark('mediaDecoded');mark('installed');mark('viewerInstallEnd');
+  window.__drawingInstalled=true;finishModelFrame();
+ },()=>{});
 }
 function install(root,info,session=null,sync=null,projection=null){
  if(projection?.drawing){installDrawing(projection.drawing,info);return;}
@@ -221,23 +228,56 @@ const matColor=new THREE.MeshStandardMaterial({color:0xffffff,vertexColors:true,
 function build(n){let o;if(n.mesh){const geo=geos.get(n.mesh);if(!geo)throw new Error('缺少网格引用');o=new THREE.Mesh(geo,geo.attributes.color?matColor:mat);}else o=new THREE.Group();o.name=n.name;o.userData.sourceId=n.id;o.userData.sourcePath=n.sourcePath;o.userData.meshDefinition=n.mesh;o.visible=n.visible!==false;if(n.mesh&&n.color){o.material=o.material.clone();o.material.color.fromArray(n.color);}if(n.matrix16){o.matrix.fromArray(n.matrix16);o.matrixAutoUpdate=false;}else if(n.matrix12){const m=n.matrix12;o.matrix.set(m[0],m[1],m[2],m[9],m[3],m[4],m[5],m[10],m[6],m[7],m[8],m[11],0,0,0,1);o.matrixAutoUpdate=false;}for(const c of n.children||[])o.add(build(c));return o;}
 let root=build(packet.root);let info={...packet,meshes:undefined,root:undefined,candidate:packet.candidate??(packet.format==='eDrawings'),reference:false};
 if(demo){const span=bounds(root).getSize(new THREE.Vector3()).x*1.6;const shared=root;const group=new THREE.Group();group.name='交互演示（人为排布，非原装配）';for(let i=0;i<3;i++){const instance=shared.clone(true);instance.name='同一板件 · 实例 '+(i+1);instance.position.x=i*span;group.add(instance);}root=group;info={name:'重复实例显隐演示',quality:'人为排布 · 仅验证交互',candidate:true,unit:packet.unit,note:'同一份真实 Platte 几何被放置三次，用于检查共享网格的实例能否分别显隐。这不是从原文件解析出的装配。',sourceSHA256:packet.sourceSHA256};}return {root,info};}
-async function cancelActive(){
+function clearPreview(){
+ if(drawingViewer){drawingViewer.destroy();drawingViewer=null;}
+ window.__drawingInstalled=false;
+ if(helper){scene.remove(helper);helper.geometry.dispose();helper.material.dispose();helper=null;}
+ highlighter.clear();
+ for(const object of [model,grid])if(object){scene.remove(object);dispose(object);}
+ model=null;grid=null;meta={};entries=[];productRows=[];selected=null;selectedProductId=null;selectedDrawId=null;
+ currentEnvelope=null;currentDrawObjects=null;logicalCache=null;viewerSession=null;syncViewer=null;sourceUpload=null;
+ dxfUpload=null;if($('xrefControls'))$('xrefControls').hidden=true;
+ cameraBounds=null;focusView=null;isolationBefore=null;groundPicking=false;groundPlane=null;dimMode=false;wire=false;
+ // Also remove DOM left by an installation that threw before returning its API.
+ for(const id of ['drawingCanvas','drawingPanel','drawingOverlay'])$(id)?.remove();
+ setDrawingChrome(false);clearNonMeshableUI();
+ $('tree').replaceChildren();$('tree').removeAttribute('data-title');$('productTree')?.replaceChildren();if($('productTree')){$('productTree').hidden=true;$('productTree').style.display='';}
+ $('nodecount').textContent='0 节点';$('search').value='';stateControls();
+ for(const id of ['completeness','partialOffer','reference']){$(id).hidden=true;if(id==='completeness'){$(id).textContent='';$(id).classList.remove('incomplete','has-omissions','has-repairs');}}
+ for(const id of ['note','source','unit'])$(id).textContent='';
+ for(const id of ['ground','wire','dim','isolate','toggle','focus'])$(id).setAttribute('aria-pressed','false');
+ $('ground').textContent='选底面摆正';$('clearGround').disabled=true;$('quality').classList.remove('candidate');
+ $('viewlabel').textContent='当前无预览';
+}
+function showLoadState(phase,name){
+ loadState={phase,name};$('filename').textContent=name;$('filename').title=name;
+ $('quality').textContent={loading:'正在导入',failed:'导入失败',cancelled:'已取消加载'}[phase];
+ $('note').textContent=phase==='loading'?'正在读取所选文件。':phase==='failed'?'本次文件未生成预览，请检查错误后重新导入。':'本次加载已取消，可重新选择文件。';
+}
+function finishLoadUI(load){
+ loading=false;activeLoad=null;$('cancelLoad').hidden=true;$('busy').hidden=true;$('viewport').setAttribute('aria-busy','false');
+ for(const id of ['sample','open','configuration','displayState'])$(id).disabled=false;
+ refresh();window.__lastLoad={ms:performance.now()-load.startedAt,rows:entries.length,name:meta.name||null,loadState:{...loadState},error:$('error').hidden?'':$('error').textContent,heap:performance.memory?performance.memory.usedJSHeapSize:null};
+}
+async function cancelActive({superseded=false}={}){
  const current=activeLoad;if(!current)return;
- activeLoad=null;current.controller.abort();
+ activeLoad=null;++loadSeq;current.controller.abort();
+ if(!superseded){clearPreview();pendingPartialFile=null;showLoadState('cancelled',current.name);$('error').hidden=true;finishLoadUI(current);}
  // The platform loader owns its authenticated cancellation route.
  if(query.get('platform')!=='1'){try{await fetch(current.jobId?'/api/jobs/'+current.jobId+'/cancel':'/api/cancel?requestId='+current.requestId,{method:'POST'});}catch(e){}}
 }
 $('cancelLoad').onclick=()=>cancelActive();
-async function busy(task){
+async function busy(task,{name='所选文件'}={}){
  // A new load cancels the previous worker instead of waiting for it; only the
  // newest token may install a result, so a stale parse cannot replace the model.
- if(loading)await cancelActive();
+ if(activeLoad)void cancelActive({superseded:true});
  const token=++loadSeq;const controller=new AbortController();const requestId=crypto.randomUUID().replace(/-/g,'');const startedAt=performance.now();loadTiming={t0:startedAt,uploadStart:0,traceId:requestId,browserDocumentHadModel:!!(model||drawingViewer)};
- activeLoad={token,controller,requestId};
- loading=true;$('cancelLoad').hidden=false;$('busy').textContent='正在解析文件…';$('busy').hidden=false;$('error').hidden=true;['sample','open','configuration','displayState'].forEach(id=>$(id).disabled=true);refresh();
- try{await task({token,controller,requestId});}
- catch(e){if(token===loadSeq&&!controller.signal.aborted){window.__lastError={message:e.message,stack:e.stack};$('error').textContent=e.message||String(e);$('error').hidden=false;const offer=$('partialOffer');if(e.payload?.partialPreviewAvailable&&pendingPartialFile){offer.hidden=false;offer.querySelector('span').textContent=`严格模式已中止：源几何存在缺失面（${e.payload.details?.entries?.length||'若干'} 处）。可手动改用部分预览；结果会明确标记为不完整。`;}else{offer.hidden=true;}}}
- finally{if(token===loadSeq){loading=false;activeLoad=null;$('cancelLoad').hidden=true;$('busy').hidden=true;['sample','open','configuration','displayState'].forEach(id=>$(id).disabled=false);refresh();window.__lastLoad={ms:performance.now()-startedAt,rows:entries.length,name:meta.name||null,error:$('error').hidden?'':$('error').textContent,heap:performance.memory?performance.memory.usedJSHeapSize:null};}}
+ const load={token,controller,requestId,startedAt,name};activeLoad=load;
+ clearPreview();pendingPartialFile=null;window.__lastError=null;showLoadState('loading',name);
+ loading=true;$('cancelLoad').hidden=false;$('busy').textContent='正在解析文件…';$('busy').hidden=false;$('error').hidden=true;$('viewport').setAttribute('aria-busy','true');['sample','open','configuration','displayState'].forEach(id=>$(id).disabled=true);refresh();
+ try{await task(load);if(token===loadSeq&&!controller.signal.aborted){await drawingViewer?.ready;if(token===loadSeq&&!controller.signal.aborted){loadState={phase:'ready',name:meta.name||name};$('filename').title=loadState.name;}}}
+ catch(e){if(token===loadSeq&&!controller.signal.aborted){clearPreview();showLoadState('failed',name);window.__lastError={message:e.message,stack:e.stack};$('error').textContent='无法打开“'+name+'”：'+(e.message||String(e));$('error').hidden=false;const offer=$('partialOffer');if(e.payload?.partialPreviewAvailable&&pendingPartialFile){offer.hidden=false;offer.querySelector('span').textContent=`严格模式已中止：源几何存在缺失面（${e.payload.details?.entries?.length||'若干'} 处）。可手动改用部分预览；结果会明确标记为不完整。`;}else{offer.hidden=true;}}}
+ finally{if(token===loadSeq)finishLoadUI(load);}
 }
 function drawIdsForRepair(face){
  const d=currentEnvelope?.document,s=currentEnvelope?.snapshot;if(!d||!s)return [];
@@ -276,7 +316,7 @@ function renderCompleteness(envelope,info){
  if(c.categories?.nonMeshableFaces?.length){box.classList.add('has-omissions');appendNonMeshableUI(box,envelope,info);}
  appendMeshRepairUI(box,envelope,info,face=>{const id=drawIdsForRepair(face).find(id=>{const o=currentDrawObjects?.get(id);return o&&effective(o.userData?.renderObject||o);});return !!id&&focusDraw(id);});
 }
-$('partialRetry').onclick=()=>{const file=pendingPartialFile;if(!file||loading)return;$('partialOffer').hidden=true;busy(async load=>{const p=await parseUpload(file,null,null,load,{partial:true});if(load.token!==loadSeq)return;const projection=decodePayload(p);const {root,info,session,sync}=projection;info.reference=false;sourceUpload=null;install(root,info,session,sync,projection);});};
+$('partialRetry').onclick=()=>{const file=pendingPartialFile;if(!file||loading)return;busy(async load=>{pendingPartialFile=file;const p=await parseUpload(file,null,null,load,{partial:true});if(load.token!==loadSeq||load.controller.signal.aborted)return;const projection=decodePayload(p);const {root,info,session,sync}=projection;info.reference=false;sourceUpload=null;install(root,info,session,sync,projection);},{name:file.name});};
 function stateControls(){
  $('stateControls').hidden=!meta.selection||!sourceUpload;
  for(const id of ['configuration','displayState'])$(id).replaceChildren();
@@ -288,21 +328,22 @@ function stateControls(){
 async function parseJobUpload(file,q,load){
   mark('jobCreateStart');
   const job=await convertJob(file,q,{signal:load.controller.signal,
-   onJob:(id,reused)=>{load.jobId=id;if(activeLoad?.token===load.token)activeLoad.jobId=id;if(loadTiming){loadTiming.jobId=id;loadTiming.jobReused=reused;}mark('jobCreated');},
+   onJob:(id,reused)=>{load.jobId=id;if(activeLoad?.token===load.token){activeLoad.jobId=id;if(loadTiming){loadTiming.jobId=id;loadTiming.jobReused=reused;}mark('jobCreated');}},
    onProgress:job=>{if(load.token!==loadSeq)return;const labels={queued:'文件已接收，等待转换…',running:'正在转换几何，请稍候…',completed:'产物已校验，正在安装模型…',failed:'转换失败',cancelled:'转换已取消','timed-out':'转换任务超时'};$('busy').textContent=labels[job.state]||'正在转换…';if(loadTiming){loadTiming.jobState=job.state;loadTiming.jobPhase=job.phase;}}});
   mark('jobVerified');load.controller.signal.throwIfAborted();
   const resultQuery=new URLSearchParams({transport:query.get('transport')==='base64'?'base64':'binary',requestId:load.requestId});
   for(const key of ['compression','metadata'])if(query.has(key))resultQuery.set(key,query.get(key));
   return packetFrom(await fetch('/api/jobs/'+job.id+'/result?'+resultQuery,{signal:load.controller.signal}),load);
 }
-async function parseUpload(file,configuration,displayState,load,{partial=false}={}){
+async function parseUpload(file,configuration,displayState,load,{partial=false,resources=null}={}){
  const q=new URLSearchParams({name:file.name,requestId:load.requestId});if(partial)q.set('partial','1');if(unifiedMode)q.set('model','ucd');if(unifiedMode&&binaryMode)q.set('transport','binary');if(configuration)q.set('configuration',configuration);if(displayState)q.set('displayState',displayState);
  if(query.has('compression'))q.set('compression',query.get('compression'));
  const step=unifiedMode&&/\.(step|stp)$/i.test(file.name);
+ const body=resources?resourcePackage(file,resources):file,endpoint=resources?'/api/parse-dxf-bundle?':'/api/parse?';
  if(step&&(file.size>8*1024*1024||query.get('jobs')==='1'))return parseJobUpload(file,q,load);
  // A cancel response can arrive just before the worker's lock is released.
  for(let attempt=0;;attempt++){
-  const response=await fetch('/api/parse?'+q,{method:'POST',body:file,signal:load.controller.signal});
+  const response=await fetch(endpoint+q,{method:'POST',body,signal:load.controller.signal});
   if(response.status===429&&step){
    if(loadTiming){loadTiming.syncBusyFallback=true;loadTiming.syncBusyTrace=JSON.parse(response.headers.get('X-CAD-Trace')||'null');}
    mark('queueFallback');return parseJobUpload(file,q,load);
@@ -313,35 +354,57 @@ async function parseUpload(file,configuration,displayState,load,{partial=false}=
 }
 async function changeState(configuration,displayState){
  if(!sourceUpload||loading)return;
- await busy(async load=>{const p=await parseUpload(sourceUpload,configuration,displayState,load);if(load.token!==loadSeq)return;const {root,info,session,sync}=decodePayload(p);install(root,info,session,sync);});stateControls();
+ const file=sourceUpload;
+ await busy(async load=>{const p=await parseUpload(file,configuration,displayState,load);if(load.token!==loadSeq||load.controller.signal.aborted)return;const projection=decodePayload(p);sourceUpload=file;install(projection.root,projection.info,projection.session,projection.sync,projection);},{name:file.name});stateControls();
 }
 $('configuration').onchange=e=>changeState(e.target.value,null);
 $('displayState').onchange=e=>changeState(meta.selectedConfiguration,e.target.value);
-async function packetFrom(response,load){mark('headers');if(loadTiming){loadTiming.artifactBytes=Number(response.headers.get('X-CAD-Artifact-Bytes')||response.headers.get('X-CAD-Unencoded-Bytes'))||null;loadTiming.cache=response.headers.get('X-Cache');loadTiming.serverTrace=JSON.parse(response.headers.get('X-CAD-Trace')||'null');}const text=await response.text();mark('body');let p=JSON.parse(text);mark('json');if(loadTiming){loadTiming.encodedBytes=Number(response.headers.get('X-CAD-Encoded-Bytes'));loadTiming.unencodedBytes=Number(response.headers.get('X-CAD-Unencoded-Bytes'));loadTiming.contentEncoding=response.headers.get('Content-Encoding');loadTiming.wireProfile=p.transportProfile;}mark('metadataExpandStart');p=unpackMetadata(p);mark('metadataExpandEnd');if(!response.ok||p.error){const error=new Error(p.error||'解析失败');error.payload=p;throw error;}if(loadTiming)loadTiming.manifestBytes=text.length;mark('resourceHydrationStart');if(p.transportProfile!=='ucd-binary-manifest/1'){mark('resourceHydrationEnd');return p;}const hydrated=await hydrateBinary(p,{signal:load?.controller.signal});mark('resources');mark('resourceHydrationEnd');return hydrated;}
+async function packetFrom(response,load){mark('headers');if(loadTiming){loadTiming.artifactBytes=Number(response.headers.get('X-CAD-Artifact-Bytes')||response.headers.get('X-CAD-Unencoded-Bytes'))||null;loadTiming.cache=response.headers.get('X-Cache');loadTiming.serverTrace=JSON.parse(response.headers.get('X-CAD-Trace')||'null');}const text=await response.text();load?.controller.signal.throwIfAborted();mark('body');let p=JSON.parse(text);mark('json');if(loadTiming){loadTiming.encodedBytes=Number(response.headers.get('X-CAD-Encoded-Bytes'));loadTiming.unencodedBytes=Number(response.headers.get('X-CAD-Unencoded-Bytes'));loadTiming.contentEncoding=response.headers.get('Content-Encoding');loadTiming.wireProfile=p.transportProfile;}mark('metadataExpandStart');p=unpackMetadata(p);mark('metadataExpandEnd');if(!response.ok||p.error){const error=new Error(p.error||'解析失败');error.payload=p;throw error;}if(loadTiming)loadTiming.manifestBytes=text.length;mark('resourceHydrationStart');if(p.transportProfile!=='ucd-binary-manifest/1'){mark('resourceHydrationEnd');return p;}const hydrated=await hydrateBinary(p,{signal:load?.controller.signal});mark('resources');mark('resourceHydrationEnd');return hydrated;}
 function decodePayload(payload){mark('viewerInstallStart');if(!unifiedMode)return fromPacket(payload);
  const drawingTables=payload.document&&payload.document.drawing;
  if(drawingTables&&Object.values(drawingTables).some(t=>t&&Object.keys(t).length)){mark('viewerProjection');mark('project');const info={name:payload.presentation.name,quality:payload.presentation.quality,unit:payload.presentation.unit,note:payload.presentation.note,candidate:payload.presentation.candidate,sourceSHA256:payload.presentation.sourceSHA256,drawing:true};return {root:null,info,session:null,sync:null,drawing:payload};}
  const p=directMode?null:fromUnified(payload);mark('viewerProjection');const projection=directMode?directProjection(payload):batchMode?batchProjection(p,payload):p;mark('project');projection.envelope=payload;return projection;}
 /** Host supplies an already validated transport envelope. CAD interpretation,
  * face identities, completeness and ViewerSession remain the existing path. */
-export function loadPlatformModel(loader){
+export function loadPlatformModel(loader,{name='业务系统文件'}={}){
  if(query.get('platform')!=='1')throw new Error('Platform entry is disabled');
  return busy(async load=>{
-  const payload=await loader({signal:load.controller.signal,progress:text=>{if(load.token===loadSeq)$('busy').textContent=text;}});
-  if(load.token!==loadSeq)return;
+  const payload=await loader({signal:load.controller.signal,progress:text=>{if(load.token===loadSeq&&!load.controller.signal.aborted)$('busy').textContent=text;}});
+  if(load.token!==loadSeq||load.controller.signal.aborted)return;
   const projection=decodePayload(payload);sourceUpload=null;
   install(projection.root,projection.info,projection.session,projection.sync,projection);
- });
+ },{name});
 }
-function loadSample(id){return busy(async load=>{const p=await packetFrom(await fetch('/api/sample?id='+(id==='demo'?'platte':id)+modelQuery+(unifiedMode&&binaryMode?'&transport=binary':'')+'&requestId='+load.requestId+(query.get('compression')==='gzip'?'&compression=gzip':''),{signal:load.controller.signal}),load);if(load.token!==loadSeq)return;const projection=decodePayload(p);const {root,info,session,sync}=projection;sourceUpload=null;install(root,info,session,sync,projection);});}
+function loadSample(id){return busy(async load=>{const p=await packetFrom(await fetch('/api/sample?id='+(id==='demo'?'platte':id)+modelQuery+(unifiedMode&&binaryMode?'&transport=binary':'')+'&requestId='+load.requestId+(query.get('compression')==='gzip'?'&compression=gzip':''),{signal:load.controller.signal}),load);if(load.token!==loadSeq||load.controller.signal.aborted)return;const projection=decodePayload(p);const {root,info,session,sync}=projection;sourceUpload=null;install(root,info,session,sync,projection);},{name:$('sample').selectedOptions[0]?.textContent||id});}
 $('sample').addEventListener('change',e=>loadSample(e.target.value));$('open').onclick=()=>$('file').click();
-$('file').addEventListener('change',async e=>{const file=e.target.files[0];e.target.value='';if(!file)return;await busy(async load=>{const ext=file.name.split('.').at(-1).toLowerCase(),limits=await getUploadLimits(),limit=/^(step|stp)$/.test(ext)?limits.stepJobInputBytes:limits.synchronousInputBytes;if(file.size>limit)throw new Error(`文件超过当前 ${limit/(1024*1024)} MiB 上限`);let root,session,sync,info={name:file.name,quality:'文件节点解析',unit:'单位依源文件',note:''};
+$('file').addEventListener('change',async e=>{const file=e.target.files[0];e.target.value='';if(!file)return;await busy(async load=>{const ext=file.name.split('.').at(-1).toLowerCase(),limits=await getUploadLimits(),limit=/^(step|stp)$/.test(ext)?limits.stepJobInputBytes:limits.synchronousInputBytes;load.controller.signal.throwIfAborted();if(load.token!==loadSeq)return;if(file.size>limit)throw new Error(`文件超过当前 ${limit/(1024*1024)} MiB 上限`);let root,session,sync,info={name:file.name,quality:'文件节点解析',unit:'单位依源文件',note:''};
 if(unifiedMode&&!['easm','step','stp','dxf'].includes(ext))throw new Error('统一模型入口接入 EASM、STEP 与 DXF');pendingPartialFile=ext==='step'||ext==='stp'?file:null;
-if(['catpart','easm','step','stp','dxf'].includes(ext)){const p=await parseUpload(file,null,null,load);if(load.token!==loadSeq)return;const projection=decodePayload(p);({root,info,session,sync}=projection);info.reference=false;var unifiedProjection=projection;}
+if(['catpart','easm','step','stp','dxf'].includes(ext)){const p=await parseUpload(file,null,null,load);if(load.token!==loadSeq||load.controller.signal.aborted)return;const projection=decodePayload(p);({root,info,session,sync}=projection);info.reference=false;var unifiedProjection=projection;}
 else if(ext==='glb'){const manager=new THREE.LoadingManager();manager.setURLModifier(url=>{if(url.startsWith('data:')||url.startsWith('blob:'))return url;throw new Error('本地验证版仅支持内嵌资源的GLB，外部引用未加载');});const gltf=await new GLTFLoader(manager).parseAsync(await file.arrayBuffer(),'');root=gltf.scene;let unsupported=false;root.traverse(o=>{if(o.isSkinnedMesh||o.isInstancedMesh||o.morphTargetInfluences?.length)unsupported=true;});if(unsupported){dispose(root);throw new Error('此GLB包含蒙皮、变形或GPU合批实例，尚未支持逐实例验收');}root.name=file.name;info.note='保留GLB场景节点、变换与网格引用；节点是否对应设计零件取决于导出文件。仅显示静态场景，不播放动画。';}
 else if(ext==='stl'){const geo=new STLLoader().parse(await file.arrayBuffer());root=new THREE.Mesh(geo,new THREE.MeshStandardMaterial({color:0x83a7b8,metalness:.2,roughness:.5,side:THREE.DoubleSide}));root.name=file.name;info.note='STL按整个文件作为一个对象显示。未按连通块猜测设计零件；文件不提供可靠的装配树和单位。';info.unit='STL单位未知';}
 else if(ext==='obj'){root=new OBJLoader().parse(await file.text());root.name=file.name;info.note='保留OBJ的对象与分组；未加载外部MTL及纹理。分组不一定对应原始CAD零件。';info.unit='OBJ单位未知';}
-else throw new Error('当前验证版不支持此格式');if(load.token!==loadSeq)return;sourceUpload=ext==='easm'?file:null;install(root,info,session,sync,typeof unifiedProjection!=='undefined'?unifiedProjection:null);});});
+else throw new Error('当前验证版不支持此格式');if(load.token!==loadSeq||load.controller.signal.aborted){if(root)dispose(root);return;}sourceUpload=ext==='easm'?file:null;install(root,info,session,sync,typeof unifiedProjection!=='undefined'?unifiedProjection:null);if(ext==='dxf')dxfUpload={file,resources:new Map()};},{name:file.name});});
+function updateXrefControls(){
+ const panel=$('xrefControls');if(!panel)return;
+ panel.hidden=!(dxfUpload&&drawingViewer&&(currentEnvelope?.document.externalReferences.length||dxfUpload.resources.size));
+ for(const id of ['xrefAdd','xrefFolder','xrefClear'])$(id).disabled=loading||!dxfUpload||(id==='xrefClear'&&!dxfUpload.resources.size);
+ $('xrefProvided').textContent=dxfUpload?'已选择 '+dxfUpload.resources.size+' 份配套文件；支持 DXF、SHX/SHP、图片和 PDF，文件夹保留相对目录。DWG 会登记为未支持。':'';
+}
+function reloadDxfResources(files=[],directory=false,clear=false){
+ const previous=dxfUpload;if(!previous||loading)return;
+ return busy(async load=>{
+  const resources=clear?new Map():collectResources(previous.resources,files,directory);
+  const payload=await parseUpload(previous.file,null,null,load,{resources});
+  if(load.token!==loadSeq||load.controller.signal.aborted)return;
+  const projection=decodePayload(payload);install(projection.root,projection.info,projection.session,projection.sync,projection);
+  dxfUpload={file:previous.file,resources};
+ },{name:previous.file.name});
+}
+if($('xrefAdd')){
+ $('xrefAdd').onclick=()=>$('xrefFiles').click();$('xrefFolder').onclick=()=>$('xrefDirectory').click();
+ for(const [id,directory] of [['xrefFiles',false],['xrefDirectory',true]])$(id).onchange=e=>{const files=[...e.target.files];e.target.value='';if(files.length)reloadDxfResources(files,directory);};
+ $('xrefClear').onclick=()=>reloadDxfResources([],false,true);
+}
 $('search').oninput=makeTree;$('fit').onclick=()=>{if(drawingViewer)return drawingViewer.fit();focusView=null;if(isolationBefore)isolationBefore.view=null;fit();updateSelectionTools();};$('dim').onclick=()=>{dimMode=!dimMode;updateSelectionTools();applyHighlight();render();};
 $('focus').onclick=()=>{
  if(drawingViewer)return drawingViewer.fitSelection();
@@ -368,6 +431,7 @@ $('isolate').onclick=()=>{
 $('showAll').onclick=()=>{isolationBefore=null;if(viewerSession){viewerSession.showAll();syncViewer();refresh();return;}entries.forEach(e=>e.object.visible=true);refresh();};$('reset').onclick=()=>{focusView=null;isolationBefore=null;dimMode=false;if(viewerSession){viewerSession.reset();syncViewer();select(null);fit();return;}entries.forEach(e=>e.object.visible=e.initial);select(null);fit();};
 $('wire').onclick=()=>{wire=!wire;$('wire').setAttribute('aria-pressed',String(wire));if(model)model.traverse(o=>{for(const m of o.material?(Array.isArray(o.material)?o.material:[o.material]):[])m.wireframe=wire;});render();};
 export function inspectionRecord(){
+ if(drawingViewer&&!loading)return {schemaVersion:'ucd-drawing-record/1',time:new Date().toISOString(),file:meta,drawing:drawingViewer.record()};
  if(!model||loading)return null;
  model.updateWorldMatrix(true,true);
  const data={viewerSession:viewerSession?.record()??null,schemaVersion:2,time:new Date().toISOString(),file:meta,scope:'当前浏览器场景运行记录，不代表原软件几何对照验收通过；运行 UUID 仅在本次加载内标识对象',matrixLayout:'column-major',groundPlane,selection:selected?.id||null,nodes:entries.map(e=>{
@@ -377,7 +441,6 @@ export function inspectionRecord(){
  return data;
 }
 $('export').onclick=()=>{
- if(drawingViewer){const data={schemaVersion:'ucd-drawing-record/1',time:new Date().toISOString(),file:meta,drawing:drawingViewer.record()};const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='DXF二维检查记录.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);return;}
  const data=inspectionRecord();if(!data)return;
  const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='CAD检查记录.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 };
@@ -411,9 +474,12 @@ $('ground').onclick=()=>{if(!model)return;groundPicking=!groundPicking;$('ground
 $('clearGround').onclick=()=>{if(grid){scene.remove(grid);dispose(grid);grid=null;}groundPlane=null;groundPicking=false;$('ground').setAttribute('aria-pressed','false');$('ground').textContent='选底面摆正';$('clearGround').disabled=true;$('viewlabel').textContent='查看方向 · 地面未设置';render();};
 
 window.addEventListener('beforeunload',()=>{controls.dispose();if(model)dispose(model);renderer.dispose();});
-if(query.get('autoload')!=='0')loadSample('viola');
+if(query.get('autoload')!=='0'){
+ const sample=query.get('sample'),initial=[...$('sample').options].some(option=>option.value===sample)?sample:'viola';
+ $('sample').value=initial;loadSample(initial);
+}
 // Read-only test hook: exposes what the page installed, not viewer internals.
-window.__viewerDebug=()=>({mode:{direct:directMode,batch:batchMode,unified:unifiedMode,drawing:!!drawingViewer},drawing:drawingViewer?drawingViewer.record():null,name:meta.name||null,unified:!!(meta.unified||meta.drawing),rows:entries.length,loading,error:$('error').hidden?'':$('error').textContent,selected:selected?.id??null,selectedDrawId,selectedSceneId:selected?.object.userData.sourceId??null,loadSeq,requestId:activeLoad?.requestId??null,render:{...renderer.info.render,renderCount},highlight:highlighter?highlighter.stats():null,timing:loadTiming?{...loadTiming}:null,draws:currentEnvelope?Object.keys(currentEnvelope.snapshot.draws).length:null,session:viewerSession?viewerSession.record():null,completeness:(currentEnvelope?.document?.extensions?.['org.cad-preview.completeness/1'])??null,products:currentEnvelope?Object.keys(currentEnvelope.document.productOccurrences).length:null,quality:meta.quality||null});
+window.__viewerDebug=()=>({mode:{direct:directMode,batch:batchMode,unified:unifiedMode,drawing:!!drawingViewer},drawing:drawingViewer?drawingViewer.record():null,name:meta.name||null,loadState:{...loadState},unified:!!(meta.unified||meta.drawing),rows:entries.length,loading,error:$('error').hidden?'':$('error').textContent,selected:selected?.id??null,selectedDrawId,selectedSceneId:selected?.object.userData.sourceId??null,loadSeq,requestId:activeLoad?.requestId??null,render:{...renderer.info.render,renderCount},highlight:highlighter?highlighter.stats():null,timing:loadTiming?{...loadTiming}:null,draws:currentEnvelope?Object.keys(currentEnvelope.snapshot.draws).length:null,session:viewerSession?viewerSession.record():null,completeness:(currentEnvelope?.document?.extensions?.['org.cad-preview.completeness/1'])??null,products:currentEnvelope?Object.keys(currentEnvelope.document.productOccurrences).length:null,quality:meta.quality||null});
 window.__viewerTest={pickDraw:(drawId)=>{const sid=currentEnvelope?.snapshot.draws[drawId]?.occurrenceId;const entry=entries.find(e=>e.object.userData.sourceId===sid)||null;select(entry,null,drawId);return {highlight:highlighter.stats(),selected:entry?.id??null};},pickProduct:(productId)=>{const entry=entries[0]||null;select(entry,productId,null);return {highlight:highlighter.stats()};},pickNone:()=>{select(null);return {highlight:highlighter.stats()};},
 pickScene:(sceneId)=>{const obj=model?.userData.productModel?.sceneObjects?.get(sceneId)||null;select(obj?.userData.entry||null,null,null);return {highlight:highlighter.stats()};},drawIds:()=>currentDrawObjects?[...currentDrawObjects.keys()]:[],
 catalog:()=>{const out=[];for(const [id,entry] of (currentDrawObjects||[])){const mesh=entry.userData?.renderObject||entry;out.push({id,topology:mesh.isLineSegments?'lines':'triangles',productId:currentEnvelope?currentEnvelope.document.renderOwnership[id]??null:null,sceneId:currentEnvelope?currentEnvelope.snapshot.draws[id]?.occurrenceId??null:null,meshDefinition:mesh.userData.meshDefinition??null,physicalMeshCount:mesh.userData.primitiveSpans?.length??1});}return out;},

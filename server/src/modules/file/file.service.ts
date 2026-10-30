@@ -1521,7 +1521,7 @@ export class FileService {
       const versions = await this.repository.listVersions(file.id, tx);
       // 预览产物按版本隔离，无共享归属；与源版本一起清理，不按客户端曾申报的哈希转移给其他文件。
       const versionIds = versions.map((version) => version.id);
-      await this.cadArchive?.purge(file.id, file.projectId);
+      await this.cadArchive?.purge(file.id, file.projectId, tx);
       const artifactRows = await this.previews.listReadyByVersionIds(versionIds, tx);
       const artifactKeys: string[] = [];
       for (const row of artifactRows) {

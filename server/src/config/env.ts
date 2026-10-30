@@ -63,6 +63,7 @@ export const EnvSchema = z
     CAD_ENGINE_SOCKET: z.string().default(""),
     CAD_ENGINE_URL: z.string().default(""),
     CAD_MAX_INPUT_MIB: z.coerce.number().int().min(1).max(256).default(64),
+    CAD_DWG_ENABLED: z.enum(["true", "false"]).default("false"),
     /** 客户端超时（毫秒）：比容器内 10 秒硬超时留余量 —— 才拿得到 504 CONVERT_TIMEOUT 而不是被客户端掐断的裸超时。 */
     PREVIEW_CONVERT_TIMEOUT_MS: z.coerce.number().int().min(1000).max(600000).default(15000),
     /** 可重试失败的最大尝试次数（含首次）：到顶写产物 failed + outbox dead（D2-05 降级「请下载」）。 */

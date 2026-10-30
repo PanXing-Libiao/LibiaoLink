@@ -1,5 +1,8 @@
 # CAD 独立沙箱
 
+
+> 二维 DXF 接入需先停止旧 API/worker，再应用迁移 `0077_cad_dxf_input_sets.sql`、`0078_cad_format_version.sql` 与 `0079_cad_dwg_format.sql`，再用当前源码构建 CAD 镜像，并与 API/worker 同步更新。`0069` 按 ADR-041 把产物缓存键拆为格式独立的 `format_version`；旧产物首次访问重建一次。镜像新增独立 `/opt/dxf`，正常构建并验证仓内 ezdxf fork；DXF v0.10.0 的 DWG 外参还需 `/opt/dwg/bin/dwgread`（固定 LibreDWG 0.13.3），由独立构建阶段校验源码并编译，运行层携带许可、对应源码与构建脚本。第一片 DWG 原生路径还需要 `/opt/dwg-native` 的 Python 依赖、ACadSharp 读取器 DLL 与 .NET 运行时，并通过 `CAD_DWG_PYTHON`、`CAD_DWG_READER`、`CAD_DWG_DOTNET` 配置；API 的 `CAD_DWG_ENABLED` 默认关闭，不能把本机 worker 验证当作目标镜像已支持。原有 `3 GiB / 1 CPU / 64 pids / 禁网` 边界保持，DWG 首版预算另为 3 GiB RSS / 512 MiB 产物。DXF 的 `partial` 是带缺失说明的有效部分产物，STEP 仍须 `completed`；旧镜像不能只靠新 API 打开 DXF。当前仅完成本机验证，未发布到公司测试机或生产。
+
 API → Unix socket → 独立 CAD 容器 → 固定 OCP/Gmsh。解析容器完全禁网，API 只传字节与来源摘要，不共享文件目录、业务凭据或 Docker socket。决策与三种方案比较见 [ADR-036](../../docs/adr/ADR-036-CAD解析沙箱与资源硬限额.md)。
 
 ADR-037 增加上传静默预解析与持久产物：平台 worker 通过同一 socket 提交，数据库保存队列/索引，私有对象存储保存完整模型。持久发布后回收没有其他窗口/alias 使用的自有临时任务，避免上传积累填满 tmpfs；沙箱不获得存储凭据或持久目录，原硬限额不变；验证见[持久化记录](../../docs/cad-platform-integration/PERSISTENCE_RESULTS.md)。

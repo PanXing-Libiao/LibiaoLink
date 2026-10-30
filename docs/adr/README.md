@@ -7,7 +7,7 @@
 > - 本批来源：技术设计v0.1-选型分析.md §0.1 / §4 / §5 / §9 的选型结论固化（定档任务 g1 · S5·ADR）。
 > - 后续来源：ADR-018 来自《技术设计v0.3-实施与验收.md》（实施与验收篇）；**ADR-019 ~ ADR-029 为 M0 口径冻结决议**（2026-09-20 · Push 71，来源 = 技术设计v0.3 §7 十五项待定案清单）；**ADR-030 来自 ONLYOFFICE 替换执行计划（PoC-10 · 2026-09-30）**；**ADR-033 来自 M5-03 单聊改智能机器人执行计划（企微单聊 · M5-03-5 · 2026-10-14）**；**ADR-034 来自安全审查 H1 与《H1 SVG 预览同源存储型 XSS 整改方案》（2026-10-20）**。
 
-## 清单（ADR-001 ~ ADR-038）
+## 清单（ADR-001 ~ ADR-041）
 
 | 编号 | 主题 | 定档结论（一句话） | 切换触发条件 | 状态 |
 |---|---|---|---|---|
@@ -18,7 +18,7 @@
 | ADR-005 | 队列与调度 | PG 原生：Outbox + SKIP LOCKED + advisory lock，不引入 Redis | 多实例 / 外发超 5 条每秒 / PG 竞争成瓶颈 | 已采纳（Accepted · 2026-09-29：S7·outbox S7-1 ~ S7-5 落地收口 · PR #221 / Push 181） |
 | ADR-006 | 对象存储 | S3 协议抽象 + 可替换实现（沙箱 MinIO pinned；生产实现由 ADR-038 定案为自维护 MinIO） | 已触发（2026-09-21：MinIO 上游归档 + 分发下线）；生产实现已由 ADR-038 改定 | **部分被 ADR-038 取代（2026-10-26）**；接口层、键形态与能力差异登记继续有效 |
 | ADR-007 | 在线预览管道 | 仅保留历史沿革；Office 由 ADR-030、CAD 由 ADR-035 承接 | 既有产物与下载按各自决策 | Office 已被 ADR-030 取代；CAD 旧子口径撤回；SVG 已由 ADR-034 局部修订 |
-| [ADR-008](ADR-008-三维与CAD查看策略.md) | 三维与 CAD 查看 | 独立工程接入替代旧选型 | 见 ADR-035 | 由 ADR-035 替代 |
+| [ADR-008](ADR-008-三维与CAD查看策略.md) | 三维与 CAD 查看 | CAD 接入替代旧选型 | 见 ADR-035 | 由 ADR-035 替代 |
 | ADR-009 | 消息通道 | 企微（应用消息 + 群机器人）+ 站内信兜底，其余留适配位 | 其他部门使用不同 IM | 已被 [ADR-033](ADR-033-企微消息通道改由智能机器人承接.md) 部分取代（Superseded · 2026-10-14 —— 企微外发（群播报 + 单聊）改走智能机器人（aibot）· 应用消息保留备用；站内信兜底 / 投递语义继续有效） |
 | ADR-010 | 认证与组织 | 公司统一 SSO（Casdoor，OIDC + PKCE），不自建账号 | SSO 不可用或不覆盖外部干系人 | 草案 |
 | ADR-011 | 权限模型 | 自研策略层（功能 / 数据范围 / 记录 / 字段 / 时效五层） | 角色超 100 或出现策略 DSL 需求 | 草案 |
@@ -45,10 +45,13 @@
 | [ADR-032](ADR-032-CAD工程测量与尺寸依据.md) | CAD 工程测量与尺寸依据 | 旧测量、字段与任务提案撤回 | 后续业务需要另行立项 | 提案撤回，由 ADR-035 替代 |
 | [ADR-033](ADR-033-企微消息通道改由智能机器人承接.md) | 企微消息通道改由智能机器人（aibot）承接 | 群播报 + 单聊提醒统一走 aibot 长连接（单聊新增渠道值 `wecom_aibot`）；应用消息（`wecom_app`）保留未启用备用；单聊可投递地址 = 绑定行密文 `open_userid`（绑定码链路），未绑定 = 确定性失败 + 站内信降级（前缀「当前用户未绑定企业微信，请前往设置补绑」） | aibot 形态不可行（接口下线 / 激活成本不可接受）→ 按回退规则切回应用消息；企微管理员权限可获得或 aibot 单聊接口变化 → 重评明文映射与寻址；新 IM 需求走 ADR-009 适配位 | 已采纳（Accepted · 2026-10-15：随 #340 并入 main · squash `a7d51e4`）· 2026-10-19 增补（绑定码 / 密文寻址 / 激活语义修订 · lan 代 wmj 起草，待 wmj 复核） |
 | [ADR-034](ADR-034-SVG预览安全栅格化.md) | SVG 预览安全栅格化 | 原始 SVG 永不内联；继续用 `target=image` 但只返回服务端 `2.0.0` PNG 产物；原 SVG download-only；精确 MIME + 沙箱 + fail closed | 固定渲染器无法满足保真度 / 沙箱要求，或业务要求动画 / 交互 SVG → 新增 ADR；S7 / S8 为独立纵深项 | 已采纳（Accepted · 2026-10-20：wmj 批准架构 / 契约，PR #518 squash `c53e895`；S2 已随 PR #523 合并 `e2b6aab`；S3 随 PR #529 合并 `acd6113`；S4 已随 PR [#531](https://github.com/PanXing-Libiao/LibiaoLink/pull/531) 合并 `db7d5e0`；S5 已随 PR [#534](https://github.com/PanXing-Libiao/LibiaoLink/pull/534) 合并 main `660cc80`；S6 已随 PR [#539](https://github.com/PanXing-Libiao/LibiaoLink/pull/539) 合并 main 336b66fd，HSTS 单头修复随 PR [#542](https://github.com/PanXing-Libiao/LibiaoLink/pull/542) 合并 333ffdeb 并部署测试机；收口 PR [#543](https://github.com/PanXing-Libiao/LibiaoLink/pull/543) 已 squash 合并 main `5e31e4b9`，最终 head PR CI [39550779854](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39550779854) 与 main CI [39550973691](https://github.com/PanXing-Libiao/LibiaoLink/actions/runs/39550973691) 均 5 / 5；main 连续 3 次含 `svg-preview-e2e` 全绿，该 job 已加入分支保护必需检查；测试机完整 B1 ～ B7 25 / 25，生产部署、真实 CAD 生产样本与关闭评审未完成，H1 未闭环） |
-| [ADR-035](ADR-035-CAD接入独立能力工程.md) | CAD 接入独立能力工程 | 沿用独立 UCD/ViewerSession 与能力矩阵；STEP 本地版本/任务/资源/查看器已联通，其余保留提示与下载 | 独立工程版本/范围变化须登记；平台联调单独验收 | 用户已授权接入；本地验证完成，待非作者评审及公司环境部署验收 |
+| [ADR-035](ADR-035-CAD接入与旧浏览器解析链移除.md) | CAD 接入与旧浏览器解析链移除 | 沿用既有 UCD/ViewerSession；STEP 本地版本/任务/资源/查看器已联通，其余保留提示与下载 | CAD 版本/范围变化须登记；平台联调单独验收 | 用户已授权接入；本地验证完成，待非作者评审及公司环境部署验收 |
 | [ADR-036](ADR-036-CAD解析沙箱与资源硬限额.md) | CAD 解析沙箱与资源硬限额 | 独立禁网容器、Unix socket、内核 CPU/内存/PID/tmpfs 限额；禁止 API 内 native 回退 | 平台持久产物按 ADR-037 承接，沙箱限额不变 | 已实现，本地验证见沙箱记录 |
 | [ADR-037](ADR-037-CAD产物持久化与上传预解析.md) | CAD 产物持久化与上传预解析 | 数据库队列/索引 + 私有对象存储产物，上传即静默登记，默认 GB，跨重启复用 | 新版本/引擎/编码或损坏时重建；迁移后更新 API/worker/CAD 镜像 | 已实现并本地验证，未推送或部署 |
 | [ADR-038](ADR-038-MinIO自维护与RustFS冻结.md) | MinIO 自维护与 RustFS POC 冻结 | MinIO 作为生产对象存储，采用最小下游补丁的自维护发行版；RustFS POC 冻结，不 fork、不接生产 | MinIO 无法安全构建 / 修补，关键 S3 回归不可修，容量或合规要求变化，或出现受支持的内网 S3；RustFS 上游修复版本删除并通过同一验收 | 已采纳（Accepted · 2026-10-26：用户定调，随 PR 合并 main） |
+
+| [ADR-040](ADR-040-DXF二维与配套输入集合.md) | DXF 二维与配套输入集合 | 固定同项目配套版本/逻辑路径，显式部分显示，沿用鉴权持久任务与隔离解析 | 扩展主图格式或资源模型时另行验证 | 草案（本地实现，未部署） |
+| [ADR-041](ADR-041-CAD版本拆分与缓存键.md) | CAD 引擎、格式与浏览器版本分离 | engineVersion 只含服务器引擎/运行时；formatVersion 按 STEP/DXF 拆分并作为产物缓存键；viewerVersion 独立记录 | 新增格式、共享引擎或查看器灰度时重评 | 草案（本地实现，未部署） |
 
 ## 模板与编写规则
 

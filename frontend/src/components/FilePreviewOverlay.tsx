@@ -38,6 +38,7 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (document.querySelector("dialog[data-cad-resources][open]")) return;
         event.stopPropagation();
         onClose();
       }
@@ -78,7 +79,7 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
           />
         ) : null}
         {pane.mode === "viewer" && pane.viewer.kind === "cad" ? (
-          <CadModelViewer key={`${pane.viewer.fileId}:${pane.viewer.versionId}:${nonce}`} viewer={pane.viewer} name={name} onClose={onClose} onDownload={onDownload} onRetry={onRetry} />
+          <CadModelViewer key={`${pane.viewer.fileId}:${pane.viewer.versionId}:${nonce}`} viewer={pane.viewer} name={name} onClose={onClose} onDownload={onDownload} />
         ) : kind === "cad" ? (
           <div
             role="status"

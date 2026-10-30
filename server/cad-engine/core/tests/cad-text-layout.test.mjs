@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import {wrapCadText,cadTextTokens,cadTextEm,cadLineHeight} from '../../../../frontend/public/cad-viewer/core/vendor/cad-text-layout.js';
+const measure=text=>text.length;
+assert.deepEqual(wrapCadText('ab cd ef',4,100,measure),['ab','cd','ef']);
+assert.deepEqual(wrapCadText('ab  cd',99,100,measure),['ab  cd']);
+assert.deepEqual(wrapCadText('a\r\nb\n',2,100,measure),['a','b','']);
+assert.deepEqual(wrapCadText('longword',1,100,measure),['longword']);
+assert.deepEqual(wrapCadText('a\u00a0b c',3,100,measure),['a\u00a0b','c']);
+for(const text of ['a-b/c d','中文 与 English  X',' a\t b ','a\u00a0b'])assert.equal(cadTextTokens(text).join(''),text);
+assert.equal(cadTextEm(3),4);assert.equal(cadLineHeight(3,1.5),7.5);
+console.log('PASS: community text wrapping retains whitespace, explicit paragraphs, nonbreaking spaces and whole long tokens.');

@@ -1,23 +1,36 @@
 # CAD 平台接入基线与迁移任务
 
+> **2026-10-29 DWG packed manifest 传输（本地未部署）**：DWG 平台路径新增 `ucd-dwg-packed/1`（`dwg-table/1`）无损传输：标准实体/显示表压成索引行，非标准形状保留回退；正式图 manifest 265,840,262 → **69,039,306 B（25.97%）**，artifact 341,892,958 → **145,092,002 B（42.4%）**，解包后 canonical revision 与原件一致。worker 75.7 秒（未打包 81.6 秒）、峰值 RSS 2.54 GiB（-148 MB）；本机平台任务 2 分 20 秒（未打包 2 分 41 秒），查看器 ready 12.1 秒（未打包 13.4 秒），画面一致。引擎父进程校验前解包、平台保存 packed 形式，查看器 `core/dwg-packed-transport.js` 解包；`conversion_jobs.py` 为共享文件，STEP/DXF 格式键随共享摘要更新。未验证目标 Linux cgroup 下的父进程解包/校验峰值、测试机/生产与真实账号；`CAD_DWG_ENABLED` 默认仍关闭。版本 `engineVersion=1667305a…`、`formatVersions.DWG=dwg-0.1.0/da44f3c9…`、`viewerVersion=cf6aafa0…`、`releaseDigest=8db94edf…`。
+
+> **2026-10-29 DWG 本机完整系统全链路（本地未部署）**：WSL Docker + PostgreSQL 18 + Casdoor + SeaweedFS S3 + 真实 API/Vite + 本机 CAD 引擎，`CAD_DWG_ENABLED=true`；真实浏览器登录后建项目/任务、分片上传公开样本 `sample_AC1027.dwg`（1,091,959 B），文件绑定任务；`GET /files/{id}/preview` 返回 `viewer.kind=cad`、`format=DWG`；平台任务 `partial`，产物 976,948 B（manifest 806,068 B + buffer 170,880 B），`cad_artifacts.state=partial` 且对象存储 manifest/buffer 存在；文件库「预览」打开 DWG 查看器（canvas 1382×825、`state=ready`、部分显示提示正常）。修复查看器只允许 DXF partial 的门禁（`platform-entry.js`；DWG partial 现可打开，按图纸走 UTF8、不显示配套资源按钮）。正式 34 MB 大图（`bc45921b…`，34,385,320 B）也经同一链路完成：5 片上传、后台任务 2 分 46 秒 `partial`、产物 341,892,958 B（manifest 265,840,390 B + buffer 76,052,568 B），文件库预览 `data-cad-ready-ms=13382`、canvas 1382×825、`state=ready`。未验证目标 Linux 沙箱资源档位、测试机/生产部署与真实公司账号浏览器验收；`CAD_DWG_ENABLED` 默认仍关闭。worker 传输优化后正式图 worker 89.6→81.6 秒、平台任务 2 分 46→2 分 41 秒，峰值 RSS 约 2.68 GiB 基本不变。版本 `engineVersion=b7420fe3…`、`formatVersions.DWG=dwg-0.1.0/7669374c…`、`releaseDigest=0013b43f…`。
+
+> **2026-10-28 DWG 平台第一片（本地未部署）**：DWG 已加入 shared CAD 格式、API 输入/预览/任务、产物仓库和 `core/dwg_platform_convert.py` worker；迁移 `0079_cad_dwg_format.sql`，DWG 只接受主图、结果固定为 `partial`。`CAD_DWG_ENABLED` 默认关闭，原生运行时由 `CAD_DWG_PYTHON`、`CAD_DWG_READER`、`CAD_DWG_DOTNET` 提供，缺少时明确失败、不回退 DXF。公开样本 worker 已跑通；正式大图约 2.7 GiB 托管内存/266 MB manifest 未在 Linux 沙箱验证，当前不开放测试机或生产。STEP/DXF 原链路与格式键不变。
+
+> **2026-10-28 二维显示治理本地收敛**：宿主侧阶段 A–D 已完成（基线/能力矩阵、裁剪、文本、图案、媒体/布局切片与分支收敛），验证与未完成项见 [阶段 D 交付检查](CAD二维显示结构治理-阶段D交付检查.md)。版本按 [ADR-041](adr/ADR-041-CAD版本拆分与缓存键.md) 拆为 engineVersion / formatVersion / viewerVersion，迁移 `0078` 改变产物唯一键；当前仅本地 `wmj`，未推送、未部署；真实账号验收和生产部署仍待办。线上开放范围不因本记录扩大。
+
+> **2026-10-27 本地实现更新**：二维 DXF v0.15.0 继续选择性适配已登记社区规则，加入源属性对象图、只读内置 FIELD、注释比例/文字上下文、代理裁剪/外参、平面 REGION、SHIFT、OLE 缓存、二维 DWF/V7 DGN 及 CTB/STB 屏幕预览。文件版本、原字节摘要、UCD 派生、裁剪与拾取沿用平台链路。DGN/DWF 轻量读取器仍为早期版本，复杂字形/未知源记录和原 CAD 精度校验按实际边界报告；不宣称完整 CAD 求解器。当前版本与依赖由 `source.json` 内容指纹确定。此轮未提交、推送或部署，现有线上开放范围不扩大。
+
+
+> **2026-10-26 本地实现更新**：二维 DXF v0.14.0 已接到平台持久任务及共用查看器，包含固定同项目配套版本、逻辑路径、显式部分显示与资源撤销。代码与依赖的当前基线由 `server/cad-engine/source.json` 内容指纹确定；下述既有线上状态不据此扩大。部署需迁移 `0077` 并协调更新 API/worker/引擎，尚未推送或部署。详见 [ADR-040](adr/ADR-040-DXF二维与配套输入集合.md) 与 [运行说明](../server/cad-engine/README.md)。
+
 更新：2026-10-23。CAD 主责 wmj，共享 file/preview/outbox 由 lan 协办，通用 UI 与部署由 px 协办。
 
-本文统一替代 LibiaoLink 原 CAD 选型、浏览器解析和工程测量实施计划。用户已批准接入及旧实现清理。独立 CAD 沙箱、持久产物与上传预解析已部署公司测试机，并通过容器、真实对象存储与复用验证；2026-10-26 又完成正式生产 API/worker 接线和真实公司账号浏览器首轮验收（64 项零件），详见 §10。决策见 [ADR-035](adr/ADR-035-CAD接入独立能力工程.md)。
+本文统一替代 LibiaoLink 原 CAD 选型、浏览器解析和工程测量实施计划。用户已批准接入及旧实现清理。独立 CAD 沙箱、持久产物与上传预解析已部署公司测试机，并通过容器、真实对象存储与复用验证；2026-10-26 又完成正式生产 API/worker 接线和真实公司账号浏览器首轮验收（64 项零件），详见 §10。决策见 [ADR-035](adr/ADR-035-CAD接入与旧浏览器解析链移除.md)。
 
 ## 1. 已有能力与唯一基线
 
-CAD 能力以独立工程 `CAD逆向` 的 STEP v0.3.3（几何基线 `0911573`，宿主适配源码固定 `f103d1c`）及其 `CAPABILITY_MATRIX.json`、`STEP_0_3_RESULTS.md` 为准。后续升级须登记实际提交与能力矩阵，不沿用 LibiaoLink 历史后缀白名单、PoC 数字或网格测量结论。
+CAD 能力以本仓库登记的 STEP v0.3.3 和已验证能力记录为准。后续升级须登记实际提交与验证结果，不沿用 LibiaoLink 历史后缀白名单、PoC 数字或网格测量结论。
 
-| 项目 | 独立工程已有能力 | LibiaoLink 当前状态 |
+| 项目 | 已登记 CAD 能力 | LibiaoLink 当前状态 |
 | --- | --- | --- |
 | STEP | 转换、产物校验、首帧、产品树、面拾取、显隐/隔离/恢复；组合补面与缺失明细 | 已接入公司测试机；运行环境已启用 STEP，原文件下载保留 |
 | 模型与传输 | UCD 2.0 文档/快照、manifest、二进制几何、ID 字典、gzip | 已接入版本/权限/窗口隔离任务、gzip manifest、二进制几何与资源释放 |
 | EASM | 仅能力矩阵中已验证范围；语义须有 eDrawings 原生逆向依据 | 待接入；不依赖 eDrawings 运行时交付 |
 | DXF | 仅能力矩阵中已验证的实体、样式、布局与诊断范围 | 待接入；不等同任意二维 CAD 支持 |
-| DWG / IGES / 3MF 等 | 不由历史白名单推定支持 | 识别为 CAD 待接入提示不等于支持解析 |
+| DWG / IGES / 3MF 等 | 原生 DWG 已登记（固定 ACadSharp 提交；只读主图、结果固定 partial）；IGES / 3MF 等不由历史白名单推定支持 | DWG 本机完整系统全链路通过，`CAD_DWG_ENABLED` 默认关闭；测试机/生产未部署。IGES / 3MF 仍为待接入提示 |
 | 工程尺寸依据、PMI、公差 | 不作为当前交付能力 | 旧测量计划撤回，另按业务需要立项 |
 
-独立工程的文件打开成功不等于平台联调成功。测试机已覆盖版本、任务、资源权限和交互，并完成受控箱体夹具的容器内 native 冒烟；真实公司账号、业务文件与浏览器完整交互仍需另行验收。
+CAD 文件打开成功不等于平台联调成功。测试机已覆盖版本、任务、资源权限和交互，并完成受控箱体夹具的容器内 native 冒烟；真实公司账号、业务文件与浏览器完整交互仍需另行验收。
 
 ## 2. 已接入的链路
 
@@ -26,7 +39,7 @@ CAD 能力以独立工程 `CAD逆向` 的 STEP v0.3.3（几何基线 `0911573`�
 `上传完成 → 事务登记后台任务 → 沙箱解析/校验 → 持久 manifest/buffers → 文件预览复用 → 鉴权资源 → 独立 ViewerSession`。
 
 - 平台通过既有 ObjectStorage 读取版本对象，核对大小与 SHA 后，经 Unix HTTP socket 将原始字节送入独立 CAD 沙箱；产物以有界流返回，不传本机路径、S3/数据库凭据或客户端 URL。旧 API 内 stdio/native 路线撤回；原始输入仍由平台完整读入内存，尚非输入流式改造。禁网、内核资源硬限额与迁移见 [ADR-036](adr/ADR-036-CAD解析沙箱与资源硬限额.md)。
-- `server/cad-engine/source.json` 固定独立源码提交、schema 和浏览器依赖逐文件 SHA；更新只运行同步脚本，宿主副本不另改 CAD 规则。OCP 和 Gmsh 使用两套固定版本 Python 环境，不复制本机虚拟环境。
+- `server/cad-engine/source.json` 固定引擎源码提交、schema 和浏览器依赖逐文件 SHA；更新只运行同步脚本，宿主副本不另改 CAD 规则。OCP 和 Gmsh 使用两套固定版本 Python 环境，不复制本机虚拟环境。
 - 复用 ConversionJobs 的预算与完整产物校验。上传完成时事务内登记 GB 后台任务，由独立 worker 经现有沙箱解析，数据库 `cad_artifacts` 保存状态与索引，私有对象存储保存 verified manifest/buffers；所有对象成功写入后才发布 completed。`cad_views` 绑定 actor/file/version/view、窗口取消和资源租期，取消不终止共享后台工作。文件版本/源摘要、固定引擎与编码隔离缓存；完成结果跨 API/worker/CAD 重启复用，损坏时撤销并重建，彻底删除文件清理全部对象前缀。见 [ADR-037](adr/ADR-037-CAD产物持久化与上传预解析.md)。
 - 显示修复与未显示面信息统一收进默认折叠的“模型信息”，主视图不再展示两类提示条；数量、分类、统计排除说明和导出仍可展开查看。此项是用户批准的展示调整，不改变转换、接收政策或记录。
 - 同源 `/cad-viewer/` iframe 使用原 ViewerSession。保留产品树、source/product/occurrence/draw/face/material、XCAF entry、实例变换、visibility/membership、显示修复与缺失清单。宿主只适配传输、进度、关闭与导出。
@@ -55,11 +68,11 @@ shared 已定义 CadPreviewViewer、CadJob 及创建响应，OpenAPI/客户端�
 
 平台不新增业务迁移或 preview.job 伪目标。工程隔离不是 CAD 身份：namespace 不进入 UCD，固定输入的文档/快照在不同 namespace 下保持相同。
 
-名称编码由“模型信息”按文件选择，当前标签页按 fileId/versionId 记忆。使用固定 OCCT 的 `read.step.codepage`，默认 UTF8，中文旧编码为 GB；非法值拒绝，所选码页进入缓存键、规则摘要和检查记录。源字节、SHA、身份算法及网格参数保持原值，不自动推测旧编码。源码依据与原生定向检查见独立工程 `docs/step-0.3/name-encoding/README.md`。
+名称编码由“模型信息”按文件选择，当前标签页按 fileId/versionId 记忆。使用固定 OCCT 的 `read.step.codepage`，默认 UTF8，中文旧编码为 GB；非法值拒绝，所选码页进入缓存键、规则摘要和检查记录。源字节、SHA、身份算法及网格参数保持原值，不自动推测旧编码。源码依据与原生定向检查随引擎版本记录。
 
 ## 4. 沿用的 STEP 接收政策
 
-优先尝试现有原生及 pcurve 修复，再按独立工程组合路线对失败面处理；不改变全局网格参数，不引入未登记近似。保留 `step-display-area/2` 误差检查。
+优先尝试现有原生及 pcurve 修复，再按 CAD 平台组合路线对失败面处理；不改变全局网格参数，不引入未登记近似。保留 `step-display-area/2` 误差检查。
 
 `step-nonmeshable/1` 对未显示面逐项分类：
 

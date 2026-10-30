@@ -104,8 +104,11 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(request, dict) or request.get('action') != 'submit' or 'path' in request:
             raise ValueError('invalid source operation')
         self.server.gateway.results.key(request)
-        length = self.length(self.server.gateway.jobs.policy['inputBytes'])
-        if request['sourceByteLength'] != length:
+        maximum=self.server.gateway.jobs.policy['inputBytes']
+        is_dxf=Path(request['name']).suffix.lower()=='.dxf'
+        if is_dxf:maximum=min(maximum,64*1024*1024)+128*1024+12
+        length = self.length(maximum)
+        if request.get('payloadByteLength',request['sourceByteLength']) != length:
             raise ValueError('source size mismatch')
         deadline, digest, remaining = time.monotonic() + 85, hashlib.sha256(), length
         with tempfile.NamedTemporaryFile(dir=self.server.gateway.incoming) as source:
@@ -119,7 +122,7 @@ class Handler(BaseHTTPRequestHandler):
                 digest.update(data)
                 remaining -= len(data)
             source.flush()
-            if digest.hexdigest() != request['sourceSHA256']:
+            if digest.hexdigest() != request.get('payloadSHA256',request['sourceSHA256']):
                 raise ValueError('source hash mismatch')
             result = self.server.gateway.handle({**request, 'path': source.name})
         self.reply(200, result)
@@ -189,18 +192,24 @@ def watchdog(gateway):
 def main():
     limits = verify()
     maximum = os.environ.get('CAD_STEP_MAX_INPUT_MIB', '64')
+    dwg_python = os.environ.get('CAD_DWG_PYTHON', '/opt/dwg-native/bin/python')
+    dwg_reader = os.environ.get('CAD_DWG_READER', '')
+    dwg_dotnet = os.environ.get('CAD_DWG_DOTNET', '')
     os.environ.clear()
     os.environ.update(PATH='/usr/local/bin:/usr/bin:/bin', LANG='C.UTF-8', HOME='/tmp', TMPDIR='/tmp',
                       PYTHONDONTWRITEBYTECODE='1', OMP_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1',
                       CAD_GATEWAY_ROOT=str(ROOT), CAD_STEP_MAX_INPUT_MIB=maximum,
-                      CAD_STEP_MESHER_PYTHON='/opt/mesher/bin/python')
+                      CAD_STEP_MESHER_PYTHON='/opt/mesher/bin/python', CAD_DXF_PYTHON='/opt/dxf/bin/python',
+                      CAD_DXF_IMPORT_MODE='installed', CAD_DWG_PYTHON=dwg_python,
+                      CAD_DWG_READER=dwg_reader, CAD_DWG_DOTNET=dwg_dotnet)
     gateway = Gateway()
-    release = json.loads((Path(__file__).parent / 'source.json').read_text())
+    from release import load_release
+    release = load_release()
     Path(SOCKET).unlink(missing_ok=True)
     os.umask(0o007)
     server = UnixHTTPServer(SOCKET, Handler)
     server.gateway, server.limits = gateway, limits
-    server.engine_version = 'step-' + release['stepRelease'] + '/' + release['sourceCommit'] + '/gateway-1'
+    server.engine_version = release['engineVersion']
     os.chmod(SOCKET, 0o660)
     # PID 1 must remain responsive even if native workers or HTTP handlers stall.
     signal.signal(signal.SIGTERM, lambda *_: os._exit(0))

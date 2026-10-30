@@ -1412,6 +1412,19 @@
             "type": "number"
           },
           "minItems": 0
+        },
+        "widths": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": 0
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "minItems": 1
         }
       },
       "required": [
@@ -1445,7 +1458,7 @@
             "minItems": 3,
             "maxItems": 3
           },
-          "minItems": 2
+          "minItems": 0
         },
         "knots": {
           "type": "array",
@@ -1464,6 +1477,21 @@
         },
         "periodic": {
           "type": "boolean"
+        },
+        "fitPointsOnly": {
+          "type": "boolean"
+        },
+        "fitPoints": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "minItems": 2
         }
       },
       "required": [
@@ -2668,6 +2696,11 @@
             "$ref": "#/$defs/SourceRef"
           },
           "minItems": 0
+        },
+        "ownerBlockInstanceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
         }
       },
       "required": [
@@ -3476,6 +3509,44 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 256
+        },
+        "visibilityLayerIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 1
+        },
+        "clipRegions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "boundary": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 2,
+                  "maxItems": 2
+                },
+                "minItems": 3
+              },
+              "inverted": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "boundary",
+              "inverted"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
         }
       },
       "required": [

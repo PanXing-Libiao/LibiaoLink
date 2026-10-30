@@ -173,10 +173,19 @@ def pcurve_region_mesh(face, deflection=0.08):
     if not _star_shaped(loop, centre):
         return None
     classifier = BRepClass_FaceClassifier()
+    # Shared triangle-edge midpoints repeat exactly. Memoize only identical UV
+    # tuples for this immutable face at this fixed tolerance; never round UVs or
+    # substitute polygon containment for the OCCT classifier. Bound memory per
+    # repair; eviction merely repeats the original query. Count every sample.
+    classified = {}
     counts = {'IN': 0, 'ON': 0}
     def inside(uv, strict=False):
-        classifier.Perform(forward, gp_Pnt2d(*uv), UV_TOLERANCE)
-        state = classifier.State()
+        state = classified.get(uv)
+        if state is None:
+            classifier.Perform(forward, gp_Pnt2d(*uv), UV_TOLERANCE)
+            state = classifier.State()
+            if len(classified) >= 16384:classified.clear()
+            classified[uv] = state
         if state not in (TopAbs_IN, TopAbs_ON) or strict and state != TopAbs_IN:
             return False
         counts['IN' if state == TopAbs_IN else 'ON'] += 1

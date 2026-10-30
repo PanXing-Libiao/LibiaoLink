@@ -1,0 +1,22 @@
+LibiaoLink uses these pinned small reader libraries through their public APIs.
+No community application, viewer, optional plotting stack or external file
+resolver is bundled. Package licenses ship with the installed distributions.
+
+olefile 0.47: BSD; https://github.com/decalage2/olefile
+  Reads saved OLE compound storage, without executing the embedded application.
+ezdgn 0.3.0: MIT; https://github.com/monozukuri-ai/ezdgn
+  Published source b9a925161c1d7dca8f832f6b9d1426373274bac6.
+  Its bundled GDAL empty V7 seed retains _data/LICENSE.GDAL.txt; no seed or
+  downloaded native fixture is copied into this repository.
+ezdwf 0.0.9: MIT; https://github.com/monozukuri-ai/ezdwf
+  Published source 5df029d553f3fb219c1963005d844f0ad4c574de.
+resvg-py 0.5.0: MIT; https://github.com/baseplate-admin/resvg-py
+  Wraps resvg (MIT/Apache-2.0). Generated, bounded SVG only; system fonts and
+  filesystem/network resource resolution are disabled by the local adapter.
+
+The DGN/DWF readers identify themselves as early-stage software. The local
+adapter rejects unknown graphical records, truncation and unsupported brushes
+or placeholders, bounds decompression and raster memory, and requires source
+fonts. Its explicit Gouraud interpolation and actual uploaded-font text bounds
+replace the upstream display approximations. Neither successful decoding nor
+local synthetic/browser tests establish arbitrary-file or native-CAD parity.

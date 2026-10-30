@@ -1,6 +1,14 @@
-# STEP 平台运行与源码更新
+# CAD 平台运行与源码更新
 
-原本地联调已跑通文件版本 → SHA/bytes 核对 → 任务 → 完整产物 → 鉴权 manifest/buffers → ViewerSession。当前运行方式按 ADR-036 改为独立沙箱；历史 stdio 结果见 [逐文件表](../../docs/cad-platform-integration/RESULTS.md)，不冒充本次隔离验收。固定源码见 `source.json`，STEP v0.3.3 几何基线仍为 `0911573`，宿主适配为 `f103d1c`；不改解析、补面或接收政策。
+换机续接原生 DWG 工作先读 [DWG_HANDOFF.md](DWG_HANDOFF.md)：列出已跑通的原型、最新版未通过项、正式图身份、私有证据迁移和逐步复现命令。
+
+二维 DXF v0.15.0 已接到同一平台任务和查看器，代码仍在本地，未部署。先停止旧 API/worker，再执行数据库迁移 `0077`、`0078`、`0079`，随后同步更新 CAD 镜像、API 与 worker；只设置旧环境变量或只更新浏览器不构成接入。`0069` 把产物缓存键从 `engine_version` 拆到格式独立的 `format_version`（ADR-041）；旧产物第一次访问会按新格式版本重建，之后浏览器或单一格式改动不再触发另一格式重建。STEP 继续要求完整产物，DXF 可发布带覆盖证据的 `partial`，DWG 平台路径已加入但由 `CAD_DWG_ENABLED` 默认关闭，尚未在目标沙箱调度或部署（2026-10-29 本机完整系统已跑通公开样本与正式 34 MB 大图的上传 → 任务 → 产物 → 查看器；DWG 平台默认使用 `ucd-dwg-packed/1` 无损 packed manifest，正式图 manifest 25.97%、artifact 42.4%，引擎父进程校验前解包、查看器 `core/dwg-packed-transport.js` 解包，见 [DWG_HANDOFF.md](DWG_HANDOFF.md)；本机 harness 未施加生产 cgroup，目标 Linux 沙箱未验证）；空白/损坏文件不得伪装成成功结果。
+
+DXF 上传后可静默预解析主图；查看器中的“配套文件”选择同项目文件的具体版本，并指定资源包内路径，例如主图 `drawings/main.dxf`、外参 `drawings/refs/detail.dxf`。系统只使用明确选择的版本，不猜测同名文件，不访问源文件路径、系统字体目录或网络。支持资源类型 `.dxf/.dwg/.shx/.shp/.ttf/.otf/.dgn/.dwf/.dwfx/.ctb/.stb`、常见位图与 PDF；DWG 外参由固定 LibreDWG CLI 独立解码，原件身份和嵌套相对路径保留；缺少解码器或文件损坏时明确未加载，解码警告保留为部分结果。主图加配套最多 128 份、合计 64 MiB。补齐、调整路径或选择新版本会创建独立产物身份；原来的部分结果不会被当成完整结果复用。每次状态、清单、资源和释放请求均检查主图及配套的实时可见性，配套被回收时拒绝读取，彻底删除时清除相关派生产物。
+
+Docker 内在 `/opt/dxf` 正常安装仓内 ezdxf 1.4.2 fork，并验证安装的 Python 源文件与仓内源码一致；本机开发保持 editable。转换进程限时 60 秒，与 OCP/Gmsh 解释器隔离；PDFium 仅在此独立进程执行。已有容器内存/CPU/进程数/禁网和临时存储硬限额继续生效。MTEXT 三项回归与五份合成反例位于 `core/tests/dxf/test_mtext_regressions.py`；公司图纸和历史研究材料不进入公共夹具。
+
+原本地联调已跑通文件版本 → SHA/bytes 核对 → 任务 → 完整产物 → 鉴权 manifest/buffers → ViewerSession。当前运行方式按 ADR-036 改为独立沙箱；历史 stdio 结果见 [逐文件表](../../docs/cad-platform-integration/RESULTS.md)，不冒充本次隔离验收。源码、依赖及浏览器模块的内容指纹见 `source.json`；STEP v0.3.3 已包含颜色查找与 UV 分类缓存优化，完整产物接收政策保持原有规则。
 
 ## 准备运行环境
 
@@ -22,7 +30,7 @@ CAD 内部临时缓存仍受限于 tmpfs 和 24 小时保留；已完成的模�
 
 名称默认使用 OCCT GB 中文旧编码，不自动猜编码；需要标准编码时，在“模型信息”切换 UTF8 并重新读取。选择在当前标签页按文件版本记忆，并传入任务参数 `nameCodepage`；不同码页隔离缓存，检查记录保留本次选择。源文件无需修改。
 
-查看器已同步相机范围修复：定位小零件后，缩放仍保留整机范围，裁切面随镜头更新。详见独立工程 `docs/step-0.3/focus-camera/README.md`；几何与解析策略沿用此前版本。
+查看器已同步相机范围修复：定位小零件后，缩放仍保留整机范围，裁切面随镜头更新。详见CAD 平台 `docs/step-0.3/focus-camera/README.md`；几何与解析策略沿用此前版本。
 
 定位、淡化、隐藏、仅显示四个操作可再次点击取消，启用时显示按下状态。取消定位恢复此前视角，取消仅显示恢复原用户隔离范围，已有隐藏及隔离期间的显隐修改保留。清空选择后仍能取消已启用模式；适应视图/摆正、全部显示、恢复初始同步更新对应模式状态。
 
@@ -90,13 +98,88 @@ CAD_TEST_ENDPOINT=http://127.0.0.1:9910 CAD_TEST_CONTAINER=libiaolink-cad-cad-1 
 ## 更新独立源码
 
 ```sh
-python3 server/cad-engine/sync-source.py /path/to/CAD-source EXACT_COMMIT
+python3 server/cad-engine/build-release.py
+python3 server/cad-engine/build-release.py --check
 ```
 
-从 LibiaoLink 根目录运行。只复制 Git 中固定提交的源码、schema、固定依赖清单与 Three.js MIT 许可证，生成 `source.json` 和 `cad-release.ts`；不复制样本、图像、运行环境或缓存。正式更新仍先在独立工程完成 CAD 规则修改与验证，随后同步整组文件。
+从 LibiaoLink 根目录运行。Python 唯一源码位于 `core/`，浏览器唯一源码位于 `frontend/public/cad-viewer/core/`；直接在本仓修改并验证，随后生成 `source.json` 与 `cad-release.ts`。源提交只作导入来源记录，发布版本按实际源码、固定依赖及网关内容生成；修改后必须重新生成，`--check` 检查漂移。`source.json` 现在分别记录 `engineDigest`（服务器引擎/运行时）、`viewerDigest`（浏览器）和 `formatVersions.STEP/DXF`；`cad_artifacts.format_version` 只随对应格式的共享/专属源码及依赖变化，浏览器改动不会使任何产物缓存失效。DXF 外参解码读取的 `core/unified/dwg-reader.json` 属于 DXF 格式身份；原生 DWG 适配器 `dwg_adapter.py` 只进入 `engineDigest`。
+
+本机多格式工作台同样使用上述源码：
+
+```sh
+sh server/cad-engine/dev/setup-runtime.sh
+sh server/cad-engine/dev/run.sh --check
+sh server/cad-engine/dev/run.sh
+```
+
+默认地址为 `http://127.0.0.1:8795`，只监听回环地址。要求 Python 3.13；`CAD_SETUP_PYTHON` 可指定解释器。OCP、Gmsh、DXF 分别安装在 `.cad-work/` 下的独立环境；DXF 以 editable 方式加载仓内 ezdxf 1.4.2。工作台的本机样本位于 `.cad-work/research/viewer/samples/`，通过文件选择也可打开其他输入；样本、历史证据、运行缓存与环境不属于公共源码。
+
+定向回归位于 `core/tests/`。STEP 网格测试需设置 `CAD_STEP_MESHER_PYTHON` 指向 mesher 解释器，DXF 回归使用 DXF 解释器；涉及真实文件的检查需要本机样本。DXF v0.14.0 已包含资源、字体、图片/PDF、布局及外参裁剪；无宽度 tab、未用右停靠及字面 `%<` 三项 MTEXT 回归已修复。EASM 继续使用严格统一模型入口，不扩大配置/显示状态的验收范围。
+
+
+DXF v0.15.0 当前能力如下：
+
+- 字体配套支持 SHX/SHP、TTF/OTF，使用原文件字形及内容摘要；字体族名称只有在输入集合中唯一时才解析。常规/扩展 Big Font 由图纸声明码页选字，支持双字节及显式转义配对；SHX 竖排 TEXT 使用字体声明的双向指令，支持沿竖列的居中、右对齐、Middle、FIT/ALIGNED 以及旋转、镜像；组 73 不按横排规则平移。TrueType/OpenType 竖排样式保留水平字形并使用列对齐规则，列下降量读取 OS/2 typo descender，不用字母 p 的轮廓代替。TTF/OTF 样式附带的 SHX Big Font 按源 CAD 规则忽略，不强制要求上传无用的大字体。SHX/SHP 单份上限 8 MiB，TTF/OTF 单份上限 32 MiB，整组仍为 64 MiB。缺字、缺字体和替代预览均保持 partial。旧式 `gbcbig` 仅在字体内部声明名称与 `0,64,2,0` 头匹配时采用已测的 8 单位高度，未知零高度头不套用该比例。MTEXT 按显式 flow_direction 或 By-style 选择方向；基础顶左竖列保留段落、字号/字宽、倾斜、颜色和 tracking，TTF/OTF 的 flow 3 保留同基线字形及段间距。复杂竖排现复用有界段落/制表字段/分数排版单元，生成九种附着点、分栏与强制换栏、背景/边框、三种分数和装饰线的派生几何；只改变排版轴，不再次旋转已含竖向指令的 SHX 字形。列顺序在 flow 3 下向下推进，反向时向上；TTF/OTF 保留水平字形与同基线段落行为。SHX 与 TTF/OTF 基础段均可混入另一类原字体；复杂布局、混排和固定流宽均记录为待原 CAD 对照的 partial 预览。缺字/解析失败仍拒绝整段派生，不能把半段文字或单独背景当成功。
+- 编译 SHX 容器支持 shapes 1.0/1.1、unifont 1.0 的 CRLF/LF 头，按目录边界读取字体定义，度量记录不进入绘图指令解释器；保留原名称、above/below/mode 和 Unicode 编码/嵌入元数据。普通 shapes 的 EOF 尾标可省略；截断、重复编号、多余字节或未声明高度不转换为默认字体。Big Font 的非标准零高度头仍只开放上述已核实的 gbcbig 特例，没有原字体证据时不猜高度。
+- 布局使用源闭合多段线、圆、椭圆、样条等裁剪边界，显示离散化与按屏幕重建共用绘制/拾取裁剪链；缺失或非法边界不能退回未裁剪矩形。视口颜色、线型、线宽、透明度遵守 BYLAYER/BYBLOCK 与显式属性规则。
+- 普通 INSERT 和上传 DXF/DWG 外参支持多边形、反向及嵌套 XCLIP，保留每个实例变换；宿主 `参照名|图层名` 的图层覆盖继续生效。选定配套版本替换旧缓存内容；缺少配套时保留源缓存并明确未加载。DWG 外参只解码选定原件，源格式/摘要与原句柄保持为 DWG；原生读入和写出报告分别校验，非致命损失不能被成功的 DXF 写出清空。中间 DXF 的失效 HANDSEED 仅推进分配游标，不重编号源对象。DWG 主图、非俯视/透视视口、三维前后裁剪面仍未开放，不使用同名 DXF 替代 DWG。
+
+### 二维补全与源事实（v0.15.0）
+
+源语义通过 `dxf-source-facts/1` 保存原对象属性、源尺寸/样式覆盖、XDATA、字典/关联图、表格/公差原标签、当前动态块状态与文档自定义属性；查看器可按原句柄查看。原 HEADER 和实体属性从同一份已验摘要的源标签解码，底层库修改的创建时间/GUID、图层出图标志及管理字典不当作源声明；匿名句柄、读取修复和标签预算损失明确记录。源事实降级独立于几何覆盖，并进入快照 partial/诊断。源记录、显示派生和工程求解分开。常用 FIELD 的文档属性、已声明变量、对象属性和算术公式采用有界只读求值，源缓存优先并报告冲突；TEXT/ATTRIB/ATTDEF/MTEXT 共用。自定义/应用/时钟相关求值器需源缓存，不执行任意代码或动态块编辑。
+
+MSLTSCALE 与 CANNOSCALE 从原变量字典读取，保存的视口注释比例不由几何缩放冒充。TEXT/MTEXT 使用原注释上下文位置、大小和分栏生成独立派生，并沿 Python/浏览器相同规则选择及处理 ANNOALLVISIBLE；其他上下文类型保留原标签，明确部分支持。代理流补上复合矩阵、表名/表索引、二维裁剪和外参显示迁移，以及字距、装饰和原字体标志。源 TEXT 的 `%%u/%%o/%%k` 按实际范围绘制。
+
+平面 REGION 以 ezdxf 低层 SAT/SAB 图读取全部边及内环，仅开放直线、椭圆、可取得显式控制/权重/结点的样条；非平面、未知程序曲线或不可达边使整项派生失败，不用端点弦或控制多边形替代。渐变的 SHIFT=0/1 采用锁定 truedxf 的连续颜色场。ACAD_TABLE 保存块按原方向、平面与基点放置；没有保存块时不伪造表格。
+
+CTB/STB 经既有 acadctb 解析上传字节，按源页面或手动选择进行屏幕打印预览，支持源 ACI/命名样式、BYLAYER/BYBLOCK/视口颜色继承、颜色/灰度/筛选、纸面线型、线宽及栅格设备填充纹理。源显示所需样式缺失进入 partial；仅用于可选打印预览的缺件不改变普通几何覆盖。该预览不是 PC3/实际打印驱动，菱形端点/连接及设备抖色仍需原 CAD 标定。所有选择仍定位同一源对象。
+
+media 共用放置、透明度、裁剪与拾取：图片亮度/对比度/淡入使用已注明的 ezdxf 屏幕近似；底图支持裁剪、单色及 HLS 对比/淡入。OLE 仅读取一个已存 CF_DIB 内容缓存，不运行 Office。DWF/DWFx 采用锁定 ezdwf 小型读取器，SVG 只作内部派生并由 resvg 栅格化；实际嵌入字形或上传原 TTF/OTF 才可显示，修正社区预览将 Gouraud 简化为平均色及文字边界被裁掉的问题。DGN 仅开放经测试的 V7 二维线、形状、弧/椭圆及开放显式样条；V8、RSC 字体、共享单元、未还原的原生曲线和自定义线型明确缺失。DGN/DWF 读取器尚属早期版本，不把文件读取或支持前缀当完整格式覆盖。配套单份 16 MiB、每幅栅格 8M 像素、整图 32M 像素，仍受输入集合/进程总预算限制。原声明路径不触发磁盘/网络读取，解析器也直接使用已验摘要的同一份主图字节。
+
+新增依赖锁定于 `requirements-dxf.txt`：olefile 0.47、ezdgn 0.3.0、ezdwf 0.0.9、resvg-py 0.5.0；它们不带入社区应用。许可和选择性适配来源见 `core/vendor/underlay-readers/NOTICE`、`core/vendor/truedxf-display/NOTICE`。原 CAD 精度、缺原字体/底图与未覆盖专有程序曲线需要相应源资源/对照证据，不能靠标记 complete 消除。
+
+### 宽多段线、复杂线型与代理图形（v0.14.0）
+
+按本项目 UCD 和输入集合契约使用已锁定 ezdxf 的 TraceBuilder，未整体引入社区应用或新增依赖。源多段线保留每段起止宽度，恒宽/变宽、闭合及 bulge 圆弧的派生宽带与零宽线段复用已有显示、拾取、块变换和裁剪链路；相交宽带按非零绕组填充，显示离散化与按屏幕重建均使用同一份有界面片。派生顶点计入既有一百万顶点预算，失败时整项明确缺失，不退回中心线后标为完整。TRACE 接入 SOLID 填充路径，两者使用库提供的原顶点顺序及 OCS 高度，不把源 Z 清零。
+
+非连续宽带按源段的实际弧长切分、插值宽度，复用 TraceBuilder 处理跨顶点的连接；PLINEGEN 决定相位是否跨顶点。选择性改写 truedxf 锁定版本的 A 型端点拟合、短段连续、闭合周期、元素末端定位和直立文字规则，来源与 MIT 许可见 `core/vendor/truedxf-display/NOTICE`。块缩放只改变源几何宽度，不直接缩放虚线周期或文字/形状；非等比缩放曲线采用有界弧长度量。PSLTSCALE=1 按纸面长度生成视口变体，=0 保留模型长度。最终 BYLAYER/BYBLOCK/视口覆盖解析后，两个投影器选择同一份有界线型变体，源实例身份和拾取关系保持不变。复杂线型读取原 LTYPE 文字/形状、比例、偏移及组 50 的度数旋转及直立文字标志；文字和编号形状复用上传 SHX/SHP/TTF/OTF 字形，未使用的线型不请求资源。缺少原字体或派生失败仅拒绝对应线型变体，记录 `linetype-presentation-failed`，不会将虚线画成实心带。
+
+ACAD_PROXY_ENTITY 使用仓内 ProxyGraphic 解码已有显示指令，生成共享派生图元并保留原对象身份。解码前核对全部指令的边界、类型、矩阵栈及数量；缺失代理流、未知指令或解码器无实现的指令使整项显示缺失，不发布有效前缀。代理流只是原应用储存的显示内容，不恢复其领域语义。三维视口和工程尺寸依据仍按既有范围。回归入口为 `test_wide_polylines.py`、`test_linetype_presentations.py`、`test_proxy_graphics.py`；合成回归及浏览器检查不能替代原 CAD 对照。
+
+### 二维归属与可见范围（v0.12.0）
+
+属性文字的源坐标已位于所属 INSERT 的 owner-space，但仍归属于该实例。UCD 2.0 通过 `Annotation.ownerBlockInstanceId` 保留此关系；两个投影器按实例一起展开块内容和属性，属性仅追加阵列偏移及外层变换，不再次乘所属块的 `localFromBlock`。BYBLOCK、父块隐藏、父层开关、视口和逐阵列裁剪沿同一继承链解析，替代原先零散的属性图层/裁剪提示。阵列偏移先在 OCS 中旋转，再进入 owner-space，不应用块缩放；零间距维度仅绘制一个位置。
+
+普通、恢复和外参读取统一在源标签边界拒绝非有限数字，文本中的字面 NaN 不受影响；无效配套数据保留外参失败说明，主图不生成伪造坐标。浏览器用同一裁剪区域产生可见线段、凸填充片段和轮廓范围，绘制继续对原路径施加该区域以保留虚线相位；拾取、适应视图与定位选中使用可见结果，不再用包围盒相交代替实际裁剪。孔洞、非凸、反向及嵌套区域沿此规则处理；有普通裁剪边界的无限线也获得有限可见范围。三维裁剪仍拒绝。
+
+回归入口：`core/tests/dxf/test_ownership.py`、`core/tests/drawing-clipping.test.mjs`，与原字体/布局/外参测试一起运行。合成几何与浏览器检查验证这些规则，不替代原 CAD 或公司原件验收；反向 XCLIP 的 ezdxf 合成文件含上游兼容警告，只用于查看器契约验证。原有复杂竖排依旧保留 partial 口径。
 
 ## 部署边界
 
 持久化与预解析已在公司测试机和正式生产部署，正式生产于 2026-10-26 完成 API/worker Unix socket 接线；完整部署状态见[接入基线](../../docs/CAD平台接入基线与迁移任务.md) §10。native runtime 已从 API 移到独立 glibc CAD 镜像，API 的 768 MiB 预算不包含 CAD；启用须叠加独立沙箱部署件并取得实际镜像 digest。API 无受限外的 Python 回退；测试与迁移见 [部署手册](../../deploy/cad/README.md)。
 
-仅开放 STEP；外部引用、多文件资源解析、EASM/DXF 平台入口与工程测量不在本轮范围。S03 继续明确失败。大文件耗时沿用实测口径，P01 既有独立结果约 71.8 秒，不能称为秒开，本轮未重复测量它。
+既有公司环境开放 STEP；本地已接入 DXF 平台入口和上传配套资源，需协调部署后才能扩大公司环境范围。EASM 平台入口与工程测量不在本轮范围。S03 继续明确失败。大文件耗时沿用实测口径，P01 既有独立结果约 71.8 秒，不能称为秒开，本轮未重复测量它。
+
+
+二维合成回归单独使用 DXF 环境，避免 OCP 单测发现时误加载另一套原生依赖：
+
+```sh
+.cad-work/dxf/bin/python -m unittest discover -s server/cad-engine/core/tests/dxf -p 'test_*.py'
+```
+
+它覆盖 MTEXT 三项回归、真实隔离作业的部分产物/缓存完整性与空白图纸拒绝；外参、字体和媒体的原始样本验证需要本机研究输入，可用 `CAD_TEST_DATA` 指向专用验证副本，避免覆盖冻结证据。
+
+### DWG 外参运行依赖
+
+独立 CLI 固定为 GNU LibreDWG **0.13.3**，来源与 SHA256 见 `core/unified/dwg-reader.json`。使用已安装并验证的本机版本，未随功能开发升级依赖；长期授权 SDK 路线未据此撤回。原生任务以 `CAD_DWG_READER` 配置可执行文件，未配置时查找 `dwgread`；版本不符或缺失时保留明确的未加载原因，普通 DXF 不要求该 CLI。每份 DWG 解码共用 15 秒上限，中间 DXF 上限 128 MiB，单份诊断上限 8 MiB，并受外层 60 秒作业及既有容器硬限额约束；取消仍终止整个工作进程组。
+
+CLI 是独立 GPL-3.0-or-later 程序，未链接进 Python 解释器。镜像构建阶段校验固定源码包并编译，运行层同时携带 COPYING、对应源码包和构建脚本；不携带编译器。不能用本机装有 CLI 代替目标镜像更新，也不表示公司环境已支持 DWG 外参。
+
+竖排对齐和已知 `gbcbig` 度量采用[固定 truedxf 上游的 AutoCAD 探针记录](https://github.com/tth05/truedxf/blob/019c2e504738965c17818a5780097fef0e7a52f4/research/notes/04-text-fonts.md#11-autocad-2027-plot-findings-for-text--mtext--attrib-2026-09-30)；MTEXT 方向、附着点定义按 [Autodesk DXF 说明](https://help.autodesk.com/cloudhelp/2026/ENU/AutoCAD-DXF/files/GUID-5E5DB93B-F8D3-4433-ADF7-E92E250D2BAB.htm)。这些资料不等于本项目已做原 AutoCAD 像素验收。
+
+编译容器差异参考[固定 truedxf SHX 解析器](https://github.com/tth05/truedxf/blob/019c2e504738965c17818a5780097fef0e7a52f4/packages/fonts/src/shx/parse.ts)；flow 3 的分栏推进方向参考 [Autodesk setColumnFlowReversed](https://help.autodesk.com/cloudhelp/2019/ENU/OARX-RefGuide/files/OREF-AcDbMText__setColumnFlowReversed_bool.html)。复杂竖排的单元测试和浏览器检查验证本项目排版/显示契约，不能替代源 CAD 对照，因此 `org.cad-preview.dxf-mtext/1` v1.1 独立记录 `verticalLayout`、`layoutWarnings` 与 `approximateLayouts`。
+
+
+## DWG 主图原生接入（2026-10-28 第一片）
+
+原生 ACadSharp → UCD 链路已加入平台代码：shared 格式 `DWG`、迁移 `0070`、API 输入/预览/任务/仓库和 `core/dwg_platform_convert.py` 已接线，但 `CAD_DWG_ENABLED` 默认关闭，当前只在本机完成 worker 样本验证，未在 Linux 沙箱调度、未部署公司测试机或生产。DWG 没有配套文件/主图相对路径，结果始终是带明确损失说明的 `partial`；需要 `CAD_DWG_PYTHON`、`CAD_DWG_READER`、`CAD_DWG_DOTNET` 和固定 ACadSharp 读取器，缺少时明确失败，不回退 DXF。构建、读取协议、源账本及已知限制见 [dwg-reader/README.md](dwg-reader/README.md)，交接状态见 [DWG_HANDOFF.md](DWG_HANDOFF.md)。正式大图的约 2.7 GiB 托管内存和约 266 MB manifest 尚未在目标沙箱验证；首版平台预算为 3 GiB worker RSS / 512 MiB 产物，不构成生产容量承诺。

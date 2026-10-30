@@ -1,0 +1,18 @@
+# Run from server/cad-engine; dev/setup-runtime.sh prepares the build tools first.
+# Editable installation ensures imports use the checked-in 1.4.2 source.
+-e ./core/vendor/ezdxf
+numpy==2.5.4
+fonttools==4.67.0
+pyparsing==3.3.3
+typing_extensions==4.16.0
+Pillow==13.0.0
+pypdfium2==5.14.0
+pypdf==6.21.2
+olefile==0.47
+ezdgn==0.3.0
+ezdwf==0.0.9
+resvg-py==0.5.0
+olefile==0.47
+ezdgn==0.3.0
+ezdwf==0.0.9
+resvg-py==0.5.0

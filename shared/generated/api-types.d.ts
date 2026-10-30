@@ -4898,7 +4898,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 为已授权 STEP 版本创建隔离任务（需要 CSRF） */
+        /** 为已授权 STEP / DXF 版本创建任务；DXF 可绑定同项目配套版本和相对路径（需要 CSRF） */
         post: {
             parameters: {
                 query?: {
@@ -4915,9 +4915,13 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["CadJobCreateBody"];
+                };
+            };
             responses: {
-                /** @description 已创建或复用当前查看窗口的任务 */
+                /** @description 已创建或复用当前查看窗口的任务；DXF 可返回 partial */
                 201: {
                     headers: {
                         [name: string]: unknown;
@@ -5179,7 +5183,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description 独立工程 ucd-binary-compact/1 清单，含短期资源 lease；每次重查文件版本权限 */
+                /** @description ucd-binary/1 或 ucd-binary-compact/1 清单，含短期资源 lease；每次重查主图及配套文件权限。STEP 必须 complete，DXF 明示 complete / partial。 */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -10276,15 +10280,23 @@ export interface components {
             publishedAt: components["schemas"]["DateTime"] & (string | null);
             publishedBy: components["schemas"]["Uuid"] & (string | null);
         };
-        /** @description 文件版本的 CAD 查看任务；后台在独立沙箱转换并将完整产物持久保存，API/worker/CAD 重启后可复用。窗口取消不取消共享后台解析。completed 只发布完整校验产物，已列举 nonMeshableFaces 保留，Partial 不算完整成功。 */
+        CadCompanion: {
+            fileId: components["schemas"]["Uuid"];
+            versionId: components["schemas"]["Uuid"];
+            path: components["schemas"]["CadLogicalPath"];
+        };
+        /** @enum {string} */
+        CadFormat: "STEP" | "DXF" | "DWG";
+        /** @description CAD 查看任务，产物可持久复用；窗口取消不取消共享后台任务。completed 发布完整产物；partial 用于有校验产物及缺失说明的 DXF 或 DWG，页面必须明确展示限制。STEP 保持完整性接收规则。 */
         CadJob: {
             id: string;
             /** @enum {string} */
-            state: "queued" | "running" | "completed" | "failed" | "cancelled" | "timed-out";
+            state: "queued" | "running" | "completed" | "partial" | "failed" | "cancelled" | "timed-out";
             phase: string;
             sourceSHA256: string;
             sourceByteLength: number;
             nameCodepage?: components["schemas"]["CadNameCodepage"];
+            format?: components["schemas"]["CadFormat"];
             createdAt: number;
             updatedAt: number;
             artifactBytes?: number;
@@ -10295,16 +10307,24 @@ export interface components {
                 error: string;
             };
         };
+        /** @description DXF 主图与当前项目中明确选择的配套文件版本；缺省仅使用主图。STEP 和 DWG 不接受配套文件（DWG 也不接受主图相对路径）。资源选择变化创建独立产物身份。 */
+        CadJobCreateBody: {
+            mainPath?: components["schemas"]["CadLogicalPath"];
+            /** @default [] */
+            companions: components["schemas"]["CadCompanion"][];
+        };
         CadJobCreateResponse: {
             job: components["schemas"]["CadJob"];
             reused: boolean;
         };
+        /** @description 资源包内相对路径；保留目录，不允许绝对路径、上级目录、URL 或任意类型。 */
+        CadLogicalPath: string;
         /**
          * @description STEP 名称编码：GB 中文旧编码（默认），UTF8 标准编码；由用户按文件选择，不自动猜测，不同编码分别缓存。
          * @enum {string}
          */
         CadNameCodepage: "UTF8" | "GB";
-        /** @description STEP 查看入口；模型就绪由独立 CAD 任务状态判定。每次模型/资源读取重新校验文件版本权限，不包含原文件签名。 */
+        /** @description STEP / DXF / DWG 查看入口；模型就绪由 CAD 任务判定。每次读取重新校验主图与全部配套版本权限，不包含原文件签名。 */
         CadPreviewViewer: {
             /** @enum {string} */
             kind: "cad";
@@ -10312,6 +10332,9 @@ export interface components {
             versionId: components["schemas"]["Uuid"];
             sourceSHA256: string;
             engineVersion: string;
+            sourceName: string;
+            format: components["schemas"]["CadFormat"];
+            projectId: components["schemas"]["Uuid"];
         };
         /** @description 日历例外条目；维护动作写审计留痕（object_type = calendar_day） */
         CalendarDay: {

@@ -21,6 +21,7 @@ import { CadEngineClient } from "../src/modules/file/cad-engine.client.js";
 import { CadArchiveRepository } from "../src/modules/file/cad-archive.repository.js";
 import { CadArchiveService } from "../src/modules/file/cad-archive.service.js";
 import { CadArchiveWorker } from "../src/modules/file/cad-archive.worker.js";
+import { CadInputService } from "../src/modules/file/cad-inputs.js";
 import { CadPreviewService } from "../src/modules/file/cad-preview.service.js";
 import type { FileRepository } from "../src/modules/file/file.repository.js";
 import type { PermissionService } from "../src/modules/permission/index.js";
@@ -38,13 +39,15 @@ let database: DatabaseService, admin: Pool, minio: ChildProcess, directory: stri
 let storage: S3ObjectStorage, repository: CadArchiveRepository, engine: CadEngineClient;
 let archive: CadArchiveService, worker: CadArchiveWorker, preview: CadPreviewService, config: AppConfig;
 let audit: AuditService;
+let inputs: CadInputService;
+const recycled = new Set<string>();
 let denied = false;
 const files = {
   async findFileById(id: string) { const source = sources.find((s) => s.fileId === id); return source ? { id, name: source.sourceName,
-    projectId, status: "draft" } : null; },
+    projectId, status: recycled.has(id) ? "recycled" : "draft" } : null; },
   async findVersionById(id: string, versionId: string) { const source = sources.find((s) => s.fileId === id && s.versionId === versionId);
     return source ? { id: versionId, fileId: id, contentHash: source.sourceSHA256, sizeBytes: source.sourceBytes,
-      objectKey: "sources/" + source.versionId + ".step" } : null; },
+      objectKey: "sources/" + source.versionId + "." + source.sourceName.split(".").at(-1) } : null; },
 } as unknown as FileRepository;
 const permissions = { async assertProjectVisible() { if (denied) throw new AppError("NOT_FOUND", "不可访问"); } } as unknown as PermissionService;
 const source = () => sources[0]!;
@@ -86,10 +89,15 @@ describe.skipIf(!databaseUrl || !endpoint || !existsSync(minioPath))("CAD durabl
       await database.pool.query("insert into file_versions(id) values($1)", [s.versionId]);
       await storage.putObject({ objectKey: "sources/" + s.versionId + ".step", body: raw });
     }
+    Object.assign(files, {
+      findFilesByIds: async (ids: string[]) => (await Promise.all(ids.map(id => files.findFileById(id)))).filter(Boolean),
+      findVersionsByIds: async (ids: string[]) => (await Promise.all(sources.filter(row => ids.includes(row.versionId)).map(row => files.findVersionById(row.fileId, row.versionId)))).filter(Boolean),
+    });
+    inputs = new CadInputService(files, permissions, storage);
     repository = new CadArchiveRepository(database, audit);
     engine = new CadEngineClient(config);
-    archive = new CadArchiveService(repository, storage, engine);
-    worker = new CadArchiveWorker(repository, files, engine, storage);
+    archive = new CadArchiveService(repository, storage, engine, inputs);
+    worker = new CadArchiveWorker(repository, files, engine, storage, inputs);
     preview = new CadPreviewService(files, permissions, storage, engine, archive);
   });
 
@@ -117,7 +125,7 @@ describe.skipIf(!databaseUrl || !endpoint || !existsSync(minioPath))("CAD durabl
 
   it("独立 worker 并发领取只转换一次，全部对象写完才发布完整结果", async () => {
     const submit = vi.spyOn(engine, "submit");
-    const second = new CadArchiveWorker(repository, files, engine, storage);
+    const second = new CadArchiveWorker(repository, files, engine, storage, inputs);
     await Promise.all([worker.drainOnce(), second.drainOnce()]);
     expect(await rows()).toMatchObject([{ state: "completed", name_codepage: "GB" }]);
     expect(submit).toHaveBeenCalledTimes(1);
@@ -153,10 +161,10 @@ describe.skipIf(!databaseUrl || !endpoint || !existsSync(minioPath))("CAD durabl
     const restartedEngine = new CadEngineClient(config);
     const submitted = vi.spyOn(restartedEngine, "submit").mockRejectedValue(new Error("Must not reparse"));
     const lookup = vi.spyOn(restartedEngine, "lookup").mockRejectedValue(new Error("Must not query sandbox"));
-    const restarted = new CadPreviewService(files, permissions, storage, restartedEngine, new CadArchiveService(new CadArchiveRepository(database, audit), storage, restartedEngine));
+    const restarted = new CadPreviewService(files, permissions, storage, restartedEngine, new CadArchiveService(new CadArchiveRepository(database, audit), storage, restartedEngine, inputs));
     const created = await open("4", restarted);
     expect(created.reused).toBe(true); expect((await manifest(created.job.id, "4", restarted)).snapshot.completeness).toBe("complete");
-    await new CadArchiveWorker(new CadArchiveRepository(database, audit), files, restartedEngine, storage).drainOnce();
+    await new CadArchiveWorker(new CadArchiveRepository(database, audit), files, restartedEngine, storage, inputs).drainOnce();
     expect(submitted).not.toHaveBeenCalled(); expect(lookup).not.toHaveBeenCalled();
     await restartedEngine.onModuleDestroy();
     let ready = false;
@@ -232,4 +240,43 @@ describe.skipIf(!databaseUrl || !endpoint || !existsSync(minioPath))("CAD durabl
     await database.pool.query("delete from files where id=$1", [source().fileId]);
     expect(await rows()).toHaveLength(0);
   });
+  it("DXF 缺少外参明示 partial，补齐固定配套版本后完整发布，并按输入集合复用及撤销", async () => {
+    const selected = [] as typeof sources;
+    for (const name of ["main.dxf", "detail.dxf"]) {
+      const raw = await readFile(new URL("./fixtures/cad/dxf/" + name, import.meta.url));
+      const input = { fileId: randomUUID(), versionId: randomUUID(), sourceName: name,
+        sourceSHA256: createHash("sha256").update(raw).digest("hex"), sourceBytes: raw.byteLength };
+      sources.push(input); selected.push(input);
+      await database.pool.query("insert into files(id, project_id) values($1,$2)", [input.fileId, projectId]);
+      await database.pool.query("insert into file_versions(id) values($1)", [input.versionId]);
+      await storage.putObject({ objectKey: "sources/" + input.versionId + ".dxf", body: raw });
+    }
+    const [main, detail] = selected as [typeof sources[number], typeof sources[number]];
+    const partial = await preview.create(main.fileId, main.versionId, "8".repeat(32), actor);
+    await worker.drainOnce();
+    expect((await preview.job("status", main.fileId, main.versionId, "8".repeat(32), partial.job.id, actor)).state).toBe("partial");
+    const read = async (id: string, view: string) => JSON.parse((await bytes((await preview.resource("manifest", main.fileId, main.versionId, view.repeat(32), id, actor)).stream)).toString());
+    expect((await read(partial.job.id, "8")).snapshot.completeness).toBe("partial");
+    const options = { mainPath: "图纸/main.dxf", companions: [{ fileId: detail.fileId, versionId: detail.versionId, path: "图纸/refs/detail.dxf" }] };
+    const complete = await preview.create(main.fileId, main.versionId, "9".repeat(32), actor, "GB", options);
+    expect(complete.reused).toBe(false); await worker.drainOnce();
+    const packet = await read(complete.job.id, "9");
+    expect(packet.snapshot.completeness).toBe("complete");
+    expect(packet.document.sources).toBeDefined();
+    expect((await rows(main.versionId)).map(row => row.state).sort()).toEqual(["completed", "partial"]);
+    const submit = vi.spyOn(engine, "submit"), objectReads = vi.spyOn(storage, "getObjectStream");
+    const reused = await preview.create(main.fileId, main.versionId, "a".repeat(32), actor, "UTF8", options);
+    expect(reused.reused).toBe(true); expect(submit).not.toHaveBeenCalled(); expect(objectReads).not.toHaveBeenCalled();
+    submit.mockRestore(); objectReads.mockRestore();
+    recycled.add(detail.fileId);
+    await expect(read(complete.job.id, "9")).rejects.toMatchObject({ code: "NOT_FOUND" });
+    recycled.delete(detail.fileId);
+    const completedRow = (await rows(main.versionId)).find(row => row.state === "completed");
+    await archive.purge(detail.fileId, projectId);
+    expect(await storage.headObject(completedRow.object_prefix + "manifest.json")).toBeNull();
+    expect((await rows(main.versionId)).map(row => row.state)).toEqual(["partial"]);
+    await expect(read(complete.job.id, "9")).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect((await read(partial.job.id, "8")).snapshot.completeness).toBe("partial");
+  });
+
 });

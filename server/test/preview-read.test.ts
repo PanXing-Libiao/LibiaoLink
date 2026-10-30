@@ -288,14 +288,15 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
     },
   );
 
-  it("启用 CAD 运行环境时 STEP ready 签独立查看器并写 preview 审计", async () => {
+  it.each(["step", "dxf"])("启用 CAD 运行环境时 %s ready 返回独立查看器并写 preview 审计", async (extension) => {
     const h = makeService({ CAD_ENGINE_URL: "http://127.0.0.1:9910" });
-    h.repo.file = makeFileRow({ name: "模型.step" });
-    h.repo.versions.set(VERSION, makeVersionRow({ mime: null, objectKey: sourceKeyOf("step") }));
+    h.repo.file = makeFileRow({ name: "模型." + extension });
+    h.repo.versions.set(VERSION, makeVersionRow({ mime: null, objectKey: sourceKeyOf(extension) }));
 
     const result = await h.service.getPreview(FILE, null, ACTOR, true);
 
-    expect(result).toMatchObject({ status: "ready", viewer: { kind: "cad", versionId: VERSION } });
+    expect(result).toMatchObject({ status: "ready", viewer: { kind: "cad", versionId: VERSION,
+      format: extension === "dxf" ? "DXF" : "STEP", projectId: PROJECT, sourceName: "模型." + extension } });
     expect(h.audit.entries).toHaveLength(1);
     expect(h.audit.entries[0]).toMatchObject({
       actorId: ACTOR,
@@ -303,7 +304,7 @@ describe("PreviewReadService.getPreview（M4-05 读 API）", () => {
       objectType: "file",
       objectId: FILE,
       projectId: PROJECT,
-      summary: "预览文件：模型.step（版本 v1 · CAD 查看器）",
+      summary: "预览文件：模型." + extension + "（版本 v1 · CAD 查看器）",
       metadata: { versionId: VERSION, viewerKind: "cad" },
     });
   });
