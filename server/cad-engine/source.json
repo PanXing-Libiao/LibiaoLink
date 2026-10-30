@@ -521,7 +521,7 @@
   },
   "runtimeFiles": {
     "bridge.py": "031d4f86ad1cbaaca8c4f2956d7f5546d2efc1a82d21bd63a534367312417fef",
-    "edge.py": "1f52a447e4e245fce4a298f39192b02d8d4364945fe1b890137d2626e39dd961",
+    "edge.py": "dbe7d59c7d3cfde08e77175c5747beb087661aed3108e1299dea4d61fa6fed39",
     "release.py": "668adb0c3bc793fd3f76a768ded722252d4f10a25f082f302500782427edcb2f",
     "requirements-dwg.txt": "b21e61c20eda27f0c62ecbb04972cc8ff0a3d3c0e1e9f30477870f17bbc6e061",
     "requirements-dxf-build.txt": "16775c2dd88b4872fd5796ab27b5692050a1fb1a8da8f45c722c685bbefe20ea",
@@ -533,13 +533,13 @@
     "service.py": "bbf51e8fb0c72e096b6ced2bc1104a1542de1571ebbbe434c6f78b3aab2ea909"
   },
   "formatVersions": {
-    "STEP": "step-0.3.3/c78904d74b807d075065484fcefbe0c54f5a10c1446a861325465392522c0fde/gateway-1",
-    "DXF": "dxf-0.15.0/0d54f3faf7f56c106d0a1c276bc1d5779111235d3cf3f22a84461508bda1da56/gateway-1",
-    "DWG": "dwg-0.1.0/ecb5f9278c29d51729f81eb9432a43abba5f9e966c00bc67b6fcbac8b30cfcd1/gateway-1"
+    "STEP": "step-0.3.3/4d60638c0249acebb85acbdba8e8c0a93e04693542841f8ae1dcfd9240044daf/gateway-1",
+    "DXF": "dxf-0.15.0/b704678f94b77f484243d01dfbb213b31dcb1f4c12a6b4ee6f6d9f0c733ff560/gateway-1",
+    "DWG": "dwg-0.1.0/773b4b07bbbe0a30c76b75b32988e8bd848794ebb1e3b3e14f8717fa65cb933e/gateway-1"
   },
-  "engineDigest": "d7692778d0a013eabadde80a8f3fd0bf76a4b347bcf278e054574ec91d9169ee",
+  "engineDigest": "80140978c7fbeb498121b604b18c3f992a9ba74de804ab5b09e95933943e1d88",
   "viewerDigest": "c73c979e1a81ba8f47519b3926b45400fb158405134854399370aac5df104867",
-  "releaseDigest": "bc78b718b766f6250bbf8dfda1706bb71ce40570c361f6c29acdf1aa63d32b50",
-  "engineVersion": "step-0.3.3/d7692778d0a013eabadde80a8f3fd0bf76a4b347bcf278e054574ec91d9169ee/gateway-1",
+  "releaseDigest": "f8bb3174597f422652db5a546ec02ffaddec9f494121c398f2c7695d01d8f447",
+  "engineVersion": "step-0.3.3/80140978c7fbeb498121b604b18c3f992a9ba74de804ab5b09e95933943e1d88/gateway-1",
   "viewerVersion": "viewer-c73c979e1a81ba8f47519b3926b45400fb158405134854399370aac5df104867"
 }

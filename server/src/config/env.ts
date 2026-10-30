@@ -6,6 +6,8 @@ export const EnvSchema = z
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
     PORT: z.coerce.number().int().min(1).max(65535).default(3000),
     DATABASE_URL: z.string().min(1),
+    /** 站外深链基址（日报群消息等项目页面链接）；本地域名暂不配置，缺省 = 生产站点。 */
+    PUBLIC_APP_BASE_URL: z.string().url().default("https://pm.libiaorobot.com"),
     LOG_LEVEL: z
       .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
       .default("info"),
@@ -17,6 +19,8 @@ export const EnvSchema = z
     CASDOOR_SCOPE: z.string().min(1).default("openid profile email"),
     /** 目录同步 owner（Casdoor 组织名；本地沙箱 libiaorobot，公司环境 libiaorobot.com）。 */
     CASDOOR_ORG_NAME: z.string().default(""),
+    /** Casdoor 群组 / 用户目录自动同步周期（毫秒）：worker 启动即执行一轮，之后持续轮询；默认 5 分钟。 */
+    ORG_SYNC_INTERVAL_MS: z.coerce.number().int().min(60000).max(86400000).default(300000),
     /** 会话空闲超时（分钟）：接入标准「企业内部系统」档为 30；0 仅测试用（立即超时）。 */
     SESSION_IDLE_MINUTES: z.coerce.number().int().min(0).default(30),
     /** 会话 Cookie Secure 属性：auto = 仅 production 开启（本地 http 调试不受影响）。 */
@@ -24,12 +28,14 @@ export const EnvSchema = z
     /** 内部作业接口凭证（请求头 X-Internal-Token；docs/开发者接入注意事项(SSO接入标准).md 第五部分）。 */
     INTERNAL_SYNC_TOKEN: z.string().default(""),
     /**
-     * 权限判定开关（一期口径「我们当前这个系统就不要考虑权限」，2026-09-23 业务已定）：
-     * `false`（默认）= **不判权限** —— 授权画像一律等效管理员（数据范围 all + 契约全量权限位 + admin 角色码），
-     * 功能权限 / 记录级可见性 / 字段级投影 / 角色内硬检查全部放开；`true` = 按 ADR-011 判定（二期打开）。
-     * 只影响**裁定**，不动数据：用户偏好（常用筛选 / 醒目模式 / 任务表列显隐）仍按账号各存一行（user_preferences）。
+     * 群组访问限制（2026-10-23）：部门规则是唯一业务权限来源。true = 按 Casdoor 群组规则收敛项目与写能力；
+     * false（默认）= 规则只可配置、不参与裁定，避免 Group 声明尚未下发时锁死全员。
      */
-    PERMISSION_ENFORCED: z.enum(["true", "false"]).default("false"),
+    GROUP_ACCESS_ENFORCED: z.enum(["true", "false"]).default("false"),
+    /** 权限管理员群组键（逗号分隔；例 libiaorobot.com/系统管理员）。与 GROUP_ACCESS_ADMIN_USER_IDS 至少配置一项。 */
+    GROUP_ACCESS_ADMIN_GROUP_KEYS: z.string().default(""),
+    /** 权限管理员用户 ID 白名单（逗号分隔；用于不属于管理员部门的指定账号，如 panxing）。 */
+    GROUP_ACCESS_ADMIN_USER_IDS: z.string().default(""),
     // ---- 对象存储（ADR-006：S3 协议抽象 + 一期 MinIO 单节点；本地沙箱见 deploy/minio/） ----
     S3_ENDPOINT: z.string().min(1).default("http://127.0.0.1:9000"),
     S3_REGION: z.string().min(1).default("us-east-1"),
@@ -130,9 +136,10 @@ export const EnvSchema = z
     OUTBOX_ALERT_PROGRESS_WINDOW_MS: z.coerce.number().int().min(60000).max(3600000).default(900000),
     /** 连续无进展的探针轮数：达到后把积压 / 最老等待合并升级为 outbox.queue_stalled。 */
     OUTBOX_ALERT_STALL_PROBES: z.coerce.number().int().min(1).max(60).default(3),
-    /** outbox 日报间隔（毫秒）：恢复通知与死信汇总只在日报出现；默认 24h。 */
-    OUTBOX_ALERT_DIGEST_INTERVAL_MS: z.coerce.number().int().min(3600000).max(604800000).default(86400000),
-    /** 管理员告警群 chatid（企微智能机器人；空 = 告警仅回退结构化日志 —— OUTBOX_ALERT_SINK 出口选择）。 */
+    /**
+     * 管理员告警群 chatid（企微智能机器人；空 = 告警仅回退结构化日志 —— OUTBOX_ALERT_SINK 出口选择）。
+     * 管理员日报固定每天 08:00（Asia/Shanghai），由 jobs 持久化 cron 调度，不再配置进程内间隔。
+     */
     OUTBOX_ALERT_WECOM_CHATID: z.string().default(""),
     /** done 行保留期（天；ADR-005 约 90 天）。 */
     OUTBOX_DONE_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(90),
@@ -300,8 +307,26 @@ export const EnvSchema = z
         });
       }
     }
+    if (
+      value.GROUP_ACCESS_ENFORCED === "true" &&
+      value.GROUP_ACCESS_ADMIN_GROUP_KEYS.trim() === "" &&
+      value.GROUP_ACCESS_ADMIN_USER_IDS.trim() === ""
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "开启 GROUP_ACCESS_ENFORCED 时必须配置 GROUP_ACCESS_ADMIN_GROUP_KEYS 或 GROUP_ACCESS_ADMIN_USER_IDS（否则无人能进入权限管理）",
+        path: ["GROUP_ACCESS_ADMIN_GROUP_KEYS"],
+      });
+    }
     if (value.NODE_ENV !== "production") {
       return;
+    }
+    if (value.GROUP_ACCESS_ENFORCED !== "true") {
+      context.addIssue({
+        code: "custom",
+        message: "生产环境必须开启 GROUP_ACCESS_ENFORCED=true（否则部门规则不参与裁决，所有登录账号都会获得全量项目范围）",
+        path: ["GROUP_ACCESS_ENFORCED"],
+      });
     }
     if (value.CASDOOR_CLIENT_ID === "") {
       context.addIssue({ code: "custom", message: "生产环境必须配置 CASDOOR_CLIENT_ID", path: ["CASDOOR_CLIENT_ID"] });

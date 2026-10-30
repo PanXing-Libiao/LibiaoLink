@@ -7,7 +7,8 @@
 - 业务留痕 AuditService.record(client, input)：由业务用例在**同一事务**内调用（谁、何时、对什么、从什么改成什么）；登录成功等无业务事务的场景用 recordStandalone(input) 独立连接追加；
 - 当前动作含 `visit`（项目详情进入 / 登录成功）与 `preview`（实际送达就绪预览，图片直签 / 产物 / ONLYOFFICE / CAD；未就绪 / 失败 / 404 不写）；操作记录筛选下拉隐藏 advance / rollback，但值集与历史写入不变；
 - 越权 / 未命中留痕 recordDenied()：全局异常过滤器经 common/audit/audit-sink.ts 的 AUDIT_SINK 令牌调用（AppModule 以 useExisting 绑定本服务）；
-- 检索 list(query)：按对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间 + 关键字 q（Push 260：summary ∪ actor_name ∪ changes ILIKE，读面参数、无新列）（GET /api/v1/audit-logs，控制器仍在 admin 模块）；
+- 检索 list(query, visibility?)：按对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间 + 关键字 q（Push 260：summary ∪ actor_name ∪ changes ILIKE，读面参数、无新列）（GET /api/v1/audit-logs，控制器仍在 admin 模块）。visibility 缺省 = 管理员全量；普通账号以 `actor_id = 本人` 为可见条件，项目经理再 OR 上「当前角色 / 部门有效范围内、未软删、本人担任项目经理」的 project_id；用户自带的项目筛选与可见条件取交集，无 projectId 的本人记录仍可见。
+- 项目上下文快照（2026-10-28）：`audit_logs.project_code` / `project_name` 在写入时保存所属项目编号 / 名称；`record()` 在同一事务连接读取当前项目（不过滤 `deleted_at`，回收站项目也属于当前项目），项目硬删调用方显式传入删除前的值；`recordDenied()` 尽力读取项目快照。检索通过 `LEFT JOIN projects` 计算 `coalesce(projects.code, audit_logs.project_code)` / `coalesce(projects.name, audit_logs.project_name)`：项目仍存在（包括回收站）显示当前值，行缺失后显示快照。契约 `AuditLog` 增 `projectCode` / `projectName`；项目筛选候选不合并回收站项目。存量行不回填，项目已硬删且无快照时仍为空。
 - 防篡改：只 INSERT / SELECT（库级收回 UPDATE / DELETE，0013 迁移）；保留 ≥6 个月由运维按月清理。
 
 ## 出口

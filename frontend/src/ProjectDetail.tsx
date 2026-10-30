@@ -6,6 +6,7 @@ import { ColumnPicker } from "./components/ColumnPicker";
 import { DailySubMenu } from "./components/DailySubMenu";
 import { ExportOverviewButton } from "./components/ExportOverviewButton";
 import { GanttChart } from "./components/GanttChart";
+import { ProjectFilesPanel } from "./components/ProjectFilesPanel";
 import { ReportIssuePanel } from "./components/ReportIssuePanel";
 import { StakeholderPanel } from "./components/StakeholderPanel";
 import { Toast, ToastConfirm } from "./components/Toast";
@@ -22,13 +23,15 @@ import { TEMP_TASK_STAGE, isTaskDone, type ProjectTask, type TaskStatus } from "
 import type { TemplatePresetNode } from "./data/templatePresets";
 import { fetchTaskFiles, recycleFile, renameFile, uploadFiles, type TaskFileRef } from "./fileApi";
 import { exportProjectOverviewPdf } from "./exportOverviewPdf";
-import type { OverviewExportLanguage } from "./overviewExportShared";
+import { groupedByStage, type OverviewExportOptions, type OverviewExportStageOption } from "./overviewExportShared";
 import { prefetchLocalizedText, useLocale, useT, viewTabText } from "./i18n";
+import { prefetchOverviewExportTranslations } from "./translateApi";
 import { ExportProgressOverlay, type ExportTranslateProgress } from "./components/ExportProgressOverlay";
 import { useBackgroundTier, type TintedTier } from "./backgroundTier";
+import { useMyPermissions } from "./permissions";
 import { projectManagerText } from "./types";
 import type { MeResponse, Project } from "./types";
-import { replaceProjectSubView, replaceProjectView, type DailySubView, type ProjectView } from "./useHashRoute";
+import { replaceProjectSubView, replaceProjectView, type DailySubView, type ProjectFocus, type ProjectView } from "./useHashRoute";
 import { ApiError } from "./api";
 import {
   createTask,
@@ -78,8 +81,8 @@ function stageRankOf(stage: string): number {
  * Push 142：「项目总览」之后再加「甘特图」（口径见 components/GanttChart.tsx）；
  * Push 154：当前标签走地址 `?view=`，刷新 / 收藏 / 分享都停在同一块标签。
  */
-/** Push 221：再往后加第六个视图「干系人」（排最右侧；A27 台账前端接线，口径见 components/StakeholderPanel.tsx）。 */
-const VIEW_TABS = ["项目总览", "甘特图", "人员任务分配", "任务进展", "日报及问题", "干系人"] as const;
+/** Push 221：第六个视图「干系人」；2026-10-29：其后再加「项目文件」—— 只列阶段任务文件与变更文件，替代原全站文件库浏览入口。 */
+const VIEW_TABS = ["项目总览", "甘特图", "人员任务分配", "任务进展", "日报及问题", "干系人", "项目文件"] as const;
 type ViewTab = (typeof VIEW_TABS)[number];
 
 /** 顶部标签 ↔ 地址参数（`?view=`）：缺省「项目总览」（overview）不落参数。 */
@@ -90,6 +93,7 @@ const VIEW_KEYS: Record<ViewTab, ProjectView> = {
   "任务进展": "progress",
   "日报及问题": "daily",
   "干系人": "stakeholders",
+  "项目文件": "files",
 };
 
 
@@ -100,6 +104,10 @@ type ProjectDetailProps = {
   view: ProjectView;
   /** 「日报及问题」的页内子视图（Push 214 起由地址 `?view=daily&sub=` 派生，缺省「日报填写」form）；其它标签下无意义。 */
   dailySub: DailySubView;
+  /** 站内信深链的精确落点：任务自动开抽屉 / 日报定位行 / 问题自动开抽屉。 */
+  focus: ProjectFocus | null;
+  /** 关闭深链抽屉后清掉地址里的精确落点，避免刷新再次弹开。 */
+  onClearFocus: () => void;
   /** 人员候选（GET /api/v1/users → directoryMemberOptions）：项目经理列 / 任务负责人 / 任务详情抽屉的多选共用。 */
   members: readonly Member[];
   /** 任务编辑里改「项目经理」时回写项目（项目经理是项目级字段，Push 136 起可多位）。 */
@@ -114,14 +122,24 @@ type ProjectDetailProps = {
   canManageStakeholders: boolean;
   /** 验收完成后设为已完成的写入口（无 project.update 权限时父层不传）；false = 写失败，父层已提示。 */
   onSetProjectDone?: (projectId: string) => Promise<boolean>;
+  /** 当前项目仅浏览：页面可进，但本项目全部业务写入口（任务 / 文件 / 日报 / 问题 / 干系人）关闭。 */
+  readOnly?: boolean;
 };
 
-export default function ProjectDetail({ me, project, view, dailySub, members, onChangeManagers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange, canManageStakeholders, onSetProjectDone }: ProjectDetailProps) {
+export default function ProjectDetail({ me, project, view, dailySub, focus, onClearFocus, members, onChangeManagers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange, canManageStakeholders, onSetProjectDone, readOnly = false }: ProjectDetailProps) {
   /** 顶部视图（Push 82 / 121）：阶段标签收进「项目总览」，另两块是看板视图，最后一块是「日报及问题」；Push 154 起当前标签由地址 `?view=` 派生。 */
   const locale = useLocale();
   const t = useT();
+  const currentActorId = useMyPermissions()?.userId ?? null;
   const activeView = VIEW_TABS.find((tab) => VIEW_KEYS[tab] === view) ?? VIEW_TABS[0];
   const projectId = project?.id ?? null;
+  const writeEnabled = !readOnly;
+  /** 定档 / 取消定档只看角色：任务当前负责人或项目经理；只读项目不再保留可点击入口。
+   *  角色外键是本库 users.id —— 必须取权限画像的 userId，不能拿 /auth/me 的 Casdoor id 比较。 */
+  const canFinalizeTask = (task: ProjectTask): boolean => {
+    if (!writeEnabled || currentActorId === null) return false;
+    return task.ownerIds.includes(currentActorId) || project?.managerIds.includes(currentActorId) === true;
+  };
 
   /**
    * 任务数据（M3-07 刀 1 后半接线）：列表与汇总卡全部来自服务端任务接口（GET /projects/{id}/tasks 与 /summary）。
@@ -368,6 +386,20 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
       ...tasks.filter((task) => task.titleEn === "" || locale === "ja" || locale === "ko").map((task) => task.title),
     ]);
   }, [project, tasks, locale]);
+
+  /**
+   * 导出语言的后台缓存不能只看当前界面语言：中文界面下也可能导出英 / 日 / 韩。
+   * 数据到达后稍让页面首屏，再把正式导出同一批项目名 / 任务名 / 进展描述预热到三语；
+   * 命中服务端译文库即只读回填，未命中的才在后台逐条补齐，不阻塞页面。
+   */
+  useEffect(() => {
+    if (project === null) {
+      return;
+    }
+    const texts = [project.description, ...tasks.flatMap((task) => [task.title, task.note])];
+    const timer = window.setTimeout(() => prefetchOverviewExportTranslations(texts), 600);
+    return () => window.clearTimeout(timer);
+  }, [project, tasks]);
 
   /** 当前行（写入要回传它的 version / sortIndex 等）。 */
   const rowOf = (taskId: string): ProjectTask | undefined => tasks.find((task) => task.id === taskId);
@@ -980,6 +1012,14 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   const [exportTranslateProgress, setExportTranslateProgress] = useState<ExportTranslateProgress | null>(null);
   /** 导出等待浮层可见性（§6.16 ㉑ 防闪烁）：译文全命中缓存时导出近乎瞬时，浮层迟 250ms 才出现。 */
   const [exportOverlayVisible, setExportOverlayVisible] = useState(false);
+  /** 导出面板逐阶段折叠用的同一份分组（与服务端 summary 计数同口径；默认全部展开）。 */
+  const exportStageOptions = useMemo<OverviewExportStageOption[]>(
+    () =>
+      groupedByStage(tasks)
+        .filter((group) => group.tasks.length > 0 || STAGE_NAMES.includes(group.name))
+        .map((group) => ({ name: group.name, total: group.total, done: group.done })),
+    [tasks],
+  );
 
   /**
    * 导出项目总览（PDF · 业务口径 2026-10-09 · §6.16）：把页面当前的 project / tasks / summary 交给报告模块
@@ -987,7 +1027,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
    * 2026-10-10 起导出前经翻译通道补「项目进展描述」列译文；2026-10-23 日 / 韩主体再补项目名与任务名（translateApi.ts；通道不通静默降级）；导出不改数据。
    * 2026-10-13 起译文已在「写进展描述」时后台预热（§6.16 ㉑）—— 命中缓存即取，只有未预热条目才现场翻。
    */
-  const exportOverview = async (primary: OverviewExportLanguage): Promise<void> => {
+  const exportOverview = async (options: OverviewExportOptions): Promise<void> => {
     if (project === null || exportingOverview) {
       return;
     }
@@ -998,7 +1038,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
       setExportOverlayVisible(true);
     }, 250);
     try {
-      await exportProjectOverviewPdf({ project, tasks, summary }, primary, (done, total) => {
+      await exportProjectOverviewPdf({ project, tasks, summary }, options, (done, total) => {
         setExportTranslateProgress({ done, total });
       });
     } finally {
@@ -1027,7 +1067,7 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
   const pendingDeleteTask = pendingDeleteTaskId === null ? undefined : rowOf(pendingDeleteTaskId);
 
   return (
-    <div className="min-h-screen">
+    <div data-project-page="" className="min-h-screen">
       <AppHeader me={me} project={project} />
       <main className="w-full px-6 pb-10 pt-3">
         {/* 主标签栏吸顶（Push 201 业务口径「这个也做吸顶效果吧」）：滚动时停在应用顶栏（h-16 = 64px）正下方，
@@ -1095,11 +1135,11 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             {/* 标签栏右侧工具区（Push 290 起「醒目模式」已下架、观感统一走顶栏背景档位）：只剩「导出 PDF」+ 列显隐，
                 两枚都按原口径只在「项目总览」出现 —— 原「日报及问题」视图最右侧那枚醒目模式开关随功能一并删除。 */}
             {activeView === "项目总览" ? (
-              <div className="flex shrink-0 items-center gap-4">
+              <div data-project-tools="" className="flex shrink-0 items-center gap-4">
                 {/* 导出 PDF（业务口径 2026-10-09 · §6.16）：数据 = 页面已取到的 project / tasks / summary，
                     生成 A4 横版报告后在系统打印窗口里另存为 PDF；
                     任务数据加载中 / 加载失败时置灰 —— 导出的报告必须和页面数据一致，宁可不给点。 */}
-                <ExportOverviewButton disabled={dataLoading || dataError !== null} busy={exportingOverview} onExport={(primary) => { void exportOverview(primary); }} />
+                <ExportOverviewButton input={{ project, tasks, summary }} stages={exportStageOptions} disabled={dataLoading || dataError !== null} busy={exportingOverview} onExport={(options) => { void exportOverview(options); }} />
                 <ColumnPicker visible={visibleColumns} onToggle={handleToggleColumn} onReset={resetColumns} />
               </div>
             ) : null}
@@ -1161,42 +1201,48 @@ export default function ProjectDetail({ me, project, view, dailySub, members, on
             <>
               {/* 汇总卡（M3-07 刀 1 后半）：最慢 / 最新阶段由服务端按任务聚合（GET /projects/{id}/summary） */}
               <ProjectSummary summary={summary} />
-              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={handleSetProgress} onSetStatus={handleSetStatus} onSetActualEnd={handleSetActualEnd} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={handleAddNode} onAddNodes={handleAddNodes} onCreateTempTask={(values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values)} viewStage="项目总览" managers={managers} managerIds={project.managerIds} onSubmitTaskEdit={handleSubmitTaskEdit} onRenameTask={handleRenameTask} onPatchTask={handlePatchTask} onChangeManagers={handleBoardManagerChange} onDeleteTask={requestDeleteTask} onUploadFiles={handleUploadTaskFiles} onDeleteFile={handleDeleteTaskFile} onRenameFile={handleRenameTaskFile} onFinalize={handleFinalizeTask} onUnfinalize={handleUnfinalizeTask} onChanged={reloadAll} actorName={me.user.displayName ?? ""} filesByTask={taskFiles} projectId={project.id} tierTint={tintRows} />
+              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={writeEnabled ? handleSetProgress : undefined} onSetStatus={writeEnabled ? handleSetStatus : undefined} onSetActualEnd={writeEnabled ? handleSetActualEnd : undefined} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={writeEnabled ? handleAddNode : undefined} onAddNodes={writeEnabled ? handleAddNodes : undefined} onCreateTempTask={writeEnabled ? (values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values) : undefined} viewStage="项目总览" managers={managers} managerIds={project.managerIds} canFinalizeTask={canFinalizeTask} onSubmitTaskEdit={writeEnabled ? handleSubmitTaskEdit : undefined} onRenameTask={writeEnabled ? handleRenameTask : undefined} onPatchTask={writeEnabled ? handlePatchTask : undefined} onChangeManagers={writeEnabled ? handleBoardManagerChange : undefined} onDeleteTask={writeEnabled ? requestDeleteTask : undefined} onUploadFiles={writeEnabled ? handleUploadTaskFiles : undefined} onDeleteFile={writeEnabled ? handleDeleteTaskFile : undefined} onRenameFile={writeEnabled ? handleRenameTaskFile : undefined} onFinalize={writeEnabled ? handleFinalizeTask : undefined} onUnfinalize={writeEnabled ? handleUnfinalizeTask : undefined} onChanged={reloadAll} actorName={me.user.displayName ?? ""} filesByTask={taskFiles} projectId={project.id} tierTint={tintRows} focusTaskId={focus?.kind === "task" ? focus.id : null} onFocusClosed={onClearFocus} />
             </>
           ) : activeView === "甘特图" ? (
             // 甘特图（Push 142）：与项目总览同一份任务数据（服务端任务接口）；拖动改期 / 改进度走同一套写入口径
-            <GanttChart tasks={tasks} members={members} managers={managers} tierTint={tintRows} onPatchTask={handlePatchTask} onSetProgress={handleSetProgress} />
+            <GanttChart tasks={tasks} members={members} managers={managers} tierTint={tintRows} onPatchTask={writeEnabled ? handlePatchTask : undefined} onSetProgress={writeEnabled ? handleSetProgress : undefined} />
           ) : activeView === "日报及问题" ? (
             // key = 项目 id：换项目时把日报 / 问题与填写草稿一起复位（原型内存态，见 ReportIssuePanel.tsx）
             // Push 290：背景档位「适中」透传给「问题追踪」做表格呈现（原醒目模式挂点，随功能下架改吃档位）；失败提示沿用同一条 toolError
-            <ReportIssuePanel key={project.id} project={project} me={me} members={members} tierTint={tintRows} sub={dailySub} onChangeSub={(next) => { replaceProjectSubView(project.id, next); }} />
+            <ReportIssuePanel key={project.id} project={project} me={me} members={members} tierTint={tintRows} sub={dailySub} focusReportId={focus?.kind === "report" ? focus.id : null} focusIssueId={focus?.kind === "issue" ? focus.id : null} onFocusClosed={onClearFocus} readOnly={readOnly} onChangeSub={(next) => { replaceProjectSubView(project.id, next); }} />
           ) : activeView === "干系人" ? (
             // 干系人（Push 221 · A27 前端接线）：表格形态与「项目总览」同一套（表头固定 + CSS grid 行 + 共用底部滑块）
-            <StakeholderPanel projectId={project.id} canManage={canManageStakeholders} scrollRef={tableScrollRef} />
+            <StakeholderPanel projectId={project.id} canManage={canManageStakeholders && writeEnabled} scrollRef={tableScrollRef} />
+          ) : activeView === "项目文件" ? (
+            // 项目文件（2026-10-29）：阶段任务文件 + 变更记录关联文件的并集；日报 / 问题附图不进入。
+            <ProjectFilesPanel projectId={project.id} tasks={tasks} />
           ) : (
             <TaskKanban
               mode={activeView === "人员任务分配" ? "owner" : "status"}
               tasks={tasks}
               managers={managers}
               managerIds={project.managerIds}
+              canFinalizeTask={canFinalizeTask}
               members={members}
-              onAddTask={handleQuickAdd}
-              onAddStageTask={handleKanbanAddNode}
-              onSubmitTaskEdit={handleSubmitTaskEdit}
-              onRenameTask={handleRenameTask}
-              onPatchTask={handlePatchTask}
-              onSetStatus={handleSetStatus}
-              onSetActualEnd={handleSetActualEnd}
-              onReorderTask={handleReorderTask}
-              onSetProgress={handleSetProgress}
-              onUploadFiles={handleUploadTaskFiles}
-              onDeleteFile={handleDeleteTaskFile}
-              onRenameFile={handleRenameTaskFile}
-              onFinalize={handleFinalizeTask}
-              onUnfinalize={handleUnfinalizeTask}
+              onAddTask={writeEnabled ? handleQuickAdd : undefined}
+              onAddStageTask={writeEnabled ? handleKanbanAddNode : undefined}
+              onSubmitTaskEdit={writeEnabled ? handleSubmitTaskEdit : undefined}
+              onRenameTask={writeEnabled ? handleRenameTask : undefined}
+              onPatchTask={writeEnabled ? handlePatchTask : undefined}
+              onSetStatus={writeEnabled ? handleSetStatus : undefined}
+              onSetActualEnd={writeEnabled ? handleSetActualEnd : undefined}
+              onReorderTask={writeEnabled ? handleReorderTask : undefined}
+              onSetProgress={writeEnabled ? handleSetProgress : undefined}
+              onUploadFiles={writeEnabled ? handleUploadTaskFiles : undefined}
+              onDeleteFile={writeEnabled ? handleDeleteTaskFile : undefined}
+              onRenameFile={writeEnabled ? handleRenameTaskFile : undefined}
+              onFinalize={writeEnabled ? handleFinalizeTask : undefined}
+              onUnfinalize={writeEnabled ? handleUnfinalizeTask : undefined}
               onChanged={reloadAll}
               actorName={me.user.displayName ?? ""}
               projectId={project.id}
+              focusTaskId={focus?.kind === "task" ? focus.id : null}
+              onFocusClosed={onClearFocus}
             />
           )}
         </div>

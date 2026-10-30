@@ -20,7 +20,7 @@ export class CsrfGuard implements CanActivate {
     const cookieToken = parseCookieHeader(request.headers.cookie)[CSRF_COOKIE];
     const headerToken = request.headers["x-csrf-token"];
     if (cookieToken === undefined || cookieToken === "" || typeof headerToken !== "string" || headerToken !== cookieToken) {
-      throw new AppError("FORBIDDEN", "CSRF 校验失败，请刷新页面后重试");
+      throw new AppError("CSRF_FAILED", "CSRF 校验失败，请刷新页面后重试");
     }
     return true;
   }

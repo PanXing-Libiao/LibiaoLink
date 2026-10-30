@@ -15,6 +15,7 @@ import {
   PLAN_CATEGORY_NAME_MAX,
   PLAN_NOTE_LIMIT,
   clearLegacyPlanBoard,
+  emptyPlanBoard,
   filterPlanNotes,
   newPlanNoteId,
   normalizePlanCategoryName,
@@ -22,7 +23,6 @@ import {
   planBoardBgOf,
   planGreeting,
   readLegacyPlanBoard,
-  seedPlanBoard,
   type PlanBoard,
   type PlanBoardBgId,
   type PlanNote,
@@ -36,7 +36,7 @@ import {
  * 228px 起跳的 auto-fill 网格 + 198 高圆角卡片（配色 = 同一套 7 色 hex 调色板）；工具条 = 搜索 + 新建便签（排序已下架；不做导出 / 导入）。
  *
  * 存储（Push 268 起 · 账号落库）：整面便签墙按账号存服务端偏好（user_preferences.prefs.myPlanBoard，见 preferencesApi.ts）——
- * 首次打开（账号里从未保存）预置 6 条示例并上云；本机旧键（libiaolink.plan.board.v1）自动迁移上云再清键（迁移失败保留旧键、本机数据兜底、下轮重试）。
+ * 首次打开（账号里从未保存）为空便签墙，不预写示例数据；本机旧键（libiaolink.plan.board.v1）自动迁移上云再清键（迁移失败保留旧键、本机数据兜底、下轮重试）。
  * 保存 = 乐观更新 + 单键 PATCH（串行）；失败保留界面改动并出提示（刷新回滚到账号里最后一次保存）。
  * 完成态（Push 269 改拖拽 · 业务口径 2026-10-10「不要这个完成 在这个分类旁边增加完成区域 拖动便签到完成区域则完成」）：
  * 编辑弹窗不再有完成键 —— 侧栏分类卡下方新增「完成」拖放区：把便签拖进去即完成；「已完成」视图里的便签拖回「全部便签」即恢复。
@@ -162,7 +162,7 @@ function CategoryItem({
 }) {
   const t = useT();
   return (
-    <div className="group relative min-w-0">
+    <div data-plan-category-wrap={value} className="group relative min-w-0">
       <button
         ref={buttonRef}
         type="button"
@@ -339,7 +339,7 @@ function BoardSearch({ value, onChange }: { value: string; onChange: (next: stri
 
 /* ----- 空态（照参考页：虚线圆角容器 + 圆形图标 + 新建按钮） ----- */
 
-function BoardEmpty({ title, text, onNew }: { title: string; text: string; onNew?: () => void }) {
+function BoardEmpty({ title, text, onNew }: { title: string; text: ReactNode; onNew?: () => void }) {
   const t = useT();
   return (
     <div
@@ -366,7 +366,7 @@ function BoardEmpty({ title, text, onNew }: { title: string; text: string; onNew
  * 点卡片进编辑弹窗（PlanNoteEditor —— 便签底色整卡铺底 + 顶栏关闭 X / 7 色圆点 / 字体 Aa 分段器 + 大标题 / 记录区 + 分类胶囊 +
  * 底栏「更新于」+ 删除 + 保存）；完成 / 恢复 = 拖拽（Push 269：便签拖进「完成」区 / 「已完成」里拖回「全部便签」）。不做导出 / 导入（业务口径 2026-10-10「导出导入功能不要」）。
  */
-export function MyPlanBoard() {
+export function MyPlanBoard({ readOnly = false }: { readOnly?: boolean }) {
   const t = useT();
   const locale = useLocale();
   const [board, setBoard] = useState<PlanBoard | null>(null);
@@ -400,7 +400,7 @@ export function MyPlanBoard() {
   const suppressOpenAtRef = useRef(0);
 
   /**
-   * 打开读面：GET 偏好 → 首次（账号里从未保存）预置示例上云；本机旧键（Push ≤ 267 的 localStorage）
+   * 打开读面：GET 偏好 → 首次（账号里从未保存）显示空便签墙；本机旧键（Push ≤ 267 的 localStorage）
    * 在账号没数据（或账号为空板而旧键有便签）时迁移上云再清键；迁移失败保留旧键、本机数据兜底展示、下轮打开重试。
    */
   useEffect(() => {
@@ -415,6 +415,10 @@ export function MyPlanBoard() {
         }
         const remote = prefs.myPlanBoard;
         revision.current = prefs.revisions?.myPlanBoard ?? 0;
+        if (readOnly) {
+          setBoard(remote.updatedAt === null ? emptyPlanBoard() : { notes: remote.notes, categories: remote.categories, bg: planBoardBgOf(remote.bg).id });
+          return;
+        }
         const legacy = readLegacyPlanBoard();
         if (legacy !== null) {
           const shouldMigrate = remote.updatedAt === null || (remote.notes.length === 0 && legacy.notes.length > 0);
@@ -448,17 +452,7 @@ export function MyPlanBoard() {
           return;
         }
         if (remote.updatedAt === null) {
-          const seeded = seedPlanBoard();
-          setBoard(seeded);
-          try {
-            const saved = await saveMyPlanBoard(seeded, revision.current);
-            revision.current = saved.revisions?.myPlanBoard ?? revision.current + 1;
-          } catch (error) {
-            if (error instanceof ApiError && error.status === 409) {
-              const latest = await loadMyPreferences();
-              if (alive) { revision.current = latest.revisions?.myPlanBoard ?? 0; setBoard(latest.myPlanBoard); }
-            } else { failed.current = true; setUnsaved(true); }
-          }
+          setBoard(emptyPlanBoard());
           return;
         }
         setBoard({ notes: remote.notes, categories: remote.categories, bg: planBoardBgOf(remote.bg).id });
@@ -471,7 +465,7 @@ export function MyPlanBoard() {
     return () => {
       alive = false;
     };
-  }, [reloadToken]);
+  }, [reloadToken, readOnly]);
 
   useLiveRefresh(["preferences"], async () => {
     const prefs = await loadMyPreferences();
@@ -483,6 +477,9 @@ export function MyPlanBoard() {
 
   /** Failed queued writes remain dirty; only an explicit conflict decision advances their baseline. */
   const commit = (next: PlanBoard, okText?: string): Promise<boolean> => {
+    if (readOnly) {
+      return Promise.resolve(false);
+    }
     setBoard(next);
     setUnsaved(true);
     pendingSaves.current += 1;
@@ -578,55 +575,130 @@ export function MyPlanBoard() {
     return null;
   };
 
-  /** 拖拽起点（Push 269）：按住便签卡 —— 超过 6px 才算拖（否则仍是点开编辑）；松手落在落点上即完成 / 恢复。 */
+  /** 拖拽起点（Push 269）：仅桌面鼠标；手机端不启用拖拽，改用卡片右上角「完成 / 恢复」。 */
   const handleNotePointerDown = (note: PlanNote, event: ReactPointerEvent<HTMLButtonElement>): void => {
-    if (event.button !== 0) {
+    if (event.pointerType !== "mouse" || event.button !== 0 || event.isPrimary === false) {
       return;
     }
+    const pointerId = event.pointerId;
+    const noteEl = event.currentTarget;
     suppressOpenAtRef.current = 0;
     const startX = event.clientX;
     const startY = event.clientY;
     /** Push 271：抓取点偏移 + 原卡宽度 —— ghost 按 1:1 原尺寸跟手。 */
-    const grabRect = event.currentTarget.getBoundingClientRect();
+    const grabRect = noteEl.getBoundingClientRect();
     const grabX = event.clientX - grabRect.left;
     const grabY = event.clientY - grabRect.top;
     const grabW = grabRect.width;
     let active = false;
-    const handleMove = (moveEvent: PointerEvent): void => {
-      if (!active) {
-        if (Math.abs(moveEvent.clientX - startX) < 6 && Math.abs(moveEvent.clientY - startY) < 6) {
+    let frameId: number | null = null;
+    let latestPoint: { x: number; y: number } | null = null;
+    let previousUserSelect = "";
+
+    const queueDrag = (x: number, y: number): void => {
+      latestPoint = { x, y };
+      if (frameId !== null) {
+        return;
+      }
+      frameId = window.requestAnimationFrame(() => {
+        frameId = null;
+        if (latestPoint === null) {
           return;
         }
-        active = true;
-      }
-      setDrag({ noteId: note.id, done: note.done, x: moveEvent.clientX, y: moveEvent.clientY, over: dragHit(moveEvent.clientX, moveEvent.clientY, note.done), w: grabW, offX: grabX, offY: grabY });
+        const point = latestPoint;
+        setDrag({ noteId: note.id, done: note.done, x: point.x, y: point.y, over: dragHit(point.x, point.y, note.done), w: grabW, offX: grabX, offY: grabY });
+      });
     };
+
+    const activate = (x: number, y: number): void => {
+      if (active) {
+        return;
+      }
+      active = true;
+      try {
+        noteEl.setPointerCapture(pointerId);
+      } catch {
+        // 某些浏览器在 pointercancel 后不允许捕获；window 监听仍能收尾。
+      }
+      previousUserSelect = noteEl.style.userSelect;
+      noteEl.style.userSelect = "none";
+      suppressOpenAtRef.current = Date.now();
+      setDrag({ noteId: note.id, done: note.done, x, y, over: dragHit(x, y, note.done), w: grabW, offX: grabX, offY: grabY });
+    };
+
+    const handleMove = (moveEvent: PointerEvent): void => {
+      if (moveEvent.pointerId !== pointerId) {
+        return;
+      }
+      if (!active) {
+        const dx = moveEvent.clientX - startX;
+        const dy = moveEvent.clientY - startY;
+        if (Math.abs(dx) < 6 && Math.abs(dy) < 6) {
+          return;
+        }
+        activate(moveEvent.clientX, moveEvent.clientY);
+      }
+      if (moveEvent.cancelable) {
+        moveEvent.preventDefault();
+      }
+      queueDrag(moveEvent.clientX, moveEvent.clientY);
+    };
+
     const handleUp = (upEvent: PointerEvent): void => {
+      if (upEvent.pointerId !== pointerId) {
+        return;
+      }
+      const wasActive = active;
+      const over = wasActive ? dragHit(upEvent.clientX, upEvent.clientY, note.done) : null;
       cleanup();
       setDrag(null);
-      if (!active) {
+      if (!wasActive) {
         return;
       }
       suppressOpenAtRef.current = Date.now();
-      const over = dragHit(upEvent.clientX, upEvent.clientY, note.done);
       if (over === "done") {
         setNoteDone(note.id, true);
       } else if (over === "all") {
         setNoteDone(note.id, false);
       }
     };
-    const handleCancel = (): void => {
+
+    const handleCancel = (cancelEvent: PointerEvent): void => {
+      if (cancelEvent.pointerId !== pointerId) {
+        return;
+      }
       cleanup();
       setDrag(null);
     };
+
+    const handleAbort = (): void => {
+      cleanup();
+      setDrag(null);
+    };
+
     function cleanup(): void {
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId);
+        frameId = null;
+      }
+      noteEl.style.userSelect = previousUserSelect;
+      try {
+        if (noteEl.hasPointerCapture(pointerId)) {
+          noteEl.releasePointerCapture(pointerId);
+        }
+      } catch {
+        // 指针已经结束时无需再释放捕获。
+      }
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", handleUp);
       window.removeEventListener("pointercancel", handleCancel);
+      window.removeEventListener("blur", handleAbort);
     }
-    window.addEventListener("pointermove", handleMove);
+
+    window.addEventListener("pointermove", handleMove, { passive: false });
     window.addEventListener("pointerup", handleUp);
     window.addEventListener("pointercancel", handleCancel);
+    window.addEventListener("blur", handleAbort);
   };
 
   /** 拖动期间禁掉正文选中（松手 / 取消即恢复）。 */
@@ -635,10 +707,13 @@ export function MyPlanBoard() {
     if (!dragging) {
       return;
     }
-    const previous = document.body.style.userSelect;
+    const previousUserSelect = document.body.style.userSelect;
+    const previousTouchAction = document.body.style.touchAction;
     document.body.style.userSelect = "none";
+    document.body.style.touchAction = "none";
     return () => {
-      document.body.style.userSelect = previous;
+      document.body.style.userSelect = previousUserSelect;
+      document.body.style.touchAction = previousTouchAction;
     };
   }, [dragging]);
 
@@ -769,13 +844,10 @@ export function MyPlanBoard() {
       className="-mx-6 -mb-10 -mt-5 min-h-[calc(100dvh-8rem)] bg-white px-6 pb-10 pt-6"
     >
       <div className="mx-auto w-full max-w-[1240px]">
-        <div className="flex flex-wrap items-center gap-3">
-          <BackgroundSwitcher
-            value={board.bg}
-            onChange={handleSwitchBg}
-          />
+        <div data-plan-toolbar="" className="flex flex-wrap items-center gap-3">
+          {readOnly ? null : <BackgroundSwitcher value={board.bg} onChange={handleSwitchBg} />}
           <BoardSearch value={keyword} onChange={setKeyword} />
-          <span className="flex items-center gap-2">
+          {readOnly ? null : <span className="flex items-center gap-2">
             <button
               type="button"
               data-plan-new=""
@@ -788,17 +860,17 @@ export function MyPlanBoard() {
               <PlusIcon />
               {t("plan.newNote")}
             </button>
-          </span>
+          </span>}
         </div>
 
-        <div className="mt-6 grid gap-6 lg:grid-cols-[252px_minmax(0,1fr)]">
+        <div data-plan-body="" className="mt-6 grid gap-6 lg:grid-cols-[252px_minmax(0,1fr)]">
           <div
             ref={doneZoneRef}
             data-plan-done-zone=""
             data-plan-done-zone-over={overDone ? "true" : "false"}
             className={zoneClass}
           >
-          <aside className="flex flex-wrap content-start items-center gap-1.5 rounded-[18px] border border-[#e8e3da] bg-white p-3.5 shadow-[0_1px_2px_rgba(28,25,23,0.05),0_10px_26px_-16px_rgba(28,25,23,0.22)] lg:flex-col lg:flex-nowrap lg:items-stretch lg:gap-[3px]">
+          <aside data-plan-sidebar="" className="flex flex-wrap content-start items-center gap-1.5 rounded-[18px] border border-[#e8e3da] bg-white p-3.5 shadow-[0_1px_2px_rgba(28,25,23,0.05),0_10px_26px_-16px_rgba(28,25,23,0.22)] lg:flex-col lg:flex-nowrap lg:items-stretch lg:gap-[3px]">
             <p className="mb-2 hidden px-2 pt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#a8a29e] lg:block">{t("plan.category")}</p>
             <CategoryItem
               value="all"
@@ -877,13 +949,13 @@ export function MyPlanBoard() {
                     setDoneOnly(false);
                     setCategory(category === item ? null : item);
                   }}
-                  onDelete={() => {
+                  onDelete={readOnly ? undefined : () => {
                     requestDeleteCategory(item);
                   }}
                 />
               );
             })}
-            {addingCategory ? (
+            {readOnly ? null : addingCategory ? (
               <input
                 autoFocus
                 data-plan-category-new=""
@@ -926,17 +998,21 @@ export function MyPlanBoard() {
             </div>
           </aside>
 
-          <div className="flex flex-col items-center justify-center gap-0.5 rounded-[14px] px-3 py-6 text-center lg:flex-1">
+          <div data-plan-complete-zone="" className="flex flex-col items-center justify-center gap-0.5 rounded-[14px] px-3 py-6 text-center lg:flex-1">
             <span className={"grid h-9 w-9 place-items-center rounded-full " + (overDone ? "bg-white/[0.14]" : "bg-[#efeae1]")}>
               <CheckCircleIcon />
             </span>
             <span className="mt-2 block text-[13.5px] font-semibold">{t("plan.doneZone")}</span>
-            <span className="mt-0.5 block text-[11.5px] opacity-80">{overDone ? t("plan.dropDone") : dragFromDone ? t("plan.dragFromDoneHint") : t("plan.dragToDoneHint")}</span>
+            <span data-plan-complete-hint="" className="mt-0.5 block text-[11.5px] opacity-80">
+              {overDone ? t("plan.dropDone") : dragFromDone ? t("plan.dragFromDoneHint") : (
+                <span data-plan-hint-desktop="">{t("plan.dragToDoneHint")}</span>
+              )}
+            </span>
           </div>
           </div>
 
-          <div className="flex min-w-0 flex-col gap-[18px]">
-            <div className="flex items-end justify-between gap-4">
+          <div data-plan-content="" className="flex min-w-0 flex-col gap-[18px]">
+            <div data-plan-heading="" className="flex items-end justify-between gap-4">
               <div>
                 <p className="mb-1 text-[12.5px] tracking-[0.16em] text-[#a8a29e]">{planGreeting(locale)}</p>
                 <h1 className="flex items-center gap-2.5 text-[30px] font-bold tracking-[-0.02em] text-[#1c1917]">
@@ -944,7 +1020,10 @@ export function MyPlanBoard() {
                   <span className="rounded-full bg-[#efeae1] px-2.5 py-[3px] text-xs font-semibold text-[#57534e]">{visible.length}</span>
                 </h1>
                 {doneOnly ? (
-                  <p data-plan-done-hint="" className="mb-0.5 mt-1.5 text-[12.5px] text-[#a8a29e]">{t("plan.doneHint")}</p>
+                  <p data-plan-done-hint="" className="mb-0.5 mt-1.5 text-[12.5px] text-[#a8a29e]">
+                    <span data-plan-hint-desktop="">{t("plan.doneHint")}</span>
+                    <span data-plan-hint-touch="">{t("plan.mobileRestoreHint")}</span>
+                  </p>
                 ) : null}
               </div>
               {keyword.trim() === "" ? null : <p className="pb-1 text-[12.5px] text-[#78716c]">{t("plan.searching", { keyword: keyword.trim() })}</p>}
@@ -954,18 +1033,24 @@ export function MyPlanBoard() {
               <BoardEmpty
                 title={t("plan.empty.title")}
                 text={t("plan.empty.text")}
-                onNew={() => {
+                onNew={readOnly ? undefined : () => {
                   createdNoteId.current = null;
                   setEditor({ note: null });
                 }}
               />
             ) : doneOnly && doneCount === 0 ? (
-              <BoardEmpty title={t("plan.emptyDone.title")} text={t("plan.emptyDone.text")} />
+              <BoardEmpty
+                title={t("plan.emptyDone.title")}
+                text={<>
+                  <span data-plan-hint-desktop="">{t("plan.emptyDone.text")}</span>
+                  <span data-plan-hint-touch="">{t("plan.mobileDoneHint")}</span>
+                </>}
+              />
             ) : visible.length === 0 ? (
               <BoardEmpty
                 title={t("plan.emptySearch.title")}
                 text={t("plan.emptySearch.text")}
-                onNew={() => {
+                onNew={readOnly ? undefined : () => {
                   createdNoteId.current = null;
                   setEditor({ note: null });
                 }}
@@ -979,16 +1064,36 @@ export function MyPlanBoard() {
                       <PlanNoteCard
                         note={note}
                         lifted={lifted}
-                        onOpen={() => {
+                        onOpen={readOnly ? () => {} : () => {
                           if (Date.now() - suppressOpenAtRef.current < 350) {
                             return;
                           }
                           setEditor({ note });
                         }}
-                        onPointerDown={(event) => {
+                        onPointerDown={readOnly ? undefined : (event) => {
                           handleNotePointerDown(note, event);
                         }}
                       />
+                      {readOnly ? null : (
+                        <button
+                          type="button"
+                          data-plan-mobile-toggle=""
+                          aria-label={t(note.done ? "plan.mobileRestoreAria" : "plan.mobileDoneAria", { name: note.title === "" ? t("plan.untitled") : note.title })}
+                          title={note.done ? t("plan.mobileRestore") : t("plan.mobileDone")}
+                          onClick={() => {
+                            setNoteDone(note.id, !note.done);
+                          }}
+                          className={
+                            "absolute right-2.5 top-2.5 z-10 hidden h-10 items-center gap-1.5 rounded-full border px-3 text-[11.5px] font-semibold shadow-[0_8px_18px_-12px_rgba(28,25,23,0.65)] transition active:scale-[0.97] " +
+                            (note.done
+                              ? "border-emerald-700/20 bg-emerald-600 text-white"
+                              : "border-[#1c1917]/15 bg-white/90 text-[#1c1917] backdrop-blur-[4px]")
+                          }
+                        >
+                          {note.done ? <FolderOpenIcon /> : <CheckCircleIcon />}
+                          <span>{note.done ? t("plan.mobileRestore") : t("plan.mobileDone")}</span>
+                        </button>
+                      )}
                       {lifted ? (
                         <div data-plan-note-lift="" className="pointer-events-none absolute inset-0 rounded-[18px] border-2 border-dashed border-[#ded6c8] bg-[#faf9f7]/70" />
                       ) : null}

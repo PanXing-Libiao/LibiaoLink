@@ -14,7 +14,7 @@
  */
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { createRequire } from "node:module";
@@ -170,9 +170,7 @@ async function seedActor() {
       "insert into users (id, casdoor_id, username, display_name, email, status) values ($1, $2, $3, $4, null, 'active')",
       [userId, casdoorId, username, "H1 S6 Browser E2E"],
     );
-    const role = await db.query("select id from roles where code = 'admin' limit 1");
-    if (role.rowCount !== 1) fail("数据库缺少 admin 角色；先执行 database/scripts/seed.mjs");
-    await db.query("insert into user_roles (user_id, role_id) values ($1, $2)", [userId, role.rows[0].id]);
+    await db.query("insert into group_access_admins (user_id, granted_by) values ($1, $1)", [userId]);
     await db.query(
       "insert into sessions (id, token_hash, user_id, id_token, last_seen_at, expires_at) " +
         "values ($1, $2, $3, $4, now(), now() + interval '2 hours')",
@@ -238,7 +236,7 @@ async function cleanup() {
     if (userId !== null) {
       await db.query("delete from audit_logs where actor_id = $1 or project_id = $2", [userId, created.projectId]);
       await db.query("delete from sessions where user_id = $1", [userId]);
-      await db.query("delete from user_roles where user_id = $1", [userId]);
+      await db.query("delete from group_access_admins where user_id = $1", [userId]);
       await db.query("delete from user_preferences where user_id = $1", [userId]);
       await db.query("delete from users where id = $1", [userId]);
     }
@@ -532,6 +530,28 @@ function svgFixture(label, color) {
   );
 }
 
+function minimalPdf(text) {
+  const stream = "BT /F1 12 Tf 20 100 Td (" + text + ") Tj ET";
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+    "<< /Length " + String(Buffer.byteLength(stream, "latin1")) + " >>\nstream\n" + stream + "\nendstream",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [];
+  for (let index = 0; index < objects.length; index += 1) {
+    offsets.push(Buffer.byteLength(pdf, "latin1"));
+    pdf += String(index + 1) + " 0 obj\n" + objects[index] + "\nendobj\n";
+  }
+  const xref = Buffer.byteLength(pdf, "latin1");
+  pdf += "xref\n0 " + String(objects.length + 1) + "\n0000000000 65535 f \n";
+  for (const offset of offsets) pdf += String(offset).padStart(10, "0") + " 00000 n \n";
+  pdf += "trailer\n<< /Size " + String(objects.length + 1) + " /Root 1 0 R >>\nstartxref\n" + String(xref) + "\n%%EOF\n";
+  return Buffer.from(pdf, "latin1");
+}
+
 async function loadFixtures() {
   const readAsset = (name) => readFile(path.join(REPO_ROOT, "server", "assets", name));
   const webp = Buffer.from("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA", "base64");
@@ -551,13 +571,7 @@ async function loadFixtures() {
     '</svg>',
     "utf8",
   );
-  const pdf = Buffer.from(
-    "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n" +
-      "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n" +
-      "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] >>\nendobj\n" +
-      "trailer\n<< /Root 1 0 R >>\n%%EOF\n",
-    "utf8",
-  );
+  const pdf = minimalPdf("LibiaoLink PDF.js regression");
   const docx = await readFile(path.join(REPO_ROOT, "server", "scripts", "poc10", "fixtures", "n1-03-weekly-report.docx"));
   const stl = Buffer.from(
     "solid h1-s6\n" +
@@ -934,9 +948,10 @@ async function thumbnailReady(name) {
 
 async function overlayImageReady() {
   await waitExpression(
-    "(() => { const img = document.querySelector('[data-image-zoom-image]'); return Boolean(img && img.complete && img.naturalWidth > 0); })()",
+    "(() => { const status = document.querySelector('[data-file-image-preview=true]')?.getAttribute('data-file-image-status');" +
+      " const img = document.querySelector('[data-image-zoom-image]'); return status === 'ready' && Boolean(img && img.complete && img.naturalWidth > 0); })()",
     "浮层图片加载",
-    20_000,
+    60_000,
   );
   return evaluate(
     "(() => { const img = document.querySelector('[data-image-zoom-image]'); return {src:img.currentSrc || img.src,naturalWidth:img.naturalWidth,naturalHeight:img.naturalHeight}; })()",
@@ -956,8 +971,8 @@ async function runB1(normal, preview) {
   await clickFileControl(normal.name, true);
   await waitOverlay("image");
   const image = await overlayImageReady();
-  assert(new URL(image.src).pathname === new URL(preview.url).pathname, "B1 浮层图片未使用预览 API 的 PNG 产物");
-  record("B1", "浮层图片加载", "naturalWidth=" + String(image.naturalWidth));
+  assert(image.src.startsWith("blob:"), "B1 浮层图片未转换为同源 Blob：" + image.src.slice(0, 48));
+  record("B1", "浮层图片加载", "blob=true; naturalWidth=" + String(image.naturalWidth));
   const before = Number(await evaluate("document.querySelector('[data-image-zoom-viewer]')?.getAttribute('data-image-zoom') || '1'"));
   await evaluate("document.querySelector('[data-image-zoom-in]').click(); true");
   await waitExpression("Number(document.querySelector('[data-image-zoom-viewer]')?.getAttribute('data-image-zoom') || '1') > " + String(before), "图片放大", 5_000);
@@ -986,7 +1001,7 @@ async function runB2(malicious, preview, downloadUrl) {
     if (exposedPreview) {
       await waitOverlay("image");
       const image = await overlayImageReady();
-      assert(new URL(image.src).pathname === new URL(preview.url).pathname, "B2 恶意 SVG 浮层未使用 PNG 产物");
+      assert(image.src.startsWith("blob:"), "B2 恶意 SVG 浮层未转换为同源 Blob");
       await closeOverlay();
       record("B2", "恶意 SVG 仅以 PNG 产物进入应用浮层", "status=ready; document 内容未执行");
     }
@@ -1039,9 +1054,9 @@ async function runB5(images) {
     await waitOverlay("image");
     const image = await overlayImageReady();
     assert(image.naturalWidth > 0 && image.naturalHeight > 0, "B5 浮层图片自然尺寸无效：" + item.name);
-    assert(new URL(image.src).pathname === new URL(preview.url).pathname, "B5 浮层图片与预览 API 地址不一致：" + item.name);
+    assert(image.src.startsWith("blob:"), "B5 浮层图片未转换为同源 Blob：" + item.name);
     await closeOverlay();
-    record("B5", item.name, "缩略图 " + String(thumb.naturalWidth) + "×" + String(thumb.naturalHeight) + "; 浮层加载");
+    record("B5", item.name, "缩略图 " + String(thumb.naturalWidth) + "×" + String(thumb.naturalHeight) + "; 浮层 Blob 加载");
   }
   await assertNoUnsafeSignals("B5");
 }
@@ -1068,21 +1083,56 @@ async function openViewerOverlay(item, kind, label) {
   return probe;
 }
 
+async function openPdfOverlay(item, label) {
+  await ensureDrawerOpen();
+  await clickFileControl(item.name, false);
+  await waitOverlay("pdf");
+  await waitExpression(
+    "(() => { const viewer = document.querySelector('[data-pdf-viewer=true]');" +
+      " return Boolean(viewer && viewer.getAttribute('data-pdf-status') === 'ready'); })()",
+    label + " PDF.js 就绪",
+    90_000,
+  );
+  const probe = await evaluate(
+    "(() => { const overlay = document.querySelector('[data-file-preview=true]');" +
+      " const viewer = overlay?.querySelector('[data-pdf-viewer=true]');" +
+      " const canvas = overlay?.querySelector('[data-pdf-viewer=true] canvas');" +
+      " return {kind:overlay?.getAttribute('data-file-preview-kind') || null,status:viewer?.getAttribute('data-pdf-status') || null," +
+      " page:overlay?.querySelector('[data-pdf-page=true]')?.textContent || '',canvasWidth:canvas?.width || 0,canvasHeight:canvas?.height || 0,frame:Boolean(overlay?.querySelector('[data-file-preview-frame]'))}; })()",
+  );
+  assert(probe.kind === "pdf", label + " 浮层 kind 不正确：" + String(probe.kind));
+  assert(probe.status === "ready", label + " PDF.js 未就绪：" + String(probe.status));
+  assert(probe.frame === false, label + " 不应再挂 PDF iframe");
+  assert(probe.canvasWidth > 0 && probe.canvasHeight > 0, label + " PDF.js 未渲染 canvas");
+  await closeOverlay();
+  return probe;
+}
+
 async function runB6(fixtures) {
   await ensureDrawerOpen();
   await resetBrowserSignals();
-  for (const [item, kind, label] of [
-    [fixtures.pdf, "pdf", "PDF"],
-    [fixtures.docx, "office", "DOCX"],
-  ]) {
-    const preview = await readPreview(item.id, item.versionId);
-    assert(preview.status === "ready", "B6 " + label + " 预览未 ready：" + preview.status);
-    assert(preview.viewer !== null, "B6 " + label + " 未进入 ONLYOFFICE 查看器通道");
-    assert(preview.url === null && preview.target === null, "B6 " + label + " 误入转换产物通道");
-    assert(preview.pipelineVersion === null, "B6 " + label + " 不应占用 SVG 转换管线");
-    const probe = await openViewerOverlay(item, kind, label);
-    record("B6", label + " ONLYOFFICE 回归", "kind=" + String(probe.kind) + "; status=" + String(probe.status) + "; 未进入 PNG 产物");
-  }
+  const pdfPreview = await readPreview(fixtures.pdf.id, fixtures.pdf.versionId);
+  assert(pdfPreview.status === "ready", "B6 PDF 预览未 ready：" + pdfPreview.status);
+  assert(pdfPreview.target === "pdf", "B6 PDF 直签 target 应为 pdf：" + String(pdfPreview.target));
+  assert(pdfPreview.viewer === null, "B6 PDF 不应进入 ONLYOFFICE 查看器通道");
+  assert(typeof pdfPreview.url === "string" && pdfPreview.url !== "", "B6 PDF 直签未返回 URL");
+  assert(pdfPreview.pipelineVersion === null, "B6 PDF 不应占用转换管线");
+  const pdfProbe = await openPdfOverlay(fixtures.pdf, "PDF");
+  assert(String(pdfProbe.page).length > 0, "B6 PDF.js 未显示页码");
+  const assetNames = await readdir(path.join(REPO_ROOT, "frontend", "dist", "assets"));
+  const workerName = assetNames.find((name) => /^pdf\.worker\.min-.*\.mjs$/.test(name));
+  assert(typeof workerName === "string", "B6 构建产物缺少 PDF.js worker (.mjs)");
+  const worker = await fetchBytes(ORIGIN + "/assets/" + encodeURIComponent(workerName));
+  assert(/javascript/.test(worker.contentType.toLowerCase()), "B6 PDF.js worker MIME 应为 JavaScript，实际 " + worker.contentType);
+  record("B6", "PDF 本地渲染", "target=pdf; viewer=null; canvas=" + String(pdfProbe.canvasWidth) + "×" + String(pdfProbe.canvasHeight) + "; worker MIME=" + worker.contentType);
+
+  const docxPreview = await readPreview(fixtures.docx.id, fixtures.docx.versionId);
+  assert(docxPreview.status === "ready", "B6 DOCX 预览未 ready：" + docxPreview.status);
+  assert(docxPreview.viewer !== null, "B6 DOCX 未进入 ONLYOFFICE 查看器通道");
+  assert(docxPreview.url === null && docxPreview.target === null, "B6 DOCX 误入转换产物通道");
+  assert(docxPreview.pipelineVersion === null, "B6 DOCX 不应占用转换管线");
+  const docxProbe = await openViewerOverlay(fixtures.docx, "office", "DOCX");
+  record("B6", "DOCX ONLYOFFICE 回归", "kind=" + String(docxProbe.kind) + "; status=" + String(docxProbe.status) + "; 未进入 PNG 产物");
 
   const cadPreview = await readPreview(fixtures.cad.id, fixtures.cad.versionId);
   // ADR-035：平台只开放独立 STEP 链；STL 明确降级，不能恢复已移除的原对象直签/浏览器解析。

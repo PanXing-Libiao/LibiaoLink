@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { STAGE_KEYS } from "@libiaolink/contracts";
-import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, ilike, inArray, isNotNull, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { changeRequests } from "../../db/schema/change.js";
@@ -245,12 +245,12 @@ export class TaskRepository {
     return links;
   }
 
-  /** 详情文件清单：排除回收站（recycled），按创建时间倒序。 */
+  /** 详情文件清单：排除回收站（recycled）与没有完成版本的空上传，按创建时间倒序。 */
   async listFiles(taskId: string, client: DbClient = this.database.db): Promise<TaskFileBriefRow[]> {
     return client
       .select({ id: files.id, name: files.name, status: files.status, docType: files.docType })
       .from(files)
-      .where(and(eq(files.taskId, taskId), inArray(files.status, FILE_STATUS_FOR_SUMMARY)))
+      .where(and(eq(files.taskId, taskId), inArray(files.status, FILE_STATUS_FOR_SUMMARY), isNotNull(files.currentVersionId)))
       .orderBy(desc(files.createdAt));
   }
 
@@ -261,7 +261,7 @@ export class TaskRepository {
     const rows = await client
       .select({ taskId: files.taskId, status: files.status, value: count() })
       .from(files)
-      .where(and(inArray(files.taskId, [...taskIds]), inArray(files.status, FILE_STATUS_FOR_SUMMARY)))
+      .where(and(inArray(files.taskId, [...taskIds]), inArray(files.status, FILE_STATUS_FOR_SUMMARY), isNotNull(files.currentVersionId)))
       .groupBy(files.taskId, files.status);
     for (const row of rows) {
       if (row.taskId === null) continue;
@@ -532,21 +532,14 @@ export class TaskRepository {
     return { overdue: Number(row?.overdue ?? 0), done: Number(row?.done ?? 0), total: Number(row?.total ?? 0) };
   }
 
-  /** 阶段任务计数（GateService 阶段门禁 / 完成度用；h4 起由 task 模块提供，node 不再直读 tasks 表）。 */
-  async countStageTasks(client: DbClient, projectId: string, stageKey: string): Promise<{ total: number; done: number }> {
-    const rows = await client
-      .select({ status: tasks.status, value: count() })
-      .from(tasks)
-      .where(and(eq(tasks.projectId, projectId), eq(tasks.stageKey, stageKey), isNull(tasks.deletedAt)))
-      .groupBy(tasks.status);
-    let total = 0;
-    let done = 0;
-    for (const row of rows) {
-      const value = Number(row.value);
-      total += value;
-      if (row.status === "done") done += value;
-    }
-    return { total, done };
+  /**
+   * 阶段完成通知串行化：并发完成同阶段最后两项任务时，只有拿到事务锁的后一笔能判断“全完成”，
+   * 避免两边都看不到对方未提交的 done 行而漏发。锁随事务提交 / 回滚自动释放。
+   */
+  async lockStageCompletion(client: DbClient, projectId: string, stageKey: string): Promise<void> {
+    await client.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${projectId + ":" + stageKey}, 0))`,
+    );
   }
 
   /** 全项目按阶段的任务计数（GET /projects/{id}/stages 的 tasks 完成度）。 */

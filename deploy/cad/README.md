@@ -1,7 +1,7 @@
 # CAD 独立沙箱
 
 
-> 二维 DXF 接入需先停止旧 API/worker，再应用迁移 `0068_cad_dxf_input_sets.sql`、`0069_cad_format_version.sql` 与 `0070_cad_dwg_format.sql`，再用当前源码构建 CAD 镜像，并与 API/worker 同步更新。`0069` 按 ADR-039 把产物缓存键拆为格式独立的 `format_version`；旧产物首次访问重建一次。镜像新增独立 `/opt/dxf`，正常构建并验证仓内 ezdxf fork；DXF v0.10.0 的 DWG 外参还需 `/opt/dwg/bin/dwgread`（固定 LibreDWG 0.13.3），由独立构建阶段校验源码并编译，运行层携带许可、对应源码与构建脚本。第一片 DWG 原生路径还需要 `/opt/dwg-native` 的 Python 依赖、ACadSharp 读取器 DLL 与 .NET 运行时，并通过 `CAD_DWG_PYTHON`、`CAD_DWG_READER`、`CAD_DWG_DOTNET` 配置；API 的 `CAD_DWG_ENABLED` 默认关闭，不能把本机 worker 验证当作目标镜像已支持。原有 `3 GiB / 1 CPU / 64 pids / 禁网` 边界保持，DWG 首版预算另为 3 GiB RSS / 512 MiB 产物。DXF 的 `partial` 是带缺失说明的有效部分产物，STEP 仍须 `completed`；旧镜像不能只靠新 API 打开 DXF。当前仅完成本机验证，未发布到公司测试机或生产。
+> 二维 DXF 接入需先停止旧 API/worker，再应用迁移 `0077_cad_dxf_input_sets.sql`、`0078_cad_format_version.sql` 与 `0079_cad_dwg_format.sql`，再用当前源码构建 CAD 镜像，并与 API/worker 同步更新。`0069` 按 ADR-041 把产物缓存键拆为格式独立的 `format_version`；旧产物首次访问重建一次。镜像新增独立 `/opt/dxf`，正常构建并验证仓内 ezdxf fork；DXF v0.10.0 的 DWG 外参还需 `/opt/dwg/bin/dwgread`（固定 LibreDWG 0.13.3），由独立构建阶段校验源码并编译，运行层携带许可、对应源码与构建脚本。第一片 DWG 原生路径还需要 `/opt/dwg-native` 的 Python 依赖、ACadSharp 读取器 DLL 与 .NET 运行时，并通过 `CAD_DWG_PYTHON`、`CAD_DWG_READER`、`CAD_DWG_DOTNET` 配置；API 的 `CAD_DWG_ENABLED` 默认关闭，不能把本机 worker 验证当作目标镜像已支持。原有 `3 GiB / 1 CPU / 64 pids / 禁网` 边界保持，DWG 首版预算另为 3 GiB RSS / 512 MiB 产物。DXF 的 `partial` 是带缺失说明的有效部分产物，STEP 仍须 `completed`；旧镜像不能只靠新 API 打开 DXF。当前仅完成本机验证，未发布到公司测试机或生产。
 
 API → Unix socket → 独立 CAD 容器 → 固定 OCP/Gmsh。解析容器完全禁网，API 只传字节与来源摘要，不共享文件目录、业务凭据或 Docker socket。决策与三种方案比较见 [ADR-036](../../docs/adr/ADR-036-CAD解析沙箱与资源硬限额.md)。
 
@@ -20,9 +20,13 @@ ADR-037 增加上传静默预解析与持久产物：平台 worker 通过同一 
 
 tmpfs 用量计入同一容器的内存预算，各项上限不能理解为可同时全部占满的额外容量。RSS 2 GiB 采样停止阈值仍保留作为提前止损；内核 memory.max 覆盖所有解析后代，不依赖该采样。另有 PID 1 watchdog，在主 worker 超过约 605 秒仍未退出时退出整个 PID namespace；对主 worker 结束后残留、脱离进程组的孤儿进程，PID 1 检测后终止整个 namespace 并回收孤儿僵尸。无活动的非 loopback 链路和出站路由；运行身份 1000:1000、根目录只读、capabilities 全部丢弃、禁止提权、默认 seccomp。服务启动检查实际 cgroup v2、挂载和进程状态，缺项拒绝运行；禁止用不受限 Python 替代。
 
-原生包保持固定版本，OCP 与 Gmsh 安装在不同 Python 环境，不改 CAD core/source.json。固定 OCP/Gmsh 的 Linux wheel 为 x86_64，因此当前镜像明确使用 linux/amd64；arm64 Docker Desktop 通过已有仿真运行，不能将该耗时当作公司 x86 服务器性能。OCP 的 vtk 依赖通过既有 cadquery-vtk 分发提供；使用 --no-deps 避免混装没有 cp313 wheel 的 vtk==9.3.1。镜像构建必须实际验证两套 native import。
+原生包保持固定版本，OCP 与 Gmsh 安装在不同 Python 环境，不改 CAD core/source.json。固定 OCP/Gmsh 的 Linux wheel 为 x86_64，因此当前镜像明确使用 linux/amd64；arm64 开发机通过已有仿真运行，不能将该耗时当作公司 x86 服务器性能。OCP 的 vtk 依赖通过既有 cadquery-vtk 分发提供；使用 --no-deps 避免混装没有 cp313 wheel 的 vtk==9.3.1。镜像构建必须实际验证两套 native import。
 
 ## 本地运行
+
+### Windows 开发机（WSL2）
+
+公司不允许 Docker Desktop。Windows 必须先按 [Windows 本地开发环境](../../docs/本地开发环境(Windows-WSL2-Docker).md) 安装 WSL2 Ubuntu 与原生 Docker Engine；仓库放在 WSL 文件系统，以下命令全部在该 Ubuntu 终端执行，PowerShell 不参与 Docker 操作。WSL2 x86_64 原生运行本镜像的 linux/amd64，不经过 Desktop 的跨平台层。
 
 从仓库根目录运行，仅构建 CAD 镜像：
 
@@ -66,7 +70,11 @@ CAD_TEST_ENDPOINT=http://127.0.0.1:9910 CAD_TEST_CONTAINER=libiaolink-cad-cad-1 
 
 2026-10-21 本地最终验证：69 项接口/真实 STEP 测试与 9 项容器探针全部通过；OCP wheel 完整性和两套 native 导入通过，生产 Compose 合并配置已核对。完整证据、已修复的磁盘/镜像故障及实际边界见 [本地验证记录](../../docs/cad-platform-integration/SANDBOX_RESULTS.md)。
 
-2026-10-23 公司测试机部署：`main` 代码基线 `c18b417e`（PR [#553](https://github.com/PanXing-Libiao/LibiaoLink/pull/553) / [#555](https://github.com/PanXing-Libiao/LibiaoLink/pull/555) / [#557](https://github.com/PanXing-Libiao/LibiaoLink/pull/557)）已部署到 `test-pm.libiaorobot.com`；生产未部署。镜像 `libiaolink/cad-sandbox:1.0.1-c18b417e@sha256:aeee8b4b072eca1aaf0b2db0d65b972f341e3da07a413aaec07d259d03a9879c`（linux/amd64，服务器解压后 1,437,769,016 B），发布件 `/srv/data/deploy-cad-c18b-20261023-0943/cad-sandbox-1.0.1-c18b417e.tar`（330,915,328 B · SHA-256 `3d3c64a61ddb4379e5c0dc592087f18e23ca158ad3d0756fac23909e4b6eb333`）。`api`、`worker`、`cad`、`web`、`postgres`、`minio`、`svg-preview` 七容器 healthy；数据库迁移 `0064_cad_artifacts.sql` 已登记（71 ms），`cad_artifacts` / `cad_views` 表存在。
+2026-10-26 正式生产接线：`https://pm.libiaorobot.com` 已存在上述 CAD 镜像与 `0064` 迁移，但 API/worker 未加载 overlay、`CAD_ENGINE_SOCKET` 为空，预览降级为 `cadPending`。未改源码 / 镜像 / DDL，备份配置和数据库后以 `docker-compose.cad.yml` 强制重建 API/worker，只读 socket 接入 `/run/cad/engine.sock`；七个容器 healthy，真实账号 Chrome 打开 STEP 首帧 `data-cad-ready-ms=2977`、零件 64 项、console error 0。完整发布、备份与回滚见 [deploy/prod/README.md](../prod/README.md) 顶部记录。
+
+**2026-10-28 正式生产复现与修复（强制门禁）**：移动端预览修复发布时，`api/worker` 再次仅以基础 compose 重建，overlay 丢失后 `CAD_ENGINE_SOCKET` 为空且 `cad_socket` 未挂载，真实 `.STEP` 返回「CAD 在线预览正在升级」。以 `docker-compose.yml + docker-compose.cad.yml` 重建后 socket 恢复；该文件已有 `completed` 持久产物（25,132,925 B），无需重算。**正式机以后任何 api / worker 重建都必须叠加本 overlay**，并用 `docker exec <container> printenv CAD_ENGINE_SOCKET`、只读 `/run/cad` 挂载检查与 socket `/healthz` 三检收口；仅看容器 healthy 不够。
+
+2026-10-23 公司测试机部署：`main` 代码基线 `c18b417e`（PR [#553](https://github.com/PanXing-Libiao/LibiaoLink/pull/553) / [#555](https://github.com/PanXing-Libiao/LibiaoLink/pull/555) / [#557](https://github.com/PanXing-Libiao/LibiaoLink/pull/557)）已部署到 `test-pm.libiaorobot.com`；当时生产未部署。镜像 `libiaolink/cad-sandbox:1.0.1-c18b417e@sha256:aeee8b4b072eca1aaf0b2db0d65b972f341e3da07a413aaec07d259d03a9879c`（linux/amd64，服务器解压后 1,437,769,016 B），发布件 `/srv/data/deploy-cad-c18b-20261023-0943/cad-sandbox-1.0.1-c18b417e.tar`（330,915,328 B · SHA-256 `3d3c64a61ddb4379e5c0dc592087f18e23ca158ad3d0756fac23909e4b6eb333`）。`api`、`worker`、`cad`、`web`、`postgres`、`minio`、`svg-preview` 七容器 healthy；数据库迁移 `0064_cad_artifacts.sql` 已登记（71 ms），`cad_artifacts` / `cad_views` 表存在。
 
 运行容器实测 `memory=3 GiB`、`memory.swap.max=0`、`nanoCpus=1`、`pids=64`、`network=none`、根目录只读、capabilities 全部丢弃、用户 `1000:1000`；`/tmp` 384 MiB、`/var/lib/cad` 1536 MiB、`/run/cad` 1 MiB 均为限容 tmpfs。引擎版本 `step-0.3.3/f103d1c40812b24c3864ae90a91ea707f734dfb5/gateway-1` 与 API 一致；受控箱体 UTF8 / GB 冒烟均 `completed`，另从对象存储读取真实 `限流环.STEP`（315,166 B · SHA-256 `36866774a174db2d3dc0de800f3b1b74f0c083bfb18fbe08674521d02550c228`）完成转换，manifest 37,303 B、完整性 `complete`、worker 峰值 RSS 333,180,928 B；第二次同源提交 `reused=true` 且任务 ID 相同。
 

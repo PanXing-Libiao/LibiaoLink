@@ -1,5 +1,5 @@
-import { HUB_HASH, TEMPLATE_BASE_HASH, WORKSPACE_BASE_HASH, projectsHref, useHashRoute } from "../useHashRoute";
 import { useT } from "../i18n";
+import { useMainNavItems } from "./mainNav";
 
 /**
  * 顶部导航栏（业务口径 2026-09-30「我要做顶部导航栏 分别是首页 项目空间 任务模版 我的任务」；
@@ -15,28 +15,12 @@ import { useT } from "../i18n";
  * 项目详情页视作「项目空间」内（导航项亮「项目空间」）。
  */
 export function TopNav() {
-  const route = useHashRoute();
   /** 导航项文案走 i18n（Push 296 语言切换）：默认中文；切英文后顶栏导航四项跟着换。 */
   const t = useT();
-  const items = [
-    { key: "hub", label: t("nav.hub"), href: HUB_HASH, active: route.kind === "hub" },
-    {
-      key: "projects",
-      label: t("nav.projects"),
-      href: projectsHref(),
-      active: route.kind === "list" || route.kind === "project",
-    },
-    {
-      key: "templates",
-      label: t("nav.templates"),
-      href: TEMPLATE_BASE_HASH,
-      active: route.kind === "placeholder" && route.page === "templates",
-    },
-    { key: "workspace", label: t("nav.workspace"), href: WORKSPACE_BASE_HASH, active: route.kind === "workspace" },
-  ];
+  const items = useMainNavItems();
 
   return (
-    <nav data-topnav="" aria-label={t("nav.aria")} className="topnav ml-1 hidden min-w-0 items-center md:flex">
+    <nav data-topnav="" aria-label={t("nav.aria")} className="topnav ml-1 hidden min-w-0 items-center lg:flex">
       {items.map((item) => (
         <a
           key={item.key}

@@ -1,6 +1,9 @@
 import { z } from "../zod.ts";
 import { DateTimeSchema, DateOnlySchema, PageQuerySchema, SortQuerySchema, UuidSchema, VersionSchema } from "../common/conventions.ts";
-import { DocTypeSchema, FileStatusSchema, PrioritySchema, StageKeySchema, TaskBaseStatusSchema, TaskDisplayStatusSchema } from "../common/dicts.ts";
+import { DOC_TYPES, DocTypeSchema, FileStatusSchema, PrioritySchema, StageKeySchema, TaskBaseStatusSchema, TaskDisplayStatusSchema } from "../common/dicts.ts";
+
+const TASK_OWNER_IDS_LIMIT = 200;
+const TASK_TEMPLATE_NODE_IDS_LIMIT = 500;
 
 /**
  * 四格进度：0 / 0.25 / 0.5 / 0.75 / 1（写入即联动状态与完成日期，并写审计）。
@@ -92,7 +95,7 @@ export const TaskFileSummarySchema = z
   .object({
     total: z.number().int().min(0),
     draft: z.number().int().min(0).openapi({ description: "未定档（draft）数量；>0 时完成门禁放行但返回 warning 并触发 R02" }),
-    final: z.number().int().min(0).openapi({ description: "已定档（final / changed）数量；门禁按 node_requirements 逐 doc_type 统计" }),
+    final: z.number().int().min(0).openapi({ description: "已定档（final / changed）数量，仅用于文件摘要展示；完成门禁统计已上传（draft / final / changed）" }),
   })
   .openapi("TaskFileSummary");
 
@@ -182,14 +185,14 @@ export const TaskProgressUpdateBodySchema = z
   })
   .openapi("TaskProgressUpdateBody");
 
-/** 任务完成门禁缺件明细（TASK_REQUIRED_DOC_MISSING 的 details.missing；与节点门禁同形同口径）。 */
+/** 任务完成门禁缺件明细（TASK_REQUIRED_DOC_MISSING 的 details.missing；按已配置成果类型逐类给出）。 */
 export const TaskGateMissingSchema = z
   .object({
     docType: DocTypeSchema,
     required: z.number().int().min(0),
     present: z.number().int().min(0),
   })
-  .openapi("TaskGateMissing", { description: "缺件明细：required / present 按门禁统计范围逐 doc_type 给出" });
+  .openapi("TaskGateMissing", { description: "缺件明细：required / present 按已配置的成果类型逐类给出；未配置成果类型时不产生缺件" });
 
 /** 完成门禁放行提示（A2-10）：存在未定档（draft）成果文件时放行，返回 warning 并触发 R02（提醒定档）。 */
 export const TaskGateWarningSchema = z
@@ -262,17 +265,17 @@ export const TaskCreateBodySchema = z
       description:
         "来源任务节点库节点（task_nodes）id：从节点库生成任务（A1-16，成员可建）—— 任务描述 / 英文名 / 阶段取节点现值（A1-17 锁定字段），同一项目内同一节点只留一份（重复 409 TASK_ALREADY_EXISTS）；与 taskNodeId（项目流程节点）二选一",
     }),
-    ownerIds: z.array(UuidSchema).optional().openapi({
+    ownerIds: z.array(UuidSchema).max(TASK_OWNER_IDS_LIMIT).optional().openapi({
       description:
-        "任务负责人：缺省 / 显式 [] = 「待分配」（**2026-09-24 业务口径修订**：任务添加后负责人默认为空 —— 不再兜底项目经理）；传数组 = 整体设置，数组顺序 = 展示顺序",
+        "任务负责人：缺省 / 显式 [] = 「待分配」（**2026-09-24 业务口径修订**：任务添加后负责人默认为空 —— 不再兜底项目经理）；传数组 = 整体设置（≤ 200 位），数组顺序 = 展示顺序",
     }),
     plannedStart: DateOnlySchema.nullable().optional(),
     plannedEnd: DateOnlySchema.nullable().optional(),
     estimatedDays: z.number().int().min(0).nullable().optional(),
     headcount: z.number().int().min(0).nullable().optional(),
     priority: PrioritySchema.nullable().optional(),
-    deliverableTypes: z.array(DocTypeSchema).optional().openapi({
-      description: "要求输出成果文件（ADR-024 多选）：去重（首次出现保序）；缺省 / 空数组 = 不要求",
+    deliverableTypes: z.array(DocTypeSchema).max(DOC_TYPES.length).optional().openapi({
+      description: "要求输出成果文件（ADR-024 多选，≤ 10 类）：去重（首次出现保序）；缺省 / 空数组 = 不要求",
     }),
     note: z.string().max(2000).nullable().optional(),
   })
@@ -308,8 +311,8 @@ export const TaskUpdateBodySchema = z
     titleEn: z.string().max(200).nullable().optional().openapi({
       description: "任务描述（英文；Push 196）：与 title 同一门禁；null = 清空",
     }),
-    ownerIds: z.array(UuidSchema).optional().openapi({
-      description: "任务负责人（A23 · Push 136）：不传 = 不改；显式 [] = 置空为「待分配」（卡片拖进「待分配」列）；传数组 = 整体替换、顺序 = 展示顺序",
+    ownerIds: z.array(UuidSchema).max(TASK_OWNER_IDS_LIMIT).optional().openapi({
+      description: "任务负责人（A23 · Push 136）：不传 = 不改；显式 [] = 置空为「待分配」（卡片拖进「待分配」列）；传数组 = 整体替换（≤ 200 位）、顺序 = 展示顺序",
     }),
     sortIndex: z.number().int().min(0).optional().openapi({
       description:
@@ -324,9 +327,9 @@ export const TaskUpdateBodySchema = z
     estimatedDays: z.number().int().min(0).nullable().optional(),
     headcount: z.number().int().min(0).nullable().optional(),
     priority: PrioritySchema.nullable().optional(),
-    deliverableTypes: z.array(DocTypeSchema).optional().openapi({
+    deliverableTypes: z.array(DocTypeSchema).max(DOC_TYPES.length).optional().openapi({
       description:
-        "要求输出成果文件（2026-10-08 业务口径「文件输出成果也要可以选择」）：常规编辑开放 —— 传数组 = 整体替换（去重、首次出现保序）；显式 [] = 不要求；缺省 = 不改",
+        "要求输出成果文件（2026-10-08 业务口径「文件输出成果也要可以选择」）：常规编辑开放 —— 传数组 = 整体替换（≤ 10 类，去重、首次出现保序）；显式 [] = 不要求；缺省 = 不改",
     }),
     note: z.string().max(2000).nullable().optional(),
     version: VersionSchema,
@@ -340,9 +343,9 @@ export const TaskUpdateBodySchema = z
 export const TaskCreateFromTemplateBodySchema = z
   .object({
     templateId: UuidSchema,
-    nodeIds: z.array(UuidSchema).optional().openapi({ description: "只添加模板内的部分节点（缺省 = 模板全部节点）；必须是该模板包含的节点，否则 400" }),
+    nodeIds: z.array(UuidSchema).max(TASK_TEMPLATE_NODE_IDS_LIMIT).optional().openapi({ description: "只添加模板内的部分节点（≤ 500 个；缺省 = 模板全部节点）；必须是该模板包含的节点，否则 400" }),
     skipExisting: z.boolean().default(true).openapi({ description: "已存在的节点跳过并计入 skipped（默认 true）；false 时遇重复返回 409" }),
-    ownerIds: z.array(UuidSchema).optional().openapi({ description: "任务负责人：缺省 = 「待分配」（2026-09-24 业务口径修订：不再兜底项目经理）；显式 [] 同义" }),
+    ownerIds: z.array(UuidSchema).max(TASK_OWNER_IDS_LIMIT).optional().openapi({ description: "任务负责人（≤ 200 位）：缺省 = 「待分配」（2026-09-24 业务口径修订：不再兜底项目经理）；显式 [] 同义" }),
     sortIndex: z.number().int().min(0).optional().openapi({
       description: "起始插入位次（A20）：整批按模板内顺序依次落位（第 k 条 = sortIndex + k）；越界 / 缺省 = 追加到组尾",
     }),
@@ -396,7 +399,7 @@ export const TaskBatchFailureSchema = z
  */
 export const TaskBatchChangesSchema = z
   .object({
-    ownerIds: z.array(UuidSchema).optional().openapi({ description: "批量指派负责人（A23）：显式 [] = 全部置为「待分配」；传数组 = 整体替换（顺序 = 展示顺序）" }),
+    ownerIds: z.array(UuidSchema).max(TASK_OWNER_IDS_LIMIT).optional().openapi({ description: "批量指派负责人（A23，≤ 200 位）：显式 [] = 全部置为「待分配」；传数组 = 整体替换（顺序 = 展示顺序）" }),
     status: TaskStatusWriteSchema.optional().openapi({
       description:
         "批量改状态（五态可选，口径同单条编辑）：done = 批量完成（逐条走同一完成门禁，缺件项进 failures 的 gate_not_passed）；overdue / early_done = 显式覆盖",
@@ -470,9 +473,9 @@ export const TaskLockedFieldsAdjustBodySchema = z
     reason: z.string().min(1).max(500).openapi({ description: "例外调整原因（必填并留痕；A1-17 / C9-07）" }),
     title: z.string().min(1).max(200).optional().openapi({ description: "任务描述（中文；锁定字段 —— 仅管理员例外修正）" }),
     titleEn: z.string().max(200).nullable().optional().openapi({ description: "任务描述（英文；锁定项；null = 清空）" }),
-    deliverableTypes: z.array(DocTypeSchema).optional().openapi({
+    deliverableTypes: z.array(DocTypeSchema).max(DOC_TYPES.length).optional().openapi({
       description:
-        "要求输出成果文件（锁定项，多选去重、首次出现保序）：修正后即刻成为完成门禁依据（有节点任务仍以节点 node_requirements 为准，本字段只作无节点任务兜底）",
+        "要求输出成果文件（锁定项，≤ 10 类，多选去重、首次出现保序）：修正后即刻成为完成门禁依据（有节点任务仍以节点 node_requirements 为准，本字段只作无节点任务兜底）",
     }),
   })
   .openapi("TaskLockedFieldsAdjustBody", {

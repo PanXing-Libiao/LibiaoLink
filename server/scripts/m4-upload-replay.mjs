@@ -15,7 +15,7 @@
  *   证据五（过期与清理）：过期会话访问即 410（惰性置 expired + 清暂存 + system 审计）；worker 启动即跑一轮定时清理并留痕。
  *   证据六（权限）：file.upload 项目成员平权（非成员 404 防 IDOR）。
  *
- * 前置：真 PG（DATABASE_URL）+ 真对象存储（S3_*，见 deploy/minio/）+ 已起 api（BASE_URL）；U20（非成员 404）需 api 以 PERMISSION_ENFORCED=true 起（一期默认 false = 等效管理员，非成员反例恒 201）。本脚本只在本地沙箱 / 联调库跑：
+ * 前置：真 PG（DATABASE_URL）+ 真对象存储（S3_*，见 deploy/minio/）+ 已起 api（BASE_URL）；U20 的「非成员 404 → 入名册后 201」需 GROUP_ACCESS_ENFORCED=true，并且成员账号的部门规则为「仅自己的项目」或其它在入名册前不覆盖回放项目的范围。本脚本只在本地沙箱 / 联调库跑：
  *      铸两个临时会话（管理员 + 名册成员，跑完撤销）、建 M4- 回放项目（跑完硬删项目及其文件 / 版本 / 会话 / 审计 / outbox 事件 + 清桶内前缀）。
  * 用法：cd server && M4_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink \
  *       node --env-file-if-exists=.env scripts/m4-upload-replay.mjs [--out <报告.md>] [--json <证据.json>] [--keep]
@@ -200,7 +200,7 @@ try {
   );
   const adminId = adminRow.rows[0]?.id;
   if (adminId === undefined) throw new Error("找不到可用的管理员账号（roles.code = admin）");
-  // 非成员基准账号需无 admin 角色：admin 数据范围为 all，任何项目都可见，构不成「非成员」404 反例。
+  // 非成员基准账号不得是系统管理员；部门规则应在其入名册前排除本回放项目，以构成「非成员」404 反例。
   const otherUsers = await db.query(
     "select u.id from users u where u.id <> $1 and u.status = 'active' and not exists (select 1 from user_roles ur join roles r on r.id = ur.role_id where ur.user_id = u.id and r.code = 'admin') order by u.id limit 1",
     [adminId],

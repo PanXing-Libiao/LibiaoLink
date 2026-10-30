@@ -5,6 +5,24 @@ export type { OutboxDrainStats } from "./dispatcher.js";
 export { JOBS_REGISTRY, JobScheduler } from "./scheduler.js";
 export type { JobRunContext, JobRunResult, OutboxJobHandler, SchedulerTickStats } from "./scheduler.js";
 export { OutboxAlertProbe } from "./probe.js";
+export { OutboxDailyDigestRepository } from "./daily-digest.repository.js";
+export { OutboxDailyDigestService } from "./daily-digest.service.js";
+export {
+  buildDailyDigest,
+  classifyPreviewFallback,
+  formatDailyDigestRange,
+  OUTBOX_DAILY_DIGEST_CRON,
+  OUTBOX_DAILY_DIGEST_DEDUPE_KEY,
+  OUTBOX_DAILY_DIGEST_JOB_KIND,
+  outboxDailyDigestRegistrationRunAt,
+  outboxDailyDigestWindow,
+} from "./daily-digest.js";
+export type {
+  DailyDigestAttemptRecord,
+  DailyDigestMessageRecord,
+  DailyDigestPreviewDeadRecord,
+  DailyDigestSourceData,
+} from "./daily-digest.js";
 export { OUTBOX_RETENTION_MAX_ROUNDS, OutboxRetention } from "./retention.js";
 export { evaluateOutboxAlerts, LogOutboxAlertSink, outboxAlertThresholdsFromEnv, OUTBOX_ALERT_SINK } from "./alert.js";
 export type {

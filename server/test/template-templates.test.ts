@@ -46,6 +46,8 @@ function makeTemplate(overrides: Partial<TaskTemplateRow> = {}): TaskTemplateRow
     name: "硬件实施模板一",
     stageKey: "install",
     version: 0,
+    createdBy: null,
+    createdByName: null,
     createdAt: AT,
     updatedAt: AT,
     ...overrides,
@@ -80,9 +82,16 @@ class FakeTaskTemplateRepository {
     return this.refs.filter((ref) => ids.includes(ref.templateId)).map((ref) => ({ ...ref }));
   }
 
-  async insert(input: { name: string; stageKey: string }): Promise<TaskTemplateRow> {
+  async insert(input: { name: string; stageKey: string; createdBy: string }): Promise<TaskTemplateRow> {
     this.counter += 1;
-    const row = makeTemplate({ id: "8888888" + this.counter + "-8888-4888-8888-88888888888" + this.counter, ...input, version: 0 });
+    const row = makeTemplate({
+      id: "8888888" + this.counter + "-8888-4888-8888-88888888888" + this.counter,
+      name: input.name,
+      stageKey: input.stageKey,
+      createdBy: input.createdBy,
+      createdByName: "测试填写人",
+      version: 0,
+    });
     this.rows.push(row);
     return { ...row };
   }
@@ -132,6 +141,10 @@ class FakePermissionService {
   async assertCan(_actorId: string, key: string, _context?: unknown, message?: string): Promise<void> {
     this.lastKey = key;
     if (!this.allowed) throw new AppError("FORBIDDEN", message ?? "无权限：" + key);
+  }
+  async assertCanManageBlueprint(_actorId: string, message?: string): Promise<void> {
+    this.lastKey = "blueprint.manage";
+    if (!this.allowed) throw new AppError("FORBIDDEN", message ?? "维护任务模板需要编辑权限");
   }
 }
 
@@ -215,7 +228,13 @@ describe("新建模板（写 = blueprint.manage）", () => {
       ACTOR,
     );
     expect(permission.lastKey).toBe("blueprint.manage");
-    expect(created).toMatchObject({ name: "英国订单", stageKey: "install", version: 0 });
+    expect(created).toMatchObject({
+      name: "英国订单",
+      stageKey: "install",
+      createdBy: ACTOR,
+      createdByName: "测试填写人",
+      version: 0,
+    });
     expect(created.nodes).toEqual([{ nodeId: OTHER_NODE, seq: 10, title: "货架组装", titleEn: "Shelf Assembly" }]);
     expect(repo.rows.map((row) => row.name)).toEqual(["硬件实施模板一", "英国订单"]);
     expect(audit.records).toHaveLength(1);

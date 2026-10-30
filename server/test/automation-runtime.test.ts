@@ -47,7 +47,6 @@ function task(overrides: Partial<ReplayTask>): ReplayTask {
     projectName: "美国仓储公司订单",
     projectProgress: 50,
     completedByName: "邵晨宇",
-    projectGroupId: "g-1",
     deliverableTypes: ["施工方案"],
     fileCount: 1,
     ...overrides,
@@ -77,7 +76,6 @@ function projectDay(date: string): ReplaySubject {
     headcountTotal: 12,
     issueCount: 1,
     summaryText: "张三：安装摄像头 3 台；李四：现场勘查完毕。",
-    groupId: "g-1",
   });
 }
 
@@ -128,7 +126,6 @@ describe("evaluateEventMessages 事件形态（R02 金标等价 + 冷启动保�
       projectName: "美国仓储公司订单",
       projectStatus: "done",
       projectVersion: 4,
-      groupId: "p-1",
     });
     const runtime = evaluateEventMessages({ topic: "project.completed", rules: ENABLED_TEST_RULES, subject: project, at: AT });
     expect(runtime.messages).toHaveLength(1);
@@ -137,7 +134,7 @@ describe("evaluateEventMessages 事件形态（R02 金标等价 + 冷启动保�
       channel: "wecom_group",
       recipientId: "p-1",
       dedupeKey: "R06:p-1:v4",
-      title: "叮咚~喜报来啦！",
+      title: "🎉 叮咚~喜报来啦！",
     });
     expect(runtime.messages[0]?.body).toBe(
       `项目：**LBUSA-20261014-002·美国仓储公司订单**\n项目已全部完成，验收交付完毕。大家一起为这份成果喝彩吧`,
@@ -195,7 +192,6 @@ describe("evaluateEventMessages 阶段事件（A08）", () => {
       projectId: "p-1",
       projectCode: "LBUSA-20261014-002",
       projectName: "美国仓储公司订单",
-      groupId: "p-1",
     });
     const runtime = evaluateEventMessages({ topic: "stage.advanced", rules: ENABLED_TEST_RULES, subject: stage, at: AT });
     expect(runtime.messages).toHaveLength(1);
@@ -203,7 +199,7 @@ describe("evaluateEventMessages 阶段事件（A08）", () => {
       ruleCode: "A08",
       channel: "wecom_group",
       recipientId: "p-1",
-      title: "大阶段完成通知",
+      title: "🏁 大阶段完成通知",
       dedupeKey: "A08:stage-1:v7",
     });
     expect(runtime.messages[0]?.body).toBe(`${PROJECT}\n邵晨宇已完成大阶段「**设计开发**」，当前项目阶段：**加工采购**。`);
@@ -328,7 +324,7 @@ describe("主体映射器（字段与收件人 = docs/rules 字段表）", () =>
     });
   });
 
-  it("toProjectDaySubject：收件人 = project.group（未绑定 → null）", () => {
+  it("toProjectDaySubject：收件人 = project.group（寻址键恒为 projectId）", () => {
     expect(projectDay("2026-09-24")).toEqual({
       kind: "project_day",
       id: "p-1",
@@ -340,13 +336,11 @@ describe("主体映射器（字段与收件人 = docs/rules 字段表）", () =>
         "report.summary_text": "张三：安装摄像头 3 台；李四：现场勘查完毕。",
         "project.name": "临港数据中心",
       },
-      recipients: { "project.group": { id: "g-1", name: null } },
+      recipients: { "project.group": { id: "p-1", name: null } },
     });
-    const unbound = toProjectDaySubject({ projectId: "p-1", projectName: "临港数据中心", date: "2026-09-24", entryCount: 0, headcountTotal: 12, issueCount: 0, summaryText: "", groupId: null });
-    expect(unbound.recipients?.["project.group"]).toBeNull();
   });
 
-  it("toStageSubject：收件人 = project.group（未绑定 → null），项目 / 阶段 / 下一阶段字段齐备", () => {
+  it("toStageSubject：收件人 = project.group（寻址键恒为 projectId），项目 / 阶段 / 下一阶段字段齐备", () => {
     const stage = toStageSubject({
       stageId: "stage-1",
       stageKey: "design",
@@ -358,7 +352,6 @@ describe("主体映射器（字段与收件人 = docs/rules 字段表）", () =>
       projectId: "p-1",
       projectCode: "LBUSA-20261014-002",
       projectName: "美国仓储公司订单",
-      groupId: null,
     });
     expect(stage).toEqual({
       kind: "stage",
@@ -376,7 +369,7 @@ describe("主体映射器（字段与收件人 = docs/rules 字段表）", () =>
         "project.name": "美国仓储公司订单",
         "project.label": "LBUSA-20261014-002·美国仓储公司订单",
       },
-      recipients: { "project.group": null },
+      recipients: { "project.group": { id: "p-1", name: null } },
     });
   });
 

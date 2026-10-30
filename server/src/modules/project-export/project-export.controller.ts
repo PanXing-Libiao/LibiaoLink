@@ -27,7 +27,7 @@ export function contentDispositionFor(fileName: string): string {
   return "attachment; filename=\"" + ascii + "\"; filename*=UTF-8" + "\u0027\u0027" + encoded;
 }
 
-/** 项目数据导出（project.export）：一次生成 4 个 Sheet 的 xlsx；文件链接指向文件库按项目 + 文件名检索。 */
+/** 项目数据导出（project.export）：一次生成 4 个 Sheet 的 xlsx；文件链接指向项目详情「项目文件」视图。 */
 @Controller("api/v1/projects")
 @UseGuards(SessionGuard, CsrfGuard, ProjectAccessGuard)
 export class ProjectExportController {

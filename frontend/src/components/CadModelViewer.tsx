@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CadInputSelection, CadNameCodepage, CadPreviewViewerConfig } from "../fileApi";
-import { apiFetch } from "../api";
+import { apiFetch, redirectToLogin } from "../api";
+import { useT } from "../i18n";
 import { CadResourcePicker } from "./CadResourcePicker";
 
 function savedNameCodepage(key: string): CadNameCodepage {
@@ -14,9 +15,12 @@ export function CadModelViewer({ viewer, name, onClose, onDownload }: {
   onClose: () => void;
   onDownload: () => void;
 }) {
+  const t = useT();
   const frame = useRef<HTMLIFrameElement>(null);
   const startedAt = useRef(performance.now());
   const [readyMs, setReadyMs] = useState<number | null>(null);
+  const [frameLoaded, setFrameLoaded] = useState(false);
+  const [frameTimedOut, setFrameTimedOut] = useState(false);
   const [exportError, setExportError] = useState(false);
   const [resourcesOpen, setResourcesOpen] = useState(false);
   const [selection, setSelection] = useState<CadInputSelection>({ companions: [] });
@@ -27,7 +31,12 @@ export function CadModelViewer({ viewer, name, onClose, onDownload }: {
   const nameCodepage = nameChoice?.key === nameKey ? nameChoice.value : savedNameCodepage(nameKey);
   const viewId = useMemo(() => Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join(""), [viewer.fileId, viewer.versionId, nameCodepage, selectionKey, retry]);
   const query = new URLSearchParams({ platform: "1", autoload: "0", format: viewer.format, fileId: viewer.fileId, versionId: viewer.versionId, viewId, engineVersion: viewer.engineVersion, nameCodepage });
-  useEffect(() => { startedAt.current = performance.now(); setReadyMs(null); }, [viewId]);
+  useEffect(() => { startedAt.current = performance.now(); setReadyMs(null); setFrameLoaded(false); setFrameTimedOut(false); }, [viewId]);
+  useEffect(() => {
+    if (frameLoaded) return;
+    const timer = window.setTimeout(() => setFrameTimedOut(true), 30000);
+    return () => window.clearTimeout(timer);
+  }, [frameLoaded, viewId]);
   const sendContext = () => frame.current?.contentWindow?.postMessage({ type: "cad-context", name, selection }, window.location.origin);
   useEffect(() => {
     const exportReport = async (report: unknown, name: string, jobId: string) => {
@@ -48,10 +57,12 @@ export function CadModelViewer({ viewer, name, onClose, onDownload }: {
       if (event.origin !== window.location.origin || event.source !== frame.current?.contentWindow) return;
       if (typeof event.data !== "object" || event.data === null || !("type" in event.data)) return;
       if (event.data.type === "cad-close") onClose();
+      if (event.data.type === "cad-auth-expired") { onClose(); redirectToLogin(); }
       if (event.data.type === "cad-download") onDownload();
       if (event.data.type === "cad-retry") setRetry((value) => value + 1);
       if (event.data.type === "cad-resources" && viewer.format === "DXF") setResourcesOpen(true);
       if (event.data.type === "cad-context-request") frame.current?.contentWindow?.postMessage({ type: "cad-context", name, selection }, window.location.origin);
+      if (event.data.type === "cad-mounted" && "viewId" in event.data && event.data.viewId === viewId) { setFrameLoaded(true); setFrameTimedOut(false); }
       if (event.data.type === "cad-ready" && "viewId" in event.data && event.data.viewId === viewId) setReadyMs(Math.round(performance.now() - startedAt.current));
       if (event.data.type === "cad-name-codepage" && "value" in event.data && (event.data.value === "UTF8" || event.data.value === "GB")) {
         try { sessionStorage.setItem(nameKey, event.data.value); } catch { /* The current preview still works without storage. */ }
@@ -69,11 +80,38 @@ export function CadModelViewer({ viewer, name, onClose, onDownload }: {
   return <div data-cad-ready-ms={readyMs} className="relative" onClick={(event) => event.stopPropagation()}>
     <iframe ref={frame} key={viewId} title={name} data-file-preview-cad="true" tabIndex={0}
     src={"/cad-viewer/index.html?" + query}
-    onLoad={sendContext}
+    onLoad={() => { setFrameLoaded(true); setFrameTimedOut(false); sendContext(); }}
     className="block h-[92dvh] w-[min(1440px,96vw)] rounded-xl border-0 bg-white shadow-2xl max-sm:h-[96dvh] max-sm:w-[98vw] max-sm:rounded-lg"
     />
     {resourcesOpen ? <CadResourcePicker projectId={viewer.projectId} fileId={viewer.fileId} name={viewer.sourceName} selection={selection}
       onClose={() => setResourcesOpen(false)} onApply={(value) => { setSelection(value); setResourcesOpen(false); }} /> : null}
+    {frameLoaded ? null : (
+      <div
+        data-cad-viewer-loading="true"
+        role={frameTimedOut ? "alert" : "status"}
+        aria-live="polite"
+        className={(frameTimedOut ? "pointer-events-auto" : "pointer-events-none") + " absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 rounded-xl bg-white text-sm text-zinc-500 shadow-2xl max-sm:rounded-lg"}
+      >
+        {frameTimedOut ? (
+          <>
+            <span className="font-medium text-zinc-700">预览加载超时</span>
+            <span className="max-w-[min(28rem,80vw)] text-center text-xs text-zinc-500">可能是网络较慢或登录状态已失效，请重试；仍无法打开可下载原文件。</span>
+            <span className="max-w-[min(28rem,80vw)] truncate px-6 text-xs text-zinc-400">{name}</span>
+            <div className="flex flex-wrap justify-center gap-2">
+              <button type="button" onClick={(event) => { event.stopPropagation(); setRetry((value) => value + 1); }} className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white">重试</button>
+              <button type="button" onClick={(event) => { event.stopPropagation(); onDownload(); }} className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700">{t("fpv.download")}</button>
+              <button type="button" onClick={(event) => { event.stopPropagation(); redirectToLogin(); }} className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700">重新登录</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <span aria-hidden="true" className="h-8 w-8 animate-spin rounded-full border-2 border-zinc-200 border-t-emerald-600" />
+            <span>{t("common.loading")}</span>
+            <span className="max-w-[min(28rem,80vw)] truncate px-6 text-xs text-zinc-400">{name}</span>
+          </>
+        )}
+      </div>
+    )}
     {exportError ? <p role="alert" className="absolute bottom-3 left-3 rounded bg-white px-3 py-2 text-sm text-red-700">清单导出失败，请确认文件访问权限后重试。</p> : null}
   </div>;
 }

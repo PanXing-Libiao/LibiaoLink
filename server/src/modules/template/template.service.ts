@@ -36,10 +36,10 @@ function nodeSnapshot(row: TaskNodeRow): Record<string, unknown> {
 
 /**
  * 任务模板域用例（M3-05 余 · 第一段：任务节点库）。
- * - 读（GET /api/v1/task-nodes）：登录即可 —— 任务模板页左列与「项目总览 → 添加任务」卡片的节点来源；
- * - 写（POST / PATCH / DELETE）：`blueprint.manage`，与蓝图维护同口径（ADR-019 / ADR-020：仅系统管理员）；
+ * - 读（GET /api/v1/task-nodes）：登录且命中部门规则 —— 任务模板页左列与「项目总览 → 添加任务」卡片的节点来源；仅登录账号 403；
+ * - 写（POST / PATCH / DELETE）：系统管理员，或已开启部门限制且命中编辑规则的账号；
  * - 留痕：新增 / 编辑 / 删除各写一条审计（对象类型 task_node；编辑写字段级 changes、删除为物理删行快照进 changes）；不写 outbox（与字典维护同口径）。
- * 第二段（任务模板 TaskTemplate）沿用同一套口径：读 = 登录即可、写 = `blueprint.manage`、留痕 objectType = task_template、不写 outbox；
+ * 第二段（任务模板 TaskTemplate）沿用同一套口径：读 = 登录且命中部门规则、写 = 系统管理员 / 部门编辑账号、留痕 objectType = task_template、不写 outbox；
  * 差异只有一处 —— 模板删除是**软删**（deleted_at / deleted_by，契约返回 deletedAt），节点库是物理删行。
  */
 @Injectable()
@@ -59,7 +59,7 @@ export class TemplateService {
 
   /** POST /api/v1/task-nodes：新增节点（同阶段同名 409 NODE_ALREADY_EXISTS）；缺省 seq = 该阶段末位 + 10。 */
   async createNode(body: TaskNodeCreateBody, actorId: string): Promise<TaskNode> {
-    await this.assertAdmin(actorId, "新增任务节点");
+    await this.assertEditor(actorId, "新增任务节点");
     const title = body.title.trim();
     const titleEn = body.titleEn === undefined || body.titleEn === null || body.titleEn.trim() === "" ? null : body.titleEn.trim();
     const created = await this.database.db.transaction(async (tx) => {
@@ -91,7 +91,7 @@ export class TemplateService {
    * 不存在 404 NOT_FOUND；版本过期 409 VERSION_CONFLICT；改成同阶段已有名字 409 NODE_ALREADY_EXISTS（排除自身）。
    */
   async updateNode(id: string, body: TaskNodeUpdateBody, actorId: string): Promise<TaskNode> {
-    await this.assertAdmin(actorId, "编辑任务节点");
+    await this.assertEditor(actorId, "编辑任务节点");
     const at = new Date();
     const updated = await this.database.db.transaction(async (tx) => {
       const before = await this.nodes.findById(id, tx);
@@ -133,7 +133,7 @@ export class TemplateService {
 
   /** DELETE /api/v1/task-nodes/{id}：物理删行（删除前快照写审计）；不存在 / 非 UUID 404。已生成的项目任务不变。 */
   async deleteNode(id: string, actorId: string): Promise<TaskNodeDeleteResponse> {
-    await this.assertAdmin(actorId, "删除任务节点");
+    await this.assertEditor(actorId, "删除任务节点");
     await this.database.db.transaction(async (tx) => {
       const before = await this.nodes.findById(id, tx);
       if (before === null) {
@@ -179,11 +179,11 @@ export class TemplateService {
    * 名称 trim 后为空 400；`nodeIds` 允许空数组（新建后逐步拖入）；重复 id / 节点不存在 / 节点跨阶段一律 400 VALIDATION_FAILED。
    */
   async createTemplate(body: TaskTemplateCreateBody, actorId: string): Promise<TaskTemplate> {
-    await this.assertAdmin(actorId, "新建任务模板");
+    await this.assertEditor(actorId, "新建任务模板");
     const name = normalizeTemplateName(body.name);
     const created = await this.database.db.transaction(async (tx) => {
       await this.assertNodesSameStage(body.stageKey, body.nodeIds, tx);
-      const row = await this.templates.insert({ name, stageKey: body.stageKey }, tx);
+      const row = await this.templates.insert({ name, stageKey: body.stageKey, createdBy: actorId }, tx);
       await this.templates.replaceNodes(row.id, body.nodeIds, tx);
       const refs = await this.templates.nodeRefsOf([row.id], tx);
       await this.audit.record(tx, {
@@ -197,7 +197,8 @@ export class TemplateService {
       });
       return { row, refs };
     });
-    return toTemplateContract(created.row, created.refs);
+    const persisted = await this.templates.findById(created.row.id);
+    return toTemplateContract(persisted ?? created.row, created.refs);
   }
 
   /**
@@ -205,7 +206,7 @@ export class TemplateService {
    * 不存在 / 已软删 404；`version` 过期 409 VERSION_CONFLICT；重复 id / 未知节点 / 跨阶段节点 400。
    */
   async updateTemplate(id: string, body: TaskTemplateUpdateBody, actorId: string): Promise<TaskTemplate> {
-    await this.assertAdmin(actorId, "编辑任务模板");
+    await this.assertEditor(actorId, "编辑任务模板");
     const at = new Date();
     const updated = await this.database.db.transaction(async (tx) => {
       const before = await this.templates.findById(id, tx);
@@ -239,7 +240,8 @@ export class TemplateService {
       });
       return { row, refs };
     });
-    return toTemplateContract(updated.row, updated.refs);
+    const persisted = await this.templates.findById(updated.row.id);
+    return toTemplateContract(persisted ?? updated.row, updated.refs);
   }
 
   /**
@@ -247,7 +249,7 @@ export class TemplateService {
    * 已生成的项目任务不变；`version` 过期 409、不存在 / 已删 404。模板内引用行连同软删一起物理清掉。
    */
   async deleteTemplate(id: string, body: TaskTemplateDeleteBody, actorId: string): Promise<TaskTemplateDeleteResponse> {
-    await this.assertAdmin(actorId, "删除任务模板");
+    await this.assertEditor(actorId, "删除任务模板");
     const at = new Date();
     await this.database.db.transaction(async (tx) => {
       const before = await this.templates.findById(id, tx);
@@ -303,9 +305,9 @@ export class TemplateService {
     }
   }
 
-  /** 节点库维护权限：矩阵键 blueprint.manage（种子 #6b 仅授系统管理员 · ADR-019 / ADR-020）。 */
-  private async assertAdmin(actorId: string, action: string): Promise<void> {
-    await this.permission.assertCan(actorId, "blueprint.manage", undefined, action + "仅限管理员（ADR-019 / ADR-020）");
+  /** 维护权限：系统管理员恒可写；部门限制开启时，命中任一「编辑」规则的账号可写。 */
+  private async assertEditor(actorId: string, action: string): Promise<void> {
+    await this.permission.assertCanManageBlueprint(actorId, action + "需要编辑权限");
   }
 }
 
@@ -334,6 +336,8 @@ function toTemplateContract(row: TaskTemplateRow, refs: TaskTemplateNodeRef[]): 
       title: ref.title,
       titleEn: ref.titleEn,
     })),
+    createdBy: row.createdBy,
+    createdByName: row.createdByName,
     version: row.version,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

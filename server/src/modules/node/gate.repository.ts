@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { and, count, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, count, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { files } from "../../db/schema/files.js";
@@ -87,7 +87,7 @@ export class GateRepository {
     const rows = await client
       .select({ value: count() })
       .from(files)
-      .where(and(eq(files.nodeId, nodeId), inArray(files.status, ["draft", "final", "changed"])));
+      .where(and(eq(files.nodeId, nodeId), inArray(files.status, ["draft", "final", "changed"]), isNotNull(files.currentVersionId)));
     return Number(rows[0]?.value ?? 0);
   }
 

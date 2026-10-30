@@ -184,7 +184,7 @@ export class ProjectExportService {
 
   async exportProject(projectId: string, actorId: string, requestOrigin: string): Promise<ProjectExportResult> {
     const [project, userPage, fileItems, taskItems, reportItems, issueItems, changeItems, stakeholderItems] = await Promise.all([
-      this.projects.getProject(projectId),
+      this.projects.getProject(projectId, actorId),
       collectPages((page, limit) => this.users.listUsers({ page, limit }), "用户目录"),
       collectPages((page, limit) => this.files.listProjectFiles(projectId, { page, limit }), "文件"),
       collectPages((page, limit) => this.tasks.list(projectId, { page, limit }), "任务"),

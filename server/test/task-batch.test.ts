@@ -1,7 +1,7 @@
 /**
  * M3-04 任务批量操作回归（A1-08 · Push 150）：同一组变更逐条独立事务（成功项照常生效 + 部分失败清单）、
  * ids 去重 / 空 changes 400 / 归档项目 409、批量完成走同一完成门禁（缺件进 failures.gate_not_passed + 拒绝留痕）、
- * 【暂时下线 · 2026-09-30】业务口径「暂时不要这个约束功能」：缺件不再拦截批量完成（无 gate_not_passed / 无拒绝留痕）；恢复门禁时把本文件断言与常量一起还原（原断言见 git 历史）。
+ * 2026-10-29 口径：配置了成果类型的任务缺上传文件时，该条进入 gate_not_passed；未配置成果类型的任务不要求文件。
  * 已完成条目 already_done、审计标注批量入口（entry=batch + 同批 batchId）。
  * 真机口径见 server/README.md「M3-04」；门禁判定与单条写入共用同一内核（见 test/task-gate.test.ts）。
  */
@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import type { AuditService } from "../src/modules/admin/index.js";
 import type { DatabaseService } from "../src/db/database.service.js";
 import type { DbClient } from "../src/db/db-client.js";
-import type { RoleService } from "../src/modules/identity/index.js";
+import type { PermissionService } from "../src/modules/permission/index.js";
 import type { TaskGateRepository } from "../src/modules/task/task.gate.repository.js";
 import type {
   TaskEventInput,
@@ -91,6 +91,11 @@ function makeRow(id: string, overrides: Partial<TaskRow> = {}): TaskRow {
 
 /** 任务仓储替身（多行）：批量逐条独立事务 —— lockTask / updateWithVersion 按 id 取行。 */
 class FakeTaskRepository {
+  async lockStageCompletion(): Promise<void> {}
+  async countStageTasks(): Promise<{ total: number; done: number; deliveryReady: number }> {
+    return { total: 0, done: 0, deliveryReady: 0 };
+  }
+
   project: TaskProjectRow = { id: PROJECT, managerIds: [], stageKey: "install", status: "active" };
   tasks = new Map<string, TaskRow>();
   events: TaskEventInput[] = [];
@@ -146,16 +151,25 @@ class FakeTaskRepository {
 /** 门禁替身：默认放行；用例注入 required_doc 要求与 final / draft 计数（与 task-gate.test.ts 同形）。 */
 class FakeTaskGateRepository {
   requirements: { docType: string; minCount: number }[] = [];
-  finalCounts: { docType: string; present: number }[] = [];
+  uploadedCounts: { docType: string | null; present: number }[] = [{ docType: null, present: 1 }];
   draftCounts: { docType: string; present: number }[] = [];
   async listNodeDocRequirements(): Promise<{ docType: string; minCount: number }[]> {
     return this.requirements;
   }
-  async countFinalFiles(): Promise<{ docType: string; present: number }[]> {
-    return this.finalCounts;
+  async countUploadedFiles(): Promise<{ docType: string | null; present: number }[]> {
+    return this.uploadedCounts;
   }
   async countDraftFiles(): Promise<{ docType: string; present: number }[]> {
     return this.draftCounts;
+  }
+  delivery: { total: number; done: number; deliveryReady: number; issues: unknown[] } = {
+    total: 0,
+    done: 0,
+    deliveryReady: 0,
+    issues: [],
+  };
+  async evaluateDeliveryStatus() {
+    return this.delivery;
   }
 }
 
@@ -176,7 +190,7 @@ function makeService(
     db as unknown as DatabaseService,
     repo as unknown as TaskRepository,
     gate as unknown as TaskGateRepository,
-    {} as unknown as RoleService,
+    {} as unknown as PermissionService,
     audit as unknown as AuditService,
     {} as unknown as TaskNodeRepository,
     {} as unknown as TemplateService,
@@ -299,19 +313,26 @@ describe("M3-04 · 任务批量操作（A1-08）", () => {
     expect(repo.events.some((event) => event.eventType === "status_change")).toBe(true);
   });
 
-  it("批量完成缺件（门禁暂时下线 2026-09-30）：两条都放行 —— 无 gate_not_passed、无拒绝留痕", async () => {
+  it("批量完成缺件：该条 gate_not_passed + missing 明细（不生效），同批其它条目照常完成", async () => {
     const repo = new FakeTaskRepository();
     repo.tasks.set(TASK_A, makeRow(TASK_A, { nodeId: null, deliverableTypes: ["合同"] }));
     const gate = new FakeTaskGateRepository();
     const { service, db, audit } = makeService(repo, gate);
     const result = await service.batch(PROJECT, { ids: [TASK_A, TASK_B], changes: { status: "done" } }, ACTOR);
-    // 恢复门禁时还原：TASK_A gate_not_passed + missing 明细 + task.gate_rejected 留痕 + batch 元数据审计
-    expect(result.succeededCount).toBe(2);
-    expect(result.failedCount).toBe(0);
-    expect(repo.tasks.get(TASK_A)?.status).toBe("done");
+    expect(result.succeededCount).toBe(1);
+    expect(result.failedCount).toBe(1);
+    expect(result.failures[0]).toMatchObject({ id: TASK_A, code: "gate_not_passed" });
+    expect(result.failures[0]?.missing).toEqual([{ docType: "合同", required: 1, present: 0 }]);
+    expect(repo.tasks.get(TASK_A)?.status).toBe("pending");
     expect(repo.tasks.get(TASK_B)?.status).toBe("done");
-    expect(db.outbox.some((row) => row.topic === "task.gate_rejected")).toBe(false);
-    expect(audit.entries.some((entry) => entry.result === "failed")).toBe(false);
+    const rejected = db.outbox.find((row) => row.topic === "task.gate_rejected");
+    expect(rejected?.payload["taskId"]).toBe(TASK_A);
+    const failed = audit.entries.find((entry) => entry.result === "failed");
+    expect(failed?.objectType).toBe("task");
+    const metadata = failed?.metadata as Record<string, unknown>;
+    expect(metadata["entry"]).toBe("batch");
+    expect(typeof metadata["batchId"]).toBe("string");
+    expect((failed?.summary as string).startsWith("批量任务完成被门禁拒绝：")).toBe(true);
   });
 
   it("批量完成遇已完成：该条 already_done（不重复写），同批其它条目照常完成", async () => {

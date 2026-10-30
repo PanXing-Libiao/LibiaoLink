@@ -15,9 +15,9 @@
  *   证据八（彻底删除）：仅管理员（成员 403）；对象与元数据一并清理、留痕；非回收站 → 409。
  *   证据九（权限）：读面项目可见即可（非成员 404 防 IDOR）；生命周期写面 file.upload 成员平权。
  *
- * 前置：真 PG（DATABASE_URL）+ 真对象存储（S3_*，见 deploy/minio/）+ 已起 api（BASE_URL，**须以 PERMISSION_ENFORCED=true 启动** ——
- *      L11 / L14 的「非成员 404 / 非管理员 403」验的是 ADR-011 判定语义；一期默认 false = 不判权限时成员也是等效管理员，
- *      S0b 守卫会直接失败并给出重启指引）。本脚本只在本地沙箱 / 联调库跑：
+ * 前置：真 PG（DATABASE_URL）+ 真对象存储（S3_*，见 deploy/minio/）+ 已起 api（BASE_URL，**须以 GROUP_ACCESS_ENFORCED=true 启动**，
+ *      并让管理员账号命中系统管理员来源、成员账号的部门规则看不到本回放项目 —— L11 / L14 的「非成员 404 / 非管理员 403」按部门规则验证）。
+ *      本脚本只在本地沙箱 / 联调库跑：
  *      铸两个临时会话（管理员 + 名册成员，跑完撤销）、建 M4L- 回放项目（跑完硬删项目及其文件 / 版本 / 会话 / 审计 / outbox 事件 + 清桶内前缀）。
  * 用法：cd server && M4_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink \
  *       node --env-file-if-exists=.env scripts/m4-lifecycle-replay.mjs [--out <报告.md>] [--json <证据.json>] [--keep]
@@ -259,11 +259,11 @@ try {
   member = await makeSession(memberId, "m4l-replay-member");
   cleanup.sessions.push(admin.token, member.token);
 
-  // 前置守卫（Push 178 · PERMISSION_ENFORCED）：L11 / L14 的「非成员 404 / 非管理员 403」验证的是 ADR-011 判定，
-  // 目标 api 须以 PERMISSION_ENFORCED=true 启动；一期默认 false = 不判权限（受限账号也是等效管理员）。
+  // 前置守卫：L11 / L14 的「非成员 404 / 非管理员 403」按部门规则验证。
+  // 目标 api 须以 GROUP_ACCESS_ENFORCED=true 启动；成员账号不得是系统管理员，并且其适用规则不能覆盖本回放项目。
   const enforceProbe = await call("GET", "/api/v1/permissions/me", undefined, member);
-  const enforceScopes = enforceProbe.body?.permissions?.dataScopes ?? [];
-  check("S0b", "前置：目标 api 处于「按 ADR-011 判定」模式（PERMISSION_ENFORCED=true）", "成员账号 dataScopes 不含 all", "dataScopes=" + short(enforceScopes, 80), enforceProbe.status === 200 && !enforceScopes.includes("all"), "一期「不判权限」口径下请先以 PERMISSION_ENFORCED=true 重启 api 再跑本脚本");
+  const enforceProfile = enforceProbe.body?.permissions ?? {};
+  check("S0b", "前置：目标 api 处于部门规则执行模式（GROUP_ACCESS_ENFORCED=true）且成员不是系统管理员", "groupAccessEnforced=true / groupAccessAdmin=false", "enforced=" + String(enforceProfile.groupAccessEnforced) + " admin=" + String(enforceProfile.groupAccessAdmin), enforceProbe.status === 200 && enforceProfile.groupAccessEnforced === true && enforceProfile.groupAccessAdmin === false, "请以 GROUP_ACCESS_ENFORCED=true 启动 api，并准备无本回放项目访问范围的成员账号");
 
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
   const created = await call("POST", "/api/v1/projects", {

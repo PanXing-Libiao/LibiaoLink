@@ -4,6 +4,7 @@ import {
   DOC_TYPES,
   PRIORITY_VALUES,
   STAGE_KEYS,
+  STAGE_NAMES,
   ProjectSummarySchema,
   TaskBatchBodySchema,
   TaskBatchFailureSchema,
@@ -36,7 +37,7 @@ import type { DbClient } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { appendOutbox } from "../../db/outbox.js";
 import { AuditService, diffRecords } from "../admin/index.js";
-import { RoleService } from "../identity/index.js";
+import { PermissionService, canManageTaskFinalization } from "../permission/index.js";
 import { TaskNodeRepository, TemplateService } from "../template/index.js";
 import { clampSortIndex } from "./task.order.js";
 import { parseTaskListFilter, parseTaskSort, type TaskListQueryInput } from "./task.query.js";
@@ -58,7 +59,13 @@ import {
   type TaskRow,
   type TaskUpdatePatch,
 } from "./task.repository.js";
-import { TaskGateRepository, type TaskGateDocCountRow, type TaskGateScope } from "./task.gate.repository.js";
+import {
+  TaskGateRepository,
+  mergeDeliveryRequirements,
+  missingDeliveryRequirements,
+  type TaskGateDocCountRow,
+  type TaskGateScope,
+} from "./task.gate.repository.js";
 
 type Task = z.infer<typeof TaskSchema>;
 type TaskDetail = z.infer<typeof TaskDetailSchema>;
@@ -96,14 +103,6 @@ type TaskWriteRequest = Pick<
 const EMPTY_FILE_SUMMARY: TaskFileSummaryCounts = { total: 0, draft: 0, final: 0 };
 const CHANGE_SUMMARY_MAX = 40;
 
-/**
- * 任务完成「必交成果文件」门禁总开关（业务口径 2026-09-30：暂时不要这个约束功能）：
- * false = 任务完成不再校验必交成果文件缺件（单条编辑 / 批量 / 进度 / 完成提交四条写入路径同口径），预检恒放行（missing 恒空）；
- * draft 成果文件的放行提醒（R02）不受影响；节点完成 / 阶段推进 / 归档的同类门禁不随本开关。
- * 恢复门禁：把本常量改回 true 即可（判定与留痕逻辑原样保留，无需改其它代码）。
- */
-const TASK_COMPLETION_DOC_GATE_ENABLED: boolean = false;
-
 /** 门禁拒绝的内部信号（事务回滚后补写留痕，再转 422 契约错误）—— 与 FlowService 同模式。 */
 class GateRejectedSignal extends Error {
   constructor(
@@ -126,7 +125,7 @@ export class TaskService {
     private readonly database: DatabaseService,
     private readonly repository: TaskRepository,
     private readonly gate: TaskGateRepository,
-    private readonly roles: RoleService,
+    private readonly permission: PermissionService,
     private readonly audit: AuditService,
     private readonly nodes: TaskNodeRepository,
     private readonly templates: TemplateService,
@@ -682,6 +681,15 @@ export class TaskService {
     return row;
   }
   /**
+   * 定档 / 取消定档的角色闸（2026-10-27）：仅任务当前负责人或项目经理。
+   * 必须在幂等短路之前判定，避免无权用户通过重复操作探测或维持已定档状态。
+   */
+  private assertCanManageTaskFinalization(actorId: string, task: TaskRow, projectManager: boolean): void {
+    if (canManageTaskFinalization(actorId, task.ownerIds, projectManager)) return;
+    throw new AppError("FORBIDDEN", "仅任务负责人或项目经理可定档或取消定档");
+  }
+
+  /**
    * 任务定档写口闸（Push 249 · 业务口径「添加和替换文件要提示是否为定档文件，若是则上传文件后该任务定档不支持任何修改」）：
    * 定档后的任务不支持任何修改 —— 编辑 / 批量 / 进度 / 完成提交 / 删除 / 锁定字段例外调整一律 409 TASK_FINALIZED。
    * 唯一保留的修改通道 = 对已定档文件的变更（A2-10「定档后修改须走变更管理」，A4-13 申请即通过）。
@@ -882,8 +890,8 @@ export class TaskService {
    */
   /**
    * GET /projects/{id}/tasks/{taskId}/can-complete：完成任务预检（UI 置灰依据；不替代事务内强校验 —— 与节点 can-complete 同口径）。
-   * 门禁口径（ADR-024 / A4-20）：有节点任务按所属节点 node_requirements 判定；无节点任务按自身 deliverable_types 兜底（每类 ≥ 1 份）。
-   * 【暂时下线 · 2026-09-30】缺件不拦截（见 TASK_COMPLETION_DOC_GATE_ENABLED）：预检随缺件恒空而恒放行（missing 恒空）；draft 提醒保留。
+   * 门禁口径（ADR-024 / A4-20 · 2026-10-29）：合并节点 required_doc 与任务 deliverable_types，配置了成果类型才要求对应上传文件；未配置不要求。
+   * draft 文件可完成并返回 R02 提醒；预检与事务内强校验同口径。
    */
   async canComplete(projectId: string, taskId: string): Promise<TaskCanCompleteResponse> {
     await this.loadProjectOrFail(projectId);
@@ -898,8 +906,8 @@ export class TaskService {
 
   /**
    * POST /projects/{id}/tasks/{taskId}/complete：任务完成提交（M3-03 · PoC 9 后半）。
-   * 事务内乐观锁 + 门禁强校验；缺件 422 TASK_REQUIRED_DOC_MISSING（拒绝也留痕）；存在 draft 成果文件放行 + warning 并触发 R02。
-   * 【暂时下线 · 2026-09-30】缺件不再 422（见 TASK_COMPLETION_DOC_GATE_ENABLED）；draft 放行 + warning（R02）保留。
+   * 事务内乐观锁 + 门禁强校验；已配置成果类型但缺上传文件 → 422 TASK_REQUIRED_DOC_MISSING（拒绝也留痕）；
+   * 存在 draft 成果文件放行 + warning 并触发 R02。
    */
   async complete(projectId: string, taskId: string, body: TaskCompleteBody, actorId: string): Promise<TaskCompleteResponse> {
     await this.loadProjectForWrite(projectId);
@@ -968,10 +976,12 @@ export class TaskService {
    */
   async finalize(projectId: string, taskId: string, body: TaskFinalizeBody, actorId: string): Promise<Task> {
     await this.loadProjectForWrite(projectId);
+    const access = await this.permission.assertProjectVisible(actorId, projectId);
     const at = new Date();
     const today = shanghaiToday(at);
     const row = await this.database.db.transaction(async (tx) => {
       const before = await this.requireActiveTask(tx, projectId, taskId);
+      this.assertCanManageTaskFinalization(actorId, before, access.projectManager);
       if (before.finalizedAt !== null) {
         return before;
       }
@@ -1028,10 +1038,12 @@ export class TaskService {
    */
   async unfinalize(projectId: string, taskId: string, body: TaskUnfinalizeBody, actorId: string): Promise<Task> {
     await this.loadProjectForWrite(projectId);
+    const access = await this.permission.assertProjectVisible(actorId, projectId);
     const at = new Date();
     const today = shanghaiToday(at);
     const row = await this.database.db.transaction(async (tx) => {
       const before = await this.requireActiveTask(tx, projectId, taskId);
+      this.assertCanManageTaskFinalization(actorId, before, access.projectManager);
       if (before.finalizedAt === null) {
         return before;
       }
@@ -1075,38 +1087,25 @@ export class TaskService {
   }
 
   /**
-   * 门禁判定（ADR-024 / A4-20）：有节点任务按所属节点 node_requirements 逐类统计；无节点任务按自身 deliverable_types 兜底（每类 ≥ 1 份）。
-   * 定档口径：files.status ∈ (final, changed) 且 current_version_id 非空；draft 单独计数作放行提示（R02）。
-   * 【暂时下线 · 2026-09-30】缺件判定整体短路（恒空清单 = 放行，见 TASK_COMPLETION_DOC_GATE_ENABLED）；draft 放行提示（R02）保留；恢复 = 常量改回 true。
+   * 门禁判定（ADR-024 / A4-20 · 2026-10-29 收敛）：
+   * 1) 合并节点 required_doc 与任务 deliverable_types；配置了成果类型时逐类要求至少上传一份；
+   * 2) 未配置任何成果类型时不要求文件，不能凭空增加“所有任务都必须有文件”的隐性约束。
+   * 上传口径：files.status ∈ (draft, final, changed) 且 current_version_id 非空；draft 放行并给 R02 提醒。
    */
   private async evaluateGate(
     client: DbClient,
     task: TaskCompletionTargetRow,
   ): Promise<{ missing: TaskGateMissing[]; warnings: TaskGateWarning[] }> {
-    const scope: TaskGateScope = task.nodeId !== null ? { nodeId: task.nodeId } : { taskId: task.id };
-    // 门禁暂时下线（业务口径 2026-09-30，见 TASK_COMPLETION_DOC_GATE_ENABLED）：缺件恒放行 —— 要求 / 定档计数两处查询整体跳过；
-    // draft 放行提示（R02）照旧。恢复门禁 = 常量改回 true，下面的判定逻辑原样保留、无需改动。
-    if (!TASK_COMPLETION_DOC_GATE_ENABLED) {
-      return { missing: [], warnings: buildDraftWarnings(await this.gate.countDraftFiles(client, scope)) };
-    }
-    const requirements: { docType: string; minCount: number }[] =
-      task.nodeId !== null
-        ? await this.gate.listNodeDocRequirements(client, task.nodeId)
-        : normalizeDocTypes(task.deliverableTypes).map((docType) => ({ docType, minCount: 1 }));
-    const presentByType = new Map((await this.gate.countFinalFiles(client, scope)).map((row) => [row.docType, row.present]));
-    const missing: TaskGateMissing[] = [];
-    for (const requirement of requirements) {
-      // 蓝图校验（BLUEPRINT_REF_UNKNOWN）已限制 required_doc 取值；非法历史值静默跳过，不让门禁误拦。
-      if (!(DOC_TYPES as readonly string[]).includes(requirement.docType)) continue;
-      const presentCount = presentByType.get(requirement.docType) ?? 0;
-      if (presentCount < requirement.minCount) {
-        missing.push({
-          docType: requirement.docType as TaskGateMissing["docType"],
-          required: requirement.minCount,
-          present: presentCount,
-        });
-      }
-    }
+    const scope: TaskGateScope = { taskId: task.id, nodeId: task.nodeId };
+    const nodeRequirements =
+      task.nodeId === null ? [] : await this.gate.listNodeDocRequirements(client, task.nodeId);
+    const requirements = mergeDeliveryRequirements(nodeRequirements, task.deliverableTypes);
+    const uploaded = await this.gate.countUploadedFiles(client, scope);
+    const missing: TaskGateMissing[] = missingDeliveryRequirements(requirements, uploaded).map((item) => ({
+      docType: item.docType as TaskGateMissing["docType"],
+      required: item.required,
+      present: item.present,
+    }));
     const warnings = buildDraftWarnings(await this.gate.countDraftFiles(client, scope));
     return { missing, warnings };
   }
@@ -1140,18 +1139,60 @@ export class TaskService {
         payload: { projectId: input.projectId, taskId: input.task.id, warnings: input.warnings, actorId: input.actorId, at: input.at.toISOString() },
       });
     }
+    await this.appendStageCompletionOutbox(tx, {
+      projectId: input.projectId,
+      task: input.task,
+      actorId: input.actorId,
+      at: input.at,
+    });
   }
 
-  /** 事务内门禁强校验：缺件 → GateRejectedSignal（422 + missing）；通过 → 放行提示（R02）。拒绝留痕由调用方在事务外补写。【暂时下线 · 2026-09-30】evaluateGate 缺件恒空 → 本方法实际只剩放行提示；拒绝分支保留备恢复（见 TASK_COMPLETION_DOC_GATE_ENABLED）。 */
+  /**
+   * 大阶段完成群通知：只在本次任务首次转入 done 的同一事务内判定。
+   * 阶段锁保证并发完成最后两项时只有后一笔看到“全部完成”；无任务 / 未分组阶段不发。
+   * 幂等键包含触发任务版本，阶段回退后再次完成可再次形成里程碑。
+   */
+  private async appendStageCompletionOutbox(
+    tx: DbClient,
+    input: { projectId: string; task: TaskRow; actorId: string; at: Date },
+  ): Promise<void> {
+    const stageKey = input.task.stageKey;
+    if (stageKey === null || !(STAGE_KEYS as readonly string[]).includes(stageKey)) return;
+    await this.repository.lockStageCompletion(tx, input.projectId, stageKey);
+    const counts = await this.gate.evaluateDeliveryStatus(tx, input.projectId, stageKey);
+    if (
+      counts.total === 0 ||
+      counts.done !== counts.total ||
+      counts.deliveryReady !== counts.total
+    ) {
+      return;
+    }
+    const stageName = (STAGE_NAMES as Record<string, string>)[stageKey] ?? stageKey;
+    await appendOutbox(tx, {
+      topic: "notify.group",
+      dedupeKey: "stage.completed:" + input.projectId + ":" + stageKey + ":" + input.task.id + ":v" + String(input.task.version),
+      payload: {
+        projectId: input.projectId,
+        title: "阶段完成｜" + stageName,
+        body: "「" + stageName + "」阶段 " + String(counts.total) + " 项小任务已全部完成，阶段里程碑达成。",
+        refType: "task",
+        refId: input.task.id,
+        templateCode: "STAGE_COMPLETE_GROUP",
+        stageKey,
+      },
+    });
+  }
+
+  /** 事务内门禁强校验：已配置成果类型缺上传文件 → GateRejectedSignal（422 + missing）；通过 → 放行提示（R02）。拒绝留痕由调用方在事务外补写。 */
   private async assertCompletionGate(client: DbClient, task: TaskRow, at: Date, actorId: string): Promise<TaskGateWarning[]> {
     const gate = await this.evaluateGate(client, task);
     if (gate.missing.length > 0) {
       const rejection = new AppError(
         "TASK_REQUIRED_DOC_MISSING",
-        "缺少必交成果文件，无法完成任务（TASK_REQUIRED_DOC_MISSING）",
+        "已配置的成果文件尚未上传，无法完成任务（TASK_REQUIRED_DOC_MISSING）",
         gate.missing.map((item) => ({
           code: "required_doc",
-          message: "缺少必交成果文件：" + item.docType + "（需要 " + item.required + "，现有 " + item.present + "）",
+          message: "缺少已上传的成果文件：" + item.docType + "（需要 " + item.required + "，现有 " + item.present + "）",
           path: "missing",
           meta: { ...item },
         })),
@@ -1258,10 +1299,8 @@ export class TaskService {
 
   /** 手工创建非标准任务仅管理员（系统功能书 A1-13）。 */
   private async assertAdmin(actorId: string, action: string): Promise<void> {
-    const authorization = await this.roles.getActorAuthorization(actorId);
-    if (!authorization.roleCodes.includes("admin")) {
-      throw new AppError("FORBIDDEN", "仅管理员可" + action + "（系统功能书 A1-13）");
-    }
+    if (await this.permission.canManageGroupAccess(actorId)) return;
+    throw new AppError("FORBIDDEN", "仅管理员可" + action + "（系统功能书 A1-13）");
   }
 }
 

@@ -7,6 +7,14 @@
 | 主责 | wmj（团队分工.md §2） |
 | 对外接口 | TaskService（summary / list / detail / create / update / updateProgress / canComplete / complete / batch / remove / adjustLockedFields）、TaskStatsService（countStageTasks / stageTaskCounts）、规则纯函数与查询解析（task.rules / task.query）；节点实例的读写仍在 project 模块 flow.service（依赖方向 project → node → task，本模块不反向依赖） |
 
+## 大阶段完成群通知（2026-10-29）
+
+- **触发**：任务首次转入 `done` 的同一事务里，按 `stage_key` 统计未删除任务；仅当该阶段任务总数 > 0 且全部完成时写入 `notify.group`，模板码 `STAGE_COMPLETE_GROUP`，不覆盖旧数据、不为历史已完阶段补发。
+- **并发**：判定前取得项目 + 阶段的 `pg_advisory_xact_lock`，保证并发完成最后两项任务时只由后提交的一笔发通知；锁随事务释放。
+- **幂等**：outbox `dedupe_key = stage.completed:{projectId}:{stageKey}:{taskId}:v{version}`；阶段回退后再次完成视为新的里程碑。
+- **载荷**：outbox 载荷新增可选 `stageKey`，供 worker 生成对应阶段海报；未分组任务与无任务阶段不发。
+- **回归**：`server/test/task-service.test.ts` 覆盖全完成发通知、部分完成 / 未分组不发、阶段锁调用。
+
 ## 已实现（h4 · Push 89）
 
 - 契约：`shared/src/modules/tasks.ts`（列表 / 详情 / 创建 / 编辑 / 进度五组 schema + `TaskListItem` 随行摘要）；错误码新增 `TASK_ALREADY_EXISTS`（409：节点已有未删任务）。**Push 146（lan 线代记，请 wmj 复核）**：`Task.changeRef` → `Task.changeLinks: TaskChangeLink[]`（`{ id, reason(截 40 字), appliedAt }`，A1-07「追加＋去重」可多条），`TaskListItem` / `TaskDetail` 的单条 `changeSummary` 下线（改由 `changeLinks` 承载）；落库 `tasks.change_refs uuid[]`（迁移 0020），本模块只读、不写该列。
@@ -19,7 +27,7 @@
 - 接口（挂 `api/v1/projects`；读登录即可，写入口径见下）：
   - `GET /{id}/summary` 汇总卡（**M3-07 刀 1 起**：`slowestStage` 最慢 = 九阶段序第一个存在未完成任务的阶段 / `latestStage` 最新 = 已动工任务（基础态 active / done）里阶段序最靠后者的所属阶段，均 `nullable`；`overdue` / `done` / `total` 三计数照旧）—— 原 `currentStage`（= `projects.stage_key`）下线；
   - `GET /{id}/tasks` 分页列表：阶段 / 负责人 / 展示态（可多值，条件下推 SQL）/ 关键字 `q` 筛选 + 排序白名单（plannedStart / plannedEnd / actualEnd / progress / title / createdAt；默认序 = 阶段序 + 组内位次 `sort_index` + id（A15 / A19 / A20 · Push 124：未分组落最后，与看板列内顺序同口径））；非法参数 400；
-  - `GET /{id}/tasks/{taskId}` 详情：抽屉全字段 + 文件清单 + 负责人名与变更摘要（`fileSummaries` 聚合，免 N+1）；
+  - `GET /{id}/tasks/{taskId}` 详情：抽屉全字段 + 文件清单 + 负责人名与变更摘要（`fileSummaries` 聚合，免 N+1）；文件清单与摘要只统计 `current_version_id` 非空的完成上传，失败 / 刷新留下的空草稿不展示也不计数；
   - `POST /{id}/tasks` 创建：① 从任务节点生成（来源二选一：`taskNodeId` = **项目流程节点**；`sourceNodeId` = **节点库节点（Push 183）**，同传 400 `VALIDATION_FAILED`，`sourceNodeId` 时描述 / 英文名 / 阶段取节点库现值；节点须属本项目，`stageKey` 与节点阶段不一致 400；同节点已有未删任务 409 `TASK_ALREADY_EXISTS`）；② 手工创建（**仅管理员**，系统功能书 A1-13，非管理员 403）；`stageKey` 缺省 / 显式 null = 「未分组」、`ownerIds` 缺省与**显式 `[]` 同义 = 「待分配」**（A18 / A23 · Push 136；**Push 184 修订：不再兜底项目经理**）、`sortIndex` = 插入位次（A15 / A18 / A20 · Push 124）；
   - `POST /{id}/tasks/from-template` 模板实例化（M3-07 刀 3 · A1-16 · Push 183）：`templateId` + 可选 `nodeIds`（子集，模板外节点 400）/ `skipExisting`（缺省 true → 已加过的进 `skipped`；false 遇重复 409 且**整批回滚**）/ `ownerIds` / `sortIndex` / `priority` → `{ created: Task[], skipped: { nodeId, taskId }[] }`；整批同事务、顺序 = 模板内顺序、阶段取模板阶段、位次从 `sortIndex` 起顺延；空模板 / 空 `nodeIds` 返回空数组且不 touch 项目；模板不存在或已软删 404；口径见下节「节点库来源与模板实例化」。
   - `PATCH /{id}/tasks/{taskId}` 编辑：乐观锁 `version`（不一致 409 `VERSION_CONFLICT`）+ **五态写入联动（A12 · M3-07 刀 1）**+ `ownerIds` 显式置空（不传 = 不改；传数组 = 整体替换、顺序 = 展示顺序）+ 组内重排（`sortIndex`，越界 = 组尾）+ 字段级留痕（A18 / A19 / A20 · Push 124）；输出成果文件（`deliverableTypes`）自 2026-10-08 起**常规编辑开放**（业务口径「文件输出成果也要可以选择」：传数组 = 整体替换、去重保序，显式 [] = 不要求；原「生成后锁定（A1-17）」下架 —— px 线代记，请 wmj 复核）、任务描述自 **Push 196（px 线代记，请 wmj 复核；Push 197 收窄判定）** 起仅对**未归入阶段**的临时任务（看板「添加 → 临时任务」手工创建：`stage_key` 为空且无来源节点）开放 —— **阶段任务**（`stageKey` 非空，哪怕没有来源节点）与节点 / 模板生成的任务带 `title` / `titleEn` 请求 400 `VALIDATION_FAILED`，仍走「锁定字段例外调整」；
@@ -34,19 +42,18 @@
 
 ## 完成门禁（M3-03 · Push 143）
 
-> 【暂时下线 · 2026-09-30】业务口径「暂时不要这个约束功能」：缺件不再拦截完成（单条 / 批量 / 进度 / 完成提交四条写入路径同口径），预检 `can-complete` 恒放行（`missing` 恒空）；draft 放行提示（R02）保留；节点完成 / 阶段推进 / 归档的同类门禁不随本开关。开关 = `task.service.ts` 常量 `TASK_COMPLETION_DOC_GATE_ENABLED`（恢复改回 true）；本节以下描述为门禁恢复后的口径。
-
 > 口径来源：系统功能书 A4-20 / A2-10、ADR-024（成果文件多选与门禁）、技术设计v0.3 §3.4。
 
 - 契约：`GET /projects/{id}/tasks/{taskId}/can-complete`（预检：`canComplete` + `missing[]` + `warnings[]`）、`POST …/complete`（提交：`{ task, warnings }`）；错误码新增 422 `TASK_REQUIRED_DOC_MISSING`（缺件）与 409 `TASK_ALREADY_DONE`（重复提交）；`Task.deliverableTypes: DocType[]`（数组、服务端去重、空数组 = 不要求）。
-- 判定来源（ADR-024）：① 有节点任务按所属节点 `node_requirements` 的 `required_doc` 逐类统计（与 node 模块 `GateService.evaluateNode` 同口径）；② 无节点任务按自身 `deliverable_types` 兜底（每类 ≥ 1 份）。定档口径 = `files.status ∈ (final, changed)` 且 `current_version_id` 非空；统计范围 = 节点下 / 任务下文件（回收站不计）。
-- 三入口一致（A4-20）：完成提交（`POST …/complete`）与 `PATCH …/{taskId}`（`status=done`）、`PATCH …/progress`（`progress=1`）在**事务内走同一门禁判定**；缺件一律 422 + `missing[]`（`details[].code = required_doc`）且不部分生效（乐观锁校验在前、写库在后）。
+- 判定来源（ADR-024 · 2026-10-29 业务口径）：合并节点 `node_requirements.required_doc` 与任务自身 `deliverable_types`，**配置了成果类型才要求上传**；未配置成果类型不要求文件。每类默认至少 1 份，节点要求的 `min_count` 优先取较大值。上传口径 = `files.status ∈ (draft, final, changed)` 且 `current_version_id` 非空；统计范围 = 任务直接上传文件或直接挂所属节点的文件（回收站不计）。
+- 三入口一致（A4-20）：完成提交（`POST …/complete`）与 `PATCH …/{taskId}`（`status=done`）、`PATCH …/progress`（`progress=1`）在**事务内走同一门禁判定**；已配置成果类型但缺上传文件一律 422 + `missing[]`（`details[].code = required_doc`）且不部分生效（乐观锁校验在前、写库在后）。
 - 完成事件统一（2026-10-19）：上述入口及批量状态完成在任务**首次进入 done**（含 `early_done` 覆盖）时统一写 `task.completed`（同版本幂等键，与完成提交同载荷）；已完成后编辑其他字段不重复发。R02 因此不再依赖单一完成提交入口。
-- 放行提示（A2-10 / R02）：存在未定档（draft）成果文件时放行，响应带 `warnings[{ code: draft_doc_present, docType, count }]`，并写 outbox `task.draft_doc_reminded`（R02 触发点，notify 落地后消费）。
+- 放行提示（A2-10 / R02）：存在未定档（draft）成果文件时放行，响应带 `warnings[{ code: draft_doc_present, docType, count }]`，并写 outbox `task.draft_doc_reminded`（R02 触发点，notify 落地后消费）；`draft` 本身已计入“已上传”，不以定档作为完成前置。
+- 大阶段完成群通知（2026-10-29）：任务首次进入 done 时在事务内按项目 + 阶段 advisory lock 串行判定；该阶段未删除任务全部 done、且每个配置了成果类型的任务均已上传对应文件，才写 `notify.group` / `STAGE_COMPLETE_GROUP`。阶段无任务或任务未分组不发。
 - 留痕：拒绝 → outbox `task.gate_rejected`（事务回滚后补写）+ 审计 `result=failed`（含错误码与缺件明细）；成功 → outbox `task.completed`（payload 带 warnings）+ 审计 `action=complete`。
 - 数据面：迁移 `0018_task_deliverable_types.sql`（`deliverable` text → `deliverable_types` text[] 非空默认空数组 + `ck_tasks_deliverable_types` / `ck_tasks_deliverable_types_no_null` + GIN `ix_tasks_deliverable_types`；存量单值转单元素数组、空值转空数组）；创建任务缺省从节点 `required_doc` 类型带出（body 显式给出优先）；`TaskUpdateBody` 自 2026-10-08 起含该字段（常规编辑开放：传数组 = 整体替换 / 去重保序、显式 [] = 不要求；原「生成后锁定（A1-17）」下架）；**例外调整已落 Push 153**（见下节），本字段的例外通道保留。
-- 实现归属：门禁判定实现在本模块 `task.gate.repository.ts`（只读 `node_requirements` / `files`）—— node 模块 `GateService` 依赖 task（`TaskStatsService`），task 反向依赖会成环；两处 SQL 口径必须同步修改（node/README.md 已登记）。
-- 单测：`test/task-gate.test.ts` 11 例（预检缺件明细 / 无节点 deliverable_types 兜底 / 完成缺件 422 + outbox + 审计 failed / 门禁通过 200 + `task.completed` / draft 放行 + R02 / 重复提交 409 / `PATCH status=done`、`status=early_done`、`progress=1` 与批量完成写完成事件 / 已完成后编辑不重复发）。
+- 实现归属：任务完成门禁实现在本模块 `task.gate.repository.ts`（只读 `node_requirements` / `files`）；阶段 / 项目交付齐套聚合由同文件 `evaluateDeliveryStatus` 提供，经 `TaskStatsService` 供 node 门禁与模块外复用。节点完成仍走节点自身的定档文件门禁；两处口径边界在 node/README.md 登记。
+- 单测：`test/task-gate.test.ts` 15 例（节点要求 + 任务成果合并 / 未配置成果类型直接放行 / 配置后缺上传 422 + outbox + 审计 failed / draft 上传放行 + R02 / 完成事件与三入口一致 / 已完成后编辑不重复发）；阶段完成通知另由 `task-service.test.ts` 覆盖。
 
 ## 批量操作（M3-04 · A1-08 · Push 150）
 
@@ -76,7 +83,7 @@
 
 > 口径来源：系统功能书 A1-17（任务描述 / 阶段性里程 / 输出成果文件按流程节点模板生成后锁定；确需修正时由管理员修正模板 + 对当期任务例外调整，原因必填并留痕）与 C9-07；设计口径见 技术设计v0.3 §3.4（M3-05）。
 
-- 端点与权限：`PATCH /projects/{id}/tasks/{taskId}/locked-fields`（body `TaskLockedFieldsAdjustBody` = `version` + `reason` + 可选 `title` / `titleEn` / `deliverableTypes`）；控制器 `@RequirePermission(task.update)` 只作项目上下文门禁，**服务端 `assertAdmin` 复核（仅系统管理员，非管理员 403）** —— 与手工创建任务同口径（A1-13）。
+- 端点与权限：`PATCH /projects/{id}/tasks/{taskId}/locked-fields`（body `TaskLockedFieldsAdjustBody` = `version` + `reason` + 可选 `title` / `titleEn` / `deliverableTypes`）；控制器 `@RequirePermission(task.update)` 只作项目上下文门禁，**服务端 `assertAdmin` 复核（仅部门权限管理员 `groupAccessAdmin`，非管理员 403）** —— 与手工创建任务同口径（A1-13），不再读取遗留 `roleCodes`。
 - 锁定范围：`title`（任务描述）/ `titleEn`；`deliverableTypes` 2026-10-08 起常规编辑开放（常规 `PATCH …/{taskId}` 可带、去重保序；本端点 body 该字段保留 —— 例外修正通道不动）；本端点与批量 `PATCH …/batch` 均不含这三项（**Push 196 例外 / Push 197 收窄**：仅**未归入阶段**的临时任务（`stage_key` 为空且无来源节点）可在常规编辑 `PATCH …/{taskId}` 里直接改 `title` / `titleEn` —— 面向的是「手工输入、非模板生成、也未挂施工阶段」的任务；**阶段任务**（`stageKey` 非空）与节点 / 模板生成的任务保持锁定）；**「阶段性里程」一期 tasks 表无对应列**（A1-17 映射修订），本期不开放（差异登记见本 README 边界段与系统功能书）。
 - 校验：至少一个实际变化（同值 / 空调整 → 400 `VALIDATION_FAILED`，防止刷留痕）；`deliverableTypes` 走 `normalizeDocTypes`（字典内、首次出现去重保序）；乐观锁 409 `VERSION_CONFLICT`；归档项目 409 `PROJECT_ARCHIVED`；不存在 / 跨项目 / 已软删统一 404。
 - 留痕（A1-17 / C9-07）：审计 `action=update`（changes = 锁定字段 before → after；metadata = { reason, kind: locked_field_exception, adminOnly: true, fields }）+ outbox `task.locked_fields_adjusted`（dedupeKey = `task.locked_fields_adjusted:{taskId}:{version}`，payload = projectId / taskId / fields / reason / actorId / at）+ touch 项目 `updated_at`；**不写 `task_events`**（四值闭集）。
@@ -123,7 +130,7 @@
 
 ## 边界与后续（差异登记）
 
-- 已随 h6 落地：读路由记录级 404（不可见项目 / 跨项目任务统一 404）、写路由功能权限位（`task.create` / `task.update` / `task.progress` —— 项目内成员对这三项平权，见 `modules/permission/README.md`）；手工创建仅管理员的口径随 A1-13 复核；
+- 已随 h6 落地：读路由记录级 404（不可见项目 / 跨项目任务统一 404）、写路由功能权限位（`task.create` / `task.update` / `task.progress` —— 项目内成员对这三项平权，见 `modules/permission/README.md`）；手工创建仅管理员的口径随 A1-13 复核；此处「管理员」与锁定字段例外调整统一指部门权限管理员 `groupAccessAdmin`，不再读取遗留 `roleCodes`；
 - M3-07 刀 1 后半（前端接线）不在本模块：前端 `taskApi.ts` 接线与服务端零改动；刀 2（门禁三入口 / 批量 failures 消费）已随 M3-03 / M3-04 落地，**刀 3（添加任务模板化）已落 Push 183**；只剩快筛参数待后续切片。
 - 不在本卡（Push 152 后更新）：列表快捷筛选参数、门禁增强 M3-04 ~ M3-06（**M3-03 已落 Push 143**：`deliverableTypes` 多值 + 完成门禁；**M3-04 批量操作已落 Push 150**：批量指派 / 改状态 / 改期 / 批量完成 + 部分失败清单；**M3-05 软删已落 Push 152**：`DELETE …/tasks/{taskId}` + 统一 404 + 位次压缩；**锁定字段例外调整已落 Push 153**：仅管理员可执行（非管理员 403）/ 原因必填并留痕（审计 + outbox）/ 空调整 400 / 阶段性里程一期无列；模板实例化与快筛随 M3-05 其余切片、1 万行压测随 M3-06）；
 - A1-17 差异登记（Push 153）：系统功能书锁定字段含「阶段性里程」，一期 `tasks` 表无该列（A1-17 映射修订），本期只开放任务描述 / 英文描述 / 输出成果文件三项；里程碑列落地后再开；

@@ -18,7 +18,7 @@ const isDrawing=format==='DXF'||format==='DWG';
 const hasResources=format==='DXF';
 let resolveContext;
 const contextReady=new Promise(resolve=>{resolveContext=resolve;});
-let currentJob=null,jobBase=null,delivered=false,cancelled=false,loadedEnvelope=null;
+let currentJob=null,jobBase=null,delivered=false,cancelled=false,loadedEnvelope=null,csrfToken=null,csrfPending=null,authExpiredNotified=false;
 const ui=new ImportUI({fileId,versionId,engineVersion:query.get('engineVersion')||'unknown'});
 const nameSelect=document.getElementById('nameCodepage'),reloadNames=document.getElementById('reloadNames');
 nameSelect.value=nameCodepage;
@@ -135,18 +135,68 @@ document.addEventListener('click',event=>{
  parent.postMessage({type:'cad-export',name,report,jobId:currentJob?.id},location.origin);
 },true);
 
+const CSRF_HEADER="X-CSRF-Token";
+const SAFE_METHODS=new Set(["GET","HEAD","OPTIONS"]);
+function notifyAuthExpired(){
+ if(authExpiredNotified)return;
+ authExpiredNotified=true;
+ parent.postMessage({type:"cad-auth-expired"},location.origin);
+}
 function csrf(){
- const part=document.cookie.split(';').find(value=>value.trim().startsWith('ll_csrf='));
- return part?decodeURIComponent(part.trim().slice('ll_csrf='.length)):'';
+ const part=document.cookie.split(";").find(value=>value.trim().startsWith("ll_csrf="));
+ return part?decodeURIComponent(part.trim().slice("ll_csrf=".length)):"";
 }
-function request(url,options={}){
+async function sessionCsrf(force=false){
+ if(force)csrfToken=null;
+ if(csrfToken)return csrfToken;
+ const cookie=force?"":csrf();
+ if(cookie){csrfToken=cookie;return cookie;}
+ if(csrfPending)return csrfPending;
+ csrfPending=(async()=>{
+  try{
+   const response=await fetch("/auth/me",{headers:{Accept:"application/json"},credentials:"same-origin",cache:"no-store"});
+   if(response.status===401){notifyAuthExpired();return null;}
+   if(!response.ok)return null;
+   const data=await response.json();
+   if(typeof data?.csrfToken==="string"&&data.csrfToken)csrfToken=data.csrfToken;
+  }catch{}
+  return csrfToken||(force?"":csrf());
+ })().finally(()=>{csrfPending=null;});
+ return csrfPending;
+}
+async function request(url,options={}){
  const headers=new Headers(options.headers);
- if(!['GET','HEAD'].includes((options.method||'GET').toUpperCase()))headers.set('X-CSRF-Token',csrf());
- return fetch(url,{...options,headers,credentials:'same-origin',cache:'no-store'});
+ headers.set("Accept","application/json");
+ if(!SAFE_METHODS.has((options.method||"GET").toUpperCase())){
+  const token=await sessionCsrf();
+  if(token)headers.set(CSRF_HEADER,token);
+ }
+ return fetch(url,{...options,headers,credentials:"same-origin",cache:"no-store"});
 }
-async function json(response){
- const data=await response.json();
- if(!response.ok)throw new Error(data.error?.message||data.message||'模型读取失败，请重试或下载原文件');
+function responseError(data,status){
+ return data?.error?.message||data?.message||(status===401?"登录状态已失效，请重新登录后打开文件。":status===403?"没有权限或登录状态已失效，请重新登录后打开文件。":"模型读取失败，请重试或下载原文件");
+}
+async function readJson(response){
+ if(response.status===401)notifyAuthExpired();
+ const type=(response.headers.get("content-type")||"").toLowerCase();
+ if(!type.includes("json")){
+  await response.text().catch(()=>"");
+  if(response.status===401)throw new Error("登录状态已失效，请重新登录后打开文件。");
+  throw new Error("模型服务返回了异常页面，请重新登录或稍后重试；也可以先下载原文件。");
+ }
+ try{return await response.json();}
+ catch{throw new Error("模型服务响应格式异常，请稍后重试或下载原文件。");}
+}
+async function requestJson(url,options={}){
+ let response=await request(url,options),data=await readJson(response);
+ if(response.status===403&&data?.code==="CSRF_FAILED"){
+  const token=await sessionCsrf(true);
+  if(token){
+   response=await request(url,options);
+   data=await readJson(response);
+  }
+ }
+ if(!response.ok)throw new Error(responseError(data,response.status));
  return data;
 }
 function delay(signal){
@@ -196,8 +246,8 @@ loadPlatformModel(async({signal,progress})=>{
   active.throwIfAborted();progress('正在读取模型任务…');
   const selection=isDrawing?await Promise.race([contextReady,new Promise((_,reject)=>active.addEventListener('abort',()=>reject(active.reason),{once:true}))]):{companions:[]};
   active.throwIfAborted();
-  const created=await json(await request(base+'?'+new URLSearchParams({nameCodepage:isDrawing?'UTF8':nameCodepage}),{method:'POST',signal:active,
-   headers:{'Content-Type':'application/json'},body:JSON.stringify(selection)}));
+  const created=await requestJson(base+'?'+new URLSearchParams({nameCodepage:isDrawing?'UTF8':nameCodepage}),{method:'POST',signal:active,
+   headers:{'Content-Type':'application/json'},body:JSON.stringify(selection)});
   currentJob=created.job;
   if(!/^[a-f0-9]{32}$/.test(currentJob?.id||''))throw new Error('模型任务响应无效');
   jobBase=base+'/'+currentJob.id;
@@ -207,13 +257,13 @@ loadPlatformModel(async({signal,progress})=>{
    if(!['queued','running'].includes(currentJob.state))throw new Error('模型任务状态无效');
    progress(currentJob.state==='queued'?'正在排队处理模型…':'正在处理模型…');
    ui.job(currentJob);
-   await delay(active);currentJob=await json(await request(jobBase,{signal:active}));
+   await delay(active);currentJob=await requestJson(jobBase,{signal:active});
   }
   ui.bytes=currentJob.sourceByteLength;
   ui.update(2,'正在准备模型视图');
   progress('正在读取已校验模型…');
-  const response=await request(jobBase+'/manifest',{signal:active});
-  let packet=unpackDwgPacked(unpackMetadata(await json(response)));
+  let packet=await requestJson(jobBase+'/manifest',{signal:active});
+  packet=unpackDwgPacked(unpackMetadata(packet));
   const expected=currentJob.state==='partial'?'partial':'complete';
   const partialFormat=currentJob.format==='DXF'||currentJob.format==='DWG';
   if(packet.presentation?.sourceSHA256!==currentJob.sourceSHA256||packet.snapshot?.completeness!==expected

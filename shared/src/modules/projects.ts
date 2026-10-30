@@ -1,6 +1,9 @@
 import { z } from "../zod.ts";
 import { DateTimeSchema, DateOnlySchema, PageQuerySchema, SortQuerySchema, UuidSchema, VersionSchema } from "../common/conventions.ts";
 import { ProjectStatusSchema, StageKeySchema } from "../common/dicts.ts";
+import { GroupAccessAccessLevelSchema } from "./group-access.ts";
+
+const PROJECT_MANAGER_IDS_LIMIT = 200;
 
 /** 项目主数据（projects 表；API 字段 camelCase 与 DDL snake_case 的映射见 shared/README.md）。 */
 export const ProjectSchema = z
@@ -20,6 +23,7 @@ export const ProjectSchema = z
     }),
     stageKey: StageKeySchema,
     status: ProjectStatusSchema,
+    groupAccessLevel: GroupAccessAccessLevelSchema.openapi({ description: "当前登录账号对该项目的部门权限：edit 可写 / view 仅浏览；由服务端按所有命中范围取最高权限后随项目下发" }),
     description: z.string().nullable(),
     version: VersionSchema,
     createdAt: DateTimeSchema,
@@ -133,8 +137,8 @@ export const ProjectCreateBodySchema = z
       .max(100)
       .default("未分类")
       .openapi({ description: "项目类型（字典 project_type）；未填写归入「未分类」（A1-12 定档）" }),
-    managerIds: z.array(UuidSchema).min(1).openapi({
-      description: "项目经理（A22 · Push 136）：至少一位、可多位；数组顺序 = 展示顺序；判空失败返回 400 VALIDATION_FAILED",
+    managerIds: z.array(UuidSchema).min(1).max(PROJECT_MANAGER_IDS_LIMIT).openapi({
+      description: "项目经理（A22 · Push 136）：至少一位、可多位（≤ 200 位）；数组顺序 = 展示顺序；判空或超过上限返回 400 VALIDATION_FAILED",
     }),
     stageKey: StageKeySchema.optional(),
     description: z.string().max(2000).optional(),
@@ -150,8 +154,8 @@ export const ProjectUpdateBodySchema = z
     customer: z.string().max(200).nullable().optional(),
     region: z.string().min(1).max(100).optional(),
     projectType: z.string().min(1).max(100).optional(),
-    managerIds: z.array(UuidSchema).min(1).optional().openapi({
-      description: "项目经理（A22 · Push 136）：至少一位、可多位；不传 = 不改、传空数组 = 400；数组顺序 = 展示顺序",
+    managerIds: z.array(UuidSchema).min(1).max(PROJECT_MANAGER_IDS_LIMIT).optional().openapi({
+      description: "项目经理（A22 · Push 136）：至少一位、可多位（≤ 200 位）；不传 = 不改、传空数组或超过上限 = 400；数组顺序 = 展示顺序",
     }),
     stageKey: StageKeySchema.optional(),
     status: z
@@ -350,6 +354,7 @@ export const ProjectGroupBindingSchema = z
     name: z.string().nullable().openapi({ description: "群名 / 备注（绑定维护用）；未绑定 = null" }),
     chatidMasked: z.string().nullable().openapi({ description: "绑定 chatid 掩码（只回末 4 位）；未绑定 = null" }),
     activated: z.boolean().openapi({ description: "会话已激活（群内有人给机器人发过消息）；未绑定 = false" }),
+    canManage: z.boolean().openapi({ description: "当前访问者是否为项目经理：决定是否显示项目群维护与日报同步入口；由服务端按内部 actor 身份裁决" }),
     updatedAt: DateTimeSchema.nullable().openapi({ description: "绑定 / 换绑 / 解绑时点；未绑定 = null" }),
   })
   .openapi("ProjectGroupBinding", { description: "项目群绑定状态（GET 恒 200；未绑定 = bound:false）" });

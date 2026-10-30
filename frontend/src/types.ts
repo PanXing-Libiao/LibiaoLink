@@ -2,6 +2,7 @@ export type User = {
   name: string | null;
   displayName: string | null;
   email: string | null;
+  /** `/auth/me` 的 Casdoor 侧标识；项目 managerIds / 任务 ownerIds 是本库 users.id，两者不可直接比较。 */
   id: string | null;
   owner: string | null;
 };
@@ -10,6 +11,8 @@ export type MeResponse = {
   user: User;
   claims: Record<string, unknown>;
   expiresAt: number | null;
+  /** 写请求 X-CSRF-Token；由 /auth/me 随会话下发，兼容 WAF 将 ll_csrf 改写为 HttpOnly。 */
+  csrfToken: string;
 };
 
 /**
@@ -22,9 +25,9 @@ export type Project = {
   /** 项目序号（契约 seqNo ↔ projects.seq_no）：服务端创建时分配，全库唯一、不可修改；彻底删除后的空号由下一次创建复用；卡片两位补零展示。 */
   seqNo: number;
   code: string;
-  /** 前端「项目描述」= 契约 name（唯一展示名）；备注长文本是契约 description（Push 280 起表单采集，见下 remark）。 */
+  /** 前端「项目名称」= 契约 name（唯一展示名）；备注长文本是契约 description（Push 280 起表单采集，见下 remark）。 */
   description: string;
-  /** 备注（契约 description，与前端「项目描述」= name 不是一回事）：Push 280 起新建 / 编辑弹窗采集；空串 = 未填写（新建不发送、编辑清空发 null）。 */
+  /** 备注（契约 description，与前端「项目名称」= name 不是一回事）：Push 280 起新建 / 编辑弹窗采集；空串 = 未填写（新建不发送、编辑清空发 null）。 */
   remark: string;
   /** 项目地区：契约 projects.region 存字典 region 的码；显示名走 dictLabel（已删除条目的存量值回落码本身）。 */
   region: string;
@@ -47,6 +50,8 @@ export type Project = {
   stageKey: string;
   /** 项目状态（契约 status：active / paused / done / archived）。 */
   status: string;
+  /** 当前登录人在该项目的部门权限：edit 可写 / view 仅浏览；由服务端逐项目裁决。 */
+  groupAccessLevel: "edit" | "view";
   /** 进入项目回收站的时间（展示用「YYYY-MM-DD HH:mm」）；未删除 = null。 */
   deletedAt: string | null;
   /** 将项目移入回收站的用户 id；未删除 = null。 */

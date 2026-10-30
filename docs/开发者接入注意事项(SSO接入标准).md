@@ -38,7 +38,7 @@
 | 1 | **只用标准 OIDC 协议**，不要用 Casdoor 集成的 SDK | 接入方代码 | 只需 `Client ID` + `Client Secret` |
 | 2 | **配好 Redirect URLs**（测试环境先填测试域名，正式环境引用同一套地址规则） | Applications → Redirect URLs | `http://localhost:8000/account`（本地沙箱） |
 | 3 | **Grant types 只用 Authorization Code** | Applications → Grant Types | 只勾 `authorization_code` |
-| 4 | **Token format 用 `JWT-Custom`**，Token fields 默认只开放 5 个字段 | Applications → Token Format / Token Fields | `Name`、`Owner`、`Id`、`DisplayName`、`Email` |
+| 4 | **Token format 用 `JWT-Custom`**，Token fields 默认只开放 5 个字段；需要按 Casdoor 群组控制页面 / 项目时额外勾选 `Groups` | Applications → Token Format / Token Fields | `Name`、`Owner`、`Id`、`DisplayName`、`Email`；群组权限另加 `Groups` |
 | 5 | **提供应用图标**：必须是能代表该应用的 SVG（可用 AI 生成） | Applications → Logo / LogoDark | `assets/libiaolink-logo.svg`（浅色）/ `assets/libiaolink-logo-dark.svg`（深色） |
 
 为什么用标准 OIDC 而不用 SDK：SDK 会把接入方和 Casdoor 的版本绑死，标准 OIDC 让**任何语言、任何框架**都能接，将来换 IdP 时改动最小。业务系统只需要会三件事：跳授权、换令牌、验签。
@@ -53,7 +53,7 @@
    过渡期可以同时登记测试和正式两个地址，上线后再删掉测试地址。
 2. **Grant Types**：只勾 `Authorization Code`。
 3. **Token Format**：选 `JWT-Custom`。
-4. **Token Fields**：只选 `Name`、`Owner`、`Id`、`DisplayName`、`Email`；业务确实需要的再加，**不要图省事全开**。
+4. **Token Fields**：只选 `Name`、`Owner`、`Id`、`DisplayName`、`Email`；业务确实需要的再加，**不要图省事全开**。LibiaoLink 群组权限必须额外勾选 `Groups`，否则令牌中没有 `groups` 声明。
 5. 保存后复制 **Client ID / Client Secret** 给业务系统（Secret 只走密钥渠道，不要贴群里）。
 
 > **建测试用户时的坑（实测）**：不要用 API 复制现成用户来建号——`ldap` 字段会被一起复制过去，
@@ -145,7 +145,7 @@ Casdoor v4.4.0 的登录页把应用 Logo 的高度**写死为 40px**（组件�
 
 开发者需要注意：
 
-1. **默认令牌里没有角色和权限**。公司标准是 `JWT-Custom` + 5 个字段，`roles` / `permissions` 不在其中。
+1. **默认令牌里没有角色、权限和群组**。公司标准是 `JWT-Custom` + 5 个字段；LibiaoLink 若按群组限制页面 / 项目，应用必须额外开放 `Groups`。`roles` / `permissions` 不在其中。
    如果应用要按角色或部门放行，二选一：
    - 在该应用的 **Token Fields** 里额外勾上 `Roles`（令牌自解释，接入最简单）；
    - 保持令牌精简，改用 `/api/userinfo` 或权限接口**实时查询**（令牌更小，但要考虑调用开销与缓存）。
@@ -193,7 +193,7 @@ Casdoor v4.4.0 的登录页把应用 Logo 的高度**写死为 40px**（组件�
 | 分类 | 内容 |
 |---|---|
 | 固定带上的标准声明 | `iss`、`sub`、`aud`、`exp`、`nbf`、`iat`、`jti`、`tokenType`、`azp`、`nonce`、`scope` |
-| 勾选的业务字段 | `name`、`owner`、`id`、`displayName`、`email` |
+| 勾选的业务字段 | `name`、`owner`、`id`、`displayName`、`email`（LibiaoLink 群组权限另加 `groups`） |
 | 不带的内容 | 密码、密码盐、手机号、角色、权限等一律不出现（除非显式勾选） |
 
 ### 以「张三」为例（实测结果；姓名、邮箱为示例值，正式用户以 HR 员工数据为准）
@@ -298,7 +298,7 @@ const user = {
 
 | 结论 | 说明 |
 |---|---|
-| Token fields 收敛有效 | 配好后令牌里只有那 5 个业务字段，其余用户字段全部消失 |
+| Token fields 收敛有效 | 配好后令牌里只有勾选的业务字段（公司标准 5 个；LibiaoLink 群组权限另加 `groups`），其余用户字段全部消失 |
 | **Grant Types 拦不住 refresh_token** | 即使只勾 `authorization_code`，授权码流程**仍会返回 refresh_token，且刷新接口可用**（实测 HTTP 200）。要限制长期会话只能靠缩短 Refresh expire，不能指望这个开关 |
 | 标准声明不可裁剪 | `iss`/`sub`/`aud`/`exp` 始终存在，这是 OIDC 规范要求，业务侧必须校验 |
 | `email_verified` | userinfo 里固定返回 `true`（Casdoor 不校验邮箱域名归属） |
@@ -322,6 +322,7 @@ const user = {
 - [ ] 校验了 `iss`、`aud`、`exp`
 - [ ] 处理了 userinfo 与令牌的字段命名差异
 - [ ] 用户唯一标识用 `owner + name`，没有误用 `id`(UUID)
+- [ ] 若按 Casdoor 群组控制页面 / 项目，应用 Token Fields 已勾选 `Groups`，且重新登录后令牌含 `groups`
 - [ ] Client Secret 放在服务端配置或密钥管理里，没有进前端代码或 Git
 - [ ] 会话空闲超时已按应用类型设置（见第二节），且超时后会重新走 SSO 认证
 - [ ] 未登录访问主页直接跳 SSO，看不到本地登录界面；本地管理员入口是隐藏路径且全站无链接
@@ -330,9 +331,11 @@ const user = {
 
 ---
 
-## 十、本地参考实现（当前 Docker 环境）
+## 十、本地参考实现（当前 WSL2 + Docker 环境）
 
 完整配置快照、常用命令与常见问题见 **[本地沙箱说明](./本地沙箱(LibiaoLink%20演练环境).md)**。三条登录路径：
+
+> Windows 本地必须使用 WSL2 Ubuntu 内的原生 Docker Engine，不使用 Docker Desktop；安装与验收见 [Windows 本地开发环境](本地开发环境(Windows-WSL2-Docker).md)。
 
 | 路径 | 入口 | 账号 |
 |---|---|---|

@@ -14,6 +14,8 @@ import type {
   WecomGroupCandidateRow,
   WecomGroupRow,
 } from "../src/modules/notify/notify.group.repository.js";
+import type { DailyReportPosterData } from "../src/modules/notify/daily-report.poster.types.js";
+import type { StageCompletePosterData } from "../src/modules/notify/stage-complete.poster.types.js";
 import { areAllProjectTasksOnTime } from "../src/modules/notify/notify.group.repository.js";
 import {
   composeGroupMarkdown,
@@ -28,6 +30,10 @@ import {
   truncateGroupMarkdown,
 } from "../src/modules/notify/notify.group.service.js";
 import type { AibotIncomingMessage, AibotSendResult, WecomAibotClient } from "../src/modules/notify/wecom.aibot.js";
+import type {
+  ProjectGroupDeliveryAlertPort,
+  ProjectGroupUnavailableReason,
+} from "../src/modules/notify/project-group-delivery-alert.service.js";
 import { FakeNotifyDeliveryArchive } from "./fakes/notify-delivery-archive.fake.js";
 
 const AT = new Date("2026-10-12T06:00:00.000Z");
@@ -35,12 +41,20 @@ const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const PROJECT_2 = "22222222-2222-4222-8222-222222222222";
 const CHATID = "AbcDefGhiJkLmNoPqrStUv-12";
 
+function dailyReportGroupBody(reportId: string): string {
+  return (
+    "日报已送达\n" +
+    "[新能源汽车总装输送线项目2026-10-27的日报记录]" +
+    "(https://pm.libiaorobot.com/#/project/" + PROJECT_ID + "?view=daily&report=" + reportId + ")"
+  );
+}
+
 function groupRow(overrides: Partial<WecomGroupRow> & { projectId: string; chatid: string }): WecomGroupRow {
   return {
     id: 1,
     name: null,
     enabled: true,
-    activatedAt: null,
+    activatedAt: AT,
     createdAt: AT,
     updatedAt: AT,
     ...overrides,
@@ -58,10 +72,13 @@ class FakeGroupRepository {
   candidates: WecomGroupCandidateRow[] = [];
   observeCalls: { chatid: string; name: string | null; at: Date }[] = [];
   managers = new Map<string, string>();
+  projectNames = new Map<string, string>([[PROJECT_ID, "总装输送线项目"]]);
   allTasksOnTime = false;
   projectCompleted = true;
   r06PosterData: R06PosterData | null = null;
   r06PosterError = false;
+  dailyReportPosterData: DailyReportPosterData | null = null;
+  stageCompletePosterData: StageCompletePosterData | null = null;
   setNameCalls: { chatid: string; name: string; at: Date }[] = [];
 
   async findGroupByProject(projectId: string): Promise<WecomGroupRow | null> {
@@ -116,6 +133,10 @@ class FakeGroupRepository {
     return this.managers.get(projectId) ?? null;
   }
 
+  async findProjectName(projectId: string): Promise<string | null> {
+    return this.projectNames.get(projectId) ?? null;
+  }
+
   async areProjectTasksAllOnTime(): Promise<boolean> {
     return this.allTasksOnTime;
   }
@@ -131,6 +152,14 @@ class FakeGroupRepository {
     return this.r06PosterData;
   }
 
+  async findDailyReportPosterData(): Promise<DailyReportPosterData | null> {
+    return this.dailyReportPosterData;
+  }
+
+  async findStageCompletePosterData(): Promise<StageCompletePosterData | null> {
+    return this.stageCompletePosterData;
+  }
+
 }
 
 class FakeAibot {
@@ -143,6 +172,7 @@ class FakeAibot {
     groupActivated?: boolean | null;
   }[] = [];
   replies: { reqId: string; userid: string; content: string; chatid?: string | null }[] = [];
+  events: string[] = [];
   result: AibotSendResult = { ok: true, attempts: 1 };
   imageResult: AibotSendResult = { ok: true, attempts: 1 };
   imageResults = new Map<string, AibotSendResult>();
@@ -163,6 +193,7 @@ class FakeAibot {
     groupActivated?: boolean | null;
   }): Promise<AibotSendResult> {
     this.sends.push(params);
+    this.events.push("markdown");
     return this.result;
   }
 
@@ -174,6 +205,7 @@ class FakeAibot {
     groupActivated?: boolean | null;
   }): Promise<AibotSendResult> {
     this.imageSends.push(params);
+    this.events.push("image");
     return this.imageResults.get(params.fileName) ?? this.imageResult;
   }
 }
@@ -196,6 +228,19 @@ class FakeNotifyInbox {
   }
 }
 
+class FakeDeliveryAlerts implements ProjectGroupDeliveryAlertPort {
+  unavailable: { projectId: string; projectName: string; reason: ProjectGroupUnavailableReason }[] = [];
+  available: string[] = [];
+
+  reportUnavailable(projectId: string, projectName: string, reason: ProjectGroupUnavailableReason): void {
+    this.unavailable.push({ projectId, projectName, reason });
+  }
+
+  reportAvailable(projectId: string): void {
+    this.available.push(projectId);
+  }
+}
+
 function makeService(
   r06ImagePath = "",
   r06OnTimeImagePath = "",
@@ -208,10 +253,12 @@ function makeService(
   aibot: FakeAibot;
   inbox: FakeNotifyInbox;
   archive: FakeNotifyDeliveryArchive;
+  deliveryAlerts: FakeDeliveryAlerts;
 } {
   const repo = new FakeGroupRepository();
   const aibot = new FakeAibot();
   const inbox = new FakeNotifyInbox();
+  const deliveryAlerts = new FakeDeliveryAlerts();
   const clock = new ClockService();
   clock.setSource(() => AT);
   const service = new NotifyGroupService(
@@ -233,8 +280,10 @@ function makeService(
         WECOM_R06_ROCKET_FALLBACK_IMAGE_PATH: rocketFallbackImagePath,
       },
     } as never,
+    {} as never,
+    deliveryAlerts as never,
   );
-  return { service, repo, aibot, inbox, archive: repo.archive };
+  return { service, repo, aibot, inbox, archive: repo.archive, deliveryAlerts };
 }
 
 function claimedRow(payload: Record<string, unknown>, overrides: Partial<OutboxClaimedRow> = {}): OutboxClaimedRow {
@@ -282,6 +331,7 @@ describe("parseGroupMessage / composeGroupMarkdown / truncateGroupMarkdown（纯
       refType: "task",
       refId: PROJECT_2,
       templateCode: null,
+      stageKey: null,
     });
     expect(parseGroupMessage(payload({ title: null }))?.title).toBeNull();
   });
@@ -353,7 +403,7 @@ describe("parseGroupNameCommand（群内群名命令）", () => {
 
 describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分类）", () => {
   it("ok：发送受理 → done + sent 行（sentAt 非空 / error 为空 / attempts=1）", async () => {
-    const { service, repo, aibot, archive } = makeService();
+    const { service, repo, aibot, archive, deliveryAlerts } = makeService();
     repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
 
     const outcome = await service.consume(claimedRow(payload({ title: null })));
@@ -375,7 +425,167 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
       sentAt: AT,
     });
     expect(archive.attempts[0]).toMatchObject({ messageId: archive.messages[0]!.id, channel: "wecom_group" });
+    expect(deliveryAlerts.available).toEqual([PROJECT_ID]);
   });
+
+  it("DAILY_REPORT_GROUP：日报送达文字与纯文字深链保真后，追加日报海报与现场问题专报", async () => {
+    const { service, repo, aibot, archive } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
+    const reportId = "33333333-3333-4333-8333-333333333333";
+    repo.dailyReportPosterData = {
+      projectId: PROJECT_ID,
+      projectCode: "LB-2026-018",
+      projectName: "新能源汽车总装输送线项目",
+      managers: ["王磊"],
+      reportId,
+      reportDate: "2026-10-27",
+      state: "submitted",
+      authorName: "陈工",
+      headcount: 28,
+      doneWork: "1. 完成主线体安装与找平",
+      plan: "1. 完成后续工位安装与联动调试",
+      stages: ["机械安装"],
+      submittedAt: AT.toISOString(),
+      photos: [],
+      issues: [
+        {
+          id: "44444444-4444-4444-8444-444444444444",
+          title: "现场网络切换后仍无法连通",
+          categories: ["供应商原因"],
+          ownerName: "王磊",
+          state: "in_progress",
+          solution: "已更换网口主板，继续观察频闪现象。",
+          photos: [],
+        },
+      ],
+    };
+
+    const outcome = await service.consume(claimedRow(payload({
+      title: null,
+      body: dailyReportGroupBody(reportId),
+      refType: "report",
+      refId: reportId,
+      templateCode: "DAILY_REPORT_GROUP",
+    }), { dedupeKey: "report.group-sync:" + reportId + ":v1" }));
+
+    expect(outcome).toEqual({ outcome: "done" });
+    expect(aibot.events).toEqual(["markdown", "image", "image"]);
+    expect(aibot.sends[0]).toEqual({
+      chatid: CHATID,
+      content:
+        "日报已送达  \n" +
+        "[新能源汽车总装输送线项目2026-10-27的日报记录]" +
+        "(https://pm.libiaorobot.com/#/project/" + PROJECT_ID + "?view=daily&report=" + reportId + ")",
+      groupActivated: true,
+    });
+    expect(aibot.imageSends).toHaveLength(2);
+    for (const image of aibot.imageSends) {
+      expect(image.content.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+      expect(image.content.readUInt32BE(16)).toBe(1440);
+      expect(image.content.readUInt32BE(20)).toBeGreaterThan(500);
+    }
+    expect(aibot.imageSends[0]).toMatchObject({ fileName: "DAILY-2026-10-27-LB-2026-018.png", mime: "image/png" });
+    expect(aibot.imageSends[1]).toMatchObject({ fileName: "ISSUE-2026-10-27-LB-2026-018.png", mime: "image/png" });
+    expect(repo.deliveries[0]).toMatchObject({ state: "sent", attempts: 3 });
+    expect(archive.messages[0]).toMatchObject({ sourceDedupeKey: "report.group-sync:" + reportId + ":v1", attemptCount: 1 });
+    expect(archive.attempts[0]).toMatchObject({ state: "sent", attempts: 3 });
+  }, 20_000);
+
+  it("DAILY_REPORT_GROUP：无问题时只发日报海报，不发空问题专报", async () => {
+    const { service, repo, aibot } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
+    const reportId = "77777777-7777-4777-8777-777777777777";
+    repo.dailyReportPosterData = {
+      projectId: PROJECT_ID,
+      projectCode: "LB-2026-018",
+      projectName: "新能源汽车总装输送线项目",
+      managers: ["王磊"],
+      reportId,
+      reportDate: "2026-10-27",
+      state: "submitted",
+      authorName: "陈工",
+      headcount: 28,
+      doneWork: "1. 完成主线体安装与找平",
+      plan: "1. 完成后续工位安装与联动调试",
+      stages: ["机械安装"],
+      submittedAt: AT.toISOString(),
+      photos: [],
+      issues: [],
+    };
+
+    const outcome = await service.consume(claimedRow(payload({
+      title: null,
+      body: dailyReportGroupBody(reportId),
+      refType: "report",
+      refId: reportId,
+      templateCode: "DAILY_REPORT_GROUP",
+    }), { dedupeKey: "report.group-sync:" + reportId + ":v1" }));
+
+    expect(outcome).toEqual({ outcome: "done" });
+    expect(aibot.events).toEqual(["markdown", "image"]);
+    expect(aibot.imageSends.map((image) => image.fileName)).toEqual([
+      "DAILY-2026-10-27-LB-2026-018.png",
+    ]);
+  }, 20_000);
+
+  it("DAILY_REPORT_GROUP：问题专报失败不重发文字，仍完成本次投递", async () => {
+    const { service, repo, aibot } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
+    const reportId = "55555555-5555-4555-8555-555555555555";
+    repo.dailyReportPosterData = {
+      projectId: PROJECT_ID,
+      projectCode: "LB-2026-018",
+      projectName: "新能源汽车总装输送线项目",
+      managers: ["王磊"],
+      reportId,
+      reportDate: "2026-10-27",
+      state: "submitted",
+      authorName: "陈工",
+      headcount: 28,
+      doneWork: "1. 完成主线体安装与找平",
+      plan: "1. 完成后续工位安装与联动调试",
+      stages: ["机械安装"],
+      submittedAt: AT.toISOString(),
+      photos: [],
+      issues: [
+        {
+          id: "66666666-6666-4666-8666-666666666666",
+          title: "现场网络切换后仍无法连通",
+          categories: ["供应商原因"],
+          ownerName: "王磊",
+          state: "in_progress",
+          solution: "已更换网口主板，继续观察频闪现象。",
+          photos: [],
+        },
+      ],
+    };
+    aibot.imageResults.set("ISSUE-2026-10-27-LB-2026-018.png", {
+      ok: false,
+      kind: "retryable",
+      errcode: null,
+      errmsg: "fake image timeout",
+      retryAt: null,
+      attempts: 1,
+      state: "subscribed",
+    });
+
+    const outcome = await service.consume(claimedRow(payload({
+      title: null,
+      body: dailyReportGroupBody(reportId),
+      refType: "report",
+      refId: reportId,
+      templateCode: "DAILY_REPORT_GROUP",
+    }), { dedupeKey: "report.group-sync:" + reportId + ":v1" }));
+
+    expect(outcome).toEqual({ outcome: "done" });
+    expect(aibot.sends).toHaveLength(1);
+    expect(aibot.events).toEqual(["markdown", "image", "image"]);
+    expect(aibot.imageSends.map((image) => image.fileName)).toEqual([
+      "DAILY-2026-10-27-LB-2026-018.png",
+      "ISSUE-2026-10-27-LB-2026-018.png",
+    ]);
+    expect(repo.deliveries[0]).toMatchObject({ state: "sent", attempts: 3 });
+  }, 20_000);
 
   it("重复消费：归档已 sent → done，不再发起第二次群消息", async () => {
     const { service, repo, aibot, archive } = makeService();
@@ -446,19 +656,20 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
     expect(repo.deliveries[0]).toMatchObject({ state: "failed", attempts: 0, sentAt: null });
   });
 
-  it("permanent（846607 未激活）：dead 行 + dead + B4 降级项目经理站内信（播报类型 + 幂等键后缀）", async () => {
-    const { service, repo, aibot, inbox } = makeService();
-    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID }));
+  it("未激活：发送前置判定转 dead（digest 告警）、不发帧 + B4 降级项目经理站内信", async () => {
+    const { service, repo, aibot, inbox, deliveryAlerts } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: null }));
     repo.managers.set(PROJECT_ID, PROJECT_2);
     aibot.result = { ok: false, kind: "permanent", errcode: 846607, errmsg: "send msg not allowed", retryAt: null, attempts: 1, state: "subscribed" };
 
     const outcome = await service.consume(claimedRow(payload({ templateCode: "A02_GROUP" })));
 
-    expect(outcome).toMatchObject({ outcome: "dead" });
-    if (outcome.outcome === "dead") {
-      expect(outcome.error).toContain("846607");
-    }
-    expect(repo.deliveries[0]).toMatchObject({ state: "dead", attempts: 1, sentAt: null });
+    expect(outcome).toMatchObject({ outcome: "dead", deadAlert: "digest" });
+    expect(aibot.sends).toEqual([]);
+    expect(repo.deliveries[0]).toMatchObject({ state: "dead", attempts: 0, sentAt: null });
+    expect(deliveryAlerts.unavailable).toEqual([
+      { projectId: PROJECT_ID, projectName: "总装输送线项目", reason: "not_activated" },
+    ]);
     expect(inbox.copies).toHaveLength(1);
     expect(inbox.copies[0]!.topic).toBe("notify.group");
     expect(inbox.copies[0]!.dedupeKey).toBe("R03:t-1:2026-09-24:c504");
@@ -467,20 +678,23 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
   });
 
   it("无绑定：dead + 不写投递行（target NOT NULL 无值可落 · 差异登记②）+ B4 降级项目经理站内信", async () => {
-    const { service, repo, aibot, inbox } = makeService();
+    const { service, repo, aibot, inbox, deliveryAlerts } = makeService();
     repo.managers.set(PROJECT_ID, PROJECT_2);
 
     const outcome = await service.consume(claimedRow(payload()));
 
-    expect(outcome).toMatchObject({ outcome: "dead" });
+    expect(outcome).toMatchObject({ outcome: "dead", deadAlert: "digest" });
     expect(repo.deliveries).toEqual([]);
     expect(aibot.sends).toEqual([]);
     expect(inbox.copies).toHaveLength(1);
     expect(inbox.copies[0]!.message).toMatchObject({ recipientId: PROJECT_2, type: "reminder" });
+    expect(deliveryAlerts.unavailable).toEqual([
+      { projectId: PROJECT_ID, projectName: "总装输送线项目", reason: "unbound" },
+    ]);
   });
 
   it("绑定停用：dead 行（target=chatid）+ dead，不发送 + B4 降级", async () => {
-    const { service, repo, aibot, inbox } = makeService();
+    const { service, repo, aibot, inbox, deliveryAlerts } = makeService();
     repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, enabled: false }));
     repo.managers.set(PROJECT_ID, PROJECT_2);
 
@@ -490,6 +704,8 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
     expect(repo.deliveries[0]).toMatchObject({ state: "dead", target: CHATID, attempts: 0 });
     expect(aibot.sends).toEqual([]);
     expect(inbox.copies).toHaveLength(1);
+    expect(deliveryAlerts.unavailable).toEqual([]);
+    expect(deliveryAlerts.available).toEqual([]);
   });
 
   it("降级：PM 解析不到（项目软删 / 不存在）→ 跳过站内信，仍 dead", async () => {
@@ -699,6 +915,87 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("STAGE_COMPLETE_GROUP：文字送达后按阶段真实数据生成 1280x720 海报", async () => {
+    const { service, repo, aibot } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
+    repo.stageCompletePosterData = {
+      projectCode: "LBGW-20260331-1459",
+      projectName: "新能源汽车总装输送线项目",
+      stageKey: "design",
+      completedAt: AT,
+      stages: [
+        { key: "presale", total: 4, done: 4 },
+        { key: "design", total: 5, done: 5 },
+        { key: "purchase", total: 3, done: 0 },
+        { key: "assembly", total: 6, done: 3 },
+        { key: "install", total: 19, done: 16 },
+        { key: "deploy", total: 4, done: 0 },
+        { key: "trial", total: 2, done: 0 },
+        { key: "production", total: 1, done: 0 },
+        { key: "acceptance", total: 1, done: 0 },
+      ],
+    };
+
+    const outcome = await service.consume(
+      claimedRow(
+        payload({
+          title: "阶段完成｜设计开发",
+          body: "「设计开发」阶段 5 项小任务已全部完成，阶段里程碑达成。",
+          refType: "task",
+          refId: PROJECT_2,
+          templateCode: "STAGE_COMPLETE_GROUP",
+          stageKey: "design",
+        }),
+      ),
+    );
+
+    expect(outcome).toEqual({ outcome: "done" });
+    expect(aibot.imageSends).toHaveLength(1);
+    const image = aibot.imageSends[0]!;
+    expect(image.fileName).toBe("STAGE-LBGW-20260331-1459-design.png");
+    expect(image.mime).toBe("image/png");
+    expect(image.content.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    expect(image.content.readUInt32BE(16)).toBe(1280);
+    expect(image.content.readUInt32BE(20)).toBe(720);
+    expect(repo.deliveries[0]).toMatchObject({ state: "sent", attempts: 2 });
+  });
+
+  it("STAGE_COMPLETE_GROUP：阶段键缺失或海报发送失败只留文字，不回滚已送达消息", async () => {
+    const { service, repo, aibot } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
+    let outcome = await service.consume(
+      claimedRow(payload({ templateCode: "STAGE_COMPLETE_GROUP", title: "阶段完成", body: "本阶段已全部完成" })),
+    );
+    expect(outcome).toEqual({ outcome: "done" });
+    expect(aibot.imageSends).toHaveLength(0);
+
+    aibot.imageResult = {
+      ok: false,
+      kind: "retryable",
+      errcode: null,
+      errmsg: "素材上传回执超时",
+      retryAt: null,
+      attempts: 0,
+      state: "subscribed",
+    };
+    repo.stageCompletePosterData = {
+      projectCode: "P-001",
+      projectName: "测试项目",
+      stageKey: "design",
+      completedAt: AT,
+      stages: [{ key: "design", total: 5, done: 5 }],
+    };
+    outcome = await service.consume(
+      claimedRow(
+        payload({ templateCode: "STAGE_COMPLETE_GROUP", stageKey: "design", title: "阶段完成", body: "本阶段已全部完成" }),
+        { id: 8, dedupeKey: "stage.completed:test" },
+      ),
+    );
+    expect(outcome).toEqual({ outcome: "done" });
+    expect(aibot.imageSends).toHaveLength(1);
+    expect(repo.deliveries.at(-1)).toMatchObject({ state: "sent" });
   });
 
   it("R06_GROUP：默认按真实项目数据生成 900x1350 动态海报", async () => {
@@ -949,7 +1246,7 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
 describe("NotifyGroupService.activateFromCallback（群回调 ingest）", () => {
   it("未激活绑定：置位（activated_at = 回调时刻），不写候选", async () => {
     const { service, repo } = makeService();
-    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID }));
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: null }));
 
     await service.activateFromCallback(incoming());
 
@@ -1031,7 +1328,7 @@ describe("NotifyGroupService.activateFromCallback（群回调 ingest）", () => 
 
   it("已绑定未激活 + 群名命令：激活并更新名称", async () => {
     const { service, repo } = makeService();
-    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID }));
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: null }));
 
     await service.activateFromCallback(incoming({ msgtype: "text", text: "群名：新名称" }));
 

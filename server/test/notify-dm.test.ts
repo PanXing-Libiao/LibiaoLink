@@ -441,7 +441,7 @@ function makeService(envOverrides: Record<string, unknown> = {}): {
 }
 
 function contact(overrides: Partial<WecomDmContact> = {}): WecomDmContact {
-  return { id: USER_ID, status: "active", removedAt: null, ...overrides };
+  return { id: USER_ID, displayName: "张三", status: "active", removedAt: null, ...overrides };
 }
 
 function activation(overrides: Partial<DmActivationRow> = {}): DmActivationRow {
@@ -658,24 +658,51 @@ describe("NotifyDmService.consume（三分类 + 留痕 + 降级 + 绑定行寻�
     expect(await made.service.consume(claimedRow(payload()))).toEqual({ outcome: "done" });
   });
 
-  it("未绑定企微（无绑定行）：不发帧 + dead 行（target=user:<id>）+ D4 绑定指引降级", async () => {
+  it("未绑定企微（无绑定行）：不发帧 + dead 行（target=user:<id>）+ D4 绑定指引降级 + 专用告警", async () => {
     const { service, repo, aibot, inbox } = makeService();
     repo.contacts.set(USER_ID, contact());
 
     const outcome = await service.consume(claimedRow(payload()));
 
-    expect(outcome.outcome).toBe("dead");
+    expect(outcome).toMatchObject({
+      outcome: "dead",
+      error: "收件人未绑定企业微信（张三，无可投递地址）",
+      alert: {
+        message: "消息类型：任务节点完成\n未绑定企业微信的收件人：张三",
+        impact: null,
+        action: "请提醒相关收件人及时绑定企业微信",
+      },
+    });
+    expect(JSON.stringify(outcome)).not.toContain("notify.message#");
+    expect(JSON.stringify(outcome)).not.toContain("R02:t-1:v5:aibot");
     expect(aibot.sends).toEqual([]);
     expect(repo.deliveries[0]).toMatchObject({
       state: "dead",
       target: "user:" + USER_ID,
       attempts: 0,
-      error: "收件人未绑定企业微信（无可投递地址）",
+      error: "收件人未绑定企业微信（张三，无可投递地址）",
     });
     expect(inbox.copies).toHaveLength(1);
     expect(inbox.copies[0]!.dedupeKey).toBe("R02:t-1:v5:aibot:c504");
     expect(String(inbox.copies[0]!.message.body)).toContain("节点：到货验收 负责人：张工");
     expect(String(inbox.copies[0]!.message.body)).toContain("当前用户未绑定企业微信，请前往设置补绑");
+  });
+
+  it("未绑定企微且姓名未登记：专用告警回落为姓名未登记", async () => {
+    const { service, repo } = makeService();
+    repo.contacts.set(USER_ID, contact({ displayName: "   " }));
+
+    const outcome = await service.consume(claimedRow(payload({ title: "⏰ 任务即将延期提醒" })));
+
+    expect(outcome).toMatchObject({
+      outcome: "dead",
+      error: "收件人未绑定企业微信（姓名未登记，无可投递地址）",
+      alert: {
+        message: "消息类型：⏰ 任务即将延期提醒\n未绑定企业微信的收件人：姓名未登记",
+        impact: null,
+        action: "请提醒相关收件人及时绑定企业微信",
+      },
+    });
   });
 
   it("用户关闭企微单聊提醒：不发帧 + 投递行 dead + outbox done 收口", async () => {

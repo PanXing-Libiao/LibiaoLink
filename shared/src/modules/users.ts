@@ -1,6 +1,8 @@
 import { z } from "../zod.ts";
 import { DateOnlySchema, DateTimeSchema, PageQuerySchema, UuidSchema, paginated } from "../common/conventions.ts";
 
+const SAVED_HOME_FILTER_VALUES_LIMIT = 200;
+
 /** 用户状态（users.status）：离职 / 停用由组织同步维护；非 active 的登录会话立即失效（v0.3 §3.2）。 */
 export const UserStatusSchema = z.enum(["active", "disabled"]).openapi("UserStatus", {
   description: "用户状态；非 active 时该用户全部会话被撤销",
@@ -43,9 +45,9 @@ export const SavedHomeFilterSchema = z
   .object({
     id: z.string().min(1).max(64).openapi({ description: "组合 id（前端生成 sf- 前缀；跨设备同步后保持不变）" }),
     name: z.string().min(1).max(20).openapi({ description: "组合名称（≤ 20 字）" }),
-    regions: z.array(z.string()).openapi({ description: "地区字典码（多值任一命中）" }),
-    projectTypes: z.array(z.string()).openapi({ description: "项目类型字典码（多值任一命中）" }),
-    managerIds: z.array(z.string()).openapi({ description: "项目经理 id 列表（用户目录 id；多值任一命中）" }),
+    regions: z.array(z.string()).max(SAVED_HOME_FILTER_VALUES_LIMIT).openapi({ description: "地区字典码（多值任一命中，≤ 200 项）" }),
+    projectTypes: z.array(z.string()).max(SAVED_HOME_FILTER_VALUES_LIMIT).openapi({ description: "项目类型字典码（多值任一命中，≤ 200 项）" }),
+    managerIds: z.array(z.string()).max(SAVED_HOME_FILTER_VALUES_LIMIT).openapi({ description: "项目经理 id 列表（用户目录 id；多值任一命中，≤ 200 项）" }),
     timeFrom: DateOnlySchema.nullable().openapi({ description: "项目时间区间起（闭区间；与 timeTo 成对，单边不生效）" }),
     timeTo: DateOnlySchema.nullable().openapi({ description: "项目时间区间止（闭区间；与 timeFrom 成对，单边不生效）" }),
   })

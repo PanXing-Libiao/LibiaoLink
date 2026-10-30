@@ -2,13 +2,13 @@
  * M3-07 刀 3 · 添加任务模板化（A1-16 / A1-17 / A11）：
  * - POST /projects/{id}/tasks 的 sourceNodeId（节点库来源）：描述 / 英文名 / 阶段取节点现值、成员可建、按项目判重 409；
  * - POST /projects/{id}/tasks/from-template（模板实例化）：「整套添加」整批落库 + skipped 清单 + 同事务 + 位次。
- * 替身测试（仓储 / 门禁 / 审计 / 角色 / 节点库 / 模板服务替身），不连库、不起 Nest。
+ * 替身测试（仓储 / 门禁 / 审计 / 部门权限 / 节点库 / 模板服务替身），不连库、不起 Nest。
  */
 import { describe, expect, it } from "vitest";
 import type { AuditService } from "../src/modules/admin/index.js";
 import { AppError } from "../src/common/errors/app-error.js";
 import type { DatabaseService } from "../src/db/database.service.js";
-import type { RoleService } from "../src/modules/identity/index.js";
+import type { PermissionService } from "../src/modules/permission/index.js";
 import type { TaskGateRepository } from "../src/modules/task/task.gate.repository.js";
 import type { TaskInsertInput, TaskProjectRow, TaskRepository, TaskRow } from "../src/modules/task/task.repository.js";
 import { TaskService } from "../src/modules/task/task.service.js";
@@ -73,6 +73,11 @@ function makeRow(overrides: Partial<TaskRow> = {}): TaskRow {
 
 /** 任务仓储替身：只实现 create / createFromTemplate 用到的读与写。 */
 class FakeTaskRepository {
+  async lockStageCompletion(): Promise<void> {}
+  async countStageTasks(): Promise<{ total: number; done: number; deliveryReady: number }> {
+    return { total: 0, done: 0, deliveryReady: 0 };
+  }
+
   project: TaskProjectRow = { id: PROJECT, managerIds: [MANAGER], stageKey: "presale", status: "active" };
   /** 节点库来源判重表：sourceNodeId → 已存在任务 id。 */
   bySourceNode = new Map<string, string>();
@@ -156,10 +161,9 @@ class FakeTemplateService {
   }
 }
 
-class FakeRoleService {
-  roleCodes: string[] = [];
-  async getActorAuthorization(): Promise<{ roleCodes: string[] }> {
-    return { roleCodes: this.roleCodes };
+class FakePermissionService {
+  async canManageGroupAccess(): Promise<boolean> {
+    return false;
   }
 }
 
@@ -190,7 +194,7 @@ function makeService(
   repo: FakeTaskRepository,
   nodes: FakeTaskNodeRepository = new FakeTaskNodeRepository(),
   templates: FakeTemplateService = new FakeTemplateService(),
-  roles: FakeRoleService = new FakeRoleService(),
+  permission: FakePermissionService = new FakePermissionService(),
 ): { service: TaskService; audit: FakeAuditService; database: FakeDatabase } {
   const database = new FakeDatabase();
   const audit = new FakeAuditService();
@@ -198,7 +202,7 @@ function makeService(
     database as unknown as DatabaseService,
     repo as unknown as TaskRepository,
     {} as unknown as TaskGateRepository,
-    roles as unknown as RoleService,
+    permission as unknown as PermissionService,
     audit as unknown as AuditService,
     nodes as unknown as TaskNodeRepository,
     templates as unknown as TemplateService,

@@ -24,6 +24,7 @@ import { FakeNotifyDeliveryArchive } from "./fakes/notify-delivery-archive.fake.
 const ME = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1";
 const OTHER = "b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2";
 const REF_A = "11111111-1111-4111-8111-111111111111";
+const PROJECT_A = "22222222-2222-4222-8222-222222222222";
 const DAY_MS = 86_400_000;
 
 /** 固定时钟：上海 2026-09-28 14:00（= UTC 06:00，非免打扰）。 */
@@ -44,6 +45,8 @@ class FakeNotifyRepository {
   failInsert = false;
   /** 模拟「查到主行后、落合并前主行被删除 / 标读」的条件更新失败。 */
   mergeConflict = false;
+  /** 站内信关联对象 → 所属项目（测试直接给映射，真实实现见 NotifyRepository）。 */
+  projectIds = new Map<string, string>();
   private seq = 0;
 
   async insertMessage(input: NotifyMessageInsert, _tx?: unknown): Promise<NotifyMessageRow | null> {
@@ -138,6 +141,17 @@ class FakeNotifyRepository {
         row.deliveredAt !== null &&
         row.deliveredAt.getTime() >= since.getTime(),
     ).length;
+  }
+
+  async resolveProjectIds(refs: readonly { refType: string | null; refId: string | null }[]): Promise<Map<string, string>> {
+    const result = new Map<string, string>();
+    for (const ref of refs) {
+      if (ref.refType === null || ref.refId === null) continue;
+      const key = ref.refType + ":" + ref.refId;
+      const projectId = this.projectIds.get(key);
+      if (projectId !== undefined) result.set(key, projectId);
+    }
+    return result;
   }
 
   async listInbox(recipientId: string, filter: NotifyInboxFilter): Promise<{ rows: NotifyMessageRow[]; total: number }> {
@@ -513,6 +527,7 @@ describe("站内信投递（S7-4 · j1 / M5-04 首刀）", () => {
 
   it("收件箱：过滤（状态 / 类型 / 关联对象 / 区间）+ 未读角标 + 分页；未投递与合并子行不返回", async () => {
     const repo = new FakeNotifyRepository();
+    repo.projectIds.set("task:" + REF_A, PROJECT_A);
     const service = makeService(repo, DAYTIME);
     await service.consume(claimedRow(payload({ templateCode: "R02", refType: "task", refId: REF_A })));
     await service.consume(
@@ -529,6 +544,7 @@ describe("站内信投递（S7-4 · j1 / M5-04 首刀）", () => {
     expect(reminders.unreadCount).toBe(3);
     const byRef = await service.list(ME, { refType: "task", page: 1, limit: 50 });
     expect(byRef.items.map((item) => item.refType)).toEqual(["task"]);
+    expect(byRef.items[0]?.projectId).toBe(PROJECT_A);
     const paged = await service.list(ME, { page: 2, limit: 2 });
     expect(paged.items.map((item) => item.id)).toEqual([1]);
 

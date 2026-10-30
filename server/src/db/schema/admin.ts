@@ -78,6 +78,10 @@ export const auditLogs = pgTable(
     objectType: text("object_type").notNull(),
     objectId: text("object_id").notNull(),
     projectId: uuid("project_id"),
+    /** 所属项目编号快照：项目彻底删除后仍保留操作记录上下文；查询时优先当前项目。 */
+    projectCode: text("project_code"),
+    /** 所属项目名称快照：项目彻底删除后仍保留操作记录上下文；查询时优先当前项目。 */
+    projectName: text("project_name"),
     result: text("result").notNull().default("succeeded"),
     entry: text("entry").notNull().default("api"),
     summary: text("summary").notNull().default(""),

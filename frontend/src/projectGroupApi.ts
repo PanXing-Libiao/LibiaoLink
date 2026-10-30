@@ -16,6 +16,8 @@ export type ProjectGroupBinding = {
   name: string | null;
   chatidMasked: string | null;
   activated: boolean;
+  /** 服务端按内部 actor 身份裁决；前端不得用 SSO user.id 与项目内部 managerIds 直接比较。 */
+  canManage: boolean;
   updatedAt: string | null;
 };
 

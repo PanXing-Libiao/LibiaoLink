@@ -49,7 +49,7 @@ export class FileDownloadService {
     await this.permission.assertCan(
       actorId,
       "file.download",
-      { member: access.member, projectManager: access.projectManager },
+      { member: access.member, projectManager: access.projectManager, groupAccessLevel: access.groupAccessLevel },
       "无权限下载文件（file.download）",
     );
     const version = await this.repository.findVersionById(file.id, versionId);

@@ -21,7 +21,7 @@
  *   ⑥ 图片行 40×40 缩略图 → 大图预览浮层（短时签名 URL）；Esc 先关浮层、抽屉仍在；
  *   ⑦ 文件名可改：点名字进编辑，只改主名（后缀保留）；Enter 提交 / Esc 取消 / 空名不写回；
  *   ⑧ 抽屉内「删除」= 二次确认 → 移入回收站（清单 / 计数回落，recycled 不进读面）；
- *   ⑨ PDF：点「预览」→ 浏览器内置查看器浮层（iframe 短时签名 URL，PDF 源直通）；Esc 先关浮层；
+ *   ⑨ PDF：点「预览」→ PDF.js 本地分页浮层（直签原件；无 DocServer / iframe）；Esc 先关浮层；
  *   ⑩ 下载 = 原文件（抽屉每行「下载」+ 预览浮层「下载原文件」；attachment 签名落盘 + download 审计）；
  *   ⑪ 「文件」列下拉交互（Push 246 · 业务口径 2026-10-08「点击后出现右侧下拉框 / 点文件名预览 / 删除按钮」）：
  *      点文件名 = 预览浮层（Esc 先关浮层）；Esc 先关下拉（任务行 / 详情抽屉不被连带）；行尾「删除」= 红胶囊按钮 → 行内二次确认 → 移入回收站（清单 / 单元格回落）；
@@ -599,7 +599,7 @@ const cellBack2 = await waitCellHas([filePngRenamed, "+1"], 20000);
 const cellBack2Text = String(await ev(CELL_TEXT_PROBE));
 check("④m 表格「文件」列 = 改名后的 PNG + 「+1」（recycled 不进列 / 无「N 份」）", cellBack2 === true && cellBack2Text === filePngRenamed + "+1", cellBack2Text);
 
-// ⑤（续三）PDF 点击预览（业务口径 2026-09-29「这个pdf我也打不开啊」）：PDF 源直通 → 内置查看器 iframe
+// ⑤（续三）PDF 点击预览：服务端直签原件 → 前端 PDF.js 本地分页渲染（不再创建 ONLYOFFICE 会话）
 await setFileInput(DRAWER_INPUT, filePdfPath);
 const fourthLanded = await waitForAsync(async () => (await db.query("select count(*)::int as c from files where task_id = $1", [taskId])).rows[0].c === 4, 30000);
 const pdfRow = (await db.query("select id, name, status from files where task_id = $1 and name = $2", [taskId, filePdfName])).rows[0];
@@ -611,14 +611,14 @@ check("④o2 清单三行 + 「文件」列 = 最新 PDF 名 + 「+2」", drawer
 const pdfPoint = await fileRowPoint(filePdfName, "[data-file-preview-open=true]");
 if (pdfPoint === null || pdfPoint === undefined) await bail("PDF 行没有预览入口（data-file-preview-open）");
 await clickAt(pdfPoint);
-const pdfPreviewShown = await waitFor("(function(){return document.querySelector(" + j("[data-file-preview-kind=pdf]") + ")!==null&&document.querySelector(" + j("[data-oo-status=ready]") + ")!==null;})()", 60000);
-const pdfPreviewInfo = pdfPreviewShown === true ? await ev("(function(){var el=document.querySelector(" + j("[data-file-preview]") + ");if(el===null){return {open:false};}var v=el.querySelector(" + j("[data-onlyoffice-viewer=true]") + ");var dl=el.querySelector(" + j("[data-file-preview-download=true]") + ");return {open:true,viewer:v!==null,status:v===null?null:v.getAttribute(" + j("data-oo-status") + "),frames:v===null?0:v.querySelectorAll(" + j("iframe") + ").length,download:dl!==null,drawer:document.querySelector(" + j(DRAWER) + ")!==null};})()") : { open: false, viewer: false, status: null, frames: 0, download: false, drawer: false };
-check("④o3 点「预览」→ PDF 走 ONLYOFFICE 查看器（data-oo-status=ready + 编辑器 iframe 在位；caption 带「下载原文件」入口）", pdfPreviewInfo.open === true && pdfPreviewInfo.viewer === true && pdfPreviewInfo.status === "ready" && pdfPreviewInfo.frames >= 1 && pdfPreviewInfo.download === true && pdfPreviewInfo.drawer === true, JSON.stringify(pdfPreviewInfo));
+const pdfPreviewShown = await waitFor("(function(){var v=document.querySelector(" + j("[data-pdf-viewer=true]") + ");return document.querySelector(" + j("[data-file-preview-kind=pdf]") + ")!==null&&v!==null&&v.getAttribute(" + j("data-pdf-status") + ")===" + j("ready") + ";})()", 90000);
+const pdfPreviewInfo = pdfPreviewShown === true ? await ev("(function(){var el=document.querySelector(" + j("[data-file-preview]") + ");if(el===null){return {open:false};}var v=el.querySelector(" + j("[data-pdf-viewer=true]") + ");var c=v===null?null:v.querySelector(" + j("canvas") + ");var dl=el.querySelector(" + j("[data-file-preview-download=true]") + ");return {open:true,pdf:v!==null,status:v===null?null:v.getAttribute(" + j("data-pdf-status") + "),canvas:c!==null&&c.width>0&&c.height>0,frames:el.querySelectorAll(" + j("iframe") + ").length,download:dl!==null,drawer:document.querySelector(" + j(DRAWER) + ")!==null};})()") : { open: false, pdf: false, status: null, canvas: false, frames: 0, download: false, drawer: false };
+check("④o3 点「预览」→ PDF 直签原件并由 PDF.js 本地渲染（data-pdf-status=ready + canvas 在位 + 无 ONLYOFFICE iframe；caption 带「下载原文件」入口）", pdfPreviewInfo.open === true && pdfPreviewInfo.pdf === true && pdfPreviewInfo.status === "ready" && pdfPreviewInfo.canvas === true && pdfPreviewInfo.frames === 0 && pdfPreviewInfo.download === true && pdfPreviewInfo.drawer === true, JSON.stringify(pdfPreviewInfo));
 const pdfShot = await page.send("Page.captureScreenshot", { format: "png" });
 writeFileSync(join(SCREENSHOT_DIR, "m4-07-pdf-preview.png"), Buffer.from(pdfShot.data, "base64"));
 console.log("截图：" + join(SCREENSHOT_DIR, "m4-07-pdf-preview.png"));
 const escPdf = await waitForAsync(async () => {
-  // 编辑器 iframe 会抢焦点：先 blur 回上层文档再发 Esc（与 ④q2 同一对抗手法）
+  // 与 ④q2 同一对抗手法：先 blur 当前焦点再发 Esc，确保浮层捕获层收到按键
   await ev("(function(){if(document.activeElement&&document.activeElement.blur){document.activeElement.blur();}return true;})()");
   await pressKey("Escape", "Escape", 27);
   return (await ev("(function(){return document.querySelector(" + j("[data-file-preview]") + ")===null&&document.querySelector(" + j(DRAWER) + ")!==null;})()")) === true;
@@ -1214,11 +1214,11 @@ console.log("截图：" + join(SCREENSHOT_DIR, "m4-07-drawer-change-modal.png"))
 // ④u6c（Push 256 续 · 业务口径「这两个要可以点击 点击文件预览」）：点弹窗「变更后文件」卡 → 弹内版本态预览（z 高于弹窗）；
 // Esc 先关预览浮层（弹窗仍在 —— 「Esc 先关内层」两层）。
 const modalCardPoint = await clickScrolled("[data-change-modal] [data-change-modal-file-open]");
-const modalPreviewShown = await waitFor("document.querySelector(" + j("[data-file-preview]") + ")!==null&&document.querySelector(" + j("[data-change-modal]") + ")!==null", 25000);
-const modalPreviewInfo = modalPreviewShown === true ? await ev("(function(){var el=document.querySelector(" + j("[data-file-preview]") + ");if(el===null){return null;}return {kind:el.getAttribute(" + j("data-file-preview-kind") + "),oo:el.querySelector(" + j("[data-oo-status]") + ")!==null,frame:el.querySelector(" + j("[data-file-preview-frame]") + ")!==null,caption:el.innerText.slice(0,120)};})()") : null;
-check("④u6c 弹窗「变更后文件」卡可点击 = 预览（查看器外壳 / iframe 在位 + 标题 = 变更选择的文件名；PDF 自 2026-10-08 统一 ONLYOFFICE）",
+const modalPreviewShown = await waitFor("(function(){var v=document.querySelector(" + j("[data-pdf-viewer=true]") + ");return document.querySelector(" + j("[data-file-preview]") + ")!==null&&document.querySelector(" + j("[data-change-modal]") + ")!==null&&v!==null&&v.getAttribute(" + j("data-pdf-status") + ")===" + j("ready") + ";})()", 90000);
+const modalPreviewInfo = modalPreviewShown === true ? await ev("(function(){var el=document.querySelector(" + j("[data-file-preview]") + ");if(el===null){return null;}var v=el.querySelector(" + j("[data-pdf-viewer=true]") + ");var c=v===null?null:v.querySelector(" + j("canvas") + ");return {kind:el.getAttribute(" + j("data-file-preview-kind") + "),pdf:v!==null,oo:el.querySelector(" + j("[data-oo-status]") + ")!==null,frame:el.querySelector(" + j("[data-file-preview-frame]") + ")!==null,canvas:c!==null&&c.width>0&&c.height>0,caption:el.innerText.slice(0,120)};})()") : null;
+check("④u6c 弹窗「变更后文件」卡可点击 = 预览（PDF.js 就绪 + canvas 在位 + 无 ONLYOFFICE / iframe + 标题 = 变更选择的文件名）",
   modalCardPoint === true && modalPreviewShown === true && modalPreviewInfo !== null && modalPreviewInfo !== undefined
-  && (modalPreviewInfo.oo === true || modalPreviewInfo.frame === true) && String(modalPreviewInfo.caption).indexOf(changeAfterName) >= 0,
+  && modalPreviewInfo.kind === "pdf" && modalPreviewInfo.pdf === true && modalPreviewInfo.canvas === true && modalPreviewInfo.oo === false && modalPreviewInfo.frame === false && String(modalPreviewInfo.caption).indexOf(changeAfterName) >= 0,
   JSON.stringify(modalPreviewInfo));
 // 关弹内预览：先 Esc；若按键被 ONLYOFFICE 编辑器 iframe 吞掉（DocServer 在线时焦点在编辑器内）→ 点遮罩关闭。
 // 两种关法都要求「弹窗 + 抽屉仍在」（Esc 先关内层）。
@@ -1319,14 +1319,14 @@ if (beforePreviewClosed !== true) {
 check("④u8c 关预览浮层（Esc；编辑器持焦时点遮罩）= 变更记录页仍在（「Esc 先关内层」）", beforePreviewClosed === true, String(beforePreviewClosed));
 
 // ④u8d（Push 256 · 业务口径「变更后文件的名字后后缀要用变更选择的 不然都不能预览」）：变更后版本按**新扩展名**预览 ——
-// v2 对象键 = .pdf → 预览通道 = pdf（浏览器内置查看器 iframe；不再因沿用旧扩展名被 ONLYOFFICE 判「扩展名不一致」拒开）；
+// v2 对象键 = .pdf → 服务端直签原件 + 前端 PDF.js 本地渲染（不再是 ONLYOFFICE / 浏览器内置 iframe）；
 // 浮层标题 = 变更选择的文件名（当前名 + v2 扩展名）。Esc 关浮层后抽屉仍在。
 const afterPreviewPoint = await clickScrolled("[data-change-preview=after]");
-const afterPreviewShown = await waitFor("document.querySelector(" + j("[data-file-preview]") + ")!==null&&document.querySelector(" + j("[data-drawer-page=history]") + ")!==null", 25000);
-const afterPreviewInfo = afterPreviewShown === true ? await ev("(function(){var el=document.querySelector(" + j("[data-file-preview]") + ");if(el===null){return null;}return {open:true,kind:el.getAttribute(" + j("data-file-preview-kind") + "),oo:el.querySelector(" + j("[data-oo-status]") + ")!==null,frame:el.querySelector(" + j("[data-file-preview-frame]") + ")!==null,caption:el.innerText.slice(0,120)};})()") : null;
-check("④u8d 变更记录「变更后」版本按新扩展名预览（查看器外壳 / iframe 在位 + 标题 = 变更选择的文件名 .pdf —— 替换效果生效，不再被「扩展名不一致」拒开）",
+const afterPreviewShown = await waitFor("(function(){var v=document.querySelector(" + j("[data-pdf-viewer=true]") + ");return document.querySelector(" + j("[data-file-preview]") + ")!==null&&document.querySelector(" + j("[data-drawer-page=history]") + ")!==null&&v!==null&&v.getAttribute(" + j("data-pdf-status") + ")===" + j("ready") + ";})()", 90000);
+const afterPreviewInfo = afterPreviewShown === true ? await ev("(function(){var el=document.querySelector(" + j("[data-file-preview]") + ");if(el===null){return null;}var v=el.querySelector(" + j("[data-pdf-viewer=true]") + ");var c=v===null?null:v.querySelector(" + j("canvas") + ");return {open:true,kind:el.getAttribute(" + j("data-file-preview-kind") + "),pdf:v!==null,oo:el.querySelector(" + j("[data-oo-status]") + ")!==null,frame:el.querySelector(" + j("[data-file-preview-frame]") + ")!==null,canvas:c!==null&&c.width>0&&c.height>0,caption:el.innerText.slice(0,120)};})()") : null;
+check("④u8d 变更记录「变更后」版本按新扩展名预览（PDF.js 就绪 + canvas 在位 + 无 ONLYOFFICE / iframe + 标题 = 变更选择的文件名 .pdf —— 替换效果生效，不再被「扩展名不一致」拒开）",
   afterPreviewPoint === true && afterPreviewShown === true && afterPreviewInfo !== null && afterPreviewInfo !== undefined
-  && (afterPreviewInfo.oo === true || afterPreviewInfo.frame === true) && String(afterPreviewInfo.caption).indexOf(changeAfterName) >= 0,
+  && afterPreviewInfo.kind === "pdf" && afterPreviewInfo.pdf === true && afterPreviewInfo.canvas === true && afterPreviewInfo.oo === false && afterPreviewInfo.frame === false && String(afterPreviewInfo.caption).indexOf(changeAfterName) >= 0,
   JSON.stringify(afterPreviewInfo));
 await pressKey("Escape", "Escape", 27);
 let afterPreviewClosed = await waitFor("(function(){return document.querySelector(" + j("[data-file-preview]") + ")===null&&document.querySelector(" + j(DRAWER) + ")!==null;})()", 2500);

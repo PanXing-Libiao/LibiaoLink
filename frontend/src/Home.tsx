@@ -29,6 +29,7 @@ import { PROJECT_STATUS_VALUES, projectManagerText } from "./types";
 import { isLocalizedLocale, projectStatusTextOf, projectTypeText, prefetchLocalizedText, useLocale, useT } from "./i18n";
 import type { Locale } from "./i18n";
 import { regionNameEn } from "./data/regionPicker";
+import { useMyPermissions } from "./permissions";
 import type { MeResponse, Project } from "./types";
 
 type HomeProps = {
@@ -41,11 +42,11 @@ type HomeProps = {
   dictTools: DictTools;
   /** 是否持有 dict.manage（Push 172）：决定「＋ 添加项目类型」与两类条目删除入口的呈现。 */
   canManageDicts: boolean;
-  /** 是否持有 project.delete（Push 172）：决定卡片上删除项目入口的呈现（服务端仍是最终裁决）。 */
+  /** 是否持有 project.delete：功能位门槛；卡片再叠加当前项目的 groupAccessLevel === "edit"（服务端仍是最终裁决）。 */
   canDeleteProject: boolean;
-  /** 是否持有 project.create（Push 173）：无权限时「新建项目」出禁用观感、点击给提示条（服务端仍是最终裁决）。 */
+  /** 是否具备新建项目能力（功能位 + 全部 / 自己的项目编辑）：无权限时「新建项目」出禁用观感、点击给提示条。 */
   canCreateProject: boolean;
-  /** 是否持有 project.update（Push 173）：无权限时卡片编辑入口不渲染（与删除同款收敛口径）。 */
+  /** 是否持有 project.update：功能位门槛；卡片再叠加当前项目的 groupAccessLevel === "edit"（服务端仍是最终裁决）。 */
   canUpdateProject: boolean;
   /** 是否持有 project.export：无权限时卡片导出入口不渲染（服务端仍是最终裁决）。 */
   canExportProject: boolean;
@@ -115,6 +116,7 @@ type LoadError =
 export default function Home({ me, dicts, directory, dictTools, canManageDicts, canDeleteProject, canCreateProject, canUpdateProject, canExportProject, onExportProject, exportingProjectId, onDeleteProject, onCreate, onEdit, refreshToken, savedFilters, onSavedFiltersChange }: HomeProps) {
   const t = useT();
   const locale = useLocale();
+  const permissions = useMyPermissions();
   /** 无建项目权限提示（Push 173 口径；文案随语言切换）。 */
   const noCreatePermission = t("home.noCreatePermission");
 
@@ -138,8 +140,9 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   // 选中文件即打开；关闭 / 导入完成清空。同一文件重复选也要能重开（onChange 里把 value 复位）。
   const [importFile, setImportFile] = useState<File | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
-  // 导入说明浮层（Push 329 · 2026-10-15）：点击「导入说明」= 系统内浮层预览（复用文件预览浮层 · iframe 浏览器内置 PDF 渲染 · Esc / 点遮罩关闭），不开新标签页。
+  // 导入说明浮层（Push 329 · 2026-10-15；2026-10-28 PDF.js 修订）：点击「导入说明」= 系统内浮层预览（复用文件预览浮层 · PDF.js 本地分页 · Esc / 点遮罩关闭），不开新标签页。
   const [guideOpen, setGuideOpen] = useState(false);
+  const [guideNonce, setGuideNonce] = useState(0);
   const onImportFileChange = (event: ChangeEvent<HTMLInputElement>): void => {
     const picked = event.target.files?.[0] ?? null;
     event.target.value = "";
@@ -176,6 +179,22 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
   const query = activeFilters.q;
   const keyword = query.trim();
   const hasFilters = hasListFilters(activeFilters);
+  const permissionEmpty = !hasFilters && keyword === "" && permissions?.groupProjectAccess === "empty";
+  const currentPermissionText = permissions === null || permissions.groupScopePermissions.length === 0
+    ? null
+    : t("access.currentPermissionScopes", {
+      scopes: permissions.groupScopePermissions
+        .map((permission) => {
+          const scope = permission.projectScope === "all"
+            ? t("access.scope.all")
+            : permission.projectScope === "own"
+              ? t("access.scope.own")
+              : t("access.scope.selected");
+          const level = permission.accessLevel === "edit" ? t("access.level.edit") : t("access.level.view");
+          return scope + " · " + level;
+        })
+        .join(t("access.permissionSeparator")),
+    });
   const sortDesc = activeFilters.sortDesc;
   const dateRange: DateRange | null =
     activeFilters.timeFrom !== null && activeFilters.timeTo !== null
@@ -510,8 +529,8 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
         }}
       />
 
-      <main className={"@container w-full pt-0 pb-10 pr-6 pl-6 transition-[padding-left] duration-300 ease-out " + (filterOpen ? "md:pl-[304px]" : "")}>
-        <div className="sticky top-16 z-10 -mx-6 mb-6 flex flex-wrap items-center gap-3 bg-[#f5f6f8] px-6 pt-4 pb-2">
+      <main data-project-list-main="" className={"@container w-full pt-0 pb-10 pr-6 pl-6 transition-[padding-left] duration-300 ease-out " + (filterOpen ? "md:pl-[304px]" : "")}>
+        <div data-project-list-toolbar="" className="sticky top-16 z-10 -mx-6 mb-6 flex flex-wrap items-center gap-3 bg-[#f5f6f8] px-6 pt-4 pb-2">
           <CategorySwitch
             checked={filterOpen}
             onChange={(next) => {
@@ -567,9 +586,9 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
           <span className="text-sm text-zinc-400">
             {keyword === "" && !hasFilters ? t("home.count.total", { n: total }) : t("home.count.found", { n: total })}
           </span>
-          <div className="ml-auto flex w-full flex-col items-start gap-3 sm:w-auto sm:flex-row sm:items-center">
+          <div data-project-actions="" className="ml-auto flex w-full flex-col items-start gap-3 sm:w-auto sm:flex-row sm:items-center">
             {/* 导入项目（Push 316 待推）：新建项目左侧 —— 点开原生文件选择（.xlsx / .xlsm），选完在页内大屏面板里解析 / 校验 / 导入 */}
-            {/* 导入说明（Push 328 追订 · 2026-10-15）：不常显 —— 悬停 / 键盘聚焦「导入项目」时按钮下方浮出入口（业务口径「鼠标触碰导入项目再上下显示」）；点击「导入说明」= 系统内浮层预览（Push 329 起：复用文件预览浮层 · iframe 浏览器内置 PDF 渲染 · Esc / 点遮罩关闭 · 浮层内可下载原文件），静态件随构建发布（public/docs/import-guide.pdf） */}
+            {/* 导入说明（Push 328 追订 · 2026-10-15）：不常显 —— 悬停 / 键盘聚焦「导入项目」时按钮下方浮出入口（业务口径「鼠标触碰导入项目再上下显示」）；点击「导入说明」= 系统内浮层预览（Push 329 起复用文件预览浮层；2026-10-28 起由 PDF.js 本地分页，不再依赖浏览器 iframe · Esc / 点遮罩关闭 · 浮层内可下载原文件），静态件随构建发布（public/docs/import-guide.pdf） */}
             <div className="group relative">
             <button
               type="button"
@@ -628,8 +647,8 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                 pane={{ mode: "url", url: import.meta.env.BASE_URL + "docs/import-guide.pdf" }}
                 name={t("home.importGuide")}
                 kind="pdf"
-                nonce={0}
-                onRetry={() => {}}
+                nonce={guideNonce}
+                onRetry={() => setGuideNonce((value) => value + 1)}
                 onDownload={() => {
                   const link = document.createElement("a");
                   link.href = import.meta.env.BASE_URL + "docs/import-guide.pdf";
@@ -645,6 +664,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
             ) : null}
             <button
               type="button"
+              data-project-create=""
               aria-disabled={canCreateProject ? undefined : true}
               title={canCreateProject ? undefined : noCreatePermission}
               onClick={() => {
@@ -666,14 +686,16 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
               </svg>
               {t("home.create")}
             </button>
-            <SearchInput
-              value={query}
-              onChange={(value) => {
-                updateFilters({ q: value });
-              }}
-              placeholder={t("home.search.placeholder")}
-              className="w-full sm:w-72"
-            />
+            <div data-project-search="" className="w-full sm:w-auto">
+              <SearchInput
+                value={query}
+                onChange={(value) => {
+                  updateFilters({ q: value });
+                }}
+                placeholder={t("home.search.placeholder")}
+                className="w-full sm:w-72"
+              />
+            </div>
           </div>
         </div>
 
@@ -720,10 +742,19 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
 
         {!loading && items.length === 0 && loadError === null ? (
           <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-6 py-16 text-center">
-            <p className="text-sm text-zinc-500">
-              {keyword === "" ? t("home.empty.filtered") : t("home.empty.keyword", { kw: keyword })}
-            </p>
-            <div className="mt-4 flex items-center justify-center gap-3">
+            {permissionEmpty ? (
+              <>
+                <p className="text-sm font-medium text-zinc-700">{t("access.noProjects.title")}</p>
+                {currentPermissionText === null ? null : (
+                  <p className="mt-2 text-xs text-zinc-500">{currentPermissionText}</p>
+                )}
+              </>
+            ) : (
+              <p className="text-sm text-zinc-500">
+                {keyword === "" ? t("home.empty.filtered") : t("home.empty.keyword", { kw: keyword })}
+              </p>
+            )}
+            {(keyword !== "" || hasFilters) && <div className="mt-4 flex items-center justify-center gap-3">
               {keyword !== "" && (
                 <button
                   type="button"
@@ -744,7 +775,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                   {t("home.clearFilters")}
                 </button>
               )}
-            </div>
+            </div>}
           </div>
         ) : null}
 
@@ -782,7 +813,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                 managerNames={projectManagerText(project)}
                 time={project.createdAt}
                 onEdit={
-                  canUpdateProject
+                  canUpdateProject && project.groupAccessLevel === "edit"
                     ? () => {
                         onEdit(project);
                       }
@@ -797,7 +828,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                 }
                 exporting={exportingProjectId === project.id}
                 onDelete={
-                  canDeleteProject
+                  canDeleteProject && project.groupAccessLevel === "edit"
                     ? () => {
                         onDeleteProject(project);
                       }

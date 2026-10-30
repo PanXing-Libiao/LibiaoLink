@@ -2,7 +2,7 @@
 
 换机续接原生 DWG 工作先读 [DWG_HANDOFF.md](DWG_HANDOFF.md)：列出已跑通的原型、最新版未通过项、正式图身份、私有证据迁移和逐步复现命令。
 
-二维 DXF v0.15.0 已接到同一平台任务和查看器，代码仍在本地，未部署。先停止旧 API/worker，再执行数据库迁移 `0068`、`0069`、`0070`，随后同步更新 CAD 镜像、API 与 worker；只设置旧环境变量或只更新浏览器不构成接入。`0069` 把产物缓存键从 `engine_version` 拆到格式独立的 `format_version`（ADR-039）；旧产物第一次访问会按新格式版本重建，之后浏览器或单一格式改动不再触发另一格式重建。STEP 继续要求完整产物，DXF 可发布带覆盖证据的 `partial`，DWG 平台路径已加入但由 `CAD_DWG_ENABLED` 默认关闭，尚未在目标沙箱调度或部署（2026-10-29 本机完整系统已跑通公开样本与正式 34 MB 大图的上传 → 任务 → 产物 → 查看器；DWG 平台默认使用 `ucd-dwg-packed/1` 无损 packed manifest，正式图 manifest 25.97%、artifact 42.4%，引擎父进程校验前解包、查看器 `core/dwg-packed-transport.js` 解包，见 [DWG_HANDOFF.md](DWG_HANDOFF.md)；本机 harness 未施加生产 cgroup，目标 Linux 沙箱未验证）；空白/损坏文件不得伪装成成功结果。
+二维 DXF v0.15.0 已接到同一平台任务和查看器，代码仍在本地，未部署。先停止旧 API/worker，再执行数据库迁移 `0077`、`0078`、`0079`，随后同步更新 CAD 镜像、API 与 worker；只设置旧环境变量或只更新浏览器不构成接入。`0069` 把产物缓存键从 `engine_version` 拆到格式独立的 `format_version`（ADR-041）；旧产物第一次访问会按新格式版本重建，之后浏览器或单一格式改动不再触发另一格式重建。STEP 继续要求完整产物，DXF 可发布带覆盖证据的 `partial`，DWG 平台路径已加入但由 `CAD_DWG_ENABLED` 默认关闭，尚未在目标沙箱调度或部署（2026-10-29 本机完整系统已跑通公开样本与正式 34 MB 大图的上传 → 任务 → 产物 → 查看器；DWG 平台默认使用 `ucd-dwg-packed/1` 无损 packed manifest，正式图 manifest 25.97%、artifact 42.4%，引擎父进程校验前解包、查看器 `core/dwg-packed-transport.js` 解包，见 [DWG_HANDOFF.md](DWG_HANDOFF.md)；本机 harness 未施加生产 cgroup，目标 Linux 沙箱未验证）；空白/损坏文件不得伪装成成功结果。
 
 DXF 上传后可静默预解析主图；查看器中的“配套文件”选择同项目文件的具体版本，并指定资源包内路径，例如主图 `drawings/main.dxf`、外参 `drawings/refs/detail.dxf`。系统只使用明确选择的版本，不猜测同名文件，不访问源文件路径、系统字体目录或网络。支持资源类型 `.dxf/.dwg/.shx/.shp/.ttf/.otf/.dgn/.dwf/.dwfx/.ctb/.stb`、常见位图与 PDF；DWG 外参由固定 LibreDWG CLI 独立解码，原件身份和嵌套相对路径保留；缺少解码器或文件损坏时明确未加载，解码警告保留为部分结果。主图加配套最多 128 份、合计 64 MiB。补齐、调整路径或选择新版本会创建独立产物身份；原来的部分结果不会被当成完整结果复用。每次状态、清单、资源和释放请求均检查主图及配套的实时可见性，配套被回收时拒绝读取，彻底删除时清除相关派生产物。
 
@@ -12,7 +12,7 @@ Docker 内在 `/opt/dxf` 正常安装仓内 ezdxf 1.4.2 fork，并验证安装�
 
 ## 准备运行环境
 
-CAD 解析已迁移到独立 Linux 容器，不再由 API 启动 Python。先按 [CAD 沙箱部署手册](../../deploy/cad/README.md) 仅构建 CAD 镜像并启动沙箱；macOS 本地使用开发中继，生产 API 直接连接 Unix socket。
+CAD 解析已迁移到独立 Linux 容器，不再由 API 启动 Python。先按 [CAD 沙箱部署手册](../../deploy/cad/README.md) 仅构建 CAD 镜像并启动沙箱；macOS 与 Windows/WSL2 的本地 API 使用开发中继，生产 API 直接连接 Unix socket。
 
 | API 参数 | 含义 |
 | --- | --- |
@@ -26,7 +26,7 @@ CAD 解析已迁移到独立 Linux 容器，不再由 API 启动 Python。先按
 
 CAD 内部临时缓存仍受限于 tmpfs 和 24 小时保留；已完成的模型另按 [ADR-037](../../docs/adr/ADR-037-CAD产物持久化与上传预解析.md) 持久化：数据库保存队列、状态、窗口和产物索引，私有对象存储保存完整 manifest / buffers。API/worker/CAD 重启后直接读取完成产物，无需 native 重算；新版本、固定引擎版本或名称编码分别生成，缺失/损坏撤销完成态并排队重建。缓存先按文件版本隔离，不能把上传声明的 SHA 当作跨文件复用的可信凭据。沙箱仍禁网且不持有存储凭据，不增加持久宿主挂载。
 
-浏览器使用 HTTPS，本地 loopback 可验证 Web Crypto。生产镜像、server/shared 和同版本 `/cad-viewer/` 静态资源须按部署流程同步；API 的原内存预算与 CAD 独立核算。本次持久化与预解析变更仍待部署验收。运行边界与研究依据见 [ADR-036](../../docs/adr/ADR-036-CAD解析沙箱与资源硬限额.md)。
+浏览器使用 HTTPS，本地 loopback 可验证 Web Crypto。生产镜像、server/shared 和同版本 `/cad-viewer/` 静态资源须按部署流程同步；API 的原内存预算与 CAD 独立核算。持久化与预解析已在公司测试机和正式生产部署；正式生产首轮打开、产品树与真实文件转换已验收。运行边界与研究依据见 [ADR-036](../../docs/adr/ADR-036-CAD解析沙箱与资源硬限额.md)。
 
 名称默认使用 OCCT GB 中文旧编码，不自动猜编码；需要标准编码时，在“模型信息”切换 UTF8 并重新读取。选择在当前标签页按文件版本记忆，并传入任务参数 `nameCodepage`；不同码页隔离缓存，检查记录保留本次选择。源文件无需修改。
 
@@ -48,7 +48,9 @@ CAD 内部临时缓存仍受限于 tmpfs 和 24 小时保留；已完成的模�
 
 无需先合入 main。`local-system.mjs` 直接运行当前分支的实际 `AppModule` 与完整前端，登录走本地 Casdoor 的 authorization code + PKCE；项目、任务、文件版本写入独立 PostgreSQL 18，文件经原有分片上传链路写入私有 MinIO。它不注册试用夹具的登录/导入接口，不连接公司数据。
 
-复用已有 Node 24、PostgreSQL 18 Docker 镜像与单独启动的 CAD 沙箱。官方本地程序放在被忽略的 `server/cad-engine/.runtime/`：MinIO `RELEASE.2025-09-07T16-13-09Z` 的 macOS arm64 二进制保存为 `.runtime/minio`；Casdoor `v4.4.0` macOS arm64 发行包解压至 `.runtime/local-system/casdoor/`，保留 `casdoor`、`web/build` 与 `conf/`。下载后按官方 release 的 SHA-256 校验，不复制或重建 CAD native 环境。
+复用已有 Node 24、PostgreSQL 18 Docker 镜像与单独启动的 CAD 沙箱。官方本地程序放在被忽略的 `server/cad-engine/.runtime/`：MinIO `RELEASE.2025-09-07T16-13-09Z` 按开发机平台选择 Linux amd64 或 macOS arm64 二进制，保存为 `.runtime/minio`；Casdoor `v4.4.0` 选择 `casdoor_Linux_x86_64.tar.gz` 或 macOS arm64 发行包，解压至 `.runtime/local-system/casdoor/`，保留 `casdoor`、`web/build` 与 `conf/`。下载后按官方 release 的 SHA-256 校验，并在 Linux/WSL 执行 `chmod 700 server/cad-engine/.runtime/minio server/cad-engine/.runtime/local-system/casdoor/casdoor`；不复制或重建 CAD native 环境。
+
+> **Windows 开发机**：公司不允许 Docker Desktop。先按 [WSL2 + Docker Engine 安装说明](../../docs/本地开发环境(Windows-WSL2-Docker).md) 把仓库和全部运行命令放进 WSL Ubuntu；本地 Casdoor/MinIO 使用上面的 Linux amd64 程序，不要下载 Windows `.exe`。
 
 在 `server/` 运行：
 
@@ -154,7 +156,7 @@ ACAD_PROXY_ENTITY 使用仓内 ProxyGraphic 解码已有显示指令，生成共
 
 ## 部署边界
 
-本次持久化与预解析尚未部署；既有 STEP 接入的部署状态见[接入基线](../../docs/CAD平台接入基线与迁移任务.md)。native runtime 已从 API 移到独立 glibc CAD 镜像，API 的 768 MiB 预算不包含 CAD；启用须叠加独立沙箱部署件并取得实际镜像 digest。API 无受限外的 Python 回退；测试与迁移见 [部署手册](../../deploy/cad/README.md)。
+持久化与预解析已在公司测试机和正式生产部署，正式生产于 2026-10-26 完成 API/worker Unix socket 接线；完整部署状态见[接入基线](../../docs/CAD平台接入基线与迁移任务.md) §10。native runtime 已从 API 移到独立 glibc CAD 镜像，API 的 768 MiB 预算不包含 CAD；启用须叠加独立沙箱部署件并取得实际镜像 digest。API 无受限外的 Python 回退；测试与迁移见 [部署手册](../../deploy/cad/README.md)。
 
 既有公司环境开放 STEP；本地已接入 DXF 平台入口和上传配套资源，需协调部署后才能扩大公司环境范围。EASM 平台入口与工程测量不在本轮范围。S03 继续明确失败。大文件耗时沿用实测口径，P01 既有独立结果约 71.8 秒，不能称为秒开，本轮未重复测量它。
 

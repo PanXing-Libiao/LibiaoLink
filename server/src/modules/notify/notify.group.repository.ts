@@ -7,13 +7,22 @@
  * 未绑定群回调写入 wecom_group_candidates staging 表（0058），绑定成功后由 project 模块删除。
  */
 import { Injectable } from "@nestjs/common";
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { STAGE_KEYS, STAGE_NAMES } from "@libiaolink/contracts";
+import { and, asc, count, eq, inArray, isNull, sql } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { users } from "../../db/schema/identity.js";
+import { files, fileLinks, fileVersions } from "../../db/schema/files.js";
 import { notifyDeliveries, wecomGroupCandidates, wecomGroups } from "../../db/schema/notify.js";
 import { projectMembers, projects } from "../../db/schema/projects.js";
+import { dailyReports, issues } from "../../db/schema/reports.js";
 import { tasks } from "../../db/schema/tasks.js";
+import type {
+  DailyReportPosterData,
+  DailyReportPosterIssue,
+  DailyReportPosterPhoto,
+} from "./daily-report.poster.types.js";
+import type { StageCompletePosterData } from "./stage-complete.poster.types.js";
 
 export type WecomGroupRow = typeof wecomGroups.$inferSelect;
 export type WecomGroupCandidateRow = typeof wecomGroupCandidates.$inferSelect;
@@ -31,6 +40,15 @@ export interface R06PosterData {
   startDate: string | null;
   plannedEnd: string | null;
 }
+
+/** 日报海报附图行：objectKey / mime 缺失时仍返回引用，渲染器会留空片位。 */
+type DailyReportPosterPhotoRow = {
+  fileId: string;
+  objectId: string;
+  name: string;
+  objectKey: string | null;
+  mime: string | null;
+};
 
 /** 投递留痕输入（服务层保证 CHECK 语义：sent ↔ sentAt 非空且 error 为空）。 */
 export interface NotifyDeliveryInsert {
@@ -88,6 +106,16 @@ export class NotifyGroupRepository {
   async findGroupByChatid(chatid: string, client: DbClient = this.database.db): Promise<WecomGroupRow | null> {
     const rows = await client.select().from(wecomGroups).where(eq(wecomGroups.chatid, chatid)).limit(1);
     return rows[0] ?? null;
+  }
+
+  /** 项目名（告警正文只展示名称；项目不存在 / 已软删 = null）。 */
+  async findProjectName(projectId: string, client: DbClient = this.database.db): Promise<string | null> {
+    const rows = await client
+      .select({ name: projects.name })
+      .from(projects)
+      .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)))
+      .limit(1);
+    return rows[0]?.name ?? null;
   }
 
   /**
@@ -185,6 +213,193 @@ export class NotifyGroupRepository {
       onTimeDone: doneRows.filter((row) => isCompletedTaskOnTime(row)).length,
       startDate: starts[0] ?? null,
       plannedEnd: ends.at(-1) ?? null,
+    };
+  }
+
+  /**
+   * 阶段完成海报快照：项目编号 / 名称 + 九阶段任务完成度。
+   * 目标阶段由 outbox 载荷 stageKey 指定；任务统计含未删除任务，阶段完成判定与任务页同口径。
+   */
+  async findStageCompletePosterData(
+    projectId: string,
+    stageKey: string,
+    completedAt: Date,
+    client: DbClient = this.database.db,
+  ): Promise<StageCompletePosterData | null> {
+    const projectRows = await client
+      .select({ code: projects.code, name: projects.name })
+      .from(projects)
+      .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)))
+      .limit(1);
+    const project = projectRows[0];
+    if (project === undefined) {
+      return null;
+    }
+    const taskRows = await client
+      .select({ stageKey: tasks.stageKey, status: tasks.status, value: count() })
+      .from(tasks)
+      .where(and(eq(tasks.projectId, projectId), isNull(tasks.deletedAt)))
+      .groupBy(tasks.stageKey, tasks.status);
+    const totals = new Map<string, { total: number; done: number }>();
+    for (const row of taskRows) {
+      if (row.stageKey === null) continue;
+      const entry = totals.get(row.stageKey) ?? { total: 0, done: 0 };
+      const value = Number(row.value);
+      entry.total += value;
+      if (row.status === "done") entry.done += value;
+      totals.set(row.stageKey, entry);
+    }
+    return {
+      projectCode: project.code,
+      projectName: project.name,
+      stageKey,
+      completedAt,
+      stages: STAGE_KEYS.map((key) => ({
+        key,
+        total: totals.get(key)?.total ?? 0,
+        done: totals.get(key)?.done ?? 0,
+      })),
+    };
+  }
+
+  /**
+   * 日报群同步海报快照：项目 / 项目经理 / 日报正文 / 关联阶段 / 全部现场图 / 派生问题、处理记录及全部问题图。
+   *
+   * 边界同文件头注：notify 是平台模块，直接读 report-issue 所需表，不 import 领域模块。
+   * 图片只返回 objectKey；worker 用 ObjectStorage 读字节后交给纯渲染器。
+   * 日报不存在 / 项目软删 = null；草稿照常返回 state，由投递层拒绝生成。
+   */
+  async findDailyReportPosterData(
+    projectId: string,
+    reportId: string,
+    client: DbClient = this.database.db,
+  ): Promise<DailyReportPosterData | null> {
+    const projectRows = await client
+      .select({
+        code: projects.code,
+        name: projects.name,
+        managerIds: projects.managerIds,
+      })
+      .from(projects)
+      .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)))
+      .limit(1);
+    const project = projectRows[0];
+    if (project === undefined) {
+      return null;
+    }
+
+    const reportRows = await client
+      .select({
+        id: dailyReports.id,
+        reportDate: dailyReports.reportDate,
+        state: dailyReports.state,
+        authorId: dailyReports.authorId,
+        authorName: users.displayName,
+        headcount: dailyReports.headcount,
+        doneWork: dailyReports.doneWork,
+        plan: dailyReports.plan,
+        stageKeys: dailyReports.stageKeys,
+        submittedAt: dailyReports.submittedAt,
+      })
+      .from(dailyReports)
+      .leftJoin(users, eq(users.id, dailyReports.authorId))
+      .where(and(eq(dailyReports.id, reportId), eq(dailyReports.projectId, projectId)))
+      .limit(1);
+    const report = reportRows[0];
+    if (report === undefined) {
+      return null;
+    }
+
+    const issueRows = await client
+      .select({
+        id: issues.id,
+        title: issues.title,
+        categories: issues.categories,
+        state: issues.state,
+        solution: issues.solution,
+        ownerName: users.displayName,
+      })
+      .from(issues)
+      .leftJoin(users, eq(users.id, issues.ownerId))
+      .where(and(eq(issues.projectId, projectId), eq(issues.sourceReportId, reportId)))
+      .orderBy(asc(issues.createdAt), asc(issues.id));
+
+    const personIds = [...new Set([...project.managerIds, report.authorId])];
+    const personRows = personIds.length === 0
+      ? []
+      : await client
+          .select({ id: users.id, displayName: users.displayName })
+          .from(users)
+          .where(inArray(users.id, personIds));
+    const nameById = new Map(personRows.map((row) => [row.id, row.displayName.replace(/-test$/i, "").trim()]));
+    const managers = project.managerIds
+      .map((id) => nameById.get(id) ?? "")
+      .filter((name) => name !== "");
+
+    const photoColumns = {
+      fileId: fileLinks.fileId,
+      objectId: fileLinks.objectId,
+      name: files.name,
+      objectKey: fileVersions.objectKey,
+      mime: fileVersions.mime,
+    };
+    const onsiteRows = await client
+      .select(photoColumns)
+      .from(fileLinks)
+      .innerJoin(files, eq(files.id, fileLinks.fileId))
+      .leftJoin(fileVersions, eq(fileVersions.id, files.currentVersionId))
+      .where(and(eq(fileLinks.objectType, "report"), eq(fileLinks.objectId, reportId), eq(fileLinks.kind, "onsite")))
+      .orderBy(asc(fileLinks.createdAt), asc(fileLinks.id));
+    const issueIds = issueRows.map((row) => row.id);
+    const issuePhotoRows = issueIds.length === 0
+      ? []
+      : await client
+          .select(photoColumns)
+          .from(fileLinks)
+          .innerJoin(files, eq(files.id, fileLinks.fileId))
+          .leftJoin(fileVersions, eq(fileVersions.id, files.currentVersionId))
+          .where(and(eq(fileLinks.objectType, "issue"), inArray(fileLinks.objectId, issueIds)))
+          .orderBy(asc(fileLinks.createdAt), asc(fileLinks.id));
+
+    const photoOf = (row: DailyReportPosterPhotoRow): DailyReportPosterPhoto => ({
+      fileId: row.fileId,
+      name: row.name,
+      objectKey: row.objectKey,
+      mime: row.mime,
+    });
+    const photosByIssue = new Map<string, DailyReportPosterPhoto[]>();
+    for (const row of issuePhotoRows) {
+      const list = photosByIssue.get(row.objectId) ?? [];
+      list.push(photoOf(row));
+      photosByIssue.set(row.objectId, list);
+    }
+    const posterIssues: DailyReportPosterIssue[] = issueRows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      categories: row.categories,
+      ownerName: row.ownerName,
+      state: row.state,
+      solution: row.solution,
+      photos: photosByIssue.get(row.id) ?? [],
+    }));
+    const stageNames = STAGE_NAMES as Record<string, string>;
+
+    return {
+      projectId,
+      projectCode: project.code,
+      projectName: project.name,
+      managers,
+      reportId: report.id,
+      reportDate: report.reportDate,
+      state: report.state,
+      authorName: report.authorName,
+      headcount: report.headcount,
+      doneWork: report.doneWork,
+      plan: report.plan,
+      stages: report.stageKeys.map((key) => stageNames[key] ?? key),
+      submittedAt: report.submittedAt === null ? null : report.submittedAt.toISOString(),
+      photos: onsiteRows.map(photoOf),
+      issues: posterIssues,
     };
   }
 

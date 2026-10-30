@@ -324,12 +324,12 @@ export const FileDownloadUrlResponseSchema = z
 /**
  * 预览目标（渲染通道口径 · wmj 评审定案 · PR #103）：按前端渲染方式定义，不按文件格式；格式差异由产物 MIME 表达。
  * 缓存键 = versionId + pipelineVersion + target；不同版本即使内容哈希相同也隔离（迁移 0067）。
- * pdf = PDF 查看器通道（PDF 直通；Office 改走查看器通道 viewer、不产转换产物 —— 历史 LibreOffice 转出口径随 S3 收口；CAD 接入另见 ADR-035，不占既有图片/PDF 通道）；image = 图片查看器通道（图片直出、图片型兜底、含矢量 SVG）；structured = 结构化表格渲染通道（一期未启用时 xlsx 走 pdf）。
+ * pdf = PDF 直签通道（原件 application/pdf + inline 短时签名，前端 PDF.js 本地分页渲染；不创建 DocServer 会话；Office 改走查看器通道 viewer、不产转换产物；CAD 接入另见 ADR-035，不占既有图片/PDF 通道）；image = 图片查看器通道（图片直出、图片型兜底、含矢量 SVG 产物）；structured = 结构化表格渲染通道（一期未启用时 xlsx 走 pdf）。
  */
 export const PREVIEW_TARGETS = ["pdf", "image", "structured"] as const;
 export const PreviewTargetSchema = z.enum(PREVIEW_TARGETS).openapi("PreviewTarget", {
   description:
-    "预览目标（渲染通道口径 · 转换产物通道）：pdf PDF 查看器通道（PDF 直通；历史 Office 转出口径随 S3 收口 —— Office 改走查看器通道、不占 target；CAD 模型资源另按 ADR-035 接入，不占本通道） / image 图片查看器通道（图片直出、图片型兜底、含矢量 SVG 产物） / structured 结构化表格渲染通道（一期未启用时 xlsx 走 pdf 通道）；ONLYOFFICE 查看器通道不产生转换产物、不占用 target（见 FilePreviewResponse.viewer）",
+    "预览目标（渲染通道口径 · 转换产物通道）：pdf PDF 直签通道（原件 application/pdf + inline，前端 PDF.js 本地渲染；Office 改走查看器通道、不占 target；CAD 模型资源另按 ADR-035 接入，不占本通道） / image 图片查看器通道（图片直出、图片型兜底、含矢量 SVG 产物） / structured 结构化表格渲染通道（一期未启用时 xlsx 走 pdf 通道）；ONLYOFFICE 查看器通道不产生转换产物、不占用 target（见 FilePreviewResponse.viewer）",
 });
 
 /**
@@ -346,6 +346,13 @@ export const PreviewStatusSchema = z.enum(PREVIEW_STATUSES).openapi("PreviewStat
 export const FilePreviewQuerySchema = z
   .object({
     versionId: UuidSchema.optional().openapi({ description: "指定历史版本（A4-06）；缺省 = 当前版本；不属于该文件 / 不存在 → 404" }),
+    /**
+     * 是否把本次送达计入预览审计。缺省 / false = 只取缩略图或预览签名，不写操作记录；
+     * true = 用户已点开具体图片 / 文件，由前端显式请求一次预览并写一条 `action=preview`。
+     */
+    recordView: z.enum(["true", "false"]).optional().openapi({
+      description: "是否记录用户实际查看（缺省 false）；缩略图挂载必须省略，点开具体预览时传 true",
+    }),
   })
   .openapi("FilePreviewQuery");
 
@@ -406,15 +413,15 @@ export const OnlyOfficePreviewViewerSchema = z
   .object({
     kind: z.literal("onlyoffice"),
     docServerUrl: z.string().openapi({ description: "DocServer 基址（前端据此加载 /web-apps/apps/api/documents/api.js 初始化 DocEditor；服务端配置下发）" }),
-    documentType: z.enum(["word", "cell", "slide", "pdf"]).openapi("PreviewViewerDocumentType", {
-      description: "文档大类（word 文档 / cell 表格 / slide 演示 / pdf 文档；由文件类型映射）",
+    documentType: z.enum(["word", "cell", "slide"]).openapi("PreviewViewerDocumentType", {
+      description: "文档大类（word 文档 / cell 表格 / slide 演示；PDF 不走 ONLYOFFICE，改由前端 PDF.js 本地渲染）",
     }),
     document: PreviewViewerDocumentSchema,
     editorConfig: PreviewViewerEditorConfigSchema,
     token: z.string().openapi({ description: "查看器 JWT（HS256；载荷 = documentType / document（含 permissions）/ editorConfig 逐字签发 + iat / exp；浏览器持有 —— 泄漏面仅只读会话，取原文件依赖服务端端点鉴权）" }),
   })
   .openapi("OnlyOfficePreviewViewer", {
-    description: "在线查看器配置（ONLYOFFICE 查看通道；替代「转换产物 + 短时签名 URL」路径 —— 预览链全程无预签名）",
+    description: "在线查看器配置（ONLYOFFICE 查看通道；Office / 文本族专用，PDF 与图片走短时签名 URL）",
   });
 
 export const PreviewViewerSchema = z.discriminatedUnion("kind", [OnlyOfficePreviewViewerSchema, CadPreviewViewerSchema])
@@ -466,4 +473,11 @@ export const FileListQuerySchema = z
   })
   .openapi("FileListQuery");
 
-export const FileListResponseSchema = paginated(FileSchema).openapi("FileListResponse");
+export const FileLibraryItemSchema = FileSchema.extend({
+  createdByName: z.string().nullable().openapi({
+    description:
+      "上传人姓名（users.display_name）；停用 / 离职历史账号仍返回姓名；用户行不存在时为空，前端回退用户 id",
+  }),
+}).openapi("FileLibraryItem");
+
+export const FileListResponseSchema = paginated(FileLibraryItemSchema).openapi("FileListResponse");

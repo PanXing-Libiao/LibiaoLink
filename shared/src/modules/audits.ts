@@ -8,12 +8,13 @@ import { DateTimeSchema, PageQuerySchema, UuidSchema, paginated } from "../commo
 
 /**
  * 审计动作（audit_logs.action）：新增 / 修改 / 删除 / 进度 / 完成 / 推进 / 回退 / 归档 / 访问 / 预览 / 下载 / 越权拒绝（C7-03；archive 随 M7-04 归档）。
- * 2026-10-23 起：进入项目详情记 visit（访问），登录成功也记 visit + objectType=user；预览在实际送达就绪内容时恢复写 preview（含缩略图等高频预览）。
+ * 2026-10-23 起：进入项目详情记 visit（访问），登录成功也记 visit + objectType=user；预览恢复写 preview。
+ * 2026-10-27 收口：GET /files/{id}/preview 的 recordView 缺省 false（缩略图只取签名）；用户点开具体预览并显式传 true 且实际送达就绪内容时才写一条 preview。
  */
 export const AUDIT_ACTIONS = ["create", "update", "delete", "progress", "complete", "advance", "rollback", "archive", "visit", "preview", "download", "deny"] as const;
 export const AuditActionSchema = z.enum(AUDIT_ACTIONS).openapi("AuditAction", {
   description:
-    "审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / archive 项目归档（ADR-027：归档动作写审计，确认越过的缺项计数记 metadata）/ visit 访问（进入项目详情时由页面调用 POST /projects/{id}/visit 记录；登录成功也记 visit + objectType=user） / preview 预览查看（2026-10-23 起每次实际签出并送达的预览记一条；含缩略图等高频预览） / download 离线下载（A4-10：下载受 file.download 权限点控制并写日志；对象类型 file，经 metadata 记 versionId） / deny 越权拒绝",
+    "审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / archive 项目归档（ADR-027：归档动作写审计，确认越过的缺项计数记 metadata）/ visit 访问（进入项目详情时由页面调用 POST /projects/{id}/visit 记录；登录成功也记 visit + objectType=user） / preview 预览查看（2026-10-23 起恢复；2026-10-27 起仅用户点开具体预览并显式传 recordView=true、实际送达就绪内容时记一条，缩略图不写） / download 离线下载（A4-10：下载受 file.download 权限点控制并写日志；对象类型 file，经 metadata 记 versionId） / deny 越权拒绝",
 });
 
 /** 审计对象类型（audit_logs.object_type）：覆盖 h7 全部写入点 + h8 工作日历 + M4 file（文件与上传会话生命周期 / 预览）+ 变更记录 + M6 日报 / 问题 + M3-05 余任务节点库 + M5-06 规则 / 发送记录。 */
@@ -38,10 +39,12 @@ export const AUDIT_OBJECT_TYPES = [
   "wecom_dm_binding",
   "automation_rule",
   "notify_delivery",
+  "group_access_rule",
+  "group_access_admin",
 ] as const;
 export const AuditObjectTypeSchema = z.enum(AUDIT_OBJECT_TYPES).openapi("AuditObjectType", {
   description:
-    "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；预览实际送达时写 preview 审计 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删；登录成功记 visit，metadata.operation=login） / wecom_dm_binding 企微绑定验证（对象 id = 机器人标识 + 掩码 open_userid；失败 / 锁定记 deny + denied，不落完整 userid 或绑定码） / automation_rule 自动化规则（对象 id = 规则 id；保存记录字段级 diff，metadata 带 code / beforeVersion / afterVersion，M5-06） / notify_delivery 发送记录（对象 id = 消息归档 id；仅管理员重发写 update + metadata.operation=resend，M5-06）",
+    "审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；仅用户点开具体预览（recordView=true）且实际送达时写 preview 审计，缩略图不写 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删；登录成功记 visit，metadata.operation=login） / wecom_dm_binding 企微绑定验证（对象 id = 机器人标识 + 掩码 open_userid；失败 / 锁定记 deny + denied，不落完整 userid 或绑定码） / automation_rule 自动化规则（对象 id = 规则 id；保存记录字段级 diff，metadata 带 code / beforeVersion / afterVersion，M5-06） / notify_delivery 发送记录（对象 id = 消息归档 id；仅管理员重发写 update + metadata.operation=resend，M5-06） / group_access_rule 部门访问规则（对象 id = 群组键；保存 / 删除写审计，2026-10-23） / group_access_admin 系统管理员（对象 id = users.id；手工授予 / 撤销写审计，2026-10-24）",
 });
 
 /** 审计结果：成功 / 越权拒绝（C7-03，管理员可按 result=denied 筛出）/ 失败（门禁拒绝等）。 */
@@ -75,6 +78,12 @@ export const AuditLogSchema = z
     objectType: AuditObjectTypeSchema,
     objectId: z.string().openapi({ description: "对象 id（uuid 或字典码等业务键）" }),
     projectId: UuidSchema.nullable().openapi({ description: "所属项目（非项目对象为 null）" }),
+    projectCode: z.string().nullable().openapi({
+      description: "所属项目编号：优先当前项目数据（含回收站），项目彻底删除后回退审计写入快照",
+    }),
+    projectName: z.string().nullable().openapi({
+      description: "所属项目名称：优先当前项目数据（含回收站），项目彻底删除后回退审计写入快照",
+    }),
     result: AuditResultSchema,
     entry: AuditEntrySchema,
     summary: z.string().openapi({ description: "可读摘要（列表直接展示）" }),

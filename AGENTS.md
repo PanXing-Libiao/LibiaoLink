@@ -1,6 +1,6 @@
 # LibiaoLink 仓库约定
 
-> **CAD 专项说明（2026-10-21 更新）**：wmj 负责 CAD 接入及相关文档，任务见 `docs/CAD平台接入基线与迁移任务.md`，决策见 ADR-035。旧浏览器解析、原对象图片直签及 CAD-0～CAD-5 测量计划撤回；STEP 已在本机完整系统跑通实际 API、数据库/对象存储、本地 OIDC、任务附件与文件库预览，并部署到公司测试机；运行方式见 `server/cad-engine/README.md`；测试机已显式配置运行环境开放 STEP，其余 CAD 或未启用环境仍提示并保留下载；真实公司账号浏览器验收待完成，生产未部署。lan 协办共享 file/preview/outbox，px 协办部署与通用 UI，不改变其他模块归属。不得把旧网格测量描述为加工/验收依据。
+> **CAD 专项说明（2026-10-26 更新）**：wmj 负责 CAD 接入及相关文档，任务见 `docs/CAD平台接入基线与迁移任务.md`，决策见 ADR-035。旧浏览器解析、原对象图片直签及 CAD-0～CAD-5 测量计划撤回；STEP 已在本机完整系统跑通实际 API、数据库/对象存储、本地 OIDC、任务附件与文件库预览，并部署到公司测试机；运行方式见 `server/cad-engine/README.md`；公司测试机与正式生产均已显式配置运行环境开放 STEP；正式生产于 2026-10-26 完成 API/worker Unix socket 接线，真实公司账号已打开 64 项零件 STEP。其余 CAD 或未启用环境仍提示并保留下载；拾取、显隐/隔离/恢复与跨重启复用仍待专项验收。lan 协办共享 file/preview/outbox，px 协办部署与通用 UI，不改变其他模块归属。不得把旧网格测量描述为加工/验收依据。
 
 ## 文档同步（每次改动必须遵守）
 
@@ -29,14 +29,20 @@
 
 - 代理（AI）动手前先按上表判断归属，改动只落在本线目录内；跨线改动（契约、字段口径、部署、权限）先对齐归属人再开工。
 - 分支：改动推给归属人的常驻分支（`px` / `wmj` / `lan`）再走 PR；不代他人创建或推送常驻分支（CONTRIBUTING.md 第 5 节）。
-- 后端目录（`server/`、`database/`、`shared/`）尚未落地；落地前涉及后端的改动先落文档与契约（`技术设计v0.2-架构与数据模型.md`、`前端功能需求.md`）。
+- 后端目录（`server/`、`database/`、`shared/`）已落地；后端改动按本表归属落到对应目录，API 契约以 `shared/` 为唯一来源并同步生成物；跨线契约、字段口径、部署与权限改动先对齐归属人再开工。
 - 高风险变更（CONTRIBUTING.md 第 15 节）必须取得另一名合格评审者批准；评审路由见 `.github/CODEOWNERS`。
 
-## 服务器与运维（测试机）
+## 服务器与运维（正式机 / 测试机）
 
-- 部署目标机 = `10.1.104.44`（libiao-vm；域名 `test-pm.libiaorobot.com`）；`10.1.103.44` 只是 ALLinSSL 证书下发接收端，勿作部署目标。登录 / 目录 / 部署件口径见 `deploy/prod/README.md` §1 与 §1.1。
-- SSH 登录：开发机 `ssh root@10.1.104.44`；**登录口令不落仓库**（CONTRIBUTING §12）—— 由 px 持有；开发机上的未跟踪备忘 = `deploy/prod/服务器登录.local.md`（已被 `.gitignore` 忽略，新会话可直接读该文件续接）。
+- 正式机 = `10.1.103.44`（域名 `pm.libiaorobot.com`；发布清单在 `/opt/libiaolink/RELEASE_MANIFEST.json`）；测试机 = `10.1.104.44`（主机名 `libiao-vm`，域名 `test-pm.libiaorobot.com`）。正式发布只部署 `10.1.103.44`，不得写入测试机；登录 / 目录 / 部署件口径见 `deploy/prod/README.md` §1 与 §1.1。
+- SSH 登录：开发机已配置 SSH 密钥；正式机使用 `ssh libiaolink-prod`，测试机使用 `id_ed25519_libiao` 对 `root@10.1.104.44` 登录。**登录凭据不落仓库**（CONTRIBUTING §12）——由 px 持有；开发机上的未跟踪备忘 = `deploy/prod/服务器登录.local.md`（已被 `.gitignore` 忽略，新会话可读该文件续接；过期口令以现场密钥 / IT 登记为准）。
 - 铁律：不得修改 root 密码；服务器只跑不改 —— 代码 / 配置变更走本仓常驻分支（`px` / `wmj` / `lan`）→ PR → 部署件同步；禁止在服务器上直接手改业务代码，临时热修必须回灌仓库。
+
+## 本地开发环境（Windows）
+
+- 公司不允许 Docker Desktop。Windows 本地容器统一使用 **WSL2 + Ubuntu + 原生 Docker Engine（docker-ce）**，安装 / 验收 / 排障见 `docs/本地开发环境(Windows-WSL2-Docker).md`。
+- Docker、Compose、Node、npm、迁移与回放命令在 WSL Ubuntu 内执行；仓库放在 WSL 文件系统，不以 `/mnt/d` 作为长期构建目录，不在 PowerShell 中调用 Docker。
+- 历史实测记录中的 Docker Desktop 仅保留当时环境事实，不作为当前方案或新验收依据。
 
 ## 完整规则
 

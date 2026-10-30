@@ -1,0 +1,21 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket",
+        "s3:ListBucket",
+        "s3:GetBucketVersioning",
+        "s3:PutBucketVersioning",
+        "s3:GetBucketCors",
+        "s3:PutBucketCors",
+        "s3:GetBucketLifecycle",
+        "s3:PutBucketLifecycle"
+      ],
+      "Resource": [
+        "arn:aws:s3:::rustfs-poc"
+      ]
+    }
+  ]
+}

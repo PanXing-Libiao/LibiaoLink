@@ -96,18 +96,16 @@ try {
   check("P1", "api 可用（/healthz）", "200", String(health), health === 200, "先起 api 再跑本脚本");
 
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
-  const adminRow = await db.query("select u.id, u.display_name from users u join user_roles ur on ur.user_id = u.id join roles r on r.id = ur.role_id where r.code = $1 and u.status = $2 order by u.id limit 1", ["admin", "active"]);
+  const adminRow = await db.query("select u.id, u.display_name from users u join group_access_admins gaa on gaa.user_id = u.id where u.status = $1 order by u.id limit 1", ["active"]);
   if (args.actor === undefined && adminRow.rows.length === 0) {
-    const adminRole = await db.query("select id from roles where code = 'admin' limit 1");
-    if (adminRole.rows.length === 0) throw new Error("roles 表缺少 admin 角色；先在目标库跑 database/scripts/seed.mjs");
-    const createdAdmin = await db.query("insert into users (casdoor_id, username, display_name, status) values ($1, $2, $3, 'active') returning id, display_name", ["m2rpl-" + stamp + "-admin", "m2rpl-" + stamp + "-admin", "M2 回放管理员"]);
-    await db.query("insert into user_roles (user_id, role_id) values ($1, $2)", [createdAdmin.rows[0].id, adminRole.rows[0].id]);
+    const createdAdmin = await db.query("insert into users (casdoor_id, username, display_name, status) values ($1, $2, $3, $4) returning id, display_name", ["m2rpl-" + stamp + "-admin", "m2rpl-" + stamp + "-admin", "M2 回放管理员", "active"]);
+    await db.query("insert into group_access_admins (user_id, granted_by) values ($1, $1)", [createdAdmin.rows[0].id]);
     cleanup.syntheticUserIds.push(createdAdmin.rows[0].id);
     adminRow.rows.push(createdAdmin.rows[0]);
   }
   adminId = args.actor ?? adminRow.rows[0]?.id;
   const adminName = adminRow.rows[0]?.display_name ?? null;
-  check("P2", "管理员账号可用（roles.code = admin；空库自动建合成管理员）", "非空 userId", short({ id: adminId ?? null, name: adminName }, 120), adminId !== undefined);
+  check("P2", "管理员账号可用（group_access_admins；空库自动建合成管理员）", "非空 userId", short({ id: adminId ?? null, name: adminName }, 120), adminId !== undefined);
   admin = await makeSession(adminId, "m2-06-replay");
   const probe = await call("GET", "/api/v1/projects?limit=1");
   check("P3", "临时会话可用（GET /api/v1/projects）", "200", probe.status + " " + short(probe.body?.total ?? probe.body?.code ?? null, 80), probe.status === 200);
@@ -126,8 +124,8 @@ try {
   cleanup.syntheticUserIds.push(plainId);
   plain = await makeSession(plainId, "m2-06-replay-plain");
   const plainProjects = await call("GET", "/api/v1/projects?limit=1", undefined, plain);
-  const permissionEnforced = plainProjects.status === 200 && plainProjects.body?.total === 0;
-  check("P6", "合成复核用户（无角色）：会话可用 + 记录权限开关（PERMISSION_ENFORCED" + (permissionEnforced ? "=true（判权限态）" : "=false（一期不判权限 · Push 178）") + "）", "200（并记录开关，供 F7 分派）", plainProjects.status + " total=" + (plainProjects.body?.total ?? "-"), plainProjects.status === 200);
+  const groupAccessRestricted = plainProjects.status === 200 && plainProjects.body?.total === 0;
+  check("P6", "合成复核用户（无部门规则）：会话可用 + 部门规则状态探测", "200（并记录访问状态，供 F7 分派）", plainProjects.status + " total=" + (plainProjects.body?.total ?? "-"), plainProjects.status === 200);
 
   // ---------- 证据一：视图（A1-03 · 个人 / 公共） ----------
   const viewOne = await call("POST", "/api/v1/views", {
@@ -227,12 +225,12 @@ try {
 
   const plainFollow = await call("POST", "/api/v1/follows", { objectType: "project", objectId: projectA }, plain);
   const plainList = await call("GET", "/api/v1/follows", undefined, plain);
-  if (permissionEnforced) {
-    check("F7", "防 IDOR（PERMISSION_ENFORCED=true）：不可见项目关注 404；复核用户关注清单 0 条", "404 / 0 条", plainFollow.status + " / " + (plainList.body?.items?.length ?? "-"), plainFollow.status === 404 && plainFollow.body?.code === "NOT_FOUND" && plainList.status === 200 && plainList.body?.items?.length === 0);
+  if (groupAccessRestricted) {
+    check("F7", "防 IDOR（部门规则开启 · 无适用规则）：不可见项目关注 404；复核用户关注清单 0 条", "404 / 0 条", plainFollow.status + " / " + (plainList.body?.items?.length ?? "-"), plainFollow.status === 404 && plainFollow.body?.code === "NOT_FOUND" && plainList.status === 200 && plainList.body?.items?.length === 0);
   } else {
     const plainUnfollow = await call("DELETE", "/api/v1/follows/project/" + projectA, undefined, plain);
     const plainListAfter = await call("GET", "/api/v1/follows", undefined, plain);
-    check("F7", "关注可见性（一期不判权限 · PERMISSION_ENFORCED=false · Push 178）：全员可见 → 关注 201 / 取关 200 / 清单归零", "201 / 200 / 0 条", plainFollow.status + " / " + plainUnfollow.status + " / " + (plainListAfter.body?.items?.length ?? "-"), plainFollow.status === 201 && plainFollow.body?.created === true && plainUnfollow.status === 200 && plainUnfollow.body?.removed === true && plainListAfter.status === 200 && (plainListAfter.body?.items ?? []).length === 0);
+    check("F7", "关注可见性（部门规则关闭）：全员可见 → 关注 201 / 取关 200 / 清单归零", "201 / 200 / 0 条", plainFollow.status + " / " + plainUnfollow.status + " / " + (plainListAfter.body?.items?.length ?? "-"), plainFollow.status === 201 && plainFollow.body?.created === true && plainUnfollow.status === 200 && plainUnfollow.body?.removed === true && plainListAfter.status === 200 && (plainListAfter.body?.items ?? []).length === 0);
   }
 
   const createdB = await call("POST", "/api/v1/projects", { code: "M2RPL-ARC-" + stamp, name: "M2 回放归档项目", projectType: "default", managerIds: [adminId] });
@@ -310,7 +308,7 @@ try {
         await db.query("delete from audit_logs where actor_id = $1", [userId]);
         await db.query("delete from project_views where owner_id = $1", [userId]);
         await db.query("delete from follows where user_id = $1", [userId]);
-        await db.query("delete from user_roles where user_id = $1", [userId]);
+        await db.query("delete from group_access_admins where user_id = $1", [userId]);
         await db.query("delete from sessions where user_id = $1", [userId]);
         await db.query("delete from user_preferences where user_id = $1", [userId]);
         await db.query("delete from users where id = $1", [userId]);
@@ -349,7 +347,7 @@ lines.push("");
 lines.push("## 验收对照（M2-06 · A1-03 / A1-15）");
 lines.push("");
 lines.push("- A1-03（视图管理）= V1 ' V11：个人视图全字段建 / 读（个人在前 + scope 过滤）/ 局部改（空更新 400）/ 默认视图互斥（每人至多一条）/ 物理删（重复删 404）；归属：个人视图他人 404（不可见）、公共视图非创建者 403（可见无写权）、公共视图全员可见。");
-lines.push("- A1-15（关注订阅）= F1 ' F11：关注项目 / 任务（201 created=true；重复关注 200 created=false 幂等）；清单随行名称 + 时间倒序 + object 过滤；批量五态（followed / unfollowed / unchanged / failures）+ 失败 index / code；取关（未关注 404）；关注目标可见性按 `PERMISSION_ENFORCED` 开关分派（判权限态：不可见目标 404 防 IDOR；一期不判权限态：全员可见 201 + 取关清理）；归档项目不可新关注（既有关系行保留可见 —— 一期口径）；项目移入回收站 → 关注行保留（可恢复）；彻底删除路径随项目关系键清理。");
+lines.push("- A1-15（关注订阅）= F1 ' F11：关注项目 / 任务（201 created=true；重复关注 200 created=false 幂等）；清单随行名称 + 时间倒序 + object 过滤；批量五态（followed / unfollowed / unchanged / failures）+ 失败 index / code；取关（未关注 404）；关注目标可见性按部门规则状态分派（部门规则开启且无适用规则：不可见目标 404 防 IDOR；部门规则关闭：全员可见 201 + 取关清理）；归档项目不可新关注（既有关系行保留可见 —— 部门规则关闭口径）；项目移入回收站 → 关注行保留（可恢复）；彻底删除路径随项目关系键清理。");
 lines.push("- 单测回归（不连库）：server/test/view.test.ts 7 例（范围透传 / 名称收敛 / 空更新 / 归属 / 默认互斥 / 物理删）+ server/test/follow.test.ts 7 例（幂等 / 404 三态 / 清单过滤 / 批量五态 / 归档失败），随 npm test 常跑。");
 lines.push("- 差异登记：公共视图「共享给指定角色」（A1-03）未做 —— 一期公共视图 = 全员可见；关注后的关键事件通知随 M5（lan），关注动态流（A6-08）随工作台二刀。");
 lines.push("- 复跑：cd server && M2_06_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink node scripts/m2-06-replay.mjs --out ../docs/m2-06-回放证据(视图与关注).md");

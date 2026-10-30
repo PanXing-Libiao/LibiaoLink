@@ -24,6 +24,7 @@ import {
 } from "@libiaolink/contracts";
 import { ClockService } from "../../common/clock/clock.service.js";
 import { AppConfig } from "../../config/config.module.js";
+import { ObjectStorage } from "../../storage/index.js";
 import type { OutboxClaimedRow } from "../../db/outbox.store.js";
 import type { OutboxHandleOutcome } from "../../outbox/handler.js";
 import {
@@ -32,10 +33,16 @@ import {
   type NotifyDeliveryMessageRow,
 } from "./notify.delivery-archive.repository.js";
 import { NotifyGroupRepository } from "./notify.group.repository.js";
+import {
+  projectGroupDeliverability,
+  ProjectGroupDeliveryAlertService,
+} from "./project-group-delivery-alert.service.js";
 import { NotifyService } from "./notify.service.js";
 import type { AibotIncomingMessage, AibotSendResult } from "./wecom.aibot.js";
 import { aibotImageMimeFromFileName, WecomAibotClient } from "./wecom.aibot.js";
+import { renderDailyReportIssuePoster, renderDailyReportPoster } from "./daily-report.poster.js";
 import { renderR06Poster } from "./r06.poster.js";
+import { renderStageCompletePoster } from "./stage-complete.poster.js";
 import { describeWecomFailure } from "./wecom.errors.js";
 import { applyMarkdownHardBreaks, truncateUtf8Bytes } from "./wecom.text.js";
 
@@ -74,6 +81,7 @@ export function parseGroupMessage(raw: Record<string, unknown>): NotifyGroupMess
     refType: trimOrNull(value.refType),
     refId: value.refId ?? null,
     templateCode: trimOrNull(value.templateCode),
+    stageKey: value.stageKey ?? null,
   };
 }
 
@@ -143,9 +151,9 @@ function normalizeGroupName(value: string | null | undefined): string | null {
   return Array.from(trimmed).slice(0, GROUP_NAME_MAX_CHARS).join("");
 }
 
-/** 降级站内信类型：A02 / R06 为播报（摘要群发 / 喜报），其余群播报按提醒。 */
+/** 降级站内信类型：A02 / R06 / 阶段完成为播报（摘要群发 / 喜报 / 里程碑），其余群播报按提醒。 */
 function degradeTypeOf(templateCode: string | null): "broadcast" | "reminder" {
-  return templateCode !== null && /^(A02|R06|A08)/.test(templateCode) ? "broadcast" : "reminder";
+  return templateCode !== null && /^(A02|R06|A08|STAGE_COMPLETE)/.test(templateCode) ? "broadcast" : "reminder";
 }
 
 /** 失败描述（核心语义：errcode + 白话标签 / errmsg 概要；不含 kind / state 内部态与企微机器尾巴；不含 chatid 明文）。 */
@@ -168,6 +176,8 @@ export class NotifyGroupService {
     private readonly notify: NotifyService,
     private readonly clock: ClockService,
     private readonly config: AppConfig,
+    private readonly storage: ObjectStorage,
+    private readonly deliveryAlerts: ProjectGroupDeliveryAlertService,
   ) {}
 
   /**
@@ -290,18 +300,21 @@ export class NotifyGroupService {
     const binding = await this.repository.findGroupByProject(message.projectId);
     if (binding === null) {
       // 无绑定：notify_deliveries.target NOT NULL 无值可落 —— 不写尝试行，消息级归档置 dead + 日志（差异登记②）；
-      // 运营可见性由 outbox 死信告警承担（项目群绑定维护 = M5-07 前端入口 / PUT 接口）；
+      // 专用即时告警按项目 + 原因去重；通用 outbox.dead 仅进日报，避免同一故障双报。
       // 降级（B4）= 项目经理站内信（正文含原文）。
       const error = "群未绑定（project " + message.projectId + "）：" + row.dedupeKey;
       if (!terminalDead) {
         await this.archive.markState({ messageId: archived.id, state: "dead", at: this.clock.now(), error });
       }
+      const projectName = (await this.repository.findProjectName(message.projectId)) ?? "项目名称未登记";
+      this.deliveryAlerts.reportUnavailable(message.projectId, projectName, "unbound");
       this.logger.warn(
         "群未绑定（确定性失败转 dead）：outbox#" + row.id + " · project=" + message.projectId + " · " + row.dedupeKey,
       );
-      return await this.deadWithDegrade(row, message, terminalDead ? (archived.lastError ?? error) : error);
+      return await this.deadWithDegrade(row, message, terminalDead ? (archived.lastError ?? error) : error, "digest");
     }
     const masked = maskChatid(binding.chatid);
+    // 停用是历史兼容态：保留既有 dead + 降级路径，但不并入「项目群不可投递」专用告警。
     if (!binding.enabled) {
       const error = "群绑定已停用（chatid " + masked + "）";
       if (!terminalDead) {
@@ -323,6 +336,36 @@ export class NotifyGroupService {
         row,
         message,
         terminalDead ? (archived.lastError ?? error) : error + "：" + row.dedupeKey,
+      );
+    }
+    const deliverability = projectGroupDeliverability({
+      bound: true,
+      activated: binding.activatedAt !== null,
+    });
+    if (!deliverability.deliverable) {
+      const error = "已绑定，但机器人尚未激活（chatid " + masked + "）";
+      if (!terminalDead) {
+        await this.archive.recordAttempt({
+          messageId: archived.id,
+          outboxId: row.id,
+          channel: "wecom_group",
+          target: binding.chatid,
+          recipientLabel: "project:" + message.projectId + " · " + masked,
+          state: "dead",
+          attempts: 0,
+          error,
+          sentAt: null,
+          at: this.clock.now(),
+        });
+      }
+      const projectName = (await this.repository.findProjectName(message.projectId)) ?? "项目名称未登记";
+      this.deliveryAlerts.reportUnavailable(message.projectId, projectName, "not_activated");
+      this.logger.warn("项目群已绑定但机器人未激活（确定性失败转 dead）：outbox#" + row.id + " · chatid " + masked);
+      return await this.deadWithDegrade(
+        row,
+        message,
+        terminalDead ? (archived.lastError ?? error) : error + "：" + row.dedupeKey,
+        "digest",
       );
     }
     if (terminalDead) {
@@ -367,6 +410,20 @@ export class NotifyGroupService {
         masked,
         dedupeKey: row.dedupeKey,
       });
+      const dailyReportPosterAttempts = await this.sendDailyReportPoster({
+        message,
+        chatid: binding.chatid,
+        groupActivated: binding.activatedAt !== null,
+        masked,
+        dedupeKey: row.dedupeKey,
+      });
+      const stagePosterAttempts = await this.sendStageCompletePoster({
+        message,
+        chatid: binding.chatid,
+        groupActivated: binding.activatedAt !== null,
+        masked,
+        dedupeKey: row.dedupeKey,
+      });
       const sentAt = this.clock.now();
       await this.archive.recordAttempt({
         messageId: archived.id,
@@ -375,12 +432,13 @@ export class NotifyGroupService {
         target: binding.chatid,
         recipientLabel: "project:" + message.projectId + " · " + masked,
         state: "sent",
-        attempts: result.attempts + rocketAttempts + posterAttempts,
+        attempts: result.attempts + rocketAttempts + posterAttempts + dailyReportPosterAttempts + stagePosterAttempts,
         error: null,
         sentAt,
         at: sentAt,
       });
       this.logger.log("群播报已受理：" + row.dedupeKey + " · chatid " + masked + (truncated ? "（截断发送）" : ""));
+      this.deliveryAlerts.reportAvailable(message.projectId);
       return { outcome: "done" };
     }
 
@@ -431,6 +489,179 @@ export class NotifyGroupService {
     });
     this.logger.warn("群播报确定性失败（转 dead）：" + row.dedupeKey + " · chatid " + masked + " —— " + error);
     return await this.deadWithDegrade(row, message, error);
+  }
+
+  /**
+   * 日报群同步：文字「日报已送达」及其项目日报纯文字深链送达后，依次追加日报海报与现场问题专报（有问题时）。
+   * 两张图均为 1440px 宽、按内容动态增高；正文与图片不省略，任一图片失败只留日志，不重发文字。
+   */
+  private async sendDailyReportPoster(input: {
+    message: NotifyGroupMessagePayload;
+    chatid: string;
+    groupActivated: boolean;
+    masked: string;
+    dedupeKey: string;
+  }): Promise<number> {
+    const reportId = input.message.refId;
+    if (input.message.templateCode !== "DAILY_REPORT_GROUP" || reportId === null || reportId === undefined) {
+      return 0;
+    }
+    let data: Awaited<ReturnType<NotifyGroupRepository["findDailyReportPosterData"]>>;
+    try {
+      data = await this.repository.findDailyReportPosterData(input.message.projectId, reportId);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.warn("日报海报数据读取失败，已跳过图片（文字已发送）：" + input.dedupeKey + " —— " + detail);
+      return 0;
+    }
+    if (data === null) {
+      this.logger.warn("日报海报数据不存在，已跳过图片（文字已发送）：" + input.dedupeKey);
+      return 0;
+    }
+    if (data.state === "draft") {
+      this.logger.warn("草稿日报不生成群海报，已跳过图片（文字已发送）：" + input.dedupeKey);
+      return 0;
+    }
+
+    // 终稿口径：现场图与问题图全部进入海报；同一 objectKey 只读取一次，单张坏图仅影响自身片位。
+    const photos = [...data.photos, ...data.issues.flatMap((issue) => issue.photos)];
+    const objectKeys = [
+      ...new Set(photos.map((photo) => photo.objectKey).filter((key): key is string => key !== null)),
+    ];
+    const objectBytes = new Map<string, Buffer>();
+    await Promise.all(
+      objectKeys.map(async (objectKey) => {
+        try {
+          const object = await this.storage.getObject(objectKey);
+          if (object !== null) {
+            objectBytes.set(objectKey, Buffer.from(object.bytes));
+          }
+        } catch {
+          // 单张附件读取失败只影响该片位；海报其余文字 / 图片继续生成。
+        }
+      }),
+    );
+    const images = new Map<string, Buffer>();
+    for (const photo of photos) {
+      const bytes = photo.objectKey === null ? undefined : objectBytes.get(photo.objectKey);
+      if (bytes !== undefined) {
+        images.set(photo.fileId, bytes);
+      }
+    }
+
+    let attempts = 0;
+    const projectCode = data.projectCode.replace(/[^A-Za-z0-9._-]+/gu, "-");
+    const sendPoster = async (
+      label: string,
+      fileName: string,
+      render: () => Promise<Buffer>,
+    ): Promise<void> => {
+      let content: Buffer;
+      try {
+        content = await render();
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        this.logger.warn(label + "生成失败，已跳过图片（文字已发送）：" + input.dedupeKey + " —— " + detail);
+        return;
+      }
+      const result = await this.aibot.sendGroupImage({
+        chatid: input.chatid,
+        content,
+        fileName,
+        mime: "image/png",
+        groupActivated: input.groupActivated,
+      });
+      attempts += result.attempts;
+      if (!result.ok) {
+        this.logger.warn(
+          label +
+            "未送达（文字已发送）：" +
+            input.dedupeKey +
+            " · chatid " +
+            input.masked +
+            " —— " +
+            describeAibotFailure(result),
+        );
+        return;
+      }
+      this.logger.log(label + "已送达：" + input.dedupeKey + " · chatid " + input.masked);
+    };
+
+    await sendPoster(
+      "日报海报",
+      "DAILY-" + data.reportDate + "-" + projectCode + ".png",
+      () => renderDailyReportPoster(data, images),
+    );
+    if (data.issues.length > 0) {
+      await sendPoster(
+        "现场问题专报",
+        "ISSUE-" + data.reportDate + "-" + projectCode + ".png",
+        () => renderDailyReportIssuePoster(data, images),
+      );
+    }
+    return attempts;
+  }
+
+  /**
+   * 大阶段完成海报：文字通知送达后追加 1280×720 PNG。
+   * 只认 STAGE_COMPLETE_GROUP + stageKey；数据读取 / 绘制 / 发送任一失败只留日志，不重发已送达文字。
+   */
+  private async sendStageCompletePoster(input: {
+    message: NotifyGroupMessagePayload;
+    chatid: string;
+    groupActivated: boolean;
+    masked: string;
+    dedupeKey: string;
+  }): Promise<number> {
+    if (input.message.templateCode !== "STAGE_COMPLETE_GROUP" || input.message.stageKey === null || input.message.stageKey === undefined) {
+      return 0;
+    }
+    let data: Awaited<ReturnType<NotifyGroupRepository["findStageCompletePosterData"]>>;
+    try {
+      data = await this.repository.findStageCompletePosterData(
+        input.message.projectId,
+        input.message.stageKey,
+        this.clock.now(),
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.warn("阶段完成海报数据读取失败，已跳过图片（文字已发送）：" + input.dedupeKey + " —— " + detail);
+      return 0;
+    }
+    if (data === null) {
+      this.logger.warn("阶段完成海报数据不存在，已跳过图片（文字已发送）：" + input.dedupeKey);
+      return 0;
+    }
+
+    let content: Buffer;
+    try {
+      content = await renderStageCompletePoster(data);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.warn("阶段完成海报生成失败，已跳过图片（文字已发送）：" + input.dedupeKey + " —— " + detail);
+      return 0;
+    }
+    const projectCode = data.projectCode.replace(/[^A-Za-z0-9._-]+/gu, "-");
+    const result = await this.aibot.sendGroupImage({
+      chatid: input.chatid,
+      content,
+      fileName: "STAGE-" + projectCode + "-" + data.stageKey + ".png",
+      mime: "image/png",
+      groupActivated: input.groupActivated,
+    });
+    if (!result.ok) {
+      this.logger.warn(
+        "阶段完成海报未送达（文字已发送）：" +
+          input.dedupeKey +
+          " · chatid " +
+          input.masked +
+          " —— " +
+          describeAibotFailure(result),
+      );
+      return result.attempts;
+    }
+    this.logger.log("阶段完成海报已送达：" + input.dedupeKey + " · chatid " + input.masked);
+    return result.attempts;
   }
 
   /**
@@ -647,11 +878,12 @@ export class NotifyGroupService {
     row: OutboxClaimedRow,
     message: NotifyGroupMessagePayload,
     error: string,
+    deadAlert: "immediate" | "digest" = "immediate",
   ): Promise<OutboxHandleOutcome> {
     const managerId = await this.repository.findProjectManagerId(message.projectId);
     if (managerId === null) {
       this.logger.warn("群失败降级：项目经理解析不到（跳过站内信）：" + row.dedupeKey + " · project=" + message.projectId);
-      return { outcome: "dead", error };
+      return deadAlert === "digest" ? { outcome: "dead", error, deadAlert } : { outcome: "dead", error };
     }
     try {
       await this.notify.deliverInboxCopy(
@@ -669,7 +901,7 @@ export class NotifyGroupService {
         row.dedupeKey + ":c504",
       );
       this.logger.warn("群失败已降级项目经理站内信（manager " + managerId + "）：" + row.dedupeKey + " —— " + error);
-      return { outcome: "dead", error };
+      return deadAlert === "digest" ? { outcome: "dead", error, deadAlert } : { outcome: "dead", error };
     } catch (degradeError) {
       const detail = degradeError instanceof Error ? degradeError.message : String(degradeError);
       this.logger.error("群失败降级站内信失败（按可重试收敛）：" + row.dedupeKey + " —— " + detail);

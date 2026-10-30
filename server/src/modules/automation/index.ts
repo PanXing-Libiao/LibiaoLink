@@ -26,9 +26,11 @@ export {
   BUILTIN_RULE_SUBJECT_KINDS,
   MERGED_TEMPLATE_SPECS,
   R01_NOTE,
+  RECIPIENT_TEMPLATE_OVERRIDES,
   SUBJECT_TEMPLATE_VARIABLES,
   findMergedSpec,
   findTemplate,
+  findTemplateForRecipient,
   subjectKindOf,
 } from "./builtin-rules.js";
 export type { MergedTemplateSpec } from "./builtin-rules.js";

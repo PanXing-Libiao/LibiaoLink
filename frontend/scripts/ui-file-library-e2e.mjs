@@ -1,35 +1,17 @@
 #!/usr/bin/env node
 /**
- * LibiaoLink 前端 · 回放：文件库（Push 261 · 系统现有文件 / 文件回收站 / 项目回收站）
+ * LibiaoLink 前端 · 回放：回收站（2026-10-29 · 文件回收站 / 项目回收站）
  *
- * 业务口径（2026-10-09）：「新增文件库 文件库里面分为 系统现有文件 回收站」（入口 = 右上角头像菜单「文件库」）。
+ * 业务口径（2026-10-29）：「文件库改成回收站」；原「系统现有文件」栏下线，项目文件改在项目详情「项目文件」查看。
  *
  * 本脚本用真机浏览器（无头 Chrome + CDP）验：
- *   ① 头像菜单四项（设置 / 退出登录 / 操作记录 / 文件库）：「文件库」在「操作记录」下方、href = #/files；
- *   ② 点入口 → #/files：三枚标签（系统现有文件 / 文件回收站 / 项目回收站）、缺省停在「系统现有文件」；计数 / 首屏 50 行 / 行序
- *      与库内逐一对账（同一项目集 + 四档在库状态，created_at desc + id asc）；
- *   ③ 分页：下一页 → page=2、行 = 库内第 51 行起；上一页回第 1 页、地址回 #/files；
- *   ④ 筛选（地址即状态）：状态 = 草稿（status=draft，行全草稿）/ 清除筛选还原；项目筛选 = **可搜索多选下拉**
- *      （打开即列全部选项、列表内部可鼠标滚轮滑动；输入夹具项目编号（Push 274 起按第一条项目动态派生，避免沙箱新增项目即漂移）把选项过滤到命中项 —— 业务口径 2026-10-09
- *      「应该是搜索下拉框加鼠标滑动」）；多选追订「要可以多项选择 再次点击取消选择」：点选不关浮层（再点 = 取消），
- *      地址 project=<idA>[,<idB>…]（去重保序），多选计数 = 选中项目并集，逐个取消后还原 #/files；
- *      状态 / 上传人筛选同理多选（地址 status=draft,final / uploadedBy=<id>[,<id>…]；上传人 = 前端内存过滤）；
- *      ② 另断言项目列排版 = 编号 + 名字两行（追订「项目名称要编号和名字都写在表格里面注意排版」）；
- *      触发器口径（追订「不要这样显示太丑了 可以只显现这个筛选的名称 然后数量淡灰色的」）：只显筛选名称 +
- *      浅灰数量（data-select-trigger-label / -count），空选无数量；
- *   ⑤ 关键字搜索：输入唯一文件名 → 防抖后地址 / 请求同步 q=（page=1）、1 行命中、状态 = 草稿、上传人 = 潘兴、
- *      项目 = 项目码；清空（×）→ 地址回 #/files、行还原；操作列按钮定宽（忙碌文案不改宽 —— 点预览不抖表）。
- *      【2026-10-09 追订】「类型」列与筛选整条撤除（业务口径「文件类型不需要 因为没有明确的绑定机制」），
- *      本脚本不再断言类型列 / 类型筛选（库内 files.doc_type 全空，无绑定机制）；
- *   ⑥ 回收站栏（?tab=recycled）：标签切换 + 地址同步 + 行状态签全 = 回收站 + 计数 / 行序与库内 recycled 对账；
- *   ⑦ 回收站写口（真实接口）：恢复 → 行移出回收站、DB status 回退 draft、通知「已恢复」；
- *      再次回收后深链 #/files?tab=recycled&q=<名> 刷新直接打开同款（输入框带词、1 行命中）；
- *      「彻底删除」：第一下出确认条 → 取消（行仍在）→ 再点 → 确认 → 行消失、通知「已彻底删除」、
- *      DB 文件 / 版本行清零、审计留痕（delete · 彻底删除：…）；
- *   ⑧ 控制台零报错；跑完会话撤销、文件 / 版本零残留（上传会话行是历史台账，保留）。
- *   ⑨ 提示口径（2026-10-23 分层）：普通写口反馈 = 屏幕顶部居中浮空 Toast（position=fixed / top ≤ 48px / 水平居中），
- *      白色圆角卡片自顶部下落，停留 2s 后自动向上收起（无需手动关闭）；验收交付确认仍在底部；
- *      操作列按钮定宽（预览 / 下载忙碌文案不再把自动布局的表格重排 = 抖动）。
+ *   ① 头像菜单「回收站」位于「操作记录」下方、href = #/files；
+ *   ② #/files 缺省 = 文件回收站，仅两枚标签（文件回收站 / 项目回收站）；无系统现有文件栏、无状态筛选；
+ *      计数 / 首屏 50 行 / 行序与库内 recycled 对账；项目列 = 名称 + 编号两行；
+ *   ③ 分页、关键字 / 项目 / 上传人筛选与地址即状态；
+ *   ④ 文件回收站写口：恢复后行移出、DB 回退原状态；再次回收后深链刷新、彻底删除确认 / 审计；
+ *   ⑤ 项目回收站卡片栏与文件筛选条隐藏；
+ *   ⑥ 控制台零报错；会话与夹具零残留。
  *
  * 前置（都在本机跑着）：前端 dev :3000 / api :3001 / 本地沙箱 PG :5433 / MinIO :9000 / 本机 Chrome。
  * 用法：node scripts/ui-file-library-e2e.mjs
@@ -127,10 +109,12 @@ const projectItems = projectList.body.items;
 const project = projectItems[0];
 const projectLabel = project.code + " · " + project.name;
 const stamp = randomBytes(4).toString("hex");
-const fileName = "回放-文件库-" + stamp + ".txt";
-const contentBytes = Buffer.from("LibiaoLink 文件库回放 " + stamp, "utf8");
+const fileName = "回放-回收站-" + stamp + ".txt";
+const contentBytes = Buffer.from("LibiaoLink 回收站回放 " + stamp, "utf8");
 const fileId = await uploadTestFile(project.id, fileName, contentBytes);
 console.log("测试文件：" + fileName + "（" + fileId + "）@ " + project.code + "（" + project.name + "）");
+await recycleViaApi(fileId);
+console.log("API 回收：" + fileName);
 
 const profile = mkdtempSync(join(tmpdir(), "pxfiles-"));
 const chrome = spawn(CHROME, ["--headless=new", "--remote-debugging-port=" + PORT, "--user-data-dir=" + profile, "--no-first-run", "--no-default-browser-check", "--disable-gpu", "about:blank"], { stdio: "ignore" });
@@ -263,7 +247,7 @@ async function bail(message) {
 /** 行 / 计数 / 标签 / 通知的一把抓（与 data-file-* 钩子对齐）。 */
 const rowExpr = "(function(){var rows=document.querySelectorAll(" + j("[data-file-row]") + ");var out=[];for(var i=0;i<rows.length;i+=1){var tr=rows[i];var tds=tr.querySelectorAll(" + j("td") + ");var st=tr.querySelector(" + j("[data-file-status]") + ");var pj=tds[2].querySelector(" + j("[data-file-project]") + ");out.push({id:tr.getAttribute(" + j("data-file-row") + "),name:String(tds[0].textContent).trim(),status:st===null?null:st.getAttribute(" + j("data-file-status") + "),statusText:st===null?null:String(st.textContent).trim(),project:String(tds[2].textContent).trim(),projectCode:pj===null?null:pj.getAttribute(" + j("data-file-project-code") + "),projectName:pj===null?null:pj.getAttribute(" + j("data-file-project-name") + "),uploader:String(tds[3].textContent).trim(),when:String(tds[4].textContent).trim()});}var count=document.querySelector(" + j("[data-file-count]") + ");var info=document.querySelector(" + j("[data-file-page-info]") + ");var empty=document.querySelector(" + j("[data-file-empty]") + ");var tabs=document.querySelectorAll(" + j("[data-file-tab]") + ");var tabTexts=[];var activeTab=null;for(var k=0;k<tabs.length;k+=1){tabTexts.push(String(tabs[k].textContent).trim());if(tabs[k].getAttribute(" + j("aria-current") + ")===" + j("page") + "){activeTab=tabs[k].getAttribute(" + j("data-file-tab") + ");}}var notice=document.querySelector(" + j("[data-file-notice]") + ");var noticeKind=notice===null?null:notice.getAttribute(" + j("data-file-notice") + ");var kw=document.querySelector(" + j("[data-file-filter=keyword] input") + ");return {rows:out,rowCount:rows.length,count:count===null?null:String(count.textContent).trim(),pageInfo:info===null?null:String(info.textContent).trim(),empty:empty===null?null:String(empty.textContent).trim(),tabTexts:tabTexts,activeTab:activeTab,notice:notice===null?null:String(notice.textContent).trim(),noticeKind:noticeKind,keyword:kw===null?null:kw.value,hash:window.location.hash,headerText:String(document.querySelector(" + j("[data-file-library]") + ").textContent)};})()";
 
-const STATUSES_CURRENT = ["draft", "final", "changed", "archived"];
+const STATUSES_LIBRARY = ["recycled"];
 const STATUSES_RECYCLED = ["recycled"];
 const projectIds = projectItems.map((item) => item.id);
 const orderedIds = async (statuses, projectId) => {
@@ -280,12 +264,12 @@ const countRows = async (statuses, projectId) => {
 };
 /** 多选并集（与前端合并排序同口径：created_at desc + id asc）。 */
 const unionIds = async (ids) => {
-  const rows = await db.query("select id from files where project_id = any($1::uuid[]) and status = any($2::text[]) order by created_at desc, id asc", [ids, STATUSES_CURRENT]);
+  const rows = await db.query("select id from files where project_id = any($1::uuid[]) and status = any($2::text[]) order by created_at desc, id asc", [ids, STATUSES_LIBRARY]);
   return rows.rows.map((row) => String(row.id));
 };
-/** 多选上传人（created_by）：单人 / 多人的在库文件计数与序（与前端内存过滤同口径）。 */
-const countByCreators = async (creatorIds) => Number((await db.query("select count(*)::int n from files where project_id = any($1::uuid[]) and status = any($2::text[]) and created_by = any($3::uuid[])", [projectIds, STATUSES_CURRENT, creatorIds])).rows[0].n);
-const orderedByCreators = async (creatorIds) => (await db.query("select id from files where project_id = any($1::uuid[]) and status = any($2::text[]) and created_by = any($3::uuid[]) order by created_at desc, id asc", [projectIds, STATUSES_CURRENT, creatorIds])).rows.map((row) => String(row.id));
+/** 多选上传人（created_by）：单人 / 多人的回收站文件计数与序（与前端内存过滤同口径）。 */
+const countByCreators = async (creatorIds) => Number((await db.query("select count(*)::int n from files where project_id = any($1::uuid[]) and status = any($2::text[]) and created_by = any($3::uuid[])", [projectIds, STATUSES_LIBRARY, creatorIds])).rows[0].n);
+const orderedByCreators = async (creatorIds) => (await db.query("select id from files where project_id = any($1::uuid[]) and status = any($2::text[]) and created_by = any($3::uuid[]) order by created_at desc, id asc", [projectIds, STATUSES_LIBRARY, creatorIds])).rows.map((row) => String(row.id));
 const fileStatusOf = async (id) => (await db.query("select status, version from files where id = $1", [id])).rows[0];
 const lastFileReq = () => fileRequests.length === 0 ? "" : fileRequests[fileRequests.length - 1];
 const lastProjectReq = () => projectRequests.length === 0 ? "" : projectRequests[projectRequests.length - 1];
@@ -302,47 +286,46 @@ for (let i = 0; i < 50 && hubReady !== true; i += 1) {
 }
 await sleep(1200);
 
-// 首登「绑定企业微信」引导是遮罩层，先按产品允许的「稍后再说」关闭，避免挡住头像菜单。
-const guideSkipPoint = await ev("(function(){var b=document.querySelector(" + j("[data-wecom-binding-guide-skip]") + ");if(b===null){return null;}var r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
-if (guideSkipPoint !== null && guideSkipPoint !== undefined) {
-  await clickAt(guideSkipPoint);
-  await waitFor("document.querySelector(" + j("[data-wecom-binding-guide]") + ") === null", 5000);
+// 登录后不再自动弹企微绑定浮卡；若出现即视为回归（并会挡住头像菜单）。
+if ((await ev("document.querySelector(" + j("[data-wecom-binding-guide]") + ") !== null")) === true) {
+  await bail("登录后不应再自动出现企微绑定浮卡");
 }
 
-// ---------- ① 头像菜单：「文件库」在「操作记录」下方 ----------
+// ---------- ① 头像菜单：「回收站」在「操作记录」下方 ----------
 const avatarPoint = await ev("(function(){var b=document.querySelector(" + j("[data-account-trigger]") + ");if(b===null){return null;}var r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
 if (avatarPoint === null || avatarPoint === undefined) { await bail("头像按钮找不到"); }
 await clickAt(avatarPoint);
 const menuReady = await waitFor("document.querySelector(" + j("[data-account-files]") + ") !== null", 8000);
-if (menuReady !== true) { await bail("头像菜单里没有「文件库」入口"); }
+if (menuReady !== true) { await bail("头像菜单里没有「回收站」入口"); }
 const menuInfo = await ev("(function(){var f=document.querySelector(" + j("[data-account-files]") + ");var box=f.parentElement;var items=box.querySelectorAll(" + j("[role=menuitem]") + ");var out=[];for(var i=0;i<items.length;i+=1){var it=items[i];out.push({text:String(it.textContent).trim(),href:it.getAttribute(" + j("href") + "),y:Math.round(it.getBoundingClientRect().top)});}return {items:out,filesHref:f.getAttribute(" + j("href") + "),filesY:Math.round(f.getBoundingClientRect().top)};})()");
 const menuShot = await shot("file-library-menu", { x: 900, y: 0, width: 600, height: 280, scale: 1 });
 console.log("截图：" + menuShot);
 const auditItem = menuInfo.items.find((item) => item.text === "操作记录");
-check("① 头像菜单四项（设置 / 退出登录 / 操作记录 / 文件库）：「文件库」在「操作记录」下方、href = #/files",
-  menuInfo.items.length === 4 && menuInfo.items[0].text === "设置" && menuInfo.items[1].text === "退出登录" && auditItem !== undefined && menuInfo.items[3].text === "文件库" && menuInfo.filesHref === "#/files" && auditItem.y < menuInfo.filesY,
+check("① 头像菜单四项（设置 / 退出登录 / 操作记录 / 回收站）：「回收站」在「操作记录」下方、href = #/files",
+  menuInfo.items.length === 4 && menuInfo.items[0].text === "设置" && menuInfo.items[1].text === "退出登录" && auditItem !== undefined && menuInfo.items[3].text === "回收站" && menuInfo.filesHref === "#/files" && auditItem.y < menuInfo.filesY,
   JSON.stringify(menuInfo));
 
-// ---------- ② 入口 → #/files：标签 / 计数 / 行序对账 ----------
+// ---------- ② 入口 → #/files：文件回收站默认页签 / 计数 / 行序对账 ----------
 await clickSelector("[data-account-files]");
 const baseReady = await waitFor("window.location.hash === " + j("#/files") + " && document.querySelectorAll(" + j("[data-file-row]") + ").length > 0", 40000);
 if (baseReady !== true) { await bail("#/files 没就位（表格行没出来）"); }
 await sleep(1500);
 const base = await ev(rowExpr);
-const expectCurrentIds = await orderedIds(STATUSES_CURRENT);
-const baseShot = await shot("file-library-current", { x: 0, y: 0, width: 1500, height: 950, scale: 1 });
+const expectCurrentIds = await orderedIds(STATUSES_LIBRARY);
+const baseShot = await shot("file-recycle-bin", { x: 0, y: 0, width: 1500, height: 950, scale: 1 });
 console.log("截图：" + baseShot);
-check("② #/files 就位：三枚标签（系统现有文件 / 文件回收站 / 项目回收站）、缺省当前 = 系统现有文件、页头保留 30 天口径",
-  base.tabTexts.join(",") === "系统现有文件,文件回收站,项目回收站" && base.activeTab === "current" && base.headerText.indexOf("默认保留 30 天，可恢复") !== -1,
+check("② #/files 就位：两枚标签（文件回收站 / 项目回收站）、缺省当前 = 文件回收站、页头保留 30 天口径",
+  base.tabTexts.join(",") === "文件回收站,项目回收站" && base.activeTab === "recycled" && base.headerText.indexOf("默认保留 30 天，可恢复") !== -1,
   JSON.stringify({ tabs: base.tabTexts, active: base.activeTab }));
-check("②b 计数 / 首屏 50 行 / 行序与库内（四档在库状态）逐一对账、在库行不出现回收站签",
-  base.count === "共 " + String(expectCurrentIds.length) + " 条" && base.rowCount === Math.min(50, expectCurrentIds.length) && base.rows.map((row) => row.id).join(",") === expectCurrentIds.slice(0, 50).join(",") && base.rows.every((row) => row.status !== "recycled"),
+check("②b 计数 / 首屏 50 行 / 行序与库内 recycled 逐一对账、行状态签全 = 回收站",
+  base.count === "共 " + String(expectCurrentIds.length) + " 条" && base.rowCount === Math.min(50, expectCurrentIds.length) && base.rows.map((row) => row.id).join(",") === expectCurrentIds.slice(0, 50).join(",") && base.rows.every((row) => row.status === "recycled"),
   JSON.stringify({ count: base.count, db: expectCurrentIds.length, rows: base.rowCount }));
-check("②c 请求口径：filter[status]=四档在库状态（显式给全、不含 recycled）+ limit=200&page=1",
-  hasReq("filter[status]=draft,final,changed,archived") && hasReq("limit=200&page=1"),
+check("②c 请求口径：filter[status]=recycled + limit=200&page=1",
+  hasReq("filter[status]=recycled") && hasReq("limit=200&page=1"),
   lastFileReq().slice(0, 200));
 const typeGone = await ev("(function(){return {filter:document.querySelector(" + j("[data-file-filter=docType]") + ")!==null,th:document.querySelector(" + j("[data-file-library] thead") + ").textContent.indexOf(" + j("类型") + ") !== -1,ths:document.querySelectorAll(" + j("[data-file-library] thead th") + ").length};})()");
 check("②d 无「类型」列与类型筛选（Push 261 追订：文件类型不需要 因为没有明确的绑定机制）+ 表头六列", typeGone.filter === false && typeGone.th === false && typeGone.ths === 6, JSON.stringify(typeGone));
+
 
 const projectCell = await ev("(function(){var c=document.querySelector(" + j("[data-file-project]") + ");if(c===null){return null;}var spans=c.querySelectorAll(" + j("span") + ");return {code:c.getAttribute(" + j("data-file-project-code") + "),name:c.getAttribute(" + j("data-file-project-name") + "),rows:spans.length,direction:getComputedStyle(c).flexDirection,first:spans.length>0?String(spans[0].textContent).trim():null,second:spans.length>1?String(spans[1].textContent).trim():null};})()");
 check("②e 项目列排版 = 中文名 + 编号两行（上行项目名、下行项目编号；首行 = 测试项目，追订「项目名称要编号和名字都写在表格里面注意排版」+「中文和编号的位置反一下」）",
@@ -351,75 +334,27 @@ check("②e 项目列排版 = 中文名 + 编号两行（上行项目名、下�
 
 // ---------- ③ 分页 ----------
 const totalPages = Math.max(1, Math.ceil(expectCurrentIds.length / 50));
-await clickSelector("[data-file-next]");
-const page2Ready = await waitFor("window.location.hash.indexOf(" + j("page=2") + ") !== -1 && document.querySelectorAll(" + j("[data-file-row]") + ").length > 0", 40000);
-await sleep(1200);
-const page2 = await ev(rowExpr);
-check("③ 分页：下一页 → 地址 page=2、页脚「第 2 / " + String(totalPages) + " 页」、行 = 库内第 51 行起",
-  page2Ready === true && page2.hash.indexOf("page=2") !== -1 && page2.pageInfo === "共 " + String(expectCurrentIds.length) + " 条 · 第 2 / " + String(totalPages) + " 页" && page2.rows.map((row) => row.id).join(",") === expectCurrentIds.slice(50, 100).join(","),
-  JSON.stringify({ info: page2.pageInfo, rows: page2.rowCount }));
-await clickSelector("[data-file-prev]");
-const backReady = await waitFor("window.location.hash === " + j("#/files") + " && document.querySelectorAll(" + j("[data-file-row]") + ").length > 0", 40000);
-await sleep(1200);
-const back1 = await ev(rowExpr);
-check("③b 上一页 → 地址回 #/files（缺省参数不落地址）、首行还原",
-  backReady === true && back1.rows[0] !== undefined && back1.rows[0].id === expectCurrentIds[0],
-  JSON.stringify({ hash: back1.hash, first: back1.rows[0] === undefined ? null : back1.rows[0].id }));
+if (totalPages > 1) {
+  await clickSelector("[data-file-next]");
+  const page2Ready = await waitFor("window.location.hash.indexOf(" + j("page=2") + ") !== -1 && document.querySelectorAll(" + j("[data-file-row]") + ").length > 0", 40000);
+  await sleep(1200);
+  const page2 = await ev(rowExpr);
+  check("③ 分页：下一页 → 地址 page=2、页脚「第 2 / " + String(totalPages) + " 页」、行 = 库内第 51 行起",
+    page2Ready === true && page2.hash.indexOf("page=2") !== -1 && page2.pageInfo === "共 " + String(expectCurrentIds.length) + " 条 · 第 2 / " + String(totalPages) + " 页" && page2.rows.map((row) => row.id).join(",") === expectCurrentIds.slice(50, 100).join(","),
+    JSON.stringify({ info: page2.pageInfo, rows: page2.rowCount }));
+  await clickSelector("[data-file-prev]");
+  const backReady = await waitFor("window.location.hash === " + j("#/files") + " && document.querySelectorAll(" + j("[data-file-row]") + ").length > 0", 40000);
+  await sleep(1200);
+  const back1 = await ev(rowExpr);
+  check("③b 上一页 → 地址回 #/files（缺省参数不落地址）、首行还原",
+    backReady === true && back1.rows[0] !== undefined && back1.rows[0].id === expectCurrentIds[0],
+    JSON.stringify({ hash: back1.hash, first: back1.rows[0] === undefined ? null : back1.rows[0].id }));
+} else {
+  const onlyPage = await ev("(function(){var b=document.querySelector(" + j("[data-file-next]") + ");return b!==null && b.disabled;})()");
+  check("③ 回收站只有 1 页：下一页禁用、地址保持 #/files", onlyPage === true && (await ev("window.location.hash")) === "#/files");
+}
 
-// ---------- ④ 筛选（地址即状态） ----------
-await clickSelector("[data-file-filter=status] button");
-const statusPicked = await pickOption("草稿");
-const draftReady = await waitFor("window.location.hash.indexOf(" + j("status=draft") + ") !== -1 && document.querySelectorAll(" + j("[data-file-row]") + ").length > 0", 40000);
-await sleep(1200);
-const draftState = await ev(rowExpr);
-const expectDraftIds = await orderedIds(["draft"]);
-check("④ 状态筛选 = 草稿：地址 status=draft、计数 / 首屏行与库内草稿对账、行状态签全草稿",
-  statusPicked === true && draftReady === true && draftState.count === "共 " + String(expectDraftIds.length) + " 条" && draftState.rows.map((row) => row.id).join(",") === expectDraftIds.slice(0, 50).join(",") && draftState.rows.every((row) => row.status === "draft" && row.statusText === "草稿"),
-  JSON.stringify({ picked: statusPicked, hash: draftState.hash, count: draftState.count, db: expectDraftIds.length }));
-await clickSelector("[data-file-clear]");
-const clearedReady = await waitFor("window.location.hash === " + j("#/files") + " && document.querySelectorAll(" + j("[data-file-row]") + ").length > 0", 40000);
-await sleep(1200);
-const afterClear = await ev(rowExpr);
-check("④b 清除筛选 → 地址回 #/files、计数还原",
-  clearedReady === true && afterClear.count === "共 " + String(expectCurrentIds.length) + " 条",
-  JSON.stringify({ hash: afterClear.hash, count: afterClear.count }));
-// ---------- ④b2 状态筛选 = 多选（点选不关浮层 / 再点取消；追订「别的筛选也是同理 要支持多选」） ----------
-const countDraft = await countRows(["draft"]);
-const countFinal = await countRows(["final"]);
-const expectDraftFinalIds = await orderedIds(["draft", "final"]);
-await clickSelector("[data-file-filter=status] button");
-const statusBoxReady = await waitFor("document.querySelector(" + j("[data-search-select-input]") + ") !== null", 8000);
-const draftPick2 = await pickOption("草稿");
-const draftOnlyReady = await waitFor("window.location.hash === " + j("#/files?status=draft") + " && document.querySelector(" + j("[data-file-count]") + ") !== null && document.querySelector(" + j("[data-file-count]") + ").textContent === " + j("共 " + String(countDraft) + " 条"), 40000);
-await sleep(1200);
-const draftOnly = await ev(rowExpr);
-const draftMultiUi = await ev("(function(){var t=document.querySelector(" + j("[data-file-filter=status] button") + ");var p=document.querySelector(" + j("[data-select-popover]") + ");return {label:t===null?null:t.getAttribute(" + j("data-select-trigger-label") + "),count:t===null?null:t.getAttribute(" + j("data-select-trigger-count") + "),open:p!==null};})()");
-check("④b2 状态筛选 = 多选第一项（草稿）：点选不关浮层 + 触发器「状态 + 浅灰 1」（新口径：只显名称 + 浅灰数量）、地址 status=draft、计数 / 行全草稿",
-  statusBoxReady === true && draftPick2 === true && draftOnlyReady === true && draftMultiUi.open === true && draftMultiUi.label === "状态" && draftMultiUi.count === "1" && draftOnly.count === "共 " + String(countDraft) + " 条" && draftOnly.rows.every((row) => row.status === "draft"),
-  JSON.stringify({ picked: draftPick2, hash: draftOnly.hash, count: draftOnly.count, db: countDraft, ui: draftMultiUi }));
-const finalPick = await pickOption("已定档");
-const draftFinalReady = await waitFor("window.location.hash === " + j("#/files?status=draft,final") + " && document.querySelector(" + j("[data-file-count]") + ") !== null && document.querySelector(" + j("[data-file-count]") + ").textContent === " + j("共 " + String(expectDraftFinalIds.length) + " 条"), 40000);
-await sleep(1200);
-const draftFinal = await ev(rowExpr);
-const draftFinalUi = await ev("(function(){var t=document.querySelector(" + j("[data-file-filter=status] button") + ");return {label:t===null?null:t.getAttribute(" + j("data-select-trigger-label") + "),count:t===null?null:t.getAttribute(" + j("data-select-trigger-count") + ")};})()");
-check("④b3 状态多选累加（草稿 + 已定档）：地址 status=draft,final（逗号分隔）、触发器「状态 + 浅灰 2」、计数 / 行 = 两状态并集",
-  finalPick === true && draftFinalReady === true && draftFinalUi.label === "状态" && draftFinalUi.count === "2" && draftFinal.count === "共 " + String(expectDraftFinalIds.length) + " 条" && draftFinal.rows.map((row) => row.id).join(",") === expectDraftFinalIds.slice(0, 50).join(",") && draftFinal.rows.every((row) => row.status === "draft" || row.status === "final"),
-  JSON.stringify({ picked: finalPick, hash: draftFinal.hash, count: draftFinal.count, db: expectDraftFinalIds.length, ui: draftFinalUi }));
-const draftUnpick = await pickOption("草稿");
-const finalOnlyReady = await waitFor("window.location.hash === " + j("#/files?status=final") + " && document.querySelector(" + j("[data-file-count]") + ") !== null && document.querySelector(" + j("[data-file-count]") + ").textContent === " + j("共 " + String(countFinal) + " 条"), 40000);
-await sleep(1000);
-const finalOnly = await ev(rowExpr);
-check("④b4 再次点击草稿 = 取消选择：地址只剩 status=final、计数 = 已定档",
-  draftUnpick === true && finalOnlyReady === true && finalOnly.count === "共 " + String(countFinal) + " 条" && finalOnly.rows.every((row) => row.status === "final"),
-  JSON.stringify({ picked: draftUnpick, hash: finalOnly.hash, count: finalOnly.count, db: countFinal }));
-const finalUnpick = await pickOption("已定档");
-const statusAllBack = await waitFor("window.location.hash === " + j("#/files") + " && document.querySelector(" + j("[data-file-count]") + ") !== null && document.querySelector(" + j("[data-file-count]") + ").textContent === " + j("共 " + String(expectCurrentIds.length) + " 条"), 40000);
-check("④b5 再点已定档 = 清空状态筛选：地址回 #/files、计数还原",
-  finalUnpick === true && statusAllBack === true,
-  JSON.stringify({ picked: finalUnpick }));
-await clickSelector("[data-file-filter=status] button");
-await waitFor("document.querySelector(" + j("[data-select-popover]") + ") === null", 8000);
-await sleep(600);
+// ---------- ④ 筛选（地址即状态；状态筛选已随系统现有文件栏下线） ----------
 
 // ④c1 搜索词：按第一条项目（= 夹具项目）动态派生 —— 写死词在沙箱新增项目后必漂移（Push 274 修）。
 const projectSearchTerm = project.code;
@@ -435,7 +370,7 @@ check("④c1 项目筛选 = 搜索下拉框（可输入过滤；打开即见全�
   searchBoxReady === true && projectListAll !== null && projectListAll.count > 20 && projectListAll.scrollable === true && projectListAll.overflow === "auto" && projectSearch !== null && projectSearch.count > 0 && projectSearch.count < projectListAll.count && projectSearch.texts.every((text) => text.indexOf(projectSearchTerm) !== -1),
   JSON.stringify({ all: projectListAll, filtered: projectSearch === null ? null : { count: projectSearch.count, first: projectSearch.texts[0] } }));
 const projectPicked = await pickOption(projectLabel);
-const expectProjectIds = await orderedIds(STATUSES_CURRENT, project.id);
+const expectProjectIds = await orderedIds(STATUSES_LIBRARY, project.id);
 const projectReady = await waitFor("window.location.hash === " + j("#/files?project=" + project.id) + " && document.querySelector(" + j("[data-file-count]") + ") !== null && document.querySelector(" + j("[data-file-count]") + ").textContent === " + j("共 " + String(expectProjectIds.length) + " 条"), 40000);
 await sleep(1200);
 const byProject = await ev(rowExpr);
@@ -444,10 +379,10 @@ check("④c 项目筛选 = " + project.code + "（多选第一项）：点选不
   projectPicked === true && projectReady === true && multiPickUi.open === true && multiPickUi.label === "项目" && multiPickUi.count === "1" && multiPickUi.checked === 1 && byProject.count === "共 " + String(expectProjectIds.length) + " 条" && byProject.rows.map((row) => row.id).join(",") === expectProjectIds.slice(0, 50).join(",") && byProject.rows.every((row) => row.projectCode === project.code),
   JSON.stringify({ picked: projectPicked, hash: byProject.hash, count: byProject.count, db: expectProjectIds.length, ui: multiPickUi }));
 
-// —— 多选第二项：第二个有在库文件的项目（下拉选项 = 同一份项目列表，必然存在）——
-const fileCountByProject = new Map((await db.query("select project_id, count(*)::int n from files where project_id = any($1::uuid[]) and status = any($2::text[]) group by project_id", [projectIds, STATUSES_CURRENT])).rows.map((row) => [String(row.project_id), Number(row.n)]));
+// —— 多选第二项：第二个有回收站文件的项目（下拉选项 = 同一份项目列表，必然存在）——
+const fileCountByProject = new Map((await db.query("select project_id, count(*)::int n from files where project_id = any($1::uuid[]) and status = any($2::text[]) group by project_id", [projectIds, STATUSES_LIBRARY])).rows.map((row) => [String(row.project_id), Number(row.n)]));
 const projectB = projectItems.find((item) => item.id !== project.id && (fileCountByProject.get(item.id) ?? 0) > 0);
-if (projectB === undefined) { await bail("找不到第二个有在库文件的项目，多选断言无法回放"); }
+if (projectB === undefined) { await bail("找不到第二个有回收站文件的项目，多选断言无法回放"); }
 const projectBLabel = projectB.code + " · " + projectB.name;
 const searchCleared = await setSearchSelectQuery("");
 const expectUnionIds = await unionIds([project.id, projectB.id]);
@@ -461,7 +396,7 @@ check("④c2 多选第二项（" + projectB.code + "，再点选累加）：地�
   JSON.stringify({ picked: secondPicked, hash: byTwo.hash, count: byTwo.count, db: expectUnionIds.length, ui: multiTwoUi }));
 
 // —— 再次点击第一项 = 取消选择（只留第二项）——
-const countB = await countRows(STATUSES_CURRENT, projectB.id);
+const countB = await countRows(STATUSES_LIBRARY, projectB.id);
 const firstUnpicked = await pickOption(projectLabel);
 const bOnlyReady = await waitFor("window.location.hash === " + j("#/files?project=" + projectB.id) + " && document.querySelector(" + j("[data-file-count]") + ") !== null && document.querySelector(" + j("[data-file-count]") + ").textContent === " + j("共 " + String(countB) + " 条"), 40000);
 await sleep(1200);
@@ -484,23 +419,32 @@ await waitFor("document.querySelector(" + j("[data-select-popover]") + ") === nu
 await sleep(600);
 
 // ---------- ④d 上传人筛选 = 多选（内存过滤；点选 / 再点取消） ----------
-const creatorRows = (await db.query("select u.id, u.display_name, count(f.id)::int n from files f join users u on u.id = f.created_by where f.project_id = any($1::uuid[]) and f.status = any($2::text[]) group by u.id, u.display_name order by n desc, u.id asc", [projectIds, STATUSES_CURRENT])).rows;
+const creatorRows = (await db.query("select f.created_by id, coalesce(u.display_name, f.created_by::text) display_name, count(f.id)::int n from files f left join users u on u.id = f.created_by where f.project_id = any($1::uuid[]) and f.status = any($2::text[]) group by f.created_by, u.display_name order by n desc, f.created_by asc", [projectIds, STATUSES_LIBRARY])).rows;
 const creatorA = creatorRows.find((row) => String(row.id) === userRow.id) ?? creatorRows[0];
 const creatorB = creatorRows.find((row) => String(row.id) !== String(creatorA === undefined ? "" : creatorA.id));
-if (creatorA === undefined || creatorB === undefined) { await bail("上传人多选回放需要至少两个有在库文件的创建者"); }
+if (creatorA === undefined || creatorB === undefined) { await bail("上传人多选回放需要至少两个有回收站文件的创建者"); }
 const expectCreatorAIds = await orderedByCreators([creatorA.id]);
 const expectCreatorABIds = await orderedByCreators([creatorA.id, creatorB.id]);
 const expectCreatorBIds = await orderedByCreators([creatorB.id]);
 await clickSelector("[data-file-filter=uploader] button");
 const uploaderBoxReady = await waitFor("document.querySelector(" + j("[data-search-select-input]") + ") !== null", 8000);
+const uploaderNamesBefore = await ev("(function(){var box=document.querySelector(" + j("[data-search-select-list]") + ");if(box===null){return null;}return Array.from(box.querySelectorAll(" + j("[role=option]") + ")).map(function(o){return String(o.textContent).trim();}).sort();})()");
+const expectUploaderNames = creatorRows.map((row) => String(row.display_name)).sort();
+check("④d0 上传人候选 = 当前筛选结果中有文件的上传人（不导入完整用户目录；姓名可含停用 / 离职账号）",
+  uploaderBoxReady === true && uploaderNamesBefore !== null && uploaderNamesBefore.length === expectUploaderNames.length && uploaderNamesBefore.join("|") === expectUploaderNames.join("|"),
+  JSON.stringify({ ui: uploaderNamesBefore, db: expectUploaderNames }));
 const creatorAPick = await pickOption(String(creatorA.display_name));
 const creatorAReady = await waitFor("window.location.hash === " + j("#/files?uploadedBy=" + creatorA.id) + " && document.querySelector(" + j("[data-file-count]") + ") !== null && document.querySelector(" + j("[data-file-count]") + ").textContent === " + j("共 " + String(expectCreatorAIds.length) + " 条"), 20000);
 await sleep(800);
 const byCreatorA = await ev(rowExpr);
+const uploaderNamesAfterA = await ev("(function(){var box=document.querySelector(" + j("[data-search-select-list]") + ");if(box===null){return null;}return Array.from(box.querySelectorAll(" + j("[role=option]") + ")).map(function(o){return String(o.textContent).trim();}).sort();})()");
 const uploaderMultiUi = await ev("(function(){var t=document.querySelector(" + j("[data-file-filter=uploader] button") + ");var p=document.querySelector(" + j("[data-select-popover]") + ");return {label:t===null?null:t.getAttribute(" + j("data-select-trigger-label") + "),count:t===null?null:t.getAttribute(" + j("data-select-trigger-count") + "),open:p!==null};})()");
-check("④d 上传人筛选 = 多选第一项（" + creatorA.display_name + "）：点选不关浮层 + 触发器「上传人 + 浅灰 1」、地址 uploadedBy=<id>、计数 / 行 = 该上传人在库文件（内存过滤）",
+check("④d 上传人筛选 = 多选第一项（" + creatorA.display_name + "）：点选不关浮层 + 触发器「上传人 + 浅灰 1」、地址 uploadedBy=<id>、计数 / 行 = 该上传人的回收站文件（内存过滤）",
   uploaderBoxReady === true && creatorAPick === true && creatorAReady === true && uploaderMultiUi.open === true && uploaderMultiUi.label === "上传人" && uploaderMultiUi.count === "1" && byCreatorA.count === "共 " + String(expectCreatorAIds.length) + " 条" && byCreatorA.rows.map((row) => row.id).join(",") === expectCreatorAIds.slice(0, 50).join(",") && byCreatorA.rows.every((row) => row.uploader === creatorA.display_name),
   JSON.stringify({ picked: creatorAPick, hash: byCreatorA.hash, count: byCreatorA.count, db: expectCreatorAIds.length, ui: uploaderMultiUi }));
+check("④d1 选中上传人后候选集不自我收窄：其余有文件的上传人仍在选项中",
+  uploaderNamesAfterA !== null && uploaderNamesAfterA.length === expectUploaderNames.length && uploaderNamesAfterA.join("|") === expectUploaderNames.join("|"),
+  JSON.stringify({ ui: uploaderNamesAfterA, db: expectUploaderNames }));
 const creatorBPick = await pickOption(String(creatorB.display_name));
 const creatorABReady = await waitFor("window.location.hash === " + j("#/files?uploadedBy=" + creatorA.id + "," + creatorB.id) + " && document.querySelector(" + j("[data-file-count]") + ") !== null && document.querySelector(" + j("[data-file-count]") + ").textContent === " + j("共 " + String(expectCreatorABIds.length) + " 条"), 20000);
 await sleep(800);
@@ -516,14 +460,27 @@ const byCreatorB = await ev(rowExpr);
 check("④d3 再次点击 " + creatorA.display_name + " = 取消选择：地址只剩 uploadedBy=<idB>、计数 / 行回该上传人单项",
   creatorAUnpick === true && creatorBOnlyReady === true && byCreatorB.count === "共 " + String(expectCreatorBIds.length) + " 条" && byCreatorB.rows.every((row) => row.uploader === creatorB.display_name),
   JSON.stringify({ picked: creatorAUnpick, hash: byCreatorB.hash, count: byCreatorB.count, db: expectCreatorBIds.length }));
+const zeroKeyword = "回放-上传人零命中-" + stamp;
+const zeroKeywordEnc = encodeURIComponent(zeroKeyword);
+await clickSelector("[data-file-filter=keyword] input");
+await page.send("Input.insertText", { text: zeroKeyword });
+const uploaderZeroReady = await waitFor("window.location.hash.indexOf(" + j("q=" + zeroKeywordEnc) + ") !== -1 && document.querySelector(" + j("[data-file-empty]") + ") !== null && document.querySelector(" + j("[data-file-count]") + ").textContent === " + j("共 0 条"), 40000);
+await clickSelector("[data-file-filter=uploader] button");
+await waitFor("document.querySelector(" + j("[data-search-select-list]") + ") !== null", 8000);
+const uploaderZeroOptions = await ev("(function(){var box=document.querySelector(" + j("[data-search-select-list]") + ");if(box===null){return null;}return Array.from(box.querySelectorAll(" + j("[role=option]") + ")).map(function(o){return String(o.textContent).trim();}).sort();})()");
 const creatorBUnpick = await pickOption(String(creatorB.display_name));
-const uploaderAllBack = await waitFor("window.location.hash === " + j("#/files") + " && document.querySelector(" + j("[data-file-count]") + ") !== null && document.querySelector(" + j("[data-file-count]") + ").textContent === " + j("共 " + String(expectCurrentIds.length) + " 条"), 20000);
-await sleep(600);
-check("④d4 再点 " + creatorB.display_name + " = 清空上传人筛选：地址回 #/files、计数还原",
-  creatorBUnpick === true && uploaderAllBack === true,
-  JSON.stringify({ picked: creatorBUnpick }));
+const uploaderZeroCancelled = await waitFor("window.location.hash.indexOf(" + j("uploadedBy=") + ") === -1 && document.querySelector(" + j("[data-file-count]") + ").textContent === " + j("共 0 条"), 20000);
+check("④d3b 已选上传人零命中仍保留在候选并显示原姓名，可再次点击取消",
+  uploaderZeroReady === true && uploaderZeroOptions !== null && uploaderZeroOptions.length === 1 && uploaderZeroOptions[0] === creatorB.display_name && creatorBUnpick === true && uploaderZeroCancelled === true,
+  JSON.stringify({ ui: uploaderZeroOptions, expected: creatorB.display_name, picked: creatorBUnpick, hash: await ev("window.location.hash") }));
 await clickSelector("[data-file-filter=uploader] button");
 await waitFor("document.querySelector(" + j("[data-select-popover]") + ") === null", 8000);
+await clickSelector("[data-file-filter=keyword] button");
+const uploaderAllBack = await waitFor("window.location.hash === " + j("#/files") + " && document.querySelector(" + j("[data-file-count]") + ") !== null && document.querySelector(" + j("[data-file-count]") + ").textContent === " + j("共 " + String(expectCurrentIds.length) + " 条"), 20000);
+await sleep(600);
+check("④d4 清空零命中关键字 = 地址回 #/files、计数还原",
+  uploaderAllBack === true,
+  JSON.stringify({ hash: await ev("window.location.hash"), count: await ev("document.querySelector(" + j("[data-file-count]") + ").textContent") }));
 await sleep(600);
 
 // ---------- ⑤ 关键字搜索 ----------
@@ -535,11 +492,10 @@ const byKeyword = await ev(rowExpr);
 check("⑤ 关键字搜索：防抖后地址 / 请求同步 q=、1 行命中",
   kwReady === true && byKeyword.hash.indexOf("q=" + fileNameEnc) !== -1 && lastFileReq().indexOf("q=" + fileNameEnc) !== -1 && byKeyword.rowCount === 1 && byKeyword.rows[0].id === fileId,
   JSON.stringify({ hash: byKeyword.hash, rows: byKeyword.rowCount, req: lastFileReq().slice(0, 200) }));
-const previewWidth = await ev("(function(){var b=document.querySelector(" + j("[data-file-preview]") + ");if(b===null){return null;}var w0=Math.round(b.getBoundingClientRect().width*100)/100;var t=b.textContent;b.textContent=" + j("打开中") + ";var w1=Math.round(b.getBoundingClientRect().width*100)/100;b.textContent=t;return {w0:w0,w1:w1};})()");
-const downloadWidth = await ev("(function(){var b=document.querySelector(" + j("[data-file-download]") + ");if(b===null){return null;}var w0=Math.round(b.getBoundingClientRect().width*100)/100;var t=b.textContent;b.textContent=" + j("下载中") + ";var w1=Math.round(b.getBoundingClientRect().width*100)/100;b.textContent=t;return {w0:w0,w1:w1};})()");
-check("⑤b1 操作列定宽：预览 / 下载按钮换忙碌文案后宽度不变（点击预览不再把整表抖一下）", previewWidth !== null && downloadWidth !== null && previewWidth.w0 === previewWidth.w1 && downloadWidth.w0 === downloadWidth.w1, JSON.stringify({ preview: previewWidth, download: downloadWidth }));
-check("⑤b 命中行口径：状态 = 草稿、上传人 = 潘兴、项目列 = 编号 + 名字",
-  byKeyword.rows[0].status === "draft" && byKeyword.rows[0].statusText === "草稿" && byKeyword.rows[0].uploader === userRow.display_name && byKeyword.rows[0].projectCode === project.code && byKeyword.rows[0].projectName === project.name,
+const previewEntry = await ev("(function(){var r=document.querySelector(" + j("[data-file-row=" + j(fileId) + "]") + ");return {buttonCount:document.querySelectorAll(" + j("[data-file-preview]") + ").length,downloadButtonCount:document.querySelectorAll(" + j("[data-file-download]") + ").length,row:r!==null,tabIndex:r===null?null:r.tabIndex,cursor:r===null?null:getComputedStyle(r).cursor};})()");
+check("⑤b1 列表无预览 / 下载按钮，行可聚焦 / 手型即预览入口", previewEntry.buttonCount === 0 && previewEntry.downloadButtonCount === 0 && previewEntry.row === true && previewEntry.tabIndex === 0 && previewEntry.cursor === "pointer", JSON.stringify(previewEntry));
+check("⑤b 命中行口径：状态 = 回收站、上传人 = 潘兴、项目列 = 编号 + 名字",
+  byKeyword.rows[0].status === "recycled" && byKeyword.rows[0].statusText === "回收站" && byKeyword.rows[0].uploader === userRow.display_name && byKeyword.rows[0].projectCode === project.code && byKeyword.rows[0].projectName === project.name,
   JSON.stringify(byKeyword.rows[0] ?? null));
 await clickSelector("[data-file-filter=keyword] button");
 const kwClearedReady = await waitFor("window.location.hash === " + j("#/files") + " && document.querySelectorAll(" + j("[data-file-row]") + ").length > 0", 40000);
@@ -549,17 +505,15 @@ check("⑤c 清空搜索（×）→ 地址回 #/files、首行 / 计数还原",
   kwClearedReady === true && afterKwClear.rows[0] !== undefined && afterKwClear.rows[0].id === expectCurrentIds[0] && afterKwClear.count === "共 " + String(expectCurrentIds.length) + " 条",
   JSON.stringify({ hash: afterKwClear.hash, count: afterKwClear.count }));
 
-// ---------- ⑥ 回收站栏 ----------
-await recycleViaApi(fileId);
-console.log("API 回收：" + fileName);
+// ---------- ⑥ 文件回收站默认栏 ----------
 const expectRecycledIds = await orderedIds(STATUSES_RECYCLED);
 await clickSelector("[data-file-tab=recycled]");
-const recycledReady = await waitFor("window.location.hash.indexOf(" + j("tab=recycled") + ") !== -1 && document.querySelectorAll(" + j("[data-file-row]") + ").length > 0", 40000);
+const recycledReady = await waitFor("window.location.hash === " + j("#/files") + " && document.querySelectorAll(" + j("[data-file-row]") + ").length > 0", 40000);
 await sleep(1500);
 const bin = await ev(rowExpr);
 const binShot = await shot("file-library-recycled", { x: 0, y: 0, width: 1500, height: 950, scale: 1 });
 console.log("截图：" + binShot);
-check("⑥ 回收站栏：地址 tab=recycled、标签当前项 = 回收站、请求 = filter[status]=recycled",
+check("⑥ 文件回收站栏：地址缺省 #/files、标签当前项 = 文件回收站、请求 = filter[status]=recycled",
   recycledReady === true && bin.activeTab === "recycled" && lastFileReq().indexOf("filter[status]=recycled") !== -1,
   JSON.stringify({ hash: bin.hash, active: bin.activeTab }));
 check("⑥b 回收站计数 / 行序与库内 recycled 逐一对账、行状态签全 = 回收站",
@@ -584,7 +538,7 @@ const restoredRowsGone = await waitFor("document.querySelectorAll(" + j("[data-f
 const afterRestore = await ev(rowExpr);
 const restoredRow = await fileStatusOf(fileId);
 check("⑦ 恢复：通知「已恢复」+ 行移出回收站（空态）+ DB status 回退 draft",
-  restoredReady === true && restoredRowsGone === true && noticeBox !== null && noticeBox.text.indexOf("已恢复") !== -1 && noticeBox.text.indexOf("草稿") !== -1 && restoredRow !== undefined && restoredRow.status === "draft",
+  restoredReady === true && restoredRowsGone === true && noticeBox !== null && noticeBox.text.indexOf("已恢复") !== -1 && noticeBox.text.indexOf("未定档") !== -1 && restoredRow !== undefined && restoredRow.status === "draft",
   JSON.stringify({ notice: noticeBox === null ? null : noticeBox.text, rows: afterRestore.rowCount, status: restoredRow === undefined ? null : restoredRow.status }));
 const restoreAudit = Number((await db.query("select count(*)::int n from audit_logs where object_id = $1 and action = $2 and summary like $3", [fileId, "update", "回收站恢复：%"])).rows[0].n);
 check("⑦b 恢复审计：audit_logs 一条「回收站恢复：…」（action=update）", restoreAudit === 1, String(restoreAudit));
@@ -592,23 +546,15 @@ check("⑦a 浮动提示几何：屏幕顶部居中浮空（position=fixed、0 �
 const noticeGone = await waitFor("document.querySelector(" + j("[data-file-notice]") + ") === null", 8000);
 const noticeMs = Date.now() - noticeSeenAt;
 check("⑦d 自动消失：成功提示约 2s 后自行收起（停留 1.5s ~ 5s，无需点关闭）", noticeGone === true && noticeMs >= 1500 && noticeMs <= 5000, noticeMs + "ms");
-await clickSelector("[data-file-tab=current]");
-const backCurrentReady = await waitFor("window.location.hash.indexOf(" + j("tab=") + ") === -1 && document.querySelectorAll(" + j("[data-file-row]") + ").length === 1", 40000);
-await sleep(1200);
-const backCurrent = await ev(rowExpr);
-check("⑦c 切回系统现有文件栏：恢复的文件回到在库行（关键字仍在、1 行命中、状态 = 草稿）",
-  backCurrentReady === true && backCurrent.rows[0] !== undefined && backCurrent.rows[0].id === fileId && backCurrent.rows[0].status === "draft",
-  JSON.stringify({ hash: backCurrent.hash, rows: backCurrent.rowCount }));
-
 // ---------- ⑧ 深链刷新 + 彻底删除 ----------
 await recycleViaApi(fileId);
-await ev("window.location.hash = " + j("#/files?tab=recycled&q=" + fileNameEnc));
+await ev("window.location.hash = " + j("#/files?q=" + fileNameEnc));
 await page.send("Page.reload");
 const deepReady = await waitFor("document.querySelectorAll(" + j("[data-file-row]") + ").length === 1", 40000);
 await sleep(1500);
 const deep = await ev(rowExpr);
-check("⑧ 深链 #/files?tab=recycled&q=<名> 刷新：回收站栏直接打开、输入框带词、1 行命中",
-  deepReady === true && deep.hash.indexOf("tab=recycled") !== -1 && deep.hash.indexOf("q=" + fileNameEnc) !== -1 && deep.activeTab === "recycled" && deep.keyword === fileName && deep.rows[0].id === fileId,
+check("⑧ 深链 #/files?q=<名> 刷新：文件回收站直接打开、地址无 tab、输入框带词、1 行命中",
+  deepReady === true && deep.hash.indexOf("tab=") === -1 && deep.hash.indexOf("q=" + fileNameEnc) !== -1 && deep.activeTab === "recycled" && deep.keyword === fileName && deep.rows[0].id === fileId,
   JSON.stringify({ hash: deep.hash, keyword: deep.keyword, rows: deep.rowCount }));
 const purgeBtnReady = await waitFor("document.querySelector(" + j("[data-file-purge=" + j(fileId) + "]") + ") !== null", 15000);
 await clickSelector("[data-file-purge=" + j(fileId) + "]");

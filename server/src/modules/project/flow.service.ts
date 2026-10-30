@@ -8,8 +8,12 @@ import type { DbClient } from "../../db/db-client.js";
 import { appendOutbox } from "../../db/outbox.js";
 import { AuditService } from "../admin/index.js";
 import { BlueprintService } from "../blueprint/index.js";
-import { GateService, type StageGateMissingItem } from "../node/index.js";
-import { RoleService } from "../identity/index.js";
+import {
+  GateService,
+  type ProjectCompletionMissingItem,
+  type StageGateMissingItem,
+} from "../node/index.js";
+import { PermissionService } from "../permission/index.js";
 import { FlowRepository, type NodeWithRequirements, type ProjectNodeRow, type ProjectStageRow } from "./flow.repository.js";
 import { ProjectMemberRepository } from "./project-member.repository.js";
 import { ProjectRepository, type ProjectViewRow } from "./project.repository.js";
@@ -40,7 +44,7 @@ export class FlowService {
     private readonly members: ProjectMemberRepository,
     private readonly blueprints: BlueprintService,
     private readonly gate: GateService,
-    private readonly roles: RoleService,
+    private readonly permission: PermissionService,
     private readonly audit: AuditService,
   ) {}
 
@@ -494,9 +498,37 @@ export class FlowService {
   }
 
   /** 节点增删 / 阶段推进 / 项目归档的权限：项目经理（manager_ids 任一位）/ 名册项目经理 / 管理员（ADR-020 / A22 / ADR-027）；记录级 404 语义随 h6。 */
+  /**
+   * 项目标记完成门禁：所有任务已完成，且配置了成果类型的任务均已上传对应文件。
+   * 未配置成果类型的任务只检查完成状态；缺交付文件时返回 422 TASK_REQUIRED_DOC_MISSING，前端沿用统一 Toast 提示。
+   */
+  async assertProjectCompletionGate(client: DbClient, projectId: string): Promise<void> {
+    const gate = await this.gate.evaluateProjectCompletion(client, projectId);
+    if (gate.ok) return;
+    const pending = gate.missing.find((item) => item.type === "task_not_done");
+    const deliveries = gate.missing.filter(
+      (item): item is Extract<ProjectCompletionMissingItem, { type: "task_delivery_missing" }> =>
+        item.type === "task_delivery_missing",
+    );
+    const parts: string[] = [];
+    if (deliveries.length > 0) parts.push("有 " + deliveries.length + " 项已配置成果文件尚未上传");
+    if (pending !== undefined) parts.push("有 " + (pending.total - pending.done) + " / " + pending.total + " 项任务未完成");
+    const examples = [...new Set(deliveries.map((item) => "「" + item.taskTitle + "」" + item.docType))].slice(0, 3);
+    const suffix = examples.length === 0 ? "" : "：" + examples.join("、");
+    throw new AppError(
+      deliveries.length > 0 ? "TASK_REQUIRED_DOC_MISSING" : "VALIDATION_FAILED",
+      "项目无法标记为已完成 —— " + parts.join("；") + suffix,
+      gate.missing.map((item) => ({
+        code: item.type,
+        message: projectCompletionMissingMessage(item),
+        path: "missing",
+        meta: { ...item },
+      })),
+    );
+  }
+
   async assertProjectManager(projectId: string, managerIds: readonly string[], actorId: string, action: string): Promise<void> {
-    const authorization = await this.roles.getActorAuthorization(actorId);
-    if (authorization.roleCodes.includes("admin")) return;
+    if (await this.permission.canManageGroupAccess(actorId)) return;
     if (managerIds.includes(actorId)) return;
     const member = await this.members.findByProjectAndUser(projectId, actorId);
     if (member !== null && member.member.roleInProject === "project_manager") return;
@@ -536,9 +568,17 @@ export class FlowService {
 }
 
 /** 阶段门禁缺项的可读说明（422 details）。 */
+function projectCompletionMissingMessage(item: ProjectCompletionMissingItem): string {
+  if (item.type === "task_not_done") return "项目仍有任务未完成：" + item.done + " / " + item.total;
+  return "任务「" + item.taskTitle + "」缺少已上传的成果文件：" + item.docType + "（需要 " + item.required + "，现有 " + item.present + "）";
+}
+
 function stageMissingMessage(item: StageGateMissingItem): string {
   if (item.type === "node_not_done") return "节点未完成：" + item.name + "（" + item.nodeKey + "，状态 " + item.status + "）";
   if (item.type === "task_not_done") return "阶段内任务未全部完成：" + item.done + " / " + item.total;
+  if (item.type === "task_delivery_missing") {
+    return "阶段内已完成任务缺少交付文件：" + item.ready + " / " + item.total + " 份已齐套";
+  }
   return "节点 " + item.nodeKey + " 缺少必交成果文件：" + item.docType + "（需要 " + item.required + "，现有 " + item.present + "）";
 }
 

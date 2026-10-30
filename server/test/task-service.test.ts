@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DatabaseService } from "../src/db/database.service.js";
 import type { DbClient } from "../src/db/db-client.js";
-import type { RoleService } from "../src/modules/identity/index.js";
+import type { PermissionService } from "../src/modules/permission/index.js";
 import type { AuditService } from "../src/modules/admin/index.js";
 import type {
   TaskChangeLinkRow,
@@ -178,8 +178,13 @@ class FakeTaskRepository {
     this.abortedTaskUploadSessions.push({ taskId, at });
     return this.abortedTaskSessionCount;
   }
-  async countStageTasks(): Promise<{ total: number; done: number }> {
-    return { total: 0, done: 0 };
+  stageCounts = { total: 0, done: 0, deliveryReady: 0 };
+  stageLocks: { projectId: string; stageKey: string }[] = [];
+  async lockStageCompletion(_client: unknown, projectId: string, stageKey: string): Promise<void> {
+    this.stageLocks.push({ projectId, stageKey });
+  }
+  async countStageTasks(): Promise<{ total: number; done: number; deliveryReady: number }> {
+    return this.stageCounts;
   }
   async findTaskBrief(): Promise<{ id: string; projectId: string; stageKey: string | null; sortIndex: number } | null> {
     return this.task === null
@@ -212,23 +217,38 @@ class FakeTaskRepository {
 /** 门禁替身（M3-03）：默认放行；用例可注入要求与计数（缺件 / draft 提示）。 */
 class FakeTaskGateRepository {
   requirements: { docType: string; minCount: number }[] = [];
-  finalCounts: { docType: string; present: number }[] = [];
+  uploadedCounts: { docType: string | null; present: number }[] = [{ docType: null, present: 1 }];
   draftCounts: { docType: string; present: number }[] = [];
   async listNodeDocRequirements(): Promise<{ docType: string; minCount: number }[]> {
     return this.requirements;
   }
-  async countFinalFiles(): Promise<{ docType: string; present: number }[]> {
-    return this.finalCounts;
+  async countUploadedFiles(): Promise<{ docType: string | null; present: number }[]> {
+    return this.uploadedCounts;
   }
   async countDraftFiles(): Promise<{ docType: string; present: number }[]> {
     return this.draftCounts;
   }
+  delivery: { total: number; done: number; deliveryReady: number; issues: unknown[] } = {
+    total: 0,
+    done: 0,
+    deliveryReady: 0,
+    issues: [],
+  };
+  async evaluateDeliveryStatus() {
+    return this.delivery;
+  }
 }
 
-class FakeRoleService {
-  roleCodes: string[] = [];
-  async getActorAuthorization(): Promise<{ roleCodes: string[] }> {
-    return { roleCodes: this.roleCodes };
+class FakePermissionService {
+  groupAccessAdmin = false;
+  projectManager = false;
+
+  async assertProjectVisible(_actorId: string, projectId: string): Promise<{ projectId: string; member: boolean; projectManager: boolean }> {
+    return { projectId, member: true, projectManager: this.projectManager };
+  }
+
+  async canManageGroupAccess(): Promise<boolean> {
+    return this.groupAccessAdmin;
   }
 }
 
@@ -258,16 +278,16 @@ class FakeAuditService {
 
 function makeService(
   repo: FakeTaskRepository,
-  roles: FakeRoleService = new FakeRoleService(),
+  permission: FakePermissionService = new FakePermissionService(),
   gate: FakeTaskGateRepository = new FakeTaskGateRepository(),
   audit: FakeAuditService = new FakeAuditService(),
+  database: FakeDatabase = new FakeDatabase(),
 ): TaskService {
-  const database = new FakeDatabase();
   return new TaskService(
     database as unknown as DatabaseService,
     repo as unknown as TaskRepository,
     gate as unknown as TaskGateRepository,
-    roles as unknown as RoleService,
+    permission as unknown as PermissionService,
     audit as unknown as AuditService,
     {} as unknown as TaskNodeRepository,
     {} as unknown as TemplateService,
@@ -317,13 +337,13 @@ describe("TaskService.create（A10 / A1-13）", () => {
 
   it("手工创建（无节点）非管理员 → 403；管理员 → 放行", async () => {
     const repo = new FakeTaskRepository();
-    const roles = new FakeRoleService();
-    const service = makeService(repo, roles);
+    const permission = new FakePermissionService();
+    const service = makeService(repo, permission);
     await expect(service.create(PROJECT, { stageKey: "install", title: "临时任务" }, ACTOR)).rejects.toMatchObject({
       code: "FORBIDDEN",
       httpStatus: 403,
     });
-    roles.roleCodes = ["admin"];
+    permission.groupAccessAdmin = true;
     const created = await service.create(PROJECT, { stageKey: "install", title: "临时任务" }, ACTOR);
     expect(created.title).toBe("临时任务");
   });
@@ -435,7 +455,7 @@ describe("TaskService.update（A12 状态联动 + 乐观锁 + 留痕）", () => 
     const repo = new FakeTaskRepository();
     repo.task = makeRow({ stageKey: null, nodeId: null, taskNodeId: null, title: "临时任务", titleEn: null });
     const audit = new FakeAuditService();
-    const service = makeService(repo, new FakeRoleService(), new FakeTaskGateRepository(), audit);
+    const service = makeService(repo, new FakePermissionService(), new FakeTaskGateRepository(), audit);
     const updated = await service.update(PROJECT, TASK, { title: "临时任务（改名）", titleEn: "Ad hoc task", version: 3 }, ACTOR);
     expect(updated.title).toBe("临时任务（改名）");
     expect(updated.titleEn).toBe("Ad hoc task");
@@ -490,7 +510,7 @@ describe("TaskService.update（A12 状态联动 + 乐观锁 + 留痕）", () => 
     const repo = new FakeTaskRepository();
     repo.task = makeRow({ deliverableTypes: ["技术协议"] });
     const audit = new FakeAuditService();
-    const service = makeService(repo, new FakeRoleService(), new FakeTaskGateRepository(), audit);
+    const service = makeService(repo, new FakePermissionService(), new FakeTaskGateRepository(), audit);
     const updated = await service.update(PROJECT, TASK, { deliverableTypes: ["CAD图纸", "技术协议", "CAD图纸"], version: 3 }, ACTOR);
     expect(updated.deliverableTypes).toEqual(["CAD图纸", "技术协议"]);
     expect(repo.task?.version).toBe(4);
@@ -542,9 +562,9 @@ describe("TaskService.updateProgress（A13 清除完成日期的唯一方式）"
 describe("TaskService w2 落库口径（A15 / A18 / A19 / A20 · Push 124）", () => {
   it("临时任务：stageKey 缺省 = 「未分组」、ownerIds 显式 [] = 「待分配」（不兜底项目经理）", async () => {
     const repo = new FakeTaskRepository();
-    const roles = new FakeRoleService();
-    roles.roleCodes = ["admin"];
-    const service = makeService(repo, roles);
+    const permission = new FakePermissionService();
+    permission.groupAccessAdmin = true;
+    const service = makeService(repo, permission);
     const created = await service.create(PROJECT, { title: "临时任务", ownerIds: [] }, ACTOR);
     expect(created.stageKey).toBeNull();
     expect(created.ownerIds).toEqual([]);
@@ -563,9 +583,9 @@ describe("TaskService w2 落库口径（A15 / A18 / A19 / A20 · Push 124）", (
   it("插入位置：sortIndex=0 → 同组其余任务位次顺延（+1），新任务落 0 位", async () => {
     const repo = new FakeTaskRepository();
     repo.groupSize = 3;
-    const roles = new FakeRoleService();
-    roles.roleCodes = ["admin"];
-    const service = makeService(repo, roles);
+    const permission = new FakePermissionService();
+    permission.groupAccessAdmin = true;
+    const service = makeService(repo, permission);
     const created = await service.create(PROJECT, { title: "临时任务", sortIndex: 0 }, ACTOR);
     expect(created.sortIndex).toBe(0);
     expect(repo.shifted).toEqual([{ from: 0, to: null, delta: 1 }]);
@@ -693,6 +713,73 @@ describe("变更关联多条（A1-07 / R01 · Push 144）", () => {
 });
 
 
+describe("大阶段完成群通知（全部小任务完成）", () => {
+  it("本次完成使阶段全部 done：写入 STAGE_COMPLETE_GROUP 群通知，阶段判定加事务锁", async () => {
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ stageKey: "design", status: "active", progress: "0.8" });
+    const gate = new FakeTaskGateRepository();
+    gate.delivery = { total: 5, done: 5, deliveryReady: 5, issues: [] };
+    const database = new FakeDatabase();
+    const service = makeService(repo, new FakePermissionService(), gate, new FakeAuditService(), database);
+
+    await service.complete(PROJECT, TASK, { version: 3 }, ACTOR);
+
+    expect(repo.stageLocks).toEqual([{ projectId: PROJECT, stageKey: "design" }]);
+    const groupEvent = database.outbox.find(
+      (item) =>
+        typeof item === "object" &&
+        item !== null &&
+        (item as { topic?: string }).topic === "notify.group",
+    ) as
+      | { topic: string; dedupeKey: string; payload: Record<string, unknown> }
+      | undefined;
+    expect(groupEvent).toMatchObject({
+      topic: "notify.group",
+      dedupeKey: "stage.completed:" + PROJECT + ":design:" + TASK + ":v4",
+      payload: {
+        projectId: PROJECT,
+        title: "阶段完成｜设计开发",
+        body: "「设计开发」阶段 5 项小任务已全部完成，阶段里程碑达成。",
+        refType: "task",
+        refId: TASK,
+        templateCode: "STAGE_COMPLETE_GROUP",
+        stageKey: "design",
+      },
+    });
+  });
+
+  it("阶段仍有未完成任务 / 未分组任务：不发群通知", async () => {
+    const partialRepo = new FakeTaskRepository();
+    partialRepo.task = makeRow({ stageKey: "design", status: "active" });
+    const partialGate = new FakeTaskGateRepository();
+    partialGate.delivery = { total: 5, done: 4, deliveryReady: 4, issues: [] };
+    const partialDb = new FakeDatabase();
+    await makeService(
+      partialRepo,
+      new FakePermissionService(),
+      partialGate,
+      new FakeAuditService(),
+      partialDb,
+    ).complete(PROJECT, TASK, { version: 3 }, ACTOR);
+    expect(partialDb.outbox.some((item) => (item as { topic?: string }).topic === "notify.group")).toBe(false);
+
+    const ungroupedRepo = new FakeTaskRepository();
+    ungroupedRepo.task = makeRow({ stageKey: null, status: "active" });
+    const ungroupedGate = new FakeTaskGateRepository();
+    ungroupedGate.delivery = { total: 1, done: 1, deliveryReady: 1, issues: [] };
+    const ungroupedDb = new FakeDatabase();
+    await makeService(
+      ungroupedRepo,
+      new FakePermissionService(),
+      ungroupedGate,
+      new FakeAuditService(),
+      ungroupedDb,
+    ).complete(PROJECT, TASK, { version: 3 }, ACTOR);
+    expect(ungroupedRepo.stageLocks).toEqual([]);
+    expect(ungroupedDb.outbox.some((item) => (item as { topic?: string }).topic === "notify.group")).toBe(false);
+  });
+});
+
 describe("任务定档写口闸（Push 249 · 业务口径「若是则上传文件后该任务定档不支持任何修改」）", () => {
   const FINALIZED_AT = new Date("2026-10-08T02:00:00Z");
 
@@ -745,17 +832,16 @@ describe("任务定档写口闸（Push 249 · 业务口径「若是则上传文�
 });
 
 describe("任务定档入口（Push 252 · 抽屉「定档」开关 + 二次确认）", () => {
-  it("未定档任务：finalize 置位 finalizedAt / finalizedBy + version+1 + 审计「任务定档」+ 项目触点", async () => {
+  it("任务负责人：未定档任务 finalize 置位 finalizedAt / finalizedBy + version+1 + 审计「任务定档」+ 项目触点", async () => {
     const repo = new FakeTaskRepository();
     const audit = new FakeAuditService();
     repo.abortedTaskSessionCount = 3;
-    const updated = await makeService(repo, new FakeRoleService(), new FakeTaskGateRepository(), audit).finalize(PROJECT, TASK, { version: 3 }, ACTOR);
+    const updated = await makeService(repo, new FakePermissionService(), new FakeTaskGateRepository(), audit).finalize(PROJECT, TASK, { version: 3 }, MANAGER);
     expect(updated.finalizedAt).not.toBeNull();
-    expect(updated.finalizedBy).toBe(ACTOR);
+    expect(updated.finalizedBy).toBe(MANAGER);
     expect(updated.version).toBe(4);
     expect(repo.task?.finalizedAt).not.toBeNull();
     expect(repo.touched).toEqual([PROJECT]);
-    // 定档兜底：撤销在途 version 上传会话，条数进审计 metadata
     expect(repo.abortedTaskUploadSessions).toEqual([{ taskId: TASK, at: expect.any(Date) }]);
     expect(audit.entries).toHaveLength(1);
     const entry = audit.entries[0] as { action: string; objectType: string; objectId: string; summary: string; metadata?: unknown };
@@ -766,12 +852,12 @@ describe("任务定档入口（Push 252 · 抽屉「定档」开关 + 二次确�
     expect(entry.metadata).toEqual({ abortedUploadSessions: 3 });
   });
 
-  it("已定档任务：finalize 幂等短路（原样返回、不递增版本、不再写审计）", async () => {
+  it("已定档任务：负责人 finalize 幂等短路（原样返回、不递增版本、不再写审计）", async () => {
     const repo = new FakeTaskRepository();
     const FINALIZED_AT = new Date("2026-10-08T02:00:00Z");
-    repo.task = makeRow({ finalizedAt: FINALIZED_AT, finalizedBy: ACTOR, version: 7 });
+    repo.task = makeRow({ finalizedAt: FINALIZED_AT, finalizedBy: MANAGER, version: 7 });
     const audit = new FakeAuditService();
-    const returned = await makeService(repo, new FakeRoleService(), new FakeTaskGateRepository(), audit).finalize(PROJECT, TASK, { version: 7 }, ACTOR);
+    const returned = await makeService(repo, new FakePermissionService(), new FakeTaskGateRepository(), audit).finalize(PROJECT, TASK, { version: 7 }, MANAGER);
     expect(returned.finalizedAt).toBe(FINALIZED_AT.toISOString());
     expect(returned.version).toBe(7);
     expect(repo.task?.version).toBe(7);
@@ -782,30 +868,30 @@ describe("任务定档入口（Push 252 · 抽屉「定档」开关 + 二次确�
 
   it("未定档任务：version 不匹配 → 409 VERSION_CONFLICT（不写库）", async () => {
     const repo = new FakeTaskRepository();
-    await expect(makeService(repo).finalize(PROJECT, TASK, { version: 2 }, ACTOR)).rejects.toMatchObject({ code: "VERSION_CONFLICT", httpStatus: 409 });
+    await expect(makeService(repo).finalize(PROJECT, TASK, { version: 2 }, MANAGER)).rejects.toMatchObject({ code: "VERSION_CONFLICT", httpStatus: 409 });
     expect(repo.task?.finalizedAt).toBeNull();
   });
 
   it("已删除任务：finalize → 404（记录级 404 语义）", async () => {
     const repo = new FakeTaskRepository();
     repo.task = makeRow({ deletedAt: new Date("2026-10-08T03:00:00Z"), deletedBy: ACTOR });
-    await expect(makeService(repo).finalize(PROJECT, TASK, { version: 3 }, ACTOR)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(makeService(repo).finalize(PROJECT, TASK, { version: 3 }, MANAGER)).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
-  it("定档后写口闸不放松：finalize 置位后 update → 409 TASK_FINALIZED", async () => {
+  it("定档后写口闸不放松：负责人 finalize 置位后 update → 409 TASK_FINALIZED", async () => {
     const repo = new FakeTaskRepository();
-    await makeService(repo).finalize(PROJECT, TASK, { version: 3 }, ACTOR);
+    await makeService(repo).finalize(PROJECT, TASK, { version: 3 }, MANAGER);
     await expect(makeService(repo).update(PROJECT, TASK, { version: 4, note: "改备注" }, ACTOR)).rejects.toMatchObject({ code: "TASK_FINALIZED" });
   });
 });
 
 describe("任务取消定档入口（Push 260 · 「已」开关再次点击 + 二次确认）", () => {
-  it("已定档任务：unfinalize 清位 finalizedAt / finalizedBy + version+1 + 审计「取消定档」+ 项目触点", async () => {
+  it("任务负责人：已定档任务 unfinalize 清位 finalizedAt / finalizedBy + version+1 + 审计「取消定档」+ 项目触点", async () => {
     const repo = new FakeTaskRepository();
     const FINALIZED_AT = new Date("2026-10-08T02:00:00Z");
     repo.task = makeRow({ finalizedAt: FINALIZED_AT, finalizedBy: ACTOR, version: 9 });
     const audit = new FakeAuditService();
-    const updated = await makeService(repo, new FakeRoleService(), new FakeTaskGateRepository(), audit).unfinalize(PROJECT, TASK, { version: 9 }, ACTOR);
+    const updated = await makeService(repo, new FakePermissionService(), new FakeTaskGateRepository(), audit).unfinalize(PROJECT, TASK, { version: 9 }, MANAGER);
     expect(updated.finalizedAt).toBeNull();
     expect(updated.finalizedBy).toBeNull();
     expect(updated.version).toBe(10);
@@ -820,10 +906,10 @@ describe("任务取消定档入口（Push 260 · 「已」开关再次点击 + �
     expect(entry.changes).toEqual([{ field: "finalizedAt", from: FINALIZED_AT.toISOString(), to: null }]);
   });
 
-  it("未定档任务：unfinalize 幂等短路（原样返回、不递增版本、不再写审计）", async () => {
+  it("未定档任务：负责人 unfinalize 幂等短路（原样返回、不递增版本、不再写审计）", async () => {
     const repo = new FakeTaskRepository();
     const audit = new FakeAuditService();
-    const returned = await makeService(repo, new FakeRoleService(), new FakeTaskGateRepository(), audit).unfinalize(PROJECT, TASK, { version: 3 }, ACTOR);
+    const returned = await makeService(repo, new FakePermissionService(), new FakeTaskGateRepository(), audit).unfinalize(PROJECT, TASK, { version: 3 }, MANAGER);
     expect(returned.finalizedAt).toBeNull();
     expect(returned.version).toBe(3);
     expect(repo.task?.version).toBe(3);
@@ -835,15 +921,15 @@ describe("任务取消定档入口（Push 260 · 「已」开关再次点击 + �
     const repo = new FakeTaskRepository();
     const FINALIZED_AT = new Date("2026-10-08T02:00:00Z");
     repo.task = makeRow({ finalizedAt: FINALIZED_AT, finalizedBy: ACTOR, version: 9 });
-    await expect(makeService(repo).unfinalize(PROJECT, TASK, { version: 8 }, ACTOR)).rejects.toMatchObject({ code: "VERSION_CONFLICT", httpStatus: 409 });
+    await expect(makeService(repo).unfinalize(PROJECT, TASK, { version: 8 }, MANAGER)).rejects.toMatchObject({ code: "VERSION_CONFLICT", httpStatus: 409 });
     expect(repo.task?.finalizedAt).toBe(FINALIZED_AT);
   });
 
   it("取消定档后写口恢复：unfinalize 清位后 update 照常（与 finalize 置位后 409 对照）", async () => {
     const repo = new FakeTaskRepository();
     const service = makeService(repo);
-    await service.finalize(PROJECT, TASK, { version: 3 }, ACTOR);
-    await service.unfinalize(PROJECT, TASK, { version: 4 }, ACTOR);
+    await service.finalize(PROJECT, TASK, { version: 3 }, MANAGER);
+    await service.unfinalize(PROJECT, TASK, { version: 4 }, MANAGER);
     const updated = await service.update(PROJECT, TASK, { version: 5, note: "取消定档后改备注" }, ACTOR);
     expect(updated.note).toBe("取消定档后改备注");
   });
@@ -851,6 +937,35 @@ describe("任务取消定档入口（Push 260 · 「已」开关再次点击 + �
   it("已删除任务：unfinalize → 404（记录级 404 语义）", async () => {
     const repo = new FakeTaskRepository();
     repo.task = makeRow({ finalizedAt: new Date("2026-10-08T02:00:00Z"), finalizedBy: ACTOR, deletedAt: new Date("2026-10-08T03:00:00Z"), deletedBy: ACTOR });
-    await expect(makeService(repo).unfinalize(PROJECT, TASK, { version: 3 }, ACTOR)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(makeService(repo).unfinalize(PROJECT, TASK, { version: 3 }, MANAGER)).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("任务定档角色权限（2026-10-27）", () => {
+  it("项目经理非任务负责人也可定档 / 取消定档", async () => {
+    const repo = new FakeTaskRepository();
+    const permission = new FakePermissionService();
+    permission.projectManager = true;
+    const service = makeService(repo, permission);
+    const finalized = await service.finalize(PROJECT, TASK, { version: 3 }, ACTOR);
+    expect(finalized.finalizedBy).toBe(ACTOR);
+    const unfinalized = await service.unfinalize(PROJECT, TASK, { version: 4 }, ACTOR);
+    expect(unfinalized.finalizedAt).toBeNull();
+    expect(unfinalized.version).toBe(5);
+  });
+
+  it("普通项目编辑者不能定档、不能取消，重复调用也不能维持已定档状态", async () => {
+    const repo = new FakeTaskRepository();
+    const service = makeService(repo, new FakePermissionService());
+    await expect(service.finalize(PROJECT, TASK, { version: 3 }, ACTOR)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      httpStatus: 403,
+      message: "仅任务负责人或项目经理可定档或取消定档",
+    });
+    const FINALIZED_AT = new Date("2026-10-08T02:00:00Z");
+    repo.task = makeRow({ finalizedAt: FINALIZED_AT, finalizedBy: MANAGER, version: 3 });
+    await expect(service.finalize(PROJECT, TASK, { version: 3 }, ACTOR)).rejects.toMatchObject({ code: "FORBIDDEN", httpStatus: 403 });
+    await expect(service.unfinalize(PROJECT, TASK, { version: 3 }, ACTOR)).rejects.toMatchObject({ code: "FORBIDDEN", httpStatus: 403 });
+    expect(repo.task?.finalizedAt).toBe(FINALIZED_AT);
   });
 });

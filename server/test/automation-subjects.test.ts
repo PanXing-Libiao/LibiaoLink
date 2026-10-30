@@ -4,7 +4,11 @@
  * 与 M5-03-2 群接线回放共同取证。
  */
 import { describe, expect, it } from "vitest";
-import { summarizeProjectDay, todoOccursOn, type ReportDayRow } from "../src/outbox/automation-subjects.js";
+import {
+  summarizeProjectDay,
+  todoOccursOn,
+  type ReportDayRow,
+} from "../src/outbox/automation-subjects.js";
 
 function reportRow(overrides: Partial<ReportDayRow> = {}): ReportDayRow {
   return {

@@ -12,11 +12,12 @@
     "generate": "node scripts/generate.mjs",
     "generate:openapi": "node scripts/generate.mjs --only=openapi",
     "generate:client": "node scripts/generate.mjs --only=client",
-    "check": "node scripts/check-drift.mjs",
+    "check": "node scripts/check-drift.mjs && node scripts/check-request-array-bounds.mjs",
+    "check:request-array-bounds": "node scripts/check-request-array-bounds.mjs",
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
-    "zod": "^4.6.5"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@asteasolutions/zod-to-openapi": "^9.1.0",

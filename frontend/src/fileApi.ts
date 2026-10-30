@@ -17,7 +17,8 @@ import { RefreshQueue, liveReadPaused, subscribeLiveHints } from "./liveSync";
  *   非安全源、crypto.subtle 为 undefined，取哈希抛错会让上传表现为「点了没反应」；回退输出与 WebCrypto 一致。
  * S4（ONLYOFFICE 查看器外壳 · 计划 S4 / R5）：Office / 文本族改走**查看器通道** —— ensurePreviewOutcome 按响应裁决
  *   （viewer 非空 = 查看器外壳；url 非空 = 产物浮层）；previewKindOf 增 "office"（名单与 server viewerChannelFor 对齐）。
- * 2026-10-08：PDF 并入查看器通道（业务口径「统一用onlyoffice」）—— 服务端返回 viewer，本文件按响应裁决、无分支。
+ * 2026-10-08：PDF 曾并入查看器通道（业务口径「统一用onlyoffice」）。
+ * 2026-10-28 移动端修订：PDF 改服务端直签 + 前端 PDF.js；viewer 非空仍按查看器裁决，url 非空按直签浮层裁决。
  * 2026-10-08 续：文件替换（replaceFileContent —— 业务口径「增加一个替换按钮 点击替换则选择新文件代替」）：
  *   未定档（draft）直替 = intent=version + fileId（版本链追加、名称 / 归属不变）；已定档 / 已变更 = intent=change
  *   + change.reason 必填（A4-13 申请即通过，完成上传时同事务生效）。
@@ -37,9 +38,10 @@ import { RefreshQueue, liveReadPaused, subscribeLiveHints } from "./liveSync";
  * 预览：GET /api/v1/files/{fileId}/preview → ready 时短时签名 URL（模块级缓存 + 订阅，供附图懒取）。
  * Push 255（业务口径「文件显示 已变更 不如直接替换成变更后的啊… 变更记录也要显示 之前是什么文件 这次是什么文件… 文件可以预览在变更里面」）：
  *   变更记录行接版本链 —— fetchFileVersions（GET /files/{id}/versions）+ 版本态预览 / 下载
- *   （ensurePreviewOutcome(fileId, versionId?) / fetchDownloadUrl(fileId, versionId?)：A4-06 任意历史版本可预览与下载 * Push 261（业务口径「新增文件库 文件库里面分为 系统现有文件 回收站」）：文件库列表（fetchProjectFileLibrary —— 跨项目聚合的单项目读口，
- *   按项目分页取满；系统现有文件 = 四档在库状态、回收站 = filter[status]=recycled）与回收站两个写口（restoreFile / purgeFile）在此收口；
- *   页面见 frontend/src/FileLibraryPage.tsx。
+ *   （ensurePreviewOutcome(fileId, versionId?) / fetchDownloadUrl(fileId, versionId?)：A4-06 任意历史版本可预览与下载）。
+ * Push 261 / 2026-10-29：单项目文件读口 fetchProjectFileLibrary（按项目分页取满）同时服务项目详情「项目文件」
+ *   （四档在库状态 + taskId 过滤）与回收站「文件回收站」（filter[status]=recycled）；回收站两个写口
+ *   （restoreFile / purgeFile）也在此收口。页面见 components/ProjectFilesPanel.tsx、FileLibraryPage.tsx。
  */
 import { useEffect, useSyncExternalStore } from "react";
 import { ApiError, apiRequest, apiSend, readAllPages } from "./api";
@@ -61,7 +63,7 @@ type UploadCompleteResponse = { file: { id: string; name: string } };
 export type OnlyOfficePreviewViewerConfig = {
   kind: "onlyoffice";
   docServerUrl: string;
-  documentType: "word" | "cell" | "slide" | "pdf";
+  documentType: "word" | "cell" | "slide";
   document: {
     title: string;
     url: string;
@@ -157,7 +159,11 @@ async function putPartWithRetry(
       }
     }
     try {
-      const response = await fetch(url, { method: "PUT", body: slice });
+      const response = await fetch(url, {
+        method: "PUT",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: slice,
+      });
       if (response.ok) {
         return;
       }
@@ -204,6 +210,15 @@ async function transferChunks(
   );
 }
 
+/** 上传中途失败时尽力取消会话；页面刷新等来不及发请求的未完成会话由服务端读面隐藏并由过期清扫兜底。 */
+async function abortCreatedUpload(fileId: string, uploadId: string): Promise<void> {
+  try {
+    await apiSend<unknown>("/api/v1/files/" + encodeURIComponent(fileId) + "/uploads/" + encodeURIComponent(uploadId) + "/abort", "POST");
+  } catch {
+    // 取消是失败后的收尾：不覆盖原始上传错误；已完成或已过期会话无需再次处理。
+  }
+}
+
 /** 同内容在途上传合并表（key = 项目 + 哈希 + 任务）：连点 / 一次粘贴多份同一张图只发一次上传链路。 */
 const inFlightUploads = new Map<string, Promise<string>>();
 
@@ -229,7 +244,12 @@ export async function uploadFile(projectId: string, file: Blob, name: string, op
     if (created.reused || created.upload === null) {
       return created.file.id;
     }
-    await transferChunks(created.file.id, created.upload, buffer, contentHash);
+    try {
+      await transferChunks(created.file.id, created.upload, buffer, contentHash);
+    } catch (error) {
+      await abortCreatedUpload(created.file.id, created.upload.id);
+      throw error;
+    }
     if (options.finalize === true) {
       await finalizeFile(created.file.id);
     }
@@ -432,18 +452,18 @@ export function isImageFileName(name: string): boolean {
   return IMAGE_EXTENSIONS.some((extension) => lower.endsWith(extension));
 }
 
-/** PDF 查看器族（Push 226 续三 · 业务口径「这个pdf我也打不开啊」）：PDF 源直通（S4 起 Office / 文本族
- *  不再经转换器出 PDF —— 改走 ONLYOFFICE 查看器通道，这里只剩 PDF 源本身）。 */
+/** PDF 查看器族（2026-10-28 移动端修订）：API 直签原件，前端 PDF.js 本地分页渲染；
+ *  不再创建 ONLYOFFICE 文档会话，也不再依赖移动浏览器内置 PDF 插件。 */
 const PDF_PREVIEW_EXTENSIONS = [".pdf"];
 
 /** ONLYOFFICE 查看器族（S4 · 名单与 server preview.targets.ts 的 viewerChannelFor 对齐）：Office（含宏变体）
- *  + 文本族（txt / csv / html / htm）。服务端负责最终通道裁决；判不出的文件前端不出预览入口。 */
-const OFFICE_VIEWER_EXTENSIONS = [".doc", ".docx", ".docm", ".odt", ".rtf", ".txt", ".html", ".htm", ".xls", ".xlsx", ".xlsm", ".ods", ".csv", ".ppt", ".pptx", ".pptm", ".odp"];
+ *  + 文本族（txt / csv）。HTML / HTM 是主动内容，服务端已移出查看器通道，前端也不出预览入口。 */
+const OFFICE_VIEWER_EXTENSIONS = [".doc", ".docx", ".docm", ".odt", ".rtf", ".txt", ".xls", ".xlsx", ".xlsm", ".ods", ".csv", ".ppt", ".pptx", ".pptm", ".odp"];
 
 /** CAD 暂不可预览提示名单（ADR-035，与 server isCadPreviewPending 对齐）。仅分类，不声明解析支持。 */
 const CAD_PREVIEW_EXTENSIONS = [".step", ".stp", ".iges", ".igs", ".stl", ".3mf", ".obj", ".gltf", ".glb", ".easm", ".dxf", ".dwg"];
 
-/** 可视预览通道：image = 浏览器直渲染（40×40 缩略图 + img 浮层）；pdf = 浏览器内置查看器（iframe 浮层）；
+/** 可视预览通道：image = 取签名字节后由 img 浮层渲染（40×40 缩略图仍直取签名）；pdf = PDF.js 本地分页渲染；
  *  office = ONLYOFFICE 查看器外壳（S4：api.js + DocEditor，超时 / 重试 / 降级「请下载」）；
  *  cad = 接入准备提示，不加载模型；判不出 = null（抽屉里没有预览入口，只有改名 / 删除）。 */
 export type FilePreviewKind = "image" | "pdf" | "office" | "cad";
@@ -650,11 +670,23 @@ export function ensurePreviewOutcome(fileId: string, versionId?: string): Promis
   return promise;
 }
 
+/** 预览端点：`recordView` 只在用户真正点开某个图片 / 文件时追加；缩略图一律省略。 */
+function previewRequestPath(fileId: string, versionId?: string, recordView = false): string {
+  const params = new URLSearchParams();
+  if (versionId !== undefined) {
+    params.set("versionId", versionId);
+  }
+  if (recordView) {
+    params.set("recordView", "true");
+  }
+  const query = params.toString();
+  return "/api/v1/files/" + encodeURIComponent(fileId) + "/preview" + (query === "" ? "" : "?" + query);
+}
+
 async function readPreviewOutcome(fileId: string, versionId?: string): Promise<PreviewOpenOutcome> {
   const key = previewCacheKey(fileId, versionId);
   const epoch = previewEpoch;
-  const endpoint =
-    "/api/v1/files/" + encodeURIComponent(fileId) + "/preview" + (versionId === undefined ? "" : "?versionId=" + encodeURIComponent(versionId));
+  const endpoint = previewRequestPath(fileId, versionId);
   try {
     for (let attempt = 0; attempt < 40; attempt += 1) {
       const preview = await apiRequest<FilePreviewResponse>(endpoint);
@@ -690,13 +722,35 @@ async function readPreviewOutcome(fileId: string, versionId?: string): Promise<P
   }
 }
 
-/** 取预览签名（带缓存；产物通道专用 —— 图片缩略图 / 附图懒取、PDF 浮层）。查看器通道走 ensurePreviewOutcome。 */
+/** 取预览签名（带缓存；缩略图专用 —— 不写预览审计）。查看器通道走 ensurePreviewOutcome。 */
 export async function ensurePreviewUrl(fileId: string): Promise<string | null> {
   const outcome = await ensurePreviewOutcome(fileId);
   return outcome.kind === "url" ? outcome.url : null;
 }
 
-/** 附图展示地址：本地 blob（会话内刚贴的图）优先，否则懒取服务端预览签名并订阅缓存变化。 */
+/** 用户真正点开具体预览后，显式补一次「查看」审计（同一文件 / 版本的并发请求合并）。
+ *  不复用缩略图缓存：缓存命中时也要让服务端知道这一次是用户主动打开，而不是页面挂载时的批量签名。 */
+const previewViewRecords = new Map<string, Promise<void>>();
+export function recordPreviewView(fileId: string, versionId?: string): Promise<void> {
+  if (fileId === "") {
+    return Promise.resolve();
+  }
+  const key = previewCacheKey(fileId, versionId);
+  const pending = previewViewRecords.get(key);
+  if (pending !== undefined) {
+    return pending;
+  }
+  const request = apiRequest<FilePreviewResponse>(previewRequestPath(fileId, versionId, true))
+    .then(() => undefined, () => undefined)
+    .finally(() => {
+      previewViewRecords.delete(key);
+    });
+  previewViewRecords.set(key, request);
+  return request;
+}
+
+/** 附图缩略图展示地址：本地 blob（会话内刚贴的图）优先，否则懒取服务端预览签名并订阅缓存变化。
+ *  2026-10-27：缩略图只取签名、不写审计；`recordPreviewView` 在大图真正打开时补记一次。 */
 export function usePhotoUrl(fileId: string, localUrl: string | null): string | null {
   const remote = useSyncExternalStore(subscribePreview, () => (fileId === "" ? null : previewUrls.get(fileId) ?? null));
   useEffect(() => {
@@ -711,8 +765,8 @@ export function usePhotoUrl(fileId: string, localUrl: string | null): string | n
 }
 
 /**
- * 文件库列表项（M4-03 读面 FileSchema 子集；Push 261「文件库（系统现有文件 / 回收站）」）。
- * 列表项不带大小（大小在版本链上：FileVersionSchema.sizeBytes）—— 文件库不展示，预览 / 下载走各自入口。
+ * 文件库列表项（M4-03 读面 FileSchema 子集；Push 261 / 2026-10-29）。
+ * 列表项不带大小（大小在版本链上：FileVersionSchema.sizeBytes）—— 项目文件 / 回收站列表不展示，预览 / 下载走各自入口。
  * 状态取值：draft（草稿）/ final（已定档）/ changed（已变更）/ archived（已归档）/ recycled（回收站）。
  */
 export type FileLibraryItem = {
@@ -724,6 +778,8 @@ export type FileLibraryItem = {
   status: string;
   version: number;
   createdBy: string;
+  /** 上传人姓名（服务端按 users.display_name 返回；停用 / 离职历史账号仍可取值，用户行缺失时为空）。 */
+  createdByName: string | null;
   createdAt: string;
   updatedAt: string;
   finalizedAt: string | null;
@@ -734,8 +790,8 @@ export type FileLibraryItem = {
 
 /**
  * 文件库单项目查询（契约 FileListQuerySchema 子集）。
- * statuses 必给：系统现有文件栏 = 四档在库状态（draft / final / changed / archived；服务端缺省虽排除 recycled，
- * 但显式给全更不容易随口径漂移），回收站栏 = recycled（服务端显式 filter[status]=recycled 才返回回收站行）。
+ * statuses 必给：项目文件 = 四档在库状态（draft / final / changed / archived；服务端缺省虽排除 recycled，
+ * 但显式给全更不容易随口径漂移），文件回收站 = recycled（服务端显式 filter[status]=recycled 才返回回收站行）。
  */
 export type FileLibraryQuery = {
   statuses: readonly string[];
@@ -790,7 +846,7 @@ export async function restoreFile(fileId: string): Promise<void> {
   await apiSend<{ id: string }>("/api/v1/files/" + encodeURIComponent(fileId) + "/restore", "POST", { version: detail.version });
 }
 
-/** 彻底删除（Push 261 · 文件库「回收站」栏 · 仅系统管理员 —— 服务端按 roleCodes=admin 硬闸，A4-12）：
+/** 彻底删除（Push 261 · 文件库「回收站」栏 · 仅系统管理员 —— 服务端按 groupAccessAdmin 硬闸，A4-12）：
  *  POST /files/{id}/purge —— 对象与元数据一并清理、操作留痕；仅回收站中的文件可彻底删除；乐观锁 version 先读详情取回。 */
 export async function purgeFile(fileId: string): Promise<void> {
   const detail = await apiRequest<{ version: number }>("/api/v1/files/" + encodeURIComponent(fileId));

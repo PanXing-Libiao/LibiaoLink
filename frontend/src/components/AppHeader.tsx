@@ -4,10 +4,12 @@ import { BG_TIER_TEXT_KEYS, LOCALES, selectLocale, useLocalizedText, useLocale, 
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { clearHomePrefs } from "../homePrefs";
 import { clearLegacyPlanBoard } from "../myPlan";
-import { hasPermission, useMyPermissions } from "../permissions";
+import { hasPageAccess, useMyPermissions } from "../permissions";
 import { useInboxBadge } from "../inbox";
-import { clearBindingGuidePrefs } from "../bindingGuide";
-import { AUDIT_BASE_HASH, FILES_BASE_HASH, SETTINGS_BASE_HASH, goBackToList, goUpLevel, listHref, upLevelHref } from "../useHashRoute";
+import { resetWecomBindingStatus, useWecomBindingBound } from "../wecomBindingStatus";
+import { ACCESS_BASE_HASH, AUDIT_BASE_HASH, FILES_BASE_HASH, HUB_HASH, SETTINGS_BASE_HASH, goBackToList, goUpLevel, listHref, upLevelHref } from "../useHashRoute";
+import { firstAllowedHref } from "../accessRoutes";
+import { MobileNav } from "./MobileNav";
 import { TopNav } from "./TopNav";
 import { InboxPanel } from "./InboxPanel";
 import { Toast } from "./Toast";
@@ -23,9 +25,10 @@ import type { MeResponse, Project } from "../types";
  * 站内信（业务口径 2026-10-16「在这个左侧增加站内信按钮 点击后出现局部弹窗用来消息通知」）：「语言」胶囊左侧
  *  新增铃铛按钮 + 未读红点（Transitions.dev「Notification badge」样张：滑入 + 弹性放大、读完后缩小消散，
  *  app.css 的 .inbox-badge 等价还原），点击 = 局部弹窗（最近 8 条 + 全部已读；见 ./InboxPanel）；
- *  红点 = ../inbox 模块级 store（登录后读面补拉 + SSE unread 快照，切页不丢）。
+ *  红点 = ../inbox 模块级 store（登录后读面补拉 + SSE unread 快照，切页不丢）；未绑定企微时
+ *  未读为 0 也亮无数字红点，并由弹窗底部提示直达设置页（Push 540 起取消登录后自动浮卡）。
  * 设置页入口（业务口径 2026-10-16「在点击用户右上角头像后的列表中添加一个设置页」· Push 250）：账号菜单第三项（Push 400 顺序调整）
- *  「企微绑定」（#/settings · 全账号可见），落点 = 账号级设置（单聊 D5 / D6 + 项目群绑定）；菜单顺序（Push 400）= 文件库 /〔操作记录〕/ 企微绑定 / 退出登录。 */
+ *  「企微绑定」（#/settings · 全账号可见），落点 = 账号级设置（单聊 D5 / D6 + 项目群绑定）；菜单顺序 = 回收站 /〔操作记录〕/〔权限管理〕/ 企微绑定 / 退出登录；权限管理仅群组管理员可见。 */
 
 type AppHeaderProps = {
   me: MeResponse;
@@ -61,18 +64,44 @@ export function AppHeader({ me, project }: AppHeaderProps) {
   const inboxMenuRef = useRef<HTMLDivElement | null>(null);
   const localeLabel = LOCALES.find((item) => item.key === locale)?.label ?? "中文";
   const bgTierLabel = t(BG_TIER_TEXT_KEYS[bgTier]);
-  /** 未读角标（../inbox：登录后读面补拉 + SSE unread 快照；顶栏每页渲染，切页不丢）。 */
+  /** 顶栏站内信提示：../inbox 给未读数，../wecomBindingStatus 给未绑定态；切页不丢。 */
   const inboxBadge = useInboxBadge();
+  const wecomBound = useWecomBindingBound();
+  const inboxWecomUnbound = wecomBound === false;
+  const inboxHasUnread = inboxBadge.unreadCount > 0;
+  const inboxBadgeVisible = inboxHasUnread || inboxWecomUnbound;
+  const inboxBadgeKind = inboxHasUnread ? "unread" : inboxWecomUnbound ? "binding" : "none";
   const inboxUnreadText = inboxBadge.unreadCount > 99 ? "99+" : String(inboxBadge.unreadCount);
+  const inboxTitle = inboxWecomUnbound
+    ? t("header.inbox.title") + " · " + t("inbox.unbound.hint")
+    : t("header.inbox.title");
+  const inboxAriaLabel = inboxWecomUnbound
+    ? (inboxHasUnread ? t("header.inbox.unreadAria", { count: inboxBadge.unreadCount }) : t("header.inbox.title")) + " · " + t("inbox.unbound.hint")
+    : inboxHasUnread
+      ? t("header.inbox.unreadAria", { count: inboxBadge.unreadCount })
+      : t("header.inbox.title");
   const homeHref = listHref();
-  const upHref = upLevelHref();
+  const defaultUpHref = upLevelHref();
+  /** Logo 缺省回仪表盘；群组未开通仪表盘时落首个可访问页面，避免点 Logo 直接吃 403。 */
+  const upHref = defaultUpHref === HUB_HASH && !hasPageAccess(permissions, "dashboard")
+    ? firstAllowedHref(permissions)
+    : defaultUpHref;
+  const goUp = (): void => {
+    if (upHref === defaultUpHref) {
+      goUpLevel();
+      return;
+    }
+    if (window.location.hash !== upHref) window.location.hash = upHref.slice(1);
+  };
   const seqNoText = project ? String(project.seqNo).padStart(2, "0") : "";
   /** 手打内容（项目名）机翻显示：英文界面显示译文（自动切换到位），悬停看中文原文。 */
   const projectNameText = useLocalizedText(project?.description ?? "");
-  /** 「操作记录」菜单项（audit.view）：管理面入口，画像未到 / 无权限不渲染。 */
-  const canViewAudit = hasPermission(permissions, "audit.view");
-  /** 「文件库」菜单项（Push 261）：文件库页（#/files）全账号可见 —— 读面按项目可见性放开（无单独权限位），
-   *  「彻底删除」入口在页面内按 admin 角色收敛。 */
+  /** 操作记录对所有登录账号开放：服务端按管理员 / 项目经理 / 本人收敛可见记录。 */
+  const canViewFiles = hasPageAccess(permissions, "files");
+  /** 「权限管理」菜单项：群组管理员（关闭群组限制时等价管理员亦可配置）。 */
+  const canManageAccess = permissions?.groupAccessAdmin === true;
+  /** 「回收站」菜单项（Push 261）：回收站页（#/files）按群组页面权限收敛；
+   *  读面仍按项目可见性放开，「彻底删除」入口在页面内按 groupAccessAdmin 收敛。 */
 
   useEffect(() => {
     if (!menuOpen) {
@@ -165,9 +194,6 @@ export function AppHeader({ me, project }: AppHeaderProps) {
     };
   }, [inboxOpen]);
 
-  // 「操作记录」入口的权限位（audit.view · C7-04 管理员查询页）：画像未到 / 拉取失败 = 不渲染入口（服务端逐请求仍是最终裁决）。
-
-
   // 站内跳转统一拦截：带修饰键点击（新标签 / 新窗口）交给浏览器默认行为
   const interceptNav = (action: () => void) => (event: ReactMouseEvent<HTMLAnchorElement>) => {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
@@ -177,12 +203,19 @@ export function AppHeader({ me, project }: AppHeaderProps) {
     action();
   };
 
-  return (
-    <header className="sticky top-0 z-30 border-b border-zinc-200 bg-white/90 backdrop-blur">
-      <div className="flex h-16 items-center gap-3 px-6">
-        <a href={upHref} onClick={interceptNav(goUpLevel)} title={t("header.up")} className="flex shrink-0 items-center gap-3">
-          <img src="/libiaolink-logo.svg" alt="LibiaoLink" className="h-11 w-auto" />
-          <div className="leading-tight">
+  useEffect(() => {
+    document.body.dataset.appShell = "true";
+    return () => {
+      delete document.body.dataset.appShell;
+    };
+  }, []);
+
+  const header = (
+    <header data-app-header="" className="app-header sticky top-0 z-30 border-b border-zinc-200 bg-white/90 backdrop-blur">
+      <div className="app-header__inner flex h-16 items-center gap-3 px-6">
+        <a href={upHref} onClick={interceptNav(goUp)} title={t("header.up")} className="app-header__brand flex shrink-0 items-center gap-3">
+          <img src="/libiaolink-logo.svg" alt="LibiaoLink" className="app-header__logo h-11 w-auto" />
+          <div className="app-header__brand-copy leading-tight">
             <p className="text-base font-semibold text-zinc-900">LibiaoLink</p>
             <p className="text-xs text-zinc-500">{t("header.brand.subtitle")}</p>
           </div>
@@ -208,16 +241,17 @@ export function AppHeader({ me, project }: AppHeaderProps) {
             </p>
           </div>
         ) : null}
-        <div className="ml-auto flex shrink-0 items-center gap-2">
+        <div className="app-header__actions ml-auto flex shrink-0 items-center gap-2">
           {/* 站内信（业务口径 2026-10-16「在这个左侧增加站内信按钮 点击后出现局部弹窗用来消息通知」）：
-              位置 =「语言」胶囊左侧；未读红点样式借 Transitions.dev「Notification badge」样张（app.css 的
-              .inbox-badge 等价还原）；弹窗与语言 / 背景 / 账号菜单同一套交互（点外 / Esc / 再点触发钮收起）且互斥。 */}
+              位置 =「语言」胶囊左侧；未读 / 未绑定企微提示共用一枚红点（app.css 的 .inbox-badge）；
+              弹窗与语言 / 背景 / 账号菜单同一套交互（点外 / Esc / 再点触发钮收起）且互斥。 */}
           <div ref={inboxMenuRef} className="relative">
             <button
               type="button"
               data-inbox-trigger="true"
-              title={t("header.inbox.title")}
-              aria-label={inboxBadge.unreadCount > 0 ? t("header.inbox.unreadAria", { count: inboxBadge.unreadCount }) : t("header.inbox.title")}
+              data-inbox-binding-hint={inboxWecomUnbound ? "true" : "false"}
+              title={inboxTitle}
+              aria-label={inboxAriaLabel}
               aria-haspopup="dialog"
               aria-expanded={inboxOpen}
               onClick={() => {
@@ -226,13 +260,15 @@ export function AppHeader({ me, project }: AppHeaderProps) {
                 setBgMenuOpen(false);
                 setLangMenuOpen(false);
               }}
-              className="relative inline-flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-600 transition hover:border-zinc-300 hover:text-zinc-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
+              className="app-header__icon-button relative inline-flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-600 transition hover:border-zinc-300 hover:text-zinc-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" className="h-4 w-4">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
               </svg>
-              <span className="inbox-badge" data-open={inboxBadge.unreadCount > 0 ? "true" : "false"} aria-hidden="true">
-                <span className="inbox-badge-dot">{inboxUnreadText}</span>
+              <span className="inbox-badge" data-open={inboxBadgeVisible ? "true" : "false"} data-kind={inboxBadgeKind} aria-hidden="true">
+                <span className="inbox-badge-dot" data-shape={inboxHasUnread ? "count" : "dot"}>
+                  {inboxHasUnread ? inboxUnreadText : null}
+                </span>
               </span>
             </button>
             {inboxOpen ? (
@@ -270,9 +306,12 @@ export function AppHeader({ me, project }: AppHeaderProps) {
                 setBgMenuOpen(false);
                 setInboxOpen(false);
               }}
-              className="inline-flex h-9 items-center gap-1 rounded-full border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:text-zinc-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
+              className="app-header__pill inline-flex h-9 items-center gap-1 rounded-full border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:text-zinc-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
             >
-              {t("header.lang.label")} · {localeLabel}
+              <span className="app-header__control-text">
+                <span className="app-header__control-prefix">{t("header.lang.label")} · </span>
+                <span className="app-header__control-value">{localeLabel}</span>
+              </span>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" className="h-3 w-3 text-zinc-400">
                 <path strokeLinecap="round" strokeLinejoin="round" d="m6 9 6 6 6-6" />
               </svg>
@@ -327,9 +366,12 @@ export function AppHeader({ me, project }: AppHeaderProps) {
                 setMenuOpen(false);
                 setInboxOpen(false);
               }}
-              className="inline-flex h-9 items-center gap-1 rounded-full border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:text-zinc-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
+              className="app-header__pill inline-flex h-9 items-center gap-1 rounded-full border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:text-zinc-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
             >
-              {t("header.bg.label")} · {bgTierLabel}
+              <span className="app-header__control-text">
+                <span className="app-header__control-prefix">{t("header.bg.label")} · </span>
+                <span className="app-header__control-value">{bgTierLabel}</span>
+              </span>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" className="h-3 w-3 text-zinc-400">
                 <path strokeLinecap="round" strokeLinejoin="round" d="m6 9 6 6 6-6" />
               </svg>
@@ -404,7 +446,7 @@ export function AppHeader({ me, project }: AppHeaderProps) {
                 setLangMenuOpen(false);
                 setInboxOpen(false);
               }}
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-zinc-100 text-sm font-medium text-zinc-700 transition hover:bg-zinc-200 hover:text-zinc-900 hover:shadow-[0_6px_18px_rgba(15,23,42,0.18)] active:shadow-[0_2px_8px_rgba(15,23,42,0.16)] focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
+              className="app-header__icon-button flex h-9 w-9 items-center justify-center rounded-full bg-zinc-100 text-sm font-medium text-zinc-700 transition hover:bg-zinc-200 hover:text-zinc-900 hover:shadow-[0_6px_18px_rgba(15,23,42,0.18)] active:shadow-[0_2px_8px_rgba(15,23,42,0.16)] focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
             >
               {initial}
             </button>
@@ -413,28 +455,41 @@ export function AppHeader({ me, project }: AppHeaderProps) {
                 role="menu"
                 className="menu-pop absolute right-0 top-full z-20 mt-2 w-36 overflow-hidden rounded-xl border border-zinc-200/80 bg-white p-1 shadow-[0_18px_40px_-12px_rgba(15,23,42,0.30),0_4px_12px_-4px_rgba(15,23,42,0.14)]"
               >
-                <a
-                  role="menuitem"
-                  data-account-files="true"
-                  href={FILES_BASE_HASH}
-                  onClick={() => {
-                    setMenuOpen(false);
-                  }}
-                  className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
-                >
-                  {t("header.files")}
-                </a>
-                {canViewAudit ? (
+                {canViewFiles ? (
                   <a
                     role="menuitem"
-                    data-account-audit="true"
-                    href={AUDIT_BASE_HASH}
+                    data-account-files="true"
+                    href={FILES_BASE_HASH}
                     onClick={() => {
                       setMenuOpen(false);
                     }}
                     className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
                   >
-                    {t("header.audit")}
+                    {t("header.files")}
+                  </a>
+                ) : null}
+                <a
+                  role="menuitem"
+                  data-account-audit="true"
+                  href={AUDIT_BASE_HASH}
+                  onClick={() => {
+                    setMenuOpen(false);
+                  }}
+                  className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
+                >
+                  {t("header.audit")}
+                </a>
+                {canManageAccess ? (
+                  <a
+                    role="menuitem"
+                    data-account-access="true"
+                    href={ACCESS_BASE_HASH}
+                    onClick={() => {
+                      setMenuOpen(false);
+                    }}
+                    className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
+                  >
+                    {t("header.access")}
                   </a>
                 ) : null}
                 <a
@@ -456,8 +511,8 @@ export function AppHeader({ me, project }: AppHeaderProps) {
                     clearHomePrefs();
                     // 「我的计划」便签墙：数据在账号里（Push 268 起）；这里只清尚未迁移上云的本机旧键，不带给下一位用户
                     clearLegacyPlanBoard();
-                    // 「绑定企业微信」引导的跳过位（Push 250）：本机记忆按账号分记，退出登录一并清 —— 换人登录照常引导
-                    clearBindingGuidePrefs();
+                    // 清空会话内的企微绑定提示态，避免共用设备时把上一位用户的红点状态带给下一位
+                    resetWecomBindingStatus();
                   }}
                   className="block rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
                 >
@@ -478,5 +533,12 @@ export function AppHeader({ me, project }: AppHeaderProps) {
         <Toast kind="error" text={inboxError} onClose={() => { setInboxError(null); }} anchor={{ name: "data-inbox-error", value: "" }} />
       )}
     </header>
+  );
+
+  return (
+    <>
+      {header}
+      <MobileNav />
+    </>
   );
 }

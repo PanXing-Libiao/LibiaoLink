@@ -1,10 +1,11 @@
 import { Injectable } from "@nestjs/common";
-import { and, asc, count, desc, eq, ilike, inArray, isNull, lt, lte, ne, notInArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, inArray, isNotNull, isNull, lt, lte, ne, notInArray, or, sql, type SQL } from "drizzle-orm";
 import type { DbClient, DbTransaction } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { changeRequests } from "../../db/schema/change.js";
 import { fileLinks, files, fileVersions, uploadSessions } from "../../db/schema/files.js";
 import { projectNodes } from "../../db/schema/flow.js";
+import { users } from "../../db/schema/identity.js";
 import { projectStages, projects } from "../../db/schema/projects.js";
 import { tasks } from "../../db/schema/tasks.js";
 import type { ChangeRequestListFilter, ChangeRequestSort } from "./change.query.js";
@@ -36,6 +37,8 @@ export interface FileNodeBriefRow {
 export interface FileTaskBriefRow {
   id: string;
   projectId: string;
+  /** 任务当前负责人：文件定档会联动任务定档，权限必须与任务定档入口同口径。 */
+  ownerIds: string[];
   /** 任务定档时间（非空 = 已定档：直接修改一律 409 TASK_FINALIZED；修改走变更，A4-13）。 */
   finalizedAt: Date | null;
 }
@@ -44,6 +47,12 @@ export type FileRow = typeof files.$inferSelect;
 export type FileVersionRow = typeof fileVersions.$inferSelect;
 export type UploadSessionRow = typeof uploadSessions.$inferSelect;
 export type ChangeRequestRow = typeof changeRequests.$inferSelect;
+
+/** 文件库列表行：文件本体 + 创建者姓名（停用 / 离职用户保留，用户行缺失时为空）。 */
+export interface FileLibraryRow {
+  file: FileRow;
+  createdByName: string | null;
+}
 
 /**
  * 变更记录读面行（M4-04 读面）：变更本体 + 由 `file_versions.change_request_id` 反查的变更后文件 / 版本。
@@ -230,7 +239,7 @@ export class FileRepository {
 
   async findTaskBrief(taskId: string, client: DbClient = this.database.db): Promise<FileTaskBriefRow | null> {
     const rows = await client
-      .select({ id: tasks.id, projectId: tasks.projectId, finalizedAt: tasks.finalizedAt })
+      .select({ id: tasks.id, projectId: tasks.projectId, ownerIds: tasks.ownerIds, finalizedAt: tasks.finalizedAt })
       .from(tasks)
       .where(eq(tasks.id, taskId))
       .limit(1);
@@ -625,11 +634,12 @@ export class FileRepository {
     limit: number,
     offset: number,
     client: DbClient = this.database.db,
-  ): Promise<{ items: FileRow[]; total: number }> {
+  ): Promise<{ items: FileLibraryRow[]; total: number }> {
     const where = and(...fileLibraryConditions(projectId, filter));
     const items = await client
-      .select()
+      .select({ file: files, createdByName: users.displayName })
       .from(files)
+      .leftJoin(users, eq(users.id, files.createdBy))
       .where(where)
       .orderBy(...fileLibraryOrderBy(sorts))
       .limit(limit)
@@ -780,9 +790,9 @@ function changeRequestOrderBy(sorts: readonly ChangeRequestSort[]): SQL[] {
   return clauses;
 }
 
-/** 文件库列表条件（M4-03）：默认排除回收站（显式给出 statuses 时以给出为准）。 */
+/** 文件库列表条件（M4-03）：默认排除回收站（显式给出 statuses 时以给出为准）；未完成上传没有版本，不对外展示。 */
 function fileLibraryConditions(projectId: string, filter: FileListFilter): SQL[] {
-  const conditions: SQL[] = [eq(files.projectId, projectId)];
+  const conditions: SQL[] = [eq(files.projectId, projectId), isNotNull(files.currentVersionId)];
   if (filter.nodeId !== null) conditions.push(eq(files.nodeId, filter.nodeId));
   if (filter.taskId !== null) conditions.push(eq(files.taskId, filter.taskId));
   if (filter.statuses !== null) conditions.push(inArray(files.status, filter.statuses));

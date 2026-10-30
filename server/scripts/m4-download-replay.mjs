@@ -9,9 +9,9 @@
  *   证据四·B（Office 夹具 round-trip）：真实 .docx（PK/ZIP）上传 → 下载字节与夹具**逐字节一致**（非 PDF 转换件）；
  *             并在 `previews/{hash}/{pipelineVersion}/pdf` 自造占位产物，证下载只签 `projects/` 原对象（与预览链不串）。
  *   证据五（404 与禁匿名）：版本不属于该文件 / 文件不存在 → 404（同形，防 IDOR）；无会话 → 401（D2-04 禁匿名）。
- *   证据六（权限双态 · 按运行形态自适应）：非名册成员（sales 角色）——**默认态**（`PERMISSION_ENFORCED=false`，一期不判权限）
- *             画像为等效管理员 → 下载 200（记录级不裁剪，与「一期不判权限」口径一致）；**判权限态**（`true`）→ 项目不可见 → 404
- *             （记录级优先于功能权限，不因缺权限暴露存在性）。脚本以 `/permissions/me` 探测实际画像并断言与声明形态一致。
+ *   证据六（部门规则双态 · 按运行形态自适应）：非名册成员——**部门规则关闭**时下载 200；
+ *             **部门规则开启且无适用项目规则**时项目不可见 → 404（记录级优先于功能权限，不因缺权限暴露存在性）。
+ *             脚本以 `/permissions/me` 的 `groupAccessEnforced` / `groupAccessAdmin` 探测实际形态。
  *
  * 前置：真 PG（DATABASE_URL）+ 真对象存储（S3_*，见 deploy/minio/）+ 已起 api（BASE_URL）。
  *       本脚本只在本地沙箱 / 联调库跑：铸临时管理员会话（跑完撤销）、建 M4DL- 回放项目
@@ -227,7 +227,7 @@ let project;
 let downloadTtlSeconds = 300;
 let previewTtlSeconds = 300;
 let previewPipelineVersion = "1.0.0";
-let permissionEnforced = false;
+let groupAccessRestricted = false;
 const cleanup = { projectIds: [], sessions: [], userIds: [], previewPrefixes: [] };
 
 try {
@@ -239,7 +239,6 @@ try {
     downloadTtlSeconds = env.S3_DOWNLOAD_URL_TTL_SECONDS;
     previewTtlSeconds = env.PREVIEW_URL_TTL_SECONDS;
     previewPipelineVersion = env.PREVIEW_PIPELINE_VERSION;
-    permissionEnforced = env.PERMISSION_ENFORCED === "true";
     storage = storageModule.createS3ObjectStorage(env);
     rawClient = storageModule.createS3Client(env);
   } catch (error) {
@@ -447,7 +446,7 @@ try {
   const anonymous = await downloadUrl(v1.fileId, v1VersionId, null);
   check("D8", "无会话 → 401（D2-04 禁匿名：下载地址必须带会话换签）", "401", short({ status: anonymous.status, code: anonymous.body?.code }, 160), anonymous.status === 401);
 
-  // ---------- 证据六：权限双态（默认态 = 全员等效管理员；判权限态 = 非成员不可见 404） ----------
+  // ---------- 证据六：部门规则双态（关闭 = 全员可见；开启且无适用规则 = 非成员不可见 404） ----------
   const salesRow = await db.query("insert into users (casdoor_id, username, display_name, status) values ($1, $2, $3, $4) returning id", [
     "m4dl-" + stamp + "-sales",
     "m4dl-sales-" + stamp,
@@ -456,20 +455,20 @@ try {
   ]);
   const salesId = salesRow.rows[0].id;
   cleanup.userIds.push(salesId);
-  await db.query("insert into user_roles (user_id, role_id) select $1, id from roles where code = $2 on conflict do nothing", [salesId, "sales"]);
   const sales = await makeSession(salesId, "m4dl-replay-sales");
   cleanup.sessions.push(sales.token);
 
   const profile = await call("GET", "/api/v1/permissions/me", undefined, sales);
   const salesProfile = profile.body?.permissions ?? {};
   const salesKeys = Array.isArray(salesProfile.permissionKeys) ? salesProfile.permissionKeys : [];
-  const equivalentAdmin = salesKeys.includes("file.download") && salesKeys.length >= 31;
+  const fullBaseline = salesKeys.includes("file.download") && salesKeys.length >= 31;
+  groupAccessRestricted = salesProfile.groupAccessEnforced === true && salesProfile.groupAccessAdmin !== true;
   check(
     "D9",
-    "权限形态探测（sales 角色用户画像）：与脚本声明形态一致（等效管理员画像 ⇔ `PERMISSION_ENFORCED=false`）",
-    "声明 = " + (permissionEnforced ? "判权限（true）→ 画像应为角色画像" : "一期不判权限（false）→ 画像应为等效管理员") + "；画像键 " + salesKeys.length + " 个",
-    short({ enforced: permissionEnforced, profileKeys: salesKeys.length, hasFileDownload: salesKeys.includes("file.download"), equivalentAdmin }, 240),
-    salesProfile.userId === salesId && equivalentAdmin === !permissionEnforced,
+    "权限基线探测（非成员画像）：全量能力基线 + 部门规则执行状态",
+    "全量功能权限基线；记录级由 groupAccessEnforced / 项目规则收敛",
+    short({ groupAccessEnforced: salesProfile.groupAccessEnforced, groupAccessAdmin: salesProfile.groupAccessAdmin, profileKeys: salesKeys.length, hasFileDownload: salesKeys.includes("file.download"), fullBaseline }, 240),
+    salesProfile.userId === salesId && fullBaseline === true,
   );
 
   const auditsBeforeSales = (await auditOf(project, "download")).length;
@@ -477,12 +476,12 @@ try {
   const auditsAfterSales = (await auditOf(project, "download")).length;
   check(
     "D10",
-    permissionEnforced
-      ? "判权限态：非名册成员（sales）→ 项目不可见 → 404；不签发、不写 download 审计（记录级优先，防 IDOR）"
-      : "默认态（一期不判权限）：非名册成员画像 = 等效管理员 → 下载 200 + 写一条 download 审计（记录级不裁剪）",
-    permissionEnforced ? "404 + 审计不增（" + auditsBeforeSales + " 条）" : "200 + 审计 " + auditsBeforeSales + " → " + (auditsBeforeSales + 1) + " 条",
-    short({ mode: permissionEnforced ? "enforced" : "phase1-off", status: salesAttempt.status, code: salesAttempt.body?.code, fileName: salesAttempt.body?.fileName, auditsBefore: auditsBeforeSales, auditsAfter: auditsAfterSales }, 320),
-    permissionEnforced
+    groupAccessRestricted
+      ? "部门规则开启：非名册成员无适用项目规则 → 项目不可见 404；不签发、不写 download 审计（记录级优先，防 IDOR）"
+      : "部门规则关闭：非名册成员可下载 → 200 + 写一条 download 审计",
+    groupAccessRestricted ? "404 + 审计不增（" + auditsBeforeSales + " 条）" : "200 + 审计 " + auditsBeforeSales + " → " + (auditsBeforeSales + 1) + " 条",
+    short({ mode: groupAccessRestricted ? "group-rules" : "rules-off", status: salesAttempt.status, code: salesAttempt.body?.code, fileName: salesAttempt.body?.fileName, auditsBefore: auditsBeforeSales, auditsAfter: auditsAfterSales }, 320),
+    groupAccessRestricted
       ? salesAttempt.status === 404 && auditsAfterSales === auditsBeforeSales
       : salesAttempt.status === 200 && auditsAfterSales === auditsBeforeSales + 1 && salesAttempt.body?.fileName === "下载回放-机械设计图纸.pdf",
   );
@@ -550,7 +549,7 @@ lines.push("| 数据库 | " + DATABASE_URL.replace(/:[^:@/]+@/, ":***@") + " |")
 lines.push("| 对象存储 | " + (storage === undefined ? "-" : storage.bucket) + "（本地 MinIO 沙箱：仅沙箱、不代表生产选型） |");
 lines.push("| 签名窗口 | 下载 " + downloadTtlSeconds + "s（`S3_DOWNLOAD_URL_TTL_SECONDS`）／预览 " + previewTtlSeconds + "s（`PREVIEW_URL_TTL_SECONDS`）—— 两键独立配置 |");
 lines.push("| 代码版本 | " + commit + (dirty ? "（回放时工作区含本卡未提交改动）" : "") + " |");
-lines.push("| 权限形态 | " + (permissionEnforced ? "判权限（`PERMISSION_ENFORCED=true`）：非成员 → 不可见 404" : "一期不判权限（`PERMISSION_ENFORCED=false`，缺省）：全员等效管理员画像") + " |");
+lines.push("| 权限形态 | " + (groupAccessRestricted ? "部门规则开启：非成员 → 不可见 404" : "部门规则关闭：全员可下载") + " |");
 lines.push("| 执行账号 | 管理员（建项目 / 上传 / 换签下载）；另有**非成员**（sales 角色）与**匿名**（401）各一条 |");
 lines.push("| 脚本 | server/scripts/m4-download-replay.mjs |");
 lines.push("");
@@ -560,11 +559,11 @@ lines.push(...report);
 lines.push("");
 lines.push("## 汇总");
 lines.push("");
-lines.push(failures === 0 ? "- ✅ 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：签名四字段与独立窗口 / 附件投递（字节逐字节一致 + Content-Disposition 原名）/ Office 夹具 round-trip（.docx 字节一致 + PK 容器 + ≠ previews/ 占位产物）/ download 审计一条一次 / v1·v2 版本路由 / 跨文件版本 404 / 文件不存在 404 / 禁匿名 401 / 权限形态（" + (permissionEnforced ? "判权限 → 非成员 404、不写审计" : "一期不判权限 → 全员可下载") + "）。" : "- ❌ 有 " + failures + " 项失败，见上方 FAIL 行。");
+lines.push(failures === 0 ? "- ✅ 全部断言通过（" + evidence.steps.filter((step) => step.ok).length + " 项）：签名四字段与独立窗口 / 附件投递（字节逐字节一致 + Content-Disposition 原名）/ Office 夹具 round-trip（.docx 字节一致 + PK 容器 + ≠ previews/ 占位产物）/ download 审计一条一次 / v1·v2 版本路由 / 跨文件版本 404 / 文件不存在 404 / 禁匿名 401 / 权限形态（" + (groupAccessRestricted ? "部门规则开启 → 非成员 404、不写审计" : "部门规则关闭 → 全员可下载") + "）。" : "- ❌ 有 " + failures + " 项失败，见上方 FAIL 行。");
 lines.push("");
 lines.push("## 未覆盖 / 风险登记");
 lines.push("");
-lines.push("- **运行形态（两态各跑一次）**：默认态（`PERMISSION_ENFORCED=false`）证「一期不判权限 → 全员可下载」；判权限态（`true`）证「非成员不可见 → 404、不写审计」——脚本按声明形态自适应断言，两态分别产出证据。");
+lines.push("- **运行形态（两态各跑一次）**：部门规则关闭证「全员可下载」；开启且非成员无适用项目规则证「不可见 → 404、不写审计」——脚本按 `/permissions/me` 的实际部门画像自适应断言。");
 lines.push("- **403（可见但缺 `file.download`）真机不可达**：`file.download` 在项目成员 / 项目经理的**隐含权限位**内（`permission.rules.ts`），而可见性本身来自名册 / 主数据责任人 —— 一期六角色矩阵下「可见但无权下载」构造不出来；该分支由单测覆盖（`test/file-download.test.ts`：缺权限 403 且不签名不审计）。二期角色矩阵（更细粒度授权）落地后可在真机复验。");
 lines.push("- **Office 夹具的「预览产物」为回放自造占位**：本脚本不跑 converter，占位对象只用于断言「下载不指向 `previews/` 前缀」（同一 contentHash 下 .docx 与 PDF 字节必然不同）；真实转换件与下载原文件的不串链由 M4-05d 预览回放 + 本组共同覆盖。");
 lines.push("- **压测未做**：并发 2~4、200MB 级长跑内存曲线不在本脚本范围（属 M4-05 压测 / M8 容量验证）。");
@@ -574,7 +573,7 @@ lines.push("## 复跑");
 lines.push("");
 lines.push("```bash");
 lines.push("cd server && npm run build && S3_DOWNLOAD_URL_TTL_SECONDS=600 PREVIEW_URL_TTL_SECONDS=900 npm run start:api &");
-lines.push("# 判权限态复跑：api 与脚本两侧同加 PERMISSION_ENFORCED=true，D10 断言翻转为「非成员 404」")
+lines.push("# 部门规则态复跑：api 以 GROUP_ACCESS_ENFORCED=true 启动，并让非成员账号无适用项目规则；D10 断言为「非成员 404」")
 lines.push('cd server && M4_DATABASE_URL=postgresql://libiaolink_migrator@127.0.0.1:55432/libiaolink \\');
 lines.push('  S3_DOWNLOAD_URL_TTL_SECONDS=600 PREVIEW_URL_TTL_SECONDS=900 node --env-file-if-exists=.env scripts/m4-download-replay.mjs --out "../docs/m4-05f-回放证据(下载切片).md"');
 lines.push("```");

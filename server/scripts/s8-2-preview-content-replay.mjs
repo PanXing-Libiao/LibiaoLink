@@ -7,7 +7,7 @@
  *   ③ 无重定向：200 不跟随重定向可得（302 不存在、无 Location）；
  *   ④ 配置 token 无 `X-Amz-`：查看器签发形状 + token HMAC 复算 + claims / TTL（900s）；
  *   ⑤ 401 计数可观测：api 日志逐条 warn（`--api-log` 指定；未给则该用例 SKIP 并登记）；
- *   ⑥ 下载链回归：download-url 200 + 签名字节 = 原对象 + download 审计一条一次；查看器预览签发本身写一条 preview 审计（2026-10-23 恢复），preview-content 拉取不额外写。
+ *   ⑥ 下载链回归：download-url 200 + 签名字节 = 原对象 + download 审计一条一次；查看器仅在 recordView=true 时写一条 preview 审计（2026-10-27 收口），preview-content 拉取不额外写。
  *
  * 前置：真 PG + 真 MinIO + 已起 api（BASE_URL；ONLYOFFICE_* 已配置 —— `ONLYOFFICE_DOCSERVER_API_BASE_URL` = DocServer 视角基址，
  *       本机联调 = `http://host.docker.internal:<api 端口>`，容器经 host.docker.internal 可达）。
@@ -347,7 +347,7 @@ try {
   const endpointUrl = ooBase + "/api/v1/files/" + fileId + "/versions/" + versionId + "/preview-content";
 
   // ---------- ④ 查看器签发：形状 + token（无 X-Amz- / HMAC / claims / TTL） ----------
-  const preview = await call("GET", "/api/v1/files/" + fileId + "/preview", undefined, admin);
+  const preview = await call("GET", "/api/v1/files/" + fileId + "/preview?recordView=true", undefined, admin);
   const viewer = preview.body?.viewer ?? null;
   check(
     "A4a",
@@ -425,7 +425,7 @@ try {
   const previewAudits = await auditOf(project, "preview");
   check(
     "A4c",
-    "④ 查看器预览签发写一条 `action = preview` 审计（2026-10-23 恢复）；preview-content 拉取不额外写",
+    "④ 查看器仅在 recordView=true 时写一条 `action = preview` 审计（2026-10-27 收口）；preview-content 拉取不额外写",
     "1 条（版本 " + versionId + " + viewerKind=onlyoffice）",
     short({ count: previewAudits.length }, 200),
     previewAudits.length === 1 && previewAudits[0].metadata?.versionId === versionId && previewAudits[0].metadata?.viewerKind === "onlyoffice",

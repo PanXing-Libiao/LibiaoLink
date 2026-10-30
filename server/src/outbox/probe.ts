@@ -10,7 +10,6 @@ import {
   type OutboxAlert,
   type OutboxAlertCode,
   type OutboxAlertSink,
-  type OutboxDailyDigest,
   type OutboxDailyDigestRecovery,
 } from "./alert.js";
 import { OUTBOX_REGISTRY } from "./dispatcher.js";
@@ -119,38 +118,11 @@ export class OutboxAlertProbe {
     return emitted;
   }
 
-  /**
-   * 日报：恢复通知、最近窗口死信、当前队列快照；没有可报告内容时只写日志，不向告警群推送。
-   * 日状态保存在 worker 进程内，重启会重新起算；恢复事件同时已写结构化日志，避免完全丢失。
-   */
-  async digestOnce(): Promise<OutboxDailyDigest | null> {
-    const now = this.clock.now();
-    const env = this.config.env;
-    const snapshot = await this.store.stats({
-      deadWindowMs: env.OUTBOX_ALERT_DIGEST_INTERVAL_MS,
-      progressWindowMs: env.OUTBOX_ALERT_PROGRESS_WINDOW_MS,
-    });
-    const activeAlerts = [...this.lastActiveAlertAt.keys()].sort();
-    const recoveries = [...this.digestRecoveries];
-    if (snapshot.deadRecent === 0 && recoveries.length === 0 && activeAlerts.length === 0) {
-      this.logger.log("outbox 日报无异常，不推送");
-      return null;
-    }
-    const report: OutboxDailyDigest = {
-      generatedAt: now.toISOString(),
-      windowMs: env.OUTBOX_ALERT_DIGEST_INTERVAL_MS,
-      duePending: snapshot.duePending,
-      oldestDueMs: snapshot.oldestDueMs,
-      deadRecent: snapshot.deadRecent,
-      deadTotal: snapshot.deadTotal,
-      byTopic: snapshot.byTopic.slice(0, 5),
-      deadByTopic: snapshot.deadByTopic.slice(0, 5),
-      recoveries,
-      activeAlerts,
-    };
-    this.alerts.emitDigest(report);
+  /** 取出并清空已恢复事件，供固定 08:00 管理员日报计数（不展示具体 ID / 对象名）。 */
+  drainDailyDigestRecoveries(): OutboxDailyDigestRecovery[] {
+    const result = [...this.digestRecoveries];
     this.digestRecoveries.length = 0;
-    return report;
+    return result;
   }
 
   private shouldEmitState(code: RepeatableAlertCode, nowMs: number): boolean {

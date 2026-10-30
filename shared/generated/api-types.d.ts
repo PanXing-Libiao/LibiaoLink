@@ -286,7 +286,7 @@ export interface paths {
         };
         options?: never;
         head?: never;
-        /** 更新项目（乐观锁：必须回传 version） */
+        /** 更新项目（乐观锁：必须回传 version；首次改为 done 时要求任务全部完成且已配置成果文件均已上传） */
         patch: {
             parameters: {
                 query?: never;
@@ -332,6 +332,15 @@ export interface paths {
                 };
                 /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
                 409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 业务校验未通过（门禁 / 蓝图校验，含明细） */
+                422: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -1443,7 +1452,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 完成预检（门禁缺件与放行提示；UI 置灰依据，服务端仍在事务内强校验） */
+        /** 完成预检（已配置成果类型缺上传文件时提示；未配置成果类型直接放行；服务端仍在事务内强校验） */
         get: {
             parameters: {
                 query?: never;
@@ -1495,7 +1504,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 任务完成提交（事务内门禁：缺件 422 TASK_REQUIRED_DOC_MISSING；未定档放行 + warning 并触发 R02） */
+        /** 任务完成提交（事务内门禁：已配置成果类型缺上传文件 422 TASK_REQUIRED_DOC_MISSING；未配置不要求文件；draft 放行 + warning 并触发 R02） */
         post: {
             parameters: {
                 query?: never;
@@ -2880,7 +2889,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 审计检索（对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间；仅 audit.view） */
+        /** 审计检索（对象 / 操作人 / 动作 / 结果 / 项目 / 时间区间；管理员全量，其他账号按本人 / 项目经理范围） */
         get: {
             parameters: {
                 query?: {
@@ -3629,7 +3638,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 推进阶段（服务端门禁：任务 / 节点 / 成果文件；失败 422 + 缺项明细，不部分推进） */
+        /** 推进阶段（服务端门禁：节点 / 任务完成与交付要求 / 节点定档文件；失败 422 + 缺项明细，不部分推进） */
         post: {
             parameters: {
                 query?: never;
@@ -3804,7 +3813,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 项目文件库列表（按类型 / 节点 / 任务 / 状态 / 上传人筛选） */
+        /** 项目文件库列表（按类型 / 节点 / 任务 / 状态 / 上传人筛选；行随附上传人姓名） */
         get: {
             parameters: {
                 query?: {
@@ -4840,6 +4849,8 @@ export interface paths {
                 query?: {
                     /** @description 指定历史版本（A4-06）；缺省 = 当前版本；不属于该文件 / 不存在 → 404 */
                     versionId?: components["schemas"]["Uuid"] & unknown;
+                    /** @description 是否记录用户实际查看（缺省 false）；缩略图挂载必须省略，点开具体预览时传 true */
+                    recordView?: "true" | "false";
                 };
                 header?: never;
                 path: {
@@ -5577,6 +5588,450 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 部门权限管理概览（仅权限管理员）：开关、当前账号部门、系统管理员、可配置部门与项目 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 群组权限概览 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GroupAccessOverview"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/access/rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** 保存群组页面与项目规则（仅群组管理员；projectScope=selected 时写项目白名单） */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["GroupAccessRuleInput"];
+                };
+            };
+            responses: {
+                /** @description 保存后的规则 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GroupAccessRuleResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        /** 删除群组访问规则（仅群组管理员；规则不存在 404） */
+        delete: {
+            parameters: {
+                query: {
+                    groupKey: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 已删除 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/access/member-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** 保存部门内个人权限覆盖（仅权限管理员；同一部门不同人员可分别设置） */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["GroupAccessMemberRuleInput"];
+                };
+            };
+            responses: {
+                /** @description 保存后的个人权限覆盖 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GroupAccessMemberRuleResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        /** 删除部门内个人权限覆盖并恢复部门默认（仅权限管理员） */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["GroupAccessMemberRuleDeleteInput"];
+                };
+            };
+            responses: {
+                /** @description 已恢复部门默认 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/access/admins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 手工授予系统管理员（仅权限管理员；环境配置与角色来源不可重复授予） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["GroupAccessAdminInput"];
+                };
+            };
+            responses: {
+                /** @description 当前生效的系统管理员 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GroupAccessAdminResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        /** 撤销手工授予的系统管理员（仅权限管理员；环境配置与角色来源不可撤销） */
+        delete: {
+            parameters: {
+                query: {
+                    /** @description UUID（主键与关联 ID） */
+                    userId: components["schemas"]["Uuid"];
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 已撤销 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/login": {
         parameters: {
             query?: never;
@@ -5669,7 +6124,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 当前登录用户（会话无效 / 超时返回 401，前端据此重新走 SSO） */
+        /** 当前登录用户与 CSRF token（禁止缓存；会话无效 / 超时返回 401，前端据此重新走 SSO） */
         get: {
             parameters: {
                 query?: never;
@@ -6925,6 +7380,83 @@ export interface paths {
                 };
             };
         };
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/reports/{reportId}/group-sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 同步日报到项目群（仅项目经理）：已提交日报 + 已绑定项目群；受理后机器人先发「日报已送达」及具体日报记录纯文字链接，worker 再发送包含现场图与问题附图的日报海报 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                    /** @description UUID（主键与关联 ID） */
+                    reportId: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 已受理同步（queued=true；最终送达以通知投递记录为准） */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DailyReportGroupSyncResponse"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/projects/{id}/issues": {
@@ -9332,20 +9864,42 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** @description 当前用户授权画像（角色 + 数据范围 + 功能权限位） */
+        /** @description 当前用户授权画像（全量能力基线 + 部门规则裁决结果） */
         ActorPermissions: {
             userId: components["schemas"]["Uuid"];
             /**
-             * @description 角色码（roles.code；多角色并集）
-             * @example [
-             *       "project_manager"
-             *     ]
+             * @description 遗留字段，固定为空；不读取 user_roles，不参与授权或管理员判定
+             * @example []
              */
             roleCodes: string[];
-            /** @description 数据范围并集（由宽到窄） */
+            /** @description 固定全量数据范围基线；实际项目范围由部门规则收窄 */
             dataScopes: components["schemas"]["DataScope"][];
-            /** @description 功能权限位并集（role_permissions） */
+            /** @description 全量功能权限位基线；业务写能力另由部门编辑范围 / 项目 groupAccessLevel 裁决 */
             permissionKeys: components["schemas"]["PermissionKey"][];
+            /** @description 当前账号的 Casdoor 群组键（owner/name；按登录或目录同步落地） */
+            groupKeys?: string[];
+            /** @description GROUP_ACCESS_ENFORCED=true 时当前账号可进入的页面；管理员为全量 */
+            pageKeys?: components["schemas"]["GroupAccessPage"][];
+            /** @description 群组访问限制是否已启用 */
+            groupAccessEnforced?: boolean;
+            /** @description 当前账号是否可进入群组权限管理页 */
+            groupAccessAdmin?: boolean;
+            /** @description 兼容摘要：账号没有任何编辑范围时为 true；项目级写能力以项目 groupAccessLevel 为准，全局写能力以 groupAllEdit 为准 */
+            groupReadOnly?: boolean;
+            groupProjectAccess?: components["schemas"]["GroupProjectAccess"];
+            /** @description 当前账号命中的部门项目范围并集：all / own / selected / none；用于空态展示当前权限 */
+            groupProjectScopes?: components["schemas"]["GroupAccessProjectScope"][];
+            groupAccessLevel?: components["schemas"]["GroupAccessAccessLevel"] & unknown;
+            groupScopePermissions?: components["schemas"]["GroupAccessScopePermissions"];
+            /** @description 当前账号是否至少在一个项目范围拥有编辑权限（任务模板 / 节点库写入口） */
+            groupAnyEdit?: boolean;
+            /** @description 当前账号是否拥有全部项目编辑权限（字典 / 日历 / 自动化等全局写入口） */
+            groupAllEdit?: boolean;
+            /** @description 当前账号是否拥有自己的项目编辑权限（可用于新建项目） */
+            groupOwnEdit?: boolean;
+            /** @description 当前账号是否拥有指定项目编辑权限 */
+            groupSelectedEdit?: boolean;
+            auditScope?: components["schemas"]["AuditScope"];
         };
         /** @description 统一错误信封（技术设计v0.2 §7.2） */
         ApiError: {
@@ -9358,7 +9912,7 @@ export interface components {
             traceId: string;
         };
         /**
-         * @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / archive 项目归档（ADR-027：归档动作写审计，确认越过的缺项计数记 metadata）/ visit 访问（进入项目详情时由页面调用 POST /projects/{id}/visit 记录；登录成功也记 visit + objectType=user） / preview 预览查看（2026-10-23 起每次实际签出并送达的预览记一条；含缩略图等高频预览） / download 离线下载（A4-10：下载受 file.download 权限点控制并写日志；对象类型 file，经 metadata 记 versionId） / deny 越权拒绝
+         * @description 审计动作：create 新增 / update 修改 / delete 删除 / progress 进度 / complete 节点完成 / advance 阶段推进 / rollback 阶段回退 / archive 项目归档（ADR-027：归档动作写审计，确认越过的缺项计数记 metadata）/ visit 访问（进入项目详情时由页面调用 POST /projects/{id}/visit 记录；登录成功也记 visit + objectType=user） / preview 预览查看（2026-10-23 起恢复；2026-10-27 起仅用户点开具体预览并显式传 recordView=true、实际送达就绪内容时记一条，缩略图不写） / download 离线下载（A4-10：下载受 file.download 权限点控制并写日志；对象类型 file，经 metadata 记 versionId） / deny 越权拒绝
          * @enum {string}
          */
         AuditAction: "create" | "update" | "delete" | "progress" | "complete" | "advance" | "rollback" | "archive" | "visit" | "preview" | "download" | "deny";
@@ -9389,6 +9943,10 @@ export interface components {
             /** @description 对象 id（uuid 或字典码等业务键） */
             objectId: string;
             projectId: components["schemas"]["Uuid"] & (string | null);
+            /** @description 所属项目编号：优先当前项目数据（含回收站），项目彻底删除后回退审计写入快照 */
+            projectCode: string | null;
+            /** @description 所属项目名称：优先当前项目数据（含回收站），项目彻底删除后回退审计写入快照 */
+            projectName: string | null;
             result: components["schemas"]["AuditResult"];
             entry: components["schemas"]["AuditEntry"];
             /** @description 可读摘要（列表直接展示） */
@@ -9409,15 +9967,20 @@ export interface components {
             windowId: number | null;
         };
         /**
-         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；预览实际送达时写 preview 审计 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删；登录成功记 visit，metadata.operation=login） / wecom_dm_binding 企微绑定验证（对象 id = 机器人标识 + 掩码 open_userid；失败 / 锁定记 deny + denied，不落完整 userid 或绑定码） / automation_rule 自动化规则（对象 id = 规则 id；保存记录字段级 diff，metadata 带 code / beforeVersion / afterVersion，M5-06） / notify_delivery 发送记录（对象 id = 消息归档 id；仅管理员重发写 update + metadata.operation=resend，M5-06）
+         * @description 审计对象类型：project 项目 / project_member 名册 / task 任务 / node 节点 / stage 阶段 / dict_item 字典条目 / blueprint 蓝图 / calendar_day 日历例外（对象 id = 业务日期） / calendar_settings 顺延配置（对象 id = default） / file 文件（对象 id = fileId；上传会话事件经 metadata.uploadId 定位；仅用户点开具体预览（recordView=true）且实际送达时写 preview 审计，缩略图不写 —— 不为同一 fileId 开第二种对象类型） / change 变更记录（对象 id = changeRequestId，M4-04） / stakeholder 干系人（对象 id = stakeholderId；项目关联 / 解除经 metadata.projectId 记录，j6） / daily_report 日报（对象 id = reportId，M6-01 / M6-02） / issue 问题（对象 id = issueId，M6-02 / M6-03） / task_node 任务节点（对象 id = taskNodeId，M3-05 余：节点库新增 / 编辑 / 删除） / task_template 任务模板（对象 id = templateId，M3-05 余第二段：模板新增 / 编辑 / 软删） / user 系统用户（对象 id = users.id；Push 173：离职回收 / 组织同步的停用 · 启用 · 软删；登录成功记 visit，metadata.operation=login） / wecom_dm_binding 企微绑定验证（对象 id = 机器人标识 + 掩码 open_userid；失败 / 锁定记 deny + denied，不落完整 userid 或绑定码） / automation_rule 自动化规则（对象 id = 规则 id；保存记录字段级 diff，metadata 带 code / beforeVersion / afterVersion，M5-06） / notify_delivery 发送记录（对象 id = 消息归档 id；仅管理员重发写 update + metadata.operation=resend，M5-06） / group_access_rule 部门访问规则（对象 id = 群组键；保存 / 删除写审计，2026-10-23） / group_access_admin 系统管理员（对象 id = users.id；手工授予 / 撤销写审计，2026-10-24）
          * @enum {string}
          */
-        AuditObjectType: "project" | "project_member" | "task" | "node" | "stage" | "dict_item" | "blueprint" | "calendar_day" | "calendar_settings" | "file" | "change" | "stakeholder" | "daily_report" | "issue" | "task_node" | "task_template" | "user" | "wecom_dm_binding" | "automation_rule" | "notify_delivery";
+        AuditObjectType: "project" | "project_member" | "task" | "node" | "stage" | "dict_item" | "blueprint" | "calendar_day" | "calendar_settings" | "file" | "change" | "stakeholder" | "daily_report" | "issue" | "task_node" | "task_template" | "user" | "wecom_dm_binding" | "automation_rule" | "notify_delivery" | "group_access_rule" | "group_access_admin";
         /**
          * @description 审计结果：succeeded 成功 / denied 越权尝试（C7-03）/ failed 业务拒绝（门禁等）
          * @enum {string}
          */
         AuditResult: "succeeded" | "denied" | "failed";
+        /**
+         * @description 当前账号操作记录可见范围；所有登录账号至少可查看本人记录
+         * @enum {string}
+         */
+        AuditScope: "all" | "project_manager" | "self";
         /** @description 规则动作：notify 渠道消息（企微 / 邮件）/ notification 站内信 */
         AutomationAction: {
             kind: components["schemas"]["RuleActionKind"];
@@ -9426,7 +9989,7 @@ export interface components {
              * @enum {string|null}
              */
             channel?: "wecom_app" | "wecom_aibot" | "wecom_group" | "inbox" | "email" | null;
-            /** @description 收件人口径（多个 = 逐个解析，均落发送记录） */
+            /** @description 收件人口径（单个或至多 6 个；多个 = 逐个解析，均落发送记录） */
             recipient: components["schemas"]["RuleRecipient"] | components["schemas"]["RuleRecipient"][];
             /**
              * @description 消息模板码（逐字文案见 docs/rules/R01-R07-内置规则文案.md）
@@ -9647,6 +10210,7 @@ export interface components {
             /** @description 所属项目类型（ADR-019：按项目类型各一份，default 为兜底模板）；缺省 = 通用 */
             projectType?: string;
             updatedAt: components["schemas"]["DateTime"];
+            /** @description 蓝图阶段（1~9 个，键取九阶段字典） */
             stages: components["schemas"]["BlueprintStage"][];
         };
         BlueprintConstraint: components["schemas"]["BlueprintRequiredDocConstraint"] | components["schemas"]["BlueprintReservedConstraint"];
@@ -9665,7 +10229,10 @@ export interface components {
             name: string;
             /** @description 排序（建议 10/20/30 步长，便于插入） */
             seq: number;
-            /** @default [] */
+            /**
+             * @description 节点约束（≤ 20 条）
+             * @default []
+             */
             constraints: components["schemas"]["BlueprintConstraint"][];
         };
         /** @description 必交成果物（一期门禁实现的唯一约束类型） */
@@ -9693,6 +10260,7 @@ export interface components {
             key: components["schemas"]["StageKey"];
             name: string;
             seq: number;
+            /** @description 阶段节点（1~200 个） */
             nodes: components["schemas"]["BlueprintNode"][];
         };
         /**
@@ -9997,6 +10565,21 @@ export interface components {
             /** @description 连带删除的问题（删日报 = 连它派生的全部问题） */
             cascadedIssueIds: components["schemas"]["Uuid"][];
         };
+        /** @description 日报同步项目群受理结果（机器人文字 + 海报由 worker 异步发送） */
+        DailyReportGroupSyncResponse: {
+            reportId: components["schemas"]["Uuid"];
+            version: components["schemas"]["Version"] & unknown;
+            /**
+             * @description 已受理并写入 outbox；最终送达状态以通知投递记录为准
+             * @enum {boolean}
+             */
+            queued: true;
+            /**
+             * @description 面向用户的受理提示（不宣称已送达）
+             * @example 已提交同步
+             */
+            message: string;
+        };
         /** @description 日报列表（项目内成员可见） */
         DailyReportListResponse: {
             items: components["schemas"]["DailyReport"][];
@@ -10283,7 +10866,7 @@ export interface components {
          * @description 统一错误码（技术设计v0.2 §7.2）
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "DICT_ITEM_IN_USE" | "STAGE_GATE_NOT_PASSED" | "ARCHIVE_NOT_READY" | "ARCHIVE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "TASK_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "TASK_ALREADY_DONE" | "TASK_HAS_REFERENCES" | "TASK_FINALIZED" | "REPORT_ALREADY_EXISTS" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "IMPORT_FILE_INVALID" | "IMPORT_PARSE_FAILED" | "IMPORT_PREVIEW_EXPIRED" | "IMPORT_CANCELLED" | "RATE_LIMITED" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "AUTH_REQUIRED" | "AUTH_CALLBACK_FAILED" | "FORBIDDEN" | "CSRF_FAILED" | "NOT_FOUND" | "VERSION_CONFLICT" | "PROJECT_CODE_EXISTS" | "PROJECT_ARCHIVED" | "DICT_ITEM_EXISTS" | "DICT_ITEM_IN_USE" | "STAGE_GATE_NOT_PASSED" | "ARCHIVE_NOT_READY" | "ARCHIVE_GATE_NOT_PASSED" | "BLUEPRINT_NOT_PUBLISHED" | "NODE_REQUIRED_DOC_MISSING" | "TASK_REQUIRED_DOC_MISSING" | "NODE_HAS_FILES" | "STAGE_STATE_INVALID" | "NODE_ALREADY_DONE" | "NODE_ALREADY_EXISTS" | "NODE_DELETED" | "TASK_ALREADY_EXISTS" | "TASK_ALREADY_DONE" | "TASK_HAS_REFERENCES" | "TASK_FINALIZED" | "REPORT_ALREADY_EXISTS" | "REPORT_GROUP_NOT_BOUND" | "BLUEPRINT_SCHEMA_INVALID" | "BLUEPRINT_REF_UNKNOWN" | "FILE_STATE_INVALID" | "UPLOAD_INCOMPLETE" | "UPLOAD_SESSION_EXPIRED" | "FILE_HASH_MISMATCH" | "IDEMPOTENT_REPLAY" | "PREVIEW_NOT_READY" | "PREVIEW_FAILED" | "IMPORT_FILE_INVALID" | "IMPORT_PARSE_FAILED" | "IMPORT_PREVIEW_EXPIRED" | "IMPORT_CANCELLED" | "RATE_LIMITED" | "INTERNAL";
         /** @description 字段级错误明细（校验失败、门禁缺件等） */
         ErrorDetail: {
             /** @example too_small */
@@ -10335,8 +10918,13 @@ export interface components {
         FileFinalizeBody: {
             version: components["schemas"]["Version"];
         };
+        /** @description 文件（v0.2 §5.2；定档后不可覆盖，修改必须走变更） */
+        FileLibraryItem: components["schemas"]["File"] & {
+            /** @description 上传人姓名（users.display_name）；停用 / 离职历史账号仍返回姓名；用户行不存在时为空，前端回退用户 id */
+            createdByName: string | null;
+        };
         FileListResponse: {
-            items: components["schemas"]["File"][];
+            items: components["schemas"]["FileLibraryItem"][];
             page: number;
             limit: number;
             total: number;
@@ -10495,6 +11083,201 @@ export interface components {
          * @enum {string}
          */
         FollowObjectType: "project" | "task";
+        /**
+         * @description 当前登录账号对该项目的部门权限：edit 可写 / view 仅浏览；由服务端按所有命中范围取最高权限后随项目下发
+         * @enum {string}
+         */
+        GroupAccessAccessLevel: "edit" | "view";
+        /** @description 系统管理员名单项（姓名 / 工号 / 邮箱 / 来源 / 是否可撤销） */
+        GroupAccessAdmin: {
+            userId: components["schemas"]["Uuid"];
+            username: string;
+            displayName: string;
+            email: string | null;
+            status: components["schemas"]["UserStatus"];
+            source: components["schemas"]["GroupAccessAdminSource"];
+            /** @description 仅手工添加的管理员可在权限页撤销 */
+            removable: boolean;
+        };
+        /** @description 将系统用户设为权限管理员 */
+        GroupAccessAdminInput: {
+            userId: components["schemas"]["Uuid"];
+        };
+        /** @description 当前生效的系统管理员 */
+        GroupAccessAdminResponse: {
+            admin: components["schemas"]["GroupAccessAdmin"];
+        };
+        /**
+         * @description 管理员来源：configured 环境配置 / manual 手工添加
+         * @enum {string}
+         */
+        GroupAccessAdminSource: "configured" | "manual";
+        /**
+         * @description 可授予数据权限的项目范围：all 全部项目 / own 仅自己的项目 / selected 仅指定项目
+         * @enum {string}
+         */
+        GroupAccessDataProjectScope: "all" | "own" | "selected";
+        /** @description 可配置部门：层级、直属人员与已保存规则；groupKey=__ungrouped__ 为虚拟未分组节点，仅聚合无部门成员关系的账号 */
+        GroupAccessGroup: {
+            groupKey: string;
+            groupName: string;
+            /** @description 上级部门键；null = 根部门 */
+            parentGroupKey: string | null;
+            memberCount: number;
+            /** @description 部门直属人员（按姓名 / 工号排序） */
+            members: components["schemas"]["GroupAccessMember"][];
+            /** @description 部门内个人权限覆盖；同一部门不同人员可分别设置 */
+            memberRules: components["schemas"]["GroupAccessMemberRule"][];
+            rule: components["schemas"]["GroupAccessRule"];
+        };
+        /** @description 部门人员（姓名 / 工号 / 邮箱 / 状态） */
+        GroupAccessMember: {
+            userId: components["schemas"]["Uuid"];
+            /** @description 工号（users.username） */
+            username: string;
+            /** @description 姓名（users.display_name） */
+            displayName: string;
+            email: string | null;
+            status: components["schemas"]["UserStatus"];
+        };
+        /** @description 部门内个人权限覆盖：scopePermissions 为裁决口径；projectIds 仅 selected 时有值；整体覆盖同部门默认规则 */
+        GroupAccessMemberRule: {
+            groupKey: string;
+            userId: components["schemas"]["Uuid"];
+            scopePermissions: components["schemas"]["GroupAccessScopePermissions"] & unknown;
+            projectScope: components["schemas"]["GroupAccessProjectScope"] & unknown;
+            accessLevel: components["schemas"]["GroupAccessAccessLevel"] & unknown;
+            projectIds: components["schemas"]["Uuid"][];
+            updatedAt: components["schemas"]["DateTime"];
+        };
+        /** @description 删除部门内个人权限覆盖并恢复部门默认规则 */
+        GroupAccessMemberRuleDeleteInput: {
+            groupKey: string;
+            groupName?: string;
+            userIds: components["schemas"]["Uuid"][];
+        };
+        /** @description 保存部门内个人权限覆盖：多范围可分别设置编辑 / 仅浏览；同一部门可按 userIds 批量写入，各成员仍保存为独立规则 */
+        GroupAccessMemberRuleInput: {
+            /** @example libiaorobot.com/项目部 */
+            groupKey: string;
+            groupName?: string;
+            userIds: components["schemas"]["Uuid"][];
+            scopePermissions?: components["schemas"]["GroupAccessScopePermissions"] & unknown;
+            projectScope?: components["schemas"]["GroupAccessProjectScope"] & unknown;
+            /**
+             * @description 旧客户端兼容档位；scopePermissions 存在时忽略
+             * @default view
+             * @enum {string}
+             */
+            accessLevel: "edit" | "view";
+            /**
+             * @description selected 范围的项目白名单
+             * @default []
+             */
+            projectIds: components["schemas"]["Uuid"][];
+        };
+        /** @description 保存后的个人权限覆盖列表 */
+        GroupAccessMemberRuleResponse: {
+            rules: components["schemas"]["GroupAccessMemberRule"][];
+        };
+        /**
+         * @description 部门规则适用人员：all 全部门 / selected 仅勾选人员
+         * @enum {string}
+         */
+        GroupAccessMemberScope: "all" | "selected";
+        /** @description 权限管理页数据：开关状态、当前账号部门、系统管理员、可配置部门树与项目；无部门账号汇总在虚拟未分组节点 */
+        GroupAccessOverview: {
+            enforced: boolean;
+            admin: boolean;
+            currentGroupKeys: string[];
+            /** @description 当前生效的系统管理员名单（环境配置 / 手工添加） */
+            admins: components["schemas"]["GroupAccessAdmin"][];
+            groups: components["schemas"]["GroupAccessGroup"][];
+            projects: components["schemas"]["GroupAccessProject"][];
+        };
+        /**
+         * @description 页面键（旧客户端兼容）：dashboard / projects / templates / workspace / files / audit；群组规则恒放行全部页面
+         * @enum {string}
+         */
+        GroupAccessPage: "dashboard" | "projects" | "templates" | "workspace" | "files" | "audit";
+        /** @description 群组规则可选项目（未进入回收站） */
+        GroupAccessProject: {
+            id: components["schemas"]["Uuid"];
+            code: string;
+            name: string;
+        };
+        /**
+         * @description 部门项目范围：all 全部项目 / own 仅本人负责或参与的项目 / selected 仅指定项目 / none 不可见任何项目
+         * @enum {string}
+         */
+        GroupAccessProjectScope: "all" | "own" | "selected" | "none";
+        /** @description 部门默认规则；未单独设置个人权限的成员沿用 */
+        GroupAccessRule: {
+            groupKey: string;
+            groupName: string;
+            /** @description 旧客户端兼容字段；恒返回全部页面 */
+            allowedPages: components["schemas"]["GroupAccessPage"][];
+            scopePermissions: components["schemas"]["GroupAccessScopePermissions"] & unknown;
+            projectScope: components["schemas"]["GroupAccessProjectScope"] & unknown;
+            accessLevel: components["schemas"]["GroupAccessAccessLevel"] & unknown;
+            /** @description selected 范围项目白名单 */
+            projectIds: components["schemas"]["Uuid"][];
+            memberScope: components["schemas"]["GroupAccessMemberScope"];
+            memberUserIds: components["schemas"]["Uuid"][];
+            updatedAt: components["schemas"]["DateTime"];
+        } | null;
+        /** @description 保存群组访问规则：可多选全部 / 自己的 / 指定项目并分别设置编辑或仅浏览；不显示项目数据为互斥清空项；旧 projectScope / accessLevel 继续兼容 */
+        GroupAccessRuleInput: {
+            /** @example libiaorobot.com/项目部 */
+            groupKey: string;
+            groupName?: string;
+            /**
+             * @default [
+             *       "dashboard",
+             *       "projects",
+             *       "templates",
+             *       "workspace",
+             *       "files",
+             *       "audit"
+             *     ]
+             */
+            allowedPages: components["schemas"]["GroupAccessPage"][];
+            scopePermissions?: components["schemas"]["GroupAccessScopePermissions"] & unknown;
+            projectScope?: components["schemas"]["GroupAccessProjectScope"] & unknown;
+            /**
+             * @description 旧客户端兼容档位；scopePermissions 存在时忽略
+             * @default view
+             * @enum {string}
+             */
+            accessLevel: "edit" | "view";
+            /**
+             * @description selected 范围的项目白名单；不存在 selected 时忽略
+             * @default []
+             */
+            projectIds: components["schemas"]["Uuid"][];
+            memberScope?: components["schemas"]["GroupAccessMemberScope"] & unknown;
+            /**
+             * @description selected 时生效的直属人员 user id
+             * @default []
+             */
+            memberUserIds: components["schemas"]["Uuid"][];
+        };
+        /** @description 保存后的群组访问规则 */
+        GroupAccessRuleResponse: {
+            rule: components["schemas"]["GroupAccessRule"] & unknown;
+        };
+        /** @description 一个项目范围的权限档位：编辑 / 仅浏览 */
+        GroupAccessScopePermission: {
+            projectScope: components["schemas"]["GroupAccessDataProjectScope"];
+            accessLevel: components["schemas"]["GroupAccessAccessLevel"] & unknown;
+        };
+        /** @description 当前账号命中的多范围权限（多部门 / 个人覆盖取并集后，同一范围取最高权限）；空数组 = 不显示项目数据 */
+        GroupAccessScopePermissions: components["schemas"]["GroupAccessScopePermission"][];
+        /**
+         * @description 部门项目权限三态：allowed / empty / denied；none 规则按仅登录处理，用于业务页面统一空状态
+         * @enum {string}
+         */
+        GroupProjectAccess: "allowed" | "empty" | "denied";
         /** @description 仪表盘页的常驻项目 id（Push 336 · 按账号记住；Push 358 起六个图表视图共用）：null = 全部项目（默认）；项目已不存在时界面回落全部项目，读侧非字符串 / 空串 / 超长一律收敛为 null */
         HubDashProject: string | null;
         /**
@@ -10613,7 +11396,7 @@ export interface components {
          * @enum {string}
          */
         Locale: "zh" | "en" | "ja" | "ko";
-        /** @description /auth/me 响应（会话由 HttpOnly Cookie 承载） */
+        /** @description /auth/me 响应（会话由 HttpOnly Cookie 承载；CSRF token 随响应下发） */
         MeResponse: {
             user: components["schemas"]["User"];
             /** @description ID Token 声明（已验签；排障用） */
@@ -10625,6 +11408,11 @@ export interface components {
              * @example 1758182400
              */
             expiresAt: number | null;
+            /**
+             * @description 写请求 X-CSRF-Token 同步值（与 ll_csrf Cookie 一致；响应禁止缓存）
+             * @example Q2xvdWQtQ1NSRi10b2tlbi0xNg
+             */
+            csrfToken: string;
         };
         /** @description 「我的计划」便签墙（Push 268）：按账号跨设备可见；读侧坏形状逐条收敛 */
         MyPlanBoard: components["schemas"]["MyPlanBoardUpdate"] & {
@@ -10713,6 +11501,7 @@ export interface components {
             /** @description 关联对象类型（可空） */
             refType: string | null;
             refId: components["schemas"]["Uuid"] & (string | null);
+            projectId: components["schemas"]["Uuid"] & (string | null);
             /** @description 模板码（可空） */
             templateCode: string | null;
             /** @description 合并条数：同期同合并键的消息条数（未合并 = 1） */
@@ -10897,7 +11686,7 @@ export interface components {
         };
         /** @description 免打扰配置（三态）：default 继承缺省（env NOTIFY_QUIET_HOURS，缺省 22:00-08:00）/ off 关闭 / HH:MM-HH:MM 自定义（Asia/Shanghai，跨零点允许） */
         NotifyQuietHours: string;
-        /** @description 在线查看器配置（ONLYOFFICE 查看通道；替代「转换产物 + 短时签名 URL」路径 —— 预览链全程无预签名） */
+        /** @description 在线查看器配置（ONLYOFFICE 查看通道；Office / 文本族专用，PDF 与图片走短时签名 URL） */
         OnlyOfficePreviewViewer: {
             /** @enum {string} */
             kind: "onlyoffice";
@@ -10910,10 +11699,10 @@ export interface components {
             token: string;
         };
         /**
-         * @description 功能权限位（模块.操作）；一期取值见 PERMISSION_KEYS（种子 #6b 按角色分配）
+         * @description 功能权限位（模块.操作）；部门权限模型下作为全量能力基线
          * @enum {string}
          */
-        PermissionKey: "project.view" | "project.create" | "project.update" | "project.delete" | "project.archive" | "project.export" | "member.view" | "member.manage" | "task.view" | "task.create" | "task.update" | "task.progress" | "report.view" | "report.fill" | "issue.view" | "issue.manage" | "node.view" | "node.create" | "node.delete" | "node.complete" | "node.advance" | "node.rollback" | "blueprint.view" | "blueprint.manage" | "file.upload" | "file.download" | "stakeholder.view" | "stakeholder.manage" | "stakeholder.contact.view" | "dict.manage" | "audit.view" | "calendar.manage" | "automation.view" | "automation.manage" | "notify.record.view" | "notify.resend";
+        PermissionKey: "project.view" | "project.create" | "project.update" | "project.delete" | "project.archive" | "project.export" | "member.view" | "member.manage" | "task.view" | "task.create" | "task.update" | "task.progress" | "report.view" | "report.fill" | "issue.view" | "issue.manage" | "node.view" | "node.create" | "node.delete" | "node.complete" | "node.advance" | "node.rollback" | "blueprint.view" | "blueprint.manage" | "file.upload" | "file.download" | "stakeholder.view" | "stakeholder.manage" | "stakeholder.contact.view" | "dict.manage" | "audit.view" | "calendar.manage" | "automation.view" | "automation.manage" | "notify.record.view" | "notify.resend" | "access.manage";
         /** @description 当前用户授权画像（未登录 401） */
         PermissionMeResponse: {
             permissions: components["schemas"]["ActorPermissions"];
@@ -10957,10 +11746,10 @@ export interface components {
             permissions: components["schemas"]["PreviewViewerPermissions"];
         };
         /**
-         * @description 文档大类（word 文档 / cell 表格 / slide 演示 / pdf 文档；由文件类型映射）
+         * @description 文档大类（word 文档 / cell 表格 / slide 演示；PDF 不走 ONLYOFFICE，改由前端 PDF.js 本地渲染）
          * @enum {string}
          */
-        PreviewViewerDocumentType: "word" | "cell" | "slide" | "pdf";
+        PreviewViewerDocumentType: "word" | "cell" | "slide";
         PreviewViewerEditorConfig: {
             /**
              * @description 固定 view（只读；与 permissions 行为面 + 服务端受控端点双重约束）
@@ -11016,6 +11805,7 @@ export interface components {
             managerNames: (string | null)[];
             stageKey: components["schemas"]["StageKey"];
             status: components["schemas"]["ProjectStatus"];
+            groupAccessLevel: components["schemas"]["GroupAccessAccessLevel"];
             description: string | null;
             version: components["schemas"]["Version"];
             createdAt: components["schemas"]["DateTime"];
@@ -11138,7 +11928,7 @@ export interface components {
              * @default 未分类
              */
             projectType: string;
-            /** @description 项目经理（A22 · Push 136）：至少一位、可多位；数组顺序 = 展示顺序；判空失败返回 400 VALIDATION_FAILED */
+            /** @description 项目经理（A22 · Push 136）：至少一位、可多位（≤ 200 位）；数组顺序 = 展示顺序；判空或超过上限返回 400 VALIDATION_FAILED */
             managerIds: components["schemas"]["Uuid"][];
             stageKey?: components["schemas"]["StageKey"];
             description?: string;
@@ -11183,6 +11973,8 @@ export interface components {
             chatidMasked: string | null;
             /** @description 会话已激活（群内有人给机器人发过消息）；未绑定 = false */
             activated: boolean;
+            /** @description 当前访问者是否为项目经理：决定是否显示项目群维护与日报同步入口；由服务端按内部 actor 身份裁决 */
+            canManage: boolean;
             updatedAt: components["schemas"]["DateTime"] & (string | null);
         };
         /** @description 自动发现但尚未绑定的项目群候选 */
@@ -11321,7 +12113,7 @@ export interface components {
             customer?: string | null;
             region?: string;
             projectType?: string;
-            /** @description 项目经理（A22 · Push 136）：至少一位、可多位；不传 = 不改、传空数组 = 400；数组顺序 = 展示顺序 */
+            /** @description 项目经理（A22 · Push 136）：至少一位、可多位（≤ 200 位）；不传 = 不改、传空数组或超过上限 = 400；数组顺序 = 展示顺序 */
             managerIds?: components["schemas"]["Uuid"][];
             stageKey?: components["schemas"]["StageKey"];
             /**
@@ -11382,11 +12174,11 @@ export interface components {
             id: string;
             /** @description 组合名称（≤ 20 字） */
             name: string;
-            /** @description 地区字典码（多值任一命中） */
+            /** @description 地区字典码（多值任一命中，≤ 200 项） */
             regions: string[];
-            /** @description 项目类型字典码（多值任一命中） */
+            /** @description 项目类型字典码（多值任一命中，≤ 200 项） */
             projectTypes: string[];
-            /** @description 项目经理 id 列表（用户目录 id；多值任一命中） */
+            /** @description 项目经理 id 列表（用户目录 id；多值任一命中，≤ 200 项） */
             managerIds: string[];
             timeFrom: components["schemas"]["DateOnly"] & (string | null);
             timeTo: components["schemas"]["DateOnly"] & (string | null);
@@ -11575,7 +12367,7 @@ export interface components {
         };
         /** @description 批量变更字段（白名单；语义同单条编辑：null = 清空、缺键 = 不改；至少给一个键） */
         TaskBatchChanges: {
-            /** @description 批量指派负责人（A23）：显式 [] = 全部置为「待分配」；传数组 = 整体替换（顺序 = 展示顺序） */
+            /** @description 批量指派负责人（A23，≤ 200 位）：显式 [] = 全部置为「待分配」；传数组 = 整体替换（顺序 = 展示顺序） */
             ownerIds?: components["schemas"]["Uuid"][];
             status?: components["schemas"]["TaskStatusWrite"];
             plannedStart?: components["schemas"]["DateOnly"] & (string | null);
@@ -11660,28 +12452,28 @@ export interface components {
             titleEn?: string | null;
             taskNodeId?: components["schemas"]["Uuid"] & unknown;
             sourceNodeId?: components["schemas"]["Uuid"] & unknown;
-            /** @description 任务负责人：缺省 / 显式 [] = 「待分配」（**2026-09-24 业务口径修订**：任务添加后负责人默认为空 —— 不再兜底项目经理）；传数组 = 整体设置，数组顺序 = 展示顺序 */
+            /** @description 任务负责人：缺省 / 显式 [] = 「待分配」（**2026-09-24 业务口径修订**：任务添加后负责人默认为空 —— 不再兜底项目经理）；传数组 = 整体设置（≤ 200 位），数组顺序 = 展示顺序 */
             ownerIds?: components["schemas"]["Uuid"][];
             plannedStart?: components["schemas"]["DateOnly"] & (string | null);
             plannedEnd?: components["schemas"]["DateOnly"] & (string | null);
             estimatedDays?: number | null;
             headcount?: number | null;
             priority?: components["schemas"]["Priority"];
-            /** @description 要求输出成果文件（ADR-024 多选）：去重（首次出现保序）；缺省 / 空数组 = 不要求 */
+            /** @description 要求输出成果文件（ADR-024 多选，≤ 10 类）：去重（首次出现保序）；缺省 / 空数组 = 不要求 */
             deliverableTypes?: components["schemas"]["DocType"][];
             note?: string | null;
         };
         /** @description 从任务模板生成任务（批量；同一节点在项目里只留一份） */
         TaskCreateFromTemplateBody: {
             templateId: components["schemas"]["Uuid"];
-            /** @description 只添加模板内的部分节点（缺省 = 模板全部节点）；必须是该模板包含的节点，否则 400 */
+            /** @description 只添加模板内的部分节点（≤ 500 个；缺省 = 模板全部节点）；必须是该模板包含的节点，否则 400 */
             nodeIds?: components["schemas"]["Uuid"][];
             /**
              * @description 已存在的节点跳过并计入 skipped（默认 true）；false 时遇重复返回 409
              * @default true
              */
             skipExisting: boolean;
-            /** @description 任务负责人：缺省 = 「待分配」（2026-09-24 业务口径修订：不再兜底项目经理）；显式 [] 同义 */
+            /** @description 任务负责人（≤ 200 位）：缺省 = 「待分配」（2026-09-24 业务口径修订：不再兜底项目经理）；显式 [] 同义 */
             ownerIds?: components["schemas"]["Uuid"][];
             /** @description 起始插入位次（A20）：整批按模板内顺序依次落位（第 k 条 = sortIndex + k）；越界 / 缺省 = 追加到组尾 */
             sortIndex?: number;
@@ -11726,14 +12518,14 @@ export interface components {
             total: number;
             /** @description 未定档（draft）数量；>0 时完成门禁放行但返回 warning 并触发 R02 */
             draft: number;
-            /** @description 已定档（final / changed）数量；门禁按 node_requirements 逐 doc_type 统计 */
+            /** @description 已定档（final / changed）数量，仅用于文件摘要展示；完成门禁统计已上传（draft / final / changed） */
             final: number;
         };
         /** @description 任务定档提交（version = 抽屉当前行版本） */
         TaskFinalizeBody: {
             version: components["schemas"]["Version"] & unknown;
         };
-        /** @description 缺件明细：required / present 按门禁统计范围逐 doc_type 给出 */
+        /** @description 缺件明细：required / present 按已配置的成果类型逐类给出；未配置成果类型时不产生缺件 */
         TaskGateMissing: {
             docType: components["schemas"]["DocType"];
             required: number;
@@ -11768,7 +12560,7 @@ export interface components {
             title?: string;
             /** @description 任务描述（英文；锁定项；null = 清空） */
             titleEn?: string | null;
-            /** @description 要求输出成果文件（锁定项，多选去重、首次出现保序）：修正后即刻成为完成门禁依据（有节点任务仍以节点 node_requirements 为准，本字段只作无节点任务兜底） */
+            /** @description 要求输出成果文件（锁定项，≤ 10 类，多选去重、首次出现保序）：修正后即刻成为完成门禁依据（有节点任务仍以节点 node_requirements 为准，本字段只作无节点任务兜底） */
             deliverableTypes?: components["schemas"]["DocType"][];
         };
         /** @description 任务节点库条目（任务模板的节点来源） */
@@ -11839,7 +12631,7 @@ export interface components {
          * @enum {string}
          */
         TaskTableColumnKey: "manager" | "owner" | "status" | "priority" | "onTime" | "deliverable" | "files" | "note" | "start" | "days" | "due" | "headcount" | "doneDate" | "change";
-        /** @description 任务模板（名称 + 阶段 + 节点顺序；A1-16 / A1-17 的落点） */
+        /** @description 任务模板（名称 + 阶段 + 节点顺序 + 填写人；A1-16 / A1-17 的落点） */
         TaskTemplate: {
             id: components["schemas"]["Uuid"];
             /**
@@ -11850,6 +12642,9 @@ export interface components {
             stageKey: components["schemas"]["StageKey"];
             /** @description 节点顺序 = 数组顺序；同一模板内按 nodeId 去重 */
             nodes: components["schemas"]["TaskTemplateNode"][];
+            createdBy: components["schemas"]["Uuid"] & (string | null);
+            /** @description 填写人姓名（users.display_name）；为空时界面显示系统 */
+            createdByName: string | null;
             version: components["schemas"]["Version"];
             createdAt: components["schemas"]["DateTime"];
             updatedAt: components["schemas"]["DateTime"];
@@ -11858,7 +12653,7 @@ export interface components {
             name: string;
             stageKey: components["schemas"]["StageKey"];
             /**
-             * @description 任务节点库内的节点 id，顺序即模板内顺序；允许空（新建后逐步添加）；重复 id 返回 400
+             * @description 任务节点库内的节点 id（≤ 500 个），顺序即模板内顺序；允许空（新建后逐步添加）；重复 id 返回 400
              * @default []
              */
             nodeIds: components["schemas"]["Uuid"][];
@@ -11885,7 +12680,7 @@ export interface components {
         /** @description 编辑模板（改名 / 节点全量替换；乐观锁 version 必传） */
         TaskTemplateUpdateBody: {
             name?: string;
-            /** @description 全量替换节点顺序（含增删 / 重排）；同一模板内按 id 去重，重复 id 返回 400 */
+            /** @description 全量替换节点顺序（≤ 500 个，含增删 / 重排）；同一模板内按 id 去重，重复 id 返回 400 */
             nodeIds?: components["schemas"]["Uuid"][];
             version: components["schemas"]["Version"];
         };
@@ -11899,7 +12694,7 @@ export interface components {
             title?: string;
             /** @description 任务描述（英文；Push 196）：与 title 同一门禁；null = 清空 */
             titleEn?: string | null;
-            /** @description 任务负责人（A23 · Push 136）：不传 = 不改；显式 [] = 置空为「待分配」（卡片拖进「待分配」列）；传数组 = 整体替换、顺序 = 展示顺序 */
+            /** @description 任务负责人（A23 · Push 136）：不传 = 不改；显式 [] = 置空为「待分配」（卡片拖进「待分配」列）；传数组 = 整体替换（≤ 200 位）、顺序 = 展示顺序 */
             ownerIds?: components["schemas"]["Uuid"][];
             /** @description 组内位次（A19 / A20 · Push 124）：把任务移到该组第 N 位（0 起，越界 = 组尾）—— 同组其余任务位次顺延；不传 = 不动顺序 */
             sortIndex?: number;
@@ -11909,7 +12704,7 @@ export interface components {
             estimatedDays?: number | null;
             headcount?: number | null;
             priority?: components["schemas"]["Priority"];
-            /** @description 要求输出成果文件（2026-10-08 业务口径「文件输出成果也要可以选择」）：常规编辑开放 —— 传数组 = 整体替换（去重、首次出现保序）；显式 [] = 不要求；缺省 = 不改 */
+            /** @description 要求输出成果文件（2026-10-08 业务口径「文件输出成果也要可以选择」）：常规编辑开放 —— 传数组 = 整体替换（≤ 10 类，去重、首次出现保序）；显式 [] = 不要求；缺省 = 不改 */
             deliverableTypes?: components["schemas"]["DocType"][];
             note?: string | null;
             version: components["schemas"]["Version"];

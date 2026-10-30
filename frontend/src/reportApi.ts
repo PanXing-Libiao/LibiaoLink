@@ -176,6 +176,23 @@ export function updateReport(projectId: string, reportId: string, body: ReportUp
   ).then(toUiReport);
 }
 
+
+/** 日报同步项目群受理结果（2026-10-27）：queued=true 只表示已落投递队列，不等于已送达。 */
+export type ReportGroupSyncResult = {
+  reportId: string;
+  version: number;
+  queued: true;
+  message: string;
+};
+
+/** 同步日报到项目群（仅项目经理；已提交 + 已绑定项目群）。机器人先发文字，worker 再追加动态海报。 */
+export function syncReportToProjectGroup(projectId: string, reportId: string): Promise<ReportGroupSyncResult> {
+  return apiSend<ReportGroupSyncResult>(
+    "/api/v1/projects/" + encodeURIComponent(projectId) + "/reports/" + encodeURIComponent(reportId) + "/group-sync",
+    "POST",
+  );
+}
+
 /** 删除日报（成对删除：连带它派生的全部问题）。 */
 export function deleteReport(projectId: string, reportId: string): Promise<{ id: string; cascadedIssueIds: string[] }> {
   return apiSend<{ id: string; deleted: true; cascadedIssueIds: string[] }>(

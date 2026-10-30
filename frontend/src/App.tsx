@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { startLiveSync } from "./liveSync";
 import { applyInboxUnread, noteInboxNotification, refreshInboxUnread } from "./inbox";
+import { refreshWecomDmBindingStatus } from "./bindingApi";
 import { useLiveRefresh } from "./useLiveRefresh";
+import { AccessControlPage } from "./AccessControlPage";
 import { AuditLogPage } from "./AuditLogPage";
 import { FileLibraryPage } from "./FileLibraryPage";
 import { SettingsPage } from "./SettingsPage";
@@ -10,17 +12,18 @@ import Home from "./Home";
 import PlaceholderPage from "./PlaceholderPage";
 import ProjectDetail from "./ProjectDetail";
 import WorkspacePage from "./WorkspacePage";
-import { ApiError, apiFetch, redirectToLogin } from "./api";
+import { ApiError, apiFetch, redirectToLogin, rememberCsrfToken } from "./api";
 import { applyBackgroundTier, applyCardWatermark, asBackgroundTier, asCardWatermark } from "./backgroundTier";
 import { applyLocale, asLocale, getLocale, textOf, useT, type TextKey } from "./i18n";
+import { AppHeader } from "./components/AppHeader";
 import { Loader } from "./components/Loader";
 import { Toast, ToastConfirm } from "./components/Toast";
 import { ExportProgressOverlay } from "./components/ExportProgressOverlay";
 import { useFocusTrap } from "./components/useFocusTrap";
-import { BindingGuideModal } from "./components/BindingGuideModal";
 import { ProjectModal, type ProjectDraft, type ProjectSubmitResult } from "./components/ProjectModal";
 import type { DictTools } from "./dictTools";
-import { hasPermission, loadMyPermissions, useMyPermissions } from "./permissions";
+import { canEditTaskTemplates, hasPermission, loadMyPermissions, useMyPermissions } from "./permissions";
+import { firstAllowedHref } from "./accessRoutes";
 import {
   createDictItem,
   deleteDictItem,
@@ -36,7 +39,17 @@ import { archiveProject, createProject, deleteProject, downloadProjectWorkbook, 
 import { loadMyPreferences, loadMyPreferencesWithLegacyMigration, saveHomeSavedFilters, saveTaskTableHiddenColumns, saveHubDashProject, saveHubDashView, saveHubView, saveWorkspaceOpenProjects, type WorkspaceOpenProjects } from "./preferencesApi";
 import type { SavedFilter } from "./savedFilters";
 import { asHubDashView, type HubDashView } from "./data/dashboardProgress";
-import { asHubView, replaceAuditQuery, replaceFilesQuery, replaceWorkspaceSub, replaceWorkspaceTab, useHashRoute, type HubView } from "./useHashRoute";
+import {
+  asHubView,
+  clearProjectFocus,
+  replaceAuditQuery,
+  replaceFilesQuery,
+  replaceWorkspaceSub,
+  replaceWorkspaceTab,
+  useHashRoute,
+  type HubView,
+  type Route,
+} from "./useHashRoute";
 import { projectStatusOf, type MeResponse, type Project } from "./types";
 
 type ViewState =
@@ -44,6 +57,58 @@ type ViewState =
   | { kind: "signed-out" }
   | { kind: "signed-in"; me: MeResponse }
   | { kind: "error"; message: string };
+
+/** 仅登录账号的页面级阻断范围；任务模板与项目数据同权，有规则但无项目的 empty 状态保留页面骨架，我的任务始终可进入。 */
+function blocksWhenLoginOnly(route: Route): boolean {
+  return route.kind === "hub" || route.kind === "list" || route.kind === "project" || route.kind === "placeholder" || route.kind === "files";
+}
+
+/** 直链无权限时的明确落点；菜单隐藏只是呈现层，这里仍以服务端画像为准。 */
+function PageAccessDenied({ me, backHref }: { me: MeResponse; backHref: string }) {
+  const t = useT();
+  return (
+    <>
+      <AppHeader me={me} />
+      <main className="w-full px-4 pb-10 pt-3 sm:px-6">
+        <div data-access-denied="" className="mx-auto mt-12 max-w-xl rounded-2xl border border-zinc-200 bg-white p-8 text-center shadow-sm">
+          <p className="text-xs font-semibold tracking-wide text-zinc-400">403</p>
+          <h1 className="mt-2 text-lg font-semibold text-zinc-900">{t("access.denied.title")}</h1>
+          <p className="mt-2 text-sm leading-6 text-zinc-500">{t("access.denied.desc")}</p>
+          <a href={backHref} className="mt-5 inline-flex rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800">
+            {t("access.denied.back")}
+          </a>
+        </div>
+      </main>
+    </>
+  );
+}
+
+/** 业务数据不可用：仅登录 = 权限不足；有规则但当前无项目 = 空项目提示。 */
+function BusinessAccessState({ me, kind }: { me: MeResponse; kind: "denied" | "empty" }) {
+  const t = useT();
+  const denied = kind === "denied";
+  return (
+    <>
+      <AppHeader me={me} />
+      <main className="w-full px-4 pb-10 pt-3 sm:px-6">
+        <div data-business-access-state={kind} className="mx-auto mt-12 max-w-xl rounded-2xl border border-zinc-200 bg-white p-8 text-center shadow-sm">
+          <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-amber-50 text-amber-600">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" className="h-5 w-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 3.5 4.5 6.8v5.4c0 4.4 3 8.1 7.5 9.3 4.5-1.2 7.5-4.9 7.5-9.3V6.8L12 3.5Z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8.5v4.2m0 3.1h.01" />
+            </svg>
+          </div>
+          <h1 className="mt-4 text-lg font-semibold text-zinc-900">
+            {t(denied ? "access.insufficient.title" : "access.noProjects.title")}
+          </h1>
+          <p className="mt-2 text-sm leading-6 text-zinc-500">
+            {t(denied ? "access.insufficient.desc" : "access.noProjects.desc")}
+          </p>
+        </div>
+      </main>
+    </>
+  );
+}
 
 /** 写失败 → 面向业务的提示（错误码口径《前端功能需求》§3.7）。 */
 function errorMessageOf(error: unknown, fallback: string): string {
@@ -134,6 +199,8 @@ export default function App() {
   /** 首落闸门（Push 354 · 业务口径 2026-10-16「仪表盘页面重新登录点击刷新后 会触发页面转场动画效果」）：账号记忆（prefs）落定前，
    *  仪表盘页 #/（无 ?view=）先不渲染卡面 —— 落哪一屏由记忆决定，记忆没到就落屏必出「先地图、后滑屏」的假转场。 */
   const [hubPrefsSettled, setHubPrefsSettled] = useState(false);
+  /** 权限画像首次读取是否已结算：业务页在画像就绪前不挂载，避免仅登录账号先发数据请求再被拦截。 */
+  const [permissionsSettled, setPermissionsSettled] = useState(false);
   /** 仪表盘常驻项目（Push 336 · 业务口径「选择的项目也要记住 不随刷新变动而回到全部项目」）：按账号记住选中的项目；null = 全部项目。 */
   const [hubDashProject, setHubDashProject] = useState<string | null>(null);
   /** 仪表盘页内图表视图（Push 345 · 业务口径 2026-10-16「选择后刷新不变 按账号记住」）：按账号记住选中视图 —— 数据总览 / 项目进度 / 任务状态 / 问题 / 交付时间 / 词频图。 */
@@ -148,7 +215,6 @@ export default function App() {
   /** 键盘焦点陷阱（Push 264 追订）：删除确认条开着时焦点进条内（初始焦点不再留在背景卡片）、Tab 在条内循环、关闭还原。 */
   const deleteConfirmTrapRef = useFocusTrap<HTMLDivElement>(pendingDelete !== null);
   const route = useHashRoute();
-
   const signedIn = state.kind === "signed-in";
   /** 站内信红点（Push 352）：登录后先按读面补拉一次角标（SSE 未连上也有数），随后由 unread 快照驱动；
    *  open（含自动重连；服务端重连不补发）再补拉一次对齐；notification 只推进弹窗补拉版本号。 */
@@ -157,6 +223,7 @@ export default function App() {
       return undefined;
     }
     void refreshInboxUnread();
+    void refreshWecomDmBindingStatus();
     return startLiveSync({
       onUnread: applyInboxUnread,
       onNotification: noteInboxNotification,
@@ -213,6 +280,7 @@ export default function App() {
         if (cancelled) {
           return;
         }
+        rememberCsrfToken(me.csrfToken);
         setState({ kind: "signed-in", me });
         const [dictResult, directoryResult, prefsResult] = await Promise.allSettled([
           loadDicts(),
@@ -223,6 +291,7 @@ export default function App() {
         if (cancelled) {
           return;
         }
+        setPermissionsSettled(true);
         if (dictResult.status === "fulfilled") {
           setDicts(dictResult.value);
         }
@@ -379,7 +448,7 @@ export default function App() {
 
   /**
    * 删除项目（A5；2026-10-19 起 = 移入项目回收站）：If-Match 回传当前 version 防误删；卡片上的删除是隐式的，
-   * 点一下先出确认条，确认后才调 DELETE —— 项目聚合数据与图片保留，可在文件库 > 项目回收站恢复。
+   * 点一下先出确认条，确认后才调 DELETE —— 项目聚合数据与图片保留，可在回收站 > 项目回收站恢复。
    */
   const handleConfirmDeleteProject = async (): Promise<void> => {
     const project = pendingDelete;
@@ -655,23 +724,27 @@ export default function App() {
     onDelete: handleDictDelete,
   };
 
-  /** 权限分叉（Push 172）：字典治理 = dict.manage；删项目 = project.delete（服务端逐请求仍是最终裁决）。 */
-  const canManageDicts = hasPermission(permissions, "dict.manage");
-  const canDeleteProject = hasPermission(permissions, "project.delete");
+  /**
+   * 功能权限 = 角色能力位；项目级写入口再叠加当前项目的 groupAccessLevel === "edit"。
+   * 全局写入（字典）要求全部项目编辑；项目内写入由项目卡 / 详情按项目逐项收敛（服务端逐请求仍是最终裁决）。
+   */
+  const canManageDicts = permissions !== null && permissions.groupAllEdit && hasPermission(permissions, "dict.manage");
+  const canDeleteProject = permissions === null || hasPermission(permissions, "project.delete");
   /**
    * 建 / 改项目（Push 173）：画像**未到时乐观放行**（网络抖动不该把有权限的账号挡在门外；服务端仍是最终裁决），
    * 已知缺位才收敛入口 —— 首页「新建项目」出禁用观感 + 提示条、卡片编辑入口不渲染。
    */
-  const canCreateProject = permissions === null || hasPermission(permissions, "project.create");
+  const canCreateProject = permissions === null ||
+    (hasPermission(permissions, "project.create") && (permissions.groupAllEdit || permissions.groupOwnEdit));
   const canUpdateProject = permissions === null || hasPermission(permissions, "project.update");
   const canExportProject = permissions === null || hasPermission(permissions, "project.export");
   /** 归档权（Push 262 · M7-04 前端接线一部分）：决定编辑弹窗「已归档」选项是否可选（服务端逐请求仍是最终裁决）。 */
   const canArchiveProject = permissions === null || hasPermission(permissions, "project.archive");
   /**
-   * 任务模板页的维护权（左列节点库的新增 / 编辑 / 删除 + 右侧模板的新建 / 保存 / 删除 / 拖拽改内容）= blueprint.manage
-   * （Push 181 起节点库、Push 182 起模板；服务端逐请求仍是最终裁决 —— 无权 = 403 FORBIDDEN）。
+   * 任务模板页维护权（节点库 + 模板写操作）= 系统管理员或部门编辑规则。
+   * 所有登录账号都能查看模板；服务端逐请求仍是最终裁决 —— 无权 = 403 FORBIDDEN。
    */
-  const canManageBlueprint = hasPermission(permissions, "blueprint.manage");
+  const canManageBlueprint = canEditTaskTemplates(permissions);
   /**
    * 干系人写入口（Push 221 · A27）：新建 / 编辑 / 删除 = stakeholder.manage。与 project.create / project.update
    * 同一口径：画像未到时乐观放行（服务端逐请求仍是最终裁决），已知缺位才收起写入口 —— 读列表 = stakeholder.view
@@ -718,6 +791,22 @@ export default function App() {
     );
   }
 
+  if (permissions === null && !permissionsSettled && (blocksWhenLoginOnly(route) || route.kind === "access")) {
+    return (
+      <main className="page">
+        <Loader />
+      </main>
+    );
+  }
+
+  const accessDenied = route.kind === "access" && permissions !== null && !permissions.groupAccessAdmin;
+  if (accessDenied) {
+    return <PageAccessDenied me={state.me} backHref={firstAllowedHref(permissions)} />;
+  }
+  if (permissions !== null && blocksWhenLoginOnly(route) && permissions.groupProjectAccess === "denied") {
+    return <BusinessAccessState me={state.me} kind={permissions.groupProjectAccess} />;
+  }
+
   /**
    * 全局提示区：
    * ① 删除项目确认条（Push 172：卡片隐式删除的第二下）—— 非阻断式确认，统一为顶部同款确认 Toast；
@@ -749,8 +838,6 @@ export default function App() {
           }}
         />
       )}
-      {/* 首登「绑定企业微信」引导（D5 · Push 250）：未绑定且本机未跳过才弹；已绑定 / 已跳过 = 静默不渲染。 */}
-      <BindingGuideModal me={state.me} />
     </>
   );
 
@@ -771,7 +858,7 @@ export default function App() {
         dicts={dicts}
         dictTools={dictTools}
         canManageDicts={canManageDicts}
-        canArchive={canArchiveProject}
+        canArchive={canArchiveProject && editingProject.groupAccessLevel === "edit"}
         managerOptions={directoryMemberOptions(directory)}
         onClose={() => {
           setEditingProject(null);
@@ -851,13 +938,16 @@ export default function App() {
           project={detail}
           view={route.view}
           dailySub={route.sub}
+          focus={route.focus}
+          onClearFocus={clearProjectFocus}
           members={directoryMemberOptions(directory)}
           onChangeManagers={handleChangeManagers}
           onTaskEdited={handleTaskEdited}
           taskHiddenColumns={taskTableHiddenColumns}
           onTaskHiddenColumnsChange={handleSaveTaskHiddenColumns}
           canManageStakeholders={canManageStakeholders}
-          onSetProjectDone={canUpdateProject ? handleSetProjectDone : undefined}
+          readOnly={detail?.groupAccessLevel !== "edit"}
+          onSetProjectDone={canUpdateProject && detail?.groupAccessLevel === "edit" ? handleSetProjectDone : undefined}
         />
         {editModal}
         {bottomBars}
@@ -866,7 +956,7 @@ export default function App() {
   }
 
   if (route.kind === "files") {
-    // 文件库（Push 261 · 头像菜单「文件库」入口）：两栏（系统现有文件 / 回收站）+ 关键字 / 项目 / 状态 / 类型 / 上传人筛选，
+    // 回收站（Push 261 · 头像菜单「回收站」入口）：两栏（文件回收站 / 项目回收站）+ 关键字 / 项目 / 上传人筛选，
     // 筛选态走地址（replaceFilesQuery，地址即状态）—— 与 #/audit 同一口径；数据 = 逐项目聚合（FileLibraryPage.tsx）。
     return (
       <>
@@ -877,11 +967,21 @@ export default function App() {
   }
 
   if (route.kind === "audit") {
-    // 操作记录（C7-04 管理员查询页 · u12）：入口 = 头像菜单「操作记录」（AppHeader · audit.view）；
+    // 操作记录（C7-04 · u12）：入口 = 头像菜单「操作记录」，所有登录账号可读，服务端按 auditScope 收敛；
     // 数据 = GET /api/v1/audit-logs（AuditLogPage + auditApi）；筛选态走地址（replaceAuditQuery，地址即状态）。
     return (
       <>
         <AuditLogPage me={state.me} query={route.query} onChangeQuery={replaceAuditQuery} directory={directory} />
+        {bottomBars}
+      </>
+    );
+  }
+
+  if (route.kind === "access") {
+    // 权限管理（2026-10-23 · 头像菜单入口）：按 Casdoor 群组配置页面与项目范围。
+    return (
+      <>
+        <AccessControlPage me={state.me} />
         {bottomBars}
       </>
     );

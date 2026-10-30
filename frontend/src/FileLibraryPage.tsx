@@ -4,6 +4,7 @@ import { cardBorderOf, cardTintOf, useBackgroundTier, useCardWatermark } from ".
 import { AppHeader } from "./components/AppHeader";
 import { Card } from "./components/Card";
 import { FilePreviewOverlay } from "./components/FilePreviewOverlay";
+import { mobileFilePreviewMustDownload } from "./mobilePreviewPolicy";
 import { FileTypeIcon } from "./components/FileTypeIcon";
 import { Loader } from "./components/Loader";
 import { SearchInput } from "./components/SearchInput";
@@ -33,6 +34,7 @@ import {
   fetchProjectFileLibrary,
   previewKindOf,
   purgeFile,
+  recordPreviewView,
   restoreFile,
   triggerDownload,
   type FileLibraryItem,
@@ -52,44 +54,25 @@ import type { MeResponse } from "./types";
 import { EMPTY_FILES_QUERY, EMPTY_LIST_QUERY, type FilesQueryState, type FilesTab } from "./useHashRoute";
 
 /**
- * 文件库页（Push 261 · 业务口径 2026-10-09「新增文件库 文件库里面分为 系统现有文件 回收站」）。
+ * 回收站页（2026-10-29 · 由原「文件库」收敛而来）。
  *
- * 入口 = 右上角头像菜单第三项「文件库」（AppHeader；全账号可见 —— 读面按项目可见性放开，无单独权限位）。
- * 两栏（地址 `?tab=recycled`，缺省「系统现有文件」不落参数，见 useHashRoute 的 FilesQueryState）：
- *   ① 系统现有文件 = 四档在库状态（草稿 / 已定档 / 已变更 / 已归档），显式 filter[status]=draft,final,changed,archived
- *      （服务端缺省虽排除回收站，显式给全更不随口径漂移）；
- *   ② 回收站 = filter[status]=recycled，行内可就地「恢复」（回退到进入回收站前的状态）与「彻底删除」
- *      （仅系统管理员渲染入口 —— 服务端按 roleCodes=admin 硬闸，A4-12；非管理员吃 403 兜底）。
+ * 入口 = 右上角头像菜单「回收站」（AppHeader；全账号可见 —— 读面按项目可见性放开，无单独权限位）。
+ * 两栏（地址缺省 = 文件回收站；`?tab=project-recycled` = 项目回收站）：
+ *   ① 文件回收站 = filter[status]=recycled，行内可就地「恢复」（回退到进入回收站前的状态）与「彻底删除」
+ *      （仅系统管理员渲染入口 —— 服务端按 groupAccessAdmin 硬闸，A4-12；非管理员吃 403 兜底）；
+ *   ② 项目回收站 = 独立项目读口，按项目空间卡片展示、恢复 / 彻底删除。
+ * 原「系统现有文件」栏已移到项目详情「项目文件」标签：那里只列各阶段任务文件与变更记录对应文件，
+ * 日报 / 问题附图不进入项目文件列表。
  *
- * 数据面（一期口径 · 前端聚合）：文件列表接口只有项目维度（GET /projects/{id}/files），本页按项目列表逐项目
- * 分页取满再合并（fileApi.fetchProjectFileLibrary），关键字 / 状态筛选下沉到服务端同一套 filter（filter[status] 支持逗号多值）；
- *【2026-10-09 追订一】筛选多选（业务口径「要可以多项选择 再次点击取消选择」+「别的筛选也是同理 要支持多选」）：
- * 项目 / 状态 / 上传人 = 可搜索**多选**下拉（点选 / 再点取消，点选不关浮层；地址 project=<id>[,<id>…]、
- * status=<k>[,<k>…]、uploadedBy=<id>[,<id>…]，逗号分隔去重保序，见 useHashRoute.parseFilesQuery）；
- * 多选 = 逐选中项目取满后并集。上传人筛选在内存过滤（服务端 filter[uploadedBy] 仍是单值 UUID 口径，本页已逐项目
- * 取满全量、内存过滤等价且多选不翻倍请求）—— 多值口径列入《前端功能需求》§3.8 对齐清单，待服务端放开。
- * 单项目失败（非成员 404 等）跳过不阻断整页（读面 404 防 IDOR 是服务端口径，页面只兜底）。
- * 「共 N 条」= 前端合并后的条数；分页为前端切页（页大小 50，与操作记录页同宽）。跨项目全站列表端点列入
- * 《前端功能需求》§3.8 对齐清单（wmj / lan 复核后由服务端接手，前端聚合作一期过渡）。
- *
- * 列口径（六列）：文件名（类型图标 + 名字）/ 状态（与站内文件状态签 / 定档开关同一套颜色）/ 项目（**名字 + 编号两行**：
- * 上行项目名、下行项目编号 —— 追订「项目名称要编号和名字都写在表格里面注意排版」+「中文和编号的位置反一下」）/ 上传人（用户目录姓名，离线兜底 id）/
- * 时间（Asia/Shanghai，YYYY-MM-DD HH:mm）/ 操作；回收站栏第 5 列改「移入回收站」（时间 · 人）、操作列 = 恢复 / 彻底删除。
- *【2026-10-09 追订】「类型」列与筛选整条撤除（业务口径「文件类型不需要 因为没有明确的绑定机制」—— 库内文件
- * 没有类型绑定点（files.doc_type 全空）、列恒「—」；任务侧「输出成果文件」是任务字段，不受影响）。
- * 操作列按钮定宽（预览 / 下载换忙碌文案不重排 auto layout 表格 = 点预览不再抖表）；写口反馈走上方浮动 Toast
- * （components/Toast.tsx：屏幕顶部居中、停留 2s 自动消失）。
- * 预览走 S4 两通道裁决（ensurePreviewOutcome：viewer = ONLYOFFICE 外壳 / url = 产物浮层）；下载 = 原文件
- * attachment 短时签名 + Blob 落盘（fetchDownloadUrl + triggerDownload，服务端写 download 审计）。
- * 失败口径：本页只读 + 两个回收站写口，写失败给一行提示（VERSION_CONFLICT = 数据已被他人更新）。
+ * 数据面（前端聚合）：文件列表接口只有项目维度（GET /projects/{id}/files），本页按项目列表逐项目分页取满再合并
+ * （fileApi.fetchProjectFileLibrary）；关键字 / 项目 / 上传人筛选保留，状态恒为 recycled。单项目失败（非成员 404 等）
+ * 跳过不阻断整页。分页为前端切页（页大小 50）。
+ * 预览走 S4 两通道裁决；写口反馈走顶部 Toast；失败口径不变（VERSION_CONFLICT = 数据已被他人更新）。
  */
-
-/** 「系统现有文件」栏的四档在库状态（顺序 = 筛选下拉；与契约 FileStatus 同口径）。 */
-const CURRENT_STATUSES: readonly string[] = ["draft", "final", "changed", "archived"];
 
 /** 文件状态中文签（与站内文件行 / 抽屉「变更申请」页同一套文案；未知取值回落原文）。 */
 const FILE_STATUS_LABELS: Record<string, string> = {
-  draft: "草稿",
+  draft: "未定档",
   final: "已定档",
   changed: "已变更",
   archived: "已归档",
@@ -129,9 +112,8 @@ type PreviewState = {
 
 type Notice = { kind: "ok" | "error"; text: string };
 
-/** 三栏（顺序 = 标签栏顺序；Push 301：label 存词典键，随语言切换）。 */
+/** 两栏（顺序 = 标签栏顺序；label 存词典键，随语言切换）。 */
 const TABS: ReadonlyArray<{ key: FilesTab; label: TextKey }> = [
-  { key: "current", label: "lib.tab.current" },
   { key: "recycled", label: "lib.tab.recycled" },
   { key: "project-recycled", label: "lib.tab.projectRecycled" },
 ];
@@ -166,6 +148,8 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
   /** 手打内容（项目名）机翻显示：英文界面取译文，未就绪回退原文；文件名不翻译（业务口径 2026-10-13）。 */
   const localize = useLocalizedTranslator();
   const [state, setState] = useState<LibraryState>({ kind: "loading" });
+  /** 已见上传人姓名缓存：筛选切换后已选停用账号即使零命中，也保留可读姓名供取消选择。 */
+  const uploaderNameCacheRef = useRef<Map<string, string>>(new Map());
   const [projects, setProjects] = useState<ApiProject[] | null>(null);
   const liveProjectsRef = useRef<ApiProject[] | null>(null);
   const [projectRecycleState, setProjectRecycleState] = useState<ProjectRecycleState>({ kind: "loading" });
@@ -180,6 +164,21 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [purgeConfirmId, setPurgeConfirmId] = useState<string | null>(null);
   const [projectPurgeConfirmId, setProjectPurgeConfirmId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (state.kind !== "ready") {
+      return;
+    }
+    const directoryNames = new Map(directory.map((user) => [user.id, user.displayName] as const));
+    const next = new Map(uploaderNameCacheRef.current);
+    for (const item of state.items) {
+      next.set(
+        item.createdBy,
+        item.createdByName ?? directoryNames.get(item.createdBy) ?? item.createdBy,
+      );
+    }
+    uploaderNameCacheRef.current = next;
+  }, [state, directory]);
 
   // 关键字防抖（与首页列表 / 操作记录页同口径）：输入时不每敲一个字打一次接口，250ms 内的最后一次生效
   const [debouncedKeyword, setDebouncedKeyword] = useState(query.keyword ?? "");
@@ -241,7 +240,6 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
   // 多选筛选键（2026-10-09 追订）：数组引用每次解析都会变，用逗号串当依赖键，防误触发整页重取；
   // 上传人是内存过滤（见文件头）：不进 fetch 依赖 —— 勾选 / 取消只重算派生列表、不重发请求。
   const projectIdKey = query.projectIds.join(",");
-  const statusKey = query.statuses.join(",");
 
   useLiveRefresh(["files", "projects", "permissions", "users"], async () => {
     if (query.tab === "project-recycled") {
@@ -252,9 +250,8 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
     }
     const list = await fetchProjectList(EMPTY_LIST_QUERY);
     const targetIds = projectIdKey === "" ? [] : projectIdKey.split(",");
-    const targets = targetIds.length === 0 ? list.items : list.items.filter((project) => targetIds.includes(project.id));
-    const statuses = query.tab === "recycled" ? ["recycled"] : statusKey === "" ? CURRENT_STATUSES : statusKey.split(",");
-    const results = await Promise.all(targets.map(async (project) => { try { return await fetchProjectFileLibrary(project.id, { statuses, keyword: debouncedKeyword.trim() || undefined }); } catch (error) { if (error instanceof ApiError && (error.status === 403 || error.status === 404)) return []; throw error; } }));
+    const targets = list.items.filter((project) => targetIds.length === 0 || targetIds.includes(project.id));
+    const results = await Promise.all(targets.map(async (project) => { try { return await fetchProjectFileLibrary(project.id, { statuses: ["recycled"], keyword: debouncedKeyword.trim() || undefined }); } catch (error) { if (error instanceof ApiError && (error.status === 403 || error.status === 404)) return []; throw error; } }));
     const nextProjects = keepLiveOrder(projects ?? [], list.items);
     return () => {
       // The file results and project labels belong to one completed snapshot.
@@ -262,7 +259,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
       setProjects(nextProjects);
       setState((previous) => previous.kind === "ready" ? { kind: "ready", items: keepLiveOrder(previous.items, results.flat()) } : previous);
     };
-  }, query.tab + ":" + projectIdKey + ":" + statusKey + ":" + debouncedKeyword + ":" + String(reloadTick), query.tab === "project-recycled" ? projectRecycleState.kind === "ready" : projects !== null && state.kind === "ready");
+  }, query.tab + ":" + projectIdKey + ":" + debouncedKeyword + ":" + String(reloadTick), query.tab === "project-recycled" ? projectRecycleState.kind === "ready" : projects !== null && state.kind === "ready");
 
   // 文件列表：按项目列表逐项目取满再合并（见文件头「数据面」；单项目失败跳过；多选 = 选中项目并集）。
   useEffect(() => {
@@ -273,13 +270,12 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
     let alive = true;
     setState((previous) => previous.kind === "ready" ? previous : { kind: "loading" });
     const keyword = debouncedKeyword.trim();
-    const statuses = query.tab === "recycled" ? ["recycled"] : statusKey === "" ? CURRENT_STATUSES : statusKey.split(",");
     const targetIds = projectIdKey === "" ? [] : projectIdKey.split(",");
-    const targets = targetIds.length === 0 ? projects : projects.filter((project) => targetIds.includes(project.id));
+    const targets = projects.filter((project) => targetIds.length === 0 || targetIds.includes(project.id));
     void Promise.all(
       targets.map((project) =>
         fetchProjectFileLibrary(project.id, {
-          statuses,
+          statuses: ["recycled"],
           keyword: keyword === "" ? undefined : keyword,
         }).catch(() => [] as FileLibraryItem[]),
       ),
@@ -299,26 +295,29 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
     return () => {
       alive = false;
     };
-  }, [projects, debouncedKeyword, query.tab, projectIdKey, statusKey, reloadTick]);
+  }, [projects, debouncedKeyword, query.tab, projectIdKey, reloadTick]);
 
-  // 权限画像（与 AppHeader 共用同一份进程内单飞缓存）：只用来裁决恢复 / 彻底删除入口的渲染 —— 服务端逐请求仍是最终裁决。
-  const isAdmin = permissions !== null && permissions.roleCodes.includes("admin");
+  // 权限画像（与 AppHeader 共用同一份进程内单飞缓存）：功能位 + 项目级 groupAccessLevel 共同收敛恢复 / 删除入口。
+  // 服务端逐请求仍是最终裁决；系统管理员绕过部门项目范围限制。
+  const isAdmin = permissions?.groupAccessAdmin === true;
   const canDeleteProject = hasPermission(permissions, "project.delete");
   const isProjectRecycle = query.tab === "project-recycled";
   const recycledProjects = projectRecycleState.kind === "ready" ? projectRecycleState.items : [];
 
-  // 上传人多选 = 内存过滤（服务端 filter[uploadedBy] 单值口径，见文件头）：空选不筛、多选取并集。
+  const projectById = new Map((projects ?? []).map((project) => [project.id, project] as const));
+  // 上传人 = 内存过滤（服务端 filter[uploadedBy] 单值口径，见文件头）：空选不筛、多选取并集。
   const visibleItems =
     state.kind !== "ready"
       ? []
-      : query.uploaderIds.length === 0
-        ? state.items
-        : state.items.filter((item) => query.uploaderIds.includes(item.createdBy));
+      : state.items.filter((item) => query.uploaderIds.length === 0 || query.uploaderIds.includes(item.createdBy));
   const total = visibleItems.length;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_LIMIT));
   const page = Math.min(query.page, totalPages);
   const pageItems = visibleItems.slice((page - 1) * PAGE_LIMIT, page * PAGE_LIMIT);
-  const projectById = new Map((projects ?? []).map((project) => [project.id, project] as const));
+  const canEditProject = (projectId: string): boolean =>
+    isAdmin || projectById.get(projectId)?.groupAccessLevel === "edit";
+  const canRestoreProject = (project: ApiProject): boolean =>
+    canDeleteProject && (isAdmin || project.groupAccessLevel === "edit");
   const userNameById = new Map(directory.map((user) => [user.id, user.displayName] as const));
   const userNameOf = (id: string | null): string => (id === null ? "—" : userNameById.get(id) ?? id);
   const projectCodeOf = (id: string): string => projectById.get(id)?.code ?? "—";
@@ -338,26 +337,46 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
     if (tab === query.tab) {
       return;
     }
-    // 换栏保留项目 / 关键字 / 上传人，状态清掉（只在系统现有文件栏有语义）；两处彻底删除确认一并收起。
+    // 换栏保留项目 / 关键字 / 上传人；两处彻底删除确认一并收起。
     setPurgeConfirmId(null);
     setProjectPurgeConfirmId(null);
-    onChangeQuery({ ...query, tab, statuses: [], page: 1 });
+    onChangeQuery({ ...query, tab, page: 1 });
   };
   const hasFilter =
-    query.keyword !== null || query.projectIds.length > 0 || query.statuses.length > 0 || query.uploaderIds.length > 0;
+    query.keyword !== null || query.projectIds.length > 0 || query.uploaderIds.length > 0;
   const clearFilters = (): void => {
     onChangeQuery({ ...EMPTY_FILES_QUERY, tab: query.tab });
   };
 
   // 项目筛选 = 多选（2026-10-09 追订）：不再有「全部项目」选项行，空选占位由 placeholder="全部项目" 承担。
   const projectOptions = (projects ?? []).map((project) => ({ value: project.id, label: project.code + " · " + localize(project.name) }));
-  // 状态 / 上传人筛选同为多选（2026-10-09 追订二）：不再有「全部…」选项行，空选占位交给 placeholder。
-  const statusOptions = CURRENT_STATUSES.map((status) => ({ value: status, label: statusText(locale, FILE_STATUS_LABELS[status] ?? status) }));
-  const uploaderOptions = directory.map((user) => ({ value: user.id, label: user.displayName }));
+  // 上传人候选 = 当前筛选结果（尚未应用上传人自身过滤的 state.items）中去重后的 createdBy；
+  // 必须用 state.items 而不是 visibleItems，否则选中一人后其他候选会消失。已选但当前零命中的 id 也并入，保证可取消。
+  const uploaderNameById = new Map<string, string>(uploaderNameCacheRef.current);
+  if (state.kind === "ready") {
+    for (const item of state.items) {
+      uploaderNameById.set(
+        item.createdBy,
+        item.createdByName ?? userNameById.get(item.createdBy) ?? item.createdBy,
+      );
+    }
+  }
+  for (const id of query.uploaderIds) {
+    if (!uploaderNameById.has(id)) {
+      uploaderNameById.set(id, userNameById.get(id) ?? id);
+    }
+  }
+  const uploaderOptions = [...uploaderNameById]
+    .map(([value, label]) => ({ value, label }))
+    .sort((left, right) => left.label.localeCompare(right.label, locale));
 
   /** 预览（与任务抽屉同一套 S4 两通道裁决）：点开才懒取；unavailable = 一行提示（reason 或「请下载查看」口径）。 */
   const openPreview = async (file: FileLibraryItem): Promise<void> => {
     if (previewBusy !== null) {
+      return;
+    }
+    if (mobileFilePreviewMustDownload(file.name)) {
+      await downloadFile(file);
       return;
     }
     setPreviewBusy(file.id);
@@ -368,6 +387,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
       setNotice({ kind: "error", text: outcome.reason ?? t("drawer.preview.unavailable") });
       return;
     }
+    void recordPreviewView(file.id);
     const kind = previewKindOf(file.name) ?? "image";
     if (outcome.kind === "viewer") {
       setPreview({ pane: { mode: "viewer", viewer: outcome.viewer }, name: file.name, kind, fileId: file.id, nonce: 0 });
@@ -415,14 +435,14 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
 
   /** 回收站恢复（A4-12）：回退到进入回收站前的状态；成功后重取当前栏。 */
   const restoreItem = async (file: FileLibraryItem): Promise<void> => {
-    if (actionBusy !== null) {
+    if (actionBusy !== null || !canEditProject(file.projectId)) {
       return;
     }
     setActionBusy(file.id);
     setNotice(null);
     try {
       await restoreFile(file.id);
-      const back = statusText(locale, FILE_STATUS_LABELS[file.recycledFromStatus ?? "draft"] ?? "草稿");
+      const back = statusText(locale, FILE_STATUS_LABELS[file.recycledFromStatus ?? "draft"] ?? "未定档");
       setNotice({ kind: "ok", text: t("lib.restored", { name: file.name, status: back }) });
       setReloadTick((tick) => tick + 1);
     } catch (error) {
@@ -433,9 +453,9 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
     }
   };
 
-  /** 彻底删除（仅系统管理员渲染入口；服务端按 roleCodes=admin 硬闸）：行内二次确认后 POST /files/{id}/purge。 */
+  /** 彻底删除（仅系统管理员渲染入口；服务端按 groupAccessAdmin 硬闸）：行内二次确认后 POST /files/{id}/purge。 */
   const purgeItem = async (file: FileLibraryItem): Promise<void> => {
-    if (actionBusy !== null) {
+    if (actionBusy !== null || !isAdmin) {
       return;
     }
     setActionBusy(file.id);
@@ -454,7 +474,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
 
   /** 项目回收站恢复：项目数据与图片原样保留，成功后从项目回收站列表移除。 */
   const restoreRecycledProject = async (project: ApiProject): Promise<void> => {
-    if (actionBusy !== null) {
+    if (actionBusy !== null || !canRestoreProject(project)) {
       return;
     }
     setActionBusy(project.id);
@@ -486,7 +506,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
       projectPurgeConfirmId === null
         ? undefined
         : recycledProjects.find((item) => item.id === projectPurgeConfirmId);
-    if (project === undefined || actionBusy !== null) {
+    if (project === undefined || actionBusy !== null || !isAdmin) {
       return;
     }
     setActionBusy(project.id);
@@ -513,9 +533,9 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
       return t("lib.empty.keyword", { kw: query.keyword });
     }
     if (hasFilter) {
-      return query.tab === "recycled" ? t("lib.empty.filter.recycled") : t("lib.empty.filter.current");
+      return t("lib.empty.filter.recycled");
     }
-    return query.tab === "recycled" ? t("lib.empty.recycled") : t("lib.empty.current");
+    return t("lib.empty.recycled");
   })();
 
   return (
@@ -596,26 +616,6 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
                 }}
               />
             </span>
-            {query.tab === "current" ? (
-              <span data-file-filter="status" className="w-32 shrink-0">
-                <SearchSelect
-                  mode="multi"
-                  ariaLabel={t("lib.filter.status.aria")}
-                  values={query.statuses}
-                  options={statusOptions}
-                  placeholder={t("lib.filter.status.placeholder")}
-                  searchPlaceholder={t("lib.filter.status.search")}
-                  label={t("lib.filter.status.label")}
-                  onToggle={(value) => {
-                    patchFilter({
-                      statuses: query.statuses.includes(value)
-                        ? query.statuses.filter((status) => status !== value)
-                        : query.statuses.concat(value),
-                    });
-                  }}
-                />
-              </span>
-            ) : null}
             <span data-file-filter="uploader" className="w-36 shrink-0">
               <SearchSelect
                 mode="multi"
@@ -689,7 +689,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
 
           {state.kind === "ready" && total > 0 ? (
             <>
-              <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
+              <div data-file-table="" className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
                 <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
                   <thead className="bg-zinc-50 text-zinc-500">
                     <tr>
@@ -697,14 +697,32 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
                       <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">{t("lib.col.status")}</th>
                       <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">{t("lib.col.project")}</th>
                       <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">{t("lib.col.uploader")}</th>
-                      <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">{query.tab === "recycled" ? t("lib.col.recycledAt") : t("lib.col.createdAt")}</th>
+                      <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">{t("lib.col.recycledAt")}</th>
                       <th className="whitespace-nowrap border-b border-zinc-200 px-4 py-3 font-medium">{t("lib.col.actions")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {pageItems.map((file) => (
-                      <tr key={file.id} data-file-row={file.id} className="transition hover:bg-zinc-50/70">
-                        <td className="align-middle border-b border-zinc-100 px-4 py-3">
+                      <tr
+                        key={file.id}
+                        data-file-row={file.id}
+                        tabIndex={0}
+                        aria-label={(mobileFilePreviewMustDownload(file.name) ? t("lib.download") : t("lib.preview")) + " " + file.name}
+                        aria-busy={previewBusy === file.id}
+                        onClick={(event) => {
+                          const target = event.target;
+                          if (target instanceof Element && target.closest("button, a, input, select, textarea, [role=button]") !== null) return;
+                          void openPreview(file);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.target !== event.currentTarget) return;
+                          if (event.key !== "Enter" && event.key !== " ") return;
+                          event.preventDefault();
+                          void openPreview(file);
+                        }}
+                        className="cursor-pointer transition hover:bg-zinc-50/70 focus-visible:bg-blue-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400"
+                      >
+                        <td data-mobile-label={t("lib.col.file")} className="align-middle border-b border-zinc-100 px-4 py-3">
                           <span className="flex items-center gap-2.5">
                             <FileTypeIcon name={file.name} className="h-5 w-5" />
                             <span className="truncate text-base text-zinc-800" title={file.name}>
@@ -712,11 +730,11 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
                             </span>
                           </span>
                         </td>
-                        <td className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3">
+                        <td data-mobile-label={t("lib.col.status")} className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3">
                           <span
                             data-file-status={file.status}
                             title={
-                              query.tab === "recycled" && file.recycledFromStatus !== null
+                              file.recycledFromStatus !== null
                                 ? t("lib.status.original", { status: statusText(locale, FILE_STATUS_LABELS[file.recycledFromStatus] ?? file.recycledFromStatus) })
                                 : undefined
                             }
@@ -725,7 +743,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
                             {statusText(locale, FILE_STATUS_LABELS[file.status] ?? file.status)}
                           </span>
                         </td>
-                        <td className="align-middle border-b border-zinc-100 px-4 py-3">
+                        <td data-mobile-label={t("lib.col.project")} className="align-middle border-b border-zinc-100 px-4 py-3">
                           <div
                             data-file-project={file.projectId}
                             data-file-project-code={projectCodeOf(file.projectId)}
@@ -738,42 +756,15 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
                             <span className="whitespace-nowrap text-xs text-zinc-500">{projectCodeOf(file.projectId)}</span>
                           </div>
                         </td>
-                        <td className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-700">{userNameOf(file.createdBy)}</td>
-                        <td className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-600">
-                          {query.tab === "recycled"
-                            ? file.recycledAt === null
-                              ? "—"
-                              : formatDateTime(file.recycledAt) + " · " + userNameOf(file.recycledBy)
-                            : formatDateTime(file.createdAt)}
+                        <td data-mobile-label={t("lib.col.uploader")} className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-700">{file.createdByName ?? userNameOf(file.createdBy)}</td>
+                        <td data-mobile-label={t("lib.col.recycledAt")} className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3 text-zinc-600">
+                          {file.recycledAt === null
+                            ? "—"
+                            : formatDateTime(file.recycledAt) + " · " + userNameOf(file.recycledBy)}
                         </td>
-                        <td className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3">
+                        <td data-mobile-label={t("lib.col.actions")} className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3">
                           <span className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              data-file-preview={file.id}
-                              disabled={previewBusy !== null}
-                              onClick={() => {
-                                void openPreview(file);
-                              }}
-                              className="inline-flex w-16 items-center justify-center rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-300"
-                            >
-                              {previewBusy === file.id ? t("lib.preview.busy") : t("lib.preview")}
-                            </button>
-                            {query.tab === "current" ? (
-                              <button
-                                type="button"
-                                data-file-download={file.id}
-                                disabled={downloadBusy !== null}
-                                onClick={() => {
-                                  void downloadFile(file);
-                                }}
-                                className="inline-flex w-16 items-center justify-center rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-300"
-                              >
-                                {downloadBusy === file.id ? t("lib.download.busy") : t("lib.download")}
-                              </button>
-                            ) : (
-                              <>
-                                <button
+                                {canEditProject(file.projectId) && <button
                                   type="button"
                                   data-file-restore={file.id}
                                   disabled={actionBusy !== null}
@@ -783,7 +774,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
                                   className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-300"
                                 >
                                   {t("lib.restore")}
-                                </button>
+                                </button>}
                                 {isAdmin ? (
                                   purgeConfirmId === file.id ? (
                                     <>
@@ -824,8 +815,6 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
                                     </button>
                                   )
                                 ) : null}
-                              </>
-                            )}
                           </span>
                         </td>
                       </tr>
@@ -918,7 +907,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
                           managerNames={project.managerNames.map((name) => (name === null || name === "" ? "—" : name)).join("、")}
                           time={formatDateTime(project.deletedAt ?? project.updatedAt)}
                           onRestore={
-                            canDeleteProject
+                            canRestoreProject(project)
                               ? () => {
                                   void restoreRecycledProject(project);
                                 }

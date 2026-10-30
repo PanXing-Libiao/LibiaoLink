@@ -4,7 +4,7 @@ import type { ActorAuthorization, DataScope } from "../identity/index.js";
 /**
  * 权限策略（ADR-011 落地形态 · h6 · PoC-6）：本文件是**纯函数**策略层，不碰数据库，
  * 供五类出口统一调用（字段级 / 记录级 / 导出 / 搜索 / 通知），也是 CI 权限矩阵用例的主对象。
- * 数据面（角色画像、名册、项目可见集）由 permission.service + permission.repository 提供。
+ * 数据面（全量能力基线、名册、项目可见集）由 permission.service + permission.repository 提供。
  */
 
 // ---------- 记录级：数据范围 → 项目可见集规格 ----------
@@ -84,6 +84,8 @@ export function isProjectVisible(
 export interface ProjectResourceContext {
   member: boolean;
   projectManager: boolean;
+  /** 当前项目的部门权限；项目内写操作必须为 edit。 */
+  groupAccessLevel?: "edit" | "view";
 }
 
 /**
@@ -123,6 +125,19 @@ export const PROJECT_MANAGER_IMPLIED_KEYS: readonly PermissionKey[] = [
   "stakeholder.contact.view",
 ];
 
+/**
+ * 任务定档 / 取消定档的唯一角色口径（2026-10-27）：仅任务当前负责人或项目经理。
+ * 项目经理来自 ProjectAccessContext（主数据 managerIds 或项目名册 project_manager）；
+ * 该规则同时供任务接口与文件定档联动任务定档的旁路复用，避免两套判定漂移。
+ */
+export function canManageTaskFinalization(
+  actorId: string,
+  taskOwnerIds: readonly string[],
+  projectManager: boolean,
+): boolean {
+  return projectManager || taskOwnerIds.includes(actorId);
+}
+
 /** 策略层用到的全部权限键必须落在契约枚举内（防手写错字；用例覆盖）。 */
 export function isKnownPermissionKey(value: string): value is PermissionKey {
   return (PERMISSION_KEYS as readonly string[]).includes(value);
@@ -130,7 +145,7 @@ export function isKnownPermissionKey(value: string): value is PermissionKey {
 
 /**
  * 权限判定（ADR-011）：三个来源取并集 ——
- * 1) 全局功能权限位（role_permissions，随角色下发）；
+ * 1) 全量功能权限基线（旧角色权限已退出授权，写能力由部门规则再裁决）；
  * 2) 项目内角色隐含位（项目经理 / 成员，仅在该项目内生效）；
  * 3) 无需权限的读路径（不经过本函数，如 /auth/me）。
  * 无权访问**已有资源**返回 403；不可见资源一律 404（防 IDOR，由记录级负责）。

@@ -109,6 +109,8 @@ describe("env（ONLYOFFICE 查看器 · S3 配置契约）", () => {
       INTERNAL_SYNC_TOKEN: "token",
       S3_ACCESS_KEY: "key",
       S3_SECRET_KEY: "secret",
+      GROUP_ACCESS_ENFORCED: "true",
+      GROUP_ACCESS_ADMIN_USER_IDS: "11111111-1111-4111-8111-111111111111",
     };
   }
 

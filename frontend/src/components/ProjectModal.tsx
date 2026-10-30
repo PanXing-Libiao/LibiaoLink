@@ -25,7 +25,7 @@ import { fetchUsedRegions } from "../projectApi";
 
 export type ProjectDraft = {
   code: string;
-  /** 前端「项目描述」= 契约 name。 */
+  /** 前端「项目名称」= 契约 name。 */
   description: string;
   /** 备注（契约 description，Push 280 恢复采集）：空串 = 未填写（新建不发送、编辑发送 null 清空）。 */
   note: string;
@@ -474,7 +474,7 @@ export function ProjectModal({ mode, initial, dicts, dictTools, canManageDicts, 
           )}
           {conflict === null ? null : (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-              <details><summary>{t("modal.conflict.latest")}</summary><p className="mt-2 whitespace-pre-wrap">{fieldText(locale, "项目编号")}{colon}{conflict.latest.code}<br />{fieldText(locale, "项目描述")}{colon}{conflict.latest.description}<br />{fieldText(locale, "备注")}{colon}{conflict.latest.note || "—"}<br />{fieldText(locale, "项目经理")}{colon}{conflict.latest.managerIds.map((id) => managerOptions.find((member) => member.id === id)?.name ?? id).join(isLocalizedLocale(locale) ? ", " : "、")}<br />{fieldText(locale, "项目类型")}{colon}{projectTypeText(locale, dictLabel(dicts, "projectType", conflict.latest.projectType))}{semi}{fieldText(locale, "项目地区")}{colon}{isLocalizedLocale(locale) ? regionNameEn(dictLabel(dicts, "region", conflict.latest.region)) || dictLabel(dicts, "region", conflict.latest.region) : dictLabel(dicts, "region", conflict.latest.region)}{semi}{fieldText(locale, "项目状态")}{colon}{projectStatusTextOf(locale, conflict.latest.status)}</p></details>
+              <details><summary>{t("modal.conflict.latest")}</summary><p className="mt-2 whitespace-pre-wrap">{fieldText(locale, "项目编号")}{colon}{conflict.latest.code}<br />{fieldText(locale, "项目名称")}{colon}{conflict.latest.description}<br />{fieldText(locale, "备注")}{colon}{conflict.latest.note || "—"}<br />{fieldText(locale, "项目经理")}{colon}{conflict.latest.managerIds.map((id) => managerOptions.find((member) => member.id === id)?.name ?? id).join(isLocalizedLocale(locale) ? ", " : "、")}<br />{fieldText(locale, "项目类型")}{colon}{projectTypeText(locale, dictLabel(dicts, "projectType", conflict.latest.projectType))}{semi}{fieldText(locale, "项目地区")}{colon}{isLocalizedLocale(locale) ? regionNameEn(dictLabel(dicts, "region", conflict.latest.region)) || dictLabel(dicts, "region", conflict.latest.region) : dictLabel(dicts, "region", conflict.latest.region)}{semi}{fieldText(locale, "项目状态")}{colon}{projectStatusTextOf(locale, conflict.latest.status)}</p></details>
               <button type="button" disabled={pending || conflict.latest.status === "archived"} className="mt-2 underline disabled:opacity-50" onClick={() => {
                 setConfirmedVersion(conflict.version);
                 setConflict(null);

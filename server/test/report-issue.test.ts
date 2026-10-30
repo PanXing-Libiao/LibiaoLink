@@ -10,11 +10,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DailyReportCreateBodySchema, DailyReportUpdateBodySchema } from "@libiaolink/contracts";
 import type { AuditService } from "../src/modules/admin/index.js";
+import { AppConfig } from "../src/config/config.module.js";
+import { loadEnv } from "../src/config/env.js";
 import type { DatabaseService } from "../src/db/database.service.js";
 import type { DbClient } from "../src/db/db-client.js";
 import type { IssueRepository, IssueRow } from "../src/modules/report-issue/issue.repository.js";
 import { IssueService } from "../src/modules/report-issue/issue.service.js";
+import { buildDailyReportGroupBody } from "../src/modules/report-issue/report-issue.rules.js";
 import type { DailyReportRow, ReportRepository } from "../src/modules/report-issue/report.repository.js";
+import type { ProjectGroupService } from "../src/modules/project/index.js";
 import { ReportService } from "../src/modules/report-issue/report.service.js";
 import { shanghaiToday } from "../src/modules/task/task.rules.js";
 
@@ -52,6 +56,7 @@ interface AuditEntry {
   objectId: string;
   projectId: string | null;
   changes: unknown;
+  metadata?: Record<string, unknown>;
 }
 
 class FakeDatabase {
@@ -60,7 +65,9 @@ class FakeDatabase {
     insert: () => ({
       values: (value: OutboxRow) => {
         this.outbox.push(value);
-        return Promise.resolve();
+        return {
+          onConflictDoUpdate: async () => undefined,
+        };
       },
     }),
   } as unknown as DbClient;
@@ -75,6 +82,23 @@ class FakeAuditService {
   record = async (_client: DbClient, input: AuditEntry): Promise<void> => {
     this.entries.push(input);
   };
+}
+
+class FakeProjectGroupService {
+  bound = false;
+  activated = true;
+  name: string | null = "交付项目群";
+
+  async getGroup(projectId: string) {
+    return {
+      projectId,
+      bound: this.bound,
+      name: this.bound ? this.name : null,
+      chatidMasked: this.bound ? "****abcd" : null,
+      activated: this.bound && this.activated,
+      updatedAt: null,
+    };
+  }
 }
 
 function makeReport(id: string, overrides: Partial<DailyReportRow> = {}): DailyReportRow {
@@ -128,7 +152,11 @@ function makeIssue(id: string, overrides: Partial<IssueRow> = {}): IssueRow {
 
 /** 日报仓储替身：镜像真仓储的读面过滤（项目 + 筛选）、插入与乐观锁（同日多条 —— 无唯一键判重）。 */
 class FakeReportRepository {
-  project: { id: string; status: string } | null = { id: PROJECT, status: "active" };
+  project: { id: string; status: string; name: string } | null = {
+    id: PROJECT,
+    status: "active",
+    name: "新能源汽车总装输送线项目",
+  };
   reports = new Map<string, DailyReportRow>();
   inserted: DailyReportRow[] = [];
   reportIds = [REPORT_1, REPORT_2, "c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3", "c4c4c4c4-c4c4-4c4c-8c4c-c4c4c4c4c4c4"];
@@ -174,7 +202,7 @@ class FakeReportRepository {
     return true;
   }
 
-  async findProject(projectId: string): Promise<{ id: string; status: string } | null> {
+  async findProject(projectId: string): Promise<{ id: string; status: string; name: string } | null> {
     return this.project !== null && this.project.id === projectId ? this.project : null;
   }
 }
@@ -256,12 +284,15 @@ function makeReportService(
   reports: FakeReportRepository,
   issues: FakeIssueRepository,
   audit: FakeAuditService,
+  group: FakeProjectGroupService = new FakeProjectGroupService(),
 ): ReportService {
   return new ReportService(
     db as unknown as DatabaseService,
     reports as unknown as ReportRepository,
     issues as unknown as IssueRepository,
     audit as unknown as AuditService,
+    group as unknown as ProjectGroupService,
+    new AppConfig(loadEnv({ NODE_ENV: "test", DATABASE_URL: "postgres://test/test" })),
   );
 }
 
@@ -289,14 +320,51 @@ beforeEach(() => {
 /** 当天（Asia/Shanghai，与 service 同口径）：用真实 now 求值，避免用例随日期推移失真。 */
 const NOW_DAY = shanghaiToday(new Date());
 
+describe("日报项目群正文", () => {
+  const input = {
+    publicBaseUrl: "https://pm.libiaorobot.com/",
+    projectId: PROJECT,
+    projectName: "新能源汽车总装输送线项目",
+    reportId: REPORT_1,
+    reportDate: "2026-10-27",
+  };
+
+  it("标题写「日报已送达」，次行用项目名 + 日期作为纯文字链接", () => {
+    expect(buildDailyReportGroupBody(input)).toBe(
+      "日报已送达\n" +
+        "[新能源汽车总装输送线项目2026-10-27的日报记录]" +
+        "(https://pm.libiaorobot.com/#/project/" + PROJECT + "?view=daily&report=" + REPORT_1 + ")",
+    );
+  });
+
+  it("归一基址尾部斜杠并转义项目名中的 Markdown 与换行", () => {
+    expect(
+      buildDailyReportGroupBody({
+        ...input,
+        publicBaseUrl: "https://preview.example.com/base/",
+        projectName: " A\\B [一期]\n 项目 ",
+      }),
+    ).toBe(
+      "日报已送达\n" +
+        "[A\\\\B \\[一期\\] 项目2026-10-27的日报记录]" +
+        "(https://preview.example.com/base/#/project/" + PROJECT + "?view=daily&report=" + REPORT_1 + ")",
+    );
+  });
+
+  it("空基址直接失败，避免生成不可点击的相对链接", () => {
+    expect(() => buildDailyReportGroupBody({ ...input, publicBaseUrl: "  " })).toThrow(/PUBLIC_APP_BASE_URL/);
+  });
+});
+
 describe("日报（M6-01 / M6-02 · A3-01 ~ A3-09）", () => {
   function seed() {
     const db = new FakeDatabase();
     const reports = new FakeReportRepository();
     const issues = new FakeIssueRepository();
     const audit = new FakeAuditService();
+    const group = new FakeProjectGroupService();
     wireLinks(reports, issues);
-    return { db, reports, issues, audit, service: makeReportService(db, reports, issues, audit) };
+    return { db, reports, issues, audit, group, service: makeReportService(db, reports, issues, audit, group) };
   }
 
   it("提交当天日报：state=submitted；submittedAt 落库；审计 create + outbox report.submitted；无现场问题不生成问题", async () => {
@@ -630,7 +698,7 @@ describe("日报（M6-01 / M6-02 · A3-01 ~ A3-09）", () => {
 
   it("归档项目：写入口一律 409 PROJECT_ARCHIVED（ADR-027）", async () => {
     const { reports, issues, service } = seed();
-    reports.project = { id: PROJECT, status: "archived" };
+    reports.project = { id: PROJECT, status: "archived", name: "新能源汽车总装输送线项目" };
     issues.project = { id: PROJECT, status: "archived" };
     await expect(
       service.create(PROJECT, { date: NOW_DAY, state: "submitted", doneWork: "归档后" }, ACTOR),
@@ -658,6 +726,96 @@ describe("日报（M6-01 / M6-02 · A3-01 ~ A3-09）", () => {
       code: "NOT_FOUND",
       httpStatus: 404,
     });
+  });
+
+  it("同步项目群：非项目经理 403，不写审计 / outbox", async () => {
+    const { db, reports, audit, group, service } = seed();
+    reports.reports.set(REPORT_1, makeReport(REPORT_1));
+    group.bound = true;
+
+    await expect(service.syncToProjectGroup(PROJECT, REPORT_1, ACTOR, false)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      httpStatus: 403,
+    });
+    expect(audit.entries).toEqual([]);
+    expect(db.outbox).toEqual([]);
+  });
+
+  it("同步项目群：未绑定 409、草稿 400，均不写审计 / outbox", async () => {
+    const { db, reports, audit, group, service } = seed();
+    reports.reports.set(REPORT_1, makeReport(REPORT_1));
+
+    await expect(service.syncToProjectGroup(PROJECT, REPORT_1, ACTOR, true)).rejects.toMatchObject({
+      code: "REPORT_GROUP_NOT_BOUND",
+      httpStatus: 409,
+    });
+
+    group.bound = true;
+    reports.reports.set(REPORT_1, makeReport(REPORT_1, { state: "draft", submittedAt: null }));
+    await expect(service.syncToProjectGroup(PROJECT, REPORT_1, ACTOR, true)).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      httpStatus: 400,
+    });
+    expect(audit.entries).toEqual([]);
+    expect(db.outbox).toEqual([]);
+  });
+
+  it("同步项目群：已绑定但机器人未激活 → 409，提示原因与激活处置，不写审计 / outbox", async () => {
+    const { db, reports, audit, group, service } = seed();
+    reports.reports.set(REPORT_1, makeReport(REPORT_1));
+    group.bound = true;
+    group.activated = false;
+
+    await expect(service.syncToProjectGroup(PROJECT, REPORT_1, ACTOR, true)).rejects.toMatchObject({
+      code: "REPORT_GROUP_NOT_BOUND",
+      httpStatus: 409,
+      message: expect.stringContaining("已绑定，但机器人尚未激活"),
+    });
+    await expect(service.syncToProjectGroup(PROJECT, REPORT_1, ACTOR, true)).rejects.toMatchObject({
+      message: expect.stringContaining("请在项目群内 @LibiaoLink 发送一条消息完成激活"),
+    });
+    expect(audit.entries).toEqual([]);
+    expect(db.outbox).toEqual([]);
+  });
+
+  it("同步项目群：PM + 已提交 + 已绑定 → 202 受理；审计与 outbox 载荷 / 去重键按日报版本收口", async () => {
+    const { db, reports, audit, group, service } = seed();
+    reports.reports.set(REPORT_1, makeReport(REPORT_1, { reportDate: "2026-10-27", version: 7 }));
+    group.bound = true;
+    group.name = "总装项目交付群";
+
+    await expect(service.syncToProjectGroup(PROJECT, REPORT_1, ACTOR, true)).resolves.toEqual({
+      reportId: REPORT_1,
+      version: 7,
+      queued: true,
+      message: "已提交同步",
+    });
+    expect(audit.entries).toHaveLength(1);
+    expect(audit.entries[0]).toMatchObject({
+      action: "update",
+      objectType: "daily_report",
+      objectId: REPORT_1,
+      projectId: PROJECT,
+      metadata: { templateCode: "DAILY_REPORT_GROUP", reportVersion: 7, groupName: "总装项目交付群" },
+    });
+    expect(db.outbox).toEqual([
+      {
+        topic: "notify.group",
+        dedupeKey: "report.group-sync:" + REPORT_1 + ":v7",
+        status: "pending",
+        payload: {
+          projectId: PROJECT,
+          title: null,
+          body:
+            "日报已送达\n" +
+            "[新能源汽车总装输送线项目2026-10-27的日报记录]" +
+            "(https://pm.libiaorobot.com/#/project/" + PROJECT + "?view=daily&report=" + REPORT_1 + ")",
+          refType: "report",
+          refId: REPORT_1,
+          templateCode: "DAILY_REPORT_GROUP",
+        },
+      },
+    ]);
   });
 
   it("列表：日期区间与状态筛选 + 日期倒序；dateFrom > dateTo 400", async () => {

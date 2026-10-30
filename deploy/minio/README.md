@@ -1,6 +1,6 @@
-# deploy/minio/ · 对象存储沙箱（S7·file 存储接入）
+# deploy/minio/ · 对象存储沙箱与生产基线（S7·file 存储接入）
 
-ADR-006（2026-09-21 阶段 0 修订）定案：接口层只依赖 S3 协议、实现可替换。本目录是**本地 / 联调沙箱**（pinned MinIO，**仅沙箱，不代表生产选型**），不是生产部署模板。
+ADR-006（2026-09-21 阶段 0 修订）定案：接口层只依赖 S3 协议、实现可替换。ADR-038（2026-10-26）进一步定案：MinIO 作为后续生产对象存储，采用自维护发行版；本目录仍是**本地 / 联调沙箱**，不是生产部署模板，生产构建与维护见 `deploy/prod/minio/MAINTENANCE.md`。
 
 ## 阶段 0 结论（2026-09-20 实测；ADR-006 修订已定案，Push 126）
 
@@ -14,15 +14,15 @@ ADR-006 要求「阶段 0 必须核实 MinIO 许可与版本并锁定」。核�
 | 官方下载 | `https://dl.min.io/server/minio/release/**`（含 windows / linux 二进制与目录页）**全部 410 Gone** |
 | 上游仓库 | `github.com/minio/minio` 已 **archived**（最后推送 2026-04-24） |
 
-**含义**：ADR-006 写的切换触发条件「MinIO 许可或功能不满足」**已触发且更强** —— **上游归档、官方分发渠道下线**，社区版不再有安全更新。wmj 已据此定案（[PR #96](https://github.com/256-code/LibiaoLink/pull/96) / Push 126，评审 lan / px）：接口层不变，一期实现改为**可替换绑定** —— 沙箱继续用本目录 pinned 的版本，生产按候选顺序在 **M8 生产部署形态验证前**关闭（责任 px 运维 + lan 平台；关闭验收 = `storage:init -- --check` + `storage:it` 在目标实现上全绿）。**关闭验收已达成（2026-10-14）**：生产形态（本机 MinIO 单节点、本地构建镜像）上 `storage:init --check` 通过、`storage:it` 24/24 全绿、`readyz` 全绿（px 记录；待 lan 复核）。生产接入形态（2026-10-14）：S3 走 TLS https **同源**门面 `https://test-pm.libiaorobot.com`（443 `location /libiaolink/` = 桶名 → `minio:9000`；`proxy_pass` 不重写 / Host 原样透传保 SigV4；客户端网络仅放行 22/80/443，9443 / 9000 实测被拦）；`storage:it` 24/24 于同源门面复跑通过，开发机真实网络预签名 PUT / GET / DELETE 全绿；9443 保留为内网备用门面。
+**含义**：ADR-006 写的切换触发条件「MinIO 许可或功能不满足」**已触发且更强** —— **上游归档、官方分发渠道下线**，社区版不再有安全更新。wmj 已据此定案（[PR #96](https://github.com/256-code/LibiaoLink/pull/96) / Push 126，评审 lan / px）：接口层不变，一期实现改为**可替换绑定**；ADR-038 进一步定案生产采用 MinIO 自维护发行版，沙箱继续用本目录 pinned 的版本，生产维护与补丁流程见 `deploy/prod/minio/MAINTENANCE.md`（关闭验收 = `storage:init -- --check` + `storage:it` 在目标实现上全绿）。**关闭验收已达成（2026-10-14）**：生产形态（本机 MinIO 单节点、本地构建镜像）上 `storage:init --check` 通过、`storage:it` 24/24 全绿、`readyz` 全绿（px 记录；待 lan 复核）。生产接入形态（2026-10-14）：S3 走 TLS https **同源**门面 `https://test-pm.libiaorobot.com`（443 `location /libiaolink/` = 桶名 → `minio:9000`；`proxy_pass` 不重写 / Host 原样透传保 SigV4；客户端网络仅放行 22/80/443，9443 / 9000 实测被拦）；`storage:it` 24/24 于同源门面复跑通过，开发机真实网络预签名 PUT / GET / DELETE 全绿；9443 保留为内网备用门面。
 
-候选顺序（接口层只依赖 S3 协议，**换实现不动调用代码**，见 `server/src/storage/README.md`）：
+历史候选顺序（2026-09-21 ～ 2026-10-25；接口层只依赖 S3 协议，**换实现不动调用代码**，见 `server/src/storage/README.md`）；2026-10-26 ADR-038 已定案 MinIO 自维护，以下仅保留为历史与未来切换参考：
 
 1. 复用公司内网既有对象存储 / 既有 MinIO 集群（运维能力现成，风险最低）；
 2. SeaweedFS（Apache-2.0，活跃维护）等自建 S3 兼容实现；
 3. 公司云 OSS（受「不允许上传第三方云」约束，需先有云策略结论）。
 
-**运维待办（px 线，不依赖选型定案）**：把锁定的镜像**固化**到内网 registry 或做成 `docker save` 离线包 —— `docker-compose.yml` 的 digest 锁定只在 quay.io 还留着该 manifest 时有效，quay 也可能随时下架 —— **2026-10-13 实测已下架（匿名拉取 401 / token 内 $disabled）**：生产应急 = GitHub Release 官方资产（`minio.linux-amd64.RELEASE.2025-09-07T16-13-09Z`，SHA-256 `7c5bd851…b855f` 已校验）在服务器本地 `docker build` 出 `libiaolink/minio:RELEASE.2025-09-07T16-13-09Z`（构建件 `deploy/prod/minio/Dockerfile`；步骤见 `deploy/prod/README.md` §9），不再依赖 quay；`docker save` 离线归档仍随附。**两条能力缺口登记为「任何替代实现都必须满足的行为面」**：CORS 不能只依赖存储 API（沙箱走 `MINIO_API_CORS_ALLOW_ORIGIN` 服务端配置）；清理不依赖 lifecycle 规则（未完成分片靠存储侧内置 `stale_uploads_expiry` 兜底，草稿 30 天走应用侧 `files.purge_after` → worker）。
+**运维基线（ADR-038：lan 平台 + px 运维）**：把锁定的镜像**固化**到内网 registry 或做成 `docker save` 离线包 —— `docker-compose.yml` 的 digest 锁定只在 quay.io 还留着该 manifest 时有效，quay 也可能随时下架 —— **2026-10-13 实测已下架（匿名拉取 401 / token 内 $disabled）**：生产应急 = GitHub Release 官方资产（`minio.linux-amd64.RELEASE.2025-09-07T16-13-09Z`，SHA-256 `7c5bd851…b855f` 已校验）在服务器本地 `docker build` 出 `libiaolink/minio:RELEASE.2025-09-07T16-13-09Z`（构建件 `deploy/prod/minio/Dockerfile`；步骤见 `deploy/prod/README.md` §9），不再依赖 quay；`docker save` 离线归档仍随附。**两条能力缺口登记为「任何替代实现都必须满足的行为面」**：CORS 不能只依赖存储 API（沙箱走 `MINIO_API_CORS_ALLOW_ORIGIN` 服务端配置）；清理不依赖 lifecycle 规则（未完成分片靠存储侧内置 `stale_uploads_expiry` 兜底，草稿 30 天走应用侧 `files.purge_after` → worker）。RustFS 1.0.3 POC 已冻结（ADR-038），不 fork、不接生产。
 
 ## 启动（本地沙箱）
 

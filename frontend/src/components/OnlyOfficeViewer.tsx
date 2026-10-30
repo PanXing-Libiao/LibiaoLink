@@ -1,9 +1,16 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { OnlyOfficePreviewViewerConfig } from "../fileApi";
 import { getLocale, textOf, useT } from "../i18n";
+import { isMobileFilePreviewDevice } from "../mobilePreviewPolicy";
 
-/** 查看器就绪超时（计划 S4 · R5）：api.js 加载 + DocEditor 建会话后超过此时长仍未 onDocumentReady → 降级（重试 / 下载）。 */
-const READY_TIMEOUT_MS = 20_000;
+/** 移动端/窄屏使用 ONLYOFFICE mobile 编辑器：与文件预览设备口径共用，桌面窄窗口仍按桌面处理。 */
+export function isMobileOnlyOfficeEditor(): boolean {
+  return isMobileFilePreviewDevice();
+}
+
+/** 查看器就绪超时（S4 · R5 / 2026-10-28 移动端修订）：api.js、DocServer 移动 UI 与文档会话全部就绪后 onDocumentReady。
+ *  DocServer 查看器模板另有内建 require 超时；本轮随部署镜像延长到 120 秒，外层 90 秒先到时统一展示可重试降级。 */
+const READY_TIMEOUT_MS = 90_000;
 
 type DocEditorInstance = { destroyEditor: () => void };
 type DocsApiConstructor = new (placeholderId: string, config: Record<string, unknown>) => DocEditorInstance;
@@ -81,6 +88,7 @@ export function OnlyOfficeViewer({ viewer, onRetry }: { viewer: OnlyOfficePrevie
   const placeholderId = "oo-viewer-" + rawId.replace(/[^a-zA-Z0-9_-]/g, "");
   const [status, setStatus] = useState<"loading" | "ready" | "error" | "timeout">("loading");
   const [detail, setDetail] = useState<string | null>(null);
+  const mobile = isMobileOnlyOfficeEditor();
   const editorRef = useRef<DocEditorInstance | null>(null);
   // 焦点守卫（2026-10-10 修复「点击 iframe 内部后 Esc 关不掉」）：查看器 iframe 跨域，键盘落在其中时宿主页面
   // 的 capture 监听收不到；实测 DocServer 9.4 view 配置下 Esc 也不会回落 onRequestClose，只能宿主侧兜住 ——
@@ -108,6 +116,13 @@ export function OnlyOfficeViewer({ viewer, onRetry }: { viewer: OnlyOfficePrevie
         if (cancelled) {
           return;
         }
+        if (mobile) {
+          try {
+            window.localStorage.removeItem("asc-force-editor-type");
+          } catch {
+            // 隐私模式 / 存储禁用时忽略；DocEditor 仍按本次传入的 mobile 类型初始化。
+          }
+        }
         const docsApi = window.DocsAPI;
         if (docsApi === undefined) {
           throw new Error(t("oov.notMounted"));
@@ -115,6 +130,7 @@ export function OnlyOfficeViewer({ viewer, onRetry }: { viewer: OnlyOfficePrevie
         editorRef.current = new docsApi.DocEditor(placeholderId, {
           width: "100%",
           height: "100%",
+          type: mobile ? "mobile" : "desktop",
           documentType: viewer.documentType,
           document: viewer.document,
           editorConfig: viewer.editorConfig,
@@ -161,11 +177,12 @@ export function OnlyOfficeViewer({ viewer, onRetry }: { viewer: OnlyOfficePrevie
       ref={rootRef}
       data-onlyoffice-viewer="true"
       data-oo-status={status}
+      data-onlyoffice-mobile={mobile ? "true" : undefined}
       tabIndex={-1}
       onClick={(event) => {
         event.stopPropagation();
       }}
-      className="relative h-[80vh] w-[min(90vw,calc(100vw-3rem))] overflow-hidden rounded-xl bg-white shadow-2xl outline-none"
+      className="relative h-[80vh] w-[calc(100vw-1rem)] overflow-hidden rounded-xl bg-white shadow-2xl outline-none sm:w-[min(90vw,calc(100vw-3rem))]"
     >
       <div id={placeholderId} className="h-full w-full" />
       {status === "loading" ? (

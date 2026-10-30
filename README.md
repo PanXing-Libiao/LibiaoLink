@@ -18,6 +18,7 @@
 | `database/` | **数据库基线**（g3）：只追加迁移（`migrations/`，0001 一期基线 DDL）、最小权限角色（`roles/`）、带 advisory lock 与漂移校验的迁移器（`scripts/migrate.mjs`）；`npm run migrate` 空库一键迁移（详见 `database/README.md`） |
 | `server/` | **后端服务**（g4）：NestJS 12 模块化单体骨架（api / worker 双入口）、统一错误与日志、健康检查、Drizzle schema（对齐 `database/` 基线）与服务边界规则（`npm run check:boundaries`）（详见 `server/README.md`）
 | `docs/本地沙箱(LibiaoLink 演练环境).md` | **本地沙箱现状**：起停、登录入口与账号、配置快照、联邦原理、常见问题、与公司环境对照 |
+| `docs/本地开发环境(Windows-WSL2-Docker).md` | **Windows 本地环境标准**：WSL2 + Ubuntu + 原生 Docker Engine 的安装、验收与排障；不使用 Docker Desktop |
 | `docs/开发者接入注意事项(SSO接入标准).md` | **开发者必读**：只用标准 OIDC、Grant Types、JWT-Custom 与 Token fields、字段命名差异 |
 | `docs/企业微信(WeCom)对接指南.md` | **企微对接**：登录通道（Provider 字段/可信域名）+ 通讯录同步（离职自动禁用）+ 常见报错 |
 | `docs/实测报告(SSO接入验证).md` | **实测记录**：本地沙箱三轮实测（PKCE 全链路、公司接入标准落地、合规改造）+ 公司测试环境端到端演练 + 正式环境只读核对 |
@@ -47,6 +48,8 @@
 ### 快速开始
 
 本地体验当前分支的完整 STEP 业务流程（登录 → 项目/任务附件上传 → 文件库 → CAD 预览），使用 [本地完整系统启动说明](server/cad-engine/README.md#本地完整系统)，地址为 `http://localhost:3000`；无需先合入 main，不连接公司数据库。
+
+> **Windows 开发机**：公司不允许 Docker Desktop。先按 [WSL2 + Docker Engine 安装说明](docs/本地开发环境(Windows-WSL2-Docker).md) 配好 Ubuntu，并在这个 Ubuntu 终端里执行下面的命令；不要在 PowerShell 中调用 Docker。
 
 ```bash
 # 1. 本地联调：起一套 Casdoor 沙箱（公司环境已就绪，接入方一般不需要自己部署）

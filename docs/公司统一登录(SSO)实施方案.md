@@ -57,7 +57,7 @@ AD/LDAP 先只做认证源（provider），跑通后再开定时同步（sync）
 ### 3.1 前置条件
 
 - 一台 Linux 服务器（生产建议 2C4G 起，磁盘按日志量给）
-- Docker + Docker Compose v2
+- Docker + Docker Compose v2（Windows 开发机使用 WSL2 Ubuntu 内的原生 Docker Engine，不使用 Docker Desktop；见 [Windows 本地开发环境](本地开发环境(Windows-WSL2-Docker).md)）
 - 一个域名，例如 `auth.libiaorobot.com`，并准备好 HTTPS 证书
 - 数据库：MySQL 8 / PostgreSQL（生产不要用 SQLite）
 - Redis：**可选，但多副本必须用**（会话、缓存）
@@ -149,6 +149,7 @@ server {                                # HTTP 全量跳 HTTPS
    - `Grant Types`：**公司标准只勾 `authorization_code`**（服务间调用等特殊场景另行审批）
    - `Token Format`：按公司标准选 `JWT-Custom`
    - `Token Fields`：默认只开放 `Name`、`Owner`、`Id`、`DisplayName`、`Email`，其他按需开放
+   - **按群组限制页面 / 项目时必须额外勾选 `Groups`**（LibiaoLink「权限管理」依赖该声明；未勾选时登录写入的 `groups` 为空缺，已有群组关系不会被清空，但新群组变更不会生效）。勾选后让用户重新登录，并用 `/auth/me` 检查 `claims.groups`。
    - 以上三项建议在组织级 `Default Token Format` / `Default Token Fields` 里固化，新应用自动继承（详见 `docs/开发者接入注意事项(SSO接入标准).md`）
    - `Token expire` / `Refresh expire`：访问令牌建议 1~2 小时，刷新令牌 7~30 天
    - `Enable Password` / `Enable Sign Up`：公司内部系统建议只开密码登录、关闭自助注册

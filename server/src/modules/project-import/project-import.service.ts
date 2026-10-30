@@ -1,6 +1,10 @@
 
 import { createHash, randomUUID } from "node:crypto";
-import { Injectable, Logger } from "@nestjs/common";
+import { createReadStream, createWriteStream, rmSync } from "node:fs";
+import { join } from "node:path";
+import { Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { Injectable, Logger, type OnModuleInit } from "@nestjs/common";
 import { IMPORT_ALLOWED_EXTENSIONS, IMPORT_MAX_FILE_BYTES, IMPORT_PREVIEW_TTL_MINUTES } from "@libiaolink/contracts";
 import type {
   ImportAccount,
@@ -15,10 +19,17 @@ import type {
   ProjectImportResult,
 } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
+import {
+  cleanupStaleImportTempDirs,
+  createImportTempDirectory,
+  isNoSpaceError,
+  temporaryStorageError,
+} from "../../common/http/import-temp.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { buildObjectKey, extensionOf, ObjectStorage } from "../../storage/index.js";
 import { AuditService } from "../admin/index.js";
 import type { UserRow } from "../identity/index.js";
+import { PermissionService } from "../permission/index.js";
 import { FlowService, ProjectMemberRepository, ProjectRepository } from "../project/index.js";
 import { TaskNodeRepository } from "../template/index.js";
 import type { TaskNodeRow } from "../template/index.js";
@@ -43,7 +54,7 @@ import type {
   ImportStakeholderInsert,
   ImportTaskInsert,
 } from "./project-import.repository.js";
-import { ZipArchive, parseWorkbook } from "./xlsx.js";
+import { ZipArchive, parseWorkbook, parseWorkbookFile } from "./xlsx.js";
 import type { ParsedWorkbook } from "./xlsx.js";
 
 /**
@@ -75,13 +86,22 @@ import type { ParsedWorkbook } from "./xlsx.js";
 /** 提醒文案语言（Accept-Language 取 zh / en；缺省 zh）。 */
 export type ImportLocale = "zh" | "en";
 
-/** 预览入参：HTTP 层读完 multipart 后把字节与文件名交给用例（服务端不落盘）。 */
-export interface ImportPreviewInput {
-  bytes: Buffer;
+/** 导入文件在盘上的字节区间（multipart 临时文件；调用方负责在 preview 返回后清理）。 */
+export interface ImportFileSource {
+  path: string;
+  offset: number;
+  sizeBytes: number;
+}
+
+/** 预览入参：生产走 sourceFile（盘上区间），测试 / 小文件兼容走 bytes；服务端不整读上传包。 */
+export type ImportPreviewInput = {
   fileName: string;
   actorId: string;
   locale: ImportLocale;
-}
+} & (
+  | { sourceFile: ImportFileSource; bytes?: never }
+  | { bytes: Uint8Array; sourceFile?: never }
+);
 
 /** 人员解析结果：accounts 进面板，byName 供提交挂人（null = 库里还没有这个账号）。 */
 interface AccountResolution {
@@ -138,7 +158,7 @@ const TITLE_LIMIT = 500;
 
 /** 导入表导入用例（h2+ · 导入项目按钮的服务端落点）。 */
 @Injectable()
-export class ProjectImportService {
+export class ProjectImportService implements OnModuleInit {
   private readonly logger = new Logger(ProjectImportService.name);
 
   constructor(
@@ -147,11 +167,19 @@ export class ProjectImportService {
     private readonly projects: ProjectRepository,
     private readonly members: ProjectMemberRepository,
     private readonly flow: FlowService,
+    private readonly permission: PermissionService,
     private readonly nodes: TaskNodeRepository,
     private readonly audit: AuditService,
     private readonly storage: ObjectStorage,
     private readonly translate: TranslateService,
   ) {}
+
+  /** 启动清掉上次进程崩溃遗留的导入临时目录（按前缀 + mtime 保龄，不碰活跃请求）。 */
+  onModuleInit(): void {
+    const cleaned = cleanupStaleImportTempDirs();
+    if (cleaned.removed > 0) this.logger.log("导入临时目录启动清扫：移除 " + String(cleaned.removed) + " 个");
+    if (cleaned.failed > 0) this.logger.warn("导入临时目录启动清扫失败 " + String(cleaned.failed) + " 个");
+  }
 
   /**
    * 解析预览（不写业务库）：文件名闸 → 解析 + 转换 → 账号 / 节点对账 → 源文件入对象存储 → 票据落库。
@@ -159,24 +187,44 @@ export class ProjectImportService {
    */
   async preview(input: ImportPreviewInput): Promise<ProjectImportPreview> {
     const fileName = sanitizeFileName(input.fileName);
-    assertImportFile(fileName, input.bytes.length);
-    const { parse, workbook } = parseLegacy(input.bytes, fileName);
+    const source = input.sourceFile;
+    const sizeBytes = source === undefined ? (input.bytes?.byteLength ?? 0) : source.sizeBytes;
+    assertImportFile(fileName, sizeBytes);
+
+    let parse!: LegacyParse;
+    let skippedImages = 0;
+    let workbook: ParsedWorkbook | null = null;
+    try {
+      if (source === undefined) {
+        const bytes = input.bytes;
+        if (bytes === undefined) {
+          throw new AppError("IMPORT_FILE_INVALID", "缺少上传文件");
+        }
+        const buffer = Buffer.isBuffer(bytes)
+          ? bytes
+          : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        workbook = parseWorkbook(buffer);
+      } else {
+        workbook = parseWorkbookFile(source.path, { offset: source.offset, length: source.sizeBytes });
+      }
+      parse = convertLegacyWorkbook(workbook, fileName);
+      skippedImages = countSkippedImages(parse, (media) => workbook!.hasMedia(media));
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      throw new AppError("IMPORT_PARSE_FAILED", "导入表解析失败：" + messageOf(error));
+    } finally {
+      workbook?.close();
+    }
     const extraSeeds: LegacyIssueSeed[] = [];
-    const skippedImages = countSkippedImages(parse, (media) => workbook.hasMedia(media));
     const resolution = await this.resolveAccounts(collectPeople(parse));
     const { groups } = await this.buildNodeGroups(parse.tasks);
     const previewId = randomUUID();
     const objectKey = "imports/" + previewId + "/source." + extensionOf(fileName);
-    await this.storage.putObject({
-      objectKey,
-      body: input.bytes,
-      contentType: XLSX_MIME,
-      metadata: { origin: "legacy-import", createdBy: input.actorId },
-    });
+    await this.putSource(objectKey, input, sizeBytes);
     const at = new Date();
     const expiresAt = new Date(at.getTime() + IMPORT_PREVIEW_TTL_MINUTES * 60_000);
     const payload: ImportPreviewPayload = {
-      file: { name: fileName, size: input.bytes.length },
+      file: { name: fileName, size: sizeBytes },
       parse,
       accounts: resolution.accounts,
     };
@@ -184,7 +232,7 @@ export class ProjectImportService {
       {
         id: previewId,
         fileName,
-        fileSizeBytes: input.bytes.length,
+        fileSizeBytes: sizeBytes,
         objectKey,
         payload: payload as unknown as Record<string, unknown>,
         createdBy: input.actorId,
@@ -236,6 +284,30 @@ export class ProjectImportService {
       nodes: groups.map(contractNodeOf),
       issues,
     };
+  }
+
+  /** 源文件入对象存储：生产路径从 multipart 临时文件流式上传，不重新缓冲整包。 */
+  private async putSource(objectKey: string, input: ImportPreviewInput, sizeBytes: number): Promise<void> {
+    const metadata = { origin: "legacy-import", createdBy: input.actorId };
+    const source = input.sourceFile;
+    if (source !== undefined) {
+      await this.storage.putObjectStream({
+        objectKey,
+        body: createReadStream(source.path, {
+          start: source.offset,
+          end: source.offset + source.sizeBytes - 1,
+        }),
+        sizeBytes,
+        contentType: XLSX_MIME,
+        metadata,
+      });
+      return;
+    }
+    const bytes = input.bytes;
+    if (bytes === undefined) {
+      throw new AppError("IMPORT_FILE_INVALID", "缺少上传文件");
+    }
+    await this.storage.putObject({ objectKey, body: bytes, contentType: XLSX_MIME, metadata });
   }
 
   /**
@@ -318,6 +390,17 @@ export class ProjectImportService {
         managerFallbackSeed(placement.managerNames.map((name) => stripParen(name))),
       );
     }
+    const groupAccess = await this.permission.groupAccessOf(actorId);
+    if (
+      groupAccess.enforced &&
+      !groupAccess.admin &&
+      groupAccess.ownEdit &&
+      !groupAccess.allEdit &&
+      !managerIds.includes(actorId)
+    ) {
+      // 「仅自己的项目可编辑」账号新建 / 导入项目后必须仍能访问该项目：与 ProjectService 新建口径一致。
+      managerIds.push(actorId);
+    }
     const unresolvedIssues = parse.reports.filter((report) => report.issue !== null && report.issue.state !== "done").length;
     if (unresolvedIssues > 0) {
       extraSeeds.push(issueOwnerFallbackSeed(resolvedManagerName(parse, resolution), unresolvedIssues));
@@ -338,18 +421,19 @@ export class ProjectImportService {
         issueCount += 1;
       });
     }
-    const imageBuild = buildImagePlans(
-      parse,
-      (media) => zip.has("xl/media/" + media),
-      issueIndexByReport,
-    );
     const uploadedImageKeys: string[] = [];
     const uploadedPlans: UploadedImagePlan[] = [];
-    let skippedImages = imageBuild.skipped;
+    let skippedImages = 0;
     try {
+      const imageBuild = buildImagePlans(
+        parse,
+        (media) => zip.has("xl/media/" + media),
+        issueIndexByReport,
+      );
+      skippedImages = imageBuild.skipped;
       for (const plan of imageBuild.plans) {
         throwIfCancelled(signal);
-        // 逐张读取：method 0 返回源 Buffer 视图，method 8 仅在这一轮解压；不进入 ZipArchive 缓存。
+        // 逐张读取：只保留当前图片字节，解压结果不进入 ZipArchive 缓存。
         const bytes = zip.readUncached("xl/media/" + plan.media);
         if (bytes === null) {
           skippedImages += 1;
@@ -369,6 +453,8 @@ export class ProjectImportService {
     } catch (error) {
       await this.discardImages(uploadedImageKeys);
       throw error;
+    } finally {
+      zip.close();
     }
     if (skippedImages > 0) {
       extraSeeds.push(imageRowMissingSeed(skippedImages));
@@ -841,16 +927,45 @@ export class ProjectImportService {
     return { groups, groupIndexByTask };
   }
 
-  /** 源工作簿取回（提交时解内嵌图）；对象被生命周期清掉 = 票据事实过期（410，请重新解析）。 */
+  /**
+   * 源工作簿取回（提交时解内嵌图）：对象流落到 0600 临时文件后按 ZIP 偏移读取，
+   * 不再把整份源文件（上限 256 MB）读进 API 堆内存。对象被生命周期清掉 = 票据事实过期（410）。
+   */
   private async readSourceZip(objectKey: string): Promise<ZipArchive> {
-    const object = await this.storage.getObject(objectKey);
+    const object = await this.storage.getObjectStream(objectKey);
     if (object === null) {
       throw new AppError("IMPORT_PREVIEW_EXPIRED", "预览源文件已清理（票据过期），请重新选择文件解析");
     }
-    const bytes = Buffer.isBuffer(object.bytes)
-      ? object.bytes
-      : Buffer.from(object.bytes.buffer, object.bytes.byteOffset, object.bytes.byteLength);
-    return ZipArchive.open(bytes);
+    let temporaryRoot: string | null = null;
+    try {
+      if (object.sizeBytes > IMPORT_MAX_FILE_BYTES) {
+        throw new AppError("IMPORT_PREVIEW_EXPIRED", "预览源文件超过导入上限，请重新选择文件解析");
+      }
+
+      temporaryRoot = await createImportTempDirectory(object.sizeBytes);
+      const root = temporaryRoot;
+      const temporaryPath = join(root, "source.xlsx");
+      let total = 0;
+      const limiter = new Transform({
+        transform(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null, data?: Buffer) => void): void {
+          total += chunk.length;
+          if (total > IMPORT_MAX_FILE_BYTES) {
+            callback(new AppError("IMPORT_PREVIEW_EXPIRED", "预览源文件超过导入上限，请重新选择文件解析"));
+            return;
+          }
+          callback(null, chunk);
+        },
+      });
+      await pipeline(object.stream, limiter, createWriteStream(temporaryPath, { flags: "wx", mode: 0o600 }));
+      return ZipArchive.openFile(temporaryPath, {
+        onClose: () => rmSync(root, { recursive: true, force: true }),
+      });
+    } catch (error) {
+      object.stream.destroy();
+      if (temporaryRoot !== null) rmSync(temporaryRoot, { recursive: true, force: true });
+      if (isNoSpaceError(error)) throw temporaryStorageError();
+      throw error;
+    }
   }
 
   /** 取消 / 失败收尾（Push 321）：丢弃本次已上传的图片对象（尽力而为；重试会重新生成对象键）。 */
@@ -899,17 +1014,6 @@ function assertImportFile(fileName: string, size: number): void {
       "IMPORT_FILE_INVALID",
       "文件超过上限（" + String(Math.floor(IMPORT_MAX_FILE_BYTES / 1024 / 1024)) + " MB），请拆分后再导入",
     );
-  }
-}
-
-/** 解析 + 转换：解析期异常统一 422 IMPORT_PARSE_FAILED（导入表结构不对、不是 xlsx、缺任务 sheet）。 */
-function parseLegacy(bytes: Buffer, fileName: string): { parse: LegacyParse; workbook: ParsedWorkbook } {
-  try {
-    const workbook = parseWorkbook(bytes);
-    return { parse: convertLegacyWorkbook(workbook, fileName), workbook };
-  } catch (error) {
-    if (error instanceof AppError) throw error;
-    throw new AppError("IMPORT_PARSE_FAILED", "导入表解析失败：" + messageOf(error));
   }
 }
 

@@ -83,7 +83,7 @@ describe("audit hints follow durable writes", () => {
     const execute = vi.fn(async (_statement: SQL) => {});
     const client = { insert: () => ({ values }), execute };
     const repository = new AuditRepository({} as never);
-    const input = { occurredAt: new Date(), actorId: null, actorName: "private", action: "download", objectType: "file", objectId: "private-id", projectId: null, result: "succeeded", entry: "api", summary: "private summary", changes: null, metadata: {} };
+    const input = { occurredAt: new Date(), actorId: null, actorName: "private", action: "download", objectType: "file", objectId: "private-id", projectId: null, projectCode: null, projectName: null, result: "succeeded", entry: "api", summary: "private summary", changes: null, metadata: {} };
     await repository.insert(client as never, input);
     expect(execute).toHaveBeenCalledOnce();
     const sql = new PgDialect().sqlToQuery(execute.mock.calls[0]![0]!);

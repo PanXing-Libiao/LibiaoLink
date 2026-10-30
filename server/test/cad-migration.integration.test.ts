@@ -17,7 +17,7 @@ it.skipIf(!databaseUrl)("0068 upgrades existing STEP records and supports a coor
     await db.query("insert into files values($1)", [fileId]); await db.query("insert into file_versions values($1)", [versionId]);
     const oldInsert = "insert into cad_artifacts(file_id,version_id,source_sha256,source_bytes,source_name,engine_version) values($1,$2,$3,10,'box.step','old-release') on conflict(version_id,engine_version,name_codepage) do nothing returning id";
     const oldId = (await db.query(oldInsert, [fileId, versionId, sha])).rows[0].id;
-    await db.query(await readFile(new URL("../../database/migrations/0068_cad_dxf_input_sets.sql", import.meta.url), "utf8"));
+    await db.query(await readFile(new URL("../../database/migrations/0077_cad_dxf_input_sets.sql", import.meta.url), "utf8"));
     expect((await db.query("select id,source_format,main_path,companions,resource_set_hash from cad_artifacts")).rows).toEqual([
       { id: oldId, source_format: "STEP", main_path: "box.step", companions: [], resource_set_hash: "0".repeat(64) },
     ]);

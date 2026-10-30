@@ -8,6 +8,7 @@
   --muted: #6b7280;
   --line: #e5e7eb;
   --accent: #feca04;
+  --app-header-height: 4rem;
 }
 
 * {
@@ -249,36 +250,10 @@ body {
   animation: ll-plan-bg-panel-in 240ms cubic-bezier(0.175, 0.885, 0.32, 1.1) both;
 }
 
-/* 登录后企微绑定提醒（Push 369）：右侧悬浮卡轻弹入场 —— 从右侧 14px + 下方 10px 处缩放淡入，
-   轻微回弹后回到垂直居中位；prefers-reduced-motion 下直接显示。 */
-@keyframes ll-guide-pop-in {
-  0% {
-    opacity: 0;
-    translate: 14px calc(10px - 50%);
-    scale: 0.96;
-  }
-  62% {
-    opacity: 1;
-    translate: 0 calc(-50% - 2px);
-    scale: 1.01;
-  }
-  100% {
-    opacity: 1;
-    translate: 0 -50%;
-    scale: 1;
-  }
-}
-
-.wecom-guide-pop {
-  transform-origin: right center;
-  will-change: translate, scale, opacity;
-  animation: ll-guide-pop-in 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-/* 顶栏「站内信」未读红点（Push 352 · 业务口径 2026-10-16「在这个左侧增加站内信按钮 点击后出现局部弹窗
+/* 顶栏「站内信」红点（Push 352 / Push 540 · 业务口径 2026-10-16「在这个左侧增加站内信按钮 点击后出现局部弹窗
    用来消息通知」）：样式借 Transitions.dev「Notification badge」样张 —— 未读出现 = 260ms 自左下角滑入
    + 弹性放大回弹（cubic-bezier(0.34,1.36,0.64,1)）；读完清零 = 180ms 缩小 + 模糊消散。
-   红点常挂按钮右上角（pointer-events:none，不抢按钮点击）。 */
+   有未读显示数字；仅未绑定企微显示无数字圆点；红点常挂按钮右上角（pointer-events:none，不抢按钮点击）。 */
 @keyframes ll-inbox-badge-slide-in {
   from { transform: translate(-8px, 12px); }
   to   { transform: translate(0, 0); }
@@ -319,6 +294,13 @@ body {
     opacity 400ms cubic-bezier(0.34, 1.36, 0.64, 1),
     filter 500ms cubic-bezier(0.34, 1.36, 0.64, 1);
   will-change: transform, opacity, filter;
+}
+
+.inbox-badge-dot[data-shape="dot"] {
+  min-width: 10px;
+  width: 10px;
+  height: 10px;
+  padding: 0;
 }
 
 .inbox-badge[data-open="false"] .inbox-badge-dot {
@@ -422,7 +404,6 @@ body {
   .menu-pop,
   .submenu-pop,
   .plan-bg-panel-pop,
-  .wecom-guide-pop,
   .ll-toast,
   .ll-toast.is-closing,
   .ll-toast-top,
@@ -1251,6 +1232,276 @@ body {
     transition: none;
   }
 }
+
+/* 全局顶栏在手机 / 平板上的紧凑变量；桌面仍使用原有 64px 高度。
+   横屏低高度时导航改为左侧竖栏，不占用本就有限的纵向空间。 */
+.app-header {
+  padding-top: env(safe-area-inset-top);
+}
+
+.app-header__inner,
+.app-header__brand,
+.app-header__actions,
+.app-header__control-text {
+  min-width: 0;
+}
+
+.app-header__logo {
+  flex: 0 0 auto;
+}
+
+.app-header__control-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-nav {
+  display: none;
+}
+
+@media (max-width: 1023.98px) {
+  :root {
+    --app-header-height: 3.5rem;
+  }
+
+  .app-header .app-header__inner {
+    height: var(--app-header-height);
+    gap: 0.5rem;
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+  }
+
+  .app-header .app-header__logo {
+    height: 2.25rem;
+  }
+
+  .app-header__brand-copy {
+    display: none;
+  }
+
+  .app-header .app-header__actions {
+    gap: 0.375rem;
+  }
+
+  .app-header .app-header__icon-button {
+    width: 2.5rem;
+    height: 2.5rem;
+  }
+
+  .app-header .app-header__pill {
+    height: 2.5rem;
+    max-width: 4.75rem;
+    gap: 0.25rem;
+    padding-left: 0.625rem;
+    padding-right: 0.625rem;
+    font-size: 0.6875rem;
+  }
+
+  .app-header__control-prefix {
+    display: none;
+  }
+
+  .app-header__control-value {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-nav {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 45;
+    display: block;
+    padding-right: env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    border-top: 1px solid rgba(228, 228, 231, 0.92);
+    background: rgba(255, 255, 255, 0.94);
+    box-shadow: 0 -10px 30px -24px rgba(15, 23, 42, 0.45);
+    -webkit-backdrop-filter: blur(16px) saturate(1.2);
+    backdrop-filter: blur(16px) saturate(1.2);
+  }
+
+  .mobile-nav__inner {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    width: min(100%, 42rem);
+    min-height: 4.25rem;
+    margin: 0 auto;
+    padding: 0.375rem 0.5rem 0.25rem;
+  }
+
+  .mobile-nav__link {
+    display: flex;
+    min-width: 0;
+    min-height: 3.25rem;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.125rem;
+    border-radius: 0.875rem;
+    color: #71717a;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    line-height: 1.1;
+    text-decoration: none;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    transition: color 160ms ease, background-color 160ms ease;
+  }
+
+  .mobile-nav__icon {
+    display: flex;
+    width: 2.5rem;
+    height: 2rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.75rem;
+    opacity: 0.62;
+    transition: opacity 160ms ease, background-color 160ms ease, transform 160ms ease;
+  }
+
+  .mobile-nav__label {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-nav__link:active,
+  .mobile-nav__link:focus-visible {
+    color: #27272a;
+    background: rgba(244, 244, 245, 0.75);
+  }
+
+  .mobile-nav__link:focus-visible {
+    outline: 2px solid rgba(251, 191, 36, 0.72);
+    outline-offset: 1px;
+  }
+
+  .mobile-nav__link[aria-current="page"] {
+    color: #18181b;
+    font-weight: 700;
+  }
+
+  .mobile-nav__link[aria-current="page"] .mobile-nav__icon {
+    opacity: 1;
+    background: rgba(254, 202, 4, 0.16);
+    transform: translateY(-1px);
+  }
+
+  body[data-app-shell="true"] main[class] {
+    padding-bottom: calc(5.75rem + env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-width: 1023.98px) and (prefers-reduced-motion: reduce) {
+  .mobile-nav__link,
+  .mobile-nav__icon {
+    transition: none;
+  }
+}
+
+@media (max-width: 639.98px) {
+  :root {
+    --app-header-height: 3.25rem;
+  }
+
+  .app-header .app-header__inner {
+    gap: 0.25rem;
+    padding-left: max(0.75rem, env(safe-area-inset-left));
+    padding-right: max(0.75rem, env(safe-area-inset-right));
+  }
+
+  .app-header .app-header__logo {
+    height: 2rem;
+  }
+
+  .app-header .app-header__actions {
+    gap: 0.25rem;
+  }
+
+  .app-header .app-header__pill {
+    max-width: 4.25rem;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+}
+
+@media (max-width: 1023.98px) and (orientation: landscape) and (max-height: 500px) {
+  :root {
+    --app-header-height: 3rem;
+  }
+
+  .app-header .app-header__inner {
+    gap: 0.25rem;
+    padding-left: max(0.75rem, env(safe-area-inset-left));
+    padding-right: max(0.75rem, env(safe-area-inset-right));
+  }
+
+  .app-header .app-header__logo {
+    height: 1.875rem;
+  }
+
+  .app-header .app-header__icon-button {
+    width: 2.25rem;
+    height: 2.25rem;
+  }
+
+  .app-header .app-header__pill {
+    height: 2.25rem;
+    max-width: 4.25rem;
+  }
+
+  .mobile-nav {
+    top: calc(var(--app-header-height) + env(safe-area-inset-top));
+    right: auto;
+    bottom: 0;
+    width: calc(4.25rem + env(safe-area-inset-left));
+    padding: 0 0 0 env(safe-area-inset-left);
+    border-top: 0;
+    border-right: 1px solid rgba(228, 228, 231, 0.92);
+    box-shadow: 10px 0 30px -24px rgba(15, 23, 42, 0.45);
+  }
+
+  .mobile-nav__inner {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.375rem 0.375rem calc(0.375rem + env(safe-area-inset-bottom));
+  }
+
+  .mobile-nav__link {
+    flex: 1 1 0;
+    min-height: 3rem;
+    gap: 0.125rem;
+    border-radius: 0.75rem;
+  }
+
+  .mobile-nav__icon {
+    width: 2.25rem;
+    height: 1.75rem;
+  }
+
+  .mobile-nav__label {
+    font-size: 0.625rem;
+  }
+
+  body[data-app-shell="true"] main[class] {
+    padding-left: calc(4.25rem + env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+    padding-bottom: 0;
+  }
+}
+
 
 /* ============================================================================
    项目总览「导出 PDF」按钮（业务口径 2026-10-09：按钮放在项目总览工具区，导出项目总览数据给客户看；
@@ -2680,4 +2931,1224 @@ body {
   .ll-tooltip {
     animation: none;
   }
+}
+
+
+/* 权限看板（2026-10-24 · 业务口径「可以开始做了」）：图表入场、刷新反馈、卡片与部门行悬停；
+   动效只在入场阶段执行（backwards），结束后把 transform 交还给 hover，避免动画锁死悬停位移。 */
+@keyframes ll-access-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes ll-access-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes ll-access-number-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes ll-access-bar-in {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+
+@keyframes ll-access-segment-in {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@keyframes ll-access-donut-in {
+  from {
+    opacity: 0;
+    transform: rotate(-18deg) scale(0.88);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(0) scale(1);
+  }
+}
+
+@keyframes ll-access-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes ll-access-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.access-dash-card {
+  animation: ll-access-card-in 380ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+.access-dash-donut {
+  animation: ll-access-donut-in 520ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+.access-dash-number,
+.access-dash-bar-number {
+  animation: ll-access-number-in 300ms ease-out 150ms backwards;
+}
+
+.access-dash-admin {
+  animation: ll-access-fade-in 280ms ease-out backwards;
+}
+
+.access-dash-bar {
+  transform-origin: center bottom;
+  animation: ll-access-bar-in 520ms cubic-bezier(0.22, 1, 0.36, 1) 120ms backwards;
+}
+
+.access-dash-segment {
+  transform-origin: left center;
+  animation: ll-access-segment-in 480ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+.access-refresh-spin {
+  animation: ll-access-spin 700ms linear infinite;
+}
+
+.access-modal-backdrop {
+  animation: ll-access-fade-in 160ms ease-out both;
+}
+
+.access-modal-panel {
+  animation: ll-access-modal-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .access-dash-card,
+  .access-dash-donut,
+  .access-dash-number,
+  .access-dash-bar-number,
+  .access-dash-admin,
+  .access-dash-bar,
+  .access-dash-segment,
+  .access-refresh-spin,
+  .access-modal-backdrop,
+  .access-modal-panel {
+    animation: none;
+  }
+
+  .access-dash-card,
+  .access-dash-bar,
+  .access-dash-segment {
+    transition: none;
+  }
+}
+
+
+/* ============================================================================
+   2026-10-28 手机端逐页适配：横屏优先、竖屏保底。
+   桌面 >=1024px 不进入本段任何布局分支；<=1023px 只调整移动外壳与吸顶基准；
+   <=639.98px 才把宽表 / 网格任务行切成字段卡，844x390 横屏继续保留完整表格。
+   ============================================================================ */
+
+/* 仪表盘独立视口：桌面行为与原布局一致，手机竖屏才有可滚动 / 可平移的画布。 */
+.hub-dash-viewport {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.hub-dash-viewport > * {
+  min-width: 0;
+  min-height: 0;
+}
+
+@media (max-width: 1023.98px) {
+  /* 所有页内吸顶栏统一跟随真实顶栏高度（含刘海安全区），不再写死 64px。 */
+  [data-maintabs],
+  [data-workspace-tabs],
+  [data-template-tabs],
+  [data-project-list-toolbar] {
+    top: calc(var(--app-header-height) + env(safe-area-inset-top)) !important;
+  }
+
+  /* 单行标签栏时，表格头落在页内标签栏下方。 */
+  [data-board-head],
+  [data-stakeholder-head] {
+    top: calc(var(--app-header-height) + env(safe-area-inset-top) + 3.6875rem) !important;
+  }
+
+  [data-project-page] [data-maintabs] > div,
+  [data-workspace-tabs] > div {
+    gap: 0.5rem;
+  }
+
+  [data-maintabs-item],
+  [data-workspace-tab],
+  [data-template-tabs] > div:first-child > button {
+    padding-right: 0.625rem;
+    padding-left: 0.625rem;
+  }
+
+  [data-project-tools] {
+    gap: 0.625rem;
+  }
+
+  [data-maintabs] > div > div:first-child,
+  [data-workspace-tabs] > div > div:first-child,
+  [data-template-tabs] > div:first-child {
+    scrollbar-width: none;
+  }
+
+  [data-maintabs] > div > div:first-child::-webkit-scrollbar,
+  [data-workspace-tabs] > div > div:first-child::-webkit-scrollbar,
+  [data-template-tabs] > div:first-child::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@media (max-width: 639.98px) {
+  /* 竖屏让字段卡多拿 24px 有效宽度；仅改手机页面的左右内衬。 */
+  body[data-app-shell="true"] main[class] {
+    padding-right: max(0.75rem, env(safe-area-inset-right));
+    padding-left: max(0.75rem, env(safe-area-inset-left));
+  }
+
+  [data-maintabs],
+  [data-workspace-tabs],
+  [data-template-tabs] {
+    padding-right: 0.75rem !important;
+    padding-left: 0.75rem !important;
+  }
+
+  /* 项目页：竖屏标签一行、导出 / 筛选工具一行；工具不再把最后一个标签挤掉。 */
+  [data-project-page] [data-maintabs] > div {
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    padding-bottom: 0.5rem;
+  }
+
+  [data-project-page] [data-maintabs] > div > div:first-child {
+    flex: 1 0 100%;
+    width: 100%;
+    padding-bottom: 0.125rem;
+  }
+
+  [data-project-tools] {
+    width: 100%;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    padding-top: 0.125rem;
+  }
+
+  [data-project-tools] .export-docs-btn__face {
+    height: 2rem;
+  }
+
+  /* 任务模板：板块标签一行、新建模板一行，窄屏不再把阶段名挤断。 */
+  [data-template-tabs] {
+    flex-wrap: wrap;
+    gap: 0.35rem 0.5rem;
+    padding-bottom: 0.5rem;
+  }
+
+  [data-template-tabs] > div:first-child {
+    flex: 1 0 100%;
+    width: 100%;
+  }
+
+  [data-template-new] {
+    margin-left: auto;
+    padding: 0.35rem 0.6rem;
+  }
+
+  /* 项目空间工具栏铺边到铺边，吸顶后不出现左右断层。 */
+  [data-project-list-toolbar] {
+    margin-right: -0.75rem !important;
+    margin-left: -0.75rem !important;
+    padding-right: 0.75rem;
+    padding-left: 0.75rem;
+  }
+
+  /* 卡片化后不再有横向表格滚动，隐藏底部滑块占位。 */
+  [data-table-scrollbar],
+  #table-scrollbar-bar {
+    display: none !important;
+  }
+
+  /* ── 项目总览 / 工作台「我的任务」：CSS Grid 任务行切字段卡 ───────────── */
+  [data-board-wrap] [data-board-head],
+  [data-stakeholder-head],
+  [data-workspace-task-head] {
+    display: none !important;
+  }
+
+  [data-board-wrap] #task-board-scroll,
+  #stakeholder-board-scroll,
+  [data-workspace-task-table] .overflow-x-auto,
+  [data-workspace-task-table] {
+    overflow: visible !important;
+  }
+
+  [data-board-wrap] #task-board-scroll > div,
+  #stakeholder-board-scroll > div,
+  [data-workspace-task-table] .overflow-x-auto > div {
+    min-width: 0 !important;
+  }
+
+  [data-board-wrap] [data-task-row],
+  [data-workspace-task-table] [data-task-row] {
+    width: auto !important;
+    min-width: 0 !important;
+    margin: 0.5rem 0.625rem !important;
+    padding: 0.875rem 1rem !important;
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    align-items: stretch !important;
+    gap: 0.45rem !important;
+    border: 1px solid #e4e4e7;
+    border-radius: 0.875rem;
+    background-color: var(--row-tint, #fff) !important;
+    box-shadow: 0 8px 20px -18px rgba(15, 23, 42, 0.35);
+  }
+
+  [data-board-wrap] [data-task-row] [data-column="title"],
+  [data-workspace-task-table] [data-task-row] [data-column="title"] {
+    width: 100%;
+    padding-bottom: 0.15rem;
+  }
+
+  [data-board-wrap] [data-task-row] [data-column][data-label],
+  [data-workspace-task-table] [data-task-row] [data-column][data-label] {
+    width: 100%;
+    padding: 0.4rem 0 0 !important;
+    display: grid !important;
+    grid-template-columns: minmax(5.25rem, 34%) minmax(0, 1fr);
+    align-items: start;
+    justify-content: stretch;
+    gap: 0.5rem;
+    border-top: 1px solid rgba(228, 228, 231, 0.72);
+    text-align: left !important;
+  }
+
+  [data-board-wrap] [data-task-row] [data-column][data-label]::before,
+  [data-workspace-task-table] [data-task-row] [data-column][data-label]::before {
+    content: attr(data-label);
+    color: #71717a;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    line-height: 1.45;
+  }
+
+  [data-board-wrap] [data-task-row] [data-column][data-label] > *,
+  [data-workspace-task-table] [data-task-row] [data-column][data-label] > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  /* ── 干系人：同一套字段卡，姓名作为卡头。 ─────────────────────────── */
+  [data-stakeholder-head] {
+    display: none !important;
+  }
+
+  [data-stakeholder-row] {
+    width: auto !important;
+    min-width: 0 !important;
+    margin: 0.5rem 0.625rem !important;
+    padding: 0.875rem 1rem !important;
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    align-items: stretch !important;
+    gap: 0.45rem !important;
+    border: 1px solid #e4e4e7 !important;
+    border-radius: 0.875rem;
+    background: #fff;
+    box-shadow: 0 8px 20px -18px rgba(15, 23, 42, 0.35);
+  }
+
+  [data-stakeholder-cell][data-mobile-label] {
+    width: 100%;
+    display: grid !important;
+    grid-template-columns: minmax(5.25rem, 34%) minmax(0, 1fr);
+    align-items: start;
+    justify-content: stretch !important;
+    gap: 0.5rem;
+    padding-top: 0.4rem;
+    border-top: 1px solid rgba(228, 228, 231, 0.72);
+    text-align: left !important;
+  }
+
+  [data-stakeholder-cell][data-mobile-label]::before {
+    content: attr(data-mobile-label);
+    color: #71717a;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    line-height: 1.45;
+  }
+
+  [data-stakeholder-cell="name"] {
+    display: block !important;
+    padding: 0 0 0.5rem !important;
+    border-top: 0;
+  }
+
+  [data-stakeholder-cell="name"]::before {
+    display: none;
+  }
+
+  [data-stakeholder-cell="name"] p {
+    overflow: visible;
+    font-size: 0.9375rem;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  [data-stakeholder-cell="actions"] {
+    display: flex !important;
+    justify-content: flex-end !important;
+    padding-top: 0.55rem;
+    border-top: 1px solid rgba(228, 228, 231, 0.72);
+  }
+
+  /* ── HTML 宽表统一字段卡：日报 / 问题 / 回收站 / 项目文件 / 操作记录 / 工作台问题 ── */
+  :is([data-audit-table], [data-file-table], [data-project-files-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) {
+    border: 0 !important;
+    background: transparent !important;
+    overflow: visible !important;
+  }
+
+  :is([data-audit-table], [data-file-table], [data-project-files-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table {
+    display: block !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    table-layout: auto !important;
+    border-collapse: separate !important;
+    border-spacing: 0 !important;
+  }
+
+  :is([data-audit-table], [data-file-table], [data-project-files-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > thead,
+  :is([data-audit-table], [data-file-table], [data-project-files-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > colgroup {
+    display: none !important;
+  }
+
+  :is([data-audit-table], [data-file-table], [data-project-files-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > tbody {
+    display: flex !important;
+    flex-direction: column;
+    gap: 0.625rem;
+  }
+
+  :is([data-audit-table], [data-file-table], [data-project-files-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > tbody > tr {
+    display: block !important;
+    width: auto !important;
+    padding: 0.75rem 0.875rem !important;
+    overflow: hidden;
+    border: 1px solid #e4e4e7 !important;
+    border-radius: 0.875rem;
+    background-color: var(--row-tint, #fff) !important;
+    box-shadow: 0 8px 20px -18px rgba(15, 23, 42, 0.35);
+  }
+
+  :is([data-audit-table], [data-file-table], [data-project-files-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > tbody > tr > td {
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    padding: 0.28rem 0 !important;
+    display: grid !important;
+    grid-template-columns: minmax(5.25rem, 34%) minmax(0, 1fr);
+    align-items: start;
+    gap: 0.5rem;
+    border: 0 !important;
+    white-space: normal !important;
+    text-align: left !important;
+    overflow-wrap: anywhere;
+  }
+
+  :is([data-audit-table], [data-file-table], [data-project-files-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > tbody > tr > td::before {
+    content: attr(data-mobile-label);
+    color: #71717a;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    line-height: 1.45;
+  }
+
+  :is([data-audit-table], [data-file-table], [data-project-files-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > tbody > tr > td > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  :is([data-audit-table], [data-file-table], [data-project-files-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > tbody > tr > td > :is(span, div)[class*="inline-block"],
+  :is([data-audit-table], [data-file-table], [data-project-files-table], [data-report-table], [data-issue-table], [data-workspace-issue-table]) > table > tbody > tr > td > :is(span, div)[class*="inline-flex"] {
+    width: fit-content;
+    max-width: 100%;
+    justify-self: start;
+  }
+
+  /* 长文本列把标签抬到内容上方，避免内容只剩半行宽。 */
+  [data-report-table] > table > tbody > tr > td:nth-child(4),
+  [data-report-table] > table > tbody > tr > td:nth-child(5),
+  [data-report-table] > table > tbody > tr > td:nth-child(6),
+  [data-issue-table] > table > tbody > tr > td:nth-child(2),
+  [data-issue-table] > table > tbody > tr > td:nth-child(5),
+  [data-issue-table] > table > tbody > tr > td:nth-child(6),
+  [data-workspace-issue-table] > table > tbody > tr > td:nth-child(2),
+  [data-workspace-issue-table] > table > tbody > tr > td:nth-child(5),
+  [data-workspace-issue-table] > table > tbody > tr > td:nth-child(6),
+  [data-audit-table] > table > tbody > tr > td:nth-child(5) {
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 0.15rem;
+  }
+
+  [data-report-table] > table > tbody > tr > td[data-report-delete-cell],
+  [data-issue-table] > table > tbody > tr > td[data-issue-delete-cell],
+  [data-file-table] > table > tbody > tr > td:last-child,
+  [data-project-files-table] > table > tbody > tr > td:last-child {
+    margin-top: 0.35rem;
+    padding-top: 0.6rem !important;
+    display: flex !important;
+    align-items: center;
+    justify-content: flex-end;
+    border-top: 1px solid rgba(228, 228, 231, 0.72) !important;
+  }
+
+  [data-report-table] > table > tbody > tr > td[data-report-delete-cell]::before,
+  [data-issue-table] > table > tbody > tr > td[data-issue-delete-cell]::before,
+  [data-file-table] > table > tbody > tr > td:last-child::before,
+  [data-project-files-table] > table > tbody > tr > td:last-child::before {
+    display: none;
+  }
+
+  [data-file-table] > table > tbody > tr > td:last-child > span,
+  [data-project-files-table] > table > tbody > tr > td:last-child > span,
+  [data-report-table] td[data-report-delete-cell] > span,
+  [data-issue-table] td[data-issue-delete-cell] > span {
+    margin-left: auto;
+  }
+
+  /* 筛选区在竖屏按两列排，关键字 / 日期独占一行。 */
+  [data-file-filter],
+  [data-project-files-filter],
+  [data-audit-filter] {
+    width: auto !important;
+    min-width: 0;
+    flex: 1 1 calc(50% - 0.25rem);
+  }
+
+  [data-file-filter="keyword"],
+  [data-project-files-filter="keyword"],
+  [data-audit-filter="keyword"],
+  [data-audit-filter="time"] {
+    flex-basis: 100%;
+  }
+
+  /* ── 甘特图：先让工具区让位，图表在首屏露出来。 ───────────────────── */
+  [data-gantt-toolbar] {
+    padding: 0.5rem 0.625rem !important;
+  }
+
+  [data-gantt-toolbar] > div:first-child {
+    gap: 0.375rem 0.5rem !important;
+  }
+
+  [data-gantt-legend] {
+    flex-wrap: nowrap !important;
+    max-width: 100%;
+    overflow-x: auto;
+    padding-bottom: 0.125rem;
+    gap: 0.25rem 0.75rem !important;
+    font-size: 0.625rem !important;
+    scrollbar-width: none;
+  }
+
+  [data-gantt-legend]::-webkit-scrollbar {
+    display: none;
+  }
+
+  [data-gantt-legend] > li {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  [data-gantt-help] {
+    display: none !important;
+  }
+
+  [data-gantt-scroll] {
+    height: min(52rem, calc(100dvh - 20rem)) !important;
+    min-height: 20rem !important;
+  }
+
+  /* ── 任务 / 问题看板：一列占可视宽、下一列明确露出引导横滑。 ───────── */
+  [data-kanban-board] [data-kanban-column],
+  [data-issue-board] [data-issue-column] {
+    width: calc(100vw - 5rem) !important;
+    min-width: calc(100vw - 5rem) !important;
+    max-width: 22rem;
+    height: min(52rem, calc(100dvh - 17rem)) !important;
+    min-height: 18rem;
+  }
+
+  /* ── 仪表盘：竖屏保留可读画布（横向平移），视图开关固定在卡片底部。 ── */
+  [data-hub-page] [data-hub-main] {
+    padding: 0.5rem 0.75rem calc(5.75rem + env(safe-area-inset-bottom)) !important;
+  }
+
+  [data-hub-page] [data-hub-deck-cell] {
+    padding: 0.5rem !important;
+    border-radius: 1.125rem !important;
+  }
+
+  .hub-dash-head {
+    flex-wrap: wrap;
+    gap: 0.2rem 0.35rem;
+    padding: 0.375rem 0.5rem 0.3rem;
+  }
+
+  .hub-dash-title {
+    font-size: 1rem;
+  }
+
+  .hub-dash-sep {
+    font-size: 1rem;
+  }
+
+  .hub-dash-pick {
+    width: 100%;
+    max-width: 100%;
+    flex: 1 0 100%;
+  }
+
+  .hub-dash-pick button[aria-expanded="false"] {
+    max-width: 100%;
+    overflow: hidden;
+    padding-right: 1.1rem;
+    font-size: 1rem;
+    text-align: left;
+  }
+
+  .hub-dash-pick button[aria-expanded="false"] span {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  [data-hub-dash-viewport] {
+    display: block !important;
+    overflow: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  [data-hub-dash-viewport] > .hub-dash,
+  [data-hub-dash-viewport] > .hub-dash-issues,
+  [data-hub-dash-viewport] > .hub-dash-delivery,
+  [data-hub-dash-viewport] > .hub-dash-status,
+  [data-hub-dash-viewport] > .hub-dash-wordcloud {
+    width: 64rem !important;
+    min-width: 64rem !important;
+    height: 32rem !important;
+    min-height: 32rem !important;
+    max-width: none !important;
+  }
+
+  [data-hub-dash-viewport] > .hub-dash-overview {
+    width: 64rem !important;
+    min-width: 64rem !important;
+    height: 40rem !important;
+    min-height: 40rem !important;
+    overflow: visible !important;
+    padding: 0.35rem 0.5rem !important;
+    flex: 0 0 auto !important;
+  }
+
+  [data-hub-dash-viewport] > .hub-dash-state {
+    min-height: 16rem;
+  }
+
+  .hub-dash-switch {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.4rem 0.55rem;
+    padding: 0.45rem 0.5rem 0.55rem;
+    border-top: 1px solid rgba(228, 228, 231, 0.82);
+    background: rgba(255, 255, 255, 0.96);
+  }
+
+  .hub-dash-switch label {
+    min-width: 0;
+    gap: 0.25rem;
+  }
+
+  .hub-dash-switch label > span:last-child {
+    min-width: 0;
+    margin-left: 0.25rem !important;
+    overflow: hidden;
+    font-size: 0.75rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 1023.98px) and (orientation: landscape) and (max-height: 500px) {
+  /* 横屏优先：压缩非数据区，把高度还给表格 / 看板 / 甘特。 */
+  [data-project-page] [data-maintabs],
+  [data-workspace-tabs],
+  [data-template-tabs] {
+    padding-top: 0.375rem !important;
+  }
+
+  [data-maintabs-item],
+  [data-workspace-tab],
+  [data-template-tabs] > div:first-child > button {
+    padding-top: 0.55rem !important;
+    padding-bottom: 0.55rem !important;
+    font-size: 0.8125rem !important;
+  }
+
+  [data-project-tools] .export-docs-btn__face {
+    height: 1.75rem;
+  }
+
+  [data-gantt-toolbar] {
+    padding-top: 0.375rem !important;
+    padding-bottom: 0.375rem !important;
+  }
+
+  [data-gantt-help] {
+    display: none !important;
+  }
+
+  [data-gantt-scroll] {
+    height: min(52rem, calc(100dvh - 11rem)) !important;
+    min-height: 12rem !important;
+  }
+
+  [data-kanban-board] [data-kanban-column],
+  [data-issue-board] [data-issue-column] {
+    height: min(52rem, calc(100dvh - 10rem)) !important;
+    min-height: 12rem !important;
+  }
+
+  [data-hub-page] [data-hub-main] {
+    padding-top: 0.5rem !important;
+    padding-bottom: 0.5rem !important;
+  }
+
+  [data-hub-page] [data-hub-deck-cell] {
+    padding: 0.6rem !important;
+  }
+
+  .hub-dash-head {
+    padding-top: 0 !important;
+    padding-bottom: 0.2rem !important;
+  }
+
+  .hub-dash-switch {
+    gap: 0.35rem 1.5rem;
+    padding-top: 0.2rem;
+    padding-bottom: 0.25rem;
+  }
+}
+
+
+/* 2026-10-28 手机端回归收口：筛选 / 任务卡 / 站内信 / 吸顶缝。 */
+@media (max-width: 1023.98px) {
+  /* 触屏没有可靠的 hover：项目卡片与各表行的动作入口常显，桌面仍按原样悬停浮现。 */
+  .project-card [data-card-actions] button,
+  [data-row-edit],
+  [data-row-delete] {
+    opacity: 1 !important;
+  }
+
+  .project-card [data-card-actions] > button {
+    border: 1px solid rgba(228, 228, 231, 0.82);
+    background-color: rgba(255, 255, 255, 0.76);
+  }
+
+  [data-row-edit],
+  [data-row-delete] {
+    color: #71717a !important;
+  }
+
+  [data-row-edit] svg,
+  [data-row-delete] svg {
+    width: 0.875rem;
+    height: 0.875rem;
+  }
+
+  .project-card [data-card-actions] [data-row-delete] {
+    width: 2rem !important;
+    height: 2rem !important;
+    border: 1px solid rgba(228, 228, 231, 0.82);
+    background-color: rgba(255, 255, 255, 0.76);
+    color: #71717a !important;
+  }
+
+  /* Tailwind md 隐藏遮罩，但 768–1023px 仍是手机 / 平板抽屉：补回遮罩与显式关闭键。 */
+  [data-category-filter-backdrop] {
+    display: block !important;
+  }
+
+  [data-filter-close] {
+    display: inline-flex !important;
+  }
+}
+
+@media (max-width: 639.98px) {
+  /* 页内标签的负外边距跟正文内衬保持一致，避免手机出现 12px 页面级横向溢出。 */
+  [data-maintabs],
+  [data-workspace-tabs],
+  [data-template-tabs] {
+    margin-right: -0.75rem !important;
+    margin-left: -0.75rem !important;
+  }
+
+  /* 字段卡里的行内编辑入口按内容收宽；长成员名单仍以可用宽度为上限。 */
+  [data-board-wrap] [data-task-row] [data-column][data-label] > [data-inline-cell],
+  [data-workspace-task-table] [data-task-row] [data-column][data-label] > [data-inline-cell] {
+    width: fit-content !important;
+    max-width: 100%;
+    justify-self: start;
+  }
+
+  /* 文件列在字段卡里与其他值共用同一条左基线。 */
+  [data-board-wrap] [data-task-row] [data-column="files"] > span,
+  [data-workspace-task-table] [data-task-row] [data-column="files"] > span {
+    justify-content: flex-start !important;
+  }
+
+  /* 站内信不再以铃铛为锚向外扩：竖屏贴视口左右留白，避免 352px 面板从左侧被裁。 */
+  [data-inbox-panel] {
+    position: fixed !important;
+    top: calc(var(--app-header-height) + env(safe-area-inset-top) + 0.375rem) !important;
+    right: max(0.75rem, env(safe-area-inset-right)) !important;
+    left: auto !important;
+    width: min(22rem, calc(100vw - 1.5rem)) !important;
+    max-width: none !important;
+    margin-top: 0 !important;
+  }
+}
+
+@media (max-width: 1023.98px) and (orientation: landscape) and (max-height: 500px) {
+  /* 右侧保留原 24px 内衬，让页内标签的 -mx-6 与正文严格对齐，不再多出 8px 横向溢出。 */
+  body[data-app-shell="true"] main[class] {
+    padding-right: max(1.5rem, env(safe-area-inset-right));
+  }
+
+  /* 横屏筛选抽屉从左侧导航右缘开始，顶部贴真实顶栏；不再被导航压住前 68px。 */
+  #category-filter-panel {
+    top: calc(var(--app-header-height) + env(safe-area-inset-top)) !important;
+    left: calc(4.25rem + env(safe-area-inset-left)) !important;
+    max-width: calc(100vw - 4.25rem - env(safe-area-inset-left) - 1rem);
+  }
+
+  [data-category-filter-backdrop] {
+    top: calc(var(--app-header-height) + env(safe-area-inset-top)) !important;
+    left: calc(4.25rem + env(safe-area-inset-left)) !important;
+  }
+
+  /* 横屏页内标签实测 45px；表头紧跟标签下沿，消除滚动时露出的任务行“缝”。 */
+  [data-board-head],
+  [data-stakeholder-head] {
+    top: calc(var(--app-header-height) + env(safe-area-inset-top) + 2.8125rem) !important;
+  }
+
+  /* 任务详情抽屉横屏使用导航右侧的全部高度，并压缩头 / 标签 / 进度 / 页脚，把空间还给字段滚动区。 */
+  [data-task-drawer-layer] {
+    top: max(0.25rem, env(safe-area-inset-top)) !important;
+    right: max(0.25rem, env(safe-area-inset-right)) !important;
+    bottom: max(0.25rem, env(safe-area-inset-bottom)) !important;
+    left: calc(4.25rem + env(safe-area-inset-left) + 0.25rem) !important;
+    padding: 0 !important;
+  }
+
+  [data-task-drawer-layer] .drawer-panel {
+    width: 100% !important;
+    max-width: none !important;
+    height: 100% !important;
+    max-height: none !important;
+    border-radius: 1rem !important;
+  }
+
+  [data-task-drawer-layer] .drawer-panel > header {
+    padding: 0.5rem 1rem 0.45rem !important;
+  }
+
+  [data-task-drawer-layer] .drawer-panel > header h2 {
+    margin-top: 0.3rem !important;
+    font-size: 1.05rem !important;
+    line-height: 1.35 !important;
+  }
+
+  [data-task-drawer-layer] .drawer-panel > header h2 + p {
+    margin-top: 0.1rem !important;
+    font-size: 0.6875rem !important;
+    line-height: 1.2 !important;
+  }
+
+  [data-task-drawer-layer] [data-drawer-tabs] {
+    padding-right: 1rem !important;
+    padding-left: 1rem !important;
+  }
+
+  [data-task-drawer-layer] [data-drawer-tabs] button {
+    padding-top: 0.4rem !important;
+    padding-bottom: 0.4rem !important;
+    font-size: 0.8125rem !important;
+  }
+
+  [data-task-drawer-layer] [data-drawer-progress] {
+    padding: 0.4rem 1rem !important;
+  }
+
+  [data-task-drawer-layer] [data-drawer-progress] > div:nth-child(2) {
+    margin-top: 0.4rem !important;
+  }
+
+  [data-task-drawer-layer] .drawer-panel > footer {
+    padding: 0.35rem 1rem !important;
+  }
+
+  /* 任务进展空列不再撑满整屏：列高跟随内容，超过可视高度才在列内滚动。 */
+  [data-kanban-board] [data-kanban-column],
+  [data-issue-board] [data-issue-column] {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: calc(100dvh - 9rem) !important;
+  }
+
+  [data-kanban-board] [data-kanban-column] > div:has(> [data-scroll-area="vertical"]),
+  [data-issue-board] [data-issue-column] > div:has(> [data-scroll-area="vertical"]) {
+    flex: 0 1 auto !important;
+    max-height: calc(100dvh - 13rem) !important;
+  }
+}
+
+
+/* 手机端 r8：不支持拖拽；完成 / 恢复改由便签卡右上角按钮触发。 */
+[data-plan-hint-touch],
+[data-plan-mobile-toggle] {
+  display: none;
+}
+
+/* 2026-10-28 手机端 r6：项目动作同排 / 工作台摘要防吞 / 我的计划紧凑化。桌面 >=1024px 不进入本段。 */
+@media (max-width: 1023.98px) {
+  /* 项目空间：导入与新建固定同排，搜索独占下一行；不再受 Tailwind sm 断点影响而竖排。 */
+  [data-project-actions] {
+    width: 100% !important;
+    margin-left: 0 !important;
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    gap: 0.5rem !important;
+  }
+
+  [data-project-actions] > [data-project-search] {
+    flex: 1 0 100%;
+    width: 100%;
+  }
+
+  [data-project-actions] > [data-project-search] > div {
+    width: 100% !important;
+    max-width: none !important;
+  }
+
+  [data-project-actions] [data-import-project],
+  [data-project-actions] [data-project-create] {
+    min-height: 2.25rem;
+    white-space: nowrap;
+  }
+
+  /* 我的任务：项目名 / 编号与「进入项目」留在首行，计数与状态签整体换到第二行并允许自然换行。 */
+  [data-workspace-panel-head] {
+    align-items: flex-start !important;
+    gap: 0.5rem !important;
+    padding: 0.55rem 0.6rem 0.55rem 0.75rem !important;
+  }
+
+  [data-workspace-panel-main] {
+    flex-wrap: wrap !important;
+    row-gap: 0.35rem !important;
+    column-gap: 0.5rem !important;
+  }
+
+  [data-workspace-panel-summary] {
+    flex: 1 0 calc(100% - 1.5rem) !important;
+    min-width: 0;
+    margin-left: 1.5rem !important;
+    flex-wrap: wrap !important;
+    justify-content: flex-start !important;
+    gap: 0.35rem !important;
+  }
+
+  [data-workspace-panel-summary] > span {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  [data-workspace-panel-link] {
+    min-height: 2rem;
+    padding: 0.3rem 0.5rem !important;
+    font-size: 0.6875rem !important;
+  }
+
+  /* 我的计划：压缩背景切换、分类栏与完成落点，把首屏还给标题和便签。 */
+  [data-workspace-plan] {
+    margin-bottom: 0 !important;
+    padding-top: 0.75rem !important;
+    padding-bottom: calc(1.5rem + env(safe-area-inset-bottom)) !important;
+  }
+
+  [data-plan-toolbar] {
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    gap: 0.5rem !important;
+  }
+
+  [data-plan-toolbar] > [data-plan-bg-root] {
+    flex: 0 0 auto;
+    padding-left: 0 !important;
+  }
+
+  [data-plan-bg-trigger] {
+    width: 2.75rem !important;
+    height: 2.75rem !important;
+  }
+
+  [data-plan-bg-trigger] > span:first-child {
+    width: 2.75rem !important;
+  }
+
+  [data-plan-bg-trigger] > span:nth-child(2) {
+    width: 2.75rem !important;
+    height: 2.75rem !important;
+    transform: translateX(0) !important;
+  }
+
+  [data-plan-bg-trigger] > span:last-child {
+    display: none !important;
+  }
+
+  [data-plan-bg-panel] {
+    top: calc(100% + 0.5rem) !important;
+    left: 0 !important;
+    max-width: calc(100vw - 2rem);
+    padding: 0.8rem !important;
+  }
+
+  [data-plan-toolbar] > [data-plan-search] {
+    flex: 1 1 8.5rem !important;
+    width: auto !important;
+    max-width: none !important;
+    min-width: 0;
+    margin-left: 0 !important;
+  }
+
+  [data-plan-toolbar] > span:has([data-plan-new]) {
+    flex: 0 0 auto;
+  }
+
+  [data-plan-new] {
+    min-height: 2.75rem;
+    padding: 0.65rem 0.85rem !important;
+    white-space: nowrap;
+  }
+
+  [data-plan-body] {
+    margin-top: 0.75rem !important;
+    gap: 0.75rem !important;
+  }
+
+  [data-plan-done-zone] {
+    min-height: 0 !important;
+    gap: 0.4rem !important;
+    padding: 0.35rem !important;
+    border-radius: 14px !important;
+  }
+
+  [data-plan-sidebar] {
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    gap: 0.35rem !important;
+    padding: 0.4rem !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    border-radius: 12px !important;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  [data-plan-sidebar]::-webkit-scrollbar {
+    display: none;
+  }
+
+  [data-plan-sidebar] [data-plan-category-wrap] {
+    flex: 0 0 auto !important;
+  }
+
+  [data-plan-sidebar] [data-plan-category] {
+    width: auto !important;
+    gap: 0.3rem !important;
+    padding: 0.4rem 0.65rem !important;
+    border-radius: 9999px !important;
+    font-size: 0.78rem !important;
+    white-space: nowrap;
+  }
+
+  [data-plan-sidebar] [data-plan-category] > span:last-child {
+    display: none !important;
+  }
+
+  [data-plan-sidebar] [data-plan-category-delete] {
+    right: 0.3rem !important;
+    display: none !important;
+  }
+
+  [data-plan-sidebar] [data-plan-category][aria-pressed="true"] {
+    padding-right: 2rem !important;
+  }
+
+  [data-plan-sidebar] [data-plan-category][aria-pressed="true"] + [data-plan-category-delete] {
+    display: flex !important;
+  }
+
+  [data-plan-sidebar] [data-plan-category-add] {
+    width: auto !important;
+    padding: 0.4rem 0.65rem !important;
+    border-radius: 9999px !important;
+    white-space: nowrap;
+  }
+
+  [data-plan-sidebar] [data-plan-category-new] {
+    width: 7.25rem !important;
+    min-width: 7.25rem;
+    padding: 0.4rem 0.65rem !important;
+    border-radius: 9999px !important;
+  }
+
+  [data-plan-sidebar] [data-plan-category-confirm] {
+    flex: 0 0 18rem !important;
+    width: 18rem !important;
+    min-width: min(18rem, calc(100vw - 4rem));
+  }
+
+  [data-plan-complete-zone] {
+    min-height: 2.75rem;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 0.5rem !important;
+    padding: 0.55rem 0.75rem !important;
+  }
+
+  [data-plan-complete-zone] > span:first-child {
+    width: 1.75rem !important;
+    height: 1.75rem !important;
+    flex: 0 0 auto;
+  }
+
+  [data-plan-complete-zone] > span:nth-child(2) {
+    margin-top: 0 !important;
+    font-size: 0.8rem !important;
+    white-space: nowrap;
+  }
+
+  [data-plan-complete-zone] > span:nth-child(3) {
+    min-width: 0;
+    margin-top: 0 !important;
+    overflow: hidden;
+    font-size: 0.72rem !important;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  [data-plan-content] {
+    gap: 0.75rem !important;
+  }
+
+  [data-plan-heading] {
+    align-items: center !important;
+    gap: 0.5rem !important;
+  }
+
+  [data-plan-heading] p:first-child {
+    margin-bottom: 0.1rem !important;
+    font-size: 0.68rem !important;
+    letter-spacing: 0.12em !important;
+  }
+
+  [data-plan-heading] h1 {
+    gap: 0.45rem !important;
+    font-size: clamp(1.4rem, 6vw, 1.75rem) !important;
+    line-height: 1.15 !important;
+  }
+
+  [data-plan-heading] h1 > span {
+    padding: 0.1rem 0.5rem !important;
+    font-size: 0.68rem !important;
+  }
+
+  [data-plan-grid] {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr)) !important;
+    gap: 0.75rem !important;
+  }
+
+  [data-workspace-plan] [data-plan-empty] {
+    padding: 2.5rem 1rem !important;
+  }
+
+  /* r8：手机端不启用拖拽；卡片右上角常显「完成 / 恢复」，系统滚动与点按编辑保持原生行为。 */
+  [data-plan-hint-desktop] {
+    display: none !important;
+  }
+
+  [data-plan-hint-touch] {
+    display: inline !important;
+  }
+
+  [data-plan-complete-zone] {
+    display: none !important;
+  }
+
+  [data-plan-note] {
+    cursor: pointer !important;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  [data-plan-note-title] {
+    padding-right: 4.5rem;
+  }
+
+  [data-plan-note-done] {
+    display: none !important;
+  }
+
+  [data-plan-mobile-toggle] {
+    display: inline-flex !important;
+  }
+}
+
+/* ONLYOFFICE 移动版 iframe 默认 fixed 到视口；约束在预览卡片内，保留遮罩点击关闭与原文件下载栏。 */
+[data-onlyoffice-mobile="true"] iframe {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
 }

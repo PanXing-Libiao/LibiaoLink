@@ -13,12 +13,12 @@ it.skipIf(!databaseUrl)("0069 backfills format_version and keys artifacts by for
     await db.query(`create schema ${schema}`); await db.query(`set search_path to ${schema}`);
     await db.query("create table files(id uuid primary key); create table file_versions(id uuid primary key)");
     await db.query(await readFile(new URL("../../database/migrations/0064_cad_artifacts.sql", import.meta.url), "utf8"));
-    await db.query(await readFile(new URL("../../database/migrations/0068_cad_dxf_input_sets.sql", import.meta.url), "utf8"));
+    await db.query(await readFile(new URL("../../database/migrations/0077_cad_dxf_input_sets.sql", import.meta.url), "utf8"));
     const fileId = randomUUID(), versionId = randomUUID(), sha = "1".repeat(64);
     await db.query("insert into files values($1)", [fileId]); await db.query("insert into file_versions values($1)", [versionId]);
     const oldId = (await db.query("insert into cad_artifacts(file_id,version_id,source_sha256,source_bytes,source_name,engine_version,main_path) values($1,$2,$3,10,'box.step','old-bundle','box.step') returning id", [fileId, versionId, sha])).rows[0].id;
 
-    await db.query(await readFile(new URL("../../database/migrations/0069_cad_format_version.sql", import.meta.url), "utf8"));
+    await db.query(await readFile(new URL("../../database/migrations/0078_cad_format_version.sql", import.meta.url), "utf8"));
     expect((await db.query("select id,engine_version,format_version from cad_artifacts")).rows).toEqual([
       { id: oldId, engine_version: "old-bundle", format_version: "old-bundle" },
     ]);

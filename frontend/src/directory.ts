@@ -32,5 +32,5 @@ export function directoryNames(users: readonly DirectoryUser[], ids: readonly st
 
 /** 下拉选项：把用户目录映射成 MemberSelect 认的 Member（拼音列 = 工号）。 */
 export function directoryMemberOptions(users: readonly DirectoryUser[]): Member[] {
-  return users.map((user) => ({ id: user.id, name: user.displayName, handle: user.username, role: "项目经理" }));
+  return users.map((user) => ({ id: user.id, name: user.displayName, handle: user.username }));
 }

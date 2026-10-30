@@ -1,34 +1,33 @@
 import { Injectable } from "@nestjs/common";
 import { PERMISSION_KEYS } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
-import { AppConfig } from "../../config/config.module.js";
-import { sortDataScopes, type DataScope } from "./data-scope.js";
+import { type DataScope } from "./data-scope.js";
 import { RoleRepository, type RoleRow } from "./role.repository.js";
 
 /**
- * 授权画像：用户当前全部角色 + 数据范围并集 + 功能权限位并集。
- * h6 策略服务（can / buildScopeWhere / fieldPolicy / exportPolicy）以本画像为唯一输入（ADR-011）。
+ * 授权画像：部门权限模型的全量能力基线。
+ * h6 策略服务（can / buildScopeWhere / fieldPolicy / exportPolicy）以本画像为唯一输入；
+ * 旧角色表只保留为历史维护数据，不参与业务授权判定。
  */
 export interface ActorAuthorization {
   userId: string;
+  /** 遗留字段；固定为空，不参与任何授权或管理员判定。 */
   roleCodes: string[];
-  /** 多角色数据范围并集（由宽到窄去重）。 */
+  /** 固定为 ["all"]；实际项目范围由部门规则再次收窄。 */
   dataScopes: DataScope[];
-  /** 功能权限位并集（role_permissions；矩阵随 h6 填充，当前为空集）。 */
+  /** 全量功能权限位基线；写能力由部门规则的编辑 / 仅浏览档位再裁决。 */
   permissionKeys: string[];
 }
 
 /**
- * 「一期不判权限」等效管理员画像（PERMISSION_ENFORCED=false；业务口径 2026-09-23「我们当前这个系统就不要考虑权限」）：
- * 授权画像一律按系统管理员下发 —— 数据范围 `all` + 契约全量权限位（PERMISSION_KEYS）+ `admin` 角色码，
- * 于是四处判定一并放开：功能权限（can / @RequirePermission）、记录级可见集（projectScopeSpec）、
- * 字段级投影（FIELD_POLICIES）与角色内硬检查（task / flow / file 三处读 roleCodes 含 admin）。
- * 只影响**裁定**、不动数据：用户偏好（常用筛选 / 醒目模式 / 任务表列显隐）仍按账号各存一行。
+ * 2026-10-26 部门权限收口：旧角色权限不再参与业务授权判定。
+ * 画像固定为全量功能权限位 + dataScope=all，最终项目范围、编辑 / 仅浏览与资源可见性由部门规则裁决。
+ * `roleCodes` 保留为空数组仅为契约兼容；系统管理员统一由部门权限画像判定，角色表 / 绑定数据不迁移、不删除。
  */
-export function equivalentAdminAuthorization(userId: string): ActorAuthorization {
+export function fullCapabilityAuthorization(userId: string): ActorAuthorization {
   return {
     userId,
-    roleCodes: ["admin"],
+    roleCodes: [],
     dataScopes: ["all"],
     permissionKeys: [...PERMISSION_KEYS],
   };
@@ -37,10 +36,7 @@ export function equivalentAdminAuthorization(userId: string): ActorAuthorization
 /** 角色用例（h1）：角色列表、授权画像、用户 ↔ 角色绑定；不新开 HTTP 端点（管理界面随 C3-09 / u12）。 */
 @Injectable()
 export class RoleService {
-  constructor(
-    private readonly config: AppConfig,
-    private readonly roles: RoleRepository,
-  ) {}
+  constructor(private readonly roles: RoleRepository) {}
 
   /** 一期六个内置角色（种子维护）。 */
   listRoles(): Promise<RoleRow[]> {
@@ -48,27 +44,11 @@ export class RoleService {
   }
 
   /**
-   * 授权画像：全站权限判定的唯一输入（ADR-011）。
-   * `PERMISSION_ENFORCED=false`（默认 · 一期）= 不判权限 —— 一律等效管理员（不读库）；
-   * `true`（二期打开）= 按 roles / role_permissions 判定。
+   * 授权基线：旧角色权限不再参与裁定，统一返回部门权限模型所需的全量能力画像。
+   * 数据范围与部门规则在 PermissionService 中另行收窄。
    */
   async getActorAuthorization(userId: string): Promise<ActorAuthorization> {
-    if (!this.permissionEnforced) {
-      return equivalentAdminAuthorization(userId);
-    }
-    const rows = await this.roles.listByUser(userId);
-    const permissionKeys = await this.roles.listPermissionKeys(rows.map((row) => row.id));
-    return {
-      userId,
-      roleCodes: rows.map((row) => row.code),
-      dataScopes: sortDataScopes(rows.map((row) => row.dataScope)),
-      permissionKeys,
-    };
-  }
-
-  /** 权限判定开关（PERMISSION_ENFORCED）：`true` = 按 ADR-011 判定；`false` = 一期不判权限（等效管理员）。 */
-  private get permissionEnforced(): boolean {
-    return this.config.env.PERMISSION_ENFORCED === "true";
+    return fullCapabilityAuthorization(userId);
   }
 
   /** 授予角色（幂等）；未知角色码 → 404（与「不存在与无权统一 404」一致，ADR-011）。 */

@@ -7,8 +7,11 @@
 import { describe, expect, it } from "vitest";
 import { PERMISSION_KEYS, type PermissionKey } from "@libiaolink/contracts";
 import { AppError } from "../src/common/errors/app-error.js";
+import { AppConfig } from "../src/config/config.module.js";
+import type { Env } from "../src/config/env.js";
 import type { ActorAuthorization, RoleService } from "../src/modules/identity/index.js";
-import { equivalentAdminAuthorization } from "../src/modules/identity/role.service.js";
+import { fullCapabilityAuthorization } from "../src/modules/identity/role.service.js";
+import type { GroupAccessRuleData } from "../src/modules/permission/group-access.rules.js";
 import type { PermissionRepository } from "../src/modules/permission/permission.repository.js";
 import { PermissionService } from "../src/modules/permission/permission.service.js";
 import {
@@ -37,6 +40,13 @@ const OTHER_PROJECT = "44444444-4444-4444-8444-444444444444";
 const ALL_SPEC: ProjectScopeSpec = { all: true, managed: false, member: false };
 const MANAGED_SPEC: ProjectScopeSpec = { all: false, managed: true, member: false };
 const MEMBER_SPEC: ProjectScopeSpec = { all: false, managed: false, member: true };
+
+const ADMIN_ONLY_KEYS: readonly PermissionKey[] = [
+  "automation.view",
+  "automation.manage",
+  "notify.record.view",
+  "notify.resend",
+];
 
 function actor(partial: Partial<ActorAuthorization> = {}): ActorAuthorization {
   return { userId: ACTOR_ID, roleCodes: [], dataScopes: [], permissionKeys: [], ...partial };
@@ -263,21 +273,21 @@ describe("五出口：页面 / 导出 / 搜索 / 通知同源（C3-08 不变量�
   });
 });
 
-// ---------- 权限判定开关（PERMISSION_ENFORCED=false · 一期不判权限，业务口径 2026-09-23） ----------
+// ---------- 部门权限基线（2026-10-26） ----------
 
-describe("一期不判权限：等效管理员画像把五出口一并放开", () => {
-  const admin = equivalentAdminAuthorization(ACTOR_ID);
+describe("全量能力基线把五出口一并放开，项目范围由部门规则再次收窄", () => {
+  const admin = fullCapabilityAuthorization(ACTOR_ID);
 
-  it("画像：admin 角色码 + 数据范围 all + 契约全量权限位", () => {
+  it("画像：遗留角色码为空 + 数据范围 all + 契约全量权限位", () => {
     expect(admin).toEqual({
       userId: ACTOR_ID,
-      roleCodes: ["admin"],
+      roleCodes: [],
       dataScopes: ["all"],
       permissionKeys: [...PERMISSION_KEYS],
     });
   });
 
-  it("功能权限：全键放行（含「导出单独授权」的 project.export，不因二期口径被拦）", () => {
+  it("功能权限：全键放行（含 project.export）；写能力在服务层按部门规则再裁决", () => {
     for (const key of PERMISSION_KEYS) {
       expect(can(admin, key)).toBe(true);
     }
@@ -319,6 +329,9 @@ class FakePermissionRepository {
   managedRosterIds: string[] = [];
   refs = new Map<string, { managerIds: string[]; deletedAt: Date | null }>();
   memberships = new Map<string, string>();
+  groupKeys: string[] = [];
+  groupRules: GroupAccessRuleData[] = [];
+  manualAdmin = false;
   visibleCalls = 0;
 
   async listMemberProjectIds(): Promise<string[]> {
@@ -331,6 +344,14 @@ class FakePermissionRepository {
 
   async listManagedRosterProjectIds(): Promise<string[]> {
     return [...this.managedRosterIds];
+  }
+
+  async listActiveProjectIds(projectIds: readonly string[]): Promise<string[]> {
+    return projectIds.filter((projectId) => this.refs.get(projectId)?.deletedAt === null);
+  }
+
+  async hasActiveProject(): Promise<boolean> {
+    return [...this.refs.values()].some((ref) => ref.deletedAt === null);
   }
 
   async listVisibleProjectIds(_actorId: string, spec: ProjectScopeSpec): Promise<string[]> {
@@ -353,11 +374,36 @@ class FakePermissionRepository {
   async findNodeProjectId(_nodeId: string): Promise<string | null> {
     return null;
   }
+
+  async listUserGroupKeys(): Promise<string[]> {
+    return [...this.groupKeys];
+  }
+
+  async listGroupAccessRules(groupKeys: readonly string[]): Promise<GroupAccessRuleData[]> {
+    const allowed = new Set(groupKeys);
+    return this.groupRules.filter((rule) => allowed.has(rule.groupKey));
+  }
+
+  async listMemberAccessRulesForUser(): Promise<[]> {
+    return [];
+  }
+
+  async isManualGroupAccessAdmin(): Promise<boolean> {
+    return this.manualAdmin;
+  }
 }
 
-function makeService(actors: ActorAuthorization[], repository: FakePermissionRepository) {
+function makeService(
+  actors: ActorAuthorization[],
+  repository: FakePermissionRepository,
+  config?: AppConfig,
+) {
   const roles = new FakeRoleService(new Map(actors.map((item) => [item.userId, item])));
-  const service = new PermissionService(roles as unknown as RoleService, repository as unknown as PermissionRepository);
+  const service = new PermissionService(
+    roles as unknown as RoleService,
+    repository as unknown as PermissionRepository,
+    config,
+  );
   return { service, roles, repository };
 }
 
@@ -398,6 +444,7 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
       projectId: PROJECT_ID,
       member: true,
       projectManager: true,
+      groupAccessLevel: "edit",
     });
 
     const rosterOnly = new FakePermissionRepository();
@@ -408,6 +455,7 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
       projectId: PROJECT_ID,
       member: true,
       projectManager: false,
+      groupAccessLevel: "edit",
     });
 
     const owner = new FakePermissionRepository();
@@ -417,6 +465,7 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
       projectId: PROJECT_ID,
       member: true,
       projectManager: true,
+      groupAccessLevel: "edit",
     });
     // A22 · Push 136：multi-manager —— 责任人是第二位经理同样命中（任意一位）。
     const secondManager = new FakePermissionRepository();
@@ -426,6 +475,7 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
       projectId: PROJECT_ID,
       member: true,
       projectManager: true,
+      groupAccessLevel: "edit",
     });
   });
 
@@ -453,5 +503,74 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
     service.invalidate(ACTOR_ID);
     await service.can(ACTOR_ID, "project.view");
     expect(roles.calls).toBe(2);
+  });
+});
+
+describe("策略服务：M5-06 管理面仅系统管理员", () => {
+  function configWith(overrides: Partial<Env> = {}): AppConfig {
+    return new AppConfig({
+      GROUP_ACCESS_ENFORCED: "false",
+      GROUP_ACCESS_ADMIN_GROUP_KEYS: "",
+      GROUP_ACCESS_ADMIN_USER_IDS: "",
+      ...overrides,
+    } as Env);
+  }
+
+  function allEditRule(): GroupAccessRuleData {
+    return {
+      groupKey: "libiaorobot.com/项目部",
+      allowedPages: [],
+      scopePermissions: [{ projectScope: "all", accessLevel: "edit" }],
+      projectScope: "all",
+      accessLevel: "edit",
+      projectIds: [],
+      memberScope: "all",
+      memberUserIds: [],
+    };
+  }
+
+  const fullActor = actorWithKeys(PERMISSION_KEYS);
+
+  it("部门限制关闭时，普通账号仍不能读取规则 / 发送记录或重发", async () => {
+    const repository = new FakePermissionRepository();
+    const { service } = makeService([fullActor], repository, configWith());
+
+    for (const key of ADMIN_ONLY_KEYS) {
+      expect(await service.can(ACTOR_ID, key)).toBe(false);
+    }
+    expect(await service.can(ACTOR_ID, "dict.manage")).toBe(true);
+    expect((await service.permissionsOf(ACTOR_ID)).permissionKeys).toEqual(
+      PERMISSION_KEYS.filter((key) => !ADMIN_ONLY_KEYS.includes(key)),
+    );
+  });
+
+  it("全部项目编辑的普通账号仍不能进入管理面，但保留普通全局写权限", async () => {
+    const repository = new FakePermissionRepository();
+    repository.groupKeys = ["libiaorobot.com/项目部"];
+    repository.groupRules = [allEditRule()];
+    const { service } = makeService(
+      [fullActor],
+      repository,
+      configWith({ GROUP_ACCESS_ENFORCED: "true" }),
+    );
+
+    for (const key of ADMIN_ONLY_KEYS) {
+      expect(await service.can(ACTOR_ID, key)).toBe(false);
+    }
+    expect(await service.can(ACTOR_ID, "dict.manage")).toBe(true);
+    const permissionKeys = (await service.permissionsOf(ACTOR_ID)).permissionKeys;
+    expect(permissionKeys).toContain("dict.manage");
+    expect(permissionKeys).not.toEqual(expect.arrayContaining([...ADMIN_ONLY_KEYS]));
+  });
+
+  it("系统管理员保留四键与全量权限画像", async () => {
+    const repository = new FakePermissionRepository();
+    repository.manualAdmin = true;
+    const { service } = makeService([fullActor], repository, configWith());
+
+    for (const key of ADMIN_ONLY_KEYS) {
+      expect(await service.can(ACTOR_ID, key)).toBe(true);
+    }
+    expect((await service.permissionsOf(ACTOR_ID)).permissionKeys).toEqual([...PERMISSION_KEYS]);
   });
 });

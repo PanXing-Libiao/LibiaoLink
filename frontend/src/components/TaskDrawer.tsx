@@ -15,7 +15,7 @@ import {
   type TaskPriority,
   type TaskStatus,
 } from "../data/tasks";
-import { applyFileChange, ensurePreviewOutcome, fetchChangeRequest, fetchDownloadUrl, fetchFileVersions, finalizeFile, previewKindOf, triggerDownload, usePhotoUrl, type ChangeRequestDetail, type FilePreviewKind, type FileVersionBrief, type PreviewViewerConfig } from "../fileApi";
+import { applyFileChange, ensurePreviewOutcome, fetchChangeRequest, fetchDownloadUrl, fetchFileVersions, finalizeFile, previewKindOf, recordPreviewView, triggerDownload, usePhotoUrl, type ChangeRequestDetail, type FilePreviewKind, type FileVersionBrief, type PreviewViewerConfig } from "../fileApi";
 import { lockBodyScroll } from "../scrollLock";
 import { fetchTaskDetail, toUiTask, stageKeyOfName, stageNameOf, type TaskFileBrief } from "../taskApi";
 import { fieldText, isLocalizedLocale, mdText, priorityText, progressLabelOf, stageText, statusText, translationTargetOf, useLocale, useLocalizedText, useT } from "../i18n";
@@ -23,10 +23,12 @@ import { cachedZhTo, translateZhTo } from "../translateApi";
 import { DateRangePicker, type DateRange } from "./DateRangePicker";
 import { ChangeDetailModal } from "./ChangeDetailModal";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
+import { mobileFilePreviewMustDownload } from "../mobilePreviewPolicy";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { InlineDateCell } from "./InlineEdit";
 import { MemberMultiSelect } from "./MemberSelect";
 import { RowDeleteButton } from "./RowDeleteButton";
+import { UploadProgressOverlay } from "./UploadProgressOverlay";
 import { DeliverableCell, docTypeChip } from "./DeliverablePicker";
 import { ScrollArea } from "./ScrollArea";
 import { SelectMenu, type SelectOption } from "./SelectMenu";
@@ -215,6 +217,8 @@ type TaskDrawerProps = {
   managers?: string;
   /** 当前项目经理 id 名单（项目级字段，人员多选下拉的选中项，Push 136）。 */
   managerIds?: string[];
+  /** 当前账号是否为该任务负责人或项目经理：false 时不渲染任何定档入口（服务端同口径 403）。 */
+  canFinalize?: boolean;
   task: ProjectTask | null;
   /** 抽屉内直接改字段后的即时保存；不传 = 抽屉只读（不渲染可编辑控件）。 */
   onSubmit?: (values: TaskEditSubmit) => Promise<number | null>;
@@ -288,7 +292,7 @@ type TaskDrawerProps = {
  * 任务描述（中文 / 英文）自 Push 196 起对「临时任务」开放（**Push 197 收窄：仅未归入阶段的临时任务** —— 业务口径 2026-09-28「这个不是临时任务 不能修改」；失焦即存，中文名必填），
  * 阶段任务与节点 / 模板生成的任务仍锁定（抽屉里不出这一行，服务端同口径 400 兜底）。
  */
-export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit, onRename, onProgress, onSetStatus, onSetActualEnd, onFinalize, onUnfinalize, onChanged, actorName, onUploadFiles, onDeleteFile, onRenameFile, projectId, onClose }: TaskDrawerProps) {
+export function TaskDrawer({ task, managers, managerIds = [], canFinalize = false, members, onSubmit, onRename, onProgress, onSetStatus, onSetActualEnd, onFinalize, onUnfinalize, onChanged, actorName, onUploadFiles, onDeleteFile, onRenameFile, projectId, onClose }: TaskDrawerProps) {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
   const taskId = task === null ? null : task.id;
@@ -318,7 +322,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
   /** 上传中的份数进度（null = 没有上传）。 */
   const [uploading, setUploading] = useState<{ done: number; total: number } | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
-  /** 预览浮层（Push 226 续 / 续三 · S4 两通道）：点清单里的图片 / PDF → 产物浮层（大图 / 内置查看器 iframe）；
+  /** 预览浮层（Push 226 续 / 续三 · S4 两通道）：点清单里的图片 / PDF → 预览浮层（图片 Blob 大图 / PDF.js 本地分页）；
    *  Office / 文本族 → ONLYOFFICE 查看器外壳（viewer 配置逐字下发）。nonce = 重试自增，强制重建查看器（重取 token）。null = 未开。 */
   const [preview, setPreview] = useState<{
     pane: { mode: "url"; url: string } | { mode: "viewer"; viewer: PreviewViewerConfig };
@@ -763,11 +767,15 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
     });
   };
 
-  /** 预览（Push 226 续 · S4 两通道裁决）：点开才懒取 —— 早先预览读取会写「查看」审计，不该随清单一开就铺开申请；Push 283 起预览不再写审计（操作日志不记录预览动作），懒取仍保留（不随清单铺开无谓的签发请求）。
-   *  viewer = ONLYOFFICE 查看器外壳（Office / 文本族）；url = 产物浮层（图片大图 / PDF iframe）；
+  /** 预览（Push 226 续 · S4 两通道裁决）：点开才懒取 —— 预览只在实际点开具体文件时写「查看」审计；缩略图 / 清单挂载只懒取签名，不写审计；2026-10-27 起由 recordPreviewView 在点开后显式补记。
+   *  viewer = ONLYOFFICE 查看器外壳（Office / 文本族）；url = 直签浮层（图片 Blob 大图 / PDF.js 本地分页）；
    *  unavailable = 确定性降级（failed / 判不出通道 —— 服务端 reason 或「请下载查看」口径）。 */
   const openPreview = async (fileId: string, name: string, versionId?: string) => {
     if (previewBusy !== null) {
+      return;
+    }
+    if (mobileFilePreviewMustDownload(name)) {
+      await downloadFile(fileId, versionId);
       return;
     }
     setPreviewBusy(fileId);
@@ -779,6 +787,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
       setPreviewNote(outcome.reason ?? t("drawer.preview.unavailable"));
       return;
     }
+    void recordPreviewView(fileId, versionId);
     if (outcome.kind === "viewer") {
       setPreview({ pane: { mode: "viewer", viewer: outcome.viewer }, name, kind, fileId, versionId: versionId ?? null, nonce: 0 });
       return;
@@ -813,7 +822,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
 
   /** 下载原文件（Push 226 续四 · 业务口径「下载为什么都是pdf 你是不是签名调用错了」）：取当前版本的
    *  attachment 短时签名（原文件字节 + 原文件名；服务端写 download 审计），再触发浏览器落盘 ——
-   *  与预览区分（S4）：Office / 文本族走 ONLYOFFICE 查看器渲染、图片 / PDF 走产物浮层；下载始终拿原文件。 */
+   *  与预览区分（S4）：Office / 文本族走 ONLYOFFICE 查看器渲染、图片 / PDF 走直签浮层；下载始终拿原文件。 */
   const downloadFile = async (fileId: string, versionId?: string) => {
     if (downloadBusy !== null) {
       return;
@@ -1011,7 +1020,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
    * 挂接任务随文件定档一并锁定，此后修改走变更）→ 重取文件清单 → 自动选中该文件。
    */
   const finalizeForChange = (fileId: string) => {
-    if (changeFinalizeBusy || projectId === undefined) {
+    if (!canFinalize || changeFinalizeBusy || projectId === undefined) {
       return;
     }
     setChangeFinalizeBusy(true);
@@ -1267,11 +1276,12 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
             <ul className="flex flex-col gap-1">
               {files.map((file) => {
                 const previewKind = previewKindOf(file.name);
+                const downloadOnMobile = mobileFilePreviewMustDownload(file.name);
                 const previewing = previewBusy === file.id;
                 const confirming = pendingDelete === file.id;
                 return (
                   <li key={file.id} data-drawer-file-item="true" className="group flex min-w-0 items-center gap-2 rounded-lg border border-zinc-100 bg-zinc-50/70 px-2.5 py-1.5 transition-colors hover:bg-zinc-100">
-                    {previewKind === "image" ? <FileThumb fileId={file.id} name={file.name} onOpen={() => { void openPreview(file.id, file.name); }} /> : <FileTypeIcon name={file.name} />}
+                    {previewKind === "image" && !downloadOnMobile ? <FileThumb fileId={file.id} name={file.name} onOpen={() => { void openPreview(file.id, file.name); }} /> : <FileTypeIcon name={file.name} />}
                     {renamingId === file.id ? (
                       <span className="flex min-w-0 flex-1 items-center gap-0.5">
                         <input
@@ -1302,7 +1312,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                           data-file-preview-open="true"
                           onClick={() => { void openPreview(file.id, file.name); }}
                           disabled={previewing}
-                          title={t("drawer.file.previewTitle")}
+                          title={downloadOnMobile ? t("drawer.file.downloadTitle") : t("drawer.file.previewTitle")}
                           className="min-w-0 flex-1 truncate text-left text-xs text-zinc-700 transition-colors hover:text-zinc-900 disabled:text-zinc-400"
                         >
                           {file.name}
@@ -1328,7 +1338,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                       </span>
                     )}
                     {previewing && previewKind === "image" ? <span className="shrink-0 text-[10px] text-zinc-400">{t("drawer.file.previewing")}</span> : null}
-                    {previewKind !== null && previewKind !== "image" ? (
+                    {previewKind !== null && previewKind !== "image" && !downloadOnMobile ? (
                       <button
                         type="button"
                         data-file-preview-open="true"
@@ -1513,24 +1523,25 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
         }}
         aria-hidden="true"
       />
-      <aside
-        ref={drawerRef}
-        key={task.id}
-        role="dialog"
-        data-live-sync-readonly={protectingDraft ? "false" : "true"}
-        aria-modal="true"
-        aria-labelledby="task-drawer-title"
-        className={
-          "drawer-panel absolute right-0 top-0 flex h-full w-[460px] max-w-[94vw] flex-col bg-white shadow-[-24px_0_60px_rgba(15,23,42,0.18)]" +
-          (closing ? " is-closing" : "")
-        }
-      >
+      <div data-task-drawer-layer="" className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
+        <aside
+          ref={drawerRef}
+          key={task.id}
+          role="dialog"
+          data-live-sync-readonly={protectingDraft ? "false" : "true"}
+          aria-modal="true"
+          aria-labelledby="task-drawer-title"
+          className={
+            "drawer-panel pointer-events-auto relative flex h-[min(78vh,800px)] max-h-[calc(100vh-2rem)] w-[min(92vw,980px)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl bg-white shadow-[0_24px_80px_rgba(15,23,42,0.24)]" +
+            (closing ? " is-closing" : "")
+          }
+        >
         <header className="border-b border-zinc-100 px-6 pb-5 pt-5">
           <div className="flex items-start justify-between gap-4">
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-[11px] font-medium text-zinc-500">{stageText(locale, task.stage === "" ? TEMP_TASK_STAGE : task.stage)}</span>
               <span data-task-status-chip="true" className={"rounded-full px-2.5 py-0.5 text-[11px] font-medium " + statusChipClass}>{statusText(locale, status)}</span>
-              {task.finalizedAt !== null ? (
+              {canFinalize && task.finalizedAt !== null ? (
                 <span className="flex items-center gap-1.5">
                   <span className="text-[11px] font-medium text-zinc-400">{t("drawer.finalize.label")}</span>
                   {onUnfinalize === undefined ? (
@@ -1561,7 +1572,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                     </button>
                   )}
                 </span>
-              ) : onFinalize === undefined ? null : (
+              ) : !canFinalize || onFinalize === undefined ? null : (
                 <span className="flex items-center gap-1.5">
                   <span className="text-[11px] font-medium text-zinc-400">{t("drawer.finalize.label")}</span>
                   <button
@@ -1590,7 +1601,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
               </svg>
             </button>
           </div>
-          {finalizeConfirm && task.finalizedAt === null ? (
+          {canFinalize && finalizeConfirm && task.finalizedAt === null ? (
             <div data-task-finalize-confirm="true" className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
               <p className="text-xs leading-5 text-amber-800">{t("drawer.finalize.confirm")}</p>
               <span className="flex shrink-0 items-center gap-1">
@@ -1613,7 +1624,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
               </span>
             </div>
           ) : null}
-          {unfinalizeConfirm && task.finalizedAt !== null ? (
+          {canFinalize && unfinalizeConfirm && task.finalizedAt !== null ? (
             <div data-task-unfinalize-confirm="true" className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
               <p className="text-xs leading-5 text-amber-800">{t("drawer.unfinalize.confirm")}</p>
               <span className="flex shrink-0 items-center gap-1">
@@ -1671,7 +1682,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
 
         {tab === "detail" ? (
           <>
-            <div className="border-b border-zinc-100 px-6 py-4">
+            <div data-drawer-progress="" className="border-b border-zinc-100 px-6 py-4">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-zinc-500">{fieldText(locale, "项目进度")}</span>
                 <span className="text-sm font-semibold text-zinc-900">{progressText}</span>
@@ -1788,7 +1799,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                                 {fileStatusLabel + (selectable ? "" : t("drawer.change.file.lockedSuffix"))}
                               </span>
                             </button>
-                            {selectable || file.status !== "draft" ? null : (
+                            {!canFinalize || selectable || file.status !== "draft" ? null : (
                               <button
                                 type="button"
                                 data-change-finalize={file.id}
@@ -1803,7 +1814,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
                               </button>
                             )}
                           </div>
-                          {finalizeOpen ? (
+                          {canFinalize && finalizeOpen ? (
                             <div data-change-finalize-confirm={file.id} className="mt-1.5 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2">
                               <p className="text-[11px] leading-4 text-amber-800">{t("drawer.change.file.finalizeConfirm")}</p>
                               <div className="mt-1.5 flex items-center gap-2">
@@ -2112,7 +2123,8 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
             <p className="text-[11px] text-zinc-400">{t("drawer.save.autosave")}</p>
           ) : null}
         </footer>
-      </aside>
+        </aside>
+      </div>
       {preview === null ? null : (
         <FilePreviewOverlay
           pane={preview.pane}
@@ -2134,6 +2146,7 @@ export function TaskDrawer({ task, managers, managerIds = [], members, onSubmit,
           onClose={() => { setChangeModalId(null); }}
         />
       )}
+      <UploadProgressOverlay progress={uploading} />
     </div>
   );
 }
@@ -2176,7 +2189,7 @@ function ChangeFileRows({ detail, versions, previewBusy, downloadBusy, onPreview
         const versionId = row.versionId;
         // 行名 / 可预览性都按「该版本自己的名称」判：变更前 = 更名前名称（各版本扩展名随版本对象键）。
         const rowName = row.kind === "before" ? beforeName : name;
-        const previewable = previewKindOf(rowName) !== null;
+        const previewable = previewKindOf(rowName) !== null && !mobileFilePreviewMustDownload(rowName);
         return (
           <span key={row.kind} data-change-file={row.kind} className="flex min-w-0 items-center gap-1.5">
             <span className="shrink-0 text-[11px] text-zinc-400">{isLocalizedLocale(locale) ? fieldText(locale, row.label) + ": " : fieldText(locale, row.label) + "："}</span>

@@ -1,9 +1,11 @@
 import { useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { ensurePreviewOutcome, fetchDownloadUrl, previewKindOf, triggerDownload, type FilePreviewKind, type PreviewViewerConfig, type TaskFileRef } from "../fileApi";
+import { ensurePreviewOutcome, fetchDownloadUrl, previewKindOf, recordPreviewView, triggerDownload, type FilePreviewKind, type PreviewViewerConfig, type TaskFileRef } from "../fileApi";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
+import { mobileFilePreviewMustDownload } from "../mobilePreviewPolicy";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { RowDeleteButton } from "./RowDeleteButton";
+import { UploadProgressOverlay } from "./UploadProgressOverlay";
 import { usePopover } from "./usePopover";
 import { useT } from "../i18n";
 
@@ -12,7 +14,7 @@ import { useT } from "../i18n";
  *  - 触发器 = 「文件」列胶囊（内容沿用「文件名 + +N」/「N 份」/「—」，液态玻璃样式与行内可编辑单元格同款）；
  *  - 下拉优先贴右侧展开（放不下自动回落上下 —— usePopover placement "right" 口径）：
  *    顶部一行 = 「＋ 添加文件」/「＋ 添加定档文件」（Push 251 改版：点哪个直接开选文件框、不再出一问——业务口径「这里直接取消按钮 直接在最上方改 改成 添加定档文件 和添加文件 在一行上」+「添加文件放前 定档文件放后 按钮」；上传中两个入口禁用、行尾「上传中 N/M」）+ 已有文件清单（服务端默认序 = 最新在前）；
- *  - 点文件名 = 预览（与详情抽屉同一套两通道裁决 + FilePreviewOverlay：图片大图 / PDF iframe /
+ *  - 点文件名 = 预览（与详情抽屉同一套两通道裁决 + FilePreviewOverlay：图片大图 / PDF.js 本地分页 /
  *    Office·文本 ONLYOFFICE 查看器外壳；R5 降级在同一下拉内出一行灰字提示）；
  *  - 行尾「删除」= 与任务表行删除**同款胶囊**（业务口径 2026-10-08「和胶囊的一样」—— 复用 RowDeleteButton：
  *    随行悬停浮现 24px 幽灵态、悬停按钮展开 48px 红胶囊「删除」，动效一致）→ 行内二次确认「确认删除 / 取消」，
@@ -28,7 +30,7 @@ import { useT } from "../i18n";
  *  - 上传 / 进度 / 删除确认都托管在本组件：关掉下拉后台上传继续、重开还在；预览打开时收起下拉；
  *  - 点击冒泡（2026-10-08 修正 · 业务口径「点击这部分内容现在抽屉也会出来 是bug」）：portal 的 click 按 **React 树**冒泡 ——
  *    根节点拦一道 stopPropagation，点下拉里的空白 / 图标 / 提示条不再冒到任务行（行点击 = 开详情抽屉）。 */
-export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete, taskFinalized = false, children }: {
+export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete, taskFinalized = false, canFinalize = false, children }: {
   taskId: string;
   taskTitle: string;
   files: readonly TaskFileRef[];
@@ -37,6 +39,8 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
   /** 任务定档（Push 249 · 业务口径「若是则上传文件后该任务定档不支持任何修改」）：true = 该任务已定档 ——
    *  两个添加入口关闭（服务端 409 TASK_FINALIZED），下拉顶出常驻提示。 */
   taskFinalized?: boolean;
+  /** 仅任务负责人 / 项目经理可定档：false 时不渲染「添加定档文件」入口。 */
+  canFinalize?: boolean;
   children: ReactNode;
 }) {
   const t = useT();
@@ -83,6 +87,9 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
   const beginAddFlow = (finalize: boolean) => {
     setPreviewNote(null);
     setPendingDelete(null);
+    if (finalize && !canFinalize) {
+      return;
+    }
     if (taskFinalized) {
       setFinalizeNote(t("files.finalizedNote"));
       return;
@@ -97,6 +104,10 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
     if (previewing !== null) {
       return;
     }
+    if (mobileFilePreviewMustDownload(name)) {
+      await downloadFile(fileId);
+      return;
+    }
     setPreviewing(fileId);
     setPreviewNote(null);
     const outcome = await ensurePreviewOutcome(fileId);
@@ -105,6 +116,7 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
       setPreviewNote(outcome.reason ?? t("drawer.preview.unavailable"));
       return;
     }
+    void recordPreviewView(fileId);
     const kind = previewKindOf(name) ?? "image";
     setPreview(outcome.kind === "viewer"
       ? { pane: { mode: "viewer", viewer: outcome.viewer }, name, kind, fileId, nonce: 0 }
@@ -201,16 +213,18 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
             >
               {t("files.add")}
             </button>
-            <button
-              type="button"
-              data-task-files-add-finalize="true"
-              onClick={() => { beginAddFlow(true); }}
-              disabled={uploading !== null}
-              title={t("files.addFinalTitle")}
-              className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:text-zinc-400 disabled:hover:bg-transparent"
-            >
-              {t("files.addFinal")}
-            </button>
+            {canFinalize ? (
+              <button
+                type="button"
+                data-task-files-add-finalize="true"
+                onClick={() => { beginAddFlow(true); }}
+                disabled={uploading !== null}
+                title={t("files.addFinalTitle")}
+                className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:text-zinc-400 disabled:hover:bg-transparent"
+              >
+                {t("files.addFinal")}
+              </button>
+            ) : null}
             {uploading === null ? null : (
               <span className="ml-auto text-[11px] tabular-nums text-zinc-400">
                 {uploading.done === 0 ? t("drawer.files.uploading") : t("drawer.files.uploadingCount", { done: uploading.done, total: uploading.total })}
@@ -256,7 +270,7 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
                         data-task-files-preview="true"
                         onClick={() => { void openPreview(file.id, file.name); }}
                         disabled={previewingThis}
-                        title={t("files.previewTitle", { name: file.name })}
+                        title={mobileFilePreviewMustDownload(file.name) ? t("drawer.file.downloadTitle") : t("files.previewTitle", { name: file.name })}
                         className="min-w-0 flex-1 truncate rounded px-1 py-0.5 text-left text-xs text-zinc-700 transition-colors hover:text-zinc-900 disabled:text-zinc-400"
                       >
                         {file.name}
@@ -309,6 +323,7 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
           onClose={() => { setPreview(null); }}
         />
       )}
+      <UploadProgressOverlay progress={uploading} />
     </>
   );
 }

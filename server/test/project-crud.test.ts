@@ -246,14 +246,29 @@ class FakeAuditService {
 }
 
 class FakePermissionService {
+  groupAccess = { enforced: false, admin: false, allEdit: true, ownEdit: true };
+  levels = new Map<string, "edit" | "view">();
+
   constructor(private readonly adminIds: readonly string[] = []) {}
 
-  async permissionsOf(actorId: string): Promise<{ roleCodes: string[]; dataScopes: string[]; permissionKeys: string[] }> {
-    return {
-      roleCodes: this.adminIds.includes(actorId) ? ["admin"] : ["member"],
-      dataScopes: [],
-      permissionKeys: [],
-    };
+  async canManageGroupAccess(actorId: string): Promise<boolean> {
+    return this.adminIds.includes(actorId);
+  }
+
+  async groupAccessOf(): Promise<{
+    enforced: boolean;
+    admin: boolean;
+    allEdit: boolean;
+    ownEdit: boolean;
+  }> {
+    return this.groupAccess;
+  }
+
+  async projectGroupAccessLevelsOf(
+    _actorId: string,
+    projectIds: readonly string[],
+  ): Promise<Map<string, "edit" | "view">> {
+    return new Map(projectIds.map((projectId) => [projectId, this.levels.get(projectId) ?? "edit"]));
   }
 }
 
@@ -270,7 +285,7 @@ class FakeObjectStorage {
 
 function makeService(
   rows: ProjectRow[] = [],
-  options: { adminIds?: readonly string[] } = {},
+  options: { adminIds?: readonly string[]; completionGateError?: AppError } = {},
 ): {
   service: ProjectService;
   repo: FakeProjectRepository;
@@ -304,6 +319,9 @@ function makeService(
         nodes: 19,
         requirements: 8,
       }),
+    assertProjectCompletionGate: async () => {
+      if (options.completionGateError !== undefined) throw options.completionGateError;
+    },
   };
   return {
     service: new ProjectService(
@@ -403,6 +421,7 @@ describe("toProjectView", () => {
     expect(view.seqNo).toBe(1);
     expect(view.managerNames).toEqual([null]);
     expect(view.customer).toBeNull();
+    expect(view.groupAccessLevel).toBe("view");
     expect(view.createdAt).toBe("2026-09-20T06:00:00.000Z");
     expect(view.deletedAt).toBeNull();
     expect(view.deletedBy).toBeNull();
@@ -415,6 +434,7 @@ describe("toProjectView", () => {
       "deletedAt",
       "deletedBy",
       "description",
+      "groupAccessLevel",
       "id",
       "managerIds",
       "managerNames",
@@ -456,6 +476,16 @@ describe("ProjectService（M2-01 项目 CRUD + 项目回收站）", () => {
     expect(repo.rows).toHaveLength(1);
   });
 
+  it("仅自己的项目编辑：创建项目时自动把创建人加入项目经理，保留原经理", async () => {
+    const { service, repo, permission } = makeService();
+    permission.groupAccess = { enforced: true, admin: false, allEdit: false, ownEdit: true };
+    await service.createProject(
+      { code: "OWN-1", name: "自己的项目", region: "华东", projectType: "分拣", managerIds: [UUID_B] },
+      UUID_A,
+    );
+    expect(repo.rows[0]?.project.managerIds).toEqual([UUID_B, UUID_A]);
+  });
+
   it("创建：显式 stageKey 生效；编号重复 409 PROJECT_CODE_EXISTS", async () => {
     const { service } = makeService([projectRow({ id: UUID_A })]);
     const created = await service.createProject(
@@ -473,23 +503,37 @@ describe("ProjectService（M2-01 项目 CRUD + 项目回收站）", () => {
     );
   });
 
+  it("列表与详情按项目随行下发 groupAccessLevel", async () => {
+    const { service, permission } = makeService([
+      projectRow({ id: UUID_A, seqNo: 1 }),
+      projectRow({ id: UUID_B, seqNo: 2 }),
+    ]);
+    permission.levels.set(UUID_B, "view");
+    const page = await service.listProjects({ page: 1, limit: 10 }, { kind: "all" }, UUID_A);
+    expect(page.items.map((item) => [item.id, item.groupAccessLevel])).toEqual([
+      [UUID_A, "edit"],
+      [UUID_B, "view"],
+    ]);
+    expect((await service.getProject(UUID_B, UUID_A)).groupAccessLevel).toBe("view");
+  });
+
   it("列表：普通栏排除回收站；项目回收站只返回已软删项目", async () => {
     const alive = projectRow({ id: UUID_A, seqNo: 1 });
     const removed = projectRow({ id: UUID_B, seqNo: 2, deletedAt: AT, deletedBy: UUID_A, version: 3 });
     const { service, repo } = makeService([alive, removed]);
-    const page = await service.listProjects({ page: 1, limit: 10 }, { kind: "all" });
+    const page = await service.listProjects({ page: 1, limit: 10 }, { kind: "all" }, UUID_A);
     expect(page.total).toBe(1);
     expect(page.page).toBe(1);
     expect(page.limit).toBe(10);
     expect(page.items.map((item) => item.id)).toEqual([UUID_A]);
     expect(repo.lastList?.filter.recycled).toBe(false);
 
-    const recycled = await service.listProjects({ "filter[recycled]": "true", page: 1, limit: 10 }, { kind: "all" });
+    const recycled = await service.listProjects({ "filter[recycled]": "true", page: 1, limit: 10 }, { kind: "all" }, UUID_A);
     expect(recycled.total).toBe(1);
     expect(recycled.items[0]).toMatchObject({ id: UUID_B, deletedAt: AT.toISOString(), deletedBy: UUID_A });
     expect(repo.lastList?.filter.recycled).toBe(true);
 
-    await service.listProjects({ page: 2, limit: 10 }, { kind: "all" });
+    await service.listProjects({ page: 2, limit: 10 }, { kind: "all" }, UUID_A);
     expect(repo.lastList?.offset).toBe(10);
   });
 
@@ -504,8 +548,8 @@ describe("ProjectService（M2-01 项目 CRUD + 项目回收站）", () => {
 
   it("详情：不存在 / 已软删统一 404 NOT_FOUND", async () => {
     const { service } = makeService([projectRow({ id: UUID_A, deletedAt: AT })]);
-    await expectAppErrorAsync(() => service.getProject(UUID_B), "NOT_FOUND");
-    await expectAppErrorAsync(() => service.getProject(UUID_A), "NOT_FOUND");
+    await expectAppErrorAsync(() => service.getProject(UUID_B, UUID_A), "NOT_FOUND");
+    await expectAppErrorAsync(() => service.getProject(UUID_A, UUID_A), "NOT_FOUND");
   });
 
   it("访问：可见项目写一条 project + visit 审计；不存在 404 不写", async () => {
@@ -561,6 +605,23 @@ describe("ProjectService（M2-01 项目 CRUD + 项目回收站）", () => {
     expect(outbox).toHaveLength(1);
   });
 
+  it("更新为已完成：完成门禁缺交付文件 → 422，项目状态与 outbox 均不写", async () => {
+    const { service, outbox } = makeService(
+      [projectRow({ id: UUID_A, version: 3, status: "active" })],
+      {
+        completionGateError: new AppError(
+          "TASK_REQUIRED_DOC_MISSING",
+          "项目无法标记为已完成 —— 有 1 项已配置成果文件尚未上传：「机械设计」CAD图纸",
+        ),
+      },
+    );
+    await expectAppErrorAsync(
+      () => service.updateProject(UUID_A, { status: "done", version: 3 }, UUID_B),
+      "TASK_REQUIRED_DOC_MISSING",
+    );
+    expect(outbox).toHaveLength(0);
+  });
+
   it("更新：version 不匹配 409 VERSION_CONFLICT；期间被删则 404", async () => {
     const { service } = makeService([projectRow({ id: UUID_A, version: 3 })]);
     await expectAppErrorAsync(() => service.updateProject(UUID_A, { name: "改名", version: 2 }, UUID_A), "VERSION_CONFLICT");
@@ -587,10 +648,10 @@ describe("ProjectService（M2-01 项目 CRUD + 项目回收站）", () => {
     expect(repo.rows).toHaveLength(1);
     expect(repo.rows[0]?.project).toMatchObject({ id: UUID_A, version: 3, deletedBy: UUID_B });
 
-    await expectAppErrorAsync(() => service.getProject(UUID_A), "NOT_FOUND");
-    expect((await service.listProjects({ page: 1, limit: 20 }, { kind: "all" })).total).toBe(0);
+    await expectAppErrorAsync(() => service.getProject(UUID_A, UUID_A), "NOT_FOUND");
+    expect((await service.listProjects({ page: 1, limit: 20 }, { kind: "all" }, UUID_A)).total).toBe(0);
     expect(
-      (await service.listProjects({ "filter[recycled]": "true", page: 1, limit: 20 }, { kind: "all" })).total,
+      (await service.listProjects({ "filter[recycled]": "true", page: 1, limit: 20 }, { kind: "all" }, UUID_A)).total,
     ).toBe(1);
     expect(audit.entries[0]).toMatchObject({
       action: "delete",
@@ -623,9 +684,9 @@ describe("ProjectService（M2-01 项目 CRUD + 项目回收站）", () => {
     expect(restored).toMatchObject({ id: UUID_A, version: 4, deletedAt: null, deletedBy: null });
     expect(restored.managerNames).toEqual(["张工"]);
     expect(repo.lastRestore).toEqual({ id: UUID_A, expectedVersion: 3 });
-    expect((await service.listProjects({ page: 1, limit: 20 }, { kind: "all" })).total).toBe(1);
+    expect((await service.listProjects({ page: 1, limit: 20 }, { kind: "all" }, UUID_A)).total).toBe(1);
     expect(
-      (await service.listProjects({ "filter[recycled]": "true", page: 1, limit: 20 }, { kind: "all" })).total,
+      (await service.listProjects({ "filter[recycled]": "true", page: 1, limit: 20 }, { kind: "all" }, UUID_A)).total,
     ).toBe(0);
     expect(audit.entries[0]).toMatchObject({
       action: "update",

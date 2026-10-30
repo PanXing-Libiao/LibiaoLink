@@ -1,6 +1,7 @@
 import { z } from "../zod.ts";
 import { NotifyChannelSchema, NotifyExternalChannelSchema } from "./automation.ts";
 import { DateTimeSchema, PageQuerySchema, UuidSchema, paginated } from "../common/conventions.ts";
+import { StageKeySchema } from "../common/dicts.ts";
 
 /**
  * 通知（站内信 · 消息中心）契约（S7-4 · j1 / M5-04 首刀 · lan）。
@@ -138,7 +139,10 @@ export const NotifyGroupMessagePayloadSchema = z
       .string()
       .max(NOTIFICATION_TEMPLATE_CODE_MAX_LENGTH)
       .nullish()
-      .openapi({ description: "模板码（R04_GROUP / R06_GROUP / A02_GROUP / A08_GROUP；排障与文案回溯用）" }),
+      .openapi({ description: "模板码（R04_GROUP / R06_GROUP / A02_GROUP / A08_GROUP / STAGE_COMPLETE_GROUP；排障与文案回溯用）" }),
+    stageKey: StageKeySchema.nullish().openapi({
+      description: "九阶段键；仅 STAGE_COMPLETE_GROUP 使用，投递层据此生成阶段完成海报",
+    }),
   })
   .superRefine((value, context) => {
     const hasRefType = value.refType !== null && value.refType !== undefined && value.refType !== "";
@@ -277,6 +281,9 @@ export const NotificationSchema = z
     status: NotificationStatusSchema,
     refType: z.string().nullable().openapi({ description: "关联对象类型（可空）" }),
     refId: UuidSchema.nullable().openapi({ description: "关联对象 id（可空；与 refType 成对）" }),
+    projectId: UuidSchema.nullable().openapi({
+      description: "关联对象所属项目 id（读面按 refType / refId 解析；站内信点击直达关联项目；无法解析 = null）",
+    }),
     templateCode: z.string().nullable().openapi({ description: "模板码（可空）" }),
     mergedCount: z.number().int().min(1).openapi({ description: "合并条数：同期同合并键的消息条数（未合并 = 1）" }),
     snoozeUntil: DateTimeSchema.nullable().openapi({

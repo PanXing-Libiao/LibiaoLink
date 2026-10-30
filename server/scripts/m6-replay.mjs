@@ -128,17 +128,15 @@ try {
   check("P1", "api 可用（/healthz）", "200", String(health), health === 200, "先起 api 再跑本脚本");
 
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
-  const adminRow = await db.query("select u.id from users u join user_roles ur on ur.user_id = u.id join roles r on r.id = ur.role_id where r.code = $1 and u.status = $2 order by u.id limit 1", ["admin", "active"]);
+  const adminRow = await db.query("select u.id from users u join group_access_admins gaa on gaa.user_id = u.id where u.status = $1 order by u.id limit 1", ["active"]);
   if (args.actor === undefined && adminRow.rows.length === 0) {
-    const adminRole = await db.query("select id from roles where code = $$admin$$ limit 1");
-    if (adminRole.rows.length === 0) throw new Error("roles 表缺少 admin 角色；先在目标库跑 database/scripts/seed.mjs");
-    const createdAdmin = await db.query("insert into users (casdoor_id, username, display_name, status) values ($1, $2, $3, $$active$$) returning id", ["m6rpl-" + stamp + "-admin", "m6rpl-" + stamp + "-admin", "M6 回放管理员"]);
-    await db.query("insert into user_roles (user_id, role_id) values ($1, $2)", [createdAdmin.rows[0].id, adminRole.rows[0].id]);
+    const createdAdmin = await db.query("insert into users (casdoor_id, username, display_name, status) values ($1, $2, $3, $4) returning id", ["m6rpl-" + stamp + "-admin", "m6rpl-" + stamp + "-admin", "M6 回放管理员", "active"]);
+    await db.query("insert into group_access_admins (user_id, granted_by) values ($1, $1)", [createdAdmin.rows[0].id]);
     cleanup.syntheticUserId = createdAdmin.rows[0].id;
     adminRow.rows.push(createdAdmin.rows[0]);
   }
   adminId = args.actor ?? adminRow.rows[0]?.id;
-  check("P2", "管理员账号可用（roles.code = admin；空库自动建合成管理员）", "非空 userId", short(adminId ?? null, 80), adminId !== undefined);
+  check("P2", "管理员账号可用（group_access_admins；空库自动建合成管理员）", "非空 userId", short(adminId ?? null, 80), adminId !== undefined);
   admin = await makeSession(adminId, "m6-replay");
   const probe = await call("GET", "/api/v1/projects?limit=1");
   check("P3", "临时会话可用（GET /api/v1/projects）", "200", probe.status + " " + short(probe.body?.total ?? probe.body?.code ?? null, 80), probe.status === 200);
@@ -497,7 +495,7 @@ try {
       }
       if (cleanup.syntheticUserId !== null) {
         await db.query("delete from audit_logs where actor_id = $1", [cleanup.syntheticUserId]);
-        await db.query("delete from user_roles where user_id = $1", [cleanup.syntheticUserId]);
+        await db.query("delete from group_access_admins where user_id = $1", [cleanup.syntheticUserId]);
         await db.query("delete from sessions where user_id = $1", [cleanup.syntheticUserId]);
         await db.query("delete from users where id = $1", [cleanup.syntheticUserId]);
       }

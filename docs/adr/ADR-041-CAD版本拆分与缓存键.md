@@ -1,8 +1,8 @@
-# ADR-039：CAD 引擎、格式与浏览器版本分离
+# ADR-041：CAD 引擎、格式与浏览器版本分离
 
 - 日期：2026-10-28
 - 状态：草案；本地实现，未推送或部署
-- 主责：wmj；补充 ADR-035、ADR-037、ADR-038
+- 主责：wmj；补充 ADR-035、ADR-037、ADR-040
 
 ## 问题
 
@@ -18,7 +18,7 @@
   `cad_artifacts.format_version` 成为产物唯一键的一部分；`engine_version` 只保留部署/审计含义，不再参与唯一键。
 - **viewerVersion**：只由 `frontend/public/cad-viewer/core/` 计算，写入 `source.json`/`cad-release.ts`，用于部署追溯与静态资源版本核对；不进入引擎或格式缓存键。当前不改 `CadViewer` API 契约；如后续需要浏览器灰度，再单独增加可选字段。
 - `bridge.py` 的本地任务恢复摘要改用 `engineDigest`，浏览器改动不再影响 CAD 任务缓存。
-- `0069_cad_format_version.sql` 增加 `format_version`，旧行回填为旧 `engine_version`，并把唯一键改为 `(version_id, format_version, name_codepage, resource_set_hash)`。旧产物不会被伪装成新格式产物；首次访问新格式版本时重建。之后：
+- `0078_cad_format_version.sql` 增加 `format_version`，旧行回填为旧 `engine_version`，并把唯一键改为 `(version_id, format_version, name_codepage, resource_set_hash)`。旧产物不会被伪装成新格式产物；首次访问新格式版本时重建。之后：
   - 浏览器-only 改动：engineVersion/formatVersion 不变，STEP/DXF 产物都复用；
   - DXF-only 改动：仅 DXF formatVersion 变化，STEP 产物复用；
   - STEP-only 改动：仅 STEP formatVersion 变化，DXF 产物复用；

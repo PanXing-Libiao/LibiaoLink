@@ -4,7 +4,7 @@ import type { Response } from "express";
 import type { IncomingMessage } from "node:http";
 import { IMPORT_MAX_FILE_BYTES, ProjectImportCommitBodySchema, z } from "@libiaolink/contracts";
 import type { ProjectImportPreview, ProjectImportResult } from "@libiaolink/contracts";
-import { readMultipartParts } from "../../common/http/multipart.js";
+import { readMultipartFile } from "../../common/http/multipart.js";
 import { AppError } from "../../common/errors/app-error.js";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
@@ -18,7 +18,7 @@ type ProjectImportCommitBody = z.infer<typeof ProjectImportCommitBodySchema>;
  * 导入表导入接口（直连 API 导入 · 业务口径 2026-10-14）：项目空间「导入项目」按钮 → 大屏面板四步（选择 / 解析 / 确认 / 完成）
  * 走这两条接口；契约 shared/src/modules/imports.ts（前端 frontend/src/importApi.ts 已接线）。
  * - preview：multipart/form-data（字段 file；.xlsx / .xlsm，≤ 256 MB）—— **不用 Nest FileInterceptor / multer**
- *   （服务端无该依赖，且这是一进一出的整包解析）：由 common/http/multipart.ts 直接收流，超限 / 非 multipart 400；
+ *   （服务端无该依赖）：由 common/http/multipart.ts 直接收流到受控临时文件，ZIP 按偏移读盘解析，超限 / 非 multipart 400；
  * - commit：JSON（previewId + 落位确认）—— 单事务建项目并写入全量数据（预检失败 409 / 410 / 422 见契约错误码）。
  * 门禁：登录 + CSRF + project.create（与「新建项目」同权限位）；预览票据只认创建人本人（他人提交 403）。
  * 语言：按 Accept-Language 出提醒文案（zh 缺省 / en）—— 前端 apiFetch 已带该头。
@@ -26,7 +26,7 @@ type ProjectImportCommitBody = z.infer<typeof ProjectImportCommitBodySchema>;
 @Controller("api/v1/project-imports")
 @UseGuards(SessionGuard, CsrfGuard, ProjectAccessGuard)
 export class ProjectImportController {
-  /** 200 MB 级导入只允许单实例并发，避免预览 / 提交同时保留整包文件与图片缓存。 */
+  /** 200 MB 级导入只允许单实例并发，限制解析 / 图片处理的单实例峰值与临时盘占用。 */
   private importInFlight = false;
 
   constructor(private readonly imports: ProjectImportService) {}
@@ -46,17 +46,20 @@ export class ProjectImportController {
     }
     this.importInFlight = true;
     try {
-      const parts = await readMultipartParts(request, contentType ?? null, ["file"], IMPORT_MAX_FILE_BYTES);
-      const main = parts.get("file") ?? null;
-      if (main === null) {
+      const upload = await readMultipartFile(request, contentType ?? null, "file", IMPORT_MAX_FILE_BYTES);
+      if (upload === null) {
         throw new AppError("IMPORT_FILE_INVALID", "缺少上传文件（multipart 字段 file）");
       }
-      return await this.imports.preview({
-        bytes: main.bytes,
-        fileName: main.fileName,
-        actorId,
-        locale: localeOf(acceptLanguage),
-      });
+      try {
+        return await this.imports.preview({
+          sourceFile: { path: upload.path, offset: upload.offset, sizeBytes: upload.sizeBytes },
+          fileName: upload.fileName,
+          actorId,
+          locale: localeOf(acceptLanguage),
+        });
+      } finally {
+        await upload.cleanup();
+      }
     } finally {
       this.importInFlight = false;
     }
