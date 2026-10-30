@@ -1458,7 +1458,7 @@
             "minItems": 3,
             "maxItems": 3
           },
-          "minItems": 2
+          "minItems": 0
         },
         "knots": {
           "type": "array",
@@ -1477,6 +1477,21 @@
         },
         "periodic": {
           "type": "boolean"
+        },
+        "fitPointsOnly": {
+          "type": "boolean"
+        },
+        "fitPoints": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "minItems": 2
         }
       },
       "required": [

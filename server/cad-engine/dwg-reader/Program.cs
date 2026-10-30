@@ -448,11 +448,15 @@ static class Program
                 EntityRow(e,space,id,R(("type","ellipse"),("center",P(ellipse.Center)),("majorAxis",P(ellipse.MajorAxisEndPoint)),
                     ("minorAxis",P(ellipse.MinorAxisEndPoint)),("startAngle",ellipse.StartParameter),("sweepAngle",ellipse.EndParameter-ellipse.StartParameter)),ellipsePoints,original:original); return;
             case Spline spline:
-                if(!spline.TryPolygonalVertexes(48,out var splinePoints)) throw new InvalidDataException("ACadSharp.TryPolygonalVertexes failed; no invented fit");
-                splinePoints=CleanSplineDisplayPoints(splinePoints,spline.ControlPoints);
+                var splinePoints=SplineDisplayPoints(spline);
                 var weights=spline.Weights.Count==0?Enumerable.Repeat(1.0,spline.ControlPoints.Count).ToArray():spline.Weights.ToArray();
-                EntityRow(e,space,id,R(("type","spline"),("degree",spline.Degree),("controlPoints",spline.ControlPoints.Select(P).ToArray()),
-                    ("knots",spline.Knots.ToArray()),("weights",weights),("periodic",spline.IsPeriodic)),splinePoints,original:original); return;
+                var splineFacts=R(("type","spline"),("degree",spline.Degree),("controlPoints",spline.ControlPoints.Select(P).ToArray()),
+                    ("knots",spline.Knots.ToArray()),("weights",weights),("periodic",spline.IsPeriodic));
+                if(spline.ControlPoints.Count==0) {
+                    splineFacts["fitPointsOnly"]=true;
+                    splineFacts["fitPoints"]=spline.FitPoints.Select(P).ToArray();
+                }
+                EntityRow(e,space,id,splineFacts,splinePoints,original:original); return;
             case XLine xline:
                 Infinite(e,space,id,"xline",xline.FirstPoint,xline.Direction,original); return;
             case Ray ray:
@@ -609,6 +613,21 @@ static class Program
             points.RemoveAt(0);
         return points;
     }
+    static List<XYZ> SplineDisplayPoints(Spline spline)
+    {
+        if(spline.TryPolygonalVertexes(48,out var points))
+            return CleanSplineDisplayPoints(points,spline.ControlPoints);
+        // R13/R14-era splines can store only fit points; ACadSharp evaluates the
+        // NURBS from the control polygon, so the stored fit points are the only
+        // source geometry left. Joining them is an explicit approximation
+        // (fitPointsOnly), never an invented curve; a spline with neither
+        // control nor fit points stays a reported loss.
+        if(spline.FitPoints.Count>=2){
+            var fit=spline.FitPoints.ToList();
+            return spline.IsClosed?Closed(fit):fit;
+        }
+        throw new InvalidDataException("ACadSharp.TryPolygonalVertexes failed; no invented fit");
+    }
     static void SelfTest(string folder)
     {
         Directory.CreateDirectory(folder);
@@ -629,6 +648,15 @@ static class Program
         var kept=CleanSplineDisplayPoints(new List<XYZ>{XYZ.Zero,new XYZ(10,10,0)},new List<XYZ>{XYZ.Zero});
         if(kept.Count!=2)
             throw new InvalidDataException("a spline that starts at the origin must keep its first vertex");
+        var fitOnly=new Spline{Degree=3};
+        fitOnly.FitPoints.Add(new XYZ(0,0,0));fitOnly.FitPoints.Add(new XYZ(10,5,0));
+        var fitPoints=SplineDisplayPoints(fitOnly);
+        if(fitPoints.Count!=2 || Math.Abs(fitPoints[1].Y-5)>1e-9)
+            throw new InvalidDataException("fit-point-only spline fallback changed");
+        bool emptySplineRejected=false;
+        try{SplineDisplayPoints(new Spline{Degree=3});}
+        catch(InvalidDataException){emptySplineRejected=true;}
+        if(!emptySplineRejected)throw new InvalidDataException("a spline with neither control nor fit points was accepted");
         var arrow=DefaultLeaderArrowPoints(XYZ.Zero,new XYZ(100,0,0),10);
         if(Math.Abs(arrow[1].X-10)>1e-9 || Math.Abs(arrow[1].Y-10.0/6.0)>1e-9
             || Math.Abs(arrow[2].Y+10.0/6.0)>1e-9)
@@ -650,7 +678,7 @@ static class Program
         if(cap.Count!=9 || Math.Abs(cap[0].Y)>1e-9 || Math.Abs(cap[^1].Y-20)>1e-9
             || Math.Abs(Math.Abs(cap[4].X)-10)>1e-6)
             throw new InvalidDataException("MLine round cap arc changed");
-        Console.WriteLine("PASS: native DWG header fields remain independent, including raw -1; no interchange format; spline zero vertex guard; default leader arrow guard; MLine miter and round cap geometry.");
+        Console.WriteLine("PASS: native DWG header fields remain independent, including raw -1; no interchange format; spline zero vertex guard; fit-point spline fallback; default leader arrow guard; MLine miter and round cap geometry.");
     }
     static int Main(string[] args)
     {
@@ -711,7 +739,7 @@ static class Program
             foreach(var style in doc.TextStyles) Emit("nativeFonts",H(style),new{handle=H(style),style.Name,style.Filename,style.BigFontFilename,style.Height,style.Width,style.ObliqueAngle});
             foreach(var block in doc.BlockRecords) if(reachable.Contains(block.Handle)) {
                 string space=spaces[block.Handle],bid="block-"+H(block);
-                string kind=block==doc.ModelSpace?"model":block.Name.StartsWith("*Paper_Space")?"paper":"block";
+                string kind=block==doc.ModelSpace?"model":block.Name.StartsWith("*Paper_Space",StringComparison.OrdinalIgnoreCase)?"paper":"block";
                 Emit("spaces",space,new{id=space,drawingId,kind,ownerId=kind=="block"?bid:drawingId,entityIds=Array.Empty<string>(),annotationIds=Array.Empty<string>(),blockInstanceIds=Array.Empty<string>()});
                 if(kind=="block")Emit("blocks",bid,new{id=bid,drawingId,name=block.Name,spaceId=space,basePoint=P(block.BlockEntity.BasePoint),units=Unknown(),dynamicParameters=R()});
                 foreach(var e in SortedEntities(block))Map(e,space);

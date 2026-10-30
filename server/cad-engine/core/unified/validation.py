@@ -575,7 +575,13 @@ def validate_drawing(d):
                     if 'widths' in g:
                         require(len(g['widths'])==count and all(len(pair)==2 and all(type(v) in (int,float) and math.isfinite(v) and v>=0 for v in pair) for pair in g['widths']),
                                 'invalid-geometry',item['id'],'Invalid segment widths')
-                if t=='spline':require(g['degree']<len(g['controlPoints']) and len(g['weights'])==len(g['controlPoints']) and len(g['knots'])==len(g['controlPoints'])+g['degree']+1 and g['knots']==sorted(g['knots']),'invalid-geometry',item['id'],'Spline dimensions/knots')
+                if t=='spline':
+                    if g.get('fitPointsOnly'):
+                        # R13/R14-era splines can store only fit points; the NURBS
+                        # dimension rules apply to the control-polygon form.
+                        require(len(g['controlPoints'])==0 and len(g.get('fitPoints') or [])>=2,'invalid-geometry',item['id'],'Fit-point spline dimensions')
+                    else:
+                        require(g['degree']<len(g['controlPoints']) and len(g['weights'])==len(g['controlPoints']) and len(g['knots'])==len(g['controlPoints'])+g['degree']+1 and g['knots']==sorted(g['knots']),'invalid-geometry',item['id'],'Spline dimensions/knots')
                 if t=='hatch':require(set(g['boundaryEntityIds'])<=member_tables['entities'],'invalid-reference',item['id'],'Missing hatch boundary')
                 if t=='image':require(g['resourceId'] in d['resources'],'invalid-reference',item['id'],'Missing image')
             elif tab=='annotations':
