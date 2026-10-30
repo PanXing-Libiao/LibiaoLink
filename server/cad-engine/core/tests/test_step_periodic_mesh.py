@@ -5,16 +5,22 @@ import sys
 import unittest
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from OCP.BRep import BRep_Tool
-from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
-from OCP.BRepClass import BRepClass_FaceClassifier
-from OCP.Geom import Geom_CylindricalSurface
-from OCP.TopAbs import TopAbs_FORWARD,TopAbs_IN,TopAbs_ON
-from OCP.TopoDS import TopoDS
-from OCP.TopLoc import TopLoc_Location
-from OCP.gp import gp_Ax3,gp_Pnt2d,gp_Trsf,gp_Vec
-from unified.step_periodic_mesh import closed_face_native_mesh
+try:
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
+    from OCP.BRepClass import BRepClass_FaceClassifier
+    from OCP.Geom import Geom_CylindricalSurface
+    from OCP.TopAbs import TopAbs_FORWARD,TopAbs_IN,TopAbs_ON
+    from OCP.TopoDS import TopoDS
+    from OCP.TopLoc import TopLoc_Location
+    from OCP.gp import gp_Ax3,gp_Pnt2d,gp_Trsf,gp_Vec
+    from unified.step_periodic_mesh import closed_face_native_mesh
+except ModuleNotFoundError:
+    HAVE_OCP = False
+else:
+    HAVE_OCP = True
 
+@unittest.skipUnless(HAVE_OCP, 'OpenCASCADE (OCP) Python bindings are not installed')
 class PeriodicMeshTests(unittest.TestCase):
     def face(self,start=0,end=2*math.pi):
         return BRepBuilderAPI_MakeFace(Geom_CylindricalSurface(gp_Ax3(),3),start,end,0,4,1e-7).Face()

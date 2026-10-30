@@ -3,12 +3,18 @@ import os,sys,tempfile,unittest
 from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
-from OCP.gp import gp_Pln
-from OCP.BRep import BRep_Tool
-from OCP.TopLoc import TopLoc_Location
-from unified.step_missing_faces import classify_missing_face,is_accepted_nonmeshable,REMESH_DEFLECTIONS
+try:
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
+    from OCP.gp import gp_Pln
+    from OCP.BRep import BRep_Tool
+    from OCP.TopLoc import TopLoc_Location
+    from unified.step_missing_faces import classify_missing_face,is_accepted_nonmeshable,REMESH_DEFLECTIONS
+except ModuleNotFoundError:
+    HAVE_OCP = False
+else:
+    HAVE_OCP = True
 
+@unittest.skipUnless(HAVE_OCP, 'OpenCASCADE (OCP) Python bindings are not installed')
 class MissingFaceTests(unittest.TestCase):
     def face(self,x,y):return BRepBuilderAPI_MakeFace(gp_Pln(),0,x,0,y).Face()
     def test_absolute_and_relative_zero_are_distinct_policy_criteria(self):

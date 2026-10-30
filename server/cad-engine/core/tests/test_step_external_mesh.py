@@ -4,15 +4,21 @@ import math,os,subprocess,sys,tempfile,unittest
 from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from OCP.BRep import BRep_Tool
-from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace,BRepBuilderAPI_MakePolygon
-from OCP.Geom import Geom_CylindricalSurface
-from OCP.TopLoc import TopLoc_Location
-from OCP.TopoDS import TopoDS
-from OCP.gp import gp_Ax3,gp_Pln,gp_Pnt,gp_Trsf,gp_Vec
-from unified.step_external_mesh import ExternalMeshContext,_execute
-from unified.step_mesh_validation import validate_external_mesh
+try:
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace,BRepBuilderAPI_MakePolygon
+    from OCP.Geom import Geom_CylindricalSurface
+    from OCP.TopLoc import TopLoc_Location
+    from OCP.TopoDS import TopoDS
+    from OCP.gp import gp_Ax3,gp_Pln,gp_Pnt,gp_Trsf,gp_Vec
+    from unified.step_external_mesh import ExternalMeshContext,_execute
+    from unified.step_mesh_validation import validate_external_mesh
+except ModuleNotFoundError:
+    HAVE_OCP = False
+else:
+    HAVE_OCP = True
 
+@unittest.skipUnless(HAVE_OCP, 'OpenCASCADE (OCP) Python bindings are not installed')
 class ExternalMeshTests(unittest.TestCase):
     def fixture(self):
         polygon=BRepBuilderAPI_MakePolygon()

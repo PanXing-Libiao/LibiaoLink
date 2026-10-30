@@ -6,15 +6,21 @@ import tempfile
 import unittest
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
-from OCP.TDocStd import TDocStd_Document
-from OCP.TCollection import TCollection_ExtendedString
-from OCP.XCAFDoc import XCAFDoc_DocumentTool
-from OCP.TDataStd import TDataStd_Name
-from OCP.STEPCAFControl import STEPCAFControl_Writer
-from OCP.IFSelect import IFSelect_RetDone
-from unified.step_adapter import read_step
+try:
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.TDocStd import TDocStd_Document
+    from OCP.TCollection import TCollection_ExtendedString
+    from OCP.XCAFDoc import XCAFDoc_DocumentTool
+    from OCP.TDataStd import TDataStd_Name
+    from OCP.STEPCAFControl import STEPCAFControl_Writer
+    from OCP.IFSelect import IFSelect_RetDone
+    from unified.step_adapter import read_step
+except ModuleNotFoundError:
+    HAVE_OCP = False
+else:
+    HAVE_OCP = True
 
+@unittest.skipUnless(HAVE_OCP, 'OpenCASCADE (OCP) Python bindings are not installed')
 class StepNameEncodingTests(unittest.TestCase):
     def test_utf8_escaped_and_explicit_gb_names_preserve_geometry(self):
         doc=TDocStd_Document(TCollection_ExtendedString('BinXCAF'))

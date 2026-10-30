@@ -20,6 +20,7 @@ from convert import convert
 from unified.adapter import from_packet
 from unified.migrate import migrate_bridge_v1
 
+@unittest.skipUnless((SAMPLE_ROOT / 'Viola.easm').exists(), 'external STEP sample (CAD_TEST_DATA or .cad-work/research) is not provisioned')
 class JobTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

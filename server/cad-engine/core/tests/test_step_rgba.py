@@ -5,15 +5,23 @@ import tempfile
 import unittest
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
-from OCP.TDocStd import TDocStd_Document
-from OCP.TCollection import TCollection_ExtendedString
-from OCP.XCAFDoc import XCAFDoc_DocumentTool,XCAFDoc_ColorSurf
-from OCP.Quantity import Quantity_Color,Quantity_ColorRGBA,Quantity_TOC_RGB
-from OCP.STEPCAFControl import STEPCAFControl_Writer
-from OCP.IFSelect import IFSelect_RetDone
-from unified.step_adapter import read_step
+try:
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.TDocStd import TDocStd_Document
+    from OCP.TCollection import TCollection_ExtendedString
+    from OCP.XCAFDoc import XCAFDoc_DocumentTool,XCAFDoc_ColorSurf
+    from OCP.Quantity import Quantity_Color,Quantity_ColorRGBA,Quantity_TOC_RGB
+    from OCP.STEPCAFControl import STEPCAFControl_Writer
+    from OCP.IFSelect import IFSelect_RetDone
+    from unified.step_adapter import read_step
+except ModuleNotFoundError:
+    # OpenCASCADE (OCP) is the external STEP runtime; without it these tests
+    # cannot run, so they skip instead of failing on an import.
+    HAVE_OCP = False
+else:
+    HAVE_OCP = True
 
+@unittest.skipUnless(HAVE_OCP, 'OpenCASCADE (OCP) Python bindings are not installed')
 class StepRGBATests(unittest.TestCase):
     def test_native_step_transparency_is_preserved(self):
         doc=TDocStd_Document(TCollection_ExtendedString('BinXCAF'))

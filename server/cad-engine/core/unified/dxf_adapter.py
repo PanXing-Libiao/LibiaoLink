@@ -2433,6 +2433,10 @@ def project_drawing(d, target, effective_layers=None, presentation_styles=None):
             part_layer = effective_layer(part['layerId'], part_chain)
             rows.append({'id': part['id'], 'layerId': part_layer,
                          'style': resolve(part['style'], part_layer, part_chain, part['id'], viewport),
+                         # Mirrors drawing-projection.js: presentation parts carry the
+                         # same ancestor layer chain as the draw so visibility toggles
+                         # apply per part in both implementations.
+                         'visibilityLayerIds': list(dict.fromkeys([part_layer] + [parent[1] for parent in part_chain])),
                          'visibility': 'hidden' if visibility == 'hidden' else entity_visibility(part['id'], part_layer, viewport)})
             line_type = rows[-1]['style'].get('lineTypeId')
             variant = part.get('drawVariants', {}).get(draw_id)

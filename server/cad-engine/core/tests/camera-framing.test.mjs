@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+// Run with: node --experimental-loader ./tests/three-loader.mjs --test tests/*.test.mjs
+// The loader maps the browser import-map entry 'three' to the vendored module.
 import * as THREE from 'three';
 import {fitCameraToBox,updateCameraRange,captureCameraView,restoreCameraView} from '../../../../frontend/public/cad-viewer/core/camera-framing.js';
 

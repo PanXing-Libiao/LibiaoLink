@@ -34,6 +34,13 @@ def stop(proc):
         proc.wait()
 
 
+# These tests drive the isolated DXF worker through a provisioned local runtime
+# (.cad-work/dxf venv). Without that interpreter they would only exercise the
+# worker-failure path, so the class skips instead of asserting a fake contract.
+WORKER = WORK / 'dxf/bin/python'
+
+
+@unittest.skipUnless(WORKER.exists(), 'isolated DXF worker interpreter (.cad-work/dxf/bin/python) is not provisioned')
 class DxfJobsTest(unittest.TestCase):
     def test_uploaded_dwfx_and_print_style_reach_the_isolated_worker(self):
         from test_underlays import dwfx

@@ -36,6 +36,7 @@ def drawing_projection_fixture(e):
  e['snapshot']['drawingProjection']={'drawingId':'D','target':{'kind':'layout','layoutId':'L'},'viewports':copy.deepcopy(e['document']['drawing']['viewports']),'layerStates':{'Y':{'visible':True,'frozen':False,'plot':True}},'draws':{'draw-E-V':{'kind':'entity','itemId':'E','blockPath':[],'viewportId':'V','localToSpace':IDENTITY,'visibility':'shown','availability':'ready','style':{'color':[0,0,0,1],'opacity':1,'plot':True},'drawOrder':0}}}
  refresh(e);return e
 
+@unittest.skipUnless((SAMPLE_ROOT / 'Viola.easm').exists(), 'external STEP sample (CAD_TEST_DATA or .cad-work/research) is not provisioned')
 class SchemaTests(unittest.TestCase):
  @classmethod
  def setUpClass(cls):
