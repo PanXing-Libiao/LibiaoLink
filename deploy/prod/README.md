@@ -82,6 +82,14 @@
 >
 > **待办**：源码仍是本地 `px` 工作区未提交改动，尚未推送 PR；需按仓库流程补提交与评审。
 
+> **2026-10-29 12:04 交付完成门禁已部署正式机（PR [#708](https://github.com/PanXing-Libiao/LibiaoLink/pull/708) · main@d7f7162f）**：正式环境 `https://pm.libiaorobot.com`（`10.1.103.44`）已更新到 `main@d7f7162f`，release = `prod-20261029-task-delivery-gate-d7f7162f`。任务仅在配置了成果类型时要求对应文件；任务完成、阶段完成群通知与项目 done 共用同一交付齐套判定，draft / final / changed 且已有当前版本均算上传，未配置成果类型不额外要求。缺件仍返回 422 并保留逐项缺失明细；测试机 `10.1.104.44` 本轮未再部署，生产群未实际触发新消息。
+>
+> **发布包与构建**：server `output/server-task-delivery-gate-d7f7162f-20261029-1158.tar.gz`（978,276 B · SHA-256 `961680ddd68f625ee7f2e858853d6c5dd5881247b7849993ef7b4a6007af2467` · 620 文件 / 4,283,710 B）、shared `output/shared-task-delivery-gate-d7f7162f-20261029-1158.tar.gz`（381,143 B · `620fd0c474e2d15e10248fabfd679f6d2aa647eba7d0d6a0b54b55b586b19c24` · 98 文件 / 2,467,600 B）；远端 SHA-256 与 staging 解包逐字节一致。最终 `main@d7f7162f` CI 5 / 5 通过；本地构建源 `HEAD@03983122` 的 `server` / `shared` git tree 与最终 main 完全一致。
+>
+> **备份 / 清单**：部署前备份 `/srv/data/backups/before-task-delivery-gate-prod-d7f7162f-20261029-1200/`（server 968,060 B · `2fef4bad…3fee`；shared 394,627 B · `344d39b3…27c15`；原 manifest 38,330 B · `4392971b…8b6f`；数据库 dump 577,656 B · `3d03fa9d…3398`，`pg_restore -l` 619 条）；manifest = `prod-20261029-task-delivery-gate-d7f7162f`（41,995 B · `c8071497…1c53`）。
+>
+> **部署 / 验收**：仅以 rsync-checksum-delete 同步 `server/dist`、`shared/dist`、`shared/generated`，并用 `docker-compose.yml + docker-compose.cad.yml`、`--profile app --no-deps --force-recreate` 重建 api / worker；无 DDL、迁移、依赖、环境变量或权限字段变化。8 / 8 容器 healthy，api / worker 重启计数 0；站点 / `healthz` / `readyz` 均 200，ready 四探针全过；CAD socket 保留；近 20 分钟 api / worker error / fatal / exception 0。只读探针：配置“安装完成证明”但缺文件 → `canComplete=false`（missing 1 / present 0），未配置成果类型 → `canComplete=true`；临时会话已删除。
+
 > **2026-10-29 11:14 企微绑定引导三步文案已发布正式机（PR [#707](https://github.com/PanXing-Libiao/LibiaoLink/pull/707) · main@26f1b7d7）**：正式环境 `https://pm.libiaorobot.com`（`10.1.103.44`）已更新到 `main@26f1b7d7`。设置页未绑定引导显示「复制机器人链接 → 到企微任意对话框发送 → 打开机器人名片发消息发送绑定码」，黑底序号保留；测试机 `10.1.104.44` 未触碰。
 >
 > **发布包与构建**：frontend `output/frontend-wecom-binding-steps-26f1b7d7-20261029-1108.tar.gz`（15,445,285 B · SHA-256 `1772ba18…5f12` · 388 文件 / 20,422,309 B），远端 SHA-256 一致。构建直接来自 `origin/main@26f1b7d7` 独立 worktree；staging 388 文件与本地一致，公网 `index.html` / `assets/index-BDD4YAUD.js` / `assets/index-UTdnWqS6.css` 的 SHA-256 分别为 `758cd256…22c8` / `30c0fe42…bb4` / `b03722a6…68a0`，与构建逐字节一致；三步文案均存在，旧步骤文案 0 次。
