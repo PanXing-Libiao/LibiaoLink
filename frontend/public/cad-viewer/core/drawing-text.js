@@ -21,20 +21,21 @@ function measureTextLines(text, size, measure, fontFamily) {
 }
 
 // MTEXT inline formatting: split the raw source into runs that carry their own
-// font. Only font switches (\f / \F) are modelled here; other controls are
-// skipped exactly like the sanitized plain text. Grouping braces push/pop the
-// current font so a font switch inside {...} ends with the group.
-export function parseMtextRuns(raw, defaultFont, resolveFont) {
+// font and color. Only font switches (\f / \F) and inline colors (\C ACI index,
+// \c true color) are modelled here; other controls are skipped exactly like the
+// sanitized plain text. Grouping braces push/pop the current font and color so
+// a switch inside {...} ends with the group.
+export function parseMtextRuns(raw, defaultFont, resolveFont, resolveColor) {
   const source = String(raw || '');
   const runs = [];
   const stack = [];
-  let font = defaultFont;
+  let font = defaultFont, color = null;
   let buffer = '';
   const flush = () => {
     if (!buffer) return;
     const last = runs[runs.length - 1];
-    if (last && last.fontFamily === font) last.text += buffer;
-    else runs.push({text: buffer, fontFamily: font});
+    if (last && last.fontFamily === font && last.color === color) last.text += buffer;
+    else runs.push({text: buffer, fontFamily: font, color});
     buffer = '';
   };
   let i = 0;
@@ -54,6 +55,14 @@ export function parseMtextRuns(raw, defaultFont, resolveFont) {
         font = name ? ((resolveFont && resolveFont(name)) || defaultFont) : defaultFont;
         i = j; continue;
       }
+      if (next === 'C' || next === 'c') {
+        let j = i + 2, value = '';
+        while (j < source.length && source[j] !== ';') { value += source[j]; j += 1; }
+        if (j < source.length) j += 1;
+        flush();
+        color = resolveColor ? resolveColor(next === 'c' ? 'true' : 'aci', value.trim()) : null;
+        i = j; continue;
+      }
       // Other controls carry their parameter before ';'. Skipping the parameter
       // keeps the visible text that follows it.
       let j = i + 2;
@@ -61,8 +70,13 @@ export function parseMtextRuns(raw, defaultFont, resolveFont) {
       i = j < source.length ? j + 1 : source.length;
       continue;
     }
-    if (ch === '{') { flush(); stack.push(font); i += 1; continue; }
-    if (ch === '}') { flush(); if (stack.length) font = stack.pop(); i += 1; continue; }
+    if (ch === '{') { flush(); stack.push({font, color}); i += 1; continue; }
+    if (ch === '}') {
+      flush();
+      const scope = stack.pop();
+      if (scope) { font = scope.font; color = scope.color; }
+      i += 1; continue;
+    }
     buffer += ch;
     i += 1;
   }
@@ -70,7 +84,7 @@ export function parseMtextRuns(raw, defaultFont, resolveFont) {
   const merged = [];
   for (const run of runs) {
     const last = merged[merged.length - 1];
-    if (last && last.fontFamily === run.fontFamily) last.text += run.text;
+    if (last && last.fontFamily === run.fontFamily && last.color === run.color) last.text += run.text;
     else merged.push({...run});
   }
   return merged;
@@ -84,29 +98,29 @@ function layoutRunLines(runs, size, measure, wrapWidth) {
     const parts = String(run.text).split('\n');
     parts.forEach((part, index) => {
       if (index > 0) { paragraphs.push(current); current = []; }
-      if (part) current.push({text: part, fontFamily: run.fontFamily});
+      if (part) current.push({text: part, fontFamily: run.fontFamily, color: run.color});
     });
   }
   paragraphs.push(current);
   const lines = [];
   for (const paragraph of paragraphs) {
     let segments = [], width = 0;
-    const pushSegment = (text, fontFamily, segmentWidth) => {
+    const pushSegment = (text, fontFamily, color, segmentWidth) => {
       if (!text) return;
       const last = segments[segments.length - 1];
-      if (last && last.fontFamily === fontFamily) { last.text += text; last.width += segmentWidth; }
-      else segments.push({text, fontFamily, width: segmentWidth});
+      if (last && last.fontFamily === fontFamily && last.color === color) { last.text += text; last.width += segmentWidth; }
+      else segments.push({text, fontFamily, color, width: segmentWidth});
       width += segmentWidth;
     };
     for (const run of paragraph) {
       const whole = measure(run.text, run.fontFamily) * (size / 100);
-      if (!wrapWidth || width + whole <= wrapWidth) { pushSegment(run.text, run.fontFamily, whole); continue; }
+      if (!wrapWidth || width + whole <= wrapWidth) { pushSegment(run.text, run.fontFamily, run.color, whole); continue; }
       for (const ch of run.text) {
         const w = measure(ch, run.fontFamily) * (size / 100);
         if (wrapWidth && width + w > wrapWidth && segments.length) {
           lines.push({segments, width}); segments = []; width = 0;
         }
-        pushSegment(ch, run.fontFamily, w);
+        pushSegment(ch, run.fontFamily, run.color, w);
       }
     }
     lines.push({segments, width});

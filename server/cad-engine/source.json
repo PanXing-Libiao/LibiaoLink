@@ -475,6 +475,7 @@
     "direct-projection.js": "0d7a95890aea9b431d7e86f651e83a33b904ee50c27bcffd5d38a7eb53e9b36d",
     "drawing-2d.js": "25a6dca759f304976752e6d2ca4d17667d7e934348435425e28d960a8591ed83",
     "drawing-clipping.js": "2c7437a8ca77ee40da95e2be1290d01641bd36f2c58e627631ab54d3841f1469",
+    "drawing-colors.js": "74c2270f611783fcd2895dee88d53d8ed6c3d01ace40044585d5b9cd09b2003f",
     "drawing-display.js": "349e32fb91e7fc55bf1309eecc229a6d44f733a58de5e4c446749a2bacfaf937",
     "drawing-instances.js": "1e3e476fd2f9f73da692aecf0b0c0327d0d9db301fa309ba50de6f4d120ce20b",
     "drawing-layout.js": "9a611425b8d5151225a8bf06cc9b4b950ec8d1ba138be31cf627c14c5d5ab68b",
@@ -483,8 +484,8 @@
     "drawing-plot-styles.js": "a2c3888311ccdaac04b38f108ab7175cd171a43f0fb82fdb9356e9431819b243",
     "drawing-projection.js": "0a501669718907a7422ba6f6a803bbfaee5e3d7d2c4393ba816710c3a3313363",
     "drawing-text-avoidance.js": "2e65f43a90f24b6a669325a3bc7687d0d1f93f22610ba937d9b8c2ae2b3e5001",
-    "drawing-text.js": "e9e2c6762795e337a818cb6f07b17e49c1135eeb7b8aa1d0fda2462c3b02a03c",
-    "drawing-viewer.js": "c571463a0c647517b037f370a65a54d2761a9ecb75dd82714b67e5e99beb13c8",
+    "drawing-text.js": "994fcb1116f3ab0c7a736774517d6f0e93da83a542b6f2aea098f94aeae8dde1",
+    "drawing-viewer.js": "99136685852c2749e76334aa6d024ec909afaddb6b8ab7e6000cbaf0bbd66156",
     "dwg-packed-transport.js": "7ca25caedff71fb3102f9a67489d5f1eb0b03cc250351be027abe73648279045",
     "dxf-resources.js": "219569569cc22deca979ec3f6693031bfbfe050c30eb8fe419962f4e3dab5c2c",
     "highlight.js": "31754dabcf90e0c71a67123e7e03f9e39614f02021fdd35d18b61e688c734099",
@@ -531,8 +532,8 @@
     "DWG": "dwg-0.1.0/7150e0b1abf3017c8106823201aa56e6d739ce451b33933476e60bfad27906ab/gateway-1"
   },
   "engineDigest": "1448a31c15b7906c01393c8a5857060d394afe80d04ef730ccbb355fbfa366a1",
-  "viewerDigest": "2927694dda235dc2d725a96f5b6bbbf3c90b14a5e40abbf746a6925b63e5676b",
-  "releaseDigest": "b5beea24b4115e327ca839bc1434de46bf3987269b06c30994247f56918c359b",
+  "viewerDigest": "df07079448f58cd479ce4b0ae9a0e1dcdcdbdf336043ef2c7d3dc7cce0f0a02f",
+  "releaseDigest": "b01a6e1258290a1a1531233dcfc5da01562eb48564ceecfd8c3389e56e783d76",
   "engineVersion": "step-0.3.3/1448a31c15b7906c01393c8a5857060d394afe80d04ef730ccbb355fbfa366a1/gateway-1",
-  "viewerVersion": "viewer-2927694dda235dc2d725a96f5b6bbbf3c90b14a5e40abbf746a6925b63e5676b"
+  "viewerVersion": "viewer-df07079448f58cd479ce4b0ae9a0e1dcdcdbdf336043ef2c7d3dc7cce0f0a02f"
 }

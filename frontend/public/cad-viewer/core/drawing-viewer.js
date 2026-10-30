@@ -9,6 +9,7 @@ import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dx
 import {estimateDrawingDraws, projectInstances, shouldProjectInstances, recordVisibleBounds, INSTANCE_DRAW_LIMIT, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, I} from './drawing-instances.js';
 import Flatbush from './vendor/flatbush.js';
 import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, textOffsets, textWorldCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.15.0';
+import {aciColor, trueColorCss} from './drawing-colors.js?v=dxf-0.15.0';
 import {resolveTextAvoidance} from './drawing-text-avoidance.js?v=dxf-0.15.0';
 import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentation} from './drawing-pattern.js?v=dxf-0.15.0';
 import {mediaItemFor, rasterRecord} from './drawing-media.js?v=dxf-0.15.0';
@@ -88,6 +89,9 @@ export function mountDrawingViewer(envelope) {
     if (/^hy|longfang/.test(n)) return FONT_STACK_CJK;
     return null;
   }
+  // \C carries an ACI index, \c a 24-bit true color; both become CSS colors on
+  // the following text runs until the next color control or group end.
+  const textRunColor = (kind, value) => kind === 'true' ? trueColorCss(value) : aciColor(value);
   function styleFontFamilyFor(annotation) {
     const sem = annotation.semantic || {};
     let name = (sem.fontFilename && sem.fontFilename.value) || '';
@@ -109,10 +113,10 @@ export function mountDrawingViewer(envelope) {
     const sem = annotation.semantic || {};
     const raw = (sem.rawText && sem.rawText.value) || '';
     let runs = null;
-    // Font runs only when the parser reproduces the sanitized plain text; any
+    // Inline runs only when the parser reproduces the sanitized plain text; any
     // control we do not model (e.g. stacking) falls back to the single-font path.
-    if (nativeTextLayout && /\\[fF]/.test(raw) && !/\\[sS][^;]*;/.test(raw)) {
-      const parsed = parseMtextRuns(raw, defaultFont, mapFontFamily);
+    if (nativeTextLayout && /\\[fFcC]/.test(raw) && !/\\[sS][^;]*;/.test(raw)) {
+      const parsed = parseMtextRuns(raw, defaultFont, mapFontFamily, textRunColor);
       const plain = (sem.plainText && sem.plainText.value) || annotation.text || '';
       const norm = value => String(value).replace(/\s+/g, '');
       if (parsed.length && norm(parsed.map(item => item.text).join('')) === norm(plain)) runs = parsed;
@@ -791,6 +795,7 @@ export function mountDrawingViewer(envelope) {
               for(const seg of t.runLines[i].segments){
                 if(!seg.text)continue;
                 ctx.font=(screen/localScale)+'px '+(seg.fontFamily||t.fontFamily||TEXT_FONT);
+                ctx.fillStyle=seg.color||t.color;
                 ctx.fillText(seg.text,x,y);x+=seg.width;
               }
             }
@@ -1090,6 +1095,7 @@ export function mountDrawingViewer(envelope) {
         for (const segment of line.segments) {
           if (!segment.text) continue;
           ctx.font = size.toFixed(2) + 'px ' + (segment.fontFamily || t.fontFamily || TEXT_FONT);
+          ctx.fillStyle = segment.color || t.color;
           ctx.fillText(segment.text, x, y);
           x += segment.width * scale;
         }

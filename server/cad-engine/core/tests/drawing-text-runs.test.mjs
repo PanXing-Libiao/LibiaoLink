@@ -25,3 +25,25 @@ test('layout keeps per-run fonts and total widths', () => {
   assert.deepEqual(run.runLines[0].segments.map(segment => segment.fontFamily), ['SIM', 'LAT']);
   assert.equal(run.width, 2 * 10 + 2 * 5);
 });
+
+test('inline ACI color persists until the group ends', () => {
+  const color = (kind, value) => (kind === 'aci' && Number(value) === 30 ? 'ORANGE' : null);
+  const runs = parseMtextRuns('{\\C30;黄}AB', 'LAT', resolve, color);
+  assert.deepEqual(runs.map(run => [run.text, run.color]), [['黄', 'ORANGE'], ['AB', null]]);
+});
+
+test('inline true color resolves a 24-bit value', () => {
+  const color = (kind, value) => (kind === 'true' && Number(value) === 16711680 ? 'RED' : null);
+  const runs = parseMtextRuns('\\c16711680;红', 'LAT', resolve, color);
+  assert.deepEqual(runs.map(run => [run.text, run.color]), [['红', 'RED']]);
+});
+
+test('run colors survive layout into segments', () => {
+  const measure = () => 50;
+  const run = layoutTextRun({
+    text: '', runs: [{text: '甲', fontFamily: 'SIM', color: 'ORANGE'}, {text: 'AB', fontFamily: 'LAT', color: null}],
+    kind: 'mtext', x: 0, y: 0, angle: 0, height: 10, measure, nativeLayout: false
+  });
+  assert.deepEqual(run.runLines[0].segments.map(segment => segment.color), ['ORANGE', null]);
+  assert.deepEqual(run.runLines[0].segments.map(segment => segment.text), ['甲', 'AB']);
+});
