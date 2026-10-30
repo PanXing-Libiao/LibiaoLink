@@ -108,6 +108,102 @@ static class Program
         return R(("type","polyline"),("points",pts.Select(P).ToArray()),("closed",closed),
                  ("bulges",Enumerable.Repeat(0.0,Math.Max(0,n)).ToArray()),("widths",Enumerable.Range(0,Math.Max(0,n)).Select(_=>new[]{0.0,0.0}).ToArray()));
     }
+    // Multi-chain presentation: the buffer holds already-paired segments, so the
+    // viewer's non-indexed 'lines' pair stepping sees every element chain.
+    static void DisplayPairs(string id, CadObject original, IReadOnlyList<XYZ> pairs)
+    {
+        if(pairs.Count==0) throw new InvalidDataException("MLine produced no element segments: "+id);
+        if(pairs.Any(p=>!double.IsFinite(p.X)||!double.IsFinite(p.Y)||!double.IsFinite(p.Z)))
+            throw new InvalidDataException("MLine element segments are not finite: "+id);
+        long offset=positions.BaseStream.Position;
+        foreach(var p in pairs){positions.Write(p.X);positions.Write(p.Y);positions.Write(p.Z);}
+        var min=new[]{pairs.Min(p=>p.X),pairs.Min(p=>p.Y),pairs.Min(p=>p.Z)};
+        var max=new[]{pairs.Max(p=>p.X),pairs.Max(p=>p.Y),pairs.Max(p=>p.Z)};
+        Emit("displays",id,new {offset, byteLength=pairs.Count*24, count=pairs.Count, topology="lines", min, max, sourceRefs=Refs(original)});
+    }
+    static double[]? Unit(double x, double y)
+    {
+        double length=Math.Sqrt(x*x+y*y);
+        return length<1e-12?null:new[]{x/length,y/length};
+    }
+    static double[] LeftNormal(double[] direction) => new[]{-direction[1],direction[0]};
+    // MLINE presentation: one polyline per style element, offset from the vertex
+    // path along the stored miter (falling back to the segment bisector when the
+    // stored miter is degenerate). Justification puts the top/bottom element on
+    // the source path, matching AutoCAD's Top/Zero/Bottom meaning.
+    static void MapMLine(MLine mline, string space, string id, CadObject original)
+    {
+        var vertices=mline.Vertices;
+        var normal=mline.Normal;
+        if(vertices.Count<2 || Math.Abs(normal.X)>1e-9 || Math.Abs(normal.Y)>1e-9 || Math.Abs(normal.Z-1)>1e-9)
+        {
+            EntityRow(mline,space,id,R(("type","unsupported"),("sourceType","MLINE"),
+                ("reason","Native object retained; no accepted 2D presentation mapping")),null,original:original);
+            Loss(original,"unsupported-native-presentation","No accepted native presentation: MLine");
+            return;
+        }
+        var points=vertices.Select(v=>new[]{v.Position.X,v.Position.Y}).ToList();
+        double scale=Math.Abs(mline.ScaleFactor)<1e-9?1:mline.ScaleFactor;
+        var elements=mline.Style?.Elements;
+        var offsets=elements is null?new List<double>():elements.Select(element=>element.Offset).ToList();
+        if(offsets.Count==0) offsets.Add(0);
+        double justification=mline.Justification switch {
+            MLineJustification.Top=>offsets.Max(),
+            MLineJustification.Bottom=>offsets.Min(),
+            _=>0};
+        var miters=new double[points.Count][];
+        var caps=new double[]?[points.Count];
+        for(int i=0;i<points.Count;i++)
+        {
+            double[]? previous=i>0?Unit(points[i][0]-points[i-1][0],points[i][1]-points[i-1][1]):null;
+            double[]? next=i<points.Count-1?Unit(points[i+1][0]-points[i][0],points[i+1][1]-points[i][1]):null;
+            double[]? miter=null;
+            var stored=vertices[i].Miter;
+            var direction=next ?? previous;
+            var storedUnit=Unit(stored.X,stored.Y);
+            if(storedUnit is not null && direction is not null
+                && Math.Abs(storedUnit[0]*direction[0]+storedUnit[1]*direction[1])<0.5)
+                miter=storedUnit;
+            if(miter is null && previous is not null && next is not null)
+            {
+                var left0=LeftNormal(previous); var left1=LeftNormal(next);
+                var bisector=Unit(left0[0]+left1[0],left0[1]+left1[1]);
+                if(bisector is null)
+                {
+                    // A 180-degree turn has no bisector; carry the incoming normal
+                    // into the vertex and cap over to the outgoing side.
+                    miter=left0; caps[i]=left1;
+                }
+                else {
+                    double cosine=Math.Abs(bisector[0]*left1[0]+bisector[1]*left1[1]);
+                    double stretch=1/Math.Max(0.2,cosine);
+                    miter=new[]{bisector[0]*stretch,bisector[1]*stretch};
+                }
+            }
+            miter ??= next is not null?LeftNormal(next):(previous is not null?LeftNormal(previous):new[]{0.0,0.0});
+            miters[i]=miter;
+        }
+        bool closed=mline.Flags.HasFlag(MLineFlags.Closed);
+        var segments=new List<XYZ>();
+        foreach(double offset in offsets)
+        {
+            double shift=(offset-justification)*scale;
+            var element=new List<XYZ>();
+            for(int i=0;i<points.Count;i++)
+            {
+                element.Add(new XYZ(points[i][0]+miters[i][0]*shift,points[i][1]+miters[i][1]*shift,0));
+                if(caps[i] is not null)
+                    element.Add(new XYZ(points[i][0]+caps[i]![0]*shift,points[i][1]+caps[i]![1]*shift,0));
+            }
+            if(closed&&element.Count>1) element.Add(element[0]);
+            for(int i=0;i+1<element.Count;i++){segments.Add(element[i]);segments.Add(element[i+1]);}
+        }
+        var baseline=points.Select(p=>new XYZ(p[0],p[1],0)).ToArray();
+        EntityRow(mline,space,id,Poly(baseline),null,original:original);
+        DisplayPairs(id,original,segments);
+        if(mline.Style is not null && mline.Style.FillColor.Index>=0)
+            Loss(original,"mline-area-fill-unsupported","MLine area fill retained but not painted");
+    }
     static void EntityRow(Entity e, string space, string id, Row geometry, IEnumerable<XYZ>? points, double[]? local=null, string topology="lines", CadObject? original=null)
     {
         original ??= e;
@@ -294,6 +390,8 @@ static class Program
                 var solidPoints=new[]{solid.FirstCorner,solid.SecondCorner,solid.FourthCorner,solid.ThirdCorner};
                 EntityRow(e,space,id,Poly(solidPoints,true),Closed(solidPoints),original:original);
                 Emit("fills",id,new {rings=new[]{solidPoints.Select(P).ToArray()},fillRule="even-odd"});return;
+            case MLine mline:
+                MapMLine(mline,space,id,original);return;
             case Hatch hatch:
                 MapHatch(hatch,space,id);return;
             case Leader leader:
