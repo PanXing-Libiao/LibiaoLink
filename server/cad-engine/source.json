@@ -28,7 +28,7 @@
     "unified/compact_transport.py": "4c1a09e511b863a20295c63f553c8c067e8e2b51d9cd103178325f2b62418bd3",
     "unified/conversion_jobs.py": "333c06e5bfd890c6d084ed3217ce3577a3180301fd15521cacb841c12d5f864e",
     "unified/dwg-reader.json": "80327cfad2181ed90eef19fc78e9db65c94ca9a39a74bb4b0bde96b582d16fdc",
-    "unified/dwg_adapter.py": "349503f19d103df71761b005ac358f38864c14a8b3e53b315929f3b5b65c5d67",
+    "unified/dwg_adapter.py": "0b166f350bc3660f03d43d0d2f2e87ed641a4188e30ac214d33be03e53636f02",
     "unified/dwg_pack.py": "55660bbd81fe0e28042557dcc2a207b7a017fafb1377568eae3433cfcb91dd5a",
     "unified/dxf_adapter.py": "6ed280dd8fa5391be1e6e84f9f4c2078ed904b22a868f6b47a8447aad4093195",
     "unified/dxf_annotations.py": "f0835f4f8e5a947b1fc6732dae7721cbd4b3d56cc0354ae4d5abf284440297d5",
@@ -60,7 +60,7 @@
     "unified/http_encoding.py": "09cbbd7f7410222e433c3660462ca371bff3ace99027b93a540512ecba01bb2e",
     "unified/input_policy.py": "aaf45f6fe798b285a1c206f20df2c78b918ed24d180838e5a69c05e0d753aea5",
     "unified/migrate.py": "7009d2180ba300f3d07e170a9f9e747c8a839f74f4771e67f4a68415ff681312",
-    "unified/native_schema.py": "37587c03069bb82bfefa1a9c7de8b8930f1478ea7eec2105d9a02baca68c0e05",
+    "unified/native_schema.py": "516ab85ed956831f8ad9daf20f4df88013987704a3e4d6a47ca75f5be4330526",
     "unified/payload_sink.py": "93f35533b5f033cbecf1f4d8ae7fa7323fea6629c1d7c57185a8197267074abc",
     "unified/schema/ucd-1.0.schema.json": "cbb524d856ad408e673213a6034b43d4899d3db0e014567876e0b9cc80410419",
     "unified/schema/ucd-2.0.schema.json": "7cfa59370372dab929fc78b83f22bedcc25ec51b6d3b0b7cf1f0fb94f9e8d740",
@@ -77,7 +77,7 @@
     "unified/step_periodic_mesh.py": "eb80f1fb36a968271aae908bc82804742e1207e5d0daa2a2100ed30a1a743771",
     "unified/step_repair_quality.py": "a844cca8e932b402fdff4677c1a35bfc8307b4ce26fe8e26fe5230164f0244a4",
     "unified/transport.py": "ee5e055c78c772f21972ca557f92f330697913010ee9c3eff5cfbd6763c84e75",
-    "unified/validation.py": "33ef16132e3f8b5b401c73d024d2cc947c7bf5678a024fd659a3d731ab288e52",
+    "unified/validation.py": "ad1902960b791429abfbd0ed9b1813543259b9298e8baf5e6f1ee8e6e67c2330",
     "unified/worker_trace.py": "266022c5c796b14ce9cdf8121d450c67fd5472989be8ad93980907993d1ab19e",
     "vendor/cadcraft-display/LICENSE-MIT": "54b0fc87ed7b61b59c20340070dd2b8c7f9d0b53795347819c3bd7c67ea2508a",
     "vendor/cadcraft-display/README.md": "7a6d7a10d2c9a9245c4cf190f7c2992d8ba4291702811dc7848324fbb8a6047e",
@@ -468,7 +468,7 @@
   },
   "readerFiles": {
     "CommunityText.cs": "8772f4985084c216e9f1c9a1de6f6cec0a45067049838ef786f2eafcfebe4198",
-    "Program.cs": "2a50f04acf6e95c175f8ce6bf7676b680a50861cf177ad1beb62e512174a48af",
+    "Program.cs": "7f26b9c56ad43c85192fb5255b3552e9a7046511ed87944fc69c938fa8448fe4",
     "Reader.csproj": "28dd949906cf4b8ab2ca44e02a9fbb2391c0f3e086587c7627e93d6a68f0c32d",
     "dependency.json": "2743f57992af0db961cfe4c05c78b8312d4836f939230a981c5641d01f4942bc"
   },
@@ -538,13 +538,13 @@
     "service.py": "269f3abbc739ee578a525aaa554af9ad0aeb7043fc801ee0118d35543f12f0b8"
   },
   "formatVersions": {
-    "STEP": "step-0.3.3/a70835fa50668d4a395e01b42f17a42ed9299dc81efcdfff4cce47d4d30a0942/gateway-1",
-    "DXF": "dxf-0.15.0/4a2b949c231a6b2215ef4dbb408b547839567d4f3581bfe23653f95dee2c4d6c/gateway-1",
-    "DWG": "dwg-0.1.0/51a3b6d813e3911d4109a2672acb19350cb058b1215341bd108a106e035d41df/gateway-1"
+    "STEP": "step-0.3.3/ed9947bd5304fb0364754a05f660d4a1dcf4c649898e36b121ab333e63aaeb25/gateway-1",
+    "DXF": "dxf-0.15.0/503313aee9733968e222d2c2a6094703dfeb55e49e500cca946f9c8434dcc141/gateway-1",
+    "DWG": "dwg-0.1.0/20ec58b1ad5972b30b622bcd88792518ee4c0c081fa11e50ae6aef6bc544d75b/gateway-1"
   },
-  "engineDigest": "1836c59a10c42ab25b92944f9791f96779cec0636555f110751f7c33bae1740b",
+  "engineDigest": "8d3adc32c6d9b6b3e78eebf035c23df2b5e6e812b09193a1818d412e579e1b6c",
   "viewerDigest": "81e5c9d2c43f7d6810c246493f0087810f93c62f32d982114027ac273adde071",
-  "releaseDigest": "5758070ad1bcbd16f3b51173fe70c2909426e5ef9a4259fb304caf31681e8c00",
-  "engineVersion": "step-0.3.3/1836c59a10c42ab25b92944f9791f96779cec0636555f110751f7c33bae1740b/gateway-1",
+  "releaseDigest": "ebdde9509737dca386ba48088b2c67397db6a190c671749b31b84e4fe5030f83",
+  "engineVersion": "step-0.3.3/8d3adc32c6d9b6b3e78eebf035c23df2b5e6e812b09193a1818d412e579e1b6c/gateway-1",
   "viewerVersion": "viewer-81e5c9d2c43f7d6810c246493f0087810f93c62f32d982114027ac273adde071"
 }

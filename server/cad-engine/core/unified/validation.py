@@ -5,7 +5,6 @@ schema is supported; new schema keywords must be implemented explicitly.
 """
 import base64
 import hashlib
-from array import array
 import json
 import math
 import re
@@ -184,11 +183,11 @@ def tree(nodes,path):
         require(order not in orders,'invalid-reference',path,'Duplicate sibling order');orders.add(order)
 
 def _column_values(accessor,blob):
-    """Contiguous accessor bytes as a flat typed array (None if the window is short)."""
+    """Contiguous accessor bytes as a shared typed view (None if the window is short)."""
     code,width=COMPONENTS[accessor['component']];element=width*accessor['components']
     start=accessor['byteOffset'];end=start+accessor['byteLength']
     if end>len(blob) or accessor['byteLength']%element:return None
-    result=array(code);result.frombytes(blob[start:end]);return result
+    return memoryview(blob)[start:end].cast(code)
 
 
 def values(accessor,raw,first=0,count=None):
@@ -333,7 +332,7 @@ def _validate_core(envelope,version,schema,max_decoded,raw=None):
             require(first+count<=limit and count%{'triangles':3,'lines':2,'points':1}[p['topology']]==0,'invalid-geometry',key,'Primitive range/arity')
             if 'indices' in p:
                 blob=raw[a['bufferId']];code,width=COMPONENTS[a['component']];start=a['byteOffset']+first*width
-                window=array(code);window.frombytes(blob[start:start+count*width])
+                window=memoryview(blob)[start:start+count*width].cast(code)
                 require(len(window)==count and (not window or max(window)<position['count']),'invalid-geometry',key,'Index exceeds vertex count')
     for key,r in d['representations'].items():
         require(r['id']==key and len({b['id'] for b in r['bindings']})==len(r['bindings']),'invalid-reference',key,'Representation identity/binding collision')
