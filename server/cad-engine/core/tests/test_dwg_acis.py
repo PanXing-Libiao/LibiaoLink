@@ -19,6 +19,30 @@ except ImportError:
 
 @unittest.skipUnless(AVAILABLE,'pinned ACIS runtime not installed')
 class AcisGeometry(unittest.TestCase):
+ def test_elliptic_preview_is_small_closed_and_bounded(self):
+  from collections import Counter
+  from unified.dwg_acis_mesh import mesh
+  source=cq.Workplane('XY').ellipse(2,1).extrude(100).val()
+  volume=source.Volume();result=mesh(source,1e-6)
+  self.assertIsNotNone(result)
+  vertices,triangles,proof=result
+  self.assertLess(len(triangles),1000)
+  self.assertLessEqual(proof['linearBound'],.08)
+  counts=Counter(tuple(sorted((a,b))) for t in triangles for a,b in zip(t,(t[1],t[2],t[0])))
+  self.assertTrue(all(count==2 for count in counts.values()))
+  self.assertEqual(volume,source.Volume())
+  signed=sum(vertices[a].dot(vertices[b].cross(vertices[c])) for a,b,c in triangles)/6
+  self.assertGreater(signed,0)
+  self.assertLess(abs(signed-volume)/volume,.002)
+ def test_elliptic_preview_falls_back_for_spline_trims_and_other_topology(self):
+  from unified.dwg_acis_mesh import mesh
+  source=cq.Workplane('XY').ellipse(2,1).extrude(100)
+  cutter=cq.Workplane('XY').transformed(offset=(0,0,80),rotate=(0,20,0)).rect(100,100).extrude(100)
+  shape=source.cut(cutter).val();result=mesh(shape,1e-6)
+  # Boolean trimming produces a spline rim outside the analytic fast path.
+  self.assertIsNone(result)
+  self.assertTrue(shape.isValid())
+  self.assertIsNone(mesh(cq.Workplane().box(1,2,3).val(),1e-6))
  def test_box_roundtrip_and_native_units(self):
   source=cq.Workplane().box(2,3,4).val()
   authored=cq_acis.from_cadquery(source)
