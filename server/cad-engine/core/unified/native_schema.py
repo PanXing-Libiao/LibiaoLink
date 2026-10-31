@@ -3,6 +3,7 @@ import copy
 import math
 import re
 from functools import lru_cache
+from itertools import islice
 import jsonschema_rs
 
 
@@ -34,7 +35,7 @@ class KnownFact:
 
 
 @lru_cache(maxsize=1)
-def _validator():
+def _prepared_schema():
     from .validation import SCHEMA_V2, SUPPORTED
     schema = copy.deepcopy(SCHEMA_V2)
 
@@ -67,6 +68,13 @@ def _validator():
     schema.pop('$ref', None)
     prepare(schema)
     schema['$ref'] = '#/$defs/Envelope'
+    return schema
+
+
+@lru_cache(maxsize=32)
+def _validator(definition='Envelope', field=None):
+    schema = _prepared_schema().copy()
+    schema['$ref'] = '#/$defs/' + definition + ('/properties/' + field if field else '')
     return jsonschema_rs.validator_for(schema, offline=True, keywords={
         'x-python-integer': StrictInteger, 'x-python-pattern': PythonPattern,
         'x-known-fact': KnownFact,
@@ -85,4 +93,27 @@ def accepts(envelope):
             pending.extend(item)
         elif type(item) is float and not math.isfinite(item):
             return False
-    return _validator().is_valid(envelope)
+    # These map schemas have only a type and per-entry constraint: splitting them
+    # preserves every rule, while bounding the native Python-callback reference
+    # retention arena. Cross-table checks still run on the original document.
+    if not isinstance(envelope, dict) or not isinstance(envelope.get('document'), dict):
+        return _validator().is_valid(envelope)
+    view = envelope.copy()
+    document = view['document'] = envelope['document'].copy()
+    tables = [('Document', document)]
+    if isinstance(document.get('drawing'), dict):
+        drawing = document['drawing'] = document['drawing'].copy()
+        tables.append(('DrawingModel', drawing))
+    for definition, owner in tables:
+        for field, schema in _prepared_schema()['$defs'][definition]['properties'].items():
+            table = owner.get(field)
+            if (set(schema) != {'type', 'additionalProperties'} or schema['type'] != 'object'
+                    or not isinstance(table, dict) or len(table) <= 1024):
+                continue
+            validator = _validator(definition, field)
+            entries = iter(table.items())
+            while batch := dict(islice(entries, 1024)):
+                if not validator.is_valid(batch):
+                    return False
+            owner[field] = {}
+    return _validator().is_valid(view)

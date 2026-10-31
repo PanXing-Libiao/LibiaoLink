@@ -1,5 +1,6 @@
 """DWG native schema parity and retained semantic/security checks."""
 import copy
+import struct
 import unittest
 from unittest.mock import patch
 from test_schema_v2 import fixture
@@ -17,6 +18,62 @@ def dwg_fixture():
 
 
 class DwgSchema(unittest.TestCase):
+    def test_shared_binary_views_keep_geometry_rejections(self):
+        import hashlib
+        for bad in (None, 'nan', 'bounds', 'index'):
+            with self.subTest(bad=bad):
+                e = dwg_fixture()
+                positions = [0.,0.,0., 1.,0.,0., 0.,1.,0.]
+                if bad == 'nan': positions[0] = float('nan')
+                if bad == 'bounds': positions[0] = 2.
+                raw = struct.pack('<9f3I', *positions, 0, 1, 3 if bad == 'index' else 2)
+                d = e['document']
+                d['buffers']['b'] = {'id':'b','sha256':hashlib.sha256(raw).hexdigest(),
+                    'byteLength':len(raw),'endianness':'little','alignment':4,
+                    'storage':{'kind':'resource','resourceId':'b'}}
+                d['accessors']['p'] = {'bufferId':'b','byteOffset':0,'byteLength':36,
+                    'component':'f32','components':3,'count':3,'normalized':False}
+                d['accessors']['i'] = {'bufferId':'b','byteOffset':36,'byteLength':12,
+                    'component':'u32','components':1,'count':3,'normalized':False}
+                d['geometries']['g'] = {'id':'g','coordinateSpace':'geometry-local',
+                    'attributes':{'POSITION':'p'},'bounds':{'min':[0,0,0],'max':[1,1,0]},
+                    'normalOrigin':'absent','sourceRefs':[],
+                    'primitives':[{'id':'t','topology':'triangles','indices':'i','range':{'first':0,'count':3}}]}
+                seal(e)
+                if bad is None:
+                    v.validate_binary_envelope(d,e['snapshot'],e['presentation'],lambda key:raw)
+                else:
+                    with self.assertRaises(v.ValidationError) as error:
+                        v.validate_binary_envelope(d,e['snapshot'],e['presentation'],lambda key:raw)
+                    self.assertEqual(error.exception.code, 'invalid-geometry')
+
+    def test_large_map_batches_keep_schema_rules_and_input(self):
+        e = dwg_fixture()
+        entities = e['document']['drawing']['entities']
+        source = next(iter(entities.values()))
+        entities.update({str(i):copy.deepcopy(source) for i in range(1025)})
+        before = copy.deepcopy(e)
+        self.assertTrue(accepts(e))
+        v.shape(e, v.SCHEMA_V2['$defs']['Envelope'], root_schema=v.SCHEMA_V2)
+        self.assertEqual(e, before)
+        entities['1024']['id'] = 7
+        self.assertFalse(accepts(e))
+        with self.assertRaises(v.ValidationError):
+            v.shape(e, v.SCHEMA_V2['$defs']['Envelope'], root_schema=v.SCHEMA_V2)
+        entities['1024']['id'] = source['id']
+        e['document']['unexpected'] = True
+        self.assertFalse(accepts(e))
+
+    def test_binary_columns_share_storage_and_preserve_values(self):
+        blob = struct.pack('<6d', -1, 2, 3, 4, 5, 6)
+        accessor = {'component':'f64', 'components':3, 'byteOffset':0, 'byteLength':len(blob)}
+        column = v._column_values(accessor, blob)
+        self.assertIs(column.obj, blob)
+        self.assertTrue(column.readonly)
+        self.assertEqual(list(column), [-1, 2, 3, 4, 5, 6])
+        self.assertEqual(list(column[::3]), [-1, 4])
+        self.assertIsNone(v._column_values(dict(accessor, byteLength=len(blob)+24), blob))
+
     def test_valid_uses_native_without_mutating(self):
         e = dwg_fixture()
         before = copy.deepcopy(e)

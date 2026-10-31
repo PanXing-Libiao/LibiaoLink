@@ -78,6 +78,16 @@ static class Program
         var z=transform.ApplyTransform(XYZ.AxisZ)-origin;
         return [x.X,x.Y,x.Z,0, y.X,y.Y,y.Z,0, z.X,z.Y,z.Z,0, origin.X,origin.Y,origin.Z,1];
     }
+    // ACadSharp 3.8.30 subtracts the base before R*S; it must be in block coordinates.
+    static Transform InsertTransform(Insert insert)
+    {
+        var basis=Matrix4.GetArbitraryAxis(insert.Normal);
+        var origin=insert.Block?.BlockEntity?.BasePoint ?? XYZ.Zero;
+        return new Transform(basis * Transform.CreateTranslation(insert.InsertPoint).Matrix
+            * Transform.CreateRotation(XYZ.AxisZ,insert.Rotation).Matrix
+            * Transform.CreateScaling(new XYZ(insert.XScale,insert.YScale,insert.ZScale)).Matrix
+            * Transform.CreateTranslation(-origin).Matrix);
+    }
     static List<XYZ> Closed(IEnumerable<XYZ> values)
     {
         var points=values.ToList();
@@ -420,7 +430,7 @@ static class Program
         try {
             switch(e) {
             case Insert i:
-                Instance(e,i.Block,space,id,Matrix(i.GetTransform()));
+                Instance(e,i.Block,space,id,Matrix(InsertTransform(i)));
                 foreach(var attribute in i.Attributes) Map(attribute,space);
                 return;
             case Dimension dimension when dimension.Block is not null:
@@ -506,23 +516,76 @@ static class Program
             Emit("entityState",id,R(("presentationGeometry","missing"),("visible",!e.IsInvisible)));
         }
     }
+    static bool InsideRing(XYZ point, List<XYZ> ring)
+    {
+        bool inside=false;
+        for(int i=0,j=ring.Count-1;i<ring.Count;j=i++) {
+            var a=ring[i];var b=ring[j];
+            if((a.Y>point.Y)!=(b.Y>point.Y) && point.X<(b.X-a.X)*(point.Y-a.Y)/(b.Y-a.Y)+a.X) inside=!inside;
+        }
+        return inside;
+    }
+    static List<int> FillLoops(List<List<XYZ>> rings,HatchStyleType style)
+    {
+        if(style==HatchStyleType.Normal)return Enumerable.Range(0,rings.Count).ToList();
+        var selected=new List<int>();
+        for(int i=0;i<rings.Count;i++) {
+            if(rings[i].Count<3)continue;
+            int depth=0;
+            for(int j=0;j<rings.Count;j++)if(i!=j && InsideRing(rings[i][0],rings[j]))depth++;
+            if(depth==0 || (style==HatchStyleType.Outer && depth==1))selected.Add(i);
+        }
+        return selected;
+    }
+    static int[] GradientRgb(Color color) { var rgb=color.GetRgb();return [rgb[0],rgb[1],rgb[2]]; }
+    static Row HatchGradient(Hatch hatch,List<List<XYZ>> rings,Transform basis)
+    {
+        var g=hatch.GradientColor;
+        string name=g.Name.ToUpperInvariant();
+        string[] names=["LINEAR","CYLINDER","INVCYLINDER","SPHERICAL","INVSPHERICAL","HEMISPHERICAL","INVHEMISPHERICAL","CURVED","INVCURVED"];
+        if(!names.Contains(name) || !double.IsFinite(g.Angle) || !double.IsFinite(g.ColorTint) || (g.Shift!=0 && g.Shift!=1))
+            throw new InvalidDataException("Unsupported gradient field parameters");
+        var stops=g.Colors.OrderBy(x=>x.Value).ToArray();
+        if(stops.Length!=2 || stops[0].Value!=0 || stops[1].Value!=1 || stops.Any(x=>x.Color.IsByLayer || x.Color.IsByBlock || (!x.Color.IsTrueColor && x.Color.Index==257)))
+            throw new InvalidDataException("Gradient needs two explicit source colour stops at 0 and 1");
+        var points=rings.SelectMany(x=>x).ToArray();
+        double c=Math.Cos(g.Angle),s=Math.Sin(g.Angle);
+        var rotated=points.Select(p=>new XYZ(p.X*c+p.Y*s,-p.X*s+p.Y*c,0)).ToArray();
+        double[] Bounds(XYZ[] ps)=>[ps.Min(p=>p.X),ps.Min(p=>p.Y),ps.Max(p=>p.X),ps.Max(p=>p.Y)];
+        var domain=Bounds(points);var frame=Bounds(rotated);
+        if(Math.Min(Math.Min(domain[2]-domain[0],domain[3]-domain[1]),Math.Min(frame[2]-frame[0],frame[3]-frame[1]))<=1e-12)
+            throw new InvalidDataException("Degenerate gradient domain");
+        return R(("profile","truedxf-gradient-field/1"),("name",name),("colors",stops.Select(x=>GradientRgb(x.Color)).ToArray()),
+            ("angleRadians",g.Angle),("shift",g.Shift),("oneColor",g.IsSingleColorGradient?1:0),("tint",g.ColorTint),
+            ("domain",domain),("frameBounds",frame),("localToOwner",Matrix(basis)),
+            ("method","truedxf 019c2e5 calibrated field + Canvas clipped texture"),
+            ("fidelity","display fit; CAD Gouraud tessellation/dither is not reproduced"));
+    }
     static void MapHatch(Hatch hatch,string space,string id)
     {
         Emit("hatchSemantics",id,new{pattern=hatch.Pattern.Name,hatch.IsSolid,hatch.PatternAngle,hatch.PatternScale,hatch.Style,
             gradient=hatch.GradientColor.Enabled,loops=hatch.Paths.Select(p=>new{flags=(int)p.Flags,edges=p.Edges.Count}).ToArray(),sourceRefs=Refs(hatch)});
-        if(hatch.GradientColor.Enabled)Loss(hatch,"hatch-gradient-unmapped","Native gradient fields retained in source; no accepted gradient colour presentation.");
+        var localRings=hatch.Paths.Select(loop=>Closed(loop.GetPoints(64))).ToList();
+        var selected=FillLoops(localRings,hatch.Style);
+        var basis=new Transform(Matrix4.GetArbitraryAxis(hatch.Normal)*Transform.CreateTranslation(new XYZ(0,0,hatch.Elevation)).Matrix);
         var boundaryIds=new List<string>(); var rings=new List<double[][]>(); int n=0;
-        foreach(var loop in hatch.Paths) {
-            var pts=Closed(loop.GetPoints(64)); string child=id+"-boundary-"+n++;
+        foreach(int index in selected) {
+            var pts=localRings[index].Select(p=>basis.ApplyTransform(p)).ToList(); string child=id+"-boundary-"+n++;
             EntityRow(hatch,space,child,Poly(pts),pts); boundaryIds.Add(child); rings.Add(pts.Select(P).ToArray());
             Emit("entityState",child,R(("visible",false)));
         }
         EntityRow(hatch,space,id,R(("type","hatch"),("boundaryEntityIds",boundaryIds),("fillRule","even-odd")),null);
-        if(hatch.IsSolid) Emit("fills",id,new {rings,fillRule="even-odd"});
+        if(hatch.GradientColor.Enabled) {
+            try { Emit("fills",id,R(("rings",rings),("fillRule","even-odd"),("gradient",HatchGradient(hatch,localRings,basis)))); }
+            catch(InvalidDataException error) { Loss(hatch,"hatch-gradient-unmapped",error.Message); }
+        }
+        else if(hatch.IsSolid) Emit("fills",id,new {rings,fillRule="even-odd"});
         else {
-            var lines=hatch.ExplodePattern().ToArray();
+            var patternHatch=new Hatch { Pattern=hatch.Pattern };
+            foreach(int index in selected)patternHatch.Paths.Add(hatch.Paths[index]);
+            var lines=patternHatch.ExplodePattern().ToArray();
             if(lines.Length>200000) throw new InvalidDataException("Hatch community expansion exceeds per-object budget");
-            var points=lines.SelectMany(l=>new[]{l.StartPoint,l.EndPoint}).ToArray();
+            var points=lines.SelectMany(l=>new[]{basis.ApplyTransform(l.StartPoint),basis.ApplyTransform(l.EndPoint)}).ToArray();
             // A disjoint segment list, not an invented connected polyline.
             long offset=positions.BaseStream.Position;
             foreach(var p in points){positions.Write(p.X);positions.Write(p.Y);positions.Write(p.Z);}
@@ -628,9 +691,63 @@ static class Program
         }
         throw new InvalidDataException("ACadSharp.TryPolygonalVertexes failed; no invented fit");
     }
+    static void Display2DSelfTest(string folder)
+    {
+        var document=new CadDocument(ACadVersion.AC1027);
+        var block=new BlockRecord("NonzeroBase");
+        block.BlockEntity.BasePoint=new XYZ(1,2,0);
+        block.Entities.Add(new Line(new XYZ(1,2,0),new XYZ(3,5,0)));
+        document.BlockRecords.Add(block);
+        var insert=new Insert(block){InsertPoint=new XYZ(10,20,0),XScale=2,YScale=3,Rotation=Math.PI/2};
+        var expected=new XYZ(1,24,0);
+        if((InsertTransform(insert).ApplyTransform(new XYZ(3,5,0))-expected).GetLength()>1e-9)
+            throw new InvalidDataException("Nonzero-base rotated scaled block moved");
+        if((insert.GetTransform().ApplyTransform(new XYZ(3,5,0))-expected).GetLength()<1)
+            throw new InvalidDataException("Pinned upstream block defect no longer reproduced; review workaround");
+        document.Entities.Add(insert);
+        insert=new Insert(block){InsertPoint=new XYZ(30,20,0),XScale=-2,YScale=3,Rotation=Math.PI/2};
+        if((InsertTransform(insert).ApplyTransform(new XYZ(3,5,0))-new XYZ(21,16,0)).GetLength()>1e-9)
+            throw new InvalidDataException("Mirrored block moved");
+        document.Entities.Add(insert);
+        var nested=new BlockRecord("NestedBase");nested.BlockEntity.BasePoint=new XYZ(2,1,0);
+        nested.Entities.Add(new Insert(block){InsertPoint=new XYZ(10,20,0),XScale=2,YScale=3,Rotation=Math.PI/2});document.BlockRecords.Add(nested);
+        var parent=new Insert(nested){InsertPoint=new XYZ(50,20,0),XScale=-1,YScale=2,Rotation=Math.PI/2};
+        var child=(Insert)nested.Entities.First();
+        if((InsertTransform(parent).ApplyTransform(InsertTransform(child).ApplyTransform(new XYZ(3,5,0)))-new XYZ(4,21,0)).GetLength()>1e-9)
+            throw new InvalidDataException("Nested mirrored block moved");
+        document.Entities.Add(parent);
+        var normalInsert=new Insert(block){InsertPoint=new XYZ(10,20,3),Normal=new XYZ(0,0,-1),XScale=2,YScale=3,Rotation=Math.PI/2};
+        if((InsertTransform(normalInsert).ApplyTransform(new XYZ(3,5,0))-new XYZ(-1,24,-3)).GetLength()>1e-9)
+            throw new InvalidDataException("Reversed extrusion block moved");
+        List<XYZ> Square(double x,double y,double width)=>[new XYZ(x,y,0),new XYZ(x+width,y,0),new XYZ(x+width,y+width,0),new XYZ(x,y+width,0),new XYZ(x,y,0)];
+        var rings=new List<List<XYZ>>{Square(0,0,10),Square(2,2,6),Square(4,4,2),Square(20,0,5)};
+        if(!FillLoops(rings,HatchStyleType.Normal).SequenceEqual(new[]{0,1,2,3}) ||
+           !FillLoops(rings,HatchStyleType.Outer).SequenceEqual(new[]{0,1,3}) ||
+           !FillLoops(rings,HatchStyleType.Ignore).SequenceEqual(new[]{0,3}))throw new InvalidDataException("Island style selection changed");
+        foreach(var style in new[]{HatchStyleType.Normal,HatchStyleType.Outer,HatchStyleType.Ignore}) {
+            var hatch=new Hatch{IsSolid=true,Pattern=HatchPattern.Solid,Style=style};
+            foreach(var ring in rings){var path=new Hatch.BoundaryPath();path.Edges.Add(new Hatch.BoundaryPath.Polyline(ring.Select(p=>p+new XYZ((int)style*30,0,0))));hatch.Paths.Add(path);}
+            document.Entities.Add(hatch);
+        }
+        string[] names=["LINEAR","CYLINDER","INVCYLINDER","SPHERICAL","INVSPHERICAL","HEMISPHERICAL","INVHEMISPHERICAL","CURVED","INVCURVED"];
+        for(int i=0;i<names.Length;i++) {
+            var hatch=new Hatch{IsSolid=true,Pattern=HatchPattern.Solid};
+            hatch.GradientColor.Enabled=true;hatch.GradientColor.Name=names[i];hatch.GradientColor.Angle=Math.PI/6;hatch.GradientColor.Shift=i%2;
+            hatch.GradientColor.Colors.Add(new GradientColor{Value=0,Color=new Color(255,0,0)});
+            hatch.GradientColor.Colors.Add(new GradientColor{Value=1,Color=new Color(0,0,255)});
+            var ring=Square((i%3)*15,40+(i/3)*15,10);var path=new Hatch.BoundaryPath();
+            path.Edges.Add(new Hatch.BoundaryPath.Polyline(ring));hatch.Paths.Add(path);
+            var spec=HatchGradient(hatch,new List<List<XYZ>>{ring},new Transform(Matrix4.Identity));
+            if((string)spec["name"]! !=names[i])throw new InvalidDataException("Gradient name changed");
+            document.Entities.Add(hatch);
+        }
+        DwgWriter.Write(Path.Combine(folder,"display-2d.dwg"),document);
+        Console.WriteLine("PASS: reproduced upstream block offset; corrected rotation/scale/mirror; three island styles and disjoint contours; nine stored-colour gradient fields.");
+    }
     static void SelfTest(string folder)
     {
         Directory.CreateDirectory(folder);
+        Display2DSelfTest(folder);
         foreach(short raw in new short[]{-1,4,257}) {
             var document=new CadDocument(ACadVersion.AC1027);
             document.Header.IntersectionColorIndex=raw;

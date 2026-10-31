@@ -311,6 +311,8 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
             region_handles.add(str(meta.get('handle')))
     if region_handles:
         buffer_path.write_bytes(buffer_bytes)
+    # Freeze once; validation and publication share the exact same immutable bytes.
+    buffer_bytes = bytes(buffer_bytes)
     sha = hashlib.sha256(buffer_bytes).hexdigest()
     doc['buffers'][bid] = {'id':bid, 'sha256':sha, 'byteLength':len(buffer_bytes),
         'endianness':'little', 'alignment':8, 'storage':{'kind':'resource','resourceId':bid}}
@@ -387,7 +389,7 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
         'sourceSHA256':identity['sha256'],'candidate':True,
         'quality':'partial','note':'Native DWG → UCD; source handles preserved. See explicit decoder/mapping/font losses.',
         'stats':{'sourceHandles':summary['sourceHandles'],'mappedSourceObjects':summary.get('mappedSourceObjects',summary['mappedObjects']),'displayGeometry':len(displays)+len(infinite_items)+len(region_items)}}
-    validate_binary_envelope(doc,snapshot,presentation,lambda key:buffer_path.read_bytes())
+    validate_binary_envelope(doc,snapshot,presentation,lambda key:buffer_bytes)
     phase('contract and binary validated')
     if packed:
         doc = pack_document(doc)
