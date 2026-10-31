@@ -259,6 +259,31 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
         rid = 'representation-'+digest([key])
         doc['representations'][rid] = {'id':rid, 'kind':'drawing', 'bindings':[{'id':'b','geometryId':gid,
             'localFromRepresentation':IDENTITY, 'materialSlots':{}}], 'sourceRefs':row['sourceRefs']}
+    mesh_items = {}
+    for key, meta in extras.get('meshPresentations', {}).items():
+        entity = drawing['entities'][key]
+        parts = []
+        for role, part_id in (('fill', meta['fill']), ('stroke', meta.get('stroke'))):
+            if not part_id:
+                continue
+            rid = 'representation-' + digest([part_id])
+            geometry = doc['geometries'][doc['representations'][rid]['bindings'][0]['geometryId']]
+            primitive = geometry['primitives'][0]
+            # Presentation consumers require an explicit index accessor.
+            iaid = 'i-' + part_id
+            offset = len(buffer_bytes)
+            count = displays[part_id]['count']
+            buffer_bytes.extend(struct.pack('<' + str(count) + 'I', *range(count)))
+            while len(buffer_bytes) % 8:
+                buffer_bytes.append(0)
+            doc['accessors'][iaid] = {'bufferId':bid, 'byteOffset':offset, 'byteLength':count*4,
+                'component':'u32', 'components':1, 'count':count, 'normalized':False}
+            primitive['indices'] = iaid
+            parts.append({'id':part_id, 'representationId':rid, 'role':role,
+                'layerId':entity['layerId'], 'style':{'color':{'mode':'by-block'},'plot':True},
+                'ancestors':[]})
+        mesh_items[key] = {'status':'ready', 'sourceKind':meta['sourceKind'],
+            'sourceRefs':entity['sourceRefs'], 'mode':'geometry', 'parts':parts}
     region_items = {}
     region_handles = set()
     region_errors = []
@@ -309,7 +334,7 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
             region_items[key] = {'status':'ready', 'sourceKind':'REGION',
                 'sourceRefs':entity.get('sourceRefs') or [], 'mode':'geometry', 'parts':parts}
             region_handles.add(str(meta.get('handle')))
-    if region_handles:
+    if region_handles or mesh_items:
         buffer_path.write_bytes(buffer_bytes)
     # Freeze once; validation and publication share the exact same immutable bytes.
     buffer_bytes = bytes(buffer_bytes)
@@ -327,12 +352,16 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
             if lt in ('BYLAYER','BYBLOCK'):
                 modes[key] = {'lineType':'by-layer' if lt=='BYLAYER' else 'by-block'}
                 del style['lineTypeId']
+    for entry in mesh_items.values():
+        for part in entry['parts']:
+            modes[part['id']] = {'lineType':'by-block', 'lineWeight':'by-block'}
+            extras.setdefault('entityState', {})[part['id']] = {'opacityMode':'by-block'}
     doc['extensions']['org.cad-preview.style-inheritance/1'] = {
         'layerInheritance':inheritance, 'modes':modes,
         'drawOrder':{key:state['drawOrder'] for key,state in extras.get('entityState',{}).items() if 'drawOrder' in state},
         'entityState':extras.get('entityState',{}), 'annotationStyles':extras.get('annotationStyles',{})}
     infinite_items = infinite_presentation_items(extras.get('infiniteLines',{}),drawing['entities'])
-    presentation_items = {**infinite_items, **region_items}
+    presentation_items = {**infinite_items, **region_items, **mesh_items}
     if presentation_items:
         doc['extensions']['org.cad-preview.annotation-presentation/1'] = {
             'schemaVersion':'1.3.0','items':presentation_items}
@@ -363,7 +392,7 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
         'header':summary['header'], 'nativeGeometry':extras.get('nativeGeometry',{}),
         'nativeReaderSha256':summary['readerSha256'],'readMemory':summary.get('readMemory'),
         'dimensionSemantics':extras.get('dimensionSemantics',{}), 'multiLeaderSemantics':extras.get('multiLeaderSemantics',{}),
-        'hatchSemantics':extras.get('hatchSemantics',{}),
+        'hatchSemantics':extras.get('hatchSemantics',{}), 'meshPresentations':extras.get('meshPresentations',{}),
         'fonts':extras.get('nativeFonts',{}), 'textAppearance':extras.get('textAppearance',{}),
         'opaque':extras.get('opaque',{}),
         'sourceLedger':{'artifact':'native/source-handles.tsv', 'sha256':hashlib.file_digest(ledger.open('rb'),'sha256').hexdigest(),

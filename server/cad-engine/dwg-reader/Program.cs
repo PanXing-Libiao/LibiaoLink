@@ -483,6 +483,10 @@ static class Program
                     ("vertices",polyline.Vertices.Select(v=>R(("point",new[]{v.Location[0],v.Location[1]}),("bulge",v.Bulge))).ToArray()))); return;
             case ACadSharp.Entities.Point point:
                 EntityRow(e,space,id,R(("type","point"),("position",P(point.Location))),[point.Location],topology:"points",original:original);return;
+            case Face3D face:
+                MapMesh(face,space,id,new[]{face.FirstCorner,face.SecondCorner,face.ThirdCorner,face.FourthCorner},new[]{new[]{0,1,2,3}},(int)face.Flags);return;
+            case Mesh mesh:
+                MapMesh(mesh,space,id,mesh.Vertices,mesh.Faces,subdivision:mesh.SubdivisionLevel);return;
             case Solid solid:
                 var solidPoints=new[]{solid.FirstCorner,solid.SecondCorner,solid.FourthCorner,solid.ThirdCorner};
                 EntityRow(e,space,id,Poly(solidPoints,true),Closed(solidPoints),original:original);
@@ -560,6 +564,57 @@ static class Program
             ("domain",domain),("frameBounds",frame),("localToOwner",Matrix(basis)),
             ("method","truedxf 019c2e5 calibrated field + Canvas clipped texture"),
             ("fidelity","display fit; CAD Gouraud tessellation/dither is not reproduced"));
+    }
+    static XYZ MeshCross(XYZ a,XYZ b)=>new XYZ(a.Y*b.Z-a.Z*b.Y,a.Z*b.X-a.X*b.Z,a.X*b.Y-a.Y*b.X);
+    static double MeshDot(XYZ a,XYZ b)=>a.X*b.X+a.Y*b.Y+a.Z*b.Z;
+    // Admit only the planar triangle/quad profile validated against native DWGs.
+    // No new points, smoothing, subdivision or nonplanar diagonal is invented.
+    static List<int[]> MeshTriangles(IReadOnlyList<XYZ> vertices,IReadOnlyList<int> source)
+    {
+        if(source.Count<3 || source.Count>4 || source.Any(i=>i<0||i>=vertices.Count))
+            throw new InvalidDataException("mesh-face-indices-or-size-unsupported");
+        var face=new List<int>();
+        foreach(int i in source)if(face.Count==0||vertices[i]!=vertices[face[^1]])face.Add(i);
+        if(face.Count>1&&vertices[face[0]]==vertices[face[^1]])face.RemoveAt(face.Count-1);
+        if(face.Count<3)throw new InvalidDataException("mesh-face-degenerate");
+        var origin=vertices[face[0]];var normal=XYZ.Zero;
+        for(int i=1;i+1<face.Count;i++)normal+=MeshCross(vertices[face[i]]-origin,vertices[face[i+1]]-origin);
+        double length=normal.GetLength();
+        if(!double.IsFinite(length)||length<=1e-12)throw new InvalidDataException("mesh-face-degenerate");
+        normal/=length;
+        if(face.Any(i=>Math.Abs(MeshDot(vertices[i]-origin,normal))>1e-7))
+            throw new InvalidDataException("mesh-face-nonplanar");
+        bool Positive(int a,int b,int c)=>MeshDot(MeshCross(vertices[face[b]]-vertices[face[a]],vertices[face[c]]-vertices[face[a]]),normal)>1e-12;
+        if(face.Count==3)return new List<int[]>{face.ToArray()};
+        if(Positive(0,1,2)&&Positive(0,2,3))return new List<int[]>{new[]{face[0],face[1],face[2]},new[]{face[0],face[2],face[3]}};
+        if(Positive(0,1,3)&&Positive(1,2,3))return new List<int[]>{new[]{face[0],face[1],face[3]},new[]{face[1],face[2],face[3]}};
+        throw new InvalidDataException("mesh-face-invalid-boundary");
+    }
+    static void MapMesh(Entity entity,string space,string id,IReadOnlyList<XYZ> vertices,IEnumerable<int[]> sourceFaces,int hiddenEdges=0,int subdivision=0)
+    {
+        var triangles=new List<XYZ>();var edges=new List<XYZ>();var seen=new HashSet<(int,int)>();int faceCount=0;
+        try {
+            if(subdivision!=0)throw new InvalidDataException("mesh-subdivision-unsupported");
+            foreach(var face in sourceFaces) {
+                foreach(var triangle in MeshTriangles(vertices,face))foreach(int i in triangle)triangles.Add(vertices[i]);
+                for(int j=0;j<face.Length;j++) {
+                    int a=face[j],b=face[(j+1)%face.Length];
+                    if((hiddenEdges&(1<<j))!=0||vertices[a]==vertices[b]||!seen.Add((Math.Min(a,b),Math.Max(a,b))))continue;
+                    edges.Add(vertices[a]);edges.Add(vertices[b]);
+                }
+                faceCount++;
+                if(triangles.Count>600000||edges.Count>400000)throw new InvalidDataException("mesh-presentation-budget");
+            }
+            if(triangles.Count==0)throw new InvalidDataException("mesh-empty");
+        } catch(InvalidDataException error) {
+            EntityRow(entity,space,id,R(("type","unsupported"),("sourceType",entity.ObjectName),("reason",error.Message)),null);
+            Loss(entity,"native-mesh-unmapped",error.Message);return;
+        }
+        EntityRow(entity,space,id,R(("type","unsupported"),("sourceType",entity.ObjectName),("reason","Native mesh retained as source-owned presentation parts")),null);
+        string fill=id+"-mesh-fill",stroke=id+"-mesh-edges";
+        Display(fill,entity,triangles,"triangles");
+        if(edges.Count>0)DisplayPairs(stroke,entity,edges);
+        Emit("meshPresentations",id,new{sourceKind=entity.ObjectName,fill,stroke=edges.Count>0?stroke:null,faceCount,triangleCount=triangles.Count/3,hiddenEdges,subdivision,sourceRefs=Refs(entity)});
     }
     static void MapHatch(Hatch hatch,string space,string id)
     {
@@ -744,10 +799,33 @@ static class Program
         DwgWriter.Write(Path.Combine(folder,"display-2d.dwg"),document);
         Console.WriteLine("PASS: reproduced upstream block offset; corrected rotation/scale/mirror; three island styles and disjoint contours; nine stored-colour gradient fields.");
     }
+    static void MeshSelfTest(string folder)
+    {
+        var triangle=new[]{XYZ.Zero,XYZ.AxisX,XYZ.AxisY,XYZ.Zero};
+        if(MeshTriangles(triangle,new[]{0,1,2,3}).Count!=1)throw new InvalidDataException("Closed triangle changed");
+        triangle[3]=triangle[2];
+        if(MeshTriangles(triangle,new[]{0,1,2,3}).Count!=1)throw new InvalidDataException("Repeated last corner changed");
+        var concave=new[]{XYZ.Zero,new XYZ(2,0,0),new XYZ(.5,.5,0),new XYZ(0,2,0)};
+        if(MeshTriangles(concave,new[]{0,1,2,3}).Count!=2)throw new InvalidDataException("Concave quad changed");
+        bool rejected=false;concave[2]=new XYZ(.5,.5,1);
+        try{MeshTriangles(concave,new[]{0,1,2,3});}catch(InvalidDataException){rejected=true;}
+        if(!rejected)throw new InvalidDataException("Nonplanar quad accepted");
+        var document=new CadDocument(ACadVersion.AC1027);
+        var block=new BlockRecord("MeshBase");block.BlockEntity.BasePoint=new XYZ(1,2,3);
+        block.Entities.Add(new Face3D{FirstCorner=new XYZ(1,2,3),SecondCorner=new XYZ(5,2,3),ThirdCorner=new XYZ(5,6,3),FourthCorner=new XYZ(1,6,3),Color=new Color(0)});
+        document.BlockRecords.Add(block);
+        document.Entities.Add(new Insert(block){InsertPoint=new XYZ(10,20,5),XScale=-2,YScale=3,Rotation=Math.PI/2,Color=new Color(255,0,0)});
+        var nested=new BlockRecord("NestedMesh");nested.BlockEntity.BasePoint=new XYZ(2,1,0);
+        nested.Entities.Add(new Insert(block){InsertPoint=new XYZ(10,20,5),Color=new Color(0)});document.BlockRecords.Add(nested);
+        document.Entities.Add(new Insert(nested){InsertPoint=new XYZ(50,20,0),XScale=-1,YScale=2,Rotation=Math.PI/2,Color=new Color(0,0,255)});
+        DwgWriter.Write(Path.Combine(folder,"mesh-blocks.dwg"),document);
+        Console.WriteLine("PASS: mesh closed triangles, concave quads, nonplanar rejection; mirrored nested block fixture written.");
+    }
     static void SelfTest(string folder)
     {
         Directory.CreateDirectory(folder);
         Display2DSelfTest(folder);
+        MeshSelfTest(folder);
         foreach(short raw in new short[]{-1,4,257}) {
             var document=new CadDocument(ACadVersion.AC1027);
             document.Header.IntersectionColorIndex=raw;
