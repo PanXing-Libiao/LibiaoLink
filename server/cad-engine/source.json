@@ -472,7 +472,7 @@
     "dependency.json": "2743f57992af0db961cfe4c05c78b8312d4836f939230a981c5641d01f4942bc"
   },
   "browserFiles": {
-    "app.js": "d127c0a59ba909277e7eba44bde43efe96c0ff193afee584f991b30923a25c94",
+    "app.js": "2c29aaff6cd2e926071039f8bde87826adbb1d9eedd3d3f0ce8ff8771634c6fc",
     "benchmark.js": "c81b3668354f0fc431c02f068545d5c71ce4a266bf414671341aa97674fc3e9d",
     "binary-transport.js": "99cab8e8e665b718e8cf24d7aab6c568ce2e99e02cfbaa01873501cce322fea4",
     "camera-framing.js": "12f685ca11f995192d3f5348a44c2cf5fca5286bca58b0af99a7faa7ef5aab6d",
@@ -498,7 +498,7 @@
     "gpu/gpu-strokes.js": "fe4f81a4a7a51487e1139f2c17021c24962d62364eb2d46ff33e8ed6e8107312",
     "gpu/paint-worker.js": "3e04891ecb9e7ae8ae0689d293c8ec7a63f2167ae18e3d33b178b8b5de33d8ea",
     "gpu/recorded-path.js": "99e818b93996227a46b53a5ea54d54a15dd9dca4848790d16d6eeb7a6c1d7133",
-    "highlight.js": "31754dabcf90e0c71a67123e7e03f9e39614f02021fdd35d18b61e688c734099",
+    "highlight.js": "1d19f0528e5fc706484efcdcb1101c4aa32285023cf550acefc04d85a386b2f5",
     "mesh-repair-ui.js": "8750dc2c2a63d9ba10bada090fb2938a9cd9a593125f5d2f31e0e0d4e7c02aaf",
     "nonmeshable-ui.js": "d4b8a76429eea81e79e26eaef07e4a6508d6d791a2fa86f5313b21214951d618",
     "render-batches.js": "f27fcf79ee6188a9dbb9a516e466a25cd6c1f93393803eab6ede601a79f989e4",
@@ -542,8 +542,8 @@
     "DWG": "dwg-0.1.0/773b4b07bbbe0a30c76b75b32988e8bd848794ebb1e3b3e14f8717fa65cb933e/gateway-1"
   },
   "engineDigest": "d47e16ba854f2c13aefd7dbf194b99c0b41cb0bd9d0d4fecbca07f78a0fb68c8",
-  "viewerDigest": "d8fd4d60342b2838f20349c89a4a7985d4df252139bfcb860873b86f34bd82be",
-  "releaseDigest": "433fd07adae9c54f3af18d3bb9f2ef68c3fd5cfe26f3ee341579dfaf25b31db8",
+  "viewerDigest": "81e5c9d2c43f7d6810c246493f0087810f93c62f32d982114027ac273adde071",
+  "releaseDigest": "1a14d75527715f1cf774e677f4d6b824c4fecc6e043d1b514a75456c13396013",
   "engineVersion": "step-0.3.3/d47e16ba854f2c13aefd7dbf194b99c0b41cb0bd9d0d4fecbca07f78a0fb68c8/gateway-1",
-  "viewerVersion": "viewer-d8fd4d60342b2838f20349c89a4a7985d4df252139bfcb860873b86f34bd82be"
+  "viewerVersion": "viewer-81e5c9d2c43f7d6810c246493f0087810f93c62f32d982114027ac273adde071"
 }

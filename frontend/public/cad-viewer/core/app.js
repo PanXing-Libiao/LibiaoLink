@@ -55,7 +55,7 @@ const drawMap=()=>currentDrawObjects||new Map();
 function applyHighlight(){
   if(!highlighter||!currentEnvelope){highlighter&&highlighter.clear();return;}
   try{
-    if(selectedDrawId){highlighter.build([selectedDrawId],drawMap(),{dim:dimMode});}
+    if(selectedDrawId){highlighter.build([selectedDrawId],drawMap(),{dim:dimMode,dimExcludedDrawIds:selectedProductId?drawsForProduct(currentEnvelope.document,selectedProductId):drawsForScene(currentEnvelope.document,currentEnvelope.snapshot,selected.object.userData.sourceId)});}
     else if(selectedProductId&&currentEnvelope.document){highlighter.build(drawsForProduct(currentEnvelope.document,selectedProductId),drawMap(),{dim:dimMode});}
     else if(selected&&selected.object?.userData.sourceId&&currentEnvelope.snapshot){highlighter.build(drawsForScene(currentEnvelope.document,currentEnvelope.snapshot,selected.object.userData.sourceId),drawMap(),{dim:dimMode});}
     else highlighter.clear();
@@ -132,7 +132,7 @@ function visibleLogical(){
 function bounds(root,visible=false){root.updateWorldMatrix(true,true);const b=new THREE.Box3();for(const m of meshes(root,visible)){if(!m.geometry.boundingBox)m.geometry.computeBoundingBox();b.union(m.geometry.boundingBox.clone().applyMatrix4(m.matrixWorld));}return b;}
 function fit(root=model,visible=true){if(!root)return;const b=bounds(root,visible);if(b.isEmpty())return;cameraBounds=bounds(model||root).getBoundingSphere(new THREE.Sphere());fitCameraToBox(camera,controls,b,cameraBounds);render();}
 function selectionKey(entry=selected,productId=selectedProductId,drawId=selectedDrawId){return productId?'product:'+productId:drawId?'draw:'+drawId:entry?.id;}
-function select(entry,productId=null,drawId=null){if(entry&&focusView&&focusView.key!==selectionKey(entry,productId,drawId))focusView=null;selected=entry;selectedProductId=productId;selectedDrawId=drawId||null;if(helper){scene.remove(helper);helper.geometry.dispose();helper.material.dispose();helper=null;}if(entry&&!drawId&&!productId&&effective(entry.object)){helper=new THREE.BoxHelper(entry.object,0x1489a4);scene.add(helper);}refresh();applyHighlight();}
+function select(entry,productId=null,drawId=null){if(entry&&focusView&&focusView.key!==selectionKey(entry,productId,drawId))focusView=null;selected=entry;selectedProductId=productId;selectedDrawId=drawId||null;if(helper){scene.remove(helper);helper.geometry.dispose();helper.material.dispose();helper=null;}if(entry&&!drawId&&!productId&&effective(entry.object)){helper=new THREE.BoxHelper(entry.object,0x1489a4);scene.add(helper);}applyHighlight();refresh();}
 function updateSelectionTools(){
  const hidden=!!selected&&!(selectedProductId&&viewerSession?viewerSession.productEffective(selectedProductId):effective(selected.object));
  const active={focus:!!focusView,dim:dimMode,toggle:hidden,isolate:!!isolationBefore};
