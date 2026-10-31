@@ -248,6 +248,26 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
     buffer_path = folder/'positions.bin'
     bid = 'buffer-0'
     buffer_bytes = bytearray(buffer_path.read_bytes())
+    from .dwg_acis import reconstruct
+    acis_rows,acis_errors,acis_bytes=reconstruct(folder,extras.get('opaque',{}),drawing['entities'])
+    acis_handles=set()
+    acis_base=len(buffer_bytes);buffer_bytes.extend(acis_bytes)
+    for result in acis_rows:
+        key=result['id'];entity=drawing['entities'][key];parts={}
+        for part in result['parts']:
+            part_id=key+'-acis-'+part['role'];parts[part['role']]=part_id
+            displays[part_id]={**part,'offset':acis_base+part['offset'],
+                'topology':'triangles' if part['role']=='fill' else 'lines','sourceRefs':entity['sourceRefs']}
+        extras.setdefault('meshPresentations',{})[key]={
+            'sourceKind':entity['geometry']['sourceType'],'fill':parts['fill'],'stroke':parts.get('stroke'),
+            'faceCount':result['faceCount'],'triangleCount':result['triangleCount'],
+            'acis':{k:result[k] for k in ('unitsMM','resabs','resnor','saveVersion')}}
+        acis_handles.add(extras['opaque'][key]['handle'])
+    if acis_rows:
+        doc['adapter']['dependencies'].extend([{'name':'cq-acis','version':'0.3.12'},{'name':'cadquery','version':'2.8.0'},{'name':'cadquery-ocp','version':'7.9.3.1.1'}])
+    for key,reason in acis_errors.items():
+        doc['diagnostics'].append({'code':'native-acis-unavailable','severity':'warning','stage':'mapping',
+            'message':reason,'sourceRefs':drawing['entities'][key]['sourceRefs']})
     for key,row in displays.items():
         row = trim_spline_origin_pair(row, drawing['entities'].get(key), buffer_bytes)
         aid, gid = 'a-'+key, 'g-'+key
@@ -289,7 +309,7 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
     region_errors = []
     for key,meta in extras.get('opaque',{}).items():
         entity = drawing['entities'].get(key)
-        if not entity or (entity.get('geometry') or {}).get('sourceType')!='REGION':
+        if not entity or key in mesh_items or (entity.get('geometry') or {}).get('sourceType')!='REGION':
             continue
         opaque_path = folder/('opaque-'+str(meta.get('handle'))+'.bin')
         if not opaque_path.is_file():
@@ -367,11 +387,10 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
             'schemaVersion':'1.3.0','items':presentation_items}
     doc['extensions']['org.cad-preview.fill/1'] = {'fills':extras.get('fills',{})}
     raw_losses = [json.loads(line) for line in (folder/'losses.jsonl').open()]
-    if region_handles:
+    if region_handles or acis_handles:
         raw_losses = [row for row in raw_losses
             if not (row.get('code')=='unsupported-native-presentation'
-                    and row.get('sourceType')=='REGION'
-                    and str(row.get('handle')) in region_handles)]
+                    and str(row.get('handle')) in (region_handles|acis_handles))]
     by_loss = Counter(row['code'] for row in raw_losses)
     for code,count in by_loss.items():
         refs = [{'sourceId':sid,'objectKey':row['handle']} for row in raw_losses if row['code']==code and row['handle']]

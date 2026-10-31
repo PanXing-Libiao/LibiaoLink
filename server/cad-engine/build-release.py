@@ -14,13 +14,13 @@ ENTRY_POINTS = ('convert.py', 'states.py', 'provenance.py', 'parser-provenance.j
 READER_FILES = ('Program.cs', 'CommunityText.cs', 'Reader.csproj', 'dependency.json')
 RUNTIME_FILES = ('bridge.py', 'result_cache.py', 'service.py', 'sandbox.py', 'edge.py',
                  'release.py', 'requirements-step.txt', 'requirements-step-mesher.txt',
-                 'requirements-dxf.txt', 'requirements-dxf-build.txt', 'requirements-dwg.txt')
+                 'requirements-dxf.txt', 'requirements-dxf-build.txt', 'requirements-dwg.txt', 'requirements-acis.txt')
 IMPORTED_COMMIT = '337bfc0d185a82cc3e269afaff879ccfc67a2e57'
 FORMAT_RELEASES = {'STEP': '0.3.3', 'DXF': '0.15.0', 'DWG': '0.1.0'}
 FORMAT_RUNTIME = {
     'STEP': ('requirements-step.txt', 'requirements-step-mesher.txt'),
     'DXF': ('requirements-dxf.txt', 'requirements-dxf-build.txt'),
-    'DWG': ('requirements-dwg.txt',),
+    'DWG': ('requirements-dwg.txt', 'requirements-acis.txt', 'requirements-step.txt'),
 }
 
 
@@ -48,6 +48,8 @@ def format_of(name):
         return 'STEP'
     if name.startswith(('unified/dxf_', 'vendor/ezdxf/')) or name == 'dxf_convert.py':
         return 'DXF'
+    if name.startswith('unified/dwg_'):
+        return 'DWG'
     if name in ('dwg_convert.py', 'dwg_platform_convert.py', 'unified/dwg_adapter.py', 'unified/dwg_pack.py'):
         return 'DWG'
     # LibreDWG decodes DWG external references inside the DXF path and its
@@ -81,6 +83,8 @@ def describe(base, browser):
                       if name not in {item for names in FORMAT_RUNTIME.values() for item in names}}
     runtime_format = {format_name: {'runtime/' + name: runtime_files[name] for name in names}
                       for format_name, names in FORMAT_RUNTIME.items()}
+    # ACIS reconstruction also consumes the pinned ezdxf record decoder and OCP runtime.
+    format_files['DWG'].update({name: value for name, value in engine_files.items() if name.startswith('vendor/ezdxf/')})
     format_files['DWG'].update({'dwg-reader/' + name: value for name, value in reader_files.items()})
 
     format_versions = {}

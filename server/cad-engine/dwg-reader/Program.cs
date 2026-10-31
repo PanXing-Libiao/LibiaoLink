@@ -504,7 +504,7 @@ static class Program
                 MapProxy(multi,space,id);return;
             default:
                 EntityRow(e,space,id,R(("type","unsupported"),("sourceType",e.ObjectName),("reason","Native object retained; no accepted 2D presentation mapping")),null,original:original);
-                if(e is Region region && region.AcisData is not null) {
+                if(e is ModelerGeometry region && region.AcisData is not null) {
                     var data=region.AcisData; File.WriteAllBytes(Path.Combine(output,"opaque-"+H(e)+".bin"),data);
                     Emit("opaque",id,new {handle=H(e), byteLength=data.Length, sha256=Convert.ToHexString(SHA256.HashData(data)).ToLowerInvariant(),kind="ACIS"});
                 }
