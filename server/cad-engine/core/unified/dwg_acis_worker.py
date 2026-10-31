@@ -18,13 +18,15 @@ def tessellate(model,source_kind):
  converted=shapes(model,source_kind);scale=model.metadata.units_mm
  triangles=array.array('d');edges=array.array('d');face_count=0
  for shape in converted:
-  for face in shape.Faces():
-   vertices,indices=face.tessellate(0.08,0.15)
+  from unified.dwg_acis_mesh import mesh
+  optimized=mesh(shape,model.metadata.resabs*scale)
+  faces=shape.Faces();face_count+=len(faces)
+  pieces=[optimized[:2]] if optimized is not None else (face.tessellate(0.08,0.15) for face in faces)
+  for vertices,indices in pieces:
    if not vertices or not indices:raise ValueError('acis-unmeshed-face')
    if len(triangles)//9+len(indices)>MAX_TRIANGLES:raise ValueError('acis-triangle-budget')
    for triangle in indices:
     for index in triangle:triangles.extend(v/scale for v in vertices[index].toTuple())
-   face_count+=1
   for edge in shape.Edges():
    points,_=edge.sample(0.08)
    if edge.IsClosed() and points:points.append(points[0])
