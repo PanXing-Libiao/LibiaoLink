@@ -8,3 +8,6 @@ typing_extensions==4.16.0
 pyparsing==3.3.3
 fonttools==4.67.0
 Pillow==13.0.0
+
+# DWG structural validation (worker and gateway publication).
+jsonschema-rs==0.60.3

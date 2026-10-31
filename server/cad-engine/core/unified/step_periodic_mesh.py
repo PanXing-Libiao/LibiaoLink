@@ -103,7 +103,7 @@ def closed_face_native_mesh(face,deflection=.08):
             'area':area,'areaRatio':area/source_area,'maxDeviation':worst,
             'trim':'occt-closed-face-split','reason':'closed-face-native-remesh','nativePatchCount':patches,
             'validation':{'kind':'native-partition-finite-sampled-display-repair',
-                'classifier':'BRepClass_FaceClassifier OCCT 7.8.1','classificationCounts':counts,
+                'classifier':'BRepClass_FaceClassifier OCCT 7.9.3','classificationCounts':counts,
                 'samplesPerTriangle':len(BARYCENTRIC_SAMPLES),'uvTolerance':UV_TOLERANCE,
                 'nativeLinearDeflectionMM':deflection/4,'nativeAngularDeflectionRadians':.1,
                 'splitSurfaceAreaRatio':split_props.Mass()/source_area,

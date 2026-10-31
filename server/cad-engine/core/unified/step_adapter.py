@@ -1,6 +1,6 @@
 """STEP XDE adapter. Geometry/assembly interpretation belongs to pinned OCCT.
 
-API basis: OCCT V7_8_1 XCAFDoc_ShapeTool (reference labels, component locations),
+API basis: OCCT V7_9_3 XCAFDoc_ShapeTool (reference labels, component locations),
 STEPCAFControl_Reader (XDE transfer), BRep_Tool::Triangulation (face location).
 No STEP geometric entities are decoded here. IDs are stable within source SHA +
 reader version; label entries are not claimed stable across CAD revisions.
@@ -14,10 +14,10 @@ from .payload_sink import Base64Sink
 from .validation import validate_binary_envelope,validate_envelope
 from . import stageprof
 from .step_repair_quality import AREA_POLICY
-from .step_external_mesh import ExternalMeshContext,ENGINE as MESH_ENGINE
+from .step_external_mesh import ExternalMeshContext,ENGINE as MESH_ENGINE,REPAIR_POLICY
 from .step_name_encoding import name_codepage as check_name_codepage
 
-ENGINE='7.8.1.1'
+ENGINE='7.9.3.1.1'
 class PartialPreviewAvailable(ValueError):
     """Strict mode rejected an incomplete STEP; the caller may offer partial preview."""
     def __init__(self,message,details):
@@ -34,7 +34,10 @@ def read_step(path,sink=None,partial=False,name_codepage='UTF8'):
     name_codepage=check_name_codepage(name_codepage)
     sink=sink or Base64Sink()
     import OCP
-    if OCP.__version__!=ENGINE:raise ValueError('STEP requires cadquery-ocp=='+ENGINE)
+    from importlib.metadata import version
+    # The wheel's packaging revision is not included in OCP.__version__.
+    if OCP.__version__!='7.9.3.1' or version('cadquery-ocp')!=ENGINE:
+        raise ValueError('STEP requires cadquery-ocp=='+ENGINE)
     from OCP.TDocStd import TDocStd_Document
     from OCP.TCollection import TCollection_ExtendedString,TCollection_AsciiString
     from OCP.XCAFDoc import XCAFDoc_DocumentTool,XCAFDoc_ColorSurf,XCAFDoc_ColorGen
@@ -79,12 +82,12 @@ def read_step(path,sink=None,partial=False,name_codepage='UTF8'):
     transferred=time.perf_counter();stageprof.mark('transfer')
     worker_trace.mark('xcafTransferCompleted')
     st=XCAFDoc_DocumentTool.ShapeTool_s(doc.Main());ct=XCAFDoc_DocumentTool.ColorTool_s(doc.Main())
-    evidence=[{'id':'xde','kind':'official','reference':'OCCT V7_8_1 XCAFDoc_ShapeTool, STEPCAFControl_Reader, BRep_Tool','version':ENGINE,'scope':'XDE reference/component placement and tessellation API; input-specific fidelity requires independent checks'},{'id':'policy','kind':'engineering-contract','reference':'unified/step_adapter.py','scope':'mm output unit, default viewing context and tessellation settings'}]
+    evidence=[{'id':'xde','kind':'official','reference':'OCCT V7_9_3 XCAFDoc_ShapeTool, STEPCAFControl_Reader, BRep_Tool','version':ENGINE,'scope':'XDE reference/component placement and tessellation API; input-specific fidelity requires independent checks'},{'id':'policy','kind':'engineering-contract','reference':'unified/step_adapter.py','scope':'mm output unit, default viewing context and tessellation settings'}]
     evidence.append({'id':'name-codepage','kind':'official','reference':'https://github.com/Open-Cascade-SAS/OCCT/blob/V7_8_1/src/STEPControl/STEPControl_Controller.cxx','version':ENGINE,'scope':'read.step.codepage UTF8 default / explicit GB; charset selection is an import option, not a source declaration'})
     external_mesh=ExternalMeshContext()
     def fact(v,policy=False):return {'value':v,'knowledge':'engineering-defined' if policy else 'source-declared','validation':'experimental','evidenceIds':['policy' if policy else 'xde']}
     d={'schemaVersion':'2.0.0','serializationProfile':'ucd-json-python-sorted/1','documentId':'document-'+sha,'revision':'0'*64,'sources':[{'id':sid,'name':Path(path).name,'sha256':sha,'byteLength':len(raw),'format':'STEP'}],
-       'adapter':{'id':'occt-xde-step','version':'0.3.3','implementationHash':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),'ruleSetHash':digest({'occt':ENGINE,'nameCodepage':name_codepage,'linearDeflectionMM':.08,'angularDeflectionRadians':.3,'closedFacePartition':1,'surfaceRGBA':1,'nonMeshableAcceptance':'step-nonmeshable/1','displayAreaAcceptance':AREA_POLICY,'combinedRepair':{'enabled':external_mesh.enabled,'gmsh':MESH_ENGINE,'policy':'step-combined-repair/2'}}),'dependencies':[{'name':'cadquery-ocp','version':ENGINE}]},
+       'adapter':{'id':'occt-xde-step','version':'0.3.3','implementationHash':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),'ruleSetHash':digest({'occt':ENGINE,'nameCodepage':name_codepage,'linearDeflectionMM':.08,'angularDeflectionRadians':.3,'closedFacePartition':1,'surfaceRGBA':1,'nonMeshableAcceptance':'step-nonmeshable/1','displayAreaAcceptance':AREA_POLICY,'combinedRepair':{'enabled':external_mesh.enabled,'gmsh':MESH_ENGINE,'policy':REPAIR_POLICY}}),'dependencies':[{'name':'cadquery-ocp','version':ENGINE}]},
        'coordinates':{'space':'metric','lengthUnit':fact('mm',True),'handedness':fact('right',True),'upAxis':unknown(),'sourceToDocument':IDENTITY,'conversionReason':'OCCT transfer normalizes length to mm; no model-up direction inferred'},
        'products':{},'productOccurrences':{},'productRoots':[],'sceneOccurrences':{},'renderOwnership':{},'representations':{},'geometries':{},'accessors':{},'buffers':{},'resources':{},'materials':{},'configurations':[],'displayStates':[],
        'viewContexts':[{'id':'view-default','origin':'system-default','name':'Imported STEP scene'}],'defaultSelection':fact({'viewContextId':'view-default'},True),'properties':{},'externalReferences':[],
@@ -284,7 +287,7 @@ def read_step(path,sink=None,partial=False,name_codepage='UTF8'):
     if external_mesh.used:d['adapter']['dependencies'].append({'name':'gmsh','version':MESH_ENGINE})
     has_wireframe=any(p['topology']=='lines' for g in d['geometries'].values() for p in g['primitives'])
     has_partial=any(x['code']=='face-triangulation-missing' for x in d['diagnostics'])
-    d['extensions']['org.cad-preview.completeness/1']={'status':'partial' if has_partial else 'complete','categories':{'faceTriangulation':missing_geometry,'nonMeshableFaces':non_meshable_faces,'meshRepairs':mesh_repairs,'geometryWithoutFaces':wireframe_products,'unsupportedSourceAttributes':[]},'counts':{'products':len(d['products']),'productsAffected':len({r['productId'] for r in missing_geometry}),'missingFaces':len(missing_geometry),'omittedFaces':len(missing_geometry),'nonMeshableFaces':len(non_meshable_faces),'nonMeshableProducts':len({r['productId'] for r in non_meshable_faces}),'repairedFaces':len(mesh_repairs),'repairedTriangles':sum(r['triangles'] for r in mesh_repairs),'wireframeProducts':len(wireframe_products)},'affectedProducts':sorted({r['productName'] for r in missing_geometry}),'repairedProducts':sorted({r['productName'] for r in mesh_repairs}),'missingIsNotSourceHidden':True,'acceptancePolicy':'step-nonmeshable/1','rule':'missing-other remains strict; classified nonmeshable omissions are listed separately, not pickable, excluded from measurements','reader':'OCCT 7.8.1.1 STEPCAFControl_Reader + XCAF'}
+    d['extensions']['org.cad-preview.completeness/1']={'status':'partial' if has_partial else 'complete','categories':{'faceTriangulation':missing_geometry,'nonMeshableFaces':non_meshable_faces,'meshRepairs':mesh_repairs,'geometryWithoutFaces':wireframe_products,'unsupportedSourceAttributes':[]},'counts':{'products':len(d['products']),'productsAffected':len({r['productId'] for r in missing_geometry}),'missingFaces':len(missing_geometry),'omittedFaces':len(missing_geometry),'nonMeshableFaces':len(non_meshable_faces),'nonMeshableProducts':len({r['productId'] for r in non_meshable_faces}),'repairedFaces':len(mesh_repairs),'repairedTriangles':sum(r['triangles'] for r in mesh_repairs),'wireframeProducts':len(wireframe_products)},'affectedProducts':sorted({r['productName'] for r in missing_geometry}),'repairedProducts':sorted({r['productName'] for r in mesh_repairs}),'missingIsNotSourceHidden':True,'acceptancePolicy':'step-nonmeshable/1','rule':'missing-other remains strict; classified nonmeshable omissions are listed separately, not pickable, excluded from measurements','reader':'OCCT 7.9.3.1.1 STEPCAFControl_Reader + XCAF'}
     s['completeness']='partial' if has_partial else 'complete'
     d['extensions']['org.cad-preview.step-audit/1']={'entityInventory':dict(types),'definitionMeasurements':measurements,'measurementScope':'leaf-definitions-only; accepted nonmeshable faces excluded from area, affected part volume/centroid unavailable','identityStability':'source-sha-and-reader-version','linearDeflectionMM':.08,'angularDeflectionRadians':.3,'wireframeGeometry':has_wireframe,'partialPreview':has_partial,'strictMode':not partial,'meshRepairs':{'faces':len(mesh_repairs),'triangles':sum(r['triangles'] for r in mesh_repairs),'detail':mesh_repairs}}
     d['extensions']['org.cad-preview.step-audit/1']['nameEncoding']={'codepage':name_codepage,'selection':'explicit-import-option' if name_codepage!='UTF8' else 'default','policy':'step-name-codepage/1','evidenceIds':['name-codepage']}

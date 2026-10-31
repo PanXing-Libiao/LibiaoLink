@@ -123,6 +123,10 @@ def shape(value,schema,path='$',root_schema=None):
                 try:shape(value,choice,path,root_schema);matches+=1
                 except ValidationError:pass
             require(matches==1 if op=='oneOf' else matches>0,'invalid-schema',path,op+' mismatch')
+            # Each successful branch already walked every descendant, including
+            # unconstrained values and non-finite numbers. A union-only wrapper
+            # adds no further constraints, so do not walk that value again.
+            if set(schema)<={op,'title','description','$schema','$id','$defs'}:return
     kind=schema.get('type')
     if kind:
         valid=(type(value) in (int,float) and math.isfinite(value)) if kind=='number' else (
@@ -196,11 +200,30 @@ def values(accessor,raw,first=0,count=None):
     else:
         for i in range(count):yield struct.unpack_from('<'+code*accessor['components'],raw,start+i*stride)
 
+def _envelope_shape(envelope,schema):
+    document=envelope.get('document')
+    adapter=document.get('adapter') if isinstance(document,dict) else None
+    extensions=document.get('extensions') if isinstance(document,dict) else None
+    snapshot=envelope.get('snapshot')
+    draws=snapshot.get('draws') if isinstance(snapshot,dict) else None
+    # Small STEP envelopes cost less to walk than loading the native runtime.
+    large_step=isinstance(adapter,dict) and adapter.get('id')=='occt-xde-step' and isinstance(draws,dict) and len(draws)>=2048
+    native=large_step or (isinstance(extensions,dict) and 'org.libiaolink.dwg/1' in extensions)
+    if schema is SCHEMA_V2 and native:
+        from .native_schema import accepts
+        if accepts(envelope):return
+        # Invalid inputs use the original walker for stable error codes/paths.
+        # A native rejection can never become acceptance through this path.
+        shape(envelope,schema['$defs']['Envelope'],root_schema=schema)
+        raise ValidationError('invalid-schema','$','CAD structure rejected')
+    shape(envelope,schema['$defs']['Envelope'],root_schema=schema)
+
+
 def validate_envelope(envelope,max_decoded=256*1024*1024):
     version=envelope.get('document',{}).get('schemaVersion')
     require(version in ('1.0.0','2.0.0'),'unsupported-version','document','Unknown UCD major version')
     schema=SCHEMA if version=='1.0.0' else SCHEMA_V2
-    shape(envelope,schema['$defs']['Envelope'],root_schema=schema)
+    _envelope_shape(envelope,schema)
     return _validate_core(envelope,version,schema,max_decoded)
 
 def validate_binary_envelope(document,snapshot,presentation,reader,max_decoded=256*1024*1024):
@@ -214,7 +237,7 @@ def validate_binary_envelope(document,snapshot,presentation,reader,max_decoded=2
     require(version in ('1.0.0','2.0.0'),'unsupported-version','document','Unknown UCD major version')
     schema=SCHEMA if version=='1.0.0' else SCHEMA_V2
     wrapper={'transportProfile':'ucd-base64-envelope/1','document':document,'snapshot':snapshot,'bufferPayloads':{},'presentation':presentation}
-    shape(wrapper,schema['$defs']['Envelope'],root_schema=schema)
+    _envelope_shape(wrapper,schema)
     raw={}
     for key,b in document['buffers'].items():
         blob=reader(key)

@@ -42,7 +42,7 @@ if data==b'fail':print(json.dumps({'error':'controlled failure','code':'controll
 if data==b'crash':sys.exit(9)
 e=json.loads((Path(__file__).parent/'fixture.json').read_text())
 e['document']['sources'][0].update(sha256=hashlib.sha256(data).hexdigest(),format='STEP',name=sys.argv[1],byteLength=len(data))
-e['document']['adapter'].update(id='occt-xde-step',dependencies=[{'name':'cadquery-ocp','version':'7.8.1.1'}])
+e['document']['adapter'].update(id='occt-xde-step',dependencies=[{'name':'cadquery-ocp','version':'7.9.3.1.1'}])
 e['snapshot']['completeness']='complete'
 e['document']['extensions']['controlledNameCodepage']=os.environ.get('CAD_STEP_NAME_CODEPAGE')
 if data==b'wrong-source':e['document']['sources'][0]['sha256']='0'*64

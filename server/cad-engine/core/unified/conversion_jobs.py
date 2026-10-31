@@ -174,7 +174,7 @@ class ConversionJobs:
             sha=hashlib.sha256(main).hexdigest();length=len(main);name_codepage='UTF8'
         source_format='DXF' if is_dxf else 'DWG' if is_dwg else 'STEP'
         identity={'sourceSHA256':sha,'sourceByteLength':length,'name':name,'partial':bool(partial),
-                  'reader':'acadsharp/3.8.30' if is_dwg else 'cadquery-ocp/7.8.1.1',
+                  'reader':'acadsharp/3.8.30' if is_dwg else 'cadquery-ocp/7.9.3.1.1',
                   'rules':self.rule_version,'schema':'2.0.0','policy':self.policy['version'],'nameCodepage':name_codepage,
                   'artifactTransport':'binary' if self.binary else 'base64',
                   'artifactMetadata':VERSION if self.compact and not is_dxf and not is_dwg else 'full'}
@@ -399,7 +399,7 @@ class ConversionJobs:
                 if is_dwg:
                     adapter,dependency='libiaolink-acadsharp-dwg',{'name':'ACadSharp','version':'3.8.30+intersection-field-separation'}
                 else:
-                    adapter,dependency=('ezdxf-dxf',{'name':'ezdxf','version':'1.4.2'}) if is_dxf else ('occt-xde-step',{'name':'cadquery-ocp','version':'7.8.1.1'})
+                    adapter,dependency=('ezdxf-dxf',{'name':'ezdxf','version':'1.4.2'}) if is_dxf else ('occt-xde-step',{'name':'cadquery-ocp','version':'7.9.3.1.1'})
                 if document['adapter']['id']!=adapter or dependency not in document['adapter']['dependencies']:
                     raise ValueError('worker reader identity mismatch')
                 completeness=envelope['snapshot']['completeness']
