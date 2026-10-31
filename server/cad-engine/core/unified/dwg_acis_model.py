@@ -125,17 +125,18 @@ def parse(data):
  metadata=model.metadata
  if any(v is None or not math.isfinite(v) or v<=0 for v in (metadata.units_mm,metadata.resabs,metadata.resnor)):
   raise ValueError('acis-source-units-or-precision-missing')
- return model
+ from .dwg_acis_surfaces import decode_surfaces
+ return decode_surfaces(model)
 
 def shapes(model,source_kind):
  import cadquery as cq
- from cq_acis.cadquery import CadQueryConverter
+ from .dwg_acis_surfaces import AcisSurfaceConverter
  from cq_acis.model import LumpEntity,ShellEntity,FaceEntity
  if source_kind=='3DSOLID':
-  result=cq_acis.convert_model(model)
+  result=AcisSurfaceConverter(model).convert()
   if any(not shape.Solids() or shape.Volume()<=0 for shape in result):raise ValueError('acis-solid-not-closed')
  elif source_kind in ('REGION','PLANESURFACE','EXTRUDEDSURFACE','LOFTEDSURFACE','REVOLVEDSURFACE','SWEPTSURFACE'):
-  converter=CadQueryConverter(model);result=[]
+  converter=AcisSurfaceConverter(model);result=[]
   for body in model.bodies():
    if not body.wire.is_null:raise ValueError('acis-wire-body-unsupported')
    placement=converter._body_placement(body);faces=[]

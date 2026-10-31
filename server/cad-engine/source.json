@@ -29,7 +29,8 @@
     "unified/conversion_jobs.py": "333c06e5bfd890c6d084ed3217ce3577a3180301fd15521cacb841c12d5f864e",
     "unified/dwg-reader.json": "80327cfad2181ed90eef19fc78e9db65c94ca9a39a74bb4b0bde96b582d16fdc",
     "unified/dwg_acis.py": "58bf368c0251d1bc89dd088d5998fbbc34e811280b80b6673efa8d6b678db46f",
-    "unified/dwg_acis_model.py": "6fc5631efbcd1e103d106035db4de1d9181eca4afb2d313b7f0aea56384bc27a",
+    "unified/dwg_acis_model.py": "39e6e5f0d22ad401be9a407506c535c6104ec8f2bff1d3915a6345097ad15c7a",
+    "unified/dwg_acis_surfaces.py": "ddeb9699a5bc2dcbd3537d114f3ce48a3641ee63f11e18ef5e9434956d89562b",
     "unified/dwg_acis_worker.py": "f2d8fab0c4df456611cd17fc6906bb77f67abc1e48c0da2acaecc65b7e8afbfa",
     "unified/dwg_adapter.py": "0ccc28e0ab158b2c2e89b987f30ac7b0fdd22d1f90812fdddf9c12dcff3de208",
     "unified/dwg_pack.py": "55660bbd81fe0e28042557dcc2a207b7a017fafb1377568eae3433cfcb91dd5a",
@@ -545,11 +546,11 @@
   "formatVersions": {
     "STEP": "step-0.3.3/248aea4f4988438060ee90f5022b2aee890ae9e7f9fcc909dfd871972e3400da/gateway-1",
     "DXF": "dxf-0.15.0/134defb3ab543472153bc31e76761db123308edf5d708f2b1a4c5479b56ef3c9/gateway-1",
-    "DWG": "dwg-0.1.0/70a89345f68d1024409bbcff5d81235c1472862597f7672c6e1928b3a88f1671/gateway-1"
+    "DWG": "dwg-0.1.0/c4ca7ffc139fc30ed9e750cc2a3d4b51f4b034518d3354a658d4b87125b6dc85/gateway-1"
   },
-  "engineDigest": "287ba55511fc962eeda43d3d32fb8528ef00816e058b205a50958300133f17bf",
+  "engineDigest": "3e8c4b88efc2c30c177717cb3f22acd45d45d519a9a4377b71769c8a506a676f",
   "viewerDigest": "97ff39a2c45d6eb12958001e0cd65cca2d14413daa2dceaf32b76c496f1962de",
-  "releaseDigest": "86a4532c01216ac3a588de8a42495eb12d1a935bc6b3b05ac4a63af8b278bdb7",
-  "engineVersion": "step-0.3.3/287ba55511fc962eeda43d3d32fb8528ef00816e058b205a50958300133f17bf/gateway-1",
+  "releaseDigest": "f0f5081ee987b21e3dbcd2b10521611bb1a46d0039206a895b267e400e4924dc",
+  "engineVersion": "step-0.3.3/3e8c4b88efc2c30c177717cb3f22acd45d45d519a9a4377b71769c8a506a676f/gateway-1",
   "viewerVersion": "viewer-97ff39a2c45d6eb12958001e0cd65cca2d14413daa2dceaf32b76c496f1962de"
 }

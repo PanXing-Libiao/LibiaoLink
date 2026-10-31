@@ -54,6 +54,30 @@ class AcisGeometry(unittest.TestCase):
   model=replace(model,metadata=replace(model.metadata,resabs=None))
   with patch.object(acis,'parse_sat',return_value=model):
    with self.assertRaisesRegex(ValueError,'precision-missing'):acis.parse(b'synthetic')
+ def test_explicit_bicubic_preserves_poles_and_rejects_unknown_fit(self):
+  from cq_acis.model import RawEntity,NULL_REF,BSplineSurfaceEntity
+  from unified.dwg_acis_surfaces import decode_surfaces
+  model=acis.parse(cq_acis.from_cadquery(cq.Workplane().box(1,1,1).val()).to_sab())
+  poles=tuple(float(c) for u in range(4) for v in range(4) for c in (u,v,u*v))
+  values=(NULL_REF,b'\x0b',1,'exactsur',0,'nubs',3,3,0,0,0,0,2,2,0.,3,1.,3,0.,3,1.,3)+poles+(0.,0,0,0,0,0,0,b'\x0a',1.,b'\x0a',0.,b'\x0a',1.,b'\x0a',0.,1,b'\x0b',b'\x0b',b'\x0b',b'\x0b')
+  raw=RawEntity(0,'spline-surface',NULL_REF,None,values)
+  model=replace(model,metadata=replace(model.metadata,save_version=20800),entities=(raw,))
+  surface=decode_surfaces(model).entities[0]
+  self.assertIsInstance(surface,BSplineSurfaceEntity)
+  self.assertEqual(surface.raw,raw)
+  surface.validate()
+  for index,value in ((70,.01),(71,1),(89,0)):
+   changed=list(values);changed[index]=value
+   with self.subTest(index=index),self.assertRaisesRegex(ValueError,'unqualified-exactsur'):
+    decode_surfaces(replace(model,entities=(replace(raw,values=tuple(changed)),)))
+ def test_torus_patch_must_stay_outside_singular_branch(self):
+  import math
+  from unified.dwg_acis_surfaces import regular_patch_clearance
+  self.assertGreater(regular_patch_clearance(2,3,(0,1,-.2,.2)),0)
+  self.assertLess(regular_patch_clearance(2,3,(0,1,0,math.pi)),0)
+  self.assertLess(regular_patch_clearance(2,3,(0,1,2*math.pi,3*math.pi)),0)
+  for bounds in ((0,0,0,1),(0,1,0,7),(0,1,0,float('inf'))):
+   with self.subTest(bounds=bounds),self.assertRaises(ValueError):regular_patch_clearance(2,3,bounds)
  def test_import_does_not_patch_shared_library(self):
   self.assertEqual(cq_acis.parse_sab_model.__module__,'cq_acis.sab')
   self.assertEqual(cq_acis.entities._EntityReader.read_bool.__module__,'cq_acis.entities')
