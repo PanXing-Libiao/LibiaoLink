@@ -84,7 +84,7 @@ export function createDrawingMeshViewer({document:doc,viewport,geometry,meshIds,
     camera.near=Math.max(radius/10000,1e-8);camera.far=distance+radius*100;camera.updateProjectionMatrix();controls.target.copy(center);controls.update();request();return true;}
   function resize(){const w=viewport.clientWidth||1,h=viewport.clientHeight||1;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();request();}
   function sync(layers,selected){for(const row of rows)row.visible=!(row.userData.draw.visibilityLayerIds||[]).some(id=>layers.get(id)===false);
-    status.textContent=(rows.some(row=>row.visible)?'三维对象 · 仅显示已支持的面和网格':'当前没有可见的三维面或网格')+(skipped?' · 裁剪实例暂未显示':'');
+    status.textContent=(rows.some(row=>row.visible)?'三维对象 · 仅显示已成功解析的对象':'当前没有可见的三维面或网格')+(skipped?' · 裁剪实例暂未显示':'');
     for(const object of objects)object.material.color.copy(selected.has(object.userData.id)?new THREE.Color(0xd9426f):object.userData.color);request();}
   let down=null;
   const start=e=>{down=[e.clientX,e.clientY];};
