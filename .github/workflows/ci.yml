@@ -711,9 +711,15 @@ jobs:
           set -euo pipefail
           python -m pip install --upgrade pip
           python -m pip install -r requirements-dxf.txt
+          python -m pip install --only-binary=:all: --no-deps -r requirements-step.txt
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libglu1-mesa
+          python -m venv "$RUNNER_TEMP/cad-step-mesher"
+          "$RUNNER_TEMP/cad-step-mesher/bin/pip" install --only-binary=:all: --no-deps -r requirements-step-mesher.txt
       - name: Python suites (UCD / transport / DXF)
         env:
           PYTHONPATH: server/cad-engine/core
+          CAD_STEP_MESHER_PYTHON: ${{ runner.temp }}/cad-step-mesher/bin/python
         run: |
           set -euo pipefail
           cd server/cad-engine/core/tests

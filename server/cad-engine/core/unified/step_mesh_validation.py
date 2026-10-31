@@ -5,6 +5,31 @@ sample measurements, not continuous Hausdorff bounds.
 """
 import math,struct
 
+def _cone_triangle_chart(surface,bounds,uvs):
+    """Lift each cone triangle across its seam/pole without moving its vertices."""
+    import itertools
+    from OCP.gp import gp_Pnt,gp_Vec
+    values=[list(u) for u in uvs];poles=[]
+    for i,(u,v) in enumerate(values):
+        p,du,dv=gp_Pnt(),gp_Vec(),gp_Vec();surface.D1(u,v,p,du,dv)
+        if du.Magnitude()<1e-7:poles.append(i)
+    if len(poles)>1:raise ValueError('multiple singular corners')
+    active=[i for i in range(3) if i not in poles];period=surface.UPeriod();low,high=bounds[:2]
+    candidates=[]
+    for shifts in itertools.product((-1,0,1),repeat=len(active)):
+        numbers=[values[i][0]+s*period for i,s in zip(active,shifts)]
+        if min(numbers)>=low-1e-7 and max(numbers)<=high+1e-7:candidates.append((max(numbers)-min(numbers),sum(abs(s) for s in shifts),numbers))
+    if not candidates:raise ValueError('unresolved-periodic-triangle-chart')
+    spread,_,numbers=min(candidates)
+    if spread>period/2:raise ValueError('unresolved periodic chart')
+    for i,u in zip(active,numbers):values[i][0]=u
+    for i in poles:values[i][0]=sum(numbers)/len(numbers)
+    for old,new in zip(uvs,values):
+        if surface.Value(*old).Distance(surface.Value(*new))>1e-7:raise ValueError('chart changed source point')
+    return values
+
+
+
 def _seam_charts(surface,bounds,xyz,uvs,triangles,tolerance):
     """Give seam corners their own equivalent UV without changing source CAD.
 
@@ -48,7 +73,7 @@ def _seam_charts(surface,bounds,xyz,uvs,triangles,tolerance):
         adjusted+=changed;result.append(ids)
     return points,chart,result,{'periodicTrianglesAdjusted':adjusted,'periodicSeamVerticesAdded':len(aliases)}
 
-def boundary_checks(face,positions,triangles,deflection=.08):
+def boundary_checks(face,positions,triangles,deflection=.08,physical_boundary=False):
     """Finite, bidirectional source-pcurve / final float32 mesh boundary check.
 
     Source curves are sampled separately: a source pcurve gap is measured, never
@@ -76,7 +101,7 @@ def boundary_checks(face,positions,triangles,deflection=.08):
         while todo:
             for other in graph[todo.pop()]:
                 if other in unseen:unseen.remove(other);todo.append(other)
-    surface=BRep_Tool.Surface_s(face);source_segments=[];source_samples=[];source_wires=0;gap=0.
+    surface=BRep_Tool.Surface_s(face);source_segments=[];source_samples=[];source_wires=0;gap=0.;physical_edges=[]
     wires=TopExp_Explorer(face,TopAbs_WIRE)
     while wires.More():
         source_wires+=1;wire=TopoDS.Wire_s(wires.Current());wires.Next();ex=BRepTools_WireExplorer(wire,face);segments=[]
@@ -86,14 +111,39 @@ def boundary_checks(face,positions,triangles,deflection=.08):
             edge=ex.Current();ex.Next();curve=BRepAdaptor_Curve2d(edge,face);a,b=curve.FirstParameter(),curve.LastParameter()
             points=[surface.Value(*curve.Value(a+(b-a)*i/32).Coord()).Coord() for i in range(33)]
             if edge.Orientation()==TopAbs_REVERSED:points.reverse()
-            segments.append(points);source_samples.extend(points);source_segments.extend(zip(points,points[1:]))
+            segments.append(points)
+            if not physical_boundary or (not BRep_Tool.IsClosed_s(edge,face) and not BRep_Tool.Degenerated_s(edge)):
+                source_samples.extend(points);source_segments.extend(zip(points,points[1:]));physical_edges.append(edge)
             if len(source_samples)>8192:
                 row['rejectionReasons'].append('source-boundary-budget-exceeded');return row
         if len(segments)!=edge_count or not segments:
             row['rejectionReasons'].append('incomplete-source-boundary');return row
         gap=max(gap,max(math.dist(a[-1],b[0]) for a,b in zip(segments,segments[1:]+segments[:1])))
     row.update(sourceWireCount=source_wires,meshBoundaryComponents=components,sourcePCurveJoinMaximumMM=gap)
-    if components!=source_wires:row['rejectionReasons'].append('source-hole-or-boundary-component-count-mismatch')
+    if physical_boundary:
+        # A periodic face can have one parameter wire but two physical loops.
+        # Use exact source vertex identity; never weld nearby points or holes.
+        from OCP.TopExp import TopExp
+        vertices=[];source_graph={};degree={}
+        def vertex_id(vertex):
+            if vertex.IsNull():raise ValueError('source-boundary-missing-vertex')
+            for i,known in enumerate(vertices):
+                if vertex.IsSame(known):return i
+            vertices.append(vertex);return len(vertices)-1
+        for edge in physical_edges:
+            a=vertex_id(TopExp.FirstVertex_s(edge));b=vertex_id(TopExp.LastVertex_s(edge))
+            source_graph.setdefault(a,set()).add(b);source_graph.setdefault(b,set()).add(a)
+            degree[a]=degree.get(a,0)+1;degree[b]=degree.get(b,0)+1
+        if any(n!=2 for n in degree.values()):row['rejectionReasons'].append('source-physical-boundary-not-closed')
+        remaining=set(source_graph);source_components=0
+        while remaining:
+            source_components+=1;todo=[remaining.pop()]
+            while todo:
+                for other in source_graph[todo.pop()]:
+                    if other in remaining:remaining.remove(other);todo.append(other)
+        row['sourcePhysicalBoundaryComponents']=source_components
+        if components!=source_components:row['rejectionReasons'].append('source-hole-or-boundary-component-count-mismatch')
+    elif components!=source_wires:row['rejectionReasons'].append('source-hole-or-boundary-component-count-mismatch')
     if not source_segments:
         row['rejectionReasons'].append('source-boundary-unavailable');return row
     mesh_segments=[(positions[a],positions[b]) for a,b in edges]
@@ -139,7 +189,12 @@ def validate_external_mesh(face,raw,deflection=.08):
     if not all(isinstance(t,list) and len(t)==3 and len(set(t))==3 and all(type(i) is int and 0<=i<len(xyz) for i in t) for t in triangles):raise ValueError('invalid-mesher-triangle')
     if len({tuple(sorted(t)) for t in triangles})!=len(triangles):raise ValueError('duplicate-mesher-triangle')
     forward=TopoDS.Face_s(face.Oriented(TopAbs_FORWARD));surface=BRep_Tool.Surface_s(forward)
-    xyz,uvs,triangles,seam_check=_seam_charts(surface,BRepTools.UVBounds_s(forward),xyz,uvs,triangles,UV_TOLERANCE)
+    cone_chart=surface.DynamicType().Name()=='Geom_ConicalSurface'
+    bounds=BRepTools.UVBounds_s(forward)
+    if cone_chart:
+        seam_check={'coneTriangleLocalCharts':True,'chartPolicy':'step-cone-chart/1'}
+    else:
+        xyz,uvs,triangles,seam_check=_seam_charts(surface,bounds,xyz,uvs,triangles,UV_TOLERANCE)
     exact=[surface.Value(*uv).Coord() for uv in uvs]
     displacement=max(math.dist(a,b) for a,b in zip(xyz,exact))
     if not math.isfinite(displacement) or displacement>deflection:raise ValueError('external-chart-exceeds-source-surface-budget')
@@ -148,10 +203,12 @@ def validate_external_mesh(face,raw,deflection=.08):
     classifier=BRepClass_FaceClassifier();counts={'IN':0,'ON':0};indices=[];oriented=[];area=double_area=worst=0.;rewound=0
     for triangle in triangles:
         ids=list(triangle);tuv=[uvs[i] for i in ids]
+        if cone_chart:tuv=_cone_triangle_chart(surface,bounds,tuv)
         cross=(tuv[1][0]-tuv[0][0])*(tuv[2][1]-tuv[0][1])-(tuv[1][1]-tuv[0][1])*(tuv[2][0]-tuv[0][0])
         if not math.isfinite(cross) or cross==0:raise ValueError('collapsed-UV-triangle')
         if cross<0:ids[1],ids[2]=ids[2],ids[1];rewound+=1
-        tuv=[uvs[i] for i in ids];points=[stored[i] for i in ids]
+        if cross<0:tuv=[tuv[0],tuv[2],tuv[1]]
+        points=[stored[i] for i in ids]
         tri_area=_triangle_area(*points)
         if tri_area<=1e-14:raise ValueError('collapsed-float32-triangle')
         centre=tuple(sum(p[j] for p in tuv)/3 for j in range(2));p,du,dv=gp_Pnt(),gp_Vec(),gp_Vec();surface.D1(*centre,p,du,dv)
@@ -170,12 +227,12 @@ def validate_external_mesh(face,raw,deflection=.08):
     area_check=display_area_check(source_area,double_area);stored_check=display_area_check(source_area,area)
     if not area_check['accepted'] or not stored_check['accepted']:raise ValueError('mesh-outside-display-area-budget')
     if worst>deflection:raise ValueError('paired-float32-surface-samples-exceed-deflection')
-    boundary=boundary_checks(forward,stored,oriented,deflection)
+    boundary=boundary_checks(forward,stored,oriented,deflection,physical_boundary=cone_chart)
     if boundary['rejectionReasons']:raise ValueError(';'.join(boundary['rejectionReasons']))
     return {'positions':stored,'uvs':uvs,'indices':indices,'rings':0,'area':area,'areaRatio':area/source_area,
             'maxDeviation':max(worst,boundary['sourceToMeshBoundaryMaximumMM'],boundary['meshToSourceBoundaryMaximumMM']),
             'trim':'independent-source-surface-chart','reason':'independent-gmsh-source-face',
-            'validation':{'kind':'independent-finite-sampled-display-repair','classifier':'BRepClass_FaceClassifier OCCT 7.8.1',
+            'validation':{'kind':'independent-finite-sampled-display-repair','classifier':'BRepClass_FaceClassifier OCCT 7.9.3',
                 'uvTolerance':UV_TOLERANCE,'samplesPerTriangle':len(BARYCENTRIC_SAMPLES),'classificationCounts':counts,
                 'areaCheck':area_check,'float32AreaCheck':stored_check,'boundaryChecks':boundary,
                 'pairedSurfaceMeshMeasuredMaximumMM':worst,'sourceSurfaceResampled':True,

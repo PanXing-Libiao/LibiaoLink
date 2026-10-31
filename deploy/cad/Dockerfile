@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 FROM mirror.gcr.io/library/python:3.13.13-slim-bookworm@sha256:355bfa66770995d7e9a0da4b3473b44d0cb451f6b56f5615ad9c39e3c4eca03f AS native
 COPY server/cad-engine/requirements-step.txt server/cad-engine/requirements-step-mesher.txt /tmp/
-# cadquery-vtk supplies vtkmodules for the fixed OCP release on Python 3.13.
-# Upstream vtk==9.3.1 has no cp313 wheel; never mix the two distributions.
+# OCP 7.9.3 uses the pinned proxy and upstream VTK cp313 wheels.
+# Keep these explicit because this runtime is installed with --no-deps.
 RUN python -m venv /opt/ocp \
  && /opt/ocp/bin/pip install --no-cache-dir --only-binary=:all: --no-deps -r /tmp/requirements-step.txt \
  && python -m venv /opt/mesher \
