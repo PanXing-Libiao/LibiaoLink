@@ -1,7 +1,10 @@
 # CAD 独立沙箱
 
+> **本地 Linux 接线修复（2026-10-31，未部署）**：镜像现在构建固定 ACadSharp 3.8.30 读取器并携带 .NET 10.0.14，DXF/DWG 共用已安装并校验的 Python 显示依赖。DXF 的 DWG 外参只使用 `CAD_DXF_DWG_READER=/opt/dwg/bin/dwgread`，原生 DWG 使用 `CAD_DWG_READER=/opt/dwg-native/LibiaoLink.DwgReader.dll` 与 `CAD_DWG_DOTNET=/opt/dotnet/dotnet`，不再共用同一读取器变量。容器仍为 3 GiB / 1 CPU / 64 PIDs / 禁网；STEP、DXF 的任务进程树 RSS 阈值为 2 GiB，DWG 为 2.5 GiB，容器 memory.current 达 2.75 GiB 提前终止当前 worker。临时文件位于受限数据 tmpfs，每任务 scratch 512 MiB；单文件硬上限与最大 DWG 产物预算统一为 512 MiB。内存采样含原生后代；这些限额不是任意图纸可成功的承诺。验证结论以本机真实图与隔离探针结果为准，不等于公司环境验收。
 
-> 二维 DXF 接入需先停止旧 API/worker，再应用迁移 `0077_cad_dxf_input_sets.sql`、`0078_cad_format_version.sql` 与 `0079_cad_dwg_format.sql`，再用当前源码构建 CAD 镜像，并与 API/worker 同步更新。`0069` 按 ADR-041 把产物缓存键拆为格式独立的 `format_version`；旧产物首次访问重建一次。镜像新增独立 `/opt/dxf`，正常构建并验证仓内 ezdxf fork；DXF v0.10.0 的 DWG 外参还需 `/opt/dwg/bin/dwgread`（固定 LibreDWG 0.13.3），由独立构建阶段校验源码并编译，运行层携带许可、对应源码与构建脚本。第一片 DWG 原生路径还需要 `/opt/dwg-native` 的 Python 依赖、ACadSharp 读取器 DLL 与 .NET 运行时，并通过 `CAD_DWG_PYTHON`、`CAD_DWG_READER`、`CAD_DWG_DOTNET` 配置；API 的 `CAD_DWG_ENABLED` 默认关闭，不能把本机 worker 验证当作目标镜像已支持。原有 `3 GiB / 1 CPU / 64 pids / 禁网` 边界保持，DWG 首版预算另为 3 GiB RSS / 512 MiB 产物。DXF 的 `partial` 是带缺失说明的有效部分产物，STEP 仍须 `completed`；旧镜像不能只靠新 API 打开 DXF。当前仅完成本机验证，未发布到公司测试机或生产。
+
+
+> 二维 DXF 接入需先停止旧 API/worker，再应用迁移 `0077_cad_dxf_input_sets.sql`、`0078_cad_format_version.sql` 与 `0079_cad_dwg_format.sql`，再用当前源码构建 CAD 镜像，并与 API/worker 同步更新。`0069` 按 ADR-041 把产物缓存键拆为格式独立的 `format_version`；旧产物首次访问重建一次。镜像新增独立 `/opt/dxf`，正常构建并验证仓内 ezdxf fork；DXF v0.10.0 的 DWG 外参还需 `/opt/dwg/bin/dwgread`（固定 LibreDWG 0.13.3），由独立构建阶段校验源码并编译，运行层携带许可、对应源码与构建脚本。当前镜像已携带原生 DWG 的 ACadSharp 读取器 DLL、.NET 运行时，Python 依赖复用 `/opt/dxf`，通过 `CAD_DWG_PYTHON`、`CAD_DWG_READER`、`CAD_DWG_DOTNET` 配置；API 的 `CAD_DWG_ENABLED` 默认关闭，仍需目标环境启用和验收。原有 `3 GiB / 1 CPU / 64 pids / 禁网` 边界保持，DWG 任务预算为 2.5 GiB 进程树 RSS / 512 MiB 产物。DXF 的 `partial` 是带缺失说明的有效部分产物，STEP 仍须 `completed`；旧镜像不能只靠新 API 打开 DXF。当前仅完成本机验证，未发布到公司测试机或生产。
 
 API → Unix socket → 独立 CAD 容器 → 固定 OCP/Gmsh。解析容器完全禁网，API 只传字节与来源摘要，不共享文件目录、业务凭据或 Docker socket。决策与三种方案比较见 [ADR-036](../../docs/adr/ADR-036-CAD解析沙箱与资源硬限额.md)。
 
@@ -14,13 +17,13 @@ ADR-037 增加上传静默预解析与持久产物：平台 worker 通过同一 
 | 内存、交换空间 | cgroup：3 GiB；不允许 swap |
 | CPU | cgroup：整个容器最多 1 核配额 |
 | 进程/线程 | cgroup：整个容器最多 64 |
-| 单文件、FD、core | rlimit：256 MiB、128、0 |
+| 单文件、FD、core | rlimit：512 MiB、128、0 |
 | 转换数据、临时目录、通信目录、共享内存 | 限容 tmpfs：1536 MiB、384 MiB、1 MiB、8 MiB |
-| 输入、队列、转换 | 单文件默认 64 MiB（显式最大 256）、并发 1、排队 8、worker 600 秒、排队 900 秒 |
+| 输入、队列、转换 | 单文件默认 64 MiB（显式最大 256）、并发 1、活动任务合计 8（包含运行中）、STEP/DWG worker 600 秒、DXF worker 60 秒、排队 900 秒 |
 
-tmpfs 用量计入同一容器的内存预算，各项上限不能理解为可同时全部占满的额外容量。RSS 2 GiB 采样停止阈值仍保留作为提前止损；内核 memory.max 覆盖所有解析后代，不依赖该采样。另有 PID 1 watchdog，在主 worker 超过约 605 秒仍未退出时退出整个 PID namespace；对主 worker 结束后残留、脱离进程组的孤儿进程，PID 1 检测后终止整个 namespace 并回收孤儿僵尸。无活动的非 loopback 链路和出站路由；运行身份 1000:1000、根目录只读、capabilities 全部丢弃、禁止提权、默认 seccomp。服务启动检查实际 cgroup v2、挂载和进程状态，缺项拒绝运行；禁止用不受限 Python 替代。
+tmpfs 用量计入同一容器的内存预算，各项上限不能理解为可同时全部占满的额外容量。STEP/DXF 进程树 RSS 2 GiB、DWG 2.5 GiB 采样停止阈值作为提前止损；容器总占用超过 2.75 GiB 时停止当前 worker，给主服务留出余量；内核 memory.max 覆盖所有解析后代，不依赖该采样。另有 PID 1 watchdog，在主 worker 超过约 605 秒仍未退出时退出整个 PID namespace；对主 worker 结束后残留、脱离进程组的孤儿进程，PID 1 检测后终止整个 namespace 并回收孤儿僵尸。无活动的非 loopback 链路和出站路由；运行身份 1000:1000、根目录只读、capabilities 全部丢弃、禁止提权、默认 seccomp。服务启动检查实际 cgroup v2、挂载和进程状态，缺项拒绝运行；禁止用不受限 Python 替代。
 
-原生包保持固定版本，OCP 与 Gmsh 安装在不同 Python 环境，不改 CAD core/source.json。固定 OCP/Gmsh 的 Linux wheel 为 x86_64，因此当前镜像明确使用 linux/amd64；arm64 开发机通过已有仿真运行，不能将该耗时当作公司 x86 服务器性能。OCP 的 vtk 依赖通过既有 cadquery-vtk 分发提供；使用 --no-deps 避免混装没有 cp313 wheel 的 vtk==9.3.1。镜像构建必须实际验证两套 native import。
+原生包保持固定版本，OCP 与 Gmsh 安装在不同 Python 环境，发布身份由 CAD core/source.json 与 API 常量同步生成。固定 OCP/Gmsh 的 Linux wheel 为 x86_64，因此当前镜像明确使用 linux/amd64；arm64 开发机通过已有仿真运行，不能将该耗时当作公司 x86 服务器性能。OCP 的 vtk 依赖通过既有 cadquery-vtk 分发提供；使用 --no-deps 避免混装没有 cp313 wheel 的 vtk==9.3.1。镜像构建必须实际验证两套 native import。
 
 ## 本地运行
 
@@ -54,6 +57,9 @@ docker compose -f deploy/prod/docker-compose.yml -f deploy/prod/docker-compose.c
 沙箱内部缓存仍使用限容 tmpfs，重启会清除；平台已完成的持久产物不依赖它。上传提交事务只登记 GB 后台任务，worker 独立轮询，不与通知 outbox 串行等待 native；关闭预览仅取消当前窗口。成功产物跨 API/worker/CAD 重启复用，无需 native 重算；新文件版本/引擎/编码或损坏时重建。对象与数据库需一并备份，彻底删除文件或项目会清理 CAD 前缀。迁移与生命周期见 [ADR-037](../../docs/adr/ADR-037-CAD产物持久化与上传预解析.md)。
 
 ## 定向验收
+
+2026-10-31 本地 Linux 验证：固定依赖的 CAD 镜像构建及原生导入成功；9 项实际容器隔离探针、38 项字体/布局/外参回归通过。真实 DXF/DWG 均经隔离服务完成转换；同输入及字体的 DXF 旧新画面对比一致。已验证损坏输入、摘要不匹配、路径越界、跨 namespace 读取、队列饱和、取消和降低预算后的真实 DWG 内存止损；失败后可继续处理有效 DXF。原字体处理和混合绘制未修改，DWG 仍明确为 partial。私有图纸、性能数字和截图仅保留本机，不属于部署验收；本次未部署。
+
 
 在 server/ 运行（下例使用本地 Compose 默认容器名；自定义项目名时同步调整）：
 

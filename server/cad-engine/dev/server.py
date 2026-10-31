@@ -41,7 +41,7 @@ def _rule_version():
     digest=hashlib.sha256()
     for name in scope:digest.update(name.encode());digest.update((BASE/name).read_bytes())
     digest.update(b'vendor/ezdxf');digest.update(dxf_source_digest().encode())
-    for setting in ('CAD_STEP_EXTERNAL_MESH','CAD_STEP_MESHER_PYTHON','CAD_DWG_READER'):
+    for setting in ('CAD_STEP_EXTERNAL_MESH','CAD_STEP_MESHER_PYTHON','CAD_DXF_DWG_READER','CAD_DWG_READER','CAD_DWG_DOTNET','CAD_DWG_PYTHON'):
         digest.update(setting.encode());digest.update(os.environ.get(setting,'').encode())
     return digest.hexdigest()[:16]
 RULE_VERSION=_rule_version()

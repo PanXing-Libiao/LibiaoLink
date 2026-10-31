@@ -27,12 +27,29 @@ from .step_name_encoding import name_codepage as check_name_codepage
 from . import dxf_resources
 
 TERMINAL={'completed','partial','failed','cancelled','timed-out'}
-POLICY={'version':'local-step-job/3','workerWallSeconds':600,'queueWallSeconds':900,'workerRSSBytes':2*1024**3,
+POLICY={'version':'local-step-job/4','workerWallSeconds':600,'queueWallSeconds':900,'workerRSSBytes':2*1024**3,
         'concurrency':1,'maxQueued':8,'sourceBytes':256*1024**2,'artifactBytes':512*1024**2,
         'resultBytes':256*1024**2,'stderrBytes':8*1024**2,'logBytes':64*1024**2,'maxStoredJobs':1024,'retentionSeconds':86400,
         'synchronousWorkerSeconds':60,'restart':'queued/running jobs fail; explicit resubmission retries',
         'disconnect':'job continues until cancelled, terminal, resource limit, or server restart',
         'deduplication':'same content/name/mode/reader/rules returns same local job; cancellation is shared'}
+
+
+def process_tree_rss(pid):
+    """Count the worker and native descendants, including separate process groups."""
+    rows = subprocess.run(['ps','-eo','pid=,ppid=,rss='],capture_output=True,text=True,timeout=2,check=True).stdout
+    children = {}
+    rss = {}
+    for row in rows.splitlines():
+        child,parent,kib = map(int,row.split())
+        children.setdefault(parent,[]).append(child)
+        rss[child] = kib * 1024
+    pending = [pid]; total = 0
+    while pending:
+        child = pending.pop()
+        total += rss.get(child,0)
+        pending.extend(children.get(child,[]))
+    return total
 
 class JobLimit(ValueError):pass
 
@@ -43,7 +60,7 @@ class ConversionJobs:
         self.rule_version=rule_version;self.interpreter=interpreter;self.policy={**POLICY,'inputBytes':step_job_input_bytes(),**(policy or {})}
         self.dxf_interpreter=dxf_interpreter
         self.dwg_interpreter=dwg_interpreter
-        self.dwg_policy={'workerRSSBytes':3*1024**3,'resultBytes':512*1024**2,'artifactBytes':512*1024**2}
+        self.dwg_policy={'workerRSSBytes':2560*1024**2,'resultBytes':512*1024**2,'artifactBytes':512*1024**2}
         self.binary=os.environ.get('CAD_STEP_JOB_BINARY','1')!='0'
         self.compact=self.binary and os.environ.get('CAD_STEP_JOB_COMPACT','1')!='0'
         self.upload_reserved=0
@@ -291,6 +308,7 @@ class ConversionJobs:
                 folder=Path(folder);out=folder/'result.json';trace=folder/'trace.json'
                 binary_dir=folder/'buffers';binary_dir.mkdir()
                 env=dict(os.environ);env.pop('CAD_BINARY_DIR',None);env.pop('CAD_PROFILE_STAGES',None)
+                scratch=folder/'scratch';scratch.mkdir();env['TMPDIR']=str(scratch)
                 if self.binary:env['CAD_BINARY_DIR']=str(binary_dir)
                 env.pop('CAD_COMPACT_METADATA',None)
                 if self.compact and not is_dxf and not is_dwg:env['CAD_COMPACT_METADATA']='1'
@@ -337,9 +355,13 @@ class ConversionJobs:
                         size=out.stat().st_size+sum(f.stat().st_size for f in binary_dir.iterdir())
                         if size>result_limit or stderr.tell()>self.policy['stderrBytes']:
                             self.stop_worker(proc);fail('failed','job-output-quota','转换产物或日志超过配额');return
-                        usage=subprocess.run(['ps','-o','rss=','-p',str(proc.pid)],capture_output=True,text=True,timeout=2)
-                        rss=int(usage.stdout.strip() or 0)*1024;peak_rss=max(peak_rss,rss)
-                        if rss>rss_limit:
+                        rss=process_tree_rss(proc.pid);peak_rss=max(peak_rss,rss)
+                        memory_stop=int(os.environ.get('CAD_MEMORY_STOP_BYTES','0'))
+                        cgroup_high=memory_stop and int(Path('/sys/fs/cgroup/memory.current').read_text())>memory_stop
+                        scratch_bytes=sum(f.stat().st_size for f in scratch.rglob('*') if f.is_file())
+                        if scratch_bytes>512*1024**2:
+                            self.stop_worker(proc);fail('failed','job-scratch-quota','转换临时数据超过配额');return
+                        if rss>rss_limit or cgroup_high:
                             self.stop_worker(proc);fail('failed','job-memory-quota','转换超过后台任务内存预算');return
                         if trace.exists():
                             try:progress=json.loads(trace.read_text())

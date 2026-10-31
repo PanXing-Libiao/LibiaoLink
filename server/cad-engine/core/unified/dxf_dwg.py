@@ -75,7 +75,7 @@ def decode(raw):
     signature = raw[:6]
     if signature not in SIGNATURES:
         raise ValueError('dwg-signature-unsupported: requires R13–R2018 DWG bytes')
-    executable, implementation = reader(os.environ.get('CAD_DWG_READER', 'dwgread'))
+    executable, implementation = reader(os.environ.get('CAD_DXF_DWG_READER', 'dwgread'))
     deadline = time.monotonic() + WALL_SECONDS
     with tempfile.TemporaryDirectory(prefix='cad-dwg-') as name:
         folder = Path(name)

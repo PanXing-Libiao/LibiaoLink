@@ -65,7 +65,7 @@ class DxfJobsTest(unittest.TestCase):
                 self.assertEqual(result['document']['extensions']['org.cad-preview.dxf-plot-styles/1']['layouts']['model']['status'],'ready')
             finally:jobs.close()
 
-    @unittest.skipUnless(shutil.which(os.environ.get('CAD_DWG_READER', 'dwgread')), 'LibreDWG native reader not installed')
+    @unittest.skipUnless(shutil.which(os.environ.get('CAD_DXF_DWG_READER', 'dwgread')), 'LibreDWG native reader not installed')
     def test_dwg_companion_keeps_original_identity_through_the_isolated_worker(self):
         from test_dwg_xref import host, FIXTURE
         doc, _ = host()
