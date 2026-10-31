@@ -196,6 +196,32 @@ export function mountDrawingViewer(envelope) {
   let scale = 1, tx = 0, ty = 0, dpr = 1, cssW = 800, cssH = 600;
   let mode = 'display';
   const userLayers = new Map();
+  const meshIds = new Set(Object.keys(ucd.extensions?.['org.libiaolink.dwg/1']?.meshPresentations || {}));
+  let meshViewer = null, spatialView = '2d', meshLoading = null, viewRequest = 0;
+  async function setSpatialView(next) {
+    const request=++viewRequest;
+    if (next === '3d' && !meshIds.size) return false;
+    if (next === '3d' && spaceTarget?.kind !== 'model')
+      setSpace({kind:'model',spaceId:Object.values(drawing.drawings)[0].modelSpaceId});
+    if (next === '3d' && !meshViewer) {
+      meshLoading ||= import('./drawing-mesh-viewer.js');
+      const {createDrawingMeshViewer} = await meshLoading;
+      if (destroyed || request!==viewRequest) return false;
+      meshViewer ||= createDrawingMeshViewer({document:ucd, viewport, geometry:representationGeometry, meshIds,
+        onSelect:(hit,additive)=>select(hit?{id:hit.id,draw:hit.draw,layerId:hit.draw.visibilityLayerIds[0]}:null,additive)});
+    }
+    spatialView = next;
+    const hint=document.querySelector('.hint');
+    if(hint)hint.textContent=next==='3d'?'拖动旋转 · 滚轮缩放 · 右键平移 · 单击选中':'拖动平移 · 滚轮缩放 · 单击选中 · Shift 多选 · Esc 取消';
+    meshViewer?.setActive(next === '3d');
+    canvas.hidden = next === '3d'; overlay.hidden = next === '3d';
+    const note = panel.querySelector('#drawingMeshNote');
+    if(note) note.textContent = next === '3d'
+      ? '拖动旋转 · 右键拖动平移 · 滚轮缩放。仅显示已支持的面和网格；文字、标注及二维图元请查看二维图纸。' + (meshViewer.record().skippedClipped ? ' 带裁剪边界的对象暂不进入三维视图。' : '')
+      : '三维视图可查看已支持的面和网格。';
+    panel.querySelectorAll('[data-spatial-view]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.spatialView===next)));
+    draw(); return true;
+  }
   const selected = new Set();
   let selectedInstance = null, selectedLabel = '', selectedBlockDetails = false;
   let buildScale = 1, drag = null, moved = false, destroyed = false;
@@ -566,6 +592,11 @@ export function mountDrawingViewer(envelope) {
                 child.fillTriangles = [];
                 for (let i = 0; i + 2 < indices.length; i += 3) {
                   const tri = [point(indices[i]), point(indices[i + 1]), point(indices[i + 2])];
+                  // Overlapping mesh faces must not cancel in a plan view.
+                  if(meshIds.has(draw.itemId)){
+                    child.fillRule='nonzero';
+                    if((tri[1][0]-tri[0][0])*(tri[2][1]-tri[0][1])-(tri[1][1]-tri[0][1])*(tri[2][0]-tri[0][0])<0)[tri[1],tri[2]]=[tri[2],tri[1]];
+                  }
                   path.moveTo(...tri[0]); path.lineTo(...tri[1]); path.lineTo(...tri[2]); path.closePath();
                   tri.forEach(extend); child.fillTriangles.push(tri);
                 }
@@ -1043,6 +1074,7 @@ function refreshCanvasInstancesInFrames() {
 
   // ----- render -----------------------------------------------------------
   function resize() {
+    meshViewer?.resize();
     const r = viewport.getBoundingClientRect();
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     cssW = Math.max(200, r.width); cssH = Math.max(200, r.height);
@@ -1105,6 +1137,7 @@ function refreshCanvasInstancesInFrames() {
   }
   function draw() {
     if (destroyed) return;
+    if (spatialView === '3d') { meshViewer.sync(userLayers,selected); return; }
     cancelInstanceRefresh();
     if (interacting && drawPreview()) return;
     if(instancePlan){drawInstances();return;}
@@ -1399,6 +1432,7 @@ function refreshCanvasInstancesInFrames() {
   }
   let lastFit = null, fitted = false;
   function fit(bbox) {
+    if (spatialView === '3d') return meshViewer.fit();
     fitted = true;
     let b = bbox;
     if (!b) {
@@ -1482,6 +1516,8 @@ function refreshCanvasInstancesInFrames() {
     if (g.sourceType === 'SHAPE') name = 'SHX 形状';
     if (g.type === 'image') name = ({PDFUNDERLAY:'PDF 底图',DWFUNDERLAY:'DWF 底图',DGNUNDERLAY:'DGN 底图',OLE2FRAME:'OLE 内容缓存'})[mediaItemFor(ucd,draw.itemId)?.sourceKind]||'外链图片';
     if (g.sourceType === 'REGION') name = '平面区域';
+    if (g.sourceType === '3DFACE') name = '三维面';
+    if (g.sourceType === 'MESH') name = '三维网格';
     if (g.type === 'arc') name = Math.abs((g.sweepAngle || 0) - Math.PI * 2) < 1e-6 ? '圆' : '圆弧';
     if (g.type === 'polyline') name = g.closed ? '闭合多段线' : '多段线';
     if (g.type === 'hatch') name = fillEntryFor(ucd,draw.itemId)?.gradient ? '渐变填充' : g.patternId ? '图案填充' : '实心填充';
@@ -1493,7 +1529,7 @@ function refreshCanvasInstancesInFrames() {
     return ref&&ref.sourceId!==ucd.sources[0].id?' · 来源 '+(ucd.sources.find(source=>source.id===ref.sourceId)?.name||ref.sourceId):'';
   }
   function select(rec, additive) {
-    if(instancePlan)instanceSelected=rec;
+    if(instancePlan&&spatialView!=='3d')instanceSelected=rec;
     selectedBlockDetails=false;
     const id = rec ? rec.id : null;
     if (!additive) selected.clear();
@@ -1791,6 +1827,7 @@ function refreshCanvasInstancesInFrames() {
 
   // ----- space switching --------------------------------------------------
   function setSpace(target) {
+    if (spatialView === '3d') void setSpatialView('2d');
     spaceTarget = target;
     const plotSetup=plotStyles?.layouts?.[target.kind==='layout'?target.layoutId:'model'];
     plotPreview=target.kind!=='block-preview'&&!!plotSetup?.displayPlotStyles&&plotSetup.status==='ready';
@@ -1895,6 +1932,12 @@ function refreshCanvasInstancesInFrames() {
     '<div class="dsec"><strong>块定义与实例</strong><div class="dblocks"></div></div>' +
     '<div class="dsec"><strong>覆盖与损失</strong><div class="dcoverage"></div></div>' +
     '<div class="dsec"><button type="button" id="drawingReset">恢复源状态</button></div>';
+  if(meshIds.size){
+    const section=document.createElement('div');section.className='dsec';
+    section.innerHTML='<strong>视图</strong><div><button type="button" data-spatial-view="2d" aria-pressed="true">二维图纸</button> <button type="button" data-spatial-view="3d" aria-pressed="false">三维对象</button></div><p class="dhint" id="drawingMeshNote">三维视图可查看已支持的面和网格。</p>';
+    panel.prepend(section);
+    section.querySelectorAll('button').forEach(button=>button.addEventListener('click',()=>{void setSpatialView(button.dataset.spatialView).catch(()=>{section.querySelector('p').textContent='三维视图初始化失败，请继续使用二维图纸。';});}));
+  }
   panel.querySelectorAll('input[name=dmode]').forEach(input => input.addEventListener('change', () => {
     mode = input.value; analyticCache.clear(); rebuild(); fit(); updatePrecision();
   }));
@@ -1910,7 +1953,8 @@ function refreshCanvasInstancesInFrames() {
   fitted = false; // setSpace fitted against the placeholder width; fit again at the real size
   resize();
   const api = {
-    envelope,
+    envelope, setSpatialView,
+    meshView: () => meshViewer?.record() || null,
     get space() { return spaceTarget; },
     get mode() { return mode; },
     projection: () => projection,
@@ -1942,6 +1986,7 @@ function refreshCanvasInstancesInFrames() {
     scale: () => scale,
     extents,
     fitSelection() {
+      if (spatialView === '3d') return meshViewer.fit(selected);
       if(instancePlan&&instanceSelected?.bbox){fit(instanceSelected.bbox);return true;}
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const rec of built) if (selected.has(rec.id) && drawVisible(rec)) {
@@ -2002,11 +2047,12 @@ function refreshCanvasInstancesInFrames() {
       });
     },
     record() {
-      return { space: spaceTarget, mode, scale, layers: api.layerStates(), draws: Object.keys(projection.draws).length, selected: [...selected], selectedInstance, extents: extents(), unit: presentation.unit };
+      return { spatialView, space: spaceTarget, mode, scale, layers: api.layerStates(), draws: Object.keys(projection.draws).length, selected: [...selected], selectedInstance, extents: extents(), unit: presentation.unit };
     },
     resize, draw, ready:rasterReady,
     destroy() {
       destroyed = true;
+      meshViewer?.dispose();
       cancelInstanceRefresh();
       if (interactionFrame) { cancelAnimationFrame(interactionFrame); interactionFrame = 0; }
       if (interactionTimer) { clearTimeout(interactionTimer); interactionTimer = 0; }
