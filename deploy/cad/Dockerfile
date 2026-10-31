@@ -8,6 +8,11 @@ RUN python -m venv /opt/ocp \
  && python -m venv /opt/mesher \
  && /opt/mesher/bin/pip install --no-cache-dir --only-binary=:all: --no-deps -r /tmp/requirements-step-mesher.txt
 
+FROM native AS acis
+COPY server/cad-engine/requirements-acis.txt server/cad-engine/requirements-dwg.txt /tmp/
+RUN python -m venv /opt/acis \
+ && /opt/acis/bin/pip install --no-cache-dir --only-binary=:all: --no-deps -r /tmp/requirements-step.txt -r /tmp/requirements-dwg.txt -r /tmp/requirements-acis.txt
+
 FROM native AS drawing
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential && rm -rf /var/lib/apt/lists/*
 COPY server/cad-engine/requirements-dxf*.txt /tmp/
@@ -38,6 +43,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=native /opt/ocp /opt/ocp
 COPY --from=native /opt/mesher /opt/mesher
+COPY --from=acis /opt/acis /opt/acis
 COPY --from=drawing /opt/dxf /opt/dxf
 COPY --from=dwg-reader /opt/dwg /opt/dwg
 COPY --from=native-dwg /opt/dotnet/dotnet /opt/dotnet/dotnet
@@ -54,8 +60,9 @@ COPY server/cad-engine/bridge.py server/cad-engine/result_cache.py server/cad-en
 COPY server/cad-engine/requirements-*.txt ./
 COPY deploy/cad/healthcheck.py ./healthcheck.py
 RUN CAD_DXF_IMPORT_MODE=installed PYTHONPATH=/opt/cad/core /opt/dxf/bin/python -c 'from unified.dxf_runtime import require_engine; require_engine(); from unified.dxf_dwg import reader; reader("/opt/dwg/bin/dwgread")'
+RUN PYTHONPATH=/opt/cad/core/vendor/ezdxf/src /opt/acis/bin/python -c 'import cq_acis, cadquery; from OCP.BRepCheck import BRepCheck_Analyzer'
 RUN mkdir -p /run/cad /var/lib/cad && chown 1000:1000 /run/cad /var/lib/cad
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 CAD_DXF_IMPORT_MODE=installed CAD_DXF_DWG_READER=/opt/dwg/bin/dwgread CAD_DWG_READER=/opt/dwg-native/LibiaoLink.DwgReader.dll CAD_DWG_DOTNET=/opt/dotnet/dotnet CAD_DWG_PYTHON=/opt/dxf/bin/python
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 CAD_DXF_IMPORT_MODE=installed CAD_DXF_DWG_READER=/opt/dwg/bin/dwgread CAD_DWG_READER=/opt/dwg-native/LibiaoLink.DwgReader.dll CAD_DWG_DOTNET=/opt/dotnet/dotnet CAD_DWG_PYTHON=/opt/dxf/bin/python CAD_ACIS_PYTHON=/opt/acis/bin/python
 USER 1000:1000
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["/opt/ocp/bin/python", "/opt/cad/service.py"]

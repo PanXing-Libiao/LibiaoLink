@@ -5,6 +5,7 @@ CAD_WORK="$PWD/.cad-work"
 export PYTHONDONTWRITEBYTECODE=1
 export CAD_OCCT_PYTHON="$CAD_WORK/occt/bin/python"
 export CAD_DXF_PYTHON="$CAD_WORK/dxf/bin/python"
+export CAD_ACIS_PYTHON="$CAD_WORK/acis/bin/python"
 export CAD_STEP_MESHER_PYTHON="$CAD_WORK/step-mesher/bin/python"
 if [ ! -x "$CAD_OCCT_PYTHON" ] || [ ! -x "$CAD_DXF_PYTHON" ] || [ ! -x "$CAD_STEP_MESHER_PYTHON" ]; then
     echo 'Run sh server/cad-engine/dev/setup-runtime.sh first.' >&2

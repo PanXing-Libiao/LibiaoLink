@@ -217,8 +217,8 @@ export function mountDrawingViewer(envelope) {
     canvas.hidden = next === '3d'; overlay.hidden = next === '3d';
     const note = panel.querySelector('#drawingMeshNote');
     if(note) note.textContent = next === '3d'
-      ? '拖动旋转 · 右键拖动平移 · 滚轮缩放。仅显示已支持的面和网格；文字、标注及二维图元请查看二维图纸。' + (meshViewer.record().skippedClipped ? ' 带裁剪边界的对象暂不进入三维视图。' : '')
-      : '三维视图可查看已支持的面和网格。';
+      ? '拖动旋转 · 右键拖动平移 · 滚轮缩放。仅显示已成功解析的三维对象；文字、标注及二维图元请查看二维图纸。' + (meshViewer.record().skippedClipped ? ' 带裁剪边界的对象暂不进入三维视图。' : '')
+      : '三维视图可查看已成功解析的三维对象。';
     panel.querySelectorAll('[data-spatial-view]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.spatialView===next)));
     draw(); return true;
   }
@@ -1518,6 +1518,8 @@ function refreshCanvasInstancesInFrames() {
     if (g.sourceType === 'REGION') name = '平面区域';
     if (g.sourceType === '3DFACE') name = '三维面';
     if (g.sourceType === 'MESH') name = '三维网格';
+    if (g.sourceType === '3DSOLID') name = '三维实体';
+    if (g.sourceType?.endsWith('SURFACE')) name = '三维曲面';
     if (g.type === 'arc') name = Math.abs((g.sweepAngle || 0) - Math.PI * 2) < 1e-6 ? '圆' : '圆弧';
     if (g.type === 'polyline') name = g.closed ? '闭合多段线' : '多段线';
     if (g.type === 'hatch') name = fillEntryFor(ucd,draw.itemId)?.gradient ? '渐变填充' : g.patternId ? '图案填充' : '实心填充';
@@ -1934,7 +1936,7 @@ function refreshCanvasInstancesInFrames() {
     '<div class="dsec"><button type="button" id="drawingReset">恢复源状态</button></div>';
   if(meshIds.size){
     const section=document.createElement('div');section.className='dsec';
-    section.innerHTML='<strong>视图</strong><div><button type="button" data-spatial-view="2d" aria-pressed="true">二维图纸</button> <button type="button" data-spatial-view="3d" aria-pressed="false">三维对象</button></div><p class="dhint" id="drawingMeshNote">三维视图可查看已支持的面和网格。</p>';
+    section.innerHTML='<strong>视图</strong><div><button type="button" data-spatial-view="2d" aria-pressed="true">二维图纸</button> <button type="button" data-spatial-view="3d" aria-pressed="false">三维对象</button></div><p class="dhint" id="drawingMeshNote">三维视图可查看已成功解析的三维对象。</p>';
     panel.prepend(section);
     section.querySelectorAll('button').forEach(button=>button.addEventListener('click',()=>{void setSpatialView(button.dataset.spatialView).catch(()=>{section.querySelector('p').textContent='三维视图初始化失败，请继续使用二维图纸。';});}));
   }
