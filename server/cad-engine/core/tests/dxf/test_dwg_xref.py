@@ -38,7 +38,7 @@ def convert_bytes(raw, files):
 
 
 class DwgXrefTest(unittest.TestCase):
-    @unittest.skipUnless(shutil.which(os.environ.get('CAD_DWG_READER', 'dwgread')), 'LibreDWG native reader not installed')
+    @unittest.skipUnless(shutil.which(os.environ.get('CAD_DXF_DWG_READER', 'dwgread')), 'LibreDWG native reader not installed')
     def test_selected_dwg_replaces_cache_and_keeps_original_format_handles_and_clip(self):
         doc, insert = host()
         XClip(insert).set_block_clipping_path([(0, -1), (15, -1), (15, 1), (0, 1)])
@@ -71,7 +71,7 @@ class DwgXrefTest(unittest.TestCase):
         for raw, expected in ((raw_doc(substitute), 'dwg-signature-unsupported'),
                               (FIXTURE.read_bytes(), 'dwg-reader-unavailable')):
             doc, _ = host()
-            with patch.dict(os.environ, {'CAD_DWG_READER': '/nonexistent/cad-dwg-reader'}):
+            with patch.dict(os.environ, {'CAD_DXF_DWG_READER': '/nonexistent/cad-dwg-reader'}):
                 result = convert(doc, {'drawings/parts/part.dwg': raw, 'drawings/parts/part.dxf': raw_doc(substitute)})
             ext = result['document']['extensions']['org.cad-preview.dxf-xref/1']
             ref = ext['references'][0]
@@ -80,7 +80,7 @@ class DwgXrefTest(unittest.TestCase):
             self.assertNotIn('resolvedSourceId', ref)
             self.assertEqual(result['snapshot']['completeness'], 'partial')
 
-    @unittest.skipUnless(shutil.which(os.environ.get('CAD_DWG_READER', 'dwgread')), 'LibreDWG native reader not installed')
+    @unittest.skipUnless(shutil.which(os.environ.get('CAD_DXF_DWG_READER', 'dwgread')), 'LibreDWG native reader not installed')
     def test_truncated_dwg_never_replaces_cache_with_empty_success(self):
         doc, _ = host()
         result = convert(doc, {'drawings/parts/part.dwg': FIXTURE.read_bytes()[:40]})
@@ -89,7 +89,7 @@ class DwgXrefTest(unittest.TestCase):
         self.assertIn('dwg-decode-failed', ref['reason'])
         self.assertNotIn('replacedCachedRecords', ref)
 
-    @unittest.skipUnless(shutil.which(os.environ.get('CAD_DWG_READER', 'dwgread')), 'LibreDWG native reader not installed')
+    @unittest.skipUnless(shutil.which(os.environ.get('CAD_DXF_DWG_READER', 'dwgread')), 'LibreDWG native reader not installed')
     def test_nested_dxf_and_font_resolve_relative_to_original_dwg(self):
         doc, _ = host(False)
         detail = ezdxf.new('R2000'); detail.styles.new('Original', dxfattribs={'font': 'fonts/primary.shp'})
@@ -116,7 +116,7 @@ class DwgXrefTest(unittest.TestCase):
         cyclic = convert(doc, files)['document']['extensions']['org.cad-preview.dxf-xref/1']
         self.assertTrue(any('xref-cycle' in r['reason'] for r in cyclic['references']))
 
-    @unittest.skipUnless(shutil.which(os.environ.get('CAD_DWG_READER', 'dwgread')), 'LibreDWG native reader not installed')
+    @unittest.skipUnless(shutil.which(os.environ.get('CAD_DXF_DWG_READER', 'dwgread')), 'LibreDWG native reader not installed')
     def test_noncritical_read_losses_survive_a_successful_dxf_write(self):
         doc, _ = host(False)
         damaged = bytearray(FIXTURE.read_bytes())

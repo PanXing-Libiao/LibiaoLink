@@ -21,3 +21,6 @@ server/cad-engine/core/vendor/ezdxf/build/
 **/*.egg-info/
 **/*.so
 **/acc/*.c
+
+!server/cad-engine/dwg-reader/
+!server/cad-engine/dwg-reader/**

@@ -31,13 +31,13 @@ def main():
         fail('missing-dwg-runtime: CAD_DWG_READER and CAD_DWG_DOTNET are required')
     if not binary_dir:
         fail('dwg-binary-transport-required: CAD_BINARY_DIR is required for the DWG platform worker')
-    raw = sys.stdin.buffer.read()
-    if not raw:
-        fail('empty-dwg-source')
     with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR') or None) as folder:
         root = Path(folder)
         source = root / name
-        source.write_bytes(raw)
+        with source.open('wb') as target:
+            shutil.copyfileobj(sys.stdin.buffer, target, length=1024*1024)
+        if not source.stat().st_size:
+            fail('empty-dwg-source')
         result = root / 'result'
         native = result / 'native'
         try:
