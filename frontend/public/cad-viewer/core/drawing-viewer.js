@@ -14,6 +14,13 @@ import {resolveTextAvoidance} from './drawing-text-avoidance.js?v=dxf-0.15.0';
 import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentation} from './drawing-pattern.js?v=dxf-0.15.0';
 import {mediaItemFor, rasterRecord} from './drawing-media.js?v=dxf-0.15.0';
 
+// Use hybrid rendering automatically; retain compatibility for older browsers.
+const accelerated = typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined';
+const gpuModules = accelerated ? await Promise.all([
+  import('./gpu/background-painter.js'), import('./gpu/gpu-strokes.js')
+]) : null;
+const createBackgroundPainter = gpuModules?.[0].createBackgroundPainter;
+const createStrokeGPU = gpuModules?.[1].createStrokeGPU;
 const ACCENT = '#d9426f';
 
 export function mountDrawingViewer(envelope) {
@@ -34,7 +41,10 @@ export function mountDrawingViewer(envelope) {
   let canvas = document.getElementById('drawingCanvas');
   if (!canvas) { canvas = document.createElement('canvas'); canvas.id = 'drawingCanvas'; viewport.prepend(canvas); }
   canvas.hidden = false;
-  const ctx = canvas.getContext('2d');
+  let ctx = canvas.getContext('2d');
+  let strokeGPU = accelerated ? createStrokeGPU() : null;
+  let background=null;
+  canvas.dataset.renderer = accelerated ? 'gpu' : 'canvas';
   let overlay = document.getElementById('drawingOverlay');
   if (!overlay) {
     overlay = document.createElement('div'); overlay.id = 'drawingOverlay';
@@ -687,7 +697,7 @@ export function mountDrawingViewer(envelope) {
       }
     }
     applyTextAvoidance();
-    if(instancePlan)buildInstanceIndexes();
+    if(instancePlan)buildInstanceIndexes(); else buildPaintIndex();
     draw();
     updateStats();
     renderLayers();
@@ -698,6 +708,8 @@ export function mountDrawingViewer(envelope) {
   // index and Canvas Path2D batches consecutive opaque strokes in source order.
   function projectionCount(){return instancePlan?instancePlan.count:Object.keys(projection.draws).length;}
   function buildInstanceIndexes(){
+    if(background){background.dispose();background=null;}
+    strokeGPU?.reset();
     if(!instancePlan)return;
     const active=new Set(),done=new Set();
     instancePlan.infiniteAnchor=null;
@@ -741,8 +753,8 @@ export function mountDrawingViewer(envelope) {
           if(box&&rec.path&&!rec.fillPath&&!rec.textEntry&&!rec.pointMark&&!rec.infinite&&!rec.raster&&!rec.clipRegion.active&&opaque){
             const key=JSON.stringify([rec.color,rec.width,rec.dash]);
             let batch=pending.get(key);
-            if(!batch){batch={kind:'stroke',key,path:new Path2D(),color:rec.color,width:rec.width,dash:rec.dash,bounds:null,count:0};pending.set(key,batch);}
-            batch.path.addPath(rec.path);batch.bounds=union(batch.bounds,box);batch.count++;
+            if(!batch){batch={kind:'stroke',key,path:new Path2D(),color:rec.color,width:rec.width,dash:rec.dash,bounds:null,count:0,gpuSegments:[]};pending.set(key,batch);}
+            if(accelerated)batch.gpuSegments.push(rec.segments || rec.visibleGeometry?.segments || []);batch.path.addPath(rec.path);batch.bounds=union(batch.bounds,box);batch.count++;
           }else{flush();group.paint.push({kind:'record',rec,bounds:box});}
         }
       }
@@ -755,27 +767,124 @@ export function mountDrawingViewer(envelope) {
     instanceLayerKey=JSON.stringify([...userLayers]);
   }
   function refreshInstanceLayers(){if(instancePlan&&instanceLayerKey!==JSON.stringify([...userLayers]))buildInstanceIndexes();}
-  function drawInstances(){
+
+  let instanceRefresh = null;
+  function cancelInstanceRefresh() {
+    if (!instanceRefresh) return;
+    background?.cancel();
+    cancelAnimationFrame(instanceRefresh.frame);
+    instanceRefresh.steps.return();
+    instanceRefresh = null;
+  }
+  function drawInstances() {
+    for (const ignored of instancePaintSteps()) { /* immediate initial/explicit draw */ }
+    cacheFullFrame();
+  }
+  // Keep the last complete image visible; discard unfinished work when the
+  // view changes. Only publish a complete frame, preserving source paint order.
+  function refreshInstancesInFrames() {
+    if(!accelerated)return refreshCanvasInstancesInFrames();
+    cancelInstanceRefresh();
+    const job={steps:instancePaintSteps(),frame:0,maxStepMs:0,started:performance.now(),id:0};
+    instanceRefresh=job;
+    if(!background){
+      background=createBackgroundPainter(message=>{
+        if(!instanceRefresh||message.id!==instanceRefresh.id){message.bitmap.close();return;}
+        const finished=instanceRefresh;instanceRefresh=null;
+        ctx.setTransform(1,0,0,1,0,0);ctx.drawImage(message.bitmap,0,0);message.bitmap.close();
+        ctx.setTransform(dpr,0,0,dpr,0,0);cacheFullFrame();
+        canvas.dataset.maxRefreshStepMs=String(finished.maxStepMs);
+        canvas.dataset.refreshTotalMs=String(performance.now()-finished.started);
+        canvas.dataset.workerPaint='complete';
+        panel.querySelector('#drawingRenderStatus').textContent='';
+        panel.querySelector('#drawingRenderStatus').hidden=true;
+      },error=>{canvas.dataset.workerError=error;panel.querySelector('#drawingRenderStatus').textContent='清晰画面更新失败，请重新打开图纸。';panel.querySelector('#drawingRenderStatus').hidden=false;console.error(error);});
+      const painter=background;document.fonts.ready.then(()=>{if(background===painter)painter.fonts();});
+    }
+    const step=()=>{
+      if(instanceRefresh!==job)return;
+      const screen=ctx,device=strokeGPU,start=performance.now();
+      ctx=background.context;strokeGPU=background.gpu;
+      let result;
+      try{result=job.steps.next();}finally{ctx=screen;strokeGPU=device;}
+      job.maxStepMs=Math.max(job.maxStepMs,performance.now()-start);
+      background.submit(result.done,()=>{if(instanceRefresh===job)job.frame=requestAnimationFrame(step);});
+    };
+    Promise.all([background.ready,document.fonts.ready]).then(()=>{
+      if(instanceRefresh!==job)return;
+      background.fonts();
+      job.id=background.begin(canvas.width,canvas.height);
+      canvas.dataset.workerPaint='working';
+      panel.querySelector('#drawingRenderStatus').textContent='正在补充清晰细节，可继续缩放和拖动。';
+      panel.querySelector('#drawingRenderStatus').hidden=false;
+      job.frame=requestAnimationFrame(step);
+    });
+  }
+
+function refreshCanvasInstancesInFrames() {
+    cancelInstanceRefresh();
+    const target = document.createElement('canvas');
+    target.width = canvas.width; target.height = canvas.height;
+    const context = target.getContext('2d');
+    const job = {steps: instancePaintSteps(), frame: 0, maxStepMs: 0};
+    instanceRefresh = job;
+    const step = () => {
+      const screen = ctx;
+      let result;
+      const stepStarted = performance.now();
+      ctx = context;
+      try { result = job.steps.next(); } finally { ctx = screen; }
+      job.maxStepMs = Math.max(job.maxStepMs, performance.now() - stepStarted);
+      if (result.done) {
+        const publishStarted = performance.now();
+        instanceRefresh = null;
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.drawImage(target, 0, 0);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        cacheFullFrame();
+        if (window.__CAD_VIEWER_PROFILE__ === true) {
+          canvas.dataset.maxRefreshStepMs = String(job.maxStepMs);
+          canvas.dataset.refreshPublishMs = String(performance.now() - publishStarted);
+        }
+      } else job.frame = requestAnimationFrame(step);
+    };
+    job.frame = requestAnimationFrame(step);
+  }
+
+
+  function* instancePaintSteps(){
     const profile = typeof window !== 'undefined' && window.__CAD_VIEWER_PROFILE__ === true;
     const paintStarted = profile ? performance.now() : 0;
     refreshInstanceLayers();
     ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle='#fff';ctx.fillRect(0,0,cssW,cssH);
+    strokeGPU?.begin(canvas.width,canvas.height);
     const view={minX:-tx/scale,maxX:(cssW-tx)/scale,minY:(ty-cssH)/scale,maxY:ty/scale};
     let calls=0;
     const intersects=b=>b&&b.minX<=view.maxX&&b.maxX>=view.minX&&b.minY<=view.maxY&&b.maxY>=view.minY;
     function setMatrix(m){ctx.setTransform(dpr*scale*m[0],-dpr*scale*m[1],dpr*scale*m[4],-dpr*scale*m[5],dpr*(tx+scale*m[12]),dpr*(ty-scale*m[13]));}
     function localClipBounds(matrix){const inverse=inverse2D(matrix);return inverse?transformBounds(view,inverse):null;}
-    function paint(node,parent){
+    let sliceStarted = performance.now(), visited = 0;
+    function* paint(node,parent){
       const matrix=multiply(parent,node.matrix);
       if(!node.group.unbounded&&!intersects(transformBounds(node.group.bounds,matrix)))return;
       const localScale=scale*Math.max(Math.hypot(matrix[0],matrix[1]),Math.hypot(matrix[4],matrix[5]),1e-15);
       for(const entry of node.group.paint){
-        if(entry.kind==='group'){paint(entry,matrix);continue;}
+        if (++visited % 32 === 0 && performance.now() - sliceStarted >= 6) {
+          strokeGPU?.flush(ctx); yield; sliceStarted = performance.now();
+        }
+        if(entry.kind==='group'){yield* paint(entry,matrix);continue;}
         if(entry.bounds&&!intersects(transformBounds(entry.bounds,matrix)))continue;
         if(entry.kind==='stroke'){
+          const sx=Math.hypot(matrix[0],matrix[1]), sy=Math.hypot(matrix[4],matrix[5]);
+          const uniform=Math.abs(sx-sy)<1e-8*Math.max(sx,sy) && Math.abs(matrix[0]*matrix[4]+matrix[1]*matrix[5])<1e-8*sx*sy;
+          if(strokeGPU && uniform && !entry.dash?.length && entry.gpuSegments.length && entry.gpuSegments.every(a=>a.length)){
+            strokeGPU.stroke(entry,matrix,{scale,tx,ty,dpr});calls++;continue;
+          }
+          strokeGPU?.flush(ctx);
           setMatrix(matrix);calls++;
           ctx.strokeStyle=entry.color;ctx.lineWidth=entry.width/localScale;ctx.lineJoin='round';ctx.lineCap=entry.dash?.length?'round':'butt';ctx.setLineDash(entry.dash||[]);ctx.stroke(entry.path);continue;
         }
+        strokeGPU?.flush(ctx);
         const rec=entry.rec;
         if(rec.infinite){
           // Infinite construction lines stay clipped to the visible window; the
@@ -837,7 +946,8 @@ export function mountDrawingViewer(envelope) {
         ctx.restore();
       }
     }
-    for(const root of instancePlan.roots)paint(root,I);
+    for(const root of instancePlan.roots)yield* paint(root,I);
+    strokeGPU?.flush(ctx);
     instancePlan.lastPaintCalls=calls;
     if(profile){canvas.dataset.lastPaintMs=(performance.now()-paintStarted).toFixed(1);canvas.dataset.lastPaintCalls=String(calls);}
     if(instanceSelected){
@@ -845,7 +955,6 @@ export function mountDrawingViewer(envelope) {
       if(rec.path)ctx.stroke(rec.path);else if(rec.fillPath)ctx.stroke(rec.fillPath);else if(rec.bbox){const b=rec.bbox;ctx.strokeRect(b.minX,b.minY,b.maxX-b.minX,b.maxY-b.minY);}
     }
     ctx.setTransform(dpr,0,0,dpr,0,0);
-    cacheFullFrame();
   }
   function hitInstances(sx,sy){
     refreshInstanceLayers();const world=[(sx-tx)/scale,(ty-sy)/scale],worldTolerance=5/scale;
@@ -870,6 +979,66 @@ export function mountDrawingViewer(envelope) {
     let base=instancePlan.count;
     for(let i=instancePlan.roots.length-1;i>=0;i--){const root=instancePlan.roots[i];base-=root.group.count;const hit=query(root,I,[],base);if(hit)return hit;}
     return null;
+  }
+
+
+  // Compile only consecutive opaque, unclipped strokes. A fill, text, style or
+  // layer change is a barrier: source paint order must remain unchanged.
+  let paintRecords = [], paintIndex = null, indexedPaint = [], unindexedPaint = [];
+  let paintPadding = 3, interactionFrame = 0;
+  function buildPaintIndex() {
+    paintRecords = []; paintPadding = 3;
+    let batch = null, previousKey = null, batchSize = 0;
+    for (const rec of built) {
+      const simple = rec.path && !rec.fillPath && !rec.textEntry && !rec.pointMark
+        && !rec.raster && !rec.infinite && !rec.clipRegion.active && !rec.plotPen
+        && !rec.dash?.length && (rec.draw.style.opacity ?? 1) === 1;
+      const key = simple ? JSON.stringify([rec.color, rec.width, rec.layerId,
+        rec.draw.visibility, rec.draw.availability, rec.draw.visibilityLayerIds]) : null;
+      if (simple && key === previousKey && batchSize < 256) {
+        batch.path.addPath(rec.path);
+        batch.bbox = union(batch.bbox, rec.bbox);
+        batch.visibleGeometry.bounds = batch.bbox;
+        batchSize++;
+      } else {
+        batch = simple ? {...rec, path: new Path2D(rec.path),
+          visibleGeometry: {...rec.visibleGeometry}} : rec;
+        paintRecords.push(batch); batchSize = 1;
+      }
+      previousKey = key;
+      paintPadding = Math.max(paintPadding, rec.width / 2 + 2);
+    }
+    indexedPaint = []; unindexedPaint = [];
+    for (let i = 0; i < paintRecords.length; i++) {
+      const rec = paintRecords[i];
+      // Text can have screen-sized glyphs/leaders beyond its source bounds.
+      if (rec.infinite || rec.textEntry || !rec.visibleGeometry?.bounds) unindexedPaint.push(i);
+      else indexedPaint.push(i);
+    }
+    paintIndex = indexedPaint.length ? new Flatbush(indexedPaint.length) : null;
+    if (paintIndex) {
+      for (const i of indexedPaint) {
+        const b = paintRecords[i].visibleGeometry.bounds;
+        paintIndex.add(b.minX, b.minY, b.maxX, b.maxY);
+      }
+      paintIndex.finish();
+    }
+  }
+  function visiblePaintRecords() {
+    // Individual records retain exact source selection and highlight ordering.
+    if (selected.size) return built.filter(drawVisible);
+    const pad = paintPadding / scale;
+    const ids = paintIndex ? paintIndex.search(-tx / scale - pad,
+      (ty - cssH) / scale - pad, (cssW - tx) / scale + pad, ty / scale + pad)
+      .map(i => indexedPaint[i]) : [];
+    ids.push(...unindexedPaint);
+    ids.sort((a, b) => a - b);
+    return ids.map(i => paintRecords[i]).filter(drawVisible);
+  }
+  function requestInteractionDraw() {
+    if (!interactionFrame) interactionFrame = requestAnimationFrame(() => {
+      interactionFrame = 0; draw();
+    });
   }
 
   // ----- render -----------------------------------------------------------
@@ -901,13 +1070,18 @@ export function mountDrawingViewer(envelope) {
   }
   function interactionSettled() {
     if (destroyed) return;
-    if (mode === 'analytic' && (scale > buildScale * 2 || scale < buildScale / 2)) rebuild(); else draw();
+    if (interactionFrame) { cancelAnimationFrame(interactionFrame); interactionFrame = 0; }
+    if (mode === 'analytic' && (scale > buildScale * 2 || scale < buildScale / 2)) rebuild();
+    else if (instancePlan) refreshInstancesInFrames(); else draw();
   }
   function beginInteraction() {
+    cancelInstanceRefresh();
     interacting = true;
     if (interactionTimer) clearTimeout(interactionTimer);
     interactionTimer = setTimeout(() => {
-      interactionTimer = 0; interacting = false; interactionSettled();
+      interactionTimer = 0;
+      if (drag) return;
+      interacting = false; interactionSettled();
     }, 140);
   }
   function endInteraction() {
@@ -920,7 +1094,7 @@ export function mountDrawingViewer(envelope) {
     if (!previewValid || !previewCanvas || !previewView) return false;
     if (previewCanvas.width !== canvas.width || previewCanvas.height !== canvas.height) return false;
     const k = scale / previewView.scale;
-    if (!Number.isFinite(k) || k < 0.05 || k > 20) return false;
+    if (!Number.isFinite(k) || k <= 0) return false;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -931,11 +1105,12 @@ export function mountDrawingViewer(envelope) {
   }
   function draw() {
     if (destroyed) return;
+    cancelInstanceRefresh();
     if (interacting && drawPreview()) return;
     if(instancePlan){drawInstances();return;}
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, cssW, cssH);
-    const visible = built.filter(drawVisible);
+    const visible = visiblePaintRecords();
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     for (const rec of visible) {
       // Paint all primitive kinds in source/SORTENTSTABLE order. A late WIPEOUT
@@ -1246,7 +1421,7 @@ export function mountDrawingViewer(envelope) {
     scale = Math.max(1e-9, Math.min(1e12, scale * factor));
     tx = mx - wx * scale; ty = my + wy * scale;
     if (mode === 'analytic' && !interacting && (scale > buildScale * 2 || scale < buildScale / 2)) rebuild();
-    else draw();
+    else if (interacting) requestInteractionDraw(); else draw();
     updatePrecision();
   }
   function screenToWorld(mx, my) { return { x: (mx - tx) / scale, y: (ty - my) / scale }; }
@@ -1673,7 +1848,7 @@ export function mountDrawingViewer(envelope) {
     if (drag) {
       const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
       if (Math.hypot(dx, dy) > 3) moved = true;
-      if (moved) { beginInteraction(); tx += dx; ty += dy; drag.x = event.clientX; drag.y = event.clientY; draw(); }
+      if (moved) { beginInteraction(); tx += dx; ty += dy; drag.x = event.clientX; drag.y = event.clientY; requestInteractionDraw(); }
     }
   }
   function formatCoord(value) {
@@ -1712,7 +1887,7 @@ export function mountDrawingViewer(envelope) {
   resizeObserver.observe(viewport);
 
   // ----- panel skeleton ---------------------------------------------------
-  panel.innerHTML = '<div class="dsec"><strong>图纸空间</strong><div class="dspaces"></div></div>' +
+  panel.innerHTML = '<p class="dhint" id="drawingRenderStatus" role="status" hidden></p>' + '<div class="dsec"><strong>图纸空间</strong><div class="dspaces"></div></div>' +
     '<div class="dsec"><strong>显示方式</strong><div class="dmodes"><label><input type="radio" name="dmode" value="display" checked>显示离散化</label><label><input type="radio" name="dmode" value="analytic">按屏幕重建</label></div><p class="dhint">重建模式采样源曲线；填充与宽带沿用已生成的显示几何。</p></div>' +
     '<div class="dsec"><strong>图层</strong><div class="dlayers"></div></div>' +
     '<div class="dsec"><strong>打印样式</strong><div class="dplot"></div></div>' +
@@ -1832,7 +2007,11 @@ export function mountDrawingViewer(envelope) {
     resize, draw, ready:rasterReady,
     destroy() {
       destroyed = true;
+      cancelInstanceRefresh();
+      if (interactionFrame) { cancelAnimationFrame(interactionFrame); interactionFrame = 0; }
       if (interactionTimer) { clearTimeout(interactionTimer); interactionTimer = 0; }
+      background?.dispose();
+      strokeGPU?.dispose();
       rasterCache.clear();
       rasterProbes.clear();
       if (window.__drawing === api) { delete window.__drawing; delete window.__drawingTest; }
