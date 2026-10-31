@@ -117,7 +117,7 @@ def main():
                     import shutil
                     shutil.copyfileobj(stream,self.wfile)
                 return
-            elif path.startswith('/core/') or path=='/platform.css':return super().do_GET()
+            elif path.startswith(('/core/', '/fonts/')) or path in ('/platform.css', '/import-assembly.svg'):return super().do_GET()
             else:return self.send_error(404)
             self.send_response(200);self.send_header('Content-Type',kind);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
     server=ThreadingHTTPServer(('127.0.0.1',args.port),Handler)

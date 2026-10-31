@@ -183,3 +183,13 @@ CLI 是独立 GPL-3.0-or-later 程序，未链接进 Python 解释器。镜像�
 ## DWG 主图原生接入（2026-10-28 第一片）
 
 原生 ACadSharp → UCD 链路已加入平台代码：shared 格式 `DWG`、迁移 `0070`、API 输入/预览/任务/仓库和 `core/dwg_platform_convert.py` 已接线，但 `CAD_DWG_ENABLED` 默认关闭，当前只在本机完成 worker 样本验证，未在 Linux 沙箱调度、未部署公司测试机或生产。DWG 没有配套文件/主图相对路径，结果始终是带明确损失说明的 `partial`；需要 `CAD_DWG_PYTHON`、`CAD_DWG_READER`、`CAD_DWG_DOTNET` 和固定 ACadSharp 读取器，缺少时明确失败，不回退 DXF。构建、读取协议、源账本及已知限制见 [dwg-reader/README.md](dwg-reader/README.md)，交接状态见 [DWG_HANDOFF.md](DWG_HANDOFF.md)。正式大图的约 2.7 GiB 托管内存和约 266 MB manifest 尚未在目标沙箱验证；首版平台预算为 3 GiB worker RSS / 512 MiB 产物，不构成生产容量承诺。
+
+### 二维混合绘制与后台重绘（2026-10-31）
+
+查看器统一采用混合方案，不向用户提供原版切换，旧 renderer 参数不再控制绘制方式。具备后台绘制能力的浏览器在保留实例路径中使用 WebGL2 实线绘制与 Worker/OffscreenCanvas 清晰重绘，其余复杂对象继续执行现有 Canvas 指令；浏览器能力不足时自动使用兼容流程。
+
+字体、字形、文字排版、布局、裁剪、图层和拾取规则仍由同一查看器生成。新操作会取消旧视角任务；清晰帧生成期间保留可交互预览，完成后一次替换。初次载入、显式同步重绘和普通小图路径不扩大优化承诺。图层重建或查看器销毁时释放后台资源。
+
+后台文件位于 core/gpu/，Worker 使用相对模块 URL；主线程与 Worker 共用 GPU 实线实现，不依赖本机实验目录。开发入口 dev/dwg-local.py 同时提供 /core/、/fonts/、/platform.css 和 /import-assembly.svg，避免缺失字体样式或加载图标触发页面资源异常。
+
+本机已完成真实图交互、字体/显示样本和移除切换后的运行验证；详细性能记录、截图及原始图纸只保存在本机，不随代码提交。既有 partial 能力与抗锯齿/图片采样差异保持，未进行部署。引擎及格式版本不变，仅更新查看器身份。
