@@ -27,6 +27,9 @@ class LegacyGeometryReader(SourceReader):
 
 def parse_sat(data):
  graph=parse_sat_graph(data);decoded=[]
+ # SAT 106 omits source units and tolerances; report this before legacy field decoding.
+ if graph.header.save_version==106:
+  raise ValueError('acis-source-units-or-precision-missing')
  for raw in graph.entities:
   if graph.header.save_version==106 and raw.type_name in ('plane-surface','straight-curve','ellipse-curve'):
    reader=LegacyGeometryReader(graph,raw);reader.version=400
