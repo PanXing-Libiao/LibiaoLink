@@ -1740,6 +1740,8 @@ function refreshCanvasInstancesInFrames() {
     const unsupported = (geom.byReason && geom.byReason.unsupported) || {};
     const losses = coverageExt.losses || [];
     const lines = [];
+    const missingAcisPrecision = (ucd.diagnostics || []).filter(item => item.code === 'native-acis-unavailable' && item.message === 'acis-source-units-or-precision-missing').length;
+    if (missingAcisPrecision) lines.push('有 ' + missingAcisPrecision + ' 个三维或面域对象无法预览：文件缺少有效的单位或建模精度信息，无法确认尺寸和精度。为避免显示错误，这些对象未显示。请联系图纸提供者，在原 CAD 软件中确认单位和精度后重新导出为较新版本的 DWG；也可下载原文件查看。');
     if (recovery) {
       const issue = recovery.missingSections.length ? '缺少 ' + recovery.missingSections.join('、') : '已进行结构恢复';
       lines.push('原文件信息不完整（Partial）：' + issue + '。仅预览已恢复的内容，未声明的版本、单位和布局不作推定。');
