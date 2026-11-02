@@ -51,7 +51,7 @@
     "unified/dxf_fill.py": "f19d07212a59cdc7d35bbe917de070b949d810314ca5b5e363e821eadd10d9a6",
     "unified/dxf_gradients.py": "ea78ed46ffb2c50c885ecaba841d1942b478a0a2db50e1b4e55250b746f31c6c",
     "unified/dxf_linetype.py": "a52e365c6740406e4b1f05edc4056c6c9fb2d8180cdc53fa577807c47ff4307b",
-    "unified/dxf_media.py": "35a36e5f0fc5537425430d58535bdd0a98743a66c36df326e1db6bdb7eb8600d",
+    "unified/dxf_media.py": "9851cb4f85c2b11676b70cdf0b042bf706fe0e7266c0d687e477c0dbc08c4341",
     "unified/dxf_mtext.py": "274ad04c3362a51991988ca37fe27c1bac220da8b913ea18a2af83a443f9358f",
     "unified/dxf_ole.py": "45bfd3388ec394d330ff365a252850e7d5fbb722ddfd309f691f3066df0d5dc4",
     "unified/dxf_plotstyles.py": "62c215ff40189e815b4fc9d644058927e5e9fc7421ef4045c25dc04fd29f7776",
@@ -544,7 +544,7 @@
     "requirements-acis.txt": "41c96ddc1758bcf4f681aa951b0e51e1ebcab7ed59d54854ba41e43f3b5c0a38",
     "requirements-dwg.txt": "7ac59d1229502ce67bbd9ce1a1c4e5fb3aa6b7a809c0234d2e8b8e5bb6e5e5f8",
     "requirements-dxf-build.txt": "ce4b64b8e077c68e6729627a07536137a57ef181ac682c2a9dc9b598ee249fe9",
-    "requirements-dxf.txt": "b0dac32ea901102dc6fd66941f9102a26f646c09bf676e6631d816a4e5e058de",
+    "requirements-dxf.txt": "c9908e10a04c6b013c3be1f10646ec144f79584a8fbc682b6261bea803d74340",
     "requirements-step-mesher.txt": "ed84873ed3b2dde7a0fc74d36293cd0ce9f6d55379482b223c74cdf2a37b764b",
     "requirements-step.txt": "0dae28816ed0b37608d8786d3117e31e9449c500ff765ca3627c1bd9c8b97f2c",
     "result_cache.py": "da631878a0769fe31bd6e4ed0503a336c5af250024cf7fe76347a096c4f68455",
@@ -553,12 +553,12 @@
   },
   "formatVersions": {
     "STEP": "step-0.3.3/248aea4f4988438060ee90f5022b2aee890ae9e7f9fcc909dfd871972e3400da/gateway-1",
-    "DXF": "dxf-0.15.0/134defb3ab543472153bc31e76761db123308edf5d708f2b1a4c5479b56ef3c9/gateway-1",
+    "DXF": "dxf-0.15.0/17325cb4d46ca9647adf86c1986b5b28e15aeb8a662fe6953a498d80cf14843c/gateway-1",
     "DWG": "dwg-0.1.0/ae32877fb9e98f4ff5e24ab62d61c7f4a81f5665b0880fe9c3c183a60b4b35d8/gateway-1"
   },
-  "engineDigest": "fbb9efeda8b09c559024cc4723f568b055f9bca9e8a17875db805fbf45e0830e",
+  "engineDigest": "75daa5d2199a7e8b4e249b7a009d0d08548e336dd8ea5dcf30b4035ba0680908",
   "viewerDigest": "e9b8600c424806fc085245fc9f89b24a41cf4bbbdb59550c8e72cc69a0629fab",
-  "releaseDigest": "fedb5432db45597f0154201b2b82a1f7b59a29c59c8d203f23244254d1226c9a",
-  "engineVersion": "step-0.3.3/fbb9efeda8b09c559024cc4723f568b055f9bca9e8a17875db805fbf45e0830e/gateway-1",
+  "releaseDigest": "a38ec301419a22cd13e62b3298cda1c2ed84f13acfc4f8b9ee6fd6f9387f7092",
+  "engineVersion": "step-0.3.3/75daa5d2199a7e8b4e249b7a009d0d08548e336dd8ea5dcf30b4035ba0680908/gateway-1",
   "viewerVersion": "viewer-e9b8600c424806fc085245fc9f89b24a41cf4bbbdb59550c8e72cc69a0629fab"
 }

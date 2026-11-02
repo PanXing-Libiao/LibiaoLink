@@ -7,7 +7,7 @@ pyparsing==3.3.3
 typing_extensions==4.16.0
 Pillow==13.0.0
 pypdfium2==5.14.0
-pypdf==6.21.2
+pypdf==6.21.4
 olefile==0.47
 ezdgn==0.3.0
 ezdwf==0.0.9

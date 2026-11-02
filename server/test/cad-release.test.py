@@ -21,6 +21,9 @@ class ReleaseTest(unittest.TestCase):
                 path.write_text('source')
             for name in release.RUNTIME_FILES:
                 (base / name).write_text('runtime')
+            (base / 'dwg-reader').mkdir()
+            for name in release.READER_FILES:
+                (base / 'dwg-reader' / name).write_text('reader')
             browser.mkdir()
             (browser / 'app.js').write_text('browser')
             initial = release.describe(base, browser)
