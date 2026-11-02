@@ -19,7 +19,7 @@ MAX_DOCUMENT_PIXELS = 32 * 1024 * 1024
 MAX_PDF_PAGES = 1000
 PDF_RENDER_SCALE = 2.0
 MAX_PDF_SIDE = 4096
-VERSIONS = {'Pillow': '13.0.0', 'pypdfium2': '5.14.0', 'pypdf': '6.21.2', 'olefile':'0.47',
+VERSIONS = {'Pillow': '13.0.0', 'pypdfium2': '5.14.0', 'pypdf': '6.21.4', 'olefile':'0.47',
     'ezdgn':'0.3.0', 'ezdwf':'0.0.9', 'resvg-py':'0.5.0'}
 
 
