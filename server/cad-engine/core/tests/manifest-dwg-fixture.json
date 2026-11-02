@@ -1,0 +1,292 @@
+{
+  "transportProfile": "ucd-binary-manifest/1",
+  "document": {
+    "schemaVersion": "2.0.0",
+    "sources": [
+      {
+        "id": "source-0"
+      }
+    ],
+    "adapter": {
+      "id": "test"
+    },
+    "buffers": {
+      "buffer-0": {
+        "id": "buffer-0"
+      }
+    },
+    "revision": "0e700bfa07143f4038255ace30e35cf82b6977de33986793a201b403a2fdd93e",
+    "drawing": {
+      "layers": {
+        "layer-0": {
+          "id": "layer-0"
+        },
+        "layer-1": {
+          "id": "layer-1"
+        }
+      },
+      "spaces": {
+        "space-1": {
+          "drawingId": "drawing-1"
+        }
+      },
+      "entities": {
+        "entity-4": {
+          "id": "entity-4",
+          "drawingId": "drawing-1",
+          "ownerSpaceId": "space-1",
+          "layerId": "layer-0",
+          "localFromOwner": [
+            1,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            1
+          ],
+          "geometry": {
+            "type": "unsupported"
+          },
+          "style": {
+            "color": {
+              "mode": "by-layer"
+            },
+            "plot": true
+          },
+          "sourceRefs": [
+            {
+              "sourceId": "source-0",
+              "objectKey": "entity-4"
+            }
+          ],
+          "displayOrder": 4,
+          "extra": "kept verbatim"
+        }
+      }
+    },
+    "extensions": {
+      "org.cad-preview.style-inheritance/1": {
+        "entityState": {
+          "entity-2": {
+            "drawOrder": 2,
+            "invisible": false,
+            "lineTypeScale": 1,
+            "nativeColor": {
+              "index": 256,
+              "trueColor": -1
+            },
+            "presentationGeometry": "missing"
+          }
+        },
+        "modes": {},
+        "drawOrder": {
+          "entity-1": 1,
+          "entity-2": 2,
+          "entity-3": 3
+        }
+      }
+    },
+    "accessors": {
+      "a-2": {
+        "bufferId": "buffer-0",
+        "byteOffset": 0,
+        "byteLength": 48,
+        "component": "f64",
+        "components": 3,
+        "count": 2,
+        "normalized": false
+      },
+      "i-2": {
+        "bufferId": "buffer-0",
+        "byteOffset": 48,
+        "byteLength": 8,
+        "component": "u32",
+        "components": 1,
+        "count": 2,
+        "normalized": false
+      }
+    },
+    "geometries": {
+      "g-2": {
+        "id": "g-2",
+        "coordinateSpace": "geometry-local",
+        "attributes": {
+          "POSITION": "a-2"
+        },
+        "primitives": [
+          {
+            "id": "p",
+            "topology": "lines",
+            "indices": "i-2",
+            "range": {
+              "first": 0,
+              "count": 2
+            }
+          }
+        ],
+        "bounds": {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            0
+          ]
+        },
+        "normalOrigin": "absent",
+        "sourceRefs": [
+          {
+            "sourceId": "source-0",
+            "objectKey": "2"
+          }
+        ]
+      }
+    },
+    "representations": {
+      "representation-68a90152c04505f5f2f397b31c13447056085e8176be9daa43b182b9d731b2e4": {
+        "id": "representation-68a90152c04505f5f2f397b31c13447056085e8176be9daa43b182b9d731b2e4",
+        "kind": "drawing",
+        "bindings": [
+          {
+            "id": "b",
+            "geometryId": "g-2",
+            "localFromRepresentation": [
+              1,
+              0,
+              0,
+              0,
+              0,
+              1,
+              0,
+              0,
+              0,
+              0,
+              1,
+              0,
+              0,
+              0,
+              0,
+              1
+            ],
+            "materialSlots": {}
+          }
+        ],
+        "sourceRefs": [
+          {
+            "sourceId": "source-0",
+            "objectKey": "2"
+          }
+        ]
+      }
+    },
+    "packed": {
+      "profile": "ucd-dwg-packed/1",
+      "version": "dwg-table/1",
+      "strings": [
+        "entity-1",
+        "entity-2",
+        "entity-3",
+        "1",
+        "lines"
+      ],
+      "layers": [
+        "layer-0",
+        "layer-1"
+      ],
+      "spaces": [
+        "space-1"
+      ],
+      "styles": [
+        {
+          "color": {
+            "mode": "by-layer"
+          },
+          "plot": true
+        }
+      ],
+      "entities": [
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          null,
+          null,
+          null,
+          null,
+          null,
+          {
+            "type": "unsupported"
+          },
+          1
+        ],
+        [
+          1,
+          1,
+          0,
+          1,
+          0,
+          2,
+          3,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "geometry-ref-2",
+          1
+        ],
+        [
+          2,
+          0,
+          0,
+          2,
+          0,
+          3,
+          1,
+          1,
+          null,
+          null,
+          null,
+          null,
+          {
+            "type": "unsupported"
+          },
+          0
+        ]
+      ],
+      "displays": [
+        [
+          3,
+          0,
+          48,
+          2,
+          4,
+          0,
+          0,
+          0,
+          1,
+          1,
+          0,
+          3
+        ]
+      ]
+    }
+  }
+}

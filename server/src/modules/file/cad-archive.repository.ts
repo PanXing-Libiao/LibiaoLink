@@ -39,10 +39,16 @@ export class CadArchiveRepository {
 
   async openView(artifactId: string, actorId: string, viewId: string): Promise<CadViewRow> {
     const expiresAt = new Date(Date.now() + 24 * 60 * 60_000);
-    const rows = await this.database.db.insert(cadViews).values({ artifactId, actorId, viewId, expiresAt })
-      .onConflictDoUpdate({ target: [cadViews.actorId, cadViews.viewId, cadViews.artifactId],
-        set: { expiresAt, cancelled: false, leaseExpiresAt: null, lastSeenAt: new Date() } }).returning();
-    return rows[0]!;
+    return this.database.db.transaction(async (tx) => {
+      // Serialize opening with retirement; a removed artifact cannot acquire new readers.
+      const [artifact] = await tx.update(cadArtifacts).set({ lastAccessedAt: new Date() })
+        .where(eq(cadArtifacts.id, artifactId)).returning({ id: cadArtifacts.id });
+      if (!artifact) throw new Error("CAD artifact no longer available");
+      const rows = await tx.insert(cadViews).values({ artifactId, actorId, viewId, expiresAt })
+        .onConflictDoUpdate({ target: [cadViews.actorId, cadViews.viewId, cadViews.artifactId],
+          set: { expiresAt, cancelled: false, leaseExpiresAt: null, lastSeenAt: new Date() } }).returning();
+      return rows[0]!;
+    });
   }
 
   async view(jobId: string, source: CadArchiveSource, actorId: string, viewId: string) {

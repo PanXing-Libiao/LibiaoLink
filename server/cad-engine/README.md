@@ -259,3 +259,13 @@ Docker 镜像新增独立 /opt/acis 环境，CAD_ACIS_PYTHON 指向该环境的 
 worker 每次尝试输出 `cad.archive.timing`，以 artifactId/attempt 关联队列与日志：`eligibleQueueWaitMS` 是可执行时间至领取，`inputLookupSubmitMS` 为输入核对、缓存查询与提交，`engineWaitMS` 为沙箱任务等待，`persistMS` 为校验和持久化，`totalMS` 为本次归档流程耗时（不含最终租约释放）。失败时只记录已完成阶段。日志不含文件名、对象路径或原件内容。
 
 buffer 下载最多 4 个请求、32 MiB 在途声明字节；单个更大但符合原预算的资源独占下载。去重仅发生于当前已授权清单内部，不跨文件/用户共享浏览器缓存。现有 SHA、大小及总预算限制继续有效。
+
+## 第二批：主线程响应与缓存生命周期
+
+平台清单达到 1 MiB 时在同源 module Worker 执行 JSON/compact/DWG packed 解码；通过 transferable ArrayBuffer 避免复制输入，再将高基数表按 256 项逐批确认交接，限制消息复制停顿。小清单直接处理，取消终止线程，失败不静默降级。`__viewerDebug().timing.manifestDecode` 区分 `execution`、`jsonMS`、`expandMS`、包含线程启动和交接的 `totalMS`。`manifestRead` 是网络读取阶段，解码属于 `metadataExpand`；此变化需要注意与第一批诊断的口径差异。Three.js 安装与索引未迁移，不宣称全部首开计算都离开主线程。
+
+空闲 CAD worker 每实例每分钟最多预热两个近七天真实打开、尚无当前格式任务的输入集合。只继承访问时间，不人为续热；维持现有鉴权/输入可用性复查、重试上限和解析并发。回收站文件、禁用 DWG 不预热，当前格式已有失败任务留待用户正常重试。
+
+每次空闲维护最多退休两个旧格式记录、处理两个到期删除任务。退休要求精确输入身份匹配的当前格式替代品已就绪且创建更晚，旧任务无活动执行、未过期窗口或租约。打开窗口与退休在产物行锁上串行化；退休和精确前缀删除意图同事务提交，实际删除延迟一天，存储失败五分钟后重试。没有替代品的冷文件保留旧产物；持续繁忙时维护会推迟。该机制处理有记录的跨格式旧产物，不对历史未知孤儿对象进行全桶扫描。
+
+先迁移 0081 再部署 API/worker；本批未新增解析并发或外部依赖。参考：[Web Workers](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Using_web_workers)、[PostgreSQL 行锁](https://www.postgresql.org/docs/current/explicit-locking.html)。
