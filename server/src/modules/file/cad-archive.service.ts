@@ -44,6 +44,7 @@ export class CadArchiveService {
 
   async job(action: "status" | "cancel", source: CadArchiveSource, actorId: string, viewId: string, jobId: string): Promise<CadJob> {
     const bound = await this.bound(source, actorId, viewId, jobId);
+    if (action === "status" && ["queued", "running"].includes(bound.artifact.state) && !bound.view.cancelled) await this.repository.touchView(bound.view.id);
     if (action === "cancel") {
       await this.repository.cancelView(bound.view.id);
       bound.view.cancelled = true;
