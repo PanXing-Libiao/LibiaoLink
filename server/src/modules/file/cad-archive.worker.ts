@@ -9,6 +9,7 @@ import { CadEngineBusyError, CadEngineClient } from "./cad-engine.client.js";
 import { CadArchiveRepository, type CadFailureContext } from "./cad-archive.repository.js";
 import { CAD_ARTIFACT_LIMIT, CAD_BUFFER_LIMIT, checkedCadStream, readCadManifest } from "./cad-archive.integrity.js";
 import { CadInputService, CadInputIntegrityError, cadInputs, cadResourceFingerprint } from "./cad-inputs.js";
+import { CadCacheMaintenance } from "./cad-cache-maintenance.js";
 import { AppError } from "../../common/errors/app-error.js";
 
 const definition = z.object({ sha256: z.string().regex(/^[a-f0-9]{64}$/), byteLength: z.number().int().nonnegative().max(CAD_BUFFER_LIMIT) });
@@ -32,7 +33,7 @@ export class CadArchiveWorker implements OnApplicationShutdown {
   private abort?: AbortController;
   private readonly streams = new Set<Readable>();
   constructor(private readonly repository: CadArchiveRepository, private readonly files: FileRepository,
-    private readonly engine: CadEngineClient, private readonly storage: ObjectStorage, private readonly inputs: CadInputService) {}
+    private readonly engine: CadEngineClient, private readonly storage: ObjectStorage, private readonly inputs: CadInputService, private readonly maintenance: CadCacheMaintenance) {}
 
   async drainOnce(): Promise<void> {
     if (!this.engine.enabled || this.running) return;
@@ -43,7 +44,7 @@ export class CadArchiveWorker implements OnApplicationShutdown {
   private async drain(): Promise<void> {
     await this.repository.clearExpiredViews();
     const row = await this.repository.claim();
-    if (!row) return;
+    if (!row) { await this.maintenance.runIfDue(); return; }
     const started = performance.now();
     const timings: Record<string, number> = { eligibleQueueWaitMS: Math.max(0, new Date().getTime() - row.availableAt.getTime()) };
     let submittedAt: number | undefined, nativeReadyAt: number | undefined, failureCode: string | undefined;

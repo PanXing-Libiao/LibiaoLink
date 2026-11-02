@@ -23,7 +23,7 @@ function fixture() {
     attempts: 1, availableAt: now, claimToken: null, claimUntil: null, objectPrefix: "projects/test/files/test/cad/test/",
     manifestSHA256: createHash("sha256").update(body).digest("hex"), manifestBytes: body.byteLength,
     resourceLease: "4".repeat(48), buffers: [], artifactBytes: body.byteLength, errorCode: null, error: null,
-    createdAt: now, updatedAt: now,
+    lastAccessedAt: null, createdAt: now, updatedAt: now,
   };
   const view: CadViewRow = { id: "55555555-5555-4555-8555-555555555555", artifactId: artifact.id,
     actorId: "66666666-6666-4666-8666-666666666666", viewId: "7".repeat(32), cancelled: false,

@@ -17,7 +17,7 @@ function fixture(state: CadJob["state"], code?: string) {
     engineVersion: "fixture", formatVersion: "fixture", nameCodepage: "GB", state: "running", phase: "reading", attempts: 1,
     availableAt: new Date(), claimToken: "44444444-4444-4444-8444-444444444444", claimUntil: new Date(),
     objectPrefix: null, manifestSHA256: null, manifestBytes: null, resourceLease: null, buffers: null, artifactBytes: 0,
-    errorCode: null, error: null, createdAt: new Date(), updatedAt: new Date() };
+    errorCode: null, error: null, lastAccessedAt: null, createdAt: new Date(), updatedAt: new Date() };
   const job: CadJob = { id: "5".repeat(32), state, phase: state, sourceSHA256: sha, sourceByteLength: 3,
     createdAt: 1, updatedAt: 1, ...(code ? { error: { code, error: "controlled conversion failure" } } : {}) };
   const failures: { code: string; retryable: boolean; context: CadFailureContext | undefined }[] = [];
@@ -37,7 +37,7 @@ function fixture(state: CadJob["state"], code?: string) {
   const storage = { getObject: async () => ({ bytes: body }), purgePrefix: async () => {}, putObject: async () => {} };
   const worker = new CadArchiveWorker(repository as unknown as CadArchiveRepository, files as unknown as FileRepository,
     engine as unknown as CadEngineClient, storage as unknown as ObjectStorage,
-    { assertAvailable: async () => {}, payload: async () => body } as never);
+    { assertAvailable: async () => {}, payload: async () => body } as never, { runIfDue: async () => {} } as never);
   return { worker, engine, repository, failures, job };
 }
 

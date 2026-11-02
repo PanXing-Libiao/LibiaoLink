@@ -514,6 +514,10 @@
     "gpu/recorded-path.js": "99e818b93996227a46b53a5ea54d54a15dd9dca4848790d16d6eeb7a6c1d7133",
     "highlight.js": "1d19f0528e5fc706484efcdcb1101c4aa32285023cf550acefc04d85a386b2f5",
     "load-phases.js": "6b2c33cef7e2a6f9f08a1fbee603f3e15c1229739a09ed0aa1885fb184f1036d",
+    "manifest-decode.js": "326540e7d369fb02eff8bb2f31526de3462a2868fc758a9361f19c63f5fcfa97",
+    "manifest-loader.js": "7075f8196a16fef481431a20cdc975e2df9a467d9cd2c008c6f76b874855081f",
+    "manifest-parts.js": "131e61e4cae9f64c55e4b12bd000294a0aad1a174b37d4f905f89f66015ed213",
+    "manifest-worker.js": "ed71a99467fa62b0aa5226839060a234238a565d31f75e4e1df05f4efdd885c4",
     "mesh-repair-ui.js": "8750dc2c2a63d9ba10bada090fb2938a9cd9a593125f5d2f31e0e0d4e7c02aaf",
     "nonmeshable-ui.js": "d4b8a76429eea81e79e26eaef07e4a6508d6d791a2fa86f5313b21214951d618",
     "render-batches.js": "f27fcf79ee6188a9dbb9a516e466a25cd6c1f93393803eab6ede601a79f989e4",
@@ -558,8 +562,8 @@
     "DWG": "dwg-0.1.0/ae32877fb9e98f4ff5e24ab62d61c7f4a81f5665b0880fe9c3c183a60b4b35d8/gateway-1"
   },
   "engineDigest": "75daa5d2199a7e8b4e249b7a009d0d08548e336dd8ea5dcf30b4035ba0680908",
-  "viewerDigest": "b6297c1243d9ea777d522c17439ab6b4f1d0809265142e658f798de6d35dbb9e",
-  "releaseDigest": "146fde996d1569865af1b382cfe8356014223ac7e58ec7ef4ab0eb6c6364dc0a",
+  "viewerDigest": "cd40fd22662376eab91fb5b89805216743dc47000bb4413f978660ff01c7c485",
+  "releaseDigest": "28a0257ee0f93041939ad1dc83fcc9e76462e6fa1eaaf6216b77445dff319ccf",
   "engineVersion": "step-0.3.3/75daa5d2199a7e8b4e249b7a009d0d08548e336dd8ea5dcf30b4035ba0680908/gateway-1",
-  "viewerVersion": "viewer-b6297c1243d9ea777d522c17439ab6b4f1d0809265142e658f798de6d35dbb9e"
+  "viewerVersion": "viewer-cd40fd22662376eab91fb5b89805216743dc47000bb4413f978660ff01c7c485"
 }

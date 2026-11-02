@@ -1,6 +1,5 @@
 import {loadPlatformModel,inspectionRecord} from './core/app.js?v=dxf-0.15.0';
-import {unpackMetadata} from './core/compact-transport.js';
-import {unpackDwgPacked} from './core/dwg-packed-transport.js?v=dxf-0.15.0';
+import {decodeManifest} from './core/manifest-loader.js';
 import {LoadPhases} from './core/load-phases.js';
 import {hydrateBinary} from './core/binary-transport.js';
 import {missingFaceManifest} from './core/nonmeshable-ui.js';
@@ -268,9 +267,14 @@ loadPlatformModel(async({signal,progress,mark,record})=>{
   ui.bytes=currentJob.sourceByteLength;
   ui.update(2,'正在准备模型视图');
   progress('正在读取已校验模型…');
-  let packet=await requestJson(jobBase+'/manifest',{signal:active});
+  const response=await request(jobBase+'/manifest',{signal:active});
+  if(!response.ok||!(response.headers.get('content-type')||'').toLowerCase().includes('json')){
+   const error=await readJson(response);throw new Error(responseError(error,response.status));
+  }
+  const bytes=await response.arrayBuffer();active.throwIfAborted();
   mark('manifestReadEnd');phases.phase('metadataExpand');mark('metadataExpandStart');
-  packet=unpackDwgPacked(unpackMetadata(packet));
+  const decoded=await decodeManifest(bytes,{signal:active});
+  let packet=decoded.packet;record({manifestDecode:decoded.timing});
   mark('metadataExpandEnd');
   const expected=currentJob.state==='partial'?'partial':'complete';
   const partialFormat=currentJob.format==='DXF'||currentJob.format==='DWG';

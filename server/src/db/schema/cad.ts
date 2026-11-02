@@ -34,11 +34,13 @@ export const cadArtifacts = pgTable("cad_artifacts", {
   artifactBytes: bigint("artifact_bytes", { mode: "number" }).notNull().default(0),
   errorCode: text("error_code"),
   error: text("error"),
+  lastAccessedAt: timestamp("last_accessed_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   unique("uq_cad_artifacts_input_set").on(t.versionId, t.formatVersion, t.nameCodepage, t.resourceSetHash),
   index("ix_cad_artifacts_queue").on(t.state, t.availableAt),
+  index("ix_cad_artifacts_access").on(t.lastAccessedAt),
   index("ix_cad_artifacts_file").on(t.fileId),
   check("ck_cad_artifacts_state", sql`${t.state} in ('queued','running','completed','partial','failed','timed-out')`),
   check("ck_cad_artifacts_input_set", sql`${t.sourceFormat} in ('STEP','DXF','DWG') and ${t.resourceSetHash} ~ '^[a-f0-9]{64}$' and length(coalesce(${t.mainPath},${t.sourceName})) between 1 and 1024 and jsonb_typeof(${t.companions}) = 'array' and jsonb_array_length(${t.companions}) <= 127 and ((${t.sourceFormat} in ('DXF','DWG') and ${t.mainPath} is not null and (${t.sourceFormat} <> 'DWG' or (${t.companions} = '[]'::jsonb and ${t.resourceSetHash} = repeat('0',64)))) or (${t.sourceFormat} = 'STEP' and ${t.state} <> 'partial' and ${t.companions} = '[]'::jsonb and ${t.resourceSetHash} = repeat('0',64)))`),
@@ -62,4 +64,13 @@ export const cadViews = pgTable("cad_views", {
   index("ix_cad_views_active_artifact").on(t.artifactId, t.lastSeenAt),
   index("ix_cad_views_expiry").on(t.expiresAt),
   check("ck_cad_views_id", sql`${t.viewId} ~ '^[a-f0-9]{32}$'`),
+]);
+
+/** Durable deletion intent; intentionally independent of artifact/file foreign keys. */
+export const cadRetiredObjects = pgTable("cad_retired_objects", {
+  prefix: text("prefix").primaryKey(),
+  availableAt: timestamp("available_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("ix_cad_retired_available").on(t.availableAt),
+  check("ck_cad_retired_prefix", sql`${t.prefix} ~ '^projects/[0-9a-f-]{36}/files/[0-9a-f-]{36}/cad/[0-9a-f-]{36}/[0-9a-f-]{36}/$'`),
 ]);
