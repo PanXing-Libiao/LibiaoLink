@@ -1,4 +1,5 @@
 import "reflect-metadata";
+import { Logger } from "@nestjs/common";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
@@ -67,7 +68,12 @@ describe("CAD failure audit context", () => {
   });
 
   it("a completed conversion publishes normally without emitting a failure", async () => {
+    const log = vi.spyOn(Logger.prototype, "log").mockImplementation(() => {});
     const env = fixture("completed"); await env.worker.drainOnce();
+    const entry = log.mock.calls.map(call => call[0]).find(value => value?.event === "cad.archive.timing");
+    expect(entry).toMatchObject({ outcome: "published", attempt: 1 });
+    expect(Object.keys(entry.timings).sort()).toEqual(["eligibleQueueWaitMS", "engineWaitMS", "inputLookupSubmitMS", "persistMS", "totalMS"]);
+    for (const value of Object.values(entry.timings)) expect(value).toBeGreaterThanOrEqual(0);
     expect(env.repository.publish).toHaveBeenCalledOnce(); expect(env.failures).toEqual([]);
   });
 

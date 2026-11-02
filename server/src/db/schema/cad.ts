@@ -55,9 +55,11 @@ export const cadViews = pgTable("cad_views", {
   viewId: text("view_id").notNull(),
   cancelled: boolean("cancelled").notNull().default(false),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
   leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
 }, (t) => [
   unique("uq_cad_views_window").on(t.actorId, t.viewId, t.artifactId),
+  index("ix_cad_views_active_artifact").on(t.artifactId, t.lastSeenAt),
   index("ix_cad_views_expiry").on(t.expiresAt),
   check("ck_cad_views_id", sql`${t.viewId} ~ '^[a-f0-9]{32}$'`),
 ]);

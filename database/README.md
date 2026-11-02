@@ -228,3 +228,7 @@ seed: 完成，本次执行 4 个种子
 - **2026-10-28 0076 复算**：67 表 / **668 列** / 208 索引（含唯一）/ **243 CHECK**（0076 = `audit_logs` +2 可空列；临时 PostgreSQL 18 @55435 空库迁移 75 件至 0076 + 幂等复跑无漂移，`check:db-schema` 通过；回收站当前项目名与彻底删除后快照回退 SQL 行为已验证）。
 - **Drizzle 对齐**：`server` 构建后跑 `npm run check:db-schema`（比对表 / 列类型 / 可空性 / 索引 / CHECK 名称）。
 - **已合入迁移不可变**：改文件 / 删文件 / 中间插队三种情形均退出码 1，并给出中文原因（`scripts/migrate.mjs` 的 `verifyNoDrift`）。
+
+### CAD 窗口活跃度迁移 0080
+
+`0080_cad_view_activity.sql` 为 `cad_views` 增加 `last_seen_at` 和按产物/心跳查询的索引。部署新版 API/worker 前执行迁移。存量窗口初始不获得调度优先，下一次授权状态轮询恢复心跳；旧 API 可继续使用默认值，回滚应用不需要删除该列。

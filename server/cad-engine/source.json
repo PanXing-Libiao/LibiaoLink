@@ -485,9 +485,9 @@
     "dependency.json": "2743f57992af0db961cfe4c05c78b8312d4836f939230a981c5641d01f4942bc"
   },
   "browserFiles": {
-    "app.js": "2c29aaff6cd2e926071039f8bde87826adbb1d9eedd3d3f0ce8ff8771634c6fc",
+    "app.js": "761590bb1a4525201a8a47f9fa3e1cf530591937cd4a42d660acf9f86ed271cb",
     "benchmark.js": "c81b3668354f0fc431c02f068545d5c71ce4a266bf414671341aa97674fc3e9d",
-    "binary-transport.js": "99cab8e8e665b718e8cf24d7aab6c568ce2e99e02cfbaa01873501cce322fea4",
+    "binary-transport.js": "98c23b1e4cdc2806043a4e116791c1376d45be41773e09085c9a4b920cc1b0fa",
     "camera-framing.js": "12f685ca11f995192d3f5348a44c2cf5fca5286bca58b0af99a7faa7ef5aab6d",
     "compact-transport.js": "25ba61842b0faa37bbe039880df4ecb4df3e30727348aa7a33e68a61fba283c4",
     "conversion-jobs.js": "05be087b3ceb9017e8d21f078b6922f297a0bf709e0f39c63c414646bfa938d0",
@@ -513,6 +513,7 @@
     "gpu/paint-worker.js": "3e04891ecb9e7ae8ae0689d293c8ec7a63f2167ae18e3d33b178b8b5de33d8ea",
     "gpu/recorded-path.js": "99e818b93996227a46b53a5ea54d54a15dd9dca4848790d16d6eeb7a6c1d7133",
     "highlight.js": "1d19f0528e5fc706484efcdcb1101c4aa32285023cf550acefc04d85a386b2f5",
+    "load-phases.js": "6b2c33cef7e2a6f9f08a1fbee603f3e15c1229739a09ed0aa1885fb184f1036d",
     "mesh-repair-ui.js": "8750dc2c2a63d9ba10bada090fb2938a9cd9a593125f5d2f31e0e0d4e7c02aaf",
     "nonmeshable-ui.js": "d4b8a76429eea81e79e26eaef07e4a6508d6d791a2fa86f5313b21214951d618",
     "render-batches.js": "f27fcf79ee6188a9dbb9a516e466a25cd6c1f93393803eab6ede601a79f989e4",
@@ -557,8 +558,8 @@
     "DWG": "dwg-0.1.0/ae32877fb9e98f4ff5e24ab62d61c7f4a81f5665b0880fe9c3c183a60b4b35d8/gateway-1"
   },
   "engineDigest": "75daa5d2199a7e8b4e249b7a009d0d08548e336dd8ea5dcf30b4035ba0680908",
-  "viewerDigest": "e9b8600c424806fc085245fc9f89b24a41cf4bbbdb59550c8e72cc69a0629fab",
-  "releaseDigest": "a38ec301419a22cd13e62b3298cda1c2ed84f13acfc4f8b9ee6fd6f9387f7092",
+  "viewerDigest": "b6297c1243d9ea777d522c17439ab6b4f1d0809265142e658f798de6d35dbb9e",
+  "releaseDigest": "146fde996d1569865af1b382cfe8356014223ac7e58ec7ef4ab0eb6c6364dc0a",
   "engineVersion": "step-0.3.3/75daa5d2199a7e8b4e249b7a009d0d08548e336dd8ea5dcf30b4035ba0680908/gateway-1",
-  "viewerVersion": "viewer-e9b8600c424806fc085245fc9f89b24a41cf4bbbdb59550c8e72cc69a0629fab"
+  "viewerVersion": "viewer-b6297c1243d9ea777d522c17439ab6b4f1d0809265142e658f798de6d35dbb9e"
 }
