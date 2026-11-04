@@ -79,21 +79,36 @@ function layoutPageWatermark(text: string, width: number, height: number): Water
 function readViewportSize(): ViewportSize {
   if (typeof document === "undefined") return { width: 0, height: 0 };
   const root = document.documentElement;
-  return { width: Math.max(0, root.clientWidth), height: Math.max(0, root.clientHeight) };
+  const width = root.clientWidth || window.innerWidth;
+  const height = root.clientHeight || window.innerHeight;
+  return { width: Math.max(0, width), height: Math.max(0, height) };
 }
 
 function useViewportSize(): ViewportSize {
   const [size, setSize] = useState<ViewportSize>(readViewportSize);
   useEffect(() => {
+    let frame = 0;
     const sync = () => {
       const next = readViewportSize();
       setSize((current) =>
         current.width === next.width && current.height === next.height ? current : next,
       );
     };
-    sync();
+    const syncAfterLayout = () => {
+      sync();
+      frame = window.requestAnimationFrame(sync);
+    };
+    syncAfterLayout();
     window.addEventListener("resize", sync, { passive: true });
-    return () => window.removeEventListener("resize", sync);
+    window.addEventListener("orientationchange", syncAfterLayout, { passive: true });
+    const visualViewport = window.visualViewport;
+    visualViewport?.addEventListener("resize", sync, { passive: true });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", sync);
+      window.removeEventListener("orientationchange", syncAfterLayout);
+      visualViewport?.removeEventListener("resize", sync);
+    };
   }, []);
   return size;
 }

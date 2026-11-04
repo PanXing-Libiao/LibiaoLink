@@ -50,6 +50,21 @@ body {
   opacity: 0.1;
 }
 
+/* 手机屏细小文字更易被低透明度吞掉：保持字号与网格不变，只补足可辨识度和内容层之上的安全层级。 */
+@media (max-width: 1023.98px) {
+  .page-watermark {
+    z-index: 18;
+  }
+
+  .page-watermark-mark {
+    opacity: 0.08;
+  }
+
+  .page-watermark[data-bg-tier="vivid"] .page-watermark-mark {
+    opacity: 0.13;
+  }
+}
+
 .page {
   min-height: 100vh;
   display: flex;
