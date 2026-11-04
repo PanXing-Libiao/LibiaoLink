@@ -22,29 +22,32 @@ body {
   color: var(--text);
 }
 
-/* 全站个人水印（2026-11-04）：小字号斜向等距平铺；只作身份标识，不截获点击，也不进入无障碍树。 */
+/* 全站个人水印（2026-11-04）：密集但整齐的交错行网格；按视口安全区落点，避免边缘截字。 */
 .page-watermark {
   position: fixed;
   inset: 0;
   z-index: 9;
+  overflow: hidden;
   pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
-  background-repeat: repeat;
-  background-position: 0 0;
-  background-size: 760px 500px;
 }
 
-@media (max-width: 1023.98px) {
-  .page-watermark {
-    background-size: 650px 428px;
-  }
+.page-watermark-mark {
+  position: absolute;
+  color: #18181b;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  line-height: 1;
+  white-space: nowrap;
+  opacity: 0.055;
+  transform: translate(-50%, -50%) rotate(-18deg);
+  transform-origin: center;
 }
 
-@media (max-width: 1023.98px) and (orientation: landscape) and (max-height: 500px) {
-  .page-watermark {
-    background-size: 690px 454px;
-  }
+.page-watermark[data-bg-tier="vivid"] .page-watermark-mark {
+  opacity: 0.1;
 }
 
 .page {
