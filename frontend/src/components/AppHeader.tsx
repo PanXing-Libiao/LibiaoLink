@@ -38,12 +38,33 @@ const XML_ESCAPES: Record<string, string> = {
   "'": "&apos;",
 };
 
-/** 小字号斜向平铺水印：单块 248×144，页面内均匀重复；SVG 内联避免额外资源请求。 */
+/** 小字号斜向散布水印：较大单元内多枚错位水印，重复后避开规则行列；SVG 内联避免额外资源请求。 */
+const PAGE_WATERMARK_TILE = { width: 760, height: 500 } as const;
+const PAGE_WATERMARK_POSITIONS: ReadonlyArray<readonly [number, number]> = [
+  [18, 58],
+  [248, 24],
+  [500, 64],
+  [710, 38],
+  [92, 160],
+  [350, 126],
+  [640, 174],
+  [28, 276],
+  [300, 248],
+  [610, 300],
+  [174, 392],
+  [470, 370],
+  [700, 446],
+];
+
 function pageWatermarkImage(text: string, vivid: boolean): string {
   const escaped = text.replace(/[&<>"']/g, (char) => XML_ESCAPES[char] ?? char);
   /** 炫彩档行色更浓；只提高深灰水印自身透明度，不加白描边，避免发白抢眼。 */
   const fillOpacity = vivid ? ".10" : ".055";
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="248" height="144" viewBox="0 0 248 144"><g transform="translate(14 100) rotate(-18)"><text fill="#18181b" fill-opacity="${fillOpacity}" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="13" font-weight="600" letter-spacing="-0.2">${escaped}</text></g></svg>`;
+  const marks = PAGE_WATERMARK_POSITIONS.map(
+    ([x, y]) =>
+      `<g transform="translate(${x} ${y}) rotate(-18)"><text fill="#18181b" fill-opacity="${fillOpacity}" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="13" font-weight="600" letter-spacing="-0.2">${escaped}</text></g>`,
+  ).join("");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${PAGE_WATERMARK_TILE.width}" height="${PAGE_WATERMARK_TILE.height}" viewBox="0 0 ${PAGE_WATERMARK_TILE.width} ${PAGE_WATERMARK_TILE.height}">${marks}</svg>`;
   return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
 }
 

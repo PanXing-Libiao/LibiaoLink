@@ -31,19 +31,19 @@ body {
   user-select: none;
   -webkit-user-select: none;
   background-repeat: repeat;
-  background-position: 10px 18px;
-  background-size: 248px 144px;
+  background-position: 0 0;
+  background-size: 760px 500px;
 }
 
 @media (max-width: 1023.98px) {
   .page-watermark {
-    background-size: 212px 122px;
+    background-size: 650px 428px;
   }
 }
 
 @media (max-width: 1023.98px) and (orientation: landscape) and (max-height: 500px) {
   .page-watermark {
-    background-size: 230px 132px;
+    background-size: 690px 454px;
   }
 }
 
