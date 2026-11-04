@@ -16,7 +16,7 @@ project-import.service.ts     # 口径编排：preview = 文件闸 → 解析 + 
 project-import.repository.ts  # 数据访问：project_import_previews 票据（插入 / 取回 / 状态机 / 过期）与批量写入（task_nodes / project_members / tasks / reports / report_issues / change_requests / stakeholders / project_stakeholders / files；写路径由服务层开事务传 tx）
 project-import.module.ts      # DI 装配：identity / permission / admin / project / template / translate；对象存储走全局 ObjectStorage 端口
 xlsx.ts                       # 解析层（零依赖）：zip 解包（store / deflate，实际解压量受预算约束）+ sheet XML → 二维格 + 内嵌图锚点（cell → media）；XML 缓存与图片按需读取分开限量；支持 .xlsx / .xlsm
-legacy.ts                     # 转换层（纯函数）：导入表 → 标准导入模型 + 提醒清单（进度五档 / 完成日期口径 / 日期笔误 / 节点拼装 / 变更阶段映射 / 干系人列解析 / 图片清单；message 中英双语）
+legacy.ts                     # 转换层（纯函数）：导入表 → 标准导入模型 + 提醒清单（进度五档 / 完成日期口径 / 日期笔误 / 节点拼装 / 变更阶段映射 / 干系人列解析 / 图片清单 / 日报中英混排表头标准化；message 中英双语）
 people.ts                     # 人员注册表：姓名 → 拼音登录名 / 显示名（-test）建议；PEOPLE_REGISTRY + proposeAccount + stripParen
 index.ts                      # 唯一公开出口（跨模块只允许 import 本文件；ADR-010 / g6）
 ```
@@ -62,7 +62,8 @@ index.ts                      # 唯一公开出口（跨模块只允许 import �
 - `server/test/xlsx-limits.test.ts`（9 用例）：超大坐标 / 稀疏矩形单元格预算 / XML 解压上限（含 ZIP 头部低报实际大小）/ 图片总量逐张累计 / 工作簿文本总量 / 稀疏行不矩形化 / sharedStrings 十进制与十六进制 XML 字符实体解码（含 `&#10;` 单元格换行）/ 临时文件区间按偏移解析。
 - `server/test/import-http-limits.test.ts`（5 用例）：`Content-Length` 预分配兼容入口、multipart 流式落盘区间、流式超限拒绝、并发 preview / commit 闸门 429、sourceFile 入参接线。
 - `server/test/import-temp.test.ts`（3 用例）：启动清扫只删过期同前缀目录、磁盘余量预检、嵌套 ENOSPC 识别。
-- `server/test/project-import.test.ts`（26 用例）：自带最小 xlsx 构造器（zip store + inlineStr + 图片锚点）—— 解析口径 / zh·en 文案 / 文件闸 400·422 / `IMAGE_ROW_MISSING` / commit 主链路（`taskNodeId` / `sortIndex` / 图片挂问题 / 回退提醒 / purge / warmup / 审计）/ 账号在库直挂 / 不勾选补节点 / 票据状态机（403 / 409 / 410 / 400）/ **变更关联（Push 319：解析命中与提醒码 / 提交回写 `change_refs`；Push 398：R01 输出成果文件匹配 + 手动文件目标任务）** / **未解决问题默认处理人（含 done 不挂人）** / **写入取消两例（Push 321：上传途中 abort → 已传图片清理 + 票据 pending + 重提成功 + 源文件保留；事务内 abort → 回滚 + 已传图片全清）** / **过期票据清扫（Push 325：删除源对象成功置 expired；删除失败保留 pending 下轮重试）** / **干系人两例（Push 324：导入表内嵌转换（分类四值 / 联系方式拆分 / 提交时间）；导入表缺表 info 提醒，不导入干系人；提交写台账 + 项目关联（分类 / 提交时间 / 填写者匹配账号））** / **变更申请人·填写者（Push 347：源表「变更申请人」「填写者」两列命中库内账号 → `applied_by` / `writer_by`；未命中 = 回落导入人 / 留空 + `CHANGE_APPLICANT_MISSING` / `CHANGE_WRITER_MISSING`）** / **变更附图（Push 349：解析锚点列 / 行映射 + 列外提醒；提交落 files 并回填 change_requests 两列）**。
+- `server/test/project-import.test.ts`（28 用例）：自带最小 xlsx 构造器（zip store + inlineStr + 图片锚点）—— 解析口径 / zh·en 文案 / 文件闸 400·422 / `IMAGE_ROW_MISSING` / commit 主链路（`taskNodeId` / `sortIndex` / 图片挂问题 / 回退提醒 / purge / warmup / 审计）/ 账号在库直挂 / 不勾选补节点 / 票据状态机（403 / 409 / 410 / 400）/ **变更关联（Push 319：解析命中与提醒码 / 提交回写 `change_refs`；Push 398：R01 输出成果文件匹配 + 手动文件目标任务）** / **未解决问题默认处理人（含 done 不挂人）** / **写入取消两例（Push 321：上传途中 abort → 已传图片清理 + 票据 pending + 重提成功 + 源文件保留；事务内 abort → 回滚 + 已传图片全清）** / **过期票据清扫（Push 325：删除源对象成功置 expired；删除失败保留 pending 下轮重试）** / **干系人两例（Push 324：导入表内嵌转换（分类四值 / 联系方式拆分 / 提交时间）；导入表缺表 info 提醒，不导入干系人；提交写台账 + 项目关联（分类 / 提交时间 / 填写者匹配账号））** / **变更申请人·填写者（Push 347：源表「变更申请人」「填写者」两列命中库内账号 → `applied_by` / `writer_by`；未命中 = 回落导入人 / 留空 + `CHANGE_APPLICANT_MISSING` / `CHANGE_WRITER_MISSING`）** / **变更附图（Push 349：解析锚点列 / 行映射 + 列外提醒；提交落 files 并回填 change_requests 两列）**。
+- 日报表头兼容回归（2026-11-04）：测试覆盖 `时间time` / `当日完成工作Work completed today` / `现场发现问题Problem` / `今日施工人数Number of people today` 等历史混排表头，并验证日报与第 5 / 9 列图片锚点一起导入；真实原文件预览为 38 任务 / 12 日报 / 2 问题 / 45 图片（现场 43 / 问题 2），正式机同文件解析结果一致。
 - `server/test/resource-change.test.ts`：commit 的资源变更登记（projects / tasks / reports / issues / files / templates）。
 
 ## 待落地

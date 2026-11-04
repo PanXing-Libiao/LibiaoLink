@@ -295,6 +295,70 @@ function pickSheet(sheets: SheetGrid[], mustHave: string[]): { sheet: SheetGrid;
   return null;
 }
 
+/**
+ * 日报表历史表头兼容：源表 / 早期页面导出的表头是中英混排（如「时间time」「现场发现问题Problem」
+ * 「今日施工人数Number of people today」），而系统新导出使用短中文表头。这里按别名定位列，
+ * 找到填写者 / 当日完成工作 / 施工人数即认定日报表；图片锚点仍按第 5 / 9 列挂行。
+ */
+const REPORT_HEADER_ALIASES: Record<string, readonly string[]> = {
+  日期: ["日期", "日期Date", "时间time", "时间"],
+  填写者: ["填写者", "填写者Filler"],
+  当日完成工作: ["当日完成工作", "当日完成工作Work completed today"],
+  明日计划: ["明日计划"],
+  现场工作附图: ["现场工作附图", "现场工作附图On-site photos"],
+  问题描述: ["问题描述", "现场发现问题Problem", "现场发现问题"],
+  问题归类: ["问题归类", "问题归类Problem classification"],
+  解决方案或建议: ["解决方案或建议", "解决方案或建议Solutions or suggestions"],
+  问题附图: ["问题附图", "问题附图photos"],
+  问题是否处理: ["问题是否处理", "问题是否处理Issue status"],
+  施工人数: ["施工人数", "今日施工人数Number of people today", "今日施工人数"],
+};
+
+function normalizeReportHeader(value: string): string {
+  return clean(value)
+    .toLowerCase()
+    .replace(/[\s\u00a0\u200b\u200c\u200d\-‐‑‒–—―_:：/\\]+/g, "");
+}
+
+function reportHeaderIndex(sheet: SheetGrid): Map<string, number> {
+  const headers = (sheet.rows[0] ?? []).map((value) => normalizeReportHeader(clean(value)));
+  const index = new Map<string, number>();
+  for (const [key, aliases] of Object.entries(REPORT_HEADER_ALIASES)) {
+    let column: number | null = null;
+    for (const alias of aliases) {
+      const needle = normalizeReportHeader(alias);
+      const exact = headers.indexOf(needle);
+      if (exact >= 0) {
+        column = exact;
+        break;
+      }
+    }
+    if (column === null) {
+      outer: for (let i = 0; i < headers.length; i += 1) {
+        const header = headers[i] ?? "";
+        for (const alias of aliases) {
+          const needle = normalizeReportHeader(alias);
+          if (needle.length >= 2 && header.startsWith(needle)) {
+            column = i;
+            break outer;
+          }
+        }
+      }
+    }
+    if (column !== null) index.set(key, column);
+  }
+  return index;
+}
+
+function pickReportSheet(sheets: SheetGrid[]): { sheet: SheetGrid; index: Map<string, number> } | null {
+  for (const sheet of sheets) {
+    if (sheet.rows.length === 0) continue;
+    const index = reportHeaderIndex(sheet);
+    if (["填写者", "当日完成工作", "施工人数"].every((key) => index.has(key))) return { sheet, index };
+  }
+  return null;
+}
+
 function cellAt(sheet: SheetGrid, row: number, index: Map<string, number>, key: string): string {
   const column = index.get(key);
   if (column === undefined) return "";
@@ -501,7 +565,7 @@ export function convertLegacyWorkbook(workbook: ParsedWorkbook, fileName: string
   const sheets = workbook.sheets;
   const sheetNames = sheets.map((sheet) => sheet.name);
   const taskSheet = pickSheet(sheets, ["任务描述", "任务状态", "阶段性里程"]);
-  const reportSheet = pickSheet(sheets, ["填写者", "当日完成工作", "施工人数"]);
+  const reportSheet = pickReportSheet(sheets);
   const changeSheet = pickSheet(sheets, ["变更时间", "变更原因"]);
   const issues: LegacyIssueSeed[] = [];
   if (taskSheet === null) {
