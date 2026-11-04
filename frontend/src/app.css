@@ -22,46 +22,29 @@ body {
   color: var(--text);
 }
 
-/* 全站个人水印（2026-11-04）：参考 Ant Design Watermark 的双行交错布局，按视口安全区落点，避免边缘截字。 */
+/* 全站个人水印（2026-11-04）：小字号斜向等距平铺；只作身份标识，不截获点击，也不进入无障碍树。 */
 .page-watermark {
   position: fixed;
   inset: 0;
   z-index: 9;
-  overflow: hidden;
   pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
+  background-repeat: repeat;
+  background-position: 0 0;
+  background-size: 760px 500px;
 }
 
-.page-watermark-mark {
-  position: absolute;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1px;
-  color: #18181b;
-  line-height: 1.08;
-  white-space: nowrap;
-  opacity: 0.06;
-  transform: translate(-50%, -50%) rotate(-22deg);
-  transform-origin: center;
+@media (max-width: 1023.98px) {
+  .page-watermark {
+    background-size: 650px 428px;
+  }
 }
 
-.page-watermark-mark-name {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: -0.2px;
-}
-
-.page-watermark-mark-org {
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: -0.1px;
-  opacity: 0.68;
-}
-
-.page-watermark[data-bg-tier="vivid"] .page-watermark-mark {
-  opacity: 0.105;
+@media (max-width: 1023.98px) and (orientation: landscape) and (max-height: 500px) {
+  .page-watermark {
+    background-size: 690px 454px;
+  }
 }
 
 .page {
