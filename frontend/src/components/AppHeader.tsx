@@ -41,19 +41,19 @@ const XML_ESCAPES: Record<string, string> = {
 /** 小字号斜向散布水印：较大单元内多枚错位水印，重复后避开规则行列；SVG 内联避免额外资源请求。 */
 const PAGE_WATERMARK_TILE = { width: 760, height: 500 } as const;
 const PAGE_WATERMARK_POSITIONS: ReadonlyArray<readonly [number, number]> = [
-  [18, 58],
-  [248, 24],
-  [500, 64],
-  [710, 38],
-  [92, 160],
-  [350, 126],
-  [640, 174],
-  [28, 276],
-  [300, 248],
-  [610, 300],
-  [174, 392],
-  [470, 370],
-  [700, 446],
+  [20, 62],
+  [238, 42],
+  [470, 74],
+  [596, 54],
+  [86, 168],
+  [330, 140],
+  [548, 190],
+  [26, 286],
+  [270, 254],
+  [510, 312],
+  [150, 408],
+  [386, 380],
+  [594, 456],
 ];
 
 function pageWatermarkImage(text: string, vivid: boolean): string {
