@@ -32,18 +32,18 @@ body {
   -webkit-user-select: none;
   background-repeat: repeat;
   background-position: 10px 18px;
-  background-size: 280px 160px;
+  background-size: 248px 144px;
 }
 
 @media (max-width: 1023.98px) {
   .page-watermark {
-    background-size: 240px 137px;
+    background-size: 212px 122px;
   }
 }
 
 @media (max-width: 1023.98px) and (orientation: landscape) and (max-height: 500px) {
   .page-watermark {
-    background-size: 260px 148px;
+    background-size: 230px 132px;
   }
 }
 
