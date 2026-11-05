@@ -68,7 +68,7 @@ export const EnvSchema = z
     PREVIEW_CONVERT_TIMEOUT_MS: z.coerce.number().int().min(1000).max(600000).default(15000),
     /** 可重试失败的最大尝试次数（含首次）：到顶写产物 failed + outbox dead（D2-05 降级「请下载」）。 */
     PREVIEW_CONVERT_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
-    /** 重试退避基数（毫秒）：第 n 次失败后等 min(基数 × 2^(n-1), 30 分钟)。 */
+    /** 重试退避基数（毫秒）：先按 min(基数 × 2^(n-1), 30 分钟) 计算，再在 80%～100% 内应用确定性抖动。 */
     PREVIEW_CONVERT_BACKOFF_MS: z.coerce.number().int().min(1000).max(600000).default(15000),
     /** 直接降级「仅下载」的源 SVG 上限（MB）：与栅格化沙箱的 20 MiB 定档值对齐。 */
     PREVIEW_CONVERT_MAX_SOURCE_MB: z.coerce.number().int().min(1).max(512).default(20),
@@ -117,7 +117,7 @@ export const EnvSchema = z
     // ---- Outbox 运行时（S7-1：重试 / 死信 / 告警 / done 行保留） ----
     /** 通用主题重试上限（含首次）：preview.job 仍走 PREVIEW_CONVERT_MAX_ATTEMPTS。 */
     OUTBOX_DEFAULT_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(5),
-    /** 通用主题退避基数（毫秒）：第 n 次失败后等 base * 2^(n-1)，封顶 OUTBOX_DEFAULT_BACKOFF_MAX_MS。 */
+    /** 通用主题退避基数（毫秒）：先按 base * 2^(n-1) 封顶 OUTBOX_DEFAULT_BACKOFF_MAX_MS，再在 80%～100% 内应用确定性抖动。 */
     OUTBOX_DEFAULT_BACKOFF_BASE_MS: z.coerce.number().int().min(1000).max(3600000).default(15000),
     OUTBOX_DEFAULT_BACKOFF_MAX_MS: z.coerce.number().int().min(1000).max(86400000).default(1800000),
     /** 告警探针周期（毫秒）：积压 / 最老待领取年龄 / 近期新增死信；死信单条即时告警不依赖本周期。 */
