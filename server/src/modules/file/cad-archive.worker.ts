@@ -2,13 +2,20 @@ import { Injectable, Logger, type OnApplicationShutdown } from "@nestjs/common";
 import { CadNameCodepageSchema, z } from "@libiaolink/contracts";
 import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import type { Readable } from "node:stream";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { buffer as collect } from "node:stream/consumers";
 import { ObjectStorage } from "../../storage/index.js";
 import { FileRepository } from "./file.repository.js";
 import { CadEngineBusyError, CadEngineClient } from "./cad-engine.client.js";
 import { CadArchiveRepository, type CadFailureContext } from "./cad-archive.repository.js";
 import { CAD_ARTIFACT_LIMIT, CAD_BUFFER_LIMIT, checkedCadStream, readCadManifest } from "./cad-archive.integrity.js";
 import { CadInputService, CadInputIntegrityError, cadInputs, cadResourceFingerprint } from "./cad-inputs.js";
+import { cadArchiveEncoder, cadPrecompressedObjectKey } from "./cad-preview.compression.js";
 import { AppError } from "../../common/errors/app-error.js";
 
 const definition = z.object({ sha256: z.string().regex(/^[a-f0-9]{64}$/), byteLength: z.number().int().nonnegative().max(CAD_BUFFER_LIMIT) });
@@ -70,7 +77,7 @@ export class CadArchiveWorker implements OnApplicationShutdown {
         sourceByteLength: row.sourceBytes, nameCodepage: CadNameCodepageSchema.parse(row.nameCodepage),
         ...(source.sourceFormat === "DXF" ? { resourceFingerprint: cadResourceFingerprint(source) } : {}) };
       abort.signal.throwIfAborted();
-      let job = (await this.engine.lookup(identity) ?? await this.engine.submit({ ...identity, bytes: await this.inputs.payload(source) })).job;
+      let job = (await this.engine.lookup(identity) ?? await this.engine.submit({ ...identity, payload: await this.inputs.enginePayload(source) })).job;
       nativeId = job.id;
       const deadline = Date.now() + 26 * 60_000;
       while (job.state === "queued" || job.state === "running") {
@@ -116,14 +123,39 @@ export class CadArchiveWorker implements OnApplicationShutdown {
         if (resource.bytes !== buffer.byteLength) { resource.stream.destroy(); throw new Error("CAD resource size mismatch"); }
         const checked = checkedCadStream(resource.stream, buffer.byteLength, buffer.sha256);
         this.streams.add(checked);
-        try { await this.storage.putObjectStream({ objectKey: buffer.objectKey, body: checked, sizeBytes: buffer.byteLength,
-          contentType: "application/octet-stream" }); }
-        finally { checked.destroy(); this.streams.delete(checked); }
+        const folder = await mkdtemp(join(tmpdir(), "cad-buffer-"));
+        const spool = join(folder, "buffer.bin");
+        try {
+          await pipeline(checked, createWriteStream(spool), { signal: abort.signal });
+          await this.storage.putObjectStream({ objectKey: buffer.objectKey, body: createReadStream(spool), sizeBytes: buffer.byteLength,
+            contentType: "application/octet-stream" });
+          const body = await collect(createReadStream(spool).pipe(cadArchiveEncoder(buffer.byteLength)))
+            .catch((error: unknown) => { this.logger.warn("CAD compressed buffer derivative unavailable: " + (error as Error).message); return null; });
+          if (body) {
+            try {
+              await this.storage.putObject({ objectKey: cadPrecompressedObjectKey(buffer.objectKey), body,
+                contentType: "application/octet-stream", metadata: { "source-sha256": buffer.sha256 } });
+            } catch (error) {
+              this.logger.warn("CAD compressed buffer derivative unavailable: " + (error as Error).message);
+            }
+          }
+        } finally {
+          checked.destroy(); this.streams.delete(checked);
+          await rm(folder, { recursive: true, force: true }).catch(() => {});
+        }
       }
       abort.signal.throwIfAborted();
       await this.inputs.assertAvailable(source, null);
+      const manifestSHA256 = createHash("sha256").update(raw).digest("hex");
       await this.storage.putObject({ objectKey: prefix + "manifest.json", body: raw, contentType: "application/json" });
-      const published = await this.repository.publish(row, { objectPrefix: prefix, manifestSHA256: createHash("sha256").update(raw).digest("hex"),
+      try {
+        const compressedManifest = await collect(Readable.from([raw]).pipe(cadArchiveEncoder(raw.byteLength)));
+        await this.storage.putObject({ objectKey: cadPrecompressedObjectKey(prefix + "manifest.json"), body: compressedManifest,
+          contentType: "application/json", metadata: { "source-sha256": manifestSHA256 } });
+      } catch (error) {
+        this.logger.warn("CAD compressed manifest derivative unavailable: " + (error as Error).message);
+      }
+      const published = await this.repository.publish(row, { objectPrefix: prefix, manifestSHA256,
         manifestBytes: raw.byteLength, resourceLease: activeLease, buffers: [...buffers.values()], artifactBytes: total }, job.state);
       if (!published) throw new Error("CAD claim no longer owned");
       archived = true;

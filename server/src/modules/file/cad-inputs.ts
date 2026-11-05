@@ -1,10 +1,12 @@
 import { Injectable, ServiceUnavailableException } from "@nestjs/common";
 import { CadJobCreateBodySchema, CadCompanionSchema, z, type CadFormat, type CadJobCreateBody } from "@libiaolink/contracts";
 import { createHash } from "node:crypto";
+import { Transform, type Readable } from "node:stream";
 import { AppError } from "../../common/errors/app-error.js";
 import { ObjectStorage, versionFileName } from "../../storage/index.js";
 import { PermissionService } from "../permission/index.js";
 import { FileRepository } from "./file.repository.js";
+import type { CadPayload } from "./cad-engine.client.js";
 
 export const CAD_DXF_INPUT_BYTES = 64 * 1024 * 1024;
 export const CAD_EMPTY_RESOURCE_SET = "0".repeat(64);
@@ -15,12 +17,42 @@ export class CadInputIntegrityError extends ServiceUnavailableException {
 }
 export type CadBoundCompanion = z.infer<typeof boundCompanion>;
 export type CadArchiveSource = {
-  fileId: string; versionId: string; sourceSHA256: string; sourceBytes: number; sourceName: string;
+  projectId?: string; fileId: string; versionId: string; objectKey?: string;
+  sourceSHA256: string; sourceBytes: number; sourceName: string;
   sourceFormat?: CadFormat; mainPath?: string | null; companions?: CadBoundCompanion[]; resourceSetHash?: string;
 };
 export type CadInputSource = CadArchiveSource & {
   sourceFormat: CadFormat; mainPath: string; companions: CadBoundCompanion[]; resourceSetHash: string;
 };
+
+/** 把对象存储流原样交给沙箱，同时在传输途中校验长度与 SHA-256，避免为了校验再缓存整份文件。 */
+function verifiedCadStream(stream: Readable, byteLength: number, sha256: string): Readable {
+  const hash = createHash("sha256");
+  let total = 0;
+  const verifier = new Transform({
+    transform(chunk: Buffer | string, _encoding, callback) {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += bytes.byteLength;
+      if (total > byteLength) {
+        stream.destroy();
+        callback(new CadInputIntegrityError());
+        return;
+      }
+      hash.update(bytes);
+      callback(null, bytes);
+    },
+    flush(callback) {
+      if (total !== byteLength || hash.digest("hex") !== sha256) {
+        callback(new CadInputIntegrityError());
+        return;
+      }
+      callback();
+    },
+  });
+  stream.once("error", (error: unknown) => verifier.destroy(error instanceof Error ? error : new CadInputIntegrityError()));
+  stream.pipe(verifier);
+  return verifier;
+}
 
 export function cadFormat(name: string): CadFormat {
   if (/\.(step|stp)$/i.test(name)) return "STEP";
@@ -83,20 +115,41 @@ export class CadInputService {
     const sourceName = versionFileName(main.file.name, main.version.objectKey);
     if (cadFormat(sourceName) === "STEP" && (selected.mainPath || companions.length)) throw new AppError("VALIDATION_FAILED", "STEP 暂不接受配套路径或文件");
     if (cadFormat(sourceName) === "DWG" && (selected.mainPath || companions.length)) throw new AppError("VALIDATION_FAILED", "DWG 暂不接受配套路径或文件");
-    return cadInputs({ fileId, versionId, sourceName, sourceSHA256: main.version.contentHash,
-      sourceBytes: main.version.sizeBytes, ...(selected.mainPath ? { mainPath: selected.mainPath } : {}), companions });
+    return cadInputs({ projectId: main.file.projectId, fileId, versionId, objectKey: main.version.objectKey,
+      sourceName, sourceSHA256: main.version.contentHash, sourceBytes: main.version.sizeBytes,
+      ...(selected.mainPath ? { mainPath: selected.mainPath } : {}), companions });
   }
 
   async assertAvailable(source: CadArchiveSource, actorId: string | null): Promise<void> {
     await this.boundVersions(cadInputs(source), actorId);
   }
 
-  async payload(source: CadArchiveSource): Promise<Buffer> {
+  /** 授权并构造一次提交载荷：DWG/STEP 直接流式；DXF 输入集合受 64 MiB 总预算限制，继续打包为单帧。 */
+  async enginePayload(source: CadArchiveSource): Promise<CadPayload> {
     const input = cadInputs(source);
     if (input.sourceFormat === "DXF" && input.sourceBytes + input.companions.reduce((sum, row) => sum + row.sourceBytes, 0) > CAD_DXF_INPUT_BYTES) {
       throw new ServiceUnavailableException("主图和配套文件合计不能超过 64 MiB");
     }
+    if ((input.sourceFormat === "STEP" || input.sourceFormat === "DWG") && input.objectKey) {
+      const object = await this.storage.getObjectStream(input.objectKey);
+      if (!object || object.sizeBytes !== input.sourceBytes) {
+        object?.stream.destroy();
+        throw new CadInputIntegrityError();
+      }
+      return { body: verifiedCadStream(object.stream, input.sourceBytes, input.sourceSHA256),
+        byteLength: input.sourceBytes, sha256: input.sourceSHA256 };
+    }
     const rows = await this.boundVersions(input, null);
+    const mainVersion = rows.get(input.versionId)!.version;
+    if (input.sourceFormat === "STEP" || input.sourceFormat === "DWG") {
+      const object = await this.storage.getObjectStream(mainVersion.objectKey);
+      if (!object || object.sizeBytes !== input.sourceBytes) {
+        object?.stream.destroy();
+        throw new CadInputIntegrityError();
+      }
+      return { body: verifiedCadStream(object.stream, input.sourceBytes, input.sourceSHA256),
+        byteLength: input.sourceBytes, sha256: input.sourceSHA256 };
+    }
     const entries = [{ versionId: input.versionId, path: input.mainPath, sourceBytes: input.sourceBytes, sourceSHA256: input.sourceSHA256 }, ...input.companions];
     entries.sort((a, b) => Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)));
     const blobs: Buffer[] = [];
@@ -119,12 +172,12 @@ export class CadInputService {
         } finally { object.stream.destroy(); }
       })));
     }
-    if (input.sourceFormat === "STEP" || input.sourceFormat === "DWG") return blobs[0]!;
     const header = Buffer.from(JSON.stringify({ version: "dxf-resources/1", main: input.mainPath,
       files: entries.map((entry) => ({ path: entry.path, byteLength: entry.sourceBytes })) }));
     if (header.byteLength > 128 * 1024) throw new Error("CAD input metadata exceeds budget");
     const prefix = Buffer.alloc(12); prefix.write("DXFRES1\n"); prefix.writeUInt32LE(header.byteLength, 8);
-    return Buffer.concat([prefix, header, ...blobs]);
+    const body = Buffer.concat([prefix, header, ...blobs]);
+    return { body, byteLength: body.byteLength, sha256: digest(body) };
   }
 
   private async versions(refs: { fileId: string; versionId: string }[]) {

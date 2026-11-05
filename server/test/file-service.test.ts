@@ -83,6 +83,11 @@ function uploadBytes(prefix: Uint8Array, size = 12 * MI_B, fill = 0): Buffer {
 const HASH = createHash("sha256").update(uploadBytes(PDF_PREFIX)).digest("hex");
 const OTHER_HASH = createHash("sha256").update(uploadBytes(PDF_PREFIX, 12 * MI_B, 1)).digest("hex");
 const STAGING_KEY = `projects/${PROJECT}/files/${FILE}/staging/${SESSION}`;
+const BLOB_KEY = `projects/${PROJECT}/blobs/sha256/${HASH.slice(0, 2)}/${HASH}.pdf`;
+const BLOB_KEY_V2 = `projects/${PROJECT}/blobs/sha256/${OTHER_HASH.slice(0, 2)}/${OTHER_HASH}.pdf`;
+function contentBlobKey(hash: string, extension: string): string {
+  return `projects/${PROJECT}/blobs/sha256/${hash.slice(0, 2)}/${hash}.${extension}`;
+}
 const CONTRACT_KEY = `projects/${PROJECT}/files/${FILE}/v1/${HASH}.pdf`;
 const CONTRACT_KEY_V2 = `projects/${PROJECT}/files/${FILE}/v2/${OTHER_HASH}.pdf`;
 const CONTRACT_KEY_V3 = `projects/${PROJECT}/files/${FILE}/v3/${HASH}.pdf`;
@@ -190,6 +195,10 @@ class FakeFileRepository {
   session: UploadSessionRow | null = makeSessionRow();
   duplicate: DuplicateFileRow | null = null;
   attachmentDuplicate: DuplicateFileRow | null = null;
+  /** 项目内内容秒传候选（null = 不命中，走普通上传）。 */
+  reusableBlob: { objectKey: string; sizeBytes: number; contentHash: string; mime: string | null } | null = null;
+  reusableBlobQueries: { projectId: string; contentHash: string; sizeBytes: number; extension: string }[] = [];
+  objectKeyLockCalls: string[][] = [];
   expiredRows: (UploadSessionRow & { projectId: string })[] = [];
   /** 锁会话时抛错（验证过期清理「单条失败不阻断」）。 */
   failLockFor: string | null = null;
@@ -273,6 +282,24 @@ class FakeFileRepository {
   async findAttachmentDuplicateByHash(projectId: string, contentHash: string): Promise<DuplicateFileRow | null> {
     this.attachmentDuplicateQueries.push({ projectId, contentHash });
     return this.attachmentDuplicate;
+  }
+
+  async findReusableVersionByHash(projectId: string, contentHash: string, sizeBytes: number, extension: string): Promise<{ objectKey: string; sizeBytes: number; contentHash: string; mime: string | null } | null> {
+    this.reusableBlobQueries.push({ projectId, contentHash, sizeBytes, extension });
+    return this.reusableBlob;
+  }
+
+  async lockObjectKeys(_tx: unknown, objectKeys: readonly string[]): Promise<void> {
+    this.objectKeyLockCalls.push([...objectKeys]);
+  }
+
+  async countObjectKeyReferences(objectKeys: readonly string[], excludeFileId: string): Promise<Map<string, number>> {
+    const counts = new Map<string, number>();
+    for (const version of this.versions) {
+      if (version.fileId === excludeFileId || !objectKeys.includes(version.objectKey)) continue;
+      counts.set(version.objectKey, (counts.get(version.objectKey) ?? 0) + 1);
+    }
+    return counts;
   }
 
   async findFileById(fileId: string): Promise<FileRow | null> {
@@ -508,6 +535,8 @@ class FakeObjectStorage extends ObjectStorage {
   readonly bucket = "test-bucket";
   parts: UploadedPart[] = [];
   head: ObjectHead | null = null;
+  /** 指定对象键已存在（内容寻址秒传 / 共享对象测试）；staging HEAD 仍由 head 预置。 */
+  readonly heads = new Map<string, ObjectHead>();
   listError: Error | null = null;
   prefix: Uint8Array | null = PDF_PREFIX;
   prefixError: Error | null = null;
@@ -561,8 +590,10 @@ class FakeObjectStorage extends ObjectStorage {
   }
 
   async headObject(objectKey: string): Promise<ObjectHead | null> {
-    if (this.head === null) return null;
-    return { ...this.head, objectKey };
+    if (this.head !== null && (objectKey === STAGING_KEY || this.head.objectKey === objectKey)) {
+      return { ...this.head, objectKey };
+    }
+    return this.heads.get(objectKey) ?? null;
   }
 
   async signDownloadUrl(input: DownloadUrlInput): Promise<SignedUrl> {
@@ -581,6 +612,13 @@ class FakeObjectStorage extends ObjectStorage {
 
   async copyObject(input: CopyObjectInput): Promise<CopyObjectResult> {
     this.copied.push(input);
+    this.heads.set(input.destinationKey, {
+      objectKey: input.destinationKey,
+      sizeBytes: this.head?.sizeBytes ?? 0,
+      etag: "\"copy-etag\"",
+      contentType: input.contentType ?? null,
+      lastModified: NOW,
+    });
     return { etag: "\"copy-etag\"", versionId: null };
   }
 
@@ -1205,6 +1243,66 @@ describe("FileService.signParts（分片预签名 / 断点续传）", () => {
   });
 });
 
+describe("FileService.createUpload（项目内内容秒传）", () => {
+  it("项目内同内容 / 同大小 / 同扩展名命中 → 秒传新建文件与 v1，不建上传会话", async () => {
+    const h = makeService();
+    h.repo.reusableBlob = {
+      objectKey: BLOB_KEY,
+      sizeBytes: 12 * MI_B,
+      contentHash: HASH,
+      mime: "application/pdf",
+    };
+    h.storage.heads.set(BLOB_KEY, {
+      objectKey: BLOB_KEY,
+      sizeBytes: 12 * MI_B,
+      etag: "\"shared-etag\"",
+      contentType: "application/octet-stream",
+      lastModified: NOW,
+    });
+
+    const result = await h.service.createUpload(
+      { projectId: PROJECT, name: "机械设计图纸.pdf", sizeBytes: 12 * MI_B, mime: "application/pdf", contentHash: HASH.toUpperCase(), intent: "version" },
+      ACTOR,
+    );
+
+    expect(result.reused).toBe(false);
+    expect(result.upload).toBeNull();
+    expect(result.duplicateHint).toBeNull();
+    expect(result.file.id).toBe(FILE);
+    expect(result.file.version).toBe(1);
+    expect(h.repo.reusableBlobQueries).toEqual([{ projectId: PROJECT, contentHash: HASH.toUpperCase(), sizeBytes: 12 * MI_B, extension: "pdf" }]);
+    expect(h.repo.insertedSessions).toHaveLength(0);
+    expect(h.repo.insertedFiles).toHaveLength(1);
+    expect(h.repo.insertedVersions).toHaveLength(1);
+    expect(h.repo.insertedVersions[0]).toMatchObject({ objectKey: BLOB_KEY, contentHash: HASH, sizeBytes: 12 * MI_B });
+    expect(h.repo.objectKeyLockCalls).toContainEqual([BLOB_KEY]);
+    expect(h.storage.copied).toHaveLength(0);
+    expect(h.audit.entries.at(-1)).toMatchObject({ metadata: { instantUpload: true, deduplicatedBlob: true } });
+    expect(h.database.outbox).toHaveLength(1);
+  });
+
+  it("内容秒传候选对象已消失 → 不落草稿文件，回退普通分片上传", async () => {
+    const h = makeService();
+    h.repo.reusableBlob = {
+      objectKey: BLOB_KEY,
+      sizeBytes: 12 * MI_B,
+      contentHash: HASH,
+      mime: "application/pdf",
+    };
+
+    const result = await h.service.createUpload(
+      { projectId: PROJECT, name: "机械设计图纸.pdf", sizeBytes: 12 * MI_B, mime: "application/pdf", contentHash: HASH, intent: "version" },
+      ACTOR,
+    );
+
+    expect(result.upload).not.toBeNull();
+    expect(h.repo.insertedFiles).toHaveLength(1);
+    expect(h.repo.insertedSessions).toHaveLength(1);
+    expect(h.repo.insertedVersions).toHaveLength(0);
+    expect(h.repo.objectKeyLockCalls).toContainEqual([BLOB_KEY]);
+  });
+
+});
 describe("FileService.getUpload（会话状态 / 续传依据）", () => {
   it("按 ListParts 回已传与缺失分片", async () => {
     const h = makeService();
@@ -1288,7 +1386,8 @@ describe("FileService.completeUpload（合并 / 复制到契约键 / 落版本�
     const result = await h.service.completeUpload(FILE, SESSION, { contentHash: declareActualHash(h) }, ACTOR);
     expect(result.version.id).toBe(VERSION);
     expect(uploaded).toHaveBeenCalledOnce();
-    expect(uploaded.mock.calls[0]?.[0]).toEqual({ fileId: FILE, versionId: VERSION, sourceSHA256: h.repo.insertedVersions[0]!.contentHash,
+    expect(uploaded.mock.calls[0]?.[0]).toEqual({ projectId: PROJECT, fileId: FILE, versionId: VERSION,
+      objectKey: h.repo.insertedVersions[0]!.objectKey, sourceSHA256: h.repo.insertedVersions[0]!.contentHash,
       sourceBytes: 12 * MI_B, sourceName: "总装.step" });
     expect(uploaded.mock.calls[0]?.[1]).toBeDefined();
     expect(h.database.outbox[0]).toMatchObject({ topic: "file.version.created" });
@@ -1303,7 +1402,7 @@ describe("FileService.completeUpload（合并 / 复制到契约键 / 落版本�
     // 键形态：暂存键 → 契约键
     expect(h.storage.copied[0]).toMatchObject({
       sourceKey: STAGING_KEY,
-      destinationKey: CONTRACT_KEY,
+      destinationKey: BLOB_KEY,
       contentType: "application/octet-stream",
     });
     expect(h.storage.prefixReads).toEqual([]);
@@ -1311,7 +1410,7 @@ describe("FileService.completeUpload（合并 / 复制到契约键 / 落版本�
     expect(h.storage.purged).toEqual([STAGING_KEY]);
 
     const version = h.repo.insertedVersions[0]!;
-    expect(version.objectKey).toBe(CONTRACT_KEY);
+    expect(version.objectKey).toBe(BLOB_KEY);
     expect(version.seq).toBe(1);
     expect(version.sizeBytes).toBe(12 * MI_B);
     expect(version.contentHash).toBe(HASH);
@@ -1327,7 +1426,7 @@ describe("FileService.completeUpload（合并 / 复制到契约键 / 落版本�
       action: "complete",
       objectType: "file",
       objectId: FILE,
-      metadata: { uploadId: SESSION, versionSeq: 1, objectKey: CONTRACT_KEY, duplicateOf: null },
+      metadata: { uploadId: SESSION, versionSeq: 1, objectKey: BLOB_KEY, duplicateOf: null },
     });
     expect(h.database.outbox).toHaveLength(1);
     expect(h.database.outbox[0]).toMatchObject({ topic: "file.version.created", dedupeKey: "file.version.created:" + VERSION, status: "pending" });
@@ -1347,7 +1446,7 @@ describe("FileService.completeUpload（合并 / 复制到契约键 / 落版本�
     expect(result.version.mime).toBe("application/pdf");
     expect(h.repo.insertedVersions[0]!.mime).toBe("application/pdf");
     expect(h.storage.copied[0]).toMatchObject({
-      destinationKey: `projects/${PROJECT}/files/${FILE}/v1/${HASH}.pdf`,
+      destinationKey: BLOB_KEY,
       contentType: "application/octet-stream",
     });
   });
@@ -1425,7 +1524,7 @@ describe("FileService.completeUpload（合并 / 复制到契约键 / 落版本�
     const result = await h.service.completeUpload(FILE, SESSION, { contentHash: declareActualHash(h) }, ACTOR);
 
     expect(result.version.mime).toBe("application/octet-stream");
-    expect(h.repo.insertedVersions[0]!.objectKey).toBe(`projects/${PROJECT}/files/${FILE}/v1/${h.repo.insertedVersions[0]!.contentHash}.bin`);
+    expect(h.repo.insertedVersions[0]!.objectKey).toBe(contentBlobKey(h.repo.insertedVersions[0]!.contentHash, "bin"));
     expect(h.storage.copied[0]).toMatchObject({ contentType: "application/octet-stream" });
   });
 
@@ -1491,7 +1590,7 @@ describe("FileService.completeUpload（合并 / 复制到契约键 / 落版本�
     h.storage.fill = 1;
     const result = await h.service.completeUpload(FILE, SESSION, { contentHash: OTHER_HASH.toUpperCase() }, ACTOR);
     expect(result.version.contentHash).toBe(OTHER_HASH);
-    expect(h.storage.copied[0]!.destinationKey).toBe(`projects/${PROJECT}/files/${FILE}/v1/${OTHER_HASH}.pdf`);
+    expect(h.storage.copied[0]!.destinationKey).toBe(BLOB_KEY_V2);
   });
 
   it("会话过期 → 410（先惰性清理）", async () => {
@@ -1513,15 +1612,20 @@ describe("FileService.completeUpload（合并 / 复制到契约键 / 落版本�
     });
   });
 
-  it("copy 后位次被并发完成抢占 → 500 INTERNAL（不写半份版本）", async () => {
+  it("同一内容第二次完成复用共享对象，不重复复制", async () => {
     const h = readyHarness();
-    h.repo.seqDriftOnLock = true;
-    await expect(h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR)).rejects.toMatchObject({
-      code: "INTERNAL",
-      httpStatus: 500,
-    });
-    expect(h.repo.insertedVersions).toHaveLength(0);
-    expect(h.database.outbox).toHaveLength(0);
+    const first = await h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+    expect(first.version.seq).toBe(1);
+    expect(h.storage.copied).toHaveLength(1);
+
+    h.repo.nextSeqBase = 2;
+    h.repo.session = makeSessionRow({ storageUploadId: "storage-1", contentHash: HASH, mime: "application/pdf" });
+    const second = await h.service.completeUpload(FILE, SESSION, { contentHash: HASH }, ACTOR);
+
+    expect(second.version.seq).toBe(2);
+    expect(h.storage.copied).toHaveLength(1);
+    expect(h.repo.insertedVersions.map((version) => version.objectKey)).toEqual([BLOB_KEY, BLOB_KEY]);
+    expect(h.repo.objectKeyLockCalls).toContainEqual([BLOB_KEY]);
   });
 
   it("copyObject 存储失败 → 映射为契约错误（不落库）", async () => {
@@ -1701,6 +1805,24 @@ describe("FileService.purgeFile（彻底删除 · 仅管理员）", () => {
     });
     expect(h.repo.deletedFiles).toHaveLength(0);
     expect(h.repo.versions).toHaveLength(2);
+  });
+  it("共享内容对象仍有其他文件引用 → 删元数据但保留对象与引用", async () => {
+    const h = recycledHarness();
+    h.permission.groupAccessAdmin = true;
+    h.repo.versions = [
+      makeVersionRow({ id: VERSION_A, seq: 1, objectKey: BLOB_KEY, contentHash: HASH }),
+      makeVersionRow({ id: VERSION_B, fileId: OTHER_FILE, seq: 1, objectKey: BLOB_KEY, contentHash: HASH }),
+    ];
+
+    await h.service.purgeFile(FILE, { version: 7, reason: "共享对象引用测试" }, ACTOR);
+
+    expect(h.storage.purged).toEqual([]);
+    expect(h.repo.deletedFiles).toEqual([FILE]);
+    expect(h.repo.versions).toHaveLength(1);
+    expect(h.repo.versions[0]!.fileId).toBe(OTHER_FILE);
+    expect(h.audit.entries.at(-1)).toMatchObject({
+      metadata: { objectKeys: [BLOB_KEY], retainedSharedObjectKeys: [BLOB_KEY] },
+    });
   });
 });
 
@@ -2534,8 +2656,8 @@ describe("FileService.completeUpload 变更写入（M4-04 申请即通过 · int
 
     // files.name 更名；新版本对象键 / 存储元数据用变更后扩展名（.pptx）——历史版本对象键不动（假旧名不改写）
     expect(h.repo.file!.name).toBe("回放-变更后.pptx");
-    expect(h.repo.insertedVersions[0]!.objectKey).toBe(`projects/${PROJECT}/files/${FILE}/v1/${h.repo.insertedVersions[0]!.contentHash}.pptx`);
-    expect(h.storage.copied[0]!.destinationKey).toBe(`projects/${PROJECT}/files/${FILE}/v1/${h.repo.insertedVersions[0]!.contentHash}.pptx`);
+    expect(h.repo.insertedVersions[0]!.objectKey).toBe(contentBlobKey(h.repo.insertedVersions[0]!.contentHash, "pptx"));
+    expect(h.storage.copied[0]!.destinationKey).toBe(contentBlobKey(h.repo.insertedVersions[0]!.contentHash, "pptx"));
     expect(h.storage.copied[0]!.metadata).toMatchObject({ "file-name": encodeURIComponent("回放-变更后.pptx") });
     // 审计：完成变更上传记「旧名 → 新名」；变更 create 审计的 changes 同步带 name 变化
     const completeAudit = h.audit.entries.at(-1) as { summary: string; changes: { field: string; from: unknown; to: unknown }[] };

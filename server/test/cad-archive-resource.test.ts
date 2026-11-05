@@ -44,10 +44,34 @@ function fixture() {
   const source = { fileId: artifact.fileId, versionId: artifact.versionId, sourceSHA256: artifact.sourceSHA256,
     sourceBytes: artifact.sourceBytes, sourceName: artifact.sourceName };
   const manifest = () => service.resource("manifest", source, view.actorId, view.viewId, view.id.replaceAll("-", ""));
-  return { body, artifact, view, repository, storage, manifest };
+  const job = () => service.job("status", source, view.actorId, view.viewId, view.id.replaceAll("-", ""));
+  return { body, artifact, view, repository, storage, manifest, job };
 }
 
 describe("CAD cached resource lifecycle", () => {
+  it("任务状态只发布可并行预取的资源摘要，不泄露对象存储键", async () => {
+    const { artifact, job } = fixture();
+    artifact.buffers = [{ sha256: "a".repeat(64), byteLength: 12, objectKey: "projects/private/geometry.bin" }];
+
+    const state = await job();
+
+    expect(state.resources).toEqual({ lease: artifact.resourceLease, buffers: [{ sha256: "a".repeat(64), byteLength: 12 }] });
+    expect(JSON.stringify(state)).not.toContain("projects/private");
+  });
+
+  it("资源摘要最多发布 256 项且不泄露对象存储键", async () => {
+    const { artifact, job } = fixture();
+    artifact.buffers = Array.from({ length: 300 }, (_, index) => ({
+      sha256: (index + 1).toString(16).padStart(64, "0"), byteLength: index,
+      objectKey: `projects/private/${index}.bin`,
+    }));
+
+    const state = await job();
+
+    expect(state.resources?.buffers).toHaveLength(256);
+    expect(JSON.stringify(state)).not.toContain("projects/private");
+  });
+
   it("数据库续租失败后不遗留已打开的对象读取流，也不触发重新解析", async () => {
     const { repository, manifest } = fixture();
     const failure = new Error("lease write unavailable");

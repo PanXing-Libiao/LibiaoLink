@@ -36,7 +36,7 @@ function fixture(state: CadJob["state"], code?: string) {
   const storage = { getObject: async () => ({ bytes: body }), purgePrefix: async () => {}, putObject: async () => {} };
   const worker = new CadArchiveWorker(repository as unknown as CadArchiveRepository, files as unknown as FileRepository,
     engine as unknown as CadEngineClient, storage as unknown as ObjectStorage,
-    { assertAvailable: async () => {}, payload: async () => body } as never);
+    { assertAvailable: async () => {}, enginePayload: async () => ({ body, byteLength: body.byteLength, sha256: sha }) } as never);
   return { worker, engine, repository, failures, job };
 }
 

@@ -2,7 +2,6 @@ import { Injectable, ServiceUnavailableException, type OnModuleDestroy } from "@
 import { CadJobSchema, CadJobCreateResponseSchema, z, type CadNameCodepage } from "@libiaolink/contracts";
 import { request, type ClientRequest, type IncomingMessage } from "node:http";
 import { isAbsolute } from "node:path";
-import { createHash } from "node:crypto";
 import type { Readable } from "node:stream";
 import { AppConfig } from "../../config/config.module.js";
 import type { Env } from "../../config/env.js";
@@ -14,7 +13,9 @@ const JSON_LIMIT = 64 * 1024;
 const RESOURCE_LIMIT = 512 * 1024 * 1024;
 type Identity = { name: string; sourceSHA256: string; sourceByteLength: number; namespace: string; cacheScope: string; nameCodepage: CadNameCodepage; resourceFingerprint?: string };
 export type CadJob = z.infer<typeof CadJobSchema>;
-export type CadResource = { stream: Readable; bytes: number; artifactBytes?: number };
+export type CadResource = { stream: Readable; bytes: number; artifactBytes?: number; encoding?: "br" };
+/** 原文件交给沙箱的一次性字节流；sha256 与 byteLength 由受权输入层先确定，传输层不再整文件重算。 */
+export type CadPayload = { body: Uint8Array | Readable; byteLength: number; sha256: string };
 
 /** Private protocol detail: the sandbox explicitly rejected a queue/storage/lease quota. */
 export class CadEngineBusyError extends ServiceUnavailableException {
@@ -35,58 +36,98 @@ export class CadEngineClient implements OnModuleDestroy {
   get dwgEnabled(): boolean { return this.config.env.CAD_DWG_ENABLED === "true"; }
   get inputLimit(): number { return (this.config.env.CAD_MAX_INPUT_MIB ?? 64) * 1024 * 1024; }
 
-  private open(action: string, input: Record<string, unknown>, source?: Uint8Array): Promise<IncomingMessage> {
-    if (!this.enabled) throw new ServiceUnavailableException("CAD 转换服务未启用，请下载原文件查看");
-    if (this.requests.size >= 64) throw new ServiceUnavailableException("CAD 请求过多，请稍后重试");
+  private open(action: string, input: Record<string, unknown>, payload?: CadPayload): Promise<IncomingMessage> {
+    const source = payload !== undefined && !(payload.body instanceof Uint8Array) ? payload.body : undefined;
+    const rejectBeforeSend = (error: ServiceUnavailableException): never => {
+      source?.destroy();
+      throw error;
+    };
+    if (!this.enabled) return rejectBeforeSend(new ServiceUnavailableException("CAD 转换服务未启用，请下载原文件查看"));
+    if (this.requests.size >= 64) return rejectBeforeSend(new ServiceUnavailableException("CAD 请求过多，请稍后重试"));
     const socketPath = this.config.env.CAD_ENGINE_SOCKET;
     let target: URL | undefined;
     if (socketPath) {
-      if (!isAbsolute(socketPath) || Buffer.byteLength(socketPath) > 100) throw new ServiceUnavailableException("CAD 服务配置不可用");
+      if (!isAbsolute(socketPath) || Buffer.byteLength(socketPath) > 100) return rejectBeforeSend(new ServiceUnavailableException("CAD 服务配置不可用"));
     } else {
-      try { target = new URL(this.config.env.CAD_ENGINE_URL); } catch { throw new ServiceUnavailableException("CAD 服务配置不可用"); }
+      try { target = new URL(this.config.env.CAD_ENGINE_URL); } catch { return rejectBeforeSend(new ServiceUnavailableException("CAD 服务配置不可用")); }
       if (this.config.env.NODE_ENV === "production" || target.protocol !== "http:" || target.hostname !== "127.0.0.1"
         || target.username || target.password || target.pathname !== "/" || target.search || target.hash) {
-        throw new ServiceUnavailableException("CAD 服务配置不可用");
+        return rejectBeforeSend(new ServiceUnavailableException("CAD 服务配置不可用"));
       }
     }
     const metadata = Buffer.from(JSON.stringify({ action, ...input }));
     const wireLimit = typeof input.name === "string" && /\.(dxf|dwg)$/i.test(input.name)
       ? Math.min(this.inputLimit, 64 * 1024 ** 2) + 128 * 1024 + 12 : this.inputLimit;
-    if (metadata.byteLength > 6 * 1024 || (source !== undefined && (source.byteLength === 0 || source.byteLength > wireLimit))) {
-      throw new ServiceUnavailableException("CAD 请求超过处理限制");
+    if (metadata.byteLength > 6 * 1024) return rejectBeforeSend(new ServiceUnavailableException("CAD 请求超过处理限制"));
+    if (payload !== undefined) {
+      if (payload.body instanceof Uint8Array && payload.body.byteLength !== payload.byteLength) {
+        return rejectBeforeSend(new ServiceUnavailableException("CAD 请求超过处理限制"));
+      }
+      if (payload.byteLength === 0 || payload.byteLength > wireLimit || !/^[a-f0-9]{64}$/.test(payload.sha256)) {
+        return rejectBeforeSend(new ServiceUnavailableException("CAD 请求超过处理限制"));
+      }
     }
-    const body = source ?? metadata;
+    const body = payload?.body ?? metadata;
+    const bodyLength = payload?.byteLength ?? metadata.byteLength;
     return new Promise((resolve, reject) => {
-      const call = request({
-        ...(socketPath ? { socketPath } : { hostname: target!.hostname, port: target!.port }),
-        path: source === undefined ? "/rpc" : "/submit", method: "POST", agent: false,
-        headers: { "Content-Type": source === undefined ? "application/json" : "application/octet-stream",
-          "Content-Length": body.byteLength, ...(source === undefined ? {} : { "X-CAD-Request": metadata.toString("base64url") }) },
-      });
+      let settled = false;
+      let sourceError: Error | undefined;
+      const fail = (error: Error): void => {
+        if (settled) return;
+        settled = true;
+        source?.destroy();
+        reject(error);
+      };
+      let call: ClientRequest;
+      try {
+        call = request({
+          ...(socketPath ? { socketPath } : { hostname: target!.hostname, port: target!.port }),
+          path: payload === undefined ? "/rpc" : action === "preview" ? "/preview" : "/submit", method: "POST", agent: false,
+          headers: { "Content-Type": payload === undefined ? "application/json" : "application/octet-stream",
+            "Content-Length": bodyLength, ...(payload === undefined ? {} : { "X-CAD-Request": metadata.toString("base64url") }) },
+        });
+      } catch {
+        source?.destroy();
+        reject(new ServiceUnavailableException("CAD 转换服务暂不可用，请重试或下载原文件"));
+        return;
+      }
       this.requests.add(call);
       const timer = setTimeout(() => call.destroy(new Error("CAD deadline exceeded")), 90_000);
       call.once("close", () => { clearTimeout(timer); this.requests.delete(call); });
-      call.once("error", () => reject(new ServiceUnavailableException("CAD 转换服务暂不可用，请重试或下载原文件")));
+      call.once("error", () => fail(sourceError instanceof ServiceUnavailableException ? sourceError
+        : new ServiceUnavailableException("CAD 转换服务暂不可用，请重试或下载原文件")));
       call.once("response", (response) => {
         if (response.headers["x-cad-engine-version"] !== CAD_ENGINE_VERSION || response.statusCode !== 200) {
           if (response.headers["x-cad-engine-version"] === CAD_ENGINE_VERSION && response.statusCode === 503) {
             void this.readJson(response).then((packet) => {
-              reject(z.object({ code: z.literal("busy") }).safeParse(packet).success ? new CadEngineBusyError()
+              fail(z.object({ code: z.literal("busy") }).safeParse(packet).success ? new CadEngineBusyError()
                 : new ServiceUnavailableException("CAD 转换服务暂不可用，请重试或下载原文件"));
-            }, (error: unknown) => reject(error));
+            }, (error: unknown) => fail(error instanceof Error ? error : new ServiceUnavailableException("CAD 服务响应不可用，请重试或下载原文件")));
             return;
           }
           response.destroy();
-          reject(response.statusCode === 404 ? new AppError("NOT_FOUND", "模型资源不存在或不可访问")
+          fail(response.statusCode === 404 ? new AppError("NOT_FOUND", "模型资源不存在或不可访问")
             : new ServiceUnavailableException("CAD 转换服务暂不可用，请重试或下载原文件"));
-        } else resolve(response);
+          return;
+        }
+        if (settled) { response.destroy(); return; }
+        settled = true;
+        resolve(response);
       });
-      call.end(body);
+      if (body instanceof Uint8Array) {
+        call.end(body);
+      } else {
+        body.once("error", (error: unknown) => {
+          sourceError = error instanceof Error ? error : new Error("CAD source stream failed");
+          call.destroy();
+        });
+        body.pipe(call);
+      }
     });
   }
 
-  private async json(action: string, input: Record<string, unknown>, source?: Uint8Array): Promise<unknown> {
-    return this.readJson(await this.open(action, input, source));
+  private async json(action: string, input: Record<string, unknown>, payload?: CadPayload): Promise<unknown> {
+    return this.readJson(await this.open(action, input, payload));
   }
 
   private async readJson(response: IncomingMessage): Promise<unknown> {
@@ -108,10 +149,10 @@ export class CadEngineClient implements OnModuleDestroy {
   async lookup(input: Identity): Promise<z.infer<typeof CadJobCreateResponseSchema> | null> {
     return CadJobCreateResponseSchema.nullable().parse(await this.json("lookup", input));
   }
-  async submit(input: Identity & { bytes: Uint8Array }): Promise<z.infer<typeof CadJobCreateResponseSchema>> {
-    const { bytes, ...identity } = input;
-    return CadJobCreateResponseSchema.parse(await this.json("submit", { ...identity, payloadByteLength: bytes.byteLength,
-      payloadSHA256: createHash("sha256").update(bytes).digest("hex") }, bytes));
+  async submit(input: Identity & { payload: CadPayload }): Promise<z.infer<typeof CadJobCreateResponseSchema>> {
+    const { payload, ...identity } = input;
+    return CadJobCreateResponseSchema.parse(await this.json("submit", { ...identity, payloadByteLength: payload.byteLength,
+      payloadSHA256: payload.sha256 }, payload));
   }
   async status(input: { jobId: string; namespace: string }): Promise<CadJob> { return CadJobSchema.parse(await this.json("status", input)); }
   async cancel(input: { jobId: string; namespace: string }): Promise<CadJob> { return CadJobSchema.parse(await this.json("cancel", input)); }

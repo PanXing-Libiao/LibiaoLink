@@ -60,7 +60,7 @@ class ConversionJobs:
         self.rule_version=rule_version;self.interpreter=interpreter;self.policy={**POLICY,'inputBytes':step_job_input_bytes(),**(policy or {})}
         self.dxf_interpreter=dxf_interpreter
         self.dwg_interpreter=dwg_interpreter
-        self.dwg_policy={'workerRSSBytes':2560*1024**2,'resultBytes':512*1024**2,'artifactBytes':512*1024**2}
+        self.dwg_policy={'workerRSSBytes':3584*1024**2,'resultBytes':512*1024**2,'artifactBytes':512*1024**2}
         self.binary=os.environ.get('CAD_STEP_JOB_BINARY','1')!='0'
         self.compact=self.binary and os.environ.get('CAD_STEP_JOB_COMPACT','1')!='0'
         self.upload_reserved=0
@@ -421,9 +421,9 @@ class ConversionJobs:
                     blobs=read_worker_buffers(binary_dir,entries)
                     # Same schema, complete geometry and revision validation as base64.
                     validate_binary_envelope(document,envelope['snapshot'],envelope.get('presentation',{}),blobs.__getitem__)
-                    del wire_envelope['bufferResources']  # Temporary paths are never durable/public metadata.
-                    raw=json.dumps(wire_envelope,ensure_ascii=False,separators=(',',':'),allow_nan=False).encode()
-                    out.write_bytes(raw)
+                    # The worker manifest carries only relative buffer file names, never host
+                    # paths. Persist its bytes verbatim so large drawings are not parsed and
+                    # serialized a second time in the parent process.
                 else:validate_envelope(envelope)
                 sha=hashlib.sha256(raw).hexdigest()
                 with self.lock:

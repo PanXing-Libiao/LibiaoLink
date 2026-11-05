@@ -1,5 +1,7 @@
 # file 模块（S7·file：上传管道 + 版本 / 定档 / 回溯 / 回收站 + 文件库查询与多态关联 + 变更申请即通过（写入 + 读面）+ 预览（数据层 + 转换队列 + 读 API + 产物清理收口）+ 下载切片 + ONLYOFFICE 查看器 + 安全位图原对象直签 + H1 · S2 精确 MIME / 文件头裁决与 S4 SVG → PNG 队列接线已落地；S2 / S3 / S4 须同批上线）
 
+> **2026-11-03 CAD 输入流式交接**：STEP / DWG 提交不再由 API 把对象存储内容收集成完整 Buffer，也不再在传输层重算整文件 SHA-256。`CadInputService.enginePayload` 返回只读流与已绑定的大小 / 哈希，经 Unix socket 带背压转发；流中超出声明大小或摘要不符仍抛 `CadInputIntegrityError`，由后台任务落为 `source-integrity-failed`。DXF 因配套资源包协议与 64 MiB 预算保持单帧 Buffer。接口契约、DDL、权限与对象键不变。
+
 > **2026-10-27 未完成上传可见性**：文件只有在 `current_version_id` 非空、至少存在一个完成版本后才进入用户可见读面。文件库列表、任务详情文件清单 / 文件摘要、工作台随行文件、任务与节点门禁、归档清单 / 导出及项目删除计数均排除空上传；上传完成前 / 失败 / 页面刷新留下的空草稿不会显示，也不会被误计为成果文件。前端上传失败会尽力调用 abort 清理会话；来不及 abort 的会话继续由过期清扫兜底。无 DDL / 迁移 / 契约变更。
 
 > **2026-10-23 上传与预览安全修订**：上传完成时服务端对实际对象流计算 SHA-256，与 init / complete 申报不符即拒绝；对象键、版本和后续任务只采用计算结果。预览缓存、任务去重与产物对象按文件版本隔离，取消跨文件 / 跨项目的同哈希复用；ONLYOFFICE key 绑定服务实例、项目、文件和版本。迁移 `0067` 失效旧全局缓存登记，源文件、版本与审计保留。详见 [修复与验证口径](../../../../docs/security/上传哈希与预览缓存隔离.md)。
@@ -59,10 +61,10 @@ index.ts             # 唯一公开出口（跨模块只允许 import 本文件�
 
 | 路径 | 说明 | 响应码 | 权限 |
 |---|---|---|---|
-| `POST /api/v1/files/uploads` | 发起上传（建 draft 文件 + 会话；附件域同内容命中 → 秒传复用，其余带 contentHash 回秒传提示；2026-10-12） | 201 | `file.upload` |
+| `POST /api/v1/files/uploads` | 发起上传（附件域同内容命中 → 复用既有文件；项目内同内容 / 同大小 / 同扩展名命中 → 秒传新建文件与 v1、不建会话；其余建 draft 文件 + 会话；2026-11-03） | 201 | `file.upload` |
 | `POST /api/v1/files/{id}/uploads/{uploadId}/parts` | 批量取分片预签名 URL（首传 / 续传共用） | 200 | `file.upload` |
 | `GET /api/v1/files/{id}/uploads/{uploadId}` | 会话状态（已传 / 缺失分片；续传依据） | 200 | 项目可见即可 |
-| `POST /api/v1/files/{id}/uploads/{uploadId}/complete` | 完成（合并 → 校验 → 复制契约键 → 落版本） | 200 | `file.upload` |
+| `POST /api/v1/files/{id}/uploads/{uploadId}/complete` | 完成（合并 → 校验 → 内容寻址键缺失才复制 → 落版本） | 200 | `file.upload` |
 | `POST /api/v1/files/{id}/uploads/{uploadId}/abort` | 取消（幂等） | 200 | `file.upload` |
 | `GET /api/v1/files/{id}` | 文件详情（含当前版本；回收站文件也可读） | 200 | 项目可见即可 |
 | `GET /api/v1/files/{id}/versions` | 版本链（按 seq 升序；只读不删历史） | 200 | 项目可见即可 |
@@ -77,6 +79,18 @@ index.ts             # 唯一公开出口（跨模块只允许 import 本文件�
 | `GET /api/v1/projects/{id}/files` | 文件库列表（筛选 / 关键字 / 白名单排序 / 分页；默认排除 recycled；行随附 `createdByName`） | 200 | 项目可见即可 |
 | `GET /api/v1/projects/{id}/change-requests` | 变更记录列表（阶段 / 节点 / 变更文件 / 申请人筛选 + 关键字 + 白名单排序 + 分页） | 200 | 项目可见即可 |
 | `GET /api/v1/change-requests/{id}` | 变更详情（变更记录 + 变更后文件 + 变更后版本） | 200 | 项目可见即可（服务层判定，非成员 404） |
+
+## 内容寻址、项目内秒传与断点续传（2026-11-03）
+
+> 2026-11-03 已部署公司测试机：22:26 发布 `test-20261103-2226-upload-resume-dedup-3c622411`；22:32 增量发布 `test-20261103-2232-upload-resume-finalize-3c622411`，修复内容秒传 `upload=null` 在调用方要求定档时未补调 finalize。正式生产未部署。9 MiB 真实接口回放验证缺片续传、同内容 `upload=null` 秒传、共享对象引用保留与最后引用删除；无 DDL / 依赖 / 环境 / 镜像变化。
+
+- **内容寻址对象键**：普通上传完成时使用 `projects/{projectId}/blobs/sha256/{hash 前两位}/{contentHash}.{ext}`；同项目、同内容、同扩展名共享一份对象，历史 `projects/{projectId}/files/{fileId}/v{seq}/...` 键继续可读，不迁移、不改写。跨项目不共享，保持租户隔离。
+- **完成事务**：合并暂存分片并校验哈希 / 类型 / 大小后，事务内先 `lockObjectKeys` 取得对象键 advisory lock，再 `HEAD` 目标键；不存在才从 staging `copyObject`，已存在且大小一致直接复用，大小不一致则回滚且不落版本。暂存对象仅在版本事务提交后清理。
+- **项目内秒传**：`POST /files/uploads` 在目标为新文件且带 `contentHash` 时，按同项目、同 `contentHash`、同 `sizeBytes`、同扩展名查未回收版本；命中后事务内锁对象键并 `HEAD`，通过则新建独立文件与 v1 版本，返回 `upload=null`、`reused=false`，不创建上传会话、不重复传输。对象已消失时回退普通分片上传。
+- **定档联动**：项目内秒传只新建文件与 v1，不自行定档；调用方要求 `finalize=true` 时必须在秒传返回后调用 `POST /files/{id}/finalize`。附件域 `reused=true` 仍复用既有文件且不重复定档；前端修复见 2026-11-03 22:32 测试机增量发布。
+- **引用计数清理**：彻底删除 / 回收站到期清理先锁本文件全部对象键，再统计排除本文件后的 `file_versions.object_key` 引用；仍有其他文件引用的共享对象保留，最后一个引用删除时才 `purgeObject`。版本级预览产物仍按各自版本清理。
+- **断点续传**：`GET /files/{id}/uploads/{uploadId}` 以存储侧 ListParts 返回已传 / 缺失分片；前端只在 localStorage 保存会话元数据，刷新后重新选择同一文件时用项目 + SHA-256 + 名称 + 大小 + taskId 找回会话，只请求并 PUT `missingPartNumbers`。会话 404 / 409 / 410 自动新建；网络错误保留索引，避免悄悄重传整套文件。
+- **回归**：`server/test/file-service.test.ts` 覆盖同内容重复完成只复制一次、项目内秒传不建会话、候选对象消失回退、共享对象引用保留与最后引用删除；`server/test/storage-s3.test.ts` 覆盖内容寻址键形态与历史键共存。
 
 - 实现口径（键形态 / 校验顺序 / 错误码 / 过期语义 / worker 清理）见 `server/README.md`「文件上传接口」与 `src/storage/README.md`；真机回放见 `docs/m4-01-回放证据(上传管道S7file).md`（变更回放见 `docs/m4-04-回放证据(变更申请即通过).md`）。
 - **文件库上传人姓名（2026-10-28）**：列表查询以 `files.created_by = users.id` 左连接 `users`，行内返回 `createdByName = users.display_name`。该链接**不按 `users.status` / `removed_at` 过滤**：停用或软删除账号只要仍有文件，仍返回姓名；用户行缺失时为空，由前端回退用户 id。`filter[uploadedBy]`、`total` 与分页口径不变，无 DDL / 迁移。
@@ -132,4 +146,5 @@ index.ts             # 唯一公开出口（跨模块只允许 import 本文件�
 - **M4-04**：写入面**已落地（PR-7）**、读面**已落地（PR-8）**（列表 / 详情，见上「M4-04 变更口径」「M4-04 变更读面」）；**剩余** = 变更统计（A4-17，无对外契约，口径由后续切片 / 仪表盘定）与通知（A4-18，随 M5；outbox `change.applied` 已埋点）。
 - **M4-05**：预览编排（预览鉴权与产物）——**数据层已落地（PR-9 · 迁移 `0027`）**；**转换队列已落地（PR-10 · 迁移 `0028`：outbox `preview.job` 领取器 / 转换沙箱客户端 / 三元组幂等 / 失败降级 / 定档预生成）；**读 API 已落地（PR-11：三态 + 短时签名 + 版本 404 + 读取侧幂等补投 + 两类终态降级；2026-10-27 收口为仅用户显式查看（recordView=true）且 ready 写一条审计）**；**产物清理已落地（PR-12：按 `content_hash` 反查引用 —— 有引用则归属转移、无引用清对象与行）**；**下载切片已落地（PR-13：attachment 签名 + `file.download` + download 审计 + 真机两态回放 14/14）**；**压测已落地（PR-14 · M4-05g：两档实跑 —— 成功率 / 200MB 续传 / 并发背压 / 长跑内存）**；**S7-1 起消费与分类收敛为 `PreviewService.consume`（retry / dead 分类）+ `onDead`（终态置 failed），领取 / 退避 / dead 落库归 `src/outbox/`（迁移 `0038`）**；剩余 = 无。
 - **CAD 接入准备（2026-10-21，ADR-035）**：旧 CAD 浏览器解析及原文件 `ready/image` 直签撤下。CAD 当前返回 `failed`，`target/url/viewer` 为空、提示暂不可预览并保留原文件下载；版本与权限规则不变，不投空任务。后续以 CAD 平台 UCD/ViewerSession 与能力矩阵适配文件版本、任务、多资源权限和完整性，见 [接入任务](../../../../docs/CAD平台接入基线与迁移任务.md)。旧二维 SVG/PDF PoC 与测量计划不再执行。
+- **CAD 快速概览（已于 2026-11-04 移除）**：前端恢复原导入步骤动画、已用时间和预计时间；上传后不再异步预热 DWG 内嵌缩略图，任务创建不再等待最多 6 秒，`CadJobCreateResponseSchema` 不再包含 `preview`，对象存储快速概览缓存也不再读写。CAD 网关私有 `/preview` 保留为未使用内部接口，CAD 镜像未重建。输入解析仍把 `projectId/objectKey` 作为非持久化读取上下文传给引擎，数据库插入显式白名单，避免把对象键写入 `cad_artifacts`。DWG 任务仍按损失清单返回 `partial`。
 - 后续增强：回收站「到期前提醒 / 批量清理」、审计 `entry = "system"` 字段语义（现为 `entry = "api"` + `actorId = null` 表达系统触发）。

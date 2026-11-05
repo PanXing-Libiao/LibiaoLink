@@ -21,7 +21,9 @@ const events = async (fileId: string) => (await database.pool.query("select * fr
 const state = async (id: string) => (await database.pool.query("select * from cad_artifacts where id=$1", [id])).rows[0];
 
 async function source(): Promise<CadArchiveSource> {
-  const row = { fileId: randomUUID(), versionId: randomUUID(), sourceSHA256: "1".repeat(64), sourceBytes: 3, sourceName: "box.step" };
+  const versionId = randomUUID();
+  const row = { projectId, fileId: randomUUID(), versionId, objectKey: "sources/" + versionId + ".step",
+    sourceSHA256: "1".repeat(64), sourceBytes: 3, sourceName: "box.step" };
   await database.pool.query("insert into files(id, project_id) values($1,$2)", [row.fileId, projectId]);
   await database.pool.query("insert into file_versions(id) values($1)", [row.versionId]);
   return row;

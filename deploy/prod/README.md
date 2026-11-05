@@ -1,3 +1,155 @@
+> **2026-11-05 10:32 CAD 导入估时相关性修复（测试机已部署；正式生产未部署）**：测试机发布 `test-20261105-1032-cad-eta-relevance-v5`，仅原子替换 `/opt/libiaolink/frontend/dist/cad-viewer`，随后 `docker restart libiaolink-web`；测试机没有 `libiaolink-web.service`。发布包 `/srv/data/deploy-test-20261105-1032-cad-eta-relevance-v5/cad-viewer-dist.tar.gz`，7,183,817 B · SHA-256 `0c7683452612887647bd152d5073256a5735eae8bc6e08c2b0c74e36ab56887a`，304 个文件 / 10 个目录 / 解包 9,601,902 B；本地、测试机、运行目录与公网读取结果一致：`index.html` 10,221 B · `9b3672aa…`、`platform-entry.js` 21,889 B · `1695f95a…`、`import-ui.js` 10,372 B · `beb5575d…`、`import-progress.js` 10,671 B · `8840100a…`。备份 `/srv/data/deploy-test-20261105-1032-cad-eta-relevance-v5/backup/`：`cad-viewer-before.tar.gz` 7,202,087 B · `7ed33a71…`，`RELEASE_MANIFEST.before.json` 306,394 B · `0950561f…`。测试机清单已原子替换为 313,252 B · `f06fdb5d…`，含 43 条增量记录，`activeIncrementalRelease` 指向本次发布。`libiaolink-web` 为 running healthy、重启计数 0，10 / 10 列出容器 healthy，`/healthz`、`/readyz` 与 `cad-0.21.7` 四项关键资源均 200，近 30 分钟 web 日志无 error / fatal；`node --test scripts/cad-import-progress.test.mjs` 13/13，frontend typecheck / build 通过。
+>
+> **验证边界 / 回滚**：v4 首次转换同一 34,385,320 B DWG 的实测显示跨文件历史污染：初始 `13–33 秒`，83 秒仍显示 `最多约 22 秒`，最终约 346 秒 ready（UI 318 秒）、`partial`、artifact 145,269,322 B。v5 已通过单测覆盖“大小相差超过 3 倍不复用历史”和“下载完成后不能继续延长高界”；同文件缓存复开实测 5.6 秒提示 `10–23 秒`、12 秒收敛到 `4–17 秒`、约 20 秒 ready，console error 0。v5 尚未用另一份未缓存大图复核冷转换估时；测试机 `CAD_MAX_INPUT_MIB=64`，76 MiB 文件仍不支持；该 DWG 仍为 `partial`，不得描述为零缺损。回滚时恢复上述 CAD 目录 tar 与清单备份并重启 web；本轮不触数据库、服务端、CAD 镜像、依赖或环境。正式机 `10.1.103.44` 未触碰，代码未提交。
+
+> **2026-11-05 10:04 CAD 导入预计时间分层校准（测试机已部署；正式生产未部署）**：测试机发布 `test-20261105-1004-cad-eta-calibration-v4`，仅原子替换 `/opt/libiaolink/frontend/dist/cad-viewer`，随后 `docker restart libiaolink-web`；测试机没有 `libiaolink-web.service`。发布包 `/srv/data/deploy-test-20261105-1004-cad-eta-calibration-v4/cad-viewer-dist.tar.gz`，7,184,559 B · SHA-256 `e47054e698e3057e11b6c827c7fc04894b9859fd790785c0527a7c9d644912de`，304 个文件 / 10 个目录 / 解包 9,601,411 B；本地、测试机与运行目录关键哈希一致：`index.html` `d6b39595…`、`platform-entry.js` `6ac4ce86…`、`import-ui.js` `1acca21f…`、`import-progress.js` `fff46d72…`。
+>
+> 备份 `/srv/data/deploy-test-20261105-1004-cad-eta-calibration-v4/backup/`：`cad-viewer-before.tar.gz` 7,202,022 B · `9feabac2…`，`RELEASE_MANIFEST.before.json` 300,662 B · `880b785e…`。测试机清单已原子替换为 306,394 B · `0950561f…`，含 42 条增量记录，`activeIncrementalRelease` 指向本次发布。`libiaolink-web` 为 running healthy，`/healthz`、`/readyz` 与 `cad-0.21.6` 关键资源探针 200。真实 34,385,320 B DWG 复测：初始“预计还需 8–23 秒”且依据本机历史，下载进度连续经过 44% / 69%，`readyPaint=18.902 s`，console error 0；仍为 `partial`，`CAD_MAX_INPUT_MIB=64`，76 MiB 文件未验证，`readyPaint` 是单次样本不是 SLA。回滚恢复上述 CAD 目录 tar 与清单备份并重启 web；本轮不触数据库、服务端、CAD 镜像、依赖或环境。正式机 `10.1.103.44` 未触碰。
+
+> **2026-11-04 CAD 快速概览移除（公司测试机已部署；正式生产未部署）**：按验收口径撤回 DWG 快速概览：前端不再显示内嵌缩略图或设置 `data-quick-preview`，打开 CAD 后始终保留原导入步骤动画、已用时间和预计时间，完整图纸 ready 后正常切换。后端移除缩略图预热、任务创建最多 6 秒等待、缩略图对象存储缓存和 `CadJobCreateResponse.preview`；CAD 网关私有 `/preview` 保留但平台不再调用，CAD 镜像未重建。画布 `ResizeObserver` 首帧稳定修复保留。测试机发布 `test-20261104-0719-cad-restore-import-animation-3c622411`：前端 662 文件 / 27,449,131 B · `58a79302…`，server 630 文件 / `e8440c50…`，shared 93 文件 / `2b51abb7…`，generated 2 文件 / `c6f3f240…`；`cad-viewer/index.html` 10,221 B · `2760e9e7…`、`platform-entry.js` 21,600 B · `0e075538…`；快速概览静态资源 404。真实登录测试机复用 34,385,320 B DWG 复测：打开 2 秒时导入遮罩可见、显示“预计还需 10–15 秒”和“已用 2 秒”，DOM 无 `#quickPreview` / `data-quick-preview`；完整图纸 `readyPaint=20.2 s`，画布 2160×1125（CSS 1440×750）有内容，console error 0。10/10 容器 healthy，`/healthz`、`/readyz` 与四项探针通过。边界不变：`CAD_MAX_INPUT_MIB=64`，76 MiB 文件未验证；该 DWG 仍为 `partial`，不得宣称零缺损。正式生产未部署，代码未提交。
+> **发布件 / 清单 / 回滚**：远端目录 `/srv/data/deploy-test-20261104-0719-cad-restore-import-animation-3c622411/`；发布前备份 `/srv/data/backups/before-test-20261104-0719-cad-restore-import-animation-3c622411/`（前端 / server / shared / shared-generated 和原清单）。测试机清单原子替换为 235,713 B · `5becc163…`，含 32 条增量记录；回滚时用备份 tar 恢复三个挂载目录并重启 api / worker / web，不改数据库、CAD 镜像或正式机。
+> **2026-11-04 01:05 CAD 快速概览与首帧稳定修复（公司测试机已部署；正式生产未部署）**：修复两个导致“已打开但仍空白”的问题：DWG 内嵌 BMP/DIB 缺少 14 字节 `BITMAPFILEHEADER` 时先补齐再交给浏览器解码；绘图画布在 `ResizeObserver` 报告相同尺寸时不再重设 `canvas.width/height`，真实尺寸变化时先保留并拉伸上一帧，直到新预览/完整帧发布。快速概览仍覆盖排队和转换期间，完整画布有像素后才移除。测试机发布 `test-20261104-0105-cad-resize-hold-ea277570`，仅增量更新前端并重启 web；前端包 22,097,238 B · `a59d5a46…`，`quick-preview.js` `2a129679…`、`drawing-viewer.js` `e4cc93ef…`、`platform-entry.js` `9c6b6ae9…`。真实现有 DWG 任务复测：快速概览 364 ms；ready 9.1 s 时画布 1600×897 已有 1,435,200 个不透明像素，提示自动收起后 1600×944 仍有 1,510,400 个；console/page error 0。服务端格式兼容别名继续复用旧 DWG 产物，首次任务创建 351 ms（不再等待约 7 分 51 秒重转）。边界不变：`CAD_MAX_INPUT_MIB=64`，76 MiB 文件仍被拒绝；该 DWG 仍为 `partial`，快速概览不代表完整几何，不得据此宣称零缺损。正式生产未部署，代码未提交。
+>
+> **发布件 / 清单 / 回滚**：远端目录 `/srv/data/deploy-test-20261104-0105-cad-resize-hold-ea277570/`；前端包 22,097,238 B · `a59d5a467ef8…`。发布前备份 `/srv/data/backups/before-test-20261104-0105-cad-resize-hold-ea277570/`：前端快照 22,133,870 B · `8d6cd97bf6df…`、原清单 228,393 B · `9d8c00e9bd3c…`；旧运行目录保留在 `/opt/libiaolink/frontend/dist-before-test-20261104-0105-cad-resize-hold-ea277570/`。测试机清单已原子替换为 229,039 B · `ec535afd82bb…`。回滚时把旧前端目录恢复为 `/opt/libiaolink/frontend/dist` 并重启 web，不改数据库、CAD 镜像或正式机。
+>
+> **2026-11-03 23:53 构建 / 2026-11-04 00:01 完成发布：DWG 快速概览与 CAD 镜像已部署测试机（正式生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）已发布 `test-20261103-2353-dwg-quick-preview-a5806e13`。本轮更新 `frontend/dist`、`server/dist`、`shared/dist`、`shared/generated` 与 CAD 镜像，并把 `.env` 的 `CAD_SANDBOX_IMAGE` 切换为 `libiaolink/cad-sandbox:1.0.1-dwg-quick-preview-a5806e13-20261103-2335@sha256:6767f48652827a2905b9c7a1d4c1b5312cf97f38f4511a516c68a840540639f0`；数据库、迁移、依赖与 `CAD_MAX_INPUT_MIB=64` 未改，正式机 `10.1.103.44` 未触碰。
+>
+> **发布件 / 备份**：远端目录 `/srv/data/deploy-test-20261103-2353-dwg-quick-preview-a5806e13/`。`frontend-dist.tar.gz`（22,508,414 B · `f37280253a01…` · 663 文件 / 27,464,597 B）；`server-dist.tar.gz`（1,270,490 B · `bad4171cd17d…` · 630 文件 / 4,429,713 B）；`shared-dist.tar.gz`（475,501 B · `b890490888a4…` · 95 文件 / 2,429,928 B）；CAD 镜像包（1,034,392,770 B · `00fd18a21a54…`）。备份 `/srv/data/backups/before-test-20261103-2353-dwg-quick-preview-a5806e13/` 保存前端 / server / shared 运行目录、`.env`、`server.env`、CAD compose 与发布前清单（207,559 B · `1c8f32d87382…`）。
+>
+> **镜像 / 身份**：镜像 ID 与 RepoDigest 均为 `sha256:6767f48652827a2905b9c7a1d4c1b5312cf97f38f4511a516c68a840540639f0`，解压后 4,764,669,906 B；`engineVersion=step-0.3.3/b9d528531efcbd8cd97f0574d6ea4768adeaa3e3e96d21c3d7454b703ce686dd/gateway-1`、`viewerVersion=viewer-d3b39104ade22e6c11d15f8cd77e1a423e006cd1ba183d47d7e33fcdc149bb2e`、releaseDigest `a5806e13…`。服务端与 CAD 响应头的引擎版本一致。
+>
+> **清单 / 冒烟**：测试机 `RELEASE_MANIFEST.json` 原子替换为 228,393 B · `9d8c00e9bd3c…`，含 31 条增量记录。10 / 10 列出容器 healthy，cad / api / worker 重启计数 0；站点根、`/healthz`、`/readyz`、`quick-preview.js`、`drawing-viewer.js` 均 200，就绪四项探针通过，iPhone / Android UA 首页均 200。真实 34,385,320 B DWG（SHA-256 `bc45921ba82b…`）经测试机 CAD socket `/preview` 返回 200：`image/png`、220×123、6,926 B、SHA-256 `cf22b882e422…`；部署窗口内 fatal / panic / unhandled rejection 均 0。
+>
+> **验证边界 / 回滚**：快速概览只是低分辨率定位图，该 DWG 仍为 `partial`，不能据此宣称零缺损；本轮未重复浏览器完整上传、排队与切换交互，76 MiB 源文件仍因 `CAD_MAX_INPUT_MIB=64` 被拒绝。发布后根盘可用约 2.1 GiB，下一次大 CAD 镜像发布前需规划清理或扩容。回滚时恢复备份目录中的运行目录、`.env` 与发布前清单，再在 `/opt/libiaolink/deploy/prod` 使用基础 compose + CAD override 强制重建 `cad api worker`，不触数据库与正式机。
+
+> **2026-11-03 22:32 项目内内容秒传定档修复已部署测试机（正式生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）已增量发布 `test-20261103-2232-upload-resume-finalize-3c622411`。来源为 `origin/wmj@3c62241168b275f65fe18603291996cae4a04bc4` 加 `codex/cad-preview-async-paint` 工作树补丁；本轮只更新 `frontend/dist`，API / worker / server / shared / CAD / 数据库 / 依赖 / 环境 / 镜像均未改动，正式机 `10.1.103.44` 未触碰。
+>
+> **修复**：项目内内容秒传返回 `upload=null`、`reused=false` 时，`uploadFile` 在 `options.finalize=true` 时补调 `POST /api/v1/files/{id}/finalize`，确保秒传新建的 v1 进入定档流程；附件域 `reused=true` 仍直接复用既有文件、不重复定档。前端重新执行 `npm run typecheck` 与 `npm run build`，最终主包包含该接口调用。
+>
+> **发布件 / 远端目录**：`/srv/data/deploy-test-20261103-2232-upload-resume-finalize-3c622411/`。`frontend-dist.tar.gz`（22,092,767 B · `8125e6b9…` · 662 文件 / 27,447,906 B）；本地、测试机与公网关键文件哈希一致。备份 `/srv/data/backups/before-test-20261103-2232-upload-resume-finalize/`：原前端 22,130,860 B · `556b2e3b…`，原清单 203,086 B · `d40d87ab…`。
+>
+> **清单 / 冒烟**：测试机 `RELEASE_MANIFEST.json` 已原子替换为 207,559 B · `1c8f32d8…`，含 30 条增量记录。10 / 10 列出容器 healthy，API / worker 重启计数 0；站点根、`/healthz`、`/readyz`、`index-Btb8Z_2L.js`、CSS、Worker、查看器入口均 200，就绪四项探针通过，iPhone / Android UA 首页均 200。公网 `index.html` `13804d87…`、JS `ef71d863…`、CSS `df6b48aa…`、Worker `f3ee6882…` 与本地逐字节一致；14:32Z 后 API / worker / web / CAD 日志 error / fatal / exception / panic 均 0。
+>
+> **验证边界 / 回滚**：构建产物已确认包含 `POST /api/v1/files/{id}/finalize`，但本轮为增量发布，未创建临时业务任务重复“秒传 + 浏览器端定档”完整 E2E；上一轮 22:26 的 9 MiB 内容秒传 / 引用计数接口回放仍有效。回滚恢复备份前端 tar、原子替换备份清单并重启 `libiaolink-web`；不触数据库。
+
+> **2026-11-03 22:26 文件上传断点续传与项目内内容秒传已部署测试机（正式生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）已发布 `test-20261103-2226-upload-resume-dedup-3c622411`。来源为 `origin/wmj@3c62241168b275f65fe18603291996cae4a04bc4` 加 `codex/cad-preview-async-paint` 工作树补丁；本轮同时更新前端与 API/worker 的 `server/dist`，正式机 `10.1.103.44` 未触碰。
+>
+> **改动**：前端 SHA-256 改用独立 Worker，分片签名每批最多 32 片、固定 4 路有界并发并使用 `Blob.slice` 直传；刷新或断网后重选同一文件，按项目 + 哈希 + 名称 + 大小 + taskId 找回会话，只补 `missingPartNumbers`。普通上传完成使用项目内内容寻址键，事务内锁键 / HEAD，缺失才复制 staging；项目内同内容、同大小、同扩展名可秒传新建独立文件与 v1，返回 `upload=null`、不建上传会话。彻底删除按 `object_key` 引用计数保留共享对象，最后一个引用删除后才清物理对象；历史按文件 / 版本对象键继续可读。
+>
+> **发布件 / 远端目录**：`/srv/data/deploy-upload-resume-dedup-3c622411-20261103-2226/`。`frontend-dist.tar.gz`（22,093,118 B · `ed1dfab1…` · 662 文件 / 27,447,849 B）；`server-dist.tar.gz`（1,008,078 B · `1ea3f7b6…` · 630 文件 / 4,415,168 B）。本地、测试机暂存目录与运行目录关键文件哈希一致。备份 `/srv/data/backups/before-test-20261103-2226-upload-resume-dedup/`：原前端 22,129,866 B · `989ba551…`，原 server dist 1,008,127 B · `ed8c1ba1…`，原清单 194,202 B · `07d3c3ef…`。
+>
+> **清单 / 冒烟**：测试机 `RELEASE_MANIFEST.json` 已原子替换为 203,086 B · `d40d87ab…`，含 29 条增量记录。10 / 10 列出容器 healthy，API / worker 重启健康且重启计数 0；站点根、`/healthz`、`/readyz`、Worker 资源、`index-CzJ_jlUC.js`、`index-Ck-OIwT9.css`、查看器入口、iPhone / Android UA 首页均 200，就绪四项探针通过。公网 `index.html` `42dd28d4…`、JS `54f5f25f…`、CSS `df6b48aa…`、Worker `f3ee6882…` 与本地构建逐字节一致。
+>
+> **真实接口回放**：9,437,184 B / SHA-256 `06e4edbe…` 文件只先 PUT 第 1 片，`GET /files/{id}/uploads/{uploadId}` 返回已传 `[1]`、缺失 `[2]`；补 PUT 第 2 片后完成 v1。同内容第二次上传返回 `upload=null`、`reused=false`，生成独立文件与 v1，两条版本对象键均为 `projects/{projectId}/blobs/sha256/06/06e4edbe….txt`。删除第一条后共享对象下载仍为 200 且 SHA-256 一致；删除最后一条后原签名地址返回 S3 `NoSuchKey` 404。测试文件 / 版本 / 上传会话 / 临时登录会话均清零。部署后 API / worker / CAD 日志无 error / fatal / exception / panic；web 在 API 重启窗口记录 2 条预期 SSE 重连错误，14:27 后为 0。
+>
+> **边界 / 回滚**：正式生产未部署；本轮无数据库迁移、DDL、依赖、环境变量或镜像变化，不宣称 CAD “76MB 零缺损”。回滚时恢复备份中的前端 / server dist tar，原子替换备份清单，使用 `rsync --delete` 回写并重启 `libiaolink-api` / `libiaolink-worker`；不触数据库。
+
+> **2026-11-03 21:45 CAD 图纸内容默认收起已部署测试机（正式生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）已发布 `test-20261103-2143-cad-sidebar-default-e1f82611`。来源为 `origin/wmj@3c62241168b275f65fe18603291996cae4a04bc4` 加 `codex/cad-preview-async-paint` 工作树补丁；只发布前端，API / worker / CAD / server / shared / 数据库未动，`viewerVersion = viewer-d3b39104…`、`releaseDigest = 0f07f012…` 未变（改动位于 core 之外的静态入口）。正式机 `10.1.103.44` 未触碰。
+>
+> **交互改动**：CAD 查看器首次进入时“图纸内容”侧栏在所有屏幕尺寸下默认收起；宽屏 resize 不再自动展开，进入 `max-width:760px` 时自动收起。工具栏按钮仍可展开 / 收起，面板关闭按钮、遮罩与 Esc 行为保留。HTML 初始 `data-sidebar="closed"`、`aria-expanded="false"`，模块脚本也统一调用 `setSidebar(false)`，避免加载前闪现。
+>
+> **发布件 / 远端目录**：`/srv/data/deploy-cad-sidebar-default-e1f82611-20261103-2143/`。`frontend-dist.tar.gz`（22,089,177 B · `52d9536a…`）；本地、测试机与公网哈希一致。备份 `/srv/data/backups/before-test-20261103-2143-cad-sidebar-default-e1f82611/`：原前端 22,121,369 B · `f31d4954…`，原清单 187,278 B · `995dfaaf…`。
+>
+> **清单 / 验证**：测试机 `RELEASE_MANIFEST.json` 已原子替换为 194,202 B · `07d3c3ef…`，含 28 条增量记录。公网 `cad-viewer/index.html` 10,221 B · `aaa5cf37…`、`platform-entry.js` 21,600 B · `e1f82611…`、`core/drawing-viewer.js` 160,034 B · `c2450431…`；10 / 10 列出容器 healthy，站点根、`/healthz`、`/readyz`、查看器入口、iPhone / Android UA 首页均 200，就绪四项探针通过，部署窗口 web / API / worker / CAD 日志 error / fatal / exception / panic 0 命中。真实登录测试环境 34,385,320 B DWG 预览 `ready` 后验证侧栏默认 `closed` / `aria-expanded=false` / `display:none`，工具栏点击后 `open` / `true` / `flex`，再次点击恢复收起；本轮未重复几何绘制性能回归。
+>
+> **边界 / 回滚**：正式生产未部署；DWG 仍为 `partial`，不能宣称零缺损。本次无数据库迁移、无依赖或镜像变化。回滚时恢复备份前端 tar，使用备份清单原子替换，rsync 回写并重启 `libiaolink-web`；不触碰数据库。
+
+> **2026-11-03 21:35 CAD 首屏后立即放大调度已部署测试机（正式生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）已发布 `test-20261103-2130-cad-first-zoom-0f07f012`。来源为 `origin/wmj@3c62241168b275f65fe18603291996cae4a04bc4` 加 `codex/cad-preview-async-paint` 工作树补丁；`viewerVersion = viewer-d3b39104…`、`releaseDigest = 0f07f012…`、`engineVersion = step-0.3.3/385636ad…` 未变，CAD 镜像未重建。正式机 `10.1.103.44` 未触碰。
+>
+> **交互修复**：概览完成后，完整重绘不再立即抢占主线程，而是延迟 160 ms 后台补全；新滚轮、拖动、图层或空间变化会取消待补全任务。交互静默期由 140 ms 调整为 220 ms；当前视口绘制量达到 20,000 项时，缩放后的首轮重绘先发布粗 LOD 概览。Worker 与 Canvas 2D 两条路径一致。
+>
+> **发布件 / 远端目录**：`/srv/data/deploy-cad-first-zoom-0f07f012-20261103-2130/`。`frontend-dist.tar.gz`（22,089,156 B · `711a67e8…`）；本地、测试机与公网关键文件哈希一致。备份 `/srv/data/backups/before-test-20261103-2130-cad-first-zoom-0f07f012/`：原前端 22,119,456 B · `a3bc4eec…`，原清单 175,847 B · `965cc7e5…`。
+>
+> **清单 / 验证**：测试机 `RELEASE_MANIFEST.json` 已原子替换为 187,278 B · `995dfaaf…`，含 27 条增量记录。`drawing-viewer.js` 160,034 B · `c2450431…`、`app.js` 65,676 B · `d4e42fa8…`、`drawing-instances.js` 11,662 B · `8ec76144…`；10 / 10 列出容器 healthy，站点根、`/healthz`、`/readyz`、查看器入口、iPhone / Android UA 首页均 200，就绪四项探针通过，部署窗口 API / worker / CAD / web 日志 error / fatal / exception / panic 0 命中。
+>
+> **真实浏览器回归**：测试环境 34,385,320 B 业务 DWG（`fileId=79294d4d…`、`versionId=e0dcd1c2…`，`partial`）重新打开后 `overviewPaintMs=33,990`、`fullPaintMs=53,484`、`maxRefreshStepMs=7.2`、当前绘制量 98,907、`needRepaintPreview=true`，最终 `overviewPaint=complete`、`workerPaint=complete`、`instancePaint=complete`、无 `workerError`。概览出现后连续 5 次滚轮放大立即生效，状态按概览、补细节、完成推进，约 7.9 秒完成细节补齐；自动化输入窗口包含测试工具开销，不作为帧率或固定 SLA。
+>
+> **边界 / 回滚**：正式生产未部署；DWG 仍为 `partial`，不能宣称零缺损；本次未重载 API / worker / CAD，无数据库迁移，不缩短 DWG 下载、解包和 UCD 重建时间。回滚时恢复备份前端 tar，使用备份清单原子替换，rsync 回写并重启 `libiaolink-web`；不触碰数据库。
+
+> **2026-11-03 20:18 CAD 大 DWG 首导性能补丁已部署测试机（正式生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）已发布 `test-20261103-2021-cad-result-file-d5f3aef`。来源为 `origin/wmj@3c62241168b275f65fe18603291996cae4a04bc4` 加 `codex/cad-preview-async-paint` 工作树补丁；`releaseDigest = d5f3aef7…`、`engineVersion = step-0.3.3/385636ad…`、DWG format `dwg-0.1.0/fdd7433b…`；CAD 镜像 `libiaolink/cad-sandbox:1.0.1-cad-result-file-d5f3aef-20261103-2021@sha256:28022472…`。正式机 `10.1.103.44` 未触碰。
+>
+> **链路改动**：DWG 一次性 worker 将 manifest 直接写入父进程结果文件，stdout 仅保留失败兜底，避免 122 MB 二次管道复制；写完立即退出，临时目录由父进程回收。大几何 buffer 先校验并落到任务临时文件，再按单个串行 PUT 持久化；压缩副本使用 Brotli quality 1，完整性等待改为 180 秒空闲超时。规范 JSON 片段合并、相对 buffer 文件名和父进程直接复用 worker manifest 字节继续保留。未改前端、鉴权、下载、字体或对象路由。
+>
+> **真实复测（同一任务 `f9bb41f1-0074-4142-9654-5b80861788b1`）**：源 DWG 7,623,968 B（SHA-256 `6ef3c195…`），manifest 122,573,052 B、总产物 248,610,396 B；转换阶段 native records 26.844s、sealed 105.555s、contract+binary validated 200.602s、packed 212.807s、artifact written 247.211s；任务相对 `workerCompleted = 323.986s`、`validationCompleted = 433.139s`、`artifactCommitted = 433.335s`，随后对象存储落库，最终约 7 分 51 秒。主瓶颈是 DWG→UCD 组装、父进程完整校验和对象存储，不是 7.6 MB 源文件；本次没有把 DWG `partial` 说成零缺损，也不承诺固定秒数。
+>
+> **发布件 / 远端目录**：`/srv/data/deploy-test-20261103-2021-cad-result-file-d5f3aef/`。`cad-sandbox-1.0.1-cad-result-file-d5f3aef.tar.gz`（1,034,268,205 B · `1df3816c…`）、`server-dist.tar.gz`（1,002,689 B · `290a515f…`），本地与远端哈希一致。回滚备份 `/srv/data/backups/before-test-20261103-2021-cad-result-file-d5f3aef/`（原 `.env`、`server-dist`、`RELEASE_MANIFEST.json`）。
+>
+> **清单 / 验证**：测试机 `RELEASE_MANIFEST.json` 已原子替换为 175,847 B · `965cc7e5…`，含 26 条增量记录。`api`、`worker`、`cad`、`web`、`minio`、`postgres` 六个核心容器 healthy；公网 `/healthz` / `/readyz` 均 200，四项就绪探针通过。桌面、iPhone、Android UA 的首页均 200，`/cad-viewer/platform-entry.js` 均 200，未登录 API 401。API 重建后容器 IP 变化导致 nginx 短暂 502，已仅重启 `web` 刷新上游，未改 nginx 配置；重启后恢复 200。
+>
+> **边界 / 回滚**：正式生产未部署；登录后的真实手机 CAD 导入/预览仍需公司账号复验，公网静态入口 smoke 不能替代真机业务验收。回滚时恢复备份 `.env` 指向 `1.0.1-cad-first-import-perf-607603aa-20261103-1946@sha256:eb9949b5…`、恢复备份 `server-dist`，用同一 overlay 重建 `cad/api/worker` 并刷新 `web`；不触碰数据库。
+
+
+> **2026-11-03 18:50 CAD 首开并行资源预取与主线程微优化已部署测试机（正式生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）已发布 `test-20261103-1850-cad-entry-prefetch-fc4a4d60`。来源为 `origin/wmj@3c62241168b275f65fe18603291996cae4a04bc4` 加 `codex/cad-preview-async-paint` 工作树补丁；前端 `viewerVersion = viewer-d66e51db…`、`releaseDigest = fc4a4d60…`，引擎 `6c98f200…` 与 CAD 镜像未变。正式机 `10.1.103.44` 未触碰。
+>
+> **首开优化**：完成态任务状态新增只会发布 lease、buffer SHA-256 与 byteLength 的资源摘要（最多 256 项，不返回对象存储 key）；查看器在任务就绪后立即并行预取最多 4 个几何 buffer，manifest 下载与几何下载不再串行。预取命中仍执行 manifest 引用、长度与 SHA-256 校验，失败或取消回退受控资源路由并释放 lease。二维重建同时移除 16 万 draw 的临时 `Object.entries`、重复样式计算与重复文字测量，无裁剪路径复用冻结空区域；本地 76 MB harness 的主线程重建约改善 4–8%。
+>
+> **发布件 / 远端目录**：`/srv/data/deploy-cad-entry-prefetch-fc4a4d60-20261103-1850/`。`frontend-dist.tar.gz`（22,088,810 B · `91452017…`）、`server-dist.tar.gz`（1,002,233 B · `86d7e7fd…`）、`shared-output.tar.gz`（375,685 B · `a5096000…`）；本地与远端哈希一致。备份 `/srv/data/backups/before-test-20261103-1850-cad-entry-prefetch-fc4a4d60/`（前端 22,120,126 B · `5c19ae46…`、原清单 158,872 B · `21c367fe…`）。
+>
+> **清单 / 一致性**：测试机 `RELEASE_MANIFEST.json` 已原子替换为 173,094 B · `e923d586…`，含 25 条增量记录。公网与容器静态哈希一致：`cad-viewer/index.html` 10,198 B · `cb7a3b65…`、`platform-entry.js` 21,599 B · `a40df98d…`、`platform.css` 14,490 B · `edf926d9…`、`core/app.js` 65,468 B · `00211361…`、`core/drawing-viewer.js` 154,022 B · `363cbaeb…`、`core/dwg-packed-transport.js` 6,388 B · `36fad783…`、`assets/index-BnyXnVQq.js` 2,023,713 B · `f4d3f3ae…`。10 / 10 容器 healthy；站点根、`/healthz`、`/readyz` 均 200，`/readyz` 四项探针通过；API 与 worker 重启后近 15 分钟 error / fatal / exception 扫描为空。
+>
+> **真实浏览器状态**：34,385,320 B 业务 DWG（`fileId=7f18b3a7…`、`versionId=a7be31b9…`，任务 `partial`）已确认 7,604,739 B br manifest 与 9,199,128 B br 几何 buffer 在 300 ms 内并行发起（API 1,511 ms / 1,815 ms）；浏览器两次 `packedUnpacked → buffersHydrated` 为 291 / 338 ms，旧链路同一视图约 1,069 ms。前台 `readyPaint` 两次为 11.3 s / 15.3 s，仍由 1,478,198 绘制项与运行设备主导，不能承诺固定秒数。
+>
+> **边界**：正式生产未部署；测试库无 76 MB 源 DWG，34 MB 业务文件本身为 `partial`，不能宣称零缺损。首屏几何传输已并行化，但首次“按屏幕重建”和 200,000 项以上主线程分帧仍需专项压测；本轮不修改 CAD 镜像、不执行数据库迁移。
+
+> **2026-11-03 16:38 CAD 大图首开优化已部署测试机（正式生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）已发布 `test-20261103-1638-cad-first-paint-f790edd4`。来源为 `origin/wmj@3c62241168b275f65fe18603291996cae4a04bc4` 加 `codex/cad-preview-async-paint` 工作树补丁；前端 `viewerVersion = viewer-936fa59d…`、`releaseDigest = f790edd4…`，引擎 `6c98f200…` 与 CAD 镜像未变。正式机 `10.1.103.44` 未触碰。
+>
+> **首开优化**：大图首次打开在加速可用且绘制量不超过 200,000 时优先使用后台 Worker 完整首帧，不再因尚无预览强制走主线程；Worker 启动、字体初始化或提交失败回退主线程分帧绘制，`ready` 等待实际首帧且失败路径可收口。显示行复用 `representationId`，投影阶段去除约 14.9 万次重复 SHA-256；同一真实 Manifest 的 Node 投影 1,443 → 727 ms。首帧 `Path2D` 改为按需创建，去掉 163,000 个 draw 的重复 `sort`，并保持源 `drawOrder`。
+>
+> **发布件 / 远端目录**：`/srv/data/deploy-cad-first-paint-f790edd4-20261103-1638/`。`frontend-dist.tar.gz`（22,090,201 B · `27f0f87c…`）；本地、远端、公网哈希一致。备份 `/srv/data/backups/before-test-20261103-1638-cad-first-paint-f790edd4/`（前端 27,435,920 B · `aebcdefe…`、原清单 145,637 B · `ed4481a1…`）。
+>
+> **清单 / 一致性**：测试机 `RELEASE_MANIFEST.json` 已原子替换为 158,872 B · `21c367fe…`，含 24 条增量记录，并补记 15:58 / 16:07 / 16:17 / 16:33 四个中间构建。公网与容器静态哈希一致：`cad-viewer/index.html` 10,198 B · `cb7a3b65…`、`platform-entry.js` 20,063 B · `329989ab…`、`platform.css` 14,490 B · `edf926d9…`、`core/app.js` 65,468 B · `00211361…`、`core/drawing-viewer.js` 153,188 B · `54230941…`、`core/dwg-packed-transport.js` 11,233 B · `e7a91bfb…`、`assets/index-BnyXnVQq.js` 2,023,713 B · `f4d3f3ae…`。10 / 10 容器 healthy；站点根、`/healthz`、`/readyz` 均 200，`/readyz` 四项探针通过。
+>
+> **真实浏览器状态**：34,385,320 B 业务 DWG（`fileId=7f18b3a7…`、`versionId=a7be31b9…`，任务 `partial`）已确认 `data-workerPaint=complete`、`data-instancePaint=complete`、无 `data-workerError`，14 个 Worker 分块内部合计 1,038 ms、6,732 次 stroke / 37,565 段，画面完整。复测标签页处于最小化 Chrome 窗口，rAF 被节流；后台 `refreshTotalMs=14,134.6 ms`、`readyPaint=25,518.6 ms` 不能视为前台墙钟结果，前台首开复测仍待完成。
+>
+> **边界**：测试库无 76 MB 源 DWG；34 MB 文件本身为 `partial`，不能宣称零缺损。后台 Worker 仍有 200,000 绘制项上限；首次「按屏幕重建」与超大图仍需专项压测。本轮只发布前端，未重建 API / worker；下次服务端发布须重新生成并一起部署 `cad-release.ts`。
+> **2026-11-03 15:12 CAD 预览交互修复已部署测试机（正式生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）已发布 `test-20261103-1512-cad-preview-controls-38e9b001`。来源为 `origin/wmj@3c62241168b275f65fe18603291996cae4a04bc4` 加 `codex/cad-preview-async-paint` 工作树补丁；`viewerVersion = viewer-5cff5524…`、`releaseDigest = 38e9b001…`，`engineDigest = 6c98f200…` 未变，CAD 镜像未重建。正式机 `10.1.103.44` 未触碰。
+>
+> **交互修复**：预览打开时锁定背景滚动并在关闭后恢复；DWG「部分显示」提示约 2 秒自动关闭，新增手动关闭按钮；移除 CAD iframe 原生 `title`，消除鼠标悬停文件名提示卡；标题栏新增全屏按钮，并处理全屏状态同步及退出全屏后的 Esc 防误关。
+>
+> **发布件 / 远端目录**：`/srv/data/deploy-cad-preview-controls-38e9b001-20261103-1512/`。`frontend-dist.tar.gz`（22,088,856 B · `672a04f8…`）、`server-dist.tar.gz`（999,630 B · `ccd07843…`）、`shared-output.tar.gz`（375,273 B · `ff21f344…`）；本地与远端哈希一致。备份 `/srv/data/backups/before-test-20261103-1507-cad-preview-controls-38e9b001/` 与前端热更前 `/srv/data/backups/before-test-20261103-1512-cad-preview-controls-38e9b001/`。
+>
+> **清单 / 一致性**：测试机 `RELEASE_MANIFEST.json` 已原子替换为 145,637 B · `ed4481a1…`，含 23 条增量记录。公网与容器静态哈希一致：`cad-viewer/index.html` 10,131 B · `845b4d65…`、`platform-entry.js` 19,391 B · `c6c87bfa…`、`platform.css` 14,490 B · `edf926d9…`、`core/app.js` 65,157 B · `46b31f08…`、`assets/index-Dukhvtuf.js` 2,023,546 B · `ef730e12…`。10 / 10 容器 healthy；站点根、`/healthz`、`/readyz` 均 200，`/readyz` 四项探针通过。
+>
+> **真实浏览器回归**：34,385,320 B 业务 DWG（`fileId=7f18b3a7…`、`versionId=a7be31b9…`，任务 `partial`）确认 iframe 悬停提示消失、背景滚动锁定与恢复、黄色提示自动隐藏约 1,925 ms、手动关闭约 42 ms。Playwright / 扩展对原生全屏的自动化点击会立即释放全屏焦点，`document.fullscreenElement` 不能稳定保持，因此全屏进入 / 退出按钮和 Esc 行为仍需真实 Chrome 人工点按确认。
+>
+> **边界**：测试库无 76 MB 源 DWG；34 MB 文件本身为 `partial`，本轮不能宣称为零缺损。首次「按屏幕重建」的秒级长任务仍属既有性能边界，不由本轮交互修复覆盖。
+
+> **2026-11-02 14:13 CAD 三维返回与图纸空间切换修复已部署测试机（bc185336；正式生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）已增量发布 `test-20261102-1413-cad-viewer-space-fix-bc185336`。来源仍为 `3c62241168b275f65fe18603291996cae4a04bc4` 加 `codex/cad-preview-async-paint` 工作树补丁；`engineVersion = step-0.3.3/6c98f200…/gateway-1`、`viewerVersion = viewer-bcf9bd8f…`、`releaseDigest = bc185336…`，引擎未重建，继续使用 13:35 的 CAD worker-canvas 镜像 `libiaolink/cad-sandbox:1.0.1-cad-worker-canvas-3c622411-20261102-1335@sha256:bdb9fac2…`。正式机 `10.1.103.44` 未触碰。
+>
+> **修复**：三维网格画布从内容层 z-index 1、状态条 2 放置，右侧图纸面板保持 z-index 3，解决三维视图遮住“二维图纸”按钮导致无法返回；三维文案明确“仅显示已解析的面/网格，不包含普通二维线条、文字、标注，不作为加工/验收依据”。同一图纸空间重复点击直接返回；模型空间 / 布局空间按“空间 + 显示模式 + 打印样式 + 文字避让”缓存最近两份状态，模式与空间往返复用缓存和解析结果。首次“按屏幕重建”仍需采样源曲线，不能宣称零卡顿。
+>
+> **发布件 / 远端目录**：`/srv/data/deploy-cad-viewer-space-fix-bc185336-20261102-1413/`。`frontend-dist.tar.gz`（22,087,348 B · `98343fb5…`）、`server-dist.tar.gz`（999,669 B · `6a85201a…`）、`shared-output.tar.gz`（375,273 B · `b4eec4d6…`）；本地与远端哈希一致。备份 `/srv/data/backups/before-test-20261102-1413-cad-viewer-space-fix-bc185336/`，保留 `/opt/libiaolink/frontend/dist.before-20261102-1413`、`server/dist.before-20261102-1413`、`shared/dist.before-20261102-1413`、`shared/generated.before-20261102-1413`。
+>
+> **部署故障与处置**：首次覆盖后 `libiaolink-web` 仍挂载重命名前的旧 dist（容器内 drawing-viewer 为旧哈希）；`docker restart libiaolink-web` 后刷新 bind mount，无需 force-recreate。公网 `drawing-viewer.js = 4a390448…`、`drawing-mesh-viewer.js = f3bf2a41…`、`core/app.js = 24f01e00…`、`platform-entry.js = 3d6f5861…`，与本地构建一致；10 / 10 容器 healthy，站点根、`/healthz`、`/readyz` 均 200，`/readyz` 四项探针通过。
+>
+> **真实浏览器回归**：临时账号会话注入后，在真实 Chromium 以鼠标操作 34,385,320 B 业务 DWG（`fileId=7f18b3a7…`、`versionId=a7be31b9…`）复验；任务为 `partial`，显示 `1,476,332 / 1,478,198` 个绘制项，页面 error 0、console error 0、网络请求失败仅一例已完成/取消的资源传输（`ERR_ABORTED`）。实测：3D 打开 147–177 ms、3D → 2D 81–98 ms；模型 / 布局往返 110–378 ms；首次“按屏幕重建”4.3–4.6 s（主线程长任务约 4.2–4.5 s），重复模式切换 214–249 ms，analytic 下模型 / 布局往返 126–224 ms。首次 analytical 卡顿仍存在，后续 Worker / 分片治理另行处理。
+>
+> **清单与边界**：`RELEASE_MANIFEST.json` 已原子更新为 136,419 B · `7a9d1cce…`（历史增量 22 条，补记 13:35 worker-canvas 与本次 14:13）。测试库没有 76 MB 源 DWG，34 MB 业务图本身为 `partial`（字体仍为 partial），不能外推为零缺损或任意大图承诺；浏览器回归使用临时会话，结束后已撤销并清理。正式生产未部署；资源上限与 76 MB 样本仍需 ADR-036 评审。
+
+> **2026-11-02 11:29 CAD 大图浏览器性能补丁已部署公司测试机（3c622411 + 工作树补丁）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）已从 `test-20261102-dwg-memory-7e023ff1-1013` 升级为 `test-20261102-cad-viewer-async-3c622411-1125`。来源提交 `3c62241168b275f65fe18603291996cae4a04bc4`（源码树 `00fc8119…`，与 `origin/main@6dd74377` 相同）加 `codex/cad-preview-async-paint` 未提交工作树补丁；本轮保留测试机已有的 DWG 5 GiB / 3584 MiB 内存修复，并重新生成与源码匹配的 CAD 发布身份。正式机 `10.1.103.44` 未触碰。
+>
+> **发布件 / 镜像**：远端目录 `/srv/data/deploy-cad-viewer-async-3c622411-20261102-1125/`。`frontend-dist.tar.gz`（22,096,478 B · `f5014986…32be`）、`server-dist.tar.gz`（1,000,889 B · `413ff578…09c3`）、`shared-output.tar.gz`（375,983 B · `714c1b86…99f9`）与 CAD 镜像归档 `cad-sandbox-1.0.1-cad-perf-3c622411.tar.gz`（1,034,268,215 B · `27edc3a2…4de0`）上传后远端哈希一致。CAD 镜像 `libiaolink/cad-sandbox:1.0.1-cad-perf-3c622411-20261102@sha256:c0bcbd4e29022203ef039117d16f859850d3f23a249f488b704e8b281be98b14`（4,764,646,926 B）。
+>
+> **版本**：`engineVersion = step-0.3.3/f15a40f5957e822fd053a53ae5886f9f83d520c1791b07944ddfdb518fa34738/gateway-1`；`viewerVersion = viewer-aa5e22d1f4e3ef7b6747ce07011cf43d6e278dd6fba9ae08b0f72c88c44fa6cc`；`releaseDigest = 987c63115ffd720657433c407b713c1f81af6a176caf7642bb420b3d07529759`；DWG 格式版本保持 `dwg-0.1.0/5d640ed8…/gateway-1`。API 与 CAD 容器上报的 `engineVersion` 一致。
+>
+> **验收 / 边界**：10 / 10 容器 healthy；站点根、`/healthz`、`/readyz` 均 200，readyz 四项探针全过；`/cad-viewer/core/drawing-viewer.js` 200 且 SHA-256 `e12968e6…9af7` 与本地构建一致。真实既有 DWG 经 API 创建临时视图和任务，终态 `partial`、产物 145,268,685 B、manifest 69,197,685 B、`ucd-binary-manifest/1`；临时 session / cad view 已清理。api / worker / CAD 近 15 分钟 ERROR / FATAL / exception / panic 匹配 0。API 容器重建后 Nginx 曾缓存旧上游地址返回 502，`nginx -t` 通过并 reload 后恢复；本次未执行数据库迁移。真实账号浏览器首屏、缩放/图层/点选和 76MB 文件仍需复验，不能把本地合成基准外推为任意大图承诺。仅测试机部署，正式生产未部署。
+>
+> **回滚**：备份 `/srv/data/backups/before-test-20261102-cad-viewer-async-3c622411-1125/`，含前后端 / shared tar、`.env.before`、`server.env.before`、原 manifest、CAD compose 和当前镜像 ID。恢复备份文件与 `.env` 后，切回 `libiaolink/cad-sandbox:1.0.1-dwg-7e023ff1-mem2@sha256:d379319c7309d44090f4a351dec60bbd9656424e6caf15685923e8d4619b2340`，以基础 compose + CAD overlay 重建 `cad` / `api` / `worker` 并 reload `web`；无数据库回退。
+>
+> **测试机清单**：`RELEASE_MANIFEST.json` 已原子替换为 121,586 B · `299dbf5b7e7ec056d03ddf5c6f07c822e19d70007271bd7a2b8579381d497eb0`（历史 20 条，`target.host=10.1.104.44`）。
+
+> **2026-11-02 10:13 公司测试机 DWG 大文件内存预算修复并完成真实业务文件复验（wmj@7e023ff1 + 未提交修复；正式生产未部署）**：测试环境 `https://test-pm.libiaorobot.com`（`10.1.104.44`）。当日上午首发的 `test-20261102-dwg-preview-7e023ff1-0912` 在真实 `01-LBGW-20260331-1459  英国-VANILLA-飞箱项目-Layout-启动会后版本06-更新货架立柱尺寸.dwg`（34,385,320 B，SHA-256 `bc45921ba82bff24204ae525d4e6b581c316cae489011bd25a6b9a397164a52b`）上触发 `job-memory-quota`；原失败 artifact `5685e0b1-c860-4e44-9285-f35c2c25e68e` 保留。隔离基线确认 worker 进程树峰值 2,978,451,456 B、cgroup 峰值 3,291,672,576 B，原 3 GiB 容器 / 2.5 GiB DWG worker 档位不足。
+>
+> **修复与发布**：CAD 容器改为 5 GiB / swap 0 / 1 CPU / 64 PIDs / 禁网，`sandbox.py` 自检同步接受 5 GiB，DWG worker RSS 采样改为 3,584 MiB，结果 / 产物上限仍 512 MiB；重新生成 CAD release digest 并重建 server。首次只改 Compose 被自检拒绝，修正代码后以最终镜像重新部署，没有绕过门禁。最终发布 `test-20261102-dwg-memory-7e023ff1-1013`，镜像 `libiaolink/cad-sandbox:1.0.1-dwg-7e023ff1-mem2@sha256:d379319c7309d44090f4a351dec60bbd9656424e6caf15685923e8d4619b2340`，release `5f117dec3c5ea6910b97ac517401c1720ec852037cb8cef58c1ab4436dbc7521`，engine `step-0.3.3/e3a20b2799ab0c06c843efa60cb6ea03a15caa81fc0c59c81d6b515d511c3931/gateway-1`；server `npm run typecheck` / `npm run build` 通过。
+>
+> **发布件与清单**：`/srv/data/deploy-dwg-memory-7e023ff1-20261102-1013/` 内 `server-dist.tar.gz`（999,668 B · SHA-256 `d32f66ba7c74f42887a41b63139cf9ff9fb307464ec4d4c157974233668165d7` · 628 文件 / 4,377,518 B）、`cad-sandbox-1.0.1-dwg-7e023ff1-mem2.tar.gz`（1,034,260,922 B · `711dd3d4f25b94daa7dd658ab672c0dd26ca62f56e4500950ce0f6b961d59375`）、`cad-docker-compose.yml`（2,143 B · `30769e07efa0b5adb45f919deabfdd730f605362184ce00b2ad3789c7d33eef1`）；远端逐项哈希一致。测试机 manifest 已原子替换为 `test-20261102-dwg-memory-7e023ff1-1013`（109,467 B · `125ebc84d76d8cf86c9974c03bbecdbc27c7bbafaba49ebe1c3c05b579cab7a7`，历史 19 条）。
+>
+> **备份**：`/srv/data/backups/before-dwg-memory-7e023ff1-mem1-20261102-0956/`，含原 manifest `61927d43cd2991a4ef5199b3c29ff1bb80d857f62d2e44c6fa83518e19926270`、server dist tar `f49156a827b9aa56776de40476bf00eb5b0a1e6e3a78b98c89092dd9a026a041`、prod `.env` `3c62ffeb71f2e87c9327c51118a411dadae96916152dceffed8e4c4416cf2dea`、server.env `4c7e824db545721750930be07513f1bb4c90b18ded5caa6fd8800e96f9014edf`、原 CAD Compose `e9214ca3d1238d56654bcc8c821d96a779c4ef050a85616d15ced165df1d15d0`。
+>
+> **验收**：`api` / `worker` / `cad` 均 healthy、restart count 0，9 / 9 个列出容器 healthy；公网 `/healthz` / `/readyz` 200；CAD `memory.max=5,368,709,120`、`memory.swap.max=0`、`pids.max=64`、`network=none`、根目录只读；cgroup `memory.peak=3,477,983,232 B`，`oom=0` / `oom_kill=0`。同一业务文件经临时公司账号会话重新创建 view / job：最终 `partial`，artifact `b316ed8c-2529-4db8-8118-da64b23a26a8`，产物 145,268,685 B、manifest 69,197,685 B、`transportProfile=ucd-binary-manifest/1`、端到端 386.312 秒、`error=null`；临时 session / view 已清理，原文件、原版本和原失败记录未动。近 20 分钟 api / worker / CAD 的 `ERROR/FATAL/Unhandled/exception/panic/oom` 计数均为 0。
+>
+> **边界**：正式机 `10.1.103.44` 未触碰；测试机旧 DWG 镜像已移除但原归档仍保留，可回滚。正式生产采用 5 GiB / 3.5 GiB 档位前须按 ADR-036 完成容量与整机预算评审。真实账号浏览器视觉 / 交互复验仍待补。
+
 > **2026-10-30 11:40 项目总览导出三语缓存与非阻塞预览已发布正式机（px@03983122 + 工作区发布；已提交 `a668f47a` · PR [#715](https://github.com/PanXing-Libiao/LibiaoLink/pull/715)）**：正式环境 `https://pm.libiaorobot.com`（`10.1.103.44`）已更新。保存链路预热由仅英文扩为英 / 日 / 韩，按目标语言 + 原文去重、并发 4、命中即跳过；项目详情到达后 600ms 在后台预热正式导出同批文本的三语缓存（每语言并发 2），不再只预热当前界面语言。导出设置首屏 A4 分页就绪后立即撤掉白色遮罩，已有译文先显示、其余逐条原位补全并在顶部显示进度；正式导出仍等待最终译文。标题、版式、折叠字段、10 列表头均未改。
 >
 > **发布包与清单**：`output/prod-20261030-overview-export-cache-px03983122-20261030-1140/frontend-dist.tar.gz`（15,455,576 B · SHA-256 `ef33b9cbc625f38eed85152ba0b78e9b2874404c2bedbdf5142b48b6dd1573cd` · 389 文件 / 20,463,014 B）上传至 `/srv/data/backups/project-overview-export-cache-prod-20261030-1140/` 后远端哈希一致；公网 `index.html` / `assets/index-CeRFxt_E.js` / `assets/index-CDAGmqKb.css` / `assets/overviewPreviewPaged-BSabBLcF.js` 均 200，并与构建文件逐字节一致。服务端只替换 `/opt/libiaolink/server/dist/modules/translate/translate.service.js`（16,760 B · SHA-256 `65dc0a548e4a6b2547628ff8fbca957247a0e5f6e83c0b8b166cb4058ce2118f`），未带工作区中无关的 project-export 改动。部署前备份 `/srv/data/backups/before-project-overview-export-cache-prod-20261030-1140/` 含原 frontend dist（403 文件 / 42,931,744 B · tar 21,930,773 B · SHA-256 `4368c02183dd1399cfff194b3dc33f7cba673767d94b337df1ed4fe56bcc7abe`）、原 manifest（62,556 B · `b5533aed2594224eb79b5c7487d840f50ff1c266c6a29d58b8f9fe3b7938ba10`）与原 translate 编译件（`8a6500c4b69c4fdf89e49caf8d663f31536739405b3610a3e080a0bc65181084`）。正式清单 `prod-20261030-overview-export-cache-px03983122-20261030-1140` 已原子替换（69,539 B · SHA-256 `72e1d679e39723636c4733a443154264130c75f6657df6a69a072868da2e8b63`，历史 16 条）。

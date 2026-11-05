@@ -1,0 +1,13 @@
+{
+  "formats": {
+    "STEP": [
+      "step-0.3.3/b5f89279cddc47c26566bd138e4d6bf3e6abdd64b2abc6dc1effbe5370134512/gateway-1"
+    ],
+    "DXF": [
+      "dxf-0.15.0/84c73aa6277e1c70d3ae88b52c8be04e4ab045da8449ace5276dc0078a8dc47e/gateway-1"
+    ],
+    "DWG": [
+      "dwg-0.1.0/fdd7433b4a757f28a066b816b3230da860eefd52a5ca20d00b5887f72d382f5e/gateway-1"
+    ]
+  }
+}

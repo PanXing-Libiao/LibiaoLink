@@ -1,5 +1,5 @@
 /** Transport profile, independent of the UCD 2.0 document contract. */
-export async function hydrateBinary(manifest,{signal,fetcher=fetch}={}){
+export async function hydrateBinary(manifest,{signal,fetcher=fetch,prefetched=new Map()}={}){
  if(manifest.transportProfile!=='ucd-binary-manifest/1'||manifest.document?.schemaVersion!=='2.0.0')throw new Error('Unknown binary profile');
  const token=manifest.resourceLease;
  if(!/^[a-f0-9]{48}$/.test(token))throw new Error('Invalid resource lease');
@@ -11,8 +11,10 @@ export async function hydrateBinary(manifest,{signal,fetcher=fetch}={}){
   for(const [id,b] of Object.entries(defs)){
    signal?.throwIfAborted();const ref=refs[id];
    if(!/^[a-f0-9]{64}$/.test(b.sha256)||!ref||ref.url!==`/api/resources/${token}/${b.sha256}`||ref.sha256!==b.sha256||ref.byteLength!==b.byteLength)throw new Error('Invalid resource reference');
-   const response=await fetcher(ref.url,{signal});if(!response.ok)throw new Error('Resource unavailable');
-   const raw=await response.arrayBuffer();if(raw.byteLength!==b.byteLength)throw new Error('Buffer length mismatch');
+   const ready=prefetched.get(b.sha256);let raw=null;
+   if(ready!==undefined)try{const value=await ready;if(value?.byteLength===b.byteLength)raw=value;}catch{}
+   if(raw===null){const response=await fetcher(ref.url,{signal});if(!response.ok)throw new Error('Resource unavailable');raw=await response.arrayBuffer();}
+   if(raw.byteLength!==b.byteLength)throw new Error('Buffer length mismatch');
    const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',raw)),x=>x.toString(16).padStart(2,'0')).join('');
    if(hash!==b.sha256)throw new Error('Buffer hash mismatch');buffers.set(id,raw);
   }

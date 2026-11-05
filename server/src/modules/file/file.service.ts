@@ -36,10 +36,13 @@ import type { DbClient, DbTransaction } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { appendOutbox, appendOutboxIfAbsent } from "../../db/outbox.js";
 import {
+  buildBlobObjectKey,
   buildObjectKey,
   buildUploadStagingKey,
+  extensionOf,
   missingPartNumbers,
   ObjectStorage,
+  type ObjectHead,
   planUpload,
   toApiError,
 } from "../../storage/index.js";
@@ -60,6 +63,9 @@ import { PreviewRepository } from "./preview.repository.js";
 import { buildPreviewJobPayload, PREVIEW_JOB_TOPIC, previewJobDedupeKey } from "./preview.job.js";
 import { previewTargetsFor } from "./preview.targets.js";
 import { inspectUploadedObject } from "./upload-integrity.js";
+
+/** 事务内二次 HEAD 发现共享对象已消失：回滚刚建的草稿文件，由调用方走普通上传。 */
+class InstantBlobUnavailableError extends Error {}
 
 type UploadCreateBody = z.infer<typeof UploadCreateBodySchema>;
 type UploadPartsBody = z.infer<typeof UploadPartsBodySchema>;
@@ -239,6 +245,34 @@ export class FileService {
         const file = await this.repository.findFileById(reusable.fileId);
         if (file !== null) {
           return { file: toFileView(file), upload: null, reused: true, duplicateHint: toDuplicateHint(reusable) };
+        }
+      }
+    }
+
+    // 项目内内容秒传（2026-11-03）：目标为新建文件时，同项目已有同内容 / 同大小 / 同扩展名对象，
+    // 直接在事务内建新文件与版本引用同一对象，不创建上传会话、不重复传输。事务内锁对象键 + HEAD，
+    // 避免与回收站清理并发；对象若在边界消失则回滚草稿文件并继续普通分片上传。
+    if (body.intent === "version" && target === null && body.contentHash !== undefined) {
+      const reusableBlob = await this.repository.findReusableVersionByHash(
+        body.projectId,
+        body.contentHash,
+        body.sizeBytes,
+        extensionOf(effectiveName),
+      );
+      if (reusableBlob !== null) {
+        const instantFile = await this.tryCreateInstantUpload({
+          projectId: body.projectId,
+          blob: reusableBlob,
+          name: effectiveName,
+          sizeBytes: body.sizeBytes,
+          taskId: effectiveTaskId ?? null,
+          nodeId: effectiveNodeId ?? null,
+          docType: effectiveDocType,
+          actorId,
+          at: this.clock.now(),
+        });
+        if (instantFile !== null) {
+          return { file: toFileView(instantFile), upload: null, reused: false, duplicateHint: null };
         }
       }
     }
@@ -449,10 +483,9 @@ export class FileService {
       ]);
     }
 
-    // 契约键（ADR-006：v{seq}/{contentHash}.{ext}）：先复制再落库 —— 若数据库事务失败，重试会覆盖同一个键，
-    // 不留「落库版本指向不存在对象」的悬挂引用；seq 在事务内锁行复核，防并发完成抢同一位次。
-    // Push 256：change 意图采纳「变更后文件名称」（会话 change_payload.fileName）—— 对象键 / 存储元数据 / 完成
-    // 事务内的 files.name 全部随新名称（扩展名随之上新）；历史版本对象键不动，按各自扩展名预览 / 下载（preview-read / download 同口径）。
+    // 内容寻址键（2026-11-03）：同项目、同内容、同扩展名共享对象；复制放在落库事务内，失败时版本不会指向
+    // 不存在的对象。Push 256：change 意图采纳「变更后文件名称」—— 对象键扩展名 / 存储元数据 / files.name
+    // 随新名称更新；历史版本对象键不动，按各自扩展名预览 / 下载（preview-read / download 同口径）。
     const changePayload = isChange ? readChangePayload(session.changePayload) : null;
     const effectiveName = changePayload?.fileName ?? file.name;
     const inspected = await inspectUploadedObject(this.storage, stagingKey, head.sizeBytes, MIME_SNIFF_BYTES);
@@ -474,19 +507,9 @@ export class FileService {
     }
     const contentHash = inspected.contentHash;
     const versionMime = type.mime;
-    const seq = await this.repository.nextVersionSeq(fileId);
-    const objectKey = buildObjectKey({ projectId: file.projectId, fileId, seq, contentHash, fileName: effectiveName });
-    try {
-      await this.storage.copyObject({
-        sourceKey: stagingKey,
-        destinationKey: objectKey,
-        // H1 · S2：原对象统一按不透明字节保存，浏览器投递类型只由服务端签名响应覆盖。
-        contentType: OCTET_STREAM_MIME,
-        metadata: { "file-name": encodeURIComponent(effectiveName) },
-      });
-    } catch (error) {
-      throw toApiError(error);
-    }
+    // 内容寻址（2026-11-03）：同一项目、同内容、同扩展名只保存一份对象。
+    // 锁与存在性检查放在事务内，防止与回收站彻底删除并发时把刚复用的对象清掉。
+    const objectKey = buildBlobObjectKey({ projectId: file.projectId, contentHash, fileName: effectiveName });
 
     const committed = await this.database.db.transaction(async (tx) => {
       const lockedSession = await this.repository.lockSession(tx, session.id);
@@ -520,111 +543,55 @@ export class FileService {
       if (!isChange && lockedFile.taskId !== null) {
         await this.assertTaskNotFinalized(lockedFile.taskId, tx);
       }
-      const currentSeq = await this.repository.nextVersionSeq(fileId, tx);
-      if (currentSeq !== seq) {
-        throw new AppError("INTERNAL", "文件版本位次被并发上传占用，请重试完成上传");
+      const changePayloadForCommit = isChange ? (changePayload ?? readChangePayload(session.changePayload)) : null;
+      // 共享对象键在同一事务锁下检查：并发完成同一内容只复制一次；对象已存在时直接复用。
+      // 复制仍在事务内完成，避免先落版本却指向不存在的对象。
+      await this.repository.lockObjectKeys(tx, [objectKey]);
+      let sharedObject: ObjectHead | null;
+      try {
+        sharedObject = await this.storage.headObject(objectKey);
+      } catch (error) {
+        throw toApiError(error);
       }
-      const changeRequestId = isChange ? randomUUID() : null;
-      // M4-04：变更记录先于版本落库 —— file_versions.change_request_id 是即时外键（同事务内也要求被引用行先存在）。
-      const changeDraft =
-        changeRequestId === null
-          ? null
-          : await this.insertChangeInTx(tx, {
-              changeRequestId,
-              file: lockedFile,
-              payload: changePayload ?? readChangePayload(session.changePayload),
-              actorId,
-              at,
-            });
-      const version = await this.repository.insertVersion(
-        {
-          fileId,
-          seq,
-          objectKey,
-          sizeBytes: head.sizeBytes,
-          contentHash,
-          mime: versionMime,
-          uploadedBy: actorId,
-          uploadedAt: at,
-          changeRequestId,
-        },
-        tx,
-      );
-      const updatedFile = await this.repository.updateFileOnComplete(
-        fileId,
-        {
-          currentVersionId: version.id,
-          version: lockedFile.version + 1,
-          status: isChange ? "changed" : undefined,
-          name: isChange && effectiveName !== lockedFile.name ? effectiveName : undefined,
-          updatedAt: at,
-        },
-        tx,
-      );
+      if (sharedObject === null) {
+        try {
+          await this.storage.copyObject({
+            sourceKey: stagingKey,
+            destinationKey: objectKey,
+            contentType: OCTET_STREAM_MIME,
+            metadata: { "file-name": encodeURIComponent(effectiveName) },
+          });
+        } catch (error) {
+          throw toApiError(error);
+        }
+      } else if (sharedObject.sizeBytes !== head.sizeBytes) {
+        throw new AppError("INTERNAL", "共享内容对象大小与申报不一致，已停止落库");
+      }
       const completedSession = await this.repository.updateSession(
         session.id,
         { status: "completed", completedAt: at, updatedAt: at },
         tx,
       );
-      await this.cadArchive?.uploaded({ fileId, versionId: version.id, sourceSHA256: contentHash,
-        sourceBytes: version.sizeBytes, sourceName: effectiveName }, tx);
-      // M4-03 多态关联：上传成功即建立关联（project 必写，node / task 有则写；on conflict do nothing 幂等）。
-      await this.repository.insertFileLinks(buildFileLinkInputs(lockedFile, actorId, at), tx);
-      // M4-04 变更（申请即通过）：同事务写 file_links(change) + R01 任务回写 + 变更审计 + outbox（记录行已先落库）。
-      if (changeDraft !== null) {
-        await this.finishChangeInTx(tx, {
-          draft: changeDraft,
-          file: effectiveName === lockedFile.name ? lockedFile : { ...lockedFile, name: effectiveName },
-          version,
-          actorId,
-          at,
-          fromStatus: lockedFile.status,
-          renamedFrom: effectiveName === lockedFile.name ? null : lockedFile.name,
-        });
-      }
-      const changeRequest = changeDraft === null ? null : changeDraft.row;
-      await this.audit.record(tx, {
+      const committed = await this.commitVersionInTx(tx, {
+        file: lockedFile,
+        objectKey,
+        sizeBytes: head.sizeBytes,
+        contentHash,
+        mime: versionMime,
         actorId,
-        action: "complete",
-        objectType: "file",
-        objectId: fileId,
-        projectId: file.projectId,
-        summary: isChange
-          ? "完成变更上传：" + (effectiveName === lockedFile.name ? lockedFile.name : lockedFile.name + " → " + effectiveName) + " v" + version.seq + "（状态 " + lockedFile.status + " → changed）"
-          : "完成上传：" + lockedFile.name + " v" + version.seq,
-        changes: [
-          { field: "currentVersionId", from: lockedFile.currentVersionId, to: version.id },
-          { field: "version", from: String(lockedFile.version), to: String(updatedFile.version) },
-          ...(effectiveName === lockedFile.name ? [] : [{ field: "name", from: lockedFile.name, to: effectiveName }]),
-        ],
-        metadata: {
-          uploadId: session.id,
-          versionSeq: version.seq,
-          objectKey,
-          contentHash,
-          sizeBytes: head.sizeBytes,
-          etag: mergedEtag,
-          duplicateOf: null,
-          changeRequestId: changeRequest === null ? null : changeRequest.id,
-        },
+        at,
+        uploadId: session.id,
+        etag: mergedEtag,
+        effectiveName,
+        changePayload: changePayloadForCommit,
+        nextStatus: isChange ? "changed" : undefined,
+        renamedFrom: isChange && effectiveName !== lockedFile.name ? lockedFile.name : null,
+        auditAction: "complete",
+        auditSummary: isChange
+          ? "完成变更上传：" + (effectiveName === lockedFile.name ? lockedFile.name : lockedFile.name + " → " + effectiveName) + " v" + String(lockedFile.version + 1) + "（状态 " + lockedFile.status + " → changed）"
+          : "完成上传：" + lockedFile.name + " v" + String(lockedFile.version + 1),
       });
-      await appendOutbox(tx, {
-        topic: "file.version.created",
-        dedupeKey: "file.version.created:" + version.id,
-        payload: {
-          projectId: file.projectId,
-          fileId,
-          versionId: version.id,
-          seq: version.seq,
-          objectKey,
-          contentHash,
-          sizeBytes: head.sizeBytes,
-          mime: versionMime,
-          actorId,
-          at: at.toISOString(),
-        },
-      });
-      return { file: updatedFile, version, session: completedSession, changeRequest };
+      return { ...committed, session: completedSession };
     });
 
     // 暂存对象已复制到契约键：按版本清理（失败只告警 —— 残留由过期清理兜底，不影响已落库版本）。
@@ -640,6 +607,196 @@ export class FileService {
       changeRequest:
         committed.changeRequest === null ? null : toChangeRequestView(committed.changeRequest, fileId, committed.version),
     };
+  }
+
+  /** 内容寻址秒传：创建新文件 + v1 版本，引用项目内既有同内容对象。 */
+  private async tryCreateInstantUpload(input: {
+    projectId: string;
+    blob: { objectKey: string; sizeBytes: number; contentHash: string; mime: string | null };
+    name: string;
+    sizeBytes: number;
+    taskId: string | null;
+    nodeId: string | null;
+    docType: string | null;
+    actorId: string;
+    at: Date;
+  }): Promise<FileRow | null> {
+    try {
+      return await this.database.db.transaction(async (tx) => {
+        await this.repository.lockObjectKeys(tx, [input.blob.objectKey]);
+        const head = await this.storage.headObject(input.blob.objectKey);
+        if (head === null || head.sizeBytes !== input.sizeBytes) {
+          throw new InstantBlobUnavailableError("共享内容对象已不可用，回退普通上传");
+        }
+        const file = await this.repository.insertFile(
+          {
+            projectId: input.projectId,
+            nodeId: input.nodeId,
+            taskId: input.taskId,
+            docType: input.docType,
+            name: input.name,
+            status: "draft",
+            createdBy: input.actorId,
+          },
+          tx,
+        );
+        const committed = await this.commitVersionInTx(tx, {
+          file,
+          objectKey: input.blob.objectKey,
+          sizeBytes: input.sizeBytes,
+          contentHash: input.blob.contentHash,
+          mime: normalizeMime(input.blob.mime) ?? OCTET_STREAM_MIME,
+          actorId: input.actorId,
+          at: input.at,
+          uploadId: null,
+          etag: null,
+          effectiveName: input.name,
+          changePayload: null,
+          nextStatus: undefined,
+          renamedFrom: null,
+          auditAction: "complete",
+          auditSummary: "完成上传（内容秒传）：" + input.name + " v1",
+          auditMetadata: { instantUpload: true, deduplicatedBlob: true },
+        });
+        return committed.file;
+      });
+    } catch (error) {
+      if (error instanceof InstantBlobUnavailableError) return null;
+      throw error;
+    }
+  }
+
+  /**
+   * 版本落库的公共尾段（普通上传 / 内容秒传共用）：版本行、文件指针、变更、关联、CAD 预解析、
+   * 审计与 outbox 同事务完成。调用方负责前置权限 / 状态门禁与对象就绪。
+   */
+  private async commitVersionInTx(
+    tx: DbTransaction,
+    input: {
+      file: FileRow;
+      expectedSeq?: number;
+      objectKey: string;
+      sizeBytes: number;
+      contentHash: string;
+      mime: string;
+      actorId: string;
+      at: Date;
+      uploadId: string | null;
+      etag: string | null;
+      effectiveName: string;
+      changePayload: ChangePayload | null;
+      nextStatus?: "changed";
+      renamedFrom: string | null;
+      auditAction: "complete" | "rollback";
+      auditSummary: string;
+      auditMetadata?: Record<string, unknown>;
+      outboxExtra?: Record<string, unknown>;
+    },
+  ): Promise<{ file: FileRow; version: FileVersionRow; changeRequest: ChangeRequestRow | null }> {
+    const seq = await this.repository.nextVersionSeq(input.file.id, tx);
+    if (input.expectedSeq !== undefined && seq !== input.expectedSeq) {
+      throw new AppError("INTERNAL", "文件版本位次被并发上传占用，请重试");
+    }
+    const changeRequestId = input.changePayload === null ? null : randomUUID();
+    const changeDraft =
+      changeRequestId === null
+        ? null
+        : await this.insertChangeInTx(tx, {
+            changeRequestId,
+            file: input.file,
+            payload: input.changePayload!,
+            actorId: input.actorId,
+            at: input.at,
+          });
+    const version = await this.repository.insertVersion(
+      {
+        fileId: input.file.id,
+        seq,
+        objectKey: input.objectKey,
+        sizeBytes: input.sizeBytes,
+        contentHash: input.contentHash,
+        mime: input.mime,
+        uploadedBy: input.actorId,
+        uploadedAt: input.at,
+        changeRequestId,
+      },
+      tx,
+    );
+    const updatedFile = await this.repository.updateFileOnComplete(
+      input.file.id,
+      {
+        currentVersionId: version.id,
+        version: input.file.version + 1,
+        status: input.nextStatus,
+        name: input.effectiveName === input.file.name ? undefined : input.effectiveName,
+        updatedAt: input.at,
+      },
+      tx,
+    );
+    await this.cadArchive?.uploaded({
+      projectId: input.file.projectId,
+      fileId: input.file.id,
+      versionId: version.id,
+      objectKey: input.objectKey,
+      sourceSHA256: input.contentHash,
+      sourceBytes: version.sizeBytes,
+      sourceName: input.effectiveName,
+    }, tx);
+    await this.repository.insertFileLinks(buildFileLinkInputs(updatedFile, input.actorId, input.at), tx);
+    if (changeDraft !== null) {
+      await this.finishChangeInTx(tx, {
+        draft: changeDraft,
+        file: updatedFile,
+        version,
+        actorId: input.actorId,
+        at: input.at,
+        fromStatus: input.file.status,
+        renamedFrom: input.renamedFrom,
+      });
+    }
+    const changeRequest = changeDraft === null ? null : changeDraft.row;
+    await this.audit.record(tx, {
+      actorId: input.actorId,
+      action: input.auditAction,
+      objectType: "file",
+      objectId: input.file.id,
+      projectId: input.file.projectId,
+      summary: input.auditSummary,
+      changes: [
+        { field: "currentVersionId", from: input.file.currentVersionId, to: version.id },
+        { field: "version", from: String(input.file.version), to: String(updatedFile.version) },
+        ...(input.effectiveName === input.file.name ? [] : [{ field: "name", from: input.file.name, to: input.effectiveName }]),
+      ],
+      metadata: {
+        uploadId: input.uploadId,
+        versionSeq: version.seq,
+        objectKey: input.objectKey,
+        contentHash: input.contentHash,
+        sizeBytes: input.sizeBytes,
+        etag: input.etag,
+        duplicateOf: null,
+        changeRequestId: changeRequest === null ? null : changeRequest.id,
+        ...(input.auditMetadata ?? {}),
+      },
+    });
+    await appendOutbox(tx, {
+      topic: "file.version.created",
+      dedupeKey: "file.version.created:" + version.id,
+      payload: {
+        projectId: input.file.projectId,
+        fileId: input.file.id,
+        versionId: version.id,
+        seq: version.seq,
+        objectKey: input.objectKey,
+        contentHash: input.contentHash,
+        sizeBytes: input.sizeBytes,
+        mime: input.mime,
+        actorId: input.actorId,
+        at: input.at.toISOString(),
+        ...(input.outboxExtra ?? {}),
+      },
+    });
+    return { file: updatedFile, version, changeRequest };
   }
 
   /**
@@ -1521,6 +1678,10 @@ export class FileService {
       const versions = await this.repository.listVersions(file.id, tx);
       // 预览产物按版本隔离，无共享归属；与源版本一起清理，不按客户端曾申报的哈希转移给其他文件。
       const versionIds = versions.map((version) => version.id);
+      const versionObjectKeys = [...new Set(versions.map((version) => version.objectKey))];
+      await this.repository.lockObjectKeys(tx, versionObjectKeys);
+      const sharedReferences = await this.repository.countObjectKeyReferences(versionObjectKeys, file.id, tx);
+      const retainedSharedObjectKeys = versionObjectKeys.filter((key) => (sharedReferences.get(key) ?? 0) > 0);
       await this.cadArchive?.purge(file.id, file.projectId, tx);
       const artifactRows = await this.previews.listReadyByVersionIds(versionIds, tx);
       const artifactKeys: string[] = [];
@@ -1528,9 +1689,10 @@ export class FileService {
         if (row.objectKey === null) continue;
         artifactKeys.push(row.objectKey);
       }
-      for (const version of versions) {
+      for (const objectKey of versionObjectKeys) {
+        if ((sharedReferences.get(objectKey) ?? 0) > 0) continue;
         try {
-          await this.storage.purgeObject(version.objectKey);
+          await this.storage.purgeObject(objectKey);
         } catch (error) {
           throw toApiError(error);
         }
@@ -1566,7 +1728,8 @@ export class FileService {
           deletedVersions,
           previewArtifactsPurged: artifactKeys.length,
           purgedAt: at.toISOString(),
-          objectKeys: versions.map((version) => version.objectKey),
+          objectKeys: versionObjectKeys,
+          retainedSharedObjectKeys,
         },
       });
       return { deletedVersions };

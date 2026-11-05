@@ -71,6 +71,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
+            if self.path == "/preview":
+                self.preview()
+                return
             if self.path == '/submit':
                 self.submit()
                 return
@@ -95,6 +98,40 @@ class Handler(BaseHTTPRequestHandler):
             self.reject(503, 'busy')
         except (ValueError, TypeError, OSError):
             self.reject(503, 'unavailable')
+
+    def preview(self):
+        encoded = self.headers.get("X-CAD-Request", "")
+        if len(encoded) > 8192:
+            raise ValueError("metadata exceeds budget")
+        request = json.loads(base64.b64decode(encoded + "=" * (-len(encoded) % 4), altchars=b"-_", validate=True))
+        if not isinstance(request, dict) or request.get("action") != "preview" or "path" in request:
+            raise ValueError("invalid preview operation")
+        if Path(str(request.get("name", ""))).suffix.lower() != ".dwg":
+            raise ValueError("preview requires DWG")
+        maximum = min(self.server.gateway.jobs.policy["inputBytes"], 64 * 1024 * 1024)
+        length = self.length(maximum)
+        if request.get("payloadByteLength", request.get("sourceByteLength", 0)) != length:
+            raise ValueError("source size mismatch")
+        deadline, digest, remaining = time.monotonic() + 85, hashlib.sha256(), length
+        with tempfile.NamedTemporaryFile(dir=self.server.gateway.incoming) as source:
+            while remaining:
+                if time.monotonic() >= deadline:
+                    raise ValueError("upload deadline exceeded")
+                data = self.rfile.read(min(1024 * 1024, remaining))
+                if not data:
+                    raise ValueError("incomplete source")
+                source.write(data)
+                digest.update(data)
+                remaining -= len(data)
+            source.flush()
+            expected = request.get("payloadSHA256", request.get("sourceSHA256", ""))
+            if digest.hexdigest() != expected:
+                raise ValueError("source hash mismatch")
+            result = self.server.gateway.preview(request, source.name)
+        if result is None:
+            self.reject(404, "not-found")
+            return
+        self.file(result)
 
     def submit(self):
         encoded = self.headers.get('X-CAD-Request', '')
@@ -138,7 +175,14 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError('invalid resource size')
             self.send_response(200)
             self.send_header('X-CAD-Engine-Version', self.server.engine_version)
-            self.send_header('Content-Type', 'application/octet-stream')
+            contentType = result.get("contentType", "application/octet-stream")
+            if contentType not in ("application/octet-stream", "image/bmp", "image/png"):
+                raise ValueError("invalid resource type")
+            self.send_header("Content-Type", contentType)
+            for name in ("width", "height"):
+                value = result.get(name)
+                if isinstance(value, int) and value > 0:
+                    self.send_header("X-CAD-Preview-" + name.title(), str(value))
             self.send_header('Content-Length', str(info.st_size))
             if 'artifactBytes' in result:
                 self.send_header('X-CAD-Artifact-Bytes', str(result['artifactBytes']))

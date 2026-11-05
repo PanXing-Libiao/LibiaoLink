@@ -19,6 +19,7 @@ export function CadModelViewer({ viewer, name, onClose, onDownload }: {
   const frame = useRef<HTMLIFrameElement>(null);
   const startedAt = useRef(performance.now());
   const [readyMs, setReadyMs] = useState<number | null>(null);
+  const [timingJson, setTimingJson] = useState("");
   const [frameLoaded, setFrameLoaded] = useState(false);
   const [frameTimedOut, setFrameTimedOut] = useState(false);
   const [exportError, setExportError] = useState(false);
@@ -31,7 +32,7 @@ export function CadModelViewer({ viewer, name, onClose, onDownload }: {
   const nameCodepage = nameChoice?.key === nameKey ? nameChoice.value : savedNameCodepage(nameKey);
   const viewId = useMemo(() => Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join(""), [viewer.fileId, viewer.versionId, nameCodepage, selectionKey, retry]);
   const query = new URLSearchParams({ platform: "1", autoload: "0", format: viewer.format, fileId: viewer.fileId, versionId: viewer.versionId, viewId, engineVersion: viewer.engineVersion, nameCodepage });
-  useEffect(() => { startedAt.current = performance.now(); setReadyMs(null); setFrameLoaded(false); setFrameTimedOut(false); }, [viewId]);
+  useEffect(() => { startedAt.current = performance.now(); setReadyMs(null); setTimingJson(""); setFrameLoaded(false); setFrameTimedOut(false); }, [viewId]);
   useEffect(() => {
     if (frameLoaded) return;
     const timer = window.setTimeout(() => setFrameTimedOut(true), 30000);
@@ -63,7 +64,10 @@ export function CadModelViewer({ viewer, name, onClose, onDownload }: {
       if (event.data.type === "cad-resources" && viewer.format === "DXF") setResourcesOpen(true);
       if (event.data.type === "cad-context-request") frame.current?.contentWindow?.postMessage({ type: "cad-context", name, selection }, window.location.origin);
       if (event.data.type === "cad-mounted" && "viewId" in event.data && event.data.viewId === viewId) { setFrameLoaded(true); setFrameTimedOut(false); }
-      if (event.data.type === "cad-ready" && "viewId" in event.data && event.data.viewId === viewId) setReadyMs(Math.round(performance.now() - startedAt.current));
+      if (event.data.type === "cad-ready" && "viewId" in event.data && event.data.viewId === viewId) {
+        setReadyMs(Math.round(performance.now() - startedAt.current));
+        if ("timing" in event.data && typeof event.data.timing === "object" && event.data.timing !== null) setTimingJson(JSON.stringify(event.data.timing));
+      }
       if (event.data.type === "cad-name-codepage" && "value" in event.data && (event.data.value === "UTF8" || event.data.value === "GB")) {
         try { sessionStorage.setItem(nameKey, event.data.value); } catch { /* The current preview still works without storage. */ }
         setNameChoice({ key: nameKey, value: event.data.value });
@@ -77,8 +81,8 @@ export function CadModelViewer({ viewer, name, onClose, onDownload }: {
     return () => window.removeEventListener("message", receive);
   }, [onClose, onDownload, name, viewer.fileId, viewer.versionId, viewer.sourceSHA256, viewer.engineVersion, viewer.format, viewId, nameKey, selection]);
   if (crypto.subtle === undefined) return <div role="alert" className="rounded-xl bg-white p-8 text-sm text-zinc-600">请通过 HTTPS 打开 CAD 在线预览，或下载原文件查看。</div>;
-  return <div data-cad-ready-ms={readyMs} className="relative" onClick={(event) => event.stopPropagation()}>
-    <iframe ref={frame} key={viewId} title={name} data-file-preview-cad="true" tabIndex={0}
+  return <div data-cad-ready-ms={readyMs} data-cad-timing={timingJson || undefined} className="relative" onClick={(event) => event.stopPropagation()}>
+    <iframe ref={frame} key={viewId} aria-label={name} allowFullScreen data-file-preview-cad="true" tabIndex={0}
     src={"/cad-viewer/index.html?" + query}
     onLoad={() => { setFrameLoaded(true); setFrameTimedOut(false); sendContext(); }}
     className="block h-[92dvh] w-[min(1440px,96vw)] rounded-xl border-0 bg-white shadow-2xl max-sm:h-[96dvh] max-sm:w-[98vw] max-sm:rounded-lg"

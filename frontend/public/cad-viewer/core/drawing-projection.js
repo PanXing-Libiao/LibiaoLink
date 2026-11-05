@@ -33,8 +33,15 @@ export function canonical(value){
  return JSON.stringify(value);
 }
 export function identity(kind,value){return kind+'-'+sha256Hex(new TextEncoder().encode(canonical(value)));}
+// Drawing ids are internal map keys, not persisted identifiers. A compact
+// deterministic key avoids canonicalization plus SHA-256 per source draw; the
+// exact server id is still computed lazily where variant maps require it.
+export function drawingDrawIdentity(drawingId,kind,itemId,path,viewportId=''){
+ return 'drawing-draw:'+JSON.stringify([drawingId,kind,itemId,path||[],viewportId||'']);
+}
 function mul(a,b){const out=new Array(16);for(let col=0;col<4;col++)for(let row=0;row<4;row++){let sum=0;for(let k=0;k<4;k++)sum+=a[k*4+row]*b[col*4+k];out[col*4+row]=sum;}return out;}
-function translate(x,y,z){const m=IDENTITY.slice();m[12]=x;m[13]=y;m[14]=z;return m;}
+function afterTranslation(a,x,y,z){const out=a.slice();out[12]=a[0]*x+a[4]*y+a[8]*z+a[12];out[13]=a[1]*x+a[5]*y+a[9]*z+a[13];out[14]=a[2]*x+a[6]*y+a[10]*z+a[14];out[15]=a[3]*x+a[7]*y+a[11]*z+a[15];return out;}
+function isIdentityMatrix(m){for(let i=0;i<16;i++)if(m[i]!==(i%5===0?1:0))return false;return true;}
 
 export function annotationForScale(document,entry,viewport,layoutId){
  if(!entry.scaleVariants?.length)return {entry,hidden:false};
@@ -139,7 +146,7 @@ export function projectDrawing(document,target,effectiveLayers=null,presentation
   // so applying that budget here would fail files the retained path is meant to
   // support. Retained projection is bounded by the instance count instead.
   if(!visitor){drawn+=1;if(drawn>MAX)throw new Error('drawing-projection-over-limit');}
-  const drawId=identity('drawing-draw',[drawingId,kind,itemId,blockPath,viewportId||'']);
+  const drawId=visitor?drawingDrawIdentity(drawingId,kind,itemId,blockPath,viewportId||''):identity('drawing-draw',[drawingId,kind,itemId,blockPath,viewportId||'']);
   const draw={kind,itemId,blockPath,localToSpace,visibility,availability,style,drawOrder:order-1,
    visibilityLayerIds:[...new Set([layerId,...chain.map(parent=>parent[1])])]};
   if(clips?.length)draw.clipRegions=clips;
@@ -180,10 +187,9 @@ export function projectDrawing(document,target,effectiveLayers=null,presentation
   return false;
  };
  const entityVisibility=(itemId,layerId,viewport)=>hiddenByLayer(layerId,viewport)?'hidden':((flags[itemId]||{}).invisible?'hidden':'shown');
- function resolvePresentation(itemId,sourceStyle,layerId,chain,path,viewport,visibility,kind,draw){
+ function resolvePresentation(itemId,sourceStyle,layerId,chain,path,viewport,visibility,kind,draw,drawId){
   const entry=annotationItems[itemId];
   if(entry?.status!=='ready')return;
-  const drawId=identity('drawing-draw',[drawingId,kind,itemId,path,viewport?viewport.id:'']);
   const chosen=annotationForScale(document,entry,viewport,layoutId),parts=chosen.entry.parts;
   if(chosen.hidden){visibility='hidden';draw.visibility='hidden';}
   if(chosen.entry.status!=='ready'){draw.availability=kind==='annotation'?'missing-reference':'unsupported';delete draw.displayRepresentationId;if(presentationStyles)presentationStyles[drawId]=[];if(visitor)draw.presentationStyles=[];return;}
@@ -197,7 +203,9 @@ export function projectDrawing(document,target,effectiveLayers=null,presentation
    const row={id:part.id,layerId:partLayer,style,
     visibility:visibility==='hidden'?'hidden':entityVisibility(part.id,partLayer,viewport),
     visibilityLayerIds:[...new Set([partLayer,...partChain.map(parent=>parent[1])])]};
-   const contextVariant=part.drawVariants?.[drawId];
+   let contextVariant=part.drawVariants?.[drawId];
+    if(contextVariant===undefined&&part.drawVariants&&Object.keys(part.drawVariants).length)
+     contextVariant=part.drawVariants[identity('drawing-draw',[drawingId,kind,itemId,path,viewport?viewport.id:''])];
    const variant=contextVariant?.lineTypeId===style.lineTypeId?contextVariant:part.lineTypeVariants?.[style.lineTypeId];
    if(variant){row.presentationParts=variant.parts;if(variant.status!=='ready')patternGap=true;}
    else if((part.patternedStroke||part.patternContinuation)&&(styleExt.lineTypePatterns?.[style.lineTypeId]?.length||styleExt.complexLineTypeIds?.includes(style.lineTypeId))){row.presentationParts=[];patternGap=true;}
@@ -234,7 +242,7 @@ export function projectDrawing(document,target,effectiveLayers=null,presentation
     const local=mul(transform,item.localFromOwner);
     const draw=addDraw('entity',itemId,path,local,visibility,availability,style,
      item.displayRepresentationId||(availability==='ready'&&annotationItems[itemId]?.mode!=='view-dependent'?identity('representation',[itemId]):null),viewport?viewport.id:null,layerId,clips,chain);
-    resolvePresentation(itemId,item.style,layerId,chain,path,viewport,visibility,'entity',draw);
+    resolvePresentation(itemId,item.style,layerId,chain,path,viewport,visibility,'entity',draw,draw.id);
    }else if(kind==='annotation'){
     const info=flags[itemId]||{};
     const layerId=effectiveLayer(item.layerId,chain);
@@ -245,7 +253,7 @@ export function projectDrawing(document,target,effectiveLayers=null,presentation
     if(item.fontResourceId)style.fontResourceId=item.fontResourceId;
     const draw=addDraw('annotation',itemId,path,transform,visibility,availability,style,
      annotationItems[itemId]?.status==='ready'?identity('representation',[itemId]):null,viewport?viewport.id:null,layerId,clips,chain);
-    resolvePresentation(itemId,sourceStyle,layerId,chain,path,viewport,visibility,'annotation',draw);
+    resolvePresentation(itemId,sourceStyle,layerId,chain,path,viewport,visibility,'annotation',draw,draw.id);
    }else{
     const definition=m.blocks[item.definitionId];
     const layerId=effectiveLayer(item.layerId,chain);
@@ -260,11 +268,16 @@ export function projectDrawing(document,target,effectiveLayers=null,presentation
     if(!visitor&&copies>MAX)throw new Error('drawing-projection-over-limit');
     const hidden=inheritedHidden||entityVisibility(itemId,layerId,viewport)==='hidden';
     const childChain=chain.concat([[item.style,layerId,itemId]]);
+    const identityLocal=isIdentityMatrix(item.localFromBlock);
     for(let row=0;row<rows;row++)for(let column=0;column<columns;column++){
-     const offset=translate(...columnOffset.map((v,axis)=>v*column+rowOffset[axis]*row));
-     const ownerPlacement=mul(transform,offset),placement=mul(ownerPlacement,item.localFromBlock);
+     const dx=columnOffset[0]*column+rowOffset[0]*row;
+     const dy=columnOffset[1]*column+rowOffset[1]*row;
+     const dz=columnOffset[2]*column+rowOffset[2]*row;
+     const ownerPlacement=dx===0&&dy===0&&dz===0?transform:afterTranslation(transform,dx,dy,dz);
+     const placement=identityLocal?ownerPlacement:mul(ownerPlacement,item.localFromBlock);
      const childPath=path.concat([{instanceId:itemId,row,column}]);
-     const childClips=clips.concat(transformedClip(itemId,placement));
+     const addedClip=transformedClip(itemId,placement);
+     const childClips=addedClip.length?clips.concat(addedClip):clips;
      walk(definition.spaceId,placement,childPath,viewport,childChain,hidden,childClips);
      visit(attachedAnnotations.get(itemId)||[],ownerPlacement,childPath,viewport,childChain,hidden,childClips);
     }

@@ -1,16 +1,20 @@
 import {pathRecords} from './recorded-path.js';
 export function createBackgroundPainter(onFrame,onError){
  const worker=new Worker(new URL('./paint-worker.js',import.meta.url),{type:'module'});
- let serial=0,current=0,waiting=null,commands=[],paths=[],batches=[],images=[],transfers=[];
+ let serial=0,current=0,fontTiming=null,beginTiming=null,waiting=null,commands=[],paths=[],batches=[],images=[],transfers=[];
  const pathIds=new WeakMap(),batchIds=new WeakMap(),imageIds=new WeakMap();
- let fontsReadyResolve;
- const ready=new Promise(resolve=>fontsReadyResolve=resolve);
+ let fontsReadyResolve,fontStartupReject,failed=false;
+ const ready=new Promise((resolve,reject)=>{fontsReadyResolve=resolve;fontStartupReject=reject;});
+ function fail(message){if(failed)return;failed=true;const detail=message instanceof Error?message:new Error(String(message||"background painter failed"));fontStartupReject?.(detail);waiting?.();waiting=null;onError(detail);}
  worker.onmessage=({data:m})=>{
-  if(m.type==='fonts-ready')fontsReadyResolve();
-  else if(m.type==='error'){onError(m.message);waiting?.();waiting=null;}
-  else if(m.id===current){if(m.type==='frame')onFrame(m);else if(m.type==='chunk-ready'){const fn=waiting;waiting=null;fn?.();}}
+  if(m.type==="fonts-ready"){fontTiming=m.timing;fontsReadyResolve();}
+  else if(m.type==="begin-ready"){if(m.id===current)beginTiming=m.timing;}
+  else if(m.type==="error"){fail(m.message);}
+  else if(m.id===current){if(m.type==="frame")onFrame(m);else if(m.type==="chunk-ready"){const fn=waiting;waiting=null;fn?.(m);}}
   else m.bitmap?.close();
  };
+ worker.onerror=event=>{event?.preventDefault?.();fail(event?.message||"background painter worker failed");};
+ worker.onmessageerror=()=>fail("background painter worker message failed");
  function pathRef(path){
   let id=pathIds.get(path);if(id)return {path:id};
   const data=pathRecords.get(path);if(!data)throw new Error('Unrecorded drawing path');
@@ -78,5 +82,5 @@ export function createBackgroundPainter(onFrame,onError){
   stroke:(batch,m,view)=>commands.push(['$gpu-stroke',batchRef(batch),m,view]),
   flush:()=>commands.push(['$gpu-flush'])
  };
- return {context,gpu,ready,fonts,begin,submit,cancel,dispose:()=>worker.terminate()};
+ return {context,gpu,ready,fonts,begin,submit,cancel,profile:()=>({font:fontTiming,begin:beginTiming}),dispose:()=>worker.terminate()};
 }

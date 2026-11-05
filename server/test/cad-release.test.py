@@ -1,5 +1,6 @@
 """A source/dependency change must invalidate the CAD release and stale checks."""
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -68,6 +69,19 @@ class ReleaseTest(unittest.TestCase):
             (base / 'core/tests').mkdir()
             (base / 'core/tests/test_local.py').write_text('test only')
             self.assertEqual(dwg_spec, release.describe(base, browser))
+            current_dwg = dwg_spec["formatVersions"]["DWG"]
+            legacy_dwg = "dwg-0.1.0/" + "0" * 64 + "/gateway-1"
+            (base / release.COMPATIBILITY_FILE).write_text(
+                json.dumps({"formats": {"DWG": [legacy_dwg]}}))
+            compatible = release.describe(base, browser)
+            self.assertEqual(compatible["formatVersions"], dwg_spec["formatVersions"])
+            self.assertEqual(compatible["compatibility"]["DWG"], [legacy_dwg])
+            self.assertNotEqual(compatible["releaseDigest"], dwg_spec["releaseDigest"])
+            self.assertIn("CAD_FORMAT_COMPAT_VERSIONS", release.typescript(compatible))
+            (base / release.COMPATIBILITY_FILE).write_text(
+                json.dumps({"formats": {"DWG": [current_dwg]}}))
+            with self.assertRaisesRegex(ValueError, "current CAD format version"):
+                release.describe(base, browser)
 
 
 if __name__ == '__main__':

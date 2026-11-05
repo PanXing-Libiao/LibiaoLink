@@ -53,6 +53,13 @@ export const CadJobSchema = z.object({
   createdAt: z.number(),
   updatedAt: z.number(),
   artifactBytes: z.number().int().nonnegative().optional(),
+  resources: z.object({
+    lease: z.string().regex(/^[a-f0-9]{48}$/),
+    buffers: z.array(z.object({
+      sha256: z.string().regex(/^[a-f0-9]{64}$/),
+      byteLength: z.number().int().nonnegative(),
+    }).strict()).max(256),
+  }).strict().optional(),
   workerPeakRSSBytes: z.number().int().nonnegative().optional(),
   workerWallSeconds: z.number().nonnegative().optional(),
   error: z.object({ code: z.string(), error: z.string().max(500) }).optional(),

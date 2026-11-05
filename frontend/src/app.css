@@ -22,6 +22,31 @@ body {
   color: var(--text);
 }
 
+/* 全站个人水印（2026-11-04）：小字号斜向等距平铺；只作身份标识，不截获点击，也不进入无障碍树。 */
+.page-watermark {
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  background-repeat: repeat;
+  background-position: 10px 18px;
+  background-size: 280px 160px;
+}
+
+@media (max-width: 1023.98px) {
+  .page-watermark {
+    background-size: 240px 137px;
+  }
+}
+
+@media (max-width: 1023.98px) and (orientation: landscape) and (max-height: 500px) {
+  .page-watermark {
+    background-size: 260px 148px;
+  }
+}
+
 .page {
   min-height: 100vh;
   display: flex;
