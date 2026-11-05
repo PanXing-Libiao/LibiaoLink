@@ -290,6 +290,8 @@ export function mountDrawingViewer(envelope) {
     if (!a) throw new Error('missing accessor ' + id);
     const bytes = bufferBytes(a.bufferId);
     const count = a.count * (a.components || 1), offset = a.byteOffset || 0;
+    if (a.component === 'u8') return new Uint8Array(bytes.buffer, bytes.byteOffset + offset, count);
+    if (a.component === 'u16') return new Uint16Array(bytes.buffer, bytes.byteOffset + offset, count);
     if (a.component === 'u32') return new Uint32Array(bytes.buffer, bytes.byteOffset + offset, count);
     if (a.component === 'f32') return new Float32Array(bytes.buffer, bytes.byteOffset + offset, count);
     return new Float64Array(bytes.buffer, bytes.byteOffset + offset, count);

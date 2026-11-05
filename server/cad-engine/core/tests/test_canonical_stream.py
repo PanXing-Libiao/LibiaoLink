@@ -43,6 +43,14 @@ class CanonicalStream(unittest.TestCase):
         self.assertGreater(sum(sizes),1000000)
         self.assertLess(max(sizes),128*1024)
 
+    def test_batched_tables_keep_large_scalar_strings_and_array_boundaries(self):
+        value={'rows':[[i, -0.0, True, None] for i in range(5000)],
+               'large':{'text':'中文'*200000},'after':list(range(33))}
+        expected=json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False).encode()
+        output=io.BytesIO();write_canonical(value,output)
+        self.assertEqual(output.getvalue(),expected)
+        self.assertEqual(canonical_sha256(value),hashlib.sha256(expected).hexdigest())
+
     def test_nonfinite_is_not_serializable(self):
         for value in [float('nan'),{'nested':[float('inf')]}]:
             with self.assertRaises(ValueError):canonical_sha256(value)

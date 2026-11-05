@@ -95,8 +95,8 @@ class PackedDwgTest(unittest.TestCase):
         self.assertEqual(set(packed['drawing']['entities']), {'entity-4'})
         self.assertEqual(len(payload['entities']), 3)
         self.assertEqual(len(payload['displays']), 2)
-        self.assertEqual(payload['version'], 'dwg-table/3')
-        self.assertEqual(len(payload['displays'][1]), 14)
+        self.assertEqual(payload['version'], 'dwg-table/4')
+        self.assertEqual(len(payload['displays'][1]), 15)
         self.assertIn('entity-2', packed['extensions']['org.cad-preview.style-inheritance/1']['entityState'])
         unpacked = unpack_document(packed)
         self.assertNotIn('packed', unpacked)
@@ -169,6 +169,30 @@ class PackedDwgTest(unittest.TestCase):
         packed = pack_document(document)
         self.assertIsInstance(packed['packed']['entities'][1][12], dict)
         self.assertEqual(unpack_document(packed), document)
+
+    def test_narrow_indices_round_trip_and_old_v3_remains_readable(self):
+        for component,width in [('u8',1),('u16',2),('u32',4)]:
+            with self.subTest(component=component):
+                document = fixture(); index = document['accessors']['i-entity-2']
+                index['component'] = component; index['byteLength'] = index['count'] * width
+                document['revision'] = canonical_sha256({k:v for k,v in document.items() if k != 'revision'})
+                packed = pack_document(document)
+                self.assertEqual(unpack_document(packed),document)
+                self.assertEqual(packed['packed']['displays'][1][-1],component)
+                if component == 'u32':
+                    packed['packed']['version'] = 'dwg-table/3'
+                    packed['packed']['displays'][1].pop()
+                    self.assertEqual(unpack_document(packed),document)
+
+    def test_narrow_index_component_is_rejected_when_unknown_or_legacy(self):
+        import copy
+        original = pack_document(fixture())
+        for change in ('component','legacy','offset'):
+            packed = copy.deepcopy(original)
+            if change == 'component': packed['packed']['displays'][1][-1] = 'i8'
+            if change == 'legacy': packed['packed']['version'] = 'dwg-table/3'
+            if change == 'offset': packed['packed']['displays'][1][12] = -1
+            with self.assertRaises(ValueError): unpack_document(packed)
 
     def test_legacy_unindexed_rows_still_unpack(self):
         document = fixture()
