@@ -12,7 +12,8 @@ ENCODER=json.JSONEncoder(ensure_ascii=False,sort_keys=True,separators=(',',':'),
 def _small(value):
     # Bound both the scan and the C encoder's temporary output. A scalar string
     # is already an indivisible token in the standard streaming encoder.
-    pending=[value];nodes=256;chars=16384
+    # Larger bounded leaves amortize Python traversal without encoding a whole CAD document.
+    pending=[value];nodes=4096;chars=262144
     while pending:
         item=pending.pop();nodes-=1
         if nodes<0:return False

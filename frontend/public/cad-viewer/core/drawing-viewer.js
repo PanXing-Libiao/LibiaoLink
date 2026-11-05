@@ -6,7 +6,7 @@ import {projectDrawing, projectBlock} from './drawing-projection.js?v=dxf-0.17.1
 import {clipInfiniteLine, gradientField, triangleBoundarySegments, traceStrokeSegments} from './drawing-2d.js?v=dxf-2d-0.5.0';
 import {drawingClips, compileClips, triangulateRings, insideRing} from './drawing-clipping.js?v=dxf-0.17.1';
 import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.17.1';
-import {estimateDrawingDraws, projectInstances, shouldProjectInstances, recordVisibleBounds, INSTANCE_DRAW_LIMIT, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, quantizeLodSize, LOD_MIN_SCREEN_PX, isLodCulled, I} from './drawing-instances.js?v=dxf-0.17.1';
+import {estimateDrawingDraws, projectInstances, projectInstancesSteps, shouldProjectInstances, recordVisibleBounds, INSTANCE_DRAW_LIMIT, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, quantizeLodSize, LOD_MIN_SCREEN_PX, isLodCulled, I} from './drawing-instances.js?v=dxf-0.17.1';
 import Flatbush from './vendor/flatbush.js';
 import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, textOffsets, textWorldCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.1';
 import {aciColor, trueColorCss} from './drawing-colors.js?v=dxf-0.17.1';
@@ -237,9 +237,9 @@ export function mountDrawingViewer(envelope) {
   const bufferCache = new Map(), repCache = new Map(), analyticCache = new Map(), measureCache = new Map();
   document.fonts?.ready.then(() => measureCache.clear(), () => {});
   let overviewPaintDone = false, firstPaintDone = false;
-  let resolveOverviewPaint = null, resolveFirstPaint = null;
+  let resolveOverviewPaint = null, resolveFirstPaint = null, rejectFirstPaint = null;
   const overviewPaint = new Promise(resolve => { resolveOverviewPaint = resolve; });
-  const firstPaint = new Promise(resolve => { resolveFirstPaint = resolve; });
+  const firstPaint = new Promise((resolve, reject) => { resolveFirstPaint = resolve; rejectFirstPaint = reject; });
   function completeOverviewPaint() {
     if (overviewPaintDone) return;
     overviewPaintDone = true;
@@ -316,7 +316,8 @@ export function mountDrawingViewer(envelope) {
         rasterCache.set(item.resourceId,target);
       } finally { bitmap.close(); }
     })).then(()=>{
-      if (destroyed) return;
+      // The pending build will draw the decoded media when its indexes are ready.
+      if (destroyed || initialBuild) return;
       if (overviewPaintDone || !hasNonRasterPaint()) draw();
       else overviewPaint.then(() => { if (!destroyed) draw(); }, () => {});
     });
@@ -584,7 +585,47 @@ export function mountDrawingViewer(envelope) {
     }
   }
 
-  function rebuild() {
+  let initialBuild = null;
+  function cancelInitialBuild() {
+    if (!initialBuild) return;
+    const job = initialBuild; initialBuild = null;
+    job.channel.port1.close(); job.channel.port2.close();
+    job.steps.return();
+  }
+  function rebuild(onComplete) {
+    cancelInitialBuild();
+    const steps = rebuildSteps();
+    if (!mounting || !instancePlan) {
+      for (const ignored of steps) { /* preserve immediate edits and small drawings */ }
+      onComplete?.(); return;
+    }
+    startInitialBuild(steps,onComplete);
+  }
+  function startInitialBuild(steps,onComplete) {
+    // One bounded task at a time lets input and painting run during large setup.
+    const job = {steps, channel: new MessageChannel(), maxStepMS: 0};
+    initialBuild = job;
+    setPaintStatus('正在准备图纸，可随时关闭。');
+    job.channel.port1.onmessage = () => {
+      if (initialBuild !== job) return;
+      try {
+        const start = performance.now(), result = steps.next();
+        job.maxStepMS = Math.max(job.maxStepMS, performance.now() - start);
+        if (!result.done) { job.channel.port2.postMessage(null); return; }
+        cancelInitialBuild();
+        canvas.dataset.maxBuildStepMs = String(job.maxStepMS);
+        onComplete?.();
+      } catch (error) {
+        cancelInitialBuild();
+        canvas.dataset.instancePaint = 'error';
+        canvas.dataset.instancePaintError = String(error?.message || error);
+        setPaintStatus('图纸准备失败，请重新打开或下载原图查看。');
+        rejectFirstPaint(error);
+      }
+    };
+    job.channel.port2.postMessage(null);
+  }
+  function* rebuildSteps() {
     paintRevision++;
     built = []; texts = []; pointMarks = [];
     if(instancePlan)for(const group of instancePlan.groups)group.records=[];
@@ -597,7 +638,11 @@ export function mountDrawingViewer(envelope) {
     // projectDrawing appends each draw immediately after assigning drawOrder,
     // so object insertion order is already the source paint order. Iterate it in
     // place; Object.entries allocated one pair per draw before first paint.
+    let sliceStart = performance.now(), visited = 0;
     for (const drawId in projection.draws) {
+      if (++visited % 64 === 0 && performance.now() - sliceStart >= 6) {
+        yield; sliceStart = performance.now();
+      }
       const draw = projection.draws[drawId];
       const layerId = effectiveLayer(draw);
       // Retained draws carry a group-qualified key; plot styles are resolved by
@@ -798,7 +843,7 @@ export function mountDrawingViewer(envelope) {
     window.__cadTimingMark?.("rebuildRecordsEnd");
     applyTextAvoidance();
     window.__cadTimingMark?.("rebuildIndexesStart");
-    if(instancePlan)buildInstanceIndexes(); else buildPaintIndex();
+    if(instancePlan)yield* buildInstanceIndexSteps(); else buildPaintIndex();
     window.__cadTimingMark?.("rebuildIndexesEnd");
     draw(); window.__cadTimingMark?.("rebuildPaintScheduled");
     updateStats();
@@ -810,14 +855,17 @@ export function mountDrawingViewer(envelope) {
   // index and Canvas Path2D batches consecutive opaque strokes in source order.
   function projectionCount(){return instancePlan?instancePlan.count:Object.keys(projection.draws).length;}
   function buildInstanceIndexes(){
+    for (const ignored of buildInstanceIndexSteps()) { /* layer changes use existing immediate path */ }
+  }
+  function* buildInstanceIndexSteps(){
     if(background){background.dispose();background=null;}
     strokeGPU?.reset();
     if(!instancePlan)return;
     const active=new Set(),done=new Set();
-    let visibleRecords=0;
+    let visibleRecords=0, sliceStart=performance.now(), visited=0;
     instancePlan.infiniteAnchor=null;
     const extendBounds=(target,box)=>{if(!box)return target;if(!target)return {minX:box.minX,minY:box.minY,maxX:box.maxX,maxY:box.maxY};if(box.minX<target.minX)target.minX=box.minX;if(box.minY<target.minY)target.minY=box.minY;if(box.maxX>target.maxX)target.maxX=box.maxX;if(box.maxY>target.maxY)target.maxY=box.maxY;return target;};
-    function compile(group,matrix){
+    function* compile(group,matrix){
       if(done.has(group))return;if(active.has(group))throw new Error("cyclic-instance-plan");active.add(group);
       const byId=new Map();for(const rec of group.records){const rows=byId.get(rec.id)||[];rows.push(rec);byId.set(rec.id,rows);}
       group.bounds=null;group.unbounded=false;group.paint=[];group.hits=[];group.visibleCount=0;group.byKind={entity:0,annotation:0};
@@ -828,9 +876,10 @@ export function mountDrawingViewer(envelope) {
       let pending=new Map();
       const flush=()=>{for(const batch of pending.values())group.paint.push(batch);pending=new Map();};
       for(const entry of group.entries){
+        if (++visited % 64 === 0 && performance.now() - sliceStart >= 6) { yield; sliceStart=performance.now(); }
         if(entry.kind==="group"){
           flush();
-          compile(entry.group,multiply(matrix,entry.matrix));entry.bounds=transformBounds(entry.group.bounds,entry.matrix);
+          yield* compile(entry.group,multiply(matrix,entry.matrix));entry.bounds=transformBounds(entry.group.bounds,entry.matrix);
           group.bounds=extendBounds(group.bounds,entry.bounds);group.unbounded=group.unbounded||entry.group.unbounded;
           group.paint.push(entry);if(entry.bounds)group.hits.push(entry);
           group.visibleCount+=entry.group.visibleCount;
@@ -877,7 +926,7 @@ export function mountDrawingViewer(envelope) {
       group.index=null;
       active.delete(group);done.add(group);
     }
-    for(const node of instancePlan.roots)compile(node.group,node.matrix);
+    for(const node of instancePlan.roots)yield* compile(node.group,node.matrix);
     function countPaint(node,parent,minScreenPx=LOD_MIN_SCREEN_PX){
       const matrix=multiply(parent,node.matrix);
       const localScale=scale*Math.max(Math.hypot(matrix[0],matrix[1]),Math.hypot(matrix[4],matrix[5]),1e-15);
@@ -913,7 +962,15 @@ export function mountDrawingViewer(envelope) {
     }
     return total;
   }
-  function currentInstancePaintCount(minScreenPx=LOD_MIN_SCREEN_PX){return instancePlan?instancePlan.roots.reduce((n,node)=>n+countInstancePaint(node,I,minScreenPx),0):0;}
+  let paintCountKey = '', paintCounts = new Map();
+  function currentInstancePaintCount(minScreenPx=LOD_MIN_SCREEN_PX){
+    if (!instancePlan) return 0;
+    const key = [paintRevision, scale, instanceLayerKey].join('|');
+    if (key !== paintCountKey) { paintCountKey=key; paintCounts.clear(); }
+    if (!paintCounts.has(minScreenPx))
+      paintCounts.set(minScreenPx, instancePlan.roots.reduce((n,node)=>n+countInstancePaint(node,I,minScreenPx),0));
+    return paintCounts.get(minScreenPx);
+  }
 
   function ensureInstanceIndex(group) {
     if (!group.hits.length) return null;
@@ -932,7 +989,6 @@ export function mountDrawingViewer(envelope) {
   const INSTANCE_SYNC_PAINT_LIMIT = 5000;
   const INSTANCE_WORKER_PAINT_LIMIT = 200000;
   const INSTANCE_OVERVIEW_SCREEN_PX = 3;
-  const INSTANCE_REPAINT_PREVIEW_LIMIT = 20000;
   const INSTANCE_INTERACTION_SETTLE_MS = 700;
   const ORDINARY_INTERACTION_SETTLE_MS = 220;
   let paintRevision = 0;
@@ -1008,7 +1064,9 @@ export function mountDrawingViewer(envelope) {
       completeFirstPaint();
       return;
     }
-    const needPreview = !overviewPaintDone || paintCount >= INSTANCE_REPAINT_PREVIEW_LIMIT;
+    // Interaction already transforms the last complete frame. Refine it directly
+    // instead of painting a second overview and waiting again before full detail.
+    const needPreview = !hasUsablePreview();
     canvas.dataset.needRepaintPreview = String(needPreview);
     if (needPreview) {
       const overviewCount = currentInstancePaintCount(INSTANCE_OVERVIEW_SCREEN_PX);
@@ -1599,7 +1657,7 @@ export function mountDrawingViewer(envelope) {
     return true;
   }
   function draw() {
-    if (destroyed || mounting) return;
+    if (destroyed || mounting || initialBuild) return;
     if (spatialView === '3d') { meshViewer.sync(userLayers,selected); return; }
     if (interacting) {
       cancelInstanceRefresh();
@@ -1906,6 +1964,7 @@ export function mountDrawingViewer(envelope) {
   let lastFit = null, fitted = false;
   function fit(bbox) {
     if (spatialView === '3d') return meshViewer.fit();
+    if (initialBuild) return;
     fitted = true;
     let b = bbox;
     if (!b) {
@@ -1941,6 +2000,7 @@ export function mountDrawingViewer(envelope) {
     return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
   }
   function hitTest(sx, sy) {
+    if (initialBuild) return null;
     if(instancePlan)return hitInstances(sx,sy);
     const wx = (sx - tx) / scale, wy = (ty - sy) / scale;
     const tolerance = 5 / scale;
@@ -2004,6 +2064,7 @@ export function mountDrawingViewer(envelope) {
     return ref&&ref.sourceId!==ucd.sources[0].id?' · 来源 '+(ucd.sources.find(source=>source.id===ref.sourceId)?.name||ref.sourceId):'';
   }
   function select(rec, additive) {
+    if (initialBuild) return;
     if(instancePlan&&spatialView!=='3d')instanceSelected=rec;
     selectedBlockDetails=false;
     const id = rec ? rec.id : null;
@@ -2398,7 +2459,7 @@ export function mountDrawingViewer(envelope) {
     for (const [key, value] of Object.entries(state.counts)) state.plan[key] = value;
   }
   function rememberSpaceState(target = spaceTarget) {
-    if (!target || !projection || interacting || spatialView !== '2d') return false;
+    if (!target || !projection || interacting || initialBuild || spatialView !== '2d') return false;
     const weight = built.length + Object.keys(projection.draws).length;
     if (weight > SPACE_STATE_MAX_RECORDS) return false;
     const key = cachedSpaceKey(target);
@@ -2484,6 +2545,7 @@ export function mountDrawingViewer(envelope) {
       (target.kind === 'block-preview' && current.blockId === target.blockId))) return;
     const nextPlotPreview = plotPreviewFor(target);
     rememberSpaceState();
+    cancelInitialBuild();
     if (restoreSpaceState(target, nextPlotPreview)) {
       plotPreview = nextPlotPreview;
       renderSpaces(); renderBlocks(); renderCoverage(); renderPlotControls(); updateSelectionButtons();
@@ -2497,22 +2559,41 @@ export function mountDrawingViewer(envelope) {
     presentationStyles = {};
     instancePlan=null;instanceSelected=null;
     window.__cadTimingMark?.("spaceProjectionStart");
-     const drawEstimate=(target.kind==='model'||target.kind==='layout')?estimateDrawingDraws(ucd,target):0;
+    const drawEstimate=(target.kind==='model'||target.kind==='layout')?estimateDrawingDraws(ucd,target):0;
     if(drawEstimate>INSTANCE_DRAW_LIMIT)
       throw new Error('drawing-instance-count-overflow: '+drawEstimate+' expanded draws exceed the retained-viewer budget');
-    if((target.kind==='model'||target.kind==='layout')&&shouldProjectInstances(target,forceInstances?0:drawEstimate,forceInstances)){
+    const retained=(target.kind==='model'||target.kind==='layout')&&shouldProjectInstances(target,forceInstances?0:drawEstimate,forceInstances);
+    const beginRebuild=()=>{
+      window.__cadTimingMark?.("spaceProjectionEnd");
+      if (!target.drawingId) target.drawingId = projection.drawingId;
+      userLayers.clear();
+      window.__cadTimingMark?.("spaceRebuildStart");
+    };
+    const finishSpace=()=>{
+      window.__cadTimingMark?.("spaceRebuildEnd");
+      renderSpaces(); renderBlocks(); renderCoverage(); renderPlotControls();
+      fit(); updateSelectionButtons(); window.__cadTimingMark?.("spaceReady");
+    };
+    if (mounting && retained) {
+      // The retained plan is private until traversal has finished. Cancellation
+      // closes the same task and nested generators used by the subsequent build.
+      startInitialBuild((function*(){
+        instancePlan=yield* projectInstancesSteps(ucd,target,presentationStyles);
+        projection=instancePlan.projection;effectiveLayers=instancePlan.layers;
+        beginRebuild();
+        yield* rebuildSteps();
+      })(),finishSpace);
+      return;
+    }
+    if(retained){
       instancePlan=projectInstances(ucd,target,presentationStyles);projection=instancePlan.projection;effectiveLayers=instancePlan.layers;
     }else{
-    projection = target.kind === 'block-preview'
-      ? projectBlock(ucd, target.blockId, layerMap, presentationStyles)
-      : projectDrawing(ucd, target, layerMap, presentationStyles);
-    effectiveLayers = new WeakMap(Object.entries(projection.draws).map(([id, draw]) => [draw, layerMap[id]]));
+      projection = target.kind === 'block-preview'
+        ? projectBlock(ucd, target.blockId, layerMap, presentationStyles)
+        : projectDrawing(ucd, target, layerMap, presentationStyles);
+      effectiveLayers = new WeakMap(Object.entries(projection.draws).map(([id, draw]) => [draw, layerMap[id]]));
     }
-    window.__cadTimingMark?.("spaceProjectionEnd");
-     if (!target.drawingId) target.drawingId = projection.drawingId;
-    userLayers.clear();
-    window.__cadTimingMark?.("spaceRebuildStart");
-     rebuild(); window.__cadTimingMark?.("spaceRebuildEnd"); renderSpaces(); renderBlocks(); renderCoverage(); renderPlotControls(); fit(); updateSelectionButtons(); window.__cadTimingMark?.("spaceReady");
+    beginRebuild();rebuild(finishSpace);
   }
 
   function renderPlotControls() {
@@ -2723,6 +2804,7 @@ export function mountDrawingViewer(envelope) {
     resize, draw, overviewPaint, ready: Promise.all([rasterReady, firstPaint]),
     destroy() {
       destroyed = true;
+      cancelInitialBuild();
       completeFirstPaint();
       meshViewer?.dispose();
       cancelInstanceRefresh();

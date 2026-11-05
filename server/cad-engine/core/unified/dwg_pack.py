@@ -10,7 +10,7 @@ import json
 from .canonical import canonical_sha256
 
 PROFILE = 'ucd-dwg-packed/1'
-VERSION = 'dwg-table/1'
+VERSION = 'dwg-table/2'
 IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
 ENTITY_FIELDS = {'id', 'drawingId', 'ownerSpaceId', 'layerId', 'localFromOwner',
                  'geometry', 'style', 'sourceRefs', 'displayOrder'}
@@ -123,8 +123,25 @@ def _fast_display(rep_id, rep, doc):
     if not (isinstance(primitives, list) and len(primitives) == 1):
         return None
     primitive = primitives[0]
-    if not isinstance(primitive, dict) or set(primitive) != {'id', 'topology', 'range'} \
-            or primitive.get('id') != 'p' or primitive.get('range') != {'first': 0, 'count': count}:
+    if not isinstance(primitive, dict) or set(primitive) not in (
+            {'id', 'topology', 'range'}, {'id', 'topology', 'range', 'indices'}) or primitive.get('id') != 'p':
+        return None
+    index_id = primitive.get('indices')
+    index_accessor = doc['accessors'].get(index_id) if index_id is not None else None
+    if index_id is not None:
+        # Browser fast rows synthesize entity representation ids. Derived parts
+        # keep explicit representation references and must retain the full tables.
+        if key not in (doc.get('drawing') or {}).get('entities', {}):
+            return None
+        if index_id != 'i-' + key or not isinstance(index_accessor, dict) or set(index_accessor) != ACCESSOR_FIELDS:
+            return None
+        if (index_accessor.get('bufferId'), index_accessor.get('component'), index_accessor.get('components'),
+                index_accessor.get('normalized')) != ('buffer-0', 'u32', 1, False):
+            return None
+        if type(index_accessor.get('count')) is not int or index_accessor['byteLength'] != index_accessor['count'] * 4:
+            return None
+    primitive_count = index_accessor['count'] if index_accessor else count
+    if primitive.get('range') != {'first': 0, 'count': primitive_count}:
         return None
     if not isinstance(primitive.get('topology'), str):
         return None
@@ -145,6 +162,7 @@ def _fast_display(rep_id, rep, doc):
         'key': key, 'accessor': accessor_id, 'geometry': geometry_id,
         'topology': primitive['topology'], 'bounds': bounds, 'handle': refs[0]['objectKey'],
         'byteOffset': accessor['byteOffset'], 'byteLength': accessor['byteLength'], 'count': count,
+        'indexAccessor': index_id, 'index': index_accessor,
     }
 
 
@@ -243,25 +261,29 @@ def pack_document(document):
         fast = pending[index]
         if fast is None:
             continue
-        if fast['geometry'] in fallback_geometries or fast['accessor'] in fallback_accessors:
+        if fast['geometry'] in fallback_geometries or any(
+                aid in fallback_accessors for aid in (fast['accessor'], fast['indexAccessor'])):
             rep = document['representations'][rep_id]
             representations[rep_id] = rep
             geometries[fast['geometry']] = document['geometries'][fast['geometry']]
-            accessors[fast['accessor']] = document['accessors'][fast['accessor']]
+            _copy_geometry_accessors(geometries[fast['geometry']], document, accessors)
             fallback_geometries.add(fast['geometry'])
-            fallback_accessors.add(fast['accessor'])
+            fallback_accessors.update(aid for aid in (fast['accessor'], fast['indexAccessor']) if aid is not None)
             continue
         try:
-            display_rows.append([strings(fast['key']), fast['byteOffset'], fast['byteLength'], fast['count'],
-                                 strings(fast['topology']), *fast['bounds']['min'], *fast['bounds']['max'],
-                                 strings(fast['handle'])])
+            display_row = [strings(fast['key']), fast['byteOffset'], fast['byteLength'], fast['count'],
+                           strings(fast['topology']), *fast['bounds']['min'], *fast['bounds']['max'],
+                           strings(fast['handle'])]
+            if fast['index'] is not None:
+                display_row.extend([fast['index']['byteOffset'], fast['index']['count']])
+            display_rows.append(display_row)
         except (TypeError, ValueError):
             rep = document['representations'][rep_id]
             representations[rep_id] = rep
             geometries[fast['geometry']] = document['geometries'][fast['geometry']]
-            accessors[fast['accessor']] = document['accessors'][fast['accessor']]
+            _copy_geometry_accessors(geometries[fast['geometry']], document, accessors)
             fallback_geometries.add(fast['geometry'])
-            fallback_accessors.add(fast['accessor'])
+            fallback_accessors.update(aid for aid in (fast['accessor'], fast['indexAccessor']) if aid is not None)
             continue
         display_info[fast['key']] = fast
 
@@ -303,7 +325,7 @@ def unpack_document(packed_doc):
     if not isinstance(packed_doc, dict) or 'packed' not in packed_doc:
         return packed_doc
     payload = packed_doc['packed']
-    if not isinstance(payload, dict) or payload.get('profile') != PROFILE or payload.get('version') != VERSION:
+    if not isinstance(payload, dict) or payload.get('profile') != PROFILE or payload.get('version') not in ('dwg-table/1', VERSION):
         raise ValueError('packed-profile')
     strings = payload.get('strings')
     layers = payload.get('layers')
@@ -369,7 +391,7 @@ def unpack_document(packed_doc):
     geometries = dict(packed_doc.get('geometries') or {})
     representations = dict(packed_doc.get('representations') or {})
     for row in payload.get('displays') or []:
-        if not isinstance(row, list) or len(row) != 12:
+        if not isinstance(row, list) or len(row) not in (12, 14) or (len(row) == 14 and payload['version'] != VERSION):
             raise ValueError('packed-display-row')
         key = _row_index(strings, row[0], 'display-key')
         accessor_id = 'a-' + key
@@ -383,12 +405,20 @@ def unpack_document(packed_doc):
         topology = _row_index(strings, row[4], 'display-topology')
         handle = _row_index(strings, row[11], 'display-handle')
         refs = [{'sourceId': 'source-0', 'objectKey': handle}]
+        primitive = {'id': 'p', 'topology': topology, 'range': {'first': 0, 'count': count}}
+        if len(row) == 14:
+            index_id = 'i-' + key
+            if index_id in accessors or any(type(v) is not int or v < 0 for v in row[12:]):
+                raise ValueError('packed-index-range-or-duplicate')
+            accessors[index_id] = {'bufferId': 'buffer-0', 'byteOffset': row[12], 'byteLength': row[13]*4,
+                'component': 'u32', 'components': 1, 'count': row[13], 'normalized': False}
+            primitive['indices'] = index_id
+            primitive['range']['count'] = row[13]
         accessors[accessor_id] = {'bufferId': 'buffer-0', 'byteOffset': row[1], 'byteLength': row[2],
                                   'component': 'f64', 'components': 3, 'count': count, 'normalized': False}
         geometries[geometry_id] = {'id': geometry_id, 'coordinateSpace': 'geometry-local',
                                    'attributes': {'POSITION': accessor_id},
-                                   'primitives': [{'id': 'p', 'topology': topology,
-                                                   'range': {'first': 0, 'count': count}}],
+                                   'primitives': [primitive],
                                    'bounds': {'min': row[5:8], 'max': row[8:11]},
                                    'normalOrigin': 'absent', 'sourceRefs': refs}
         representations[representation_id] = {'id': representation_id, 'kind': 'drawing',
