@@ -31,8 +31,8 @@ export interface OutboxDrainStats {
  * 不变式：
  * - 未注册主题不领取；注册表为空则不触库（「只投递不消费」的排障态 = 注册表为空）。
  * - handler 不直接回写 outbox；异常 / 非法返回一律按「可重试」收敛，绝不打断轮询（其余行、其余主题照常）。
- * - 串行处理（同实例并发恒为 1）：预览单条最长 90s，给转换沙箱留人工排障余量；
- *   要提速先按 ADR-013 复核 OUTBOX_BATCH_LIMIT 与沙箱并发，再把这里改成小并发。
+ * - 单次领取调用内串行处理；调用方可用互斥主题集合组成多个逻辑通道并行消费（worker 的
+ *   notify / preview / general）。同通道不得重入，预览转换本身仍保持单并发。
  */
 @Injectable()
 export class OutboxDispatcher {
@@ -51,12 +51,26 @@ export class OutboxDispatcher {
   }
 
   async drainOnce(): Promise<OutboxDrainStats> {
+    return this.drainTopics(this.registeredTopics());
+  }
+
+  /** 已注册主题（排序快照）：供 worker 划分互斥消费通道。 */
+  registeredTopics(): readonly OutboxTopic[] {
+    return [...this.registry.keys()].sort();
+  }
+
+  /**
+   * 只领取指定主题中的已注册项，并按主题独立成批、逐条串行处理。
+   * 并发调用方必须保证主题集合互斥；同一主题的重入会破坏通道内串行保证。
+   */
+  async drainTopics(topics: readonly OutboxTopic[]): Promise<OutboxDrainStats> {
     const stats: OutboxDrainStats = { claimed: 0, done: 0, retried: 0, deferred: 0, dead: 0 };
-    const topics = [...this.registry.keys()].sort();
-    if (topics.length === 0) {
+    const selected = new Set(topics);
+    const registered = this.registeredTopics().filter((topic) => selected.has(topic));
+    if (registered.length === 0) {
       return stats;
     }
-    for (const topic of topics) {
+    for (const topic of registered) {
       const handler = this.registry.get(topic);
       if (handler === undefined) {
         continue;
