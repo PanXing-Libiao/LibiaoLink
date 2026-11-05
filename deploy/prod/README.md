@@ -4,7 +4,7 @@
 >
 > **根因 / 缓存口径**：这轮不是 MinIO 或数据库中的缓存被删除。旧版内存停止线为 `memoryBytes-256 MiB`，真实 18,311,890 B DWG 在 2026-11-05T04:14Z 的任务以 `job-memory-quota` 失败，前一次为 `job-scratch-quota`；旧失败记录保留在 `cad_artifacts`。同时，旧发布身份把 `service.py` 等网关 / 调度文件计入三种格式的 formatVersion，导致一次内存预留调整就把历史产物判为不兼容。新构建将 `service.py`、`dwg_platform_convert.py`、`unified/conversion_jobs.py` 从格式身份中剔除，只让它们进入 engineVersion，并把测试库现存 STEP / DXF / DWG 历史格式写入 `format-compat.json`，旧完成产物可继续复用。本轮把停止线调到 `memoryBytes-128 MiB`；同文件隔离诊断约 395.5 s 完成 `partial`，artifact 374,839,080 B，worker 峰值 RSS 4,318,523,392 B、cgroup 峰值 4,962,590,720 B，低于新阈值 5,234,491,392 B。
 >
-> **边界 / 回滚**：旧失败任务不会自动变成缓存；用户重新打开该图会按新 DWG formatVersion 新建任务，预计仍需数分钟冷转换，之后再次打开才命中缓存。结果仍为 `partial`，不得描述为零缺损；`CAD_MAX_INPUT_MIB=64`，76 MiB 仍不支持。回滚时恢复上述 `.env`、`server/dist` 与清单，使用同一 CAD overlay 重建 `cad / api / worker`；本轮无数据库迁移，回滚不触数据库。
+> **边界 / 回滚**：用户重新打开后，系统按新 DWG formatVersion 新建任务并在 459 s 内完成 `partial`（artifact 374,839,439 B、manifest 195,634,727 B），缓存行已落库；生产 cgroup 峰值 5,023,698,944 B。后续再次打开复用该产物。结果仍为 `partial`，不得描述为零缺损；`CAD_MAX_INPUT_MIB=64`，76 MiB 仍不支持。回滚时恢复上述 `.env`、`server/dist` 与清单，使用同一 CAD overlay 重建 `cad / api / worker`；本轮无数据库迁移，回滚不触数据库。
 
 > **2026-11-05 11:13 CAD 大图纸预览与归档可靠性发布（正式生产已部署）**：正式环境 `https://pm.libiaorobot.com`（`10.1.103.44`）已发布 `prod-20261105-cad-large-preview-73513c0b`，源提交 `73513c0b`。本轮把 `codex/cad-preview-async-paint` 的 CAD 大图纸预览、分块传输与异步绘制、图层 / 空间切换、分片上传续传、SHA-256 Worker、导入估时、CAD 归档流式读取 / 压缩预览 / 对象存储回收接入正式生产，同时合入正式服 11-05 前端基线，保留日报 / 问题编辑弹窗焦点修复、移动端水印与项目导入中英混排表头修复。
 
