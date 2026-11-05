@@ -2031,6 +2031,8 @@ function RecordEditModal({ label, hint, submitLabel, pending, canSubmit, error, 
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [onClose]);
+  /** 弹窗打开时锁住背景页滚动，避免滚轮穿透到下方列表（日报 / 问题共用）。 */
+  useEffect(() => lockBodyScroll(), []);
   /** 键盘焦点陷阱（Push 264 追订）：编辑弹窗打开时焦点进弹窗、Tab 在弹窗内循环、关闭还原到触发按钮。 */
   const trapRef = useFocusTrap<HTMLDivElement>();
   return (
@@ -2047,7 +2049,9 @@ function RecordEditModal({ label, hint, submitLabel, pending, canSubmit, error, 
         <h2 className="text-lg font-bold text-zinc-900">{label}</h2>
         <p className="mt-1 text-sm text-zinc-500">{hint}</p>
         <form className="mt-5 flex min-h-0 flex-1 flex-col" onSubmit={onSubmit}>
-          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-0.5">{children}</div>
+          <ScrollArea viewportClassName="min-h-0 flex-1" className="space-y-4 px-0.5 overscroll-contain" ariaLabel={label}>
+            {children}
+          </ScrollArea>
           {error === null ? null : (
             <p role="alert" className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
               {error}
@@ -2255,7 +2259,7 @@ function ReportEditModal({ project, row, onClose, onSubmit, sync }: {
       </label>
       <label className="block">
         <span className="mb-1.5 block text-sm font-medium text-zinc-700">
-          {fieldText(locale, "明日计划")}<span className="ml-1 text-xs font-normal text-zinc-400">{t("report.optional.clear")}</span>
+          {fieldText(locale, "明日计划")}
         </span>
         <GrowingTextarea
           data-record-field="plan"
@@ -2286,8 +2290,7 @@ function ReportEditModal({ project, row, onClose, onSubmit, sync }: {
 }
 
 /** 「问题追踪」行编辑弹窗（Push 223 · 业务口径「问题追溯里面 这个编辑也要和干系人同款」+「文字和图片编辑要同款」）：
- *  只收**文字 + 图片**两类字段 —— 问题描述 / 解决方案或建议 / 问题附图；「问题归类」「问题是否处理」是下拉口径，
- *  按业务要求**保持原来的行内编辑**，不进弹窗。
+ *  可编辑问题描述 / 问题归类 / 问题处理人 / 解决方案或建议 / 问题附图；「问题是否处理」仍走行内编辑。
  *  Push 244（业务口径「这个负责人要可以编辑」）：追加**问题处理人 / 责任人**单选（成员搜索下拉 + 首项「待分派」）。 */
 function IssueEditModal({ projectId, members, row, onClose, onSubmit }: {
   projectId: string;
@@ -2299,6 +2302,7 @@ function IssueEditModal({ projectId, members, row, onClose, onSubmit }: {
   const locale = useLocale();
   const t = useT();
   const [title, setTitle] = useState(row.title);
+  const [categories, setCategories] = useState<string[]>(row.categories);
   const [solution, setSolution] = useState(row.solution);
   const [photos, setPhotos] = useState<ReportPhoto[]>(row.photos);
   /** 问题处理人 / 责任人（Push 244）："" = 待分派（落值时转契约 null）。 */
@@ -2312,12 +2316,15 @@ function IssueEditModal({ projectId, members, row, onClose, onSubmit }: {
   /** 图片还在上传 / 上传失败先拦住（复用「日报填写」提交那套文案）。 */
   const uploadBlocked = uploadBlockingMessage({ ...emptyDraft(), photos }, locale);
   /** 「问题描述」是契约必填（清空会被服务端拒）—— 前端先拦（与行内编辑同口径）。 */
-  const canSubmit = nextTitle !== "" && uploadBlocked === "" && !pending;
+  const canSubmit = nextTitle !== "" && categories.length > 0 && uploadBlocked === "" && !pending;
   /** 只提交改动过的键（solution 空串 = 清空 → 契约 null，口径同 issueUpdateBody）。 */
   const changedPatch = (): IssuePatch => {
     const patch: IssuePatch = {};
     if (nextTitle !== row.title) {
       patch.title = nextTitle;
+    }
+    if (categories.join("|") !== row.categories.join("|")) {
+      patch.categories = categories;
     }
     if (nextSolution !== row.solution) {
       patch.solution = nextSolution;
@@ -2369,6 +2376,21 @@ function IssueEditModal({ projectId, members, row, onClose, onSubmit }: {
         />
       </label>
       <div className="block">
+        <span className="mb-1.5 block text-sm font-medium text-zinc-700">
+          {fieldText(locale, "问题归类")}<span className="ml-1 text-xs font-normal text-zinc-400">{t("report.required")}</span>
+        </span>
+        <div data-record-field="categories">
+          <MultiSelectMenu
+            values={categories}
+            options={ISSUE_CATEGORIES}
+            labelOf={(name) => fieldText(locale, name)}
+            onChange={setCategories}
+            placeholder={t("report.placeholder.issueCategory")}
+            ariaLabel={t("rp.catAria", { date: isoDateText(locale, row.raisedAt) })}
+          />
+        </div>
+      </div>
+      <div className="block">
         <span className="mb-1.5 block text-sm font-medium text-zinc-700">{fieldText(locale, "问题处理人 / 责任人")}</span>
         <div data-record-field="owner">
           <SearchSelect
@@ -2383,7 +2405,7 @@ function IssueEditModal({ projectId, members, row, onClose, onSubmit }: {
       </div>
       <label className="block">
         <span className="mb-1.5 block text-sm font-medium text-zinc-700">
-          {fieldText(locale, "解决方案或建议")}<span className="ml-1 text-xs font-normal text-zinc-400">{t("report.optional.clear")}</span>
+          {fieldText(locale, "解决方案或建议")}
         </span>
         <GrowingTextarea
           data-record-field="solution"
