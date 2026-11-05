@@ -91,45 +91,52 @@ export function visibleTileRange(bounds, level, view) {
   const y1 = clamp(Math.floor((view.maxY - bounds.minY - 1e-12) / size), 0, cells - 1);
   return { level, x0, x1, y0, y1, count: Math.max(0, x1 - x0 + 1) * Math.max(0, y1 - y0 + 1) };
 }
-function clipSegments(worldSegments, box) {
-  const out = [];
-  for (let i = 0; i + 3 < worldSegments.length; i += 4) {
-    const clipped = clipSegment(worldSegments[i], worldSegments[i + 1], worldSegments[i + 2], worldSegments[i + 3], box);
-    if (clipped) out.push(...clipped);
-  }
-  return out;
-}
-export function buildTileVertices(descriptors, box, minWorldSize = 0) {
+export function buildTileVertices(descriptors, box, minWorldSize = 0, scratch = null) {
   const groups = new Map();
   const clipBox = padBox(box);
   for (const descriptor of descriptors) {
     if (!intersects(descriptor.bounds, clipBox)) continue;
     if (descriptor.lodSize > 0 && descriptor.lodSize < minWorldSize) continue;
-    const clipped = clipSegments(descriptor.worldSegments, clipBox);
-    if (!clipped.length) continue;
     let group = groups.get(descriptor.styleKey);
-    if (!group) { group = { key: descriptor.styleKey, color: descriptor.color, width: descriptor.width, layerId: descriptor.layerId, rank: Number.isFinite(descriptor.order) ? descriptor.order : groups.size, rows: [] }; groups.set(group.key, group); }
-    else if (Number.isFinite(descriptor.order)) group.rank = Math.min(group.rank, descriptor.order);
-    group.rows.push({ descriptor, segments: clipped });
+    if (!group) {
+      group = { key: descriptor.styleKey, color: descriptor.color, width: descriptor.width,
+        layerId: descriptor.layerId, rank: Number.isFinite(descriptor.order) ? descriptor.order : groups.size, rows: [] };
+      groups.set(group.key, group);
+    } else if (Number.isFinite(descriptor.order)) group.rank = Math.min(group.rank, descriptor.order);
+    group.rows.push(descriptor);
   }
   if (!groups.size) return { data: new Float32Array(0), segments: 0, styleCount: 0 };
   const ordered = [...groups.values()].sort((a, b) => a.rank - b.rank);
   let segments = 0;
-  for (const group of ordered) for (const row of group.rows) segments += row.segments.length / 4;
+  for (const group of ordered) {
+    for (const descriptor of group.rows) {
+      const source = descriptor.worldSegments;
+      for (let i = 0; i + 3 < source.length; i += 4) {
+        if (clipSegment(source[i], source[i + 1], source[i + 2], source[i + 3], clipBox)) segments++;
+      }
+    }
+  }
   if (!segments) return { data: new Float32Array(0), segments: 0, styleCount: 0 };
   const originX = (box.minX + box.maxX) * 0.5;
   const originY = (box.minY + box.maxY) * 0.5;
-  const data = new Float32Array(segments * STROKE_TILE_STRIDE);
+  const needed = segments * STROKE_TILE_STRIDE;
+  let data;
+  if (scratch) {
+    if (!scratch.data || scratch.data.length < needed) scratch.data = new Float32Array(needed);
+    data = scratch.data.subarray(0, needed);
+  } else data = new Float32Array(needed);
   let at = 0;
   for (const group of ordered) {
-    for (const row of group.rows) {
-      const { color, width, lodSize } = row.descriptor;
-      const source = row.segments;
-      for (let i = 0; i < source.length; i += 4) {
-        data[at++] = source[i] - originX;
-        data[at++] = source[i + 1] - originY;
-        data[at++] = source[i + 2] - originX;
-        data[at++] = source[i + 3] - originY;
+    for (const descriptor of group.rows) {
+      const { color, width, lodSize } = descriptor;
+      const source = descriptor.worldSegments;
+      for (let i = 0; i + 3 < source.length; i += 4) {
+        const clipped = clipSegment(source[i], source[i + 1], source[i + 2], source[i + 3], clipBox);
+        if (!clipped) continue;
+        data[at++] = clipped[0] - originX;
+        data[at++] = clipped[1] - originY;
+        data[at++] = clipped[2] - originX;
+        data[at++] = clipped[3] - originY;
         data[at++] = color[0];
         data[at++] = color[1];
         data[at++] = color[2];
@@ -151,6 +158,8 @@ export function createStrokeTilePlanner(renderer, options = {}) {
   let useSerial = 0;
   let totalBytes = 0;
   let builtTiles = 0;
+  let maxBuildMs = 0, maxBuildSegments = 0, maxBuildBytes = 0;
+  const vertexScratch = { data: null };
   const rows = new Map();
   function prune(activeKeys) {
     if (totalBytes <= maxBytes) return;
@@ -229,9 +238,14 @@ export function createStrokeTilePlanner(renderer, options = {}) {
     const candidates = run.index
       ? run.index.search(bounds.minX, bounds.minY, bounds.maxX, bounds.maxY).map(i => run.descriptors[i])
       : run.descriptors;
-    const built = buildTileVertices(candidates, bounds, minWorldSize);
+    const buildStarted = performance.now();
+    const built = buildTileVertices(candidates, bounds, minWorldSize, vertexScratch);
     if (!built.segments) { run.tiles.set(key, null); return null; }
     const buffer = renderer.createTileBuffer(built.data, built.segments, built.originX, built.originY);
+    const buildMs = performance.now() - buildStarted;
+    if (buildMs > maxBuildMs) {
+      maxBuildMs = buildMs; maxBuildSegments = built.segments; maxBuildBytes = built.data.byteLength;
+    }
     const row = { key, run, buffer, bytes: built.data.byteLength, segments: built.segments, styles: built.styleCount, lastUse: ++useSerial };
     run.tiles.set(key, row);
     rows.set(key, row);
@@ -239,7 +253,7 @@ export function createStrokeTilePlanner(renderer, options = {}) {
     builtTiles++;
     return row;
   }
-  function drawRun(node, runId, entries, matrix, view, scale, minScreenPx) {
+  function* drawRunSteps(node, runId, entries, matrix, view, scale, minScreenPx) {
     if (!completeView(view)) return { tiles: 0, segments: 0, styles: 0, level: 0, bytes: 0, built: 0, reused: 0 };
     const plan = runPlan(node, entries);
     const run = describeRun(plan, runId, matrix, entries);
@@ -254,8 +268,13 @@ export function createStrokeTilePlanner(renderer, options = {}) {
     if (!range.count) return { tiles: 0, segments: 0, styles: 0, level, bytes: 0, built: 0, reused: 0 };
     const activeKeys = new Set();
     let tiles = 0, segments = 0, styles = 0, bytes = 0, built = 0, reused = 0;
+    let sliceStarted = performance.now();
     for (let y = range.y0; y <= range.y1; y++) {
       for (let x = range.x0; x <= range.x1; x++) {
+        if (performance.now() - sliceStarted >= 6) {
+          yield;
+          sliceStarted = performance.now();
+        }
         const key = rowKey(plan.id, run.id, level, x, y, lodKey);
         const known = run.tiles.get(key);
         const row = ensureTile(plan, run, level, x, y, lodKey, buildMinWorldSize);
@@ -272,12 +291,19 @@ export function createStrokeTilePlanner(renderer, options = {}) {
     prune(activeKeys);
     return { tiles, segments, styles, level, bytes, built, reused };
   }
+  function drawRun(node, runId, entries, matrix, view, scale, minScreenPx) {
+    const steps = drawRunSteps(node, runId, entries, matrix, view, scale, minScreenPx);
+    let next = steps.next();
+    while (!next.done) next = steps.next();
+    return next.value;
+  }
   function reset() {
     for (const row of rows.values()) renderer.deleteTileBuffer(row.buffer);
     rows.clear();
     totalBytes = 0;
     builtTiles = 0;
+    maxBuildMs = 0; maxBuildSegments = 0; maxBuildBytes = 0;
     nodePlans = new WeakMap();
   }
-  return { drawRun, reset, stats: () => ({ cachedTiles: rows.size, bytes: totalBytes, builtTiles }) };
+  return { drawRun, drawRunSteps, reset, stats: () => ({ cachedTiles: rows.size, bytes: totalBytes, builtTiles, maxBuildMs, maxBuildSegments, maxBuildBytes }) };
 }

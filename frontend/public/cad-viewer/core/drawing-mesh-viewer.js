@@ -1,6 +1,6 @@
 import * as THREE from './vendor/three.module.js';
 import {OrbitControls} from './vendor/controls/OrbitControls.js';
-import {projectDrawing} from './drawing-projection.js?v=dxf-0.17.3';
+import {projectDrawing} from './drawing-projection.js?v=dxf-0.17.4';
 
 // Project only supported mesh sources, retaining the original block hierarchy.
 export function projectMeshes(document, meshIds) {
