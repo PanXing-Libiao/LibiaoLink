@@ -486,7 +486,7 @@
     "dependency.json": "a17930ad7b0dadf5bd81c59f23995af557f383b7584fdf48bdb3c2550240666e"
   },
   "browserFiles": {
-    "app.js": "026f303011d30f678fc44caaa6f57fceb71d40f04013530bb2943213ee492849",
+    "app.js": "8f6e110671a4b492303d53b5d418ed2e82fbd98934725062c205f4a4e6523439",
     "benchmark.js": "c81b3668354f0fc431c02f068545d5c71ce4a266bf414671341aa97674fc3e9d",
     "binary-transport.js": "e08b956fd5caa3588d5826f531d208ca12792ce10c003b2de1ceddc5527a447f",
     "camera-framing.js": "12f685ca11f995192d3f5348a44c2cf5fca5286bca58b0af99a7faa7ef5aab6d",
@@ -500,19 +500,20 @@
     "drawing-instances.js": "3b87391e8e52a87e23a23f37deb6aefd581aaee88e828baab3e41ba9c9c05532",
     "drawing-layout.js": "9a611425b8d5151225a8bf06cc9b4b950ec8d1ba138be31cf627c14c5d5ab68b",
     "drawing-media.js": "3b9558eb5ee8dc3031f6b6c823b65c1ef58f3d4cfc676a477798bb6f10ed6a27",
-    "drawing-mesh-viewer.js": "7686dfdf0a330839304d588e9c3863af4fb7a149a7e0cdea21efed42e572acc2",
+    "drawing-mesh-viewer.js": "300fa860d3f4a3f56082196e1218eb250dfc075f35b55fba670d1dbbb1a29798",
     "drawing-pattern.js": "4f0aa4a0b4f6bc0d7cb0dfe477de687fa4f87d4d603db30b63c8c3e2e3c5b5b2",
     "drawing-plot-styles.js": "a2c3888311ccdaac04b38f108ab7175cd171a43f0fb82fdb9356e9431819b243",
     "drawing-projection.js": "4060268bef6a42a83f6cb0977393245d6880721fc028f45498914b369fe6ab0d",
     "drawing-text-avoidance.js": "2e65f43a90f24b6a669325a3bc7687d0d1f93f22610ba937d9b8c2ae2b3e5001",
     "drawing-text.js": "1cc508f97d4d196842167e7d79b1ec50493bbff0756e89b002a58c933d02141c",
-    "drawing-viewer.js": "447521b0d77eb7ef450f7d43576ed2f363377c3e96115201040ffd3e845dc4af",
+    "drawing-viewer.js": "fe255e025b16af0b9442ccf894a964d2252d57e3c6464962fcc977316d198c1e",
     "dwg-packed-transport.js": "f2b4a648f467f2154c4af1cb31cb7cd54439e15079c5096b3eb2a62dfc827759",
     "dxf-resources.js": "219569569cc22deca979ec3f6693031bfbfe050c30eb8fe419962f4e3dab5c2c",
     "gpu/background-painter.js": "20424c614d1879af4a4b2cfa265ef0fa4b79acaebb1124c46395e94ab8d287f1",
-    "gpu/gpu-strokes.js": "d95d1772bfa21723013a7cb4e9aa62368b9c9026602ffd02c4bcd26d366e89a0",
+    "gpu/gpu-strokes.js": "72d96e5b91dc2b6957a3c3f88c3d115bb1ab586b38644785176687d8aff2efa2",
     "gpu/paint-worker.js": "8c865a4847a9133853604dd7f52162b863ee2d708aeff2d6a93911bfa90e7978",
     "gpu/recorded-path.js": "99e818b93996227a46b53a5ea54d54a15dd9dca4848790d16d6eeb7a6c1d7133",
+    "gpu/stroke-tiles.js": "147bdbeee536038c561b708a7e073078b4579ece8cd8e36323b6eecb80cafdb1",
     "highlight.js": "1d19f0528e5fc706484efcdcb1101c4aa32285023cf550acefc04d85a386b2f5",
     "load-phases.js": "6b2c33cef7e2a6f9f08a1fbee603f3e15c1229739a09ed0aa1885fb184f1036d",
     "manifest-decode.js": "948dbd2b2107624c82586076213084c579e651d46439a300bfd19ad3c4b586c7",
@@ -588,8 +589,8 @@
     ]
   },
   "engineDigest": "eb10cd3d0e02999fea2a539873cc2ab32ec0af95110f6c733c9863b0860e13d0",
-  "viewerDigest": "0f168deca1d9b42ca6a6f8d4490a8a9f63a425e19e9d27e6f3c4fb4197a2220b",
-  "releaseDigest": "b3b3315cacff6b9270372d24c36d5c68623041f76d1046336106b73b4cdf6e97",
+  "viewerDigest": "9dab59aded63f0c4a942afe7530ec9d3d879f57c2dd259654747a52aa89fee94",
+  "releaseDigest": "d227ba1b186aab8c3d944f8ff018a09d2649837aa52ab4a50846ad35a467bfda",
   "engineVersion": "step-0.3.3/eb10cd3d0e02999fea2a539873cc2ab32ec0af95110f6c733c9863b0860e13d0/gateway-1",
-  "viewerVersion": "viewer-0f168deca1d9b42ca6a6f8d4490a8a9f63a425e19e9d27e6f3c4fb4197a2220b"
+  "viewerVersion": "viewer-9dab59aded63f0c4a942afe7530ec9d3d879f57c2dd259654747a52aa89fee94"
 }
