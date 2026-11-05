@@ -97,6 +97,11 @@ export interface ProjectExportWorkbookResult {
   sheetNames: string[];
 }
 
+export interface ProjectExportWorkbookFileResult {
+  filePath: string;
+  sheetNames: string[];
+}
+
 const TASK_HEADERS = [
   "任务描述",
   "项目经理",
@@ -283,13 +288,46 @@ function filesValue(files: readonly ExportFileLink[], origin: string | null, pro
   return { text, hyperlink: link, tooltip: files[0]?.name ?? text };
 }
 
+function linkedText(text: string, tooltip: string, origin: string | null, projectId: string): ExcelJS.CellValue {
+  if (text === "") return null;
+  const link = fileLink(origin, projectId);
+  if (link === null) return text;
+  return { text, hyperlink: link, tooltip };
+}
+
+function uniquePhotoNames(refs: readonly ExportPhotoRef[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const ref of refs) {
+    if (seen.has(ref.fileId)) continue;
+    seen.add(ref.fileId);
+    result.push(ref.name);
+  }
+  return result;
+}
+
+/** 流式导出的图片单元格：不嵌二进制，整个单元格链到项目文件视图；文本保留附图名称。 */
+function photoLinksValue(refs: readonly ExportPhotoRef[], origin: string | null, projectId: string): ExcelJS.CellValue {
+  const names = uniquePhotoNames(refs);
+  if (names.length === 0) return null;
+  const text = names.join("\n");
+  return linkedText(text, names[0] ?? text, origin, projectId);
+}
+
+function appendPhotoLinks(base: string, refs: readonly ExportPhotoRef[], origin: string | null, projectId: string): ExcelJS.CellValue {
+  const names = uniquePhotoNames(refs);
+  if (names.length === 0) return base === "" ? null : base;
+  const text = base === "" ? names.join("\n") : base + "\n" + names.join("\n");
+  return linkedText(text, names[0] ?? text, origin, projectId);
+}
+
 function applyLinkFont(cell: ExcelJS.Cell): void {
   if (cell.value !== null && typeof cell.value === "object" && "hyperlink" in cell.value) {
     cell.font = { name: "Arial", size: 10, color: { argb: "FF0563C1" }, underline: true };
   }
 }
 
-function styleHeader(sheet: ExcelJS.Worksheet, headers: readonly string[]): void {
+function styleHeader(sheet: ExcelJS.Worksheet, headers: readonly string[]): ExcelJS.Row {
   const row = sheet.addRow([...headers]);
   row.height = 24;
   for (let index = 1; index <= headers.length; index += 1) {
@@ -298,6 +336,7 @@ function styleHeader(sheet: ExcelJS.Worksheet, headers: readonly string[]): void
     cell.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
     cell.border = { bottom: { style: "thin", color: { argb: "FFE4E4E7" } } };
   }
+  return row;
 }
 
 function setWidths(sheet: ExcelJS.Worksheet, widths: Record<number, number>, count: number): void {
@@ -561,17 +600,203 @@ export async function buildProjectExportWorkbook(payload: ProjectExportPayload):
   workbook.created = new Date();
   workbook.modified = new Date();
   workbook.title = payload.project.code + " " + payload.project.name;
-  const reportSheetName = "日报及问题汇总";
-  const changeSheetName = "变更管理";
-  const stakeholderSheetName = "干系人";
-  const fixed = [reportSheetName, changeSheetName, stakeholderSheetName];
-  let taskSheetName = sheetNameOf(payload.project.name);
-  if (fixed.includes(taskSheetName)) taskSheetName = sheetNameOf(taskSheetName + " 项目");
+  const sheetNames = projectExportSheetNames(payload.project);
+  const [taskSheetName, reportSheetName, changeSheetName, stakeholderSheetName] = sheetNames;
+  if (taskSheetName === undefined || reportSheetName === undefined || changeSheetName === undefined || stakeholderSheetName === undefined) {
+    throw new Error("项目导出 Sheet 配置不完整");
+  }
   addTaskSheet(workbook, payload, taskSheetName);
   addReportSheet(workbook, payload, reportSheetName);
   addChangeSheet(workbook, payload, changeSheetName);
   addStakeholderSheet(workbook, payload, stakeholderSheetName);
   const bytes = await workbook.xlsx.writeBuffer();
   const buffer = Buffer.from(bytes as unknown as Uint8Array);
-  return { buffer, sheetNames: [taskSheetName, ...fixed] };
+  return { buffer, sheetNames };
+}
+
+export function projectExportSheetNames(project: { name: string }): string[] {
+  const reportSheetName = "日报及问题汇总";
+  const changeSheetName = "变更管理";
+  const stakeholderSheetName = "干系人";
+  const fixed = [reportSheetName, changeSheetName, stakeholderSheetName];
+  let taskSheetName = sheetNameOf(project.name);
+  if (fixed.includes(taskSheetName)) taskSheetName = sheetNameOf(taskSheetName + " 项目");
+  return [taskSheetName, ...fixed];
+}
+
+/**
+ * 大项目流式工作簿写入器：按 Sheet / 行提交到临时文件，内存只保留当前页与当前行。
+ * ExcelJS 4.4 的流式写入不支持图片；本类把图片单元格改为项目文件视图链接，由服务层仅在 stream 模式使用。
+ */
+export class ProjectExportWorkbookWriter {
+  private readonly workbook: ExcelJS.stream.xlsx.WorkbookWriter;
+  readonly sheetNames: string[];
+  private committed = false;
+
+  constructor(
+    readonly filePath: string,
+    private readonly project: { id: string; code: string; name: string },
+    private readonly origin: string | null,
+    now = new Date(),
+  ) {
+    this.sheetNames = projectExportSheetNames(project);
+    this.workbook = new ExcelJS.stream.xlsx.WorkbookWriter({
+      filename: filePath,
+      useStyles: true,
+      useSharedStrings: false,
+    });
+    this.workbook.creator = "LibiaoLink";
+    this.workbook.lastModifiedBy = "LibiaoLink";
+    this.workbook.created = now;
+    this.workbook.modified = now;
+    this.workbook.title = project.code + " " + project.name;
+  }
+
+  async writeTasks(rows: AsyncIterable<ProjectExportTaskRow>): Promise<void> {
+    const sheet = this.createSheet(this.sheetNames[0] ?? "项目任务", TASK_WIDTHS, TASK_HEADERS, true);
+    for await (const task of rows) {
+      const row = sheet.addRow([
+        task.description,
+        task.managers,
+        task.owners,
+        task.status,
+        task.progress,
+        task.onTime,
+        task.deliverables,
+        task.note,
+        task.plannedStart,
+        task.plannedEnd,
+        task.headcount,
+        task.estimatedDays,
+        task.actualEnd,
+        task.stage,
+        task.priority,
+        task.endedAt,
+        null,
+        task.changeDates.join("\n"),
+      ]);
+      row.getCell(17).value = filesValue(task.files, this.origin, this.project.id);
+      styleBodyRow(sheet, row.number, TASK_HEADERS.length);
+      const texts: string[] = [];
+      for (let col = 1; col <= TASK_HEADERS.length; col += 1) texts.push(plainText(row.getCell(col)));
+      row.height = estimatedTextHeight(sheet, texts, Array.from({ length: TASK_HEADERS.length }, (_value, index) => index + 1)) / PX_PER_POINT;
+      row.commit();
+    }
+    sheet.commit();
+  }
+
+  async writeReports(rows: AsyncIterable<ProjectExportReportRow>): Promise<void> {
+    const sheet = this.createSheet(this.sheetNames[1] ?? "日报及问题汇总", REPORT_WIDTHS, REPORT_HEADERS, true);
+    for await (const report of rows) {
+      const onsite = uniquePhotos(report.onsitePhotos);
+      const issuePhotos = uniquePhotos(report.issuePhotos);
+      const row = sheet.addRow([
+        report.date,
+        report.author,
+        report.doneWork,
+        report.plan,
+        null,
+        report.issueDescription,
+        report.issueCategory,
+        report.issueSolution,
+        null,
+        report.issueState,
+        report.headcount,
+      ]);
+      row.getCell(5).value = photoLinksValue(onsite, this.origin, this.project.id);
+      row.getCell(9).value = photoLinksValue(issuePhotos, this.origin, this.project.id);
+      styleBodyRow(sheet, row.number, REPORT_HEADERS.length);
+      const basePx = estimatedTextHeight(sheet, [
+        plainText(row.getCell(3)),
+        plainText(row.getCell(4)),
+        plainText(row.getCell(5)),
+        plainText(row.getCell(6)),
+        plainText(row.getCell(7)),
+        plainText(row.getCell(8)),
+        plainText(row.getCell(9)),
+      ], [3, 4, 5, 6, 7, 8, 9]);
+      row.height = basePx / PX_PER_POINT;
+      row.commit();
+    }
+    sheet.commit();
+  }
+
+  async writeChanges(rows: AsyncIterable<ProjectExportChangeRow>): Promise<void> {
+    const sheet = this.createSheet(this.sheetNames[2] ?? "变更管理", CHANGE_WIDTHS, CHANGE_HEADERS, true);
+    for await (const change of rows) {
+      const before = uniquePhotos(change.beforePhotos);
+      const after = uniquePhotos(change.afterPhotos);
+      const row = sheet.addRow([
+        change.changedAt,
+        change.stage,
+        null,
+        change.description,
+        null,
+        null,
+        change.reason,
+        change.applicant,
+        change.writer,
+        change.afterVersion,
+        null,
+        change.progress,
+        change.related,
+      ]);
+      row.getCell(3).value = filesValue(change.files, this.origin, this.project.id);
+      row.getCell(5).value = appendPhotoLinks(change.beforeText, before, this.origin, this.project.id);
+      row.getCell(6).value = appendPhotoLinks(change.afterText, after, this.origin, this.project.id);
+      row.getCell(11).value = filesValue(change.afterFiles, this.origin, this.project.id);
+      styleBodyRow(sheet, row.number, CHANGE_HEADERS.length);
+      const basePx = estimatedTextHeight(sheet, [
+        plainText(row.getCell(3)),
+        plainText(row.getCell(4)),
+        plainText(row.getCell(5)),
+        plainText(row.getCell(6)),
+        plainText(row.getCell(7)),
+        plainText(row.getCell(11)),
+        plainText(row.getCell(13)),
+      ], [3, 4, 5, 6, 7, 11, 13]);
+      row.height = basePx / PX_PER_POINT;
+      row.commit();
+    }
+    sheet.commit();
+  }
+
+  async writeStakeholders(rows: AsyncIterable<ProjectExportStakeholderRow>): Promise<void> {
+    const sheet = this.createSheet(this.sheetNames[3] ?? "干系人", STAKEHOLDER_WIDTHS, STAKEHOLDER_HEADERS, false);
+    for await (const item of rows) {
+      const row = sheet.addRow([item.name, item.contact, item.email, item.position, item.company, item.writer, item.submittedAt]);
+      styleBodyRow(sheet, row.number, STAKEHOLDER_HEADERS.length);
+      const texts: string[] = [];
+      for (let col = 1; col <= STAKEHOLDER_HEADERS.length; col += 1) texts.push(plainText(row.getCell(col)));
+      row.height = estimatedTextHeight(sheet, texts, Array.from({ length: STAKEHOLDER_HEADERS.length }, (_value, index) => index + 1)) / PX_PER_POINT;
+      row.commit();
+    }
+    sheet.commit();
+  }
+
+  async commit(): Promise<ProjectExportWorkbookFileResult> {
+    if (this.committed) throw new Error("项目导出工作簿已经提交");
+    this.committed = true;
+    await this.workbook.commit();
+    return { filePath: this.filePath, sheetNames: this.sheetNames };
+  }
+
+  /** 异常路径尽力完成 ZIP 收尾，让底层文件句柄关闭；随后由调用方删除临时目录。 */
+  async abort(): Promise<void> {
+    if (this.committed) return;
+    this.committed = true;
+    await this.workbook.commit().catch(() => undefined);
+  }
+
+  private createSheet(
+    name: string,
+    widths: Record<number, number>,
+    headers: readonly string[],
+    frozen: boolean,
+  ): ExcelJS.Worksheet {
+    const sheet = this.workbook.addWorksheet(name, frozen ? { views: [{ state: "frozen", xSplit: 1, ySplit: 1 }] } : undefined);
+    setWidths(sheet, widths, headers.length);
+    styleHeader(sheet, headers).commit();
+    return sheet;
+  }
 }

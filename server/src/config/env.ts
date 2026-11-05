@@ -54,6 +54,8 @@ export const EnvSchema = z
     UPLOAD_SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
     /** 回收站保留期（天）：移入回收站时写 `files.purge_after = recycled_at + 保留期`（A4-12，默认 30）。 */
     FILE_RECYCLE_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(30),
+    /** 项目导出：auto = 小项目内存生成并嵌图、大项目流式临时文件并改图片链接；legacy / stream 仅用于排障。 */
+    PROJECT_EXPORT_MODE: z.enum(["auto", "legacy", "stream"]).default("auto"),
     // ---- SVG 预览栅格化沙箱（H1 · S4：converter 落点 deploy/svg-preview/，接口契约见其 README） ----
     /** 转换器基址：dev = 本机哑中继 `127.0.0.1:9900`；生产 = `http://svg-preview:9900`（同处 internal 网络）。 */
     PREVIEW_CONVERTER_URL: z.string().min(1).default("http://127.0.0.1:9900"),
