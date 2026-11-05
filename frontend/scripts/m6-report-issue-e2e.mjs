@@ -607,6 +607,9 @@ check("⑥c 日报「明日计划」弹窗保存落库（只提交改动键：�
 // 图片：弹窗内 AttachmentPicker 删图 + 保存落库
 await clickSelector(rowSel1 + " [data-report-edit-slot] button");
 const photoModalOpened = await waitFor("document.querySelector(" + j("[data-record-edit-modal]") + ")!==null", 6000);
+const reportModalFocused = await waitFor("(function(){var m=document.querySelector(" + j("[data-record-edit-modal]") + ");return m!==null&&document.activeElement===m;})()", 2000);
+const reportModalFocusState = await ev("(function(){var m=document.querySelector(" + j("[data-record-edit-modal]") + ");var a=document.activeElement;return {isContainer:a===m,field:a===null?null:a.dataset.recordField};})()");
+check("⑥d1 日报编辑弹窗打开后焦点停在弹窗容器，不默认选中施工人数或其他字段", reportModalFocused === true && reportModalFocusState !== null && reportModalFocusState.isContainer === true && reportModalFocusState.field === null, JSON.stringify(reportModalFocusState));
 const photoModalScope = await ev(modalScopeExpr);
 check("⑥d 日报编辑弹窗 = 文字两列 + 图片一区（关联阶段不在弹窗里 —— 下拉保持行内）", photoModalOpened === true && photoModalScope !== null && photoModalScope.fields.join(",") === "doneWork,plan" && photoModalScope.pasteZones === 1 && photoModalScope.attachments === 1 && photoModalScope.inlineSave === 0 && photoModalScope.multiOptions === 0, JSON.stringify(photoModalScope));
 await clickSelector("[data-record-edit-modal] [data-action=remove-attachment]");
