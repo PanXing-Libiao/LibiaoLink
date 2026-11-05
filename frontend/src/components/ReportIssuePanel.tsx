@@ -2043,8 +2043,10 @@ function RecordEditModal({ label, hint, submitLabel, pending, canSubmit, error, 
         role="dialog"
         aria-modal="true"
         aria-label={label}
+        data-focus-container=""
+        tabIndex={-1}
         data-record-edit-modal=""
-        className={"relative flex max-h-[calc(100vh-3rem)] w-full flex-col rounded-2xl bg-white p-6 shadow-[0_24px_60px_rgba(0,0,0,0.25)] " + (wide ? "max-w-2xl" : "max-w-md")}
+        className={"relative flex max-h-[calc(100vh-3rem)] w-full flex-col rounded-2xl bg-white p-6 shadow-[0_24px_60px_rgba(0,0,0,0.25)] outline-none " + (wide ? "max-w-2xl" : "max-w-md")}
       >
         <h2 className="text-lg font-bold text-zinc-900">{label}</h2>
         <p className="mt-1 text-sm text-zinc-500">{hint}</p>
