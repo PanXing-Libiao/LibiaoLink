@@ -1,18 +1,24 @@
 {
   "formats": {
     "STEP": [
+      "step-0.3.3/abaf60238566c2ec5152a78c679dc690c6fac23d50c09133de4aa21311ecd50d/gateway-1",
+      "step-0.3.3/70f222d6fb7b0cd9c561f713bab3130dc8ce6112c588202bdba395ba5837e889/gateway-1",
       "step-0.3.3/dc2597ef7a5b32a1f00d11c4858673682130eae98dd136ae965adbe8e876adf0/gateway-1",
       "step-0.3.3/b5f89279cddc47c26566bd138e4d6bf3e6abdd64b2abc6dc1effbe5370134512/gateway-1",
       "step-0.3.3/b7d8a4e715396b4e83bef72f52eb2e8da0808a3714d65b78768180da92fac531/gateway-1",
       "step-0.3.3/f103d1c40812b24c3864ae90a91ea707f734dfb5/gateway-1"
     ],
     "DXF": [
+      "dxf-0.15.0/22ffc010f9fb501113458e54f373d0c3a3372cd325e0666e50b3b94ce718b1aa/gateway-1",
+      "dxf-0.15.0/4d4c94984f564ad555fa4d429669fdebf4625567b4d5fe57e2b66fa33f0912d8/gateway-1",
       "dxf-0.15.0/fa4965249dcbcadacbeb7d674ad58353296e03b8c6b3c52f7e87ae5ee8bf4657/gateway-1",
       "dxf-0.15.0/59478483af88b597cc206a13183d757d70f06ddc06d3dbf3e04f68f63b77776e/gateway-1",
       "dxf-0.15.0/84c73aa6277e1c70d3ae88b52c8be04e4ab045da8449ace5276dc0078a8dc47e/gateway-1",
       "dxf-0.15.0/b2585a65d76ecc3332747a11a38623c9c1982701800504e00fd906e61f9c4ef3/gateway-1"
     ],
     "DWG": [
+      "dwg-0.1.0/2626cf8f491b4db411af7394b4a3b2a450d7e0ce053c7bb3ce036e71017260f5/gateway-1",
+      "dwg-0.1.0/93b39c734af105e43384539665f9bebab16431e6170b82a8c2da627a5c5f2c3f/gateway-1",
       "dwg-0.1.0/656609650fbcf08983ac9890ebe3aacdac915361e83d5322c8615e7bfb0411ad/gateway-1",
       "dwg-0.1.0/5d640ed883443261ffedb2a59c098f7b006e3b3e1450299d9111ce433e63b61c/gateway-1",
       "dwg-0.1.0/836e31b687e7dc569c6a64398e55d74824b8dc7321141a9298c56cb89e3a6726/gateway-1",

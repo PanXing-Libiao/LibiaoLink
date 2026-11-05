@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {unpackDwgPacked} from "../../../../frontend/public/cad-viewer/core/dwg-packed-transport.js";
+import {unpackDwgPacked,inflateDwgGeometry} from "../../../../frontend/public/cad-viewer/core/dwg-packed-transport.js";
 
 test("packed display rows use collision-checked keys as deterministic representation ids", () => {
   const strings = ["e1", "H-E1", "lines", "L1", "S1", "H-D1"];
@@ -46,4 +46,45 @@ test('indexed rows reject invalid ranges, duplicate accessors and legacy profile
     if(bad==='legacy')env.document.packed.version='dwg-table/1';
     assert.throws(()=>unpackDwgPacked(env),/packed transport/,bad);
   }
+});
+
+
+test('v3 source geometry chunks inflate exactly and reject invalid blocks', async () => {
+ const {deflateSync} = await import('node:zlib');
+ const geometry = {type:'polyline',points:[[-0,1e-20,0],[1,2,0]],widths:[[0,0],[0,0]],closed:false};
+ const raw=JSON.stringify([geometry]);
+ const payload={profile:'ucd-dwg-packed/1',version:'dwg-table/3',entities:[[0,0,0,1,0,0,0,0,1,0,0,0,null,0]],
+   geometryChunks:[{first:0,count:1,byteLength:Buffer.byteLength(raw),data:deflateSync(raw).toString('base64')}]};
+ const envelope={document:{packed:payload}};
+ const expanded=await inflateDwgGeometry(envelope);
+ assert.deepEqual(expanded.document.packed.entities[0][12],JSON.parse(raw)[0]);
+ assert.equal(envelope.document.packed.entities[0][12],null);
+ for(const change of ['short','large','count','overlap','corrupt']) {
+   const invalid=structuredClone(envelope),p=invalid.document.packed;
+   if(change==='short')p.geometryChunks[0].byteLength--;
+   if(change==='large')p.geometryChunks[0].byteLength=1048577;
+   if(change==='count')p.geometryChunks[0].count=2;
+   if(change==='overlap')p.entities[0][12]={};
+   if(change==='corrupt')p.geometryChunks[0].data='bad!';
+   await assert.rejects(inflateDwgGeometry(invalid));
+ }
+ await assert.rejects(async()=>unpackDwgPacked(envelope));
+});
+
+
+test('v4 narrow indices preserve counts and component byte widths',()=>{
+ for(const [component,width] of [['u8',1],['u16',2],['u32',4]]){
+   const env=indexedEnvelope();env.document.packed.version='dwg-table/4';env.document.packed.displays[0].push(component);
+   const doc=unpackDwgPacked(env).document;
+   assert.equal(doc.accessors['i-e1'].component,component);
+   assert.equal(doc.accessors['i-e1'].byteLength,4*width);
+   assert.equal(doc.geometries['g-e1'].primitives[0].range.count,4);
+ }
+ for(const change of ['component','legacy','overflow']){
+   const env=indexedEnvelope();env.document.packed.version='dwg-table/4';env.document.packed.displays[0].push('u8');
+   if(change==='component')env.document.packed.displays[0][14]='i8';
+   if(change==='legacy')env.document.packed.version='dwg-table/3';
+   if(change==='overflow'){env.document.packed.displays[0][14]='u32';env.document.packed.displays[0][13]=Number.MAX_SAFE_INTEGER;}
+   assert.throws(()=>unpackDwgPacked(env),/packed transport/);
+ }
 });

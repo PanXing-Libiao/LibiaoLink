@@ -20,7 +20,8 @@ class DwgBuffersTest(unittest.TestCase):
         doc=document(len(points));packed,stats=compact_display_buffers(doc,raw)
         primitive=doc['geometries']['g-line']['primitives'][0]
         index=doc['accessors'][primitive['indices']];position=doc['accessors']['a-line']
-        values=struct.unpack_from('<'+str(index['count'])+'I',packed,index['byteOffset'])
+        code={'u8':'B','u16':'H','u32':'I'}[index['component']]
+        values=struct.unpack_from('<'+str(index['count'])+code,packed,index['byteOffset'])
         rebuilt=b''.join(packed[position['byteOffset']+i*24:position['byteOffset']+(i+1)*24] for i in values)
         self.assertEqual(raw,rebuilt)
         self.assertLess(len(packed),len(raw))
@@ -37,12 +38,34 @@ class DwgBuffersTest(unittest.TestCase):
     def test_existing_indexed_geometry_keeps_its_topology(self):
         raw=b''.join(struct.pack('<3d',i,i+1,i+2) for i in range(12))+struct.pack('<2I',1,0)
         doc=document(12);doc['accessors']['i-line']={'bufferId':'buffer-0','byteOffset':288,
-            'byteLength':8,'component':'u32','components':1,'count':2,'normalized':False}
+            'byteLength':8,'component':'u32','components':1,'count':2,'normalized':False,'byteStride':4}
         primitive=doc['geometries']['g-line']['primitives'][0]
         primitive['indices']='i-line';primitive['range']['count']=2
         packed,stats=compact_display_buffers(doc,raw)
-        self.assertEqual(packed,raw)
+        self.assertEqual(struct.unpack_from('<2B',packed,doc['accessors']['i-line']['byteOffset']),(1,0))
+        self.assertEqual(doc['accessors']['i-line']['component'],'u8')
+        self.assertEqual(doc['accessors']['i-line']['byteStride'],1)
         self.assertEqual(primitive['range']['count'],2)
         self.assertEqual(stats['indexedGeometries'],0)
+
+    def test_identical_position_and_index_windows_share_offsets(self):
+        raw = b''.join(struct.pack('<3d', *p) for p in [(0.,0.,0.),(1.,2.,3.)] * 6)
+        doc = document(12)
+        doc['accessors']['a-copy'] = dict(doc['accessors']['a-line'])
+        doc['geometries']['g-copy'] = {'attributes':{'POSITION':'a-copy'},
+            'primitives':[{'id':'p','topology':'lines','range':{'first':0,'count':12}}]}
+        packed,stats = compact_display_buffers(doc,raw)
+        self.assertEqual(doc['accessors']['a-line']['byteOffset'],doc['accessors']['a-copy']['byteOffset'])
+        self.assertEqual(doc['accessors']['i-line']['byteOffset'],doc['accessors']['i-copy']['byteOffset'])
+        self.assertGreater(stats['sharedWindowBytes'],0)
+        self.assertEqual(len(packed),64)
+
+    def test_index_width_boundaries_preserve_integer_values(self):
+        from unified.dwg_buffers import _index_bytes
+        for maximum,component,code in [(255,'u8','B'),(256,'u16','H'),(65535,'u16','H'),(65536,'u32','I')]:
+            with self.subTest(maximum=maximum):
+                actual,raw = _index_bytes([0,maximum,1])
+                self.assertEqual(actual,component)
+                self.assertEqual(struct.unpack('<3'+code,raw),(0,maximum,1))
 
 if __name__=='__main__':unittest.main()

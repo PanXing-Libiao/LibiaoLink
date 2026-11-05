@@ -22,11 +22,12 @@ body {
   color: var(--text);
 }
 
-/* 全站个人水印（2026-11-04）：密集但整齐的交错行网格；按视口安全区落点，避免边缘截字。 */
+/* 全站个人水印（2026-11-04；2026-11-05 补弹窗 / 抽屉）：密集但整齐的交错行网格；按视口安全区落点，避免边缘截字。
+   层级 85 = 高于任务抽屉 / 编辑弹窗 / 问题抽屉 / 数据详情（50–80），低于 Toast / 导出浮层（90）与系统提示（100）。 */
 .page-watermark {
   position: fixed;
   inset: 0;
-  z-index: 9;
+  z-index: 85;
   overflow: hidden;
   pointer-events: none;
   user-select: none;
@@ -53,7 +54,7 @@ body {
 /* 手机屏细小文字更易被低透明度吞掉：保持字号与网格不变，只补足可辨识度和内容层之上的安全层级。 */
 @media (max-width: 1023.98px) {
   .page-watermark {
-    z-index: 18;
+    z-index: 85;
   }
 
   .page-watermark-mark {
