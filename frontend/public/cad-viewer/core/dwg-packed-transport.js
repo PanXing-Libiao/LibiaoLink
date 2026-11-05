@@ -2,7 +2,7 @@
 // Standard drawing entities and display tables are rebuilt into ordinary UCD
 // objects; any row that was not packed stays verbatim in the fallback tables.
 const PROFILE = 'ucd-dwg-packed/1';
-const VERSION = 'dwg-table/1';
+const VERSION = 'dwg-table/2';
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 const EXTENSION = 'org.cad-preview.style-inheritance/1';
 function fail(message) {
@@ -20,7 +20,7 @@ export function unpackDwgPacked(envelope) {
   if (!envelope || !envelope.document || !envelope.document.packed) return envelope;
   const packedDoc = envelope.document;
   const payload = packedDoc.packed;
-  if (payload.profile !== PROFILE || payload.version !== VERSION) fail('unknown profile');
+  if (payload.profile !== PROFILE || (payload.version !== VERSION && payload.version !== 'dwg-table/1')) fail('unknown profile');
   const strings = payload.strings;
   const layers = payload.layers;
   const spaces = payload.spaces;
@@ -88,7 +88,8 @@ export function unpackDwgPacked(envelope) {
   const geometries = { ...(packedDoc.geometries || {}) };
   const representations = { ...(packedDoc.representations || {}) };
   for (const row of payload.displays) {
-    if (!Array.isArray(row) || row.length !== 12) fail('invalid display row');
+    if (!Array.isArray(row) || ![12,14].includes(row.length)
+        || (row.length === 14 && payload.version !== VERSION)) fail('invalid display row');
     const key = indexOf(strings, row[0], 'display key');
     const accessorId = 'a-' + key;
     const geometryId = 'g-' + key;
@@ -103,6 +104,17 @@ export function unpackDwgPacked(envelope) {
     const topology = indexOf(strings, row[4], 'topology');
     const handle = indexOf(strings, row[11], 'display handle');
     const refs = [{ sourceId: 'source-0', objectKey: handle }];
+    const primitive = { id: 'p', topology, range: { first: 0, count } };
+    if (row.length === 14) {
+      const indexId = 'i-' + key, offset = row[12], indexCount = row[13];
+      if (Object.hasOwn(accessors,indexId) || !Number.isSafeInteger(offset) || offset < 0
+          || !Number.isSafeInteger(indexCount) || indexCount < 0 || !Number.isSafeInteger(indexCount*4))
+        fail('invalid or duplicate index accessor');
+      accessors[indexId] = {bufferId:'buffer-0', byteOffset:offset, byteLength:indexCount*4,
+        component:'u32', components:1, count:indexCount, normalized:false};
+      primitive.indices = indexId;
+      primitive.range.count = indexCount;
+    }
     accessors[accessorId] = {
       bufferId: 'buffer-0', byteOffset, byteLength, component: 'f64', components: 3,
       count, normalized: false,
@@ -110,7 +122,7 @@ export function unpackDwgPacked(envelope) {
     geometries[geometryId] = {
       id: geometryId, coordinateSpace: 'geometry-local',
       attributes: { POSITION: accessorId },
-      primitives: [{ id: 'p', topology, range: { first: 0, count } }],
+      primitives: [primitive],
       bounds: { min: row.slice(5, 8), max: row.slice(8, 11) }, normalOrigin: 'absent',
       sourceRefs: refs,
     };
