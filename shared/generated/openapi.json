@@ -1626,6 +1626,42 @@
             "type": "integer",
             "minimum": 0
           },
+          "resources": {
+            "type": "object",
+            "properties": {
+              "lease": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{48}$"
+              },
+              "buffers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "byteLength": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "sha256",
+                    "byteLength"
+                  ],
+                  "additionalProperties": false
+                },
+                "maxItems": 256
+              }
+            },
+            "required": [
+              "lease",
+              "buffers"
+            ],
+            "additionalProperties": false
+          },
           "workerPeakRSSBytes": {
             "type": "integer",
             "minimum": 0

@@ -2,7 +2,7 @@ from cad_paths import CORE, DATA, WORK, BROWSER, SAMPLE_ROOT
 import base64,hashlib,sys,time,unittest
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from unified.transport import ResourceStore,byte_range
+from unified.transport import ResourceStore,byte_range,public_worker_manifest
 
 def envelope(raw=b'abcdefgh'):
  h=hashlib.sha256(raw).hexdigest()
@@ -29,6 +29,17 @@ class Transport(unittest.TestCase):
   for key,value in [('resourceLease','../bad'),('transportProfile','unknown'),('bufferPayloads',{})]:
    bad=copy.deepcopy(manifest);bad[key]=value
    with self.assertRaises(ValidationError):shape(bad,schema,root_schema=SCHEMA_V2)
+ def test_public_worker_manifest_avoids_full_json_reencode(self):
+  import json
+  sha='0'*64
+  raw=json.dumps({'bufferResources':[{'id':'b','sha256':sha,'byteLength':8,'file':'b.bin'}],
+    'document':{'buffers':{'b':{'sha256':sha,'byteLength':8}}},
+    'presentation':{},'snapshot':{'completeness':'partial'},
+    'transportProfile':'ucd-worker-binary/1'},separators=(',',':')).encode()
+  token='a'*48;body,entries=public_worker_manifest(raw,token);result=json.loads(body)
+  self.assertEqual(result['transportProfile'],'ucd-binary-manifest/1');self.assertEqual(result['resourceLease'],token)
+  self.assertEqual(result['bufferResources']['b']['url'],f'/api/resources/{token}/{sha}');self.assertEqual(result['document'],json.loads(raw)['document'])
+  self.assertEqual(entries[0]['file'],'b.bin')
  def test_ranges(self):
   self.assertEqual(byte_range('bytes=2-4',8),(2,4));self.assertEqual(byte_range('bytes=6-99',8),(6,7));self.assertEqual(byte_range('bytes=1-',8),(1,7))
   for value in ('bytes=8-9','bytes=5-4','bytes=-3','bytes=0-1,4-5','garbage'):

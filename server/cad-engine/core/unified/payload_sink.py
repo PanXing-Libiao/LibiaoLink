@@ -38,7 +38,7 @@ class FileSink:
         for bid in envelope['document']['buffers']:
             entry=self.entries[bid];path=self.directory/entry['file']
             path.write_bytes(self.blobs[bid])
-            resources.append({**entry,'path':str(path)})
+            resources.append({**entry})
         envelope['bufferResources']=resources
         self.blobs.clear()
         return resources

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
+COMPATIBILITY_FILE = "format-compat.json"
 ENTRY_POINTS = ('convert.py', 'states.py', 'provenance.py', 'parser-provenance.json',
                 'evidence-index.json', 'step_convert.py', 'dxf_convert.py', 'dwg_convert.py',
                 'dwg_platform_convert.py', 'ucd_convert.py')
@@ -15,6 +16,7 @@ READER_FILES = ('Program.cs', 'CommunityText.cs', 'Reader.csproj', 'dependency.j
 RUNTIME_FILES = ('bridge.py', 'result_cache.py', 'service.py', 'sandbox.py', 'edge.py',
                  'release.py', 'requirements-step.txt', 'requirements-step-mesher.txt',
                  'requirements-dxf.txt', 'requirements-dxf-build.txt', 'requirements-dwg.txt', 'requirements-acis.txt')
+FORMAT_NEUTRAL_FILES = {'service.py', 'dwg_platform_convert.py', 'unified/conversion_jobs.py'}
 IMPORTED_COMMIT = '337bfc0d185a82cc3e269afaff879ccfc67a2e57'
 FORMAT_RELEASES = {'STEP': '0.3.3', 'DXF': '0.15.0', 'DWG': '0.1.0'}
 FORMAT_RUNTIME = {
@@ -61,6 +63,32 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
+def compatibility(base, format_versions):
+    path = base / COMPATIBILITY_FILE
+    result = {name: [] for name in FORMAT_RELEASES}
+    if not path.is_file():
+        return result
+    data = json.loads(path.read_text())
+    formats = data.get("formats", data) if isinstance(data, dict) else None
+    if not isinstance(formats, dict):
+        raise ValueError("CAD format compatibility file must be an object")
+    unknown = set(formats) - set(FORMAT_RELEASES)
+    if unknown:
+        raise ValueError("unknown CAD compatibility formats: " + ", ".join(sorted(unknown)))
+    prefixes = {"STEP": "step-", "DXF": "dxf-", "DWG": "dwg-"}
+    for name in FORMAT_RELEASES:
+        values = formats.get(name, [])
+        if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+            raise ValueError("CAD compatibility versions must be string arrays")
+        for value in values:
+            if not value.startswith(prefixes[name]) or not value.endswith("/gateway-1"):
+                raise ValueError("invalid CAD compatibility version: " + value)
+            if value == format_versions[name]:
+                raise ValueError("current CAD format version cannot be a compatibility alias")
+        result[name] = sorted(set(values))
+    return result
+
+
 def describe(base, browser):
     core = base / 'core'
     paths = [core / name for name in ENTRY_POINTS]
@@ -74,13 +102,16 @@ def describe(base, browser):
     shared = {}
     format_files = {'STEP': {}, 'DXF': {}, 'DWG': {}}
     for name, value in engine_files.items():
+        if name in FORMAT_NEUTRAL_FILES:
+            continue
         kind = format_of(name)
         if kind in format_files:
             format_files[kind][name] = value
         else:
             shared[name] = value
     runtime_shared = {'runtime/' + name: value for name, value in runtime_files.items()
-                      if name not in {item for names in FORMAT_RUNTIME.values() for item in names}}
+                      if name not in {item for names in FORMAT_RUNTIME.values() for item in names}
+                      and name not in FORMAT_NEUTRAL_FILES}
     runtime_format = {format_name: {'runtime/' + name: runtime_files[name] for name in names}
                       for format_name, names in FORMAT_RUNTIME.items()}
     # ACIS reconstruction also consumes the pinned ezdxf record decoder and OCP runtime.
@@ -98,6 +129,8 @@ def describe(base, browser):
         prefix = {'STEP': 'step-', 'DXF': 'dxf-', 'DWG': 'dwg-'}[format_name]
         format_versions[format_name] = prefix + release + '/' + digest(identity) + '/gateway-1'
 
+    compatibility_versions = compatibility(base, format_versions)
+
     engine_digest = digest({
         'stepRelease': FORMAT_RELEASES['STEP'],
         'dxfRelease': FORMAT_RELEASES['DXF'],
@@ -112,6 +145,7 @@ def describe(base, browser):
         'engineDigest': engine_digest,
         'viewerDigest': viewer_digest,
         'formatVersions': format_versions,
+        'compatibility': compatibility_versions,
     })
     result = {
         'sourceCommit': IMPORTED_COMMIT,
@@ -123,6 +157,7 @@ def describe(base, browser):
         'browserFiles': browser_files,
         'runtimeFiles': runtime_files,
         'formatVersions': format_versions,
+        'compatibility': compatibility_versions,
         'engineDigest': engine_digest,
         'viewerDigest': viewer_digest,
         'releaseDigest': release_digest,
@@ -140,7 +175,12 @@ def typescript(release):
         'export const CAD_FORMAT_VERSIONS = ' + json.dumps(
             release['formatVersions'], ensure_ascii=False, separators=(',', ':')) + ' as const;\n'
         'export type CadFormatVersion = keyof typeof CAD_FORMAT_VERSIONS;\n'
+        'export const CAD_FORMAT_COMPAT_VERSIONS = ' + json.dumps(
+            release.get('compatibility', {}), ensure_ascii=False, separators=(',', ':')) + ' as const satisfies Record<CadFormatVersion, readonly string[]>;\n'
         'export function cadFormatVersion(format: CadFormatVersion): string { return CAD_FORMAT_VERSIONS[format]; }\n'
+        'export function cadFormatVersions(format: CadFormatVersion): readonly string[] {\n'
+        '  return [CAD_FORMAT_VERSIONS[format], ...CAD_FORMAT_COMPAT_VERSIONS[format]];\n'
+        '}\n'
     )
 
 

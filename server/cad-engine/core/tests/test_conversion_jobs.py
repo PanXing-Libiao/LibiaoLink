@@ -52,7 +52,7 @@ if os.environ.get('CAD_BINARY_DIR'):
  sink=FileSink(os.environ['CAD_BINARY_DIR'])
  for bid,value in e.pop('bufferPayloads').items():sink.put(bid,base64.b64decode(value))
  sink.attach(e);sink.finish(e)
- if data==b'bad-buffer':Path(e['bufferResources'][0]['path']).write_bytes(b'corrupt')
+ if data==b'bad-buffer':(Path(os.environ['CAD_BINARY_DIR'])/e['bufferResources'][0]['file']).write_bytes(b'corrupt')
  if os.environ.get('CAD_COMPACT_METADATA')=='1':e=pack_metadata(e)
 print(json.dumps(e))
 ''')
@@ -101,7 +101,8 @@ print(json.dumps(e))
     def test_binary_bundle_and_corrupt_buffer_after_restart(self):
         row=self.submit();done=self.wait(row['id'],'completed');_,raw=self.jobs.result(row['id']);e=json.loads(raw)
         self.assertEqual(e['transportProfile'],'ucd-worker-binary-compact/1')
-        self.assertNotIn('bufferPayloads',e);self.assertNotIn('bufferResources',e)
+        self.assertNotIn('bufferPayloads',e);self.assertTrue(e['bufferResources'])
+        self.assertTrue(all('file' in row and 'path' not in row for row in e['bufferResources']))
         blobs=self.jobs.buffers(e);self.assertEqual(set(blobs),set(e['document']['buffers']))
         self.assertEqual(done['artifactBytes'],len(raw)+sum(len(b) for b in {hashlib.sha256(b).hexdigest():b for b in blobs.values()}.values()))
         self.jobs.close();self.jobs=self.create();self.assertIsNotNone(self.jobs.result(row['id'])[1])
@@ -222,5 +223,28 @@ print(json.dumps(e))
             self.assertTrue(not state or state.startswith('Z'),state)
         finally:
             if child.poll() is None:child.kill();child.wait()
+
+class DwgResourcePolicyTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.app=self.root/"app";self.app.mkdir()
+        (self.app/"dwg_platform_convert.py").write_text("import os,time\nfrom pathlib import Path\n(Path(os.environ[\"TMPDIR\"])/\"scratch.bin\").write_bytes(b\"x\"*4096)\ntime.sleep(30)\n")
+        def stop(proc):
+            if proc.poll() is None:proc.kill()
+            try:proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:pass
+        self.jobs=ConversionJobs(self.root/"store",self.app,threading.Lock(),stop,"rules-v1",sys.executable,dwg_interpreter=sys.executable)
+    def tearDown(self):self.jobs.close();self.tmp.cleanup()
+    def test_dwg_uses_its_own_scratch_budget(self):
+        self.assertEqual(self.jobs.dwg_policy["scratchBytes"],1024*1024**2)
+        self.assertEqual(self.jobs.dwg_policy["workerRSSBytes"],4608*1024**2)
+        self.jobs.dwg_policy["scratchBytes"]=1024
+        row,_=self.jobs.submit(b"dwg","dense.dwg",False,"a"*32)
+        deadline=time.monotonic()+8
+        while time.monotonic()<deadline:
+            state=self.jobs.status(row["id"])
+            if state["state"] in ("completed","failed","cancelled","timed-out"):break
+            time.sleep(.025)
+        self.assertEqual(state["state"],"failed")
+        self.assertEqual(state["error"]["code"],"job-scratch-quota")
 
 if __name__=='__main__':unittest.main()

@@ -175,6 +175,167 @@ def trim_spline_origin_pair(row, entity, buffer_bytes):
             'min': [min(xs), min(ys), min(zs)], 'max': [max(xs), max(ys), max(zs)]}
 
 
+def _source_handle(row):
+    refs = row.get("sourceRefs") if isinstance(row, dict) else None
+    if not isinstance(refs, list) or not refs:
+        return None
+    first = refs[0]
+    if not isinstance(first, dict):
+        return None
+    value = first.get("objectKey")
+    if value is None:
+        return None
+    value = str(value)
+    return value or None
+
+
+def _table_by_source_handle(table):
+    rows = {}
+    for row in (table or {}).values():
+        handle = _source_handle(row)
+        if handle is not None:
+            rows.setdefault(handle, row)
+    return rows
+
+
+def source_display_coverage(drawing, displays, presentation_items, summary, native_fonts, fills=None):
+    """Account for every unique native source handle exactly once.
+
+    Direct display rows, annotation presentation and block-instance indirection
+    are different display mechanisms. Counting only the first while comparing
+    against every mapped UCD object reports normal block reuse as missing
+    geometry. This ledger partitions the union of mapped source handles and
+    keeps empty-but-valid block definitions distinct from unresolved handles.
+    """
+    entity_rows = _table_by_source_handle(drawing.get("entities"))
+    annotation_rows = _table_by_source_handle(drawing.get("annotations"))
+    instance_rows = _table_by_source_handle(drawing.get("blockInstances"))
+    entity_handles = set(entity_rows)
+    annotation_handles = set(annotation_rows)
+    instance_handles = set(instance_rows)
+    source_handles = entity_handles | annotation_handles | instance_handles
+
+    direct_handles = set()
+    for row in (displays or {}).values():
+        handle = _source_handle(row)
+        if handle is not None:
+            direct_handles.add(handle)
+    for row in (presentation_items or {}).values():
+        handle = _source_handle(row)
+        if handle is not None:
+            direct_handles.add(handle)
+    fill_handles = set()
+    for key in (fills or {}):
+        row = (drawing.get("entities") or {}).get(key)
+        handle = _source_handle(row)
+        if handle is not None:
+            fill_handles.add(handle)
+    visual_entity_handles = direct_handles | fill_handles
+
+    entity_handles_by_space = {}
+    for handle, row in entity_rows.items():
+        space = row.get("ownerSpaceId")
+        entity_handles_by_space.setdefault(space, set()).add(handle)
+    annotation_handles_by_space = {}
+    for handle, row in annotation_rows.items():
+        space = row.get("ownerSpaceId")
+        annotation_handles_by_space.setdefault(space, set()).add(handle)
+    instances_by_space = {}
+    for handle, row in instance_rows.items():
+        space = row.get("ownerSpaceId")
+        instances_by_space.setdefault(space, []).append((handle, row))
+
+    blocks = drawing.get("blocks") or {}
+    visual_definition_cache = {}
+
+    def definition_has_visual_content(definition_id, active=None):
+        if definition_id in visual_definition_cache:
+            return visual_definition_cache[definition_id]
+        if active is None:
+            active = set()
+        if definition_id in active:
+            return False
+        block = blocks.get(definition_id)
+        if not isinstance(block, dict):
+            return False
+        active.add(definition_id)
+        space = block.get("spaceId")
+        visible = bool(entity_handles_by_space.get(space, set()) & visual_entity_handles)
+        if not visible and annotation_handles_by_space.get(space):
+            visible = True
+        if not visible:
+            for child_handle, child in instances_by_space.get(space, []):
+                child_id = child.get("definitionId")
+                if isinstance(child_id, str) and definition_has_visual_content(child_id, active):
+                    visible = True
+                    break
+        active.remove(definition_id)
+        visual_definition_cache[definition_id] = visible
+        return visible
+
+    valid_instance_handles = set()
+    empty_instance_handles = set()
+    missing_definition_handles = set()
+    for handle, row in instance_rows.items():
+        definition_id = row.get("definitionId")
+        if definition_id not in blocks:
+            missing_definition_handles.add(handle)
+        else:
+            valid_instance_handles.add(handle)
+            if not definition_has_visual_content(definition_id):
+                empty_instance_handles.add(handle)
+
+    reasons = {}
+    unsupported = Counter()
+    for handle in source_handles:
+        if handle in direct_handles:
+            reasons[handle] = "directGeometry"
+        elif handle in annotation_handles:
+            reasons[handle] = "annotationPresentation"
+        elif handle in valid_instance_handles:
+            reasons[handle] = "blockInstanceIndirect"
+        else:
+            reasons[handle] = "unresolved"
+            row = entity_rows.get(handle)
+            source_type = ((row or {}).get("geometry") or {}).get("sourceType")
+            unsupported[str(source_type or "UNKNOWN")] += 1
+
+    direct_count = sum(value == "directGeometry" for value in reasons.values())
+    annotation_count = sum(value == "annotationPresentation" for value in reasons.values())
+    block_count = sum(value == "blockInstanceIndirect" for value in reasons.values())
+    unresolved_count = sum(value == "unresolved" for value in reasons.values())
+    source_count = len(source_handles)
+    status = "complete" if unresolved_count == 0 else "partial"
+    return {
+        "status": status,
+        "withDisplayGeometry": source_count - unresolved_count,
+        "withoutDisplayGeometry": unresolved_count,
+        "sourceRecords": source_count,
+        "sourceRecordBasis": "unique-source-handle",
+        "byReason": {
+            "directGeometry": direct_count,
+            "annotationPresentation": annotation_count,
+            "blockInstanceIndirect": block_count,
+            "blockInstanceEmptyDefinition": len(empty_instance_handles),
+            "unresolved": unresolved_count,
+            "unsupported": dict(sorted(unsupported.items())),
+        },
+        "blockInstanceDefinitionsMissing": len(missing_definition_handles),
+        "fidelity": {
+            "status": "partial" if native_fonts else "complete",
+            "fontSubstitution": {
+                "status": "partial" if native_fonts else "complete",
+                "nativeFontRecords": len(native_fonts or {}),
+                "annotationSourceRecords": len(annotation_handles),
+                "originalCompanionsProvided": False,
+                "note": "Geometric objects are accounted for, but source SHX/TTF companions are not supplied; text glyphs and layout remain an explicit substitution.",
+            },
+        },
+        "mappedObjectRecords": summary.get("mappedObjects"),
+        "mappedSourceObjects": summary.get("mappedSourceObjects", source_count),
+    }
+
+
 def assemble_native(folder, original, output, platform=False, binary_dir=None, packed=False):
     started=time.perf_counter()
     def phase(name):print(f'DWG UCD {name}: {time.perf_counter()-started:.3f}s',file=sys.stderr,flush=True)
@@ -421,12 +582,12 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
         'scope':'All native source handles audited; model and layout reachable definitions mapped; unreferenced definitions remain in original source/ledger.',
         'curveDisplay':{'library':'ACadSharp','circleVertices':80,'ellipseVertices':64,'splineVertices':48,
             'policy':'Sampled display is a derivative, not an engineering tolerance guarantee.'}}
-    ready = len(displays) + len(drawing['annotations']) + len(extras.get('fills',{})) + len(infinite_items) + len(region_items)
-    doc['extensions']['org.cad-preview.drawing-coverage/1'] = {
-        'sourceRead':{'status':'partial' if summary['missingHandles'] else 'read-with-warnings','sourceRecords':summary.get('sourceEntityRecords',summary['sourceHandles'])},
-        'displayGeometry':{'status':'partial','withDisplayGeometry':ready,'sourceRecords':summary['mappedObjects']},
-        'engineeringAttributes':{'status':'partial','sourceRecords':summary.get('mappedSourceObjects',summary['mappedObjects'])},
-        'losses':raw_losses}
+    doc["extensions"]["org.cad-preview.drawing-coverage/1"] = {
+        "sourceRead":{"status":"partial" if summary["missingHandles"] else "read-with-warnings","sourceRecords":summary.get("sourceEntityRecords",summary["sourceHandles"])},
+        "displayGeometry":source_display_coverage(drawing, displays, presentation_items, summary,
+            extras.get("nativeFonts",{}), extras.get("fills",{})),
+        "engineeringAttributes":{"status":"partial","sourceRecords":summary.get("mappedSourceObjects",summary["mappedObjects"])},
+        "losses":raw_losses}
     doc['revision'] = digest({k:v for k,v in doc.items() if k!='revision'})
     phase('document sealed')
     snapshot = {'schemaVersion':'2.0.0','id':'pending','documentRevision':doc['revision'],

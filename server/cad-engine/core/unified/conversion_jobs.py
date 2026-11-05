@@ -29,7 +29,7 @@ from . import dxf_resources
 TERMINAL={'completed','partial','failed','cancelled','timed-out'}
 POLICY={'version':'local-step-job/4','workerWallSeconds':600,'queueWallSeconds':900,'workerRSSBytes':2*1024**3,
         'concurrency':1,'maxQueued':8,'sourceBytes':256*1024**2,'artifactBytes':512*1024**2,
-        'resultBytes':256*1024**2,'stderrBytes':8*1024**2,'logBytes':64*1024**2,'maxStoredJobs':1024,'retentionSeconds':86400,
+        'resultBytes':256*1024**2,'scratchBytes':512*1024**2,'stderrBytes':8*1024**2,'logBytes':64*1024**2,'maxStoredJobs':1024,'retentionSeconds':86400,
         'synchronousWorkerSeconds':60,'restart':'queued/running jobs fail; explicit resubmission retries',
         'disconnect':'job continues until cancelled, terminal, resource limit, or server restart',
         'deduplication':'same content/name/mode/reader/rules returns same local job; cancellation is shared'}
@@ -60,7 +60,10 @@ class ConversionJobs:
         self.rule_version=rule_version;self.interpreter=interpreter;self.policy={**POLICY,'inputBytes':step_job_input_bytes(),**(policy or {})}
         self.dxf_interpreter=dxf_interpreter
         self.dwg_interpreter=dwg_interpreter
-        self.dwg_policy={'workerRSSBytes':2560*1024**2,'resultBytes':512*1024**2,'artifactBytes':512*1024**2}
+        # DWG assembly retains the parsed ledger and the packed transport until
+        # serialization. A real 18.3 MB source peaked at 4.02 GiB RSS.
+        self.dwg_policy={'workerRSSBytes':4608*1024**2,'resultBytes':512*1024**2,'artifactBytes':512*1024**2,
+                         'scratchBytes':1024*1024**2}
         self.binary=os.environ.get('CAD_STEP_JOB_BINARY','1')!='0'
         self.compact=self.binary and os.environ.get('CAD_STEP_JOB_COMPACT','1')!='0'
         self.upload_reserved=0
@@ -303,6 +306,7 @@ class ConversionJobs:
             result_limit=self.dwg_policy['resultBytes'] if is_dwg else self.policy['resultBytes']
             rss_limit=self.dwg_policy['workerRSSBytes'] if is_dwg else self.policy['workerRSSBytes']
             artifact_limit=self.dwg_policy['artifactBytes'] if is_dwg else self.policy['artifactBytes']
+            scratch_limit=self.dwg_policy['scratchBytes'] if is_dwg else self.policy['scratchBytes']
             if sum(f.stat().st_size for f in (self.root/'logs').iterdir())+self.policy['stderrBytes']>self.policy['logBytes']:raise JobLimit('log storage quota exceeded')
             with tempfile.TemporaryDirectory(dir=self.root/'temporary') as folder:
                 folder=Path(folder);out=folder/'result.json';trace=folder/'trace.json'
@@ -359,7 +363,7 @@ class ConversionJobs:
                         memory_stop=int(os.environ.get('CAD_MEMORY_STOP_BYTES','0'))
                         cgroup_high=memory_stop and int(Path('/sys/fs/cgroup/memory.current').read_text())>memory_stop
                         scratch_bytes=sum(f.stat().st_size for f in scratch.rglob('*') if f.is_file())
-                        if scratch_bytes>512*1024**2:
+                        if scratch_bytes>scratch_limit:
                             self.stop_worker(proc);fail('failed','job-scratch-quota','转换临时数据超过配额');return
                         if rss>rss_limit or cgroup_high:
                             self.stop_worker(proc);fail('failed','job-memory-quota','转换超过后台任务内存预算');return
@@ -421,9 +425,9 @@ class ConversionJobs:
                     blobs=read_worker_buffers(binary_dir,entries)
                     # Same schema, complete geometry and revision validation as base64.
                     validate_binary_envelope(document,envelope['snapshot'],envelope.get('presentation',{}),blobs.__getitem__)
-                    del wire_envelope['bufferResources']  # Temporary paths are never durable/public metadata.
-                    raw=json.dumps(wire_envelope,ensure_ascii=False,separators=(',',':'),allow_nan=False).encode()
-                    out.write_bytes(raw)
+                    # The worker manifest carries only relative buffer file names, never host
+                    # paths. Persist its bytes verbatim so large drawings are not parsed and
+                    # serialized a second time in the parent process.
                 else:validate_envelope(envelope)
                 sha=hashlib.sha256(raw).hexdigest()
                 with self.lock:

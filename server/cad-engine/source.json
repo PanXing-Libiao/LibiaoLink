@@ -6,7 +6,7 @@
   "engineFiles": {
     "convert.py": "8fc48b6f5f98c1be5b73ec32fa34127edef61ab60e8cfa8198f17f0de28447e7",
     "dwg_convert.py": "c0c93633b7177cc49d4636cd61e6a30275d3c921bc90d65a0c9ca8387569f98c",
-    "dwg_platform_convert.py": "0f180bc76b65bab8236763ae2200ad3526c0fbb79a58c27bee7856743675c897",
+    "dwg_platform_convert.py": "2ca2c9f0fa01371f5c46ab7707c9443007895a47aa0a4eab7cd1b448d0e95a2d",
     "dxf_convert.py": "15d8c5ee1b0bed208684f7b71575b79d6bb15d8c7f9d35f4254f6603ba200c74",
     "evidence-index.json": "6aa2e4a65860bd758c66e014eed29963ef6c8b196c934467b3f1c1230fd42b3a",
     "parser/affine.py": "3ac78b704c1310d64ee8b8e5423b149fddcaf576a1b50edf9a59d423a23bb391",
@@ -24,9 +24,9 @@
     "unified/adapter.py": "2c42955764d3518803953d6f08e698f339af44c6b804c1b6a3ddac6b2c887fb5",
     "unified/build_schema.py": "30207e8fdf1c9f9eee8dc2ccb9ec5785c947078bfc8d4465ebacd292a4b0823f",
     "unified/build_schema_v2.py": "7ae95c01ccdee17d894222f03e932c2752be1418e0cd4eebe98923687a28016b",
-    "unified/canonical.py": "a3808a40627f5a7628f919583f024721949ef52a9fbef274d6174f5b7ce532b2",
+    "unified/canonical.py": "9fff5200fe667737e8619419ec69a50972e3fe4ec10c0a4bb27a86b29730e809",
     "unified/compact_transport.py": "4c1a09e511b863a20295c63f553c8c067e8e2b51d9cd103178325f2b62418bd3",
-    "unified/conversion_jobs.py": "333c06e5bfd890c6d084ed3217ce3577a3180301fd15521cacb841c12d5f864e",
+    "unified/conversion_jobs.py": "7e31bc6bc9fa1713ad7d95deb5c4316c61b84a1bf343ed968a8edcb0006eca94",
     "unified/dwg-reader.json": "80327cfad2181ed90eef19fc78e9db65c94ca9a39a74bb4b0bde96b582d16fdc",
     "unified/dwg_acis.py": "58bf368c0251d1bc89dd088d5998fbbc34e811280b80b6673efa8d6b678db46f",
     "unified/dwg_acis_LICENSE.txt": "c631eb20a0675add35e49625d3bf3952fe3b0923d98eb050e775c6acfbeaf3be",
@@ -40,7 +40,7 @@
     "unified/dwg_acis_seam_check.py": "afa7a93f9181e17655f4f1b6cb4e82e1708a08d88e1ed9f50b2878ffcd9cee7a",
     "unified/dwg_acis_surfaces.py": "ddeb9699a5bc2dcbd3537d114f3ce48a3641ee63f11e18ef5e9434956d89562b",
     "unified/dwg_acis_worker.py": "ecbfc3b67cd2ca750d85582c198e903605e5a6a0b8b3422816f0899109f12c3e",
-    "unified/dwg_adapter.py": "0ccc28e0ab158b2c2e89b987f30ac7b0fdd22d1f90812fdddf9c12dcff3de208",
+    "unified/dwg_adapter.py": "8e00d5ba830b11b8ad8af92d92e2b9bd7523c0e7956da7a8ee47365e07c3a14b",
     "unified/dwg_pack.py": "55660bbd81fe0e28042557dcc2a207b7a017fafb1377568eae3433cfcb91dd5a",
     "unified/dxf_adapter.py": "6ed280dd8fa5391be1e6e84f9f4c2078ed904b22a868f6b47a8447aad4093195",
     "unified/dxf_annotations.py": "f0835f4f8e5a947b1fc6732dae7721cbd4b3d56cc0354ae4d5abf284440297d5",
@@ -73,7 +73,7 @@
     "unified/input_policy.py": "aaf45f6fe798b285a1c206f20df2c78b918ed24d180838e5a69c05e0d753aea5",
     "unified/migrate.py": "7009d2180ba300f3d07e170a9f9e747c8a839f74f4771e67f4a68415ff681312",
     "unified/native_schema.py": "516ab85ed956831f8ad9daf20f4df88013987704a3e4d6a47ca75f5be4330526",
-    "unified/payload_sink.py": "93f35533b5f033cbecf1f4d8ae7fa7323fea6629c1d7c57185a8197267074abc",
+    "unified/payload_sink.py": "3246700f843c29fe693fb0f4ed4e33bcd4293b1061e20b6c44b4ac2d54f6041e",
     "unified/schema/ucd-1.0.schema.json": "cbb524d856ad408e673213a6034b43d4899d3db0e014567876e0b9cc80410419",
     "unified/schema/ucd-2.0.schema.json": "7cfa59370372dab929fc78b83f22bedcc25ec51b6d3b0b7cf1f0fb94f9e8d740",
     "unified/schema/ucd-binary-manifest-1.schema.json": "cb71aa787be04eacc975c4410e64a4ece3b06f9f5fc93a69dcadf574d8f40714",
@@ -88,7 +88,7 @@
     "unified/step_name_encoding.py": "57d6e91bc1ca1176f06961091b39c600ad3af778fe250df7b8d74d5ca42fc7db",
     "unified/step_periodic_mesh.py": "eb80f1fb36a968271aae908bc82804742e1207e5d0daa2a2100ed30a1a743771",
     "unified/step_repair_quality.py": "a844cca8e932b402fdff4677c1a35bfc8307b4ce26fe8e26fe5230164f0244a4",
-    "unified/transport.py": "ee5e055c78c772f21972ca557f92f330697913010ee9c3eff5cfbd6763c84e75",
+    "unified/transport.py": "345d5c235b7fc1287f8a20cae40e2f7790953b62dd8126fc89d461f936fe7a1e",
     "unified/validation.py": "ad1902960b791429abfbd0ed9b1813543259b9298e8baf5e6f1ee8e6e67c2330",
     "unified/worker_trace.py": "266022c5c796b14ce9cdf8121d450c67fd5472989be8ad93980907993d1ab19e",
     "vendor/cadcraft-display/LICENSE-MIT": "54b0fc87ed7b61b59c20340070dd2b8c7f9d0b53795347819c3bd7c67ea2508a",
@@ -480,37 +480,37 @@
   },
   "readerFiles": {
     "CommunityText.cs": "8772f4985084c216e9f1c9a1de6f6cec0a45067049838ef786f2eafcfebe4198",
-    "Program.cs": "150de89c636584eed935208ebd944d70281eb8d0fa214c1e90aa0121c42fe5b7",
+    "Program.cs": "11f4664ce7ef52f4a019199be9d86d507923d3e87c5e13832de31a0b6a1d4f38",
     "Reader.csproj": "28dd949906cf4b8ab2ca44e02a9fbb2391c0f3e086587c7627e93d6a68f0c32d",
-    "dependency.json": "2743f57992af0db961cfe4c05c78b8312d4836f939230a981c5641d01f4942bc"
+    "dependency.json": "a17930ad7b0dadf5bd81c59f23995af557f383b7584fdf48bdb3c2550240666e"
   },
   "browserFiles": {
-    "app.js": "761590bb1a4525201a8a47f9fa3e1cf530591937cd4a42d660acf9f86ed271cb",
+    "app.js": "f32c0ea41468204606d292209ee59ed65109abd4a303d2e1ad288a3ca71c8871",
     "benchmark.js": "c81b3668354f0fc431c02f068545d5c71ce4a266bf414671341aa97674fc3e9d",
-    "binary-transport.js": "98c23b1e4cdc2806043a4e116791c1376d45be41773e09085c9a4b920cc1b0fa",
+    "binary-transport.js": "e08b956fd5caa3588d5826f531d208ca12792ce10c003b2de1ceddc5527a447f",
     "camera-framing.js": "12f685ca11f995192d3f5348a44c2cf5fca5286bca58b0af99a7faa7ef5aab6d",
     "compact-transport.js": "25ba61842b0faa37bbe039880df4ecb4df3e30727348aa7a33e68a61fba283c4",
     "conversion-jobs.js": "05be087b3ceb9017e8d21f078b6922f297a0bf709e0f39c63c414646bfa938d0",
     "direct-projection.js": "0d7a95890aea9b431d7e86f651e83a33b904ee50c27bcffd5d38a7eb53e9b36d",
     "drawing-2d.js": "25a6dca759f304976752e6d2ca4d17667d7e934348435425e28d960a8591ed83",
-    "drawing-clipping.js": "2c7437a8ca77ee40da95e2be1290d01641bd36f2c58e627631ab54d3841f1469",
+    "drawing-clipping.js": "4628b6c5ff6f2ad0da563d2056ae313d2d0cd2fe8481dfcb107e05db3f6b5e34",
     "drawing-colors.js": "74c2270f611783fcd2895dee88d53d8ed6c3d01ace40044585d5b9cd09b2003f",
     "drawing-display.js": "349e32fb91e7fc55bf1309eecc229a6d44f733a58de5e4c446749a2bacfaf937",
-    "drawing-instances.js": "a44de5a9cac9c46a86a8469f23d1d1bc5873a97f2b98fee8098b1232b5b07c50",
+    "drawing-instances.js": "8ec76144b3a50277d00e8e35257f8fb96e4195d11fee32365830966d0bdafcc0",
     "drawing-layout.js": "9a611425b8d5151225a8bf06cc9b4b950ec8d1ba138be31cf627c14c5d5ab68b",
     "drawing-media.js": "3b9558eb5ee8dc3031f6b6c823b65c1ef58f3d4cfc676a477798bb6f10ed6a27",
-    "drawing-mesh-viewer.js": "5e73af2f6c064e705e1e32ab0a9696a87900161dd9c440056ec4b97851c2aab6",
+    "drawing-mesh-viewer.js": "a505d839ab529f8e372739e6496c673908112915c20e888f6c3eab126586468c",
     "drawing-pattern.js": "4f0aa4a0b4f6bc0d7cb0dfe477de687fa4f87d4d603db30b63c8c3e2e3c5b5b2",
     "drawing-plot-styles.js": "a2c3888311ccdaac04b38f108ab7175cd171a43f0fb82fdb9356e9431819b243",
-    "drawing-projection.js": "0a501669718907a7422ba6f6a803bbfaee5e3d7d2c4393ba816710c3a3313363",
+    "drawing-projection.js": "a6331999e696cdec7497ffa2fc56b6601e1fb55aeec4531db1458c6094a4c7ab",
     "drawing-text-avoidance.js": "2e65f43a90f24b6a669325a3bc7687d0d1f93f22610ba937d9b8c2ae2b3e5001",
     "drawing-text.js": "1cc508f97d4d196842167e7d79b1ec50493bbff0756e89b002a58c933d02141c",
-    "drawing-viewer.js": "720e96977c6cf353edc472cb770f133e7674b417dc9e283309705f3375f77e26",
-    "dwg-packed-transport.js": "7ca25caedff71fb3102f9a67489d5f1eb0b03cc250351be027abe73648279045",
+    "drawing-viewer.js": "e4cc93ef5778c9de467652663306f8c69bb4ff862e41cbc4db99dc6a0109f06e",
+    "dwg-packed-transport.js": "36fad78365584340ac8e57bfd2952ed46ef07438e216cf828091949b6a59812f",
     "dxf-resources.js": "219569569cc22deca979ec3f6693031bfbfe050c30eb8fe419962f4e3dab5c2c",
-    "gpu/background-painter.js": "7f79453df7434fa17c83b4aa5feb2db93c086b6519356bdab17ad70097b0add4",
-    "gpu/gpu-strokes.js": "fe4f81a4a7a51487e1139f2c17021c24962d62364eb2d46ff33e8ed6e8107312",
-    "gpu/paint-worker.js": "3e04891ecb9e7ae8ae0689d293c8ec7a63f2167ae18e3d33b178b8b5de33d8ea",
+    "gpu/background-painter.js": "20424c614d1879af4a4b2cfa265ef0fa4b79acaebb1124c46395e94ab8d287f1",
+    "gpu/gpu-strokes.js": "d95d1772bfa21723013a7cb4e9aa62368b9c9026602ffd02c4bcd26d366e89a0",
+    "gpu/paint-worker.js": "8c865a4847a9133853604dd7f52162b863ee2d708aeff2d6a93911bfa90e7978",
     "gpu/recorded-path.js": "99e818b93996227a46b53a5ea54d54a15dd9dca4848790d16d6eeb7a6c1d7133",
     "highlight.js": "1d19f0528e5fc706484efcdcb1101c4aa32285023cf550acefc04d85a386b2f5",
     "load-phases.js": "6b2c33cef7e2a6f9f08a1fbee603f3e15c1229739a09ed0aa1885fb184f1036d",
@@ -543,7 +543,7 @@
     "viewer-session.js": "54e44e94a0cb0c1b56923f1f5a7c46bdfc44d8b25ec32df02e528a65af96d496"
   },
   "runtimeFiles": {
-    "bridge.py": "031d4f86ad1cbaaca8c4f2956d7f5546d2efc1a82d21bd63a534367312417fef",
+    "bridge.py": "5c4ef7a28b70533cbb98c9d4f42b19b34eb27ab7509174b3d7a664ef638efe9c",
     "edge.py": "dbe7d59c7d3cfde08e77175c5747beb087661aed3108e1299dea4d61fa6fed39",
     "release.py": "668adb0c3bc793fd3f76a768ded722252d4f10a25f082f302500782427edcb2f",
     "requirements-acis.txt": "41c96ddc1758bcf4f681aa951b0e51e1ebcab7ed59d54854ba41e43f3b5c0a38",
@@ -553,17 +553,36 @@
     "requirements-step-mesher.txt": "ed84873ed3b2dde7a0fc74d36293cd0ce9f6d55379482b223c74cdf2a37b764b",
     "requirements-step.txt": "0dae28816ed0b37608d8786d3117e31e9449c500ff765ca3627c1bd9c8b97f2c",
     "result_cache.py": "da631878a0769fe31bd6e4ed0503a336c5af250024cf7fe76347a096c4f68455",
-    "sandbox.py": "cf35807a2e751574b7646ba47e1a7f766bc7d4d2d8d70e19730b62a60489a149",
-    "service.py": "58d869fc1b1aa46f2e9cdeee7aff9f0ade0f5aad2d4456661dff16f1a5305491"
+    "sandbox.py": "9adf201fc2e36de084732709d4dbfdb5375c37c5840f68e77352b68566a14c5c",
+    "service.py": "3a6fbfa9bfc2b1d16d646dfc896bbaf56383a2967f4812afd7e3b745f3c3b3e9"
   },
   "formatVersions": {
-    "STEP": "step-0.3.3/248aea4f4988438060ee90f5022b2aee890ae9e7f9fcc909dfd871972e3400da/gateway-1",
-    "DXF": "dxf-0.15.0/17325cb4d46ca9647adf86c1986b5b28e15aeb8a662fe6953a498d80cf14843c/gateway-1",
-    "DWG": "dwg-0.1.0/ae32877fb9e98f4ff5e24ab62d61c7f4a81f5665b0880fe9c3c183a60b4b35d8/gateway-1"
+    "STEP": "step-0.3.3/dc2597ef7a5b32a1f00d11c4858673682130eae98dd136ae965adbe8e876adf0/gateway-1",
+    "DXF": "dxf-0.15.0/fa4965249dcbcadacbeb7d674ad58353296e03b8c6b3c52f7e87ae5ee8bf4657/gateway-1",
+    "DWG": "dwg-0.1.0/656609650fbcf08983ac9890ebe3aacdac915361e83d5322c8615e7bfb0411ad/gateway-1"
   },
-  "engineDigest": "75daa5d2199a7e8b4e249b7a009d0d08548e336dd8ea5dcf30b4035ba0680908",
-  "viewerDigest": "cd40fd22662376eab91fb5b89805216743dc47000bb4413f978660ff01c7c485",
-  "releaseDigest": "28a0257ee0f93041939ad1dc83fcc9e76462e6fa1eaaf6216b77445dff319ccf",
-  "engineVersion": "step-0.3.3/75daa5d2199a7e8b4e249b7a009d0d08548e336dd8ea5dcf30b4035ba0680908/gateway-1",
-  "viewerVersion": "viewer-cd40fd22662376eab91fb5b89805216743dc47000bb4413f978660ff01c7c485"
+  "compatibility": {
+    "STEP": [
+      "step-0.3.3/b5f89279cddc47c26566bd138e4d6bf3e6abdd64b2abc6dc1effbe5370134512/gateway-1",
+      "step-0.3.3/b7d8a4e715396b4e83bef72f52eb2e8da0808a3714d65b78768180da92fac531/gateway-1",
+      "step-0.3.3/f103d1c40812b24c3864ae90a91ea707f734dfb5/gateway-1"
+    ],
+    "DXF": [
+      "dxf-0.15.0/59478483af88b597cc206a13183d757d70f06ddc06d3dbf3e04f68f63b77776e/gateway-1",
+      "dxf-0.15.0/84c73aa6277e1c70d3ae88b52c8be04e4ab045da8449ace5276dc0078a8dc47e/gateway-1",
+      "dxf-0.15.0/b2585a65d76ecc3332747a11a38623c9c1982701800504e00fd906e61f9c4ef3/gateway-1"
+    ],
+    "DWG": [
+      "dwg-0.1.0/5d640ed883443261ffedb2a59c098f7b006e3b3e1450299d9111ce433e63b61c/gateway-1",
+      "dwg-0.1.0/836e31b687e7dc569c6a64398e55d74824b8dc7321141a9298c56cb89e3a6726/gateway-1",
+      "dwg-0.1.0/ab0c55d6a3542c695ab8a983e6c277ef4b5dd797f6e43ee4cb55f0f3f3023ba4/gateway-1",
+      "dwg-0.1.0/ae32877fb9e98f4ff5e24ab62d61c7f4a81f5665b0880fe9c3c183a60b4b35d8/gateway-1",
+      "dwg-0.1.0/fdd7433b4a757f28a066b816b3230da860eefd52a5ca20d00b5887f72d382f5e/gateway-1"
+    ]
+  },
+  "engineDigest": "71c0ba0de35563a216b7c57a84d633d844ae91e889970198309b335c59399d3d",
+  "viewerDigest": "3da3ecadcd95ceb650a4b57d732b454772024da48e0d3552b4129a9a0d5b2145",
+  "releaseDigest": "44cbeffb5ae74592b15f81572919fb92457c60a7475e754a79fbbdade8e3ecc1",
+  "engineVersion": "step-0.3.3/71c0ba0de35563a216b7c57a84d633d844ae91e889970198309b335c59399d3d/gateway-1",
+  "viewerVersion": "viewer-3da3ecadcd95ceb650a4b57d732b454772024da48e0d3552b4129a9a0d5b2145"
 }

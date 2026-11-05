@@ -1,12 +1,12 @@
 import { Injectable } from "@nestjs/common";
-import { and, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { cadArtifacts, cadViews } from "../../db/schema/cad.js";
 import { files } from "../../db/schema/files.js";
 import { AuditService, type AuditRecordInput } from "../admin/index.js";
-import { CAD_ENGINE_VERSION, CAD_FORMAT_VERSIONS, cadFormatVersion } from "./cad-release.js";
+import { CAD_ENGINE_VERSION, CAD_FORMAT_VERSIONS, cadFormatVersion, cadFormatVersions } from "./cad-release.js";
 import type { CadNameCodepage } from "@libiaolink/contracts";
 import { cadFormat, cadInputs, type CadArchiveSource } from "./cad-inputs.js";
 export type { CadArchiveSource } from "./cad-inputs.js";
@@ -26,7 +26,18 @@ export class CadArchiveRepository {
     const input = cadInputs(source);
     codepage = input.sourceFormat === "DXF" ? "UTF8" : codepage;
     const formatVersion = cadFormatVersion(input.sourceFormat);
-    const inserted = await client.insert(cadArtifacts).values({ ...input, engineVersion: CAD_ENGINE_VERSION, formatVersion, nameCodepage: codepage })
+    const compatibleVersions = cadFormatVersions(input.sourceFormat);
+    const reusable = (await client.select().from(cadArtifacts).where(and(
+      eq(cadArtifacts.fileId, input.fileId), eq(cadArtifacts.versionId, input.versionId),
+      inArray(cadArtifacts.formatVersion, compatibleVersions), eq(cadArtifacts.nameCodepage, codepage),
+      eq(cadArtifacts.resourceSetHash, input.resourceSetHash), eq(cadArtifacts.sourceSHA256, input.sourceSHA256),
+      eq(cadArtifacts.sourceBytes, input.sourceBytes), inArray(cadArtifacts.state, ["completed", "partial"])))
+      .orderBy(desc(cadArtifacts.updatedAt)).limit(1))[0];
+    if (reusable) return reusable;
+    const persisted = { fileId: input.fileId, versionId: input.versionId, sourceSHA256: input.sourceSHA256,
+      sourceBytes: input.sourceBytes, sourceName: input.sourceName, sourceFormat: input.sourceFormat, mainPath: input.mainPath,
+      companions: input.companions, resourceSetHash: input.resourceSetHash };
+    const inserted = await client.insert(cadArtifacts).values({ ...persisted, engineVersion: CAD_ENGINE_VERSION, formatVersion, nameCodepage: codepage })
       .onConflictDoNothing({ target: [cadArtifacts.versionId, cadArtifacts.formatVersion, cadArtifacts.nameCodepage, cadArtifacts.resourceSetHash] }).returning();
     const row = inserted[0] ?? (await client.select().from(cadArtifacts).where(and(eq(cadArtifacts.versionId, source.versionId),
       eq(cadArtifacts.formatVersion, formatVersion), eq(cadArtifacts.nameCodepage, codepage),
@@ -39,14 +50,15 @@ export class CadArchiveRepository {
 
   async openView(artifactId: string, actorId: string, viewId: string): Promise<CadViewRow> {
     const expiresAt = new Date(Date.now() + 24 * 60 * 60_000);
+    const leaseExpiresAt = new Date(Date.now() + 300_000);
     return this.database.db.transaction(async (tx) => {
       // Serialize opening with retirement; a removed artifact cannot acquire new readers.
       const [artifact] = await tx.update(cadArtifacts).set({ lastAccessedAt: new Date() })
         .where(eq(cadArtifacts.id, artifactId)).returning({ id: cadArtifacts.id });
       if (!artifact) throw new Error("CAD artifact no longer available");
-      const rows = await tx.insert(cadViews).values({ artifactId, actorId, viewId, expiresAt })
+      const rows = await tx.insert(cadViews).values({ artifactId, actorId, viewId, expiresAt, leaseExpiresAt })
         .onConflictDoUpdate({ target: [cadViews.actorId, cadViews.viewId, cadViews.artifactId],
-          set: { expiresAt, cancelled: false, leaseExpiresAt: null, lastSeenAt: new Date() } }).returning();
+          set: { expiresAt, cancelled: false, leaseExpiresAt, lastSeenAt: new Date() } }).returning();
       return rows[0]!;
     });
   }
@@ -54,12 +66,12 @@ export class CadArchiveRepository {
   async view(jobId: string, source: CadArchiveSource, actorId: string, viewId: string) {
     if (!/^[a-f0-9]{32}$/.test(jobId)) return null;
     const id = jobId.replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
-    const formatVersion = cadFormatVersion(source.sourceFormat ?? cadFormat(source.sourceName));
     const rows = await this.database.db.select({ view: cadViews, artifact: cadArtifacts }).from(cadViews)
       .innerJoin(cadArtifacts, eq(cadArtifacts.id, cadViews.artifactId)).where(and(eq(cadViews.id, id),
         eq(cadViews.actorId, actorId), eq(cadViews.viewId, viewId), gt(cadViews.expiresAt, new Date()),
         eq(cadArtifacts.versionId, source.versionId), eq(cadArtifacts.fileId, source.fileId),
-        eq(cadArtifacts.formatVersion, formatVersion), eq(cadArtifacts.sourceSHA256, source.sourceSHA256))).limit(1);
+        inArray(cadArtifacts.formatVersion, cadFormatVersions(source.sourceFormat ?? cadFormat(source.sourceName))),
+        eq(cadArtifacts.sourceSHA256, source.sourceSHA256))).limit(1);
     return rows[0] ?? null;
   }
 

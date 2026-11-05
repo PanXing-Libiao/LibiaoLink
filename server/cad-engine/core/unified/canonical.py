@@ -29,7 +29,7 @@ def _small(value):
     return True
 
 
-def canonical_chunks(value):
+def _canonical_parts(value):
     markers=set()
     def chunks(item):
         if _small(item) or not isinstance(item,(dict,list,tuple)):
@@ -59,6 +59,24 @@ def canonical_chunks(value):
                 yield b']'
         finally:markers.remove(marker)
     yield from chunks(value)
+
+
+def canonical_chunks(value):
+    """Coalesce encoder fragments before hashing or writing.
+
+    The canonical encoder emits many tiny fragments for nested drawings. Hashing
+    each fragment separately spends most of its time in Python/SHA call overhead;
+    bounded coalescing keeps memory flat while reducing those calls by orders of
+    magnitude. The concatenated bytes remain byte-identical to the profile above.
+    """
+    pending=bytearray()
+    for part in _canonical_parts(value):
+        pending.extend(part)
+        if len(pending)>=64*1024:
+            yield bytes(pending)
+            pending.clear()
+    if pending:
+        yield bytes(pending)
 
 
 def canonical_sha256(value):
