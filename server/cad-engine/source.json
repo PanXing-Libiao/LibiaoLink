@@ -486,7 +486,7 @@
     "dependency.json": "a17930ad7b0dadf5bd81c59f23995af557f383b7584fdf48bdb3c2550240666e"
   },
   "browserFiles": {
-    "app.js": "f32c0ea41468204606d292209ee59ed65109abd4a303d2e1ad288a3ca71c8871",
+    "app.js": "026f303011d30f678fc44caaa6f57fceb71d40f04013530bb2943213ee492849",
     "benchmark.js": "c81b3668354f0fc431c02f068545d5c71ce4a266bf414671341aa97674fc3e9d",
     "binary-transport.js": "e08b956fd5caa3588d5826f531d208ca12792ce10c003b2de1ceddc5527a447f",
     "camera-framing.js": "12f685ca11f995192d3f5348a44c2cf5fca5286bca58b0af99a7faa7ef5aab6d",
@@ -500,13 +500,13 @@
     "drawing-instances.js": "3b87391e8e52a87e23a23f37deb6aefd581aaee88e828baab3e41ba9c9c05532",
     "drawing-layout.js": "9a611425b8d5151225a8bf06cc9b4b950ec8d1ba138be31cf627c14c5d5ab68b",
     "drawing-media.js": "3b9558eb5ee8dc3031f6b6c823b65c1ef58f3d4cfc676a477798bb6f10ed6a27",
-    "drawing-mesh-viewer.js": "a505d839ab529f8e372739e6496c673908112915c20e888f6c3eab126586468c",
+    "drawing-mesh-viewer.js": "7686dfdf0a330839304d588e9c3863af4fb7a149a7e0cdea21efed42e572acc2",
     "drawing-pattern.js": "4f0aa4a0b4f6bc0d7cb0dfe477de687fa4f87d4d603db30b63c8c3e2e3c5b5b2",
     "drawing-plot-styles.js": "a2c3888311ccdaac04b38f108ab7175cd171a43f0fb82fdb9356e9431819b243",
     "drawing-projection.js": "4060268bef6a42a83f6cb0977393245d6880721fc028f45498914b369fe6ab0d",
     "drawing-text-avoidance.js": "2e65f43a90f24b6a669325a3bc7687d0d1f93f22610ba937d9b8c2ae2b3e5001",
     "drawing-text.js": "1cc508f97d4d196842167e7d79b1ec50493bbff0756e89b002a58c933d02141c",
-    "drawing-viewer.js": "19b7a68aae893eb83d371553899e6efa0d5cc7206c62cf6d4827ad469fe80c58",
+    "drawing-viewer.js": "447521b0d77eb7ef450f7d43576ed2f363377c3e96115201040ffd3e845dc4af",
     "dwg-packed-transport.js": "bb398080585a6a65ed1b1ec73469e5492367dd8a7a7abdedd591f856e1823b42",
     "dxf-resources.js": "219569569cc22deca979ec3f6693031bfbfe050c30eb8fe419962f4e3dab5c2c",
     "gpu/background-painter.js": "20424c614d1879af4a4b2cfa265ef0fa4b79acaebb1124c46395e94ab8d287f1",
@@ -585,8 +585,8 @@
     ]
   },
   "engineDigest": "a10cc3aed195a672eb13cb7504e97cb0cf9bf052c77735f49fcf65aa13e81abf",
-  "viewerDigest": "d7337b062301909565564a0ef5d737958c4af35ce06ea8e0d3b52bac65757efd",
-  "releaseDigest": "476815650034c69f77f244919444f4d48643201ddf5aa879de54d2a05dc50b45",
+  "viewerDigest": "94210ddec2ff65f0effd7882c022e1556f7033af2d7852c8a49985f4239c2bb7",
+  "releaseDigest": "42542f5283697969e0ee355e86dd0d357047d30723e45d82c7a84ab55eafa3ba",
   "engineVersion": "step-0.3.3/a10cc3aed195a672eb13cb7504e97cb0cf9bf052c77735f49fcf65aa13e81abf/gateway-1",
-  "viewerVersion": "viewer-d7337b062301909565564a0ef5d737958c4af35ce06ea8e0d3b52bac65757efd"
+  "viewerVersion": "viewer-94210ddec2ff65f0effd7882c022e1556f7033af2d7852c8a49985f4239c2bb7"
 }

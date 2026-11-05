@@ -2,23 +2,23 @@
 // Input: a UCD 2.0 envelope whose document carries Drawing tables. The viewer never
 // re-reads DXF. Analytic source curves (Entity.geometry) and the discretized display
 // representation (Representation kind=drawing) are selectable, separate paths.
-import {projectDrawing, projectBlock} from './drawing-projection.js?v=dxf-0.17.0';
+import {projectDrawing, projectBlock} from './drawing-projection.js?v=dxf-0.17.1';
 import {clipInfiniteLine, gradientField, triangleBoundarySegments, traceStrokeSegments} from './drawing-2d.js?v=dxf-2d-0.5.0';
-import {drawingClips, compileClips, triangulateRings, insideRing} from './drawing-clipping.js?v=dxf-0.17.0';
-import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.17.0';
-import {estimateDrawingDraws, projectInstances, projectInstancesSteps, shouldProjectInstances, recordVisibleBounds, INSTANCE_DRAW_LIMIT, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, quantizeLodSize, LOD_MIN_SCREEN_PX, isLodCulled, I} from './drawing-instances.js?v=dxf-0.17.0';
+import {drawingClips, compileClips, triangulateRings, insideRing} from './drawing-clipping.js?v=dxf-0.17.1';
+import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.17.1';
+import {estimateDrawingDraws, projectInstances, projectInstancesSteps, shouldProjectInstances, recordVisibleBounds, INSTANCE_DRAW_LIMIT, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, quantizeLodSize, LOD_MIN_SCREEN_PX, isLodCulled, I} from './drawing-instances.js?v=dxf-0.17.1';
 import Flatbush from './vendor/flatbush.js';
-import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, textOffsets, textWorldCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.0';
-import {aciColor, trueColorCss} from './drawing-colors.js?v=dxf-0.17.0';
-import {resolveTextAvoidance} from './drawing-text-avoidance.js?v=dxf-0.17.0';
-import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentation} from './drawing-pattern.js?v=dxf-0.17.0';
-import {mediaItemFor, rasterRecord} from './drawing-media.js?v=dxf-0.17.0';
+import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, textOffsets, textWorldCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.1';
+import {aciColor, trueColorCss} from './drawing-colors.js?v=dxf-0.17.1';
+import {resolveTextAvoidance} from './drawing-text-avoidance.js?v=dxf-0.17.1';
+import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentation} from './drawing-pattern.js?v=dxf-0.17.1';
+import {mediaItemFor, rasterRecord} from './drawing-media.js?v=dxf-0.17.1';
 
 // Use hybrid rendering automatically; retain compatibility for older browsers.
 const forceCanvasRenderer = typeof location !== 'undefined' && new URLSearchParams(location.search).get('renderer') === 'canvas';
 const accelerated = !forceCanvasRenderer && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined';
 const gpuModules = accelerated ? await Promise.all([
-  import('./gpu/background-painter.js?v=dxf-0.17.0'), import('./gpu/gpu-strokes.js?v=dxf-0.17.0')
+  import('./gpu/background-painter.js?v=dxf-0.17.1'), import('./gpu/gpu-strokes.js?v=dxf-0.17.1')
 ]) : null;
 const createBackgroundPainter = gpuModules?.[0].createBackgroundPainter;
 const createStrokeGPU = gpuModules?.[1].createStrokeGPU;
@@ -207,7 +207,7 @@ export function mountDrawingViewer(envelope) {
     if (next === '3d' && spaceTarget?.kind !== 'model')
       setSpace({kind:'model',spaceId:Object.values(drawing.drawings)[0].modelSpaceId});
     if (next === '3d' && !meshViewer) {
-      meshLoading ||= import('./drawing-mesh-viewer.js?v=dxf-0.17.0');
+      meshLoading ||= import('./drawing-mesh-viewer.js?v=dxf-0.17.1');
       const {createDrawingMeshViewer} = await meshLoading;
       if (destroyed || request!==viewRequest) return false;
       meshViewer ||= createDrawingMeshViewer({document:ucd, viewport, geometry:representationGeometry, meshIds,
@@ -989,7 +989,8 @@ export function mountDrawingViewer(envelope) {
   const INSTANCE_SYNC_PAINT_LIMIT = 5000;
   const INSTANCE_WORKER_PAINT_LIMIT = 200000;
   const INSTANCE_OVERVIEW_SCREEN_PX = 3;
-  const INSTANCE_INTERACTION_SETTLE_MS = 220;
+  const INSTANCE_INTERACTION_SETTLE_MS = 700;
+  const ORDINARY_INTERACTION_SETTLE_MS = 220;
   let paintRevision = 0;
   let instanceRefresh = null;
   let fullPaintTimer = 0;
@@ -1620,20 +1621,25 @@ export function mountDrawingViewer(envelope) {
     if (mode === 'analytic' && (scale > buildScale * 2 || scale < buildScale / 2)) rebuild();
     else if (instancePlan) drawInstances(); else draw();
   }
-  function beginInteraction() {
-    if (instancePlan && !hasUsablePreview()) cacheFullFrame();
-    cancelInstanceRefresh();
-    interacting = true;
+  function scheduleInteractionSettled() {
     if (interactionTimer) clearTimeout(interactionTimer);
     interactionTimer = setTimeout(() => {
       interactionTimer = 0;
       if (drag) return;
-      interacting = false; interactionSettled();
-    }, INSTANCE_INTERACTION_SETTLE_MS);
+      interacting = false;
+      interactionSettled();
+    }, instancePlan ? INSTANCE_INTERACTION_SETTLE_MS : ORDINARY_INTERACTION_SETTLE_MS);
+  }
+  function beginInteraction() {
+    if (instancePlan && !hasUsablePreview()) cacheFullFrame();
+    cancelInstanceRefresh();
+    interacting = true;
+    scheduleInteractionSettled();
   }
   function endInteraction() {
-    if (interactionTimer) { clearTimeout(interactionTimer); interactionTimer = 0; }
     if (!interacting) return;
+    if (instancePlan) { scheduleInteractionSettled(); return; }
+    if (interactionTimer) { clearTimeout(interactionTimer); interactionTimer = 0; }
     interacting = false;
     interactionSettled();
   }
