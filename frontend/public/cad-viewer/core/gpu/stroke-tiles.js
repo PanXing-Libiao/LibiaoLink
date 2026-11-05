@@ -8,6 +8,9 @@ const MAX_DRAW_TILES = 64;
 const COLOR_FALLBACK = [0, 0, 0];
 
 function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
+function completeView(view) {
+  return !!view && [view.scale, view.tx, view.ty, view.dpr].every(Number.isFinite);
+}
 function intersects(a, b) {
   return !!a && !!b && a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY;
 }
@@ -31,6 +34,15 @@ function parseColor(css) {
   const values = match[1].split(",").map(Number);
   if (values.length < 3 || values.slice(0, 3).some(value => !Number.isFinite(value))) return COLOR_FALLBACK;
   return [clamp(values[0] / 255, 0, 1), clamp(values[1] / 255, 0, 1), clamp(values[2] / 255, 0, 1)];
+}
+// Flatbush stores bounds as Float32. Pad only the spatial query by a few ULP
+// so a line on a tile boundary is not rounded into the neighbouring tile.
+function boxPadding(box) {
+  const magnitude = Math.max(Math.abs(box.minX), Math.abs(box.maxX), Math.abs(box.minY), Math.abs(box.maxY), 1);
+  return Math.max(1e-6, magnitude * 2 ** -22);
+}
+function padBox(box, pad = boxPadding(box)) {
+  return { minX: box.minX - pad, minY: box.minY - pad, maxX: box.maxX + pad, maxY: box.maxY + pad };
 }
 function transformChunk(chunk, matrix) {
   const count = chunk ? chunk.length & ~1 : 0;
@@ -89,10 +101,11 @@ function clipSegments(worldSegments, box) {
 }
 export function buildTileVertices(descriptors, box, minWorldSize = 0) {
   const groups = new Map();
+  const clipBox = padBox(box);
   for (const descriptor of descriptors) {
-    if (!intersects(descriptor.bounds, box)) continue;
+    if (!intersects(descriptor.bounds, clipBox)) continue;
     if (descriptor.lodSize > 0 && descriptor.lodSize < minWorldSize) continue;
-    const clipped = clipSegments(descriptor.worldSegments, box);
+    const clipped = clipSegments(descriptor.worldSegments, clipBox);
     if (!clipped.length) continue;
     let group = groups.get(descriptor.styleKey);
     if (!group) { group = { key: descriptor.styleKey, color: descriptor.color, width: descriptor.width, layerId: descriptor.layerId, rank: Number.isFinite(descriptor.order) ? descriptor.order : groups.size, rows: [] }; groups.set(group.key, group); }
@@ -189,7 +202,7 @@ export function createStrokeTilePlanner(renderer, options = {}) {
     let index = null;
     if (descriptors.length) {
       index = new Flatbush(descriptors.length, 16, Float32Array);
-      for (const descriptor of descriptors) index.add(descriptor.bounds.minX, descriptor.bounds.minY, descriptor.bounds.maxX, descriptor.bounds.maxY);
+      for (const descriptor of descriptors) { const box = padBox(descriptor.bounds); index.add(box.minX, box.minY, box.maxX, box.maxY); }
       index.finish();
     }
     const run = { id: runId, descriptors, index, bounds, tiles: new Map() };
@@ -227,6 +240,7 @@ export function createStrokeTilePlanner(renderer, options = {}) {
     return row;
   }
   function drawRun(node, runId, entries, matrix, view, scale, minScreenPx) {
+    if (!completeView(view)) return { tiles: 0, segments: 0, styles: 0, level: 0, bytes: 0, built: 0, reused: 0 };
     const plan = runPlan(node, entries);
     const run = describeRun(plan, runId, matrix, entries);
     if (!run || !run.descriptors.length || !intersects(run.bounds, view)) return { tiles: 0, segments: 0, styles: 0, level: 0, bytes: 0, built: 0, reused: 0 };
