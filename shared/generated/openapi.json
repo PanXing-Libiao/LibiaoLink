@@ -1552,6 +1552,34 @@
           "publishedBy"
         ]
       },
+      "CadCompanion": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "versionId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "path": {
+            "$ref": "#/components/schemas/CadLogicalPath"
+          }
+        },
+        "required": [
+          "fileId",
+          "versionId",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "CadFormat": {
+        "type": "string",
+        "enum": [
+          "STEP",
+          "DXF",
+          "DWG"
+        ]
+      },
       "CadJob": {
         "type": "object",
         "properties": {
@@ -1565,6 +1593,7 @@
               "queued",
               "running",
               "completed",
+              "partial",
               "failed",
               "cancelled",
               "timed-out"
@@ -1583,6 +1612,9 @@
           },
           "nameCodepage": {
             "$ref": "#/components/schemas/CadNameCodepage"
+          },
+          "format": {
+            "$ref": "#/components/schemas/CadFormat"
           },
           "createdAt": {
             "type": "number"
@@ -1628,7 +1660,25 @@
           "createdAt",
           "updatedAt"
         ],
-        "description": "文件版本的 CAD 查看任务；后台在独立沙箱转换并将完整产物持久保存，API/worker/CAD 重启后可复用。窗口取消不取消共享后台解析。completed 只发布完整校验产物，已列举 nonMeshableFaces 保留，Partial 不算完整成功。"
+        "description": "CAD 查看任务，产物可持久复用；窗口取消不取消共享后台任务。completed 发布完整产物；partial 用于有校验产物及缺失说明的 DXF 或 DWG，页面必须明确展示限制。STEP 保持完整性接收规则。"
+      },
+      "CadJobCreateBody": {
+        "type": "object",
+        "properties": {
+          "mainPath": {
+            "$ref": "#/components/schemas/CadLogicalPath"
+          },
+          "companions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CadCompanion"
+            },
+            "maxItems": 127,
+            "default": []
+          }
+        },
+        "additionalProperties": false,
+        "description": "DXF 主图与当前项目中明确选择的配套文件版本；缺省仅使用主图。STEP 和 DWG 不接受配套文件（DWG 也不接受主图相对路径）。资源选择变化创建独立产物身份。"
       },
       "CadJobCreateResponse": {
         "type": "object",
@@ -1644,6 +1694,12 @@
           "job",
           "reused"
         ]
+      },
+      "CadLogicalPath": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024,
+        "description": "资源包内相对路径；保留目录，不允许绝对路径、上级目录、URL 或任意类型。"
       },
       "CadNameCodepage": {
         "type": "string",
@@ -1674,6 +1730,15 @@
           },
           "engineVersion": {
             "type": "string"
+          },
+          "sourceName": {
+            "type": "string"
+          },
+          "format": {
+            "$ref": "#/components/schemas/CadFormat"
+          },
+          "projectId": {
+            "$ref": "#/components/schemas/Uuid"
           }
         },
         "required": [
@@ -1681,9 +1746,12 @@
           "fileId",
           "versionId",
           "sourceSHA256",
-          "engineVersion"
+          "engineVersion",
+          "sourceName",
+          "format",
+          "projectId"
         ],
-        "description": "STEP 查看入口；模型就绪由独立 CAD 任务状态判定。每次模型/资源读取重新校验文件版本权限，不包含原文件签名。"
+        "description": "STEP / DXF / DWG 查看入口；模型就绪由 CAD 任务判定。每次读取重新校验主图与全部配套版本权限，不包含原文件签名。"
       },
       "CalendarDay": {
         "type": "object",
@@ -18183,7 +18251,7 @@
         "tags": [
           "files"
         ],
-        "summary": "为已授权 STEP 版本创建隔离任务（需要 CSRF）",
+        "summary": "为已授权 STEP / DXF 版本创建任务；DXF 可绑定同项目配套版本和相对路径（需要 CSRF）",
         "parameters": [
           {
             "schema": {
@@ -18222,9 +18290,18 @@
             "in": "query"
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CadJobCreateBody"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
-            "description": "已创建或复用当前查看窗口的任务",
+            "description": "已创建或复用当前查看窗口的任务；DXF 可返回 partial",
             "content": {
               "application/json": {
                 "schema": {
@@ -18548,7 +18625,7 @@
         ],
         "responses": {
           "200": {
-            "description": "独立工程 ucd-binary-compact/1 清单，含短期资源 lease；每次重查文件版本权限",
+            "description": "ucd-binary/1 或 ucd-binary-compact/1 清单，含短期资源 lease；每次重查主图及配套文件权限。STEP 必须 complete，DXF 明示 complete / partial。",
             "content": {
               "application/json": {
                 "schema": {

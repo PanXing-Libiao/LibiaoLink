@@ -23,7 +23,7 @@ services:
     ulimits:
       core: 0
       nofile: {soft: 128, hard: 128}
-      fsize: {soft: 268435456, hard: 268435456}
+      fsize: {soft: 536870912, hard: 536870912}
     tmpfs:
       - /tmp:size=384m,uid=1000,gid=1000,mode=0700,noexec,nosuid,nodev
       - /var/lib/cad:size=1536m,uid=1000,gid=1000,mode=0700,noexec,nosuid,nodev

@@ -1,5 +1,8 @@
 # database/ · 数据库基线（g3 · S5）
 
+
+> CAD 二维（2026-10-26，本地未部署）：`0077_cad_dxf_input_sets.sql` 增加格式、逻辑路径、配套版本快照和输入集合摘要，扩展唯一键及仅 DXF 的 `partial` 约束。`0078_cad_format_version.sql` 按 ADR-041 增加 `format_version` 并把产物唯一键从 `engine_version` 拆到格式版本；旧行回填旧 bundle 字符串，首次访问新格式时重建。`0079_cad_dwg_format.sql` 将 `DWG` 加入 `cad_artifacts` 格式约束：DWG 只接受主图、无配套文件、允许带明确损失说明的 `partial`。先停止旧 API/worker，再依次迁移并同步升级。回滚不能只换旧镜像，须协调清理可重建 CAD 派生索引/对象并恢复旧唯一约束；保留 STEP 和源版本。见 [ADR-040](../docs/adr/ADR-040-DXF二维与配套输入集合.md) 与 [ADR-041](../docs/adr/ADR-041-CAD版本拆分与缓存键.md)。
+
 > CAD（2026-10-22）：新增 `0064_cad_artifacts.sql`，按版本/引擎/编码唯一的持久队列与产物索引，以及窗口授权/租期；几何文件保存到私有对象存储，应用不在启动时改结构。先迁移，再同步 API / worker。见 [ADR-037](../docs/adr/ADR-037-CAD产物持久化与上传预解析.md)。
 > 审计（2026-10-23）：新增 `0066_audit_visit_action.sql`，`audit_logs.action` 增 `visit`（项目访问 / 登录成功），保留 `preview` 并在实际送达预览时恢复写入；动作下拉另行隐藏推进 / 回退，不改历史值。
 
@@ -225,3 +228,11 @@ seed: 完成，本次执行 4 个种子
 - **2026-10-28 0076 复算**：67 表 / **668 列** / 208 索引（含唯一）/ **243 CHECK**（0076 = `audit_logs` +2 可空列；临时 PostgreSQL 18 @55435 空库迁移 75 件至 0076 + 幂等复跑无漂移，`check:db-schema` 通过；回收站当前项目名与彻底删除后快照回退 SQL 行为已验证）。
 - **Drizzle 对齐**：`server` 构建后跑 `npm run check:db-schema`（比对表 / 列类型 / 可空性 / 索引 / CHECK 名称）。
 - **已合入迁移不可变**：改文件 / 删文件 / 中间插队三种情形均退出码 1，并给出中文原因（`scripts/migrate.mjs` 的 `verifyNoDrift`）。
+
+### CAD 窗口活跃度迁移 0080
+
+`0080_cad_view_activity.sql` 为 `cad_views` 增加 `last_seen_at` 和按产物/心跳查询的索引。部署新版 API/worker 前执行迁移。存量窗口初始不获得调度优先，下一次授权状态轮询恢复心跳；旧 API 可继续使用默认值，回滚应用不需要删除该列。
+
+### CAD 近期预热和退休产物（0081）
+
+部署本批 API/worker 前先应用 `0081_cad_cache_lifecycle.sql`（依赖 0080）。新增可空访问时间与独立持久删除队列，不改既有状态枚举。旧应用可忽略新增结构；回滚代码时不要删除待清理记录。回填仅使用现存视图的已知访问时间，无法恢复已过期删除的历史视图。迁移不触发全库转换或对象删除。

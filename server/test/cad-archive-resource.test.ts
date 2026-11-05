@@ -6,7 +6,7 @@ import type { ObjectStorage } from "../src/storage/object-storage.js";
 import type { CadArchiveRepository, CadArtifactRow, CadViewRow } from "../src/modules/file/cad-archive.repository.js";
 import type { CadEngineClient } from "../src/modules/file/cad-engine.client.js";
 import { CadArchiveService } from "../src/modules/file/cad-archive.service.js";
-import { CAD_ENGINE_VERSION } from "../src/modules/file/cad-release.js";
+import { CAD_ENGINE_VERSION, CAD_FORMAT_VERSIONS } from "../src/modules/file/cad-release.js";
 
 const opened = new Set<Readable>();
 afterEach(() => { for (const stream of opened) stream.destroy(); opened.clear(); });
@@ -17,17 +17,20 @@ function fixture() {
   const artifact: CadArtifactRow = {
     id: "11111111-1111-4111-8111-111111111111", fileId: "22222222-2222-4222-8222-222222222222",
     versionId: "33333333-3333-4333-8333-333333333333", sourceSHA256: "1".repeat(64), sourceBytes: 3,
-    sourceName: "box.step", engineVersion: CAD_ENGINE_VERSION, nameCodepage: "GB", state: "completed", phase: "completed",
+    sourceFormat: "STEP", mainPath: "box.step", companions: [], resourceSetHash: "0".repeat(64),
+    sourceName: "box.step", engineVersion: CAD_ENGINE_VERSION, formatVersion: CAD_FORMAT_VERSIONS.STEP,
+    nameCodepage: "GB", state: "completed", phase: "completed",
     attempts: 1, availableAt: now, claimToken: null, claimUntil: null, objectPrefix: "projects/test/files/test/cad/test/",
     manifestSHA256: createHash("sha256").update(body).digest("hex"), manifestBytes: body.byteLength,
     resourceLease: "4".repeat(48), buffers: [], artifactBytes: body.byteLength, errorCode: null, error: null,
-    createdAt: now, updatedAt: now,
+    lastAccessedAt: null, createdAt: now, updatedAt: now,
   };
   const view: CadViewRow = { id: "55555555-5555-4555-8555-555555555555", artifactId: artifact.id,
     actorId: "66666666-6666-4666-8666-666666666666", viewId: "7".repeat(32), cancelled: false,
-    expiresAt: new Date(Date.now() + 60_000), leaseExpiresAt: null };
+    expiresAt: new Date(Date.now() + 60_000), lastSeenAt: new Date(), leaseExpiresAt: null };
   const repository = {
     view: vi.fn<CadArchiveRepository["view"]>().mockResolvedValue({ artifact, view }),
+    touchView: vi.fn<CadArchiveRepository["touchView"]>().mockResolvedValue(undefined),
     lease: vi.fn<CadArchiveRepository["lease"]>().mockResolvedValue(undefined),
     retry: vi.fn<CadArchiveRepository["retry"]>().mockResolvedValue(undefined),
   };
@@ -37,15 +40,30 @@ function fixture() {
       return { stream, sizeBytes: body.byteLength, contentType: "application/json" };
     }),
   };
+  const inputs = { assertAvailable: vi.fn(async () => {}) };
   const service = new CadArchiveService(repository as unknown as CadArchiveRepository, storage as unknown as ObjectStorage,
-    {} as CadEngineClient);
+    {} as CadEngineClient, inputs as never);
   const source = { fileId: artifact.fileId, versionId: artifact.versionId, sourceSHA256: artifact.sourceSHA256,
     sourceBytes: artifact.sourceBytes, sourceName: artifact.sourceName };
   const manifest = () => service.resource("manifest", source, view.actorId, view.viewId, view.id.replaceAll("-", ""));
-  return { body, artifact, view, repository, storage, manifest };
+  const status = () => service.job("status", source, view.actorId, view.viewId, view.id.replaceAll("-", ""));
+  return { body, artifact, view, repository, storage, manifest, inputs, status };
 }
 
 describe("CAD cached resource lifecycle", () => {
+  it("only authorized uncancelled waiting views refresh scheduling intent", async () => {
+    const f = fixture();f.artifact.state = "queued";
+    await f.status();expect(f.repository.touchView).toHaveBeenCalledWith(f.view.id);
+    f.repository.touchView.mockClear();f.artifact.state = "running";
+    await f.status();expect(f.repository.touchView).toHaveBeenCalledWith(f.view.id);
+    f.repository.touchView.mockClear();f.artifact.state = "completed";
+    await f.status();expect(f.repository.touchView).not.toHaveBeenCalled();
+    f.artifact.state = "queued";f.view.cancelled = true;
+    await f.status();expect(f.repository.touchView).not.toHaveBeenCalled();
+    f.view.cancelled = false;f.inputs.assertAvailable.mockRejectedValue(new Error("revoked"));
+    await expect(f.status()).rejects.toThrow("revoked");expect(f.repository.touchView).not.toHaveBeenCalled();
+  });
+
   it("数据库续租失败后不遗留已打开的对象读取流，也不触发重新解析", async () => {
     const { repository, manifest } = fixture();
     const failure = new Error("lease write unavailable");

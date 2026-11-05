@@ -26,19 +26,24 @@ class ResultCache:
             if not re.fullmatch(r'[a-f0-9]{64}', request.get(field, '')):
                 raise ValueError('Invalid cache identity')
         name, length = request.get('name'), request.get('sourceByteLength')
-        if not isinstance(name, str) or Path(name).name != name or Path(name).suffix.lower() not in ('.step', '.stp'):
+        if not isinstance(name, str) or Path(name).name != name or Path(name).suffix.lower() not in ('.step', '.stp', '.dxf', '.dwg'):
             raise ValueError('Invalid cache source name')
         if type(length) is not int or not 0 < length <= self.jobs.policy['inputBytes']:
             raise ValueError('Invalid cache source length')
         codepage = request.get('nameCodepage', 'UTF8')
         if codepage not in ('UTF8', 'GB'):
             raise ValueError('Invalid name encoding')
+        is_dxf=Path(name).suffix.lower()=='.dxf'
+        resource=request.get('resourceFingerprint')
+        if is_dxf and (codepage!='UTF8' or not isinstance(resource,str) or not re.fullmatch(r'[a-f0-9]{64}',resource)):
+            raise ValueError('Invalid DXF resource identity')
         # File/version/content, parser release, transport and name encoding determine
         # reusable bytes. Actor/view remain authorization bindings, never cache keys.
         identity = {key: request[key] for key in ('cacheScope', 'sourceSHA256', 'sourceByteLength', 'name')}
         identity.update(version='libiaolink-result-cache/1', rules=self.jobs.rule_version,
                         policy=self.jobs.policy['version'], binary=self.jobs.binary,
                         compact=self.jobs.compact, nameCodepage=codepage)
+        if is_dxf:identity['resourceFingerprint']=resource
         return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
 
     def prune(self, force=False):
@@ -74,7 +79,9 @@ class ResultCache:
                 self.db.execute('DELETE FROM results WHERE job_id=?', (job_id,)); self.db.commit()
                 continue
             # Never share a running task: closing/cancelling one view must not stop another.
-            if row['state'] != 'completed' or time.time() - row['updatedAt'] > self.jobs.policy['retentionSeconds']:
+            if row['state'] not in ('completed','partial') or time.time() - row['updatedAt'] > self.jobs.policy['retentionSeconds']:
+                continue
+            if row.get('resourceFingerprint')!=request.get('resourceFingerprint'):
                 continue
             if (row.get('sourceSHA256'), row.get('sourceByteLength'), row.get('name'), row.get('nameCodepage', 'UTF8')) != (
                     request['sourceSHA256'], request['sourceByteLength'], request['name'], request.get('nameCodepage', 'UTF8')):
@@ -86,7 +93,9 @@ class ResultCache:
                 self.db.execute('DELETE FROM results WHERE job_id=?', (job_id,)); self.db.commit()
                 continue
             packet = json.loads(raw)
-            if packet.get('snapshot', {}).get('completeness') != 'complete' or packet.get('transportProfile') not in (
+            completeness=packet.get('snapshot',{}).get('completeness')
+            acceptable=completeness=='complete' or (row.get('sourceFormat') in ('DXF','DWG') and completeness=='partial')
+            if not acceptable or packet.get('transportProfile') not in (
                     'ucd-worker-binary/1', 'ucd-worker-binary-compact/1'):
                 continue
             namespace = request['namespace']

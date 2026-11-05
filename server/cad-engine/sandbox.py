@@ -7,7 +7,7 @@ from pathlib import Path
 MIB = 1024 * 1024
 MEMORY_BYTES = 3 * 1024 * MIB
 PIDS = 64
-FILE_BYTES = 256 * MIB
+FILE_BYTES = 512 * MIB
 ROOT = Path('/var/lib/cad')
 SOCKET = '/run/cad/engine.sock'
 

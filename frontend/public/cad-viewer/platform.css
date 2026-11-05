@@ -56,6 +56,8 @@ aside:has(#productTree:not([hidden])) #tree { display: none; }
 .tool-divider { width: 1px; height: 18px; background: #e0e7eb; margin: 0 2px; }
 #viewport { position: absolute; inset: 0; height: 100%; min-height: 0; border-radius: 0; border: 0; background: #edf1f4; }
 #viewport > canvas { position: absolute; inset: 0; }
+/* Ready but nothing drawable: explain the blank canvas in place. */
+.drawingEmpty { position: absolute; z-index: 3; left: 50%; top: 42%; transform: translate(-50%, -50%); max-width: min(460px, calc(100% - 40px)); padding: 10px 16px; border: 1px solid #d5dfe5; border-radius: 9px; background: #fffffff2; box-shadow: 0 3px 16px #293b4812; color: #4b5b68; font-size: 13px; line-height: 1.6; text-align: center; }
 .viewlabel { top: 70px; right: 16px; left: auto; font-size: 11px; }
 .hint { bottom: 14px; right: 14px; left: auto; width: auto; font-size: 11px; }
 .hint span { margin: 0 4px; color: #96a5af; }
@@ -162,3 +164,4 @@ body[data-cad-state="unsupported"] #error { width: min(500px, 100%); max-width: 
   *, *::before, *::after { transition: none !important; animation: none !important; }
   .progress-indicator { left: 25%; opacity: .7; }
 }
+#drawingLimitations:not([hidden]) { margin: 0; padding: 10px 16px; border-bottom: 1px solid #e3c574; background: #fff8e5; color: #754b0e; font-size: 12px; line-height: 1.5; }

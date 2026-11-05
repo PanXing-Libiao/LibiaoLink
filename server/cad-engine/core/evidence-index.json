@@ -1,0 +1,26 @@
+{
+  "scope": "Pinned references for existing mechanisms; not a claim of full EASM support",
+  "version": "eDrawings 34.2.0056",
+  "binaryHashes": {
+    "libhoops_stream.dylib": "774a9d3be41a96e0917a1b3e403bce4ab0adaffc06dcd89e43db5fe284a749f6",
+    "libhoops_3dgs.dylib": "6c5740b832519f9d0584285fa91a06ccf4b066bd4efc15673eafe35f7c208493"
+  },
+  "artifacts": [
+    {
+      "reference": "archive/09_跨文件验证/native-hierarchy-evidence.json",
+      "sha256": "39b9dad2074ff1622f512c5e18b68d87b05c2f999665b910d28c2516ec644873"
+    },
+    {
+      "reference": "archive/09_跨文件验证/native-version-coverage.json",
+      "sha256": "c2269ef67d90a4b902de4469be56d54793845e6558a4c8bd1551a6ea3b335a11"
+    },
+    {
+      "reference": "archive/09_跨文件验证/native-render-lock-field-verification.json",
+      "sha256": "19243c62af8aaafcf4c8bdf4ba1c89934ab33fd0ad06121f12db087ee72c833f"
+    },
+    {
+      "reference": "archive/08_原生逆向核验/rea-native/findings.md",
+      "sha256": "183e385dec40c2718f3cdc48a34f6cd6ad62fa1020733b75dfd1e7892775f3e8"
+    }
+  ]
+}

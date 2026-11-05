@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { Readable, Transform } from "node:stream";
 
-export const CAD_MANIFEST_LIMIT = 64 * 1024 * 1024;
+export const CAD_MANIFEST_LIMIT = 512 * 1024 * 1024;
 export const CAD_BUFFER_LIMIT = 256 * 1024 * 1024;
 export const CAD_ARTIFACT_LIMIT = 512 * 1024 * 1024;
 class CadIntegrityError extends Error {}

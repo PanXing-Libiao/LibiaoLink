@@ -7,6 +7,8 @@ MAX_OUTPUT_BYTES=16*1024*1024
 CHILD_RSS_BYTES=768*1024*1024
 FACE_SECONDS=30.
 DOCUMENT_SECONDS=90.
+RAW_CACHE_BYTES=16*1024*1024
+REPAIR_POLICY='step-combined-repair/4'
 
 def _execute(interpreter,source,target,size,timeout):
     from . import worker_trace
@@ -52,6 +54,7 @@ class ExternalMeshContext:
         root=Path(__file__).resolve().parents[2]
         self.interpreter=Path(os.environ.get('CAD_STEP_MESHER_PYTHON',str(root/'.phase-work/step-mesher/bin/python')))
         self.remaining=DOCUMENT_SECONDS;self.attempts=[];self.used=False
+        self._mesh_cache={};self._cache_bytes=0
 
     def recover(self,face):
         from OCP.BRepBndLib import BRepBndLib
@@ -77,7 +80,11 @@ class ExternalMeshContext:
         except Exception as error:
             self.attempts.append({**base,'status':'not-applicable','reason':str(error)[:512]});return None
         # Local fallback settings depend on geometry size, never file identity.
-        sizes=(.002,.0005) if area<=MICRO_FACE_AREA_MM2 else (.08,.02)
+        # Element size is a candidate-generation setting, not the accepted
+        # surface deviation. Large faces must not start with millions of cells.
+        size=max(.08,math.sqrt(area/1000.))
+        sizes=(.002,.0005) if area<=MICRO_FACE_AREA_MM2 else (
+            tuple(dict.fromkeys((size,size/2,.08,.02))) if size>.08 else (.08,.02))
         # The server removes this parent even when the worker group is killed.
         trace=os.environ.get('CAD_TRACE_FILE');parent=Path(trace).parent if trace else None
         with tempfile.TemporaryDirectory(prefix='cad-face-mesh-',dir=parent) as folder:
@@ -91,9 +98,17 @@ class ExternalMeshContext:
                 began=time.monotonic()
                 try:
                     target.unlink(missing_ok=True)
-                    raw=_execute(self.interpreter,source,target,size,min(FACE_SECONDS,self.remaining))
+                    key=(ENGINE,REPAIR_POLICY,source_sha,size,2)
+                    cached=self._mesh_cache.get(key)
+                    raw=json.loads(cached) if cached is not None else _execute(self.interpreter,source,target,size,min(FACE_SECONDS,self.remaining))
                     if raw.get('engine')!='gmsh' or raw.get('version')!=ENGINE or raw.get('sourceSHA256')!=source_sha:raise ValueError('independent-mesher-source-or-version-mismatch')
                     result=validate_external_mesh(face,raw)
+                    # Cache only accepted raw meshes. Every hit is source/version
+                    # checked and fully validated against this face again.
+                    if cached is None:
+                        encoded=json.dumps(raw,allow_nan=False,separators=(',',':')).encode('utf8')
+                        if self._cache_bytes+len(encoded)<=RAW_CACHE_BYTES:
+                            self._mesh_cache[key]=encoded;self._cache_bytes+=len(encoded)
                     result['validation']['duplicateNodeRowsCollapsed']=raw.get('duplicateNodeRowsCollapsed',0)
                     row['status']='accepted';self.used=True
                     result['validation'].update(engine='gmsh',engineVersion=ENGINE,sourceFaceBRepSHA256=source_sha,maxElementSizeMM=size,algorithm=2)

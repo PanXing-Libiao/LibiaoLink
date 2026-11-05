@@ -6,6 +6,8 @@
   <title>CAD 模型查看器</title>
   <link rel="stylesheet" href="core/style.css">
   <link rel="stylesheet" href="platform.css">
+  <link rel="stylesheet" href="fonts/latin.css">
+  <link rel="stylesheet" href="fonts/noto.css">
   <script type="importmap">{"imports":{"three":"./core/vendor/three.module.js"}}</script>
 </head>
 <body data-cad-state="loading">
@@ -15,6 +17,7 @@
       <div class="filename"><strong id="filename">正在准备模型…</strong><small>CAD 模型 <span aria-hidden="true">·</span> <span id="sessionStatus">正在导入</span></small></div>
     </div>
     <div class="header-actions">
+      <button id="drawingResources" hidden>配套文件</button>
       <button id="downloadOriginal" title="下载原文件">下载原文件</button>
       <span class="header-divider" aria-hidden="true"></span>
       <button id="closeViewer" class="icon-button" aria-label="关闭模型" title="关闭模型（Esc）"><svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m5 5 10 10M15 5 5 15"/></svg></button>
@@ -23,6 +26,7 @@
     <button id="open" hidden>打开本地文件</button>
     <input type="file" id="file" hidden accept=".step,.stp">
   </header>
+  <p id="drawingLimitations" role="status" hidden></p>
   <main>
     <button id="sidebarScrim" aria-label="收起零件结构" tabindex="-1"></button>
     <aside id="partsSidebar" aria-label="零件结构">
@@ -108,6 +112,6 @@
       window.addEventListener("load", mounted, { once: true });
     })();
   </script>
-  <script type="module" src="platform-entry.js"></script>
+  <script type="module" src="platform-entry.js?v=dxf-0.15.0"></script>
 </body>
 </html>

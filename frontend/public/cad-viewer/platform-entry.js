@@ -1,5 +1,6 @@
-import {loadPlatformModel,inspectionRecord} from './core/app.js';
-import {unpackMetadata} from './core/compact-transport.js';
+import {loadPlatformModel,inspectionRecord} from './core/app.js?v=dxf-0.15.0';
+import {decodeManifest} from './core/manifest-loader.js';
+import {LoadPhases} from './core/load-phases.js';
 import {hydrateBinary} from './core/binary-transport.js';
 import {missingFaceManifest} from './core/nonmeshable-ui.js';
 import {repairManifest} from './core/mesh-repair-ui.js';
@@ -12,10 +13,19 @@ const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const valid=uuid.test(fileId||'')&&uuid.test(versionId||'')&&/^[a-f0-9]{32}$/.test(viewId||'');
 const base=valid?`/api/v1/files/${fileId}/versions/${versionId}/cad/views/${viewId}/jobs`:null;
 const nameCodepage=query.get('nameCodepage')==='UTF8'?'UTF8':'GB';
+const format=query.get('format');
+const isDrawing=format==='DXF'||format==='DWG';
+const hasResources=format==='DXF';
+let resolveContext;
+const contextReady=new Promise(resolve=>{resolveContext=resolve;});
 let currentJob=null,jobBase=null,delivered=false,cancelled=false,loadedEnvelope=null,csrfToken=null,csrfPending=null,authExpiredNotified=false;
 const ui=new ImportUI({fileId,versionId,engineVersion:query.get('engineVersion')||'unknown'});
 const nameSelect=document.getElementById('nameCodepage'),reloadNames=document.getElementById('reloadNames');
 nameSelect.value=nameCodepage;
+document.querySelector('.name-encoding').hidden=isDrawing;
+const resourcesButton=document.getElementById('drawingResources');
+resourcesButton.hidden=!hasResources;
+resourcesButton.onclick=()=>parent.postMessage({type:'cad-resources'},location.origin);
 nameSelect.onchange=()=>{reloadNames.disabled=!delivered||nameSelect.value===nameCodepage;};
 reloadNames.onclick=()=>{
  if(delivered&&['UTF8','GB'].includes(nameSelect.value)&&nameSelect.value!==nameCodepage){
@@ -26,6 +36,7 @@ reloadNames.onclick=()=>{
 window.addEventListener('message',event=>{
  if(event.origin!==location.origin||event.source!==parent||event.data?.type!=='cad-context')return;
  ui.context(event.data.name);
+ resolveContext(event.data.selection||{companions:[]});
 });
 parent.postMessage({type:'cad-context-request'},location.origin);
 
@@ -121,7 +132,7 @@ document.addEventListener('click',event=>{
  const report=inspection?inspectionRecord():missing?missingFaceManifest(loadedEnvelope):repairManifest(loadedEnvelope);
  if(!report)return;
  const name=inspection?'CAD检查记录.json':(loadedEnvelope.presentation.name||'STEP').replace(/\.(step|stp)$/i,'')+(missing?'.missing-faces.json':'.display-repairs.json');
- parent.postMessage({type:'cad-export',name,report},location.origin);
+ parent.postMessage({type:'cad-export',name,report,jobId:currentJob?.id},location.origin);
 },true);
 
 const CSRF_HEADER="X-CSRF-Token";
@@ -196,7 +207,7 @@ function delay(signal){
  });
 }
 function cancelJob(){
- if(jobBase&&currentJob&&!['completed','failed','cancelled','timed-out'].includes(currentJob.state)){
+ if(jobBase&&currentJob&&!['completed','partial','failed','cancelled','timed-out'].includes(currentJob.state)){
   request(jobBase+'/cancel',{method:'POST',keepalive:true}).catch(()=>{});
  }
 }
@@ -225,7 +236,9 @@ window.addEventListener('keydown',event=>{
 const unloading=new AbortController();
 window.addEventListener('pagehide',()=>{ui.destroy();unloading.abort();cancelJob();},{once:true});
 
-loadPlatformModel(async({signal,progress})=>{
+loadPlatformModel(async({signal,progress,mark,record})=>{
+ const phases=new LoadPhases();let outcome='failed';
+ phases.phase('context');
  if(!base)throw new Error('文件版本信息无效，请关闭后重新打开');
  const controller=new AbortController();
  const abort=()=>{cancelled=true;controller.abort();cancelJob();};
@@ -233,24 +246,40 @@ loadPlatformModel(async({signal,progress})=>{
  const active=controller.signal;
  try{
   active.throwIfAborted();progress('正在读取模型任务…');
-  const created=await requestJson(base+"?"+new URLSearchParams({nameCodepage}),{method:"POST",signal:active});
-  currentJob=created.job;
+  const selection=isDrawing?await Promise.race([contextReady,new Promise((_,reject)=>active.addEventListener('abort',()=>reject(active.reason),{once:true}))]):{companions:[]};
+  active.throwIfAborted();
+  phases.phase('jobRequest');mark('jobRequestStart');
+  const created=await requestJson(base+'?'+new URLSearchParams({nameCodepage:isDrawing?'UTF8':nameCodepage}),{method:'POST',signal:active,
+   headers:{'Content-Type':'application/json'},body:JSON.stringify(selection)});
+  currentJob=created.job;mark('jobCreated');record({jobReused:created.reused});
   if(!/^[a-f0-9]{32}$/.test(currentJob?.id||''))throw new Error('模型任务响应无效');
   jobBase=base+'/'+currentJob.id;
   active.throwIfAborted();
-  while(currentJob.state!=='completed'){
+  while(!['completed','partial'].includes(currentJob.state)){
    if(['failed','cancelled','timed-out'].includes(currentJob.state))throw new Error(failureMessage(currentJob));
    if(!['queued','running'].includes(currentJob.state))throw new Error('模型任务状态无效');
    progress(currentJob.state==='queued'?'正在排队处理模型…':'正在处理模型…');
+   phases.phase(currentJob.state==='queued'?'queued':currentJob.phase==='persisting'?'persisting':'processing');
    ui.job(currentJob);
    await delay(active);currentJob=await requestJson(jobBase,{signal:active});
   }
+  mark('jobReady');phases.phase('manifestRead');
   ui.bytes=currentJob.sourceByteLength;
   ui.update(2,'正在准备模型视图');
   progress('正在读取已校验模型…');
-  let packet=await requestJson(jobBase+"/manifest",{signal:active});
-  packet=unpackMetadata(packet);
-  if(packet.presentation?.sourceSHA256!==currentJob.sourceSHA256||packet.snapshot?.completeness!=='complete')throw new Error('模型来源或完整性检查未通过');
+  const response=await request(jobBase+'/manifest',{signal:active});
+  if(!response.ok||!(response.headers.get('content-type')||'').toLowerCase().includes('json')){
+   const error=await readJson(response);throw new Error(responseError(error,response.status));
+  }
+  const bytes=await response.arrayBuffer();active.throwIfAborted();
+  mark('manifestReadEnd');phases.phase('metadataExpand');mark('metadataExpandStart');
+  const decoded=await decodeManifest(bytes,{signal:active});
+  let packet=decoded.packet;record({manifestDecode:decoded.timing});
+  mark('metadataExpandEnd');
+  const expected=currentJob.state==='partial'?'partial':'complete';
+  const partialFormat=currentJob.format==='DXF'||currentJob.format==='DWG';
+  if(packet.presentation?.sourceSHA256!==currentJob.sourceSHA256||packet.snapshot?.completeness!==expected
+    ||currentJob.state==='partial'&&!partialFormat)throw new Error('模型来源或完整性检查未通过');
   const lease=packet.resourceLease;
   const fetcher=async(url,options={})=>{
    const match=/^\/api\/resources\/([a-f0-9]{48})(?:\/([a-f0-9]{64}))?$/.exec(url);
@@ -259,20 +288,35 @@ loadPlatformModel(async({signal,progress})=>{
    return match[2]?trackResponse(resource,count=>ui.receive(count)):resource;
   };
   progress('正在读取模型几何…');
-  const total=Object.values(packet.document.buffers).reduce((sum,buffer)=>sum+buffer.byteLength,0);
-  ui.downloading(Number.isSafeInteger(total)&&total>0&&total<=256*1024*1024?total:0);
-  packet=await hydrateBinary(packet,{signal:active,fetcher});
+  phases.phase('resources');mark('resourceHydrationStart');
+  packet=await hydrateBinary(packet,{signal:active,fetcher,onPlan:plan=>{ui.downloading(plan.totalBytes);record({uniqueBufferBytes:plan.totalBytes,uniqueBuffers:plan.uniqueBuffers});}});
+  mark('resourceHydrationEnd');
   active.throwIfAborted();progress('正在显示模型…');
   ui.update(2,'正在生成可交互视图');
-  loadedEnvelope=packet;delivered=true;return packet;
+  loadedEnvelope=packet;delivered=true;outcome='ready';return packet;
  }finally{
+  phases.phase(null);record({platform:{...phases.snapshot(),outcome:active.aborted?'cancelled':outcome}});
   signal.removeEventListener('abort',abort);unloading.signal.removeEventListener('abort',abort);
  }
 }).then(()=>{
  const ready=delivered&&document.getElementById('error').hidden;
  if(ready){
   ui.update(3,'模型已就绪');
-  requestAnimationFrame(()=>requestAnimationFrame(()=>{ui.stop('ready');filterParts();parent.postMessage({type:'cad-ready',viewId},location.origin);}));
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+   ui.stop('ready');
+   if(isDrawing){
+    document.querySelector('.treehead strong').textContent='图纸内容';
+    document.getElementById('partsSidebar').setAttribute('aria-label','图纸内容');
+    for(const id of ['sidebarScrim','closeSidebar'])document.getElementById(id).setAttribute('aria-label','收起图纸内容');
+    document.querySelector('#toggleSidebar span').textContent='图纸内容';
+    document.querySelector('.hint').textContent='拖动平移 · 滚轮缩放 · 单击选中 · Shift 多选 · Esc 关闭';
+    const warning=document.getElementById('drawingLimitations');
+    warning.hidden=currentJob.state!=='partial';
+    warning.textContent='部分显示：有内容缺失或暂不支持。请查看图纸覆盖清单，必要时补充配套文件；本视图不能作为加工或验收依据。';
+    if(currentJob.state==='partial')document.getElementById('sessionStatus').textContent='部分显示';
+   }else filterParts();
+   parent.postMessage({type:'cad-ready',viewId},location.origin);
+  }));
  }else{
   const unsupported=!cancelled&&unsupportedPreview(currentJob);
   ui.stop(cancelled?'cancelled':unsupported?'unsupported':'failed',{retryable:!unsupported});

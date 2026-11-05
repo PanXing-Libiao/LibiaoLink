@@ -27,6 +27,7 @@ deploy/prod/server.env
 deploy/prod/*.local.md
 
 # CAD runtime/cache (source release remains tracked)
+.cad-work/
 server/var/cad/
 server/var/cad-browser-smoke/
 server/cad-engine/.runtime/

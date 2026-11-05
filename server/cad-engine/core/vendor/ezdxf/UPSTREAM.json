@@ -1,0 +1,32 @@
+{
+  "upstream": "https://github.com/mozman/ezdxf",
+  "version": "1.4.2",
+  "sourceArchive": "https://files.pythonhosted.org/packages/64/11/eb27e779a550033972ece48de313be6cff8f537963dfce04778b25543788/ezdxf-1.4.2.tar.gz",
+  "sourceArchiveSHA256": "1fb8edf5bc10dbd83f61f56f2058af4296cd8d817307dae2cbd7be9d665bf726",
+  "importedUpstreamFiles": 378,
+  "importedUpstreamBytes": 5186078,
+  "runtimeSourceFiles": 371,
+  "runtimeSourceBytes": 5172395,
+  "upstreamRuntimeFilesUnmodified": false,
+  "packagingChanges": [
+    {
+      "file": "pyproject.toml",
+      "change": "license file LICENCE -> LICENSE, matching the upstream archive"
+    }
+  ],
+  "excluded": [
+    "tests",
+    "integration_tests",
+    "generated PKG-INFO and egg-info",
+    "generated C files",
+    "compiled machine binaries",
+    "Git history"
+  ],
+  "runtimeChanges": [
+    {
+      "file": "src/ezdxf/tools/text_layout.py",
+      "change": "Optional Paragraph align_tab_fields selects each actual stop before grouping center/right fields; left fields retain wrapping. Disabled by default; enabled by the CAD MTEXT adapter.",
+      "regression": "core/tests/dxf/test_mtext_regressions.py"
+    }
+  ]
+}

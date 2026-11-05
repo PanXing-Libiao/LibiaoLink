@@ -6,7 +6,7 @@ import threading
 import time
 
 SLOTS = threading.BoundedSemaphore(8)
-LIMIT = 257 * 1024 * 1024
+LIMIT = 513 * 1024 * 1024
 
 
 class Relay(socketserver.BaseRequestHandler):

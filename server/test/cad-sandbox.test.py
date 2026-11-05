@@ -75,7 +75,7 @@ else:
     raise AssertionError('writable root')
 with tempfile.TemporaryFile() as file:
     try:
-        os.ftruncate(file.fileno(), 256 * 1024**2 + 1)
+        os.ftruncate(file.fileno(), 512 * 1024**2 + 1)
     except OSError as error:
         assert error.errno == errno.EFBIG
     else:

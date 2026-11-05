@@ -5,6 +5,7 @@ import { Controller, Get, Headers, Param, Post, Req, Res, UseGuards, Inject } fr
 import { Test } from "@nestjs/testing";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { Readable } from "node:stream";
 import { basename, extname, join } from "node:path";
 import type { IncomingMessage } from "node:http";
 import type { Response, RequestHandler } from "express";
@@ -19,6 +20,7 @@ import { SessionService } from "../src/modules/identity/session.service.js";
 import { CadEngineClient } from "../src/modules/file/cad-engine.client.js";
 import { CadPreviewService } from "../src/modules/file/cad-preview.service.js";
 import { CadPreviewController } from "../src/modules/file/cad-preview.controller.js";
+import type { CadArchiveService } from "../src/modules/file/cad-archive.service.js";
 import { PreviewReadService } from "../src/modules/file/preview-read.service.js";
 import type { FileRepository } from "../src/modules/file/file.repository.js";
 import type { PermissionService } from "../src/modules/permission/index.js";
@@ -39,7 +41,9 @@ class PreviewFixtureController {
   }
 }
 
-export async function createCadFixture(paths: string[], cache: string, endpoint: string, browser = false, middleware?: RequestHandler) {
+export async function createCadFixture(paths: string[], cache: string, endpoint: string, browser = false, middleware?: RequestHandler,
+  archiveFactory?: (input: { files: FileRepository; permission: PermissionService; storage: ObjectStorage; engine: CadEngineClient;
+    records: { id: string; versionId: string }[] }) => Promise<{ archive: CadArchiveService; close(): Promise<void> }>) {
   const importedPaths = new Set<string>();
   const records = await Promise.all(paths.map(async (path, index) => {
     const bytes = await readFile(path), sha = createHash("sha256").update(bytes).digest("hex"), number = String(index + 1).padStart(12, "0");
@@ -51,12 +55,19 @@ export async function createCadFixture(paths: string[], cache: string, endpoint:
     async findFileById(id: string) { const row = records.find((record) => record.id === id); return row ? { id, projectId: "11111111-1111-4111-8111-111111111111", name: row.name, currentVersionId: row.versionId } : null; },
     async findVersionById(id: string, versionId: string) { const row = records.find((record) => record.id === id && record.versionId === versionId); return row ? { id: versionId, fileId: id, objectKey: row.objectKey, contentHash: row.sha, sizeBytes: row.size, mime: "application/step" } : null; },
   };
+  Object.assign(repository, {
+    findFilesByIds: async (ids: string[]) => (await Promise.all(ids.map(id => repository.findFileById(id)))).filter(Boolean),
+    findVersionsByIds: async (ids: string[]) => (await Promise.all(records.filter(row => ids.includes(row.versionId)).map(row => repository.findVersionById(row.id, row.versionId)))).filter(Boolean),
+  });
   const storage = { corrupt: false, beforeRead: undefined as (() => Promise<void>) | undefined,
     async getObject(key: string) { await this.beforeRead?.(); const row = records.find((record) => record.objectKey === key); if (!row) return null; const bytes = await readFile(row.path); if (this.corrupt && bytes.length > 0) bytes[0] = bytes[0]! ^ 1; return { objectKey: key, bytes, sizeBytes: bytes.byteLength, contentType: "application/step" }; } };
+  Object.assign(storage, { getObjectStream: async (key: string) => { const object = await storage.getObject(key); return object ? { ...object, stream: Readable.from(object.bytes) } : null; } });
   const config = new AppConfig({ NODE_ENV: "test", CAD_ENGINE_URL: endpoint.startsWith("http:") ? endpoint : "",
     CAD_ENGINE_SOCKET: endpoint.startsWith("/") ? endpoint : "", CAD_MAX_INPUT_MIB: 64 } as Env);
   const engine = new CadEngineClient(config);
-  const cad = new CadPreviewService(repository as unknown as FileRepository, permission as unknown as PermissionService, storage as unknown as ObjectStorage, engine);
+  const durable = await archiveFactory?.({ files: repository as unknown as FileRepository, permission: permission as unknown as PermissionService,
+    storage: storage as unknown as ObjectStorage, engine, records });
+  const cad = new CadPreviewService(repository as unknown as FileRepository, permission as unknown as PermissionService, storage as unknown as ObjectStorage, engine, durable?.archive);
   const previews = new PreviewReadService({} as never, repository as never, {} as never, storage as never, permission as never, {} as never, { record: async () => {} } as never, config);
   const sessions = { async resolve(token: string) { if (!["cad-local-a", "cad-local-b"].includes(token)) throw new AppError("AUTH_REQUIRED", "未登录"); return { user: { id: token === "cad-local-a" ? ACTOR_A : ACTOR_B, casdoorId: "local-fixture", username: "local-fixture", displayName: "本地测试", email: null, owner: "local" } }; } };
 
@@ -103,5 +114,5 @@ export async function createCadFixture(paths: string[], cache: string, endpoint:
   if (middleware !== undefined) app.use(middleware);
   await app.init();
   if (!browser) await app.listen(0, "127.0.0.1");
-  return { app, engine, cad, records, permission, storage, async close() { await app.close(); await engine.onModuleDestroy(); await Promise.all([...importedPaths].map(path => rm(path, { force: true }))); } };
+  return { app, engine, cad, records, permission, storage, async close() { await app.close(); await durable?.close(); await engine.onModuleDestroy(); await Promise.all([...importedPaths].map(path => rm(path, { force: true }))); } };
 }
