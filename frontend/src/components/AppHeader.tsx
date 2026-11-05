@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BG_TIERS, selectBackgroundTier, selectCardWatermark, useBackgroundTier, useCardWatermark } from "../backgroundTier";
 import { BG_TIER_TEXT_KEYS, LOCALES, selectLocale, useLocalizedText, useLocale, useT } from "../i18n";
 import type { MouseEvent as ReactMouseEvent } from "react";
@@ -30,21 +30,87 @@ import type { MeResponse, Project } from "../types";
  * 设置页入口（业务口径 2026-10-16「在点击用户右上角头像后的列表中添加一个设置页」· Push 250）：账号菜单第三项（Push 400 顺序调整）
  *  「企微绑定」（#/settings · 全账号可见），落点 = 账号级设置（单聊 D5 / D6 + 项目群绑定）；菜单顺序 = 回收站 /〔操作记录〕/〔权限管理〕/ 企微绑定 / 退出登录；权限管理仅群组管理员可见。 */
 
-const XML_ESCAPES: Record<string, string> = {
-  "&": "&amp;",
-  "<": "&lt;",
-  ">": "&gt;",
-  "\"": "&quot;",
-  "'": "&apos;",
-};
+const PAGE_WATERMARK_EDGE_GAP = 10;
+const PAGE_WATERMARK_BLOCK_HEIGHT = 18;
+const PAGE_WATERMARK_ROTATION_DEG = 18;
 
-/** 小字号斜向平铺水印：单块 280×160，页面内均匀重复；SVG 内联避免额外资源请求。 */
-function pageWatermarkImage(text: string, vivid: boolean): string {
-  const escaped = text.replace(/[&<>"']/g, (char) => XML_ESCAPES[char] ?? char);
-  /** 炫彩档行色更浓；只提高深灰水印自身透明度，不加白描边，避免发白抢眼。 */
-  const fillOpacity = vivid ? ".085" : ".045";
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="280" height="160" viewBox="0 0 280 160"><g transform="translate(18 112) rotate(-18)"><text fill="#18181b" fill-opacity="${fillOpacity}" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="13" font-weight="600" letter-spacing="-0.2">${escaped}</text></g></svg>`;
-  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+type WatermarkMark = { x: number; y: number };
+type ViewportSize = { width: number; height: number };
+
+/** 中文按全角、拉丁字符按半角估算文本宽度；只用于给完整水印预留边界。 */
+function estimateWatermarkTextWidth(text: string): number {
+  let width = 0;
+  for (const char of text) {
+    width += (char.codePointAt(0) ?? 0) > 0x2e7f ? 13 : 7.2;
+  }
+  return Math.max(24, width - 0.2 * Math.max(0, Array.from(text).length - 1));
+}
+
+/** 按视口生成整齐的交错行网格；每枚按完整包围盒落在安全区内，密集但不随机、不截字。 */
+function layoutPageWatermark(text: string, width: number, height: number): WatermarkMark[] {
+  const angle = (PAGE_WATERMARK_ROTATION_DEG * Math.PI) / 180;
+  const textWidth = estimateWatermarkTextWidth(text) + 8;
+  const boxWidth = textWidth * Math.cos(angle) + PAGE_WATERMARK_BLOCK_HEIGHT * Math.sin(angle);
+  const boxHeight = textWidth * Math.sin(angle) + PAGE_WATERMARK_BLOCK_HEIGHT * Math.cos(angle);
+  const minX = boxWidth / 2 + PAGE_WATERMARK_EDGE_GAP;
+  const maxX = width - boxWidth / 2 - PAGE_WATERMARK_EDGE_GAP;
+  const minY = boxHeight / 2 + PAGE_WATERMARK_EDGE_GAP;
+  const maxY = height - boxHeight / 2 - PAGE_WATERMARK_EDGE_GAP;
+  if (maxX <= minX || maxY <= minY) return [];
+
+  const desiredStepX = Math.max(165, Math.min(410, width * 0.165));
+  const desiredStepY = Math.max(120, Math.min(170, height * 0.125));
+  const columns = Math.max(1, Math.round((maxX - minX) / desiredStepX) + 1);
+  const rows = Math.max(1, Math.round((maxY - minY) / desiredStepY) + 1);
+  const stepX = columns > 1 ? (maxX - minX) / (columns - 1) : 0;
+  const stepY = rows > 1 ? (maxY - minY) / (rows - 1) : 0;
+  const marks: WatermarkMark[] = [];
+  for (let row = 0; row < rows; row += 1) {
+    const rowOffset = row % 2 === 1 ? stepX / 2 : 0;
+    for (let column = 0; column < columns; column += 1) {
+      const x = minX + rowOffset + column * stepX;
+      if (x > maxX + 0.01) continue;
+      marks.push({ x, y: minY + row * stepY });
+    }
+  }
+  return marks;
+}
+
+function readViewportSize(): ViewportSize {
+  if (typeof document === "undefined") return { width: 0, height: 0 };
+  const root = document.documentElement;
+  const width = root.clientWidth || window.innerWidth;
+  const height = root.clientHeight || window.innerHeight;
+  return { width: Math.max(0, width), height: Math.max(0, height) };
+}
+
+function useViewportSize(): ViewportSize {
+  const [size, setSize] = useState<ViewportSize>(readViewportSize);
+  useEffect(() => {
+    let frame = 0;
+    const sync = () => {
+      const next = readViewportSize();
+      setSize((current) =>
+        current.width === next.width && current.height === next.height ? current : next,
+      );
+    };
+    const syncAfterLayout = () => {
+      sync();
+      frame = window.requestAnimationFrame(sync);
+    };
+    syncAfterLayout();
+    window.addEventListener("resize", sync, { passive: true });
+    window.addEventListener("orientationchange", syncAfterLayout, { passive: true });
+    const visualViewport = window.visualViewport;
+    visualViewport?.addEventListener("resize", sync, { passive: true });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", sync);
+      window.removeEventListener("orientationchange", syncAfterLayout);
+      visualViewport?.removeEventListener("resize", sync);
+    };
+  }, []);
+  return size;
 }
 
 type AppHeaderProps = {
@@ -57,8 +123,13 @@ export function AppHeader({ me, project }: AppHeaderProps) {
   const t = useT();
   const user = me.user;
   const displayName = user.displayName ?? user.name ?? t("header.unnamed");
-  /** 全站个人水印：显示名取当前登录账号，后缀固定；小字号斜向平铺，与卡片国家名水印开关互相独立。 */
-  const pageWatermark = `${displayName}@立镖机器人`;
+  /** 全站个人水印：显示名取当前登录账号，后缀固定；按视口生成交错网格，与卡片国家名水印开关互相独立。 */
+  const pageWatermark = displayName + "@立镖机器人";
+  const viewport = useViewportSize();
+  const pageWatermarkMarks = useMemo(
+    () => layoutPageWatermark(pageWatermark, viewport.width, viewport.height),
+    [pageWatermark, viewport.width, viewport.height],
+  );
   const contact = user.email ?? user.name ?? "—";
   const initial = Array.from(displayName)[0] ?? "—";
   const [menuOpen, setMenuOpen] = useState(false);
@@ -561,8 +632,17 @@ export function AppHeader({ me, project }: AppHeaderProps) {
         data-page-watermark={pageWatermark}
         data-bg-tier={bgTier}
         className="page-watermark"
-        style={{ backgroundImage: pageWatermarkImage(pageWatermark, bgTier === "vivid") }}
-      />
+      >
+        {pageWatermarkMarks.map((mark, index) => (
+          <span
+            key={index}
+            className="page-watermark-mark"
+            style={{ left: mark.x + "px", top: mark.y + "px" }}
+          >
+            {pageWatermark}
+          </span>
+        ))}
+      </div>
       {header}
       <MobileNav />
     </>
