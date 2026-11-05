@@ -1,9 +1,11 @@
+import {createDashedStrokeGPU} from './dashed-strokes.js';
+import {LOD_BIN_RATIO} from '../drawing-instances.js';
 // Batched solid-stroke renderer. Geometry is uploaded once per spatial tile and
 // reused across pan/zoom; non-stroke CAD semantics remain in the existing viewer.
 export function createStrokeGPU(makeCanvas=()=>document.createElement("canvas")) {
  const canvas=makeCanvas();
  const gl=canvas.getContext("webgl2",{alpha:true,premultipliedAlpha:true,antialias:false,preserveDrawingBuffer:true});
- if(!gl)throw new Error("本机未启用 WebGL2，请使用原显示版本");
+ if(!gl)return null;
  function shader(type,source){const value=gl.createShader(type);gl.shaderSource(value,source);gl.compileShader(value);if(!gl.getShaderParameter(value,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(value));return value;}
  const program=gl.createProgram();
  gl.attachShader(program,shader(gl.VERTEX_SHADER,`#version 300 es
@@ -14,7 +16,8 @@ layout(location=2) in float strokeWidth;
 layout(location=3) in float lodSize;
 uniform vec2 viewport;
 uniform vec3 view;
-uniform vec2 tileOrigin;
+uniform vec2 originScreen;
+uniform mat2 instanceLinear;
 uniform float dpr;
 uniform float minWorldSize;
 out vec2 distanceToLine;
@@ -22,12 +25,12 @@ flat out float lineLength;
 flat out vec3 color;
 flat out float width;
 void main() {
- if(lodSize>0.0 && lodSize<minWorldSize){
+ if(lodSize>0.0 && lodSize<=minWorldSize){
   distanceToLine=vec2(0.0);lineLength=0.0;color=tint;width=strokeWidth;
   gl_Position=vec4(3.0,3.0,3.0,1.0);return;
  }
- vec2 a=segment.xy+tileOrigin;
- vec2 b=segment.zw+tileOrigin;
+ vec2 a=instanceLinear*segment.xy;
+ vec2 b=instanceLinear*segment.zw;
  vec2 delta=b-a;float len=length(delta);
  vec2 direction=len>0.?delta/len:vec2(1.,0.);
  vec2 normal=vec2(-direction.y,direction.x);
@@ -40,7 +43,7 @@ void main() {
  float along=mix(-extent,len+extent,end);
  vec2 p=a+direction*along+normal*side*extent;
  distanceToLine=vec2(along,side*extent)*deviceScale;lineLength=len*deviceScale;color=tint;width=deviceWidth;
- gl_Position=vec4((view.y+p.x*view.x)*dpr/viewport.x*2.-1.,1.-(view.z-p.y*view.x)*dpr/viewport.y*2.,0.,1.);
+ gl_Position=vec4((originScreen.x+p.x*view.x)*dpr/viewport.x*2.-1.,1.-(originScreen.y-p.y*view.x)*dpr/viewport.y*2.,0.,1.);
 }`));
  gl.attachShader(program,shader(gl.FRAGMENT_SHADER,`#version 300 es
 precision highp float;
@@ -57,10 +60,11 @@ void main() {
  result=vec4(color*alpha,alpha);
 }`));
  gl.linkProgram(program);if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program));
- const u={viewport:gl.getUniformLocation(program,"viewport"),view:gl.getUniformLocation(program,"view"),tileOrigin:gl.getUniformLocation(program,"tileOrigin"),dpr:gl.getUniformLocation(program,"dpr"),minWorldSize:gl.getUniformLocation(program,"minWorldSize")};
+ const u={viewport:gl.getUniformLocation(program,"viewport"),view:gl.getUniformLocation(program,"view"),originScreen:gl.getUniformLocation(program,"originScreen"),linear:gl.getUniformLocation(program,"instanceLinear"),dpr:gl.getUniformLocation(program,"dpr"),minWorldSize:gl.getUniformLocation(program,"minWorldSize")};
  const stride=9,bytesPerVertex=stride*4;
  const buffers=new Set();
  let calls=0,segments=0,tileBatches=0,bufferBytes=0,pendingDraw=false;
+ let activeView=null,activeMatrix=null,activeMinPx=null,dashed=null;
  function configureAttributes(){
   gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,4,gl.FLOAT,false,bytesPerVertex,0);gl.vertexAttribDivisor(0,1);
   gl.enableVertexAttribArray(1);gl.vertexAttribPointer(1,3,gl.FLOAT,false,bytesPerVertex,16);gl.vertexAttribDivisor(1,1);
@@ -72,28 +76,41 @@ void main() {
   gl.viewport(0,0,w,h);gl.useProgram(program);gl.disable(gl.DEPTH_TEST);gl.enable(gl.BLEND);gl.blendFunc(gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
   gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);gl.uniform2f(u.viewport,w,h);
   calls=0;segments=0;tileBatches=0;pendingDraw=false;
+  activeView=null;activeMatrix=null;activeMinPx=null;
  }
  function createTileBuffer(data,count,originX,originY){
-  const buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);
-  const tile={buffer,segments:count,originX,originY,bytes:data.byteLength};buffers.add(tile);bufferBytes+=tile.bytes;return tile;
+  const buffer=gl.createBuffer(),vao=gl.createVertexArray();gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);configureAttributes();
+  const tile={buffer,vao,segments:count,originX,originY,bytes:data.byteLength};buffers.add(tile);bufferBytes+=tile.bytes;return tile;
  }
  function deleteTileBuffer(tile){
-  if(!tile||!buffers.delete(tile))return;bufferBytes-=tile.bytes;gl.deleteBuffer(tile.buffer);
+  if(!tile||!buffers.delete(tile))return;bufferBytes-=tile.bytes;gl.deleteBuffer(tile.buffer);gl.deleteVertexArray(tile.vao);
  }
- function drawTile(tile,view,minScreenPx){
+ function drawTile(tile,view,minScreenPx,matrix){
   if(!tile||!tile.segments)return;
-  const minWorldSize=minScreenPx>0?minScreenPx/Math.max(view.scale,1e-15):0;
-  gl.useProgram(program);gl.bindBuffer(gl.ARRAY_BUFFER,tile.buffer);configureAttributes();
-  gl.uniform3f(u.view,view.scale,view.tx,view.ty);gl.uniform2f(u.tileOrigin,tile.originX,tile.originY);
-  gl.uniform1f(u.dpr,view.dpr);gl.uniform1f(u.minWorldSize,minWorldSize);
+  gl.bindVertexArray(tile.vao);
+  if(activeView!==view){activeMatrix=null;gl.uniform3f(u.view,view.scale,view.tx,view.ty);gl.uniform1f(u.dpr,view.dpr);activeView=view;}
+  if(activeMatrix!==matrix||activeMinPx!==minScreenPx){
+   const localScale=view.scale*Math.max(Math.hypot(matrix[0],matrix[1]),Math.hypot(matrix[4],matrix[5]),1e-15);
+   gl.uniformMatrix2fv(u.linear,false,new Float32Array([matrix[0],matrix[1],matrix[4],matrix[5]]));
+   gl.uniform1f(u.minWorldSize,minScreenPx>0?minScreenPx/(localScale*LOD_BIN_RATIO):0);activeMatrix=matrix;activeMinPx=minScreenPx;
+  }
+  gl.uniform2f(u.originScreen,view.tx+(matrix[0]*tile.originX+matrix[4]*tile.originY+matrix[12])*view.scale,
+    view.ty-(matrix[1]*tile.originX+matrix[5]*tile.originY+matrix[13])*view.scale);
   gl.drawArraysInstanced(gl.TRIANGLES,0,6,tile.segments);
   calls++;segments+=tile.segments;tileBatches++;pendingDraw=true;
+ }
+ function drawDashed(entry,view,matrix){
+  dashed ||= createDashedStrokeGPU(gl,canvas);
+  const count=dashed.draw(entry,view,matrix);
+  gl.useProgram(program);activeView=null;activeMatrix=null;activeMinPx=null;
+  if(count===null)return false;
+  if(count){calls++;segments+=count;pendingDraw=true;}return true;
  }
  function flush(ctx){
   if(!pendingDraw)return;
   ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.drawImage(canvas,0,0);ctx.restore();gl.clear(gl.COLOR_BUFFER_BIT);pendingDraw=false;
  }
- function reset(){for(const tile of buffers)gl.deleteBuffer(tile.buffer);buffers.clear();bufferBytes=0;calls=0;segments=0;tileBatches=0;pendingDraw=false;}
- function dispose(){reset();gl.deleteProgram(program);gl.getExtension("WEBGL_lose_context")?.loseContext();}
- return {begin,createTileBuffer,deleteTileBuffer,drawTile,flush,reset,dispose,stats:()=>({calls,segments,buffers:buffers.size,batches:tileBatches,bytes:bufferBytes})};
+ function reset(){for(const tile of buffers){gl.deleteBuffer(tile.buffer);gl.deleteVertexArray(tile.vao);}buffers.clear();bufferBytes=0;calls=0;segments=0;tileBatches=0;pendingDraw=false;}
+ function dispose(){reset();dashed?.dispose();gl.deleteProgram(program);gl.getExtension("WEBGL_lose_context")?.loseContext();}
+ return {begin,createTileBuffer,deleteTileBuffer,drawTile,drawDashed,flush,reset,dispose,stats:()=>({calls,segments,buffers:buffers.size,batches:tileBatches,bytes:bufferBytes})};
 }

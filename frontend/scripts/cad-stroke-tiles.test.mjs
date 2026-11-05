@@ -59,3 +59,35 @@ test("evicted tile buffers are rebuilt instead of redrawn", () => {
   assert.equal(created,3);
   assert.equal(front,3);
 });
+
+
+test('shared node geometry follows each parent transform without a second upload',()=>{
+ const calls=[];let uploads=0;const renderer={createTileBuffer:(data,segments,x,y)=>({data,segments,originX:x,originY:y,id:++uploads}),deleteTileBuffer(){},drawTile:(tile,view,min,matrix)=>calls.push({tile,matrix:Array.from(matrix)})};
+ const planner=createStrokeTilePlanner(renderer),group={},node={group};
+ const entry={kind:'stroke',gpuRun:0,dash:[],layerId:'0',color:'rgb(0,0,0)',width:1,lodSize:100,bounds:{minX:0,minY:0,maxX:100,maxY:10},gpuSegments:[[0,5,100,5]],records:[{bbox:{minX:0,minY:0,maxX:100,maxY:10}}]};
+ const first=[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],second=first.slice();second[12]=1000;
+ const a=planner.drawRun(node,0,[entry],first,{minX:-10,maxX:110,minY:-10,maxY:20},1,0.75);
+ const b=planner.drawRun(node,0,[entry],second,{minX:990,maxX:1110,minY:-10,maxY:20},1,0.75);
+ assert.equal(a.tiles,1);assert.equal(b.tiles,1);assert.equal(uploads,1);assert.equal(calls[1].matrix[12],1000);
+ const other={group};planner.drawRun(other,0,[entry],second,{minX:990,maxX:1110,minY:-10,maxY:20},1,0.75);
+ assert.equal(uploads,1);assert.equal(calls[0].tile,calls[2].tile);
+});
+
+test('rotation, mirror, nonuniform scale and changing LOD keep local buffers reusable',()=>{
+ let uploads=0;const seen=[];const renderer={createTileBuffer:(data,segments,x,y)=>({data,segments,originX:x,originY:y,id:++uploads}),deleteTileBuffer(){},drawTile:(tile,view,min,m)=>seen.push(Array.from(m))};
+ const planner=createStrokeTilePlanner(renderer),node={};const entry={kind:'stroke',gpuRun:0,dash:[],layerId:'0',color:'rgb(0,0,0)',width:1,lodSize:100,bounds:{minX:0,minY:0,maxX:100,maxY:10},gpuSegments:[[0,5,100,5]],records:[{bbox:{minX:0,minY:0,maxX:100,maxY:10}}]};
+ const matrices=[[0,1,0,0,-1,0,0,0,0,0,1,0,100,200,0,1],[-2,0,0,0,0,0.5,0,0,0,0,1,0,400,200,0,1],[1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,1]];
+ for(const matrix of matrices)assert.equal(planner.drawRun(node,0,[entry],matrix,{minX:-1000,maxX:1000,minY:-1000,maxY:1000},1,3).tiles,1);
+ assert.equal(uploads,1);assert.deepEqual(seen,matrices);
+});
+
+test('tile uploads yield and cancellation stops unfinished draws',(t)=>{
+ let now=0,uploads=0,draws=0;t.mock.method(performance,'now',()=>now+=7);
+ const renderer={createTileBuffer:(data,segments)=>({segments,id:++uploads}),deleteTileBuffer(){},drawTile(){draws++;}};
+ const planner=createStrokeTilePlanner(renderer),node={},matrix=[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
+ const entry={kind:'stroke',gpuRun:0,color:'rgb(0,0,0)',width:1,lodSize:100,bounds:{minX:0,minY:0,maxX:100,maxY:10},gpuSegments:[[0,5,100,5]],records:[{bbox:{minX:0,minY:0,maxX:100,maxY:10}}]};
+ const args=[node,0,[entry],matrix,{minX:-10,maxX:110,minY:-10,maxY:20},1,0.75];
+ const pending=planner.drawRunSteps(...args);assert.equal(pending.next().done,false);
+ assert.equal(uploads,0);pending.return();assert.equal(draws,0);
+ const complete=planner.drawRun(...args);assert.equal(complete.tiles,1);assert.equal(uploads,1);assert.equal(draws,1);
+});
