@@ -54,6 +54,12 @@ export function annotationForScale(document,entry,viewport,layoutId){
 }
 
 export function projectDrawing(document,target,effectiveLayers=null,presentationStyles=null,visitor=null){
+ const steps=projectDrawingSteps(document,target,effectiveLayers,presentationStyles,visitor);
+ let result;do{result=steps.next();}while(!result.done);
+ return result.value;
+}
+// The same ordered traversal can be driven one bounded task at a time at first open.
+export function* projectDrawingSteps(document,target,effectiveLayers=null,presentationStyles=null,visitor=null){
  const m=document.drawing;
  const styleExt=(document.extensions&&document.extensions['org.cad-preview.style-inheritance/1'])||{};
  const styleModes=styleExt.modes||{},annotationStyles=styleExt.annotationStyles||{},flags=styleExt.entityState||{};
@@ -139,6 +145,7 @@ export function projectDrawing(document,target,effectiveLayers=null,presentation
   return clip?[{boundary:clip.boundary.map(([x,y])=>[placement[0]*x+placement[4]*y+placement[12],placement[1]*x+placement[5]*y+placement[13]]),inverted:clip.inverted}]:[];
  };
  const MAX=Number(projectionLimits.maxDraws)||400000;
+ let sliceStart=performance.now(),visited=0;
  function addDraw(kind,itemId,blockPath,localToSpace,visibility,availability,style,representationId,viewportId,layerId,clips,chain){
   order+=1;
   // maxDraws budgets the ordinary projector's expanded draws. Retained groups
@@ -157,10 +164,11 @@ export function projectDrawing(document,target,effectiveLayers=null,presentation
   if(effectiveLayers)effectiveLayers[drawId]=layerId;
   return [drawId,draw];
  }
- function members(space){
+ function* members(space){
   const rows=[];
   for(const [kind,table,field] of [['entity',m.entities,'entityIds'],['annotation',m.annotations,'annotationIds'],['blockInstance',m.blockInstances,'blockInstanceIds']]){
    for(const itemId of space[field]||[]){
+    if(++visited%64===0&&performance.now()-sliceStart>=6){yield;sliceStart=performance.now();}
     const item=table[itemId];
     if(kind==='annotation'&&item.ownerBlockInstanceId)continue;
     const ref=(item.sourceRefs&&item.sourceRefs[0])||{};
@@ -221,18 +229,23 @@ export function projectDrawing(document,target,effectiveLayers=null,presentation
   // group-qualified draw ids cannot address the viewer's presentation map.
   if(visitor)draw.presentationStyles=rows;
  }
- function walk(spaceId,transform,path,viewport,chain,inheritedHidden,clips=[]){
+ function* walk(spaceId,transform,path,viewport,chain,inheritedHidden,clips=[]){
   if(visitor?.space){
    // Retained groups repaint space-local geometry under each instance matrix.
    // The visitor returns the inherited clips re-expressed in this space's frame;
    // keeping the parent-frame clips here would re-apply the child matrix to them.
-   visitor.space({spaceId,transform,path,viewport,chain,inheritedHidden,clips},localClips=>{
-    visit(members(m.spaces[spaceId]),IDENTITY,path,viewport,chain,inheritedHidden,localClips??clips);
+   yield* visitor.space({spaceId,transform,path,viewport,chain,inheritedHidden,clips},function*(localClips){
+    const rows=yield* members(m.spaces[spaceId]);
+    yield* visit(rows,IDENTITY,path,viewport,chain,inheritedHidden,localClips??clips);
    });
-  }else visit(members(m.spaces[spaceId]),transform,path,viewport,chain,inheritedHidden,clips);
+  }else{
+   const rows=yield* members(m.spaces[spaceId]);
+   yield* visit(rows,transform,path,viewport,chain,inheritedHidden,clips);
+  }
  }
- function visit(rows,transform,path,viewport,chain,inheritedHidden,clips){
+ function* visit(rows,transform,path,viewport,chain,inheritedHidden,clips){
   for(const [,kind,itemId,item] of rows){
+   if(++visited%64===0&&performance.now()-sliceStart>=6){yield;sliceStart=performance.now();}
    if(kind==='entity'){
     const layerId=effectiveLayer(item.layerId,chain);
     const visibility=inheritedHidden?'hidden':entityVisibility(itemId,layerId,viewport);
@@ -270,6 +283,7 @@ export function projectDrawing(document,target,effectiveLayers=null,presentation
     const childChain=chain.concat([[item.style,layerId,itemId]]);
     const identityLocal=isIdentityMatrix(item.localFromBlock);
     for(let row=0;row<rows;row++)for(let column=0;column<columns;column++){
+     if(++visited%64===0&&performance.now()-sliceStart>=6){yield;sliceStart=performance.now();}
      const dx=columnOffset[0]*column+rowOffset[0]*row;
      const dy=columnOffset[1]*column+rowOffset[1]*row;
      const dz=columnOffset[2]*column+rowOffset[2]*row;
@@ -278,18 +292,18 @@ export function projectDrawing(document,target,effectiveLayers=null,presentation
      const childPath=path.concat([{instanceId:itemId,row,column}]);
      const addedClip=transformedClip(itemId,placement);
      const childClips=addedClip.length?clips.concat(addedClip):clips;
-     walk(definition.spaceId,placement,childPath,viewport,childChain,hidden,childClips);
-     visit(attachedAnnotations.get(itemId)||[],ownerPlacement,childPath,viewport,childChain,hidden,childClips);
+     yield* walk(definition.spaceId,placement,childPath,viewport,childChain,hidden,childClips);
+     yield* visit(attachedAnnotations.get(itemId)||[],ownerPlacement,childPath,viewport,childChain,hidden,childClips);
     }
    }
   }
  }
  if(layoutId){
   for(const viewport of layoutViewports(document,layoutId)){
-   walk(viewport.sourceSpaceId,viewport.modelToPaper,[],viewport,[]);
+   yield* walk(viewport.sourceSpaceId,viewport.modelToPaper,[],viewport,[]);
   }
-  walk(spaceId,IDENTITY,[],null,[]);
- }else walk(spaceId,IDENTITY,[],null,[]);
+  yield* walk(spaceId,IDENTITY,[],null,[]);
+ }else yield* walk(spaceId,IDENTITY,[],null,[]);
  return {drawingId,target:layoutId?{kind:'layout',layoutId}:{kind:'model',spaceId:drawingRow.modelSpaceId},
   viewports,layerStates,draws};
 }

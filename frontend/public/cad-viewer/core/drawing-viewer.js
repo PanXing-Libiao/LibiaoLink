@@ -2,26 +2,27 @@
 // Input: a UCD 2.0 envelope whose document carries Drawing tables. The viewer never
 // re-reads DXF. Analytic source curves (Entity.geometry) and the discretized display
 // representation (Representation kind=drawing) are selectable, separate paths.
-import {projectDrawing, projectBlock} from './drawing-projection.js?v=dxf-0.17.0';
+import {projectDrawing, projectBlock} from './drawing-projection.js?v=dxf-0.17.3';
 import {clipInfiniteLine, gradientField, triangleBoundarySegments, traceStrokeSegments} from './drawing-2d.js?v=dxf-2d-0.5.0';
-import {drawingClips, compileClips, triangulateRings, insideRing} from './drawing-clipping.js?v=dxf-0.17.0';
-import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.17.0';
-import {estimateDrawingDraws, projectInstances, shouldProjectInstances, recordVisibleBounds, INSTANCE_DRAW_LIMIT, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, quantizeLodSize, LOD_MIN_SCREEN_PX, isLodCulled, I} from './drawing-instances.js?v=dxf-0.17.0';
+import {drawingClips, compileClips, triangulateRings, insideRing} from './drawing-clipping.js?v=dxf-0.17.3';
+import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.17.3';
+import {estimateDrawingDraws, projectInstancesSteps, shouldProjectInstances, recordVisibleBounds, INSTANCE_DRAW_LIMIT, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, quantizeLodSize, LOD_MIN_SCREEN_PX, isLodCulled, I} from './drawing-instances.js?v=dxf-0.17.3';
 import Flatbush from './vendor/flatbush.js';
-import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, textOffsets, textWorldCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.0';
-import {aciColor, trueColorCss} from './drawing-colors.js?v=dxf-0.17.0';
-import {resolveTextAvoidance} from './drawing-text-avoidance.js?v=dxf-0.17.0';
-import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentation} from './drawing-pattern.js?v=dxf-0.17.0';
-import {mediaItemFor, rasterRecord} from './drawing-media.js?v=dxf-0.17.0';
+import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, textOffsets, textWorldCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.3';
+import {aciColor, trueColorCss} from './drawing-colors.js?v=dxf-0.17.3';
+import {resolveTextAvoidance} from './drawing-text-avoidance.js?v=dxf-0.17.3';
+import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentation} from './drawing-pattern.js?v=dxf-0.17.3';
+import {mediaItemFor, rasterRecord} from './drawing-media.js?v=dxf-0.17.3';
 
 // Use hybrid rendering automatically; retain compatibility for older browsers.
 const forceCanvasRenderer = typeof location !== 'undefined' && new URLSearchParams(location.search).get('renderer') === 'canvas';
 const accelerated = !forceCanvasRenderer && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined';
 const gpuModules = accelerated ? await Promise.all([
-  import('./gpu/background-painter.js?v=dxf-0.17.0'), import('./gpu/gpu-strokes.js?v=dxf-0.17.0')
+  import('./gpu/background-painter.js?v=dxf-0.17.3'), import('./gpu/gpu-strokes.js?v=dxf-0.17.3'), import('./gpu/stroke-tiles.js?v=dxf-0.17.3')
 ]) : null;
 const createBackgroundPainter = gpuModules?.[0].createBackgroundPainter;
 const createStrokeGPU = gpuModules?.[1].createStrokeGPU;
+const createStrokeTilePlanner = gpuModules?.[2].createStrokeTilePlanner;
 const ACCENT = '#d9426f';
 
 export function mountDrawingViewer(envelope) {
@@ -45,7 +46,9 @@ export function mountDrawingViewer(envelope) {
   if (!canvas) { canvas = document.createElement('canvas'); canvas.id = 'drawingCanvas'; viewport.prepend(canvas); }
   canvas.hidden = false;
   let ctx = canvas.getContext('2d');
-  let strokeGPU = accelerated ? createStrokeGPU() : null;
+  let strokeGPU = gpuModules ? createStrokeGPU() : null;
+  const accelerated = !!strokeGPU;
+  let strokeTiles = strokeGPU && createStrokeTilePlanner ? createStrokeTilePlanner(strokeGPU) : null;
   let background=null;
   canvas.dataset.renderer = accelerated ? 'gpu' : 'canvas';
   let overlay = document.getElementById('drawingOverlay');
@@ -207,7 +210,7 @@ export function mountDrawingViewer(envelope) {
     if (next === '3d' && spaceTarget?.kind !== 'model')
       setSpace({kind:'model',spaceId:Object.values(drawing.drawings)[0].modelSpaceId});
     if (next === '3d' && !meshViewer) {
-      meshLoading ||= import('./drawing-mesh-viewer.js?v=dxf-0.17.0');
+      meshLoading ||= import('./drawing-mesh-viewer.js?v=dxf-0.17.3');
       const {createDrawingMeshViewer} = await meshLoading;
       if (destroyed || request!==viewRequest) return false;
       meshViewer ||= createDrawingMeshViewer({document:ucd, viewport, geometry:representationGeometry, meshIds,
@@ -237,9 +240,9 @@ export function mountDrawingViewer(envelope) {
   const bufferCache = new Map(), repCache = new Map(), analyticCache = new Map(), measureCache = new Map();
   document.fonts?.ready.then(() => measureCache.clear(), () => {});
   let overviewPaintDone = false, firstPaintDone = false;
-  let resolveOverviewPaint = null, resolveFirstPaint = null;
+  let resolveOverviewPaint = null, resolveFirstPaint = null, rejectFirstPaint = null;
   const overviewPaint = new Promise(resolve => { resolveOverviewPaint = resolve; });
-  const firstPaint = new Promise(resolve => { resolveFirstPaint = resolve; });
+  const firstPaint = new Promise((resolve, reject) => { resolveFirstPaint = resolve; rejectFirstPaint = reject; });
   function completeOverviewPaint() {
     if (overviewPaintDone) return;
     overviewPaintDone = true;
@@ -316,7 +319,8 @@ export function mountDrawingViewer(envelope) {
         rasterCache.set(item.resourceId,target);
       } finally { bitmap.close(); }
     })).then(()=>{
-      if (destroyed) return;
+      // The pending build will draw the decoded media when its indexes are ready.
+      if (destroyed || initialBuild) return;
       if (overviewPaintDone || !hasNonRasterPaint()) draw();
       else overviewPaint.then(() => { if (!destroyed) draw(); }, () => {});
     });
@@ -509,11 +513,12 @@ export function mountDrawingViewer(envelope) {
   function layerVisible(layerId) {
     return layerSourceVisible(layerId) && (userLayers.has(layerId) ? userLayers.get(layerId) : true);
   }
-  function drawVisible(rec) {
+  function drawVisible(rec, sourceOnly=false) {
     const draw = rec.draw;
     if (draw.visibility === 'hidden' || draw.availability !== 'ready') return false;
     const hasGeometry=rec.infinite ? rec.clipRegion.finiteBounds===undefined || !!rec.navigationBounds : !!rec.visibleGeometry.bounds;
-    return hasGeometry && layerVisible(rec.layerId) && draw.visibilityLayerIds.every(layerVisible);
+    const visible=sourceOnly?layerSourceVisible:layerVisible;
+    return hasGeometry && visible(rec.layerId) && draw.visibilityLayerIds.every(visible);
   }
   function rgba(style) {
     const c = style.color || [1, 1, 1, 1];
@@ -584,7 +589,47 @@ export function mountDrawingViewer(envelope) {
     }
   }
 
-  function rebuild() {
+  let initialBuild = null;
+  function cancelInitialBuild() {
+    if (!initialBuild) return;
+    const job = initialBuild; initialBuild = null;
+    job.channel.port1.close(); job.channel.port2.close();
+    job.steps.return();
+  }
+  function rebuild(onComplete) {
+    cancelInitialBuild();
+    const steps = rebuildSteps();
+    if (!mounting || !instancePlan) {
+      for (const ignored of steps) { /* preserve immediate edits and small drawings */ }
+      onComplete?.(); return;
+    }
+    startInitialBuild(steps,onComplete);
+  }
+  function startInitialBuild(steps,onComplete) {
+    // One bounded task at a time lets input and painting run during large setup.
+    const job = {steps, channel: new MessageChannel(), maxStepMS: 0};
+    initialBuild = job;
+    setPaintStatus('正在准备图纸，可随时关闭。');
+    job.channel.port1.onmessage = () => {
+      if (initialBuild !== job) return;
+      try {
+        const start = performance.now(), result = steps.next();
+        job.maxStepMS = Math.max(job.maxStepMS, performance.now() - start);
+        if (!result.done) { job.channel.port2.postMessage(null); return; }
+        cancelInitialBuild();
+        canvas.dataset.maxBuildStepMs = String(job.maxStepMS);
+        onComplete?.();
+      } catch (error) {
+        cancelInitialBuild();
+        canvas.dataset.instancePaint = 'error';
+        canvas.dataset.instancePaintError = String(error?.message || error);
+        setPaintStatus('图纸准备失败，请重新打开或下载原图查看。');
+        rejectFirstPaint(error);
+      }
+    };
+    job.channel.port2.postMessage(null);
+  }
+  function* rebuildSteps() {
     paintRevision++;
     built = []; texts = []; pointMarks = [];
     if(instancePlan)for(const group of instancePlan.groups)group.records=[];
@@ -597,7 +642,11 @@ export function mountDrawingViewer(envelope) {
     // projectDrawing appends each draw immediately after assigning drawOrder,
     // so object insertion order is already the source paint order. Iterate it in
     // place; Object.entries allocated one pair per draw before first paint.
+    let sliceStart = performance.now(), visited = 0;
     for (const drawId in projection.draws) {
+      if (++visited % 64 === 0 && performance.now() - sliceStart >= 6) {
+        yield; sliceStart = performance.now();
+      }
       const draw = projection.draws[drawId];
       const layerId = effectiveLayer(draw);
       // Retained draws carry a group-qualified key; plot styles are resolved by
@@ -798,7 +847,7 @@ export function mountDrawingViewer(envelope) {
     window.__cadTimingMark?.("rebuildRecordsEnd");
     applyTextAvoidance();
     window.__cadTimingMark?.("rebuildIndexesStart");
-    if(instancePlan)buildInstanceIndexes(); else buildPaintIndex();
+    if(instancePlan)yield* buildInstanceIndexSteps(); else buildPaintIndex();
     window.__cadTimingMark?.("rebuildIndexesEnd");
     draw(); window.__cadTimingMark?.("rebuildPaintScheduled");
     updateStats();
@@ -809,15 +858,16 @@ export function mountDrawingViewer(envelope) {
   // projection still resolves UCD styles/ownership; Flatbush supplies the spatial
   // index and Canvas Path2D batches consecutive opaque strokes in source order.
   function projectionCount(){return instancePlan?instancePlan.count:Object.keys(projection.draws).length;}
-  function buildInstanceIndexes(){
+  function* buildInstanceIndexSteps(){
     if(background){background.dispose();background=null;}
+    strokeTiles?.reset();
     strokeGPU?.reset();
     if(!instancePlan)return;
     const active=new Set(),done=new Set();
-    let visibleRecords=0;
+    let visibleRecords=0, sliceStart=performance.now(), visited=0;
     instancePlan.infiniteAnchor=null;
     const extendBounds=(target,box)=>{if(!box)return target;if(!target)return {minX:box.minX,minY:box.minY,maxX:box.maxX,maxY:box.maxY};if(box.minX<target.minX)target.minX=box.minX;if(box.minY<target.minY)target.minY=box.minY;if(box.maxX>target.maxX)target.maxX=box.maxX;if(box.maxY>target.maxY)target.maxY=box.maxY;return target;};
-    function compile(group,matrix){
+    function* compile(group,matrix){
       if(done.has(group))return;if(active.has(group))throw new Error("cyclic-instance-plan");active.add(group);
       const byId=new Map();for(const rec of group.records){const rows=byId.get(rec.id)||[];rows.push(rec);byId.set(rec.id,rows);}
       group.bounds=null;group.unbounded=false;group.paint=[];group.hits=[];group.visibleCount=0;group.byKind={entity:0,annotation:0};
@@ -828,9 +878,10 @@ export function mountDrawingViewer(envelope) {
       let pending=new Map();
       const flush=()=>{for(const batch of pending.values())group.paint.push(batch);pending=new Map();};
       for(const entry of group.entries){
+        if (++visited % 64 === 0 && performance.now() - sliceStart >= 6) { yield; sliceStart=performance.now(); }
         if(entry.kind==="group"){
           flush();
-          compile(entry.group,multiply(matrix,entry.matrix));entry.bounds=transformBounds(entry.group.bounds,entry.matrix);
+          yield* compile(entry.group,multiply(matrix,entry.matrix));entry.bounds=transformBounds(entry.group.bounds,entry.matrix);
           group.bounds=extendBounds(group.bounds,entry.bounds);group.unbounded=group.unbounded||entry.group.unbounded;
           group.paint.push(entry);if(entry.bounds)group.hits.push(entry);
           group.visibleCount+=entry.group.visibleCount;
@@ -839,7 +890,7 @@ export function mountDrawingViewer(envelope) {
         }
         const visible=[];
         for(const rec of byId.get(entry.id)||[]){
-          if(!drawVisible(rec))continue;
+          if(!drawVisible(rec,true))continue;
           // Infinite lines get a finite navigation box only when a clip window
           // bounds them; unbounded ones are painted per frame and stay unindexed.
           const box=recordVisibleBounds(rec);
@@ -864,9 +915,10 @@ export function mountDrawingViewer(envelope) {
           if(box&&rec.segments?.length&&!rec.fillPath&&!rec.textEntry&&!rec.pointMark&&!rec.infinite&&!rec.raster&&!rec.clipRegion.active&&opaque){
             let dashKey=rec._batchDashKey;
             if(dashKey===undefined){dashKey=rec.dash?.length?rec.dash.join(","):"";rec._batchDashKey=dashKey;}
-            const key=rec.color+"|"+rec.width+"|"+dashKey+"|"+lodSize;
+            const visibilityKey=JSON.stringify([...new Set([rec.layerId,...rec.draw.visibilityLayerIds])].sort());
+            const key=rec.color+"|"+rec.width+"|"+dashKey+"|"+lodSize+"|"+visibilityKey;
             let batch=pending.get(key);
-            if(!batch){batch={kind:"stroke",key,path:accelerated?null:new Path2D(),color:rec.color,width:rec.width,dash:rec.dash,bounds:null,count:0,lodSize,rec,records:[],gpuSegments:[]};pending.set(key,batch);}
+            if(!batch){batch={kind:"stroke",key,visibilityKey,path:accelerated?null:new Path2D(),color:rec.color,width:rec.width,dash:rec.dash,layerId:rec.layerId,bounds:null,count:0,lodSize,rec,records:[],gpuSegments:[]};pending.set(key,batch);}
             batch.records.push(rec);if(accelerated)batch.gpuSegments.push(rec.segments || rec.visibleGeometry?.segments || []);else traceStrokeSegments(batch.path,rec.segments);batch.bounds=extendBounds(batch.bounds,box);batch.count++;
           }else{
             flush();ensureRecordPath(rec);group.paint.push({kind:"record",rec,bounds:box,lodSize});
@@ -874,46 +926,90 @@ export function mountDrawingViewer(envelope) {
         }
       }
       flush();
+      let gpuRun=0,visibility=null;
+      for(const entry of group.paint){
+        if(entry.kind==="stroke"&&!entry.dash?.length&&entry.gpuSegments?.length){
+          if(visibility!==entry.visibilityKey){gpuRun++;visibility=entry.visibilityKey;}
+          entry.gpuRun=gpuRun;
+        }else{entry.gpuRun=-1;gpuRun++;visibility=null;}
+      }
       group.index=null;
       active.delete(group);done.add(group);
     }
-    for(const node of instancePlan.roots)compile(node.group,node.matrix);
-    function countPaint(node,parent,minScreenPx=LOD_MIN_SCREEN_PX){
-      const matrix=multiply(parent,node.matrix);
-      const localScale=scale*Math.max(Math.hypot(matrix[0],matrix[1]),Math.hypot(matrix[4],matrix[5]),1e-15);
-      let total=0;
-      for(const entry of node.group.paint){
-        if(entry.kind==="group"){total+=countPaint(entry,matrix,minScreenPx);continue;}
-        if(entry.lodSize&&isLodCulled(entry.lodSize,localScale,minScreenPx))continue;
-        total+=entry.kind==="stroke"?entry.count:1;
-      }
-      return total;
-    }
-    const expandedPaintRecords=instancePlan.roots.reduce((n,node)=>n+countPaint(node,I),0);
-    instancePlan.sourceVisibleRecordCount=visibleRecords;
-    instancePlan.visibleRecordCount=visibleRecords;
-    instancePlan.renderedRecordCount=expandedPaintRecords;
-    instancePlan.culledRecordCount=0;
-    canvas.dataset.sourceVisibleRecords=String(visibleRecords);
-    canvas.dataset.visibleRecords=String(visibleRecords);
-    canvas.dataset.expandedPaintEstimate=String(expandedPaintRecords);
-    canvas.dataset.renderedRecords='0';
-    canvas.dataset.culledRecords=String(visibleRecords);
-    canvas.dataset.lodScale=String(scale);
-    instanceLayerKey=currentInstanceLayerKey();
+    for(const node of instancePlan.roots)yield* compile(node.group,node.matrix);
+    refreshInstanceVisibility();
   }
-  function countInstancePaint(node,parent,minScreenPx=LOD_MIN_SCREEN_PX){
+  // A layer mask changes bounds/hits/counts, not source geometry or GPU buffers.
+  function refreshInstanceVisibility(){
+    if(!instancePlan)return;
+    const done=new Set();let visibleRecords=0;
+    instancePlan.infiniteAnchor=null;
+    const extend=(target,box)=>{if(!box)return target;if(!target)return {...box};target.minX=Math.min(target.minX,box.minX);target.minY=Math.min(target.minY,box.minY);target.maxX=Math.max(target.maxX,box.maxX);target.maxY=Math.max(target.maxY,box.maxY);return target;};
+    function visit(group,matrix){
+      if(done.has(group))return;done.add(group);
+      group.bounds=null;group.hits=[];group.unbounded=false;group.visibleCount=0;
+      group.byKind={entity:0,annotation:0};const ids=new Set();
+      for(const entry of group.paint){
+        if(entry.kind==='group'){
+          visit(entry.group,multiply(matrix,entry.matrix));
+          entry.bounds=transformBounds(entry.group.bounds,entry.matrix);
+          group.bounds=extend(group.bounds,entry.bounds);group.unbounded ||= entry.group.unbounded;
+          if(entry.bounds)group.hits.push(entry);
+          group.visibleCount+=entry.group.visibleCount;
+          for(const kind of ['entity','annotation'])group.byKind[kind]+=entry.group.byKind[kind];
+          continue;
+        }
+        const records=entry.kind==='stroke'?entry.records:[entry.rec];
+        entry.visible=drawVisible(records[0]);
+        if(!entry.visible)continue;
+        for(const rec of records){
+          const box=recordVisibleBounds(rec);
+          if(!box&&!rec.infinite)continue;
+          visibleRecords++;
+          if(!ids.has(rec.id)){ids.add(rec.id);group.visibleCount++;group.byKind[rec.draw.kind]++;}
+          if(box){group.bounds=extend(group.bounds,box);group.hits.push({kind:'record',rec,bounds:box,order:rec.instanceOrder});}
+          else{group.unbounded=true;if(!instancePlan.infiniteAnchor)instancePlan.infiniteAnchor=transformPoint(matrix,...rec.infinite.origin);}
+        }
+      }
+      group.index=null;
+    }
+    for(const node of instancePlan.roots)visit(node.group,node.matrix);
+    const memo=new Map();
+    const expanded=instancePlan.roots.reduce((n,node)=>n+countInstancePaint(node,I,LOD_MIN_SCREEN_PX,memo),0);
+    instancePlan.sourceVisibleRecordCount=visibleRecords;instancePlan.visibleRecordCount=visibleRecords;
+    instancePlan.renderedRecordCount=expanded;instancePlan.culledRecordCount=0;
+    canvas.dataset.sourceVisibleRecords=String(visibleRecords);canvas.dataset.visibleRecords=String(visibleRecords);
+    canvas.dataset.expandedPaintEstimate=String(expanded);canvas.dataset.renderedRecords='0';
+    canvas.dataset.culledRecords=String(visibleRecords);canvas.dataset.lodScale=String(scale);
+    instanceLayerKey=currentInstanceLayerKey();
+    paintCountKey=[paintRevision,scale,instanceLayerKey].join('|');paintCounts.clear();paintCounts.set(LOD_MIN_SCREEN_PX,expanded);
+  }
+  function countInstancePaint(node,parent,minScreenPx=LOD_MIN_SCREEN_PX,memo=new Map()){
     const matrix=multiply(parent,node.matrix);
     const localScale=scale*Math.max(Math.hypot(matrix[0],matrix[1]),Math.hypot(matrix[4],matrix[5]),1e-15);
+    let saved=memo.get(node.group);if(!saved){saved=new Map();memo.set(node.group,saved);}
+    const key=[matrix[0],matrix[1],matrix[2],matrix[4],matrix[5],matrix[6],matrix[8],matrix[9],matrix[10]].join('|');
+    if(saved.has(key))return saved.get(key);
     let total=0;
     for(const entry of node.group.paint){
-      if(entry.kind==="group"){total+=countInstancePaint(entry,matrix,minScreenPx);continue;}
+      if(entry.kind==="group"){total+=countInstancePaint(entry,matrix,minScreenPx,memo);continue;}
+      if(entry.visible===false)continue;
       if(entry.lodSize&&isLodCulled(entry.lodSize,localScale,minScreenPx))continue;
       total+=entry.kind==="stroke"?entry.count:1;
     }
-    return total;
+    saved.set(key,total);return total;
   }
-  function currentInstancePaintCount(minScreenPx=LOD_MIN_SCREEN_PX){return instancePlan?instancePlan.roots.reduce((n,node)=>n+countInstancePaint(node,I,minScreenPx),0):0;}
+  let paintCountKey = '', paintCounts = new Map();
+  function currentInstancePaintCount(minScreenPx=LOD_MIN_SCREEN_PX){
+    if (!instancePlan) return 0;
+    const key = [paintRevision, scale, instanceLayerKey].join('|');
+    if (key !== paintCountKey) { paintCountKey=key; paintCounts.clear(); }
+    if (!paintCounts.has(minScreenPx)){
+      const memo=new Map();
+      paintCounts.set(minScreenPx, instancePlan.roots.reduce((n,node)=>n+countInstancePaint(node,I,minScreenPx,memo),0));
+    }
+    return paintCounts.get(minScreenPx);
+  }
 
   function ensureInstanceIndex(group) {
     if (!group.hits.length) return null;
@@ -927,13 +1023,13 @@ export function mountDrawingViewer(envelope) {
     group.index = index;
     return index;
   }
-  function refreshInstanceLayers(){if(instancePlan&&instanceLayerKey!==currentInstanceLayerKey())buildInstanceIndexes();}
+  function refreshInstanceLayers(){if(instancePlan&&instanceLayerKey!==currentInstanceLayerKey())refreshInstanceVisibility();}
 
   const INSTANCE_SYNC_PAINT_LIMIT = 5000;
   const INSTANCE_WORKER_PAINT_LIMIT = 200000;
   const INSTANCE_OVERVIEW_SCREEN_PX = 3;
-  const INSTANCE_REPAINT_PREVIEW_LIMIT = 20000;
   const INSTANCE_INTERACTION_SETTLE_MS = 220;
+  const ORDINARY_INTERACTION_SETTLE_MS = 220;
   let paintRevision = 0;
   let instanceRefresh = null;
   let fullPaintTimer = 0;
@@ -941,14 +1037,16 @@ export function mountDrawingViewer(envelope) {
   function currentInstanceLayerKey() {
     return JSON.stringify([...userLayers]);
   }
+  function instanceBasePaintKey() {
+    return [scale,tx,ty,dpr,canvas.width,canvas.height,paintRevision,currentInstanceLayerKey()].join('|');
+  }
   function instancePaintKey() {
     const selection = instanceSelected
       ? [instanceSelected.id || '', instanceSelected.draw?.id || '',
           instanceSelected.bbox ? [instanceSelected.bbox.minX, instanceSelected.bbox.minY,
             instanceSelected.bbox.maxX, instanceSelected.bbox.maxY].join(':') : ''].join('|')
       : '';
-    return [scale, tx, ty, dpr, canvas.width, canvas.height, paintRevision,
-      currentInstanceLayerKey(), selection].join('|');
+    return instanceBasePaintKey()+'|'+selection;
   }
   function hasUsablePreview() {
     return previewValid && !!previewCanvas && !!previewView
@@ -979,7 +1077,7 @@ export function mountDrawingViewer(envelope) {
     if (!instancePlan) return;
     if (instanceLayerKey !== currentInstanceLayerKey()) {
       cancelInstanceRefresh();
-      buildInstanceIndexes();
+      refreshInstanceVisibility();
     }
     const key = instancePaintKey();
     if (instanceRefresh) {
@@ -1007,7 +1105,9 @@ export function mountDrawingViewer(envelope) {
       completeFirstPaint();
       return;
     }
-    const needPreview = !overviewPaintDone || paintCount >= INSTANCE_REPAINT_PREVIEW_LIMIT;
+    // Interaction already transforms the last complete frame. Refine it directly
+    // instead of painting a second overview and waiting again before full detail.
+    const needPreview = !hasUsablePreview();
     canvas.dataset.needRepaintPreview = String(needPreview);
     if (needPreview) {
       const overviewCount = currentInstancePaintCount(INSTANCE_OVERVIEW_SCREEN_PX);
@@ -1050,6 +1150,12 @@ export function mountDrawingViewer(envelope) {
     const paintCount = phase === "preview"
       ? currentInstancePaintCount(minScreenPx)
       : (instancePlan.renderedRecordCount ?? instancePlan.visibleRecordCount ?? instancePlan.count);
+    // Persistent WebGL tiles already keep geometry off the CPU paint loop. The
+    // Canvas2D worker remains a fallback for browsers without WebGL2/tile support.
+    if (strokeTiles) {
+      canvas.dataset.gpuTiles = "persistent";
+      return refreshCanvasInstancesInFrames(key, !hasUsablePreview(), {phase, minScreenPx});
+    }
     if (!accelerated || paintCount > INSTANCE_WORKER_PAINT_LIMIT) {
       return refreshCanvasInstancesInFrames(key, !hasUsablePreview(), {phase, minScreenPx});
     }
@@ -1223,7 +1329,7 @@ export function mountDrawingViewer(envelope) {
         let result;
         const stepStarted = performance.now();
         if (context) ctx = context;
-        strokeGPU = null;
+        strokeGPU = strokeTiles ? device : null;
         try { result = job.steps.next(); } finally { ctx = screen; strokeGPU = device; }
         if (result.done) job.result = result.value;
         job.maxStepMs = Math.max(job.maxStepMs, performance.now() - stepStarted);
@@ -1275,8 +1381,9 @@ export function mountDrawingViewer(envelope) {
     refreshInstanceLayers();
     ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle='#fff';ctx.fillRect(0,0,cssW,cssH);
     strokeGPU?.begin(canvas.width,canvas.height);
-    const view={minX:-tx/scale,maxX:(cssW-tx)/scale,minY:(ty-cssH)/scale,maxY:ty/scale};
-    let calls=0;
+    const view={minX:-tx/scale,maxX:(cssW-tx)/scale,minY:(ty-cssH)/scale,maxY:ty/scale,scale,tx,ty,dpr};
+    let calls=0,activeGpuNode=null,activeGpuRun=-1;
+    const tilePaint={tiles:0,segments:0,styles:0,level:0,built:0,reused:0};
     const paintStats={rendered:0,culled:0,drawn:0,pendingRaster:0,renderedSource:new Set(),samples:[]};
     const intersects=b=>b&&b.minX<=view.maxX&&b.maxX>=view.minX&&b.minY<=view.maxY&&b.maxY>=view.minY;
     function setMatrix(m){ctx.setTransform(dpr*scale*m[0],-dpr*scale*m[1],dpr*scale*m[4],-dpr*scale*m[5],dpr*(tx+scale*m[12]),dpr*(ty-scale*m[13]));}
@@ -1311,26 +1418,43 @@ export function mountDrawingViewer(envelope) {
         if (++visited % 32 === 0 && performance.now() - sliceStarted >= 6) {
           strokeGPU?.flush(ctx); yield; sliceStarted = performance.now();
         }
-        if(entry.kind==='group'){yield* paint(entry,matrix);continue;}
+        if(entry.kind==='group'){activeGpuNode=null;activeGpuRun=-1;yield* paint(entry,matrix);continue;}
         if(entry.bounds&&!intersects(transformBounds(entry.bounds,matrix))){
           paintStats.culled+=entry.kind==='stroke'?entry.count:1;continue;
         }
+        if(entry.visible===false)continue;
         if(entry.lodSize&&isLodCulled(entry.lodSize,localScale,minScreenPx)){
           paintStats.culled+=entry.kind==='stroke'?entry.count:1;
           noteHiddenSample(entry.rec,matrix);
           continue;
         }
         if(entry.kind==='stroke'){
-          const sx=Math.hypot(matrix[0],matrix[1]), sy=Math.hypot(matrix[4],matrix[5]);
-          const uniform=Math.abs(sx-sy)<1e-8*Math.max(sx,sy) && Math.abs(matrix[0]*matrix[4]+matrix[1]*matrix[5])<1e-8*sx*sy;
           for(const record of entry.records)paintStats.renderedSource.add(record.id);
-          if(strokeGPU && uniform && !entry.dash?.length && entry.gpuSegments.length && entry.gpuSegments.every(a=>a.length)){
-            strokeGPU.stroke(entry,matrix,{scale,tx,ty,dpr});calls++;paintStats.rendered+=entry.count;paintStats.drawn+=entry.count;continue;
+          if(strokeGPU&&strokeTiles&&entry.gpuRun>=0&&entry.gpuSegments?.length){
+            if(activeGpuNode!==node||activeGpuRun!==entry.gpuRun){
+              const steps=strokeTiles.drawRunSteps(node,entry.gpuRun,node.group.paint,matrix,view,scale,minScreenPx);
+              let next;
+              do{
+                next=steps.next();
+                if(!next.done){strokeGPU.flush(ctx);yield;sliceStarted=performance.now();}
+              }while(!next.done);
+              const result=next.value;
+              activeGpuNode=node;activeGpuRun=entry.gpuRun;
+              if(result.tiles){
+                tilePaint.tiles+=result.tiles;tilePaint.segments+=result.segments;
+                tilePaint.styles+=result.styles;tilePaint.level=Math.max(tilePaint.level,result.level);
+                tilePaint.built+=result.built||0;tilePaint.reused+=result.reused||0;
+              }
+            }
+            calls++;paintStats.rendered+=entry.count;paintStats.drawn+=entry.count;continue;
           }
+          activeGpuNode=null;activeGpuRun=-1;
           strokeGPU?.flush(ctx);
           setMatrix(matrix);calls++;paintStats.rendered+=entry.count;paintStats.drawn+=entry.count;
+          if(entry.dash?.length&&strokeGPU?.drawDashed?.(entry,view,matrix)){strokeGPU.flush(ctx);continue;}
           ctx.strokeStyle=entry.color;ctx.lineWidth=entry.width/localScale;ctx.lineJoin='round';ctx.lineCap=entry.dash?.length?'round':'butt';ctx.setLineDash(entry.dash||[]);ctx.stroke(ensureBatchPath(entry));continue;
         }
+        activeGpuNode=null;activeGpuRun=-1;
         strokeGPU?.flush(ctx);
         const rec=entry.rec;
         if(rec.infinite){
@@ -1409,12 +1533,21 @@ export function mountDrawingViewer(envelope) {
       canvas.dataset.renderedSourceRecords=String(renderedSourceTotal);
       canvas.dataset.culledRecords=String(instancePlan.lastCulledRecordCount);
       canvas.dataset.lodSamples=JSON.stringify(paintStats.samples);
+      const gpuStats=strokeGPU?.stats?.()||{};
+      const tileCache=strokeTiles?.stats?.()||{};
+      canvas.dataset.gpuTiles=strokeTiles?"persistent":"off";
+      canvas.dataset.gpuTilesDrawn=String(tilePaint.tiles);
+      canvas.dataset.gpuTileSegments=String(gpuStats.segments||0);
+      canvas.dataset.gpuTileStyleBatches=String(tilePaint.styles);
+      canvas.dataset.gpuTileLevel=String(tilePaint.level);
+      canvas.dataset.gpuTileCalls=String(gpuStats.calls||0);
+      canvas.dataset.gpuTileBufferBytes=String(gpuStats.bytes||0);
+      canvas.dataset.gpuTileCacheTiles=String(tileCache.cachedTiles||0);
+      canvas.dataset.gpuTileBuildsThisPaint=String(tilePaint.built);
+      canvas.dataset.gpuTileReuseThisPaint=String(tilePaint.reused);
+      canvas.dataset.gpuTileBuilds=String(tileCache.builtTiles||0);
     }
     if(profile){canvas.dataset.lastPaintMs=(performance.now()-paintStarted).toFixed(1);canvas.dataset.lastPaintCalls=String(calls);}
-    if(instanceSelected){
-      const {record:rec,matrix}=instanceSelected.instance;setMatrix(matrix);ctx.setLineDash([]);ctx.strokeStyle=ACCENT;ctx.lineWidth=2.4/(scale*Math.max(matrixScale(matrix),1e-15));
-      ensureRecordPath(rec);if(rec.path)ctx.stroke(rec.path);else if(rec.fillPath)ctx.stroke(rec.fillPath);else if(rec.bbox){const b=rec.bbox;ctx.strokeRect(b.minX,b.minY,b.maxX-b.minX,b.maxY-b.minY);}
-    }
     ctx.setTransform(dpr,0,0,dpr,0,0);
     return {drawn:paintStats.drawn,pendingRaster:paintStats.pendingRaster,rendered:paintStats.rendered,culled:paintStats.culled};
   }
@@ -1553,8 +1686,26 @@ export function mountDrawingViewer(envelope) {
     cache.setTransform(1, 0, 0, 1, 0, 0);
     cache.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
     cache.drawImage(canvas, 0, 0);
-    previewView = { scale, tx, ty };
+    previewView = { scale, tx, ty, baseKey:instancePlan?instanceBasePaintKey():null };
     previewValid = true;
+    if(instancePlan)paintInstanceSelection();
+  }
+  function paintInstanceSelection(){
+    if(!instanceSelected||spatialView!=='2d')return;
+    const {record:rec,matrix:m}=instanceSelected.instance;
+    if(rec.draw&&!drawVisible(rec))return;
+    ctx.save();ctx.setTransform(dpr*scale*m[0],-dpr*scale*m[1],dpr*scale*m[4],-dpr*scale*m[5],dpr*(tx+scale*m[12]),dpr*(ty-scale*m[13]));
+    ctx.setLineDash([]);ctx.strokeStyle=ACCENT;ctx.lineWidth=2.4/(scale*Math.max(matrixScale(m),1e-15));
+    ensureRecordPath(rec);
+    if(rec.path)ctx.stroke(rec.path);else if(rec.fillPath)ctx.stroke(rec.fillPath);else if(rec.bbox){const b=rec.bbox;ctx.strokeRect(b.minX,b.minY,b.maxX-b.minX,b.maxY-b.minY);}
+    ctx.restore();
+  }
+  function drawRetainedSelection(){
+    if(instancePlan&&spatialView==='2d'&&!interacting&&!initialBuild&&!instanceRefresh
+        &&canvas.dataset.instancePaint==='complete'&&hasUsablePreview()&&previewView.baseKey===instanceBasePaintKey()){
+      drawPreview();canvas.dataset.selectionRepaint='cached';return;
+    }
+    draw();
   }
   function interactionSettled() {
     if (destroyed) return;
@@ -1562,20 +1713,25 @@ export function mountDrawingViewer(envelope) {
     if (mode === 'analytic' && (scale > buildScale * 2 || scale < buildScale / 2)) rebuild();
     else if (instancePlan) drawInstances(); else draw();
   }
-  function beginInteraction() {
-    if (instancePlan && !hasUsablePreview()) cacheFullFrame();
-    cancelInstanceRefresh();
-    interacting = true;
+  function scheduleInteractionSettled() {
     if (interactionTimer) clearTimeout(interactionTimer);
     interactionTimer = setTimeout(() => {
       interactionTimer = 0;
       if (drag) return;
-      interacting = false; interactionSettled();
-    }, INSTANCE_INTERACTION_SETTLE_MS);
+      interacting = false;
+      interactionSettled();
+    }, instancePlan ? INSTANCE_INTERACTION_SETTLE_MS : ORDINARY_INTERACTION_SETTLE_MS);
+  }
+  function beginInteraction() {
+    if (instancePlan && !hasUsablePreview()) cacheFullFrame();
+    cancelInstanceRefresh();
+    interacting = true;
+    scheduleInteractionSettled();
   }
   function endInteraction() {
-    if (interactionTimer) { clearTimeout(interactionTimer); interactionTimer = 0; }
     if (!interacting) return;
+    if (instancePlan) { scheduleInteractionSettled(); return; }
+    if (interactionTimer) { clearTimeout(interactionTimer); interactionTimer = 0; }
     interacting = false;
     interactionSettled();
   }
@@ -1590,10 +1746,11 @@ export function mountDrawingViewer(envelope) {
     ctx.setTransform(k, 0, 0, k, dpr * (tx - k * previewView.tx), dpr * (ty - k * previewView.ty));
     ctx.drawImage(previewCanvas, 0, 0);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if(instancePlan)paintInstanceSelection();
     return true;
   }
   function draw() {
-    if (destroyed || mounting) return;
+    if (destroyed || mounting || initialBuild) return;
     if (spatialView === '3d') { meshViewer.sync(userLayers,selected); return; }
     if (interacting) {
       cancelInstanceRefresh();
@@ -1900,6 +2057,7 @@ export function mountDrawingViewer(envelope) {
   let lastFit = null, fitted = false;
   function fit(bbox) {
     if (spatialView === '3d') return meshViewer.fit();
+    if (initialBuild) return;
     fitted = true;
     let b = bbox;
     if (!b) {
@@ -1935,6 +2093,7 @@ export function mountDrawingViewer(envelope) {
     return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
   }
   function hitTest(sx, sy) {
+    if (initialBuild) return null;
     if(instancePlan)return hitInstances(sx,sy);
     const wx = (sx - tx) / scale, wy = (ty - sy) / scale;
     const tolerance = 5 / scale;
@@ -1998,6 +2157,7 @@ export function mountDrawingViewer(envelope) {
     return ref&&ref.sourceId!==ucd.sources[0].id?' · 来源 '+(ucd.sources.find(source=>source.id===ref.sourceId)?.name||ref.sourceId):'';
   }
   function select(rec, additive) {
+    if (initialBuild) return;
     if(instancePlan&&spatialView!=='3d')instanceSelected=rec;
     selectedBlockDetails=false;
     const id = rec ? rec.id : null;
@@ -2010,7 +2170,7 @@ export function mountDrawingViewer(envelope) {
     }
     const el = document.getElementById('selected');
     if (el) el.textContent = selected.size ? selectedLabel + (selected.size > 1 ? '（+' + (selected.size - 1) + '）' : '') : '尚未选择';
-    draw(); updateSelectionButtons(); renderBlocks();
+    drawRetainedSelection(); updateSelectionButtons(); renderBlocks();
   }
   function selectInstance(instanceId) {
     if(instancePlan){
@@ -2023,7 +2183,7 @@ export function mountDrawingViewer(envelope) {
       selected.clear();selected.add('instance-selection:'+instanceId);selectedInstance=instanceId;selectedBlockDetails=true;
       const box=found.node.group.bounds;instanceSelected={bbox:transformBounds(box,found.matrix),instance:{record:{bbox:box},matrix:found.matrix}};
       selectedLabel='块实例 '+drawing.blocks[drawing.blockInstances[instanceId].definitionId].name+' · '+found.node.group.count+' 项 · 句柄 '+(drawing.blockInstances[instanceId].sourceRefs[0]?.objectKey||'?');
-      document.getElementById('selected').textContent=selectedLabel;draw();updateSelectionButtons();renderBlocks();return;
+      document.getElementById('selected').textContent=selectedLabel;drawRetainedSelection();updateSelectionButtons();renderBlocks();return;
     }
     selected.clear(); selectedInstance = instanceId;selectedBlockDetails=true;
     const inst = drawing.blockInstances[instanceId];
@@ -2031,7 +2191,7 @@ export function mountDrawingViewer(envelope) {
     const block = inst ? drawing.blocks[inst.definitionId] : null;
     selectedLabel = '块实例 ' + (block ? block.name : instanceId.slice(0, 12)) + ' · ' + selected.size + ' 个绘制项';
     const el = document.getElementById('selected'); if (el) el.textContent = selectedLabel;
-    draw(); updateSelectionButtons(); renderBlocks();
+    drawRetainedSelection(); updateSelectionButtons(); renderBlocks();
   }
   function focusSourceHandle(handle){
     const key=String(handle).toUpperCase();
@@ -2133,16 +2293,19 @@ export function mountDrawingViewer(envelope) {
       label.append(select); host.append(label);
     }
   }
+  let layerCountCache=null;
+  function layerRecordCounts(){
+    if(layerCountCache?.records===built&&layerCountCache.length===built.length)return layerCountCache.counts;
+    const counts=new Map();
+    for(const rec of built)for(const id of new Set([rec.layerId,...rec.draw.visibilityLayerIds])){
+      const row=counts.get(id)||{layer:drawing.layers[id],ids:new Set()};row.ids.add(rec.id);counts.set(id,row);
+    }
+    layerCountCache={records:built,length:built.length,counts};return counts;
+  }
   function renderLayers() {
     const host = panel.querySelector('.dlayers'); if (!host) return;
     host.replaceChildren();
-    const counts = new Map();
-    for (const rec of built) {
-      for (const id of new Set([rec.layerId,...rec.draw.visibilityLayerIds])) {
-        const row=counts.get(id)||{layer:drawing.layers[id],ids:new Set()};
-        row.ids.add(rec.id);counts.set(id,row);
-      }
-    }
+    const counts = layerRecordCounts();
     const rows = [...counts.entries()].sort((a, b) => (a[1].layer ? a[1].layer.name : '').localeCompare(b[1].layer ? b[1].layer.name : ''));
     for (const [layerId, row] of rows) {
       const layer = row.layer || { name: layerId, defaultStyle: { color: { rgba: [1, 1, 1, 1] } } };
@@ -2392,7 +2555,7 @@ export function mountDrawingViewer(envelope) {
     for (const [key, value] of Object.entries(state.counts)) state.plan[key] = value;
   }
   function rememberSpaceState(target = spaceTarget) {
-    if (!target || !projection || interacting || spatialView !== '2d') return false;
+    if (!target || !projection || interacting || initialBuild || spatialView !== '2d') return false;
     const weight = built.length + Object.keys(projection.draws).length;
     if (weight > SPACE_STATE_MAX_RECORDS) return false;
     const key = cachedSpaceKey(target);
@@ -2478,6 +2641,8 @@ export function mountDrawingViewer(envelope) {
       (target.kind === 'block-preview' && current.blockId === target.blockId))) return;
     const nextPlotPreview = plotPreviewFor(target);
     rememberSpaceState();
+    cancelInitialBuild();
+    cancelInstanceRefresh();
     if (restoreSpaceState(target, nextPlotPreview)) {
       plotPreview = nextPlotPreview;
       renderSpaces(); renderBlocks(); renderCoverage(); renderPlotControls(); updateSelectionButtons();
@@ -2491,22 +2656,37 @@ export function mountDrawingViewer(envelope) {
     presentationStyles = {};
     instancePlan=null;instanceSelected=null;
     window.__cadTimingMark?.("spaceProjectionStart");
-     const drawEstimate=(target.kind==='model'||target.kind==='layout')?estimateDrawingDraws(ucd,target):0;
+    const drawEstimate=(target.kind==='model'||target.kind==='layout')?estimateDrawingDraws(ucd,target):0;
     if(drawEstimate>INSTANCE_DRAW_LIMIT)
       throw new Error('drawing-instance-count-overflow: '+drawEstimate+' expanded draws exceed the retained-viewer budget');
-    if((target.kind==='model'||target.kind==='layout')&&shouldProjectInstances(target,forceInstances?0:drawEstimate,forceInstances)){
-      instancePlan=projectInstances(ucd,target,presentationStyles);projection=instancePlan.projection;effectiveLayers=instancePlan.layers;
-    }else{
+    const retained=(target.kind==='model'||target.kind==='layout')&&shouldProjectInstances(target,forceInstances?0:drawEstimate,forceInstances);
+    const beginRebuild=()=>{
+      window.__cadTimingMark?.("spaceProjectionEnd");
+      if (!target.drawingId) target.drawingId = projection.drawingId;
+      userLayers.clear();
+      window.__cadTimingMark?.("spaceRebuildStart");
+    };
+    const finishSpace=()=>{
+      window.__cadTimingMark?.("spaceRebuildEnd");
+      renderSpaces(); renderBlocks(); renderCoverage(); renderPlotControls();
+      fit(); updateSelectionButtons(); window.__cadTimingMark?.("spaceReady");
+    };
+    if (retained) {
+      // The retained plan is private until traversal has finished. Cancellation
+      // closes the same task and nested generators used by the subsequent build.
+      startInitialBuild((function*(){
+        instancePlan=yield* projectInstancesSteps(ucd,target,presentationStyles);
+        projection=instancePlan.projection;effectiveLayers=instancePlan.layers;
+        beginRebuild();
+        yield* rebuildSteps();
+      })(),finishSpace);
+      return;
+    }
     projection = target.kind === 'block-preview'
       ? projectBlock(ucd, target.blockId, layerMap, presentationStyles)
       : projectDrawing(ucd, target, layerMap, presentationStyles);
     effectiveLayers = new WeakMap(Object.entries(projection.draws).map(([id, draw]) => [draw, layerMap[id]]));
-    }
-    window.__cadTimingMark?.("spaceProjectionEnd");
-     if (!target.drawingId) target.drawingId = projection.drawingId;
-    userLayers.clear();
-    window.__cadTimingMark?.("spaceRebuildStart");
-     rebuild(); window.__cadTimingMark?.("spaceRebuildEnd"); renderSpaces(); renderBlocks(); renderCoverage(); renderPlotControls(); fit(); updateSelectionButtons(); window.__cadTimingMark?.("spaceReady");
+    beginRebuild();rebuild(finishSpace);
   }
 
   function renderPlotControls() {
@@ -2634,14 +2814,8 @@ export function mountDrawingViewer(envelope) {
       userLayers.set(layer.id, !!visible); renderLayers(); draw(); updateStats(); return true;
     },
     layerStates() {
-      const counts = new Map();
-      for (const rec of built) {
-        for (const layerId of new Set([rec.layerId,...rec.draw.visibilityLayerIds])) {
-          if (!counts.has(layerId)) counts.set(layerId, new Set());
-          counts.get(layerId).add(rec.id);
-        }
-      }
-      return Object.values(drawing.layers).map(l => ({ id: l.id, name: l.name, draws: counts.get(l.id)?.size || 0,
+      const counts = layerRecordCounts();
+      return Object.values(drawing.layers).map(l => ({ id: l.id, name: l.name, draws: counts.get(l.id)?.ids.size || 0,
         sourceVisible: layerSourceVisible(l.id), userVisible: userLayers.has(l.id) ? userLayers.get(l.id) : true }));
     },
     fit,
@@ -2717,12 +2891,14 @@ export function mountDrawingViewer(envelope) {
     resize, draw, overviewPaint, ready: Promise.all([rasterReady, firstPaint]),
     destroy() {
       destroyed = true;
+      cancelInitialBuild();
       completeFirstPaint();
       meshViewer?.dispose();
       cancelInstanceRefresh();
       if (interactionFrame) { cancelAnimationFrame(interactionFrame); interactionFrame = 0; }
       if (interactionTimer) { clearTimeout(interactionTimer); interactionTimer = 0; }
       background?.dispose();
+      strokeTiles?.reset();
       strokeGPU?.dispose();
       rasterCache.clear();
       rasterProbes.clear();
