@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Env } from "../config/env.js";
 import type { OutboxTopic } from "@libiaolink/contracts";
 import { PREVIEW_JOB_TOPIC } from "../modules/file/index.js";
@@ -13,13 +14,16 @@ export interface OutboxTopicPolicy {
   batchLimit: number;
   /** 可重试失败的最大尝试次数（含首次）。 */
   maxAttempts: number;
-  /** 指数退避基数（毫秒）：第 n 次失败后等待 base * 2^(n-1)，封顶 backoffMaxMs。 */
+  /** 指数退避基数（毫秒）：第 n 次失败后等待 base * 2^(n-1)，封顶 backoffMaxMs；实际重试再叠加确定性抖动。 */
   backoffBaseMs: number;
   backoffMaxMs: number;
 }
 
 /** 预览转换退避封顶 30 分钟（与 M4-05c 原实现同口径：容器重启 / 配额耗尽不无限拉长）。 */
 export const PREVIEW_BACKOFF_MAX_MS = 30 * 60_000;
+
+/** 重试延时的确定性抖动幅度：在原始退避的 80%～100% 内错峰，不突破封顶。 */
+export const RETRY_BACKOFF_JITTER_RATIO = 0.2;
 
 export function defaultTopicPolicy(env: Env): OutboxTopicPolicy {
   return {
@@ -52,7 +56,19 @@ export function resolveOutboxPolicies(env: Env): ReadonlyMap<OutboxTopic, Outbox
   ]);
 }
 
-/** 第 attempts 次失败（含本次，1 起）后的退避时长。 */
+/** 第 attempts 次失败（含本次，1 起）后的原始退避时长；供 retry 退避在应用抖动前复用。 */
 export function backoffDelayMs(policy: OutboxTopicPolicy, attempts: number): number {
   return Math.min(policy.backoffBaseMs * 2 ** (attempts - 1), policy.backoffMaxMs);
+}
+
+/**
+ * 第 attempts 次失败后的实际重试延时：以 dedupeKey + attempts 为稳定种子，在原始退避的
+ * 80%～100% 内确定性错峰。同一消息 / 同一尝试跨 worker、跨重放得到同一结果；不同消息自然分散，
+ * 避免下游恢复时整批重试同时到期。抖动只向下收敛，因此不会突破 backoffMaxMs。
+ */
+export function retryBackoffDelayMs(policy: OutboxTopicPolicy, attempts: number, dedupeKey: string): number {
+  const cappedMs = backoffDelayMs(policy, attempts);
+  const digest = createHash("sha256").update(JSON.stringify([dedupeKey, attempts])).digest();
+  const fraction = digest.readUInt32BE(0) / 0x1_0000_0000;
+  return Math.max(1, Math.round(cappedMs * (1 - RETRY_BACKOFF_JITTER_RATIO * fraction)));
 }

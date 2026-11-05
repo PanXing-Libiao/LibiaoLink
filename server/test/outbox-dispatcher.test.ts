@@ -9,7 +9,7 @@ import type { OutboxStore } from "../src/db/outbox.store.js";
 import type { OutboxAlert, OutboxAlertSink, OutboxDailyDigest } from "../src/outbox/alert.js";
 import { OutboxDispatcher } from "../src/outbox/dispatcher.js";
 import type { OutboxHandleOutcome, OutboxTopicHandler } from "../src/outbox/handler.js";
-import { previewTopicPolicy, type OutboxTopicPolicy } from "../src/outbox/policy.js";
+import { previewTopicPolicy, retryBackoffDelayMs, type OutboxTopicPolicy } from "../src/outbox/policy.js";
 import { createDrainOnlyHandler } from "../src/outbox/topic-catalog.js";
 
 /**
@@ -259,7 +259,7 @@ describe("OutboxDispatcher.drainOnce（S7-1 分派与收敛）", () => {
     expect(h.store.retried[1]!.input.error).toBe("处理器返回非法结果");
   });
 
-  it("retry 未到顶：按主题策略退避回 pending（attempts 累计；availableAt = now + base * 2^(n-1)）", async () => {
+  it("retry 未到顶：按主题策略确定性抖动退避回 pending（attempts 累计；availableAt = now + 抖动后延时）", async () => {
     const policies = new Map<OutboxTopic, OutboxTopicPolicy>([
       [TOPIC_A, { batchLimit: 2, maxAttempts: 5, backoffBaseMs: 1000, backoffMaxMs: 10000 }],
     ]);
@@ -275,8 +275,8 @@ describe("OutboxDispatcher.drainOnce（S7-1 分派与收敛）", () => {
 
     expect(stats).toEqual({ claimed: 1, done: 0, retried: 1, deferred: 0, dead: 0 });
     expect(h.store.retried[0]).toMatchObject({ id: 1, input: { attempts: 3, error: "稍后再试" } });
-    // 第 3 次失败后：1000 * 2^(3-1) = 4000ms
-    expect(h.store.retried[0]!.input.availableAt.getTime()).toBe(NOW.getTime() + 4000);
+    const expectedDelay = retryBackoffDelayMs(policies.get(TOPIC_A)!, 3, TOPIC_A + ":key:1");
+    expect(h.store.retried[0]!.input.availableAt.getTime()).toBe(NOW.getTime() + expectedDelay);
     expect(h.store.dead).toHaveLength(0);
   });
 

@@ -7,7 +7,7 @@
  *        OUTBOX_STALE_MS 之外（等价于「崩溃已超阈值」；CI 不等满默认窗口）→ 真 OutboxDispatcher 重领并消费
  *        **恰好一次**（done · locked_by = 第二 worker）。
  *   证据二（重复领取不重发）：done 行不再被领取；同 dedupeKey 复投（appendOutboxIfAbsent）不新增行、不重开 pending。
- *   证据三（重试与可执行告警）：可重试失败按主题策略退避回 pending（attempts 累计 / available_at = now + base*2^(n-1)）；
+ *   证据三（重试与可执行告警）：可重试失败按主题策略退避回 pending（attempts 累计 / available_at = now + 确定性抖动后的指数退避）；
  *        到顶转 dead + onDead 留痕 + OUTBOX_ALERT_SINK 捕获「outbox.dead」即时告警；告警探针真机对照 ——
  *        积压 / 最老等待只记日志，连续无 done 进度时合并升级为 queue_stalled；合成 backlog 主题无消费者另发
  *        unconsumed_topic；dead_letter 不即时推送，只进入日报。同一快照宽阈值下阈值类 0 告警（未消费主题
@@ -380,15 +380,15 @@ async function runMain() {
     const retryDelayMs = retryDelay.rows[0].ms;
     check(
       "B1",
-      "可重试失败：attempts 累计 + 按主题策略退避（第 1 次 = base 1000ms）回 pending",
-      "retried=1 / status=pending / attempts=1 / last_error=记录 / 剩余退避 ∈ [850,1600]ms / locked_at=null",
+      "可重试失败：attempts 累计 + 按主题策略退避（第 1 次 base 1000ms，抖动后约 800～1000ms）回 pending",
+      "retried=1 / status=pending / attempts=1 / last_error=记录 / 剩余退避 ∈ [700,1600]ms / locked_at=null",
       "stats=" + short(statsB1) + " / " + fmtRow(retryRow1) + " / 剩余退避=" + retryDelayMs + "ms",
       statsB1.retried === 1 &&
         retryRow1.status === "pending" &&
         Number(retryRow1.attempts) === 1 &&
         retryRow1.last_error === RETRY_ERROR &&
         retryRow1.locked_at === null &&
-        retryDelayMs >= 850 &&
+        retryDelayMs >= 700 &&
         retryDelayMs <= 1600,
     );
 
