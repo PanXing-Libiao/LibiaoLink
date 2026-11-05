@@ -172,6 +172,65 @@ describe("OutboxDispatcher.drainOnce（S7-1 分派与收敛）", () => {
     expect(h.store.claims).toHaveLength(0);
   });
 
+  it("精确领取指定主题：未选中的已注册主题保持 pending，不进入本轮", async () => {
+    const h = makeDispatcher({
+      registry: new Map<OutboxTopic, OutboxTopicHandler>([
+        [TOPIC_A, handlerOf(async () => ({ outcome: "done" }))],
+        [TOPIC_B, handlerOf(async () => ({ outcome: "done" }))],
+      ]),
+    });
+    h.store.byTopic.set(TOPIC_A, [makeRow(TOPIC_A, 21)]);
+    h.store.byTopic.set(TOPIC_B, [makeRow(TOPIC_B, 22)]);
+
+    const stats = await h.dispatcher.drainTopics([TOPIC_A]);
+
+    expect(stats).toEqual({ claimed: 1, done: 1, retried: 0, deferred: 0, dead: 0 });
+    expect(h.store.claims.map((claim) => claim.topics)).toEqual([[TOPIC_A]]);
+    expect(h.store.done).toEqual([21]);
+    expect(h.store.byTopic.get(TOPIC_B)!.map((row) => row.id)).toEqual([22]);
+  });
+
+  it("互斥主题通道可并行：预览未完成时通知照常领取并 done", async () => {
+    let releasePreview!: () => void;
+    let previewEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      previewEntered = resolve;
+    });
+    const released = new Promise<void>((resolve) => {
+      releasePreview = resolve;
+    });
+    const h = makeDispatcher({
+      registry: new Map<OutboxTopic, OutboxTopicHandler>([
+        [
+          "preview.job",
+          handlerOf(async () => {
+            previewEntered();
+            await released;
+            return { outcome: "done" };
+          }),
+        ],
+        ["notify.message", handlerOf(async () => ({ outcome: "done" }))],
+      ]),
+    });
+    h.store.byTopic.set("preview.job", [makeRow("preview.job", 31)]);
+    h.store.byTopic.set("notify.message", [makeRow("notify.message", 32)]);
+
+    let previewSettled = false;
+    const previewRun = h.dispatcher.drainTopics(["preview.job"]).finally(() => {
+      previewSettled = true;
+    });
+    await entered;
+    const notifyStats = await h.dispatcher.drainTopics(["notify.message"]);
+
+    expect(notifyStats).toEqual({ claimed: 1, done: 1, retried: 0, deferred: 0, dead: 0 });
+    expect(h.store.done).toEqual([32]);
+    expect(previewSettled).toBe(false);
+
+    releasePreview();
+    await previewRun;
+    expect(h.store.done).toEqual([32, 31]);
+  });
+
   it("handler 抛异常 / 返回非法值：按可重试收敛，不打断同批其余行", async () => {
     const h = makeDispatcher({
       env: { OUTBOX_BATCH_LIMIT: 5 },

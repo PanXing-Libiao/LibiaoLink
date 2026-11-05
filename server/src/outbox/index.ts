@@ -34,6 +34,8 @@ export type {
   OutboxDailyDigestRecovery,
 } from "./alert.js";
 export type { OutboxHandleOutcome, OutboxTopicHandler } from "./handler.js";
+export { assertOutboxLanePartition, buildOutboxLanes, OUTBOX_LANE_NAMES } from "./lanes.js";
+export type { OutboxLane, OutboxLaneName } from "./lanes.js";
 export { backoffDelayMs, defaultTopicPolicy, PREVIEW_BACKOFF_MAX_MS, previewTopicPolicy, resolveOutboxPolicies } from "./policy.js";
 export type { OutboxTopicPolicy } from "./policy.js";
 export {

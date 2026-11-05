@@ -10,11 +10,14 @@ import { PROJECT_RECYCLE_SWEEP_BATCH, ProjectService } from "../modules/project/
 import { IMPORT_PREVIEW_SWEEP_INTERVAL_MS, ProjectImportService } from "../modules/project-import/index.js";
 import { NotifyDmService, NotifyGroupService, NotifyService, WecomAibotClient } from "../modules/notify/index.js";
 import {
+  buildOutboxLanes,
   JobScheduler,
   OutboxAlertProbe,
   OutboxDailyDigestService,
   OutboxDispatcher,
   OutboxRetention,
+  type OutboxLane,
+  type OutboxLaneName,
 } from "../outbox/index.js";
 import { WorkerModule } from "../worker.module.js";
 
@@ -231,34 +234,43 @@ async function bootstrap(): Promise<void> {
     logger.warn("企微机器人通道未启动（WECOM_BOT_ID / WECOM_BOT_SECRET 未配置或通知投递关闭）：notify.group 只存不投；wecom_aibot 投递行按未就绪重试收敛（有界重试，不静默成功）");
   }
 
-  // Outbox 分派（S7-1）：一轮 = 按注册主题各领一批（每主题 OUTBOX_BATCH_LIMIT 条，SKIP LOCKED）后串行收敛；
-  // 单条预览最长占满客户端超时（默认 90s），用 draining 闸门避免上一轮没跑完就叠加下一轮。
-  let draining = false;
-  const drainOutbox = async (): Promise<void> => {
-    if (draining) {
+  // Outbox 分派（S7-1 · P0 通道隔离）：主题划分为 notify / preview / general 三个互斥通道；
+  // 通道内逐条串行，通道间并行，慢预览不再阻塞通知。单个通道未跑完只跳过本通道，不影响其它通道。
+  const outboxLanes = buildOutboxLanes(dispatcher.registeredTopics());
+  const outboxLaneRunning = new Set<OutboxLaneName>();
+  const drainOutboxLane = async (lane: OutboxLane): Promise<void> => {
+    if (lane.topics.length === 0 || outboxLaneRunning.has(lane.name)) {
       return;
     }
-    draining = true;
+    outboxLaneRunning.add(lane.name);
     try {
-      const stats = await dispatcher.drainOnce();
+      const stats = await dispatcher.drainTopics(lane.topics);
       if (stats.claimed > 0) {
         logger.log(
-          "outbox 分派：领取 " + stats.claimed + " / done " + stats.done + " / 重试 " + stats.retried + " / 延期 " +
-            stats.deferred + " / 死信 " + stats.dead,
+          "outbox 分派（" + lane.name + "）：领取 " + stats.claimed + " / done " + stats.done + " / 重试 " +
+            stats.retried + " / 延期 " + stats.deferred + " / 死信 " + stats.dead,
         );
       }
     } catch (error) {
-      logger.error("outbox 分派失败：" + messageOf(error));
+      logger.error("outbox 分派失败（" + lane.name + "）：" + messageOf(error));
     } finally {
-      draining = false;
+      outboxLaneRunning.delete(lane.name);
     }
   };
-  const outboxPoll = setInterval(() => void drainOutbox(), env.OUTBOX_POLL_MS);
-  void drainOutbox();
+  const drainOutbox = (): void => {
+    for (const lane of outboxLanes) {
+      void drainOutboxLane(lane);
+    }
+  };
+  logger.log(
+    "outbox 消费通道：" + outboxLanes.map((lane) => lane.name + "=" + lane.topics.length).join(" / "),
+  );
+  const outboxPoll = setInterval(drainOutbox, env.OUTBOX_POLL_MS);
+  drainOutbox();
 
   // 调度器（S7-3 · i11 / M5-02）：每分钟 tick（契约 OUTBOX_SCHEDULER.tickMs）——单活 advisory lock 选主，
   // 领取到期 jobs（SKIP LOCKED），窗口 (last_run_at, now] 按应执行清单补发；无生产者注册的 kind = 只存不跑。
-  // 与分派循环同用 draining 闸门思路：上一 tick 未跑完不叠加（单条任务可能触发多条产出）。
+  // 与 Outbox 分派一致的「未完成不叠加」闸门：上一 tick 未跑完不再叠加（单条任务可能触发多条产出）。
   let scheduling = false;
   const tickScheduler = async (): Promise<void> => {
     if (scheduling) {
