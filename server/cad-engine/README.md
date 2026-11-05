@@ -34,6 +34,8 @@ CAD 解析已迁移到独立 Linux 容器，不再由 API 启动 Python。先按
 
 沙箱强制 5 GiB 内存、1 核 CPU、64 进程/线程、禁 swap；单文件 256 MiB、FD 128、core 0。转换数据、临时目录、通信目录分别限容 1536 / 384 / 1 MiB，根目录只读、capabilities 全部丢弃、禁止提权、seccomp、禁网。启动读取内核实际状态，限制缺失或 cgroup v2 不可用则拒绝运行。STEP/DXF worker 2 GiB、DWG worker 3.5 GiB RSS 采样阈值不是硬限额；cgroup 覆盖 gateway、OCP、Gmsh 全部后代。固定任务预算仍为并发 1、排队 8、worker 600 秒、队列 900 秒，PID 1 watchdog 对超期未退出的主 worker 终止整个 CAD namespace。
 
+上传完成和 worker 空闲维护都会检测 STEP / STP / DWG：新版本在事务内入队；升级前已上传的当前版本若没有兼容持久缓存，worker 会按批自动补投，无需先打开。扫描只覆盖未回收文件的当前版本、大小不超过 `CAD_MAX_INPUT_MIB` 的输入；DWG 还要求 `CAD_DWG_ENABLED=true`。历史非当前版本仍在打开时按需补投，已失败任务不会无限自动重试。
+
 CAD 内部临时缓存仍受限于 tmpfs 和 24 小时保留；已完成的模型另按 [ADR-037](../../docs/adr/ADR-037-CAD产物持久化与上传预解析.md) 持久化：数据库保存队列、状态、窗口和产物索引，私有对象存储保存完整 manifest / buffers。API/worker/CAD 重启后直接读取完成产物，无需 native 重算；新版本、固定引擎版本或名称编码分别生成，缺失/损坏撤销完成态并排队重建。缓存先按文件版本隔离，不能把上传声明的 SHA 当作跨文件复用的可信凭据。沙箱仍禁网且不持有存储凭据，不增加持久宿主挂载。
 
 浏览器使用 HTTPS，本地 loopback 可验证 Web Crypto。生产镜像、server/shared 和同版本 `/cad-viewer/` 静态资源须按部署流程同步；API 的原内存预算与 CAD 独立核算。持久化与预解析已在公司测试机和正式生产部署；正式生产首轮打开、产品树与真实文件转换已验收。运行边界与研究依据见 [ADR-036](../../docs/adr/ADR-036-CAD解析沙箱与资源硬限额.md)。

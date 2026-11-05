@@ -6,8 +6,8 @@ export async function installCadAuditTables(database: DatabaseService, actorId: 
   await database.pool.query(`
     create table projects(id uuid primary key, code text, name text);
     create table users(id uuid primary key, display_name text);
-    create table files(id uuid primary key, project_id uuid not null, status text not null default 'draft');
-    create table file_versions(id uuid primary key);
+    create table files(id uuid primary key, project_id uuid not null, status text not null default 'draft', name text not null default 'fixture', current_version_id uuid);
+    create table file_versions(id uuid primary key, file_id uuid, object_key text, size_bytes bigint, content_hash text, uploaded_at timestamptz not null default now());
   `);
   const migration = await readFile(new URL("../../database/migrations/0013_admin_dict_audit.sql", import.meta.url), "utf8");
   await database.pool.query(migration.slice(migration.indexOf("create table audit_logs"), migration.indexOf("create index ix_audit_logs_object")));

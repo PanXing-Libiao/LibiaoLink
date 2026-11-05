@@ -7,7 +7,7 @@
 > **2026-10-23 上传与预览安全修订**：上传完成时服务端对实际对象流计算 SHA-256，与 init / complete 申报不符即拒绝；对象键、版本和后续任务只采用计算结果。预览缓存、任务去重与产物对象按文件版本隔离，取消跨文件 / 跨项目的同哈希复用；ONLYOFFICE key 绑定服务实例、项目、文件和版本。迁移 `0067` 失效旧全局缓存登记，源文件、版本与审计保留。详见 [修复与验证口径](../../../../docs/security/上传哈希与预览缓存隔离.md)。
 
 
-> CAD 持久化（2026-10-22，ADR-037）：STEP 上传完成的版本事务内登记 GB 后台队列，worker 独立消费，完整 manifest/buffers 落私有对象存储后才发布 completed。`cad_artifacts` / `cad_views` 保存状态、索引和窗口授权；完成结果跨重启复用，取消只影响当前窗口。对象统一放在 `projects/{projectId}/files/{fileId}/cad/`，文件与项目彻底删除均能清理。见 [运行说明](../../../cad-engine/README.md)。
+> CAD 持久化（2026-10-22，ADR-037）：STEP / STP 上传完成的版本事务内登记 GB 后台队列，DWG 登记 UTF8 队列；worker 独立消费，完整 manifest/buffers 落私有对象存储后才发布 completed。worker 空闲时还会扫描未回收文件的当前 STEP / STP / DWG 版本，没有兼容缓存就自动补投；DWG 仍受 `CAD_DWG_ENABLED` 开关约束。`cad_artifacts` / `cad_views` 保存状态、索引和窗口授权；完成结果跨重启复用，取消只影响当前窗口。对象统一放在 `projects/{projectId}/files/{fileId}/cad/`，文件与项目彻底删除均能清理。见 [运行说明](../../../cad-engine/README.md)。
 
 读取持久模型清单时，先完成窗口资源续租，再打开对象存储流，避免续租失败后遗留未关闭的读取流。存储暂时不可用保留已完成缓存，确认产物缺失或损坏才排队重建。
 

@@ -61,6 +61,14 @@ export function cadFormat(name: string): CadFormat {
   throw new AppError("NOT_FOUND", "该版本暂无 CAD 在线查看能力");
 }
 
+/** 上传与空闲扫描共用的自动缓存格式判定；DWG 仅在运行环境显式启用时参与。 */
+export function cadAutoCacheFormat(name: string, dwgEnabled: boolean): CadFormat | null {
+  if (/\.(step|stp)$/i.test(name)) return "STEP";
+  if (/\.dxf$/i.test(name)) return "DXF";
+  if (/\.dwg$/i.test(name)) return dwgEnabled ? "DWG" : null;
+  return null;
+}
+
 export function cadInputs(source: CadArchiveSource): CadInputSource {
   const format = cadFormat(source.sourceName);
   const companions = z.array(boundCompanion).max(127).parse(source.companions ?? []);

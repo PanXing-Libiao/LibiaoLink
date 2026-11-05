@@ -6,7 +6,7 @@ import { ObjectStorage } from "../../storage/index.js";
 import { CadEngineClient, type CadJob, type CadResource } from "./cad-engine.client.js";
 import { CadArchiveRepository, type CadArchiveSource, type CadArtifactRow, type CadViewRow } from "./cad-archive.repository.js";
 import { checkedCadStream } from "./cad-archive.integrity.js";
-import { CadInputService, cadInputs, CAD_DXF_INPUT_BYTES } from "./cad-inputs.js";
+import { CadInputService, cadAutoCacheFormat, cadInputs, CAD_DXF_INPUT_BYTES } from "./cad-inputs.js";
 import { cadPrecompressedObjectKey, type CadPrecompressedEncoding } from "./cad-preview.compression.js";
 
 @Injectable()
@@ -15,10 +15,10 @@ export class CadArchiveService {
     private readonly engine: CadEngineClient, private readonly inputs: CadInputService) {}
 
   async uploaded(source: CadArchiveSource, client?: DbClient): Promise<void> {
-    if (!this.engine.enabled || !/\.(step|stp|dxf|dwg)$/i.test(source.sourceName)
-      || source.sourceBytes > Math.min(this.engine.inputLimit, /\.dxf$/i.test(source.sourceName) ? 64 * 1024 ** 2 : Infinity)
-      || (/\.dwg$/i.test(source.sourceName) && !this.engine.dwgEnabled)) return;
-    await this.repository.request(source, /\.dwg$/i.test(source.sourceName) ? "UTF8" : "GB", client);
+    const format = cadAutoCacheFormat(source.sourceName, this.engine.dwgEnabled);
+    if (!this.engine.enabled || format === null
+      || source.sourceBytes > Math.min(this.engine.inputLimit, format === "DXF" ? CAD_DXF_INPUT_BYTES : Infinity)) return;
+    await this.repository.request(source, format === "STEP" ? "GB" : "UTF8", client);
   }
 
   async create(source: CadArchiveSource, actorId: string, viewId: string, codepage: CadNameCodepage) {

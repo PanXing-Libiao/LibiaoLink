@@ -2,13 +2,15 @@ import { Injectable, Logger } from "@nestjs/common";
 import { and, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import { cadArtifacts, cadRetiredObjects } from "../../db/schema/cad.js";
-import { files } from "../../db/schema/files.js";
-import { ObjectStorage } from "../../storage/index.js";
+import { files, fileVersions } from "../../db/schema/files.js";
+import { ObjectStorage, versionFileName } from "../../storage/index.js";
 import { CadArchiveRepository } from "./cad-archive.repository.js";
 import { CadEngineClient } from "./cad-engine.client.js";
-import { CAD_FORMAT_VERSIONS } from "./cad-release.js";
+import { cadAutoCacheFormat } from "./cad-inputs.js";
+import { CAD_FORMAT_VERSIONS, cadFormatVersions } from "./cad-release.js";
 import type { CadNameCodepage } from "@libiaolink/contracts";
 
+const AUTO_CACHE_BATCH = 8;
 const currentVersion = sql`case ${cadArtifacts.sourceFormat}
   when 'STEP' then ${CAD_FORMAT_VERSIONS.STEP} when 'DXF' then ${CAD_FORMAT_VERSIONS.DXF}
   when 'DWG' then ${CAD_FORMAT_VERSIONS.DWG} end`;
@@ -31,6 +33,7 @@ export class CadCacheMaintenance {
     if (!this.engine.enabled || Date.now() < this.nextRun) return;
     this.nextRun = Date.now() + 60_000;
     await this.warmRecent();
+    await this.warmUncached();
     await this.retireReplaced();
     await this.purgeRetired();
   }
@@ -52,6 +55,45 @@ export class CadCacheMaintenance {
         resourceSetHash: artifact.resourceSetHash }, artifact.nameCodepage as CadNameCodepage);
       await this.database.db.update(cadArtifacts).set({ lastAccessedAt: sql`greatest(${cadArtifacts.lastAccessedAt}, ${artifact.lastAccessedAt})` })
         .where(eq(cadArtifacts.id, warmed.id));
+    }
+  }
+
+  /** Discover current versions uploaded before silent pre-parse and enqueue only missing caches. */
+  async warmUncached(): Promise<void> {
+    const compatible = (format: "STEP" | "DWG") =>
+      sql.join(cadFormatVersions(format).map((version) => sql`${version}`), sql.raw(", "));
+    const cached = sql`exists (select 1 from cad_artifacts cached_artifact
+      where cached_artifact.file_id = ${fileVersions.fileId}
+        and cached_artifact.version_id = ${fileVersions.id}
+        and cached_artifact.source_sha256 = ${fileVersions.contentHash}
+        and cached_artifact.source_bytes = ${fileVersions.sizeBytes}
+        and cached_artifact.name_codepage = (case when lower(${fileVersions.objectKey}) like '%.dwg' then 'UTF8' else 'GB' end)
+        and cached_artifact.resource_set_hash = ${"0".repeat(64)}
+        and ((lower(${fileVersions.objectKey}) ~ '\\.(step|stp)$' and cached_artifact.format_version in (${compatible("STEP")}))
+          or (lower(${fileVersions.objectKey}) ~ '\\.dwg$' and cached_artifact.format_version in (${compatible("DWG")}))))`;
+    const filters = [
+      sql`${files.status} <> 'recycled'`,
+      sql`lower(${fileVersions.objectKey}) ~ '\\.(step|stp|dwg)$'`,
+      sql`${fileVersions.sizeBytes} > 0 and ${fileVersions.sizeBytes} <= ${this.engine.inputLimit}`,
+      sql`not ${cached}`,
+    ];
+    if (!this.engine.dwgEnabled) filters.push(sql`lower(${fileVersions.objectKey}) !~ '\\.dwg$'`);
+    const rows = await this.database.db.select({
+      fileId: files.id, versionId: fileVersions.id, fileName: files.name, objectKey: fileVersions.objectKey,
+      sourceSHA256: fileVersions.contentHash, sourceBytes: fileVersions.sizeBytes,
+    }).from(fileVersions).innerJoin(files, eq(files.currentVersionId, fileVersions.id))
+      .where(and(...filters)).orderBy(desc(fileVersions.uploadedAt), fileVersions.id).limit(AUTO_CACHE_BATCH);
+    for (const row of rows) {
+      const sourceName = versionFileName(row.fileName, row.objectKey);
+      const format = cadAutoCacheFormat(sourceName, this.engine.dwgEnabled);
+      if (format !== "STEP" && format !== "DWG") continue;
+      try {
+        await this.archive.request({ fileId: row.fileId, versionId: row.versionId, objectKey: row.objectKey,
+          sourceSHA256: row.sourceSHA256, sourceBytes: row.sourceBytes, sourceName },
+          format === "DWG" ? "UTF8" : "GB");
+      } catch {
+        this.logger.warn("CAD 自动缓存登记失败，将在下一轮重试");
+      }
     }
   }
 
