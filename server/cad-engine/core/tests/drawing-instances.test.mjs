@@ -55,6 +55,20 @@ test('instance path is selected only above the registered draw threshold', () =>
   assert.equal(shouldProjectInstances(model, 0, true), true);
 });
 
+test("ordinary projection keys presentation styles by draw id", () => {
+  const doc = document();
+  annotation(doc);
+  presentation(doc, "a1", {status:"ready", sourceKind:"TEXT",
+    parts:[part("p-text","text","l1"), part("p-mask","mask","l2")]});
+  const styles = {};
+  const projection = projectDrawing(doc, {kind:"model",spaceId:"s1"}, null, styles);
+  const draw = Object.values(projection.draws).find(item => item.itemId === "a1");
+  assert.ok(draw, "annotation draw is projected");
+  const drawId = identity("drawing-draw", ["d1","annotation","a1",[],""]);
+  assert.deepEqual(styles[drawId].map(row => row.id), ["p-text","p-mask"]);
+  assert.equal(Object.hasOwn(styles, "undefined"), false);
+});
+
 test('a non-invertible clip placement is reported instead of silently unclipped', () => {
   const doc = document();
   doc.drawing.spaces.s1.blockInstanceIds.push('bi1');

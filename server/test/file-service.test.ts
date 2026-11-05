@@ -1281,6 +1281,32 @@ describe("FileService.createUpload（项目内内容秒传）", () => {
     expect(h.database.outbox).toHaveLength(1);
   });
 
+  it("声明的 MIME 与命中对象冲突 → 不秒传，回退普通分片上传", async () => {
+    const h = makeService();
+    h.repo.reusableBlob = {
+      objectKey: BLOB_KEY,
+      sizeBytes: 12 * MI_B,
+      contentHash: HASH,
+      mime: "image/svg+xml",
+    };
+    h.storage.heads.set(BLOB_KEY, {
+      objectKey: BLOB_KEY,
+      sizeBytes: 12 * MI_B,
+      etag: "\"shared-etag\"",
+      contentType: "application/octet-stream",
+      lastModified: NOW,
+    });
+
+    const result = await h.service.createUpload(
+      { projectId: PROJECT, name: "冲突.svg", sizeBytes: 12 * MI_B, mime: "image/png", contentHash: HASH, intent: "version" },
+      ACTOR,
+    );
+
+    expect(result.upload).not.toBeNull();
+    expect(h.repo.insertedSessions).toHaveLength(1);
+    expect(h.repo.insertedVersions).toHaveLength(0);
+  });
+
   it("内容秒传候选对象已消失 → 不落草稿文件，回退普通分片上传", async () => {
     const h = makeService();
     h.repo.reusableBlob = {

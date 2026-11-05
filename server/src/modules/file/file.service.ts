@@ -259,7 +259,14 @@ export class FileService {
         body.sizeBytes,
         extensionOf(effectiveName),
       );
-      if (reusableBlob !== null) {
+      const declaredMime = normalizeMime(body.mime);
+      const reusableMime = normalizeMime(reusableBlob?.mime);
+      const mimeCompatible =
+        declaredMime === null ||
+        declaredMime === OCTET_STREAM_MIME ||
+        reusableMime === null ||
+        declaredMime === reusableMime;
+      if (reusableBlob !== null && mimeCompatible) {
         const instantFile = await this.tryCreateInstantUpload({
           projectId: body.projectId,
           blob: reusableBlob,

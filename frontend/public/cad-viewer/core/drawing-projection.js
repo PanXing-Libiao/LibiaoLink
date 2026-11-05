@@ -155,7 +155,7 @@ export function projectDrawing(document,target,effectiveLayers=null,presentation
   if(visitor?.draw)visitor.draw(drawId,draw,layerId);
   else draws[drawId]=draw;
   if(effectiveLayers)effectiveLayers[drawId]=layerId;
-  return draw;
+  return [drawId,draw];
  }
  function members(space){
   const rows=[];
@@ -240,9 +240,9 @@ export function projectDrawing(document,target,effectiveLayers=null,presentation
     const availability=flags[itemId]?.presentationGeometry==='missing'||presentation?.status==='missing'||item.geometry&&item.geometry.type==='unsupported'&&presentation?.status!=='ready'?'unsupported':'ready';
     const style=resolve(item.style,layerId,chain,itemId,viewport);
     const local=mul(transform,item.localFromOwner);
-    const draw=addDraw('entity',itemId,path,local,visibility,availability,style,
+    const [drawId,draw]=addDraw('entity',itemId,path,local,visibility,availability,style,
      item.displayRepresentationId||(availability==='ready'&&annotationItems[itemId]?.mode!=='view-dependent'?identity('representation',[itemId]):null),viewport?viewport.id:null,layerId,clips,chain);
-    resolvePresentation(itemId,item.style,layerId,chain,path,viewport,visibility,'entity',draw,draw.id);
+    resolvePresentation(itemId,item.style,layerId,chain,path,viewport,visibility,'entity',draw,drawId);
    }else if(kind==='annotation'){
     const info=flags[itemId]||{};
     const layerId=effectiveLayer(item.layerId,chain);
@@ -251,9 +251,9 @@ export function projectDrawing(document,target,effectiveLayers=null,presentation
     const sourceStyle=annotationStyles[itemId]||{color:{mode:'by-layer'},plot:true};
     const style=resolve(sourceStyle,layerId,chain,itemId,viewport);
     if(item.fontResourceId)style.fontResourceId=item.fontResourceId;
-    const draw=addDraw('annotation',itemId,path,transform,visibility,availability,style,
+    const [drawId,draw]=addDraw('annotation',itemId,path,transform,visibility,availability,style,
      annotationItems[itemId]?.status==='ready'?identity('representation',[itemId]):null,viewport?viewport.id:null,layerId,clips,chain);
-    resolvePresentation(itemId,sourceStyle,layerId,chain,path,viewport,visibility,'annotation',draw,draw.id);
+    resolvePresentation(itemId,sourceStyle,layerId,chain,path,viewport,visibility,'annotation',draw,drawId);
    }else{
     const definition=m.blocks[item.definitionId];
     const layerId=effectiveLayer(item.layerId,chain);
