@@ -18,6 +18,8 @@ const PRODUCTION_BASE = {
 describe("生产环境部门权限开关", () => {
   it("站外深链默认生产域名，本地无需配置", () => {
     expect(loadEnv({ DATABASE_URL: "postgres://test/test" }).PUBLIC_APP_BASE_URL).toBe("https://pm.libiaorobot.com");
+    expect(loadEnv({ DATABASE_URL: "postgres://test/test" }).PROJECT_EXPORT_MODE).toBe("auto");
+    expect(() => loadEnv({ DATABASE_URL: "postgres://test/test", PROJECT_EXPORT_MODE: "invalid" })).toThrow(/PROJECT_EXPORT_MODE/);
   });
 
   it("生产缺省或 false 均拒绝启动，避免部门规则静默失效", () => {
