@@ -208,6 +208,7 @@ import { fieldText, fullDateText, isLocalizedLocale, stageText, statusText, text
  *   「问题追踪」= 问题描述 / 解决方案或建议 / 问题附图（图片 = 与表格 / 抽屉同一套 `AttachmentPicker`：
  *   粘贴 / 选文件增图、× 删图、改名、点开大图）；**下拉口径保持原来的行内编辑** ——
  *   「关联阶段」（日报）/ 「问题归类」「问题是否处理」（问题）三处仍是点单元格直接改、不进弹窗；
+ *   2026-11-05 起「日报记录」弹窗另补施工人数与关联阶段，原行内入口保留；
  *   表格里点空白 / 点行体依旧不进入编辑（编辑只走行尾按钮）；行尾两枚按钮共用**预留槽位**，
  *   展开只在槽内长大、列宽 / 表宽一格不动（沿用「鼠标触碰表格会动」的修法）。
  */
@@ -216,7 +217,8 @@ import { fieldText, fullDateText, isLocalizedLocale, stageText, statusText, text
  *  文字两列 + 关联阶段多选 —— 时间 / 填写者不动（「编辑后时间不变」）。
  *  Push 212 续（业务口径「图片也要可以增删」）：追加**现场工作附图**（photos）—— 抽屉里与两列文字共用同一份 patchReport 内存态。
  *  Push 217 续⑥（业务口径「施工人数抽屉也要可以编辑」）：追加**施工人数**（headcount，契约 number | null，null = 清空）。
- *  Push 223：文字两列 / 现场工作附图改走行尾「编辑」弹窗（表格内只做展示），「关联阶段」仍是行内多选。 */
+ *  Push 223：文字两列 / 现场工作附图改走行尾「编辑」弹窗（表格内只做展示），「关联阶段」仍是行内多选。
+ *  2026-11-05：日报编辑弹窗补齐施工人数 / 关联阶段 / 只读项目与时间，行内入口继续保留。 */
 export type ReportPatch = Partial<Pick<DailyReport, "doneWork" | "plan" | "stageNames" | "photos" | "headcount">>;
 
 /** 行内编辑能改的问题字段（Push 208）：问题描述 / 问题归类 / 解决方案或建议 / 问题状态 —— 日期不动（「编辑后时间不变」）。
@@ -2000,10 +2002,12 @@ type RecordEditSecondaryAction = {
   onClick: () => void;
 };
 
-function RecordEditModal({ label, hint, submitLabel, pending, canSubmit, error, onClose, onSubmit, secondaryAction, children }: {
+function RecordEditModal({ label, hint, submitLabel, pending, canSubmit, error, onClose, onSubmit, secondaryAction, wide = false, children }: {
   label: string;
   hint: string;
   submitLabel: string;
+  /** 日报字段较多时加宽弹窗；问题弹窗沿用原来宽度。 */
+  wide?: boolean;
   /** 提交中（主按钮转「保存中…」并禁用）。 */
   pending: boolean;
   canSubmit: boolean;
@@ -2027,6 +2031,8 @@ function RecordEditModal({ label, hint, submitLabel, pending, canSubmit, error, 
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [onClose]);
+  /** 弹窗打开时锁住背景页滚动，避免滚轮穿透到下方列表（日报 / 问题共用）。 */
+  useEffect(() => lockBodyScroll(), []);
   /** 键盘焦点陷阱（Push 264 追订）：编辑弹窗打开时焦点进弹窗、Tab 在弹窗内循环、关闭还原到触发按钮。 */
   const trapRef = useFocusTrap<HTMLDivElement>();
   return (
@@ -2037,13 +2043,17 @@ function RecordEditModal({ label, hint, submitLabel, pending, canSubmit, error, 
         role="dialog"
         aria-modal="true"
         aria-label={label}
+        data-focus-container=""
+        tabIndex={-1}
         data-record-edit-modal=""
-        className="relative flex max-h-[calc(100vh-3rem)] w-full max-w-md flex-col rounded-2xl bg-white p-6 shadow-[0_24px_60px_rgba(0,0,0,0.25)]"
+        className={"relative flex max-h-[calc(100vh-3rem)] w-full flex-col rounded-2xl bg-white p-6 shadow-[0_24px_60px_rgba(0,0,0,0.25)] outline-none " + (wide ? "max-w-2xl" : "max-w-md")}
       >
         <h2 className="text-lg font-bold text-zinc-900">{label}</h2>
         <p className="mt-1 text-sm text-zinc-500">{hint}</p>
         <form className="mt-5 flex min-h-0 flex-1 flex-col" onSubmit={onSubmit}>
-          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-0.5">{children}</div>
+          <ScrollArea viewportClassName="min-h-0 flex-1" className="space-y-4 px-0.5 overscroll-contain" ariaLabel={label}>
+            {children}
+          </ScrollArea>
           {error === null ? null : (
             <p role="alert" className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
               {error}
@@ -2091,12 +2101,12 @@ type ProjectGroupSyncState =
   | { status: "ready"; binding: ProjectGroupBinding }
   | { status: "error" };
 
-/** 「日报记录」行编辑弹窗（Push 223 · 业务口径「日报记录 … 这个编辑也要和干系人同款」+「文字和图片编辑要同款」）：
- *  只收**文字 + 图片**两类字段 —— 当日完成工作 / 明日计划 / 现场工作附图；「关联阶段」是下拉口径，
- *  按业务要求**保持原来的行内编辑**，不进弹窗。
- *  PATCH 合并语义与「干系人」弹窗一致：只提交改动过的键（文字保存前统一过自动序号 renumberLines）。 */
-function ReportEditModal({ projectId, row, onClose, onSubmit, sync }: {
-  projectId: string;
+/** 「日报记录」行编辑弹窗（2026-11-05 业务口径「编辑的内容要包括图二填写的部分，现在只有一部分」）：
+ *  与「日报填写」同字段面 —— 项目名称 / 时间 / 提交人只读，今日施工人数 / 关联阶段 / 当日完成工作 /
+ *  明日计划 / 现场工作附图可编辑。PATCH 合并语义与「干系人」弹窗一致：只提交改动过的键
+ *  （文字保存前统一过自动序号 renumberLines）。 */
+function ReportEditModal({ project, row, onClose, onSubmit, sync }: {
+  project: Project;
   row: DailyReport;
   onClose: () => void;
   /** 提交：返回 null = 成功（父层关窗）；返回文案 = 失败提示，窗口保持打开。 */
@@ -2106,6 +2116,9 @@ function ReportEditModal({ projectId, row, onClose, onSubmit, sync }: {
 }) {
   const locale = useLocale();
   const t = useT();
+  const localize = useLocalizedTranslator();
+  const [headcount, setHeadcount] = useState(row.headcount === null ? "" : String(row.headcount));
+  const [stages, setStages] = useState<string[]>(row.stageNames);
   const [doneWork, setDoneWork] = useState(row.doneWork);
   const [plan, setPlan] = useState(row.plan);
   const [photos, setPhotos] = useState<ReportPhoto[]>(row.photos);
@@ -2115,6 +2128,8 @@ function ReportEditModal({ projectId, row, onClose, onSubmit, sync }: {
   /** 保存前统一过一遍自动序号（与表格行内编辑 / 「日报填写」提交同一口径）。 */
   const nextDoneWork = renumberLines(doneWork);
   const nextPlan = renumberLines(plan);
+  const parsedHeadcount = headcount.trim() === "" ? null : Number.parseInt(headcount, 10);
+  const nextHeadcount = parsedHeadcount === null || Number.isNaN(parsedHeadcount) ? null : Math.max(0, parsedHeadcount);
   /** 图片还在上传 / 上传失败先拦住（复用「日报填写」提交那套文案）。 */
   const uploadBlocked = uploadBlockingMessage({ ...emptyDraft(), photos }, locale);
   /** 「当日完成工作」是契约必填 —— 清空不允许保存（与行内编辑同口径）。 */
@@ -2123,6 +2138,12 @@ function ReportEditModal({ projectId, row, onClose, onSubmit, sync }: {
   /** 只提交改动过的键（与干系人弹窗的 PATCH 合并语义一致）；无改动 = 空 patch（父层直接关窗）。 */
   const changedPatch = (): ReportPatch => {
     const patch: ReportPatch = {};
+    if (nextHeadcount !== row.headcount) {
+      patch.headcount = nextHeadcount;
+    }
+    if (stages.join("|") !== row.stageNames.join("|")) {
+      patch.stageNames = stages;
+    }
     if (nextDoneWork !== row.doneWork) {
       patch.doneWork = nextDoneWork;
     }
@@ -2163,6 +2184,7 @@ function ReportEditModal({ projectId, row, onClose, onSubmit, sync }: {
   };
   return (
     <RecordEditModal
+      wide
       label={t("report.modal.report.title")}
       hint={t("report.modal.report.hint", { date: isoDateText(locale, row.date), author: row.author })}
       submitLabel={t("report.modal.submit")}
@@ -2180,6 +2202,50 @@ function ReportEditModal({ projectId, row, onClose, onSubmit, sync }: {
         onClick: handleSync,
       }}
     >
+      <div className="grid gap-4 sm:grid-cols-2">
+        <label className="block">
+          <span className="mb-1.5 block text-sm font-medium text-zinc-700">{fieldText(locale, "项目名称")}</span>
+          <span data-record-field="projectName" className="mt-1 flex min-h-[38px] items-center rounded-lg border border-zinc-100 bg-zinc-50 px-2.5 py-2 text-sm text-zinc-600">
+            {localize(project.description)}{isLocalizedLocale(locale) ? " (" + project.code + ")" : "（" + project.code + "）"}
+          </span>
+        </label>
+        <label className="block">
+          <span className="mb-1.5 block text-sm font-medium text-zinc-700">{fieldText(locale, "时间")}</span>
+          <span data-record-field="date" className="mt-1 flex min-h-[38px] items-center rounded-lg border border-zinc-100 bg-zinc-50 px-2.5 py-2 text-sm text-zinc-600">
+            {isoDateText(locale, row.date)}
+          </span>
+        </label>
+        <label className="block">
+          <span className="mb-1.5 block text-sm font-medium text-zinc-700">{fieldText(locale, "提交人")}</span>
+          <span data-record-field="author" className="mt-1 flex min-h-[38px] items-center rounded-lg border border-zinc-100 bg-zinc-50 px-2.5 py-2 text-sm text-zinc-600">
+            {row.author}
+          </span>
+        </label>
+        <label className="block">
+          <span className="mb-1.5 block text-sm font-medium text-zinc-700">{fieldText(locale, "今日施工人数")}</span>
+          <input
+            data-record-field="headcount"
+            type="number"
+            min="0"
+            max="100000"
+            step="1"
+            className={FORM_INPUT + " mt-1"}
+            value={headcount}
+            onChange={(event) => setHeadcount(event.target.value)}
+            placeholder={t("report.placeholder.headcount")}
+          />
+        </label>
+      </div>
+      <div>
+        <span className="mb-1.5 block text-sm font-medium text-zinc-700">{fieldText(locale, "关联阶段")}</span>
+        <span className="mb-1.5 block text-[11px] text-zinc-400">{t("report.hint.stages")}</span>
+        <StageChecklist
+          values={stages}
+          onChange={setStages}
+          dataField="record-stages"
+          boxClass="max-h-44 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1.5"
+        />
+      </div>
       <label className="block">
         <span className="mb-1.5 block text-sm font-medium text-zinc-700">
           {fieldText(locale, "当日完成工作")}<span className="ml-1 text-xs font-normal text-zinc-400">{t("report.required")}</span>
@@ -2195,7 +2261,7 @@ function ReportEditModal({ projectId, row, onClose, onSubmit, sync }: {
       </label>
       <label className="block">
         <span className="mb-1.5 block text-sm font-medium text-zinc-700">
-          {fieldText(locale, "明日计划")}<span className="ml-1 text-xs font-normal text-zinc-400">{t("report.optional.clear")}</span>
+          {fieldText(locale, "明日计划")}
         </span>
         <GrowingTextarea
           data-record-field="plan"
@@ -2211,7 +2277,7 @@ function ReportEditModal({ projectId, row, onClose, onSubmit, sync }: {
           {fieldText(locale, "现场工作附图")}
         </span>
         <AttachmentPicker
-          projectId={projectId}
+          projectId={project.id}
           variant="compact"
           field="photos"
           size="lg"
@@ -2226,8 +2292,7 @@ function ReportEditModal({ projectId, row, onClose, onSubmit, sync }: {
 }
 
 /** 「问题追踪」行编辑弹窗（Push 223 · 业务口径「问题追溯里面 这个编辑也要和干系人同款」+「文字和图片编辑要同款」）：
- *  只收**文字 + 图片**两类字段 —— 问题描述 / 解决方案或建议 / 问题附图；「问题归类」「问题是否处理」是下拉口径，
- *  按业务要求**保持原来的行内编辑**，不进弹窗。
+ *  可编辑问题描述 / 问题归类 / 问题处理人 / 解决方案或建议 / 问题附图；「问题是否处理」仍走行内编辑。
  *  Push 244（业务口径「这个负责人要可以编辑」）：追加**问题处理人 / 责任人**单选（成员搜索下拉 + 首项「待分派」）。 */
 function IssueEditModal({ projectId, members, row, onClose, onSubmit }: {
   projectId: string;
@@ -2239,6 +2304,7 @@ function IssueEditModal({ projectId, members, row, onClose, onSubmit }: {
   const locale = useLocale();
   const t = useT();
   const [title, setTitle] = useState(row.title);
+  const [categories, setCategories] = useState<string[]>(row.categories);
   const [solution, setSolution] = useState(row.solution);
   const [photos, setPhotos] = useState<ReportPhoto[]>(row.photos);
   /** 问题处理人 / 责任人（Push 244）："" = 待分派（落值时转契约 null）。 */
@@ -2252,12 +2318,15 @@ function IssueEditModal({ projectId, members, row, onClose, onSubmit }: {
   /** 图片还在上传 / 上传失败先拦住（复用「日报填写」提交那套文案）。 */
   const uploadBlocked = uploadBlockingMessage({ ...emptyDraft(), photos }, locale);
   /** 「问题描述」是契约必填（清空会被服务端拒）—— 前端先拦（与行内编辑同口径）。 */
-  const canSubmit = nextTitle !== "" && uploadBlocked === "" && !pending;
+  const canSubmit = nextTitle !== "" && categories.length > 0 && uploadBlocked === "" && !pending;
   /** 只提交改动过的键（solution 空串 = 清空 → 契约 null，口径同 issueUpdateBody）。 */
   const changedPatch = (): IssuePatch => {
     const patch: IssuePatch = {};
     if (nextTitle !== row.title) {
       patch.title = nextTitle;
+    }
+    if (categories.join("|") !== row.categories.join("|")) {
+      patch.categories = categories;
     }
     if (nextSolution !== row.solution) {
       patch.solution = nextSolution;
@@ -2309,6 +2378,21 @@ function IssueEditModal({ projectId, members, row, onClose, onSubmit }: {
         />
       </label>
       <div className="block">
+        <span className="mb-1.5 block text-sm font-medium text-zinc-700">
+          {fieldText(locale, "问题归类")}<span className="ml-1 text-xs font-normal text-zinc-400">{t("report.required")}</span>
+        </span>
+        <div data-record-field="categories">
+          <MultiSelectMenu
+            values={categories}
+            options={ISSUE_CATEGORIES}
+            labelOf={(name) => fieldText(locale, name)}
+            onChange={setCategories}
+            placeholder={t("report.placeholder.issueCategory")}
+            ariaLabel={t("rp.catAria", { date: isoDateText(locale, row.raisedAt) })}
+          />
+        </div>
+      </div>
+      <div className="block">
         <span className="mb-1.5 block text-sm font-medium text-zinc-700">{fieldText(locale, "问题处理人 / 责任人")}</span>
         <div data-record-field="owner">
           <SearchSelect
@@ -2323,7 +2407,7 @@ function IssueEditModal({ projectId, members, row, onClose, onSubmit }: {
       </div>
       <label className="block">
         <span className="mb-1.5 block text-sm font-medium text-zinc-700">
-          {fieldText(locale, "解决方案或建议")}<span className="ml-1 text-xs font-normal text-zinc-400">{t("report.optional.clear")}</span>
+          {fieldText(locale, "解决方案或建议")}
         </span>
         <GrowingTextarea
           data-record-field="solution"
@@ -3843,7 +3927,7 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, focusRep
       {/* 行编辑弹窗（Push 223）：日报 / 问题各一枚 —— 与「干系人」弹窗同款；取消 / Esc / 点遮罩关闭，保存成功才关 */}
       {editingReport === null ? null : (
         <ReportEditModal
-          projectId={project.id}
+          project={project}
           row={editingReport}
           onClose={() => { setEditModal(null); }}
           onSubmit={(patch) => submitReportEdit(editingReport, patch)}

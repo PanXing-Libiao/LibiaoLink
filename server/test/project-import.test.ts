@@ -477,6 +477,19 @@ const REPORT_HEADER = [
   "问题是否处理",
   "解决方案或建议",
 ];
+const REPORT_HEADER_BILINGUAL = [
+  "时间time",
+  "填写者",
+  "当日完成工作Work completed today",
+  "明日计划Tomorrow\u0027s plan",
+  "现场工作附图On-site photos",
+  "现场发现问题Problem",
+  "问题归类Problem classification",
+  "解决方案或建议Solutions or suggestions",
+  "问题附图photos",
+  "问题是否处理",
+  "今日施工人数Number of people today",
+];
 const CHANGE_HEADER = ["变更时间", "变更阶段", "变更内容描述", "变更原因", "变更前", "变更后", "变更后文件", "变更后文件版本", "关联", "变更申请人", "填写者"];
 
 const ACTOR_ID = "99999999-9999-4999-8999-999999999999";
@@ -530,6 +543,23 @@ function sampleWorkbook(
   reportIssueState = "处理中",
 ): Buffer {
   return buildWorkbook(sampleSheets(extraAnchors, reportIssueState));
+}
+
+/** 与旧版中英混排导入表同形的日报表（时间time / 现场发现问题Problem / 今日施工人数…）。 */
+function bilingualReportWorkbook(): Buffer {
+  const sheets = sampleSheets();
+  sheets[1] = {
+    name: "日报及问题汇总",
+    rows: [
+      REPORT_HEADER_BILINGUAL,
+      ["2026年10月24日", "贾海洋(haiyang)", "设备拆除", "设备打包", "", "立脚高度改造", "客户原因", "已同步客户", "", "处理中", "8"],
+    ],
+    anchors: [
+      { row: 2, col: 5, media: "image1.png" },
+      { row: 2, col: 9, media: "image2.png" },
+    ],
+  };
+  return buildWorkbook(sheets);
 }
 
 const STAKEHOLDER_HEADER = [
@@ -731,6 +761,31 @@ describe("ProjectImportService.preview（导入表解析预览）", () => {
       task: "现场补装",
     });
     expect(preview.imagesManual[0]?.reason).toContain("手动上传");
+  });
+
+  it("日报表兼容中英混排历史表头：日报、问题与锚点图片都导入", async () => {
+    const h = createHarness();
+    h.nodes.library = [];
+    const preview = await h.service.preview({
+      bytes: bilingualReportWorkbook(),
+      fileName: "[LBGW-20260331-1459] UK-VANILLA-AIRROB.xlsx",
+      actorId: ACTOR_ID,
+      locale: "zh",
+    });
+    expect(preview.counts.reports).toBe(1);
+    expect(preview.counts.images).toBe(2);
+    const parsed = previewPayload(h).parse as {
+      reportSheetName: string | null;
+      reports: Array<{ reportDate: string; headcount: number | null; issue: { title: string } | null }>;
+      images: Array<{ kind: string }>;
+    };
+    expect(parsed.reportSheetName).toBe("日报及问题汇总");
+    expect(parsed.reports[0]).toMatchObject({
+      reportDate: "2026-10-24",
+      headcount: 8,
+      issue: { title: "立脚高度改造" },
+    });
+    expect(parsed.images.map((image) => image.kind)).toEqual(["onsite", "issue"]);
   });
 
   it("生产入参 sourceFile：按临时文件偏移解析并流式写入对象存储", async () => {
