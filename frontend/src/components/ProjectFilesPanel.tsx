@@ -41,6 +41,9 @@ import { Toast } from "./Toast";
  * - 两端按文件 id 去重求并集；每个变更文件取最新一次变更，拆成「变更前 / 变更后」两行，
  *   更早的变更仍在任务抽屉「变更记录」中查看。项目回收站文件不在列表内。
  *
+ * 状态口径：任务已定档时，其 draft 文件按业务可见口径显示 / 筛选为「已定档」（与变更资格、任务抽屉一致）；
+ * 变更文件仍按最新一次变更拆成「变更前 / 变更后」。
+ *
  * 交互：关键字 + 阶段 + 文件状态筛选（本地内存过滤，单项目一次取满）、50 行分页（变更前后同页）、
  * 整行点击预览、操作列下载原文件。预览 / 审计 / 下载均使用该行对应 versionId；阶段来自任务；
  * 无任务的历史任务文件显示「未关联阶段」，仅变更文件显示「变更文件」。
@@ -314,8 +317,18 @@ export function ProjectFilesPanel({ projectId, tasks }: { projectId: string; tas
     return order;
   }, []);
 
-  const statusValueOf = (row: ProjectFileRow): string =>
-    row.changeSide ?? (row.file.status === "changed" ? "after" : row.file.status);
+  /** 任务定档后，其 draft 文件在业务上视为已定档（与变更申请资格、任务抽屉口径一致）。 */
+  const statusValueOf = (row: ProjectFileRow): string => {
+    if (row.changeSide !== null) {
+      return row.changeSide;
+    }
+    const status = row.file.status;
+    const task = taskById.get(row.file.taskId ?? "");
+    if (status === "draft" && task !== undefined && task.finalizedAt !== null) {
+      return "final";
+    }
+    return status === "changed" ? "after" : status;
+  };
   const statusLabelOf = (status: string): string => {
     if (status === "before") return t("pd.files.status.before");
     if (status === "after") return t("pd.files.status.after");
@@ -592,16 +605,12 @@ export function ProjectFilesPanel({ projectId, tasks }: { projectId: string; tas
                   const task = taskById.get(file.taskId ?? "");
                   const stageKey = stageKeyOf(row);
                   const available = rowHasVersion(row);
-                  const statusLabel =
-                    row.changeSide === "before"
-                      ? t("pd.files.status.before")
-                      : row.changeSide === "after"
-                        ? t("pd.files.status.after")
-                        : statusText(locale, STATUS_LABELS[file.status] ?? file.status);
+                  const statusKey = statusValueOf(row);
+                  const statusLabel = statusLabelOf(statusKey);
                   const statusClass =
-                    row.changeSide === null
-                      ? STATUS_CLASS[file.status] ?? "bg-zinc-100 text-zinc-600"
-                      : CHANGE_SIDE_CLASS[row.changeSide];
+                    statusKey === "before" || statusKey === "after"
+                      ? CHANGE_SIDE_CLASS[statusKey]
+                      : STATUS_CLASS[statusKey] ?? "bg-zinc-100 text-zinc-600";
                   return (
                     <tr
                       key={row.key}
@@ -672,7 +681,7 @@ export function ProjectFilesPanel({ projectId, tasks }: { projectId: string; tas
                           {task?.title ?? "—"}
                         </span>
                       </td>
-                      <td data-project-file-status={row.changeSide ?? file.status} data-mobile-label={t("lib.col.status")} className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3">
+                      <td data-project-file-status={statusKey} data-mobile-label={t("lib.col.status")} className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3">
                         <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + statusClass}>
                           {statusLabel}
                         </span>

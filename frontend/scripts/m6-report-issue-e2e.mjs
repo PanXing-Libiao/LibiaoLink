@@ -607,6 +607,9 @@ check("⑥c 日报「明日计划」弹窗保存落库（只提交改动键：�
 // 图片：弹窗内 AttachmentPicker 删图 + 保存落库
 await clickSelector(rowSel1 + " [data-report-edit-slot] button");
 const photoModalOpened = await waitFor("document.querySelector(" + j("[data-record-edit-modal]") + ")!==null", 6000);
+const reportModalFocused = await waitFor("(function(){var m=document.querySelector(" + j("[data-record-edit-modal]") + ");return m!==null&&document.activeElement===m;})()", 2000);
+const reportModalFocusState = await ev("(function(){var m=document.querySelector(" + j("[data-record-edit-modal]") + ");var a=document.activeElement;return {isContainer:a===m,field:a===null?null:a.dataset.recordField};})()");
+check("⑥d1 日报编辑弹窗打开后焦点停在弹窗容器，不默认选中施工人数或其他字段", reportModalFocused === true && reportModalFocusState !== null && reportModalFocusState.isContainer === true && reportModalFocusState.field === null, JSON.stringify(reportModalFocusState));
 const photoModalScope = await ev(modalScopeExpr);
 check("⑥d 日报编辑弹窗 = 文字两列 + 图片一区（关联阶段不在弹窗里 —— 下拉保持行内）", photoModalOpened === true && photoModalScope !== null && photoModalScope.fields.join(",") === "doneWork,plan" && photoModalScope.pasteZones === 1 && photoModalScope.attachments === 1 && photoModalScope.inlineSave === 0 && photoModalScope.multiOptions === 0, JSON.stringify(photoModalScope));
 await clickSelector("[data-record-edit-modal] [data-action=remove-attachment]");
@@ -662,7 +665,13 @@ const issueRowSelQ = "[data-issue-row=" + Q + iss1.id + Q + "]";
 await clickSelector(issueRowSelQ + " [data-issue-edit-slot] button");
 const ownerModalOpened = await waitFor("document.querySelector(" + j("[data-record-edit-modal]") + ")!==null", 6000);
 const ownerModalScope = await ev(modalScopeExpr);
-check("⑥q-1 问题编辑弹窗 = 描述 / 处理人 / 解决方案三字段（Push 244 新增「问题处理人 / 责任人」单选，预填当前值）", ownerModalOpened === true && ownerModalScope !== null && ownerModalScope.fields.join(",") === "title,owner,solution", JSON.stringify(ownerModalScope));
+check("⑥q-1 问题编辑弹窗 = 描述 / 问题归类 / 处理人 / 解决方案四字段（问题归类为新增必填多选）", ownerModalOpened === true && ownerModalScope !== null && ownerModalScope.fields.join(",") === "title,categories,owner,solution", JSON.stringify(ownerModalScope));
+const modalCategoryOpened = await ev("(function(){var b=document.querySelector(" + j("[data-record-edit-modal] [data-record-field=categories] button") + ");if(b===null||b.disabled){return false;}b.click();return true;})()");
+await sleep(400);
+const modalCategoryPicked = await ev("(function(){var os=document.querySelectorAll(" + j("[data-multi-option]") + ");for(var i=0;i<os.length;i++){if(os[i].getAttribute(\"data-multi-option\")===" + j("供应商原因") + "){os[i].click();return true;}}return false;})()");
+await sleep(400);
+await clickSelector("[data-record-edit-modal] h2");
+await sleep(300);
 await clickSelector("[data-record-edit-modal] [data-record-field=owner] button");
 const ownerPickOpened = await waitFor("document.querySelector(" + j("[data-select-popover]") + ")!==null", 6000);
 const ownerPicked = await ev("(function(){var p=document.querySelector(" + j("[data-select-popover]") + ");if(p===null){return false;}var rows=p.querySelectorAll(" + j("[role=option]") + ");for(var i=0;i<rows.length;i++){if(rows[i].textContent.indexOf(" + j(userRow.display_name) + ")>=0){rows[i].click();return true;}}return false;})()");
@@ -671,7 +680,7 @@ await clickSelector("[data-record-edit-submit]");
 const ownerModalClosed = await waitFor("document.querySelector(" + j("[data-record-edit-modal]") + ")===null", 8000);
 await sleep(1200);
 const iss1Owner = (await issuesOf()).items.filter((row) => row.id === iss1.id)[0];
-check("⑥q-2 弹窗选「" + userRow.display_name + "」保存 → owner_id / owner_name 落库（version 递增）", ownerPickOpened === true && ownerPicked === true && ownerModalClosed === true && iss1Owner.ownerId === userRow.id && iss1Owner.ownerName === userRow.display_name && iss1Owner.version > iss1State3.version, JSON.stringify({ ownerId: iss1Owner.ownerId, ownerName: iss1Owner.ownerName, version: iss1Owner.version }));
+check("⑥q-2 弹窗补「供应商原因」并选「" + userRow.display_name + "」保存 → owner_id / categories 落库（version 递增）", ownerPickOpened === true && ownerPicked === true && categoryModalOpened === true && categoryModalPicked === true && ownerModalClosed === true && iss1Owner.ownerId === userRow.id && iss1Owner.ownerName === userRow.display_name && iss1Owner.categories.indexOf("供应商原因") >= 0 && iss1Owner.categories.length === 4 && iss1Owner.version > iss1State3.version, JSON.stringify({ ownerId: iss1Owner.ownerId, ownerName: iss1Owner.ownerName, categories: iss1Owner.categories, version: iss1Owner.version }));
 
 
 // 抽屉口径（Push 224 续 · 业务口径「移除图片要加二次确认」——只改抽屉）：点看板卡开抽屉 → × 只出确认条（不落库）→ 确认才摘。
