@@ -7,6 +7,7 @@ import { FileRepository } from "./file.repository.js";
 import { CadEngineClient } from "./cad-engine.client.js";
 import { CadArchiveService } from "./cad-archive.service.js";
 import { CadInputService, cadResourceFingerprint } from "./cad-inputs.js";
+import type { CadPrecompressedEncoding } from "./cad-preview.compression.js";
 
 @Injectable()
 export class CadPreviewService {
@@ -60,7 +61,7 @@ export class CadPreviewService {
     if (this.preparing >= 2) throw new ServiceUnavailableException("CAD 文件读取繁忙，请稍后重试");
     this.preparing += 1;
     try {
-      return await this.engine.submit({ bytes: await this.inputs.payload(source), ...identity });
+      return await this.engine.submit({ payload: await this.inputs.enginePayload(source), ...identity });
     } finally { this.preparing -= 1; }
   }
 
@@ -71,9 +72,9 @@ export class CadPreviewService {
     return this.engine[action]({ namespace, jobId });
   }
   async resource(action: "manifest" | "buffer", fileId: string, versionId: string, viewId: string, jobId: string,
-    actorId: string, lease?: string, sha256?: string) {
+    actorId: string, lease?: string, sha256?: string, precompressed?: CadPrecompressedEncoding) {
     const context = await this.context(fileId, versionId, viewId, actorId);
-    if (this.archive) return this.archive.resource(action, context.source, actorId, viewId, jobId, lease, sha256);
+    if (this.archive) return this.archive.resource(action, context.source, actorId, viewId, jobId, lease, sha256, precompressed);
     const { namespace } = context;
     return this.engine.file(action, { namespace, jobId, lease, sha256 });
   }

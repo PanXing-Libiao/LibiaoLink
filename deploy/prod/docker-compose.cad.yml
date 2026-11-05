@@ -12,6 +12,7 @@ services:
       CAD_ENGINE_SOCKET: /run/cad/engine.sock
       CAD_ENGINE_URL: ""
       CAD_MAX_INPUT_MIB: "${CAD_MAX_INPUT_MIB:-64}"
+      CAD_DWG_ENABLED: "${CAD_DWG_ENABLED:-true}"
     volumes:
       - cad_socket:/run/cad:ro
     depends_on:
@@ -21,6 +22,7 @@ services:
       CAD_ENGINE_SOCKET: /run/cad/engine.sock
       CAD_ENGINE_URL: ""
       CAD_MAX_INPUT_MIB: "${CAD_MAX_INPUT_MIB:-64}"
+      CAD_DWG_ENABLED: "${CAD_DWG_ENABLED:-true}"
     volumes:
       - cad_socket:/run/cad:ro
     depends_on:

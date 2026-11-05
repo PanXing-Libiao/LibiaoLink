@@ -875,6 +875,57 @@ static class Program
             throw new InvalidDataException("MLine round cap arc changed");
         Console.WriteLine("PASS: native DWG header fields remain independent, including raw -1; no interchange format; spline zero vertex guard; fit-point spline fallback; default leader arrow guard; MLine miter and round cap geometry.");
     }
+    static (int Width,int Height) PreviewDimensions(byte[] image,DwgPreview.PreviewType code)
+    {
+        if(code==DwgPreview.PreviewType.Png&&image.Length>=24
+            &&image[0]==0x89&&image[1]==0x50&&image[2]==0x4E&&image[3]==0x47)
+        {
+            int width=(image[16]<<24)|(image[17]<<16)|(image[18]<<8)|image[19];
+            int height=(image[20]<<24)|(image[21]<<16)|(image[22]<<8)|image[23];
+            return (width,height);
+        }
+        if(code==DwgPreview.PreviewType.Bmp&&image.Length>=26)
+        {
+            int offset=image.Length>=18&&image[0]==0x42&&image[1]==0x4D?18:4;
+            int width=BitConverter.ToInt32(image,offset);
+            int height=Math.Abs(BitConverter.ToInt32(image,offset+4));
+            return (width,height);
+        }
+        return (0,0);
+    }
+    static void Preview(string inputPath,string outputFolder)
+    {
+        string input=Path.GetFullPath(inputPath);string output=Path.GetFullPath(outputFolder);
+        Directory.CreateDirectory(output);
+        string metaPath=Path.Combine(output,"preview.json"),imagePath=Path.Combine(output,"preview.bin");
+        using var stream=File.OpenRead(input);
+        byte[] signature=new byte[6];stream.ReadExactly(signature);
+        string version=System.Text.Encoding.ASCII.GetString(signature);
+        if(!System.Text.RegularExpressions.Regex.IsMatch(version,"^AC10[0-9]{2}$"))
+            throw new InvalidDataException("Not native DWG bytes");
+        stream.Position=0;
+        using var reader=new DwgReader(stream);
+        var preview=reader.ReadPreview();
+        string? contentType=preview?.Code switch
+        {
+            DwgPreview.PreviewType.Bmp=>"image/bmp",
+            DwgPreview.PreviewType.Png=>"image/png",
+            _=>null
+        };
+        if(preview is null||preview.RawImage.Length==0||preview.RawImage.Length>4*1024*1024||contentType is null)
+        {
+            string reason=preview is null?"missing":contentType is null?"unsupported-preview-format":"preview-too-large";
+            File.WriteAllText(metaPath,JsonSerializer.Serialize(new{available=false,reason}));
+            Console.WriteLine(JsonSerializer.Serialize(new{available=false,bytes=preview?.RawImage.Length??0,reason}));
+            return;
+        }
+        byte[] image=preview.RawImage;
+        File.WriteAllBytes(imagePath,image);
+        var (width,height)=PreviewDimensions(image,preview.Code);
+        string sha=Convert.ToHexString(SHA256.HashData(image)).ToLowerInvariant();
+        File.WriteAllText(metaPath,JsonSerializer.Serialize(new{available=true,contentType,width,height,byteLength=image.Length,imageSHA256=sha}));
+        Console.WriteLine(JsonSerializer.Serialize(new{available=true,bytes=image.Length,width,height,contentType}));
+    }
     static int Main(string[] args)
     {
         try { return Run(args); }
@@ -891,6 +942,7 @@ static class Program
     static int Run(string[] args)
     {
         if(args.Length==2&&args[0]=="--self-test"){SelfTest(args[1]);return 0;}
+        if(args.Length==3&&args[0]=="--preview"){Preview(args[1],args[2]);return 0;}
         if(args.Length!=2)throw new ArgumentException("DWG source path and private output folder are required");
         string input=Path.GetFullPath(args[0]);output=Path.GetFullPath(args[1]);
         Directory.CreateDirectory(output);

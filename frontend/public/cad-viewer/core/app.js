@@ -7,13 +7,13 @@ import { fromUnified } from './unified-viewer.js';
 import {hydrateBinary} from './binary-transport.js';
 import {unpackMetadata} from './compact-transport.js?v=step-0.3-packed';
 import {convertJob} from './conversion-jobs.js';
-import {resourcePackage,collectResources} from './dxf-resources.js?v=dxf-0.15.0';
+import {resourcePackage,collectResources} from './dxf-resources.js?v=dxf-0.17.1';
 import {batchProjection,identityAtHit} from './render-batches.js';
 import {createHighlighter,drawsForProduct,drawsForScene} from './highlight.js';
 import {directProjection} from './direct-projection.js?v=step-0.2';
 import {appendNonMeshableUI,clearNonMeshableUI} from './nonmeshable-ui.js?v=step-combined';
 import {appendMeshRepairUI,repairManifest} from './mesh-repair-ui.js?v=step-combined';
-import {mountDrawingViewer} from './drawing-viewer.js?v=dxf-0.15.0';
+import {mountDrawingViewer} from './drawing-viewer.js?v=dxf-0.17.1';
 import {fitCameraToBox,updateCameraRange,captureCameraView,restoreCameraView} from './camera-framing.js';
 const query=new URLSearchParams(location.search),binaryMode=query.get('transport')==='binary',batchMode=query.get('batch')==='1';
 // The unified pipeline is the default entry; ?pipeline=legacy keeps the old EASM bridge for regression.
@@ -170,7 +170,9 @@ function installDrawing(envelope,info){
  if(model){scene.remove(model);dispose(model);model=null;}
  currentEnvelope=envelope;currentDrawObjects=null;logicalCache=null;entries=[];productRows=[];viewerSession=null;syncViewer=null;meta=info;drawingViewer=null;cameraBounds=null;
  setDrawingChrome(true);
+ window.__cadTimingMark?.("drawingMountStart");
  drawingViewer=mountDrawingViewer(envelope);
+ window.__cadTimingMark?.("drawingMounted");
  $('filename').textContent=info.name||'DXF 图纸';
  $('quality').textContent=info.quality||'DXF 二维绘制';
  $('quality').classList.toggle('candidate',!!info.candidate);
@@ -193,11 +195,16 @@ function installDrawing(envelope,info){
  box.hidden=false;box.classList.toggle('incomplete',(geom.status||snap.completeness)!=='complete');
  box.textContent=readLine+' · '+geomLine+' · '+attrLine+'。';
  mark('sceneTreeReady');
+ window.__cadTimingMark?.("drawingReadyWaitStart");
  const installedDrawing=drawingViewer,token=loadSeq;
  installedDrawing.ready.then(()=>{
   if(token!==loadSeq||drawingViewer!==installedDrawing)return;
   mark('mediaDecoded');mark('installed');mark('viewerInstallEnd');
   window.__drawingInstalled=true;finishModelFrame();
+ },()=>{});
+ installedDrawing.overviewPaint.then(()=>{
+  if(token!==loadSeq||drawingViewer!==installedDrawing)return;
+  window.__drawingVisible=true;mark('firstVisiblePaint');
  },()=>{});
 }
 function install(root,info,session=null,sync=null,projection=null){
@@ -275,7 +282,7 @@ async function busy(task,{name='所选文件'}={}){
  const load={token,controller,requestId,startedAt,name};activeLoad=load;
  clearPreview();pendingPartialFile=null;window.__lastError=null;showLoadState('loading',name);
  loading=true;$('cancelLoad').hidden=false;$('busy').textContent='正在解析文件…';$('busy').hidden=false;$('error').hidden=true;$('viewport').setAttribute('aria-busy','true');['sample','open','configuration','displayState'].forEach(id=>$(id).disabled=true);refresh();
- try{await task(load);if(token===loadSeq&&!controller.signal.aborted){await drawingViewer?.ready;if(token===loadSeq&&!controller.signal.aborted){loadState={phase:'ready',name:meta.name||name};$('filename').title=loadState.name;}}}
+ try{await task(load);if(token===loadSeq&&!controller.signal.aborted){await (drawingViewer?.overviewPaint||drawingViewer?.ready);if(token===loadSeq&&!controller.signal.aborted){loadState={phase:'ready',name:meta.name||name};$('filename').title=loadState.name;}}}
  catch(e){if(token===loadSeq&&!controller.signal.aborted){clearPreview();showLoadState('failed',name);window.__lastError={message:e.message,stack:e.stack};$('error').textContent='无法打开“'+name+'”：'+(e.message||String(e));$('error').hidden=false;const offer=$('partialOffer');if(e.payload?.partialPreviewAvailable&&pendingPartialFile){offer.hidden=false;offer.querySelector('span').textContent=`严格模式已中止：源几何存在缺失面（${e.payload.details?.entries?.length||'若干'} 处）。可手动改用部分预览；结果会明确标记为不完整。`;}else{offer.hidden=true;}}}
  finally{if(token===loadSeq)finishLoadUI(load);}
 }
@@ -369,10 +376,11 @@ function decodePayload(payload){mark('viewerInstallStart');if(!unifiedMode)retur
 export function loadPlatformModel(loader,{name='业务系统文件'}={}){
  if(query.get('platform')!=='1')throw new Error('Platform entry is disabled');
  return busy(async load=>{
+  window.__cadTimingMark?.("loaderBegin");
   const payload=await loader({signal:load.controller.signal,mark:name=>{if(load.token===loadSeq)mark(name);},record:values=>{if(load.token===loadSeq)Object.assign(loadTiming,values);},progress:text=>{if(load.token===loadSeq&&!load.controller.signal.aborted)$('busy').textContent=text;}});
   if(load.token!==loadSeq||load.controller.signal.aborted)return;
-  const projection=decodePayload(payload);sourceUpload=null;
-  install(projection.root,projection.info,projection.session,projection.sync,projection);
+  const projection=decodePayload(payload);window.__cadTimingMark?.("payloadDecoded");sourceUpload=null;
+  window.__cadTimingMark?.("installStart");install(projection.root,projection.info,projection.session,projection.sync,projection);window.__cadTimingMark?.("installEnd");
  },{name});
 }
 function loadSample(id){return busy(async load=>{const p=await packetFrom(await fetch('/api/sample?id='+(id==='demo'?'platte':id)+modelQuery+(unifiedMode&&binaryMode?'&transport=binary':'')+'&requestId='+load.requestId+(query.get('compression')==='gzip'?'&compression=gzip':''),{signal:load.controller.signal}),load);if(load.token!==loadSeq||load.controller.signal.aborted)return;const projection=decodePayload(p);const {root,info,session,sync}=projection;sourceUpload=null;install(root,info,session,sync,projection);},{name:$('sample').selectedOptions[0]?.textContent||id});}

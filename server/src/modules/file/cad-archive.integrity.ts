@@ -7,14 +7,19 @@ export const CAD_ARTIFACT_LIMIT = 512 * 1024 * 1024;
 class CadIntegrityError extends Error {}
 
 /** Validate while streaming. A corrupt object is never marked completed or accepted by the viewer. */
-export function checkedCadStream(source: Readable, expectedBytes: number, sha256: string, failed?: () => void): Readable {
+export function checkedCadStream(source: Readable, expectedBytes: number, sha256: string, failed?: () => void, idleTimeoutMs = 180_000): Transform {
   if (!Number.isSafeInteger(expectedBytes) || expectedBytes < 0 || expectedBytes > CAD_BUFFER_LIMIT) {
     source.destroy(); throw new Error("CAD resource size exceeds budget");
   }
+  if (!Number.isSafeInteger(idleTimeoutMs) || idleTimeoutMs <= 0) {
+    source.destroy(); throw new Error("CAD resource idle timeout is invalid");
+  }
   let count = 0;
   const hash = createHash("sha256");
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const checked = new Transform({
     transform(chunk: Buffer, _encoding, done) {
+      armIdleDeadline();
       count += chunk.byteLength;
       if (count > expectedBytes) { done(new CadIntegrityError("CAD resource exceeds declared size")); return; }
       hash.update(chunk); done(null, chunk);
@@ -23,10 +28,17 @@ export function checkedCadStream(source: Readable, expectedBytes: number, sha256
       done(count === expectedBytes && hash.digest("hex") === sha256 ? null : new CadIntegrityError("CAD resource integrity mismatch"));
     },
   });
-  const timer = setTimeout(() => checked.destroy(new Error("CAD resource deadline exceeded")), 90_000);
-  timer.unref();
+  const armIdleDeadline = () => {
+    if (timer) {
+      timer.refresh();
+      return;
+    }
+    timer = setTimeout(() => checked.destroy(new Error("CAD resource stalled")), idleTimeoutMs);
+    timer.unref();
+  };
+  armIdleDeadline();
   checked.once("error", (error) => { if (error instanceof CadIntegrityError) failed?.(); });
-  checked.once("close", () => { clearTimeout(timer); source.destroy(); });
+  checked.once("close", () => { if (timer) { clearTimeout(timer); timer = undefined; } source.destroy(); });
   source.once("error", (error) => checked.destroy(error));
   return source.pipe(checked);
 }

@@ -1,6 +1,6 @@
 import * as THREE from './vendor/three.module.js';
 import {OrbitControls} from './vendor/controls/OrbitControls.js';
-import {projectDrawing} from './drawing-projection.js';
+import {projectDrawing} from './drawing-projection.js?v=dxf-0.17.1';
 
 // Project only supported mesh sources, retaining the original block hierarchy.
 export function projectMeshes(document, meshIds) {
@@ -25,10 +25,10 @@ export function createDrawingMeshViewer({document:doc,viewport,geometry,meshIds,
   const renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});
   renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));renderer.setClearColor(0xf4f5f7);
   const canvas=renderer.domElement;canvas.id='drawingMeshCanvas';
-  canvas.style.cssText='position:absolute;inset:0;width:100%;height:100%;z-index:4;touch-action:none';
+  canvas.style.cssText='position:absolute;inset:0;width:100%;height:100%;z-index:1;touch-action:none';
   viewport.append(canvas);
   const status=document.createElement('div');status.setAttribute('role','status');
-  status.style.cssText='position:absolute;top:12px;left:12px;z-index:5;pointer-events:none;padding:6px 10px;border-radius:6px;background:#ffffffdd;color:#405566;font-size:12px';
+  status.style.cssText='position:absolute;top:12px;left:12px;z-index:2;pointer-events:none;padding:6px 10px;border-radius:6px;background:#ffffffdd;color:#405566;font-size:12px';
   viewport.append(status);
   const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(40,1,0.01,10000);
   camera.up.set(0,0,1);
@@ -84,7 +84,7 @@ export function createDrawingMeshViewer({document:doc,viewport,geometry,meshIds,
     camera.near=Math.max(radius/10000,1e-8);camera.far=distance+radius*100;camera.updateProjectionMatrix();controls.target.copy(center);controls.update();request();return true;}
   function resize(){const w=viewport.clientWidth||1,h=viewport.clientHeight||1;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();request();}
   function sync(layers,selected){for(const row of rows)row.visible=!(row.userData.draw.visibilityLayerIds||[]).some(id=>layers.get(id)===false);
-    status.textContent=(rows.some(row=>row.visible)?'三维对象 · 仅显示已成功解析的对象':'当前没有可见的三维面或网格')+(skipped?' · 裁剪实例暂未显示':'');
+    status.textContent=(rows.some(row=>row.visible)?'三维对象 · 仅显示已解析的面/网格':'当前没有可见的三维面或网格')+(skipped?' · 裁剪实例暂未显示':'');
     for(const object of objects)object.material.color.copy(selected.has(object.userData.id)?new THREE.Color(0xd9426f):object.userData.color);request();}
   let down=null;
   const start=e=>{down=[e.clientX,e.clientY];};

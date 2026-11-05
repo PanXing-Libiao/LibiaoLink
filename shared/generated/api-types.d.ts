@@ -10300,6 +10300,13 @@ export interface components {
             createdAt: number;
             updatedAt: number;
             artifactBytes?: number;
+            resources?: {
+                lease: string;
+                buffers: {
+                    sha256: string;
+                    byteLength: number;
+                }[];
+            };
             workerPeakRSSBytes?: number;
             workerWallSeconds?: number;
             error?: {

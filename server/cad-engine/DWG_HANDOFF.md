@@ -1,5 +1,7 @@
 # 原生 DWG → UCD 换机交接（2026-10-27）
 
+> **2026-11-05 正式生产 DWG 内存阈值修复（已部署）**：正式 `10.1.103.44` 已启用 `libiaolink/cad-sandbox:1.0.1-cad-memory-reserve-4e76ac93-20261105-1245@sha256:655143c…`，`releaseDigest=4e76ac93…`。18,311,890 B 真实 DWG 的两次失败分别为旧版 `job-scratch-quota` 与 `job-memory-quota`；新镜像把 worker 内存停止线从 `memoryBytes-256 MiB` 调到 `memoryBytes-128 MiB`。同文件隔离诊断在新阈值下约 395.5 s 完成 `partial`，artifact 374,839,080 B，worker 峰值 RSS 4,318,523,392 B、cgroup 峰值 4,962,590,720 B。api / worker / cad 已重建并 healthy，公网健康检查 200；正式生产重新打开后已按新格式版本完成冷转换：459 s、`partial`、artifact 374,839,439 B、manifest 195,634,727 B，生产 cgroup 峰值 5,023,698,944 B；后续打开复用该缓存。该图仍为 `partial`，不能宣称零缺损；`CAD_MAX_INPUT_MIB=64`，76 MiB 仍不支持。
+
 交接分支：`wmj`，本次为 Push 304 开发检查点。用户已授权交接后直接推送；没有部署、开放平台 DWG 主图或创建 PR。后续先读本文件，再读 [读取器说明](dwg-reader/README.md) 和 [业务接入计划](../../docs/superpowers/plans/2026-10-27-dwg-native-ucd.md)。
 
 ## 先明确当前状态
@@ -13,6 +15,9 @@
 > **2026-10-28 本地补充（未部署）**：查看器已修复非索引 `topology:'lines'` 被当成单点绘制的问题，真实正式图点标记 160,173→844、paint 调用 1,476,219→41,970。用 WSL systemd 复刻生产沙箱（3 GiB、无 swap、1 核、64 tasks、tmpfs 1536/384 MiB、单文件 256 MiB、禁网、只读根）完整跑通真实图：读取 22.6 s、峰值 VmRSS 2274 MiB；组装 93.5 s、峰值 1531 MiB；manifest 253.5 MiB validated，无 OOM。生产 2 GiB RSS 采样会在读取 8.1 s 中止；建议 DWG 读取档 2.5 GiB、组装 2 GiB。12 GiB 测试主机加 CAD 3 GiB 的整机预算仍未决策。沙箱位置：`D:\LibiaoLink-verify\sandbox`，报告：`D:\LibiaoLink-verify\RESULTS.md`。
 
 > **2026-10-28 本机复验补充（未部署）**：公开样本 `sample_AC1027.dwg`（1,091,959 B，SHA-256 `4c63508dd794d5cdfb56c60aded47928999b02619ea8c2ef435a4b74e60d24d6`）重新执行原生读取、UCD 组装和校验，结果为 `partial`：865 个源句柄中 11 个未找回；48 项损失（未显示原生对象 24、代理原语未映射 15、布局视口未映射 3、渐变填充未映射 2、特殊多行文字布局 1、原生显示失败 1、引线箭头 1、读取器缺句柄 1）；3 个 LAYOUT 的 `viewportIds` 均为空，3 个布局没有可见内容，对应 `layout-viewport-unmapped`。浏览器可显示模型并成功拾取线条；本结果不证明纸面布局能力。摘要保存在仓库外 `D:\liniaolink\.cad-work\dwg-review-20261028-native-01\assembly-summary.json`，逐句柄损失见同目录 `native/losses.jsonl`。正式 34,385,320 B 大图使用此前已校验产物在当前查看器打开约 147.8 万个绘制项；关闭图层后可见项减少，重新打开后恢复；按原句柄 `13EB13` 定位成功；首次就绪约 10.5 秒。该图第一个布局为空，不能用它验证纸面视口；10.5 秒只是本机无头 Chrome 的这一次运行，不是性能或资源验收。`dev/dwg-local.py` 的页面 HTML 读取已固定为 UTF-8；此前 Windows 默认代码页会在读取含中文的 `index.html` 时抛编码错误，`python -X utf8` 只是绕过该缺陷。回归 `server/test/dwg-local-encoding.test.py` 在正常与 `LC_ALL=C PYTHONUTF8=0` 下均通过；强制非 UTF-8 环境启动本机服务时 `/` 返回 200 且中文标题正常。
+
+> **2026-11-03 首开性能补充（公司测试机已部署；正式生产未部署）**：查看器大图首次打开在 Worker 可用且当前绘制量 ≤ 200,000 时优先合成完整首帧，不再因为尚无预览强制走主线程；Worker 启动、字体初始化、块提交或首帧发布失败时回退主线程分帧，`ready` 等待实际首帧发布并在失败时收口。显示行复用 `representationId`，投影阶段去掉约 14.9 万次重复 SHA-256；同一真实 Manifest 的 Node 投影 1,443 → 727 ms（163,000 draws / 453 groups / 1,478,198 展开项）。首帧 `Path2D` 改为按需创建并移除 163,000 个 draw 的重复 `sort`。测试机 `test-20261103-1638-cad-first-paint-f790edd4` 已确认真实 34 MB DWG 的 Worker 首绘成功（14 个分块内部合计 1,038 ms、无 `workerError`）；复测标签页被 Chrome 后台节流，前台墙钟耗时仍需重测。测试库无 76 MB 源 DWG，34 MB 文件仍为 `partial`，不能宣称零缺损。
+> **2026-11-04 快速概览已从平台移除（公司测试机已部署；正式生产未部署）**：服务端不再上传后预热、任务创建最多等待 6 秒或持久缓存 DWG 内嵌缩略图；前端恢复原导入步骤动画、已用时间和预计时间。测试机发布 `test-20261104-0719-cad-restore-import-animation-3c622411`，快速概览前端资源 404，真实登录测试机打开 DWG 2 秒时导入遮罩与预计时间可见；完整图纸 `readyPaint` 20.2 秒、画布有内容、console error 0。CAD 网关私有 `/preview` 仍保留在现有镜像供诊断但不被平台调用，CAD 镜像未重建。该 34,385,320 B 样本仍为 `partial`，`CAD_MAX_INPUT_MIB=64` 未改，76 MiB 未验证，不能宣称零缺损。
 
 ## 2026-10-28 阶段 A 状态（本机，未部署）
 
@@ -226,7 +231,8 @@
 - 平台契约新增 `DWG`：shared `CadFormat`、`cad-inputs`、CAD worker/仓库/预览入口、`cad_artifacts` 与迁移 `0079_cad_dwg_format.sql`。DWG 不接受配套文件或主图相对路径，结果始终为带明确损失说明的 `partial`。
 - 新增 `core/dwg_platform_convert.py` 平台 worker：从 stdin 接收原字节，调用固定 ACadSharp 读取器与既有 `assemble_native`，再通过 `FileSink` 输出现有 UCD 二进制传输。运行时由 CAD 沙箱提供 `CAD_DWG_PYTHON`、`CAD_DWG_READER`、`CAD_DWG_DOTNET`；未配置时明确失败，不静默退回 DXF。
 - 平台特性开关 `CAD_DWG_ENABLED` 默认 `false`，本机只验证代码路径；未启用时预览仍显示暂不可用并保留下载。已在公开样本上跑通 worker 输出（805,623 B manifest / 171,216 B buffer）；当时正式大图尚未在平台沙箱调度，原生读取约 2.7 GiB 托管内存、manifest 约 266 MB，目标 Linux 资源档位仍需验收。
-- 资源/门禁：DWG worker RSS 采样档 3 GiB、结果/产物上限 512 MiB、manifest 读取上限 512 MiB、沙箱单文件上限 512 MiB；这些是首版预算，不能当作生产容量结论。
+- 资源/门禁：DWG worker RSS 采样档 3.5 GiB（公司测试机 2026-11-02 已验证，容器 5 GiB）、结果/产物上限 512 MiB、manifest 读取上限 512 MiB、沙箱单文件上限 512 MiB；这些是测试机预算，不能直接当作正式生产容量结论。
+- 2026-11-02 公司测试机复验：原始失败文件 `bc45921ba82bff24204ae525d4e6b581c316cae489011bd25a6b9a397164a52b`（34,385,320 B）在新档位转为 `partial`，产物 145,268,685 B、manifest 69,197,685 B；容器 cgroup 峰值 3,477,983,232 B，`oom=0`、`oom_kill=0`。原 `job-memory-quota` 记录保留；正式生产未部署，资源上限须按 ADR-036 评审。
 - 2026-10-29 本机完整系统全链路通过：WSL Docker（PostgreSQL 18、Casdoor、SeaweedFS S3）+ 本机 API/Vite + 本机 CAD 引擎（9910），`CAD_DWG_ENABLED=true`。真实浏览器登录 Casdoor 后创建项目与任务，分片上传公开样本 `sample_AC1027.dwg`（1,091,959 B / SHA-256 `4c63508d…`），文件绑定任务（`files.task_id`）；`GET /files/{id}/preview` 返回 `viewer.kind=cad`、`format=DWG`。平台任务 `partial`，产物 976,948 B（manifest 806,068 B + 1 个 buffer 170,880 B），`cad_artifacts` 行 `state=partial`、`format_version=dwg-0.1.0/81d2cbf7…`，S3 前缀下 manifest/buffer 均存在。文件库点「预览」打开真实 DWG 查看器：canvas 1382×825、`data-cad-ready-ms=424`、`state=ready`，模型空间/图层/布局与「部分显示」提示正常；证据在仓库外 `D:\LibiaoLink-verify\local-engine\shots\`。
 - 2026-10-29 正式大图经平台全链路通过：`bc45921b…`（34,385,320 B）以 5 片上传并绑定任务；后台任务 2 分 46 秒完成，`state=partial`，产物 341,892,958 B（manifest 265,840,390 B + buffer 76,052,568 B），`cad_artifacts.format_version=dwg-0.1.0/81d2cbf7…`，S3 下 manifest/buffer 均存在；文件库预览打开正式图查看器，`data-cad-ready-ms=13382`、canvas 1382×825、`state=ready`，默认按源范围显示、部分显示提示正常。本机 harness 在 15 GiB WSL 中运行，未施加生产 cgroup；截图在仓库外 `D:\LibiaoLink-verify\local-engine\shots\`。
 - 本轮发现并修复查看器门禁：`platform-entry.js` 原先把 `partial` 只允许给 DXF，DWG 的 partial 快照被「模型来源或完整性检查未通过」拒绝；现在 DXF/DWG 均可接受 partial，DWG 按图纸处理（名称走 UTF8、隐藏名称编码切换），配套资源按钮仍仅 DXF。该文件不在 `viewerVersion` 摘要范围内（摘要只覆盖 `cad-viewer/core`），本机验证使用全新浏览器配置；旧缓存升级路径未验证。
@@ -312,7 +318,7 @@
 
 最新读取器 DLL 摘要为 `e4a63a14c851de7584d2d67deaa31ec539e40f2831830a8862263acf3cada524`。跨机器重新构建应记录自己的二进制摘要，不假定必然相同。
 
-默认读取后的 `managedLiveBytes=2941217344`、`managedCommittedBytes=3130966016`（未强制 GC）。现有生产容器是 **3 GiB cgroup 硬限制、禁 swap**；worker 另有 **2 GiB RSS 采样阈值**，并非 2 GiB 容器硬限制。GC 堆上限只约束托管堆，macOS RSS 又会受到压缩/换页影响。Linux 沙箱、总进程树、tmpfs 与完整任务预算都没有验证达标；不能盲目放宽生产配置。
+默认读取后的 `managedLiveBytes=2941217344`、`managedCommittedBytes=3130966016`（未强制 GC）。现有生产容器是 **3 GiB cgroup 硬限制、禁 swap**；worker 另有 **2 GiB RSS 采样阈值**，并非 2 GiB 容器硬限制。公司测试机 2026-11-02 已另行验证 5 GiB 容器 / 3.5 GiB DWG worker 档位，不改变正式生产。GC 堆上限只约束托管堆，macOS RSS 又会受到压缩/换页影响。正式生产 Linux 沙箱仍是上述档位；公司测试机已在 5 GiB / 3.5 GiB 档位完成真实文件验证，但不能据此直接放宽正式生产配置。
 
 原 DWG 已在独立 ODA Viewer 中以原件打开，原模型/全图截图仅在私有目录。尚未对**最新版 UCD**逐区域进行独立 CAD 视觉核验。独立 CAD 对照需继续使用原件，不能用同一解码器写回成功替代。
 

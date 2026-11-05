@@ -2,12 +2,23 @@
 // remain intact for Canvas dash phase; interaction uses their clipped intervals.
 import {ShapeUtils, Vector2} from './vendor/three.core.js';
 
+const NO_CLIPS=Object.freeze([]);
+const EMPTY_REGION=Object.freeze({
+  active:false, finiteBounds:undefined, contains:()=>true,
+  geometry({segments:lines=[],polygons:faces=[],points:marks=[]}={}) {
+    const visible={segments:lines,polygons:faces,points:marks};
+    return {...visible,bounds:boundsOf(visible.polygons,visible.segments,visible.points)};
+  },
+  apply(){}
+});
+
 export function drawingClips(draw, viewports) {
   // Instanced projection stores the viewport boundary in the retained draw's
   // space-local coordinates; resolving the paper boundary again would clip a
   // second time under a different basis.
-  if (draw.viewportClipLocal) return draw.clipRegions || [];
+  if (draw.viewportClipLocal) return draw.clipRegions || NO_CLIPS;
   const viewport = viewports[draw.viewportId];
+  if (!viewport && !(draw.clipRegions || []).length) return NO_CLIPS;
   return (viewport ? [{boundary: viewport.clipBoundary, inverted: false}] : []).concat(draw.clipRegions || []);
 }
 
@@ -117,6 +128,7 @@ function subtractConvex(polygon,triangle) {
 }
 
 export function compileClips(clips) {
+  if (!clips.length) return EMPTY_REGION;
   const contains=(x,y)=>clips.every(clip=>insideRing(x,y,clip.boundary)!==clip.inverted);
   const regions=clips.map(clip=>({...clip,bounds:boundsOf([clip.boundary]),triangles:null}));
   // Undefined means unbounded; null means an empty intersection. Infinite source

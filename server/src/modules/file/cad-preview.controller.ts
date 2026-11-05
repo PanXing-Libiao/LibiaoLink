@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Inject, Param, Post, Query, Req, Res, StreamableFile, UseGuards } from "@nestjs/common";
 import { CadJobCreateBodySchema, CadNameCodepageSchema, UuidSchema, z, type CadNameCodepage, type CadJobCreateBody } from "@libiaolink/contracts";
-import { createGzip } from "node:zlib";
+import { CAD_PRECOMPRESSED_ENCODING, cadContentEncoder, cadEncodingAccepted, preferredCadEncoding } from "./cad-preview.compression.js";
 import type { Request, Response } from "express";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
@@ -52,17 +52,24 @@ export class CadPreviewController {
   async manifest(@Param("fileId", uuid) fileId: string, @Param("versionId", uuid) versionId: string,
     @Param("viewId", view) viewId: string, @Param("jobId", view) jobId: string, @CurrentActorId() actorId: string,
     @Req() request: Request, @Res({ passthrough: true }) response: Response) {
-    const file = await this.cad.resource("manifest", fileId, versionId, viewId, jobId, actorId);
+    const accepted = request.headers["accept-encoding"];
+    const precompressed = cadEncodingAccepted(accepted, CAD_PRECOMPRESSED_ENCODING) ? CAD_PRECOMPRESSED_ENCODING : undefined;
+    const file = await this.cad.resource("manifest", fileId, versionId, viewId, jobId, actorId, undefined, undefined, precompressed);
     response.setHeader("Content-Type", "application/json; charset=utf-8");
     response.setHeader("Cache-Control", "private, no-store");
     response.setHeader("Vary", "Accept-Encoding");
     response.setHeader("X-CAD-Artifact-Bytes", String(file.artifactBytes ?? file.bytes));
     const source = file.stream;
-    const gzip = (request.headers["accept-encoding"] ?? "").split(",").some((item) => /^\s*gzip\s*(;|$)/i.test(item) && !/;\s*q=0(?:\.0*)?\s*$/i.test(item));
     response.once("close", () => source.destroy());
-    if (gzip) {
-      response.setHeader("Content-Encoding", "gzip");
-      const encoded = createGzip(); source.on("error", (error) => encoded.destroy(error));
+    if (file.encoding) {
+      response.setHeader("Content-Encoding", file.encoding);
+      response.setHeader("Content-Length", String(file.bytes));
+      return new StreamableFile(source);
+    }
+    const encoding = preferredCadEncoding(request.headers["accept-encoding"]);
+    if (encoding !== null) {
+      response.setHeader("Content-Encoding", encoding);
+      const encoded = cadContentEncoder(encoding, file.bytes); source.on("error", (error) => encoded.destroy(error));
       return new StreamableFile(source.pipe(encoded));
     }
     response.setHeader("Content-Length", String(file.bytes));
@@ -73,12 +80,26 @@ export class CadPreviewController {
   async buffer(@Param("fileId", uuid) fileId: string, @Param("versionId", uuid) versionId: string,
     @Param("viewId", view) viewId: string, @Param("jobId", view) jobId: string, @Param("lease", leaseParam) lease: string,
     @Param("sha256", hashParam) sha256: string, @CurrentActorId() actorId: string,
-    @Res({ passthrough: true }) response: Response) {
-    const file = await this.cad.resource("buffer", fileId, versionId, viewId, jobId, actorId, lease, sha256);
+    @Req() request: Request, @Res({ passthrough: true }) response: Response) {
+    const accepted = request.headers["accept-encoding"];
+    const precompressed = cadEncodingAccepted(accepted, CAD_PRECOMPRESSED_ENCODING) ? CAD_PRECOMPRESSED_ENCODING : undefined;
+    const file = await this.cad.resource("buffer", fileId, versionId, viewId, jobId, actorId, lease, sha256, precompressed);
     response.setHeader("Cache-Control", "private, no-store");
     response.setHeader("X-Content-Type-Options", "nosniff");
     const source = file.stream;
+    response.setHeader("Vary", "Accept-Encoding");
     response.once("close", () => source.destroy());
+    if (file.encoding) {
+      response.setHeader("Content-Encoding", file.encoding);
+      response.setHeader("Content-Length", String(file.bytes));
+      return new StreamableFile(source, { type: "application/octet-stream" });
+    }
+    const encoding = preferredCadEncoding(request.headers["accept-encoding"]);
+    if (encoding !== null) {
+      response.setHeader("Content-Encoding", encoding);
+      const encoded = cadContentEncoder(encoding, file.bytes); source.on("error", (error) => encoded.destroy(error));
+      return new StreamableFile(source.pipe(encoded), { type: "application/octet-stream" });
+    }
     return new StreamableFile(source, { type: "application/octet-stream", length: file.bytes });
   }
 
