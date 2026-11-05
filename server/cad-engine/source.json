@@ -24,7 +24,7 @@
     "unified/adapter.py": "2c42955764d3518803953d6f08e698f339af44c6b804c1b6a3ddac6b2c887fb5",
     "unified/build_schema.py": "30207e8fdf1c9f9eee8dc2ccb9ec5785c947078bfc8d4465ebacd292a4b0823f",
     "unified/build_schema_v2.py": "7ae95c01ccdee17d894222f03e932c2752be1418e0cd4eebe98923687a28016b",
-    "unified/canonical.py": "9fff5200fe667737e8619419ec69a50972e3fe4ec10c0a4bb27a86b29730e809",
+    "unified/canonical.py": "6c08a04d222a910050288dcd3b3d8605e917d41a8cf5c6ebbae5f65b0bc8a965",
     "unified/compact_transport.py": "4c1a09e511b863a20295c63f553c8c067e8e2b51d9cd103178325f2b62418bd3",
     "unified/conversion_jobs.py": "7e31bc6bc9fa1713ad7d95deb5c4316c61b84a1bf343ed968a8edcb0006eca94",
     "unified/dwg-reader.json": "80327cfad2181ed90eef19fc78e9db65c94ca9a39a74bb4b0bde96b582d16fdc",
@@ -40,8 +40,9 @@
     "unified/dwg_acis_seam_check.py": "afa7a93f9181e17655f4f1b6cb4e82e1708a08d88e1ed9f50b2878ffcd9cee7a",
     "unified/dwg_acis_surfaces.py": "ddeb9699a5bc2dcbd3537d114f3ce48a3641ee63f11e18ef5e9434956d89562b",
     "unified/dwg_acis_worker.py": "ecbfc3b67cd2ca750d85582c198e903605e5a6a0b8b3422816f0899109f12c3e",
-    "unified/dwg_adapter.py": "8e00d5ba830b11b8ad8af92d92e2b9bd7523c0e7956da7a8ee47365e07c3a14b",
-    "unified/dwg_pack.py": "55660bbd81fe0e28042557dcc2a207b7a017fafb1377568eae3433cfcb91dd5a",
+    "unified/dwg_adapter.py": "e72ecbad8960b2524f78a49e03d3b6d07e606bae1487f3a3bda22be48716d7d9",
+    "unified/dwg_buffers.py": "16ab5116feba025554552d752b91b497a20640283e17e9de034a3d12927b1c28",
+    "unified/dwg_pack.py": "a4af54bc5a2ba1ec9b7b5be78de76c8fa7de9cf0f775a37c332a95a048e6e03d",
     "unified/dxf_adapter.py": "6ed280dd8fa5391be1e6e84f9f4c2078ed904b22a868f6b47a8447aad4093195",
     "unified/dxf_annotations.py": "f0835f4f8e5a947b1fc6732dae7721cbd4b3d56cc0354ae4d5abf284440297d5",
     "unified/dxf_bigfont.py": "b19f3c7f858640f6f60ee5f3e70cd652d36b180dd2fbf3ac2fe7e0c71a5a715f",
@@ -496,17 +497,17 @@
     "drawing-clipping.js": "4628b6c5ff6f2ad0da563d2056ae313d2d0cd2fe8481dfcb107e05db3f6b5e34",
     "drawing-colors.js": "74c2270f611783fcd2895dee88d53d8ed6c3d01ace40044585d5b9cd09b2003f",
     "drawing-display.js": "349e32fb91e7fc55bf1309eecc229a6d44f733a58de5e4c446749a2bacfaf937",
-    "drawing-instances.js": "8ec76144b3a50277d00e8e35257f8fb96e4195d11fee32365830966d0bdafcc0",
+    "drawing-instances.js": "3b87391e8e52a87e23a23f37deb6aefd581aaee88e828baab3e41ba9c9c05532",
     "drawing-layout.js": "9a611425b8d5151225a8bf06cc9b4b950ec8d1ba138be31cf627c14c5d5ab68b",
     "drawing-media.js": "3b9558eb5ee8dc3031f6b6c823b65c1ef58f3d4cfc676a477798bb6f10ed6a27",
     "drawing-mesh-viewer.js": "a505d839ab529f8e372739e6496c673908112915c20e888f6c3eab126586468c",
     "drawing-pattern.js": "4f0aa4a0b4f6bc0d7cb0dfe477de687fa4f87d4d603db30b63c8c3e2e3c5b5b2",
     "drawing-plot-styles.js": "a2c3888311ccdaac04b38f108ab7175cd171a43f0fb82fdb9356e9431819b243",
-    "drawing-projection.js": "a6331999e696cdec7497ffa2fc56b6601e1fb55aeec4531db1458c6094a4c7ab",
+    "drawing-projection.js": "4060268bef6a42a83f6cb0977393245d6880721fc028f45498914b369fe6ab0d",
     "drawing-text-avoidance.js": "2e65f43a90f24b6a669325a3bc7687d0d1f93f22610ba937d9b8c2ae2b3e5001",
     "drawing-text.js": "1cc508f97d4d196842167e7d79b1ec50493bbff0756e89b002a58c933d02141c",
-    "drawing-viewer.js": "e4cc93ef5778c9de467652663306f8c69bb4ff862e41cbc4db99dc6a0109f06e",
-    "dwg-packed-transport.js": "36fad78365584340ac8e57bfd2952ed46ef07438e216cf828091949b6a59812f",
+    "drawing-viewer.js": "19b7a68aae893eb83d371553899e6efa0d5cc7206c62cf6d4827ad469fe80c58",
+    "dwg-packed-transport.js": "bb398080585a6a65ed1b1ec73469e5492367dd8a7a7abdedd591f856e1823b42",
     "dxf-resources.js": "219569569cc22deca979ec3f6693031bfbfe050c30eb8fe419962f4e3dab5c2c",
     "gpu/background-painter.js": "20424c614d1879af4a4b2cfa265ef0fa4b79acaebb1124c46395e94ab8d287f1",
     "gpu/gpu-strokes.js": "d95d1772bfa21723013a7cb4e9aa62368b9c9026602ffd02c4bcd26d366e89a0",
@@ -557,32 +558,35 @@
     "service.py": "3a6fbfa9bfc2b1d16d646dfc896bbaf56383a2967f4812afd7e3b745f3c3b3e9"
   },
   "formatVersions": {
-    "STEP": "step-0.3.3/dc2597ef7a5b32a1f00d11c4858673682130eae98dd136ae965adbe8e876adf0/gateway-1",
-    "DXF": "dxf-0.15.0/fa4965249dcbcadacbeb7d674ad58353296e03b8c6b3c52f7e87ae5ee8bf4657/gateway-1",
-    "DWG": "dwg-0.1.0/656609650fbcf08983ac9890ebe3aacdac915361e83d5322c8615e7bfb0411ad/gateway-1"
+    "STEP": "step-0.3.3/70f222d6fb7b0cd9c561f713bab3130dc8ce6112c588202bdba395ba5837e889/gateway-1",
+    "DXF": "dxf-0.15.0/4d4c94984f564ad555fa4d429669fdebf4625567b4d5fe57e2b66fa33f0912d8/gateway-1",
+    "DWG": "dwg-0.1.0/93b39c734af105e43384539665f9bebab16431e6170b82a8c2da627a5c5f2c3f/gateway-1"
   },
   "compatibility": {
     "STEP": [
       "step-0.3.3/b5f89279cddc47c26566bd138e4d6bf3e6abdd64b2abc6dc1effbe5370134512/gateway-1",
       "step-0.3.3/b7d8a4e715396b4e83bef72f52eb2e8da0808a3714d65b78768180da92fac531/gateway-1",
+      "step-0.3.3/dc2597ef7a5b32a1f00d11c4858673682130eae98dd136ae965adbe8e876adf0/gateway-1",
       "step-0.3.3/f103d1c40812b24c3864ae90a91ea707f734dfb5/gateway-1"
     ],
     "DXF": [
       "dxf-0.15.0/59478483af88b597cc206a13183d757d70f06ddc06d3dbf3e04f68f63b77776e/gateway-1",
       "dxf-0.15.0/84c73aa6277e1c70d3ae88b52c8be04e4ab045da8449ace5276dc0078a8dc47e/gateway-1",
-      "dxf-0.15.0/b2585a65d76ecc3332747a11a38623c9c1982701800504e00fd906e61f9c4ef3/gateway-1"
+      "dxf-0.15.0/b2585a65d76ecc3332747a11a38623c9c1982701800504e00fd906e61f9c4ef3/gateway-1",
+      "dxf-0.15.0/fa4965249dcbcadacbeb7d674ad58353296e03b8c6b3c52f7e87ae5ee8bf4657/gateway-1"
     ],
     "DWG": [
       "dwg-0.1.0/5d640ed883443261ffedb2a59c098f7b006e3b3e1450299d9111ce433e63b61c/gateway-1",
+      "dwg-0.1.0/656609650fbcf08983ac9890ebe3aacdac915361e83d5322c8615e7bfb0411ad/gateway-1",
       "dwg-0.1.0/836e31b687e7dc569c6a64398e55d74824b8dc7321141a9298c56cb89e3a6726/gateway-1",
       "dwg-0.1.0/ab0c55d6a3542c695ab8a983e6c277ef4b5dd797f6e43ee4cb55f0f3f3023ba4/gateway-1",
       "dwg-0.1.0/ae32877fb9e98f4ff5e24ab62d61c7f4a81f5665b0880fe9c3c183a60b4b35d8/gateway-1",
       "dwg-0.1.0/fdd7433b4a757f28a066b816b3230da860eefd52a5ca20d00b5887f72d382f5e/gateway-1"
     ]
   },
-  "engineDigest": "71c0ba0de35563a216b7c57a84d633d844ae91e889970198309b335c59399d3d",
-  "viewerDigest": "3da3ecadcd95ceb650a4b57d732b454772024da48e0d3552b4129a9a0d5b2145",
-  "releaseDigest": "44cbeffb5ae74592b15f81572919fb92457c60a7475e754a79fbbdade8e3ecc1",
-  "engineVersion": "step-0.3.3/71c0ba0de35563a216b7c57a84d633d844ae91e889970198309b335c59399d3d/gateway-1",
-  "viewerVersion": "viewer-3da3ecadcd95ceb650a4b57d732b454772024da48e0d3552b4129a9a0d5b2145"
+  "engineDigest": "a10cc3aed195a672eb13cb7504e97cb0cf9bf052c77735f49fcf65aa13e81abf",
+  "viewerDigest": "d7337b062301909565564a0ef5d737958c4af35ce06ea8e0d3b52bac65757efd",
+  "releaseDigest": "476815650034c69f77f244919444f4d48643201ddf5aa879de54d2a05dc50b45",
+  "engineVersion": "step-0.3.3/a10cc3aed195a672eb13cb7504e97cb0cf9bf052c77735f49fcf65aa13e81abf/gateway-1",
+  "viewerVersion": "viewer-d7337b062301909565564a0ef5d737958c4af35ce06ea8e0d3b52bac65757efd"
 }
