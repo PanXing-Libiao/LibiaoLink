@@ -1,11 +1,11 @@
-import {loadPlatformModel,inspectionRecord} from "./core/app.js?v=dxf-0.17.0";
+import {loadPlatformModel,inspectionRecord} from "./core/app.js?v=dxf-0.17.1";
 import {decodeManifest} from "./core/manifest-loader.js";
 import {LoadPhases} from "./core/load-phases.js";
 import {hydrateBinary} from './core/binary-transport.js';
 import {missingFaceManifest} from './core/nonmeshable-ui.js';
 import {repairManifest} from './core/mesh-repair-ui.js';
-import {ImportUI} from './import-ui.js?v=cad-0.21.7';
-import {trackResponse} from './import-progress.js?v=cad-0.21.7';
+import {ImportUI} from './import-ui.js?v=cad-0.21.8';
+import {trackResponse} from './import-progress.js?v=cad-0.21.8';
 
 const query=new URLSearchParams(location.search);
 const fileId=query.get('fileId'),versionId=query.get('versionId'),viewId=query.get('viewId');

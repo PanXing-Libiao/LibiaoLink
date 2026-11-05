@@ -1,4 +1,4 @@
-import { ImportClock, estimateRemaining, HISTORY_LIMIT, MAX_SAMPLE_MS } from './import-progress.js?v=cad-0.21.7';
+import { ImportClock, estimateRemaining, HISTORY_LIMIT, MAX_SAMPLE_MS } from './import-progress.js?v=cad-0.21.8';
 
 const $ = id => document.getElementById(id);
 const phaseText = {
