@@ -1,5 +1,6 @@
 """A source/dependency change must invalidate the CAD release and stale checks."""
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -19,6 +20,8 @@ class ReleaseTest(unittest.TestCase):
                 path = base / 'core' / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text('source')
+            (base / 'core/unified').mkdir(parents=True, exist_ok=True)
+            (base / 'core/unified/conversion_jobs.py').write_text('source')
             for name in release.RUNTIME_FILES:
                 (base / name).write_text('runtime')
             (base / 'dwg-reader').mkdir()
@@ -27,6 +30,13 @@ class ReleaseTest(unittest.TestCase):
             browser.mkdir()
             (browser / 'app.js').write_text('browser')
             initial = release.describe(base, browser)
+            for neutral in ('service.py', 'core/dwg_platform_convert.py', 'core/unified/conversion_jobs.py'):
+                original = (base / neutral).read_text()
+                (base / neutral).write_text('changed gateway or scheduling')
+                neutral_release = release.describe(base, browser)
+                self.assertNotEqual(initial['engineVersion'], neutral_release['engineVersion'])
+                self.assertEqual(initial['formatVersions'], neutral_release['formatVersions'])
+                (base / neutral).write_text(original)
             (browser / 'app.js').write_text('changed browser')
             viewer = release.describe(base, browser)
             self.assertEqual(initial['engineVersion'], viewer['engineVersion'])
@@ -68,6 +78,19 @@ class ReleaseTest(unittest.TestCase):
             (base / 'core/tests').mkdir()
             (base / 'core/tests/test_local.py').write_text('test only')
             self.assertEqual(dwg_spec, release.describe(base, browser))
+            current_dwg = dwg_spec["formatVersions"]["DWG"]
+            legacy_dwg = "dwg-0.1.0/" + "0" * 64 + "/gateway-1"
+            (base / release.COMPATIBILITY_FILE).write_text(
+                json.dumps({"formats": {"DWG": [legacy_dwg]}}))
+            compatible = release.describe(base, browser)
+            self.assertEqual(compatible["formatVersions"], dwg_spec["formatVersions"])
+            self.assertEqual(compatible["compatibility"]["DWG"], [legacy_dwg])
+            self.assertNotEqual(compatible["releaseDigest"], dwg_spec["releaseDigest"])
+            self.assertIn("CAD_FORMAT_COMPAT_VERSIONS", release.typescript(compatible))
+            (base / release.COMPATIBILITY_FILE).write_text(
+                json.dumps({"formats": {"DWG": [current_dwg]}}))
+            with self.assertRaisesRegex(ValueError, "current CAD format version"):
+                release.describe(base, browser)
 
 
 if __name__ == '__main__':

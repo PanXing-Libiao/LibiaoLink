@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {projectInstances, estimateDrawingDraws, shouldProjectInstances, recordVisibleBounds, multiply, transformPoint, sourceExtentsFromHeader, fitExtentsCandidate, INSTANCE_DRAW_THRESHOLD} from '../../../../frontend/public/cad-viewer/core/drawing-instances.js';
+import {projectInstances, estimateDrawingDraws, shouldProjectInstances, recordVisibleBounds, multiply, transformPoint, sourceExtentsFromHeader, fitExtentsCandidate, INSTANCE_DRAW_THRESHOLD, LOD_MIN_SCREEN_PX, LOD_BIN_RATIO, quantizeLodSize, isLodCulled} from '../../../../frontend/public/cad-viewer/core/drawing-instances.js';
 import {drawingClips} from '../../../../frontend/public/cad-viewer/core/drawing-clipping.js';
 import {projectDrawing, identity} from '../../../../frontend/public/cad-viewer/core/drawing-projection.js';
 
@@ -53,6 +53,20 @@ test('instance path is selected only above the registered draw threshold', () =>
   assert.equal(shouldProjectInstances({kind:'layout', layoutId:'l1'}, 400001), true);
   assert.equal(shouldProjectInstances({kind:'block-preview', blockId:'b1'}, 999999), false);
   assert.equal(shouldProjectInstances(model, 0, true), true);
+});
+
+test("ordinary projection keys presentation styles by draw id", () => {
+  const doc = document();
+  annotation(doc);
+  presentation(doc, "a1", {status:"ready", sourceKind:"TEXT",
+    parts:[part("p-text","text","l1"), part("p-mask","mask","l2")]});
+  const styles = {};
+  const projection = projectDrawing(doc, {kind:"model",spaceId:"s1"}, null, styles);
+  const draw = Object.values(projection.draws).find(item => item.itemId === "a1");
+  assert.ok(draw, "annotation draw is projected");
+  const drawId = identity("drawing-draw", ["d1","annotation","a1",[],""]);
+  assert.deepEqual(styles[drawId].map(row => row.id), ["p-text","p-mask"]);
+  assert.equal(Object.hasOwn(styles, "undefined"), false);
 });
 
 test('a non-invertible clip placement is reported instead of silently unclipped', () => {
@@ -549,4 +563,50 @@ test('header extents seed the default view only when they cover the drawing', ()
     'a header box dwarfing the geometry is not a usable default');
   assert.equal(fitExtentsCandidate(null, computed, 1), null);
   assert.deepEqual(fitExtentsCandidate(computed, computed, 1), computed);
+});
+
+
+test("LOD quantized bins cull only records wholly below the screen threshold", () => {
+  assert.equal(LOD_MIN_SCREEN_PX, 0.75);
+  assert.ok(LOD_BIN_RATIO > 1);
+  const justAbove = quantizeLodSize(0.76);
+  assert.ok(justAbove <= 0.76);
+  assert.equal(isLodCulled(justAbove, 1), false);
+  assert.equal(isLodCulled(quantizeLodSize(0.5), 1), true);
+  assert.equal(isLodCulled(quantizeLodSize(0.4), 2), false);
+  assert.equal(isLodCulled(quantizeLodSize(0.8), 0.5), true);
+  assert.equal(isLodCulled(quantizeLodSize(2), 1, 3), true);
+  assert.equal(isLodCulled(quantizeLodSize(4), 1, 3), false);
+  assert.equal(isLodCulled(0, 1), false);
+});
+
+test("retained draw insertion order follows source drawOrder", () => {
+  const doc = document();
+  for (const id of ["e1", "e2", "e3"]) {
+    doc.drawing.entities[id] = entity(id);
+    doc.drawing.spaces.s1.entityIds.push(id);
+  }
+  const plan = projectInstances(doc, {kind:"model", spaceId:"s1"});
+  const orders = Object.values(plan.projection.draws).map(draw => draw.drawOrder);
+  assert.deepEqual(orders, [0, 1, 2]);
+});
+
+test("different INSERT scales share one retained group with per-instance LOD decisions", () => {
+  const doc = document();
+  doc.drawing.spaces.s1.blockInstanceIds.push("bi1", "bi2");
+  doc.drawing.blocks.b1 = {id:"b1", spaceId:"bs1", drawingId:"d1", name:"B"};
+  doc.drawing.spaces.bs1 = {id:"bs1", drawingId:"d1", entityIds:["be1"], annotationIds:[], blockInstanceIds:[]};
+  doc.drawing.entities.be1 = entity("be1");
+  const scaleAt = (value, x) => [value,0,0,0, 0,value,0,0, 0,0,1,0, x,0,0,1];
+  doc.drawing.blockInstances.bi1 = {id:"bi1", ownerSpaceId:"s1", definitionId:"b1", layerId:"l0", localFromBlock:scaleAt(2, 10), style:paint(), sourceRefs:[{recordOffset:0}]};
+  doc.drawing.blockInstances.bi2 = {id:"bi2", ownerSpaceId:"s1", definitionId:"b1", layerId:"l0", localFromBlock:scaleAt(0.5, 20), style:paint(), sourceRefs:[{recordOffset:0}]};
+  const plan = projectInstances(doc, {kind:"model", spaceId:"s1"});
+  const [first, second] = plan.roots[0].group.entries;
+  assert.equal(first.group, second.group);
+  assert.equal(plan.groups.length, 2);
+  assert.notDeepEqual(first.path, second.path);
+  assert.deepEqual(first.matrix, scaleAt(2, 10));
+  assert.deepEqual(second.matrix, scaleAt(0.5, 20));
+  assert.equal(isLodCulled(quantizeLodSize(0.4), 2), false);
+  assert.equal(isLodCulled(quantizeLodSize(0.4), 0.5), true);
 });

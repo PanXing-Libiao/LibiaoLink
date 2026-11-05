@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   S3ObjectStorage,
   StorageError,
+  buildBlobObjectKey,
   buildObjectKey,
   buildUploadStagingKey,
   contentDisposition,
@@ -85,6 +86,22 @@ describe("对象键（ADR-006：定档不覆盖物理对象，版本与哈希进
     expect(() => buildObjectKey({ projectId: "../../etc", fileId: FILE_ID, seq: 1, contentHash: HASH, fileName: "a.docx" })).toThrow(/projectId/);
     expect(() => buildObjectKey({ projectId: PROJECT_ID, fileId: FILE_ID, seq: 1, contentHash: "../../x", fileName: "a.docx" })).toThrow(/contentHash/);
     expect(() => buildObjectKey({ projectId: PROJECT_ID, fileId: FILE_ID, seq: 0, contentHash: HASH, fileName: "a.docx" })).toThrow(/seq/);
+  });
+
+  it("内容寻址键按项目 / 哈希 / 扩展名隔离，历史版本键仍可读取", () => {
+    expect(buildBlobObjectKey({ projectId: PROJECT_ID, contentHash: HASH.toUpperCase(), fileName: "机械设计图纸-V2.DOCX" }))
+      .toBe("projects/" + PROJECT_ID + "/blobs/sha256/" + HASH.slice(0, 2) + "/" + HASH + ".docx");
+    expect(buildBlobObjectKey({ projectId: PROJECT_ID, contentHash: HASH, fileName: "图纸" }))
+      .toBe("projects/" + PROJECT_ID + "/blobs/sha256/" + HASH.slice(0, 2) + "/" + HASH + ".bin");
+    expect(buildObjectKey({ projectId: PROJECT_ID, fileId: FILE_ID, seq: 1, contentHash: HASH, fileName: "a.docx" }))
+      .toBe(OBJECT_KEY);
+  });
+
+  it("内容寻址键拒绝非法哈希 / 项目输入，非法扩展名回落 bin", () => {
+    expect(() => buildBlobObjectKey({ projectId: "../../etc", contentHash: HASH, fileName: "a.docx" })).toThrow(/projectId/);
+    expect(() => buildBlobObjectKey({ projectId: PROJECT_ID, contentHash: "../../x", fileName: "a.docx" })).toThrow(/contentHash/);
+    expect(buildBlobObjectKey({ projectId: PROJECT_ID, contentHash: HASH, fileName: "x." + "a".repeat(20) }))
+      .toBe("projects/" + PROJECT_ID + "/blobs/sha256/" + HASH.slice(0, 2) + "/" + HASH + ".bin");
   });
 
   it("暂存键按上传会话隔离（同一文件可并发多个会话）", () => {

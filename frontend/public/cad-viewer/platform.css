@@ -164,4 +164,8 @@ body[data-cad-state="unsupported"] #error { width: min(500px, 100%); max-width: 
   *, *::before, *::after { transition: none !important; animation: none !important; }
   .progress-indicator { left: 25%; opacity: .7; }
 }
-#drawingLimitations:not([hidden]) { margin: 0; padding: 10px 16px; border-bottom: 1px solid #e3c574; background: #fff8e5; color: #754b0e; font-size: 12px; line-height: 1.5; }
+#drawingLimitations:not([hidden]) { display: flex; align-items: flex-start; gap: 12px; margin: 0; padding: 10px 16px; border-bottom: 1px solid #e3c574; background: #fff8e5; color: #754b0e; font-size: 12px; line-height: 1.5; }
+#drawingLimitationsText { flex: 1; min-width: 0; }
+#dismissDrawingLimitations { flex: none; width: 26px; min-height: 26px; padding: 0; border-color: transparent; background: transparent; color: #754b0e; font-size: 18px; line-height: 1; }
+#dismissDrawingLimitations:hover { background: #f5e8bd; border-color: #e3c574; }
+#fullscreenViewer[aria-pressed="true"] { background: #dceef3; border-color: #5e9cac; }

@@ -70,6 +70,31 @@ export function buildObjectKey(input: ObjectKeyInput): string {
   return `projects/${input.projectId}/files/${input.fileId}/v${input.seq}/${input.contentHash.toLowerCase()}.${extensionOf(input.fileName)}`;
 }
 
+/** 项目内内容寻址键：同一项目、同一内容、同一扩展名共用一个对象。 */
+export interface BlobObjectKeyInput {
+  projectId: string;
+  /** 内容哈希（SHA-256 十六进制）；同一内容不因文件名 / 上传人 / 版本变化而复制。 */
+  contentHash: string;
+  /** 原始文件名：只取扩展名，保证预览通道能识别版本格式。 */
+  fileName: string;
+}
+
+/**
+ * 内容寻址对象键（2026-11-03）：
+ * `projects/{projectId}/blobs/sha256/{hash 前两位}/{hash}.{ext}`
+ *
+ * 同项目内重复内容共用对象；版本行仍各自保留 `file_versions.object_key`，
+ * 清理时必须按 object_key 做引用计数，不能按文件删除对象。跨项目不共享，保持租户隔离。
+ */
+export function buildBlobObjectKey(input: BlobObjectKeyInput): string {
+  if (!SHA256_HEX.test(input.contentHash)) {
+    throw new Error("内容对象键构造失败：contentHash 必须是 SHA-256 十六进制");
+  }
+  assertUuid(input.projectId, "projectId");
+  const hash = input.contentHash.toLowerCase();
+  return `projects/${input.projectId}/blobs/sha256/${hash.slice(0, 2)}/${hash}.${extensionOf(input.fileName)}`;
+}
+
 export interface PreviewArtifactKeyInput {
   /** 服务端分配的文件版本 ID，隔离不同文档与历史版本。 */
   versionId: string;

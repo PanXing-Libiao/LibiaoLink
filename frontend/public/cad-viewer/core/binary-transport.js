@@ -21,7 +21,7 @@ export function binaryDownloadPlan(manifest){
  return {resources,totalBytes:resources.reduce((sum,b)=>sum+b.byteLength,0)};
 }
 
-export async function hydrateBinary(manifest,{signal,fetcher=fetch,onPlan=()=>{}}={}){
+export async function hydrateBinary(manifest,{signal,fetcher=fetch,prefetched=new Map(),onPlan=()=>{}}={}){
  // Do not send a release request for an untrusted lease identifier.
  const token=manifest.resourceLease;
  if(!/^[a-f0-9]{48}$/.test(token))throw new Error('Invalid resource lease');
@@ -32,11 +32,17 @@ export async function hydrateBinary(manifest,{signal,fetcher=fetch,onPlan=()=>{}
  try{
   const plan=binaryDownloadPlan(manifest);onPlan({totalBytes:plan.totalBytes,uniqueBuffers:plan.resources.length});
   async function download(b){
-   const response=await fetcher(b.url,{signal:controller.signal});if(!response.ok)throw new Error('Resource unavailable');
-   const raw=await response.arrayBuffer();controller.signal.throwIfAborted();
-   if(raw.byteLength!==b.byteLength)throw new Error('Buffer length mismatch');
-   const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',raw)),x=>x.toString(16).padStart(2,'0')).join('');
-   if(hash!==b.sha256)throw new Error('Buffer hash mismatch');
+   let raw=null;
+   const ready=prefetched.get(b.sha256);
+   if(ready!==undefined)try{const value=await ready;if(value?.byteLength===b.byteLength)raw=value;}catch{}
+   controller.signal.throwIfAborted();
+   if(raw===null){
+    const response=await fetcher(b.url,{signal:controller.signal});if(!response.ok)throw new Error("Resource unavailable");
+    raw=await response.arrayBuffer();controller.signal.throwIfAborted();
+   }
+   if(raw.byteLength!==b.byteLength)throw new Error("Buffer length mismatch");
+   const hash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",raw)),x=>x.toString(16).padStart(2,"0")).join("");
+   if(hash!==b.sha256)throw new Error("Buffer hash mismatch");
    controller.signal.throwIfAborted();for(const id of b.ids)buffers.set(id,raw);
   }
   for(const b of plan.resources){

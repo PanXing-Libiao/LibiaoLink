@@ -1,12 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
-import { CadInputService } from "../src/modules/file/cad-inputs.js";
+import { CadInputIntegrityError, CadInputService, type CadArchiveSource } from "../src/modules/file/cad-inputs.js";
 
 const mainId = "a1111111-1111-4111-8111-111111111111", companionId = "b2222222-2222-4222-8222-222222222222";
 const version = "c3333333-3333-4333-8333-333333333333", companionVersion = "d4444444-4444-4444-8444-444444444444";
 const projectId = "55555555-5555-4555-8555-555555555555";
 const sha = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+async function payloadBytes(service: CadInputService, source: CadArchiveSource): Promise<Buffer> {
+  const payload = await service.enginePayload(source);
+  if (payload.body instanceof Uint8Array) return Buffer.from(payload.body);
+  const chunks: Buffer[] = [];
+  for await (const chunk of payload.body) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  return Buffer.concat(chunks);
+}
 function fixture() {
   const main = Buffer.from("main drawing"), resource = Buffer.from("font bytes");
   const files = [{ id: mainId, projectId, name: "main.dxf", status: "draft" }, { id: companionId, projectId, name: "font.shx", status: "draft" }];
@@ -33,7 +40,7 @@ describe("DXF input set authorization and content identity", () => {
     f.options.companions[0]!.path = `fonts/font.${extension}`;
     const source = await f.service.resolve(mainId, version, "actor", f.options);
     expect(source.companions[0]!.path).toBe(`fonts/font.${extension}`);
-    expect((await f.service.payload(source)).includes(Buffer.from(`fonts/font.${extension}`))).toBe(true);
+    expect((await payloadBytes(f.service, source)).includes(Buffer.from(`fonts/font.${extension}`))).toBe(true);
     f.files[1]!.projectId = "another-project";
     await expect(f.service.assertAvailable(source, "actor")).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
@@ -44,7 +51,7 @@ describe("DXF input set authorization and content identity", () => {
     expect(empty.resourceSetHash).not.toBe(source.resourceSetHash);
     const moved = await f.service.resolve(mainId, version, "actor", { ...f.options, mainPath: "other/main.dxf" });
     expect(moved.resourceSetHash).not.toBe(source.resourceSetHash);
-    expect((await f.service.payload(source)).subarray(0, 8).toString()).toBe("DXFRES1\n");
+    expect((await payloadBytes(f.service, source)).subarray(0, 8).toString()).toBe("DXFRES1\n");
     const upper = await f.service.resolve(mainId.toUpperCase(), version.toUpperCase(), "actor", { ...f.options,
       companions: f.options.companions.map((row) => ({ ...row, fileId: row.fileId.toUpperCase(), versionId: row.versionId.toUpperCase() })) });
     expect(upper.resourceSetHash).toBe(source.resourceSetHash);
@@ -60,6 +67,23 @@ describe("DXF input set authorization and content identity", () => {
     await expect(f.service.resolve(mainId, version, "actor", { ...f.options, companions: [...f.options.companions, ...f.options.companions] })).rejects.toBeDefined();
     expect(f.storage.getObjectStream).not.toHaveBeenCalled();
   });
+  it("streams DWG bytes and rejects same-size content corruption without buffering the whole file", async () => {
+    const f = fixture();
+    f.files[0]!.name = "main.dwg";
+    f.versions[0]!.objectKey = "objects/main.dwg";
+    const main = f.blobs.get("objects/main.dxf")!;
+    f.blobs.set(f.versions[0]!.objectKey, main);
+    const source = await f.service.resolve(mainId, version, "actor", { companions: [] });
+    const payload = await f.service.enginePayload(source);
+    expect(payload.body instanceof Uint8Array).toBe(false);
+    expect(payload.byteLength).toBe(main.byteLength);
+    expect(payload.sha256).toBe(sha(main));
+    expect(await payloadBytes(f.service, source)).toEqual(main);
+
+    const corrupted = Buffer.from(main); corrupted[0] = corrupted[0]! ^ 1;
+    f.storage.getObjectStream.mockResolvedValueOnce({ sizeBytes: corrupted.byteLength, stream: Readable.from(corrupted) });
+    await expect(payloadBytes(f.service, source)).rejects.toBeInstanceOf(CadInputIntegrityError);
+  });
   it("binds a DWG main drawing without companions or a relative main path", async () => {
     const f = fixture();
     f.files[0]!.name = "main.dwg";
@@ -72,7 +96,7 @@ describe("DXF input set authorization and content identity", () => {
     expect(source.mainPath).toBe("main.dwg");
     expect(source.companions).toHaveLength(0);
     expect(source.resourceSetHash).toBe("0".repeat(64));
-    expect(await f.service.payload(source)).toEqual(main);
+    expect(await payloadBytes(f.service, source)).toEqual(main);
     await expect(f.service.resolve(mainId, version, "actor", {
       mainPath: "drawings/main.dwg", companions: [],
     })).rejects.toMatchObject({ code: "VALIDATION_FAILED" });

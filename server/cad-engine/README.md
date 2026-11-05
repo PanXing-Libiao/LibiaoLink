@@ -1,4 +1,10 @@
+> **2026-11-05 12:53 正式生产 DWG 内存阈值与格式缓存键修复（已部署）**：正式 `10.1.103.44` 已从 `c766e2fa` 切到 `libiaolink/cad-sandbox:1.0.1-cad-memory-reserve-4e76ac93-20261105-1245@sha256:655143c6552e0fc784c41002ab8558d00ecfb1df3ed77cadb19886f7a59cf3be`，`releaseDigest=4e76ac93…`、`engineDigest=71c0ba0d…`；仅 `.env` 的 `CAD_SANDBOX_IMAGE` 变化。api / worker / cad 重建后均 healthy、重启计数 0，公网 `/healthz` / `/readyz` 200。真实 18,311,890 B DWG 在旧版 `memoryBytes-256 MiB` 阈值下报 `job-memory-quota`（前一次为 `job-scratch-quota`）；本轮改为 `memoryBytes-128 MiB`，同文件隔离诊断约 395.5 s 完成 `partial`，artifact 374,839,080 B，worker 峰值 RSS 4,318,523,392 B、cgroup 峰值 4,962,590,720 B。`service.py`、`dwg_platform_convert.py`、`unified/conversion_jobs.py` 改为格式中立：只影响 engine 身份，不再改变 STEP / DXF / DWG 的 formatVersion；历史缓存格式版本已写入 `format-compat.json`，避免网关或调度改动触发重转。旧失败任务不会自动变成缓存，用户重新打开后，系统已按新格式版本新建任务并在 459 s 内完成 `partial`（artifact 374,839,439 B、manifest 195,634,727 B），缓存行已落库；生产 cgroup 峰值 5,023,698,944 B。后续打开复用该产物，结果仍为 `partial`，不能承诺零缺损。
+
+> **2026-11-04 平台已移除快速概览调用（公司测试机已部署；正式生产未部署）**：前端恢复原导入步骤动画、已用时间和预计时间；服务端不再预热、等待或缓存 DWG 内嵌缩略图。CAD 网关私有 `/preview` 仍保留在现有测试机镜像内，但平台不再调用；本轮未重建 CAD 镜像。测试机发布 `test-20261104-0719-cad-restore-import-animation-3c622411`，10/10 容器 healthy；快速概览前端资源 404，真实登录 DWG 打开 2 秒时导入遮罩与预计时间可见。快速概览只用于定位，DWG 仍为 `partial`，`CAD_MAX_INPUT_MIB=64` 未改，正式生产未部署。
+
 # CAD 平台运行与源码更新
+
+2026-11-03 大 DWG 首导性能与测试机实测：规范 JSON 编码片段按 64 KiB 合并后哈希/落盘，产物字节不变；worker 几何 buffer 只登记相对文件名，父进程直接持久化已校验的 manifest 字节，不再为删除临时路径重解析和重序列化整份大 JSON；manifest 颁发对 canonical 的 DWG 传输表做小对象替换，避免每次再编码 document/snapshot。大 buffer 先校验并落到任务临时文件，再由单个串行 PUT 写入对象存储；完整性等待改为 180 秒空闲超时，大于 16 MiB 的归档压缩副本使用 Brotli quality 1。DWG 一次性 worker 现在直接把 manifest 写到父进程结果文件，stdout 只在失败时兜底，避免 122 MB 的二次管道复制；写完后立即退出，临时目录由父进程回收。目标仍是完整结构 / 引用 / 几何 / 摘要校验，不降低损坏输入拒绝规则。测试机真实图（7,623,968 B，SHA-256 6ef3c195…）产物 manifest 122,573,052 B、总产物 248,610,396 B；转换阶段 native records 26.844s、sealed 105.555s、contract+binary validated 200.602s、packed 212.807s、artifact written 247.211s；任务相对 workerCompleted 323.986s、validationCompleted 433.139s、artifactCommitted 433.335s，最终落库约 7 分 51 秒。主瓶颈仍是 DWG→UCD 组装、父进程完整校验及对象存储，不能承诺固定秒数；DWG 结果仍为 partial，不宣称零缺损。公网桌面、iPhone、Android 入口 smoke 均为 200，未改前端、鉴权、下载或字体路径。
 
 DWG 面/网格预览（2026-11-01，本地未部署）：原生读取器将平面 3DFACE、细分级别 0 且各面为平面三角形/四边形的 MESH 映射为带源归属的三角面和原始边，保留隐藏边标记；不生成平滑曲面或新增拟合点。不共面、退化、未支持面型及超限对象写入 native-mesh-unmapped 诊断。现有 annotation-presentation 表示供二维显示与可旋转三维视图复用，字体路径不变；ACIS 重建与独立依赖见下方专项说明。三维视图暂不显示带二维裁剪的实例，界面明确提示。每对象上限为 20 万三角面、20 万线段，继续受既有进程资源限制及产物校验约束。
 
@@ -26,7 +32,9 @@ CAD 解析已迁移到独立 Linux 容器，不再由 API 启动 Python。先按
 
 旧 `CAD_ENGINE_PYTHON` / `CAD_MESHER_PYTHON` / `CAD_CACHE_DIR` 不再启用 API 内 native 解析。API 无 Python/native 依赖，不接收 CAD 返回的本机路径；沙箱只接收核对过 SHA/bytes 的输入字节，产物以有界流返回。
 
-沙箱强制 3 GiB 内存、1 核 CPU、64 进程/线程、禁 swap；单文件 256 MiB、FD 128、core 0。转换数据、临时目录、通信目录分别限容 1536 / 384 / 1 MiB，根目录只读、capabilities 全部丢弃、禁止提权、seccomp、禁网。启动读取内核实际状态，限制缺失或 cgroup v2 不可用则拒绝运行。原 worker 2 GiB RSS 采样阈值不是硬限额；cgroup 覆盖 gateway、OCP、Gmsh 全部后代。固定任务预算仍为并发 1、排队 8、worker 600 秒、队列 900 秒，PID 1 watchdog 对超期未退出的主 worker 终止整个 CAD namespace。
+沙箱强制 5 GiB 内存、1 核 CPU、64 进程/线程、禁 swap；单文件 256 MiB、FD 128、core 0。转换数据、临时目录、通信目录分别限容 1536 / 384 / 1 MiB，根目录只读、capabilities 全部丢弃、禁止提权、seccomp、禁网。启动读取内核实际状态，限制缺失或 cgroup v2 不可用则拒绝运行。STEP/DXF worker 2 GiB、DWG worker 3.5 GiB RSS 采样阈值不是硬限额；cgroup 覆盖 gateway、OCP、Gmsh 全部后代。固定任务预算仍为并发 1、排队 8、worker 600 秒、队列 900 秒，PID 1 watchdog 对超期未退出的主 worker 终止整个 CAD namespace。
+
+上传完成和 worker 空闲维护都会检测 STEP / STP / DWG：新版本在事务内入队；升级前已上传的当前版本若没有兼容持久缓存，worker 会按批自动补投，无需先打开。扫描只覆盖未回收文件的当前版本、大小不超过 `CAD_MAX_INPUT_MIB` 的输入；DWG 还要求 `CAD_DWG_ENABLED=true`。历史非当前版本仍在打开时按需补投，已失败任务不会无限自动重试。
 
 CAD 内部临时缓存仍受限于 tmpfs 和 24 小时保留；已完成的模型另按 [ADR-037](../../docs/adr/ADR-037-CAD产物持久化与上传预解析.md) 持久化：数据库保存队列、状态、窗口和产物索引，私有对象存储保存完整 manifest / buffers。API/worker/CAD 重启后直接读取完成产物，无需 native 重算；新版本、固定引擎版本或名称编码分别生成，缺失/损坏撤销完成态并排队重建。缓存先按文件版本隔离，不能把上传声明的 SHA 当作跨文件复用的可信凭据。沙箱仍禁网且不持有存储凭据，不增加持久宿主挂载。
 
@@ -186,7 +194,13 @@ CLI 是独立 GPL-3.0-or-later 程序，未链接进 Python 解释器。镜像�
 
 ## DWG 主图原生接入（2026-10-28 第一片）
 
-原生 ACadSharp → UCD 链路已加入平台代码：shared 格式 `DWG`、迁移 `0070`、API 输入/预览/任务/仓库和 `core/dwg_platform_convert.py` 已接线，但 `CAD_DWG_ENABLED` 默认关闭，当前只在本机完成 worker 样本验证，未在 Linux 沙箱调度、未部署公司测试机或生产。DWG 没有配套文件/主图相对路径，结果始终是带明确损失说明的 `partial`；需要 `CAD_DWG_PYTHON`、`CAD_DWG_READER`、`CAD_DWG_DOTNET` 和固定 ACadSharp 读取器，缺少时明确失败，不回退 DXF。构建、读取协议、源账本及已知限制见 [dwg-reader/README.md](dwg-reader/README.md)，交接状态见 [DWG_HANDOFF.md](DWG_HANDOFF.md)。正式大图的约 2.7 GiB 托管内存和约 266 MB manifest 尚未在目标沙箱验证；首版平台预算为 3 GiB worker RSS / 512 MiB 产物，不构成生产容量承诺。
+原生 ACadSharp → UCD 链路已加入平台代码：shared 格式 `DWG`、迁移 `0070`、API 输入/预览/任务/仓库和 `core/dwg_platform_convert.py` 已接线，`CAD_DWG_ENABLED` 默认关闭；公司测试机已显式开启并完成 Linux 沙箱真实业务文件复验，正式生产尚未部署。DWG 没有配套文件/主图相对路径，结果始终是带明确损失说明的 `partial`；需要 `CAD_DWG_PYTHON`、`CAD_DWG_READER`、`CAD_DWG_DOTNET` 和固定 ACadSharp 读取器，缺少时明确失败，不回退 DXF。构建、读取协议、源账本及已知限制见 [dwg-reader/README.md](dwg-reader/README.md)，交接状态见 [DWG_HANDOFF.md](DWG_HANDOFF.md)。2026-11-02 公司测试机已用真实 34,385,320 B DWG 完成平台再转换：任务 `partial`，packed manifest 69,197,685 B、产物 145,268,685 B，CAD cgroup 峰值 3,477,983,232 B；测试机档为 5 GiB 容器 / 3.5 GiB DWG worker RSS，结果与产物仍限 512 MiB。正式生产仍未部署 DWG，资源放宽须先按 ADR-036 评审。
+
+### DWG 内嵌缩略图私有接口（平台已停用，2026-11-04）
+
+平台已按验收口径停用该通道：上传完成不再预热缩略图，打开任务不再返回或显示快速概览，前端恢复原导入步骤动画、已用时间和预计时间。现有测试机镜像仍保留私有 `/preview` 供内部诊断，但服务端和浏览器均不再调用；本轮未重建 CAD 镜像。缩略图只用于定位，不是显示几何，也不改变 DWG 始终 `partial` 的完整性口径。
+
+网关新增私有 `POST /preview`：仅接受 DWG，按源路径、后缀、长度与 SHA-256 复核，4 MiB 图像上限，单个子进程 30 秒超时；同一源 SHA 复用临时缓存，并用独立锁与最多 2 个并发预览进程隔离重活。构建脚本对固定 ACadSharp 增加内嵌预览选择补丁，优先 PNG，其次 BMP，最后 WMF；WMF 或缺失缩略图安全返回不可用，不回退伪造图像。API 侧以 12 项 / 30 分钟内存 LRU 加对象存储持久缓存复用结果，单次打开最多等待 6 秒，失败不阻塞完整任务。真实 34,385,320 B DWG 的 220×123 PNG 读取约 227 ms；浏览器验收使用静态入口加模拟任务 API，未完成测试机端到端发布验收。
 
 ### 二维混合绘制与后台重绘（2026-10-31）
 

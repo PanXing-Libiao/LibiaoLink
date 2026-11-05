@@ -6,7 +6,8 @@ import { ObjectStorage } from "../../storage/index.js";
 import { CadEngineClient, type CadJob, type CadResource } from "./cad-engine.client.js";
 import { CadArchiveRepository, type CadArchiveSource, type CadArtifactRow, type CadViewRow } from "./cad-archive.repository.js";
 import { checkedCadStream } from "./cad-archive.integrity.js";
-import { CadInputService, cadInputs, CAD_DXF_INPUT_BYTES } from "./cad-inputs.js";
+import { CadInputService, cadAutoCacheFormat, cadInputs, CAD_DXF_INPUT_BYTES } from "./cad-inputs.js";
+import { cadPrecompressedObjectKey, type CadPrecompressedEncoding } from "./cad-preview.compression.js";
 
 @Injectable()
 export class CadArchiveService {
@@ -14,10 +15,10 @@ export class CadArchiveService {
     private readonly engine: CadEngineClient, private readonly inputs: CadInputService) {}
 
   async uploaded(source: CadArchiveSource, client?: DbClient): Promise<void> {
-    if (!this.engine.enabled || !/\.(step|stp|dxf|dwg)$/i.test(source.sourceName)
-      || source.sourceBytes > Math.min(this.engine.inputLimit, /\.dxf$/i.test(source.sourceName) ? 64 * 1024 ** 2 : Infinity)
-      || (/\.dwg$/i.test(source.sourceName) && !this.engine.dwgEnabled)) return;
-    await this.repository.request(source, /\.dwg$/i.test(source.sourceName) ? "UTF8" : "GB", client);
+    const format = cadAutoCacheFormat(source.sourceName, this.engine.dwgEnabled);
+    if (!this.engine.enabled || format === null
+      || source.sourceBytes > Math.min(this.engine.inputLimit, format === "DXF" ? CAD_DXF_INPUT_BYTES : Infinity)) return;
+    await this.repository.request(source, format === "STEP" ? "GB" : "UTF8", client);
   }
 
   async create(source: CadArchiveSource, actorId: string, viewId: string, codepage: CadNameCodepage) {
@@ -49,11 +50,15 @@ export class CadArchiveService {
       await this.repository.cancelView(bound.view.id);
       bound.view.cancelled = true;
     }
+    if (action === "status" && !bound.view.cancelled && bound.view.leaseExpiresAt !== null
+      && ["completed", "partial"].includes(bound.artifact.state)) {
+      await this.repository.lease(bound.view.id);
+    }
     return this.public(bound.artifact, bound.view);
   }
 
   async resource(action: "manifest" | "buffer", source: CadArchiveSource, actorId: string, viewId: string,
-    jobId: string, lease?: string, sha256?: string): Promise<CadResource> {
+    jobId: string, lease?: string, sha256?: string, precompressed?: CadPrecompressedEncoding): Promise<CadResource> {
     const { artifact, view } = await this.bound(source, actorId, viewId, jobId);
     if (view.cancelled || !["completed", "partial"].includes(artifact.state) || !artifact.objectPrefix || !artifact.manifestSHA256 || !artifact.manifestBytes) {
       throw new ServiceUnavailableException("模型尚未就绪或当前窗口已取消，请重新打开");
@@ -67,6 +72,13 @@ export class CadArchiveService {
     const digest = buffer?.sha256 ?? artifact.manifestSHA256;
     if (!objectKey.startsWith(artifact.objectPrefix)) throw new AppError("NOT_FOUND", "模型资源不存在或不可访问");
     if (action === "manifest") await this.repository.lease(view.id);
+    if (precompressed === "br") {
+      const compressed = await this.storage.getObjectStream(cadPrecompressedObjectKey(objectKey)).catch(() => null);
+      if (compressed && compressed.sizeBytes > 0) {
+        return { stream: compressed.stream, bytes: compressed.sizeBytes, artifactBytes: artifact.artifactBytes, encoding: "br" };
+      }
+      compressed?.stream.destroy();
+    }
     const object = await this.storage.getObjectStream(objectKey).catch(() => {
       throw new ServiceUnavailableException("模型资源暂时无法读取，请稍后重试");
     });
@@ -100,10 +112,13 @@ export class CadArchiveService {
 
   private public(row: CadArtifactRow, view: CadViewRow): CadJob {
     const state = view.cancelled ? "cancelled" : row.state as CadJob["state"];
+    const resources = row.resourceLease && row.buffers
+      ? { lease: row.resourceLease, buffers: row.buffers.slice(0, 256).map(({ sha256, byteLength }) => ({ sha256, byteLength })) }
+      : undefined;
     return { id: view.id.replaceAll("-", ""), state, format: row.sourceFormat, phase: view.cancelled ? "cancelled" : row.phase,
       sourceSHA256: row.sourceSHA256, sourceByteLength: row.sourceBytes, nameCodepage: row.nameCodepage as CadNameCodepage,
       createdAt: row.createdAt.getTime() / 1000, updatedAt: row.updatedAt.getTime() / 1000,
-      ...(["completed", "partial"].includes(row.state) ? { artifactBytes: row.artifactBytes } : {}),
+      ...(["completed", "partial"].includes(row.state) && !view.cancelled ? { artifactBytes: row.artifactBytes, ...(resources ? { resources } : {}) } : {}),
       ...(row.error && state === "failed" ? { error: { code: row.errorCode ?? "conversion-failed", error: row.error } } : {}) };
   }
 }

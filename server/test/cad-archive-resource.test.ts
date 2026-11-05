@@ -64,6 +64,56 @@ describe("CAD cached resource lifecycle", () => {
     await expect(f.status()).rejects.toThrow("revoked");expect(f.repository.touchView).not.toHaveBeenCalled();
   });
 
+  it("任务状态只发布可并行预取的资源摘要，不泄露对象存储键", async () => {
+    const { artifact, status } = fixture();
+    artifact.buffers = [{ sha256: "a".repeat(64), byteLength: 12, objectKey: "projects/private/geometry.bin" }];
+
+    const state = await status();
+
+    expect(state.resources).toEqual({ lease: artifact.resourceLease, buffers: [{ sha256: "a".repeat(64), byteLength: 12 }] });
+    expect(JSON.stringify(state)).not.toContain("projects/private");
+  });
+
+  it("任务完成状态在返回资源摘要前续租，避免长转换后的预取命中过期租约", async () => {
+    const { repository, view, status } = fixture();
+    view.leaseExpiresAt = new Date(Date.now() - 1000);
+
+    const state = await status();
+
+    expect(state.state).toBe("completed");
+    expect(repository.lease).toHaveBeenCalledWith(view.id);
+  });
+
+  it("任务仍在转换时不续租资源窗口", async () => {
+    const { artifact, repository, status } = fixture();
+    artifact.state = "running";
+
+    await status();
+
+    expect(repository.lease).not.toHaveBeenCalled();
+  });
+
+  it("已释放的资源窗口不会因状态查询被重新租用", async () => {
+    const { repository, status } = fixture();
+
+    await status();
+
+    expect(repository.lease).not.toHaveBeenCalled();
+  });
+
+  it("资源摘要最多发布 256 项且不泄露对象存储键", async () => {
+    const { artifact, status } = fixture();
+    artifact.buffers = Array.from({ length: 300 }, (_, index) => ({
+      sha256: (index + 1).toString(16).padStart(64, "0"), byteLength: index,
+      objectKey: `projects/private/${index}.bin`,
+    }));
+
+    const state = await status();
+
+    expect(state.resources?.buffers).toHaveLength(256);
+    expect(JSON.stringify(state)).not.toContain("projects/private");
+  });
+
   it("数据库续租失败后不遗留已打开的对象读取流，也不触发重新解析", async () => {
     const { repository, manifest } = fixture();
     const failure = new Error("lease write unavailable");

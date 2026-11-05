@@ -19,6 +19,7 @@ import { AppError } from "../src/common/errors/app-error.js";
 import { S3ObjectStorage } from "../src/storage/s3-object-storage.js";
 import { CadEngineClient } from "../src/modules/file/cad-engine.client.js";
 import { CadArchiveRepository } from "../src/modules/file/cad-archive.repository.js";
+import { CAD_FORMAT_COMPAT_VERSIONS } from "../src/modules/file/cad-release.js";
 import { CadArchiveService } from "../src/modules/file/cad-archive.service.js";
 import { CadCacheMaintenance } from "../src/modules/file/cad-cache-maintenance.js";
 import { CadArchiveWorker } from "../src/modules/file/cad-archive.worker.js";
@@ -34,8 +35,11 @@ const minioPath = fileURLToPath(new URL("../cad-engine/.runtime/minio", import.m
 const actor = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const projectId = randomUUID();
 const schemaName = "cad_test_" + randomBytes(8).toString("hex");
-const sources = Array.from({ length: 4 }, () => ({ fileId: randomUUID(), versionId: randomUUID(),
-  sourceSHA256: "", sourceBytes: 0, sourceName: "受控箱体.step" }));
+const sources = Array.from({ length: 4 }, () => {
+  const versionId = randomUUID();
+  return { projectId, fileId: randomUUID(), versionId, objectKey: "sources/" + versionId + ".step",
+    sourceSHA256: "", sourceBytes: 0, sourceName: "受控箱体.step" };
+});
 let database: DatabaseService, admin: Pool, minio: ChildProcess, directory: string, s3: S3Client;
 let storage: S3ObjectStorage, repository: CadArchiveRepository, engine: CadEngineClient;
 let archive: CadArchiveService, worker: CadArchiveWorker, preview: CadPreviewService, config: AppConfig;
@@ -230,6 +234,28 @@ describe.skipIf(!databaseUrl || !endpoint || !existsSync(minioPath))("CAD durabl
     expect(submitted).not.toHaveBeenCalled(); submitted.mockRestore();
   });
 
+  it("兼容摘要下的已完成历史产物直接复用，不重新入队或转换", async () => {
+    const s = sources[3]!;
+    await archive.uploaded(s);
+    await worker.drainOnce();
+    const [current] = await rows(s.versionId);
+    expect(current.state).toBe("completed");
+    const legacy = CAD_FORMAT_COMPAT_VERSIONS.STEP[0]!;
+    await database.pool.query("update cad_artifacts set format_version=$2 where id=$1", [current.id, legacy]);
+    const submit = vi.spyOn(engine, "submit");
+    await archive.uploaded(s);
+    expect(await rows(s.versionId)).toHaveLength(1);
+    expect((await rows(s.versionId))[0]).toMatchObject({ format_version: legacy, state: "completed" });
+    const view = "b".repeat(32);
+    const created = await preview.create(s.fileId, s.versionId, view, actor);
+    expect(created.reused).toBe(true);
+    expect(submit).not.toHaveBeenCalled();
+    expect((await preview.job("status", s.fileId, s.versionId, view, created.job.id, actor)).state).toBe("completed");
+    const response = await preview.resource("manifest", s.fileId, s.versionId, view, created.job.id, actor);
+    expect(JSON.parse((await bytes(response.stream)).toString()).snapshot.completeness).toBe("complete");
+    submit.mockRestore();
+  });
+
   it("完成态受数据库约束保护，清理文件同时移除私有 CAD 对象", async () => {
     expect((await rows())[0].state).toBe("completed");
     await expect(database.pool.query("update cad_artifacts set manifest_sha256=null where version_id=$1", [source().versionId]))
@@ -245,8 +271,9 @@ describe.skipIf(!databaseUrl || !endpoint || !existsSync(minioPath))("CAD durabl
     const selected = [] as typeof sources;
     for (const name of ["main.dxf", "detail.dxf"]) {
       const raw = await readFile(new URL("./fixtures/cad/dxf/" + name, import.meta.url));
-      const input = { fileId: randomUUID(), versionId: randomUUID(), sourceName: name,
-        sourceSHA256: createHash("sha256").update(raw).digest("hex"), sourceBytes: raw.byteLength };
+      const versionId = randomUUID();
+      const input = { projectId, fileId: randomUUID(), versionId, objectKey: "sources/" + versionId + ".dxf",
+        sourceName: name, sourceSHA256: createHash("sha256").update(raw).digest("hex"), sourceBytes: raw.byteLength };
       sources.push(input); selected.push(input);
       await database.pool.query("insert into files(id, project_id) values($1,$2)", [input.fileId, projectId]);
       await database.pool.query("insert into file_versions(id) values($1)", [input.versionId]);

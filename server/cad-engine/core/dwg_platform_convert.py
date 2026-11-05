@@ -44,8 +44,22 @@ def main():
             run_reader(dotnet, reader, source, native)
             manifest_path = assemble_native(native, source, result, platform=True,
                                              binary_dir=binary_dir, packed=True)
+            result_path = os.environ.get('CAD_RESULT_PATH')
+            if not result_path:
+                # conversion_jobs places trace.json next to result.json.
+                trace_path = os.environ.get('CAD_TRACE_FILE')
+                result_path = str(Path(trace_path).with_name('result.json')) if trace_path else None
+            if result_path:
+                # The parent owns this result file for the one-shot worker.
+                # Move the manifest out of TMPDIR instead of duplicating it;
+                # the parent validates the same bytes after the worker exits.
+                shutil.move(manifest_path, result_path)
+                os._exit(0)
             with open(manifest_path, 'rb') as manifest:
                 shutil.copyfileobj(manifest, sys.stdout.buffer)
+            # stdout fallback for callers without a result file.
+            sys.stdout.buffer.flush()
+            os._exit(0)
         except Exception as error:
             fail(error)
 
