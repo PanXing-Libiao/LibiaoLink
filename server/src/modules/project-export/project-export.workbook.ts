@@ -270,15 +270,15 @@ function sheetNameOf(value: string): string {
   return result.slice(0, 31);
 }
 
-function fileLink(origin: string | null, projectId: string, fileName: string): string | null {
+function fileLink(origin: string | null, projectId: string): string | null {
   if (origin === null) return null;
-  return origin + "/#/files?project=" + encodeURIComponent(projectId) + "&q=" + encodeURIComponent(fileName);
+  return origin + "/#/project/" + encodeURIComponent(projectId) + "?view=files";
 }
 
 function filesValue(files: readonly ExportFileLink[], origin: string | null, projectId: string): ExcelJS.CellValue {
   if (files.length === 0) return null;
   const text = files.map((file) => file.name).join("\n");
-  const link = fileLink(origin, projectId, files[0]?.name ?? "");
+  const link = fileLink(origin, projectId);
   if (link === null) return text;
   return { text, hyperlink: link, tooltip: files[0]?.name ?? text };
 }

@@ -1,0 +1,9 @@
+{
+  "name": "GNU LibreDWG",
+  "version": "0.13.3",
+  "license": "GPL-3.0-or-later",
+  "url": "https://ftp.gnu.org/gnu/libredwg/libredwg-0.13.3.tar.xz",
+  "sha256": "83f1f6e78a744777a481ff4520e4cef3f8ac4b2c1c25671077ca12fe81e8816e",
+  "execution": "independent dwgread CLI, no Python/native linking",
+  "scope": "selected DWG external references of a DXF root; DWG root remains disabled"
+}

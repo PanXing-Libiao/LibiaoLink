@@ -1,10 +1,11 @@
-import {loadPlatformModel,inspectionRecord} from './core/app.js';
-import {unpackMetadata} from './core/compact-transport.js';
+import {loadPlatformModel,inspectionRecord} from "./core/app.js?v=dxf-0.17.0";
+import {decodeManifest} from "./core/manifest-loader.js";
+import {LoadPhases} from "./core/load-phases.js";
 import {hydrateBinary} from './core/binary-transport.js';
 import {missingFaceManifest} from './core/nonmeshable-ui.js';
 import {repairManifest} from './core/mesh-repair-ui.js';
-import {ImportUI} from './import-ui.js';
-import {trackResponse} from './import-progress.js';
+import {ImportUI} from './import-ui.js?v=cad-0.21.7';
+import {trackResponse} from './import-progress.js?v=cad-0.21.7';
 
 const query=new URLSearchParams(location.search);
 const fileId=query.get('fileId'),versionId=query.get('versionId'),viewId=query.get('viewId');
@@ -12,10 +13,59 @@ const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const valid=uuid.test(fileId||'')&&uuid.test(versionId||'')&&/^[a-f0-9]{32}$/.test(viewId||'');
 const base=valid?`/api/v1/files/${fileId}/versions/${versionId}/cad/views/${viewId}/jobs`:null;
 const nameCodepage=query.get('nameCodepage')==='UTF8'?'UTF8':'GB';
-let currentJob=null,jobBase=null,delivered=false,cancelled=false,loadedEnvelope=null,csrfToken=null,csrfPending=null,authExpiredNotified=false;
-const ui=new ImportUI({fileId,versionId,engineVersion:query.get('engineVersion')||'unknown'});
+const format=query.get('format');
+const isDrawing=format==='DXF'||format==='DWG';
+const hasResources=format==='DXF';
+let resolveContext;
+const contextReady=new Promise(resolve=>{resolveContext=resolve;});
+let currentJob=null,jobBase=null,reusedJob=false,delivered=false,cancelled=false,loadedEnvelope=null,csrfToken=null,csrfPending=null,authExpiredNotified=false;
+const platformTiming={start:performance.now()};
+window.__cadTimingMark=name=>{platformTiming[name]=Math.round((performance.now()-platformTiming.start)*10)/10;};
+const ui=new ImportUI({fileId,versionId,engineVersion:query.get('engineVersion')||'unknown',format});
 const nameSelect=document.getElementById('nameCodepage'),reloadNames=document.getElementById('reloadNames');
 nameSelect.value=nameCodepage;
+document.querySelector('.name-encoding').hidden=isDrawing;
+const resourcesButton=document.getElementById('drawingResources');
+resourcesButton.hidden=!hasResources;
+resourcesButton.onclick=()=>parent.postMessage({type:'cad-resources'},location.origin);
+
+const fullscreenButton=document.getElementById('fullscreenViewer');
+let limitationTimer=0,fullscreenExitAt=0;
+function dismissDrawingLimitations(){
+ clearTimeout(limitationTimer);limitationTimer=0;
+ const warning=document.getElementById('drawingLimitations');if(warning)warning.hidden=true;
+}
+function showDrawingLimitations(message,autoHideMs=2000){
+ const warning=document.getElementById('drawingLimitations'),text=document.getElementById('drawingLimitationsText');
+ if(!warning||!text)return;
+ clearTimeout(limitationTimer);
+ warning.hidden=false;
+ text.textContent=message;
+ limitationTimer=window.setTimeout(dismissDrawingLimitations,autoHideMs);
+}
+function isFullscreen(){return !!document.fullscreenElement;}
+function syncFullscreenButton(){
+ if(!fullscreenButton)return;
+ const active=isFullscreen(),wasActive=fullscreenButton.getAttribute("aria-pressed")==="true";
+ if(wasActive&&!active)fullscreenExitAt=Date.now();
+ fullscreenButton.setAttribute('aria-pressed',String(active));
+ fullscreenButton.setAttribute('aria-label',active?'退出全屏':'全屏显示');
+ fullscreenButton.title=active?'退出全屏（Esc）':'全屏显示';
+ fullscreenButton.querySelector('[data-fullscreen-enter]').hidden=active;
+ fullscreenButton.querySelector('[data-fullscreen-exit]').hidden=!active;
+}
+if(fullscreenButton&&!document.documentElement.requestFullscreen)fullscreenButton.hidden=true;
+fullscreenButton?.addEventListener('click',async()=>{
+ try{
+  if(isFullscreen())await document.exitFullscreen();
+  else await document.documentElement.requestFullscreen();
+ }catch{}
+ syncFullscreenButton();
+});
+document.addEventListener('fullscreenchange',syncFullscreenButton);
+window.addEventListener('focus',syncFullscreenButton);
+document.getElementById('dismissDrawingLimitations')?.addEventListener('click',dismissDrawingLimitations);
+syncFullscreenButton();
 nameSelect.onchange=()=>{reloadNames.disabled=!delivered||nameSelect.value===nameCodepage;};
 reloadNames.onclick=()=>{
  if(delivered&&['UTF8','GB'].includes(nameSelect.value)&&nameSelect.value!==nameCodepage){
@@ -26,6 +76,7 @@ reloadNames.onclick=()=>{
 window.addEventListener('message',event=>{
  if(event.origin!==location.origin||event.source!==parent||event.data?.type!=='cad-context')return;
  ui.context(event.data.name);
+ resolveContext(event.data.selection||{companions:[]});
 });
 parent.postMessage({type:'cad-context-request'},location.origin);
 
@@ -35,8 +86,8 @@ function setSidebar(open){
  sidebarButton.setAttribute('aria-expanded',String(open));
 }
 const narrow=matchMedia('(max-width:760px)');
-setSidebar(!narrow.matches);
-narrow.addEventListener('change',event=>setSidebar(!event.matches));
+setSidebar(false);
+narrow.addEventListener('change',event=>{if(event.matches)setSidebar(false);});
 sidebarButton.onclick=()=>setSidebar(document.body.dataset.sidebar==='closed');
 function closeSidebar(){setSidebar(false);sidebarButton.focus();}
 document.getElementById('closeSidebar').onclick=closeSidebar;
@@ -121,7 +172,7 @@ document.addEventListener('click',event=>{
  const report=inspection?inspectionRecord():missing?missingFaceManifest(loadedEnvelope):repairManifest(loadedEnvelope);
  if(!report)return;
  const name=inspection?'CAD检查记录.json':(loadedEnvelope.presentation.name||'STEP').replace(/\.(step|stp)$/i,'')+(missing?'.missing-faces.json':'.display-repairs.json');
- parent.postMessage({type:'cad-export',name,report},location.origin);
+ parent.postMessage({type:'cad-export',name,report,jobId:currentJob?.id},location.origin);
 },true);
 
 const CSRF_HEADER="X-CSRF-Token";
@@ -196,7 +247,7 @@ function delay(signal){
  });
 }
 function cancelJob(){
- if(jobBase&&currentJob&&!['completed','failed','cancelled','timed-out'].includes(currentJob.state)){
+ if(jobBase&&currentJob&&!['completed','partial','failed','cancelled','timed-out'].includes(currentJob.state)){
   request(jobBase+'/cancel',{method:'POST',keepalive:true}).catch(()=>{});
  }
 }
@@ -211,7 +262,7 @@ function unsupportedPreview(job){
  return codes.has(job?.error?.code)||codes.has(job?.error?.error?.split(':',1)[0]);
 }
 window.addEventListener('keydown',event=>{
- if(event.key==='Escape'){event.preventDefault();parent.postMessage({type:'cad-close'},location.origin);}
+ if(event.key==='Escape'&&!isFullscreen()&&Date.now()-fullscreenExitAt>500){event.preventDefault();parent.postMessage({type:'cad-close'},location.origin);}
  // Keyboard events inside an iframe do not reach the host modal's focus trap.
  if(event.key==='Tab'){
   const items=[...document.querySelectorAll('button:not([disabled]),input:not([disabled]),select:not([disabled]),summary,[tabindex="0"]')]
@@ -223,34 +274,85 @@ window.addEventListener('keydown',event=>{
  }
 });
 const unloading=new AbortController();
-window.addEventListener('pagehide',()=>{ui.destroy();unloading.abort();cancelJob();},{once:true});
+window.addEventListener('pagehide',()=>{clearTimeout(limitationTimer);ui.destroy();unloading.abort();cancelJob();},{once:true});
 
-loadPlatformModel(async({signal,progress})=>{
+loadPlatformModel(async({signal,progress,mark,record})=>{
+ const phases=new LoadPhases();let outcome="failed";
+ window.__cadTimingMark?.("loaderStart");
+ phases.phase("context");
  if(!base)throw new Error('文件版本信息无效，请关闭后重新打开');
  const controller=new AbortController();
  const abort=()=>{cancelled=true;controller.abort();cancelJob();};
  signal.addEventListener('abort',abort,{once:true});unloading.signal.addEventListener('abort',abort,{once:true});
  const active=controller.signal;
+ const prefetchController=new AbortController();
+ const abortPrefetch=()=>prefetchController.abort();
+ active.addEventListener("abort",abortPrefetch,{once:true});
  try{
   active.throwIfAborted();progress('正在读取模型任务…');
-  const created=await requestJson(base+"?"+new URLSearchParams({nameCodepage}),{method:"POST",signal:active});
-  currentJob=created.job;
+  const selection=format==="DXF"?await Promise.race([contextReady,new Promise((_,reject)=>active.addEventListener('abort',()=>reject(active.reason),{once:true}))]):{companions:[]};
+  active.throwIfAborted();
+  phases.phase('jobRequest');mark('jobRequestStart');
+  const created=await requestJson(base+'?'+new URLSearchParams({nameCodepage:isDrawing?'UTF8':nameCodepage}),{method:'POST',signal:active,
+   headers:{'Content-Type':'application/json'},body:JSON.stringify(selection)});
+  currentJob=created.job;reusedJob=created.reused===true;
+ window.__cadTimingMark?.("jobCreated");mark("jobCreated");record({jobReused:created.reused});
   if(!/^[a-f0-9]{32}$/.test(currentJob?.id||''))throw new Error('模型任务响应无效');
   jobBase=base+'/'+currentJob.id;
+  ui.job(currentJob,{reused:reusedJob});
   active.throwIfAborted();
-  while(currentJob.state!=='completed'){
+  while(!['completed','partial'].includes(currentJob.state)){
    if(['failed','cancelled','timed-out'].includes(currentJob.state))throw new Error(failureMessage(currentJob));
    if(!['queued','running'].includes(currentJob.state))throw new Error('模型任务状态无效');
    progress(currentJob.state==='queued'?'正在排队处理模型…':'正在处理模型…');
-   ui.job(currentJob);
+   phases.phase(currentJob.state==="queued"?"queued":currentJob.phase==="persisting"?"persisting":"processing");
+   ui.job(currentJob,{reused:reusedJob});
    await delay(active);currentJob=await requestJson(jobBase,{signal:active});
   }
-  ui.bytes=currentJob.sourceByteLength;
-  ui.update(2,'正在准备模型视图');
-  progress('正在读取已校验模型…');
-  let packet=await requestJson(jobBase+"/manifest",{signal:active});
-  packet=unpackMetadata(packet);
-  if(packet.presentation?.sourceSHA256!==currentJob.sourceSHA256||packet.snapshot?.completeness!=='complete')throw new Error('模型来源或完整性检查未通过');
+  window.__cadTimingMark?.("jobReady");
+  mark("jobReady");phases.phase("manifestRead");
+  ui.bytes=currentJob.sourceByteLength;ui.artifactBytes=Number.isSafeInteger(currentJob.artifactBytes)&&currentJob.artifactBytes>0?currentJob.artifactBytes:ui.artifactBytes;
+  ui.update(2,"正在准备模型视图");
+  progress("正在读取已校验模型…");
+  const prefetchedBuffers=new Map();
+  const resourceHint=currentJob.resources;
+  if(resourceHint&&/^[a-f0-9]{48}$/.test(resourceHint.lease)&&Array.isArray(resourceHint.buffers)){
+   const unique=new Map();
+   for(const descriptor of resourceHint.buffers){
+    if(!descriptor||!/^[a-f0-9]{64}$/.test(descriptor.sha256)||!Number.isSafeInteger(descriptor.byteLength)||descriptor.byteLength<0)continue;
+    unique.set(descriptor.sha256,descriptor);
+   }
+   const prefetchRows=[...unique.values()].sort((a,b)=>b.byteLength-a.byteLength).slice(0,4);
+   const prefetchBytes=prefetchRows.reduce((sum,row)=>sum+row.byteLength,0);
+   if(prefetchBytes>0&&prefetchBytes<=256*1024*1024){
+    ui.downloading(prefetchBytes);
+    for(const descriptor of prefetchRows){
+     const promise=request(jobBase+"/resources/"+resourceHint.lease+"/"+descriptor.sha256,{signal:prefetchController.signal}).then(response=>{
+      if(!response.ok)throw new Error("Resource unavailable");
+      return trackResponse(response,count=>ui.receive(count)).arrayBuffer();
+     });
+     promise.catch(()=>{});
+     prefetchedBuffers.set(descriptor.sha256,promise);
+    }
+    window.__cadTimingMark?.("resourcePrefetchStart");
+   }
+  }
+  window.__cadTimingMark?.("manifestStart");
+  const response=await request(jobBase+"/manifest",{signal:active});
+  if(!response.ok||!(response.headers.get("content-type")||"").toLowerCase().includes("json")){
+   const error=await readJson(response);throw new Error(responseError(error,response.status));
+  }
+  const bytes=await response.arrayBuffer();active.throwIfAborted();
+  window.__cadTimingMark?.("manifestReceived");
+  mark("manifestReadEnd");phases.phase("metadataExpand");mark("metadataExpandStart");
+  const decoded=await decodeManifest(bytes,{signal:active});
+  let packet=decoded.packet;record({manifestDecode:decoded.timing});
+  window.__cadTimingMark?.("packedUnpacked");
+  mark("metadataExpandEnd");
+  const expected=currentJob.state==='partial'?'partial':'complete';
+  const partialFormat=currentJob.format==='DXF'||currentJob.format==='DWG';
+  if(packet.presentation?.sourceSHA256!==currentJob.sourceSHA256||packet.snapshot?.completeness!==expected
+    ||currentJob.state==='partial'&&!partialFormat)throw new Error('模型来源或完整性检查未通过');
   const lease=packet.resourceLease;
   const fetcher=async(url,options={})=>{
    const match=/^\/api\/resources\/([a-f0-9]{48})(?:\/([a-f0-9]{64}))?$/.exec(url);
@@ -260,21 +362,45 @@ loadPlatformModel(async({signal,progress})=>{
   };
   progress('正在读取模型几何…');
   const total=Object.values(packet.document.buffers).reduce((sum,buffer)=>sum+buffer.byteLength,0);
-  ui.downloading(Number.isSafeInteger(total)&&total>0&&total<=256*1024*1024?total:0);
-  packet=await hydrateBinary(packet,{signal:active,fetcher});
+  ui.downloading(Number.isSafeInteger(total)&&total>0&&total<=256*1024*1024?total:0,{reset:false});
+  phases.phase("resources");mark("resourceHydrationStart");window.__cadTimingMark?.("buffersHydrateStart");
+  packet=await hydrateBinary(packet,{signal:active,fetcher,
+   prefetched:currentJob.resources?.lease===packet.resourceLease?prefetchedBuffers:new Map(),
+   onPlan:plan=>{ui.downloading(plan.totalBytes,{reset:false});record({uniqueBufferBytes:plan.totalBytes,uniqueBuffers:plan.uniqueBuffers});}});
+  window.__cadTimingMark?.("buffersHydrated");mark("resourceHydrationEnd");
   active.throwIfAborted();progress('正在显示模型…');
   ui.update(2,'正在生成可交互视图');
-  loadedEnvelope=packet;delivered=true;return packet;
+  loadedEnvelope=packet;delivered=true;outcome='ready';return packet;
  }finally{
+  prefetchController.abort();active.removeEventListener("abort",abortPrefetch);
+  phases.phase(null);record({platform:{...phases.snapshot(),outcome:active.aborted?"cancelled":outcome}});
   signal.removeEventListener('abort',abort);unloading.signal.removeEventListener('abort',abort);
  }
 }).then(()=>{
  const ready=delivered&&document.getElementById('error').hidden;
  if(ready){
   ui.update(3,'模型已就绪');
-  requestAnimationFrame(()=>requestAnimationFrame(()=>{ui.stop('ready');filterParts();parent.postMessage({type:'cad-ready',viewId},location.origin);}));
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+   window.__cadTimingMark?.("readyPaint");
+   const timing={...platformTiming};
+   document.body.dataset.cadTiming=JSON.stringify(timing);
+   console.info("[cad-timing]",JSON.stringify(timing));
+   ui.stop('ready');
+   if(isDrawing){
+    document.querySelector('.treehead strong').textContent='图纸内容';
+    document.getElementById('partsSidebar').setAttribute('aria-label','图纸内容');
+    for(const id of ['sidebarScrim','closeSidebar'])document.getElementById(id).setAttribute('aria-label','收起图纸内容');
+    document.querySelector('#toggleSidebar span').textContent='图纸内容';
+    document.querySelector('.hint').textContent='拖动平移 · 滚轮缩放 · 单击选中 · Shift 多选 · Esc 关闭';
+    if(currentJob.state==='partial'){
+      showDrawingLimitations('部分显示：有内容缺失或暂不支持。请查看图纸覆盖清单，必要时补充配套文件；本视图不能作为加工或验收依据。',2000);
+      document.getElementById('sessionStatus').textContent='部分显示';
+    }else dismissDrawingLimitations();
+   }else filterParts();
+   parent.postMessage({type:'cad-ready',viewId,timing},location.origin);
+  }));
  }else{
-  const unsupported=!cancelled&&unsupportedPreview(currentJob);
+ const unsupported=!cancelled&&unsupportedPreview(currentJob);
   ui.stop(cancelled?'cancelled':unsupported?'unsupported':'failed',{retryable:!unsupported});
  }
 });

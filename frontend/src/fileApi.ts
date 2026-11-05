@@ -38,18 +38,20 @@ import { RefreshQueue, liveReadPaused, subscribeLiveHints } from "./liveSync";
  * 预览：GET /api/v1/files/{fileId}/preview → ready 时短时签名 URL（模块级缓存 + 订阅，供附图懒取）。
  * Push 255（业务口径「文件显示 已变更 不如直接替换成变更后的啊… 变更记录也要显示 之前是什么文件 这次是什么文件… 文件可以预览在变更里面」）：
  *   变更记录行接版本链 —— fetchFileVersions（GET /files/{id}/versions）+ 版本态预览 / 下载
- *   （ensurePreviewOutcome(fileId, versionId?) / fetchDownloadUrl(fileId, versionId?)：A4-06 任意历史版本可预览与下载 * Push 261（业务口径「新增文件库 文件库里面分为 系统现有文件 回收站」）：文件库列表（fetchProjectFileLibrary —— 跨项目聚合的单项目读口，
- *   按项目分页取满；系统现有文件 = 四档在库状态、回收站 = filter[status]=recycled）与回收站两个写口（restoreFile / purgeFile）在此收口；
- *   页面见 frontend/src/FileLibraryPage.tsx。
+ *   （ensurePreviewOutcome(fileId, versionId?) / fetchDownloadUrl(fileId, versionId?)：A4-06 任意历史版本可预览与下载）。
+ * Push 261 / 2026-10-29：单项目文件读口 fetchProjectFileLibrary（按项目分页取满）同时服务项目详情「项目文件」
+ *   （四档在库状态 + taskId 过滤）与回收站「文件回收站」（filter[status]=recycled）；回收站两个写口
+ *   （restoreFile / purgeFile）也在此收口。页面见 components/ProjectFilesPanel.tsx、FileLibraryPage.tsx。
  */
 import { useEffect, useSyncExternalStore } from "react";
 import { ApiError, apiRequest, apiSend, readAllPages } from "./api";
-import { sha256Hex } from "./sha256";
+import { sha256Blob } from "./sha256Blob";
+import { findUploadResume, forgetUploadResume, rememberUploadResume, type UploadResumeRecord } from "./uploadResume";
 
 type UploadCreateResponse = {
   file: { id: string; name: string };
   /** 上传会话；附件域秒传复用命中 = null（2026-10-12：同一内容的附图只沉淀一条文件记录，不再重复传输）。 */
-  upload: { id: string; partSizeBytes: number; totalParts: number } | null;
+  upload: { id: string; partSizeBytes: number; totalParts: number; expiresAt: string } | null;
   /** true = 未新建文件 / 未建会话，file = 复用的既有文件（仅附件域；任务成果上传恒 false）。 */
   reused: boolean;
 };
@@ -57,6 +59,18 @@ type UploadCreateResponse = {
 type UploadPartsResponse = { parts: Array<{ partNumber: number; url: string }> };
 
 type UploadCompleteResponse = { file: { id: string; name: string } };
+
+/** GET /files/{id}/uploads/{uploadId} 的续传视图（服务端 ListParts 结果，只补缺失分片）。 */
+type UploadSessionStatusResponse = {
+  id: string;
+  fileId: string;
+  partSizeBytes: number;
+  totalParts: number;
+  status: "active" | "completed" | "aborted" | "expired";
+  expiresAt: string;
+  uploadedPartNumbers: number[];
+  missingPartNumbers: number[];
+};
 
 /** ONLYOFFICE 查看器配置（契约 PreviewViewer 子集 · S4 直接组装 DocEditor 配置；token = documentType / document（含 permissions）/ editorConfig 逐字签发）。 */
 export type OnlyOfficePreviewViewerConfig = {
@@ -79,11 +93,23 @@ export type CadNameCodepage = "UTF8" | "GB";
 
 export type CadPreviewViewerConfig = {
   kind: "cad";
+  format: "STEP" | "DXF" | "DWG";
+  sourceName: string;
+  projectId: string;
   fileId: string;
   versionId: string;
   sourceSHA256: string;
   engineVersion: string;
 };
+export type CadCompanion = { fileId: string; versionId: string; path: string };
+export type CadInputSelection = { mainPath?: string; companions: CadCompanion[] };
+
+/** Freeze the selected current version; later replacements never silently change the DXF input set. */
+export async function fetchCadCompanionVersion(fileId: string): Promise<{ id: string; sizeBytes: number }> {
+  const detail = await apiRequest<{ currentVersion: { id: string; sizeBytes: number } | null }>("/api/v1/files/" + encodeURIComponent(fileId));
+  if (!detail.currentVersion) throw new Error("此文件还没有可用版本");
+  return detail.currentVersion;
+}
 export type PreviewViewerConfig = OnlyOfficePreviewViewerConfig | CadPreviewViewerConfig;
 
 /** 预览状态响应（契约 FilePreviewResponse 子集）：ready 才有签名地址 / 查看器配置（两通道互斥）。 */
@@ -110,6 +136,10 @@ export type UploadFileOptions = {
 const PART_UPLOAD_MAX_ATTEMPTS = 3;
 /** 重试退避基数（毫秒）：第 N 次失败后等待 N × 该值再重试。 */
 const PART_UPLOAD_RETRY_DELAY_MS = 500;
+/** 分片上传并发：固定有界，避免把手机网络和对象存储连接池打满。 */
+const PART_UPLOAD_CONCURRENCY = 4;
+/** 一次预签名领取的分片数；大批量文件分批签名，避免一次生成过大的响应。 */
+const PART_SIGN_BATCH = 32;
 
 /** 分片签名接口路径（首传整批签 / 重试单签共用）。 */
 function uploadPartsPath(fileId: string, uploadId: string): string {
@@ -131,7 +161,7 @@ async function putPartWithRetry(
   fileId: string,
   uploadId: string,
   part: { partNumber: number; url: string },
-  slice: ArrayBuffer,
+  slice: Blob,
 ): Promise<void> {
   let lastReason = "";
   for (let attempt = 1; attempt <= PART_UPLOAD_MAX_ATTEMPTS; attempt += 1) {
@@ -169,26 +199,39 @@ async function putPartWithRetry(
   throw new Error("文件上传失败（" + lastReason + "；已尝试 " + String(PART_UPLOAD_MAX_ATTEMPTS) + " 次）");
 }
 
-/** 分片直传公共尾段（uploadFile / replaceFileContent 共用）：取分片签名 → 逐片代重试 PUT → complete。 */
+/** 分片直传公共尾段（首传 / 刷新后续传共用）：分批签名 → 有界并发 PUT → complete。 */
 async function transferChunks(
   fileId: string,
   upload: { id: string; partSizeBytes: number; totalParts: number },
-  buffer: ArrayBuffer,
+  source: Blob,
   contentHash: string,
+  onlyPartNumbers?: readonly number[],
 ): Promise<void> {
-  const partNumbers: number[] = [];
-  for (let index = 1; index <= upload.totalParts; index += 1) {
-    partNumbers.push(index);
-  }
-  const signed = await apiSend<UploadPartsResponse>(
-    uploadPartsPath(fileId, upload.id),
-    "POST",
-    { partNumbers },
-  );
-  for (const part of signed.parts) {
-    const start = (part.partNumber - 1) * upload.partSizeBytes;
-    const slice = buffer.slice(start, Math.min(start + upload.partSizeBytes, buffer.byteLength));
-    await putPartWithRetry(fileId, upload.id, part, slice);
+  const requested =
+    onlyPartNumbers === undefined
+      ? Array.from({ length: upload.totalParts }, (_, index) => index + 1)
+      : Array.from(new Set(onlyPartNumbers))
+          .filter((partNumber) => Number.isInteger(partNumber) && partNumber >= 1 && partNumber <= upload.totalParts)
+          .sort((left, right) => left - right);
+  for (let first = 0; first < requested.length; first += PART_SIGN_BATCH) {
+    const partNumbers = requested.slice(first, first + PART_SIGN_BATCH);
+    const signed = await apiSend<UploadPartsResponse>(
+      uploadPartsPath(fileId, upload.id),
+      "POST",
+      { partNumbers },
+    );
+    const parts = signed.parts.slice().sort((left, right) => left.partNumber - right.partNumber);
+    let cursor = 0;
+    const uploadLane = async (): Promise<void> => {
+      while (cursor < parts.length) {
+        const part = parts[cursor]!;
+        cursor += 1;
+        const start = (part.partNumber - 1) * upload.partSizeBytes;
+        const end = Math.min(start + upload.partSizeBytes, source.size);
+        await putPartWithRetry(fileId, upload.id, part, source.slice(start, end));
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(PART_UPLOAD_CONCURRENCY, parts.length) }, uploadLane));
   }
   await apiSend<UploadCompleteResponse>(
     "/api/v1/files/" + encodeURIComponent(fileId) + "/uploads/" + encodeURIComponent(upload.id) + "/complete",
@@ -197,27 +240,73 @@ async function transferChunks(
   );
 }
 
-/** 上传中途失败时尽力取消会话；页面刷新等来不及发请求的未完成会话由服务端读面隐藏并由过期清扫兜底。 */
-async function abortCreatedUpload(fileId: string, uploadId: string): Promise<void> {
+/**
+ * 刷新 / 断网后重新选择同一文件：先向服务端核对已上传分片，只补缺失部分。
+ * 会话已终止或内容 / 名称 / 目标不匹配时清掉本地索引并返回 null，由调用方新建会话；
+ * 网络类失败继续上抛，保留索引供下一次重试，避免悄悄复制一整套文件。
+ */
+async function resumeStoredUpload(
+  record: UploadResumeRecord,
+  source: Blob,
+  contentHash: string,
+  finalize: boolean,
+): Promise<string | null> {
+  let status: UploadSessionStatusResponse;
   try {
-    await apiSend<unknown>("/api/v1/files/" + encodeURIComponent(fileId) + "/uploads/" + encodeURIComponent(uploadId) + "/abort", "POST");
-  } catch {
-    // 取消是失败后的收尾：不覆盖原始上传错误；已完成或已过期会话无需再次处理。
+    status = await apiRequest<UploadSessionStatusResponse>(
+      "/api/v1/files/" + encodeURIComponent(record.fileId) + "/uploads/" + encodeURIComponent(record.uploadId),
+    );
+  } catch (error) {
+    if (error instanceof ApiError && (error.status === 404 || error.status === 409 || error.status === 410)) {
+      forgetUploadResume(record.uploadId);
+      return null;
+    }
+    throw error;
   }
+  if (
+    status.status !== "active" ||
+    status.partSizeBytes !== record.partSizeBytes ||
+    status.totalParts !== record.totalParts ||
+    Date.parse(status.expiresAt) <= Date.now() + 15_000
+  ) {
+    forgetUploadResume(record.uploadId);
+    return null;
+  }
+  await transferChunks(
+    record.fileId,
+    { id: record.uploadId, partSizeBytes: record.partSizeBytes, totalParts: record.totalParts },
+    source,
+    contentHash,
+    status.missingPartNumbers,
+  );
+  forgetUploadResume(record.uploadId);
+  if (finalize) await finalizeFile(record.fileId);
+  return record.fileId;
 }
 
 /** 同内容在途上传合并表（key = 项目 + 哈希 + 任务）：连点 / 一次粘贴多份同一张图只发一次上传链路。 */
 const inFlightUploads = new Map<string, Promise<string>>();
 
 export async function uploadFile(projectId: string, file: Blob, name: string, options: UploadFileOptions = {}): Promise<string> {
-  const buffer = await file.arrayBuffer();
-  const contentHash = await sha256Hex(buffer);
-  const key = projectId + "|" + contentHash + "|" + (options.taskId ?? "");
+  const contentHash = await sha256Blob(file);
+  const taskId = options.taskId ?? null;
+  const key = projectId + "|" + contentHash + "|" + (taskId ?? "");
   const running = inFlightUploads.get(key);
   if (running !== undefined) {
     return running;
   }
   const pending = (async (): Promise<string> => {
+    const resumable = findUploadResume({
+      projectId,
+      contentHash,
+      fileName: name,
+      sizeBytes: file.size,
+      taskId,
+    });
+    if (resumable !== null) {
+      const resumed = await resumeStoredUpload(resumable, file, contentHash, options.finalize === true);
+      if (resumed !== null) return resumed;
+    }
     const created = await apiSend<UploadCreateResponse>("/api/v1/files/uploads", "POST", {
       projectId,
       name,
@@ -227,16 +316,31 @@ export async function uploadFile(projectId: string, file: Blob, name: string, op
       intent: "version",
       taskId: options.taskId,
     });
-    // 附件域秒传复用（2026-10-12）：服务端不建文件 / 会话，直接用既有 file.id。
-    if (created.reused || created.upload === null) {
+    // 附件域秒传复用（2026-10-12）：直接复用既有文件，不重复定档。
+    if (created.reused) {
       return created.file.id;
     }
-    try {
-      await transferChunks(created.file.id, created.upload, buffer, contentHash);
-    } catch (error) {
-      await abortCreatedUpload(created.file.id, created.upload.id);
-      throw error;
+    // 项目内内容秒传（2026-11-03）：服务端已生成新文件与 v1，仅跳过分片传输；
+    // finalize 仍须按调用方要求执行，不能和附件复用走同一提前返回。
+    if (created.upload === null) {
+      if (options.finalize === true) await finalizeFile(created.file.id);
+      return created.file.id;
     }
+    rememberUploadResume({
+      version: 1,
+      projectId,
+      fileId: created.file.id,
+      uploadId: created.upload.id,
+      contentHash,
+      fileName: name,
+      sizeBytes: file.size,
+      taskId,
+      partSizeBytes: created.upload.partSizeBytes,
+      totalParts: created.upload.totalParts,
+      expiresAt: created.upload.expiresAt,
+    });
+    await transferChunks(created.file.id, created.upload, file, contentHash);
+    forgetUploadResume(created.upload.id);
     if (options.finalize === true) {
       await finalizeFile(created.file.id);
     }
@@ -294,8 +398,7 @@ export async function applyFileChange(projectId: string, target: TaskFileRef, fi
   }
   const before = change.beforeSummary === undefined ? "" : change.beforeSummary.trim();
   const after = change.afterSummary === undefined ? "" : change.afterSummary.trim();
-  const buffer = await file.arrayBuffer();
-  const contentHash = await sha256Hex(buffer);
+  const contentHash = await sha256Blob(file);
   const created = await apiSend<UploadCreateResponse>("/api/v1/files/uploads", "POST", {
     projectId,
     name: file.name === "" ? target.name : file.name,
@@ -316,7 +419,7 @@ export async function applyFileChange(projectId: string, target: TaskFileRef, fi
   if (created.upload === null) {
     throw new Error("上传会话创建失败，请重试");
   }
-  await transferChunks(created.file.id, created.upload, buffer, contentHash);
+  await transferChunks(created.file.id, created.upload, file, contentHash);
   invalidatePreview(target.id);
 }
 
@@ -390,8 +493,7 @@ export async function replaceFileContent(projectId: string, target: TaskFileRef,
   if (needsChange && changeReason === "") {
     throw new Error("已定档文件替换需填写变更原因");
   }
-  const buffer = await file.arrayBuffer();
-  const contentHash = await sha256Hex(buffer);
+  const contentHash = await sha256Blob(file);
   const created = await apiSend<UploadCreateResponse>("/api/v1/files/uploads", "POST", {
     projectId,
     // Push 256：change 路径 name = 变更后文件名（完成时更名）；version 路径须与目标文件一致（直接替换 = 同一文件）
@@ -406,7 +508,7 @@ export async function replaceFileContent(projectId: string, target: TaskFileRef,
   if (created.upload === null) {
     throw new Error("上传会话创建失败，请重试");
   }
-  await transferChunks(created.file.id, created.upload, buffer, contentHash);
+  await transferChunks(created.file.id, created.upload, file, contentHash);
   invalidatePreview(target.id);
   if (finalize && !needsChange) {
     await finalizeFile(target.id);
@@ -529,27 +631,18 @@ export async function fetchFileVersions(fileId: string): Promise<FileVersionBrie
   return list.items.map((item) => ({ id: item.id, seq: item.seq, sizeBytes: item.sizeBytes, uploadedAt: item.uploadedAt }));
 }
 
-/** 触发一次浏览器下载（Push 258 续）：先 fetch 成 Blob 再走 objectURL 落盘 —— download 属性必生效（原文件名精确落盘），
- *  不依赖对象存储的 Content-Disposition；注意：http 内网源下 Chrome 对**任何**下载（含 blob:）都会标「未确认 *.crdownload」
- *  等用户点「保留」（实测对照：安全源 127.0.0.1 干净落盘）—— 这一步是浏览器对非安全源的限制，站点升 https / 策略白名单后即消失。
- *  失败抛错，由调用方提示。 */
+/** 触发一次浏览器下载：直接打开短时签名地址，让对象存储按 Content-Disposition 流式写盘。
+ *  不再 fetch 成 Blob，避免大 CAD / Office 文件整体进入前端内存；fileName 仅作为跨域 download 属性的补充，
+ *  实际文件名由服务端签名的 attachment 响应保证。http 内网源下 Chrome 仍可能显示「未确认 *.crdownload」，
+ *  这是浏览器对非安全源的既有提示，与下载链路无关。 */
 export async function triggerDownload(url: string, fileName: string): Promise<void> {
-  const response = await fetch(url, { credentials: "omit" });
-  if (response.ok !== true) {
-    throw new Error("下载失败（HTTP " + String(response.status) + "），请稍后再试");
-  }
-  const blob = await response.blob();
-  const objectUrl = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
-  anchor.href = objectUrl;
+  anchor.href = url;
   anchor.download = fileName;
   anchor.rel = "noopener";
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  window.setTimeout(() => {
-    URL.revokeObjectURL(objectUrl);
-  }, 10000);
 }
 
 /** 任务文件引用（Push 246；2026-10-08 携 status 供「替换」裁决）：任务列表「文件」列下拉与单元格展示共用 ——
@@ -752,8 +845,8 @@ export function usePhotoUrl(fileId: string, localUrl: string | null): string | n
 }
 
 /**
- * 文件库列表项（M4-03 读面 FileSchema 子集；Push 261「文件库（系统现有文件 / 回收站）」）。
- * 列表项不带大小（大小在版本链上：FileVersionSchema.sizeBytes）—— 文件库不展示，预览 / 下载走各自入口。
+ * 文件库列表项（M4-03 读面 FileSchema 子集；Push 261 / 2026-10-29）。
+ * 列表项不带大小（大小在版本链上：FileVersionSchema.sizeBytes）—— 项目文件 / 回收站列表不展示，预览 / 下载走各自入口。
  * 状态取值：draft（草稿）/ final（已定档）/ changed（已变更）/ archived（已归档）/ recycled（回收站）。
  */
 export type FileLibraryItem = {
@@ -777,8 +870,8 @@ export type FileLibraryItem = {
 
 /**
  * 文件库单项目查询（契约 FileListQuerySchema 子集）。
- * statuses 必给：系统现有文件栏 = 四档在库状态（draft / final / changed / archived；服务端缺省虽排除 recycled，
- * 但显式给全更不容易随口径漂移），回收站栏 = recycled（服务端显式 filter[status]=recycled 才返回回收站行）。
+ * statuses 必给：项目文件 = 四档在库状态（draft / final / changed / archived；服务端缺省虽排除 recycled，
+ * 但显式给全更不容易随口径漂移），文件回收站 = recycled（服务端显式 filter[status]=recycled 才返回回收站行）。
  */
 export type FileLibraryQuery = {
   statuses: readonly string[];

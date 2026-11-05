@@ -1,6 +1,6 @@
 """Conservative display tessellation of a single non-periodic trimmed surface.
 
-OCCT 7.8.1 supplies ordered pcurves and face classification. Acceptance is a finite
+OCCT 7.9.3 supplies ordered pcurves and face classification. Acceptance is a finite
 sampling contract, NOT a proof of a Hausdorff bound or arbitrary B-spline support.
 The B-Rep is never edited. Uncertain topology is refused, leaving strict/partial
 missing-face handling to the caller.
@@ -173,10 +173,19 @@ def pcurve_region_mesh(face, deflection=0.08):
     if not _star_shaped(loop, centre):
         return None
     classifier = BRepClass_FaceClassifier()
+    # Shared triangle-edge midpoints repeat exactly. Memoize only identical UV
+    # tuples for this immutable face at this fixed tolerance; never round UVs or
+    # substitute polygon containment for the OCCT classifier. Bound memory per
+    # repair; eviction merely repeats the original query. Count every sample.
+    classified = {}
     counts = {'IN': 0, 'ON': 0}
     def inside(uv, strict=False):
-        classifier.Perform(forward, gp_Pnt2d(*uv), UV_TOLERANCE)
-        state = classifier.State()
+        state = classified.get(uv)
+        if state is None:
+            classifier.Perform(forward, gp_Pnt2d(*uv), UV_TOLERANCE)
+            state = classifier.State()
+            if len(classified) >= 16384:classified.clear()
+            classified[uv] = state
         if state not in (TopAbs_IN, TopAbs_ON) or strict and state != TopAbs_IN:
             return False
         counts['IN' if state == TopAbs_IN else 'ON'] += 1
@@ -284,7 +293,7 @@ def pcurve_region_mesh(face, deflection=0.08):
                     'rings': rings, 'maxDeviation': worst, 'areaRatio': ratio,
                     'trim': 'single-pcurve-loop-classified',
                     'validation': {'kind': 'finite-sampled-display-repair',
-                        'classifier': 'BRepClass_FaceClassifier OCCT 7.8.1',
+                        'classifier': 'BRepClass_FaceClassifier OCCT 7.9.3',
                         'uvTolerance': UV_TOLERANCE, 'classificationCounts': counts,
                         'samplesPerTriangle': len(BARYCENTRIC_SAMPLES),
                         'boundaryMeasuredMaximumMM': boundary_worst,

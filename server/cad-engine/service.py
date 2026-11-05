@@ -12,7 +12,7 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from bridge import Gateway, JobLimit, CacheLimit
-from sandbox import ROOT, SOCKET, FILE_BYTES, verify
+from sandbox import ROOT, SOCKET, FILE_BYTES, MIB, verify
 
 CONTROL_BYTES = 16 * 1024
 ACTIONS = {'lookup', 'status', 'cancel', 'manifest', 'buffer', 'release'}
@@ -71,6 +71,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
+            if self.path == "/preview":
+                self.preview()
+                return
             if self.path == '/submit':
                 self.submit()
                 return
@@ -96,6 +99,40 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, TypeError, OSError):
             self.reject(503, 'unavailable')
 
+    def preview(self):
+        encoded = self.headers.get("X-CAD-Request", "")
+        if len(encoded) > 8192:
+            raise ValueError("metadata exceeds budget")
+        request = json.loads(base64.b64decode(encoded + "=" * (-len(encoded) % 4), altchars=b"-_", validate=True))
+        if not isinstance(request, dict) or request.get("action") != "preview" or "path" in request:
+            raise ValueError("invalid preview operation")
+        if Path(str(request.get("name", ""))).suffix.lower() != ".dwg":
+            raise ValueError("preview requires DWG")
+        maximum = min(self.server.gateway.jobs.policy["inputBytes"], 64 * 1024 * 1024)
+        length = self.length(maximum)
+        if request.get("payloadByteLength", request.get("sourceByteLength", 0)) != length:
+            raise ValueError("source size mismatch")
+        deadline, digest, remaining = time.monotonic() + 85, hashlib.sha256(), length
+        with tempfile.NamedTemporaryFile(dir=self.server.gateway.incoming) as source:
+            while remaining:
+                if time.monotonic() >= deadline:
+                    raise ValueError("upload deadline exceeded")
+                data = self.rfile.read(min(1024 * 1024, remaining))
+                if not data:
+                    raise ValueError("incomplete source")
+                source.write(data)
+                digest.update(data)
+                remaining -= len(data)
+            source.flush()
+            expected = request.get("payloadSHA256", request.get("sourceSHA256", ""))
+            if digest.hexdigest() != expected:
+                raise ValueError("source hash mismatch")
+            result = self.server.gateway.preview(request, source.name)
+        if result is None:
+            self.reject(404, "not-found")
+            return
+        self.file(result)
+
     def submit(self):
         encoded = self.headers.get('X-CAD-Request', '')
         if len(encoded) > 8192:
@@ -104,8 +141,11 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(request, dict) or request.get('action') != 'submit' or 'path' in request:
             raise ValueError('invalid source operation')
         self.server.gateway.results.key(request)
-        length = self.length(self.server.gateway.jobs.policy['inputBytes'])
-        if request['sourceByteLength'] != length:
+        maximum=self.server.gateway.jobs.policy['inputBytes']
+        is_dxf=Path(request['name']).suffix.lower()=='.dxf'
+        if is_dxf:maximum=min(maximum,64*1024*1024)+128*1024+12
+        length = self.length(maximum)
+        if request.get('payloadByteLength',request['sourceByteLength']) != length:
             raise ValueError('source size mismatch')
         deadline, digest, remaining = time.monotonic() + 85, hashlib.sha256(), length
         with tempfile.NamedTemporaryFile(dir=self.server.gateway.incoming) as source:
@@ -119,7 +159,7 @@ class Handler(BaseHTTPRequestHandler):
                 digest.update(data)
                 remaining -= len(data)
             source.flush()
-            if digest.hexdigest() != request['sourceSHA256']:
+            if digest.hexdigest() != request.get('payloadSHA256',request['sourceSHA256']):
                 raise ValueError('source hash mismatch')
             result = self.server.gateway.handle({**request, 'path': source.name})
         self.reply(200, result)
@@ -135,7 +175,14 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError('invalid resource size')
             self.send_response(200)
             self.send_header('X-CAD-Engine-Version', self.server.engine_version)
-            self.send_header('Content-Type', 'application/octet-stream')
+            contentType = result.get("contentType", "application/octet-stream")
+            if contentType not in ("application/octet-stream", "image/bmp", "image/png"):
+                raise ValueError("invalid resource type")
+            self.send_header("Content-Type", contentType)
+            for name in ("width", "height"):
+                value = result.get(name)
+                if isinstance(value, int) and value > 0:
+                    self.send_header("X-CAD-Preview-" + name.title(), str(value))
             self.send_header('Content-Length', str(info.st_size))
             if 'artifactBytes' in result:
                 self.send_header('X-CAD-Artifact-Bytes', str(result['artifactBytes']))
@@ -189,18 +236,28 @@ def watchdog(gateway):
 def main():
     limits = verify()
     maximum = os.environ.get('CAD_STEP_MAX_INPUT_MIB', '64')
+    dwg_python = os.environ.get('CAD_DWG_PYTHON', '/opt/dxf/bin/python')
+    dxf_dwg_reader = os.environ.get('CAD_DXF_DWG_READER', '/opt/dwg/bin/dwgread')
+    dwg_reader = os.environ.get('CAD_DWG_READER', '')
+    dwg_dotnet = os.environ.get('CAD_DWG_DOTNET', '')
+    acis_python = os.environ.get('CAD_ACIS_PYTHON', '/opt/acis/bin/python')
     os.environ.clear()
     os.environ.update(PATH='/usr/local/bin:/usr/bin:/bin', LANG='C.UTF-8', HOME='/tmp', TMPDIR='/tmp',
                       PYTHONDONTWRITEBYTECODE='1', OMP_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1',
                       CAD_GATEWAY_ROOT=str(ROOT), CAD_STEP_MAX_INPUT_MIB=maximum,
-                      CAD_STEP_MESHER_PYTHON='/opt/mesher/bin/python')
+                      CAD_MEMORY_STOP_BYTES=str(limits['memoryBytes']-128*MIB),
+                      CAD_STEP_MESHER_PYTHON='/opt/mesher/bin/python', CAD_DXF_PYTHON='/opt/dxf/bin/python',
+                      CAD_DXF_IMPORT_MODE='installed', CAD_DWG_PYTHON=dwg_python,
+                      CAD_DWG_READER=dwg_reader, CAD_DWG_DOTNET=dwg_dotnet, CAD_ACIS_PYTHON=acis_python,
+                      CAD_DXF_DWG_READER=dxf_dwg_reader)
     gateway = Gateway()
-    release = json.loads((Path(__file__).parent / 'source.json').read_text())
+    from release import load_release
+    release = load_release()
     Path(SOCKET).unlink(missing_ok=True)
     os.umask(0o007)
     server = UnixHTTPServer(SOCKET, Handler)
     server.gateway, server.limits = gateway, limits
-    server.engine_version = 'step-' + release['stepRelease'] + '/' + release['sourceCommit'] + '/gateway-1'
+    server.engine_version = release['engineVersion']
     os.chmod(SOCKET, 0o660)
     # PID 1 must remain responsive even if native workers or HTTP handlers stall.
     signal.signal(signal.SIGTERM, lambda *_: os._exit(0))

@@ -11,8 +11,24 @@ import type { ApiProjectSummary } from "./taskApi";
 import type { Project } from "./types";
 
 /** 导出入参（全部来自项目详情页已取到的数据，导出零新增请求）。 */
-/** 导出报告的主体语言：zh = 中文大字 + 英文小字（当前版式）；en = 英文大字 + 中文小字；ja / ko = 日文 / 韩文大字 + 中文小字。 */
+/** 导出报告的主体语言：zh = 中文大字 + 英文小字；en = 英文大字 + 中文小字；ja / ko = 日文 / 韩文大字 + 中文小字。 */
 export type OverviewExportLanguage = "zh" | "en" | "ja" | "ko";
+
+/** 导出面板里的一项大阶段（名称 = 分组名；计数与服务端 summary / 任务列表同口径）。 */
+export type OverviewExportStageOption = {
+  name: string;
+  total: number;
+  done: number;
+};
+
+/** 一次导出前在面板里选定的选项（只作用于当次导出，不写偏好）。 */
+export type OverviewExportOptions = {
+  primary: OverviewExportLanguage;
+  /** 需要折叠任务明细的阶段名；空数组 = 全部展开（默认）。 */
+  collapsedStages: readonly string[];
+};
+
+export const DEFAULT_OVERVIEW_EXPORT_OPTIONS: OverviewExportOptions = { primary: "zh", collapsedStages: [] };
 
 export type OverviewExportInput = {
   project: Project;

@@ -52,7 +52,7 @@ export function createHighlighter(scene) {
     return [];
   }
 
-  function build(drawIds, drawObjects, {dim = false} = {}) {
+  function build(drawIds, drawObjects, {dim = false, dimExcludedDrawIds = drawIds} = {}) {
     clear();
     const byMesh = new Map();
     for (const id of drawIds) {
@@ -101,33 +101,45 @@ export function createHighlighter(scene) {
       if (topology === 'lines') stats.segments += total / 2; else stats.triangles += total / 3;
       stats.indexBytes += array.byteLength;
     }
-    if (dim) buildDim(byMesh);
+    if (dim) buildDim(drawObjects, dimExcludedDrawIds);
     stats.meshes = group.children.length;
     syncVisibility();
     return stats;
   }
 
-  function buildDim(byMesh) {
-    const CAP = 12 * 1024 * 1024; // refuse a dim pass that would allocate more than ~48 MB of indices
-    let budget = CAP;
-    for (const [mesh, selected] of byMesh) {
-      const source = mesh.geometry;
-      const indices = source.index;
+  function buildDim(drawObjects, excludedDrawIds) {
+    const selectedByMesh = new Map();
+    for (const id of excludedDrawIds) {
+      const entry = drawObjects.get(id), mesh = entry?.userData?.renderObject || entry;
+      if (!mesh) continue;
+      const spans = selectedByMesh.get(mesh) || [];
+      spans.push(...spansFor(mesh, id));
+      selectedByMesh.set(mesh, spans);
+    }
+    const meshes = new Set([...drawObjects.values()].map(entry => entry?.userData?.renderObject || entry));
+    for (const mesh of meshes) {
+      const source = mesh.geometry, indices = source.index;
       if (!indices || !source.attributes.position) continue;
-      const total = indices.count;
-      const excluded = new Uint8Array(total);
-      for (const span of selected) for (let i = 0; i < span.indexCount; i += 1) excluded[span.firstIndex + i] = 1;
-      let keep = 0;
-      for (let i = 0; i < total; i += 1) if (!excluded[i]) keep += 1;
-      if (!keep || keep > budget) continue;
-      budget -= keep;
-      const array = new Uint32Array(keep);
-      let at = 0;
-      for (let i = 0; i < total; i += 1) if (!excluded[i]) array[at++] = indices.getX(i);
+      const first = source.drawRange.start, end = Math.min(indices.count, first + source.drawRange.count);
+      const selected = selectedByMesh.get(mesh) || [];
+      let dimIndex = indices, count = end - first, start = first;
+      if (selected.length) {
+        const excluded = new Uint8Array(count);
+        for (const span of selected) excluded.fill(1, Math.max(first, span.firstIndex) - first, Math.min(end, span.firstIndex + span.indexCount) - first);
+        const keep = count - excluded.reduce((sum, value) => sum + value, 0);
+        if (!keep) continue;
+        const array = new Uint32Array(keep);
+        let at = 0;
+        for (let i = first; i < end; i++) if (!excluded[i - first]) array[at++] = indices.getX(i);
+        dimIndex = new THREE.BufferAttribute(array, 1);
+        count = keep; start = 0;
+      }
+      if (!count) continue;
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', source.attributes.position);
       if (source.attributes.normal) geometry.setAttribute('normal', source.attributes.normal);
-      geometry.setIndex(new THREE.BufferAttribute(array, 1));
+      geometry.setIndex(dimIndex);
+      geometry.setDrawRange(start, count);
       const lines = (mesh.userData.topology || 'triangles') === 'lines';
       const overlay = lines ? new THREE.LineSegments(geometry, dimLineMaterial) : new THREE.Mesh(geometry, dimMaterial);
       overlay.matrixAutoUpdate = false;
@@ -140,10 +152,9 @@ export function createHighlighter(scene) {
       overlay.userData.sourceMesh = mesh;
       group.add(overlay);
       stats.dimMeshes += 1;
-      stats.dimIndices += keep;
+      stats.dimIndices += count;
     }
   }
-
   function clear() {
     for (const child of group.children) child.geometry.dispose();
     group.clear();
@@ -165,17 +176,30 @@ export function createHighlighter(scene) {
   return { group, build, clear, syncVisibility, stats: () => ({ ...stats }), material, lineMaterial };
 }
 
-// Resolve the Draw ids owned by a product occurrence (all scene anchors).
-export function drawsForProduct(document, productOccurrenceId) {
-  const out = [];
-  for (const [drawId, owner] of Object.entries(document.renderOwnership || {})) {
-    if (owner === productOccurrenceId) out.push(drawId);
+// Resolve the selected product/scene subtree, including assembly children.
+function descendants(nodes, rootId) {
+  const children = new Map();
+  for (const [id, node] of Object.entries(nodes)) {
+    const list = children.get(node.parentId) || [];
+    list.push(id); children.set(node.parentId, list);
   }
-  return out;
+  const ids = new Set(), pending = [rootId];
+  while (pending.length) {
+    const id = pending.pop();
+    ids.add(id);
+    pending.push(...(children.get(id) || []));
+  }
+  return ids;
+}
+
+export function drawsForProduct(document, productOccurrenceId) {
+  const ids = descendants(document.productOccurrences, productOccurrenceId);
+  return Object.entries(document.renderOwnership || {})
+    .filter(([, owner]) => ids.has(owner)).map(([id]) => id);
 }
 
 export function drawsForScene(document, snapshot, sceneOccurrenceId) {
+  const ids = descendants(document.sceneOccurrences, sceneOccurrenceId);
   return Object.entries(snapshot.draws || {})
-    .filter(([, draw]) => draw.occurrenceId === sceneOccurrenceId)
-    .map(([id]) => id);
+    .filter(([, draw]) => ids.has(draw.occurrenceId)).map(([id]) => id);
 }

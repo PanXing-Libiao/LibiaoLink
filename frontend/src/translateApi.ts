@@ -31,6 +31,12 @@ const CJK_PATTERN = /[\u4e00-\u9fff]/;
 /** 并发上限：单条服务 + 导出场景（去重后个位数）小并发即可，同时防批量导入时打满请求。 */
 const MAX_CONCURRENCY = 4;
 
+/** 页面到达时的后台预热并发：三语可同时补，但每个目标语言保持轻量。 */
+const PREFETCH_CONCURRENCY = 2;
+
+/** 项目总览导出的全部主体语言；与 report 的 TranslationTarget 口径一致。 */
+const OVERVIEW_EXPORT_TARGETS: readonly TranslationTarget[] = ["en", "ja", "ko"];
+
 /** 译文缓存总量上限（按单目标约 600 条 × en / ja / ko 估算；Map 插入序淘汰最老一条）。 */
 const CACHE_LIMIT_PER_TARGET = 600;
 const CACHE_TOTAL_LIMIT = CACHE_LIMIT_PER_TARGET * 3;
@@ -193,7 +199,17 @@ function translateOneShared(text: string, target: TranslationTarget): Promise<st
  * ① 批量查服务端译文库（L2，一次请求）；② 未入库的再逐条 /translate（L3，服务端命中即出、未命中引擎 + 落库）。
  */
 export function prefetchZhTo(texts: readonly string[], target: TranslationTarget): void {
-  void prefetchZhToAsync(texts, target);
+  void prefetchZhToAsync(texts, target, PREFETCH_CONCURRENCY);
+}
+
+/**
+ * 项目总览导出用：页面数据到达时预热全部导出主体语言，不再只预热当前界面语言。
+ * 服务端译文库批量直取仍是一次请求；只有未入库条目才进入逐条后台机翻。
+ */
+export function prefetchOverviewExportTranslations(texts: readonly string[]): void {
+  for (const target of OVERVIEW_EXPORT_TARGETS) {
+    void prefetchZhToAsync(texts, target, PREFETCH_CONCURRENCY);
+  }
 }
 
 /** 兼容既有调用：英文导出的后台预热。 */
@@ -201,7 +217,7 @@ export function prefetchZhToEn(texts: readonly string[]): void {
   prefetchZhTo(texts, "en");
 }
 
-async function prefetchZhToAsync(texts: readonly string[], target: TranslationTarget): Promise<void> {
+async function prefetchZhToAsync(texts: readonly string[], target: TranslationTarget, concurrency: number = MAX_CONCURRENCY): Promise<void> {
   const now = Date.now();
   const queue = uniqueTexts(texts).filter((text) => {
     const key = keyOf(target, text);
@@ -217,7 +233,7 @@ async function prefetchZhToAsync(texts: readonly string[], target: TranslationTa
   }
   let cursor = 0;
   await Promise.all(
-    Array.from({ length: Math.min(MAX_CONCURRENCY, missing.length) }, async () => {
+    Array.from({ length: Math.min(concurrency, missing.length) }, async () => {
       while (cursor < missing.length) {
         const at = cursor;
         cursor += 1;

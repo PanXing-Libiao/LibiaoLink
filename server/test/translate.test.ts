@@ -220,23 +220,26 @@ describe("TranslateService.lookup（批量只读查库）", () => {
 });
 
 describe("TranslateService.warmup（保存即后台翻译）", () => {
-  it("只排中文文本（去空去重），后台翻好落库；重复调用在去重窗口内不再排队", async () => {
+  it("只排中文文本（去空去重），按英 / 日 / 韩三语后台翻好落库；重复调用在去重窗口内不再排队", async () => {
     const { repository, service } = makeService();
     const engine = stubEngineReply((q) => ({ payload: { translatedText: q } }));
     service.warmup(["任务甲", "plain ascii", "", "任务甲", "   "]);
     await vi.waitFor(() => {
-      expect(repository.upsertCalls).toHaveLength(1);
+      expect(repository.upsertCalls).toHaveLength(3);
     });
-    expect(engine.calls).toHaveLength(1);
+    expect(engine.calls).toHaveLength(3);
+    expect(repository.upsertCalls.map((row) => row.targetLang).sort()).toEqual(["en", "ja", "ko"]);
     service.warmup(["任务甲"]);
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(engine.calls).toHaveLength(1);
-    expect(repository.upsertCalls).toHaveLength(1);
+    expect(engine.calls).toHaveLength(3);
+    expect(repository.upsertCalls).toHaveLength(3);
   });
 
   it("已入库条目跳过（不调引擎）；引擎失败静默不抛错", async () => {
     const seeded = makeService();
     seeded.repository.rows.set("zh|en|" + hashOf("已翻文本"), { sourceText: "已翻文本", translatedText: "Done", engine: "hy-mt-1.5-1.8b" });
+    seeded.repository.rows.set("zh|ja|" + hashOf("已翻文本"), { sourceText: "已翻文本", translatedText: "完了", engine: "hy-mt-1.5-1.8b" });
+    seeded.repository.rows.set("zh|ko|" + hashOf("已翻文本"), { sourceText: "已翻文本", translatedText: "완료", engine: "hy-mt-1.5-1.8b" });
     const okEngine = stubEngineReply((q) => ({ payload: { translatedText: q } }));
     seeded.service.warmup(["已翻文本"]);
     await new Promise((resolve) => setTimeout(resolve, 20));

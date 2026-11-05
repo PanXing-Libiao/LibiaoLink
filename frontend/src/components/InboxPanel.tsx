@@ -11,7 +11,7 @@ import {
   type InboxNotification,
   type InboxNotificationType,
 } from "../inboxApi";
-import { FILES_BASE_HASH, projectFocusHref, projectViewHref, SETTINGS_BASE_HASH } from "../useHashRoute";
+import { projectFocusHref, projectViewHref, SETTINGS_BASE_HASH } from "../useHashRoute";
 import { Loader } from "./Loader";
 
 /** 弹窗条数：快速一瞥「最近 8 条」；完整消息中心（分类筛选 / 已处理 / 稍后提醒）留给 M5-07 整页。 */
@@ -37,10 +37,10 @@ const TYPE_CHIP_CLASS: Record<InboxNotificationType, string> = {
  * 用来消息通知」）：最近 8 条 + 全部已读 + 全部删除；打开即拉取（随行回读未读角标）。
  * SSE notification 事件只推进 ../inbox 的版本号，弹窗开着时据此静默补拉（不清空现值、不整页骨架 ——
  * 与全局静默同步口径一致）；点条 = 置读（乐观 + 失败回滚出 Toast），并按读面 projectId + refType
- * 直达关联内容（项目 / 任务抽屉 / 日报行 / 问题抽屉 / 文件库项目筛选）。2026-10-23 增单条删除 / 一键删除：先二次确认，成功按服务端 unreadCount
+ * 直达关联内容（项目 / 任务抽屉 / 日报行 / 问题抽屉 / 项目文件视图）。2026-10-23 增单条删除 / 一键删除：先二次确认，成功按服务端 unreadCount
  * 校准红点并补拉；删除只隐藏本人收件箱（C5-03 全量留档保留）。
  */
-/** 站内信点击落点：任务开抽屉、日报定位行、问题开抽屉；文件和其它关联对象至少落到所属项目。 */
+/** 站内信点击落点：任务开抽屉、日报定位行、问题开抽屉；文件打开项目详情「项目文件」，其它对象落到项目总览。 */
 function inboxTargetHref(item: InboxNotification): string | null {
   const projectId = item.projectId ?? (item.refType === "project" ? item.refId : null);
   if (projectId === null) {
@@ -56,7 +56,7 @@ function inboxTargetHref(item: InboxNotification): string | null {
     return projectFocusHref(projectId, { kind: "issue", id: item.refId });
   }
   if (item.refType === "file") {
-    return FILES_BASE_HASH + "?project=" + encodeURIComponent(projectId);
+    return projectViewHref(projectId, "files");
   }
   return projectViewHref(projectId, "overview");
 }

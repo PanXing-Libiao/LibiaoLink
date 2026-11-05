@@ -7,6 +7,7 @@ import { isMobileOnlyOfficeEditor, OnlyOfficeViewer } from "./OnlyOfficeViewer";
 import { CadModelViewer } from "./CadModelViewer";
 import { useFocusTrap } from "./useFocusTrap";
 import { useT } from "../i18n";
+import { lockBodyScroll } from "../scrollLock";
 
 /** 预览浮层（Push 226 续 / 续三 · S4 · Push 246 起任务列表「文件」列下拉与详情抽屉共用）：
  *  图片 = 取签名字节后本地大图、PDF = PDF.js 本地分页查看、Office / 文本族 = ONLYOFFICE 查看器外壳
@@ -34,10 +35,12 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
   onClose: () => void;
 }) {
   const t = useT();
+  useEffect(() => lockBodyScroll(), []);
   const onlyOfficeMobile = pane.mode === "viewer" && pane.viewer.kind === "onlyoffice" && isMobileOnlyOfficeEditor();
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (document.querySelector("dialog[data-cad-resources][open]")) return;
         event.stopPropagation();
         onClose();
       }
@@ -78,7 +81,7 @@ export function FilePreviewOverlay({ pane, name, kind, nonce, zClass = "z-[60]",
           />
         ) : null}
         {pane.mode === "viewer" && pane.viewer.kind === "cad" ? (
-          <CadModelViewer key={`${pane.viewer.fileId}:${pane.viewer.versionId}:${nonce}`} viewer={pane.viewer} name={name} onClose={onClose} onDownload={onDownload} onRetry={onRetry} />
+          <CadModelViewer key={`${pane.viewer.fileId}:${pane.viewer.versionId}:${nonce}`} viewer={pane.viewer} name={name} onClose={onClose} onDownload={onDownload} />
         ) : kind === "cad" ? (
           <div
             role="status"

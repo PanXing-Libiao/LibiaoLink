@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
+import { Readable } from "node:stream";
 import { AppConfig } from "../src/config/config.module.js";
 import { loadEnv } from "../src/config/env.js";
 import { CadEngineClient, CAD_ENGINE_VERSION } from "../src/modules/file/cad-engine.client.js";
@@ -31,7 +32,7 @@ afterEach(async () => {
 });
 
 describe("CAD sandbox boundary", () => {
-  it("生产客户端通过 Unix socket 工作，无需 TCP 或 CAD 文件目录", async () => {
+  it.skipIf(process.platform === "win32")("生产客户端通过 Unix socket 工作，无需 TCP 或 CAD 文件目录", async () => {
     socketDirectory = await mkdtemp("/tmp/libiaolink-cad-client-");
     const socketPath = socketDirectory + "/engine.sock";
     server = createServer((_request, response) => { response.setHeader("X-CAD-Engine-Version", CAD_ENGINE_VERSION); response.end("null"); });
@@ -61,9 +62,23 @@ describe("CAD sandbox boundary", () => {
       });
     });
     const bytes = Uint8Array.of(0, 97, 98, 99, 0).subarray(1, 4);
-    expect((await engine.submit({ ...identity, bytes })).job.id).toBe(job.id);
+    const sha256 = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    expect((await engine.submit({ ...identity, payload: { body: bytes, byteLength: 3, sha256 } })).job.id).toBe(job.id);
     expect(body?.toString()).toBe("abc");
-    expect(metadata).toEqual({ action: "submit", ...identity });
+    expect(metadata).toEqual({ action: "submit", ...identity, payloadByteLength: 3, payloadSHA256: sha256 });
+  });
+
+  it("原件流按块转发，不先把整份文件收集到内存", async () => {
+    let body = "";
+    const engine = await fixture((request, response) => {
+      request.setEncoding("utf8");
+      request.on("data", chunk => { body += String(chunk); });
+      request.on("end", () => response.end(JSON.stringify({ job, reused: false })));
+    });
+    const sha256 = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    const payload = { body: Readable.from([Buffer.from("a"), Buffer.from("bc")]), byteLength: 3, sha256 };
+    expect((await engine.submit({ ...identity, payload })).job.id).toBe(job.id);
+    expect(body).toBe("abc");
   });
 
   it("产物从响应流读取，不接受沙箱返回的本机路径", async () => {
@@ -79,7 +94,7 @@ describe("CAD sandbox boundary", () => {
     let mode = "json";
     const engine = await fixture((_request, response) => {
       if (mode === "json") response.end(" ".repeat(64 * 1024 + 1));
-      else if (mode === "resource") { response.setHeader("Content-Length", 256 * 1024 * 1024 + 1); response.flushHeaders(); }
+      else if (mode === "resource") { response.setHeader("Content-Length", 512 * 1024 * 1024 + 1); response.flushHeaders(); }
       else { response.setHeader("X-CAD-Engine-Version", "wrong-version"); response.end("null"); }
     });
     await expect(engine.lookup(identity)).rejects.toMatchObject({ status: 503 });

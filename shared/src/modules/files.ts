@@ -324,7 +324,7 @@ export const FileDownloadUrlResponseSchema = z
 /**
  * 预览目标（渲染通道口径 · wmj 评审定案 · PR #103）：按前端渲染方式定义，不按文件格式；格式差异由产物 MIME 表达。
  * 缓存键 = versionId + pipelineVersion + target；不同版本即使内容哈希相同也隔离（迁移 0067）。
- * pdf = PDF 直签通道（原件 application/pdf + inline 短时签名，前端 PDF.js 本地分页渲染；不创建 DocServer 会话；Office 改走查看器通道 viewer、不产转换产物）；image = 图片查看器通道（图片直出、图片型兜底、含矢量 SVG 产物）；structured = 结构化表格渲染通道（一期未启用时 xlsx 走 pdf）。
+ * pdf = PDF 直签通道（原件 application/pdf + inline 短时签名，前端 PDF.js 本地分页渲染；不创建 DocServer 会话；Office 改走查看器通道 viewer、不产转换产物；CAD 接入另见 ADR-035，不占既有图片/PDF 通道）；image = 图片查看器通道（图片直出、图片型兜底、含矢量 SVG 产物）；structured = 结构化表格渲染通道（一期未启用时 xlsx 走 pdf）。
  */
 export const PREVIEW_TARGETS = ["pdf", "image", "structured"] as const;
 export const PreviewTargetSchema = z.enum(PREVIEW_TARGETS).openapi("PreviewTarget", {

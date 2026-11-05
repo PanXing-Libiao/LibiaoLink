@@ -448,7 +448,7 @@ export default function App() {
 
   /**
    * 删除项目（A5；2026-10-19 起 = 移入项目回收站）：If-Match 回传当前 version 防误删；卡片上的删除是隐式的，
-   * 点一下先出确认条，确认后才调 DELETE —— 项目聚合数据与图片保留，可在文件库 > 项目回收站恢复。
+   * 点一下先出确认条，确认后才调 DELETE —— 项目聚合数据与图片保留，可在回收站 > 项目回收站恢复。
    */
   const handleConfirmDeleteProject = async (): Promise<void> => {
     const project = pendingDelete;
@@ -956,7 +956,7 @@ export default function App() {
   }
 
   if (route.kind === "files") {
-    // 文件库（Push 261 · 头像菜单「文件库」入口）：两栏（系统现有文件 / 回收站）+ 关键字 / 项目 / 状态 / 类型 / 上传人筛选，
+    // 回收站（Push 261 · 头像菜单「回收站」入口）：两栏（文件回收站 / 项目回收站）+ 关键字 / 项目 / 上传人筛选，
     // 筛选态走地址（replaceFilesQuery，地址即状态）—— 与 #/audit 同一口径；数据 = 逐项目聚合（FileLibraryPage.tsx）。
     return (
       <>

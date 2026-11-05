@@ -144,18 +144,18 @@ describe("项目数据导出工作簿", () => {
     expect(stakeholder.getCell(2, 5).value).toBe("客户customer / Vanilla");
   });
 
-  it("文件列只写文件名 / 文件库链接；多文件逐行展示，链接指向第一份", async () => {
+  it("文件列只写文件名 / 项目文件链接；多文件逐行展示，链接指向项目文件视图", async () => {
     const result = await buildProjectExportWorkbook(payload());
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(result.buffer as unknown as ArrayBuffer);
     const taskFile = workbook.getWorksheet("英国项目")!.getCell(2, 17).value as { text?: string; hyperlink?: string };
     expect(taskFile.text).toBe("电气图.pdf\n说明.pdf");
     expect(taskFile.hyperlink).toBe(
-      "https://test-pm.libiaorobot.com/#/files?project=" + PROJECT_ID + "&q=" + encodeURIComponent("电气图.pdf"),
+      "https://test-pm.libiaorobot.com/#/project/" + PROJECT_ID + "?view=files",
     );
     const changeFile = workbook.getWorksheet("变更管理")!.getCell(2, 11).value as { text?: string; hyperlink?: string };
     expect(changeFile.text).toBe("电气图.pdf");
-    expect(changeFile.hyperlink).toContain("/#/files?project=" + PROJECT_ID);
+    expect(changeFile.hyperlink).toContain("/#/project/" + PROJECT_ID + "?view=files");
   });
 
   it("同一单元格的多个附图按网格排布，图片不重叠", async () => {

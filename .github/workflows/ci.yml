@@ -567,6 +567,13 @@ jobs:
         env:
           PREVIEW_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/libiaolink
         run: node node_modules/vitest/vitest.mjs run test/preview-isolation.integration.test.ts
+      - name: CAD queue activity and fairness (PostgreSQL)
+        working-directory: server
+        env:
+          CAD_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/libiaolink_cad_test_queue
+        run: |
+          createdb -h 127.0.0.1 -U postgres libiaolink_cad_test_queue
+          node node_modules/vitest/vitest.mjs run --config test/cad.vitest.config.ts test/cad-audit.integration.test.ts test/cad-cache-maintenance.integration.test.ts
       # ---- 真机回放（M3-06 压测 / M6 日报与问题）：空库种子 + 起 api + 脚本自证（报告逐行落 CI 日志） ----
       - name: Seed base data (roles / dicts / blueprint)
         working-directory: database
@@ -686,3 +693,49 @@ jobs:
           M5_04_2_DATABASE_URL: postgresql://libiaolink_migrator@127.0.0.1:5432/libiaolink
           M5_04_2_BASE_URL: http://127.0.0.1:3011
         run: node scripts/m5-04-2-snooze-replay.mjs
+
+  # CAD 引擎：UCD 契约、DXF 适配器、二维查看器核心（纯 Python / Node，无数据库与 .NET）。
+  # STEP 用例依赖外部 OCP 运行时、隔离 worker 用例依赖本机 .cad-work/dxf venv，二者缺失时用例自行
+  # skip（见 tests/test_step_*.py 与 tests/dxf/test_jobs.py 的 skipUnless）；DWG 读取器 --self-test
+  # 需要 .NET 10 与社区二进制，不在本 job 内。请 wmj 复核（CAD 专项，Push 320）。
+  cad-engine:
+    name: cad-engine
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install Python dependencies (locked)
+        working-directory: server/cad-engine
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dxf.txt
+          python -m pip install --only-binary=:all: --no-deps -r requirements-step.txt -r requirements-acis.txt
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libglu1-mesa
+          python -c 'import cq_acis, cadquery; from OCP.BRepCheck import BRepCheck_Analyzer'
+          python -m venv "$RUNNER_TEMP/cad-step-mesher"
+          "$RUNNER_TEMP/cad-step-mesher/bin/pip" install --only-binary=:all: --no-deps -r requirements-step-mesher.txt
+      - name: Python suites (UCD / transport / DXF)
+        env:
+          PYTHONPATH: server/cad-engine/core
+          CAD_STEP_MESHER_PYTHON: ${{ runner.temp }}/cad-step-mesher/bin/python
+        run: |
+          set -euo pipefail
+          cd server/cad-engine/core/tests
+          python -m unittest discover -p "test_*.py"
+          cd dxf
+          python -m unittest discover -p "test_*.py"
+      - name: Node suites (drawing core; three resolves through the viewer loader)
+        working-directory: server/cad-engine/core
+        run: node --experimental-loader ./tests/three-loader.mjs --test tests/*.test.mjs
+      - name: Release identity check
+        run: python server/cad-engine/build-release.py --check

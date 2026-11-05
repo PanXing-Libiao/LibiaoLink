@@ -1,7 +1,7 @@
 """UCD 2.0: explicit view contexts and discriminated, typed facts. v1 is frozen."""
 import json
 from pathlib import Path
-from .build_schema import obj,arr,ref,enum,ID,TEXT
+from .build_schema import obj,arr,ref,enum,ID,TEXT,BOOL,vec
 KNOWLEDGE=['native-confirmed','standard-confirmed','official-declared','source-declared','engineering-defined','hypothesis','unknown']
 VALIDATION=['not-implemented','experimental','verified-scope','not-applicable']
 def fact(value):
@@ -20,5 +20,14 @@ def build():
     for name in ('Configuration','DisplayState'):d[name]['properties']['validation']=enum(*VALIDATION)
     p=d['Capability']['properties'];p['mechanism']=enum(*KNOWLEDGE);p['implementation']=enum('not-implemented','experimental','implemented','unsupported');p['validation']=enum(*VALIDATION);d['Capability']['required'].append('validation')
     d['Snapshot']['properties']['completeness']=enum('complete','partial','experimental')
+    # Attached attribute geometry already lives in the INSERT's owner space.
+    # Its semantic owner supplies inheritance and each array placement, without
+    # applying localFromBlock a second time. Standalone annotations omit this.
+    d['Annotation']['properties']['ownerBlockInstanceId']=ID
+    d['DrawingDraw']['properties']['visibilityLayerIds']=arr(ID,1)
+    d['DrawingDraw']['properties']['clipRegions']=arr(obj({'boundary':arr(vec(2),3),'inverted':BOOL}))
+    # Optional effective start/end widths in source units, one pair per segment.
+    # Omission retains the existing zero-width curve contract; v1 stays frozen.
+    d['Polyline']['properties']['widths']=arr({'type':'array','items':{'type':'number','minimum':0},'minItems':2,'maxItems':2},1)
     return schema
 if __name__=='__main__':(Path(__file__).parent/'schema/ucd-2.0.schema.json').write_text(json.dumps(build(),ensure_ascii=False,indent=2)+'\n')

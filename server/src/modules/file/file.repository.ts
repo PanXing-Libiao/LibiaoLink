@@ -510,6 +510,62 @@ export class FileRepository {
   }
 
   /**
+   * 项目内内容寻址复用（2026-11-03）：找到同项目、同内容哈希、同大小、同扩展名的既有版本对象。
+   * 仅返回元数据；调用方还必须在事务内锁对象键并 HEAD 对象，确认对象仍存在后才能免传。
+   */
+  async findReusableVersionByHash(
+    projectId: string,
+    contentHash: string,
+    sizeBytes: number,
+    extension: string,
+    client: DbClient = this.database.db,
+  ): Promise<{ objectKey: string; sizeBytes: number; contentHash: string; mime: string | null } | null> {
+    const rows = await client
+      .select({
+        objectKey: fileVersions.objectKey,
+        sizeBytes: fileVersions.sizeBytes,
+        contentHash: fileVersions.contentHash,
+        mime: fileVersions.mime,
+      })
+      .from(fileVersions)
+      .innerJoin(files, eq(fileVersions.fileId, files.id))
+      .where(
+        and(
+          eq(files.projectId, projectId),
+          eq(fileVersions.contentHash, contentHash.toLowerCase()),
+          eq(fileVersions.sizeBytes, sizeBytes),
+          ne(files.status, "recycled"),
+          sql`${fileVersions.objectKey} like ${"%." + extension}`,
+        ),
+      )
+      .orderBy(desc(fileVersions.uploadedAt))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  /** 共享对象键的事务级串行锁（哈希空间避免与其它 advisory lock 冲突）；按字典序避免死锁。 */
+  async lockObjectKeys(tx: DbTransaction, objectKeys: readonly string[]): Promise<void> {
+    for (const objectKey of [...new Set(objectKeys)].sort()) {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${objectKey}, 0))`);
+    }
+  }
+
+  /** 排除正在删除的文件后，各共享对象键仍被多少版本引用。 */
+  async countObjectKeyReferences(
+    objectKeys: readonly string[],
+    excludeFileId: string,
+    client: DbClient,
+  ): Promise<Map<string, number>> {
+    if (objectKeys.length === 0) return new Map();
+    const rows = await client
+      .select({ objectKey: fileVersions.objectKey, total: count() })
+      .from(fileVersions)
+      .where(and(inArray(fileVersions.objectKey, [...objectKeys]), ne(fileVersions.fileId, excludeFileId)))
+      .groupBy(fileVersions.objectKey);
+    return new Map(rows.map((row) => [row.objectKey, Number(row.total)]));
+  }
+
+  /**
    * 附件域秒传复用（2026-10-12）：同项目、同内容哈希、无任务 / 节点 / 类型归属（纯附图）的既有文件。
    * 命中 = 上传发起直接复用（不建新文件 / 会话）；只认完成版本（join file_versions），空 draft 与上传中的会话不参与。
    * 任务成果上传不查本口（文件按 files.task_id 单归属，跨任务复用会吞掉新任务的文件列）。

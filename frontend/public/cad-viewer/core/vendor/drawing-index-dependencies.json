@@ -1,0 +1,24 @@
+{
+  "flatbush": {
+    "version": "4.5.0",
+    "source": "https://github.com/mourner/flatbush/tree/v4.5.0",
+    "license": "ISC",
+    "sha256": "26dab0d5b1794e22cac7127b2c09051156141d1518b7382013412ab9de596a5b",
+    "localChanges": "relative import"
+  },
+  "flatqueue": {
+    "version": "3.0.0",
+    "source": "https://github.com/mourner/flatqueue/tree/v3.0.0",
+    "license": "ISC",
+    "sha256": "0f0465c158da5086a50c62db72ad0d125d3c095894a65873a50496619b86b6fc",
+    "localChanges": "comments elided, source implementation retained"
+  },
+  "cad-text-layout": {
+    "source": "https://github.com/slaveOftime/ACadSharp.Image/blob/main/ACadSharp.Image/Rendering/Svg/SvgTextLayout.cs",
+    "license": "MIT",
+    "sourceSha256": "6c6c927587459b86d30aab02e8db805693c071b6cc629f9ebb3eab21a8a563d2",
+    "sha256": "a37f88e57ce11a198699810700793e9f51f1020eaa37f71a03cacc507cbf41ce",
+    "revision": "source content pin; main commit not independently resolved",
+    "adaptation": "Selected wrapping/metrics methods ported to Canvas measureText, no SixLabors dependency; no original font fidelity claim"
+  }
+}

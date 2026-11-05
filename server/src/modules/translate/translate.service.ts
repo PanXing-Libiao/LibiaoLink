@@ -28,10 +28,12 @@ export const TRANSLATE_ENGINE = "hy-mt-1.5-1.8b";
 
 /** 预热去重窗口（毫秒）：同文本在此窗口内不重复排队。 */
 const WARMUP_RECENT_TTL_MS = 300000;
-/** 预热队列每次调用的条数硬顶（防大列表保存时内存失控）。 */
-const WARMUP_MAX_PER_CALL = 300;
-/** 预热并发（2 并发足够且不打满；本地小模型 / API 网关均适用）。 */
-const WARMUP_CONCURRENCY = 2;
+/** 预热队列每次调用的原文条数硬顶（每条再按导出语言展开；防大列表保存时内存失控）。 */
+const WARMUP_MAX_TEXTS_PER_CALL = 300;
+/** 保存后预热覆盖所有导出主体语言：英文 / 日文 / 韩文。 */
+const WARMUP_TARGETS: readonly TranslateLang[] = ["en", "ja", "ko"];
+/** 预热并发（与导出读路径一致；后台执行，不阻塞保存响应）。 */
+const WARMUP_CONCURRENCY = 4;
 /** 中文痕迹（含 CJK 基本区即排队；纯英文 / 数字文本不翻）。 */
 const CJK_PATTERN = /[\u4e00-\u9fff]/;
 
@@ -48,7 +50,7 @@ interface EngineOutput { translatedText: string; engine: string }
 @Injectable()
 export class TranslateService {
   private readonly logger = new Logger(TranslateService.name);
-  /** 预热去重表（文本 → 最近排队时间）。 */
+  /** 预热去重表（目标语言 + 原文 → 最近排队时间）。 */
   private readonly warmupRecent = new Map<string, number>();
 
   constructor(
@@ -93,25 +95,30 @@ export class TranslateService {
   }
 
   /**
-   * 保存即后台翻译（业务口径）：把一批手打文本静默翻成英文落库 —— 不同步、不抛错、不阻塞保存响应。
-   * 日 / 韩译文由前端按当前界面语言走单条 / 批量读通道，保存链路不额外放大三倍机翻请求。
-   * 只排「非空 + 含中文痕迹 + 去重窗口外」的文本；已入库的条目在后台逐条跳过。
+   * 保存即后台翻译（业务口径）：把一批手打文本静默翻成全部导出主体语言（英 / 日 / 韩）落库 ——
+   * 不同步、不抛错、不阻塞保存响应。只排「非空 + 含中文痕迹 + 去重窗口外」的文本；
+   * 已入库的条目在后台逐条跳过。
    */
   warmup(texts: readonly string[]): void {
     const now = Date.now();
     this.pruneWarmupRecent(now);
-    const queue: string[] = [];
+    const queue: Array<{ text: string; target: TranslateLang }> = [];
+    let textCount = 0;
     for (const raw of texts) {
       const text = typeof raw === "string" ? raw.trim() : "";
       if (text === "" || !CJK_PATTERN.test(text)) {
         continue;
       }
-      if (this.warmupRecent.has(text)) {
-        continue;
+      textCount += 1;
+      for (const target of WARMUP_TARGETS) {
+        const key = warmupKeyOf(target, text);
+        if (this.warmupRecent.has(key)) {
+          continue;
+        }
+        this.warmupRecent.set(key, now);
+        queue.push({ text, target });
       }
-      this.warmupRecent.set(text, now);
-      queue.push(text);
-      if (queue.length >= WARMUP_MAX_PER_CALL) {
+      if (textCount >= WARMUP_MAX_TEXTS_PER_CALL) {
         break;
       }
     }
@@ -124,26 +131,26 @@ export class TranslateService {
         while (cursor < queue.length) {
           const at = cursor;
           cursor += 1;
-          const text = queue[at];
-          if (text === undefined) {
+          const job = queue[at];
+          if (job === undefined) {
             return;
           }
-          await this.warmupOne(text);
+          await this.warmupOne(job.text, job.target);
         }
       }),
     );
   }
 
-  /** 单条预热：已入库跳过；未入库调引擎翻好落库；任何失败静默（下次再试）。 */
-  private async warmupOne(text: string): Promise<void> {
+  /** 单条预热：目标语言已入库跳过；未入库调引擎翻好落库；任何失败静默（下次再试）。 */
+  private async warmupOne(text: string, target: TranslateLang): Promise<void> {
     try {
       const hash = hashOf(text);
-      const hit = await this.repository.findByHash("zh", "en", hash);
+      const hit = await this.repository.findByHash("zh", target, hash);
       if (hit !== null && hit.translatedText !== "") {
         return;
       }
-      const output = await this.callEngine(text, "zh", "en");
-      await this.repository.upsert({ sourceLang: "zh", targetLang: "en", sourceHash: hash, sourceText: text, translatedText: output.translatedText, engine: output.engine }, new Date());
+      const output = await this.callEngine(text, "zh", target);
+      await this.repository.upsert({ sourceLang: "zh", targetLang: target, sourceHash: hash, sourceText: text, translatedText: output.translatedText, engine: output.engine }, new Date());
     } catch (error) {
       this.logger.debug("warmup skipped: " + String(error instanceof Error ? error.message : error));
     }
@@ -151,7 +158,7 @@ export class TranslateService {
 
   /** 去重表瘦身（仅在超阈值时扫过期项）。 */
   private pruneWarmupRecent(now: number): void {
-    if (this.warmupRecent.size <= 2000) {
+    if (this.warmupRecent.size <= 6000) {
       return;
     }
     for (const [key, at] of this.warmupRecent) {
@@ -277,6 +284,11 @@ export class TranslateService {
     }
     return finalText;
   }
+}
+
+/** 预热去重键（目标语言 + 原文）。 */
+function warmupKeyOf(target: TranslateLang, text: string): string {
+  return target + "\u0000" + text;
 }
 
 /** sha256 十六进制（译文库键）。 */
