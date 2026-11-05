@@ -11,6 +11,8 @@
 
 读取持久模型清单时，先完成窗口资源续租，再打开对象存储流，避免续租失败后遗留未关闭的读取流。存储暂时不可用保留已完成缓存，确认产物缺失或损坏才排队重建。
 
+任务状态轮询首次返回 completed / partial 前会续租 5 分钟资源窗口；仅对尚未释放的资源窗口生效。这样冷转换超过 5 分钟时，前端并行预取 buffer 不会在清单请求续租前收到 404。
+
 CAD 异常审计（2026-10-23，F-03）：解析失败、资源超限、超时和窗口取消均追加到既有 `audit_logs`，对象为 `file`、动作为 `update`，不增加枚举或迁移。后台失败使用 `actorId=null` / `entry=system` / `result=failed`；输入大小拒绝使用当前用户 / `entry=api` / `result=failed`；窗口取消使用窗口所属用户 / `entry=api` / `result=succeeded`，仍不取消共享后台解析。正常预览沿用主干已有审计行为。
 
 - `metadata.operation` 分别为 `cad.failed` / `cad.limit_exceeded` / `cad.timed_out` / `cad.cancelled`；记录文件版本、持久任务、固定引擎与码页。后台事件另带尝试次数、错误码、是否计划重试及已知的 native job / 终态；取消事件带窗口和对外窗口任务 id；输入拒绝记录源大小和输入限额。不记录原件、凭据、socket、本机路径或未过滤的 native 错误正文。

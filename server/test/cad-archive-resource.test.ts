@@ -59,6 +59,33 @@ describe("CAD cached resource lifecycle", () => {
     expect(JSON.stringify(state)).not.toContain("projects/private");
   });
 
+  it("任务完成状态在返回资源摘要前续租，避免长转换后的预取命中过期租约", async () => {
+    const { repository, view, job } = fixture();
+    view.leaseExpiresAt = new Date(Date.now() - 1000);
+
+    const state = await job();
+
+    expect(state.state).toBe("completed");
+    expect(repository.lease).toHaveBeenCalledWith(view.id);
+  });
+
+  it("任务仍在转换时不续租资源窗口", async () => {
+    const { artifact, repository, job } = fixture();
+    artifact.state = "running";
+
+    await job();
+
+    expect(repository.lease).not.toHaveBeenCalled();
+  });
+
+  it("已释放的资源窗口不会因状态查询被重新租用", async () => {
+    const { repository, job } = fixture();
+
+    await job();
+
+    expect(repository.lease).not.toHaveBeenCalled();
+  });
+
   it("资源摘要最多发布 256 项且不泄露对象存储键", async () => {
     const { artifact, job } = fixture();
     artifact.buffers = Array.from({ length: 300 }, (_, index) => ({

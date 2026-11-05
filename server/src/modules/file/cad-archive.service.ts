@@ -49,6 +49,10 @@ export class CadArchiveService {
       await this.repository.cancelView(bound.view.id);
       bound.view.cancelled = true;
     }
+    if (action === "status" && !bound.view.cancelled && bound.view.leaseExpiresAt !== null
+      && ["completed", "partial"].includes(bound.artifact.state)) {
+      await this.repository.lease(bound.view.id);
+    }
     return this.public(bound.artifact, bound.view);
   }
 
