@@ -2,26 +2,27 @@
 // Input: a UCD 2.0 envelope whose document carries Drawing tables. The viewer never
 // re-reads DXF. Analytic source curves (Entity.geometry) and the discretized display
 // representation (Representation kind=drawing) are selectable, separate paths.
-import {projectDrawing, projectBlock} from './drawing-projection.js?v=dxf-0.17.1';
+import {projectDrawing, projectBlock} from './drawing-projection.js?v=dxf-0.17.2';
 import {clipInfiniteLine, gradientField, triangleBoundarySegments, traceStrokeSegments} from './drawing-2d.js?v=dxf-2d-0.5.0';
-import {drawingClips, compileClips, triangulateRings, insideRing} from './drawing-clipping.js?v=dxf-0.17.1';
-import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.17.1';
-import {estimateDrawingDraws, projectInstances, projectInstancesSteps, shouldProjectInstances, recordVisibleBounds, INSTANCE_DRAW_LIMIT, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, quantizeLodSize, LOD_MIN_SCREEN_PX, isLodCulled, I} from './drawing-instances.js?v=dxf-0.17.1';
+import {drawingClips, compileClips, triangulateRings, insideRing} from './drawing-clipping.js?v=dxf-0.17.2';
+import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.17.2';
+import {estimateDrawingDraws, projectInstances, projectInstancesSteps, shouldProjectInstances, recordVisibleBounds, INSTANCE_DRAW_LIMIT, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, quantizeLodSize, LOD_MIN_SCREEN_PX, isLodCulled, I} from './drawing-instances.js?v=dxf-0.17.2';
 import Flatbush from './vendor/flatbush.js';
-import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, textOffsets, textWorldCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.1';
-import {aciColor, trueColorCss} from './drawing-colors.js?v=dxf-0.17.1';
-import {resolveTextAvoidance} from './drawing-text-avoidance.js?v=dxf-0.17.1';
-import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentation} from './drawing-pattern.js?v=dxf-0.17.1';
-import {mediaItemFor, rasterRecord} from './drawing-media.js?v=dxf-0.17.1';
+import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, textOffsets, textWorldCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.2';
+import {aciColor, trueColorCss} from './drawing-colors.js?v=dxf-0.17.2';
+import {resolveTextAvoidance} from './drawing-text-avoidance.js?v=dxf-0.17.2';
+import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentation} from './drawing-pattern.js?v=dxf-0.17.2';
+import {mediaItemFor, rasterRecord} from './drawing-media.js?v=dxf-0.17.2';
 
 // Use hybrid rendering automatically; retain compatibility for older browsers.
 const forceCanvasRenderer = typeof location !== 'undefined' && new URLSearchParams(location.search).get('renderer') === 'canvas';
 const accelerated = !forceCanvasRenderer && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined';
 const gpuModules = accelerated ? await Promise.all([
-  import('./gpu/background-painter.js?v=dxf-0.17.1'), import('./gpu/gpu-strokes.js?v=dxf-0.17.1')
+  import('./gpu/background-painter.js?v=dxf-0.17.2'), import('./gpu/gpu-strokes.js?v=dxf-0.17.2'), import('./gpu/stroke-tiles.js?v=dxf-0.17.2')
 ]) : null;
 const createBackgroundPainter = gpuModules?.[0].createBackgroundPainter;
 const createStrokeGPU = gpuModules?.[1].createStrokeGPU;
+const createStrokeTilePlanner = gpuModules?.[2].createStrokeTilePlanner;
 const ACCENT = '#d9426f';
 
 export function mountDrawingViewer(envelope) {
@@ -46,6 +47,7 @@ export function mountDrawingViewer(envelope) {
   canvas.hidden = false;
   let ctx = canvas.getContext('2d');
   let strokeGPU = accelerated ? createStrokeGPU() : null;
+  let strokeTiles = strokeGPU && createStrokeTilePlanner ? createStrokeTilePlanner(strokeGPU) : null;
   let background=null;
   canvas.dataset.renderer = accelerated ? 'gpu' : 'canvas';
   let overlay = document.getElementById('drawingOverlay');
@@ -207,7 +209,7 @@ export function mountDrawingViewer(envelope) {
     if (next === '3d' && spaceTarget?.kind !== 'model')
       setSpace({kind:'model',spaceId:Object.values(drawing.drawings)[0].modelSpaceId});
     if (next === '3d' && !meshViewer) {
-      meshLoading ||= import('./drawing-mesh-viewer.js?v=dxf-0.17.1');
+      meshLoading ||= import('./drawing-mesh-viewer.js?v=dxf-0.17.2');
       const {createDrawingMeshViewer} = await meshLoading;
       if (destroyed || request!==viewRequest) return false;
       meshViewer ||= createDrawingMeshViewer({document:ucd, viewport, geometry:representationGeometry, meshIds,
@@ -859,6 +861,7 @@ export function mountDrawingViewer(envelope) {
   }
   function* buildInstanceIndexSteps(){
     if(background){background.dispose();background=null;}
+    strokeTiles?.reset();
     strokeGPU?.reset();
     if(!instancePlan)return;
     const active=new Set(),done=new Set();
@@ -913,9 +916,9 @@ export function mountDrawingViewer(envelope) {
           if(box&&rec.segments?.length&&!rec.fillPath&&!rec.textEntry&&!rec.pointMark&&!rec.infinite&&!rec.raster&&!rec.clipRegion.active&&opaque){
             let dashKey=rec._batchDashKey;
             if(dashKey===undefined){dashKey=rec.dash?.length?rec.dash.join(","):"";rec._batchDashKey=dashKey;}
-            const key=rec.color+"|"+rec.width+"|"+dashKey+"|"+lodSize;
+            const key=rec.color+"|"+rec.width+"|"+dashKey+"|"+lodSize+"|"+rec.layerId;
             let batch=pending.get(key);
-            if(!batch){batch={kind:"stroke",key,path:accelerated?null:new Path2D(),color:rec.color,width:rec.width,dash:rec.dash,bounds:null,count:0,lodSize,rec,records:[],gpuSegments:[]};pending.set(key,batch);}
+            if(!batch){batch={kind:"stroke",key,path:accelerated?null:new Path2D(),color:rec.color,width:rec.width,dash:rec.dash,layerId:rec.layerId,bounds:null,count:0,lodSize,rec,records:[],gpuSegments:[]};pending.set(key,batch);}
             batch.records.push(rec);if(accelerated)batch.gpuSegments.push(rec.segments || rec.visibleGeometry?.segments || []);else traceStrokeSegments(batch.path,rec.segments);batch.bounds=extendBounds(batch.bounds,box);batch.count++;
           }else{
             flush();ensureRecordPath(rec);group.paint.push({kind:"record",rec,bounds:box,lodSize});
@@ -923,6 +926,11 @@ export function mountDrawingViewer(envelope) {
         }
       }
       flush();
+      let gpuRun=0;
+      for(const entry of group.paint){
+        if(entry.kind==="stroke"&&!entry.dash?.length&&entry.gpuSegments?.length){entry.gpuRun=gpuRun;}
+        else{entry.gpuRun=-1;gpuRun++;}
+      }
       group.index=null;
       active.delete(group);done.add(group);
     }
@@ -989,7 +997,7 @@ export function mountDrawingViewer(envelope) {
   const INSTANCE_SYNC_PAINT_LIMIT = 5000;
   const INSTANCE_WORKER_PAINT_LIMIT = 200000;
   const INSTANCE_OVERVIEW_SCREEN_PX = 3;
-  const INSTANCE_INTERACTION_SETTLE_MS = 700;
+  const INSTANCE_INTERACTION_SETTLE_MS = 220;
   const ORDINARY_INTERACTION_SETTLE_MS = 220;
   let paintRevision = 0;
   let instanceRefresh = null;
@@ -1109,6 +1117,12 @@ export function mountDrawingViewer(envelope) {
     const paintCount = phase === "preview"
       ? currentInstancePaintCount(minScreenPx)
       : (instancePlan.renderedRecordCount ?? instancePlan.visibleRecordCount ?? instancePlan.count);
+    // Persistent WebGL tiles already keep geometry off the CPU paint loop. The
+    // Canvas2D worker remains a fallback for browsers without WebGL2/tile support.
+    if (strokeTiles) {
+      canvas.dataset.gpuTiles = "persistent";
+      return refreshCanvasInstancesInFrames(key, !hasUsablePreview(), {phase, minScreenPx});
+    }
     if (!accelerated || paintCount > INSTANCE_WORKER_PAINT_LIMIT) {
       return refreshCanvasInstancesInFrames(key, !hasUsablePreview(), {phase, minScreenPx});
     }
@@ -1282,7 +1296,7 @@ export function mountDrawingViewer(envelope) {
         let result;
         const stepStarted = performance.now();
         if (context) ctx = context;
-        strokeGPU = null;
+        strokeGPU = strokeTiles ? device : null;
         try { result = job.steps.next(); } finally { ctx = screen; strokeGPU = device; }
         if (result.done) job.result = result.value;
         job.maxStepMs = Math.max(job.maxStepMs, performance.now() - stepStarted);
@@ -1334,8 +1348,9 @@ export function mountDrawingViewer(envelope) {
     refreshInstanceLayers();
     ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle='#fff';ctx.fillRect(0,0,cssW,cssH);
     strokeGPU?.begin(canvas.width,canvas.height);
-    const view={minX:-tx/scale,maxX:(cssW-tx)/scale,minY:(ty-cssH)/scale,maxY:ty/scale};
-    let calls=0;
+    const view={minX:-tx/scale,maxX:(cssW-tx)/scale,minY:(ty-cssH)/scale,maxY:ty/scale,dpr};
+    let calls=0,activeGpuNode=null,activeGpuRun=-1;
+    const tilePaint={tiles:0,segments:0,styles:0,level:0,built:0,reused:0};
     const paintStats={rendered:0,culled:0,drawn:0,pendingRaster:0,renderedSource:new Set(),samples:[]};
     const intersects=b=>b&&b.minX<=view.maxX&&b.maxX>=view.minX&&b.minY<=view.maxY&&b.maxY>=view.minY;
     function setMatrix(m){ctx.setTransform(dpr*scale*m[0],-dpr*scale*m[1],dpr*scale*m[4],-dpr*scale*m[5],dpr*(tx+scale*m[12]),dpr*(ty-scale*m[13]));}
@@ -1370,7 +1385,7 @@ export function mountDrawingViewer(envelope) {
         if (++visited % 32 === 0 && performance.now() - sliceStarted >= 6) {
           strokeGPU?.flush(ctx); yield; sliceStarted = performance.now();
         }
-        if(entry.kind==='group'){yield* paint(entry,matrix);continue;}
+        if(entry.kind==='group'){activeGpuNode=null;activeGpuRun=-1;yield* paint(entry,matrix);continue;}
         if(entry.bounds&&!intersects(transformBounds(entry.bounds,matrix))){
           paintStats.culled+=entry.kind==='stroke'?entry.count:1;continue;
         }
@@ -1380,16 +1395,25 @@ export function mountDrawingViewer(envelope) {
           continue;
         }
         if(entry.kind==='stroke'){
-          const sx=Math.hypot(matrix[0],matrix[1]), sy=Math.hypot(matrix[4],matrix[5]);
-          const uniform=Math.abs(sx-sy)<1e-8*Math.max(sx,sy) && Math.abs(matrix[0]*matrix[4]+matrix[1]*matrix[5])<1e-8*sx*sy;
           for(const record of entry.records)paintStats.renderedSource.add(record.id);
-          if(strokeGPU && uniform && !entry.dash?.length && entry.gpuSegments.length && entry.gpuSegments.every(a=>a.length)){
-            strokeGPU.stroke(entry,matrix,{scale,tx,ty,dpr});calls++;paintStats.rendered+=entry.count;paintStats.drawn+=entry.count;continue;
+          if(strokeGPU&&strokeTiles&&entry.gpuRun>=0&&entry.gpuSegments?.length){
+            if(activeGpuNode!==node||activeGpuRun!==entry.gpuRun){
+              const result=strokeTiles.drawRun(node,entry.gpuRun,node.group.paint,matrix,view,scale,minScreenPx);
+              activeGpuNode=node;activeGpuRun=entry.gpuRun;
+              if(result.tiles){
+                tilePaint.tiles+=result.tiles;tilePaint.segments+=result.segments;
+                tilePaint.styles+=result.styles;tilePaint.level=Math.max(tilePaint.level,result.level);
+                tilePaint.built+=result.built||0;tilePaint.reused+=result.reused||0;
+              }
+            }
+            calls++;paintStats.rendered+=entry.count;paintStats.drawn+=entry.count;continue;
           }
+          activeGpuNode=null;activeGpuRun=-1;
           strokeGPU?.flush(ctx);
           setMatrix(matrix);calls++;paintStats.rendered+=entry.count;paintStats.drawn+=entry.count;
           ctx.strokeStyle=entry.color;ctx.lineWidth=entry.width/localScale;ctx.lineJoin='round';ctx.lineCap=entry.dash?.length?'round':'butt';ctx.setLineDash(entry.dash||[]);ctx.stroke(ensureBatchPath(entry));continue;
         }
+        activeGpuNode=null;activeGpuRun=-1;
         strokeGPU?.flush(ctx);
         const rec=entry.rec;
         if(rec.infinite){
@@ -1468,6 +1492,19 @@ export function mountDrawingViewer(envelope) {
       canvas.dataset.renderedSourceRecords=String(renderedSourceTotal);
       canvas.dataset.culledRecords=String(instancePlan.lastCulledRecordCount);
       canvas.dataset.lodSamples=JSON.stringify(paintStats.samples);
+      const gpuStats=strokeGPU?.stats?.()||{};
+      const tileCache=strokeTiles?.stats?.()||{};
+      canvas.dataset.gpuTiles=strokeTiles?"persistent":"off";
+      canvas.dataset.gpuTilesDrawn=String(tilePaint.tiles);
+      canvas.dataset.gpuTileSegments=String(gpuStats.segments||0);
+      canvas.dataset.gpuTileStyleBatches=String(tilePaint.styles);
+      canvas.dataset.gpuTileLevel=String(tilePaint.level);
+      canvas.dataset.gpuTileCalls=String(gpuStats.calls||0);
+      canvas.dataset.gpuTileBufferBytes=String(gpuStats.bytes||0);
+      canvas.dataset.gpuTileCacheTiles=String(tileCache.cachedTiles||0);
+      canvas.dataset.gpuTileBuildsThisPaint=String(tilePaint.built);
+      canvas.dataset.gpuTileReuseThisPaint=String(tilePaint.reused);
+      canvas.dataset.gpuTileBuilds=String(tileCache.builtTiles||0);
     }
     if(profile){canvas.dataset.lastPaintMs=(performance.now()-paintStarted).toFixed(1);canvas.dataset.lastPaintCalls=String(calls);}
     if(instanceSelected){
@@ -2811,6 +2848,7 @@ export function mountDrawingViewer(envelope) {
       if (interactionFrame) { cancelAnimationFrame(interactionFrame); interactionFrame = 0; }
       if (interactionTimer) { clearTimeout(interactionTimer); interactionTimer = 0; }
       background?.dispose();
+      strokeTiles?.reset();
       strokeGPU?.dispose();
       rasterCache.clear();
       rasterProbes.clear();
