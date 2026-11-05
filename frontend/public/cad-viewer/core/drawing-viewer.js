@@ -2,23 +2,23 @@
 // Input: a UCD 2.0 envelope whose document carries Drawing tables. The viewer never
 // re-reads DXF. Analytic source curves (Entity.geometry) and the discretized display
 // representation (Representation kind=drawing) are selectable, separate paths.
-import {projectDrawing, projectBlock} from './drawing-projection.js?v=dxf-0.17.4';
+import {projectDrawing, projectBlock} from './drawing-projection.js?v=dxf-0.17.5';
 import {clipInfiniteLine, gradientField, triangleBoundarySegments, traceStrokeSegments} from './drawing-2d.js?v=dxf-2d-0.5.0';
-import {drawingClips, compileClips, triangulateRings, insideRing} from './drawing-clipping.js?v=dxf-0.17.4';
-import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.17.4';
-import {estimateDrawingDraws, projectInstances, projectInstancesSteps, shouldProjectInstances, recordVisibleBounds, INSTANCE_DRAW_LIMIT, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, quantizeLodSize, LOD_MIN_SCREEN_PX, isLodCulled, I} from './drawing-instances.js?v=dxf-0.17.4';
+import {drawingClips, compileClips, triangulateRings, insideRing} from './drawing-clipping.js?v=dxf-0.17.5';
+import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.17.5';
+import {estimateDrawingDraws, projectInstances, projectInstancesSteps, shouldProjectInstances, recordVisibleBounds, INSTANCE_DRAW_LIMIT, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, quantizeLodSize, LOD_MIN_SCREEN_PX, isLodCulled, I} from './drawing-instances.js?v=dxf-0.17.5';
 import Flatbush from './vendor/flatbush.js';
-import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, textOffsets, textWorldCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.4';
-import {aciColor, trueColorCss} from './drawing-colors.js?v=dxf-0.17.4';
-import {resolveTextAvoidance} from './drawing-text-avoidance.js?v=dxf-0.17.4';
-import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentation} from './drawing-pattern.js?v=dxf-0.17.4';
-import {mediaItemFor, rasterRecord} from './drawing-media.js?v=dxf-0.17.4';
+import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, textOffsets, textWorldCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.5';
+import {aciColor, trueColorCss} from './drawing-colors.js?v=dxf-0.17.5';
+import {resolveTextAvoidance} from './drawing-text-avoidance.js?v=dxf-0.17.5';
+import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentation} from './drawing-pattern.js?v=dxf-0.17.5';
+import {mediaItemFor, rasterRecord} from './drawing-media.js?v=dxf-0.17.5';
 
 // Use hybrid rendering automatically; retain compatibility for older browsers.
 const forceCanvasRenderer = typeof location !== 'undefined' && new URLSearchParams(location.search).get('renderer') === 'canvas';
 const accelerated = !forceCanvasRenderer && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined';
 const gpuModules = accelerated ? await Promise.all([
-  import('./gpu/background-painter.js?v=dxf-0.17.4'), import('./gpu/gpu-strokes.js?v=dxf-0.17.4'), import('./gpu/stroke-tiles.js?v=dxf-0.17.4')
+  import('./gpu/background-painter.js?v=dxf-0.17.5'), import('./gpu/gpu-strokes.js?v=dxf-0.17.5'), import('./gpu/stroke-tiles.js?v=dxf-0.17.5')
 ]) : null;
 const createBackgroundPainter = gpuModules?.[0].createBackgroundPainter;
 const createStrokeGPU = gpuModules?.[1].createStrokeGPU;
@@ -209,7 +209,7 @@ export function mountDrawingViewer(envelope) {
     if (next === '3d' && spaceTarget?.kind !== 'model')
       setSpace({kind:'model',spaceId:Object.values(drawing.drawings)[0].modelSpaceId});
     if (next === '3d' && !meshViewer) {
-      meshLoading ||= import('./drawing-mesh-viewer.js?v=dxf-0.17.4');
+      meshLoading ||= import('./drawing-mesh-viewer.js?v=dxf-0.17.5');
       const {createDrawingMeshViewer} = await meshLoading;
       if (destroyed || request!==viewRequest) return false;
       meshViewer ||= createDrawingMeshViewer({document:ucd, viewport, geometry:representationGeometry, meshIds,
@@ -233,7 +233,7 @@ export function mountDrawingViewer(envelope) {
   let buildScale = 1, drag = null, moved = false, destroyed = false, mounting = true;
   // Interaction preview: transformed bitmap while panning/zooming.
   let interacting = false, interactionTimer = 0;
-  let previewCanvas = null, previewView = null, previewValid = false;
+  let previewCanvas = null, previewBackdrop = null, previewView = null, previewValid = false;
   const spaceStateCache = new Map();
   const SPACE_STATE_CACHE_SIZE = 2;
   const SPACE_STATE_MAX_RECORDS = 420000;
@@ -1662,10 +1662,18 @@ export function mountDrawingViewer(envelope) {
       previewCanvas.style.willChange = 'transform';
       canvas.after(previewCanvas);
     }
+    if (!previewBackdrop) {
+      previewBackdrop = document.createElement('div');
+      previewBackdrop.id = 'drawingPreviewBackdrop';
+      previewBackdrop.setAttribute('aria-hidden', 'true');
+      previewBackdrop.style.cssText = 'position:absolute;inset:0;z-index:1;background:#fff;pointer-events:none;display:none';
+      previewCanvas.before(previewBackdrop);
+    }
     return previewCanvas;
   }
   function hidePreviewLayer() {
     if (previewCanvas) previewCanvas.style.display = 'none';
+    if (previewBackdrop) previewBackdrop.style.display = 'none';
   }
   function syncPreviewTransform() {
     if (!previewValid || !previewView || !previewCanvas) return false;
@@ -1720,8 +1728,10 @@ export function mountDrawingViewer(envelope) {
     if (!previewValid || !previewCanvas || !previewView) return false;
     if (previewCanvas.width !== canvas.width || previewCanvas.height !== canvas.height) return false;
     previewCanvas.style.width = cssW + 'px'; previewCanvas.style.height = cssH + 'px';
+    if (!syncPreviewTransform()) return false;
+    if (previewBackdrop) previewBackdrop.style.display = 'block';
     previewCanvas.style.display = 'block';
-    return syncPreviewTransform();
+    return true;
   }
   function draw() {
     if (destroyed || mounting || initialBuild) return;
@@ -2893,6 +2903,9 @@ export function mountDrawingViewer(envelope) {
       window.removeEventListener('keydown', onKeyDown);
       canvas.hidden = true; overlay.remove(); panel.remove();
       previewCanvas?.remove();
+      previewBackdrop?.remove();
+      previewCanvas = null;
+      previewBackdrop = null;
       if (emptyState) emptyState.remove();
       canvas.remove();
     }
