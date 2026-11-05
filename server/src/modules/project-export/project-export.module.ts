@@ -11,8 +11,9 @@ import { ProjectExportController } from "./project-export.controller.js";
 import { ProjectExportService } from "./project-export.service.js";
 
 /**
- * 项目数据导出（领域模块）：只读聚合 project / task / report-issue / file / stakeholder，
- * 在内存中生成 4 Sheet xlsx。依赖方向 = 领域 → 领域 + 平台 file；file 不反向依赖本模块。
+ * 项目数据导出（领域模块）：只读聚合 project / task / report-issue / file / stakeholder。
+ * 小项目内存生成；大项目用 ExcelJS WorkbookWriter 写临时文件并返回文件流。
+ * 依赖方向 = 领域 → 领域 + 平台 file；file 不反向依赖本模块。
  */
 @Module({
   imports: [IdentityModule, PermissionModule, AdminModule, ProjectModule, TaskModule, ReportIssueModule, StakeholderModule, FileModule],

@@ -1,8 +1,12 @@
 import ExcelJS from "exceljs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { access, mkdtemp, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { contentDispositionFor, requestOriginCandidate } from "../src/modules/project-export/project-export.controller.js";
-import { splitChangeReason } from "../src/modules/project-export/project-export.service.js";
+import { ProjectExportService, resolveProjectExportMode, splitChangeReason } from "../src/modules/project-export/project-export.service.js";
 import {
+  ProjectExportWorkbookWriter,
   buildProjectExportWorkbook,
   normalizeHttpOrigin,
   projectExportFileName,
@@ -99,6 +103,10 @@ function payload(): ProjectExportPayload {
 
 function headersOf(sheet: ExcelJS.Worksheet): unknown[] {
   return Array.from({ length: sheet.columnCount }, (_value, index) => sheet.getCell(1, index + 1).value);
+}
+
+async function* rowsOf<T>(values: readonly T[]): AsyncGenerator<T> {
+  yield* values;
 }
 
 describe("项目数据导出工作簿", () => {
@@ -200,6 +208,63 @@ describe("项目数据导出工作簿", () => {
     assertNoOverlap(workbook.getWorksheet("日报及问题汇总")!);
     assertNoOverlap(workbook.getWorksheet("变更管理")!);
   });
+
+  it("流式工作簿逐 Sheet 落盘；大项目附图改为项目文件视图链接且不嵌二进制", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "libiaolink-project-export-test-"));
+    const filePath = join(directory, "stream.xlsx");
+    try {
+      const sample = payload();
+      const writer = new ProjectExportWorkbookWriter(filePath, sample.project, sample.origin);
+      await writer.writeTasks(rowsOf(sample.tasks));
+      await writer.writeReports(rowsOf(sample.reports));
+      await writer.writeChanges(rowsOf(sample.changes));
+      await writer.writeStakeholders(rowsOf(sample.stakeholders));
+      const result = await writer.commit();
+      expect(result.sheetNames).toEqual(["英国项目", "日报及问题汇总", "变更管理", "干系人"]);
+      expect((await stat(result.filePath)).size).toBeGreaterThan(0);
+
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.readFile(result.filePath);
+      expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual(result.sheetNames);
+      expect(headersOf(workbook.getWorksheet("英国项目")!)).toHaveLength(18);
+      expect(workbook.getWorksheet("英国项目")!.getCell(2, 5).value).toBe(1);
+
+      const report = workbook.getWorksheet("日报及问题汇总")!;
+      const onsite = report.getCell(2, 5).value as { text?: string; hyperlink?: string };
+      expect(onsite.text).toBe("现场.png\n缺失现场.jpg");
+      expect(onsite.hyperlink).toBe("https://test-pm.libiaorobot.com/#/project/" + PROJECT_ID + "?view=files");
+      expect(report.getImages()).toHaveLength(0);
+
+      const change = workbook.getWorksheet("变更管理")!;
+      const before = change.getCell(2, 5).value as { text?: string; hyperlink?: string };
+      expect(before.text).toBe("旧电源\n变更前.png");
+      expect(before.hyperlink).toContain("/#/project/" + PROJECT_ID + "?view=files");
+      expect(change.getImages()).toHaveLength(0);
+
+      const legacyWorkbook = new ExcelJS.Workbook();
+      await legacyWorkbook.xlsx.load((await buildProjectExportWorkbook(sample)).buffer as unknown as ArrayBuffer);
+      const skippedColumns: Record<string, ReadonlySet<number>> = {
+        "日报及问题汇总": new Set([5, 9]),
+        "变更管理": new Set([5, 6]),
+      };
+      for (const sheetName of result.sheetNames) {
+        const streamedSheet = workbook.getWorksheet(sheetName)!;
+        const legacySheet = legacyWorkbook.getWorksheet(sheetName)!;
+        expect(streamedSheet.rowCount).toBe(legacySheet.rowCount);
+        const skip = skippedColumns[sheetName] ?? new Set<number>();
+        for (let row = 1; row <= legacySheet.rowCount; row += 1) {
+          for (let column = 1; column <= legacySheet.columnCount; column += 1) {
+            if (skip.has(column)) continue;
+            expect(streamedSheet.getCell(row, column).value, sheetName + " R" + row + "C" + column).toEqual(
+              legacySheet.getCell(row, column).value,
+            );
+          }
+        }
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("项目导出的命名与请求边界", () => {
@@ -230,5 +295,45 @@ describe("项目导出的命名与请求边界", () => {
     expect(value).toContain('filename="[LBGW-1] ____.xlsx"');
     expect(value).toContain("filename*=UTF-8''");
     expect(value).toContain(encodeURIComponent("[LBGW-1] 英国项目.xlsx"));
+  });
+
+  it("auto 模式在 3,000 行达到流式阈值，显式模式始终优先", () => {
+    expect(resolveProjectExportMode("auto", 2_999)).toBe("legacy");
+    expect(resolveProjectExportMode("auto", 3_000)).toBe("stream");
+    expect(resolveProjectExportMode("legacy", 20_000)).toBe("legacy");
+    expect(resolveProjectExportMode("stream", 1)).toBe("stream");
+  });
+
+  it("stream 模式经服务返回临时文件，并在交付清理钩子后删除目录", async () => {
+    const emptyPage = { items: [], page: 1, limit: 200, total: 0 };
+    const list = vi.fn().mockResolvedValue(emptyPage);
+    const audit = { record: vi.fn().mockResolvedValue(undefined) };
+    const service = new ProjectExportService(
+      { getProject: vi.fn().mockResolvedValue({ id: PROJECT_ID, code: "LBGW-1", name: "英国项目", managerIds: [], managerNames: [] }) } as never,
+      { list } as never,
+      { list } as never,
+      { list } as never,
+      { listProjectChanges: list } as never,
+      { list } as never,
+      { listProjectFiles: list } as never,
+      { listUsers: list } as never,
+      audit as never,
+      { db: {} } as never,
+      {} as never,
+      { env: { PROJECT_EXPORT_MODE: "stream" } } as never,
+    );
+    const result = await service.exportProject(PROJECT_ID, "actor-1", "https://pm.libiaorobot.com");
+    expect(result.kind).toBe("file");
+    if (result.kind !== "file") throw new Error("预期文件结果");
+    await expect(access(result.filePath)).resolves.toBeUndefined();
+    if (process.platform !== "win32") {
+      expect((await stat(result.filePath)).mode & 0o777).toBe(0o600);
+      expect((await stat(dirname(result.filePath))).mode & 0o777).toBe(0o700);
+    }
+    expect(result.mode).toBe("stream");
+    expect(result.sheetNames).toEqual(["英国项目", "日报及问题汇总", "变更管理", "干系人"]);
+    expect(audit.record).toHaveBeenCalledOnce();
+    await result.cleanup();
+    await expect(access(result.filePath)).rejects.toBeTruthy();
   });
 });
