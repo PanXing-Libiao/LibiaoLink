@@ -5,12 +5,14 @@ Standard drawing entities and display tables move into index rows; any row that
 does not match the exact fast shape stays in the ordinary document tables, so
 unpacking is lossless for both the formal drawing and the public sample.
 """
+import base64
 import json
+import zlib
 
 from .canonical import canonical_sha256
 
 PROFILE = 'ucd-dwg-packed/1'
-VERSION = 'dwg-table/2'
+VERSION = 'dwg-table/3'
 IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
 ENTITY_FIELDS = {'id', 'drawingId', 'ownerSpaceId', 'layerId', 'localFromOwner',
                  'geometry', 'style', 'sourceRefs', 'displayOrder'}
@@ -42,6 +44,61 @@ class _Strings:
 
 def _canonical(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
+
+
+GEOMETRY_CHUNK_BYTES = 1024 * 1024
+
+
+def _pack_geometry_chunks(rows):
+    chunks = []; pending = []; first = 0; length = 2
+    def flush():
+        if not pending: return
+        raw = ('[' + ','.join(pending) + ']').encode('utf-8')
+        chunks.append({'first': first, 'count': len(pending), 'byteLength': len(raw),
+                       'data': base64.b64encode(zlib.compress(raw, 1)).decode('ascii')})
+        pending.clear()
+    for index, row in enumerate(rows):
+        text = _canonical(row[12]); size = len(text.encode('utf-8'))
+        if length + size + 1 > GEOMETRY_CHUNK_BYTES:
+            flush(); length = 2
+        if size + 2 > GEOMETRY_CHUNK_BYTES:
+            continue  # An indivisible oversized geometry keeps its ordinary JSON value.
+        if not pending: first = index
+        pending.append(text); length += size + 1
+        row[12] = None
+    flush()
+    return chunks
+
+
+def _unpack_geometry_chunks(payload):
+    rows = payload.get('entities')
+    chunks = payload.get('geometryChunks')
+    if not isinstance(rows, list) or not isinstance(chunks, list):
+        raise ValueError('packed-geometry-chunks')
+    rows = [list(row) if isinstance(row, list) else row for row in rows]
+    end = 0
+    for chunk in chunks:
+        if not isinstance(chunk, dict) or set(chunk) != {'first', 'count', 'byteLength', 'data'}:
+            raise ValueError('packed-geometry-chunk')
+        first, count, size = (chunk[k] for k in ('first', 'count', 'byteLength'))
+        if (any(type(v) is not int for v in (first, count, size)) or first < end or count <= 0
+                or first + count > len(rows) or not 0 < size <= GEOMETRY_CHUNK_BYTES
+                or not isinstance(chunk['data'], str) or len(chunk['data']) > GEOMETRY_CHUNK_BYTES * 2):
+            raise ValueError('packed-geometry-range')
+        decoder = zlib.decompressobj()
+        raw = decoder.decompress(base64.b64decode(chunk['data'], validate=True), size + 1)
+        if len(raw) != size or not decoder.eof or decoder.unused_data or decoder.unconsumed_tail:
+            raise ValueError('packed-geometry-length')
+        values = json.loads(raw)
+        if not isinstance(values, list) or len(values) != count:
+            raise ValueError('packed-geometry-count')
+        for index, value in enumerate(values, first):
+            row = rows[index]
+            if not isinstance(row, list) or len(row) != 14 or row[12] is not None:
+                raise ValueError('packed-geometry-overlap')
+            row[12] = value
+        end = first + count
+    return rows
 
 
 def _fast_entity(key, row, drawing, states, modes):
@@ -310,6 +367,7 @@ def pack_document(document):
         'profile': PROFILE, 'version': VERSION,
         'strings': strings.values, 'layers': layers, 'spaces': spaces, 'styles': styles,
         'entities': rows, 'displays': display_rows,
+        'geometryChunks': _pack_geometry_chunks(rows),
     }
     return packed_doc
 
@@ -325,7 +383,7 @@ def unpack_document(packed_doc):
     if not isinstance(packed_doc, dict) or 'packed' not in packed_doc:
         return packed_doc
     payload = packed_doc['packed']
-    if not isinstance(payload, dict) or payload.get('profile') != PROFILE or payload.get('version') not in ('dwg-table/1', VERSION):
+    if not isinstance(payload, dict) or payload.get('profile') != PROFILE or payload.get('version') not in ('dwg-table/1', 'dwg-table/2', VERSION):
         raise ValueError('packed-profile')
     strings = payload.get('strings')
     layers = payload.get('layers')
@@ -348,7 +406,8 @@ def unpack_document(packed_doc):
     modes = dict(extension.get('modes') or {})
     orders = dict(extension.get('drawOrder') or {})
     entities = dict(drawing.get('entities') or {})
-    for row in payload.get('entities') or []:
+    entity_rows = _unpack_geometry_chunks(payload) if payload['version'] == VERSION else payload.get('entities') or []
+    for row in entity_rows:
         if not isinstance(row, list) or len(row) != 14:
             raise ValueError('packed-entity-row')
         key = _row_index(strings, row[0], 'entity-id')
@@ -391,7 +450,7 @@ def unpack_document(packed_doc):
     geometries = dict(packed_doc.get('geometries') or {})
     representations = dict(packed_doc.get('representations') or {})
     for row in payload.get('displays') or []:
-        if not isinstance(row, list) or len(row) not in (12, 14) or (len(row) == 14 and payload['version'] != VERSION):
+        if not isinstance(row, list) or len(row) not in (12, 14) or (len(row) == 14 and payload['version'] not in ('dwg-table/2', VERSION)):
             raise ValueError('packed-display-row')
         key = _row_index(strings, row[0], 'display-key')
         accessor_id = 'a-' + key

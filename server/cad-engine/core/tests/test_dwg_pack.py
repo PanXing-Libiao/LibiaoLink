@@ -95,7 +95,7 @@ class PackedDwgTest(unittest.TestCase):
         self.assertEqual(set(packed['drawing']['entities']), {'entity-4'})
         self.assertEqual(len(payload['entities']), 3)
         self.assertEqual(len(payload['displays']), 2)
-        self.assertEqual(payload['version'], 'dwg-table/2')
+        self.assertEqual(payload['version'], 'dwg-table/3')
         self.assertEqual(len(payload['displays'][1]), 14)
         self.assertIn('entity-2', packed['extensions']['org.cad-preview.style-inheritance/1']['entityState'])
         unpacked = unpack_document(packed)
@@ -139,12 +139,46 @@ class PackedDwgTest(unittest.TestCase):
         self.assertIn('i-entity-2', packed['accessors'])
         self.assertEqual(unpack_document(packed), document)
 
+    def test_geometry_chunks_preserve_float_types_and_source_parameters(self):
+        document = fixture()
+        geometry = {'type': 'polyline', 'points': [[-0.0, 1.0, 0], [1e-20, 1e21, 0.0]],
+                    'bulges': [0, 0.0], 'widths': [[0, 0], [0.0, -0.0]], 'closed': False}
+        document['drawing']['entities']['entity-1']['geometry'] = geometry
+        packed = pack_document(document)
+        self.assertIsNone(packed['packed']['entities'][0][12])
+        self.assertTrue(packed['packed']['geometryChunks'])
+        self.assertEqual(canonical_sha256(unpack_document(packed)), canonical_sha256(document))
+        self.assertEqual(packed['packed']['entities'][0][12], None)  # No mutation during unpack.
+
+    def test_geometry_chunks_reject_oversize_overlap_and_corrupt_payloads(self):
+        import copy
+        document = pack_document(fixture())
+        for change in ('size', 'overlap', 'count', 'truncated', 'trailing'):
+            with self.subTest(change=change):
+                packed = copy.deepcopy(document); chunk = packed['packed']['geometryChunks'][0]
+                if change == 'size': chunk['byteLength'] = 1024 * 1024 + 1
+                if change == 'overlap': packed['packed']['entities'][0][12] = {}
+                if change == 'count': chunk['count'] += 1
+                if change == 'truncated': chunk['data'] = chunk['data'][:-4]
+                if change == 'trailing': chunk['data'] += 'AAAA'
+                with self.assertRaises(ValueError): unpack_document(packed)
+
+    def test_oversized_geometry_stays_verbatim_between_chunks(self):
+        document = fixture()
+        document['drawing']['entities']['entity-2']['geometry'] = {'type': 'unsupported', 'reason': 'x' * 1048576}
+        packed = pack_document(document)
+        self.assertIsInstance(packed['packed']['entities'][1][12], dict)
+        self.assertEqual(unpack_document(packed), document)
+
     def test_legacy_unindexed_rows_still_unpack(self):
         document = fixture()
         document['representations'].pop('representation-' + canonical_sha256(['entity-2']))
         document['geometries'].pop('g-entity-2')
         document['accessors'].pop('a-entity-2');document['accessors'].pop('i-entity-2')
         packed = pack_document(document)
+        from unified.dwg_pack import _unpack_geometry_chunks
+        packed['packed']['entities'] = _unpack_geometry_chunks(packed['packed'])
+        packed['packed'].pop('geometryChunks')
         packed['packed']['version'] = 'dwg-table/1'
         self.assertEqual(unpack_document(packed), document)
 
