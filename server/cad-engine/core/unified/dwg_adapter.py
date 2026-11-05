@@ -18,7 +18,6 @@ from .validation import validate_binary_envelope
 from .canonical import canonical_sha256,write_canonical
 from .payload_sink import FileSink
 from .dwg_pack import pack_document
-from .dwg_buffers import compact_display_buffers
 
 VERSION = '0.1.0-local'
 IDENTITY = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
@@ -516,15 +515,10 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
             region_items[key] = {'status':'ready', 'sourceKind':'REGION',
                 'sourceRefs':entity.get('sourceRefs') or [], 'mode':'geometry', 'parts':parts}
             region_handles.add(str(meta.get('handle')))
-    if (region_handles or mesh_items) and not platform:
+    if region_handles or mesh_items:
         buffer_path.write_bytes(buffer_bytes)
     # Freeze once; validation and publication share the exact same immutable bytes.
-    buffer_packing = None
-    if platform:
-        buffer_bytes, buffer_packing = compact_display_buffers(doc, buffer_bytes)
-        phase('display buffers indexed')
-    else:
-        buffer_bytes = bytes(buffer_bytes)
+    buffer_bytes = bytes(buffer_bytes)
     sha = hashlib.sha256(buffer_bytes).hexdigest()
     doc['buffers'][bid] = {'id':bid, 'sha256':sha, 'byteLength':len(buffer_bytes),
         'endianness':'little', 'alignment':8, 'storage':{'kind':'resource','resourceId':bid}}
@@ -604,14 +598,8 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
         'sourceSHA256':identity['sha256'],'candidate':True,
         'quality':'partial','note':'Native DWG → UCD; source handles preserved. See explicit decoder/mapping/font losses.',
         'stats':{'sourceHandles':summary['sourceHandles'],'mappedSourceObjects':summary.get('mappedSourceObjects',summary['mappedObjects']),'displayGeometry':len(displays)+len(infinite_items)+len(region_items)}}
-    if platform:
-        # The separate job receiver validates schema, references, every geometry,
-        # buffers and revision before publication. Do not repeat that full walk
-        # in the trusted producer; independent local exports still validate here.
-        phase('complete validation required at receiver')
-    else:
-        validate_binary_envelope(doc,snapshot,presentation,lambda key:buffer_bytes)
-        phase('contract and binary validated')
+    validate_binary_envelope(doc,snapshot,presentation,lambda key:buffer_bytes)
+    phase('contract and binary validated')
     if packed:
         doc = pack_document(doc)
         phase('document packed')
@@ -633,8 +621,7 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
         raise ValueError('dwg-manifest-budget-exceeded: '+str(pending.stat().st_size)+' bytes; retained temporary output is not a successful artifact')
     pending.replace(artifact)
     phase('artifact written')
-    (output/'assembly-summary.json').write_text(json.dumps({'validated':not platform,'validation':'receiver-required' if platform else 'complete',
-        'displayBufferPacking':buffer_packing,'manifestBytes':artifact.stat().st_size,
-        'bufferBytes':len(buffer_bytes),'source':identity,'tables':{k:len(v) for k,v in drawing.items()},
+    (output/'assembly-summary.json').write_text(json.dumps({'validated':True,'manifestBytes':artifact.stat().st_size,
+        'bufferBytes':buffer_path.stat().st_size,'source':identity,'tables':{k:len(v) for k,v in drawing.items()},
         'lossCounts':dict(by_loss),'completeness':'partial'},ensure_ascii=False,indent=2))
     return artifact

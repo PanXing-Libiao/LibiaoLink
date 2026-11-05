@@ -3,7 +3,7 @@
 // Presentation parts, layout viewports and image/media draws keep the same
 // projection contract; only the space-local clip boundary is re-expressed so
 // retained geometry can be repainted under each instance matrix.
-import {projectDrawingSteps, canonical, identity, drawingDrawIdentity} from './drawing-projection.js';
+import {projectDrawing, canonical, identity, drawingDrawIdentity} from './drawing-projection.js';
 import {layoutSpacePlan} from './drawing-layout.js';
 export const I=[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
 export const LOD_MIN_SCREEN_PX=0.75;
@@ -86,11 +86,6 @@ export function estimateDrawingDraws(document,target){
 }
 
 export function projectInstances(document,target,presentationStyles=null){
- const steps=projectInstancesSteps(document,target,presentationStyles);
- let result;do{result=steps.next();}while(!result.done);
- return result.value;
-}
-export function* projectInstancesSteps(document,target,presentationStyles=null){
  const ext=document.extensions?.['org.cad-preview.style-inheritance/1']||{};
  const groups=[],cache=new Map(),groupsByChain=new WeakMap(),roots=[],drawGroups=new WeakMap(),layers=new WeakMap(),draws={};let current=null,currentSpace=null;
  const seenViewports=new WeakSet();
@@ -119,8 +114,8 @@ export function* projectInstancesSteps(document,target,presentationStyles=null){
   }
   sensing.delete(spaceId);pathVariants.set(spaceId,value);return value;
  }
- const projection=yield* projectDrawingSteps(document,target,null,presentationStyles,{
-  *space(context,visit){
+ const projection=projectDrawing(document,target,null,presentationStyles,{
+  space(context,visit){
    const {spaceId,transform,path,viewport,chain,inheritedHidden,clips}=context;
    // Group nodes carry the path relative to their parent group; the visitor's
    // draw ids keep the absolute path so per-instance variants still resolve.
@@ -157,7 +152,7 @@ export function* projectInstancesSteps(document,target,presentationStyles=null){
      effective.length?effective:null,pathVariant?path:null]);
     group=cache.get(key)||null;
     if(!group){group={id:'group-'+groups.length,spaceId,entries:[],records:[],count:0,bounds:null};cache.set(key,group);groups.push(group);
-     current=group;const previousSpace=currentSpace;currentSpace={clips:effective,viewport:!!viewport,path};yield* visit(effective);currentSpace=previousSpace;current=parent;
+     current=group;const previousSpace=currentSpace;currentSpace={clips:effective,viewport:!!viewport,path};visit(effective);currentSpace=previousSpace;current=parent;
      for(const entry of group.entries){entry.order=group.count;group.count+=entry.kind==='group'?entry.group.count:1;}
     }
     if(byContext)byContext.set(contextKey,group);
