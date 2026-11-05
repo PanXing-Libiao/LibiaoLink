@@ -678,14 +678,21 @@ def validate_v2(e):
     selection(s['selection'])
     if 'value' in d['defaultSelection']:selection(d['defaultSelection']['value'])
     def walk(v,path):
+        # These closed schema tables contain no Fact. Entity source geometry also
+        # cannot contain Fact; its style is the only fact-bearing entity field.
+        if path == 'document/drawing/entities':
+            for key,row in v.items():walk(row['style'],path+'/'+key+'/style')
+            return
         if isinstance(v,dict):
             if 'knowledge' in v and 'evidenceIds' in v:
                 require(set(v['evidenceIds'])<=set(evidence),'invalid-reference',path,'Fact evidence missing')
                 require(v['knowledge']!='hypothesis' or v['validation']!='verified-scope','invalid-fact',path,'Hypothesis cannot be verified')
             for k,a in v.items():
-                if k not in ('extensions',):walk(a,path+'/'+k)
+                if (k != 'extensions' and not (path == 'document' and k in ('accessors','geometries','buffers','representations'))
+                        and isinstance(a,(dict,list))):walk(a,path+'/'+k)
         elif isinstance(v,list):
-            for i,a in enumerate(v):walk(a,path+'/'+str(i))
+            for i,a in enumerate(v):
+                if isinstance(a,(dict,list)):walk(a,path+'/'+str(i))
     walk(d,'document')
     for c in d['capabilities']:
         require(c['validation']!='verified-scope' or (c['implementation']=='implemented' and c['mechanism'] not in ('unknown','hypothesis') and c['evidenceIds']),'invalid-capability',c['feature'],'Verified capability needs implementation and evidence')

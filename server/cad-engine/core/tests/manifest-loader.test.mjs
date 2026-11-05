@@ -16,7 +16,7 @@ function workerFactory(){
  return worker;
 }
 test('large compact manifest uses a real worker, transfers input, and preserves full draw identities',async()=>{
- const bytes=encode(compact(30000)),expected=decodeManifestBytes(bytes).packet;
+ const bytes=encode(compact(30000)),expected=(await decodeManifestBytes(bytes)).packet;
  const pending=decodeManifest(bytes,{workerFactory});assert.equal(bytes.byteLength,0);
  const {packet,timing}=await pending;
  assert.deepEqual(packet,structuredClone(expected));assert.equal(timing.execution,'worker');
@@ -52,9 +52,31 @@ test('DWG packed geometry and style tables survive batched worker handoff withou
  const fixture=JSON.parse(await readFile(new URL('./manifest-dwg-fixture.json',import.meta.url),'utf8'));
  // Force the worker threshold without duplicating domain entities or identities.
  fixture.padding=' '.repeat(1024*1024);
- const raw=encode(fixture),expected=decodeManifestBytes(raw).packet;
+ const raw=encode(fixture),expected=(await decodeManifestBytes(raw)).packet;
  const {packet}=await decodeManifest(raw,{workerFactory});
  assert.deepEqual(packet,structuredClone(expected));assert.equal(packet.document.packed,undefined);
  assert.ok(Object.keys(packet.document.representations).length>0);
  assert.ok(Object.keys(packet.document.drawing.entities).length>0);
+});
+
+
+test('v3 compressed source geometry survives a real worker and small-load cancellation',async()=>{
+ const {readFile}=await import('node:fs/promises'),{deflateSync}=await import('node:zlib');
+ const fixture=JSON.parse(await readFile(new URL('./manifest-dwg-fixture.json',import.meta.url),'utf8'));
+ const payload=fixture.document.packed,geometries=payload.entities.map(row=>row[12]);
+ const raw=JSON.stringify(geometries);
+ payload.version='dwg-table/3';
+ payload.geometryChunks=[{first:0,count:geometries.length,byteLength:Buffer.byteLength(raw),data:deflateSync(raw).toString('base64')}];
+ for(const row of payload.entities)row[12]=null;
+ fixture.padding=' '.repeat(1024*1024);
+ const {packet}=await decodeManifest(encode(fixture),{workerFactory});
+ assert.equal(packet.document.packed,undefined);
+ for(let i=0;i<payload.entities.length;i++){
+   const key=payload.strings[payload.entities[i][0]];
+   assert.deepEqual(packet.document.drawing.entities[key].geometry,geometries[i]);
+ }
+ delete fixture.padding;
+ const controller=new AbortController();
+ const pending=decodeManifest(encode(fixture),{signal:controller.signal,workerFactory:()=>{throw Error('unexpected worker');}});
+ controller.abort();await assert.rejects(pending,{name:'AbortError'});
 });

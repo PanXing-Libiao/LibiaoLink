@@ -119,6 +119,19 @@ class DwgSchema(unittest.TestCase):
             legacy = False
         self.assertEqual(accepts(e), legacy)
 
+    def test_entity_style_facts_are_checked_after_geometry_pruning(self):
+        for fact in [
+                {'knowledge':'source-declared','validation':'experimental','evidenceIds':['missing'],'value':1},
+                {'knowledge':'hypothesis','validation':'verified-scope','evidenceIds':['existing'],'value':1}]:
+            e = dwg_fixture()
+            if fact['knowledge'] == 'hypothesis': fact['evidenceIds'] = [e['document']['evidence'][0]['id']]
+            e['document']['drawing']['entities']['E']['style']['lineWeight'] = fact
+            seal(e)
+            self.assertTrue(accepts(e))
+            with self.assertRaises(v.ValidationError) as error:
+                v.validate_envelope(e)
+            self.assertIn(error.exception.code, ('invalid-reference', 'invalid-fact'))
+
     def test_semantic_reference_and_revision_checks_remain(self):
         for edit in [lambda e: e['document']['drawing']['entities']['E'].update(layerId='missing'),
                      lambda e: e['snapshot']['selection'].update(viewContextId='missing')]:
