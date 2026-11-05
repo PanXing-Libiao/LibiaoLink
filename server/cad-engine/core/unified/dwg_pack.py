@@ -12,7 +12,7 @@ import zlib
 from .canonical import canonical_sha256
 
 PROFILE = 'ucd-dwg-packed/1'
-VERSION = 'dwg-table/3'
+VERSION = 'dwg-table/4'
 IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
 ENTITY_FIELDS = {'id', 'drawingId', 'ownerSpaceId', 'layerId', 'localFromOwner',
                  'geometry', 'style', 'sourceRefs', 'displayOrder'}
@@ -192,10 +192,10 @@ def _fast_display(rep_id, rep, doc):
             return None
         if index_id != 'i-' + key or not isinstance(index_accessor, dict) or set(index_accessor) != ACCESSOR_FIELDS:
             return None
-        if (index_accessor.get('bufferId'), index_accessor.get('component'), index_accessor.get('components'),
-                index_accessor.get('normalized')) != ('buffer-0', 'u32', 1, False):
+        if ((index_accessor.get('bufferId'), index_accessor.get('components'), index_accessor.get('normalized')) != ('buffer-0', 1, False)
+                or index_accessor.get('component') not in ('u8', 'u16', 'u32')):
             return None
-        if type(index_accessor.get('count')) is not int or index_accessor['byteLength'] != index_accessor['count'] * 4:
+        if type(index_accessor.get('count')) is not int or index_accessor['byteLength'] != index_accessor['count'] * {'u8': 1, 'u16': 2, 'u32': 4}[index_accessor['component']]:
             return None
     primitive_count = index_accessor['count'] if index_accessor else count
     if primitive.get('range') != {'first': 0, 'count': primitive_count}:
@@ -332,7 +332,7 @@ def pack_document(document):
                            strings(fast['topology']), *fast['bounds']['min'], *fast['bounds']['max'],
                            strings(fast['handle'])]
             if fast['index'] is not None:
-                display_row.extend([fast['index']['byteOffset'], fast['index']['count']])
+                display_row.extend([fast['index']['byteOffset'], fast['index']['count'], fast['index']['component']])
             display_rows.append(display_row)
         except (TypeError, ValueError):
             rep = document['representations'][rep_id]
@@ -383,7 +383,7 @@ def unpack_document(packed_doc):
     if not isinstance(packed_doc, dict) or 'packed' not in packed_doc:
         return packed_doc
     payload = packed_doc['packed']
-    if not isinstance(payload, dict) or payload.get('profile') != PROFILE or payload.get('version') not in ('dwg-table/1', 'dwg-table/2', VERSION):
+    if not isinstance(payload, dict) or payload.get('profile') != PROFILE or payload.get('version') not in ('dwg-table/1', 'dwg-table/2', 'dwg-table/3', VERSION):
         raise ValueError('packed-profile')
     strings = payload.get('strings')
     layers = payload.get('layers')
@@ -406,7 +406,7 @@ def unpack_document(packed_doc):
     modes = dict(extension.get('modes') or {})
     orders = dict(extension.get('drawOrder') or {})
     entities = dict(drawing.get('entities') or {})
-    entity_rows = _unpack_geometry_chunks(payload) if payload['version'] == VERSION else payload.get('entities') or []
+    entity_rows = _unpack_geometry_chunks(payload) if payload['version'] in ('dwg-table/3', VERSION) else payload.get('entities') or []
     for row in entity_rows:
         if not isinstance(row, list) or len(row) != 14:
             raise ValueError('packed-entity-row')
@@ -450,7 +450,7 @@ def unpack_document(packed_doc):
     geometries = dict(packed_doc.get('geometries') or {})
     representations = dict(packed_doc.get('representations') or {})
     for row in payload.get('displays') or []:
-        if not isinstance(row, list) or len(row) not in (12, 14) or (len(row) == 14 and payload['version'] not in ('dwg-table/2', VERSION)):
+        if not isinstance(row, list) or len(row) not in (12, 14, 15) or (len(row) == 14 and payload['version'] == 'dwg-table/1') or (len(row) == 15 and payload['version'] != VERSION):
             raise ValueError('packed-display-row')
         key = _row_index(strings, row[0], 'display-key')
         accessor_id = 'a-' + key
@@ -465,12 +465,16 @@ def unpack_document(packed_doc):
         handle = _row_index(strings, row[11], 'display-handle')
         refs = [{'sourceId': 'source-0', 'objectKey': handle}]
         primitive = {'id': 'p', 'topology': topology, 'range': {'first': 0, 'count': count}}
-        if len(row) == 14:
+        if len(row) >= 14:
             index_id = 'i-' + key
-            if index_id in accessors or any(type(v) is not int or v < 0 for v in row[12:]):
+            component = row[14] if len(row) == 15 else 'u32'
+            if component not in ('u8', 'u16', 'u32'):
+                raise ValueError('packed-index-component')
+            width = {'u8': 1, 'u16': 2, 'u32': 4}[component]
+            if index_id in accessors or any(type(v) is not int or v < 0 for v in row[12:14]):
                 raise ValueError('packed-index-range-or-duplicate')
-            accessors[index_id] = {'bufferId': 'buffer-0', 'byteOffset': row[12], 'byteLength': row[13]*4,
-                'component': 'u32', 'components': 1, 'count': row[13], 'normalized': False}
+            accessors[index_id] = {'bufferId': 'buffer-0', 'byteOffset': row[12], 'byteLength': row[13]*width,
+                'component': component, 'components': 1, 'count': row[13], 'normalized': False}
             primitive['indices'] = index_id
             primitive['range']['count'] = row[13]
         accessors[accessor_id] = {'bufferId': 'buffer-0', 'byteOffset': row[1], 'byteLength': row[2],

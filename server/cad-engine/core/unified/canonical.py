@@ -9,14 +9,17 @@ import json
 ENCODER=json.JSONEncoder(ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False)
 
 
+_NUMERIC_TYPES={int,float,bool,type(None)}
+
+
 def _small(value):
-    # Bound both the scan and the C encoder's temporary output. A scalar string
-    # is already an indivisible token in the standard streaming encoder.
-    # Larger bounded leaves amortize Python traversal without encoding a whole CAD document.
+    # Bound the scan and the C encoder's temporary output; scalar strings remain indivisible.
     pending=[value];nodes=4096;chars=262144
     while pending:
         item=pending.pop();nodes-=1
         if nodes<0:return False
+        # Scalar numbers cannot contain child containers or string bytes.
+        if type(item) in _NUMERIC_TYPES:continue
         if isinstance(item,dict):
             if len(item)>nodes:return False
             for key in item:
@@ -24,7 +27,8 @@ def _small(value):
             pending.extend(item.values())
         elif isinstance(item,(list,tuple)):
             if len(item)>nodes:return False
-            pending.extend(item)
+            if set(map(type,item))<=_NUMERIC_TYPES:nodes-=len(item)
+            else:pending.extend(item)
         elif isinstance(item,str):chars-=len(item)
         if chars<0:return False
     return True
@@ -32,11 +36,14 @@ def _small(value):
 
 def _canonical_parts(value):
     markers=set()
-    def chunks(item):
-        if _small(item) or not isinstance(item,(dict,list,tuple)):
-            yield ENCODER.encode(item).encode('utf-8')
-            return
-        # Non-string keys retain the standard encoder's coercion/error behavior.
+    def encoded_inner(batch):
+        raw=ENCODER.encode(batch).encode('utf-8')
+        # Bound emitted fragments even when a group contains several large leaves.
+        for start in range(1,len(raw)-1,64*1024):
+            yield raw[start:min(start+64*1024,len(raw)-1)]
+    def chunks(item,known_large=False):
+        if not isinstance(item,(dict,list,tuple)) or (not known_large and _small(item)):
+            yield ENCODER.encode(item).encode('utf-8');return
         if isinstance(item,dict) and not all(isinstance(k,str) for k in item):
             for text in ENCODER.iterencode(item):yield text.encode('utf-8')
             return
@@ -44,20 +51,27 @@ def _canonical_parts(value):
         if marker in markers:raise ValueError('Circular reference detected')
         markers.add(marker)
         try:
-            if isinstance(item,dict):
-                yield b'{'
-                for index,key in enumerate(sorted(item)):
-                    if index:yield b','
-                    yield ENCODER.encode(key).encode('utf-8')
-                    yield b':'
-                    yield from chunks(item[key])
-                yield b'}'
-            else:
-                yield b'['
-                for index,child in enumerate(item):
-                    if index:yield b','
-                    yield from chunks(child)
-                yield b']'
+            mapping=isinstance(item,dict)
+            yield b'{' if mapping else b'['
+            batch={} if mapping else [];emitted=False
+            rows=((key,item[key]) for key in sorted(item)) if mapping else enumerate(item)
+            for key,child in rows:
+                small=_small(child)
+                if batch and (len(batch)==16 or not small):
+                    if emitted:yield b','
+                    yield from encoded_inner(batch);batch.clear();emitted=True
+                if small:
+                    if mapping:batch[key]=child
+                    else:batch.append(child)
+                else:
+                    if emitted:yield b','
+                    if mapping:
+                        yield ENCODER.encode(key).encode('utf-8');yield b':'
+                    yield from chunks(child,known_large=True);emitted=True
+            if batch:
+                if emitted:yield b','
+                yield from encoded_inner(batch)
+            yield b'}' if mapping else b']'
         finally:markers.remove(marker)
     yield from chunks(value)
 

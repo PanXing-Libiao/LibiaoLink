@@ -70,3 +70,21 @@ test('v3 source geometry chunks inflate exactly and reject invalid blocks', asyn
  }
  await assert.rejects(async()=>unpackDwgPacked(envelope));
 });
+
+
+test('v4 narrow indices preserve counts and component byte widths',()=>{
+ for(const [component,width] of [['u8',1],['u16',2],['u32',4]]){
+   const env=indexedEnvelope();env.document.packed.version='dwg-table/4';env.document.packed.displays[0].push(component);
+   const doc=unpackDwgPacked(env).document;
+   assert.equal(doc.accessors['i-e1'].component,component);
+   assert.equal(doc.accessors['i-e1'].byteLength,4*width);
+   assert.equal(doc.geometries['g-e1'].primitives[0].range.count,4);
+ }
+ for(const change of ['component','legacy','overflow']){
+   const env=indexedEnvelope();env.document.packed.version='dwg-table/4';env.document.packed.displays[0].push('u8');
+   if(change==='component')env.document.packed.displays[0][14]='i8';
+   if(change==='legacy')env.document.packed.version='dwg-table/3';
+   if(change==='overflow'){env.document.packed.displays[0][14]='u32';env.document.packed.displays[0][13]=Number.MAX_SAFE_INTEGER;}
+   assert.throws(()=>unpackDwgPacked(env),/packed transport/);
+ }
+});
