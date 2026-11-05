@@ -7,7 +7,7 @@ import type { Env } from "../config/env.js";
 import { OutboxStore, type OutboxClaimedRow } from "../db/outbox.store.js";
 import { OUTBOX_ALERT_SINK, type OutboxAlertSink } from "./alert.js";
 import type { OutboxDeadAlertOverride, OutboxHandleOutcome, OutboxTopicHandler } from "./handler.js";
-import { backoffDelayMs, defaultTopicPolicy, type OutboxTopicPolicy } from "./policy.js";
+import { defaultTopicPolicy, retryBackoffDelayMs, type OutboxTopicPolicy } from "./policy.js";
 
 /** 注入令牌：消费者注册表（topic → handler）由组合根装配（OutboxModule.forRoot）。 */
 export const OUTBOX_REGISTRY = Symbol("OUTBOX_REGISTRY");
@@ -144,7 +144,7 @@ export class OutboxDispatcher {
       return;
     }
     if (attempts < policy.maxAttempts) {
-      const delayMs = backoffDelayMs(policy, attempts);
+      const delayMs = retryBackoffDelayMs(policy, attempts, row.dedupeKey);
       await this.store.markRetry(row.id, {
         attempts,
         availableAt: new Date(this.clock.now().getTime() + delayMs),

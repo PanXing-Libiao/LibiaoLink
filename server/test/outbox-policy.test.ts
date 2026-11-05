@@ -5,10 +5,12 @@ import {
   defaultTopicPolicy,
   PREVIEW_BACKOFF_MAX_MS,
   previewTopicPolicy,
+  RETRY_BACKOFF_JITTER_RATIO,
   resolveOutboxPolicies,
+  retryBackoffDelayMs,
 } from "../src/outbox/policy.js";
 
-/** S7-1 主题策略门禁：缺省策略读 OUTBOX_DEFAULT_*、preview.job 沿用 PREVIEW_CONVERT_*、指数退避封顶。 */
+/** S7-1 主题策略门禁：缺省策略读 OUTBOX_DEFAULT_*、preview.job 沿用 PREVIEW_CONVERT_*、指数退避封顶与确定性抖动。 */
 
 const ENV = {
   OUTBOX_BATCH_LIMIT: 2,
@@ -58,5 +60,27 @@ describe("outbox 主题策略（S7-1）", () => {
     expect(backoffDelayMs(policy, 4)).toBe(120000);
     expect(backoffDelayMs(policy, 8)).toBe(1800000);
     expect(backoffDelayMs(policy, 30)).toBe(1800000);
+  });
+
+  it("retry 退避按 dedupeKey + attempts 确定性抖动：同键稳定、不同键错峰、不突破封顶", () => {
+    const policy = defaultTopicPolicy(ENV);
+    const first = retryBackoffDelayMs(policy, 1, "task.updated:key:1");
+
+    expect(RETRY_BACKOFF_JITTER_RATIO).toBe(0.2);
+    expect(retryBackoffDelayMs(policy, 1, "task.updated:key:1")).toBe(first);
+    expect(first).toBeGreaterThanOrEqual(12000);
+    expect(first).toBeLessThanOrEqual(15000);
+
+    const delays = new Set(
+      Array.from({ length: 128 }, (_, index) => retryBackoffDelayMs(policy, 1, "task.updated:key:" + index)),
+    );
+    expect(delays.size).toBeGreaterThan(64);
+    for (const delay of delays) {
+      expect(delay).toBeGreaterThanOrEqual(12000);
+      expect(delay).toBeLessThanOrEqual(15000);
+    }
+
+    expect(retryBackoffDelayMs(policy, 30, "task.updated:key:1")).toBeGreaterThanOrEqual(1440000);
+    expect(retryBackoffDelayMs(policy, 30, "task.updated:key:1")).toBeLessThanOrEqual(1800000);
   });
 });
