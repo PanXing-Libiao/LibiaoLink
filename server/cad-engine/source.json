@@ -6,7 +6,7 @@
   "engineFiles": {
     "convert.py": "8fc48b6f5f98c1be5b73ec32fa34127edef61ab60e8cfa8198f17f0de28447e7",
     "dwg_convert.py": "c0c93633b7177cc49d4636cd61e6a30275d3c921bc90d65a0c9ca8387569f98c",
-    "dwg_platform_convert.py": "b7b7896b708d793a5ca0722c097531db97912222b31eb73abae81822c7d8dc4c",
+    "dwg_platform_convert.py": "2ca2c9f0fa01371f5c46ab7707c9443007895a47aa0a4eab7cd1b448d0e95a2d",
     "dxf_convert.py": "15d8c5ee1b0bed208684f7b71575b79d6bb15d8c7f9d35f4254f6603ba200c74",
     "evidence-index.json": "6aa2e4a65860bd758c66e014eed29963ef6c8b196c934467b3f1c1230fd42b3a",
     "parser/affine.py": "3ac78b704c1310d64ee8b8e5423b149fddcaf576a1b50edf9a59d423a23bb391",
@@ -26,7 +26,7 @@
     "unified/build_schema_v2.py": "7ae95c01ccdee17d894222f03e932c2752be1418e0cd4eebe98923687a28016b",
     "unified/canonical.py": "9fff5200fe667737e8619419ec69a50972e3fe4ec10c0a4bb27a86b29730e809",
     "unified/compact_transport.py": "4c1a09e511b863a20295c63f553c8c067e8e2b51d9cd103178325f2b62418bd3",
-    "unified/conversion_jobs.py": "7e8c9ccdfa7967f42b110664c42e5c364fd6b3da4d8624a54ae773edc14ffd1f",
+    "unified/conversion_jobs.py": "7e31bc6bc9fa1713ad7d95deb5c4316c61b84a1bf343ed968a8edcb0006eca94",
     "unified/dwg-reader.json": "80327cfad2181ed90eef19fc78e9db65c94ca9a39a74bb4b0bde96b582d16fdc",
     "unified/dwg_acis.py": "58bf368c0251d1bc89dd088d5998fbbc34e811280b80b6673efa8d6b678db46f",
     "unified/dwg_acis_LICENSE.txt": "c631eb20a0675add35e49625d3bf3952fe3b0923d98eb050e775c6acfbeaf3be",
@@ -552,9 +552,9 @@
     "service.py": "64bfcdb501b77a441661b8aad2f30fd1bcb20d462c5e0797029907419ed7f254"
   },
   "formatVersions": {
-    "STEP": "step-0.3.3/b7d8a4e715396b4e83bef72f52eb2e8da0808a3714d65b78768180da92fac531/gateway-1",
-    "DXF": "dxf-0.15.0/b2585a65d76ecc3332747a11a38623c9c1982701800504e00fd906e61f9c4ef3/gateway-1",
-    "DWG": "dwg-0.1.0/ab0c55d6a3542c695ab8a983e6c277ef4b5dd797f6e43ee4cb55f0f3f3023ba4/gateway-1"
+    "STEP": "step-0.3.3/73fa26c1e0a9242757cfe04989464688cc3150f7bd70723e1528f9bf205d711d/gateway-1",
+    "DXF": "dxf-0.15.0/4d6057241384e22a00fb7de94b179063eadca1fe4a374e0ec03aa671543537c5/gateway-1",
+    "DWG": "dwg-0.1.0/5190432c754fbd0747a0843554e0201bacd9be5789beefb7bcc5704f31d99670/gateway-1"
   },
   "compatibility": {
     "STEP": [
@@ -567,9 +567,9 @@
       "dwg-0.1.0/fdd7433b4a757f28a066b816b3230da860eefd52a5ca20d00b5887f72d382f5e/gateway-1"
     ]
   },
-  "engineDigest": "b9d528531efcbd8cd97f0574d6ea4768adeaa3e3e96d21c3d7454b703ce686dd",
+  "engineDigest": "0c9d53b208dfecb24e3ec3451a442cdbcfd4ea28e5b0892b081a8c12e77e494b",
   "viewerDigest": "4708c3633cf4afd8e05a8242ace968b5fe1c1cfd76513836de19bb92589cc7fb",
-  "releaseDigest": "3f3096bdfd1cb554fc7d733c02293e68bbecf1a905a3eacb2b6b11920a9afabf",
-  "engineVersion": "step-0.3.3/b9d528531efcbd8cd97f0574d6ea4768adeaa3e3e96d21c3d7454b703ce686dd/gateway-1",
+  "releaseDigest": "71f82e6ca39043c0a23fee39cead05da66d34c685e8a224e270bf461ed0918b0",
+  "engineVersion": "step-0.3.3/0c9d53b208dfecb24e3ec3451a442cdbcfd4ea28e5b0892b081a8c12e77e494b/gateway-1",
   "viewerVersion": "viewer-4708c3633cf4afd8e05a8242ace968b5fe1c1cfd76513836de19bb92589cc7fb"
 }

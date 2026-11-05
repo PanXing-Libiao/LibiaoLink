@@ -51,9 +51,9 @@ def main():
                 result_path = str(Path(trace_path).with_name('result.json')) if trace_path else None
             if result_path:
                 # The parent owns this result file for the one-shot worker.
-                # Avoid copying a large manifest through a second stdout pipe
-                # before validation; the bytes are identical.
-                shutil.copyfile(manifest_path, result_path)
+                # Move the manifest out of TMPDIR instead of duplicating it;
+                # the parent validates the same bytes after the worker exits.
+                shutil.move(manifest_path, result_path)
                 os._exit(0)
             with open(manifest_path, 'rb') as manifest:
                 shutil.copyfileobj(manifest, sys.stdout.buffer)

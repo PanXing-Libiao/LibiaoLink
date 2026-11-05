@@ -224,4 +224,27 @@ print(json.dumps(e))
         finally:
             if child.poll() is None:child.kill();child.wait()
 
+class DwgResourcePolicyTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.app=self.root/"app";self.app.mkdir()
+        (self.app/"dwg_platform_convert.py").write_text("import os,time\nfrom pathlib import Path\n(Path(os.environ[\"TMPDIR\"])/\"scratch.bin\").write_bytes(b\"x\"*4096)\ntime.sleep(30)\n")
+        def stop(proc):
+            if proc.poll() is None:proc.kill()
+            try:proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:pass
+        self.jobs=ConversionJobs(self.root/"store",self.app,threading.Lock(),stop,"rules-v1",sys.executable,dwg_interpreter=sys.executable)
+    def tearDown(self):self.jobs.close();self.tmp.cleanup()
+    def test_dwg_uses_its_own_scratch_budget(self):
+        self.assertEqual(self.jobs.dwg_policy["scratchBytes"],1024*1024**2)
+        self.assertEqual(self.jobs.dwg_policy["workerRSSBytes"],4608*1024**2)
+        self.jobs.dwg_policy["scratchBytes"]=1024
+        row,_=self.jobs.submit(b"dwg","dense.dwg",False,"a"*32)
+        deadline=time.monotonic()+8
+        while time.monotonic()<deadline:
+            state=self.jobs.status(row["id"])
+            if state["state"] in ("completed","failed","cancelled","timed-out"):break
+            time.sleep(.025)
+        self.assertEqual(state["state"],"failed")
+        self.assertEqual(state["error"]["code"],"job-scratch-quota")
+
 if __name__=='__main__':unittest.main()
