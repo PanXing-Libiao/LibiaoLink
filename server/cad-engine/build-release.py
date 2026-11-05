@@ -16,6 +16,7 @@ READER_FILES = ('Program.cs', 'CommunityText.cs', 'Reader.csproj', 'dependency.j
 RUNTIME_FILES = ('bridge.py', 'result_cache.py', 'service.py', 'sandbox.py', 'edge.py',
                  'release.py', 'requirements-step.txt', 'requirements-step-mesher.txt',
                  'requirements-dxf.txt', 'requirements-dxf-build.txt', 'requirements-dwg.txt', 'requirements-acis.txt')
+FORMAT_NEUTRAL_FILES = {'service.py', 'dwg_platform_convert.py', 'unified/conversion_jobs.py'}
 IMPORTED_COMMIT = '337bfc0d185a82cc3e269afaff879ccfc67a2e57'
 FORMAT_RELEASES = {'STEP': '0.3.3', 'DXF': '0.15.0', 'DWG': '0.1.0'}
 FORMAT_RUNTIME = {
@@ -101,13 +102,16 @@ def describe(base, browser):
     shared = {}
     format_files = {'STEP': {}, 'DXF': {}, 'DWG': {}}
     for name, value in engine_files.items():
+        if name in FORMAT_NEUTRAL_FILES:
+            continue
         kind = format_of(name)
         if kind in format_files:
             format_files[kind][name] = value
         else:
             shared[name] = value
     runtime_shared = {'runtime/' + name: value for name, value in runtime_files.items()
-                      if name not in {item for names in FORMAT_RUNTIME.values() for item in names}}
+                      if name not in {item for names in FORMAT_RUNTIME.values() for item in names}
+                      and name not in FORMAT_NEUTRAL_FILES}
     runtime_format = {format_name: {'runtime/' + name: runtime_files[name] for name in names}
                       for format_name, names in FORMAT_RUNTIME.items()}
     # ACIS reconstruction also consumes the pinned ezdxf record decoder and OCP runtime.

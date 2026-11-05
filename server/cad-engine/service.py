@@ -245,7 +245,7 @@ def main():
     os.environ.update(PATH='/usr/local/bin:/usr/bin:/bin', LANG='C.UTF-8', HOME='/tmp', TMPDIR='/tmp',
                       PYTHONDONTWRITEBYTECODE='1', OMP_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1',
                       CAD_GATEWAY_ROOT=str(ROOT), CAD_STEP_MAX_INPUT_MIB=maximum,
-                      CAD_MEMORY_STOP_BYTES=str(limits['memoryBytes']-256*MIB),
+                      CAD_MEMORY_STOP_BYTES=str(limits['memoryBytes']-128*MIB),
                       CAD_STEP_MESHER_PYTHON='/opt/mesher/bin/python', CAD_DXF_PYTHON='/opt/dxf/bin/python',
                       CAD_DXF_IMPORT_MODE='installed', CAD_DWG_PYTHON=dwg_python,
                       CAD_DWG_READER=dwg_reader, CAD_DWG_DOTNET=dwg_dotnet, CAD_ACIS_PYTHON=acis_python,

@@ -1,5 +1,7 @@
 # 原生 DWG → UCD 换机交接（2026-10-27）
 
+> **2026-11-05 正式生产 DWG 内存阈值修复（已部署）**：正式 `10.1.103.44` 已启用 `libiaolink/cad-sandbox:1.0.1-cad-memory-reserve-4e76ac93-20261105-1245@sha256:655143c…`，`releaseDigest=4e76ac93…`。18,311,890 B 真实 DWG 的两次失败分别为旧版 `job-scratch-quota` 与 `job-memory-quota`；新镜像把 worker 内存停止线从 `memoryBytes-256 MiB` 调到 `memoryBytes-128 MiB`。同文件隔离诊断在新阈值下约 395.5 s 完成 `partial`，artifact 374,839,080 B，worker 峰值 RSS 4,318,523,392 B、cgroup 峰值 4,962,590,720 B。api / worker / cad 已重建并 healthy，公网健康检查 200；旧失败任务不会自动变成缓存，重新打开会按新格式版本冷转换，仍需数分钟。该图仍为 `partial`，不能宣称零缺损；`CAD_MAX_INPUT_MIB=64`，76 MiB 仍不支持。
+
 交接分支：`wmj`，本次为 Push 304 开发检查点。用户已授权交接后直接推送；没有部署、开放平台 DWG 主图或创建 PR。后续先读本文件，再读 [读取器说明](dwg-reader/README.md) 和 [业务接入计划](../../docs/superpowers/plans/2026-10-27-dwg-native-ucd.md)。
 
 ## 先明确当前状态

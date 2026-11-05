@@ -20,6 +20,8 @@ class ReleaseTest(unittest.TestCase):
                 path = base / 'core' / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text('source')
+            (base / 'core/unified').mkdir(parents=True, exist_ok=True)
+            (base / 'core/unified/conversion_jobs.py').write_text('source')
             for name in release.RUNTIME_FILES:
                 (base / name).write_text('runtime')
             (base / 'dwg-reader').mkdir()
@@ -28,6 +30,13 @@ class ReleaseTest(unittest.TestCase):
             browser.mkdir()
             (browser / 'app.js').write_text('browser')
             initial = release.describe(base, browser)
+            for neutral in ('service.py', 'core/dwg_platform_convert.py', 'core/unified/conversion_jobs.py'):
+                original = (base / neutral).read_text()
+                (base / neutral).write_text('changed gateway or scheduling')
+                neutral_release = release.describe(base, browser)
+                self.assertNotEqual(initial['engineVersion'], neutral_release['engineVersion'])
+                self.assertEqual(initial['formatVersions'], neutral_release['formatVersions'])
+                (base / neutral).write_text(original)
             (browser / 'app.js').write_text('changed browser')
             viewer = release.describe(base, browser)
             self.assertEqual(initial['engineVersion'], viewer['engineVersion'])
