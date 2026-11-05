@@ -485,9 +485,9 @@
     "dependency.json": "a17930ad7b0dadf5bd81c59f23995af557f383b7584fdf48bdb3c2550240666e"
   },
   "browserFiles": {
-    "app.js": "d4e42fa83f2b8c24419c6ba833555fb4e88a0e9641d072912118e2d33aee5235",
+    "app.js": "f32c0ea41468204606d292209ee59ed65109abd4a303d2e1ad288a3ca71c8871",
     "benchmark.js": "c81b3668354f0fc431c02f068545d5c71ce4a266bf414671341aa97674fc3e9d",
-    "binary-transport.js": "8dd062ebe5e8f32d1bfe1dddac854de8287ed2d0627268f7f08dd121df9404d1",
+    "binary-transport.js": "e08b956fd5caa3588d5826f531d208ca12792ce10c003b2de1ceddc5527a447f",
     "camera-framing.js": "12f685ca11f995192d3f5348a44c2cf5fca5286bca58b0af99a7faa7ef5aab6d",
     "compact-transport.js": "25ba61842b0faa37bbe039880df4ecb4df3e30727348aa7a33e68a61fba283c4",
     "conversion-jobs.js": "05be087b3ceb9017e8d21f078b6922f297a0bf709e0f39c63c414646bfa938d0",
@@ -513,6 +513,11 @@
     "gpu/paint-worker.js": "8c865a4847a9133853604dd7f52162b863ee2d708aeff2d6a93911bfa90e7978",
     "gpu/recorded-path.js": "99e818b93996227a46b53a5ea54d54a15dd9dca4848790d16d6eeb7a6c1d7133",
     "highlight.js": "1d19f0528e5fc706484efcdcb1101c4aa32285023cf550acefc04d85a386b2f5",
+    "load-phases.js": "6b2c33cef7e2a6f9f08a1fbee603f3e15c1229739a09ed0aa1885fb184f1036d",
+    "manifest-decode.js": "326540e7d369fb02eff8bb2f31526de3462a2868fc758a9361f19c63f5fcfa97",
+    "manifest-loader.js": "7075f8196a16fef481431a20cdc975e2df9a467d9cd2c008c6f76b874855081f",
+    "manifest-parts.js": "131e61e4cae9f64c55e4b12bd000294a0aad1a174b37d4f905f89f66015ed213",
+    "manifest-worker.js": "ed71a99467fa62b0aa5226839060a234238a565d31f75e4e1df05f4efdd885c4",
     "mesh-repair-ui.js": "8750dc2c2a63d9ba10bada090fb2938a9cd9a593125f5d2f31e0e0d4e7c02aaf",
     "nonmeshable-ui.js": "d4b8a76429eea81e79e26eaef07e4a6508d6d791a2fa86f5313b21214951d618",
     "render-batches.js": "f27fcf79ee6188a9dbb9a516e466a25cd6c1f93393803eab6ede601a79f989e4",
@@ -576,8 +581,8 @@
     ]
   },
   "engineDigest": "71c0ba0de35563a216b7c57a84d633d844ae91e889970198309b335c59399d3d",
-  "viewerDigest": "4708c3633cf4afd8e05a8242ace968b5fe1c1cfd76513836de19bb92589cc7fb",
-  "releaseDigest": "4e76ac93e147687e26ff9e49035029a8e89107f75b7d0be320b26bf7c4d07249",
+  "viewerDigest": "f56918d36686889ccf8587e96911b06477ec9bdb79a7ac06ee560f2954387856",
+  "releaseDigest": "b7269ffb2f5c3c0c95a63c607f29c4b04642e6b29d2ba1d50d47724b35235c9b",
   "engineVersion": "step-0.3.3/71c0ba0de35563a216b7c57a84d633d844ae91e889970198309b335c59399d3d/gateway-1",
-  "viewerVersion": "viewer-4708c3633cf4afd8e05a8242ace968b5fe1c1cfd76513836de19bb92589cc7fb"
+  "viewerVersion": "viewer-f56918d36686889ccf8587e96911b06477ec9bdb79a7ac06ee560f2954387856"
 }

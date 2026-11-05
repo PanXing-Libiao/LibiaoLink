@@ -21,6 +21,7 @@ import { CadEngineClient } from "../src/modules/file/cad-engine.client.js";
 import { CadArchiveRepository } from "../src/modules/file/cad-archive.repository.js";
 import { CAD_FORMAT_COMPAT_VERSIONS } from "../src/modules/file/cad-release.js";
 import { CadArchiveService } from "../src/modules/file/cad-archive.service.js";
+import { CadCacheMaintenance } from "../src/modules/file/cad-cache-maintenance.js";
 import { CadArchiveWorker } from "../src/modules/file/cad-archive.worker.js";
 import { CadInputService } from "../src/modules/file/cad-inputs.js";
 import { CadPreviewService } from "../src/modules/file/cad-preview.service.js";
@@ -101,7 +102,7 @@ describe.skipIf(!databaseUrl || !endpoint || !existsSync(minioPath))("CAD durabl
     repository = new CadArchiveRepository(database, audit);
     engine = new CadEngineClient(config);
     archive = new CadArchiveService(repository, storage, engine, inputs);
-    worker = new CadArchiveWorker(repository, files, engine, storage, inputs);
+    worker = new CadArchiveWorker(repository, files, engine, storage, inputs, new CadCacheMaintenance(database, repository, engine, storage));
     preview = new CadPreviewService(files, permissions, storage, engine, archive);
   });
 
@@ -129,7 +130,7 @@ describe.skipIf(!databaseUrl || !endpoint || !existsSync(minioPath))("CAD durabl
 
   it("独立 worker 并发领取只转换一次，全部对象写完才发布完整结果", async () => {
     const submit = vi.spyOn(engine, "submit");
-    const second = new CadArchiveWorker(repository, files, engine, storage, inputs);
+    const second = new CadArchiveWorker(repository, files, engine, storage, inputs, new CadCacheMaintenance(database, repository, engine, storage));
     await Promise.all([worker.drainOnce(), second.drainOnce()]);
     expect(await rows()).toMatchObject([{ state: "completed", name_codepage: "GB" }]);
     expect(submit).toHaveBeenCalledTimes(1);
@@ -168,7 +169,7 @@ describe.skipIf(!databaseUrl || !endpoint || !existsSync(minioPath))("CAD durabl
     const restarted = new CadPreviewService(files, permissions, storage, restartedEngine, new CadArchiveService(new CadArchiveRepository(database, audit), storage, restartedEngine, inputs));
     const created = await open("4", restarted);
     expect(created.reused).toBe(true); expect((await manifest(created.job.id, "4", restarted)).snapshot.completeness).toBe("complete");
-    await new CadArchiveWorker(new CadArchiveRepository(database, audit), files, restartedEngine, storage, inputs).drainOnce();
+    await new CadArchiveWorker(new CadArchiveRepository(database, audit), files, restartedEngine, storage, inputs, new CadCacheMaintenance(database, repository, restartedEngine, storage)).drainOnce();
     expect(submitted).not.toHaveBeenCalled(); expect(lookup).not.toHaveBeenCalled();
     await restartedEngine.onModuleDestroy();
     let ready = false;

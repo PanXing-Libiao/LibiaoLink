@@ -16,6 +16,7 @@ import { CadArchiveRepository, type CadFailureContext } from "./cad-archive.repo
 import { CAD_ARTIFACT_LIMIT, CAD_BUFFER_LIMIT, checkedCadStream, readCadManifest } from "./cad-archive.integrity.js";
 import { CadInputService, CadInputIntegrityError, cadInputs, cadResourceFingerprint } from "./cad-inputs.js";
 import { cadArchiveEncoder, cadPrecompressedObjectKey } from "./cad-preview.compression.js";
+import { CadCacheMaintenance } from "./cad-cache-maintenance.js";
 import { AppError } from "../../common/errors/app-error.js";
 
 const definition = z.object({ sha256: z.string().regex(/^[a-f0-9]{64}$/), byteLength: z.number().int().nonnegative().max(CAD_BUFFER_LIMIT) });
@@ -39,7 +40,7 @@ export class CadArchiveWorker implements OnApplicationShutdown {
   private abort?: AbortController;
   private readonly streams = new Set<Readable>();
   constructor(private readonly repository: CadArchiveRepository, private readonly files: FileRepository,
-    private readonly engine: CadEngineClient, private readonly storage: ObjectStorage, private readonly inputs: CadInputService) {}
+    private readonly engine: CadEngineClient, private readonly storage: ObjectStorage, private readonly inputs: CadInputService, private readonly maintenance: CadCacheMaintenance) {}
 
   async drainOnce(): Promise<void> {
     if (!this.engine.enabled || this.running) return;
@@ -50,7 +51,10 @@ export class CadArchiveWorker implements OnApplicationShutdown {
   private async drain(): Promise<void> {
     await this.repository.clearExpiredViews();
     const row = await this.repository.claim();
-    if (!row) return;
+    if (!row) { await this.maintenance.runIfDue(); return; }
+    const started = performance.now();
+    const timings: Record<string, number> = { eligibleQueueWaitMS: Math.max(0, new Date().getTime() - row.availableAt.getTime()) };
+    let submittedAt: number | undefined, nativeReadyAt: number | undefined, failureCode: string | undefined;
     const abort = this.abort = new AbortController();
     let prefix: string | undefined;
     let activeLease: string | undefined, nativeId: string | undefined;
@@ -78,7 +82,7 @@ export class CadArchiveWorker implements OnApplicationShutdown {
         ...(source.sourceFormat === "DXF" ? { resourceFingerprint: cadResourceFingerprint(source) } : {}) };
       abort.signal.throwIfAborted();
       let job = (await this.engine.lookup(identity) ?? await this.engine.submit({ ...identity, payload: await this.inputs.enginePayload(source) })).job;
-      nativeId = job.id;
+      nativeId = job.id;submittedAt = performance.now();timings.inputLookupSubmitMS = submittedAt - started;
       const deadline = Date.now() + 26 * 60_000;
       while (job.state === "queued" || job.state === "running") {
         if (Date.now() > deadline) {
@@ -94,6 +98,7 @@ export class CadArchiveWorker implements OnApplicationShutdown {
         throw new CadArchiveFailure(job.error?.code ?? (job.state === "timed-out" ? "job-timeout" : "conversion-failed"),
           job.error?.error ?? "CAD 后台解析未完成，请下载原文件查看", false);
       }
+      nativeReadyAt = performance.now();timings.engineWaitMS = nativeReadyAt - submittedAt;
       if (!await this.repository.renew(row, "persisting")) throw new Error("CAD claim no longer owned");
       const manifest = await this.engine.file("manifest", { namespace, jobId: nativeId });
       this.streams.add(manifest.stream);
@@ -158,7 +163,7 @@ export class CadArchiveWorker implements OnApplicationShutdown {
       const published = await this.repository.publish(row, { objectPrefix: prefix, manifestSHA256,
         manifestBytes: raw.byteLength, resourceLease: activeLease, buffers: [...buffers.values()], artifactBytes: total }, job.state);
       if (!published) throw new Error("CAD claim no longer owned");
-      archived = true;
+      archived = true;timings.persistMS = performance.now() - nativeReadyAt;
       if (row.objectPrefix && row.objectPrefix !== prefix) await this.storage.purgePrefix(row.objectPrefix).catch(() => {});
     } catch (error) {
       if (prefix) await this.storage.purgePrefix(prefix).catch(() => {});
@@ -167,11 +172,15 @@ export class CadArchiveWorker implements OnApplicationShutdown {
         : error instanceof AppError && error.code === "NOT_FOUND" ? new CadArchiveFailure("source-unavailable", "主图或配套版本已不可用，请重新选择文件", false)
         : error instanceof CadEngineBusyError ? new CadArchiveFailure("engine-busy", "CAD 转换服务繁忙，请稍后重试", true)
         : new CadArchiveFailure("archive-unavailable", "CAD 后台解析或保存暂不可用，请稍后重试", true);
+      failureCode = failure.code;
       await this.repository.fail(row, failure.code, failure.message, failure.retryable, {
         ...(nativeId === undefined ? {} : { nativeJobId: nativeId }), ...(terminalState === undefined ? {} : { terminalState }),
       });
       this.logger.warn("CAD 后台任务未完成：" + row.id + " / " + failure.code);
     } finally {
+      this.logger.log({ event: "cad.archive.timing", artifactId: row.id, attempt: row.attempts,
+        outcome: archived ? "published" : "failed", ...(failureCode ? { failureCode } : {}),
+        timings: { ...timings, totalMS: performance.now() - started } });
       clearInterval(heartbeat);
       if (nativeId && activeLease) await this.engine.release({ namespace, jobId: nativeId, lease: activeLease, retire: archived }).catch(() => {});
       this.abort = undefined;

@@ -1,4 +1,5 @@
 import "reflect-metadata";
+import { Logger } from "@nestjs/common";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
@@ -16,7 +17,7 @@ function fixture(state: CadJob["state"], code?: string) {
     engineVersion: "fixture", formatVersion: "fixture", nameCodepage: "GB", state: "running", phase: "reading", attempts: 1,
     availableAt: new Date(), claimToken: "44444444-4444-4444-8444-444444444444", claimUntil: new Date(),
     objectPrefix: null, manifestSHA256: null, manifestBytes: null, resourceLease: null, buffers: null, artifactBytes: 0,
-    errorCode: null, error: null, createdAt: new Date(), updatedAt: new Date() };
+    errorCode: null, error: null, lastAccessedAt: null, createdAt: new Date(), updatedAt: new Date() };
   const job: CadJob = { id: "5".repeat(32), state, phase: state, sourceSHA256: sha, sourceByteLength: 3,
     createdAt: 1, updatedAt: 1, ...(code ? { error: { code, error: "controlled conversion failure" } } : {}) };
   const failures: { code: string; retryable: boolean; context: CadFailureContext | undefined }[] = [];
@@ -36,7 +37,8 @@ function fixture(state: CadJob["state"], code?: string) {
   const storage = { getObject: async () => ({ bytes: body }), purgePrefix: async () => {}, putObject: async () => {} };
   const worker = new CadArchiveWorker(repository as unknown as CadArchiveRepository, files as unknown as FileRepository,
     engine as unknown as CadEngineClient, storage as unknown as ObjectStorage,
-    { assertAvailable: async () => {}, enginePayload: async () => ({ body, byteLength: body.byteLength, sha256: sha }) } as never);
+    { assertAvailable: async () => {}, enginePayload: async () => ({ body, byteLength: body.byteLength, sha256: sha }) } as never,
+    { runIfDue: async () => {} } as never);
   return { worker, engine, repository, failures, job };
 }
 
@@ -67,7 +69,12 @@ describe("CAD failure audit context", () => {
   });
 
   it("a completed conversion publishes normally without emitting a failure", async () => {
+    const log = vi.spyOn(Logger.prototype, "log").mockImplementation(() => {});
     const env = fixture("completed"); await env.worker.drainOnce();
+    const entry = log.mock.calls.map(call => call[0]).find(value => value?.event === "cad.archive.timing");
+    expect(entry).toMatchObject({ outcome: "published", attempt: 1 });
+    expect(Object.keys(entry.timings).sort()).toEqual(["eligibleQueueWaitMS", "engineWaitMS", "inputLookupSubmitMS", "persistMS", "totalMS"]);
+    for (const value of Object.values(entry.timings)) expect(value).toBeGreaterThanOrEqual(0);
     expect(env.repository.publish).toHaveBeenCalledOnce(); expect(env.failures).toEqual([]);
   });
 

@@ -261,3 +261,23 @@ Docker 镜像新增独立 /opt/acis 环境，CAD_ACIS_PYTHON 指向该环境的 
 支持已验证的椭圆柱参数一致性、分段椭圆截面周期接缝和斜切椭圆柱。保持物理边界曲线、区间、原顶点和曲面，接缝只有两次反向使用；UV 候选须通过完整曲线区间误差检查。仅对已验证的显式双圆柱交线字段重算交线，保留原记录，分别验证原拟合误差、完整单调对应、支撑面误差和原端点精度；未知字段继续拒绝。
 
 预览网格仅对完整椭圆柱加两个解析平面端盖启用轻量生成，保留精确 BRep；以解析曲率界约束线性误差，并限制角度步长。孔洞、样条端界和其他未满足条件的拓扑沿用原网格。原工作进程的时间、内存、输入量及网格总量限制不变，新增 UV 分段及交线分支预算，无新增依赖；字体、图层、颜色和装配路径未修改。原始图纸、详细性能记录和截图只留本机。
+
+## 首开性能与队列诊断
+
+先执行迁移 `0080_cad_view_activity.sql`，再部署新版 API/worker 与查看器。排队时最近 30 秒仍在查看且未取消的窗口获得优先；心跳写入最多每 10 秒一次。可执行时间已等待 5 分钟的任务先于新前台任务，不打断已有解析，也不绕过失败退避。5 分钟是排序老化阈值，不是完成时间承诺。
+
+查看器的 `__viewerDebug().timing.platform` 输出毫秒级浏览器观察时长；`jobReused` 区分已缓存产物与等待路径，`uniqueBufferBytes` / `uniqueBuffers` 为去重下载规模；同一 timing 中保留 `viewerInstallStart/End`、`firstModelFrame` 和 `interactionReady`。排队/处理/保存时长来自轮询，清单读取含网络与 JSON 解码，不等同于服务器原生解析耗时。
+
+worker 每次尝试输出 `cad.archive.timing`，以 artifactId/attempt 关联队列与日志：`eligibleQueueWaitMS` 是可执行时间至领取，`inputLookupSubmitMS` 为输入核对、缓存查询与提交，`engineWaitMS` 为沙箱任务等待，`persistMS` 为校验和持久化，`totalMS` 为本次归档流程耗时（不含最终租约释放）。失败时只记录已完成阶段。日志不含文件名、对象路径或原件内容。
+
+buffer 下载最多 4 个请求、32 MiB 在途声明字节；单个更大但符合原预算的资源独占下载。去重仅发生于当前已授权清单内部，不跨文件/用户共享浏览器缓存。现有 SHA、大小及总预算限制继续有效。
+
+## 第二批：主线程响应与缓存生命周期
+
+平台清单达到 1 MiB 时在同源 module Worker 执行 JSON/compact/DWG packed 解码；通过 transferable ArrayBuffer 避免复制输入，再将高基数表按 256 项逐批确认交接，限制消息复制停顿。小清单直接处理，取消终止线程，失败不静默降级。`__viewerDebug().timing.manifestDecode` 区分 `execution`、`jsonMS`、`expandMS`、包含线程启动和交接的 `totalMS`。`manifestRead` 是网络读取阶段，解码属于 `metadataExpand`；此变化需要注意与第一批诊断的口径差异。Three.js 安装与索引未迁移，不宣称全部首开计算都离开主线程。
+
+空闲 CAD worker 每实例每分钟最多预热两个近七天真实打开、尚无当前格式任务的输入集合。只继承访问时间，不人为续热；维持现有鉴权/输入可用性复查、重试上限和解析并发。回收站文件、禁用 DWG 不预热，当前格式已有失败任务留待用户正常重试。
+
+每次空闲维护最多退休两个旧格式记录、处理两个到期删除任务。退休要求精确输入身份匹配的当前格式替代品已就绪且创建更晚，旧任务无活动执行、未过期窗口或租约。打开窗口与退休在产物行锁上串行化；退休和精确前缀删除意图同事务提交，实际删除延迟一天，存储失败五分钟后重试。没有替代品的冷文件保留旧产物；持续繁忙时维护会推迟。该机制处理有记录的跨格式旧产物，不对历史未知孤儿对象进行全桶扫描。
+
+先迁移 0081 再部署 API/worker；本批未新增解析并发或外部依赖。参考：[Web Workers](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Using_web_workers)、[PostgreSQL 行锁](https://www.postgresql.org/docs/current/explicit-locking.html)。

@@ -51,10 +51,16 @@ export class CadArchiveRepository {
   async openView(artifactId: string, actorId: string, viewId: string): Promise<CadViewRow> {
     const expiresAt = new Date(Date.now() + 24 * 60 * 60_000);
     const leaseExpiresAt = new Date(Date.now() + 300_000);
-    const rows = await this.database.db.insert(cadViews).values({ artifactId, actorId, viewId, expiresAt, leaseExpiresAt })
-      .onConflictDoUpdate({ target: [cadViews.actorId, cadViews.viewId, cadViews.artifactId],
-        set: { expiresAt, cancelled: false, leaseExpiresAt } }).returning();
-    return rows[0]!;
+    return this.database.db.transaction(async (tx) => {
+      // Serialize opening with retirement; a removed artifact cannot acquire new readers.
+      const [artifact] = await tx.update(cadArtifacts).set({ lastAccessedAt: new Date() })
+        .where(eq(cadArtifacts.id, artifactId)).returning({ id: cadArtifacts.id });
+      if (!artifact) throw new Error("CAD artifact no longer available");
+      const rows = await tx.insert(cadViews).values({ artifactId, actorId, viewId, expiresAt, leaseExpiresAt })
+        .onConflictDoUpdate({ target: [cadViews.actorId, cadViews.viewId, cadViews.artifactId],
+          set: { expiresAt, cancelled: false, leaseExpiresAt, lastSeenAt: new Date() } }).returning();
+      return rows[0]!;
+    });
   }
 
   async view(jobId: string, source: CadArchiveSource, actorId: string, viewId: string) {
@@ -67,6 +73,14 @@ export class CadArchiveRepository {
         inArray(cadArtifacts.formatVersion, cadFormatVersions(source.sourceFormat ?? cadFormat(source.sourceName))),
         eq(cadArtifacts.sourceSHA256, source.sourceSHA256))).limit(1);
     return rows[0] ?? null;
+  }
+
+  /** Renew scheduling intent only after the caller has passed the view/input authorization. */
+  async touchView(id: string): Promise<void> {
+    const now = new Date();
+    await this.database.db.update(cadViews).set({ lastSeenAt: now }).where(and(
+      eq(cadViews.id, id), eq(cadViews.cancelled, false), gt(cadViews.expiresAt, now),
+      lt(cadViews.lastSeenAt, new Date(now.getTime() - 10_000))));
   }
 
   async cancelView(id: string): Promise<void> {
@@ -112,7 +126,12 @@ export class CadArchiveRepository {
         inArray(cadArtifacts.formatVersion, Object.values(CAD_FORMAT_VERSIONS)),
         or(and(eq(cadArtifacts.state, "queued"), lt(cadArtifacts.availableAt, now)),
           and(eq(cadArtifacts.state, "running"), lt(cadArtifacts.claimUntil, now)))))
-        .orderBy(cadArtifacts.availableAt).limit(1).for("update", { skipLocked: true }))[0];
+        .orderBy(sql`case
+          when ${cadArtifacts.availableAt} < ${new Date(now.getTime() - 300_000)} then 0
+          when exists (select 1 from ${cadViews} where ${cadViews.artifactId} = ${cadArtifacts.id}
+            and not ${cadViews.cancelled} and ${cadViews.expiresAt} > ${now}
+            and ${cadViews.lastSeenAt} > ${new Date(now.getTime() - 30_000)}) then 1
+          else 2 end`, cadArtifacts.availableAt, cadArtifacts.id).limit(1).for("update", { skipLocked: true }))[0];
       if (!row) return null;
       if (row.state === "running" || row.attempts >= 3) {
         await this.recordFailure(tx, row, "worker-interrupted", row.attempts < 3);

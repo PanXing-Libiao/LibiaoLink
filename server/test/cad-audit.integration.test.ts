@@ -29,7 +29,9 @@ async function source(): Promise<CadArchiveSource> {
   return row;
 }
 async function running() {
-  const input = await source(); await repository.request(input, "GB");
+  const input = await source(), artifact = await repository.request(input, "GB");
+  // Explicit eligibility avoids DB microseconds racing the application millisecond clock.
+  await database.pool.query("update cad_artifacts set available_at=now()-interval '1 second' where id=$1", [artifact.id]);
   const row = await repository.claim();
   if (!row) throw new Error("Expected claimed CAD task");
   return { input, row };
@@ -60,6 +62,53 @@ describe.skipIf(!databaseUrl)("CAD audit transactions with PostgreSQL", () => {
     if (admin) { await admin.query(`drop schema if exists ${schemaName} cascade`); await admin.end(); }
   });
 
+  it("active viewers overtake fresh silent tasks without duplicating their artifact", async () => {
+    const silent = await repository.request(await source(), "GB");
+    const input = await source(), watched = await repository.request(input, "GB");
+    await repository.openView(watched.id, actorId, "a".repeat(32));
+    expect((await repository.request(input, "GB")).id).toBe(watched.id);
+    expect((await repository.claim())?.id).toBe(watched.id);
+    expect((await repository.claim())?.id).toBe(silent.id);
+  });
+
+  it("a background task waiting five minutes overtakes new viewers, but retry backoff is respected", async () => {
+    const old = await repository.request(await source(), "GB");
+    await database.pool.query("update cad_artifacts set available_at=now()-interval '6 minutes' where id=$1", [old.id]);
+    const deferred = await repository.request(await source(), "GB");
+    await repository.openView(deferred.id, actorId, "b".repeat(32));
+    await database.pool.query("update cad_artifacts set available_at=now()+interval '1 hour' where id=$1", [deferred.id]);
+    const watched = await repository.request(await source(), "GB");
+    await repository.openView(watched.id, actorId, "c".repeat(32));
+    expect((await repository.claim())?.id).toBe(old.id);
+    expect((await repository.claim())?.id).toBe(watched.id);
+    expect(await repository.claim()).toBeNull();
+  });
+
+  it("closed or disconnected windows lose priority; another live window retains it", async () => {
+    const silent = await repository.request(await source(), "GB");
+    const watched = await repository.request(await source(), "GB");
+    const closed = await repository.openView(watched.id, actorId, "d".repeat(32));
+    const stale = await repository.openView(watched.id, actorId, "e".repeat(32));
+    await repository.cancelView(closed.id);
+    await database.pool.query("update cad_views set last_seen_at=now()-interval '31 seconds' where id=$1", [stale.id]);
+    expect((await repository.claim())?.id).toBe(silent.id);
+    const other = await repository.request(await source(), "GB");
+    await repository.touchView(stale.id);
+    expect((await repository.claim())?.id).toBe(watched.id);
+    expect((await repository.claim())?.id).toBe(other.id);
+    await repository.touchView(closed.id);
+    expect((await database.pool.query("select cancelled from cad_views where id=$1", [closed.id])).rows[0].cancelled).toBe(true);
+  });
+
+  it("concurrent workers claim separate tasks and do not preempt a running task", async () => {
+    const first = await repository.request(await source(), "GB");
+    const second = await repository.request(await source(), "GB");
+    await repository.openView(second.id, actorId, "f".repeat(32));
+    const claimed = await Promise.all([repository.claim(), repository.claim()]);
+    expect(new Set(claimed.map(row => row?.id))).toEqual(new Set([first.id, second.id]));
+    expect(await repository.claim()).toBeNull();
+  });
+
   it.each([
     ["conversion-failed", undefined, "cad.failed"],
     ["job-memory-quota", "failed", "cad.limit_exceeded"],
@@ -84,6 +133,7 @@ describe.skipIf(!databaseUrl)("CAD audit transactions with PostgreSQL", () => {
     await Promise.all(Array.from({ length: 3 }, () => repository.fail(row, "job-memory-quota", "too large", true)));
     expect(await events(input.fileId)).toHaveLength(1);
     await repository.retry(row.id, "queued");
+    await database.pool.query("update cad_artifacts set available_at=now()-interval '1 second' where id=$1", [row.id]);
     expect((await state(row.id)).error_code).toBeNull();
     expect((await events(input.fileId))[0].metadata.errorCode).toBe("job-memory-quota");
     const next = (await repository.claim())!;

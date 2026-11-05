@@ -377,7 +377,7 @@ export function loadPlatformModel(loader,{name='业务系统文件'}={}){
  if(query.get('platform')!=='1')throw new Error('Platform entry is disabled');
  return busy(async load=>{
   window.__cadTimingMark?.("loaderBegin");
-  const payload=await loader({signal:load.controller.signal,progress:text=>{if(load.token===loadSeq&&!load.controller.signal.aborted)$('busy').textContent=text;}});
+  const payload=await loader({signal:load.controller.signal,mark:name=>{if(load.token===loadSeq)mark(name);},record:values=>{if(load.token===loadSeq)Object.assign(loadTiming,values);},progress:text=>{if(load.token===loadSeq&&!load.controller.signal.aborted)$('busy').textContent=text;}});
   if(load.token!==loadSeq||load.controller.signal.aborted)return;
   const projection=decodePayload(payload);window.__cadTimingMark?.("payloadDecoded");sourceUpload=null;
   window.__cadTimingMark?.("installStart");install(projection.root,projection.info,projection.session,projection.sync,projection);window.__cadTimingMark?.("installEnd");
