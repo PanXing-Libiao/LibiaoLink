@@ -18,7 +18,7 @@ import {mediaItemFor, rasterRecord} from './drawing-media.js?v=dxf-0.17.3';
 const forceCanvasRenderer = typeof location !== 'undefined' && new URLSearchParams(location.search).get('renderer') === 'canvas';
 const accelerated = !forceCanvasRenderer && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined';
 const gpuModules = accelerated ? await Promise.all([
-  import('./gpu/background-painter.js?v=dxf-0.17.3'), import('./gpu/gpu-strokes.js?v=dxf-0.17.4'), import('./gpu/stroke-tiles.js?v=dxf-0.17.3')
+  import('./gpu/background-painter.js?v=dxf-0.17.3'), import('./gpu/gpu-strokes.js?v=dxf-0.17.6'), import('./gpu/stroke-tiles.js?v=dxf-0.17.3')
 ]) : null;
 const createBackgroundPainter = gpuModules?.[0].createBackgroundPainter;
 const createStrokeGPU = gpuModules?.[1].createStrokeGPU;
@@ -1092,7 +1092,7 @@ export function mountDrawingViewer(envelope) {
     const paintCount = currentInstancePaintCount(LOD_MIN_SCREEN_PX);
     instancePlan.renderedRecordCount = paintCount;
     canvas.dataset.currentPaintEstimate = String(paintCount);
-    if (paintCount <= INSTANCE_SYNC_PAINT_LIMIT) {
+    if (paintCount <= INSTANCE_SYNC_PAINT_LIMIT && !strokeTiles) {
       const started = performance.now();
       try {
         for (const ignored of instancePaintSteps({minScreenPx:LOD_MIN_SCREEN_PX})) { /* small drawings stay immediate */ }
@@ -1307,8 +1307,9 @@ export function mountDrawingViewer(envelope) {
       target.height = canvas.height;
     }
     const context = target ? target.getContext("2d") : null;
+    const gpu = strokeTiles ? strokeGPU : null;
     const job = {steps: instancePaintSteps({minScreenPx}), frame: 0, maxStepMs: 0,
-      started: performance.now(), key, direct, phase, minScreenPx, result: null, background: false};
+      started: performance.now(), key, direct, phase, minScreenPx, result: null, done: false, background: false};
     instanceRefresh = job;
     canvas.dataset.instancePaint = direct ? "progressive" : "canvas";
     if (phase === "preview") canvas.dataset.overviewPaint = "working";
@@ -1330,14 +1331,30 @@ export function mountDrawingViewer(envelope) {
       if (instanceRefresh !== job) return;
       const screen = ctx, device = strokeGPU;
       try {
-        let result;
-        const stepStarted = performance.now();
-        if (context) ctx = context;
-        strokeGPU = strokeTiles ? device : null;
-        try { result = job.steps.next(); } finally { ctx = screen; strokeGPU = device; }
-        if (result.done) job.result = result.value;
-        job.maxStepMs = Math.max(job.maxStepMs, performance.now() - stepStarted);
-        if (result.done) {
+        // CPU slices alone can enqueue a second of GPU work. Poll without
+        // blocking input, including a batch left by a cancelled refresh.
+        if (gpu && !gpu.batchComplete()) {
+          job.frame = requestAnimationFrame(step);
+          return;
+        }
+        if (!job.done) {
+          const stepStarted = performance.now();
+          if (context) ctx = context;
+          strokeGPU = gpu;
+          let result;
+          try { result = job.steps.next(); } finally { ctx = screen; strokeGPU = device; }
+          job.done = result.done;
+          if (result.done) job.result = result.value;
+          job.maxStepMs = Math.max(job.maxStepMs, performance.now() - stepStarted);
+          if (gpu) {
+            gpu.submitBatch();
+            job.frame = requestAnimationFrame(step);
+            return;
+          }
+        }
+        // Publish only after the final GPU batch has completed. Until then,
+        // interaction continues to transform the previous complete image.
+        if (job.done) {
           const publishStarted = performance.now();
           instanceRefresh = null;
           const drawn = Number(job.result?.drawn || 0);

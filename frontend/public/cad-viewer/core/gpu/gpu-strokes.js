@@ -65,7 +65,7 @@ void main() {
  const buffers=new Set();
  let calls=0,segments=0,tileBatches=0,bufferBytes=0,pendingDraw=false;
  let activeView=null,activeMatrix=null,activeMinPx=null,dashed=null;
- let damage=null;
+ let damage=null,submission=null;
  // Include the complete stroke footprint, including caps and antialiasing. The
  // source draw order is unchanged; only transparent space around it is omitted.
  function includeBounds(box,m,v,width){
@@ -143,7 +143,23 @@ void main() {
   }
   pendingDraw=false;damage=null;
  }
+ // Fence the whole batch after its WebGL -> Canvas copies and source clears.
+ // Keep it across cancellation/reset: queued GPU work cannot be cancelled.
+ function submitBatch(){
+  if(submission)gl.deleteSync(submission);
+  submission=gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE,0);
+  if(!submission)throw new Error('GPU completion fence unavailable');
+  gl.flush();
+ }
+ function batchComplete(){
+  if(!submission)return true;
+  const status=gl.clientWaitSync(submission,0,0);
+  if(status===gl.TIMEOUT_EXPIRED)return false;
+  gl.deleteSync(submission);submission=null;
+  if(status===gl.WAIT_FAILED)throw new Error('GPU completion wait failed');
+  return true;
+ }
  function reset(){for(const tile of buffers){gl.deleteBuffer(tile.buffer);gl.deleteVertexArray(tile.vao);}buffers.clear();bufferBytes=0;calls=0;segments=0;tileBatches=0;pendingDraw=false;damage=null;}
- function dispose(){reset();dashed?.dispose();gl.deleteProgram(program);gl.getExtension("WEBGL_lose_context")?.loseContext();}
- return {begin,createTileBuffer,deleteTileBuffer,drawTile,drawDashed,flush,reset,dispose,stats:()=>({calls,segments,buffers:buffers.size,batches:tileBatches,bytes:bufferBytes})};
+ function dispose(){if(submission){gl.deleteSync(submission);submission=null;}reset();dashed?.dispose();gl.deleteProgram(program);gl.getExtension("WEBGL_lose_context")?.loseContext();}
+ return {begin,submitBatch,batchComplete,createTileBuffer,deleteTileBuffer,drawTile,drawDashed,flush,reset,dispose,stats:()=>({calls,segments,buffers:buffers.size,batches:tileBatches,bytes:bufferBytes})};
 }

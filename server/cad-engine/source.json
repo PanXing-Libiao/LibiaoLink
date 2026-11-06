@@ -485,7 +485,7 @@
     "dependency.json": "a17930ad7b0dadf5bd81c59f23995af557f383b7584fdf48bdb3c2550240666e"
   },
   "browserFiles": {
-    "app.js": "2314a6f593418986c0366d33a438e9d6292ffef07e0374a84901399175ed0315",
+    "app.js": "6dcf0c07f1ed4dc9aa2d20b7c6d0f8273db4d33d4f45fb74515f50dff259aa67",
     "benchmark.js": "c81b3668354f0fc431c02f068545d5c71ce4a266bf414671341aa97674fc3e9d",
     "binary-transport.js": "e08b956fd5caa3588d5826f531d208ca12792ce10c003b2de1ceddc5527a447f",
     "camera-framing.js": "12f685ca11f995192d3f5348a44c2cf5fca5286bca58b0af99a7faa7ef5aab6d",
@@ -505,12 +505,12 @@
     "drawing-projection.js": "4060268bef6a42a83f6cb0977393245d6880721fc028f45498914b369fe6ab0d",
     "drawing-text-avoidance.js": "2e65f43a90f24b6a669325a3bc7687d0d1f93f22610ba937d9b8c2ae2b3e5001",
     "drawing-text.js": "d9a7a02a4423d54e3f2ba799406431160f03b9d01dc27d55129a42b38f73688e",
-    "drawing-viewer.js": "bb9f379e2b4d2f8a1199094a201e9abc6cfb60e6d1cfb05a833b45a70b2460b6",
+    "drawing-viewer.js": "eebb7365682c29eae0214265afb199856ecc6411680e86aa376fd984beb62070",
     "dwg-packed-transport.js": "36fad78365584340ac8e57bfd2952ed46ef07438e216cf828091949b6a59812f",
     "dxf-resources.js": "219569569cc22deca979ec3f6693031bfbfe050c30eb8fe419962f4e3dab5c2c",
     "gpu/background-painter.js": "20424c614d1879af4a4b2cfa265ef0fa4b79acaebb1124c46395e94ab8d287f1",
     "gpu/dashed-strokes.js": "6b5b2147f26a3951ce50c996a2c729e0e841cd40afbf4fa90944c1be2b53af92",
-    "gpu/gpu-strokes.js": "0b46aa1dd44888173b14533b97fb2fd8887a3e16da09e6e37adbbc30d678c26c",
+    "gpu/gpu-strokes.js": "f9e11f7926b2a04e05aebbcb41c5a85be20b74a4c01cca218e08609354e41bf2",
     "gpu/paint-worker.js": "8c865a4847a9133853604dd7f52162b863ee2d708aeff2d6a93911bfa90e7978",
     "gpu/recorded-path.js": "99e818b93996227a46b53a5ea54d54a15dd9dca4848790d16d6eeb7a6c1d7133",
     "gpu/stroke-tiles.js": "d2a7e3087219b3fa1da88429d721eca0df31536907acf5a6393f0c94e9faf735",
@@ -583,8 +583,8 @@
     ]
   },
   "engineDigest": "1108eb6124e2cb0458b4c5d21288b7d368d135f345fdd5f2f7fcb3105e10b4d8",
-  "viewerDigest": "0d0f2fbac0a0fac569d7422241b38ada65e91a0ea4e7b93ed3f08c10dda323d1",
-  "releaseDigest": "9c8c1d88b8d7b0bb2e4e8186fac4da9a4ce665bb6293916ccc615f086b1b0768",
+  "viewerDigest": "bd34ac9d41ba2490d8a6758a5e3bd1878f92a1167c6242a2821509bd2c024890",
+  "releaseDigest": "4ffc5ed24be8132ff1acee633b9927debe8b3629c3c2a1e7b80422b7fac972cf",
   "engineVersion": "step-0.3.3/1108eb6124e2cb0458b4c5d21288b7d368d135f345fdd5f2f7fcb3105e10b4d8/gateway-1",
-  "viewerVersion": "viewer-0d0f2fbac0a0fac569d7422241b38ada65e91a0ea4e7b93ed3f08c10dda323d1"
+  "viewerVersion": "viewer-bd34ac9d41ba2490d8a6758a5e3bd1878f92a1167c6242a2821509bd2c024890"
 }
