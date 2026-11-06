@@ -18,7 +18,7 @@ import {mediaItemFor, rasterRecord} from './drawing-media.js?v=dxf-0.17.3';
 const forceCanvasRenderer = typeof location !== 'undefined' && new URLSearchParams(location.search).get('renderer') === 'canvas';
 const accelerated = !forceCanvasRenderer && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined';
 const gpuModules = accelerated ? await Promise.all([
-  import('./gpu/background-painter.js?v=dxf-0.17.3'), import('./gpu/gpu-strokes.js?v=dxf-0.17.3'), import('./gpu/stroke-tiles.js?v=dxf-0.17.3')
+  import('./gpu/background-painter.js?v=dxf-0.17.3'), import('./gpu/gpu-strokes.js?v=dxf-0.17.4'), import('./gpu/stroke-tiles.js?v=dxf-0.17.3')
 ]) : null;
 const createBackgroundPainter = gpuModules?.[0].createBackgroundPainter;
 const createStrokeGPU = gpuModules?.[1].createStrokeGPU;
@@ -1449,9 +1449,9 @@ export function mountDrawingViewer(envelope) {
             calls++;paintStats.rendered+=entry.count;paintStats.drawn+=entry.count;continue;
           }
           activeGpuNode=null;activeGpuRun=-1;
-          strokeGPU?.flush(ctx);
           setMatrix(matrix);calls++;paintStats.rendered+=entry.count;paintStats.drawn+=entry.count;
-          if(entry.dash?.length&&strokeGPU?.drawDashed?.(entry,view,matrix)){strokeGPU.flush(ctx);continue;}
+          if(entry.dash?.length&&strokeGPU?.drawDashed?.(entry,view,matrix))continue;
+          strokeGPU?.flush(ctx);
           ctx.strokeStyle=entry.color;ctx.lineWidth=entry.width/localScale;ctx.lineJoin='round';ctx.lineCap=entry.dash?.length?'round':'butt';ctx.setLineDash(entry.dash||[]);ctx.stroke(ensureBatchPath(entry));continue;
         }
         activeGpuNode=null;activeGpuRun=-1;
