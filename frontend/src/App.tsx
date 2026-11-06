@@ -63,6 +63,46 @@ function blocksWhenLoginOnly(route: Route): boolean {
   return route.kind === "hub" || route.kind === "list" || route.kind === "project" || route.kind === "placeholder" || route.kind === "files";
 }
 
+/** 项目详情直链不可用：403 = 当前账号无权访问；404 = 项目不存在或已删除。 */
+type ProjectAccessIssue = "forbidden" | "notFound";
+
+function projectAccessIssueOf(error: unknown): ProjectAccessIssue | null {
+  if (!(error instanceof ApiError)) return null;
+  if (error.status === 403) return "forbidden";
+  if (error.status === 404) return "notFound";
+  return null;
+}
+
+/** 项目直链失败时的明确落点：不再把“无权访问”伪装成“项目不存在”。 */
+function ProjectAccessState({ me, issue }: { me: MeResponse; issue: ProjectAccessIssue }) {
+  const t = useT();
+  const forbidden = issue === "forbidden";
+  return (
+    <>
+      <AppHeader me={me} />
+      <main className="w-full px-4 pb-10 pt-3 sm:px-6">
+        <div data-project-access-state={issue} role="alert" className="mx-auto mt-12 max-w-xl rounded-2xl border border-zinc-200 bg-white p-8 text-center shadow-sm">
+          <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-amber-50 text-amber-600">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" className="h-5 w-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 3.5 4.5 6.8v5.4c0 4.4 3 8.1 7.5 9.3 4.5-1.2 7.5-4.9 7.5-9.3V6.8L12 3.5Z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8.5v4.2m0 3.1h.01" />
+            </svg>
+          </div>
+          <h1 className="mt-4 text-lg font-semibold text-zinc-900">
+            {t(forbidden ? "project.access.forbiddenTitle" : "project.access.notFoundTitle")}
+          </h1>
+          <p className="mt-2 text-sm leading-6 text-zinc-500">
+            {t(forbidden ? "project.access.forbiddenDesc" : "project.access.notFoundDesc")}
+          </p>
+          <a href="#/projects" className="mt-5 inline-flex rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800">
+            {t("project.back")}
+          </a>
+        </div>
+      </main>
+    </>
+  );
+}
+
 /** 直链无权限时的明确落点；菜单隐藏只是呈现层，这里仍以服务端画像为准。 */
 function PageAccessDenied({ me, backHref }: { me: MeResponse; backHref: string }) {
   const t = useT();
@@ -191,6 +231,8 @@ export default function App() {
   // 详情页数据（GET /projects/{id}）：列表分页外的项目也能直接打开
   const [detail, setDetail] = useState<Project | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  /** 项目直链失败原因（按项目 id 记忆，避免切换路由时闪过上一项目的提示）。 */
+  const [detailAccessIssue, setDetailAccessIssue] = useState<{ projectId: string; issue: ProjectAccessIssue } | null>(null);
   // 写操作后 +1：列表与详情按它重新取数（前端不做本地拼接，以服务端返回为准）
   const [dataVersion, setDataVersion] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
@@ -343,23 +385,32 @@ export default function App() {
       const view = await fetchProject(detailId);
       return () => setDetail(toUiProject(view));
     } catch (error) {
-      if (error instanceof ApiError && (error.status === 404 || error.status === 403)) return () => setDetail(null);
+      const issue = projectAccessIssueOf(error);
+      if (issue !== null) {
+        return () => {
+          setDetail(null);
+          setDetailAccessIssue({ projectId: detailId, issue });
+        };
+      }
       throw error;
     }
   }, String(detailId) + ":" + String(dataVersion), signedIn && detailId !== null && !detailLoading && detail !== null);
   useEffect(() => {
     if (detailId === null) {
       setDetail(null);
+      setDetailAccessIssue(null);
       visitedProjectId.current = null;
       return;
     }
     let cancelled = false;
     setDetailLoading(true);
+    setDetailAccessIssue(null);
     const load = async (): Promise<void> => {
       try {
         const view = await fetchProject(detailId);
         if (!cancelled) {
           setDetail(toUiProject(view));
+          setDetailAccessIssue(null);
           if (visitedProjectId.current !== detailId) {
             visitedProjectId.current = detailId;
             void recordProjectVisit(detailId).catch(() => undefined);
@@ -368,7 +419,9 @@ export default function App() {
       } catch (error: unknown) {
         if (!cancelled) {
           setDetail(null);
-          if (error instanceof ApiError && error.status !== 404) {
+          const issue = projectAccessIssueOf(error);
+          setDetailAccessIssue(issue === null ? null : { projectId: detailId, issue });
+          if (issue === null) {
             setNotice(errorMessageOf(error, t("app.fail.loadProject")));
           }
         }
@@ -929,6 +982,14 @@ export default function App() {
         <main className="page">
           <Loader />
         </main>
+      );
+    }
+    if (detail === null && detailAccessIssue !== null && detailAccessIssue.projectId === detailId) {
+      return (
+        <>
+          <ProjectAccessState me={state.me} issue={detailAccessIssue.issue} />
+          {bottomBars}
+        </>
       );
     }
     return (
