@@ -45,6 +45,39 @@ def strict_shape(font, number, stacked=False, primary=None):
     return shapefile.render_shapes([number], get_codes, stacked=stacked)
 
 
+def outline_triangles(paths, tolerance):
+    """Classify actual contours: bounding boxes misclassify separated CJK strokes as holes."""
+    from .dxf_fill import _point_in_ring, _ring_area
+    from ezdxf.math.triangulation import mapbox_earcut_2d
+    rings = []
+    for outline in paths:
+        ring = [(v.x, v.y) for v in outline.flattening(tolerance, segments=2)]
+        if len(ring) > 1 and ring[0] == ring[-1]: ring.pop()
+        if len(ring) >= 3: rings.append(ring)
+    bounds = [(min(x for x, y in r), min(y for x, y in r),
+               max(x for x, y in r), max(y for x, y in r)) for r in rings]
+    areas = [abs(_ring_area(r)) for r in rings]
+    parents = {}
+    for index, ring in enumerate(rings):
+        a = bounds[index]
+        # A boundary point can lie on the preceding letter (e.g. AA). A parent
+        # must enclose the whole bounds as well as the actual contour point.
+        candidates = [j for j, b in enumerate(bounds) if areas[j] > areas[index]
+                      and b[0] <= a[0] and b[1] <= a[1] and b[2] >= a[2] and b[3] >= a[3]
+                      and _point_in_ring(ring[0], rings[j])]
+        if candidates: parents[index] = min(candidates, key=lambda j: areas[j])
+    depths = []
+    for index in range(len(rings)):
+        owner, depth = index, 0
+        while owner in parents:
+            owner = parents[owner]; depth += 1
+        depths.append(depth)
+    for index, depth in enumerate(depths):
+        if depth % 2 == 0:
+            holes = [rings[hole] for hole, owner in parents.items() if owner == index]
+            yield from mapbox_earcut_2d(rings[index], holes)
+
+
 class StrictGlyphCache(shapefile.GlyphCache):
     def _render_shape(self, number):
         return strict_shape(self.font, number)
@@ -198,10 +231,10 @@ class Resources:
         if self.outline_names is None:
             self.outline_names = {}
             for logical, raw in self.files.items():
-                if not logical.lower().endswith(('.ttf', '.otf')) or len(raw) > MAX_OUTLINE_FONT_BYTES:
+                if not logical.lower().endswith(('.ttf', '.otf', '.ttc')) or len(raw) > MAX_OUTLINE_FONT_BYTES:
                     continue
                 try:
-                    with TTFont(io.BytesIO(raw), lazy=True) as font:
+                    with TTFont(io.BytesIO(raw), lazy=True, fontNumber=0) as font:
                         names = {entry.toUnicode().casefold() for entry in font['name'].names if entry.nameID in (1, 4, 6, 16)}
                         self.outline_variants[logical] = (font['OS/2'].usWeightClass > 400, bool(font['head'].macStyle & 2))
                     names.add(PurePosixPath(logical).stem.casefold())
@@ -243,11 +276,11 @@ class Resources:
                 row['logicalPath'] = logical
                 try:
                     suffix = PurePosixPath(logical).suffix.lower()
-                    if suffix not in ('.shx', '.shp', '.ttf', '.otf'):
+                    if suffix not in ('.shx', '.shp', '.ttf', '.otf', '.ttc'):
                         raise ValueError('shx-resource-type-unsupported')
                     raw = self.files[logical]
                     row.update(sha256=hashlib.sha256(raw).hexdigest(), byteLength=len(raw))
-                    outline = suffix in ('.ttf', '.otf')
+                    outline = suffix in ('.ttf', '.otf', '.ttc')
                     if len(raw) > (MAX_OUTLINE_FONT_BYTES if outline else MAX_FONT_BYTES):
                         raise ValueError('shx-file-byte-limit')
                     row['_kind'] = suffix[1:].upper() if outline else 'SHX/SHP'
@@ -331,7 +364,7 @@ class Resources:
         if entity.dxftype() == 'MTEXT':
             flow = entity.dxf.get('flow_direction', 1)
             binding['_vertical'] = flow == 3 or flow == 5 and binding['_vertical']
-        if bigfont and row.get('_kind') in ('TTF', 'OTF'):
+        if bigfont and row.get('_kind') in ('TTF', 'OTF', 'TTC'):
             # AutoCAD ignores a STYLE Big Font for outline fonts. Requiring an
             # unused SHX would discard the provided TTF/OTF or substitute it.
             binding['bigfontPolicy'] = {'declared': bigfont, 'action': 'ignored-for-outline-font'}
@@ -355,7 +388,7 @@ class Resources:
         if binding['_kind'] == 'SHX/SHP' and not isinstance(binding['_glyphs'], ShapeTextCache):
             binding = {**binding, '_codepage': binding.get('_codepage', self.doc.encoding)}
             binding['_glyphs'] = ShapeTextCache(binding)
-        cls = UploadedOutlineFont if binding['_kind'] in ('TTF', 'OTF') else UploadedFont
+        cls = UploadedOutlineFont if binding['_kind'] in ('TTF', 'OTF', 'TTC') else UploadedFont
         return cls(binding, height, width)
 
     def face(self, row):

@@ -15,6 +15,7 @@ def main():
     parser.add_argument('--reader')
     parser.add_argument('--dotnet')
     parser.add_argument('--assemble-only',action='store_true')
+    parser.add_argument('--font-dir', help='Explicit local companion font directory; files stay local')
     args=parser.parse_args()
     source=Path(args.source).resolve()
     file_identity(source)
@@ -24,7 +25,8 @@ def main():
         if not args.reader or not args.dotnet:parser.error('--reader and --dotnet are required for the native decode')
         if native.exists():raise ValueError('Native output exists; use a new directory or explicitly reassemble retained records')
         run_reader(args.dotnet,args.reader,source,native,stdout=None)
-    print(assemble_native(native,source,output))
+    from unified.dwg_text import read_font_files
+    print(assemble_native(native,source,output,font_files=read_font_files(args.font_dir)))
 
 
 if __name__=='__main__':main()

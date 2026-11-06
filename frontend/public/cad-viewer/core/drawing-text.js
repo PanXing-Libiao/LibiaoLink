@@ -388,6 +388,10 @@ export function textDisplayHeight(t) {
   return Math.max(size, (lineCount - 1) * lineHeight + size);
 }
 
+export function textDisplayCorners(t) {
+  return textWorldCorners({...t, height: textDisplayHeight(t)}, textOffsets(t));
+}
+
 export function textDisplayBox(t, x = t.x, y = t.y) {
   const box = textWorldBox({...t, x, y, height: textDisplayHeight(t)}, textOffsets(t));
   return Number.isFinite(box.minX) && Number.isFinite(box.minY) ? box : null;

@@ -96,7 +96,9 @@ class TTFontRenderer(Glyphs):
     @no_type_check
     def _get_font_measurements(self) -> FontMeasurements:
         bbox = BoundingBox2d(self.get_glyph_path("x").control_vertices())
-        baseline = bbox.extmin.y
+        # CAD height uses the A top above the font baseline, not the x ink bottom.
+        # SimSun x starts at +4; subtracting that makes every advance too wide.
+        baseline = 0.0
         x_height = bbox.extmax.y - baseline
         bbox = BoundingBox2d(self.get_glyph_path("A").control_vertices())
         cap_height = bbox.extmax.y - baseline

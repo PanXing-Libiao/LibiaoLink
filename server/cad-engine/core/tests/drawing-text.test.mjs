@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  TEXT_FONT, layoutAnnotationText, layoutTextRun, textOffsets, textWorldBox, textWorldCorners, textDisplayBox
+  TEXT_FONT, layoutAnnotationText, layoutTextRun, textOffsets, textWorldBox, textWorldCorners, textDisplayBox, textDisplayCorners
 } from '../../../../frontend/public/cad-viewer/core/drawing-text.js';
 
 const IDENTITY = [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
@@ -139,4 +139,15 @@ test('an overlong number keeps its source paragraph without an extra empty line'
   const run=layoutTextRun({text:'2480\n1000',kind:'mtext',x:0,y:0,angle:0,height:10,
     nativeLayout:true,rectangleWidth:5,measure:text=>text.length*50,measureCapHeight:()=>72});
   assert.deepEqual(run.lines,['2480','1000']);
+});
+
+test('rotated multiline clip corners include later lines outside the one-line box', () => {
+  const run=layoutTextRun({text:'A\nB\nC',kind:'mtext',x:10,y:20,angle:Math.PI/2,
+    height:2,nativeLayout:true,measure,measureCapHeight:()=>100});
+  const corners=textDisplayCorners(run);
+  const box=textDisplayBox(run);
+  assert.ok(box.maxX>run.box.maxX+6);
+  assert.equal(Math.max(...corners.map(p=>p[0])),box.maxX);
+  assert.equal(Math.min(...corners.map(p=>p[1])),box.minY);
+  assert.equal(run.lines.length,3);
 });

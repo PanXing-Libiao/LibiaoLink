@@ -5,7 +5,7 @@
   "gatewayProtocol": "libiaolink-cad-gateway/1",
   "engineFiles": {
     "convert.py": "8fc48b6f5f98c1be5b73ec32fa34127edef61ab60e8cfa8198f17f0de28447e7",
-    "dwg_convert.py": "c0c93633b7177cc49d4636cd61e6a30275d3c921bc90d65a0c9ca8387569f98c",
+    "dwg_convert.py": "9546fb4636d0c0c021846bb3a0e1e4197768fca336ebf8cff0d584f87871558a",
     "dwg_platform_convert.py": "2ca2c9f0fa01371f5c46ab7707c9443007895a47aa0a4eab7cd1b448d0e95a2d",
     "dxf_convert.py": "15d8c5ee1b0bed208684f7b71575b79d6bb15d8c7f9d35f4254f6603ba200c74",
     "evidence-index.json": "6aa2e4a65860bd758c66e014eed29963ef6c8b196c934467b3f1c1230fd42b3a",
@@ -40,11 +40,12 @@
     "unified/dwg_acis_seam_check.py": "afa7a93f9181e17655f4f1b6cb4e82e1708a08d88e1ed9f50b2878ffcd9cee7a",
     "unified/dwg_acis_surfaces.py": "ddeb9699a5bc2dcbd3537d114f3ce48a3641ee63f11e18ef5e9434956d89562b",
     "unified/dwg_acis_worker.py": "ecbfc3b67cd2ca750d85582c198e903605e5a6a0b8b3422816f0899109f12c3e",
-    "unified/dwg_adapter.py": "8e00d5ba830b11b8ad8af92d92e2b9bd7523c0e7956da7a8ee47365e07c3a14b",
+    "unified/dwg_adapter.py": "c05df8b671e3d9cf18675290460b60f36d843939598066a83314d34871356a71",
     "unified/dwg_pack.py": "55660bbd81fe0e28042557dcc2a207b7a017fafb1377568eae3433cfcb91dd5a",
+    "unified/dwg_text.py": "ceb573a95e7388b51040b80636a112dce8424dc6440d1a7827b625b524c0db0f",
     "unified/dxf_adapter.py": "6ed280dd8fa5391be1e6e84f9f4c2078ed904b22a868f6b47a8447aad4093195",
-    "unified/dxf_annotations.py": "f0835f4f8e5a947b1fc6732dae7721cbd4b3d56cc0354ae4d5abf284440297d5",
-    "unified/dxf_bigfont.py": "b19f3c7f858640f6f60ee5f3e70cd652d36b180dd2fbf3ac2fe7e0c71a5a715f",
+    "unified/dxf_annotations.py": "afa91846fee5e8f75c942d33cb45b383926065780a71f0b82a6063027d9130b2",
+    "unified/dxf_bigfont.py": "96e7f4b0be9fa5d86d5c8bf302a59fdaf821df53d57a289c59c91db6c295e25c",
     "unified/dxf_clipping.py": "3034c15c22c060ed3e318ced7128cc68997bdfc8b74364ff25bb35313e4147e4",
     "unified/dxf_dwg.py": "8e3c72eca06e399506580ec04025f78fda652b271fd0927a58ebf419f419cdbc",
     "unified/dxf_fields.py": "eaba006d04c9e63aed7b63a5705308efa273628aec581d6d33f8d46f4121cddb",
@@ -52,7 +53,7 @@
     "unified/dxf_gradients.py": "ea78ed46ffb2c50c885ecaba841d1942b478a0a2db50e1b4e55250b746f31c6c",
     "unified/dxf_linetype.py": "a52e365c6740406e4b1f05edc4056c6c9fb2d8180cdc53fa577807c47ff4307b",
     "unified/dxf_media.py": "9851cb4f85c2b11676b70cdf0b042bf706fe0e7266c0d687e477c0dbc08c4341",
-    "unified/dxf_mtext.py": "274ad04c3362a51991988ca37fe27c1bac220da8b913ea18a2af83a443f9358f",
+    "unified/dxf_mtext.py": "17be7194baf6b2d1250a4ef06a799fa902e33b25f352d73d71d7e9ab77d40d49",
     "unified/dxf_ole.py": "45bfd3388ec394d330ff365a252850e7d5fbb722ddfd309f691f3066df0d5dc4",
     "unified/dxf_plotstyles.py": "62c215ff40189e815b4fc9d644058927e5e9fc7421ef4045c25dc04fd29f7776",
     "unified/dxf_proxy.py": "b49dace88c6e8787579a79428ecc0ca39bddaf4bc3c1432b125f2758b6f00a4d",
@@ -62,9 +63,9 @@
     "unified/dxf_runtime.py": "486c8a773db1b82ab030514d7d5c4f8a18e439c71013e69b2d2a53fbe316a5ed",
     "unified/dxf_scale.py": "91ebc7fdc34526ae4ee4be1a3bb62b394973db21277229daeeeccba6ca4b3470",
     "unified/dxf_semantics.py": "e759189e8e44e0d17be0dbfc056e38fc6b6e74e1c2ec6c9e49a8861b015f0c09",
-    "unified/dxf_shx.py": "9936be736184421fa2ee982ab00bdcc766b4276b3021ade068029e93992a8f85",
+    "unified/dxf_shx.py": "66e6a009bb9e1432f5f1c48b30fe4852e1968e12c0c746fb7e698d141e661841",
     "unified/dxf_shxfont.py": "8001f0ada1ad64bca5b189d25861711f6c4ded65a38170d3aaa0f9f4e6bf3e45",
-    "unified/dxf_stroke.py": "438750e7d7d751949d2190e3410668064b8ed5085defb45735bf7ffa386f19ab",
+    "unified/dxf_stroke.py": "6da6c2937141c05df32fdb10476a26526ac553aa5e1471e1295a1ef5cd7561d9",
     "unified/dxf_tolerance.py": "d5f420ed54634032949480b171c70e5a37efd9502573761bfa0b4cb354ade16a",
     "unified/dxf_underlays.py": "0e09194fd0f10a0e4e283cb91ef6c0acd67253821999dce39a9af2839bf760e4",
     "unified/dxf_vertical.py": "549c233d19ed115750ad3b117d7f28098aea728d9f426328345ac529e2d0075d",
@@ -313,7 +314,7 @@
     "vendor/ezdxf/src/ezdxf/fonts/glyphs.py": "3b2267dd124a8891901aa05df325c5475fd82975005ede409ac5415743432b08",
     "vendor/ezdxf/src/ezdxf/fonts/lff.py": "ac1c4e085a1a6c0305af862e214a5fe9c48f52c34a400e8ac4124cb451d0f869",
     "vendor/ezdxf/src/ezdxf/fonts/shapefile.py": "8802aa55c05b0377b1d26c3ad0b418882a9338f30ad702af58832d678875e808",
-    "vendor/ezdxf/src/ezdxf/fonts/ttfonts.py": "161b004a65a0c311049859c2a8fb37b435f1c628f87ce992ed3b1f761fbabde3",
+    "vendor/ezdxf/src/ezdxf/fonts/ttfonts.py": "5dbdcb84b1bb6aa561bce7992af7366f0f9f749b64cc1075e12aee8e9125347c",
     "vendor/ezdxf/src/ezdxf/gfxattribs.py": "43c65f6283f6a3c8093c7d43e3d1b9eacc8185c6ff7c1ebec07d2a89ac7cdb2b",
     "vendor/ezdxf/src/ezdxf/graphicsfactory.py": "aa2a3f9286615be4d74b72a4a0fdb95a348c1a70597ea092fa901040cd6c2b9e",
     "vendor/ezdxf/src/ezdxf/groupby.py": "b2aa21958b136d0024331638e53f2b5b03699ae01e435a51affd3b1432e4f3f2",
@@ -413,7 +414,7 @@
     "vendor/ezdxf/src/ezdxf/render/point.py": "c94efe12a4c8be1b8d7b51015c8e54ae877f53d6533655e11acf8b6983900ed1",
     "vendor/ezdxf/src/ezdxf/render/polyline.py": "08c6fbd47937857431ed36e37b0abfef61b2c6b07ac02fbbe5744a6caebd5979",
     "vendor/ezdxf/src/ezdxf/render/r12spline.py": "512e8e9399d0841836d5182963b41aa9a72d5daf405ca2c1df9ebb7187e35cc8",
-    "vendor/ezdxf/src/ezdxf/render/trace.py": "98678448634e271ef04c82508ae732938ded0dde6afbbc8957bf6e7ac516b7b0",
+    "vendor/ezdxf/src/ezdxf/render/trace.py": "09872a5a82350a3ffb619893b6e02339bf8410386af8182df70ec8029cce3c3a",
     "vendor/ezdxf/src/ezdxf/reorder.py": "0de0cd8e2c14c661cc281b5a299b331c8826f2ebb26962a2d192b04388f896a3",
     "vendor/ezdxf/src/ezdxf/resources/16x16.png": "ca564ec8b19b20807665e9464fcc07b90e7f4e51cfdf4aad79ba58d26a784c09",
     "vendor/ezdxf/src/ezdxf/resources/24x24.png": "527d09c8cf2db664a75b58cfb2a22f9c0be43c7dfaf99b4126e40a3240685f61",
@@ -480,12 +481,12 @@
   },
   "readerFiles": {
     "CommunityText.cs": "8772f4985084c216e9f1c9a1de6f6cec0a45067049838ef786f2eafcfebe4198",
-    "Program.cs": "3bbd15b4e6a1db9d6180e84667b01b781e99ab610c9ac464b225fc19606af76f",
+    "Program.cs": "ad4254ee20da3a1cffeeb32d2071cf35b5a7dfd1d9451946da1731c3eb72d3fd",
     "Reader.csproj": "28dd949906cf4b8ab2ca44e02a9fbb2391c0f3e086587c7627e93d6a68f0c32d",
     "dependency.json": "4c396a2da3717365102546d8efb46d4d03eba6de67b5c3911edf147f1a790193"
   },
   "browserFiles": {
-    "app.js": "dfcef39584e49ebf8f3060d00807a4fe9d0186903b95f526345b3562ba882e83",
+    "app.js": "fc79794440affa29761c86f0910514d30b5f2deee5844f7d8957173c34005f23",
     "benchmark.js": "c81b3668354f0fc431c02f068545d5c71ce4a266bf414671341aa97674fc3e9d",
     "binary-transport.js": "e08b956fd5caa3588d5826f531d208ca12792ce10c003b2de1ceddc5527a447f",
     "camera-framing.js": "12f685ca11f995192d3f5348a44c2cf5fca5286bca58b0af99a7faa7ef5aab6d",
@@ -504,8 +505,8 @@
     "drawing-plot-styles.js": "a2c3888311ccdaac04b38f108ab7175cd171a43f0fb82fdb9356e9431819b243",
     "drawing-projection.js": "4060268bef6a42a83f6cb0977393245d6880721fc028f45498914b369fe6ab0d",
     "drawing-text-avoidance.js": "2e65f43a90f24b6a669325a3bc7687d0d1f93f22610ba937d9b8c2ae2b3e5001",
-    "drawing-text.js": "d9a7a02a4423d54e3f2ba799406431160f03b9d01dc27d55129a42b38f73688e",
-    "drawing-viewer.js": "c1bfb04efe43b0eb8db803fce3c85f1219aeed7d3496763b7c1f175ea0c2a5b6",
+    "drawing-text.js": "9affef6e07d138c8f2a2c361f4d591fc92fc29521c730b14d9c8820a6c33785c",
+    "drawing-viewer.js": "93c2acf0ab438356daf6bc0d83e4b086142cba59c66a61fd4debd8d121c12a7e",
     "dwg-packed-transport.js": "36fad78365584340ac8e57bfd2952ed46ef07438e216cf828091949b6a59812f",
     "dxf-resources.js": "219569569cc22deca979ec3f6693031bfbfe050c30eb8fe419962f4e3dab5c2c",
     "gpu/background-painter.js": "20424c614d1879af4a4b2cfa265ef0fa4b79acaebb1124c46395e94ab8d287f1",
@@ -560,8 +561,8 @@
   },
   "formatVersions": {
     "STEP": "step-0.3.3/dc2597ef7a5b32a1f00d11c4858673682130eae98dd136ae965adbe8e876adf0/gateway-1",
-    "DXF": "dxf-0.15.0/fa4965249dcbcadacbeb7d674ad58353296e03b8c6b3c52f7e87ae5ee8bf4657/gateway-1",
-    "DWG": "dwg-0.1.0/42470d4d87d01d00ec4e1d3ad5180d6b12a9f3a2ecaf13f9e8498a6a9876fb8d/gateway-1"
+    "DXF": "dxf-0.15.0/e376e5f13377a6467a1d2ce9a3bf23e5dd533b73a8910df921eea1689c156bda/gateway-1",
+    "DWG": "dwg-0.1.0/9709bafa54abcb137d8c58e2b91bb88a259f3ce30c00860a077339a0e8038767/gateway-1"
   },
   "compatibility": {
     "STEP": [
@@ -582,9 +583,9 @@
       "dwg-0.1.0/fdd7433b4a757f28a066b816b3230da860eefd52a5ca20d00b5887f72d382f5e/gateway-1"
     ]
   },
-  "engineDigest": "38f640c5f97230649d425d9d364b3f8e78e5a712bb7110e779ae1d872b686593",
-  "viewerDigest": "e7bf511e701ef51a92f32366c1c12536f9277a615d38c7a0a27d2bc1bf5c2fb2",
-  "releaseDigest": "b0546d7e7d0c9bd88f9cd41de7a65142d05a9bd1d9bb6f6f7b9fa4d2a8ee6a83",
-  "engineVersion": "step-0.3.3/38f640c5f97230649d425d9d364b3f8e78e5a712bb7110e779ae1d872b686593/gateway-1",
-  "viewerVersion": "viewer-e7bf511e701ef51a92f32366c1c12536f9277a615d38c7a0a27d2bc1bf5c2fb2"
+  "engineDigest": "c982003e453ff94b1eab8314368b85bada886ee933107cc722bc2a937ef54f47",
+  "viewerDigest": "07848ba4c9c62aa234336ed7e7d62b04c3a5121e56a9acb289105372beb22e1d",
+  "releaseDigest": "ec1a690b3f7450e6a0fb6f433823d6e0c4a4dbea85820d0739316d6a394c0d2d",
+  "engineVersion": "step-0.3.3/c982003e453ff94b1eab8314368b85bada886ee933107cc722bc2a937ef54f47/gateway-1",
+  "viewerVersion": "viewer-07848ba4c9c62aa234336ed7e7d62b04c3a5121e56a9acb289105372beb22e1d"
 }
