@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {parseMtextRuns, layoutTextRun} from '../../../../frontend/public/cad-viewer/core/drawing-text.js';
+import {parseMtextRuns, layoutTextRun, paintTextRun} from '../../../../frontend/public/cad-viewer/core/drawing-text.js';
 
 const resolve = name => (/宋体|simsun/i.test(name) ? 'SIM' : null);
 
@@ -139,4 +139,64 @@ test('plain native text wrapping applies kinsoku too', () => {
     nativeLayout: true, rectangleWidth: 30, matrixScale: 1
   });
   assert.deepEqual(run.lines, ['甲乙丙，', '丁']);
+});
+
+
+// Record glyph transforms, rather than only checking layout widths.
+function paintRecords(run, scale, retained = false) {
+  const calls = [], stack = [];
+  let xScale = retained ? scale : 1, yScale = xScale;
+  const ctx = {
+    save() { stack.push([xScale, yScale, this.font, this.fillStyle]); },
+    restore() { [xScale, yScale, this.font, this.fillStyle] = stack.pop(); },
+    scale(x, y) { xScale *= x; yScale *= y; },
+    fillText(text, x, y) {
+      const size = Number(/([\d.]+)px/.exec(this.font)[1]);
+      calls.push({text, x: x * xScale, y: y * yScale,
+        width: text.length * 0.5 * size * xScale, height: size * yScale, color: this.fillStyle});
+    },
+  };
+  paintTextRun(ctx, run, retained ? 1 : scale, scale);
+  return calls;
+}
+const paintLayout = extra => layoutTextRun({text: 'AB', kind: 'mtext', x: 0, y: 0, angle: 0,
+  height: 800, attachment: 5, nativeLayout: true, measure: text => text.length * 50, ...extra});
+
+test('zoom keeps native glyph size and alignment proportional beyond 220 pixels', () => {
+  const run = paintLayout({});
+  for (const retained of [false, true]) {
+    const small = paintRecords(run, 0.1, retained)[0];
+    const large = paintRecords(run, 0.5, retained)[0];
+    assert.equal(large.height, 400);
+    assert.equal(large.width, small.width * 5);
+    assert.equal(large.x, -large.width / 2);
+    assert.equal(large.y, small.y * 5);
+  }
+});
+
+test('inline width affects glyphs and advances, preserving nested width changes', () => {
+  const runs = parseMtextRuns('\\W0.5;AB{\\W2;CD}EF', 'LAT');
+  const run = paintLayout({runs, widthFactor: 0.8});
+  assert.deepEqual(run.runLines[0].segments.map(s => s.widthFactor), [0.5, 2, 0.5]);
+  for (const retained of [false, true]) {
+    const calls = paintRecords(run, 0.5, retained);
+    for (let i = 1; i < calls.length; i++) assert.equal(calls[i].x, calls[i - 1].x + calls[i - 1].width);
+    assert.equal(calls.at(-1).x + calls.at(-1).width, run.width * 0.5 / 2);
+    assert.equal(calls[0].x, -run.width * 0.5 / 2);
+  }
+});
+
+test('short centered lines have identical alignment in both projections', () => {
+  for (const formatted of [false, true]) {
+    const run = paintLayout({text: 'ABCD\nAB', ...(formatted ? {runs: [{text: 'ABCD\nAB', fontFamily: 'LAT'}]} : {})});
+    const ordinary = paintRecords(run, 0.5);
+    const retained = paintRecords(run, 0.5, true);
+    assert.deepEqual(retained, ordinary);
+    for (const call of ordinary) assert.equal(call.x, -call.width / 2);
+  }
+});
+
+test('inline color remains active during painting', () => {
+  const run = paintLayout({runs: parseMtextRuns('\\C1;\\W0.85;AB', 'LAT', null, () => '#f00'), color: '#0f0'});
+  assert.equal(paintRecords(run, 0.5, true)[0].color, '#f00');
 });

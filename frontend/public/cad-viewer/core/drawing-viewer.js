@@ -8,7 +8,7 @@ import {drawingClips, compileClips, triangulateRings, insideRing} from './drawin
 import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.17.3';
 import {estimateDrawingDraws, projectInstancesSteps, shouldProjectInstances, recordVisibleBounds, INSTANCE_DRAW_LIMIT, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, quantizeLodSize, LOD_MIN_SCREEN_PX, isLodCulled, I} from './drawing-instances.js?v=dxf-0.17.3';
 import Flatbush from './vendor/flatbush.js';
-import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, textOffsets, textDisplayCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.8';
+import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, paintTextRun, textDisplayCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.9';
 import {aciColor, trueColorCss, drawingColorCss} from './drawing-colors.js?v=dxf-0.17.4';
 import {resolveTextAvoidance} from './drawing-text-avoidance.js?v=dxf-0.17.3';
 import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentation} from './drawing-pattern.js?v=dxf-0.17.3';
@@ -1512,29 +1512,8 @@ export function mountDrawingViewer(envelope) {
         if(rec.textEntry){
           const t=rec.textEntry;
           drawTextLeader(t,matrix);
-          // Match the ordinary path: raw annotations keep a legible minimum
-          // screen size, while presentation glyph parts stay at source scale.
-          const screen=Math.max(t.nativeLayout?0.7:5,Math.min(220,t.size*localScale));
-          ctx.save();ctx.translate(t.displayX??t.x,t.displayY??t.y);ctx.rotate(t.angle);ctx.scale(1,-1);ctx.fillStyle=t.color;ctx.font=(screen/localScale)+'px '+(t.fontFamily||TEXT_FONT);ctx.textBaseline='alphabetic';
-          const wf=t.widthFactor&&t.widthFactor!==1?t.widthFactor:1;if(wf!==1)ctx.scale(wf,1);
-          const off=textOffsets(t);
-          if(t.runLines){
-            let y=off.dy;
-            for(let i=0;i<t.runLines.length;i++){
-              const line=t.runLines[i],lineAdvance=line.advance||t.lineHeight||t.height*1.25;
-              let x=off.dx/wf;
-              for(const seg of line.segments){
-                if(!seg.text)continue;
-                const segScale=seg.size&&t.size?seg.size/t.size:1;
-                ctx.font=(seg.italic?'italic ':'')+(seg.bold?'bold ':'')+((screen*segScale)/localScale)+'px '+(seg.fontFamily||t.fontFamily||TEXT_FONT);
-                ctx.fillStyle=seg.color||t.color;
-                ctx.fillText(seg.text,x,y);x+=seg.width/wf;
-              }
-              y+=lineAdvance;
-            }
-          }else{
-            for(let i=0;i<t.lines.length;i++)ctx.fillText(t.lines[i],off.dx/wf,off.dy+i*(t.lineHeight||t.height*1.25));
-          }
+          ctx.save();ctx.translate(t.displayX??t.x,t.displayY??t.y);ctx.rotate(t.angle);ctx.scale(1,-1);
+          paintTextRun(ctx,t,1,localScale);
           ctx.restore();
         }
         if(rasterDrawn||rec.fillPath||rec.path||rec.pointMark||rec.textEntry) paintStats.drawn++;
@@ -1967,48 +1946,10 @@ export function mountDrawingViewer(envelope) {
   }
   function drawText(t) {
     drawTextLeader(t);
-    const size = Math.max(t.nativeLayout ? 0.7 : 5, Math.min(220, t.size * scale));
     const sx = (t.displayX ?? t.x) * scale + tx, sy = -(t.displayY ?? t.y) * scale + ty;
-    if (sx < -400 || sy < -400 || sx > cssW + 400 || sy > cssH + 400) return;
     ctx.save();
     ctx.translate(sx, sy); ctx.rotate(-t.angle);
-    const wf = t.widthFactor && t.widthFactor !== 1 ? t.widthFactor : 1;
-    if (wf !== 1) ctx.scale(wf, 1);
-    ctx.font = size.toFixed(2) + 'px ' + (t.fontFamily || TEXT_FONT);
-    ctx.fillStyle = t.color;
-    const lines = t.lines || String(t.text).split('\n');
-    const widths = t.widths || [t.width];
-    const offsets = textOffsets(t);
-    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-    const alignDx = w => t.kind === 'mtext'
-      ? ((t.attachment === 2 || t.attachment === 5 || t.attachment === 8) ? -w / 2
-        : (t.attachment === 3 || t.attachment === 6 || t.attachment === 9) ? -w : 0)
-      : (t.halign === 1 ? -w / 2 : t.halign === 2 ? -w : 0);
-    if (t.runLines) {
-      let y = offsets.dy * scale;
-      t.runLines.forEach((line) => {
-        const dx = alignDx(line.width * scale) / wf;
-        let x = dx;
-        for (const segment of line.segments) {
-          if (!segment.text) continue;
-          const segScale = segment.size && t.size ? segment.size / t.size : 1;
-          ctx.font = (segment.italic ? 'italic ' : '') + (segment.bold ? 'bold ' : '')
-            + (size * segScale).toFixed(2) + 'px ' + (segment.fontFamily || t.fontFamily || TEXT_FONT);
-          ctx.fillStyle = segment.color || t.color;
-          ctx.fillText(segment.text, x, y);
-          x += segment.width * scale / wf;
-        }
-        y += line.advance ? line.advance * scale : (t.lineHeight ? t.lineHeight * scale : size * 1.25);
-      });
-      ctx.restore();
-      return;
-    }
-    lines.forEach((line, i) => {
-      // Alignment is per line: a short centred line must not keep the longest line's offset.
-      const w = (widths[i] ?? t.width) * scale;
-      const dx = alignDx(w) / wf;
-      ctx.fillText(line, dx, offsets.dy * scale + i * (t.lineHeight?t.lineHeight*scale:size*1.25));
-    });
+    paintTextRun(ctx, t, scale);
     ctx.restore();
   }
   function drawSelection(rec) {
