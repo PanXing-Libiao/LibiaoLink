@@ -61,10 +61,22 @@ static class Program
         if((short)e.LineWeight>=0) style["lineWeight"]=Fact((short)e.LineWeight/100.0);
         return style;
     }
+    static bool EntityVisible(Entity e)
+    {
+        if(e.IsInvisible)return false;
+        if(e is not AttributeEntity attribute)return true;
+        var mode=attribute.Document?.Header.AttributeVisibility ?? ACadSharp.Header.AttributeVisibilityMode.Normal;
+        return mode switch {
+            ACadSharp.Header.AttributeVisibilityMode.None => false,
+            ACadSharp.Header.AttributeVisibilityMode.All => true,
+            _ => !attribute.Flags.HasFlag(AttributeFlags.Hidden)
+        };
+    }
     static void State(Entity e, string id, Row? extra=null)
     {
         var state=extra ?? R();
-        state["visible"]=!e.IsInvisible;
+        state["visible"]=EntityVisible(e);
+        if(e is AttributeEntity attribute)state["attributeFlags"]=(int)attribute.Flags;
         state["lineTypeScale"]=e.LineTypeScale;
         state["drawOrder"]=order++;
         state["nativeColor"]=R(("index",e.Color.Index),("trueColor",e.Color.TrueColor));
@@ -883,6 +895,45 @@ static class Program
         DwgWriter.Write(Path.Combine(folder,"mesh-blocks.dwg"),document);
         Console.WriteLine("PASS: mesh closed triangles, concave quads, nonplanar rejection; mirrored nested block fixture written.");
     }
+    static void AttributeVisibilitySelfTest(string folder)
+    {
+        foreach(var mode in new[]{ACadSharp.Header.AttributeVisibilityMode.None,
+            ACadSharp.Header.AttributeVisibilityMode.Normal,ACadSharp.Header.AttributeVisibilityMode.All}) {
+            var document=new CadDocument(ACadVersion.AC1027);
+            document.Header.AttributeVisibility=mode;
+            var block=new BlockRecord("attribute-visibility");
+            block.Entities.Add(new Line(XYZ.Zero,XYZ.AxisX));document.BlockRecords.Add(block);
+            var insert=new Insert(block);document.Entities.Add(insert);
+            insert.Attributes.Add(new AttributeEntity{Tag="hidden",Value="hidden",Flags=AttributeFlags.Hidden});
+            insert.Attributes.Add(new AttributeEntity{Tag="shown",Value="shown"});
+            insert.Attributes.Add(new AttributeEntity{Tag="entity-hidden",Value="entity-hidden",IsInvisible=true});
+            document.Entities.Add(new TextEntity{Value="ordinary",Height=1});
+            string source=Path.Combine(folder,"attributes-"+mode+".dwg"),target=Path.Combine(folder,"attributes-"+mode);
+            DwgWriter.Write(source,document);var reread=DwgReader.Read(source);
+            Directory.CreateDirectory(target);
+            var names=new Dictionary<string,string>();var states=new Dictionary<string,bool>();
+            using(records=new StreamWriter(Path.Combine(target,"ucd-records.jsonl"))) {
+                foreach(var text in reread.Entities.OfType<TextEntity>().Concat(
+                    reread.Entities.OfType<Insert>().SelectMany(i=>i.Attributes))) {
+                    string id="annotation-"+H(text);names[id]=text.Value;State(text,id);
+                }
+            }
+            foreach(string line in File.ReadLines(Path.Combine(target,"ucd-records.jsonl"))) {
+                using var row=JsonDocument.Parse(line);var root=row.RootElement;
+                var table=root.GetProperty("table").GetString();var value=root.GetProperty("value");
+                string id=root.GetProperty("id").GetString()!;
+                if(table=="annotations")names[id]=value.GetProperty("text").GetString()!;
+                if(table=="entityState"&&value.TryGetProperty("visible",out var visible))states[id]=visible.GetBoolean();
+            }
+            if(names.Count!=4)throw new InvalidDataException("Attribute visibility fixture lost source text");
+            foreach(var (id,name) in names) {
+                bool expected=name=="ordinary" || (name!="entity-hidden" && mode!=ACadSharp.Header.AttributeVisibilityMode.None
+                    && (name=="shown"||mode==ACadSharp.Header.AttributeVisibilityMode.All));
+                if(states[id]!=expected)throw new InvalidDataException("Incorrect attribute visibility: "+mode+"/"+name);
+            }
+        }
+        Console.WriteLine("PASS: attribute Normal/All/None, dedicated Hidden flag, entity invisibility and ordinary text (12 cases).");
+    }
     static void LayerStateSelfTest(string folder)
     {
         var document=new CadDocument(ACadVersion.AC1027);
@@ -960,6 +1011,7 @@ static class Program
             || Math.Abs(Math.Abs(cap[4].X)-10)>1e-6)
             throw new InvalidDataException("MLine round cap arc changed");
         LayerStateSelfTest(folder);
+        AttributeVisibilitySelfTest(folder);
         Console.WriteLine("PASS: native DWG header fields remain independent, including raw -1; no interchange format; spline zero vertex guard; fit-point spline fallback; default leader arrow guard; MLine miter and round cap geometry.");
     }
     static (int Width,int Height) PreviewDimensions(byte[] image,DwgPreview.PreviewType code)
