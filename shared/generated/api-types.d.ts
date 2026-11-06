@@ -11874,7 +11874,7 @@ export interface components {
         PageExportCatalogResponse: {
             sheets: components["schemas"]["PageExportCatalogSheet"][];
         };
-        /** @description 一个可导出页面的目录项 */
+        /** @description 一个可导出页面的目录项（含中文实时预览） */
         PageExportCatalogSheet: {
             key: components["schemas"]["PageExportSheetKey"];
             label: string;
@@ -11885,8 +11885,10 @@ export interface components {
             /** @description 默认勾选列（已按当前账号列权限过滤） */
             defaultColumns: string[];
             columns: components["schemas"]["PageExportCatalogColumn"][];
+            /** @description 按当前账号列权限生成的中文预览行（最多 3 条） */
+            previewRows: components["schemas"]["PageExportPreviewRow"][];
         };
-        /** @description 页面导出方案（Sheet + 列顺序；按账号跨项目复用） */
+        /** @description 页面导出方案（Sheet + 列选择；导出列顺序由系统目录固定） */
         PageExportPreset: {
             /** @description 方案 id（前端生成，建议 pe- 前缀） */
             id: string;
@@ -11894,7 +11896,13 @@ export interface components {
             name: string;
             sheets: components["schemas"]["PageExportSheets"];
         };
-        /** @description 页面级 Excel 导出请求（POST；只导出勾选页面的勾选列） */
+        /** @description 导出预览单元格；长文本由服务端截断，附图显示为图片数量 */
+        PageExportPreviewCell: string | number | null;
+        /** @description 一条中文页面导出预览行（键为列 key） */
+        PageExportPreviewRow: {
+            [key: string]: components["schemas"]["PageExportPreviewCell"];
+        };
+        /** @description 页面级中文 Excel 导出请求（POST；只导出勾选页面的勾选列，列序固定） */
         PageExportRequest: {
             /** @description 当前站点 origin；用于把附图单元格链接到项目文件视图，服务端只接受 http(s) origin */
             origin?: string;
@@ -11905,9 +11913,9 @@ export interface components {
          * @enum {string}
          */
         PageExportSheetKey: "reports" | "issues" | "stakeholders";
-        /** @description 1～3 个页面的导出列选择（重复 Sheet / 重复列拒绝） */
+        /** @description 1～3 个页面的导出列选择（列序由系统目录固定；重复 Sheet / 重复列拒绝） */
         PageExportSheets: components["schemas"]["PageExportSheetSelection"][];
-        /** @description 一个页面的导出列选择；columns 顺序即 Excel 列顺序，未知列 / 空列 / 重复列拒绝 */
+        /** @description 一个页面的导出列选择；columns 只选择字段，Excel 列序固定取系统目录，未知列 / 空列 / 重复列拒绝 */
         PageExportSheetSelection: {
             /** @enum {string} */
             sheet: "reports";

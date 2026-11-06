@@ -209,6 +209,34 @@ describe("页面级 Excel 导出契约", () => {
     expect(contacts.every((column) => !column.allowed)).toBe(true);
     expect(catalog.sheets[2]?.columns.find((column) => column.key === "title")?.allowed).toBe(true);
     expect(catalog.sheets[2]?.defaultColumns).not.toContain("phone");
+    expect(catalog.sheets[0]?.previewRows).toEqual([{
+      date: "2026年11月5日",
+      author: "刘安安",
+      stageNames: "硬件实施、软件部署",
+      doneWork: "完成现场勘查",
+      plan: "开始安装",
+      photos: "2 张图片",
+    }]);
+    expect(catalog.sheets[1]?.previewRows).toEqual([]);
+    const stakeholderPreview = catalog.sheets[2]?.previewRows?.[0] ?? {};
+    expect(stakeholderPreview).toMatchObject({ name: "Christian Winkler", title: "项目经理", company: "客户 / Vanilla" });
+    expect(stakeholderPreview).not.toHaveProperty("phone");
+    expect(stakeholderPreview).not.toHaveProperty("wechat");
+    expect(stakeholderPreview).not.toHaveProperty("email");
+  });
+
+  it("目录预览最多 3 条，长文本截断，不把未授权列带出服务端", async () => {
+    const longReport = { ...report, doneWork: "长".repeat(300) };
+    const { service, reportsList, projectAccess } = harness({
+      reports: [longReport, { ...longReport, id: "88888888-8888-4888-8888-888888888888" }, { ...longReport, id: "99999999-9999-4999-8999-999999999999" }, { ...longReport, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }],
+    });
+    const catalog = await service.pageExportCatalog(PROJECT_ID, USER_ID, projectAccess);
+    const previews = catalog.sheets[0]?.previewRows ?? [];
+    expect(catalog.sheets[0]?.rowCount).toBe(4);
+    expect(previews).toHaveLength(3);
+    expect(String(previews[0]?.doneWork).length).toBe(240);
+    expect(String(previews[0]?.doneWork).endsWith("…")).toBe(true);
+    expect(reportsList).toHaveBeenCalledWith(PROJECT_ID, { page: 1, limit: 3 });
   });
 
   it("请求含无权列时 403，不能静默遗漏或导出空列", async () => {
@@ -234,8 +262,8 @@ describe("页面级 Excel 导出契约", () => {
     expect(result.kind).toBe("buffer");
   });
 
-  it("列顺序按请求顺序写入，日报 / 问题 / 干系人各自一行，不把问题合并进日报", async () => {
-    const { service, projectAccess } = harness();
+  it("请求列只表达勾选，Excel 列序固定取系统目录，三个页面各自成表", async () => {
+    const { service, audit, projectAccess } = harness();
     const result = await service.exportPages(PROJECT_ID, USER_ID, "https://pm.example", [
       { sheet: "reports", columns: ["doneWork", "date", "stageNames"] },
       { sheet: "issues", columns: ["state", "title", "categories"] },
@@ -249,18 +277,28 @@ describe("页面级 Excel 导出契约", () => {
     const reports = workbook.getWorksheet("日报记录")!;
     const issues = workbook.getWorksheet("问题追踪")!;
     const stakeholders = workbook.getWorksheet("干系人")!;
-    expect(headersOf(reports)).toEqual(["当日完成工作", "时间", "关联阶段"]);
-    expect(reports.getCell(2, 1).value).toBe("完成现场勘查");
-    expect(reports.getCell(2, 2).value).toBe("2026年11月5日");
-    expect(reports.getCell(2, 3).value).toBe("硬件实施、软件部署");
+    expect(headersOf(reports)).toEqual(["时间", "关联阶段", "当日完成工作"]);
+    expect(reports.getCell(2, 1).value).toBe("2026年11月5日");
+    expect(reports.getCell(2, 2).value).toBe("硬件实施、软件部署");
+    expect(reports.getCell(2, 3).value).toBe("完成现场勘查");
     expect(reports.rowCount).toBe(2);
-    expect(headersOf(issues)).toEqual(["问题是否处理", "问题描述", "问题归类"]);
-    expect(issues.getCell(2, 1).value).toBe("处理中");
-    expect(issues.getCell(2, 2).value).toBe("现场渗水");
+    expect(headersOf(issues)).toEqual(["问题描述", "问题归类", "问题是否处理"]);
+    expect(issues.getCell(2, 1).value).toBe("现场渗水");
+    expect(issues.getCell(2, 3).value).toBe("处理中");
     expect(issues.rowCount).toBe(2);
-    expect(headersOf(stakeholders)).toEqual(["所属公司", "干系人姓名"]);
-    expect(stakeholders.getCell(2, 1).value).toBe("客户 / Vanilla");
+    expect(headersOf(stakeholders)).toEqual(["干系人姓名", "所属公司"]);
+    expect(stakeholders.getCell(2, 1).value).toBe("Christian Winkler");
+    expect(stakeholders.getCell(2, 2).value).toBe("客户 / Vanilla");
     expect(stakeholders.rowCount).toBe(2);
+    expect(audit.record).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      metadata: expect.objectContaining({
+        columns: {
+          reports: ["date", "stageNames", "doneWork"],
+          issues: ["title", "categories", "state"],
+          stakeholders: ["name", "company"],
+        },
+      }),
+    }));
   });
 
   it("未勾选页面不读取业务数据；超过 20,000 条时拒绝导出", async () => {
@@ -285,10 +323,10 @@ describe("页面级 Excel 导出契约", () => {
     expect(result.missingImageCount).toBe(1);
     const workbook = await workbookOf(result.buffer);
     const sheet = workbook.getWorksheet("日报记录")!;
-    expect(headersOf(sheet)).toEqual(["现场工作附图", "时间"]);
+    expect(headersOf(sheet)).toEqual(["时间", "现场工作附图"]);
     expect(sheet.getImages()).toHaveLength(1);
-    expect(String(sheet.getCell(2, 1).value)).toContain("附图缺失");
-    expect(sheet.getColumn(1).width).toBe(58);
+    expect(String(sheet.getCell(2, 2).value)).toContain("附图缺失");
+    expect(sheet.getColumn(2).width).toBe(58);
     expect(sheet.getRow(2).height).toBeGreaterThan(24);
     expect(audit.record).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       metadata: expect.objectContaining({ feature: "page_export", mode: "legacy", images: 1, missingImages: 1 }),
@@ -306,7 +344,7 @@ describe("页面级 Excel 导出契约", () => {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(result.filePath);
     const sheet = workbook.getWorksheet("日报记录")!;
-    const value = sheet.getCell(2, 1).value as { text?: string; hyperlink?: string };
+    const value = sheet.getCell(2, 2).value as { text?: string; hyperlink?: string };
     expect(value.text).toContain("现场.png");
     expect(value.text).toContain("缺失.jpg");
     expect(value.hyperlink).toBe("https://pm.example/#/project/" + PROJECT_ID + "?view=files");
