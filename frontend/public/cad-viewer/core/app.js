@@ -7,7 +7,7 @@ import { fromUnified } from './unified-viewer.js';
 import {hydrateBinary} from './binary-transport.js';
 import {unpackMetadata} from './compact-transport.js?v=step-0.3-packed';
 import {convertJob} from './conversion-jobs.js';
-import {resourcePackage,collectResources} from './dxf-resources.js?v=dxf-0.17.1';
+import {resourcePackage,collectResources} from './dxf-resources.js?v=dxf-0.17.3';
 import {batchProjection,identityAtHit} from './render-batches.js';
 import {createHighlighter,drawsForProduct,drawsForScene} from './highlight.js';
 import {directProjection} from './direct-projection.js?v=step-0.2';

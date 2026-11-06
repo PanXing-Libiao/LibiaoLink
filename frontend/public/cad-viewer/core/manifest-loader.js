@@ -8,8 +8,7 @@ export async function decodeManifest(bytes,{signal,workerFactory=createWorker}={
  signal?.throwIfAborted();
  const started=performance.now();
  if(bytes.byteLength<WORKER_BYTES){
-  const result=await decodeManifestBytes(bytes);
-  signal?.throwIfAborted();
+  const result=decodeManifestBytes(bytes);
   return {...result,timing:{...result.timing,execution:'main',totalMS:performance.now()-started}};
  }
  return new Promise((resolve,reject)=>{

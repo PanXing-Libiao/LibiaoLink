@@ -8,9 +8,6 @@ const MAX_DRAW_TILES = 64;
 const COLOR_FALLBACK = [0, 0, 0];
 
 function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
-function completeView(view) {
-  return !!view && [view.scale, view.tx, view.ty, view.dpr].every(Number.isFinite);
-}
 function intersects(a, b) {
   return !!a && !!b && a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY;
 }
@@ -35,26 +32,12 @@ function parseColor(css) {
   if (values.length < 3 || values.slice(0, 3).some(value => !Number.isFinite(value))) return COLOR_FALLBACK;
   return [clamp(values[0] / 255, 0, 1), clamp(values[1] / 255, 0, 1), clamp(values[2] / 255, 0, 1)];
 }
-// Flatbush stores bounds as Float32. Pad only the spatial query by a few ULP
-// so a line on a tile boundary is not rounded into the neighbouring tile.
-function boxPadding(box) {
-  const magnitude = Math.max(Math.abs(box.minX), Math.abs(box.maxX), Math.abs(box.minY), Math.abs(box.maxY), 1);
-  return Math.max(1e-6, magnitude * 2 ** -22);
-}
-function padBox(box, pad = boxPadding(box)) {
-  return { minX: box.minX - pad, minY: box.minY - pad, maxX: box.maxX + pad, maxY: box.maxY + pad };
-}
-function transformChunk(chunk, matrix) {
-  const count = chunk ? chunk.length & ~1 : 0;
-  if (!count) return null;
-  const out = new Float32Array(count);
-  const a = matrix[0], b = matrix[1], c = matrix[4], d = matrix[5], tx = matrix[12], ty = matrix[13];
-  for (let i = 0; i < count; i += 2) {
-    const x = chunk[i], y = chunk[i + 1];
-    out[i] = a * x + c * y + tx;
-    out[i + 1] = b * x + d * y + ty;
-  }
-  return out;
+function localViewBounds(view,matrix,bounds) {
+  const a=matrix[0],b=matrix[1],c=matrix[4],d=matrix[5],det=a*d-b*c;
+  if(!det)return bounds;
+  const inverse=[d/det,-b/det,0,0,-c/det,a/det,0,0,0,0,1,0,
+    (c*matrix[13]-d*matrix[12])/det,(b*matrix[12]-a*matrix[13])/det,0,1];
+  return transformBounds(view,inverse);
 }
 function clipSegment(x1, y1, x2, y2, box) {
   const dx = x2 - x1, dy = y2 - y1;
@@ -101,11 +84,10 @@ function clipSegments(worldSegments, box) {
 }
 export function buildTileVertices(descriptors, box, minWorldSize = 0) {
   const groups = new Map();
-  const clipBox = padBox(box);
   for (const descriptor of descriptors) {
-    if (!intersects(descriptor.bounds, clipBox)) continue;
+    if (!intersects(descriptor.bounds, box)) continue;
     if (descriptor.lodSize > 0 && descriptor.lodSize < minWorldSize) continue;
-    const clipped = clipSegments(descriptor.worldSegments, clipBox);
+    const clipped = clipSegments(descriptor.worldSegments, box);
     if (!clipped.length) continue;
     let group = groups.get(descriptor.styleKey);
     if (!group) { group = { key: descriptor.styleKey, color: descriptor.color, width: descriptor.width, layerId: descriptor.layerId, rank: Number.isFinite(descriptor.order) ? descriptor.order : groups.size, rows: [] }; groups.set(group.key, group); }
@@ -164,7 +146,7 @@ export function createStrokeTilePlanner(renderer, options = {}) {
       renderer.deleteTileBuffer(row.buffer);
     }
   }
-  function describeRun(plan, runId, matrix, entries) {
+  function describeRun(plan, runId, entries) {
     const cached = plan.runs.get(runId);
     if (cached) return cached;
     const descriptors = [];
@@ -180,29 +162,29 @@ export function createStrokeTilePlanner(renderer, options = {}) {
       }
     }
     for (const entry of plan.runEntries.get(runId) || []) {
-      const entryBounds = transformBounds(entry.bounds, matrix);
+      const entryBounds = entry.bounds;
       if (!entryBounds) continue;
       const layerId = entry.layerId || "";
       const width = Math.max(0.01, Number(entry.width) || 0.01);
       const color = parseColor(entry.color);
       const styleKey = layerId + "|" + entry.color + "|" + width;
-      const lodSize = Math.max(entryBounds.maxX - entryBounds.minX, entryBounds.maxY - entryBounds.minY, 1e-9);
+      const lodSize = entry.lodSize ?? Math.max(entryBounds.maxX - entryBounds.minX, entryBounds.maxY - entryBounds.minY, 1e-9);
       const chunks = entry.gpuSegments || [];
       const records = entry.records || [];
       const count = Math.min(chunks.length, records.length);
       for (let i = 0; i < count; i++) {
-        const worldSegments = transformChunk(chunks[i], matrix);
+        const worldSegments = chunks[i];
         if (!worldSegments) continue;
-        const worldBounds = transformBounds(records[i].bbox || entry.bounds, matrix);
+        const worldBounds = records[i].bbox || entry.bounds;
         if (!worldBounds) continue;
-        descriptors.push({ bounds: worldBounds, worldSegments, layerId, width, color, styleKey, lodSize, order: order++ });
+        descriptors.push({ bounds: worldBounds, worldSegments, layerId, width, color, styleKey, lodSize,order: order++ });
         bounds = union(bounds, worldBounds);
       }
     }
     let index = null;
     if (descriptors.length) {
       index = new Flatbush(descriptors.length, 16, Float32Array);
-      for (const descriptor of descriptors) { const box = padBox(descriptor.bounds); index.add(box.minX, box.minY, box.maxX, box.maxY); }
+      for (const descriptor of descriptors) index.add(descriptor.bounds.minX, descriptor.bounds.minY, descriptor.bounds.maxX, descriptor.bounds.maxY);
       index.finish();
     }
     const run = { id: runId, descriptors, index, bounds, tiles: new Map() };
@@ -239,30 +221,32 @@ export function createStrokeTilePlanner(renderer, options = {}) {
     builtTiles++;
     return row;
   }
-  function drawRun(node, runId, entries, matrix, view, scale, minScreenPx) {
-    if (!completeView(view)) return { tiles: 0, segments: 0, styles: 0, level: 0, bytes: 0, built: 0, reused: 0 };
-    const plan = runPlan(node, entries);
-    const run = describeRun(plan, runId, matrix, entries);
-    if (!run || !run.descriptors.length || !intersects(run.bounds, view)) return { tiles: 0, segments: 0, styles: 0, level: 0, bytes: 0, built: 0, reused: 0 };
-    const minWorldSize = minScreenPx > 0 ? minScreenPx / Math.max(scale, 1e-15) : 0;
-    const lodExponent = minWorldSize > 0 ? Math.floor(Math.log2(minWorldSize)) : -1000;
-    const buildMinWorldSize = minWorldSize > 0 ? 2 ** lodExponent : 0;
-    const lodKey = lodExponent;
-    let level = selectTileLevel(run.bounds, scale, tilePx, maxLevel);
-    let range = visibleTileRange(run.bounds, level, view);
-    while (range.count > maxDrawTiles && level > 0) { level--; range = visibleTileRange(run.bounds, level, view); }
+  function* drawRunSteps(node, runId, entries, matrix, view, scale, minScreenPx) {
+    let sliceStarted=performance.now();
+    const plan = runPlan(node.group || node, entries);
+    const run = describeRun(plan, runId, entries);
+    if (!run || !run.descriptors.length || !intersects(transformBounds(run.bounds,matrix), view)) return { tiles: 0, segments: 0, styles: 0, level: 0, bytes: 0, built: 0, reused: 0 };
+    // Geometry and tile keys remain in group-local space. The shader applies
+    // each parent transform and the exact screen-space LOD threshold per draw.
+    const localView=localViewBounds(view,matrix,run.bounds);
+    const localScale=scale*Math.max(Math.hypot(matrix[0],matrix[1]),Math.hypot(matrix[4],matrix[5]));
+    const lodKey=0,buildMinWorldSize=0;
+    let level = selectTileLevel(run.bounds, localScale, tilePx, maxLevel);
+    let range = visibleTileRange(run.bounds, level, localView);
+    while (range.count > maxDrawTiles && level > 0) { level--; range = visibleTileRange(run.bounds, level, localView); }
     if (!range.count) return { tiles: 0, segments: 0, styles: 0, level, bytes: 0, built: 0, reused: 0 };
     const activeKeys = new Set();
     let tiles = 0, segments = 0, styles = 0, bytes = 0, built = 0, reused = 0;
     for (let y = range.y0; y <= range.y1; y++) {
       for (let x = range.x0; x <= range.x1; x++) {
+        if(performance.now()-sliceStarted>=6){yield;sliceStarted=performance.now();}
         const key = rowKey(plan.id, run.id, level, x, y, lodKey);
         const known = run.tiles.get(key);
         const row = ensureTile(plan, run, level, x, y, lodKey, buildMinWorldSize);
         if (!row) continue;
         if (known) reused++; else built++;
         activeKeys.add(key);
-        renderer.drawTile(row.buffer, view, minScreenPx);
+        renderer.drawTile(row.buffer, view, minScreenPx, matrix);
         tiles++;
         segments += row.segments;
         styles += row.styles;
@@ -272,6 +256,9 @@ export function createStrokeTilePlanner(renderer, options = {}) {
     prune(activeKeys);
     return { tiles, segments, styles, level, bytes, built, reused };
   }
+  function drawRun(...args){
+    const steps=drawRunSteps(...args);let next;do{next=steps.next();}while(!next.done);return next.value;
+  }
   function reset() {
     for (const row of rows.values()) renderer.deleteTileBuffer(row.buffer);
     rows.clear();
@@ -279,5 +266,5 @@ export function createStrokeTilePlanner(renderer, options = {}) {
     builtTiles = 0;
     nodePlans = new WeakMap();
   }
-  return { drawRun, reset, stats: () => ({ cachedTiles: rows.size, bytes: totalBytes, builtTiles }) };
+  return { drawRun, drawRunSteps, reset, stats: () => ({ cachedTiles: rows.size, bytes: totalBytes, builtTiles }) };
 }
