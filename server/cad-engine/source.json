@@ -480,12 +480,12 @@
   },
   "readerFiles": {
     "CommunityText.cs": "8772f4985084c216e9f1c9a1de6f6cec0a45067049838ef786f2eafcfebe4198",
-    "Program.cs": "b863fda1864cfcd1346cc4ba5926c72370f60fcf8bfe81ebb0f760f018dcdf0c",
+    "Program.cs": "3bbd15b4e6a1db9d6180e84667b01b781e99ab610c9ac464b225fc19606af76f",
     "Reader.csproj": "28dd949906cf4b8ab2ca44e02a9fbb2391c0f3e086587c7627e93d6a68f0c32d",
-    "dependency.json": "a17930ad7b0dadf5bd81c59f23995af557f383b7584fdf48bdb3c2550240666e"
+    "dependency.json": "4c396a2da3717365102546d8efb46d4d03eba6de67b5c3911edf147f1a790193"
   },
   "browserFiles": {
-    "app.js": "6dcf0c07f1ed4dc9aa2d20b7c6d0f8273db4d33d4f45fb74515f50dff259aa67",
+    "app.js": "dfcef39584e49ebf8f3060d00807a4fe9d0186903b95f526345b3562ba882e83",
     "benchmark.js": "c81b3668354f0fc431c02f068545d5c71ce4a266bf414671341aa97674fc3e9d",
     "binary-transport.js": "e08b956fd5caa3588d5826f531d208ca12792ce10c003b2de1ceddc5527a447f",
     "camera-framing.js": "12f685ca11f995192d3f5348a44c2cf5fca5286bca58b0af99a7faa7ef5aab6d",
@@ -505,7 +505,7 @@
     "drawing-projection.js": "4060268bef6a42a83f6cb0977393245d6880721fc028f45498914b369fe6ab0d",
     "drawing-text-avoidance.js": "2e65f43a90f24b6a669325a3bc7687d0d1f93f22610ba937d9b8c2ae2b3e5001",
     "drawing-text.js": "d9a7a02a4423d54e3f2ba799406431160f03b9d01dc27d55129a42b38f73688e",
-    "drawing-viewer.js": "eebb7365682c29eae0214265afb199856ecc6411680e86aa376fd984beb62070",
+    "drawing-viewer.js": "c1bfb04efe43b0eb8db803fce3c85f1219aeed7d3496763b7c1f175ea0c2a5b6",
     "dwg-packed-transport.js": "36fad78365584340ac8e57bfd2952ed46ef07438e216cf828091949b6a59812f",
     "dxf-resources.js": "219569569cc22deca979ec3f6693031bfbfe050c30eb8fe419962f4e3dab5c2c",
     "gpu/background-painter.js": "20424c614d1879af4a4b2cfa265ef0fa4b79acaebb1124c46395e94ab8d287f1",
@@ -513,7 +513,7 @@
     "gpu/gpu-strokes.js": "f9e11f7926b2a04e05aebbcb41c5a85be20b74a4c01cca218e08609354e41bf2",
     "gpu/paint-worker.js": "8c865a4847a9133853604dd7f52162b863ee2d708aeff2d6a93911bfa90e7978",
     "gpu/recorded-path.js": "99e818b93996227a46b53a5ea54d54a15dd9dca4848790d16d6eeb7a6c1d7133",
-    "gpu/stroke-tiles.js": "d2a7e3087219b3fa1da88429d721eca0df31536907acf5a6393f0c94e9faf735",
+    "gpu/stroke-tiles.js": "2c5b0b8f08e61a80b4f8827c7549dd94cec464530e21faf8cb4cbb48d3ec393f",
     "highlight.js": "1d19f0528e5fc706484efcdcb1101c4aa32285023cf550acefc04d85a386b2f5",
     "load-phases.js": "6b2c33cef7e2a6f9f08a1fbee603f3e15c1229739a09ed0aa1885fb184f1036d",
     "manifest-decode.js": "326540e7d369fb02eff8bb2f31526de3462a2868fc758a9361f19c63f5fcfa97",
@@ -561,7 +561,7 @@
   "formatVersions": {
     "STEP": "step-0.3.3/dc2597ef7a5b32a1f00d11c4858673682130eae98dd136ae965adbe8e876adf0/gateway-1",
     "DXF": "dxf-0.15.0/fa4965249dcbcadacbeb7d674ad58353296e03b8c6b3c52f7e87ae5ee8bf4657/gateway-1",
-    "DWG": "dwg-0.1.0/d65e34c6d2d6d131f725956ba7e60e187a1849b683a2a5278b71ad5a9c4f2b8d/gateway-1"
+    "DWG": "dwg-0.1.0/42470d4d87d01d00ec4e1d3ad5180d6b12a9f3a2ecaf13f9e8498a6a9876fb8d/gateway-1"
   },
   "compatibility": {
     "STEP": [
@@ -582,9 +582,9 @@
       "dwg-0.1.0/fdd7433b4a757f28a066b816b3230da860eefd52a5ca20d00b5887f72d382f5e/gateway-1"
     ]
   },
-  "engineDigest": "1108eb6124e2cb0458b4c5d21288b7d368d135f345fdd5f2f7fcb3105e10b4d8",
-  "viewerDigest": "bd34ac9d41ba2490d8a6758a5e3bd1878f92a1167c6242a2821509bd2c024890",
-  "releaseDigest": "4ffc5ed24be8132ff1acee633b9927debe8b3629c3c2a1e7b80422b7fac972cf",
-  "engineVersion": "step-0.3.3/1108eb6124e2cb0458b4c5d21288b7d368d135f345fdd5f2f7fcb3105e10b4d8/gateway-1",
-  "viewerVersion": "viewer-bd34ac9d41ba2490d8a6758a5e3bd1878f92a1167c6242a2821509bd2c024890"
+  "engineDigest": "38f640c5f97230649d425d9d364b3f8e78e5a712bb7110e779ae1d872b686593",
+  "viewerDigest": "e7bf511e701ef51a92f32366c1c12536f9277a615d38c7a0a27d2bc1bf5c2fb2",
+  "releaseDigest": "b0546d7e7d0c9bd88f9cd41de7a65142d05a9bd1d9bb6f6f7b9fa4d2a8ee6a83",
+  "engineVersion": "step-0.3.3/38f640c5f97230649d425d9d364b3f8e78e5a712bb7110e779ae1d872b686593/gateway-1",
+  "viewerVersion": "viewer-e7bf511e701ef51a92f32366c1c12536f9277a615d38c7a0a27d2bc1bf5c2fb2"
 }

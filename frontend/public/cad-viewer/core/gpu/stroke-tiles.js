@@ -183,7 +183,9 @@ export function createStrokeTilePlanner(renderer, options = {}) {
     }
     let index = null;
     if (descriptors.length) {
-      index = new Flatbush(descriptors.length, 16, Float32Array);
+      // Tile queries use double-precision drawing coordinates. Float32 bounds
+      // can round boundary lines outside the tile and discard entire strokes.
+      index = new Flatbush(descriptors.length, 16, Float64Array);
       for (const descriptor of descriptors) index.add(descriptor.bounds.minX, descriptor.bounds.minY, descriptor.bounds.maxX, descriptor.bounds.maxY);
       index.finish();
     }
