@@ -232,6 +232,7 @@ export async function readMultipartFile(
   const maxBodyBytes = maxBytes + 1024 * 1024;
   const header = req.headers["content-length"];
   const declared = typeof header === "string" ? Number(header) : Number.NaN;
+  const declaredBodyBytes = Number.isSafeInteger(declared) && declared >= 0 ? declared : null;
   if (Number.isSafeInteger(declared) && declared > maxBodyBytes) {
     throw fileTooLarge(maxBytes);
   }
@@ -251,6 +252,10 @@ export async function readMultipartFile(
     const limiter = new Transform({
       transform(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null, data?: Buffer) => void): void {
         total += chunk.length;
+        if (declaredBodyBytes !== null && total > declaredBodyBytes) {
+          callback(new AppError("IMPORT_FILE_INVALID", "请求体长度与 Content-Length 不一致"));
+          return;
+        }
         if (total > maxBodyBytes) {
           callback(fileTooLarge(maxBytes));
           return;
@@ -265,7 +270,7 @@ export async function readMultipartFile(
       if (isNoSpaceError(error)) throw temporaryStorageError();
       throw new AppError("IMPORT_FILE_INVALID", "上传请求中断或临时文件写入失败");
     }
-    if (Number.isSafeInteger(declared) && total !== declared) {
+    if (declaredBodyBytes !== null && total !== declaredBodyBytes) {
       throw new AppError("IMPORT_FILE_INVALID", "请求体长度与 Content-Length 不一致");
     }
 

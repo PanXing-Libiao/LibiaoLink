@@ -52,6 +52,16 @@ export const EnvSchema = z
     UPLOAD_MAX_SIZE_MB: z.coerce.number().int().min(1).max(102400).default(2048),
     /** 上传会话有效期（小时）：过期不可续传，需重新发起（契约 UploadSession.expiresAt）。 */
     UPLOAD_SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
+    /**
+     * 项目导入 preview 的进程内准入预算（按请求体大小计权：≤32 MiB = 1、≤128 MiB = 2、
+     * 更大 / Content-Length 缺失 = 3）。1 = 完整串行回退；当前生产只有单 API 容器。
+     */
+    IMPORT_CONCURRENCY_BUDGET: z.coerce.number().int().min(1).max(16).default(3),
+    /**
+     * 项目导入 commit 的进程内并发上限。第一期保持 1：项目行 advisory lock、5 连接查询池
+     * 与补任务节点 maxSeq 仍要求提交串行；放开前需另做 project 领域改造。
+     */
+    IMPORT_COMMIT_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(1),
     /** 回收站保留期（天）：移入回收站时写 `files.purge_after = recycled_at + 保留期`（A4-12，默认 30）。 */
     FILE_RECYCLE_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(30),
     /** 项目导出：auto = 小项目内存生成并嵌图、大项目流式临时文件并改图片链接；legacy / stream 仅用于排障。 */

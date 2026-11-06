@@ -10,6 +10,7 @@ import { ProjectImportController } from "./project-import.controller.js";
 import { ProjectImportManualController } from "./project-import-manual.controller.js";
 import { ProjectImportRepository } from "./project-import.repository.js";
 import { ProjectImportService } from "./project-import.service.js";
+import { ImportAdmissionGate } from "./import-admission.gate.js";
 
 /**
  * project-import 模块（领域 · 导入表导入 · 业务口径 2026-10-14）：项目空间「导入项目」按钮的服务端落点 ——
@@ -22,7 +23,7 @@ import { ProjectImportService } from "./project-import.service.js";
 @Module({
   imports: [IdentityModule, PermissionModule, AdminModule, ProjectModule, TemplateModule, TranslateModule],
   controllers: [ProjectImportController, ProjectImportManualController],
-  providers: [ProjectImportRepository, ProjectImportService],
+  providers: [ProjectImportRepository, ProjectImportService, ImportAdmissionGate],
   exports: [ProjectImportService, ProjectImportRepository],
 })
 export class ProjectImportModule {}

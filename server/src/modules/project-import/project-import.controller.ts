@@ -9,6 +9,7 @@ import { AppError } from "../../common/errors/app-error.js";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
 import { ProjectAccessGuard, RequirePermission } from "../permission/index.js";
+import { ImportAdmissionGate } from "./import-admission.gate.js";
 import { ProjectImportService } from "./project-import.service.js";
 import type { ImportLocale } from "./project-import.service.js";
 
@@ -26,10 +27,10 @@ type ProjectImportCommitBody = z.infer<typeof ProjectImportCommitBodySchema>;
 @Controller("api/v1/project-imports")
 @UseGuards(SessionGuard, CsrfGuard, ProjectAccessGuard)
 export class ProjectImportController {
-  /** 200 MB 级导入只允许单实例并发，限制解析 / 图片处理的单实例峰值与临时盘占用。 */
-  private importInFlight = false;
-
-  constructor(private readonly imports: ProjectImportService) {}
+  constructor(
+    private readonly imports: ProjectImportService,
+    private readonly admission: ImportAdmissionGate,
+  ) {}
 
   /** 解析预览（不写业务库）：返回票据（30 分钟）+ 落位建议 + 须手动导入清单 + 节点 / 账号清单 + 提醒。 */
   @Post("preview")
@@ -41,10 +42,10 @@ export class ProjectImportController {
     @Headers("accept-language") acceptLanguage: string | undefined,
     @CurrentActorId() actorId: string,
   ): Promise<ProjectImportPreview> {
-    if (this.importInFlight) {
+    const lease = this.admission.tryPreview(request.headers["content-length"]);
+    if (lease === null) {
       throw new AppError("RATE_LIMITED", "导入任务正在处理中，请稍后重试");
     }
-    this.importInFlight = true;
     try {
       const upload = await readMultipartFile(request, contentType ?? null, "file", IMPORT_MAX_FILE_BYTES);
       if (upload === null) {
@@ -61,7 +62,7 @@ export class ProjectImportController {
         await upload.cleanup();
       }
     } finally {
-      this.importInFlight = false;
+      lease.release();
     }
   }
 
@@ -75,15 +76,7 @@ export class ProjectImportController {
     @Headers("accept-language") acceptLanguage: string | undefined,
     @CurrentActorId() actorId: string,
   ): Promise<ProjectImportResult> {
-    if (this.importInFlight) {
-      throw new AppError("RATE_LIMITED", "导入任务正在处理中，请稍后重试");
-    }
-    this.importInFlight = true;
-    try {
-      return await this.imports.commit(body, actorId, localeOf(acceptLanguage), clientGoneSignal(response));
-    } finally {
-      this.importInFlight = false;
-    }
+    return await this.imports.commit(body, actorId, localeOf(acceptLanguage), clientGoneSignal(response));
   }
 }
 
