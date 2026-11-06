@@ -271,6 +271,10 @@ type TaskDrawerProps = {
   onChanged?: () => void;
   /** 任务文件清单（详情接口 GET /projects/{id}/tasks/{taskId}）：不传 = 只显示列表随行计数（fileSummary）。 */
   projectId?: string;
+  /** 全站自定义成果类型（字典 deliverableType）：跨项目 / 任务共享。 */
+  customDeliverableTypes?: readonly string[];
+  /** 仅当前项目项目经理可新增；不传 = 成果选择器底部入口置灰。 */
+  onCreateDeliverableType?: (name: string) => Promise<string | null>;
   /** 人员候选（GET /api/v1/users 目录）：项目经理 / 任务负责人两个多选共用。 */
   members: readonly Member[];
   onClose: () => void;
@@ -292,7 +296,7 @@ type TaskDrawerProps = {
  * 任务描述（中文 / 英文）自 Push 196 起对「临时任务」开放（**Push 197 收窄：仅未归入阶段的临时任务** —— 业务口径 2026-09-28「这个不是临时任务 不能修改」；失焦即存，中文名必填），
  * 阶段任务与节点 / 模板生成的任务仍锁定（抽屉里不出这一行，服务端同口径 400 兜底）。
  */
-export function TaskDrawer({ task, managers, managerIds = [], canFinalize = false, members, onSubmit, onRename, onProgress, onSetStatus, onSetActualEnd, onFinalize, onUnfinalize, onChanged, actorName, onUploadFiles, onDeleteFile, onRenameFile, projectId, onClose }: TaskDrawerProps) {
+export function TaskDrawer({ task, managers, managerIds = [], canFinalize = false, members, customDeliverableTypes = [], onCreateDeliverableType, onSubmit, onRename, onProgress, onSetStatus, onSetActualEnd, onFinalize, onUnfinalize, onChanged, actorName, onUploadFiles, onDeleteFile, onRenameFile, projectId, onClose }: TaskDrawerProps) {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
   const taskId = task === null ? null : task.id;
@@ -1207,13 +1211,16 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
         ),
     },
     {
-      // 输出成果文件（2026-10-08 · 业务口径「文件输出成果也要可以选择」）：只读色签改可点选择（搜索 + 十类多选，
+      // 输出成果文件（2026-10-08 · 业务口径「文件输出成果也要可以选择」）：只读色签改可点选择（搜索 + 内置十类 / 自定义多选，
       // 彩签全量摊开）；勾选即存（与其它字段同一套写入口径）。不传 onSubmit（只读抽屉）= 静态色签。
       label: "输出成果文件",
       value: editable ? (
         <DeliverableCell
           all
           values={draft.deliverableTypes}
+          customTypes={customDeliverableTypes}
+          canCreateCustom={onCreateDeliverableType !== undefined}
+          onCreateCustom={onCreateDeliverableType}
           onChange={(next) => {
             commit({ deliverableTypes: next });
           }}

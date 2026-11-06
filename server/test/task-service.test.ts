@@ -506,22 +506,27 @@ describe("TaskService.update（A12 状态联动 + 乐观锁 + 留痕）", () => 
     expect(repo.task?.version).toBe(3);
   });
 
-  it("输出成果文件常规编辑开放（2026-10-08「文件输出成果也要可以选择」）：节点任务可直接改、去重保序、版本 +1 + 审计含 deliverableTypes", async () => {
+  it("输出成果文件常规编辑开放：内置与自定义类型去重保序、版本 +1 + 审计含 deliverableTypes", async () => {
     const repo = new FakeTaskRepository();
     repo.task = makeRow({ deliverableTypes: ["技术协议"] });
     const audit = new FakeAuditService();
     const service = makeService(repo, new FakePermissionService(), new FakeTaskGateRepository(), audit);
-    const updated = await service.update(PROJECT, TASK, { deliverableTypes: ["CAD图纸", "技术协议", "CAD图纸"], version: 3 }, ACTOR);
-    expect(updated.deliverableTypes).toEqual(["CAD图纸", "技术协议"]);
+    const updated = await service.update(
+      PROJECT,
+      TASK,
+      { deliverableTypes: ["CAD图纸", "技术协议", "CAD图纸", "  竣工图  ", "   "], version: 3 },
+      ACTOR,
+    );
+    expect(updated.deliverableTypes).toEqual(["CAD图纸", "技术协议", "竣工图"]);
     expect(repo.task?.version).toBe(4);
     expect(repo.events).toEqual([]);
     const entry = audit.entries.at(-1) as { changes: Array<{ field: string; to: unknown }> };
-    expect(entry.changes.some((change) => change.field === "deliverableTypes" && JSON.stringify(change.to) === JSON.stringify(["CAD图纸", "技术协议"]))).toBe(true);
+    expect(entry.changes.some((change) => change.field === "deliverableTypes" && JSON.stringify(change.to) === JSON.stringify(["CAD图纸", "技术协议", "竣工图"]))).toBe(true);
   });
 
-  it("输出成果文件清空（显式 []）→ 空数组 = 不要求；未知类型被过滤", async () => {
+  it("输出成果文件清空（显式 []）→ 空数组 = 不要求", async () => {
     const repo = new FakeTaskRepository();
-    repo.task = makeRow({ deliverableTypes: ["验收单", "非字典值"] });
+    repo.task = makeRow({ deliverableTypes: ["验收单", "竣工图"] });
     const updated = await makeService(repo).update(PROJECT, TASK, { deliverableTypes: [], version: 3 }, ACTOR);
     expect(updated.deliverableTypes).toEqual([]);
   });

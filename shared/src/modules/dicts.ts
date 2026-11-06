@@ -3,13 +3,15 @@ import { DateTimeSchema } from "../common/conventions.ts";
 
 /**
  * 字典类型（A3）：一期只下发「可运营数据字典」（业务会变的主数据）。
- * 阶段 / 成果文件类型 / 紧急重要度属契约枚举，唯一来源是 shared/src/common/dicts.ts，
- * 前端直接引用，不走接口 —— 避免同一事实两处来源（v0.1 复盘头号问题）。
+ * 阶段 / 内置十类成果文件类型 / 紧急重要度仍属契约枚举，唯一来源是 shared/src/common/dicts.ts；
+ * deliverableType 只承载项目经理新增的全站自定义成果名称，避免同一事实两处来源（v0.1 复盘头号问题）。
  */
-export const DICT_TYPES = ["region", "projectType"] as const;
+export const CUSTOM_DELIVERABLE_DICT_TYPE = "deliverableType" as const;
+
+export const DICT_TYPES = ["region", "projectType", CUSTOM_DELIVERABLE_DICT_TYPE] as const;
 
 export const DictTypeSchema = z.enum(DICT_TYPES).openapi("DictType", {
-  description: "字典类型（一期）：region 地区 / projectType 项目类型；未知类型返回 404",
+  description: "字典类型：region 地区 / projectType 项目类型 / deliverableType 全站自定义成果文件类型；未知类型返回 404",
 });
 
 export const DictItemSchema = z
@@ -43,7 +45,7 @@ export const DictListResponseSchema = z
   .object({
     items: z.array(DictSchema),
   })
-  .openapi("DictListResponse", { description: "全量字典（一期两个类型：region / projectType）" });
+  .openapi("DictListResponse", { description: "全量字典：region / projectType / deliverableType 全站自定义成果文件类型" });
 
 
 /**
@@ -74,7 +76,7 @@ export const DictItemCreateBodySchema = z
   })
   .openapi("DictItemCreateBody", {
     description:
-      "新增字典条目：region 任何登录用户可增（全站共享；重复码 409）；projectType 仅管理员 dict.manage；变更写审计留痕（C9-02）；响应为更新后的整个字典",
+      "新增字典条目：region 任何登录用户可增（全站共享；重复码 409）；projectType 仅管理员 dict.manage；deliverableType 的自定义成果由项目经理走 POST /projects/{id}/deliverable-types（本通用端点仍仅 dict.manage）；变更写审计留痕（C9-02）；响应为更新后的整个字典",
   });
 
 /**

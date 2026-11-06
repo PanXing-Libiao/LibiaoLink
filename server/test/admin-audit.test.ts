@@ -242,6 +242,36 @@ describe("DictService（字典 C9）", () => {
     });
   });
 
+  it("自定义成果类型：写入全站 deliverableType 字典，所有项目共用同一候选", async () => {
+    const { service, dicts, audit } = makeDictService();
+    dicts.types.push({ code: "deliverableType", name: "成果文件类型", sort: 30, enabled: true, updatedAt: AT });
+    dicts.items.push({ id: UUID_ACTOR, typeCode: "deliverableType", code: "竣工图", name: "竣工图", sort: 30, enabled: true, metadata: {}, updatedAt: AT });
+    const created = await service.createCustomDeliverableType("现场签证单", UUID_ACTOR);
+    expect(created.type).toBe("deliverableType");
+    expect(created.items.map((item) => item.code)).toEqual(["竣工图", "现场签证单"]);
+    expect(dicts.items.find((item) => item.code === "现场签证单")).toMatchObject({
+      typeCode: "deliverableType",
+      name: "现场签证单",
+      sort: 40,
+      enabled: true,
+      metadata: {},
+    });
+    expect(dicts.touched).toEqual(["deliverableType"]);
+    expect(audit.inserted[0]).toMatchObject({ action: "create", objectId: "deliverableType:现场签证单" });
+    const all = await service.list(false);
+    expect(all.items.find((item) => item.type === "deliverableType")?.items.map((item) => item.code)).toEqual(["竣工图", "现场签证单"]);
+  });
+
+  it("自定义成果类型：内置十类与已存在名称均 409，不落库、不写审计", async () => {
+    const { service, dicts, audit } = makeDictService();
+    dicts.types.push({ code: "deliverableType", name: "成果文件类型", sort: 30, enabled: true, updatedAt: AT });
+    dicts.items.push({ id: UUID_ACTOR, typeCode: "deliverableType", code: "竣工图", name: "竣工图", sort: 30, enabled: true, metadata: {}, updatedAt: AT });
+    await expectAppErrorAsync(() => service.createCustomDeliverableType("合同", UUID_ACTOR), "DICT_ITEM_EXISTS");
+    await expectAppErrorAsync(() => service.createCustomDeliverableType("竣工图", UUID_ACTOR), "DICT_ITEM_EXISTS");
+    expect(dicts.touched).toEqual([]);
+    expect(audit.inserted).toHaveLength(0);
+  });
+
   it("兼容路径：PATCH enabled=false 仍可写（一期前端已改走物理删除），不删行", async () => {
     const { service, dicts, audit } = makeDictService();
     const dict = await service.updateItem("region", "华东", { enabled: false }, UUID_ACTOR);

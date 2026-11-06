@@ -1,9 +1,9 @@
-import { DOC_TYPES, UuidSchema } from "@libiaolink/contracts";
+import { DeliverableTypeSchema, UuidSchema } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 
 /**
  * 文件库列表查询解析（M4-03 · A4-01 / A4-09）：纯函数、不做 IO。
- * 非法枚举 / uuid 一律 400（明确失败，不返回静默空列表）；排序白名单外 400。
+ * 非法状态 / 超长类型名称 / uuid 一律 400（明确失败，不返回静默空列表）；排序白名单外 400。
  *
  * 默认口径：不带 filter[status] 时排除 recycled（文件库 = 在用文件；回收站文件走显式
  * `filter[status]=recycled`，与任务文件摘要的排除口径一致）；显式给出时以给出为准。
@@ -58,7 +58,7 @@ export function parseFileListFilter(query: FileListQueryInput): FileListFilter {
   const docTypes = splitMulti(query["filter[docType]"]);
   if (docTypes !== null) {
     for (const docType of docTypes) {
-      if (!(DOC_TYPES as readonly string[]).includes(docType)) {
+      if (!DeliverableTypeSchema.safeParse(docType).success) {
         throw new AppError("VALIDATION_FAILED", "filter[docType] 含非法成果文件类型：" + docType);
       }
     }

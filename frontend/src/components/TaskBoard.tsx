@@ -312,6 +312,10 @@ type TaskBoardProps = {
   onSetActualEnd?: (taskId: string, iso: string) => void;
   /** 人员候选（GET /api/v1/users 目录）：项目经理列 / 任务负责人列 / 抽屉共用。 */
   members: readonly Member[];
+  /** 全站自定义成果类型（字典 deliverableType）：所有任务共用。 */
+  customDeliverableTypes?: readonly string[];
+  /** 只有当前项目项目经理拿到新增回调；不传 = 选择器入口置灰。 */
+  onCreateDeliverableType?: (name: string) => Promise<string | null>;
   visibleColumns?: VisibleColumns;
   scrollRef?: RefObject<HTMLDivElement | null>;
   collapsed: Record<string, boolean>;
@@ -411,7 +415,7 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
  *  （onSetStatus）/ 紧急重要度与成果文件与进展描述（onPatch）/ 「文件」列下拉（onUploadFiles + onDeleteFile）/
  *  三段日期与人数（onPatch）；天数不单开编辑（随日期联动写回，与项目页同口径）。点行 = onSelect（开抽屉）；**onSelect 不传 = 整行不可点**（不出「点击查看任务详情」提示、不出 pointer 光标、不占键盘 Tab 焦点；行内各列仍按回调照常只读 / 可编辑 —— 甘特图「画不出时间轴」的兜底列表这样用，Push 294）。
  *  subtitle 缺省 = 英文名小行（项目页口径）；工作台传「阶段 / 临时任务 · 英文名」保持自己那张表的副行。 */
-export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, canFinalize = false, members, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, onDeleteFile, files, tierTint, subtitle }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect?: () => void; onProgress?: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; canFinalize?: boolean; members: readonly Member[]; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; tierTint?: TintedTier | false; subtitle?: string }) {
+export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, canFinalize = false, members, customDeliverableTypes = [], onCreateDeliverableType, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, onDeleteFile, files, tierTint, subtitle }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect?: () => void; onProgress?: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; canFinalize?: boolean; members: readonly Member[]; customDeliverableTypes?: readonly string[]; onCreateDeliverableType?: (name: string) => Promise<string | null>; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; tierTint?: TintedTier | false; subtitle?: string }) {
   const locale = useLocale();
   const t = useT();
   /** 手打内容机翻显示（业务口径 2026-10-13「因为页面有些内容是手打的 我建议是提前后台机翻」）：
@@ -631,7 +635,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
       </span>
     ),
     // 输出成果文件（2026-10-08 · 业务口径「文件输出成果也要可以选择」）：只读徽标改可点选择 ——
-    // 点开 = DeliverablePicker（搜索 + 十类彩签多选）；列窄走「首枚 + +N」，全名清单进浮层。
+    // 点开 = DeliverablePicker（搜索 + 内置十类 / 自定义彩签多选）；列窄走「首枚 + +N」，全名清单进浮层。
     deliverable:
       onPatch === undefined ? (
         <span className="flex min-w-0 items-center gap-1">
@@ -647,6 +651,9 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
       ) : (
         <DeliverableCell
           values={task.deliverableTypes}
+          customTypes={customDeliverableTypes}
+          canCreateCustom={onCreateDeliverableType !== undefined}
+          onCreateCustom={onCreateDeliverableType}
           disabled={taskFinalized}
           disabledHint={t("board.finalizedHint")}
           onChange={(next) => {
@@ -911,7 +918,7 @@ export function ProjectSummary({ summary }: { summary: ApiProjectSummary | null 
   );
 }
 
-export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgress, onSetStatus, onSetActualEnd, members, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, canFinalizeTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, filesByTask, projectId, tierTint }: TaskBoardProps) {
+export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgress, onSetStatus, onSetActualEnd, members, customDeliverableTypes = [], onCreateDeliverableType, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, canFinalizeTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, filesByTask, projectId, tierTint }: TaskBoardProps) {
   const t = useT();
   const locale = useLocale();
   /**
@@ -1288,6 +1295,8 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
                         managerIds={managerIds ?? []}
                         canFinalize={canFinalizeTask?.(task) === true}
                         members={members}
+                        customDeliverableTypes={customDeliverableTypes}
+                        onCreateDeliverableType={onCreateDeliverableType}
                         onSetStatus={onSetStatus === undefined ? undefined : (status) => onSetStatus(task.id, status)}
                         onSetActualEnd={onSetActualEnd === undefined ? undefined : (iso) => onSetActualEnd(task.id, iso)}
                         onChangeManagers={onChangeManagers}
@@ -1362,6 +1371,8 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
         managerIds={managerIds ?? []}
         canFinalize={drawerTask !== null && canFinalizeTask?.(drawerTask) === true}
         members={members}
+        customDeliverableTypes={customDeliverableTypes}
+        onCreateDeliverableType={onCreateDeliverableType}
         onSubmit={onSubmitTaskEdit}
         onRename={onRenameTask}
         onProgress={onSetProgress}

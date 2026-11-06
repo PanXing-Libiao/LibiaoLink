@@ -19,6 +19,7 @@ describe("shared-page invalidation", () => {
     expect(changedResources("POST", "/api/v1/files/a/uploads/b/parts")).toEqual([]);
     expect(changedResources("PATCH", "/api/v1/users/me/preferences")).toEqual([]);
     expect(changedResources("PATCH", "/api/v1/projects/a/tasks/b")).toContain("tasks");
+    expect(changedResources("POST", "/api/v1/projects/a/deliverable-types")).toEqual(["dicts", "projects", "tasks"]);
     expect(changedResources("POST", "/api/v1/files/a/uploads/b/complete")).toContain("files");
     // 导入表导入（Push 316 服务端落地）：只有 commit 写业务数据；preview 只落票据，不触发刷新
     expect(changedResources("POST", "/api/v1/project-imports/preview")).toEqual([]);

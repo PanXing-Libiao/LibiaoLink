@@ -3606,6 +3606,13 @@
         "format": "date-time",
         "description": "ISO8601 时间戳（UTC 存储，前端按 Asia/Shanghai 展示）"
       },
+      "DeliverableType": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 50,
+        "pattern": "^[^,\\r\\n]+$",
+        "description": "自定义成果文件类型名称（1–50 字，不含英文逗号 / 换行；新增后全站共享）"
+      },
       "Dict": {
         "type": "object",
         "properties": {
@@ -3704,7 +3711,7 @@
           "code",
           "name"
         ],
-        "description": "新增字典条目：region 任何登录用户可增（全站共享；重复码 409）；projectType 仅管理员 dict.manage；变更写审计留痕（C9-02）；响应为更新后的整个字典"
+        "description": "新增字典条目：region 任何登录用户可增（全站共享；重复码 409）；projectType 仅管理员 dict.manage；deliverableType 的自定义成果由项目经理走 POST /projects/{id}/deliverable-types（本通用端点仍仅 dict.manage）；变更写审计留痕（C9-02）；响应为更新后的整个字典"
       },
       "DictItemUpdateBody": {
         "type": "object",
@@ -3742,15 +3749,16 @@
         "required": [
           "items"
         ],
-        "description": "全量字典（一期两个类型：region / projectType）"
+        "description": "全量字典：region / projectType / deliverableType 全站自定义成果文件类型"
       },
       "DictType": {
         "type": "string",
         "enum": [
           "region",
-          "projectType"
+          "projectType",
+          "deliverableType"
         ],
-        "description": "字典类型（一期）：region 地区 / projectType 项目类型；未知类型返回 404"
+        "description": "字典类型：region 地区 / projectType 项目类型 / deliverableType 全站自定义成果文件类型；未知类型返回 404"
       },
       "DocType": {
         "type": "string",
@@ -3766,7 +3774,7 @@
           "安装完成证明",
           "验收单"
         ],
-        "description": "十类成果文件字典；门禁 required_doc 只能引用此字典（v0.2 §2.5）"
+        "description": "十类成果文件字典；流程蓝图与节点门禁 required_doc 只能引用此字典（v0.2 §2.5）"
       },
       "DuplicateHint": {
         "type": [
@@ -3913,14 +3921,14 @@
           "docType": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/DocType"
+                "$ref": "#/components/schemas/DeliverableType"
               },
               {
                 "type": [
                   "string",
                   "null"
                 ],
-                "description": "成果文件类型（十类字典）；普通附件为空"
+                "description": "成果文件类型（内置十类或全站自定义类型）；普通附件为空"
               }
             ]
           },
@@ -7891,6 +7899,18 @@
         ],
         "description": "创建项目：项目序号 seqNo 不接受传入，由服务端分配并随响应返回"
       },
+      "ProjectDeliverableTypeCreateBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/DeliverableType"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "description": "仅当前项目的项目经理 / 名册项目经理可新增；条目进入全站 deliverableType 字典，所有账号与项目可见"
+      },
       "ProjectFacets": {
         "type": "object",
         "properties": {
@@ -9595,9 +9615,16 @@
           "deliverableTypes": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/DocType"
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/DeliverableType"
+                },
+                {
+                  "description": "输出成果文件类型名称：内置十类（DOC_TYPES）+ 全站自定义类型（1–50 字，不含英文逗号 / 换行）；自定义值存于 deliverableType 字典，所有项目与任务共享"
+                }
+              ]
             },
-            "description": "要求输出成果文件（ADR-024 多选，Push 143）：取值属十类成果文件字典；服务端按首次出现去重；**空数组 = 不要求**；随模板 / 节点生成后默认锁定（A1-17，例外调整随 M3-05）"
+            "description": "要求输出成果文件（ADR-024 多选，Push 143）：内置十类 + 全站自定义类型（deliverableType 字典）；服务端去空、按首次出现去重；**空数组 = 不要求**；常规编辑开放"
           },
           "note": {
             "type": [
@@ -10107,10 +10134,17 @@
           "deliverableTypes": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/DocType"
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/DeliverableType"
+                },
+                {
+                  "description": "输出成果文件类型名称：内置十类（DOC_TYPES）+ 全站自定义类型（1–50 字，不含英文逗号 / 换行）；自定义值存于 deliverableType 字典，所有项目与任务共享"
+                }
+              ]
             },
-            "maxItems": 10,
-            "description": "要求输出成果文件（ADR-024 多选，≤ 10 类）：去重（首次出现保序）；缺省 / 空数组 = 不要求"
+            "maxItems": 20,
+            "description": "要求输出成果文件（ADR-024 多选，≤ 20 项；含全站自定义）：去重（首次出现保序）；缺省 / 空数组 = 不要求"
           },
           "note": {
             "type": [
@@ -10286,13 +10320,14 @@
           "docType": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/DocType"
+                "$ref": "#/components/schemas/DeliverableType"
               },
               {
                 "type": [
                   "string",
                   "null"
-                ]
+                ],
+                "description": "输出成果文件类型名称：内置十类（DOC_TYPES）+ 全站自定义类型（1–50 字，不含英文逗号 / 换行）；自定义值存于 deliverableType 字典，所有项目与任务共享"
               }
             ]
           }
@@ -10351,7 +10386,14 @@
         "type": "object",
         "properties": {
           "docType": {
-            "$ref": "#/components/schemas/DocType"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DeliverableType"
+              },
+              {
+                "description": "输出成果文件类型名称：内置十类（DOC_TYPES）+ 全站自定义类型（1–50 字，不含英文逗号 / 换行）；自定义值存于 deliverableType 字典，所有项目与任务共享"
+              }
+            ]
           },
           "required": {
             "type": "integer",
@@ -10379,7 +10421,14 @@
             ]
           },
           "docType": {
-            "$ref": "#/components/schemas/DocType"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DeliverableType"
+              },
+              {
+                "description": "输出成果文件类型名称：内置十类（DOC_TYPES）+ 全站自定义类型（1–50 字，不含英文逗号 / 换行）；自定义值存于 deliverableType 字典，所有项目与任务共享"
+              }
+            ]
           },
           "count": {
             "type": "integer",
@@ -10482,10 +10531,17 @@
           "deliverableTypes": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/DocType"
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/DeliverableType"
+                },
+                {
+                  "description": "输出成果文件类型名称：内置十类（DOC_TYPES）+ 全站自定义类型（1–50 字，不含英文逗号 / 换行）；自定义值存于 deliverableType 字典，所有项目与任务共享"
+                }
+              ]
             },
-            "maxItems": 10,
-            "description": "要求输出成果文件（锁定项，≤ 10 类，多选去重、首次出现保序）：修正后即刻成为完成门禁依据（有节点任务仍以节点 node_requirements 为准，本字段只作无节点任务兜底）"
+            "maxItems": 20,
+            "description": "要求输出成果文件（锁定项，≤ 20 项，含全站自定义；多选去重、首次出现保序）：修正后即刻成为完成门禁依据（有节点任务仍以节点 node_requirements 为准，本字段只作无节点任务兜底）"
           }
         },
         "required": [
@@ -11029,10 +11085,17 @@
           "deliverableTypes": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/DocType"
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/DeliverableType"
+                },
+                {
+                  "description": "输出成果文件类型名称：内置十类（DOC_TYPES）+ 全站自定义类型（1–50 字，不含英文逗号 / 换行）；自定义值存于 deliverableType 字典，所有项目与任务共享"
+                }
+              ]
             },
-            "maxItems": 10,
-            "description": "要求输出成果文件（2026-10-08 业务口径「文件输出成果也要可以选择」）：常规编辑开放 —— 传数组 = 整体替换（≤ 10 类，去重、首次出现保序）；显式 [] = 不要求；缺省 = 不改"
+            "maxItems": 20,
+            "description": "要求输出成果文件（2026-10-08 业务口径「文件输出成果也要可以选择」）：常规编辑开放 —— 传数组 = 整体替换（≤ 20 项，含全站自定义；去重、首次出现保序）；显式 [] = 不要求；缺省 = 不改"
           },
           "note": {
             "type": [
@@ -11236,7 +11299,14 @@
                 "$ref": "#/components/schemas/Sha256"
               },
               "docType": {
-                "$ref": "#/components/schemas/DocType"
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/DeliverableType"
+                  },
+                  {
+                    "description": "输出成果文件类型名称：内置十类（DOC_TYPES）+ 全站自定义类型（1–50 字，不含英文逗号 / 换行）；自定义值存于 deliverableType 字典，所有项目与任务共享"
+                  }
+                ]
               },
               "nodeId": {
                 "$ref": "#/components/schemas/Uuid"
@@ -11293,7 +11363,14 @@
                 "$ref": "#/components/schemas/Sha256"
               },
               "docType": {
-                "$ref": "#/components/schemas/DocType"
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/DeliverableType"
+                  },
+                  {
+                    "description": "输出成果文件类型名称：内置十类（DOC_TYPES）+ 全站自定义类型（1–50 字，不含英文逗号 / 换行）；自定义值存于 deliverableType 字典，所有项目与任务共享"
+                  }
+                ]
               },
               "nodeId": {
                 "$ref": "#/components/schemas/Uuid"
@@ -13182,6 +13259,86 @@
           },
           "404": {
             "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/deliverable-types": {
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "新增全站自定义成果文件类型（仅当前项目项目经理；写入 deliverableType 全局字典，所有项目共享）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectDeliverableTypeCreateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "创建成功（更新后的 deliverableType 字典）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Dict"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
             "content": {
               "application/json": {
                 "schema": {
@@ -15587,7 +15744,7 @@
         "tags": [
           "dicts"
         ],
-        "summary": "全量字典（region / projectType，含元数据 / 主题色与引用计数 usageCount；阶段与成果文件类型走契约枚举，不在字典内）",
+        "summary": "全量字典（region / projectType / deliverableType，含元数据 / 主题色与引用计数 usageCount；deliverableType 为全站自定义成果类型，内置十类仍走契约 DOC_TYPES）",
         "parameters": [
           {
             "schema": {
@@ -15640,10 +15797,10 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 64,
-              "description": "字典类型（一期：region / projectType）；未知类型返回 404"
+              "description": "字典类型：region / projectType / deliverableType（全站自定义成果类型）；未知类型返回 404"
             },
             "required": true,
-            "description": "字典类型（一期：region / projectType）；未知类型返回 404",
+            "description": "字典类型：region / projectType / deliverableType（全站自定义成果类型）；未知类型返回 404",
             "name": "type",
             "in": "path"
           },
@@ -15708,10 +15865,10 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 64,
-              "description": "字典类型（一期：region / projectType）；未知类型返回 404"
+              "description": "字典类型：region / projectType / deliverableType（全站自定义成果类型）；未知类型返回 404"
             },
             "required": true,
-            "description": "字典类型（一期：region / projectType）；未知类型返回 404",
+            "description": "字典类型：region / projectType / deliverableType（全站自定义成果类型）；未知类型返回 404",
             "name": "type",
             "in": "path"
           }
@@ -15801,10 +15958,10 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 64,
-              "description": "字典类型（一期：region / projectType）；未知类型返回 404"
+              "description": "字典类型：region / projectType / deliverableType（全站自定义成果类型）；未知类型返回 404"
             },
             "required": true,
-            "description": "字典类型（一期：region / projectType）；未知类型返回 404",
+            "description": "字典类型：region / projectType / deliverableType（全站自定义成果类型）；未知类型返回 404",
             "name": "type",
             "in": "path"
           },
@@ -15890,10 +16047,10 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 64,
-              "description": "字典类型（一期：region / projectType）；未知类型返回 404"
+              "description": "字典类型：region / projectType / deliverableType（全站自定义成果类型）；未知类型返回 404"
             },
             "required": true,
-            "description": "字典类型（一期：region / projectType）；未知类型返回 404",
+            "description": "字典类型：region / projectType / deliverableType（全站自定义成果类型）；未知类型返回 404",
             "name": "type",
             "in": "path"
           },
@@ -17104,10 +17261,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "成果文件类型（多值逗号分隔，取值见 DocType 字典）"
+              "description": "成果文件类型（多值逗号分隔；内置十类或全站自定义类型）"
             },
             "required": false,
-            "description": "成果文件类型（多值逗号分隔，取值见 DocType 字典）",
+            "description": "成果文件类型（多值逗号分隔；内置十类或全站自定义类型）",
             "name": "filter[docType]",
             "in": "query"
           },

@@ -26,6 +26,7 @@ import { canEditTaskTemplates, hasPermission, loadMyPermissions, useMyPermission
 import { firstAllowedHref } from "./accessRoutes";
 import {
   createDictItem,
+  createProjectDeliverableType,
   deleteDictItem,
   EMPTY_DICTS,
   loadDicts,
@@ -457,7 +458,7 @@ export default function App() {
 
   /** 字典写操作后的缓存替换（Push 173）：只换**当前类型**（写响应只带该类型；不本地拼接顺序，以服务端返回为准）。 */
   const applyDictType = (type: DictTypeCode, result: DictTypeResult): void => {
-    setDicts((previous) => (type === "region" ? { ...previous, region: result.items } : { ...previous, projectType: result.items }));
+    setDicts((previous) => ({ ...previous, [type]: result.items }));
   };
 
   /**
@@ -481,6 +482,20 @@ export default function App() {
       return null;
     } catch (error: unknown) {
       return errorMessageOf(error, type === "region" ? t("app.fail.addRegion") : t("app.fail.addProjectType"));
+    }
+  };
+
+  /**
+   * 输出成果文件「自定义」新增（2026-11-06）：只由项目详情 / 工作台抽屉里的项目经理触发，
+   * 服务端按当前项目再次裁决（manager_ids 或名册 project_manager）；成功后把全站字典缓存整类替换。
+   * 返回 null = 成功；返回文案 = 面板内联提示。
+   */
+  const handleCreateDeliverableType = async (projectId: string, name: string): Promise<string | null> => {
+    try {
+      applyDictType("deliverableType", await createProjectDeliverableType(projectId, name));
+      return null;
+    } catch (error: unknown) {
+      return errorMessageOf(error, t("app.fail.addDeliverableType"));
     }
   };
 
@@ -954,6 +969,8 @@ export default function App() {
       <>
         <WorkspacePage
           me={state.me}
+          customDeliverableTypes={dicts.deliverableType.map((item) => item.name)}
+          onCreateDeliverableType={handleCreateDeliverableType}
           members={directoryMemberOptions(directory)}
           tab={route.tab}
           onChangeTab={replaceWorkspaceTab}
@@ -1001,6 +1018,8 @@ export default function App() {
           dailySub={route.sub}
           focus={route.focus}
           onClearFocus={clearProjectFocus}
+          customDeliverableTypes={dicts.deliverableType.map((item) => item.name)}
+          onCreateDeliverableType={handleCreateDeliverableType}
           members={directoryMemberOptions(directory)}
           onChangeManagers={handleChangeManagers}
           onTaskEdited={handleTaskEdited}

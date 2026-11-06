@@ -8,7 +8,7 @@ import {
   VersionSchema,
   paginated,
 } from "../common/conventions.ts";
-import { ChangeStatusSchema, DocTypeSchema, FileStatusSchema, StageKeySchema } from "../common/dicts.ts";
+import { ChangeStatusSchema, DeliverableTypeSchema, FileStatusSchema, StageKeySchema } from "../common/dicts.ts";
 
 /**
  * 文件与变更契约（v0.2 §5.1-5.3；系统功能书 A4-01~A4-18 / D2 的接口面）。
@@ -60,7 +60,7 @@ export const FileSchema = z
     projectId: UuidSchema,
     nodeId: UuidSchema.nullable(),
     taskId: UuidSchema.nullable(),
-    docType: DocTypeSchema.nullable().openapi({ description: "成果文件类型（十类字典）；普通附件为空" }),
+    docType: DeliverableTypeSchema.nullable().openapi({ description: "成果文件类型（内置十类或全站自定义类型）；普通附件为空" }),
     name: z.string().openapi({ example: "机械设计图纸-v2.docx", description: "原文件名（含中文，保留在元数据）" }),
     status: FileStatusSchema,
     currentVersionId: UuidSchema.nullable(),
@@ -152,7 +152,7 @@ const UploadCreateBaseSchema = z.object({
   contentHash: Sha256Schema.optional().openapi({
     description: "客户端计算的内容哈希；附件上传（未给 taskId / nodeId / docType）命中同项目既有同内容附件时直接秒传复用（reused=true、upload=null，不建新文件 / 会话）；其余命中返回 duplicateHint（A4-04，提示后可确认继续）；complete 时必须回传",
   }),
-  docType: DocTypeSchema.optional(),
+  docType: DeliverableTypeSchema.optional(),
   nodeId: UuidSchema.optional(),
   taskId: UuidSchema.optional(),
 });
@@ -464,7 +464,7 @@ export const FileListQuerySchema = z
     "filter[nodeId]": UuidSchema.optional(),
     "filter[taskId]": UuidSchema.optional(),
     "filter[status]": z.string().optional().openapi({ description: "文件状态（多值逗号分隔）：draft / final / changed / archived / recycled" }),
-    "filter[docType]": z.string().optional().openapi({ description: "成果文件类型（多值逗号分隔，取值见 DocType 字典）" }),
+    "filter[docType]": z.string().optional().openapi({ description: "成果文件类型（多值逗号分隔；内置十类或全站自定义类型）" }),
     "filter[uploadedBy]": UuidSchema.optional(),
     q: z.string().optional().openapi({ description: "关键字（文件名）" }),
     page: PageQuerySchema.shape.page,

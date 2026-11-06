@@ -1,13 +1,20 @@
 import { useState } from "react";
 import { InlineCell } from "./InlineEdit";
-import { DOC_TYPE_OPTIONS } from "../docTypes";
+import {
+  DOC_TYPE_NAME_MAX,
+  DOC_TYPE_NAME_PATTERN,
+  DOC_TYPE_OPTIONS,
+  DOC_TYPE_SELECTION_MAX,
+  isBuiltinDocType,
+} from "../docTypes";
 import { fieldText, useLocale, useT, type Locale } from "../i18n";
 
 /**
  * 输出成果文件（deliverableTypes）选择器（2026-10-08 · 业务口径「文件输出成果也要可以选择」）：
- * 十类成果文件字典（契约 DocType 枚举；顺序 = 契约顺序：CAD图纸 / 技术协议 / 合同 / 评审单 / 设备清单 /
- * 物料总清单 / 发货装箱单 / 到货单 / 安装完成证明 / 验收单），样式照业务给的参考图 ——
- * 顶部搜索框（「查找选项」）+ 「多选」小标 + 彩签选项（悬停浅灰底、选中打绿勾、点选不收浮层、再点取消）。
+ * 内置十类成果文件（契约 DOC_TYPES；顺序 = 契约顺序：CAD图纸 / 技术协议 / 合同 / 评审单 / 设备清单 /
+ * 物料总清单 / 发货装箱单 / 到货单 / 安装完成证明 / 验收单）+ 全站 deliverableType 自定义类型。项目项目经理可新增，新增后所有项目共享。
+ * 样式照业务给的参考图 —— 顶部搜索框（「查找选项」）+ 「多选」小标 + 彩签选项（悬停浅灰底、选中打绿勾、
+ * 点选不收浮层、再点取消）；列表底部新增「＋ 自定义」，输入名称后立即选中并保存。
  * 色表（2026-10-08 业务口径「和这个相同即可 简约一点」）对齐「是否按时交付」列徽标：浅彩底（Tailwind 50 档 hex）+ 同色系深字小签（rounded + px-1.5 py-0.5 + text-[11px]）。
  * 任务表「输出成果文件」列与任务详情抽屉「输出成果文件」行共用（DeliverableCell）。
  */
@@ -28,11 +35,37 @@ export const DOC_TYPE_CLASS: Record<string, string> = {
   验收单: "bg-[#FFF7ED] text-orange-600",
 };
 
+/** 自定义类型的浅彩底候选：按名称稳定取色，同一名称跨任务 / 刷新保持一致（未收录的内置值也复用此表）。 */
+const CUSTOM_DOC_TYPE_CLASSES = [
+  "bg-[#F5F3FF] text-violet-600",
+  "bg-[#F0F9FF] text-sky-600",
+  "bg-[#ECFDF5] text-emerald-600",
+  "bg-[#FFF1F2] text-rose-600",
+  "bg-[#FFFBEB] text-amber-700",
+] as const;
+
+function docTypeClass(name: string): string {
+  const known = DOC_TYPE_CLASS[name];
+  if (known !== undefined) return known;
+  let hash = 0;
+  for (const char of name) {
+    hash = (hash * 31 + (char.codePointAt(0) ?? 0)) >>> 0;
+  }
+  return CUSTOM_DOC_TYPE_CLASSES[hash % CUSTOM_DOC_TYPE_CLASSES.length] ?? "bg-zinc-100 text-zinc-600";
+}
+
+/** 选择面板最大高度（px）：与 InlineCell 的浮层定位估算共用，超出后只滚动选项区。 */
+const DELIVERABLE_PANEL_MAX_HEIGHT = 524;
+
+function docTypeText(name: string, locale: Locale): string {
+  return isBuiltinDocType(name) ? fieldText(locale, name) : name;
+}
+
 /** 成果文件小色签（浮层选项 / 静态展示用；同「是否按时交付」徽标口径，未收录回落浅灰）。 */
 export function docTypeChip(name: string, locale: Locale) {
   return (
-    <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + (DOC_TYPE_CLASS[name] ?? "bg-zinc-100 text-zinc-600")}>
-      {fieldText(locale, name)}
+    <span className={"inline-block max-w-full break-words rounded px-1.5 py-0.5 text-[11px] font-medium " + docTypeClass(name)}>
+      {docTypeText(name, locale)}
     </span>
   );
 }
@@ -45,25 +78,107 @@ export function docTypeCapsule(name: string, locale: Locale) {
     <span
       data-deliverable-value={name}
       className={
-        "inline-block rounded px-1.5 py-0.5 text-[11px] font-medium transition hover:brightness-[0.97] " +
-        (DOC_TYPE_CLASS[name] ?? "bg-zinc-100 text-zinc-600")
+        "inline-block max-w-full break-words rounded px-1.5 py-0.5 text-[11px] font-medium transition hover:brightness-[0.97] " +
+        docTypeClass(name)
       }
     >
-      {fieldText(locale, name)}
+      {docTypeText(name, locale)}
     </span>
   );
 }
 
-/** 选择面板（搜索 + 十类多选）：点选项不关浮层、可连着选；再点已选项 = 取消。 */
-export function DeliverablePanel({ values, onChange }: { values: readonly string[]; onChange: (next: string[]) => void }) {
+/** 选择面板（搜索 + 内置十类 + 全站自定义）：点选项不关浮层、可连着选；再点已选项 = 取消。 */
+type DeliverablePanelProps = {
+  values: readonly string[];
+  /** 勾选 / 取消一枚（浮层不自动关；落值 = 勾选顺序的数组）。 */
+  onChange: (next: string[]) => void;
+  /** 全站 deliverableType 字典名称（后端已按 sort 排好；面板再去重并追加当前任务里尚未入字典的历史值）。 */
+  customTypes?: readonly string[];
+  /** 当前项目项目经理 = true；非项目经理仍显示入口，但置灰并给出说明。 */
+  canCreateCustom?: boolean;
+  /** 新增全站自定义类型：返回 null = 成功；返回文案 = 面板内联错误。 */
+  onCreateCustom?: (name: string) => Promise<string | null>;
+};
+
+export function DeliverablePanel({ values, onChange, customTypes = [], canCreateCustom = false, onCreateCustom }: DeliverablePanelProps) {
   const t = useT();
   const locale = useLocale();
   const [keyword, setKeyword] = useState("");
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customName, setCustomName] = useState("");
+  const [customError, setCustomError] = useState<string | null>(null);
+  const [customSaving, setCustomSaving] = useState(false);
   const query = keyword.trim().toLowerCase();
-  const filtered = query === "" ? DOC_TYPE_OPTIONS : DOC_TYPE_OPTIONS.filter((option) => option.toLowerCase().includes(query));
+  const options = Array.from(
+    new Set([
+      ...DOC_TYPE_OPTIONS,
+      ...customTypes.filter((name) => name.trim() !== "" && !isBuiltinDocType(name)),
+      ...values.filter((value) => value.trim() !== "" && !isBuiltinDocType(value)),
+    ]),
+  );
+  const filtered = query === "" ? options : options.filter((option) => option.toLowerCase().includes(query));
+
+  const closeCustom = (): void => {
+    setCustomOpen(false);
+    setCustomName("");
+    setCustomError(null);
+  };
+
+  const addCustom = async (): Promise<void> => {
+    if (customSaving) return;
+    const name = customName.trim();
+    if (name === "") {
+      setCustomError(t("dp.customRequired"));
+      return;
+    }
+    if (name.length > DOC_TYPE_NAME_MAX) {
+      setCustomError(t("dp.customTooLong"));
+      return;
+    }
+    if (!DOC_TYPE_NAME_PATTERN.test(name)) {
+      setCustomError(t("dp.customInvalidChars"));
+      return;
+    }
+    if (!values.includes(name) && values.length >= DOC_TYPE_SELECTION_MAX) {
+      setCustomError(t("dp.customMax"));
+      return;
+    }
+    // 内置十类或已存在的全站自定义项：直接选中，不重复写字典。
+    if (options.includes(name)) {
+      if (!values.includes(name)) onChange([...values, name]);
+      setKeyword("");
+      closeCustom();
+      return;
+    }
+    if (!canCreateCustom || onCreateCustom === undefined) {
+      setCustomError(t("dp.customManagerOnlyHint"));
+      return;
+    }
+    setCustomSaving(true);
+    try {
+      const error = await onCreateCustom(name);
+      if (error !== null) {
+        setCustomError(error);
+        return;
+      }
+      if (!values.includes(name)) onChange([...values, name]);
+      setKeyword("");
+      closeCustom();
+    } catch (error: unknown) {
+      setCustomError(error instanceof Error && error.message !== "" ? error.message : t("app.fail.addDeliverableType"));
+    } finally {
+      setCustomSaving(false);
+    }
+  };
+
+  const customLabel = t("dp.customWithRole");
   return (
-    <div data-deliverable-panel="true">
-      <div className="border-b border-zinc-100 px-2 py-1.5">
+    <div
+      data-deliverable-panel="true"
+      className="flex flex-col"
+      style={{ maxHeight: "min(calc(100vh - 16px), " + DELIVERABLE_PANEL_MAX_HEIGHT + "px)" }}
+    >
+      <div className="shrink-0 border-b border-zinc-100 px-2 py-1.5">
         <input
           data-deliverable-search="true"
           value={keyword}
@@ -77,8 +192,13 @@ export function DeliverablePanel({ values, onChange }: { values: readonly string
           className="w-full rounded-md bg-transparent px-1.5 py-1 text-sm text-zinc-700 outline-none placeholder:text-zinc-400"
         />
       </div>
-      <div className="px-3 pb-1 pt-2 text-[11px] leading-4 text-zinc-400">{t("dp.multi")}</div>
-      <div role="listbox" aria-multiselectable="true" aria-label={t("dp.listAria")} className="p-1">
+      <div className="shrink-0 px-3 pb-1 pt-2 text-[11px] leading-4 text-zinc-400">{t("dp.multi")}</div>
+      <div
+        role="listbox"
+        aria-multiselectable="true"
+        aria-label={t("dp.listAria")}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1"
+      >
         {filtered.length === 0 ? <div className="px-2.5 py-2 text-xs text-zinc-400">{t("dp.noMatch")}</div> : null}
         {filtered.map((option) => {
           const selected = values.includes(option);
@@ -104,12 +224,92 @@ export function DeliverablePanel({ values, onChange }: { values: readonly string
           );
         })}
       </div>
+      <div className="shrink-0 border-t border-zinc-100 p-2">
+        {customOpen && canCreateCustom ? (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void addCustom();
+            }}
+          >
+            <input
+              autoFocus
+              data-deliverable-custom-input="true"
+              value={customName}
+              maxLength={DOC_TYPE_NAME_MAX}
+              disabled={customSaving}
+              aria-label={t("dp.customAria")}
+              placeholder={t("dp.customPlaceholder")}
+              onChange={(event) => {
+                setCustomName(event.target.value);
+                setCustomError(null);
+              }}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  closeCustom();
+                }
+              }}
+              className="w-full rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs text-zinc-800 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400 focus:ring-2 focus:ring-zinc-900/10 disabled:bg-zinc-50 disabled:text-zinc-400"
+            />
+            {customError === null ? null : (
+              <p role="alert" className="mt-1 text-[11px] leading-4 text-rose-600">
+                {customError}
+              </p>
+            )}
+            <div className="mt-1.5 flex justify-end gap-1.5">
+              <button
+                type="button"
+                disabled={customSaving}
+                onClick={closeCustom}
+                className="rounded-md px-2 py-1 text-xs text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {t("dp.customCancel")}
+              </button>
+              <button
+                type="submit"
+                data-deliverable-custom-submit="true"
+                disabled={customSaving}
+                className="rounded-md bg-zinc-900 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-wait disabled:opacity-60"
+              >
+                {customSaving ? t("dp.customSaving") : t("dp.customAdd")}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <button
+            type="button"
+            data-deliverable-custom-button="true"
+            aria-expanded="false"
+            aria-label={canCreateCustom ? customLabel : customLabel + "，" + t("dp.customManagerOnlyHint")}
+            title={canCreateCustom ? undefined : t("dp.customManagerOnlyHint")}
+            disabled={!canCreateCustom}
+            onClick={() => {
+              setCustomOpen(true);
+              setCustomError(null);
+            }}
+            className={"flex w-full items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-zinc-500 transition " + (canCreateCustom ? "hover:bg-zinc-100 hover:text-zinc-700" : "cursor-not-allowed opacity-45")}
+          >
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-3.5 w-3.5 shrink-0">
+              <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+            </svg>
+            {customLabel}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
 
 type DeliverableCellProps = {
   values: readonly string[];
+  /** 全站自定义成果类型名称（bootstrap 字典 deliverableType）。 */
+  customTypes?: readonly string[];
+  /** 当前项目项目经理才可新增；false = 入口置灰。 */
+  canCreateCustom?: boolean;
+  /** 新增全站自定义类型（返回 null = 成功；文案 = 错误）。 */
+  onCreateCustom?: (name: string) => Promise<string | null>;
   /** 勾选 / 取消一枚（浮层不自动关；落值 = 勾选顺序的数组）。 */
   onChange: (next: string[]) => void;
   /** 全量摊开（抽屉行用：色签折行全显）；缺省 = 首枚 + 「+N」（任务表列用，窄列单行）。 */
@@ -122,7 +322,7 @@ type DeliverableCellProps = {
 
 /** 行内选择单元格（任务表列 / 抽屉行共用）：空值 = 「—」（液态玻璃小框，同列内其它空态口径）；
  *  有值 = 浅彩底小色签（首枚 + 「+N」；抽屉行 all = 全量摊开逐枚）—— 点开 = DeliverablePanel。 */
-export function DeliverableCell({ values, onChange, all = false, disabled = false, disabledHint }: DeliverableCellProps) {
+export function DeliverableCell({ values, onChange, customTypes = [], canCreateCustom = false, onCreateCustom, all = false, disabled = false, disabledHint }: DeliverableCellProps) {
   const t = useT();
   const locale = useLocale();
   const filled = values.length > 0;
@@ -142,14 +342,22 @@ export function DeliverableCell({ values, onChange, all = false, disabled = fals
       ariaLabel={t("dp.editAria")}
       title={t("dp.pickTitle")}
       width={200}
-      height={DOC_TYPE_OPTIONS.length * 34 + 40 + 26 + 12}
+      height={DELIVERABLE_PANEL_MAX_HEIGHT}
       disabled={disabled}
       disabledHint={disabledHint}
       bare={filled}
       wrapContent={all}
       triggerClassName={filled ? "p-0" : undefined}
       display={display}
-      render={() => <DeliverablePanel values={values} onChange={onChange} />}
+      render={() => (
+        <DeliverablePanel
+          values={values}
+          onChange={onChange}
+          customTypes={customTypes}
+          canCreateCustom={canCreateCustom}
+          onCreateCustom={onCreateCustom}
+        />
+      )}
     />
   );
 }

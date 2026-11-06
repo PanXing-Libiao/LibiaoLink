@@ -877,7 +877,7 @@ export type FileLibraryQuery = {
   statuses: readonly string[];
   /** 文件名关键字（服务端 ILIKE 包含命中、大小写不敏感）；空 / 缺省 = 不落参数。 */
   keyword?: string;
-  /** 成果文件类型（十类字典，中文值）；空 / 缺省 = 不落参数。 */
+  /** 成果文件类型（内置十类或全站自定义类型，中文值）；空 / 缺省 = 不落参数。 */
   docType?: string;
   /** 上传人（createdBy）；空 / 缺省 = 不落参数。 */
   uploadedBy?: string;

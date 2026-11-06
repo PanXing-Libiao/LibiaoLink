@@ -1,5 +1,7 @@
 # project 模块（h2 · S6·project + h3 · S6·blueprint/node：项目 CRUD / 列表 facets / 成员名册 / 流程快照与阶段）
 
+> **2026-11-06 全站自定义成果类型入口（跨线代记，请 wmj 复核）**：`POST /api/v1/projects/{id}/deliverable-types`（body `{ name }`，1–50 字、不含英文逗号 / 换行）仅当前项目项目经理可调用（`manager_ids` 或名册 `project_manager`），同时受 `project.update` 与部门编辑档位约束；新增写入全站 `deliverableType` 字典并返回整类字典，所有项目 / 任务共享。内置十类与已存在名称返回 409 `DICT_ITEM_EXISTS`。
+
 | 字段 | 内容 |
 |---|---|
 | 类型 | 领域模块（domain） |
