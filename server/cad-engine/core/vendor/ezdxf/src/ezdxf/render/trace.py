@@ -229,7 +229,9 @@ class LinearTrace(AbstractTrace):
             # A zero-width shaft cannot miter into a nonzero arrow base: their
             # offset-ray intersection collapses the arrow to its tip.
             end_width, start_width = stations[left].end_width, stations[right].start_width
-            if (end_width == 0) != (start_width == 0):
+            # Two zero-width ends already meet at the source station; solving
+            # their offset rays only adds roundoff to a zero-area shaft.
+            if end_width == 0 or start_width == 0:
                 return False
             if end_width != start_width:
                 incoming = stations[left + 1].vertex - stations[left].vertex

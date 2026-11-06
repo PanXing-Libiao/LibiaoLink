@@ -151,3 +151,27 @@ test('rotated multiline clip corners include later lines outside the one-line bo
   assert.equal(Math.min(...corners.map(p=>p[1])),box.minY);
   assert.equal(run.lines.length,3);
 });
+
+
+test('native Fit uses both source endpoints with substituted metrics and a rotated mirrored placement', () => {
+  const a=annotation({text:'ABCDEF',semantic:{height:{value:2},halign:{value:5},
+    horizontalAlignment:{value:'Fit'},fitPoints:{value:[[10,20,0],[10,27,0]]}}});
+  const m=[0,-2,0,0,-3,0,0,0,0,0,1,0,100,200,0,1];
+  for(const metric of [text=>text.length*50,text=>text.length*83]){
+    const {run,anchor}=layoutAnnotationText(a,draw(m),{measure:metric,nativeLayout:true,widthFactor:3.6});
+    assert.deepEqual(anchor,[40,180]);
+    assert.equal(run.width,21);assert.equal(run.size,4);
+    assert.ok(Math.abs(Math.abs(run.angle)-Math.PI)<1e-12);
+    assert.ok(Math.abs(metric(a.text)*run.size/100*run.widthFactor-21)<1e-10);
+    assert.equal(run.widths[0],21);
+  }
+});
+
+test('native Aligned scales height together with advance; ordinary text keeps its source width', () => {
+  const a=annotation({text:'AB',semantic:{height:{value:2},halign:{value:3},
+    horizontalAlignment:{value:'Aligned'},fitPoints:{value:[[0,0,0],[8,0,0]]}}});
+  const {run}=layoutAnnotationText(a,draw(),{measure,nativeLayout:true,widthFactor:2});
+  assert.equal(run.width,8);assert.equal(run.size,4);assert.equal(run.widthFactor,2);
+  const plain=layoutAnnotationText(annotation(),draw(),{measure,widthFactor:2}).run;
+  assert.equal(plain.width,5);
+});
