@@ -1,5 +1,7 @@
 // Partition high-cardinality UCD tables. One acknowledged batch is in flight,
 // so the main thread never has to clone an entire expanded draw dictionary.
+// A bounded 1K batch amortizes message/clone overhead without queueing the scene.
+const BATCH_ENTRIES=1024;
 const paths=[
  ...['products','productOccurrences','sceneOccurrences','renderOwnership','representations','geometries','accessors','buffers','materials','configurations','displayStates','properties','externalReferences','resources','viewContexts'].map(key=>['document',key]),
  ...['drawings','spaces','sheets','layouts','viewports','entities','annotations','blocks','blockInstances','layers','lineTypes','textStyles','plotStyles','hatchPatterns'].map(key=>['document','drawing',key]),
@@ -19,13 +21,19 @@ export function* manifestParts(packet){
  for(const {path,value} of tables){
   let entries=[];
   for(const key of Object.keys(value)){
-   entries.push([key,value[key]]);
-   if(entries.length===256){yield {kind:'entries',path,entries};entries=[];}
+   entries.push(key,value[key]);
+   if(entries.length===BATCH_ENTRIES*2){yield {kind:'entries',path,entries};entries=[];}
   }
   if(entries.length)yield {kind:'entries',path,entries};
  }
 }
 export function applyManifestEntries(packet,{path,entries}){
  let table=packet;for(const key of path)table=table[key];
- for(const [key,value] of entries)Object.defineProperty(table,key,{value,enumerable:true,writable:true,configurable:true});
+ // Alternating keys/values avoid millions of tiny pair arrays during cloning.
+ // Keep JSON's own data-property semantics for the legacy prototype setter.
+ for(let i=0;i<entries.length;i+=2){
+  const key=entries[i],value=entries[i+1];
+  if(key==='__proto__')Object.defineProperty(table,key,{value,enumerable:true,writable:true,configurable:true});
+  else table[key]=value;
+ }
 }

@@ -485,7 +485,7 @@
     "dependency.json": "a17930ad7b0dadf5bd81c59f23995af557f383b7584fdf48bdb3c2550240666e"
   },
   "browserFiles": {
-    "app.js": "2331d29639a53138fe1f8937ad1cca0b09bc4a06f0f760524a3ce4602683e92a",
+    "app.js": "c206066d7c4b90f0e96602df0e9fd23eece88a4fd1a7e857d5d2b1010ec6d1aa",
     "benchmark.js": "c81b3668354f0fc431c02f068545d5c71ce4a266bf414671341aa97674fc3e9d",
     "binary-transport.js": "e08b956fd5caa3588d5826f531d208ca12792ce10c003b2de1ceddc5527a447f",
     "camera-framing.js": "12f685ca11f995192d3f5348a44c2cf5fca5286bca58b0af99a7faa7ef5aab6d",
@@ -505,21 +505,21 @@
     "drawing-projection.js": "4060268bef6a42a83f6cb0977393245d6880721fc028f45498914b369fe6ab0d",
     "drawing-text-avoidance.js": "2e65f43a90f24b6a669325a3bc7687d0d1f93f22610ba937d9b8c2ae2b3e5001",
     "drawing-text.js": "1cc508f97d4d196842167e7d79b1ec50493bbff0756e89b002a58c933d02141c",
-    "drawing-viewer.js": "af61a8473feb45c83187d1da623ee1fcb4aa870bd6f9d7b4d0799ef14633142e",
+    "drawing-viewer.js": "3ecd0cb1610bdea883efc5c18f9a46c2e88d3f53e1ae7bebbc914d7fa39d7bed",
     "dwg-packed-transport.js": "36fad78365584340ac8e57bfd2952ed46ef07438e216cf828091949b6a59812f",
     "dxf-resources.js": "219569569cc22deca979ec3f6693031bfbfe050c30eb8fe419962f4e3dab5c2c",
     "gpu/background-painter.js": "20424c614d1879af4a4b2cfa265ef0fa4b79acaebb1124c46395e94ab8d287f1",
-    "gpu/dashed-strokes.js": "1665b55b406a08c8c29a9180915b06954a78963aa8505df1f0ad041ce1d72011",
-    "gpu/gpu-strokes.js": "d62969a68e7910f5f15b6ae6bc4ace6d97fd360c36dd56afa4b75b68f8e502fd",
+    "gpu/dashed-strokes.js": "6b5b2147f26a3951ce50c996a2c729e0e841cd40afbf4fa90944c1be2b53af92",
+    "gpu/gpu-strokes.js": "0b46aa1dd44888173b14533b97fb2fd8887a3e16da09e6e37adbbc30d678c26c",
     "gpu/paint-worker.js": "8c865a4847a9133853604dd7f52162b863ee2d708aeff2d6a93911bfa90e7978",
     "gpu/recorded-path.js": "99e818b93996227a46b53a5ea54d54a15dd9dca4848790d16d6eeb7a6c1d7133",
     "gpu/stroke-tiles.js": "d2a7e3087219b3fa1da88429d721eca0df31536907acf5a6393f0c94e9faf735",
     "highlight.js": "1d19f0528e5fc706484efcdcb1101c4aa32285023cf550acefc04d85a386b2f5",
     "load-phases.js": "6b2c33cef7e2a6f9f08a1fbee603f3e15c1229739a09ed0aa1885fb184f1036d",
     "manifest-decode.js": "326540e7d369fb02eff8bb2f31526de3462a2868fc758a9361f19c63f5fcfa97",
-    "manifest-loader.js": "7075f8196a16fef481431a20cdc975e2df9a467d9cd2c008c6f76b874855081f",
-    "manifest-parts.js": "131e61e4cae9f64c55e4b12bd000294a0aad1a174b37d4f905f89f66015ed213",
-    "manifest-worker.js": "ed71a99467fa62b0aa5226839060a234238a565d31f75e4e1df05f4efdd885c4",
+    "manifest-loader.js": "a172c5b3e227f711d6923b0741e2eb575e9455ca8ba1f2adabca3105fd1ae3e4",
+    "manifest-parts.js": "a684ab961e1e420d8fa32e95fc36e8ea49f702176f276d23faba5ae1844f5dd5",
+    "manifest-worker.js": "e599aa745e6f9fd46a46d44f398a8ad33a31349900bc9f0405fd1816ee68669e",
     "mesh-repair-ui.js": "8750dc2c2a63d9ba10bada090fb2938a9cd9a593125f5d2f31e0e0d4e7c02aaf",
     "nonmeshable-ui.js": "d4b8a76429eea81e79e26eaef07e4a6508d6d791a2fa86f5313b21214951d618",
     "render-batches.js": "f27fcf79ee6188a9dbb9a516e466a25cd6c1f93393803eab6ede601a79f989e4",
@@ -583,8 +583,8 @@
     ]
   },
   "engineDigest": "71c0ba0de35563a216b7c57a84d633d844ae91e889970198309b335c59399d3d",
-  "viewerDigest": "e8175955abf21b1b2680788e077956b8e1474ed2f57bf92886d58db2c3b3518e",
-  "releaseDigest": "96eb3f303801221bc225eef8605d181a4cb0481d53b4af0f55b261e3d513ea85",
+  "viewerDigest": "87c826b0f072416c3e2c5351895578c1928c708466cbaf4cbc85348ff0cdd844",
+  "releaseDigest": "ad931d16c9a4db7e7b95ab9f6cf4ada2a2d63d5b4e19ec973d3f390ec4cade0b",
   "engineVersion": "step-0.3.3/71c0ba0de35563a216b7c57a84d633d844ae91e889970198309b335c59399d3d/gateway-1",
-  "viewerVersion": "viewer-e8175955abf21b1b2680788e077956b8e1474ed2f57bf92886d58db2c3b3518e"
+  "viewerVersion": "viewer-87c826b0f072416c3e2c5351895578c1928c708466cbaf4cbc85348ff0cdd844"
 }
