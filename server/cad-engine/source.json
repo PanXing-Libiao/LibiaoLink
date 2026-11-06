@@ -480,12 +480,12 @@
   },
   "readerFiles": {
     "CommunityText.cs": "8772f4985084c216e9f1c9a1de6f6cec0a45067049838ef786f2eafcfebe4198",
-    "Program.cs": "11f4664ce7ef52f4a019199be9d86d507923d3e87c5e13832de31a0b6a1d4f38",
+    "Program.cs": "b863fda1864cfcd1346cc4ba5926c72370f60fcf8bfe81ebb0f760f018dcdf0c",
     "Reader.csproj": "28dd949906cf4b8ab2ca44e02a9fbb2391c0f3e086587c7627e93d6a68f0c32d",
     "dependency.json": "a17930ad7b0dadf5bd81c59f23995af557f383b7584fdf48bdb3c2550240666e"
   },
   "browserFiles": {
-    "app.js": "c206066d7c4b90f0e96602df0e9fd23eece88a4fd1a7e857d5d2b1010ec6d1aa",
+    "app.js": "2314a6f593418986c0366d33a438e9d6292ffef07e0374a84901399175ed0315",
     "benchmark.js": "c81b3668354f0fc431c02f068545d5c71ce4a266bf414671341aa97674fc3e9d",
     "binary-transport.js": "e08b956fd5caa3588d5826f531d208ca12792ce10c003b2de1ceddc5527a447f",
     "camera-framing.js": "12f685ca11f995192d3f5348a44c2cf5fca5286bca58b0af99a7faa7ef5aab6d",
@@ -494,7 +494,7 @@
     "direct-projection.js": "0d7a95890aea9b431d7e86f651e83a33b904ee50c27bcffd5d38a7eb53e9b36d",
     "drawing-2d.js": "25a6dca759f304976752e6d2ca4d17667d7e934348435425e28d960a8591ed83",
     "drawing-clipping.js": "4628b6c5ff6f2ad0da563d2056ae313d2d0cd2fe8481dfcb107e05db3f6b5e34",
-    "drawing-colors.js": "74c2270f611783fcd2895dee88d53d8ed6c3d01ace40044585d5b9cd09b2003f",
+    "drawing-colors.js": "aea75b4f432143394ae7e09f25c75139fa8b2ff06fc9487180849a943971df05",
     "drawing-display.js": "349e32fb91e7fc55bf1309eecc229a6d44f733a58de5e4c446749a2bacfaf937",
     "drawing-instances.js": "3b87391e8e52a87e23a23f37deb6aefd581aaee88e828baab3e41ba9c9c05532",
     "drawing-layout.js": "9a611425b8d5151225a8bf06cc9b4b950ec8d1ba138be31cf627c14c5d5ab68b",
@@ -504,8 +504,8 @@
     "drawing-plot-styles.js": "a2c3888311ccdaac04b38f108ab7175cd171a43f0fb82fdb9356e9431819b243",
     "drawing-projection.js": "4060268bef6a42a83f6cb0977393245d6880721fc028f45498914b369fe6ab0d",
     "drawing-text-avoidance.js": "2e65f43a90f24b6a669325a3bc7687d0d1f93f22610ba937d9b8c2ae2b3e5001",
-    "drawing-text.js": "1cc508f97d4d196842167e7d79b1ec50493bbff0756e89b002a58c933d02141c",
-    "drawing-viewer.js": "3ecd0cb1610bdea883efc5c18f9a46c2e88d3f53e1ae7bebbc914d7fa39d7bed",
+    "drawing-text.js": "d9a7a02a4423d54e3f2ba799406431160f03b9d01dc27d55129a42b38f73688e",
+    "drawing-viewer.js": "bb9f379e2b4d2f8a1199094a201e9abc6cfb60e6d1cfb05a833b45a70b2460b6",
     "dwg-packed-transport.js": "36fad78365584340ac8e57bfd2952ed46ef07438e216cf828091949b6a59812f",
     "dxf-resources.js": "219569569cc22deca979ec3f6693031bfbfe050c30eb8fe419962f4e3dab5c2c",
     "gpu/background-painter.js": "20424c614d1879af4a4b2cfa265ef0fa4b79acaebb1124c46395e94ab8d287f1",
@@ -561,7 +561,7 @@
   "formatVersions": {
     "STEP": "step-0.3.3/dc2597ef7a5b32a1f00d11c4858673682130eae98dd136ae965adbe8e876adf0/gateway-1",
     "DXF": "dxf-0.15.0/fa4965249dcbcadacbeb7d674ad58353296e03b8c6b3c52f7e87ae5ee8bf4657/gateway-1",
-    "DWG": "dwg-0.1.0/656609650fbcf08983ac9890ebe3aacdac915361e83d5322c8615e7bfb0411ad/gateway-1"
+    "DWG": "dwg-0.1.0/d65e34c6d2d6d131f725956ba7e60e187a1849b683a2a5278b71ad5a9c4f2b8d/gateway-1"
   },
   "compatibility": {
     "STEP": [
@@ -582,9 +582,9 @@
       "dwg-0.1.0/fdd7433b4a757f28a066b816b3230da860eefd52a5ca20d00b5887f72d382f5e/gateway-1"
     ]
   },
-  "engineDigest": "71c0ba0de35563a216b7c57a84d633d844ae91e889970198309b335c59399d3d",
-  "viewerDigest": "87c826b0f072416c3e2c5351895578c1928c708466cbaf4cbc85348ff0cdd844",
-  "releaseDigest": "ad931d16c9a4db7e7b95ab9f6cf4ada2a2d63d5b4e19ec973d3f390ec4cade0b",
-  "engineVersion": "step-0.3.3/71c0ba0de35563a216b7c57a84d633d844ae91e889970198309b335c59399d3d/gateway-1",
-  "viewerVersion": "viewer-87c826b0f072416c3e2c5351895578c1928c708466cbaf4cbc85348ff0cdd844"
+  "engineDigest": "1108eb6124e2cb0458b4c5d21288b7d368d135f345fdd5f2f7fcb3105e10b4d8",
+  "viewerDigest": "0d0f2fbac0a0fac569d7422241b38ada65e91a0ea4e7b93ed3f08c10dda323d1",
+  "releaseDigest": "9c8c1d88b8d7b0bb2e4e8186fac4da9a4ce665bb6293916ccc615f086b1b0768",
+  "engineVersion": "step-0.3.3/1108eb6124e2cb0458b4c5d21288b7d368d135f345fdd5f2f7fcb3105e10b4d8/gateway-1",
+  "viewerVersion": "viewer-0d0f2fbac0a0fac569d7422241b38ada65e91a0ea4e7b93ed3f08c10dda323d1"
 }

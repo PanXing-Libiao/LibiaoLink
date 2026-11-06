@@ -38,7 +38,7 @@ test('rotation follows the annotation direction and keeps the box in world space
   assert.ok(Math.abs(run.box.maxY - 22.5) < 1e-9);
 });
 
-test('native CAD layout uses the stored height as em with line spacing and wrapping', () => {
+test('native CAD layout without font metrics retains its legacy em sizing', () => {
   const native = layoutAnnotationText(annotation({
     text:'ABCD EFGH', semantic:{height:{value:2.5}, lineSpacing:{value:1}, rectangleWidth:{value:10},
       halign:{value:0}, valign:{value:0}, attachmentPoint:{value:1}}
@@ -108,4 +108,35 @@ test('empty and dimension annotations keep their anchor but allocate no text run
 test('a missing font metric callback is an explicit failure, not a zero-width guess', () => {
   assert.throws(() => layoutTextRun({text:'A', x:0, y:0, angle:0, height:2.5}),
     /text-measure-required/);
+});
+
+
+test('native wrapping uses measured cap height while source line spacing stays unchanged', () => {
+  const input = {text:'甲乙丙丁', kind:'mtext', x:0, y:0, angle:0, height:10,
+    nativeLayout:true, rectangleWidth:32, measure:text=>text.length*100,
+    measureCapHeight:()=>72};
+  const run = layoutTextRun(input);
+  assert.deepEqual(run.lines, ['甲乙', '丙丁']);
+  assert.ok(Math.abs(run.size*0.72-10)<1e-12);
+  assert.equal(run.lineHeight,10*5/3);
+  const largerCap = layoutTextRun({...input,measureCapHeight:()=>100});
+  assert.deepEqual(largerCap.lines,['甲乙丙','丁']);
+  assert.equal(largerCap.lineHeight,run.lineHeight);
+});
+
+test('inline font changes use their own cap metrics without inflating line spacing', () => {
+  const run = layoutTextRun({text:'',kind:'mtext',x:0,y:0,angle:0,height:10,
+    nativeLayout:true,fontFamily:'A',measure:text=>text.length*50,
+    measureCapHeight:font=>font==='B'?80:50,
+    runs:[{text:'AB',fontFamily:'A'},{text:'CD',fontFamily:'B'}]});
+  assert.deepEqual(run.runLines[0].segments.map(s=>s.size),[20,12.5]);
+  assert.equal(run.runLines[0].advance,10*5/3);
+  assert.equal(run.width,32.5);
+});
+
+
+test('an overlong number keeps its source paragraph without an extra empty line', () => {
+  const run=layoutTextRun({text:'2480\n1000',kind:'mtext',x:0,y:0,angle:0,height:10,
+    nativeLayout:true,rectangleWidth:5,measure:text=>text.length*50,measureCapHeight:()=>72});
+  assert.deepEqual(run.lines,['2480','1000']);
 });

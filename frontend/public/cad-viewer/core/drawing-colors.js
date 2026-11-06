@@ -36,22 +36,35 @@ export const ACI_RGB=[
   0x260009,0x581317,0x000000,0x656565,0x666666,0x999999,0xcccccc,0xffffff,
 ];
 
+// Display-only contrast for monochrome drawing ink. This also handles cached
+// DWG documents whose ACI 7 was resolved to black by older readers. Source
+// colors stay untouched; masks and raster/gradient pixels use their own paths.
+function sheetRgb(r, g, b, background) {
+  if ((r === 255 && g === 255 && b === 255) || (r === 0 && g === 0 && b === 0)) {
+    return background === '#000000' ? [255, 255, 255] : [0, 0, 0];
+  }
+  return [r, g, b];
+}
+export function drawingColorCss(color, opacity = 1, background = '#ffffff') {
+  const [r, g, b] = sheetRgb(...color.slice(0, 3).map(v => Math.round(v * 255)), background);
+  return 'rgba(' + r + ',' + g + ',' + b + ',' + opacity + ')';
+}
+
 // ACI 0 and 256 mean ByBlock/ByLayer and have no standalone color. ACI 7 is the
-// context ink; this viewer always draws on a white sheet, so it resolves black.
-export function aciColor(index) {
+// context ink; monochrome ink follows the selected sheet background.
+export function aciColor(index, background = '#ffffff') {
   const value = Number(index);
   if (!Number.isFinite(value)) return null;
   const i = Math.trunc(value);
   if (i <= 0 || i > 255) return null;
-  if (i === 7) return 'rgb(0,0,0)';
   const rgb = ACI_RGB[i];
-  return 'rgb(' + ((rgb >> 16) & 255) + ',' + ((rgb >> 8) & 255) + ',' + (rgb & 255) + ')';
+  return 'rgb(' + sheetRgb((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255, background).join(',') + ')';
 }
 
 // \c carries a 24-bit true color instead of an index.
-export function trueColorCss(value) {
+export function trueColorCss(value, background = '#ffffff') {
   const n = Number(value);
   if (!Number.isFinite(n) || n < 0 || n > 0xffffff) return null;
   const rgb = Math.trunc(n);
-  return 'rgb(' + ((rgb >> 16) & 255) + ',' + ((rgb >> 8) & 255) + ',' + (rgb & 255) + ')';
+  return 'rgb(' + sheetRgb((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255, background).join(',') + ')';
 }

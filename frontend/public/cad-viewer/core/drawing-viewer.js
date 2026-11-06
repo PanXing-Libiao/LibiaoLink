@@ -8,8 +8,8 @@ import {drawingClips, compileClips, triangulateRings, insideRing} from './drawin
 import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.17.3';
 import {estimateDrawingDraws, projectInstancesSteps, shouldProjectInstances, recordVisibleBounds, INSTANCE_DRAW_LIMIT, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, quantizeLodSize, LOD_MIN_SCREEN_PX, isLodCulled, I} from './drawing-instances.js?v=dxf-0.17.3';
 import Flatbush from './vendor/flatbush.js';
-import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, textOffsets, textWorldCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.3';
-import {aciColor, trueColorCss} from './drawing-colors.js?v=dxf-0.17.3';
+import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, textOffsets, textWorldCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.4';
+import {aciColor, trueColorCss, drawingColorCss} from './drawing-colors.js?v=dxf-0.17.4';
 import {resolveTextAvoidance} from './drawing-text-avoidance.js?v=dxf-0.17.3';
 import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentation} from './drawing-pattern.js?v=dxf-0.17.3';
 import {mediaItemFor, rasterRecord} from './drawing-media.js?v=dxf-0.17.3';
@@ -44,6 +44,8 @@ export function mountDrawingViewer(envelope) {
   const viewport = document.getElementById('viewport');
   let canvas = document.getElementById('drawingCanvas');
   if (!canvas) { canvas = document.createElement('canvas'); canvas.id = 'drawingCanvas'; viewport.prepend(canvas); }
+  let sheetBackground = ucd.extensions?.['org.libiaolink.dwg/1'] ? '#000000' : '#ffffff';
+  canvas.style.background = sheetBackground;
   canvas.hidden = false;
   let ctx = canvas.getContext('2d');
   let strokeGPU = gpuModules ? createStrokeGPU() : null;
@@ -105,20 +107,21 @@ export function mountDrawingViewer(envelope) {
   const FONT_STACK_LATIN = '"Arial","Libiao Sans","Liberation Sans","SimSun",sans-serif';
   function mapFontFamily(name) {
     if (!name) return null;
-    const n = String(name).toLowerCase();
+    const n = String(name).trim().toLowerCase().split(/[\\/]/).pop().replace(/\.(shx|ttf|otf)$/i, '');
     if (/simsun|宋体|song|fangsong|stsong/.test(n)) return FONT_STACK_CJK;
     if (/simhei|黑体|heiti/.test(n)) return '"SimHei","Libiao Sans SC","Noto Sans CJK SC",sans-serif';
     if (/msyh|yahei|pingfang/.test(n)) return '"Microsoft YaHei","Libiao Sans SC","Noto Sans CJK SC",sans-serif';
     if (/swiss|arial|helvetica/.test(n)) return FONT_STACK_LATIN;
     if (/times/.test(n)) return '"Times New Roman","Libiao Serif","Liberation Serif","SimSun",serif';
     if (/courier/.test(n)) return '"Courier New","Libiao Mono","Liberation Mono","SimSun",monospace';
-    if (/romans|simplex|txt\.shx|gbcbig|hztxt|\.shx/.test(n)) return FONT_STACK_LATIN;
+    if (/^(isocp[23]?|isoct[23]?|romans|romand|romant|simplex|complex|txt|gbcbig|hztxt)$/.test(n)
+      || /\.shx$/i.test(String(name).trim())) return FONT_STACK_LATIN;
     if (/^hy|longfang/.test(n)) return FONT_STACK_CJK;
     return null;
   }
   // \C carries an ACI index, \c a 24-bit true color; both become CSS colors on
   // the following text runs until the next color control or group end.
-  const textRunColor = (kind, value) => kind === 'true' ? trueColorCss(value) : aciColor(value);
+  const textRunColor = (kind, value) => kind === 'true' ? trueColorCss(value, sheetBackground) : aciColor(value, sheetBackground);
   function styleFontFamilyFor(annotation) {
     const sem = annotation.semantic || {};
     let name = (sem.fontFilename && sem.fontFilename.value) || '';
@@ -130,13 +133,13 @@ export function mountDrawingViewer(envelope) {
     }
     const mapped = mapFontFamily(name);
     if (mapped) return mapped;
-    const bigFont = (sem.bigFontFilename && sem.bigFontFilename.value) || '';
-    if (bigFont) return FONT_STACK_CJK;
     const text = (sem.plainText && sem.plainText.value) || annotation.text || '';
     return /[⺀-鿿豈-﫿＀-￯]/.test(String(text)) ? FONT_STACK_CJK : FONT_STACK_LATIN;
   }
   function styleWidthFactorFor(annotation) {
     const sem = annotation.semantic || {};
+    const entityWidth = Number(sem.widthFactor?.value);
+    if (Number.isFinite(entityWidth) && entityWidth > 0) return entityWidth;
     if (!sem.textStyleId) return 1;
     const key = String(sem.textStyleId.value || '').replace(/^textstyle-/, '');
     const row = (ucd.extensions?.['org.libiaolink.dwg/1']?.fonts || {})[key];
@@ -172,8 +175,6 @@ export function mountDrawingViewer(envelope) {
     }
     const mapped = mapFontFamily(name);
     if (mapped) return mapped;
-    const bigFont = (sem.bigFontFilename && sem.bigFontFilename.value) || '';
-    if (bigFont) return FONT_STACK_CJK;
     const text = (sem.plainText && sem.plainText.value) || annotation.text || '';
     return /[⺀-鿿豈-﫿＀-￯]/.test(String(text)) ? FONT_STACK_CJK : FONT_STACK_LATIN;
   }
@@ -197,7 +198,8 @@ export function mountDrawingViewer(envelope) {
   }
   const forceInstances = typeof location !== 'undefined' && new URLSearchParams(location.search).get('instances') === '1';
   let spaceTarget = null, projection = null, built = [], texts = [], pointMarks = [];
-  let textAvoidance = true;
+  // CAD labels keep their source anchors unless avoidance is explicitly enabled.
+  let textAvoidance = false;
   let instancePlan = null, instanceLayerKey = '', instanceSelected = null;
   let scale = 1, tx = 0, ty = 0, dpr = 1, cssW = 800, cssH = 600;
   let mode = 'display';
@@ -522,7 +524,7 @@ export function mountDrawingViewer(envelope) {
   }
   function rgba(style) {
     const c = style.color || [1, 1, 1, 1];
-    return 'rgba(' + Math.round(c[0] * 255) + ',' + Math.round(c[1] * 255) + ',' + Math.round(c[2] * 255) + ',' + (style.opacity ?? 1) + ')';
+    return drawingColorCss(c, style.opacity ?? 1, sheetBackground);
   }
   function ensureRecordPath(rec) {
     if (rec.path || !rec.segments?.length) return rec.path;
@@ -759,6 +761,7 @@ export function mountDrawingViewer(envelope) {
           rec.fillPath = fill.path; rec.fillTriangles = fill.triangles; rec.fillRings = fill.rings;
           rec.bbox = fill.bbox;
           rec.gradient = fillEntry?.gradient;
+          rec.mask = fillEntry?.mask === true;
           addRecord(rec);
           continue;
         }
@@ -827,6 +830,7 @@ export function mountDrawingViewer(envelope) {
         const widthFactor = styleWidthFactorFor(annotation);
         const layout = layoutAnnotationText(annotation, draw, {
           measure: measureReference,
+          measureCapHeight: measureReferenceCapHeight,
           nativeLayout: nativeTextLayout,
           color: rec.color,
           fontFamily: annotationFont.runs ? annotationFont.defaultFont : fontFamilyFor(annotation),
@@ -1379,7 +1383,7 @@ export function mountDrawingViewer(envelope) {
     const profile = typeof window !== 'undefined' && window.__CAD_VIEWER_PROFILE__ === true;
     const paintStarted = profile ? performance.now() : 0;
     refreshInstanceLayers();
-    ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle='#fff';ctx.fillRect(0,0,cssW,cssH);
+    ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle=sheetBackground;ctx.fillRect(0,0,cssW,cssH);
     strokeGPU?.begin(canvas.width,canvas.height);
     const view={minX:-tx/scale,maxX:(cssW-tx)/scale,minY:(ty-cssH)/scale,maxY:ty/scale,scale,tx,ty,dpr};
     let calls=0,activeGpuNode=null,activeGpuRun=-1;
@@ -1482,7 +1486,7 @@ export function mountDrawingViewer(envelope) {
         const rasterDrawn=rec.raster?drawRaster(rec):false;
         if(rec.fillPath){
           if(rec.gradient)drawGradient(rec);
-          else {ctx.fillStyle=rec.mask?'#ffffff':rec.color;ctx.fill(rec.fillPath,rec.fillRule||'evenodd');}
+          else {ctx.fillStyle=rec.mask?sheetBackground:rec.color;ctx.fill(rec.fillPath,rec.fillRule||'evenodd');}
         }
         if(rec.path){ctx.strokeStyle=rec.color;ctx.lineWidth=rec.width/localScale;ctx.setLineDash(rec.dash||[]);ctx.stroke(rec.path);}
         if(rec.pointMark){const p=rec.pointMark;ctx.strokeStyle=rec.color;ctx.lineWidth=1/localScale;ctx.beginPath();ctx.moveTo(p.x-2.5/localScale,p.y);ctx.lineTo(p.x+2.5/localScale,p.y);ctx.moveTo(p.x,p.y-2.5/localScale);ctx.lineTo(p.x,p.y+2.5/localScale);ctx.stroke();}
@@ -1665,7 +1669,7 @@ export function mountDrawingViewer(envelope) {
     canvas.style.width = cssW + 'px'; canvas.style.height = cssH + 'px';
     if (previousFrame) {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = sheetBackground; ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(previousFrame, 0, 0, canvas.width, canvas.height);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
@@ -1741,7 +1745,7 @@ export function mountDrawingViewer(envelope) {
     const k = scale / previewView.scale;
     if (!Number.isFinite(k) || k <= 0) return false;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = sheetBackground;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.setTransform(k, 0, 0, k, dpr * (tx - k * previewView.tx), dpr * (ty - k * previewView.ty));
     ctx.drawImage(previewCanvas, 0, 0);
@@ -1760,7 +1764,7 @@ export function mountDrawingViewer(envelope) {
     if (instancePlan) { drawInstances(); return; }
     cancelInstanceRefresh();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, cssW, cssH);
+    ctx.fillStyle = sheetBackground; ctx.fillRect(0, 0, cssW, cssH);
     const visible = visiblePaintRecords();
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     for (const rec of visible) {
@@ -1776,7 +1780,7 @@ export function mountDrawingViewer(envelope) {
       if (rec.fillPath) {
         if (rec.gradient) drawGradient(rec);
         else {
-          ctx.fillStyle = rec.mask ? '#ffffff' : rec.color;
+          ctx.fillStyle = rec.mask ? sheetBackground : rec.color;
           if (rec.plotPen && !rec.mask && rec.plotPen.fill!==64 && rec.plotPen.fill!==73) {
             const key=rec.plotPen.fill+':'+rec.color;
             let pattern=plotFillCache.get(key);
@@ -1908,6 +1912,16 @@ export function mountDrawingViewer(envelope) {
     if (measureCache.size >= 4096) measureCache.clear();
     measureCache.set(key, width);
     return width;
+  }
+  function measureReferenceCapHeight(fontFamily = TEXT_FONT, bold = false, italic = false) {
+    const key = 'cap\0' + (bold ? '1' : '0') + (italic ? '1' : '0') + fontFamily;
+    if (measureCache.has(key)) return measureCache.get(key);
+    ctx.save();
+    ctx.font = (italic ? 'italic ' : '') + (bold ? 'bold ' : '') + '100px ' + fontFamily;
+    const height = ctx.measureText('H').actualBoundingBoxAscent;
+    ctx.restore();
+    measureCache.set(key, height);
+    return height;
   }
   function drawTextLeader(t, matrix) {
     const a = t.avoidance;
@@ -2505,7 +2519,7 @@ export function mountDrawingViewer(envelope) {
   function cachedSpaceKey(target, stateMode = mode, statePlot = plotPreview) {
     if (!target) return null;
     const identity = target.kind === 'model' ? target.spaceId : target.kind === 'layout' ? target.layoutId : target.blockId;
-    return JSON.stringify([target.kind, identity || '', stateMode, statePlot, textAvoidance]);
+    return JSON.stringify([target.kind, identity || '', stateMode, statePlot, textAvoidance, sheetBackground]);
   }
   function captureInstanceState(plan) {
     if (!plan) return null;
@@ -2763,6 +2777,7 @@ export function mountDrawingViewer(envelope) {
   // ----- panel skeleton ---------------------------------------------------
   panel.innerHTML = '<p class="dhint" id="drawingRenderStatus" role="status" hidden></p>' + '<div class="dsec"><strong>图纸空间</strong><div class="dspaces"></div></div>' +
     '<div class="dsec"><strong>显示方式</strong><div class="dmodes"><label><input type="radio" name="dmode" value="display" checked>显示离散化（默认，较快）</label><label><input type="radio" name="dmode" value="analytic">按屏幕重建（曲线更平滑，首次较慢）</label></div><p class="dhint">默认使用已生成的显示几何；按屏幕重建会采样源曲线，曲线更平滑，但超大图纸首次切换可能需数秒。填充与宽带仍沿用显示几何；再次切换同一空间或模式通常更快。</p></div>' +
+    '<div class="dsec"><strong>图纸背景</strong><div class="dmodes"><label><input type="radio" name="dbackground" value="#000000">黑底</label><label><input type="radio" name="dbackground" value="#ffffff">白底</label></div></div>' +
     '<div class="dsec"><strong>图层</strong><div class="dlayers"></div></div>' +
     '<div class="dsec"><strong>打印样式</strong><div class="dplot"></div></div>' +
     '<div class="dsec"><strong>源属性</strong><div class="dproperties"></div></div>' +
@@ -2778,6 +2793,26 @@ export function mountDrawingViewer(envelope) {
   panel.querySelectorAll('input[name=dmode]').forEach(input => input.addEventListener('change', () => {
     applyMode(input.value);
   }));
+  function setBackground(next) {
+    if (next !== '#000000' && next !== '#ffffff') return sheetBackground;
+    if (next === sheetBackground) return sheetBackground;
+    cancelInstanceRefresh();
+    cancelInitialBuild();
+    sheetBackground = next;
+    canvas.style.background = next;
+    previewValid = false;
+    spaceStateCache.clear();
+    plotFillCache.clear();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = next; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    panel.querySelectorAll('input[name=dbackground]').forEach(input => { input.checked = input.value === next; });
+    if (instancePlan) startInitialBuild(rebuildSteps(), draw); else rebuild();
+    return sheetBackground;
+  }
+  panel.querySelectorAll('input[name=dbackground]').forEach(input => {
+    input.checked = input.value === sheetBackground;
+    input.addEventListener('change', () => setBackground(input.value));
+  });
   panel.querySelector('#drawingReset').addEventListener('click', () => { userLayers.clear(); select(null, false); renderLayers(); draw(); updateStats(); });
 
   // ----- public API -------------------------------------------------------
@@ -2791,7 +2826,8 @@ export function mountDrawingViewer(envelope) {
   mounting = false;
   resize();
   const api = {
-    envelope, setSpatialView,
+    envelope, setSpatialView, setBackground,
+    backgroundColor: () => sheetBackground,
     meshView: () => meshViewer?.record() || null,
     get space() { return spaceTarget; },
     get mode() { return mode; },
