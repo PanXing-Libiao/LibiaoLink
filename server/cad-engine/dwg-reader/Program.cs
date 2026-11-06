@@ -882,6 +882,30 @@ static class Program
         DwgWriter.Write(Path.Combine(folder,"mesh-blocks.dwg"),document);
         Console.WriteLine("PASS: mesh closed triangles, concave quads, nonplanar rejection; mirrored nested block fixture written.");
     }
+    static void LayerStateSelfTest(string folder)
+    {
+        var document=new CadDocument(ACadVersion.AC1027);
+        var cases=new[]{LayerFlags.None,LayerFlags.FrozenNewViewports,LayerFlags.Frozen,
+            LayerFlags.Frozen|LayerFlags.FrozenNewViewports|LayerFlags.Locked};
+        foreach(var flags in cases) {
+            var layer=new Layer("flags-"+(int)flags){Flags=flags};
+            document.Layers.Add(layer);
+            document.Entities.Add(new Line(XYZ.Zero,XYZ.AxisX){Layer=layer});
+        }
+        string source=Path.Combine(folder,"layer-flags.dwg"),target=Path.Combine(folder,"layer-flags-read");
+        DwgWriter.Write(source,document);
+        Run(new[]{source,target});
+        foreach(string line in File.ReadLines(Path.Combine(target,"ucd-records.jsonl"))) {
+            using var row=JsonDocument.Parse(line);
+            if(row.RootElement.GetProperty("table").GetString()!="layers")continue;
+            var value=row.RootElement.GetProperty("value");var name=value.GetProperty("name").GetString()!;
+            if(!name.StartsWith("flags-"))continue;
+            int flags=int.Parse(name[6..]);
+            if(value.GetProperty("frozen").GetBoolean()!=((flags&1)!=0)
+                ||value.GetProperty("lockedForEditing").GetBoolean()!=((flags&4)!=0))
+                throw new InvalidDataException("Current layer freeze confused with new-viewport freeze");
+        }
+    }
     static void SelfTest(string folder)
     {
         Directory.CreateDirectory(folder);
@@ -934,6 +958,7 @@ static class Program
         if(cap.Count!=9 || Math.Abs(cap[0].Y)>1e-9 || Math.Abs(cap[^1].Y-20)>1e-9
             || Math.Abs(Math.Abs(cap[4].X)-10)>1e-6)
             throw new InvalidDataException("MLine round cap arc changed");
+        LayerStateSelfTest(folder);
         Console.WriteLine("PASS: native DWG header fields remain independent, including raw -1; no interchange format; spline zero vertex guard; fit-point spline fallback; default leader arrow guard; MLine miter and round cap geometry.");
     }
     static (int Width,int Height) PreviewDimensions(byte[] image,DwgPreview.PreviewType code)
@@ -1037,8 +1062,8 @@ static class Program
             foreach(var layer in doc.Layers) {
                 var style=ColorStyle(layer.Color,layer.PlotFlag);style["lineTypeId"]="linetype-"+H(layer.LineType);
                 if((short)layer.LineWeight>=0)style["lineWeight"]=Fact((short)layer.LineWeight/100.0);
-                string id="layer-"+H(layer);string flags=layer.Flags.ToString();
-                Emit("layers",id,new{id,drawingId,name=layer.Name,visible=layer.IsOn,frozen=flags.Contains("Frozen"),lockedForEditing=flags.Contains("Locked"),plot=layer.PlotFlag,defaultStyle=style,sourceRefs=Refs(layer)});
+                string id="layer-"+H(layer);var flags=layer.Flags;
+                Emit("layers",id,new{id,drawingId,name=layer.Name,visible=layer.IsOn,frozen=(flags&LayerFlags.Frozen)!=0,lockedForEditing=(flags&LayerFlags.Locked)!=0,plot=layer.PlotFlag,defaultStyle=style,sourceRefs=Refs(layer)});
             }
             foreach(var line in doc.LineTypes) {
                 string id="linetype-"+H(line);

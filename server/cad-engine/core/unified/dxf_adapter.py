@@ -2260,7 +2260,8 @@ def project_drawing(d, target, effective_layers=None, presentation_styles=None):
                     return list(parent_style['color']['rgba'])
                 if pmode == 'by-layer':
                     return layer_color(parent_layer, viewport)
-            return layer_color(layer_id, viewport)
+            # Unbound ByBlock is ACI 7, not the entity's layer color.
+            return [0.0, 0.0, 0.0, 1.0]
         return layer_color(layer_id, viewport)
 
     def resolve(style, layer_id, chain, item_id, viewport):
