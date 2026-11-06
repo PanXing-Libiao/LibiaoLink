@@ -156,11 +156,11 @@ function layoutRunLines(runs, size, measure, wrapWidth, native = false, lineSpac
         const last = segments[segments.length - 1];
         if (last && last.fontFamily === token.fontFamily && last.color === token.color
           && last.bold === token.bold && last.italic === token.italic
-          && last.size === token.size) {
+          && last.size === token.size && last.widthFactor === (token.widthFactor || 1)) {
           last.text += token.text; last.width += token.width;
         } else {
           segments.push({text: token.text, fontFamily: token.fontFamily, color: token.color,
-            bold: token.bold, italic: token.italic, size: token.size, width: token.width});
+            bold: token.bold, italic: token.italic, size: token.size, width: token.width, widthFactor: token.widthFactor || 1});
         }
         lineWidth += token.width;
         lineSize = Math.max(lineSize, token.size);
@@ -395,4 +395,47 @@ export function textDisplayCorners(t) {
 export function textDisplayBox(t, x = t.x, y = t.y) {
   const box = textWorldBox({...t, x, y, height: textDisplayHeight(t)}, textOffsets(t));
   return Number.isFinite(box.minX) && Number.isFinite(box.minY) ? box : null;
+}
+
+
+// Both viewer projections paint the same layout. Native CAD glyphs must keep
+// the source scale: clamping font pixels while scaling advances/anchors moves
+// visible text away from its layout and can push it entirely out of the view.
+export function paintTextRun(ctx, t, scale = 1, screenScale = scale) {
+  const size = t.nativeLayout ? t.size * scale
+    : Math.max(5, Math.min(220, t.size * screenScale)) / screenScale * scale;
+  const wf = t.widthFactor || 1;
+  const offsets = textOffsets(t);
+  ctx.save();
+  ctx.scale(wf, 1);
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  if (t.runLines) {
+    let y = offsets.dy * scale;
+    for (const line of t.runLines) {
+      let x = textOffsets({...t, width: line.width}).dx * scale / wf;
+      for (const segment of line.segments) {
+        if (!segment.text) continue;
+        const inlineWidth = segment.widthFactor || 1;
+        const segmentSize = segment.size && t.size ? segment.size / t.size : 1;
+        ctx.font = (segment.italic ? 'italic ' : '') + (segment.bold ? 'bold ' : '')
+          + (size * segmentSize) + 'px ' + (segment.fontFamily || t.fontFamily || TEXT_FONT);
+        ctx.fillStyle = segment.color || t.color;
+        ctx.save(); ctx.scale(inlineWidth, 1);
+        ctx.fillText(segment.text, x / inlineWidth, y);
+        ctx.restore();
+        x += segment.width * scale / wf;
+      }
+      y += (line.advance || t.lineHeight || t.height * 1.25) * scale;
+    }
+  } else {
+    ctx.font = size + 'px ' + (t.fontFamily || TEXT_FONT);
+    ctx.fillStyle = t.color;
+    const lines = t.lines || String(t.text).split('\n');
+    lines.forEach((line, i) => {
+      const width = t.widths?.[i] ?? t.width;
+      const dx = textOffsets({...t, width}).dx * scale / wf;
+      ctx.fillText(line, dx, offsets.dy * scale + i * (t.lineHeight ? t.lineHeight * scale : size * 1.25));
+    });
+  }
+  ctx.restore();
 }
