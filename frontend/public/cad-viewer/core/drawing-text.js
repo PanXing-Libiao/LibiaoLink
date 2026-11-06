@@ -129,7 +129,7 @@ function parseHeightControl(value, baseHeight) {
 const CLOSING_PUNCT = /^[，。、；：！？"”’）】》」』·…—％‰,.;:!?)\]}%]$/;
 const OPENING_PUNCT = /^[（【《「『“‘(\[{]$/;
 
-function layoutRunLines(runs, size, measure, wrapWidth, native = false, lineSpacing = 1) {
+function layoutRunLines(runs, size, measure, wrapWidth, native = false, lineSpacing = 1, capHeight = size, measureCapHeight) {
   if (typeof measure !== 'function') throw new Error('text-measure-required');
   const paragraphs = [];
   let current = [];
@@ -145,36 +145,40 @@ function layoutRunLines(runs, size, measure, wrapWidth, native = false, lineSpac
   for (const paragraph of paragraphs) {
     let tokens = [];
     let width = 0;
+    const fontSize = entry => (native && measureCapHeight
+      ? capHeight * 100 / measureCapHeight(entry.fontFamily, entry.bold, entry.italic) : size) * (entry.heightFactor || 1);
     const tokenWidth = (text, entry) => measure(text, entry.fontFamily, entry.bold, entry.italic)
-      * (size * (entry.heightFactor || 1) / 100) * (entry.widthFactor || 1);
+      * (fontSize(entry) / 100) * (entry.widthFactor || 1);
     const pushLine = () => {
       const segments = [];
-      let lineWidth = 0, lineSize = 0;
+      let lineWidth = 0, lineSize = 0, lineCapHeight = 0;
       for (const token of tokens) {
         const last = segments[segments.length - 1];
         if (last && last.fontFamily === token.fontFamily && last.color === token.color
           && last.bold === token.bold && last.italic === token.italic
-          && last.size === token.size) {
+          && last.size === token.size && last.widthFactor === (token.widthFactor || 1)) {
           last.text += token.text; last.width += token.width;
         } else {
           segments.push({text: token.text, fontFamily: token.fontFamily, color: token.color,
-            bold: token.bold, italic: token.italic, size: token.size, width: token.width});
+            bold: token.bold, italic: token.italic, size: token.size, width: token.width, widthFactor: token.widthFactor || 1});
         }
         lineWidth += token.width;
         lineSize = Math.max(lineSize, token.size);
+        lineCapHeight = Math.max(lineCapHeight, token.capHeight);
       }
       const effSize = lineSize || size;
       lines.push({segments, width: lineWidth, size: effSize,
-        advance: native ? cadLineHeight(effSize, lineSpacing) : effSize * 1.25});
+        advance: native ? cadLineHeight(lineCapHeight || capHeight, lineSpacing) : effSize * 1.25});
       tokens = []; width = 0;
     };
     for (const entry of paragraph) {
-      const entrySize = size * (entry.heightFactor || 1);
+      const entrySize = fontSize(entry);
+      const entryCapHeight = capHeight * (entry.heightFactor || 1);
       const whole = tokenWidth(entry.text, entry);
       if (!wrapWidth || width + whole <= wrapWidth) {
         tokens.push({text: entry.text, fontFamily: entry.fontFamily, color: entry.color,
           bold: entry.bold, italic: entry.italic, widthFactor: entry.widthFactor,
-          size: entrySize, width: whole});
+          size: entrySize, capHeight: entryCapHeight, width: whole});
         width += whole;
         continue;
       }
@@ -193,7 +197,7 @@ function layoutRunLines(runs, size, measure, wrapWidth, native = false, lineSpac
         }
         tokens.push({text: token, fontFamily: entry.fontFamily, color: entry.color,
           bold: entry.bold, italic: entry.italic, widthFactor: entry.widthFactor,
-          size: entrySize, width: w});
+          size: entrySize, capHeight: entryCapHeight, width: w});
         width += w;
       }
     }
@@ -217,7 +221,7 @@ function wrapCadLines(text, wrapWidth, size, measure, fontFamily) {
     for (const token of cadTextTokens(paragraph)) {
       const fit = measure(token.replace(/[ \t]+$/, ''), fontFamily) * (size / 100);
       const full = measure(token, fontFamily) * (size / 100);
-      if (!wrapWidth || width + fit <= wrapWidth) { tokens.push({text: token, width: full}); width += full; continue; }
+      if (!tokens.length || !wrapWidth || width + fit <= wrapWidth) { tokens.push({text: token, width: full}); width += full; continue; }
       if (!CLOSING_PUNCT.test(token)) {
         let carry = null;
         const last = tokens[tokens.length - 1];
@@ -254,15 +258,13 @@ export function layoutTextRun(input) {
     // multi-line box height here would multiply em and line advance by the
     // source line count, so wrapped notes grow every time they gain a line.
     const capHeight = Number(input.height);
-    // The reference DWG viewer sizes TrueType text so the glyph em equals the
-    // stored text height. The ACadSharp SvgTextLayout port's 4/3 cap-height
-    // conversion made every note a third taller and wider than the reference,
-    // which wrapped notes early and grew their blocks past the source rectangle.
-    run.size = capHeight;
+    // CAD stores capital-letter height, whereas Canvas font size is an em.
+    // Measure the selected font instead of assuming one multiplier for all fonts.
+    run.size = input.measureCapHeight ? capHeight * 100 / input.measureCapHeight(run.fontFamily) : capHeight;
     run.lineHeight = cadLineHeight(capHeight, input.lineSpacing ?? 1);
     const width = Number(input.rectangleWidth || 0) * Number(input.matrixScale || 1);
     if (useRuns) {
-      const runLines = layoutRunLines(input.runs, run.size, measure, width, true, input.lineSpacing ?? 1);
+      const runLines = layoutRunLines(input.runs, run.size, measure, width, true, input.lineSpacing ?? 1, capHeight, input.measureCapHeight);
       run.runLines = runLines;
       run.lines = runLines.map(line => line.segments.map(segment => segment.text).join(''));
       run.widths = runLines.map(line => line.width);
@@ -327,6 +329,7 @@ export function layoutAnnotationText(annotation, draw, options = {}) {
     rectangleWidth: Number((sem.rectangleWidth && sem.rectangleWidth.value) || 0),
     matrixScale: matrixScale(matrix),
     measure: options.measure,
+    measureCapHeight: options.measureCapHeight,
     fontFamily: options.fontFamily,
     runs: options.runs,
     widthFactor: options.widthFactor,
@@ -385,7 +388,54 @@ export function textDisplayHeight(t) {
   return Math.max(size, (lineCount - 1) * lineHeight + size);
 }
 
+export function textDisplayCorners(t) {
+  return textWorldCorners({...t, height: textDisplayHeight(t)}, textOffsets(t));
+}
+
 export function textDisplayBox(t, x = t.x, y = t.y) {
   const box = textWorldBox({...t, x, y, height: textDisplayHeight(t)}, textOffsets(t));
   return Number.isFinite(box.minX) && Number.isFinite(box.minY) ? box : null;
+}
+
+
+// Both viewer projections paint the same layout. Native CAD glyphs must keep
+// the source scale: clamping font pixels while scaling advances/anchors moves
+// visible text away from its layout and can push it entirely out of the view.
+export function paintTextRun(ctx, t, scale = 1, screenScale = scale) {
+  const size = t.nativeLayout ? t.size * scale
+    : Math.max(5, Math.min(220, t.size * screenScale)) / screenScale * scale;
+  const wf = t.widthFactor || 1;
+  const offsets = textOffsets(t);
+  ctx.save();
+  ctx.scale(wf, 1);
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  if (t.runLines) {
+    let y = offsets.dy * scale;
+    for (const line of t.runLines) {
+      let x = textOffsets({...t, width: line.width}).dx * scale / wf;
+      for (const segment of line.segments) {
+        if (!segment.text) continue;
+        const inlineWidth = segment.widthFactor || 1;
+        const segmentSize = segment.size && t.size ? segment.size / t.size : 1;
+        ctx.font = (segment.italic ? 'italic ' : '') + (segment.bold ? 'bold ' : '')
+          + (size * segmentSize) + 'px ' + (segment.fontFamily || t.fontFamily || TEXT_FONT);
+        ctx.fillStyle = segment.color || t.color;
+        ctx.save(); ctx.scale(inlineWidth, 1);
+        ctx.fillText(segment.text, x / inlineWidth, y);
+        ctx.restore();
+        x += segment.width * scale / wf;
+      }
+      y += (line.advance || t.lineHeight || t.height * 1.25) * scale;
+    }
+  } else {
+    ctx.font = size + 'px ' + (t.fontFamily || TEXT_FONT);
+    ctx.fillStyle = t.color;
+    const lines = t.lines || String(t.text).split('\n');
+    lines.forEach((line, i) => {
+      const width = t.widths?.[i] ?? t.width;
+      const dx = textOffsets({...t, width}).dx * scale / wf;
+      ctx.fillText(line, dx, offsets.dy * scale + i * (t.lineHeight ? t.lineHeight * scale : size * 1.25));
+    });
+  }
+  ctx.restore();
 }

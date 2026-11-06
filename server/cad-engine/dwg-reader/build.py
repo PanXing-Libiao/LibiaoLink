@@ -48,6 +48,11 @@ def build(args):
     import shutil
     preview = acad / "src/ACadSharp/IO/DWG/DwgStreamReaders/DwgPreviewReader.cs"
     replace_once(preview, "\t\t\tDwgPreview.PreviewType previewCode = DwgPreview.PreviewType.Unknown;\n\n\t\t\t//The data follows the records in the same order\n\t\t\tfor (int i = 0; i < imagespresent; i++)\n\t\t\t{\n\t\t\t\tbyte[] data = this._reader.ReadBytes((int)sizes[i]);\n\t\t\t\tswitch (codes[i])\n\t\t\t\t{\n\t\t\t\t\tcase 1:\n\t\t\t\t\t\theader = data;\n\t\t\t\t\t\tbreak;\n\t\t\t\t\tdefault:\n\t\t\t\t\t\t//Keep the first image, a file may store a second lower quality bitmap after it\n\t\t\t\t\t\tif (previewCode == DwgPreview.PreviewType.Unknown)\n\t\t\t\t\t\t{\n\t\t\t\t\t\t\tpreviewCode = (DwgPreview.PreviewType)codes[i];\n\t\t\t\t\t\t\tbody = data;\n\t\t\t\t\t\t}\n\t\t\t\t\t\tbreak;\n\t\t\t\t}\n\t\t\t}", "\t\t\tDwgPreview.PreviewType previewCode = DwgPreview.PreviewType.Unknown;\n\t\t\tint previewPriority = -1;\n\n\t\t\t//The data follows the records in the same order. Prefer a self-contained PNG,\n\t\t\t//then BMP, then WMF; some files put a lower-priority image first.\n\t\t\tfor (int i = 0; i < imagespresent; i++)\n\t\t\t{\n\t\t\t\tbyte[] data = this._reader.ReadBytes((int)sizes[i]);\n\t\t\t\tswitch (codes[i])\n\t\t\t\t{\n\t\t\t\t\tcase 1:\n\t\t\t\t\t\theader = data;\n\t\t\t\t\t\tbreak;\n\t\t\t\t\tdefault:\n\t\t\t\t\t\tint candidatePriority = codes[i] == 6 ? 3 : codes[i] == 2 ? 2 : codes[i] == 3 ? 1 : 0;\n\t\t\t\t\t\tif (candidatePriority > previewPriority)\n\t\t\t\t\t\t{\n\t\t\t\t\t\t\tpreviewCode = (DwgPreview.PreviewType)codes[i];\n\t\t\t\t\t\t\tpreviewPriority = candidatePriority;\n\t\t\t\t\t\t\tbody = data;\n\t\t\t\t\t\t}\n\t\t\t\t\t\tbreak;\n\t\t\t\t}\n\t\t\t}");
+    # C# integer division made 1 / 64 zero, rotating near-pole OCS frames.
+    # Patch the shared helper so native curve evaluation and INSERT agree.
+    replace_once(utilities / 'CSMath/Matrix4.cs',
+                 'Math.Abs(zaxis.X) < (1 / 64) && Math.Abs(zaxis.Y) < (1 / 64)',
+                 'Math.Abs(zaxis.X) < (1.0 / 64.0) && Math.Abs(zaxis.Y) < (1.0 / 64.0)')
     shutil.copytree(utilities, acad / 'src/CSUtilities', dirs_exist_ok=True)
     header = acad / 'src/ACadSharp/Header/CadHeader.cs'
     replace_once(header, 'public Color InterfereColor { get; set; } = new Color(1);',

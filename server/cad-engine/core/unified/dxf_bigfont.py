@@ -5,6 +5,7 @@ Indexed SHX layout independently checked against truedxf's original MIT test
 fonts: https://github.com/tth05/truedxf/tree/master/packages/fonts
 No system font discovery or lossy character-code conversion is used.
 """
+import hashlib
 import struct
 from ezdxf import path
 from ezdxf.math import Matrix44
@@ -18,7 +19,7 @@ def number(value):
 
 
 class BigFont(shapefile.ShapeFile):
-    def __init__(self, records, ranges, binary):
+    def __init__(self, records, ranges, binary, verified_legacy=False):
         name, params = records.pop(0)
         if binary:
             metrics = list(params)
@@ -33,7 +34,7 @@ class BigFont(shapefile.ShapeFile):
             # (019c2e5, research/notes/04-text-fonts.md §10). 64 is NOT its
             # cap height. Do not extrapolate the eight-unit cap to other headers
             # or trust the uploaded filename (which can legitimately be renamed).
-            if name.strip().lower() not in (b'gbcbig', b'gbcbig.shx') or metrics != [0, 64, 2, 0]:
+            if (name.strip().lower() not in (b'gbcbig', b'gbcbig.shx') and not verified_legacy) or metrics != [0, 64, 2, 0]:
                 raise ValueError('bigfont-legacy-height-profile-unverified')
             above, below = 8, 0
             self.metrics_profile = 'gbcbig-legacy-0-64-2'
@@ -184,5 +185,10 @@ def load(raw):
         binary = False
     if 0 not in records or not ranges or any(not 0 <= low <= high <= 255 for low, high in ranges):
         raise ValueError('bigfont-definition-invalid')
-    font = BigFont(records, ranges, binary)
+    # Engineering CJK 1998.1: local FastView probes with simplex/gbenor at
+    # height 1000 match the raw glyph top scaled by 1000/8, not 1000/64.
+    # Match content, not the filename or a generic zero-height header. No font
+    # bytes are distributed; other unnamed legacy profiles remain unverified.
+    verified_legacy = hashlib.sha256(raw).hexdigest() == 'd58dd6d39dc271b311f3bcdc6e26bd1d28b9fcce6ec49ee626c081757d23f2d9'
+    font = BigFont(records, ranges, binary, verified_legacy=verified_legacy)
     return font

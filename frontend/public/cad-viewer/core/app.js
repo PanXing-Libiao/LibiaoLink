@@ -13,7 +13,7 @@ import {createHighlighter,drawsForProduct,drawsForScene} from './highlight.js';
 import {directProjection} from './direct-projection.js?v=step-0.2';
 import {appendNonMeshableUI,clearNonMeshableUI} from './nonmeshable-ui.js?v=step-combined';
 import {appendMeshRepairUI,repairManifest} from './mesh-repair-ui.js?v=step-combined';
-import {mountDrawingViewer} from './drawing-viewer.js?v=dxf-0.17.4';
+import {mountDrawingViewer} from './drawing-viewer.js?v=dxf-0.17.9';
 import {fitCameraToBox,updateCameraRange,captureCameraView,restoreCameraView} from './camera-framing.js';
 const query=new URLSearchParams(location.search),binaryMode=query.get('transport')==='binary',batchMode=query.get('batch')==='1';
 // The unified pipeline is the default entry; ?pipeline=legacy keeps the old EASM bridge for regression.

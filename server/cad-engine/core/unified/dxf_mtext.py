@@ -139,7 +139,23 @@ def text_origins(font, text, factor):
     return offsets, cursor
 
 
-def layout_from_tokens(renderer, mtext, tokens, width, line_spacing, paragraph_gap=None):
+def cjk_break(left, right):
+    def cjk(char):
+        return '\u2e80' <= char <= '\u9fff' or '\uf900' <= char <= '\ufaff' or '\uff01' <= char <= '\uff60'
+    return bool(left and right and (cjk(left[-1]) or cjk(right[0]))
+                and left[-1] not in '（《「【『〈〔〖'
+                and right[0] not in '，。！？；：、）》」】』〉〕〗')
+
+
+def cjk_words(text):
+    words, start = [], 0
+    for index in range(1, len(text)):
+        if cjk_break(text[index-1], text[index]):
+            words.append(text[start:index]); start = index
+    return words + [text[start:]]
+
+
+def layout_from_tokens(renderer, mtext, tokens, width, line_spacing, paragraph_gap=None, cjk=False):
     """Shared cell assembly: horizontal and vertical flow use identical tab fields,
     paragraph formatting, fractions, wrapping and column overflow rules.
     A zero width is unbounded; its upper bound includes authored tab stops.
@@ -206,8 +222,10 @@ def layout_from_tokens(renderer, mtext, tokens, width, line_spacing, paragraph_g
             paragraph = tl.EmptyParagraph(cap_height=ctx.cap_height, line_spacing=line_spacing)
         layout.append_paragraphs([paragraph]); cells = []
 
+    previous_word = ""
     for token_index, token in enumerate(tokens):
         ctx = token.ctx
+        if token.type != TokenType.WORD: previous_word = ""
         if token.type == TokenType.NEW_PARAGRAPH and paragraph_gap is not None:
             cells.append(tl.NonBreakingSpace(width=paragraph_gap))
         elif token.type in (TokenType.NEW_PARAGRAPH, TokenType.NEW_COLUMN):
@@ -216,11 +234,18 @@ def layout_from_tokens(renderer, mtext, tokens, width, line_spacing, paragraph_g
                 layout.next_column()
         elif token.type in (TokenType.WORD, TokenType.STACK):
             if cells and isinstance(cells[-1], (tl.Text, tl.Fraction)):
-                cells.append(am.super_glue())
-            cell = token_cells.get(token_index)
-            if cell is None:
-                cell = renderer.word(token.data, ctx) if token.type == TokenType.WORD else renderer.fraction(token.data, ctx)
-            cells.append(cell)
+                cells.append(tl.Space(width=0) if cjk and token.type == TokenType.WORD
+                             and cjk_break(previous_word, token.data) else am.super_glue())
+            if cjk and token.type == TokenType.WORD:
+                for index, word in enumerate(cjk_words(token.data)):
+                    if index: cells.append(tl.Space(width=0))
+                    cells.append(renderer.word(word, ctx))
+                previous_word = token.data
+            else:
+                cell = token_cells.get(token_index)
+                if cell is None:
+                    cell = renderer.word(token.data, ctx) if token.type == TokenType.WORD else renderer.fraction(token.data, ctx)
+                cells.append(cell)
         elif token.type == TokenType.SPACE:
             cells.append(renderer.space(ctx))
         elif token.type == TokenType.NBSP:

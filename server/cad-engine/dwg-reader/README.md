@@ -10,7 +10,7 @@
 
 - ACadSharp 3.8.30，提交 `760bd909c384b8f1a47c29acd1777ea8e3fe7cfe`；CSUtilities 子模块也固定提交和归档 SHA-256。见 [dependency.json](dependency.json)。
 - 运行时为 .NET 10；构建产物、源码解包、正式样本和验证产物全部放在忽略目录。
-- 上游 `DwgHeaderReader` 把 `INTERSECTIONCOLOR` 的 BS 短整数和 `INTERFERECOLOR` 的 CMC 颜色写入同一属性。构建脚本只修正这个字段边界，读写分别存储；负数原值保留，不夹取成某个颜色，不启用 failsafe。
+- 上游 `DwgHeaderReader` 把 `INTERSECTIONCOLOR` 的 BS 短整数和 `INTERFERECOLOR` 的 CMC 颜色写入同一属性。构建脚本修正这个字段边界，读写分别存储；负数原值保留，不夹取成某个颜色，不启用 failsafe。
 - 内嵌预览 `--preview` 读取 DWG 自带缩略图，只输出 PNG/BMP；构建脚本补丁把上游“取第一张图”改为优先 PNG、其次 BMP、最后 WMF，避免可显示的位图被前置 WMF 遮住。WMF、未知格式和超限图像明确返回不可用，不伪造预览。
 - 读取使用 `Failsafe=false`，保留未知实体、未知非图形对象和原生代理图形。未知内容仍可能只有基础元数据，原 DWG 才是权威源。
 - 选择性复用 ACadSharp 的曲线、样条、填充图案、存储标注块和 SORTENTSTABLE。大块的排序句柄建立一次索引，避免上游逐实体线性查询。
@@ -20,6 +20,8 @@
 - WIPEOUT 按 DXF/ezdxf 的图像边界公式（`insert + u/2 - v/2`，裁剪顶点为像素坐标）生成白色预览遮罩，源句柄保留；这是覆盖绘制而不是查看器 mask part，不拦截拾取。IMAGE/PDFUNDERLAY 仍需要外部资源，不在本映射内。
 - MULTILEADER 代理按出现顺序维护 `SubentLayer/SubentLineType/SubentThickness/SubentPlotStyleName` 状态：默认图层/线型/零厚度/ByLayer 打印样式不再误报，具体可解析的索引应用；非零厚度、越界索引或具体打印样式仍保留损失。
 - 文字转义与换行选择性采用 MIT 的 ACadSharp.Image 方法；见 `CommunityText.cs`、前端 `vendor/cad-text-layout.js` 及随附许可。只复用相关代码，不包含该应用或 SixLabors 栅格依赖。原配套字体缺失、行内富文本格式等仍有明确限制。
+
+- 共用 OCS 坐标转换：固定版本 CSMath `Matrix4.GetArbitraryAxis` 的 `1 / 64` 被 C# 整数除法算成零；构建补丁改为 `1.0 / 64.0`，使接近正负 Z 轴的法向按原算法选择正确坐标轴。补丁作用于底层共用库，覆盖 INSERT 与原生曲线/填充求值；不修改源法向，不按图纸或句柄特判。`--self-test` 覆盖精确轴、带微小尾差的正负轴、阈值内法向、一般法向及旋转缩放块。旧预览必须重新转换；仅更新查看器不能纠正已生成的错误坐标。本机已通过读取器定向自检、真实原图重新转换及预览契约/二进制校验，并检查全图总览与分散区域；未运行全项目构建，未部署。
 
 ## 本机构建与查看
 
@@ -63,3 +65,7 @@ python3 server/cad-engine/dev/dwg-local.py .cad-work/dwg-result --port 8769
 原生读取的默认托管堆提交约 3 GiB；本机 1.5 GiB 和 1.75 GiB GC 堆硬上限实验均内存不足。正式生产现有容器是 3 GiB cgroup 硬限额、禁 swap，worker 另有 2 GiB RSS 采样阈值；公司测试机 2026-11-02 已用 5 GiB 容器 / 3.5 GiB DWG worker 档位完成真实 34,385,320 B 文件复验，但不改变正式生产。两者不是同一个限制。macOS 压缩后的 RSS 不能作为 Linux 达标证据，GC 堆上限实验也不能替代容器实测。当前不改变生产资源政策，也不宣称 Linux 沙箱验证通过。需先取得社区读取器的内存改进，或在另行确认的主图资源政策下验证，再开放平台主图任务。
 
 非平面 REGION/ACIS、MLINE、IMAGE/PDF 底图、自定义引线箭头和部分代理样式仍有缺口；多行文字使用社区纯文本换行与替代字体，尚不等价于原字体富文本排版。具体逐类结果以本机正式样本的原始记录和视觉核验为准。
+
+### WIPEOUT 背景遮罩
+
+原生 WIPEOUT 的 `fills` 记录保留 `mask: true`，装配为 `org.cad-preview.fill/1` 的同名字段；查看器按当前黑底或白底绘制遮罩，不套用普通图元的黑白对比色。既有未标记派生产物需要重新转换，不能根据纯白填充猜测其是否为遮罩。

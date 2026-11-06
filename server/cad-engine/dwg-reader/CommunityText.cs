@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 using ACadSharp.Entities;
 
@@ -13,7 +14,31 @@ static class CommunityText
     {
         string value=mtext.Value??string.Empty;
         string decoded=UnicodeEscape.Replace(value,m=>((char)Convert.ToInt32(m.Groups[1].Value,16)).ToString());
+        decoded=StripWidthControls(decoded);
         return Normalize(decoded==value?mtext.PlainText:new MText{Value=decoded}.PlainText);
+    }
+    // ACadSharp's plain-text projection handles font/color/height controls but
+    // leaves the parameter of \W in the visible text. Keep rawText untouched;
+    // discard only width formatting here, respecting escaped backslashes.
+    static string StripWidthControls(string value)
+    {
+        var result=new StringBuilder(value.Length);
+        for(int i=0;i<value.Length;i++)
+        {
+            if(value[i]=='\\' && i+1<value.Length)
+            {
+                if(value[i+1]=='W')
+                {
+                    int end=value.IndexOf(';',i+2);
+                    if(end>=0 && double.TryParse(value.AsSpan(i+2,end-i-2),
+                        System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out _))
+                    { i=end; continue; }
+                }
+                result.Append(value[i]); result.Append(value[++i]);
+            }
+            else result.Append(value[i]);
+        }
+        return result.ToString();
     }
     public static string Normalize(string? value)
     {

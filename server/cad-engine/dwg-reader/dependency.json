@@ -12,6 +12,6 @@
     "url": "https://codeload.github.com/DomCR/CSUtilities/tar.gz/a6505ab24bb45eac91e912179b2049136b7e88af",
     "sha256": "a9ab65129173c6bd7f428cb59b1d947999907d2916fb2cdacad928a5c9f55c84"
   },
-  "patch": "Separate native INTERSECTIONCOLOR short from INTERFERECOLOR CMC. Preserve unrepresented values; no Color clamping or failsafe read. Prefer PNG then BMP then WMF embedded previews instead of the first image.",
+  "patch": "Separate native INTERSECTIONCOLOR short from INTERFERECOLOR CMC. Preserve unrepresented values; no Color clamping or failsafe read. Prefer PNG then BMP then WMF embedded previews instead of the first image. Use floating-point 1/64 threshold in shared Matrix4 OCS arbitrary-axis selection.",
   "runtime": "net10.0"
 }

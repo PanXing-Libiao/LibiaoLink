@@ -113,6 +113,16 @@ static class Program
         var max=new[]{points.Max(p=>p.X),points.Max(p=>p.Y),points.Max(p=>p.Z)};
         Emit("displays",id,new {offset, byteLength=count*24, count, topology, min, max, sourceRefs=Refs(original)});
     }
+    static double[][] PolylineWidths(Entity entity, IPolyline polyline)
+    {
+        // DWG vertices carry explicit widths; LWPOLYLINE constant width overrides them.
+        double constant=entity is LwPolyline lw ? lw.ConstantWidth : 0;
+        return polyline.Vertices.Select(v=>constant!=0 ? new[]{constant,constant} : v switch {
+            LwPolyline.Vertex vertex=>new[]{vertex.StartWidth,vertex.EndWidth},
+            Vertex2D vertex=>new[]{vertex.StartWidth,vertex.EndWidth},
+            _=>new[]{0.0,0.0}
+        }).ToArray();
+    }
     static Row Poly(IEnumerable<XYZ> values, bool closed=false)
     {
         var pts=values.ToArray(); int n=closed?pts.Length:pts.Length-1;
@@ -358,7 +368,7 @@ static class Program
             pixels=new List<XY>{p0,new XY(p1.X,p0.Y),p1,new XY(p0.X,p1.Y)};
         }else pixels=new List<XY>{new XY(-0.5,-0.5),new XY(size.X-0.5,-0.5),
             new XY(size.X-0.5,size.Y-0.5),new XY(-0.5,size.Y-0.5)};
-        // A wipeout is a preview mask: a white filled polygon over the source.
+        // A wipeout follows the viewer background, independent of its stored color.
         // It is not a viewer mask part, so hit testing is not occluded.
         var points=pixels.Select(p=>new XYZ(
             origin.X+u.X*p.X+v.X*(size.Y-p.Y),
@@ -367,8 +377,11 @@ static class Program
         if(points.Length<3){Loss(original,"wipeout-boundary-invalid","Wipeout boundary has fewer than three vertices");return;}
         var mask=new Polyline3D(points){Layer=e.Layer,Color=new Color(255,255,255),LineType=e.LineType};
         EntityRow(mask,space,id,Poly(points,true),Closed(points),original:original);
-        Emit("fills",id,new{rings=new[]{points.Select(P).ToArray()},fillRule="even-odd"});
+        Emit("fills",id,new{rings=new[]{points.Select(P).ToArray()},fillRule="even-odd",mask=true});
     }
+    static string FontFamily(TextStyle style) => style.ExtendedData
+        .Where(pair=>pair.Key.Name=="ACAD").SelectMany(pair=>pair.Value.Records)
+        .OfType<ACadSharp.XData.ExtendedDataString>().Select(record=>record.Value).FirstOrDefault() ?? "";
     static void Text(Entity e, IText text, string space, string id, CadObject? original=null)
     {
         original ??=e;
@@ -379,7 +392,15 @@ static class Program
         string value=e is MText m ? CommunityText.Plain(m) : CommunityText.Normalize(text.Value);
         var semantic=R(("height",Fact(text.Height)),("rotation",Fact(text.Rotation)),("textStyleId",Fact("textstyle-"+H(text.Style))),
                       ("rawText",Fact(text.Value)),("fontFilename",Fact(text.Style.Filename)),("bigFontFilename",Fact(text.Style.BigFontFilename)));
+        semantic["fontFamily"]=Fact(FontFamily(text.Style));
+        semantic["styleWidthFactor"]=Fact(text.Style.Width);
+        semantic["styleOblique"]=Fact(text.Style.ObliqueAngle);
+        semantic["styleFlags"]=Fact((int)text.Style.Flags);
+        semantic["insertPoint"]=Fact(P(text.InsertPoint));
+        semantic["normal"]=Fact(P(e is MText mt ? mt.Normal : ((TextEntity)e).Normal));
         if(e is TextEntity single) {
+            semantic["oblique"]=Fact(single.ObliqueAngle);
+            semantic["mirror"]=Fact((int)single.Mirror);
             semantic["widthFactor"]=Fact(single.WidthFactor);
             semantic["halign"]=Fact((int)single.HorizontalAlignment);
             semantic["valign"]=Fact((int)single.VerticalAlignment);
@@ -391,6 +412,7 @@ static class Program
             semantic["attachmentPoint"]=Fact((int)multiline.AttachmentPoint);
             semantic["rectangleWidth"]=Fact(multiline.RectangleWidth);
             semantic["lineSpacing"]=Fact(multiline.LineSpacing);
+            semantic["lineSpacingStyle"]=Fact(multiline.LineSpacingStyle.ToString());
             semantic["drawingDirection"]=Fact(multiline.DrawingDirection.ToString());
             semantic["hasColumns"]=Fact(multiline.HasColumns);
             if(multiline.DrawingDirection.ToString()=="TopToBottom" || multiline.HasColumns)
@@ -473,14 +495,33 @@ static class Program
                 Infinite(e,space,id,"ray",ray.StartPoint,ray.Direction,original); return;
             case IPolyline polyline:
                 var polyPoints=polyline.GetPoints<XYZ>(64).ToList();
-                if(e is LwPolyline or Polyline2D) {
-                    var ocs=Matrix4.GetArbitraryAxis(polyline.Normal);
-                    polyPoints=polyPoints.Select(p=>ocs*new XYZ(p.X,p.Y,polyline.Elevation)).ToList();
+                var polyWidths=PolylineWidths(e,polyline);
+                int polySegments=polyline.IsClosed ? polyWidths.Length : polyWidths.Length-1;
+                bool wide=(e is LwPolyline or Polyline2D) && polyWidths.Take(polySegments).Any(w=>w[0]!=0||w[1]!=0);
+                double[]? polyLocal=null;
+                Row polyGeometry;
+                if(wide) {
+                    // Keep width stations and bulges in OCS. The same entity transform
+                    // applies to the source curve and its generated display bands.
+                    polyLocal=Matrix(new Transform(Matrix4.GetArbitraryAxis(polyline.Normal)));
+                    polyPoints=polyPoints.Select(p=>new XYZ(p.X,p.Y,polyline.Elevation)).ToList();
+                    polyGeometry=R(("type","polyline"),("closed",polyline.IsClosed),
+                        ("points",polyline.Vertices.Select(v=>new[]{v.Location[0],v.Location[1],polyline.Elevation}).ToArray()),
+                        ("bulges",polyline.Vertices.Take(polySegments).Select(v=>v.Bulge).ToArray()),
+                        ("widths",polyWidths.Take(polySegments).ToArray()));
+                } else {
+                    if(e is LwPolyline or Polyline2D) {
+                        var ocs=Matrix4.GetArbitraryAxis(polyline.Normal);
+                        polyPoints=polyPoints.Select(p=>ocs*new XYZ(p.X,p.Y,polyline.Elevation)).ToList();
+                    }
+                    if(polyline.IsClosed) polyPoints=Closed(polyPoints);
+                    polyGeometry=Poly(polyPoints);
                 }
                 if(polyline.IsClosed) polyPoints=Closed(polyPoints);
-                EntityRow(e,space,id,Poly(polyPoints),polyPoints,original:original);
+                EntityRow(e,space,id,polyGeometry,polyPoints,local:polyLocal,original:original);
                 Emit("nativeGeometry",id,R(("type","polyline"),("closed",polyline.IsClosed),("normal",P(polyline.Normal)),("elevation",polyline.Elevation),
-                    ("vertices",polyline.Vertices.Select(v=>R(("point",new[]{v.Location[0],v.Location[1]}),("bulge",v.Bulge))).ToArray()))); return;
+                    ("vertices",polyline.Vertices.Select((v,i)=>R(("point",new[]{v.Location[0],v.Location[1]}),("bulge",v.Bulge),
+                        ("startWidth",polyWidths[i][0]),("endWidth",polyWidths[i][1]))).ToArray()))); return;
             case ACadSharp.Entities.Point point:
                 EntityRow(e,space,id,R(("type","point"),("position",P(point.Location))),[point.Location],topology:"points",original:original);return;
             case Face3D face:
@@ -691,7 +732,7 @@ static class Program
                 ProxyText p=>new TextEntity{InsertPoint=p.StartPoint,Height=p.Height,Value=p.Text,Rotation=Math.Atan2(p.TextDirection.Y,p.TextDirection.X),Normal=p.Normal,WidthFactor=p.WidthFactor},
                 ProxyUnicodeText p=>new TextEntity{InsertPoint=p.StartPoint,Height=p.Height,Value=p.Text,Rotation=Math.Atan2(p.TextDirection.Y,p.TextDirection.X),Normal=p.Normal,WidthFactor=p.WidthFactor},
                 ProxyUnicodeText2 p=>new TextEntity{InsertPoint=p.StartPoint,Height=p.Height,Value=p.Text,Rotation=Math.Atan2(p.TextDirection.Y,p.TextDirection.X),Normal=p.Normal,WidthFactor=p.WidthFactor,
-                  Style=new TextStyle("proxy-font"){Filename=p.FontDescriptor.FontFilename??p.FontDescriptor.Typeface??"",BigFontFilename=p.BigFontFilename??""}},
+                  Style=new TextStyle("proxy-font"){Filename=string.IsNullOrEmpty(p.FontDescriptor.FontFilename)?p.FontDescriptor.Typeface??"":p.FontDescriptor.FontFilename,BigFontFilename=p.BigFontFilename??""}},
                 _=>null
             };
             if(presentation is not null) {
@@ -748,6 +789,19 @@ static class Program
     }
     static void Display2DSelfTest(string folder)
     {
+        // Near-pole normals must use the same OCS orientation as exact axes.
+        // The pinned helper previously evaluated the 1/64 threshold as integer zero.
+        foreach(var (normal,expectedX) in new[]{
+            (XYZ.AxisZ,XYZ.AxisX),(-XYZ.AxisZ,-XYZ.AxisX),
+            (new XYZ(1e-28,-2e-28,1),XYZ.AxisX),
+            (new XYZ(1e-28,-2e-28,-1),-XYZ.AxisX),
+            (new XYZ(0,0.01,1),XYZ.AxisX),
+            (new XYZ(1,0,1),XYZ.AxisY)}) {
+            var basis=Matrix4.GetArbitraryAxis(normal);
+            if((basis*XYZ.AxisX-expectedX).GetLength()>1e-12 ||
+               (basis*XYZ.AxisZ-normal.Normalize()).GetLength()>1e-12)
+                throw new InvalidDataException("OCS arbitrary-axis orientation changed");
+        }
         var document=new CadDocument(ACadVersion.AC1027);
         var block=new BlockRecord("NonzeroBase");
         block.BlockEntity.BasePoint=new XYZ(1,2,0);
@@ -774,6 +828,13 @@ static class Program
         var normalInsert=new Insert(block){InsertPoint=new XYZ(10,20,3),Normal=new XYZ(0,0,-1),XScale=2,YScale=3,Rotation=Math.PI/2};
         if((InsertTransform(normalInsert).ApplyTransform(new XYZ(3,5,0))-new XYZ(-1,24,-3)).GetLength()>1e-9)
             throw new InvalidDataException("Reversed extrusion block moved");
+        foreach(var sign in new[]{1.0,-1.0}) {
+            normalInsert.Normal=new XYZ(0,0,sign);
+            var exact=InsertTransform(normalInsert).ApplyTransform(new XYZ(3,5,0));
+            normalInsert.Normal=new XYZ(1e-28,-2e-28,sign);
+            if((InsertTransform(normalInsert).ApplyTransform(new XYZ(3,5,0))-exact).GetLength()>1e-9)
+                throw new InvalidDataException("Near-pole rotated scaled block moved");
+        }
         List<XYZ> Square(double x,double y,double width)=>[new XYZ(x,y,0),new XYZ(x+width,y,0),new XYZ(x+width,y+width,0),new XYZ(x,y+width,0),new XYZ(x,y,0)];
         var rings=new List<List<XYZ>>{Square(0,0,10),Square(2,2,6),Square(4,4,2),Square(20,0,5)};
         if(!FillLoops(rings,HatchStyleType.Normal).SequenceEqual(new[]{0,1,2,3}) ||
@@ -983,7 +1044,7 @@ static class Program
                 string id="linetype-"+H(line);
                 Emit("lineTypes",id,new{id,name=line.Name,segments=line.Segments.Select(s=>new{kind=s.Length==0?"dot":s.Length<0?"gap":"dash",length=Math.Abs(s.Length)}).ToArray(),unit="drawing-unit"});
             }
-            foreach(var style in doc.TextStyles) Emit("nativeFonts",H(style),new{handle=H(style),style.Name,style.Filename,style.BigFontFilename,style.Height,style.Width,style.ObliqueAngle});
+            foreach(var style in doc.TextStyles) Emit("nativeFonts",H(style),new{handle=H(style),style.Name,style.Filename,style.BigFontFilename,style.Height,style.Width,style.ObliqueAngle,fontFamily=FontFamily(style)});
             foreach(var block in doc.BlockRecords) if(reachable.Contains(block.Handle)) {
                 string space=spaces[block.Handle],bid="block-"+H(block);
                 string kind=block==doc.ModelSpace?"model":block.Name.StartsWith("*Paper_Space",StringComparison.OrdinalIgnoreCase)?"paper":"block";
