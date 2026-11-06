@@ -748,6 +748,19 @@ static class Program
     }
     static void Display2DSelfTest(string folder)
     {
+        // Near-pole normals must use the same OCS orientation as exact axes.
+        // The pinned helper previously evaluated the 1/64 threshold as integer zero.
+        foreach(var (normal,expectedX) in new[]{
+            (XYZ.AxisZ,XYZ.AxisX),(-XYZ.AxisZ,-XYZ.AxisX),
+            (new XYZ(1e-28,-2e-28,1),XYZ.AxisX),
+            (new XYZ(1e-28,-2e-28,-1),-XYZ.AxisX),
+            (new XYZ(0,0.01,1),XYZ.AxisX),
+            (new XYZ(1,0,1),XYZ.AxisY)}) {
+            var basis=Matrix4.GetArbitraryAxis(normal);
+            if((basis*XYZ.AxisX-expectedX).GetLength()>1e-12 ||
+               (basis*XYZ.AxisZ-normal.Normalize()).GetLength()>1e-12)
+                throw new InvalidDataException("OCS arbitrary-axis orientation changed");
+        }
         var document=new CadDocument(ACadVersion.AC1027);
         var block=new BlockRecord("NonzeroBase");
         block.BlockEntity.BasePoint=new XYZ(1,2,0);
@@ -774,6 +787,13 @@ static class Program
         var normalInsert=new Insert(block){InsertPoint=new XYZ(10,20,3),Normal=new XYZ(0,0,-1),XScale=2,YScale=3,Rotation=Math.PI/2};
         if((InsertTransform(normalInsert).ApplyTransform(new XYZ(3,5,0))-new XYZ(-1,24,-3)).GetLength()>1e-9)
             throw new InvalidDataException("Reversed extrusion block moved");
+        foreach(var sign in new[]{1.0,-1.0}) {
+            normalInsert.Normal=new XYZ(0,0,sign);
+            var exact=InsertTransform(normalInsert).ApplyTransform(new XYZ(3,5,0));
+            normalInsert.Normal=new XYZ(1e-28,-2e-28,sign);
+            if((InsertTransform(normalInsert).ApplyTransform(new XYZ(3,5,0))-exact).GetLength()>1e-9)
+                throw new InvalidDataException("Near-pole rotated scaled block moved");
+        }
         List<XYZ> Square(double x,double y,double width)=>[new XYZ(x,y,0),new XYZ(x+width,y,0),new XYZ(x+width,y+width,0),new XYZ(x,y+width,0),new XYZ(x,y,0)];
         var rings=new List<List<XYZ>>{Square(0,0,10),Square(2,2,6),Square(4,4,2),Square(20,0,5)};
         if(!FillLoops(rings,HatchStyleType.Normal).SequenceEqual(new[]{0,1,2,3}) ||
