@@ -7,8 +7,8 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { HUB_DASH_PROJECT_MAX_LENGTH, PLAN_BOARD_CATEGORY_LIMIT, PLAN_BOARD_NOTE_LIMIT, SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, UserPreferencesUpdateBodySchema, WORKSPACE_OPEN_PROJECTS_LIMIT } from "@libiaolink/contracts";
-import type { MyPlanNote } from "@libiaolink/contracts";
+import { HUB_DASH_PROJECT_MAX_LENGTH, PAGE_EXPORT_PRESET_LIMIT, PLAN_BOARD_CATEGORY_LIMIT, PLAN_BOARD_NOTE_LIMIT, SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, UserPreferencesUpdateBodySchema, WORKSPACE_OPEN_PROJECTS_LIMIT } from "@libiaolink/contracts";
+import type { MyPlanNote, PageExportPreset } from "@libiaolink/contracts";
 import type { SavedHomeFilter } from "@libiaolink/contracts";
 import { UserPreferenceService } from "../src/modules/identity/user-preference.service.js";
 import type { UserPreferenceRepository, UserPreferenceRow } from "../src/modules/identity/user-preference.repository.js";
@@ -74,10 +74,64 @@ function filterOf(index: number, name?: string): SavedHomeFilter {
   };
 }
 
+function presetOf(index: number, name?: string): PageExportPreset {
+  return {
+    id: "pe-" + String(index),
+    name: name ?? "方案" + String(index),
+    sheets: [{ sheet: "reports", columns: ["date", "photos"] }],
+  };
+}
+
 describe("用户偏好（A4 / A24）", () => {
   it("无行：返回契约默认值 + updatedAt null", async () => {
     const { service } = makeService();
-    expect(await service.get(USER_ID)).toEqual({ taskTableHiddenColumns: [], homeSavedFilters: [], focusMode: false, workspaceOpenProjects: { tasks: [], raised: [] }, myPlanBoard: { notes: [], categories: [], bg: "white", updatedAt: null }, revisions: {}, backgroundTier: "medium", cardWatermark: false, locale: "zh", hubView: "map", hubDashProject: null, hubDashView: "progress", updatedAt: null });
+    expect(await service.get(USER_ID)).toEqual({ taskTableHiddenColumns: [], homeSavedFilters: [], pageExportPresets: [], focusMode: false, workspaceOpenProjects: { tasks: [], raised: [] }, myPlanBoard: { notes: [], categories: [], bg: "white", updatedAt: null }, revisions: {}, backgroundTier: "medium", cardWatermark: false, locale: "zh", hubView: "map", hubDashProject: null, hubDashView: "progress", updatedAt: null });
+  });
+
+  it("页面导出方案：整体替换、按账号跨项目保存；必须带 revision，缺基线 400、旧基线 409", async () => {
+    const { service, repo } = makeService();
+    await expect(service.update(USER_ID, { pageExportPresets: [presetOf(1)] })).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    const first = await service.update(USER_ID, { pageExportPresets: [presetOf(1)], expectedRevisions: { pageExportPresets: 0 } }, AT);
+    expect(first.pageExportPresets).toEqual([presetOf(1)]);
+    expect(first.revisions.pageExportPresets).toBe(1);
+    expect(repo.rows.get(USER_ID)?.prefs).toMatchObject({ pageExportPresets: [presetOf(1)] });
+    await expect(service.update(USER_ID, { pageExportPresets: [presetOf(2)], expectedRevisions: { pageExportPresets: 0 } }, AT)).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    const second = await service.update(USER_ID, { pageExportPresets: [presetOf(2)], expectedRevisions: { pageExportPresets: 1 } }, AT);
+    expect(second.pageExportPresets).toEqual([presetOf(2)]);
+    expect(second.revisions.pageExportPresets).toBe(2);
+  });
+
+  it("页面导出方案：上限 20 个 / 名称 20 字；读侧坏项丢弃、重复 id 只留第一条", async () => {
+    const many = Array.from({ length: PAGE_EXPORT_PRESET_LIMIT + 1 }, (_value, index) => presetOf(index));
+    expect(UserPreferencesUpdateBodySchema.safeParse({ pageExportPresets: many }).success).toBe(false);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ pageExportPresets: [presetOf(1, "一二三四五六七八九十一二三四五六七八九十一")] }).success).toBe(false);
+    expect(UserPreferencesUpdateBodySchema.safeParse({ pageExportPresets: [presetOf(1, "一二三四五六七八九十一二三四五六七八九十")] }).success).toBe(true);
+
+    const { service, repo } = makeService();
+    repo.rows.set(USER_ID, {
+      userId: USER_ID,
+      prefs: {
+        pageExportPresets: [
+          presetOf(1),
+          { ...presetOf(1), name: "重复 id" },
+          { ...presetOf(3), sheets: [{ sheet: "reports", columns: ["unknown"] }] },
+          { id: "pe-4", name: "缺 sheets" },
+        ],
+      },
+      updatedAt: AT,
+    } as unknown as UserPreferenceRow);
+    const prefs = await service.get(USER_ID);
+    expect(prefs.pageExportPresets).toEqual([presetOf(1)]);
+  });
+
+  it("页面导出方案并发保存：同一基线只成功一个，失败方不能覆盖", async () => {
+    const { service } = makeService();
+    const writes = await Promise.allSettled([
+      service.update(USER_ID, { pageExportPresets: [presetOf(1)], expectedRevisions: { pageExportPresets: 0 } }),
+      service.update(USER_ID, { pageExportPresets: [presetOf(2)], expectedRevisions: { pageExportPresets: 0 } }),
+    ]);
+    expect(writes.filter((item) => item.status === "fulfilled")).toHaveLength(1);
+    expect((await service.get(USER_ID)).pageExportPresets).toEqual([presetOf(1)]);
   });
 
   it("首次 PATCH 只传 homeSavedFilters：数组整体落库，updatedAt 为写入时间", async () => {

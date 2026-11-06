@@ -166,6 +166,7 @@ import {
 } from "./modules/flow.ts";
 import { CallbackQuerySchema, LoginQuerySchema, MeResponseSchema } from "./modules/identity.ts";
 import { UserListQuerySchema, UserListResponseSchema, UserPreferencesSchema, UserPreferencesUpdateBodySchema } from "./modules/users.ts";
+import { PageExportCatalogResponseSchema, PageExportRequestSchema } from "./modules/page-exports.ts";
 import {
   DictItemCreateBodySchema,
   DictItemUpdateBodySchema,
@@ -829,7 +830,7 @@ export function buildOpenApiDocument() {
     method: "get",
     path: "/api/v1/users/me/preferences",
     tags: ["users"],
-    summary: "读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式 / 工作台展开态 / 背景档位 / 卡片水印）",
+    summary: "读取当前用户偏好（任务表列显隐 / 常用筛选 / 页面导出方案 / 工作台展开态 / 背景档位 / 卡片水印等）",
     responses: {
       200: { description: "偏好全量", ...json(UserPreferencesSchema) },
       401: commonErrors[401],
@@ -847,6 +848,44 @@ export function buildOpenApiDocument() {
       400: commonErrors[400],
       401: commonErrors[401],
       409: commonErrors[409],
+    },
+  });
+
+  const xlsxResponse = {
+    content: {
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+        schema: { type: "string", format: "binary" },
+      },
+    },
+  } as const;
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/projects/{id}/page-exports/catalog",
+    tags: ["projects"],
+    summary: "页面级 Excel 导出目录（日报记录 / 问题追踪 / 干系人：可选 Sheet、列、字段权限与记录数）",
+    request: { params: idParams },
+    responses: {
+      200: { description: "导出目录", ...json(PageExportCatalogResponseSchema) },
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/page-exports",
+    tags: ["projects"],
+    summary: "页面级 Excel 导出（1～3 个 Sheet；每个 Sheet 使用勾选列及列顺序；不支持扩展列）",
+    request: { params: idParams, body: json(PageExportRequestSchema) },
+    responses: {
+      200: { description: "xlsx 文件流", ...xlsxResponse },
+      400: commonErrors[400],
+      401: commonErrors[401],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      429: errorResponse("同一时间已有大项目流式导出（RATE_LIMITED）"),
     },
   });
 
