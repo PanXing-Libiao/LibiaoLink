@@ -1,5 +1,5 @@
 import {decodeManifestBytes} from './manifest-decode.js';
-import {manifestParts} from './manifest-parts.js';
+import {manifestParts} from './manifest-parts.js?v=cad-handoff-1';
 let parts,timing;
 self.onmessage=({data})=>{
  try{

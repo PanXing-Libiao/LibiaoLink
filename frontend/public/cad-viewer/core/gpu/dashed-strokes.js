@@ -106,11 +106,43 @@ void main(){
   const buffer=gl.createBuffer(),vao=gl.createVertexArray();gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
   gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,4,gl.FLOAT,false,20,0);gl.vertexAttribDivisor(0,1);
   gl.enableVertexAttribArray(1);gl.vertexAttribPointer(1,1,gl.FLOAT,false,20,16);gl.vertexAttribDivisor(1,1);
+  // Union one dashed stroke in an isolated target, then source-over it onto
+  // the shared stroke canvas. This preserves round-join coverage without a
+  // GPU -> Canvas handoff at every dashed batch.
+  const target=gl.createFramebuffer(),texture=gl.createTexture(),copyVAO=gl.createVertexArray();
+  let targetWidth=0,targetHeight=0;
+  const copyProgram=gl.createProgram();
+  const copyVertex=compile(gl.VERTEX_SHADER,`#version 300 es
+  void main(){vec2 p=gl_VertexID==0?vec2(-1.,-1.):gl_VertexID==1?vec2(3.,-1.):vec2(-1.,3.);gl_Position=vec4(p,0.,1.);}`);
+  const copyFragment=compile(gl.FRAGMENT_SHADER,`#version 300 es
+  precision highp float;
+  uniform sampler2D source;
+  out vec4 result;
+  void main(){result=texelFetch(source,ivec2(gl_FragCoord.xy),0);}`);
+  gl.attachShader(copyProgram,copyVertex);gl.attachShader(copyProgram,copyFragment);gl.linkProgram(copyProgram);
+  if(!gl.getProgramParameter(copyProgram,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(copyProgram));
+  gl.deleteShader(copyVertex);gl.deleteShader(copyFragment);
+  gl.bindTexture(gl.TEXTURE_2D,texture);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
   function draw(entry,view,matrix){
     const pattern=normalizedDash(entry.dash),scale=dashViewScale(matrix,view);
     if(!scale||pattern.length>MAX_DASH_VALUES)return null;
     const data=dashSegmentsForView(entry.records,pattern,matrix,view,canvas.width/view.dpr,canvas.height/view.dpr,entry.width);
     if(!data.length)return 0;
+    gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,texture);
+    if(targetWidth!==canvas.width||targetHeight!==canvas.height){
+      targetWidth=canvas.width;targetHeight=canvas.height;
+      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,targetWidth,targetHeight,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+    }
+    let left=Infinity,top=Infinity,right=-Infinity,bottom=-Infinity;
+    for(let i=0;i<data.length;i+=5){left=Math.min(left,data[i],data[i+2]);right=Math.max(right,data[i],data[i+2]);top=Math.min(top,data[i+1],data[i+3]);bottom=Math.max(bottom,data[i+1],data[i+3]);}
+    const pad=entry.width*view.dpr*.5+3;
+    left=Math.max(0,Math.floor(left*view.dpr-pad));right=Math.min(canvas.width,Math.ceil(right*view.dpr+pad));
+    top=Math.max(0,Math.floor(top*view.dpr-pad));bottom=Math.min(canvas.height,Math.ceil(bottom*view.dpr+pad));
+    gl.bindFramebuffer(gl.FRAMEBUFFER,target);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,texture,0);
+    gl.enable(gl.SCISSOR_TEST);gl.scissor(left,canvas.height-bottom,Math.max(0,right-left),Math.max(0,bottom-top));
+    gl.clear(gl.COLOR_BUFFER_BIT);
     const ranges=new Float32Array(32);let at=0;
     for(let i=0;i<pattern.length;i++){if(i%2===0)ranges[i]=at*scale;at+=pattern[i];if(i%2===0)ranges[i+1]=at*scale;}
     const color=entry.color.match(/[\d.]+/g).slice(0,3).map(x=>Number(x)/255);
@@ -120,7 +152,10 @@ void main(){
     // A single Canvas stroke unions its subpaths. MAX prevents overlapping
     // caps/joins of the same batch from repeatedly darkening antialiased pixels.
     gl.blendEquation(gl.MAX);gl.drawArraysInstanced(gl.TRIANGLES,0,6,data.length/5);
-    gl.blendEquation(gl.FUNC_ADD);return data.length/5;
+    gl.blendEquation(gl.FUNC_ADD);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.useProgram(copyProgram);gl.bindVertexArray(copyVAO);
+    gl.drawArrays(gl.TRIANGLES,0,3);gl.disable(gl.SCISSOR_TEST);
+    return data.length/5;
   }
-  return {draw,dispose(){gl.deleteBuffer(buffer);gl.deleteVertexArray(vao);gl.deleteProgram(program);}};
+  return {draw,dispose(){gl.deleteBuffer(buffer);gl.deleteVertexArray(vao);gl.deleteProgram(program);gl.deleteFramebuffer(target);gl.deleteTexture(texture);gl.deleteVertexArray(copyVAO);gl.deleteProgram(copyProgram);}};
 }
