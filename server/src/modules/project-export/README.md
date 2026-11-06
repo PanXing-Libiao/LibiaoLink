@@ -3,11 +3,11 @@
 | 字段 | 内容 |
 |---|---|
 | 类型 | 领域模块（只读聚合） |
-| 职责 | 把一个项目的任务、日报 / 问题、变更、干系人导出为单个 xlsx；模板对齐现用企微智能表格导出的四张表。小项目内存生成并嵌图，大项目流式写临时文件并把附图改为文件链接 |
+| 职责 | 把一个项目的任务、日报 / 问题、变更、干系人导出为单个 xlsx；另支持按日报记录 / 问题追踪 / 干系人页面勾选 Sheet 与列导出。小项目内存生成并嵌图，大项目流式写临时文件并把附图改为文件链接 |
 | 上游 | project / task / report-issue / stakeholder / file / identity（用户显示名）/ admin（审计） |
-| HTTP | `GET /api/v1/projects/{id}/export?origin={站点 origin}` |
-| 权限 | `project.export`（`RequirePermission` + `ProjectAccessGuard`；服务端仍按项目可见性裁决） |
-| 审计 | 成功生成后写 `audit_logs`：`action=download`、`objectType=project`、`objectId/projectId=项目 id`，metadata 记格式、Sheet、行数与图片数 |
+| HTTP | 项目全量：`GET /api/v1/projects/{id}/export?origin={站点 origin}`；页面级：`GET /api/v1/projects/{id}/page-exports/catalog`、`POST /api/v1/projects/{id}/page-exports` |
+| 权限 | `project.export`（`RequirePermission` + `ProjectAccessGuard`；服务端仍按项目可见性裁决）；页面级另按 `report.view` / `issue.view` / `stakeholder.view` 与干系人字段级权限逐列校验 |
+| 审计 | 成功生成后写 `audit_logs`：`action=download`、`objectType=project`、`objectId/projectId=项目 id`，metadata 记格式、Sheet、行数与图片数；页面级另记 `feature=page_export` 与每个 Sheet 的列 key |
 
 ## 响应与文件名
 
@@ -34,6 +34,18 @@
 4. `干系人`（7 列）：干系人姓名/name / 电话或whats app或微信号 / 邮箱Email / 职务Position/责任板块 / 所属公司company / 填写者 / 提交时间
 
 前三张 Sheet 冻结首行首列（`B1`），干系人表不冻结。
+
+## 页面级导出（日报记录 / 问题追踪 / 干系人）
+
+- 入口：三个页面共用 `PageExportButton`；打开时默认选中当前页面，可再勾选其余页面，最终生成一个多 Sheet xlsx。用户可逐页勾选列并用上下箭头调整列顺序。
+- 列范围（仅页面当前列，不支持扩展列）：
+  - `日报记录`：时间 / 填写者 / 关联阶段 / 当日完成工作 / 明日计划 / 现场工作附图
+  - `问题追踪`：日期 / 问题描述 / 问题归类 / 问题处理人 / 解决方案或建议 / 问题附图 / 问题是否处理
+  - `干系人`：干系人姓名 / 电话（含 WhatsApp）/ 微信 / 邮箱 / 职务 / 所属公司 / 填写者 / 干系人角色
+- `GET .../catalog` 返回固定三页的列目录、当前账号列可用性与记录数；无页面权限时 `allowed=false` 且行数为 0。`POST` 请求体为 `{ origin?, sheets: [{ sheet, columns }] }`，列顺序即 Excel 列顺序；空列、未知列、重复列、重复 Sheet 由契约拒绝，携带无权列返回 403，不静默丢列。
+- 导出范围 = 该项目对应页面全部记录，不跟随页面搜索框；记录上限沿用单类 20,000 条。页数总量与 `PROJECT_EXPORT_MODE` 同样决定内存 / 流式；流式导出与项目全量导出共用同一并发槽。
+- 图片列沿用项目导出策略：内存模式嵌图，流式模式写文件名与项目文件视图链接；图片与缺失占位限制不变。
+- 导出方案由前端保存到当前账号的 `user_preferences.prefs.pageExportPresets`（最多 20 个、名称 ≤ 20 字），只存 Sheet 与列顺序，不绑定项目；跨项目 / 跨设备复用，应用时自动忽略当前账号无权或已下线的列。
 
 ## 字段口径
 
@@ -65,3 +77,4 @@
 ## 测试
 
 - `server/test/project-export.test.ts`：四表名称与列序、关键字段、文件超链接、嵌入图、多图网格不重叠、缺失图占位、草稿日期、文件名 / origin / Content-Disposition；流式工作簿落盘、附图改文件链接、auto / legacy / stream 模式判定。
+- `server/test/page-export.test.ts`：页面列目录与契约同源、日报 / 干系人不含扩展字段、权限过滤、请求校验、跨 Sheet 列序、分页上限、嵌图 / 流式链接与并发槽。

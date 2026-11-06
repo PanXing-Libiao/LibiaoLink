@@ -317,6 +317,7 @@ describe("项目导出的命名与请求边界", () => {
       { list } as never,
       { listProjectFiles: list } as never,
       { listUsers: list } as never,
+      { can: vi.fn().mockResolvedValue(true) } as never,
       audit as never,
       { db: {} } as never,
       {} as never,

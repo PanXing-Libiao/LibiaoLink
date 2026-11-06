@@ -38,6 +38,7 @@ import { RowDeleteButton } from "./RowDeleteButton";
 import { RowEditButton } from "./RowEditButton";
 import { ScrollArea } from "./ScrollArea";
 import { SearchInput } from "./SearchInput";
+import { PageExportButton } from "./PageExportButton";
 import { useFocusTrap } from "./useFocusTrap";
 import type { Member } from "../data/members";
 import type { MeResponse, Project } from "../types";
@@ -3874,8 +3875,11 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, focusRep
                   : t("report.records.hintFound", { found: visibleReports.length, total: reports.length })
               }
             />
-            <div data-report-search="" className="w-full sm:ml-auto sm:w-72">
-              <SearchInput value={recordKeyword} onChange={setRecordKeyword} placeholder={t("report.records.search")} className="w-full" />
+            <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:flex-row sm:items-center">
+              <PageExportButton projectId={project.id} initialSheet="reports" />
+              <div data-report-search="" className="w-full sm:w-72">
+                <SearchInput value={recordKeyword} onChange={setRecordKeyword} placeholder={t("report.records.search")} className="w-full" />
+              </div>
             </div>
           </div>
           {reports.length === 0 ? (
@@ -3898,8 +3902,11 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, focusRep
                   : t("report.issues.hintFound", { found: visibleIssues.length, total: issues.length })
               }
             />
-            <div data-issue-search="" className="w-full sm:ml-auto sm:w-72">
-              <SearchInput value={issueKeyword} onChange={setIssueKeyword} placeholder={t("report.issues.search")} className="w-full" />
+            <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:flex-row sm:items-center">
+              <PageExportButton projectId={project.id} initialSheet="issues" />
+              <div data-issue-search="" className="w-full sm:w-72">
+                <SearchInput value={issueKeyword} onChange={setIssueKeyword} placeholder={t("report.issues.search")} className="w-full" />
+              </div>
             </div>
           </div>
           {issues.length === 0 ? (
