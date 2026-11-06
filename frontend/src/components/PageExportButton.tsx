@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ApiError } from "../api";
+import { usePhotoUrl } from "../fileApi";
 import { textOf, useLocale, useT } from "../i18n";
 import {
+  PAGE_EXPORT_PREVIEW_PHOTO_LIMIT,
+  PAGE_EXPORT_PREVIEW_ROW_LIMIT,
   downloadPageExport,
   fetchPageExportCatalog,
   type PageExportCatalogColumn,
@@ -10,6 +13,8 @@ import {
   type PageExportCatalogResponse,
   type PageExportPreset,
   type PageExportPreviewCell,
+  type PageExportPreviewPhoto,
+  type PageExportPreviewPhotoCell,
   type PageExportPreviewRow,
   type PageExportSheetKey,
   type PageExportSheetSelection,
@@ -91,13 +96,92 @@ function previewWidth(sheet: PageExportSheetKey, column: string): number {
   return widths[column] ?? 140;
 }
 
-function previewCellText(value: PageExportPreviewCell | undefined): string {
+function previewCellText(value: string | number | null | undefined): string {
   if (value === null || value === undefined) return "—";
   if (typeof value === "number") return value.toLocaleString("zh-CN");
   return value.trim() === "" ? "—" : value;
 }
 
+function isPhotoCell(value: PageExportPreviewCell | undefined): value is PageExportPreviewPhotoCell {
+  return typeof value === "object" && value !== null && value.kind === "photos";
+}
+
+function PreviewPhotoImage({ photo }: { photo: PageExportPreviewPhoto }) {
+  const url = usePhotoUrl(photo.fileId, null);
+  if (url === null) {
+    return <span aria-hidden="true" className="block h-full w-full animate-pulse bg-zinc-100" />;
+  }
+  return (
+    <img
+      src={url}
+      alt={photo.name}
+      title={photo.name}
+      loading="lazy"
+      className="block h-full w-full object-cover"
+    />
+  );
+}
+
+/** 视口接近时才挂载签名请求，避免一次预览为全部行批量取缩略图。 */
+function PreviewPhotoThumb({ photo }: { photo: PageExportPreviewPhoto }) {
+  const [visible, setVisible] = useState(false);
+  const holderRef = useRef<HTMLSpanElement | null>(null);
+
+  useEffect(() => {
+    if (visible) return undefined;
+    const holder = holderRef.current;
+    if (holder === null) return undefined;
+    if (typeof IntersectionObserver === "undefined") {
+      setVisible(true);
+      return undefined;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setVisible(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: "200px" });
+    observer.observe(holder);
+    return () => observer.disconnect();
+  }, [visible]);
+
+  return (
+    <span
+      ref={holderRef}
+      data-page-export-preview-photo={photo.name}
+      className="block h-10 w-10 overflow-hidden rounded-md border border-zinc-200 bg-zinc-100"
+    >
+      {visible ? <PreviewPhotoImage photo={photo} /> : <span aria-hidden="true" className="block h-full w-full animate-pulse bg-zinc-100" />}
+    </span>
+  );
+}
+
+function PreviewPhotos({ cell }: { cell: PageExportPreviewPhotoCell }) {
+  const t = useT();
+  if (cell.total === 0) return <span className="text-zinc-400">—</span>;
+  const items = cell.items.slice(0, PAGE_EXPORT_PREVIEW_PHOTO_LIMIT);
+  const remaining = Math.max(0, cell.total - items.length);
+  return (
+    <span className="flex flex-col items-start gap-1">
+      <span className="grid grid-cols-2 gap-1">
+        {items.map((photo, index) => (
+          <PreviewPhotoThumb key={photo.fileId + "#" + String(index)} photo={photo} />
+        ))}
+      </span>
+      {remaining > 0 ? (
+        <span
+          title={t("pageExport.preview.morePhotos", { n: remaining })}
+          className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-zinc-600"
+        >
+          +{remaining}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 function PreviewCell({ value }: { value: PageExportPreviewCell | undefined }) {
+  if (isPhotoCell(value)) return <PreviewPhotos cell={value} />;
   const text = previewCellText(value);
   return <span className="line-clamp-3 whitespace-pre-wrap break-words" title={text}>{text}</span>;
 }
@@ -552,7 +636,9 @@ export function PageExportButton({ projectId, initialSheet }: PageExportButtonPr
                   <div className="flex flex-wrap items-start gap-3">
                     <div className="min-w-0 flex-1">
                       <h3 className="text-sm font-semibold text-zinc-900">{t("pageExport.preview.title")}</h3>
-                      <p className="mt-0.5 text-[11px] leading-5 text-zinc-500">{t("pageExport.preview.subtitle")}</p>
+                      <p className="mt-0.5 text-[11px] leading-5 text-zinc-500">
+                        {t("pageExport.preview.subtitle", { n: PAGE_EXPORT_PREVIEW_ROW_LIMIT })}
+                      </p>
                     </div>
                     <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-medium text-zinc-500">
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />

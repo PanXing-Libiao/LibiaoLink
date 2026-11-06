@@ -2,14 +2,17 @@ import { Injectable, Logger, type OnModuleInit } from "@nestjs/common";
 import { chmod, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type {
-  DailyReport,
-  Issue,
-  PageExportCatalogResponse,
-  PageExportPreviewRow,
-  PageExportSheetKey,
-  PageExportSheetSelection,
-  PermissionKey,
+import {
+  PAGE_EXPORT_PREVIEW_PHOTO_LIMIT,
+  PAGE_EXPORT_PREVIEW_ROW_LIMIT,
+  type DailyReport,
+  type Issue,
+  type PageExportCatalogResponse,
+  type PageExportPreviewPhotoCell,
+  type PageExportPreviewRow,
+  type PageExportSheetKey,
+  type PageExportSheetSelection,
+  type PermissionKey,
 } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import { AppConfig } from "../../config/config.module.js";
@@ -68,7 +71,6 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_TOTAL_IMAGE_BYTES = 80 * 1024 * 1024;
 const TEMP_EXPORT_PREFIX = "libiaolink-project-export-";
 const STALE_TEMP_EXPORT_MS = 60 * 60 * 1000;
-const PAGE_EXPORT_PREVIEW_LIMIT = 3;
 const PAGE_EXPORT_PREVIEW_TEXT_MAX = 240;
 
 export type ProjectExportModeSetting = "auto" | "legacy" | "stream";
@@ -385,18 +387,18 @@ export class ProjectExportService implements OnModuleInit {
   ): Promise<{ rowCount: number; rows: PageExportMappedRow[] }> {
     const users = new Map<string, ProjectExportUserLabel>();
     if (sheet === "reports") {
-      const result = await this.reports.list(projectId, { page: 1, limit: PAGE_EXPORT_PREVIEW_LIMIT });
-      return { rowCount: result.total, rows: result.items.slice(0, PAGE_EXPORT_PREVIEW_LIMIT).map((report) => pageReportRow(report, users)) };
+      const result = await this.reports.list(projectId, { page: 1, limit: PAGE_EXPORT_PREVIEW_ROW_LIMIT });
+      return { rowCount: result.total, rows: result.items.slice(0, PAGE_EXPORT_PREVIEW_ROW_LIMIT).map((report) => pageReportRow(report, users)) };
     }
     if (sheet === "issues") {
-      const result = await this.issues.list(projectId, { page: 1, limit: PAGE_EXPORT_PREVIEW_LIMIT });
-      return { rowCount: result.total, rows: result.items.slice(0, PAGE_EXPORT_PREVIEW_LIMIT).map((issue) => pageIssueRow(issue, users)) };
+      const result = await this.issues.list(projectId, { page: 1, limit: PAGE_EXPORT_PREVIEW_ROW_LIMIT });
+      return { rowCount: result.total, rows: result.items.slice(0, PAGE_EXPORT_PREVIEW_ROW_LIMIT).map((issue) => pageIssueRow(issue, users)) };
     }
     const result = await this.stakeholders.list(
-      { "filter[projectId]": projectId, page: 1, limit: PAGE_EXPORT_PREVIEW_LIMIT },
+      { "filter[projectId]": projectId, page: 1, limit: PAGE_EXPORT_PREVIEW_ROW_LIMIT },
       actorId,
     );
-    return { rowCount: result.total, rows: result.items.slice(0, PAGE_EXPORT_PREVIEW_LIMIT).map((item) => pageStakeholderRow(item, users)) };
+    return { rowCount: result.total, rows: result.items.slice(0, PAGE_EXPORT_PREVIEW_ROW_LIMIT).map((item) => pageStakeholderRow(item, users)) };
   }
 
   private pageExportPreviewRow(
@@ -407,7 +409,16 @@ export class ProjectExportService implements OnModuleInit {
     for (const key of allowedColumnKeys) {
       const photos = row.photos[key];
       if (photos !== undefined) {
-        result[key] = photos.length === 0 ? "" : String(photos.length) + " 张图片";
+        if (photos.length === 0) {
+          result[key] = "";
+        } else {
+          const photoCell: PageExportPreviewPhotoCell = {
+            kind: "photos",
+            total: photos.length,
+            items: photos.slice(0, PAGE_EXPORT_PREVIEW_PHOTO_LIMIT).map((photo) => ({ fileId: photo.fileId, name: photo.name })),
+          };
+          result[key] = photoCell;
+        }
         continue;
       }
       const value = row.values[key] ?? null;

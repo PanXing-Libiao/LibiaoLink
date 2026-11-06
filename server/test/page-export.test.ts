@@ -3,6 +3,8 @@ import { access, rm } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 import {
   PAGE_EXPORT_COLUMN_KEYS,
+  PAGE_EXPORT_PREVIEW_PHOTO_LIMIT,
+  PAGE_EXPORT_PREVIEW_ROW_LIMIT,
   PageExportRequestSchema,
   type DailyReport,
   type Issue,
@@ -215,7 +217,14 @@ describe("页面级 Excel 导出契约", () => {
       stageNames: "硬件实施、软件部署",
       doneWork: "完成现场勘查",
       plan: "开始安装",
-      photos: "2 张图片",
+      photos: {
+        kind: "photos",
+        total: 2,
+        items: [
+          { fileId: IMAGE_ID, name: "现场.png" },
+          { fileId: MISSING_IMAGE_ID, name: "缺失.jpg" },
+        ],
+      },
     }]);
     expect(catalog.sheets[1]?.previewRows).toEqual([]);
     const stakeholderPreview = catalog.sheets[2]?.previewRows?.[0] ?? {};
@@ -225,18 +234,36 @@ describe("页面级 Excel 导出契约", () => {
     expect(stakeholderPreview).not.toHaveProperty("email");
   });
 
-  it("目录预览最多 3 条，长文本截断，不把未授权列带出服务端", async () => {
+  it("目录预览最多 20 条，长文本截断，不把未授权列带出服务端", async () => {
     const longReport = { ...report, doneWork: "长".repeat(300) };
+    const reports = Array.from({ length: PAGE_EXPORT_PREVIEW_ROW_LIMIT + 1 }, (_value, index) => ({
+      ...longReport,
+      id: "88888888-8888-4888-8888-" + String(index).padStart(12, "0"),
+    }));
     const { service, reportsList, projectAccess } = harness({
-      reports: [longReport, { ...longReport, id: "88888888-8888-4888-8888-888888888888" }, { ...longReport, id: "99999999-9999-4999-8999-999999999999" }, { ...longReport, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }],
+      reports,
     });
     const catalog = await service.pageExportCatalog(PROJECT_ID, USER_ID, projectAccess);
     const previews = catalog.sheets[0]?.previewRows ?? [];
-    expect(catalog.sheets[0]?.rowCount).toBe(4);
-    expect(previews).toHaveLength(3);
+    expect(catalog.sheets[0]?.rowCount).toBe(PAGE_EXPORT_PREVIEW_ROW_LIMIT + 1);
+    expect(previews).toHaveLength(PAGE_EXPORT_PREVIEW_ROW_LIMIT);
     expect(String(previews[0]?.doneWork).length).toBe(240);
     expect(String(previews[0]?.doneWork).endsWith("…")).toBe(true);
-    expect(reportsList).toHaveBeenCalledWith(PROJECT_ID, { page: 1, limit: 3 });
+    expect(reportsList).toHaveBeenCalledWith(PROJECT_ID, { page: 1, limit: PAGE_EXPORT_PREVIEW_ROW_LIMIT });
+  });
+
+  it("附图预览最多返回 4 个缩略图引用，并保留真实图片总数", async () => {
+    const photos = Array.from({ length: PAGE_EXPORT_PREVIEW_PHOTO_LIMIT + 2 }, (_value, index) => ({
+      fileId: "aaaaaaaa-aaaa-4aaa-8aaa-" + String(index).padStart(12, "0"),
+      name: "现场" + String(index + 1) + ".png",
+    }));
+    const { service, projectAccess } = harness({ reports: [{ ...report, photos }] });
+    const catalog = await service.pageExportCatalog(PROJECT_ID, USER_ID, projectAccess);
+    expect(catalog.sheets[0]?.previewRows?.[0]?.photos).toEqual({
+      kind: "photos",
+      total: PAGE_EXPORT_PREVIEW_PHOTO_LIMIT + 2,
+      items: photos.slice(0, PAGE_EXPORT_PREVIEW_PHOTO_LIMIT),
+    });
   });
 
   it("请求含无权列时 403，不能静默遗漏或导出空列", async () => {

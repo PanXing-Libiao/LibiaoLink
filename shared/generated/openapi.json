@@ -7125,8 +7125,8 @@
             "items": {
               "$ref": "#/components/schemas/PageExportPreviewRow"
             },
-            "maxItems": 3,
-            "description": "按当前账号列权限生成的中文预览行（最多 3 条）"
+            "maxItems": 20,
+            "description": "按当前账号列权限生成的中文预览行（最多 20 条）"
           }
         },
         "required": [
@@ -7177,9 +7177,61 @@
           },
           {
             "type": "null"
+          },
+          {
+            "$ref": "#/components/schemas/PageExportPreviewPhotoCell"
           }
         ],
-        "description": "导出预览单元格；长文本由服务端截断，附图显示为图片数量"
+        "description": "导出预览单元格；长文本由服务端截断，附图返回受限缩略图引用"
+      },
+      "PageExportPreviewPhoto": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 255
+          }
+        },
+        "required": [
+          "fileId",
+          "name"
+        ],
+        "additionalProperties": false,
+        "description": "预览附图引用；仅用于按权限懒取缩略图，不含对象键或图片二进制"
+      },
+      "PageExportPreviewPhotoCell": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "photos"
+            ]
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PageExportPreviewPhoto"
+            },
+            "maxItems": 4
+          }
+        },
+        "required": [
+          "kind",
+          "total",
+          "items"
+        ],
+        "additionalProperties": false,
+        "description": "附图预览单元格：total 为真实图片数，items 最多 4 个可懒加载缩略图引用"
       },
       "PageExportPreviewRow": {
         "type": "object",

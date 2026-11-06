@@ -1,6 +1,6 @@
 /**
  * 页面级 Excel 导出（日报记录 / 问题追踪 / 干系人）。
- * - GET  catalog：按当前账号权限返回可选 Sheet、列、默认勾选、记录数与最多 3 条中文预览行。
+ * - GET  catalog：按当前账号权限返回可选 Sheet、列、默认勾选、记录数与最多 20 条中文预览行。
  * - POST          ：提交 1～3 个 Sheet 的列 key，返回中文多 Sheet xlsx；列只表达选择，服务端固定按目录顺序生成。
  * 导出方案不绑定项目，存 user_preferences.prefs.pageExportPresets，见 preferencesApi.ts。
  */
@@ -15,7 +15,22 @@ export type PageExportCatalogColumn = {
   allowed: boolean;
 };
 
-export type PageExportPreviewCell = string | number | null;
+/** 与 shared/src/modules/page-exports.ts 的 PAGE_EXPORT_PREVIEW_* 保持同值；前端不直接依赖契约包。 */
+export const PAGE_EXPORT_PREVIEW_ROW_LIMIT = 20;
+export const PAGE_EXPORT_PREVIEW_PHOTO_LIMIT = 4;
+
+export type PageExportPreviewPhoto = {
+  fileId: string;
+  name: string;
+};
+
+export type PageExportPreviewPhotoCell = {
+  kind: "photos";
+  total: number;
+  items: PageExportPreviewPhoto[];
+};
+
+export type PageExportPreviewCell = string | number | null | PageExportPreviewPhotoCell;
 export type PageExportPreviewRow = Record<string, PageExportPreviewCell>;
 
 export type PageExportCatalogSheet = {

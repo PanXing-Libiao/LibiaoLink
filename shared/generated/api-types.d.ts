@@ -11885,7 +11885,7 @@ export interface components {
             /** @description 默认勾选列（已按当前账号列权限过滤） */
             defaultColumns: string[];
             columns: components["schemas"]["PageExportCatalogColumn"][];
-            /** @description 按当前账号列权限生成的中文预览行（最多 3 条） */
+            /** @description 按当前账号列权限生成的中文预览行（最多 20 条） */
             previewRows: components["schemas"]["PageExportPreviewRow"][];
         };
         /** @description 页面导出方案（Sheet + 列选择；导出列顺序由系统目录固定） */
@@ -11896,8 +11896,20 @@ export interface components {
             name: string;
             sheets: components["schemas"]["PageExportSheets"];
         };
-        /** @description 导出预览单元格；长文本由服务端截断，附图显示为图片数量 */
-        PageExportPreviewCell: string | number | null;
+        /** @description 导出预览单元格；长文本由服务端截断，附图返回受限缩略图引用 */
+        PageExportPreviewCell: string | number | null | components["schemas"]["PageExportPreviewPhotoCell"];
+        /** @description 预览附图引用；仅用于按权限懒取缩略图，不含对象键或图片二进制 */
+        PageExportPreviewPhoto: {
+            fileId: string;
+            name: string;
+        };
+        /** @description 附图预览单元格：total 为真实图片数，items 最多 4 个可懒加载缩略图引用 */
+        PageExportPreviewPhotoCell: {
+            /** @enum {string} */
+            kind: "photos";
+            total: number;
+            items: components["schemas"]["PageExportPreviewPhoto"][];
+        };
         /** @description 一条中文页面导出预览行（键为列 key） */
         PageExportPreviewRow: {
             [key: string]: components["schemas"]["PageExportPreviewCell"];
