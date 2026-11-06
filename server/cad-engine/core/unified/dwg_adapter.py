@@ -102,6 +102,38 @@ def infinite_presentation_items(rows, entities):
 VENDOR_EZDXF = Path(__file__).resolve().parent.parent / 'vendor/ezdxf/src'
 
 
+def add_polyline_width_displays(entities, displays, extras, buffer_bytes):
+    """Build source-width bands in entity OCS; INSERT/OCS transforms stay shared."""
+    if str(VENDOR_EZDXF) not in sys.path:
+        sys.path.insert(0, str(VENDOR_EZDXF))
+    from .dxf_stroke import display_parts_from_vertices
+    for key, entity in entities.items():
+        geometry = entity['geometry']
+        if geometry['type'] != 'polyline' or not any(any(w) for w in geometry.get('widths', [])):
+            continue
+        points, widths, bulges = geometry['points'], geometry['widths'], geometry['bulges']
+        stations = [(point[:2], *(widths[i] if i < len(widths) else (0, 0)),
+                     bulges[i] if i < len(bulges) else 0) for i, point in enumerate(points)]
+        batches = display_parts_from_vertices(stations, geometry['closed'], points[0][2], 64, 1000000)
+        parts = {}
+        for positions, indices, topology in batches:
+            role = 'fill' if topology == 'triangles' else 'stroke'
+            part_id = key + '-width-' + role
+            vertices = [positions[index] for primitive in indices for index in primitive]
+            offset = len(buffer_bytes)
+            for point in vertices:
+                buffer_bytes.extend(struct.pack('<3d', *point))
+            displays[part_id] = {'offset':offset, 'byteLength':len(vertices)*24,
+                'count':len(vertices), 'topology':topology,
+                'min':[min(p[axis] for p in vertices) for axis in range(3)],
+                'max':[max(p[axis] for p in vertices) for axis in range(3)],
+                'sourceRefs':entity['sourceRefs']}
+            parts[role] = part_id
+        displays.pop(key, None)
+        extras.setdefault('meshPresentations', {})[key] = {
+            'sourceKind':'POLYLINE', 'fill':parts.get('fill'), 'stroke':parts.get('stroke')}
+
+
 def region_boundary_leaves(raw):
     """Parse retained ACIS bytes through the same planar SAT/SAB reader as DXF.
     Returns (leaves, error); without the optional ACIS stack the caller keeps the
@@ -198,7 +230,7 @@ def _table_by_source_handle(table):
     return rows
 
 
-def source_display_coverage(drawing, displays, presentation_items, summary, native_fonts, fills=None):
+def source_display_coverage(drawing, displays, presentation_items, summary, native_fonts, fills=None, text_layouts=None):
     """Account for every unique native source handle exactly once.
 
     Direct display rows, annotation presentation and block-instance indirection
@@ -327,8 +359,12 @@ def source_display_coverage(drawing, displays, presentation_items, summary, nati
                 "status": "partial" if native_fonts else "complete",
                 "nativeFontRecords": len(native_fonts or {}),
                 "annotationSourceRecords": len(annotation_handles),
-                "originalCompanionsProvided": False,
-                "note": "Geometric objects are accounted for, but source SHX/TTF companions are not supplied; text glyphs and layout remain an explicit substitution.",
+                "originalCompanionsProvided": bool(text_layouts),
+                "originalGlyphLayouts": sum(row["status"] == "ready" and not row.get("linkedCharacters") for row in (text_layouts or {}).values()),
+                "linkedGlyphLayouts": sum(bool(row.get("linkedCharacters")) for row in (text_layouts or {}).values()),
+                "substitutedLayouts": sum(row["status"] != "ready" for row in (text_layouts or {}).values()),
+                "note": ("Original companion glyphs and layout are used where resolved; linked characters and unresolved objects are retained in the text layout records."
+                         if text_layouts else "Source font companions are not supplied; text glyphs and layout remain an explicit substitution."),
             },
         },
         "mappedObjectRecords": summary.get("mappedObjects"),
@@ -336,7 +372,7 @@ def source_display_coverage(drawing, displays, presentation_items, summary, nati
     }
 
 
-def assemble_native(folder, original, output, platform=False, binary_dir=None, packed=False):
+def assemble_native(folder, original, output, platform=False, binary_dir=None, packed=False, font_files=None):
     started=time.perf_counter()
     def phase(name):print(f'DWG UCD {name}: {time.perf_counter()-started:.3f}s',file=sys.stderr,flush=True)
     folder, output = Path(folder), Path(output)
@@ -408,7 +444,9 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
         'layerIds':list(drawing['layers']), 'units':doc['coordinates']['lengthUnit']}
     buffer_path = folder/'positions.bin'
     bid = 'buffer-0'
-    buffer_bytes = bytearray(buffer_path.read_bytes())
+    # Reassembly starts at the native display extent, excluding previously appended derivatives.
+    native_bytes = max((row['offset'] + row['byteLength'] for row in displays.values()), default=0)
+    buffer_bytes = bytearray(buffer_path.read_bytes()[:native_bytes])
     from .dwg_acis import reconstruct
     acis_rows,acis_errors,acis_bytes=reconstruct(folder,extras.get('opaque',{}),drawing['entities'])
     acis_handles=set()
@@ -429,6 +467,12 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
     for key,reason in acis_errors.items():
         doc['diagnostics'].append({'code':'native-acis-unavailable','severity':'warning','stage':'mapping',
             'message':reason,'sourceRefs':drawing['entities'][key]['sourceRefs']})
+    add_polyline_width_displays(drawing['entities'], displays, extras, buffer_bytes)
+    text_layouts = {}
+    if font_files:
+        from .dwg_text import add_text_displays
+        text_layouts = add_text_displays(drawing['annotations'], displays, extras, buffer_bytes, font_files)
+        phase('original-font text laid out')
     for key,row in displays.items():
         row = trim_spline_origin_pair(row, drawing['entities'].get(key), buffer_bytes)
         aid, gid = 'a-'+key, 'g-'+key
@@ -442,9 +486,14 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
             'localFromRepresentation':IDENTITY, 'materialSlots':{}}], 'sourceRefs':row['sourceRefs']}
     mesh_items = {}
     for key, meta in extras.get('meshPresentations', {}).items():
-        entity = drawing['entities'][key]
+        entity = drawing['entities'].get(key) or drawing['annotations'][key]
         parts = []
-        for role, part_id in (('fill', meta['fill']), ('stroke', meta.get('stroke'))):
+        source_parts = meta.get('textParts')
+        if source_parts is None:
+            source_parts = [{'id': meta.get(role), 'role': role, 'color': {'mode':'by-block'}}
+                            for role in ('fill', 'stroke')]
+        for source_part in source_parts:
+            role, part_id = source_part['role'], source_part['id']
             if not part_id:
                 continue
             rid = 'representation-' + digest([part_id])
@@ -453,15 +502,18 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
             # Presentation consumers require an explicit index accessor.
             iaid = 'i-' + part_id
             offset = len(buffer_bytes)
-            count = displays[part_id]['count']
-            buffer_bytes.extend(struct.pack('<' + str(count) + 'I', *range(count)))
+            indices = displays[part_id].get('indices')
+            if indices is None: indices = range(displays[part_id]['count'])
+            count = len(indices)
+            buffer_bytes.extend(struct.pack('<' + str(count) + 'I', *indices))
+            primitive['range']['count'] = count
             while len(buffer_bytes) % 8:
                 buffer_bytes.append(0)
             doc['accessors'][iaid] = {'bufferId':bid, 'byteOffset':offset, 'byteLength':count*4,
                 'component':'u32', 'components':1, 'count':count, 'normalized':False}
             primitive['indices'] = iaid
             parts.append({'id':part_id, 'representationId':rid, 'role':role,
-                'layerId':entity['layerId'], 'style':{'color':{'mode':'by-block'},'plot':True},
+                'layerId':entity['layerId'], 'style':{'color':source_part['color'],'plot':True},
                 'ancestors':[]})
         mesh_items[key] = {'status':'ready', 'sourceKind':meta['sourceKind'],
             'sourceRefs':entity['sourceRefs'], 'mode':'geometry', 'parts':parts}
@@ -562,7 +614,14 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
         if row['type'] in ('Warning','Error','NotSupported','NotImplemented'):
             doc['diagnostics'].append({'code':'acadsharp-'+row['type'].lower(), 'severity':'warning', 'stage':'parse',
                 'message':row['Message'], 'sourceRefs':[]})
-    doc['diagnostics'].append({'code':'source-fonts-not-provided','severity':'warning','stage':'presentation',
+    if font_files:
+        doc['extensions']['org.libiaolink.dwg-text/1'] = {'items':text_layouts,
+            'policy':'Original companion advances and glyphs share MTEXT layout; unresolved objects retain explicit substituted text.'}
+        for key, row in text_layouts.items():
+            if row['status'] != 'ready':
+                doc['diagnostics'].append({'code':'source-text-layout-unavailable','severity':'warning','stage':'presentation',
+                    'message':row['reason'],'sourceRefs':drawing['annotations'][key]['sourceRefs']})
+    if not font_files: doc['diagnostics'].append({'code':'source-fonts-not-provided','severity':'warning','stage':'presentation',
         'message':'Original font companions were not supplied. Native Unicode and font requests are retained; browser text is explicitly substituted, with no original glyph/layout fidelity claim.', 'sourceRefs':[]})
     for entity,error in region_errors:
         doc['diagnostics'].append({'code':'region-acis-boundary-unavailable','severity':'warning','stage':'mapping',
@@ -585,7 +644,7 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
     doc["extensions"]["org.cad-preview.drawing-coverage/1"] = {
         "sourceRead":{"status":"partial" if summary["missingHandles"] else "read-with-warnings","sourceRecords":summary.get("sourceEntityRecords",summary["sourceHandles"])},
         "displayGeometry":source_display_coverage(drawing, displays, presentation_items, summary,
-            extras.get("nativeFonts",{}), extras.get("fills",{})),
+            extras.get("nativeFonts",{}), extras.get("fills",{}), text_layouts),
         "engineeringAttributes":{"status":"partial","sourceRecords":summary.get("mappedSourceObjects",summary["mappedObjects"])},
         "losses":raw_losses}
     doc['revision'] = digest({k:v for k,v in doc.items() if k!='revision'})

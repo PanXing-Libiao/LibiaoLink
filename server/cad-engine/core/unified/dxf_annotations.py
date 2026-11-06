@@ -280,7 +280,8 @@ def text_geometry(entity, shx=None, source_refs=None, parent_context=None):
         return vertices[key]
     filled = font.font_render_type != fonts.FontRenderType.STROKE
     if filled:
-        for triangle in path.triangulate(paths, max_sagitta=tolerance, min_segments=2):
+        from .dxf_shx import outline_triangles
+        for triangle in outline_triangles(paths, tolerance):
             indices.append(tuple(vertex(matrix.transform((v.x, v.y, 0))) for v in triangle))
             if len(points) > MAX_VERTICES:
                 raise ValueError('annotation-glyph-budget')

@@ -8,7 +8,7 @@ import {drawingClips, compileClips, triangulateRings, insideRing} from './drawin
 import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.17.3';
 import {estimateDrawingDraws, projectInstancesSteps, shouldProjectInstances, recordVisibleBounds, INSTANCE_DRAW_LIMIT, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, quantizeLodSize, LOD_MIN_SCREEN_PX, isLodCulled, I} from './drawing-instances.js?v=dxf-0.17.3';
 import Flatbush from './vendor/flatbush.js';
-import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, textOffsets, textWorldCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.4';
+import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, textOffsets, textDisplayCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.8';
 import {aciColor, trueColorCss, drawingColorCss} from './drawing-colors.js?v=dxf-0.17.4';
 import {resolveTextAvoidance} from './drawing-text-avoidance.js?v=dxf-0.17.3';
 import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentation} from './drawing-pattern.js?v=dxf-0.17.3';
@@ -108,7 +108,8 @@ export function mountDrawingViewer(envelope) {
   function mapFontFamily(name) {
     if (!name) return null;
     const n = String(name).trim().toLowerCase().split(/[\\/]/).pop().replace(/\.(shx|ttf|otf)$/i, '');
-    if (/simsun|宋体|song|fangsong|stsong/.test(n)) return FONT_STACK_CJK;
+    if (/^(simfang|fangsong|仿宋|仿宋_gb2312)$/.test(n)) return '"FangSong","仿宋",' + FONT_STACK_CJK;
+    if (/simsun|宋体|song|stsong/.test(n)) return FONT_STACK_CJK;
     if (/simhei|黑体|heiti/.test(n)) return '"SimHei","Libiao Sans SC","Noto Sans CJK SC",sans-serif';
     if (/msyh|yahei|pingfang/.test(n)) return '"Microsoft YaHei","Libiao Sans SC","Noto Sans CJK SC",sans-serif';
     if (/swiss|arial|helvetica/.test(n)) return FONT_STACK_LATIN;
@@ -547,7 +548,7 @@ export function mountDrawingViewer(envelope) {
       rec.navigationBounds=segment ? rec.clipRegion.geometry({segments:segment}).bounds : null;
     } else if (rec.clipRegion.active) {
       const polygons=rec.fillTriangles || (rec.fillRings ? triangulateRings(rec.fillRings)
-        : rec.raster ? [rec.raster.corners] : rec.textEntry ? [textWorldCorners(rec.textEntry,textOffsets(rec.textEntry))] : []);
+        : rec.raster ? [rec.raster.corners] : rec.textEntry ? [textDisplayCorners(rec.textEntry)] : []);
       rec.visibleGeometry=rec.clipRegion.geometry({segments:rec.segments||[],polygons,
         points:rec.pointMark?[[rec.pointMark.x,rec.pointMark.y]]:[]});
     } else rec.visibleGeometry={bounds:rec.bbox,segments:rec.segments||[]};
@@ -841,7 +842,8 @@ export function mountDrawingViewer(envelope) {
           maxX: layout.anchor[0], maxY: layout.anchor[1] };
         if (layout.run) {
           const entry = {...layout.run, draw, drawId, itemId: draw.itemId};
-          rec.bbox = entry.box; rec.textBox = entry.box;
+          // Spatial culling must cover every line, including rotated paragraphs.
+          rec.bbox = textDisplayBox(entry); rec.textBox = rec.bbox;
           rec.textEntry = entry;
           texts.push(entry);
         }

@@ -116,6 +116,9 @@ def describe(base, browser):
                       for format_name, names in FORMAT_RUNTIME.items()}
     # ACIS reconstruction also consumes the pinned ezdxf record decoder and OCP runtime.
     format_files['DWG'].update({name: value for name, value in engine_files.items() if name.startswith('vendor/ezdxf/')})
+    format_files['DWG'].update({name: engine_files[name] for name in ('unified/dxf_stroke.py', 'unified/dxf_fill.py',
+        'unified/dxf_shx.py', 'unified/dxf_shxfont.py', 'unified/dxf_bigfont.py',
+        'unified/dxf_mtext.py', 'unified/dxf_xref.py')})
     format_files['DWG'].update({'dwg-reader/' + name: value for name, value in reader_files.items()})
 
     format_versions = {}
