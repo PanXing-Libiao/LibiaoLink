@@ -732,7 +732,7 @@ static class Program
                 ProxyText p=>new TextEntity{InsertPoint=p.StartPoint,Height=p.Height,Value=p.Text,Rotation=Math.Atan2(p.TextDirection.Y,p.TextDirection.X),Normal=p.Normal,WidthFactor=p.WidthFactor},
                 ProxyUnicodeText p=>new TextEntity{InsertPoint=p.StartPoint,Height=p.Height,Value=p.Text,Rotation=Math.Atan2(p.TextDirection.Y,p.TextDirection.X),Normal=p.Normal,WidthFactor=p.WidthFactor},
                 ProxyUnicodeText2 p=>new TextEntity{InsertPoint=p.StartPoint,Height=p.Height,Value=p.Text,Rotation=Math.Atan2(p.TextDirection.Y,p.TextDirection.X),Normal=p.Normal,WidthFactor=p.WidthFactor,
-                  Style=new TextStyle("proxy-font"){Filename=p.FontDescriptor.FontFilename??p.FontDescriptor.Typeface??"",BigFontFilename=p.BigFontFilename??""}},
+                  Style=new TextStyle("proxy-font"){Filename=string.IsNullOrEmpty(p.FontDescriptor.FontFilename)?p.FontDescriptor.Typeface??"":p.FontDescriptor.FontFilename,BigFontFilename=p.BigFontFilename??""}},
                 _=>null
             };
             if(presentation is not null) {

@@ -34,6 +34,42 @@ class NativeTextTest(unittest.TestCase):
     def layout(self, text, **changes):
         result=TextLayout(self.fonts,annotation(text,**changes));result.render();return result
 
+    def test_unicode_primary_symbols_with_bigfont_keep_cjk_routing(self):
+        primary = PRIMARY_SHP.replace(b'*0,4,Generated primary\n8,2,2,0',
+            b'*UNIFONT,6,Generated Unicode\n8,2,2,0,0,0')
+        for code in (0x2205, 0xb2):
+            primary += ('*%d,9,symbol\n1,8,4,4,2,8,2,-4,0\n' % code).encode()
+        registry = NativeFonts({'unicode.shp': primary, 'big.shp': BIG_SHP})
+        font = registry.font('unicode.shp', 'big.shp', 8)
+        self.assertEqual(font.text_width('A∅中²'), 28)
+        self.assertGreater(len(font.text_path('A∅中²').to_path()), 0)
+        with self.assertRaisesRegex(ValueError, 'shx-glyph-missing'):
+            font.text_width('☃')
+        with self.assertRaisesRegex(ValueError, 'font-codepage-character-unrepresentable'):
+            self.fonts.font('primary.shp', 'big.shp', 8).text_width('∅')
+
+    def test_empty_mirrored_attribute_needs_no_font_or_geometry(self):
+        a = annotation('', mirror=4, fontFilename='not-provided.shx')
+        a['kind'] = 'text'
+        displays, extras, buffer = {}, {}, bytearray()
+        records = add_text_displays({a['id']: a}, displays, extras, buffer, {})
+        self.assertEqual(records[a['id']]['status'], 'ready')
+        self.assertEqual(records[a['id']]['fonts'], [])
+        self.assertEqual((len(displays), len(buffer)), (0, 0))
+        a['text'] = 'A'
+        records = add_text_displays({a['id']: a}, displays, {}, buffer, {})
+        self.assertEqual(records[a['id']]['reason'], 'native-text-mirrored-or-fit-layout-unavailable')
+
+    def test_unbounded_center_and_right_use_ink_not_flow_estimate(self):
+        for attachment in (2, 3, 5, 6):
+            for width in (0, .8):
+                result = self.layout(r'A\PAA', attachmentPoint=attachment, rectangleWidth=width)
+                points = [p for b in result.batches.values() for p in b['points']]
+                left, right = min(p.x for p in points), max(p.x for p in points)
+                self.assertAlmostEqual((left+right)/2 if attachment % 3 == 2 else right, 0)
+        fixed = self.layout('AA', attachmentPoint=2, rectangleWidth=100)
+        self.assertAlmostEqual(min(p.x for b in fixed.batches.values() for p in b['points']), -50)
+
     def test_cjk_breaks_but_latin_word_overflows_intact(self):
         self.assertEqual(lines(self.layout('中中中中',rectangleWidth=21)),['中中','中中'])
         self.assertEqual(lines(self.layout('中AAAA中',rectangleWidth=11)),['中','AAAA','中'])
