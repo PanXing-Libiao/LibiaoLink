@@ -250,7 +250,7 @@ export function* projectDrawingSteps(document,target,effectiveLayers=null,presen
     const layerId=effectiveLayer(item.layerId,chain);
     const visibility=inheritedHidden?'hidden':entityVisibility(itemId,layerId,viewport);
     const presentation=annotationItems[itemId];
-    const availability=flags[itemId]?.presentationGeometry==='missing'||presentation?.status==='missing'||item.geometry&&item.geometry.type==='unsupported'&&presentation?.status!=='ready'?'unsupported':'ready';
+    const availability=flags[itemId]?.presentationGeometry==='missing'||presentation?.status==='missing'||item.geometry&&item.geometry.type==='unsupported'&&!item.displayRepresentationId&&presentation?.status!=='ready'?'unsupported':'ready';
     const style=resolve(item.style,layerId,chain,itemId,viewport);
     const local=mul(transform,item.localFromOwner);
     const [drawId,draw]=addDraw('entity',itemId,path,local,visibility,availability,style,

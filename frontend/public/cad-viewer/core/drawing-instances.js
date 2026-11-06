@@ -47,10 +47,11 @@ export function fitExtentsCandidate(source,computed,coverage){
  return coverage>=0.5?source:null;
 }
 
-export const INSTANCE_DRAW_THRESHOLD=400000;
-// Retained projection keeps one source draw per instance path and no longer
-// applies the ordinary 400k expanded-draw budget. A finite ceiling still keeps
-// pathological block arrays from freezing the viewer while it builds the plan.
+export const INSTANCE_DRAW_THRESHOLD=512;
+// Retained projection keeps one source draw per instance path instead of
+// expanding every block instance into ordinary draws. A finite ceiling still
+// keeps pathological block arrays from freezing the viewer while it builds the
+// plan.
 // Measured: a real 2.0M-expanded-draw layout DWG opened in ~24 s with a ~1.1 GB
 // JS heap and a 2.8 s fit repaint, so the ceiling leaves that class admitted
 // with headroom while still rejecting pathological expansion.
@@ -156,7 +157,7 @@ export function* projectInstancesSteps(document,target,presentationStyles=null){
      {opacityMode:ext.entityState?.[id]?.opacityMode,opacity:ext.entityState?.[id]?.opacity}]),!!inheritedHidden,
      effective.length?effective:null,pathVariant?path:null]);
     group=cache.get(key)||null;
-    if(!group){group={id:'group-'+groups.length,spaceId,entries:[],records:[],count:0,bounds:null};cache.set(key,group);groups.push(group);
+    if(!group){group={id:'group-'+groups.length,spaceId,entries:[],records:[],count:0,bounds:null,paint:[],hits:[],visibleCount:0,byKind:{entity:0,annotation:0}};cache.set(key,group);groups.push(group);
      current=group;const previousSpace=currentSpace;currentSpace={clips:effective,viewport:!!viewport,path};yield* visit(effective);currentSpace=previousSpace;current=parent;
      for(const entry of group.entries){entry.order=group.count;group.count+=entry.kind==='group'?entry.group.count:1;}
     }

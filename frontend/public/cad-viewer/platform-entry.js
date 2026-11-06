@@ -1,11 +1,12 @@
-import {loadPlatformModel,inspectionRecord} from "./core/app.js?v=dxf-0.17.8";
-import {decodeManifest} from "./core/manifest-loader.js?v=cad-handoff-1";
+import {loadPlatformModel,inspectionRecord} from "./core/app.js?v=dxf-0.17.24";
+import {decodeManifest} from "./core/manifest-loader.js";
 import {LoadPhases} from "./core/load-phases.js";
 import {hydrateBinary} from './core/binary-transport.js';
+import {isServerChunked} from './core/server-chunks.js?v=dxf-0.17.24';
 import {missingFaceManifest} from './core/nonmeshable-ui.js';
 import {repairManifest} from './core/mesh-repair-ui.js';
-import {ImportUI} from './import-ui.js?v=cad-0.21.13';
-import {trackResponse} from './import-progress.js?v=cad-0.21.13';
+import {ImportUI} from './import-ui.js?v=cad-0.21.31';
+import {trackResponse} from './import-progress.js?v=cad-0.21.31';
 
 const query=new URLSearchParams(location.search);
 const fileId=query.get('fileId'),versionId=query.get('versionId'),viewId=query.get('viewId');
@@ -239,6 +240,31 @@ async function requestJson(url,options={}){
  if(!response.ok)throw new Error(responseError(data,response.status));
  return data;
 }
+const LEASE_HEARTBEAT_MS=120000;
+let leaseHeartbeat=0,leasePulse=null,chunkLeaseReleased=false;
+function stopLeaseHeartbeat(){
+ if(leaseHeartbeat){clearInterval(leaseHeartbeat);leaseHeartbeat=0;}
+ leasePulse?.abort();leasePulse=null;
+}
+function releaseChunkLease(){
+ const chunked=loadedEnvelope?.serverChunks;
+ if(!chunkLeaseReleased&&chunked){chunkLeaseReleased=true;void Promise.resolve().then(()=>chunked.release?.()).catch(()=>{});}
+ stopLeaseHeartbeat();
+}
+async function renewLease(){
+ if(!jobBase||chunkLeaseReleased||leasePulse)return;
+ const controller=new AbortController();leasePulse=controller;
+ try{
+  const response=await request(jobBase,{signal:controller.signal});
+  if(response.status===401)notifyAuthExpired();
+ }catch{}
+ finally{if(leasePulse===controller)leasePulse=null;}
+}
+function startLeaseHeartbeat(){
+ if(leaseHeartbeat||chunkLeaseReleased||!jobBase)return;
+ leaseHeartbeat=setInterval(()=>{void renewLease();},LEASE_HEARTBEAT_MS);
+ document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void renewLease();});
+}
 function delay(signal){
  return new Promise((resolve,reject)=>{
   const stop=()=>{clearTimeout(timer);reject(signal.reason);};
@@ -274,7 +300,7 @@ window.addEventListener('keydown',event=>{
  }
 });
 const unloading=new AbortController();
-window.addEventListener('pagehide',()=>{clearTimeout(limitationTimer);ui.destroy();unloading.abort();cancelJob();},{once:true});
+window.addEventListener('pagehide',()=>{clearTimeout(limitationTimer);ui.destroy();releaseChunkLease();unloading.abort();cancelJob();},{once:true});
 
 loadPlatformModel(async({signal,progress,mark,record})=>{
  const phases=new LoadPhases();let outcome="failed";
@@ -316,7 +342,9 @@ loadPlatformModel(async({signal,progress,mark,record})=>{
   progress("正在读取已校验模型…");
   const prefetchedBuffers=new Map();
   const resourceHint=currentJob.resources;
-  if(resourceHint&&/^[a-f0-9]{48}$/.test(resourceHint.lease)&&Array.isArray(resourceHint.buffers)){
+  // Chunked DWG manifests carry a small overview base; fetching the largest
+  // archive resources here would defeat spatial loading and pull whole block packs.
+  if(currentJob.format!=='DWG'&&resourceHint&&/^[a-f0-9]{48}$/.test(resourceHint.lease)&&Array.isArray(resourceHint.buffers)){
    const unique=new Map();
    for(const descriptor of resourceHint.buffers){
     if(!descriptor||!/^[a-f0-9]{64}$/.test(descriptor.sha256)||!Number.isSafeInteger(descriptor.byteLength)||descriptor.byteLength<0)continue;
@@ -362,11 +390,13 @@ loadPlatformModel(async({signal,progress,mark,record})=>{
   };
   progress('正在读取模型几何…');
   const total=Object.values(packet.document.buffers).reduce((sum,buffer)=>sum+buffer.byteLength,0);
+  const chunked=isServerChunked(packet);
   ui.downloading(Number.isSafeInteger(total)&&total>0&&total<=256*1024*1024?total:0,{reset:false});
   phases.phase("resources");mark("resourceHydrationStart");window.__cadTimingMark?.("buffersHydrateStart");
-  packet=await hydrateBinary(packet,{signal:active,fetcher,
+  packet=await hydrateBinary(packet,{signal:active,fetcher,release:!chunked,
    prefetched:currentJob.resources?.lease===packet.resourceLease?prefetchedBuffers:new Map(),
    onPlan:plan=>{ui.downloading(plan.totalBytes,{reset:false});record({uniqueBufferBytes:plan.totalBytes,uniqueBuffers:plan.uniqueBuffers});}});
+  if(chunked){packet.serverChunks={fetcher,lease,release:()=>fetcher(`/api/resources/${lease}`,{method:'DELETE',keepalive:true})};loadedEnvelope=packet;startLeaseHeartbeat();}
   window.__cadTimingMark?.("buffersHydrated");mark("resourceHydrationEnd");
   active.throwIfAborted();progress('正在显示模型…');
   ui.update(2,'正在生成可交互视图');
@@ -400,7 +430,8 @@ loadPlatformModel(async({signal,progress,mark,record})=>{
    parent.postMessage({type:'cad-ready',viewId,timing},location.origin);
   }));
  }else{
- const unsupported=!cancelled&&unsupportedPreview(currentJob);
+  releaseChunkLease();
+  const unsupported=!cancelled&&unsupportedPreview(currentJob);
   ui.stop(cancelled?'cancelled':unsupported?'unsupported':'failed',{retryable:!unsupported});
  }
 });

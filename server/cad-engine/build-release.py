@@ -16,9 +16,9 @@ READER_FILES = ('Program.cs', 'CommunityText.cs', 'Reader.csproj', 'dependency.j
 RUNTIME_FILES = ('bridge.py', 'result_cache.py', 'service.py', 'sandbox.py', 'edge.py',
                  'release.py', 'requirements-step.txt', 'requirements-step-mesher.txt',
                  'requirements-dxf.txt', 'requirements-dxf-build.txt', 'requirements-dwg.txt', 'requirements-acis.txt')
-FORMAT_NEUTRAL_FILES = {'service.py', 'dwg_platform_convert.py', 'unified/conversion_jobs.py'}
+FORMAT_NEUTRAL_FILES = {'service.py', 'sandbox.py', 'dwg_platform_convert.py', 'unified/conversion_jobs.py'}
 IMPORTED_COMMIT = '337bfc0d185a82cc3e269afaff879ccfc67a2e57'
-FORMAT_RELEASES = {'STEP': '0.3.3', 'DXF': '0.15.0', 'DWG': '0.1.0'}
+FORMAT_RELEASES = {'STEP': '0.3.3', 'DXF': '0.15.0', 'DWG': '0.1.1'}
 FORMAT_RUNTIME = {
     'STEP': ('requirements-step.txt', 'requirements-step-mesher.txt'),
     'DXF': ('requirements-dxf.txt', 'requirements-dxf-build.txt'),

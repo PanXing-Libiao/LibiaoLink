@@ -82,3 +82,27 @@ test('batched handoff preserves insertion order and keeps one bounded part per a
  assert.ok(parts<16,'handoff should amortize per-message overhead');
  assert.deepEqual(packet,input);assert.deepEqual(Object.keys(packet.document.properties),Object.keys(input.document.properties));
 });
+
+test('worker batches preserve special dictionary keys as own data properties',async()=>{
+ const source=compact(30000);
+ source.document.properties=JSON.parse('{"__proto__":{"label":"source value"},"constructor":{"label":"constructor value"},"toString":{"label":"own method name"}}');
+ const expected=decodeManifestBytes(encode(source)).packet;
+ const {packet}=await decodeManifest(encode(source),{workerFactory});
+ assert.deepEqual(packet,structuredClone(expected));
+ assert.equal(Object.getPrototypeOf(packet.document.properties),Object.prototype);
+ assert.equal(Object.getOwnPropertyDescriptor(packet.document.properties,'__proto__').value.label,'source value');
+ assert.equal({}.label,undefined);
+});
+
+test('batched handoff preserves insertion order and keeps one bounded part per acknowledgement',async()=>{
+ const {manifestParts,applyManifestEntries}=await import('../../../../frontend/public/cad-viewer/core/manifest-parts.js');
+ const input={document:{properties:Object.fromEntries(Array.from({length:8193},(_,i)=>['p-'+i,{id:i}]))}};
+ let packet,parts=0;
+ for(const part of manifestParts(input)){
+  const message=structuredClone(part);
+  if(message.kind==='header')packet=message.packet;
+  else {assert.ok(message.entries.length/2<=1024);applyManifestEntries(packet,message);parts++;}
+ }
+ assert.ok(parts<16,'handoff should amortize per-message overhead');
+ assert.deepEqual(packet,input);assert.deepEqual(Object.keys(packet.document.properties),Object.keys(input.document.properties));
+});

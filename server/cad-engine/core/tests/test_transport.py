@@ -40,6 +40,12 @@ class Transport(unittest.TestCase):
   self.assertEqual(result['transportProfile'],'ucd-binary-manifest/1');self.assertEqual(result['resourceLease'],token)
   self.assertEqual(result['bufferResources']['b']['url'],f'/api/resources/{token}/{sha}');self.assertEqual(result['document'],json.loads(raw)['document'])
   self.assertEqual(entries[0]['file'],'b.bin')
+ def test_public_worker_manifest_defers_worker_local_chunk_urls(self):
+  import json
+  raw=json.dumps({'chunkResources':[{'id':'chunk-tile-000','sha256':'0'*64,'byteLength':12,
+    'file':'chunk-tile-000.bin'}],'document':{'buffers':{}},'presentation':{},
+    'snapshot':{'completeness':'partial'},'transportProfile':'ucd-worker-binary/1'},separators=(',',':')).encode()
+  self.assertIsNone(public_worker_manifest(raw,'a'*48))
  def test_ranges(self):
   self.assertEqual(byte_range('bytes=2-4',8),(2,4));self.assertEqual(byte_range('bytes=6-99',8),(6,7));self.assertEqual(byte_range('bytes=1-',8),(1,7))
   for value in ('bytes=8-9','bytes=5-4','bytes=-3','bytes=0-1,4-5','garbage'):

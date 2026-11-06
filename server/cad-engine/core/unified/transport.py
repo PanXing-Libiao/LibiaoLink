@@ -69,6 +69,31 @@ def read_worker_buffers(folder,entries):
     return blobs
 
 
+def check_worker_buffers(folder,entries):
+    """Validate worker-written files without retaining their bytes in memory."""
+    import os
+    if not isinstance(entries,list) or len(entries)>4096:raise ValueError('worker buffer inventory is invalid')
+    root=os.path.realpath(folder);seen=set();result=[]
+    for entry in entries:
+        if not isinstance(entry,dict):raise ValueError('worker buffer entry is invalid')
+        bid=entry.get('id');sha=entry.get('sha256');length=entry.get('byteLength');name=entry.get('file')
+        if not isinstance(bid,str) or not re.fullmatch(r'[A-Za-z0-9._:-]{1,128}',bid) or bid in seen:raise ValueError('worker buffer id is invalid')
+        if not isinstance(sha,str) or not re.fullmatch(r'[a-f0-9]{64}',sha):raise ValueError('worker buffer hash is invalid')
+        if type(length) is not int or not 0<=length<=256*1024*1024:raise ValueError('worker buffer length is invalid')
+        if name!=f'{bid}.bin':raise ValueError('worker buffer file name is invalid')
+        raw=os.path.join(folder,name)
+        if os.path.islink(raw):raise ValueError('worker buffer path is a symlink')
+        path=os.path.realpath(raw)
+        if os.path.dirname(path)!=root or os.path.basename(path)!=name:raise ValueError('worker buffer path escaped its directory')
+        if not os.path.isfile(path) or os.path.getsize(path)!=length:raise ValueError('worker buffer is missing or has the wrong length')
+        digest=hashlib.sha256()
+        with open(path,'rb') as handle:
+            for chunk in iter(lambda:handle.read(1024*1024),b''):digest.update(chunk)
+        if digest.hexdigest()!=sha:raise ValueError('worker buffer hash mismatch')
+        seen.add(bid);result.append({'id':bid,'sha256':sha,'byteLength':length,'file':name})
+    return result
+
+
 def _json_value_end(data,start):
     '''Return the byte offset just after one JSON object/array value.'''
     if start>=len(data) or data[start] not in b"{[":raise ValueError('json value is missing')
@@ -107,6 +132,9 @@ def public_worker_manifest(raw,token):
         if type(length) is not int or not 0<=length<=256*1024*1024 or file!=f'{bid}.bin':return None
         resources[bid]={'url':f'/api/resources/{token}/{sha}','sha256':sha,'byteLength':length}
     suffix=body[end:]
+    # Chunk references need URL replacement and lease coverage too; use the
+    # general manifest path rather than leaving worker-local file names public.
+    if b'\x22chunkResources\x22' in suffix:return None
     if b'\x22resourceLease\x22' in suffix:return None
     worker=b'\x22transportProfile\x22:\x22ucd-worker-binary/1\x22'
     compact=b'\x22transportProfile\x22:\x22ucd-worker-binary-compact/1\x22'

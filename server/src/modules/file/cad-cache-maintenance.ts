@@ -10,7 +10,7 @@ import { cadAutoCacheFormat } from "./cad-inputs.js";
 import { CAD_FORMAT_VERSIONS, cadFormatVersions } from "./cad-release.js";
 import type { CadNameCodepage } from "@libiaolink/contracts";
 
-const AUTO_CACHE_BATCH = 8;
+const AUTO_CACHE_BATCH = 2;
 const currentVersion = sql`case ${cadArtifacts.sourceFormat}
   when 'STEP' then ${CAD_FORMAT_VERSIONS.STEP} when 'DXF' then ${CAD_FORMAT_VERSIONS.DXF}
   when 'DWG' then ${CAD_FORMAT_VERSIONS.DWG} end`;
@@ -49,7 +49,7 @@ export class CadCacheMaintenance {
       )).orderBy(desc(cadArtifacts.lastAccessedAt), cadArtifacts.id).limit(2);
     for (const { artifact } of rows) {
       // request is idempotent and preserves file/version/companion scope; it does not open a view.
-      const warmed = await this.archive.request({ fileId: artifact.fileId, versionId: artifact.versionId,
+      const warmed = await this.archive.requestCurrent({ fileId: artifact.fileId, versionId: artifact.versionId,
         sourceSHA256: artifact.sourceSHA256, sourceBytes: artifact.sourceBytes, sourceName: artifact.sourceName,
         sourceFormat: artifact.sourceFormat, mainPath: artifact.mainPath, companions: artifact.companions,
         resourceSetHash: artifact.resourceSetHash }, artifact.nameCodepage as CadNameCodepage);

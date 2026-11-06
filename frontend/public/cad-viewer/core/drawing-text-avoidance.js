@@ -61,14 +61,19 @@ function candidateShifts(box, placed, gap) {
  * the nearest free edge. Items that cannot be placed within `maxShift` keep
  * their source position rather than being moved arbitrarily.
  */
-export function resolveTextAvoidance(items, {gap = 0, maxShift = Infinity} = {}) {
+export function* resolveTextAvoidanceSteps(items, {gap = 0, maxShift = Infinity, sliceMs = 4} = {}) {
   const resolved = new Map();
   const placed = [];
   const ordered = items
     .map((item, order) => ({...item, order}))
     .sort((a, b) => boxArea(b.box) - boxArea(a.box) || a.order - b.order);
+  let sliceStart = performance.now(), visited = 0;
 
   for (const item of ordered) {
+    if (++visited % 32 === 0 && performance.now() - sliceStart >= sliceMs) {
+      yield;
+      sliceStart = performance.now();
+    }
     const source = item.box;
     let choice = {dx: 0, dy: 0, box: source};
     if (placed.some(other => boxesOverlap(source, other))) {
@@ -85,4 +90,11 @@ export function resolveTextAvoidance(items, {gap = 0, maxShift = Infinity} = {})
     resolved.set(item.id, choice);
   }
   return resolved;
+}
+
+export function resolveTextAvoidance(items, options = {}) {
+  const steps = resolveTextAvoidanceSteps(items, options);
+  let result = steps.next();
+  while (!result.done) result = steps.next();
+  return result.value;
 }

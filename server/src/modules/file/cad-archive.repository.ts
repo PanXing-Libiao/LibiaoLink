@@ -22,11 +22,11 @@ const LIMIT_CODES = new Set(["job-memory-quota", "job-output-quota", "artifact-b
 export class CadArchiveRepository {
   constructor(private readonly database: DatabaseService, private readonly audit: AuditService) {}
 
-  async request(source: CadArchiveSource, codepage: CadNameCodepage, client: DbClient = this.database.db): Promise<CadArtifactRow> {
+  async request(source: CadArchiveSource, codepage: CadNameCodepage, client: DbClient = this.database.db, currentOnly = false): Promise<CadArtifactRow> {
     const input = cadInputs(source);
     codepage = input.sourceFormat === "DXF" ? "UTF8" : codepage;
     const formatVersion = cadFormatVersion(input.sourceFormat);
-    const compatibleVersions = cadFormatVersions(input.sourceFormat);
+    const compatibleVersions = currentOnly ? [formatVersion] : cadFormatVersions(input.sourceFormat);
     const reusable = (await client.select().from(cadArtifacts).where(and(
       eq(cadArtifacts.fileId, input.fileId), eq(cadArtifacts.versionId, input.versionId),
       inArray(cadArtifacts.formatVersion, compatibleVersions), eq(cadArtifacts.nameCodepage, codepage),
@@ -46,6 +46,11 @@ export class CadArchiveRepository {
       throw new Error("CAD version identity mismatch");
     }
     return row;
+  }
+
+  /** Enqueue or reuse the current format generation even when an older compatible artifact is still viewable. */
+  async requestCurrent(source: CadArchiveSource, codepage: CadNameCodepage, client: DbClient = this.database.db): Promise<CadArtifactRow> {
+    return this.request(source, codepage, client, true);
   }
 
   async openView(artifactId: string, actorId: string, viewId: string): Promise<CadViewRow> {
@@ -119,6 +124,7 @@ export class CadArchiveRepository {
         objectPrefix ? eq(cadArtifacts.objectPrefix, objectPrefix) : undefined));
   }
 
+  /** A live viewer always outranks speculative cache work; age only prevents indefinite starvation. */
   async claim(): Promise<CadArtifactRow | null> {
     return this.database.db.transaction(async (tx) => {
       const now = new Date();
@@ -127,11 +133,12 @@ export class CadArchiveRepository {
         or(and(eq(cadArtifacts.state, "queued"), lt(cadArtifacts.availableAt, now)),
           and(eq(cadArtifacts.state, "running"), lt(cadArtifacts.claimUntil, now)))))
         .orderBy(sql`case
-          when ${cadArtifacts.availableAt} < ${new Date(now.getTime() - 300_000)} then 0
           when exists (select 1 from ${cadViews} where ${cadViews.artifactId} = ${cadArtifacts.id}
             and not ${cadViews.cancelled} and ${cadViews.expiresAt} > ${now}
-            and ${cadViews.lastSeenAt} > ${new Date(now.getTime() - 30_000)}) then 1
-          else 2 end`, cadArtifacts.availableAt, cadArtifacts.id).limit(1).for("update", { skipLocked: true }))[0];
+            and ${cadViews.lastSeenAt} > ${new Date(now.getTime() - 30_000)}) then 0
+          when ${cadArtifacts.lastAccessedAt} is not null then 1
+          when ${cadArtifacts.availableAt} < ${new Date(now.getTime() - 300_000)} then 2
+          else 3 end`, cadArtifacts.availableAt, cadArtifacts.id).limit(1).for("update", { skipLocked: true }))[0];
       if (!row) return null;
       if (row.state === "running" || row.attempts >= 3) {
         await this.recordFailure(tx, row, "worker-interrupted", row.attempts < 3);

@@ -14,8 +14,9 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 APP=Path(__file__).resolve().parents[1];sys.path.insert(0,str(APP))
-from unified.conversion_jobs import ConversionJobs,JobLimit
+from unified.conversion_jobs import ConversionJobs,JobLimit,dwg_worker_rss_bytes
 from server import stop_worker
+from sandbox import memory_limit_bytes
 from convert import convert
 from unified.adapter import from_packet
 from unified.migrate import migrate_bridge_v1
@@ -246,5 +247,15 @@ class DwgResourcePolicyTests(unittest.TestCase):
             time.sleep(.025)
         self.assertEqual(state["state"],"failed")
         self.assertEqual(state["error"]["code"],"job-scratch-quota")
+    def test_dwg_worker_memory_limit_is_operator_configurable(self):
+        with patch.dict(os.environ,{"CAD_DWG_WORKER_RSS_MIB":"6144"}):
+            self.assertEqual(dwg_worker_rss_bytes(),6144*1024**2)
+        with patch.dict(os.environ,{"CAD_DWG_WORKER_RSS_MIB":"512"}):
+            with self.assertRaises(ValueError):dwg_worker_rss_bytes()
+    def test_sandbox_memory_ceiling_is_operator_configurable(self):
+        with patch.dict(os.environ,{"CAD_SANDBOX_MAX_MIB":"7168"}):
+            self.assertEqual(memory_limit_bytes(),7168*1024**2)
+        with patch.dict(os.environ,{"CAD_SANDBOX_MAX_MIB":"512"}):
+            with self.assertRaises(RuntimeError):memory_limit_bytes()
 
 if __name__=='__main__':unittest.main()

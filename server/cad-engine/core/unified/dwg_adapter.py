@@ -18,6 +18,8 @@ from .validation import validate_binary_envelope
 from .canonical import canonical_sha256,write_canonical
 from .payload_sink import FileSink
 from .dwg_pack import pack_document
+from .dwg_buffers import compact_display_buffers
+from .dwg_chunks import build_dwg_chunks
 
 VERSION = '0.1.0-local'
 IDENTITY = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
@@ -567,10 +569,15 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
             region_items[key] = {'status':'ready', 'sourceKind':'REGION',
                 'sourceRefs':entity.get('sourceRefs') or [], 'mode':'geometry', 'parts':parts}
             region_handles.add(str(meta.get('handle')))
-    if region_handles or mesh_items:
+    if (region_handles or mesh_items) and not platform:
         buffer_path.write_bytes(buffer_bytes)
     # Freeze once; validation and publication share the exact same immutable bytes.
-    buffer_bytes = bytes(buffer_bytes)
+    buffer_packing = None
+    if platform:
+        buffer_bytes, buffer_packing = compact_display_buffers(doc, buffer_bytes)
+        phase('display buffers indexed')
+    else:
+        buffer_bytes = bytes(buffer_bytes)
     sha = hashlib.sha256(buffer_bytes).hexdigest()
     doc['buffers'][bid] = {'id':bid, 'sha256':sha, 'byteLength':len(buffer_bytes),
         'endianness':'little', 'alignment':8, 'storage':{'kind':'resource','resourceId':bid}}
@@ -657,13 +664,33 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
         'sourceSHA256':identity['sha256'],'candidate':True,
         'quality':'partial','note':'Native DWG → UCD; source handles preserved. See explicit decoder/mapping/font losses.',
         'stats':{'sourceHandles':summary['sourceHandles'],'mappedSourceObjects':summary.get('mappedSourceObjects',summary['mappedObjects']),'displayGeometry':len(displays)+len(infinite_items)+len(region_items)}}
-    validate_binary_envelope(doc,snapshot,presentation,lambda key:buffer_bytes)
-    phase('contract and binary validated')
+    chunk_resources = []
+    chunking = None
+    if platform and binary_dir is not None:
+        # DWG only: publish a compact overview document plus immutable spatial
+        # chunk bundles. The archive worker persists every bundle as a private
+        # resource; the viewer fetches only chunks intersecting its viewport.
+        chunk_folder = Path(binary_dir)
+        doc, overview_bytes, overview_buffer_id, chunking, chunk_resources, snapshot = build_dwg_chunks(
+            doc, buffer_bytes, chunk_folder, snapshot=snapshot, presentation=presentation)
+        buffer_bytes = overview_bytes
+        bid = overview_buffer_id
+        phase('spatial chunks built')
+    if platform:
+        # The separate job receiver validates schema, references, every geometry,
+        # buffers and revision before publication. Do not repeat that full walk
+        # in the trusted producer; independent local exports still validate here.
+        phase('complete validation required at receiver')
+    else:
+        validate_binary_envelope(doc,snapshot,presentation,lambda key:buffer_bytes)
+        phase('contract and binary validated')
     if packed:
         doc = pack_document(doc)
         phase('document packed')
     envelope = {'transportProfile':'ucd-worker-binary/1','document':doc,'snapshot':snapshot,
         'bufferPayloads':{bid:'native/positions.bin'},'presentation':presentation}
+    if chunk_resources:
+        envelope['chunkResources'] = [dict(item) for item in chunk_resources]
     if platform:
         # The platform worker consumes bufferResources directly. Writing them here
         # avoids parsing and re-serialising the full manifest in the worker wrapper.
@@ -680,7 +707,10 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
         raise ValueError('dwg-manifest-budget-exceeded: '+str(pending.stat().st_size)+' bytes; retained temporary output is not a successful artifact')
     pending.replace(artifact)
     phase('artifact written')
-    (output/'assembly-summary.json').write_text(json.dumps({'validated':True,'manifestBytes':artifact.stat().st_size,
-        'bufferBytes':buffer_path.stat().st_size,'source':identity,'tables':{k:len(v) for k,v in drawing.items()},
-        'lossCounts':dict(by_loss),'completeness':'partial'},ensure_ascii=False,indent=2))
+    (output/'assembly-summary.json').write_text(json.dumps({'validated':not platform,'validation':'receiver-required' if platform else 'complete',
+        'displayBufferPacking':buffer_packing,'manifestBytes':artifact.stat().st_size,
+        'bufferBytes':len(buffer_bytes),'source':identity,'tables':{k:len(v) for k,v in drawing.items()},
+        'lossCounts':dict(by_loss),'completeness':'partial',
+        'chunking':({k:chunking[k] for k in ('version','resourceCount','resourceBytes')} if chunking else None),
+        'chunkResources':len(chunk_resources)},ensure_ascii=False,indent=2))
     return artifact

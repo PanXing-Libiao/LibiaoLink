@@ -5,6 +5,7 @@ import type { DbClient } from "../../db/db-client.js";
 import { ObjectStorage } from "../../storage/index.js";
 import { CadEngineClient, type CadJob, type CadResource } from "./cad-engine.client.js";
 import { CadArchiveRepository, type CadArchiveSource, type CadArtifactRow, type CadViewRow } from "./cad-archive.repository.js";
+import { cadFormatVersion } from "./cad-release.js";
 import { checkedCadStream } from "./cad-archive.integrity.js";
 import { CadInputService, cadAutoCacheFormat, cadInputs, CAD_DXF_INPUT_BYTES } from "./cad-inputs.js";
 import { cadPrecompressedObjectKey, type CadPrecompressedEncoding } from "./cad-preview.compression.js";
@@ -36,6 +37,9 @@ export class CadArchiveService {
       throw new ServiceUnavailableException("文件超过当前 CAD 处理大小限制，请下载原文件查看");
     }
     const artifact = await this.repository.request(input, codepage);
+    if (artifact.formatVersion !== cadFormatVersion(input.sourceFormat)) {
+      void this.repository.requestCurrent(input, codepage).catch(() => {});
+    }
     if (["failed", "timed-out"].includes(artifact.state)) await this.repository.retry(artifact.id, artifact.state);
     const view = await this.repository.openView(artifact.id, actorId, viewId);
     const current = await this.repository.view(view.id.replaceAll("-", ""), source, actorId, viewId);
@@ -71,7 +75,9 @@ export class CadArchiveService {
     const bytes = buffer?.byteLength ?? artifact.manifestBytes;
     const digest = buffer?.sha256 ?? artifact.manifestSHA256;
     if (!objectKey.startsWith(artifact.objectPrefix)) throw new AppError("NOT_FOUND", "模型资源不存在或不可访问");
-    if (action === "manifest") await this.repository.lease(view.id);
+    // Chunks arrive after the manifest, so any valid resource read renews the
+    // five-minute window while the viewer remains open.
+    if (action === "manifest" || action === "buffer") await this.repository.lease(view.id);
     if (precompressed === "br") {
       const compressed = await this.storage.getObjectStream(cadPrecompressedObjectKey(objectKey)).catch(() => null);
       if (compressed && compressed.sizeBytes > 0) {

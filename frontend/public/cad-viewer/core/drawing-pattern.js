@@ -17,6 +17,11 @@ function boundsOf(points) {
   return bounds;
 }
 
+export function normalizedFillRule(value) {
+  const rule = String(value || "").toLowerCase().replace(/[^a-z]/g, "");
+  return rule === "nonzero" ? "nonzero" : "evenodd";
+}
+
 export function fillEntryFor(document, itemId) {
   return document?.extensions?.['org.cad-preview.fill/1']?.fills?.[itemId] || null;
 }
@@ -42,10 +47,15 @@ export function lineDashFor(style, itemId, {lineTypes = {}, styleExt = {}} = {})
 export function fillGeometryFor({draw, entity, fillEntry, mode, tolerance,
   representationGeometry, analyticFor, toWorld, boundaryGeometry}) {
   if (typeof toWorld !== 'function') throw new Error('pattern-to-world-required');
+  const retainedTriangles = fillEntry && fillEntry.triangles;
+  if (Array.isArray(retainedTriangles) && retainedTriangles.length) {
+    const triangles = retainedTriangles.map(triangle => triangle.map(toWorld));
+    return {kind:"triangles", triangles, fillRule:'nonzero', bbox:boundsOf(triangles.flat())};
+  }
   const retainedRings = fillEntry && fillEntry.rings;
   if (retainedRings) {
     const rings = retainedRings.map(ring => ring.map(toWorld));
-    return {kind:'rings', rings, bbox:boundsOf(rings.flat())};
+    return {kind:'rings', rings, fillRule: normalizedFillRule(fillEntry.fillRule), bbox:boundsOf(rings.flat())};
   }
   if (mode === 'display') {
     const representation = representationGeometry(draw.displayRepresentationId);
@@ -58,7 +68,7 @@ export function fillGeometryFor({draw, entity, fillEntry, mode, tolerance,
       }));
     }
     if (!triangles.length) return null;
-    return {kind:'triangles', triangles, bbox:boundsOf(triangles.flat())};
+    return {kind:'triangles', triangles, fillRule:'nonzero', bbox:boundsOf(triangles.flat())};
   }
   const rings = [];
   for (const id of ((entity.geometry && entity.geometry.boundaryEntityIds) || [])) {
@@ -72,33 +82,53 @@ export function fillGeometryFor({draw, entity, fillEntry, mode, tolerance,
   return {kind:'rings', rings, bbox:boundsOf(rings.flat())};
 }
 
-export function strokeSegmentsForRepresentation(representation, toWorld, skipVertices = 0) {
+export function* strokeSegmentsForRepresentationSteps(representation, toWorld, skipVertices = 0) {
   if (!representation) return null;
   if (typeof toWorld !== 'function') throw new Error('pattern-to-world-required');
   const positions = representation.positions, segments = [], points = [];
-  const add = (a, b) => {
-    const p1 = toWorld([positions[a * 3], positions[a * 3 + 1], positions[a * 3 + 2]]);
-    const p2 = toWorld([positions[b * 3], positions[b * 3 + 1], positions[b * 3 + 2]]);
-    segments.push(p1[0], p1[1], p2[0], p2[1]);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, work = 0;
+  let sliceStart = performance.now();
+  const extend = point => {
+    if (point[0] < minX) minX = point[0];
+    if (point[1] < minY) minY = point[1];
+    if (point[0] > maxX) maxX = point[0];
+    if (point[1] > maxY) maxY = point[1];
   };
+  const point = index => toWorld([positions[index * 3], positions[index * 3 + 1], positions[index * 3 + 2]]);
+  const add = (a, b) => {
+    const p1 = point(a), p2 = point(b);
+    segments.push(p1[0], p1[1], p2[0], p2[1]);
+    extend(p1); extend(p2);
+  };
+  const due = () => ++work >= 1024 && performance.now() - sliceStart >= 6;
   if (representation.indices) {
     const indices = representation.indices;
-    for (let i = 0; i + 1 < indices.length; i += 2) add(indices[i], indices[i + 1]);
+    for (let index = 0; index + 1 < indices.length; index += 2) {
+      add(indices[index], indices[index + 1]);
+      if (due()) { yield; work = 0; sliceStart = performance.now(); }
+    }
   } else if (representation.topology === 'lines') {
     const range = normalizeLineRange(representation.range, Math.floor(positions.length / 3));
     if (!range) return {segments:[], points:[], bbox:null, invalidRange:true};
     const start = range.first + Math.max(0, skipVertices);
-    for (let i = start; i + 1 < range.first + range.count; i += 2) add(i, i + 1);
+    for (let index = start; index + 1 < range.first + range.count; index += 2) {
+      add(index, index + 1);
+      if (due()) { yield; work = 0; sliceStart = performance.now(); }
+    }
   } else if (representation.topology === 'points') {
-    for (let i = 0; i < positions.length / 3; i++)
-      points.push(toWorld([positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]]));
+    for (let index = 0; index < positions.length / 3; index += 1) {
+      const next = point(index);
+      points.push(next); extend(next);
+      if (due()) { yield; work = 0; sliceStart = performance.now(); }
+    }
   } else {
     return {segments:[], points:[], bbox:null, unsupported:representation.topology};
   }
-  const all = [];
-  for (let i = 0; i < segments.length; i += 2) all.push([segments[i], segments[i + 1]]);
-  // Pattern expansion is budgeted at hundreds of thousands of points; spreading
-  // them into push() would overflow the JS stack, so copy element-wise.
-  for (let i = 0; i < points.length; i++) all.push(points[i]);
-  return {segments, points, bbox:boundsOf(all)};
+  return {segments, points, bbox:minX === Infinity ? null : {minX, minY, maxX, maxY}};
+}
+export function strokeSegmentsForRepresentation(representation, toWorld, skipVertices = 0) {
+  const steps = strokeSegmentsForRepresentationSteps(representation, toWorld, skipVertices);
+  let result;
+  do { result = steps.next(); } while (!result.done);
+  return result.value;
 }

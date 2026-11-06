@@ -74,15 +74,16 @@ async function run(m){
   commandMs+=elapsed;
   if(name.startsWith("$gpu-"))gpuMs+=elapsed;
  }
- mark=performance.now();
- ctx.getImageData(0,0,1,1);
- drainMs=performance.now()-mark;
+ let bitmap=null;
+ if(m.done){
+  const drainStarted=performance.now();
+  bitmap=canvas.transferToImageBitmap();
+  drainMs=performance.now()-drainStarted;
+ }
  const timing={totalMs:performance.now()-started,pathMs,imageMs,commandMs,gpuMs,drainMs,
   pathDefinitions:m.paths.length,commandCount:m.commands.length,
   gpuCalls:0,gpuSegments:0,gpuBuffers:0,gpuBatches:strokeStats.batches,
   strokeCalls:strokeStats.calls,strokeSegments:strokeStats.segments,renderer:"canvas-worker"};
- if(m.done){
-  const bitmap=canvas.transferToImageBitmap();
-  self.postMessage({type:"frame",id:m.id,bitmap,stats:{...strokeStats,renderer:"canvas-worker"},profile:timing},[bitmap]);
- }else self.postMessage({type:"chunk-ready",id:m.id,profile:timing});
+ if(m.done)self.postMessage({type:"frame",id:m.id,bitmap,stats:{...strokeStats,renderer:"canvas-worker"},profile:timing},[bitmap]);
+ else self.postMessage({type:"chunk-ready",id:m.id,profile:timing});
 }

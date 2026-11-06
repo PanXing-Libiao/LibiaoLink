@@ -2,14 +2,34 @@
 // the caller so WIPEOUT, fills and text keep their source order.
 import Flatbush from "../vendor/flatbush.js";
 export const STROKE_TILE_STRIDE = 9;
-export const STROKE_TILE_TARGET_PX = 360;
+export const STROKE_TILE_TARGET_PX = 1440;
 export const STROKE_TILE_MAX_LEVEL = 8;
 const MAX_DRAW_TILES = 64;
 const COLOR_FALLBACK = [0, 0, 0];
 
 function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
+function completeView(view) {
+  return !!view && [view.scale, view.tx, view.ty, view.dpr].every(Number.isFinite);
+}
 function intersects(a, b) {
   return !!a && !!b && a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY;
+}
+function inverseAffine(matrix) {
+  if (!matrix) return null;
+  const det = matrix[0] * matrix[5] - matrix[1] * matrix[4];
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-20) return null;
+  const a = matrix[5] / det, b = -matrix[1] / det;
+  const c = -matrix[4] / det, d = matrix[0] / det;
+  return [a, b, 0, 0, c, d, 0, 0, 0, 0, 1, 0,
+    -a * matrix[12] - c * matrix[13], -b * matrix[12] - d * matrix[13], 0, 1];
+}
+function matrixScale(matrix) {
+  return matrix ? Math.max(Math.hypot(matrix[0], matrix[1]), Math.hypot(matrix[4], matrix[5]), 1e-15) : 1;
+}
+function intersectView(view, matrix) {
+  if (!matrix) return view;
+  const inverse = inverseAffine(matrix);
+  return inverse ? transformBounds(view, inverse) : null;
 }
 function union(a, b) {
   if (!a) return b ? { ...b } : null;
@@ -32,12 +52,26 @@ function parseColor(css) {
   if (values.length < 3 || values.slice(0, 3).some(value => !Number.isFinite(value))) return COLOR_FALLBACK;
   return [clamp(values[0] / 255, 0, 1), clamp(values[1] / 255, 0, 1), clamp(values[2] / 255, 0, 1)];
 }
-function localViewBounds(view,matrix,bounds) {
-  const a=matrix[0],b=matrix[1],c=matrix[4],d=matrix[5],det=a*d-b*c;
-  if(!det)return bounds;
-  const inverse=[d/det,-b/det,0,0,-c/det,a/det,0,0,0,0,1,0,
-    (c*matrix[13]-d*matrix[12])/det,(b*matrix[12]-a*matrix[13])/det,0,1];
-  return transformBounds(view,inverse);
+// Flatbush stores bounds as Float32. Pad only the spatial query by a few ULP
+// so a line on a tile boundary is not rounded into the neighbouring tile.
+function boxPadding(box) {
+  const magnitude = Math.max(Math.abs(box.minX), Math.abs(box.maxX), Math.abs(box.minY), Math.abs(box.maxY), 1);
+  return Math.max(1e-6, magnitude * 2 ** -22);
+}
+function padBox(box, pad = boxPadding(box)) {
+  return { minX: box.minX - pad, minY: box.minY - pad, maxX: box.maxX + pad, maxY: box.maxY + pad };
+}
+function transformChunk(chunk, matrix) {
+  const count = chunk ? chunk.length & ~1 : 0;
+  if (!count) return null;
+  const out = new Float32Array(count);
+  const a = matrix[0], b = matrix[1], c = matrix[4], d = matrix[5], tx = matrix[12], ty = matrix[13];
+  for (let i = 0; i < count; i += 2) {
+    const x = chunk[i], y = chunk[i + 1];
+    out[i] = a * x + c * y + tx;
+    out[i + 1] = b * x + d * y + ty;
+  }
+  return out;
 }
 function clipSegment(x1, y1, x2, y2, box) {
   const dx = x2 - x1, dy = y2 - y1;
@@ -74,44 +108,52 @@ export function visibleTileRange(bounds, level, view) {
   const y1 = clamp(Math.floor((view.maxY - bounds.minY - 1e-12) / size), 0, cells - 1);
   return { level, x0, x1, y0, y1, count: Math.max(0, x1 - x0 + 1) * Math.max(0, y1 - y0 + 1) };
 }
-function clipSegments(worldSegments, box) {
-  const out = [];
-  for (let i = 0; i + 3 < worldSegments.length; i += 4) {
-    const clipped = clipSegment(worldSegments[i], worldSegments[i + 1], worldSegments[i + 2], worldSegments[i + 3], box);
-    if (clipped) out.push(...clipped);
-  }
-  return out;
-}
-export function buildTileVertices(descriptors, box, minWorldSize = 0) {
+export function buildTileVertices(descriptors, box, minWorldSize = 0, scratch = null) {
   const groups = new Map();
+  const clipBox = padBox(box);
   for (const descriptor of descriptors) {
-    if (!intersects(descriptor.bounds, box)) continue;
+    if (!intersects(descriptor.bounds, clipBox)) continue;
     if (descriptor.lodSize > 0 && descriptor.lodSize < minWorldSize) continue;
-    const clipped = clipSegments(descriptor.worldSegments, box);
-    if (!clipped.length) continue;
     let group = groups.get(descriptor.styleKey);
-    if (!group) { group = { key: descriptor.styleKey, color: descriptor.color, width: descriptor.width, layerId: descriptor.layerId, rank: Number.isFinite(descriptor.order) ? descriptor.order : groups.size, rows: [] }; groups.set(group.key, group); }
-    else if (Number.isFinite(descriptor.order)) group.rank = Math.min(group.rank, descriptor.order);
-    group.rows.push({ descriptor, segments: clipped });
+    if (!group) {
+      group = { key: descriptor.styleKey, color: descriptor.color, width: descriptor.width,
+        layerId: descriptor.layerId, rank: Number.isFinite(descriptor.order) ? descriptor.order : groups.size, rows: [] };
+      groups.set(group.key, group);
+    } else if (Number.isFinite(descriptor.order)) group.rank = Math.min(group.rank, descriptor.order);
+    group.rows.push(descriptor);
   }
   if (!groups.size) return { data: new Float32Array(0), segments: 0, styleCount: 0 };
   const ordered = [...groups.values()].sort((a, b) => a.rank - b.rank);
   let segments = 0;
-  for (const group of ordered) for (const row of group.rows) segments += row.segments.length / 4;
+  for (const group of ordered) {
+    for (const descriptor of group.rows) {
+      const source = descriptor.worldSegments;
+      for (let i = 0; i + 3 < source.length; i += 4) {
+        if (clipSegment(source[i], source[i + 1], source[i + 2], source[i + 3], clipBox)) segments++;
+      }
+    }
+  }
   if (!segments) return { data: new Float32Array(0), segments: 0, styleCount: 0 };
   const originX = (box.minX + box.maxX) * 0.5;
   const originY = (box.minY + box.maxY) * 0.5;
-  const data = new Float32Array(segments * STROKE_TILE_STRIDE);
+  const needed = segments * STROKE_TILE_STRIDE;
+  let data;
+  if (scratch) {
+    if (!scratch.data || scratch.data.length < needed) scratch.data = new Float32Array(needed);
+    data = scratch.data.subarray(0, needed);
+  } else data = new Float32Array(needed);
   let at = 0;
   for (const group of ordered) {
-    for (const row of group.rows) {
-      const { color, width, lodSize } = row.descriptor;
-      const source = row.segments;
-      for (let i = 0; i < source.length; i += 4) {
-        data[at++] = source[i] - originX;
-        data[at++] = source[i + 1] - originY;
-        data[at++] = source[i + 2] - originX;
-        data[at++] = source[i + 3] - originY;
+    for (const descriptor of group.rows) {
+      const { color, width, lodSize } = descriptor;
+      const source = descriptor.worldSegments;
+      for (let i = 0; i + 3 < source.length; i += 4) {
+        const clipped = clipSegment(source[i], source[i + 1], source[i + 2], source[i + 3], clipBox);
+        if (!clipped) continue;
+        data[at++] = clipped[0] - originX;
+        data[at++] = clipped[1] - originY;
+        data[at++] = clipped[2] - originX;
+        data[at++] = clipped[3] - originY;
         data[at++] = color[0];
         data[at++] = color[1];
         data[at++] = color[2];
@@ -133,6 +175,8 @@ export function createStrokeTilePlanner(renderer, options = {}) {
   let useSerial = 0;
   let totalBytes = 0;
   let builtTiles = 0;
+  let maxBuildMs = 0, maxBuildSegments = 0, maxBuildBytes = 0;
+  const vertexScratch = { data: null };
   const rows = new Map();
   function prune(activeKeys) {
     if (totalBytes <= maxBytes) return;
@@ -146,7 +190,7 @@ export function createStrokeTilePlanner(renderer, options = {}) {
       renderer.deleteTileBuffer(row.buffer);
     }
   }
-  function describeRun(plan, runId, entries) {
+  function describeRun(plan, runId, _matrix, entries) {
     const cached = plan.runs.get(runId);
     if (cached) return cached;
     const descriptors = [];
@@ -162,23 +206,24 @@ export function createStrokeTilePlanner(renderer, options = {}) {
       }
     }
     for (const entry of plan.runEntries.get(runId) || []) {
-      const entryBounds = entry.bounds;
-      if (!entryBounds) continue;
       const layerId = entry.layerId || "";
       const width = Math.max(0.01, Number(entry.width) || 0.01);
       const color = parseColor(entry.color);
       const styleKey = layerId + "|" + entry.color + "|" + width;
-      const lodSize = entry.lodSize ?? Math.max(entryBounds.maxX - entryBounds.minX, entryBounds.maxY - entryBounds.minY, 1e-9);
       const chunks = entry.gpuSegments || [];
       const records = entry.records || [];
       const count = Math.min(chunks.length, records.length);
       for (let i = 0; i < count; i++) {
-        const worldSegments = chunks[i];
-        if (!worldSegments) continue;
-        const worldBounds = records[i].bbox || entry.bounds;
-        if (!worldBounds) continue;
-        descriptors.push({ bounds: worldBounds, worldSegments, layerId, width, color, styleKey, lodSize,order: order++ });
-        bounds = union(bounds, worldBounds);
+        const localSegments = chunks[i];
+        if (!localSegments?.length) continue;
+        const recordBounds = records[i].bbox || entry.bounds;
+        if (!recordBounds) continue;
+        // Tile buffers stay in retained-group local coordinates and are shared
+        // by every instance matrix. Only the per-record extent is used for LOD;
+        // a whole batch envelope keeps millions of tiny dense records alive.
+        const lodSize = Math.max(recordBounds.maxX - recordBounds.minX, recordBounds.maxY - recordBounds.minY, 1e-9);
+        descriptors.push({ bounds: recordBounds, worldSegments: localSegments, layerId, width, color, styleKey, lodSize, order: order++ });
+        bounds = union(bounds, recordBounds);
       }
     }
     let index = null;
@@ -186,7 +231,7 @@ export function createStrokeTilePlanner(renderer, options = {}) {
       // Tile queries use double-precision drawing coordinates. Float32 bounds
       // can round boundary lines outside the tile and discard entire strokes.
       index = new Flatbush(descriptors.length, 16, Float64Array);
-      for (const descriptor of descriptors) index.add(descriptor.bounds.minX, descriptor.bounds.minY, descriptor.bounds.maxX, descriptor.bounds.maxY);
+      for (const descriptor of descriptors) { const box = padBox(descriptor.bounds); index.add(box.minX, box.minY, box.maxX, box.maxY); }
       index.finish();
     }
     const run = { id: runId, descriptors, index, bounds, tiles: new Map() };
@@ -194,10 +239,11 @@ export function createStrokeTilePlanner(renderer, options = {}) {
     return run;
   }
   function runPlan(node, entries) {
-    let plan = nodePlans.get(node);
+    const owner = node?.group || node || {};
+    let plan = nodePlans.get(owner);
     if (!plan) {
       plan = { id: ++planSerial, runs: new Map() };
-      nodePlans.set(node, plan);
+      nodePlans.set(owner, plan);
     }
     return plan;
   }
@@ -213,9 +259,14 @@ export function createStrokeTilePlanner(renderer, options = {}) {
     const candidates = run.index
       ? run.index.search(bounds.minX, bounds.minY, bounds.maxX, bounds.maxY).map(i => run.descriptors[i])
       : run.descriptors;
-    const built = buildTileVertices(candidates, bounds, minWorldSize);
+    const buildStarted = performance.now();
+    const built = buildTileVertices(candidates, bounds, minWorldSize, vertexScratch);
     if (!built.segments) { run.tiles.set(key, null); return null; }
     const buffer = renderer.createTileBuffer(built.data, built.segments, built.originX, built.originY);
+    const buildMs = performance.now() - buildStarted;
+    if (buildMs > maxBuildMs) {
+      maxBuildMs = buildMs; maxBuildSegments = built.segments; maxBuildBytes = built.data.byteLength;
+    }
     const row = { key, run, buffer, bytes: built.data.byteLength, segments: built.segments, styles: built.styleCount, lastUse: ++useSerial };
     run.tiles.set(key, row);
     rows.set(key, row);
@@ -224,24 +275,29 @@ export function createStrokeTilePlanner(renderer, options = {}) {
     return row;
   }
   function* drawRunSteps(node, runId, entries, matrix, view, scale, minScreenPx) {
-    let sliceStarted=performance.now();
-    const plan = runPlan(node.group || node, entries);
-    const run = describeRun(plan, runId, entries);
-    if (!run || !run.descriptors.length || !intersects(transformBounds(run.bounds,matrix), view)) return { tiles: 0, segments: 0, styles: 0, level: 0, bytes: 0, built: 0, reused: 0 };
-    // Geometry and tile keys remain in group-local space. The shader applies
-    // each parent transform and the exact screen-space LOD threshold per draw.
-    const localView=localViewBounds(view,matrix,run.bounds);
-    const localScale=scale*Math.max(Math.hypot(matrix[0],matrix[1]),Math.hypot(matrix[4],matrix[5]));
-    const lodKey=0,buildMinWorldSize=0;
+    if (!completeView(view)) return { tiles: 0, segments: 0, styles: 0, level: 0, bytes: 0, built: 0, reused: 0 };
+    const plan = runPlan(node, entries);
+    const run = describeRun(plan, runId, matrix, entries);
+    const localView = intersectView(view, matrix);
+    if (!run || !run.descriptors.length || !localView || !intersects(run.bounds, localView)) return { tiles: 0, segments: 0, styles: 0, level: 0, bytes: 0, built: 0, reused: 0 };
+    const localScale = Math.max(scale * matrixScale(matrix), 1e-15);
+    // Uploaded tiles remain zoom-stable; the GPU applies the per-record LOD
+    // threshold from each vertex, so gestures reuse the same buffers.
+    const lodKey = 0;
+    const buildMinWorldSize = 0;
     let level = selectTileLevel(run.bounds, localScale, tilePx, maxLevel);
     let range = visibleTileRange(run.bounds, level, localView);
     while (range.count > maxDrawTiles && level > 0) { level--; range = visibleTileRange(run.bounds, level, localView); }
     if (!range.count) return { tiles: 0, segments: 0, styles: 0, level, bytes: 0, built: 0, reused: 0 };
     const activeKeys = new Set();
     let tiles = 0, segments = 0, styles = 0, bytes = 0, built = 0, reused = 0;
+    let sliceStarted = performance.now();
     for (let y = range.y0; y <= range.y1; y++) {
       for (let x = range.x0; x <= range.x1; x++) {
-        if(performance.now()-sliceStarted>=6){yield;sliceStarted=performance.now();}
+        if (performance.now() - sliceStarted >= 6) {
+          yield;
+          sliceStarted = performance.now();
+        }
         const key = rowKey(plan.id, run.id, level, x, y, lodKey);
         const known = run.tiles.get(key);
         const row = ensureTile(plan, run, level, x, y, lodKey, buildMinWorldSize);
@@ -258,15 +314,19 @@ export function createStrokeTilePlanner(renderer, options = {}) {
     prune(activeKeys);
     return { tiles, segments, styles, level, bytes, built, reused };
   }
-  function drawRun(...args){
-    const steps=drawRunSteps(...args);let next;do{next=steps.next();}while(!next.done);return next.value;
+  function drawRun(node, runId, entries, matrix, view, scale, minScreenPx) {
+    const steps = drawRunSteps(node, runId, entries, matrix, view, scale, minScreenPx);
+    let next = steps.next();
+    while (!next.done) next = steps.next();
+    return next.value;
   }
   function reset() {
     for (const row of rows.values()) renderer.deleteTileBuffer(row.buffer);
     rows.clear();
     totalBytes = 0;
     builtTiles = 0;
+    maxBuildMs = 0; maxBuildSegments = 0; maxBuildBytes = 0;
     nodePlans = new WeakMap();
   }
-  return { drawRun, drawRunSteps, reset, stats: () => ({ cachedTiles: rows.size, bytes: totalBytes, builtTiles }) };
+  return { drawRun, drawRunSteps, reset, stats: () => ({ cachedTiles: rows.size, bytes: totalBytes, builtTiles, maxBuildMs, maxBuildSegments, maxBuildBytes }) };
 }

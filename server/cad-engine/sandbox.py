@@ -5,7 +5,17 @@ import socket
 from pathlib import Path
 
 MIB = 1024 * 1024
-MEMORY_BYTES = 5 * 1024 * MIB
+def memory_limit_bytes():
+    raw = os.environ.get('CAD_SANDBOX_MAX_MIB', '5120')
+    try:
+        mib = int(raw)
+    except ValueError:
+        raise RuntimeError('CAD_SANDBOX_MAX_MIB must be an integer') from None
+    if not 1024 <= mib <= 16384:
+        raise RuntimeError('CAD_SANDBOX_MAX_MIB must be between 1024 and 16384')
+    return mib * MIB
+
+MEMORY_BYTES = memory_limit_bytes()
 PIDS = 64
 FILE_BYTES = 512 * MIB
 ROOT = Path('/var/lib/cad')

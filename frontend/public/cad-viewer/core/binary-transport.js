@@ -21,7 +21,7 @@ export function binaryDownloadPlan(manifest){
  return {resources,totalBytes:resources.reduce((sum,b)=>sum+b.byteLength,0)};
 }
 
-export async function hydrateBinary(manifest,{signal,fetcher=fetch,prefetched=new Map(),onPlan=()=>{}}={}){
+export async function hydrateBinary(manifest,{signal,fetcher=fetch,prefetched=new Map(),onPlan=()=>{},release=true}={}){
  // Do not send a release request for an untrusted lease identifier.
  const token=manifest.resourceLease;
  if(!/^[a-f0-9]{48}$/.test(token))throw new Error('Invalid resource lease');
@@ -59,6 +59,6 @@ export async function hydrateBinary(manifest,{signal,fetcher=fetch,prefetched=ne
  finally{
   await Promise.allSettled(pending);signal?.removeEventListener('abort',abort);
   // Release only after all reads settle, including siblings aborted on failure.
-  await fetcher(`/api/resources/${token}`,{method:'DELETE'}).catch(()=>{});
+  if(release)await fetcher(`/api/resources/${token}`,{method:'DELETE'}).catch(()=>{});
  }
 }

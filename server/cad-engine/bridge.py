@@ -236,11 +236,38 @@ class Gateway:
                     raise ValueError('Expected binary artifact')
                 definitions = packet['document']['buffers']
                 paths = {b['sha256']: self.jobs._buffer_path(b) for b in definitions.values()}
+                chunks = packet.get('chunkResources')
+                public_chunks = None
+                if chunks is not None:
+                    if not isinstance(chunks, list) or len(chunks) > 4096:
+                        raise ValueError('Invalid chunk inventory')
+                    public_chunks = []
+                    seen_chunks = set()
+                    for entry in chunks:
+                        if not isinstance(entry, dict):
+                            raise ValueError('Invalid chunk resource')
+                        cid = entry.get('id'); sha = entry.get('sha256'); length = entry.get('byteLength')
+                        content_type = entry.get('contentType', 'application/octet-stream')
+                        if not isinstance(cid, str) or not re.fullmatch(r'[A-Za-z0-9._:-]{1,128}', cid) or cid in seen_chunks:
+                            raise ValueError('Invalid chunk id')
+                        if not isinstance(sha, str) or not re.fullmatch(r'[a-f0-9]{64}', sha):
+                            raise ValueError('Invalid chunk hash')
+                        if type(length) is not int or not 0 <= length <= 256 * 1024 * 1024 or entry.get('file') != cid + '.bin':
+                            raise ValueError('Invalid chunk size')
+                        if not isinstance(content_type, str) or len(content_type) > 128:
+                            raise ValueError('Invalid chunk content type')
+                        paths[sha] = self.jobs._buffer_path({'sha256': sha, 'byteLength': length})
+                        public_chunks.append({'id': cid, 'sha256': sha, 'byteLength': length,
+                                              'contentType': content_type,
+                                              'url': f'/api/resources/{token}/{sha}'})
+                        seen_chunks.add(cid)
                 packet.update(transportProfile='ucd-binary-compact/1' if 'compact' in profile else 'ucd-binary-manifest/1',
                               resourceLease=token,
                               bufferResources={bid: {'url': f'/api/resources/{token}/{b["sha256"]}',
                                                     'sha256': b['sha256'], 'byteLength': b['byteLength']}
                                                for bid, b in definitions.items()})
+                if public_chunks is not None:
+                    packet['chunkResources'] = public_chunks
                 with path.open('x') as output:
                     json.dump(packet, output, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
             self.leases[token] = {'namespace': request['namespace'], 'jobId': row['id'], 'paths': paths,

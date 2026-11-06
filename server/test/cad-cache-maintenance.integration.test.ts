@@ -8,7 +8,7 @@ import { loadEnv } from "../src/config/env.js";
 import { DatabaseService } from "../src/db/database.service.js";
 import { CadArchiveRepository } from "../src/modules/file/cad-archive.repository.js";
 import { CadCacheMaintenance } from "../src/modules/file/cad-cache-maintenance.js";
-import { CAD_FORMAT_COMPAT_VERSIONS } from "../src/modules/file/cad-release.js";
+import { CAD_FORMAT_COMPAT_VERSIONS, CAD_FORMAT_VERSIONS } from "../src/modules/file/cad-release.js";
 import { installCadAuditTables } from "./cad-audit.fixture.js";
 const databaseUrl=process.env.CAD_TEST_DATABASE_URL, actorId=randomUUID(), projectId=randomUUID();
 const schemaName='cad_cache_'+randomBytes(8).toString('hex');
@@ -60,6 +60,13 @@ describe.skipIf(!databaseUrl)('CAD bounded cache lifecycle with PostgreSQL',()=>
   expect(rows).toHaveLength(2);expect(rows.every(r=>r.last_accessed_at.getTime()<Date.now()-3600_000&&r.attempts===0&&r.object_prefix===null)).toBe(true);
   expect(rows.some(r=>[cold.source.versionId,unseen.source.versionId,failed.source.versionId].includes(r.version_id))).toBe(false);
   expect((await query('select state from cad_artifacts where id=$1',[current.id])).rows[0].state).toBe('failed');
+ });
+ it("enqueues the current chunked generation for a recently used compatible artifact",async()=>{
+  const legacy=await oldArtifact();
+  await query("update cad_artifacts set format_version=$2,last_accessed_at=now() where id=$1",[legacy.artifact.id,CAD_FORMAT_COMPAT_VERSIONS.STEP[0]]);
+  await maintenance().warmRecent();
+  const rows=(await query("select format_version,state from cad_artifacts where version_id=$1 and format_version<>$2",[legacy.source.versionId,CAD_FORMAT_COMPAT_VERSIONS.STEP[0]])).rows;
+  expect(rows).toEqual([{format_version:CAD_FORMAT_VERSIONS.STEP,state:"queued"}]);
  });
  it('discovers current STEP/STP/DWG without cache and ignores recycled or unsupported files',async()=>{
   const step=await currentCad('零件.STEP','step'),stp=await currentCad('装配.stp','stp'),dwg=await currentCad('总图.dwg','dwg');
@@ -153,6 +160,13 @@ describe.skipIf(!databaseUrl)('CAD bounded cache lifecycle with PostgreSQL',()=>
    const rows=(await connection.query('select * from cad_artifacts')).rows;
    expect(rows.find(r=>r.id===seen).last_accessed_at).toBeInstanceOf(Date);expect(rows.find(r=>r.id===unseen).last_accessed_at).toBeNull();
   }finally{await connection.query('rollback');connection.release();}
+ });
+ it('claims a live viewer conversion before older speculative work',async()=>{
+  const speculative=await oldArtifact('older.step'),live=await oldArtifact('live.step');
+  await query("update cad_artifacts set format_version=$2,state='queued',available_at=now()-interval '10 minutes',claim_token=null,claim_until=null where id=$1",[speculative.artifact.id,CAD_FORMAT_VERSIONS.STEP]);
+  await query("update cad_artifacts set format_version=$2,state='queued',available_at=now(),claim_token=null,claim_until=null where id=$1",[live.artifact.id,CAD_FORMAT_VERSIONS.STEP]);
+  await archive.openView(live.artifact.id,actorId,'d'.repeat(32));
+  expect((await archive.claim())?.id).toBe(live.artifact.id);
  });
  it('rate limits idle maintenance and respects disabled engine',async()=>{
   const m=maintenance(),warm=vi.spyOn(m,'warmRecent').mockResolvedValue(),retire=vi.spyOn(m,'retireReplaced').mockResolvedValue(),purge=vi.spyOn(m,'purgeRetired').mockResolvedValue();

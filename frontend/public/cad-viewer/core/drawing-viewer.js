@@ -2,33 +2,53 @@
 // Input: a UCD 2.0 envelope whose document carries Drawing tables. The viewer never
 // re-reads DXF. Analytic source curves (Entity.geometry) and the discretized display
 // representation (Representation kind=drawing) are selectable, separate paths.
-import {projectDrawing, projectBlock} from './drawing-projection.js?v=dxf-0.17.3';
+import {projectDrawing, projectBlock} from './drawing-projection.js?v=dxf-0.17.24';
 import {clipInfiniteLine, gradientField, triangleBoundarySegments, traceStrokeSegments} from './drawing-2d.js?v=dxf-2d-0.5.0';
-import {drawingClips, compileClips, triangulateRings, insideRing} from './drawing-clipping.js?v=dxf-0.17.3';
-import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.17.3';
-import {estimateDrawingDraws, projectInstancesSteps, shouldProjectInstances, recordVisibleBounds, INSTANCE_DRAW_LIMIT, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, quantizeLodSize, LOD_MIN_SCREEN_PX, isLodCulled, I} from './drawing-instances.js?v=dxf-0.17.3';
+import {drawingClips, compileClips, triangulateRings, insideRing} from './drawing-clipping.js?v=dxf-0.17.24';
+import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.17.24';
+import {estimateDrawingDraws, projectInstances, projectInstancesSteps, shouldProjectInstances, recordVisibleBounds, INSTANCE_DRAW_LIMIT, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, quantizeLodSize, LOD_MIN_SCREEN_PX, isLodCulled, I} from './drawing-instances.js?v=dxf-0.17.24';
 import Flatbush from './vendor/flatbush.js';
-import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, textOffsets, textDisplayCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.8';
-import {aciColor, trueColorCss, drawingColorCss} from './drawing-colors.js?v=dxf-0.17.4';
-import {resolveTextAvoidance} from './drawing-text-avoidance.js?v=dxf-0.17.3';
-import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentation} from './drawing-pattern.js?v=dxf-0.17.3';
-import {mediaItemFor, rasterRecord} from './drawing-media.js?v=dxf-0.17.3';
+import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, textOffsets, textDisplayCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.24';
+import {aciColor, trueColorCss, drawingColorCss} from './drawing-colors.js?v=dxf-0.17.24';
+import {resolveTextAvoidanceSteps} from './drawing-text-avoidance.js?v=dxf-0.17.24';
+import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentationSteps} from './drawing-pattern.js?v=dxf-0.17.24';
+import {mediaItemFor, rasterRecord} from './drawing-media.js?v=dxf-0.17.24';
+import {createServerChunkController, isServerChunked, bindOverviewRepresentations} from './server-chunks.js?v=dxf-0.17.24';
+
 
 // Use hybrid rendering automatically; retain compatibility for older browsers.
 const forceCanvasRenderer = typeof location !== 'undefined' && new URLSearchParams(location.search).get('renderer') === 'canvas';
 const accelerated = !forceCanvasRenderer && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined';
 const gpuModules = accelerated ? await Promise.all([
-  import('./gpu/background-painter.js?v=dxf-0.17.3'), import('./gpu/gpu-strokes.js?v=dxf-0.17.6'), import('./gpu/stroke-tiles.js?v=dxf-0.17.7')
+  import('./gpu/background-painter.js?v=dxf-0.17.24'), import('./gpu/gpu-strokes.js?v=dxf-0.17.24'), import('./gpu/stroke-tiles.js?v=dxf-0.17.24'), import('./gpu/fill-tiles.js?v=dxf-0.17.24')
+
 ]) : null;
 const createBackgroundPainter = gpuModules?.[0].createBackgroundPainter;
 const createStrokeGPU = gpuModules?.[1].createStrokeGPU;
 const createStrokeTilePlanner = gpuModules?.[2].createStrokeTilePlanner;
+const createFillTilePlanner = gpuModules?.[3].createFillTilePlanner;
 const ACCENT = '#d9426f';
+// Rasterization cost grows with the square of the backing-store DPR. Complex
+// drawings keep the CSS size but cap the device pixels; the preview bitmap and
+// all hit testing stay in CSS/world units, so only visual sharpness changes.
+const COMPLEX_RENDER_DPR = 1.25;
+const COMPLEX_RENDER_DRAW_THRESHOLD = 400000;
+// A full-size preview bitmap doubles the backing store. Cap total pixels so a
+// high-DPI 4K window cannot make compositor transforms copy hundreds of MB.
+const CANVAS_PIXEL_BUDGET = 16000000;
+const viewerProfile = (() => {
+  try {
+    return new URLSearchParams(location.search).get('profile') === '1'
+      || window.__CAD_VIEWER_PROFILE__ === true;
+  } catch { return false; }
+})();
 
 export function mountDrawingViewer(envelope) {
   window.__cadTimingMark?.("drawingViewerMountStart");
   const viewerStarted = performance.now();
   const ucd = envelope.document, drawing = ucd.drawing, presentation = envelope.presentation;
+  const overviewBindingCount = bindOverviewRepresentations(envelope);
+  const chunkedModelSpaceId = ucd.extensions?.['org.cad-preview.server-chunks/1']?.modelSpaceId || null;
   const styleExt = (ucd.extensions && ucd.extensions['org.cad-preview.style-inheritance/1']) || {};
   const coverageExt = (ucd.extensions && ucd.extensions['org.cad-preview.drawing-coverage/1']) || {};
   const annotationItems = ucd.extensions?.['org.cad-preview.annotation-presentation/1']?.items || {};
@@ -51,8 +71,10 @@ export function mountDrawingViewer(envelope) {
   let strokeGPU = gpuModules ? createStrokeGPU() : null;
   const accelerated = !!strokeGPU;
   let strokeTiles = strokeGPU && createStrokeTilePlanner ? createStrokeTilePlanner(strokeGPU) : null;
+  let fillTiles = strokeGPU && createFillTilePlanner ? createFillTilePlanner(strokeGPU) : null;
   let background=null;
   canvas.dataset.renderer = accelerated ? 'gpu' : 'canvas';
+  canvas.dataset.overviewBindings = String(overviewBindingCount);
   let overlay = document.getElementById('drawingOverlay');
   if (!overlay) {
     overlay = document.createElement('div'); overlay.id = 'drawingOverlay';
@@ -202,7 +224,10 @@ export function mountDrawingViewer(envelope) {
   // CAD labels keep their source anchors unless avoidance is explicitly enabled.
   let textAvoidance = false;
   let instancePlan = null, instanceLayerKey = '', instanceSelected = null;
-  let scale = 1, tx = 0, ty = 0, dpr = 1, cssW = 800, cssH = 600;
+  let scale = 1, tx = 0, ty = 0, dpr = 1, cssW = 800, cssH = 600, fitScale = 1;
+  let overviewSuppressed = false;
+  let serverChunks = null, viewChangeHandler = null;
+  let renderDrawEstimate = 0;
   let mode = 'display';
   const userLayers = new Map();
   const meshIds = new Set(Object.keys(ucd.extensions?.['org.libiaolink.dwg/1']?.meshPresentations || {}));
@@ -213,7 +238,8 @@ export function mountDrawingViewer(envelope) {
     if (next === '3d' && spaceTarget?.kind !== 'model')
       setSpace({kind:'model',spaceId:Object.values(drawing.drawings)[0].modelSpaceId});
     if (next === '3d' && !meshViewer) {
-      meshLoading ||= import('./drawing-mesh-viewer.js?v=dxf-0.17.3');
+      meshLoading ||= import('./drawing-mesh-viewer.js?v=dxf-0.17.24');
+
       const {createDrawingMeshViewer} = await meshLoading;
       if (destroyed || request!==viewRequest) return false;
       meshViewer ||= createDrawingMeshViewer({document:ucd, viewport, geometry:representationGeometry, meshIds,
@@ -237,6 +263,7 @@ export function mountDrawingViewer(envelope) {
   // Interaction preview: transformed bitmap while panning/zooming.
   let interacting = false, interactionTimer = 0;
   let previewCanvas = null, previewView = null, previewValid = false;
+  let previewCompositeActive = false, previewTransformFrames = 0;
   const spaceStateCache = new Map();
   const SPACE_STATE_CACHE_SIZE = 2;
   const SPACE_STATE_MAX_RECORDS = 420000;
@@ -296,6 +323,8 @@ export function mountDrawingViewer(envelope) {
     if (!a) throw new Error('missing accessor ' + id);
     const bytes = bufferBytes(a.bufferId);
     const count = a.count * (a.components || 1), offset = a.byteOffset || 0;
+    if (a.component === 'u8') return new Uint8Array(bytes.buffer, bytes.byteOffset + offset, count);
+    if (a.component === 'u16') return new Uint16Array(bytes.buffer, bytes.byteOffset + offset, count);
     if (a.component === 'u32') return new Uint32Array(bytes.buffer, bytes.byteOffset + offset, count);
     if (a.component === 'f32') return new Float32Array(bytes.buffer, bytes.byteOffset + offset, count);
     return new Float64Array(bytes.buffer, bytes.byteOffset + offset, count);
@@ -463,7 +492,7 @@ export function mountDrawingViewer(envelope) {
       for (const triangle of fill.triangles) {
         path.moveTo(...triangle[0]); path.lineTo(...triangle[1]); path.lineTo(...triangle[2]); path.closePath();
       }
-      return {path, triangles:fill.triangles, bbox:fill.bbox};
+      return {path, triangles:fill.triangles, fillRule:'nonzero', bbox:fill.bbox};
     }
     for (const ring of fill.rings) {
       if (!ring.length) continue;
@@ -471,7 +500,7 @@ export function mountDrawingViewer(envelope) {
       for (const point of ring.slice(1)) path.lineTo(...point);
       path.closePath();
     }
-    return {path, rings:fill.rings, bbox:fill.bbox};
+    return {path, rings:fill.rings, fillRule:fill.fillRule || 'evenodd', bbox:fill.bbox};
   }
   function pointInRing(x, y, ring) {
     let inside = false;
@@ -498,7 +527,7 @@ export function mountDrawingViewer(envelope) {
   }
 
   // ----- build ------------------------------------------------------------
-  function apply(m, p) { return [m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12], m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13]]; }
+  function apply(m, p) { const z = p[2] ?? 0; return [m[0] * p[0] + m[4] * p[1] + m[8] * z + m[12], m[1] * p[0] + m[5] * p[1] + m[9] * z + m[13]]; }
   function matrixScale(m) { return Math.hypot(m[0], m[1]) || 1; }
   function lineWidthPx(mm) { return Math.max(0.6, Math.min(4.0, 0.75 + (Number(mm || 0.25) - 0.25) * 1.1)); }
   function dashFor(style, itemId) {
@@ -519,6 +548,14 @@ export function mountDrawingViewer(envelope) {
   function drawVisible(rec, sourceOnly=false) {
     const draw = rec.draw;
     if (draw.visibility === 'hidden' || draw.availability !== 'ready') return false;
+    // Retain every record in the build path. At runtime, chunked model space
+    // paints exactly one representation: overview until every intersecting
+    // detail chunk is applied, then detail. This avoids double-painting during
+    // the hand-off without leaving holes while chunks download.
+    if (!sourceOnly && isChunkedModelSpace()) {
+      const isOverview = isChunkedOverviewDraw(draw);
+      if (isOverview === overviewSuppressed) return false;
+    }
     const hasGeometry=rec.infinite ? rec.clipRegion.finiteBounds===undefined || !!rec.navigationBounds : !!rec.visibleGeometry.bounds;
     const visible=sourceOnly?layerSourceVisible:layerVisible;
     return hasGeometry && visible(rec.layerId) && draw.visibilityLayerIds.every(visible);
@@ -541,7 +578,16 @@ export function mountDrawingViewer(envelope) {
     batch.path = path;
     return path;
   }
+  const buildTiming = Object.create(null);
+  function noteBuildTiming(name, started, id) {
+    const ms = performance.now() - started;
+    if (ms <= (buildTiming[name] || 0)) return;
+    buildTiming[name] = ms;
+    canvas.dataset["maxBuild" + name + "Ms"] = String(ms);
+    canvas.dataset["maxBuild" + name + "Id"] = String(id || "");
+  }
   function addRecord(rec) {
+    const addStarted = viewerProfile ? performance.now() : 0;
     if (rec.infinite) {
       const window=rec.clipRegion.finiteBounds;
       const segment=window && clipInfiniteLine(rec.infinite,window);
@@ -554,11 +600,18 @@ export function mountDrawingViewer(envelope) {
     } else rec.visibleGeometry={bounds:rec.bbox,segments:rec.segments||[]};
     built.push(rec);
     if(instancePlan)instancePlan.drawGroups.get(rec.draw).records.push(rec);
+    if (viewerProfile) noteBuildTiming("Record", addStarted, rec.id);
   }
-  function applyTextAvoidance() {
+  function* applyTextAvoidanceSteps() {
     if (!textAvoidance || !nativeTextLayout) return;
+    const avoidanceStarted = viewerProfile ? performance.now() : 0;
     const entries = [], seen = new Set();
+    let sliceStart = performance.now(), visited = 0;
     for (const rec of built) {
+      if (++visited % 64 === 0 && performance.now() - sliceStart >= 6) {
+        yield;
+        sliceStart = performance.now();
+      }
       const entry = rec.textEntry;
       // Block-internal text (dimension pictures, attributes) keeps its source
       // position: retained instances share one record, so moving it would move
@@ -570,9 +623,20 @@ export function mountDrawingViewer(envelope) {
       if (!box) continue;
       entries.push({id: entry.itemId + '@' + entries.length, box, entry, rec});
     }
-    if (!entries.length) return;
-    const resolved = resolveTextAvoidance(entries.map(({id, box}) => ({id, box})), {gap: 0});
+    if (!entries.length) {
+      if (viewerProfile) {
+        canvas.dataset.textAvoidanceMs = String(performance.now() - avoidanceStarted);
+        canvas.dataset.textAvoidanceItems = "0";
+      }
+      return;
+    }
+    const resolved = yield* resolveTextAvoidanceSteps(entries.map(({id, box}) => ({id, box})), {gap: 0});
+    let applied = 0;
     for (const item of entries) {
+      if (++applied % 64 === 0 && performance.now() - sliceStart >= 6) {
+        yield;
+        sliceStart = performance.now();
+      }
       const choice = resolved.get(item.id);
       if (!choice) continue;
       const entry = item.entry;
@@ -590,49 +654,98 @@ export function mountDrawingViewer(envelope) {
       item.rec.bbox = choice.box;
       if (item.rec.visibleGeometry) item.rec.visibleGeometry.bounds = choice.box;
     }
+    if (viewerProfile) {
+      canvas.dataset.textAvoidanceMs = String(performance.now() - avoidanceStarted);
+      canvas.dataset.textAvoidanceItems = String(entries.length);
+    }
   }
 
+  let buildPhase = "records";
   let initialBuild = null;
+  let deferredFit = null;
   function cancelInitialBuild() {
     if (!initialBuild) return;
     const job = initialBuild; initialBuild = null;
+    if (job.pauseTimer) { clearTimeout(job.pauseTimer); job.pauseTimer = 0; }
     job.channel.port1.close(); job.channel.port2.close();
     job.steps.return();
+  }
+  function pauseInitialBuild(job) {
+    if (initialBuild !== job || (!interacting && !drag)) return false;
+    if (!job.pauseTimer) {
+      job.pauseCount += 1;
+      canvas.dataset.initialBuildPaused = "true";
+      job.pauseTimer = setTimeout(() => {
+        job.pauseTimer = 0;
+        if (initialBuild !== job) return;
+        if (interacting || drag) { pauseInitialBuild(job); return; }
+        canvas.dataset.initialBuildPaused = "false";
+        job.channel.port2.postMessage(null);
+      }, 80);
+    }
+    return true;
   }
   function rebuild(onComplete) {
     cancelInitialBuild();
     const steps = rebuildSteps();
+    const finish = () => {
+      if (onComplete) {
+        onComplete();
+      } else {
+        draw();
+        updateStats();
+        renderLayers();
+      }
+    };
     if (!mounting || !instancePlan) {
       for (const ignored of steps) { /* preserve immediate edits and small drawings */ }
-      onComplete?.(); return;
+      finish(); return;
     }
-    startInitialBuild(steps,onComplete);
+    startInitialBuild(steps, finish);
   }
-  function startInitialBuild(steps,onComplete) {
+  function startInitialBuild(steps,onComplete,onError,status='正在准备图纸，可随时关闭。') {
     // One bounded task at a time lets input and painting run during large setup.
-    const job = {steps, channel: new MessageChannel(), maxStepMS: 0};
+    const job = {steps, channel: new MessageChannel(), maxStepMS: 0, pauseTimer: 0, pauseCount: 0};
     initialBuild = job;
-    setPaintStatus('正在准备图纸，可随时关闭。');
+    setPaintStatus(status);
     job.channel.port1.onmessage = () => {
       if (initialBuild !== job) return;
+      if (pauseInitialBuild(job)) return;
       try {
-        const start = performance.now(), result = steps.next();
-        job.maxStepMS = Math.max(job.maxStepMS, performance.now() - start);
+        const start = viewerProfile ? performance.now() : 0, result = steps.next();
+        const stepMS = viewerProfile ? performance.now() - start : 0;
+        if (viewerProfile) {
+          job.maxStepMS = Math.max(job.maxStepMS, stepMS);
+          if (stepMS > (job.maxPhaseMS || 0)) { job.maxPhase = buildPhase; job.maxPhaseMS = stepMS; }
+        }
         if (!result.done) { job.channel.port2.postMessage(null); return; }
         cancelInitialBuild();
-        canvas.dataset.maxBuildStepMs = String(job.maxStepMS);
+        canvas.dataset.initialBuildPaused = "false";
+        canvas.dataset.initialBuildPauses = String(job.pauseCount);
+        if (viewerProfile) {
+          canvas.dataset.maxBuildStepMs = String(job.maxStepMS);
+          canvas.dataset.maxBuildPhase = String(job.maxPhase || "") + ":" + String(job.maxPhaseMS || 0);
+        }
         onComplete?.();
+        if (deferredFit && !destroyed && !initialBuild) {
+          const request = deferredFit;
+          deferredFit = null;
+          fit(request.bbox);
+        }
       } catch (error) {
         cancelInitialBuild();
         canvas.dataset.instancePaint = 'error';
         canvas.dataset.instancePaintError = String(error?.message || error);
         setPaintStatus('图纸准备失败，请重新打开或下载原图查看。');
-        rejectFirstPaint(error);
+        if(onError)onError(error);else rejectFirstPaint(error);
       }
     };
     job.channel.port2.postMessage(null);
   }
   function* rebuildSteps() {
+    cancelVisibilityRefresh();
+    updateOverviewLod();
+    buildPhase = "records";
     paintRevision++;
     built = []; texts = []; pointMarks = [];
     if(instancePlan)for(const group of instancePlan.groups)group.records=[];
@@ -645,9 +758,9 @@ export function mountDrawingViewer(envelope) {
     // projectDrawing appends each draw immediately after assigning drawOrder,
     // so object insertion order is already the source paint order. Iterate it in
     // place; Object.entries allocated one pair per draw before first paint.
-    let sliceStart = performance.now(), visited = 0;
+    let sliceStart = performance.now(), visited = 0, innerVisited = 0;
     for (const drawId in projection.draws) {
-      if (++visited % 64 === 0 && performance.now() - sliceStart >= 6) {
+      if (++visited % 8 === 0 && performance.now() - sliceStart >= 6) {
         yield; sliceStart = performance.now();
       }
       const draw = projection.draws[drawId];
@@ -658,7 +771,10 @@ export function mountDrawingViewer(envelope) {
       const plotEntry=plotPreview?plotStyles?.resolved?.[plotContext]?.[plotDrawId]:null;
       let rootStyle=draw.style;
       try {rootStyle=plotAppearance(rootStyle,plotEntry?.root);} catch(error) {plotErrors.add(error.message);continue;}
-      const rec = { id: drawId, draw, layerId, clipRegion:compileClips(drawingClips(draw,projection.viewports)), path: null, segments: null, fillPath: null, fillTriangles: null, fillRings: null, width: lineWidthPx(rootStyle.lineWeight?.value), dash: dashFor(draw.style, draw.itemId), color: rgba(rootStyle), bbox: null, plotPen: plotEntry?.root?.style };
+      const clipStarted = viewerProfile ? performance.now() : 0;
+      const clipRegion = compileClips(drawingClips(draw,projection.viewports));
+      if (viewerProfile) noteBuildTiming("Clip", clipStarted, drawId);
+      const rec = { id: drawId, draw, layerId, clipRegion, path: null, segments: null, fillPath: null, fillTriangles: null, fillRings: null, width: lineWidthPx(rootStyle.lineWeight?.value), dash: dashFor(draw.style, draw.itemId), color: rgba(rootStyle), bbox: null, plotPen: plotEntry?.root?.style };
       const annotationDisplay = annotationItems[draw.itemId];
       if (annotationDisplay) {
         // One source identity/selection, many library-generated presentation parts.
@@ -713,12 +829,14 @@ export function mountDrawingViewer(envelope) {
                   }
                   path.moveTo(...tri[0]); path.lineTo(...tri[1]); path.lineTo(...tri[2]); path.closePath();
                   tri.forEach(extend); child.fillTriangles.push(tri);
+                  if ((++innerVisited % 256 === 0) && performance.now() - sliceStart >= 6) { yield; sliceStart = performance.now(); }
                 }
                 child.fillPath = path;
               } else if (geometry.topology === 'points') {
                 for (let index=0; index<positions.length/3; index++) {
                   const p=point(index), mark={...child,pointMark:{x:p[0],y:p[1],dot:renderedPart.role==='stroke'},bbox:{minX:p[0],minY:p[1],maxX:p[0],maxY:p[1]}};
                   pointMarks.push(mark.pointMark);addRecord(mark);
+                  if ((++innerVisited % 128 === 0) && performance.now() - sliceStart >= 6) { yield; sliceStart = performance.now(); }
                 }
                 continue;
               } else {
@@ -727,6 +845,7 @@ export function mountDrawingViewer(envelope) {
                   const a = point(indices[i]), b = point(indices[i + 1]);
                   extend(a); extend(b);
                   child.segments.push(...a, ...b);
+                  if ((++innerVisited % 256 === 0) && performance.now() - sliceStart >= 6) { yield; sliceStart = performance.now(); }
                 }
                 if (!instancePlan) {
                   const path = new Path2D();
@@ -746,7 +865,7 @@ export function mountDrawingViewer(envelope) {
       }
       if (draw.kind === 'entity') {
         const entity = drawing.entities[draw.itemId];
-        if (!entity || entity.geometry.type === 'unsupported') continue;
+        if (!entity || (entity.geometry.type === 'unsupported' && !entity.displayRepresentationId)) continue;
         if (entity.geometry.type === 'image') {
           const raster = rasterRecord(entity, draw, mediaItemFor(ucd, draw.itemId));
           if (!raster) continue;
@@ -757,10 +876,12 @@ export function mountDrawingViewer(envelope) {
         const fillEntry = fillEntryFor(ucd, draw.itemId);
         const patternHatch = hatchFillKind(entity, fillEntry) === 'pattern';
         if (entity.geometry.type === 'hatch' && !patternHatch) {
+          const fillStarted = viewerProfile ? performance.now() : 0;
           const fill = fillPathFor(draw, entity, tolerance);
+          if (viewerProfile) noteBuildTiming("Fill", fillStarted, draw.itemId);
           if (!fill) continue;
           rec.fillPath = fill.path; rec.fillTriangles = fill.triangles; rec.fillRings = fill.rings;
-          rec.bbox = fill.bbox;
+          rec.fillRule = fill.fillRule || 'evenodd'; rec.bbox = fill.bbox;
           rec.gradient = fillEntry?.gradient;
           rec.mask = fillEntry?.mask === true;
           addRecord(rec);
@@ -771,10 +892,10 @@ export function mountDrawingViewer(envelope) {
         const extend = (x, y) => { if (x < minX) minX = x; if (y < minY) minY = y; if (x > maxX) maxX = x; if (y > maxY) maxY = y; };
         // Pattern strokes already encode their own dashes/dots. Keep them in
         // both display modes; drawing boundary polygons would solid-fill holes.
-        if (patternHatch || mode === 'display') {
-          const representation = representationGeometry(draw.displayRepresentationId);
+        const representation = representationGeometry(draw.displayRepresentationId);
+        if (representation && (patternHatch || mode === 'display')) {
           const skip = splineOriginPair(entity, representation) ? 2 : 0;
-          const stroke = strokeSegmentsForRepresentation(representation,
+          const stroke = yield* strokeSegmentsForRepresentationSteps(representation,
             point => apply(draw.localToSpace, point), skip);
           if (!stroke) continue;
           if (stroke.invalidRange) {
@@ -795,14 +916,21 @@ export function mountDrawingViewer(envelope) {
           // Spread into push() allocates one argument per element and overflows
           // the JS stack once a single entity carries tens of thousands of
           // display segments; copy element-wise instead.
-          for (let i = 0; i < stroke.segments.length; i++) segments.push(stroke.segments[i]);
+          for (let i = 0; i < stroke.segments.length; i++) {
+            segments.push(stroke.segments[i]);
+            if ((++innerVisited % 4096 === 0) && performance.now() - sliceStart >= 6) { yield; sliceStart = performance.now(); }
+          }
           if (stroke.points.length) {
             const p = stroke.points[0];
             rec.pointMark = {x: p[0], y: p[1]}; pointMarks.push(rec.pointMark);
           }
           if (stroke.bbox) { extend(stroke.bbox.minX, stroke.bbox.minY); extend(stroke.bbox.maxX, stroke.bbox.maxY); }
+        } else if (patternHatch) {
+          continue;
         } else {
+          const analyticStarted = viewerProfile ? performance.now() : 0;
           const pts = analyticFor(draw.itemId, entity.geometry, tolerance);
+          if (viewerProfile) noteBuildTiming("Analytic", analyticStarted, draw.itemId);
           if (!pts || !pts.length) continue;
           if (entity.geometry.type === 'point' || pts.length === 1) {
             const p = apply(draw.localToSpace, pts[0]);
@@ -813,6 +941,7 @@ export function mountDrawingViewer(envelope) {
               const q = apply(draw.localToSpace, p);
               if (previous) segments.push(previous[0], previous[1], q[0], q[1]);
               extend(q[0], q[1]); previous = q;
+              if ((++innerVisited % 512 === 0) && performance.now() - sliceStart >= 6) { yield; sliceStart = performance.now(); }
             }
           }
         }
@@ -829,6 +958,7 @@ export function mountDrawingViewer(envelope) {
         if (!annotation) continue;
         const annotationFont = annotationRuns(annotation);
         const widthFactor = styleWidthFactorFor(annotation);
+        const layoutStarted = viewerProfile ? performance.now() : 0;
         const layout = layoutAnnotationText(annotation, draw, {
           measure: measureReference,
           measureCapHeight: measureReferenceCapHeight,
@@ -838,6 +968,7 @@ export function mountDrawingViewer(envelope) {
           runs: annotationFont.runs,
           widthFactor
         });
+        if (viewerProfile) noteBuildTiming("Layout", layoutStarted, draw.itemId);
         rec.bbox = { minX: layout.anchor[0], minY: layout.anchor[1],
           maxX: layout.anchor[0], maxY: layout.anchor[1] };
         if (layout.run) {
@@ -851,13 +982,18 @@ export function mountDrawingViewer(envelope) {
       }
     }
     window.__cadTimingMark?.("rebuildRecordsEnd");
-    applyTextAvoidance();
+    buildPhase = "text-avoidance";
+    yield* applyTextAvoidanceSteps();
+    buildPhase = "index";
     window.__cadTimingMark?.("rebuildIndexesStart");
     if(instancePlan)yield* buildInstanceIndexSteps(); else buildPaintIndex();
     window.__cadTimingMark?.("rebuildIndexesEnd");
-    draw(); window.__cadTimingMark?.("rebuildPaintScheduled");
-    updateStats();
-    renderLayers();
+    buildPhase = "paint-schedule";
+    window.__cadTimingMark?.("rebuildPaintScheduled");
+    // Publish the canvas in the next scheduler task. Keeping draw() out of the
+    // final build slice prevents a large first frame from being charged to the
+    // same task as the retained-plan index and panel teardown.
+    yield;
   }
 
   // Retained block rendering is a capacity strategy inside this viewer. The
@@ -867,24 +1003,52 @@ export function mountDrawingViewer(envelope) {
   function* buildInstanceIndexSteps(){
     if(background){background.dispose();background=null;}
     strokeTiles?.reset();
+    fillTiles?.reset();
     strokeGPU?.reset();
     if(!instancePlan)return;
     const active=new Set(),done=new Set();
-    let visibleRecords=0, sliceStart=performance.now(), visited=0;
+    let visibleRecords=0, gpuRunCount=0, gpuFillRunCount=0, sliceStart=performance.now(), visited=0;
+    const canBatchFills=typeof Path2D!=="undefined"&&typeof Path2D.prototype.addPath==="function";
     instancePlan.infiniteAnchor=null;
     const extendBounds=(target,box)=>{if(!box)return target;if(!target)return {minX:box.minX,minY:box.minY,maxX:box.maxX,maxY:box.maxY};if(box.minX<target.minX)target.minX=box.minX;if(box.minY<target.minY)target.minY=box.minY;if(box.maxX>target.maxX)target.maxX=box.maxX;if(box.maxY>target.maxY)target.maxY=box.maxY;return target;};
+    const visibilityKeyFor=rec=>{
+      let key=rec._visibilityKey;
+      if(key!==undefined)return key;
+      const layers=rec.draw.visibilityLayerIds||[];
+      if(!layers.length||(layers.length===1&&layers[0]===rec.layerId))key="\u0002"+rec.layerId;
+      else key=JSON.stringify([...new Set([rec.layerId,...layers])].sort());
+      rec._visibilityKey=key;
+      return key;
+    };
+    const lodSizeFor=rec=>{
+      let size=rec._lodSize;
+      if(size!==undefined)return size;
+      const box=rec.visibleGeometry?.bounds;
+      const localWidth=box?box.maxX-box.minX:0;
+      const localHeight=box?box.maxY-box.minY:0;
+      size=rec.infinite?0:quantizeLodSize(rec.textEntry?Math.min(localWidth,localHeight):Math.max(localWidth,localHeight));
+      rec._lodSize=size;
+      return size;
+    };
     function* compile(group,matrix){
       if(done.has(group))return;if(active.has(group))throw new Error("cyclic-instance-plan");active.add(group);
-      const byId=new Map();for(const rec of group.records){const rows=byId.get(rec.id)||[];rows.push(rec);byId.set(rec.id,rows);}
+      const byId=new Map();
+      for(const rec of group.records){
+        if(++visited%16===0&&performance.now()-sliceStart>=6){yield;sliceStart=performance.now();}
+        const rows=byId.get(rec.id)||[];rows.push(rec);byId.set(rec.id,rows);
+      }
       group.bounds=null;group.unbounded=false;group.paint=[];group.hits=[];group.visibleCount=0;group.byKind={entity:0,annotation:0};
       // Merge strokes with the same style inside each barrier segment (a barrier
       // is any non-stroke entry: group, fill, text, raster, clipped record...).
       // Same-style strokes may then paint in first-appearance order; strokes of
       // different styles keep their segment order and never cross a barrier.
       let pending=new Map();
-      const flush=()=>{for(const batch of pending.values())group.paint.push(batch);pending=new Map();};
+      let pendingFill=null;
+      const flushStrokes=()=>{for(const batch of pending.values())group.paint.push(batch);pending=new Map();};
+      const flushFill=()=>{if(pendingFill){pendingFill.gpuTriangles=pendingFill.records.every(rec=>rec.fillTriangles?.length);group.paint.push(pendingFill);}pendingFill=null;};
+      const flush=()=>{flushStrokes();flushFill();};
       for(const entry of group.entries){
-        if (++visited % 64 === 0 && performance.now() - sliceStart >= 6) { yield; sliceStart=performance.now(); }
+        if(++visited%16===0&&performance.now()-sliceStart>=6){yield;sliceStart=performance.now();}
         if(entry.kind==="group"){
           flush();
           yield* compile(entry.group,multiply(matrix,entry.matrix));entry.bounds=transformBounds(entry.group.bounds,entry.matrix);
@@ -896,6 +1060,7 @@ export function mountDrawingViewer(envelope) {
         }
         const visible=[];
         for(const rec of byId.get(entry.id)||[]){
+          if(++visited%16===0&&performance.now()-sliceStart>=6){yield;sliceStart=performance.now();}
           if(!drawVisible(rec,true))continue;
           // Infinite lines get a finite navigation box only when a clip window
           // bounds them; unbounded ones are painted per frame and stay unindexed.
@@ -907,6 +1072,7 @@ export function mountDrawingViewer(envelope) {
         }
         if(visible.length){group.visibleCount++;group.byKind[visible[0][0].draw.kind]++;}
         for(const [rec,box] of visible){
+          if(++visited%16===0&&performance.now()-sliceStart>=6){yield;sliceStart=performance.now();}
           visibleRecords++;
           rec.instanceOrder=entry.order;
           // LOD is display-only. Every finite record stays in the bounds and hit
@@ -914,50 +1080,96 @@ export function mountDrawingViewer(envelope) {
           // record at full precision even when its pixels are too small to paint.
           if(box)group.bounds=extendBounds(group.bounds,box);else group.unbounded=true;
           if(box)group.hits.push({kind:"record",rec,bounds:box,order:entry.order});
-          const localWidth=box?box.maxX-box.minX:0;
-          const localHeight=box?box.maxY-box.minY:0;
-          const lodSize=rec.infinite?0:quantizeLodSize(rec.textEntry?Math.min(localWidth,localHeight):Math.max(localWidth,localHeight));
+          const lodSize=lodSizeFor(rec);
           const opaque=(rec.draw.style.opacity??1)===1;
           if(box&&rec.segments?.length&&!rec.fillPath&&!rec.textEntry&&!rec.pointMark&&!rec.infinite&&!rec.raster&&!rec.clipRegion.active&&opaque){
+            flushFill();
             let dashKey=rec._batchDashKey;
             if(dashKey===undefined){dashKey=rec.dash?.length?rec.dash.join(","):"";rec._batchDashKey=dashKey;}
-            const visibilityKey=JSON.stringify([...new Set([rec.layerId,...rec.draw.visibilityLayerIds])].sort());
+            const visibilityKey=visibilityKeyFor(rec);
             const key=rec.color+"|"+rec.width+"|"+dashKey+"|"+lodSize+"|"+visibilityKey;
             let batch=pending.get(key);
             if(!batch){batch={kind:"stroke",key,visibilityKey,path:accelerated?null:new Path2D(),color:rec.color,width:rec.width,dash:rec.dash,layerId:rec.layerId,bounds:null,count:0,lodSize,rec,records:[],gpuSegments:[]};pending.set(key,batch);}
             batch.records.push(rec);if(accelerated)batch.gpuSegments.push(rec.segments || rec.visibleGeometry?.segments || []);else traceStrokeSegments(batch.path,rec.segments);batch.bounds=extendBounds(batch.bounds,box);batch.count++;
+          }else if(canBatchFills&&box&&rec.fillPath&&!rec.gradient&&!rec.mask&&!rec.raster&&!rec.textEntry&&!rec.pointMark&&!rec.infinite&&!rec.clipRegion.active&&!rec.path&&!rec.segments?.length&&opaque){
+            flushStrokes();
+            const visibilityKey=visibilityKeyFor(rec);
+            const fillRule=rec.fillRule||"evenodd";
+            const representation=isChunkedOverviewDraw(rec.draw)?"overview":"detail";
+            const key=rec.color+"|"+fillRule+"|"+lodSize+"|"+representation+"|"+visibilityKey;
+            if(!pendingFill||pendingFill.key!==key){
+              flushFill();
+              pendingFill={kind:"fill",key,visibilityKey,path:new Path2D(),color:rec.color,fillRule,representation,layerId:rec.layerId,bounds:null,count:0,lodSize,rec,records:[]};
+            }
+            pendingFill.path.addPath(rec.fillPath);
+            pendingFill.records.push(rec);pendingFill.bounds=extendBounds(pendingFill.bounds,box);pendingFill.count++;
           }else{
             flush();ensureRecordPath(rec);group.paint.push({kind:"record",rec,bounds:box,lodSize});
           }
         }
       }
       flush();
-      let gpuRun=0,visibility=null;
+      let gpuRun=0,gpuRuns=0,visibility=null;
+      let fillRun=0,fillRuns=0,fillVisibility=null;
+      let paintVisited=0;
       for(const entry of group.paint){
+        if(++paintVisited%16===0&&performance.now()-sliceStart>=6){yield;sliceStart=performance.now();}
         if(entry.kind==="stroke"&&!entry.dash?.length&&entry.gpuSegments?.length){
-          if(visibility!==entry.visibilityKey){gpuRun++;visibility=entry.visibilityKey;}
+          if(visibility!==entry.visibilityKey){gpuRun++;gpuRuns++;visibility=entry.visibilityKey;}
           entry.gpuRun=gpuRun;
         }else{entry.gpuRun=-1;gpuRun++;visibility=null;}
+        if(entry.kind==="fill"&&entry.gpuTriangles){
+          const fillKey=(entry.visibilityKey||"")+"|"+(entry.representation||"");
+          if(fillVisibility!==fillKey){fillRun++;fillRuns++;fillVisibility=fillKey;}
+          entry.gpuFillRun=fillRun;
+        }else{entry.gpuFillRun=-1;fillRun++;fillVisibility=null;}
       }
       group.index=null;
+      group.gpuRunCount=gpuRuns;
+      group.gpuFillRunCount=fillRuns;
+      gpuRunCount+=gpuRuns;
+      gpuFillRunCount+=fillRuns;
       active.delete(group);done.add(group);
     }
     for(const node of instancePlan.roots)yield* compile(node.group,node.matrix);
-    refreshInstanceVisibility();
+    instancePlan.gpuRunCount=gpuRunCount;
+    instancePlan.gpuFillRunCount=gpuFillRunCount;
+    yield* refreshInstanceVisibilitySteps();
   }
   // A layer mask changes bounds/hits/counts, not source geometry or GPU buffers.
-  function refreshInstanceVisibility(){
+  function* refreshInstanceVisibilitySteps(){
     if(!instancePlan)return;
-    const done=new Set();let visibleRecords=0;
+    const done=new Set();let visibleRecords=0,sliceStart=performance.now(),visited=0;
+    const targetLayerKey=currentInstanceLayerKey();
     instancePlan.infiniteAnchor=null;
+    const layerVisibilityCache=new Map();
+    const layerVisibleCached=id=>{
+      let value=layerVisibilityCache.get(id);
+      if(value===undefined){value=layerVisible(id);layerVisibilityCache.set(id,value);}
+      return value;
+    };
+    const entryVisible=rec=>{
+      const draw=rec.draw;
+      if(draw.visibility==='hidden'||draw.availability!=='ready')return false;
+      if(isChunkedModelSpace()){
+        const isOverview=isChunkedOverviewDraw(draw);
+        if(isOverview===overviewSuppressed)return false;
+      }
+      const hasGeometry=rec.infinite?rec.clipRegion.finiteBounds===undefined||!!rec.navigationBounds:!!rec.visibleGeometry.bounds;
+      if(!hasGeometry||!layerVisibleCached(rec.layerId))return false;
+      const layers=draw.visibilityLayerIds;
+      for(let i=0;i<layers.length;i++)if(!layerVisibleCached(layers[i]))return false;
+      return true;
+    };
     const extend=(target,box)=>{if(!box)return target;if(!target)return {...box};target.minX=Math.min(target.minX,box.minX);target.minY=Math.min(target.minY,box.minY);target.maxX=Math.max(target.maxX,box.maxX);target.maxY=Math.max(target.maxY,box.maxY);return target;};
-    function visit(group,matrix){
+    function* visit(group,matrix){
       if(done.has(group))return;done.add(group);
       group.bounds=null;group.hits=[];group.unbounded=false;group.visibleCount=0;
       group.byKind={entity:0,annotation:0};const ids=new Set();
       for(const entry of group.paint){
+        if(++visited%32===0&&performance.now()-sliceStart>=6){yield;sliceStart=performance.now();}
         if(entry.kind==='group'){
-          visit(entry.group,multiply(matrix,entry.matrix));
+          yield* visit(entry.group,multiply(matrix,entry.matrix));
           entry.bounds=transformBounds(entry.group.bounds,entry.matrix);
           group.bounds=extend(group.bounds,entry.bounds);group.unbounded ||= entry.group.unbounded;
           if(entry.bounds)group.hits.push(entry);
@@ -965,10 +1177,11 @@ export function mountDrawingViewer(envelope) {
           for(const kind of ['entity','annotation'])group.byKind[kind]+=entry.group.byKind[kind];
           continue;
         }
-        const records=entry.kind==='stroke'?entry.records:[entry.rec];
-        entry.visible=drawVisible(records[0]);
+        const records=entry.kind==='stroke'||entry.kind==='fill'?entry.records:[entry.rec];
+        entry.visible=entryVisible(records[0]);
         if(!entry.visible)continue;
         for(const rec of records){
+          if(++visited%32===0&&performance.now()-sliceStart>=6){yield;sliceStart=performance.now();}
           const box=recordVisibleBounds(rec);
           if(!box&&!rec.infinite)continue;
           visibleRecords++;
@@ -979,16 +1192,55 @@ export function mountDrawingViewer(envelope) {
       }
       group.index=null;
     }
-    for(const node of instancePlan.roots)visit(node.group,node.matrix);
-    const memo=new Map();
-    const expanded=instancePlan.roots.reduce((n,node)=>n+countInstancePaint(node,I,LOD_MIN_SCREEN_PX,memo),0);
+    for(const node of instancePlan.roots)yield* visit(node.group,node.matrix);
+    // The exact LOD count is cosmetic for this path. Use the visible total as a
+    // conservative upper bound so a rebuild completion does not traverse the
+    // whole retained plan just to count paint candidates.
+    const expanded=visibleRecords;
     instancePlan.sourceVisibleRecordCount=visibleRecords;instancePlan.visibleRecordCount=visibleRecords;
     instancePlan.renderedRecordCount=expanded;instancePlan.culledRecordCount=0;
     canvas.dataset.sourceVisibleRecords=String(visibleRecords);canvas.dataset.visibleRecords=String(visibleRecords);
     canvas.dataset.expandedPaintEstimate=String(expanded);canvas.dataset.renderedRecords='0';
     canvas.dataset.culledRecords=String(visibleRecords);canvas.dataset.lodScale=String(scale);
-    instanceLayerKey=currentInstanceLayerKey();
+    instanceLayerKey=targetLayerKey;
     paintCountKey=[paintRevision,scale,instanceLayerKey].join('|');paintCounts.clear();paintCounts.set(LOD_MIN_SCREEN_PX,expanded);
+  }
+  let visibilityRefreshJob = null;
+  function cancelVisibilityRefresh(){
+    const job=visibilityRefreshJob;
+    if(!job)return;
+    visibilityRefreshJob=null;
+    if(job.frame)cancelAnimationFrame(job.frame);
+    try{job.steps.return();}catch{}
+  }
+  function scheduleVisibilityRefresh(){
+    if(visibilityRefreshJob||!instancePlan||destroyed)return;
+    const job={steps:refreshInstanceVisibilitySteps(),frame:0};
+    visibilityRefreshJob=job;
+    const run=()=>{
+      job.frame=0;
+      if(destroyed||visibilityRefreshJob!==job)return;
+      const started=performance.now();
+      try{
+        while(performance.now()-started<6){
+          const next=job.steps.next();
+          if(next.done){
+            visibilityRefreshJob=null;
+            if(instanceLayerKey!==currentInstanceLayerKey()){scheduleVisibilityRefresh();return;}
+            draw();
+            schedulePanelRender([updateStats,renderLayers]);
+            return;
+          }
+        }
+      }catch(error){
+        visibilityRefreshJob=null;
+        canvas.dataset.visibilityRefreshError=String(error?.message||error);
+        console.error(error);
+        return;
+      }
+      job.frame=requestAnimationFrame(run);
+    };
+    job.frame=requestAnimationFrame(run);
   }
   function countInstancePaint(node,parent,minScreenPx=LOD_MIN_SCREEN_PX,memo=new Map()){
     const matrix=multiply(parent,node.matrix);
@@ -1001,7 +1253,7 @@ export function mountDrawingViewer(envelope) {
       if(entry.kind==="group"){total+=countInstancePaint(entry,matrix,minScreenPx,memo);continue;}
       if(entry.visible===false)continue;
       if(entry.lodSize&&isLodCulled(entry.lodSize,localScale,minScreenPx))continue;
-      total+=entry.kind==="stroke"?entry.count:1;
+      total+=entry.kind==="stroke"||entry.kind==="fill"?entry.count:1;
     }
     saved.set(key,total);return total;
   }
@@ -1011,8 +1263,12 @@ export function mountDrawingViewer(envelope) {
     const key = [paintRevision, scale, instanceLayerKey].join('|');
     if (key !== paintCountKey) { paintCountKey=key; paintCounts.clear(); }
     if (!paintCounts.has(minScreenPx)){
-      const memo=new Map();
-      paintCounts.set(minScreenPx, instancePlan.roots.reduce((n,node)=>n+countInstancePaint(node,I,minScreenPx,memo),0));
+      if (minScreenPx === LOD_MIN_SCREEN_PX && instancePlan.renderedRecordCount > 0) {
+        paintCounts.set(minScreenPx, instancePlan.renderedRecordCount);
+      } else {
+        const memo=new Map();
+        paintCounts.set(minScreenPx, instancePlan.roots.reduce((n,node)=>n+countInstancePaint(node,I,minScreenPx,memo),0));
+      }
     }
     return paintCounts.get(minScreenPx);
   }
@@ -1029,10 +1285,16 @@ export function mountDrawingViewer(envelope) {
     group.index = index;
     return index;
   }
-  function refreshInstanceLayers(){if(instancePlan&&instanceLayerKey!==currentInstanceLayerKey())refreshInstanceVisibility();}
+  function refreshInstanceLayers(){if(instancePlan&&!initialBuild&&instanceLayerKey!==currentInstanceLayerKey())scheduleVisibilityRefresh();}
 
-  const INSTANCE_SYNC_PAINT_LIMIT = 5000;
+  const INSTANCE_SYNC_PAINT_LIMIT = 256;
+  const INSTANCE_SETTLE_SYNC_PAINT_LIMIT = 256;
   const INSTANCE_WORKER_PAINT_LIMIT = 200000;
+  // A retained block instance shares its local stroke tiles with every other
+  // instance. Once a drawing has many independent GPU runs, the per-tile draw
+  // call and GL->Canvas flush cost exceeds the Canvas2D worker. Keep WebGL for
+  // genuinely batchable scenes and use the worker for highly fragmented ones.
+  const GPU_RUN_LIMIT = 2048;
   const INSTANCE_OVERVIEW_SCREEN_PX = 3;
   const INSTANCE_INTERACTION_SETTLE_MS = 220;
   const ORDINARY_INTERACTION_SETTLE_MS = 220;
@@ -1040,11 +1302,39 @@ export function mountDrawingViewer(envelope) {
   let instanceRefresh = null;
   let fullPaintTimer = 0;
 
+  function isChunkedOverviewDraw(draw) {
+    const itemId = String(draw?.itemId || "");
+    return itemId.startsWith("overview-e-") || itemId.startsWith("overview-a-");
+  }
+  function isChunkedModelSpace() {
+    return !!serverChunks && spaceTarget?.kind === 'model'
+      && (!chunkedModelSpaceId || spaceTarget.spaceId === chunkedModelSpaceId);
+  }
+  function chunkDetailReady(record) {
+    return !!record && record.loaded.length > 0 && record.pending === 0
+      && record.applied === record.changed && record.failed.length === 0;
+  }
+  function updateOverviewLod() {
+    const record = serverChunks?.record?.();
+    const ratio = Number(record?.detailScaleRatio);
+    const detailScale = isChunkedModelSpace() && Number.isFinite(ratio) && ratio > 0
+      && scale >= Math.max(1e-12, fitScale) * ratio;
+    const next = detailScale && chunkDetailReady(record);
+    if (next === overviewSuppressed) return false;
+    overviewSuppressed = next;
+    if (canvas) canvas.dataset.overviewLod = next ? 'detail' : 'overview';
+    return true;
+  }
   function currentInstanceLayerKey() {
-    return JSON.stringify([...userLayers]);
+    return JSON.stringify([...userLayers, overviewSuppressed ? 'overview-hidden' : 'overview-visible']);
+  }
+  function usesGpuTilePath() {
+    const gpuRuns=(instancePlan?.gpuRunCount||0)+(instancePlan?.gpuFillRunCount||0);
+    return !!(strokeGPU && strokeTiles && fillTiles && instancePlan && gpuRuns > 0 && gpuRuns <= GPU_RUN_LIMIT);
   }
   function instanceBasePaintKey() {
     return [scale,tx,ty,dpr,canvas.width,canvas.height,paintRevision,currentInstanceLayerKey()].join('|');
+
   }
   function instancePaintKey() {
     const selection = instanceSelected
@@ -1079,11 +1369,14 @@ export function mountDrawingViewer(envelope) {
     if (job.frame) cancelAnimationFrame(job.frame);
     job.steps.return();
   }
-  function drawInstances() {
+  function drawInstances(options = {}) {
     if (!instancePlan) return;
+    window.__cadTimingMark?.("drawInstancesStart");
+    if (previewCompositeActive && !drawPreview()) clearCanvasPreviewTransform();
     if (instanceLayerKey !== currentInstanceLayerKey()) {
       cancelInstanceRefresh();
-      refreshInstanceVisibility();
+      scheduleVisibilityRefresh();
+      return;
     }
     const key = instancePaintKey();
     if (instanceRefresh) {
@@ -1091,13 +1384,17 @@ export function mountDrawingViewer(envelope) {
       cancelInstanceRefresh();
     }
     if (interacting) return;
+    window.__cadTimingMark?.("drawInstancesBeforeCount");
     const paintCount = currentInstancePaintCount(LOD_MIN_SCREEN_PX);
+    window.__cadTimingMark?.("drawInstancesAfterCount");
     instancePlan.renderedRecordCount = paintCount;
     canvas.dataset.currentPaintEstimate = String(paintCount);
-    if (paintCount <= INSTANCE_SYNC_PAINT_LIMIT && !strokeTiles) {
+    const settleAsync = options.afterInteraction === true && hasUsablePreview()
+      && paintCount > INSTANCE_SETTLE_SYNC_PAINT_LIMIT;
+    if (!settleAsync && paintCount <= INSTANCE_SYNC_PAINT_LIMIT && !usesGpuTilePath()) {
       const started = performance.now();
       try {
-        for (const ignored of instancePaintSteps({minScreenPx:LOD_MIN_SCREEN_PX})) { /* small drawings stay immediate */ }
+        for (const ignored of instancePaintSteps({minScreenPx:LOD_MIN_SCREEN_PX,useGpuTiles:usesGpuTilePath()})) { /* small drawings stay immediate */ }
         cacheFullFrame();
         canvas.dataset.instancePaint = "complete";
         canvas.dataset.syncPaintMs = String(performance.now() - started);
@@ -1124,6 +1421,7 @@ export function mountDrawingViewer(envelope) {
       }
     }
     refreshInstancesInFrames(key, {phase:"full"});
+    window.__cadTimingMark?.("drawInstancesScheduled");
   }
   function setPaintStatus(message) {
     const status = panel.querySelector('#drawingRenderStatus');
@@ -1158,10 +1456,12 @@ export function mountDrawingViewer(envelope) {
       : (instancePlan.renderedRecordCount ?? instancePlan.visibleRecordCount ?? instancePlan.count);
     // Persistent WebGL tiles already keep geometry off the CPU paint loop. The
     // Canvas2D worker remains a fallback for browsers without WebGL2/tile support.
-    if (strokeTiles) {
+    if (usesGpuTilePath() && options.preferWorker !== true) {
+
       canvas.dataset.gpuTiles = "persistent";
-      return refreshCanvasInstancesInFrames(key, !hasUsablePreview(), {phase, minScreenPx});
+      return refreshCanvasInstancesInFrames(key, !hasUsablePreview(), {phase, minScreenPx, useGpuTiles:true});
     }
+    canvas.dataset.gpuTiles = "adaptive-canvas";
     if (!accelerated || paintCount > INSTANCE_WORKER_PAINT_LIMIT) {
       return refreshCanvasInstancesInFrames(key, !hasUsablePreview(), {phase, minScreenPx});
     }
@@ -1302,16 +1602,20 @@ export function mountDrawingViewer(envelope) {
   function refreshCanvasInstancesInFrames(key = instancePaintKey(), direct = !hasUsablePreview(), options = {}) {
     const phase = options.phase === "preview" ? "preview" : "full";
     const minScreenPx = options.minScreenPx ?? (phase === "preview" ? INSTANCE_OVERVIEW_SCREEN_PX : LOD_MIN_SCREEN_PX);
+    window.__cadTimingMark?.("canvasRefreshStart");
     cancelInstanceRefresh();
+    window.__cadTimingMark?.("canvasRefreshCanceled");
     const target = direct ? null : document.createElement("canvas");
     if (target) {
       target.width = canvas.width;
       target.height = canvas.height;
     }
+    window.__cadTimingMark?.("canvasRefreshTarget");
     const context = target ? target.getContext("2d") : null;
-    const gpu = strokeTiles ? strokeGPU : null;
-    const job = {steps: instancePaintSteps({minScreenPx}), frame: 0, maxStepMs: 0,
-      started: performance.now(), key, direct, phase, minScreenPx, result: null, done: false, background: false};
+    window.__cadTimingMark?.("canvasRefreshContext");
+    const useTiles = options.useGpuTiles ?? usesGpuTilePath();
+    const job = {steps: instancePaintSteps({minScreenPx,useGpuTiles:useTiles}), frame: 0, maxStepMs: 0, cpuMs: 0, slices: 0,
+      started: performance.now(), key, direct, phase, minScreenPx, useTiles, result: null, done: false, background: false};
     instanceRefresh = job;
     canvas.dataset.instancePaint = direct ? "progressive" : "canvas";
     if (phase === "preview") canvas.dataset.overviewPaint = "working";
@@ -1335,21 +1639,22 @@ export function mountDrawingViewer(envelope) {
       try {
         // CPU slices alone can enqueue a second of GPU work. Poll without
         // blocking input, including a batch left by a cancelled refresh.
-        if (gpu && !gpu.batchComplete()) {
+        if (job.useTiles && device && !device.batchComplete()) {
           job.frame = requestAnimationFrame(step);
           return;
         }
+        let result;
         if (!job.done) {
           const stepStarted = performance.now();
           if (context) ctx = context;
-          strokeGPU = gpu;
-          let result;
+          strokeGPU = job.useTiles ? device : null;
           try { result = job.steps.next(); } finally { ctx = screen; strokeGPU = device; }
-          job.done = result.done;
+          job.done = !!result.done;
           if (result.done) job.result = result.value;
-          job.maxStepMs = Math.max(job.maxStepMs, performance.now() - stepStarted);
-          if (gpu) {
-            gpu.submitBatch();
+          const stepMs=performance.now() - stepStarted;
+          job.maxStepMs = Math.max(job.maxStepMs, stepMs);job.cpuMs+=stepMs;job.slices+=1;
+          if (job.useTiles && device) {
+            device.submitBatch();
             job.frame = requestAnimationFrame(step);
             return;
           }
@@ -1373,6 +1678,8 @@ export function mountDrawingViewer(envelope) {
           }
           ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
           canvas.dataset.maxRefreshStepMs = String(job.maxStepMs);
+          canvas.dataset.refreshCpuMs = String(job.cpuMs);
+          canvas.dataset.refreshSlices = String(job.slices);
           canvas.dataset.refreshTotalMs = String(performance.now() - job.started);
           if (window.__CAD_VIEWER_PROFILE__ === true) {
             canvas.dataset.refreshPublishMs = String(performance.now() - publishStarted);
@@ -1388,6 +1695,7 @@ export function mountDrawingViewer(envelope) {
           completeFirstPaint();
           cacheFullFrame();
           canvas.dataset.instancePaint = "complete";
+          window.__cadTimingMark?.("chunkPaintComplete");
           setPaintStatus("");
         } else job.frame = requestAnimationFrame(step);
       } catch (error) {
@@ -1395,39 +1703,29 @@ export function mountDrawingViewer(envelope) {
         fail(error);
       }
     };
+    window.__cadTimingMark?.("canvasRefreshScheduled");
     job.frame = requestAnimationFrame(step);
   }
 
-  function* instancePaintSteps({minScreenPx=LOD_MIN_SCREEN_PX,publishStats=true}={}){
+  function* instancePaintSteps({minScreenPx=LOD_MIN_SCREEN_PX,publishStats=true,useGpuTiles=false}={}){
     const profile = typeof window !== 'undefined' && window.__CAD_VIEWER_PROFILE__ === true;
     const paintStarted = profile ? performance.now() : 0;
     refreshInstanceLayers();
+    // Snapshot the retained plan: a chunk merge may replace or clear the global
+    // plan between yielded paint slices, while this job still owns its canvas.
+    const plan=instancePlan;
+    if(!plan)return {drawn:0,pendingRaster:0,rendered:0,culled:0};
     ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle=sheetBackground;ctx.fillRect(0,0,cssW,cssH);
     strokeGPU?.begin(canvas.width,canvas.height);
     const view={minX:-tx/scale,maxX:(cssW-tx)/scale,minY:(ty-cssH)/scale,maxY:ty/scale,scale,tx,ty,dpr};
-    let calls=0,activeGpuNode=null,activeGpuRun=-1;
+    let calls=0,activeGpuNode=null,activeGpuRun=-1,activeFillNode=null,activeFillRun=-1;
     const tilePaint={tiles:0,segments:0,styles:0,level:0,built:0,reused:0};
-    const paintStats={rendered:0,culled:0,drawn:0,pendingRaster:0,renderedSource:new Set(),samples:[]};
+    const fillTilePaint={tiles:0,triangles:0,styles:0,level:0,built:0,reused:0};
+    const paintStats={rendered:0,culled:0,drawn:0,pendingRaster:0,fillMs:0,textMs:0,strokeMs:0,recordMs:0,preTextMs:0,gpuEligible:0,gpuBranches:0,gpuEmpty:0,gpuRunTiles:0,gpuRunSegments:0,gpuFillEligible:0,gpuFillBranches:0,gpuFillEmpty:0,gpuFillRunTiles:0,gpuFillRunTriangles:0,strokeEntries:0,strokeRecords:0,fillRecords:0,textRecords:0,otherRecords:0,renderedSource:new Set()};
     const intersects=b=>b&&b.minX<=view.maxX&&b.maxX>=view.minX&&b.minY<=view.maxY&&b.maxY>=view.minY;
     function setMatrix(m){ctx.setTransform(dpr*scale*m[0],-dpr*scale*m[1],dpr*scale*m[4],-dpr*scale*m[5],dpr*(tx+scale*m[12]),dpr*(ty-scale*m[13]));}
     function localClipBounds(matrix){const inverse=inverse2D(matrix);return inverse?transformBounds(view,inverse):null;}
-    function hiddenSamplePoint(rec){
-      if(rec.segments?.length>=4)return [(rec.segments[0]+rec.segments[2])/2,(rec.segments[1]+rec.segments[3])/2];
-      if(rec.fillRings?.[0]?.length)return rec.fillRings[0][0];
-      if(rec.fillTriangles?.length){const triangle=rec.fillTriangles[0];return [(triangle[0][0]+triangle[1][0]+triangle[2][0])/3,(triangle[0][1]+triangle[1][1]+triangle[2][1])/3];}
-      if(rec.pointMark)return [rec.pointMark.x,rec.pointMark.y];
-      if(rec.raster?.corners?.length)return [(rec.raster.corners[0][0]+rec.raster.corners[2][0])/2,(rec.raster.corners[0][1]+rec.raster.corners[2][1])/2];
-      const box=rec.textBox||rec.bbox;return box?[(box.minX+box.maxX)/2,(box.minY+box.maxY)/2]:null;
-    }
-    function noteHiddenSample(rec,matrix){
-      if(paintStats.samples.length>=6||paintStats.samples.some(row=>row.itemId===rec.draw.itemId))return;
-      const local=hiddenSamplePoint(rec);if(!local)return;
-      const world=transformPoint(matrix,...local),sx=world[0]*scale+tx,sy=-world[1]*scale+ty;
-      if(sx<0||sy<0||sx>cssW||sy>cssH)return;
-      const item=drawing.entities[rec.draw.itemId]||drawing.annotations[rec.draw.itemId]||{};
-      paintStats.samples.push({x:Math.round(sx*10)/10,y:Math.round(sy*10)/10,id:rec.id,itemId:rec.draw.itemId,
-        kind:rec.draw.kind,handle:(item.sourceRefs||[])[0]?.objectKey||null});
-    }
+    const paintSliceMs=8;
     let sliceStarted = performance.now(), visited = 0;
     function* paint(node,parent){
       const matrix=multiply(parent,node.matrix);
@@ -1438,22 +1736,27 @@ export function mountDrawingViewer(envelope) {
       if(groupBounds&&Math.max(groupBounds.maxX-groupBounds.minX,groupBounds.maxY-groupBounds.minY)*scale<minScreenPx)return;
       const localScale=scale*Math.max(Math.hypot(matrix[0],matrix[1]),Math.hypot(matrix[4],matrix[5]),1e-15);
       for(const entry of node.group.paint){
-        if (++visited % 32 === 0 && performance.now() - sliceStarted >= 6) {
+        if (++visited % 8 === 0 && performance.now() - sliceStarted >= paintSliceMs) {
           strokeGPU?.flush(ctx); yield; sliceStarted = performance.now();
         }
-        if(entry.kind==='group'){activeGpuNode=null;activeGpuRun=-1;yield* paint(entry,matrix);continue;}
+        if(entry.kind==='group'){activeGpuNode=null;activeGpuRun=-1;activeFillNode=null;activeFillRun=-1;yield* paint(entry,matrix);continue;}
         if(entry.bounds&&!intersects(transformBounds(entry.bounds,matrix))){
-          paintStats.culled+=entry.kind==='stroke'?entry.count:1;continue;
+          paintStats.culled+=entry.kind==='stroke'||entry.kind==='fill'?entry.count:1;continue;
         }
         if(entry.visible===false)continue;
-        if(entry.lodSize&&isLodCulled(entry.lodSize,localScale,minScreenPx)){
-          paintStats.culled+=entry.kind==='stroke'?entry.count:1;
-          noteHiddenSample(entry.rec,matrix);
+        const gpuFill=!!(useGpuTiles&&strokeGPU&&fillTiles&&entry.kind==='fill'&&entry.gpuFillRun>=0&&entry.gpuTriangles);
+        if(entry.lodSize&&!gpuFill&&isLodCulled(entry.lodSize,localScale,minScreenPx)){
+          paintStats.culled+=entry.kind==='stroke'||entry.kind==='fill'?entry.count:1;
           continue;
         }
         if(entry.kind==='stroke'){
+          activeFillNode=null;activeFillRun=-1;
+          paintStats.strokeEntries++;paintStats.strokeRecords+=entry.count;
+          const strokeStarted=profile?performance.now():0;
           for(const record of entry.records)paintStats.renderedSource.add(record.id);
-          if(strokeGPU&&strokeTiles&&entry.gpuRun>=0&&entry.gpuSegments?.length){
+          if(entry.gpuRun>=0&&entry.gpuSegments?.length)paintStats.gpuEligible++;
+          if(useGpuTiles&&strokeGPU&&strokeTiles&&entry.gpuRun>=0&&entry.gpuSegments?.length){
+            paintStats.gpuBranches++;
             if(activeGpuNode!==node||activeGpuRun!==entry.gpuRun){
               const steps=strokeTiles.drawRunSteps(node,entry.gpuRun,node.group.paint,matrix,view,scale,minScreenPx);
               let next;
@@ -1464,19 +1767,64 @@ export function mountDrawingViewer(envelope) {
               const result=next.value;
               activeGpuNode=node;activeGpuRun=entry.gpuRun;
               if(result.tiles){
+                paintStats.gpuRunTiles+=result.tiles;paintStats.gpuRunSegments+=result.segments;
                 tilePaint.tiles+=result.tiles;tilePaint.segments+=result.segments;
                 tilePaint.styles+=result.styles;tilePaint.level=Math.max(tilePaint.level,result.level);
                 tilePaint.built+=result.built||0;tilePaint.reused+=result.reused||0;
-              }
+              }else paintStats.gpuEmpty++;
             }
-            calls++;paintStats.rendered+=entry.count;paintStats.drawn+=entry.count;continue;
+            calls++;paintStats.rendered+=entry.count;paintStats.drawn+=entry.count;
+            if(profile)paintStats.strokeMs+=performance.now()-strokeStarted;
+            continue;
           }
           activeGpuNode=null;activeGpuRun=-1;
           setMatrix(matrix);calls++;paintStats.rendered+=entry.count;paintStats.drawn+=entry.count;
           if(entry.dash?.length&&strokeGPU?.drawDashed?.(entry,view,matrix))continue;
           strokeGPU?.flush(ctx);
-          ctx.strokeStyle=entry.color;ctx.lineWidth=entry.width/localScale;ctx.lineJoin='round';ctx.lineCap=entry.dash?.length?'round':'butt';ctx.setLineDash(entry.dash||[]);ctx.stroke(ensureBatchPath(entry));continue;
+          ctx.strokeStyle=entry.color;ctx.lineWidth=entry.width/localScale;ctx.lineJoin='round';ctx.lineCap=entry.dash?.length?'round':'butt';ctx.setLineDash(entry.dash||[]);ctx.stroke(ensureBatchPath(entry));
+          if(profile)paintStats.strokeMs+=performance.now()-strokeStarted;
+          continue;
         }
+        if(entry.kind==='fill'){
+          paintStats.fillRecords+=entry.count;
+          const fillStarted=profile?performance.now():0;
+          if(gpuFill){
+            paintStats.gpuFillEligible++;
+            activeGpuNode=null;activeGpuRun=-1;
+            if(activeFillNode!==node||activeFillRun!==entry.gpuFillRun){
+              paintStats.gpuFillBranches++;
+              const steps=fillTiles.drawRunSteps(node,entry.gpuFillRun,node.group.paint,matrix,view,scale,minScreenPx);
+              let next;
+              do{
+                next=steps.next();
+                if(!next.done){strokeGPU.flush(ctx);yield;sliceStarted=performance.now();}
+              }while(!next.done);
+              const result=next.value;
+              activeFillNode=node;activeFillRun=entry.gpuFillRun;
+              if(result.tiles){
+                paintStats.gpuFillRunTiles+=result.tiles;paintStats.gpuFillRunTriangles+=result.triangles;
+                fillTilePaint.tiles+=result.tiles;fillTilePaint.triangles+=result.triangles;
+                fillTilePaint.styles+=result.styles;fillTilePaint.level=Math.max(fillTilePaint.level,result.level);
+                fillTilePaint.built+=result.built||0;fillTilePaint.reused+=result.reused||0;
+              }else paintStats.gpuFillEmpty++;
+            }
+            calls++;paintStats.rendered+=entry.count;paintStats.drawn+=entry.count;
+            for(const record of entry.records)paintStats.renderedSource.add(record.id);
+            if(profile)paintStats.fillMs+=performance.now()-fillStarted;
+            continue;
+          }
+          activeFillNode=null;activeFillRun=-1;
+          activeGpuNode=null;activeGpuRun=-1;
+          strokeGPU?.flush(ctx);
+          setMatrix(matrix);calls++;paintStats.rendered+=entry.count;paintStats.drawn+=entry.count;
+          for(const record of entry.records)paintStats.renderedSource.add(record.id);
+          ctx.fillStyle=entry.color;ctx.fill(entry.path,entry.fillRule);
+          if(profile)paintStats.fillMs+=performance.now()-fillStarted;
+          continue;
+        }
+        activeFillNode=null;activeFillRun=-1;
+        if(entry.rec?.textEntry)paintStats.textRecords++;else paintStats.otherRecords++;
+        const recordStarted=profile?performance.now():0;
         activeGpuNode=null;activeGpuRun=-1;
         strokeGPU?.flush(ctx);
         const rec=entry.rec;
@@ -1509,56 +1857,64 @@ export function mountDrawingViewer(envelope) {
         }
         if(rec.path){ctx.strokeStyle=rec.color;ctx.lineWidth=rec.width/localScale;ctx.setLineDash(rec.dash||[]);ctx.stroke(rec.path);}
         if(rec.pointMark){const p=rec.pointMark;ctx.strokeStyle=rec.color;ctx.lineWidth=1/localScale;ctx.beginPath();ctx.moveTo(p.x-2.5/localScale,p.y);ctx.lineTo(p.x+2.5/localScale,p.y);ctx.moveTo(p.x,p.y-2.5/localScale);ctx.lineTo(p.x,p.y+2.5/localScale);ctx.stroke();}
+        if(profile)paintStats.preTextMs+=performance.now()-recordStarted;
         if(rec.textEntry){
+          const textStarted=profile?performance.now():0;
           const t=rec.textEntry;
           drawTextLeader(t,matrix);
           // Match the ordinary path: raw annotations keep a legible minimum
           // screen size, while presentation glyph parts stay at source scale.
           const screen=Math.max(t.nativeLayout?0.7:5,Math.min(220,t.size*localScale));
-          ctx.save();ctx.translate(t.displayX??t.x,t.displayY??t.y);ctx.rotate(t.angle);ctx.scale(1,-1);ctx.fillStyle=t.color;ctx.font=(screen/localScale)+'px '+(t.fontFamily||TEXT_FONT);ctx.textBaseline='alphabetic';
-          const wf=t.widthFactor&&t.widthFactor!==1?t.widthFactor:1;if(wf!==1)ctx.scale(wf,1);
-          const off=textOffsets(t);
+          ctx.save();
+          const wf=t.widthFactor&&t.widthFactor!==1?t.widthFactor:1;
+          const screenTransform=textDeviceTransform(matrix,t,wf);
+          ctx.setTransform(screenTransform.a,screenTransform.b,screenTransform.c,screenTransform.d,screenTransform.e,screenTransform.f);
+          const off=textOffsets(t),mag=screenTransform.mag;
+          ctx.fillStyle=t.color;ctx.font=(screen*dpr)+'px '+(t.fontFamily||TEXT_FONT);ctx.textBaseline='alphabetic';
           if(t.runLines){
-            let y=off.dy;
+            let y=off.dy*mag;
             for(let i=0;i<t.runLines.length;i++){
-              const line=t.runLines[i],lineAdvance=line.advance||t.lineHeight||t.height*1.25;
-              let x=off.dx/wf;
+              const line=t.runLines[i],lineAdvance=(line.advance||t.lineHeight||t.height*1.25)*mag;
+              let x=(off.dx/wf)*mag;
               for(const seg of line.segments){
                 if(!seg.text)continue;
                 const segScale=seg.size&&t.size?seg.size/t.size:1;
-                ctx.font=(seg.italic?'italic ':'')+(seg.bold?'bold ':'')+((screen*segScale)/localScale)+'px '+(seg.fontFamily||t.fontFamily||TEXT_FONT);
+                ctx.font=(seg.italic?'italic ':'')+(seg.bold?'bold ':'')+((screen*segScale*dpr))+'px '+(seg.fontFamily||t.fontFamily||TEXT_FONT);
                 ctx.fillStyle=seg.color||t.color;
-                ctx.fillText(seg.text,x,y);x+=seg.width/wf;
+                ctx.fillText(seg.text,x,y);x+=seg.width/wf*mag;
               }
               y+=lineAdvance;
             }
           }else{
-            for(let i=0;i<t.lines.length;i++)ctx.fillText(t.lines[i],off.dx/wf,off.dy+i*(t.lineHeight||t.height*1.25));
+            const lines=t.lines||String(t.text||"").split("\n");
+            for(let i=0;i<lines.length;i++)ctx.fillText(lines[i],(off.dx/wf)*mag,(off.dy+i*(t.lineHeight||t.height*1.25))*mag);
           }
           ctx.restore();
+          if(profile)paintStats.textMs+=performance.now()-textStarted;
         }
         if(rasterDrawn||rec.fillPath||rec.path||rec.pointMark||rec.textEntry) paintStats.drawn++;
         else if(rec.raster) paintStats.pendingRaster++;
         ctx.restore();
+        if(profile)paintStats.recordMs+=performance.now()-recordStarted;
       }
     }
-    for(const root of instancePlan.roots)yield* paint(root,I);
+    for(const root of plan.roots)yield* paint(root,I);
     strokeGPU?.flush(ctx);
     if(publishStats){
-      instancePlan.lastPaintCalls=calls;
-      const sourceVisibleTotal=instancePlan.sourceVisibleRecordCount||instancePlan.visibleRecordCount||0;
+      plan.lastPaintCalls=calls;
+      const sourceVisibleTotal=plan.sourceVisibleRecordCount||plan.visibleRecordCount||0;
       const renderedTotal=paintStats.rendered;
       const renderedSourceTotal=paintStats.renderedSource.size;
-      instancePlan.lastRenderedRecordCount=renderedTotal;
-      instancePlan.lastRenderedSourceRecordCount=renderedSourceTotal;
-      instancePlan.lastCulledRecordCount=Math.max(0,sourceVisibleTotal-renderedSourceTotal);
+      plan.lastRenderedRecordCount=renderedTotal;
+      plan.lastRenderedSourceRecordCount=renderedSourceTotal;
+      plan.lastCulledRecordCount=Math.max(0,sourceVisibleTotal-renderedSourceTotal);
       canvas.dataset.renderedRecords=String(renderedTotal);
       canvas.dataset.renderedSourceRecords=String(renderedSourceTotal);
-      canvas.dataset.culledRecords=String(instancePlan.lastCulledRecordCount);
-      canvas.dataset.lodSamples=JSON.stringify(paintStats.samples);
+      canvas.dataset.culledRecords=String(plan.lastCulledRecordCount);
       const gpuStats=strokeGPU?.stats?.()||{};
       const tileCache=strokeTiles?.stats?.()||{};
-      canvas.dataset.gpuTiles=strokeTiles?"persistent":"off";
+      const fillTileCache=fillTiles?.stats?.()||{};
+      canvas.dataset.gpuTiles=usesGpuTilePath()?"persistent":strokeTiles?"adaptive-canvas":"off";
       canvas.dataset.gpuTilesDrawn=String(tilePaint.tiles);
       canvas.dataset.gpuTileSegments=String(gpuStats.segments||0);
       canvas.dataset.gpuTileStyleBatches=String(tilePaint.styles);
@@ -1569,8 +1925,33 @@ export function mountDrawingViewer(envelope) {
       canvas.dataset.gpuTileBuildsThisPaint=String(tilePaint.built);
       canvas.dataset.gpuTileReuseThisPaint=String(tilePaint.reused);
       canvas.dataset.gpuTileBuilds=String(tileCache.builtTiles||0);
+      canvas.dataset.gpuEligibleRuns=String(paintStats.gpuEligible);
+      canvas.dataset.gpuBranches=String(paintStats.gpuBranches);
+      canvas.dataset.gpuEmptyRuns=String(paintStats.gpuEmpty);
+      canvas.dataset.gpuRunTiles=String(paintStats.gpuRunTiles);
+      canvas.dataset.gpuRunSegments=String(paintStats.gpuRunSegments);
+      canvas.dataset.gpuFillTilesDrawn=String(fillTilePaint.tiles);
+      canvas.dataset.gpuFillTrianglesDrawn=String(fillTilePaint.triangles);
+      canvas.dataset.gpuFillTileStyleBatches=String(fillTilePaint.styles);
+      canvas.dataset.gpuFillTileLevel=String(fillTilePaint.level);
+      canvas.dataset.gpuFillTileCalls=String(gpuStats.fillCalls||0);
+      canvas.dataset.gpuFillTileTriangles=String(gpuStats.fillTriangles||0);
+      canvas.dataset.gpuFillTileCacheTiles=String(fillTileCache.cachedTiles||0);
+      canvas.dataset.gpuFillTileBuildsThisPaint=String(fillTilePaint.built);
+      canvas.dataset.gpuFillTileReuseThisPaint=String(fillTilePaint.reused);
+      canvas.dataset.gpuFillTileBuilds=String(fillTileCache.builtTiles||0);
+      canvas.dataset.gpuFillEligibleRuns=String(paintStats.gpuFillEligible);
+      canvas.dataset.gpuFillBranches=String(paintStats.gpuFillBranches);
+      canvas.dataset.gpuFillEmptyRuns=String(paintStats.gpuFillEmpty);
+      canvas.dataset.gpuFillRunTiles=String(paintStats.gpuFillRunTiles);
+      canvas.dataset.gpuFillRunTriangles=String(paintStats.gpuFillRunTriangles);
+      canvas.dataset.renderedStrokeRecords=String(paintStats.strokeRecords);
+      canvas.dataset.renderedFillRecords=String(paintStats.fillRecords);
+      canvas.dataset.renderedTextRecords=String(paintStats.textRecords);
+      canvas.dataset.renderedOtherRecords=String(paintStats.otherRecords);
+      canvas.dataset.renderedStrokeEntries=String(paintStats.strokeEntries);
     }
-    if(profile){canvas.dataset.lastPaintMs=(performance.now()-paintStarted).toFixed(1);canvas.dataset.lastPaintCalls=String(calls);}
+    if(profile){canvas.dataset.lastPaintMs=(performance.now()-paintStarted).toFixed(1);canvas.dataset.lastPaintCalls=String(calls);canvas.dataset.lastPaintFillMs=paintStats.fillMs.toFixed(1);canvas.dataset.lastPaintTextMs=paintStats.textMs.toFixed(1);canvas.dataset.lastPaintStrokeMs=paintStats.strokeMs.toFixed(1);canvas.dataset.lastPaintRecordMs=paintStats.recordMs.toFixed(1);canvas.dataset.lastPaintPreTextMs=paintStats.preTextMs.toFixed(1);}
     ctx.setTransform(dpr,0,0,dpr,0,0);
     return {drawn:paintStats.drawn,pendingRaster:paintStats.pendingRaster,rendered:paintStats.rendered,culled:paintStats.culled};
   }
@@ -1666,10 +2047,14 @@ export function mountDrawingViewer(envelope) {
 
   // ----- render -----------------------------------------------------------
   function resize() {
+    clearCanvasPreviewTransform();
     meshViewer?.resize();
     const r = viewport.getBoundingClientRect();
-    const nextDpr = Math.min(window.devicePixelRatio || 1, 2);
     const nextCssW = Math.max(200, r.width), nextCssH = Math.max(200, r.height);
+    const pixelBudgetDpr = Math.sqrt(CANVAS_PIXEL_BUDGET / Math.max(1, nextCssW * nextCssH));
+    const denseChunked = isServerChunked(envelope);
+    const maxDpr = Math.min(denseChunked || renderDrawEstimate > COMPLEX_RENDER_DRAW_THRESHOLD ? COMPLEX_RENDER_DPR : 2, Math.max(1, pixelBudgetDpr));
+    const nextDpr = Math.min(window.devicePixelRatio || 1, maxDpr);
     const nextWidth = Math.round(nextCssW * nextDpr), nextHeight = Math.round(nextCssH * nextDpr);
     // Assigning width/height clears the backing store even when the value is
     // unchanged. ResizeObserver may report the same box after the first frame,
@@ -1678,12 +2063,17 @@ export function mountDrawingViewer(envelope) {
       && canvas.width === nextWidth && canvas.height === nextHeight) return;
     const sizeChanged = canvas.width !== nextWidth || canvas.height !== nextHeight || nextDpr !== dpr;
     let previousFrame = null;
+    if (sizeChanged) {
+      previewValid = false;
+    }
     if (sizeChanged && overviewPaintDone && canvas.width > 0 && canvas.height > 0) {
       previousFrame = document.createElement('canvas');
       previousFrame.width = canvas.width; previousFrame.height = canvas.height;
       previousFrame.getContext('2d').drawImage(canvas, 0, 0);
     }
     dpr = nextDpr; cssW = nextCssW; cssH = nextCssH;
+    canvas.dataset.renderDpr = String(nextDpr);
+    canvas.dataset.renderDrawEstimate = String(renderDrawEstimate);
     canvas.width = nextWidth; canvas.height = nextHeight;
     canvas.style.width = cssW + 'px'; canvas.style.height = cssH + 'px';
     if (previousFrame) {
@@ -1695,12 +2085,40 @@ export function mountDrawingViewer(envelope) {
     // The first ResizeObserver delivery is the first real size; fitting before it
     // would use the placeholder width and leave the drawing off-centre.
     if (!fitted) fit(); else draw();
+    notifyViewChange();
   }
   // ----- interaction preview ---------------------------------------------
-  // While the user pans or zooms, reuse the last full frame as a transformed
-  // bitmap; the vector scene is repainted once the interaction settles. This
-  // keeps wheel/drag feedback cheap on drawings with >1M expanded draws.
+  // While the user pans or zooms, keep the last complete frame in the single
+  // canvas and let the compositor translate/scale that GPU surface. The canvas
+  // backing store is not copied or repainted until the gesture settles.
+  function clearCanvasPreviewTransform() {
+    if (!previewCompositeActive) return;
+    previewCompositeActive = false;
+    canvas.style.transform = '';
+    canvas.style.transformOrigin = '';
+    canvas.style.willChange = 'auto';
+    canvas.dataset.previewMode = 'canvas';
+    canvas.dataset.previewTransforms = String(previewTransformFrames);
+  }
+  function applyCanvasPreviewTransform() {
+    if (!previewValid || !previewView || !previewCanvas) return false;
+    if (previewCanvas.width !== canvas.width || previewCanvas.height !== canvas.height) return false;
+    const k = scale / previewView.scale;
+    if (!Number.isFinite(k) || k <= 0) return false;
+    const dx = tx - k * previewView.tx;
+    const dy = ty - k * previewView.ty;
+    canvas.style.transformOrigin = '0 0';
+    canvas.style.transform = 'translate3d(' + dx.toFixed(3) + 'px,' + dy.toFixed(3) + 'px,0) scale(' + k.toFixed(6) + ')';
+    if (!previewCompositeActive) {
+      previewCompositeActive = true;
+      canvas.style.willChange = 'transform';
+      canvas.dataset.previewMode = 'compositor';
+    }
+    previewTransformFrames += 1;
+    return true;
+  }
   function cacheFullFrame() {
+    clearCanvasPreviewTransform();
     if (!previewCanvas) previewCanvas = document.createElement('canvas');
     if (previewCanvas.width !== canvas.width || previewCanvas.height !== canvas.height) {
       previewCanvas.width = canvas.width; previewCanvas.height = canvas.height;
@@ -1730,11 +2148,40 @@ export function mountDrawingViewer(envelope) {
     }
     draw();
   }
+  function notifyViewChange() {
+    const handler = viewChangeHandler;
+    if (!handler || destroyed) return;
+    queueMicrotask(() => {
+      if (destroyed || viewChangeHandler !== handler) return;
+      try { handler(); } catch {}
+    });
+  }
+  let panelRenderFrame = 0, panelRenderSerial = 0;
+  function schedulePanelRender(tasks) {
+    const serial = ++panelRenderSerial;
+    if (panelRenderFrame) cancelAnimationFrame(panelRenderFrame);
+    const pending = tasks.slice();
+    const run = () => {
+      panelRenderFrame = 0;
+      if (destroyed || serial !== panelRenderSerial) return;
+      if (initialBuild || interacting || drag) { panelRenderFrame = requestAnimationFrame(run); return; }
+      const started = performance.now();
+      while (pending.length && performance.now() - started < 6) {
+        try { pending.shift()(); } catch (error) { console.error(error); }
+      }
+      if (pending.length) panelRenderFrame = requestAnimationFrame(run);
+    };
+    panelRenderFrame = requestAnimationFrame(run);
+  }
   function interactionSettled() {
     if (destroyed) return;
+    if (initialBuild) { notifyViewChange(); return; }
     if (interactionFrame) { cancelAnimationFrame(interactionFrame); interactionFrame = 0; }
+    if (previewCompositeActive && !drawPreview()) clearCanvasPreviewTransform();
     if (mode === 'analytic' && (scale > buildScale * 2 || scale < buildScale / 2)) rebuild();
-    else if (instancePlan) drawInstances(); else draw();
+    else if (instancePlan) drawInstances({afterInteraction:true}); else draw();
+    notifyViewChange();
+
   }
   function scheduleInteractionSettled() {
     if (interactionTimer) clearTimeout(interactionTimer);
@@ -1746,6 +2193,7 @@ export function mountDrawingViewer(envelope) {
     }, instancePlan ? INSTANCE_INTERACTION_SETTLE_MS : ORDINARY_INTERACTION_SETTLE_MS);
   }
   function beginInteraction() {
+    if (interacting) { scheduleInteractionSettled(); return; }
     if (instancePlan && !hasUsablePreview()) cacheFullFrame();
     cancelInstanceRefresh();
     interacting = true;
@@ -1763,6 +2211,7 @@ export function mountDrawingViewer(envelope) {
     if (previewCanvas.width !== canvas.width || previewCanvas.height !== canvas.height) return false;
     const k = scale / previewView.scale;
     if (!Number.isFinite(k) || k <= 0) return false;
+    clearCanvasPreviewTransform();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = sheetBackground;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1773,13 +2222,17 @@ export function mountDrawingViewer(envelope) {
     return true;
   }
   function draw() {
-    if (destroyed || mounting || initialBuild) return;
-    if (spatialView === '3d') { meshViewer.sync(userLayers,selected); return; }
+    if (destroyed || mounting) return;
+    if (spatialView === '3d') { clearCanvasPreviewTransform(); meshViewer.sync(userLayers,selected); return; }
+    updateOverviewLod();
     if (interacting) {
       cancelInstanceRefresh();
+      if (applyCanvasPreviewTransform()) return;
       if (drawPreview()) return;
       if (instancePlan) return;
     }
+    if (initialBuild) return;
+    if (previewCompositeActive && !drawPreview()) clearCanvasPreviewTransform();
     if (instancePlan) { drawInstances(); return; }
     cancelInstanceRefresh();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1965,6 +2418,21 @@ export function mountDrawingViewer(envelope) {
     ctx.beginPath(); ctx.arc(ax, ay, 1.6, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
   }
+  function textDeviceTransform(matrix, t, wf) {
+    const a0 = dpr * scale * matrix[0], b0 = -dpr * scale * matrix[1];
+    const c0 = dpr * scale * matrix[4], d0 = -dpr * scale * matrix[5];
+    const e0 = dpr * (tx + scale * matrix[12]), f0 = dpr * (ty - scale * matrix[13]);
+    const anchorX = t.displayX ?? t.x, anchorY = t.displayY ?? t.y;
+    const e = e0 + a0 * anchorX + c0 * anchorY;
+    const f = f0 + b0 * anchorX + d0 * anchorY;
+    const cos = Math.cos(t.angle), sin = Math.sin(t.angle);
+    let a = a0 * cos + c0 * sin, b = b0 * cos + d0 * sin;
+    let c = -a0 * sin + c0 * cos, d = -b0 * sin + d0 * cos;
+    c = -c; d = -d; a *= wf; b *= wf;
+    const mag = Math.max(1e-15, dpr * scale * Math.max(
+      Math.hypot(matrix[0], matrix[1]), Math.hypot(matrix[4], matrix[5]), 1e-15));
+    return {a: a / mag, b: b / mag, c: c / mag, d: d / mag, e, f, mag};
+  }
   function drawText(t) {
     drawTextLeader(t);
     const size = Math.max(t.nativeLayout ? 0.7 : 5, Math.min(220, t.size * scale));
@@ -2080,6 +2548,15 @@ export function mountDrawingViewer(envelope) {
   }
   function sourceExtentsForFit(computed){
     if(spaceTarget?.kind!=='model')return null;
+    const chunkFit=ucd.extensions?.['org.cad-preview.server-chunks/1']?.fitBounds;
+    if(Array.isArray(chunkFit)&&chunkFit.length===4&&chunkFit.every(Number.isFinite)){
+      const candidate={minX:chunkFit[0],minY:chunkFit[1],maxX:chunkFit[2],maxY:chunkFit[3]};
+      const width=candidate.maxX-candidate.minX,height=candidate.maxY-candidate.minY;
+      if(width>0&&height>0){
+        lastFit={computed,fitBounds:candidate,candidate:true};
+        return candidate;
+      }
+    }
     const source=sourceExtentsFromHeader(ucd.extensions?.['org.libiaolink.dwg/1']?.header);
     if(!source)return null;
     const coverage=modelCoverage(source);
@@ -2090,7 +2567,8 @@ export function mountDrawingViewer(envelope) {
   let lastFit = null, fitted = false;
   function fit(bbox) {
     if (spatialView === '3d') return meshViewer.fit();
-    if (initialBuild) return;
+    if (initialBuild) { deferredFit = {bbox}; return; }
+    deferredFit = null;
     fitted = true;
     let b = bbox;
     if (!b) {
@@ -2103,10 +2581,12 @@ export function mountDrawingViewer(envelope) {
     const dx = Math.max(b.maxX - b.minX, 1e-9), dy = Math.max(b.maxY - b.minY, 1e-9);
     scale = Math.min((cssW * 0.9) / dx, (cssH * 0.9) / dy);
     if (!Number.isFinite(scale) || scale <= 0) scale = 1;
+    if (!bbox) fitScale = scale;
     const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
     tx = cssW / 2 - cx * scale; ty = cssH / 2 + cy * scale;
     if (mode === 'analytic') rebuild(); else draw();
     updatePrecision();
+    notifyViewChange();
   }
   function zoomAt(mx, my, factor) {
     const wx = (mx - tx) / scale, wy = (ty - my) / scale;
@@ -2114,7 +2594,6 @@ export function mountDrawingViewer(envelope) {
     tx = mx - wx * scale; ty = my + wy * scale;
     if (mode === 'analytic' && !interacting && (scale > buildScale * 2 || scale < buildScale / 2)) rebuild();
     else if (interacting) requestInteractionDraw(); else draw();
-    updatePrecision();
   }
   function screenToWorld(mx, my) { return { x: (mx - tx) / scale, y: (ty - my) / scale }; }
 
@@ -2328,14 +2807,23 @@ export function mountDrawingViewer(envelope) {
   }
   let layerCountCache=null;
   function layerRecordCounts(){
+    const started=viewerProfile?performance.now():0;
     if(layerCountCache?.records===built&&layerCountCache.length===built.length)return layerCountCache.counts;
     const counts=new Map();
-    for(const rec of built)for(const id of new Set([rec.layerId,...rec.draw.visibilityLayerIds])){
-      const row=counts.get(id)||{layer:drawing.layers[id],ids:new Set()};row.ids.add(rec.id);counts.set(id,row);
+    const add=(id,recordId)=>{const row=counts.get(id)||{layer:drawing.layers[id],ids:new Set()};row.ids.add(recordId);counts.set(id,row);};
+    for(const rec of built){
+      add(rec.layerId,rec.id);
+      const layers=rec.draw.visibilityLayerIds||[];
+      for(let i=0;i<layers.length;i++){
+        const id=layers[i];
+        if(id===rec.layerId||layers.indexOf(id)!==i)continue;
+        add(id,rec.id);
+      }
     }
-    layerCountCache={records:built,length:built.length,counts};return counts;
+    layerCountCache={records:built,length:built.length,counts};if(viewerProfile)canvas.dataset.layerCountMs=String(performance.now()-started);return counts;
   }
   function renderLayers() {
+    const started=viewerProfile?performance.now():0;
     const host = panel.querySelector('.dlayers'); if (!host) return;
     host.replaceChildren();
     const counts = layerRecordCounts();
@@ -2363,6 +2851,7 @@ export function mountDrawingViewer(envelope) {
       host.append(wrapper);
     }
     if (!rows.length) host.textContent = '当前空间没有可显示的图层。';
+    if(viewerProfile)canvas.dataset.renderLayersMs=String(performance.now()-started);
   }
   function renderBlocks() {
     const host = panel.querySelector('.dblocks'); if (!host) return;
@@ -2499,18 +2988,29 @@ export function mountDrawingViewer(envelope) {
     for (const line of lines) { const p = document.createElement('p'); p.textContent = line; host.append(p); }
   }
   function updateStats() {
+    const started=viewerProfile?performance.now():0;
     const total = projectionCount();
     let shown = 0, entities = 0, annotations = 0;
-    const seen = new Set();
-    for (const rec of built) { if (drawVisible(rec) && !seen.has(rec.id)) { seen.add(rec.id); shown += 1; if (rec.draw.kind === 'entity') entities += 1; else annotations += 1; } }
+    if (!instancePlan) {
+      const seen = new Set();
+      for (const rec of built) { if (drawVisible(rec) && !seen.has(rec.id)) { seen.add(rec.id); shown += 1; if (rec.draw.kind === 'entity') entities += 1; else annotations += 1; } }
+    }
     if(instancePlan){refreshInstanceLayers();shown=instancePlan.roots.reduce((n,node)=>n+node.group.visibleCount,0);entities=instancePlan.roots.reduce((n,node)=>n+node.group.byKind.entity,0);annotations=instancePlan.roots.reduce((n,node)=>n+node.group.byKind.annotation,0);}
     if (emptyState) {
       emptyState.hidden = shown !== 0;
       if (shown === 0) {
         const hiddenByUser = [...userLayers.values()].some(value => value === false);
+        const chunkState = serverChunks?.record?.();
+        const detailPending = !!chunkState && !chunkState.applyHalted
+          && (chunkState.pending > 0 || chunkState.changed > chunkState.applied
+            || (chunkState.total > 0 && chunkState.loaded.length === 0));
         emptyState.textContent = hiddenByUser
           ? '当前图层均已隐藏，请在“图层”列表中恢复显示。'
-          : '图纸内没有可显示的图形：全部内容不在支持范围内（详见“图纸覆盖清单”）。';
+          : (initialBuild || detailPending)
+            ? '正在载入图纸概览与细节，完成前不会把尚未显示的图形判为不支持。'
+            : chunkState?.failed.length
+              ? '图纸细节加载失败；已保留下载原文件入口，可稍后重试。'
+              : '图纸内没有可显示的图形：全部内容不在支持范围内（详见“图纸覆盖清单”）。';
       }
     }
     const stats = document.getElementById('stats');
@@ -2522,6 +3022,7 @@ export function mountDrawingViewer(envelope) {
     const label = document.getElementById('viewlabel');
     if (label) label.textContent = spaceName() + ' · 二维 · ' + (mode === 'display' ? '显示离散化' : '按屏幕重建');
     updatePrecision();
+    if(viewerProfile)canvas.dataset.updateStatsMs=String(performance.now()-started);
   }
   function updatePrecision() {
     const chip = document.getElementById('drawingPrecision');
@@ -2610,6 +3111,7 @@ export function mountDrawingViewer(envelope) {
     const state = key ? spaceStateCache.get(key) : null;
     if (!state || state.mode !== mode || state.plotPreview !== statePlot) return false;
     cancelInstanceRefresh();
+    cancelVisibilityRefresh();
     spaceStateCache.delete(key);
     spaceStateCache.set(key, state);
     spatialView = '2d';
@@ -2676,9 +3178,11 @@ export function mountDrawingViewer(envelope) {
     rememberSpaceState();
     cancelInitialBuild();
     cancelInstanceRefresh();
+    cancelVisibilityRefresh();
     if (restoreSpaceState(target, nextPlotPreview)) {
       plotPreview = nextPlotPreview;
-      renderSpaces(); renderBlocks(); renderCoverage(); renderPlotControls(); updateSelectionButtons();
+      notifyViewChange();
+      schedulePanelRender([renderSpaces, renderBlocks, renderCoverage, renderPlotControls, updateSelectionButtons]);
       return;
     }
     spaceTarget = target;
@@ -2690,6 +3194,7 @@ export function mountDrawingViewer(envelope) {
     instancePlan=null;instanceSelected=null;
     window.__cadTimingMark?.("spaceProjectionStart");
     const drawEstimate=(target.kind==='model'||target.kind==='layout')?estimateDrawingDraws(ucd,target):0;
+    renderDrawEstimate=drawEstimate;
     if(drawEstimate>INSTANCE_DRAW_LIMIT)
       throw new Error('drawing-instance-count-overflow: '+drawEstimate+' expanded draws exceed the retained-viewer budget');
     const retained=(target.kind==='model'||target.kind==='layout')&&shouldProjectInstances(target,forceInstances?0:drawEstimate,forceInstances);
@@ -2701,8 +3206,10 @@ export function mountDrawingViewer(envelope) {
     };
     const finishSpace=()=>{
       window.__cadTimingMark?.("spaceRebuildEnd");
-      renderSpaces(); renderBlocks(); renderCoverage(); renderPlotControls();
-      fit(); updateSelectionButtons(); window.__cadTimingMark?.("spaceReady");
+      fit();
+      notifyViewChange();
+      schedulePanelRender([updateStats, renderLayers, renderSpaces, renderBlocks, renderCoverage, renderPlotControls, updateSelectionButtons]);
+      window.__cadTimingMark?.("spaceReady");
     };
     if (retained) {
       // The retained plan is private until traversal has finished. Cancellation
@@ -2722,6 +3229,51 @@ export function mountDrawingViewer(envelope) {
     beginRebuild();rebuild(finishSpace);
   }
 
+  function reloadAfterChunks() {
+    return new Promise((resolve,reject)=>{
+      let waits=0;
+      const begin=()=>{
+      if(destroyed){resolve();return;}
+      if(initialBuild){
+        if(++waits>500){reject(new Error('drawing rebuild is busy'));return;}
+        setTimeout(begin,40);return;
+      }
+      const target=spaceTarget;
+      if(!target){resolve();return;}
+      cancelVisibilityRefresh();
+      const dwg=ucd.extensions?.['org.libiaolink.dwg/1'];
+      for(const id of Object.keys(dwg?.meshPresentations||{}))meshIds.add(id);
+      for(const id of Object.keys(dwg?.dimensionSemantics||{}))dimensionInstances.add(id);
+      spaceStateCache.clear();
+      instanceLayerKey='';instanceSelected=null;presentationStyles={};
+      const estimate=(target.kind==='model'||target.kind==='layout')?estimateDrawingDraws(ucd,target):0;
+      renderDrawEstimate=estimate;
+      if(estimate>INSTANCE_DRAW_LIMIT)throw new Error('drawing-instance-count-overflow: '+estimate+' expanded draws exceed the retained-viewer budget');
+      const retained=(target.kind==='model'||target.kind==='layout')&&shouldProjectInstances(target,forceInstances?0:estimate,forceInstances);
+      const steps=(function*(){
+        const layerMap={};
+        instancePlan=null;
+        if(target.kind==='block-preview'){
+          projection=projectBlock(ucd,target.blockId,layerMap,presentationStyles);
+        }else if(retained){
+          instancePlan=yield* projectInstancesSteps(ucd,target,presentationStyles);
+          projection=instancePlan.projection;
+        }else{
+          projection=projectDrawing(ucd,target,layerMap,presentationStyles);
+        }
+        effectiveLayers=instancePlan?instancePlan.layers:new WeakMap(Object.entries(projection.draws).map(([id,draw])=>[draw,layerMap[id]]));
+        yield* rebuildSteps();
+      })();
+      cancelInstanceRefresh();
+      startInitialBuild(steps,()=>{
+        resolve();
+        notifyViewChange();
+        schedulePanelRender([updateStats, renderLayers, renderSpaces, renderBlocks, renderCoverage, renderPlotControls, updateSelectionButtons]);
+      },reject,'正在载入图纸细节…');
+      };
+      begin();
+    });
+  }
   function renderPlotControls() {
     const host=panel.querySelector('.dplot');if (!host) return;host.replaceChildren();
     const setup=plotStyles?.layouts?.[spaceTarget.kind==='layout'?spaceTarget.layoutId:'model'];
@@ -2737,21 +3289,36 @@ export function mountDrawingViewer(envelope) {
   }
 
   // ----- events -----------------------------------------------------------
+  function isViewportControl(target) {
+    return !!target?.closest?.('#partsSidebar,#drawingPanel,#viewTools,#selectionTools,#modelInfo,button,input,select,textarea,a,summary,label');
+  }
   function pointerPosition(event) {
-    const r = canvas.getBoundingClientRect();
+    const r = viewport.getBoundingClientRect();
     return { x: event.clientX - r.left, y: event.clientY - r.top };
   }
   function onPointerDown(event) {
+    if (isViewportControl(event.target)) return;
     if (event.button !== 0 && event.button !== 1) return;
     drag = { x: event.clientX, y: event.clientY, start: pointerPosition(event), button: event.button };
     moved = false;
-    canvas.setPointerCapture(event.pointerId);
+    try { canvas.setPointerCapture(event.pointerId); } catch {}
+  }
+  let coordFrame = 0, pendingCoord = null;
+  function scheduleCoordLabel(world) {
+    pendingCoord = world;
+    if (coordFrame) return;
+    coordFrame = requestAnimationFrame(() => {
+      coordFrame = 0;
+      const chip = document.getElementById('drawingCoords');
+      const point = pendingCoord;
+      pendingCoord = null;
+      if (chip && point) chip.textContent = 'X ' + formatCoord(point.x) + ' · Y ' + formatCoord(point.y);
+    });
   }
   function onPointerMove(event) {
     const p = pointerPosition(event);
     const world = screenToWorld(p.x, p.y);
-    const chip = document.getElementById('drawingCoords');
-    if (chip) chip.textContent = 'X ' + formatCoord(world.x) + ' · Y ' + formatCoord(world.y);
+    scheduleCoordLabel(world);
     if (drag) {
       const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
       if (Math.hypot(dx, dy) > 3) moved = true;
@@ -2774,6 +3341,7 @@ export function mountDrawingViewer(envelope) {
     select(rec, event.shiftKey);
   }
   function onWheel(event) {
+    if (isViewportControl(event.target)) return;
     event.preventDefault();
     const p = pointerPosition(event);
     beginInteraction();
@@ -2784,11 +3352,11 @@ export function mountDrawingViewer(envelope) {
     if (event.key === 'Escape') select(null, false);
     if (event.key.toLowerCase() === 'f' && !event.metaKey && !event.ctrlKey) fit();
   }
-  canvas.addEventListener('pointerdown', onPointerDown);
-  canvas.addEventListener('pointermove', onPointerMove);
-  canvas.addEventListener('pointerup', onPointerUp);
-  canvas.addEventListener('wheel', onWheel, { passive: false });
-  canvas.addEventListener('contextmenu', event => event.preventDefault());
+  viewport.addEventListener('pointerdown', onPointerDown);
+  viewport.addEventListener('pointermove', onPointerMove);
+  viewport.addEventListener('pointerup', onPointerUp);
+  viewport.addEventListener('wheel', onWheel, { passive: false });
+  viewport.addEventListener('contextmenu', event => { if (!isViewportControl(event.target)) event.preventDefault(); });
   window.addEventListener('keydown', onKeyDown);
   const resizeObserver = new ResizeObserver(() => resize());
   resizeObserver.observe(viewport);
@@ -2852,6 +3420,11 @@ export function mountDrawingViewer(envelope) {
     get mode() { return mode; },
     projection: () => projection,
     setSpace,
+    viewportBounds: () => ({minX:-tx/scale,minY:(ty-cssH)/scale,maxX:(cssW-tx)/scale,maxY:ty/scale}),
+    fitScale: () => fitScale,
+    onViewportChange(handler) { viewChangeHandler=typeof handler==='function'?handler:null; return () => { if(viewChangeHandler===handler)viewChangeHandler=null; }; },
+    reloadAfterChunks,
+    serverChunks: () => serverChunks?.record() || null,
     setMode(next) { applyMode(next); },
     setPlotPreview(enabled) {
       const next = !!enabled;
@@ -2941,34 +3514,68 @@ export function mountDrawingViewer(envelope) {
       });
     },
     record() {
-      return { spatialView, space: spaceTarget, mode, scale, layers: api.layerStates(), draws: Object.keys(projection.draws).length, selected: [...selected], selectedInstance, extents: extents(), unit: presentation.unit };
+      return { spatialView, space: spaceTarget, mode, scale, layers: api.layerStates(), draws: Object.keys(projection.draws).length, selected: [...selected], selectedInstance, extents: extents(), unit: presentation.unit, serverChunks: serverChunks?.record() || null };
     },
     resize, draw, overviewPaint, ready: Promise.all([rasterReady, firstPaint]),
     destroy() {
+      clearCanvasPreviewTransform();
       destroyed = true;
+      deferredFit = null;
+      serverChunks?.destroy();serverChunks=null;viewChangeHandler=null;
       cancelInitialBuild();
       completeFirstPaint();
       meshViewer?.dispose();
       cancelInstanceRefresh();
+      cancelVisibilityRefresh();
       if (interactionFrame) { cancelAnimationFrame(interactionFrame); interactionFrame = 0; }
+      if (panelRenderFrame) { cancelAnimationFrame(panelRenderFrame); panelRenderFrame = 0; panelRenderSerial++; }
       if (interactionTimer) { clearTimeout(interactionTimer); interactionTimer = 0; }
       background?.dispose();
       strokeTiles?.reset();
+      fillTiles?.reset();
       strokeGPU?.dispose();
       rasterCache.clear();
       rasterProbes.clear();
       if (window.__drawing === api) { delete window.__drawing; delete window.__drawingTest; }
       resizeObserver.disconnect();
-      canvas.removeEventListener('pointerdown', onPointerDown);
-      canvas.removeEventListener('pointermove', onPointerMove);
-      canvas.removeEventListener('pointerup', onPointerUp);
-      canvas.removeEventListener('wheel', onWheel);
+      viewport.removeEventListener('pointerdown', onPointerDown);
+      viewport.removeEventListener('pointermove', onPointerMove);
+      viewport.removeEventListener('pointerup', onPointerUp);
+      viewport.removeEventListener('wheel', onWheel);
       window.removeEventListener('keydown', onKeyDown);
       canvas.hidden = true; overlay.remove(); panel.remove();
       if (emptyState) emptyState.remove();
       canvas.remove();
     }
   };
+  if (isServerChunked(envelope) && envelope.serverChunks?.fetcher) {
+    try {
+      serverChunks = createServerChunkController({
+        envelope,
+        fetch: (url, options) => envelope.serverChunks.fetcher(url, options),
+        ready: api.ready,
+        viewportBounds: api.viewportBounds,
+        scale: () => scale,
+        fitScale: () => fitScale,
+        currentSpace: () => spaceTarget,
+        apply: reloadAfterChunks,
+        afterApply: () => {
+          window.__cadTimingMark?.("chunkPaintStart");
+          updateOverviewLod();
+          draw();
+          window.__cadTimingMark?.("chunkPaintScheduled");
+        },
+        canWork: () => !interacting && !drag && !initialBuild,
+        release: envelope.serverChunks.release,
+        onError: error => { canvas.dataset.serverChunksError = String(error?.message || error); }
+      });
+      viewChangeHandler = () => serverChunks?.update();
+      serverChunks.start();
+    } catch (error) {
+      canvas.dataset.serverChunksError = String(error?.message || error);
+      void envelope.serverChunks.release?.().catch?.(() => {});
+    }
+  }
   window.__drawing = api;
   window.__drawingTest = {
     debug: () => ({ space: spaceTarget, mode, scale, counts: api.counts(), fills: api.fills(),
@@ -2984,7 +3591,7 @@ export function mountDrawingViewer(envelope) {
     layers: () => api.layerStates(),
     sample: (n) => built.slice(0, n || 40).map(rec => ({ id: rec.id, layerId: rec.layerId,
       itemId:rec.draw.itemId, sourceRefs:(drawing.entities[rec.draw.itemId]||drawing.annotations[rec.draw.itemId])?.sourceRefs||[],
-      segmentCount:rec.segments?rec.segments.length/4:0, raster:!!rec.raster,
+      segmentCount:rec.segments?rec.segments.length/4:0, raster:!!rec.raster, fill:!!rec.fillPath, text:!!rec.textEntry, clipped:!!rec.clipRegion.active, dash:rec.dash?.length||0, opacity:rec.draw.style.opacity??1,
       itemLayer: itemLayer(rec.draw), blockPath: (rec.draw.blockPath || []).length })),
     wideRecords: (minWidth=300, maxHeight=30) => built.map(rec => {
       const b = rec.visibleGeometry?.bounds || rec.bbox;
@@ -3010,6 +3617,20 @@ export function mountDrawingViewer(envelope) {
           violations.push({itemId: draw.itemId, handle: (entity.sourceRefs || [{}])[0]?.objectKey || null});
       }
       return {splines: total, originPairs: violations.length, samples: violations.slice(0, 10)};
+    },
+    paintMix: () => {
+      const record={records:built.length,fill:0,text:0,stroke:0,dash:0,clipped:0,raster:0,point:0,simpleStroke:0,simpleClipped:0,simpleDash:0,simpleOpaque:0};
+      for(const rec of built){
+        if(rec.fillPath)record.fill++;if(rec.textEntry)record.text++;if(rec.segments?.length)record.stroke++;if(rec.dash?.length)record.dash++;if(rec.clipRegion.active)record.clipped++;if(rec.raster)record.raster++;if(rec.pointMark)record.point++;
+        if(rec.segments?.length&&!rec.fillPath&&!rec.textEntry&&!rec.pointMark&&!rec.raster&&!rec.infinite&&!rec.clipRegion.active&&(rec.draw.style.opacity??1)===1&&!rec.dash?.length)record.simpleStroke++;
+        if(rec.segments?.length&&!rec.fillPath&&!rec.textEntry&&!rec.pointMark&&!rec.raster&&!rec.infinite&&rec.clipRegion.active&&(rec.draw.style.opacity??1)===1&&!rec.dash?.length)record.simpleClipped++;
+        if(rec.segments?.length&&rec.dash?.length&&!rec.fillPath&&!rec.textEntry&&!rec.pointMark&&!rec.raster&&!rec.infinite&&(rec.draw.style.opacity??1)===1)record.simpleDash++;
+        if(rec.segments?.length&&(rec.draw.style.opacity??1)===1)record.simpleOpaque++;
+      }
+      const paint={entries:0,stroke:0,strokeRecords:0,fill:0,fillRecords:0,record:0,group:0,textRecords:0,clippedRecords:0};
+      if(instancePlan)for(const group of instancePlan.groups)for(const entry of group.paint||[]){paint.entries++;if(entry.kind==="group")paint.group++;else if(entry.kind==="stroke"){paint.stroke++;paint.strokeRecords+=entry.records?.length||0;}else if(entry.kind==="fill"){paint.fill++;paint.fillRecords+=entry.records?.length||0;}else{paint.record++;if(entry.rec?.textEntry)paint.textRecords++;if(entry.rec?.clipRegion?.active)paint.clippedRecords++;}}
+      const fillRules={};for(const rec of built){if(!rec.fillPath)continue;const rule=rec.fillRule||"evenodd";fillRules[rule]=(fillRules[rule]||0)+1;}
+      return {record,paint,fillRules,gpu:{strokes:instancePlan?.gpuRunCount||0,fills:instancePlan?.gpuFillRunCount||0,limit:GPU_RUN_LIMIT,used:usesGpuTilePath()}};
     },
     counts: () => api.counts(),
     texts: (limit) => api.texts(limit),

@@ -20,12 +20,15 @@ import { CadCacheMaintenance } from "./cad-cache-maintenance.js";
 import { AppError } from "../../common/errors/app-error.js";
 
 const definition = z.object({ sha256: z.string().regex(/^[a-f0-9]{64}$/), byteLength: z.number().int().nonnegative().max(CAD_BUFFER_LIMIT) });
+const chunkResource = definition.extend({ id: z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/), url: z.string(),
+  contentType: z.string().max(128).optional() });
 const archiveManifest = z.object({
   resourceLease: z.string().regex(/^[a-f0-9]{48}$/),
   presentation: z.object({ sourceSHA256: z.string() }),
   snapshot: z.object({ completeness: z.enum(["complete", "partial"]) }),
   document: z.object({ buffers: z.record(z.string(), definition).refine((value) => Object.keys(value).length <= 4096) }),
   bufferResources: z.record(z.string(), definition.extend({ url: z.string() })),
+  chunkResources: z.array(chunkResource).max(4096).optional(),
 });
 
 class CadArchiveFailure extends Error {
@@ -110,16 +113,26 @@ export class CadArchiveWorker implements OnApplicationShutdown {
       if (packet.snapshot.completeness !== (job.state === "partial" ? "partial" : "complete")) throw new Error("CAD completeness mismatch");
       const buffers = new Map<string, { sha256: string; byteLength: number; objectKey: string }>();
       let total = raw.byteLength;
+      const archiveResource = (sha256: string, byteLength: number) => {
+        const previous = buffers.get(sha256);
+        if (previous && previous.byteLength !== byteLength) throw new Error("CAD duplicate buffer mismatch");
+        if (!previous) {
+          total += byteLength;
+          buffers.set(sha256, { sha256, byteLength, objectKey: prefix! + sha256 });
+        }
+      };
       for (const [id, buffer] of Object.entries(packet.document.buffers)) {
         const resource = packet.bufferResources[id];
         if (!resource || resource.sha256 !== buffer.sha256 || resource.byteLength !== buffer.byteLength
           || resource.url !== `/api/resources/${activeLease}/${buffer.sha256}`) throw new Error("CAD manifest resource mismatch");
-        const previous = buffers.get(buffer.sha256);
-        if (previous && previous.byteLength !== buffer.byteLength) throw new Error("CAD duplicate buffer mismatch");
-        if (!previous) {
-          total += buffer.byteLength;
-          buffers.set(buffer.sha256, { ...buffer, objectKey: prefix + buffer.sha256 });
-        }
+        archiveResource(buffer.sha256, buffer.byteLength);
+      }
+      const chunkIds = new Set<string>();
+      for (const chunk of packet.chunkResources ?? []) {
+        if (chunkIds.has(chunk.id)) throw new Error("CAD duplicate chunk id");
+        if (chunk.url !== `/api/resources/${activeLease}/${chunk.sha256}`) throw new Error("CAD chunk resource mismatch");
+        chunkIds.add(chunk.id);
+        archiveResource(chunk.sha256, chunk.byteLength);
       }
       if (total > CAD_ARTIFACT_LIMIT) throw new CadArchiveFailure("artifact-budget", "模型产物超过当前持久化大小限制，请下载原文件查看", false);
       for (const buffer of buffers.values()) {

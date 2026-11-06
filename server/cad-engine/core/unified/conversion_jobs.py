@@ -7,19 +7,21 @@ import hashlib
 import io
 import fcntl
 import json
+import math
 import os
 import re
 import secrets
 import signal
 import shutil
 import sqlite3
+import struct
 import subprocess
 import tempfile
 import threading
 import time
 from pathlib import Path
 from .validation import validate_envelope,validate_binary_envelope
-from .transport import read_worker_buffers
+from .transport import read_worker_buffers,check_worker_buffers
 from .input_policy import step_job_input_bytes
 from .compact_transport import WORKER,VERSION,unpack_metadata
 from .dwg_pack import unpack_document
@@ -27,6 +29,13 @@ from .step_name_encoding import name_codepage as check_name_codepage
 from . import dxf_resources
 
 TERMINAL={'completed','partial','failed','cancelled','timed-out'}
+DWG_WORKER_RSS_MIB_DEFAULT=4608
+def dwg_worker_rss_bytes():
+    raw=os.environ.get('CAD_DWG_WORKER_RSS_MIB',str(DWG_WORKER_RSS_MIB_DEFAULT))
+    try:mib=int(raw)
+    except ValueError:raise ValueError('CAD_DWG_WORKER_RSS_MIB must be an integer') from None
+    if not 1024<=mib<=16384:raise ValueError('CAD_DWG_WORKER_RSS_MIB must be between 1024 and 16384')
+    return mib*1024**2
 POLICY={'version':'local-step-job/4','workerWallSeconds':600,'queueWallSeconds':900,'workerRSSBytes':2*1024**3,
         'concurrency':1,'maxQueued':8,'sourceBytes':256*1024**2,'artifactBytes':512*1024**2,
         'resultBytes':256*1024**2,'scratchBytes':512*1024**2,'stderrBytes':8*1024**2,'logBytes':64*1024**2,'maxStoredJobs':1024,'retentionSeconds':86400,
@@ -34,6 +43,116 @@ POLICY={'version':'local-step-job/4','workerWallSeconds':600,'queueWallSeconds':
         'disconnect':'job continues until cancelled, terminal, resource limit, or server restart',
         'deduplication':'same content/name/mode/reader/rules returns same local job; cancellation is shared'}
 
+def validate_worker_chunks(directory,document,entries):
+    extension=(document.get('extensions') or {}).get('org.cad-preview.server-chunks/1')
+    if extension is None:
+        if entries:raise ValueError('worker chunk inventory has no index')
+        return []
+    if not isinstance(extension,dict) or extension.get('version')!='ucd-dwg-chunks/1':raise ValueError('worker chunk index is invalid')
+    rows=[];identifiers=set()
+    for key,kind in (('tiles','tile'),('layouts','layout'),('blocks','block')):
+        values=extension.get(key)
+        if not isinstance(values,list):raise ValueError('worker chunk table is invalid')
+        for row in values:
+            if not isinstance(row,dict):raise ValueError('worker chunk row is invalid')
+            chunk_id=row.get('id');resource_id=row.get('resourceId');bounds=row.get('bounds')
+            if not isinstance(chunk_id,str) or not re.fullmatch(r'[A-Za-z0-9._:-]{1,96}',chunk_id) or chunk_id in identifiers:raise ValueError('worker chunk id is invalid')
+            if row.get('kind')!=kind:raise ValueError('worker chunk kind is invalid')
+            if not isinstance(bounds,list) or len(bounds)!=4 or not all(isinstance(v,(int,float)) and not isinstance(v,bool) and math.isfinite(v) for v in bounds):raise ValueError('worker chunk bounds are invalid')
+            dependencies=row.get('dependencies');remove=row.get('removeOverview')
+            if not isinstance(dependencies,list) or not all(isinstance(v,str) for v in dependencies):raise ValueError('worker chunk dependencies are invalid')
+            if not isinstance(remove,list) or not all(isinstance(v,str) for v in remove):raise ValueError('worker chunk overview inventory is invalid')
+            if type(row.get('always')) is not bool:raise ValueError('worker chunk priority is invalid')
+            if resource_id!='chunk-'+chunk_id or not re.fullmatch(r'[A-Za-z0-9._:-]{1,128}',resource_id):raise ValueError('worker chunk resource id is invalid')
+            if not isinstance(row.get('resourceSHA256'),str) or not re.fullmatch(r'[a-f0-9]{64}',row['resourceSHA256']):raise ValueError('worker chunk resource hash is invalid')
+            if type(row.get('resourceBytes')) is not int or type(row.get('documentBytes')) is not int or type(row.get('positionBytes')) is not int:raise ValueError('worker chunk resource size is invalid')
+            if row['documentBytes']<=0 or row['documentBytes']>64*1024*1024 or row['positionBytes']<0 or row['positionBytes']>256*1024*1024 or row['resourceBytes']!=12+row['documentBytes']+row['positionBytes'] or row['resourceBytes']>256*1024*1024:raise ValueError('worker chunk resource size is inconsistent')
+            if not isinstance(row.get('counts'),dict):raise ValueError('worker chunk counts are invalid')
+            identifiers.add(chunk_id);rows.append(row)
+    by_id={row['id']:row for row in rows}
+    states={}
+    def visit(chunk_id):
+        state=states.get(chunk_id)
+        if state==1:raise ValueError('worker chunk dependency cycle')
+        if state==2:return
+        states[chunk_id]=1
+        for dependency in by_id[chunk_id]['dependencies']:
+            if dependency not in by_id or dependency==chunk_id:raise ValueError('worker chunk dependency is invalid')
+            visit(dependency)
+        states[chunk_id]=2
+    for row in rows:visit(row['id'])
+    if not rows or len(rows)!=len(entries):raise ValueError('worker chunk inventory is incomplete')
+    resources={entry['id']:entry for entry in entries}
+    if len(resources)!=len(rows) or {row['resourceId'] for row in rows}!=set(resources):raise ValueError('worker chunk resources do not match the index')
+    if extension.get('resourceCount')!=len(rows) or extension.get('resourceBytes')!=sum(row['resourceBytes'] for row in rows):raise ValueError('worker chunk totals are invalid')
+    overview=extension.get('overview')
+    if not isinstance(overview,dict) or overview.get('bufferId')!='buffer-chunk-overview' or not isinstance(overview.get('entityIds'),list):raise ValueError('worker overview index is invalid')
+    overview_ids=overview['entityIds']
+    if (len(overview_ids)!=len(set(overview_ids)) or not all(isinstance(value,str) for value in overview_ids)):raise ValueError('worker overview inventory is invalid')
+    drawing=document.get('drawing') if isinstance(document.get('drawing'),dict) else {}
+    entities=drawing.get('entities') if isinstance(drawing.get('entities'),dict) else {}
+    if any(value not in entities for value in overview_ids):raise ValueError('worker overview entity is missing')
+    if any('displayRepresentationId' in entities[value] for value in overview_ids):raise ValueError('worker overview entity carries an inline representation')
+    bindings=overview.get('representations')
+    if not isinstance(bindings,dict) or set(bindings)!=set(overview_ids):raise ValueError('worker overview representation index is invalid')
+    representations=document.get('representations') if isinstance(document.get('representations'),dict) else {}
+    for entity_id,representation_id in bindings.items():
+        representation=representations.get(representation_id)
+        if not isinstance(representation_id,str) or not isinstance(representation,dict) or representation.get('kind')!='drawing':raise ValueError('worker overview representation is missing')
+    model_space_id=extension.get('modelSpaceId')
+    if not isinstance(model_space_id,str) or model_space_id not in (drawing.get('spaces') or {}):raise ValueError('worker model space is invalid')
+    overview_buffer=(document.get('buffers') or {}).get(overview.get('bufferId'))
+    if not isinstance(overview_buffer,dict) or overview_buffer.get('id')!=overview.get('bufferId'):raise ValueError('worker overview buffer is missing')
+    removed=set()
+    resources_by_row={row['id']:resources[row['resourceId']] for row in rows}
+    for row in rows:
+        entry=resources_by_row[row['id']]
+        if entry['sha256']!=row['resourceSHA256'] or entry['byteLength']!=row['resourceBytes']:raise ValueError('worker chunk resource metadata mismatch')
+        path=Path(directory)/entry['file']
+        with path.open('rb') as handle:
+            header=handle.read(12)
+            if len(header)!=12:raise ValueError('worker chunk bundle is truncated')
+            magic,document_bytes,position_bytes=struct.unpack('<4sII',header)
+            if magic!=b'CDW1' or document_bytes!=row['documentBytes'] or position_bytes!=row['positionBytes']:raise ValueError('worker chunk bundle header mismatch')
+            try:chunk=json.loads(handle.read(document_bytes).decode('utf-8'))
+            except (UnicodeDecodeError,json.JSONDecodeError) as error:raise ValueError('worker chunk document is invalid') from error
+            digest=hashlib.sha256()
+            remaining=position_bytes
+            while remaining:
+                block=handle.read(min(1024*1024,remaining))
+                if not block:raise ValueError('worker chunk positions are truncated')
+                digest.update(block);remaining-=len(block)
+            if handle.read(1):raise ValueError('worker chunk bundle has trailing bytes')
+        if not isinstance(chunk,dict) or chunk.get('version')!='ucd-dwg-chunk/1':raise ValueError('worker chunk document identity is invalid')
+        if chunk.get('id')!=row['id'] or chunk.get('kind')!=row['kind'] or chunk.get('bounds')!=row['bounds']:raise ValueError('worker chunk document does not match its index')
+        if chunk.get('dependencies')!=row['dependencies'] or chunk.get('removeOverview')!=row['removeOverview']:raise ValueError('worker chunk dependency inventory mismatch')
+        chunk_document=chunk.get('document')
+        if not isinstance(chunk_document,dict) or chunk_document.get('schemaVersion')!='2.0.0':raise ValueError('worker chunk document schema is invalid')
+        buffer=chunk.get('buffer')
+        position_sha=digest.hexdigest()
+        if position_bytes:
+            if not isinstance(buffer,dict) or buffer.get('id')!='buffer-'+row['id'] or buffer.get('sha256')!=position_sha or buffer.get('byteLength')!=position_bytes:raise ValueError('worker chunk position metadata mismatch')
+            definition=(chunk_document.get('buffers') or {}).get(buffer['id'])
+            if not isinstance(definition,dict) or definition.get('id')!=buffer['id'] or definition.get('sha256')!=position_sha or definition.get('byteLength')!=position_bytes:raise ValueError('worker chunk position buffer mismatch')
+        elif buffer is not None or (chunk_document.get('buffers') or {}):raise ValueError('worker chunk has unexpected position data')
+        for accessor in (chunk_document.get('accessors') or {}).values():
+            if not isinstance(accessor,dict) or accessor.get('bufferId') not in (chunk_document.get('buffers') or {}):raise ValueError('worker chunk accessor has no buffer')
+            if accessor.get('bufferId')=='buffer-'+row['id'] and (not isinstance(accessor.get('byteOffset',0),int) or not isinstance(accessor.get('byteLength'),int) or accessor.get('byteOffset',0)<0 or accessor.get('byteLength')<0 or accessor.get('byteOffset',0)+accessor.get('byteLength')>position_bytes):raise ValueError('worker chunk accessor range is invalid')
+        for geometry_id,geometry in (chunk_document.get('geometries') or {}).items():
+            if not isinstance(geometry,dict) or geometry.get('id')!=geometry_id or geometry.get('attributes',{}).get('POSITION') not in (chunk_document.get('accessors') or {}):raise ValueError('worker chunk geometry is invalid')
+        for representation_id,representation in (chunk_document.get('representations') or {}).items():
+            if not isinstance(representation,dict) or representation.get('id')!=representation_id or not isinstance(representation.get('bindings'),list):raise ValueError('worker chunk representation is invalid')
+            if any(not isinstance(binding,dict) or binding.get('geometryId') not in (chunk_document.get('geometries') or {}) for binding in representation['bindings']):raise ValueError('worker chunk representation binding is invalid')
+        chunk_drawing=chunk_document.get('drawing') or {}
+        for entity_id,entity in (chunk_drawing.get('entities') or {}).items():
+            if not isinstance(entity,dict) or entity.get('id')!=entity_id:raise ValueError('worker chunk entity is invalid')
+            representation_id=entity.get('displayRepresentationId')
+            if representation_id is not None and representation_id not in (chunk_document.get('representations') or {}):raise ValueError('worker chunk entity representation is missing')
+        for value in row['removeOverview']:
+            if value not in set(overview_ids) or value in removed:raise ValueError('worker chunk overview target is invalid')
+            removed.add(value)
+    if removed!=set(overview_ids):raise ValueError('worker chunk overview inventory is incomplete')
+    return rows
 
 def process_tree_rss(pid):
     """Count the worker and native descendants, including separate process groups."""
@@ -61,13 +180,15 @@ class ConversionJobs:
         self.dxf_interpreter=dxf_interpreter
         self.dwg_interpreter=dwg_interpreter
         # DWG assembly retains the parsed ledger and the packed transport until
-        # serialization. A real 18.3 MB source peaked at 4.02 GiB RSS.
-        self.dwg_policy={'workerRSSBytes':4608*1024**2,'resultBytes':512*1024**2,'artifactBytes':512*1024**2,
+        # serialization. A real 18.3 MB source peaked at 4.02 GiB RSS; operators
+        # can raise this within the separately reviewed container budget.
+        self.dwg_policy={'workerRSSBytes':dwg_worker_rss_bytes(),'resultBytes':512*1024**2,'artifactBytes':512*1024**2,
                          'scratchBytes':1024*1024**2}
         self.binary=os.environ.get('CAD_STEP_JOB_BINARY','1')!='0'
         self.compact=self.binary and os.environ.get('CAD_STEP_JOB_COMPACT','1')!='0'
         self.upload_reserved=0
         self.lock=threading.RLock();self.active={};self.threads={};self.cancelled_requests={};self.closed=False;self.db_closed=False
+        self.verified_artifacts=set();self.verified_buffers=set()
         for name in ('sources','artifacts','buffers','temporary','logs'):(self.root/name).mkdir(parents=True,exist_ok=True)
         self.owner=(self.root/'owner.lock').open('a')
         try:fcntl.flock(self.owner,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -226,16 +347,20 @@ class ConversionJobs:
         sha=row.get('artifactSHA256');path=self.root/'artifacts'/(sha or 'missing')
         if sha and path.is_file():
             raw=path.read_bytes()
-            if hashlib.sha256(raw).hexdigest()==sha:
+            if sha in self.verified_artifacts or hashlib.sha256(raw).hexdigest()==sha:
                 try:
                     if row.get('artifactTransport')=='binary':
-                        # Reuse verifies every immutable buffer, including after restart.
-                        # Stream hashes here; do not retain a second geometry-sized copy.
+                        # Verify each immutable buffer once per process. A restart
+                        # re-walks the cache; repeated manifests only stat lengths.
                         for key in row['artifactBufferSHA256']:
-                            path=self._buffer_path({'sha256':key});digest=hashlib.sha256()
+                            path=self._buffer_path({'sha256':key})
+                            if key in self.verified_buffers:continue
+                            digest=hashlib.sha256()
                             with path.open('rb') as handle:
                                 for chunk in iter(lambda:handle.read(1024*1024),b''):digest.update(chunk)
                             if digest.hexdigest()!=key:raise ValueError('artifact buffer hash mismatch')
+                            self.verified_buffers.add(key)
+                    self.verified_artifacts.add(sha)
                     return raw
                 except (OSError,ValueError):pass
         if row['state'] in ('completed','partial'):self._update(row,state='failed',error={'code':'cache-integrity-failed','error':'已验证产物缺失或已损坏，需重新转换'})
@@ -412,7 +537,7 @@ class ConversionJobs:
                 if is_dxf and document['extensions']['org.cad-preview.drawing-coverage/1']['displayGeometry']['withDisplayGeometry']<1:
                     raise ValueError('DXF has no display geometry')
                 if not is_dxf and not is_dwg and not row['partial'] and completeness!='complete':raise ValueError('strict job requires complete geometry')
-                blobs={}
+                blobs={};chunk_entries=[]
                 if self.binary:
                     if envelope.get('transportProfile')!='ucd-worker-binary/1':raise ValueError('binary worker transport mismatch')
                     if self.compact and not is_dxf and not is_dwg and wire_envelope.get('transportProfile')!=WORKER:raise ValueError('compact worker transport mismatch')
@@ -422,6 +547,8 @@ class ConversionJobs:
                     for entry in entries:
                         b=definitions[entry['id']]
                         if entry['byteLength']!=b['byteLength'] or entry['sha256']!=b['sha256']:raise ValueError('worker buffer metadata mismatch')
+                    chunk_entries=check_worker_buffers(binary_dir,envelope.get('chunkResources',[]))
+                    validate_worker_chunks(binary_dir,document,chunk_entries)
                     blobs=read_worker_buffers(binary_dir,entries)
                     # Same schema, complete geometry and revision validation as base64.
                     validate_binary_envelope(document,envelope['snapshot'],envelope.get('presentation',{}),blobs.__getitem__)
@@ -434,21 +561,40 @@ class ConversionJobs:
                     current=self._get(jid)
                     if self.closed or current['state'] in TERMINAL:return
                     event(current,'validationCompleted')
-                    unique={document['buffers'][bid]['sha256']:blob for bid,blob in blobs.items()}
+                    unique={}
+                    for bid,blob in blobs.items():
+                        key=document['buffers'][bid]['sha256'];item=unique.get(key)
+                        if item is not None and item['byteLength']!=len(blob):raise ValueError('artifact buffer size conflict')
+                        if item is None:unique[key]={'byteLength':len(blob),'blob':blob,'file':None}
+                    for entry in chunk_entries:
+                        key=entry['sha256'];item=unique.get(key)
+                        if item is None:unique[key]={'byteLength':entry['byteLength'],'blob':None,'file':binary_dir/entry['file']}
+                        elif item['byteLength']!=entry['byteLength']:raise ValueError('artifact resource size conflict')
+                    def stored_file(key,size):
+                        path=self.root/'buffers'/key
+                        return path.is_file() and not path.is_symlink() and path.stat().st_size==size
                     stored=sum(f.stat().st_size for name in ('artifacts','buffers') for f in (self.root/name).iterdir())
-                    added=sum(len(blob) for key,blob in unique.items() if not (self.root/'buffers'/key).exists())
+                    added=sum(item['byteLength'] for key,item in unique.items() if not stored_file(key,item['byteLength']))
                     if stored+len(raw)+added>artifact_limit:raise JobLimit('artifact storage quota exceeded')
-                    # Publish buffers first, then the manifest, then terminal metadata.
-                    # Interrupted/orphan writes remain unreachable and are pruned.
-                    for key,blob in unique.items():
-                        temporary=binary_dir/'commit';temporary.write_bytes(blob)
-                        temporary.replace(self.root/'buffers'/key)
+                    # Publish every immutable resource before the manifest. Chunk bundles
+                    # are moved, not loaded, so multi-file DWG previews stay bounded here.
+                    for key,item in unique.items():
+                        target=self.root/'buffers'/key
+                        if stored_file(key,item['byteLength']):
+                            if item['file'] is not None:item['file'].unlink(missing_ok=True)
+                            continue
+                        if target.exists() or target.is_symlink():target.unlink()
+                        if item['blob'] is not None:
+                            temporary=binary_dir/'commit';temporary.write_bytes(item['blob'])
+                            temporary.replace(target)
+                        else:item['file'].replace(target)
                     target=self.root/'artifacts'/sha;out.replace(target)
+                    self.verified_artifacts.add(sha);self.verified_buffers.update(unique)
                     event(current,'artifactCommitted')
                     self._update(current,state='partial' if (is_dxf or is_dwg) and completeness=='partial' else 'completed',phase='verified-artifact',artifactSHA256=sha,
                                  artifactBufferSHA256=list(unique),
                                  documentRevision=envelope['document']['revision'],completeness=envelope['snapshot']['completeness'],
-                                 artifactBytes=len(raw)+sum(map(len,unique.values())),manifestBytes=len(raw),
+                                 artifactBytes=len(raw)+sum(item['byteLength'] for item in unique.values()),manifestBytes=len(raw),
                                  workerPeakRSSBytes=peak_rss,workerWallSeconds=time.perf_counter()-wall)
         except Exception as error:
             fail('failed','job-worker-failed',str(error))
