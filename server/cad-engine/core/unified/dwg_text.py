@@ -258,10 +258,28 @@ class TextLayout(AbstractMTextRenderer):
             anchor = ((self.source.get('attachmentPoint', 1)-1)//3) * .5
             self.baseline_shifts = {key: shift + anchor*extra_height
                                     for key, shift in self.baseline_shifts.items()}
-        layout.render(matrix)
+        horizontal_anchor = (self.source.get('attachmentPoint', 1)-1) % 3
+        if horizontal_anchor and self.source.get('rectangleWidth', 0) <= self.source['height'] * .1:
+            # The unbounded-flow estimate prevents wrapping; it is not the frame
+            # width. Center/right attachments anchor the actual rendered extent.
+            layout.render()
+            points = [p for batch in self.batches.values() for p in batch['points']]
+            if points:
+                left, right = min(p.x for p in points), max(p.x for p in points)
+                shift = -(left+right)/2 if horizontal_anchor == 1 else -right
+                matrix = Matrix44.chain(Matrix44.translate(shift, 0, 0), matrix)
+                for batch in self.batches.values():
+                    batch['points'] = [matrix.transform(p) for p in batch['points']]
+                for run in self.runs:
+                    run['left'] += shift
+        else:
+            layout.render(matrix)
 
     def render(self):
         s, a = self.source, self.annotation
+        # Empty attributes have no glyphs, even when their generation flags mirror.
+        if a['kind'] == 'text' and not a['text']:
+            return []
         if s.get('hasColumns') or s.get('drawingDirection') == 'TopToBottom':
             raise ValueError('native-text-column-or-vertical-layout-unavailable')
         normal = Vec3(s.get('normal', (0, 0, 1)))

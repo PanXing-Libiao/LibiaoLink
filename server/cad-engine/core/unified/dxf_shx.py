@@ -100,6 +100,9 @@ class ShapeTextCache(Glyphs):
         try:
             return text.encode(self.binding['_codepage'], errors='strict')
         except UnicodeError as error:
+            # A Unicode primary can contain symbols outside the Big Font codepage.
+            if self.binding['_unicode']:
+                return None
             raise ValueError('font-codepage-character-unrepresentable: ' + repr(text)) from error
 
     def select(self, char):
@@ -125,10 +128,10 @@ class ShapeTextCache(Glyphs):
             char = text[index]; index += 1
             if big and not char.isspace():
                 encoded = self.encode(char)
-                if len(encoded) == 1 and any(low <= encoded[0] <= high for low, high in big.ranges):
+                if encoded and len(encoded) == 1 and any(low <= encoded[0] <= high for low, high in big.ranges):
                     if index == len(text): raise ValueError('bigfont-lead-byte-without-pair')
                     following = self.encode(text[index])
-                    if len(following) != 1: raise ValueError('bigfont-invalid-escape-pair')
+                    if following is None or len(following) != 1: raise ValueError('bigfont-invalid-escape-pair')
                     char += text[index]; index += 1
             yield char
 
