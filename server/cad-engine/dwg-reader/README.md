@@ -63,3 +63,7 @@ python3 server/cad-engine/dev/dwg-local.py .cad-work/dwg-result --port 8769
 原生读取的默认托管堆提交约 3 GiB；本机 1.5 GiB 和 1.75 GiB GC 堆硬上限实验均内存不足。正式生产现有容器是 3 GiB cgroup 硬限额、禁 swap，worker 另有 2 GiB RSS 采样阈值；公司测试机 2026-11-02 已用 5 GiB 容器 / 3.5 GiB DWG worker 档位完成真实 34,385,320 B 文件复验，但不改变正式生产。两者不是同一个限制。macOS 压缩后的 RSS 不能作为 Linux 达标证据，GC 堆上限实验也不能替代容器实测。当前不改变生产资源政策，也不宣称 Linux 沙箱验证通过。需先取得社区读取器的内存改进，或在另行确认的主图资源政策下验证，再开放平台主图任务。
 
 非平面 REGION/ACIS、MLINE、IMAGE/PDF 底图、自定义引线箭头和部分代理样式仍有缺口；多行文字使用社区纯文本换行与替代字体，尚不等价于原字体富文本排版。具体逐类结果以本机正式样本的原始记录和视觉核验为准。
+
+### WIPEOUT 背景遮罩
+
+原生 WIPEOUT 的 `fills` 记录保留 `mask: true`，装配为 `org.cad-preview.fill/1` 的同名字段；查看器按当前黑底或白底绘制遮罩，不套用普通图元的黑白对比色。既有未标记派生产物需要重新转换，不能根据纯白填充猜测其是否为遮罩。
