@@ -58,7 +58,23 @@ class NativeTextTest(unittest.TestCase):
         self.assertEqual((len(displays), len(buffer)), (0, 0))
         a['text'] = 'A'
         records = add_text_displays({a['id']: a}, displays, {}, buffer, {})
-        self.assertEqual(records[a['id']]['reason'], 'native-text-mirrored-or-fit-layout-unavailable')
+        self.assertEqual(records[a['id']]['reason'], 'native-text-mirrored-layout-unavailable')
+
+    def test_fit_and_aligned_use_source_baseline_with_companion_glyphs(self):
+        def layout(mode, endpoint):
+            a=annotation('AA',height=8,widthFactor=2,insertPoint=[10,20,0],
+                alignmentPoint=endpoint,horizontalAlignment=mode,rotation=0,normal=[0,0,1])
+            a['kind']='text'
+            result=TextLayout(self.fonts,a)
+            return [p for b in result.render() for p in b['points']]
+        ordinary=layout('Left',[10,20,0])
+        width=self.fonts.font('primary.shp','big.shp',8,2).text_width('AA')
+        for mode in ('Fit','Aligned'):
+            fitted=layout(mode,[10,20+width*2,0])
+            self.assertEqual(len(ordinary),len(fitted))
+            for before,after in zip(ordinary,fitted):
+                self.assertAlmostEqual(after.y,20+(before.x-10)*2)
+                self.assertAlmostEqual(after.x,10-(before.y-20)*(2 if mode=='Aligned' else 1))
 
     def test_unbounded_center_and_right_use_ink_not_flow_estimate(self):
         for attachment in (2, 3, 5, 6):

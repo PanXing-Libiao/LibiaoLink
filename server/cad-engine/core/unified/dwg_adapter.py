@@ -286,7 +286,36 @@ def _table_by_source_handle(table):
     return rows
 
 
-def source_display_coverage(drawing, displays, presentation_items, summary, native_fonts, fills=None, text_layouts=None):
+def native_block_clip(clip):
+    """Map enabled planar DWG boundaries into block-definition coordinates."""
+    if not clip['enabled']:
+        return None
+    if clip['inverted'] or clip['front'] or clip['back']:
+        raise ValueError('native-xclip-inverted-or-depth-unsupported')
+    if clip['normal'] != [0, 0, 1] or clip['origin'] != [0, 0, 0] or clip['clipTransform'] != IDENTITY:
+        raise ValueError('native-xclip-plane-transform-unsupported')
+    points = clip['boundary']
+    # Expand before transforming: a rotated rectangle is not an axis-aligned box.
+    if len(points) == 2:
+        (x0, y0), (x1, y1) = points
+        points = [[x0,y0], [x1,y0], [x1,y1], [x0,y1]]
+    m = clip['inverseInsert']
+    boundary = [[m[0]*x+m[4]*y+m[12], m[1]*x+m[5]*y+m[13]] for x,y in points]
+    if len(boundary)>1 and boundary[0] == boundary[-1]:
+        boundary.pop()
+    if len(boundary)<3 or not all(math.isfinite(v) for p in boundary for v in p):
+        raise ValueError('native-xclip-invalid-boundary')
+    if any(abs(m[2]*x+m[6]*y+m[14])>1e-9 for x,y in points):
+        raise ValueError('native-xclip-nonplanar-block-boundary')
+    x0,y0 = boundary[0]
+    area = sum((a[0]-x0)*(b[1]-y0)-(b[0]-x0)*(a[1]-y0)
+               for a,b in zip(boundary,boundary[1:]+boundary[:1]))
+    if not math.isfinite(area) or area == 0:
+        raise ValueError('native-xclip-degenerate-boundary')
+    return {'boundary':boundary, 'inverted':False}
+
+
+def source_display_coverage(drawing, displays, presentation_items, summary, native_fonts, fills=None, text_layouts=None, dimension_semantics=None):
     """Account for every unique native source handle exactly once.
 
     Direct display rows, annotation presentation and block-instance indirection
@@ -298,6 +327,7 @@ def source_display_coverage(drawing, displays, presentation_items, summary, nati
     entity_rows = _table_by_source_handle(drawing.get("entities"))
     annotation_rows = _table_by_source_handle(drawing.get("annotations"))
     instance_rows = _table_by_source_handle(drawing.get("blockInstances"))
+    dimension_rows = _table_by_source_handle(dimension_semantics)
     entity_handles = set(entity_rows)
     annotation_handles = set(annotation_rows)
     instance_handles = set(instance_rows)
@@ -364,10 +394,13 @@ def source_display_coverage(drawing, displays, presentation_items, summary, nati
     valid_instance_handles = set()
     empty_instance_handles = set()
     missing_definition_handles = set()
+    unresolved_reference_handles = set()
     for handle, row in instance_rows.items():
         definition_id = row.get("definitionId")
         if definition_id not in blocks:
             missing_definition_handles.add(handle)
+        elif blocks[definition_id].get('externalReferenceId'):
+            unresolved_reference_handles.add(handle)
         else:
             valid_instance_handles.add(handle)
             if not definition_has_visual_content(definition_id):
@@ -385,7 +418,12 @@ def source_display_coverage(drawing, displays, presentation_items, summary, nati
         else:
             reasons[handle] = "unresolved"
             row = entity_rows.get(handle)
-            source_type = ((row or {}).get("geometry") or {}).get("sourceType")
+            if handle in unresolved_reference_handles:
+                unsupported['XREF'] += 1
+                continue
+            geometry = (row or {}).get("geometry") or {}
+            source_type = ("DIMENSION_CONSTRAINT" if dimension_rows.get(handle, {}).get("pictureStatus") == "constraint-without-picture"
+                           else geometry.get("sourceType"))
             unsupported[str(source_type or "UNKNOWN")] += 1
 
     direct_count = sum(value == "directGeometry" for value in reasons.values())
@@ -405,6 +443,7 @@ def source_display_coverage(drawing, displays, presentation_items, summary, nati
             "annotationPresentation": annotation_count,
             "blockInstanceIndirect": block_count,
             "blockInstanceEmptyDefinition": len(empty_instance_handles),
+            "externalReferenceUnresolved": len(unresolved_reference_handles),
             "unresolved": unresolved_count,
             "unsupported": dict(sorted(unsupported.items())),
         },
@@ -477,6 +516,24 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
         else:
             target[key] = value
     phase('native records loaded')
+    for block_id, reference in extras.get('nativeExternalReferences', {}).items():
+        reference_id = 'xref-' + block_id
+        drawing['blocks'][block_id]['externalReferenceId'] = reference_id
+        doc['externalReferences'].append({'id':reference_id, 'ownerSourceId':sid,
+            'requestedPath':reference['requestedPath'], 'required':True, 'status':'blocked',
+            'reason':'原生 DWG 外参关系已保留；配套外参加载尚未接入，不能将其视为有效空块。'})
+        doc['diagnostics'].append({'code':'native-xref-unresolved','severity':'warning','stage':'mapping',
+            'message':'External DWG reference retained but not loaded; no source filesystem path was opened.',
+            'sourceRefs':reference['sourceRefs']})
+    block_clips = {}
+    clip_losses = []
+    for key, clip in extras.get('nativeBlockClips', {}).items():
+        try:
+            result = native_block_clip(clip)
+            if result is not None: block_clips[key] = result
+        except ValueError as error:
+            clip_losses.append({'code':str(error), 'message':'Source clip retained but not applied.',
+                'handle':drawing['blockInstances'][key]['sourceRefs'][0]['objectKey'], 'sourceType':'INSERT'})
     for table, member in [('entities','entityIds'),('annotations','annotationIds'),('blockInstances','blockInstanceIds')]:
         for key,row in drawing[table].items():
             drawing['spaces'][row['ownerSpaceId']][member].append(key)
@@ -649,7 +706,7 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
             modes[part['id']] = {'lineType':'by-block', 'lineWeight':'by-block'}
             extras.setdefault('entityState', {})[part['id']] = {'opacityMode':'by-block'}
     doc['extensions']['org.cad-preview.style-inheritance/1'] = {
-        'layerInheritance':inheritance, 'modes':modes,
+        'layerInheritance':inheritance, 'modes':modes, 'blockClips':block_clips,
         'drawOrder':{key:state['drawOrder'] for key,state in extras.get('entityState',{}).items() if 'drawOrder' in state},
         'entityState':extras.get('entityState',{}), 'annotationStyles':extras.get('annotationStyles',{})}
     infinite_items = infinite_presentation_items(extras.get('infiniteLines',{}),drawing['entities'])
@@ -658,7 +715,7 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
         doc['extensions']['org.cad-preview.annotation-presentation/1'] = {
             'schemaVersion':'1.3.0','items':presentation_items}
     doc['extensions']['org.cad-preview.fill/1'] = {'fills':extras.get('fills',{})}
-    raw_losses = [json.loads(line) for line in (folder/'losses.jsonl').open()]
+    raw_losses = [json.loads(line) for line in (folder/'losses.jsonl').open()] + clip_losses
     if region_handles or acis_handles:
         raw_losses = [row for row in raw_losses
             if not (row.get('code')=='unsupported-native-presentation'
@@ -666,8 +723,18 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
     by_loss = Counter(row['code'] for row in raw_losses)
     for code,count in by_loss.items():
         refs = [{'sourceId':sid,'objectKey':row['handle']} for row in raw_losses if row['code']==code and row['handle']]
+        message = (f'{count} 个 HATCH 空输出待核实；尚不能按已读取源定义证明为空，'
+                   '也不能据此认定读取或转换损失。请核对保留的图案定义、边界及判定原因。'
+                   if code == 'empty-native-hatch-pattern' else
+                   f'{count} native object/field losses; see retained per-handle loss ledger.')
         doc['diagnostics'].append({'code':code, 'severity':'warning', 'stage':'mapping',
-            'message':f'{count} native object/field losses; see retained per-handle loss ledger.', 'sourceRefs':refs})
+            'message':message, 'sourceRefs':refs})
+    hatch_outcomes = extras.get('hatchPatternOutcomes', {})
+    proven_empty = [row for row in hatch_outcomes.values() if row['status'] == 'empty-by-read-definition']
+    if proven_empty:
+        doc['diagnostics'].append({'code':'hatch-empty-by-read-definition', 'severity':'info', 'stage':'mapping',
+            'message':f'{len(proven_empty)} 个 HATCH 按已读取源定义为空；不代表读取完整或整图无损。',
+            'sourceRefs':[ref for row in proven_empty for ref in row['sourceRefs']]})
     notifications = [json.loads(line) for line in (folder/'notifications.jsonl').open()]
     for index,row in enumerate(notifications):
         if row['type'] in ('Warning','Error','NotSupported','NotImplemented'):
@@ -690,9 +757,10 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
         'header':summary['header'], 'nativeGeometry':extras.get('nativeGeometry',{}),
         'nativeReaderSha256':summary['readerSha256'],'readMemory':summary.get('readMemory'),
         'dimensionSemantics':extras.get('dimensionSemantics',{}), 'multiLeaderSemantics':extras.get('multiLeaderSemantics',{}),
-        'hatchSemantics':extras.get('hatchSemantics',{}), 'meshPresentations':extras.get('meshPresentations',{}),
+        'hatchSemantics':extras.get('hatchSemantics',{}), 'hatchPatternOutcomes':hatch_outcomes, 'meshPresentations':extras.get('meshPresentations',{}),
         'fonts':extras.get('nativeFonts',{}), 'textAppearance':extras.get('textAppearance',{}),
-        'opaque':extras.get('opaque',{}),
+        'opaque':extras.get('opaque',{}), 'proxyGraphics':extras.get('proxyGraphics',{}),
+        'blockClips':extras.get('nativeBlockClips',{}), 'externalReferences':extras.get('nativeExternalReferences',{}),
         'sourceLedger':{'artifact':'native/source-handles.tsv', 'sha256':hashlib.file_digest(ledger.open('rb'),'sha256').hexdigest(),
             'byteLength':ledger.stat().st_size,'sourceHandles':summary['sourceHandles'], 'missingHandles':summary['missingHandles'],
             'offsetSpace':'decompressed AcDbObjects, not original file byte offsets'},
@@ -703,7 +771,7 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
     doc["extensions"]["org.cad-preview.drawing-coverage/1"] = {
         "sourceRead":{"status":"partial" if summary["missingHandles"] else "read-with-warnings","sourceRecords":summary.get("sourceEntityRecords",summary["sourceHandles"])},
         "displayGeometry":source_display_coverage(drawing, displays, presentation_items, summary,
-            extras.get("nativeFonts",{}), extras.get("fills",{}), text_layouts),
+            extras.get("nativeFonts",{}), extras.get("fills",{}), text_layouts, extras.get("dimensionSemantics",{})),
         "engineeringAttributes":{"status":"partial","sourceRecords":summary.get("mappedSourceObjects",summary["mappedObjects"])},
         "losses":raw_losses}
     doc['revision'] = digest({k:v for k,v in doc.items() if k!='revision'})

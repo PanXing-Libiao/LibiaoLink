@@ -65,6 +65,18 @@ def build(args):
     replace_once(acad / 'src/ACadSharp/IO/DWG/DwgStreamWriters/DwgHeaderWriter.cs',
                  '//BS : INTERSECTIONCOLOR\n\t\t\t\tthis._writer.WriteBitShort(this._header.InterfereColor.Index);',
                  '//BS : INTERSECTIONCOLOR\n\t\t\t\tthis._writer.WriteBitShort(this._header.IntersectionColorIndex);')
+    # DWG spatial-filter matrices store three rows of four values. CSMath's
+    # indexer is [column,row]; the pinned reader/writer used the transposed order.
+    replace_once(acad / 'src/ACadSharp/IO/DWG/DwgStreamReaders/DwgObjectReader.cs',
+                 'identity[i, j] = this._mergedReaders.ReadBitDouble();',
+                 'identity[j, i] = this._mergedReaders.ReadBitDouble();')
+    replace_once(acad / 'src/ACadSharp/IO/DWG/DwgStreamWriters/DwgObjectWriter.Objects.cs',
+                 'this._writer.WriteBitDouble(matrix[i, j]);',
+                 'this._writer.WriteBitDouble(matrix[j, i]);')
+    # HATCH even-odd parity must retain crossing multiplicity between loops.
+    replace_once(acad / 'src/ACadSharp/Entities/Hatch.cs',
+                 "\tprivate bool isPointInsideByParity(XY point, double jitter = 1e-7)\n\t{\n\t\tLine2D ray = new Line2D(new XY(point.X, point.Y + jitter), XY.AxisX);\n\n\t\tList<double> hits = new();\n\t\tforeach (BoundaryPath boundary in this.Paths)\n\t\t{\n\t\t\tforeach (XY p in boundary.FindIntersections(ray))\n\t\t\t{\n\t\t\t\tif (p.X >= point.X - MathHelper.Epsilon)\n\t\t\t\t{\n\t\t\t\t\thits.Add(p.X);\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\n\t\tList<double> merged = mergeParameters(hits).ToList();\n\t\treturn merged.Count.IsOdd();\n\t}",
+                 "\tprivate bool isPointInsideByParity(XY point, double jitter = 1e-7)\n\t{\n\t\tLine2D ray = new Line2D(new XY(point.X, point.Y + jitter), XY.AxisX);\n\n\t\tbool inside = false;\n\t\tforeach (BoundaryPath boundary in this.Paths)\n\t\t{\n\t\t\t// Coincident crossings cancel between loops; only deduplicate within one loop.\n\t\t\tList<double> hits = new();\n\t\t\tforeach (XY p in boundary.FindIntersections(ray))\n\t\t\t{\n\t\t\t\tif (p.X >= point.X - MathHelper.Epsilon)\n\t\t\t\t{\n\t\t\t\t\thits.Add(p.X);\n\t\t\t\t}\n\t\t\t}\n\t\t\tinside ^= mergeParameters(hits).Count().IsOdd();\n\t\t}\n\n\t\treturn inside;\n\t}")
     config = work / 'NuGet.Config'
     config.write_text('<configuration><packageSources><clear /></packageSources></configuration>')
     env = dict(os.environ, DOTNET_CLI_TELEMETRY_OPTOUT='1', DOTNET_GENERATE_ASPNET_CERTIFICATE='false',

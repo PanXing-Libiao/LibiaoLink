@@ -35,9 +35,29 @@ def display_parts_from_vertices(vertices, closed, elevation, segments, vertex_bu
     return _display_parts(TraceBuilder.from_vertices(vertices, closed, segments), elevation, vertex_budget)
 
 
+def _simple_band_faces(face):
+    """Split a crossed trace quad into its two filled lobes, not its convex hull.
+
+    Miter cross-sections can cross on short segments, as can radial sections
+    when an arc's half-width exceeds its radius. A simple-ring triangulator
+    cannot use the signed (cancelling) area of that bow-tie as its filled area.
+    """
+    for i, j, k, l in ((0, 1, 2, 3), (1, 2, 3, 0)):
+        a, b, c, d = (face[n] for n in (i, j, k, l))
+        r, s, q = b - a, d - c, c - a
+        denominator = r.det(s)
+        if denominator == 0:
+            continue
+        t, u = q.det(s) / denominator, q.det(r) / denominator
+        if 0 < t < 1 and 0 < u < 1:
+            crossing = a + r * t
+            return ((crossing, b, c, crossing), (crossing, d, a, crossing))
+    return (face,)
+
+
 def _display_parts(trace, elevation, vertex_budget):
     positions, triangles, line_points, lines = [], [], [], []
-    for face in trace.faces():
+    for face in (part for quad in trace.faces() for part in _simple_band_faces(quad)):
         if len(positions) + len(line_points) + 4 > vertex_budget:
             raise ValueError('polyline-width-vertex-budget')
         # A zero-width segment is still visible at its plotted lineweight.
@@ -57,8 +77,13 @@ def _display_parts(trace, elevation, vertex_budget):
         # million-unit coordinates, where absolute shoelace products cancel.
         origin = plane[0]
         local_plane = [[p[0]-origin[0], p[1]-origin[1]] for p in plane]
-        points, indices = triangulate([{'points': [p + [elevation] for p in plane], 'points2d': local_plane,
-                                       'bulges': [0.0] * len(plane), 'analytic': {'type': 'display-band'}, 'flags': 0}])
+        if len(plane) == 3:
+            # Already a triangle: retain its vertices directly. The general
+            # ring triangulator's rounded lookup can merge a tiny split lobe.
+            points, indices = [p + [elevation] for p in plane], [(0, 1, 2)]
+        else:
+            points, indices = triangulate([{'points': [p + [elevation] for p in plane], 'points2d': local_plane,
+                                           'bulges': [0.0] * len(plane), 'analytic': {'type': 'display-band'}, 'flags': 0}])
         first = len(positions)
         positions.extend(points)
         # Consistent winding makes overlapping bands a union, not an even-odd cutout.

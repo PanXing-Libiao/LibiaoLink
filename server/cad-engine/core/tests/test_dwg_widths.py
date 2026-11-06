@@ -8,7 +8,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'vendor/ezdxf/src')
 from unified.dxf_stroke import display_parts_from_vertices
 from unified.dwg_adapter import add_polyline_width_displays
 from ezdxf.entities import LWPolyline
-from unified.dxf_stroke import display_parts
+from unified.dxf_stroke import display_parts, _display_parts
+from ezdxf.math import Vec2
 
 
 def area(batches):
@@ -75,6 +76,59 @@ class PolylineWidthTest(unittest.TestCase):
         entity = LWPolyline.new(dxfattribs={'elevation':7})
         entity.set_points(source, format='xyseb')
         self.assertEqual(display_parts(entity,64,10000), self.parts([((x,y),sw,ew,b) for x,y,sw,ew,b in source]))
+
+    def test_crossed_band_preserves_both_lobes_without_convex_hull(self):
+        # This contour encloses two triangles of area 2 each; its signed area
+        # cancels to zero and its convex hull has area 8. Neither is its fill.
+        source = [(-2,-1),(2,1),(-2,1),(2,-1)]
+        for shift in ((0,0), (1800000,850000)):
+            for reverse in (False, True):
+                for offset in (0, 1):
+                    with self.subTest(shift=shift, reverse=reverse, offset=offset):
+                        ring = source[::-1] if reverse else source[:]
+                        ring = ring[offset:] + ring[:offset]
+                        face = tuple(Vec2(x+shift[0],y+shift[1]) for x,y in ring)
+                        class Trace:
+                            def faces(self): return iter([face])
+                        parts = _display_parts(Trace(),7,100)
+                        self.assertAlmostEqual(area(parts),4)
+                        points, triangles, kind = parts[0]
+                        self.assertEqual(kind,'triangles')
+                        self.assertEqual(len(triangles),2)
+                        # Both lobes meet exactly at the source-edge crossing.
+                        self.assertEqual(sum(p==[shift[0],shift[1],7] for p in points),2)
+                        for a,b,c in triangles:
+                            ys=[points[i][1]-shift[1] for i in (a,b,c)]
+                            self.assertTrue(min(ys)>=0 or max(ys)<=0)
+
+    def test_zero_width_join_retains_exact_shaft_at_large_coordinates(self):
+        for angle in (0,37,90,180):
+            with self.subTest(angle=angle):
+                c,s=math.cos(math.radians(angle)),math.sin(math.radians(angle))
+                def point(x): return (1800000+x*c,850000+x*s)
+                source=[(point(1290),0,0,0),(point(0),0,80,0),(point(300),0,0,0)]
+                parts=self.parts(source)
+                self.assertAlmostEqual(area(parts),12000,delta=1e-5)
+                self.assertEqual(next(b for b in parts if b[2]=='lines')[0],
+                                 [list(point(1290))+[7],list(point(0))+[7]])
+
+    def test_full_width_circle_at_large_coordinates_keeps_small_inner_lobes(self):
+        for radius,width in ((100/3,200/3),(5,12)):
+            with self.subTest(radius=radius,width=width):
+                source=[((0,radius),width,width,1),((0,-radius),width,width,1)]
+                shifted=[((x+1800000,y+850000),sw,ew,b) for (x,y),sw,ew,b in source]
+                local=self.parts(source,True);remote=self.parts(shifted,True)
+                # Community arc sampling rounds each half-circle segment count
+                # upward; float angle tails may choose 32 or 33 subdivisions.
+                # Check the analytic face-area bounds, not identical sampling.
+                squared_radii=(radius+width/2)**2+(radius-width/2)**2
+                lower=32*math.sin(math.pi/32)*squared_radii
+                upper=math.pi*squared_radii
+                for parts in (local,remote):
+                    self.assertGreaterEqual(area(parts),lower-1e-5)
+                    self.assertLessEqual(area(parts),upper+1e-5)
+                for part in remote:
+                    self.assertTrue(all(math.isfinite(v) for p in part[0] for v in p))
 
     def test_native_presentation_uses_band_bounds_and_retains_source_transform(self):
         transform = [0,1,0,0,-1,0,0,0,0,0,1,0,100,200,0,1]

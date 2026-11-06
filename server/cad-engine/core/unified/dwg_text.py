@@ -300,17 +300,27 @@ class TextLayout(AbstractMTextRenderer):
         else:
             # Native DWG already stores the positioned baseline insertion point.
             # Re-applying DXF alignment would shift centered/right text twice.
-            if s.get('mirror', 0) or s.get('horizontalAlignment') in ('Fit', 'Aligned'):
-                raise ValueError('native-text-mirrored-or-fit-layout-unavailable')
+            if s.get('mirror', 0):
+                raise ValueError('native-text-mirrored-layout-unavailable')
             ctx = self.make_mtext_context(None)
             ctx.width_factor = s.get('widthFactor', 1)
             ctx.oblique = math.degrees(s.get('oblique', 0))
             point = Vec3(s.get('insertPoint', a['position']))
             ocs = OCS(normal)
-            matrix = Matrix44.chain(Matrix44.z_rotate(s['rotation']),
+            font = self.get_font(ctx)
+            rotation = s['rotation']
+            sx = sy = 1
+            if s.get('horizontalAlignment') in ('Fit', 'Aligned'):
+                delta = Vec3(s['alignmentPoint']) - point
+                width = font.text_width(a['text'])
+                if delta.magnitude == 0 or width == 0:
+                    raise ValueError('native-text-fit-degenerate-baseline')
+                rotation = math.atan2(delta.y, delta.x)
+                sx = delta.magnitude / width
+                if s['horizontalAlignment'] == 'Aligned': sy = sx
+            matrix = Matrix44.chain(Matrix44.scale(sx, sy, 1), Matrix44.z_rotate(rotation),
                                      Matrix44.translate(*point),
                                      Matrix44.ucs(ocs.ux, ocs.uy, ocs.uz))
-            font = self.get_font(ctx)
             GlyphRenderer(self, a['text'], ctx).render(0, 0, font.text_width(a['text']), ctx.cap_height, matrix)
         return list(self.batches.values())
 
