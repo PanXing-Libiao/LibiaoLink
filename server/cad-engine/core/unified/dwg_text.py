@@ -17,7 +17,7 @@ if str(VENDOR) not in sys.path:
 from ezdxf import colors, path
 from ezdxf.fonts import fonts
 from ezdxf.math import Matrix44, Vec3, OCS
-from ezdxf.render.abstract_mtext_renderer import AbstractMTextRenderer
+from ezdxf.render.abstract_mtext_renderer import AbstractMTextRenderer, ATTACHMENT_POINT_TO_ALIGN
 from ezdxf.tools import text_layout as tl
 from ezdxf.tools.text import MTextContext, ParagraphProperties
 from .dxf_shx import Resources, outline_triangles
@@ -172,8 +172,9 @@ class TextLayout(AbstractMTextRenderer):
         ctx = MTextContext()
         ctx.cap_height = self.source['height']
         ctx.font_face = self.get_font_face(None)
-        # Attachment anchors the whole frame; paragraph alignment is authored by \\p.
-        ctx.paragraph = ParagraphProperties()
+        # Attachment supplies the default paragraph alignment; inline \\p can override it.
+        ctx.paragraph = ParagraphProperties(align=ATTACHMENT_POINT_TO_ALIGN.get(
+            self.source.get('attachmentPoint', 1), tl.ParagraphAlignment.LEFT))
         ctx.aci = 0
         ctx.width_factor = self.source.get('styleWidthFactor', 1)
         ctx.oblique = math.degrees(self.source.get('styleOblique', 0))

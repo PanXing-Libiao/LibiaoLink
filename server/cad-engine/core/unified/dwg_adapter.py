@@ -134,6 +134,62 @@ def add_polyline_width_displays(entities, displays, extras, buffer_bytes):
             'sourceKind':'POLYLINE', 'fill':parts.get('fill'), 'stroke':parts.get('stroke')}
 
 
+def add_short_linetype_displays(entities, line_types, displays, extras):
+    """A-type paths shorter than a complete pattern keep their full source stroke.
+
+    Only fixed simple source linetypes are resolved here. Longer patterns and
+    inherited linetypes keep their existing rendering path.
+    """
+    if str(VENDOR_EZDXF) not in sys.path:
+        sys.path.insert(0, str(VENDOR_EZDXF))
+    from .dxf_linetype import Segment, fitted_events
+    continuous_id = next((key for key, row in line_types.items()
+                          if row['name'].upper() == 'CONTINUOUS'), None)
+    settings = extras.get('nativeLineTypeSettings', {}).get('drawing-dwg')
+    if continuous_id is None or settings is None:
+        return
+    for key, entity in entities.items():
+        line_id = entity['style'].get('lineTypeId')
+        definition = line_types.get(line_id, {})
+        details = extras.get('nativeLineTypes', {}).get(line_id, {})
+        if details.get('alignment') != 'A' or details.get('complex', True) or key not in displays:
+            continue
+        pattern = definition.get('segments', [])
+        if not pattern or not any(p['kind'] == 'gap' for p in pattern):
+            continue
+        scale = settings['scale'] * extras.get('entityState', {}).get(key, {}).get('lineTypeScale', 1)
+        lengths = [p['length'] * scale for p in pattern]
+        period = sum(lengths)
+        if scale <= 0 or period <= 0:
+            continue
+        groups = [{49: p['length'] * (-1 if p['kind'] == 'gap' else 1)} for p in pattern]
+        geometry = entity['geometry']
+        if geometry['type'] == 'line':
+            paths = [math.dist(geometry['start'], geometry['end'])]
+        elif geometry['type'] == 'polyline':
+            native = extras.get('nativeGeometry', {}).get(key, {})
+            if 'lineTypeContinuous' not in native or any(any(w) for w in geometry.get('widths', [])):
+                continue
+            vertices = native['vertices']
+            count = len(vertices) if native['closed'] else len(vertices)-1
+            paths = [Segment(tuple(vertices[i]['point'])+(native['elevation'],),
+                tuple(vertices[(i+1)%len(vertices)]['point'])+(native['elevation'],),
+                bulge=vertices[i]['bulge']).length for i in range(count)]
+            if native['lineTypeContinuous']:
+                paths = [sum(paths)]
+        else:
+            continue
+        if not paths or any(length >= period for length in paths):
+            continue
+        if any(fitted_events(length, groups, lengths, period, False, 100)[0]
+               != [('dash', 0, length)] for length in paths):
+            continue
+        part = key + '-short-linetype'
+        displays[part] = dict(displays.pop(key))
+        extras.setdefault('meshPresentations', {})[key] = {
+            'sourceKind': geometry['type'].upper(), 'stroke': part, 'lineTypeId': continuous_id}
+
+
 def region_boundary_leaves(raw):
     """Parse retained ACIS bytes through the same planar SAT/SAB reader as DXF.
     Returns (leaves, error); without the optional ACIS stack the caller keeps the
@@ -468,6 +524,7 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
         doc['diagnostics'].append({'code':'native-acis-unavailable','severity':'warning','stage':'mapping',
             'message':reason,'sourceRefs':drawing['entities'][key]['sourceRefs']})
     add_polyline_width_displays(drawing['entities'], displays, extras, buffer_bytes)
+    add_short_linetype_displays(drawing['entities'], drawing['lineTypes'], displays, extras)
     text_layouts = {}
     if font_files:
         from .dwg_text import add_text_displays
@@ -515,6 +572,8 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
             parts.append({'id':part_id, 'representationId':rid, 'role':role,
                 'layerId':entity['layerId'], 'style':{'color':source_part['color'],'plot':True},
                 'ancestors':[]})
+            if meta.get('lineTypeId'):
+                parts[-1]['style']['lineTypeId'] = meta['lineTypeId']
         mesh_items[key] = {'status':'ready', 'sourceKind':meta['sourceKind'],
             'sourceRefs':entity['sourceRefs'], 'mode':'geometry', 'parts':parts}
     region_items = {}

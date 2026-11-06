@@ -68,7 +68,18 @@ class NativeTextTest(unittest.TestCase):
                 left, right = min(p.x for p in points), max(p.x for p in points)
                 self.assertAlmostEqual((left+right)/2 if attachment % 3 == 2 else right, 0)
         fixed = self.layout('AA', attachmentPoint=2, rectangleWidth=100)
-        self.assertAlmostEqual(min(p.x for b in fixed.batches.values() for p in b['points']), -50)
+        self.assertAlmostEqual(fixed.runs[0]['left'] + fixed.runs[0]['width']/2, 0)
+
+    def test_attachment_sets_default_alignment_and_inline_paragraph_can_override(self):
+        for attachment in range(1, 10):
+            result = self.layout('AA', attachmentPoint=attachment, rectangleWidth=100)
+            run = result.runs[0]
+            anchor = (attachment - 1) % 3
+            self.assertAlmostEqual(run['left'] + run['width'] * anchor / 2, 0)
+        right = self.layout(r'\pql;AA', attachmentPoint=3, rectangleWidth=100)
+        self.assertAlmostEqual(right.runs[0]['left'], -100)
+        left = self.layout(r'\pqr;AA', attachmentPoint=1, rectangleWidth=100)
+        self.assertAlmostEqual(left.runs[0]['left'] + left.runs[0]['width'], 100)
 
     def test_cjk_breaks_but_latin_word_overflows_intact(self):
         self.assertEqual(lines(self.layout('中中中中',rectangleWidth=21)),['中中','中中'])
