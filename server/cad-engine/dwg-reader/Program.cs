@@ -358,7 +358,7 @@ static class Program
             pixels=new List<XY>{p0,new XY(p1.X,p0.Y),p1,new XY(p0.X,p1.Y)};
         }else pixels=new List<XY>{new XY(-0.5,-0.5),new XY(size.X-0.5,-0.5),
             new XY(size.X-0.5,size.Y-0.5),new XY(-0.5,size.Y-0.5)};
-        // A wipeout is a preview mask: a white filled polygon over the source.
+        // A wipeout follows the viewer background, independent of its stored color.
         // It is not a viewer mask part, so hit testing is not occluded.
         var points=pixels.Select(p=>new XYZ(
             origin.X+u.X*p.X+v.X*(size.Y-p.Y),
@@ -367,7 +367,7 @@ static class Program
         if(points.Length<3){Loss(original,"wipeout-boundary-invalid","Wipeout boundary has fewer than three vertices");return;}
         var mask=new Polyline3D(points){Layer=e.Layer,Color=new Color(255,255,255),LineType=e.LineType};
         EntityRow(mask,space,id,Poly(points,true),Closed(points),original:original);
-        Emit("fills",id,new{rings=new[]{points.Select(P).ToArray()},fillRule="even-odd"});
+        Emit("fills",id,new{rings=new[]{points.Select(P).ToArray()},fillRule="even-odd",mask=true});
     }
     static void Text(Entity e, IText text, string space, string id, CadObject? original=null)
     {
