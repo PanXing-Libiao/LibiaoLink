@@ -1,4 +1,4 @@
-import {loadPlatformModel,inspectionRecord} from "./core/app.js?v=dxf-0.17.9";
+import {loadPlatformModel,inspectionRecord} from "./core/app.js?v=dxf-0.17.10";
 import {decodeManifest} from "./core/manifest-loader.js?v=cad-handoff-1";
 import {LoadPhases} from "./core/load-phases.js";
 import {hydrateBinary} from './core/binary-transport.js';
