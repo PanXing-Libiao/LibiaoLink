@@ -228,7 +228,17 @@ class LinearTrace(AbstractTrace):
         def joins(left: int, right: int) -> bool:
             # A zero-width shaft cannot miter into a nonzero arrow base: their
             # offset-ray intersection collapses the arrow to its tip.
-            return (stations[left].end_width == 0) == (stations[right].start_width == 0)
+            end_width, start_width = stations[left].end_width, stations[right].start_width
+            if (end_width == 0) != (start_width == 0):
+                return False
+            if end_width != start_width:
+                incoming = stations[left + 1].vertex - stations[left].vertex
+                outgoing = stations[right + 1].vertex - stations[right].vertex
+                # A straight width step has two authored cross-sections, not a
+                # corner whose offset-ray intersection should move the station.
+                if abs(incoming.det(outgoing)) <= 1e-12 * incoming.magnitude * outgoing.magnitude:
+                    return False
+            return True
 
         # offset rays:
         # 1 is the upper or left of line

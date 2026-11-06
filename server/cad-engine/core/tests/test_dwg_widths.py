@@ -39,6 +39,18 @@ class PolylineWidthTest(unittest.TestCase):
         self.assertAlmostEqual(area(parts),48000)
         self.assertEqual(next(b for b in parts if b[2]=='lines')[0],[[0,2000,7],[0,600,7]])
 
+    def test_collinear_nonzero_width_step_keeps_arrow_base_and_shaft_length(self):
+        for angle in (0, 37, 90, 180):
+            with self.subTest(angle=angle):
+                c, s = math.cos(math.radians(angle)), math.sin(math.radians(angle))
+                def point(x, y): return (1000000+x*c-y*s, -2000000+x*s+y*c)
+                parts = self.parts([(point(0,0),2,2,0), (point(0,4),10,0,0),
+                                    (point(0,24),0,0,0)])
+                self.assertAlmostEqual(area(parts), 108, delta=1e-7)
+                points = [p for batch in parts for p in batch[0]]
+                for corner in (point(-5,4), point(5,4)):
+                    self.assertLess(min(math.dist(p[:2], corner) for p in points), 1e-8)
+
     def test_thin_band_at_large_coordinates_keeps_its_area(self):
         parts = self.parts([((923665.4077,3671834.5002),.001,.001,0),
                             ((923446.5669,3671834.5002),.001,.001,0),

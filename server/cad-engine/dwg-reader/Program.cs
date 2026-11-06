@@ -520,6 +520,7 @@ static class Program
                 if(polyline.IsClosed) polyPoints=Closed(polyPoints);
                 EntityRow(e,space,id,polyGeometry,polyPoints,local:polyLocal,original:original);
                 Emit("nativeGeometry",id,R(("type","polyline"),("closed",polyline.IsClosed),("normal",P(polyline.Normal)),("elevation",polyline.Elevation),
+                    ("lineTypeContinuous",e switch { LwPolyline lw => ((int)lw.Flags&128)!=0, Polyline2D p2 => ((int)p2.Flags&128)!=0, _ => true }),
                     ("vertices",polyline.Vertices.Select((v,i)=>R(("point",new[]{v.Location[0],v.Location[1]}),("bulge",v.Bulge),
                         ("startWidth",polyWidths[i][0]),("endWidth",polyWidths[i][1]))).ToArray()))); return;
             case ACadSharp.Entities.Point point:
@@ -1065,8 +1066,10 @@ static class Program
                 string id="layer-"+H(layer);var flags=layer.Flags;
                 Emit("layers",id,new{id,drawingId,name=layer.Name,visible=layer.IsOn,frozen=(flags&LayerFlags.Frozen)!=0,lockedForEditing=(flags&LayerFlags.Locked)!=0,plot=layer.PlotFlag,defaultStyle=style,sourceRefs=Refs(layer)});
             }
+            Emit("nativeLineTypeSettings",drawingId,new{scale=doc.Header.LineTypeScale});
             foreach(var line in doc.LineTypes) {
                 string id="linetype-"+H(line);
+                Emit("nativeLineTypes",id,new{alignment=line.Alignment.ToString(),complex=line.Segments.Any(s=>s.IsShape||s.IsText)});
                 Emit("lineTypes",id,new{id,name=line.Name,segments=line.Segments.Select(s=>new{kind=s.Length==0?"dot":s.Length<0?"gap":"dash",length=Math.Abs(s.Length)}).ToArray(),unit="drawing-unit"});
             }
             foreach(var style in doc.TextStyles) Emit("nativeFonts",H(style),new{handle=H(style),style.Name,style.Filename,style.BigFontFilename,style.Height,style.Width,style.ObliqueAngle,fontFamily=FontFamily(style)});
