@@ -6,6 +6,9 @@ import type { IncomingMessage } from "node:http";
 import type { ProjectImportPreview, ProjectImportResult } from "@libiaolink/contracts";
 import { AppError } from "../src/common/errors/app-error.js";
 import { parseMultipart, readMultipartFile, readRequestBody } from "../src/common/http/multipart.js";
+import { AppConfig } from "../src/config/config.module.js";
+import type { Env } from "../src/config/env.js";
+import { ImportAdmissionGate } from "../src/modules/project-import/import-admission.gate.js";
 import { ProjectImportController } from "../src/modules/project-import/project-import.controller.js";
 import type { ProjectImportService } from "../src/modules/project-import/project-import.service.js";
 
@@ -80,6 +83,19 @@ describe("import HTTP body budgets", () => {
     expect((upload as AppError).code).toBe("IMPORT_FILE_INVALID");
   });
 
+  it("rejects a stream that exceeds its declared Content-Length before the body is fully read", async () => {
+    const body = multipartBody(Buffer.alloc(64 * 1024, 1));
+    const error = await readMultipartFile(
+      requestOf([body.subarray(0, 16 * 1024), body.subarray(16 * 1024)], 32 * 1024),
+      "multipart/form-data; boundary=" + BOUNDARY,
+      "file",
+      body.length,
+    ).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(AppError);
+    expect((error as AppError).code).toBe("IMPORT_FILE_INVALID");
+    expect((error as AppError).message).toContain("Content-Length");
+  });
+
   it("rejects an oversized Content-Length as IMPORT_FILE_INVALID", async () => {
     const error = await readRequestBody(requestOf([], 11), 10).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(AppError);
@@ -114,10 +130,22 @@ class DeferredImportService {
   }
 }
 
+function createController(imports: DeferredImportService): ProjectImportController {
+  return new ProjectImportController(
+    imports as unknown as ProjectImportService,
+    new ImportAdmissionGate(
+      new AppConfig({
+        IMPORT_CONCURRENCY_BUDGET: 1,
+        IMPORT_COMMIT_CONCURRENCY: 1,
+      } as Env),
+    ),
+  );
+}
+
 describe("ProjectImportController import gate", () => {
-  it("rejects preview and commit while another import is in flight, then releases the gate", async () => {
+  it("preview 额度不足时立即 429，释放后恢复；commit 由 service 独立准入", async () => {
     const imports = new DeferredImportService();
-    const controller = new ProjectImportController(imports as unknown as ProjectImportService);
+    const controller = createController(imports);
     const firstBody = multipartBody(Buffer.from("first", "utf8"));
     const first = controller.preview(
       requestOf([firstBody], firstBody.length),
@@ -140,12 +168,14 @@ describe("ProjectImportController import gate", () => {
     expect((second as AppError).code).toBe("RATE_LIMITED");
 
     const response = { writableEnded: false, on: () => response } as unknown as Response;
-    const commit = await controller
-      .commit(response, { previewId: "preview-1", region: "英国", projectType: "飞箱", addMissingNodes: true }, "zh-CN", ACTOR_ID)
-      .catch((caught: unknown) => caught);
-    expect(commit).toBeInstanceOf(AppError);
-    expect((commit as AppError).code).toBe("RATE_LIMITED");
-    expect(imports.commitCalls).toBe(0);
+    const commit = await controller.commit(
+      response,
+      { previewId: "preview-1", region: "英国", projectType: "飞箱", addMissingNodes: true },
+      "zh-CN",
+      ACTOR_ID,
+    );
+    expect(commit.projectId).toBe("project-1");
+    expect(imports.commitCalls).toBe(1);
 
     imports.releasePreview();
     await first;
@@ -153,5 +183,14 @@ describe("ProjectImportController import gate", () => {
     expect(imports.lastPreviewInput).toMatchObject({ fileName: "book.xlsx", actorId: ACTOR_ID });
     expect(imports.lastPreviewInput).not.toHaveProperty("bytes");
     expect(imports.lastPreviewInput).toHaveProperty("sourceFile");
+
+    const thirdBody = multipartBody(Buffer.from("third", "utf8"));
+    await controller.preview(
+      requestOf([thirdBody], thirdBody.length),
+      "multipart/form-data; boundary=" + BOUNDARY,
+      "zh-CN",
+      ACTOR_ID,
+    );
+    expect(imports.previewCalls).toBe(2);
   });
 });
