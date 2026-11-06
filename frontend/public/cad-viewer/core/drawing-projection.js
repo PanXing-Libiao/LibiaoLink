@@ -93,7 +93,8 @@ export function* projectDrawingSteps(document,target,effectiveLayers=null,presen
     if(pm==='explicit')return parent.color.rgba.slice();
     if(pm==='by-layer')return layerColor(parentLayer,viewport);
    }
-   return layerColor(layerId,viewport);
+   // Unbound ByBlock uses ACI 7; the viewer adapts black to its background.
+   return [0,0,0,1];
   }
   return layerColor(layerId,viewport);
  }
