@@ -7119,6 +7119,14 @@
               "$ref": "#/components/schemas/PageExportCatalogColumn"
             },
             "maxItems": 16
+          },
+          "previewRows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PageExportPreviewRow"
+            },
+            "maxItems": 3,
+            "description": "按当前账号列权限生成的中文预览行（最多 3 条）"
           }
         },
         "required": [
@@ -7127,9 +7135,10 @@
           "allowed",
           "rowCount",
           "defaultColumns",
-          "columns"
+          "columns",
+          "previewRows"
         ],
-        "description": "一个可导出页面的目录项"
+        "description": "一个可导出页面的目录项（含中文实时预览）"
       },
       "PageExportPreset": {
         "type": "object",
@@ -7155,7 +7164,29 @@
           "name",
           "sheets"
         ],
-        "description": "页面导出方案（Sheet + 列顺序；按账号跨项目复用）"
+        "description": "页面导出方案（Sheet + 列选择；导出列顺序由系统目录固定）"
+      },
+      "PageExportPreviewCell": {
+        "anyOf": [
+          {
+            "type": "string",
+            "maxLength": 500
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "导出预览单元格；长文本由服务端截断，附图显示为图片数量"
+      },
+      "PageExportPreviewRow": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/PageExportPreviewCell"
+        },
+        "description": "一条中文页面导出预览行（键为列 key）"
       },
       "PageExportRequest": {
         "type": "object",
@@ -7173,7 +7204,7 @@
           "sheets"
         ],
         "additionalProperties": false,
-        "description": "页面级 Excel 导出请求（POST；只导出勾选页面的勾选列）"
+        "description": "页面级中文 Excel 导出请求（POST；只导出勾选页面的勾选列，列序固定）"
       },
       "PageExportSheetKey": {
         "type": "string",
@@ -7191,7 +7222,7 @@
         },
         "minItems": 1,
         "maxItems": 3,
-        "description": "1～3 个页面的导出列选择（重复 Sheet / 重复列拒绝）"
+        "description": "1～3 个页面的导出列选择（列序由系统目录固定；重复 Sheet / 重复列拒绝）"
       },
       "PageExportSheetSelection": {
         "oneOf": [
@@ -7268,7 +7299,7 @@
             "additionalProperties": false
           }
         ],
-        "description": "一个页面的导出列选择；columns 顺序即 Excel 列顺序，未知列 / 空列 / 重复列拒绝"
+        "description": "一个页面的导出列选择；columns 只选择字段，Excel 列序固定取系统目录，未知列 / 空列 / 重复列拒绝"
       },
       "PermissionKey": {
         "type": "string",

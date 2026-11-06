@@ -90,12 +90,12 @@ const StakeholderPageExportSheetSchema = z
 export const PageExportSheetSelectionSchema = z
   .discriminatedUnion("sheet", [ReportPageExportSheetSchema, IssuePageExportSheetSchema, StakeholderPageExportSheetSchema])
   .openapi("PageExportSheetSelection", {
-    description: "一个页面的导出列选择；columns 顺序即 Excel 列顺序，未知列 / 空列 / 重复列拒绝",
+    description: "一个页面的导出列选择；columns 只选择字段，Excel 列序固定取系统目录，未知列 / 空列 / 重复列拒绝",
   });
 
 const PAGE_EXPORT_SHEET_SET: ReadonlySet<string> = new Set(PAGE_EXPORT_SHEET_KEYS);
 
-/** Sheet 最多 3 个、列顺序保留；重复 Sheet / 重复列在请求层直接 400。 */
+/** Sheet 最多 3 个；请求列只表达选择，导出列序固定取系统目录；重复 Sheet / 重复列在请求层直接 400。 */
 export const PageExportSheetsSchema = z
   .array(PageExportSheetSelectionSchema)
   .min(1)
@@ -120,7 +120,7 @@ export const PageExportSheetsSchema = z
       }
     }
   })
-  .openapi("PageExportSheets", { description: "1～3 个页面的导出列选择（重复 Sheet / 重复列拒绝）" });
+  .openapi("PageExportSheets", { description: "1～3 个页面的导出列选择（列序由系统目录固定；重复 Sheet / 重复列拒绝）" });
 
 export const PageExportRequestSchema = z
   .object({
@@ -133,7 +133,7 @@ export const PageExportRequestSchema = z
     sheets: PageExportSheetsSchema,
   })
   .strict()
-  .openapi("PageExportRequest", { description: "页面级 Excel 导出请求（POST；只导出勾选页面的勾选列）" });
+  .openapi("PageExportRequest", { description: "页面级中文 Excel 导出请求（POST；只导出勾选页面的勾选列，列序固定）" });
 
 /** Catalog 列项：allowed=false 时前端禁用勾选，POST 若携带该列由服务端 403。 */
 export const PageExportCatalogColumnSchema = z
@@ -144,6 +144,14 @@ export const PageExportCatalogColumnSchema = z
   })
   .openapi("PageExportCatalogColumn", { description: "可导出列（含当前账号字段权限）" });
 
+export const PageExportPreviewCellSchema = z
+  .union([z.string().max(500), z.number(), z.null()])
+  .openapi("PageExportPreviewCell", { description: "导出预览单元格；长文本由服务端截断，附图显示为图片数量" });
+
+export const PageExportPreviewRowSchema = z
+  .record(z.string().min(1).max(64), PageExportPreviewCellSchema)
+  .openapi("PageExportPreviewRow", { description: "一条中文页面导出预览行（键为列 key）" });
+
 export const PageExportCatalogSheetSchema = z
   .object({
     key: PageExportSheetKeySchema,
@@ -152,8 +160,9 @@ export const PageExportCatalogSheetSchema = z
     rowCount: z.number().int().nonnegative().openapi({ description: "当前项目该页面的记录数（用于预计行数提示）" }),
     defaultColumns: z.array(z.string()).max(16).openapi({ description: "默认勾选列（已按当前账号列权限过滤）" }),
     columns: z.array(PageExportCatalogColumnSchema).max(16),
+    previewRows: z.array(PageExportPreviewRowSchema).max(3).openapi({ description: "按当前账号列权限生成的中文预览行（最多 3 条）" }),
   })
-  .openapi("PageExportCatalogSheet", { description: "一个可导出页面的目录项" });
+  .openapi("PageExportCatalogSheet", { description: "一个可导出页面的目录项（含中文实时预览）" });
 
 export const PageExportCatalogResponseSchema = z
   .object({ sheets: z.array(PageExportCatalogSheetSchema).max(PAGE_EXPORT_SHEET_KEYS.length) })
@@ -170,7 +179,7 @@ export const PageExportPresetSchema = z
     name: z.string().trim().min(1).max(PAGE_EXPORT_PRESET_NAME_MAX).openapi({ description: "方案名称（≤ 20 字）" }),
     sheets: PageExportSheetsSchema,
   })
-  .openapi("PageExportPreset", { description: "页面导出方案（Sheet + 列顺序；按账号跨项目复用）" });
+  .openapi("PageExportPreset", { description: "页面导出方案（Sheet + 列选择；导出列顺序由系统目录固定）" });
 
 export type PageExportSheetKey = z.infer<typeof PageExportSheetKeySchema>;
 export type ReportPageExportColumn = z.infer<typeof ReportPageExportColumnSchema>;
@@ -178,6 +187,8 @@ export type IssuePageExportColumn = z.infer<typeof IssuePageExportColumnSchema>;
 export type StakeholderPageExportColumn = z.infer<typeof StakeholderPageExportColumnSchema>;
 export type PageExportSheetSelection = z.infer<typeof PageExportSheetSelectionSchema>;
 export type PageExportRequest = z.infer<typeof PageExportRequestSchema>;
+export type PageExportPreviewCell = z.infer<typeof PageExportPreviewCellSchema>
+export type PageExportPreviewRow = z.infer<typeof PageExportPreviewRowSchema>
 export type PageExportCatalogColumn = z.infer<typeof PageExportCatalogColumnSchema>;
 export type PageExportCatalogSheet = z.infer<typeof PageExportCatalogSheetSchema>;
 export type PageExportCatalogResponse = z.infer<typeof PageExportCatalogResponseSchema>;

@@ -6,6 +6,7 @@ import type {
   DailyReport,
   Issue,
   PageExportCatalogResponse,
+  PageExportPreviewRow,
   PageExportSheetKey,
   PageExportSheetSelection,
   PermissionKey,
@@ -67,6 +68,8 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_TOTAL_IMAGE_BYTES = 80 * 1024 * 1024;
 const TEMP_EXPORT_PREFIX = "libiaolink-project-export-";
 const STALE_TEMP_EXPORT_MS = 60 * 60 * 1000;
+const PAGE_EXPORT_PREVIEW_LIMIT = 3;
+const PAGE_EXPORT_PREVIEW_TEXT_MAX = 240;
 
 export type ProjectExportModeSetting = "auto" | "legacy" | "stream";
 export type ProjectExportExecutionMode = "legacy" | "stream";
@@ -289,13 +292,18 @@ export class ProjectExportService implements OnModuleInit {
           allowed: allowed && (column.permission === undefined || access.columns.get(this.pageExportColumnAccessKey(definition.key, column.key)) === true),
         }));
         const defaultColumns = definition.defaultColumns.filter((key) => columns.some((column) => column.key === key && column.allowed));
+        const preview = allowed
+          ? await this.pageExportPreviewOne(projectId, actorId, definition.key)
+          : { rowCount: 0, rows: [] as PageExportMappedRow[] };
+        const allowedColumnKeys = new Set(columns.filter((column) => column.allowed).map((column) => column.key));
         return {
           key: definition.key,
           label: definition.label,
           allowed,
-          rowCount: allowed ? await this.pageExportCountOne(projectId, actorId, definition.key) : 0,
+          rowCount: preview.rowCount,
           defaultColumns: defaultColumns.length > 0 ? defaultColumns : columns.filter((column) => column.allowed).slice(0, 1).map((column) => column.key),
           columns,
+          previewRows: preview.rows.map((row) => this.pageExportPreviewRow(row, allowedColumnKeys)),
         };
       }),
     );
@@ -370,6 +378,46 @@ export class ProjectExportService implements OnModuleInit {
     }
   }
 
+  private async pageExportPreviewOne(
+    projectId: string,
+    actorId: string,
+    sheet: PageExportSheetKey,
+  ): Promise<{ rowCount: number; rows: PageExportMappedRow[] }> {
+    const users = new Map<string, ProjectExportUserLabel>();
+    if (sheet === "reports") {
+      const result = await this.reports.list(projectId, { page: 1, limit: PAGE_EXPORT_PREVIEW_LIMIT });
+      return { rowCount: result.total, rows: result.items.slice(0, PAGE_EXPORT_PREVIEW_LIMIT).map((report) => pageReportRow(report, users)) };
+    }
+    if (sheet === "issues") {
+      const result = await this.issues.list(projectId, { page: 1, limit: PAGE_EXPORT_PREVIEW_LIMIT });
+      return { rowCount: result.total, rows: result.items.slice(0, PAGE_EXPORT_PREVIEW_LIMIT).map((issue) => pageIssueRow(issue, users)) };
+    }
+    const result = await this.stakeholders.list(
+      { "filter[projectId]": projectId, page: 1, limit: PAGE_EXPORT_PREVIEW_LIMIT },
+      actorId,
+    );
+    return { rowCount: result.total, rows: result.items.slice(0, PAGE_EXPORT_PREVIEW_LIMIT).map((item) => pageStakeholderRow(item, users)) };
+  }
+
+  private pageExportPreviewRow(
+    row: PageExportMappedRow,
+    allowedColumnKeys: ReadonlySet<string>,
+  ): PageExportPreviewRow {
+    const result: PageExportPreviewRow = {};
+    for (const key of allowedColumnKeys) {
+      const photos = row.photos[key];
+      if (photos !== undefined) {
+        result[key] = photos.length === 0 ? "" : String(photos.length) + " 张图片";
+        continue;
+      }
+      const value = row.values[key] ?? null;
+      result[key] = typeof value === "string" && value.length > PAGE_EXPORT_PREVIEW_TEXT_MAX
+        ? value.slice(0, PAGE_EXPORT_PREVIEW_TEXT_MAX - 1) + "…"
+        : value;
+    }
+    return result;
+  }
+
   private async pageExportCountOne(projectId: string, actorId: string, sheet: PageExportSheetKey): Promise<number> {
     if (sheet === "reports") return (await this.reports.list(projectId, { page: 1, limit: 1 })).total;
     if (sheet === "issues") return (await this.issues.list(projectId, { page: 1, limit: 1 })).total;
@@ -393,12 +441,19 @@ export class ProjectExportService implements OnModuleInit {
     return { reports, issues, stakeholders };
   }
 
+  /** 请求列只表达“导出哪些列”，Excel 列序始终取系统目录顺序。 */
+  private pageExportCanonicalColumns(selection: PageExportSheetSelection): string[] {
+    const definition = pageExportSheetDefinition(selection.sheet);
+    const selected = new Set<string>(selection.columns);
+    return definition.columns.filter((column) => selected.has(column.key)).map((column) => column.key);
+  }
+
   private pageExportWorkbookSheet(selection: PageExportSheetSelection, rows: readonly PageExportWorkbookRow[]): PageExportWorkbookSheet {
     const definition = pageExportSheetDefinition(selection.sheet);
     return {
       key: definition.key,
       name: definition.label,
-      columns: selection.columns.map((key) => {
+      columns: this.pageExportCanonicalColumns(selection).map((key) => {
         const column = pageExportColumnDefinition(definition, key);
         return { key: column.key, label: column.label, width: column.width, photo: column.photo };
       }),
@@ -610,7 +665,7 @@ export class ProjectExportService implements OnModuleInit {
         mode: metrics.mode,
         format: "xlsx",
         sheets: sheetNames,
-        columns: Object.fromEntries(selections.map((selection) => [selection.sheet, selection.columns])),
+        columns: Object.fromEntries(selections.map((selection) => [selection.sheet, this.pageExportCanonicalColumns(selection)])),
         reports: rowCounts.reports,
         issues: rowCounts.issues,
         stakeholders: rowCounts.stakeholders,
