@@ -144,9 +144,33 @@ export const PageExportCatalogColumnSchema = z
   })
   .openapi("PageExportCatalogColumn", { description: "可导出列（含当前账号字段权限）" });
 
+/** 目录预览最多返回 20 条；完整导出仍按页面全部记录生成。 */
+export const PAGE_EXPORT_PREVIEW_ROW_LIMIT = 20;
+/** 每个附图预览单元格最多返回 4 个缩略图引用；total 保留真实图片总数。 */
+export const PAGE_EXPORT_PREVIEW_PHOTO_LIMIT = 4;
+
+export const PageExportPreviewPhotoSchema = z
+  .object({
+    fileId: z.string().min(1).max(64),
+    name: z.string().max(255),
+  })
+  .strict()
+  .openapi("PageExportPreviewPhoto", { description: "预览附图引用；仅用于按权限懒取缩略图，不含对象键或图片二进制" });
+
+export const PageExportPreviewPhotoCellSchema = z
+  .object({
+    kind: z.literal("photos"),
+    total: z.number().int().nonnegative(),
+    items: z.array(PageExportPreviewPhotoSchema).max(PAGE_EXPORT_PREVIEW_PHOTO_LIMIT),
+  })
+  .strict()
+  .openapi("PageExportPreviewPhotoCell", {
+    description: "附图预览单元格：total 为真实图片数，items 最多 4 个可懒加载缩略图引用",
+  });
+
 export const PageExportPreviewCellSchema = z
-  .union([z.string().max(500), z.number(), z.null()])
-  .openapi("PageExportPreviewCell", { description: "导出预览单元格；长文本由服务端截断，附图显示为图片数量" });
+  .union([z.string().max(500), z.number(), z.null(), PageExportPreviewPhotoCellSchema])
+  .openapi("PageExportPreviewCell", { description: "导出预览单元格；长文本由服务端截断，附图返回受限缩略图引用" });
 
 export const PageExportPreviewRowSchema = z
   .record(z.string().min(1).max(64), PageExportPreviewCellSchema)
@@ -160,7 +184,10 @@ export const PageExportCatalogSheetSchema = z
     rowCount: z.number().int().nonnegative().openapi({ description: "当前项目该页面的记录数（用于预计行数提示）" }),
     defaultColumns: z.array(z.string()).max(16).openapi({ description: "默认勾选列（已按当前账号列权限过滤）" }),
     columns: z.array(PageExportCatalogColumnSchema).max(16),
-    previewRows: z.array(PageExportPreviewRowSchema).max(3).openapi({ description: "按当前账号列权限生成的中文预览行（最多 3 条）" }),
+    previewRows: z
+      .array(PageExportPreviewRowSchema)
+      .max(PAGE_EXPORT_PREVIEW_ROW_LIMIT)
+      .openapi({ description: "按当前账号列权限生成的中文预览行（最多 20 条）" }),
   })
   .openapi("PageExportCatalogSheet", { description: "一个可导出页面的目录项（含中文实时预览）" });
 
@@ -187,6 +214,8 @@ export type IssuePageExportColumn = z.infer<typeof IssuePageExportColumnSchema>;
 export type StakeholderPageExportColumn = z.infer<typeof StakeholderPageExportColumnSchema>;
 export type PageExportSheetSelection = z.infer<typeof PageExportSheetSelectionSchema>;
 export type PageExportRequest = z.infer<typeof PageExportRequestSchema>;
+export type PageExportPreviewPhoto = z.infer<typeof PageExportPreviewPhotoSchema>;
+export type PageExportPreviewPhotoCell = z.infer<typeof PageExportPreviewPhotoCellSchema>;
 export type PageExportPreviewCell = z.infer<typeof PageExportPreviewCellSchema>
 export type PageExportPreviewRow = z.infer<typeof PageExportPreviewRowSchema>
 export type PageExportCatalogColumn = z.infer<typeof PageExportCatalogColumnSchema>;
