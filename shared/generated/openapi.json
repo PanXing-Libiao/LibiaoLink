@@ -5815,6 +5815,19 @@
         ],
         "description": "问题列表（问题追踪表 / 问题看板共用；看板按三态分组由前端渲染）"
       },
+      "IssuePageExportColumn": {
+        "type": "string",
+        "enum": [
+          "raisedAt",
+          "title",
+          "categories",
+          "owner",
+          "solution",
+          "photos",
+          "state"
+        ],
+        "description": "问题追踪导出列 key（仅页面当前可见列）"
+      },
       "IssueState": {
         "type": "string",
         "enum": [
@@ -7031,6 +7044,231 @@
           "token"
         ],
         "description": "在线查看器配置（ONLYOFFICE 查看通道；Office / 文本族专用，PDF 与图片走短时签名 URL）"
+      },
+      "PageExportCatalogColumn": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "allowed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "allowed"
+        ],
+        "description": "可导出列（含当前账号字段权限）"
+      },
+      "PageExportCatalogResponse": {
+        "type": "object",
+        "properties": {
+          "sheets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PageExportCatalogSheet"
+            },
+            "maxItems": 3
+          }
+        },
+        "required": [
+          "sheets"
+        ],
+        "description": "页面导出目录（按当前账号权限下发列可用性）"
+      },
+      "PageExportCatalogSheet": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "$ref": "#/components/schemas/PageExportSheetKey"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "allowed": {
+            "type": "boolean",
+            "description": "当前账号是否可读取该页面；false 时导出请求 403"
+          },
+          "rowCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "当前项目该页面的记录数（用于预计行数提示）"
+          },
+          "defaultColumns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 16,
+            "description": "默认勾选列（已按当前账号列权限过滤）"
+          },
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PageExportCatalogColumn"
+            },
+            "maxItems": 16
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "allowed",
+          "rowCount",
+          "defaultColumns",
+          "columns"
+        ],
+        "description": "一个可导出页面的目录项"
+      },
+      "PageExportPreset": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "方案 id（前端生成，建议 pe- 前缀）"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20,
+            "description": "方案名称（≤ 20 字）"
+          },
+          "sheets": {
+            "$ref": "#/components/schemas/PageExportSheets"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "sheets"
+        ],
+        "description": "页面导出方案（Sheet + 列顺序；按账号跨项目复用）"
+      },
+      "PageExportRequest": {
+        "type": "object",
+        "properties": {
+          "origin": {
+            "type": "string",
+            "maxLength": 2048,
+            "description": "当前站点 origin；用于把附图单元格链接到项目文件视图，服务端只接受 http(s) origin"
+          },
+          "sheets": {
+            "$ref": "#/components/schemas/PageExportSheets"
+          }
+        },
+        "required": [
+          "sheets"
+        ],
+        "additionalProperties": false,
+        "description": "页面级 Excel 导出请求（POST；只导出勾选页面的勾选列）"
+      },
+      "PageExportSheetKey": {
+        "type": "string",
+        "enum": [
+          "reports",
+          "issues",
+          "stakeholders"
+        ],
+        "description": "页面导出 Sheet：reports = 日报记录 / issues = 问题追踪 / stakeholders = 干系人"
+      },
+      "PageExportSheets": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/PageExportSheetSelection"
+        },
+        "minItems": 1,
+        "maxItems": 3,
+        "description": "1～3 个页面的导出列选择（重复 Sheet / 重复列拒绝）"
+      },
+      "PageExportSheetSelection": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "sheet": {
+                "type": "string",
+                "enum": [
+                  "reports"
+                ]
+              },
+              "columns": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ReportPageExportColumn"
+                },
+                "minItems": 1,
+                "maxItems": 6
+              }
+            },
+            "required": [
+              "sheet",
+              "columns"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "sheet": {
+                "type": "string",
+                "enum": [
+                  "issues"
+                ]
+              },
+              "columns": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/IssuePageExportColumn"
+                },
+                "minItems": 1,
+                "maxItems": 7
+              }
+            },
+            "required": [
+              "sheet",
+              "columns"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "sheet": {
+                "type": "string",
+                "enum": [
+                  "stakeholders"
+                ]
+              },
+              "columns": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/StakeholderPageExportColumn"
+                },
+                "minItems": 1,
+                "maxItems": 8
+              }
+            },
+            "required": [
+              "sheet",
+              "columns"
+            ],
+            "additionalProperties": false
+          }
+        ],
+        "description": "一个页面的导出列选择；columns 顺序即 Excel 列顺序，未知列 / 空列 / 重复列拒绝"
       },
       "PermissionKey": {
         "type": "string",
@@ -8776,6 +9014,18 @@
         ],
         "description": "日报内联问题草稿（一次填报 1~N 条；提交时逐条生成问题记录）"
       },
+      "ReportPageExportColumn": {
+        "type": "string",
+        "enum": [
+          "date",
+          "author",
+          "stageNames",
+          "doneWork",
+          "plan",
+          "photos"
+        ],
+        "description": "日报记录导出列 key（仅页面当前可见列）"
+      },
       "ResourceInvalidationPayload": {
         "type": "object",
         "properties": {
@@ -9349,6 +9599,20 @@
           "limit",
           "total"
         ]
+      },
+      "StakeholderPageExportColumn": {
+        "type": "string",
+        "enum": [
+          "name",
+          "phone",
+          "wechat",
+          "email",
+          "title",
+          "company",
+          "createdBy",
+          "role"
+        ],
+        "description": "干系人导出列 key（仅页面当前可见列）"
       },
       "StakeholderProjectLinkBody": {
         "type": "object",
@@ -11620,6 +11884,14 @@
             "maxItems": 20,
             "description": "常用筛选组合（最多 20 组；整体替换语义）"
           },
+          "pageExportPresets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PageExportPreset"
+            },
+            "maxItems": 20,
+            "description": "页面级 Excel 导出方案（最多 20 个；按账号跨项目复用；整体替换语义）"
+          },
           "focusMode": {
             "type": "boolean",
             "description": "醒目模式（A4 · §6.13，Push 171）：true = 项目总览任务表每行铺该任务状态的底色；默认 false；读侧非布尔一律收敛为 false"
@@ -11675,6 +11947,7 @@
         "required": [
           "taskTableHiddenColumns",
           "homeSavedFilters",
+          "pageExportPresets",
           "focusMode",
           "workspaceOpenProjects",
           "myPlanBoard",
@@ -11706,6 +11979,13 @@
             },
             "maxItems": 20
           },
+          "pageExportPresets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PageExportPreset"
+            },
+            "maxItems": 20
+          },
           "focusMode": {
             "type": "boolean"
           },
@@ -11722,13 +12002,17 @@
                 "type": "integer",
                 "minimum": 0
               },
+              "pageExportPresets": {
+                "type": "integer",
+                "minimum": 0
+              },
               "myPlanBoard": {
                 "type": "integer",
                 "minimum": 0
               }
             },
             "additionalProperties": false,
-            "description": "更新homeSavedFilters/myPlanBoard时必须带对应基线版本，缺失400、冲突409；服务端行锁合并。内部_revisions禁止客户端写入。"
+            "description": "更新homeSavedFilters/pageExportPresets/myPlanBoard时必须带对应基线版本，缺失400、冲突409；服务端行锁合并。内部_revisions禁止客户端写入。"
           },
           "backgroundTier": {
             "allOf": [
@@ -11785,7 +12069,7 @@
           }
         },
         "additionalProperties": {},
-        "description": "PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单，focusMode/cardWatermark为布尔，backgroundTier/locale/hubView/hubDashView需在枚举内，hubDashProject为1..64字符或null，否则400"
+        "description": "PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/pageExportPresets/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单，focusMode/cardWatermark为布尔，backgroundTier/locale/hubView/hubDashView需在枚举内，hubDashProject为1..64字符或null，否则400"
       },
       "UserStatus": {
         "type": "string",
@@ -15500,7 +15784,7 @@
         "tags": [
           "users"
         ],
-        "summary": "读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式 / 工作台展开态 / 背景档位 / 卡片水印）",
+        "summary": "读取当前用户偏好（任务表列显隐 / 常用筛选 / 页面导出方案 / 工作台展开态 / 背景档位 / 卡片水印等）",
         "responses": {
           "200": {
             "description": "偏好全量",
@@ -15571,6 +15855,158 @@
           },
           "409": {
             "description": "冲突（VERSION_CONFLICT / 状态不允许当前操作）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/page-exports/catalog": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "页面级 Excel 导出目录（日报记录 / 问题追踪 / 干系人：可选 Sheet、列、字段权限与记录数）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "导出目录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageExportCatalogResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/page-exports": {
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "页面级 Excel 导出（1～3 个 Sheet；每个 Sheet 使用勾选列及列顺序；不支持扩展列）",
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "required": true,
+            "description": "UUID（主键与关联 ID）",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PageExportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "xlsx 文件流",
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "契约校验失败（VALIDATION_FAILED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证（AUTH_REQUIRED）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限（FORBIDDEN）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在或不可见（NOT_FOUND，统一 404 语义）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "同一时间已有大项目流式导出（RATE_LIMITED）",
             "content": {
               "application/json": {
                 "schema": {

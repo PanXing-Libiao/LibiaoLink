@@ -10,6 +10,7 @@ export * from "./modules/files.ts";
 export * from "./modules/cad.ts";
 export * from "./modules/identity.ts";
 export * from "./modules/users.ts";
+export * from "./modules/page-exports.ts";
 export * from "./modules/dicts.ts";
 export * from "./modules/audits.ts";
 export * from "./modules/calendar.ts";

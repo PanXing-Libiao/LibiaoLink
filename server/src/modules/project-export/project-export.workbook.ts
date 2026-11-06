@@ -222,9 +222,13 @@ export function formatCalendarDate(value: string | null): string {
   return parts.year + "/" + String(Number(parts.month)) + "/" + String(Number(parts.day));
 }
 
-export function formatReportDate(value: string, state: string): string {
+export function formatReportDay(value: string): string {
   const parts = partsOf(value);
-  const text = parts === null ? value : parts.year + "年" + String(Number(parts.month)) + "月" + String(Number(parts.day)) + "日";
+  return parts === null ? value : parts.year + "年" + String(Number(parts.month)) + "月" + String(Number(parts.day)) + "日";
+}
+
+export function formatReportDate(value: string, state: string): string {
+  const text = formatReportDay(value);
   return state === "draft" ? text + "（草稿）" : text;
 }
 

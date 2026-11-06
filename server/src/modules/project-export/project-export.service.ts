@@ -2,7 +2,14 @@ import { Injectable, Logger, type OnModuleInit } from "@nestjs/common";
 import { chmod, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DailyReport, Issue } from "@libiaolink/contracts";
+import type {
+  DailyReport,
+  Issue,
+  PageExportCatalogResponse,
+  PageExportSheetKey,
+  PageExportSheetSelection,
+  PermissionKey,
+} from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import { AppConfig } from "../../config/config.module.js";
 import { DatabaseService } from "../../db/database.service.js";
@@ -12,6 +19,7 @@ import { ChangeService, FileService, type ProjectExportFileRef } from "../file/i
 import { UserService } from "../identity/index.js";
 import { ProjectService } from "../project/index.js";
 import { IssueService, ReportService } from "../report-issue/index.js";
+import { PermissionService, type ProjectAccessContext } from "../permission/index.js";
 import { StakeholderService } from "../stakeholder/index.js";
 import { TaskService } from "../task/index.js";
 import {
@@ -37,6 +45,15 @@ import {
   type ProjectExportStakeholderRow,
   type ProjectExportTaskRow,
 } from "./project-export.workbook.js";
+import { PAGE_EXPORT_SHEETS, pageExportColumnDefinition, pageExportSheetDefinition, type PageExportColumnDefinition } from "./page-export.catalog.js";
+import { pageExportPhotoIds, pageIssueRow, pageReportRow, pageStakeholderRow, type PageExportMappedRow } from "./page-export.mapping.js";
+import {
+  buildPageExportWorkbook,
+  pageExportFileName,
+  PageExportWorkbookWriter,
+  type PageExportWorkbookRow,
+  type PageExportWorkbookSheet,
+} from "./page-export.workbook.js";
 
 export { splitChangeReason } from "./project-export.mapping.js";
 
@@ -86,6 +103,36 @@ export interface ProjectExportFileResult extends ProjectExportMetrics {
 
 export type ProjectExportResult = ProjectExportBufferResult | ProjectExportFileResult;
 
+export interface PageExportRowCounts {
+  reports: number;
+  issues: number;
+  stakeholders: number;
+}
+
+interface PageExportMetrics {
+  fileName: string;
+  sheetNames: string[];
+  rowCounts: PageExportRowCounts;
+  imageCount: number;
+  imageLinkCount: number;
+  missingImageCount: number;
+  mode: ProjectExportExecutionMode;
+}
+
+export interface PageExportBufferResult extends PageExportMetrics {
+  kind: "buffer";
+  buffer: Buffer;
+}
+
+export interface PageExportFileResult extends PageExportMetrics {
+  kind: "file";
+  filePath: string;
+  sizeBytes: number;
+  cleanup: () => Promise<void>;
+}
+
+export type PageExportResult = PageExportBufferResult | PageExportFileResult;
+
 interface ExportProject {
   id: string;
   code: string;
@@ -105,6 +152,32 @@ interface StreamingCounts {
   changes: number;
   stakeholders: number;
   imageIds: Set<string>;
+}
+
+interface PageExportStreamingCounts extends PageExportRowCounts {
+  imageIds: Set<string>;
+}
+
+interface PageExportAccess {
+  sheets: Map<PageExportSheetKey, boolean>;
+  columns: Map<string, boolean>;
+}
+
+interface PageExportRows {
+  reports: PageExportMappedRow[];
+  issues: PageExportMappedRow[];
+  stakeholders: PageExportMappedRow[];
+}
+
+function zeroPageCounts(): PageExportRowCounts {
+  return { reports: 0, issues: 0, stakeholders: 0 };
+}
+
+function columnsAllowed(
+  column: PageExportColumnDefinition,
+  allowed: ReadonlyMap<PermissionKey, boolean>,
+): boolean {
+  return column.permission === undefined || allowed.get(column.permission) === true;
 }
 
 function abortReason(signal: AbortSignal): Error {
@@ -190,6 +263,7 @@ export class ProjectExportService implements OnModuleInit {
     private readonly stakeholders: StakeholderService,
     private readonly files: FileService,
     private readonly users: UserService,
+    private readonly permission: PermissionService,
     private readonly audit: AuditService,
     private readonly database: DatabaseService,
     private readonly storage: ObjectStorage,
@@ -198,6 +272,353 @@ export class ProjectExportService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     await this.cleanupStaleExportDirectories();
+  }
+
+  async pageExportCatalog(
+    projectId: string,
+    actorId: string,
+    projectAccess: ProjectAccessContext,
+  ): Promise<PageExportCatalogResponse> {
+    const access = await this.pageExportAccess(actorId, projectAccess);
+    const sheets = await Promise.all(
+      PAGE_EXPORT_SHEETS.map(async (definition) => {
+        const allowed = access.sheets.get(definition.key) === true;
+        const columns = definition.columns.map((column) => ({
+          key: column.key,
+          label: column.label,
+          allowed: allowed && (column.permission === undefined || access.columns.get(this.pageExportColumnAccessKey(definition.key, column.key)) === true),
+        }));
+        const defaultColumns = definition.defaultColumns.filter((key) => columns.some((column) => column.key === key && column.allowed));
+        return {
+          key: definition.key,
+          label: definition.label,
+          allowed,
+          rowCount: allowed ? await this.pageExportCountOne(projectId, actorId, definition.key) : 0,
+          defaultColumns: defaultColumns.length > 0 ? defaultColumns : columns.filter((column) => column.allowed).slice(0, 1).map((column) => column.key),
+          columns,
+        };
+      }),
+    );
+    return { sheets };
+  }
+
+  async exportPages(
+    projectId: string,
+    actorId: string,
+    requestOrigin: string,
+    sheets: readonly PageExportSheetSelection[],
+    projectAccess: ProjectAccessContext,
+    signal?: AbortSignal,
+  ): Promise<PageExportResult> {
+    throwIfAborted(signal);
+    await this.assertPageExportAccess(actorId, sheets, projectAccess);
+    const project = await this.projects.getProject(projectId, actorId);
+    const rowCounts = await this.pageExportCounts(projectId, actorId, sheets.map((sheet) => sheet.sheet), signal);
+    const mode = resolveProjectExportMode(
+      this.config.env.PROJECT_EXPORT_MODE,
+      rowCounts.reports + rowCounts.issues + rowCounts.stakeholders,
+    );
+    if (mode === "legacy") return this.exportPagesLegacy(project, actorId, requestOrigin, sheets, rowCounts, signal);
+    return this.withStreamingSlot(() => this.exportPagesStreaming(project, actorId, requestOrigin, sheets, rowCounts, signal));
+  }
+
+  private pageExportColumnAccessKey(sheet: PageExportSheetKey, column: string): string {
+    return sheet + ":" + column;
+  }
+
+  private async pageExportAccess(actorId: string, projectAccess: ProjectAccessContext): Promise<PageExportAccess> {
+    const permissions = new Set<PermissionKey>();
+    for (const definition of PAGE_EXPORT_SHEETS) {
+      permissions.add(definition.permission);
+      for (const column of definition.columns) if (column.permission !== undefined) permissions.add(column.permission);
+    }
+    const allowed = new Map<PermissionKey, boolean>();
+    await Promise.all([...permissions].map(async (permission) => {
+      allowed.set(permission, await this.permission.can(actorId, permission, projectAccess));
+    }));
+    const sheets = new Map<PageExportSheetKey, boolean>();
+    const columns = new Map<string, boolean>();
+    for (const definition of PAGE_EXPORT_SHEETS) {
+      sheets.set(definition.key, allowed.get(definition.permission) === true);
+      for (const column of definition.columns) {
+        columns.set(
+          this.pageExportColumnAccessKey(definition.key, column.key),
+          columnsAllowed(column, allowed) && allowed.get(definition.permission) === true,
+        );
+      }
+    }
+    return { sheets, columns };
+  }
+
+  private async assertPageExportAccess(
+    actorId: string,
+    sheets: readonly PageExportSheetSelection[],
+    projectAccess: ProjectAccessContext,
+  ): Promise<void> {
+    const access = await this.pageExportAccess(actorId, projectAccess);
+    for (const selection of sheets) {
+      const definition = pageExportSheetDefinition(selection.sheet);
+      if (access.sheets.get(selection.sheet) !== true) {
+        throw new AppError("FORBIDDEN", "无权限导出页面：" + definition.label);
+      }
+      for (const columnKey of selection.columns) {
+        const column = pageExportColumnDefinition(definition, columnKey);
+        if (access.columns.get(this.pageExportColumnAccessKey(selection.sheet, columnKey)) !== true) {
+          throw new AppError("FORBIDDEN", "无权限导出列：" + definition.label + " / " + column.label);
+        }
+      }
+    }
+  }
+
+  private async pageExportCountOne(projectId: string, actorId: string, sheet: PageExportSheetKey): Promise<number> {
+    if (sheet === "reports") return (await this.reports.list(projectId, { page: 1, limit: 1 })).total;
+    if (sheet === "issues") return (await this.issues.list(projectId, { page: 1, limit: 1 })).total;
+    return (await this.stakeholders.list({ "filter[projectId]": projectId, page: 1, limit: 1 }, actorId)).total;
+  }
+
+  private async pageExportCounts(
+    projectId: string,
+    actorId: string,
+    sheets: readonly PageExportSheetKey[],
+    signal: AbortSignal | undefined,
+  ): Promise<PageExportRowCounts> {
+    const selected = new Set(sheets);
+    throwIfAborted(signal);
+    const [reports, issues, stakeholders] = await Promise.all([
+      selected.has("reports") ? this.pageExportCountOne(projectId, actorId, "reports") : 0,
+      selected.has("issues") ? this.pageExportCountOne(projectId, actorId, "issues") : 0,
+      selected.has("stakeholders") ? this.pageExportCountOne(projectId, actorId, "stakeholders") : 0,
+    ]);
+    throwIfAborted(signal);
+    return { reports, issues, stakeholders };
+  }
+
+  private pageExportWorkbookSheet(selection: PageExportSheetSelection, rows: readonly PageExportWorkbookRow[]): PageExportWorkbookSheet {
+    const definition = pageExportSheetDefinition(selection.sheet);
+    return {
+      key: definition.key,
+      name: definition.label,
+      columns: selection.columns.map((key) => {
+        const column = pageExportColumnDefinition(definition, key);
+        return { key: column.key, label: column.label, width: column.width, photo: column.photo };
+      }),
+      rows,
+    };
+  }
+
+  private pageExportHasPhotoColumn(selection: PageExportSheetSelection): boolean {
+    return (selection.columns as readonly string[]).includes("photos");
+  }
+
+  private async exportPagesLegacy(
+    project: ExportProject,
+    actorId: string,
+    requestOrigin: string,
+    selections: readonly PageExportSheetSelection[],
+    rowCounts: PageExportRowCounts,
+    signal: AbortSignal | undefined,
+  ): Promise<PageExportBufferResult> {
+    const selected = new Set(selections.map((selection) => selection.sheet));
+    const userPromise = collectPaged((page, limit) => this.users.listUsers({ page, limit }), "用户目录", signal);
+    const reportPromise: Promise<DailyReport[]> = selected.has("reports")
+      ? collectPaged((page, limit) => this.reports.list(project.id, { page, limit }), "日报", signal)
+      : Promise.resolve([]);
+    const issuePromise: Promise<Issue[]> = selected.has("issues")
+      ? collectPaged((page, limit) => this.issues.list(project.id, { page, limit }), "问题", signal)
+      : Promise.resolve([]);
+    const stakeholderPromise = selected.has("stakeholders")
+      ? collectPaged(
+          (page, limit) => this.stakeholders.list({ "filter[projectId]": project.id, page, limit }, actorId),
+          "干系人",
+          signal,
+        )
+      : Promise.resolve([]);
+    const [userItems, reportItems, issueItems, stakeholderItems] = await Promise.all([
+      userPromise,
+      reportPromise,
+      issuePromise,
+      stakeholderPromise,
+    ]);
+    throwIfAborted(signal);
+
+    const users = this.userLabels(userItems);
+    const rows: PageExportRows = {
+      reports: reportItems.map((report) => pageReportRow(report, users)),
+      issues: issueItems.map((issue) => pageIssueRow(issue, users)),
+      stakeholders: stakeholderItems.map((item) => pageStakeholderRow(item, users)),
+    };
+    const imageIds = new Set<string>();
+    for (const selection of selections) {
+      if (!this.pageExportHasPhotoColumn(selection)) continue;
+      for (const id of pageExportPhotoIds(rows[selection.sheet])) imageIds.add(id);
+    }
+    const fileRefs = imageIds.size === 0
+      ? new Map<string, ProjectExportFileRef>()
+      : await this.files.listExportFileRefs(project.id, [...imageIds]);
+    const images = await this.loadImages(imageIds, fileRefs);
+    const missingImageCount = [...imageIds].filter((id) => !images.has(id)).length;
+    throwIfAborted(signal);
+
+    const workbookSheets = selections.map((selection) => this.pageExportWorkbookSheet(selection, rows[selection.sheet]));
+    const workbook = await buildPageExportWorkbook({
+      projectId: project.id,
+      origin: normalizeHttpOrigin(requestOrigin),
+      sheets: workbookSheets,
+      images,
+    });
+    const fileName = pageExportFileName(project, workbookSheets);
+    await this.auditPageExport(project, actorId, workbook.sheetNames, selections, rowCounts, {
+      mode: "legacy",
+      images: images.size,
+      imageLinks: 0,
+      missingImages: missingImageCount,
+    });
+    return {
+      kind: "buffer",
+      fileName,
+      buffer: workbook.buffer,
+      sheetNames: workbook.sheetNames,
+      rowCounts,
+      imageCount: images.size,
+      imageLinkCount: 0,
+      missingImageCount,
+      mode: "legacy",
+    };
+  }
+
+  private async exportPagesStreaming(
+    project: ExportProject,
+    actorId: string,
+    requestOrigin: string,
+    selections: readonly PageExportSheetSelection[],
+    rowCounts: PageExportRowCounts,
+    signal: AbortSignal | undefined,
+  ): Promise<PageExportFileResult> {
+    let directory: string | undefined;
+    let writer: PageExportWorkbookWriter | undefined;
+    try {
+      directory = await mkdtemp(join(tmpdir(), TEMP_EXPORT_PREFIX));
+      await chmod(directory, 0o700);
+      const filePath = join(directory, "page-export.xlsx");
+      throwIfAborted(signal);
+      const userItems = await collectPaged((page, limit) => this.users.listUsers({ page, limit }), "用户目录", signal);
+      const users = this.userLabels(userItems);
+      const counts: PageExportStreamingCounts = { ...zeroPageCounts(), imageIds: new Set<string>() };
+      writer = new PageExportWorkbookWriter(filePath, project.id, normalizeHttpOrigin(requestOrigin));
+      for (const selection of selections) {
+        const sheet = this.pageExportWorkbookSheet(selection, []);
+        await writer.writeSheet(sheet, this.streamPageExportRows(project.id, actorId, selection, users, counts, signal));
+      }
+      throwIfAborted(signal);
+      const workbook = await writer.commit();
+      await chmod(filePath, 0o600);
+      const info = await stat(filePath);
+      const fileName = pageExportFileName(project, selections.map((selection) => ({ name: pageExportSheetDefinition(selection.sheet).label })));
+      const fileRefs = counts.imageIds.size === 0
+        ? new Map<string, ProjectExportFileRef>()
+        : await this.files.listExportFileRefs(project.id, [...counts.imageIds]);
+      const missingImageCount = [...counts.imageIds].filter((id) => !fileRefs.has(id)).length;
+      await this.auditPageExport(project, actorId, workbook.sheetNames, selections, rowCounts, {
+        mode: "stream",
+        images: 0,
+        imageLinks: counts.imageIds.size,
+        missingImages: missingImageCount,
+      });
+      return {
+        kind: "file",
+        fileName,
+        filePath,
+        sizeBytes: info.size,
+        cleanup: this.tempDirectoryCleanup(directory),
+        sheetNames: workbook.sheetNames,
+        rowCounts,
+        imageCount: 0,
+        imageLinkCount: counts.imageIds.size,
+        missingImageCount,
+        mode: "stream",
+      };
+    } catch (error) {
+      if (writer !== undefined) await writer.abort();
+      if (directory !== undefined) await this.removeTempDirectory(directory);
+      throw error;
+    }
+  }
+
+  private async *streamPageExportRows(
+    projectId: string,
+    actorId: string,
+    selection: PageExportSheetSelection,
+    users: ReadonlyMap<string, ProjectExportUserLabel>,
+    counts: PageExportStreamingCounts,
+    signal: AbortSignal | undefined,
+  ): AsyncGenerator<PageExportWorkbookRow> {
+    const wantsPhotos = this.pageExportHasPhotoColumn(selection);
+    if (selection.sheet === "reports") {
+      for await (const page of readPaged((page, limit) => this.reports.list(projectId, { page, limit }), "日报", signal)) {
+        for (const report of page.items) {
+          throwIfAborted(signal);
+          const row = pageReportRow(report, users);
+          if (wantsPhotos) for (const id of pageExportPhotoIds([row])) counts.imageIds.add(id);
+          counts.reports += 1;
+          yield row;
+        }
+      }
+      return;
+    }
+    if (selection.sheet === "issues") {
+      for await (const page of readPaged((page, limit) => this.issues.list(projectId, { page, limit }), "问题", signal)) {
+        for (const issue of page.items) {
+          throwIfAborted(signal);
+          const row = pageIssueRow(issue, users);
+          if (wantsPhotos) for (const id of pageExportPhotoIds([row])) counts.imageIds.add(id);
+          counts.issues += 1;
+          yield row;
+        }
+      }
+      return;
+    }
+    for await (const page of readPaged(
+      (page, limit) => this.stakeholders.list({ "filter[projectId]": projectId, page, limit }, actorId),
+      "干系人",
+      signal,
+    )) {
+      for (const item of page.items) {
+        throwIfAborted(signal);
+        counts.stakeholders += 1;
+        yield pageStakeholderRow(item, users);
+      }
+    }
+  }
+
+  private async auditPageExport(
+    project: ExportProject,
+    actorId: string,
+    sheetNames: readonly string[],
+    selections: readonly PageExportSheetSelection[],
+    rowCounts: PageExportRowCounts,
+    metrics: { mode: ProjectExportExecutionMode; images: number; imageLinks: number; missingImages: number },
+  ): Promise<void> {
+    await this.audit.record(this.database.db, {
+      actorId,
+      action: "download",
+      objectType: "project",
+      objectId: project.id,
+      projectId: project.id,
+      summary: "导出页面数据：" + project.code + " " + project.name,
+      metadata: {
+        feature: "page_export",
+        mode: metrics.mode,
+        format: "xlsx",
+        sheets: sheetNames,
+        columns: Object.fromEntries(selections.map((selection) => [selection.sheet, selection.columns])),
+        reports: rowCounts.reports,
+        issues: rowCounts.issues,
+        stakeholders: rowCounts.stakeholders,
+        images: metrics.images,
+        imageLinks: metrics.imageLinks,
+        missingImages: metrics.missingImages,
+      },
+    });
   }
 
   async exportProject(
