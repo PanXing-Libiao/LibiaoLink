@@ -90,9 +90,10 @@ describe("请求体解析安全（GHSA-27r3-jxmh-p828）", () => {
     expect(httpsEnd).toBeGreaterThan(httpsStart);
     const httpsBlock = config.slice(httpsStart, httpsEnd);
 
-    expect(httpsBlock.match(/proxy_pass http:\/\/api_backend;/g)).toHaveLength(4);
-    expect(httpsBlock.match(/\$http_content_encoding !~\* "\^\(identity\)\?\$"/g)).toHaveLength(4);
-    expect(httpsBlock.match(/return 415;/g)).toHaveLength(4);
+    // API 入口 5 个：/api/v1、导入 preview 专用 location、/auth、/healthz、/readyz。
+    expect(httpsBlock.match(/proxy_pass http:\/\/api_backend;/g)).toHaveLength(5);
+    expect(httpsBlock.match(/\$http_content_encoding !~\* "\^\(identity\)\?\$"/g)).toHaveLength(5);
+    expect(httpsBlock.match(/return 415;/g)).toHaveLength(5);
     expect(httpsBlock).not.toContain("proxy_set_header Content-Encoding");
   });
 });

@@ -16,6 +16,7 @@ import type { TaskNodeRepository } from "../src/modules/template/index.js";
 import type { TranslateService } from "../src/modules/translate/index.js";
 import type { ProjectImportRepository } from "../src/modules/project-import/index.js";
 import { ProjectImportService } from "../src/modules/project-import/index.js";
+import type { ImportAdmissionGate } from "../src/modules/project-import/import-admission.gate.js";
 
 /**
  * 导入表导入用例测试（服务端落地 · 业务口径 2026-10-14）：内存替身（不连库 / 不连对象存储）——
@@ -432,6 +433,21 @@ function createHarness() {
     },
   };
 
+  const admission = {
+    attempts: [] as Array<{ previewId: string; sourceBytes: number }>,
+    releases: 0,
+    allow: true,
+    tryCommit(previewId: string, sourceBytes: number): { release(): void } | null {
+      this.attempts.push({ previewId, sourceBytes });
+      if (!this.allow) return null;
+      return {
+        release: () => {
+          this.releases += 1;
+        },
+      };
+    },
+  };
+
   const service = new ProjectImportService(
     database as unknown as DatabaseService,
     previews as unknown as ProjectImportRepository,
@@ -443,9 +459,10 @@ function createHarness() {
     audit as unknown as AuditService,
     storage as unknown as ObjectStorage,
     translate as unknown as TranslateService,
+    admission as unknown as ImportAdmissionGate,
   );
 
-  return { service, previews, projects, members, nodes, audit, storage, translate, flow, permission };
+  return { service, previews, projects, members, nodes, audit, storage, translate, flow, permission, admission };
 }
 
 /** 导入表三种 sheet 的表头（与真实导入表同列名；列顺序可乱，按表头定位）。 */
@@ -989,6 +1006,25 @@ describe("ProjectImportService.preview（导入表解析预览）", () => {
 // ---------- commit ----------
 
 describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
+  it("commit 准入：票据校验后按源文件大小抢额度；拒绝不写入，成功释放", async () => {
+    const h = createHarness();
+    const preview = await runPreview(h);
+    const row = h.previews.row;
+    if (row === null) throw new Error("预览票据未创建");
+
+    h.admission.allow = false;
+    await expectCode(() => h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh"), "RATE_LIMITED");
+    expect(h.admission.attempts[0]).toEqual({ previewId: preview.previewId, sourceBytes: row.fileSizeBytes });
+    expect(h.admission.releases).toBe(0);
+    expect(h.projects.inserted).toHaveLength(0);
+
+    h.admission.allow = true;
+    h.storage.objects.set(row.objectKey, zipStore([{ name: "placeholder", data: Buffer.alloc(0) }]));
+    await h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh");
+    expect(h.admission.attempts).toHaveLength(2);
+    expect(h.admission.releases).toBe(1);
+  });
+
   it("手动补充附件回挂变更：写版本变更 id + 定档 + 审计；冲突 / 跨项目拒绝", async () => {
     const h = createHarness();
     const projectId = "11111111-1111-4111-8111-111111111111";
@@ -1059,12 +1095,14 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
       () => h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh", controller.signal),
       "IMPORT_CANCELLED",
     );
+    expect(h.admission.releases).toBe(1);
     expect(h.projects.inserted.length).toBe(0);
     expect(h.previews.row === null ? "" : h.previews.row.status).toBe("pending");
     expect(h.storage.purged.filter((key) => key.startsWith("projects/")).length).toBe(1);
     expect(h.storage.purged).not.toContain(sourceKey);
     const done = await h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh");
     expect(done.code).toBe(preview.project.code);
+    expect(h.admission.releases).toBe(2);
     expect(h.storage.purged).toContain(sourceKey);
   });
 
