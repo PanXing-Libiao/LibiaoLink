@@ -46,6 +46,7 @@ import type {
 } from "./legacy.js";
 import { proposeAccount, stripParen } from "./people.js";
 import { IMPORT_PREVIEW_SWEEP_BATCH, ProjectImportRepository } from "./project-import.repository.js";
+import type { ProjectImportPreviewRow } from "./project-import.repository.js";
 import type {
   ImportChangeInsert,
   ImportFileInsert,
@@ -54,6 +55,7 @@ import type {
   ImportStakeholderInsert,
   ImportTaskInsert,
 } from "./project-import.repository.js";
+import { ImportAdmissionGate } from "./import-admission.gate.js";
 import { ZipArchive, parseWorkbook, parseWorkbookFile } from "./xlsx.js";
 import type { ParsedWorkbook } from "./xlsx.js";
 
@@ -172,6 +174,7 @@ export class ProjectImportService implements OnModuleInit {
     private readonly audit: AuditService,
     private readonly storage: ObjectStorage,
     private readonly translate: TranslateService,
+    private readonly admission: ImportAdmissionGate,
   ) {}
 
   /** 启动清掉上次进程崩溃遗留的导入临时目录（按前缀 + mtime 保龄，不碰活跃请求）。 */
@@ -353,6 +356,25 @@ export class ProjectImportService implements OnModuleInit {
         "预览票据已过期（" + IMPORT_PREVIEW_TTL_MINUTES + " 分钟内未确认导入），请重新选择文件解析",
       );
     }
+    const lease = this.admission.tryCommit(preview.id, preview.fileSizeBytes);
+    if (lease === null) {
+      throw new AppError("RATE_LIMITED", "导入任务正在处理中，请稍后重试");
+    }
+    try {
+      return await this.commitAdmitted(preview, body, actorId, locale, signal);
+    } finally {
+      lease.release();
+    }
+  }
+
+  /** 已取得 commit 准入后的写入编排；所有等待 / 事务 / 清理均在外层租约保护内。 */
+  private async commitAdmitted(
+    preview: ProjectImportPreviewRow,
+    body: ProjectImportCommitBody,
+    actorId: string,
+    locale: ImportLocale,
+    signal?: AbortSignal,
+  ): Promise<ProjectImportResult> {
     const payload = preview.payload as unknown as ImportPreviewPayload;
     const parse = payload.parse;
     const placement = parse.project;

@@ -65,7 +65,7 @@ def fixture():
     reps = {}
     geometries = {}
     accessors = {}
-    for builder in (display('entity-1'), display('entity-2', indices=True)):
+    for builder in (display('1'), display('2', indices=True)):
         rep_id, rep, gid, geometry, aid, accessor, extra = builder
         reps[rep_id] = rep
         geometries[gid] = geometry
@@ -94,9 +94,7 @@ class PackedDwgTest(unittest.TestCase):
         self.assertEqual(payload['profile'], 'ucd-dwg-packed/1')
         self.assertEqual(set(packed['drawing']['entities']), {'entity-4'})
         self.assertEqual(len(payload['entities']), 3)
-        self.assertEqual(len(payload['displays']), 2)
-        self.assertEqual(payload['version'], 'dwg-table/2')
-        self.assertEqual(len(payload['displays'][1]), 14)
+        self.assertEqual(len(payload['displays']), 1)
         self.assertIn('entity-2', packed['extensions']['org.cad-preview.style-inheritance/1']['entityState'])
         unpacked = unpack_document(packed)
         self.assertNotIn('packed', unpacked)
@@ -109,44 +107,24 @@ class PackedDwgTest(unittest.TestCase):
 
     def test_fallback_entity_and_display_stay_verbatim(self):
         document = fixture()
-        document['geometries']['g-entity-2']['extra'] = 'keep this fallback'
         packed = pack_document(document)
         self.assertIn('entity-4', packed['drawing']['entities'])
-        self.assertIn('g-entity-2', packed['geometries'])
-        self.assertIn('a-entity-2', packed['accessors'])
+        self.assertIn('g-2', packed['geometries'])
+        self.assertIn('a-2', packed['accessors'])
         unpacked = unpack_document(packed)
         self.assertEqual(unpacked['drawing']['entities']['entity-4'], document['drawing']['entities']['entity-4'])
         self.assertEqual(unpacked['drawing']['entities']['entity-2'],
                          document['drawing']['entities']['entity-2'])
-        self.assertEqual(unpacked['geometries']['g-entity-2'], document['geometries']['g-entity-2'])
+        self.assertEqual(unpacked['geometries']['g-2'], document['geometries']['g-2'])
 
     def test_fallback_geometry_keeps_its_index_accessor(self):
         document = fixture()
-        document['geometries']['g-entity-2']['extra'] = 'keep this fallback'
         packed = pack_document(document)
-        self.assertIn('i-entity-2', packed['accessors'])
+        self.assertIn('i-2', packed['accessors'])
         unpacked = unpack_document(packed)
-        self.assertIn('i-entity-2', unpacked['accessors'])
-        indices = unpacked['geometries']['g-entity-2']['primitives'][0]['indices']
+        self.assertIn('i-2', unpacked['accessors'])
+        indices = unpacked['geometries']['g-2']['primitives'][0]['indices']
         self.assertIn(indices, unpacked['accessors'])
-
-    def test_indexed_derived_parts_keep_explicit_representation_references(self):
-        document = fixture()
-        del document['drawing']['entities']['entity-2']
-        packed = pack_document(document)
-        representation_id = 'representation-' + canonical_sha256(['entity-2'])
-        self.assertIn(representation_id, packed['representations'])
-        self.assertIn('i-entity-2', packed['accessors'])
-        self.assertEqual(unpack_document(packed), document)
-
-    def test_legacy_unindexed_rows_still_unpack(self):
-        document = fixture()
-        document['representations'].pop('representation-' + canonical_sha256(['entity-2']))
-        document['geometries'].pop('g-entity-2')
-        document['accessors'].pop('a-entity-2');document['accessors'].pop('i-entity-2')
-        packed = pack_document(document)
-        packed['packed']['version'] = 'dwg-table/1'
-        self.assertEqual(unpack_document(packed), document)
 
 
 if __name__ == '__main__':

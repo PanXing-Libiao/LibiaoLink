@@ -2,26 +2,27 @@
 // Input: a UCD 2.0 envelope whose document carries Drawing tables. The viewer never
 // re-reads DXF. Analytic source curves (Entity.geometry) and the discretized display
 // representation (Representation kind=drawing) are selectable, separate paths.
-import {projectDrawing, projectBlock} from './drawing-projection.js?v=dxf-0.17.1';
+import {projectDrawing, projectBlock} from './drawing-projection.js?v=dxf-0.17.3';
 import {clipInfiniteLine, gradientField, triangleBoundarySegments, traceStrokeSegments} from './drawing-2d.js?v=dxf-2d-0.5.0';
-import {drawingClips, compileClips, triangulateRings, insideRing} from './drawing-clipping.js?v=dxf-0.17.1';
-import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.17.1';
-import {estimateDrawingDraws, projectInstances, projectInstancesSteps, shouldProjectInstances, recordVisibleBounds, INSTANCE_DRAW_LIMIT, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, quantizeLodSize, LOD_MIN_SCREEN_PX, isLodCulled, I} from './drawing-instances.js?v=dxf-0.17.1';
+import {drawingClips, compileClips, triangulateRings, insideRing} from './drawing-clipping.js?v=dxf-0.17.3';
+import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.17.3';
+import {estimateDrawingDraws, projectInstancesSteps, shouldProjectInstances, recordVisibleBounds, INSTANCE_DRAW_LIMIT, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, quantizeLodSize, LOD_MIN_SCREEN_PX, isLodCulled, I} from './drawing-instances.js?v=dxf-0.17.3';
 import Flatbush from './vendor/flatbush.js';
-import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, textOffsets, textWorldCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.1';
-import {aciColor, trueColorCss} from './drawing-colors.js?v=dxf-0.17.1';
-import {resolveTextAvoidance} from './drawing-text-avoidance.js?v=dxf-0.17.1';
-import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentation} from './drawing-pattern.js?v=dxf-0.17.1';
-import {mediaItemFor, rasterRecord} from './drawing-media.js?v=dxf-0.17.1';
+import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, textOffsets, textWorldCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.3';
+import {aciColor, trueColorCss} from './drawing-colors.js?v=dxf-0.17.3';
+import {resolveTextAvoidance} from './drawing-text-avoidance.js?v=dxf-0.17.3';
+import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentation} from './drawing-pattern.js?v=dxf-0.17.3';
+import {mediaItemFor, rasterRecord} from './drawing-media.js?v=dxf-0.17.3';
 
 // Use hybrid rendering automatically; retain compatibility for older browsers.
 const forceCanvasRenderer = typeof location !== 'undefined' && new URLSearchParams(location.search).get('renderer') === 'canvas';
 const accelerated = !forceCanvasRenderer && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined';
 const gpuModules = accelerated ? await Promise.all([
-  import('./gpu/background-painter.js?v=dxf-0.17.1'), import('./gpu/gpu-strokes.js?v=dxf-0.17.1')
+  import('./gpu/background-painter.js?v=dxf-0.17.3'), import('./gpu/gpu-strokes.js?v=dxf-0.17.4'), import('./gpu/stroke-tiles.js?v=dxf-0.17.3')
 ]) : null;
 const createBackgroundPainter = gpuModules?.[0].createBackgroundPainter;
 const createStrokeGPU = gpuModules?.[1].createStrokeGPU;
+const createStrokeTilePlanner = gpuModules?.[2].createStrokeTilePlanner;
 const ACCENT = '#d9426f';
 
 export function mountDrawingViewer(envelope) {
@@ -45,7 +46,9 @@ export function mountDrawingViewer(envelope) {
   if (!canvas) { canvas = document.createElement('canvas'); canvas.id = 'drawingCanvas'; viewport.prepend(canvas); }
   canvas.hidden = false;
   let ctx = canvas.getContext('2d');
-  let strokeGPU = accelerated ? createStrokeGPU() : null;
+  let strokeGPU = gpuModules ? createStrokeGPU() : null;
+  const accelerated = !!strokeGPU;
+  let strokeTiles = strokeGPU && createStrokeTilePlanner ? createStrokeTilePlanner(strokeGPU) : null;
   let background=null;
   canvas.dataset.renderer = accelerated ? 'gpu' : 'canvas';
   let overlay = document.getElementById('drawingOverlay');
@@ -207,7 +210,7 @@ export function mountDrawingViewer(envelope) {
     if (next === '3d' && spaceTarget?.kind !== 'model')
       setSpace({kind:'model',spaceId:Object.values(drawing.drawings)[0].modelSpaceId});
     if (next === '3d' && !meshViewer) {
-      meshLoading ||= import('./drawing-mesh-viewer.js?v=dxf-0.17.1');
+      meshLoading ||= import('./drawing-mesh-viewer.js?v=dxf-0.17.3');
       const {createDrawingMeshViewer} = await meshLoading;
       if (destroyed || request!==viewRequest) return false;
       meshViewer ||= createDrawingMeshViewer({document:ucd, viewport, geometry:representationGeometry, meshIds,
@@ -510,11 +513,12 @@ export function mountDrawingViewer(envelope) {
   function layerVisible(layerId) {
     return layerSourceVisible(layerId) && (userLayers.has(layerId) ? userLayers.get(layerId) : true);
   }
-  function drawVisible(rec) {
+  function drawVisible(rec, sourceOnly=false) {
     const draw = rec.draw;
     if (draw.visibility === 'hidden' || draw.availability !== 'ready') return false;
     const hasGeometry=rec.infinite ? rec.clipRegion.finiteBounds===undefined || !!rec.navigationBounds : !!rec.visibleGeometry.bounds;
-    return hasGeometry && layerVisible(rec.layerId) && draw.visibilityLayerIds.every(layerVisible);
+    const visible=sourceOnly?layerSourceVisible:layerVisible;
+    return hasGeometry && visible(rec.layerId) && draw.visibilityLayerIds.every(visible);
   }
   function rgba(style) {
     const c = style.color || [1, 1, 1, 1];
@@ -854,11 +858,9 @@ export function mountDrawingViewer(envelope) {
   // projection still resolves UCD styles/ownership; Flatbush supplies the spatial
   // index and Canvas Path2D batches consecutive opaque strokes in source order.
   function projectionCount(){return instancePlan?instancePlan.count:Object.keys(projection.draws).length;}
-  function buildInstanceIndexes(){
-    for (const ignored of buildInstanceIndexSteps()) { /* layer changes use existing immediate path */ }
-  }
   function* buildInstanceIndexSteps(){
     if(background){background.dispose();background=null;}
+    strokeTiles?.reset();
     strokeGPU?.reset();
     if(!instancePlan)return;
     const active=new Set(),done=new Set();
@@ -888,7 +890,7 @@ export function mountDrawingViewer(envelope) {
         }
         const visible=[];
         for(const rec of byId.get(entry.id)||[]){
-          if(!drawVisible(rec))continue;
+          if(!drawVisible(rec,true))continue;
           // Infinite lines get a finite navigation box only when a clip window
           // bounds them; unbounded ones are painted per frame and stay unindexed.
           const box=recordVisibleBounds(rec);
@@ -913,9 +915,10 @@ export function mountDrawingViewer(envelope) {
           if(box&&rec.segments?.length&&!rec.fillPath&&!rec.textEntry&&!rec.pointMark&&!rec.infinite&&!rec.raster&&!rec.clipRegion.active&&opaque){
             let dashKey=rec._batchDashKey;
             if(dashKey===undefined){dashKey=rec.dash?.length?rec.dash.join(","):"";rec._batchDashKey=dashKey;}
-            const key=rec.color+"|"+rec.width+"|"+dashKey+"|"+lodSize;
+            const visibilityKey=JSON.stringify([...new Set([rec.layerId,...rec.draw.visibilityLayerIds])].sort());
+            const key=rec.color+"|"+rec.width+"|"+dashKey+"|"+lodSize+"|"+visibilityKey;
             let batch=pending.get(key);
-            if(!batch){batch={kind:"stroke",key,path:accelerated?null:new Path2D(),color:rec.color,width:rec.width,dash:rec.dash,bounds:null,count:0,lodSize,rec,records:[],gpuSegments:[]};pending.set(key,batch);}
+            if(!batch){batch={kind:"stroke",key,visibilityKey,path:accelerated?null:new Path2D(),color:rec.color,width:rec.width,dash:rec.dash,layerId:rec.layerId,bounds:null,count:0,lodSize,rec,records:[],gpuSegments:[]};pending.set(key,batch);}
             batch.records.push(rec);if(accelerated)batch.gpuSegments.push(rec.segments || rec.visibleGeometry?.segments || []);else traceStrokeSegments(batch.path,rec.segments);batch.bounds=extendBounds(batch.bounds,box);batch.count++;
           }else{
             flush();ensureRecordPath(rec);group.paint.push({kind:"record",rec,bounds:box,lodSize});
@@ -923,52 +926,88 @@ export function mountDrawingViewer(envelope) {
         }
       }
       flush();
+      let gpuRun=0,visibility=null;
+      for(const entry of group.paint){
+        if(entry.kind==="stroke"&&!entry.dash?.length&&entry.gpuSegments?.length){
+          if(visibility!==entry.visibilityKey){gpuRun++;visibility=entry.visibilityKey;}
+          entry.gpuRun=gpuRun;
+        }else{entry.gpuRun=-1;gpuRun++;visibility=null;}
+      }
       group.index=null;
       active.delete(group);done.add(group);
     }
     for(const node of instancePlan.roots)yield* compile(node.group,node.matrix);
-    function countPaint(node,parent,minScreenPx=LOD_MIN_SCREEN_PX){
-      const matrix=multiply(parent,node.matrix);
-      const localScale=scale*Math.max(Math.hypot(matrix[0],matrix[1]),Math.hypot(matrix[4],matrix[5]),1e-15);
-      let total=0;
-      for(const entry of node.group.paint){
-        if(entry.kind==="group"){total+=countPaint(entry,matrix,minScreenPx);continue;}
-        if(entry.lodSize&&isLodCulled(entry.lodSize,localScale,minScreenPx))continue;
-        total+=entry.kind==="stroke"?entry.count:1;
-      }
-      return total;
-    }
-    const expandedPaintRecords=instancePlan.roots.reduce((n,node)=>n+countPaint(node,I),0);
-    instancePlan.sourceVisibleRecordCount=visibleRecords;
-    instancePlan.visibleRecordCount=visibleRecords;
-    instancePlan.renderedRecordCount=expandedPaintRecords;
-    instancePlan.culledRecordCount=0;
-    canvas.dataset.sourceVisibleRecords=String(visibleRecords);
-    canvas.dataset.visibleRecords=String(visibleRecords);
-    canvas.dataset.expandedPaintEstimate=String(expandedPaintRecords);
-    canvas.dataset.renderedRecords='0';
-    canvas.dataset.culledRecords=String(visibleRecords);
-    canvas.dataset.lodScale=String(scale);
-    instanceLayerKey=currentInstanceLayerKey();
+    refreshInstanceVisibility();
   }
-  function countInstancePaint(node,parent,minScreenPx=LOD_MIN_SCREEN_PX){
+  // A layer mask changes bounds/hits/counts, not source geometry or GPU buffers.
+  function refreshInstanceVisibility(){
+    if(!instancePlan)return;
+    const done=new Set();let visibleRecords=0;
+    instancePlan.infiniteAnchor=null;
+    const extend=(target,box)=>{if(!box)return target;if(!target)return {...box};target.minX=Math.min(target.minX,box.minX);target.minY=Math.min(target.minY,box.minY);target.maxX=Math.max(target.maxX,box.maxX);target.maxY=Math.max(target.maxY,box.maxY);return target;};
+    function visit(group,matrix){
+      if(done.has(group))return;done.add(group);
+      group.bounds=null;group.hits=[];group.unbounded=false;group.visibleCount=0;
+      group.byKind={entity:0,annotation:0};const ids=new Set();
+      for(const entry of group.paint){
+        if(entry.kind==='group'){
+          visit(entry.group,multiply(matrix,entry.matrix));
+          entry.bounds=transformBounds(entry.group.bounds,entry.matrix);
+          group.bounds=extend(group.bounds,entry.bounds);group.unbounded ||= entry.group.unbounded;
+          if(entry.bounds)group.hits.push(entry);
+          group.visibleCount+=entry.group.visibleCount;
+          for(const kind of ['entity','annotation'])group.byKind[kind]+=entry.group.byKind[kind];
+          continue;
+        }
+        const records=entry.kind==='stroke'?entry.records:[entry.rec];
+        entry.visible=drawVisible(records[0]);
+        if(!entry.visible)continue;
+        for(const rec of records){
+          const box=recordVisibleBounds(rec);
+          if(!box&&!rec.infinite)continue;
+          visibleRecords++;
+          if(!ids.has(rec.id)){ids.add(rec.id);group.visibleCount++;group.byKind[rec.draw.kind]++;}
+          if(box){group.bounds=extend(group.bounds,box);group.hits.push({kind:'record',rec,bounds:box,order:rec.instanceOrder});}
+          else{group.unbounded=true;if(!instancePlan.infiniteAnchor)instancePlan.infiniteAnchor=transformPoint(matrix,...rec.infinite.origin);}
+        }
+      }
+      group.index=null;
+    }
+    for(const node of instancePlan.roots)visit(node.group,node.matrix);
+    const memo=new Map();
+    const expanded=instancePlan.roots.reduce((n,node)=>n+countInstancePaint(node,I,LOD_MIN_SCREEN_PX,memo),0);
+    instancePlan.sourceVisibleRecordCount=visibleRecords;instancePlan.visibleRecordCount=visibleRecords;
+    instancePlan.renderedRecordCount=expanded;instancePlan.culledRecordCount=0;
+    canvas.dataset.sourceVisibleRecords=String(visibleRecords);canvas.dataset.visibleRecords=String(visibleRecords);
+    canvas.dataset.expandedPaintEstimate=String(expanded);canvas.dataset.renderedRecords='0';
+    canvas.dataset.culledRecords=String(visibleRecords);canvas.dataset.lodScale=String(scale);
+    instanceLayerKey=currentInstanceLayerKey();
+    paintCountKey=[paintRevision,scale,instanceLayerKey].join('|');paintCounts.clear();paintCounts.set(LOD_MIN_SCREEN_PX,expanded);
+  }
+  function countInstancePaint(node,parent,minScreenPx=LOD_MIN_SCREEN_PX,memo=new Map()){
     const matrix=multiply(parent,node.matrix);
     const localScale=scale*Math.max(Math.hypot(matrix[0],matrix[1]),Math.hypot(matrix[4],matrix[5]),1e-15);
+    let saved=memo.get(node.group);if(!saved){saved=new Map();memo.set(node.group,saved);}
+    const key=[matrix[0],matrix[1],matrix[2],matrix[4],matrix[5],matrix[6],matrix[8],matrix[9],matrix[10]].join('|');
+    if(saved.has(key))return saved.get(key);
     let total=0;
     for(const entry of node.group.paint){
-      if(entry.kind==="group"){total+=countInstancePaint(entry,matrix,minScreenPx);continue;}
+      if(entry.kind==="group"){total+=countInstancePaint(entry,matrix,minScreenPx,memo);continue;}
+      if(entry.visible===false)continue;
       if(entry.lodSize&&isLodCulled(entry.lodSize,localScale,minScreenPx))continue;
       total+=entry.kind==="stroke"?entry.count:1;
     }
-    return total;
+    saved.set(key,total);return total;
   }
   let paintCountKey = '', paintCounts = new Map();
   function currentInstancePaintCount(minScreenPx=LOD_MIN_SCREEN_PX){
     if (!instancePlan) return 0;
     const key = [paintRevision, scale, instanceLayerKey].join('|');
     if (key !== paintCountKey) { paintCountKey=key; paintCounts.clear(); }
-    if (!paintCounts.has(minScreenPx))
-      paintCounts.set(minScreenPx, instancePlan.roots.reduce((n,node)=>n+countInstancePaint(node,I,minScreenPx),0));
+    if (!paintCounts.has(minScreenPx)){
+      const memo=new Map();
+      paintCounts.set(minScreenPx, instancePlan.roots.reduce((n,node)=>n+countInstancePaint(node,I,minScreenPx,memo),0));
+    }
     return paintCounts.get(minScreenPx);
   }
 
@@ -984,12 +1023,12 @@ export function mountDrawingViewer(envelope) {
     group.index = index;
     return index;
   }
-  function refreshInstanceLayers(){if(instancePlan&&instanceLayerKey!==currentInstanceLayerKey())buildInstanceIndexes();}
+  function refreshInstanceLayers(){if(instancePlan&&instanceLayerKey!==currentInstanceLayerKey())refreshInstanceVisibility();}
 
   const INSTANCE_SYNC_PAINT_LIMIT = 5000;
   const INSTANCE_WORKER_PAINT_LIMIT = 200000;
   const INSTANCE_OVERVIEW_SCREEN_PX = 3;
-  const INSTANCE_INTERACTION_SETTLE_MS = 700;
+  const INSTANCE_INTERACTION_SETTLE_MS = 220;
   const ORDINARY_INTERACTION_SETTLE_MS = 220;
   let paintRevision = 0;
   let instanceRefresh = null;
@@ -998,14 +1037,16 @@ export function mountDrawingViewer(envelope) {
   function currentInstanceLayerKey() {
     return JSON.stringify([...userLayers]);
   }
+  function instanceBasePaintKey() {
+    return [scale,tx,ty,dpr,canvas.width,canvas.height,paintRevision,currentInstanceLayerKey()].join('|');
+  }
   function instancePaintKey() {
     const selection = instanceSelected
       ? [instanceSelected.id || '', instanceSelected.draw?.id || '',
           instanceSelected.bbox ? [instanceSelected.bbox.minX, instanceSelected.bbox.minY,
             instanceSelected.bbox.maxX, instanceSelected.bbox.maxY].join(':') : ''].join('|')
       : '';
-    return [scale, tx, ty, dpr, canvas.width, canvas.height, paintRevision,
-      currentInstanceLayerKey(), selection].join('|');
+    return instanceBasePaintKey()+'|'+selection;
   }
   function hasUsablePreview() {
     return previewValid && !!previewCanvas && !!previewView
@@ -1036,7 +1077,7 @@ export function mountDrawingViewer(envelope) {
     if (!instancePlan) return;
     if (instanceLayerKey !== currentInstanceLayerKey()) {
       cancelInstanceRefresh();
-      buildInstanceIndexes();
+      refreshInstanceVisibility();
     }
     const key = instancePaintKey();
     if (instanceRefresh) {
@@ -1109,6 +1150,12 @@ export function mountDrawingViewer(envelope) {
     const paintCount = phase === "preview"
       ? currentInstancePaintCount(minScreenPx)
       : (instancePlan.renderedRecordCount ?? instancePlan.visibleRecordCount ?? instancePlan.count);
+    // Persistent WebGL tiles already keep geometry off the CPU paint loop. The
+    // Canvas2D worker remains a fallback for browsers without WebGL2/tile support.
+    if (strokeTiles) {
+      canvas.dataset.gpuTiles = "persistent";
+      return refreshCanvasInstancesInFrames(key, !hasUsablePreview(), {phase, minScreenPx});
+    }
     if (!accelerated || paintCount > INSTANCE_WORKER_PAINT_LIMIT) {
       return refreshCanvasInstancesInFrames(key, !hasUsablePreview(), {phase, minScreenPx});
     }
@@ -1282,7 +1329,7 @@ export function mountDrawingViewer(envelope) {
         let result;
         const stepStarted = performance.now();
         if (context) ctx = context;
-        strokeGPU = null;
+        strokeGPU = strokeTiles ? device : null;
         try { result = job.steps.next(); } finally { ctx = screen; strokeGPU = device; }
         if (result.done) job.result = result.value;
         job.maxStepMs = Math.max(job.maxStepMs, performance.now() - stepStarted);
@@ -1334,8 +1381,9 @@ export function mountDrawingViewer(envelope) {
     refreshInstanceLayers();
     ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle='#fff';ctx.fillRect(0,0,cssW,cssH);
     strokeGPU?.begin(canvas.width,canvas.height);
-    const view={minX:-tx/scale,maxX:(cssW-tx)/scale,minY:(ty-cssH)/scale,maxY:ty/scale};
-    let calls=0;
+    const view={minX:-tx/scale,maxX:(cssW-tx)/scale,minY:(ty-cssH)/scale,maxY:ty/scale,scale,tx,ty,dpr};
+    let calls=0,activeGpuNode=null,activeGpuRun=-1;
+    const tilePaint={tiles:0,segments:0,styles:0,level:0,built:0,reused:0};
     const paintStats={rendered:0,culled:0,drawn:0,pendingRaster:0,renderedSource:new Set(),samples:[]};
     const intersects=b=>b&&b.minX<=view.maxX&&b.maxX>=view.minX&&b.minY<=view.maxY&&b.maxY>=view.minY;
     function setMatrix(m){ctx.setTransform(dpr*scale*m[0],-dpr*scale*m[1],dpr*scale*m[4],-dpr*scale*m[5],dpr*(tx+scale*m[12]),dpr*(ty-scale*m[13]));}
@@ -1370,26 +1418,43 @@ export function mountDrawingViewer(envelope) {
         if (++visited % 32 === 0 && performance.now() - sliceStarted >= 6) {
           strokeGPU?.flush(ctx); yield; sliceStarted = performance.now();
         }
-        if(entry.kind==='group'){yield* paint(entry,matrix);continue;}
+        if(entry.kind==='group'){activeGpuNode=null;activeGpuRun=-1;yield* paint(entry,matrix);continue;}
         if(entry.bounds&&!intersects(transformBounds(entry.bounds,matrix))){
           paintStats.culled+=entry.kind==='stroke'?entry.count:1;continue;
         }
+        if(entry.visible===false)continue;
         if(entry.lodSize&&isLodCulled(entry.lodSize,localScale,minScreenPx)){
           paintStats.culled+=entry.kind==='stroke'?entry.count:1;
           noteHiddenSample(entry.rec,matrix);
           continue;
         }
         if(entry.kind==='stroke'){
-          const sx=Math.hypot(matrix[0],matrix[1]), sy=Math.hypot(matrix[4],matrix[5]);
-          const uniform=Math.abs(sx-sy)<1e-8*Math.max(sx,sy) && Math.abs(matrix[0]*matrix[4]+matrix[1]*matrix[5])<1e-8*sx*sy;
           for(const record of entry.records)paintStats.renderedSource.add(record.id);
-          if(strokeGPU && uniform && !entry.dash?.length && entry.gpuSegments.length && entry.gpuSegments.every(a=>a.length)){
-            strokeGPU.stroke(entry,matrix,{scale,tx,ty,dpr});calls++;paintStats.rendered+=entry.count;paintStats.drawn+=entry.count;continue;
+          if(strokeGPU&&strokeTiles&&entry.gpuRun>=0&&entry.gpuSegments?.length){
+            if(activeGpuNode!==node||activeGpuRun!==entry.gpuRun){
+              const steps=strokeTiles.drawRunSteps(node,entry.gpuRun,node.group.paint,matrix,view,scale,minScreenPx);
+              let next;
+              do{
+                next=steps.next();
+                if(!next.done){strokeGPU.flush(ctx);yield;sliceStarted=performance.now();}
+              }while(!next.done);
+              const result=next.value;
+              activeGpuNode=node;activeGpuRun=entry.gpuRun;
+              if(result.tiles){
+                tilePaint.tiles+=result.tiles;tilePaint.segments+=result.segments;
+                tilePaint.styles+=result.styles;tilePaint.level=Math.max(tilePaint.level,result.level);
+                tilePaint.built+=result.built||0;tilePaint.reused+=result.reused||0;
+              }
+            }
+            calls++;paintStats.rendered+=entry.count;paintStats.drawn+=entry.count;continue;
           }
-          strokeGPU?.flush(ctx);
+          activeGpuNode=null;activeGpuRun=-1;
           setMatrix(matrix);calls++;paintStats.rendered+=entry.count;paintStats.drawn+=entry.count;
+          if(entry.dash?.length&&strokeGPU?.drawDashed?.(entry,view,matrix))continue;
+          strokeGPU?.flush(ctx);
           ctx.strokeStyle=entry.color;ctx.lineWidth=entry.width/localScale;ctx.lineJoin='round';ctx.lineCap=entry.dash?.length?'round':'butt';ctx.setLineDash(entry.dash||[]);ctx.stroke(ensureBatchPath(entry));continue;
         }
+        activeGpuNode=null;activeGpuRun=-1;
         strokeGPU?.flush(ctx);
         const rec=entry.rec;
         if(rec.infinite){
@@ -1468,12 +1533,21 @@ export function mountDrawingViewer(envelope) {
       canvas.dataset.renderedSourceRecords=String(renderedSourceTotal);
       canvas.dataset.culledRecords=String(instancePlan.lastCulledRecordCount);
       canvas.dataset.lodSamples=JSON.stringify(paintStats.samples);
+      const gpuStats=strokeGPU?.stats?.()||{};
+      const tileCache=strokeTiles?.stats?.()||{};
+      canvas.dataset.gpuTiles=strokeTiles?"persistent":"off";
+      canvas.dataset.gpuTilesDrawn=String(tilePaint.tiles);
+      canvas.dataset.gpuTileSegments=String(gpuStats.segments||0);
+      canvas.dataset.gpuTileStyleBatches=String(tilePaint.styles);
+      canvas.dataset.gpuTileLevel=String(tilePaint.level);
+      canvas.dataset.gpuTileCalls=String(gpuStats.calls||0);
+      canvas.dataset.gpuTileBufferBytes=String(gpuStats.bytes||0);
+      canvas.dataset.gpuTileCacheTiles=String(tileCache.cachedTiles||0);
+      canvas.dataset.gpuTileBuildsThisPaint=String(tilePaint.built);
+      canvas.dataset.gpuTileReuseThisPaint=String(tilePaint.reused);
+      canvas.dataset.gpuTileBuilds=String(tileCache.builtTiles||0);
     }
     if(profile){canvas.dataset.lastPaintMs=(performance.now()-paintStarted).toFixed(1);canvas.dataset.lastPaintCalls=String(calls);}
-    if(instanceSelected){
-      const {record:rec,matrix}=instanceSelected.instance;setMatrix(matrix);ctx.setLineDash([]);ctx.strokeStyle=ACCENT;ctx.lineWidth=2.4/(scale*Math.max(matrixScale(matrix),1e-15));
-      ensureRecordPath(rec);if(rec.path)ctx.stroke(rec.path);else if(rec.fillPath)ctx.stroke(rec.fillPath);else if(rec.bbox){const b=rec.bbox;ctx.strokeRect(b.minX,b.minY,b.maxX-b.minX,b.maxY-b.minY);}
-    }
     ctx.setTransform(dpr,0,0,dpr,0,0);
     return {drawn:paintStats.drawn,pendingRaster:paintStats.pendingRaster,rendered:paintStats.rendered,culled:paintStats.culled};
   }
@@ -1612,8 +1686,26 @@ export function mountDrawingViewer(envelope) {
     cache.setTransform(1, 0, 0, 1, 0, 0);
     cache.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
     cache.drawImage(canvas, 0, 0);
-    previewView = { scale, tx, ty };
+    previewView = { scale, tx, ty, baseKey:instancePlan?instanceBasePaintKey():null };
     previewValid = true;
+    if(instancePlan)paintInstanceSelection();
+  }
+  function paintInstanceSelection(){
+    if(!instanceSelected||spatialView!=='2d')return;
+    const {record:rec,matrix:m}=instanceSelected.instance;
+    if(rec.draw&&!drawVisible(rec))return;
+    ctx.save();ctx.setTransform(dpr*scale*m[0],-dpr*scale*m[1],dpr*scale*m[4],-dpr*scale*m[5],dpr*(tx+scale*m[12]),dpr*(ty-scale*m[13]));
+    ctx.setLineDash([]);ctx.strokeStyle=ACCENT;ctx.lineWidth=2.4/(scale*Math.max(matrixScale(m),1e-15));
+    ensureRecordPath(rec);
+    if(rec.path)ctx.stroke(rec.path);else if(rec.fillPath)ctx.stroke(rec.fillPath);else if(rec.bbox){const b=rec.bbox;ctx.strokeRect(b.minX,b.minY,b.maxX-b.minX,b.maxY-b.minY);}
+    ctx.restore();
+  }
+  function drawRetainedSelection(){
+    if(instancePlan&&spatialView==='2d'&&!interacting&&!initialBuild&&!instanceRefresh
+        &&canvas.dataset.instancePaint==='complete'&&hasUsablePreview()&&previewView.baseKey===instanceBasePaintKey()){
+      drawPreview();canvas.dataset.selectionRepaint='cached';return;
+    }
+    draw();
   }
   function interactionSettled() {
     if (destroyed) return;
@@ -1654,6 +1746,7 @@ export function mountDrawingViewer(envelope) {
     ctx.setTransform(k, 0, 0, k, dpr * (tx - k * previewView.tx), dpr * (ty - k * previewView.ty));
     ctx.drawImage(previewCanvas, 0, 0);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if(instancePlan)paintInstanceSelection();
     return true;
   }
   function draw() {
@@ -2077,7 +2170,7 @@ export function mountDrawingViewer(envelope) {
     }
     const el = document.getElementById('selected');
     if (el) el.textContent = selected.size ? selectedLabel + (selected.size > 1 ? '（+' + (selected.size - 1) + '）' : '') : '尚未选择';
-    draw(); updateSelectionButtons(); renderBlocks();
+    drawRetainedSelection(); updateSelectionButtons(); renderBlocks();
   }
   function selectInstance(instanceId) {
     if(instancePlan){
@@ -2090,7 +2183,7 @@ export function mountDrawingViewer(envelope) {
       selected.clear();selected.add('instance-selection:'+instanceId);selectedInstance=instanceId;selectedBlockDetails=true;
       const box=found.node.group.bounds;instanceSelected={bbox:transformBounds(box,found.matrix),instance:{record:{bbox:box},matrix:found.matrix}};
       selectedLabel='块实例 '+drawing.blocks[drawing.blockInstances[instanceId].definitionId].name+' · '+found.node.group.count+' 项 · 句柄 '+(drawing.blockInstances[instanceId].sourceRefs[0]?.objectKey||'?');
-      document.getElementById('selected').textContent=selectedLabel;draw();updateSelectionButtons();renderBlocks();return;
+      document.getElementById('selected').textContent=selectedLabel;drawRetainedSelection();updateSelectionButtons();renderBlocks();return;
     }
     selected.clear(); selectedInstance = instanceId;selectedBlockDetails=true;
     const inst = drawing.blockInstances[instanceId];
@@ -2098,7 +2191,7 @@ export function mountDrawingViewer(envelope) {
     const block = inst ? drawing.blocks[inst.definitionId] : null;
     selectedLabel = '块实例 ' + (block ? block.name : instanceId.slice(0, 12)) + ' · ' + selected.size + ' 个绘制项';
     const el = document.getElementById('selected'); if (el) el.textContent = selectedLabel;
-    draw(); updateSelectionButtons(); renderBlocks();
+    drawRetainedSelection(); updateSelectionButtons(); renderBlocks();
   }
   function focusSourceHandle(handle){
     const key=String(handle).toUpperCase();
@@ -2200,16 +2293,19 @@ export function mountDrawingViewer(envelope) {
       label.append(select); host.append(label);
     }
   }
+  let layerCountCache=null;
+  function layerRecordCounts(){
+    if(layerCountCache?.records===built&&layerCountCache.length===built.length)return layerCountCache.counts;
+    const counts=new Map();
+    for(const rec of built)for(const id of new Set([rec.layerId,...rec.draw.visibilityLayerIds])){
+      const row=counts.get(id)||{layer:drawing.layers[id],ids:new Set()};row.ids.add(rec.id);counts.set(id,row);
+    }
+    layerCountCache={records:built,length:built.length,counts};return counts;
+  }
   function renderLayers() {
     const host = panel.querySelector('.dlayers'); if (!host) return;
     host.replaceChildren();
-    const counts = new Map();
-    for (const rec of built) {
-      for (const id of new Set([rec.layerId,...rec.draw.visibilityLayerIds])) {
-        const row=counts.get(id)||{layer:drawing.layers[id],ids:new Set()};
-        row.ids.add(rec.id);counts.set(id,row);
-      }
-    }
+    const counts = layerRecordCounts();
     const rows = [...counts.entries()].sort((a, b) => (a[1].layer ? a[1].layer.name : '').localeCompare(b[1].layer ? b[1].layer.name : ''));
     for (const [layerId, row] of rows) {
       const layer = row.layer || { name: layerId, defaultStyle: { color: { rgba: [1, 1, 1, 1] } } };
@@ -2546,6 +2642,7 @@ export function mountDrawingViewer(envelope) {
     const nextPlotPreview = plotPreviewFor(target);
     rememberSpaceState();
     cancelInitialBuild();
+    cancelInstanceRefresh();
     if (restoreSpaceState(target, nextPlotPreview)) {
       plotPreview = nextPlotPreview;
       renderSpaces(); renderBlocks(); renderCoverage(); renderPlotControls(); updateSelectionButtons();
@@ -2574,7 +2671,7 @@ export function mountDrawingViewer(envelope) {
       renderSpaces(); renderBlocks(); renderCoverage(); renderPlotControls();
       fit(); updateSelectionButtons(); window.__cadTimingMark?.("spaceReady");
     };
-    if (mounting && retained) {
+    if (retained) {
       // The retained plan is private until traversal has finished. Cancellation
       // closes the same task and nested generators used by the subsequent build.
       startInitialBuild((function*(){
@@ -2585,14 +2682,10 @@ export function mountDrawingViewer(envelope) {
       })(),finishSpace);
       return;
     }
-    if(retained){
-      instancePlan=projectInstances(ucd,target,presentationStyles);projection=instancePlan.projection;effectiveLayers=instancePlan.layers;
-    }else{
-      projection = target.kind === 'block-preview'
-        ? projectBlock(ucd, target.blockId, layerMap, presentationStyles)
-        : projectDrawing(ucd, target, layerMap, presentationStyles);
-      effectiveLayers = new WeakMap(Object.entries(projection.draws).map(([id, draw]) => [draw, layerMap[id]]));
-    }
+    projection = target.kind === 'block-preview'
+      ? projectBlock(ucd, target.blockId, layerMap, presentationStyles)
+      : projectDrawing(ucd, target, layerMap, presentationStyles);
+    effectiveLayers = new WeakMap(Object.entries(projection.draws).map(([id, draw]) => [draw, layerMap[id]]));
     beginRebuild();rebuild(finishSpace);
   }
 
@@ -2721,14 +2814,8 @@ export function mountDrawingViewer(envelope) {
       userLayers.set(layer.id, !!visible); renderLayers(); draw(); updateStats(); return true;
     },
     layerStates() {
-      const counts = new Map();
-      for (const rec of built) {
-        for (const layerId of new Set([rec.layerId,...rec.draw.visibilityLayerIds])) {
-          if (!counts.has(layerId)) counts.set(layerId, new Set());
-          counts.get(layerId).add(rec.id);
-        }
-      }
-      return Object.values(drawing.layers).map(l => ({ id: l.id, name: l.name, draws: counts.get(l.id)?.size || 0,
+      const counts = layerRecordCounts();
+      return Object.values(drawing.layers).map(l => ({ id: l.id, name: l.name, draws: counts.get(l.id)?.ids.size || 0,
         sourceVisible: layerSourceVisible(l.id), userVisible: userLayers.has(l.id) ? userLayers.get(l.id) : true }));
     },
     fit,
@@ -2811,6 +2898,7 @@ export function mountDrawingViewer(envelope) {
       if (interactionFrame) { cancelAnimationFrame(interactionFrame); interactionFrame = 0; }
       if (interactionTimer) { clearTimeout(interactionTimer); interactionTimer = 0; }
       background?.dispose();
+      strokeTiles?.reset();
       strokeGPU?.dispose();
       rasterCache.clear();
       rasterProbes.clear();

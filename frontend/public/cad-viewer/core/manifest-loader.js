@@ -1,7 +1,7 @@
-import {applyManifestEntries} from './manifest-parts.js';
+import {applyManifestEntries} from './manifest-parts.js?v=cad-handoff-1';
 import {decodeManifestBytes} from './manifest-decode.js';
 const WORKER_BYTES=1024*1024;
-const createWorker=()=>new Worker(new URL('./manifest-worker.js',import.meta.url),{type:'module'});
+const createWorker=()=>new Worker(new URL('./manifest-worker.js?v=cad-handoff-1',import.meta.url),{type:'module'});
 
 /** One owner per load: cancellation terminates CPU work and rejects stale results. */
 export async function decodeManifest(bytes,{signal,workerFactory=createWorker}={}){
