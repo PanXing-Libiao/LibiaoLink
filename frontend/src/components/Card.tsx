@@ -1,6 +1,9 @@
 import type { CSSProperties, ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useLocalizedText, useT } from "../i18n";
+import type { ProjectExportFormat } from "../projectApi";
 import { RowDeleteButton } from "./RowDeleteButton";
+import { usePopover } from "./usePopover";
 
 /**
  * 项目卡片（首页）：主题色由字典 projectType 条目的 metadata.accent / accentText 下发（M2-07 · A3），
@@ -60,8 +63,8 @@ type CardProps = {
   onEdit?: () => void;
   /** 恢复项目（项目回收站：占用原编辑按钮位；与 onEdit 互斥，优先渲染）。 */
   onRestore?: () => void;
-  /** 导出项目全部数据（project.export；隐式：位于编辑与删除之间；不传 = 不渲染）。 */
-  onExport?: () => void;
+  /** 导出项目数据（project.export；隐式：位于编辑与删除之间；点开选择 xlsx / Excel+附件 ZIP）。 */
+  onExport?: (format: ProjectExportFormat) => void;
   /** 当前项目正在导出：按钮保持可见并显示忙碌态，防止重复点击。 */
   exporting?: boolean;
   /** 移入项目回收站（首页卡片；隐式：与编辑同款；不传 = 不渲染）。 */
@@ -99,6 +102,7 @@ export function Card({
   purgeLabel,
 }: CardProps) {
   const t = useT();
+  const exportMenu = usePopover(248, 116);
   /** 手打内容（项目名）机翻显示：英文界面显示译文（到位后自动切换），悬停看原文。 */
   const localizedDescription = useLocalizedText(description);
   /** 序号文案：不足两位补零（7 → "07"）；**三位数之后不再有位置问题** —— 数字锚在圆点右内侧（right-6，不再用 left-6），
@@ -180,17 +184,20 @@ export function Card({
         ) : null}
         {onExport !== undefined ? (
           <button
+            ref={exportMenu.triggerRef}
             type="button"
             data-card-export="true"
             disabled={exporting}
             aria-busy={exporting ? true : undefined}
+            aria-haspopup="menu"
+            aria-expanded={exportMenu.open}
             onClick={(event) => {
               event.stopPropagation();
-              onExport();
+              exportMenu.setOpen(!exportMenu.open);
             }}
             aria-label={exporting ? t("card.exporting") : t("card.export")}
             title={exporting ? t("card.exporting") : t("card.export")}
-            className={"relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-zinc-400/70 transition duration-200 hover:bg-white hover:text-zinc-700 hover:shadow-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60 disabled:cursor-wait " + (exporting ? "opacity-100 text-zinc-500" : "opacity-0 group-hover:text-zinc-400 group-hover:opacity-100 focus-visible:opacity-100")}
+            className={"relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-zinc-400/70 transition duration-200 hover:bg-white hover:text-zinc-700 hover:shadow-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60 disabled:cursor-wait " + (exporting || exportMenu.open ? "opacity-100 text-zinc-600" : "opacity-0 group-hover:text-zinc-400 group-hover:opacity-100 focus-visible:opacity-100")}
           >
             {exporting ? (
               <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 animate-spin" aria-hidden="true">
@@ -204,6 +211,71 @@ export function Card({
             )}
           </button>
         ) : null}
+        {exportMenu.open && exportMenu.position !== null && onExport !== undefined
+          ? createPortal(
+              <div
+                ref={exportMenu.popoverRef}
+                role="menu"
+                aria-label={t("card.export.menu")}
+                data-card-export-menu="true"
+                onClick={(event) => {
+                  event.stopPropagation();
+                }}
+                style={{ position: "fixed", top: exportMenu.position.top, left: exportMenu.position.left, width: exportMenu.position.width }}
+                className="z-[140] rounded-xl border border-zinc-200 bg-white p-1 shadow-[0_14px_40px_rgba(24,24,27,0.18)] ring-1 ring-black/5"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-card-export-format="xlsx"
+                  onClick={() => {
+                    exportMenu.setOpen(false);
+                    onExport("xlsx");
+                  }}
+                  className="group/export-item flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition hover:bg-zinc-100 focus:bg-zinc-100 focus:outline-none"
+                >
+                  <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100">
+                    <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                      <path d="M7 3.75h7.5L19 8.25v12H7a1.5 1.5 0 0 1-1.5-1.5V5.25A1.5 1.5 0 0 1 7 3.75Z" stroke="currentColor" strokeWidth="1.6" />
+                      <path d="M14.5 3.75v4.5H19M8.5 12h6m-6 3h6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2 text-sm font-medium text-zinc-800">
+                      <span className="truncate">{t("card.export.xlsx")}</span>
+                      <span className="ml-auto font-mono text-[10px] text-zinc-400">.xlsx</span>
+                    </span>
+                    <span className="mt-0.5 block text-[11px] text-zinc-400">{t("card.export.xlsxHint")}</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-card-export-format="zip"
+                  onClick={() => {
+                    exportMenu.setOpen(false);
+                    onExport("zip");
+                  }}
+                  className="group/export-item flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition hover:bg-zinc-100 focus:bg-zinc-100 focus:outline-none"
+                >
+                  <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-700 ring-1 ring-amber-100">
+                    <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                      <path d="M4.5 7.5h5l1.25-1.75h8.75c.69 0 1.25.56 1.25 1.25v11.5c0 .69-.56 1.25-1.25 1.25H4.5c-.69 0-1.25-.56-1.25-1.25V8.75c0-.69.56-1.25 1.25-1.25Z" stroke="currentColor" strokeWidth="1.6" />
+                      <path d="M9 12h6m-6 3h4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                    </svg>
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2 text-sm font-medium text-zinc-800">
+                      <span className="truncate">{t("card.export.zip")}</span>
+                      <span className="ml-auto font-mono text-[10px] text-zinc-400">.zip</span>
+                    </span>
+                    <span className="mt-0.5 block text-[11px] text-zinc-400">{t("card.export.zipHint")}</span>
+                  </span>
+                </button>
+              </div>,
+              document.body,
+            )
+          : null}
         {onPurge !== undefined ? (
           <span className="flex h-6 w-20 shrink-0 items-center">
             <RowDeleteButton

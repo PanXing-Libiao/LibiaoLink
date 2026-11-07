@@ -1,14 +1,26 @@
 import ExcelJS from "exceljs";
 import { describe, expect, it, vi } from "vitest";
-import { access, mkdtemp, rm, stat } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { contentDispositionFor, requestOriginCandidate } from "../src/modules/project-export/project-export.controller.js";
+import { Readable } from "node:stream";
+import { inflateRawSync } from "node:zlib";
+import { contentDispositionFor, projectExportFormat, requestOriginCandidate } from "../src/modules/project-export/project-export.controller.js";
+import {
+  planProjectArchiveAttachments,
+  projectArchiveHref,
+  projectArchiveLinks,
+  ProjectZipWriter,
+  type ProjectArchiveAttachmentSource,
+} from "../src/modules/project-export/project-export.archive.js";
 import { ProjectExportService, resolveProjectExportMode, splitChangeReason } from "../src/modules/project-export/project-export.service.js";
 import {
   ProjectExportWorkbookWriter,
   buildProjectExportWorkbook,
   normalizeHttpOrigin,
+  projectExportArchiveFileName,
+  projectExportArchiveStem,
+  projectExportArchiveWorkbookName,
   projectExportFileName,
   versionNameOf,
   type ProjectExportPayload,
@@ -103,6 +115,39 @@ function payload(): ProjectExportPayload {
 
 function headersOf(sheet: ExcelJS.Worksheet): unknown[] {
   return Array.from({ length: sheet.columnCount }, (_value, index) => sheet.getCell(1, index + 1).value);
+}
+
+
+function readZipEntries(bytes: Buffer): Map<string, Buffer> {
+  let eocd = -1;
+  for (let offset = bytes.length - 22; offset >= Math.max(0, bytes.length - 65_557); offset -= 1) {
+    if (bytes.readUInt32LE(offset) === 0x06054b50) {
+      eocd = offset;
+      break;
+    }
+  }
+  if (eocd < 0) throw new Error("EOCD 缺失");
+  const count = bytes.readUInt16LE(eocd + 10);
+  const centralOffset = bytes.readUInt32LE(eocd + 16);
+  const result = new Map<string, Buffer>();
+  let cursor = centralOffset;
+  for (let index = 0; index < count; index += 1) {
+    if (bytes.readUInt32LE(cursor) !== 0x02014b50) throw new Error("中央目录损坏");
+    const method = bytes.readUInt16LE(cursor + 10);
+    const compressedSize = bytes.readUInt32LE(cursor + 20);
+    const nameLength = bytes.readUInt16LE(cursor + 28);
+    const extraLength = bytes.readUInt16LE(cursor + 30);
+    const commentLength = bytes.readUInt16LE(cursor + 32);
+    const localOffset = bytes.readUInt32LE(cursor + 42);
+    const name = bytes.subarray(cursor + 46, cursor + 46 + nameLength).toString("utf8");
+    const localNameLength = bytes.readUInt16LE(localOffset + 26);
+    const localExtraLength = bytes.readUInt16LE(localOffset + 28);
+    const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
+    const compressed = bytes.subarray(dataOffset, dataOffset + compressedSize);
+    result.set(name, method === 8 ? inflateRawSync(compressed) : Buffer.from(compressed));
+    cursor += 46 + nameLength + extraLength + commentLength;
+  }
+  return result;
 }
 
 async function* rowsOf<T>(values: readonly T[]): AsyncGenerator<T> {
@@ -267,11 +312,174 @@ describe("项目数据导出工作簿", () => {
   });
 });
 
+describe("项目 Excel + 附件 ZIP", () => {
+  it("内置 ZIP 写入器支持中文路径、压缩与未压缩条目", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "libiaolink-zip-test-"));
+    const filePath = join(directory, "sample.zip");
+    try {
+      const writer = new ProjectZipWriter(filePath);
+      await writer.open();
+      await writer.addBuffer("项目/说明.txt", Buffer.from("你好", "utf8"));
+      await writer.addBuffer("项目/附件/原图.jpg", Buffer.from("not-really-jpeg"), false);
+      await writer.close();
+      const entries = readZipEntries(await readFile(filePath));
+      expect([...entries.keys()]).toEqual(["项目/说明.txt", "项目/附件/原图.jpg"]);
+      expect(entries.get("项目/说明.txt")?.toString("utf8")).toBe("你好");
+      expect(entries.get("项目/附件/原图.jpg")?.toString("utf8")).toBe("not-really-jpeg");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("附件规划按目录去重、重名追加序号，并为 Excel 生成编码后的相对链接", () => {
+    const sources: ProjectArchiveAttachmentSource[] = [
+      { key: "a", sourcePage: "日报及问题汇总", sourceRow: 2, sourceRecord: "9月1日", attachmentType: "现场工作附图", directory: "日报及问题汇总/现场工作附图", fileId: "file-1", fileName: "现场 1.png" },
+      { key: "b", sourcePage: "日报及问题汇总", sourceRow: 3, sourceRecord: "9月2日", attachmentType: "现场工作附图", directory: "日报及问题汇总/现场工作附图", fileId: "file-1", fileName: "现场 1.png" },
+      { key: "c", sourcePage: "日报及问题汇总", sourceRow: 4, sourceRecord: "9月3日", attachmentType: "现场工作附图", directory: "日报及问题汇总/现场工作附图", fileId: "file-2", fileName: "现场 1.png" },
+      { key: "d", sourcePage: "变更管理", sourceRow: 2, sourceRecord: "变更", attachmentType: "变更后文件", directory: "变更管理/变更后文件", fileId: "missing", fileName: "缺失.pdf" },
+    ];
+    const plan = planProjectArchiveAttachments(sources, new Map([
+      ["file-1", { id: "file-1", name: "现场 1.png", mime: "image/png", sizeBytes: 10, objectKey: "objects/1" }],
+      ["file-2", { id: "file-2", name: "现场 1.png", mime: "image/png", sizeBytes: 20, objectKey: "objects/2" }],
+    ]));
+    expect(plan.files).toHaveLength(3);
+    expect(plan.references[0]?.file.relativePath).toBe("附件/日报及问题汇总/现场工作附图/现场 1.png");
+    expect(plan.references[1]?.file.relativePath).toBe("附件/日报及问题汇总/现场工作附图/现场 1.png");
+    expect(plan.references[2]?.file.relativePath).toBe("附件/日报及问题汇总/现场工作附图/现场 1_2.png");
+    expect(plan.references[3]?.file.status).toBe("missing");
+    expect(projectArchiveHref("附件/日报及问题汇总/现场工作附图/现场 1.png")).toContain("%E7%8E%B0%E5%9C%BA%201.png");
+    expect(projectArchiveLinks(plan).get("a")).toBe(projectArchiveHref("附件/日报及问题汇总/现场工作附图/现场 1.png"));
+    expect(projectArchiveLinks(plan).has("d")).toBe(false);
+  });
+
+  it("ZIP 模式工作簿增加附件清单 Sheet，附图最多嵌 4 张并链接相对路径", async () => {
+    const sample = payload();
+    const photos = Array.from({ length: 6 }, (_value, index) => ({
+      fileId: "archive-photo-" + String(index + 1),
+      name: "附件图" + String(index + 1) + ".png",
+      href: "./附件/日报及问题汇总/现场工作附图/附件图" + String(index + 1) + ".png",
+    }));
+    for (const photo of photos) sample.images.set(photo.fileId, { bytes: PNG, extension: "png" });
+    sample.reports[0]!.onsitePhotos = photos;
+    sample.attachmentSheet = [{
+      sourcePage: "日报及问题汇总",
+      sourceRow: 2,
+      sourceRecord: "2026年9月1日",
+      attachmentType: "现场工作附图",
+      fileName: "附件图1.png",
+      relativePath: "附件/日报及问题汇总/现场工作附图/附件图1.png",
+      sizeBytes: PNG.byteLength,
+      status: "已包含",
+    }];
+    sample.imageLimitPerCell = 4;
+    const result = await buildProjectExportWorkbook(sample);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(result.buffer as unknown as ArrayBuffer);
+    expect(result.sheetNames).toEqual(["英国项目", "日报及问题汇总", "变更管理", "干系人", "附件清单"]);
+    expect(headersOf(workbook.getWorksheet("附件清单")!)).toEqual([
+      "来源页面", "来源行", "来源记录", "附件类型", "文件名", "相对路径", "文件大小", "状态",
+    ]);
+    const report = workbook.getWorksheet("日报及问题汇总")!;
+    const onsite = report.getCell(2, 5).value as { text?: string; hyperlink?: string };
+    expect(onsite.text).toBe("6 张现场附图");
+    expect(onsite.hyperlink).toBe("./附件/日报及问题汇总/现场工作附图/附件图1.png");
+    expect(report.getImages()).toHaveLength(4);
+  });
+
+  it("服务层生成可解压 ZIP：xlsx、原附件与 manifest 同包，默认 xlsx 兼容", async () => {
+    const report = {
+      id: "22222222-2222-4222-8222-222222222222",
+      projectId: PROJECT_ID,
+      authorId: "33333333-3333-4333-8333-333333333333",
+      authorName: "张三",
+      date: "2026-09-01",
+      state: "submitted" as const,
+      headcount: 2,
+      doneWork: "现场施工",
+      plan: "继续施工",
+      foundIssue: null,
+      issueCategories: [],
+      suggestion: null,
+      stageKeys: [],
+      stageNames: [],
+      photos: [{ fileId: "file-report", name: "现场.png" }],
+      issuePhotos: [],
+      submittedAt: "2026-09-01T10:00:00.000Z",
+      createdAt: "2026-09-01T09:00:00.000Z",
+      updatedAt: "2026-09-01T10:00:00.000Z",
+      version: 1,
+    };
+    const emptyPage = { items: [], page: 1, limit: 200, total: 0 };
+    const emptyList = vi.fn().mockResolvedValue(emptyPage);
+    const reportList = vi.fn().mockResolvedValue({ items: [report], page: 1, limit: 200, total: 1 });
+    const refs = new Map([
+      ["file-report", { id: "file-report", name: "现场.png", mime: "image/png", sizeBytes: 5, objectKey: "objects/report.png" }],
+    ]);
+    const storage = {
+      getObjectStream: vi.fn().mockResolvedValue({ stream: Readable.from([Buffer.from("hello")]), sizeBytes: 5, contentType: "image/png" }),
+      getObject: vi.fn().mockResolvedValue({ objectKey: "objects/report.png", bytes: PNG, contentType: "image/png", sizeBytes: PNG.byteLength }),
+    };
+    const audit = { record: vi.fn().mockResolvedValue(undefined) };
+    const service = new ProjectExportService(
+      { getProject: vi.fn().mockResolvedValue({ id: PROJECT_ID, code: "LBGW-1", name: "英国项目", managerIds: [], managerNames: [] }) } as never,
+      { list: emptyList } as never,
+      { list: reportList } as never,
+      { list: emptyList } as never,
+      { listProjectChanges: emptyList } as never,
+      { list: emptyList } as never,
+      { listProjectFiles: emptyList, listExportFileRefs: vi.fn().mockResolvedValue(refs) } as never,
+      { listUsers: emptyList } as never,
+      { can: vi.fn().mockResolvedValue(true) } as never,
+      audit as never,
+      { db: {} } as never,
+      storage as never,
+      { env: { PROJECT_EXPORT_MODE: "legacy" } } as never,
+    );
+    const result = await service.exportProject(PROJECT_ID, "actor-1", "https://test-pm.libiaorobot.com", undefined, "zip");
+    expect(result.kind).toBe("file");
+    if (result.kind !== "file") throw new Error("预期 ZIP 文件结果");
+    try {
+      expect(result.fileName).toBe("[LBGW-1] 英国项目.zip");
+      expect(result.sheetNames).toEqual(["英国项目", "日报及问题汇总", "变更管理", "干系人", "附件清单"]);
+      const entries = readZipEntries(await readFile(result.filePath));
+      const root = "[LBGW-1] 英国项目";
+      expect(entries.has(root + "/" + root + ".xlsx")).toBe(true);
+      expect(entries.get(root + "/附件/日报及问题汇总/现场工作附图/现场.png")?.toString("utf8")).toBe("hello");
+      const manifest = JSON.parse(entries.get(root + "/manifest.json")!.toString("utf8")) as {
+        workbook: string;
+        summary: { attachmentCount: number; includedFileCount: number; attachmentBytes: number };
+        attachments: Array<{ relativePath: string; status: string; sha256: string }>;
+      };
+      expect(manifest.workbook).toBe(root + ".xlsx");
+      expect(manifest.summary).toMatchObject({ attachmentCount: 1, includedFileCount: 1, attachmentBytes: 5 });
+      expect(manifest.attachments[0]).toMatchObject({
+        relativePath: "附件/日报及问题汇总/现场工作附图/现场.png",
+        status: "included",
+      });
+      expect(manifest.attachments[0]?.sha256).toMatch(/^[0-9a-f]{64}$/);
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(entries.get(root + "/" + root + ".xlsx")!.buffer as unknown as ArrayBuffer);
+      const onsite = workbook.getWorksheet("日报及问题汇总")!.getCell(2, 5).value as { hyperlink?: string };
+      expect(decodeURIComponent(onsite.hyperlink ?? "")).toBe("./附件/日报及问题汇总/现场工作附图/现场.png");
+      expect(audit.record).toHaveBeenCalledOnce();
+    } finally {
+      await result.cleanup();
+    }
+  });
+});
+
 describe("项目导出的命名与请求边界", () => {
-  it("文件名按「[项目编号] 项目名称.xlsx」；版本名沿用文件名并去掉扩展名", () => {
+  it("文件名按「[项目编号] 项目名称.xlsx」；ZIP 保留方括号编号且格式参数严格校验", () => {
     expect(projectExportFileName({ code: "LBGW-20260331-1459", name: "英国-VANILLA-飞箱" })).toBe("[LBGW-20260331-1459] 英国-VANILLA-飞箱.xlsx");
     expect(projectExportFileName({ code: "A/B", name: "CON. " })).toBe("[A_B] CON.xlsx");
     expect(projectExportFileName({ code: "A", name: "a\"b<c>d|e" })).toBe("[A] a_b_c_d_e.xlsx");
+    expect(projectExportArchiveStem({ code: "LBGW-20260331-1459", name: "UK-VANILLA-AIRROB" })).toBe("[LBGW-20260331-1459] UK-VANILLA-AIRROB");
+    expect(projectExportArchiveWorkbookName({ code: "[A/B]", name: "CON. " })).toBe("[A_B] CON.xlsx");
+    expect(projectExportArchiveFileName({ code: "A/B", name: "项目" })).toBe("[A_B] 项目.zip");
+    expect(projectExportFormat(undefined)).toBe("xlsx");
+    expect(projectExportFormat("xlsx")).toBe("xlsx");
+    expect(projectExportFormat("zip")).toBe("zip");
+    expect(() => projectExportFormat("rar")).toThrow("format 仅支持 xlsx 或 zip");
     expect(versionNameOf("发货总清单（完整）.xlsx")).toBe("发货总清单（完整）");
     expect(versionNameOf("README")).toBe("README");
   });

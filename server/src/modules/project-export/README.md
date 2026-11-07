@@ -1,21 +1,22 @@
-# project-export 模块（项目数据 Excel 导出）
+# project-export 模块（项目数据 Excel / ZIP 导出）
 
 | 字段 | 内容 |
 |---|---|
 | 类型 | 领域模块（只读聚合） |
-| 职责 | 把一个项目的任务、日报 / 问题、变更、干系人导出为单个 xlsx；另支持按日报记录 / 问题追踪 / 干系人页面勾选 Sheet 与列导出。小项目内存生成并嵌图，大项目流式写临时文件并把附图改为文件链接 |
+| 职责 | 把一个项目的任务、日报 / 问题、变更、干系人导出为单个 xlsx，或导出 Excel + 原附件的 ZIP；另支持按日报记录 / 问题追踪 / 干系人页面勾选 Sheet 与列导出。小项目内存生成并嵌图，大项目流式写临时文件并把附图改为文件链接；ZIP 模式按目录流式打包原附件 |
 | 上游 | project / task / report-issue / stakeholder / file / identity（用户显示名）/ admin（审计） |
-| HTTP | 项目全量：`GET /api/v1/projects/{id}/export?origin={站点 origin}`；页面级：`GET /api/v1/projects/{id}/page-exports/catalog`、`POST /api/v1/projects/{id}/page-exports` |
+| HTTP | 项目全量：`GET /api/v1/projects/{id}/export?format=xlsx|zip&origin={站点 origin}`（缺省 xlsx）；页面级：`GET /api/v1/projects/{id}/page-exports/catalog`、`POST /api/v1/projects/{id}/page-exports` |
 | 权限 | `project.export`（`RequirePermission` + `ProjectAccessGuard`；服务端仍按项目可见性裁决）；页面级另按 `report.view` / `issue.view` / `stakeholder.view` 与干系人字段级权限逐列校验 |
 | 审计 | 成功生成后写 `audit_logs`：`action=download`、`objectType=project`、`objectId/projectId=项目 id`，metadata 记格式、Sheet、行数与图片数；页面级另记 `feature=page_export` 与每个 Sheet 的列 key |
 
 ## 响应与文件名
 
-- `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+- xlsx：`Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+- zip：`Content-Type: application/zip`
 - `Content-Disposition: attachment`，同时给 ASCII 回退名和 RFC 5987 的 `filename*=UTF-8''…`
-- 文件名 = `[项目编号] 项目名称.xlsx`（编号 / 名称中的Windows 非法文件名字符、控制字符与末尾空格 / 点会被替换或清除；长度受控）
+- xlsx 文件名 = `[项目编号] 项目名称.xlsx`；zip 文件名 = `[项目编号] 项目名称.zip`
 - `Cache-Control: no-store`、`X-Content-Type-Options: nosniff`
-- 不生成 ZIP、JSON、封面、目录或进度弹窗；只生成一份工作簿
+- `format` 缺省 / `xlsx` 保持原行为；`zip` 生成 Excel + 原附件包；其它值 400 `VALIDATION_FAILED`
 
 ## 生成模式与内存边界
 
@@ -34,6 +35,33 @@
 4. `干系人`（7 列）：干系人姓名/name / 电话或whats app或微信号 / 邮箱Email / 职务Position/责任板块 / 所属公司company / 填写者 / 提交时间
 
 前三张 Sheet 冻结首行首列（`B1`），干系人表不冻结。
+
+
+## Excel + 附件 ZIP（2026-11-07）
+
+`GET .../export?format=zip` 产出同名项目文件夹：
+
+```text
+[项目编号] 项目名称.zip
+└─ [项目编号] 项目名称/
+   ├─ [项目编号] 项目名称.xlsx
+   ├─ 附件/
+   │  ├─ 任务文件/
+   │  ├─ 日报及问题汇总/
+   │  │  ├─ 现场工作附图/
+   │  │  └─ 问题附图/
+   │  └─ 变更管理/
+   │     ├─ 变更前/
+   │     ├─ 变更后/
+   │     └─ 变更后文件/
+   └─ manifest.json
+```
+
+- ZIP 内 xlsx 保留四张业务 Sheet、固定中文表头与系统列序，另加第五张 `附件清单`：来源页面 / 来源行 / 来源记录 / 附件类型 / 文件名 / 相对路径 / 文件大小 / 状态。附件清单逐条列出被业务行引用的附件；同一个单元格有多份文件时，Excel 仍只能挂一个主链接（第一份有效附件），完整路径以清单为准。
+- xlsx 中文件 / 附图超链接改为**包内相对路径**（如 `./附件/日报及问题汇总/现场工作附图/…`），不再指向线上项目文件视图。附图每格最多嵌 4 张缩略图（长边受控、JPEG 压缩后更大的则保留原图），原图全部放附件目录；缺图 / 回收 / 无当前版本 / 读取失败都保留清单行并标 `missing` 或 `skipped`，不静默消失。
+- 只打包 Excel 业务行实际引用的附件，不自动打包项目文件库中的散文件。任务成果文件、日报现场图、问题图、变更前后摘要与变更后文件各自按上方目录归档；同目录同一文件只入包一次，同名不同文件追加 `_2`、`_3`，不覆盖。
+- 生成器为仓库内顺序写 ZIP 的流式实现（UTF-8 路径、deflate / store、Data Descriptor），不把整包放内存，也不新增第三方依赖。限制：附件文件数 ≤ 3,000、单文件 ≤ 200 MB、解压后附件总量 ≤ 2 GB，最终 ZIP < 4 GB；仍复用单类 20,000 条记录和 10 分钟生成超时。ZIP 生成占用与大项目流式导出相同的单进程并发槽，失败 / 超时 / 客户端断开都会清理临时目录。
+- `manifest.json` 字段：`schemaVersion` / `exportedAt` / `project{code,name}` / `workbook` / `attachments[]` / `summary`。附件行只含来源页面、来源行、来源记录、附件类型、文件名、相对路径、大小、SHA-256、状态（`included` / `missing` / `skipped`），不输出内部 fileId、对象键或服务器绝对路径。审计 `metadata.format=zip`，并记录引用数、实际入包文件数、字节数、缺失 / 跳过数与图片统计。
 
 ## 页面级导出（日报记录 / 问题追踪 / 干系人）
 
@@ -63,7 +91,7 @@
 
 - 文件列只保留文件名 / 链接，不输出 fileId、对象键或二进制内容。
 - 一个单元格有多份文件时逐行写文件名；Excel 单元格只能挂一个超链接，主链接指向第一份文件。
-- 链接 = `{origin}/#/project/{projectId}?view=files`，打开项目详情的「项目文件」视图。`origin` 优先取前端显式回传的站点 origin（同源 GET 可能省略 `Origin`），其次 `Origin` / `Referer` / `X-Forwarded-Proto + Host`；只接受 http(s)，取不到时文件列只写文件名。
+- 普通 xlsx 链接 = `{origin}/#/project/{projectId}?view=files`，打开项目详情的「项目文件」视图；ZIP 内链接 = 工作簿相对的 `./附件/...`。
 - 小项目：日报现场图 / 问题图、变更前后图直接嵌入单元格（PNG / JPEG / GIF，按文件头识别，不信任扩展名）；每个单元格内按列宽可容纳数量排成网格，图片横纵均留 4px 间距并通过 DrawingML 原生 EMU 锚点定位，超出首行自动换行；行高按图片行数扩展。
 - 大项目：ExcelJS 4.4 的流式写入不支持图片，因此同一单元格改列附图文件名，整格链接到项目文件视图；变更前 / 后摘要文字保留，并在下一行附上对应文件名。链接口径与普通文件列一致。
 - 图片限制：最多 250 张、单张 8 MB、总计 80 MB、并发读取 4；缺失 / 读取失败 / 不支持的图片写「（附图缺失）文件名」，不阻断整份导出。
@@ -76,5 +104,5 @@
 
 ## 测试
 
-- `server/test/project-export.test.ts`：四表名称与列序、关键字段、文件超链接、嵌入图、多图网格不重叠、缺失图占位、草稿日期、文件名 / origin / Content-Disposition；流式工作簿落盘、附图改文件链接、auto / legacy / stream 模式判定。
+- `server/test/project-export.test.ts`：四表名称与列序、关键字段、文件超链接、嵌入图、多图网格不重叠、缺失图占位、草稿日期、文件名 / origin / Content-Disposition；流式工作簿落盘、附图改文件链接、auto / legacy / stream 模式判定；ZIP 中文路径 / 压缩完整性、附件规划去重与重名、附件清单与每格 4 张缩略图、服务层 ZIP 包结构与 manifest。
 - `server/test/page-export.test.ts`：页面列目录与契约同源、中文预览 / 字段权限 / 截断 / 最多 20 条、附图缩略图引用与总数、日报 / 干系人不含扩展字段、权限过滤、请求校验、固定系统列序、分页上限、嵌图 / 流式链接与并发槽。

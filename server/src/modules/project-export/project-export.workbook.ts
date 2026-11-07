@@ -12,11 +12,15 @@ export interface ExportImage {
 export interface ExportFileLink {
   id: string;
   name: string;
+  /** ZIP 导出时为工作簿相对的附件路径；普通在线导出不设置。 */
+  href?: string;
 }
 
 export interface ExportPhotoRef {
   fileId: string;
   name: string;
+  /** ZIP 导出时为工作簿相对的附件路径；普通在线导出不设置。 */
+  href?: string;
 }
 
 export interface ProjectExportTaskRow {
@@ -82,6 +86,17 @@ export interface ProjectExportStakeholderRow {
   submittedAt: string;
 }
 
+export interface ProjectExportAttachmentRow {
+  sourcePage: string;
+  sourceRow: number;
+  sourceRecord: string;
+  attachmentType: string;
+  fileName: string;
+  relativePath: string;
+  sizeBytes: number | null;
+  status: string;
+}
+
 export interface ProjectExportPayload {
   project: { id: string; code: string; name: string };
   origin: string | null;
@@ -90,6 +105,10 @@ export interface ProjectExportPayload {
   changes: ProjectExportChangeRow[];
   stakeholders: ProjectExportStakeholderRow[];
   images: Map<string, ExportImage>;
+  /** ZIP 模式附加的「附件清单」Sheet；不传则该 Sheet 不存在。 */
+  attachmentSheet?: ProjectExportAttachmentRow[];
+  /** ZIP 模式每个附图单元格最多嵌几张缩略图；普通导出不传。 */
+  imageLimitPerCell?: number;
 }
 
 export interface ProjectExportWorkbookResult {
@@ -167,6 +186,9 @@ const TASK_WIDTHS: Record<number, number> = { 1: 43, 2: 16.4, 3: 18.9, 4: 13.8, 
 const REPORT_WIDTHS: Record<number, number> = { 1: 13.8, 2: 16.4, 3: 21.5, 4: 23.2, 5: 60.2, 6: 26.7, 7: 18.9, 8: 23.2, 9: 37, 10: 13.8, 11: 11.2 };
 const CHANGE_WIDTHS: Record<number, number> = { 1: 21.5, 2: 13.8, 3: 18.9, 4: 23.2, 5: 30, 6: 30, 7: 23.2, 8: 16.4, 9: 16.4, 10: 23.2, 11: 21.5, 12: 13.8, 13: 21.5 };
 const STAKEHOLDER_WIDTHS: Record<number, number> = { 1: 22, 2: 25, 3: 30, 4: 30, 5: 24, 6: 18, 7: 22 };
+
+const ATTACHMENT_HEADERS = ["来源页面", "来源行", "来源记录", "附件类型", "文件名", "相对路径", "文件大小", "状态"];
+const ATTACHMENT_WIDTHS: Record<number, number> = { 1: 16, 2: 9, 3: 30, 4: 18, 5: 42, 6: 62, 7: 14, 8: 10 };
 
 const IMAGE_WIDTH_PX = 88;
 const IMAGE_HEIGHT_PX = 64;
@@ -255,6 +277,29 @@ export function projectExportFileName(project: { code: string; name: string }): 
   return "[" + sanitizeFileName(project.code) + "] " + sanitizeFileName(project.name) + ".xlsx";
 }
 
+/** ZIP 根目录 / 包内 xlsx 共用文件名：保留方括号编号，仅清理跨平台非法字符。 */
+export function projectExportArchiveStem(project: { code: string; name: string }): string {
+  const clean = (value: string, fallback: string): string => {
+    const result = value
+      .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_")
+      .replace(/[. ]+$/g, "")
+      .trim()
+      .slice(0, 120)
+      .replace(/[. ]+$/g, "");
+    return result === "" ? fallback : result;
+  };
+  const code = clean(project.code, "项目").replace(/^\[+|\]+$/g, "");
+  return "[" + code + "] " + clean(project.name, "项目");
+}
+
+export function projectExportArchiveWorkbookName(project: { code: string; name: string }): string {
+  return projectExportArchiveStem(project) + ".xlsx";
+}
+
+export function projectExportArchiveFileName(project: { code: string; name: string }): string {
+  return projectExportArchiveStem(project) + ".zip";
+}
+
 /** 企微样例的「变更后文件版本」= 文件名去掉最后一级扩展名（版本名沿用文件名），不是 vN。 */
 export function versionNameOf(fileName: string): string {
   const dot = fileName.lastIndexOf(".");
@@ -284,17 +329,21 @@ function fileLink(origin: string | null, projectId: string): string | null {
   return origin + "/#/project/" + encodeURIComponent(projectId) + "?view=files";
 }
 
+function firstArchiveHref(refs: readonly { href?: string }[]): string | null {
+  for (const ref of refs) if (ref.href !== undefined && ref.href !== "") return ref.href;
+  return null;
+}
+
 function filesValue(files: readonly ExportFileLink[], origin: string | null, projectId: string): ExcelJS.CellValue {
   if (files.length === 0) return null;
   const text = files.map((file) => file.name).join("\n");
-  const link = fileLink(origin, projectId);
+  const link = firstArchiveHref(files) ?? fileLink(origin, projectId);
   if (link === null) return text;
   return { text, hyperlink: link, tooltip: files[0]?.name ?? text };
 }
 
-function linkedText(text: string, tooltip: string, origin: string | null, projectId: string): ExcelJS.CellValue {
+function linkedText(text: string, tooltip: string, link: string | null): ExcelJS.CellValue {
   if (text === "") return null;
-  const link = fileLink(origin, projectId);
   if (link === null) return text;
   return { text, hyperlink: link, tooltip };
 }
@@ -315,14 +364,32 @@ function photoLinksValue(refs: readonly ExportPhotoRef[], origin: string | null,
   const names = uniquePhotoNames(refs);
   if (names.length === 0) return null;
   const text = names.join("\n");
-  return linkedText(text, names[0] ?? text, origin, projectId);
+  return linkedText(text, names[0] ?? text, firstArchiveHref(refs) ?? fileLink(origin, projectId));
 }
 
 function appendPhotoLinks(base: string, refs: readonly ExportPhotoRef[], origin: string | null, projectId: string): ExcelJS.CellValue {
   const names = uniquePhotoNames(refs);
   if (names.length === 0) return base === "" ? null : base;
   const text = base === "" ? names.join("\n") : base + "\n" + names.join("\n");
-  return linkedText(text, names[0] ?? text, origin, projectId);
+  return linkedText(text, names[0] ?? text, firstArchiveHref(refs) ?? fileLink(origin, projectId));
+}
+
+/** ZIP 模式附图单元格：保留一张可点缩略图摘要，完整文件名在「附件清单」Sheet。 */
+function photoArchiveValue(refs: readonly ExportPhotoRef[], label: string, origin: string | null, projectId: string): ExcelJS.CellValue {
+  const unique = uniquePhotos(refs);
+  if (unique.length === 0) return null;
+  const missing = unique.filter((ref) => ref.href === undefined).length;
+  const text = String(unique.length) + " 张" + label + (missing > 0 ? "（含" + String(missing) + " 份缺失）" : "");
+  return linkedText(text, unique.map((ref) => ref.name).join("\n"), firstArchiveHref(unique) ?? fileLink(origin, projectId));
+}
+
+function appendArchivePhotoLine(base: string, refs: readonly ExportPhotoRef[], label: string, origin: string | null, projectId: string): ExcelJS.CellValue {
+  const unique = uniquePhotos(refs);
+  if (unique.length === 0) return base === "" ? null : base;
+  const missing = unique.filter((ref) => ref.href === undefined).length;
+  const summary = String(unique.length) + " 张" + label + (missing > 0 ? "（含" + String(missing) + " 份缺失）" : "");
+  const text = base === "" ? summary : base + "\n" + summary;
+  return linkedText(text, unique.map((ref) => ref.name).join("\n"), firstArchiveHref(unique) ?? fileLink(origin, projectId));
 }
 
 function applyLinkFont(cell: ExcelJS.Cell): void {
@@ -427,8 +494,9 @@ function placeImages(
   rowNumber: number,
   capacity: number,
   baseHeightPx: number,
+  maxCount = Number.MAX_SAFE_INTEGER,
 ): number {
-  const available = availableRefs(refs, images);
+  const available = availableRefs(refs, images).slice(0, Math.max(0, maxCount));
   for (let index = 0; index < available.length; index += 1) {
     const ref = available[index];
     if (ref === undefined) continue;
@@ -495,6 +563,8 @@ function addReportSheet(workbook: ExcelJS.Workbook, payload: ProjectExportPayloa
   const sheet = workbook.addWorksheet(name, { views: [{ state: "frozen", xSplit: 1, ySplit: 1 }] });
   setWidths(sheet, REPORT_WIDTHS, REPORT_HEADERS.length);
   styleHeader(sheet, REPORT_HEADERS);
+  const archiveMode = payload.attachmentSheet !== undefined;
+  const imageLimit = payload.imageLimitPerCell ?? Number.MAX_SAFE_INTEGER;
   for (const report of payload.reports) {
     const onsite = uniquePhotos(report.onsitePhotos);
     const issuePhotos = uniquePhotos(report.issuePhotos);
@@ -505,11 +575,11 @@ function addReportSheet(workbook: ExcelJS.Workbook, payload: ProjectExportPayloa
       report.author,
       report.doneWork,
       report.plan,
-      appendMissing("", onsiteMissing),
+      archiveMode ? photoArchiveValue(onsite, "现场附图", payload.origin, payload.project.id) : appendMissing("", onsiteMissing),
       report.issueDescription,
       report.issueCategory,
       report.issueSolution,
-      appendMissing("", issueMissing),
+      archiveMode ? photoArchiveValue(issuePhotos, "问题附图", payload.origin, payload.project.id) : appendMissing("", issueMissing),
       report.issueState,
       report.headcount,
     ]);
@@ -523,15 +593,15 @@ function addReportSheet(workbook: ExcelJS.Workbook, payload: ProjectExportPayloa
       plainText(row.getCell(8)),
       plainText(row.getCell(9)),
     ], [3, 4, 5, 6, 7, 8, 9]);
-    const onsiteAvailable = availableRefs(onsite, payload.images).length;
-    const issueAvailable = availableRefs(issuePhotos, payload.images).length;
+    const onsiteAvailable = Math.min(availableRefs(onsite, payload.images).length, imageLimit);
+    const issueAvailable = Math.min(availableRefs(issuePhotos, payload.images).length, imageLimit);
     const onsiteLines = Math.ceil(onsiteAvailable / imageCapacity(REPORT_WIDTHS[5] ?? 60.2));
     const issueLines = Math.ceil(issueAvailable / imageCapacity(REPORT_WIDTHS[9] ?? 37));
     const imageLines = Math.max(onsiteLines, issueLines);
     const rowHeightPx = basePx + imageLines * (IMAGE_HEIGHT_PX + IMAGE_GAP_PX) + 4;
     row.height = rowHeightPx / PX_PER_POINT;
-    placeImages(workbook, sheet, onsite, payload.images, 5, row.number, imageCapacity(REPORT_WIDTHS[5] ?? 60.2), basePx);
-    placeImages(workbook, sheet, issuePhotos, payload.images, 9, row.number, imageCapacity(REPORT_WIDTHS[9] ?? 37), basePx);
+    placeImages(workbook, sheet, onsite, payload.images, 5, row.number, imageCapacity(REPORT_WIDTHS[5] ?? 60.2), basePx, imageLimit);
+    placeImages(workbook, sheet, issuePhotos, payload.images, 9, row.number, imageCapacity(REPORT_WIDTHS[9] ?? 37), basePx, imageLimit);
   }
   return sheet;
 }
@@ -540,6 +610,8 @@ function addChangeSheet(workbook: ExcelJS.Workbook, payload: ProjectExportPayloa
   const sheet = workbook.addWorksheet(name, { views: [{ state: "frozen", xSplit: 1, ySplit: 1 }] });
   setWidths(sheet, CHANGE_WIDTHS, CHANGE_HEADERS.length);
   styleHeader(sheet, CHANGE_HEADERS);
+  const archiveMode = payload.attachmentSheet !== undefined;
+  const imageLimit = payload.imageLimitPerCell ?? Number.MAX_SAFE_INTEGER;
   for (const change of payload.changes) {
     const before = uniquePhotos(change.beforePhotos);
     const after = uniquePhotos(change.afterPhotos);
@@ -548,8 +620,12 @@ function addChangeSheet(workbook: ExcelJS.Workbook, payload: ProjectExportPayloa
       change.stage,
       null,
       change.description,
-      appendMissing(change.beforeText, missingNames(before, payload.images)),
-      appendMissing(change.afterText, missingNames(after, payload.images)),
+      archiveMode
+        ? appendArchivePhotoLine(change.beforeText, before, "变更前附图", payload.origin, payload.project.id)
+        : appendMissing(change.beforeText, missingNames(before, payload.images)),
+      archiveMode
+        ? appendArchivePhotoLine(change.afterText, after, "变更后附图", payload.origin, payload.project.id)
+        : appendMissing(change.afterText, missingNames(after, payload.images)),
       change.reason,
       change.applicant,
       change.writer,
@@ -570,15 +646,15 @@ function addChangeSheet(workbook: ExcelJS.Workbook, payload: ProjectExportPayloa
       plainText(row.getCell(11)),
       plainText(row.getCell(13)),
     ], [3, 4, 5, 6, 7, 11, 13]);
-    const beforeAvailable = availableRefs(before, payload.images).length;
-    const afterAvailable = availableRefs(after, payload.images).length;
+    const beforeAvailable = Math.min(availableRefs(before, payload.images).length, imageLimit);
+    const afterAvailable = Math.min(availableRefs(after, payload.images).length, imageLimit);
     const beforeLines = Math.ceil(beforeAvailable / imageCapacity(CHANGE_WIDTHS[5] ?? 30));
     const afterLines = Math.ceil(afterAvailable / imageCapacity(CHANGE_WIDTHS[6] ?? 30));
     const imageLines = Math.max(beforeLines, afterLines);
     const rowHeightPx = basePx + imageLines * (IMAGE_HEIGHT_PX + IMAGE_GAP_PX) + 4;
     row.height = rowHeightPx / PX_PER_POINT;
-    placeImages(workbook, sheet, before, payload.images, 5, row.number, imageCapacity(CHANGE_WIDTHS[5] ?? 30), basePx);
-    placeImages(workbook, sheet, after, payload.images, 6, row.number, imageCapacity(CHANGE_WIDTHS[6] ?? 30), basePx);
+    placeImages(workbook, sheet, before, payload.images, 5, row.number, imageCapacity(CHANGE_WIDTHS[5] ?? 30), basePx, imageLimit);
+    placeImages(workbook, sheet, after, payload.images, 6, row.number, imageCapacity(CHANGE_WIDTHS[6] ?? 30), basePx, imageLimit);
   }
   return sheet;
 }
@@ -593,6 +669,30 @@ function addStakeholderSheet(workbook: ExcelJS.Workbook, payload: ProjectExportP
     const texts: string[] = [];
     for (let col = 1; col <= STAKEHOLDER_HEADERS.length; col += 1) texts.push(plainText(row.getCell(col)));
     row.height = estimatedTextHeight(sheet, texts, Array.from({ length: STAKEHOLDER_HEADERS.length }, (_value, index) => index + 1)) / PX_PER_POINT;
+  }
+  return sheet;
+}
+
+function addAttachmentSheet(workbook: ExcelJS.Workbook, payload: ProjectExportPayload, name: string): ExcelJS.Worksheet {
+  const sheet = workbook.addWorksheet(name, { views: [{ state: "frozen", xSplit: 1, ySplit: 1 }] });
+  setWidths(sheet, ATTACHMENT_WIDTHS, ATTACHMENT_HEADERS.length);
+  styleHeader(sheet, ATTACHMENT_HEADERS);
+  for (const item of payload.attachmentSheet ?? []) {
+    const row = sheet.addRow([
+      item.sourcePage,
+      item.sourceRow,
+      item.sourceRecord,
+      item.attachmentType,
+      item.fileName,
+      item.relativePath,
+      item.sizeBytes,
+      item.status,
+    ]);
+    row.getCell(7).numFmt = "#,##0";
+    styleBodyRow(sheet, row.number, ATTACHMENT_HEADERS.length);
+    const texts: string[] = [];
+    for (let col = 1; col <= ATTACHMENT_HEADERS.length; col += 1) texts.push(plainText(row.getCell(col)));
+    row.height = estimatedTextHeight(sheet, texts, Array.from({ length: ATTACHMENT_HEADERS.length }, (_value, index) => index + 1)) / PX_PER_POINT;
   }
   return sheet;
 }
@@ -613,6 +713,11 @@ export async function buildProjectExportWorkbook(payload: ProjectExportPayload):
   addReportSheet(workbook, payload, reportSheetName);
   addChangeSheet(workbook, payload, changeSheetName);
   addStakeholderSheet(workbook, payload, stakeholderSheetName);
+  if (payload.attachmentSheet !== undefined) {
+    const attachmentSheetName = projectExportAttachmentSheetName(payload.project, sheetNames);
+    sheetNames.push(attachmentSheetName);
+    addAttachmentSheet(workbook, payload, attachmentSheetName);
+  }
   const bytes = await workbook.xlsx.writeBuffer();
   const buffer = Buffer.from(bytes as unknown as Uint8Array);
   return { buffer, sheetNames };
@@ -622,10 +727,18 @@ export function projectExportSheetNames(project: { name: string }): string[] {
   const reportSheetName = "日报及问题汇总";
   const changeSheetName = "变更管理";
   const stakeholderSheetName = "干系人";
-  const fixed = [reportSheetName, changeSheetName, stakeholderSheetName];
+  const fixed = [reportSheetName, changeSheetName, stakeholderSheetName, "附件清单"];
   let taskSheetName = sheetNameOf(project.name);
   if (fixed.includes(taskSheetName)) taskSheetName = sheetNameOf(taskSheetName + " 项目");
-  return [taskSheetName, ...fixed];
+  return [taskSheetName, reportSheetName, changeSheetName, stakeholderSheetName];
+}
+
+function projectExportAttachmentSheetName(project: { name: string }, existing: readonly string[]): string {
+  if (!existing.includes("附件清单")) return "附件清单";
+  let base = sheetNameOf(project.name + " 附件清单");
+  if (!existing.includes(base)) return base;
+  base = sheetNameOf(base + " 附件");
+  return base;
 }
 
 /**
