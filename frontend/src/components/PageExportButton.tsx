@@ -5,7 +5,6 @@ import { usePhotoUrl } from "../fileApi";
 import { textOf, useLocale, useT } from "../i18n";
 import {
   PAGE_EXPORT_PREVIEW_PHOTO_LIMIT,
-  PAGE_EXPORT_PREVIEW_ROW_LIMIT,
   downloadPageExport,
   fetchPageExportCatalog,
   type PageExportCatalogColumn,
@@ -23,6 +22,8 @@ import { hasPermission, useMyPermissions } from "../permissions";
 import { loadMyPreferences, savePageExportPresets } from "../preferencesApi";
 import { lockBodyScroll } from "../scrollLock";
 import { useFocusTrapFor } from "./useFocusTrap";
+import { SelectMenu } from "./SelectMenu";
+import { ExportProgressOverlay } from "./ExportProgressOverlay";
 
 type PageExportButtonProps = {
   projectId: string;
@@ -636,9 +637,6 @@ export function PageExportButton({ projectId, initialSheet }: PageExportButtonPr
                   <div className="flex flex-wrap items-start gap-3">
                     <div className="min-w-0 flex-1">
                       <h3 className="text-sm font-semibold text-zinc-900">{t("pageExport.preview.title")}</h3>
-                      <p className="mt-0.5 text-[11px] leading-5 text-zinc-500">
-                        {t("pageExport.preview.subtitle", { n: PAGE_EXPORT_PREVIEW_ROW_LIMIT })}
-                      </p>
                     </div>
                     <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-medium text-zinc-500">
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
@@ -711,21 +709,23 @@ export function PageExportButton({ projectId, initialSheet }: PageExportButtonPr
                             <span className="text-[11px] tabular-nums text-zinc-400">{presetState.presets.length} / 20</span>
                           </div>
                           <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                            <select
-                              data-page-export-preset=""
-                              value={selectedPresetId}
-                              onChange={(event) => {
-                                setSelectedPresetId(event.target.value);
-                                setDeleteArmId(null);
-                                setRenameId(null);
-                                setFeedback(null);
-                              }}
-                              className="min-w-0 rounded-lg border border-zinc-300 bg-white px-2.5 py-2 text-xs text-zinc-800 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
-                              aria-label={t("pageExport.preset.select")}
-                            >
-                              <option value="">{t("pageExport.preset.select")}</option>
-                              {presetState.presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
-                            </select>
+                            <div data-page-export-preset="" className="min-w-0">
+                              <SelectMenu
+                                value={selectedPresetId}
+                                options={[
+                                  { value: "", label: t("pageExport.preset.select") },
+                                  ...presetState.presets.map((preset) => ({ value: preset.id, label: preset.name })),
+                                ]}
+                                onChange={(value) => {
+                                  setSelectedPresetId(value);
+                                  setDeleteArmId(null);
+                                  setRenameId(null);
+                                  setFeedback(null);
+                                }}
+                                ariaLabel={t("pageExport.preset.select")}
+                                popoverClassName="z-[80]"
+                              />
+                            </div>
                             <button
                               type="button"
                               onClick={applyPreset}
@@ -887,7 +887,6 @@ export function PageExportButton({ projectId, initialSheet }: PageExportButtonPr
                         </div>
                       </section>
 
-                      <p className="px-1 text-[11px] leading-5 text-zinc-400">{t("pageExport.note")}</p>
                     </div>
                   </div>
                 </aside>
@@ -927,6 +926,11 @@ export function PageExportButton({ projectId, initialSheet }: PageExportButtonPr
             </footer>
           </div>
         </div>,
+        document.body,
+      )}
+
+      {!open || !exporting ? null : createPortal(
+        <ExportProgressOverlay progress={null} variant="page-export" />,
         document.body,
       )}
     </>

@@ -136,10 +136,12 @@ type SelectMenuProps = {
   ariaLabel: string;
   /** 前置条件未满足时禁用（与原先原生 select 的 disabled 同口径：灰底灰字、点不开）。 */
   disabled?: boolean;
+  /** 浮层定位类（默认 z-50；弹窗内使用时传更高层级，如 z-[80]）。 */
+  popoverClassName?: string;
 };
 
 /** 普通下拉（不可搜索）：状态 / 紧急重要度这类枚举字段。 */
-export function SelectMenu({ value, options, onChange, placeholder: placeholderProp, ariaLabel, disabled = false }: SelectMenuProps) {
+export function SelectMenu({ value, options, onChange, placeholder: placeholderProp, ariaLabel, disabled = false, popoverClassName = "z-50" }: SelectMenuProps) {
   const { open, setOpen, position, triggerRef, popoverRef } = usePopover(160, selectMenuPopoverHeight(options.length));
   const t = useT();
   const placeholder = placeholderProp ?? t("sel.placeholder");
@@ -182,7 +184,7 @@ export function SelectMenu({ value, options, onChange, placeholder: placeholderP
             <div
               ref={popoverRef}
               data-select-popover="true"
-              className="fixed z-50 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.18)]"
+              className={"fixed " + popoverClassName + " overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.18)]"}
               style={{ top: position.top, left: position.left, width: position.width }}
             >
               <div data-select-scroll="true" className="overflow-y-auto overscroll-contain" style={{ maxHeight: SELECT_MENU_MAX_HEIGHT }}>
