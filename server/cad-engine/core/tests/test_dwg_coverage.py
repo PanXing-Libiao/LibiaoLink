@@ -60,6 +60,32 @@ class SourceDisplayCoverageTest(unittest.TestCase):
         self.assertEqual(coverage["byReason"]["blockInstanceIndirect"], 1)
         self.assertEqual(coverage["byReason"]["blockInstanceEmptyDefinition"], 1)
 
+    def test_unloaded_xref_is_not_a_valid_empty_definition(self):
+        drawing = {'entities':{}, 'annotations':{},
+            'blocks':{'external':{'spaceId':'external-space','externalReferenceId':'xref-1'},
+                      'empty':{'spaceId':'empty-space'}},
+            'blockInstances':{'i1':{'definitionId':'external','sourceRefs':source_ref('1')},
+                              'i2':{'definitionId':'empty','sourceRefs':source_ref('2')}}}
+        result = source_display_coverage(drawing, {}, {}, {}, {})
+        self.assertEqual(result['withoutDisplayGeometry'],1)
+        self.assertEqual(result['byReason']['externalReferenceUnresolved'],1)
+        self.assertEqual(result['byReason']['blockInstanceEmptyDefinition'],1)
+        self.assertEqual(result['byReason']['unsupported'],{'XREF':1})
+
+    def test_constraint_without_picture_stays_explicitly_unsupported(self):
+        drawing = {'entities':{
+            'constraint':{'geometry':{'sourceType':'DIMENSION'},
+                          'sourceRefs':source_ref('1')},
+            'ordinary':{'geometry':{'sourceType':'DIMENSION'},
+                        'sourceRefs':source_ref('2')}}, 'annotations':{}, 'blockInstances':{}, 'blocks':{}}
+        semantics = {'constraint':{'pictureStatus':'constraint-without-picture','sourceRefs':source_ref('1')},
+                     'ordinary':{'pictureStatus':'absent','sourceRefs':source_ref('2')}}
+        result = source_display_coverage(drawing, {}, {}, {}, {}, dimension_semantics=semantics)
+        self.assertEqual(result['withoutDisplayGeometry'],2)
+        self.assertEqual(result['withDisplayGeometry'],0)
+        self.assertEqual(result['status'],'partial')
+        self.assertEqual(result['byReason']['unsupported'],{'DIMENSION':1,'DIMENSION_CONSTRAINT':1})
+
 
 if __name__ == "__main__":
     unittest.main()
