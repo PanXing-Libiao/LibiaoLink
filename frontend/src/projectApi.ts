@@ -10,6 +10,8 @@ import { apiDownload, apiRequest, apiSend, readAllPages } from "./api";
 import { EMPTY_LIST_QUERY, type ListQueryState } from "./useHashRoute";
 import type { Project } from "./types";
 
+export type ProjectExportFormat = "xlsx" | "zip";
+
 export type ApiProject = {
   id: string;
   code: string;
@@ -272,26 +274,31 @@ export function toUiProject(view: ApiProject): Project {
 }
 
 /** 浏览器保存用的兜底文件名（服务端 Content-Disposition 优先；这里只处理文件名非法字符）。 */
-function projectExportDownloadName(project: Project): string {
+function projectExportDownloadName(project: Project, format: ProjectExportFormat): string {
   const clean = (value: string): string => value.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").replace(/[. ]+$/g, "").trim().slice(0, 120).replace(/[. ]+$/g, "") || "项目";
-  return "[" + clean(project.code) + "] " + clean(project.description) + ".xlsx";
+  return "[" + clean(project.code) + "] " + clean(project.description) + "." + format;
 }
 
 /**
- * 项目数据导出（project.export）：一次下载四个 Sheet 的 xlsx；
- * origin 显式回传，供服务端把「文件」列生成为当前站点的文件库检索链接。
+ * 项目数据导出（project.export）：
+ * - xlsx = 原有四个业务 Sheet 的工作簿；
+ * - zip = 工作簿 + 原附件目录 + manifest.json。
+ * origin 仅 xlsx 需要，用于「文件」列的项目文件视图链接；ZIP 内使用包内相对路径。
  */
-export async function downloadProjectWorkbook(project: Project): Promise<void> {
+export async function downloadProjectWorkbook(project: Project, format: ProjectExportFormat = "xlsx"): Promise<void> {
   const origin = encodeURIComponent(window.location.origin);
+  const accept = format === "zip"
+    ? "application/zip"
+    : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   const response = await apiDownload(
-    "/api/v1/projects/" + encodeURIComponent(project.id) + "/export?origin=" + origin,
-    { headers: { Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" } },
+    "/api/v1/projects/" + encodeURIComponent(project.id) + "/export?format=" + format + "&origin=" + origin,
+    { headers: { Accept: accept } },
   );
   const objectUrl = URL.createObjectURL(response.blob);
   try {
     const link = document.createElement("a");
     link.href = objectUrl;
-    link.download = response.fileName ?? projectExportDownloadName(project);
+    link.download = response.fileName ?? projectExportDownloadName(project, format);
     document.body.appendChild(link);
     link.click();
     link.remove();
