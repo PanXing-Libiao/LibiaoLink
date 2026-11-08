@@ -20,7 +20,7 @@ import { useFocusTrap } from "./components/useFocusTrap";
 import { dictLabel, typeAccent, type Dicts } from "./dicts";
 import { directoryMemberOptions, directoryName, type DirectoryUser } from "./directory";
 import { readStoredSidebarOpen, saveFiltersPref, saveSidebarPref } from "./homePrefs";
-import { EMPTY_FACETS, buildListQuery, fetchProjectFacets, fetchProjectList, toUiProject, type ProjectFacets } from "./projectApi";
+import { EMPTY_FACETS, buildListQuery, fetchProjectFacets, fetchProjectList, toUiProject, type ProjectExportFormat, type ProjectFacets } from "./projectApi";
 import { newSavedFilterId, sameCriteria } from "./savedFilters";
 import type { FilterCriteria, SavedFilter } from "./savedFilters";
 import { buildListHash, EMPTY_LIST_QUERY, hasListFilters, initialRouteRestored, openProject, replaceListQuery, useHashRoute } from "./useHashRoute";
@@ -50,8 +50,8 @@ type HomeProps = {
   canUpdateProject: boolean;
   /** 是否持有 project.export：无权限时卡片导出入口不渲染（服务端仍是最终裁决）。 */
   canExportProject: boolean;
-  /** 导出项目全部数据（App 层调下载接口、持忙碌态并在失败时出全局提示）。 */
-  onExportProject: (project: Project) => void;
+  /** 导出项目数据（xlsx / Excel+附件 zip；App 层调下载接口、持忙碌态并在失败时出全局提示）。 */
+  onExportProject: (project: Project, format: ProjectExportFormat) => void;
   /** 正在导出的项目 id：null = 没有进行中的导出。 */
   exportingProjectId: string | null;
   /** 卡片删除项目（硬删；二次确认由 App 层的提示条承担）：确认后由父层调接口并刷新列表。 */
@@ -821,8 +821,8 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                 }
                 onExport={
                   canExportProject
-                    ? () => {
-                        onExportProject(project);
+                    ? (format) => {
+                        onExportProject(project, format);
                       }
                     : undefined
                 }
