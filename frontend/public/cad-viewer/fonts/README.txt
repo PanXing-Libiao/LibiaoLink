@@ -28,3 +28,14 @@ Rebuild these bytes from the pinned local OTF files with:
   CAD_FONT_PYTHON=/path/to/python node frontend/scripts/generate-cad-symbol-fonts.mjs /local/upstream-fonts
 Then regenerate the coverage table. Existing bundled glyphs retain priority within
 each family; symbol subsets add only previously absent code points in the documented blocks.
+
+
+Automatic matching and source layout constraints (2026-11-08)
+- Resolved original glyph presentations remain first. Supplied files are matched automatically by logical filename or declared family; no manual font-selection UI is added.
+- Missing faces use the checked-in mapping: Song/FangSong/Kai -> Noto Serif SC; Hei/YaHei -> Noto Sans SC; Arial/Swiss/Helvetica -> Arimo; Times -> Tinos; Courier -> Cousine. SHX names initially use the Latin sans category; uncovered CJK are supplied by the finite bundled CJK faces. Unknown names use script-based defaults.
+- Per-character cmap coverage and available weights/styles select actual faces before measuring. This is category matching, not recovery of the missing original font metrics.
+- Original explicit height, width, tracking, paragraph indents/alignment and left tab stops drive replacement wrapping and painting. Absolute inline width overrides style width; relative values and nested groups keep their source contexts. Tracking changes advances rather than scaling glyph outlines.
+- Reference frame widths are constraints; stored measured extents and unparsed legacy column heights are not target sizes for automatic compression. Source coordinates, reference widths and font requests are retained. No per-drawing fitting or automatic text relocation is used.
+- Right/center tab fields, justified/distributed paragraphs, paragraph spacing controls and other unmodelled commands remain approximate. Font substitution may still change visible height, widths and line breaks.
+
+- Historical CAD cap-height measurement, source width/height controls, CJK punctuation, whole English words, original-glyph priority and shared scaled painting remain in use with these faces. Native MTEXT wrapping also ignores line-end ordinary spaces, as the earlier plain path did; leading spaces, explicit empty paragraphs, tabs and TEXT endpoint spacing remain source-defined. Raw source text is retained.
