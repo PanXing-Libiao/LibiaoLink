@@ -4,7 +4,7 @@
 // caller-supplied Canvas font metric callback.
 import {cadTextTokens, cadLineHeight} from './vendor/cad-text-layout.js';
 
-export const TEXT_FONT = '"Helvetica Neue", "PingFang SC", "Microsoft YaHei", "Libiao Sans SC", "Libiao Sans", sans-serif';
+export const TEXT_FONT = '"Libiao Sans SC"';
 
 function apply(m, p) {
   return [m[0] * p[0] + m[4] * p[1] + m[12], m[1] * p[0] + m[5] * p[1] + m[13]];
