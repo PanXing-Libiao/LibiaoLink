@@ -39,6 +39,7 @@ export function mountDrawingViewer(envelope) {
   const media = ucd.extensions?.['org.cad-preview.dxf-media/1'];
   const mtextLayout = ucd.extensions?.['org.cad-preview.dxf-mtext/1'];
   const plotStyles = ucd.extensions?.['org.cad-preview.dxf-plot-styles/1'];
+  const lineWeightSettings = ucd.extensions?.['org.libiaolink.dwg/1']?.lineWeightSettings;
   let plotPreview = false;
   const plotErrors = new Set(), plotFillCache = new Map();
   const viewport = document.getElementById('viewport');
@@ -79,6 +80,11 @@ export function mountDrawingViewer(envelope) {
   // ?instances=1 forces the retained-instance path so small fixtures can
   // regression-test layout/presentation/media semantics without a 400k-draw file.
   const nativeTextLayout = !!ucd.extensions?.['org.libiaolink.dwg/1'];
+  const nativePoints = ucd.extensions?.['org.libiaolink.dwg/1']?.pointDisplaySettings;
+  const isDefpoint = entity => nativeTextLayout && entity?.geometry.type === 'point'
+    && drawing.layers[entity.layerId]?.name.toLowerCase() === 'defpoints';
+  const pointMarkFor = (entity, p) => ({x:p[0], y:p[1],
+    pixel:entity?.geometry.type === 'point' && (isDefpoint(entity) || nativePoints?.mode === 0)});
   // Dimension picture blocks carry their own text; display avoidance must never
   // move it (that would put a dimension at a neighbour's place and leave its own
   // spot empty). The reader records every dimension instance; fall back to the
@@ -500,7 +506,13 @@ export function mountDrawingViewer(envelope) {
   // ----- build ------------------------------------------------------------
   function apply(m, p) { return [m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12], m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13]]; }
   function matrixScale(m) { return Math.hypot(m[0], m[1]) || 1; }
-  function lineWidthPx(mm) { return Math.max(0.6, Math.min(4.0, 0.75 + (Number(mm || 0.25) - 0.25) * 1.1)); }
+  function lineWidthPx(mm) {
+    // Model LWDISPLAY hides pen widths, not authored polyline geometry widths.
+    const display = lineWeightSettings?.displayLineWeight;
+    if (display === false && spaceTarget.kind === 'model' && !plotPreview) return 1;
+    const minimum = typeof display === 'boolean' ? 1 : 0.6;
+    return Math.max(minimum, Math.min(4.0, 0.75 + (Number(mm ?? 0.25) - 0.25) * 1.1));
+  }
   function dashFor(style, itemId) {
     return style?.lineTypeId ? lineDashFor(style, itemId, {lineTypes:drawing.lineTypes, styleExt}) : null;
   }
@@ -747,6 +759,7 @@ export function mountDrawingViewer(envelope) {
       if (draw.kind === 'entity') {
         const entity = drawing.entities[draw.itemId];
         if (!entity || entity.geometry.type === 'unsupported') continue;
+        if (entity.geometry.type === 'point' && nativePoints?.mode === 1 && !isDefpoint(entity)) continue;
         if (entity.geometry.type === 'image') {
           const raster = rasterRecord(entity, draw, mediaItemFor(ucd, draw.itemId));
           if (!raster) continue;
@@ -798,7 +811,7 @@ export function mountDrawingViewer(envelope) {
           for (let i = 0; i < stroke.segments.length; i++) segments.push(stroke.segments[i]);
           if (stroke.points.length) {
             const p = stroke.points[0];
-            rec.pointMark = {x: p[0], y: p[1]}; pointMarks.push(rec.pointMark);
+            rec.pointMark = pointMarkFor(entity, p); pointMarks.push(rec.pointMark);
           }
           if (stroke.bbox) { extend(stroke.bbox.minX, stroke.bbox.minY); extend(stroke.bbox.maxX, stroke.bbox.maxY); }
         } else {
@@ -806,7 +819,7 @@ export function mountDrawingViewer(envelope) {
           if (!pts || !pts.length) continue;
           if (entity.geometry.type === 'point' || pts.length === 1) {
             const p = apply(draw.localToSpace, pts[0]);
-            rec.pointMark = {x: p[0], y: p[1]}; pointMarks.push(rec.pointMark); extend(p[0], p[1]);
+            rec.pointMark = pointMarkFor(entity, p); pointMarks.push(rec.pointMark); extend(p[0], p[1]);
           } else {
             let previous = null;
             for (const p of pts) {
@@ -876,7 +889,7 @@ export function mountDrawingViewer(envelope) {
     function* compile(group,matrix){
       if(done.has(group))return;if(active.has(group))throw new Error("cyclic-instance-plan");active.add(group);
       const byId=new Map();for(const rec of group.records){const rows=byId.get(rec.id)||[];rows.push(rec);byId.set(rec.id,rows);}
-      group.bounds=null;group.unbounded=false;group.paint=[];group.hits=[];group.visibleCount=0;group.byKind={entity:0,annotation:0};
+      group.bounds=null;group.unbounded=false;group.hasPointMarks=false;group.paint=[];group.hits=[];group.visibleCount=0;group.byKind={entity:0,annotation:0};
       // Merge strokes with the same style inside each barrier segment (a barrier
       // is any non-stroke entry: group, fill, text, raster, clipped record...).
       // Same-style strokes may then paint in first-appearance order; strokes of
@@ -889,6 +902,7 @@ export function mountDrawingViewer(envelope) {
           flush();
           yield* compile(entry.group,multiply(matrix,entry.matrix));entry.bounds=transformBounds(entry.group.bounds,entry.matrix);
           group.bounds=extendBounds(group.bounds,entry.bounds);group.unbounded=group.unbounded||entry.group.unbounded;
+          group.hasPointMarks ||= entry.group.hasPointMarks;
           group.paint.push(entry);if(entry.bounds)group.hits.push(entry);
           group.visibleCount+=entry.group.visibleCount;
           for(const kind of ["entity","annotation"])group.byKind[kind]+=entry.group.byKind[kind];
@@ -908,6 +922,7 @@ export function mountDrawingViewer(envelope) {
         if(visible.length){group.visibleCount++;group.byKind[visible[0][0].draw.kind]++;}
         for(const [rec,box] of visible){
           visibleRecords++;
+          group.hasPointMarks ||= !!rec.pointMark;
           rec.instanceOrder=entry.order;
           // LOD is display-only. Every finite record stays in the bounds and hit
           // index so fit, selection, snapping and measurement still see the UCD
@@ -953,13 +968,14 @@ export function mountDrawingViewer(envelope) {
     const extend=(target,box)=>{if(!box)return target;if(!target)return {...box};target.minX=Math.min(target.minX,box.minX);target.minY=Math.min(target.minY,box.minY);target.maxX=Math.max(target.maxX,box.maxX);target.maxY=Math.max(target.maxY,box.maxY);return target;};
     function visit(group,matrix){
       if(done.has(group))return;done.add(group);
-      group.bounds=null;group.hits=[];group.unbounded=false;group.visibleCount=0;
+      group.bounds=null;group.hits=[];group.unbounded=false;group.hasPointMarks=false;group.visibleCount=0;
       group.byKind={entity:0,annotation:0};const ids=new Set();
       for(const entry of group.paint){
         if(entry.kind==='group'){
           visit(entry.group,multiply(matrix,entry.matrix));
           entry.bounds=transformBounds(entry.group.bounds,entry.matrix);
           group.bounds=extend(group.bounds,entry.bounds);group.unbounded ||= entry.group.unbounded;
+          group.hasPointMarks ||= entry.group.hasPointMarks;
           if(entry.bounds)group.hits.push(entry);
           group.visibleCount+=entry.group.visibleCount;
           for(const kind of ['entity','annotation'])group.byKind[kind]+=entry.group.byKind[kind];
@@ -972,6 +988,7 @@ export function mountDrawingViewer(envelope) {
           const box=recordVisibleBounds(rec);
           if(!box&&!rec.infinite)continue;
           visibleRecords++;
+          group.hasPointMarks ||= !!rec.pointMark;
           if(!ids.has(rec.id)){ids.add(rec.id);group.visibleCount++;group.byKind[rec.draw.kind]++;}
           if(box){group.bounds=extend(group.bounds,box);group.hits.push({kind:'record',rec,bounds:box,order:rec.instanceOrder});}
           else{group.unbounded=true;if(!instancePlan.infiniteAnchor)instancePlan.infiniteAnchor=transformPoint(matrix,...rec.infinite.origin);}
@@ -1433,9 +1450,9 @@ export function mountDrawingViewer(envelope) {
       const matrix=multiply(parent,node.matrix);
       const groupBounds=node.group.bounds&&transformBounds(node.group.bounds,matrix);
       if(!node.group.unbounded&&!intersects(groupBounds))return;
-      // If the complete retained subtree projects below one pixel, no record
-      // inside it can contribute a visible pixel, regardless of its own bbox.
-      if(groupBounds&&Math.max(groupBounds.maxX-groupBounds.minX,groupBounds.maxY-groupBounds.minY)*scale<minScreenPx)return;
+      // Screen-sized point marks can contribute pixels even when their source
+      // bounds have zero area. Preserve them through every ancestor group.
+      if(!node.group.hasPointMarks&&groupBounds&&Math.max(groupBounds.maxX-groupBounds.minX,groupBounds.maxY-groupBounds.minY)*scale<minScreenPx)return;
       const localScale=scale*Math.max(Math.hypot(matrix[0],matrix[1]),Math.hypot(matrix[4],matrix[5]),1e-15);
       for(const entry of node.group.paint){
         if (++visited % 32 === 0 && performance.now() - sliceStarted >= 6) {
@@ -1508,7 +1525,10 @@ export function mountDrawingViewer(envelope) {
           else {ctx.fillStyle=rec.mask?sheetBackground:rec.color;ctx.fill(rec.fillPath,rec.fillRule||'evenodd');}
         }
         if(rec.path){ctx.strokeStyle=rec.color;ctx.lineWidth=rec.width/localScale;ctx.setLineDash(rec.dash||[]);ctx.stroke(rec.path);}
-        if(rec.pointMark){const p=rec.pointMark;ctx.strokeStyle=rec.color;ctx.lineWidth=1/localScale;ctx.beginPath();ctx.moveTo(p.x-2.5/localScale,p.y);ctx.lineTo(p.x+2.5/localScale,p.y);ctx.moveTo(p.x,p.y-2.5/localScale);ctx.lineTo(p.x,p.y+2.5/localScale);ctx.stroke();}
+        if(rec.pointMark){const p=rec.pointMark;
+          if(p.pixel){ctx.fillStyle=rec.color;ctx.fillRect(p.x-.5/localScale,p.y-.5/localScale,1/localScale,1/localScale);}
+          else{ctx.strokeStyle=rec.color;ctx.lineWidth=1/localScale;ctx.beginPath();ctx.moveTo(p.x-2.5/localScale,p.y);ctx.lineTo(p.x+2.5/localScale,p.y);ctx.moveTo(p.x,p.y-2.5/localScale);ctx.lineTo(p.x,p.y+2.5/localScale);ctx.stroke();}
+        }
         if(rec.textEntry){
           const t=rec.textEntry;
           drawTextLeader(t,matrix);
@@ -1805,7 +1825,8 @@ export function mountDrawingViewer(envelope) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       if (rec.pointMark) {
         const p = rec.pointMark, sx = p.x * scale + tx, sy = -p.y * scale + ty;
-        if(p.dot){ctx.fillStyle=rec.color;ctx.beginPath();ctx.arc(sx,sy,Math.max(.5,rec.width/2),0,Math.PI*2);ctx.fill();}
+        if(p.pixel){ctx.fillStyle=rec.color;ctx.fillRect(sx-.5,sy-.5,1,1);}
+        else if(p.dot){ctx.fillStyle=rec.color;ctx.beginPath();ctx.arc(sx,sy,Math.max(.5,rec.width/2),0,Math.PI*2);ctx.fill();}
         else {
           ctx.strokeStyle = rec.color; ctx.lineWidth = 1;
           ctx.beginPath(); ctx.moveTo(sx - 2.5, sy); ctx.lineTo(sx + 2.5, sy); ctx.moveTo(sx, sy - 2.5); ctx.lineTo(sx, sy + 2.5); ctx.stroke();
@@ -2370,6 +2391,11 @@ export function mountDrawingViewer(envelope) {
     const unsupported = (geom.byReason && geom.byReason.unsupported) || {};
     const losses = coverageExt.losses || [];
     const lines = [];
+    if (lineWeightSettings) {
+      const sourceDisplay = lineWeightSettings.displayLineWeight;
+      lines.push('源模型线宽显示：' + (sourceDisplay === true ? '开启' : sourceDisplay === false ? '关闭（按细线显示）' : '未知（未读取到源开关）') + '；不改变多段线自身宽度。');
+      lines.push('默认笔宽采用本查看器 0.25 mm 替代；原作者的默认设置未随文件保存，不能据此认定原图默认笔宽。');
+    }
     const missingAcisPrecision = (ucd.diagnostics || []).filter(item => item.code === 'native-acis-unavailable' && item.message === 'acis-source-units-or-precision-missing').length;
     if (missingAcisPrecision) lines.push('有 ' + missingAcisPrecision + ' 个三维或面域对象无法预览：文件缺少有效的单位或建模精度信息，无法确认尺寸和精度。为避免显示错误，这些对象未显示。请联系图纸提供者，在原 CAD 软件中确认单位和精度后重新导出为较新版本的 DWG；也可下载原文件查看。');
     if (recovery) {
@@ -2389,8 +2415,18 @@ export function mountDrawingViewer(envelope) {
     }
     if (geom.fidelity?.status === "partial") {
       const font = geom.fidelity.fontSubstitution || {};
-      lines.push("字体保真 partial：" + (font.nativeFontRecords ?? "?") + " 个原生字体记录未配套，" + (font.annotationSourceRecords ?? "?") + " 个注释源对象使用显式替代字形；几何归账不受影响，但字形与排版不能等同原图。");
+      if (font.originalCompanionsProvided) {
+        lines.push("字体保真 partial：已加载配套字体；文字布局记录中 " + (font.originalGlyphLayouts ?? "?") + " 项使用匹配字形，" + (font.linkedGlyphLayouts ?? "?") + " 项含链接替代字符，" + (font.substitutedLayouts ?? "?") + " 项使用未解析对象替代；布局记录数不等于唯一源对象数，字形与排版仍不能等同原图。");
+      } else {
+        lines.push("字体保真 partial：" + (font.nativeFontRecords ?? "?") + " 个原生字体记录未配套，" + (font.annotationSourceRecords ?? "?") + " 个注释源对象使用显式替代字形；几何归账不受影响，但字形与排版不能等同原图。");
+      }
     }
+    const legacyColumnApprox = losses.filter(item => item.code === 'mtext-legacy-column-layout-approximate').length;
+    const legacyColumnMissing = losses.filter(item => item.code === 'mtext-legacy-column-layout-unavailable').length;
+    if (legacyColumnApprox || legacyColumnMissing) lines.push('旧版列文字：' + legacyColumnApprox + ' 条单列按近似预览归账（字形仍受字体限制），' + legacyColumnMissing + ' 条列布局未显示；列定义已保留，不代表完整列排版已恢复。');
+    const unknownTextDirections = losses.filter(item => item.code === 'mtext-drawing-direction-unrecognized').length;
+    if (unknownTextDirections) lines.push('文字排版：' + unknownTextDirections + ' 条源 MTEXT 含未识别方向值；已保留源值和可读的近似字形，不代表原布局已恢复。');
+    if (nativePoints && Object.hasOwn(nativePoints, 'mode') && ![0,1].includes(nativePoints.mode)) lines.push('点显示：已保留源 PDMODE/PDSIZE；Defpoints 使用点状标记，其他点样式与尺寸尚未定向验收。');
     const cachedProxies = Object.values((ucd.extensions['org.libiaolink.dwg/1'] || {}).proxyGraphics || {}).filter(item => item.status === 'cached-display');
     if (cachedProxies.length) lines.push('代理图形：' + cachedProxies.length + ' 个对象使用原图保存的显示缓存；未恢复专业对象语义，也不代表外部文字或内容已更新。');
     if (unsupported.DIMENSION_CONSTRAINT) lines.push('尺寸约束：' + unsupported.DIMENSION_CONSTRAINT + ' 个对象无存储标注图形，参数已保留；交互显示尚未支持，不能据此认定普通尺寸线丢失。');
@@ -2511,6 +2547,7 @@ export function mountDrawingViewer(envelope) {
         records: group.records,
         bounds: group.bounds,
         unbounded: group.unbounded,
+        hasPointMarks: group.hasPointMarks,
         paint: group.paint,
         hits: group.hits,
         visibleCount: group.visibleCount,
@@ -2526,6 +2563,7 @@ export function mountDrawingViewer(envelope) {
       saved.group.records = saved.records;
       saved.group.bounds = saved.bounds;
       saved.group.unbounded = saved.unbounded;
+      saved.group.hasPointMarks = saved.hasPointMarks;
       saved.group.paint = saved.paint;
       saved.group.hits = saved.hits;
       saved.group.visibleCount = saved.visibleCount;

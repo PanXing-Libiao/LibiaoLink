@@ -65,6 +65,19 @@ def build(args):
     replace_once(acad / 'src/ACadSharp/IO/DWG/DwgStreamWriters/DwgHeaderWriter.cs',
                  '//BS : INTERSECTIONCOLOR\n\t\t\t\tthis._writer.WriteBitShort(this._header.InterfereColor.Index);',
                  '//BS : INTERSECTIONCOLOR\n\t\t\t\tthis._writer.WriteBitShort(this._header.IntersectionColorIndex);')
+    # R2000+ stores an inverted LWDISPLAY bit and an indexed CELWEIGHT.
+    replace_once(header, 'public bool DisplayLineWeight { get; set; } = false;',
+                 'public bool DisplayLineWeight { get; set; } = false;\n\n'
+                 '\t/// <summary>Original R2000+ combined header flags; absent in earlier formats.</summary>\n'
+                 '\tpublic int? NativeLineWeightFlags { get; set; }')
+    header_reader = acad / 'src/ACadSharp/IO/DWG/DwgStreamReaders/DwgHeaderReader.cs'
+    replace_once(header_reader, '_header.CurrentEntityLineWeight = (LineWeightType)(flags & 0x1F);',
+                 '_header.NativeLineWeightFlags = flags;\n\t\t\t\t_header.CurrentEntityLineWeight = CadUtils.ToValue((byte)(flags & 0x1F));')
+    replace_once(header_reader, '_header.DisplayLineWeight = (flags & 0x200) == 1;',
+                 '_header.DisplayLineWeight = (flags & 0x200) == 0;')
+    replace_once(acad / 'src/ACadSharp/IO/DWG/DwgStreamWriters/DwgHeaderWriter.cs',
+                 '((int)this._header.CurrentEntityLineWeight & 0x1F)',
+                 '(CadUtils.ToIndex(this._header.CurrentEntityLineWeight) & 0x1F)')
     # DWG spatial-filter matrices store three rows of four values. CSMath's
     # indexer is [column,row]; the pinned reader/writer used the transposed order.
     replace_once(acad / 'src/ACadSharp/IO/DWG/DwgStreamReaders/DwgObjectReader.cs',
