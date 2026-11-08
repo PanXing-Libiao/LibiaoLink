@@ -480,7 +480,7 @@
     "vendor/underlay-readers/NOTICE": "2d2c791598a91aa9c1ad9820bc13bc88a6e6385b58f3d912eecb1b522c3dde93"
   },
   "readerFiles": {
-    "CommunityText.cs": "24d35d37a91a25ec23da991e701d2eade1b7c2b037bc04bfc8ae328e9ed4ea2a",
+    "CommunityText.cs": "3ee9c3e818d501e6ca73426b5cd5d61f996337d7de88d41a4fefa054a8cde8f1",
     "HatchEmptyPattern.cs": "b2a3a2c3ae22851f7207ed86e0a7c0385f49b767b1d0675b143bbb6c2ef175de",
     "LegacyMTextColumns.cs": "dafb339bd388c3b1629bc79a9d0cec50e8255529783fc72c7ff4fdb558b944b2",
     "Program.cs": "b14c0133293cad4b6ba626cfb9c5e5e64316d1cc0315164dec903d4db1488d15",
@@ -488,7 +488,7 @@
     "dependency.json": "4c396a2da3717365102546d8efb46d4d03eba6de67b5c3911edf147f1a790193"
   },
   "browserFiles": {
-    "app.js": "b6751565753f3e43e96c604331265fc47fd033d7b11801a3028c81003ae3b731",
+    "app.js": "063614afc6f2cdc09e2578187b8ce65af42cd49358f5ff2c6d822da1cfc4f8b5",
     "benchmark.js": "c81b3668354f0fc431c02f068545d5c71ce4a266bf414671341aa97674fc3e9d",
     "binary-transport.js": "e08b956fd5caa3588d5826f531d208ca12792ce10c003b2de1ceddc5527a447f",
     "camera-framing.js": "12f685ca11f995192d3f5348a44c2cf5fca5286bca58b0af99a7faa7ef5aab6d",
@@ -509,8 +509,8 @@
     "drawing-plot-styles.js": "a2c3888311ccdaac04b38f108ab7175cd171a43f0fb82fdb9356e9431819b243",
     "drawing-projection.js": "1e9be504fea21561e0bb505dfda9aebe02aa4972b28399b5e2668875b9409306",
     "drawing-text-avoidance.js": "2e65f43a90f24b6a669325a3bc7687d0d1f93f22610ba937d9b8c2ae2b3e5001",
-    "drawing-text.js": "2ef7f4fba4d3aa13609505c6260c8a95825d31d4f0630e6f834cf81ca9883096",
-    "drawing-viewer.js": "665c65e19af5e03a5d25de09276d5574cb3245e69074486a2fb8a2b96a471ffe",
+    "drawing-text.js": "81c1b08ed9278b4a56eb8fc352011ccf20665aa5038e4335e1a2680861a83391",
+    "drawing-viewer.js": "7d84dfb06707d52135a8c64a9dbc661f2c652442539bb767266a1dad6dd24654",
     "dwg-packed-transport.js": "36fad78365584340ac8e57bfd2952ed46ef07438e216cf828091949b6a59812f",
     "dxf-resources.js": "219569569cc22deca979ec3f6693031bfbfe050c30eb8fe419962f4e3dab5c2c",
     "gpu/background-painter.js": "20424c614d1879af4a4b2cfa265ef0fa4b79acaebb1124c46395e94ab8d287f1",
@@ -566,7 +566,7 @@
   "formatVersions": {
     "STEP": "step-0.3.3/dc2597ef7a5b32a1f00d11c4858673682130eae98dd136ae965adbe8e876adf0/gateway-1",
     "DXF": "dxf-0.15.0/3e2224989665ac8c0197f38a2e7b420e82efd947ac04ff9e547d3d6918ef66b4/gateway-1",
-    "DWG": "dwg-0.1.0/83810167a8cc365eb3eae222653439c4feb60d2d057bce317f9cb38a8ae82941/gateway-1"
+    "DWG": "dwg-0.1.0/d1a2a2cf8261bcc2620c1df98f6b600a3e05f93a54f48cac840a4105d19aadf0/gateway-1"
   },
   "compatibility": {
     "STEP": [
@@ -587,9 +587,9 @@
       "dwg-0.1.0/fdd7433b4a757f28a066b816b3230da860eefd52a5ca20d00b5887f72d382f5e/gateway-1"
     ]
   },
-  "engineDigest": "cd4d71704f983d7329b3532c812ef554419def309c6ba9314b291d9baf838a2c",
-  "viewerDigest": "1560bfe64b593b8660011a4d5dff685d28e5501c755ed3690cd1336cb7140206",
-  "releaseDigest": "6daa5dbdf07006072199cf50c2d48d26c21407e641fd3b457069ba57fdd70fcc",
-  "engineVersion": "step-0.3.3/cd4d71704f983d7329b3532c812ef554419def309c6ba9314b291d9baf838a2c/gateway-1",
-  "viewerVersion": "viewer-1560bfe64b593b8660011a4d5dff685d28e5501c755ed3690cd1336cb7140206"
+  "engineDigest": "41e22d105f2d925ed4c2932f3210c5f162df92104998600efa2a456e17d25385",
+  "viewerDigest": "88b4d847600618493db3f16b704bd4c370502467ae90e65515f731fa7f369628",
+  "releaseDigest": "1b95c1926a6632e0ba311b5f2597a528ab3491722d76466c93782bfea20b0d61",
+  "engineVersion": "step-0.3.3/41e22d105f2d925ed4c2932f3210c5f162df92104998600efa2a456e17d25385/gateway-1",
+  "viewerVersion": "viewer-88b4d847600618493db3f16b704bd4c370502467ae90e65515f731fa7f369628"
 }

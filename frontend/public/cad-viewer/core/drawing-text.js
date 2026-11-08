@@ -25,23 +25,24 @@ function measureTextLines(text, size, measure, fontFamily) {
 // inline colors (\C ACI index, \c true color), heights (\H) and width factors
 // (\W) are modelled here; other controls are skipped exactly like the sanitized
 // plain text. Grouping braces push/pop the whole run state.
-export function parseMtextRuns(raw, defaultFont, resolveFont, resolveColor, baseHeight = 0) {
+export function parseMtextRuns(raw, defaultFont, resolveFont, resolveColor, baseHeight = 0, baseWidthFactor = 1) {
   const source = String(raw || '');
   const runs = [];
   const stack = [];
-  const initial = {font: defaultFont, color: null, heightFactor: 1, widthFactor: 1, bold: false, italic: false};
+  const initial = {font: defaultFont, color: null, heightFactor: 1, widthFactor: 1, tracking: 1, paragraph: {}, bold: false, italic: false};
   let state = {...initial};
   let buffer = '';
   const sameState = (a, b) => (a.fontFamily ?? a.font) === (b.fontFamily ?? b.font)
     && a.color === b.color
     && a.heightFactor === b.heightFactor && a.widthFactor === b.widthFactor
+    && a.tracking === b.tracking && a.paragraph === b.paragraph
     && a.bold === b.bold && a.italic === b.italic;
   const flush = () => {
     if (!buffer) return;
     const last = runs[runs.length - 1];
     if (last && sameState(last, state)) last.text += buffer;
     else runs.push({text: buffer, fontFamily: state.font, color: state.color,
-      heightFactor: state.heightFactor, widthFactor: state.widthFactor,
+      heightFactor: state.heightFactor, widthFactor: state.widthFactor, tracking: state.tracking, paragraph: state.paragraph,
       bold: state.bold, italic: state.italic});
     buffer = '';
   };
@@ -79,15 +80,26 @@ export function parseMtextRuns(raw, defaultFont, resolveFont, resolveColor, base
       if (next === 'H') {
         const {value, end} = readValue(i + 2);
         flush();
-        const factor = parseHeightControl(value.trim(), baseHeight);
+        const factor = parseHeightControl(value.trim(), baseHeight, state.heightFactor);
         if (factor) state = {...state, heightFactor: factor};
         i = end; continue;
       }
       if (next === 'W') {
         const {value, end} = readValue(i + 2);
         flush();
-        const factor = Number(value.trim());
+        const control = value.trim();
+        const factor = /x$/i.test(control) ? state.widthFactor * Number(control.slice(0, -1)) : Number(control) / baseWidthFactor;
         if (Number.isFinite(factor) && factor > 0) state = {...state, widthFactor: factor};
+        i = end; continue;
+      }
+      if (next === 'T' || next === 'p') {
+        const {value, end} = readValue(i + 2); flush();
+        if (next === 'p') state = {...state, paragraph: paragraphControl(value, state.paragraph)};
+        else {
+          const control = value.trim(), factor = /x$/i.test(control)
+            ? state.tracking * Number(control.slice(0, -1)) : Number(control);
+          if (Number.isFinite(factor) && factor > 0) state = {...state, tracking: factor};
+        }
         i = end; continue;
       }
       // Other controls carry their parameter before ';'. Skipping the parameter
@@ -118,9 +130,9 @@ export function parseMtextRuns(raw, defaultFont, resolveFont, resolveColor, base
 
 // \H<value>x is a factor of the current height; a bare number is an absolute
 // height in drawing units, converted with the annotation's stored base height.
-function parseHeightControl(value, baseHeight) {
+function parseHeightControl(value, baseHeight, currentFactor) {
   if (!value) return null;
-  const factor = /x$/i.test(value) ? Number(value.slice(0, -1)) : (baseHeight > 0 ? Number(value) / baseHeight : NaN);
+  const factor = /x$/i.test(value) ? currentFactor * Number(value.slice(0, -1)) : (baseHeight > 0 ? Number(value) / baseHeight : NaN);
   return Number.isFinite(factor) && factor > 0 ? factor : null;
 }
 
@@ -129,77 +141,128 @@ function parseHeightControl(value, baseHeight) {
 const CLOSING_PUNCT = /^[，。、；：！？"”’）】》」』·…—％‰,.;:!?)\]}%]$/;
 const OPENING_PUNCT = /^[（【《「『“‘(\[{]$/;
 
-function layoutRunLines(runs, size, measure, wrapWidth, native = false, lineSpacing = 1, capHeight = size, measureCapHeight) {
+function trackedMeasure(text, measure, factor = 1) {
+  if (factor === 1) return {width: measure(text)};
+  let width = 0, previous = '';
+  const offsets = [];
+  for (const char of text) {
+    const advance = measure(char);
+    if (previous && !(previous.trim() === '' && char.trim() === ''))
+      width += (measure(previous + char) - measure(previous) - advance) * factor;
+    offsets.push(width); width += advance * factor; previous = char;
+  }
+  return {width, offsets};
+}
+
+function paragraphControl(value, previous = {}) {
+  const result = {...previous}, unsupported = [];
+  let tabs = null;
+  for (const part of value.replace(/^x/, '').split(',')) {
+    const numeric = /^([ilr])([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?|\*)$/i.exec(part);
+    if (numeric) { result[{i:'indent',l:'left',r:'right'}[numeric[1].toLowerCase()]] = numeric[2] === '*' ? 0 : Number(numeric[2]); continue; }
+    if (/^q[lcr*]$/.test(part)) { result.align = {l:0,c:.5,r:1,'*':null}[part[1]]; continue; }
+    if (part.startsWith('t')) tabs = [];
+    const tab = tabs && (part.startsWith('t') ? part.slice(1) : part);
+    if (tab === '*') continue;
+    if (tab !== null && tab !== false && tab !== undefined && tab !== '' && Number.isFinite(Number(tab))) { tabs.push(Number(tab)); continue; }
+    if (part) unsupported.push(part);
+  }
+  if (tabs) result.tabs = tabs;
+  if (unsupported.length) result.unsupported = unsupported;
+  return result;
+}
+
+function layoutRunLines(runs, size, measure, wrapWidth, native = false, lineSpacing = 1, capHeight = size, measureCapHeight, flow = {}) {
   if (typeof measure !== 'function') throw new Error('text-measure-required');
   const paragraphs = [];
-  let current = [];
+  let current = {runs: [], format: runs[0]?.paragraph || {}};
   for (const run of runs) {
-    const parts = String(run.text).split('\n');
-    parts.forEach((part, index) => {
-      if (index > 0) { paragraphs.push(current); current = []; }
-      if (part) current.push({...run, text: part});
+    String(run.text).split('\n').forEach((part, index) => {
+      if (index > 0) { paragraphs.push(current); current = {runs: [], format: run.paragraph || {}}; }
+      if (!current.runs.length) current.format = run.paragraph || {};
+      if (part) current.runs.push({...run, text: part});
     });
   }
   paragraphs.push(current);
-  const lines = [];
+  const lines = [], hasFrame = wrapWidth > 0;
+  const attachmentAlign = ((flow.attachment || 1) - 1) % 3 / 2;
+  const mtext = native && flow.kind === 'mtext';
   for (const paragraph of paragraphs) {
-    let tokens = [];
-    let width = 0;
+    const format = mtext ? paragraph.format : {};
+    let tokens = [], width = 0, first = true;
+    const left = () => ((format.left || 0) + (first ? format.indent || 0 : 0)) * capHeight;
+    const available = () => wrapWidth - left() - (format.right || 0) * capHeight;
     const fontSize = entry => (native && measureCapHeight
       ? capHeight * 100 / measureCapHeight(entry.fontFamily, entry.bold, entry.italic) : size) * (entry.heightFactor || 1);
-    const tokenWidth = (text, entry) => measure(text, entry.fontFamily, entry.bold, entry.italic)
-      * (fontSize(entry) / 100) * (entry.widthFactor || 1);
+    const metric = (text, entry) => trackedMeasure(text,
+      text => measure(text, entry.fontFamily, entry.bold, entry.italic), entry.tracking || 1);
+    const tokenWidth = (text, entry) => metric(text, entry).width * fontSize(entry) / 100 * (entry.widthFactor || 1);
+    const token = (text, entry) => ({...entry, text, width:tokenWidth(text, entry),
+      size:fontSize(entry), capHeight:capHeight * (entry.heightFactor || 1)});
     const pushLine = () => {
-      const segments = [];
-      let lineWidth = 0, lineSize = 0, lineCapHeight = 0;
-      for (const token of tokens) {
+      // Match plain CAD wrapping: line-end spaces are separators, not ink or
+      // extra rows. Keep leading spaces, explicit tabs and empty paragraphs.
+      if (mtext) for (let i = tokens.length - 1; i >= 0 && !tokens[i].tab; i--) {
+        const item = tokens[i], text = item.text.replace(/ +$/, '');
+        if (text === item.text) break;
+        tokens[i] = {...item, text, width: tokenWidth(text, item)};
+        if (text) break;
+      }
+      const segments = []; let lineSize = 0, lineCapHeight = 0;
+      for (const item of tokens) {
         const last = segments[segments.length - 1];
-        if (last && last.fontFamily === token.fontFamily && last.color === token.color
-          && last.bold === token.bold && last.italic === token.italic
-          && last.size === token.size && last.widthFactor === (token.widthFactor || 1)) {
-          last.text += token.text; last.width += token.width;
-        } else {
-          segments.push({text: token.text, fontFamily: token.fontFamily, color: token.color,
-            bold: token.bold, italic: token.italic, size: token.size, width: token.width, widthFactor: token.widthFactor || 1});
-        }
-        lineWidth += token.width;
-        lineSize = Math.max(lineSize, token.size);
-        lineCapHeight = Math.max(lineCapHeight, token.capHeight);
+        if (!item.tab && last && !last.tab && last.fontFamily === item.fontFamily && last.color === item.color
+          && last.bold === item.bold && last.italic === item.italic && last.size === item.size
+          && last.widthFactor === (item.widthFactor || 1) && last.tracking === (item.tracking || 1)) {
+          last.text += item.text; last.width += item.width;
+        } else segments.push({...item, widthFactor:item.widthFactor || 1, tracking:item.tracking || 1});
+        lineSize = Math.max(lineSize, item.size); lineCapHeight = Math.max(lineCapHeight, item.capHeight);
       }
-      const effSize = lineSize || size;
-      lines.push({segments, width: lineWidth, size: effSize,
-        advance: native ? cadLineHeight(lineCapHeight || capHeight, lineSpacing) : effSize * 1.25});
-      tokens = []; width = 0;
+      for (const segment of segments) if (!segment.tab && segment.tracking !== 1) {
+        const measured = metric(segment.text, segment), factor = segment.size / 100 * segment.widthFactor;
+        segment.glyphOffsets = measured.offsets.map(offset => offset * factor);
+        segment.width = measured.width * factor;
+      }
+      const lineWidth = segments.reduce((sum, segment) => sum + segment.width, 0);
+      const line = {segments, width:lineWidth, size:lineSize || size, capHeight:lineCapHeight || capHeight,
+        advance:native ? cadLineHeight(flow.lineSpacingStyle === 'Exactly' ? capHeight : lineCapHeight || capHeight, lineSpacing) : (lineSize || size) * 1.25};
+      if (mtext) {
+        const align = format.align ?? attachmentAlign;
+        line.x = hasFrame ? -attachmentAlign * wrapWidth + left() + align * (available() - lineWidth)
+          : left() - align * lineWidth;
+        if (format.unsupported?.length) line.unmappedParagraph = format.unsupported;
+      }
+      lines.push(line); tokens = []; width = 0; first = false;
     };
-    for (const entry of paragraph) {
-      const entrySize = fontSize(entry);
-      const entryCapHeight = capHeight * (entry.heightFactor || 1);
-      const whole = tokenWidth(entry.text, entry);
-      if (!wrapWidth || width + whole <= wrapWidth) {
-        tokens.push({text: entry.text, fontFamily: entry.fontFamily, color: entry.color,
-          bold: entry.bold, italic: entry.italic, widthFactor: entry.widthFactor,
-          size: entrySize, capHeight: entryCapHeight, width: whole});
-        width += whole;
-        continue;
-      }
-      // Same greedy token rule as wrapCadText: words stay whole, CJK glyphs are
-      // individual break opportunities.
-      for (const token of cadTextTokens(entry.text)) {
-        const w = tokenWidth(token, entry);
-        if (wrapWidth && width + w > wrapWidth && tokens.length) {
-          if (!CLOSING_PUNCT.test(token)) {
-            let carry = null;
-            const last = tokens[tokens.length - 1];
-            if (last && OPENING_PUNCT.test(last.text)) { carry = tokens.pop(); width -= carry.width; }
-            pushLine();
-            if (carry) { tokens.push(carry); width += carry.width; }
-          }
+    const appendText = (text, entry) => {
+      if (!text) return;
+      const whole = token(text, entry);
+      const fitWidth = tokenWidth(mtext ? text.replace(/ +$/, '') : text, entry);
+      if (!hasFrame || /^ +$/.test(text) || width + fitWidth <= available()) { tokens.push(whole); width += whole.width; return; }
+      for (const value of cadTextTokens(text)) {
+        const item = token(value, entry);
+        const fit = tokenWidth(mtext ? value.replace(/ +$/, '') : value, entry);
+        if (!/^ +$/.test(value) && width + fit > available() && tokens.length && !CLOSING_PUNCT.test(value)) {
+          let carry = null;
+          if (OPENING_PUNCT.test(tokens[tokens.length - 1].text)) { carry = tokens.pop(); width -= carry.width; }
+          pushLine();
+          if (carry) { tokens.push(carry); width += carry.width; }
         }
-        tokens.push({text: token, fontFamily: entry.fontFamily, color: entry.color,
-          bold: entry.bold, italic: entry.italic, widthFactor: entry.widthFactor,
-          size: entrySize, capHeight: entryCapHeight, width: w});
-        width += w;
+        tokens.push(item); width += item.width;
       }
+    };
+    for (const entry of paragraph.runs) {
+      const parts = entry.text.split('\t');
+      parts.forEach((part, index) => {
+        if (index > 0) {
+          const cursor = left() + width;
+          const stops = format.tabs?.length ? format.tabs.map(stop => stop * capHeight) : [];
+          const stop = stops.length ? stops.find(stop => stop > cursor) : (Math.floor(cursor / (4 * capHeight)) + 1) * 4 * capHeight;
+          const advance = stop !== undefined ? stop - cursor : tokenWidth(' ', entry);
+          tokens.push({...token('', entry), tab:true, width:advance}); width += advance;
+        }
+        appendText(part, entry);
+      });
     }
     pushLine();
   }
@@ -264,13 +327,17 @@ export function layoutTextRun(input) {
     run.lineHeight = cadLineHeight(capHeight, input.lineSpacing ?? 1);
     const width = Number(input.rectangleWidth || 0) * Number(input.matrixScale || 1);
     if (useRuns) {
-      const runLines = layoutRunLines(input.runs, run.size, measure, width, true, input.lineSpacing ?? 1, capHeight, input.measureCapHeight);
+      const runLines = layoutRunLines(input.runs, run.size, measure, width, true, input.lineSpacing ?? 1, capHeight, input.measureCapHeight, input);
       run.runLines = runLines;
       run.lines = runLines.map(line => line.segments.map(segment => segment.text).join(''));
       run.widths = runLines.map(line => line.width);
       run.lineAdvances = runLines.map(line => line.advance);
       run.lineSizes = runLines.map(line => line.size);
       run.width = Math.max(0, ...run.widths);
+      if (runLines.every(line => line.x !== undefined)) {
+        run.paragraphLeft = Math.min(...runLines.map(line => line.x));
+        run.width = Math.max(...runLines.map(line => line.x + line.width)) - run.paragraphLeft;
+      }
       run.height = run.size * 1.25 * Math.max(1, runLines.length);
     } else {
       const lines = wrapCadLines(run.text, width, run.size, measure, run.fontFamily);
@@ -306,14 +373,42 @@ export function layoutTextRun(input) {
     } else run.widthFactor *= factor;
     for (const line of run.runLines || []) {
       line.width *= factor;
+      if (line.x !== undefined) line.x *= factor;
       if (input.aligned) { line.size *= factor; line.advance *= factor; }
       for (const segment of line.segments) {
         segment.width *= factor;
+        if (segment.glyphOffsets) segment.glyphOffsets = segment.glyphOffsets.map(offset => offset * factor);
         if (input.aligned) segment.size *= factor;
       }
     }
     approximations.push(input.aligned ? 'aligned-endpoints' : 'fit-endpoints');
   }
+  // Native MTEXT attaches the complete paragraph, not its first baseline.
+  // Measure the selected faces after wrapping; ink can exceed cap height.
+  if (run.nativeLayout && run.kind === 'mtext' && input.measureInk) {
+    let top = Infinity, bottom = -Infinity, baseline = 0;
+    const lines = run.runLines || run.lines.map(text => ({segments: [{text,
+      fontFamily: run.fontFamily, size: run.size}], advance: run.lineHeight}));
+    for (const line of lines) {
+      line.inkTop = Infinity; line.inkBottom = -Infinity;
+      const visible = line.segments.filter(segment => !segment.tab);
+      const segments = visible.length ? visible : [{text: 'H', fontFamily: run.fontFamily, size:line.size || run.size}];
+      for (const segment of segments) {
+        const ink = input.measureInk(segment.text.trim() ? segment.text : 'H', segment.fontFamily, segment.bold, segment.italic);
+        line.inkTop = Math.min(line.inkTop, -ink.ascent * segment.size / 100);
+        line.inkBottom = Math.max(line.inkBottom, ink.descent * segment.size / 100);
+      }
+    }
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (i + 1 < lines.length && input.lineSpacingStyle !== 'Exactly')
+        line.advance += Math.max(0, -lines[i + 1].inkTop - (lines[i + 1].capHeight || Number(input.height)));
+      top = Math.min(top, baseline + line.inkTop); bottom = Math.max(bottom, baseline + line.inkBottom);
+      baseline += line.advance || run.lineHeight || run.height * 1.25;
+    }
+    run.verticalInk = {top, bottom};
+  }
+  if (run.runLines?.some(line => line.unmappedParagraph?.length)) approximations.push('paragraph-controls-unmapped');
   if (useRuns) approximations.push('inline-font-runs');
   run.offsets = textOffsets(run);
   run.box = textWorldBox(run, run.offsets);
@@ -353,10 +448,12 @@ export function layoutAnnotationText(annotation, draw, options = {}) {
     color: options.color,
     nativeLayout: !!options.nativeLayout,
     lineSpacing: Number((sem.lineSpacing && sem.lineSpacing.value) ?? 1),
+    lineSpacingStyle: sem.lineSpacingStyle?.value === 'Exact' ? 'Exactly' : sem.lineSpacingStyle?.value || 'AtLeast',
     rectangleWidth: Number((sem.rectangleWidth && sem.rectangleWidth.value) || 0),
     matrixScale: matrixScale(matrix),
     measure: options.measure,
     measureCapHeight: options.measureCapHeight,
+    measureInk: options.measureInk,
     fontFamily: options.fontFamily,
     runs: options.runs,
     widthFactor: options.widthFactor,
@@ -369,8 +466,10 @@ export function textOffsets(t) {
   let dx = 0, dy = 0;
   if (t.kind === 'mtext') {
     const a = t.attachment;
-    dx = (a === 2 || a === 5 || a === 8) ? -t.width / 2 : (a === 3 || a === 6 || a === 9) ? -t.width : 0;
-    dy = a <= 3 ? t.size : a <= 6 ? t.size * 0.35 : 0;
+    dx = t.paragraphLeft ?? ((a === 2 || a === 5 || a === 8) ? -t.width / 2 : (a === 3 || a === 6 || a === 9) ? -t.width : 0);
+    const ink = t.verticalInk;
+    dy = ink ? (a <= 3 ? -ink.top : a <= 6 ? -(ink.top + ink.bottom) / 2 : -ink.bottom)
+      : a <= 3 ? t.size : a <= 6 ? t.size * 0.35 : 0;
   } else {
     dx = t.halign === 1 ? -t.width / 2 : t.halign === 2 ? -t.width : 0;
     dy = t.valign === 3 ? t.size : t.valign === 2 ? t.size * 0.35 : 0;
@@ -400,6 +499,7 @@ export function textWorldBox(t, offsets) {
 // Collision resolution needs the full painted block, including every line's
 // advance, without changing that public contract.
 export function textDisplayHeight(t) {
+  if (t.verticalInk) return t.verticalInk.bottom - t.verticalInk.top;
   const size = Number(t.size || t.height || 0);
   const runLines = Array.isArray(t.runLines) ? t.runLines : null;
   if (runLines && runLines.length) {
@@ -416,11 +516,15 @@ export function textDisplayHeight(t) {
 }
 
 export function textDisplayCorners(t) {
-  return textWorldCorners({...t, height: textDisplayHeight(t)}, textOffsets(t));
+  const offsets = textOffsets(t);
+  offsets.dy += t.verticalInk?.top || 0;
+  return textWorldCorners({...t, height: textDisplayHeight(t)}, offsets);
 }
 
 export function textDisplayBox(t, x = t.x, y = t.y) {
-  const box = textWorldBox({...t, x, y, height: textDisplayHeight(t)}, textOffsets(t));
+  const offsets = textOffsets(t);
+  offsets.dy += t.verticalInk?.top || 0;
+  const box = textWorldBox({...t, x, y, height: textDisplayHeight(t)}, offsets);
   return Number.isFinite(box.minX) && Number.isFinite(box.minY) ? box : null;
 }
 
@@ -439,16 +543,19 @@ export function paintTextRun(ctx, t, scale = 1, screenScale = scale) {
   if (t.runLines) {
     let y = offsets.dy * scale;
     for (const line of t.runLines) {
-      let x = textOffsets({...t, width: line.width}).dx * scale / wf;
+      let x = (line.x ?? textOffsets({...t, width: line.width}).dx) * scale / wf;
       for (const segment of line.segments) {
-        if (!segment.text) continue;
+        if (!segment.text) { x += segment.width * scale / wf; continue; }
         const inlineWidth = segment.widthFactor || 1;
         const segmentSize = segment.size && t.size ? segment.size / t.size : 1;
         ctx.font = (segment.italic ? 'italic ' : '') + (segment.bold ? 'bold ' : '')
           + (size * segmentSize) + 'px ' + (segment.fontFamily || t.fontFamily || TEXT_FONT);
         ctx.fillStyle = segment.color || t.color;
         ctx.save(); ctx.scale(inlineWidth, 1);
-        ctx.fillText(segment.text, x / inlineWidth, y);
+        if (segment.glyphOffsets) {
+          [...segment.text].forEach((char, index) => ctx.fillText(char,
+            (x + segment.glyphOffsets[index] * scale / wf) / inlineWidth, y));
+        } else ctx.fillText(segment.text, x / inlineWidth, y);
         ctx.restore();
         x += segment.width * scale / wf;
       }

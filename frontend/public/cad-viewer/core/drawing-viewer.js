@@ -8,7 +8,7 @@ import {drawingClips, compileClips, triangulateRings, insideRing} from './drawin
 import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.17.3';
 import {estimateDrawingDraws, projectInstancesSteps, shouldProjectInstances, recordVisibleBounds, INSTANCE_DRAW_LIMIT, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, quantizeLodSize, LOD_MIN_SCREEN_PX, isLodCulled, I} from './drawing-instances.js?v=dxf-0.17.3';
 import Flatbush from './vendor/flatbush.js';
-import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, paintTextRun, textDisplayCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.9';
+import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, paintTextRun, textDisplayCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.13';
 import {createBundledFontResolver} from './drawing-fonts.js';
 import {aciColor, trueColorCss, drawingColorCss} from './drawing-colors.js?v=dxf-0.17.4';
 import {resolveTextAvoidance} from './drawing-text-avoidance.js?v=dxf-0.17.3';
@@ -144,6 +144,8 @@ export function mountDrawingViewer(envelope) {
     const sem = annotation.semantic || {};
     const entityWidth = Number(sem.widthFactor?.value);
     if (Number.isFinite(entityWidth) && entityWidth > 0) return entityWidth;
+    const declaredWidth = Number(sem.styleWidthFactor?.value);
+    if (Number.isFinite(declaredWidth) && declaredWidth > 0) return declaredWidth;
     if (!sem.textStyleId) return 1;
     const key = String(sem.textStyleId.value || '').replace(/^textstyle-/, '');
     const row = (ucd.extensions?.['org.libiaolink.dwg/1']?.fonts || {})[key];
@@ -157,9 +159,9 @@ export function mountDrawingViewer(envelope) {
     let runs = null;
     // Inline runs only when the parser reproduces the sanitized plain text; any
     // control we do not model (e.g. stacking) falls back to the single-font path.
-    if (nativeTextLayout && /\\[fFcCHW]/.test(raw) && !/\\[sS][^;]*;/.test(raw)) {
+    if (nativeTextLayout && /\\[fFcCHWTp]/.test(raw) && !/\\[sS][^;]*;/.test(raw)) {
       const baseHeight = Number((sem.height && sem.height.value) || 0);
-      const parsed = parseMtextRuns(raw, defaultFont, mapFontFamily, textRunColor, baseHeight);
+      const parsed = parseMtextRuns(raw, defaultFont, mapFontFamily, textRunColor, baseHeight, styleWidthFactorFor(annotation));
       const plain = (sem.plainText && sem.plainText.value) || annotation.text || '';
       const norm = value => String(value).replace(/\s+/g, '');
       if (parsed.length && norm(parsed.map(item => item.text).join('')) === norm(plain)) runs = parsed;
@@ -871,6 +873,7 @@ export function mountDrawingViewer(envelope) {
         const layout = layoutAnnotationText(annotation, draw, {
           measure: measureReference,
           measureCapHeight: measureReferenceCapHeight,
+          measureInk: measureReferenceInk,
           nativeLayout: nativeTextLayout,
           color: rec.color,
           fontFamily: fontRuns[0]?.fontFamily || FONT_STACK_CJK,
@@ -880,6 +883,7 @@ export function mountDrawingViewer(envelope) {
         rec.bbox = { minX: layout.anchor[0], minY: layout.anchor[1],
           maxX: layout.anchor[0], maxY: layout.anchor[1] };
         if (layout.run) {
+          fontReport.unmappedParagraphControls = layout.run.approximations.includes('paragraph-controls-unmapped');
           if (hasText) fontReports.set(draw.itemId, fontReport);
           const entry = {...layout.run, draw, drawId, itemId: draw.itemId};
           // Spatial culling must cover every line, including rotated paragraphs.
@@ -1959,6 +1963,13 @@ export function mountDrawingViewer(envelope) {
     measureCache.set(key, width);
     return width;
   }
+  function measureReferenceInk(text, fontFamily = TEXT_FONT, bold = false, italic = false) {
+    ctx.save();
+    ctx.font = (italic ? 'italic ' : '') + (bold ? 'bold ' : '') + '100px ' + fontFamily;
+    const ink = ctx.measureText(text);
+    ctx.restore();
+    return {ascent: ink.actualBoundingBoxAscent, descent: ink.actualBoundingBoxDescent};
+  }
   function measureReferenceCapHeight(fontFamily = TEXT_FONT, bold = false, italic = false) {
     const key = 'cap\0' + (bold ? '1' : '0') + (italic ? '1' : '0') + fontFamily;
     if (measureCache.has(key)) return measureCache.get(key);
@@ -2269,6 +2280,7 @@ export function mountDrawingViewer(envelope) {
           .replace('/400','（常规）').replace('/700','（粗体）'));
         note.textContent = '文字显示：开源字体替代 ' + faces.join('、') + '；原字体请求已保留，排版为近似。'
           + (substitute.styleApproximations.length ? ' 请求的粗体或斜体未提供，使用可用字形。' : '')
+          + (substitute.unmappedParagraphControls ? ' 有暂未支持的段落控制，排版仍近似。' : '')
           + (substitute.missing.length || substitute.unavailableGlyphs ? ' 仍有缺字或字体资源未加载。' : '');
       } else note.textContent = nativeDwg?.textAppearance?.[item.id]?.fontStatus === 'linked-glyphs'
         ? '文字显示：优先使用配套字形，包含链接替代字符；排版仍有支持边界。'
@@ -2890,6 +2902,8 @@ export function mountDrawingViewer(envelope) {
     fitted = false;
     mounting = false;
     resize();
+    // An unchanged viewport does not redraw; the synchronous small build was mounted.
+    if (!initialBuild && !firstPaintDone) draw();
   }).catch(error => rejectFirstPaint?.(error));
   const api = {
     envelope, setSpatialView, setBackground,
