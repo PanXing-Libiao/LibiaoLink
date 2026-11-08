@@ -9,6 +9,7 @@ import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dx
 import {estimateDrawingDraws, projectInstancesSteps, shouldProjectInstances, recordVisibleBounds, INSTANCE_DRAW_LIMIT, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, quantizeLodSize, LOD_MIN_SCREEN_PX, isLodCulled, I} from './drawing-instances.js?v=dxf-0.17.3';
 import Flatbush from './vendor/flatbush.js';
 import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, paintTextRun, textDisplayCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.9';
+import {createBundledFontResolver} from './drawing-fonts.js';
 import {aciColor, trueColorCss, drawingColorCss} from './drawing-colors.js?v=dxf-0.17.4';
 import {resolveTextAvoidance} from './drawing-text-avoidance.js?v=dxf-0.17.3';
 import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentation} from './drawing-pattern.js?v=dxf-0.17.3';
@@ -102,25 +103,21 @@ export function mountDrawingViewer(envelope) {
     const block = instance && drawing.blocks[instance.definitionId];
     return !!block && /^\*D/i.test(block.name || '');
   }
-  // Local font-substitution experiment: honour the source text style / inline
-  // \f name and pick the closest locally available family instead of one stack.
-  // Bundled fallbacks (fonts/*.css) keep CJK and Latin rendering deterministic
-  // when the client lacks SimSun/SimHei/Arial; system fonts stay first so a
-  // machine that has them keeps AutoCAD-compatible metrics.
-  const FONT_STACK_CJK = '"SimSun","Libiao Serif SC","Noto Serif CJK SC",serif';
-  // Latin-first stacks keep a CJK fallback so mixed runs get Song glyphs from
-  // the browser's per-glyph fallback instead of tofu or a wider system default.
-  const FONT_STACK_LATIN = '"Arial","Libiao Sans","Liberation Sans","SimSun",sans-serif';
+  // Uploaded original glyph parts are projected first. Unresolved annotations
+  // use only the bundled families, so system font installation cannot change
+  // the selected replacement or its measured advances.
+  const FONT_STACK_CJK = '"Libiao Serif SC"';
+  const FONT_STACK_LATIN = '"Libiao Sans"';
+  const fontResolver = createBundledFontResolver();
+  const fontReports = new Map();
   function mapFontFamily(name) {
     if (!name) return null;
-    const n = String(name).trim().toLowerCase().split(/[\\/]/).pop().replace(/\.(shx|ttf|otf)$/i, '');
-    if (/^(simfang|fangsong|仿宋|仿宋_gb2312)$/.test(n)) return '"FangSong","仿宋",' + FONT_STACK_CJK;
-    if (/simsun|宋体|song|stsong/.test(n)) return FONT_STACK_CJK;
-    if (/simhei|黑体|heiti/.test(n)) return '"SimHei","Libiao Sans SC","Noto Sans CJK SC",sans-serif';
-    if (/msyh|yahei|pingfang/.test(n)) return '"Microsoft YaHei","Libiao Sans SC","Noto Sans CJK SC",sans-serif';
+    const n = String(name).trim().toLowerCase().split(/[\\/]/).pop().replace(/\.(shx|ttf|otf|ttc)$/i, '');
+    if (/simfang|fangsong|仿宋|simsun|宋体|song|stsong|kaiti|simkai|楷体/.test(n)) return FONT_STACK_CJK;
+    if (/simhei|黑体|heiti|msyh|yahei|pingfang/.test(n)) return '"Libiao Sans SC"';
     if (/swiss|arial|helvetica/.test(n)) return FONT_STACK_LATIN;
-    if (/times/.test(n)) return '"Times New Roman","Libiao Serif","Liberation Serif","SimSun",serif';
-    if (/courier/.test(n)) return '"Courier New","Libiao Mono","Liberation Mono","SimSun",monospace';
+    if (/times/.test(n)) return '"Libiao Serif"';
+    if (/courier/.test(n)) return '"Libiao Mono"';
     if (/^(isocp[23]?|isoct[23]?|romans|romand|romant|simplex|complex|txt|gbcbig|hztxt)$/.test(n)
       || /\.shx$/i.test(String(name).trim())) return FONT_STACK_LATIN;
     if (/^hy|longfang/.test(n)) return FONT_STACK_CJK;
@@ -131,14 +128,14 @@ export function mountDrawingViewer(envelope) {
   const textRunColor = (kind, value) => kind === 'true' ? trueColorCss(value, sheetBackground) : aciColor(value, sheetBackground);
   function styleFontFamilyFor(annotation) {
     const sem = annotation.semantic || {};
-    let name = (sem.fontFilename && sem.fontFilename.value) || '';
+    let name = sem.fontFilename?.value || sem.fontFamily?.value || '';
     if (!name && sem.textStyleId) {
       const key = String(sem.textStyleId.value || '').replace(/^textstyle-/, '');
       const styles = (ucd.extensions?.['org.libiaolink.dwg/1']?.fonts) || {};
       const row = styles[key];
       if (row && row.Filename) name = row.Filename;
     }
-    const mapped = mapFontFamily(name);
+    const mapped = mapFontFamily(name) || mapFontFamily(sem.fontFamily?.value);
     if (mapped) return mapped;
     const text = (sem.plainText && sem.plainText.value) || annotation.text || '';
     return /[⺀-鿿豈-﫿＀-￯]/.test(String(text)) ? FONT_STACK_CJK : FONT_STACK_LATIN;
@@ -173,17 +170,34 @@ export function mountDrawingViewer(envelope) {
     const sem = annotation.semantic || {};
     const raw = (sem.rawText && sem.rawText.value) || '';
     const inline = /\\f([^|;\\}]+)/.exec(raw);
-    let name = inline ? inline[1] : ((sem.fontFilename && sem.fontFilename.value) || '');
+    let name = inline ? inline[1] : (sem.fontFilename?.value || sem.fontFamily?.value || '');
     if (!name && sem.textStyleId) {
       const key = String(sem.textStyleId.value || '').replace(/^textstyle-/, '');
       const styles = (ucd.extensions?.['org.libiaolink.dwg/1']?.fonts) || {};
       const row = styles[key];
       if (row && row.Filename) name = row.Filename;
     }
-    const mapped = mapFontFamily(name);
+    const mapped = mapFontFamily(name) || mapFontFamily(sem.fontFamily?.value);
     if (mapped) return mapped;
     const text = (sem.plainText && sem.plainText.value) || annotation.text || '';
     return /[⺀-鿿豈-﫿＀-￯]/.test(String(text)) ? FONT_STACK_CJK : FONT_STACK_LATIN;
+  }
+  function fallbackRuns(annotation) {
+    const entry = annotationRuns(annotation);
+    return entry.runs || [{text: annotation.semantic?.plainText?.value || annotation.text || '',
+      fontFamily: fontFamilyFor(annotation), bold: false, italic: false}];
+  }
+  const nativeTextParts = ucd.extensions?.['org.libiaolink.dwg/1']?.meshPresentations || {};
+  const fontReady = fontResolver.prepare(Object.entries(drawing.annotations)
+    .filter(([id, annotation]) => ['text','mtext'].includes(annotation.kind)
+      && !annotationItems[id] && !nativeTextParts[id]?.textParts)
+    .map(([, annotation]) => fallbackRuns(annotation)));
+  function substitutionSummary() {
+    const records = [...fontReports.values()];
+    return {status: records.length ? 'approximate' : 'not-used', annotationItems: records.length,
+      missingObjects: records.filter(row => row.missing.length || row.unavailableGlyphs).length,
+      styleApproximateObjects: records.filter(row => row.styleApproximations.length).length,
+      unavailableFaces: fontResolver.unavailable(), records};
   }
   // ACadSharp evaluates some periodic splines at uStart to XYZ.Zero; the reader's
   // display pairs then start with (0,0) -> real point, painting a giant segment
@@ -649,6 +663,7 @@ export function mountDrawingViewer(envelope) {
     built = []; texts = []; pointMarks = [];
     if(instancePlan)for(const group of instancePlan.groups)group.records=[];
     plotErrors.clear();
+    fontReports.clear();
     buildScale = scale;
     const tolerance = Math.max(1e-7, 0.35 / Math.max(scale, 1e-9));
     const plotContext=spaceTarget.kind==='layout'?spaceTarget.layoutId:'model';
@@ -840,20 +855,32 @@ export function mountDrawingViewer(envelope) {
       } else {
         const annotation = drawing.annotations[draw.itemId];
         if (!annotation) continue;
-        const annotationFont = annotationRuns(annotation);
+        const sourceRuns = fallbackRuns(annotation);
+        const hasText = ['text','mtext'].includes(annotation.kind) && sourceRuns.some(run => /\S/u.test(run.text));
+        const resolvedFonts = fontResolver.resolveRuns(sourceRuns);
+        const fontRuns = resolvedFonts.runs.map(({_face, _source, ...run}) => run);
+        const fontReport = {itemId: draw.itemId, sourceRefs: annotation.sourceRefs,
+          missing: resolvedFonts.missing, styleApproximations: resolvedFonts.styleApproximations,
+          unavailableGlyphs: resolvedFonts.unavailableGlyphs,
+          faces: [...new Set(fontRuns.map(run => run.fontFamily + '/' + (run.bold ? '700' : '400')))]};
+        if (resolvedFonts.unavailableGlyphs) {
+          if (hasText) fontReports.set(draw.itemId, fontReport);
+          continue;
+        }
         const widthFactor = styleWidthFactorFor(annotation);
         const layout = layoutAnnotationText(annotation, draw, {
           measure: measureReference,
           measureCapHeight: measureReferenceCapHeight,
           nativeLayout: nativeTextLayout,
           color: rec.color,
-          fontFamily: annotationFont.runs ? annotationFont.defaultFont : fontFamilyFor(annotation),
-          runs: annotationFont.runs,
+          fontFamily: fontRuns[0]?.fontFamily || FONT_STACK_CJK,
+          runs: fontRuns,
           widthFactor
         });
         rec.bbox = { minX: layout.anchor[0], minY: layout.anchor[1],
           maxX: layout.anchor[0], maxY: layout.anchor[1] };
         if (layout.run) {
+          if (hasText) fontReports.set(draw.itemId, fontReport);
           const entry = {...layout.run, draw, drawId, itemId: draw.itemId};
           // Spatial culling must cover every line, including rotated paragraphs.
           rec.bbox = textDisplayBox(entry); rec.textBox = rec.bbox;
@@ -2231,6 +2258,23 @@ export function mountDrawingViewer(envelope) {
     const hint=document.createElement('p');hint.className='dhint';
     hint.textContent=facts.type+' · '+(facts.handleOrigin==='reader-assigned-for-anonymous-record'?'匿名记录读取标识 ':'源句柄 ')+ref.objectKey+'；尺寸值按原文件记录，未经约束求解或验收计算。';host.append(hint);
     if(facts.attributeStatus==='reader-repaired'||facts.tagStatus){const warning=document.createElement('p');warning.className='dhint';warning.textContent='此记录存在读取修复或原标签预算损失，请结合下方状态和解析诊断查看。';host.append(warning);}
+    const substitute = fontReports.get(item?.id);
+    const originalParts = nativeTextParts[item?.id]?.textParts;
+    if (substitute || originalParts?.length) {
+      const note = document.createElement('p'); note.className = 'dhint';
+      if (substitute) {
+        const names = {'Libiao Sans SC':'Noto Sans SC','Libiao Serif SC':'Noto Serif SC',
+          'Libiao Sans':'Arimo','Libiao Serif':'Tinos','Libiao Mono':'Cousine'};
+        const faces = substitute.faces.map(face => face.replace(/"([^"]+)"/, (_match, family) => names[family] || family)
+          .replace('/400','（常规）').replace('/700','（粗体）'));
+        note.textContent = '文字显示：开源字体替代 ' + faces.join('、') + '；原字体请求已保留，排版为近似。'
+          + (substitute.styleApproximations.length ? ' 请求的粗体或斜体未提供，使用可用字形。' : '')
+          + (substitute.missing.length || substitute.unavailableGlyphs ? ' 仍有缺字或字体资源未加载。' : '');
+      } else note.textContent = nativeDwg?.textAppearance?.[item.id]?.fontStatus === 'linked-glyphs'
+        ? '文字显示：优先使用配套字形，包含链接替代字符；排版仍有支持边界。'
+        : '文字显示：优先使用已解析的配套原字形；排版仍有支持边界。';
+      host.append(note);
+    }
     const details=document.createElement('details'),summary=document.createElement('summary');summary.textContent='查看源属性与关联记录';details.append(summary);
     const pre=document.createElement('pre');pre.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere;max-height:280px;overflow:auto;font-size:11px';
     const record={attributes:facts.attributes,...Object.fromEntries(['attributeStatus','attributeDecodeError','tagStatus','dimension','blockState','xdata','extensionDictionary','entries'].filter(key=>key in facts).map(key=>[key,facts[key]]))};
@@ -2421,6 +2465,14 @@ export function mountDrawingViewer(envelope) {
         lines.push("字体保真 partial：" + (font.nativeFontRecords ?? "?") + " 个原生字体记录未配套，" + (font.annotationSourceRecords ?? "?") + " 个注释源对象使用显式替代字形；几何归账不受影响，但字形与排版不能等同原图。");
       }
     }
+    const substitutes = substitutionSummary();
+    if (substitutes.annotationItems) {
+      lines.push('开源字体替代：' + substitutes.annotationItems + ' 个含文字的当前空间注释项使用内置字体近似显示；选定字体同时用于测量、换行和绘制，原字体请求保留，不代表原图排版恢复。');
+      if (substitutes.styleApproximateObjects) lines.push('字体样式近似：' + substitutes.styleApproximateObjects + ' 个注释项请求了内置字体未提供的粗体或斜体，使用可用字形并保留近似状态。');
+      if (substitutes.missingObjects) lines.push('仍有缺字或字体资源未加载：' + substitutes.missingObjects + ' 个注释项；不覆盖的字符显示方框，源文字保留。');
+      const missing = [...new Set(substitutes.records.flatMap(row => row.missing))];
+      if (missing.length) lines.push('未覆盖字符：' + missing.map(char => 'U+' + char.codePointAt(0).toString(16).toUpperCase()).join('、'));
+    }
     const legacyColumnApprox = losses.filter(item => item.code === 'mtext-legacy-column-layout-approximate').length;
     const legacyColumnMissing = losses.filter(item => item.code === 'mtext-legacy-column-layout-unavailable').length;
     if (legacyColumnApprox || legacyColumnMissing) lines.push('旧版列文字：' + legacyColumnApprox + ' 条单列按近似预览归账（字形仍受字体限制），' + legacyColumnMissing + ' 条列布局未显示；列定义已保留，不代表完整列排版已恢复。');
@@ -2583,7 +2635,7 @@ export function mountDrawingViewer(envelope) {
     const key = cachedSpaceKey(target);
     if (!key) return false;
     const state = { key, target: { ...target }, mode, plotPreview, projection, instancePlan, instanceState: captureInstanceState(instancePlan),
-      effectiveLayers, presentationStyles, built, texts, pointMarks, buildScale,
+      effectiveLayers, presentationStyles, built, texts, pointMarks, buildScale, fontReports: new Map(fontReports),
       userLayers: new Map(userLayers), instanceLayerKey, scale, tx, ty, dpr, cssW, cssH, fitted,
       plotErrors: [...plotErrors], builtRecords: built.length, sourceDraws: Object.keys(projection.draws).length };
     spaceStateCache.delete(key);
@@ -2614,6 +2666,8 @@ export function mountDrawingViewer(envelope) {
     built = state.built;
     texts = state.texts;
     pointMarks = state.pointMarks;
+    fontReports.clear();
+    for (const [id, row] of state.fontReports) fontReports.set(id, row);
     buildScale = state.buildScale;
     plotPreview = state.plotPreview;
     userLayers.clear();
@@ -2827,15 +2881,20 @@ export function mountDrawingViewer(envelope) {
   const modelSpaceId = drawing.drawings[Object.keys(drawing.drawings)[0]].modelSpaceId;
   const model = drawing.spaces[modelSpaceId];
   const emptyModel = !model.entityIds.length && !model.annotationIds.length && !model.blockInstanceIds.length;
-  setSpace(recoveredBlocks.length && emptyModel
-    ? {kind: 'block-preview', blockId: recoveredBlocks[0].blockId}
-    : {kind: 'model', spaceId: modelSpaceId});
-  fitted = false; // setSpace fitted against the placeholder width; fit again at the real size
-  mounting = false;
-  resize();
+  fontReady.then(() => {
+    if (destroyed) return;
+    measureCache.clear();
+    setSpace(recoveredBlocks.length && emptyModel
+      ? {kind: 'block-preview', blockId: recoveredBlocks[0].blockId}
+      : {kind: 'model', spaceId: modelSpaceId});
+    fitted = false;
+    mounting = false;
+    resize();
+  }).catch(error => rejectFirstPaint?.(error));
   const api = {
     envelope, setSpatialView, setBackground,
     backgroundColor: () => sheetBackground,
+    fontSubstitution: substitutionSummary,
     meshView: () => meshViewer?.record() || null,
     get space() { return spaceTarget; },
     get mode() { return mode; },
@@ -2932,7 +2991,7 @@ export function mountDrawingViewer(envelope) {
     record() {
       return { spatialView, space: spaceTarget, mode, scale, layers: api.layerStates(), draws: Object.keys(projection.draws).length, selected: [...selected], selectedInstance, extents: extents(), unit: presentation.unit };
     },
-    resize, draw, overviewPaint, ready: Promise.all([rasterReady, firstPaint]),
+    resize, draw, overviewPaint, ready: Promise.all([rasterReady, fontReady, firstPaint]),
     destroy() {
       destroyed = true;
       cancelInitialBuild();
