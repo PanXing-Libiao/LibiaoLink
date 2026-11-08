@@ -120,3 +120,29 @@ TEXT/ATTRIB 的 Fit/Aligned 输出经过 OCS 转换的两个基线端点；浏�
 逐对象结果在 org.libiaolink.dwg/1.hatchPatternOutcomes 中保留 status、reason、method、ranges 与 sourceRefs。已证明项只生成 info 诊断 hatch-empty-by-read-definition，不再计入原生损失观察；其他空输出继续保留 empty-native-hatch-pattern warning 和原生记录。查看器解析范围分别列出两类对象数，待核实空输出不混入通用损失摘要。旧产物没有判定证据时仍为待核实，须用新读取器重读后才能获得自动判定。
 
 小型用例覆盖旋转／大坐标、负间距、多线族、圆弧内部极值、完整圆／倾斜椭圆，以及相切、细小开口、奇偶抵消、虚实段、双重填充、非有限值和不支持边界等保守反例；另有构造 DWG 经真实读取及装配验证两类状态与正常可见图案。业务图与独立住宅文件按原生记录及几何字节回归；源图、逐项结果和截图仅留本机。独立住宅图用于非空填充回归，不冒充另一份含已证明空图案的业务样本。
+
+
+## 源线宽与样式继承
+
+原生 entityState.nativeLineWeight 保留 LineWeightType 的有符号原值。显式非负值仍由 style.lineWeight 以毫米传递，包含 0；-1（ByLayer）和 -2（ByBlock）通过既有 style-inheritance 扩展的 modes.lineWeight 进入共用投影器。几何、块实例和注释均参与；注释的 ByLayer/ByBlock 线型也按 annotationStyles 归一，不能覆盖已保留的线宽模式。0 层和嵌套实例沿用既有有效图层／父实例链规则，缓存代理原语使用缓存已声明的图层和样式，不能一律套用外层专业对象的图层。
+
+Default（-3）保留源标记，并采用带 engineering-defined 证据的 0.25 mm 查看器替代值；其他负值不猜测。LWDEFAULT 是原作者应用的注册表设置，不在 DWG 中，不能从 CELWEIGHT 或默认标记恢复其具体值。默认图层与 Default 实例在继承链中使用该替代值，未绑定的 ByBlock 不随实体所在的粗线层继承。解析后的文字线宽／线型不等于已恢复字体笔画。旧原生产物缺少该字段时不能恢复源线宽模式，须重读原 DWG。该字段是内部显示证据，不改业务 API、数据库或工程尺寸口径。定向验证含构造 DWG 往返、独立真实建筑／机械图和既有业务图；局部样式核对不代表整图无损。
+
+
+## LWDISPLAY 与默认笔宽源定义
+
+固定读取库的 R2000+ 头标志中，LWDISPLAY 是反向位 `!(flags & 0x0200)`；此前错误地比较为 1，导致恒为 false。构建补丁保留 NativeLineWeightFlags 并修正反向判断；CELWEIGHT 的低 5 位使用既有线宽索引表解码，写入也按同一表编码。CELWEIGHT 仅定义新对象线宽，不能覆盖既有实体，也不是 LWDEFAULT。早于 R2000 无该头标志时，开关和头线宽保持 null／未知。原生输出 nativeLineWeightSettings 与 nativeLayerLineWeights，装配在 DWG 内部扩展中保留原始值、作者默认不可从文件读取的状态和查看器替代笔宽。
+
+模型视图遵守已读取 LWDISPLAY：关闭时笔画为 1 个 CSS 像素的细线；开启时使用现有受限屏幕线宽映射，最小为 1 CSS 像素，显式零笔宽不再被当成缺值。多段线几何宽度／实心填充不受此开关影响，源毫米值和实体属性不因关闭而改写。普通与保留实例绘制共用此规则；旧产物或旧版本没有源开关时继续未知，不按默认 false 处理。查看器显示源开关和默认笔宽替代说明。纸空间／布局的独立打印设置、CTB/STB 的物理输出、原作者的注册表默认值及字体笔画恢复不在该模型规则的保真范围内。
+
+依据：[Autodesk LWDISPLAY](https://help.autodesk.com/cloudhelp/2022/ENU/AutoCAD-Core/files/GUID-18CA6E8F-0008-402E-9F6B-2F9ED8A0A7DD.htm)、[Autodesk LWDEFAULT](https://help.autodesk.com/cloudhelp/2015/ENU/AutoCAD-Core/files/GUID-969FE4A6-C30D-44DE-AFD4-A81B53F175F6.htm)、[ODA DWG 规范](https://www.opendesign.com/files/guestdownloads/OpenDesign_Specification_for_.dwg_files.pdf)。
+
+点显示保留原生 PDMODE/PDSIZE 至 nativePointDisplaySettings。查看器定向接入模式 0 的点状标记和模式 1 的普通点隐藏；Defpoints 点不受该设置影响，保持点状显示。其他普通点模式与尺寸尚未验收；不隐藏所有非打印图层，不改源点位置。
+
+配套字体的常规字形存在但源要求的粗体/斜体变体未提供时，布局仍保守替代，并明确记录 `font-requested-bold-italic-face-not-provided`；不能笼统据此断言整份字体文件未提供，也不以合成字形冒充原字形。
+
+MTEXT 零框宽不自动换行的规则仅按已支持方向排版。未知源方向值（例如0）原样保留，归账 `mtext-drawing-direction-unrecognized`，已有字形仅作可读近似，并在文字记录中标记 `layoutStatus=approximate`。不根据另一查看器的外观猜测竖排，不将原文件缓存外包框当作作者设定框宽。旧版列扩展数据读取仍有边界，不能由`HasColumns=false`泛化为所有源列信息已读完。
+
+旧版 MTEXT（R2018 前）列定义存于 ACAD XData；固定版本库虽保留 XData，却不填充 ColumnData。读取器现在保留相关对象的完整 ACAD 有类型记录、列/链接/定义高度段完整性及解码字段，hasColumns 不再仅依赖库默认值。完整、无链接的单列只按源列宽提供明确近似预览；高度和流向未实现，负高度原样保留。多列、链接列、未知或不完整字段定义不猜测排版，保留数据并归账未显示。只含定义高度的普通 MTEXT 不标记为列；现代列和竖排仍按既有边界处理。
+
+旧版动态单列的负高度仍保留为未完全解释的源值：不得取绝对值当固定列高，不得据负号把 autoHeight 改为 1，也不以存储外包高度或 definedHeight 补造列约束。单列计数不保证不发生续列；正高度约束、自动高度分列与链接列尚未实现。当前单列字形继续明确标为近似，源高度、标志、列宽与锚点分别保留。

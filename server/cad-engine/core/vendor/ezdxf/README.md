@@ -220,3 +220,7 @@ ezdxf@mozman.at
 Feedback is greatly appreciated.
 
 Manfred
+
+## LibiaoLink local integration
+
+The text layout cells accept optional visible-ink bounds for native DWG left-aligned outline text. Line wrapping uses those bounds while cursor advances and glyph placement keep the original font metrics. Clients that do not supply ink bounds keep the existing cell-width behavior; font resolution, source rectangle width and tolerances are unchanged.
