@@ -9,6 +9,8 @@
 | 权限 | `project.export`（`RequirePermission` + `ProjectAccessGuard`；服务端仍按项目可见性裁决）；页面级另按 `report.view` / `issue.view` / `stakeholder.view` 与干系人字段级权限逐列校验 |
 | 审计 | 成功生成后写 `audit_logs`：`action=download`、`objectType=project`、`objectId/projectId=项目 id`，metadata 记格式、Sheet、行数与图片数；页面级另记 `feature=page_export` 与每个 Sheet 的列 key |
 
+> **性能优化执行口径**：[项目数据导出性能优化方案](../../../../docs/项目数据导出性能优化方案.md)。后续性能优化按该文档执行；范围、步骤或验收发生变化时直接修改该文档并登记变更记录。
+
 ## 响应与文件名
 
 - xlsx：`Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
