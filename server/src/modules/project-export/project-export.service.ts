@@ -79,6 +79,7 @@ import {
 } from "./page-export.workbook.js";
 import { injectWorkbookImages } from "./project-export.xlsx-images.js";
 import { ProjectExportTelemetry } from "./project-export.metrics.js";
+import { ProjectArchiveImageCapture, sniffProjectExportImage } from "./project-export.image-capture.js";
 
 export { splitChangeReason } from "./project-export.mapping.js";
 
@@ -105,6 +106,16 @@ interface ImageThumbnailSize {
 interface ImageLoadBudget {
   count: number;
   totalBytes: number;
+}
+
+interface ReusedExportImage {
+  image: ExportImage;
+  sourceBytes: number;
+}
+
+interface ImageLoadOptions {
+  reused?: ReadonlyMap<string, ReusedExportImage>;
+  blockedIds?: ReadonlySet<string>;
 }
 
 export type ProjectExportModeSetting = "auto" | "legacy" | "stream";
@@ -995,18 +1006,22 @@ export class ProjectExportService implements OnModuleInit {
       const sources = this.projectArchiveSources(project, data);
       const plan = planProjectArchiveAttachments(sources, data.fileRefs);
       telemetry.recordAttachmentPlan(plan.files.map((file) => file.fileId));
+      const imageIds = this.projectArchiveImageIds(data.reportRows, data.changeRows);
+      telemetry.setRequestedImages(imageIds.size);
+      const captureIds = this.projectArchiveThumbnailIds(imageIds, plan, data.fileRefs);
       const workbookName = projectExportArchiveWorkbookName(project);
       const rootName = projectExportArchiveStem(project);
       const zipPath = join(directory, "project-export.zip");
       archive = new ProjectZipWriter(zipPath, new Date());
       await archive.open();
-      await this.writeProjectArchiveAttachments(archive, plan, rootName, signal, telemetry);
+      const reusedImages = await this.writeProjectArchiveAttachments(archive, plan, rootName, signal, telemetry, captureIds);
 
       const links = projectArchiveLinks(plan);
       this.applyProjectArchiveLinks(data, links);
-      const imageIds = this.projectArchiveImageIds(data.reportRows, data.changeRows);
-      telemetry.setRequestedImages(imageIds.size);
-      const images = await this.loadImages(imageIds, data.fileRefs, ARCHIVE_THUMBNAIL_SIZE, undefined, telemetry);
+      const images = await this.loadImages(imageIds, data.fileRefs, ARCHIVE_THUMBNAIL_SIZE, undefined, telemetry, {
+        reused: reusedImages,
+        blockedIds: this.projectArchiveBlockedImageIds(plan, imageIds, reusedImages),
+      });
       throwIfAborted(signal);
 
       const attachmentRows = plan.references.map((reference) => ({
@@ -1261,15 +1276,75 @@ export class ProjectExportService implements OnModuleInit {
     return ids;
   }
 
+  private projectArchiveThumbnailIds(
+    imageIds: ReadonlySet<string>,
+    plan: ProjectArchivePlan,
+    refs: ReadonlyMap<string, ProjectExportFileRef>,
+  ): Set<string> {
+    const includedFileIds = new Set(plan.files.filter((file) => file.status === "included").map((file) => file.fileId));
+    const result = new Set<string>();
+    let count = 0;
+    let totalBytes = 0;
+    for (const id of imageIds) {
+      if (count >= MAX_IMAGE_COUNT || totalBytes >= MAX_TOTAL_IMAGE_BYTES) break;
+      if (!includedFileIds.has(id)) continue;
+      const ref = refs.get(id);
+      if (ref === undefined || ref.objectKey === null || !supportedImage(ref)) continue;
+      const sizeBytes = ref.sizeBytes;
+      if (sizeBytes !== null && (sizeBytes > MAX_IMAGE_BYTES || totalBytes + sizeBytes > MAX_TOTAL_IMAGE_BYTES)) continue;
+      result.add(id);
+      count += 1;
+      totalBytes += sizeBytes ?? 0;
+    }
+    return result;
+  }
+
+  private projectArchiveBlockedImageIds(
+    plan: ProjectArchivePlan,
+    imageIds: ReadonlySet<string>,
+    reusedImages: ReadonlyMap<string, ReusedExportImage>,
+  ): Set<string> {
+    const includedFileIds = new Set(plan.files.filter((file) => file.status === "included").map((file) => file.fileId));
+    const blockedIds = new Set(plan.files
+      .filter((file) => file.status !== "included" && !includedFileIds.has(file.fileId))
+      .map((file) => file.fileId));
+    for (const id of imageIds) {
+      if (includedFileIds.has(id) && !reusedImages.has(id)) blockedIds.add(id);
+    }
+    return blockedIds;
+  }
+
   private async writeProjectArchiveAttachments(
     archive: ProjectZipWriter,
     plan: ProjectArchivePlan,
     rootName: string,
     signal: AbortSignal | undefined,
     telemetry: ProjectExportTelemetry,
-  ): Promise<void> {
+    captureIds: ReadonlySet<string>,
+  ): Promise<Map<string, ReusedExportImage>> {
     let includedBytes = 0;
     const processed = new Set<(typeof plan.files)[number]>();
+    const reusedImages = new Map<string, ReusedExportImage>();
+    const inFlightThumbnails = new Set<Promise<void>>();
+    const captureStates = new Map<string, "pending" | "completed">();
+    const scheduleThumbnail = async (fileId: string, fileName: string, bytes: Buffer, extension: ExportImage["extension"]): Promise<void> => {
+      while (inFlightThumbnails.size >= IMAGE_CONCURRENCY) {
+        await Promise.race(inFlightThumbnails);
+      }
+      let task: Promise<void>;
+      task = (async () => {
+        if (signal?.aborted === true) return;
+        const image = await this.thumbnailImage(bytes, extension, ARCHIVE_THUMBNAIL_SIZE, telemetry);
+        reusedImages.set(fileId, { image, sourceBytes: bytes.byteLength });
+        captureStates.set(fileId, "completed");
+      })().catch((error: unknown) => {
+        captureStates.delete(fileId);
+        if (signal?.aborted !== true) this.logger.warn("项目导出 ZIP 附件缩略图生成失败：" + fileName + " / " + String(error));
+      }).finally(() => {
+        inFlightThumbnails.delete(task);
+      });
+      inFlightThumbnails.add(task);
+    };
     try {
       for (const file of plan.files) {
         if (file.status !== "included" || file.ref === null || file.ref.objectKey === null) continue;
@@ -1296,6 +1371,13 @@ export class ProjectExportService implements OnModuleInit {
           continue;
         }
         let written: Awaited<ReturnType<ProjectZipWriter["addStream"]>>;
+        const shouldCapture = captureIds.has(file.fileId)
+          && supportedImage(file.ref)
+          && (file.ref.sizeBytes === null || file.ref.sizeBytes <= MAX_IMAGE_BYTES)
+          && !reusedImages.has(file.fileId)
+          && captureStates.get(file.fileId) !== "pending";
+        const capture = shouldCapture ? new ProjectArchiveImageCapture(MAX_IMAGE_BYTES) : undefined;
+        if (capture !== undefined) captureStates.set(file.fileId, "pending");
         try {
           written = await telemetry.measure("attachmentZipWrite", () => archive.addStream(
             rootName + "/" + file.relativePath,
@@ -1304,9 +1386,11 @@ export class ProjectExportService implements OnModuleInit {
             {
               compress: shouldCompressProjectArchiveEntry(file.fileName),
               maxBytes: PROJECT_ARCHIVE_MAX_FILE_BYTES,
+              ...(capture === undefined ? {} : { onChunk: capture.onChunk }),
             },
           ));
         } catch (error) {
+          capture?.discard();
           object.stream.destroy();
           file.status = "skipped";
           this.logger.warn("项目附件写入 ZIP 失败：" + file.fileName + " / " + String(error));
@@ -1317,13 +1401,26 @@ export class ProjectExportService implements OnModuleInit {
         file.sha256 = written.sha256;
         telemetry.recordObjectStreamBytes(written.sizeBytes);
         includedBytes += written.sizeBytes;
+        if (capture !== undefined) {
+          const bytes = capture.take();
+          const extension = bytes === null ? null : sniffProjectExportImage(bytes);
+          if (bytes !== null && extension !== null) {
+            await scheduleThumbnail(file.fileId, file.fileName, bytes, extension);
+          } else {
+            captureStates.delete(file.fileId);
+          }
+        }
       }
+      await Promise.all(inFlightThumbnails);
+      throwIfAborted(signal);
     } finally {
+      await Promise.allSettled(inFlightThumbnails);
       telemetry.recordAttachmentStatuses(plan.files.map((file) => {
         if (file.status === "missing" || file.status === "skipped") return file.status;
         return processed.has(file) ? file.status : "skipped";
       }));
     }
+    return reusedImages;
   }
 
   private async exportProjectStreaming(
@@ -1667,12 +1764,17 @@ export class ProjectExportService implements OnModuleInit {
     thumbnail: ImageThumbnailSize | false = false,
     budget?: ImageLoadBudget,
     telemetry?: ProjectExportTelemetry,
+    options: ImageLoadOptions = {},
   ): Promise<Map<string, ExportImage>> {
     const candidates = [...ids]
       .map((id) => ({ id, ref: files.get(id) }))
       .filter((item): item is { id: string; ref: ProjectExportFileRef } => {
         const ref = item.ref;
-        return ref !== undefined && ref.objectKey !== null && supportedImage(ref) && (ref.sizeBytes === null || ref.sizeBytes <= MAX_IMAGE_BYTES);
+        return ref !== undefined
+          && ref.objectKey !== null
+          && supportedImage(ref)
+          && (ref.sizeBytes === null || ref.sizeBytes <= MAX_IMAGE_BYTES)
+          && options.blockedIds?.has(item.id) !== true;
       });
     const result = new Map<string, ExportImage>();
     const activeBudget = budget ?? { count: 0, totalBytes: 0 };
@@ -1684,6 +1786,14 @@ export class ProjectExportService implements OnModuleInit {
         if (activeBudget.count >= MAX_IMAGE_COUNT || activeBudget.totalBytes >= MAX_TOTAL_IMAGE_BYTES) continue;
         const candidate = candidates[index];
         if (candidate === undefined || candidate.ref.objectKey === null) continue;
+        const reused = options.reused?.get(candidate.id);
+        if (reused !== undefined) {
+          if (reused.sourceBytes > MAX_IMAGE_BYTES || activeBudget.totalBytes + reused.sourceBytes > MAX_TOTAL_IMAGE_BYTES) continue;
+          activeBudget.count += 1;
+          activeBudget.totalBytes += reused.sourceBytes;
+          result.set(candidate.id, reused.image);
+          continue;
+        }
         const objectKey = candidate.ref.objectKey;
         try {
           telemetry?.recordObjectGetCall();
@@ -1694,7 +1804,7 @@ export class ProjectExportService implements OnModuleInit {
           const bytes = object.bytes;
           telemetry?.recordObjectGetBytes(bytes.length);
           if (activeBudget.count >= MAX_IMAGE_COUNT || bytes.length > MAX_IMAGE_BYTES || activeBudget.totalBytes + bytes.length > MAX_TOTAL_IMAGE_BYTES) continue;
-          const extension = sniffImage(bytes);
+          const extension = sniffProjectExportImage(bytes);
           if (extension === null) continue;
           activeBudget.count += 1;
           activeBudget.totalBytes += bytes.length;
@@ -1746,14 +1856,4 @@ export class ProjectExportService implements OnModuleInit {
 function supportedImage(ref: { mime: string | null; name: string }): boolean {
   if (ref.mime !== null && (ref.mime.startsWith("image/png") || ref.mime.startsWith("image/jpeg") || ref.mime.startsWith("image/gif"))) return true;
   return /\.(png|jpe?g|gif)$/i.test(ref.name);
-}
-
-function sniffImage(bytes: Uint8Array): ExportImage["extension"] | null {
-  if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "png";
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "jpeg";
-  if (bytes.length >= 6) {
-    const head = String.fromCharCode(bytes[0] ?? 0, bytes[1] ?? 0, bytes[2] ?? 0, bytes[3] ?? 0, bytes[4] ?? 0, bytes[5] ?? 0);
-    if (head === "GIF87a" || head === "GIF89a") return "gif";
-  }
-  return null;
 }
