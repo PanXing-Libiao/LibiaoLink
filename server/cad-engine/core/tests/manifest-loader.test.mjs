@@ -16,7 +16,7 @@ function workerFactory(){
  return worker;
 }
 test('large compact manifest uses a real worker, transfers input, and preserves full draw identities',async()=>{
- const bytes=encode(compact(30000)),expected=decodeManifestBytes(bytes).packet;
+ const bytes=encode(compact(30000)),expected=(await decodeManifestBytes(bytes)).packet;
  const pending=decodeManifest(bytes,{workerFactory});assert.equal(bytes.byteLength,0);
  const {packet,timing}=await pending;
  assert.deepEqual(packet,structuredClone(expected));assert.equal(timing.execution,'worker');
@@ -52,7 +52,7 @@ test('DWG packed geometry and style tables survive batched worker handoff withou
  const fixture=JSON.parse(await readFile(new URL('./manifest-dwg-fixture.json',import.meta.url),'utf8'));
  // Force the worker threshold without duplicating domain entities or identities.
  fixture.padding=' '.repeat(1024*1024);
- const raw=encode(fixture),expected=decodeManifestBytes(raw).packet;
+ const raw=encode(fixture),expected=(await decodeManifestBytes(raw)).packet;
  const {packet}=await decodeManifest(raw,{workerFactory});
  assert.deepEqual(packet,structuredClone(expected));assert.equal(packet.document.packed,undefined);
  assert.ok(Object.keys(packet.document.representations).length>0);
@@ -62,7 +62,7 @@ test('DWG packed geometry and style tables survive batched worker handoff withou
 test('worker batches preserve special dictionary keys as own data properties',async()=>{
  const source=compact(30000);
  source.document.properties=JSON.parse('{"__proto__":{"label":"source value"},"constructor":{"label":"constructor value"},"toString":{"label":"own method name"}}');
- const expected=decodeManifestBytes(encode(source)).packet;
+ const expected=(await decodeManifestBytes(encode(source))).packet;
  const {packet}=await decodeManifest(encode(source),{workerFactory});
  assert.deepEqual(packet,structuredClone(expected));
  assert.equal(Object.getPrototypeOf(packet.document.properties),Object.prototype);

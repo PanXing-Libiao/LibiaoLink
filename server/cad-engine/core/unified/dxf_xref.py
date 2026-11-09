@@ -17,22 +17,7 @@ MAX_DEPTH = 8
 MAX_RECORDS = 20000
 
 
-def match_file(requested, owner, files):
-    requested = requested.replace('\\', '/')
-    relative = posixpath.normpath(posixpath.join(posixpath.dirname(owner), requested))
-    for path, method in [(relative, 'relative-path'), (requested, 'provided-path')]:
-        if path in files:
-            return path, method, []
-    candidates = [name for name in files if name.casefold() == relative.casefold()]
-    method = 'case-insensitive-path'
-    if not candidates:
-        basename = PurePosixPath(requested).name.casefold()
-        candidates = [name for name in files if PurePosixPath(name).name.casefold() == basename]
-        method = 'unique-basename'
-    if len(candidates) == 1:
-        return candidates[0], method, []
-    return None, 'ambiguous' if candidates else 'missing', sorted(candidates)
-
+from .dxf_resources import match_file
 
 def source_origins(doc, sid, chain, name, source_format='DXF'):
     from . import dxf_scale

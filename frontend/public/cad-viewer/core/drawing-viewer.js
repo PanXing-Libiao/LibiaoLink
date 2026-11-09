@@ -8,7 +8,7 @@ import {drawingClips, compileClips, triangulateRings, insideRing} from './drawin
 import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.17.3';
 import {estimateDrawingDraws, projectInstancesSteps, shouldProjectInstances, recordVisibleBounds, INSTANCE_DRAW_LIMIT, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, quantizeLodSize, LOD_MIN_SCREEN_PX, isLodCulled, I} from './drawing-instances.js?v=dxf-0.17.3';
 import Flatbush from './vendor/flatbush.js';
-import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, paintTextRun, textDisplayCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.13';
+import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, paintTextRun, textDisplayCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.14';
 import {createBundledFontResolver} from './drawing-fonts.js';
 import {aciColor, trueColorCss, drawingColorCss} from './drawing-colors.js?v=dxf-0.17.4';
 import {resolveTextAvoidance} from './drawing-text-avoidance.js?v=dxf-0.17.3';
@@ -2226,12 +2226,12 @@ export function mountDrawingViewer(envelope) {
     const el = document.getElementById('selected'); if (el) el.textContent = selectedLabel;
     drawRetainedSelection(); updateSelectionButtons(); renderBlocks();
   }
-  function focusSourceHandle(handle){
+  function focusSourceHandle(handle,sourceId=ucd.sources[0].id){
     const key=String(handle).toUpperCase();
     const sourceOf=rec=>(drawing.entities[rec.draw.itemId]||drawing.annotations[rec.draw.itemId])?.sourceRefs||[];
-    const candidates=built.filter(rec=>drawVisible(rec)&&sourceOf(rec).some(ref=>ref.objectKey.toUpperCase()===key));
+    const candidates=built.filter(rec=>drawVisible(rec)&&sourceOf(rec).some(ref=>ref.sourceId===sourceId&&ref.objectKey.toUpperCase()===key));
     if(!candidates.length){
-      const entry=Object.values(drawing.blockInstances).find(item=>item.sourceRefs.some(ref=>ref.objectKey.toUpperCase()===key));
+      const entry=Object.values(drawing.blockInstances).find(item=>item.sourceRefs.some(ref=>ref.sourceId===sourceId&&ref.objectKey.toUpperCase()===key));
       if(entry){selectInstance(entry.id);return api.fitSelection();}return false;
     }
     if(!instancePlan){select(candidates[0],false);return api.fitSelection();}
@@ -2491,12 +2491,20 @@ export function mountDrawingViewer(envelope) {
     const unknownTextDirections = losses.filter(item => item.code === 'mtext-drawing-direction-unrecognized').length;
     if (unknownTextDirections) lines.push('文字排版：' + unknownTextDirections + ' 条源 MTEXT 含未识别方向值；已保留源值和可读的近似字形，不代表原布局已恢复。');
     if (nativePoints && Object.hasOwn(nativePoints, 'mode') && ![0,1].includes(nativePoints.mode)) lines.push('点显示：已保留源 PDMODE/PDSIZE；Defpoints 使用点状标记，其他点样式与尺寸尚未定向验收。');
+    const referenceSources = Object.values(ucd.extensions?.['org.libiaolink.dwg/1']?.sourceDocuments || {});
+    if (referenceSources.length) {
+      lines.push('上述对象归账属于主图；已加载的外参保留各自的读取、显示和字体边界。');
+      for (const source of referenceSources) {
+        const missing = source.coverage?.displayGeometry?.withoutDisplayGeometry || 0;
+        if (missing) lines.push('外参 ' + source.logicalPath + '：仍有 ' + missing + ' 个源对象无显示几何，详见解析诊断。');
+      }
+    }
     const cachedProxies = Object.values((ucd.extensions['org.libiaolink.dwg/1'] || {}).proxyGraphics || {}).filter(item => item.status === 'cached-display');
     if (cachedProxies.length) lines.push('代理图形：' + cachedProxies.length + ' 个对象使用原图保存的显示缓存；未恢复专业对象语义，也不代表外部文字或内容已更新。');
     if (unsupported.DIMENSION_CONSTRAINT) lines.push('尺寸约束：' + unsupported.DIMENSION_CONSTRAINT + ' 个对象无存储标注图形，参数已保留；交互显示尚未支持，不能据此认定普通尺寸线丢失。');
     if (Object.keys(unsupported).length) lines.push('未显示：' + Object.entries(unsupported).map(([k, v]) => k + '×' + v).join('、'));
     if (geom.byReason?.externalReferenceUnresolved) lines.push('外部参照：' + geom.byReason.externalReferenceUnresolved
-      + (ucd.extensions['org.libiaolink.dwg/1'] ? ' 个实例未加载，原因见解析诊断；本地 DWG 尚未接入配套外参加载' : ' 项未加载，原因见下方配套文件列表'));
+      + ' 个实例未加载，原因见解析诊断与下方配套文件列表');
     const hatchOutcomes = Object.values((ucd.extensions['org.libiaolink.dwg/1'] || {}).hatchPatternOutcomes || {});
     const emptyHatches = hatchOutcomes.filter(item => item.status === 'empty-by-read-definition').length;
     const pendingHatches = losses.filter(item => item.code === 'empty-native-hatch-pattern').length;

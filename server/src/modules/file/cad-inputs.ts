@@ -74,22 +74,21 @@ export function cadInputs(source: CadArchiveSource): CadInputSource {
   const companions = z.array(boundCompanion).max(127).parse(source.companions ?? []);
   const mainPath = source.mainPath ?? source.sourceName;
   if (format === "STEP" && companions.length) throw new AppError("VALIDATION_FAILED", "STEP 暂不接受配套文件");
-  if (format === "DWG") {
-    if (companions.length || (source.mainPath && source.mainPath !== source.sourceName)) {
-      throw new AppError("VALIDATION_FAILED", "DWG 暂不接受配套文件或主图相对路径");
-    }
-  }
-  if (format === "DXF") {
+  if (format === "DXF" || format === "DWG") {
     CadJobCreateBodySchema.parse({ mainPath, companions: companions.map(({ fileId, versionId, path }) => ({ fileId, versionId, path })) });
     if (mainPath.split("/").at(-1) !== source.sourceName) throw new AppError("VALIDATION_FAILED", "主图相对路径须保留原文件名");
   }
   companions.sort((a, b) => Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)));
-  const resourceSetHash = format === "STEP" || format === "DWG" ? CAD_EMPTY_RESOURCE_SET
+  const resourceSetHash = format === "STEP" || format === "DWG" && !companions.length && mainPath === source.sourceName ? CAD_EMPTY_RESOURCE_SET
     : digest(JSON.stringify([mainPath, companions.map((row) => [row.path, row.fileId, row.versionId, row.sourceSHA256, row.sourceBytes])]));
   if (source.sourceFormat && source.sourceFormat !== format || source.resourceSetHash && source.resourceSetHash !== resourceSetHash) {
     throw new Error("CAD input set identity mismatch");
   }
   return { ...source, sourceFormat: format, mainPath, companions, resourceSetHash };
+}
+
+export function cadHasResourcePackage(input: CadInputSource): boolean {
+  return input.sourceFormat === "DXF" || input.sourceFormat === "DWG" && input.resourceSetHash !== CAD_EMPTY_RESOURCE_SET;
 }
 
 export function cadResourceFingerprint(source: CadArchiveSource): string {
@@ -122,7 +121,6 @@ export class CadInputService {
     });
     const sourceName = versionFileName(main.file.name, main.version.objectKey);
     if (cadFormat(sourceName) === "STEP" && (selected.mainPath || companions.length)) throw new AppError("VALIDATION_FAILED", "STEP 暂不接受配套路径或文件");
-    if (cadFormat(sourceName) === "DWG" && (selected.mainPath || companions.length)) throw new AppError("VALIDATION_FAILED", "DWG 暂不接受配套路径或文件");
     return cadInputs({ projectId: main.file.projectId, fileId, versionId, objectKey: main.version.objectKey,
       sourceName, sourceSHA256: main.version.contentHash, sourceBytes: main.version.sizeBytes,
       ...(selected.mainPath ? { mainPath: selected.mainPath } : {}), companions });
@@ -132,13 +130,14 @@ export class CadInputService {
     await this.boundVersions(cadInputs(source), actorId);
   }
 
-  /** 授权并构造一次提交载荷：DWG/STEP 直接流式；DXF 输入集合受 64 MiB 总预算限制，继续打包为单帧。 */
+  /** 主图单独流式传输；DXF/DWG 配套集合沿用 64 MiB 总预算及逐版本校验。 */
   async enginePayload(source: CadArchiveSource): Promise<CadPayload> {
     const input = cadInputs(source);
-    if (input.sourceFormat === "DXF" && input.sourceBytes + input.companions.reduce((sum, row) => sum + row.sourceBytes, 0) > CAD_DXF_INPUT_BYTES) {
+    const packaged = cadHasResourcePackage(input);
+    if (packaged && input.sourceBytes + input.companions.reduce((sum, row) => sum + row.sourceBytes, 0) > CAD_DXF_INPUT_BYTES) {
       throw new ServiceUnavailableException("主图和配套文件合计不能超过 64 MiB");
     }
-    if ((input.sourceFormat === "STEP" || input.sourceFormat === "DWG") && input.objectKey) {
+    if (!packaged && input.objectKey) {
       const object = await this.storage.getObjectStream(input.objectKey);
       if (!object || object.sizeBytes !== input.sourceBytes) {
         object?.stream.destroy();
@@ -149,7 +148,7 @@ export class CadInputService {
     }
     const rows = await this.boundVersions(input, null);
     const mainVersion = rows.get(input.versionId)!.version;
-    if (input.sourceFormat === "STEP" || input.sourceFormat === "DWG") {
+    if (!packaged) {
       const object = await this.storage.getObjectStream(mainVersion.objectKey);
       if (!object || object.sizeBytes !== input.sourceBytes) {
         object?.stream.destroy();

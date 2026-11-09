@@ -383,9 +383,9 @@ export function layoutTextRun(input) {
     }
     approximations.push(input.aligned ? 'aligned-endpoints' : 'fit-endpoints');
   }
-  // Native MTEXT attaches the complete paragraph, not its first baseline.
-  // Measure the selected faces after wrapping; ink can exceed cap height.
-  if (run.nativeLayout && run.kind === 'mtext' && input.measureInk) {
+  // Measure painted ink after wrapping and Fit/Aligned scaling. MTEXT uses it
+  // for attachment; TEXT also needs its above-baseline bounds for fit/picking.
+  if (run.nativeLayout && input.measureInk) {
     let top = Infinity, bottom = -Infinity, baseline = 0;
     const lines = run.runLines || run.lines.map(text => ({segments: [{text,
       fontFamily: run.fontFamily, size: run.size}], advance: run.lineHeight}));

@@ -1,4 +1,4 @@
-import {loadPlatformModel,inspectionRecord} from "./core/app.js?v=dxf-0.17.13";
+import {loadPlatformModel,inspectionRecord} from "./core/app.js?v=dxf-0.17.15";
 import {decodeManifest} from "./core/manifest-loader.js?v=cad-handoff-1";
 import {LoadPhases} from "./core/load-phases.js";
 import {hydrateBinary} from './core/binary-transport.js';
@@ -15,7 +15,7 @@ const base=valid?`/api/v1/files/${fileId}/versions/${versionId}/cad/views/${view
 const nameCodepage=query.get('nameCodepage')==='UTF8'?'UTF8':'GB';
 const format=query.get('format');
 const isDrawing=format==='DXF'||format==='DWG';
-const hasResources=format==='DXF';
+const hasResources=isDrawing;
 let resolveContext;
 const contextReady=new Promise(resolve=>{resolveContext=resolve;});
 let currentJob=null,jobBase=null,reusedJob=false,delivered=false,cancelled=false,loadedEnvelope=null,csrfToken=null,csrfPending=null,authExpiredNotified=false;
@@ -290,7 +290,7 @@ loadPlatformModel(async({signal,progress,mark,record})=>{
  active.addEventListener("abort",abortPrefetch,{once:true});
  try{
   active.throwIfAborted();progress('正在读取模型任务…');
-  const selection=format==="DXF"?await Promise.race([contextReady,new Promise((_,reject)=>active.addEventListener('abort',()=>reject(active.reason),{once:true}))]):{companions:[]};
+  const selection=isDrawing?await Promise.race([contextReady,new Promise((_,reject)=>active.addEventListener('abort',()=>reject(active.reason),{once:true}))]):{companions:[]};
   active.throwIfAborted();
   phases.phase('jobRequest');mark('jobRequestStart');
   const created=await requestJson(base+'?'+new URLSearchParams({nameCodepage:isDrawing?'UTF8':nameCodepage}),{method:'POST',signal:active,
