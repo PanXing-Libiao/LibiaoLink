@@ -23,8 +23,11 @@ import {
   projectExportArchiveWorkbookName,
   projectExportFileName,
   versionNameOf,
+  type ExportImage,
+  type ExportPhotoRef,
   type ProjectExportPayload,
 } from "../src/modules/project-export/project-export.workbook.js";
+import { injectWorkbookImages } from "../src/modules/project-export/project-export.xlsx-images.js";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const PNG = Buffer.from(
@@ -115,6 +118,15 @@ function payload(): ProjectExportPayload {
 
 function headersOf(sheet: ExcelJS.Worksheet): unknown[] {
   return Array.from({ length: sheet.columnCount }, (_value, index) => sheet.getCell(1, index + 1).value);
+}
+
+function loaderFor(images: ReadonlyMap<string, ExportImage>) {
+  return async (refs: readonly ExportPhotoRef[]) => new Map(
+    refs.flatMap((ref) => {
+      const image = images.get(ref.fileId);
+      return image === undefined ? [] : [[ref.fileId, image] as const];
+    }),
+  );
 }
 
 
@@ -254,17 +266,18 @@ describe("项目数据导出工作簿", () => {
     assertNoOverlap(workbook.getWorksheet("变更管理")!);
   });
 
-  it("流式工作簿逐 Sheet 落盘；大项目附图改为项目文件视图链接且不嵌二进制", async () => {
+  it("流式工作簿逐 Sheet 落盘；大项目附图仍内嵌缩略图且不生成图片链接", async () => {
     const directory = await mkdtemp(join(tmpdir(), "libiaolink-project-export-test-"));
     const filePath = join(directory, "stream.xlsx");
     try {
       const sample = payload();
-      const writer = new ProjectExportWorkbookWriter(filePath, sample.project, sample.origin);
+      const writer = new ProjectExportWorkbookWriter(filePath, sample.project, sample.origin, loaderFor(sample.images));
       await writer.writeTasks(rowsOf(sample.tasks));
       await writer.writeReports(rowsOf(sample.reports));
       await writer.writeChanges(rowsOf(sample.changes));
       await writer.writeStakeholders(rowsOf(sample.stakeholders));
       const result = await writer.commit();
+      await injectWorkbookImages(result.filePath, result.imagePlacements, result.images);
       expect(result.sheetNames).toEqual(["英国项目", "日报及问题汇总", "变更管理", "干系人"]);
       expect((await stat(result.filePath)).size).toBeGreaterThan(0);
 
@@ -275,37 +288,101 @@ describe("项目数据导出工作簿", () => {
       expect(workbook.getWorksheet("英国项目")!.getCell(2, 5).value).toBe(1);
 
       const report = workbook.getWorksheet("日报及问题汇总")!;
-      const onsite = report.getCell(2, 5).value as { text?: string; hyperlink?: string };
-      expect(onsite.text).toBe("现场.png\n缺失现场.jpg");
-      expect(onsite.hyperlink).toBe("https://test-pm.libiaorobot.com/#/project/" + PROJECT_ID + "?view=files");
-      expect(report.getImages()).toHaveLength(0);
+      expect(String(report.getCell(2, 5).value)).toBe("（附图缺失）缺失现场.jpg");
+      expect(report.getCell(2, 5).value).not.toEqual(expect.objectContaining({ hyperlink: expect.anything() }));
+      expect(report.getImages()).toHaveLength(1);
 
       const change = workbook.getWorksheet("变更管理")!;
-      const before = change.getCell(2, 5).value as { text?: string; hyperlink?: string };
-      expect(before.text).toBe("旧电源\n变更前.png");
-      expect(before.hyperlink).toContain("/#/project/" + PROJECT_ID + "?view=files");
-      expect(change.getImages()).toHaveLength(0);
+      expect(change.getCell(2, 5).value).toBe("旧电源");
+      expect(String(change.getCell(2, 6).value)).toBe("新电源\n（附图缺失）变更后.jpg");
+      expect(change.getCell(2, 5).value).not.toEqual(expect.objectContaining({ hyperlink: expect.anything() }));
+      expect(change.getImages()).toHaveLength(1);
 
       const legacyWorkbook = new ExcelJS.Workbook();
       await legacyWorkbook.xlsx.load((await buildProjectExportWorkbook(sample)).buffer as unknown as ArrayBuffer);
-      const skippedColumns: Record<string, ReadonlySet<number>> = {
-        "日报及问题汇总": new Set([5, 9]),
-        "变更管理": new Set([5, 6]),
-      };
       for (const sheetName of result.sheetNames) {
         const streamedSheet = workbook.getWorksheet(sheetName)!;
         const legacySheet = legacyWorkbook.getWorksheet(sheetName)!;
         expect(streamedSheet.rowCount).toBe(legacySheet.rowCount);
-        const skip = skippedColumns[sheetName] ?? new Set<number>();
         for (let row = 1; row <= legacySheet.rowCount; row += 1) {
           for (let column = 1; column <= legacySheet.columnCount; column += 1) {
-            if (skip.has(column)) continue;
             expect(streamedSheet.getCell(row, column).value, sheetName + " R" + row + "C" + column).toEqual(
               legacySheet.getCell(row, column).value,
             );
           }
         }
       }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("流式图片注入支持多图网格、跨 Sheet 复用媒体，并保留原文件超链接", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "libiaolink-project-export-test-"));
+    const filePath = join(directory, "stream-images.xlsx");
+    try {
+      const sample = payload();
+      const photos = Array.from({ length: 6 }, (_value, index) => ({
+        fileId: "stream-photo-" + String(index + 1),
+        name: "流式图" + String(index + 1) + ".png",
+      }));
+      for (const photo of photos) sample.images.set(photo.fileId, { bytes: PNG, extension: "png" });
+      sample.reports[0]!.onsitePhotos = photos.slice(0, 3);
+      sample.reports[0]!.issuePhotos = photos.slice(3);
+      sample.changes[0]!.beforePhotos = photos.slice(0, 3);
+      sample.changes[0]!.afterPhotos = photos.slice(3);
+
+      const writer = new ProjectExportWorkbookWriter(filePath, sample.project, sample.origin, loaderFor(sample.images));
+      await writer.writeTasks(rowsOf(sample.tasks));
+      await writer.writeReports(rowsOf(sample.reports));
+      await writer.writeChanges(rowsOf(sample.changes));
+      await writer.writeStakeholders(rowsOf(sample.stakeholders));
+      const result = await writer.commit();
+      await injectWorkbookImages(result.filePath, result.imagePlacements, result.images);
+
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.readFile(result.filePath);
+      const report = workbook.getWorksheet("日报及问题汇总")!;
+      const change = workbook.getWorksheet("变更管理")!;
+      expect(report.getImages()).toHaveLength(6);
+      expect(change.getImages()).toHaveLength(6);
+
+      const taskFile = workbook.getWorksheet("英国项目")!.getCell(2, 17).value as { hyperlink?: string };
+      expect(taskFile.hyperlink).toContain("/#/project/" + PROJECT_ID + "?view=files");
+      const changeFile = change.getCell(2, 11).value as { hyperlink?: string };
+      expect(changeFile.hyperlink).toContain("/#/project/" + PROJECT_ID + "?view=files");
+
+      const emuPerPx = 9525;
+      const assertNoOverlap = (sheet: ExcelJS.Worksheet): void => {
+        const images = sheet.getImages();
+        const boxes = images.map((image) => {
+          const ext = (image.range as unknown as { ext?: { width: number; height: number } }).ext;
+          const left = image.range.tl.nativeColOff / emuPerPx;
+          const top = image.range.tl.nativeRowOff / emuPerPx;
+          return {
+            column: image.range.tl.nativeCol,
+            row: image.range.tl.nativeRow,
+            left,
+            top,
+            right: left + (ext?.width ?? 0),
+            bottom: top + (ext?.height ?? 0),
+          };
+        });
+        for (let index = 0; index < boxes.length; index += 1) {
+          for (let other = index + 1; other < boxes.length; other += 1) {
+            const a = boxes[index]!;
+            const b = boxes[other]!;
+            if (a.column !== b.column || a.row !== b.row) continue;
+            const separated = a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top;
+            expect(separated, "流式图片 " + String(index + 1) + " 与 " + String(other + 1) + " 重叠").toBe(true);
+          }
+        }
+      };
+      assertNoOverlap(report);
+      assertNoOverlap(change);
+
+      const entries = readZipEntries(await readFile(result.filePath));
+      expect([...entries.keys()].filter((name) => /^xl\/media\/image\d+\.png$/.test(name))).toHaveLength(6);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

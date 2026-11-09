@@ -360,7 +360,7 @@ describe("页面级 Excel 导出契约", () => {
     }));
   });
 
-  it("stream 模式改为文件名 + 项目文件视图链接，交付后可清理临时文件", async () => {
+  it("stream 模式仍内嵌缩略图、保留缺图占位，交付后可清理临时文件", async () => {
     const { service, audit, projectAccess } = harness({ mode: "stream" });
     const result = await service.exportPages(PROJECT_ID, USER_ID, "https://pm.example", [
       { sheet: "reports", columns: ["photos", "date"] },
@@ -371,15 +371,14 @@ describe("页面级 Excel 导出契约", () => {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(result.filePath);
     const sheet = workbook.getWorksheet("日报记录")!;
-    const value = sheet.getCell(2, 2).value as { text?: string; hyperlink?: string };
-    expect(value.text).toContain("现场.png");
-    expect(value.text).toContain("缺失.jpg");
-    expect(value.hyperlink).toBe("https://pm.example/#/project/" + PROJECT_ID + "?view=files");
-    expect(sheet.getImages()).toHaveLength(0);
-    expect(result.imageLinkCount).toBe(2);
+    expect(String(sheet.getCell(2, 2).value)).toContain("（附图缺失）缺失.jpg");
+    expect(sheet.getCell(2, 2).value).not.toEqual(expect.objectContaining({ hyperlink: expect.anything() }));
+    expect(sheet.getImages()).toHaveLength(1);
+    expect(result.imageCount).toBe(1);
+    expect(result.imageLinkCount).toBe(0);
     expect(result.missingImageCount).toBe(1);
     expect(audit.record).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-      metadata: expect.objectContaining({ feature: "page_export", mode: "stream", imageLinks: 2, missingImages: 1 }),
+      metadata: expect.objectContaining({ feature: "page_export", mode: "stream", images: 1, imageLinks: 0, missingImages: 1 }),
     }));
     await result.cleanup();
     await expect(access(result.filePath)).rejects.toBeTruthy();
