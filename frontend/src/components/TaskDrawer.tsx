@@ -1551,6 +1551,8 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
     },
   ];
 
+  const materialModeActive = tab === "change" && changeMode === "material";
+
   return (
     <div className="fixed inset-0 z-50">
       <div
@@ -1570,11 +1572,14 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
           aria-modal="true"
           aria-labelledby="task-drawer-title"
           className={
-            "drawer-panel pointer-events-auto relative flex h-[min(78vh,800px)] max-h-[calc(100vh-2rem)] w-[min(92vw,980px)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl bg-white shadow-[0_24px_80px_rgba(15,23,42,0.24)]" +
+            "drawer-panel pointer-events-auto relative flex w-[min(92vw,980px)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl bg-white shadow-[0_24px_80px_rgba(15,23,42,0.24)] " +
+            (materialModeActive
+              ? "h-[calc(100vh-2rem)] max-h-[calc(100vh-2rem)]"
+              : "h-[min(78vh,800px)] max-h-[calc(100vh-2rem)]") +
             (closing ? " is-closing" : "")
           }
         >
-        <header className="border-b border-zinc-100 px-6 pb-5 pt-5">
+        <header className="shrink-0 border-b border-zinc-100 px-6 pb-5 pt-5">
           <div className="flex items-start justify-between gap-4">
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-[11px] font-medium text-zinc-500">{stageText(locale, task.stage === "" ? TEMP_TASK_STAGE : task.stage)}</span>
@@ -1694,7 +1699,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
         {/* 页标签导航栏（Push 254 · 业务口径「抽屉上方增加 页面标签导航栏 任务详情 变更申请 变更记录三个页面」）：
             抽屉头部之下、页内容之上（与页面主标签栏同一套下划线交互）；任务详情 = 原抽屉内容（进度 + 字段清单），
             另两页收拢变更发起与追溯。 */}
-        <div data-drawer-tabs="true" className="border-b border-zinc-100 px-6">
+        <div data-drawer-tabs="true" className="shrink-0 border-b border-zinc-100 px-6">
           <div role="tablist" aria-label={t("drawer.tabs.aria")} className="flex gap-1">
             {DRAWER_TABS.map((item) => {
               const active = item.key === tab;
@@ -1833,7 +1838,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
               ) : null}
             </div>
 
-            <ScrollArea viewportClassName="min-h-0 flex-1" className="px-6 py-1" ariaLabel={t("drawer.detail.aria")}>
+            <ScrollArea key="detail" viewportClassName="min-h-0 flex-1" className="px-6 py-1" ariaLabel={t("drawer.detail.aria")}>
               <dl>
                 {rows.map((row) => (
                   <div
@@ -1849,11 +1854,11 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
           </>
         ) : tab === "change" ? (
           changeMode === "material" ? (
-            <ScrollArea viewportClassName="min-h-0 flex-1" className="px-6" ariaLabel={t("mr.aria")}>
+            <ScrollArea key="change-material" viewportClassName="min-h-0 flex-1" className="px-6" ariaLabel={t("mr.aria")}>
               <MaterialReissueForm projectId={projectId ?? ""} task={task} members={members} onSubmitted={handleMaterialReissueSubmitted} />
             </ScrollArea>
           ) : (
-          <ScrollArea viewportClassName="min-h-0 flex-1" className="px-6" ariaLabel={t("drawer.change.aria")}>
+          <ScrollArea key="change-file" viewportClassName="min-h-0 flex-1" className="px-6" ariaLabel={t("drawer.change.aria")}>
             <div data-drawer-page="change" className="flex flex-col gap-5 py-4">
               <section>
                 <h3 className="text-xs font-medium text-zinc-500">{fieldText(locale, "变更时间")} <span className="text-rose-500">*</span></h3>
@@ -2249,7 +2254,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
             )}
           </div>
         )}
-        <footer className="flex items-center justify-between gap-3 border-t border-zinc-100 px-6 py-3">
+        <footer className="mt-auto flex shrink-0 items-center justify-between gap-3 border-t border-zinc-100 px-6 py-3">
           <p className="text-[11px] text-zinc-400">{t("drawer.footer.hint")}</p>
           {savedTick !== 0 ? (
             <p className="text-[11px] font-medium text-emerald-600">{t("drawer.save.saved")}</p>
