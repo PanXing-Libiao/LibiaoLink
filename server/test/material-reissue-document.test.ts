@@ -97,6 +97,8 @@ describe("物料变更补发 DOCX", () => {
     expect(documentXml).toContain("须先经夏总审批");
     expect(documentXml).toContain("收货信息、出库时间、运费承担方式需填写完整后再提交。");
     expect(documentXml).toContain("w:numId w:val=\"1\"");
+    expect(documentXml).toContain('<w:spacing w:before="80"/>');
+    expect(documentXml).toContain('<w:spacing w:before="0" w:after="0" w:line="280" w:lineRule="exact"/>');
     expect(documentXml).toContain('w:pgSz w:w="11906" w:h="16838"');
     expect(documentXml).toContain('w:top="1304" w:right="1077" w:bottom="1304" w:left="1077"');
     expect(documentXml).toContain('w:tblW w:w="9968" w:type="dxa"');

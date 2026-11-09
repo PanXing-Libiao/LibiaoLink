@@ -93,10 +93,10 @@ function documentXml(snapshot: MaterialReissueSnapshot): string {
   parts.push(materialHeading());
   parts.push(materialTable(snapshot));
   parts.push(noteHeading());
-  parts.push(noteParagraph(1, "项目部或售后部负责填写补发信息，并判断是否免费、是否质保期内。", false));
-  parts.push(noteParagraph(2, "商务助理和仓库根据本申请表执行发货，不负责判断是否免费、是否保内。", false));
-  parts.push(noteParagraph(3, "不属于常规免费补发范围但需免费补发的，须先经夏总审批，并在“是否已审批”处勾选“是”。", false));
-  parts.push(noteParagraph(4, "收货信息、出库时间、运费承担方式需填写完整后再提交。", true));
+  parts.push(noteParagraph("项目部或售后部负责填写补发信息，并判断是否免费、是否质保期内。"));
+  parts.push(noteParagraph("商务助理和仓库根据本申请表执行发货，不负责判断是否免费、是否保内。"));
+  parts.push(noteParagraph("不属于常规免费补发范围但需免费补发的，须先经夏总审批，并在“是否已审批”处勾选“是”。"));
+  parts.push(noteParagraph("收货信息、出库时间、运费承担方式需填写完整后再提交。"));
   const sectPr =
     '<w:sectPr><w:headerReference r:id="rId3" w:type="default"/><w:footerReference r:id="rId4" w:type="default"/>' +
     '<w:pgSz w:w="11906" w:h="16838"/>' +
@@ -255,18 +255,17 @@ function mainCell(value: string, bold: boolean, label: boolean): string {
 
 function noteHeading(): string {
   return (
-    '<w:p><w:pPr><w:spacing w:before="160"/><w:ind w:firstLine="210" w:firstLineChars="100"/><w:rPr><w:rFonts w:hint="eastAsia" w:eastAsia="宋体"/><w:lang w:eastAsia="zh-CN"/></w:rPr></w:pPr>' +
+    '<w:p><w:pPr><w:spacing w:before="80"/><w:ind w:firstLine="210" w:firstLineChars="100"/><w:rPr><w:rFonts w:hint="eastAsia" w:eastAsia="宋体"/><w:lang w:eastAsia="zh-CN"/></w:rPr></w:pPr>' +
     '<w:r><w:rPr>' + bodyRunProperties() + '</w:rPr><w:t xml:space="preserve"> </w:t></w:r>' +
     '<w:r><w:rPr>' + bodyRunProperties(true) + '</w:rPr><w:t>备注说明</w:t></w:r>' +
     '<w:r><w:rPr>' + bodyRunProperties(true) + '<w:lang w:eastAsia="zh-CN"/></w:rPr><w:t>：</w:t></w:r></w:p>'
   );
 }
 
-function noteParagraph(number: number, text: string, noSpacingAfter: boolean): string {
-  const extra = number === 1 ? '<w:spacing w:before="0"/>' : noSpacingAfter ? '<w:spacing w:after="0"/>' : "";
+function noteParagraph(text: string): string {
   return (
     '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>' +
-    extra +
+    '<w:spacing w:before="0" w:after="0" w:line="280" w:lineRule="exact"/>' +
     '<w:ind w:left="720" w:hanging="360"/></w:pPr><w:r><w:rPr>' + bodyRunProperties() + '</w:rPr><w:t>' + esc(text) + "</w:t></w:r></w:p>"
   );
 }
