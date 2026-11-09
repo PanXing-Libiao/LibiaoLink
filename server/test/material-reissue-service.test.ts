@@ -222,7 +222,20 @@ describe("MaterialReissueService.create", () => {
     expect(repo.changeRefs).toEqual([{ taskIds: [TASK], changeRequestId: repo.changeInput!.id }]);
     expect(permission.canCalls).toHaveLength(1);
     expect(audit.records).toHaveLength(2);
-    expect(outbox).toHaveLength(2);
+    expect(outbox).toHaveLength(3);
+    expect(outbox[2]).toMatchObject({
+      topic: "notify.group",
+      dedupeKey: "notify.group:material-reissue:" + repo.changeInput!.id,
+      status: "pending",
+      payload: {
+        projectId: PROJECT,
+        title: "物料变更补发已提交 · LBGN23171-G1",
+        refType: "change",
+        refId: repo.changeInput!.id,
+        templateCode: "MATERIAL_REISSUE_GROUP",
+        stageKey: "assembly",
+      },
+    });
     expect(storage.put?.contentType).toBe("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
     expect(storage.put?.body.subarray(0, 4)).toEqual(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
     expect(result.changeRequest).toMatchObject({ changeType: "material_reissue", appliedBy: ACTOR, fileId: FILE, versionId: VERSION, versionSeq: 1 });

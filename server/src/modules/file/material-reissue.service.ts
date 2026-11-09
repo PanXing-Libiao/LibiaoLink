@@ -237,6 +237,25 @@ export class MaterialReissueService {
             at: at.toISOString(),
           },
         });
+        await appendOutbox(tx, {
+          topic: "notify.group",
+          dedupeKey: "notify.group:material-reissue:" + change.id,
+          payload: {
+            projectId,
+            title: "物料变更补发已提交 · " + project.code,
+            body:
+              "项目：" + project.code + " · " + project.name + "\n" +
+              "来源任务：" + task.title + "\n" +
+              "申请人：" + applicant.displayName + "\n" +
+              "补发类别：" + reasonLabel + "（" + String(body.materials.length) + " 项）\n" +
+              "要求出库：" + body.requiredOutDate.replace(/-/g, "/") +
+              "\n\n补发/补货申请表详见下方图片。",
+            refType: "change",
+            refId: change.id,
+            templateCode: "MATERIAL_REISSUE_GROUP",
+            stageKey: task.stageKey,
+          },
+        });
         return { changeRequest: change, file: updatedFile, version };
       });
     } catch (error) {
