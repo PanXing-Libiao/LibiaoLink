@@ -39,6 +39,8 @@ import { STATUS_DOT_CLASS, TaskRow, resolveColumns, tableGridTemplate, tableMinW
  * - `taskBar.moveable`：拖条整体平移改期（工期不变）；
  * - `taskBar.resizable`：拖条两端改工期（只动被拖的那一端）；
  * - 进度圆点：拖条上的圆点改进度（按四档吸附，与四格进度条同口径）；
+ * - 任务条编辑锁（2026-11-09）：操作提示行右侧的锁按钮默认锁上，锁定时禁止拖条 / 两端 / 圆点写回，
+ *   浏览、筛选、滚动与布局操作不受影响；解锁后才恢复编辑。
  * - `taskBar.selectable` / `hoverBarStyle`：点条选中（蓝描边）、指针停在条上盖一层半透明遮罩；
  * - `taskBar.labelText: "{title} {progress}%"`：条内写「任务名 + 进度」；
  * - `gantt-locate-taskbar`：点左表任务行 = 选中它并把条定位到时间轴可视区；
@@ -573,6 +575,16 @@ function centerOnToday(element: HTMLDivElement | null, todayLeft: number | null,
   element.scrollLeft = Math.max(0, todayLeft - visible / 3);
 }
 
+/** 任务条编辑锁图标：闭合 / 打开锁 shackle 只由同一个按钮切换。 */
+function GanttLockIcon({ locked }: { locked: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="5" y="10.5" width="14" height="10" rx="2" />
+      {locked ? <path d="M8.5 10.5V7.8a3.5 3.5 0 0 1 7 0v2.7" /> : <path d="M8.5 10.5V7.8a3.5 3.5 0 0 1 6.7-1.4" />}
+    </svg>
+  );
+}
+
 /**
  * 甘特图视图（项目详情第二个标签页）。数据 = 项目任务列表同一份（服务端任务接口）；
  * 传了 onPatchTask / onSetProgress 就能拖动改期 / 改进度（不传 = 拖动照常预览、松手不写回）。
@@ -600,6 +612,8 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /** 拖动会话：预览值挂在 state 上，松手才写回任务字段。 */
   const [drag, setDrag] = useState<GanttDrag | null>(null);
+  /** 任务条编辑锁：默认锁上，防止误拖改期 / 工期 / 进度；滚动、筛选、定位等浏览操作不受影响。 */
+  const [barsLocked, setBarsLocked] = useState(true);
   /** 「回到今天」把今天并进时间轴范围（今天本来就在范围里 = 无影响）；清空筛选时收回。 */
   const [includeToday, setIncludeToday] = useState(false);
   /** 刚点「回到今天」但当时今天不在范围里：等范围延出来（todayLeft 有值）再居中一次。 */
@@ -820,12 +834,31 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
     setCollapsed(next);
   };
 
+  /** 锁图标一键切换：锁上时立即结束正在进行的拖动，避免松手后继续写回。 */
+  const toggleBarsLocked = () => {
+    if (!barsLocked) {
+      setDrag(null);
+      dragPointerRef.current = null;
+    }
+    setBarsLocked((previous) => !previous);
+  };
+
+  /** 任务条提示：锁定时去掉拖动说明，换成解锁提示；解锁时沿用完整操作说明。 */
+  const barTitleOf = (bar: GanttBar): string =>
+    barsLocked
+      ? bar.label.split("\n").filter((line) => line !== t("gantt.tip.dragBar")).concat(t("gantt.lock.lockedTip")).join("\n")
+      : bar.label;
+
   /**
    * 按下任务条（官方 taskBar.moveable / resizable / 进度圆点）：按按下的是哪一块决定这一拖改什么 ——
    * 条上圆点 = 改进度，条两端 6px = 改那一端的日期（改工期），其余 = 整条平移（工期不变）。
    * 三种都只先改预览值，松手才写回；指针捕获失败也不影响（move / up 挂在条自己身上）。
    */
   const beginDrag = (event: ReactPointerEvent<HTMLElement>, bar: GanttBar, mode: GanttDragMode) => {
+    if (barsLocked) {
+      event.stopPropagation();
+      return;
+    }
     if (bar.start === null || bar.end === null) {
       return;
     }
@@ -892,6 +925,9 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
 
   /** 条上的 pointermove：先记住指针位置（边缘自动滚动要用），再交给同一套算法。 */
   const moveDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    if (barsLocked) {
+      return;
+    }
     dragPointerRef.current = { x: event.clientX, y: event.clientY };
     applyDrag(event.clientX);
   };
@@ -931,6 +967,11 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
 
   /** 松手写回：进度走 onSetProgress（与四格进度条同一套状态联动）、日期走 onPatchTask；没动过 = 不写。 */
   const endDrag = () => {
+    if (barsLocked) {
+      setDrag(null);
+      dragPointerRef.current = null;
+      return;
+    }
     const session = drag;
     if (session === null) {
       return;
@@ -1424,9 +1465,27 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
           </>
         ) : null}
       </div>
-      <p data-gantt-help="" className="mt-2 border-t border-zinc-100 pt-2 text-[11px] leading-4 text-zinc-400">
-        {t("gantt.hint.barOps")}
-      </p>
+      <div className="mt-2 flex items-center justify-end gap-2 border-t border-zinc-100 pt-2">
+        <p data-gantt-help="" className="min-w-0 flex-1 text-[11px] leading-4 text-zinc-400">
+          {t("gantt.hint.barOps")}
+        </p>
+        <button
+          type="button"
+          data-gantt-lock={barsLocked ? "locked" : "unlocked"}
+          aria-pressed={barsLocked}
+          aria-label={t("gantt.lock.toggleAria")}
+          title={t(barsLocked ? "gantt.lock.lockedTip" : "gantt.lock.unlockedTip")}
+          onClick={toggleBarsLocked}
+          className={
+            "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border transition " +
+            (barsLocked
+              ? "border-zinc-300 bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
+              : "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100")
+          }
+        >
+          <GanttLockIcon locked={barsLocked} />
+        </button>
+      </div>
     </div>
   );
 
@@ -1558,7 +1617,9 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
     const selected = selectedId === bar.task.id;
     const dragging = live.dragging;
     const barHovered = hoveredBar === bar.task.id;
-    const showHandles = barHovered || dragging;
+    const barTitle = barTitleOf(bar);
+    const barCursor = barsLocked ? "cursor-default" : dragging ? "cursor-grabbing" : "cursor-grab";
+    const showHandles = !barsLocked && (barHovered || dragging);
     const percent = Math.round(live.percent);
     // 条内标签对齐官方 labelText「{title} {progress}%」：条够宽写全，窄条只写百分比、再窄就不写。
     const barLabel = box.width >= 84 ? ganttTitle(bar.task) + " " + String(percent) + "%" : String(percent) + "%";
@@ -1580,9 +1641,9 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
       return (
         <>
           <span
-            className={"absolute block touch-none select-none " + (dragging ? "cursor-grabbing" : "cursor-grab")}
+            className={"absolute block touch-none select-none " + barCursor}
             style={{ left: box.left + dayWidth / 2 - size / 2, top: (ROW_H - size) / 2 }}
-            title={bar.label}
+            title={barTitle}
             onPointerDown={(event) => {
               beginDrag(event, bar, "move");
             }}
@@ -1617,10 +1678,10 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
             " " +
             BAR_TODO_CLASS +
             " " +
-            (dragging ? "cursor-grabbing shadow-md" : "cursor-grab")
+            (dragging ? "cursor-grabbing shadow-md" : barCursor)
           }
           style={{ left: box.left, width: box.width, height: BAR_H, top: (ROW_H - BAR_H) / 2 }}
-          title={bar.label}
+          title={barTitle}
           onPointerDown={(event) => {
             beginDrag(event, bar, "move");
           }}
@@ -1818,7 +1879,7 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
                             event.stopPropagation();
                             locateBar(row.bar);
                           }}
-                          title={row.bar.label + "\n" + t("gantt.tip.selectTip")}
+                          title={barTitleOf(row.bar) + "\n" + t("gantt.tip.selectTip")}
                           className="flex h-full min-w-0 items-center gap-1.5 pl-6 pr-2 text-left"
                           style={{ width: COL_TITLE_W }}
                         >
