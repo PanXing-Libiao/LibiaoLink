@@ -9,6 +9,19 @@ export interface ExportImage {
   extension: ExportImageExtension;
 }
 
+export type ExportPhotoLoader = (refs: readonly ExportPhotoRef[]) => Promise<ReadonlyMap<string, ExportImage>>;
+
+export interface WorkbookImagePlacement {
+  sheetId: number;
+  row: number;
+  column: number;
+  fileId: string;
+  xOffsetPx: number;
+  yOffsetPx: number;
+  widthPx: number;
+  heightPx: number;
+}
+
 export interface ExportFileLink {
   id: string;
   name: string;
@@ -119,6 +132,8 @@ export interface ProjectExportWorkbookResult {
 export interface ProjectExportWorkbookFileResult {
   filePath: string;
   sheetNames: string[];
+  images: ReadonlyMap<string, ExportImage>;
+  imagePlacements: readonly WorkbookImagePlacement[];
 }
 
 const TASK_HEADERS = [
@@ -348,32 +363,6 @@ function linkedText(text: string, tooltip: string, link: string | null): ExcelJS
   return { text, hyperlink: link, tooltip };
 }
 
-function uniquePhotoNames(refs: readonly ExportPhotoRef[]): string[] {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const ref of refs) {
-    if (seen.has(ref.fileId)) continue;
-    seen.add(ref.fileId);
-    result.push(ref.name);
-  }
-  return result;
-}
-
-/** 流式导出的图片单元格：不嵌二进制，整个单元格链到项目文件视图；文本保留附图名称。 */
-function photoLinksValue(refs: readonly ExportPhotoRef[], origin: string | null, projectId: string): ExcelJS.CellValue {
-  const names = uniquePhotoNames(refs);
-  if (names.length === 0) return null;
-  const text = names.join("\n");
-  return linkedText(text, names[0] ?? text, firstArchiveHref(refs) ?? fileLink(origin, projectId));
-}
-
-function appendPhotoLinks(base: string, refs: readonly ExportPhotoRef[], origin: string | null, projectId: string): ExcelJS.CellValue {
-  const names = uniquePhotoNames(refs);
-  if (names.length === 0) return base === "" ? null : base;
-  const text = base === "" ? names.join("\n") : base + "\n" + names.join("\n");
-  return linkedText(text, names[0] ?? text, firstArchiveHref(refs) ?? fileLink(origin, projectId));
-}
-
 /** ZIP 模式附图单元格：保留一张可点缩略图摘要，完整文件名在「附件清单」Sheet。 */
 function photoArchiveValue(refs: readonly ExportPhotoRef[], label: string, origin: string | null, projectId: string): ExcelJS.CellValue {
   const unique = uniquePhotos(refs);
@@ -477,11 +466,11 @@ function imageCapacity(widthChars: number, gapPx = 0): number {
   return Math.max(1, Math.floor((widthChars * 7 + 5 + gapPx) / (IMAGE_WIDTH_PX + IMAGE_GAP_PX)));
 }
 
-function missingNames(refs: readonly ExportPhotoRef[], images: Map<string, ExportImage>): string[] {
+function missingNames(refs: readonly ExportPhotoRef[], images: ReadonlyMap<string, ExportImage>): string[] {
   return refs.filter((ref) => !images.has(ref.fileId)).map((ref) => ref.name);
 }
 
-function availableRefs(refs: readonly ExportPhotoRef[], images: Map<string, ExportImage>): ExportPhotoRef[] {
+function availableRefs(refs: readonly ExportPhotoRef[], images: ReadonlyMap<string, ExportImage>): ExportPhotoRef[] {
   return refs.filter((ref) => images.has(ref.fileId));
 }
 
@@ -575,11 +564,11 @@ function addReportSheet(workbook: ExcelJS.Workbook, payload: ProjectExportPayloa
       report.author,
       report.doneWork,
       report.plan,
-      archiveMode ? photoArchiveValue(onsite, "现场附图", payload.origin, payload.project.id) : appendMissing("", onsiteMissing),
+      archiveMode ? photoArchiveValue(onsite, "现场附图", payload.origin, payload.project.id) : (appendMissing("", onsiteMissing) || null),
       report.issueDescription,
       report.issueCategory,
       report.issueSolution,
-      archiveMode ? photoArchiveValue(issuePhotos, "问题附图", payload.origin, payload.project.id) : appendMissing("", issueMissing),
+      archiveMode ? photoArchiveValue(issuePhotos, "问题附图", payload.origin, payload.project.id) : (appendMissing("", issueMissing) || null),
       report.issueState,
       report.headcount,
     ]);
@@ -622,10 +611,10 @@ function addChangeSheet(workbook: ExcelJS.Workbook, payload: ProjectExportPayloa
       change.description,
       archiveMode
         ? appendArchivePhotoLine(change.beforeText, before, "变更前附图", payload.origin, payload.project.id)
-        : appendMissing(change.beforeText, missingNames(before, payload.images)),
+        : (appendMissing(change.beforeText, missingNames(before, payload.images)) || null),
       archiveMode
         ? appendArchivePhotoLine(change.afterText, after, "变更后附图", payload.origin, payload.project.id)
-        : appendMissing(change.afterText, missingNames(after, payload.images)),
+        : (appendMissing(change.afterText, missingNames(after, payload.images)) || null),
       change.reason,
       change.applicant,
       change.writer,
@@ -743,10 +732,13 @@ function projectExportAttachmentSheetName(project: { name: string }, existing: r
 
 /**
  * 大项目流式工作簿写入器：按 Sheet / 行提交到临时文件，内存只保留当前页与当前行。
- * ExcelJS 4.4 的流式写入不支持图片；本类把图片单元格改为项目文件视图链接，由服务层仅在 stream 模式使用。
+ * ExcelJS 4.4 的流式写入不支持图片；本类先记录图片锚点，落盘后由服务层注入 DrawingML 缩略图，
+ * 由服务层仅在 stream 模式使用。
  */
 export class ProjectExportWorkbookWriter {
   private readonly workbook: ExcelJS.stream.xlsx.WorkbookWriter;
+  private readonly images = new Map<string, ExportImage>();
+  private readonly imagePlacements: WorkbookImagePlacement[] = [];
   readonly sheetNames: string[];
   private committed = false;
 
@@ -754,6 +746,7 @@ export class ProjectExportWorkbookWriter {
     readonly filePath: string,
     private readonly project: { id: string; code: string; name: string },
     private readonly origin: string | null,
+    private readonly photoLoader: ExportPhotoLoader,
     now = new Date(),
   ) {
     this.sheetNames = projectExportSheetNames(project);
@@ -807,21 +800,21 @@ export class ProjectExportWorkbookWriter {
     for await (const report of rows) {
       const onsite = uniquePhotos(report.onsitePhotos);
       const issuePhotos = uniquePhotos(report.issuePhotos);
+      const onsiteImages = await this.photoLoader(onsite);
+      const issueImages = await this.photoLoader(issuePhotos);
       const row = sheet.addRow([
         report.date,
         report.author,
         report.doneWork,
         report.plan,
-        null,
+        appendMissing("", missingNames(onsite, onsiteImages)) || null,
         report.issueDescription,
         report.issueCategory,
         report.issueSolution,
-        null,
+        appendMissing("", missingNames(issuePhotos, issueImages)) || null,
         report.issueState,
         report.headcount,
       ]);
-      row.getCell(5).value = photoLinksValue(onsite, this.origin, this.project.id);
-      row.getCell(9).value = photoLinksValue(issuePhotos, this.origin, this.project.id);
       styleBodyRow(sheet, row.number, REPORT_HEADERS.length);
       const basePx = estimatedTextHeight(sheet, [
         plainText(row.getCell(3)),
@@ -832,7 +825,18 @@ export class ProjectExportWorkbookWriter {
         plainText(row.getCell(8)),
         plainText(row.getCell(9)),
       ], [3, 4, 5, 6, 7, 8, 9]);
-      row.height = basePx / PX_PER_POINT;
+      const onsiteCapacity = imageCapacity(REPORT_WIDTHS[5] ?? 60.2);
+      const issueCapacity = imageCapacity(REPORT_WIDTHS[9] ?? 37);
+      const onsiteAvailable = availableRefs(onsite, onsiteImages);
+      const issueAvailable = availableRefs(issuePhotos, issueImages);
+      const imageLines = Math.max(
+        Math.ceil(onsiteAvailable.length / onsiteCapacity),
+        Math.ceil(issueAvailable.length / issueCapacity),
+      );
+      const rowHeightPx = basePx + imageLines * (IMAGE_HEIGHT_PX + IMAGE_GAP_PX) + (imageLines > 0 ? 4 : 0);
+      row.height = rowHeightPx / PX_PER_POINT;
+      this.placeThumbnails(sheet, onsite, onsiteImages, 5, row.number, onsiteCapacity, basePx);
+      this.placeThumbnails(sheet, issuePhotos, issueImages, 9, row.number, issueCapacity, basePx);
       row.commit();
     }
     sheet.commit();
@@ -843,13 +847,15 @@ export class ProjectExportWorkbookWriter {
     for await (const change of rows) {
       const before = uniquePhotos(change.beforePhotos);
       const after = uniquePhotos(change.afterPhotos);
+      const beforeImages = await this.photoLoader(before);
+      const afterImages = await this.photoLoader(after);
       const row = sheet.addRow([
         change.changedAt,
         change.stage,
         null,
         change.description,
-        null,
-        null,
+        appendMissing(change.beforeText, missingNames(before, beforeImages)) || null,
+        appendMissing(change.afterText, missingNames(after, afterImages)) || null,
         change.reason,
         change.applicant,
         change.writer,
@@ -859,8 +865,6 @@ export class ProjectExportWorkbookWriter {
         change.related,
       ]);
       row.getCell(3).value = filesValue(change.files, this.origin, this.project.id);
-      row.getCell(5).value = appendPhotoLinks(change.beforeText, before, this.origin, this.project.id);
-      row.getCell(6).value = appendPhotoLinks(change.afterText, after, this.origin, this.project.id);
       row.getCell(11).value = filesValue(change.afterFiles, this.origin, this.project.id);
       styleBodyRow(sheet, row.number, CHANGE_HEADERS.length);
       const basePx = estimatedTextHeight(sheet, [
@@ -872,7 +876,18 @@ export class ProjectExportWorkbookWriter {
         plainText(row.getCell(11)),
         plainText(row.getCell(13)),
       ], [3, 4, 5, 6, 7, 11, 13]);
-      row.height = basePx / PX_PER_POINT;
+      const beforeCapacity = imageCapacity(CHANGE_WIDTHS[5] ?? 30);
+      const afterCapacity = imageCapacity(CHANGE_WIDTHS[6] ?? 30);
+      const beforeAvailable = availableRefs(before, beforeImages);
+      const afterAvailable = availableRefs(after, afterImages);
+      const imageLines = Math.max(
+        Math.ceil(beforeAvailable.length / beforeCapacity),
+        Math.ceil(afterAvailable.length / afterCapacity),
+      );
+      const rowHeightPx = basePx + imageLines * (IMAGE_HEIGHT_PX + IMAGE_GAP_PX) + (imageLines > 0 ? 4 : 0);
+      row.height = rowHeightPx / PX_PER_POINT;
+      this.placeThumbnails(sheet, before, beforeImages, 5, row.number, beforeCapacity, basePx);
+      this.placeThumbnails(sheet, after, afterImages, 6, row.number, afterCapacity, basePx);
       row.commit();
     }
     sheet.commit();
@@ -895,7 +910,12 @@ export class ProjectExportWorkbookWriter {
     if (this.committed) throw new Error("项目导出工作簿已经提交");
     this.committed = true;
     await this.workbook.commit();
-    return { filePath: this.filePath, sheetNames: this.sheetNames };
+    return {
+      filePath: this.filePath,
+      sheetNames: this.sheetNames,
+      images: this.images,
+      imagePlacements: this.imagePlacements,
+    };
   }
 
   /** 异常路径尽力完成 ZIP 收尾，让底层文件句柄关闭；随后由调用方删除临时目录。 */
@@ -915,5 +935,34 @@ export class ProjectExportWorkbookWriter {
     setWidths(sheet, widths, headers.length);
     styleHeader(sheet, headers).commit();
     return sheet;
+  }
+
+  private placeThumbnails(
+    sheet: ExcelJS.Worksheet,
+    refs: readonly ExportPhotoRef[],
+    images: ReadonlyMap<string, ExportImage>,
+    column: number,
+    rowNumber: number,
+    capacity: number,
+    baseHeightPx: number,
+  ): void {
+    const available = availableRefs(refs, images);
+    for (let index = 0; index < available.length; index += 1) {
+      const ref = available[index];
+      if (ref === undefined) continue;
+      const image = images.get(ref.fileId);
+      if (image === undefined) continue;
+      this.images.set(ref.fileId, image);
+      this.imagePlacements.push({
+        sheetId: sheet.id,
+        row: rowNumber,
+        column,
+        fileId: ref.fileId,
+        xOffsetPx: IMAGE_PADDING_PX + (index % capacity) * (IMAGE_WIDTH_PX + IMAGE_GAP_PX),
+        yOffsetPx: baseHeightPx + IMAGE_PADDING_PX + Math.floor(index / capacity) * (IMAGE_HEIGHT_PX + IMAGE_GAP_PX),
+        widthPx: IMAGE_WIDTH_PX,
+        heightPx: IMAGE_HEIGHT_PX,
+      });
+    }
   }
 }
