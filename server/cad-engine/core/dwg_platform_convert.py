@@ -6,14 +6,17 @@ local DWG harness; this wrapper only joins that output to the platform worker
 transport. Runtime paths are supplied by the sandbox environment.
 """
 import json
+import hashlib
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shutil
 import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from unified.dwg_adapter import assemble_native, run_reader
+from unified.dxf_resources import read_manifest
+from unified.dwg_xref import NativeResources
 
 
 def fail(error):
@@ -42,8 +45,17 @@ def main():
         native = result / 'native'
         try:
             run_reader(dotnet, reader, source, native)
+            options={}
+            if os.environ.get('CAD_DWG_RESOURCES'):
+                logical,files=read_manifest(os.environ['CAD_DWG_RESOURCES'])
+                with source.open('rb') as stream:source_sha=hashlib.file_digest(stream,'sha256').hexdigest()
+                if PurePosixPath(logical).name!=name or hashlib.sha256(files[logical]).hexdigest()!=source_sha:
+                    raise ValueError('DWG resource package main identity mismatch')
+                resources=NativeResources(files,root/'references',dotnet,reader)
+                options={'font_files':resources.fonts,'logical_path':logical,
+                         'resource_loader':resources.loader(logical,[source_sha])}
             manifest_path = assemble_native(native, source, result, platform=True,
-                                             binary_dir=binary_dir, packed=True)
+                                             binary_dir=binary_dir, packed=True, **options)
             result_path = os.environ.get('CAD_RESULT_PATH')
             if not result_path:
                 # conversion_jobs places trace.json next to result.json.

@@ -1863,7 +1863,6 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
 
               <section>
                 <h3 className="text-xs font-medium text-zinc-500">{fieldText(locale, "变更阶段")} <span className="text-rose-500">*</span></h3>
-                <span className={CAPTION_CLASS}>{t("drawer.change.stage.caption")}</span>
                 <div data-change-stage="true" className="mt-1.5">
                   <SelectMenu
                     value={changeStage}
@@ -1970,9 +1969,6 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
                 {changeFinalizeDone !== null && changeableFiles.some((file) => file.id === changeFinalizeDone) ? (
                   <p data-change-finalize-done="true" className="mt-2 text-[11px] leading-4 text-emerald-600">{t("drawer.change.file.finalizedNote")}</p>
                 ) : null}
-                {files !== null && files.length > 0 && changeableFiles.length === 0 ? (
-                  <p data-change-none-hint="true" className="mt-2 text-[11px] leading-4 text-zinc-400">{t("drawer.change.file.noneHint")}</p>
-                ) : null}
               </section>
 
               <section>
@@ -2039,7 +2035,6 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
                   variant="compact"
                   size="md"
                 />
-                <span className={CAPTION_CLASS}>{t("drawer.change.summary.caption")}</span>
               </section>
 
               <section>
@@ -2053,19 +2048,16 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
                   aria-label={fieldText(locale, "变更原因")}
                   className={FIELD_CLASS + " mt-1.5"}
                 />
-                <span className={CAPTION_CLASS}>{t("drawer.change.reason.caption")}</span>
               </section>
 
               <section>
                 <h3 className="text-xs font-medium text-zinc-500">{fieldText(locale, "变更申请人")} <span className="text-rose-500">*</span></h3>
                 <p data-change-applicant="true" className="mt-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500">{changeApplicant}</p>
-                <span className={CAPTION_CLASS}>{t("drawer.change.applicant.caption")}</span>
               </section>
 
               <section>
                 <h3 className="text-xs font-medium text-zinc-500">{fieldText(locale, "变更后文件版本")} <span className="text-rose-500">*</span></h3>
                 <p data-change-version="true" className="mt-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500">{t("drawer.change.version.auto")}</p>
-                <span className={CAPTION_CLASS}>{t("drawer.change.version.caption")}</span>
               </section>
 
               <section>
@@ -2104,7 +2096,6 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
               <section>
                 <h3 className="text-xs font-medium text-zinc-500">{fieldText(locale, "关联")}</h3>
                 <p data-change-link="true" className="mt-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500">{t("drawer.change.link.auto")}</p>
-                <span className={CAPTION_CLASS}>{t("drawer.change.link.caption")}</span>
               </section>
 
               <section className="flex flex-col gap-2 border-t border-zinc-100 pt-4">
@@ -2123,7 +2114,6 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
                 >
                   {changeBusy ? t("drawer.change.submitting") : t("drawer.change.submit")}
                 </button>
-                <p className="text-[11px] leading-4 text-zinc-400">{t("drawer.change.footnote")}</p>
               </section>
             </div>
           </ScrollArea>

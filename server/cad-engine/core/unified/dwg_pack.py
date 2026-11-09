@@ -5,12 +5,18 @@ Standard drawing entities and display tables move into index rows; any row that
 does not match the exact fast shape stays in the ordinary document tables, so
 unpacking is lossless for both the formal drawing and the public sample.
 """
+import base64
+import io
 import json
+import zlib
 
-from .canonical import canonical_sha256
+from .canonical import canonical_sha256, canonical_chunks
 
 PROFILE = 'ucd-dwg-packed/1'
 VERSION = 'dwg-table/1'
+COMPRESSED_PROFILE = 'ucd-dwg-packed-gzip/1'
+COMPRESSED_FIELDS = ('drawing','extensions','accessors','geometries','representations','packed')
+MAX_EXPANDED_BYTES = 512 * 1024**2
 IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
 ENTITY_FIELDS = {'id', 'drawingId', 'ownerSpaceId', 'layerId', 'localFromOwner',
                  'geometry', 'style', 'sourceRefs', 'displayOrder'}
@@ -292,6 +298,35 @@ def pack_document(document):
     return packed_doc
 
 
+def compress_document(packed_doc):
+    body={key:packed_doc[key] for key in COMPRESSED_FIELDS}
+    compressor=zlib.compressobj(3,zlib.DEFLATED,31);compressed=io.BytesIO();length=0
+    for chunk in canonical_chunks(body):
+        length+=len(chunk)
+        if length>MAX_EXPANDED_BYTES:raise ValueError("packed-expanded-budget-exceeded")
+        compressed.write(compressor.compress(chunk))
+    compressed.write(compressor.flush())
+    result={**packed_doc,**{key:{} for key in COMPRESSED_FIELDS}}
+    result["packed"]={"profile":COMPRESSED_PROFILE,"byteLength":length,
+                      "data":base64.b64encode(compressed.getvalue()).decode("ascii")}
+    return result
+
+
+def expand_compressed(packed_doc):
+    payload=packed_doc["packed"];length=payload.get("byteLength")
+    if type(length) is not int or not 0<length<=MAX_EXPANDED_BYTES:
+        raise ValueError("packed-expanded-budget-exceeded")
+    if any(packed_doc[key] for key in COMPRESSED_FIELDS if key!="packed"):
+        raise ValueError("packed-ambiguous-compressed-tables")
+    decoder=zlib.decompressobj(31)
+    raw=decoder.decompress(base64.b64decode(payload["data"],validate=True),length+1)
+    if len(raw)!=length or not decoder.eof or decoder.unused_data or decoder.unconsumed_tail:
+        raise ValueError("packed-compressed-length-or-integrity")
+    body=json.loads(raw)
+    if set(body)!=set(COMPRESSED_FIELDS):raise ValueError("packed-compressed-table-inventory")
+    return {**packed_doc,**body}
+
+
 def _row_index(strings, value, context):
     if type(value) is not int or not 0 <= value < len(strings):
         raise ValueError('packed-' + context + '-index')
@@ -302,6 +337,8 @@ def unpack_document(packed_doc):
     """Rebuild the ordinary DWG document from a packed document."""
     if not isinstance(packed_doc, dict) or 'packed' not in packed_doc:
         return packed_doc
+    if isinstance(packed_doc['packed'],dict) and packed_doc['packed'].get('profile')==COMPRESSED_PROFILE:
+        packed_doc=expand_compressed(packed_doc)
     payload = packed_doc['packed']
     if not isinstance(payload, dict) or payload.get('profile') != PROFILE or payload.get('version') != VERSION:
         raise ValueError('packed-profile')

@@ -136,3 +136,32 @@ export function unpackDwgPacked(envelope) {
   document.representations = representations;
   return { ...envelope, document };
 }
+
+// Stream the existing lossless tables through the browser's gzip decoder.
+// The expanded document still passes the ordinary UCD/binary validation.
+export async function expandDwgCompressed(envelope) {
+ const doc=envelope?.document,payload=doc?.packed;
+ if(payload?.profile!=='ucd-dwg-packed-gzip/1')return envelope;
+ const fields=['drawing','extensions','accessors','geometries','representations','packed'];
+ const length=payload.byteLength;
+ if(!Number.isSafeInteger(length)||length<=0||length>512*1024*1024)fail('expanded budget');
+ if(fields.some(key=>key!=='packed'&&Object.keys(doc[key]).length))fail('ambiguous compressed tables');
+ const binary=atob(payload.data),input=new Uint8Array(binary.length);
+ for(let i=0;i<binary.length;i++)input[i]=binary.charCodeAt(i);
+ const reader=new Blob([input]).stream().pipeThrough(new DecompressionStream('gzip')).getReader();
+ const chunks=[];let total=0;
+ try {
+  while(true){
+   const {done,value}=await reader.read();if(done)break;
+   total+=value.byteLength;
+   if(total>length){await reader.cancel();fail('expanded length');}
+   chunks.push(value);
+  }
+ }finally{reader.releaseLock();}
+ if(total!==length)fail('expanded length');
+ const raw=new Uint8Array(total);let offset=0;
+ for(const chunk of chunks){raw.set(chunk,offset);offset+=chunk.byteLength;}
+ const body=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(raw));
+ if(Object.keys(body).length!==fields.length||fields.some(key=>!Object.hasOwn(body,key)))fail('compressed table inventory');
+ return {...envelope,document:{...doc,...body}};
+}

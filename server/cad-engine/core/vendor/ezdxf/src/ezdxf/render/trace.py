@@ -186,7 +186,7 @@ class LinearTrace(AbstractTrace):
                     angle = (
                         stations[segment].vertex - stations[segment + 1].vertex
                     ).angle
-                    return ConstructionRay(v1, angle)
+                    return ConstructionRay(v1, angle=angle)
                 else:
                     return ConstructionRay(v1, v2)
 
@@ -225,6 +225,23 @@ class LinearTrace(AbstractTrace):
                 _normal_offset_points(start_vertex, end_vertex, start_width, end_width)
             )
 
+        def joins(left: int, right: int) -> bool:
+            # A zero-width shaft cannot miter into a nonzero arrow base: their
+            # offset-ray intersection collapses the arrow to its tip.
+            end_width, start_width = stations[left].end_width, stations[right].start_width
+            # Two zero-width ends already meet at the source station; solving
+            # their offset rays only adds roundoff to a zero-area shaft.
+            if end_width == 0 or start_width == 0:
+                return False
+            if end_width != start_width:
+                incoming = stations[left + 1].vertex - stations[left].vertex
+                outgoing = stations[right + 1].vertex - stations[right].vertex
+                # A straight width step has two authored cross-sections, not a
+                # corner whose offset-ray intersection should move the station.
+                if abs(incoming.det(outgoing)) <= 1e-12 * incoming.magnitude * outgoing.magnitude:
+                    return False
+            return True
+
         # offset rays:
         # 1 is the upper or left of line
         # 2 is the lower or right of line
@@ -239,7 +256,7 @@ class LinearTrace(AbstractTrace):
             up1, up2, down1, down2 = segments[i]
             if i == 0:
                 # Set first vertices of the first face.
-                if is_closed:
+                if is_closed and joins(len(segments) - 1, 0):
                     # Compute first two vertices as intersection of first and
                     # last segment
                     last_offset_ray1, last_offset_ray2 = offset_rays(len(segments) - 1)
@@ -255,16 +272,18 @@ class LinearTrace(AbstractTrace):
                     vtx1 = down1
                 prev_offset_ray1 = offset_ray1
                 prev_offset_ray2 = offset_ray2
-            else:
+            elif joins(i - 1, i):
                 # Compute first two vertices for the actual face.
                 vtx0 = intersect(prev_offset_ray1, offset_ray1, up1)  # type: ignore
                 vtx1 = intersect(prev_offset_ray2, offset_ray2, down1)  # type: ignore
+            else:
+                vtx0, vtx1 = up1, down1
 
             if i < len(segments) - 1:
                 # Compute last two vertices for the actual face.
                 next_offset_ray1, next_offset_ray2 = offset_rays(i + 1)
-                vtx2 = intersect(next_offset_ray2, offset_ray2, down2)
-                vtx3 = intersect(next_offset_ray1, offset_ray1, up2)
+                vtx2 = intersect(next_offset_ray2, offset_ray2, down2) if joins(i, i + 1) else down2
+                vtx3 = intersect(next_offset_ray1, offset_ray1, up2) if joins(i, i + 1) else up2
                 prev_offset_ray1 = offset_ray1
                 prev_offset_ray2 = offset_ray2
                 offset_ray1 = next_offset_ray1
@@ -553,6 +572,15 @@ class TraceBuilder(Sequence):
         else:
             raise TypeError(f"Invalid DXF type {dxftype}")
 
+        return cls.from_vertices(points, closed, segments)
+
+    @classmethod
+    def from_vertices(cls, points, closed: bool, segments: int = 64) -> TraceBuilder:
+        """Trace native OCS (location, start width, end width, bulge) stations.
+
+        Shared by entity adapters; no DXF entity or document is required.
+        """
+        points = [(Vec2(p), sw, ew, b) for p, sw, ew, b in points]
         if closed and not points[0][0].isclose(points[-1][0]):
             # close polyline explicit
             points.append(points[0])

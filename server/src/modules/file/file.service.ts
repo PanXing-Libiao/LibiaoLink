@@ -842,11 +842,10 @@ export class FileService {
    * M4-04 变更生效第二步（版本写入之后）：同事务写 `file_links`(change) + 任务回写 `change_refs` + 变更审计
    * + outbox `change.applied`；变更后文件状态置 `changed`（由调用方随状态流转落库）。
    *
-   * 任务关联口径（Push 255 业务反馈「同时相关的关联也没有显示啊」；ADR-024 多值命中 / `docs/rules/R01-R07-内置规则文案.md` / A1-07）：
-   * ① **变更文件所属任务**（`files.task_id`）直接回写 —— 变更发生在哪个任务里，就必须出现在哪个任务的「变更记录 / 变更关联」里
-   *   （此前只走 ②，而前端上传口不带成果类型 → doc_type 为空 → R01 匹配零条 → 变更关联一直空）；
-   * ② **R01**：按「变更文件成果类型 ∈ 任务输出成果文件（deliverable_types 多值）」匹配 —— 命中多条全部关联；
-   * ① ∪ ② 去重后统一「追加 + 去重」写 `change_refs`；一条都没有只记日志（不阻断变更生效，提示申请人由通知侧承担，随 M5）。
+   * 任务关联口径（R01；ADR-024 多值命中 / `docs/rules/R01-R07-内置规则文案.md` / A1-07）：
+   * 只按「变更文件成果类型 ∈ 任务输出成果文件（deliverable_types 多值）」匹配，命中多条全部关联；
+   * **不按 `files.task_id` 所属任务兜底**。命中任务统一「追加 + 去重」写 `change_refs`；
+   * 一条都没有只记日志（不阻断变更生效，提示申请人由通知侧承担，随 M5）。
    */
   private async finishChangeInTx(
     tx: DbTransaction,
@@ -869,12 +868,11 @@ export class FileService {
     );
     const matchedTaskIds =
       file.docType === null ? [] : await this.repository.listTaskIdsByDeliverable(file.projectId, file.docType, tx);
-    const targetTaskIds =
-      file.taskId === null || matchedTaskIds.includes(file.taskId) ? matchedTaskIds : [file.taskId, ...matchedTaskIds];
+    const targetTaskIds = matchedTaskIds;
     const linkedTasks = await this.repository.appendTasksChangeRefs(targetTaskIds, changeRequest.id, tx);
     if (linkedTasks === 0) {
       this.logger.warn(
-        "变更无关联任务（所属任务为空 + R01 无匹配，变更关联未回写）：" + changeRequest.id + " / 成果类型 " + String(file.docType),
+        "变更无关联任务（R01 无匹配，变更关联未回写）：" + changeRequest.id + " / 成果类型 " + String(file.docType),
       );
     }
     await this.audit.record(tx, {

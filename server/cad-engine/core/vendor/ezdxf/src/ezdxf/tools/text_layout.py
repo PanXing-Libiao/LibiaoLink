@@ -6,6 +6,7 @@ from typing_extensions import TypeAlias
 import abc
 import itertools
 import enum
+import math
 
 from ezdxf.math import Matrix44, BoundingBox2d
 from ezdxf.tools.text import leading
@@ -1310,6 +1311,14 @@ class RigidConnection(ContentCell):
         return iter(self._cells)
 
     @property
+    def ink_bounds(self):
+        rows, offset = [], 0.0
+        for cell in self._cells:
+            rows.append((cell, offset))
+            offset += cell.total_width
+        return positioned_ink_bounds(rows)
+
+    @property
     def total_width(self) -> float:
         return sum(cell.total_width for cell in self._cells)
 
@@ -1465,6 +1474,22 @@ class AbstractLine(ContentCell):  # ABC
         return False
 
 
+def positioned_ink_bounds(rows):
+    # Optional outline metrics: (left, right, first glyph origin). Glue retains
+    # its advance, including authored leading spaces, without adding visible ink.
+    left, right, origin = math.inf, -math.inf, math.inf
+    for cell, offset in rows:
+        bounds = getattr(cell, 'ink_bounds', None)
+        if bounds is None:
+            if isinstance(cell, Glue):
+                continue
+            return None
+        left = min(left, offset + bounds[0])
+        right = max(right, offset + bounds[1])
+        origin = min(origin, offset + bounds[2])
+    return None if left == math.inf else (left, right, origin)
+
+
 class LeftLine(AbstractLine):
     has_tab_support = True
 
@@ -1479,7 +1504,14 @@ class LeftLine(AbstractLine):
 
     def append(self, cell: Cell) -> AppendType:
         width = cell.total_width
-        if self._current_offset + width <= self.line_width:
+        fits = self._current_offset + width <= self.line_width
+        if getattr(cell, 'ink_bounds', None) is not None:
+            rows = [(c.cell, c.offset) for c in self._cells]
+            rows.append((cell, self._current_offset))
+            bounds = positioned_ink_bounds(rows)
+            if bounds is not None:
+                fits = bounds[1] - bounds[0] + bounds[2] <= self.line_width
+        if fits:
             self._append_line_cell(cell, self._current_offset)
             self._current_offset += width
             return AppendType.SUCCESS

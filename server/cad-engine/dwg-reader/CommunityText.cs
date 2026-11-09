@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 using ACadSharp.Entities;
 
@@ -13,7 +14,35 @@ static class CommunityText
     {
         string value=mtext.Value??string.Empty;
         string decoded=UnicodeEscape.Replace(value,m=>((char)Convert.ToInt32(m.Groups[1].Value,16)).ToString());
+        decoded=StripWidthAndTrackingControls(decoded);
         return Normalize(decoded==value?mtext.PlainText:new MText{Value=decoded}.PlainText);
+    }
+    // ACadSharp's plain-text projection handles font/color/height controls but
+    // leaves width/tracking parameters in the visible text. Keep rawText untouched;
+    // discard only these formatting controls, respecting escaped backslashes.
+    static string StripWidthAndTrackingControls(string value)
+    {
+        var result=new StringBuilder(value.Length);
+        for(int i=0;i<value.Length;i++)
+        {
+            if(value[i]=='\\' && i+1<value.Length)
+            {
+                if(value[i+1] is 'W' or 'T')
+                {
+                    int end=value.IndexOf(';',i+2);
+                    if(end>=0) {
+                        var parameter=value.AsSpan(i+2,end-i-2).Trim();
+                        if(parameter.Length>0 && parameter[^1] is 'x' or 'X') parameter=parameter[..^1];
+                        if(double.TryParse(parameter,System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture,out _))
+                        { i=end; continue; }
+                    }
+                }
+                result.Append(value[i]); result.Append(value[++i]);
+            }
+            else result.Append(value[i]);
+        }
+        return result.ToString();
     }
     public static string Normalize(string? value)
     {

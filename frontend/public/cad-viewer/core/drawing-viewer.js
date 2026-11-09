@@ -8,7 +8,8 @@ import {drawingClips, compileClips, triangulateRings, insideRing} from './drawin
 import {plotAppearance, plotParts, fillTile} from './drawing-plot-styles.js?v=dxf-0.17.3';
 import {estimateDrawingDraws, projectInstancesSteps, shouldProjectInstances, recordVisibleBounds, INSTANCE_DRAW_LIMIT, multiply, transformPoint, inverse2D, transformBounds, union, sourceExtentsFromHeader, fitExtentsCandidate, quantizeLodSize, LOD_MIN_SCREEN_PX, isLodCulled, I} from './drawing-instances.js?v=dxf-0.17.3';
 import Flatbush from './vendor/flatbush.js';
-import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, textOffsets, textWorldCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.4';
+import {TEXT_FONT, layoutAnnotationText, parseMtextRuns, paintTextRun, textDisplayCorners, textDisplayBox} from './drawing-text.js?v=dxf-0.17.14';
+import {createBundledFontResolver} from './drawing-fonts.js';
 import {aciColor, trueColorCss, drawingColorCss} from './drawing-colors.js?v=dxf-0.17.4';
 import {resolveTextAvoidance} from './drawing-text-avoidance.js?v=dxf-0.17.3';
 import {hatchFillKind, lineDashFor, fillEntryFor, fillGeometryFor, strokeSegmentsForRepresentation} from './drawing-pattern.js?v=dxf-0.17.3';
@@ -18,7 +19,7 @@ import {mediaItemFor, rasterRecord} from './drawing-media.js?v=dxf-0.17.3';
 const forceCanvasRenderer = typeof location !== 'undefined' && new URLSearchParams(location.search).get('renderer') === 'canvas';
 const accelerated = !forceCanvasRenderer && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined';
 const gpuModules = accelerated ? await Promise.all([
-  import('./gpu/background-painter.js?v=dxf-0.17.3'), import('./gpu/gpu-strokes.js?v=dxf-0.17.4'), import('./gpu/stroke-tiles.js?v=dxf-0.17.3')
+  import('./gpu/background-painter.js?v=dxf-0.17.3'), import('./gpu/gpu-strokes.js?v=dxf-0.17.6'), import('./gpu/stroke-tiles.js?v=dxf-0.17.7')
 ]) : null;
 const createBackgroundPainter = gpuModules?.[0].createBackgroundPainter;
 const createStrokeGPU = gpuModules?.[1].createStrokeGPU;
@@ -39,6 +40,7 @@ export function mountDrawingViewer(envelope) {
   const media = ucd.extensions?.['org.cad-preview.dxf-media/1'];
   const mtextLayout = ucd.extensions?.['org.cad-preview.dxf-mtext/1'];
   const plotStyles = ucd.extensions?.['org.cad-preview.dxf-plot-styles/1'];
+  const lineWeightSettings = ucd.extensions?.['org.libiaolink.dwg/1']?.lineWeightSettings;
   let plotPreview = false;
   const plotErrors = new Set(), plotFillCache = new Map();
   const viewport = document.getElementById('viewport');
@@ -79,6 +81,11 @@ export function mountDrawingViewer(envelope) {
   // ?instances=1 forces the retained-instance path so small fixtures can
   // regression-test layout/presentation/media semantics without a 400k-draw file.
   const nativeTextLayout = !!ucd.extensions?.['org.libiaolink.dwg/1'];
+  const nativePoints = ucd.extensions?.['org.libiaolink.dwg/1']?.pointDisplaySettings;
+  const isDefpoint = entity => nativeTextLayout && entity?.geometry.type === 'point'
+    && drawing.layers[entity.layerId]?.name.toLowerCase() === 'defpoints';
+  const pointMarkFor = (entity, p) => ({x:p[0], y:p[1],
+    pixel:entity?.geometry.type === 'point' && (isDefpoint(entity) || nativePoints?.mode === 0)});
   // Dimension picture blocks carry their own text; display avoidance must never
   // move it (that would put a dimension at a neighbour's place and leave its own
   // spot empty). The reader records every dimension instance; fall back to the
@@ -96,24 +103,21 @@ export function mountDrawingViewer(envelope) {
     const block = instance && drawing.blocks[instance.definitionId];
     return !!block && /^\*D/i.test(block.name || '');
   }
-  // Local font-substitution experiment: honour the source text style / inline
-  // \f name and pick the closest locally available family instead of one stack.
-  // Bundled fallbacks (fonts/*.css) keep CJK and Latin rendering deterministic
-  // when the client lacks SimSun/SimHei/Arial; system fonts stay first so a
-  // machine that has them keeps AutoCAD-compatible metrics.
-  const FONT_STACK_CJK = '"SimSun","Libiao Serif SC","Noto Serif CJK SC",serif';
-  // Latin-first stacks keep a CJK fallback so mixed runs get Song glyphs from
-  // the browser's per-glyph fallback instead of tofu or a wider system default.
-  const FONT_STACK_LATIN = '"Arial","Libiao Sans","Liberation Sans","SimSun",sans-serif';
+  // Uploaded original glyph parts are projected first. Unresolved annotations
+  // use only the bundled families, so system font installation cannot change
+  // the selected replacement or its measured advances.
+  const FONT_STACK_CJK = '"Libiao Serif SC"';
+  const FONT_STACK_LATIN = '"Libiao Sans"';
+  const fontResolver = createBundledFontResolver();
+  const fontReports = new Map();
   function mapFontFamily(name) {
     if (!name) return null;
-    const n = String(name).trim().toLowerCase().split(/[\\/]/).pop().replace(/\.(shx|ttf|otf)$/i, '');
-    if (/simsun|宋体|song|fangsong|stsong/.test(n)) return FONT_STACK_CJK;
-    if (/simhei|黑体|heiti/.test(n)) return '"SimHei","Libiao Sans SC","Noto Sans CJK SC",sans-serif';
-    if (/msyh|yahei|pingfang/.test(n)) return '"Microsoft YaHei","Libiao Sans SC","Noto Sans CJK SC",sans-serif';
+    const n = String(name).trim().toLowerCase().split(/[\\/]/).pop().replace(/\.(shx|ttf|otf|ttc)$/i, '');
+    if (/simfang|fangsong|仿宋|simsun|宋体|song|stsong|kaiti|simkai|楷体/.test(n)) return FONT_STACK_CJK;
+    if (/simhei|黑体|heiti|msyh|yahei|pingfang/.test(n)) return '"Libiao Sans SC"';
     if (/swiss|arial|helvetica/.test(n)) return FONT_STACK_LATIN;
-    if (/times/.test(n)) return '"Times New Roman","Libiao Serif","Liberation Serif","SimSun",serif';
-    if (/courier/.test(n)) return '"Courier New","Libiao Mono","Liberation Mono","SimSun",monospace';
+    if (/times/.test(n)) return '"Libiao Serif"';
+    if (/courier/.test(n)) return '"Libiao Mono"';
     if (/^(isocp[23]?|isoct[23]?|romans|romand|romant|simplex|complex|txt|gbcbig|hztxt)$/.test(n)
       || /\.shx$/i.test(String(name).trim())) return FONT_STACK_LATIN;
     if (/^hy|longfang/.test(n)) return FONT_STACK_CJK;
@@ -124,14 +128,14 @@ export function mountDrawingViewer(envelope) {
   const textRunColor = (kind, value) => kind === 'true' ? trueColorCss(value, sheetBackground) : aciColor(value, sheetBackground);
   function styleFontFamilyFor(annotation) {
     const sem = annotation.semantic || {};
-    let name = (sem.fontFilename && sem.fontFilename.value) || '';
+    let name = sem.fontFilename?.value || sem.fontFamily?.value || '';
     if (!name && sem.textStyleId) {
       const key = String(sem.textStyleId.value || '').replace(/^textstyle-/, '');
       const styles = (ucd.extensions?.['org.libiaolink.dwg/1']?.fonts) || {};
       const row = styles[key];
       if (row && row.Filename) name = row.Filename;
     }
-    const mapped = mapFontFamily(name);
+    const mapped = mapFontFamily(name) || mapFontFamily(sem.fontFamily?.value);
     if (mapped) return mapped;
     const text = (sem.plainText && sem.plainText.value) || annotation.text || '';
     return /[⺀-鿿豈-﫿＀-￯]/.test(String(text)) ? FONT_STACK_CJK : FONT_STACK_LATIN;
@@ -140,6 +144,8 @@ export function mountDrawingViewer(envelope) {
     const sem = annotation.semantic || {};
     const entityWidth = Number(sem.widthFactor?.value);
     if (Number.isFinite(entityWidth) && entityWidth > 0) return entityWidth;
+    const declaredWidth = Number(sem.styleWidthFactor?.value);
+    if (Number.isFinite(declaredWidth) && declaredWidth > 0) return declaredWidth;
     if (!sem.textStyleId) return 1;
     const key = String(sem.textStyleId.value || '').replace(/^textstyle-/, '');
     const row = (ucd.extensions?.['org.libiaolink.dwg/1']?.fonts || {})[key];
@@ -153,9 +159,9 @@ export function mountDrawingViewer(envelope) {
     let runs = null;
     // Inline runs only when the parser reproduces the sanitized plain text; any
     // control we do not model (e.g. stacking) falls back to the single-font path.
-    if (nativeTextLayout && /\\[fFcCHW]/.test(raw) && !/\\[sS][^;]*;/.test(raw)) {
+    if (nativeTextLayout && /\\[fFcCHWTp]/.test(raw) && !/\\[sS][^;]*;/.test(raw)) {
       const baseHeight = Number((sem.height && sem.height.value) || 0);
-      const parsed = parseMtextRuns(raw, defaultFont, mapFontFamily, textRunColor, baseHeight);
+      const parsed = parseMtextRuns(raw, defaultFont, mapFontFamily, textRunColor, baseHeight, styleWidthFactorFor(annotation));
       const plain = (sem.plainText && sem.plainText.value) || annotation.text || '';
       const norm = value => String(value).replace(/\s+/g, '');
       if (parsed.length && norm(parsed.map(item => item.text).join('')) === norm(plain)) runs = parsed;
@@ -166,17 +172,34 @@ export function mountDrawingViewer(envelope) {
     const sem = annotation.semantic || {};
     const raw = (sem.rawText && sem.rawText.value) || '';
     const inline = /\\f([^|;\\}]+)/.exec(raw);
-    let name = inline ? inline[1] : ((sem.fontFilename && sem.fontFilename.value) || '');
+    let name = inline ? inline[1] : (sem.fontFilename?.value || sem.fontFamily?.value || '');
     if (!name && sem.textStyleId) {
       const key = String(sem.textStyleId.value || '').replace(/^textstyle-/, '');
       const styles = (ucd.extensions?.['org.libiaolink.dwg/1']?.fonts) || {};
       const row = styles[key];
       if (row && row.Filename) name = row.Filename;
     }
-    const mapped = mapFontFamily(name);
+    const mapped = mapFontFamily(name) || mapFontFamily(sem.fontFamily?.value);
     if (mapped) return mapped;
     const text = (sem.plainText && sem.plainText.value) || annotation.text || '';
     return /[⺀-鿿豈-﫿＀-￯]/.test(String(text)) ? FONT_STACK_CJK : FONT_STACK_LATIN;
+  }
+  function fallbackRuns(annotation) {
+    const entry = annotationRuns(annotation);
+    return entry.runs || [{text: annotation.semantic?.plainText?.value || annotation.text || '',
+      fontFamily: fontFamilyFor(annotation), bold: false, italic: false}];
+  }
+  const nativeTextParts = ucd.extensions?.['org.libiaolink.dwg/1']?.meshPresentations || {};
+  const fontReady = fontResolver.prepare(Object.entries(drawing.annotations)
+    .filter(([id, annotation]) => ['text','mtext'].includes(annotation.kind)
+      && !annotationItems[id] && !nativeTextParts[id]?.textParts)
+    .map(([, annotation]) => fallbackRuns(annotation)));
+  function substitutionSummary() {
+    const records = [...fontReports.values()];
+    return {status: records.length ? 'approximate' : 'not-used', annotationItems: records.length,
+      missingObjects: records.filter(row => row.missing.length || row.unavailableGlyphs).length,
+      styleApproximateObjects: records.filter(row => row.styleApproximations.length).length,
+      unavailableFaces: fontResolver.unavailable(), records};
   }
   // ACadSharp evaluates some periodic splines at uStart to XYZ.Zero; the reader's
   // display pairs then start with (0,0) -> real point, painting a giant segment
@@ -499,7 +522,13 @@ export function mountDrawingViewer(envelope) {
   // ----- build ------------------------------------------------------------
   function apply(m, p) { return [m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12], m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13]]; }
   function matrixScale(m) { return Math.hypot(m[0], m[1]) || 1; }
-  function lineWidthPx(mm) { return Math.max(0.6, Math.min(4.0, 0.75 + (Number(mm || 0.25) - 0.25) * 1.1)); }
+  function lineWidthPx(mm) {
+    // Model LWDISPLAY hides pen widths, not authored polyline geometry widths.
+    const display = lineWeightSettings?.displayLineWeight;
+    if (display === false && spaceTarget.kind === 'model' && !plotPreview) return 1;
+    const minimum = typeof display === 'boolean' ? 1 : 0.6;
+    return Math.max(minimum, Math.min(4.0, 0.75 + (Number(mm ?? 0.25) - 0.25) * 1.1));
+  }
   function dashFor(style, itemId) {
     return style?.lineTypeId ? lineDashFor(style, itemId, {lineTypes:drawing.lineTypes, styleExt}) : null;
   }
@@ -547,7 +576,7 @@ export function mountDrawingViewer(envelope) {
       rec.navigationBounds=segment ? rec.clipRegion.geometry({segments:segment}).bounds : null;
     } else if (rec.clipRegion.active) {
       const polygons=rec.fillTriangles || (rec.fillRings ? triangulateRings(rec.fillRings)
-        : rec.raster ? [rec.raster.corners] : rec.textEntry ? [textWorldCorners(rec.textEntry,textOffsets(rec.textEntry))] : []);
+        : rec.raster ? [rec.raster.corners] : rec.textEntry ? [textDisplayCorners(rec.textEntry)] : []);
       rec.visibleGeometry=rec.clipRegion.geometry({segments:rec.segments||[],polygons,
         points:rec.pointMark?[[rec.pointMark.x,rec.pointMark.y]]:[]});
     } else rec.visibleGeometry={bounds:rec.bbox,segments:rec.segments||[]};
@@ -636,6 +665,7 @@ export function mountDrawingViewer(envelope) {
     built = []; texts = []; pointMarks = [];
     if(instancePlan)for(const group of instancePlan.groups)group.records=[];
     plotErrors.clear();
+    fontReports.clear();
     buildScale = scale;
     const tolerance = Math.max(1e-7, 0.35 / Math.max(scale, 1e-9));
     const plotContext=spaceTarget.kind==='layout'?spaceTarget.layoutId:'model';
@@ -746,6 +776,7 @@ export function mountDrawingViewer(envelope) {
       if (draw.kind === 'entity') {
         const entity = drawing.entities[draw.itemId];
         if (!entity || entity.geometry.type === 'unsupported') continue;
+        if (entity.geometry.type === 'point' && nativePoints?.mode === 1 && !isDefpoint(entity)) continue;
         if (entity.geometry.type === 'image') {
           const raster = rasterRecord(entity, draw, mediaItemFor(ucd, draw.itemId));
           if (!raster) continue;
@@ -797,7 +828,7 @@ export function mountDrawingViewer(envelope) {
           for (let i = 0; i < stroke.segments.length; i++) segments.push(stroke.segments[i]);
           if (stroke.points.length) {
             const p = stroke.points[0];
-            rec.pointMark = {x: p[0], y: p[1]}; pointMarks.push(rec.pointMark);
+            rec.pointMark = pointMarkFor(entity, p); pointMarks.push(rec.pointMark);
           }
           if (stroke.bbox) { extend(stroke.bbox.minX, stroke.bbox.minY); extend(stroke.bbox.maxX, stroke.bbox.maxY); }
         } else {
@@ -805,7 +836,7 @@ export function mountDrawingViewer(envelope) {
           if (!pts || !pts.length) continue;
           if (entity.geometry.type === 'point' || pts.length === 1) {
             const p = apply(draw.localToSpace, pts[0]);
-            rec.pointMark = {x: p[0], y: p[1]}; pointMarks.push(rec.pointMark); extend(p[0], p[1]);
+            rec.pointMark = pointMarkFor(entity, p); pointMarks.push(rec.pointMark); extend(p[0], p[1]);
           } else {
             let previous = null;
             for (const p of pts) {
@@ -826,22 +857,37 @@ export function mountDrawingViewer(envelope) {
       } else {
         const annotation = drawing.annotations[draw.itemId];
         if (!annotation) continue;
-        const annotationFont = annotationRuns(annotation);
+        const sourceRuns = fallbackRuns(annotation);
+        const hasText = ['text','mtext'].includes(annotation.kind) && sourceRuns.some(run => /\S/u.test(run.text));
+        const resolvedFonts = fontResolver.resolveRuns(sourceRuns);
+        const fontRuns = resolvedFonts.runs.map(({_face, _source, ...run}) => run);
+        const fontReport = {itemId: draw.itemId, sourceRefs: annotation.sourceRefs,
+          missing: resolvedFonts.missing, styleApproximations: resolvedFonts.styleApproximations,
+          unavailableGlyphs: resolvedFonts.unavailableGlyphs,
+          faces: [...new Set(fontRuns.map(run => run.fontFamily + '/' + (run.bold ? '700' : '400')))]};
+        if (resolvedFonts.unavailableGlyphs) {
+          if (hasText) fontReports.set(draw.itemId, fontReport);
+          continue;
+        }
         const widthFactor = styleWidthFactorFor(annotation);
         const layout = layoutAnnotationText(annotation, draw, {
           measure: measureReference,
           measureCapHeight: measureReferenceCapHeight,
+          measureInk: measureReferenceInk,
           nativeLayout: nativeTextLayout,
           color: rec.color,
-          fontFamily: annotationFont.runs ? annotationFont.defaultFont : fontFamilyFor(annotation),
-          runs: annotationFont.runs,
+          fontFamily: fontRuns[0]?.fontFamily || FONT_STACK_CJK,
+          runs: fontRuns,
           widthFactor
         });
         rec.bbox = { minX: layout.anchor[0], minY: layout.anchor[1],
           maxX: layout.anchor[0], maxY: layout.anchor[1] };
         if (layout.run) {
+          fontReport.unmappedParagraphControls = layout.run.approximations.includes('paragraph-controls-unmapped');
+          if (hasText) fontReports.set(draw.itemId, fontReport);
           const entry = {...layout.run, draw, drawId, itemId: draw.itemId};
-          rec.bbox = entry.box; rec.textBox = entry.box;
+          // Spatial culling must cover every line, including rotated paragraphs.
+          rec.bbox = textDisplayBox(entry); rec.textBox = rec.bbox;
           rec.textEntry = entry;
           texts.push(entry);
         }
@@ -874,7 +920,7 @@ export function mountDrawingViewer(envelope) {
     function* compile(group,matrix){
       if(done.has(group))return;if(active.has(group))throw new Error("cyclic-instance-plan");active.add(group);
       const byId=new Map();for(const rec of group.records){const rows=byId.get(rec.id)||[];rows.push(rec);byId.set(rec.id,rows);}
-      group.bounds=null;group.unbounded=false;group.paint=[];group.hits=[];group.visibleCount=0;group.byKind={entity:0,annotation:0};
+      group.bounds=null;group.unbounded=false;group.hasPointMarks=false;group.paint=[];group.hits=[];group.visibleCount=0;group.byKind={entity:0,annotation:0};
       // Merge strokes with the same style inside each barrier segment (a barrier
       // is any non-stroke entry: group, fill, text, raster, clipped record...).
       // Same-style strokes may then paint in first-appearance order; strokes of
@@ -887,6 +933,7 @@ export function mountDrawingViewer(envelope) {
           flush();
           yield* compile(entry.group,multiply(matrix,entry.matrix));entry.bounds=transformBounds(entry.group.bounds,entry.matrix);
           group.bounds=extendBounds(group.bounds,entry.bounds);group.unbounded=group.unbounded||entry.group.unbounded;
+          group.hasPointMarks ||= entry.group.hasPointMarks;
           group.paint.push(entry);if(entry.bounds)group.hits.push(entry);
           group.visibleCount+=entry.group.visibleCount;
           for(const kind of ["entity","annotation"])group.byKind[kind]+=entry.group.byKind[kind];
@@ -906,6 +953,7 @@ export function mountDrawingViewer(envelope) {
         if(visible.length){group.visibleCount++;group.byKind[visible[0][0].draw.kind]++;}
         for(const [rec,box] of visible){
           visibleRecords++;
+          group.hasPointMarks ||= !!rec.pointMark;
           rec.instanceOrder=entry.order;
           // LOD is display-only. Every finite record stays in the bounds and hit
           // index so fit, selection, snapping and measurement still see the UCD
@@ -951,13 +999,14 @@ export function mountDrawingViewer(envelope) {
     const extend=(target,box)=>{if(!box)return target;if(!target)return {...box};target.minX=Math.min(target.minX,box.minX);target.minY=Math.min(target.minY,box.minY);target.maxX=Math.max(target.maxX,box.maxX);target.maxY=Math.max(target.maxY,box.maxY);return target;};
     function visit(group,matrix){
       if(done.has(group))return;done.add(group);
-      group.bounds=null;group.hits=[];group.unbounded=false;group.visibleCount=0;
+      group.bounds=null;group.hits=[];group.unbounded=false;group.hasPointMarks=false;group.visibleCount=0;
       group.byKind={entity:0,annotation:0};const ids=new Set();
       for(const entry of group.paint){
         if(entry.kind==='group'){
           visit(entry.group,multiply(matrix,entry.matrix));
           entry.bounds=transformBounds(entry.group.bounds,entry.matrix);
           group.bounds=extend(group.bounds,entry.bounds);group.unbounded ||= entry.group.unbounded;
+          group.hasPointMarks ||= entry.group.hasPointMarks;
           if(entry.bounds)group.hits.push(entry);
           group.visibleCount+=entry.group.visibleCount;
           for(const kind of ['entity','annotation'])group.byKind[kind]+=entry.group.byKind[kind];
@@ -970,6 +1019,7 @@ export function mountDrawingViewer(envelope) {
           const box=recordVisibleBounds(rec);
           if(!box&&!rec.infinite)continue;
           visibleRecords++;
+          group.hasPointMarks ||= !!rec.pointMark;
           if(!ids.has(rec.id)){ids.add(rec.id);group.visibleCount++;group.byKind[rec.draw.kind]++;}
           if(box){group.bounds=extend(group.bounds,box);group.hits.push({kind:'record',rec,bounds:box,order:rec.instanceOrder});}
           else{group.unbounded=true;if(!instancePlan.infiniteAnchor)instancePlan.infiniteAnchor=transformPoint(matrix,...rec.infinite.origin);}
@@ -1092,7 +1142,7 @@ export function mountDrawingViewer(envelope) {
     const paintCount = currentInstancePaintCount(LOD_MIN_SCREEN_PX);
     instancePlan.renderedRecordCount = paintCount;
     canvas.dataset.currentPaintEstimate = String(paintCount);
-    if (paintCount <= INSTANCE_SYNC_PAINT_LIMIT) {
+    if (paintCount <= INSTANCE_SYNC_PAINT_LIMIT && !strokeTiles) {
       const started = performance.now();
       try {
         for (const ignored of instancePaintSteps({minScreenPx:LOD_MIN_SCREEN_PX})) { /* small drawings stay immediate */ }
@@ -1307,8 +1357,9 @@ export function mountDrawingViewer(envelope) {
       target.height = canvas.height;
     }
     const context = target ? target.getContext("2d") : null;
+    const gpu = strokeTiles ? strokeGPU : null;
     const job = {steps: instancePaintSteps({minScreenPx}), frame: 0, maxStepMs: 0,
-      started: performance.now(), key, direct, phase, minScreenPx, result: null, background: false};
+      started: performance.now(), key, direct, phase, minScreenPx, result: null, done: false, background: false};
     instanceRefresh = job;
     canvas.dataset.instancePaint = direct ? "progressive" : "canvas";
     if (phase === "preview") canvas.dataset.overviewPaint = "working";
@@ -1330,14 +1381,30 @@ export function mountDrawingViewer(envelope) {
       if (instanceRefresh !== job) return;
       const screen = ctx, device = strokeGPU;
       try {
-        let result;
-        const stepStarted = performance.now();
-        if (context) ctx = context;
-        strokeGPU = strokeTiles ? device : null;
-        try { result = job.steps.next(); } finally { ctx = screen; strokeGPU = device; }
-        if (result.done) job.result = result.value;
-        job.maxStepMs = Math.max(job.maxStepMs, performance.now() - stepStarted);
-        if (result.done) {
+        // CPU slices alone can enqueue a second of GPU work. Poll without
+        // blocking input, including a batch left by a cancelled refresh.
+        if (gpu && !gpu.batchComplete()) {
+          job.frame = requestAnimationFrame(step);
+          return;
+        }
+        if (!job.done) {
+          const stepStarted = performance.now();
+          if (context) ctx = context;
+          strokeGPU = gpu;
+          let result;
+          try { result = job.steps.next(); } finally { ctx = screen; strokeGPU = device; }
+          job.done = result.done;
+          if (result.done) job.result = result.value;
+          job.maxStepMs = Math.max(job.maxStepMs, performance.now() - stepStarted);
+          if (gpu) {
+            gpu.submitBatch();
+            job.frame = requestAnimationFrame(step);
+            return;
+          }
+        }
+        // Publish only after the final GPU batch has completed. Until then,
+        // interaction continues to transform the previous complete image.
+        if (job.done) {
           const publishStarted = performance.now();
           instanceRefresh = null;
           const drawn = Number(job.result?.drawn || 0);
@@ -1414,9 +1481,9 @@ export function mountDrawingViewer(envelope) {
       const matrix=multiply(parent,node.matrix);
       const groupBounds=node.group.bounds&&transformBounds(node.group.bounds,matrix);
       if(!node.group.unbounded&&!intersects(groupBounds))return;
-      // If the complete retained subtree projects below one pixel, no record
-      // inside it can contribute a visible pixel, regardless of its own bbox.
-      if(groupBounds&&Math.max(groupBounds.maxX-groupBounds.minX,groupBounds.maxY-groupBounds.minY)*scale<minScreenPx)return;
+      // Screen-sized point marks can contribute pixels even when their source
+      // bounds have zero area. Preserve them through every ancestor group.
+      if(!node.group.hasPointMarks&&groupBounds&&Math.max(groupBounds.maxX-groupBounds.minX,groupBounds.maxY-groupBounds.minY)*scale<minScreenPx)return;
       const localScale=scale*Math.max(Math.hypot(matrix[0],matrix[1]),Math.hypot(matrix[4],matrix[5]),1e-15);
       for(const entry of node.group.paint){
         if (++visited % 32 === 0 && performance.now() - sliceStarted >= 6) {
@@ -1489,33 +1556,15 @@ export function mountDrawingViewer(envelope) {
           else {ctx.fillStyle=rec.mask?sheetBackground:rec.color;ctx.fill(rec.fillPath,rec.fillRule||'evenodd');}
         }
         if(rec.path){ctx.strokeStyle=rec.color;ctx.lineWidth=rec.width/localScale;ctx.setLineDash(rec.dash||[]);ctx.stroke(rec.path);}
-        if(rec.pointMark){const p=rec.pointMark;ctx.strokeStyle=rec.color;ctx.lineWidth=1/localScale;ctx.beginPath();ctx.moveTo(p.x-2.5/localScale,p.y);ctx.lineTo(p.x+2.5/localScale,p.y);ctx.moveTo(p.x,p.y-2.5/localScale);ctx.lineTo(p.x,p.y+2.5/localScale);ctx.stroke();}
+        if(rec.pointMark){const p=rec.pointMark;
+          if(p.pixel){ctx.fillStyle=rec.color;ctx.fillRect(p.x-.5/localScale,p.y-.5/localScale,1/localScale,1/localScale);}
+          else{ctx.strokeStyle=rec.color;ctx.lineWidth=1/localScale;ctx.beginPath();ctx.moveTo(p.x-2.5/localScale,p.y);ctx.lineTo(p.x+2.5/localScale,p.y);ctx.moveTo(p.x,p.y-2.5/localScale);ctx.lineTo(p.x,p.y+2.5/localScale);ctx.stroke();}
+        }
         if(rec.textEntry){
           const t=rec.textEntry;
           drawTextLeader(t,matrix);
-          // Match the ordinary path: raw annotations keep a legible minimum
-          // screen size, while presentation glyph parts stay at source scale.
-          const screen=Math.max(t.nativeLayout?0.7:5,Math.min(220,t.size*localScale));
-          ctx.save();ctx.translate(t.displayX??t.x,t.displayY??t.y);ctx.rotate(t.angle);ctx.scale(1,-1);ctx.fillStyle=t.color;ctx.font=(screen/localScale)+'px '+(t.fontFamily||TEXT_FONT);ctx.textBaseline='alphabetic';
-          const wf=t.widthFactor&&t.widthFactor!==1?t.widthFactor:1;if(wf!==1)ctx.scale(wf,1);
-          const off=textOffsets(t);
-          if(t.runLines){
-            let y=off.dy;
-            for(let i=0;i<t.runLines.length;i++){
-              const line=t.runLines[i],lineAdvance=line.advance||t.lineHeight||t.height*1.25;
-              let x=off.dx/wf;
-              for(const seg of line.segments){
-                if(!seg.text)continue;
-                const segScale=seg.size&&t.size?seg.size/t.size:1;
-                ctx.font=(seg.italic?'italic ':'')+(seg.bold?'bold ':'')+((screen*segScale)/localScale)+'px '+(seg.fontFamily||t.fontFamily||TEXT_FONT);
-                ctx.fillStyle=seg.color||t.color;
-                ctx.fillText(seg.text,x,y);x+=seg.width/wf;
-              }
-              y+=lineAdvance;
-            }
-          }else{
-            for(let i=0;i<t.lines.length;i++)ctx.fillText(t.lines[i],off.dx/wf,off.dy+i*(t.lineHeight||t.height*1.25));
-          }
+          ctx.save();ctx.translate(t.displayX??t.x,t.displayY??t.y);ctx.rotate(t.angle);ctx.scale(1,-1);
+          paintTextRun(ctx,t,1,localScale);
           ctx.restore();
         }
         if(rasterDrawn||rec.fillPath||rec.path||rec.pointMark||rec.textEntry) paintStats.drawn++;
@@ -1807,7 +1856,8 @@ export function mountDrawingViewer(envelope) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       if (rec.pointMark) {
         const p = rec.pointMark, sx = p.x * scale + tx, sy = -p.y * scale + ty;
-        if(p.dot){ctx.fillStyle=rec.color;ctx.beginPath();ctx.arc(sx,sy,Math.max(.5,rec.width/2),0,Math.PI*2);ctx.fill();}
+        if(p.pixel){ctx.fillStyle=rec.color;ctx.fillRect(sx-.5,sy-.5,1,1);}
+        else if(p.dot){ctx.fillStyle=rec.color;ctx.beginPath();ctx.arc(sx,sy,Math.max(.5,rec.width/2),0,Math.PI*2);ctx.fill();}
         else {
           ctx.strokeStyle = rec.color; ctx.lineWidth = 1;
           ctx.beginPath(); ctx.moveTo(sx - 2.5, sy); ctx.lineTo(sx + 2.5, sy); ctx.moveTo(sx, sy - 2.5); ctx.lineTo(sx, sy + 2.5); ctx.stroke();
@@ -1913,6 +1963,13 @@ export function mountDrawingViewer(envelope) {
     measureCache.set(key, width);
     return width;
   }
+  function measureReferenceInk(text, fontFamily = TEXT_FONT, bold = false, italic = false) {
+    ctx.save();
+    ctx.font = (italic ? 'italic ' : '') + (bold ? 'bold ' : '') + '100px ' + fontFamily;
+    const ink = ctx.measureText(text);
+    ctx.restore();
+    return {ascent: ink.actualBoundingBoxAscent, descent: ink.actualBoundingBoxDescent};
+  }
   function measureReferenceCapHeight(fontFamily = TEXT_FONT, bold = false, italic = false) {
     const key = 'cap\0' + (bold ? '1' : '0') + (italic ? '1' : '0') + fontFamily;
     if (measureCache.has(key)) return measureCache.get(key);
@@ -1948,48 +2005,10 @@ export function mountDrawingViewer(envelope) {
   }
   function drawText(t) {
     drawTextLeader(t);
-    const size = Math.max(t.nativeLayout ? 0.7 : 5, Math.min(220, t.size * scale));
     const sx = (t.displayX ?? t.x) * scale + tx, sy = -(t.displayY ?? t.y) * scale + ty;
-    if (sx < -400 || sy < -400 || sx > cssW + 400 || sy > cssH + 400) return;
     ctx.save();
     ctx.translate(sx, sy); ctx.rotate(-t.angle);
-    const wf = t.widthFactor && t.widthFactor !== 1 ? t.widthFactor : 1;
-    if (wf !== 1) ctx.scale(wf, 1);
-    ctx.font = size.toFixed(2) + 'px ' + (t.fontFamily || TEXT_FONT);
-    ctx.fillStyle = t.color;
-    const lines = t.lines || String(t.text).split('\n');
-    const widths = t.widths || [t.width];
-    const offsets = textOffsets(t);
-    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-    const alignDx = w => t.kind === 'mtext'
-      ? ((t.attachment === 2 || t.attachment === 5 || t.attachment === 8) ? -w / 2
-        : (t.attachment === 3 || t.attachment === 6 || t.attachment === 9) ? -w : 0)
-      : (t.halign === 1 ? -w / 2 : t.halign === 2 ? -w : 0);
-    if (t.runLines) {
-      let y = offsets.dy * scale;
-      t.runLines.forEach((line) => {
-        const dx = alignDx(line.width * scale) / wf;
-        let x = dx;
-        for (const segment of line.segments) {
-          if (!segment.text) continue;
-          const segScale = segment.size && t.size ? segment.size / t.size : 1;
-          ctx.font = (segment.italic ? 'italic ' : '') + (segment.bold ? 'bold ' : '')
-            + (size * segScale).toFixed(2) + 'px ' + (segment.fontFamily || t.fontFamily || TEXT_FONT);
-          ctx.fillStyle = segment.color || t.color;
-          ctx.fillText(segment.text, x, y);
-          x += segment.width * scale / wf;
-        }
-        y += line.advance ? line.advance * scale : (t.lineHeight ? t.lineHeight * scale : size * 1.25);
-      });
-      ctx.restore();
-      return;
-    }
-    lines.forEach((line, i) => {
-      // Alignment is per line: a short centred line must not keep the longest line's offset.
-      const w = (widths[i] ?? t.width) * scale;
-      const dx = alignDx(w) / wf;
-      ctx.fillText(line, dx, offsets.dy * scale + i * (t.lineHeight?t.lineHeight*scale:size*1.25));
-    });
+    paintTextRun(ctx, t, scale);
     ctx.restore();
   }
   function drawSelection(rec) {
@@ -2207,12 +2226,12 @@ export function mountDrawingViewer(envelope) {
     const el = document.getElementById('selected'); if (el) el.textContent = selectedLabel;
     drawRetainedSelection(); updateSelectionButtons(); renderBlocks();
   }
-  function focusSourceHandle(handle){
+  function focusSourceHandle(handle,sourceId=ucd.sources[0].id){
     const key=String(handle).toUpperCase();
     const sourceOf=rec=>(drawing.entities[rec.draw.itemId]||drawing.annotations[rec.draw.itemId])?.sourceRefs||[];
-    const candidates=built.filter(rec=>sourceOf(rec).some(ref=>ref.objectKey.toUpperCase()===key));
+    const candidates=built.filter(rec=>drawVisible(rec)&&sourceOf(rec).some(ref=>ref.sourceId===sourceId&&ref.objectKey.toUpperCase()===key));
     if(!candidates.length){
-      const entry=Object.values(drawing.blockInstances).find(item=>item.sourceRefs.some(ref=>ref.objectKey.toUpperCase()===key));
+      const entry=Object.values(drawing.blockInstances).find(item=>item.sourceRefs.some(ref=>ref.sourceId===sourceId&&ref.objectKey.toUpperCase()===key));
       if(entry){selectInstance(entry.id);return api.fitSelection();}return false;
     }
     if(!instancePlan){select(candidates[0],false);return api.fitSelection();}
@@ -2250,6 +2269,24 @@ export function mountDrawingViewer(envelope) {
     const hint=document.createElement('p');hint.className='dhint';
     hint.textContent=facts.type+' · '+(facts.handleOrigin==='reader-assigned-for-anonymous-record'?'匿名记录读取标识 ':'源句柄 ')+ref.objectKey+'；尺寸值按原文件记录，未经约束求解或验收计算。';host.append(hint);
     if(facts.attributeStatus==='reader-repaired'||facts.tagStatus){const warning=document.createElement('p');warning.className='dhint';warning.textContent='此记录存在读取修复或原标签预算损失，请结合下方状态和解析诊断查看。';host.append(warning);}
+    const substitute = fontReports.get(item?.id);
+    const originalParts = nativeTextParts[item?.id]?.textParts;
+    if (substitute || originalParts?.length) {
+      const note = document.createElement('p'); note.className = 'dhint';
+      if (substitute) {
+        const names = {'Libiao Sans SC':'Noto Sans SC','Libiao Serif SC':'Noto Serif SC',
+          'Libiao Sans':'Arimo','Libiao Serif':'Tinos','Libiao Mono':'Cousine'};
+        const faces = substitute.faces.map(face => face.replace(/"([^"]+)"/, (_match, family) => names[family] || family)
+          .replace('/400','（常规）').replace('/700','（粗体）'));
+        note.textContent = '文字显示：开源字体替代 ' + faces.join('、') + '；原字体请求已保留，排版为近似。'
+          + (substitute.styleApproximations.length ? ' 请求的粗体或斜体未提供，使用可用字形。' : '')
+          + (substitute.unmappedParagraphControls ? ' 有暂未支持的段落控制，排版仍近似。' : '')
+          + (substitute.missing.length || substitute.unavailableGlyphs ? ' 仍有缺字或字体资源未加载。' : '');
+      } else note.textContent = nativeDwg?.textAppearance?.[item.id]?.fontStatus === 'linked-glyphs'
+        ? '文字显示：优先使用配套字形，包含链接替代字符；排版仍有支持边界。'
+        : '文字显示：优先使用已解析的配套原字形；排版仍有支持边界。';
+      host.append(note);
+    }
     const details=document.createElement('details'),summary=document.createElement('summary');summary.textContent='查看源属性与关联记录';details.append(summary);
     const pre=document.createElement('pre');pre.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere;max-height:280px;overflow:auto;font-size:11px';
     const record={attributes:facts.attributes,...Object.fromEntries(['attributeStatus','attributeDecodeError','tagStatus','dimension','blockState','xdata','extensionDictionary','entries'].filter(key=>key in facts).map(key=>[key,facts[key]]))};
@@ -2373,7 +2410,7 @@ export function mountDrawingViewer(envelope) {
         button.type='button';button.className='dblock';button.setAttribute('aria-pressed',String(selectedInstance===step.instanceId));
         button.textContent=(block?.name||step.instanceId.slice(0,12))+' · '+count+' 项';button.onclick=()=>selectInstance(step.instanceId);host.append(button);}
       if(found.size>rows.length){const note=document.createElement('p');note.className='dhint';note.textContent='共 '+found.size+' 个块引用，列表仅显示前 '+rows.length+' 个；可在图面选择。';host.append(note);}
-      if(!found.size)host.textContent='当前空间没有块引用。';return;
+      if(!found.size)host.textContent='当前空间没有已绘出的块引用；未加载外参见解析范围。';return;
     }
     const byInstance = new Map();
     for (const rec of built) {
@@ -2383,7 +2420,7 @@ export function mountDrawingViewer(envelope) {
         byInstance.get(key).ids.add(rec.id);
       }
     }
-    if (!byInstance.size) { host.textContent = '当前空间没有块引用（INSERT）。'; return; }
+    if (!byInstance.size) { host.textContent = '当前空间没有已绘出的块引用；未加载外参见解析范围。'; return; }
     const blockRows=[...byInstance.entries()].sort((a, b) => a[0].localeCompare(b[0]));
     for (const [key, value] of blockRows.slice(0,250)) {
       const instance = drawing.blockInstances[value.instanceId];
@@ -2410,6 +2447,11 @@ export function mountDrawingViewer(envelope) {
     const unsupported = (geom.byReason && geom.byReason.unsupported) || {};
     const losses = coverageExt.losses || [];
     const lines = [];
+    if (lineWeightSettings) {
+      const sourceDisplay = lineWeightSettings.displayLineWeight;
+      lines.push('源模型线宽显示：' + (sourceDisplay === true ? '开启' : sourceDisplay === false ? '关闭（按细线显示）' : '未知（未读取到源开关）') + '；不改变多段线自身宽度。');
+      lines.push('默认笔宽采用本查看器 0.25 mm 替代；原作者的默认设置未随文件保存，不能据此认定原图默认笔宽。');
+    }
     const missingAcisPrecision = (ucd.diagnostics || []).filter(item => item.code === 'native-acis-unavailable' && item.message === 'acis-source-units-or-precision-missing').length;
     if (missingAcisPrecision) lines.push('有 ' + missingAcisPrecision + ' 个三维或面域对象无法预览：文件缺少有效的单位或建模精度信息，无法确认尺寸和精度。为避免显示错误，这些对象未显示。请联系图纸提供者，在原 CAD 软件中确认单位和精度后重新导出为较新版本的 DWG；也可下载原文件查看。');
     if (recovery) {
@@ -2429,11 +2471,47 @@ export function mountDrawingViewer(envelope) {
     }
     if (geom.fidelity?.status === "partial") {
       const font = geom.fidelity.fontSubstitution || {};
-      lines.push("字体保真 partial：" + (font.nativeFontRecords ?? "?") + " 个原生字体记录未配套，" + (font.annotationSourceRecords ?? "?") + " 个注释源对象使用显式替代字形；几何归账不受影响，但字形与排版不能等同原图。");
+      if (font.originalCompanionsProvided) {
+        lines.push("字体保真 partial：已加载配套字体；文字布局记录中 " + (font.originalGlyphLayouts ?? "?") + " 项使用匹配字形，" + (font.linkedGlyphLayouts ?? "?") + " 项含链接替代字符，" + (font.substitutedLayouts ?? "?") + " 项使用未解析对象替代；布局记录数不等于唯一源对象数，字形与排版仍不能等同原图。");
+      } else {
+        lines.push("字体保真 partial：" + (font.nativeFontRecords ?? "?") + " 个原生字体记录未配套，" + (font.annotationSourceRecords ?? "?") + " 个注释源对象使用显式替代字形；几何归账不受影响，但字形与排版不能等同原图。");
+      }
     }
+    const substitutes = substitutionSummary();
+    if (substitutes.annotationItems) {
+      lines.push('开源字体替代：' + substitutes.annotationItems + ' 个含文字的当前空间注释项使用内置字体近似显示；选定字体同时用于测量、换行和绘制，原字体请求保留，不代表原图排版恢复。');
+      if (substitutes.styleApproximateObjects) lines.push('字体样式近似：' + substitutes.styleApproximateObjects + ' 个注释项请求了内置字体未提供的粗体或斜体，使用可用字形并保留近似状态。');
+      if (substitutes.missingObjects) lines.push('仍有缺字或字体资源未加载：' + substitutes.missingObjects + ' 个注释项；不覆盖的字符显示方框，源文字保留。');
+      const missing = [...new Set(substitutes.records.flatMap(row => row.missing))];
+      if (missing.length) lines.push('未覆盖字符：' + missing.map(char => 'U+' + char.codePointAt(0).toString(16).toUpperCase()).join('、'));
+    }
+    const legacyColumnApprox = losses.filter(item => item.code === 'mtext-legacy-column-layout-approximate').length;
+    const legacyColumnMissing = losses.filter(item => item.code === 'mtext-legacy-column-layout-unavailable').length;
+    if (legacyColumnApprox || legacyColumnMissing) lines.push('旧版列文字：' + legacyColumnApprox + ' 条单列按近似预览归账（字形仍受字体限制），' + legacyColumnMissing + ' 条列布局未显示；列定义已保留，不代表完整列排版已恢复。');
+    const unknownTextDirections = losses.filter(item => item.code === 'mtext-drawing-direction-unrecognized').length;
+    if (unknownTextDirections) lines.push('文字排版：' + unknownTextDirections + ' 条源 MTEXT 含未识别方向值；已保留源值和可读的近似字形，不代表原布局已恢复。');
+    if (nativePoints && Object.hasOwn(nativePoints, 'mode') && ![0,1].includes(nativePoints.mode)) lines.push('点显示：已保留源 PDMODE/PDSIZE；Defpoints 使用点状标记，其他点样式与尺寸尚未定向验收。');
+    const referenceSources = Object.values(ucd.extensions?.['org.libiaolink.dwg/1']?.sourceDocuments || {});
+    if (referenceSources.length) {
+      lines.push('上述对象归账属于主图；已加载的外参保留各自的读取、显示和字体边界。');
+      for (const source of referenceSources) {
+        const missing = source.coverage?.displayGeometry?.withoutDisplayGeometry || 0;
+        if (missing) lines.push('外参 ' + source.logicalPath + '：仍有 ' + missing + ' 个源对象无显示几何，详见解析诊断。');
+      }
+    }
+    const cachedProxies = Object.values((ucd.extensions['org.libiaolink.dwg/1'] || {}).proxyGraphics || {}).filter(item => item.status === 'cached-display');
+    if (cachedProxies.length) lines.push('代理图形：' + cachedProxies.length + ' 个对象使用原图保存的显示缓存；未恢复专业对象语义，也不代表外部文字或内容已更新。');
+    if (unsupported.DIMENSION_CONSTRAINT) lines.push('尺寸约束：' + unsupported.DIMENSION_CONSTRAINT + ' 个对象无存储标注图形，参数已保留；交互显示尚未支持，不能据此认定普通尺寸线丢失。');
     if (Object.keys(unsupported).length) lines.push('未显示：' + Object.entries(unsupported).map(([k, v]) => k + '×' + v).join('、'));
-    if (geom.byReason?.externalReferenceUnresolved) lines.push('外部参照：' + geom.byReason.externalReferenceUnresolved + ' 项未加载，原因见下方配套文件列表');
-    if (losses.length) lines.push('损失记录：' + losses.slice(0, 6).map(l => l.code + (l.detail ? '(' + l.detail + ')' : '')).join('、') + (losses.length > 6 ? ' 等 ' + losses.length + ' 条' : ''));
+    if (geom.byReason?.externalReferenceUnresolved) lines.push('外部参照：' + geom.byReason.externalReferenceUnresolved
+      + ' 个实例未加载，原因见解析诊断与下方配套文件列表');
+    const hatchOutcomes = Object.values((ucd.extensions['org.libiaolink.dwg/1'] || {}).hatchPatternOutcomes || {});
+    const emptyHatches = hatchOutcomes.filter(item => item.status === 'empty-by-read-definition').length;
+    const pendingHatches = losses.filter(item => item.code === 'empty-native-hatch-pattern').length;
+    if (emptyHatches) lines.push('图案填充：' + emptyHatches + ' 个按已读取源定义为空；不代表读取完整或整图无损。');
+    if (pendingHatches) lines.push('图案填充：' + pendingHatches + ' 个空输出待核实；尚不能证明正常空白，也不能直接认定漏画。');
+    const otherLosses = losses.filter(item => item.code !== 'empty-native-hatch-pattern');
+    if (otherLosses.length) lines.push('损失记录：' + otherLosses.slice(0, 6).map(l => l.code + (l.detail ? '(' + l.detail + ')' : '')).join('、') + (otherLosses.length > 6 ? ' 等 ' + otherLosses.length + ' 条' : ''));
     const fills = Object.values((ucd.extensions['org.cad-preview.fill/1'] || {}).fills || {});
     const patterns = fills.filter(fill => fill.solid === false).length;
     const gradients = fills.filter(fill => fill.gradient).length;
@@ -2541,6 +2619,7 @@ export function mountDrawingViewer(envelope) {
         records: group.records,
         bounds: group.bounds,
         unbounded: group.unbounded,
+        hasPointMarks: group.hasPointMarks,
         paint: group.paint,
         hits: group.hits,
         visibleCount: group.visibleCount,
@@ -2556,6 +2635,7 @@ export function mountDrawingViewer(envelope) {
       saved.group.records = saved.records;
       saved.group.bounds = saved.bounds;
       saved.group.unbounded = saved.unbounded;
+      saved.group.hasPointMarks = saved.hasPointMarks;
       saved.group.paint = saved.paint;
       saved.group.hits = saved.hits;
       saved.group.visibleCount = saved.visibleCount;
@@ -2575,7 +2655,7 @@ export function mountDrawingViewer(envelope) {
     const key = cachedSpaceKey(target);
     if (!key) return false;
     const state = { key, target: { ...target }, mode, plotPreview, projection, instancePlan, instanceState: captureInstanceState(instancePlan),
-      effectiveLayers, presentationStyles, built, texts, pointMarks, buildScale,
+      effectiveLayers, presentationStyles, built, texts, pointMarks, buildScale, fontReports: new Map(fontReports),
       userLayers: new Map(userLayers), instanceLayerKey, scale, tx, ty, dpr, cssW, cssH, fitted,
       plotErrors: [...plotErrors], builtRecords: built.length, sourceDraws: Object.keys(projection.draws).length };
     spaceStateCache.delete(key);
@@ -2606,6 +2686,8 @@ export function mountDrawingViewer(envelope) {
     built = state.built;
     texts = state.texts;
     pointMarks = state.pointMarks;
+    fontReports.clear();
+    for (const [id, row] of state.fontReports) fontReports.set(id, row);
     buildScale = state.buildScale;
     plotPreview = state.plotPreview;
     userLayers.clear();
@@ -2819,15 +2901,22 @@ export function mountDrawingViewer(envelope) {
   const modelSpaceId = drawing.drawings[Object.keys(drawing.drawings)[0]].modelSpaceId;
   const model = drawing.spaces[modelSpaceId];
   const emptyModel = !model.entityIds.length && !model.annotationIds.length && !model.blockInstanceIds.length;
-  setSpace(recoveredBlocks.length && emptyModel
-    ? {kind: 'block-preview', blockId: recoveredBlocks[0].blockId}
-    : {kind: 'model', spaceId: modelSpaceId});
-  fitted = false; // setSpace fitted against the placeholder width; fit again at the real size
-  mounting = false;
-  resize();
+  fontReady.then(() => {
+    if (destroyed) return;
+    measureCache.clear();
+    setSpace(recoveredBlocks.length && emptyModel
+      ? {kind: 'block-preview', blockId: recoveredBlocks[0].blockId}
+      : {kind: 'model', spaceId: modelSpaceId});
+    fitted = false;
+    mounting = false;
+    resize();
+    // An unchanged viewport does not redraw; the synchronous small build was mounted.
+    if (!initialBuild && !firstPaintDone) draw();
+  }).catch(error => rejectFirstPaint?.(error));
   const api = {
     envelope, setSpatialView, setBackground,
     backgroundColor: () => sheetBackground,
+    fontSubstitution: substitutionSummary,
     meshView: () => meshViewer?.record() || null,
     get space() { return spaceTarget; },
     get mode() { return mode; },
@@ -2924,7 +3013,7 @@ export function mountDrawingViewer(envelope) {
     record() {
       return { spatialView, space: spaceTarget, mode, scale, layers: api.layerStates(), draws: Object.keys(projection.draws).length, selected: [...selected], selectedInstance, extents: extents(), unit: presentation.unit };
     },
-    resize, draw, overviewPaint, ready: Promise.all([rasterReady, firstPaint]),
+    resize, draw, overviewPaint, ready: Promise.all([rasterReady, fontReady, firstPaint]),
     destroy() {
       destroyed = true;
       cancelInitialBuild();

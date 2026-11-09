@@ -93,7 +93,8 @@ export function* projectDrawingSteps(document,target,effectiveLayers=null,presen
     if(pm==='explicit')return parent.color.rgba.slice();
     if(pm==='by-layer')return layerColor(parentLayer,viewport);
    }
-   return layerColor(layerId,viewport);
+   // Unbound ByBlock uses ACI 7; the viewer adapts black to its background.
+   return [0,0,0,1];
   }
   return layerColor(layerId,viewport);
  }
@@ -121,7 +122,7 @@ export function* projectDrawingSteps(document,target,effectiveLayers=null,presen
     if(pm==='by-layer'){lw=layerLineWeight(parentLayer,viewport);break;}
     if(pm==='by-block')continue;
    }
-   if(lw===undefined)lw=layerLineWeight(layerId,viewport);
+   if(lw===undefined)lw=styleExt.defaultLineWeight||layerLineWeight(layerId,viewport);
   }
   if(lw===undefined)lw={value:0.25,knowledge:'engineering-defined',validation:'experimental',evidenceIds:['policy']};
   const info=flags[itemId]||{};

@@ -40,7 +40,7 @@ export function estimateRemainingSeconds(elapsedSeconds: number, done: number, t
   return Math.max(1, Math.ceil(rate * left + TAIL_SECONDS));
 }
 
-export type ExportProgressVariant = "overview" | "project-data";
+export type ExportProgressVariant = "overview" | "project-data" | "page-export";
 
 export function ExportProgressOverlay({ progress, variant = "overview" }: { progress: ExportTranslateProgress | null; variant?: ExportProgressVariant }) {
   const t = useT();
@@ -67,6 +67,8 @@ export function ExportProgressOverlay({ progress, variant = "overview" }: { prog
   const waiting = total <= 0;
   const translating = !waiting && done < total;
   const projectData = variant === "project-data";
+  const pageExport = variant === "page-export";
+  const indeterminate = waiting || projectData || pageExport;
   const fresh = estimateRemainingSeconds(elapsed, done, total);
   const displayed = remaining === null ? fresh : remaining;
   const percent = waiting ? 0 : Math.min(100, Math.round((done / total) * 100));
@@ -94,11 +96,13 @@ export function ExportProgressOverlay({ progress, variant = "overview" }: { prog
             </span>
           </span>
         </div>
-        <p className="export-progress__title">{projectData ? t("exp.projectData.title") : waiting || translating ? t("exp.translating") : t("exp.generating")}</p>
+        <p className="export-progress__title">{projectData ? t("exp.projectData.title") : pageExport ? t("pageExport.generatingTitle") : waiting || translating ? t("exp.translating") : t("exp.generating")}</p>
         <p className="export-progress__hint">
           {projectData
             ? t("exp.projectData.hint")
-            : waiting
+            : pageExport
+              ? t("pageExport.generatingHint")
+              : waiting
               ? t("exp.preparing")
               : translating
                 ? (
@@ -108,8 +112,8 @@ export function ExportProgressOverlay({ progress, variant = "overview" }: { prog
                   )
                 : t("exp.ready")}
         </p>
-        <div className={"export-progress__bar" + (waiting || projectData ? " is-waiting" : "")}>
-          <span className="export-progress__bar-fill" style={waiting || projectData ? undefined : { width: percent + "%" }} />
+        <div className={"export-progress__bar" + (indeterminate ? " is-waiting" : "")}>
+          <span className="export-progress__bar-fill" style={indeterminate ? undefined : { width: percent + "%" }} />
         </div>
       </div>
     </div>

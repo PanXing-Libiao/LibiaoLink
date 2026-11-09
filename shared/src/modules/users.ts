@@ -1,5 +1,6 @@
 import { z } from "../zod.ts";
 import { DateOnlySchema, DateTimeSchema, PageQuerySchema, UuidSchema, paginated } from "../common/conventions.ts";
+import { PAGE_EXPORT_PRESET_LIMIT, PageExportPresetSchema } from "./page-exports.ts";
 
 const SAVED_HOME_FILTER_VALUES_LIMIT = 200;
 
@@ -219,7 +220,7 @@ export const HubDashViewSchema = z
 /**
  * 用户级 UI 偏好（A4）：独立于项目视图 project_views（M2-06 的 filters / columns / sort / group）。
  * 存储为 user_preferences（user_id 主键 + prefs jsonb + updated_at），单用户单写者，不需要 version。
- * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ focusMode（A4 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）/ backgroundTier（背景档位 · Push 291）/ cardWatermark（卡片水印 · Push 292）/ locale（界面语言 · Push 296）/ hubView（仪表盘页常驻视图 · Push 332）/ hubDashProject（仪表盘常驻项目 · Push 336）/ hubDashView（仪表盘页内图表视图 · Push 345）；
+ * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ pageExportPresets（页面导出方案）/ focusMode（A4 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）/ backgroundTier（背景档位 · Push 291）/ cardWatermark（卡片水印 · Push 292）/ locale（界面语言 · Push 296）/ hubView（仪表盘页常驻视图 · Push 332）/ hubDashProject（仪表盘常驻项目 · Push 336）/ hubDashView（仪表盘页内图表视图 · Push 345）；
  * 未声明键按 `.catchall` 原样保存（前向兼容），但不回读 —— 新增偏好键必须同时补这里与 service 的 toContract。
  */
 export const UserPreferencesSchema = z
@@ -232,6 +233,10 @@ export const UserPreferencesSchema = z
       .array(SavedHomeFilterSchema)
       .max(SAVED_HOME_FILTER_LIMIT)
       .openapi({ description: "常用筛选组合（最多 20 组；整体替换语义）" }),
+    pageExportPresets: z
+      .array(PageExportPresetSchema)
+      .max(PAGE_EXPORT_PRESET_LIMIT)
+      .openapi({ description: "页面级 Excel 导出方案（最多 20 个；按账号跨项目复用；整体替换语义）" }),
     focusMode: z
       .boolean()
       .openapi({
@@ -260,10 +265,11 @@ export const UserPreferencesUpdateBodySchema = z
   .object({
     taskTableHiddenColumns: z.array(TaskTableColumnKeySchema).max(30).optional(),
     homeSavedFilters: z.array(SavedHomeFilterSchema).max(SAVED_HOME_FILTER_LIMIT).optional(),
+    pageExportPresets: z.array(PageExportPresetSchema).max(PAGE_EXPORT_PRESET_LIMIT).optional(),
     focusMode: z.boolean().optional(),
     workspaceOpenProjects: WorkspaceOpenProjectsSchema.optional(),
     myPlanBoard: MyPlanBoardUpdateSchema.optional(),
-    expectedRevisions: z.object({ homeSavedFilters: z.number().int().nonnegative().optional(), myPlanBoard: z.number().int().nonnegative().optional() }).strict().optional().openapi({ description: "更新homeSavedFilters/myPlanBoard时必须带对应基线版本，缺失400、冲突409；服务端行锁合并。内部_revisions禁止客户端写入。" }),
+    expectedRevisions: z.object({ homeSavedFilters: z.number().int().nonnegative().optional(), pageExportPresets: z.number().int().nonnegative().optional(), myPlanBoard: z.number().int().nonnegative().optional() }).strict().optional().openapi({ description: "更新homeSavedFilters/pageExportPresets/myPlanBoard时必须带对应基线版本，缺失400、冲突409；服务端行锁合并。内部_revisions禁止客户端写入。" }),
     backgroundTier: BackgroundTierSchema.optional(),
     locale: LocaleSchema.optional(),
     cardWatermark: z.boolean().optional(),
@@ -274,7 +280,7 @@ export const UserPreferencesUpdateBodySchema = z
   .catchall(z.unknown())
   .openapi("UserPreferencesUpdateBody", {
     description:
-      "PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单，focusMode/cardWatermark为布尔，backgroundTier/locale/hubView/hubDashView需在枚举内，hubDashProject为1..64字符或null，否则400"
+      "PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/pageExportPresets/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单，focusMode/cardWatermark为布尔，backgroundTier/locale/hubView/hubDashView需在枚举内，hubDashProject为1..64字符或null，否则400"
   });
 
 /** 契约类型出口（与 dicts.ts 同口径：schema 的 infer 类型一并导出）。 */

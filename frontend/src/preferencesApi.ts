@@ -1,6 +1,6 @@
 /**
  * 用户偏好（A4 / A24）：GET / PATCH /api/v1/users/me/preferences。
- * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ workspaceOpenProjects（A31 工作台折叠面板展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）/ backgroundTier（背景档位 · Push 291）/ cardWatermark（卡片水印 · Push 292）/ locale（界面语言 · Push 296）/ hubView（仪表盘页常驻视图 · Push 332）/ hubDashProject（仪表盘常驻项目 · Push 336）/ hubDashView（仪表盘页内图表视图 · Push 345）。
+ * 声明键：taskTableHiddenColumns（A4 列显隐）/ homeSavedFilters（A24 常用筛选）/ pageExportPresets（页面级 Excel 导出方案）/ workspaceOpenProjects（A31 工作台折叠面板展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）/ backgroundTier（背景档位 · Push 291）/ cardWatermark（卡片水印 · Push 292）/ locale（界面语言 · Push 296）/ hubView（仪表盘页常驻视图 · Push 332）/ hubDashProject（仪表盘常驻项目 · Push 336）/ hubDashView（仪表盘页内图表视图 · Push 345）。
  * （focusMode「A4 醒目模式 · Push 171」已随 Push 290「醒目模式下架、观感统一走背景档位」停用：前端不再读写，服务端键保留不动。）
  * 常用筛选（A24）自 Push 169 起按账号存服务端（user_preferences.prefs.homeSavedFilters）——
  * 同一账号换设备可见；同一设备换账号互不可见（服务端按会话 actorId 隔离，路径不接受用户 id）。
@@ -14,6 +14,7 @@ import type { HubView } from "./useHashRoute";
 import { clearLegacySavedFilters, readLegacySavedFilters } from "./savedFilters";
 import type { SavedFilter } from "./savedFilters";
 import type { PlanBoardBgId, PlanNote } from "./myPlan";
+import type { PageExportPreset } from "./pageExportApi";
 
 /** 工作台折叠面板展开态（A31 · Push 233 · 业务口径「这个下拉要有记忆」）：tasks / raised 两枚已展开的项目 id 列表（整体替换语义；默认两空数组 = 全部收起）。 */
 export type WorkspaceOpenProjects = {
@@ -34,6 +35,8 @@ export type MyPlanBoardPrefs = {
 export type UserPreferences = {
   taskTableHiddenColumns: string[];
   homeSavedFilters: SavedFilter[];
+  /** 页面级 Excel 导出方案（日报记录 / 问题追踪 / 干系人）：按账号跨项目、跨设备保存。 */
+  pageExportPresets: PageExportPreset[];
   /** 工作台折叠面板展开态（A31 · Push 233）：按标签记住已展开的项目 id；默认两空数组 = 全部收起。 */
   workspaceOpenProjects: WorkspaceOpenProjects;
   /** 「我的计划」便签墙（Push 268）：整面便签墙按账号存；从未保存 = updatedAt null（前端据此预置示例 / 迁移旧键）。 */
@@ -62,6 +65,11 @@ export function loadMyPreferences(): Promise<UserPreferences> {
 /** 常用筛选整体替换（PATCH 只带这一个键）：返回服务端收敛后的全量偏好，前端以返回值覆盖本地。 */
 export function saveHomeSavedFilters(items: SavedFilter[], revision: number): Promise<UserPreferences> {
   return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { homeSavedFilters: items, expectedRevisions: { homeSavedFilters: revision } });
+}
+
+/** 页面导出方案整体替换：必须带对应基线版本；409 = 另一窗口已改，调用方重读后再让用户保存。 */
+export function savePageExportPresets(items: PageExportPreset[], revision: number): Promise<UserPreferences> {
+  return apiSend<UserPreferences>("/api/v1/users/me/preferences", "PATCH", { pageExportPresets: items, expectedRevisions: { pageExportPresets: revision } });
 }
 
 /** 任务表列显隐整体替换（A4 · Push 170）：只传这一个键，返回服务端收敛后的全量偏好。 */

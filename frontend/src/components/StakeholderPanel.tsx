@@ -20,6 +20,7 @@ import { Toast, ToastConfirm } from "./Toast";
 import { RowEditButton } from "./RowEditButton";
 import { SelectMenu, type SelectOption } from "./SelectMenu";
 import { ScrollArea } from "./ScrollArea";
+import { PageExportButton } from "./PageExportButton";
 import { useFocusTrap } from "./useFocusTrap";
 import { fieldText as fieldLabel, textOf as pickText, useLocale, useT, type Locale } from "../i18n";
 
@@ -591,21 +592,24 @@ export function StakeholderPanel({ projectId, canManage, scrollRef }: Stakeholde
             {t("sh.shown", { shown: items.length, total })}
           </span>
         ) : null}
-        {canManage ? (
-          <button
-            type="button"
-            data-stakeholder-new=""
-            onClick={() => {
-              setModal({ mode: "create" });
-            }}
-            className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-[#feca04] px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm transition hover:brightness-95 active:brightness-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
-          >
-            <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
-              <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-            {t("sh.new")}
-          </button>
-        ) : null}
+        <div className="ml-auto flex items-center gap-2">
+          <PageExportButton projectId={projectId} initialSheet="stakeholders" />
+          {canManage ? (
+            <button
+              type="button"
+              data-stakeholder-new=""
+              onClick={() => {
+                setModal({ mode: "create" });
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[#feca04] px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm transition hover:brightness-95 active:brightness-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
+            >
+              <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+              {t("sh.new")}
+            </button>
+          ) : null}
+        </div>
       </div>
 
       {error === null ? null : (

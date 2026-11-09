@@ -14,7 +14,7 @@ import { FileRepository } from "./file.repository.js";
 import { CadEngineBusyError, CadEngineClient } from "./cad-engine.client.js";
 import { CadArchiveRepository, type CadFailureContext } from "./cad-archive.repository.js";
 import { CAD_ARTIFACT_LIMIT, CAD_BUFFER_LIMIT, checkedCadStream, readCadManifest } from "./cad-archive.integrity.js";
-import { CadInputService, CadInputIntegrityError, cadInputs, cadResourceFingerprint } from "./cad-inputs.js";
+import { CadInputService, CadInputIntegrityError, cadInputs, cadResourceFingerprint, cadHasResourcePackage } from "./cad-inputs.js";
 import { cadArchiveEncoder, cadPrecompressedObjectKey } from "./cad-preview.compression.js";
 import { CadCacheMaintenance } from "./cad-cache-maintenance.js";
 import { AppError } from "../../common/errors/app-error.js";
@@ -79,7 +79,7 @@ export class CadArchiveWorker implements OnApplicationShutdown {
       const cacheScope = createHash("sha256").update(JSON.stringify([row.fileId, row.versionId, row.sourceSHA256, source.resourceSetHash])).digest("hex");
       const identity = { name: row.sourceName, namespace, cacheScope, sourceSHA256: row.sourceSHA256,
         sourceByteLength: row.sourceBytes, nameCodepage: CadNameCodepageSchema.parse(row.nameCodepage),
-        ...(source.sourceFormat === "DXF" ? { resourceFingerprint: cadResourceFingerprint(source) } : {}) };
+        ...(cadHasResourcePackage(source) ? { resourceFingerprint: cadResourceFingerprint(source) } : {}) };
       abort.signal.throwIfAborted();
       let job = (await this.engine.lookup(identity) ?? await this.engine.submit({ ...identity, payload: await this.inputs.enginePayload(source) })).job;
       nativeId = job.id;submittedAt = performance.now();timings.inputLookupSubmitMS = submittedAt - started;

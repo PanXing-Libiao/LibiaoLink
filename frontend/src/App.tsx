@@ -36,7 +36,7 @@ import {
   type Dicts,
 } from "./dicts";
 import { directoryMemberOptions, loadDirectory, type DirectoryUser } from "./directory";
-import { archiveProject, createProject, deleteProject, downloadProjectWorkbook, fetchProject, recordProjectVisit, toUiProject, updateProject } from "./projectApi";
+import { archiveProject, createProject, deleteProject, downloadProjectWorkbook, fetchProject, recordProjectVisit, toUiProject, updateProject, type ProjectExportFormat } from "./projectApi";
 import { loadMyPreferences, loadMyPreferencesWithLegacyMigration, saveHomeSavedFilters, saveTaskTableHiddenColumns, saveHubDashProject, saveHubDashView, saveHubView, saveWorkspaceOpenProjects, type WorkspaceOpenProjects } from "./preferencesApi";
 import type { SavedFilter } from "./savedFilters";
 import { asHubDashView, type HubDashView } from "./data/dashboardProgress";
@@ -532,8 +532,8 @@ export default function App() {
     }
   };
 
-  /** 导出项目全部数据：浏览器保存 xlsx；失败沿用全局顶部 Toast，不阻断其他操作。 */
-  const handleExportProject = async (project: Project): Promise<void> => {
+  /** 导出项目数据：xlsx 或 Excel + 原附件 zip；失败沿用全局顶部 Toast，不阻断其他操作。 */
+  const handleExportProject = async (project: Project, format: ProjectExportFormat): Promise<void> => {
     if (exportInFlight.current) {
       return;
     }
@@ -541,7 +541,7 @@ export default function App() {
     setExportingProjectId(project.id);
     setNotice(null);
     try {
-      await downloadProjectWorkbook(project);
+      await downloadProjectWorkbook(project, format);
     } catch (error: unknown) {
       setNotice(errorMessageOf(error, t("app.fail.exportProject")));
     } finally {
@@ -1090,8 +1090,8 @@ export default function App() {
         canUpdateProject={canUpdateProject}
         canExportProject={canExportProject}
         exportingProjectId={exportingProjectId}
-        onExportProject={(project) => {
-          void handleExportProject(project);
+        onExportProject={(project, format) => {
+          void handleExportProject(project, format);
         }}
         onDeleteProject={(project) => {
           setPendingDelete(project);

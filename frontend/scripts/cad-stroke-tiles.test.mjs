@@ -91,3 +91,21 @@ test('tile uploads yield and cancellation stops unfinished draws',(t)=>{
  assert.equal(uploads,0);pending.return();assert.equal(draws,0);
  const complete=planner.drawRun(...args);assert.equal(complete.tiles,1);assert.equal(uploads,1);assert.equal(draws,1);
 });
+
+
+test('large-coordinate lines on every tile boundary survive spatial lookup',()=>{
+ for(const shift of [0,-600000]){
+  const x=300000.1+shift,y=350000.1+shift,endX=300100.09+shift,endY=350100.09+shift;
+  const segments=[[x,y,endX,y],[endX,y,endX,endY],[endX,endY,x,endY],[x,endY,x,y]];
+  const records=segments.map(([a,b,c,d])=>({bbox:{minX:Math.min(a,c),minY:Math.min(b,d),maxX:Math.max(a,c),maxY:Math.max(b,d)}}));
+  const uploaded=[];
+  const renderer={createTileBuffer:(data,count,originX,originY)=>{uploaded.push({data,count,originX,originY});return {segments:count};},deleteTileBuffer(){},drawTile(){}};
+  const planner=createStrokeTilePlanner(renderer,{maxLevel:0});
+  const bounds={minX:x,minY:y,maxX:endX,maxY:endY};
+  const entry={kind:'stroke',gpuRun:0,dash:[],layerId:'0',color:'rgb(255,255,0)',width:1,lodSize:100,bounds,records,gpuSegments:segments};
+  const matrix=[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
+  const result=planner.drawRun({},0,[entry],matrix,bounds,1,0);
+  assert.equal(result.segments,4,'all four boundary lines must reach the GPU');
+  assert.ok(uploaded[0].data instanceof Float32Array,'GPU vertices remain tile-relative float32');
+ }
+});

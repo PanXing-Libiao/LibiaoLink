@@ -30,8 +30,8 @@ function fixture() {
   return { service, files, versions, permission, storage, blobs, options };
 }
 
-describe("DXF input set authorization and content identity", () => {
-  it.each(["ttf", "otf", "dgn", "dwf", "dwfx", "ctb", "stb"])("binds uploaded %s companions to the selected file version", async (extension) => {
+describe("CAD input set authorization and content identity", () => {
+  it.each(["ttf", "otf", "ttc", "dgn", "dwf", "dwfx", "ctb", "stb"])("binds uploaded %s companions to the selected file version", async (extension) => {
     const f = fixture(); f.files[1]!.name = `font.${extension}`;
     const bytes = f.blobs.get(f.versions[1]!.objectKey)!;
     f.blobs.delete(f.versions[1]!.objectKey);
@@ -84,7 +84,7 @@ describe("DXF input set authorization and content identity", () => {
     f.storage.getObjectStream.mockResolvedValueOnce({ sizeBytes: corrupted.byteLength, stream: Readable.from(corrupted) });
     await expect(payloadBytes(f.service, source)).rejects.toBeInstanceOf(CadInputIntegrityError);
   });
-  it("binds a DWG main drawing without companions or a relative main path", async () => {
+  it("preserves bare DWG bytes and binds selected DWG resource paths and versions", async () => {
     const f = fixture();
     f.files[0]!.name = "main.dwg";
     f.versions[0]!.objectKey = "objects/main.dwg";
@@ -97,9 +97,20 @@ describe("DXF input set authorization and content identity", () => {
     expect(source.companions).toHaveLength(0);
     expect(source.resourceSetHash).toBe("0".repeat(64));
     expect(await payloadBytes(f.service, source)).toEqual(main);
-    await expect(f.service.resolve(mainId, version, "actor", {
+    const moved = await f.service.resolve(mainId, version, "actor", {
       mainPath: "drawings/main.dwg", companions: [],
-    })).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    });
+    expect(moved.resourceSetHash).not.toBe(source.resourceSetHash);
+    const selected = await f.service.resolve(mainId, version, "actor", { ...f.options, mainPath: "drawings/main.dwg" });
+    expect(selected.companions).toMatchObject([{ fileId: companionId, versionId: companionVersion, path: "fonts/font.shx" }]);
+    expect(selected.resourceSetHash).not.toBe(moved.resourceSetHash);
+    const bytes = await payloadBytes(f.service, selected), headerEnd = 12 + bytes.readUInt32LE(8);
+    expect(bytes.subarray(0, 8).toString()).toBe("DXFRES1\n");
+    expect(JSON.parse(bytes.subarray(12, headerEnd).toString())).toEqual({ version: "dxf-resources/1", main: "drawings/main.dwg",
+      files: [{ path: "drawings/main.dwg", byteLength: main.length }, { path: "fonts/font.shx", byteLength: f.versions[1]!.sizeBytes }] });
+    expect(bytes.subarray(headerEnd)).toEqual(Buffer.concat([main, f.blobs.get(f.versions[1]!.objectKey)!]));
     await expect(f.service.resolve(mainId, version, "actor", f.options)).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    f.files[1]!.projectId = "another-project";
+    await expect(f.service.assertAvailable(selected, "actor")).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

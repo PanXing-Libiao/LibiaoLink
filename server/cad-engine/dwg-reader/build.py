@@ -48,6 +48,11 @@ def build(args):
     import shutil
     preview = acad / "src/ACadSharp/IO/DWG/DwgStreamReaders/DwgPreviewReader.cs"
     replace_once(preview, "\t\t\tDwgPreview.PreviewType previewCode = DwgPreview.PreviewType.Unknown;\n\n\t\t\t//The data follows the records in the same order\n\t\t\tfor (int i = 0; i < imagespresent; i++)\n\t\t\t{\n\t\t\t\tbyte[] data = this._reader.ReadBytes((int)sizes[i]);\n\t\t\t\tswitch (codes[i])\n\t\t\t\t{\n\t\t\t\t\tcase 1:\n\t\t\t\t\t\theader = data;\n\t\t\t\t\t\tbreak;\n\t\t\t\t\tdefault:\n\t\t\t\t\t\t//Keep the first image, a file may store a second lower quality bitmap after it\n\t\t\t\t\t\tif (previewCode == DwgPreview.PreviewType.Unknown)\n\t\t\t\t\t\t{\n\t\t\t\t\t\t\tpreviewCode = (DwgPreview.PreviewType)codes[i];\n\t\t\t\t\t\t\tbody = data;\n\t\t\t\t\t\t}\n\t\t\t\t\t\tbreak;\n\t\t\t\t}\n\t\t\t}", "\t\t\tDwgPreview.PreviewType previewCode = DwgPreview.PreviewType.Unknown;\n\t\t\tint previewPriority = -1;\n\n\t\t\t//The data follows the records in the same order. Prefer a self-contained PNG,\n\t\t\t//then BMP, then WMF; some files put a lower-priority image first.\n\t\t\tfor (int i = 0; i < imagespresent; i++)\n\t\t\t{\n\t\t\t\tbyte[] data = this._reader.ReadBytes((int)sizes[i]);\n\t\t\t\tswitch (codes[i])\n\t\t\t\t{\n\t\t\t\t\tcase 1:\n\t\t\t\t\t\theader = data;\n\t\t\t\t\t\tbreak;\n\t\t\t\t\tdefault:\n\t\t\t\t\t\tint candidatePriority = codes[i] == 6 ? 3 : codes[i] == 2 ? 2 : codes[i] == 3 ? 1 : 0;\n\t\t\t\t\t\tif (candidatePriority > previewPriority)\n\t\t\t\t\t\t{\n\t\t\t\t\t\t\tpreviewCode = (DwgPreview.PreviewType)codes[i];\n\t\t\t\t\t\t\tpreviewPriority = candidatePriority;\n\t\t\t\t\t\t\tbody = data;\n\t\t\t\t\t\t}\n\t\t\t\t\t\tbreak;\n\t\t\t\t}\n\t\t\t}");
+    # C# integer division made 1 / 64 zero, rotating near-pole OCS frames.
+    # Patch the shared helper so native curve evaluation and INSERT agree.
+    replace_once(utilities / 'CSMath/Matrix4.cs',
+                 'Math.Abs(zaxis.X) < (1 / 64) && Math.Abs(zaxis.Y) < (1 / 64)',
+                 'Math.Abs(zaxis.X) < (1.0 / 64.0) && Math.Abs(zaxis.Y) < (1.0 / 64.0)')
     shutil.copytree(utilities, acad / 'src/CSUtilities', dirs_exist_ok=True)
     header = acad / 'src/ACadSharp/Header/CadHeader.cs'
     replace_once(header, 'public Color InterfereColor { get; set; } = new Color(1);',
@@ -60,6 +65,31 @@ def build(args):
     replace_once(acad / 'src/ACadSharp/IO/DWG/DwgStreamWriters/DwgHeaderWriter.cs',
                  '//BS : INTERSECTIONCOLOR\n\t\t\t\tthis._writer.WriteBitShort(this._header.InterfereColor.Index);',
                  '//BS : INTERSECTIONCOLOR\n\t\t\t\tthis._writer.WriteBitShort(this._header.IntersectionColorIndex);')
+    # R2000+ stores an inverted LWDISPLAY bit and an indexed CELWEIGHT.
+    replace_once(header, 'public bool DisplayLineWeight { get; set; } = false;',
+                 'public bool DisplayLineWeight { get; set; } = false;\n\n'
+                 '\t/// <summary>Original R2000+ combined header flags; absent in earlier formats.</summary>\n'
+                 '\tpublic int? NativeLineWeightFlags { get; set; }')
+    header_reader = acad / 'src/ACadSharp/IO/DWG/DwgStreamReaders/DwgHeaderReader.cs'
+    replace_once(header_reader, '_header.CurrentEntityLineWeight = (LineWeightType)(flags & 0x1F);',
+                 '_header.NativeLineWeightFlags = flags;\n\t\t\t\t_header.CurrentEntityLineWeight = CadUtils.ToValue((byte)(flags & 0x1F));')
+    replace_once(header_reader, '_header.DisplayLineWeight = (flags & 0x200) == 1;',
+                 '_header.DisplayLineWeight = (flags & 0x200) == 0;')
+    replace_once(acad / 'src/ACadSharp/IO/DWG/DwgStreamWriters/DwgHeaderWriter.cs',
+                 '((int)this._header.CurrentEntityLineWeight & 0x1F)',
+                 '(CadUtils.ToIndex(this._header.CurrentEntityLineWeight) & 0x1F)')
+    # DWG spatial-filter matrices store three rows of four values. CSMath's
+    # indexer is [column,row]; the pinned reader/writer used the transposed order.
+    replace_once(acad / 'src/ACadSharp/IO/DWG/DwgStreamReaders/DwgObjectReader.cs',
+                 'identity[i, j] = this._mergedReaders.ReadBitDouble();',
+                 'identity[j, i] = this._mergedReaders.ReadBitDouble();')
+    replace_once(acad / 'src/ACadSharp/IO/DWG/DwgStreamWriters/DwgObjectWriter.Objects.cs',
+                 'this._writer.WriteBitDouble(matrix[i, j]);',
+                 'this._writer.WriteBitDouble(matrix[j, i]);')
+    # HATCH even-odd parity must retain crossing multiplicity between loops.
+    replace_once(acad / 'src/ACadSharp/Entities/Hatch.cs',
+                 "\tprivate bool isPointInsideByParity(XY point, double jitter = 1e-7)\n\t{\n\t\tLine2D ray = new Line2D(new XY(point.X, point.Y + jitter), XY.AxisX);\n\n\t\tList<double> hits = new();\n\t\tforeach (BoundaryPath boundary in this.Paths)\n\t\t{\n\t\t\tforeach (XY p in boundary.FindIntersections(ray))\n\t\t\t{\n\t\t\t\tif (p.X >= point.X - MathHelper.Epsilon)\n\t\t\t\t{\n\t\t\t\t\thits.Add(p.X);\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\n\t\tList<double> merged = mergeParameters(hits).ToList();\n\t\treturn merged.Count.IsOdd();\n\t}",
+                 "\tprivate bool isPointInsideByParity(XY point, double jitter = 1e-7)\n\t{\n\t\tLine2D ray = new Line2D(new XY(point.X, point.Y + jitter), XY.AxisX);\n\n\t\tbool inside = false;\n\t\tforeach (BoundaryPath boundary in this.Paths)\n\t\t{\n\t\t\t// Coincident crossings cancel between loops; only deduplicate within one loop.\n\t\t\tList<double> hits = new();\n\t\t\tforeach (XY p in boundary.FindIntersections(ray))\n\t\t\t{\n\t\t\t\tif (p.X >= point.X - MathHelper.Epsilon)\n\t\t\t\t{\n\t\t\t\t\thits.Add(p.X);\n\t\t\t\t}\n\t\t\t}\n\t\t\tinside ^= mergeParameters(hits).Count().IsOdd();\n\t\t}\n\n\t\treturn inside;\n\t}")
     config = work / 'NuGet.Config'
     config.write_text('<configuration><packageSources><clear /></packageSources></configuration>')
     env = dict(os.environ, DOTNET_CLI_TELEMETRY_OPTOUT='1', DOTNET_GENERATE_ASPNET_CERTIFICATE='false',

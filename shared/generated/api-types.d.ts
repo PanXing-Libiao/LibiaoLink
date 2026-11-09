@@ -2527,7 +2527,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 读取当前用户偏好（任务表列显隐（白名单 TaskTableColumnKey）/ 常用筛选 / 醒目模式 / 工作台展开态 / 背景档位 / 卡片水印） */
+        /** 读取当前用户偏好（任务表列显隐 / 常用筛选 / 页面导出方案 / 工作台展开态 / 背景档位 / 卡片水印等） */
         get: {
             parameters: {
                 query?: never;
@@ -2614,6 +2614,160 @@ export interface paths {
                 };
             };
         };
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/page-exports/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 页面级 Excel 导出目录（日报记录 / 问题追踪 / 干系人：可选 Sheet、列、字段权限与记录数） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 导出目录 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PageExportCatalogResponse"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/page-exports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 页面级 Excel 导出（1～3 个 Sheet；每个 Sheet 使用勾选列及列顺序；不支持扩展列） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["PageExportRequest"];
+                };
+            };
+            responses: {
+                /** @description xlsx 文件流 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 未认证（AUTH_REQUIRED） */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 同一时间已有大项目流式导出（RATE_LIMITED） */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/dicts": {
@@ -10472,7 +10626,7 @@ export interface components {
                 error: string;
             };
         };
-        /** @description DXF 主图与当前项目中明确选择的配套文件版本；缺省仅使用主图。STEP 和 DWG 不接受配套文件（DWG 也不接受主图相对路径）。资源选择变化创建独立产物身份。 */
+        /** @description DXF/DWG 主图与当前项目中明确选择的配套文件版本；缺省仅使用主图。STEP 不接受配套文件。DWG 使用配套原生 DWG 外参与字体，字体按源请求自动匹配。资源选择变化创建独立产物身份。 */
         CadJobCreateBody: {
             mainPath?: components["schemas"]["CadLogicalPath"];
             /** @default [] */
@@ -11544,6 +11698,11 @@ export interface components {
             total: number;
         };
         /**
+         * @description 问题追踪导出列 key（仅页面当前可见列）
+         * @enum {string}
+         */
+        IssuePageExportColumn: "raisedAt" | "title" | "categories" | "owner" | "solution" | "photos" | "state";
+        /**
          * @description 问题三态（A3-10）：open 未解决 / in_progress 处理中 / done 已完成；允许回退且留痕
          * @enum {string}
          */
@@ -11962,6 +12121,83 @@ export interface components {
             editorConfig: components["schemas"]["PreviewViewerEditorConfig"];
             /** @description 查看器 JWT（HS256；载荷 = documentType / document（含 permissions）/ editorConfig 逐字签发 + iat / exp；浏览器持有 —— 泄漏面仅只读会话，取原文件依赖服务端端点鉴权） */
             token: string;
+        };
+        /** @description 可导出列（含当前账号字段权限） */
+        PageExportCatalogColumn: {
+            key: string;
+            label: string;
+            allowed: boolean;
+        };
+        /** @description 页面导出目录（按当前账号权限下发列可用性） */
+        PageExportCatalogResponse: {
+            sheets: components["schemas"]["PageExportCatalogSheet"][];
+        };
+        /** @description 一个可导出页面的目录项（含中文实时预览） */
+        PageExportCatalogSheet: {
+            key: components["schemas"]["PageExportSheetKey"];
+            label: string;
+            /** @description 当前账号是否可读取该页面；false 时导出请求 403 */
+            allowed: boolean;
+            /** @description 当前项目该页面的记录数（用于预计行数提示） */
+            rowCount: number;
+            /** @description 默认勾选列（已按当前账号列权限过滤） */
+            defaultColumns: string[];
+            columns: components["schemas"]["PageExportCatalogColumn"][];
+            /** @description 按当前账号列权限生成的中文预览行（最多 20 条） */
+            previewRows: components["schemas"]["PageExportPreviewRow"][];
+        };
+        /** @description 页面导出方案（Sheet + 列选择；导出列顺序由系统目录固定） */
+        PageExportPreset: {
+            /** @description 方案 id（前端生成，建议 pe- 前缀） */
+            id: string;
+            /** @description 方案名称（≤ 20 字） */
+            name: string;
+            sheets: components["schemas"]["PageExportSheets"];
+        };
+        /** @description 导出预览单元格；长文本由服务端截断，附图返回受限缩略图引用 */
+        PageExportPreviewCell: string | number | null | components["schemas"]["PageExportPreviewPhotoCell"];
+        /** @description 预览附图引用；仅用于按权限懒取缩略图，不含对象键或图片二进制 */
+        PageExportPreviewPhoto: {
+            fileId: string;
+            name: string;
+        };
+        /** @description 附图预览单元格：total 为真实图片数，items 最多 4 个可懒加载缩略图引用 */
+        PageExportPreviewPhotoCell: {
+            /** @enum {string} */
+            kind: "photos";
+            total: number;
+            items: components["schemas"]["PageExportPreviewPhoto"][];
+        };
+        /** @description 一条中文页面导出预览行（键为列 key） */
+        PageExportPreviewRow: {
+            [key: string]: components["schemas"]["PageExportPreviewCell"];
+        };
+        /** @description 页面级中文 Excel 导出请求（POST；只导出勾选页面的勾选列，列序固定） */
+        PageExportRequest: {
+            /** @description 当前站点 origin；用于把附图单元格链接到项目文件视图，服务端只接受 http(s) origin */
+            origin?: string;
+            sheets: components["schemas"]["PageExportSheets"];
+        };
+        /**
+         * @description 页面导出 Sheet：reports = 日报记录 / issues = 问题追踪 / stakeholders = 干系人
+         * @enum {string}
+         */
+        PageExportSheetKey: "reports" | "issues" | "stakeholders";
+        /** @description 1～3 个页面的导出列选择（列序由系统目录固定；重复 Sheet / 重复列拒绝） */
+        PageExportSheets: components["schemas"]["PageExportSheetSelection"][];
+        /** @description 一个页面的导出列选择；columns 只选择字段，Excel 列序固定取系统目录，未知列 / 空列 / 重复列拒绝 */
+        PageExportSheetSelection: {
+            /** @enum {string} */
+            sheet: "reports";
+            columns: components["schemas"]["ReportPageExportColumn"][];
+        } | {
+            /** @enum {string} */
+            sheet: "issues";
+            columns: components["schemas"]["IssuePageExportColumn"][];
+        } | {
+            /** @enum {string} */
+            sheet: "stakeholders";
+            columns: components["schemas"]["StakeholderPageExportColumn"][];
         };
         /**
          * @description 功能权限位（模块.操作）；部门权限模型下作为全量能力基线
@@ -12408,6 +12644,11 @@ export interface components {
             /** @description 该问题附图（文件 id；提交时直接挂到生成的问题） */
             photoFileIds?: components["schemas"]["Uuid"][];
         };
+        /**
+         * @description 日报记录导出列 key（仅页面当前可见列）
+         * @enum {string}
+         */
+        ReportPageExportColumn: "date" | "author" | "stageNames" | "doneWork" | "plan" | "photos";
         /** @description 业务读面失效提示：仅资源类别，无记录标识或业务数据；客户端按原有鉴权接口静默重取，事件允许合并与丢失，重连及周期补取兜底 */
         ResourceInvalidationPayload: {
             resources: ("projects" | "tasks" | "reports" | "issues" | "files" | "stakeholders" | "templates" | "dicts" | "users" | "audit" | "permissions" | "preferences")[];
@@ -12564,6 +12805,11 @@ export interface components {
             limit: number;
             total: number;
         };
+        /**
+         * @description 干系人导出列 key（仅页面当前可见列）
+         * @enum {string}
+         */
+        StakeholderPageExportColumn: "name" | "phone" | "wechat" | "email" | "title" | "company" | "createdBy" | "role";
         /** @description 把干系人关联到项目（幂等）；需 stakeholder.manage 且干系人可见 */
         StakeholderProjectLinkBody: {
             projectId: components["schemas"]["Uuid"] & unknown;
@@ -13145,6 +13391,8 @@ export interface components {
             taskTableHiddenColumns: components["schemas"]["TaskTableColumnKey"][];
             /** @description 常用筛选组合（最多 20 组；整体替换语义） */
             homeSavedFilters: components["schemas"]["SavedHomeFilter"][];
+            /** @description 页面级 Excel 导出方案（最多 20 个；按账号跨项目复用；整体替换语义） */
+            pageExportPresets: components["schemas"]["PageExportPreset"][];
             /** @description 醒目模式（A4 · §6.13，Push 171）：true = 项目总览任务表每行铺该任务状态的底色；默认 false；读侧非布尔一律收敛为 false */
             focusMode: boolean;
             workspaceOpenProjects: components["schemas"]["WorkspaceOpenProjects"];
@@ -13162,16 +13410,18 @@ export interface components {
             hubDashView: components["schemas"]["HubDashView"];
             updatedAt: components["schemas"]["DateTime"] & (string | null);
         };
-        /** @description PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单，focusMode/cardWatermark为布尔，backgroundTier/locale/hubView/hubDashView需在枚举内，hubDashProject为1..64字符或null，否则400 */
+        /** @description PATCH在账号行锁事务内合并变更键（数组键整体替换）；homeSavedFilters/pageExportPresets/myPlanBoard必须带expectedRevisions对应基线，缺失400、冲突409；保留其它键，禁止写内部_revisions；列key需在白名单，focusMode/cardWatermark为布尔，backgroundTier/locale/hubView/hubDashView需在枚举内，hubDashProject为1..64字符或null，否则400 */
         UserPreferencesUpdateBody: {
             taskTableHiddenColumns?: components["schemas"]["TaskTableColumnKey"][];
             homeSavedFilters?: components["schemas"]["SavedHomeFilter"][];
+            pageExportPresets?: components["schemas"]["PageExportPreset"][];
             focusMode?: boolean;
             workspaceOpenProjects?: components["schemas"]["WorkspaceOpenProjects"];
             myPlanBoard?: components["schemas"]["MyPlanBoardUpdate"];
-            /** @description 更新homeSavedFilters/myPlanBoard时必须带对应基线版本，缺失400、冲突409；服务端行锁合并。内部_revisions禁止客户端写入。 */
+            /** @description 更新homeSavedFilters/pageExportPresets/myPlanBoard时必须带对应基线版本，缺失400、冲突409；服务端行锁合并。内部_revisions禁止客户端写入。 */
             expectedRevisions?: {
                 homeSavedFilters?: number;
+                pageExportPresets?: number;
                 myPlanBoard?: number;
             };
             backgroundTier?: components["schemas"]["BackgroundTier"] & unknown;

@@ -13,7 +13,7 @@ export const CadLogicalPathSchema = z.string().min(1).max(1024)
   .transform((value) => value.replaceAll("\\", "/"))
   .refine((value) => !/[\uD800-\uDFFF]/u.test(value) && !value.startsWith("/") && !/[\x00-\x1f\x7f:]/.test(value)
     && value.split("/").every((part) => part !== "" && part !== "." && part !== "..")
-    && /\.(dxf|dwg|shx|shp|ttf|otf|png|jpe?g|bmp|gif|tiff?|webp|pdf|dgn|dwf|dwfx|ctb|stb)$/i.test(value), "请选择资源集合内的相对文件路径")
+    && /\.(dxf|dwg|shx|shp|ttf|otf|ttc|png|jpe?g|bmp|gif|tiff?|webp|pdf|dgn|dwf|dwfx|ctb|stb)$/i.test(value), "请选择资源集合内的相对文件路径")
   .openapi("CadLogicalPath", { description: "资源包内相对路径；保留目录，不允许绝对路径、上级目录、URL 或任意类型。" });
 
 export const CadCompanionSchema = z.object({ fileId: UuidSchema, versionId: UuidSchema, path: CadLogicalPathSchema }).strict().openapi("CadCompanion");
@@ -26,7 +26,7 @@ export const CadJobCreateBodySchema = z.object({
   if (new Set(paths).size !== paths.length || value.mainPath && paths.includes(value.mainPath)) {
     ctx.addIssue({ code: "custom", message: "主图与配套文件路径不能重复" });
   }
-}).openapi("CadJobCreateBody", { description: "DXF 主图与当前项目中明确选择的配套文件版本；缺省仅使用主图。STEP 和 DWG 不接受配套文件（DWG 也不接受主图相对路径）。资源选择变化创建独立产物身份。" });
+}).openapi("CadJobCreateBody", { description: "DXF/DWG 主图与当前项目中明确选择的配套文件版本；缺省仅使用主图。STEP 不接受配套文件。DWG 使用配套原生 DWG 外参与字体，字体按源请求自动匹配。资源选择变化创建独立产物身份。" });
 export type CadJobCreateBody = z.infer<typeof CadJobCreateBodySchema>;
 
 export const CadPreviewViewerSchema = z.object({

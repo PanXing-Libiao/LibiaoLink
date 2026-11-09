@@ -1,29 +1,30 @@
-# project-export 模块（项目数据 Excel 导出）
+# project-export 模块（项目数据 Excel / ZIP 导出）
 
 | 字段 | 内容 |
 |---|---|
 | 类型 | 领域模块（只读聚合） |
-| 职责 | 把一个项目的任务、日报 / 问题、变更、干系人导出为单个 xlsx；模板对齐现用企微智能表格导出的四张表。小项目内存生成并嵌图，大项目流式写临时文件并把附图改为文件链接 |
+| 职责 | 把一个项目的任务、日报 / 问题、变更、干系人导出为单个 xlsx，或导出 Excel + 原附件的 ZIP；另支持按日报记录 / 问题追踪 / 干系人页面勾选 Sheet 与列导出。小项目内存生成并嵌图；大项目流式写文本与图片锚点，落盘后流式注入缩略图；ZIP 模式按目录流式打包原附件 |
 | 上游 | project / task / report-issue / stakeholder / file / identity（用户显示名）/ admin（审计） |
-| HTTP | `GET /api/v1/projects/{id}/export?origin={站点 origin}` |
-| 权限 | `project.export`（`RequirePermission` + `ProjectAccessGuard`；服务端仍按项目可见性裁决） |
-| 审计 | 成功生成后写 `audit_logs`：`action=download`、`objectType=project`、`objectId/projectId=项目 id`，metadata 记格式、Sheet、行数与图片数 |
+| HTTP | 项目全量：`GET /api/v1/projects/{id}/export?format=xlsx|zip&origin={站点 origin}`（缺省 xlsx）；页面级：`GET /api/v1/projects/{id}/page-exports/catalog`、`POST /api/v1/projects/{id}/page-exports` |
+| 权限 | `project.export`（`RequirePermission` + `ProjectAccessGuard`；服务端仍按项目可见性裁决）；页面级另按 `report.view` / `issue.view` / `stakeholder.view` 与干系人字段级权限逐列校验 |
+| 审计 | 成功生成后写 `audit_logs`：`action=download`、`objectType=project`、`objectId/projectId=项目 id`，metadata 记格式、Sheet、行数与图片数；页面级另记 `feature=page_export` 与每个 Sheet 的列 key |
 
 ## 响应与文件名
 
-- `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+- xlsx：`Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+- zip：`Content-Type: application/zip`
 - `Content-Disposition: attachment`，同时给 ASCII 回退名和 RFC 5987 的 `filename*=UTF-8''…`
-- 文件名 = `[项目编号] 项目名称.xlsx`（编号 / 名称中的Windows 非法文件名字符、控制字符与末尾空格 / 点会被替换或清除；长度受控）
+- xlsx 文件名 = `[项目编号] 项目名称.xlsx`；zip 文件名 = `[项目编号] 项目名称.zip`
 - `Cache-Control: no-store`、`X-Content-Type-Options: nosniff`
-- 不生成 ZIP、JSON、封面、目录或进度弹窗；只生成一份工作簿
+- `format` 缺省 / `xlsx` 保持原行为；`zip` 生成 Excel + 原附件包；其它值 400 `VALIDATION_FAILED`
 
 ## 生成模式与内存边界
 
 - `PROJECT_EXPORT_MODE=auto`（默认）：任务 + 日报 + 问题 + 变更 + 干系人总数达到 3,000 行时改用流式生成，否则保持原内存生成；`legacy` / `stream` 可强制指定，供排障与压测使用。
-- 大项目流式模式使用 ExcelJS `WorkbookWriter` 按 Sheet / 行写入系统临时文件，不再先构造完整工作簿 Buffer，也不读取图片二进制。生成完成后以只读文件流返回，仍提供准确的 `Content-Length`。
+- 大项目流式模式使用 ExcelJS `WorkbookWriter` 按 Sheet / 行写入系统临时文件，不再先构造完整工作簿 Buffer；附图按最多 200 行一批预取缩略图并记录 DrawingML 锚点。工作簿提交后再以流式 ZIP 重写补入图片、DrawingML 与关系文件，原文本工作簿和图片均不整本回内存。生成完成后以只读文件流返回，仍提供准确的 `Content-Length`。
 - 同一 api 进程同一时间只允许一个大项目流式导出；并发请求返回 429 `RATE_LIMITED`，避免多个大导出同时占用内存、CPU 与临时盘。
 - 临时目录权限 `0700`、工作簿权限 `0600`。成功下载结束、客户端断开、生成异常或 10 分钟生成超时都会清理；进程启动时还会清理超过 1 小时的遗留目录。
-- 流式模式不改变四张 Sheet、列序、字段、文件链接、分页上限与审计口径；唯一内容差异是附图从单元格内嵌图片变为“附图文件名 + 项目文件视图超链接”。
+- 流式模式不改变四张 Sheet、列序、字段、文件链接、分页上限与审计口径；附图与内存模式一致，仍为单元格内嵌缩略图，不改成图片链接。
 
 ## 四个 Sheet（列序固定）
 
@@ -34,6 +35,45 @@
 4. `干系人`（7 列）：干系人姓名/name / 电话或whats app或微信号 / 邮箱Email / 职务Position/责任板块 / 所属公司company / 填写者 / 提交时间
 
 前三张 Sheet 冻结首行首列（`B1`），干系人表不冻结。
+
+
+## Excel + 附件 ZIP（2026-11-07）
+
+`GET .../export?format=zip` 产出同名项目文件夹：
+
+```text
+[项目编号] 项目名称.zip
+└─ [项目编号] 项目名称/
+   ├─ [项目编号] 项目名称.xlsx
+   ├─ 附件/
+   │  ├─ 任务文件/
+   │  ├─ 日报及问题汇总/
+   │  │  ├─ 现场工作附图/
+   │  │  └─ 问题附图/
+   │  └─ 变更管理/
+   │     ├─ 变更前/
+   │     ├─ 变更后/
+   │     └─ 变更后文件/
+   └─ manifest.json
+```
+
+- ZIP 内 xlsx 保留四张业务 Sheet、固定中文表头与系统列序，另加第五张 `附件清单`：来源页面 / 来源行 / 来源记录 / 附件类型 / 文件名 / 相对路径 / 文件大小 / 状态。附件清单逐条列出被业务行引用的附件；同一个单元格有多份文件时，Excel 仍只能挂一个主链接（第一份有效附件），完整路径以清单为准。
+- xlsx 中文件 / 附图超链接改为**包内相对路径**（如 `./附件/日报及问题汇总/现场工作附图/…`），不再指向线上项目文件视图。附图每格最多嵌 4 张缩略图（长边受控、JPEG 压缩后更大的则保留原图），原图全部放附件目录；缺图 / 回收 / 无当前版本 / 读取失败都保留清单行并标 `missing` 或 `skipped`，不静默消失。
+- 只打包 Excel 业务行实际引用的附件，不自动打包项目文件库中的散文件。任务成果文件、日报现场图、问题图、变更前后摘要与变更后文件各自按上方目录归档；同目录同一文件只入包一次，同名不同文件追加 `_2`、`_3`，不覆盖。
+- 生成器为仓库内顺序写 ZIP 的流式实现（UTF-8 路径、deflate / store、Data Descriptor），不把整包放内存，也不新增第三方依赖。限制：附件文件数 ≤ 3,000、单文件 ≤ 200 MB、解压后附件总量 ≤ 2 GB，最终 ZIP < 4 GB；仍复用单类 20,000 条记录和 10 分钟生成超时。ZIP 生成占用与大项目流式导出相同的单进程并发槽，失败 / 超时 / 客户端断开都会清理临时目录。
+- `manifest.json` 字段：`schemaVersion` / `exportedAt` / `project{code,name}` / `workbook` / `attachments[]` / `summary`。附件行只含来源页面、来源行、来源记录、附件类型、文件名、相对路径、大小、SHA-256、状态（`included` / `missing` / `skipped`），不输出内部 fileId、对象键或服务器绝对路径。审计 `metadata.format=zip`，并记录引用数、实际入包文件数、字节数、缺失 / 跳过数与图片统计。
+
+## 页面级导出（日报记录 / 问题追踪 / 干系人）
+
+- 入口：三个页面共用 `PageExportButton`；打开时默认选中当前页面，可再勾选其余页面，最终生成一个多 Sheet xlsx。弹窗左侧为实时预览、右侧为页面与列筛选；不做导出语言选择，Sheet 名、表头与内容固定中文。用户可逐页勾选列，列序固定为目录顺序，不提供自定义排序。
+- 列范围（仅页面当前列，不支持扩展列）：
+  - `日报记录`：时间 / 填写者 / 关联阶段 / 当日完成工作 / 明日计划 / 现场工作附图
+  - `问题追踪`：日期 / 问题描述 / 问题归类 / 问题处理人 / 解决方案或建议 / 问题附图 / 问题是否处理
+  - `干系人`：干系人姓名 / 电话（含 WhatsApp）/ 微信 / 邮箱 / 职务 / 所属公司 / 填写者 / 干系人角色
+- `GET .../catalog` 返回固定三页的列目录、当前账号列可用性、记录数与最多 20 条中文预览行；无页面权限时 `allowed=false` 且行数为 0。预览只含当前账号有权列，长文本截断至 240 字；附图单元格返回真实总数与最多 4 个 `{ fileId, name }` 缩略图引用，前端按视口懒取预览签名并显示剩余数量。`POST` 请求体为 `{ origin?, sheets: [{ sheet, columns }] }`；`columns` 只表达字段勾选，服务端按系统目录重建 Excel 列序，任意请求顺序都不会改变导出列序。空列、未知列、重复列、重复 Sheet 由契约拒绝，携带无权列返回 403，不静默丢列。
+- 导出范围 = 该项目对应页面全部记录，不跟随页面搜索框；记录上限沿用单类 20,000 条。页数总量与 `PROJECT_EXPORT_MODE` 同样决定内存 / 流式；流式导出与项目全量导出共用同一并发槽。
+- 图片列沿用项目导出策略：内存与流式模式都内嵌缩略图，不改用图片链接；流式模式按最多 200 行一批预取，缺图仍写占位。
+- 导出方案由前端保存到当前账号的 `user_preferences.prefs.pageExportPresets`（最多 20 个、名称 ≤ 20 字），只存 Sheet 与列集合，不绑定项目；跨项目 / 跨设备复用，应用时自动忽略当前账号无权或已下线的列，旧方案中的自定义顺序归一化为系统顺序。
 
 ## 字段口径
 
@@ -51,9 +91,9 @@
 
 - 文件列只保留文件名 / 链接，不输出 fileId、对象键或二进制内容。
 - 一个单元格有多份文件时逐行写文件名；Excel 单元格只能挂一个超链接，主链接指向第一份文件。
-- 链接 = `{origin}/#/project/{projectId}?view=files`，打开项目详情的「项目文件」视图。`origin` 优先取前端显式回传的站点 origin（同源 GET 可能省略 `Origin`），其次 `Origin` / `Referer` / `X-Forwarded-Proto + Host`；只接受 http(s)，取不到时文件列只写文件名。
-- 小项目：日报现场图 / 问题图、变更前后图直接嵌入单元格（PNG / JPEG / GIF，按文件头识别，不信任扩展名）；每个单元格内按列宽可容纳数量排成网格，图片横纵均留 4px 间距并通过 DrawingML 原生 EMU 锚点定位，超出首行自动换行；行高按图片行数扩展。
-- 大项目：ExcelJS 4.4 的流式写入不支持图片，因此同一单元格改列附图文件名，整格链接到项目文件视图；变更前 / 后摘要文字保留，并在下一行附上对应文件名。链接口径与普通文件列一致。
+- 普通 xlsx 链接 = `{origin}/#/project/{projectId}?view=files`，打开项目详情的「项目文件」视图；ZIP 内链接 = 工作簿相对的 `./附件/...`。
+- 内存与流式模式的日报现场图 / 问题图、变更前后图都直接嵌入单元格（PNG / JPEG / GIF，按文件头识别，不信任扩展名）；每个单元格内按列宽可容纳数量排成网格，图片横纵均留 4px 间距并通过 DrawingML 原生 EMU 锚点定位，超出首行自动换行；行高按图片行数扩展。
+- ExcelJS 4.4 的流式写入不直接支持单元格图片：服务层先把文本与图片锚点流式落盘，再逐 ZIP 条目改写 xlsx，注入 `xl/media`、DrawingML、工作表 / 图片关系与 Content Types。同一图片跨 Sheet 只保留一份媒体文件，原有文件超链接关系保持不变。
 - 图片限制：最多 250 张、单张 8 MB、总计 80 MB、并发读取 4；缺失 / 读取失败 / 不支持的图片写「（附图缺失）文件名」，不阻断整份导出。
 
 ## 分页与边界
@@ -64,4 +104,5 @@
 
 ## 测试
 
-- `server/test/project-export.test.ts`：四表名称与列序、关键字段、文件超链接、嵌入图、多图网格不重叠、缺失图占位、草稿日期、文件名 / origin / Content-Disposition；流式工作簿落盘、附图改文件链接、auto / legacy / stream 模式判定。
+- `server/test/project-export.test.ts`：四表名称与列序、关键字段、文件超链接、嵌入图、多图网格不重叠、缺失图占位、草稿日期、文件名 / origin / Content-Disposition；流式工作簿落盘、缩略图注入、多 Sheet 媒体复用、原有超链接保留、auto / legacy / stream 模式判定；ZIP 中文路径 / 压缩完整性、附件规划去重与重名、附件清单与每格 4 张缩略图、服务层 ZIP 包结构与 manifest。
+- `server/test/page-export.test.ts`：页面列目录与契约同源、中文预览 / 字段权限 / 截断 / 最多 20 条、附图缩略图引用与总数、日报 / 干系人不含扩展字段、权限过滤、请求校验、固定系统列序、分页上限、内存 / 流式嵌图与并发槽。

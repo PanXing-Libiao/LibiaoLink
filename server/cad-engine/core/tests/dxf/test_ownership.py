@@ -103,6 +103,27 @@ class InstanceOwnership(unittest.TestCase):
             self.assertAlmostEqual(actual, expected, places=8)
         else: self.assertEqual(actual, expected)
 
+    def test_byblock_color_without_resolved_parent_uses_aci7(self):
+        for parent_color, expected in ((None, [0, 0, 0, 1]), (0, [0, 0, 0, 1]),
+                                       (256, [0, 1, 0, 1]), (1, [1, 0, 0, 1])):
+            with self.subTest(parent_color=parent_color):
+                doc = ezdxf.new('R2013')
+                doc.styles.get('Standard').dxf.font = 'primary.shp'
+                doc.layers.new('Green', dxfattribs={'color': 3})
+                content = doc.modelspace() if parent_color is None else doc.blocks.new('Inner')
+                content.add_line((0, 0), (10, 0), dxfattribs={'layer': 'Green', 'color': 0})
+                content.add_text('A', dxfattribs={'layer': 'Green', 'color': 0})
+                if parent_color is not None:
+                    outer = doc.blocks.new('Outer')
+                    outer.add_blockref('Inner', (0, 0), dxfattribs={'layer': 'Green', 'color': 0})
+                    doc.modelspace().add_blockref('Outer', (0, 0),
+                                                  dxfattribs={'layer': 'Green', 'color': parent_color})
+                result = convert(doc, {'primary.shp': PRIMARY_SHP})
+                for kind in ('entity', 'annotation'):
+                    self.assertEqual({tuple(row['style']['color']) for row in draws(result, kind)},
+                                     {tuple(expected)})
+                self.assertBrowser(result)
+
     def test_array_and_attached_text_follow_source_placements(self):
         for attributes in ({'rotation': 90, 'xscale': 2, 'yscale': 3},
                            {'rotation': 37, 'xscale': -2, 'yscale': .5, 'extrusion': (0, .6, .8)},

@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { AppError } from "../../common/errors/app-error.js";
-import { BACKGROUND_TIER_IDS, HUB_DASH_PROJECT_MAX_LENGTH, HUB_DASH_VIEW_IDS, HUB_VIEW_IDS, LOCALE_IDS, PLAN_BOARD_BG_IDS, PLAN_BOARD_CATEGORY_LIMIT, PLAN_BOARD_CATEGORY_NAME_MAX, PLAN_BOARD_COLOR_IDS, PLAN_BOARD_CONTENT_MAX, PLAN_BOARD_FONT_IDS, PLAN_BOARD_NOTE_LIMIT, PLAN_BOARD_TITLE_MAX, SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, type BackgroundTier, type HubDashView, type HubView, type Locale, type MyPlanBoard, type MyPlanNote, type PlanBoardBg, type SavedHomeFilter, type TaskTableColumnKey, type UserPreferences, type UserPreferencesUpdateBody, type WorkspaceOpenProjects } from "@libiaolink/contracts";
+import { BACKGROUND_TIER_IDS, HUB_DASH_PROJECT_MAX_LENGTH, HUB_DASH_VIEW_IDS, HUB_VIEW_IDS, LOCALE_IDS, PAGE_EXPORT_PRESET_LIMIT, PLAN_BOARD_BG_IDS, PLAN_BOARD_CATEGORY_LIMIT, PLAN_BOARD_CATEGORY_NAME_MAX, PLAN_BOARD_COLOR_IDS, PLAN_BOARD_CONTENT_MAX, PLAN_BOARD_FONT_IDS, PLAN_BOARD_NOTE_LIMIT, PLAN_BOARD_TITLE_MAX, PageExportPresetSchema, SAVED_HOME_FILTER_LIMIT, TASK_TABLE_COLUMN_KEYS, type BackgroundTier, type HubDashView, type HubView, type Locale, type MyPlanBoard, type MyPlanNote, type PageExportPreset, type PlanBoardBg, type SavedHomeFilter, type TaskTableColumnKey, type UserPreferences, type UserPreferencesUpdateBody, type WorkspaceOpenProjects } from "@libiaolink/contracts";
 import { UserPreferenceRepository } from "./user-preference.repository.js";
 import type { UserPreferenceRow } from "./user-preference.repository.js";
 
@@ -68,6 +68,19 @@ function savedFiltersOf(value: unknown): SavedHomeFilter[] {
     if (result.length >= SAVED_HOME_FILTER_LIMIT) {
       break;
     }
+  }
+  return result;
+}
+
+/** 导出方案（页面级 Excel）：逐项按契约规范化；旧版本 / 手改坏项整条丢弃，不阻塞偏好读取。 */
+function pageExportPresetsOf(value: unknown): PageExportPreset[] {
+  if (!Array.isArray(value)) return [];
+  const result: PageExportPreset[] = [];
+  for (const item of value) {
+    const parsed = PageExportPresetSchema.safeParse(item);
+    if (!parsed.success || result.some((existing) => existing.id === parsed.data.id)) continue;
+    result.push(parsed.data);
+    if (result.length >= PAGE_EXPORT_PRESET_LIMIT) break;
   }
   return result;
 }
@@ -213,7 +226,7 @@ function dayOf(value: unknown): string | null {
 }
 
 /**
- * 用户级 UI 偏好用例（A4 / A24）：声明键 = taskTableHiddenColumns / homeSavedFilters / focusMode（§6.13 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）/ backgroundTier（背景档位 · Push 291）/ cardWatermark（卡片水印 · Push 292）/ locale（界面语言 · Push 296）/ hubView（仪表盘页常驻视图 · Push 332）/ hubDashProject（仪表盘常驻项目 · Push 336）/ hubDashView（仪表盘页内图表视图 · Push 345）；
+ * 用户级 UI 偏好用例（A4 / A24）：声明键 = taskTableHiddenColumns / homeSavedFilters / pageExportPresets / focusMode（§6.13 醒目模式 · Push 171）/ workspaceOpenProjects（A31 工作台展开态 · Push 233）/ myPlanBoard（「我的计划」便签墙 · Push 268）/ backgroundTier（背景档位 · Push 291）/ cardWatermark（卡片水印 · Push 292）/ locale（界面语言 · Push 296）/ hubView（仪表盘页常驻视图 · Push 332）/ hubDashProject（仪表盘常驻项目 · Push 336）/ hubDashView（仪表盘页内图表视图 · Push 345）；
  * GET 返回契约全量形状（无行 = 默认值 + updatedAt null）；
  * PATCH 合并语义 —— 只传变更键、数组键整体替换、未声明键原样保存（前向兼容，不必为新偏好键改契约）。
  * 偏好不写审计；事务内合并，多窗口整板/组合写入必须比较对应键的版本。
@@ -231,7 +244,7 @@ export class UserPreferenceService {
     const row = await this.preferences.mutate(userId, (current) => {
       const { expectedRevisions, ...patch } = body;
       const revisions = revisionRecord(current["_revisions"]);
-      for (const key of ["homeSavedFilters", "myPlanBoard"] as const) {
+      for (const key of ["homeSavedFilters", "pageExportPresets", "myPlanBoard"] as const) {
         if (patch[key] === undefined) continue;
         if (expectedRevisions?.[key] === undefined) throw new AppError("VALIDATION_FAILED", "保存需要偏好基线版本，请重新打开页面");
         if (expectedRevisions[key] !== (revisions[key] ?? 0)) throw new AppError("VERSION_CONFLICT", "另一个窗口已修改这些内容，未保存的改动仍保留，请核对后再保存");
@@ -255,6 +268,7 @@ export class UserPreferenceService {
     return {
       taskTableHiddenColumns: columnKeysOf(prefs["taskTableHiddenColumns"]),
       homeSavedFilters: savedFiltersOf(prefs["homeSavedFilters"]),
+      pageExportPresets: pageExportPresetsOf(prefs["pageExportPresets"]),
       focusMode: booleanOf(prefs["focusMode"]),
       workspaceOpenProjects: openProjectsOf(prefs["workspaceOpenProjects"]),
       myPlanBoard: planBoardOf(prefs["myPlanBoard"]),

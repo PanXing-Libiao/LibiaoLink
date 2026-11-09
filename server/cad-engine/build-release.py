@@ -12,7 +12,8 @@ ENTRY_POINTS = ('convert.py', 'states.py', 'provenance.py', 'parser-provenance.j
 # The pinned ACadSharp reader source and pin define the DWG binary even though the
 # compiled DLL lives outside the repository; a reader change must rebuild DWG
 # artifacts, so its sources join the DWG format identity.
-READER_FILES = ('Program.cs', 'CommunityText.cs', 'Reader.csproj', 'dependency.json')
+READER_FILES = ('Program.cs', 'CommunityText.cs', 'HatchEmptyPattern.cs', 'LegacyMTextColumns.cs',
+                'Reader.csproj', 'dependency.json')
 RUNTIME_FILES = ('bridge.py', 'result_cache.py', 'service.py', 'sandbox.py', 'edge.py',
                  'release.py', 'requirements-step.txt', 'requirements-step-mesher.txt',
                  'requirements-dxf.txt', 'requirements-dxf-build.txt', 'requirements-dwg.txt', 'requirements-acis.txt')
@@ -116,6 +117,9 @@ def describe(base, browser):
                       for format_name, names in FORMAT_RUNTIME.items()}
     # ACIS reconstruction also consumes the pinned ezdxf record decoder and OCP runtime.
     format_files['DWG'].update({name: value for name, value in engine_files.items() if name.startswith('vendor/ezdxf/')})
+    format_files['DWG'].update({name: engine_files[name] for name in ('unified/dxf_stroke.py', 'unified/dxf_fill.py',
+        'unified/dxf_shx.py', 'unified/dxf_shxfont.py', 'unified/dxf_bigfont.py',
+        'unified/dxf_mtext.py', 'unified/dxf_xref.py', 'unified/dxf_region.py', 'unified/dxf_resources.py')})
     format_files['DWG'].update({'dwg-reader/' + name: value for name, value in reader_files.items()})
 
     format_versions = {}
