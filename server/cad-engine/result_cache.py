@@ -35,7 +35,8 @@ class ResultCache:
             raise ValueError('Invalid name encoding')
         is_dxf=Path(name).suffix.lower()=='.dxf'
         resource=request.get('resourceFingerprint')
-        if is_dxf and (codepage!='UTF8' or not isinstance(resource,str) or not re.fullmatch(r'[a-f0-9]{64}',resource)):
+        packaged=is_dxf or Path(name).suffix.lower()=='.dwg' and resource is not None
+        if packaged and (is_dxf and codepage!='UTF8' or not isinstance(resource,str) or not re.fullmatch(r'[a-f0-9]{64}',resource)):
             raise ValueError('Invalid DXF resource identity')
         # File/version/content, parser release, transport and name encoding determine
         # reusable bytes. Actor/view remain authorization bindings, never cache keys.
@@ -43,7 +44,7 @@ class ResultCache:
         identity.update(version='libiaolink-result-cache/1', rules=self.jobs.rule_version,
                         policy=self.jobs.policy['version'], binary=self.jobs.binary,
                         compact=self.jobs.compact, nameCodepage=codepage)
-        if is_dxf:identity['resourceFingerprint']=resource
+        if packaged:identity['resourceFingerprint']=resource
         return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
 
     def prune(self, force=False):

@@ -10468,7 +10468,7 @@ export interface components {
                 error: string;
             };
         };
-        /** @description DXF 主图与当前项目中明确选择的配套文件版本；缺省仅使用主图。STEP 和 DWG 不接受配套文件（DWG 也不接受主图相对路径）。资源选择变化创建独立产物身份。 */
+        /** @description DXF/DWG 主图与当前项目中明确选择的配套文件版本；缺省仅使用主图。STEP 不接受配套文件。DWG 使用配套原生 DWG 外参与字体，字体按源请求自动匹配。资源选择变化创建独立产物身份。 */
         CadJobCreateBody: {
             mainPath?: components["schemas"]["CadLogicalPath"];
             /** @default [] */

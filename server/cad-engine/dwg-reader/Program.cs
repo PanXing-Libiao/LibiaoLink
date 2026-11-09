@@ -545,7 +545,7 @@ static class Program
         var builder=typeof(DwgReader).GetField("_builder",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(reader)!;
         var builderType=typeof(DwgReader).Assembly.GetType("ACadSharp.IO.CadDocumentBuilder")!;
         var templates=(IDictionary)builderType.GetField("templatesMap",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(builder)!;
-        foreach(var entity in doc.BlockRecords.SelectMany(b=>b.Entities).Where(e=>e is UnknownEntity or ProxyEntity)) {
+        foreach(var entity in doc.BlockRecords.SelectMany(b=>b.Entities).Where(e=>e is UnknownEntity or ProxyEntity || e.ProxyGeometries.Count>0)) {
             var template=templates[entity.Handle]!;
             if(template.GetType().GetProperty("ProxyGraphics")!.GetValue(template) is byte[] raw)
                 proxySources[entity.Handle]=raw;
@@ -682,6 +682,8 @@ static class Program
                 MapCachedProxy(e,space,id);return;
             case MultiLeader multi when multi.HasProxyGeometries:
                 MapProxy(multi,space,id);return;
+            case Entity cached when cached.ProxyGeometries.Count>0:
+                MapCachedProxy(cached,space,id);return;
             default:
                 EntityRow(e,space,id,R(("type","unsupported"),("sourceType",e.ObjectName),("reason","Native object retained; no accepted 2D presentation mapping")),null,original:original);
                 if(e is ModelerGeometry region && region.AcisData is not null) {
@@ -844,19 +846,53 @@ static class Program
         return new Arc{Center=toOcs*arc.Center,Normal=arc.Normal,Radius=arc.Radius,
             StartAngle=angle,EndAngle=angle+arc.SweepAngle};
     }
+    static LineType CachedProxyLineType(Entity source,ProxySubentLineType type)
+    {
+        if(type.IsByLayer||type.LineTypeIndex==32767)return source.Document.LineTypes["ByLayer"];
+        if(type.IsByBlock||type.LineTypeIndex==32766)return source.Document.LineTypes["ByBlock"];
+        var rows=source.Document.LineTypes.Where(l=>!l.Name.Equals("ByLayer",StringComparison.OrdinalIgnoreCase)
+            &&!l.Name.Equals("ByBlock",StringComparison.OrdinalIgnoreCase)).ToArray();
+        if(type.LineTypeIndex>=rows.Length)throw new InvalidDataException("Proxy linetype index unavailable");
+        return rows[type.LineTypeIndex];
+    }
+    static Transform CachedProxyTransform(ProxyPushModelTransform push)
+    {
+        // The pinned proxy reader stores the row-major payload in CSMath's
+        // column-indexed fields. Transpose once before applying the saved matrix.
+        var m=push.TransformationMatrix.Transpose();double s=m.M00;
+        if(!double.IsFinite(s)||s<=0||m.M11!=s||m.M22!=s||m.M33!=1
+            ||m.M01!=0||m.M02!=0||m.M03!=0||m.M10!=0||m.M12!=0||m.M13!=0||m.M20!=0||m.M21!=0||m.M23!=0
+            ||!double.IsFinite(m.M30)||!double.IsFinite(m.M31)||!double.IsFinite(m.M32))
+            throw new InvalidDataException("Proxy model transform requires positive uniform scale and translation");
+        return new Transform(m);
+    }
+    static TextEntity CachedProxyText(ProxyUnicodeText2 p)
+    {
+        if(p.ObliqueAngle!=0||p.TrackingPercentage!=1||p.IsBackwards||p.IsUpsideDown||p.IsVertical
+            ||p.IsUnderlined||p.IsOverlined||p.IsRaw||p.FontDescriptor is {IsBold:true} or {IsItalic:true})
+            throw new InvalidDataException("Proxy text controls are unsupported");
+        var ocs=Matrix4.GetArbitraryAxis(p.Normal).Transpose();var direction=ocs*p.TextDirection;
+        var font=p.FontDescriptor;
+        return new TextEntity{InsertPoint=ocs*p.StartPoint,Normal=p.Normal,Height=p.Height,Value=p.Text,
+            Rotation=Math.Atan2(direction.Y,direction.X),WidthFactor=p.WidthFactor,
+            Style=new TextStyle("proxy-font"){Filename=string.IsNullOrEmpty(font?.FontFilename)?font?.Typeface??"":font.FontFilename,
+                BigFontFilename=p.BigFontFilename??""}};
+    }
     static List<(int Index,Entity Entity)> CachedProxyEntities(Entity source)
     {
         var result=new List<(int,Entity)>();
         var layers=source.Document.Layers.ToArray();
-        // Proxy indices exclude the two special linetype entries.
-        var lineTypes=source.Document.LineTypes.Where(l=>!l.Name.Equals("ByLayer",StringComparison.OrdinalIgnoreCase)
-            &&!l.Name.Equals("ByBlock",StringComparison.OrdinalIgnoreCase)).ToArray();
         var layer=source.Layer;var lineType=source.LineType;var color=source.Color;
         var weight=source.LineWeight;double scale=source.LineTypeScale;bool fill=false;int index=0;
+        var transforms=new Stack<Transform>();
         foreach(var proxy in source.ProxyGeometries) {
             int ordinal=index++;
             switch(proxy) {
             case ProxyExtents or ProxySubentMarker:continue;
+            case ProxyPushModelTransform p:transforms.Push(CachedProxyTransform(p));continue;
+            case ProxyPopModelTransform:
+                if(!transforms.TryPop(out _))throw new InvalidDataException("Proxy model transform stack underflow");
+                continue;
             case ProxySubentLayer p:
                 if(p.LayerIndex<0||p.LayerIndex>=layers.Length)throw new InvalidDataException("Proxy layer index unavailable");
                 layer=layers[p.LayerIndex];continue;
@@ -866,18 +902,14 @@ static class Program
                 color=p.Color;continue;
             case ProxySubentLineWeight p:weight=p.LineWeight;continue;
             case ProxySubentLineTypeScale p:scale=p.LineTypeScale;continue;
-            case ProxySubentLineType p:
-                if(p.IsByLayer||p.LineTypeIndex==32767)lineType=source.Document.LineTypes["ByLayer"];
-                else if(p.IsByBlock||p.LineTypeIndex==32766)lineType=source.Document.LineTypes["ByBlock"];
-                else if(p.LineTypeIndex<lineTypes.Length)lineType=lineTypes[p.LineTypeIndex];
-                else throw new InvalidDataException("Proxy linetype index unavailable");
-                continue;
+            case ProxySubentLineType p:lineType=CachedProxyLineType(source,p);continue;
             case ProxySubentFillon p:fill=p.IsOn;continue;
             case ProxySubentThickness p when p.Thickness==0:continue;
             case ProxySubentPlotStyleName p when p.PlotStyleIndex==0 && p.Type.ToString() is "ByLayer" or "ByBlock":continue;
             }
             Entity presentation=proxy switch {
                 ProxyCircularArc p=>CachedProxyArc(p),
+                ProxyUnicodeText2 p=>CachedProxyText(p),
                 ProxyCircle p=>new Circle{Center=Matrix4.GetArbitraryAxis(p.Normal).Transpose()*p.Center,Normal=p.Normal,Radius=p.Radius},
                 ProxyPolyline p=>new Polyline3D(p.Points),
                 ProxyPolygon p when !fill=>new Polyline3D(Closed(p.Points)),
@@ -887,8 +919,11 @@ static class Program
             presentation.Layer=layer;presentation.LineType=lineType;presentation.Color=color;
             presentation.LineWeight=weight;presentation.LineTypeScale=scale;
             presentation.IsInvisible=source.IsInvisible;presentation.Transparency=source.Transparency;
+            // Push commands carry the active model matrix; popping restores the previous one.
+            if(transforms.TryPeek(out var transform))presentation.ApplyTransform(transform);
             result.Add((ordinal,presentation));fill=false;
         }
+        if(transforms.Count!=0)throw new InvalidDataException("Proxy model transform stack is unbalanced");
         return result;
     }
     static void MapCachedProxy(Entity entity,string space,string id)
@@ -924,9 +959,16 @@ static class Program
         int i=0; var failed=new List<string>();
         var document=entity.Document;
         var currentLayer=entity.Layer;
-        var currentLineType=entity.LineType;
+        var currentLineType=entity.LineType;var currentColor=entity.Color;
+        var currentWeight=entity.LineWeight;double currentScale=entity.LineTypeScale;bool fill=false;
+        var transforms=new Stack<Transform>();
         foreach(var proxy in entity.ProxyGeometries) {
             string child=id+"-proxy-"+i++;
+            if(proxy is ProxyPushModelTransform push) { transforms.Push(CachedProxyTransform(push));continue; }
+            if(proxy is ProxyPopModelTransform) {
+                if(!transforms.TryPop(out _))failed.Add("PopModelTransform-underflow");
+                continue;
+            }
             if(proxy is ProxySubentLayer subLayer) {
                 if(document is not null && subLayer.LayerIndex>=0 && subLayer.LayerIndex<document.Layers.Count())
                     currentLayer=document.Layers.ElementAt(subLayer.LayerIndex);
@@ -934,13 +976,8 @@ static class Program
                 continue;
             }
             if(proxy is ProxySubentLineType subLineType) {
-                // 0x7FFF is the 16-bit proxy default seen in this drawing; it does
-                // not identify a real line type and leaves the entity style intact.
-                if(!subLineType.IsByLayer && !subLineType.IsByBlock && subLineType.LineTypeIndex!=0x7FFF) {
-                    if(document is not null && (long)subLineType.LineTypeIndex<document.LineTypes.Count())
-                        currentLineType=document.LineTypes.ElementAt((int)subLineType.LineTypeIndex);
-                    else failed.Add("SubentLineType");
-                }
+                try { currentLineType=CachedProxyLineType(entity,subLineType); }
+                catch(InvalidDataException) { failed.Add("SubentLineType"); }
                 continue;
             }
             if(proxy is ProxySubentThickness subThickness) {
@@ -954,11 +991,17 @@ static class Program
                     failed.Add("SubentPlotStyleName");
                 continue;
             }
+            if(proxy is ProxySubentColor color) { currentColor=new Color((short)color.ColorIndex);continue; }
+            if(proxy is ProxySubentTrueColor trueColor) { currentColor=trueColor.Color;continue; }
+            if(proxy is ProxySubentLineWeight weight) { currentWeight=weight.LineWeight;continue; }
+            if(proxy is ProxySubentLineTypeScale lineScale) { currentScale=lineScale.LineTypeScale;continue; }
+            if(proxy is ProxySubentFillon fillOn) { fill=fillOn.IsOn;continue; }
             Entity? presentation=proxy switch {
                 ProxyPolyline p=>new Polyline3D(p.Points),
+                ProxyPolygon p when !fill=>new Polyline3D(Closed(p.Points)),
                 ProxyPolygon p when p.Points.Count==3=>new Solid{FirstCorner=p.Points[0],SecondCorner=p.Points[1],ThirdCorner=p.Points[2],FourthCorner=p.Points[2]},
                 ProxyPolygon p=>new Polyline3D(Closed(p.Points)),
-                ProxyCircle p=>new Circle{Center=p.Center,Radius=p.Radius,Normal=p.Normal},
+                ProxyCircle p=>new Circle{Center=Matrix4.GetArbitraryAxis(p.Normal).Transpose()*p.Center,Radius=p.Radius,Normal=p.Normal},
                 ProxyText p=>new TextEntity{InsertPoint=p.StartPoint,Height=p.Height,Value=p.Text,Rotation=Math.Atan2(p.TextDirection.Y,p.TextDirection.X),Normal=p.Normal,WidthFactor=p.WidthFactor},
                 ProxyUnicodeText p=>new TextEntity{InsertPoint=p.StartPoint,Height=p.Height,Value=p.Text,Rotation=Math.Atan2(p.TextDirection.Y,p.TextDirection.X),Normal=p.Normal,WidthFactor=p.WidthFactor},
                 ProxyUnicodeText2 p=>new TextEntity{InsertPoint=p.StartPoint,Height=p.Height,Value=p.Text,Rotation=Math.Atan2(p.TextDirection.Y,p.TextDirection.X),Normal=p.Normal,WidthFactor=p.WidthFactor,
@@ -966,10 +1009,14 @@ static class Program
                 _=>null
             };
             if(presentation is not null) {
-                presentation.Layer=currentLayer;presentation.Color=entity.Color;presentation.LineType=currentLineType;
-                Map(presentation,space,child,entity);
+                presentation.Layer=currentLayer;presentation.Color=currentColor;presentation.LineType=currentLineType;
+                presentation.LineWeight=currentWeight;presentation.LineTypeScale=currentScale;
+                presentation.IsInvisible=entity.IsInvisible;presentation.Transparency=entity.Transparency;
+                if(transforms.TryPeek(out var transform))presentation.ApplyTransform(transform);
+                Map(presentation,space,child,entity);fill=false;
             } else if(proxy is not (ProxyExtents or ProxySubentColor or ProxySubentTrueColor or ProxySubentLineWeight or ProxySubentFillon or ProxySubentMarker or ProxySubentLineTypeScale)) failed.Add(proxy.GraphicsType.ToString());
         }
+        if(transforms.Count!=0)failed.Add("PushModelTransform-unbalanced");
         Emit("multiLeaderSemantics",id,new{sourceRefs=Refs(entity),nativeProxyPrimitiveCount=i,unmappedProxyTypes=failed});
         if(failed.Count>0) Loss(entity,"proxy-primitive-unmapped",string.Join(",",failed.Distinct()));
     }
