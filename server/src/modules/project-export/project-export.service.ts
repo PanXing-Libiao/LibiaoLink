@@ -47,6 +47,8 @@ import {
   ProjectExportWorkbookWriter,
   type ExportFileLink,
   type ExportImage,
+  type ExportPhotoLoader,
+  type ExportPhotoRef,
   type ProjectExportChangeRow,
   type ProjectExportPayload,
   type ProjectExportReportRow,
@@ -75,6 +77,7 @@ import {
   type PageExportWorkbookRow,
   type PageExportWorkbookSheet,
 } from "./page-export.workbook.js";
+import { injectWorkbookImages } from "./project-export.xlsx-images.js";
 
 export { splitChangeReason } from "./project-export.mapping.js";
 
@@ -86,9 +89,22 @@ const IMAGE_CONCURRENCY = 4;
 const MAX_IMAGE_COUNT = 250;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_TOTAL_IMAGE_BYTES = 80 * 1024 * 1024;
+const PHOTO_PREFETCH_ROWS = 200;
+const WORKBOOK_THUMBNAIL_SIZE = { maxWidth: 176, maxHeight: 128 };
+const ARCHIVE_THUMBNAIL_SIZE = { maxWidth: 360, maxHeight: 270 };
 const TEMP_EXPORT_PREFIX = "libiaolink-project-export-";
 const STALE_TEMP_EXPORT_MS = 60 * 60 * 1000;
 const PAGE_EXPORT_PREVIEW_TEXT_MAX = 240;
+
+interface ImageThumbnailSize {
+  maxWidth: number;
+  maxHeight: number;
+}
+
+interface ImageLoadBudget {
+  count: number;
+  totalBytes: number;
+}
 
 export type ProjectExportModeSetting = "auto" | "legacy" | "stream";
 export type ProjectExportExecutionMode = "legacy" | "stream";
@@ -288,6 +304,33 @@ function addReportPhotoIds(target: Set<string>, row: ProjectExportReportRow): vo
 function addChangePhotoIds(target: Set<string>, row: ProjectExportChangeRow): void {
   addPhotoIds(target, row.beforePhotos);
   addPhotoIds(target, row.afterPhotos);
+}
+
+/** 流式写入前一页一取图：保持行级顺序与有界内存，同时避免逐行查文件引用。 */
+async function* prefetchPhotoRows<T>(
+  rows: AsyncIterable<T>,
+  photosOf: (row: T) => readonly ExportPhotoRef[],
+  loadPhotos: ExportPhotoLoader,
+): AsyncGenerator<T> {
+  let buffered: T[] = [];
+  let refs: ExportPhotoRef[] = [];
+  const takeBatch = async (): Promise<T[]> => {
+    if (buffered.length === 0) return [];
+    const batch = buffered;
+    const batchRefs = refs;
+    buffered = [];
+    refs = [];
+    await loadPhotos(batchRefs);
+    return batch;
+  };
+  for await (const row of rows) {
+    buffered.push(row);
+    refs.push(...photosOf(row));
+    if (buffered.length >= PHOTO_PREFETCH_ROWS) {
+      for (const bufferedRow of await takeBatch()) yield bufferedRow;
+    }
+  }
+  for (const bufferedRow of await takeBatch()) yield bufferedRow;
 }
 
 @Injectable()
@@ -606,24 +649,32 @@ export class ProjectExportService implements OnModuleInit {
       const userItems = await collectPaged((page, limit) => this.users.listUsers({ page, limit }), "用户目录", signal);
       const users = this.userLabels(userItems);
       const counts: PageExportStreamingCounts = { ...zeroPageCounts(), imageIds: new Set<string>() };
-      writer = new PageExportWorkbookWriter(filePath, project.id, normalizeHttpOrigin(requestOrigin));
+      const photoLoader = this.createStreamingPhotoLoader(project.id, signal);
+      writer = new PageExportWorkbookWriter(filePath, photoLoader.load);
       for (const selection of selections) {
         const sheet = this.pageExportWorkbookSheet(selection, []);
-        await writer.writeSheet(sheet, this.streamPageExportRows(project.id, actorId, selection, users, counts, signal));
+        const wantsPhotos = this.pageExportHasPhotoColumn(selection);
+        await writer.writeSheet(
+          sheet,
+          prefetchPhotoRows(
+            this.streamPageExportRows(project.id, actorId, selection, users, counts, signal),
+            (row) => wantsPhotos ? Object.values(row.photos).flat() : [],
+            photoLoader.load,
+          ),
+        );
       }
       throwIfAborted(signal);
       const workbook = await writer.commit();
+      await injectWorkbookImages(workbook.filePath, workbook.imagePlacements, workbook.images);
       await chmod(filePath, 0o600);
       const info = await stat(filePath);
       const fileName = pageExportFileName(project, selections.map((selection) => ({ name: pageExportSheetDefinition(selection.sheet).label })));
-      const fileRefs = counts.imageIds.size === 0
-        ? new Map<string, ProjectExportFileRef>()
-        : await this.files.listExportFileRefs(project.id, [...counts.imageIds]);
-      const missingImageCount = [...counts.imageIds].filter((id) => !fileRefs.has(id)).length;
+      const imageCount = workbook.images.size;
+      const missingImageCount = [...counts.imageIds].filter((id) => !workbook.images.has(id)).length;
       await this.auditPageExport(project, actorId, workbook.sheetNames, selections, rowCounts, {
         mode: "stream",
-        images: 0,
-        imageLinks: counts.imageIds.size,
+        images: imageCount,
+        imageLinks: 0,
         missingImages: missingImageCount,
       });
       return {
@@ -634,8 +685,8 @@ export class ProjectExportService implements OnModuleInit {
         cleanup: this.tempDirectoryCleanup(directory),
         sheetNames: workbook.sheetNames,
         rowCounts,
-        imageCount: 0,
-        imageLinkCount: counts.imageIds.size,
+        imageCount,
+        imageLinkCount: 0,
         missingImageCount,
         mode: "stream",
       };
@@ -916,7 +967,7 @@ export class ProjectExportService implements OnModuleInit {
       const links = projectArchiveLinks(plan);
       this.applyProjectArchiveLinks(data, links);
       const imageIds = this.projectArchiveImageIds(data.reportRows, data.changeRows);
-      const images = await this.loadImages(imageIds, data.fileRefs, true);
+      const images = await this.loadImages(imageIds, data.fileRefs, ARCHIVE_THUMBNAIL_SIZE);
       throwIfAborted(signal);
 
       const attachmentRows = plan.references.map((reference) => ({
@@ -1245,17 +1296,28 @@ export class ProjectExportService implements OnModuleInit {
       const relatedByChange = new Map<string, string[]>();
       const counts: StreamingCounts = { tasks: 0, reports: 0, changes: 0, stakeholders: 0, imageIds: new Set() };
 
-      writer = new ProjectExportWorkbookWriter(filePath, project, normalizeHttpOrigin(requestOrigin));
+      const photoLoader = this.createStreamingPhotoLoader(project.id, signal);
+      writer = new ProjectExportWorkbookWriter(filePath, project, normalizeHttpOrigin(requestOrigin), photoLoader.load);
       await writer.writeTasks(this.streamTaskRows(project.id, managerLabels, users, taskFilesById, relatedByChange, counts, signal));
-      await writer.writeReports(this.streamReportRows(project.id, reportIdentity.total, users, groupedIssues, counts, signal));
-      await writer.writeChanges(this.streamChangeRows(project.id, fileItemsById, users, relatedByChange, counts, signal));
+      await writer.writeReports(prefetchPhotoRows(
+        this.streamReportRows(project.id, reportIdentity.total, users, groupedIssues, counts, signal),
+        (row) => [...row.onsitePhotos, ...row.issuePhotos],
+        photoLoader.load,
+      ));
+      await writer.writeChanges(prefetchPhotoRows(
+        this.streamChangeRows(project.id, fileItemsById, users, relatedByChange, counts, signal),
+        (row) => [...row.beforePhotos, ...row.afterPhotos],
+        photoLoader.load,
+      ));
       await writer.writeStakeholders(this.streamStakeholderRows(project.id, actorId, users, counts, signal));
       throwIfAborted(signal);
       const workbook = await writer.commit();
+      await injectWorkbookImages(workbook.filePath, workbook.imagePlacements, workbook.images);
       await chmod(filePath, 0o600);
       const info = await stat(filePath);
       const fileName = projectExportFileName(project);
-      const missingImageCount = [...counts.imageIds].filter((id) => !fileItemsById.has(id)).length;
+      const imageCount = workbook.images.size;
+      const missingImageCount = [...counts.imageIds].filter((id) => !workbook.images.has(id)).length;
       await this.audit.record(this.database.db, {
         actorId,
         action: "download",
@@ -1271,8 +1333,8 @@ export class ProjectExportService implements OnModuleInit {
           reports: counts.reports,
           changes: counts.changes,
           stakeholders: counts.stakeholders,
-          images: 0,
-          imageLinks: counts.imageIds.size,
+          images: imageCount,
+          imageLinks: 0,
           missingImages: missingImageCount,
         },
       });
@@ -1287,8 +1349,8 @@ export class ProjectExportService implements OnModuleInit {
         reportCount: counts.reports,
         changeCount: counts.changes,
         stakeholderCount: counts.stakeholders,
-        imageCount: 0,
-        imageLinkCount: counts.imageIds.size,
+        imageCount,
+        imageLinkCount: 0,
         missingImageCount,
         mode: "stream",
       };
@@ -1490,10 +1552,34 @@ export class ProjectExportService implements OnModuleInit {
     }
   }
 
+  private createStreamingPhotoLoader(
+    projectId: string,
+    signal: AbortSignal | undefined,
+  ): { load: ExportPhotoLoader; images: Map<string, ExportImage> } {
+    const images = new Map<string, ExportImage>();
+    const requested = new Set<string>();
+    const budget: ImageLoadBudget = { count: 0, totalBytes: 0 };
+    const load: ExportPhotoLoader = async (refs) => {
+      throwIfAborted(signal);
+      const ids = [...new Set(refs.map((ref) => ref.fileId))].filter((id) => !requested.has(id));
+      if (ids.length === 0) return images;
+      for (const id of ids) requested.add(id);
+      if (budget.count >= MAX_IMAGE_COUNT || budget.totalBytes >= MAX_TOTAL_IMAGE_BYTES) return images;
+      const fileRefs = await this.files.listExportFileRefs(projectId, ids);
+      throwIfAborted(signal);
+      const loaded = await this.loadImages(new Set(ids), fileRefs, WORKBOOK_THUMBNAIL_SIZE, budget);
+      for (const [id, image] of loaded) images.set(id, image);
+      throwIfAborted(signal);
+      return images;
+    };
+    return { load, images };
+  }
+
   private async loadImages(
     ids: Set<string>,
-    files: Map<string, ProjectExportFileRef>,
-    thumbnail = false,
+    files: ReadonlyMap<string, ProjectExportFileRef>,
+    thumbnail: ImageThumbnailSize | false = false,
+    budget?: ImageLoadBudget,
   ): Promise<Map<string, ExportImage>> {
     const candidates = [...ids]
       .map((id) => ({ id, ref: files.get(id) }))
@@ -1502,24 +1588,25 @@ export class ProjectExportService implements OnModuleInit {
         return ref !== undefined && ref.objectKey !== null && supportedImage(ref) && (ref.sizeBytes === null || ref.sizeBytes <= MAX_IMAGE_BYTES);
       });
     const result = new Map<string, ExportImage>();
+    const activeBudget = budget ?? { count: 0, totalBytes: 0 };
     let cursor = 0;
-    let totalBytes = 0;
     const worker = async (): Promise<void> => {
       while (cursor < candidates.length) {
         const index = cursor;
         cursor += 1;
-        if (result.size >= MAX_IMAGE_COUNT || totalBytes >= MAX_TOTAL_IMAGE_BYTES) continue;
+        if (activeBudget.count >= MAX_IMAGE_COUNT || activeBudget.totalBytes >= MAX_TOTAL_IMAGE_BYTES) continue;
         const candidate = candidates[index];
         if (candidate === undefined || candidate.ref.objectKey === null) continue;
         try {
           const object = await this.storage.getObject(candidate.ref.objectKey);
           if (object === null) continue;
           const bytes = object.bytes;
-          if (result.size >= MAX_IMAGE_COUNT || bytes.length > MAX_IMAGE_BYTES || totalBytes + bytes.length > MAX_TOTAL_IMAGE_BYTES) continue;
+          if (activeBudget.count >= MAX_IMAGE_COUNT || bytes.length > MAX_IMAGE_BYTES || activeBudget.totalBytes + bytes.length > MAX_TOTAL_IMAGE_BYTES) continue;
           const extension = sniffImage(bytes);
           if (extension === null) continue;
-          totalBytes += bytes.length;
-          result.set(candidate.id, thumbnail ? await this.thumbnailForArchive(bytes, extension) : { bytes, extension });
+          activeBudget.count += 1;
+          activeBudget.totalBytes += bytes.length;
+          result.set(candidate.id, thumbnail ? await this.thumbnailImage(bytes, extension, thumbnail) : { bytes, extension });
         } catch (error) {
           this.logger.warn("项目导出读取图片失败：" + candidate.ref.name + " / " + String(error));
         }
@@ -1529,12 +1616,16 @@ export class ProjectExportService implements OnModuleInit {
     return result;
   }
 
-  private async thumbnailForArchive(bytes: Uint8Array, extension: ExportImage["extension"]): Promise<ExportImage> {
+  private async thumbnailImage(
+    bytes: Uint8Array,
+    extension: ExportImage["extension"],
+    size: ImageThumbnailSize,
+  ): Promise<ExportImage> {
     if (bytes.byteLength < 48 * 1024) return { bytes, extension };
     try {
       const canvasApi = await import("@napi-rs/canvas");
       const image = await canvasApi.loadImage(Buffer.from(bytes));
-      const scale = Math.min(1, 360 / Math.max(1, image.width), 270 / Math.max(1, image.height));
+      const scale = Math.min(1, size.maxWidth / Math.max(1, image.width), size.maxHeight / Math.max(1, image.height));
       const width = Math.max(1, Math.round(image.width * scale));
       const height = Math.max(1, Math.round(image.height * scale));
       const canvas = canvasApi.createCanvas(width, height);
