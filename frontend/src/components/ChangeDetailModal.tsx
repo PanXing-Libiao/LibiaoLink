@@ -16,6 +16,7 @@ import {
 } from "../fileApi";
 import { lockBodyScroll } from "../scrollLock";
 import { stageNameOf } from "../taskApi";
+import { materialReissueApprovalText, materialReissueDepartmentText, materialReissueFreightText, materialReissueReasonText } from "../materialReissue";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
 import { mobileFilePreviewMustDownload } from "../mobilePreviewPolicy";
 import { FileTypeIcon } from "./FileTypeIcon";
@@ -122,6 +123,7 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
   useEffect(() => lockBodyScroll(), []);
 
   const split = detail === null ? { content: "", cause: "" } : splitChangeReason(detail.reason);
+  const material = detail === null ? null : detail.materialReissue;
   const applicantId = detail === null ? "" : detail.appliedBy;
   const applicantName = memberNameOf(members, applicantId) ?? (applicantId === "" ? fieldText(locale, "成员") : applicantId);
   const applicant = members.find((member) => member.id === applicantId);
@@ -217,6 +219,36 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
               <>
                 <p data-change-modal-date="true" className="px-6 pt-5 text-[26px] font-semibold tracking-tight text-zinc-900">{slashDate(detail.appliedAt)}</p>
                 <dl className="flex flex-col gap-4 px-6 pb-6 pt-4">
+                  {material === null ? null : (
+                    <>
+                      <DetailRow kind="grid" label={fieldText(locale, "变更类型")} testKey="material-type">
+                        <span className="inline-block rounded bg-emerald-100 px-1.5 py-0.5 text-[12px] font-medium text-emerald-700">{fieldText(locale, "物料变更补发")}</span>
+                      </DetailRow>
+                      <DetailRow kind="doc" label={fieldText(locale, "补发类别")} testKey="material-category">{materialReissueReasonText(locale, material)}</DetailRow>
+                      <DetailRow kind="person" label={fieldText(locale, "申请部门")} testKey="material-department">{materialReissueDepartmentText(locale, material.applicationDepartment, material.applicationDepartmentOther)}</DetailRow>
+                      <DetailRow kind="calendar" label={fieldText(locale, "要求出库时间")} testKey="material-out-date">{material.requiredOutDate}</DetailRow>
+                      <DetailRow kind="person" label={fieldText(locale, "责任归属部门")} testKey="material-responsible">{materialReissueDepartmentText(locale, material.responsibleDepartment, material.responsibleDepartmentOther)}</DetailRow>
+                      <DetailRow kind="check" label={fieldText(locale, "是否已审批")} testKey="material-approved">{materialReissueApprovalText(locale, material.approved)}</DetailRow>
+                      <DetailRow kind="person" label={fieldText(locale, "收货人")} testKey="material-recipient">
+                        <span className="block">{material.recipient} · {material.phone}</span>
+                        <span className="mt-0.5 block whitespace-pre-wrap text-zinc-500">{material.address}</span>
+                      </DetailRow>
+                      <DetailRow kind="file" label={fieldText(locale, "补发物料清单")} testKey="material-items">
+                        <div className="flex flex-col gap-1">
+                          {material.materials.map((line, index) => (
+                            <div key={String(index)} data-change-material-line={String(index + 1)} className="rounded-md bg-zinc-50 px-2 py-1">
+                              <span className="font-medium text-zinc-700">{String(index + 1)}. {line.materialName}</span>
+                              <span className="ml-1 text-zinc-500">{line.specification === "" ? "" : line.specification + " · "}{String(line.quantity)} {line.unit}</span>
+                              {line.materialCode === "" ? null : <span className="mt-0.5 block text-[11px] text-zinc-400">{fieldText(locale, "物料编码")}：{line.materialCode}</span>}
+                              {line.remark === "" ? null : <span className="mt-0.5 block text-[11px] text-zinc-400">{line.remark}</span>}
+                            </div>
+                          ))}
+                        </div>
+                      </DetailRow>
+                      <DetailRow kind="doc" label={fieldText(locale, "补发原因简述")} testKey="material-description">{material.description}</DetailRow>
+                      <DetailRow kind="check" label={fieldText(locale, "运费承担")} testKey="material-freight">{materialReissueFreightText(locale, material.freightBearer)}</DetailRow>
+                    </>
+                  )}
                   <DetailRow kind="calendar" label={fieldText(locale, "变更时间")} testKey="time">{slashDate(detail.appliedAt)}</DetailRow>
                   <DetailRow kind="check" label={fieldText(locale, "变更阶段")} testKey="stage">
                     <span className="inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[12px] text-zinc-600">{stageLabelOf(locale, detail.stageKey)}</span>
@@ -226,13 +258,19 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
                       <span data-change-modal-doc-type="true" className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[12px] font-medium text-amber-700">{fileTypeText}</span>
                     )}
                   </DetailRow>
-                  <DetailRow kind="doc" label={fieldText(locale, "变更内容描述")} testKey="content">{textOrDash(split.content)}</DetailRow>
-                  <DetailRow kind="image" label={fieldText(locale, "变更前")} testKey="before">
+                  {material === null ? (
+                    <DetailRow kind="doc" label={fieldText(locale, "变更内容描述")} testKey="content">{textOrDash(split.content)}</DetailRow>
+                  ) : null}
+                  {material === null ? (
+                    <DetailRow kind="image" label={fieldText(locale, "变更前")} testKey="before">
                     <span className="block">{textOrDash(detail.beforeSummary)}</span>
                     {detail.beforeSummaryFileIds.length === 0 ? null : (
                       <PhotoStrip strip="change-modal-before" size="md" previewZClass="z-[80]" onPreviewOpenChange={(open) => { thumbPreviewOpenRef.current = open; }} items={detail.beforeSummaryFileIds.map((fileId, index) => ({ fileId, name: t("drawer.change.photo.name", { n: String(index + 1) }), url: null }))} />
                     )}
                   </DetailRow>
+                  ) : null}
+                  {material === null ? (
+                  <>
                   <DetailRow kind="image" label={fieldText(locale, "变更后")} testKey="after">
                     <span className="block">{textOrDash(detail.afterSummary)}</span>
                     {detail.afterSummaryFileIds.length === 0 ? null : (
@@ -240,6 +278,8 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
                     )}
                   </DetailRow>
                   <DetailRow kind="doc" label={fieldText(locale, "变更原因")} testKey="cause">{textOrDash(split.cause)}</DetailRow>
+                  </>
+                  ) : null}
                   <DetailRow kind="person" label={fieldText(locale, "变更申请人")} testKey="applicant">
                     <span className="inline-flex items-center gap-1.5 rounded-md bg-zinc-100 px-1.5 py-0.5 text-[12px] text-zinc-700" title={applicantId}>
                       <span className="flex h-4 w-4 items-center justify-center rounded-full bg-zinc-400 text-[9px] font-medium text-white">{applicantName.slice(0, 1)}</span>

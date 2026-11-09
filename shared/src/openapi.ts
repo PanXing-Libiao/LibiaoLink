@@ -201,6 +201,8 @@ import {
 } from "./modules/group-access.ts";
 import {
   ChangeRequestDetailSchema,
+  CreateMaterialReissueBodySchema,
+  MaterialReissueResultSchema,
   ChangeRequestListQuerySchema,
   ChangeRequestListResponseSchema,
   FileDetailSchema,
@@ -1402,6 +1404,21 @@ export function buildOpenApiDocument() {
     responses: {
       200: { description: "变更详情", ...json(ChangeRequestDetailSchema) },
       404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/change-requests/material-reissue",
+    tags: ["changes"],
+    summary: "物料变更补发（线上补发单；自动生成 DOCX 项目文件并回写任务变更记录）",
+    request: { params: idParams, body: json(CreateMaterialReissueBodySchema) },
+    responses: {
+      201: { description: "已提交：变更记录 + 补发申请 DOCX", ...json(MaterialReissueResultSchema) },
+      400: commonErrors[400],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: commonErrors[409],
     },
   });
 

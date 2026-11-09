@@ -1,5 +1,7 @@
 # database/ · 数据库基线（g3 · S5）
 
+> 物料变更补发（2026-11-09 · 待测试机部署）：`0084_material_reissue.sql` 为 `change_requests` 增加 `change_type`（默认 `file_change`）与 `material_reissue jsonb`，并用 CHECK 保证普通变更无补发载荷、补发变更必有载荷。存量行自动按普通变更回填，不改既有列、不复制文件版本。回滚语句见迁移头注；部署新版 API / worker 前先执行迁移。
+
 
 > 全站自定义成果类型（2026-11-06 · **高风险 DDL，请 wmj 复核** · CONTRIBUTING §15，本地未部署）：`0082_custom_task_deliverable_types.sql` 移除 `tasks.deliverable_types` 只允许内置十类的 CHECK，新增禁止空字符串元素的 CHECK；`0083_global_deliverable_types.sql` 只登记 `dict_types.deliverableType`，条目由项目经理新增并全站共享。不改列、不回填、内置十类数据不变。应用层按 1–50 字 trim / 去重并拒绝英文逗号 / 换行，自定义类型参与完成门禁。回滚前需清理自定义值，回滚语句见迁移头注。
 

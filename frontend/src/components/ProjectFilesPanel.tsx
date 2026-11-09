@@ -50,7 +50,7 @@ import { Toast } from "./Toast";
  */
 const PAGE_LIMIT = 50;
 const CURRENT_FILE_STATUSES = ["draft", "final", "changed", "archived"] as const;
-const FILE_STATUS_FILTERS = ["draft", "final", "before", "after", "archived"] as const;
+const FILE_STATUS_FILTERS = ["draft", "final", "before", "after", "material", "archived"] as const;
 const CHANGED_STAGE = "__changed";
 const UNKNOWN_STAGE = "__unknown";
 
@@ -58,6 +58,7 @@ const STATUS_LABELS: Record<string, string> = {
   draft: "未定档",
   final: "已定档",
   changed: "变更后",
+  material: "补发申请",
   archived: "已归档",
 };
 
@@ -65,12 +66,14 @@ const STATUS_CLASS: Record<string, string> = {
   draft: "bg-zinc-100 text-zinc-600",
   final: "bg-amber-100 text-amber-800",
   changed: "bg-blue-50 text-blue-700",
+  material: "bg-emerald-100 text-emerald-700",
   archived: "bg-zinc-100 text-zinc-500",
 };
 
-const CHANGE_SIDE_CLASS: Record<"before" | "after", string> = {
+const CHANGE_SIDE_CLASS: Record<"before" | "after" | "material", string> = {
   before: "bg-zinc-100 text-zinc-600",
   after: "bg-blue-50 text-blue-700",
+  material: "bg-emerald-100 text-emerald-700",
 };
 
 type ProjectFileRow = {
@@ -85,7 +88,7 @@ type ProjectFileRow = {
   versionId: string | null;
   versionSeq: number | null;
   uploadedAt: string;
-  changeSide: "before" | "after" | null;
+  changeSide: "before" | "after" | "material" | null;
 };
 
 type LoadState =
@@ -200,6 +203,21 @@ async function loadProjectFileRows(projectId: string): Promise<ProjectFileRow[]>
     const afterName = detail?.file?.name ?? file.name;
     const beforeName = detail?.filePreviousName ?? afterName;
     const afterUploadedAt = detail?.version?.uploadedAt ?? afterVersion?.uploadedAt ?? file.updatedAt;
+    if (latestChange.changeType === "material_reissue") {
+      rowsByFileId.set(file.id, [
+        {
+          key: file.id + ":material",
+          file,
+          changed: true,
+          name: afterName,
+          versionId: afterVersionId,
+          versionSeq: afterSeq,
+          uploadedAt: afterUploadedAt,
+          changeSide: "material",
+        },
+      ]);
+      return;
+    }
     rowsByFileId.set(file.id, [
       {
         key: file.id + ":before",
@@ -332,6 +350,7 @@ export function ProjectFilesPanel({ projectId, tasks }: { projectId: string; tas
   const statusLabelOf = (status: string): string => {
     if (status === "before") return t("pd.files.status.before");
     if (status === "after") return t("pd.files.status.after");
+    if (status === "material") return t("pd.files.status.material");
     return statusText(locale, STATUS_LABELS[status] ?? status);
   };
   const statusOptions = [
@@ -608,7 +627,7 @@ export function ProjectFilesPanel({ projectId, tasks }: { projectId: string; tas
                   const statusKey = statusValueOf(row);
                   const statusLabel = statusLabelOf(statusKey);
                   const statusClass =
-                    statusKey === "before" || statusKey === "after"
+                    statusKey === "before" || statusKey === "after" || statusKey === "material"
                       ? CHANGE_SIDE_CLASS[statusKey]
                       : STATUS_CLASS[statusKey] ?? "bg-zinc-100 text-zinc-600";
                   return (

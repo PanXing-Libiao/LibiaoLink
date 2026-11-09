@@ -423,6 +423,69 @@ export async function applyFileChange(projectId: string, target: TaskFileRef, fi
   invalidatePreview(target.id);
 }
 
+/** 物料变更补发（2026-11-09）：补发类别 / 部门 / 运费取值与契约 shared/src/modules/files.ts 对齐。 */
+export type MaterialReissueReason =
+  | "missing_list"
+  | "transport_damage"
+  | "warehouse_shortage"
+  | "customer_misoperation"
+  | "customer_change"
+  | "warranty_damage"
+  | "out_of_warranty_damage"
+  | "research_upgrade"
+  | "other";
+export type MaterialReissueDepartment = "project" | "after_sales" | "warehouse" | "research" | "customer" | "supplier" | "other";
+export type MaterialReissueFreight = "customer" | "libiao" | "with_other_goods" | "carried_by_staff";
+export type MaterialReissueApproval = "yes" | "no" | "not_applicable";
+
+export type MaterialReissueLine = {
+  materialCode: string;
+  materialName: string;
+  specification: string;
+  quantity: number;
+  unit: string;
+  remark: string;
+};
+
+/** 补发表单提交体（服务端自动补项目 / 任务 / 申请人 / 时间快照）。 */
+export type MaterialReissueInput = {
+  reason: MaterialReissueReason;
+  reasonOther?: string;
+  applicationDepartment: MaterialReissueDepartment;
+  applicationDepartmentOther?: string;
+  accepted: boolean;
+  inWarranty: boolean;
+  freeReissue: boolean;
+  approved: MaterialReissueApproval;
+  responsibleDepartment: MaterialReissueDepartment;
+  responsibleDepartmentOther?: string;
+  requiredOutDate: string;
+  oldPartReturn: boolean;
+  freightBearer: MaterialReissueFreight;
+  recipient: string;
+  phone: string;
+  address: string;
+  description: string;
+  materials: MaterialReissueLine[];
+};
+
+/** 提交后固化的表单快照（变更记录 / 变更详情读面）。 */
+export type MaterialReissueResult = {
+  changeRequest: ApiChangeRequest;
+  file: { id: string; name: string; status: string };
+  version: { id: string; seq: number };
+};
+
+export type MaterialReissueSnapshot = MaterialReissueInput & {
+  taskId: string;
+  taskTitle: string;
+  projectCode: string;
+  projectName: string;
+  customerName: string | null;
+  applicantName: string;
+};
+
+
 /** 变更记录详情（契约 ChangeRequestDetail · M4-04 读面 A4-15）：变更本体 + 变更后文件 + 变更后版本（本文件只需用到的字段）；
  *  Push 319：导入表导入变更暂无变更后文件（源文件在微盘）→ fileId / versionId / versionSeq / file / version 可为 null。 */
 export type ChangeRequestDetail = {
@@ -430,6 +493,8 @@ export type ChangeRequestDetail = {
   projectId: string;
   nodeId: string | null;
   stageKey: string | null;
+  changeType: "file_change" | "material_reissue";
+  materialReissue: MaterialReissueSnapshot | null;
   reason: string;
   beforeSummary: string | null;
   afterSummary: string | null;
@@ -461,6 +526,8 @@ export type ApiChangeRequest = {
   readonly projectId: string;
   readonly nodeId: string | null;
   readonly stageKey: string | null;
+  readonly changeType: "file_change" | "material_reissue";
+  readonly materialReissue: MaterialReissueSnapshot | null;
   readonly reason: string;
   readonly beforeSummary: string | null;
   readonly afterSummary: string | null;
@@ -475,6 +542,18 @@ export type ApiChangeRequest = {
   readonly versionId: string | null;
   readonly versionSeq: number | null;
 };
+
+/** 物料变更补发提交：生成变更记录 + 《补发/补货申请表》DOCX 项目文件（同一事务）。 */
+export function createMaterialReissue(
+  projectId: string,
+  taskId: string,
+  input: MaterialReissueInput,
+): Promise<MaterialReissueResult> {
+  return apiSend("/api/v1/projects/" + encodeURIComponent(projectId) + "/change-requests/material-reissue", "POST", {
+    ...input,
+    taskId,
+  });
+}
 
 /** 项目变更记录列表（M4-04 读面 · Push 353 仪表盘「词频图」取数）：GET /projects/{id}/change-requests 翻页取满。 */
 export async function fetchProjectChanges(projectId: string): Promise<ApiChangeRequest[]> {

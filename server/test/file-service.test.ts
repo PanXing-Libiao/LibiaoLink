@@ -396,6 +396,8 @@ class FakeFileRepository {
       projectId: input.projectId,
       nodeId: input.nodeId,
       stageKey: input.stageKey,
+      changeType: input.changeType,
+      materialReissue: input.materialReissue,
       reason: input.reason,
       beforeSummary: input.beforeSummary,
       afterSummary: input.afterSummary,

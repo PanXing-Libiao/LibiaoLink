@@ -1,5 +1,7 @@
 # shared/ 契约包（LibiaoLink API）
 
+> **2026-11-09 物料变更补发契约**：`files.ts` 新增 `ChangeType`、补发类别 / 部门 / 运费 / 审批选项、`MaterialReissueBodySchema`、`CreateMaterialReissueBodySchema`、`MaterialReissueSnapshotSchema`、`MaterialReissueResultSchema`；`ChangeRequest` 增加 `changeType` 与 `materialReissue`。`openapi.ts` 注册 `POST /api/v1/projects/{id}/change-requests/material-reissue`（201 返回变更记录 + DOCX 文件 + v1 版本）。生成物已重出，`npm run check` 零漂移。
+
 > **2026-11-06 全站自定义成果类型（跨线：以 px 请求实现，请 wmj 复核）**：`DeliverableTypeSchema`（1–50 字名称，不含英文逗号 / 换行）供 Task 的 `deliverableTypes` 与 File 的 `docType` / 文件库筛选使用；`DOC_TYPES` 保留为内置十类候选。全站自定义名称写入 `deliverableType` 字典，由当前项目项目经理经 `POST /api/v1/projects/{id}/deliverable-types` 新增，所有项目 / 任务共享。`DocTypeSchema` 与流程蓝图 / 节点 `required_doc` 仍固定内置十类，不放宽。任务创建 / 编辑最多 20 项；生成物随本批重出。数据库迁移 `0082_custom_task_deliverable_types.sql` 移除只允许内置十类的 CHECK，`0083_global_deliverable_types.sql` 登记字典类型（高风险 DDL，未部署）。
 
 /api/v1 的契约唯一真相：**Zod schema → OpenAPI 3.1 → TypeScript 类型**，三段式自动生成。
