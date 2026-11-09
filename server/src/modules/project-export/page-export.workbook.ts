@@ -1,6 +1,13 @@
 import ExcelJS from "exceljs";
 import type { PageExportSheetKey } from "@libiaolink/contracts";
-import type { ExportImage, ExportPhotoRef, ProjectExportWorkbookFileResult, ProjectExportWorkbookResult } from "./project-export.workbook.js";
+import type {
+  ExportImage,
+  ExportPhotoLoader,
+  ExportPhotoRef,
+  ProjectExportWorkbookFileResult,
+  ProjectExportWorkbookResult,
+  WorkbookImagePlacement,
+} from "./project-export.workbook.js";
 import { sanitizeFileName } from "./project-export.workbook.js";
 import type { PageExportCellValue } from "./page-export.mapping.js";
 
@@ -169,19 +176,6 @@ function sheetNameOf(value: string): string {
   return (result === "" ? "导出数据" : result).slice(0, 31);
 }
 
-function projectFileLink(origin: string | null, projectId: string): string | null {
-  if (origin === null) return null;
-  return origin + "/#/project/" + encodeURIComponent(projectId) + "?view=files";
-}
-
-function photoLinksValue(refs: readonly ExportPhotoRef[], origin: string | null, projectId: string): ExcelJS.CellValue {
-  const names = uniquePhotos(refs).map((ref) => ref.name);
-  if (names.length === 0) return null;
-  const text = names.join("\n");
-  const link = projectFileLink(origin, projectId);
-  return link === null ? text : { text, hyperlink: link, tooltip: names[0] ?? text };
-}
-
 function rowValues(sheet: PageExportWorkbookSheet, row: PageExportWorkbookRow): PageExportCellValue[] {
   return sheet.columns.map((column) => (column.photo ? null : row.values[column.key] ?? null));
 }
@@ -197,7 +191,7 @@ function addPageSheet(workbook: ExcelJS.Workbook, payload: PageExportWorkbookPay
       const column = sheetDefinition.columns[index];
       if (column === undefined || !column.photo) continue;
       const refs = uniquePhotos(definition.photos[column.key] ?? []);
-      row.getCell(index + 1).value = appendMissing("", refs, payload.images);
+      row.getCell(index + 1).value = appendMissing("", refs, payload.images) || null;
       photoColumns.push({ column: index + 1, refs, capacity: imageCapacity(column.width) });
     }
     styleBodyRow(sheet, row.number, sheetDefinition.columns.length);
@@ -236,12 +230,13 @@ export function pageExportFileName(project: { code: string; name: string }, shee
 export class PageExportWorkbookWriter {
   private readonly workbook: ExcelJS.stream.xlsx.WorkbookWriter;
   private readonly sheetNames: string[] = [];
+  private readonly images = new Map<string, ExportImage>();
+  private readonly imagePlacements: WorkbookImagePlacement[] = [];
   private committed = false;
 
   constructor(
     private readonly filePath: string,
-    private readonly projectId: string,
-    private readonly origin: string | null,
+    private readonly photoLoader: ExportPhotoLoader,
   ) {
     this.workbook = new ExcelJS.stream.xlsx.WorkbookWriter({ filename: filePath, useStyles: true, useSharedStrings: true });
   }
@@ -254,14 +249,34 @@ export class PageExportWorkbookWriter {
     styleHeader(sheet, sheetDefinition.columns).commit();
     for await (const definition of rows) {
       const row = sheet.addRow(rowValues(sheetDefinition, definition));
+      const photoColumns: Array<{
+        column: number;
+        refs: readonly ExportPhotoRef[];
+        images: ReadonlyMap<string, ExportImage>;
+        capacity: number;
+      }> = [];
       for (let index = 0; index < sheetDefinition.columns.length; index += 1) {
         const column = sheetDefinition.columns[index];
         if (column === undefined || !column.photo) continue;
-        row.getCell(index + 1).value = photoLinksValue(definition.photos[column.key] ?? [], this.origin, this.projectId);
+        const refs = uniquePhotos(definition.photos[column.key] ?? []);
+        const images = await this.photoLoader(refs);
+        row.getCell(index + 1).value = appendMissing("", refs, images) || null;
+        photoColumns.push({ column: index + 1, refs, images, capacity: imageCapacity(column.width) });
       }
       styleBodyRow(sheet, row.number, sheetDefinition.columns.length);
       const texts = sheetDefinition.columns.map((_column, index) => plainText(row.getCell(index + 1)));
-      row.height = estimatedTextHeight(sheet, texts, sheetDefinition.columns.map((_column, index) => index + 1)) / PX_PER_POINT;
+      const basePx = estimatedTextHeight(sheet, texts, sheetDefinition.columns.map((_column, index) => index + 1));
+      let imageLines = 0;
+      let availableImageCount = 0;
+      for (const photo of photoColumns) {
+        const available = uniquePhotos(photo.refs).filter((ref) => photo.images.has(ref.fileId)).length;
+        availableImageCount += available;
+        imageLines = Math.max(imageLines, Math.ceil(available / photo.capacity));
+      }
+      row.height = (basePx + imageLines * (IMAGE_HEIGHT_PX + IMAGE_GAP_PX) + (availableImageCount > 0 ? 4 : 0)) / PX_PER_POINT;
+      for (const photo of photoColumns) {
+        this.placeThumbnails(sheet, photo.refs, photo.images, photo.column, row.number, photo.capacity, basePx);
+      }
       row.commit();
     }
     sheet.commit();
@@ -271,12 +286,46 @@ export class PageExportWorkbookWriter {
     if (this.committed) throw new Error("页面导出工作簿已经提交");
     this.committed = true;
     await this.workbook.commit();
-    return { filePath: this.filePath, sheetNames: this.sheetNames };
+    return {
+      filePath: this.filePath,
+      sheetNames: this.sheetNames,
+      images: this.images,
+      imagePlacements: this.imagePlacements,
+    };
   }
 
   async abort(): Promise<void> {
     if (this.committed) return;
     this.committed = true;
     await this.workbook.commit().catch(() => undefined);
+  }
+
+  private placeThumbnails(
+    sheet: ExcelJS.Worksheet,
+    refs: readonly ExportPhotoRef[],
+    images: ReadonlyMap<string, ExportImage>,
+    column: number,
+    rowNumber: number,
+    capacity: number,
+    baseHeightPx: number,
+  ): void {
+    const available = uniquePhotos(refs).filter((ref) => images.has(ref.fileId));
+    for (let index = 0; index < available.length; index += 1) {
+      const ref = available[index];
+      if (ref === undefined) continue;
+      const image = images.get(ref.fileId);
+      if (image === undefined) continue;
+      this.images.set(ref.fileId, image);
+      this.imagePlacements.push({
+        sheetId: sheet.id,
+        row: rowNumber,
+        column,
+        fileId: ref.fileId,
+        xOffsetPx: IMAGE_PADDING_PX + (index % capacity) * (IMAGE_WIDTH_PX + IMAGE_GAP_PX),
+        yOffsetPx: baseHeightPx + IMAGE_PADDING_PX + Math.floor(index / capacity) * (IMAGE_HEIGHT_PX + IMAGE_GAP_PX),
+        widthPx: IMAGE_WIDTH_PX,
+        heightPx: IMAGE_HEIGHT_PX,
+      });
+    }
   }
 }
