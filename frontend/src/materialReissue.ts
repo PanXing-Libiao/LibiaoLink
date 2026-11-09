@@ -1,4 +1,5 @@
 import type {
+  MaterialReissueApplicationDepartment,
   MaterialReissueApproval,
   MaterialReissueDepartment,
   MaterialReissueFreight,
@@ -19,7 +20,13 @@ export const MATERIAL_REISSUE_REASON_OPTIONS: ReadonlyArray<{ value: MaterialRei
   { value: "other", label: "其他" },
 ];
 
-export const MATERIAL_REISSUE_DEPARTMENT_OPTIONS: ReadonlyArray<{ value: MaterialReissueDepartment; label: string }> = [
+export const MATERIAL_REISSUE_APPLICATION_DEPARTMENT_OPTIONS: ReadonlyArray<{ value: MaterialReissueApplicationDepartment; label: string }> = [
+  { value: "project", label: "项目部" },
+  { value: "after_sales", label: "售后部" },
+  { value: "other", label: "其他" },
+];
+
+export const MATERIAL_REISSUE_RESPONSIBLE_DEPARTMENT_OPTIONS: ReadonlyArray<{ value: MaterialReissueDepartment; label: string }> = [
   { value: "project", label: "项目部" },
   { value: "after_sales", label: "售后部" },
   { value: "warehouse", label: "仓库" },
@@ -48,8 +55,20 @@ export function materialReissueReasonText(locale: Locale, snapshot: MaterialReis
   return snapshot.reason === "other" && snapshot.reasonOther ? text + "：" + snapshot.reasonOther : text;
 }
 
+export function materialReissueApplicationDepartmentText(
+  locale: Locale,
+  value: MaterialReissueApplicationDepartment,
+  other?: string,
+): string {
+  const label = MATERIAL_REISSUE_APPLICATION_DEPARTMENT_OPTIONS.find((option) => option.value === value)?.label
+    ?? MATERIAL_REISSUE_RESPONSIBLE_DEPARTMENT_OPTIONS.find((option) => option.value === value)?.label
+    ?? value;
+  const text = fieldText(locale, label);
+  return value === "other" && other ? text + "：" + other : text;
+}
+
 export function materialReissueDepartmentText(locale: Locale, value: MaterialReissueDepartment, other?: string): string {
-  const label = MATERIAL_REISSUE_DEPARTMENT_OPTIONS.find((option) => option.value === value)?.label ?? value;
+  const label = MATERIAL_REISSUE_RESPONSIBLE_DEPARTMENT_OPTIONS.find((option) => option.value === value)?.label ?? value;
   const text = fieldText(locale, label);
   return value === "other" && other ? text + "：" + other : text;
 }

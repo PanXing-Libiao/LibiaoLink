@@ -11734,6 +11734,11 @@ export interface components {
          */
         Locale: "zh" | "en" | "ja" | "ko";
         /**
+         * @description 申请部门（模板仅项目部 / 售后部 / 其他）
+         * @enum {string}
+         */
+        MaterialReissueApplicationDepartment: "project" | "after_sales" | "other";
+        /**
          * @description 是否已审批：yes / no / not_applicable
          * @enum {string}
          */
@@ -11743,7 +11748,7 @@ export interface components {
             reason: components["schemas"]["MaterialReissueReason"];
             /** @description 补发类别 = other 时必填 */
             reasonOther?: string;
-            applicationDepartment: components["schemas"]["MaterialReissueDepartment"];
+            applicationDepartment: components["schemas"]["MaterialReissueApplicationDepartment"];
             /** @description 申请部门 = other 时必填 */
             applicationDepartmentOther?: string;
             /** @description 是否已验收 */
@@ -11776,7 +11781,7 @@ export interface components {
             materials: components["schemas"]["MaterialReissueLine"][];
         };
         /**
-         * @description 申请部门 / 责任归属部门
+         * @description 责任归属部门
          * @enum {string}
          */
         MaterialReissueDepartment: "project" | "after_sales" | "warehouse" | "research" | "customer" | "supplier" | "other";

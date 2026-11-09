@@ -16,7 +16,7 @@ import {
 } from "../fileApi";
 import { lockBodyScroll } from "../scrollLock";
 import { stageNameOf } from "../taskApi";
-import { materialReissueApprovalText, materialReissueDepartmentText, materialReissueFreightText, materialReissueReasonText } from "../materialReissue";
+import { materialReissueApplicationDepartmentText, materialReissueApprovalText, materialReissueDepartmentText, materialReissueFreightText, materialReissueReasonText } from "../materialReissue";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
 import { mobileFilePreviewMustDownload } from "../mobilePreviewPolicy";
 import { FileTypeIcon } from "./FileTypeIcon";
@@ -225,8 +225,8 @@ export function ChangeDetailModal({ changeId, linkedTaskTitle, members, delivera
                         <span className="inline-block rounded bg-emerald-100 px-1.5 py-0.5 text-[12px] font-medium text-emerald-700">{fieldText(locale, "物料变更补发")}</span>
                       </DetailRow>
                       <DetailRow kind="doc" label={fieldText(locale, "补发类别")} testKey="material-category">{materialReissueReasonText(locale, material)}</DetailRow>
-                      <DetailRow kind="person" label={fieldText(locale, "申请部门")} testKey="material-department">{materialReissueDepartmentText(locale, material.applicationDepartment, material.applicationDepartmentOther)}</DetailRow>
-                      <DetailRow kind="calendar" label={fieldText(locale, "要求出库时间")} testKey="material-out-date">{material.requiredOutDate}</DetailRow>
+                      <DetailRow kind="person" label={fieldText(locale, "申请部门")} testKey="material-department">{materialReissueApplicationDepartmentText(locale, material.applicationDepartment, material.applicationDepartmentOther)}</DetailRow>
+                      <DetailRow kind="calendar" label={fieldText(locale, "要求出库时间")} testKey="material-out-date">{material.requiredOutDate.replace(/-/g, "/")}</DetailRow>
                       <DetailRow kind="person" label={fieldText(locale, "责任归属部门")} testKey="material-responsible">{materialReissueDepartmentText(locale, material.responsibleDepartment, material.responsibleDepartmentOther)}</DetailRow>
                       <DetailRow kind="check" label={fieldText(locale, "是否已审批")} testKey="material-approved">{materialReissueApprovalText(locale, material.approved)}</DetailRow>
                       <DetailRow kind="person" label={fieldText(locale, "收货人")} testKey="material-recipient">

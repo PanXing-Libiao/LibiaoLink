@@ -5975,6 +5975,15 @@
         ],
         "description": "界面语言（Push 296 · 顶栏「语言 · 中文 / English / 日本語 / 한국어」）：zh = 中文（默认）/ en = English / ja = 日本語 / ko = 한국어；读侧白名单外 / 缺省一律收敛为 zh"
       },
+      "MaterialReissueApplicationDepartment": {
+        "type": "string",
+        "enum": [
+          "project",
+          "after_sales",
+          "other"
+        ],
+        "description": "申请部门（模板仅项目部 / 售后部 / 其他）"
+      },
       "MaterialReissueApproval": {
         "type": "string",
         "enum": [
@@ -5996,7 +6005,7 @@
             "description": "补发类别 = other 时必填"
           },
           "applicationDepartment": {
-            "$ref": "#/components/schemas/MaterialReissueDepartment"
+            "$ref": "#/components/schemas/MaterialReissueApplicationDepartment"
           },
           "applicationDepartmentOther": {
             "type": "string",
@@ -6102,7 +6111,7 @@
           "supplier",
           "other"
         ],
-        "description": "申请部门 / 责任归属部门"
+        "description": "责任归属部门"
       },
       "MaterialReissueFreight": {
         "type": "string",

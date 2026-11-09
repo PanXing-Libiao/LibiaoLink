@@ -434,6 +434,7 @@ export type MaterialReissueReason =
   | "out_of_warranty_damage"
   | "research_upgrade"
   | "other";
+export type MaterialReissueApplicationDepartment = "project" | "after_sales" | "other";
 export type MaterialReissueDepartment = "project" | "after_sales" | "warehouse" | "research" | "customer" | "supplier" | "other";
 export type MaterialReissueFreight = "customer" | "libiao" | "with_other_goods" | "carried_by_staff";
 export type MaterialReissueApproval = "yes" | "no" | "not_applicable";
@@ -451,7 +452,7 @@ export type MaterialReissueLine = {
 export type MaterialReissueInput = {
   reason: MaterialReissueReason;
   reasonOther?: string;
-  applicationDepartment: MaterialReissueDepartment;
+  applicationDepartment: MaterialReissueApplicationDepartment;
   applicationDepartmentOther?: string;
   accepted: boolean;
   inWarranty: boolean;

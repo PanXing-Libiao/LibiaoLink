@@ -1,8 +1,11 @@
+import { readFileSync } from "node:fs";
+import { inflateRawSync } from "node:zlib";
 import type { MaterialReissueSnapshot } from "@libiaolink/contracts";
 import {
-  MATERIAL_REISSUE_DEPARTMENT_OPTIONS,
+  MATERIAL_REISSUE_APPLICATION_DEPARTMENT_OPTIONS,
   MATERIAL_REISSUE_FREIGHT_OPTIONS,
   MATERIAL_REISSUE_REASON_OPTIONS,
+  MATERIAL_REISSUE_RESPONSIBLE_DEPARTMENT_OPTIONS,
 } from "@libiaolink/contracts";
 
 export const MATERIAL_REISSUE_DOCX_MIME =
@@ -10,11 +13,6 @@ export const MATERIAL_REISSUE_DOCX_MIME =
 
 type ZipEntry = { name: string; data: Buffer };
 
-/**
- * 物料变更补发 DOCX（2026-11-09）：不引入 Office 生成依赖，按 OOXML 最小包 + ZIP store 方式生成。
- * 内容对齐业务现有《补发/补货申请表》：项目 / 申请人自动带入、补发类别为已选原因、物料清单逐行落表。
- * 生成结果作为普通项目文件版本（docx）进入 ONLYOFFICE 预览与下载链路。
- */
 const SHANGHAI_PARTS = new Intl.DateTimeFormat("en-CA", {
   timeZone: "Asia/Shanghai",
   year: "numeric",
@@ -25,17 +23,13 @@ const SHANGHAI_PARTS = new Intl.DateTimeFormat("en-CA", {
   hourCycle: "h23",
 });
 
+
 function shanghaiPartMap(at: Date): Record<string, string> {
   const parts: Record<string, string> = {};
   for (const part of SHANGHAI_PARTS.formatToParts(at)) {
     if (part.type !== "literal") parts[part.type] = part.value;
   }
   return parts;
-}
-
-function shanghaiDateTimeText(at: Date): string {
-  const parts = shanghaiPartMap(at);
-  return (parts.year ?? "") + "-" + (parts.month ?? "") + "-" + (parts.day ?? "") + " " + (parts.hour ?? "") + ":" + (parts.minute ?? "");
 }
 
 export function materialReissueFileName(snapshot: MaterialReissueSnapshot, at: Date): string {
@@ -46,56 +40,131 @@ export function materialReissueFileName(snapshot: MaterialReissueSnapshot, at: D
 }
 
 export function buildMaterialReissueDocx(snapshot: MaterialReissueSnapshot, at: Date): Buffer {
-  const reason = optionLabel(MATERIAL_REISSUE_REASON_OPTIONS, snapshot.reason);
-  const reasonText = snapshot.reason === "other" && snapshot.reasonOther ? reason + "：" + snapshot.reasonOther : reason;
-  const applicationDepartment = optionLabel(MATERIAL_REISSUE_DEPARTMENT_OPTIONS, snapshot.applicationDepartment);
-  const applicationText =
-    snapshot.applicationDepartment === "other" && snapshot.applicationDepartmentOther
-      ? applicationDepartment + "：" + snapshot.applicationDepartmentOther
-      : applicationDepartment;
-  const responsibleDepartment = optionLabel(MATERIAL_REISSUE_DEPARTMENT_OPTIONS, snapshot.responsibleDepartment);
-  const responsibleText =
-    snapshot.responsibleDepartment === "other" && snapshot.responsibleDepartmentOther
-      ? responsibleDepartment + "：" + snapshot.responsibleDepartmentOther
-      : responsibleDepartment;
-  const approved =
-    snapshot.approved === "yes" ? "☑ 是　☐ 否　☐ 不涉及" : snapshot.approved === "no" ? "☐ 是　☑ 否　☐ 不涉及" : "☐ 是　☐ 否　☑ 不涉及";
-  const basicRows: Array<[string, string]> = [
-    ["项目", "填写内容"],
-    ["项目编号", snapshot.projectCode],
-    ["项目名称", snapshot.projectName],
-    ["客户名称", snapshot.customerName ?? ""],
-    ["来源任务", snapshot.taskTitle],
-    ["申请部门", applicationText],
-    ["申请人", snapshot.applicantName],
-    ["申请时间", shanghaiDateTimeText(at)],
-    ["补发类别", reasonText],
-    ["是否已验收", yesNo(snapshot.accepted)],
-    ["是否质保期内", yesNo(snapshot.inWarranty)],
-    ["是否免费补发", yesNo(snapshot.freeReissue)],
-    ["是否已审批", approved],
-    ["责任归属部门", responsibleText],
-    ["要求出库时间", snapshot.requiredOutDate],
-    ["是否涉及旧件返还", yesNo(snapshot.oldPartReturn)],
-    ["运费承担", optionLabel(MATERIAL_REISSUE_FREIGHT_OPTIONS, snapshot.freightBearer)],
-    ["收货人", snapshot.recipient],
-    ["联系电话", snapshot.phone],
-    ["收货地址", snapshot.address],
-    ["补发原因简述", snapshot.description],
-  ];
-  const body: string[] = [];
-  body.push(paragraphXml("补发/补货申请表", "Title"));
-  body.push(
-    paragraphXml(
-      "邮件标题：　项目【补发申请】" + snapshot.projectCode + " " + snapshot.projectName + " / 紧急",
-      "Subtitle",
-    ),
+  const entries = readTemplateEntries().map((entry) => ({
+    name: entry.name,
+    data: replaceTemplatePart(entry.name, documentXml(snapshot), coreXml(snapshot, at), appXml(), customXml()),
+  }));
+  return zipStore(entries);
+}
+
+function replaceTemplatePart(name: string, document: string, core: string, app: string, custom: string): Buffer {
+  if (name === "word/document.xml") return Buffer.from(document, "utf8");
+  if (name === "docProps/core.xml") return Buffer.from(core, "utf8");
+  if (name === "docProps/app.xml") return Buffer.from(app, "utf8");
+  if (name === "docProps/custom.xml") return Buffer.from(custom, "utf8");
+  return readTemplateEntry(name);
+}
+
+let templateEntries: ZipEntry[] | null = null;
+
+function readTemplateEntries(): ZipEntry[] {
+  if (templateEntries === null) {
+    const template = readFileSync(new URL("./material-reissue-template.docx", import.meta.url));
+    templateEntries = readZipEntries(template);
+  }
+  return templateEntries;
+}
+
+function readTemplateEntry(name: string): Buffer {
+  const found = readTemplateEntries().find((entry) => entry.name === name);
+  if (found === undefined) {
+    throw new Error("补发申请模板缺少部件：" + name);
+  }
+  return found.data;
+}
+
+function documentXml(snapshot: MaterialReissueSnapshot): string {
+  const parts: string[] = [];
+  parts.push(titleParagraph());
+  parts.push(emptyParagraph());
+  parts.push(emailParagraph(snapshot));
+  parts.push(mainTable(snapshot));
+  parts.push(emptyParagraph());
+  parts.push(materialHeading());
+  parts.push(materialTable(snapshot));
+  parts.push(noteHeading());
+  parts.push(noteParagraph(1, "项目部或售后部负责填写补发信息，并判断是否免费、是否质保期内。", false));
+  parts.push(noteParagraph(2, "商务助理和仓库根据本申请表执行发货，不负责判断是否免费、是否保内。", false));
+  parts.push(noteParagraph(3, "不属于常规免费补发范围但需免费补发的，须先经夏总审批，并在“是否已审批”处勾选“是”。", false));
+  parts.push(noteParagraph(4, "收货信息、出库时间、运费承担方式需填写完整后再提交。", true));
+  const sectPr =
+    '<w:sectPr><w:headerReference r:id="rId3" w:type="default"/><w:footerReference r:id="rId4" w:type="default"/>' +
+    '<w:pgSz w:w="11906" w:h="16838"/>' +
+    '<w:pgMar w:top="1304" w:right="1077" w:bottom="1304" w:left="1077" w:header="851" w:footer="992" w:gutter="0"/>' +
+    '<w:cols w:space="425" w:num="1"/><w:docGrid w:type="lines" w:linePitch="312" w:charSpace="0"/></w:sectPr>';
+  return (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+    "<w:body>" + parts.join("") + sectPr + "</w:body></w:document>"
   );
-  body.push(tableXml(basicRows.map((row) => [row[0], row[1]]), [2060, 8400], true, [true, false]));
-  body.push(paragraphXml("补发物料清单", "Heading1"));
-  const materialRows: string[][] = [
-    ["序号", "物料编码", "物料名称", "规格型号", "数量", "单位", "备注"],
-    ...snapshot.materials.map((item, index) => [
+}
+
+function titleParagraph(): string {
+  const rPr =
+    '<w:rFonts w:hint="eastAsia" w:ascii="微软雅黑" w:hAnsi="微软雅黑" w:eastAsia="微软雅黑" w:cs="微软雅黑"/><w:b/><w:bCs/><w:sz w:val="32"/><w:szCs w:val="32"/>';
+  return '<w:p><w:pPr><w:jc w:val="center"/><w:rPr>' + rPr + "</w:rPr></w:pPr><w:r><w:rPr>" + rPr + "</w:rPr><w:t>补发/补货申请表</w:t></w:r></w:p>";
+}
+
+function emptyParagraph(): string {
+  return '<w:p><w:pPr><w:rPr><w:rFonts w:hint="eastAsia"/></w:rPr></w:pPr></w:p>';
+}
+
+function emailParagraph(snapshot: MaterialReissueSnapshot): string {
+  const bold = '<w:rFonts w:hint="eastAsia"/><w:b/><w:bCs/>';
+  const boldEn = '<w:rFonts w:hint="eastAsia"/><w:b/><w:bCs/><w:lang w:val="en-US" w:eastAsia="zh-CN"/>';
+  const text = snapshot.projectCode + " " + snapshot.projectName + "项目";
+  return (
+    "<w:p><w:pPr><w:rPr><w:rFonts w:hint=\"eastAsia\" w:eastAsia=\"宋体\"/><w:lang w:eastAsia=\"zh-CN\"/></w:rPr></w:pPr>" +
+    run("邮件标题：", bold) +
+    run("  项目", boldEn) +
+    run("【补发申请】", bold) +
+    run(text, boldEn) +
+    run("/ 紧急", bold) +
+    "</w:p>"
+  );
+}
+
+function mainTable(snapshot: MaterialReissueSnapshot): string {
+  const rows: string[] = [];
+  rows.push(headerRow("项目", "填写内容"));
+  rows.push(valueRow("项目编号", snapshot.projectCode));
+  rows.push(valueRow("项目名称", snapshot.projectName));
+  rows.push(valueRow("客户名称", snapshot.customerName ?? ""));
+  rows.push(checkboxRow("申请部门", applicationDepartmentText(snapshot)));
+  rows.push(valueRow("申请人", snapshot.applicantName));
+  rows.push(checkboxRow("补发类别", reasonText(snapshot)));
+  rows.push(checkboxRow("是否已验收", boolText(snapshot.accepted)));
+  rows.push(checkboxRow("是否质保期内", boolText(snapshot.inWarranty)));
+  rows.push(checkboxRow("是否免费补发", boolText(snapshot.freeReissue)));
+  rows.push(checkboxRow("是否已审批", approvalText(snapshot.approved)));
+  rows.push(checkboxRow("责任归属部门", responsibleDepartmentText(snapshot)));
+  rows.push(valueRow("要求出库时间", slashDate(snapshot.requiredOutDate)));
+  rows.push(checkboxRow("是否涉及旧件返还", boolText(snapshot.oldPartReturn)));
+  rows.push(checkboxRow("运费承担", freightText(snapshot.freightBearer)));
+  rows.push(valueRow("收货人", snapshot.recipient));
+  rows.push(valueRow("联系电话", snapshot.phone));
+  rows.push(valueRow("收货地址", snapshot.address));
+  rows.push(valueRow("补发原因简述", snapshot.description));
+  return (
+    "<w:tbl><w:tblPr><w:tblStyle w:val=\"7\"/><w:tblW w:w=\"9968\" w:type=\"dxa\"/><w:jc w:val=\"center\"/>" +
+    tableBorders() +
+    '<w:tblLayout w:type="autofit"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="0" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar></w:tblPr>' +
+    '<w:tblGrid><w:gridCol w:w="1111"/><w:gridCol w:w="8857"/></w:tblGrid>' +
+    rows.join("") +
+    "</w:tbl>"
+  );
+}
+
+function materialHeading(): string {
+  const rPr = '<w:rFonts w:hint="eastAsia"/><w:b/><w:bCs/>';
+  return '<w:p><w:pPr><w:rPr>' + rPr + "</w:rPr></w:pPr><w:r><w:rPr>" + rPr + "</w:rPr><w:t>补发物料清单</w:t></w:r></w:p>";
+}
+
+function materialTable(snapshot: MaterialReissueSnapshot): string {
+  const rows: string[] = [];
+  rows.push(materialHeaderRow());
+  snapshot.materials.forEach((item, index) => {
+    rows.push(materialDataRow([
       String(index + 1),
       item.materialCode,
       item.materialName,
@@ -103,40 +172,183 @@ export function buildMaterialReissueDocx(snapshot: MaterialReissueSnapshot, at: 
       String(item.quantity),
       item.unit,
       item.remark,
-    ]),
-  ];
-  body.push(tableXml(materialRows, [620, 1320, 2020, 2020, 760, 760, 2960], true, [false, false, false, false, true, true, false]));
-  body.push(paragraphXml("备注说明：", "Heading1"));
-  body.push(paragraphXml("1. 项目部或售后部负责填写补发信息，并判断是否免费、是否质保期内。", "Note"));
-  body.push(paragraphXml("2. 商务助理和仓库根据本申请表执行发货，不负责判断是否免费、是否保内。", "Note"));
-  body.push(paragraphXml("3. 不属于常规免费补发范围但需免费补发的，须先经夏总审批，并在“是否已审批”处勾选“是”。", "Note"));
-  body.push(paragraphXml("4. 收货信息、出库时间、运费承担方式需填写完整后再提交。", "Note"));
-  body.push(paragraphXml("提交时间：" + shanghaiDateTimeText(at) + "　提交人：" + snapshot.applicantName, "Note"));
-  const documentXml =
-    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
-    "<w:body>" +
-    body.join("") +
-    '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr>' +
-    "</w:body></w:document>";
-  return zipStore([
-    { name: "[Content_Types].xml", data: Buffer.from(contentTypesXml(), "utf8") },
-    { name: "_rels/.rels", data: Buffer.from(packageRelsXml(), "utf8") },
-    { name: "word/document.xml", data: Buffer.from(documentXml, "utf8") },
-    { name: "word/_rels/document.xml.rels", data: Buffer.from(documentRelsXml(), "utf8") },
-    { name: "word/styles.xml", data: Buffer.from(stylesXml(), "utf8") },
-    { name: "docProps/core.xml", data: Buffer.from(coreXml(snapshot, at), "utf8") },
-    { name: "docProps/app.xml", data: Buffer.from(appXml(), "utf8") },
-  ]);
+    ]));
+  });
+  rows.push(materialDataRow(["", "", "", "", "", "", ""]));
+  return (
+    "<w:tbl><w:tblPr><w:tblStyle w:val=\"7\"/><w:tblW w:w=\"9962\" w:type=\"dxa\"/><w:jc w:val=\"center\"/>" +
+    tableBorders() +
+    '<w:tblLayout w:type="autofit"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="0" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar></w:tblPr>' +
+    '<w:tblGrid><w:gridCol w:w="960"/><w:gridCol w:w="1704"/><w:gridCol w:w="1714"/><w:gridCol w:w="1827"/><w:gridCol w:w="1026"/><w:gridCol w:w="960"/><w:gridCol w:w="1771"/></w:tblGrid>' +
+    rows.join("") +
+    "</w:tbl>"
+  );
 }
 
-
-function optionLabel(options: readonly { value: string; label: string }[], value: string): string {
-  return options.find((item) => item.value === value)?.label ?? value;
+function materialHeaderRow(): string {
+  const labels = ["序号", "物料编码", "物料名称", "规格型号", "数量", "单位", "备注"];
+  return (
+    '<w:tr><w:trPr><w:trHeight w:val="0" w:hRule="atLeast"/><w:tblHeader/><w:jc w:val="center"/></w:trPr>' +
+    labels.map((label, index) => materialCell(label, index, true)).join("") +
+    "</w:tr>"
+  );
 }
 
-function yesNo(value: boolean): string {
-  return value ? "☑ 是　☐ 否" : "☐ 是　☑ 否";
+function materialDataRow(values: string[]): string {
+  return (
+    '<w:tr><w:trPr><w:trHeight w:val="0" w:hRule="atLeast"/><w:jc w:val="center"/></w:trPr>' +
+    values.map((value, index) => materialCell(value, index, false)).join("") +
+    "</w:tr>"
+  );
+}
+
+function materialCell(value: string, index: number, bold: boolean): string {
+  const widths = ["0", "1704", "1714", "1827", "1026", "0", "1771"];
+  const width = widths[index] ?? "0";
+  const widthXml = width === "0" ? '<w:tcW w:w="0" w:type="auto"/>' : '<w:tcW w:w="' + width + '" w:type="dxa"/>';
+  const pPr =
+    (index === 0 || index === 5
+      ? '<w:snapToGrid w:val="0"/><w:ind w:left="0" w:leftChars="0" w:right="0" w:rightChars="0" w:firstLine="0" w:firstLineChars="0"/><w:jc w:val="center"/>'
+      : '<w:keepNext w:val="0"/><w:keepLines w:val="0"/><w:widowControl/><w:suppressLineNumbers w:val="0"/><w:jc w:val="center"/><w:textAlignment w:val="center"/>') +
+    (bold ? "<w:rPr><w:b/></w:rPr>" : "");
+  const runs = value === "" ? "" : multilineRun(value, '<w:rPr>' + (bold ? "<w:b/>" : '<w:rFonts w:hint="eastAsia"/>') + "</w:rPr>");
+  return "<w:tc><w:tcPr>" + widthXml + '<w:tcMar><w:left w:w="108" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr>' + pPr + "</w:pPr>" + runs + "</w:p></w:tc>";
+}
+
+function headerRow(left: string, right: string): string {
+  return (
+    '<w:tr><w:trPr><w:trHeight w:val="0" w:hRule="atLeast"/><w:tblHeader/><w:jc w:val="center"/></w:trPr>' +
+    mainCell(left, true, true) +
+    mainCell(right, true, false) +
+    "</w:tr>"
+  );
+}
+
+function valueRow(label: string, value: string): string {
+  return (
+    '<w:tr><w:trPr><w:trHeight w:val="0" w:hRule="atLeast"/><w:tblHeader/><w:jc w:val="center"/></w:trPr>' +
+    mainCell(label, false, true) +
+    mainCell(value, false, false) +
+    "</w:tr>"
+  );
+}
+
+function checkboxRow(label: string, valueXml: string): string {
+  return (
+    '<w:tr><w:trPr><w:trHeight w:val="0" w:hRule="atLeast"/><w:tblHeader/><w:jc w:val="center"/></w:trPr>' +
+    mainCell(label, false, true) +
+    "<w:tc><w:tcPr><w:tcW w:w=\"8857\" w:type=\"dxa\"/><w:tcMar><w:left w:w=\"108\" w:type=\"dxa\"/><w:right w:w=\"108\" w:type=\"dxa\"/></w:tcMar><w:vAlign w:val=\"center\"/></w:tcPr><w:p><w:pPr><w:snapToGrid w:val=\"0\"/></w:pPr>" +
+    valueXml +
+    "</w:p></w:tc></w:tr>"
+  );
+}
+
+function mainCell(value: string, bold: boolean, label: boolean): string {
+  const width = label ? '<w:tcW w:w="0" w:type="auto"/>' : '<w:tcW w:w="8857" w:type="dxa"/>';
+  const pPr = '<w:snapToGrid w:val="0"/>' + (bold ? '<w:jc w:val="center"/>' : "");
+  const rPr = bold ? "<w:rPr><w:b/></w:rPr>" : "";
+  const runs = value === "" ? "" : multilineRun(value, rPr);
+  return "<w:tc><w:tcPr>" + width + '<w:tcMar><w:left w:w="108" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr>' + pPr + "</w:pPr>" + runs + "</w:p></w:tc>";
+}
+
+function noteHeading(): string {
+  return (
+    '<w:p><w:pPr><w:spacing w:before="160"/><w:ind w:firstLine="210" w:firstLineChars="100"/><w:rPr><w:rFonts w:hint="eastAsia" w:eastAsia="宋体"/><w:lang w:eastAsia="zh-CN"/></w:rPr></w:pPr>' +
+    '<w:r><w:rPr><w:rFonts w:hint="eastAsia"/></w:rPr><w:t xml:space="preserve"> </w:t></w:r>' +
+    '<w:r><w:rPr><w:rFonts w:hint="eastAsia"/><w:b/><w:bCs/></w:rPr><w:t>备注说明</w:t></w:r>' +
+    '<w:r><w:rPr><w:rFonts w:hint="eastAsia"/><w:b/><w:bCs/><w:lang w:eastAsia="zh-CN"/></w:rPr><w:t>：</w:t></w:r></w:p>'
+  );
+}
+
+function noteParagraph(number: number, text: string, noSpacingAfter: boolean): string {
+  const extra = number === 1 ? '<w:spacing w:before="0"/>' : noSpacingAfter ? '<w:spacing w:after="0"/>' : "";
+  return (
+    '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>' +
+    extra +
+    '<w:ind w:left="720" w:hanging="360"/></w:pPr><w:r><w:t>' + esc(text) + "</w:t></w:r></w:p>"
+  );
+}
+
+function applicationDepartmentText(snapshot: MaterialReissueSnapshot): string {
+  return checkboxOptions(
+    MATERIAL_REISSUE_APPLICATION_DEPARTMENT_OPTIONS,
+    snapshot.applicationDepartment,
+    snapshot.applicationDepartmentOther,
+  );
+}
+
+function responsibleDepartmentText(snapshot: MaterialReissueSnapshot): string {
+  return checkboxOptions(
+    MATERIAL_REISSUE_RESPONSIBLE_DEPARTMENT_OPTIONS,
+    snapshot.responsibleDepartment,
+    snapshot.responsibleDepartmentOther,
+  );
+}
+
+function reasonText(snapshot: MaterialReissueSnapshot): string {
+  return checkboxOptions(MATERIAL_REISSUE_REASON_OPTIONS, snapshot.reason, snapshot.reasonOther);
+}
+
+function freightText(value: MaterialReissueSnapshot["freightBearer"]): string {
+  return checkboxOptions(MATERIAL_REISSUE_FREIGHT_OPTIONS, value);
+}
+
+function checkboxOptions(
+  options: ReadonlyArray<{ value: string; label: string }>,
+  selected: string,
+  otherText?: string,
+): string {
+  return options
+    .map((option, index) => {
+      const checked = option.value === selected;
+      const label =
+        option.value === "other" ? option.label + "：" + (checked && otherText ? otherText : "______") : option.label;
+      return symbolRun(checked) + textRun(" " + label + (index === options.length - 1 ? "" : "　"));
+    })
+    .join("");
+}
+
+function boolText(value: boolean): string {
+  return symbolRun(value) + textRun(" 是　") + symbolRun(!value) + textRun(" 否");
+}
+
+function approvalText(value: MaterialReissueSnapshot["approved"]): string {
+  return (
+    symbolRun(value === "yes") + textRun(" 是　") +
+    symbolRun(value === "no") + textRun(" 否　") +
+    symbolRun(value === "not_applicable") + textRun(" 不涉及")
+  );
+}
+
+function symbolRun(checked: boolean): string {
+  return '<w:r><w:rPr/><w:sym w:font="Wingdings 2" w:char="' + (checked ? "0052" : "00A3") + '"/></w:r>';
+}
+
+function textRun(text: string): string {
+  return '<w:r><w:t xml:space="preserve">' + esc(text) + "</w:t></w:r>";
+}
+
+function multilineRun(value: string, rPr: string): string {
+  return value
+    .split(/\r?\n/)
+    .map((line, index) => (index === 0 ? "" : "<w:r><w:br/></w:r>") + "<w:r>" + rPr + '<w:t xml:space="preserve">' + esc(line) + "</w:t></w:r>")
+    .join("");
+}
+
+function run(text: string, rPr: string): string {
+  return "<w:r><w:rPr>" + rPr + "</w:rPr><w:t xml:space=\"preserve\">" + esc(text) + "</w:t></w:r>";
+}
+
+function tableBorders(): string {
+  return (
+    '<w:tblBorders><w:top w:val="single" w:color="auto" w:sz="4" w:space="0"/><w:left w:val="single" w:color="auto" w:sz="4" w:space="0"/>' +
+    '<w:bottom w:val="single" w:color="auto" w:sz="4" w:space="0"/><w:right w:val="single" w:color="auto" w:sz="4" w:space="0"/>' +
+    '<w:insideH w:val="single" w:color="auto" w:sz="4" w:space="0"/><w:insideV w:val="single" w:color="auto" w:sz="4" w:space="0"/></w:tblBorders>'
+  );
+}
+
+function slashDate(value: string): string {
+  return value.replace(/-/g, "/");
 }
 
 function esc(value: string): string {
@@ -148,131 +360,67 @@ function esc(value: string): string {
     .replace(/'/g, "&apos;");
 }
 
-function textRuns(value: string, bold: boolean): string {
-  const parts = String(value).split(String.fromCharCode(10)).map((part) => part.split(String.fromCharCode(13)).join(""));
-  return parts
-    .map((line, index) => {
-      const br = index === 0 ? "" : "<w:r><w:br/></w:r>";
-      const rPr = bold ? "<w:rPr><w:b/></w:rPr>" : "";
-      return br + "<w:r>" + rPr + '<w:t xml:space="preserve">' + esc(line) + "</w:t></w:r>";
-    })
-    .join("");
-}
-
-function paragraphXml(value: string, style: string, bold = false): string {
-  return "<w:p><w:pPr><w:pStyle w:val=\"" + style + '"/></w:pPr>' + textRuns(value, bold) + "</w:p>";
-}
-
-function tableXml(rows: string[][], widths: number[], header: boolean, boldColumns: boolean[]): string {
-  const border =
-    '<w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="A1A1AA"/>' +
-    '<w:left w:val="single" w:sz="4" w:space="0" w:color="A1A1AA"/>' +
-    '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="A1A1AA"/>' +
-    '<w:right w:val="single" w:sz="4" w:space="0" w:color="A1A1AA"/>' +
-    '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="D4D4D8"/>' +
-    '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="D4D4D8"/></w:tblBorders>';
-  const grid =
-    "<w:tblGrid>" +
-    widths.map((width) => '<w:gridCol w:w="' + String(width) + '"/>').join("") +
-    "</w:tblGrid>";
-  const rowXmls = rows.map((cells, rowIndex) => {
-    const isHeader = header && rowIndex === 0;
-    const trPr = isHeader ? "<w:trPr><w:tblHeader/></w:trPr>" : "";
-    const tcs = cells.map((cell, cellIndex) => {
-      const width = widths[cellIndex] ?? 1000;
-      const shade = isHeader ? '<w:shd w:val="clear" w:color="auto" w:fill="F4F4F5"/>' : "";
-      const bold = isHeader || boldColumns[cellIndex] === true;
-      return (
-        "<w:tc><w:tcPr>" +
-        '<w:tcW w:w="' + String(width) + '" w:type="dxa"/>' +
-        shade +
-        "</w:tcPr>" +
-        paragraphXml(cell, "TableText", bold) +
-        "</w:tc>"
-      );
-    }).join("");
-    return "<w:tr>" + trPr + tcs + "</w:tr>";
-  }).join("");
+function coreXml(snapshot: MaterialReissueSnapshot, at: Date): string {
+  const iso = at.toISOString();
   return (
-    '<w:tbl><w:tblPr><w:tblW w:w="10460" w:type="dxa"/>' +
-    border +
-    '<w:tblLayout w:type="fixed"/></w:tblPr>' +
-    grid +
-    rowXmls +
-    "</w:tbl>"
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">' +
+    "<dc:title>补发申请 " + esc(snapshot.projectCode) + "</dc:title>" +
+    "<dc:creator>" + esc(snapshot.applicantName) + "</dc:creator>" +
+    "<cp:lastModifiedBy>" + esc(snapshot.applicantName) + "</cp:lastModifiedBy>" +
+    '<dcterms:created xsi:type="dcterms:W3CDTF">' + iso + "</dcterms:created>" +
+    '<dcterms:modified xsi:type="dcterms:W3CDTF">' + iso + "</dcterms:modified>" +
+    "</cp:coreProperties>"
   );
 }
 
-function contentTypesXml(): string {
-  return [
-    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
-    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">',
-    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>',
-    '<Default Extension="xml" ContentType="application/xml"/>',
-    '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>',
-    '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>',
-    '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>',
-    '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>',
-    "</Types>",
-  ].join("");
-}
-
-function packageRelsXml(): string {
-  return [
-    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
-    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
-    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>',
-    '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>',
-    '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>',
-    "</Relationships>",
-  ].join("");
-}
-
-function documentRelsXml(): string {
-  return [
-    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
-    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
-    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>',
-    "</Relationships>",
-  ].join("");
-}
-
-function stylesXml(): string {
-  return [
-    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
-    '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
-    '<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Microsoft YaHei"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:rPrDefault></w:docDefaults>',
-    '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:spacing w:after="80" w:line="280" w:lineRule="auto"/></w:pPr></w:style>',
-    '<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:pPr><w:jc w:val="center"/><w:spacing w:after="160"/></w:pPr><w:rPr><w:b/><w:sz w:val="36"/></w:rPr></w:style>',
-    '<w:style w:type="paragraph" w:styleId="Subtitle"><w:name w:val="Subtitle"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="120"/></w:pPr><w:rPr><w:sz w:val="18"/><w:color w:val="52525B"/></w:rPr></w:style>',
-    '<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="Heading 1"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="160" w:after="80"/></w:pPr><w:rPr><w:b/><w:sz w:val="24"/></w:rPr></w:style>',
-    '<w:style w:type="paragraph" w:styleId="Note"><w:name w:val="Note"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="40"/></w:pPr><w:rPr><w:sz w:val="18"/><w:color w:val="52525B"/></w:rPr></w:style>',
-    '<w:style w:type="paragraph" w:styleId="TableText"><w:name w:val="Table Text"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:style>',
-    "</w:styles>",
-  ].join("");
-}
-
-function coreXml(snapshot: MaterialReissueSnapshot, at: Date): string {
-  const iso = at.toISOString();
-  return [
-    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
-    '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">',
-    "<dc:title>补发申请 " + esc(snapshot.projectCode) + "</dc:title>",
-    "<dc:creator>" + esc(snapshot.applicantName) + "</dc:creator>",
-    "<cp:lastModifiedBy>" + esc(snapshot.applicantName) + "</cp:lastModifiedBy>",
-    '<dcterms:created xsi:type="dcterms:W3CDTF">' + iso + "</dcterms:created>",
-    '<dcterms:modified xsi:type="dcterms:W3CDTF">' + iso + "</dcterms:modified>",
-    "</cp:coreProperties>",
-  ].join("");
-}
-
 function appXml(): string {
-  return [
-    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
-    '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">',
-    "<Application>LibiaoLink</Application>",
-    "</Properties>",
-  ].join("");
+  return (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">' +
+    "<Application>LibiaoLink</Application></Properties>"
+  );
+}
+
+function customXml(): string {
+  return (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"></Properties>'
+  );
+}
+
+function readZipEntries(buffer: Buffer): ZipEntry[] {
+  const eocd = findSignature(buffer, 0x06054b50, Math.max(0, buffer.length - 65557));
+  if (eocd < 0) throw new Error("补发申请模板不是有效的 DOCX（缺少 ZIP 目录）");
+  const count = buffer.readUInt16LE(eocd + 10);
+  let offset = buffer.readUInt32LE(eocd + 16);
+  const entries: ZipEntry[] = [];
+  for (let index = 0; index < count; index += 1) {
+    if (buffer.readUInt32LE(offset) !== 0x02014b50) throw new Error("补发申请模板 ZIP 目录损坏");
+    const method = buffer.readUInt16LE(offset + 10);
+    const compressedSize = buffer.readUInt32LE(offset + 20);
+    const nameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const localOffset = buffer.readUInt32LE(offset + 42);
+    const name = buffer.toString("utf8", offset + 46, offset + 46 + nameLength);
+    if (buffer.readUInt32LE(localOffset) !== 0x04034b50) throw new Error("补发申请模板 ZIP 文件头损坏");
+    const localNameLength = buffer.readUInt16LE(localOffset + 26);
+    const localExtraLength = buffer.readUInt16LE(localOffset + 28);
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    const compressed = buffer.subarray(dataStart, dataStart + compressedSize);
+    const data = method === 0 ? Buffer.from(compressed) : method === 8 ? inflateRawSync(compressed) : (() => { throw new Error("补发申请模板使用了不支持的 ZIP 压缩方式"); })();
+    entries.push({ name, data });
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+
+function findSignature(buffer: Buffer, signature: number, from: number): number {
+  for (let offset = buffer.length - 22; offset >= from; offset -= 1) {
+    if (buffer.readUInt32LE(offset) === signature) return offset;
+  }
+  return -1;
 }
 
 const CRC_TABLE = (() => {

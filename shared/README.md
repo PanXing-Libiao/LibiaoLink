@@ -1,4 +1,4 @@
-# shared/ 契约包（LibiaoLink API）
+> **2026-11-09 物料变更补发契约（模板版）**：`files.ts` 新增 `ChangeType`、补发类别 / 申请部门 / 责任归属部门 / 运费 / 审批选项、`MaterialReissueBodySchema`、`CreateMaterialReissueBodySchema`、`MaterialReissueSnapshotSchema`、`MaterialReissueResultSchema`；申请部门收窄为模板三项 `project / after_sales / other`，责任归属部门保留七项。`ChangeRequest` 增加 `changeType` 与 `materialReissue`。`openapi.ts` 注册 `POST /api/v1/projects/{id}/change-requests/material-reissue`（201 返回变更记录 + DOCX 文件 + v1 版本）。生成物已重出，`npm run check` 零漂移。
 
 > **2026-11-09 物料变更补发契约**：`files.ts` 新增 `ChangeType`、补发类别 / 部门 / 运费 / 审批选项、`MaterialReissueBodySchema`、`CreateMaterialReissueBodySchema`、`MaterialReissueSnapshotSchema`、`MaterialReissueResultSchema`；`ChangeRequest` 增加 `changeType` 与 `materialReissue`。`openapi.ts` 注册 `POST /api/v1/projects/{id}/change-requests/material-reissue`（201 返回变更记录 + DOCX 文件 + v1 版本）。生成物已重出，`npm run check` 零漂移。
 

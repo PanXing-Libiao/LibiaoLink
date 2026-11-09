@@ -97,7 +97,13 @@ export const MATERIAL_REISSUE_REASON_OPTIONS = [
   { value: "other", label: "其他" },
 ] as const;
 
-export const MATERIAL_REISSUE_DEPARTMENT_OPTIONS = [
+export const MATERIAL_REISSUE_APPLICATION_DEPARTMENT_OPTIONS = [
+  { value: "project", label: "项目部" },
+  { value: "after_sales", label: "售后部" },
+  { value: "other", label: "其他" },
+] as const;
+
+export const MATERIAL_REISSUE_RESPONSIBLE_DEPARTMENT_OPTIONS = [
   { value: "project", label: "项目部" },
   { value: "after_sales", label: "售后部" },
   { value: "warehouse", label: "仓库" },
@@ -127,9 +133,12 @@ export const MaterialReissueReasonSchema = z
     "other",
   ])
   .openapi("MaterialReissueReason", { description: "补发类别（原因选题）" });
+export const MaterialReissueApplicationDepartmentSchema = z
+  .enum(["project", "after_sales", "other"])
+  .openapi("MaterialReissueApplicationDepartment", { description: "申请部门（模板仅项目部 / 售后部 / 其他）" });
 export const MaterialReissueDepartmentSchema = z
   .enum(["project", "after_sales", "warehouse", "research", "customer", "supplier", "other"])
-  .openapi("MaterialReissueDepartment", { description: "申请部门 / 责任归属部门" });
+  .openapi("MaterialReissueDepartment", { description: "责任归属部门" });
 export const MaterialReissueFreightSchema = z
   .enum(["customer", "libiao", "with_other_goods", "carried_by_staff"])
   .openapi("MaterialReissueFreight", { description: "运费承担方式" });
@@ -152,7 +161,7 @@ export const MaterialReissueBodySchema = z
   .object({
     reason: MaterialReissueReasonSchema,
     reasonOther: z.string().trim().max(100).optional().openapi({ description: "补发类别 = other 时必填" }),
-    applicationDepartment: MaterialReissueDepartmentSchema,
+    applicationDepartment: MaterialReissueApplicationDepartmentSchema,
     applicationDepartmentOther: z.string().trim().max(100).optional().openapi({ description: "申请部门 = other 时必填" }),
     accepted: z.boolean().openapi({ description: "是否已验收" }),
     inWarranty: z.boolean().openapi({ description: "是否质保期内" }),
@@ -186,6 +195,7 @@ export const MaterialReissueSnapshotSchema = MaterialReissueBodySchema.extend({
 
 export type ChangeType = z.infer<typeof ChangeTypeSchema>;
 export type MaterialReissueReason = z.infer<typeof MaterialReissueReasonSchema>;
+export type MaterialReissueApplicationDepartment = z.infer<typeof MaterialReissueApplicationDepartmentSchema>;
 export type MaterialReissueDepartment = z.infer<typeof MaterialReissueDepartmentSchema>;
 export type MaterialReissueFreight = z.infer<typeof MaterialReissueFreightSchema>;
 export type MaterialReissueApproval = z.infer<typeof MaterialReissueApprovalSchema>;

@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { memberNameOf, type Member } from "../data/members";
 import type { ProjectTask } from "../data/tasks";
 import {
   createMaterialReissue,
+  type MaterialReissueApplicationDepartment,
   type MaterialReissueApproval,
   type MaterialReissueDepartment,
   type MaterialReissueFreight,
@@ -14,43 +15,116 @@ import {
 import { fieldText, useLocale, useT } from "../i18n";
 import { useMyPermissions } from "../permissions";
 import { fetchProject, type ApiProject } from "../projectApi";
-import { SelectMenu, type SelectOption } from "./SelectMenu";
-
-const FIELD_CLASS =
-  "block w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400 focus:ring-2 focus:ring-zinc-900/10";
-const LABEL_CLASS = "text-xs font-medium text-zinc-500";
-const CAPTION_CLASS = "mt-1 block text-[11px] leading-4 text-zinc-400";
-
 import {
-  MATERIAL_REISSUE_APPROVAL_OPTIONS as APPROVAL_OPTIONS,
-  MATERIAL_REISSUE_DEPARTMENT_OPTIONS as DEPARTMENT_OPTIONS,
-  MATERIAL_REISSUE_FREIGHT_OPTIONS as FREIGHT_OPTIONS,
-  MATERIAL_REISSUE_REASON_OPTIONS as REASON_OPTIONS,
+  MATERIAL_REISSUE_APPLICATION_DEPARTMENT_OPTIONS,
+  MATERIAL_REISSUE_APPROVAL_OPTIONS,
+  MATERIAL_REISSUE_FREIGHT_OPTIONS,
+  MATERIAL_REISSUE_REASON_OPTIONS,
+  MATERIAL_REISSUE_RESPONSIBLE_DEPARTMENT_OPTIONS,
 } from "../materialReissue";
 
 type MaterialDraft = MaterialReissueLine & { id: number };
+
+const CELL_INPUT =
+  "w-full bg-transparent px-2 py-1.5 text-sm leading-5 text-zinc-900 outline-none placeholder:text-zinc-300 focus:bg-amber-50/70";
+const CELL_TEXTAREA =
+  "w-full resize-y bg-transparent px-2 py-1.5 text-sm leading-5 text-zinc-900 outline-none placeholder:text-zinc-300 focus:bg-amber-50/70";
+const TABLE_CELL = "border border-zinc-400 px-2 py-1.5 align-middle";
+const LABEL_CELL = "w-[104px] border border-zinc-400 bg-zinc-50 px-2 py-1.5 text-left align-middle text-xs font-normal text-zinc-600 sm:w-[124px]";
 
 function blankMaterial(id: number): MaterialDraft {
   return { id, materialCode: "", materialName: "", specification: "", quantity: 1, unit: "个", remark: "" };
 }
 
-function optionList(
-  options: ReadonlyArray<{ value: string; label: string }>,
-  locale: ReturnType<typeof useLocale>,
-): SelectOption[] {
-  return options.map((option) => ({ value: option.value, label: fieldText(locale, option.label) }));
+function slashDate(value: string): string {
+  return value.trim() === "" ? "" : value.replace(/-/g, "/");
 }
 
-function shanghaiNowText(): string {
-  return new Intl.DateTimeFormat("zh-CN", {
-    timeZone: "Asia/Shanghai",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).format(new Date());
+function TemplateCheck({
+  checked,
+  label,
+  name,
+  value,
+  onChange,
+  ariaLabel,
+}: {
+  checked: boolean;
+  label: string;
+  name: string;
+  value?: string;
+  onChange: () => void;
+  ariaLabel?: string;
+}) {
+  return (
+    <label className="inline-flex cursor-pointer items-center gap-1 whitespace-nowrap text-sm leading-6 text-zinc-800">
+      <input
+        type="radio"
+        name={name}
+        value={value}
+        checked={checked}
+        onChange={onChange}
+        aria-label={ariaLabel ?? label}
+        className="sr-only"
+      />
+      <span aria-hidden="true" className={"text-[15px] leading-none " + (checked ? "text-zinc-900" : "text-zinc-400")}>
+        {checked ? "☑" : "☐"}
+      </span>
+      <span>{label}</span>
+    </label>
+  );
+}
+
+function FormRow({
+  label,
+  children,
+  required = false,
+}: {
+  label: string;
+  children: ReactNode;
+  required?: boolean;
+}) {
+  return (
+    <tr>
+      <th scope="row" className={LABEL_CELL}>
+        {label}
+        {required ? <span className="ml-0.5 text-rose-500">*</span> : null}
+      </th>
+      <td className={TABLE_CELL}>{children}</td>
+    </tr>
+  );
+}
+
+function ReadOnlyValue({ value }: { value: string }) {
+  return <span className="block px-2 py-1.5 text-sm leading-5 text-zinc-800">{value === "" ? "—" : value}</span>;
+}
+
+function ChoiceGroup({
+  name,
+  value,
+  options,
+  onChange,
+  ariaLabel,
+}: {
+  name: string;
+  value: string;
+  options: ReadonlyArray<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+  ariaLabel: string;
+}) {
+  return (
+    <div role="radiogroup" aria-label={ariaLabel} className="flex flex-wrap items-center gap-x-4 gap-y-0.5">
+      {options.map((option) => (
+        <TemplateCheck
+          key={option.value}
+          name={name}
+          value={option.value}
+          checked={value === option.value}
+          label={option.label}
+          onChange={() => { onChange(option.value); }}
+        />
+      ))}
+    </div>
+  );
 }
 
 export function MaterialReissueForm({ projectId, task, members, onSubmitted }: {
@@ -66,10 +140,9 @@ export function MaterialReissueForm({ projectId, task, members, onSubmitted }: {
   const [project, setProject] = useState<ApiProject | null>(null);
   const [projectError, setProjectError] = useState<string | null>(null);
   const [projectTick, setProjectTick] = useState(0);
-  const [submittedAt] = useState(shanghaiNowText);
   const [reason, setReason] = useState<MaterialReissueReason>("missing_list");
   const [reasonOther, setReasonOther] = useState("");
-  const [applicationDepartment, setApplicationDepartment] = useState<MaterialReissueDepartment>("project");
+  const [applicationDepartment, setApplicationDepartment] = useState<MaterialReissueApplicationDepartment>("project");
   const [applicationDepartmentOther, setApplicationDepartmentOther] = useState("");
   const [accepted, setAccepted] = useState(false);
   const [inWarranty, setInWarranty] = useState(false);
@@ -215,33 +288,37 @@ export function MaterialReissueForm({ projectId, task, members, onSubmitted }: {
     }
   };
 
-  const boolOptions = (yesLabel: string, noLabel: string): SelectOption[] => [
-    { value: "true", label: yesLabel },
-    { value: "false", label: noLabel },
+  const yesNoOptions = [
+    { value: "true", label: fieldText(locale, "是") },
+    { value: "false", label: fieldText(locale, "否") },
   ];
-  const yesText = fieldText(locale, "是");
-  const noText = fieldText(locale, "否");
+  const approvalOptions = MATERIAL_REISSUE_APPROVAL_OPTIONS.map((option) => ({
+    value: option.value,
+    label: fieldText(locale, option.label),
+  }));
+  const freightOptions = MATERIAL_REISSUE_FREIGHT_OPTIONS.map((option) => ({
+    value: option.value,
+    label: fieldText(locale, option.label),
+  }));
 
   return (
     <div data-material-reissue-form="true" className="flex flex-col gap-4 py-4">
-      <section className="rounded-xl border border-zinc-200 bg-white px-4 py-3.5">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h3 className="text-base font-semibold text-zinc-900">{t("mr.title")}</h3>
-            <p className="mt-0.5 text-[11px] leading-4 text-zinc-400">{t("mr.autoHint")}</p>
-          </div>
-          <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">
-            {t("mr.autoBadge")}
-          </span>
+      <section className="rounded-xl border border-zinc-200 bg-white p-3 sm:p-5">
+        <div className="flex items-center justify-between gap-3 border-b border-zinc-300 pb-2">
+          <img src="/libiao-logo.svg" alt="Libiao Robotics" className="h-7 w-auto max-w-[150px]" />
+          <span className="text-right text-[11px] leading-4 text-zinc-500">{t("mr.form.company")}</span>
         </div>
-        <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
-          <div><dt className={LABEL_CLASS}>{fieldText(locale, "项目编号")}</dt><dd className="mt-0.5 truncate text-zinc-800">{project?.code ?? "…"}</dd></div>
-          <div><dt className={LABEL_CLASS}>{fieldText(locale, "项目名称")}</dt><dd className="mt-0.5 truncate text-zinc-800">{project?.name ?? "…"}</dd></div>
-          <div><dt className={LABEL_CLASS}>{fieldText(locale, "客户名称")}</dt><dd className="mt-0.5 truncate text-zinc-800">{project?.customer ?? "—"}</dd></div>
-          <div><dt className={LABEL_CLASS}>{fieldText(locale, "来源任务")}</dt><dd className="mt-0.5 truncate text-zinc-800">{task.title}</dd></div>
-          <div><dt className={LABEL_CLASS}>{fieldText(locale, "申请人")}</dt><dd className="mt-0.5 truncate text-zinc-800">{applicantName}</dd></div>
-          <div><dt className={LABEL_CLASS}>{fieldText(locale, "提交时间")}</dt><dd className="mt-0.5 text-zinc-800">{submittedAt}</dd></div>
-        </dl>
+
+        <h3 className="mt-4 text-center text-lg font-bold tracking-wide text-zinc-900">{t("mr.title")}</h3>
+        <p className="mt-3 break-words text-[13px] font-bold leading-6 text-zinc-900">
+          {t("mr.form.emailLabel")}　{t("mr.form.emailProject")}{t("mr.form.emailMarker")}
+          {project?.code ?? "…"} {project?.name ?? "…"}项目/ {t("mr.form.emailUrgent")}
+        </p>
+        <div className="mt-1 flex flex-wrap items-start justify-between gap-2 text-[10px] leading-4 text-zinc-400">
+          <span className="min-w-0 flex-1">{t("mr.autoHint")}</span>
+          <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-700">{t("mr.autoBadge")}</span>
+        </div>
+
         {projectError === null ? null : (
           <div className="mt-3 flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
             <span className="min-w-0 flex-1">{projectError}</span>
@@ -250,151 +327,315 @@ export function MaterialReissueForm({ projectId, task, members, onSubmitted }: {
             </button>
           </div>
         )}
-      </section>
 
-      <section className="rounded-xl border border-zinc-200 bg-white px-4 py-3.5">
-        <h3 className="text-xs font-medium text-zinc-500">{t("mr.section.basic")}</h3>
-        <div className="mt-3 grid grid-cols-2 gap-3">
-          <div className="col-span-2">
-            <span className={LABEL_CLASS}>{fieldText(locale, "补发类别")} <span className="text-rose-500">*</span></span>
-            <div className="mt-1"><SelectMenu value={reason} options={optionList(REASON_OPTIONS, locale)} onChange={(value) => { setReason(value as MaterialReissueReason); setError(null); }} ariaLabel={t("mr.reason.aria")} /></div>
-          </div>
-          {reason === "other" ? (
-            <div className="col-span-2">
-              <span className={LABEL_CLASS}>{t("mr.reasonOther")} <span className="text-rose-500">*</span></span>
-              <input value={reasonOther} maxLength={100} onChange={(event) => { setReasonOther(event.target.value); setError(null); }} placeholder={t("mr.reasonOther.placeholder")} className={FIELD_CLASS + " mt-1"} />
-            </div>
-          ) : null}
-          <div>
-            <span className={LABEL_CLASS}>{fieldText(locale, "申请部门")}</span>
-            <div className="mt-1"><SelectMenu value={applicationDepartment} options={optionList(DEPARTMENT_OPTIONS, locale)} onChange={(value) => { setApplicationDepartment(value as MaterialReissueDepartment); setError(null); }} ariaLabel={t("mr.applicationDepartment.aria")} /></div>
-          </div>
-          <div>
-            <span className={LABEL_CLASS}>{fieldText(locale, "责任归属部门")}</span>
-            <div className="mt-1"><SelectMenu value={responsibleDepartment} options={optionList(DEPARTMENT_OPTIONS, locale)} onChange={(value) => { setResponsibleDepartment(value as MaterialReissueDepartment); setError(null); }} ariaLabel={t("mr.responsibleDepartment.aria")} /></div>
-          </div>
-          {applicationDepartment === "other" ? (
-            <div className="col-span-2">
-              <span className={LABEL_CLASS}>{t("mr.applicationDepartmentOther")} <span className="text-rose-500">*</span></span>
-              <input value={applicationDepartmentOther} maxLength={100} onChange={(event) => { setApplicationDepartmentOther(event.target.value); setError(null); }} placeholder={t("mr.departmentOther.placeholder")} className={FIELD_CLASS + " mt-1"} />
-            </div>
-          ) : null}
-          {responsibleDepartment === "other" ? (
-            <div className="col-span-2">
-              <span className={LABEL_CLASS}>{t("mr.responsibleDepartmentOther")} <span className="text-rose-500">*</span></span>
-              <input value={responsibleDepartmentOther} maxLength={100} onChange={(event) => { setResponsibleDepartmentOther(event.target.value); setError(null); }} placeholder={t("mr.departmentOther.placeholder")} className={FIELD_CLASS + " mt-1"} />
-            </div>
-          ) : null}
-          <div>
-            <span className={LABEL_CLASS}>{fieldText(locale, "是否已验收")}</span>
-            <div className="mt-1"><SelectMenu value={String(accepted)} options={boolOptions(yesText, noText)} onChange={(value) => { setAccepted(value === "true"); setError(null); }} ariaLabel={t("mr.accepted.aria")} /></div>
-          </div>
-          <div>
-            <span className={LABEL_CLASS}>{fieldText(locale, "是否质保期内")}</span>
-            <div className="mt-1"><SelectMenu value={String(inWarranty)} options={boolOptions(yesText, noText)} onChange={(value) => { setInWarranty(value === "true"); setError(null); }} ariaLabel={t("mr.inWarranty.aria")} /></div>
-          </div>
-          <div>
-            <span className={LABEL_CLASS}>{fieldText(locale, "是否免费补发")}</span>
-            <div className="mt-1"><SelectMenu value={String(freeReissue)} options={boolOptions(yesText, noText)} onChange={(value) => { setFreeReissue(value === "true"); setError(null); }} ariaLabel={t("mr.freeReissue.aria")} /></div>
-          </div>
-          <div>
-            <span className={LABEL_CLASS}>{fieldText(locale, "是否已审批")}</span>
-            <div className="mt-1"><SelectMenu value={approved} options={optionList(APPROVAL_OPTIONS, locale)} onChange={(value) => { setApproved(value as MaterialReissueApproval); setError(null); }} ariaLabel={t("mr.approved.aria")} /></div>
-          </div>
-          <div>
-            <span className={LABEL_CLASS}>{fieldText(locale, "要求出库时间")} <span className="text-rose-500">*</span></span>
-            <input type="date" value={requiredOutDate} onChange={(event) => { setRequiredOutDate(event.target.value); setError(null); }} className={FIELD_CLASS + " mt-1"} />
-          </div>
-          <div>
-            <span className={LABEL_CLASS}>{fieldText(locale, "是否涉及旧件返还")}</span>
-            <div className="mt-1"><SelectMenu value={String(oldPartReturn)} options={boolOptions(yesText, noText)} onChange={(value) => { setOldPartReturn(value === "true"); setError(null); }} ariaLabel={t("mr.oldPartReturn.aria")} /></div>
-          </div>
-          <div className="col-span-2">
-            <span className={LABEL_CLASS}>{fieldText(locale, "运费承担")}</span>
-            <div className="mt-1"><SelectMenu value={freightBearer} options={optionList(FREIGHT_OPTIONS, locale)} onChange={(value) => { setFreightBearer(value as MaterialReissueFreight); setError(null); }} ariaLabel={t("mr.freight.aria")} /></div>
-          </div>
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full min-w-[560px] table-fixed border-collapse text-sm">
+            <colgroup>
+              <col className="w-[104px] sm:w-[124px]" />
+              <col />
+            </colgroup>
+            <thead>
+              <tr>
+                <th scope="col" className="border border-zinc-400 bg-zinc-100 px-2 py-1.5 text-center text-xs font-bold text-zinc-800">{fieldText(locale, "项目")}</th>
+                <th scope="col" className="border border-zinc-400 bg-zinc-100 px-2 py-1.5 text-center text-xs font-bold text-zinc-800">{t("mr.form.valueHeader")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <FormRow label={fieldText(locale, "项目编号")}>
+                <ReadOnlyValue value={project?.code ?? "…"} />
+              </FormRow>
+              <FormRow label={fieldText(locale, "项目名称")}>
+                <ReadOnlyValue value={project?.name ?? "…"} />
+              </FormRow>
+              <FormRow label={fieldText(locale, "客户名称")}>
+                <ReadOnlyValue value={project?.customer ?? ""} />
+              </FormRow>
+              <FormRow label={fieldText(locale, "申请部门")} required>
+                <div role="radiogroup" aria-label={t("mr.applicationDepartment.aria")} className="flex flex-wrap items-center gap-x-4 gap-y-0.5">
+                  {MATERIAL_REISSUE_APPLICATION_DEPARTMENT_OPTIONS.map((option) => (
+                    <TemplateCheck
+                      key={option.value}
+                      name="material-reissue-application-department"
+                      value={option.value}
+                      checked={applicationDepartment === option.value}
+                      label={fieldText(locale, option.label) + (option.value === "other" ? "：" : "")}
+                      onChange={() => { setApplicationDepartment(option.value); setError(null); }}
+                    />
+                  ))}
+                  {applicationDepartment === "other" ? (
+                    <input
+                      value={applicationDepartmentOther}
+                      maxLength={100}
+                      onChange={(event) => { setApplicationDepartmentOther(event.target.value); setError(null); }}
+                      placeholder={t("mr.form.otherPlaceholder")}
+                      aria-label={t("mr.applicationDepartmentOther")}
+                      className="h-7 w-36 border-b border-zinc-400 bg-transparent px-1 text-sm outline-none placeholder:text-zinc-300 focus:border-zinc-900"
+                    />
+                  ) : (
+                    <span className="text-sm text-zinc-300">______</span>
+                  )}
+                </div>
+              </FormRow>
+              <FormRow label={fieldText(locale, "申请人")}>
+                <ReadOnlyValue value={applicantName} />
+              </FormRow>
+              <FormRow label={fieldText(locale, "补发类别")} required>
+                <div role="radiogroup" aria-label={t("mr.reason.aria")} className="flex flex-wrap items-center gap-x-4 gap-y-0.5">
+                  {MATERIAL_REISSUE_REASON_OPTIONS.map((option) => (
+                    <TemplateCheck
+                      key={option.value}
+                      name="material-reissue-reason"
+                      value={option.value}
+                      checked={reason === option.value}
+                      label={fieldText(locale, option.label) + (option.value === "other" ? "：" : "")}
+                      onChange={() => { setReason(option.value); setError(null); }}
+                    />
+                  ))}
+                  {reason === "other" ? (
+                    <input
+                      value={reasonOther}
+                      maxLength={100}
+                      onChange={(event) => { setReasonOther(event.target.value); setError(null); }}
+                      placeholder={t("mr.form.otherPlaceholder")}
+                      aria-label={t("mr.reasonOther")}
+                      className="h-7 w-40 border-b border-zinc-400 bg-transparent px-1 text-sm outline-none placeholder:text-zinc-300 focus:border-zinc-900"
+                    />
+                  ) : (
+                    <span className="text-sm text-zinc-300">______</span>
+                  )}
+                </div>
+              </FormRow>
+              <FormRow label={fieldText(locale, "是否已验收")} required>
+                <ChoiceGroup
+                  name="material-reissue-accepted"
+                  value={accepted ? "true" : "false"}
+                  options={yesNoOptions}
+                  onChange={(value) => { setAccepted(value === "true"); setError(null); }}
+                  ariaLabel={t("mr.accepted.aria")}
+                />
+              </FormRow>
+              <FormRow label={fieldText(locale, "是否质保期内")} required>
+                <ChoiceGroup
+                  name="material-reissue-in-warranty"
+                  value={inWarranty ? "true" : "false"}
+                  options={yesNoOptions}
+                  onChange={(value) => { setInWarranty(value === "true"); setError(null); }}
+                  ariaLabel={t("mr.inWarranty.aria")}
+                />
+              </FormRow>
+              <FormRow label={fieldText(locale, "是否免费补发")} required>
+                <ChoiceGroup
+                  name="material-reissue-free"
+                  value={freeReissue ? "true" : "false"}
+                  options={yesNoOptions}
+                  onChange={(value) => { setFreeReissue(value === "true"); setError(null); }}
+                  ariaLabel={t("mr.freeReissue.aria")}
+                />
+              </FormRow>
+              <FormRow label={fieldText(locale, "是否已审批")} required>
+                <ChoiceGroup
+                  name="material-reissue-approved"
+                  value={approved}
+                  options={approvalOptions}
+                  onChange={(value) => { setApproved(value as MaterialReissueApproval); setError(null); }}
+                  ariaLabel={t("mr.approved.aria")}
+                />
+              </FormRow>
+              <FormRow label={fieldText(locale, "责任归属部门")} required>
+                <div role="radiogroup" aria-label={t("mr.responsibleDepartment.aria")} className="flex flex-wrap items-center gap-x-4 gap-y-0.5">
+                  {MATERIAL_REISSUE_RESPONSIBLE_DEPARTMENT_OPTIONS.map((option) => (
+                    <TemplateCheck
+                      key={option.value}
+                      name="material-reissue-responsible-department"
+                      value={option.value}
+                      checked={responsibleDepartment === option.value}
+                      label={fieldText(locale, option.label) + (option.value === "other" ? "：" : "")}
+                      onChange={() => { setResponsibleDepartment(option.value); setError(null); }}
+                    />
+                  ))}
+                  {responsibleDepartment === "other" ? (
+                    <input
+                      value={responsibleDepartmentOther}
+                      maxLength={100}
+                      onChange={(event) => { setResponsibleDepartmentOther(event.target.value); setError(null); }}
+                      placeholder={t("mr.form.otherPlaceholder")}
+                      aria-label={t("mr.responsibleDepartmentOther")}
+                      className="h-7 w-36 border-b border-zinc-400 bg-transparent px-1 text-sm outline-none placeholder:text-zinc-300 focus:border-zinc-900"
+                    />
+                  ) : (
+                    <span className="text-sm text-zinc-300">______</span>
+                  )}
+                </div>
+              </FormRow>
+              <FormRow label={fieldText(locale, "要求出库时间")} required>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="date"
+                    value={requiredOutDate}
+                    onChange={(event) => { setRequiredOutDate(event.target.value); setError(null); }}
+                    aria-label={fieldText(locale, "要求出库时间")}
+                    className="rounded border border-zinc-300 bg-white px-2 py-1 text-sm text-zinc-900 outline-none focus:border-zinc-500"
+                  />
+                  <span className="text-xs tabular-nums text-zinc-500">{requiredOutDate === "" ? "YYYY/MM/DD" : slashDate(requiredOutDate)}</span>
+                </div>
+              </FormRow>
+              <FormRow label={fieldText(locale, "是否涉及旧件返还")} required>
+                <ChoiceGroup
+                  name="material-reissue-old-part"
+                  value={oldPartReturn ? "true" : "false"}
+                  options={yesNoOptions}
+                  onChange={(value) => { setOldPartReturn(value === "true"); setError(null); }}
+                  ariaLabel={t("mr.oldPartReturn.aria")}
+                />
+              </FormRow>
+              <FormRow label={fieldText(locale, "运费承担")} required>
+                <ChoiceGroup
+                  name="material-reissue-freight"
+                  value={freightBearer}
+                  options={freightOptions}
+                  onChange={(value) => { setFreightBearer(value as MaterialReissueFreight); setError(null); }}
+                  ariaLabel={t("mr.freight.aria")}
+                />
+              </FormRow>
+              <FormRow label={fieldText(locale, "收货人")} required>
+                <input
+                  value={recipient}
+                  maxLength={80}
+                  onChange={(event) => { setRecipient(event.target.value); setError(null); }}
+                  placeholder={t("mr.recipient.placeholder")}
+                  className={CELL_INPUT}
+                />
+              </FormRow>
+              <FormRow label={fieldText(locale, "联系电话")} required>
+                <input
+                  type="tel"
+                  value={phone}
+                  maxLength={40}
+                  onChange={(event) => { setPhone(event.target.value); setError(null); }}
+                  placeholder={t("mr.phone.placeholder")}
+                  className={CELL_INPUT}
+                />
+              </FormRow>
+              <FormRow label={fieldText(locale, "收货地址")} required>
+                <textarea
+                  value={address}
+                  maxLength={500}
+                  rows={2}
+                  onChange={(event) => { setAddress(event.target.value); setError(null); }}
+                  placeholder={t("mr.address.placeholder")}
+                  className={CELL_TEXTAREA}
+                />
+              </FormRow>
+              <FormRow label={fieldText(locale, "补发原因简述")} required>
+                <textarea
+                  value={description}
+                  maxLength={2000}
+                  rows={3}
+                  onChange={(event) => { setDescription(event.target.value); setError(null); }}
+                  placeholder={t("mr.description.placeholder")}
+                  className={CELL_TEXTAREA}
+                />
+              </FormRow>
+            </tbody>
+          </table>
         </div>
-      </section>
 
-      <section className="rounded-xl border border-zinc-200 bg-white px-4 py-3.5">
-        <h3 className="text-xs font-medium text-zinc-500">{t("mr.section.shipping")}</h3>
-        <div className="mt-3 grid grid-cols-2 gap-3">
-          <div>
-            <span className={LABEL_CLASS}>{fieldText(locale, "收货人")} <span className="text-rose-500">*</span></span>
-            <input value={recipient} maxLength={80} onChange={(event) => { setRecipient(event.target.value); setError(null); }} placeholder={t("mr.recipient.placeholder")} className={FIELD_CLASS + " mt-1"} />
-          </div>
-          <div>
-            <span className={LABEL_CLASS}>{fieldText(locale, "联系电话")} <span className="text-rose-500">*</span></span>
-            <input value={phone} maxLength={40} onChange={(event) => { setPhone(event.target.value); setError(null); }} placeholder={t("mr.phone.placeholder")} className={FIELD_CLASS + " mt-1"} />
-          </div>
-          <div className="col-span-2">
-            <span className={LABEL_CLASS}>{fieldText(locale, "收货地址")} <span className="text-rose-500">*</span></span>
-            <textarea value={address} maxLength={500} rows={2} onChange={(event) => { setAddress(event.target.value); setError(null); }} placeholder={t("mr.address.placeholder")} className={FIELD_CLASS + " mt-1 resize-none leading-5"} />
-          </div>
+        <h4 className="mt-5 text-sm font-bold text-zinc-900">{fieldText(locale, "补发物料清单")}</h4>
+        <div className="mt-2 overflow-x-auto">
+          <table className="w-full min-w-[720px] table-fixed border-collapse text-xs">
+            <colgroup>
+              <col className="w-[48px]" />
+              <col className="w-[128px]" />
+              <col className="w-[148px]" />
+              <col className="w-[148px]" />
+              <col className="w-[72px]" />
+              <col className="w-[64px]" />
+              <col className="w-[112px]" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th scope="col" className="border border-zinc-400 bg-zinc-100 px-1 py-1.5 text-center font-bold">{fieldText(locale, "序号")}</th>
+                <th scope="col" className="border border-zinc-400 bg-zinc-100 px-1 py-1.5 text-center font-bold">{fieldText(locale, "物料编码")}</th>
+                <th scope="col" className="border border-zinc-400 bg-zinc-100 px-1 py-1.5 text-center font-bold">{fieldText(locale, "物料名称")}</th>
+                <th scope="col" className="border border-zinc-400 bg-zinc-100 px-1 py-1.5 text-center font-bold">{fieldText(locale, "规格型号")}</th>
+                <th scope="col" className="border border-zinc-400 bg-zinc-100 px-1 py-1.5 text-center font-bold">{fieldText(locale, "数量")}</th>
+                <th scope="col" className="border border-zinc-400 bg-zinc-100 px-1 py-1.5 text-center font-bold">{fieldText(locale, "单位")}</th>
+                <th scope="col" className="border border-zinc-400 bg-zinc-100 px-1 py-1.5 text-center font-bold">{fieldText(locale, "备注")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {materials.map((row, index) => (
+                <tr key={row.id} data-material-reissue-row={String(index + 1)}>
+                  <td className="border border-zinc-400 px-1 py-1 text-center align-middle">
+                    <span className="mr-1 tabular-nums text-zinc-600">{String(index + 1)}</span>
+                    {materials.length <= 1 ? null : (
+                      <button
+                        type="button"
+                        onClick={() => { removeMaterial(row.id); }}
+                        aria-label={t("mr.form.removeMaterial")}
+                        title={t("mr.form.removeMaterial")}
+                        className="text-[10px] leading-none text-zinc-300 transition hover:text-rose-600"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </td>
+                  <td className="border border-zinc-400 px-1 py-1 align-middle">
+                    <input value={row.materialCode} maxLength={80} onChange={(event) => { updateMaterial(row.id, { materialCode: event.target.value }); }} placeholder={t("mr.materialCode.placeholder")} aria-label={fieldText(locale, "物料编码")} className={CELL_INPUT + " text-xs"} />
+                  </td>
+                  <td className="border border-zinc-400 px-1 py-1 align-middle">
+                    <input value={row.materialName} maxLength={200} onChange={(event) => { updateMaterial(row.id, { materialName: event.target.value }); }} placeholder={t("mr.materialName.placeholder")} aria-label={fieldText(locale, "物料名称")} className={CELL_INPUT + " text-xs"} />
+                  </td>
+                  <td className="border border-zinc-400 px-1 py-1 align-middle">
+                    <input value={row.specification} maxLength={200} onChange={(event) => { updateMaterial(row.id, { specification: event.target.value }); }} placeholder={t("mr.specification.placeholder")} aria-label={fieldText(locale, "规格型号")} className={CELL_INPUT + " text-xs"} />
+                  </td>
+                  <td className="border border-zinc-400 px-1 py-1 align-middle">
+                    <input type="number" min="0" step="any" value={row.quantity} onChange={(event) => { updateMaterial(row.id, { quantity: Number(event.target.value) }); }} aria-label={fieldText(locale, "数量")} className={CELL_INPUT + " text-center text-xs"} />
+                  </td>
+                  <td className="border border-zinc-400 px-1 py-1 align-middle">
+                    <input value={row.unit} maxLength={20} onChange={(event) => { updateMaterial(row.id, { unit: event.target.value }); }} placeholder={t("mr.unit.placeholder")} aria-label={fieldText(locale, "单位")} className={CELL_INPUT + " text-center text-xs"} />
+                  </td>
+                  <td className="border border-zinc-400 px-1 py-1 align-middle">
+                    <input value={row.remark} maxLength={200} onChange={(event) => { updateMaterial(row.id, { remark: event.target.value }); }} placeholder={t("mr.remark.placeholder")} aria-label={fieldText(locale, "备注")} className={CELL_INPUT + " text-xs"} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-      </section>
-
-      <section className="rounded-xl border border-zinc-200 bg-white px-4 py-3.5">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-xs font-medium text-zinc-500">{t("mr.section.materials")}</h3>
-          <button type="button" onClick={addMaterial} disabled={materials.length >= 200} className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] font-medium text-zinc-600 transition hover:border-zinc-300 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50">
-            {t("mr.materials.add")}
-          </button>
-        </div>
-        <div className="mt-2 flex flex-col gap-2">
-          {materials.map((row, index) => (
-            <div key={row.id} data-material-reissue-row={String(index + 1)} className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-medium text-zinc-500">{t("mr.materials.row", { n: String(index + 1) })}</span>
-                {materials.length <= 1 ? null : (
-                  <button type="button" onClick={() => removeMaterial(row.id)} className="rounded px-1.5 py-0.5 text-[10px] text-zinc-400 transition hover:bg-rose-50 hover:text-rose-600">
-                    {t("common.delete")}
-                  </button>
-                )}
-              </div>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                <div>
-                  <span className="text-[10px] text-zinc-400">{fieldText(locale, "物料编码")}</span>
-                  <input value={row.materialCode} maxLength={80} onChange={(event) => updateMaterial(row.id, { materialCode: event.target.value })} placeholder={t("mr.materialCode.placeholder")} className={FIELD_CLASS + " mt-0.5 px-2 py-1.5 text-xs"} />
-                </div>
-                <div>
-                  <span className="text-[10px] text-zinc-400">{fieldText(locale, "物料名称")} <span className="text-rose-500">*</span></span>
-                  <input value={row.materialName} maxLength={200} onChange={(event) => updateMaterial(row.id, { materialName: event.target.value })} placeholder={t("mr.materialName.placeholder")} className={FIELD_CLASS + " mt-0.5 px-2 py-1.5 text-xs"} />
-                </div>
-                <div className="col-span-2">
-                  <span className="text-[10px] text-zinc-400">{fieldText(locale, "规格型号")}</span>
-                  <input value={row.specification} maxLength={200} onChange={(event) => updateMaterial(row.id, { specification: event.target.value })} placeholder={t("mr.specification.placeholder")} className={FIELD_CLASS + " mt-0.5 px-2 py-1.5 text-xs"} />
-                </div>
-                <div>
-                  <span className="text-[10px] text-zinc-400">{fieldText(locale, "数量")} <span className="text-rose-500">*</span></span>
-                  <input type="number" min="0" step="any" value={row.quantity} onChange={(event) => updateMaterial(row.id, { quantity: Number(event.target.value) })} className={FIELD_CLASS + " mt-0.5 px-2 py-1.5 text-xs"} />
-                </div>
-                <div>
-                  <span className="text-[10px] text-zinc-400">{fieldText(locale, "单位")} <span className="text-rose-500">*</span></span>
-                  <input value={row.unit} maxLength={20} onChange={(event) => updateMaterial(row.id, { unit: event.target.value })} placeholder={t("mr.unit.placeholder")} className={FIELD_CLASS + " mt-0.5 px-2 py-1.5 text-xs"} />
-                </div>
-                <div className="col-span-2">
-                  <span className="text-[10px] text-zinc-400">{fieldText(locale, "备注")}</span>
-                  <input value={row.remark} maxLength={200} onChange={(event) => updateMaterial(row.id, { remark: event.target.value })} placeholder={t("mr.remark.placeholder")} className={FIELD_CLASS + " mt-0.5 px-2 py-1.5 text-xs"} />
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="rounded-xl border border-zinc-200 bg-white px-4 py-3.5">
-        <h3 className="text-xs font-medium text-zinc-500">{t("mr.section.reason")}</h3>
-        <span className={LABEL_CLASS + " mt-2 block"}>{fieldText(locale, "补发原因简述")} <span className="text-rose-500">*</span></span>
-        <textarea value={description} maxLength={2000} rows={3} onChange={(event) => { setDescription(event.target.value); setError(null); }} placeholder={t("mr.description.placeholder")} className={FIELD_CLASS + " mt-1 resize-none leading-5"} />
-      </section>
-
-      <section className="flex flex-col gap-2 border-t border-zinc-100 pt-4">
-        <p className={CAPTION_CLASS}>{t("mr.footnote")}</p>
-        {error === null ? null : <p data-material-reissue-error="true" className="rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-600">{error}</p>}
-        <button type="button" data-material-reissue-submit="true" onClick={() => { void submit(); }} disabled={busy || project === null} className="w-full rounded-lg bg-zinc-900 px-3.5 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300">
-          {busy ? t("mr.submitting") : t("mr.submit")}
+        <button
+          type="button"
+          onClick={addMaterial}
+          className="mt-2 rounded-md border border-dashed border-zinc-300 px-2.5 py-1 text-[11px] font-medium text-zinc-600 transition hover:border-zinc-400 hover:text-zinc-900"
+        >
+          {t("mr.materials.add")}
         </button>
+
+        <div className="mt-4 text-xs leading-6 text-zinc-700">
+          <p className="font-bold text-zinc-900">{t("mr.form.notesTitle")}</p>
+          <ol className="mt-1 list-decimal pl-6">
+            <li>{t("mr.form.note1")}</li>
+            <li>{t("mr.form.note2")}</li>
+            <li>{t("mr.form.note3")}</li>
+            <li>{t("mr.form.note4")}</li>
+          </ol>
+        </div>
+
+        <div className="mt-4 flex flex-col gap-2 border-t border-zinc-200 pt-3">
+          {error === null ? null : <p data-material-reissue-error="true" className="rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-600">{error}</p>}
+          <div className="flex flex-col items-stretch justify-between gap-2 sm:flex-row sm:items-center">
+            <p className="text-[10px] leading-4 text-zinc-400">{t("mr.footnote")}</p>
+            <button
+              type="button"
+              data-material-reissue-submit="true"
+              onClick={() => { void submit(); }}
+              disabled={busy || project === null}
+              className="shrink-0 rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
+            >
+              {busy ? t("mr.submitting") : t("mr.submit")}
+            </button>
+          </div>
+        </div>
       </section>
     </div>
   );
