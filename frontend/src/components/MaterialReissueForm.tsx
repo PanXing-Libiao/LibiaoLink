@@ -147,10 +147,10 @@ export function MaterialReissueForm({ projectId, task, members, onSubmitted }: {
   const [reasonOther, setReasonOther] = useState("");
   const [applicationDepartment, setApplicationDepartment] = useState<MaterialReissueApplicationDepartment>("project");
   const [applicationDepartmentOther, setApplicationDepartmentOther] = useState("");
-  const [accepted, setAccepted] = useState(false);
-  const [inWarranty, setInWarranty] = useState(false);
-  const [freeReissue, setFreeReissue] = useState(false);
-  const [approved, setApproved] = useState<MaterialReissueApproval>("no");
+  const [accepted, setAccepted] = useState(true);
+  const [inWarranty, setInWarranty] = useState(true);
+  const [freeReissue, setFreeReissue] = useState(true);
+  const [approved, setApproved] = useState<MaterialReissueApproval>("yes");
   const [responsibleDepartment, setResponsibleDepartment] = useState<MaterialReissueDepartment>("project");
   const [responsibleDepartmentOther, setResponsibleDepartmentOther] = useState("");
   const [requiredOutDate, setRequiredOutDate] = useState("");
