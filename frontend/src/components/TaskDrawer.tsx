@@ -17,7 +17,7 @@ import {
 } from "../data/tasks";
 import { applyFileChange, ensurePreviewOutcome, fetchChangeRequest, fetchDownloadUrl, fetchFileVersions, finalizeFile, previewKindOf, recordPreviewView, triggerDownload, usePhotoUrl, type ChangeRequestDetail, type FilePreviewKind, type FileVersionBrief, type PreviewViewerConfig } from "../fileApi";
 import { lockBodyScroll } from "../scrollLock";
-import { fetchTaskDetail, toUiTask, stageKeyOfName, stageNameOf, type TaskFileBrief } from "../taskApi";
+import { fetchTaskDetail, toUiTask, stageNameOf, type TaskFileBrief } from "../taskApi";
 import { fieldText, isLocalizedLocale, mdText, priorityText, progressLabelOf, stageText, statusText, translationTargetOf, useLocale, useLocalizedText, useT } from "../i18n";
 import { cachedZhTo, translateZhTo } from "../translateApi";
 import { DateRangePicker, type DateRange } from "./DateRangePicker";
@@ -32,7 +32,7 @@ import { UploadProgressOverlay } from "./UploadProgressOverlay";
 import { DeliverableCell, docTypeChip } from "./DeliverablePicker";
 import { ScrollArea } from "./ScrollArea";
 import { SelectMenu, type SelectOption } from "./SelectMenu";
-import { AttachmentPicker, PhotoStrip } from "./ReportIssuePanel";
+import { PhotoStrip } from "./ReportIssuePanel";
 import { TRACKER_STEPS, TrackerBar, trackerStep } from "./Tracker";
 import { useFocusTrapFor } from "./useFocusTrap";
 const CLOSE_ANIMATION_MS = 170;
@@ -83,9 +83,6 @@ const CHANGE_FILE_STATUS_TEXT: Record<string, string> = {
   archived: "已归档",
   recycled: "回收站",
 };
-
-/** 变更阶段下拉（A4-13「变更阶段」）：九阶段字典，与任务表阶段同名同序。 */
-const CHANGE_STAGE_VALUES = ["售前规划", "设计开发", "加工采购", "组装发货", "硬件实施", "软件部署", "试运行", "生产阶段", "验收"];
 
 /** 变更阶段展示（空 / 未知 → 「—」）。 */
 function stageLabelOf(stageKey: string | null): string {
@@ -261,8 +258,6 @@ type TaskDrawerProps = {
    * 不传 = 文件名只读。
    */
   onRenameFile?: (fileId: string, name: string) => Promise<void>;
-  /** 当前登录人姓名（Push 254 · 「变更申请」页「变更申请人 / 填写者」只读展示 —— 提交时由服务端记 appliedBy）。 */
-  actorName?: string;
   /**
    * 变更生效后的父级刷新（Push 254 · 抽屉「变更申请」页）：提交成功 = 变更记录 + 文件新版本 + 任务
    * 「变更关联」（R01 同事务回写）都已落库 —— 由调用方整表重取，把最新文件状态与变更关联带回来；
@@ -292,7 +287,7 @@ type TaskDrawerProps = {
  * 任务描述（中文 / 英文）自 Push 196 起对「临时任务」开放（**Push 197 收窄：仅未归入阶段的临时任务** —— 业务口径 2026-09-28「这个不是临时任务 不能修改」；失焦即存，中文名必填），
  * 阶段任务与节点 / 模板生成的任务仍锁定（抽屉里不出这一行，服务端同口径 400 兜底）。
  */
-export function TaskDrawer({ task, managers, managerIds = [], canFinalize = false, members, onSubmit, onRename, onProgress, onSetStatus, onSetActualEnd, onFinalize, onUnfinalize, onChanged, actorName, onUploadFiles, onDeleteFile, onRenameFile, projectId, onClose }: TaskDrawerProps) {
+export function TaskDrawer({ task, managers, managerIds = [], canFinalize = false, members, onSubmit, onRename, onProgress, onSetStatus, onSetActualEnd, onFinalize, onUnfinalize, onChanged, onUploadFiles, onDeleteFile, onRenameFile, projectId, onClose }: TaskDrawerProps) {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
   const taskId = task === null ? null : task.id;
@@ -353,17 +348,10 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
   const [renameExt, setRenameExt] = useState("");
   /** 页标签（Push 254）：默认「任务详情」；换任务时回到默认页。 */
   const [tab, setTab] = useState<DrawerTab>("detail");
-  /** 「变更申请」页（A4-13 十三列字段面）：目标文件 / 变更阶段 / 变更内容描述 / 变更原因 / 变更前后 / 变更后文件。 */
+  /** 「变更申请」页（A4-13 精简 · 申请即通过）：目标文件 / 变更内容描述 / 变更后文件。 */
   const [changeTargetId, setChangeTargetId] = useState<string | null>(null);
-  const [changeStage, setChangeStage] = useState("");
   const [changeContent, setChangeContent] = useState("");
-  const [changeCause, setChangeCause] = useState("");
-  const [changeBefore, setChangeBefore] = useState("");
-  const [changeAfter, setChangeAfter] = useState("");
   const [changeFile, setChangeFile] = useState<File | null>(null);
-  /** Push 314（业务口径「这个变更要可以填图片」）：变更前 / 变更后摘要附图（粘贴 / 选图；随会话 fileIds 提交）。 */
-  const [changeBeforePhotos, setChangeBeforePhotos] = useState<ReportPhoto[]>([]);
-  const [changeAfterPhotos, setChangeAfterPhotos] = useState<ReportPhoto[]>([]);
   const changeInputRef = useRef<HTMLInputElement | null>(null);
   /** 变更提交中（防连点）与提交结果（成功绿条 / 失败红条）。 */
   const [changeBusy, setChangeBusy] = useState(false);
@@ -431,12 +419,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
     setRenameExt("");
     setTab("detail");
     setChangeTargetId(null);
-    // 变更阶段默认 = 任务所属阶段（临时任务没有阶段 → 留空，提交前必选）
-    setChangeStage(task === null ? "" : task.stageKey ?? stageKeyOfName(task.stage) ?? "");
     setChangeContent("");
-    setChangeCause("");
-    setChangeBefore("");
-    setChangeAfter("");
     setChangeFile(null);
     setChangeBusy(false);
     setChangeDone(false);
@@ -460,7 +443,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
   }, [taskId]);
 
   const draftDirty = JSON.stringify(draft) !== JSON.stringify(baseDraft.current);
-  const protectingDraft = draftDirty || saveNote !== null || changeContent !== "" || changeCause !== "" || changeBefore !== "" || changeAfter !== "" || changeBeforePhotos.length > 0 || changeAfterPhotos.length > 0 || changeFile !== null || renamingId !== null || pendingDelete !== null || finalizeConfirm || unfinalizeConfirm;
+  const protectingDraft = draftDirty || saveNote !== null || changeContent !== "" || changeFile !== null || renamingId !== null || pendingDelete !== null || finalizeConfirm || unfinalizeConfirm;
   useEffect(() => {
     if (task === null || protectingDraft || (document.activeElement instanceof HTMLElement && drawerRef.current?.contains(document.activeElement) && document.activeElement.matches('input:not([type="checkbox"]):not([type="radio"]), textarea, select, [contenteditable="true"]'))) return;
     const next = draftOf(task, managerIds);
@@ -736,7 +719,6 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
   /** Push 301：字段 / 下拉 / 徽标显示名按当前语言换词（状态 / 优先级 / 变更阶段；数据层键仍是中文）。 */
   const statusOptions = statusOptionsOf((value) => statusText(locale, value));
   const priorityOptions: SelectOption[] = PRIORITY_VALUES.map((value) => ({ value, label: priorityText(locale, value) }));
-  const changeStageOptions: SelectOption[] = CHANGE_STAGE_VALUES.map((name) => ({ value: stageKeyOfName(name) ?? name, label: stageText(locale, name) }));
 
   const draftDays = draft.range === null ? 0 : daysBetweenInclusive(draft.range.from, draft.range.to);
   const shownDays = editable ? draftDays : task.days;
@@ -745,9 +727,8 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
   const headcountInvalid = headcountText !== "" && (Number.isNaN(headcountValue) || headcountValue < 0);
   /** 任务描述校验（Push 196）：中文名必填 —— 输入过程中为空只标红提示，失焦时还原成原值、不写库。 */
   const titleInvalid = titleEditable && draft.title.trim() === "";
-  /** 「变更申请」页只读展示：变更时间（提交当天 = 系统记录口径）与变更申请人（当前登录人）。 */
+  /** 「变更申请」页只读展示：变更时间（提交当天 = 系统记录口径；生效时间由服务端记录）。 */
   const changeToday = dateOnlyText(new Date().toISOString());
-  const changeApplicant = actorName === undefined || actorName === "" ? t("drawer.currentUser") : actorName;
 
   /** 「文件」行（Push 226）：选文件 → 调用方分片直传（关联本任务）→ 完成后重取清单（列表计数由调用方刷新）。 */
   const beginFileUpload = (picked: FileList | null) => {
@@ -938,16 +919,12 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
   };
 
   /**
-   * 提交变更（A4-13 提交校验 + 一期「申请即通过」）：变更文件 / 变更内容描述 / 变更阶段 / 变更后文件四道必填 ——
-   * 前端先拦一道（服务端同口径兜底：非定档 409 FILE_STATE_INVALID / 缺校验 400）；
-   * 变更原因（选填）非空时与内容描述合并记入契约 reason（读面「变更原因」按该文本展示）；
-   * 分片直传（intent=change）完成即生效：变更记录 + 新版本 + 文件状态 changed + R01 回写任务关联。
+   * 提交变更（A4-13 精简 · 一期「申请即通过」）：变更文件 / 变更内容描述 / 变更后文件三道必填 ——
+   * 前端先拦一道（服务端同口径兜底：非定档 409 FILE_STATE_INVALID / 缺校验 400）；变更阶段 / 申请人 /
+   * 生效时间 / 变更后文件版本均由服务端记录。分片直传（intent=change）完成即生效：变更记录 + 新版本 +
+   * 文件状态 changed + R01 按输出成果文件命中回写任务变更关联。
    * 成功后重取抽屉内文件清单，并让调用方整表重取（文件计数 / 变更关联回流）。
    */
-  /** Push 314：可随变更提交的摘要附图 fileIds（上传中 / 失败的不在内 —— 提交入口先拦上传态）。 */
-  const readySummaryFileIds = (photos: readonly ReportPhoto[]) =>
-    photos.filter((photo) => photo.pending === undefined && photo.fileId !== "").map((photo) => photo.fileId);
-
   /** Push 314：读面摘要附图（只给 fileId）→ 展示条目（占位名作标题 / 预览字幕，图片按 id 懒取签名）。 */
   const summaryPhotoItems = (fileIds: readonly string[]): ReportPhoto[] =>
     fileIds.map((fileId, index) => ({ fileId, name: t("drawer.change.photo.name", { n: String(index + 1) }), url: null }));
@@ -964,44 +941,20 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
       setChangeError(t("drawer.change.err.content"));
       return;
     }
-    if (changeStage === "") {
-      setChangeError(t("drawer.change.err.stage"));
-      return;
-    }
     if (changeFile === null) {
       setChangeError(t("drawer.change.err.newFile"));
       return;
     }
-    if (changeBeforePhotos.some((photo) => photo.pending === "uploading") || changeAfterPhotos.some((photo) => photo.pending === "uploading")) {
-      setChangeError(t("report.uploadPending"));
-      return;
-    }
-    if (changeBeforePhotos.some((photo) => photo.pending === "failed") || changeAfterPhotos.some((photo) => photo.pending === "failed")) {
-      setChangeError(t("report.uploadFailed"));
-      return;
-    }
-    const cause = changeCause.trim();
-    const reason = cause === "" ? changeContent.trim() : changeContent.trim() + t("drawer.change.reasonJoin") + cause;
     setChangeBusy(true);
     setChangeDone(false);
     setChangeError(null);
     void applyFileChange(projectId, changeTarget, changeFile, {
-      reason,
-      beforeSummary: changeBefore,
-      afterSummary: changeAfter,
-      beforeSummaryFileIds: readySummaryFileIds(changeBeforePhotos),
-      afterSummaryFileIds: readySummaryFileIds(changeAfterPhotos),
-      stageKey: changeStage,
+      reason: changeContent.trim(),
     }, taskFinalized)
       .then(() => {
         setChangeDone(true);
         setChangeTargetId(null);
         setChangeContent("");
-        setChangeCause("");
-        setChangeBefore("");
-        setChangeAfter("");
-        setChangeBeforePhotos([]);
-        setChangeAfterPhotos([]);
         setChangeFile(null);
         setFilesTick((tick) => tick + 1);
         onChanged?.();
@@ -1013,7 +966,6 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
         setChangeBusy(false);
       });
   };
-
   /**
    * 「变更文件」就地定档（Push 254 续 · 业务反馈「这个选择不了啊」）：未定档文件行尾「定档」把变更前置门
    * （A4-13：只有已定档文件可以发起变更）就地补上 —— POST /files/{id}/finalize（draft → final 锁版；
@@ -1738,24 +1690,6 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
               </section>
 
               <section>
-                <h3 className="text-xs font-medium text-zinc-500">{fieldText(locale, "变更阶段")} <span className="text-rose-500">*</span></h3>
-                <span className={CAPTION_CLASS}>{t("drawer.change.stage.caption")}</span>
-                <div data-change-stage="true" className="mt-1.5">
-                  <SelectMenu
-                    value={changeStage}
-                    options={changeStageOptions}
-                    placeholder={t("drawer.change.select.placeholder")}
-                    onChange={(next) => {
-                      setChangeStage(next);
-                      setChangeDone(false);
-                      setChangeError(null);
-                    }}
-                    ariaLabel={t("drawer.change.stage.aria")}
-                  />
-                </div>
-              </section>
-
-              <section>
                 <h3 className="text-xs font-medium text-zinc-500">{fieldText(locale, "变更文件")} <span className="text-rose-500">*</span></h3>
                 <span className={CAPTION_CLASS}>{t("drawer.change.file.caption")}</span>
                 {files === null ? (
@@ -1846,9 +1780,6 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
                 {changeFinalizeDone !== null && changeableFiles.some((file) => file.id === changeFinalizeDone) ? (
                   <p data-change-finalize-done="true" className="mt-2 text-[11px] leading-4 text-emerald-600">{t("drawer.change.file.finalizedNote")}</p>
                 ) : null}
-                {files !== null && files.length > 0 && changeableFiles.length === 0 ? (
-                  <p data-change-none-hint="true" className="mt-2 text-[11px] leading-4 text-zinc-400">{t("drawer.change.file.noneHint")}</p>
-                ) : null}
               </section>
 
               <section>
@@ -1867,81 +1798,6 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
                   aria-label={t("drawer.change.desc.aria")}
                   className={FIELD_CLASS + " mt-1.5 resize-none leading-6"}
                 />
-              </section>
-
-              <section>
-                <h3 className="text-xs font-medium text-zinc-500">{fieldText(locale, "变更前")}</h3>
-                <textarea
-                  data-change-before="true"
-                  value={changeBefore}
-                  maxLength={2000}
-                  rows={2}
-                  onChange={(event) => { setChangeBefore(event.target.value); }}
-                  placeholder={t("drawer.change.before.placeholder")}
-                  aria-label={fieldText(locale, "变更前")}
-                  className={FIELD_CLASS + " mt-1.5 resize-none leading-6"}
-                />
-                <AttachmentPicker
-                  projectId={projectId ?? ""}
-                  field="change-before"
-                  items={changeBeforePhotos}
-                  onChange={(items) => { setChangeBeforePhotos(items); setChangeDone(false); setChangeError(null); }}
-                  ariaLabel={t("drawer.change.beforePhotos.aria")}
-                  disabled={projectId === undefined || changeBusy}
-                  variant="compact"
-                  size="md"
-                />
-              </section>
-
-              <section>
-                <h3 className="text-xs font-medium text-zinc-500">{fieldText(locale, "变更后")}</h3>
-                <textarea
-                  data-change-after="true"
-                  value={changeAfter}
-                  maxLength={2000}
-                  rows={2}
-                  onChange={(event) => { setChangeAfter(event.target.value); }}
-                  placeholder={t("drawer.change.after.placeholder")}
-                  aria-label={fieldText(locale, "变更后")}
-                  className={FIELD_CLASS + " mt-1.5 resize-none leading-6"}
-                />
-                <AttachmentPicker
-                  projectId={projectId ?? ""}
-                  field="change-after"
-                  items={changeAfterPhotos}
-                  onChange={(items) => { setChangeAfterPhotos(items); setChangeDone(false); setChangeError(null); }}
-                  ariaLabel={t("drawer.change.afterPhotos.aria")}
-                  disabled={projectId === undefined || changeBusy}
-                  variant="compact"
-                  size="md"
-                />
-                <span className={CAPTION_CLASS}>{t("drawer.change.summary.caption")}</span>
-              </section>
-
-              <section>
-                <h3 className="text-xs font-medium text-zinc-500">{fieldText(locale, "变更原因")}</h3>
-                <input
-                  data-change-cause="true"
-                  value={changeCause}
-                  maxLength={1000}
-                  onChange={(event) => { setChangeCause(event.target.value); }}
-                  placeholder={t("drawer.change.reason.placeholder")}
-                  aria-label={fieldText(locale, "变更原因")}
-                  className={FIELD_CLASS + " mt-1.5"}
-                />
-                <span className={CAPTION_CLASS}>{t("drawer.change.reason.caption")}</span>
-              </section>
-
-              <section>
-                <h3 className="text-xs font-medium text-zinc-500">{fieldText(locale, "变更申请人")} <span className="text-rose-500">*</span></h3>
-                <p data-change-applicant="true" className="mt-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500">{changeApplicant}</p>
-                <span className={CAPTION_CLASS}>{t("drawer.change.applicant.caption")}</span>
-              </section>
-
-              <section>
-                <h3 className="text-xs font-medium text-zinc-500">{fieldText(locale, "变更后文件版本")} <span className="text-rose-500">*</span></h3>
-                <p data-change-version="true" className="mt-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500">{t("drawer.change.version.auto")}</p>
-                <span className={CAPTION_CLASS}>{t("drawer.change.version.caption")}</span>
               </section>
 
               <section>
@@ -1974,13 +1830,11 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
                     }}
                   />
                 </div>
-                <span className={CAPTION_CLASS}>{t("drawer.change.newFile.caption")}</span>
               </section>
 
               <section>
                 <h3 className="text-xs font-medium text-zinc-500">{fieldText(locale, "关联")}</h3>
                 <p data-change-link="true" className="mt-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500">{t("drawer.change.link.auto")}</p>
-                <span className={CAPTION_CLASS}>{t("drawer.change.link.caption")}</span>
               </section>
 
               <section className="flex flex-col gap-2 border-t border-zinc-100 pt-4">
@@ -1999,7 +1853,6 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
                 >
                   {changeBusy ? t("drawer.change.submitting") : t("drawer.change.submit")}
                 </button>
-                <p className="text-[11px] leading-4 text-zinc-400">{t("drawer.change.footnote")}</p>
               </section>
             </div>
           </ScrollArea>
