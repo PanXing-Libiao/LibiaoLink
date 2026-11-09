@@ -61,6 +61,7 @@ export function MaterialReissueForm({ projectId, task, members, onSubmitted }: {
 }) {
   const t = useT();
   const locale = useLocale();
+  const projectErrorText = t("mr.err.project");
   const permissions = useMyPermissions();
   const [project, setProject] = useState<ApiProject | null>(null);
   const [projectError, setProjectError] = useState<string | null>(null);
@@ -97,12 +98,12 @@ export function MaterialReissueForm({ projectId, task, members, onSubmitted }: {
         if (!cancelled) setProject(loaded);
       })
       .catch(() => {
-        if (!cancelled) setProjectError(t("mr.err.project"));
+        if (!cancelled) setProjectError(projectErrorText);
       });
     return () => {
       cancelled = true;
     };
-  }, [projectId, projectTick, t]);
+  }, [projectId, projectTick, projectErrorText]);
 
   const applicantName =
     permissions === null
