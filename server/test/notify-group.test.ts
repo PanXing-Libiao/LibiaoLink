@@ -15,6 +15,7 @@ import type {
   WecomGroupRow,
 } from "../src/modules/notify/notify.group.repository.js";
 import type { DailyReportPosterData } from "../src/modules/notify/daily-report.poster.types.js";
+import type { MaterialReissuePosterData } from "../src/modules/notify/material-reissue.poster.types.js";
 import type { StageCompletePosterData } from "../src/modules/notify/stage-complete.poster.types.js";
 import { areAllProjectTasksOnTime } from "../src/modules/notify/notify.group.repository.js";
 import {
@@ -79,6 +80,7 @@ class FakeGroupRepository {
   r06PosterError = false;
   dailyReportPosterData: DailyReportPosterData | null = null;
   stageCompletePosterData: StageCompletePosterData | null = null;
+  materialReissuePosterData: MaterialReissuePosterData | null = null;
   setNameCalls: { chatid: string; name: string; at: Date }[] = [];
 
   async findGroupByProject(projectId: string): Promise<WecomGroupRow | null> {
@@ -158,6 +160,10 @@ class FakeGroupRepository {
 
   async findStageCompletePosterData(): Promise<StageCompletePosterData | null> {
     return this.stageCompletePosterData;
+  }
+
+  async findMaterialReissuePosterData(): Promise<MaterialReissuePosterData | null> {
+    return this.materialReissuePosterData;
   }
 
 }
@@ -991,6 +997,138 @@ describe("NotifyGroupService.consume（outbox notify.group → 投递 → 三分
       claimedRow(
         payload({ templateCode: "STAGE_COMPLETE_GROUP", stageKey: "design", title: "阶段完成", body: "本阶段已全部完成" }),
         { id: 8, dedupeKey: "stage.completed:test" },
+      ),
+    );
+    expect(outcome).toEqual({ outcome: "done" });
+    expect(aibot.imageSends).toHaveLength(1);
+    expect(repo.deliveries.at(-1)).toMatchObject({ state: "sent" });
+  });
+
+  it("MATERIAL_REISSUE_GROUP：文字送达后按变更快照生成补发表单图片", async () => {
+    const { service, repo, aibot } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
+    repo.materialReissuePosterData = {
+      submittedAt: AT,
+      snapshot: {
+        emailTitle: "项目【补发申请】LBGN23171-G1 虹迪广州NIKE分拣改造项目项目/ 紧急",
+        customerName: "虹迪科技",
+        reason: "research_upgrade",
+        applicationDepartment: "project",
+        accepted: true,
+        inWarranty: true,
+        freeReissue: true,
+        approved: "yes",
+        responsibleDepartment: "after_sales",
+        requiredOutDate: "2026-11-06",
+        oldPartReturn: false,
+        freightBearer: "libiao",
+        recipient: "贾海洋",
+        phone: "13107717060",
+        address: "广州市黄埔区宝丰路 52 号 普洛斯物流园 2 栋 5 层 虹迪科技",
+        description: "1 wes 服务器 电源损坏",
+        materials: [
+          { materialCode: "XXX002614", materialName: "DELL 主机电源 130W", specification: "DELL 主机电源 130W", quantity: 1, unit: "个", remark: "" },
+        ],
+        taskId: "b8e28548-cd5e-4da3-80ec-e6cf88cb3020",
+        taskTitle: "物料打包转运、清点分类",
+        projectCode: "LBGN23171-G1",
+        projectName: "虹迪广州NIKE分拣改造项目",
+        applicantName: "贾海洋",
+      },
+    };
+
+    const changeId = "33333333-3333-4333-8333-333333333333";
+    const outcome = await service.consume(
+      claimedRow(
+        payload({
+          title: "物料变更补发已提交 · LBGN23171-G1",
+          body: "项目：LBGN23171-G1 · 虹迪广州NIKE分拣改造项目\n补发/补货申请表详见下方图片。",
+          refType: "change",
+          refId: changeId,
+          templateCode: "MATERIAL_REISSUE_GROUP",
+        }),
+      ),
+    );
+
+    expect(outcome).toEqual({ outcome: "done" });
+    expect(aibot.imageSends).toHaveLength(1);
+    const image = aibot.imageSends[0]!;
+    expect(image.fileName).toBe("MATERIAL-LBGN23171-G1-33333333.png");
+    expect(image.mime).toBe("image/png");
+    expect(image.content.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    expect(image.content.readUInt32BE(16)).toBe(1440);
+    expect(image.content.readUInt32BE(20)).toBeGreaterThanOrEqual(1200);
+    expect(repo.deliveries[0]).toMatchObject({ state: "sent", attempts: 2 });
+  });
+
+  it("MATERIAL_REISSUE_GROUP：图片数据缺失或图片发送失败不回滚已送达文字", async () => {
+    const { service, repo, aibot } = makeService();
+    repo.groups.push(groupRow({ projectId: PROJECT_ID, chatid: CHATID, activatedAt: AT }));
+    let outcome = await service.consume(
+      claimedRow(
+        payload({
+          title: "物料变更补发已提交",
+          body: "补发/补货申请表详见下方图片。",
+          refType: "change",
+          refId: PROJECT_2,
+          templateCode: "MATERIAL_REISSUE_GROUP",
+        }),
+      ),
+    );
+    expect(outcome).toEqual({ outcome: "done" });
+    expect(aibot.imageSends).toHaveLength(0);
+
+    aibot.imageResult = {
+      ok: false,
+      kind: "retryable",
+      errcode: null,
+      errmsg: "素材上传失败",
+      retryAt: null,
+      attempts: 0,
+      state: "subscribed",
+    };
+    repo.materialReissuePosterData = {
+      submittedAt: AT,
+      snapshot: {
+        emailTitle: "补发申请",
+        customerName: null,
+        reason: "other",
+        reasonOther: "现场补充",
+        applicationDepartment: "other",
+        applicationDepartmentOther: "工程部",
+        accepted: false,
+        inWarranty: false,
+        freeReissue: false,
+        approved: "not_applicable",
+        responsibleDepartment: "other",
+        responsibleDepartmentOther: "工程部",
+        requiredOutDate: "2026-11-20",
+        oldPartReturn: true,
+        freightBearer: "with_other_goods",
+        recipient: "李四",
+        phone: "13800000000",
+        address: "测试地址",
+        description: "测试",
+        materials: [
+          { materialCode: "", materialName: "测试物料", specification: "", quantity: 1, unit: "个", remark: "" },
+        ],
+        taskId: "b8e28548-cd5e-4da3-80ec-e6cf88cb3020",
+        taskTitle: "测试任务",
+        projectCode: "TEST-001",
+        projectName: "测试项目",
+        applicantName: "李四",
+      },
+    };
+    outcome = await service.consume(
+      claimedRow(
+        payload({
+          title: "物料变更补发已提交",
+          body: "补发/补货申请表详见下方图片。",
+          refType: "change",
+          refId: PROJECT_2,
+          templateCode: "MATERIAL_REISSUE_GROUP",
+        }),
+        { id: 99, dedupeKey: "notify.group:material-reissue:failed" },
       ),
     );
     expect(outcome).toEqual({ outcome: "done" });

@@ -1,5 +1,12 @@
 # notify 模块（S7·outbox · S7-4 · 通知投递内核 j1 / M5-04 首刀 · Push 178 + 接线段渠道护栏 · Push 180） + S8-3 契约落地（SSE 实时流 / 稍后提醒）· Push 210 + M5-04-1 SSE 实现 · Push 211 + M5-04-2 稍后提醒实现 · Push 212 + M5-04 收口 · Push 213 + M5-03-1 企微适配器内核 · Push 215 + M5-03-2 契约段 · Push 221 + 群通道迁移 0046 · Push 222 + M5-03-2 智能机器人长连接客户端（webhook 面退役）· Push 223 + M5-03-2 接线段（群绑定读写 + notify.group 消费 + 回调 ingest）· Push 224 + M5-03-3 应用消息 + C5-04 降级 + 告警出口 · Push 226 + M5-03-4 开工（T3-6 收官 · 93001 锁定 · PoC-2 证据骨架）· Push 227 + M5-03-4 T5 反向修复（告警复报去重）· Push 229 + M5-03-4 告警 / 失败文案收敛（核心语义口径）· Push 230 + M5-03-5-3 单聊 aibot 实现段（sendUserMarkdown + 限速 single + NotifyDmService + 激活仓储 + 回放）· Push 237 + M5-03-5-4 单聊 aibot 接线段（outbox 路由分流 + `:aibot` 产出接线 + worker 回调分流 + 集成回放）· Push 238 + M5-03-5-6 绑定码链路（迁移 0055 · 单聊 ingest 绑定 + 密文 open_userid 寻址 + D4 话术）· Push 247 + M5-03-5-6 契约刀（取码 / 查绑定态 / 解绑 + `audit_logs` + 生成客户端）· Push 249 + outbox 告警可执行化与恢复日报 · Push 257 + 单聊 enter_chat 欢迎语 · Push 261
 
+## 物料变更补发图片（2026-11-09）
+
+- **入口**：物料变更补发提交事务内追加 `notify.group`（模板码 `MATERIAL_REISSUE_GROUP`，`refType=change`，`refId=change_requests.id`）；通知失败不回滚补发提交，outbox 重试不会重复生成业务记录。
+- **发送顺序**：先发简短文字摘要，文字受理成功后按本次 `change_requests.material_reissue` 快照生成 1440px 宽、动态高度的补发/补货申请表 PNG（`MATERIAL-{项目编号}-{变更 id 前 8 位}.png`）。
+- **数据 / 边界**：消费者按项目 + 变更 id 读取已固化快照，包含用户修改后的邮件标题、客户名称、申请人、四项是否、物料清单与收货信息；不把整张物料表塞进 outbox 载荷，不依赖浏览器截图。读取 / 渲染 / 图片发送失败只 warn，已送达文字与业务提交均不回滚。
+- **回归**：`server/test/notify-group.test.ts` 覆盖文字 + 1440px PNG、快照数据缺失、图片失败不重发；`server/test/material-reissue-service.test.ts` 锁定第三条 outbox 的模板码与 refId。
+
 ## 大阶段完成海报（2026-10-29）
 
 - **入口**：任务领域在该阶段全部小任务完成，且每个配置了成果类型的任务均已上传对应文件时写 `notify.group`（模板码 `STAGE_COMPLETE_GROUP`，载荷可选 `stageKey`）；未配置成果类型的任务不额外要求文件。与普通群播报共用绑定解析、限速、留痕与失败降级。

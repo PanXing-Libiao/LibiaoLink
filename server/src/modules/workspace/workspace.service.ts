@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { DOC_TYPES, PRIORITY_VALUES } from "@libiaolink/contracts";
+import { DeliverableTypeSchema, PRIORITY_VALUES } from "@libiaolink/contracts";
 import type { WorkspaceIssueItem, WorkspaceProject, WorkspaceResponse, WorkspaceTaskItem } from "@libiaolink/contracts";
 import { PermissionService } from "../permission/index.js";
 import { deriveDisplayStatus, deriveOnTime, shanghaiToday, type TaskDerivationInput } from "../task/index.js";
@@ -188,14 +188,15 @@ function normalizePriority(value: string | null): WorkspaceTaskItem["priority"] 
   return (PRIORITY_VALUES as readonly string[]).includes(value) ? (value as WorkspaceTaskItem["priority"]) : null;
 }
 
-/** 输出成果文件归一化（与 task.service 同口径：字典外取值剔除、保序去重、空数组 = 不要求）。 */
+/** 输出成果文件归一化（与 task.service 同口径：去首尾空白、内置与自定义均保留、保序去重、空数组 = 不要求）。 */
 function normalizeDocTypes(values: readonly string[]): WorkspaceTaskItem["deliverableTypes"] {
   const seen = new Set<string>();
   const result: WorkspaceTaskItem["deliverableTypes"] = [];
   for (const value of values) {
-    if (!(DOC_TYPES as readonly string[]).includes(value) || seen.has(value)) continue;
-    seen.add(value);
-    result.push(value as WorkspaceTaskItem["deliverableTypes"][number]);
+    const parsed = DeliverableTypeSchema.safeParse(value);
+    if (!parsed.success || seen.has(parsed.data)) continue;
+    seen.add(parsed.data);
+    result.push(parsed.data);
   }
   return result;
 }

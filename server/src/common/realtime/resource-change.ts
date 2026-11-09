@@ -12,6 +12,7 @@ export function changedResources(method: string, url: string): LiveResource[] {
   const path = url.split("?")[0] ?? "";
   if (/^\/api\/v1\/projects(?:\/|$)/.test(path)) {
     if (/\/(?:exports|can-complete|can-advance)(?:\/|$)/.test(path)) return [];
+    if (/\/deliverable-types(?:\/|$)/.test(path)) return ["dicts", "projects", "tasks"];
     if (/\/reports(?:\/|$)/.test(path)) return ["reports", "issues", "tasks", "projects"];
     if (/\/issues(?:\/|$)/.test(path)) return ["issues", "reports"];
     return ["projects", "tasks"];

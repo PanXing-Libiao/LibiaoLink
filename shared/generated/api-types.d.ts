@@ -398,6 +398,85 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/deliverable-types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 新增全站自定义成果文件类型（仅当前项目项目经理；写入 deliverableType 全局字典，所有项目共享） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["ProjectDeliverableTypeCreateBody"];
+                };
+            };
+            responses: {
+                /** @description 创建成功（更新后的 deliverableType 字典） */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Dict"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/restore": {
         parameters: {
             query?: never;
@@ -2698,7 +2777,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 全量字典（region / projectType，含元数据 / 主题色与引用计数 usageCount；阶段与成果文件类型走契约枚举，不在字典内） */
+        /** 全量字典（region / projectType / deliverableType，含元数据 / 主题色与引用计数 usageCount；deliverableType 为全站自定义成果类型，内置十类仍走契约 DOC_TYPES） */
         get: {
             parameters: {
                 query?: {
@@ -2755,7 +2834,7 @@ export interface paths {
                 };
                 header?: never;
                 path: {
-                    /** @description 字典类型（一期：region / projectType）；未知类型返回 404 */
+                    /** @description 字典类型：region / projectType / deliverableType（全站自定义成果类型）；未知类型返回 404 */
                     type: string;
                 };
                 cookie?: never;
@@ -2814,7 +2893,7 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
-                    /** @description 字典类型（一期：region / projectType）；未知类型返回 404 */
+                    /** @description 字典类型：region / projectType / deliverableType（全站自定义成果类型）；未知类型返回 404 */
                     type: string;
                 };
                 cookie?: never;
@@ -2903,7 +2982,7 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
-                    /** @description 字典类型（一期：region / projectType）；未知类型返回 404 */
+                    /** @description 字典类型：region / projectType / deliverableType（全站自定义成果类型）；未知类型返回 404 */
                     type: string;
                     code: string;
                 };
@@ -2975,7 +3054,7 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
-                    /** @description 字典类型（一期：region / projectType）；未知类型返回 404 */
+                    /** @description 字典类型：region / projectType / deliverableType（全站自定义成果类型）；未知类型返回 404 */
                     type: string;
                     code: string;
                 };
@@ -3977,7 +4056,7 @@ export interface paths {
                     "filter[taskId]"?: components["schemas"]["Uuid"];
                     /** @description 文件状态（多值逗号分隔）：draft / final / changed / archived / recycled */
                     "filter[status]"?: string;
-                    /** @description 成果文件类型（多值逗号分隔，取值见 DocType 字典） */
+                    /** @description 成果文件类型（多值逗号分隔；内置十类或全站自定义类型） */
                     "filter[docType]"?: string;
                     /** @description UUID（主键与关联 ID） */
                     "filter[uploadedBy]"?: components["schemas"]["Uuid"];
@@ -5691,6 +5770,85 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/change-requests/material-reissue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 物料变更补发（线上补发单；自动生成 DOCX 项目文件并回写任务变更记录） */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description UUID（主键与关联 ID） */
+                    id: components["schemas"]["Uuid"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["CreateMaterialReissueBody"];
+                };
+            };
+            responses: {
+                /** @description 已提交：变更记录 + 补发申请 DOCX */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MaterialReissueResult"];
+                    };
+                };
+                /** @description 契约校验失败（VALIDATION_FAILED） */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 无权限（FORBIDDEN） */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 资源不存在或不可见（NOT_FOUND，统一 404 语义） */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description 冲突（VERSION_CONFLICT / 状态不允许当前操作） */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -10621,6 +10779,8 @@ export interface components {
             projectId: components["schemas"]["Uuid"];
             nodeId: components["schemas"]["Uuid"] & (string | null);
             stageKey: components["schemas"]["StageKey"] & (string | null);
+            changeType: components["schemas"]["ChangeType"];
+            materialReissue: components["schemas"]["MaterialReissueSnapshot"];
             /** @description 变更原因（必填） */
             reason: string;
             /** @description 变更前摘要 */
@@ -10659,6 +10819,15 @@ export interface components {
          * @enum {string}
          */
         ChangeStatus: "applied";
+        /**
+         * @description 变更类型：普通文件变更 / 物料变更补发
+         * @enum {string}
+         */
+        ChangeType: "file_change" | "material_reissue";
+        /** @description 物料变更补发表单（仿现有《补发/补货申请表》） */
+        CreateMaterialReissueBody: components["schemas"]["MaterialReissueBody"] & {
+            taskId: components["schemas"]["Uuid"] & unknown;
+        };
         /** @description 一条日报（A3-01 全字段 + 系统字段） */
         DailyReport: {
             id: components["schemas"]["Uuid"];
@@ -10945,6 +11114,8 @@ export interface components {
          * @description ISO8601 时间戳（UTC 存储，前端按 Asia/Shanghai 展示）
          */
         DateTime: string;
+        /** @description 自定义成果文件类型名称（1–50 字，不含英文逗号 / 换行；新增后全站共享） */
+        DeliverableType: string;
         /** @description 单个字典（含元数据）；响应带 ETag，前端启动拉一次、登出清缓存 */
         Dict: {
             type: components["schemas"]["DictType"];
@@ -10967,7 +11138,7 @@ export interface components {
                 [key: string]: unknown;
             };
         };
-        /** @description 新增字典条目：region 任何登录用户可增（全站共享；重复码 409）；projectType 仅管理员 dict.manage；变更写审计留痕（C9-02）；响应为更新后的整个字典 */
+        /** @description 新增字典条目：region 任何登录用户可增（全站共享；重复码 409）；projectType 仅管理员 dict.manage；deliverableType 的自定义成果由项目经理走 POST /projects/{id}/deliverable-types（本通用端点仍仅 dict.manage）；变更写审计留痕（C9-02）；响应为更新后的整个字典 */
         DictItemCreateBody: {
             /** @description 字典码：同类型内唯一；重复返回 409 DICT_ITEM_EXISTS */
             code: string;
@@ -11001,17 +11172,17 @@ export interface components {
                 [key: string]: unknown;
             };
         };
-        /** @description 全量字典（一期两个类型：region / projectType） */
+        /** @description 全量字典：region / projectType / deliverableType 全站自定义成果文件类型 */
         DictListResponse: {
             items: components["schemas"]["Dict"][];
         };
         /**
-         * @description 字典类型（一期）：region 地区 / projectType 项目类型；未知类型返回 404
+         * @description 字典类型：region 地区 / projectType 项目类型 / deliverableType 全站自定义成果文件类型；未知类型返回 404
          * @enum {string}
          */
-        DictType: "region" | "projectType";
+        DictType: "region" | "projectType" | "deliverableType";
         /**
-         * @description 十类成果文件字典；门禁 required_doc 只能引用此字典（v0.2 §2.5）
+         * @description 十类成果文件字典；流程蓝图与节点门禁 required_doc 只能引用此字典（v0.2 §2.5）
          * @enum {string}
          */
         DocType: "CAD图纸" | "技术协议" | "合同" | "评审单" | "设备清单" | "物料总清单" | "发货装箱单" | "到货单" | "安装完成证明" | "验收单";
@@ -11046,7 +11217,7 @@ export interface components {
             projectId: components["schemas"]["Uuid"];
             nodeId: components["schemas"]["Uuid"] & (string | null);
             taskId: components["schemas"]["Uuid"] & (string | null);
-            docType: components["schemas"]["DocType"] & (string | null);
+            docType: components["schemas"]["DeliverableType"] & (string | null);
             /**
              * @description 原文件名（含中文，保留在元数据）
              * @example 机械设计图纸-v2.docx
@@ -11562,6 +11733,102 @@ export interface components {
          * @enum {string}
          */
         Locale: "zh" | "en" | "ja" | "ko";
+        /**
+         * @description 申请部门（模板仅项目部 / 售后部 / 其他）
+         * @enum {string}
+         */
+        MaterialReissueApplicationDepartment: "project" | "after_sales" | "other";
+        /**
+         * @description 是否已审批：yes / no / not_applicable
+         * @enum {string}
+         */
+        MaterialReissueApproval: "yes" | "no" | "not_applicable";
+        /** @description 物料变更补发表单（仿现有《补发/补货申请表》） */
+        MaterialReissueBody: {
+            /** @description 邮件标题（可修改；缺省按项目编号 / 名称生成） */
+            emailTitle?: string;
+            /** @description 客户名称（可修改；提交时固化，不回写项目主数据） */
+            customerName?: string;
+            reason: components["schemas"]["MaterialReissueReason"];
+            /** @description 补发类别 = other 时必填 */
+            reasonOther?: string;
+            applicationDepartment: components["schemas"]["MaterialReissueApplicationDepartment"];
+            /** @description 申请部门 = other 时必填 */
+            applicationDepartmentOther?: string;
+            /** @description 是否已验收 */
+            accepted: boolean;
+            /** @description 是否质保期内 */
+            inWarranty: boolean;
+            /** @description 是否免费补发 */
+            freeReissue: boolean;
+            approved: components["schemas"]["MaterialReissueApproval"];
+            responsibleDepartment: components["schemas"]["MaterialReissueDepartment"];
+            /** @description 责任归属部门 = other 时必填 */
+            responsibleDepartmentOther?: string;
+            /**
+             * Format: date
+             * @description 要求出库时间（YYYY-MM-DD）
+             */
+            requiredOutDate: string;
+            /** @description 是否涉及旧件返还 */
+            oldPartReturn: boolean;
+            freightBearer: components["schemas"]["MaterialReissueFreight"];
+            /** @description 收货人 */
+            recipient: string;
+            /** @description 联系电话 */
+            phone: string;
+            /** @description 收货地址 */
+            address: string;
+            /** @description 补发原因简述 */
+            description: string;
+            /** @description 补发物料清单（至少 1 行） */
+            materials: components["schemas"]["MaterialReissueLine"][];
+        };
+        /**
+         * @description 责任归属部门
+         * @enum {string}
+         */
+        MaterialReissueDepartment: "project" | "after_sales" | "warehouse" | "research" | "customer" | "supplier" | "other";
+        /**
+         * @description 运费承担方式
+         * @enum {string}
+         */
+        MaterialReissueFreight: "customer" | "libiao" | "with_other_goods" | "carried_by_staff";
+        /** @description 补发物料清单行 */
+        MaterialReissueLine: {
+            /** @description 物料编码（可空） */
+            materialCode: string;
+            /** @description 物料名称 */
+            materialName: string;
+            /** @description 规格型号（可空） */
+            specification: string;
+            /** @description 数量（> 0） */
+            quantity: number;
+            /** @description 单位 */
+            unit: string;
+            /** @description 备注（可空） */
+            remark: string;
+        };
+        /**
+         * @description 补发类别（原因选题）
+         * @enum {string}
+         */
+        MaterialReissueReason: "missing_list" | "transport_damage" | "warehouse_shortage" | "customer_misoperation" | "customer_change" | "warranty_damage" | "out_of_warranty_damage" | "research_upgrade" | "other";
+        /** @description 物料变更补发提交结果：变更记录 + 自动生成的 DOCX 项目文件 */
+        MaterialReissueResult: {
+            changeRequest: components["schemas"]["ChangeRequest"] & unknown;
+            file: components["schemas"]["File"];
+            version: components["schemas"]["FileVersion"];
+        };
+        /** @description 物料变更补发表单快照；普通文件变更为 null */
+        MaterialReissueSnapshot: components["schemas"]["MaterialReissueBody"] & ({
+            customerName: string | null;
+            taskId: components["schemas"]["Uuid"];
+            taskTitle: string;
+            projectCode: string;
+            projectName: string;
+            applicantName: string;
+        } | null);
         /** @description /auth/me 响应（会话由 HttpOnly Cookie 承载；CSRF token 随响应下发） */
         MeResponse: {
             user: components["schemas"]["User"];
@@ -12178,6 +12445,10 @@ export interface components {
             /** @description 导入的蓝图版本；缺省 = 当前已发布版本 */
             blueprintVersion?: number;
         };
+        /** @description 仅当前项目的项目经理 / 名册项目经理可新增；条目进入全站 deliverableType 字典，所有账号与项目可见 */
+        ProjectDeliverableTypeCreateBody: {
+            name: components["schemas"]["DeliverableType"];
+        };
         /** @description 首页分类计数；计数与列表同口径（同筛选条件）；五组固定返回，前端按需展示（A6） */
         ProjectFacets: {
             total: number;
@@ -12594,8 +12865,8 @@ export interface components {
             estimatedDays: number | null;
             headcount: number | null;
             priority: components["schemas"]["Priority"];
-            /** @description 要求输出成果文件（ADR-024 多选，Push 143）：取值属十类成果文件字典；服务端按首次出现去重；**空数组 = 不要求**；随模板 / 节点生成后默认锁定（A1-17，例外调整随 M3-05） */
-            deliverableTypes: components["schemas"]["DocType"][];
+            /** @description 要求输出成果文件（ADR-024 多选，Push 143）：内置十类 + 全站自定义类型（deliverableType 字典）；服务端去空、按首次出现去重；**空数组 = 不要求**；常规编辑开放 */
+            deliverableTypes: (components["schemas"]["DeliverableType"] & unknown)[];
             note: string | null;
             /** @description 是否按时交付（服务端读时派生，A14 · Push 70）：完成且实际完成不晚于预计完成 → true；完成但晚于预计完成，或已完成未填完成日期且预计完成已过 → false；未完成且已过预计完成 → false（配 displayStatus=overdue 即「逾期未交付」）；未完成未到期 / 无预计完成日期 → 派生不出 → 回落迁移导入的存储值，仍无则 null（前端显示「—」）。前端标签「逾期未交付 / 逾期已交付」由本字段 + displayStatus 渲染，不再本地派生 */
             onTime: boolean | null;
@@ -12712,8 +12983,8 @@ export interface components {
             estimatedDays?: number | null;
             headcount?: number | null;
             priority?: components["schemas"]["Priority"];
-            /** @description 要求输出成果文件（ADR-024 多选，≤ 10 类）：去重（首次出现保序）；缺省 / 空数组 = 不要求 */
-            deliverableTypes?: components["schemas"]["DocType"][];
+            /** @description 要求输出成果文件（ADR-024 多选，≤ 20 项；含全站自定义）：去重（首次出现保序）；缺省 / 空数组 = 不要求 */
+            deliverableTypes?: (components["schemas"]["DeliverableType"] & unknown)[];
             note?: string | null;
         };
         /** @description 从任务模板生成任务（批量；同一节点在项目里只留一份） */
@@ -12765,7 +13036,7 @@ export interface components {
             id: components["schemas"]["Uuid"];
             name: string;
             status: components["schemas"]["FileStatus"];
-            docType: components["schemas"]["DocType"] & (string | null);
+            docType: components["schemas"]["DeliverableType"] & (string | null);
         };
         TaskFileSummary: {
             total: number;
@@ -12780,7 +13051,7 @@ export interface components {
         };
         /** @description 缺件明细：required / present 按已配置的成果类型逐类给出；未配置成果类型时不产生缺件 */
         TaskGateMissing: {
-            docType: components["schemas"]["DocType"];
+            docType: components["schemas"]["DeliverableType"] & unknown;
             required: number;
             present: number;
         };
@@ -12788,7 +13059,7 @@ export interface components {
         TaskGateWarning: {
             /** @enum {string} */
             code: "draft_doc_present";
-            docType: components["schemas"]["DocType"];
+            docType: components["schemas"]["DeliverableType"] & unknown;
             count: number;
         };
         /** @description 任务（v0.2 §2.3 tasks；展示态与是否按时交付的派生规则见 §2.4、A12~A14）；阶段与负责人可空、组内位次 sort_index 见 A15 / A18 / A19（Push 124） */
@@ -12813,8 +13084,8 @@ export interface components {
             title?: string;
             /** @description 任务描述（英文；锁定项；null = 清空） */
             titleEn?: string | null;
-            /** @description 要求输出成果文件（锁定项，≤ 10 类，多选去重、首次出现保序）：修正后即刻成为完成门禁依据（有节点任务仍以节点 node_requirements 为准，本字段只作无节点任务兜底） */
-            deliverableTypes?: components["schemas"]["DocType"][];
+            /** @description 要求输出成果文件（锁定项，≤ 20 项，含全站自定义；多选去重、首次出现保序）：修正后即刻成为完成门禁依据（有节点任务仍以节点 node_requirements 为准，本字段只作无节点任务兜底） */
+            deliverableTypes?: (components["schemas"]["DeliverableType"] & unknown)[];
         };
         /** @description 任务节点库条目（任务模板的节点来源） */
         TaskNode: {
@@ -12957,8 +13228,8 @@ export interface components {
             estimatedDays?: number | null;
             headcount?: number | null;
             priority?: components["schemas"]["Priority"];
-            /** @description 要求输出成果文件（2026-10-08 业务口径「文件输出成果也要可以选择」）：常规编辑开放 —— 传数组 = 整体替换（≤ 10 类，去重、首次出现保序）；显式 [] = 不要求；缺省 = 不改 */
-            deliverableTypes?: components["schemas"]["DocType"][];
+            /** @description 要求输出成果文件（2026-10-08 业务口径「文件输出成果也要可以选择」）：常规编辑开放 —— 传数组 = 整体替换（≤ 20 项，含全站自定义；去重、首次出现保序）；显式 [] = 不要求；缺省 = 不改 */
+            deliverableTypes?: (components["schemas"]["DeliverableType"] & unknown)[];
             note?: string | null;
             version: components["schemas"]["Version"];
         };
@@ -13018,7 +13289,7 @@ export interface components {
             sizeBytes: number;
             mime?: string;
             contentHash?: components["schemas"]["Sha256"];
-            docType?: components["schemas"]["DocType"];
+            docType?: components["schemas"]["DeliverableType"] & unknown;
             nodeId?: components["schemas"]["Uuid"];
             taskId?: components["schemas"]["Uuid"];
             /** @enum {string} */
@@ -13032,7 +13303,7 @@ export interface components {
             sizeBytes: number;
             mime?: string;
             contentHash?: components["schemas"]["Sha256"];
-            docType?: components["schemas"]["DocType"];
+            docType?: components["schemas"]["DeliverableType"] & unknown;
             nodeId?: components["schemas"]["Uuid"];
             taskId?: components["schemas"]["Uuid"];
             /** @enum {string} */

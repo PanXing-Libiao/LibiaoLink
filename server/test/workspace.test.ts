@@ -230,7 +230,7 @@ describe("工作台服务（M6-05）", () => {
       makeTask({
         estimatedDays: 6,
         headcount: 4,
-        deliverableTypes: ["CAD图纸", "验收单", "CAD图纸", "非法成果"],
+        deliverableTypes: ["CAD图纸", "验收单", "CAD图纸", "竣工图"],
         note: "等待甲方确认",
         changeLinks: [{ id: "11111111-2222-4333-8444-555555555555", reason: "设计变更", appliedAt: "2026-10-01T02:00:00.000Z" }],
         fileSummary: { total: 2, draft: 1, final: 1 },
@@ -249,7 +249,7 @@ describe("工作台服务（M6-05）", () => {
     expect(item?.projectName).toBe("示范项目");
     expect(item?.estimatedDays).toBe(6);
     expect(item?.headcount).toBe(4);
-    expect(item?.deliverableTypes).toEqual(["CAD图纸", "验收单"]);
+    expect(item?.deliverableTypes).toEqual(["CAD图纸", "验收单", "竣工图"]);
     expect(item?.note).toBe("等待甲方确认");
     expect(item?.changeLinks).toHaveLength(1);
     expect(item?.changeLinks[0]?.reason).toBe("设计变更");

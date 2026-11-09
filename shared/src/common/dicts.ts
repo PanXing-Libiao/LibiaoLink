@@ -49,11 +49,30 @@ export const DOC_TYPES = [
   "验收单",
 ] as const;
 
+/** 自定义成果类型名称上限；内置十类仍由 DOC_TYPES 固定给出。 */
+export const DOC_TYPE_NAME_MAX = 50;
+
 export type DocType = (typeof DOC_TYPES)[number];
 
 export const DocTypeSchema = z.enum(DOC_TYPES).openapi("DocType", {
-  description: "十类成果文件字典；门禁 required_doc 只能引用此字典（v0.2 §2.5）",
+  description: "十类成果文件字典；流程蓝图与节点门禁 required_doc 只能引用此字典（v0.2 §2.5）",
 });
+
+/** 输出成果文件类型名称：内置十类 + 全站字典 deliverableType 中的自定义类型（1–50 字）。 */
+export type DeliverableType = string;
+
+/** 自定义名称不含英文逗号（文件库筛选以逗号分隔多值）或换行。 */
+export const DELIVERABLE_TYPE_NAME_PATTERN = /^[^,\r\n]+$/;
+
+export const DeliverableTypeSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(DOC_TYPE_NAME_MAX)
+  .regex(DELIVERABLE_TYPE_NAME_PATTERN, { message: "成果类型名称不能包含英文逗号或换行" })
+  .openapi("DeliverableType", {
+    description: "输出成果文件类型名称：内置十类（DOC_TYPES）+ 全站自定义类型（1–50 字，不含英文逗号 / 换行）；自定义值存于 deliverableType 字典，所有项目与任务共享",
+  });
 
 export const PRIORITY_VALUES = ["高", "中", "低"] as const;
 

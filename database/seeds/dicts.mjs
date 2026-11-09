@@ -1,6 +1,6 @@
 // LibiaoLink · 种子 #5：地区 / 项目类型字典（h7 · S6·admin · C9-01）
 // 口径来源：技术设计v0.2 §2.5（字典第一批）+ v0.3 §3.2（dict_types / dict_items：code、name、sort、enabled、metadata 含 accent）。
-// 范围：只写 region / projectType 两类（阶段 / 成果文件类型 / 紧急重要度走契约枚举，不进字典接口 —— 契约 shared/src/modules/dicts.ts）。
+// 范围：region / projectType 两类 + deliverableType 空类型（内置十类成果 / 阶段 / 紧急重要度仍走契约枚举；自定义成果条目由项目经理新增）。
 // 修订语义：幂等 —— 类型 / 条目按 (type_code, code) 存在即跳过，**不覆盖库内已修订的口径**（管理端改过的值不被种子回滚），不删除；
 //   删除 = 物理删行（Push 173 起由管理端走 `DELETE /dicts/{type}/items/{code}`，删除前快照写审计）；`enabled` 为兼容字段（二期「临时下架」用），种子一律带 true。
 // 取值状态：业务已回执（2026-10-14「重新写没有华东华北什么的 只有国家 字典要和新建项目选择地区那些国家地区」）——
@@ -10,7 +10,7 @@
 //   `0051_dict_region_placeholders_cleanup.sql` 一次性清理（本种子「存在即跳过」不删行，清理必须走迁移）。
 
 export const name = "dicts";
-export const title = "数据字典（地区 / 项目类型 · v0.2 §2.5）";
+export const title = "数据字典（地区 / 项目类型 / 自定义成果类型 · v0.2 §2.5）";
 
 /** 可修订常量区：metadata.accent / accentText 是前端主题色元数据（C9-01：字典驱动，前端不硬编码）。 */
 export const DICTS = [
@@ -230,6 +230,11 @@ export const DICTS = [
       { code: "3D分拣", name: "3D分拣", sort: 20, metadata: { accent: "#10b981", accentText: "#ffffff" } },
       { code: "飞箱", name: "飞箱", sort: 30, metadata: { accent: "#feca04", accentText: "#313033" } },
     ],
+  },
+  // 全站自定义成果类型：类型由迁移 0083 / 种子登记，条目由项目经理从任务选择器新增，不预置。
+  {
+    type: { code: "deliverableType", name: "成果文件类型", sort: 30 },
+    items: [],
   },
 ];
 

@@ -15,7 +15,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { projectNodes } from "./flow.js";
-import { DOC_TYPE_KEYS, STAGE_KEYS, sqlArrayLiteral, sqlValueList } from "./literals.js";
+import { STAGE_KEYS, sqlValueList } from "./literals.js";
 import { users } from "./identity.js";
 import { projects } from "./projects.js";
 import { taskNodes } from "./templates.js";
@@ -126,11 +126,8 @@ export const tasks = pgTable(
     ),
     check("ck_tasks_sort_index", sql`${table.sortIndex} >= 0`),
     check("ck_tasks_owner_ids_no_null", sql`array_position(${table.ownerIds}, null::uuid) is null`),
-    check(
-      "ck_tasks_deliverable_types",
-      sql`${table.deliverableTypes} <@ ${sql.raw(sqlArrayLiteral(DOC_TYPE_KEYS))}`,
-    ),
     check("ck_tasks_deliverable_types_no_null", sql`array_position(${table.deliverableTypes}, null::text) is null`),
+    check("ck_tasks_deliverable_types_no_empty", sql`array_position(${table.deliverableTypes}, ''::text) is null`),
     check("ck_tasks_change_refs_no_null", sql`array_position(${table.changeRefs}, null::uuid) is null`),
     check("ck_tasks_finalized_pair", sql`(${table.finalizedAt} is null) = (${table.finalizedBy} is null)`),
   ],

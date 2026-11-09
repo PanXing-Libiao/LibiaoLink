@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { and, count, eq, inArray, isNotNull, isNull, or, type SQL } from "drizzle-orm";
-import { DOC_TYPES } from "@libiaolink/contracts";
+import { DeliverableTypeSchema, DocTypeSchema } from "@libiaolink/contracts";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { files } from "../../db/schema/files.js";
@@ -151,9 +151,10 @@ export class TaskGateRepository {
           ),
         );
       for (const row of requirementRows) {
-        if (row.docType === null || !isKnownDocType(row.docType)) continue;
+        const parsed = row.docType === null ? null : DocTypeSchema.safeParse(row.docType);
+        if (parsed === null || !parsed.success) continue;
         const current = requirementByNode.get(row.nodeId) ?? [];
-        current.push({ docType: row.docType, minCount: Number(row.minCount) });
+        current.push({ docType: parsed.data, minCount: Number(row.minCount) });
         requirementByNode.set(row.nodeId, current);
       }
     }
@@ -218,12 +219,14 @@ export function mergeDeliveryRequirements(
 ): TaskDeliveryRequirement[] {
   const merged = new Map<string, number>();
   for (const requirement of base) {
-    if (!isKnownDocType(requirement.docType)) continue;
-    merged.set(requirement.docType, Math.max(merged.get(requirement.docType) ?? 0, requirement.minCount));
+    const parsed = DocTypeSchema.safeParse(requirement.docType);
+    if (!parsed.success) continue;
+    merged.set(parsed.data, Math.max(merged.get(parsed.data) ?? 0, requirement.minCount));
   }
-  for (const docType of deliverableTypes) {
-    if (!isKnownDocType(docType) || merged.has(docType)) continue;
-    merged.set(docType, 1);
+  for (const rawDocType of deliverableTypes) {
+    const parsed = DeliverableTypeSchema.safeParse(rawDocType);
+    if (!parsed.success || merged.has(parsed.data)) continue;
+    merged.set(parsed.data, 1);
   }
   return [...merged].map(([docType, minCount]) => ({ docType, minCount }));
 }
@@ -240,10 +243,6 @@ export function missingDeliveryRequirements(
       required: requirement.minCount,
       present: presentByType.get(requirement.docType) ?? 0,
     }));
-}
-
-function isKnownDocType(value: string): boolean {
-  return (DOC_TYPES as readonly string[]).includes(value);
 }
 
 function scopeCondition(scope: TaskGateScope): SQL {

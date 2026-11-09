@@ -1,9 +1,10 @@
 import { z } from "../zod.ts";
 import { DateTimeSchema, DateOnlySchema, PageQuerySchema, SortQuerySchema, UuidSchema, VersionSchema } from "../common/conventions.ts";
-import { DOC_TYPES, DocTypeSchema, FileStatusSchema, PrioritySchema, StageKeySchema, TaskBaseStatusSchema, TaskDisplayStatusSchema } from "../common/dicts.ts";
+import { DeliverableTypeSchema, FileStatusSchema, PrioritySchema, StageKeySchema, TaskBaseStatusSchema, TaskDisplayStatusSchema } from "../common/dicts.ts";
 
 const TASK_OWNER_IDS_LIMIT = 200;
 const TASK_TEMPLATE_NODE_IDS_LIMIT = 500;
+const TASK_DELIVERABLE_TYPES_LIMIT = 20;
 
 /**
  * 四格进度：0 / 0.25 / 0.5 / 0.75 / 1（写入即联动状态与完成日期，并写审计）。
@@ -61,9 +62,9 @@ export const TaskSchema = z
     estimatedDays: z.number().int().min(0).nullable(),
     headcount: z.number().int().min(0).nullable(),
     priority: PrioritySchema.nullable(),
-    deliverableTypes: z.array(DocTypeSchema).openapi({
+    deliverableTypes: z.array(DeliverableTypeSchema).openapi({
       description:
-        "要求输出成果文件（ADR-024 多选，Push 143）：取值属十类成果文件字典；服务端按首次出现去重；**空数组 = 不要求**；随模板 / 节点生成后默认锁定（A1-17，例外调整随 M3-05）",
+        "要求输出成果文件（ADR-024 多选，Push 143）：内置十类 + 全站自定义类型（deliverableType 字典）；服务端去空、按首次出现去重；**空数组 = 不要求**；常规编辑开放",
     }),
     note: z.string().nullable(),
     onTime: z.boolean().nullable().openapi({
@@ -105,7 +106,7 @@ export const TaskFileBriefSchema = z
     id: UuidSchema,
     name: z.string(),
     status: FileStatusSchema,
-    docType: DocTypeSchema.nullable(),
+    docType: DeliverableTypeSchema.nullable(),
   })
   .openapi("TaskFileBrief");
 
@@ -188,7 +189,7 @@ export const TaskProgressUpdateBodySchema = z
 /** 任务完成门禁缺件明细（TASK_REQUIRED_DOC_MISSING 的 details.missing；按已配置成果类型逐类给出）。 */
 export const TaskGateMissingSchema = z
   .object({
-    docType: DocTypeSchema,
+    docType: DeliverableTypeSchema,
     required: z.number().int().min(0),
     present: z.number().int().min(0),
   })
@@ -198,7 +199,7 @@ export const TaskGateMissingSchema = z
 export const TaskGateWarningSchema = z
   .object({
     code: z.literal("draft_doc_present"),
-    docType: DocTypeSchema,
+    docType: DeliverableTypeSchema,
     count: z.number().int().min(0),
   })
   .openapi("TaskGateWarning", { description: "放行提示：存在 draft 成果文件（放行但提示定档，R02 已入队）" });
@@ -274,8 +275,8 @@ export const TaskCreateBodySchema = z
     estimatedDays: z.number().int().min(0).nullable().optional(),
     headcount: z.number().int().min(0).nullable().optional(),
     priority: PrioritySchema.nullable().optional(),
-    deliverableTypes: z.array(DocTypeSchema).max(DOC_TYPES.length).optional().openapi({
-      description: "要求输出成果文件（ADR-024 多选，≤ 10 类）：去重（首次出现保序）；缺省 / 空数组 = 不要求",
+    deliverableTypes: z.array(DeliverableTypeSchema).max(TASK_DELIVERABLE_TYPES_LIMIT).optional().openapi({
+      description: "要求输出成果文件（ADR-024 多选，≤ 20 项；含全站自定义）：去重（首次出现保序）；缺省 / 空数组 = 不要求",
     }),
     note: z.string().max(2000).nullable().optional(),
   })
@@ -327,9 +328,9 @@ export const TaskUpdateBodySchema = z
     estimatedDays: z.number().int().min(0).nullable().optional(),
     headcount: z.number().int().min(0).nullable().optional(),
     priority: PrioritySchema.nullable().optional(),
-    deliverableTypes: z.array(DocTypeSchema).max(DOC_TYPES.length).optional().openapi({
+    deliverableTypes: z.array(DeliverableTypeSchema).max(TASK_DELIVERABLE_TYPES_LIMIT).optional().openapi({
       description:
-        "要求输出成果文件（2026-10-08 业务口径「文件输出成果也要可以选择」）：常规编辑开放 —— 传数组 = 整体替换（≤ 10 类，去重、首次出现保序）；显式 [] = 不要求；缺省 = 不改",
+        "要求输出成果文件（2026-10-08 业务口径「文件输出成果也要可以选择」）：常规编辑开放 —— 传数组 = 整体替换（≤ 20 项，含全站自定义；去重、首次出现保序）；显式 [] = 不要求；缺省 = 不改",
     }),
     note: z.string().max(2000).nullable().optional(),
     version: VersionSchema,
@@ -473,9 +474,9 @@ export const TaskLockedFieldsAdjustBodySchema = z
     reason: z.string().min(1).max(500).openapi({ description: "例外调整原因（必填并留痕；A1-17 / C9-07）" }),
     title: z.string().min(1).max(200).optional().openapi({ description: "任务描述（中文；锁定字段 —— 仅管理员例外修正）" }),
     titleEn: z.string().max(200).nullable().optional().openapi({ description: "任务描述（英文；锁定项；null = 清空）" }),
-    deliverableTypes: z.array(DocTypeSchema).max(DOC_TYPES.length).optional().openapi({
+    deliverableTypes: z.array(DeliverableTypeSchema).max(TASK_DELIVERABLE_TYPES_LIMIT).optional().openapi({
       description:
-        "要求输出成果文件（锁定项，≤ 10 类，多选去重、首次出现保序）：修正后即刻成为完成门禁依据（有节点任务仍以节点 node_requirements 为准，本字段只作无节点任务兜底）",
+        "要求输出成果文件（锁定项，≤ 20 项，含全站自定义；多选去重、首次出现保序）：修正后即刻成为完成门禁依据（有节点任务仍以节点 node_requirements 为准，本字段只作无节点任务兜底）",
     }),
   })
   .openapi("TaskLockedFieldsAdjustBody", {

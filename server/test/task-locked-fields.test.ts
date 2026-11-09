@@ -4,7 +4,7 @@
  * 真机口径见 server/README.md「M3-05 续卡」与 server/src/modules/task/README.md「锁定字段例外调整」。
  */
 import { describe, expect, it } from "vitest";
-import type { DocType } from "@libiaolink/contracts";
+import { DeliverableTypeSchema, type DeliverableType } from "@libiaolink/contracts";
 import type { AuditService } from "../src/modules/admin/index.js";
 import type { DatabaseService } from "../src/db/database.service.js";
 import type { DbClient } from "../src/db/db-client.js";
@@ -19,6 +19,15 @@ import type {
 } from "../src/modules/task/task.repository.js";
 import { TaskService } from "../src/modules/task/task.service.js";
 import type { TaskNodeRepository, TemplateService } from "../src/modules/template/index.js";
+
+describe("自定义成果类型契约（DeliverableType）", () => {
+  it("接受 1–50 字名称并 trim，拒绝空值 / 超长 / 英文逗号 / 换行", () => {
+    expect(DeliverableTypeSchema.parse("  竣工图  ")).toBe("竣工图");
+    for (const invalid of ["", "   ", "A,B", "A\nB", "x".repeat(51)]) {
+      expect(DeliverableTypeSchema.safeParse(invalid).success).toBe(false);
+    }
+  });
+});
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 const OTHER_PROJECT = "99999999-9999-4999-8999-999999999999";
@@ -314,7 +323,7 @@ describe("M3-05 续卡 · 锁定字段例外调整（A1-17 / C9-07）", () => {
     expect(audit.entries).toEqual([]);
   });
 
-  it("输出成果文件：去重 + 非法值过滤（normalizeDocTypes）；新增成果类型立即参与完成门禁", async () => {
+  it("输出成果文件：自定义类型去重保留并立即参与完成门禁", async () => {
     const repo = new FakeTaskRepository();
     repo.tasks.set(TASK_A, makeRow(TASK_A, { nodeId: null, deliverableTypes: ["合同"] }));
     const gate = new FakeTaskGateRepository();
@@ -324,14 +333,21 @@ describe("M3-05 续卡 · 锁定字段例外调整（A1-17 / C9-07）", () => {
     const view = await service.adjustLockedFields(
       PROJECT,
       TASK_A,
-      { version: 3, reason: "补充验收单要求", deliverableTypes: ["验收单", "合同", "验收单", "非法值" as DocType] },
+      { version: 3, reason: "补充验收与竣工图要求", deliverableTypes: ["验收单", "合同", "验收单", "竣工图" as DeliverableType] },
       ADMIN,
     );
-    expect(view.deliverableTypes).toEqual(["验收单", "合同"]);
+    expect(view.deliverableTypes).toEqual(["验收单", "合同", "竣工图"]);
     const blocked = await service.canComplete(PROJECT, TASK_A);
     expect(blocked.canComplete).toBe(false);
-    expect(blocked.missing).toEqual([{ docType: "验收单", required: 1, present: 0 }]);
-    gate.uploadedCounts = [{ docType: "合同", present: 1 }, { docType: "验收单", present: 1 }];
+    expect(blocked.missing).toEqual([
+      { docType: "验收单", required: 1, present: 0 },
+      { docType: "竣工图", required: 1, present: 0 },
+    ]);
+    gate.uploadedCounts = [
+      { docType: "合同", present: 1 },
+      { docType: "验收单", present: 1 },
+      { docType: "竣工图", present: 1 },
+    ];
     await expect(service.canComplete(PROJECT, TASK_A)).resolves.toMatchObject({ canComplete: true, missing: [] });
   });
 
