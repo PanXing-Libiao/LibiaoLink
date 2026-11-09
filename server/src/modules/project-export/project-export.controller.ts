@@ -11,6 +11,7 @@ import { AppError } from "../../common/errors/app-error.js";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
 import { CurrentProjectAccess, ProjectAccessGuard, RequirePermission, type ProjectAccessContext } from "../permission/index.js";
+import type { ProjectExportFormat } from "./project-export.archive.js";
 import {
   ProjectExportService,
   type PageExportResult,
@@ -20,7 +21,14 @@ import { normalizeHttpOrigin } from "./project-export.workbook.js";
 
 const uuidParam = new ZodValidationPipe(UuidSchema);
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const ZIP_MIME = "application/zip";
 const EXPORT_GENERATION_TIMEOUT_MS = 10 * 60 * 1000;
+
+export function projectExportFormat(value: string | undefined): ProjectExportFormat {
+  if (value === undefined || value === "" || value === "xlsx") return "xlsx";
+  if (value === "zip") return "zip";
+  throw new AppError("VALIDATION_FAILED", "format 仅支持 xlsx 或 zip");
+}
 
 export function requestOriginCandidate(requestedOrigin: string | undefined, origin: string | undefined, referer: string | undefined, forwardedProto: string | undefined, host: string | undefined): string {
   // 前端显式回传站点 origin，优先于可能被同源 GET 省略的 Origin / 代理改写后的 Host。
@@ -54,6 +62,7 @@ export class ProjectExportController {
   async export(
     @Param("id", uuidParam) id: string,
     @CurrentActorId() actorId: string,
+    @Query("format") requestedFormat: string | undefined,
     @Query("origin") requestedOrigin: string | undefined,
     @Headers("origin") origin: string | undefined,
     @Headers("referer") referer: string | undefined,
@@ -61,6 +70,7 @@ export class ProjectExportController {
     @Headers("host") host: string | undefined,
     @Res({ passthrough: true }) response: Response,
   ): Promise<StreamableFile> {
+    const format = projectExportFormat(requestedFormat);
     const abort = new AbortController();
     const timer = setTimeout(
       () => abort.abort(new AppError("INTERNAL", "项目导出超时，请稍后重试")),
@@ -78,12 +88,13 @@ export class ProjectExportController {
         actorId,
         requestOriginCandidate(requestedOrigin, origin, referer, forwardedProto, host),
         abort.signal,
+        format,
       );
     } finally {
       clearTimeout(timer);
       response.off("close", abortOnDisconnect);
     }
-    return this.sendResult(result, response);
+    return this.sendResult(result, response, format);
   }
 
   @Get(":id/page-exports/catalog")
@@ -133,11 +144,11 @@ export class ProjectExportController {
       clearTimeout(timer);
       response.off("close", abortOnDisconnect);
     }
-    return this.sendResult(result, response);
+    return this.sendResult(result, response, "xlsx");
   }
 
-  private sendResult(result: ExportResult, response: Response): StreamableFile {
-    response.setHeader("Content-Type", XLSX_MIME);
+  private sendResult(result: ExportResult, response: Response, format: ProjectExportFormat = "xlsx"): StreamableFile {
+    response.setHeader("Content-Type", format === "zip" ? ZIP_MIME : XLSX_MIME);
     response.setHeader("Content-Disposition", contentDispositionFor(result.fileName));
     response.setHeader("Cache-Control", "no-store");
     response.setHeader("X-Content-Type-Options", "nosniff");

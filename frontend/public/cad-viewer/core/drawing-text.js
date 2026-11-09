@@ -296,6 +296,24 @@ export function layoutTextRun(input) {
     }
     approximations.push('canvas-text-layout');
   }
+  if (input.fitWidth > 0 && run.width > 0) {
+    const factor = input.fitWidth / run.width;
+    run.width = input.fitWidth;
+    run.widths = run.widths.map(width => width * factor);
+    if (input.aligned) {
+      run.size *= factor; run.height *= factor;
+      if (run.lineHeight) run.lineHeight *= factor;
+    } else run.widthFactor *= factor;
+    for (const line of run.runLines || []) {
+      line.width *= factor;
+      if (input.aligned) { line.size *= factor; line.advance *= factor; }
+      for (const segment of line.segments) {
+        segment.width *= factor;
+        if (input.aligned) segment.size *= factor;
+      }
+    }
+    approximations.push(input.aligned ? 'aligned-endpoints' : 'fit-endpoints');
+  }
   if (useRuns) approximations.push('inline-font-runs');
   run.offsets = textOffsets(run);
   run.box = textWorldBox(run, run.offsets);
@@ -307,9 +325,9 @@ export function layoutTextRun(input) {
 export function layoutAnnotationText(annotation, draw, options = {}) {
   const sem = annotation.semantic || {};
   const matrix = draw.localToSpace;
-  const anchor = apply(matrix, annotation.position || [0, 0, 0]);
+  let anchor = apply(matrix, annotation.position || [0, 0, 0]);
   const direction = annotation.direction || [1, 0, 0];
-  const dir = [matrix[0] * direction[0] + matrix[4] * direction[1],
+  let dir = [matrix[0] * direction[0] + matrix[4] * direction[1],
     matrix[1] * direction[0] + matrix[5] * direction[1]];
   const height = Number((sem.height && sem.height.value) ||
     (sem.charHeight && sem.charHeight.value) || 2.5) * matrixScale(matrix);
@@ -317,7 +335,16 @@ export function layoutAnnotationText(annotation, draw, options = {}) {
   const text = Array.isArray(options.runs) && options.runs.length
     ? options.runs.map(item => item.text).join('') : semText;
   if (annotation.kind === 'dimension' || !text) return {anchor, run: null};
+  const fitPoints = sem.fitPoints?.value;
+  let fitWidth;
+  if (annotation.kind === 'text' && fitPoints?.length === 2) {
+    anchor = apply(matrix, fitPoints[0]);
+    const end = apply(matrix, fitPoints[1]);
+    dir = [end[0]-anchor[0], end[1]-anchor[1]];
+    fitWidth = Math.hypot(...dir);
+  }
   const run = layoutTextRun({
+    fitWidth, aligned: sem.horizontalAlignment?.value === 'Aligned',
     text, kind: annotation.kind, x: anchor[0], y: anchor[1],
     angle: Math.atan2(dir[1], dir[0]), height,
     halign: Number((sem.halign && sem.halign.value) || 0),

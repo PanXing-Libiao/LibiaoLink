@@ -2170,7 +2170,7 @@ export function mountDrawingViewer(envelope) {
   function focusSourceHandle(handle){
     const key=String(handle).toUpperCase();
     const sourceOf=rec=>(drawing.entities[rec.draw.itemId]||drawing.annotations[rec.draw.itemId])?.sourceRefs||[];
-    const candidates=built.filter(rec=>sourceOf(rec).some(ref=>ref.objectKey.toUpperCase()===key));
+    const candidates=built.filter(rec=>drawVisible(rec)&&sourceOf(rec).some(ref=>ref.objectKey.toUpperCase()===key));
     if(!candidates.length){
       const entry=Object.values(drawing.blockInstances).find(item=>item.sourceRefs.some(ref=>ref.objectKey.toUpperCase()===key));
       if(entry){selectInstance(entry.id);return api.fitSelection();}return false;
@@ -2333,7 +2333,7 @@ export function mountDrawingViewer(envelope) {
         button.type='button';button.className='dblock';button.setAttribute('aria-pressed',String(selectedInstance===step.instanceId));
         button.textContent=(block?.name||step.instanceId.slice(0,12))+' · '+count+' 项';button.onclick=()=>selectInstance(step.instanceId);host.append(button);}
       if(found.size>rows.length){const note=document.createElement('p');note.className='dhint';note.textContent='共 '+found.size+' 个块引用，列表仅显示前 '+rows.length+' 个；可在图面选择。';host.append(note);}
-      if(!found.size)host.textContent='当前空间没有块引用。';return;
+      if(!found.size)host.textContent='当前空间没有已绘出的块引用；未加载外参见解析范围。';return;
     }
     const byInstance = new Map();
     for (const rec of built) {
@@ -2343,7 +2343,7 @@ export function mountDrawingViewer(envelope) {
         byInstance.get(key).ids.add(rec.id);
       }
     }
-    if (!byInstance.size) { host.textContent = '当前空间没有块引用（INSERT）。'; return; }
+    if (!byInstance.size) { host.textContent = '当前空间没有已绘出的块引用；未加载外参见解析范围。'; return; }
     const blockRows=[...byInstance.entries()].sort((a, b) => a[0].localeCompare(b[0]));
     for (const [key, value] of blockRows.slice(0,250)) {
       const instance = drawing.blockInstances[value.instanceId];
@@ -2391,9 +2391,19 @@ export function mountDrawingViewer(envelope) {
       const font = geom.fidelity.fontSubstitution || {};
       lines.push("字体保真 partial：" + (font.nativeFontRecords ?? "?") + " 个原生字体记录未配套，" + (font.annotationSourceRecords ?? "?") + " 个注释源对象使用显式替代字形；几何归账不受影响，但字形与排版不能等同原图。");
     }
+    const cachedProxies = Object.values((ucd.extensions['org.libiaolink.dwg/1'] || {}).proxyGraphics || {}).filter(item => item.status === 'cached-display');
+    if (cachedProxies.length) lines.push('代理图形：' + cachedProxies.length + ' 个对象使用原图保存的显示缓存；未恢复专业对象语义，也不代表外部文字或内容已更新。');
+    if (unsupported.DIMENSION_CONSTRAINT) lines.push('尺寸约束：' + unsupported.DIMENSION_CONSTRAINT + ' 个对象无存储标注图形，参数已保留；交互显示尚未支持，不能据此认定普通尺寸线丢失。');
     if (Object.keys(unsupported).length) lines.push('未显示：' + Object.entries(unsupported).map(([k, v]) => k + '×' + v).join('、'));
-    if (geom.byReason?.externalReferenceUnresolved) lines.push('外部参照：' + geom.byReason.externalReferenceUnresolved + ' 项未加载，原因见下方配套文件列表');
-    if (losses.length) lines.push('损失记录：' + losses.slice(0, 6).map(l => l.code + (l.detail ? '(' + l.detail + ')' : '')).join('、') + (losses.length > 6 ? ' 等 ' + losses.length + ' 条' : ''));
+    if (geom.byReason?.externalReferenceUnresolved) lines.push('外部参照：' + geom.byReason.externalReferenceUnresolved
+      + (ucd.extensions['org.libiaolink.dwg/1'] ? ' 个实例未加载，原因见解析诊断；本地 DWG 尚未接入配套外参加载' : ' 项未加载，原因见下方配套文件列表'));
+    const hatchOutcomes = Object.values((ucd.extensions['org.libiaolink.dwg/1'] || {}).hatchPatternOutcomes || {});
+    const emptyHatches = hatchOutcomes.filter(item => item.status === 'empty-by-read-definition').length;
+    const pendingHatches = losses.filter(item => item.code === 'empty-native-hatch-pattern').length;
+    if (emptyHatches) lines.push('图案填充：' + emptyHatches + ' 个按已读取源定义为空；不代表读取完整或整图无损。');
+    if (pendingHatches) lines.push('图案填充：' + pendingHatches + ' 个空输出待核实；尚不能证明正常空白，也不能直接认定漏画。');
+    const otherLosses = losses.filter(item => item.code !== 'empty-native-hatch-pattern');
+    if (otherLosses.length) lines.push('损失记录：' + otherLosses.slice(0, 6).map(l => l.code + (l.detail ? '(' + l.detail + ')' : '')).join('、') + (otherLosses.length > 6 ? ' 等 ' + otherLosses.length + ' 条' : ''));
     const fills = Object.values((ucd.extensions['org.cad-preview.fill/1'] || {}).fills || {});
     const patterns = fills.filter(fill => fill.solid === false).length;
     const gradients = fills.filter(fill => fill.gradient).length;

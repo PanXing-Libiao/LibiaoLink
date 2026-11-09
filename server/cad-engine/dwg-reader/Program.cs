@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using ACadSharp;
 using ACadSharp.Entities;
+using ACadSharp.Blocks;
 using ACadSharp.Entities.ProxyGraphics;
 using ACadSharp.Extensions;
 using ACadSharp.IO;
@@ -29,6 +30,8 @@ static class Program
     static readonly Dictionary<string,int> counts = [];
     static readonly HashSet<ulong> reachable = [];
     static readonly Dictionary<ulong, string> spaces = [];
+    static readonly Dictionary<ulong, Row> dimensionSources = [];
+    static readonly Dictionary<ulong, byte[]> proxySources = [];
     static Row R(params (string, object?)[] values) => values.ToDictionary(x => x.Item1, x => x.Item2);
     static double[] P(XYZ p) => [p.X, p.Y, p.Z];
     static string H(CadObject o) => o.Handle.ToString("X");
@@ -419,6 +422,10 @@ static class Program
             semantic["horizontalAlignment"]=Fact(single.HorizontalAlignment.ToString());
             semantic["verticalAlignment"]=Fact(single.VerticalAlignment.ToString());
             semantic["alignmentPoint"]=Fact(P(single.AlignmentPoint));
+            if(single.HorizontalAlignment.ToString() is "Fit" or "Aligned") {
+                var ocs=new Transform(Matrix4.GetArbitraryAxis(single.Normal));
+                semantic["fitPoints"]=Fact(new[]{P(ocs.ApplyTransform(single.InsertPoint)),P(ocs.ApplyTransform(single.AlignmentPoint))});
+            }
         }
         if(e is MText multiline) {
             semantic["attachmentPoint"]=Fact((int)multiline.AttachmentPoint);
@@ -434,6 +441,7 @@ static class Program
              ("position",P(point)),("direction",new[]{Math.Cos(text.Rotation),Math.Sin(text.Rotation),0.0}),
              ("text",value),("semantic",semantic),("associativeEntityIds",Array.Empty<string>()),
              ("presentationEntityIds",Array.Empty<string>()),("annotationScales",Array.Empty<double>()),("sourceRefs",Refs(original)));
+        if(e is AttributeEntity attribute) semantic["attributeTag"]=Fact(attribute.Tag);
         if(e is AttributeEntity && e.Owner is Insert parent) row["ownerBlockInstanceId"]="instance-"+H(parent);
         Emit("annotations",id,row);
         Emit("annotationStyles",id,Style(e));
@@ -448,12 +456,98 @@ static class Program
         var row=R(("id",id),("ownerSpaceId",space),("definitionId","block-"+H(definition)),("layerId","layer-"+H(e.Layer)),
                   ("localFromBlock",matrix),("attributes",R()),("style",Style(e)),("sourceRefs",Refs(e)));
         if(e is Insert i) {
-            row["attributes"]=i.Attributes.ToDictionary(a=>a.Tag,a=>a.Value);
+            // Tags are labels, not entity identities; repeated tags must not drop the INSERT.
+            var attributes=new Dictionary<string,string>();
+            foreach(var group in i.Attributes.GroupBy(a=>a.Tag)) {
+                attributes.Add(group.Key,group.First().Value);
+                if(group.Skip(1).Any())Loss(i,"duplicate-attribute-tag",
+                    "Repeated attribute tag: "+group.Key+"; tag summary keeps the first source value; all attribute entities retain their own tag, value and placement.");
+            }
+            row["attributes"]=attributes;
+            if(i.SpatialFilter is SpatialFilter clip) {
+                bool inverted=clip.XDictionary is not null
+                    && clip.XDictionary.TryGetEntry("ACAD_XREC_ROUNDTRIP",out XRecord roundtrip)
+                    && roundtrip.Entries.Any(entry=>entry.Value is string name && name=="ACAD_INVERTEDCLIP_ROUNDTRIP");
+                Emit("nativeBlockClips",id,new{enabled=clip.DisplayBoundary,
+                    boundary=clip.BoundaryPoints.Select(p=>new[]{p.X,p.Y}).ToArray(),
+                    normal=P(clip.Normal),origin=P(clip.Origin),
+                    inverseInsert=Matrix(new Transform(clip.InverseInsertTransform)),
+                    clipTransform=Matrix(new Transform(clip.InsertTransform)),
+                    front=clip.ClipFrontPlane,back=clip.ClipBackPlane,inverted,sourceRefs=Refs(clip)});
+            }
             if(i.IsMultiple) row["array"]=R(("rows",(int)i.RowCount),("columns",(int)i.ColumnCount),
               ("rowOffset",new[]{-Math.Sin(i.Rotation)*i.RowSpacing,Math.Cos(i.Rotation)*i.RowSpacing,0}),
               ("columnOffset",new[]{Math.Cos(i.Rotation)*i.ColumnSpacing,Math.Sin(i.Rotation)*i.ColumnSpacing,0}));
         }
         Emit("blockInstances",id,row); State(e,id);
+    }
+    static void ReadDimensionSources(DwgReader reader, CadDocument doc)
+    {
+        // The pinned reader resolves Block=null both for a zero source pointer and
+        // for an unresolved nonzero pointer. Preserve the distinction before mapping.
+        var builder=typeof(DwgReader).GetField("_builder",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(reader)!;
+        var builderType=typeof(DwgReader).Assembly.GetType("ACadSharp.IO.CadDocumentBuilder")!;
+        var templates=(IDictionary)builderType.GetField("templatesMap",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(builder)!;
+        foreach(var dimension in doc.BlockRecords.SelectMany(b=>b.Entities).OfType<Dimension>()) {
+            var template=templates[dimension.Handle]!;
+            var raw=(ulong?)template.GetType().GetProperty("BlockHandle")!.GetValue(template);
+            var dependencies=new List<Row>();
+            foreach(var reactor in dimension.Reactors.Where(r=>r.ObjectName=="ACDBASSOCDEPENDENCY")) {
+                var dependency=templates[reactor.Handle];
+                var owner=(ulong?)dependency?.GetType().GetProperty("OwnerHandle")!.GetValue(dependency);
+                var ownerTemplate=owner.HasValue?templates[owner.Value]:null;
+                var group=(CadObject?)ownerTemplate?.GetType().GetProperty("CadObject",typeof(CadObject))!.GetValue(ownerTemplate);
+                if(group?.ObjectName=="ACDBASSOC2DCONSTRAINTGROUP")
+                    dependencies.Add(R(("dependencyHandle",H(reactor)),("constraintGroupHandle",H(group))));
+            }
+            dimensionSources[dimension.Handle]=R(("sourcePictureBlockHandle",raw?.ToString("X")),
+                ("pictureStatus",DimensionPictureStatus(dimension,raw,dependencies.Count>0)),
+                ("constraintDependencies",dependencies));
+        }
+    }
+    static void ReadProxySources(DwgReader reader, CadDocument doc)
+    {
+        var builder=typeof(DwgReader).GetField("_builder",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(reader)!;
+        var builderType=typeof(DwgReader).Assembly.GetType("ACadSharp.IO.CadDocumentBuilder")!;
+        var templates=(IDictionary)builderType.GetField("templatesMap",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(builder)!;
+        foreach(var entity in doc.BlockRecords.SelectMany(b=>b.Entities).Where(e=>e is UnknownEntity or ProxyEntity)) {
+            var template=templates[entity.Handle]!;
+            if(template.GetType().GetProperty("ProxyGraphics")!.GetValue(template) is byte[] raw)
+                proxySources[entity.Handle]=raw;
+        }
+    }
+    static string DimensionPictureStatus(Dimension dimension, ulong? sourceHandle, bool constraint)
+    {
+        if(dimension.Block is not null)return "stored";
+        if(sourceHandle>0)return "unresolved-reference";
+        if(sourceHandle==0)return constraint?"constraint-without-picture":"absent";
+        return "unknown";
+    }
+    static void MapDimension(Dimension dimension,string space,string id,Row source)
+    {
+        var semantic=R(("sourceType",dimension.ObjectName),("nativeType",dimension.GetType().Name),
+            ("measurement",dimension.Measurement),("measurementBasis","native-geometry-derived"),
+            ("text",dimension.Text),("pictureBlockHandle",dimension.Block is null?null:H(dimension.Block)),
+            ("definitionPoint",P(dimension.DefinitionPoint)),("textMiddlePoint",P(dimension.TextMiddlePoint)),
+            ("insertionPoint",P(dimension.InsertionPoint)),("normal",P(dimension.Normal)),
+            ("dimensionStyleHandle",H(dimension.Style)),("flags",(int)dimension.Flags),("sourceRefs",Refs(dimension)));
+        foreach(var item in source)semantic[item.Key]=item.Value;
+        Emit("dimensionSemantics",id,semantic);
+        if(dimension.Block is not null) {
+            // Consume the source's stored picture; never solve constraints here.
+            Instance(dimension,dimension.Block,space,id,Identity);return;
+        }
+        string status=(string)source["pictureStatus"]!;
+        string code=status switch {
+            "constraint-without-picture"=>"native-dimension-constraint-display-unavailable",
+            "unresolved-reference"=>"native-dimension-picture-unresolved",
+            _=>"native-dimension-picture-missing"};
+        string message=status=="constraint-without-picture"
+            ?"Source constraint dependency has no stored dimension picture; parameters retained, interactive constraint display unsupported."
+            :"Dimension picture unavailable ("+status+"); source reference and parameters retained without inventing linework.";
+        EntityRow(dimension,space,id,R(("type","unsupported"),("sourceType",dimension.ObjectName),
+            ("reason",message)),null);
+        Loss(dimension,code,message);
     }
     static void Map(Entity e, string space, string? derivedId=null, CadObject? original=null)
     {
@@ -467,13 +561,8 @@ static class Program
                 Instance(e,i.Block,space,id,Matrix(InsertTransform(i)));
                 foreach(var attribute in i.Attributes) Map(attribute,space);
                 return;
-            case Dimension dimension when dimension.Block is not null:
-                // Same strategy as ACadSharp.Formats: consume the source's stored
-                // dimension picture. Do not recalculate engineering measurements.
-                Instance(e,dimension.Block,space,id,Identity);
-                Emit("dimensionSemantics",id,R(("sourceType",e.ObjectName),("measurement",dimension.Measurement),
-                    ("text",dimension.Text),("pictureBlockHandle",H(dimension.Block)),("sourceRefs",Refs(e))));
-                return;
+            case Dimension dimension:
+                MapDimension(dimension,space,id,dimensionSources[dimension.Handle]);return;
             case IText text: Text(e,text,space,id,original); return;
             case Line line:
                 EntityRow(e,space,id,R(("type","line"),("start",P(line.StartPoint)),("end",P(line.EndPoint))),[line.StartPoint,line.EndPoint],original:original); return;
@@ -554,6 +643,8 @@ static class Program
                 LeaderArrow(e,space,id,leader,original);return;
             case Wipeout wipeout:
                 WipeoutMask(e,space,id,wipeout,original);return;
+            case UnknownEntity or ProxyEntity:
+                MapCachedProxy(e,space,id);return;
             case MultiLeader multi when multi.HasProxyGeometries:
                 MapProxy(multi,space,id);return;
             default:
@@ -673,6 +764,7 @@ static class Program
     static void MapHatch(Hatch hatch,string space,string id)
     {
         Emit("hatchSemantics",id,new{pattern=hatch.Pattern.Name,hatch.IsSolid,hatch.PatternAngle,hatch.PatternScale,hatch.Style,
+            patternLines=hatch.Pattern.Lines.Select(l=>new{l.Angle,basePoint=new[]{l.BasePoint.X,l.BasePoint.Y},offset=new[]{l.Offset.X,l.Offset.Y},dashes=l.DashLengths}).ToArray(),
             gradient=hatch.GradientColor.Enabled,loops=hatch.Paths.Select(p=>new{flags=(int)p.Flags,edges=p.Edges.Count}).ToArray(),sourceRefs=Refs(hatch)});
         var localRings=hatch.Paths.Select(loop=>Closed(loop.GetPoints(64))).ToList();
         var selected=FillLoops(localRings,hatch.Style);
@@ -699,8 +791,98 @@ static class Program
             long offset=positions.BaseStream.Position;
             foreach(var p in points){positions.Write(p.X);positions.Write(p.Y);positions.Write(p.Z);}
             if(points.Length>0) Emit("displays",id,new{offset,byteLength=points.Length*24,count=points.Length,topology="lines",min=new[]{points.Min(p=>p.X),points.Min(p=>p.Y),points.Min(p=>p.Z)},max=new[]{points.Max(p=>p.X),points.Max(p=>p.Y),points.Max(p=>p.Z)},sourceRefs=Refs(hatch)});
-            else Loss(hatch,"empty-native-hatch-pattern","Community hatch pattern returned no linework; source boundary retained.");
+            else {
+                var result=HatchEmptyPattern.Classify(hatch);
+                Emit("hatchPatternOutcomes",id,new{result.status,result.reason,result.method,result.ranges,sourceRefs=Refs(hatch)});
+                if(result.status!=HatchEmptyPattern.Empty)
+                    Loss(hatch,"empty-native-hatch-pattern","No linework; needs source verification: "+result.reason);
+            }
         }
+    }
+    static Arc CachedProxyArc(ProxyCircularArc arc)
+    {
+        if(arc.ArcType!=0 || arc.SweepAngle<=0 || arc.SweepAngle>Math.PI*2)
+            throw new InvalidDataException("Proxy circular arc type or sweep is unsupported");
+        var toOcs=Matrix4.GetArbitraryAxis(arc.Normal).Transpose();
+        var start=toOcs*arc.StartVectorDirection;
+        double angle=Math.Atan2(start.Y,start.X);
+        return new Arc{Center=toOcs*arc.Center,Normal=arc.Normal,Radius=arc.Radius,
+            StartAngle=angle,EndAngle=angle+arc.SweepAngle};
+    }
+    static List<(int Index,Entity Entity)> CachedProxyEntities(Entity source)
+    {
+        var result=new List<(int,Entity)>();
+        var layers=source.Document.Layers.ToArray();
+        // Proxy indices exclude the two special linetype entries.
+        var lineTypes=source.Document.LineTypes.Where(l=>!l.Name.Equals("ByLayer",StringComparison.OrdinalIgnoreCase)
+            &&!l.Name.Equals("ByBlock",StringComparison.OrdinalIgnoreCase)).ToArray();
+        var layer=source.Layer;var lineType=source.LineType;var color=source.Color;
+        var weight=source.LineWeight;double scale=source.LineTypeScale;bool fill=false;int index=0;
+        foreach(var proxy in source.ProxyGeometries) {
+            int ordinal=index++;
+            switch(proxy) {
+            case ProxyExtents or ProxySubentMarker:continue;
+            case ProxySubentLayer p:
+                if(p.LayerIndex<0||p.LayerIndex>=layers.Length)throw new InvalidDataException("Proxy layer index unavailable");
+                layer=layers[p.LayerIndex];continue;
+            case ProxySubentColor p when p.ColorIndex>=0 && p.ColorIndex<=256:
+                color=new Color((short)p.ColorIndex);continue;
+            case ProxySubentTrueColor p when p.ColorMethod is ProxyColorMethod.ByLayer or ProxyColorMethod.ByBlock or ProxyColorMethod.ByColor or ProxyColorMethod.ByACI or ProxyColorMethod.Foreground:
+                color=p.Color;continue;
+            case ProxySubentLineWeight p:weight=p.LineWeight;continue;
+            case ProxySubentLineTypeScale p:scale=p.LineTypeScale;continue;
+            case ProxySubentLineType p:
+                if(p.IsByLayer||p.LineTypeIndex==32767)lineType=source.Document.LineTypes["ByLayer"];
+                else if(p.IsByBlock||p.LineTypeIndex==32766)lineType=source.Document.LineTypes["ByBlock"];
+                else if(p.LineTypeIndex<lineTypes.Length)lineType=lineTypes[p.LineTypeIndex];
+                else throw new InvalidDataException("Proxy linetype index unavailable");
+                continue;
+            case ProxySubentFillon p:fill=p.IsOn;continue;
+            case ProxySubentThickness p when p.Thickness==0:continue;
+            case ProxySubentPlotStyleName p when p.PlotStyleIndex==0 && p.Type.ToString() is "ByLayer" or "ByBlock":continue;
+            }
+            Entity presentation=proxy switch {
+                ProxyCircularArc p=>CachedProxyArc(p),
+                ProxyCircle p=>new Circle{Center=Matrix4.GetArbitraryAxis(p.Normal).Transpose()*p.Center,Normal=p.Normal,Radius=p.Radius},
+                ProxyPolyline p=>new Polyline3D(p.Points),
+                ProxyPolygon p when !fill=>new Polyline3D(Closed(p.Points)),
+                ProxyPolygon p when p.Points.Count==3=>new Solid{FirstCorner=p.Points[0],SecondCorner=p.Points[1],ThirdCorner=p.Points[2],FourthCorner=p.Points[2]},
+                _=>throw new InvalidDataException("Unsupported proxy command: "+proxy.GraphicsType)
+            };
+            presentation.Layer=layer;presentation.LineType=lineType;presentation.Color=color;
+            presentation.LineWeight=weight;presentation.LineTypeScale=scale;
+            presentation.IsInvisible=source.IsInvisible;presentation.Transparency=source.Transparency;
+            result.Add((ordinal,presentation));fill=false;
+        }
+        return result;
+    }
+    static void MapCachedProxy(Entity entity,string space,string id)
+    {
+        proxySources.TryGetValue(entity.Handle,out var raw);
+        int nativeCount=raw is {Length:>=8}?System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(raw.AsSpan(4,4)):0;
+        var metadata=R(("sourceType",entity.ObjectName),("sourceRefs",Refs(entity)),("byteLength",raw?.Length??0),
+            ("nativeCommandCount",nativeCount),("decodedCommandCount",entity.ProxyGeometries.Count),
+            ("policy","Saved proxy display only; not recovered native object semantics or current external content."));
+        if(raw is {Length:>0}) {
+            string artifact="proxy-"+H(entity)+".bin";File.WriteAllBytes(Path.Combine(output,artifact),raw);
+            metadata["artifact"]="native/"+artifact;metadata["sha256"]=Convert.ToHexString(SHA256.HashData(raw)).ToLowerInvariant();
+        }
+        string? failure=null;List<(int Index,Entity Entity)>? graphics=null;
+        if(raw is null || raw.Length<8 || nativeCount==0)failure="proxy-graphics-absent";
+        else if(nativeCount!=entity.ProxyGeometries.Count)failure="proxy-graphics-decode-incomplete";
+        else {
+            try { graphics=CachedProxyEntities(entity); }
+            catch(InvalidDataException error) { failure="proxy-command-unsupported";metadata["detail"]=error.Message; }
+        }
+        if(failure is not null || graphics!.Count==0) {
+            failure??="proxy-graphics-empty";metadata["status"]=failure;
+            EntityRow(entity,space,id,R(("type","unsupported"),("sourceType",entity.ObjectName),("reason",failure)),null);
+            Loss(entity,failure,"Saved proxy display is unavailable; see retained native proxy data and command diagnostics.");
+        } else {
+            metadata["status"]="cached-display";metadata["presentationCount"]=graphics.Count;
+            foreach(var (ordinal,presentation) in graphics)Map(presentation,space,id+"-proxy-"+ordinal,entity);
+        }
+        Emit("proxyGraphics",id,metadata);
     }
     static void MapProxy(MultiLeader entity,string space,string id)
     {
@@ -934,6 +1116,198 @@ static class Program
         }
         Console.WriteLine("PASS: attribute Normal/All/None, dedicated Hidden flag, entity invisibility and ordinary text (12 cases).");
     }
+    static void EmptyHatchSelfTest(string folder)
+    {
+        int count=0;
+        void Check(Hatch h,bool empty,string name) {
+            var actual=HatchEmptyPattern.Classify(h);
+            if((actual.status==HatchEmptyPattern.Empty)!=empty)throw new InvalidDataException("Hatch empty proof: "+name+"/"+actual.reason);
+            count++;
+        }
+        Hatch Polygon(double angle=0,double x=0,double y=0) {
+            var h=new Hatch{Pattern=new HatchPattern("proof-lines")};
+            XY Move(double a,double b)=>new XY(x+a*Math.Cos(angle)-b*Math.Sin(angle),y+a*Math.Sin(angle)+b*Math.Cos(angle));
+            h.Pattern.Lines.Add(new HatchPattern.Line{Angle=angle,BasePoint=new XY(x,y),Offset=new XY(-Math.Sin(angle),Math.Cos(angle))});
+            var path=new Hatch.BoundaryPath();
+            path.Edges.Add(new Hatch.BoundaryPath.Polyline(new[]{Move(0,0.2),Move(1,0.2),Move(1,0.8),Move(0,0.8)}.Select(p=>new XYZ(p.X,p.Y,0))));h.Paths.Add(path);return h;
+        }
+        foreach(double angle in new[]{0.0,0.7,Math.PI/2,Math.PI}) {
+            var h=Polygon(angle,2000000,-900000);Check(h,true,"rotated translated no crossing");
+            h.Pattern.Lines[0].Offset*=-1;Check(h,true,"negative spacing");
+            h.Pattern.Lines[0].BasePoint-=h.Pattern.Lines[0].Offset*0.5;Check(h,false,"crossing must stay unknown");
+        }
+        var shape=Polygon();shape.Pattern.Lines.Add(new HatchPattern.Line{BasePoint=new XY(0,0.5),Offset=new XY(0,1)});Check(shape,false,"all line families required");
+        shape=Polygon();shape.IsDouble=true;Check(shape,false,"double hatch");
+        shape=Polygon();shape.Pattern.Lines[0].DashLengths.Add(-1);Check(shape,false,"dash-only gap not proved");
+        shape=Polygon();shape.Pattern.Lines.Clear();Check(shape,false,"missing definition");
+        shape=Polygon();shape.Pattern.Lines[0].Offset=XY.Zero;Check(shape,false,"zero spacing");
+        shape=Polygon();((Hatch.BoundaryPath.Polyline)shape.Paths[0].Edges[0]).IsClosed=false;Check(shape,false,"open boundary");
+        shape=Polygon();shape.Paths[0].Edges.Clear();shape.Paths[0].Edges.Add(new Hatch.BoundaryPath.Spline());Check(shape,false,"unsupported spline");
+        shape=Polygon();((Hatch.BoundaryPath.Polyline)shape.Paths[0].Edges[0]).Vertices[0]=new XYZ(double.NaN,0,0);Check(shape,false,"nonfinite source");
+        shape=Polygon();shape.Paths.Clear();Check(shape,false,"missing boundary");
+        shape=Polygon();shape.Pattern.Lines[0].BasePoint=new XY(0,0.2-5e-8);Check(shape,false,"near tangency");
+        shape=Polygon();shape.Pattern.Lines[0].BasePoint=new XY(0,0.5);shape.Paths.Add(shape.Paths[0].Clone());
+        if(shape.ExplodePattern().Any())throw new InvalidDataException("Expected parity-empty control");Check(shape,false,"parity emptiness outside proof scope");
+        shape=Polygon();shape.Paths[0].Edges.Clear();shape.Paths[0].Edges.Add(new Hatch.BoundaryPath.Polyline(new[]{new XYZ(0,0,1),new XYZ(2,0,0),new XYZ(1,0.2,0)}));
+        shape.Pattern.Lines[0].BasePoint=new XY(0,-0.5);shape.Pattern.Lines[0].Offset=new XY(0,10);Check(shape,false,"bulge interior extremum crosses");
+        shape.Pattern.Lines[0].BasePoint=new XY(0,2);Check(shape,true,"bulge no crossing");
+        shape.Paths[0].Edges.Clear();shape.Paths[0].Edges.Add(new Hatch.BoundaryPath.Ellipse{Center=new XY(0,0.5),MajorAxisEndPoint=new XY(0.1,0.1),RadiusRatio=0.5,EndAngle=Math.Tau});
+        shape.Pattern.Lines[0].BasePoint=XY.Zero;shape.Pattern.Lines[0].Offset=new XY(0,1);Check(shape,true,"full tilted ellipse");
+        ((Hatch.BoundaryPath.Ellipse)shape.Paths[0].Edges[0]).EndAngle=Math.PI;Check(shape,false,"partial ellipse");
+        shape.Paths[0].Edges.Clear();shape.Paths[0].Edges.Add(new Hatch.BoundaryPath.Arc{Center=new XY(0,0.5),Radius=0.1,EndAngle=Math.Tau});Check(shape,true,"full circle");
+        shape.Pattern.Lines[0].BasePoint=new XY(0,0.4);Check(shape,false,"circle tangent");
+        shape=Polygon();shape.Paths[0].Edges.Clear();
+        var corners=new[]{new XY(0,0.2),new XY(1,0.2),new XY(1,0.8),new XY(0,0.8)};
+        for(int i=0;i<4;i++)shape.Paths[0].Edges.Add(new Hatch.BoundaryPath.Line{Start=corners[i],End=corners[(i+1)%4]});
+        Check(shape,true,"explicit line boundary");
+        ((Hatch.BoundaryPath.Line)shape.Paths[0].Edges[0]).End+=new XY(1e-10,0);Check(shape,false,"small open gap not silently closed");
+        var doc=new CadDocument(ACadVersion.AC1027);
+        doc.Entities.Add(Polygon());
+        var cancelled=Polygon();cancelled.Pattern.Lines[0].BasePoint=new XY(0,0.5);cancelled.Paths.Add(cancelled.Paths[0].Clone());doc.Entities.Add(cancelled);
+        var visible=Polygon();visible.Pattern.Lines[0].BasePoint=new XY(0,0.5);doc.Entities.Add(visible);
+        DwgWriter.Write(Path.Combine(folder,"empty-pattern-cases.dwg"),doc);
+        Console.WriteLine($"PASS: {count} conservative empty HATCH cases (including crossing/unsupported/uncertain controls).");
+    }
+
+    static void ProxyAndHatchSelfTest(string folder)
+    {
+        List<XYZ> Square(double x,double y,double width)=>[new XYZ(x,y,0),new XYZ(x+width,y,0),new XYZ(x+width,y+width,0),new XYZ(x,y+width,0)];
+        var hatch=new Hatch{Pattern=new HatchPattern("unit-horizontal")};
+        hatch.Pattern.Lines.Add(new HatchPattern.Line{BasePoint=new XY(0,0.5),Offset=new XY(0,2)});
+        foreach(double x in new[]{0.0,1.0}) {
+            var path=new Hatch.BoundaryPath();path.Edges.Add(new Hatch.BoundaryPath.Polyline(Square(x,0,1)));hatch.Paths.Add(path);
+        }
+        var spans=hatch.ExplodePattern().OrderBy(l=>l.StartPoint.X).ToArray();
+        if(spans.Length!=2 || Math.Abs(spans.Sum(l=>(l.EndPoint-l.StartPoint).GetLength())-2)>1e-9)
+            throw new InvalidDataException("Adjacent hatch loops lost a coincident crossing");
+        // Identical loops have even parity; nested rings keep their hole.
+        hatch.Paths.RemoveAt(1);hatch.Paths.Add(hatch.Paths[0].Clone());
+        if(hatch.ExplodePattern().Any())throw new InvalidDataException("Duplicate hatch loops must cancel by parity");
+        hatch.Paths.Clear();
+        foreach(var ring in new[]{Square(0,0,4),Square(1,0.25,1)}) {
+            var path=new Hatch.BoundaryPath();path.Edges.Add(new Hatch.BoundaryPath.Polyline(ring));hatch.Paths.Add(path);
+        }
+        if(Math.Abs(hatch.ExplodePattern().Sum(l=>(l.EndPoint-l.StartPoint).GetLength())-7)>1e-9)
+            throw new InvalidDataException("Nested hatch hole changed");
+        var doc=new CadDocument(ACadVersion.AC1027);var entity=new Line{IsInvisible=true};doc.Entities.Add(entity);
+        var custom=new LineType("proxy-line");doc.LineTypes.Add(custom);
+        int lineIndex=doc.LineTypes.Where(l=>l.Name!="ByLayer"&&l.Name!="ByBlock").ToList().IndexOf(custom);
+        entity.ProxyGeometries.AddRange(new IProxyGeometry[]{new ProxySubentColor{ColorIndex=1},
+            new ProxySubentLineWeight{LineWeight=(LineWeightType)50},new ProxySubentLineTypeScale{LineTypeScale=2},
+            new ProxySubentLineType{LineTypeIndex=(uint)lineIndex},
+            new ProxyCircularArc{Center=new XYZ(10,20,0),Radius=2,Normal=-XYZ.AxisZ,StartVectorDirection=XYZ.AxisX,SweepAngle=Math.PI*1.5},
+            new ProxySubentLineType{LineTypeIndex=32767},new ProxyPolyline{Points=new(){XYZ.Zero,XYZ.AxisX}}});
+        var graphics=CachedProxyEntities(entity);
+        if(graphics.Count!=2 || graphics[0].Entity.LineType!=custom || graphics[1].Entity.LineType.Name!="ByLayer"
+            || graphics.Any(g=>g.Entity.Color.Index!=1||g.Entity.LineWeight!=(LineWeightType)50||g.Entity.LineTypeScale!=2||!g.Entity.IsInvisible))
+            throw new InvalidDataException("Proxy state or linetype indexing lost");
+        var arc=(Arc)graphics[0].Entity;var points=arc.PolygonalVertexes(5).ToArray();
+        if((points[0]-new XYZ(12,20,0)).GetLength()>1e-9 || (points[^1]-new XYZ(10,22,0)).GetLength()>1e-9)
+            throw new InvalidDataException("Proxy arc world coordinates/negative normal changed");
+        entity.ProxyGeometries.Add(new ProxyPushModelTransform());
+        bool rejected=false;try{CachedProxyEntities(entity);}catch(InvalidDataException){rejected=true;}
+        if(!rejected)throw new InvalidDataException("Unsupported proxy transform must not be silently ignored");
+        Console.WriteLine("PASS: adjacent/nested/duplicate hatch parity; proxy arc coordinates, style state, linetype indices and unsupported transforms.");
+    }
+    static void DimensionSourceSelfTest(string folder)
+    {
+        var doc=new CadDocument(ACadVersion.AC1024);
+        var dimension=new DimensionLinear{Text="WIDTH=5",FirstPoint=XYZ.Zero,SecondPoint=new XYZ(5,0,0)};
+        doc.Entities.Add(dimension);
+        foreach(var (handle,constraint,expected) in new (ulong?,bool,string)[]{
+            (0,true,"constraint-without-picture"),(0,false,"absent"),
+            (999,true,"unresolved-reference"),(999,false,"unresolved-reference"),(null,true,"unknown")}) {
+            if(DimensionPictureStatus(dimension,handle,constraint)!=expected)
+                throw new InvalidDataException("Dimension picture classification conflated source pointers or constraints");
+        }
+        var block=new BlockRecord("saved-dimension-picture");block.Entities.Add(new Line(XYZ.Zero,XYZ.AxisX));
+        doc.BlockRecords.Add(block);dimension.Block=block;
+        if(DimensionPictureStatus(dimension,block.Handle,true)!="stored")
+            throw new InvalidDataException("Stored dimension picture must take precedence over constraint relations");
+        dimension.Block=null;
+        string target=Path.Combine(folder,"dimension-source");Directory.CreateDirectory(target);
+        using(records=new StreamWriter(Path.Combine(target,"records.jsonl")))
+        using(losses=new StreamWriter(Path.Combine(target,"losses.jsonl")))
+        using(positions=new BinaryWriter(File.Create(Path.Combine(target,"positions.bin")))) {
+            foreach(bool constrained in new[]{true,false}) {
+                string id=constrained?"constraint":"missing";
+                MapDimension(dimension,"test-space",id,R(("sourcePictureBlockHandle","0"),
+                    ("pictureStatus",DimensionPictureStatus(dimension,0,constrained)),("constraintDependencies",Array.Empty<object>())));
+            }
+        }
+        var rows=File.ReadLines(Path.Combine(target,"records.jsonl")).Select(l=>JsonDocument.Parse(l)).ToArray();
+        var semantics=rows.Where(r=>r.RootElement.GetProperty("table").GetString()=="dimensionSemantics").ToArray();
+        if(semantics.Length!=2 || semantics.Any(r=>r.RootElement.GetProperty("value").GetProperty("text").GetString()!="WIDTH=5")
+            || rows.Any(r=>r.RootElement.GetProperty("table").GetString() is "displays" or "blockInstances")
+            || new FileInfo(Path.Combine(target,"positions.bin")).Length!=0)
+            throw new InvalidDataException("Missing dimension semantics lost or presentation invented");
+        var codes=File.ReadLines(Path.Combine(target,"losses.jsonl")).Select(l=>JsonDocument.Parse(l).RootElement.GetProperty("code").GetString()).ToArray();
+        if(!codes.SequenceEqual(new[]{"native-dimension-constraint-display-unavailable","native-dimension-picture-missing"}))
+            throw new InvalidDataException("Constraint and ordinary missing picture diagnostics conflated");
+        foreach(var row in rows)row.Dispose();
+        Console.WriteLine("PASS: dimension source zero/nonzero/unknown pointers, constraint relations and stored pictures remain distinct; missing pictures retain parameters without invented linework.");
+    }
+    static void SpatialFilterSelfTest(string folder)
+    {
+        var document=new CadDocument(ACadVersion.AC1027);
+        var block=new BlockRecord("clip-transform");
+        block.Entities.Add(new Line(XYZ.Zero,new XYZ(10,5,0)));document.BlockRecords.Add(block);
+        var inverse=Transform.CreateTranslation(new XYZ(10,20,0)).Matrix
+            *Transform.CreateRotation(XYZ.AxisZ,Math.PI/2).Matrix;
+        foreach(bool enabled in new[]{true,false}) {
+            var insert=new Insert(block){InsertPoint=new XYZ(30,40,0),XScale=-2,YScale=3};
+            document.Entities.Add(insert);
+            insert.SpatialFilter=new SpatialFilter{DisplayBoundary=enabled,Origin=XYZ.Zero,
+                BoundaryPoints=new(){new XY(0,0),new XY(4,2)},InverseInsertTransform=inverse};
+        }
+        string file=Path.Combine(folder,"spatial-filter.dwg");DwgWriter.Write(file,document);
+        var actual=DwgReader.Read(file).Entities.OfType<Insert>().ToArray();
+        if(actual.Length!=2 || !actual[0].SpatialFilter.DisplayBoundary || actual[1].SpatialFilter.DisplayBoundary)
+            throw new InvalidDataException("Spatial-filter enable state changed");
+        foreach(var insert in actual) {
+            var clip=insert.SpatialFilter;
+            var point=new Transform(clip.InverseInsertTransform).ApplyTransform(new XYZ(4,2,0));
+            if((point-new XYZ(8,24,0)).GetLength()>1e-9 || clip.BoundaryPoints.Count!=2)
+                throw new InvalidDataException("Spatial-filter 4x3 matrix lost rotation or translation");
+        }
+        Console.WriteLine("PASS: native spatial-filter DWG roundtrip retains enabled/disabled boundaries, rotation and translation.");
+    }
+    static void DuplicateAttributeSelfTest(string folder)
+    {
+        var document=new CadDocument(ACadVersion.AC1027);
+        var block=new BlockRecord("duplicate-attributes");
+        block.Entities.Add(new Line(XYZ.Zero,XYZ.AxisX));document.BlockRecords.Add(block);
+        var insert=new Insert(block);document.Entities.Add(insert);
+        insert.Attributes.Add(new AttributeEntity{Tag="NAME",Value="first",InsertPoint=new XYZ(1,2,0),Height=1});
+        insert.Attributes.Add(new AttributeEntity{Tag="NAME",Value="second",InsertPoint=new XYZ(3,4,0),Height=1,Flags=AttributeFlags.Hidden});
+        insert.Attributes.Add(new AttributeEntity{Tag="name",Value="case-distinct",Height=1});
+        insert.Attributes.Add(new AttributeEntity{Tag="UNIQUE",Value="unique",Height=1});
+        string source=Path.Combine(folder,"duplicate-attributes.dwg"),target=Path.Combine(folder,"duplicate-attributes");
+        DwgWriter.Write(source,document);var reread=DwgReader.Read(source);
+        var actual=reread.Entities.OfType<Insert>().Single();Directory.CreateDirectory(target);
+        using(records=new StreamWriter(Path.Combine(target,"ucd-records.jsonl")))
+        using(losses=new StreamWriter(Path.Combine(target,"losses.jsonl"))) {
+            Instance(actual,actual.Block,"test-space","instance-"+H(actual),Matrix(InsertTransform(actual)));
+            foreach(var attribute in actual.Attributes)Text(attribute,attribute,"test-space","annotation-"+H(attribute));
+        }
+        var rows=File.ReadLines(Path.Combine(target,"ucd-records.jsonl")).Select(line=>JsonDocument.Parse(line)).ToArray();
+        var instance=rows.Single(r=>r.RootElement.GetProperty("table").GetString()=="blockInstances").RootElement.GetProperty("value");
+        var tags=instance.GetProperty("attributes");
+        if(tags.EnumerateObject().Count()!=3 || tags.GetProperty("NAME").GetString()!="first" || tags.GetProperty("name").GetString()!="case-distinct")
+            throw new InvalidDataException("Duplicate tag summary changed source order or case");
+        foreach(var attribute in actual.Attributes) {
+            string id="annotation-"+H(attribute);
+            var text=rows.Single(r=>r.RootElement.GetProperty("table").GetString()=="annotations"&&r.RootElement.GetProperty("id").GetString()==id).RootElement.GetProperty("value");
+            var state=rows.Single(r=>r.RootElement.GetProperty("table").GetString()=="entityState"&&r.RootElement.GetProperty("id").GetString()==id).RootElement.GetProperty("value");
+            if(text.GetProperty("text").GetString()!=attribute.Value || text.GetProperty("semantic").GetProperty("attributeTag").GetProperty("value").GetString()!=attribute.Tag
+                || text.GetProperty("ownerBlockInstanceId").GetString()!=instance.GetProperty("id").GetString()
+                || state.GetProperty("visible").GetBoolean()==attribute.Flags.HasFlag(AttributeFlags.Hidden))
+                throw new InvalidDataException("Repeated attribute entity or visibility lost");
+        }
+        if(File.ReadLines(Path.Combine(target,"losses.jsonl")).Count()!=1)throw new InvalidDataException("Duplicate tag ambiguity was not reported once");
+        foreach(var row in rows)row.Dispose();
+        Console.WriteLine("PASS: repeated attribute tags retain INSERT, all values, source tags, owner links and Hidden state; summary preserves source order and case.");
+    }
     static void LayerStateSelfTest(string folder)
     {
         var document=new CadDocument(ACadVersion.AC1027);
@@ -1012,6 +1386,11 @@ static class Program
             throw new InvalidDataException("MLine round cap arc changed");
         LayerStateSelfTest(folder);
         AttributeVisibilitySelfTest(folder);
+        DuplicateAttributeSelfTest(folder);
+        SpatialFilterSelfTest(folder);
+        DimensionSourceSelfTest(folder);
+        ProxyAndHatchSelfTest(folder);
+        EmptyHatchSelfTest(folder);
         Console.WriteLine("PASS: native DWG header fields remain independent, including raw -1; no interchange format; spline zero vertex guard; fit-point spline fallback; default leader arrow guard; MLine miter and round cap geometry.");
     }
     static (int Width,int Height) PreviewDimensions(byte[] image,DwgPreview.PreviewType code)
@@ -1105,6 +1484,8 @@ static class Program
         reader.Configuration=new DwgReaderConfiguration{Failsafe=true,KeepUnknownEntities=true,KeepUnknownNonGraphicalObjects=true,IgnoreProxyGraphics=false};
 #pragma warning restore CS0618
         var doc=reader.Read();double readSeconds=time.Elapsed.TotalSeconds;
+        ReadDimensionSources(reader,doc);
+        ReadProxySources(reader,doc);
         var readMemory=new{managedLiveBytes=GC.GetTotalMemory(false),managedCommittedBytes=GC.GetGCMemoryInfo().TotalCommittedBytes};
         using(records=new StreamWriter(Path.Combine(output,"ucd-records.jsonl")))
         using(losses=new StreamWriter(Path.Combine(output,"losses.jsonl")))
@@ -1130,6 +1511,9 @@ static class Program
                 string kind=block==doc.ModelSpace?"model":block.Name.StartsWith("*Paper_Space",StringComparison.OrdinalIgnoreCase)?"paper":"block";
                 Emit("spaces",space,new{id=space,drawingId,kind,ownerId=kind=="block"?bid:drawingId,entityIds=Array.Empty<string>(),annotationIds=Array.Empty<string>(),blockInstanceIds=Array.Empty<string>()});
                 if(kind=="block")Emit("blocks",bid,new{id=bid,drawingId,name=block.Name,spaceId=space,basePoint=P(block.BlockEntity.BasePoint),units=Unknown(),dynamicParameters=R()});
+                if((block.BlockEntity.Flags&(BlockTypeFlags.XRef|BlockTypeFlags.XRefOverlay))!=0)
+                    Emit("nativeExternalReferences",bid,new{requestedPath=block.BlockEntity.XRefPath,
+                        overlay=(block.BlockEntity.Flags&BlockTypeFlags.XRefOverlay)!=0,sourceRefs=Refs(block)});
                 foreach(var e in SortedEntities(block))Map(e,space);
             }
             foreach(var layout in doc.Layouts)if(layout.AssociatedBlock is not null && layout.AssociatedBlock!=doc.ModelSpace) {
