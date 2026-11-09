@@ -9,6 +9,8 @@
 | 权限 | `project.export`（`RequirePermission` + `ProjectAccessGuard`；服务端仍按项目可见性裁决）；页面级另按 `report.view` / `issue.view` / `stakeholder.view` 与干系人字段级权限逐列校验 |
 | 审计 | 成功生成后写 `audit_logs`：`action=download`、`objectType=project`、`objectId/projectId=项目 id`，metadata 记格式、Sheet、行数与图片数；页面级另记 `feature=page_export` 与每个 Sheet 的列 key |
 
+> **性能优化执行口径**：[项目数据导出性能优化方案](../../../../docs/项目数据导出性能优化方案.md)。后续性能优化按该文档执行；范围、步骤或验收发生变化时直接修改该文档并登记变更记录。
+
 ## 响应与文件名
 
 - xlsx：`Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
@@ -25,6 +27,16 @@
 - 同一 api 进程同一时间只允许一个大项目流式导出；并发请求返回 429 `RATE_LIMITED`，避免多个大导出同时占用内存、CPU 与临时盘。
 - 临时目录权限 `0700`、工作簿权限 `0600`。成功下载结束、客户端断开、生成异常或 10 分钟生成超时都会清理；进程启动时还会清理超过 1 小时的遗留目录。
 - 流式模式不改变四张 Sheet、列序、字段、文件链接、分页上限与审计口径；附图与内存模式一致，仍为单元格内嵌缩略图，不改成图片链接。
+
+## 导出指标日志（P0）
+
+- 每次项目全量导出（`legacy` / `stream` / ZIP `archive`）结束时输出一条 `project_export_metrics` JSON 日志；页面级导出不输出该日志。
+- `status` 为 `success` / `failed` / `cancelled`；失败时只附 `errorCode`、`errorName`，不记录错误消息、文件名、对象键、业务内容或 Secret。
+- `timingsMs` 覆盖数据读取、附件打开 / 写 ZIP、图片对象读取 / 解码 / 缩略图生成、工作簿生成、图片注入、ZIP 收尾与审计。
+- `counts` 覆盖附件规划 / 入包 / 缺失 / 跳过、重复 `fileId`、`getObjectStream` / `getObject` 调用、读取字节、请求 / 嵌入 / 链接 / 缺失图片、导出行数与输出字节。
+- `attachmentBytesRead` 按成功写入 ZIP 的实际字节计；`thumbnailBytesRead` 为工作簿图片经 `getObject()` 读取的字节；`objectBytesRead` 为两者之和。
+- 流式模式的 `dataLoad` 与 `workbook` / `thumbnailLoad` 存在时间重叠，`timingsMs` 是阶段累计值，不能相加得到 `totalMs`。
+- 日志为 best-effort：序列化或日志写入失败不得影响导出结果；基线采集口径见[项目数据导出性能优化方案](../../../../docs/项目数据导出性能优化方案.md) §4、§8。
 
 ## 四个 Sheet（列序固定）
 
@@ -104,5 +116,6 @@
 
 ## 测试
 
-- `server/test/project-export.test.ts`：四表名称与列序、关键字段、文件超链接、嵌入图、多图网格不重叠、缺失图占位、草稿日期、文件名 / origin / Content-Disposition；流式工作簿落盘、缩略图注入、多 Sheet 媒体复用、原有超链接保留、auto / legacy / stream 模式判定；ZIP 中文路径 / 压缩完整性、附件规划去重与重名、附件清单与每格 4 张缩略图、服务层 ZIP 包结构与 manifest。
+- `server/test/project-export.test.ts`：四表名称与列序、关键字段、文件超链接、嵌入图、多图网格不重叠、缺失图占位、草稿日期、文件名 / origin / Content-Disposition；流式工作簿落盘、缩略图注入、多 Sheet 媒体复用、原有超链接保留、auto / legacy / stream 模式判定；ZIP 中文路径 / 压缩完整性、附件规划去重与重名、附件清单与每格 4 张缩略图、服务层 ZIP 包结构、manifest 与成功指标日志。
+- `server/test/project-export-metrics.test.ts`：指标聚合、错误 / 取消状态、日志失败隔离与不记录敏感错误消息。
 - `server/test/page-export.test.ts`：页面列目录与契约同源、中文预览 / 字段权限 / 截断 / 最多 20 条、附图缩略图引用与总数、日报 / 干系人不含扩展字段、权限过滤、请求校验、固定系统列序、分页上限、内存 / 流式嵌图与并发槽。

@@ -78,6 +78,7 @@ import {
   type PageExportWorkbookSheet,
 } from "./page-export.workbook.js";
 import { injectWorkbookImages } from "./project-export.xlsx-images.js";
+import { ProjectExportTelemetry } from "./project-export.metrics.js";
 
 export { splitChangeReason } from "./project-export.mapping.js";
 
@@ -781,14 +782,47 @@ export class ProjectExportService implements OnModuleInit {
     signal?: AbortSignal,
     format: ProjectExportFormat = "xlsx",
   ): Promise<ProjectExportResult> {
-    throwIfAborted(signal);
-    const project = await this.projects.getProject(projectId, actorId);
-    if (format === "zip") {
-      return this.withStreamingSlot(() => this.exportProjectArchive(project, actorId, signal));
+    const telemetry = new ProjectExportTelemetry(projectId, format);
+    try {
+      throwIfAborted(signal);
+      const project = await telemetry.measure("dataLoad", () => this.projects.getProject(projectId, actorId));
+      let result: ProjectExportResult;
+      if (format === "zip") {
+        telemetry.setMode("archive");
+        result = await this.withStreamingSlot(() => this.exportProjectArchive(project, actorId, signal, telemetry));
+      } else {
+        const mode = await telemetry.measure("dataLoad", () => this.resolveMode(projectId, actorId, signal));
+        telemetry.setMode(mode);
+        result = mode === "legacy"
+          ? await this.exportProjectLegacy(project, actorId, requestOrigin, signal, telemetry)
+          : await this.withStreamingSlot(() => this.exportProjectStreaming(project, actorId, requestOrigin, signal, telemetry));
+      }
+      telemetry.recordResult({
+        mode: result.mode,
+        rows: result.taskCount + result.reportCount + result.changeCount + result.stakeholderCount,
+        images: result.imageCount,
+        imageLinks: result.imageLinkCount,
+        missingImages: result.missingImageCount,
+        outputBytes: result.kind === "buffer" ? result.buffer.byteLength : result.sizeBytes,
+      });
+      this.logProjectExportTelemetry(telemetry, "success");
+      return result;
+    } catch (error) {
+      this.logProjectExportTelemetry(telemetry, signal?.aborted === true ? "cancelled" : "failed", error);
+      throw error;
     }
-    const mode = await this.resolveMode(projectId, actorId, signal);
-    if (mode === "legacy") return this.exportProjectLegacy(project, actorId, requestOrigin, signal);
-    return this.withStreamingSlot(() => this.exportProjectStreaming(project, actorId, requestOrigin, signal));
+  }
+
+  private logProjectExportTelemetry(
+    telemetry: ProjectExportTelemetry,
+    status: "success" | "failed" | "cancelled",
+    error?: unknown,
+  ): void {
+    try {
+      this.logger.log("project_export_metrics " + JSON.stringify(telemetry.snapshot(status, error)));
+    } catch {
+      return;
+    }
   }
 
   private async resolveMode(projectId: string, actorId: string, signal: AbortSignal | undefined): Promise<ProjectExportExecutionMode> {
@@ -811,12 +845,14 @@ export class ProjectExportService implements OnModuleInit {
     actorId: string,
     requestOrigin: string,
     signal: AbortSignal | undefined,
+    telemetry: ProjectExportTelemetry,
   ): Promise<ProjectExportBufferResult> {
-    const data = await this.collectProjectExport(project, actorId, signal);
+    const data = await telemetry.measure("dataLoad", () => this.collectProjectExport(project, actorId, signal));
     const imageIds = new Set<string>();
     for (const row of data.reportRows) addReportPhotoIds(imageIds, row);
     for (const row of data.changeRows) addChangePhotoIds(imageIds, row);
-    const images = await this.loadImages(imageIds, data.fileRefs);
+    telemetry.setRequestedImages(imageIds.size);
+    const images = await this.loadImages(imageIds, data.fileRefs, false, undefined, telemetry);
     const missingIds = new Set<string>();
     for (const id of imageIds) if (!images.has(id)) missingIds.add(id);
     throwIfAborted(signal);
@@ -830,9 +866,9 @@ export class ProjectExportService implements OnModuleInit {
       stakeholders: data.stakeholderRows,
       images,
     };
-    const workbook = await buildProjectExportWorkbook(payload);
+    const workbook = await telemetry.measure("workbook", () => buildProjectExportWorkbook(payload));
     const fileName = projectExportFileName(project);
-    await this.audit.record(this.database.db, {
+    await telemetry.measure("audit", () => this.audit.record(this.database.db, {
       actorId,
       action: "download",
       objectType: "project",
@@ -851,7 +887,7 @@ export class ProjectExportService implements OnModuleInit {
         imageLinks: 0,
         missingImages: missingIds.size,
       },
-    });
+    }));
     return {
       kind: "buffer",
       fileName,
@@ -948,26 +984,29 @@ export class ProjectExportService implements OnModuleInit {
     project: ExportProject,
     actorId: string,
     signal: AbortSignal | undefined,
+    telemetry: ProjectExportTelemetry,
   ): Promise<ProjectExportFileResult> {
     let directory: string | undefined;
     let archive: ProjectZipWriter | undefined;
     try {
       directory = await mkdtemp(join(tmpdir(), TEMP_EXPORT_PREFIX));
       await chmod(directory, 0o700);
-      const data = await this.collectProjectExport(project, actorId, signal);
+      const data = await telemetry.measure("dataLoad", () => this.collectProjectExport(project, actorId, signal));
       const sources = this.projectArchiveSources(project, data);
       const plan = planProjectArchiveAttachments(sources, data.fileRefs);
+      telemetry.recordAttachmentPlan(plan.files.map((file) => file.fileId));
       const workbookName = projectExportArchiveWorkbookName(project);
       const rootName = projectExportArchiveStem(project);
       const zipPath = join(directory, "project-export.zip");
       archive = new ProjectZipWriter(zipPath, new Date());
       await archive.open();
-      await this.writeProjectArchiveAttachments(archive, plan, rootName, signal);
+      await this.writeProjectArchiveAttachments(archive, plan, rootName, signal, telemetry);
 
       const links = projectArchiveLinks(plan);
       this.applyProjectArchiveLinks(data, links);
       const imageIds = this.projectArchiveImageIds(data.reportRows, data.changeRows);
-      const images = await this.loadImages(imageIds, data.fileRefs, ARCHIVE_THUMBNAIL_SIZE);
+      telemetry.setRequestedImages(imageIds.size);
+      const images = await this.loadImages(imageIds, data.fileRefs, ARCHIVE_THUMBNAIL_SIZE, undefined, telemetry);
       throwIfAborted(signal);
 
       const attachmentRows = plan.references.map((reference) => ({
@@ -991,19 +1030,23 @@ export class ProjectExportService implements OnModuleInit {
         attachmentSheet: attachmentRows,
         imageLimitPerCell: 4,
       };
-      const workbook = await buildProjectExportWorkbook(payload);
-      await archive.addBuffer(rootName + "/" + workbookName, workbook.buffer, false);
+      const workbook = await telemetry.measure("workbook", () => buildProjectExportWorkbook(payload));
       const manifest = buildProjectArchiveManifest({
         project: { code: project.code, name: project.name },
         workbook: workbookName,
         plan,
         exportedAt: new Date(),
       });
-      await archive.addBuffer(rootName + "/manifest.json", projectArchiveManifestJson(manifest));
-      await archive.close();
-      archive = undefined;
-      await chmod(zipPath, 0o600);
-      const info = await stat(zipPath);
+      const openArchive = archive;
+      if (openArchive === undefined) throw new AppError("INTERNAL", "项目导出 ZIP 尚未打开");
+      const info = await telemetry.measure("archiveFinalize", async () => {
+        await openArchive.addBuffer(rootName + "/" + workbookName, workbook.buffer, false);
+        await openArchive.addBuffer(rootName + "/manifest.json", projectArchiveManifestJson(manifest));
+        await openArchive.close();
+        archive = undefined;
+        await chmod(zipPath, 0o600);
+        return stat(zipPath);
+      });
       const missingImageCount = [...imageIds].filter((id) => !images.has(id)).length;
       let imageLinkCount = 0;
       for (const row of data.reportRows) {
@@ -1014,7 +1057,7 @@ export class ProjectExportService implements OnModuleInit {
         imageLinkCount += row.beforePhotos.filter((ref) => ref.href !== undefined).length;
         imageLinkCount += row.afterPhotos.filter((ref) => ref.href !== undefined).length;
       }
-      await this.audit.record(this.database.db, {
+      await telemetry.measure("audit", () => this.audit.record(this.database.db, {
         actorId,
         action: "download",
         objectType: "project",
@@ -1038,7 +1081,7 @@ export class ProjectExportService implements OnModuleInit {
           imageLinks: imageLinkCount,
           missingImages: missingImageCount,
         },
-      });
+      }));
       return {
         kind: "file",
         fileName: projectExportArchiveFileName(project),
@@ -1223,49 +1266,63 @@ export class ProjectExportService implements OnModuleInit {
     plan: ProjectArchivePlan,
     rootName: string,
     signal: AbortSignal | undefined,
+    telemetry: ProjectExportTelemetry,
   ): Promise<void> {
     let includedBytes = 0;
-    for (const file of plan.files) {
-      if (file.status !== "included" || file.ref === null || file.ref.objectKey === null) continue;
-      throwIfAborted(signal);
-      let object: Awaited<ReturnType<ObjectStorage["getObjectStream"]>>;
-      try {
-        object = await this.storage.getObjectStream(file.ref.objectKey);
-      } catch (error) {
-        this.logger.warn("项目附件导出读取失败：" + file.fileName + " / " + String(error));
-        file.status = "skipped";
-        continue;
+    const processed = new Set<(typeof plan.files)[number]>();
+    try {
+      for (const file of plan.files) {
+        if (file.status !== "included" || file.ref === null || file.ref.objectKey === null) continue;
+        const objectKey = file.ref.objectKey;
+        throwIfAborted(signal);
+        processed.add(file);
+        let object: Awaited<ReturnType<ObjectStorage["getObjectStream"]>>;
+        try {
+          telemetry.recordObjectStreamCall();
+          object = await telemetry.measure("attachmentOpen", () => this.storage.getObjectStream(objectKey));
+        } catch (error) {
+          this.logger.warn("项目附件导出读取失败：" + file.fileName + " / " + String(error));
+          file.status = "skipped";
+          continue;
+        }
+        if (object === null) {
+          file.status = "missing";
+          continue;
+        }
+        const actualSize = object.sizeBytes;
+        if (actualSize > PROJECT_ARCHIVE_MAX_FILE_BYTES || includedBytes + actualSize > PROJECT_ARCHIVE_MAX_TOTAL_BYTES) {
+          object.stream.destroy();
+          file.status = "skipped";
+          continue;
+        }
+        let written: Awaited<ReturnType<ProjectZipWriter["addStream"]>>;
+        try {
+          written = await telemetry.measure("attachmentZipWrite", () => archive.addStream(
+            rootName + "/" + file.relativePath,
+            object.stream,
+            actualSize,
+            {
+              compress: shouldCompressProjectArchiveEntry(file.fileName),
+              maxBytes: PROJECT_ARCHIVE_MAX_FILE_BYTES,
+            },
+          ));
+        } catch (error) {
+          object.stream.destroy();
+          file.status = "skipped";
+          this.logger.warn("项目附件写入 ZIP 失败：" + file.fileName + " / " + String(error));
+          throw error;
+        }
+        file.status = "included";
+        file.sizeBytes = written.sizeBytes;
+        file.sha256 = written.sha256;
+        telemetry.recordObjectStreamBytes(written.sizeBytes);
+        includedBytes += written.sizeBytes;
       }
-      if (object === null) {
-        file.status = "missing";
-        continue;
-      }
-      const actualSize = object.sizeBytes;
-      if (actualSize > PROJECT_ARCHIVE_MAX_FILE_BYTES || includedBytes + actualSize > PROJECT_ARCHIVE_MAX_TOTAL_BYTES) {
-        object.stream.destroy();
-        file.status = "skipped";
-        continue;
-      }
-      let written: Awaited<ReturnType<ProjectZipWriter["addStream"]>>;
-      try {
-        written = await archive.addStream(
-          rootName + "/" + file.relativePath,
-          object.stream,
-          actualSize,
-          {
-            compress: shouldCompressProjectArchiveEntry(file.fileName),
-            maxBytes: PROJECT_ARCHIVE_MAX_FILE_BYTES,
-          },
-        );
-      } catch (error) {
-        object.stream.destroy();
-        this.logger.warn("项目附件写入 ZIP 失败：" + file.fileName + " / " + String(error));
-        throw error;
-      }
-      file.status = "included";
-      file.sizeBytes = written.sizeBytes;
-      file.sha256 = written.sha256;
-      includedBytes += written.sizeBytes;
+    } finally {
+      telemetry.recordAttachmentStatuses(plan.files.map((file) => {
+        if (file.status === "missing" || file.status === "skipped") return file.status;
+        return processed.has(file) ? file.status : "skipped";
+      }));
     }
   }
 
@@ -1274,6 +1331,7 @@ export class ProjectExportService implements OnModuleInit {
     actorId: string,
     requestOrigin: string,
     signal: AbortSignal | undefined,
+    telemetry: ProjectExportTelemetry,
   ): Promise<ProjectExportFileResult> {
     let directory: string | undefined;
     let writer: ProjectExportWorkbookWriter | undefined;
@@ -1283,42 +1341,53 @@ export class ProjectExportService implements OnModuleInit {
       const filePath = join(directory, "project-export.xlsx");
       throwIfAborted(signal);
 
-      const [userItems, fileItems, reportIdentity] = await Promise.all([
-        collectPaged((page, limit) => this.users.listUsers({ page, limit }), "用户目录", signal),
-        collectPaged((page, limit) => this.files.listProjectFiles(project.id, { page, limit }), "文件", signal),
-        this.collectReportIdentity(project.id, signal),
-      ]);
-      const users = this.userLabels(userItems);
-      const fileItemsById = new Map(fileItems.map((file) => [file.id, { id: file.id, name: file.name }]));
-      const groupedIssues = await this.collectIssues(project.id, reportIdentity.ids, signal);
-      const managerLabels = project.managerIds.map((id, index) => personLabel(id, project.managerNames[index] ?? null, users));
-      const taskFilesById = this.taskFiles(fileItems);
-      const relatedByChange = new Map<string, string[]>();
+      const setup = await telemetry.measure("dataLoad", async () => {
+        const [userItems, fileItems, reportIdentity] = await Promise.all([
+          collectPaged((page, limit) => this.users.listUsers({ page, limit }), "用户目录", signal),
+          collectPaged((page, limit) => this.files.listProjectFiles(project.id, { page, limit }), "文件", signal),
+          this.collectReportIdentity(project.id, signal),
+        ]);
+        const users = this.userLabels(userItems);
+        return {
+          users,
+          reportIdentity,
+          fileItemsById: new Map(fileItems.map((file) => [file.id, { id: file.id, name: file.name }])),
+          groupedIssues: await this.collectIssues(project.id, reportIdentity.ids, signal),
+          managerLabels: project.managerIds.map((id, index) => personLabel(id, project.managerNames[index] ?? null, users)),
+          taskFilesById: this.taskFiles(fileItems),
+          relatedByChange: new Map<string, string[]>(),
+        };
+      });
+      const { users, reportIdentity, fileItemsById, groupedIssues, managerLabels, taskFilesById, relatedByChange } = setup;
       const counts: StreamingCounts = { tasks: 0, reports: 0, changes: 0, stakeholders: 0, imageIds: new Set() };
 
-      const photoLoader = this.createStreamingPhotoLoader(project.id, signal);
+      const photoLoader = this.createStreamingPhotoLoader(project.id, signal, telemetry);
       writer = new ProjectExportWorkbookWriter(filePath, project, normalizeHttpOrigin(requestOrigin), photoLoader.load);
-      await writer.writeTasks(this.streamTaskRows(project.id, managerLabels, users, taskFilesById, relatedByChange, counts, signal));
-      await writer.writeReports(prefetchPhotoRows(
-        this.streamReportRows(project.id, reportIdentity.total, users, groupedIssues, counts, signal),
-        (row) => [...row.onsitePhotos, ...row.issuePhotos],
-        photoLoader.load,
-      ));
-      await writer.writeChanges(prefetchPhotoRows(
-        this.streamChangeRows(project.id, fileItemsById, users, relatedByChange, counts, signal),
-        (row) => [...row.beforePhotos, ...row.afterPhotos],
-        photoLoader.load,
-      ));
-      await writer.writeStakeholders(this.streamStakeholderRows(project.id, actorId, users, counts, signal));
-      throwIfAborted(signal);
-      const workbook = await writer.commit();
-      await injectWorkbookImages(workbook.filePath, workbook.imagePlacements, workbook.images);
+      const activeWriter = writer;
+      const workbook = await telemetry.measure("workbook", async () => {
+        await activeWriter.writeTasks(this.streamTaskRows(project.id, managerLabels, users, taskFilesById, relatedByChange, counts, signal, telemetry));
+        await activeWriter.writeReports(prefetchPhotoRows(
+          this.streamReportRows(project.id, reportIdentity.total, users, groupedIssues, counts, signal, telemetry),
+          (row) => [...row.onsitePhotos, ...row.issuePhotos],
+          photoLoader.load,
+        ));
+        await activeWriter.writeChanges(prefetchPhotoRows(
+          this.streamChangeRows(project.id, fileItemsById, users, relatedByChange, counts, signal, telemetry),
+          (row) => [...row.beforePhotos, ...row.afterPhotos],
+          photoLoader.load,
+        ));
+        await activeWriter.writeStakeholders(this.streamStakeholderRows(project.id, actorId, users, counts, signal, telemetry));
+        throwIfAborted(signal);
+        telemetry.setRequestedImages(counts.imageIds.size);
+        return activeWriter.commit();
+      });
+      await telemetry.measure("imageInjection", () => injectWorkbookImages(workbook.filePath, workbook.imagePlacements, workbook.images));
       await chmod(filePath, 0o600);
       const info = await stat(filePath);
       const fileName = projectExportFileName(project);
       const imageCount = workbook.images.size;
       const missingImageCount = [...counts.imageIds].filter((id) => !workbook.images.has(id)).length;
-      await this.audit.record(this.database.db, {
+      await telemetry.measure("audit", () => this.audit.record(this.database.db, {
         actorId,
         action: "download",
         objectType: "project",
@@ -1337,7 +1406,7 @@ export class ProjectExportService implements OnModuleInit {
           imageLinks: 0,
           missingImages: missingImageCount,
         },
-      });
+      }));
       return {
         kind: "file",
         fileName,
@@ -1405,8 +1474,13 @@ export class ProjectExportService implements OnModuleInit {
     relatedByChange: Map<string, string[]>,
     counts: StreamingCounts,
     signal: AbortSignal | undefined,
+    telemetry: ProjectExportTelemetry,
   ): AsyncGenerator<ProjectExportTaskRow> {
-    for await (const page of readPaged((page, limit) => this.tasks.list(projectId, { page, limit }), "任务", signal)) {
+    for await (const page of readPaged(
+      (page, limit) => telemetry.measure("dataLoad", () => this.tasks.list(projectId, { page, limit })),
+      "任务",
+      signal,
+    )) {
       for (const task of page.items) {
         throwIfAborted(signal);
         registerTaskChangeLinks(task, relatedByChange);
@@ -1423,9 +1497,10 @@ export class ProjectExportService implements OnModuleInit {
     groupedIssues: { byReport: Map<string, Issue[]>; orphans: Issue[] },
     counts: StreamingCounts,
     signal: AbortSignal | undefined,
+    telemetry: ProjectExportTelemetry,
   ): AsyncGenerator<ProjectExportReportRow> {
     for await (const page of readPagedAscendingFromTotal(
-      (page, limit) => this.reports.list(projectId, { page, limit }),
+      (page, limit) => telemetry.measure("dataLoad", () => this.reports.list(projectId, { page, limit })),
       reportTotal,
       signal,
     )) {
@@ -1458,9 +1533,13 @@ export class ProjectExportService implements OnModuleInit {
     relatedByChange: ReadonlyMap<string, string[]>,
     counts: StreamingCounts,
     signal: AbortSignal | undefined,
+    telemetry: ProjectExportTelemetry,
   ): AsyncGenerator<ProjectExportChangeRow> {
     for await (const page of readPaged(
-      (page, limit) => this.changes.listProjectChanges(projectId, { page, limit, sort: "appliedAt:asc" }),
+      (page, limit) => telemetry.measure(
+        "dataLoad",
+        () => this.changes.listProjectChanges(projectId, { page, limit, sort: "appliedAt:asc" }),
+      ),
       "变更",
       signal,
     )) {
@@ -1480,9 +1559,13 @@ export class ProjectExportService implements OnModuleInit {
     users: ReadonlyMap<string, ProjectExportUserLabel>,
     counts: StreamingCounts,
     signal: AbortSignal | undefined,
+    telemetry: ProjectExportTelemetry,
   ): AsyncGenerator<ProjectExportStakeholderRow> {
     for await (const page of readPaged(
-      (page, limit) => this.stakeholders.list({ "filter[projectId]": projectId, page, limit, sort: "createdAt:asc" }, actorId),
+      (page, limit) => telemetry.measure(
+        "dataLoad",
+        () => this.stakeholders.list({ "filter[projectId]": projectId, page, limit, sort: "createdAt:asc" }, actorId),
+      ),
       "干系人",
       signal,
     )) {
@@ -1555,6 +1638,7 @@ export class ProjectExportService implements OnModuleInit {
   private createStreamingPhotoLoader(
     projectId: string,
     signal: AbortSignal | undefined,
+    telemetry?: ProjectExportTelemetry,
   ): { load: ExportPhotoLoader; images: Map<string, ExportImage> } {
     const images = new Map<string, ExportImage>();
     const requested = new Set<string>();
@@ -1565,9 +1649,11 @@ export class ProjectExportService implements OnModuleInit {
       if (ids.length === 0) return images;
       for (const id of ids) requested.add(id);
       if (budget.count >= MAX_IMAGE_COUNT || budget.totalBytes >= MAX_TOTAL_IMAGE_BYTES) return images;
-      const fileRefs = await this.files.listExportFileRefs(projectId, ids);
+      const fileRefs = telemetry === undefined
+        ? await this.files.listExportFileRefs(projectId, ids)
+        : await telemetry.measure("dataLoad", () => this.files.listExportFileRefs(projectId, ids));
       throwIfAborted(signal);
-      const loaded = await this.loadImages(new Set(ids), fileRefs, WORKBOOK_THUMBNAIL_SIZE, budget);
+      const loaded = await this.loadImages(new Set(ids), fileRefs, WORKBOOK_THUMBNAIL_SIZE, budget, telemetry);
       for (const [id, image] of loaded) images.set(id, image);
       throwIfAborted(signal);
       return images;
@@ -1580,6 +1666,7 @@ export class ProjectExportService implements OnModuleInit {
     files: ReadonlyMap<string, ProjectExportFileRef>,
     thumbnail: ImageThumbnailSize | false = false,
     budget?: ImageLoadBudget,
+    telemetry?: ProjectExportTelemetry,
   ): Promise<Map<string, ExportImage>> {
     const candidates = [...ids]
       .map((id) => ({ id, ref: files.get(id) }))
@@ -1597,16 +1684,24 @@ export class ProjectExportService implements OnModuleInit {
         if (activeBudget.count >= MAX_IMAGE_COUNT || activeBudget.totalBytes >= MAX_TOTAL_IMAGE_BYTES) continue;
         const candidate = candidates[index];
         if (candidate === undefined || candidate.ref.objectKey === null) continue;
+        const objectKey = candidate.ref.objectKey;
         try {
-          const object = await this.storage.getObject(candidate.ref.objectKey);
+          telemetry?.recordObjectGetCall();
+          const object = telemetry === undefined
+            ? await this.storage.getObject(objectKey)
+            : await telemetry.measure("thumbnailLoad", () => this.storage.getObject(objectKey));
           if (object === null) continue;
           const bytes = object.bytes;
+          telemetry?.recordObjectGetBytes(bytes.length);
           if (activeBudget.count >= MAX_IMAGE_COUNT || bytes.length > MAX_IMAGE_BYTES || activeBudget.totalBytes + bytes.length > MAX_TOTAL_IMAGE_BYTES) continue;
           const extension = sniffImage(bytes);
           if (extension === null) continue;
           activeBudget.count += 1;
           activeBudget.totalBytes += bytes.length;
-          result.set(candidate.id, thumbnail ? await this.thumbnailImage(bytes, extension, thumbnail) : { bytes, extension });
+          result.set(
+            candidate.id,
+            thumbnail ? await this.thumbnailImage(bytes, extension, thumbnail, telemetry) : { bytes, extension },
+          );
         } catch (error) {
           this.logger.warn("项目导出读取图片失败：" + candidate.ref.name + " / " + String(error));
         }
@@ -1620,20 +1715,25 @@ export class ProjectExportService implements OnModuleInit {
     bytes: Uint8Array,
     extension: ExportImage["extension"],
     size: ImageThumbnailSize,
+    telemetry?: ProjectExportTelemetry,
   ): Promise<ExportImage> {
     if (bytes.byteLength < 48 * 1024) return { bytes, extension };
     try {
       const canvasApi = await import("@napi-rs/canvas");
-      const image = await canvasApi.loadImage(Buffer.from(bytes));
-      const scale = Math.min(1, size.maxWidth / Math.max(1, image.width), size.maxHeight / Math.max(1, image.height));
-      const width = Math.max(1, Math.round(image.width * scale));
-      const height = Math.max(1, Math.round(image.height * scale));
-      const canvas = canvasApi.createCanvas(width, height);
-      const context = canvas.getContext("2d");
-      context.fillStyle = "#ffffff";
-      context.fillRect(0, 0, width, height);
-      context.drawImage(image, 0, 0, width, height);
-      const output = canvas.toBuffer("image/jpeg", 72);
+      const load = (): Promise<Awaited<ReturnType<typeof canvasApi.loadImage>>> => canvasApi.loadImage(Buffer.from(bytes));
+      const image = telemetry === undefined ? await load() : await telemetry.measure("thumbnailDecode", load);
+      const render = (): Buffer => {
+        const scale = Math.min(1, size.maxWidth / Math.max(1, image.width), size.maxHeight / Math.max(1, image.height));
+        const width = Math.max(1, Math.round(image.width * scale));
+        const height = Math.max(1, Math.round(image.height * scale));
+        const canvas = canvasApi.createCanvas(width, height);
+        const context = canvas.getContext("2d");
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, width, height);
+        context.drawImage(image, 0, 0, width, height);
+        return canvas.toBuffer("image/jpeg", 72);
+      };
+      const output = telemetry === undefined ? render() : telemetry.measureSync("thumbnailGenerate", render);
       if (output.byteLength >= bytes.byteLength) return { bytes, extension };
       return { bytes: output, extension: "jpeg" };
     } catch (error) {

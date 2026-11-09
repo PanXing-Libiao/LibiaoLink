@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
-import { describe, expect, it, vi } from "vitest";
+import { Logger } from "@nestjs/common";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { access, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -464,6 +465,8 @@ describe("项目 Excel + 附件 ZIP", () => {
   });
 
   it("服务层生成可解压 ZIP：xlsx、原附件与 manifest 同包，默认 xlsx 兼容", async () => {
+    const logSpy = vi.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+    onTestFinished(() => logSpy.mockRestore());
     const report = {
       id: "22222222-2222-4222-8222-222222222222",
       projectId: PROJECT_ID,
@@ -539,6 +542,41 @@ describe("项目 Excel + 附件 ZIP", () => {
       const onsite = workbook.getWorksheet("日报及问题汇总")!.getCell(2, 5).value as { hyperlink?: string };
       expect(decodeURIComponent(onsite.hyperlink ?? "")).toBe("./附件/日报及问题汇总/现场工作附图/现场.png");
       expect(audit.record).toHaveBeenCalledOnce();
+      const metricLine = logSpy.mock.calls
+        .map(([message]) => String(message))
+        .find((message) => message.startsWith("project_export_metrics "));
+      expect(metricLine).toBeDefined();
+      const metric = JSON.parse(metricLine!.slice("project_export_metrics ".length)) as {
+        format: string;
+        mode: string;
+        status: string;
+        counts: Record<string, number>;
+      };
+      expect(metric).toMatchObject({
+        format: "zip",
+        mode: "archive",
+        status: "success",
+        counts: {
+          attachmentsPlanned: 1,
+          attachmentsIncluded: 1,
+          attachmentsMissing: 0,
+          attachmentsSkipped: 0,
+          duplicateFileIds: 0,
+          objectStreamCalls: 1,
+          objectGetCalls: 1,
+          attachmentBytesRead: 5,
+          thumbnailBytesRead: PNG.byteLength,
+          objectBytesRead: 5 + PNG.byteLength,
+          requestedImages: 1,
+          embeddedImages: 1,
+          imageLinks: 1,
+          missingImages: 0,
+          rows: 1,
+          outputBytes: result.sizeBytes,
+        },
+      });
+      expect(JSON.stringify(metric)).not.toContain("objects/report.png");
+      expect(JSON.stringify(metric)).not.toContain("现场.png");
     } finally {
       await result.cleanup();
     }
