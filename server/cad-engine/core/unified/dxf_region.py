@@ -124,8 +124,14 @@ def edge_entity(edge):
         for point,t in ((a,start),(b,end)):
             if (center+major*math.cos(t)+minor*math.sin(t)-point).magnitude>major.magnitude*1e-3+1e-8:
                 raise ValueError('region-ellipse-vertices-off-curve')
-        if reverse: start,end=end,start
-        while end-start<=1e-12: end+=2*math.pi
+        if vertices[0] is vertices[-1]:
+            # A single topological vertex closes the whole conic. Canonical
+            # parameters keep the ellipse transform from collapsing a full turn
+            # at a near-zero seam into two almost equal endpoint angles.
+            start,end=0.0,math.tau
+        else:
+            if reverse: start,end=end,start
+            while end-start<=1e-12: end+=2*math.pi
         return factory.new('ELLIPSE',dxfattribs={'center':center,'major_axis':major,'extrusion':normal,
             'ratio':ratio,'start_param':start,'end_param':end})
     return spline(curve,edge,a,b,reverse)

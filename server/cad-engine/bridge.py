@@ -187,8 +187,8 @@ class Gateway:
             is_dxf=Path(request['name']).suffix.lower()=='.dxf'
             if path.stat().st_size != request.get('payloadByteLength',request['sourceByteLength']):
                 raise ValueError('Source size mismatch')
-            if is_dxf:
-                package=dxf_resources.decode_package(path.read_bytes())
+            if is_dxf or Path(request['name']).suffix.lower()=='.dwg' and request.get('resourceFingerprint') is not None:
+                package=dxf_resources.decode_package(path.read_bytes(),Path(request['name']).suffix.lower())
                 if dxf_resources.fingerprint(package)!=request['resourceFingerprint']:
                     raise ValueError('DXF resource identity mismatch')
             cached = self.results.lookup(request)

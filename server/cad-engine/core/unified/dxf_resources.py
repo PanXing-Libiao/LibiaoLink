@@ -1,6 +1,7 @@
 """Bounded, upload-only DXF dependency package. Never resolve source paths on disk."""
 import hashlib
 import json
+import posixpath
 from pathlib import Path, PurePosixPath
 import struct
 
@@ -9,7 +10,7 @@ MAX_FILES = 128
 MAX_BYTES = 64 * 1024 * 1024
 MAX_HEADER = 128 * 1024
 MAX_WIRE_BYTES = MAX_BYTES + MAX_HEADER + 12
-EXTENSIONS = ('.dxf', '.dwg', '.shx', '.shp', '.ttf', '.otf', '.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tif', '.tiff', '.webp', '.pdf', '.dgn', '.dwf', '.dwfx', '.ctb', '.stb')
+EXTENSIONS = ('.dxf', '.dwg', '.shx', '.shp', '.ttf', '.otf', '.ttc', '.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tif', '.tiff', '.webp', '.pdf', '.dgn', '.dwf', '.dwfx', '.ctb', '.stb')
 
 
 def logical_path(value):
@@ -24,7 +25,7 @@ def logical_path(value):
     return str(path)
 
 
-def decode_package(raw):
+def decode_package(raw, main_suffix='.dxf'):
     if len(raw) < 12 or raw[:8] != MAGIC or len(raw) > MAX_WIRE_BYTES:
         raise ValueError('dxf-resource-package: invalid package')
     size = struct.unpack_from('<I', raw, 8)[0]
@@ -46,7 +47,7 @@ def decode_package(raw):
         files[name] = raw[offset:offset + length]
         offset += length
     main = logical_path(metadata.get('main'))
-    if offset != len(raw) or sum(map(len, files.values())) > MAX_BYTES or main not in files or not main.lower().endswith('.dxf'):
+    if offset != len(raw) or sum(map(len, files.values())) > MAX_BYTES or main not in files or not main.lower().endswith(main_suffix):
         raise ValueError('dxf-resource-package: invalid main file or total length')
     return {'main': main, 'files': files}
 
@@ -82,3 +83,21 @@ def read_manifest(path):
     if len(files) > MAX_FILES or sum(map(len, files.values())) > MAX_BYTES:
         raise ValueError('dxf-resource-limit: worker package exceeds limit')
     return metadata['main'], files
+
+
+def match_file(requested, owner, files):
+    requested = requested.replace('\\', '/')
+    relative = posixpath.normpath(posixpath.join(posixpath.dirname(owner), requested))
+    for path, method in [(relative, 'relative-path'), (requested, 'provided-path')]:
+        if path in files:
+            return path, method, []
+    candidates = [name for name in files if name.casefold() == relative.casefold()]
+    method = 'case-insensitive-path'
+    if not candidates:
+        basename = PurePosixPath(requested).name.casefold()
+        candidates = [name for name in files if PurePosixPath(name).name.casefold() == basename]
+        method = 'unique-basename'
+    if len(candidates) == 1:
+        return candidates[0], method, []
+    return None, 'ambiguous' if candidates else 'missing', sorted(candidates)
+

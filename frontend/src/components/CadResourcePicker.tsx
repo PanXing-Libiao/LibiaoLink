@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchCadCompanionVersion, fetchProjectFileLibrary, type CadCompanion, type CadInputSelection, type FileLibraryItem } from "../fileApi";
 
-const supported = /\.(dxf|dwg|shx|shp|ttf|otf|png|jpe?g|bmp|gif|tiff?|webp|pdf|dgn|dwf|dwfx|ctb|stb)$/i;
+const supported = /\.(dxf|dwg|shx|shp|ttf|otf|ttc|png|jpe?g|bmp|gif|tiff?|webp|pdf|dgn|dwf|dwfx|ctb|stb)$/i;
 const validPath = (path: string) => path.length > 0 && path.length <= 1024 && !/[\x00-\x1f\x7f:]/.test(path)
   && !path.startsWith("/") && path.split("/").every((part) => part !== "" && part !== "." && part !== "..");
 
@@ -9,6 +9,7 @@ export function CadResourcePicker({ projectId, fileId, name, selection, onApply,
   projectId: string; fileId: string; name: string; selection: CadInputSelection;
   onApply: (selection: CadInputSelection) => void; onClose: () => void;
 }) {
+  const isDwg = /\.dwg$/i.test(name);
   const dialog = useRef<HTMLDialogElement>(null);
   const [files, setFiles] = useState<FileLibraryItem[] | null>(null);
   const [error, setError] = useState("");
@@ -20,10 +21,10 @@ export function CadResourcePicker({ projectId, fileId, name, selection, onApply,
     const element = dialog.current!; element.showModal();
     let active = true;
     void fetchProjectFileLibrary(projectId, { statuses: ["draft", "final", "changed", "archived"] }).then((items) => {
-      if (active) setFiles(items.filter((item) => item.id !== fileId && supported.test(item.name)));
+      if (active) setFiles(items.filter((item) => item.id !== fileId && supported.test(item.name) && (!isDwg || /\.(dwg|shx|shp|ttf|otf|ttc)$/i.test(item.name))));
     }).catch(() => { if (active) setError("项目文件读取失败，请关闭后重试。"); });
     return () => { active = false; element.close(); };
-  }, [projectId, fileId]);
+  }, [projectId, fileId, isDwg]);
   const add = async (file: FileLibraryItem) => {
     if (pending) return;
     setPending(file.id); setError("");
@@ -47,9 +48,9 @@ export function CadResourcePicker({ projectId, fileId, name, selection, onApply,
   return <dialog ref={dialog} data-cad-resources className="m-auto max-h-[90dvh] w-[min(720px,94vw)] overflow-y-auto rounded-xl border border-zinc-200 bg-white p-5 text-zinc-900 shadow-2xl backdrop:bg-black/40"
     aria-labelledby="cad-resources-title" onCancel={(event) => { event.preventDefault(); onClose(); }} onClick={(event) => event.stopPropagation()}>
     <div className="mb-3 flex items-center justify-between gap-3"><h2 id="cad-resources-title" className="text-base font-semibold">二维图纸配套文件</h2><button onClick={onClose} className="rounded px-3 py-2 text-sm hover:bg-zinc-100">关闭</button></div>
-    <p className="mb-4 text-sm text-zinc-600">从当前项目选择已上传的外部参照、字体、图片、PDF/DWF/DGN 底图或 CTB/STB 打印样式，并填写图纸引用的相对路径。字体支持 SHX、SHP、TTF、OTF。选择会固定到当前文件版本；补齐后重新打开图纸。</p>
+    <p className="mb-4 text-sm text-zinc-600">{isDwg ? "从当前项目选择已上传的 DWG 外部参照和配套字体。会按图纸引用自动解析外参、匹配字体，不需要选择字体样式。" : "从当前项目选择已上传的外部参照、字体、图片、PDF/DWF/DGN 底图或 CTB/STB 打印样式。"}字体支持 SHX、SHP、TTF、OTF、TTC。配套路径保留原目录；选择会固定到当前文件版本，应用后重新解析。</p>
     <label className="block text-sm font-medium">主图相对路径<input value={mainPath} onChange={(event) => setMainPath(event.target.value)} className="mt-1 w-full rounded border border-zinc-300 px-3 py-2 font-mono text-sm" /></label>
-    <p className="mt-1 text-xs text-zinc-500">例如 drawings/{name}。DWG 参照会记录为未支持；不会自动转换或替换。</p>
+    <p className="mt-1 text-xs text-zinc-500">例如 drawings/{name}。只解析本次选定的配套文件；重名或未提供的引用会明确提示。</p>
     <h3 className="mb-2 mt-5 text-sm font-semibold">已选配套（{companions.length} / 127）</h3>
     {companions.length === 0 ? <p className="text-sm text-zinc-500">尚未选择。可以直接查看主图，缺失内容会在解析范围中标明。</p> : <ul className="space-y-2">{companions.map((row, index) => <li key={row.fileId} className="flex items-center gap-2">
       <label className="min-w-0 flex-1"><span className="sr-only">配套文件 {index + 1} 相对路径</span><input value={row.path} onChange={(event) => setCompanions((rows) => rows.map((item, at) => at === index ? { ...item, path: event.target.value } : item))} className="w-full rounded border border-zinc-300 px-3 py-2 font-mono text-sm" /></label>

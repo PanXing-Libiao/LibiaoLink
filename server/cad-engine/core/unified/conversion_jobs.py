@@ -135,7 +135,7 @@ class ConversionJobs:
         name_codepage=check_name_codepage(name_codepage)
         is_dxf=Path(name).suffix.lower()=='.dxf'
         is_dwg=Path(name).suffix.lower()=='.dwg'
-        maximum=min(self.policy['inputBytes'],dxf_resources.MAX_BYTES)+dxf_resources.MAX_HEADER+12 if is_dxf else self.policy['inputBytes']
+        maximum=min(self.policy['inputBytes'],dxf_resources.MAX_BYTES)+dxf_resources.MAX_HEADER+12 if is_dxf or is_dwg else self.policy['inputBytes']
         if namespace is not None and not re.fullmatch(r'[a-f0-9]{64}',namespace):raise ValueError('invalid job namespace')
         if not 0<length<=maximum:raise ValueError('CAD input exceeds the job input budget')
         if Path(name).name!=name or Path(name).suffix.lower() not in ('.step','.stp','.dxf','.dwg'):raise ValueError('jobs accept STEP, DXF or DWG only')
@@ -168,13 +168,16 @@ class ConversionJobs:
         is_dxf=Path(name).suffix.lower()=='.dxf'
         is_dwg=Path(name).suffix.lower()=='.dwg'
         extra={}
-        if is_dxf:
-            package=dxf_resources.decode_package(temporary.read_bytes())
+        with temporary.open('rb') as source:packaged=is_dxf or is_dwg and source.read(8)==dxf_resources.MAGIC
+        if not packaged and length>self.policy['inputBytes']:raise ValueError('CAD input exceeds the job input budget')
+        if packaged:
+            package=dxf_resources.decode_package(temporary.read_bytes(),Path(name).suffix.lower())
             main=package['files'][package['main']]
             if Path(package['main']).name!=name or sum(map(len,package['files'].values()))>min(self.policy['inputBytes'],dxf_resources.MAX_BYTES):
                 raise ValueError('DXF package main or byte budget mismatch')
             extra={'inputSHA256':sha,'resourceFingerprint':dxf_resources.fingerprint(package)}
-            sha=hashlib.sha256(main).hexdigest();length=len(main);name_codepage='UTF8'
+            sha=hashlib.sha256(main).hexdigest();length=len(main)
+            if is_dxf:name_codepage='UTF8'
         source_format='DXF' if is_dxf else 'DWG' if is_dwg else 'STEP'
         identity={'sourceSHA256':sha,'sourceByteLength':length,'name':name,'partial':bool(partial),
                   'reader':'acadsharp/3.8.30' if is_dwg else 'cadquery-ocp/7.9.3.1.1',
@@ -321,18 +324,18 @@ class ConversionJobs:
                 env['CAD_STEP_NAME_CODEPAGE']=row.get('nameCodepage','UTF8')
                 if row['partial']:env['CAD_PARTIAL_PREVIEW']='1'
                 else:env.pop('CAD_PARTIAL_PREVIEW',None)
-                env.pop('CAD_DXF_RESOURCES',None)
+                env.pop('CAD_DXF_RESOURCES',None);env.pop('CAD_DWG_RESOURCES',None)
                 worker_source=source
                 allowed_sources={row['sourceSHA256']:row['sourceByteLength']}
-                if is_dxf:
+                if row.get('inputSHA256'):
                     package_raw=source.read_bytes()
                     if hashlib.sha256(package_raw).hexdigest()!=row['inputSHA256']:
                         raise ValueError('DXF package source integrity mismatch')
-                    package=dxf_resources.decode_package(package_raw)
+                    package=dxf_resources.decode_package(package_raw,'.dwg' if is_dwg else '.dxf')
                     if dxf_resources.fingerprint(package)!=row['resourceFingerprint']:
                         raise ValueError('DXF package integrity mismatch')
-                    env['CAD_DXF_RESOURCES']=dxf_resources.write_manifest(package,folder)
-                    worker_source=folder/'main.dxf';worker_source.write_bytes(package['files'][package['main']])
+                    env['CAD_DWG_RESOURCES' if is_dwg else 'CAD_DXF_RESOURCES']=dxf_resources.write_manifest(package,folder)
+                    worker_source=folder/('main.dwg' if is_dwg else 'main.dxf');worker_source.write_bytes(package['files'][package['main']])
                     allowed_sources={hashlib.sha256(raw).hexdigest():len(raw) for raw in package['files'].values()}
                 wall=time.perf_counter();peak_rss=0
                 with worker_source.open('rb') as stdin,out.open('wb') as stdout,(self.root/'logs'/(jid+'.log')).open('wb') as stderr:

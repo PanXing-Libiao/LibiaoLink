@@ -17,7 +17,7 @@ import time
 from .validation import validate_binary_envelope
 from .canonical import canonical_sha256,write_canonical
 from .payload_sink import FileSink
-from .dwg_pack import pack_document
+from .dwg_pack import pack_document, compress_document
 
 VERSION = '0.1.0-local'
 IDENTITY = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
@@ -467,7 +467,7 @@ def source_display_coverage(drawing, displays, presentation_items, summary, nati
     }
 
 
-def assemble_native(folder, original, output, platform=False, binary_dir=None, packed=False, font_files=None):
+def assemble_native(folder, original, output, platform=False, binary_dir=None, packed=False, font_files=None, resource_loader=None, logical_path=None):
     started=time.perf_counter()
     def phase(name):print(f'DWG UCD {name}: {time.perf_counter()-started:.3f}s',file=sys.stderr,flush=True)
     folder, output = Path(folder), Path(output)
@@ -520,10 +520,10 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
         reference_id = 'xref-' + block_id
         drawing['blocks'][block_id]['externalReferenceId'] = reference_id
         doc['externalReferences'].append({'id':reference_id, 'ownerSourceId':sid,
-            'requestedPath':reference['requestedPath'], 'required':True, 'status':'blocked',
-            'reason':'原生 DWG 外参关系已保留；配套外参加载尚未接入，不能将其视为有效空块。'})
+            'requestedPath':reference['requestedPath'], 'required':True, 'status':'missing',
+            'reason':'配套 DWG 尚未提供；源外参关系已保留，不能将其视为有效空块。'})
         doc['diagnostics'].append({'code':'native-xref-unresolved','severity':'warning','stage':'mapping',
-            'message':'External DWG reference retained but not loaded; no source filesystem path was opened.',
+            'message':'External DWG companion not provided; reference retained without opening any source filesystem path.',
             'sourceRefs':reference['sourceRefs']})
     block_clips = {}
     clip_losses = []
@@ -585,7 +585,7 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
     text_layouts = {}
     if font_files:
         from .dwg_text import add_text_displays
-        text_layouts = add_text_displays(drawing['annotations'], displays, extras, buffer_bytes, font_files)
+        text_layouts = add_text_displays(drawing['annotations'], displays, extras, buffer_bytes, font_files, logical_path)
         phase('original-font text laid out')
     for key,row in displays.items():
         row = trim_spline_origin_pair(row, drawing['entities'].get(key), buffer_bytes)
@@ -798,6 +798,13 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
             extras.get("nativeFonts",{}), extras.get("fills",{}), text_layouts, extras.get("dimensionSemantics",{})),
         "engineeringAttributes":{"status":"partial","sourceRecords":summary.get("mappedSourceObjects",summary["mappedObjects"])},
         "losses":raw_losses}
+    if doc['externalReferences']:
+        doc['extensions']['org.cad-preview.dxf-xref/1']={'references':[
+            {**row,'blockName':next(b['name'] for b in drawing['blocks'].values() if b.get('externalReferenceId')==row['id'])}
+            for row in doc['externalReferences']]}
+    if resource_loader is not None:
+        buffer_bytes=resource_loader(doc,buffer_bytes)
+        buffer_path.write_bytes(buffer_bytes)
     doc['revision'] = digest({k:v for k,v in doc.items() if k!='revision'})
     phase('document sealed')
     snapshot = {'schemaVersion':'2.0.0','id':'pending','documentRevision':doc['revision'],
@@ -811,7 +818,7 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
     validate_binary_envelope(doc,snapshot,presentation,lambda key:buffer_bytes)
     phase('contract and binary validated')
     if packed:
-        doc = pack_document(doc)
+        doc = compress_document(pack_document(doc))
         phase('document packed')
     envelope = {'transportProfile':'ucd-worker-binary/1','document':doc,'snapshot':snapshot,
         'bufferPayloads':{bid:'native/positions.bin'},'presentation':presentation}

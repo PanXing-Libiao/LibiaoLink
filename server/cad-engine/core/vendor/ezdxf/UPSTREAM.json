@@ -27,6 +27,10 @@
       "file": "src/ezdxf/tools/text_layout.py",
       "change": "Optional Paragraph align_tab_fields selects each actual stop before grouping center/right fields; left fields retain wrapping. Disabled by default; enabled by the CAD MTEXT adapter.",
       "regression": "core/tests/dxf/test_mtext_regressions.py"
+    },
+    {
+      "file": "src/ezdxf/render/trace.py",
+      "change": "LinearTrace offset rays pass a collapsed offset edge direction with angle=angle, matching ConstructionRay(p1, p2=None, angle=None); source stations and width/closure tolerances are unchanged."
     }
   ]
 }

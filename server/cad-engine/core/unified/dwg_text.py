@@ -63,11 +63,11 @@ class LinkedOutlineFont:
 
 
 class NativeFonts:
-    def __init__(self, files):
+    def __init__(self, files, logical_source_path=None):
         self.resources = Resources(SimpleNamespace(encoding='gbk'),
             SimpleNamespace(sources={'source-0': {'id': 'source-0'}}, name='source.dwg'), files)
         self.context = {'sourceRefs': [{'sourceId': 'source-0'}], 'chain': [],
-                        'logicalSourcePath': 'source.dwg', 'codepage': 'gbk'}
+                        'logicalSourcePath': logical_source_path or 'source.dwg', 'codepage': 'gbk'}
         self.bindings = {}
 
     def binding(self, name, bigfont='', variant=None):
@@ -338,8 +338,8 @@ class TextLayout(AbstractMTextRenderer):
         return list(self.batches.values())
 
 
-def add_text_displays(annotations, displays, extras, buffer_bytes, font_files):
-    registry = NativeFonts(font_files)
+def add_text_displays(annotations, displays, extras, buffer_bytes, font_files, logical_source_path=None):
+    registry = NativeFonts(font_files, logical_source_path)
     records = {}
     for key, annotation in annotations.items():
         if annotation['kind'] not in ('text', 'mtext'):

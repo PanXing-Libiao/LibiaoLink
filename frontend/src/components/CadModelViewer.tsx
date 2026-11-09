@@ -61,7 +61,7 @@ export function CadModelViewer({ viewer, name, onClose, onDownload }: {
       if (event.data.type === "cad-auth-expired") { onClose(); redirectToLogin(); }
       if (event.data.type === "cad-download") onDownload();
       if (event.data.type === "cad-retry") setRetry((value) => value + 1);
-      if (event.data.type === "cad-resources" && viewer.format === "DXF") setResourcesOpen(true);
+      if (event.data.type === "cad-resources" && (viewer.format === "DXF" || viewer.format === "DWG")) setResourcesOpen(true);
       if (event.data.type === "cad-context-request") frame.current?.contentWindow?.postMessage({ type: "cad-context", name, selection }, window.location.origin);
       if (event.data.type === "cad-mounted" && "viewId" in event.data && event.data.viewId === viewId) { setFrameLoaded(true); setFrameTimedOut(false); }
       if (event.data.type === "cad-ready" && "viewId" in event.data && event.data.viewId === viewId) {
