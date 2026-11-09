@@ -43,15 +43,15 @@
  *      抽屉头部下出三页标签（默认「任务详情」= 原内容）；「变更申请」= A4-13 十三列字段面 —— 变更时间（只读：提交即记）/
  *      变更阶段（九阶段下拉）/ 变更文件（已定档可选、未定档置灰 + 行尾「定档」就地补门）/ 变更内容描述（必填，落契约 reason）/ 变更前 /
  *      变更后（文本摘要）/ 变更原因（选填，合并记入 reason）/ 变更申请人（只读 = 当前登录人）/ 变更后文件版本（只读：
- *      系统递增）/ 变更后文件（必传）/ 关联（只读：R01 回写任务变更关联）→ 提交即生效（intent=change 分片直传）；
+ *      系统递增）/ 变更后文件（必传）/ 关联（只读：按输出成果文件关联）→ 提交即生效（intent=change 分片直传）；
  *      「变更记录」= 任务 changeLinks 逐条回溯（最新在前）+ 详情全文（Push 255 起进页即预取 · ④u 段）；
  *   ⑯b 变更记录 / 关联回写（Push 255 · 业务反馈「文件显示 已变更 不如直接替换成变更后的啊 直接显示变更后添加的文件 不要显示已变更」+
  *      「同时相关的关联也没有显示啊 变更记录也要显示 之前是什么文件 这次是什么文件 按照时间排序上下 文件可以预览在变更里面 变更可以看到详细内容」）：
  *      ① 任务详情文件行不再挂「已变更」签（行内显示的就是变更后的文件本身，④u6）；
  *      ② 变更记录每条直接出「变更前 v(n-1) → 变更后 v(n)」两个版本行（名称 / 版本号 / 大小）+ 各自「预览 / 下载」
  *      （版本态 A4-06：变更前点预览 = 历史版本预览浮层，④u7b / ④u8b / ④u8c）；「详情」仍出全文（阶段 / 原因 / 前后摘要 / 申请人 / 审批状态，④u8）；
- *      ③ 变更回写任务「变更关联」= 「变更文件所属任务」∪ R01 成果类型命中（去重）—— 无成果类型文件（doc_type 空、
- *      前端上传口默认口径）的变更也必回写所属任务（④v4 端到端：任务 change_refs 含该变更）；
+ *      ③ 变更只按 R01 回写任务「变更关联」= 变更文件成果类型 ∈ 任务输出成果文件（追加 + 去重）；
+ *      doc_type 空 / R01 零命中时不按所属任务兜底（④v4：任务 change_refs 保持空）；
  *   ⑯a 变更「变更前 / 变更后」可填图（Push 314 · 业务口径「这个变更要可以填图片」）：两栏文本摘要下挂与日报同款贴图区
  *      （选图 / 粘贴 → 站内文件库直传；各 ≤ 30 张）——选图各传一张真 PNG → 提交随会话落 change_requests
  *      before_summary_file_ids / after_summary_file_ids → 变更记录详情与「变更管理」弹窗按 id 出缩略图（④u3c / ④u4 / ④u6b / ④u8d）；
@@ -75,7 +75,6 @@
  *      ①「变更后文件」卡 → 弹内版本态预览（浮层 z 高于弹窗；Esc 先关预览、弹窗仍在 —— ④u6c / ④u6d 段）；
  *      Push 350 追订：弹窗「变更前 / 变更后」摘要缩略图点开的大图预览同口径 —— z 压过弹窗 + Esc 先关预览、弹窗仍在（④u6b3 / ④u6b4 段）；
  *      ②「关联」→ 关弹窗打开回写任务抽屉（任务表 chip 路径 = 选中该行开抽屉，④u6g / ④u6h；抽屉内路径 = 露出抽屉本身，④u6f）；
- *      ③「变更文件」行 = 输出成果文件类型（业务口径「变更文件就是输出文件成果这个类型」）：文件 doc_type 空 → 回退任务输出成果文件（④v5）；
  *   ㉑ 收尾：定档任务先取消定档（recycle 闸不绕过）→ 八份文件回收 + purge → 临时项目物理删、会话撤销 → 零残留。
  * 证据：docs/m4-07-回放证据(任务文件上传·前端).md
  */
@@ -1380,8 +1379,8 @@ check("④v3 确认定档：行转「已定档」随即可选（自动选中 + �
   && task4Row !== undefined && task4Row.locked === true,
   JSON.stringify({ row: finalizedRow, db: draftDb, task: task4Row }));
 
-// ④v4（Push 255 · 业务反馈「同时相关的关联也没有显示啊」）：变更文件**不带成果类型**（doc_type 空，R01 匹配不到任何任务）——
-// 变更仍必须回写「变更文件所属任务」（task4 由抽屉内变更），任务「变更关联 / 变更记录」不再空白。
+// ④v4（2026-11-09 · R01 唯一口径）：变更文件**不带成果类型**（doc_type 空，R01 匹配不到任何任务）——
+// 变更成功，但不按所属任务兜底；task4 的 change_refs 保持空。
 const noDocAfterName = "回放-先定档-变更后-v2.txt";
 const noDocAfterBuf = Buffer.from("LibiaoLink 回放先定档变更后 v2 " + fixtureCode + String.fromCharCode(10), "utf8");
 writeFileSync(join(fileDir, noDocAfterName), noDocAfterBuf);
@@ -1397,27 +1396,12 @@ const noDocLanded = await waitForAsync(async () => {
 const noDocChange = (await db.query("select id, reason, stage_key, status from change_requests where project_id = $1 order by applied_at desc limit 1", [projectId])).rows[0];
 const noDocFileRow = (await db.query("select doc_type from files where id = $1", [draftUpload.fileId])).rows[0];
 const task4Refs = (await db.query("select change_refs from tasks where id = $1", [task4Id])).rows[0].change_refs;
-check("④v4 无成果类型文件的变更（doc_type 空 · R01 零匹配）→ 所属任务 change_refs 直接回写（变更关联 / 变更记录不再空白）",
+check("④v4 无成果类型文件的变更（doc_type 空 · R01 零匹配）→ 变更成功但不回写所属任务 change_refs（只按输出成果文件关联）",
   noDocPicked === true && noDocSubmit === true && noDocLanded === true
   && noDocFileRow !== undefined && noDocFileRow.doc_type === null
   && noDocChange !== undefined && noDocChange.reason === noDocContent && noDocChange.status === "applied"
-  && Array.isArray(task4Refs) && task4Refs.indexOf(noDocChange.id) >= 0,
+  && Array.isArray(task4Refs) && task4Refs.length === 0,
   JSON.stringify({ change: noDocChange === undefined ? null : noDocChange, file: noDocFileRow, refs: task4Refs }));
-
-// ④v5（Push 256 续 · 业务口径「变更文件就是输出文件成果这个类型」）：无成果类型文件（doc_type 空）的变更 ——
-// 弹窗「变更文件」行回退显示任务「输出成果文件」类型（CAD图纸），不再是「—」；「变更后文件」卡 = 变更选择的文件名（替换效果同口径）。
-const v5Tab = await clickScrolled("[data-drawer-tab=detail]");
-// 抽屉「变更关联」可能有多条变更（R01 会把兄弟任务的变更也回写进来）——按短原因文本选中本用例那条（无成果类型变更）。
-const v5ChipReady = await waitFor("(function(){var bs=document.querySelectorAll(" + j(DRAWER + " [data-change-link-open]") + ");for(var i=0;i<bs.length;i++){if(bs[i].innerText.indexOf(" + j(noDocContent) + ")>=0){return true;}}return false;})()", 15000);
-const v5Link = await ev("(function(){var bs=document.querySelectorAll(" + j(DRAWER + " [data-change-link-open]") + ");for(var i=0;i<bs.length;i++){if(bs[i].innerText.indexOf(" + j(noDocContent) + ")>=0){bs[i].click();return true;}}return false;})()");
-const v5Modal = await waitFor("(function(){var m=document.querySelector(" + j("[data-change-modal]") + ");return m!==null&&m.querySelector(" + j("[data-change-modal-date]") + ")!==null;})()", 15000);
-const v5Info = v5Modal === true ? await ev("(function(){var m=document.querySelector(" + j("[data-change-modal]") + ");if(m===null){return null;}var dt=m.querySelector(" + j("[data-change-modal-doc-type]") + ");var r=m.querySelector(\"[data-change-modal-row=\\\"after-file\\\"]\");return {docType:dt===null?null:dt.textContent.trim(),file:r===null?null:r.innerText};})()") : null;
-check("④v5 无成果类型文件的变更：弹窗「变更文件」回退显示任务「输出成果文件」类型（CAD图纸）+ 变更后文件 = 变更选择的文件名",
-  v5Tab === true && v5ChipReady === true && v5Link === true && v5Modal === true && v5Info !== null && v5Info !== undefined
-  && String(v5Info.docType) === "CAD图纸" && String(v5Info.file).indexOf(noDocAfterName) >= 0,
-  JSON.stringify(v5Info));
-await pressKey("Escape", "Escape", 27);
-await waitFor("document.querySelector(" + j("[data-change-modal]") + ")===null", 8000);
 
 // ---------- ④w 任务已定档 → 其文件视为已定档（Push 254 续之二 · 业务口径「不是已经定档了吗 为什么变更申请里面还是未定档」）----------
 // 场景：任务经定档开关 / 端点已定档，文件未做文件级定档（保持 draft）—— 变更申请里该文件应显示「已定档」、
