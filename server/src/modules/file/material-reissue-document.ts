@@ -13,6 +13,14 @@ export const MATERIAL_REISSUE_DOCX_MIME =
 
 type ZipEntry = { name: string; data: Buffer };
 
+const BODY_FONT =
+  '<w:rFonts w:hint="eastAsia" w:ascii="宋体" w:hAnsi="宋体" w:eastAsia="宋体" w:cs="宋体"/>';
+const BODY_SIZE = '<w:sz w:val="21"/><w:szCs w:val="21"/>';
+
+function bodyRunProperties(bold = false): string {
+  return BODY_FONT + BODY_SIZE + (bold ? "<w:b/><w:bCs/>" : "");
+}
+
 const SHANGHAI_PARTS = new Intl.DateTimeFormat("en-CA", {
   timeZone: "Asia/Shanghai",
   year: "numeric",
@@ -80,10 +88,8 @@ function readTemplateEntry(name: string): Buffer {
 function documentXml(snapshot: MaterialReissueSnapshot): string {
   const parts: string[] = [];
   parts.push(titleParagraph());
-  parts.push(emptyParagraph());
   parts.push(emailParagraph(snapshot));
   parts.push(mainTable(snapshot));
-  parts.push(emptyParagraph());
   parts.push(materialHeading());
   parts.push(materialTable(snapshot));
   parts.push(noteHeading());
@@ -109,13 +115,9 @@ function titleParagraph(): string {
   return '<w:p><w:pPr><w:jc w:val="center"/><w:rPr>' + rPr + "</w:rPr></w:pPr><w:r><w:rPr>" + rPr + "</w:rPr><w:t>补发/补货申请表</w:t></w:r></w:p>";
 }
 
-function emptyParagraph(): string {
-  return '<w:p><w:pPr><w:rPr><w:rFonts w:hint="eastAsia"/></w:rPr></w:pPr></w:p>';
-}
-
 function emailParagraph(snapshot: MaterialReissueSnapshot): string {
-  const bold = '<w:rFonts w:hint="eastAsia"/><w:b/><w:bCs/>';
-  const boldEn = '<w:rFonts w:hint="eastAsia"/><w:b/><w:bCs/><w:lang w:val="en-US" w:eastAsia="zh-CN"/>';
+  const bold = bodyRunProperties(true);
+  const boldEn = bold + '<w:lang w:val="en-US" w:eastAsia="zh-CN"/>';
   const title = snapshot.emailTitle?.trim() || materialReissueDefaultEmailTitle(snapshot.projectCode, snapshot.projectName);
   return (
     "<w:p><w:pPr><w:rPr><w:rFonts w:hint=\"eastAsia\" w:eastAsia=\"宋体\"/><w:lang w:eastAsia=\"zh-CN\"/></w:rPr></w:pPr>" +
@@ -157,7 +159,7 @@ function mainTable(snapshot: MaterialReissueSnapshot): string {
 }
 
 function materialHeading(): string {
-  const rPr = '<w:rFonts w:hint="eastAsia"/><w:b/><w:bCs/>';
+  const rPr = bodyRunProperties(true);
   return '<w:p><w:pPr><w:rPr>' + rPr + "</w:rPr></w:pPr><w:r><w:rPr>" + rPr + "</w:rPr><w:t>补发物料清单</w:t></w:r></w:p>";
 }
 
@@ -175,7 +177,6 @@ function materialTable(snapshot: MaterialReissueSnapshot): string {
       item.remark,
     ]));
   });
-  rows.push(materialDataRow(["", "", "", "", "", "", ""]));
   return (
     "<w:tbl><w:tblPr><w:tblStyle w:val=\"7\"/><w:tblW w:w=\"9962\" w:type=\"dxa\"/><w:jc w:val=\"center\"/>" +
     tableBorders() +
@@ -212,7 +213,7 @@ function materialCell(value: string, index: number, bold: boolean): string {
       ? '<w:snapToGrid w:val="0"/><w:ind w:left="0" w:leftChars="0" w:right="0" w:rightChars="0" w:firstLine="0" w:firstLineChars="0"/><w:jc w:val="center"/>'
       : '<w:keepNext w:val="0"/><w:keepLines w:val="0"/><w:widowControl/><w:suppressLineNumbers w:val="0"/><w:jc w:val="center"/><w:textAlignment w:val="center"/>') +
     (bold ? "<w:rPr><w:b/></w:rPr>" : "");
-  const runs = value === "" ? "" : multilineRun(value, '<w:rPr>' + (bold ? "<w:b/>" : '<w:rFonts w:hint="eastAsia"/>') + "</w:rPr>");
+  const runs = value === "" ? "" : multilineRun(value, "<w:rPr>" + bodyRunProperties(bold) + "</w:rPr>");
   return "<w:tc><w:tcPr>" + widthXml + '<w:tcMar><w:left w:w="108" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr>' + pPr + "</w:pPr>" + runs + "</w:p></w:tc>";
 }
 
@@ -247,7 +248,7 @@ function checkboxRow(label: string, valueXml: string): string {
 function mainCell(value: string, bold: boolean, label: boolean): string {
   const width = label ? '<w:tcW w:w="0" w:type="auto"/>' : '<w:tcW w:w="8857" w:type="dxa"/>';
   const pPr = '<w:snapToGrid w:val="0"/>' + (bold ? '<w:jc w:val="center"/>' : "");
-  const rPr = bold ? "<w:rPr><w:b/></w:rPr>" : "";
+  const rPr = "<w:rPr>" + bodyRunProperties(bold) + "</w:rPr>";
   const runs = value === "" ? "" : multilineRun(value, rPr);
   return "<w:tc><w:tcPr>" + width + '<w:tcMar><w:left w:w="108" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr>' + pPr + "</w:pPr>" + runs + "</w:p></w:tc>";
 }
@@ -255,9 +256,9 @@ function mainCell(value: string, bold: boolean, label: boolean): string {
 function noteHeading(): string {
   return (
     '<w:p><w:pPr><w:spacing w:before="160"/><w:ind w:firstLine="210" w:firstLineChars="100"/><w:rPr><w:rFonts w:hint="eastAsia" w:eastAsia="宋体"/><w:lang w:eastAsia="zh-CN"/></w:rPr></w:pPr>' +
-    '<w:r><w:rPr><w:rFonts w:hint="eastAsia"/></w:rPr><w:t xml:space="preserve"> </w:t></w:r>' +
-    '<w:r><w:rPr><w:rFonts w:hint="eastAsia"/><w:b/><w:bCs/></w:rPr><w:t>备注说明</w:t></w:r>' +
-    '<w:r><w:rPr><w:rFonts w:hint="eastAsia"/><w:b/><w:bCs/><w:lang w:eastAsia="zh-CN"/></w:rPr><w:t>：</w:t></w:r></w:p>'
+    '<w:r><w:rPr>' + bodyRunProperties() + '</w:rPr><w:t xml:space="preserve"> </w:t></w:r>' +
+    '<w:r><w:rPr>' + bodyRunProperties(true) + '</w:rPr><w:t>备注说明</w:t></w:r>' +
+    '<w:r><w:rPr>' + bodyRunProperties(true) + '<w:lang w:eastAsia="zh-CN"/></w:rPr><w:t>：</w:t></w:r></w:p>'
   );
 }
 
@@ -266,7 +267,7 @@ function noteParagraph(number: number, text: string, noSpacingAfter: boolean): s
   return (
     '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>' +
     extra +
-    '<w:ind w:left="720" w:hanging="360"/></w:pPr><w:r><w:t>' + esc(text) + "</w:t></w:r></w:p>"
+    '<w:ind w:left="720" w:hanging="360"/></w:pPr><w:r><w:rPr>' + bodyRunProperties() + '</w:rPr><w:t>' + esc(text) + "</w:t></w:r></w:p>"
   );
 }
 
@@ -322,11 +323,13 @@ function approvalText(value: MaterialReissueSnapshot["approved"]): string {
 }
 
 function symbolRun(checked: boolean): string {
-  return '<w:r><w:rPr/><w:sym w:font="Wingdings 2" w:char="' + (checked ? "0052" : "00A3") + '"/></w:r>';
+  return (
+    '<w:r><w:rPr>' + bodyRunProperties() + '</w:rPr><w:t>' + (checked ? "☑" : "☐") + "</w:t></w:r>"
+  );
 }
 
 function textRun(text: string): string {
-  return '<w:r><w:t xml:space="preserve">' + esc(text) + "</w:t></w:r>";
+  return '<w:r><w:rPr>' + bodyRunProperties() + '</w:rPr><w:t xml:space="preserve">' + esc(text) + "</w:t></w:r>";
 }
 
 function multilineRun(value: string, rPr: string): string {

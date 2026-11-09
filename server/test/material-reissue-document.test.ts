@@ -33,8 +33,8 @@ const SNAPSHOT: MaterialReissueSnapshot = {
 
 function cellTexts(rowXml: string): string[] {
   return [...rowXml.matchAll(/<w:tc>[\s\S]*?<\/w:tc>/g)].map((cell) => {
-    const text = [...cell[0].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>|<w:sym\b[^>]*w:char="([0-9A-Fa-f]+)"[^>]*\/>/g)]
-      .map((match) => (match[2] === undefined ? match[1] : match[2] === "0052" ? "☑" : "☐"))
+    const text = [...cell[0].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)]
+      .map((match) => match[1])
       .join("");
     return text.replace(/&amp;/g, "&");
   });
@@ -86,9 +86,12 @@ describe("物料变更补发 DOCX", () => {
     expect(documentXml).not.toContain("提交人");
     expect(documentXml).toContain("2026/11/12");
     expect(documentXml).not.toContain("2026-11-12");
-    expect(documentXml).toContain("Wingdings 2");
-    expect(documentXml).toContain('w:char="0052"');
-    expect(documentXml).toContain('w:char="00A3"');
+    expect(documentXml).not.toContain("Wingdings 2");
+    expect(documentXml).not.toContain("w:sym");
+    expect(documentXml).toContain('w:ascii="宋体"');
+    expect(documentXml).toContain('w:sz w:val="21"');
+    expect(documentXml).toContain("<w:t>☑</w:t>");
+    expect(documentXml).toContain("<w:t>☐</w:t>");
     expect(documentXml).toContain("第二行地址");
     expect(documentXml).toContain("<w:br/>");
     expect(documentXml).toContain("须先经夏总审批");
@@ -139,7 +142,7 @@ describe("物料变更补发 DOCX", () => {
     expect(materialRows[0]).toEqual(["序号", "物料编码", "物料名称", "规格型号", "数量", "单位", "备注"]);
     expect(materialRows[1]).toEqual(["1", "M-001", "光电传感器", "E3Z-D61", "2", "个", "随主机补发"]);
     expect(materialRows[2]).toEqual(["2", "", "安装支架", "不锈钢", "1.5", "套", "含螺丝"]);
-    expect(materialRows[3]).toEqual(["", "", "", "", "", "", ""]);
+    expect(materialRows).toHaveLength(3);
 
     expect(headerXml).toContain("浙江");
     expect(headerXml).toContain("立镖机器人有限公司");
