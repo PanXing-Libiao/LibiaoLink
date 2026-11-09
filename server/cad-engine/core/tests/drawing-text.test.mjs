@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  TEXT_FONT, layoutAnnotationText, layoutTextRun, textOffsets, textWorldBox, textWorldCorners, textDisplayBox, textDisplayCorners
+  layoutAnnotationText, layoutTextRun, textOffsets, textWorldBox, textWorldCorners, textDisplayBox, textDisplayCorners
 } from '../../../../frontend/public/cad-viewer/core/drawing-text.js';
 
 const IDENTITY = [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
@@ -13,10 +13,10 @@ const annotation = (extra = {}) => ({
 });
 const draw = (matrix = IDENTITY) => ({localToSpace:matrix});
 
-test('raw text uses one measured line and the published 1.25 line box', () => {
+test('raw text uses the bundled default face, one measured line and the published 1.25 line box', () => {
   const {anchor, run} = layoutAnnotationText(annotation(), draw(), {measure});
   assert.deepEqual(anchor, [10,20]);
-  assert.equal(TEXT_FONT.includes('sans-serif'), true);
+  assert.equal(run.fontFamily, '"Libiao Sans SC"');
   assert.equal(run.angle, 0);
   assert.equal(run.size, 2.5);
   assert.deepEqual(run.lines, ['AB']);

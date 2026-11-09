@@ -364,8 +364,8 @@ export async function uploadFile(projectId: string, file: Blob, name: string, op
  * Push 251 撤销（业务口径「取消这个替换按钮」）：入口与流程已从 UI 撤除，本函数保留未接线（供后续需要时复用）。
  */
 /**
- * 变更载荷（契约 ChangeIntentBody · A4-13 十三列字段面）：reason 必填（≤ 1000，承载「变更内容描述（+变更原因）」）；
- * 变更前 / 变更后摘要可空（各 ≤ 2000）；变更阶段可选（stageKey 缺省 = 服务端取文件节点所属阶段）。
+ * 变更载荷（契约 ChangeIntentBody）：reason 必填（≤ 1000，承载「变更内容描述」）；简化后的变更申请页只传 reason，
+ * 变更前 / 变更后摘要与变更阶段等可选字段保留兼容（stageKey 缺省 = 服务端取文件节点所属阶段）。
  */
 export type FileChangePayload = {
   reason: string;

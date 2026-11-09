@@ -693,13 +693,29 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
     inheritance = {key:True for key,row in drawing['layers'].items() if row['name']=='0'}
     for state in extras.get('entityState',{}).values():
         if 'visible' in state:state['invisible']=not state.pop('visible')
+    # LWDEFAULT belongs to the author's application registry, not the DWG.
+    default_weight = {'value':0.25, 'knowledge':'engineering-defined',
+        'validation':'experimental', 'evidenceIds':['dwg-lineweight-policy']}
+    doc['evidence'].append({'id':'dwg-lineweight-policy', 'kind':'engineering-contract',
+        'reference':'dwg-viewer-default-lineweight/1',
+        'scope':'0.25 mm viewer substitute; original author LWDEFAULT is not stored in DWG.'})
+    for key, state in extras.get('nativeLayerLineWeights',{}).items():
+        if state['value'] == -3:
+            drawing['layers'][key]['defaultStyle']['lineWeight'] = dict(default_weight)
     modes = {}
-    for table in ('entities','blockInstances'):
+    for table in ('entities','blockInstances','annotations'):
         for key,row in drawing[table].items():
-            style = row['style']
+            style = (extras.get('annotationStyles',{}).get(key,{})
+                     if table == 'annotations' else row['style'])
+            weight = extras.get('entityState',{}).get(key,{}).get('nativeLineWeight')
+            if weight in (-1, -2):
+                modes.setdefault(key,{})['lineWeight'] = 'by-layer' if weight == -1 else 'by-block'
+            if weight == -3:
+                modes.setdefault(key,{})['lineWeight'] = 'default'
+                style['lineWeight'] = dict(default_weight)
             lt = drawing['lineTypes'].get(style.get('lineTypeId'),{}).get('name','').upper()
             if lt in ('BYLAYER','BYBLOCK'):
-                modes[key] = {'lineType':'by-layer' if lt=='BYLAYER' else 'by-block'}
+                modes.setdefault(key,{})['lineType'] = 'by-layer' if lt=='BYLAYER' else 'by-block'
                 del style['lineTypeId']
     for entry in mesh_items.values():
         for part in entry['parts']:
@@ -707,6 +723,7 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
             extras.setdefault('entityState', {})[part['id']] = {'opacityMode':'by-block'}
     doc['extensions']['org.cad-preview.style-inheritance/1'] = {
         'layerInheritance':inheritance, 'modes':modes, 'blockClips':block_clips,
+        'defaultLineWeight':default_weight,
         'drawOrder':{key:state['drawOrder'] for key,state in extras.get('entityState',{}).items() if 'drawOrder' in state},
         'entityState':extras.get('entityState',{}), 'annotationStyles':extras.get('annotationStyles',{})}
     infinite_items = infinite_presentation_items(extras.get('infiniteLines',{}),drawing['entities'])
@@ -747,6 +764,9 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
             if row['status'] != 'ready':
                 doc['diagnostics'].append({'code':'source-text-layout-unavailable','severity':'warning','stage':'presentation',
                     'message':row['reason'],'sourceRefs':drawing['annotations'][key]['sourceRefs']})
+            elif row.get('layoutStatus') == 'approximate':
+                doc['diagnostics'].append({'code':'source-text-layout-approximate','severity':'warning','stage':'presentation',
+                    'message':row['layoutReason'],'sourceRefs':drawing['annotations'][key]['sourceRefs']})
     if not font_files: doc['diagnostics'].append({'code':'source-fonts-not-provided','severity':'warning','stage':'presentation',
         'message':'Original font companions were not supplied. Native Unicode and font requests are retained; browser text is explicitly substituted, with no original glyph/layout fidelity claim.', 'sourceRefs':[]})
     for entity,error in region_errors:
@@ -755,6 +775,10 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
     ledger = folder/'source-handles.tsv'
     doc['extensions']['org.libiaolink.dwg/1'] = {
         'header':summary['header'], 'nativeGeometry':extras.get('nativeGeometry',{}),
+        'lineWeightSettings':{**extras.get('nativeLineWeightSettings',{}).get(did,{}),
+            'authorDefaultStatus':'not-stored-in-dwg', 'viewerDefault':default_weight},
+        'pointDisplaySettings':extras.get('nativePointDisplaySettings',{}).get(did,{}),
+        'layerLineWeights':extras.get('nativeLayerLineWeights',{}),
         'nativeReaderSha256':summary['readerSha256'],'readMemory':summary.get('readMemory'),
         'dimensionSemantics':extras.get('dimensionSemantics',{}), 'multiLeaderSemantics':extras.get('multiLeaderSemantics',{}),
         'hatchSemantics':extras.get('hatchSemantics',{}), 'hatchPatternOutcomes':hatch_outcomes, 'meshPresentations':extras.get('meshPresentations',{}),

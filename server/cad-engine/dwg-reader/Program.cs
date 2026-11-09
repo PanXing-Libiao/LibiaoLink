@@ -32,6 +32,7 @@ static class Program
     static readonly Dictionary<ulong, string> spaces = [];
     static readonly Dictionary<ulong, Row> dimensionSources = [];
     static readonly Dictionary<ulong, byte[]> proxySources = [];
+    static readonly Dictionary<ulong, Row> legacyMTextSources = [];
     static Row R(params (string, object?)[] values) => values.ToDictionary(x => x.Item1, x => x.Item2);
     static double[] P(XYZ p) => [p.X, p.Y, p.Z];
     static string H(CadObject o) => o.Handle.ToString("X");
@@ -81,6 +82,7 @@ static class Program
         state["visible"]=EntityVisible(e);
         if(e is AttributeEntity attribute)state["attributeFlags"]=(int)attribute.Flags;
         state["lineTypeScale"]=e.LineTypeScale;
+        state["nativeLineWeight"]=(short)e.LineWeight;
         state["drawOrder"]=order++;
         state["nativeColor"]=R(("index",e.Color.Index),("trueColor",e.Color.TrueColor));
         Emit("entityState",id,state);
@@ -394,6 +396,26 @@ static class Program
         EntityRow(mask,space,id,Poly(points,true),Closed(points),original:original);
         Emit("fills",id,new{rings=new[]{points.Select(P).ToArray()},fillRule="even-odd",mask=true});
     }
+    static void ReadLegacyMTextColumns(CadDocument doc)
+    {
+        foreach(var text in doc.BlockRecords.SelectMany(b=>b.Entities).OfType<MText>())
+            if(LegacyMTextColumns.Read(text) is Row metadata) legacyMTextSources[text.Handle]=metadata;
+        foreach(var pair in legacyMTextSources.ToArray()) {
+            if(!pair.Value.TryGetValue("linkedHandles",out var value)) continue;
+            var targets=new List<object>();
+            foreach(string handle in (List<string>)value!) {
+                var target=doc.GetCadObject(Convert.ToUInt64(handle,16));
+                targets.Add(new{handle,status=target is MText?"resolved-mtext":target is null?"unresolved":"wrong-type"});
+                if(target is not MText linked) continue;
+                if(!legacyMTextSources.TryGetValue(linked.Handle,out var metadata))
+                    legacyMTextSources[linked.Handle]=metadata=new Row{["encoding"]="legacy-acad-xdata-link",["nativeHasColumns"]=linked.HasColumns};
+                if(!metadata.TryGetValue("linkedColumnOwners",out var owners)) metadata["linkedColumnOwners"]=owners=new List<string>();
+                ((List<string>)owners!).Add(pair.Key.ToString("X"));
+                metadata["preview"]="unavailable";
+            }
+            pair.Value["linkedTargets"]=targets;
+        }
+    }
     static string FontFamily(TextStyle style) => style.ExtendedData
         .Where(pair=>pair.Key.Name=="ACAD").SelectMany(pair=>pair.Value.Records)
         .OfType<ACadSharp.XData.ExtendedDataString>().Select(record=>record.Value).FirstOrDefault() ?? "";
@@ -427,15 +449,28 @@ static class Program
                 semantic["fitPoints"]=Fact(new[]{P(ocs.ApplyTransform(single.InsertPoint)),P(ocs.ApplyTransform(single.AlignmentPoint))});
             }
         }
+        Row? legacyColumns = e is MText && legacyMTextSources.TryGetValue(e.Handle,out var columnSource) ? columnSource : null;
+        bool legacyUnavailable = legacyColumns is not null && (string)legacyColumns["preview"]! == "unavailable";
         if(e is MText multiline) {
             semantic["attachmentPoint"]=Fact((int)multiline.AttachmentPoint);
             semantic["rectangleWidth"]=Fact(multiline.RectangleWidth);
             semantic["lineSpacing"]=Fact(multiline.LineSpacing);
             semantic["lineSpacingStyle"]=Fact(multiline.LineSpacingStyle.ToString());
             semantic["drawingDirection"]=Fact(multiline.DrawingDirection.ToString());
-            semantic["hasColumns"]=Fact(multiline.HasColumns);
+            semantic["hasColumns"]=legacyColumns is not null && (string)legacyColumns["preview"]! != "ordinary-text"
+                ? legacyColumns.TryGetValue("columnType",out var columnType) && (short)columnType! is 0 or 1 or 2
+                    ? Fact((short)columnType! != 0 || multiline.HasColumns) : Unknown()
+                : Fact(multiline.HasColumns);
+            if(legacyColumns is not null) {
+                semantic["columnLayout"]=Fact(legacyColumns);
+                if((string)legacyColumns["preview"]! != "ordinary-text")
+                    Loss(original,legacyUnavailable?"mtext-legacy-column-layout-unavailable":"mtext-legacy-column-layout-approximate",
+                        "Legacy MTEXT column XData retained; single-column glyph preview is approximate; multi-column, linked, or incomplete definitions have no accepted layout.");
+            }
             if(multiline.DrawingDirection.ToString()=="TopToBottom" || multiline.HasColumns)
                 Loss(original,"mtext-special-layout-unmapped","Vertical/column MTEXT retained; this presentation does not claim its original layout.");
+            else if(multiline.DrawingDirection.ToString() is not ("LeftToRight" or "ByStyle"))
+                Loss(original,"mtext-drawing-direction-unrecognized","Unrecognized MTEXT drawing direction retained; horizontal glyph preview is an approximation, not the source layout.");
         }
         var row=R(("id",id),("ownerSpaceId",space),("layerId","layer-"+H(e.Layer)),("kind",e is MText?"mtext":"text"),
              ("position",P(point)),("direction",new[]{Math.Cos(text.Rotation),Math.Sin(text.Rotation),0.0}),
@@ -446,7 +481,7 @@ static class Program
         Emit("annotations",id,row);
         Emit("annotationStyles",id,Style(e));
         State(e,id,e is AttributeDefinition ? R(("attributeTemplate",true)) : null);
-        if(e is MText special && (special.DrawingDirection.ToString()=="TopToBottom" || special.HasColumns))
+        if(e is MText special && (special.DrawingDirection.ToString()=="TopToBottom" || special.HasColumns || legacyUnavailable))
             Emit("entityState",id,R(("presentationGeometry","missing")));
         Emit("textAppearance",id,R(("fontFamily",Path.GetFileNameWithoutExtension(text.Style.Filename)),("fontStatus","substituted")));
     }
@@ -1486,6 +1521,7 @@ static class Program
         var doc=reader.Read();double readSeconds=time.Elapsed.TotalSeconds;
         ReadDimensionSources(reader,doc);
         ReadProxySources(reader,doc);
+        ReadLegacyMTextColumns(doc);
         var readMemory=new{managedLiveBytes=GC.GetTotalMemory(false),managedCommittedBytes=GC.GetGCMemoryInfo().TotalCommittedBytes};
         using(records=new StreamWriter(Path.Combine(output,"ucd-records.jsonl")))
         using(losses=new StreamWriter(Path.Combine(output,"losses.jsonl")))
@@ -1497,9 +1533,15 @@ static class Program
                 var style=ColorStyle(layer.Color,layer.PlotFlag);style["lineTypeId"]="linetype-"+H(layer.LineType);
                 if((short)layer.LineWeight>=0)style["lineWeight"]=Fact((short)layer.LineWeight/100.0);
                 string id="layer-"+H(layer);var flags=layer.Flags;
+                Emit("nativeLayerLineWeights",id,new{value=(short)layer.LineWeight});
                 Emit("layers",id,new{id,drawingId,name=layer.Name,visible=layer.IsOn,frozen=(flags&LayerFlags.Frozen)!=0,lockedForEditing=(flags&LayerFlags.Locked)!=0,plot=layer.PlotFlag,defaultStyle=style,sourceRefs=Refs(layer)});
             }
+            Emit("nativePointDisplaySettings",drawingId,new{mode=(int)doc.Header.PointDisplayMode,size=doc.Header.PointDisplaySize});
             Emit("nativeLineTypeSettings",drawingId,new{scale=doc.Header.LineTypeScale});
+            Emit("nativeLineWeightSettings",drawingId,new{flags=doc.Header.NativeLineWeightFlags,
+                displayLineWeight=doc.Header.NativeLineWeightFlags.HasValue?(bool?)doc.Header.DisplayLineWeight:null,
+                currentEntityLineWeightCode=doc.Header.NativeLineWeightFlags&0x1F,
+                currentEntityLineWeight=doc.Header.NativeLineWeightFlags.HasValue?(short?)doc.Header.CurrentEntityLineWeight:null});
             foreach(var line in doc.LineTypes) {
                 string id="linetype-"+H(line);
                 Emit("nativeLineTypes",id,new{alignment=line.Alignment.ToString(),complex=line.Segments.Any(s=>s.IsShape||s.IsText)});

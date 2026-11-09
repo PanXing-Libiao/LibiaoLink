@@ -267,6 +267,8 @@ class Resources:
                 candidates = self.outline_candidates(lookup)
                 if variant is not None:
                     candidates = [name for name in candidates if self.outline_variants[name] == variant]
+                    if not candidates:
+                        row['reason'] = 'font-requested-bold-italic-face-not-provided'
                 logical, method = (candidates[0], 'uploaded-font-family') if len(candidates) == 1 else (None, 'ambiguous' if candidates else 'missing')
             else:
                 if not PurePosixPath(lookup).suffix: lookup += '.shx'

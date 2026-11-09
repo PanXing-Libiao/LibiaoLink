@@ -102,6 +102,15 @@ def run_color(ctx):
     return {'mode': 'explicit', 'rgba': [c / 255 for c in rgb] + [1]}
 
 
+def text_glyph_paths(font, text, tracking):
+    if tracking == 1:
+        return list(font.text_path(text).to_path().sub_paths())
+    offsets, _ = text_origins(font, text, tracking)
+    return [p.transform(Matrix44.translate(offset, 0, 0))
+            for char, offset in zip(text, offsets)
+            for p in font.text_path(char).to_path().sub_paths()]
+
+
 class GlyphRenderer(tl.ContentRenderer):
     def __init__(self, owner, text, ctx):
         self.owner, self.text, self.ctx = owner, text, ctx
@@ -109,14 +118,7 @@ class GlyphRenderer(tl.ContentRenderer):
 
     def render(self, left, bottom, right, top, m=None):
         font = self.owner.get_font(self.ctx)
-        paths = []
-        offsets, _ = text_origins(font, self.text, self.ctx.char_tracking_factor)
-        if self.ctx.char_tracking_factor == 1:
-            paths = list(font.text_path(self.text).to_path().sub_paths())
-        else:
-            for char, offset in zip(self.text, offsets):
-                paths.extend(p.transform(Matrix44.translate(offset, 0, 0))
-                             for p in font.text_path(char).to_path().sub_paths())
+        paths = text_glyph_paths(font, self.text, self.ctx.char_tracking_factor)
         self.baseline = round(bottom, 9)
         if self.owner.measuring:
             bounds = path.bbox(paths, fast=False)
@@ -207,9 +209,17 @@ class TextLayout(AbstractMTextRenderer):
         return StopTab(width=self.space_width(ctx))
 
     def word(self, text, ctx):
-        _, width = text_origins(self.get_font(ctx), text, ctx.char_tracking_factor)
-        return tl.Text(width=width, height=ctx.cap_height, valign=tl.CellAlignment(ctx.align),
+        font = self.get_font(ctx)
+        _, width = text_origins(font, text, ctx.char_tracking_factor)
+        cell = tl.Text(width=width, height=ctx.cap_height, valign=tl.CellAlignment(ctx.align),
                        stroke=self.get_stroke(ctx), renderer=GlyphRenderer(self, text, ctx))
+        if (font.font_render_type == fonts.FontRenderType.OUTLINE
+                and ctx.paragraph.align == tl.ParagraphAlignment.LEFT and ctx.oblique == 0):
+            bounds = path.bbox(text_glyph_paths(font, text, ctx.char_tracking_factor), fast=False)
+            if bounds.has_data:
+                # Wrapping uses visible ink; cursor advances and glyph spacing stay unchanged.
+                cell.ink_bounds = (bounds.extmin.x, bounds.extmax.x, 0.0)
+        return cell
 
     def fraction(self, data, ctx):
         top, bottom, divider = data
@@ -281,7 +291,10 @@ class TextLayout(AbstractMTextRenderer):
         # Empty attributes have no glyphs, even when their generation flags mirror.
         if a['kind'] == 'text' and not a['text']:
             return []
-        if s.get('hasColumns') or s.get('drawingDirection') == 'TopToBottom':
+        columns = s.get('columnLayout', {})
+        if columns.get('preview') == 'unavailable':
+            raise ValueError('native-text-legacy-column-layout-unavailable')
+        if (s.get('hasColumns') and columns.get('preview') != 'single-column-approximation') or s.get('drawingDirection') == 'TopToBottom':
             raise ValueError('native-text-column-or-vertical-layout-unavailable')
         normal = Vec3(s.get('normal', (0, 0, 1)))
         if a['kind'] == 'mtext':
@@ -290,7 +303,7 @@ class TextLayout(AbstractMTextRenderer):
                                   origin=Vec3(a['position']))
             proxy = SimpleNamespace(dxf=SimpleNamespace(char_height=s['height']), has_columns=False)
             tokens = list(MTextParser(s['rawText'], self.make_mtext_context(None)))
-            width = s.get('rectangleWidth', 0)
+            width = columns['columnWidth'] if columns.get('preview') == 'single-column-approximation' else s.get('rectangleWidth', 0)
             # FastView probes: at height 150, width 15 is unbounded; 15.001 wraps.
             if width <= s['height'] * .1: width = 0
             layout = layout_from_tokens(self, proxy, tokens, width,
@@ -364,5 +377,11 @@ def add_text_displays(annotations, displays, extras, buffer_bytes, font_files):
                 'sourceKind': annotation['kind'].upper(), 'textParts': parts}
         records[key] = {'status': 'ready', 'fonts': list(layout.used.values()), 'runs': layout.runs,
                         'linkedCharacters': ''.join(sorted(layout.linked))}
+        if annotation['kind'] == 'mtext' and layout.source.get('drawingDirection', 'ByStyle') not in ('LeftToRight', 'ByStyle'):
+            records[key]['layoutStatus'] = 'approximate'
+            records[key]['layoutReason'] = 'native-text-drawing-direction-unrecognized'
+        if layout.source.get('columnLayout', {}).get('preview') == 'single-column-approximation':
+            records[key]['layoutStatus'] = 'approximate'
+            records[key]['layoutReason'] = 'native-text-legacy-single-column-approximation'
         extras.setdefault('textAppearance', {}).setdefault(key, {})['fontStatus'] = 'linked-glyphs' if layout.linked else 'original-glyphs'
     return records
