@@ -704,8 +704,41 @@ export function ProjectFilesPanel({ projectId, tasks }: { projectId: string; tas
                         <span className="flex min-w-0 items-center gap-2.5">
                           <FileTypeIcon name={row.name} className="h-5 w-5 shrink-0" />
                           <span className="min-w-0">
-                            <span className="block truncate text-base text-zinc-800" title={row.name}>
-                              {row.name}
+                            <span className="flex min-w-0 flex-wrap items-center gap-2">
+                              <span className="block min-w-0 truncate text-base text-zinc-800" title={row.name}>
+                                {row.name}
+                              </span>
+                              {isMaterialReissueDocument(row) ? (
+                                deleteBusy === row.key ? (
+                                  <span data-project-file-deleting={row.key} className="inline-flex h-6 min-w-12 shrink-0 items-center justify-center rounded-full bg-red-50 px-2 text-[11px] font-medium text-red-600">
+                                    {t("pd.files.material.deleting")}
+                                  </span>
+                                ) : pendingDelete === row.key ? (
+                                  <span data-project-file-delete-confirm={row.key} className="flex shrink-0 items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => { void deleteMaterialReissue(row); }}
+                                      className="flex h-6 shrink-0 items-center justify-center rounded-full bg-red-500 px-2.5 text-[11px] font-semibold leading-none text-white shadow-[0_1px_2px_rgba(220,38,38,0.25)] transition-colors hover:bg-red-600"
+                                    >
+                                      {t("drawer.file.deleteOk")}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => { setPendingDelete(null); }}
+                                      className="flex h-6 shrink-0 items-center justify-center rounded-full bg-zinc-100 px-2.5 text-[11px] font-medium leading-none text-zinc-600 transition-colors hover:bg-zinc-200"
+                                    >
+                                      {t("drawer.file.deleteCancel")}
+                                    </button>
+                                  </span>
+                                ) : (
+                                  <span data-project-file-delete={row.key} className="flex h-6 w-12 shrink-0 items-center">
+                                    <RowDeleteButton
+                                      onDelete={() => { setPendingDelete(row.key); }}
+                                      label={t("drawer.file.deleteAria", { name: row.name })}
+                                    />
+                                  </span>
+                                )
+                              ) : null}
                             </span>
                             {row.changeSide !== null && row.versionSeq !== null ? (
                               <span className="mt-0.5 block text-[11px] text-zinc-400">v{String(row.versionSeq)}</span>
@@ -756,37 +789,6 @@ export function ProjectFilesPanel({ projectId, tasks }: { projectId: string; tas
                           >
                             {downloadBusy === row.key ? t("lib.download.busy") : t("lib.download")}
                           </button>
-                          {isMaterialReissueDocument(row) ? (
-                            deleteBusy === row.key ? (
-                              <span data-project-file-deleting={row.key} className="inline-flex h-6 min-w-12 items-center justify-center rounded-full bg-red-50 px-2 text-[11px] font-medium text-red-600">
-                                {t("pd.files.material.deleting")}
-                              </span>
-                            ) : pendingDelete === row.key ? (
-                              <span data-project-file-delete-confirm={row.key} className="flex shrink-0 items-center gap-1">
-                                <button
-                                  type="button"
-                                  onClick={() => { void deleteMaterialReissue(row); }}
-                                  className="flex h-6 shrink-0 items-center justify-center rounded-full bg-red-500 px-2.5 text-[11px] font-semibold leading-none text-white shadow-[0_1px_2px_rgba(220,38,38,0.25)] transition-colors hover:bg-red-600"
-                                >
-                                  {t("drawer.file.deleteOk")}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => { setPendingDelete(null); }}
-                                  className="flex h-6 shrink-0 items-center justify-center rounded-full bg-zinc-100 px-2.5 text-[11px] font-medium leading-none text-zinc-600 transition-colors hover:bg-zinc-200"
-                                >
-                                  {t("drawer.file.deleteCancel")}
-                                </button>
-                              </span>
-                            ) : (
-                              <span data-project-file-delete={row.key} className="flex h-6 w-12 shrink-0 items-center">
-                                <RowDeleteButton
-                                  onDelete={() => { setPendingDelete(row.key); }}
-                                  label={t("drawer.file.deleteAria", { name: row.name })}
-                                />
-                              </span>
-                            )
-                          ) : null}
                         </div>
                       </td>
                     </tr>
