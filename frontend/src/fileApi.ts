@@ -450,6 +450,8 @@ export type MaterialReissueLine = {
 
 /** 补发表单提交体（服务端自动补项目 / 任务 / 申请人 / 时间快照）。 */
 export type MaterialReissueInput = {
+  emailTitle?: string;
+  customerName?: string;
   reason: MaterialReissueReason;
   reasonOther?: string;
   applicationDepartment: MaterialReissueApplicationDepartment;
@@ -477,12 +479,13 @@ export type MaterialReissueResult = {
   version: { id: string; seq: number };
 };
 
-export type MaterialReissueSnapshot = MaterialReissueInput & {
+export type MaterialReissueSnapshot = Omit<MaterialReissueInput, "emailTitle" | "customerName"> & {
   taskId: string;
   taskTitle: string;
   projectCode: string;
   projectName: string;
   customerName: string | null;
+  emailTitle?: string;
   applicantName: string;
 };
 

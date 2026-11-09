@@ -21,6 +21,7 @@ import {
   MATERIAL_REISSUE_FREIGHT_OPTIONS,
   MATERIAL_REISSUE_REASON_OPTIONS,
   MATERIAL_REISSUE_RESPONSIBLE_DEPARTMENT_OPTIONS,
+  materialReissueDefaultEmailTitle,
 } from "../materialReissue";
 
 type MaterialDraft = MaterialReissueLine & { id: number };
@@ -140,6 +141,8 @@ export function MaterialReissueForm({ projectId, task, members, onSubmitted }: {
   const [project, setProject] = useState<ApiProject | null>(null);
   const [projectError, setProjectError] = useState<string | null>(null);
   const [projectTick, setProjectTick] = useState(0);
+  const [emailTitleDraft, setEmailTitleDraft] = useState<string | null>(null);
+  const [customerNameDraft, setCustomerNameDraft] = useState<string | null>(null);
   const [reason, setReason] = useState<MaterialReissueReason>("missing_list");
   const [reasonOther, setReasonOther] = useState("");
   const [applicationDepartment, setApplicationDepartment] = useState<MaterialReissueApplicationDepartment>("project");
@@ -178,6 +181,15 @@ export function MaterialReissueForm({ projectId, task, members, onSubmitted }: {
     };
   }, [projectId, projectTick, projectErrorText]);
 
+  useEffect(() => {
+    setEmailTitleDraft(null);
+    setCustomerNameDraft(null);
+  }, [projectId, task.id]);
+
+  const defaultEmailTitle = project === null ? "…" : materialReissueDefaultEmailTitle(project.code, project.name);
+  const emailTitle = emailTitleDraft ?? defaultEmailTitle;
+  const customerName = customerNameDraft ?? project?.customer ?? "";
+
   const applicantName =
     permissions === null
       ? t("common.loading")
@@ -200,6 +212,10 @@ export function MaterialReissueForm({ projectId, task, members, onSubmitted }: {
 
   const submit = async () => {
     if (busy) return;
+    if (emailTitle.trim() === "") {
+      setError(t("mr.err.emailTitle"));
+      return;
+    }
     if (reason === "other" && reasonOther.trim() === "") {
       setError(t("mr.err.reasonOther"));
       return;
@@ -248,6 +264,8 @@ export function MaterialReissueForm({ projectId, task, members, onSubmitted }: {
       return;
     }
     const input: MaterialReissueInput = {
+      emailTitle: emailTitle.trim(),
+      customerName: customerName.trim(),
       reason,
       reasonOther: reason === "other" ? reasonOther.trim() : undefined,
       applicationDepartment,
@@ -310,10 +328,17 @@ export function MaterialReissueForm({ projectId, task, members, onSubmitted }: {
         </div>
 
         <h3 className="mt-4 text-center text-lg font-bold tracking-wide text-zinc-900">{t("mr.title")}</h3>
-        <p className="mt-3 break-words text-[13px] font-bold leading-6 text-zinc-900">
-          {t("mr.form.emailLabel")}　{t("mr.form.emailProject")}{t("mr.form.emailMarker")}
-          {project?.code ?? "…"} {project?.name ?? "…"}项目/ {t("mr.form.emailUrgent")}
-        </p>
+        <div className="mt-3 flex min-w-0 items-center gap-1 text-[13px] font-bold leading-6 text-zinc-900">
+          <span className="shrink-0">{t("mr.form.emailLabel")}</span>
+          <input
+            data-material-reissue-email-title="true"
+            value={emailTitle}
+            maxLength={500}
+            onChange={(event) => { setEmailTitleDraft(event.target.value); setError(null); }}
+            aria-label={t("mr.form.emailLabel")}
+            className="min-w-0 flex-1 bg-transparent px-1 py-0.5 font-bold text-zinc-900 outline-none focus:bg-amber-50/70"
+          />
+        </div>
         <div className="mt-1 flex flex-wrap items-start justify-between gap-2 text-[10px] leading-4 text-zinc-400">
           <span className="min-w-0 flex-1">{t("mr.autoHint")}</span>
           <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-700">{t("mr.autoBadge")}</span>
@@ -348,7 +373,15 @@ export function MaterialReissueForm({ projectId, task, members, onSubmitted }: {
                 <ReadOnlyValue value={project?.name ?? "…"} />
               </FormRow>
               <FormRow label={fieldText(locale, "客户名称")}>
-                <ReadOnlyValue value={project?.customer ?? ""} />
+                <input
+                  data-material-reissue-customer-name="true"
+                  value={customerName}
+                  maxLength={200}
+                  onChange={(event) => { setCustomerNameDraft(event.target.value); setError(null); }}
+                  aria-label={fieldText(locale, "客户名称")}
+                  placeholder="—"
+                  className={CELL_INPUT}
+                />
               </FormRow>
               <FormRow label={fieldText(locale, "申请部门")} required>
                 <div role="radiogroup" aria-label={t("mr.applicationDepartment.aria")} className="flex flex-wrap items-center gap-x-4 gap-y-0.5">

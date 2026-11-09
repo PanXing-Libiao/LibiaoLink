@@ -49,6 +49,10 @@ export const MATERIAL_REISSUE_APPROVAL_OPTIONS: ReadonlyArray<{ value: MaterialR
   { value: "not_applicable", label: "不涉及" },
 ];
 
+export function materialReissueDefaultEmailTitle(projectCode: string, projectName: string): string {
+  return "项目【补发申请】" + projectCode + " " + projectName + "项目/ 紧急";
+}
+
 export function materialReissueReasonText(locale: Locale, snapshot: MaterialReissueSnapshot): string {
   const label = MATERIAL_REISSUE_REASON_OPTIONS.find((option) => option.value === snapshot.reason)?.label ?? snapshot.reason;
   const text = fieldText(locale, label);

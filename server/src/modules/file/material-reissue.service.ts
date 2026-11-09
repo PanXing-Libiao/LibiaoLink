@@ -19,6 +19,7 @@ import { toChangeRequestView, toFileView, toVersionView } from "./file.service.j
 import {
   MATERIAL_REISSUE_DOCX_MIME,
   buildMaterialReissueDocx,
+  materialReissueDefaultEmailTitle,
   materialReissueFileName,
 } from "./material-reissue-document.js";
 
@@ -77,7 +78,8 @@ export class MaterialReissueService {
       taskTitle: task.title,
       projectCode: project.code,
       projectName: project.name,
-      customerName: project.customer,
+      customerName: body.customerName === undefined ? project.customer : body.customerName,
+      emailTitle: body.emailTitle ?? materialReissueDefaultEmailTitle(project.code, project.name),
       applicantName: applicant.displayName,
     };
     const fileName = materialReissueFileName(snapshot, at);

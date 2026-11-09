@@ -11745,6 +11745,10 @@ export interface components {
         MaterialReissueApproval: "yes" | "no" | "not_applicable";
         /** @description 物料变更补发表单（仿现有《补发/补货申请表》） */
         MaterialReissueBody: {
+            /** @description 邮件标题（可修改；缺省按项目编号 / 名称生成） */
+            emailTitle?: string;
+            /** @description 客户名称（可修改；提交时固化，不回写项目主数据） */
+            customerName?: string;
             reason: components["schemas"]["MaterialReissueReason"];
             /** @description 补发类别 = other 时必填 */
             reasonOther?: string;
@@ -11818,11 +11822,11 @@ export interface components {
         };
         /** @description 物料变更补发表单快照；普通文件变更为 null */
         MaterialReissueSnapshot: components["schemas"]["MaterialReissueBody"] & ({
+            customerName: string | null;
             taskId: components["schemas"]["Uuid"];
             taskTitle: string;
             projectCode: string;
             projectName: string;
-            customerName: string | null;
             applicantName: string;
         } | null);
         /** @description /auth/me 响应（会话由 HttpOnly Cookie 承载；CSRF token 随响应下发） */

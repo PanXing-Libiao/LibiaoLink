@@ -159,6 +159,19 @@ export const MaterialReissueLineSchema = z
 
 export const MaterialReissueBodySchema = z
   .object({
+    emailTitle: z
+      .string()
+      .trim()
+      .min(1)
+      .max(500)
+      .optional()
+      .openapi({ description: "邮件标题（可修改；缺省按项目编号 / 名称生成）" }),
+    customerName: z
+      .string()
+      .trim()
+      .max(200)
+      .optional()
+      .openapi({ description: "客户名称（可修改；提交时固化，不回写项目主数据）" }),
     reason: MaterialReissueReasonSchema,
     reasonOther: z.string().trim().max(100).optional().openapi({ description: "补发类别 = other 时必填" }),
     applicationDepartment: MaterialReissueApplicationDepartmentSchema,

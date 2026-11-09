@@ -39,6 +39,10 @@ export function materialReissueFileName(snapshot: MaterialReissueSnapshot, at: D
   return "补发申请-" + code + "-" + stamp + ".docx";
 }
 
+export function materialReissueDefaultEmailTitle(projectCode: string, projectName: string): string {
+  return "项目【补发申请】" + projectCode + " " + projectName + "项目/ 紧急";
+}
+
 export function buildMaterialReissueDocx(snapshot: MaterialReissueSnapshot, at: Date): Buffer {
   const entries = readTemplateEntries().map((entry) => ({
     name: entry.name,
@@ -112,14 +116,11 @@ function emptyParagraph(): string {
 function emailParagraph(snapshot: MaterialReissueSnapshot): string {
   const bold = '<w:rFonts w:hint="eastAsia"/><w:b/><w:bCs/>';
   const boldEn = '<w:rFonts w:hint="eastAsia"/><w:b/><w:bCs/><w:lang w:val="en-US" w:eastAsia="zh-CN"/>';
-  const text = snapshot.projectCode + " " + snapshot.projectName + "项目";
+  const title = snapshot.emailTitle?.trim() || materialReissueDefaultEmailTitle(snapshot.projectCode, snapshot.projectName);
   return (
     "<w:p><w:pPr><w:rPr><w:rFonts w:hint=\"eastAsia\" w:eastAsia=\"宋体\"/><w:lang w:eastAsia=\"zh-CN\"/></w:rPr></w:pPr>" +
     run("邮件标题：", bold) +
-    run("  项目", boldEn) +
-    run("【补发申请】", bold) +
-    run(text, boldEn) +
-    run("/ 紧急", bold) +
+    run("  " + title, boldEn) +
     "</w:p>"
   );
 }

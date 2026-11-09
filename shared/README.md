@@ -1,3 +1,5 @@
+> **2026-11-09 物料变更补发字段扩展**：`MaterialReissueBodySchema` 增加可选 `emailTitle`（1–500 字）与 `customerName`（≤200 字，可空）覆盖字段；`MaterialReissueSnapshotSchema` 固化实际 `emailTitle`（旧记录可缺省）和 `customerName: string | null`。服务端 / DOCX 使用实际快照值，客户名称不回写项目主数据。生成物已重出，`npm run check` 零漂移。
+
 > **2026-11-09 物料变更补发契约（模板版）**：`files.ts` 新增 `ChangeType`、补发类别 / 申请部门 / 责任归属部门 / 运费 / 审批选项、`MaterialReissueBodySchema`、`CreateMaterialReissueBodySchema`、`MaterialReissueSnapshotSchema`、`MaterialReissueResultSchema`；申请部门收窄为模板三项 `project / after_sales / other`，责任归属部门保留七项。`ChangeRequest` 增加 `changeType` 与 `materialReissue`。`openapi.ts` 注册 `POST /api/v1/projects/{id}/change-requests/material-reissue`（201 返回变更记录 + DOCX 文件 + v1 版本）。生成物已重出，`npm run check` 零漂移。
 
 > **2026-11-09 物料变更补发契约**：`files.ts` 新增 `ChangeType`、补发类别 / 部门 / 运费 / 审批选项、`MaterialReissueBodySchema`、`CreateMaterialReissueBodySchema`、`MaterialReissueSnapshotSchema`、`MaterialReissueResultSchema`；`ChangeRequest` 增加 `changeType` 与 `materialReissue`。`openapi.ts` 注册 `POST /api/v1/projects/{id}/change-requests/material-reissue`（201 返回变更记录 + DOCX 文件 + v1 版本）。生成物已重出，`npm run check` 零漂移。

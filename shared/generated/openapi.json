@@ -5996,6 +5996,17 @@
       "MaterialReissueBody": {
         "type": "object",
         "properties": {
+          "emailTitle": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "邮件标题（可修改；缺省按项目编号 / 名称生成）"
+          },
+          "customerName": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "客户名称（可修改；提交时固化，不回写项目主数据）"
+          },
           "reason": {
             "$ref": "#/components/schemas/MaterialReissueReason"
           },
@@ -6223,6 +6234,12 @@
               "null"
             ],
             "properties": {
+              "customerName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "taskId": {
                 "$ref": "#/components/schemas/Uuid"
               },
@@ -6235,22 +6252,16 @@
               "projectName": {
                 "type": "string"
               },
-              "customerName": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
               "applicantName": {
                 "type": "string"
               }
             },
             "required": [
+              "customerName",
               "taskId",
               "taskTitle",
               "projectCode",
               "projectName",
-              "customerName",
               "applicantName"
             ]
           }

@@ -152,4 +152,19 @@ describe("物料变更补发 DOCX", () => {
     expect(image.length).toBeGreaterThan(1000);
     expect(coreXml).toContain("<dc:creator>李四</dc:creator>");
   });
+
+  it("邮件标题和客户名称按表单快照输出", async () => {
+    const custom = {
+      ...SNAPSHOT,
+      emailTitle: "项目【补发申请】自定义标题 / 紧急",
+      customerName: "自定义客户",
+    };
+    const zip = await JSZip.loadAsync(buildMaterialReissueDocx(custom, AT));
+    const documentXml = await zip.file("word/document.xml")!.async("string");
+    expect(documentXml).toContain("邮件标题：");
+    expect(documentXml).toContain("项目【补发申请】自定义标题 / 紧急");
+    const tables = [...documentXml.matchAll(/<w:tbl>[\s\S]*?<\/w:tbl>/g)].map((match) => match[0]);
+    const mainRows = [...tables[0]!.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)].map((match) => cellTexts(match[0]));
+    expect(mainRows[3]![1]).toBe("自定义客户");
+  });
 });

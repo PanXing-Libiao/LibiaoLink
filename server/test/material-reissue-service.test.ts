@@ -175,6 +175,8 @@ describe("MaterialReissueService.create", () => {
       clock,
     );
     const body: CreateMaterialReissueBody = {
+      emailTitle: "项目【补发申请】LBGN23171-G1 虹迪广州NIKE分拣改造项目项目/ 紧急（改）",
+      customerName: "NIKE 中国",
       reason: "transport_damage",
       applicationDepartment: "after_sales",
       accepted: true,
@@ -209,7 +211,8 @@ describe("MaterialReissueService.create", () => {
       taskTitle: "分拣线安装",
       projectCode: "LBGN23171-G1",
       projectName: "虹迪广州NIKE分拣改造项目",
-      customerName: "NIKE",
+      customerName: "NIKE 中国",
+      emailTitle: "项目【补发申请】LBGN23171-G1 虹迪广州NIKE分拣改造项目项目/ 紧急（改）",
       applicantName: "李四",
     });
     expect(repo.fileInput).toMatchObject({ projectId: PROJECT, taskId: TASK, name: "补发申请-LBGN23171-G1-202611091205.docx", status: "final", docType: null });
