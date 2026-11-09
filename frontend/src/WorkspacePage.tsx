@@ -648,7 +648,7 @@ function sameMemberIds(left: readonly string[], right: readonly string[]): boole
  *  Push 278：任务行**点击开任务抽屉**（业务口径「做我的任务页面也可以点击编辑即可 编辑行 也在右侧出现抽屉」）——
  *  抽屉 = 项目页同款 TaskDrawer（全能力即时保存）；数据源 = 聚合读面全字段行（Push 302；带 version，打开零新增请求）；
  *  写后防抖静默刷新聚合读面（抽屉不打断：task 用写回响应就地更新、version 滚动前进）。 */
-function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorId, actorName, onReload }: { data: ApiWorkspace; tierTint: TintedTier | false; openIds: ReadonlySet<string>; onToggleProject: (projectId: string) => void; members: readonly Member[]; actorId: string | null; actorName: string; onReload: () => void }) {
+function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorId, onReload }: { data: ApiWorkspace; tierTint: TintedTier | false; openIds: ReadonlySet<string>; onToggleProject: (projectId: string) => void; members: readonly Member[]; actorId: string | null; onReload: () => void }) {
   const t = useT();
   const locale = useLocale();
   const projects = groupTasksByProject(data);
@@ -981,7 +981,6 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorI
         onDeleteFile={drawerWritable ? handleDrawerDeleteFile : undefined}
         onRenameFile={drawerWritable ? handleDrawerRenameFile : undefined}
         onChanged={drawerWritable ? handleDrawerChanged : undefined}
-        actorName={actorName}
         projectId={drawerTask?.projectId}
         onClose={() => {
           setDrawerTask(null);
@@ -1413,7 +1412,6 @@ export default function WorkspacePage({ me, members, tab, onChangeTab, sub, onCh
               openIds={taskOpenIds}
               members={members}
               actorId={currentActorId}
-              actorName={me.user.displayName ?? ""}
               onReload={refreshQuietly}
               onToggleProject={(projectId) => {
                 handleToggleProject("tasks", projectId);

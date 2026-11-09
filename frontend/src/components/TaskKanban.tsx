@@ -283,8 +283,6 @@ type TaskKanbanProps = {
    * 新版本 + 任务「变更关联」（R01）的合并落库，完成后由调用方整表重取刷新；不传 = 抽屉只刷新自己的文件清单。
    */
   onChanged?: () => void;
-  /** 当前登录人姓名（Push 254 · 抽屉「变更申请」页「变更申请人」只读展示）；不传 = 显示「当前登录人」。 */
-  actorName?: string;
   projectId?: string;
 };
 
@@ -816,7 +814,7 @@ function KanbanColumn({
   );
 }
 
-export function TaskKanban({ mode, tasks, focusTaskId = null, onFocusClosed, managers, managerIds, canFinalizeTask, members, onAddTask, onAddStageTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onSetStatus, onSetActualEnd, onReorderTask, onSetProgress, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, projectId }: TaskKanbanProps) {
+export function TaskKanban({ mode, tasks, focusTaskId = null, onFocusClosed, managers, managerIds, canFinalizeTask, members, onAddTask, onAddStageTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onSetStatus, onSetActualEnd, onReorderTask, onSetProgress, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, projectId }: TaskKanbanProps) {
   const t = useT();
   /**
    * 任务详情抽屉选中的任务 id（Push 196 由对象改存 id）：点卡片与「建完临时任务」都先落 id，抽屉按 id 从最新列表取行 ——
@@ -1241,7 +1239,6 @@ export function TaskKanban({ mode, tasks, focusTaskId = null, onFocusClosed, man
         onFinalize={onFinalize}
         onUnfinalize={onUnfinalize}
         onChanged={onChanged}
-        actorName={actorName}
         projectId={projectId}
         onClose={() => {
           setSelectedTaskId(null);
