@@ -297,7 +297,7 @@ export class ProjectZipWriter {
     name: string,
     source: Readable,
     declaredSize: number,
-    options: { compress?: boolean; maxBytes?: number } = {},
+    options: { compress?: boolean; maxBytes?: number; onChunk?: (chunk: Buffer) => void } = {},
   ): Promise<ProjectZipWriteResult> {
     const handle = this.requireHandle();
     const nameBytes = Buffer.from(name, "utf8");
@@ -330,6 +330,7 @@ export class ProjectZipWriter {
           callback(new Error("ZIP 条目超过允许的大小"));
           return;
         }
+        options.onChunk?.(bytes);
         hash.update(bytes);
         callback(null, bytes);
       },

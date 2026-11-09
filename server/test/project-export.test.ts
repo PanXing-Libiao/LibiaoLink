@@ -29,6 +29,7 @@ import {
   type ProjectExportPayload,
 } from "../src/modules/project-export/project-export.workbook.js";
 import { injectWorkbookImages } from "../src/modules/project-export/project-export.xlsx-images.js";
+import { ProjectArchiveImageCapture, sniffProjectExportImage } from "../src/modules/project-export/project-export.image-capture.js";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const PNG = Buffer.from(
@@ -397,16 +398,39 @@ describe("项目 Excel + 附件 ZIP", () => {
     try {
       const writer = new ProjectZipWriter(filePath);
       await writer.open();
-      await writer.addBuffer("项目/说明.txt", Buffer.from("你好", "utf8"));
+      const observed: Buffer[] = [];
+      await writer.addStream("项目/说明.txt", Readable.from([Buffer.from("你"), Buffer.from("好")]), 6, {
+        onChunk: (chunk) => observed.push(Buffer.from(chunk)),
+      });
       await writer.addBuffer("项目/附件/原图.jpg", Buffer.from("not-really-jpeg"), false);
       await writer.close();
       const entries = readZipEntries(await readFile(filePath));
       expect([...entries.keys()]).toEqual(["项目/说明.txt", "项目/附件/原图.jpg"]);
       expect(entries.get("项目/说明.txt")?.toString("utf8")).toBe("你好");
       expect(entries.get("项目/附件/原图.jpg")?.toString("utf8")).toBe("not-really-jpeg");
+      expect(Buffer.concat(observed).toString("utf8")).toBe("你好");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it("图片捕获器跨 chunk 识别文件头，只保留有界原图字节", () => {
+    expect(sniffProjectExportImage(PNG)).toBe("png");
+    const capture = new ProjectArchiveImageCapture(PNG.byteLength);
+    capture.onChunk(PNG.subarray(0, 5));
+    capture.onChunk(PNG.subarray(5));
+    expect(capture.take()).toEqual(PNG);
+  });
+
+  it("图片捕获器对非图片和超过上限的流不保留字节", () => {
+    const textCapture = new ProjectArchiveImageCapture(1024);
+    textCapture.onChunk(Buffer.from("this is not an image"));
+    textCapture.onChunk(Buffer.from("ignored"));
+    expect(textCapture.take()).toBeNull();
+
+    const oversizedCapture = new ProjectArchiveImageCapture(8);
+    oversizedCapture.onChunk(PNG);
+    expect(oversizedCapture.take()).toBeNull();
   });
 
   it("附件规划按目录去重、重名追加序号，并为 Excel 生成编码后的相对链接", () => {
@@ -493,10 +517,10 @@ describe("项目 Excel + 附件 ZIP", () => {
     const emptyList = vi.fn().mockResolvedValue(emptyPage);
     const reportList = vi.fn().mockResolvedValue({ items: [report], page: 1, limit: 200, total: 1 });
     const refs = new Map([
-      ["file-report", { id: "file-report", name: "现场.png", mime: "image/png", sizeBytes: 5, objectKey: "objects/report.png" }],
+      ["file-report", { id: "file-report", name: "现场.png", mime: "image/png", sizeBytes: PNG.byteLength, objectKey: "objects/report.png" }],
     ]);
     const storage = {
-      getObjectStream: vi.fn().mockResolvedValue({ stream: Readable.from([Buffer.from("hello")]), sizeBytes: 5, contentType: "image/png" }),
+      getObjectStream: vi.fn().mockResolvedValue({ stream: Readable.from([PNG]), sizeBytes: PNG.byteLength, contentType: "image/png" }),
       getObject: vi.fn().mockResolvedValue({ objectKey: "objects/report.png", bytes: PNG, contentType: "image/png", sizeBytes: PNG.byteLength }),
     };
     const audit = { record: vi.fn().mockResolvedValue(undefined) };
@@ -524,14 +548,14 @@ describe("项目 Excel + 附件 ZIP", () => {
       const entries = readZipEntries(await readFile(result.filePath));
       const root = "[LBGW-1] 英国项目";
       expect(entries.has(root + "/" + root + ".xlsx")).toBe(true);
-      expect(entries.get(root + "/附件/日报及问题汇总/现场工作附图/现场.png")?.toString("utf8")).toBe("hello");
+      expect(entries.get(root + "/附件/日报及问题汇总/现场工作附图/现场.png")).toEqual(PNG);
       const manifest = JSON.parse(entries.get(root + "/manifest.json")!.toString("utf8")) as {
         workbook: string;
         summary: { attachmentCount: number; includedFileCount: number; attachmentBytes: number };
         attachments: Array<{ relativePath: string; status: string; sha256: string }>;
       };
       expect(manifest.workbook).toBe(root + ".xlsx");
-      expect(manifest.summary).toMatchObject({ attachmentCount: 1, includedFileCount: 1, attachmentBytes: 5 });
+      expect(manifest.summary).toMatchObject({ attachmentCount: 1, includedFileCount: 1, attachmentBytes: PNG.byteLength });
       expect(manifest.attachments[0]).toMatchObject({
         relativePath: "附件/日报及问题汇总/现场工作附图/现场.png",
         status: "included",
@@ -541,6 +565,8 @@ describe("项目 Excel + 附件 ZIP", () => {
       await workbook.xlsx.load(entries.get(root + "/" + root + ".xlsx")!.buffer as unknown as ArrayBuffer);
       const onsite = workbook.getWorksheet("日报及问题汇总")!.getCell(2, 5).value as { hyperlink?: string };
       expect(decodeURIComponent(onsite.hyperlink ?? "")).toBe("./附件/日报及问题汇总/现场工作附图/现场.png");
+      expect(workbook.getWorksheet("日报及问题汇总")!.getImages()).toHaveLength(1);
+      expect(storage.getObject).not.toHaveBeenCalled();
       expect(audit.record).toHaveBeenCalledOnce();
       const metricLine = logSpy.mock.calls
         .map(([message]) => String(message))
@@ -563,10 +589,10 @@ describe("项目 Excel + 附件 ZIP", () => {
           attachmentsSkipped: 0,
           duplicateFileIds: 0,
           objectStreamCalls: 1,
-          objectGetCalls: 1,
-          attachmentBytesRead: 5,
-          thumbnailBytesRead: PNG.byteLength,
-          objectBytesRead: 5 + PNG.byteLength,
+          objectGetCalls: 0,
+          attachmentBytesRead: PNG.byteLength,
+          thumbnailBytesRead: 0,
+          objectBytesRead: PNG.byteLength,
           requestedImages: 1,
           embeddedImages: 1,
           imageLinks: 1,
