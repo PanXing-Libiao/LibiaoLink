@@ -18,6 +18,11 @@ import type { StakeholderProjectRow, StakeholderRow } from "./stakeholder.reposi
 import { buildStakeholderFilter, parseStakeholderSort, stakeholderVisibility } from "./stakeholder.rules.js";
 import type { StakeholderVisibility } from "./stakeholder.rules.js";
 
+export interface StakeholderExportContext {
+  authorization: ActorAuthorization;
+  visibility: StakeholderVisibility;
+}
+
 /** 台账快照（字段级留痕口径：九个业务字段可改 —— role 为 Push 225 增列）。 */
 function stakeholderSnapshot(row: StakeholderRow): Record<string, unknown> {
   return {
@@ -53,18 +58,45 @@ export class StakeholderService {
 
   /** GET /api/v1/stakeholders：按可见集裁剪的台账列表（含关联项目反查）。 */
   async list(query: StakeholderListQuery, actorId: string): Promise<StakeholderListResponse> {
-    const authorization = await this.permission.getAuthorization(actorId);
-    const visibility = stakeholderVisibility(authorization, await this.permission.projectScope(actorId));
+    const context = await this.prepareExportContext(actorId);
     const filter = buildStakeholderFilter(query);
     const sort = parseStakeholderSort(query.sort);
-    const { rows, total } = await this.stakeholders.list(filter, visibility, sort, query.page, query.limit);
+    const { rows, total } = await this.stakeholders.list(filter, context.visibility, sort, query.page, query.limit);
     const links = await this.stakeholders.listProjects(rows.map((row) => row.id));
     return {
-      items: rows.map((row) => this.toStakeholder(authorization, row, links)),
+      items: rows.map((row) => this.toStakeholder(context.authorization, row, links)),
       page: query.page,
       limit: query.limit,
       total,
     };
+  }
+
+  /**
+   * 导出专用读上下文：授权与可见项目范围只解析一次，供计数和多批读取共享。
+   * 该上下文只在单次导出内存内使用，不缓存、不跨请求复用。
+   */
+  async prepareExportContext(actorId: string): Promise<StakeholderExportContext> {
+    const authorization = await this.permission.getAuthorization(actorId);
+    const visibility = stakeholderVisibility(authorization, await this.permission.projectScope(actorId));
+    return { authorization, visibility };
+  }
+
+  /** 导出专用总数：使用已解析的授权上下文，只查询一次 total。 */
+  async countForExport(query: StakeholderListQuery, context: StakeholderExportContext): Promise<number> {
+    const filter = buildStakeholderFilter(query);
+    return this.stakeholders.countForExport(filter, context.visibility);
+  }
+
+  /** 导出专用行读取：使用已解析的授权上下文，不重复查询 total。 */
+  async listForExport(
+    query: StakeholderListQuery,
+    context: StakeholderExportContext,
+  ): Promise<StakeholderListResponse["items"]> {
+    const filter = buildStakeholderFilter(query);
+    const sort = parseStakeholderSort(query.sort);
+    const rows = await this.stakeholders.listForExport(filter, context.visibility, sort, query.page, query.limit);
+    const links = await this.stakeholders.listProjects(rows.map((row) => row.id));
+    return rows.map((row) => this.toStakeholder(context.authorization, row, links));
   }
 
   /** GET /api/v1/stakeholders/{id}：不可见 / 已删除 404。 */

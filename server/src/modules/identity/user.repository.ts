@@ -164,6 +164,26 @@ export class UserRepository {
     const totals = await this.database.db.select({ value: count() }).from(users).where(where);
     return { rows, total: Number(totals[0]?.value ?? 0) };
   }
+
+  /** 导出专用用户行读取：保持启用用户与工号升序口径，不重复查询 total。 */
+  async listDirectoryForExport(options: { limit: number; offset: number }): Promise<UserRow[]> {
+    return this.database.db
+      .select()
+      .from(users)
+      .where(eq(users.status, "active"))
+      .orderBy(asc(users.username))
+      .limit(options.limit)
+      .offset(options.offset);
+  }
+
+  /** 导出专用用户总数：只统计启用用户。 */
+  async countDirectoryForExport(): Promise<number> {
+    const totals = await this.database.db
+      .select({ value: count() })
+      .from(users)
+      .where(eq(users.status, "active"));
+    return Number(totals[0]?.value ?? 0);
+  }
 }
 
 /** 邮箱兜底匹配：lower(email) = lower(入参)（email 可空，null 行自然不命中）。 */

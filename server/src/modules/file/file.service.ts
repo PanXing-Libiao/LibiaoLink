@@ -1361,6 +1361,22 @@ export class FileService {
     };
   }
 
+  /** 项目导出专用文件总数：只查 count，不加载文件行。 */
+  async countProjectFilesForExport(projectId: string): Promise<number> {
+    return this.repository.countProjectFilesForExport(projectId, parseFileListFilter({ page: 1, limit: 1 }));
+  }
+
+  /** 项目导出专用文件行读取：保持公共列表字段与默认排序，不重复查询 total。 */
+  async listProjectFilesForExport(
+    projectId: string,
+    query: Pick<FileListQueryInput, "page" | "limit">,
+  ): Promise<FileListResponse["items"]> {
+    const filter = parseFileListFilter(query);
+    const offset = (query.page - 1) * query.limit;
+    const items = await this.repository.listProjectFilesForExport(projectId, filter, [], query.limit, offset);
+    return items.map(({ file, createdByName }) => ({ ...toFileView(file), createdByName }));
+  }
+
   /**
    * 项目导出（project-export）：按项目 + 文件 id 批量取当前版本引用。
    * 仅返回属于该项目且未进回收站的文件；找不到 / 无当前版本时 objectKey 为 null，由导出层降级为文件名占位。

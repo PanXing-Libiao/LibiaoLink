@@ -109,6 +109,42 @@ export class StakeholderRepository {
     return { rows: rows as StakeholderRow[], total: counted[0]?.total ?? 0 };
   }
 
+  /** 导出专用行读取：保持可见集、筛选与排序口径，不重复查询 total。 */
+  async listForExport(
+    filter: StakeholderFilter,
+    visibility: StakeholderVisibility,
+    sort: StakeholderSort[],
+    page: number,
+    limit: number,
+    client: DbClient = this.database.db,
+  ): Promise<StakeholderRow[]> {
+    const where = this.buildWhere(filter, visibility);
+    if (where === null) return [];
+    return client
+      .select(ROW_COLUMNS)
+      .from(stakeholders)
+      .leftJoin(users, eq(users.id, stakeholders.createdBy))
+      .where(where)
+      .orderBy(...this.orderBy(sort))
+      .limit(limit)
+      .offset((page - 1) * limit) as Promise<StakeholderRow[]>;
+  }
+
+  /** 导出专用总数：与 listForExport 共用筛选与可见集。 */
+  async countForExport(
+    filter: StakeholderFilter,
+    visibility: StakeholderVisibility,
+    client: DbClient = this.database.db,
+  ): Promise<number> {
+    const where = this.buildWhere(filter, visibility);
+    if (where === null) return 0;
+    const counted = await client
+      .select({ total: sql<number>`count(*)::int` })
+      .from(stakeholders)
+      .where(where);
+    return counted[0]?.total ?? 0;
+  }
+
   /** 详情（软删行视为不存在 → 404，防 IDOR）。 */
   async findById(stakeholderId: string, client: DbClient = this.database.db): Promise<StakeholderRow | null> {
     const rows = await client

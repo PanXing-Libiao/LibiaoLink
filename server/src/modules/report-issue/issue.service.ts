@@ -70,6 +70,19 @@ export class IssueService {
     };
   }
 
+  /** 内部导出用：只读项目问题总数，不加载问题正文、负责人或附图。 */
+  async countForExport(projectId: string): Promise<number> {
+    return this.issues.countForExport(projectId);
+  }
+
+  /** 内部导出用：按页加载问题与附图，不重复查询 total。 */
+  async listForExport(projectId: string, query: { page: number; limit: number }): Promise<IssueListResponse["items"]> {
+    const filter = parseIssueFilter(query);
+    const rows = await this.issues.listForExport(projectId, filter, query.page, query.limit);
+    const photos = await loadIssuePhotos(rows.map((row) => row.id), this.database.db);
+    return rows.map((row) => this.toIssue(row, photos.get(row.id) ?? []));
+  }
+
   /** GET /api/v1/projects/{id}/issues/{issueId}：问题 + 处理过程留痕（时间正序）。 */
   async detail(projectId: string, issueId: string): Promise<IssueDetail> {
     const row = await this.requireIssue(projectId, issueId, this.database.db);

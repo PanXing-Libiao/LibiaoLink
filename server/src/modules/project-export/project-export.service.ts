@@ -84,6 +84,7 @@ import { ProjectArchiveImageCapture, sniffProjectExportImage } from "./project-e
 export { splitChangeReason } from "./project-export.mapping.js";
 
 const PAGE_SIZE = 200;
+const EXPORT_BATCH_SIZE = 1_000;
 const MAX_PAGES = 100;
 const MAX_EXPORT_ROWS = PAGE_SIZE * MAX_PAGES;
 const AUTO_STREAM_ROW_THRESHOLD = 3_000;
@@ -192,11 +193,6 @@ interface ExportProject {
   managerNames: Array<string | null>;
 }
 
-interface PagedResult<T> {
-  items: T[];
-  total: number;
-}
-
 interface StreamingCounts {
   tasks: number;
   reports: number;
@@ -205,9 +201,23 @@ interface StreamingCounts {
   imageIds: Set<string>;
 }
 
+interface ProjectExportRecordCounts {
+  tasks: number;
+  reports: number;
+  issues: number;
+  changes: number;
+  stakeholders: number;
+}
+
+interface ResolvedProjectExportMode {
+  mode: ProjectExportExecutionMode;
+  counts?: ProjectExportRecordCounts;
+}
+
 type ProjectTaskItem = Awaited<ReturnType<TaskService["list"]>>["items"][number];
 type ProjectChangeItem = Awaited<ReturnType<ChangeService["listProjectChanges"]>>["items"][number];
 type ProjectStakeholderItem = Awaited<ReturnType<StakeholderService["list"]>>["items"][number];
+type StakeholderExportContext = Awaited<ReturnType<StakeholderService["prepareExportContext"]>>;
 
 interface CollectedProjectExport {
   taskItems: ProjectTaskItem[];
@@ -257,50 +267,59 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted === true) throw abortReason(signal);
 }
 
-async function* readPaged<T>(
-  load: (page: number, limit: number) => Promise<PagedResult<T>>,
+/**
+ * 导出专用批次读取：total 已由调用方查询一次，本函数不再重复计数。
+ * 公共 API 仍限 200 条；内部批次只减少往返，不改变导出上限与行序。
+ */
+async function* readExportBatches<T>(
+  load: (page: number, limit: number) => Promise<T[]>,
+  total: number,
   section: string,
   signal: AbortSignal | undefined,
-): AsyncGenerator<PagedResult<T>> {
+): AsyncGenerator<T[]> {
+  if (total > MAX_EXPORT_ROWS) {
+    throw new AppError("INTERNAL", section + "超过导出上限（" + String(MAX_EXPORT_ROWS) + " 条），请分批导出");
+  }
+  const pages = Math.ceil(total / EXPORT_BATCH_SIZE);
   let loaded = 0;
-  for (let page = 1; page <= MAX_PAGES; page += 1) {
+  for (let page = 1; page <= pages; page += 1) {
     throwIfAborted(signal);
-    const result = await load(page, PAGE_SIZE);
-    if (result.total > MAX_EXPORT_ROWS) {
+    const items = await load(page, EXPORT_BATCH_SIZE);
+    if (items.length === 0) return;
+    loaded += items.length;
+    if (loaded > MAX_EXPORT_ROWS) {
       throw new AppError("INTERNAL", section + "超过导出上限（" + String(MAX_EXPORT_ROWS) + " 条），请分批导出");
     }
-    if (result.items.length === 0) return;
-    loaded += result.items.length;
-    yield result;
-    if (loaded >= result.total) return;
+    yield items;
   }
-  throw new AppError("INTERNAL", section + "超过导出上限（" + String(MAX_EXPORT_ROWS) + " 条），请分批导出");
 }
 
-async function collectPaged<T>(
-  load: (page: number, limit: number) => Promise<PagedResult<T>>,
+async function collectExportBatches<T>(
+  load: (page: number, limit: number) => Promise<T[]>,
+  total: number,
   section: string,
   signal: AbortSignal | undefined,
 ): Promise<T[]> {
   const rows: T[] = [];
-  for await (const page of readPaged(load, section, signal)) rows.push(...page.items);
+  for await (const items of readExportBatches(load, total, section, signal)) rows.push(...items);
   return rows;
 }
 
-/**
- * 日报读面固定按日期 / 创建时间倒序；从末页向前取并在页内反转，可在不缓存全量日报的前提下恢复导出口径的升序。
- */
-async function* readPagedAscendingFromTotal<T>(
-  load: (page: number, limit: number) => Promise<PagedResult<T>>,
+/** 日报列表为倒序；从末批向前读取并把批内顺序反转，保持导出口径升序。 */
+async function* readExportBatchesAscendingFromTotal<T>(
+  load: (page: number, limit: number) => Promise<T[]>,
   total: number,
   signal: AbortSignal | undefined,
 ): AsyncGenerator<T[]> {
-  if (total > MAX_EXPORT_ROWS) throw new AppError("INTERNAL", "日报超过导出上限（" + String(MAX_EXPORT_ROWS) + " 条），请分批导出");
-  const pages = Math.ceil(total / PAGE_SIZE);
+  if (total > MAX_EXPORT_ROWS) {
+    throw new AppError("INTERNAL", "日报超过导出上限（" + String(MAX_EXPORT_ROWS) + " 条），请分批导出");
+  }
+  const pages = Math.ceil(total / EXPORT_BATCH_SIZE);
   for (let page = pages; page >= 1; page -= 1) {
     throwIfAborted(signal);
-    const result = await load(page, PAGE_SIZE);
-    yield [...result.items].reverse();
+    const items = await load(page, EXPORT_BATCH_SIZE);
+    if (items.length === 0) continue;
+    yield [...items].reverse();
   }
 }
 
@@ -414,13 +433,25 @@ export class ProjectExportService implements OnModuleInit {
     throwIfAborted(signal);
     await this.assertPageExportAccess(actorId, sheets, projectAccess);
     const project = await this.projects.getProject(projectId, actorId);
-    const rowCounts = await this.pageExportCounts(projectId, actorId, sheets.map((sheet) => sheet.sheet), signal);
+    const needsStakeholders = sheets.some((selection) => selection.sheet === "stakeholders");
+    const stakeholderContext = needsStakeholders ? await this.stakeholders.prepareExportContext(actorId) : undefined;
+    const rowCounts = await this.pageExportCounts(projectId, sheets.map((sheet) => sheet.sheet), stakeholderContext, signal);
     const mode = resolveProjectExportMode(
       this.config.env.PROJECT_EXPORT_MODE,
       rowCounts.reports + rowCounts.issues + rowCounts.stakeholders,
     );
-    if (mode === "legacy") return this.exportPagesLegacy(project, actorId, requestOrigin, sheets, rowCounts, signal);
-    return this.withStreamingSlot(() => this.exportPagesStreaming(project, actorId, requestOrigin, sheets, rowCounts, signal));
+    if (mode === "legacy") {
+      return this.exportPagesLegacy(project, actorId, requestOrigin, sheets, rowCounts, stakeholderContext, signal);
+    }
+    return this.withStreamingSlot(() => this.exportPagesStreaming(
+      project,
+      actorId,
+      requestOrigin,
+      sheets,
+      rowCounts,
+      stakeholderContext,
+      signal,
+    ));
   }
 
   private pageExportColumnAccessKey(sheet: PageExportSheetKey, column: string): string {
@@ -520,24 +551,31 @@ export class ProjectExportService implements OnModuleInit {
     return result;
   }
 
-  private async pageExportCountOne(projectId: string, actorId: string, sheet: PageExportSheetKey): Promise<number> {
-    if (sheet === "reports") return (await this.reports.list(projectId, { page: 1, limit: 1 })).total;
-    if (sheet === "issues") return (await this.issues.list(projectId, { page: 1, limit: 1 })).total;
-    return (await this.stakeholders.list({ "filter[projectId]": projectId, page: 1, limit: 1 }, actorId)).total;
+  private async pageExportCountOne(
+    projectId: string,
+    sheet: PageExportSheetKey,
+    stakeholderContext: StakeholderExportContext | undefined,
+  ): Promise<number> {
+    if (sheet === "reports") return this.reports.countForExport(projectId);
+    if (sheet === "issues") return this.issues.countForExport(projectId);
+    return this.stakeholders.countForExport(
+      { "filter[projectId]": projectId, page: 1, limit: 1 },
+      this.requireStakeholderExportContext(stakeholderContext),
+    );
   }
 
   private async pageExportCounts(
     projectId: string,
-    actorId: string,
     sheets: readonly PageExportSheetKey[],
+    stakeholderContext: StakeholderExportContext | undefined,
     signal: AbortSignal | undefined,
   ): Promise<PageExportRowCounts> {
     const selected = new Set(sheets);
     throwIfAborted(signal);
     const [reports, issues, stakeholders] = await Promise.all([
-      selected.has("reports") ? this.pageExportCountOne(projectId, actorId, "reports") : 0,
-      selected.has("issues") ? this.pageExportCountOne(projectId, actorId, "issues") : 0,
-      selected.has("stakeholders") ? this.pageExportCountOne(projectId, actorId, "stakeholders") : 0,
+      selected.has("reports") ? this.pageExportCountOne(projectId, "reports", stakeholderContext) : 0,
+      selected.has("issues") ? this.pageExportCountOne(projectId, "issues", stakeholderContext) : 0,
+      selected.has("stakeholders") ? this.pageExportCountOne(projectId, "stakeholders", stakeholderContext) : 0,
     ]);
     throwIfAborted(signal);
     return { reports, issues, stakeholders };
@@ -573,19 +611,40 @@ export class ProjectExportService implements OnModuleInit {
     requestOrigin: string,
     selections: readonly PageExportSheetSelection[],
     rowCounts: PageExportRowCounts,
+    stakeholderContext: StakeholderExportContext | undefined,
     signal: AbortSignal | undefined,
   ): Promise<PageExportBufferResult> {
     const selected = new Set(selections.map((selection) => selection.sheet));
-    const userPromise = collectPaged((page, limit) => this.users.listUsers({ page, limit }), "用户目录", signal);
+    const userTotal = await this.users.countForExport();
+    const userPromise = collectExportBatches(
+      (page, limit) => this.users.listForExport({ page, limit }),
+      userTotal,
+      "用户目录",
+      signal,
+    );
     const reportPromise: Promise<DailyReport[]> = selected.has("reports")
-      ? collectPaged((page, limit) => this.reports.list(project.id, { page, limit }), "日报", signal)
+      ? collectExportBatches(
+          (page, limit) => this.reports.listForExport(project.id, { page, limit }),
+          rowCounts.reports,
+          "日报",
+          signal,
+        )
       : Promise.resolve([]);
     const issuePromise: Promise<Issue[]> = selected.has("issues")
-      ? collectPaged((page, limit) => this.issues.list(project.id, { page, limit }), "问题", signal)
+      ? collectExportBatches(
+          (page, limit) => this.issues.listForExport(project.id, { page, limit }),
+          rowCounts.issues,
+          "问题",
+          signal,
+        )
       : Promise.resolve([]);
     const stakeholderPromise = selected.has("stakeholders")
-      ? collectPaged(
-          (page, limit) => this.stakeholders.list({ "filter[projectId]": project.id, page, limit }, actorId),
+      ? collectExportBatches(
+          (page, limit) => this.stakeholders.listForExport(
+            { "filter[projectId]": project.id, page, limit },
+            this.requireStakeholderExportContext(stakeholderContext),
+          ),
+          rowCounts.stakeholders,
           "干系人",
           signal,
         )
@@ -649,6 +708,7 @@ export class ProjectExportService implements OnModuleInit {
     requestOrigin: string,
     selections: readonly PageExportSheetSelection[],
     rowCounts: PageExportRowCounts,
+    stakeholderContext: StakeholderExportContext | undefined,
     signal: AbortSignal | undefined,
   ): Promise<PageExportFileResult> {
     let directory: string | undefined;
@@ -658,7 +718,13 @@ export class ProjectExportService implements OnModuleInit {
       await chmod(directory, 0o700);
       const filePath = join(directory, "page-export.xlsx");
       throwIfAborted(signal);
-      const userItems = await collectPaged((page, limit) => this.users.listUsers({ page, limit }), "用户目录", signal);
+      const userTotal = await this.users.countForExport();
+      const userItems = await collectExportBatches(
+        (page, limit) => this.users.listForExport({ page, limit }),
+        userTotal,
+        "用户目录",
+        signal,
+      );
       const users = this.userLabels(userItems);
       const counts: PageExportStreamingCounts = { ...zeroPageCounts(), imageIds: new Set<string>() };
       const photoLoader = this.createStreamingPhotoLoader(project.id, signal);
@@ -669,7 +735,7 @@ export class ProjectExportService implements OnModuleInit {
         await writer.writeSheet(
           sheet,
           prefetchPhotoRows(
-            this.streamPageExportRows(project.id, actorId, selection, users, counts, signal),
+            this.streamPageExportRows(project.id, selection, rowCounts, users, counts, stakeholderContext, signal),
             (row) => wantsPhotos ? Object.values(row.photos).flat() : [],
             photoLoader.load,
           ),
@@ -711,16 +777,22 @@ export class ProjectExportService implements OnModuleInit {
 
   private async *streamPageExportRows(
     projectId: string,
-    actorId: string,
     selection: PageExportSheetSelection,
+    rowCounts: PageExportRowCounts,
     users: ReadonlyMap<string, ProjectExportUserLabel>,
     counts: PageExportStreamingCounts,
+    stakeholderContext: StakeholderExportContext | undefined,
     signal: AbortSignal | undefined,
   ): AsyncGenerator<PageExportWorkbookRow> {
     const wantsPhotos = this.pageExportHasPhotoColumn(selection);
     if (selection.sheet === "reports") {
-      for await (const page of readPaged((page, limit) => this.reports.list(projectId, { page, limit }), "日报", signal)) {
-        for (const report of page.items) {
+      for await (const items of readExportBatches(
+        (page, limit) => this.reports.listForExport(projectId, { page, limit }),
+        rowCounts.reports,
+        "日报",
+        signal,
+      )) {
+        for (const report of items) {
           throwIfAborted(signal);
           const row = pageReportRow(report, users);
           if (wantsPhotos) for (const id of pageExportPhotoIds([row])) counts.imageIds.add(id);
@@ -731,8 +803,13 @@ export class ProjectExportService implements OnModuleInit {
       return;
     }
     if (selection.sheet === "issues") {
-      for await (const page of readPaged((page, limit) => this.issues.list(projectId, { page, limit }), "问题", signal)) {
-        for (const issue of page.items) {
+      for await (const items of readExportBatches(
+        (page, limit) => this.issues.listForExport(projectId, { page, limit }),
+        rowCounts.issues,
+        "问题",
+        signal,
+      )) {
+        for (const issue of items) {
           throwIfAborted(signal);
           const row = pageIssueRow(issue, users);
           if (wantsPhotos) for (const id of pageExportPhotoIds([row])) counts.imageIds.add(id);
@@ -742,12 +819,14 @@ export class ProjectExportService implements OnModuleInit {
       }
       return;
     }
-    for await (const page of readPaged(
-      (page, limit) => this.stakeholders.list({ "filter[projectId]": projectId, page, limit }, actorId),
+    const context = this.requireStakeholderExportContext(stakeholderContext);
+    for await (const items of readExportBatches(
+      (page, limit) => this.stakeholders.listForExport({ "filter[projectId]": projectId, page, limit }, context),
+      rowCounts.stakeholders,
       "干系人",
       signal,
     )) {
-      for (const item of page.items) {
+      for (const item of items) {
         throwIfAborted(signal);
         counts.stakeholders += 1;
         yield pageStakeholderRow(item, users);
@@ -797,16 +876,41 @@ export class ProjectExportService implements OnModuleInit {
     try {
       throwIfAborted(signal);
       const project = await telemetry.measure("dataLoad", () => this.projects.getProject(projectId, actorId));
+      const stakeholderContext = await telemetry.measure("dataLoad", () => this.stakeholders.prepareExportContext(actorId));
       let result: ProjectExportResult;
       if (format === "zip") {
         telemetry.setMode("archive");
-        result = await this.withStreamingSlot(() => this.exportProjectArchive(project, actorId, signal, telemetry));
+        result = await this.withStreamingSlot(() => this.exportProjectArchive(
+          project,
+          actorId,
+          stakeholderContext,
+          undefined,
+          signal,
+          telemetry,
+        ));
       } else {
-        const mode = await telemetry.measure("dataLoad", () => this.resolveMode(projectId, actorId, signal));
+        const resolved = await telemetry.measure("dataLoad", () => this.resolveMode(projectId, stakeholderContext, signal));
+        const mode = resolved.mode;
         telemetry.setMode(mode);
         result = mode === "legacy"
-          ? await this.exportProjectLegacy(project, actorId, requestOrigin, signal, telemetry)
-          : await this.withStreamingSlot(() => this.exportProjectStreaming(project, actorId, requestOrigin, signal, telemetry));
+          ? await this.exportProjectLegacy(
+            project,
+            actorId,
+            requestOrigin,
+            stakeholderContext,
+            resolved.counts,
+            signal,
+            telemetry,
+          )
+          : await this.withStreamingSlot(() => this.exportProjectStreaming(
+            project,
+            actorId,
+            requestOrigin,
+            stakeholderContext,
+            resolved.counts,
+            signal,
+            telemetry,
+          ));
       }
       telemetry.recordResult({
         mode: result.mode,
@@ -836,29 +940,45 @@ export class ProjectExportService implements OnModuleInit {
     }
   }
 
-  private async resolveMode(projectId: string, actorId: string, signal: AbortSignal | undefined): Promise<ProjectExportExecutionMode> {
+  private async resolveMode(
+    projectId: string,
+    stakeholderContext: StakeholderExportContext,
+    signal: AbortSignal | undefined,
+  ): Promise<ResolvedProjectExportMode> {
     const setting = this.config.env.PROJECT_EXPORT_MODE;
-    if (setting !== "auto") return resolveProjectExportMode(setting, 0);
+    if (setting !== "auto") return { mode: resolveProjectExportMode(setting, 0) };
     throwIfAborted(signal);
     const [tasks, reports, issues, changes, stakeholders] = await Promise.all([
-      this.tasks.list(projectId, { page: 1, limit: 1 }),
-      this.reports.list(projectId, { page: 1, limit: 1 }),
-      this.issues.list(projectId, { page: 1, limit: 1 }),
-      this.changes.listProjectChanges(projectId, { page: 1, limit: 1, sort: "appliedAt:asc" }),
-      this.stakeholders.list({ "filter[projectId]": projectId, page: 1, limit: 1, sort: "createdAt:asc" }, actorId),
+      this.tasks.countForExport(projectId),
+      this.reports.countForExport(projectId),
+      this.issues.countForExport(projectId),
+      this.changes.countProjectChangesForExport(projectId),
+      this.stakeholders.countForExport(
+        { "filter[projectId]": projectId, page: 1, limit: 1, sort: "createdAt:asc" },
+        stakeholderContext,
+      ),
     ]);
     throwIfAborted(signal);
-    return resolveProjectExportMode(setting, tasks.total + reports.total + issues.total + changes.total + stakeholders.total);
+    const counts = { tasks, reports, issues, changes, stakeholders };
+    return {
+      mode: resolveProjectExportMode(setting, tasks + reports + issues + changes + stakeholders),
+      counts,
+    };
   }
 
   private async exportProjectLegacy(
     project: ExportProject,
     actorId: string,
     requestOrigin: string,
+    stakeholderContext: StakeholderExportContext,
+    knownCounts: ProjectExportRecordCounts | undefined,
     signal: AbortSignal | undefined,
     telemetry: ProjectExportTelemetry,
   ): Promise<ProjectExportBufferResult> {
-    const data = await telemetry.measure("dataLoad", () => this.collectProjectExport(project, actorId, signal));
+    const data = await telemetry.measure(
+      "dataLoad",
+      () => this.collectProjectExport(project, stakeholderContext, knownCounts, signal),
+    );
     const imageIds = new Set<string>();
     for (const row of data.reportRows) addReportPhotoIds(imageIds, row);
     for (const row of data.changeRows) addChangePhotoIds(imageIds, row);
@@ -917,18 +1037,61 @@ export class ProjectExportService implements OnModuleInit {
 
   private async collectProjectExport(
     project: ExportProject,
-    actorId: string,
+    stakeholderContext: StakeholderExportContext,
+    knownCounts: ProjectExportRecordCounts | undefined,
     signal: AbortSignal | undefined,
   ): Promise<CollectedProjectExport> {
+    const [userTotal, fileTotal, taskTotal, reportTotal, issueTotal, changeTotal, stakeholderTotal] = await Promise.all([
+      this.users.countForExport(),
+      this.files.countProjectFilesForExport(project.id),
+      knownCounts?.tasks ?? this.tasks.countForExport(project.id),
+      knownCounts?.reports ?? this.reports.countForExport(project.id),
+      knownCounts?.issues ?? this.issues.countForExport(project.id),
+      knownCounts?.changes ?? this.changes.countProjectChangesForExport(project.id),
+      knownCounts?.stakeholders ?? this.stakeholders.countForExport(
+        { "filter[projectId]": project.id, page: 1, limit: 1, sort: "createdAt:asc" },
+        stakeholderContext,
+      ),
+    ]);
+    throwIfAborted(signal);
     const [userItems, fileItems, taskItems, reportItems, issueItems, changeItems, stakeholderItems] = await Promise.all([
-      collectPaged((page, limit) => this.users.listUsers({ page, limit }), "用户目录", signal),
-      collectPaged((page, limit) => this.files.listProjectFiles(project.id, { page, limit }), "文件", signal),
-      collectPaged((page, limit) => this.tasks.list(project.id, { page, limit }), "任务", signal),
-      collectPaged((page, limit) => this.reports.list(project.id, { page, limit }), "日报", signal),
-      collectPaged((page, limit) => this.issues.list(project.id, { page, limit }), "问题", signal),
-      collectPaged((page, limit) => this.changes.listProjectChanges(project.id, { page, limit, sort: "appliedAt:asc" }), "变更", signal),
-      collectPaged(
-        (page, limit) => this.stakeholders.list({ "filter[projectId]": project.id, page, limit, sort: "createdAt:asc" }, actorId),
+      collectExportBatches((page, limit) => this.users.listForExport({ page, limit }), userTotal, "用户目录", signal),
+      collectExportBatches(
+        (page, limit) => this.files.listProjectFilesForExport(project.id, { page, limit }),
+        fileTotal,
+        "文件",
+        signal,
+      ),
+      collectExportBatches(
+        (page, limit) => this.tasks.listForExport(project.id, { page, limit }),
+        taskTotal,
+        "任务",
+        signal,
+      ),
+      collectExportBatches(
+        (page, limit) => this.reports.listForExport(project.id, { page, limit }),
+        reportTotal,
+        "日报",
+        signal,
+      ),
+      collectExportBatches(
+        (page, limit) => this.issues.listForExport(project.id, { page, limit }),
+        issueTotal,
+        "问题",
+        signal,
+      ),
+      collectExportBatches(
+        (page, limit) => this.changes.listProjectChangesForExport(project.id, { page, limit }),
+        changeTotal,
+        "变更",
+        signal,
+      ),
+      collectExportBatches(
+        (page, limit) => this.stakeholders.listForExport(
+          { "filter[projectId]": project.id, page, limit, sort: "createdAt:asc" },
+          stakeholderContext,
+        ),
+        stakeholderTotal,
         "干系人",
         signal,
       ),
@@ -994,6 +1157,8 @@ export class ProjectExportService implements OnModuleInit {
   private async exportProjectArchive(
     project: ExportProject,
     actorId: string,
+    stakeholderContext: StakeholderExportContext,
+    knownCounts: ProjectExportRecordCounts | undefined,
     signal: AbortSignal | undefined,
     telemetry: ProjectExportTelemetry,
   ): Promise<ProjectExportFileResult> {
@@ -1002,7 +1167,7 @@ export class ProjectExportService implements OnModuleInit {
     try {
       directory = await mkdtemp(join(tmpdir(), TEMP_EXPORT_PREFIX));
       await chmod(directory, 0o700);
-      const data = await telemetry.measure("dataLoad", () => this.collectProjectExport(project, actorId, signal));
+      const data = await telemetry.measure("dataLoad", () => this.collectProjectExport(project, stakeholderContext, knownCounts, signal));
       const sources = this.projectArchiveSources(project, data);
       const plan = planProjectArchiveAttachments(sources, data.fileRefs);
       telemetry.recordAttachmentPlan(plan.files.map((file) => file.fileId));
@@ -1427,6 +1592,8 @@ export class ProjectExportService implements OnModuleInit {
     project: ExportProject,
     actorId: string,
     requestOrigin: string,
+    stakeholderContext: StakeholderExportContext,
+    knownCounts: ProjectExportRecordCounts | undefined,
     signal: AbortSignal | undefined,
     telemetry: ProjectExportTelemetry,
   ): Promise<ProjectExportFileResult> {
@@ -1439,41 +1606,89 @@ export class ProjectExportService implements OnModuleInit {
       throwIfAborted(signal);
 
       const setup = await telemetry.measure("dataLoad", async () => {
-        const [userItems, fileItems, reportTotal] = await Promise.all([
-          collectPaged((page, limit) => this.users.listUsers({ page, limit }), "用户目录", signal),
-          collectPaged((page, limit) => this.files.listProjectFiles(project.id, { page, limit }), "文件", signal),
-          this.reports.countForExport(project.id),
+        const [userTotal, fileTotal, taskTotal, reportTotal, issueTotal, changeTotal, stakeholderTotal] = await Promise.all([
+          this.users.countForExport(),
+          this.files.countProjectFilesForExport(project.id),
+          knownCounts?.tasks ?? this.tasks.countForExport(project.id),
+          knownCounts?.reports ?? this.reports.countForExport(project.id),
+          knownCounts?.issues ?? this.issues.countForExport(project.id),
+          knownCounts?.changes ?? this.changes.countProjectChangesForExport(project.id),
+          knownCounts?.stakeholders ?? this.stakeholders.countForExport(
+            { "filter[projectId]": project.id, page: 1, limit: 1, sort: "createdAt:asc" },
+            stakeholderContext,
+          ),
+        ]);
+        const [userItems, fileItems] = await Promise.all([
+          collectExportBatches((page, limit) => this.users.listForExport({ page, limit }), userTotal, "用户目录", signal),
+          collectExportBatches(
+            (page, limit) => this.files.listProjectFilesForExport(project.id, { page, limit }),
+            fileTotal,
+            "文件",
+            signal,
+          ),
         ]);
         const users = this.userLabels(userItems);
         return {
           users,
           reportTotal,
+          taskTotal,
+          changeTotal,
+          stakeholderTotal,
           fileItemsById: new Map(fileItems.map((file) => [file.id, { id: file.id, name: file.name }])),
-          groupedIssues: await this.collectIssues(project.id, signal),
+          groupedIssues: await this.collectIssues(project.id, issueTotal, signal),
           managerLabels: project.managerIds.map((id, index) => personLabel(id, project.managerNames[index] ?? null, users)),
           taskFilesById: this.taskFiles(fileItems),
           relatedByChange: new Map<string, string[]>(),
         };
       });
-      const { users, reportTotal, fileItemsById, groupedIssues, managerLabels, taskFilesById, relatedByChange } = setup;
+      const {
+        users,
+        reportTotal,
+        taskTotal,
+        changeTotal,
+        stakeholderTotal,
+        fileItemsById,
+        groupedIssues,
+        managerLabels,
+        taskFilesById,
+        relatedByChange,
+      } = setup;
       const counts: StreamingCounts = { tasks: 0, reports: 0, changes: 0, stakeholders: 0, imageIds: new Set() };
 
       const photoLoader = this.createStreamingPhotoLoader(project.id, signal, telemetry);
       writer = new ProjectExportWorkbookWriter(filePath, project, normalizeHttpOrigin(requestOrigin), photoLoader.load);
       const activeWriter = writer;
       const workbook = await telemetry.measure("workbook", async () => {
-        await activeWriter.writeTasks(this.streamTaskRows(project.id, managerLabels, users, taskFilesById, relatedByChange, counts, signal, telemetry));
+        await activeWriter.writeTasks(this.streamTaskRows(
+          project.id,
+          taskTotal,
+          managerLabels,
+          users,
+          taskFilesById,
+          relatedByChange,
+          counts,
+          signal,
+          telemetry,
+        ));
         await activeWriter.writeReports(prefetchPhotoRows(
           this.streamReportRows(project.id, reportTotal, users, groupedIssues, counts, signal, telemetry),
           (row) => [...row.onsitePhotos, ...row.issuePhotos],
           photoLoader.load,
         ));
         await activeWriter.writeChanges(prefetchPhotoRows(
-          this.streamChangeRows(project.id, fileItemsById, users, relatedByChange, counts, signal, telemetry),
+          this.streamChangeRows(project.id, changeTotal, fileItemsById, users, relatedByChange, counts, signal, telemetry),
           (row) => [...row.beforePhotos, ...row.afterPhotos],
           photoLoader.load,
         ));
-        await activeWriter.writeStakeholders(this.streamStakeholderRows(project.id, actorId, users, counts, signal, telemetry));
+        await activeWriter.writeStakeholders(this.streamStakeholderRows(
+          project.id,
+          stakeholderTotal,
+          stakeholderContext,
+          users,
+          counts,
+          signal,
+          telemetry,
+        ));
         throwIfAborted(signal);
         telemetry.setRequestedImages(counts.imageIds.size);
         return activeWriter.commit();
@@ -1529,12 +1744,18 @@ export class ProjectExportService implements OnModuleInit {
 
   private async collectIssues(
     projectId: string,
+    total: number,
     signal: AbortSignal | undefined,
   ): Promise<{ byReport: Map<string, Issue[]>; orphans: Issue[] }> {
     const byReport = new Map<string, Issue[]>();
     const orphans: Issue[] = [];
-    for await (const page of readPaged((page, limit) => this.issues.list(projectId, { page, limit }), "问题", signal)) {
-      for (const issue of page.items) {
+    for await (const items of readExportBatches(
+      (page, limit) => this.issues.listForExport(projectId, { page, limit }),
+      total,
+      "问题",
+      signal,
+    )) {
+      for (const issue of items) {
         const sourceReportId = issue.sourceReportId;
         if (sourceReportId === null) {
           orphans.push(issue);
@@ -1551,6 +1772,7 @@ export class ProjectExportService implements OnModuleInit {
 
   private async *streamTaskRows(
     projectId: string,
+    total: number,
     managerLabels: readonly string[],
     users: ReadonlyMap<string, ProjectExportUserLabel>,
     taskFilesById: ReadonlyMap<string, ExportFileLink[]>,
@@ -1559,12 +1781,13 @@ export class ProjectExportService implements OnModuleInit {
     signal: AbortSignal | undefined,
     telemetry: ProjectExportTelemetry,
   ): AsyncGenerator<ProjectExportTaskRow> {
-    for await (const page of readPaged(
-      (page, limit) => telemetry.measure("dataLoad", () => this.tasks.list(projectId, { page, limit })),
+    for await (const items of readExportBatches(
+      (page, limit) => telemetry.measure("dataLoad", () => this.tasks.listForExport(projectId, { page, limit })),
+      total,
       "任务",
       signal,
     )) {
-      for (const task of page.items) {
+      for (const task of items) {
         throwIfAborted(signal);
         registerTaskChangeLinks(task, relatedByChange);
         counts.tasks += 1;
@@ -1582,12 +1805,12 @@ export class ProjectExportService implements OnModuleInit {
     signal: AbortSignal | undefined,
     telemetry: ProjectExportTelemetry,
   ): AsyncGenerator<ProjectExportReportRow> {
-    for await (const page of readPagedAscendingFromTotal(
-      (page, limit) => telemetry.measure("dataLoad", () => this.reports.list(projectId, { page, limit })),
+    for await (const items of readExportBatchesAscendingFromTotal(
+      (page, limit) => telemetry.measure("dataLoad", () => this.reports.listForExport(projectId, { page, limit })),
       reportTotal,
       signal,
     )) {
-      for (const report of page) {
+      for (const report of items) {
         throwIfAborted(signal);
         const issues = groupedIssues.byReport.get(report.id) ?? [];
         groupedIssues.byReport.delete(report.id);
@@ -1611,6 +1834,7 @@ export class ProjectExportService implements OnModuleInit {
 
   private async *streamChangeRows(
     projectId: string,
+    total: number,
     fileRefs: ReadonlyMap<string, { id: string; name: string }>,
     users: ReadonlyMap<string, ProjectExportUserLabel>,
     relatedByChange: ReadonlyMap<string, string[]>,
@@ -1618,15 +1842,16 @@ export class ProjectExportService implements OnModuleInit {
     signal: AbortSignal | undefined,
     telemetry: ProjectExportTelemetry,
   ): AsyncGenerator<ProjectExportChangeRow> {
-    for await (const page of readPaged(
+    for await (const items of readExportBatches(
       (page, limit) => telemetry.measure(
         "dataLoad",
-        () => this.changes.listProjectChanges(projectId, { page, limit, sort: "appliedAt:asc" }),
+        () => this.changes.listProjectChangesForExport(projectId, { page, limit }),
       ),
+      total,
       "变更",
       signal,
     )) {
-      for (const change of page.items) {
+      for (const change of items) {
         throwIfAborted(signal);
         const row = changeExportRow(change, fileRefs, users, relatedByChange);
         addChangePhotoIds(counts.imageIds, row);
@@ -1638,26 +1863,38 @@ export class ProjectExportService implements OnModuleInit {
 
   private async *streamStakeholderRows(
     projectId: string,
-    actorId: string,
+    total: number,
+    stakeholderContext: StakeholderExportContext,
     users: ReadonlyMap<string, ProjectExportUserLabel>,
     counts: StreamingCounts,
     signal: AbortSignal | undefined,
     telemetry: ProjectExportTelemetry,
   ): AsyncGenerator<ProjectExportStakeholderRow> {
-    for await (const page of readPaged(
+    for await (const items of readExportBatches(
       (page, limit) => telemetry.measure(
         "dataLoad",
-        () => this.stakeholders.list({ "filter[projectId]": projectId, page, limit, sort: "createdAt:asc" }, actorId),
+        () => this.stakeholders.listForExport(
+          { "filter[projectId]": projectId, page, limit, sort: "createdAt:asc" },
+          stakeholderContext,
+        ),
       ),
+      total,
       "干系人",
       signal,
     )) {
-      for (const item of page.items) {
+      for (const item of items) {
         throwIfAborted(signal);
         counts.stakeholders += 1;
         yield stakeholderExportRow(item, users);
       }
     }
+  }
+
+  private requireStakeholderExportContext(
+    context: StakeholderExportContext | undefined,
+  ): StakeholderExportContext {
+    if (context === undefined) throw new AppError("INTERNAL", "干系人导出授权上下文缺失");
+    return context;
   }
 
   private userLabels(items: readonly { id: string; username: string; displayName: string }[]): Map<string, ProjectExportUserLabel> {
