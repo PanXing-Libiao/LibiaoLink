@@ -12,16 +12,19 @@ import {
   daysBetweenInclusive,
   lateDeliveryLabel,
   type ProjectTask,
+  type TaskChange,
   type TaskPriority,
   type TaskStatus,
 } from "../data/tasks";
-import { applyFileChange, ensurePreviewOutcome, fetchChangeRequest, fetchDownloadUrl, fetchFileVersions, finalizeFile, previewKindOf, recordPreviewView, triggerDownload, usePhotoUrl, type ChangeRequestDetail, type FilePreviewKind, type FileVersionBrief, type PreviewViewerConfig } from "../fileApi";
+import { applyFileChange, ensurePreviewOutcome, fetchChangeRequest, fetchDownloadUrl, fetchFileVersions, finalizeFile, previewKindOf, recordPreviewView, triggerDownload, usePhotoUrl, type ChangeRequestDetail, type MaterialReissueResult, type FilePreviewKind, type FileVersionBrief, type PreviewViewerConfig } from "../fileApi";
 import { lockBodyScroll } from "../scrollLock";
 import { fetchTaskDetail, toUiTask, stageKeyOfName, stageNameOf, type TaskFileBrief } from "../taskApi";
 import { fieldText, isLocalizedLocale, mdText, priorityText, progressLabelOf, stageText, statusText, translationTargetOf, useLocale, useLocalizedText, useT } from "../i18n";
 import { cachedZhTo, translateZhTo } from "../translateApi";
 import { DateRangePicker, type DateRange } from "./DateRangePicker";
 import { ChangeDetailModal } from "./ChangeDetailModal";
+import { MaterialReissueForm } from "./MaterialReissueForm";
+import { materialReissueReasonText } from "../materialReissue";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
 import { mobileFilePreviewMustDownload } from "../mobilePreviewPolicy";
 import { FileTypeIcon } from "./FileTypeIcon";
@@ -45,6 +48,7 @@ const SAVED_FLASH_MS = 1600;
  * 变更记录 = 任务「变更关联」（R01 回写）逐条回溯 —— 列表带短原因，全文按需经变更详情接口取。
  */
 type DrawerTab = "detail" | "change" | "history";
+type ChangeMode = "file" | "material";
 const DRAWER_TABS: Array<{ key: DrawerTab; label: string }> = [
   { key: "detail", label: "任务详情" },
   { key: "change", label: "变更申请" },
@@ -271,6 +275,10 @@ type TaskDrawerProps = {
   onChanged?: () => void;
   /** 任务文件清单（详情接口 GET /projects/{id}/tasks/{taskId}）：不传 = 只显示列表随行计数（fileSummary）。 */
   projectId?: string;
+  /** 全站自定义成果类型（字典 deliverableType）：跨项目 / 任务共享。 */
+  customDeliverableTypes?: readonly string[];
+  /** 仅当前项目项目经理可新增；不传 = 成果选择器底部入口置灰。 */
+  onCreateDeliverableType?: (name: string) => Promise<string | null>;
   /** 人员候选（GET /api/v1/users 目录）：项目经理 / 任务负责人两个多选共用。 */
   members: readonly Member[];
   onClose: () => void;
@@ -292,7 +300,7 @@ type TaskDrawerProps = {
  * 任务描述（中文 / 英文）自 Push 196 起对「临时任务」开放（**Push 197 收窄：仅未归入阶段的临时任务** —— 业务口径 2026-09-28「这个不是临时任务 不能修改」；失焦即存，中文名必填），
  * 阶段任务与节点 / 模板生成的任务仍锁定（抽屉里不出这一行，服务端同口径 400 兜底）。
  */
-export function TaskDrawer({ task, managers, managerIds = [], canFinalize = false, members, onSubmit, onRename, onProgress, onSetStatus, onSetActualEnd, onFinalize, onUnfinalize, onChanged, actorName, onUploadFiles, onDeleteFile, onRenameFile, projectId, onClose }: TaskDrawerProps) {
+export function TaskDrawer({ task, managers, managerIds = [], canFinalize = false, members, customDeliverableTypes = [], onCreateDeliverableType, onSubmit, onRename, onProgress, onSetStatus, onSetActualEnd, onFinalize, onUnfinalize, onChanged, actorName, onUploadFiles, onDeleteFile, onRenameFile, projectId, onClose }: TaskDrawerProps) {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
   const taskId = task === null ? null : task.id;
@@ -353,6 +361,12 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
   const [renameExt, setRenameExt] = useState("");
   /** 页标签（Push 254）：默认「任务详情」；换任务时回到默认页。 */
   const [tab, setTab] = useState<DrawerTab>("detail");
+  /** 「变更申请」下拉：普通文件变更 = 当前页；物料变更补发 = 线上补发表单。 */
+  const [changeMode, setChangeMode] = useState<ChangeMode>("file");
+  const [changeMenuOpen, setChangeMenuOpen] = useState(false);
+  /** 补发提交后先乐观插入变更记录，父级整表刷新回来再按 id 去重。 */
+  const [submittedChanges, setSubmittedChanges] = useState<TaskChange[]>([]);
+  const [historyNotice, setHistoryNotice] = useState<string | null>(null);
   /** 「变更申请」页（A4-13 十三列字段面）：目标文件 / 变更阶段 / 变更内容描述 / 变更原因 / 变更前后 / 变更后文件。 */
   const [changeTargetId, setChangeTargetId] = useState<string | null>(null);
   const [changeStage, setChangeStage] = useState("");
@@ -430,6 +444,10 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
     setRenameText("");
     setRenameExt("");
     setTab("detail");
+    setChangeMode("file");
+    setChangeMenuOpen(false);
+    setSubmittedChanges([]);
+    setHistoryNotice(null);
     setChangeTargetId(null);
     // 变更阶段默认 = 任务所属阶段（临时任务没有阶段 → 留空，提交前必选）
     setChangeStage(task === null ? "" : task.stageKey ?? stageKeyOfName(task.stage) ?? "");
@@ -710,6 +728,9 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
   }
 
   const editable = onSubmit !== undefined && !unavailable;
+  const historyChanges: TaskChange[] = Array.from(
+    new Map([...task.changes, ...submittedChanges].map((change) => [change.id, change] as const)).values(),
+  );
   /** 任务描述改名（Push 196 / Push 197 收窄）：只有**未归入阶段**的「临时任务」能改 —— 归入阶段的任务即便没有来源节点也锁定（A1-17；服务端同口径 400 兜底）。 */
   const titleEditable = onRename !== undefined && task.stage === "" && task.nodeId === null && task.sourceNodeId === null;
   const canEditStatus = onSetStatus !== undefined;
@@ -1014,6 +1035,20 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
       });
   };
 
+  /** 物料变更补发提交完成：乐观插入变更记录并切到「变更记录」；项目文件由父级刷新带入。 */
+  const handleMaterialReissueSubmitted = (result: MaterialReissueResult) => {
+    setSubmittedChanges((previous) =>
+      previous.some((change) => change.id === result.changeRequest.id)
+        ? previous
+        : [...previous, { id: result.changeRequest.id, reason: result.changeRequest.reason, appliedAt: result.changeRequest.appliedAt }],
+    );
+    setHistoryNotice(t("mr.submitted"));
+    setFilesTick((tick) => tick + 1);
+    setTab("history");
+    setChangeMenuOpen(false);
+    onChanged?.();
+  };
+
   /**
    * 「变更文件」就地定档（Push 254 续 · 业务反馈「这个选择不了啊」）：未定档文件行尾「定档」把变更前置门
    * （A4-13：只有已定档文件可以发起变更）就地补上 —— POST /files/{id}/finalize（draft → final 锁版；
@@ -1207,13 +1242,16 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
         ),
     },
     {
-      // 输出成果文件（2026-10-08 · 业务口径「文件输出成果也要可以选择」）：只读色签改可点选择（搜索 + 十类多选，
+      // 输出成果文件（2026-10-08 · 业务口径「文件输出成果也要可以选择」）：只读色签改可点选择（搜索 + 内置十类 / 自定义多选，
       // 彩签全量摊开）；勾选即存（与其它字段同一套写入口径）。不传 onSubmit（只读抽屉）= 静态色签。
       label: "输出成果文件",
       value: editable ? (
         <DeliverableCell
           all
           values={draft.deliverableTypes}
+          customTypes={customDeliverableTypes}
+          canCreateCustom={onCreateDeliverableType !== undefined}
+          onCreateCustom={onCreateDeliverableType}
           onChange={(next) => {
             commit({ deliverableTypes: next });
           }}
@@ -1513,6 +1551,8 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
     },
   ];
 
+  const materialModeActive = tab === "change" && changeMode === "material";
+
   return (
     <div className="fixed inset-0 z-50">
       <div
@@ -1532,11 +1572,14 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
           aria-modal="true"
           aria-labelledby="task-drawer-title"
           className={
-            "drawer-panel pointer-events-auto relative flex h-[min(78vh,800px)] max-h-[calc(100vh-2rem)] w-[min(92vw,980px)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl bg-white shadow-[0_24px_80px_rgba(15,23,42,0.24)]" +
+            "drawer-panel pointer-events-auto relative flex w-[min(92vw,980px)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl bg-white shadow-[0_24px_80px_rgba(15,23,42,0.24)] " +
+            (materialModeActive
+              ? "h-[calc(100vh-2rem)] max-h-[calc(100vh-2rem)]"
+              : "h-[min(78vh,800px)] max-h-[calc(100vh-2rem)]") +
             (closing ? " is-closing" : "")
           }
         >
-        <header className="border-b border-zinc-100 px-6 pb-5 pt-5">
+        <header className="shrink-0 border-b border-zinc-100 px-6 pb-5 pt-5">
           <div className="flex items-start justify-between gap-4">
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-[11px] font-medium text-zinc-500">{stageText(locale, task.stage === "" ? TEMP_TASK_STAGE : task.stage)}</span>
@@ -1656,25 +1699,106 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
         {/* 页标签导航栏（Push 254 · 业务口径「抽屉上方增加 页面标签导航栏 任务详情 变更申请 变更记录三个页面」）：
             抽屉头部之下、页内容之上（与页面主标签栏同一套下划线交互）；任务详情 = 原抽屉内容（进度 + 字段清单），
             另两页收拢变更发起与追溯。 */}
-        <div data-drawer-tabs="true" className="border-b border-zinc-100 px-6">
+        <div data-drawer-tabs="true" className="shrink-0 border-b border-zinc-100 px-6">
           <div role="tablist" aria-label={t("drawer.tabs.aria")} className="flex gap-1">
             {DRAWER_TABS.map((item) => {
               const active = item.key === tab;
+              if (item.key !== "change") {
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    data-drawer-tab={item.key}
+                    onClick={() => { setTab(item.key); setChangeMenuOpen(false); }}
+                    className={
+                      "border-b-2 px-4 py-2.5 text-sm font-medium transition " +
+                      (active ? "border-zinc-900 text-zinc-900" : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-800")
+                    }
+                  >
+                    {fieldText(locale, item.label)}
+                  </button>
+                );
+              }
               return (
-                <button
-                  key={item.key}
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  data-drawer-tab={item.key}
-                  onClick={() => { setTab(item.key); }}
-                  className={
-                    "border-b-2 px-4 py-2.5 text-sm font-medium transition " +
-                    (active ? "border-zinc-900 text-zinc-900" : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-800")
-                  }
-                >
-                  {fieldText(locale, item.label)}
-                </button>
+                <div key={item.key} className="relative">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    aria-haspopup="menu"
+                    aria-expanded={changeMenuOpen}
+                    data-drawer-tab={item.key}
+                    onClick={() => { if (tab !== "change") setChangeMode("file"); setTab("change"); setChangeMenuOpen((open) => !open); }}
+                    className={
+                      "inline-flex items-center gap-1 border-b-2 px-4 py-2.5 text-sm font-medium transition " +
+                      (active ? "border-zinc-900 text-zinc-900" : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-800")
+                    }
+                  >
+                    {fieldText(locale, item.label)}
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className={"h-3.5 w-3.5 transition-transform " + (changeMenuOpen ? "rotate-180" : "")}>
+                      <path d="M6 9.5l6 6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                  {changeMenuOpen ? (
+                    <>
+                      <button
+                        type="button"
+                        aria-label={t("common.cancel")}
+                        className="fixed inset-0 z-20 cursor-default"
+                        onClick={() => { setChangeMenuOpen(false); }}
+                      />
+                      <div
+                        role="menu"
+                        data-change-mode-menu="true"
+                        className="absolute left-0 top-full z-30 mt-1 w-64 overflow-hidden rounded-2xl border border-zinc-200 bg-white p-2 shadow-[0_16px_40px_rgba(15,23,42,0.18)]"
+                      >
+                        <p className="px-2 pb-1.5 pt-1 text-[11px] text-zinc-400">{fieldText(locale, "变更申请")}</p>
+                        <button
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={changeMode === "file"}
+                          data-change-mode-option="file"
+                          onClick={() => { setChangeMode("file"); setChangeMenuOpen(false); setTab("change"); }}
+                          className={"flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition " + (changeMode === "file" ? "bg-zinc-100" : "hover:bg-zinc-50")}
+                        >
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-zinc-700 shadow-[0_1px_3px_rgba(15,23,42,0.12)]">
+                            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-4 w-4">
+                              <path d="M4 20h4l10-10-4-4L4 16v4Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+                              <path d="M13.5 6.5l4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                            </svg>
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-sm font-medium text-zinc-900">{t("mr.menu.file")}</span>
+                            <span className="mt-0.5 block text-[11px] leading-4 text-zinc-400">{t("mr.menu.fileHint")}</span>
+                          </span>
+                          {changeMode === "file" ? <span className="h-2 w-2 shrink-0 rounded-full bg-zinc-900" /> : null}
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={changeMode === "material"}
+                          data-change-mode-option="material"
+                          onClick={() => { setChangeMode("material"); setChangeMenuOpen(false); setTab("change"); }}
+                          className={"mt-1 flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition " + (changeMode === "material" ? "bg-amber-50" : "hover:bg-zinc-50")}
+                        >
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-amber-700 shadow-[0_1px_3px_rgba(15,23,42,0.12)]">
+                            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-4 w-4">
+                              <path d="M4 7.5L12 3l8 4.5v9L12 21l-8-4.5z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+                              <path d="M4 7.5l8 4.5 8-4.5M12 12v9" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+                            </svg>
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-sm font-medium text-zinc-900">{t("mr.menu.material")}</span>
+                            <span className="mt-0.5 block text-[11px] leading-4 text-zinc-400">{t("mr.menu.materialHint")}</span>
+                          </span>
+                          {changeMode === "material" ? <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500" /> : null}
+                        </button>
+                      </div>
+                    </>
+                  ) : null}
+                </div>
               );
             })}
           </div>
@@ -1714,7 +1838,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
               ) : null}
             </div>
 
-            <ScrollArea viewportClassName="min-h-0 flex-1" className="px-6 py-1" ariaLabel={t("drawer.detail.aria")}>
+            <ScrollArea key="detail" viewportClassName="min-h-0 flex-1" className="px-6 py-1" ariaLabel={t("drawer.detail.aria")}>
               <dl>
                 {rows.map((row) => (
                   <div
@@ -1729,7 +1853,12 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
             </ScrollArea>
           </>
         ) : tab === "change" ? (
-          <ScrollArea viewportClassName="min-h-0 flex-1" className="px-6" ariaLabel={t("drawer.change.aria")}>
+          changeMode === "material" ? (
+            <ScrollArea key="change-material" viewportClassName="min-h-0 flex-1" className="px-6" ariaLabel={t("mr.aria")}>
+              <MaterialReissueForm projectId={projectId ?? ""} task={task} members={members} onSubmitted={handleMaterialReissueSubmitted} />
+            </ScrollArea>
+          ) : (
+          <ScrollArea key="change-file" viewportClassName="min-h-0 flex-1" className="px-6" ariaLabel={t("drawer.change.aria")}>
             <div data-drawer-page="change" className="flex flex-col gap-5 py-4">
               <section>
                 <h3 className="text-xs font-medium text-zinc-500">{fieldText(locale, "变更时间")} <span className="text-rose-500">*</span></h3>
@@ -1993,21 +2122,27 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
               </section>
             </div>
           </ScrollArea>
+          )
         ) : (
           <ScrollArea viewportClassName="min-h-0 flex-1" className="px-6" ariaLabel={t("drawer.history.aria")}>
             <div data-drawer-page="history" className="flex flex-col gap-2 py-4">
-              {task.changes.length === 0 ? (
+              {historyNotice === null ? null : (
+                <p data-change-history-notice="true" className="rounded-lg bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-700">{historyNotice}</p>
+              )}
+              {historyChanges.length === 0 ? (
                 <p data-drawer-history-empty="true" className="rounded-lg bg-zinc-50 px-3 py-2 text-xs leading-5 text-zinc-500">{t("drawer.history.empty")}</p>
               ) : (
                 <>
                   <p className="text-[11px] leading-4 text-zinc-400">{t("drawer.history.hint")}</p>
-                  {[...task.changes].reverse().map((change) => {
+                  {[...historyChanges].reverse().map((change) => {
                     const open = changeDetailId === change.id;
                     const entry = changeEntries[change.id];
+                    const materialEntry = entry !== undefined && entry.state === "ready" && entry.detail.changeType === "material_reissue" ? entry.detail.materialReissue : null;
                     return (
                       <div key={change.id} data-change-item={change.id} className="rounded-xl border border-zinc-100 bg-zinc-50/60 px-3 py-2.5">
                         <div className="flex items-start gap-2">
-                          <span className="mt-0.5 shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">{t("drawer.change.badge", { date: dateOnlyText(change.appliedAt) })}</span>
+                          <span className={"mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium " + (materialEntry === null ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700")}>{materialEntry === null ? t("drawer.change.badge", { date: dateOnlyText(change.appliedAt) }) : fieldText(locale, "物料变更补发")}</span>
+                          {materialEntry === null ? null : <span className="mt-0.5 shrink-0 text-[11px] text-zinc-400">{dateOnlyText(change.appliedAt)}</span>}
                           <p className="min-w-0 flex-1 text-xs leading-5 text-zinc-600">{change.reason === "" ? t("drawer.history.noReason") : change.reason}</p>
                           <button
                             type="button"
@@ -2032,6 +2167,20 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
                               {t("drawer.history.retry")}
                             </button>
                           </p>
+                        ) : materialEntry !== null ? (
+                          <div data-change-material-summary="true" className="mt-1.5 rounded-lg border border-zinc-100 bg-white px-2.5 py-2 text-[11px] leading-5 text-zinc-600">
+                            <p className="font-medium text-zinc-700">{materialReissueReasonText(locale, materialEntry)}</p>
+                            <p>{t("mr.materials.summary", { n: String(materialEntry.materials.length) })} · {materialEntry.requiredOutDate} · {materialEntry.recipient}</p>
+                            <p className="text-zinc-400">{materialEntry.projectCode} · {materialEntry.taskTitle}</p>
+                            {entry.detail.file === null || entry.detail.versionId === null ? (
+                              <span className="text-zinc-400">{t("drawer.history.filePending")}</span>
+                            ) : (
+                              <span className="mt-1 flex flex-wrap items-center gap-2">
+                                <button type="button" onClick={() => { void openPreview(entry.detail.file!.id, entry.detail.file!.name, entry.detail.versionId ?? undefined); }} className="rounded px-1.5 py-0.5 text-zinc-500 underline-offset-2 transition hover:bg-zinc-50 hover:text-zinc-800 hover:underline">{t("drawer.file.preview")}</button>
+                                <button type="button" onClick={() => { void downloadFile(entry.detail.file!.id, entry.detail.versionId ?? undefined); }} className="rounded px-1.5 py-0.5 text-zinc-500 underline-offset-2 transition hover:bg-zinc-50 hover:text-zinc-800 hover:underline">{t("drawer.file.download")}</button>
+                              </span>
+                            )}
+                          </div>
                         ) : (
                           <ChangeFileRows
                             detail={entry.detail}
@@ -2105,7 +2254,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
             )}
           </div>
         )}
-        <footer className="flex items-center justify-between gap-3 border-t border-zinc-100 px-6 py-3">
+        <footer className="mt-auto flex shrink-0 items-center justify-between gap-3 border-t border-zinc-100 px-6 py-3">
           <p className="text-[11px] text-zinc-400">{t("drawer.footer.hint")}</p>
           {savedTick !== 0 ? (
             <p className="text-[11px] font-medium text-emerald-600">{t("drawer.save.saved")}</p>

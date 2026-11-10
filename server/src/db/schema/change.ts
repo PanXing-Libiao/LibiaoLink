@@ -1,7 +1,9 @@
 import { desc, sql } from "drizzle-orm";
+import type { MaterialReissueSnapshot } from "@libiaolink/contracts";
 import {
   check,
   index,
+  jsonb,
   pgTable,
   text,
   timestamp,
@@ -19,6 +21,10 @@ export const changeRequests = pgTable(
     projectId: uuid("project_id").notNull().references(() => projects.id),
     nodeId: uuid("node_id").references(() => projectNodes.id),
     stageKey: text("stage_key"),
+    /** 变更类型（0084）：file_change = 普通文件变更；material_reissue = 物料变更补发。 */
+    changeType: text("change_type").notNull().default("file_change"),
+    /** 物料变更补发表单快照（0084）：项目 / 任务 / 申请人自动带入并固化；普通变更为 null。 */
+    materialReissue: jsonb("material_reissue").$type<MaterialReissueSnapshot>(),
     reason: text("reason").notNull(),
     beforeSummary: text("before_summary"),
     afterSummary: text("after_summary"),
@@ -45,6 +51,14 @@ export const changeRequests = pgTable(
       sql`${table.stageKey} is null or ${table.stageKey} in ${sql.raw(sqlValueList(STAGE_KEYS))}`,
     ),
     check("ck_change_requests_status", sql`${table.status} in ${sql.raw(sqlValueList(["applied"]))}`),
+    check(
+      "ck_change_requests_change_type",
+      sql`${table.changeType} in ${sql.raw(sqlValueList(["file_change", "material_reissue"]))}`,
+    ),
+    check(
+      "ck_change_requests_material_reissue_payload",
+      sql`(${table.changeType} = 'file_change' and ${table.materialReissue} is null) or (${table.changeType} = 'material_reissue' and ${table.materialReissue} is not null)`,
+    ),
     check("ck_change_requests_before_summary_file_ids", sql`cardinality(${table.beforeSummaryFileIds}) <= 30`),
     check("ck_change_requests_after_summary_file_ids", sql`cardinality(${table.afterSummaryFileIds}) <= 30`),
   ],

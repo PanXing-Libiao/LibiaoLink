@@ -96,20 +96,6 @@ export const CALENDAR_DAY_TYPE_KEYS = ["holiday", "makeup_workday"] as const;
 /** 顺延方向（calendar_settings.shift_direction，h8 · D5-02）：forward 顺延到之后 / backward 提前到之前最近工作日。 */
 export const CALENDAR_SHIFT_DIRECTION_KEYS = ["forward", "backward"] as const;
 
-/** 十类成果文件字典（C9 / v0.2 §2.5）：与 shared/src/common/dicts.ts 的 DOC_TYPES 同序同值，tasks.deliverable_types 的 CHECK 与迁移 0018 引用。 */
-export const DOC_TYPE_KEYS = [
-  "CAD图纸",
-  "技术协议",
-  "合同",
-  "评审单",
-  "设备清单",
-  "物料总清单",
-  "发货装箱单",
-  "到货单",
-  "安装完成证明",
-  "验收单",
-] as const;
-
 /** 公司分类（stakeholders.company_type，A5-02 / C9）：立镖机器人 / 供应商 / 总包单位 / 客户。 */
 export const STAKEHOLDER_COMPANY_TYPE_KEYS = ["libiao", "supplier", "general_contractor", "customer"] as const;
 

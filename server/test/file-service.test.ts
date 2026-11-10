@@ -396,6 +396,8 @@ class FakeFileRepository {
       projectId: input.projectId,
       nodeId: input.nodeId,
       stageKey: input.stageKey,
+      changeType: input.changeType,
+      materialReissue: input.materialReissue,
       reason: input.reason,
       beforeSummary: input.beforeSummary,
       afterSummary: input.afterSummary,
@@ -2428,6 +2430,16 @@ describe("FileService.listProjectFiles（M4-03 文件库查询）", () => {
     expect(query.offset).toBe(0);
   });
 
+  it("成果类型筛选接受任务自定义类型（内置十类之外）", async () => {
+    const h = makeService();
+    await h.service.listProjectFiles(PROJECT, {
+      page: 1,
+      limit: 50,
+      "filter[docType]": "CAD图纸,竣工图",
+    });
+    expect(h.repo.libraryQueries[0]?.filter.docTypes).toEqual(["CAD图纸", "竣工图"]);
+  });
+
   it("非法输入一律 400 且不落查询：sort 白名单外 / 非法状态 / 非法类型 / 非 UUID / 非法方向", async () => {
     const h = makeService();
     await expect(h.service.listProjectFiles(PROJECT, { page: 1, limit: 50, sort: "sizeBytes:desc" })).rejects.toMatchObject({
@@ -2438,7 +2450,7 @@ describe("FileService.listProjectFiles（M4-03 文件库查询）", () => {
       h.service.listProjectFiles(PROJECT, { page: 1, limit: 50, "filter[status]": "draft,pending" }),
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED", httpStatus: 400 });
     await expect(
-      h.service.listProjectFiles(PROJECT, { page: 1, limit: 50, "filter[docType]": "CAD图纸,发票" }),
+      h.service.listProjectFiles(PROJECT, { page: 1, limit: 50, "filter[docType]": "CAD图纸," + "x".repeat(51) }),
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED", httpStatus: 400 });
     await expect(
       h.service.listProjectFiles(PROJECT, { page: 1, limit: 50, "filter[taskId]": "not-a-uuid" }),

@@ -229,6 +229,10 @@ type TaskKanbanProps = {
   managerIds: string[];
   /** 当前账号是否可对指定任务定档 / 取消定档：由任务负责人与项目经理名单共同裁决。 */
   canFinalizeTask?: (task: ProjectTask) => boolean;
+  /** 全站自定义成果类型（字典 deliverableType）。 */
+  customDeliverableTypes?: readonly string[];
+  /** 仅当前项目项目经理可新增；不传 = 选择器入口置灰。 */
+  onCreateDeliverableType?: (name: string) => Promise<string | null>;
   /**
    * 列底「添加 → 临时任务」：标题由用户自己填（英文名可空）；负责人 / 状态按所在列给、阶段留空。
    * 返回 = 新建任务的 id（失败 = null）—— Push 196 起建完由看板直接打开它的任务详情抽屉，补时间等细节。
@@ -816,7 +820,7 @@ function KanbanColumn({
   );
 }
 
-export function TaskKanban({ mode, tasks, focusTaskId = null, onFocusClosed, managers, managerIds, canFinalizeTask, members, onAddTask, onAddStageTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onSetStatus, onSetActualEnd, onReorderTask, onSetProgress, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, projectId }: TaskKanbanProps) {
+export function TaskKanban({ mode, tasks, focusTaskId = null, onFocusClosed, managers, managerIds, canFinalizeTask, customDeliverableTypes = [], onCreateDeliverableType, members, onAddTask, onAddStageTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onSetStatus, onSetActualEnd, onReorderTask, onSetProgress, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, projectId }: TaskKanbanProps) {
   const t = useT();
   /**
    * 任务详情抽屉选中的任务 id（Push 196 由对象改存 id）：点卡片与「建完临时任务」都先落 id，抽屉按 id 从最新列表取行 ——
@@ -1230,6 +1234,8 @@ export function TaskKanban({ mode, tasks, focusTaskId = null, onFocusClosed, man
         managerIds={managerIds}
         canFinalize={drawerTask !== null && canFinalizeTask?.(drawerTask) === true}
         members={members}
+        customDeliverableTypes={customDeliverableTypes}
+        onCreateDeliverableType={onCreateDeliverableType}
         onSubmit={onSubmitTaskEdit}
         onRename={onRenameTask}
         onProgress={onSetProgress}

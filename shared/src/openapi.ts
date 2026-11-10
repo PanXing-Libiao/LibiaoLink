@@ -8,6 +8,7 @@ import {
   ProjectArchiveBodySchema,
   ProjectArchiveViewSchema,
   ProjectCreateBodySchema,
+  ProjectDeliverableTypeCreateBodySchema,
   ProjectDeleteHeadersSchema,
   ProjectFacetsSchema,
   ProjectGroupBindingSchema,
@@ -201,6 +202,8 @@ import {
 } from "./modules/group-access.ts";
 import {
   ChangeRequestDetailSchema,
+  CreateMaterialReissueBodySchema,
+  MaterialReissueResultSchema,
   ChangeRequestListQuerySchema,
   ChangeRequestListResponseSchema,
   FileDetailSchema,
@@ -254,7 +257,7 @@ const memberParams = z.object({ id: UuidSchema, userId: UuidSchema });
 const idempotencyHeader = z.object({ "Idempotency-Key": IdempotencyKeySchema.optional() });
 const requiredIdempotencyHeader = z.object({ "Idempotency-Key": IdempotencyKeySchema });
 // 字典类型路径参数：一期取值 region / projectType；未知类型返回 404（非 400）——与 DictsController 行为一致
-const dictTypeParams = z.object({ type: z.string().min(1).max(64).openapi({ description: "字典类型（一期：region / projectType）；未知类型返回 404" }) });
+const dictTypeParams = z.object({ type: z.string().min(1).max(64).openapi({ description: "字典类型：region / projectType / deliverableType（全站自定义成果类型）；未知类型返回 404" }) });
 // 工作日历路径参数：业务日期 YYYY-MM-DD（例外表的业务键；非法日期由契约校验拦成 400）
 const calendarDayParams = z.object({ date: DateOnlySchema });
 
@@ -340,6 +343,21 @@ export function buildOpenApiDocument() {
       404: commonErrors[404],
       409: commonErrors[409],
       422: commonErrors[422],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/deliverable-types",
+    tags: ["projects"],
+    summary: "新增全站自定义成果文件类型（仅当前项目项目经理；写入 deliverableType 全局字典，所有项目共享）",
+    request: { params: idParams, body: json(ProjectDeliverableTypeCreateBodySchema) },
+    responses: {
+      201: { description: "创建成功（更新后的 deliverableType 字典）", ...json(DictSchema) },
+      400: commonErrors[400],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: commonErrors[409],
     },
   });
 
@@ -893,7 +911,7 @@ export function buildOpenApiDocument() {
     method: "get",
     path: "/api/v1/dicts",
     tags: ["dicts"],
-    summary: "全量字典（region / projectType，含元数据 / 主题色与引用计数 usageCount；阶段与成果文件类型走契约枚举，不在字典内）",
+    summary: "全量字典（region / projectType / deliverableType，含元数据 / 主题色与引用计数 usageCount；deliverableType 为全站自定义成果类型，内置十类仍走契约 DOC_TYPES）",
     request: { query: DictReadQuerySchema },
     responses: {
       200: { description: "全部字典", ...json(DictListResponseSchema) },
@@ -1425,6 +1443,21 @@ export function buildOpenApiDocument() {
     responses: {
       200: { description: "变更详情", ...json(ChangeRequestDetailSchema) },
       404: commonErrors[404],
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/projects/{id}/change-requests/material-reissue",
+    tags: ["changes"],
+    summary: "物料变更补发（线上补发单；自动生成 DOCX 项目文件并回写任务变更记录）",
+    request: { params: idParams, body: json(CreateMaterialReissueBodySchema) },
+    responses: {
+      201: { description: "已提交：变更记录 + 补发申请 DOCX", ...json(MaterialReissueResultSchema) },
+      400: commonErrors[400],
+      403: commonErrors[403],
+      404: commonErrors[404],
+      409: commonErrors[409],
     },
   });
 

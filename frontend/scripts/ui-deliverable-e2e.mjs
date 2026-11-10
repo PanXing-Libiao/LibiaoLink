@@ -12,9 +12,11 @@
  * 用法：node scripts/ui-deliverable-e2e.mjs
  *   可覆盖的环境变量：FRONTEND_BASE / API_BASE / DATABASE_URL / CHROME_PATH / CDP_PORT / REPLAY_USER / PG_MODULE
  *
- * 它做什么：用一条临时会话（跑完撤销）+ 一个临时项目（跑完硬删、读面零残留）真机过一遍 ——
+ * 它做什么：用一条临时会话（跑完撤销）+ 一个临时项目（跑完移入回收站并彻底删除、读面零残留）真机过一遍 ——
  *   任务表「输出成果文件」列空态 = 「—」可点单元格 → 点开「查找选项」搜索 + 十类彩签多选面板（10 枚底色逐项比对）→
  *   搜索过滤（「协议」只剩技术协议）→ 勾选落库 + 单元格「首枚 + +N」回流 → 再点取消 → 点页面空白收面板 →
+ *   底部「＋ 自定义（仅限项目经理）」由项目经理新增唯一全站名称：写入 deliverableType 字典并回显，
+ *   字典接口可读、再点取消；收尾删除临时全局字典项 →
  *   抽屉行同款可点（彩签全摊）→ 上传 txt 验证抽屉「预览」按钮无 title 悬停提示（「下载」对照）→ 收尾清理。
  */
 
@@ -92,6 +94,10 @@ for (const row of stale) {
 
 // ---------- 夹具：临时项目 + 一条任务 + 一份 txt（抽屉预览按钮探针用） ----------
 const fixtureCode = "PX-DLV-" + randomBytes(3).toString("hex").toUpperCase();
+const customName = "回放成果-" + randomBytes(2).toString("hex").toUpperCase();
+await db.query("delete from dict_items where type_code = $1 and code like $2", ["deliverableType", "回放成果-%"]);
+const dictBefore = await api("/api/v1/dicts/deliverableType");
+const baselineCustomCount = dictBefore.status === 200 && Array.isArray(dictBefore.json.items) ? dictBefore.json.items.length : 0;
 const projRes = await api("/api/v1/projects", "POST", { code: fixtureCode, name: "回放·成果文件选择", description: "回放·成果文件选择", managerIds: [userRow.id] });
 check("夹具：建临时项目（201）", projRes.status === 201, String(projRes.status) + " " + projRes.text.slice(0, 140));
 const projectId = projRes.json === null ? "" : projRes.json.id;
@@ -240,7 +246,28 @@ const colorWant = { "CAD图纸": "rgb(253, 242, 248)", "技术协议": "rgb(239,
 const colorOk = chipColors !== null && Object.keys(colorWant).every((name) => chipColors[name] === colorWant[name]);
 check("①c 十类彩签底色逐项比对（「是否按时交付」同款浅彩底）", colorOk === true, JSON.stringify(chipColors).slice(0, 260));
 
-// ①d 搜索过滤：「协议」只剩技术协议；清掉回十类
+// ①c2 自定义：点击「＋ 自定义」→ 输入名称 → 添加即选中并落库；再点取消
+const customButtonInfo = await ev("(function(){var p=document.querySelector(" + j(PANEL) + ");var b=p===null?null:p.querySelector(" + j("[data-deliverable-custom-button=true]") + ");return b===null?null:{text:b.textContent.trim(),disabled:b.disabled,title:b.getAttribute(" + Q + "title" + Q + ")};})()");
+const customButtonP = await pointOf("document.querySelector(" + j(PANEL + " [data-deliverable-custom-button=true]") + ")");
+await clickAt(customButtonP);
+const customInputOpen = await waitFor("document.querySelector(" + j(PANEL + " [data-deliverable-custom-input=true]") + ")!==null", 5000);
+check("①c2 面板底部显示「自定义（仅限项目经理）」，项目经理可点开输入框", customButtonInfo !== null && customButtonInfo.text === "自定义（仅限项目经理）" && customButtonInfo.disabled === false && customInputOpen === true, JSON.stringify({ customButtonInfo, customInputOpen }));
+await page.send("Input.insertText", { text: customName });
+const customSubmitP = await pointOf("document.querySelector(" + j(PANEL + " [data-deliverable-custom-submit=true]") + ")");
+await clickAt(customSubmitP);
+const customSaved = await waitForAsync(async () => JSON.stringify(await dbDeliverables()) === JSON.stringify([customName]), 10000);
+const customGlobal = await waitForAsync(async () => {
+  const res = await api("/api/v1/dicts/deliverableType");
+  return res.status === 200 && Array.isArray(res.json.items) && res.json.items.some((item) => item.code === customName && item.name === customName);
+}, 10000);
+const customCellText = await cellText("document.querySelector(" + j(CELL) + ")");
+const customOptionExists = await ev("(function(){var p=document.querySelector(" + j(PANEL) + ");return p!==null&&p.querySelector(" + j("[data-deliverable-option=" + Q + customName + Q + "]") + ")!==null;})()");
+check("①c3 新增全站自定义「" + customName + "」→ 当前任务落库 + 全局字典可读 + 单元格回显", customSaved === true && customGlobal === true && customCellText === customName && customOptionExists === true, JSON.stringify({ customSaved, customGlobal, customCellText, customOptionExists }));
+await clickAt(await optionPoint(customName, "document.querySelector(" + j(PANEL) + ")"));
+const customCleared = await waitForAsync(async () => (await dbDeliverables()).length === 0, 10000);
+check("①c4 再点自定义项 → 取消当前任务选择并落库为空（全局候选保留）", customCleared === true, String(customCleared));
+
+// ①d 搜索过滤：「协议」只剩技术协议；清空搜索回内置十类 + 全站自定义
 const searchP = await pointOf("document.querySelector(" + j(PANEL + " " + SEARCH) + ")");
 await clickAt(searchP);
 await page.send("Input.insertText", { text: "协议" });
@@ -250,7 +277,8 @@ check("①d 搜索「协议」→ 只剩 技术协议 1 项", filtered !== null 
 await pressKey("Backspace", "Backspace", 8);
 await pressKey("Backspace", "Backspace", 8);
 const restored = await ev("(function(){var p=document.querySelector(" + j(PANEL) + ");return p===null?0:p.querySelectorAll(" + j("[data-deliverable-option]") + ").length;})()");
-check("①e 退格清空搜索 → 回十类", restored === 10, String(restored));
+const expectedOptions = 10 + baselineCustomCount + 1;
+check("①e 退格清空搜索 → 回内置十类 + 全站自定义候选", restored === expectedOptions, JSON.stringify({ restored, expectedOptions }));
 
 // ② 勾选 / 取消（落库 + 单元格回流）
 await clickAt(await optionPoint("技术协议", "document.querySelector(" + j(PANEL) + ")"));
@@ -304,7 +332,7 @@ const buttonProbe = await ev("(function(){var item=document.querySelector(" + j(
 check("④a 「预览」按钮已无 title 悬停提示（可点）", buttonProbe !== null && buttonProbe.preview !== null && buttonProbe.preview.title === null && buttonProbe.preview.disabled === false, JSON.stringify(buttonProbe));
 check("④b 对照：「下载」按钮 title 保留（只撤了预览那条）", buttonProbe !== null && typeof buttonProbe.download === "string" && buttonProbe.download.indexOf("下载原文件") === 0, String(buttonProbe === null ? null : buttonProbe.download));
 
-// ⑤ 收尾：文件 purge → 项目硬删 → 读面 404 → 零残留
+// ⑤ 收尾：文件 purge → 项目移入回收站 → 读面 404 → 系统管理员彻底删除 → 零残留
 const fileRowsAll = (await db.query("select id, version, status from files where project_id = $1", [projectId])).rows;
 let purged = 0;
 for (const file of fileRowsAll) {
@@ -320,12 +348,16 @@ for (const file of fileRowsAll) {
 check("⑤a 探针文件 purge（对象真删 + 元数据删 + 留痕）", purged === fileRowsAll.length, JSON.stringify({ total: fileRowsAll.length, purged }));
 const projRow = await api("/api/v1/projects/" + projectId);
 const delProj = await api("/api/v1/projects/" + projectId, "DELETE", undefined, { "If-Match": String(projRow.json.version) });
-check("⑤b 临时项目物理删（200 / 204）", delProj.status === 200 || delProj.status === 204, String(delProj.status));
+check("⑤b 临时项目移入回收站（200）", delProj.status === 200, String(delProj.status));
 const projGone = await api("/api/v1/projects/" + projectId);
-check("⑤c 项目读面 404（物理删、行不存在）", projGone.status === 404, String(projGone.status));
+check("⑤c 项目读面 404（回收站中普通读面不可见）", projGone.status === 404, String(projGone.status));
+const purgeProj = await api("/api/v1/projects/" + projectId + "/purge", "POST", { version: Number(delProj.json.version) });
+check("⑤d 回收站项目彻底删除（200）", purgeProj.status === 200, JSON.stringify({ status: purgeProj.status, body: purgeProj.json }));
+await db.query("delete from dict_items where type_code = $1 and code = $2", ["deliverableType", customName]);
+await db.query("update dict_types set updated_at = now() where code = $1", ["deliverableType"]);
 await db.query("update sessions set revoked_at = now() where token_hash = $1", [sha256(token)]);
-const residue = (await db.query("select (select count(*)::int from files where project_id = $1) as files, (select count(*)::int from file_links where object_id = $2) as links, (select count(*)::int from tasks where id = $2) as tasks, (select count(*)::int from projects where id = $1) as projects, (select count(*)::int from sessions where token_hash = $3 and revoked_at is null) as sessions", [projectId, taskId, sha256(token)])).rows[0];
-check("⑤d 零残留：文件 / 关联 / 任务 / 项目 / 会话全 0 行", Number(residue.files) === 0 && Number(residue.links) === 0 && Number(residue.tasks) === 0 && Number(residue.projects) === 0 && Number(residue.sessions) === 0, JSON.stringify(residue));
+const residue = (await db.query("select (select count(*)::int from files where project_id = $1) as files, (select count(*)::int from file_links where object_id = $2) as links, (select count(*)::int from tasks where id = $2) as tasks, (select count(*)::int from projects where id = $1) as projects, (select count(*)::int from sessions where token_hash = $3 and revoked_at is null) as sessions, (select count(*)::int from dict_items where type_code = $4 and code = $5) as global_types", [projectId, taskId, sha256(token), "deliverableType", customName])).rows[0];
+check("⑤e 零残留：文件 / 关联 / 任务 / 项目 / 会话 / 临时全局字典项全 0 行", Number(residue.files) === 0 && Number(residue.links) === 0 && Number(residue.tasks) === 0 && Number(residue.projects) === 0 && Number(residue.sessions) === 0 && Number(residue.global_types) === 0, JSON.stringify(residue));
 
 rmSync(fileDir, { recursive: true, force: true });
 const failed = checks.filter((ok) => ok !== true).length;

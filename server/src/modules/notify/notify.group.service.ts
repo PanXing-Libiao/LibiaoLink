@@ -42,6 +42,7 @@ import type { AibotIncomingMessage, AibotSendResult } from "./wecom.aibot.js";
 import { aibotImageMimeFromFileName, WecomAibotClient } from "./wecom.aibot.js";
 import { renderDailyReportIssuePoster, renderDailyReportPoster } from "./daily-report.poster.js";
 import { renderR06Poster } from "./r06.poster.js";
+import { renderMaterialReissuePoster } from "./material-reissue.poster.js";
 import { renderStageCompletePoster } from "./stage-complete.poster.js";
 import { describeWecomFailure } from "./wecom.errors.js";
 import { applyMarkdownHardBreaks, truncateUtf8Bytes } from "./wecom.text.js";
@@ -424,6 +425,13 @@ export class NotifyGroupService {
         masked,
         dedupeKey: row.dedupeKey,
       });
+      const materialReissuePosterAttempts = await this.sendMaterialReissuePoster({
+        message,
+        chatid: binding.chatid,
+        groupActivated: binding.activatedAt !== null,
+        masked,
+        dedupeKey: row.dedupeKey,
+      });
       const sentAt = this.clock.now();
       await this.archive.recordAttempt({
         messageId: archived.id,
@@ -432,7 +440,7 @@ export class NotifyGroupService {
         target: binding.chatid,
         recipientLabel: "project:" + message.projectId + " · " + masked,
         state: "sent",
-        attempts: result.attempts + rocketAttempts + posterAttempts + dailyReportPosterAttempts + stagePosterAttempts,
+        attempts: result.attempts + rocketAttempts + posterAttempts + dailyReportPosterAttempts + stagePosterAttempts + materialReissuePosterAttempts,
         error: null,
         sentAt,
         at: sentAt,
@@ -661,6 +669,65 @@ export class NotifyGroupService {
       return result.attempts;
     }
     this.logger.log("阶段完成海报已送达：" + input.dedupeKey + " · chatid " + input.masked);
+    return result.attempts;
+  }
+
+  /**
+   * 物料变更补发图片：文字送达后按变更快照生成整张补发/补货申请表 PNG。
+   * 只认 MATERIAL_REISSUE_GROUP + refId（change_requests.id）；数据读取 / 绘制 / 发送失败只留日志，
+   * 不重发已送达文字，也不回滚补发提交（业务提交与 group 通知由 outbox 解耦）。
+   */
+  private async sendMaterialReissuePoster(input: {
+    message: NotifyGroupMessagePayload;
+    chatid: string;
+    groupActivated: boolean;
+    masked: string;
+    dedupeKey: string;
+  }): Promise<number> {
+    const changeId = input.message.refId;
+    if (input.message.templateCode !== "MATERIAL_REISSUE_GROUP" || changeId === null || changeId === undefined) {
+      return 0;
+    }
+    let data: Awaited<ReturnType<NotifyGroupRepository["findMaterialReissuePosterData"]>>;
+    try {
+      data = await this.repository.findMaterialReissuePosterData(input.message.projectId, changeId);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.warn("补发申请图片数据读取失败，已跳过图片（文字已发送）：" + input.dedupeKey + " —— " + detail);
+      return 0;
+    }
+    if (data === null) {
+      this.logger.warn("补发申请图片数据不存在，已跳过图片（文字已发送）：" + input.dedupeKey);
+      return 0;
+    }
+    let content: Buffer;
+    try {
+      content = await renderMaterialReissuePoster(data);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.warn("补发申请图片生成失败，已跳过图片（文字已发送）：" + input.dedupeKey + " —— " + detail);
+      return 0;
+    }
+    const projectCode = data.snapshot.projectCode.replace(/[^A-Za-z0-9._-]+/gu, "-");
+    const result = await this.aibot.sendGroupImage({
+      chatid: input.chatid,
+      content,
+      fileName: "MATERIAL-" + projectCode + "-" + changeId.slice(0, 8) + ".png",
+      mime: "image/png",
+      groupActivated: input.groupActivated,
+    });
+    if (!result.ok) {
+      this.logger.warn(
+        "补发申请图片未送达（文字已发送）：" +
+          input.dedupeKey +
+          " · chatid " +
+          input.masked +
+          " —— " +
+          describeAibotFailure(result),
+      );
+      return result.attempts;
+    }
+    this.logger.log("补发申请图片已送达：" + input.dedupeKey + " · chatid " + input.masked);
     return result.attempts;
   }
 

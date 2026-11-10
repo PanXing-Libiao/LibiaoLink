@@ -1,5 +1,9 @@
 # database/ · 数据库基线（g3 · S5）
 
+> 物料变更补发（2026-11-09 · 待测试机部署）：`0084_material_reissue.sql` 为 `change_requests` 增加 `change_type`（默认 `file_change`）与 `material_reissue jsonb`，并用 CHECK 保证普通变更无补发载荷、补发变更必有载荷。存量行自动按普通变更回填，不改既有列、不复制文件版本。回滚语句见迁移头注；部署新版 API / worker 前先执行迁移。
+
+
+> 全站自定义成果类型（2026-11-06 · **高风险 DDL，请 wmj 复核** · CONTRIBUTING §15，本地未部署）：`0082_custom_task_deliverable_types.sql` 移除 `tasks.deliverable_types` 只允许内置十类的 CHECK，新增禁止空字符串元素的 CHECK；`0083_global_deliverable_types.sql` 只登记 `dict_types.deliverableType`，条目由项目经理新增并全站共享。不改列、不回填、内置十类数据不变。应用层按 1–50 字 trim / 去重并拒绝英文逗号 / 换行，自定义类型参与完成门禁。回滚前需清理自定义值，回滚语句见迁移头注。
 
 > CAD 二维（2026-10-26，本地未部署）：`0077_cad_dxf_input_sets.sql` 增加格式、逻辑路径、配套版本快照和输入集合摘要，扩展唯一键及仅 DXF 的 `partial` 约束。`0078_cad_format_version.sql` 按 ADR-041 增加 `format_version` 并把产物唯一键从 `engine_version` 拆到格式版本；旧行回填旧 bundle 字符串，首次访问新格式时重建。`0079_cad_dwg_format.sql` 将 `DWG` 加入 `cad_artifacts` 格式约束：DWG 只接受主图、无配套文件、允许带明确损失说明的 `partial`。先停止旧 API/worker，再依次迁移并同步升级。回滚不能只换旧镜像，须协调清理可重建 CAD 派生索引/对象并恢复旧唯一约束；保留 STEP 和源版本。见 [ADR-040](../docs/adr/ADR-040-DXF二维与配套输入集合.md) 与 [ADR-041](../docs/adr/ADR-041-CAD版本拆分与缓存键.md)。
 
@@ -89,7 +93,7 @@ PostgreSQL 基线的唯一来源：只追加的迁移脚本、最小权限角色
 | `seeds/roles.mjs` / `seeds/index.mjs` | 种子 #6a：一期六个内置角色（h1 · Push 74）；index 为按序注册表，新种子追加到末尾 |
 | `seeds/blueprint.mjs` | 种子 #7：default 蓝图模板（9 阶段 19 节点 + 版本 1，h3 · Push 83）；节点清单待业务补全，库内已修订时不覆盖 |
 | `seeds/role-permissions.mjs` | 种子 #6b：六角色 × 权限位矩阵（h6 · Push 95，h8 补 `calendar.manage`，M6-01 ~ M6-03 补 `report.view` / `report.fill` / `issue.view` / `issue.manage`（Push 155 · 27 → 31 键）；键唯一来源 = 契约 `PERMISSION_KEYS`，移除键会删除 —— 权限吊销必须生效） |
-| `seeds/dicts.mjs` | 种子 #5：地区 **201 国标准清单**（Push 314 · 业务回执 2026-10-14 后由 8 条区域占位改口径；与 `frontend/src/data/worldMap.ts` 同源）+ 项目类型 3 项（h7 · Push 97；metadata 带 continent / accent / accentText，幂等、不覆盖库内已修订值、不删除） |
+| `seeds/dicts.mjs` | 种子 #5：地区 **201 国标准清单**（Push 314 · 业务回执 2026-10-14 后由 8 条区域占位改口径；与 `frontend/src/data/worldMap.ts` 同源）+ 项目类型 3 项 + `deliverableType` 空类型（h7 · Push 97；metadata 带 continent / accent / accentText，幂等、不覆盖库内已修订值、不删除） |
 | `seeds/task-nodes.mjs` | 种子 #8：任务节点库九阶段 52 条（售前 4 / 设计 5 / 采购 3 / 组装 6 / 实施 26 / 部署 4 / 试运行 2 / 生产 1 / 验收 1；Push 181；从原前端预设 `templatePresets.ts` 抽出，`seq = (序号+1)×10`，幂等可重跑、不覆盖库内已修订行） |
 | `seeds/demo-projects.mjs` | 种子 #11（**可选**）：演示数据 —— 项目空间 + 地图「地区分布」（Push 189：地区 41 项 + 演示项目 100 个）；`optional = true` → 整跑默认跳过，`--only=demo-projects` / `--with-optional` 显式播；项目经理按用户名解析、缺账号退兜底并报 `managerFallback`，幂等、不覆盖库内改动 |
 | `seeds/task-templates.mjs` | 种子 #9：任务模板九阶段 10 套（Push 182；源 = 原前端预设 `STAGE_TEMPLATE_PRESETS`；硬件实施两套 18 / 11 条、软件部署一套 4 条，其余阶段各一套；节点按「同阶段 + 同名」解析节点库 id、解析不到计 `skippedNodes`；`created_at` 按清单顺序**倒排**（列表按 `created_at` 倒序读，业务清单第一套仍在最左）；按 `(stage_key, name)` 幂等跳过、不覆盖库内修订） |

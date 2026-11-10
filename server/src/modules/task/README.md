@@ -1,5 +1,7 @@
 # task 模块（h4 · S6·task：任务主表 / 五态派生 + 显式覆盖 / 进度聚合 / 完成门禁 / 批量操作 / 软删 / 锁定字段例外调整 / 节点库来源与模板实例化（M3-07 刀 3））
 
+> **2026-11-06 全站自定义输出成果类型（跨线代记，请 wmj 复核）**：`deliverableTypes` 接受内置十类之外的 1–50 字名称（不含英文逗号 / 换行）；服务端 trim、去空、首次出现保序去重，最多 20 项。候选名称由项目项目经理经 `POST /api/v1/projects/{id}/deliverable-types` 写入全站 `deliverableType` 字典，完成门禁、工作台读面与文件 `doc_type` 同步保留自定义值；数据库迁移 0082 移除内置十类 CHECK，0083 登记全站字典类型。
+
 | 字段 | 内容 |
 |---|---|
 | 类型 | 领域模块（domain） |
@@ -44,7 +46,7 @@
 
 > 口径来源：系统功能书 A4-20 / A2-10、ADR-024（成果文件多选与门禁）、技术设计v0.3 §3.4。
 
-- 契约：`GET /projects/{id}/tasks/{taskId}/can-complete`（预检：`canComplete` + `missing[]` + `warnings[]`）、`POST …/complete`（提交：`{ task, warnings }`）；错误码新增 422 `TASK_REQUIRED_DOC_MISSING`（缺件）与 409 `TASK_ALREADY_DONE`（重复提交）；`Task.deliverableTypes: DocType[]`（数组、服务端去重、空数组 = 不要求）。
+- 契约：`GET /projects/{id}/tasks/{taskId}/can-complete`（预检：`canComplete` + `missing[]` + `warnings[]`）、`POST …/complete`（提交：`{ task, warnings }`）；错误码新增 422 `TASK_REQUIRED_DOC_MISSING`（缺件）与 409 `TASK_ALREADY_DONE`（重复提交）；`Task.deliverableTypes: DeliverableType[]`（内置十类或全站自定义名称、服务端 trim / 去重、空数组 = 不要求）。
 - 判定来源（ADR-024 · 2026-10-29 业务口径）：合并节点 `node_requirements.required_doc` 与任务自身 `deliverable_types`，**配置了成果类型才要求上传**；未配置成果类型不要求文件。每类默认至少 1 份，节点要求的 `min_count` 优先取较大值。上传口径 = `files.status ∈ (draft, final, changed)` 且 `current_version_id` 非空；统计范围 = 任务直接上传文件或直接挂所属节点的文件（回收站不计）。
 - 三入口一致（A4-20）：完成提交（`POST …/complete`）与 `PATCH …/{taskId}`（`status=done`）、`PATCH …/progress`（`progress=1`）在**事务内走同一门禁判定**；已配置成果类型但缺上传文件一律 422 + `missing[]`（`details[].code = required_doc`）且不部分生效（乐观锁校验在前、写库在后）。
 - 完成事件统一（2026-10-19）：上述入口及批量状态完成在任务**首次进入 done**（含 `early_done` 覆盖）时统一写 `task.completed`（同版本幂等键，与完成提交同载荷）；已完成后编辑其他字段不重复发。R02 因此不再依赖单一完成提交入口。
@@ -85,7 +87,7 @@
 
 - 端点与权限：`PATCH /projects/{id}/tasks/{taskId}/locked-fields`（body `TaskLockedFieldsAdjustBody` = `version` + `reason` + 可选 `title` / `titleEn` / `deliverableTypes`）；控制器 `@RequirePermission(task.update)` 只作项目上下文门禁，**服务端 `assertAdmin` 复核（仅部门权限管理员 `groupAccessAdmin`，非管理员 403）** —— 与手工创建任务同口径（A1-13），不再读取遗留 `roleCodes`。
 - 锁定范围：`title`（任务描述）/ `titleEn`；`deliverableTypes` 2026-10-08 起常规编辑开放（常规 `PATCH …/{taskId}` 可带、去重保序；本端点 body 该字段保留 —— 例外修正通道不动）；本端点与批量 `PATCH …/batch` 均不含这三项（**Push 196 例外 / Push 197 收窄**：仅**未归入阶段**的临时任务（`stage_key` 为空且无来源节点）可在常规编辑 `PATCH …/{taskId}` 里直接改 `title` / `titleEn` —— 面向的是「手工输入、非模板生成、也未挂施工阶段」的任务；**阶段任务**（`stageKey` 非空）与节点 / 模板生成的任务保持锁定）；**「阶段性里程」一期 tasks 表无对应列**（A1-17 映射修订），本期不开放（差异登记见本 README 边界段与系统功能书）。
-- 校验：至少一个实际变化（同值 / 空调整 → 400 `VALIDATION_FAILED`，防止刷留痕）；`deliverableTypes` 走 `normalizeDocTypes`（字典内、首次出现去重保序）；乐观锁 409 `VERSION_CONFLICT`；归档项目 409 `PROJECT_ARCHIVED`；不存在 / 跨项目 / 已软删统一 404。
+- 校验：至少一个实际变化（同值 / 空调整 → 400 `VALIDATION_FAILED`，防止刷留痕）；`deliverableTypes` 走 `normalizeDocTypes`（trim 去空、内置与自定义均保留、首次出现去重保序）；乐观锁 409 `VERSION_CONFLICT`；归档项目 409 `PROJECT_ARCHIVED`；不存在 / 跨项目 / 已软删统一 404。
 - 留痕（A1-17 / C9-07）：审计 `action=update`（changes = 锁定字段 before → after；metadata = { reason, kind: locked_field_exception, adminOnly: true, fields }）+ outbox `task.locked_fields_adjusted`（dedupeKey = `task.locked_fields_adjusted:{taskId}:{version}`，payload = projectId / taskId / fields / reason / actorId / at）+ touch 项目 `updated_at`；**不写 `task_events`**（四值闭集）。
 - 门禁联动：`deliverableTypes` 修正后即刻成为**无节点任务**的完成门禁依据（有节点任务仍以节点 `node_requirements` 为准，ADR-024）。
 - 单测：`test/task-locked-fields.test.ts` 8 例（管理员改 title + deliverableTypes → 落库 / 版本 +1 / 审计含原因 / outbox / touch / 不写 task_events / 非管理员 403 且无留痕 / 空调整 400 / 乐观锁 409 / 归档 409 / 不存在与跨项目与已软删 404 / 去重与非法值过滤 + 门禁联动 / titleEn 清空）。

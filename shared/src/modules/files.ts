@@ -8,7 +8,7 @@ import {
   VersionSchema,
   paginated,
 } from "../common/conventions.ts";
-import { ChangeStatusSchema, DocTypeSchema, FileStatusSchema, StageKeySchema } from "../common/dicts.ts";
+import { ChangeStatusSchema, DeliverableTypeSchema, FileStatusSchema, StageKeySchema } from "../common/dicts.ts";
 
 /**
  * 文件与变更契约（v0.2 §5.1-5.3；系统功能书 A4-01~A4-18 / D2 的接口面）。
@@ -60,7 +60,7 @@ export const FileSchema = z
     projectId: UuidSchema,
     nodeId: UuidSchema.nullable(),
     taskId: UuidSchema.nullable(),
-    docType: DocTypeSchema.nullable().openapi({ description: "成果文件类型（十类字典）；普通附件为空" }),
+    docType: DeliverableTypeSchema.nullable().openapi({ description: "成果文件类型（内置十类或全站自定义类型）；普通附件为空" }),
     name: z.string().openapi({ example: "机械设计图纸-v2.docx", description: "原文件名（含中文，保留在元数据）" }),
     status: FileStatusSchema,
     currentVersionId: UuidSchema.nullable(),
@@ -80,12 +80,152 @@ export const FileDetailSchema = FileSchema.extend({
   currentVersion: FileVersionSchema.nullable(),
 }).openapi("FileDetail", { description: "文件详情（含当前版本；版本链走 /files/{id}/versions）" });
 
+export const ChangeTypeSchema = z.enum(["file_change", "material_reissue"]).openapi("ChangeType", {
+  description: "变更类型：file_change = 目标文件变更（现有文件新版本）；material_reissue = 物料变更补发（线上补发单 + 自动生成 DOCX）",
+});
+
+/** 补发类别（与业务现有《补发/补货申请表》一致；线上提交用代码值，DOCX / 读面统一显示中文标签）。 */
+export const MATERIAL_REISSUE_REASON_OPTIONS = [
+  { value: "missing_list", label: "设备清单/机械清单漏出" },
+  { value: "transport_damage", label: "运输过程损坏" },
+  { value: "warehouse_shortage", label: "仓库漏发" },
+  { value: "customer_misoperation", label: "客户误操作损坏" },
+  { value: "customer_change", label: "客户需求变更" },
+  { value: "warranty_damage", label: "物料损坏质保期内" },
+  { value: "out_of_warranty_damage", label: "物料损坏质保期外" },
+  { value: "research_upgrade", label: "产品研发升级更换" },
+  { value: "other", label: "其他" },
+] as const;
+
+export const MATERIAL_REISSUE_APPLICATION_DEPARTMENT_OPTIONS = [
+  { value: "project", label: "项目部" },
+  { value: "after_sales", label: "售后部" },
+  { value: "other", label: "其他" },
+] as const;
+
+export const MATERIAL_REISSUE_RESPONSIBLE_DEPARTMENT_OPTIONS = [
+  { value: "project", label: "项目部" },
+  { value: "after_sales", label: "售后部" },
+  { value: "warehouse", label: "仓库" },
+  { value: "research", label: "研发" },
+  { value: "customer", label: "客户" },
+  { value: "supplier", label: "供应商" },
+  { value: "other", label: "其他" },
+] as const;
+
+export const MATERIAL_REISSUE_FREIGHT_OPTIONS = [
+  { value: "customer", label: "客户" },
+  { value: "libiao", label: "立镖" },
+  { value: "with_other_goods", label: "随其他货物一并发出" },
+  { value: "carried_by_staff", label: "立镖人员带过去" },
+] as const;
+
+export const MaterialReissueReasonSchema = z
+  .enum([
+    "missing_list",
+    "transport_damage",
+    "warehouse_shortage",
+    "customer_misoperation",
+    "customer_change",
+    "warranty_damage",
+    "out_of_warranty_damage",
+    "research_upgrade",
+    "other",
+  ])
+  .openapi("MaterialReissueReason", { description: "补发类别（原因选题）" });
+export const MaterialReissueApplicationDepartmentSchema = z
+  .enum(["project", "after_sales", "other"])
+  .openapi("MaterialReissueApplicationDepartment", { description: "申请部门（模板仅项目部 / 售后部 / 其他）" });
+export const MaterialReissueDepartmentSchema = z
+  .enum(["project", "after_sales", "warehouse", "research", "customer", "supplier", "other"])
+  .openapi("MaterialReissueDepartment", { description: "责任归属部门" });
+export const MaterialReissueFreightSchema = z
+  .enum(["customer", "libiao", "with_other_goods", "carried_by_staff"])
+  .openapi("MaterialReissueFreight", { description: "运费承担方式" });
+export const MaterialReissueApprovalSchema = z
+  .enum(["yes", "no", "not_applicable"])
+  .openapi("MaterialReissueApproval", { description: "是否已审批：yes / no / not_applicable" });
+
+export const MaterialReissueLineSchema = z
+  .object({
+    materialCode: z.string().trim().max(80).openapi({ description: "物料编码（可空）" }),
+    materialName: z.string().trim().min(1).max(200).openapi({ description: "物料名称" }),
+    specification: z.string().trim().max(200).openapi({ description: "规格型号（可空）" }),
+    quantity: z.number().positive().max(1_000_000).openapi({ description: "数量（> 0）" }),
+    unit: z.string().trim().min(1).max(20).openapi({ description: "单位" }),
+    remark: z.string().trim().max(200).openapi({ description: "备注（可空）" }),
+  })
+  .openapi("MaterialReissueLine", { description: "补发物料清单行" });
+
+export const MaterialReissueBodySchema = z
+  .object({
+    emailTitle: z
+      .string()
+      .trim()
+      .min(1)
+      .max(500)
+      .optional()
+      .openapi({ description: "邮件标题（可修改；缺省按项目编号 / 名称生成）" }),
+    customerName: z
+      .string()
+      .trim()
+      .max(200)
+      .optional()
+      .openapi({ description: "客户名称（可修改；提交时固化，不回写项目主数据）" }),
+    reason: MaterialReissueReasonSchema,
+    reasonOther: z.string().trim().max(100).optional().openapi({ description: "补发类别 = other 时必填" }),
+    applicationDepartment: MaterialReissueApplicationDepartmentSchema,
+    applicationDepartmentOther: z.string().trim().max(100).optional().openapi({ description: "申请部门 = other 时必填" }),
+    accepted: z.boolean().openapi({ description: "是否已验收" }),
+    inWarranty: z.boolean().openapi({ description: "是否质保期内" }),
+    freeReissue: z.boolean().openapi({ description: "是否免费补发" }),
+    approved: MaterialReissueApprovalSchema,
+    responsibleDepartment: MaterialReissueDepartmentSchema,
+    responsibleDepartmentOther: z.string().trim().max(100).optional().openapi({ description: "责任归属部门 = other 时必填" }),
+    requiredOutDate: z.iso.date().openapi({ description: "要求出库时间（YYYY-MM-DD）" }),
+    oldPartReturn: z.boolean().openapi({ description: "是否涉及旧件返还" }),
+    freightBearer: MaterialReissueFreightSchema,
+    recipient: z.string().trim().min(1).max(80).openapi({ description: "收货人" }),
+    phone: z.string().trim().min(1).max(40).openapi({ description: "联系电话" }),
+    address: z.string().trim().min(1).max(500).openapi({ description: "收货地址" }),
+    description: z.string().trim().min(1).max(2000).openapi({ description: "补发原因简述" }),
+    materials: z.array(MaterialReissueLineSchema).min(1).max(200).openapi({ description: "补发物料清单（至少 1 行）" }),
+  })
+  .openapi("MaterialReissueBody", { description: "物料变更补发表单（仿现有《补发/补货申请表》）" });
+
+export const CreateMaterialReissueBodySchema = MaterialReissueBodySchema.extend({
+  taskId: UuidSchema.openapi({ description: "来源任务（变更记录回写该任务）" }),
+}).openapi("CreateMaterialReissueBody");
+
+export const MaterialReissueSnapshotSchema = MaterialReissueBodySchema.extend({
+  taskId: UuidSchema,
+  taskTitle: z.string(),
+  projectCode: z.string(),
+  projectName: z.string(),
+  customerName: z.string().nullable(),
+  applicantName: z.string(),
+}).openapi("MaterialReissueSnapshot", { description: "提交时的表单快照（项目 / 任务 / 申请人信息自动带入并随变更记录固化）" });
+
+export type ChangeType = z.infer<typeof ChangeTypeSchema>;
+export type MaterialReissueReason = z.infer<typeof MaterialReissueReasonSchema>;
+export type MaterialReissueApplicationDepartment = z.infer<typeof MaterialReissueApplicationDepartmentSchema>;
+export type MaterialReissueDepartment = z.infer<typeof MaterialReissueDepartmentSchema>;
+export type MaterialReissueFreight = z.infer<typeof MaterialReissueFreightSchema>;
+export type MaterialReissueApproval = z.infer<typeof MaterialReissueApprovalSchema>;
+export type MaterialReissueLine = z.infer<typeof MaterialReissueLineSchema>;
+export type MaterialReissueBody = z.infer<typeof MaterialReissueBodySchema>;
+export type CreateMaterialReissueBody = z.infer<typeof CreateMaterialReissueBodySchema>;
+export type MaterialReissueSnapshot = z.infer<typeof MaterialReissueSnapshotSchema>;
+export type MaterialReissueResult = z.infer<typeof MaterialReissueResultSchema>;
+
 export const ChangeRequestSchema = z
   .object({
     id: UuidSchema,
     projectId: UuidSchema,
     nodeId: UuidSchema.nullable(),
     stageKey: StageKeySchema.nullable().openapi({ description: "变更阶段（九阶段字典）" }),
+    changeType: ChangeTypeSchema.openapi({ description: "变更类型：普通文件变更 / 物料变更补发" }),
+    materialReissue: MaterialReissueSnapshotSchema.nullable().openapi({ description: "物料变更补发表单快照；普通文件变更为 null" }),
     reason: z.string().openapi({ description: "变更原因（必填）" }),
     beforeSummary: z.string().nullable().openapi({ description: "变更前摘要" }),
     afterSummary: z.string().nullable().openapi({ description: "变更后摘要" }),
@@ -127,6 +267,14 @@ export const ChangeRequestListQuerySchema = z
 
 export const ChangeRequestListResponseSchema = paginated(ChangeRequestSchema).openapi("ChangeRequestListResponse");
 
+export const MaterialReissueResultSchema = z
+  .object({
+    changeRequest: ChangeRequestSchema,
+    file: FileSchema,
+    version: FileVersionSchema,
+  })
+  .openapi("MaterialReissueResult", { description: "物料变更补发提交结果：变更记录 + 自动生成的 DOCX 项目文件" });
+
 export const ChangeIntentBodySchema = z
   .object({
     reason: z.string().min(1).max(1000).openapi({ description: "变更原因（必填；无变更后文件不允许提交）" }),
@@ -152,7 +300,7 @@ const UploadCreateBaseSchema = z.object({
   contentHash: Sha256Schema.optional().openapi({
     description: "客户端计算的内容哈希；附件上传（未给 taskId / nodeId / docType）命中同项目既有同内容附件时直接秒传复用（reused=true、upload=null，不建新文件 / 会话）；其余命中返回 duplicateHint（A4-04，提示后可确认继续）；complete 时必须回传",
   }),
-  docType: DocTypeSchema.optional(),
+  docType: DeliverableTypeSchema.optional(),
   nodeId: UuidSchema.optional(),
   taskId: UuidSchema.optional(),
 });
@@ -464,7 +612,7 @@ export const FileListQuerySchema = z
     "filter[nodeId]": UuidSchema.optional(),
     "filter[taskId]": UuidSchema.optional(),
     "filter[status]": z.string().optional().openapi({ description: "文件状态（多值逗号分隔）：draft / final / changed / archived / recycled" }),
-    "filter[docType]": z.string().optional().openapi({ description: "成果文件类型（多值逗号分隔，取值见 DocType 字典）" }),
+    "filter[docType]": z.string().optional().openapi({ description: "成果文件类型（多值逗号分隔；内置十类或全站自定义类型）" }),
     "filter[uploadedBy]": UuidSchema.optional(),
     q: z.string().optional().openapi({ description: "关键字（文件名）" }),
     page: PageQuerySchema.shape.page,
