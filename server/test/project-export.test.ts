@@ -122,6 +122,12 @@ function headersOf(sheet: ExcelJS.Worksheet): unknown[] {
   return Array.from({ length: sheet.columnCount }, (_value, index) => sheet.getCell(1, index + 1).value);
 }
 
+function arrayBufferOf(bytes: Buffer): ArrayBuffer {
+  const copy = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(copy).set(bytes);
+  return copy;
+}
+
 function loaderFor(images: ReadonlyMap<string, ExportImage>) {
   return async (refs: readonly ExportPhotoRef[]) => new Map(
     refs.flatMap((ref) => {
@@ -660,7 +666,7 @@ describe("项目导出的命名与请求边界", () => {
     const service = new ProjectExportService(
       { getProject: vi.fn().mockResolvedValue({ id: PROJECT_ID, code: "LBGW-1", name: "英国项目", managerIds: [], managerNames: [] }) } as never,
       { list } as never,
-      { list } as never,
+      { list, countForExport: vi.fn().mockResolvedValue(0) } as never,
       { list } as never,
       { listProjectChanges: list } as never,
       { list } as never,
@@ -685,5 +691,148 @@ describe("项目导出的命名与请求边界", () => {
     expect(audit.record).toHaveBeenCalledOnce();
     await result.cleanup();
     await expect(access(result.filePath)).rejects.toBeTruthy();
+  });
+
+  it("stream 模式日报只按总数读取一次，并保持问题归属与孤立问题顺序", async () => {
+    const logSpy = vi.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+    onTestFinished(() => logSpy.mockRestore());
+    const reportA = "22222222-2222-4222-8222-222222222221";
+    const reportB = "22222222-2222-4222-8222-222222222222";
+    const missingReport = "22222222-2222-4222-8222-222222222229";
+    const authorId = "11111111-1111-4111-8111-111111111111";
+    const report = (id: string, date: string, state: string, doneWork: string, createdAt: string) => ({
+      id,
+      projectId: PROJECT_ID,
+      authorId,
+      authorName: "张工",
+      date,
+      state,
+      headcount: 2,
+      doneWork,
+      plan: null,
+      foundIssue: null,
+      issueCategories: [],
+      suggestion: null,
+      stageKeys: [],
+      stageNames: [],
+      photos: [],
+      issuePhotos: [],
+      submittedAt: state === "draft" ? null : createdAt,
+      createdAt,
+      updatedAt: createdAt,
+      version: 1,
+    });
+    const issue = (id: string, title: string, sourceReportId: string | null, raisedAt: string, createdAt: string) => ({
+      id,
+      projectId: PROJECT_ID,
+      taskId: null,
+      sourceReportId,
+      title,
+      categories: ["客户原因"],
+      state: "open",
+      reporterId: authorId,
+      reporterName: "张工",
+      ownerDepartment: null,
+      ownerId: null,
+      ownerName: null,
+      raisedAt,
+      solution: null,
+      photos: [],
+      closedBy: null,
+      closedAt: null,
+      createdAt,
+      updatedAt: createdAt,
+      version: 1,
+    });
+    const reports = [
+      report(reportB, "2026-11-02", "submitted", "B 日进度", "2026-11-02T01:00:00.000Z"),
+      report(reportA, "2026-11-01", "draft", "A 日进度", "2026-11-01T01:00:00.000Z"),
+    ];
+    const issues = [
+      issue("33333333-3333-4333-8333-333333333332", "A-第二", reportA, "2026-11-01", "2026-11-01T02:00:00.000Z"),
+      issue("33333333-3333-4333-8333-333333333331", "A-第一", reportA, "2026-11-01", "2026-11-01T01:00:00.000Z"),
+      issue("33333333-3333-4333-8333-333333333339", "来源缺失", missingReport, "2026-10-31", "2026-10-31T01:00:00.000Z"),
+      issue("33333333-3333-4333-8333-333333333340", "手工孤立", null, "2026-10-30", "2026-10-30T01:00:00.000Z"),
+    ];
+    const makeMocks = () => {
+      const emptyPage = { items: [], page: 1, limit: 200, total: 0 };
+      const emptyList = vi.fn().mockResolvedValue(emptyPage);
+      const reportList = vi.fn(async (_projectId: string, _query: { page: number; limit: number }) => ({
+        items: reports,
+        page: 1,
+        limit: 200,
+        total: reports.length,
+      }));
+      const issueList = vi.fn(async (_projectId: string, _query: { page: number; limit: number }) => ({
+        items: issues,
+        page: 1,
+        limit: 200,
+        total: issues.length,
+      }));
+      const countForExport = vi.fn().mockResolvedValue(reports.length);
+      const audit = { record: vi.fn().mockResolvedValue(undefined) };
+      return { emptyList, reportList, issueList, countForExport, audit };
+    };
+    const makeService = (mode: "legacy" | "stream", mocks: ReturnType<typeof makeMocks>) => new ProjectExportService(
+      { getProject: vi.fn().mockResolvedValue({ id: PROJECT_ID, code: "LBGW-1", name: "英国项目", managerIds: [], managerNames: [] }) } as never,
+      { list: mocks.emptyList } as never,
+      { list: mocks.reportList, countForExport: mocks.countForExport } as never,
+      { list: mocks.issueList } as never,
+      { listProjectChanges: mocks.emptyList } as never,
+      { list: mocks.emptyList } as never,
+      { listProjectFiles: mocks.emptyList, listExportFileRefs: vi.fn().mockResolvedValue(new Map()) } as never,
+      { listUsers: mocks.emptyList } as never,
+      { can: vi.fn().mockResolvedValue(true) } as never,
+      mocks.audit as never,
+      { db: {} } as never,
+      {} as never,
+      { env: { PROJECT_EXPORT_MODE: mode } } as never,
+    );
+
+    const legacyMocks = makeMocks();
+    const legacy = await makeService("legacy", legacyMocks).exportProject(PROJECT_ID, authorId, "https://pm.libiaorobot.com");
+    expect(legacy.kind).toBe("buffer");
+    if (legacy.kind !== "buffer") throw new Error("预期内存结果");
+
+    const streamMocks = makeMocks();
+    const stream = await makeService("stream", streamMocks).exportProject(PROJECT_ID, authorId, "https://pm.libiaorobot.com");
+    expect(stream.kind).toBe("file");
+    if (stream.kind !== "file") throw new Error("预期文件结果");
+    try {
+      expect(streamMocks.countForExport).toHaveBeenCalledOnce();
+      expect(streamMocks.reportList).toHaveBeenCalledOnce();
+      expect(streamMocks.reportList).toHaveBeenCalledWith(PROJECT_ID, { page: 1, limit: 200 });
+      expect(streamMocks.issueList).toHaveBeenCalledOnce();
+      expect(stream.reportCount).toBe(legacy.reportCount);
+      expect(stream.reportCount).toBe(4);
+
+      const legacyWorkbook = new ExcelJS.Workbook();
+      await legacyWorkbook.xlsx.load(arrayBufferOf(legacy.buffer));
+      const streamWorkbook = new ExcelJS.Workbook();
+      await streamWorkbook.xlsx.load(arrayBufferOf(await readFile(stream.filePath)));
+      const rowsOf = (workbook: ExcelJS.Workbook) => {
+        const sheet = workbook.getWorksheet("日报及问题汇总")!;
+        return Array.from({ length: sheet.actualRowCount - 1 }, (_value, index) => (
+          Array.from({ length: 11 }, (_cell, column) => sheet.getCell(index + 2, column + 1).value ?? "")
+        ));
+      };
+      const legacyRows = rowsOf(legacyWorkbook);
+      const streamRows = rowsOf(streamWorkbook);
+      expect(streamRows).toEqual(legacyRows);
+      expect(streamRows.map((row) => row[0])).toEqual([
+        "2026年11月1日（草稿）",
+        "2026年11月2日",
+        "2026年10月30日",
+        "2026年10月31日",
+      ]);
+      expect(streamRows.map((row) => row[5])).toEqual([
+        "1 A-第二\n2 A-第一",
+        "",
+        "1 手工孤立",
+        "1 来源缺失",
+      ]);
+    } finally {
+      await stream.cleanup();
+    }
   });
 });

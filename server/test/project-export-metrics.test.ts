@@ -30,7 +30,7 @@ function createEmptyPageService(mode: "legacy" | "stream"): ProjectExportService
   return new ProjectExportService(
     { getProject: vi.fn().mockResolvedValue({ id: PROJECT_ID, code: "LBGW-1", name: "指标测试项目", managerIds: [], managerNames: [] }) } as never,
     { list } as never,
-    { list } as never,
+    { list, countForExport: vi.fn().mockResolvedValue(0) } as never,
     { list } as never,
     { listProjectChanges: list } as never,
     { list } as never,

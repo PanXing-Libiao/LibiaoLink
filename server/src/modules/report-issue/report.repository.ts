@@ -110,6 +110,15 @@ export class ReportRepository {
     return { rows: rows as DailyReportRow[], total: counted[0]?.total ?? 0 };
   }
 
+  /** 导出专用总数：只读 count，不加载日报正文或提交人信息。 */
+  async countForExport(projectId: string, client: DbClient = this.database.db): Promise<number> {
+    const counted = await client
+      .select({ total: sql<number>`count(*)::int` })
+      .from(dailyReports)
+      .where(eq(dailyReports.projectId, projectId));
+    return counted[0]?.total ?? 0;
+  }
+
   async findById(projectId: string, reportId: string, client: DbClient = this.database.db): Promise<DailyReportRow | null> {
     const rows = await client
       .select(REPORT_COLUMNS)
