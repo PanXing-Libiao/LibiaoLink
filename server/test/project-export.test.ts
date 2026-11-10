@@ -522,6 +522,8 @@ describe("项目 Excel + 附件 ZIP", () => {
     const emptyPage = { items: [], page: 1, limit: 200, total: 0 };
     const emptyList = vi.fn().mockResolvedValue(emptyPage);
     const reportList = vi.fn().mockResolvedValue({ items: [report], page: 1, limit: 200, total: 1 });
+    const emptyItems = vi.fn().mockResolvedValue([]);
+    const zero = vi.fn().mockResolvedValue(0);
     const refs = new Map([
       ["file-report", { id: "file-report", name: "现场.png", mime: "image/png", sizeBytes: PNG.byteLength, objectKey: "objects/report.png" }],
     ]);
@@ -532,13 +534,27 @@ describe("项目 Excel + 附件 ZIP", () => {
     const audit = { record: vi.fn().mockResolvedValue(undefined) };
     const service = new ProjectExportService(
       { getProject: vi.fn().mockResolvedValue({ id: PROJECT_ID, code: "LBGW-1", name: "英国项目", managerIds: [], managerNames: [] }) } as never,
-      { list: emptyList } as never,
-      { list: reportList } as never,
-      { list: emptyList } as never,
-      { listProjectChanges: emptyList } as never,
-      { list: emptyList } as never,
-      { listProjectFiles: emptyList, listExportFileRefs: vi.fn().mockResolvedValue(refs) } as never,
-      { listUsers: emptyList } as never,
+      { list: emptyList, countForExport: zero, listForExport: emptyItems } as never,
+      {
+        list: reportList,
+        countForExport: vi.fn().mockResolvedValue(1),
+        listForExport: vi.fn().mockResolvedValue([report]),
+      } as never,
+      { list: emptyList, countForExport: zero, listForExport: emptyItems } as never,
+      { listProjectChanges: emptyList, countProjectChangesForExport: zero, listProjectChangesForExport: emptyItems } as never,
+      {
+        list: emptyList,
+        countForExport: zero,
+        listForExport: emptyItems,
+        prepareExportContext: vi.fn().mockResolvedValue({}),
+      } as never,
+      {
+        listProjectFiles: emptyList,
+        countProjectFilesForExport: zero,
+        listProjectFilesForExport: emptyItems,
+        listExportFileRefs: vi.fn().mockResolvedValue(refs),
+      } as never,
+      { listUsers: emptyList, countForExport: zero, listForExport: emptyItems } as never,
       { can: vi.fn().mockResolvedValue(true) } as never,
       audit as never,
       { db: {} } as never,
@@ -662,16 +678,27 @@ describe("项目导出的命名与请求边界", () => {
   it("stream 模式经服务返回临时文件，并在交付清理钩子后删除目录", async () => {
     const emptyPage = { items: [], page: 1, limit: 200, total: 0 };
     const list = vi.fn().mockResolvedValue(emptyPage);
+    const emptyItems = vi.fn().mockResolvedValue([]);
+    const zero = vi.fn().mockResolvedValue(0);
     const audit = { record: vi.fn().mockResolvedValue(undefined) };
     const service = new ProjectExportService(
       { getProject: vi.fn().mockResolvedValue({ id: PROJECT_ID, code: "LBGW-1", name: "英国项目", managerIds: [], managerNames: [] }) } as never,
-      { list } as never,
-      { list, countForExport: vi.fn().mockResolvedValue(0) } as never,
-      { list } as never,
-      { listProjectChanges: list } as never,
-      { list } as never,
-      { listProjectFiles: list } as never,
-      { listUsers: list } as never,
+      { list, countForExport: zero, listForExport: emptyItems } as never,
+      { list, countForExport: zero, listForExport: emptyItems } as never,
+      { list, countForExport: zero, listForExport: emptyItems } as never,
+      { listProjectChanges: list, countProjectChangesForExport: zero, listProjectChangesForExport: emptyItems } as never,
+      {
+        list,
+        countForExport: zero,
+        listForExport: emptyItems,
+        prepareExportContext: vi.fn().mockResolvedValue({}),
+      } as never,
+      {
+        listProjectFiles: list,
+        countProjectFilesForExport: zero,
+        listProjectFilesForExport: emptyItems,
+      } as never,
+      { listUsers: list, countForExport: zero, listForExport: emptyItems } as never,
       { can: vi.fn().mockResolvedValue(true) } as never,
       audit as never,
       { db: {} } as never,
@@ -757,6 +784,7 @@ describe("项目导出的命名与请求边界", () => {
     const makeMocks = () => {
       const emptyPage = { items: [], page: 1, limit: 200, total: 0 };
       const emptyList = vi.fn().mockResolvedValue(emptyPage);
+      const emptyItems = vi.fn().mockResolvedValue([]);
       const reportList = vi.fn(async (_projectId: string, _query: { page: number; limit: number }) => ({
         items: reports,
         page: 1,
@@ -769,19 +797,48 @@ describe("项目导出的命名与请求边界", () => {
         limit: 200,
         total: issues.length,
       }));
+      const reportListForExport = vi.fn().mockResolvedValue(reports);
+      const issueListForExport = vi.fn().mockResolvedValue(issues);
       const countForExport = vi.fn().mockResolvedValue(reports.length);
+      const issueCountForExport = vi.fn().mockResolvedValue(issues.length);
+      const zero = vi.fn().mockResolvedValue(0);
       const audit = { record: vi.fn().mockResolvedValue(undefined) };
-      return { emptyList, reportList, issueList, countForExport, audit };
+      return {
+        emptyList,
+        emptyItems,
+        reportList,
+        reportListForExport,
+        issueList,
+        issueListForExport,
+        countForExport,
+        issueCountForExport,
+        zero,
+        audit,
+      };
     };
     const makeService = (mode: "legacy" | "stream", mocks: ReturnType<typeof makeMocks>) => new ProjectExportService(
       { getProject: vi.fn().mockResolvedValue({ id: PROJECT_ID, code: "LBGW-1", name: "英国项目", managerIds: [], managerNames: [] }) } as never,
-      { list: mocks.emptyList } as never,
-      { list: mocks.reportList, countForExport: mocks.countForExport } as never,
-      { list: mocks.issueList } as never,
-      { listProjectChanges: mocks.emptyList } as never,
-      { list: mocks.emptyList } as never,
-      { listProjectFiles: mocks.emptyList, listExportFileRefs: vi.fn().mockResolvedValue(new Map()) } as never,
-      { listUsers: mocks.emptyList } as never,
+      { list: mocks.emptyList, countForExport: mocks.zero, listForExport: mocks.emptyItems } as never,
+      { list: mocks.reportList, countForExport: mocks.countForExport, listForExport: mocks.reportListForExport } as never,
+      { list: mocks.issueList, countForExport: mocks.issueCountForExport, listForExport: mocks.issueListForExport } as never,
+      {
+        listProjectChanges: mocks.emptyList,
+        countProjectChangesForExport: mocks.zero,
+        listProjectChangesForExport: mocks.emptyItems,
+      } as never,
+      {
+        list: mocks.emptyList,
+        countForExport: mocks.zero,
+        listForExport: mocks.emptyItems,
+        prepareExportContext: vi.fn().mockResolvedValue({}),
+      } as never,
+      {
+        listProjectFiles: mocks.emptyList,
+        countProjectFilesForExport: mocks.zero,
+        listProjectFilesForExport: mocks.emptyItems,
+        listExportFileRefs: vi.fn().mockResolvedValue(new Map()),
+      } as never,
+      { listUsers: mocks.emptyList, countForExport: mocks.zero, listForExport: mocks.emptyItems } as never,
       { can: vi.fn().mockResolvedValue(true) } as never,
       mocks.audit as never,
       { db: {} } as never,
@@ -800,9 +857,9 @@ describe("项目导出的命名与请求边界", () => {
     if (stream.kind !== "file") throw new Error("预期文件结果");
     try {
       expect(streamMocks.countForExport).toHaveBeenCalledOnce();
-      expect(streamMocks.reportList).toHaveBeenCalledOnce();
-      expect(streamMocks.reportList).toHaveBeenCalledWith(PROJECT_ID, { page: 1, limit: 200 });
-      expect(streamMocks.issueList).toHaveBeenCalledOnce();
+      expect(streamMocks.reportListForExport).toHaveBeenCalledOnce();
+      expect(streamMocks.reportListForExport).toHaveBeenCalledWith(PROJECT_ID, { page: 1, limit: 1_000 });
+      expect(streamMocks.issueListForExport).toHaveBeenCalledOnce();
       expect(stream.reportCount).toBe(legacy.reportCount);
       expect(stream.reportCount).toBe(4);
 
@@ -834,5 +891,161 @@ describe("项目导出的命名与请求边界", () => {
     } finally {
       await stream.cleanup();
     }
+  });
+
+  it("导出内部按 1,000 条分批读取，总数只查一次且不调用公共 200 条列表", async () => {
+    vi.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+    const authorId = "11111111-1111-4111-8111-111111111111";
+    const reports = Array.from({ length: 1_001 }, (_value, index) => ({
+      id: "99999999-9999-4999-8999-" + String(index).padStart(12, "0"),
+      projectId: PROJECT_ID,
+      authorId,
+      authorName: "张工",
+      date: "2026-11-01",
+      state: "submitted" as const,
+      headcount: 1,
+      doneWork: "批次 " + String(index + 1),
+      plan: null,
+      foundIssue: null,
+      issueCategories: [],
+      suggestion: null,
+      stageKeys: [],
+      stageNames: [],
+      photos: [],
+      issuePhotos: [],
+      submittedAt: "2026-11-01T01:00:00.000Z",
+      createdAt: "2026-11-01T01:00:00.000Z",
+      updatedAt: "2026-11-01T01:00:00.000Z",
+      version: 1,
+    }));
+    const emptyPage = { items: [], page: 1, limit: 200, total: 0 };
+    const emptyPublicList = vi.fn().mockResolvedValue(emptyPage);
+    const emptyItems = vi.fn().mockResolvedValue([]);
+    const zero = vi.fn().mockResolvedValue(0);
+    const publicReportList = vi.fn().mockResolvedValue(emptyPage);
+    const reportCount = vi.fn().mockResolvedValue(reports.length);
+    const reportListForExport = vi.fn(async (_projectId: string, query: { page: number; limit: number }) =>
+      reports.slice((query.page - 1) * query.limit, query.page * query.limit));
+    const service = new ProjectExportService(
+      { getProject: vi.fn().mockResolvedValue({ id: PROJECT_ID, code: "LBGW-1", name: "英国项目", managerIds: [], managerNames: [] }) } as never,
+      { list: emptyPublicList, countForExport: zero, listForExport: emptyItems } as never,
+      { list: publicReportList, countForExport: reportCount, listForExport: reportListForExport } as never,
+      { list: emptyPublicList, countForExport: zero, listForExport: emptyItems } as never,
+      { listProjectChanges: emptyPublicList, countProjectChangesForExport: zero, listProjectChangesForExport: emptyItems } as never,
+      {
+        list: emptyPublicList,
+        countForExport: zero,
+        listForExport: emptyItems,
+        prepareExportContext: vi.fn().mockResolvedValue({}),
+      } as never,
+      {
+        listProjectFiles: emptyPublicList,
+        countProjectFilesForExport: zero,
+        listProjectFilesForExport: emptyItems,
+      } as never,
+      { listUsers: emptyPublicList, countForExport: zero, listForExport: emptyItems } as never,
+      { can: vi.fn().mockResolvedValue(true) } as never,
+      { record: vi.fn().mockResolvedValue(undefined) } as never,
+      { db: {} } as never,
+      {} as never,
+      { env: { PROJECT_EXPORT_MODE: "stream" } } as never,
+    );
+
+    const result = await service.exportProject(PROJECT_ID, authorId, "https://pm.example");
+    expect(result.kind).toBe("file");
+    if (result.kind !== "file") throw new Error("预期文件结果");
+    try {
+      expect(result.reportCount).toBe(1_001);
+      expect(reportCount).toHaveBeenCalledOnce();
+      expect(reportListForExport).toHaveBeenCalledTimes(2);
+      expect(reportListForExport.mock.calls.map((call) => call[1])).toEqual([
+        { page: 2, limit: 1_000 },
+        { page: 1, limit: 1_000 },
+      ]);
+      expect(publicReportList).not.toHaveBeenCalled();
+    } finally {
+      await result.cleanup();
+    }
+  });
+
+  it("auto 模式阈值判定所用的总数直接复用于实际导出，不再重复计数", async () => {
+    vi.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+    const authorId = "11111111-1111-4111-8111-111111111111";
+    const report = {
+      id: "99999999-9999-4999-8999-000000000001",
+      projectId: PROJECT_ID,
+      authorId,
+      authorName: "张工",
+      date: "2026-11-01",
+      state: "submitted" as const,
+      headcount: 1,
+      doneWork: "单条日报",
+      plan: null,
+      foundIssue: null,
+      issueCategories: [],
+      suggestion: null,
+      stageKeys: [],
+      stageNames: [],
+      photos: [],
+      issuePhotos: [],
+      submittedAt: "2026-11-01T01:00:00.000Z",
+      createdAt: "2026-11-01T01:00:00.000Z",
+      updatedAt: "2026-11-01T01:00:00.000Z",
+      version: 1,
+    };
+    const emptyPage = { items: [], page: 1, limit: 200, total: 0 };
+    const emptyPublicList = vi.fn().mockResolvedValue(emptyPage);
+    const emptyItems = vi.fn().mockResolvedValue([]);
+    const taskCount = vi.fn().mockResolvedValue(0);
+    const reportCount = vi.fn().mockResolvedValue(1);
+    const reportListForExport = vi.fn().mockResolvedValue([report]);
+    const issueCount = vi.fn().mockResolvedValue(0);
+    const changeCount = vi.fn().mockResolvedValue(0);
+    const stakeholderCount = vi.fn().mockResolvedValue(0);
+    const service = new ProjectExportService(
+      { getProject: vi.fn().mockResolvedValue({ id: PROJECT_ID, code: "LBGW-1", name: "英国项目", managerIds: [], managerNames: [] }) } as never,
+      { list: emptyPublicList, countForExport: taskCount, listForExport: emptyItems } as never,
+      { list: emptyPublicList, countForExport: reportCount, listForExport: reportListForExport } as never,
+      { list: emptyPublicList, countForExport: issueCount, listForExport: emptyItems } as never,
+      { listProjectChanges: emptyPublicList, countProjectChangesForExport: changeCount, listProjectChangesForExport: emptyItems } as never,
+      {
+        list: emptyPublicList,
+        countForExport: stakeholderCount,
+        listForExport: emptyItems,
+        prepareExportContext: vi.fn().mockResolvedValue({}),
+      } as never,
+      {
+        listProjectFiles: emptyPublicList,
+        countProjectFilesForExport: vi.fn().mockResolvedValue(0),
+        listProjectFilesForExport: emptyItems,
+        listExportFileRefs: vi.fn().mockResolvedValue([]),
+      } as never,
+      { listUsers: emptyPublicList, countForExport: vi.fn().mockResolvedValue(0), listForExport: emptyItems } as never,
+      { can: vi.fn().mockResolvedValue(true) } as never,
+      { record: vi.fn().mockResolvedValue(undefined) } as never,
+      { db: {} } as never,
+      {} as never,
+      { env: { PROJECT_EXPORT_MODE: "auto" } } as never,
+    );
+
+    const result = await service.exportProject(PROJECT_ID, authorId, "https://pm.example");
+    expect(result.kind).toBe("buffer");
+    if (result.kind !== "buffer") throw new Error("预期内存结果");
+    expect(result.mode).toBe("legacy");
+    expect(result.reportCount).toBe(1);
+    expect(taskCount).toHaveBeenCalledOnce();
+    expect(reportCount).toHaveBeenCalledOnce();
+    expect(issueCount).toHaveBeenCalledOnce();
+    expect(changeCount).toHaveBeenCalledOnce();
+    expect(stakeholderCount).toHaveBeenCalledOnce();
+    expect(reportListForExport).toHaveBeenCalledOnce();
+    expect(reportListForExport).toHaveBeenCalledWith(PROJECT_ID, { page: 1, limit: 1_000 });
+    expect(emptyPublicList).not.toHaveBeenCalled();
   });
 });

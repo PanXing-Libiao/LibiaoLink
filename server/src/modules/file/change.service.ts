@@ -43,6 +43,24 @@ export class ChangeService {
     return { items: items.map(toChangeListView), page: query.page, limit: query.limit, total };
   }
 
+  /** 项目导出专用总数：只查 count，不加载变更行。 */
+  async countProjectChangesForExport(projectId: string): Promise<number> {
+    const filter = parseChangeListFilter(projectId, { page: 1, limit: 1, sort: "appliedAt:asc" });
+    return this.repository.countChangeRequestsForExport(projectId, filter);
+  }
+
+  /** 项目导出专用行读取：保持 `appliedAt:asc` 排序与字段映射，不重复查询 total。 */
+  async listProjectChangesForExport(
+    projectId: string,
+    query: Pick<ChangeRequestListQueryInput, "page" | "limit">,
+  ): Promise<ChangeListResponse["items"]> {
+    const filter = parseChangeListFilter(projectId, { ...query, sort: "appliedAt:asc" });
+    const sorts = parseChangeListSort("appliedAt:asc");
+    const offset = (query.page - 1) * query.limit;
+    const items = await this.repository.listChangeRequestsForExport(projectId, filter, sorts, query.limit, offset);
+    return items.map(toChangeListView);
+  }
+
   /** GET /change-requests/{id}：变更详情（含变更后文件与版本；导入遗留变更 = null）；不存在 / 不可见一律 404。 */
   async getChange(changeRequestId: string, actorId: string): Promise<ChangeDetail> {
     const row = await this.repository.findChangeRequestJoinedById(changeRequestId);

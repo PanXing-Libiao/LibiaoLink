@@ -183,6 +183,30 @@ export class TaskService {
     };
   }
 
+  /** 项目导出专用总数：只查任务总数，不加载任务行或附件摘要。 */
+  async countForExport(projectId: string): Promise<number> {
+    await this.loadProjectOrFail(projectId);
+    const today = shanghaiToday(new Date());
+    return this.repository.countForExport(projectId, parseTaskListFilter({ page: 1, limit: 1 }), today);
+  }
+
+  /**
+   * 项目导出专用行读取：保持公共列表的筛选 / 排序与字段口径，但不查 total、不补附件摘要。
+   * 导出的「文件」列来自项目文件清单，不依赖列表 fileSummary。
+   */
+  async listForExport(
+    projectId: string,
+    query: Pick<TaskListQueryInput, "page" | "limit">,
+  ): Promise<TaskListItem[]> {
+    await this.loadProjectOrFail(projectId);
+    const filter = parseTaskListFilter(query);
+    const sorts = parseTaskSort(undefined);
+    const today = shanghaiToday(new Date());
+    const offset = (query.page - 1) * query.limit;
+    const rows = await this.repository.listPageForExport(projectId, filter, sorts, query.limit, offset, today);
+    return rows.map((row) => toListItem(row, EMPTY_FILE_SUMMARY, today));
+  }
+
   /** GET /projects/{id}/tasks/{taskId}：抽屉全字段 + 文件清单（A7：列表不再补第二次请求）。 */
   async detail(projectId: string, taskId: string): Promise<TaskDetail> {
     await this.loadProjectOrFail(projectId);

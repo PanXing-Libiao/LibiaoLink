@@ -83,16 +83,34 @@ export class UserService {
       offset: (query.page - 1) * query.limit,
     });
     return {
-      items: rows.map((row) => ({
-        id: row.id,
-        username: row.username,
-        displayName: row.displayName,
-        email: row.email,
-        status: row.status === "active" ? "active" : "disabled",
-      })),
+      items: rows.map((row) => this.toDirectoryItem(row)),
       page: query.page,
       limit: query.limit,
       total,
+    };
+  }
+
+  /** 导出专用用户总数：只统计启用用户。 */
+  async countForExport(): Promise<number> {
+    return this.users.countDirectoryForExport();
+  }
+
+  /** 导出专用用户行读取：保持启用用户与工号升序口径，不重复查询 total。 */
+  async listForExport(query: { page: number; limit: number }): Promise<UserDirectoryItem[]> {
+    const rows = await this.users.listDirectoryForExport({
+      limit: query.limit,
+      offset: (query.page - 1) * query.limit,
+    });
+    return rows.map((row) => this.toDirectoryItem(row));
+  }
+
+  private toDirectoryItem(row: UserRow): UserDirectoryItem {
+    return {
+      id: row.id,
+      username: row.username,
+      displayName: row.displayName,
+      email: row.email,
+      status: row.status === "active" ? "active" : "disabled",
     };
   }
 }
