@@ -9,6 +9,7 @@ interface ZipEntry {
   name: string;
   flags: number;
   method: number;
+  crc32: number;
   compressedSize: number;
   uncompressedSize: number;
   localHeaderOffset: number;
@@ -61,6 +62,7 @@ async function readZipEntries(filePath: string): Promise<ZipEntry[]> {
       if (central.readUInt32LE(cursor) !== 0x02014b50) throw new Error("XLSX ZIP 中央目录损坏");
       const flags = central.readUInt16LE(cursor + 8);
       const method = central.readUInt16LE(cursor + 10);
+      const crc32 = central.readUInt32LE(cursor + 16);
       const compressedSize = central.readUInt32LE(cursor + 20);
       const uncompressedSize = central.readUInt32LE(cursor + 24);
       const nameLength = central.readUInt16LE(cursor + 28);
@@ -69,7 +71,7 @@ async function readZipEntries(filePath: string): Promise<ZipEntry[]> {
       const localHeaderOffset = central.readUInt32LE(cursor + 42);
       const name = central.subarray(cursor + 46, cursor + 46 + nameLength).toString("utf8");
       if (!name.endsWith("/")) {
-        entries.push({ name, flags, method, compressedSize, uncompressedSize, localHeaderOffset });
+        entries.push({ name, flags, method, crc32, compressedSize, uncompressedSize, localHeaderOffset });
       }
       cursor += 46 + nameLength + extraLength + commentLength;
     }
@@ -79,17 +81,26 @@ async function readZipEntries(filePath: string): Promise<ZipEntry[]> {
   }
 }
 
-async function openEntryStream(filePath: string, entry: ZipEntry): Promise<Readable> {
+async function entryDataStart(filePath: string, entry: ZipEntry): Promise<number> {
   if ((entry.flags & 0x0001) !== 0) throw new Error("不支持加密的 XLSX ZIP 条目");
   const handle = await open(filePath, "r");
-  let dataStart: number;
   try {
     const header = await readAt(handle, entry.localHeaderOffset, 30);
     if (header.readUInt32LE(0) !== 0x04034b50) throw new Error("XLSX ZIP 本地文件头损坏");
-    dataStart = entry.localHeaderOffset + 30 + header.readUInt16LE(26) + header.readUInt16LE(28);
+    return entry.localHeaderOffset + 30 + header.readUInt16LE(26) + header.readUInt16LE(28);
   } finally {
     await handle.close();
   }
+}
+
+async function openRawEntryStream(filePath: string, entry: ZipEntry): Promise<Readable> {
+  const dataStart = await entryDataStart(filePath, entry);
+  if (entry.compressedSize === 0) return Readable.from([]);
+  return createReadStream(filePath, { start: dataStart, end: dataStart + entry.compressedSize - 1 });
+}
+
+async function openEntryStream(filePath: string, entry: ZipEntry): Promise<Readable> {
+  const dataStart = await entryDataStart(filePath, entry);
   if (entry.compressedSize === 0) return Readable.from([]);
   const raw = createReadStream(filePath, { start: dataStart, end: dataStart + entry.compressedSize - 1 });
   if (entry.method === 0) return raw;
@@ -188,6 +199,15 @@ function contentTypesWith(extensions: ReadonlyMap<string, string>, drawingParts:
     if (!source.includes("</Types>")) throw new Error("XLSX Content Types 缺少结束标签");
     return source.replace("</Types>", additions.join("") + "</Types>");
   };
+}
+
+async function addInjectedBuffer(
+  writer: ProjectZipWriter,
+  name: string,
+  bytes: Uint8Array,
+  compress = true,
+): Promise<void> {
+  await writer.addStream(name, Readable.from([bytes]), bytes.byteLength, { compress, hash: false });
 }
 
 function drawingXml(placements: readonly WorkbookImagePlacement[], relationshipByFileId: ReadonlyMap<string, string>): string {
@@ -314,12 +334,12 @@ export async function injectWorkbookImages(
   try {
     for (const entry of entries) {
       if (entry.name === CONTENT_TYPES_NAME) {
-        await writer.addBuffer(entry.name, Buffer.from(contentTypes, "utf8"));
+        await addInjectedBuffer(writer, entry.name, Buffer.from(contentTypes, "utf8"));
         continue;
       }
       const rels = relationTransforms.get(entry.name);
       if (rels !== undefined) {
-        await writer.addBuffer(entry.name, rels);
+        await addInjectedBuffer(writer, entry.name, rels);
         continue;
       }
       const sheetTransform = sheetTransforms.get(entry.name);
@@ -329,19 +349,35 @@ export async function injectWorkbookImages(
           "</worksheet>",
           '<drawing r:id="' + sheetTransform.relationshipId + '"/>',
         ));
-        await writer.addStream(entry.name, transformed, entry.uncompressedSize + sheetTransform.addedLength);
+        await writer.addStream(entry.name, transformed, entry.uncompressedSize + sheetTransform.addedLength, { hash: false });
+        continue;
+      }
+      let raw: Readable | undefined;
+      try {
+        raw = await openRawEntryStream(filePath, entry);
+      } catch {
+        raw = undefined;
+      }
+      if (raw !== undefined) {
+        await writer.addCompressedStream(entry.name, raw, {
+          method: entry.method,
+          crc32: entry.crc32,
+          compressedSize: entry.compressedSize,
+          uncompressedSize: entry.uncompressedSize,
+        });
         continue;
       }
       await writer.addStream(entry.name, await openEntryStream(filePath, entry), entry.uncompressedSize);
     }
 
-    for (const part of drawingRelParts) await writer.addBuffer(part.name, Buffer.from(part.xml, "utf8"));
-    for (const part of addedRelationFiles) await writer.addBuffer(part.name, Buffer.from(part.xml, "utf8"));
+    for (const part of drawingRelParts) await addInjectedBuffer(writer, part.name, Buffer.from(part.xml, "utf8"));
+    for (const part of addedRelationFiles) await addInjectedBuffer(writer, part.name, Buffer.from(part.xml, "utf8"));
     for (const [sheetId, sheetPlacements] of placementsBySheet) {
       const usedFileIds = [...new Set(sheetPlacements.map((placement) => placement.fileId))];
       const relationshipByFileId = new Map<string, string>();
       for (let index = 0; index < usedFileIds.length; index += 1) relationshipByFileId.set(usedFileIds[index]!, "rId" + String(index + 1));
-      await writer.addBuffer(
+      await addInjectedBuffer(
+        writer,
         "xl/drawings/drawing" + String(sheetId) + ".xml",
         Buffer.from(drawingXml(sheetPlacements, relationshipByFileId), "utf8"),
       );
@@ -349,7 +385,7 @@ export async function injectWorkbookImages(
     for (const [fileId, mediaName] of mediaByFileId) {
       const image = images.get(fileId);
       if (image === undefined) continue;
-      await writer.addBuffer(mediaName, image.bytes, false);
+      await addInjectedBuffer(writer, mediaName, image.bytes, false);
     }
     await writer.close();
   } catch (error) {
