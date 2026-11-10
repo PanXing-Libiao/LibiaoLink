@@ -18,6 +18,44 @@ def dwg_fixture():
 
 
 class DwgSchema(unittest.TestCase):
+    def test_adapter_sealing_uses_one_digest_and_parent_rechecks_received_content(self):
+        expected = dwg_fixture()
+        actual = copy.deepcopy(expected)
+        d, s = actual['document'], actual['snapshot']
+        d['revision'] = '0'*64
+        s['documentRevision'] = d['revision']
+        s['id'] = 'snapshot-'+'0'*64
+        phases = []
+        with patch.object(v, 'canonical_sha256', wraps=v.canonical_sha256) as digest:
+            v.seal_binary_envelope(d, s, actual['presentation'], lambda key:b'', on_phase=phases.append)
+        self.assertEqual(actual, expected)
+        self.assertEqual(digest.call_count, 2)  # one document and one snapshot
+        self.assertIn('geometry checked', phases)
+        self.assertEqual(phases[-2:], ['document digest checked', 'snapshot digest checked'])
+        v.validate_binary_envelope(d, s, actual['presentation'], lambda key:b'')
+        # An altered received artifact must fail even though the adapter sealed it.
+        next(iter(d['drawing']['layers'].values()))['name'] = 'changed after sealing'
+        with self.assertRaises(v.ValidationError) as error:
+            v.validate_binary_envelope(d, s, actual['presentation'], lambda key:b'')
+        self.assertEqual(error.exception.code, 'invalid-revision')
+
+    def test_adapter_sealing_preserves_reference_and_binary_rejections(self):
+        import hashlib
+        for bad in ('reference', 'hash', 'budget'):
+            with self.subTest(bad=bad):
+                e = dwg_fixture()
+                d = e['document']
+                raw = b'1234'
+                d['buffers']['b'] = {'id':'b','sha256':hashlib.sha256(raw).hexdigest(),
+                    'byteLength':4,'endianness':'little','alignment':1,
+                    'storage':{'kind':'resource','resourceId':'b'}}
+                if bad == 'reference':d['drawing']['entities']['E']['layerId'] = 'missing'
+                if bad == 'hash':raw = b'1235'
+                with self.assertRaises(v.ValidationError) as error:
+                    v.seal_binary_envelope(d,e['snapshot'],e['presentation'],lambda key:raw,
+                        max_decoded=3 if bad == 'budget' else 256*1024*1024)
+                self.assertEqual(error.exception.code, {'reference':'invalid-reference','hash':'invalid-buffer','budget':'limit-exceeded'}[bad])
+
     def test_shared_binary_views_keep_geometry_rejections(self):
         import hashlib
         for bad in (None, 'nan', 'bounds', 'index'):

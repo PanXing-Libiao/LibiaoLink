@@ -286,6 +286,9 @@ class ConversionJobs:
 
     def _run(self,jid):
         started=time.perf_counter();gate=False;proc=None
+        timing_events={}
+        def timing(name):
+            if is_dwg:timing_events[name]=round((time.perf_counter()-started)*1000,3)
         def event(row,name):row['trace']['events'][name]=round((time.perf_counter()-started)*1000,3)
         def fail(state,code,message):
             with self.lock:
@@ -378,12 +381,15 @@ class ConversionJobs:
                                     current=self._get(jid)
                                     if current['state']=='running' and current.get('workerTrace')!=progress:self._update(current,workerTrace=progress,phase=next(reversed(progress['events'])))
                         time.sleep(.2)
+                timing('workerExited')
                 if out.stat().st_size+sum(f.stat().st_size for f in binary_dir.iterdir())>result_limit:raise JobLimit('result output quota exceeded')
                 if time.perf_counter()-wall>worker_seconds:
                     fail('timed-out','job-timeout','转换超过后台任务计算预算');return
-                raw=out.read_bytes();envelope=json.loads(raw)
+                raw=out.read_bytes();timing('resultRead')
+                envelope=json.loads(raw);timing('resultDecoded')
                 with self.lock:
                     current=self._get(jid);event(current,'workerCompleted')
+                    current['trace']['events'].update(timing_events)
                     if current['state'] not in TERMINAL:
                         self._update(current,workerTrace=json.loads(trace.read_text()) if trace.exists() else None)
                 if proc.returncode or 'error' in envelope:
@@ -396,6 +402,7 @@ class ConversionJobs:
                 if document.get('packed'):
                     # Validate the reconstructed document, but store the packed wire form.
                     document=unpack_document(document);envelope={**envelope,'document':document}
+                timing('metadataExpanded')
                 sources=document['sources']
                 main=next((item for item in sources if item['sha256']==row['sourceSHA256'] and item['name']==row['name']),None)
                 expected_format='DWG' if is_dwg else 'DXF' if is_dxf else 'STEP'
@@ -425,17 +432,20 @@ class ConversionJobs:
                     for entry in entries:
                         b=definitions[entry['id']]
                         if entry['byteLength']!=b['byteLength'] or entry['sha256']!=b['sha256']:raise ValueError('worker buffer metadata mismatch')
-                    blobs=read_worker_buffers(binary_dir,entries)
-                    # Same schema, complete geometry and revision validation as base64.
-                    validate_binary_envelope(document,envelope['snapshot'],envelope.get('presentation',{}),blobs.__getitem__)
+                    blobs=read_worker_buffers(binary_dir,entries);timing('buffersRead')
+                    # Parent validation always checks the received identities;
+                    # adapter-side sealing never supplies a validation shortcut.
+                    validate_binary_envelope(document,envelope['snapshot'],envelope.get('presentation',{}),blobs.__getitem__,
+                        on_phase=(lambda phase:timing('validation'+''.join(word.title() for word in phase.split()))) if is_dwg else None)
                     # The worker manifest carries only relative buffer file names, never host
                     # paths. Persist its bytes verbatim so large drawings are not parsed and
                     # serialized a second time in the parent process.
                 else:validate_envelope(envelope)
-                sha=hashlib.sha256(raw).hexdigest()
+                sha=hashlib.sha256(raw).hexdigest();timing('manifestDigestChecked')
                 with self.lock:
                     current=self._get(jid)
                     if self.closed or current['state'] in TERMINAL:return
+                    current['trace']['events'].update(timing_events)
                     event(current,'validationCompleted')
                     unique={document['buffers'][bid]['sha256']:blob for bid,blob in blobs.items()}
                     stored=sum(f.stat().st_size for name in ('artifacts','buffers') for f in (self.root/name).iterdir())
@@ -446,6 +456,8 @@ class ConversionJobs:
                     for key,blob in unique.items():
                         temporary=binary_dir/'commit';temporary.write_bytes(blob)
                         temporary.replace(self.root/'buffers'/key)
+                    timing('buffersCommitted')
+                    current['trace']['events'].update(timing_events)
                     target=self.root/'artifacts'/sha;out.replace(target)
                     event(current,'artifactCommitted')
                     self._update(current,state='partial' if (is_dxf or is_dwg) and completeness=='partial' else 'completed',phase='verified-artifact',artifactSHA256=sha,

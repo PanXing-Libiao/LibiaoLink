@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 
-from .validation import validate_binary_envelope
+from .validation import seal_binary_envelope
 from .canonical import canonical_sha256,write_canonical
 from .payload_sink import FileSink
 from .dwg_pack import pack_document, compress_document
@@ -805,17 +805,17 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
     if resource_loader is not None:
         buffer_bytes=resource_loader(doc,buffer_bytes)
         buffer_path.write_bytes(buffer_bytes)
-    doc['revision'] = digest({k:v for k,v in doc.items() if k!='revision'})
-    phase('document sealed')
-    snapshot = {'schemaVersion':'2.0.0','id':'pending','documentRevision':doc['revision'],
+    phase('document assembled')
+    snapshot = {'schemaVersion':'2.0.0','id':'snapshot-'+'0'*64,'documentRevision':doc['revision'],
         'selection':{'viewContextId':'native-dwg'},'sceneRoots':[],'occurrenceOverrides':{},'draws':{},
         'completeness':'partial','diagnostics':doc['diagnostics'][:]}
-    snapshot['id'] = 'snapshot-'+digest({k:v for k,v in snapshot.items() if k!='id'})
     presentation = {'name':identity['name'],'view':None,'unit':'mm' if summary['header']['insUnits']=='Millimeters' else 'unknown',
         'sourceSHA256':identity['sha256'],'candidate':True,
         'quality':'partial','note':'Native DWG → UCD; source handles preserved. See explicit decoder/mapping/font losses.',
         'stats':{'sourceHandles':summary['sourceHandles'],'mappedSourceObjects':summary.get('mappedSourceObjects',summary['mappedObjects']),'displayGeometry':len(displays)+len(infinite_items)+len(region_items)}}
-    validate_binary_envelope(doc,snapshot,presentation,lambda key:buffer_bytes)
+    seal_binary_envelope(doc,snapshot,presentation,lambda key:buffer_bytes,
+                         on_phase=lambda name:phase('validation '+name))
+    phase('document sealed')
     phase('contract and binary validated')
     if packed:
         doc = compress_document(pack_document(doc))

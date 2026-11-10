@@ -2838,9 +2838,17 @@ export function mountDrawingViewer(envelope) {
   }
   function onWheel(event) {
     event.preventDefault();
+    // Read deltaMode first: some browsers expose deltaY in different units
+    // depending on whether the event's unit has been requested.
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? cssH : 1;
+    const delta = event.deltaY * unit;
+    if (!Number.isFinite(delta) || delta === 0) return;
     const p = pointerPosition(event);
     beginInteraction();
-    zoomAt(p.x, p.y, event.deltaY < 0 ? 1.15 : 1 / 1.15);
+    // Camera updates accumulate even subpixel trackpad input; drawing is
+    // coalesced by requestInteractionDraw, with no residual zoom animation.
+    const steps = Math.max(-1, Math.min(1, -delta / 100));
+    zoomAt(p.x, p.y, 1.15 ** steps);
   }
   function onKeyDown(event) {
     if (event.target.closest?.('input,select,textarea')) return;
