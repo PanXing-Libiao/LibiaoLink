@@ -23,6 +23,7 @@ import {
 import { PermissionRepository, type ProjectAccessContext } from "./permission.repository.js";
 import {
   can,
+  isProjectEditor,
   isProjectVisible,
   projectScopeSpec,
   type ProjectResourceContext,
@@ -52,6 +53,7 @@ const PROJECT_GROUP_WRITE_KEYS: readonly PermissionKey[] = [
   "project.update",
   "project.delete",
   "project.archive",
+  "project.export",
   "member.manage",
   "task.create",
   "task.update",
@@ -215,7 +217,7 @@ export class PermissionService {
     if (GROUP_ACCESS_ADMIN_ONLY_KEYS.includes(key)) return groupAccess.admin;
     if (!groupAccess.enforced || groupAccess.admin) return true;
     if (PROJECT_GROUP_WRITE_KEYS.includes(key)) {
-      return context?.groupAccessLevel === "edit";
+      return isProjectEditor(context);
     }
     if (GLOBAL_GROUP_WRITE_KEYS.includes(key)) return groupAccess.allEdit;
     if (key === "blueprint.manage") return groupAccess.anyEdit;
@@ -264,29 +266,43 @@ export class PermissionService {
     throw new AppError("FORBIDDEN", message ?? "该操作需要全部项目编辑权限");
   }
 
-  /** 批量裁决项目级部门权限；用于项目列表 / 工作台项目卡随行下发，避免逐项目查库。 */
+  /**
+   * 批量裁决项目的最终有效权限；用于项目列表 / 详情 / 工作台随行下发，避免逐项目查库。
+   * 规则档位只决定数据范围与基础权限；本项目的项目经理（主数据 manager_ids 或名册 project_manager）
+   * 额外获得该项目编辑权，但不会外溢到其他项目。
+   */
   async projectGroupAccessLevelsOf(
     actorId: string,
     projectIds: readonly string[],
   ): Promise<Map<string, GroupAccessAccessLevel>> {
     const levels = new Map<string, GroupAccessAccessLevel>();
     const groupAccess = await this.groupAccessOf(actorId);
+    if (groupAccess.admin) {
+      for (const projectId of projectIds) levels.set(projectId, "edit");
+      return levels;
+    }
     let ownProjectIds = new Set<string>();
-    if (groupAccess.enforced && !groupAccess.admin && groupAccess.ownProjects) {
+    if (groupAccess.enforced && groupAccess.ownProjects) {
       ownProjectIds = new Set(
         await this.repository.listVisibleProjectIds(actorId, { all: false, managed: false, member: true }),
       );
     }
+    const managed = new Set([
+      ...(await this.repository.listOwnedProjectIds(actorId)),
+      ...(await this.repository.listManagedRosterProjectIds(actorId)),
+    ]);
     for (const projectId of projectIds) {
-      levels.set(
-        projectId,
-        projectGroupAccessLevelOf(groupAccess, projectId, ownProjectIds.has(projectId)) ?? "view",
-      );
+      const ruleLevel = projectGroupAccessLevelOf(groupAccess, projectId, ownProjectIds.has(projectId));
+      levels.set(projectId, managed.has(projectId) || ruleLevel === "edit" ? "edit" : "view");
     }
     return levels;
   }
 
-  /** 可见项目过滤（列表 / facets 用）：all = 不裁剪；ids 空集 = 无可见项目。 */
+  /**
+   * 可见项目过滤（列表 / facets 用）：all = 不裁剪；ids 空集 = 无可见项目。
+   * Pro 口径：部门 / 个人规则决定项目数据范围，项目关系（经理 / 成员 / 任务负责人）再取并集；
+   * 关系项目即使部门规则为 none 也可浏览；所管项目的项目经理另获该项目编辑权，成员 / 任务负责人仍只读。
+   */
   async projectScope(actorId: string): Promise<ProjectScopeFilter> {
     const groupAccess = await this.groupAccessOf(actorId);
     if (groupAccess.admin) return { kind: "all" };
@@ -298,8 +314,10 @@ export class PermissionService {
           ...groupAccess.projectIds,
           ...(await this.repository.listVisibleProjectIds(actorId, { all: false, managed: false, member: true })),
         ]);
-    const ids = intersectProjectIds(roleIds, groupIds);
-    return ids === null ? { kind: "all" } : { kind: "ids", ids };
+    const baseIds = intersectProjectIds(roleIds, groupIds);
+    if (baseIds === null) return { kind: "all" };
+    const relatedIds = await this.repository.listRelatedProjectIds(actorId);
+    return { kind: "ids", ids: uniqueIds([...baseIds, ...relatedIds]) };
   }
 
   /** 解析项目上下文：不可见 / 不存在返回 null（调用方转 404）；回收站写口可选包含已软删项目。 */
@@ -312,23 +330,30 @@ export class PermissionService {
     const groupAccess = await this.groupAccessOf(actorId);
     const ref = await this.repository.findProjectRef(projectId);
     if (ref === null || (ref.deletedAt !== null && options.includeDeleted !== true)) return null;
-    const membershipRole = await this.repository.findMembership(actorId, projectId);
+    const [membershipRole, taskOwner] = await Promise.all([
+      this.repository.findMembership(actorId, projectId),
+      this.repository.hasTaskOwnership(actorId, projectId),
+    ]);
     const rosterMember = membershipRole !== null;
     const managerOfRecord = ref.managerIds.includes(actorId);
     const projectManager = managerOfRecord || membershipRole === "project_manager";
-    const visible = groupAccess.admin || isProjectVisible(spec, {
+    const relationVisible = managerOfRecord || rosterMember || taskOwner;
+    const roleVisible = isProjectVisible(spec, {
       rosterMember,
       managerOfRecord,
       rosterProjectManager: membershipRole === "project_manager",
     });
     const ownProject = managerOfRecord || rosterMember;
     const groupAccessLevel = projectGroupAccessLevelOf(groupAccess, projectId, ownProject);
-    if (!visible || groupAccessLevel === null) return null;
+    const visible = groupAccess.admin || relationVisible || (roleVisible && groupAccessLevel !== null);
+    if (!visible) return null;
     return {
       projectId,
       member: rosterMember || managerOfRecord,
       projectManager,
+      taskOwner,
       groupAccessLevel,
+      accessLevel: groupAccess.admin || projectManager || groupAccessLevel === "edit" ? "edit" : "view",
     };
   }
 
@@ -374,11 +399,11 @@ export class PermissionService {
     projectScope: ProjectScopeFilter,
   ): Promise<GroupProjectAccess> {
     if (!groupAccess.enforced || groupAccess.admin) return "allowed";
-    if (!hasProjectDataScope(groupAccess)) return "denied";
     const hasActiveProject = projectScope.kind === "all"
       ? await this.repository.hasActiveProject()
       : (await this.repository.listActiveProjectIds(projectScope.ids)).length > 0;
-    return hasActiveProject ? "allowed" : "empty";
+    if (hasActiveProject) return "allowed";
+    return hasProjectDataScope(groupAccess) ? "empty" : "denied";
   }
 }
 

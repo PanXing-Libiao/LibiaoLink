@@ -31,6 +31,7 @@ import {
   TaskUpdateBodySchema,
   z,
   type ErrorDetail,
+  type TaskCapabilities,
 } from "@libiaolink/contracts";
 import type { OutboxTopic } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
@@ -38,7 +39,7 @@ import type { DbClient } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { appendOutbox } from "../../db/outbox.js";
 import { AuditService, diffRecords } from "../admin/index.js";
-import { PermissionService, canManageTaskFinalization } from "../permission/index.js";
+import { PermissionService, taskCapabilitiesOf, type ProjectAccessContext } from "../permission/index.js";
 import { TaskNodeRepository, TemplateService } from "../template/index.js";
 import { clampSortIndex } from "./task.order.js";
 import { parseTaskListFilter, parseTaskSort, type TaskListQueryInput } from "./task.query.js";
@@ -167,8 +168,9 @@ export class TaskService {
   }
 
   /** GET /projects/{id}/tasks：分页 + 阶段 / 负责人 / 展示态筛选 + 关键字 + 白名单排序；items 为 TaskListItem。 */
-  async list(projectId: string, query: TaskListQueryInput): Promise<TaskListResponse> {
+  async list(projectId: string, query: TaskListQueryInput, actorId?: string): Promise<TaskListResponse> {
     await this.loadProjectOrFail(projectId);
+    const access = actorId === undefined ? null : await this.permission.assertProjectVisible(actorId, projectId);
     const filter = parseTaskListFilter(query);
     const sorts = parseTaskSort(query.sort);
     const today = shanghaiToday(new Date());
@@ -176,7 +178,10 @@ export class TaskService {
     const { items, total } = await this.repository.listPage(projectId, filter, sorts, query.limit, offset, today);
     const summaries = await this.repository.fileSummaries(items.map((row) => row.task.id));
     return {
-      items: items.map((row) => toListItem(row, summaries.get(row.task.id) ?? EMPTY_FILE_SUMMARY, today)),
+      items: items.map((row) => {
+        const item = toListItem(row, summaries.get(row.task.id) ?? EMPTY_FILE_SUMMARY, today);
+        return actorId === undefined ? item : { ...item, capabilities: taskCapabilitiesOf(actorId, access, row.task.ownerIds) };
+      }),
       page: query.page,
       limit: query.limit,
       total,
@@ -208,8 +213,9 @@ export class TaskService {
   }
 
   /** GET /projects/{id}/tasks/{taskId}：抽屉全字段 + 文件清单（A7：列表不再补第二次请求）。 */
-  async detail(projectId: string, taskId: string): Promise<TaskDetail> {
+  async detail(projectId: string, taskId: string, actorId?: string): Promise<TaskDetail> {
     await this.loadProjectOrFail(projectId);
+    const access = actorId === undefined ? null : await this.permission.assertProjectVisible(actorId, projectId);
     const row = await this.repository.findListRowById(taskId, projectId);
     if (row === null) throw new AppError("NOT_FOUND", "任务不存在或不属于该项目");
     const files = await this.repository.listFiles(taskId);
@@ -223,6 +229,7 @@ export class TaskService {
         status: file.status as TaskDetail["files"][number]["status"],
         docType: normalizeDocType(file.docType),
       })),
+      ...(actorId === undefined ? {} : { capabilities: taskCapabilitiesOf(actorId, access, row.task.ownerIds) }),
     };
   }
 
@@ -458,6 +465,7 @@ export class TaskService {
    */
   async update(projectId: string, taskId: string, body: TaskUpdateBody, actorId: string): Promise<Task> {
     await this.loadProjectForWrite(projectId);
+    const access = await this.permission.assertProjectVisible(actorId, projectId);
     const at = new Date();
     const today = shanghaiToday(at);
     const row = await this.runCompletionGuarded(actorId, taskId, () =>
@@ -485,6 +493,8 @@ export class TaskService {
           at,
           today,
           null,
+          access,
+          true,
         ),
       ),
     );
@@ -500,6 +510,7 @@ export class TaskService {
    */
   async batch(projectId: string, body: TaskBatchBody, actorId: string): Promise<TaskBatchResponse> {
     await this.loadProjectForWrite(projectId);
+    const access = await this.permission.assertProjectVisible(actorId, projectId);
     if (Object.values(body.changes).every((value) => value === undefined)) {
       throw new AppError("VALIDATION_FAILED", "批量操作至少给出一个变更字段（changes）");
     }
@@ -515,7 +526,7 @@ export class TaskService {
         const row = await this.runCompletionGuarded(
           actorId,
           taskId,
-          () => this.database.db.transaction((tx) => this.applyUpdate(tx, projectId, taskId, request, actorId, at, today, batchId)),
+          () => this.database.db.transaction((tx) => this.applyUpdate(tx, projectId, taskId, request, actorId, at, today, batchId, access, false)),
           batchId,
         );
         succeeded.push(toTaskView(row, today, await this.changeLinksOf(row)));
@@ -705,13 +716,31 @@ export class TaskService {
     }
     return row;
   }
+  /** 任务写权限：项目编辑者拥有整项目；任务负责人只拥有本人任务；其余一律只读。 */
+  private assertTaskWriteAllowed(
+    actorId: string,
+    projectAccess: ProjectAccessContext,
+    task: TaskRow,
+    allowTaskOwner: boolean,
+  ): TaskCapabilities {
+    const capabilities = taskCapabilitiesOf(actorId, projectAccess, task.ownerIds);
+    if (capabilities.source === "project_edit" || (allowTaskOwner && capabilities.source === "task_owner")) {
+      return capabilities;
+    }
+    throw new AppError("FORBIDDEN", "仅项目编辑者或当前任务负责人可修改该任务");
+  }
+
   /**
-   * 定档 / 取消定档的角色闸（2026-10-27）：仅任务当前负责人或项目经理。
+   * 定档 / 取消定档的角色闸（Pro 逐人权限）：仅任务当前负责人或项目编辑者。
    * 必须在幂等短路之前判定，避免无权用户通过重复操作探测或维持已定档状态。
    */
-  private assertCanManageTaskFinalization(actorId: string, task: TaskRow, projectManager: boolean): void {
-    if (canManageTaskFinalization(actorId, task.ownerIds, projectManager)) return;
-    throw new AppError("FORBIDDEN", "仅任务负责人或项目经理可定档或取消定档");
+  private assertCanManageTaskFinalization(
+    actorId: string,
+    task: TaskRow,
+    projectAccess: ProjectAccessContext,
+  ): void {
+    if (taskCapabilitiesOf(actorId, projectAccess, task.ownerIds).canFinalize) return;
+    throw new AppError("FORBIDDEN", "仅任务负责人或项目编辑者可定档或取消定档");
   }
 
   /**
@@ -741,6 +770,8 @@ export class TaskService {
     at: Date,
     today: string,
     batchId: string | null,
+    projectAccess: ProjectAccessContext | null = null,
+    allowTaskOwner = false,
   ): Promise<TaskRow> {
     if (request.sortIndex !== undefined) {
       const brief = await this.repository.findTaskBrief(taskId, tx);
@@ -752,6 +783,15 @@ export class TaskService {
     const before = await this.repository.lockTask(tx, taskId);
     if (before === null || before.projectId !== projectId) {
       throw new AppError("NOT_FOUND", "任务不存在或不属于该项目");
+    }
+    if (projectAccess !== null) {
+      const capabilities = this.assertTaskWriteAllowed(actorId, projectAccess, before, allowTaskOwner);
+      const ownersChanged =
+        request.ownerIds !== undefined && request.ownerIds.join("\u0000") !== before.ownerIds.join("\u0000");
+      const sortChanged = request.sortIndex !== undefined && request.sortIndex !== before.sortIndex;
+      if (capabilities.source === "task_owner" && (ownersChanged || sortChanged)) {
+        throw new AppError("FORBIDDEN", "任务负责人不能修改负责人或任务排序");
+      }
     }
     this.assertTaskMutable(before);
     if (request.expectedVersion !== null && before.version !== request.expectedVersion) {
@@ -844,6 +884,7 @@ export class TaskService {
     actorId: string,
   ): Promise<TaskListItem> {
     await this.loadProjectForWrite(projectId);
+    const access = await this.permission.assertProjectVisible(actorId, projectId);
     const at = new Date();
     const today = shanghaiToday(at);
     const row = await this.runCompletionGuarded(actorId, taskId, () =>
@@ -852,6 +893,7 @@ export class TaskService {
       if (before === null || before.projectId !== projectId) {
         throw new AppError("NOT_FOUND", "任务不存在或不属于该项目");
       }
+      this.assertTaskWriteAllowed(actorId, access, before, true);
       this.assertTaskMutable(before);
       if (before.version !== body.version) {
         throw new AppError("VERSION_CONFLICT", "任务已被他人更新，请刷新后重试");
@@ -906,7 +948,10 @@ export class TaskService {
     const listRow = await this.repository.findListRowById(row.id, projectId);
     if (listRow === null) throw new AppError("NOT_FOUND", "任务不存在或不属于该项目");
     const summaries = await this.repository.fileSummaries([row.id]);
-    return toListItem(listRow, summaries.get(row.id) ?? EMPTY_FILE_SUMMARY, today);
+    return {
+      ...toListItem(listRow, summaries.get(row.id) ?? EMPTY_FILE_SUMMARY, today),
+      capabilities: taskCapabilitiesOf(actorId, access, row.ownerIds),
+    };
   }
 
   /**
@@ -936,6 +981,7 @@ export class TaskService {
    */
   async complete(projectId: string, taskId: string, body: TaskCompleteBody, actorId: string): Promise<TaskCompleteResponse> {
     await this.loadProjectForWrite(projectId);
+    const access = await this.permission.assertProjectVisible(actorId, projectId);
     const at = new Date();
     const today = shanghaiToday(at);
     const result = await this.runCompletionGuarded(actorId, taskId, () =>
@@ -944,6 +990,7 @@ export class TaskService {
         if (before === null || before.projectId !== projectId) {
           throw new AppError("NOT_FOUND", "任务不存在或不属于该项目");
         }
+        this.assertTaskWriteAllowed(actorId, access, before, true);
         this.assertTaskMutable(before);
         if (before.status === "done") {
           throw new AppError("TASK_ALREADY_DONE", "任务已完成，无需重复提交");
@@ -1006,7 +1053,7 @@ export class TaskService {
     const today = shanghaiToday(at);
     const row = await this.database.db.transaction(async (tx) => {
       const before = await this.requireActiveTask(tx, projectId, taskId);
-      this.assertCanManageTaskFinalization(actorId, before, access.projectManager);
+      this.assertCanManageTaskFinalization(actorId, before, access);
       if (before.finalizedAt !== null) {
         return before;
       }
@@ -1068,7 +1115,7 @@ export class TaskService {
     const today = shanghaiToday(at);
     const row = await this.database.db.transaction(async (tx) => {
       const before = await this.requireActiveTask(tx, projectId, taskId);
-      this.assertCanManageTaskFinalization(actorId, before, access.projectManager);
+      this.assertCanManageTaskFinalization(actorId, before, access);
       if (before.finalizedAt === null) {
         return before;
       }

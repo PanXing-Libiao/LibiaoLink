@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 
-export type PopoverPosition = { top: number; left: number; width: number };
+export type PopoverPosition = {
+  top: number;
+  left: number;
+  width: number;
+  /** 浮层相对触发器的落点；below 时箭头在浮层顶部，above 时箭头在底部。 */
+  side: "below" | "above" | "right";
+  /** 居中锚点浮层的箭头左偏移；null = 不画箭头（right 落点等）。 */
+  arrowLeft: number | null;
+};
 
 /**
  * 浮层优先落点（Push 167）：
@@ -16,7 +24,13 @@ export type PopoverPlacement = "below" | "right";
  * 浮层 fixed 定位、跟随触发器（窗口缩放 / 滚动时重算）；点触发器与浮层之外、按 Esc 关闭。
  * 浮层内容由调用方用 `createPortal` 挂到 body —— 避免被弹窗的毛玻璃 / overflow 影响定位与裁剪。
  */
-export function usePopover(width: number, height: number, placement: PopoverPlacement = "below", belowOnly = false) {
+export function usePopover(
+  width: number,
+  height: number,
+  placement: PopoverPlacement = "below",
+  belowOnly = false,
+  align: "start" | "center" = "start",
+) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<PopoverPosition | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -40,14 +54,19 @@ export function usePopover(width: number, height: number, placement: PopoverPlac
         const rightLeft = Math.max(rect.right, host.getBoundingClientRect().right) + gap;
         if (rightLeft + width <= window.innerWidth - 8) {
           const rightTop = Math.min(Math.max(8, rect.top - gap), Math.max(8, window.innerHeight - height - 8));
-          setPosition({ top: rightTop, left: rightLeft, width });
+          setPosition({ top: rightTop, left: rightLeft, width, side: "right", arrowLeft: null });
           return;
         }
       }
-      const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - popoverWidth - 8));
+      const naturalLeft = align === "center" ? rect.left + rect.width / 2 - popoverWidth / 2 : rect.left;
+      const left = Math.min(Math.max(8, naturalLeft), Math.max(8, window.innerWidth - popoverWidth - 8));
       const below = rect.bottom + gap;
-      const top = belowOnly || below + height <= window.innerHeight - 8 ? below : Math.max(8, rect.top - height - gap);
-      setPosition({ top, left, width: popoverWidth });
+      const opensAbove = !belowOnly && below + height > window.innerHeight - 8;
+      const top = opensAbove ? Math.max(8, rect.top - height - gap) : below;
+      const arrowLeft = align === "center"
+        ? Math.min(Math.max(18, rect.left + rect.width / 2 - left), Math.max(18, popoverWidth - 18))
+        : null;
+      setPosition({ top, left, width: popoverWidth, side: opensAbove ? "above" : "below", arrowLeft });
     };
     updatePosition();
     const handlePointerDown = (event: MouseEvent) => {
@@ -73,7 +92,7 @@ export function usePopover(width: number, height: number, placement: PopoverPlac
       document.removeEventListener("mousedown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [open, width, height, placement]);
+  }, [open, width, height, placement, belowOnly, align]);
 
   return { open, setOpen, position, triggerRef, popoverRef };
 }
