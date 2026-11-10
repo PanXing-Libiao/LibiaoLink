@@ -27,7 +27,7 @@ import { AppError } from "../../common/errors/app-error.js";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
 import { DictService } from "../admin/index.js";
-import { AllowDeletedProjectAccess, CurrentProjectAccess, ProjectAccess, ProjectAccessGuard, ProjectScope, RequirePermission } from "../permission/index.js";
+import { AllowDeletedProjectAccess, CurrentProjectAccess, ProjectAccess, ProjectAccessGuard, ProjectScope, RequirePermission, isProjectEditor } from "../permission/index.js";
 import { TranslateService } from "../translate/index.js";
 import type { ProjectAccessContext, ProjectScopeFilter } from "../permission/index.js";
 import { ProjectGroupService } from "./project-group.service.js";
@@ -139,7 +139,7 @@ export class ProjectsController {
   }
 
   /**
-   * 新增全站自定义成果文件类型（2026-11-06）：仅当前项目项目经理（manager_ids 或名册 project_manager）。
+   * 新增全站自定义成果文件类型（2026-11-06）：项目编辑者（部门 / 个人规则 edit，或系统管理员）。
    * 新增后写入 deliverableType 全局字典，所有项目 / 任务 / 文件库立即可选；响应 = 更新后的整个字典。
    */
   @Post(":id/deliverable-types")
@@ -150,8 +150,8 @@ export class ProjectsController {
     @CurrentProjectAccess() access: ProjectAccessContext,
     @CurrentActorId() actorId: string,
   ) {
-    if (!access.projectManager) {
-      throw new AppError("FORBIDDEN", "仅项目经理可新增自定义成果文件类型");
+    if (!isProjectEditor(access)) {
+      throw new AppError("FORBIDDEN", "仅项目编辑者可新增自定义成果文件类型");
     }
     return this.dicts.createCustomDeliverableType(body.name, actorId);
   }

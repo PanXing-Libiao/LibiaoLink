@@ -13,7 +13,7 @@ import {
   type ProjectCompletionMissingItem,
   type StageGateMissingItem,
 } from "../node/index.js";
-import { PermissionService } from "../permission/index.js";
+import { PermissionService, isProjectEditor } from "../permission/index.js";
 import { FlowRepository, type NodeWithRequirements, type ProjectNodeRow, type ProjectStageRow } from "./flow.repository.js";
 import { ProjectMemberRepository } from "./project-member.repository.js";
 import { ProjectRepository, type ProjectViewRow } from "./project.repository.js";
@@ -158,14 +158,14 @@ export class FlowService {
     };
   }
 
-  /** POST /projects/{id}/nodes：仅项目经理；nodeKey 必须命中项目导入版本的模板节点池（ADR-020）。 */
+  /** POST /projects/{id}/nodes：项目编辑者；nodeKey 必须命中项目导入版本的模板节点池（ADR-020）。 */
   async createNode(
     projectId: string,
     body: { stageId: string; nodeKey: string; name?: string; seq?: number; reason?: string },
     actorId: string,
   ): Promise<ProjectNodeView> {
     const view = await this.loadProjectForWrite(projectId);
-    await this.assertProjectManager(view.project.id, view.project.managerIds, actorId, "增删节点");
+    await this.assertProjectEditor(view.project.id, actorId, "增删节点");
     const stages = await this.flow.listStages(projectId);
     const stage = stages.find((item) => item.id === body.stageId);
     if (stage === undefined) throw new AppError("NOT_FOUND", "阶段不属于该项目：" + body.stageId);
@@ -238,7 +238,7 @@ export class FlowService {
     actorId: string,
   ): Promise<ProjectNodeView> {
     const view = await this.loadProjectForWrite(projectId);
-    await this.assertProjectManager(view.project.id, view.project.managerIds, actorId, "增删节点");
+    await this.assertProjectEditor(view.project.id, actorId, "增删节点");
     const at = new Date();
     const result = await this.database.db.transaction(async (tx) => {
       const node = await this.flow.lockNode(tx, nodeId);
@@ -360,7 +360,7 @@ export class FlowService {
   /** POST /projects/{id}/stages/{key}/advance：事务内门禁（任务 / 节点 / 成果文件）→ 阶段 done、下一阶段 active、stage_key 前移。 */
   async advanceStage(projectId: string, stageKey: string, version: number, actorId: string): Promise<StageListResponse> {
     const view = await this.loadProjectForWrite(projectId);
-    await this.assertProjectManager(view.project.id, view.project.managerIds, actorId, "阶段推进");
+    await this.assertProjectEditor(view.project.id, actorId, "阶段推进");
     const at = new Date();
     try {
       await this.database.db.transaction(async (tx) => {
@@ -441,7 +441,7 @@ export class FlowService {
     actorId: string,
   ): Promise<StageListResponse> {
     const view = await this.loadProjectForWrite(projectId);
-    await this.assertProjectManager(view.project.id, view.project.managerIds, actorId, "阶段回退");
+    await this.assertProjectEditor(view.project.id, actorId, "阶段回退");
     const at = new Date();
     await this.database.db.transaction(async (tx) => {
       const stage = await this.flow.findStage(projectId, stageKey);
@@ -497,7 +497,6 @@ export class FlowService {
     return view;
   }
 
-  /** 节点增删 / 阶段推进 / 项目归档的权限：项目经理（manager_ids 任一位）/ 名册项目经理 / 管理员（ADR-020 / A22 / ADR-027）；记录级 404 语义随 h6。 */
   /**
    * 项目标记完成门禁：所有任务已完成，且配置了成果类型的任务均已上传对应文件。
    * 未配置成果类型的任务只检查完成状态；缺交付文件时返回 422 TASK_REQUIRED_DOC_MISSING，前端沿用统一 Toast 提示。
@@ -527,12 +526,11 @@ export class FlowService {
     );
   }
 
-  async assertProjectManager(projectId: string, managerIds: readonly string[], actorId: string, action: string): Promise<void> {
-    if (await this.permission.canManageGroupAccess(actorId)) return;
-    if (managerIds.includes(actorId)) return;
-    const member = await this.members.findByProjectAndUser(projectId, actorId);
-    if (member !== null && member.member.roleInProject === "project_manager") return;
-    throw new AppError("FORBIDDEN", "仅项目经理可执行" + action + "（ADR-020）");
+  /** 项目级流程写权限：只认最终项目编辑权；项目经理 / 成员 / 任务负责人关系本身不提升。 */
+  async assertProjectEditor(projectId: string, actorId: string, action: string): Promise<void> {
+    const access = await this.permission.assertProjectVisible(actorId, projectId);
+    if (isProjectEditor(access)) return;
+    throw new AppError("FORBIDDEN", "仅项目编辑者可执行" + action);
   }
 
   private toNodeView(item: NodeWithRequirements): ProjectNodeView {

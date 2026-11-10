@@ -21,6 +21,7 @@ import {
 import { users } from "../../db/schema/identity.js";
 import { projectNodes } from "../../db/schema/flow.js";
 import { projectMembers, projects } from "../../db/schema/projects.js";
+import { tasks } from "../../db/schema/tasks.js";
 import {
   mergeScopePermissions,
   normalizeScopePermissions,
@@ -40,10 +41,15 @@ export interface ProjectRef {
 /** 记录级解析结果：可见项目上下文 + 项目内角色（can 的项目级来源）。 */
 export interface ProjectAccessContext {
   projectId: string;
+  /** 名册成员或项目经理（只代表项目内关系，不等于项目编辑权）。 */
   member: boolean;
   projectManager: boolean;
-  /** 当前账号在该项目的部门权限（所有命中范围取最高）；项目内写操作必须为 edit。 */
-  groupAccessLevel: GroupAccessAccessLevel;
+  /** 当前账号是否至少负责该项目的一条未删除任务（Pro 逐人权限：可见整个项目，编辑仅本人任务）。 */
+  taskOwner?: boolean;
+  /** 当前账号在该项目的部门 / 个人规则权限（所有命中范围取最高）；null = 关系可见但部门规则未命中。 */
+  groupAccessLevel: GroupAccessAccessLevel | null;
+  /** 有效项目访问级别：只有部门 / 个人规则 edit 或管理员为 edit；关系来源只给 view。 */
+  accessLevel?: GroupAccessAccessLevel;
 }
 
 /** 权限页用户展示字段。 */
@@ -123,6 +129,40 @@ export class PermissionRepository {
       .from(projectMembers)
       .where(and(eq(projectMembers.userId, actorId), eq(projectMembers.roleInProject, "project_manager")));
     return rows.map((row) => row.projectId);
+  }
+
+  /** 我是当前负责人（owner_ids 命中）的未删除任务所属项目。 */
+  async listTaskOwnerProjectIds(actorId: string): Promise<string[]> {
+    const rows = await this.database.db
+      .selectDistinct({ projectId: tasks.projectId })
+      .from(tasks)
+      .where(and(isNull(tasks.deletedAt), sql`${tasks.ownerIds} @> array[${actorId}]::uuid[]`));
+    return rows.map((row) => row.projectId);
+  }
+
+  /** 项目关系并集：名册成员 ∪ 项目经理 ∪ 任务负责人。关系项目只保证浏览，不提升项目编辑权。 */
+  async listRelatedProjectIds(actorId: string): Promise<string[]> {
+    const [memberIds, ownedIds, managedRosterIds, taskOwnerIds] = await Promise.all([
+      this.listMemberProjectIds(actorId),
+      this.listOwnedProjectIds(actorId),
+      this.listManagedRosterProjectIds(actorId),
+      this.listTaskOwnerProjectIds(actorId),
+    ]);
+    return [...new Set([...memberIds, ...ownedIds, ...managedRosterIds, ...taskOwnerIds])];
+  }
+
+  /** 当前账号是否负责该项目任一未删除任务（单项目记录级解析用）。 */
+  async hasTaskOwnership(actorId: string, projectId: string): Promise<boolean> {
+    const rows = await this.database.db
+      .select({ taskId: tasks.id })
+      .from(tasks)
+      .where(and(
+        eq(tasks.projectId, projectId),
+        isNull(tasks.deletedAt),
+        sql`${tasks.ownerIds} @> array[${actorId}]::uuid[]`,
+      ))
+      .limit(1);
+    return rows.length > 0;
   }
 
   /**

@@ -11,7 +11,7 @@
  */
 import { apiRequest, apiSend, readAllPages } from "./api";
 import { textOf, type Locale } from "./i18n";
-import { daysBetweenInclusive, type ProjectTask, type TaskChange, type TaskFileSummary, type TaskPriority, type TaskStatus } from "./data/tasks";
+import { daysBetweenInclusive, type ProjectTask, type TaskCapabilities, type TaskChange, type TaskFileSummary, type TaskPriority, type TaskStatus } from "./data/tasks";
 
 /** 契约 Task / TaskListItem / TaskDetail（本文件只需用到的字段；服务端可能多给，忽略即可）。 */
 export type ApiTask = {
@@ -43,11 +43,13 @@ export type ApiTask = {
   version: number;
   createdAt: string;
   updatedAt: string;
+  capabilities?: TaskCapabilities;
 };
 
 export type ApiTaskListItem = ApiTask & {
   ownerNames: Array<string | null>;
   fileSummary: { total: number; draft: number; final: number };
+  capabilities?: TaskCapabilities;
 };
 
 /** 随行文件清单（详情接口 GET /projects/{id}/tasks/{taskId}）：文件名 / 状态 / 文档类型 —— 抽屉里的文件清单随「文件」那一刀接线。 */
@@ -56,6 +58,7 @@ export type TaskFileBrief = { id: string; name: string; status: string; docType:
 export type ApiTaskDetail = ApiTask & {
   ownerNames: Array<string | null>;
   files: TaskFileBrief[];
+  capabilities?: TaskCapabilities;
 };
 
 export type ApiTaskListResult = { items: ApiTaskListItem[]; page: number; limit: number; total: number };
@@ -199,6 +202,7 @@ export function toUiTask(
     priority: priorityOf(view.priority),
     finalizedAt: view.finalizedAt ?? null,
     version: view.version,
+    capabilities: "capabilities" in view ? view.capabilities : previous?.capabilities,
   };
 }
 

@@ -47,10 +47,10 @@ export function toArchiveView(row: ArchiveViewRow): ProjectArchiveView {
  * 口径：
  *   1. 硬前置：验收阶段（stage_key = acceptance）已完成（status = done）；未完成 409 ARCHIVE_NOT_READY（不可确认越过）。
  *   2. 缺项清单：未完成任务 / 未定档文件（draft）/ 必交成果缺件（A4-20 逐节点跑 GateService.evaluateNode）；
- *      首次归档 422 ARCHIVE_GATE_NOT_PASSED 返回明细，项目经理确认（confirm = true）后放行，缺项随清单 acknowledgedMissing 留痕。
+ *      首次归档 422 ARCHIVE_GATE_NOT_PASSED 返回明细，项目编辑者确认（confirm = true）后放行，缺项随清单 acknowledgedMissing 留痕。
  *   3. 归档事务（全部同事务）：锁项目行 → 乐观锁 version 判定 → 置 status = archived + archived_at / archived_by →
  *      生成 project_archives 清单 → 撤销进行中的上传会话 → 审计 action = archive；不删数据、不改阶段。
- *   4. 权限：仅项目经理（manager_ids 任一位 / 名册项目经理）与管理员（ADR-020 复用）；记录级可见性由 ProjectAccessGuard 先行（404 语义）。
+ *   4. 权限：仅最终项目编辑者（管理员或部门 / 个人规则 edit）；项目经理 / 成员 / 任务负责人关系本身不提升编辑权。记录级可见性由 ProjectAccessGuard 先行（404 语义）。
  */
 @Injectable()
 export class ArchiveService {
@@ -68,7 +68,7 @@ export class ArchiveService {
     const view = await this.projects.findViewById(projectId);
     if (view === null) throw new AppError("NOT_FOUND", "项目不存在或不可见");
     if (view.project.status === "archived") throw new AppError("PROJECT_ARCHIVED", "项目已归档");
-    await this.flow.assertProjectManager(projectId, view.project.managerIds, actorId, "项目归档");
+    await this.flow.assertProjectEditor(projectId, actorId, "项目归档");
     const at = new Date();
     try {
       await this.database.db.transaction(async (tx) => {

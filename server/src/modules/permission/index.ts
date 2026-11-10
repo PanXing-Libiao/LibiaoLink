@@ -13,6 +13,8 @@ export {
   can,
   canManageTaskFinalization,
   canSeeField,
+  isProjectEditor,
+  taskCapabilitiesOf,
   exitsConsistent,
   hiddenFields,
   isKnownPermissionKey,

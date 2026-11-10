@@ -1,6 +1,6 @@
 # project 模块（h2 · S6·project + h3 · S6·blueprint/node：项目 CRUD / 列表 facets / 成员名册 / 流程快照与阶段）
 
-> **2026-11-06 全站自定义成果类型入口（跨线代记，请 wmj 复核）**：`POST /api/v1/projects/{id}/deliverable-types`（body `{ name }`，1–50 字、不含英文逗号 / 换行）仅当前项目项目经理可调用（`manager_ids` 或名册 `project_manager`），同时受 `project.update` 与部门编辑档位约束；新增写入全站 `deliverableType` 字典并返回整类字典，所有项目 / 任务共享。内置十类与已存在名称返回 409 `DICT_ITEM_EXISTS`。
+> **2026-11-06 全站自定义成果类型入口（跨线代记，请 wmj 复核）**：`POST /api/v1/projects/{id}/deliverable-types`（body `{ name }`，1–50 字、不含英文逗号 / 换行）仅当前项目编辑者可调用（`isProjectEditor(access)`：管理员或部门 / 个人规则 `edit`），同时受 `project.update` 与部门编辑档位约束；新增写入全站 `deliverableType` 字典并返回整类字典，所有项目 / 任务共享。内置十类与已存在名称返回 409 `DICT_ITEM_EXISTS`。
 
 | 字段 | 内容 |
 |---|---|
@@ -45,9 +45,9 @@
 - 建项目事务（M2-02）：`createProject` 改为**单事务** —— 插入 projects → `FlowService.importSnapshot`（取该项目类型已发布蓝图，缺失回落 default；生成 stages / nodes / requirements；`projects.stage_key` 指向蓝图首阶段，请求 `stageKey` 命中快照阶段时按请求）→ touch；蓝图不可用 → 422 `BLUEPRINT_NOT_PUBLISHED`。旧口径「只写 projects + 缺省 presale」由本批替代。
 - 流程读：`GET /api/v1/projects/{id}/flow`（快照：`blueprintVersion` + 阶段 + 节点 + 约束）、`GET /api/v1/projects/{id}/stages`（九阶段状态 + 节点 / 任务完成度，读时派生，不落库）。
 - 阶段推进 / 回退（ADR-023）：`advanceStage` / `rollbackStage` —— 门禁失败 = 事务回滚后补写 outbox 留痕（`stage.gate_rejected`）再转 422；回退只认相邻上一阶段、原因必填、不做门禁；跟踪列（`advanced_at/by`、`rolled_back_at/by`、`rollback_reason`）见迁移 `0012`。
-- 节点增删（ADR-020，仅项目经理）：`createNode`（模板节点池校验 → `node_key` 项目内唯一：已有未删节点 409 `NODE_ALREADY_EXISTS`；软删后再增补 = 还原同一行；`seq` 缺省 = 同阶段 max + 10）、`deleteNode`（原因必填、软删、乐观锁、有成果文件 409 `NODE_HAS_FILES`）。
+- 节点增删（ADR-020，项目编辑者）：`createNode`（模板节点池校验 → `node_key` 项目内唯一：已有未删节点 409 `NODE_ALREADY_EXISTS`；软删后再增补 = 还原同一行；`seq` 缺省 = 同阶段 max + 10）、`deleteNode`（原因必填、软删、乐观锁、有成果文件 409 `NODE_HAS_FILES`）。
 - 完成门禁：`completeNode` / `canComplete`（复用 `NodeModule` 的 GateService；`/api/v1/nodes/*` 路由在本模块 `nodes.controller.ts`，按功能面而非 project 前缀）；拒绝同样先回滚事务、再补写 `node.gate_rejected` 留痕、最后 422。`complete` 响应按契约 `NodeCompleteResponse`（{ node }）（h5 修正：原先返回裸节点视图）。
-- 权限（h6 + 0075）：读路由的记录级可见性与写路由的功能权限位统一走 `ProjectAccessGuard` —— 不可见 / 不存在 / 已软删一律 404（防 IDOR）；项目写路由除功能位外还要求投影 `groupAccessLevel=edit`（由部门规则按当前项目取最高权限）。缺位 403（`project.create` / `project.update` / `project.delete` / `member.manage`）；列表与 facets 取 `@ProjectScope()` 过滤。节点增删的 `assertProjectManager`（部门权限管理员 `groupAccessAdmin` / `projects.manager_ids` 任一位 / 名册 `role_in_project=project_manager`）保留为服务内业务口径；不再读取遗留 `roleCodes`。归档项目一律 409 `PROJECT_ARCHIVED`。
+- 权限（h6 + 0075）：读路由的记录级可见性与写路由的功能权限位统一走 `ProjectAccessGuard` —— 不可见 / 不存在 / 已软删一律 404（防 IDOR）；项目写路由除功能位外还要求最终 `accessLevel=edit`（管理员或部门 / 个人规则按当前项目取最高权限；项目经理 / 成员 / 任务负责人关系不提升编辑权）。缺位 403（`project.create` / `project.update` / `project.delete` / `member.manage`）；列表与 facets 取 `@ProjectScope()` 过滤。节点增删 / 阶段推进 / 回退 / 归档在服务层统一走 `assertProjectEditor`，只认最终 `accessLevel=edit`；`projects.manager_ids` 或名册项目经理关系本身不再单独授予写权限；不再读取遗留 `roleCodes`。归档项目一律 409 `PROJECT_ARCHIVED`。
 - 留痕与触点：节点 / 阶段事件同事务写 outbox（`node.added`（还原带 `restored: true`）/ `node.completed` / `node.deleted` / `stage.advanced` / `stage.rolled_back`）；节点增删后调用 `ProjectRepository.touch`（ADR-022 ② 触点）。
 - 单测：`test/project-crud.test.ts` 的 `makeService` 已注入 fake DB（`transaction` 直通）+ fake Flow（`importSnapshot`），创建用例覆盖快照调用；流程用例见 `test/blueprint-validation.test.ts` / `test/flow-gate.test.ts` 与本地实机演练记录。
 ## 已实现（M7-04 归档 · ADR-027 · C4-02 / C4-03 · Push 167）

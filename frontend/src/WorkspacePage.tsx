@@ -99,13 +99,12 @@ import { Toast } from "./components/Toast";
 import { useFocusTrap } from "./components/useFocusTrap";
 import { ImageZoomViewer } from "./components/ImageZoomViewer";
 import { useBackgroundTier, type TintedTier } from "./backgroundTier";
-import { useMyPermissions } from "./permissions";
 import { WorkspaceIssueSubMenu } from "./components/WorkspaceIssueSubMenu";
 import { MyPlanBoard } from "./components/MyPlanBoard";
 import { TaskDrawer, type TaskEditSubmit } from "./components/TaskDrawer";
 import { ISSUE_CATEGORY_CLASS, ISSUE_ROW_TINT, ISSUE_ROW_TINT_VIVID, ISSUE_TAG_CLASS, IssueStateCell } from "./components/ReportIssuePanel";
 import { TaskRow, resolveColumns, tableGridTemplate, tableMinWidth, taskPatchBody, type ColumnDef, type TaskPatch } from "./components/TaskBoard";
-import { TEMP_TASK_STAGE, type ProjectTask, type TaskStatus } from "./data/tasks";
+import { TEMP_TASK_STAGE, taskCapabilitiesOf, type ProjectTask, type TaskStatus } from "./data/tasks";
 import { memberNameOf, type Member } from "./data/members";
 import type { IssueState, ReportPhoto } from "./data/reports";
 import { recordPreviewView, recycleFile, renameFile, uploadFiles, usePhotoUrl, type TaskFileRef } from "./fileApi";
@@ -325,7 +324,7 @@ type TaskTableHandlers = {
   onDeleteFile: (fileId: string) => Promise<void>;
 };
 
-function TaskTable({ projectId, project, items, tierTint, members, actorId, onOpenTask, rowOf, handlers, customDeliverableTypes = [], onCreateDeliverableType }: {
+function TaskTable({ projectId, project, items, tierTint, members, onOpenTask, rowOf, handlers, customDeliverableTypes = [], onCreateDeliverableType }: {
   projectId: string;
   /** 随行项目卡（Push 302）：项目经理列与项目经理回写的项目级数据源。 */
   project: ApiProject | undefined;
@@ -335,7 +334,6 @@ function TaskTable({ projectId, project, items, tierTint, members, actorId, onOp
   /** 人员目录（任务行内「项目经理 / 负责人」多选候选；Push 279）。 */
   members: readonly Member[];
   /** 当前账号 id：任务定档入口的角色判定（任务负责人 / 项目经理）。 */
-  actorId: string | null;
   /** 点任务行打开右侧任务抽屉（Push 278）。 */
   onOpenTask: (task: ApiWorkspaceTask) => void;
   /** 行的当前数据（本地写回覆盖 → 聚合读面全字段行；Push 302 起聚合读面即行源，undefined 仅作防御）。 */
@@ -402,13 +400,13 @@ function TaskTable({ projectId, project, items, tierTint, members, actorId, onOp
                     onProgress={handlers === undefined ? undefined : (progress) => { handlers.onProgress(projectId, task.id, progress); }}
                     managers={managers}
                     managerIds={project?.managerIds ?? []}
-                    canFinalize={handlers !== undefined && actorId !== null && (ui.ownerIds.includes(actorId) || project?.managerIds.includes(actorId) === true)}
+                    canFinalize={handlers !== undefined && taskCapabilitiesOf(ui).canFinalize}
                     members={members}
                     customDeliverableTypes={customDeliverableTypes}
                     onCreateDeliverableType={onCreateDeliverableType}
                     onSetStatus={handlers === undefined ? undefined : (status) => { handlers.onSetStatus(projectId, task.id, status); }}
                     onSetActualEnd={handlers === undefined ? undefined : (iso) => { handlers.onSetActualEnd(projectId, task.id, iso); }}
-                    onChangeManagers={handlers === undefined || project === undefined ? undefined : (managerIds) => { handlers.onChangeManagers(projectId, managerIds); }}
+                    onChangeManagers={handlers === undefined || project?.accessLevel !== "edit" ? undefined : (managerIds) => { handlers.onChangeManagers(projectId, managerIds); }}
                     onPatch={handlers === undefined ? undefined : (patch) => { handlers.onPatch(projectId, task.id, patch); }}
                     onUploadFiles={handlers === undefined ? undefined : (taskId, files, onProgress, finalize) => handlers.onUploadFiles(projectId, taskId, files, onProgress, finalize)}
                     onDeleteFile={handlers?.onDeleteFile}
@@ -658,7 +656,7 @@ function sameMemberIds(left: readonly string[], right: readonly string[]): boole
  *  Push 278：任务行**点击开任务抽屉**（业务口径「做我的任务页面也可以点击编辑即可 编辑行 也在右侧出现抽屉」）——
  *  抽屉 = 项目页同款 TaskDrawer（全能力即时保存）；数据源 = 聚合读面全字段行（Push 302；带 version，打开零新增请求）；
  *  写后防抖静默刷新聚合读面（抽屉不打断：task 用写回响应就地更新、version 滚动前进）。 */
-function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorId, actorName, onReload, customDeliverableTypes = [], onCreateDeliverableType }: { data: ApiWorkspace; tierTint: TintedTier | false; openIds: ReadonlySet<string>; onToggleProject: (projectId: string) => void; members: readonly Member[]; actorId: string | null; actorName: string; onReload: () => void; customDeliverableTypes?: readonly string[]; onCreateDeliverableType?: (projectId: string, name: string) => Promise<string | null> }) {
+function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorName, onReload, customDeliverableTypes = [], onCreateDeliverableType }: { data: ApiWorkspace; tierTint: TintedTier | false; openIds: ReadonlySet<string>; onToggleProject: (projectId: string) => void; members: readonly Member[]; actorName: string; onReload: () => void; customDeliverableTypes?: readonly string[]; onCreateDeliverableType?: (projectId: string, name: string) => Promise<string | null> }) {
   const t = useT();
   const locale = useLocale();
   const projects = groupTasksByProject(data);
@@ -667,12 +665,11 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorI
   const allTasks = [...data.myTasks.overdue, ...data.myTasks.today, ...data.myTasks.upcoming, ...data.myTasks.unscheduled];
   const taskById = new Map(allTasks.map((task) => [task.id, task]));
   const projectById = new Map(data.projects.map((project) => [project.id, project]));
-  /** 项目级部门权限：行内编辑、任务抽屉与项目字段回写都只对当前项目可编辑时开放。 */
-  const canWriteProject = (projectId: string): boolean => projectById.get(projectId)?.groupAccessLevel === "edit";
-  /** 自定义成果类型只由当前项目的项目经理新增；服务端仍作最终裁决。 */
+  /** 项目编辑者：只用于项目级入口（新增成果类型 / 项目经理 / 成员）；任务写入口由逐任务 capabilities 收敛。 */
+  const canEditProject = (projectId: string): boolean => projectById.get(projectId)?.accessLevel === "edit";
+  /** 自定义成果类型是项目级写操作：项目编辑者可新增；服务端仍作最终裁决。 */
   const deliverableTypeCreatorFor = (projectId: string): ((name: string) => Promise<string | null>) | undefined => {
-    const project = projectById.get(projectId);
-    if (onCreateDeliverableType === undefined || !canWriteProject(projectId) || actorId === null || project?.managerIds.includes(actorId) !== true) {
+    if (onCreateDeliverableType === undefined || !canEditProject(projectId)) {
       return undefined;
     }
     return (name) => onCreateDeliverableType(projectId, name);
@@ -948,8 +945,8 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorI
   };
 
   const drawerProject = drawerTask === null ? undefined : projectById.get(drawerTask.projectId);
-  const drawerWritable = drawerProject?.groupAccessLevel === "edit";
-  const drawerCanFinalize = drawerWritable && drawerTask !== null && actorId !== null && (drawerTask.task.ownerIds.includes(actorId) || drawerProject?.managerIds.includes(actorId) === true);
+  const drawerProjectEditable = drawerProject?.accessLevel === "edit";
+  const drawerCanFinalize = drawerTask !== null && taskCapabilitiesOf(drawerTask.task).canFinalize;
   const drawerManagers = (drawerProject?.managerNames ?? []).filter((name): name is string => name !== null && name !== "").join("、");
 
   return (
@@ -977,7 +974,7 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorI
                 onToggleProject(project.projectId);
               }}
             >
-              <TaskTable projectId={project.projectId} project={projectById.get(project.projectId)} items={project.items} tierTint={tierTint} members={members} actorId={actorId} onOpenTask={openTask} rowOf={rowOf} handlers={canWriteProject(project.projectId) ? rowHandlers : undefined} customDeliverableTypes={customDeliverableTypes} onCreateDeliverableType={deliverableTypeCreatorFor(project.projectId)} />
+              <TaskTable projectId={project.projectId} project={projectById.get(project.projectId)} items={project.items} tierTint={tierTint} members={members} onOpenTask={openTask} rowOf={rowOf} handlers={rowHandlers} customDeliverableTypes={customDeliverableTypes} onCreateDeliverableType={deliverableTypeCreatorFor(project.projectId)} />
             </ProjectPanel>
           ))}
         </div>
@@ -987,18 +984,19 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, actorI
         managers={drawerManagers}
         managerIds={drawerProject?.managerIds ?? []}
         canFinalize={drawerCanFinalize}
+        canEditManagers={drawerProjectEditable}
         members={members}
-        onSubmit={drawerWritable ? handleDrawerSubmit : undefined}
-        onRename={drawerWritable ? handleDrawerRename : undefined}
-        onProgress={drawerWritable ? handleDrawerProgress : undefined}
-        onSetStatus={drawerWritable ? handleDrawerStatus : undefined}
-        onSetActualEnd={drawerWritable ? handleDrawerActualEnd : undefined}
-        onFinalize={drawerWritable ? handleDrawerFinalize : undefined}
-        onUnfinalize={drawerWritable ? handleDrawerUnfinalize : undefined}
-        onUploadFiles={drawerWritable ? handleDrawerUploadFiles : undefined}
-        onDeleteFile={drawerWritable ? handleDrawerDeleteFile : undefined}
-        onRenameFile={drawerWritable ? handleDrawerRenameFile : undefined}
-        onChanged={drawerWritable ? handleDrawerChanged : undefined}
+        onSubmit={handleDrawerSubmit}
+        onRename={handleDrawerRename}
+        onProgress={handleDrawerProgress}
+        onSetStatus={handleDrawerStatus}
+        onSetActualEnd={handleDrawerActualEnd}
+        onFinalize={handleDrawerFinalize}
+        onUnfinalize={handleDrawerUnfinalize}
+        onUploadFiles={handleDrawerUploadFiles}
+        onDeleteFile={handleDrawerDeleteFile}
+        onRenameFile={handleDrawerRenameFile}
+        onChanged={handleDrawerChanged}
         customDeliverableTypes={customDeliverableTypes}
         onCreateDeliverableType={drawerTask === null ? undefined : deliverableTypeCreatorFor(drawerTask.projectId)}
         actorName={actorName}
@@ -1110,7 +1108,6 @@ export default function WorkspacePage({ me, members, tab, onChangeTab, sub, onCh
   const t = useT();
   const locale = useLocale();
   /** 任务负责人 / 项目经理外键都是本库 users.id；`me.user.id` 是 Casdoor 标识，不能用于角色命中判断。 */
-  const currentActorId = useMyPermissions()?.userId ?? null;
 
   /** 展开态（Push 233 · 业务口径「这个下拉要有记忆」）：偏好由 App 层持有并单键 PATCH；null / 缺省 = 偏好尚未取到 → 按全收起渲染。
    *  未接 onWorkspaceOpenProjectsChange 时退回本页内存态（面板仍可展开 / 收起，只是不跨刷新）。 */
@@ -1142,7 +1139,7 @@ export default function WorkspacePage({ me, members, tab, onChangeTab, sub, onCh
   /** 状态改动失败文案（null = 无提示）：失败已回滚，这里只出提示条。 */
   const [issueError, setIssueError] = useState<string | null>(null);
   const handleChangeIssueState = (issue: ApiWorkspaceIssue, next: IssueState): void => {
-    if (state.kind !== "ready" || state.data.projects.find((project) => project.id === issue.projectId)?.groupAccessLevel !== "edit") {
+    if (state.kind !== "ready" || state.data.projects.find((project) => project.id === issue.projectId)?.accessLevel !== "edit") {
       return;
     }
     const known = issueOverrides.get(issue.id);
@@ -1424,7 +1421,7 @@ export default function WorkspacePage({ me, members, tab, onChangeTab, sub, onCh
               }}
               overrides={issueOverrides}
               onChangeState={handleChangeIssueState}
-              editableProjectIds={new Set(state.data.projects.filter((project) => project.groupAccessLevel === "edit").map((project) => project.id))}
+              editableProjectIds={new Set(state.data.projects.filter((project) => project.accessLevel === "edit").map((project) => project.id))}
             />
           ) : (
             <MyTasksView
@@ -1432,7 +1429,6 @@ export default function WorkspacePage({ me, members, tab, onChangeTab, sub, onCh
               tierTint={tierTint}
               openIds={taskOpenIds}
               members={members}
-              actorId={currentActorId}
               actorName={me.user.displayName ?? ""}
               onReload={refreshQuietly}
               customDeliverableTypes={customDeliverableTypes}

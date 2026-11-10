@@ -3753,7 +3753,7 @@
           "code",
           "name"
         ],
-        "description": "新增字典条目：region 任何登录用户可增（全站共享；重复码 409）；projectType 仅管理员 dict.manage；deliverableType 的自定义成果由项目经理走 POST /projects/{id}/deliverable-types（本通用端点仍仅 dict.manage）；变更写审计留痕（C9-02）；响应为更新后的整个字典"
+        "description": "新增字典条目：region 任何登录用户可增（全站共享；重复码 409）；projectType 仅管理员 dict.manage；deliverableType 的自定义成果由项目编辑者走 POST /projects/{id}/deliverable-types（本通用端点仍仅 dict.manage）；变更写审计留痕（C9-02）；响应为更新后的整个字典"
       },
       "DictItemUpdateBody": {
         "type": "object",
@@ -4788,7 +4788,7 @@
           "edit",
           "view"
         ],
-        "description": "当前登录账号对该项目的部门权限：edit 可写 / view 仅浏览；由服务端按所有命中范围取最高权限后随项目下发"
+        "description": "当前登录账号对该项目的有效访问级别：edit = 可执行项目级写操作 / view = 仅浏览。项目经理、项目成员与任务负责人关系只保证可见；只有部门 / 个人规则命中 edit 才提升为项目编辑（管理员除外）"
       },
       "GroupAccessAdmin": {
         "type": "object",
@@ -8005,6 +8005,9 @@
             },
             "description": "项目经理姓名数组：服务端按 managerIds 解析后随行下发，与 managerIds 同下标一一对应（列表 / 详情 / 创建与编辑返回均含，免前端二次查目录）；人员停用 / 离职后仍返回姓名，取不到时该位为 null（前端显示「—」）"
           },
+          "accessLevel": {
+            "$ref": "#/components/schemas/GroupAccessAccessLevel"
+          },
           "stageKey": {
             "$ref": "#/components/schemas/StageKey"
           },
@@ -8012,7 +8015,14 @@
             "$ref": "#/components/schemas/ProjectStatus"
           },
           "groupAccessLevel": {
-            "$ref": "#/components/schemas/GroupAccessAccessLevel"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GroupAccessAccessLevel"
+              },
+              {
+                "description": "当前登录账号对该项目的部门权限：edit 可写 / view 仅浏览；由服务端按所有命中范围取最高权限后随项目下发"
+              }
+            ]
           },
           "description": {
             "type": [
@@ -8096,6 +8106,7 @@
           "projectType",
           "managerIds",
           "managerNames",
+          "accessLevel",
           "stageKey",
           "status",
           "groupAccessLevel",
@@ -8565,7 +8576,7 @@
         "required": [
           "name"
         ],
-        "description": "仅当前项目的项目经理 / 名册项目经理可新增；条目进入全站 deliverableType 字典，所有账号与项目可见"
+        "description": "仅当前项目的项目编辑者（部门 / 个人规则 edit 或系统管理员）可新增；项目经理关系本身只读；条目进入全站 deliverableType 字典，所有账号与项目可见"
       },
       "ProjectFacets": {
         "type": "object",
@@ -10397,6 +10408,15 @@
         ],
         "description": "任务（v0.2 §2.3 tasks；展示态与是否按时交付的派生规则见 §2.4、A12~A14）；阶段与负责人可空、组内位次 sort_index 见 A15 / A18 / A19（Push 124）"
       },
+      "TaskAccessSource": {
+        "type": "string",
+        "enum": [
+          "project_edit",
+          "task_owner",
+          "view"
+        ],
+        "description": "任务有效权限来源：project_edit 项目编辑者 / task_owner 当前任务负责人 / view 仅浏览"
+      },
       "TaskBaseStatus": {
         "type": "string",
         "enum": [
@@ -10614,6 +10634,64 @@
           "warnings"
         ],
         "description": "完成预检（canComplete=false 时 missing 给缺件明细）"
+      },
+      "TaskCapabilities": {
+        "type": "object",
+        "properties": {
+          "level": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GroupAccessAccessLevel"
+              },
+              {
+                "description": "任务有效编辑级别：edit 可编辑 / view 只读"
+              }
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/TaskAccessSource"
+          },
+          "canEditFields": {
+            "type": "boolean",
+            "description": "可编辑任务普通字段（状态、计划、人数、重要度、成果类型、进展描述等）"
+          },
+          "canUpdateProgress": {
+            "type": "boolean",
+            "description": "可更新进度 / 实际完成日期 / 提交完成"
+          },
+          "canComplete": {
+            "type": "boolean",
+            "description": "可提交任务完成（仍受完成门禁约束）"
+          },
+          "canFinalize": {
+            "type": "boolean",
+            "description": "可定档 / 取消定档（任务负责人或项目编辑者）"
+          },
+          "canUpload": {
+            "type": "boolean",
+            "description": "可上传 / 追加版本 / 对本人任务文件发起变更"
+          },
+          "canAssignOwners": {
+            "type": "boolean",
+            "description": "可修改任务负责人（仅项目编辑者；任务负责人不可改自己的负责人）"
+          },
+          "canDelete": {
+            "type": "boolean",
+            "description": "可删除 / 排序 / 批量操作任务（仅项目编辑者）"
+          }
+        },
+        "required": [
+          "level",
+          "source",
+          "canEditFields",
+          "canUpdateProgress",
+          "canComplete",
+          "canFinalize",
+          "canUpload",
+          "canAssignOwners",
+          "canDelete"
+        ],
+        "description": "当前登录人对本任务的有效能力（列表接口随行下发；导出等内部用途可不带）"
       },
       "TaskChangeLink": {
         "type": "object",
@@ -10966,6 +11044,16 @@
                 "items": {
                   "$ref": "#/components/schemas/TaskFileBrief"
                 }
+              },
+              "capabilities": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/TaskCapabilities"
+                  },
+                  {
+                    "description": "当前登录人对本任务的有效能力"
+                  }
+                ]
               }
             },
             "required": [
@@ -11144,6 +11232,9 @@
               },
               "fileSummary": {
                 "$ref": "#/components/schemas/TaskFileSummary"
+              },
+              "capabilities": {
+                "$ref": "#/components/schemas/TaskCapabilities"
               }
             },
             "required": [
@@ -13977,7 +14068,7 @@
         "tags": [
           "projects"
         ],
-        "summary": "新增全站自定义成果文件类型（仅当前项目项目经理；写入 deliverableType 全局字典，所有项目共享）",
+        "summary": "新增全站自定义成果文件类型（仅当前项目编辑者；写入 deliverableType 全局字典，所有项目共享）",
         "parameters": [
           {
             "schema": {

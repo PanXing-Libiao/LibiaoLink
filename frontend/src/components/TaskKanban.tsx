@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState, type Dispatch, type MouseEvent a
 import type { Member } from "../data/members";
 import { PROJECT_STAGES } from "../data/projects";
 import type { TemplatePresetNode } from "../data/templatePresets";
-import { TEMP_TASK_STAGE, addedNodeIdsOf, addedNodeKeysOf, ownersLabel, lateDeliveryLabel, type ProjectTask, type TaskStatus } from "../data/tasks";
+import { TEMP_TASK_STAGE, addedNodeIdsOf, addedNodeKeysOf, ownersLabel, lateDeliveryLabel, taskCapabilitiesOf, type ProjectTask, type TaskStatus } from "../data/tasks";
 import { InlineDateCell } from "./InlineEdit";
 import { MemberAvatar } from "./MemberSelect";
 import { ScrollArea } from "./ScrollArea";
@@ -227,8 +227,12 @@ type TaskKanbanProps = {
   managers: string;
   /** 项目经理 id 名单（任务详情抽屉里「项目经理」字段的当前选中项，Push 136）。 */
   managerIds: string[];
-  /** 当前账号是否可对指定任务定档 / 取消定档：由任务负责人与项目经理名单共同裁决。 */
+  /** 当前账号是否可对指定任务定档 / 取消定档：吃服务端逐任务能力。 */
   canFinalizeTask?: (task: ProjectTask) => boolean;
+  /** 项目经理是项目级字段：仅项目编辑者可改。 */
+  canEditManagers?: boolean;
+  /** 卡片拖拽会改负责人 / 状态 / 排序，仅项目编辑者启用。 */
+  canDragTasks?: boolean;
   /** 全站自定义成果类型（字典 deliverableType）。 */
   customDeliverableTypes?: readonly string[];
   /** 仅当前项目项目经理可新增；不传 = 选择器入口置灰。 */
@@ -723,7 +727,7 @@ function KanbanColumn({
                 onOpenTask(task);
               }}
               members={members}
-              onSetActualEnd={onSetActualEnd === undefined ? undefined : (iso) => onSetActualEnd(task.id, iso)}
+              onSetActualEnd={onSetActualEnd === undefined || !taskCapabilitiesOf(task).canComplete || task.finalizedAt !== null ? undefined : (iso) => onSetActualEnd(task.id, iso)}
               dragging={draggingId === task.id}
               onPointerDownDrag={onPointerDownDrag}
             />
@@ -820,7 +824,7 @@ function KanbanColumn({
   );
 }
 
-export function TaskKanban({ mode, tasks, focusTaskId = null, onFocusClosed, managers, managerIds, canFinalizeTask, customDeliverableTypes = [], onCreateDeliverableType, members, onAddTask, onAddStageTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onSetStatus, onSetActualEnd, onReorderTask, onSetProgress, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, projectId }: TaskKanbanProps) {
+export function TaskKanban({ mode, tasks, focusTaskId = null, onFocusClosed, managers, managerIds, canFinalizeTask, canEditManagers = false, canDragTasks = false, customDeliverableTypes = [], onCreateDeliverableType, members, onAddTask, onAddStageTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onSetStatus, onSetActualEnd, onReorderTask, onSetProgress, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, projectId }: TaskKanbanProps) {
   const t = useT();
   /**
    * 任务详情抽屉选中的任务 id（Push 196 由对象改存 id）：点卡片与「建完临时任务」都先落 id，抽屉按 id 从最新列表取行 ——
@@ -1210,9 +1214,9 @@ export function TaskKanban({ mode, tasks, focusTaskId = null, onFocusClosed, man
               stageTasksOf={stageTasksOf}
               members={members}
               onSetActualEnd={onSetActualEnd}
-              draggingId={onPatchTask === undefined ? null : draggingId}
+              draggingId={canDragTasks ? draggingId : null}
               dropIndex={dropTarget !== null && dropTarget.key === group.key ? dropTarget.index : null}
-              onPointerDownDrag={onPatchTask === undefined ? undefined : beginCardDrag}
+              onPointerDownDrag={canDragTasks ? beginCardDrag : undefined}
             />
           ))}
         </ScrollArea>
@@ -1233,6 +1237,7 @@ export function TaskKanban({ mode, tasks, focusTaskId = null, onFocusClosed, man
         managers={managers}
         managerIds={managerIds}
         canFinalize={drawerTask !== null && canFinalizeTask?.(drawerTask) === true}
+        canEditManagers={canEditManagers}
         members={members}
         customDeliverableTypes={customDeliverableTypes}
         onCreateDeliverableType={onCreateDeliverableType}

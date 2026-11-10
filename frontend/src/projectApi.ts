@@ -24,6 +24,7 @@ export type ApiProject = {
   managerNames: Array<string | null>;
   stageKey: string;
   status: string;
+  accessLevel: "edit" | "view";
   groupAccessLevel: "edit" | "view";
   description: string | null;
   version: number;
@@ -267,6 +268,7 @@ export function toUiProject(view: ApiProject): Project {
     version: view.version,
     stageKey: view.stageKey,
     status: view.status,
+    accessLevel: view.accessLevel,
     groupAccessLevel: view.groupAccessLevel,
     deletedAt: view.deletedAt === null ? null : formatDateTime(view.deletedAt),
     deletedBy: view.deletedBy,

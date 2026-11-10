@@ -251,7 +251,7 @@ async function loadProjectFileRows(projectId: string): Promise<ProjectFileRow[]>
   return visibleFiles.flatMap((file) => rowsByFileId.get(file.id) ?? []);
 }
 
-export function ProjectFilesPanel({ projectId, tasks }: { projectId: string; tasks: readonly ProjectTask[] }) {
+export function ProjectFilesPanel({ projectId, tasks, canEdit = false }: { projectId: string; tasks: readonly ProjectTask[]; canEdit?: boolean }) {
   const t = useT();
   const locale = useLocale();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
@@ -517,7 +517,7 @@ export function ProjectFilesPanel({ projectId, tasks }: { projectId: string; tas
   }
 
   async function deleteMaterialReissue(row: ProjectFileRow): Promise<void> {
-    if (deleteBusy !== null || !isMaterialReissueDocument(row)) {
+    if (!canEdit || deleteBusy !== null || !isMaterialReissueDocument(row)) {
       return;
     }
     setPendingDelete(null);
@@ -708,7 +708,7 @@ export function ProjectFilesPanel({ projectId, tasks }: { projectId: string; tas
                               <span className="block min-w-0 truncate text-base text-zinc-800" title={row.name}>
                                 {row.name}
                               </span>
-                              {isMaterialReissueDocument(row) ? (
+                              {canEdit && isMaterialReissueDocument(row) ? (
                                 deleteBusy === row.key ? (
                                   <span data-project-file-deleting={row.key} className="inline-flex h-6 min-w-12 shrink-0 items-center justify-center rounded-full bg-red-50 px-2 text-[11px] font-medium text-red-600">
                                     {t("pd.files.material.deleting")}

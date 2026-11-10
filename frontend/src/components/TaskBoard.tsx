@@ -3,7 +3,7 @@ import { mediumCardBorderOf, mediumCardTintOf, vividCardBorderOf, vividCardTintO
 import { PROJECT_STAGES } from "../data/projects";
 import type { Member } from "../data/members";
 import type { TaskFileRef } from "../fileApi";
-import { TEMP_TASK_STAGE, addedNodeIdsOf, addedNodeKeysOf, dateOnlyText, daysBetweenInclusive, lateDeliveryLabel, ownersLabel, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
+import { TEMP_TASK_STAGE, addedNodeIdsOf, addedNodeKeysOf, dateOnlyText, daysBetweenInclusive, lateDeliveryLabel, ownersLabel, taskCapabilitiesOf, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
 import { stageNameOf, type ApiProjectSummary, type TaskUpdateInput } from "../taskApi";
 import { fieldText, isLocalizedLocale, mdText, priorityText, stageText, statusText, useLocale, useLocalizedText, useT } from "../i18n";
 import { InlineDateCell, InlineMemberMultiCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
@@ -432,6 +432,16 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
   /** 定档锁定（Push 264 · P1-1）：行内任务字段入口一律锁定（点击弹顶部 Toast、不弹编辑浮层）；
    *  2026-10-10 业务追订「项目经理也不可以修改」——「项目经理」列随行一并锁定；「文件」列仍走既有 taskFinalized 门控（修改走变更）。 */
   const taskFinalized = task.finalizedAt !== null;
+  const capabilities = taskCapabilitiesOf(task);
+  const canEditFields = onPatch !== undefined && capabilities.canEditFields && !taskFinalized;
+  const canAssignOwners = canEditFields && capabilities.canAssignOwners;
+  const canUpdateProgress = onProgress !== undefined && capabilities.canUpdateProgress && !taskFinalized;
+  const canUpdateStatus = onSetStatus !== undefined && capabilities.canEditFields && !taskFinalized;
+  const canUpdateActualEnd = onSetActualEnd !== undefined && capabilities.canComplete && !taskFinalized;
+  /** 文件下拉始终保留给可写任务角色；定档后只关闭上传 / 删除，预览与下载继续可用。 */
+  const showFilesPopover = (onUploadFiles !== undefined || onDeleteFile !== undefined) && capabilities.canUpload;
+  const canManageFiles = showFilesPopover && !taskFinalized;
+  const canDeleteThisTask = onDelete !== undefined && capabilities.canDelete && !taskFinalized;
   /** Push 301：状态 / 优先级下拉选项按当前语言换词（显示值经 statusText / priorityText）。 */
   const statusOptions = statusOptionsOf((value) => statusText(locale, value));
   const priorityOptions: SelectOption[] = PRIORITY_VALUES.map((value) => ({ value, label: priorityText(locale, value) }));
@@ -488,14 +498,14 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
             <p className="mt-0.5 max-w-[280px] truncate text-[11px] leading-4 text-zinc-400" title={subText}>{subText}</p>
           )}
         </div>
-        {onProgress === undefined ? (
+        {!canUpdateProgress ? (
           <span className="shrink-0">
             <TrackerDots progress={task.progress} hovered={0} onHoverChange={() => { /* 只读行：不接悬停预览 */ }} vivid={tierTint === "vivid"} />
           </span>
         ) : (
           <Tracker progress={task.progress} onChange={onProgress} vivid={tierTint === "vivid"} />
         )}
-        {onDelete === undefined ? null : (
+        {!canDeleteThisTask ? null : (
           // 删除动作位（Push 141，业务口径「不要这个笔作为编辑了…改成删除按钮吧」）：固定 48px 槽位 + 右侧 16px 留白（业务反馈「当项目经理大于两位时 就是会触碰到」—— 展开胶囊右缘原与「项目经理」列齐平，留白后不贴列），
           // 行悬停浮现 24px 幽灵态删除按钮（无底色，业务反馈「黑的太突兀了…要比较看不出来」）、悬停按钮展开成 48px 小号红底胶囊 —— 展开只吃槽位，不挤动四格进度条与描述文字。
           <span className="mr-4 flex w-12 shrink-0 items-center self-stretch">
@@ -529,7 +539,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
         />
       ),
     owner:
-      onPatch === undefined ? (
+      !canAssignOwners ? (
         task.owners.length === 0 ? (
           <span className="text-xs text-zinc-300">{fieldText(locale, "待分配")}</span>
         ) : (
@@ -563,7 +573,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
         />
       ),
     status:
-      onSetStatus === undefined ? (
+      !canUpdateStatus ? (
         <span className={"inline-flex items-center gap-1.5 text-xs " + STATUS_TEXT_CLASS[status]}>
           <span className={"h-1.5 w-1.5 shrink-0 rounded-full " + dotClass} />
           {statusText(locale, status)}
@@ -597,7 +607,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
       <span>
         {task.priority === null ? (
           <span className="text-xs text-zinc-300">—</span>
-        ) : onPatch === undefined ? (
+        ) : !canEditFields ? (
           <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + PRIORITY_CLASS[task.priority]}>
             {priorityText(locale, task.priority)}
           </span>
@@ -637,7 +647,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
     // 输出成果文件（2026-10-08 · 业务口径「文件输出成果也要可以选择」）：只读徽标改可点选择 ——
     // 点开 = DeliverablePicker（搜索 + 内置十类 / 自定义彩签多选）；列窄走「首枚 + +N」，全名清单进浮层。
     deliverable:
-      onPatch === undefined ? (
+      !canEditFields ? (
         <span className="flex min-w-0 items-center gap-1">
           {task.deliverableTypes.length === 0 ? (
             <span className="text-xs text-zinc-300">—</span>
@@ -663,15 +673,15 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
       ),
     files: (
       <span className="relative flex min-w-0 items-center justify-center gap-1 self-stretch">
-        {onUploadFiles === undefined && onDeleteFile === undefined ? (
+        {!showFilesPopover ? (
           fileCellContent
         ) : (
           <TaskFilesPopover
             taskId={task.id}
             taskTitle={task.title}
             files={filesForTask}
-            onUpload={onUploadFiles}
-            onDelete={onDeleteFile}
+            onUpload={canManageFiles ? onUploadFiles : undefined}
+            onDelete={canManageFiles ? onDeleteFile : undefined}
             taskFinalized={task.finalizedAt !== null}
             canFinalize={canFinalize}
           >
@@ -682,7 +692,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
     ),
     note: (
       <span className="min-w-0">
-        {onPatch === undefined ? (
+        {!canEditFields ? (
           task.note === "" ? (
             <span className="text-xs text-zinc-300">—</span>
           ) : (
@@ -703,7 +713,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
       </span>
     ),
     start:
-      onPatch === undefined ? (
+      !canEditFields ? (
         <span className="text-xs tabular-nums text-zinc-600">{startText}</span>
       ) : (
         <InlineDateCell
@@ -725,7 +735,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
       </span>
     ),
     due:
-      onPatch === undefined ? (
+      !canEditFields ? (
         <span className="text-xs tabular-nums text-zinc-600">{dueText}</span>
       ) : (
         <InlineDateCell
@@ -742,7 +752,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
       ),
     headcount: (
       <span className="text-xs tabular-nums text-zinc-600">
-        {onPatch === undefined ? (
+        {!canEditFields ? (
           task.headcount > 0 ? (
             t("drawer.headcount.value", { n: task.headcount })
           ) : (
@@ -764,7 +774,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
     ),
     doneDate: (
       <span className="text-xs tabular-nums">
-        {onSetActualEnd === undefined ? (
+        {!canUpdateActualEnd ? (
           task.doneDate !== "" ? (
             <span className="text-zinc-600">{doneText}</span>
           ) : (
@@ -1193,6 +1203,10 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
             const done = group.items.filter((item) => item.status === "已完成" || item.status === "提前完成").length;
             const pct = group.items.length === 0 ? 0 : Math.round((done / group.items.length) * 100);
             const isCollapsed = collapsed[group.stage] === true;
+            /** 只读关系用户没有新增回调：阶段头退化为普通标签，不出现「＋」和可展开卡片。 */
+            const canAddToStage = group.stage === TEMP_TASK_STAGE
+              ? onCreateTempTask !== undefined
+              : onAddNode !== undefined || onAddNodes !== undefined;
             return (
               <section key={group.stage} className="border-b border-zinc-100 last:border-b-0">
                 {/* 阶段分组头（业务口径 2026-09-24）：整行不再是点击区域 —— 只有左侧「折叠箭头 + 阶段标签」这一小片可点，
@@ -1214,7 +1228,17 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
                   </button>
                   {/* 点这个阶段标签 = 开 / 关右侧「任务节点 + 模板」卡片（再点同一个标签就关掉）；
                       「临时任务」没有节点 / 模板可挑（Push 197）：点它 = 直接出新建表单（自己填名称），外观与阶段标签一致。 */}
-                  {group.stage === TEMP_TASK_STAGE ? (
+                  {!canAddToStage ? (
+                    <span className="relative inline-flex items-center gap-2 overflow-hidden rounded-lg bg-white px-3 py-1.5 ring-1 ring-zinc-200">
+                      <span className="liquid-fill" style={{ height: pct + "%" }} aria-hidden="true" />
+                      <span className="relative text-sm font-semibold text-zinc-800">{stageText(locale, group.stage)}</span>
+                      {group.items.length === 0 ? null : (
+                        <span className="relative text-xs text-zinc-500">
+                          {t("board.stage.done", { done: done, total: group.items.length })}
+                        </span>
+                      )}
+                    </span>
+                  ) : group.stage === TEMP_TASK_STAGE ? (
                     <button
                       type="button"
                       data-temp-task-pill="true"
@@ -1370,6 +1394,7 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
         managers={managers ?? ""}
         managerIds={managerIds ?? []}
         canFinalize={drawerTask !== null && canFinalizeTask?.(drawerTask) === true}
+        canEditManagers={onChangeManagers !== undefined}
         members={members}
         customDeliverableTypes={customDeliverableTypes}
         onCreateDeliverableType={onCreateDeliverableType}

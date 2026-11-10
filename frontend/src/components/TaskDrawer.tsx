@@ -15,6 +15,7 @@ import {
   type TaskChange,
   type TaskPriority,
   type TaskStatus,
+  taskCapabilitiesOf,
 } from "../data/tasks";
 import { applyFileChange, ensurePreviewOutcome, fetchChangeRequest, fetchDownloadUrl, fetchFileVersions, finalizeFile, previewKindOf, recordPreviewView, triggerDownload, usePhotoUrl, type ChangeRequestDetail, type MaterialReissueResult, type FilePreviewKind, type FileVersionBrief, type PreviewViewerConfig } from "../fileApi";
 import { lockBodyScroll } from "../scrollLock";
@@ -221,8 +222,10 @@ type TaskDrawerProps = {
   managers?: string;
   /** 当前项目经理 id 名单（项目级字段，人员多选下拉的选中项，Push 136）。 */
   managerIds?: string[];
-  /** 当前账号是否为该任务负责人或项目经理：false 时不渲染任何定档入口（服务端同口径 403）。 */
+  /** 当前账号是否可对该任务定档 / 取消定档（服务端投影 canFinalize）。 */
   canFinalize?: boolean;
+  /** 项目经理是项目级字段：仅当前项目编辑者可改；任务负责人不得改。 */
+  canEditManagers?: boolean;
   task: ProjectTask | null;
   /** 抽屉内直接改字段后的即时保存；不传 = 抽屉只读（不渲染可编辑控件）。 */
   onSubmit?: (values: TaskEditSubmit) => Promise<number | null>;
@@ -300,7 +303,7 @@ type TaskDrawerProps = {
  * 任务描述（中文 / 英文）自 Push 196 起对「临时任务」开放（**Push 197 收窄：仅未归入阶段的临时任务** —— 业务口径 2026-09-28「这个不是临时任务 不能修改」；失焦即存，中文名必填），
  * 阶段任务与节点 / 模板生成的任务仍锁定（抽屉里不出这一行，服务端同口径 400 兜底）。
  */
-export function TaskDrawer({ task, managers, managerIds = [], canFinalize = false, members, customDeliverableTypes = [], onCreateDeliverableType, onSubmit, onRename, onProgress, onSetStatus, onSetActualEnd, onFinalize, onUnfinalize, onChanged, actorName, onUploadFiles, onDeleteFile, onRenameFile, projectId, onClose }: TaskDrawerProps) {
+export function TaskDrawer({ task, managers, managerIds = [], canFinalize: canFinalizeProp = false, canEditManagers = false, members, customDeliverableTypes = [], onCreateDeliverableType, onSubmit, onRename, onProgress, onSetStatus, onSetActualEnd, onFinalize, onUnfinalize, onChanged, actorName, onUploadFiles, onDeleteFile, onRenameFile, projectId, onClose }: TaskDrawerProps) {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
   const taskId = task === null ? null : task.id;
@@ -727,14 +730,25 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
     return null;
   }
 
-  const editable = onSubmit !== undefined && !unavailable;
+  const capabilities = taskCapabilitiesOf(task);
+  const taskFinalized = task.finalizedAt !== null;
+  /** 字段编辑同时要求：服务端任务能力、抽屉可写、任务未定档、当前无版本冲突。 */
+  const editable = onSubmit !== undefined && capabilities.canEditFields && !taskFinalized && !unavailable;
+  /** 文件改动的写入口：普通上传 / 删除 / 改名还要求任务未定档；变更申请可在定档后继续。 */
+  const filesWritable = capabilities.canUpload && !unavailable;
+  const fileDirectEditable = filesWritable && !taskFinalized;
   const historyChanges: TaskChange[] = Array.from(
     new Map([...task.changes, ...submittedChanges].map((change) => [change.id, change] as const)).values(),
   );
   /** 任务描述改名（Push 196 / Push 197 收窄）：只有**未归入阶段**的「临时任务」能改 —— 归入阶段的任务即便没有来源节点也锁定（A1-17；服务端同口径 400 兜底）。 */
-  const titleEditable = onRename !== undefined && task.stage === "" && task.nodeId === null && task.sourceNodeId === null;
-  const canEditStatus = onSetStatus !== undefined;
-  const canEditActualEnd = onSetActualEnd !== undefined;
+  const titleEditable = editable && onRename !== undefined && task.stage === "" && task.nodeId === null && task.sourceNodeId === null;
+  const canEditStatus = onSetStatus !== undefined && capabilities.canEditFields && !taskFinalized && !unavailable;
+  const canEditActualEnd = onSetActualEnd !== undefined && capabilities.canComplete && !taskFinalized && !unavailable;
+  const canEditProgress = onProgress !== undefined && capabilities.canUpdateProgress && !taskFinalized && !unavailable;
+  const managerEditable = editable && canEditManagers;
+  const ownerEditable = editable && capabilities.canAssignOwners;
+  const canFinalize = canFinalizeProp && capabilities.canFinalize;
+  const visibleTabs = filesWritable ? DRAWER_TABS : DRAWER_TABS.filter((item) => item.key !== "change");
   /** 逾期提示与服务端展示态同一口径（已延期 = 未完成且过了预计完成日期）。 */
   const overdue = task.status === "已延期";
   /** 「是否按时交付」的逾期标注（服务端展示态 + onTime 派生）。 */
@@ -938,7 +952,6 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
   };
 
   /** 任务已定档（Push 254 续 · 业务口径「不是已经定档了吗 为什么变更申请里面还是未定档」）：定档的可见口径是任务级动作（抽屉开关 / 表格侧签），已定档任务的 draft 文件同视为「定档后的文件」。 */
-  const taskFinalized = task !== null && task.finalizedAt !== null;
   /** 可变更的目标文件（A4-13；Push 254 续）：状态 final / changed 的行，或任务已定档时的 draft 行。 */
   const changeableFiles = (files ?? []).filter((file) => CHANGEABLE_STATUS[file.status] === true || (taskFinalized && file.status === "draft"));
   /** 当前选中的变更目标（清单刷新后可能消失 —— 找不到按未选处理）。 */
@@ -1139,7 +1152,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
       label: "项目经理",
       // 2026-10-10 业务追订「项目经理也不可以修改」：任务已定档 → 项目经理字段随行锁定（项目级字段同样不可改），
       // 只读展示名单 + 一句口径说明（未定档时行为不变）。
-      value: editable && !taskFinalized ? (
+      value: managerEditable ? (
         <>
           <MemberMultiSelect
             values={draft.managerIds}
@@ -1159,7 +1172,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
       ) : (
         <>
           <span className="font-medium text-zinc-800">{managers ?? ""}</span>
-          {editable && taskFinalized ? (
+          {canEditManagers && taskFinalized ? (
             <span className={CAPTION_CLASS}>{t("drawer.locked.caption")}</span>
           ) : null}
         </>
@@ -1167,7 +1180,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
     },
     {
       label: "任务负责人",
-      value: editable ? (
+      value: ownerEditable ? (
         <>
           <MemberMultiSelect
             values={draft.ownerIds}
@@ -1280,7 +1293,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
                 </span>
               </>
             )}
-            {onUploadFiles === undefined ? null : (
+            {!fileDirectEditable ? null : (
               <button
                 type="button"
                 data-drawer-upload="true"
@@ -1343,7 +1356,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
                         />
                         {renameExt === "" ? null : <span className="shrink-0 text-xs text-zinc-400">{renameExt}</span>}
                       </span>
-                    ) : onRenameFile === undefined ? (
+                    ) : !fileDirectEditable || onRenameFile === undefined ? (
                       previewKind !== null ? (
                         <button
                           type="button"
@@ -1397,7 +1410,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
                     >
                       {downloadBusy === file.id ? t("drawer.file.downloading") : t("drawer.file.download")}
                     </button>
-                    {onDeleteFile === undefined || taskFinalized ? null : confirming ? (
+                    {!fileDirectEditable || onDeleteFile === undefined ? null : confirming ? (
                       <span data-file-delete-confirm="true" className="flex shrink-0 items-center gap-1">
                         <button type="button" onClick={() => { confirmFileDelete(file.id); }} className="flex h-6 shrink-0 items-center justify-center rounded-full bg-red-500 px-2.5 text-[11px] font-semibold leading-none text-white shadow-[0_1px_2px_rgba(220,38,38,0.25)] transition-colors hover:bg-red-600">{t("drawer.file.deleteOk")}</button>
                         <button type="button" onClick={() => { setPendingDelete(null); }} className="flex h-6 shrink-0 items-center justify-center rounded-full bg-zinc-100 px-2.5 text-[11px] font-medium leading-none text-zinc-600 transition-colors hover:bg-zinc-200">{t("drawer.file.deleteCancel")}</button>
@@ -1701,7 +1714,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
             另两页收拢变更发起与追溯。 */}
         <div data-drawer-tabs="true" className="shrink-0 border-b border-zinc-100 px-6">
           <div role="tablist" aria-label={t("drawer.tabs.aria")} className="flex gap-1">
-            {DRAWER_TABS.map((item) => {
+            {visibleTabs.map((item) => {
               const active = item.key === tab;
               if (item.key !== "change") {
                 return (
@@ -1811,7 +1824,7 @@ export function TaskDrawer({ task, managers, managerIds = [], canFinalize = fals
                 <span className="text-xs text-zinc-500">{fieldText(locale, "项目进度")}</span>
                 <span className="text-sm font-semibold text-zinc-900">{progressText}</span>
               </div>
-              {onProgress === undefined ? (
+              {!canEditProgress ? (
                 <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-zinc-100">
                   <div className={"h-full rounded-full " + barClass} style={{ width: stepPct + "%" }} />
                 </div>
