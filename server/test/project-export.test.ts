@@ -138,7 +138,15 @@ function loaderFor(images: ReadonlyMap<string, ExportImage>) {
 }
 
 
-function readZipEntries(bytes: Buffer): Map<string, Buffer> {
+interface RawZipEntry {
+  method: number;
+  crc32: number;
+  compressedSize: number;
+  uncompressedSize: number;
+  compressed: Buffer;
+}
+
+function readRawZipEntries(bytes: Buffer): Map<string, RawZipEntry> {
   let eocd = -1;
   for (let offset = bytes.length - 22; offset >= Math.max(0, bytes.length - 65_557); offset -= 1) {
     if (bytes.readUInt32LE(offset) === 0x06054b50) {
@@ -149,12 +157,14 @@ function readZipEntries(bytes: Buffer): Map<string, Buffer> {
   if (eocd < 0) throw new Error("EOCD 缺失");
   const count = bytes.readUInt16LE(eocd + 10);
   const centralOffset = bytes.readUInt32LE(eocd + 16);
-  const result = new Map<string, Buffer>();
+  const result = new Map<string, RawZipEntry>();
   let cursor = centralOffset;
   for (let index = 0; index < count; index += 1) {
     if (bytes.readUInt32LE(cursor) !== 0x02014b50) throw new Error("中央目录损坏");
     const method = bytes.readUInt16LE(cursor + 10);
+    const crc32 = bytes.readUInt32LE(cursor + 16);
     const compressedSize = bytes.readUInt32LE(cursor + 20);
+    const uncompressedSize = bytes.readUInt32LE(cursor + 24);
     const nameLength = bytes.readUInt16LE(cursor + 28);
     const extraLength = bytes.readUInt16LE(cursor + 30);
     const commentLength = bytes.readUInt16LE(cursor + 32);
@@ -164,10 +174,23 @@ function readZipEntries(bytes: Buffer): Map<string, Buffer> {
     const localExtraLength = bytes.readUInt16LE(localOffset + 28);
     const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
     const compressed = bytes.subarray(dataOffset, dataOffset + compressedSize);
-    result.set(name, method === 8 ? inflateRawSync(compressed) : Buffer.from(compressed));
+    result.set(name, {
+      method,
+      crc32,
+      compressedSize,
+      uncompressedSize,
+      compressed: Buffer.from(compressed),
+    });
     cursor += 46 + nameLength + extraLength + commentLength;
   }
   return result;
+}
+
+function readZipEntries(bytes: Buffer): Map<string, Buffer> {
+  return new Map([...readRawZipEntries(bytes)].map(([name, entry]) => [
+    name,
+    entry.method === 8 ? inflateRawSync(entry.compressed) : Buffer.from(entry.compressed),
+  ]));
 }
 
 async function* rowsOf<T>(values: readonly T[]): AsyncGenerator<T> {
@@ -319,6 +342,42 @@ describe("项目数据导出工作簿", () => {
             );
           }
         }
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("图片注入对未修改 ZIP 条目直接复制压缩字节，仅重写必要 XML", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "libiaolink-project-export-test-"));
+    const filePath = join(directory, "stream-copy-entries.xlsx");
+    try {
+      const sample = payload();
+      const writer = new ProjectExportWorkbookWriter(filePath, sample.project, sample.origin, loaderFor(sample.images));
+      await writer.writeTasks(rowsOf(sample.tasks));
+      await writer.writeReports(rowsOf(sample.reports));
+      await writer.writeChanges(rowsOf(sample.changes));
+      await writer.writeStakeholders(rowsOf(sample.stakeholders));
+      const result = await writer.commit();
+
+      const before = readRawZipEntries(await readFile(result.filePath));
+      await injectWorkbookImages(result.filePath, result.imagePlacements, result.images);
+      const after = readRawZipEntries(await readFile(result.filePath));
+      const unchangedNames = [...before.keys()].filter((name) =>
+        name !== "[Content_Types].xml" &&
+        !/^xl\/worksheets\/sheet\d+\.xml$/.test(name) &&
+        !/^xl\/worksheets\/_rels\/sheet\d+\.xml\.rels$/.test(name),
+      );
+      expect(unchangedNames.length).toBeGreaterThan(2);
+      for (const name of unchangedNames) {
+        const source = before.get(name);
+        const copied = after.get(name);
+        if (source === undefined || copied === undefined) throw new Error("ZIP 条目缺失：" + name);
+        expect(copied.method, name).toBe(source.method);
+        expect(copied.crc32, name).toBe(source.crc32);
+        expect(copied.compressedSize, name).toBe(source.compressedSize);
+        expect(copied.uncompressedSize, name).toBe(source.uncompressedSize);
+        expect(copied.compressed.equals(source.compressed), name).toBe(true);
       }
     } finally {
       await rm(directory, { recursive: true, force: true });
