@@ -17,6 +17,6 @@ import { DictsController } from "./dicts.controller.js";
   imports: [IdentityModule, PermissionModule, AuditModule],
   controllers: [DictsController, AuditLogsController],
   providers: [DictRepository, DictService],
-  exports: [AuditModule],
+  exports: [AuditModule, DictService],
 })
 export class AdminModule {}

@@ -104,6 +104,23 @@ class FakeStakeholderRepository {
     return { rows: filtered.slice((page - 1) * limit, page * limit), total: filtered.length };
   }
 
+  async listForExport(
+    filter: { keyword: string | null; companyTypes: string[] | null; projectId: string | null },
+    visibility: { kind: string; ownId?: string | null; projectIds?: string[] },
+    sort: unknown,
+    page: number,
+    limit: number,
+  ): Promise<StakeholderRow[]> {
+    return (await this.list(filter, visibility, sort, page, limit)).rows;
+  }
+
+  async countForExport(
+    filter: { keyword: string | null; companyTypes: string[] | null; projectId: string | null },
+    visibility: { kind: string; ownId?: string | null; projectIds?: string[] },
+  ): Promise<number> {
+    return (await this.list(filter, visibility, [], 1, 1)).total;
+  }
+
   async findById(stakeholderId: string): Promise<StakeholderRow | null> {
     const row = this.rows.find((item) => item.id === stakeholderId);
     return row === undefined ? null : { ...row };
@@ -155,6 +172,8 @@ class FakeStakeholderRepository {
 class FakePermissionService {
   globalWritable = true;
   projectLevels = new Map<string, "edit" | "view">();
+  getAuthorizationCalls = 0;
+  projectScopeCalls = 0;
 
   constructor(
     public authorization: ActorAuthorization,
@@ -162,9 +181,11 @@ class FakePermissionService {
     private readonly knownProjects: ReadonlySet<string>,
   ) {}
   async getAuthorization(): Promise<ActorAuthorization> {
+    this.getAuthorizationCalls += 1;
     return this.authorization;
   }
   async projectScope(): Promise<ProjectScopeFilter> {
+    this.projectScopeCalls += 1;
     return this.scope;
   }
   async assertProjectVisible(_actorId: string, projectId: string): Promise<{
@@ -262,6 +283,26 @@ describe("字段级脱敏（A5-07 / C3-08）", () => {
     expect(item.companyType).toBe("customer");
     expect(item.createdByName).toBe("销售甲");
     expect(item.role).toBe("决策人");
+  });
+});
+
+describe("干系人导出上下文（P3）", () => {
+  it("授权与可见项目范围只解析一次，计数和多批读取共享同一上下文", async () => {
+    const { service, permission, repo } = makeService(SALES, { kind: "all" });
+    repo.links = [{ stakeholderId: STAKEHOLDER, projectId: PROJECT }];
+    const context = await service.prepareExportContext(ME);
+    expect(permission.getAuthorizationCalls).toBe(1);
+    expect(permission.projectScopeCalls).toBe(1);
+
+    const query = { "filter[projectId]": PROJECT, page: 1, limit: 1_000, sort: "createdAt:asc" } as const;
+    await expect(service.countForExport(query, context)).resolves.toBe(1);
+    const items = await service.listForExport(query, context);
+    await service.listForExport({ ...query, page: 2 }, context);
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.phone).toBe("+49 170 000000");
+    expect(permission.getAuthorizationCalls).toBe(1);
+    expect(permission.projectScopeCalls).toBe(1);
   });
 });
 

@@ -139,7 +139,7 @@ export const NotifyGroupMessagePayloadSchema = z
       .string()
       .max(NOTIFICATION_TEMPLATE_CODE_MAX_LENGTH)
       .nullish()
-      .openapi({ description: "模板码（R04_GROUP / R06_GROUP / A02_GROUP / A08_GROUP / STAGE_COMPLETE_GROUP；排障与文案回溯用）" }),
+      .openapi({ description: "模板码（R04_GROUP / R06_GROUP / A02_GROUP / A08_GROUP / STAGE_COMPLETE_GROUP / MATERIAL_REISSUE_GROUP；排障与文案回溯用）" }),
     stageKey: StageKeySchema.nullish().openapi({
       description: "九阶段键；仅 STAGE_COMPLETE_GROUP 使用，投递层据此生成阶段完成海报",
     }),

@@ -19,6 +19,7 @@ import { FileDownloadService } from "./file-download.service.js";
 import { FileLibraryController } from "./file-library.controller.js";
 import { FileRepository } from "./file.repository.js";
 import { FileService } from "./file.service.js";
+import { MaterialReissueService } from "./material-reissue.service.js";
 import { PreviewContentController } from "./preview-content.controller.js";
 import { PreviewContentService } from "./preview-content.service.js";
 import { PreviewConverter } from "./preview.converter.js";
@@ -57,6 +58,7 @@ import { PreviewService } from "./preview.service.js";
     FileRepository,
     FileService,
     ChangeService,
+    MaterialReissueService,
     ClockService,
     // M4-05c 预览转换队列：只做「消费与分类」（S7-1 起领取 / 重试 / dead 回写由 worker 的 OutboxDispatcher 统一负责）。
     PreviewRepository,

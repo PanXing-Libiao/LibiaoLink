@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Injectable } from "@nestjs/common";
 import {
   DOC_TYPES,
+  DeliverableTypeSchema,
   PRIORITY_VALUES,
   STAGE_KEYS,
   STAGE_NAMES,
@@ -180,6 +181,30 @@ export class TaskService {
       limit: query.limit,
       total,
     };
+  }
+
+  /** 项目导出专用总数：只查任务总数，不加载任务行或附件摘要。 */
+  async countForExport(projectId: string): Promise<number> {
+    await this.loadProjectOrFail(projectId);
+    const today = shanghaiToday(new Date());
+    return this.repository.countForExport(projectId, parseTaskListFilter({ page: 1, limit: 1 }), today);
+  }
+
+  /**
+   * 项目导出专用行读取：保持公共列表的筛选 / 排序与字段口径，但不查 total、不补附件摘要。
+   * 导出的「文件」列来自项目文件清单，不依赖列表 fileSummary。
+   */
+  async listForExport(
+    projectId: string,
+    query: Pick<TaskListQueryInput, "page" | "limit">,
+  ): Promise<TaskListItem[]> {
+    await this.loadProjectOrFail(projectId);
+    const filter = parseTaskListFilter(query);
+    const sorts = parseTaskSort(undefined);
+    const today = shanghaiToday(new Date());
+    const offset = (query.page - 1) * query.limit;
+    const rows = await this.repository.listPageForExport(projectId, filter, sorts, query.limit, offset, today);
+    return rows.map((row) => toListItem(row, EMPTY_FILE_SUMMARY, today));
   }
 
   /** GET /projects/{id}/tasks/{taskId}：抽屉全字段 + 文件清单（A7：列表不再补第二次请求）。 */
@@ -1345,8 +1370,9 @@ function gateMissingFrom(error: AppError): TaskGateMissing[] {
     const required = meta["required"];
     const present = meta["present"];
     if (typeof docType !== "string" || typeof required !== "number" || typeof present !== "number") continue;
-    if (!(DOC_TYPES as readonly string[]).includes(docType)) continue;
-    missing.push({ docType: docType as TaskGateMissing["docType"], required, present });
+    const trimmed = docType.trim();
+    if (trimmed === "") continue;
+    missing.push({ docType: trimmed, required, present });
   }
   return missing;
 }
@@ -1535,29 +1561,32 @@ function normalizePriority(value: string | null): Task["priority"] {
   return (PRIORITY_VALUES as readonly string[]).includes(value) ? (value as Task["priority"]) : null;
 }
 
-/** 文件侧单值类型归一（files.doc_type）：非十类字典值回落 null（文件清单展示用）。 */
+/** 文件侧单值类型归一（files.doc_type）：去首尾空白，空值回落 null；内置与自定义类型均原样保留。 */
 function normalizeDocType(value: string | null): Task["deliverableTypes"][number] | null {
   if (value === null) return null;
-  return (DOC_TYPES as readonly string[]).includes(value) ? (value as Task["deliverableTypes"][number]) : null;
+  const parsed = DeliverableTypeSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
-/** 十类字典过滤 + 去重（首次出现保序）—— ADR-024：取值属成果文件字典、数组去重、空数组 = 不要求。 */
+/** 成果类型归一 + 去重（首次出现保序）—— ADR-024：内置十类与自定义名称均可，空数组 = 不要求。 */
 function normalizeDocTypes(values: readonly string[]): Task["deliverableTypes"] {
   const seen = new Set<string>();
   const result: Task["deliverableTypes"] = [];
   for (const value of values) {
-    if (!(DOC_TYPES as readonly string[]).includes(value) || seen.has(value)) continue;
-    seen.add(value);
-    result.push(value as Task["deliverableTypes"][number]);
+    const parsed = DeliverableTypeSchema.safeParse(value);
+    if (!parsed.success || seen.has(parsed.data)) continue;
+    seen.add(parsed.data);
+    result.push(parsed.data);
   }
   return result;
 }
 
-/** 放行提示（A2-10 / R02）：存在未定档（draft）成果文件时按字典顺序出 warning（计数 > 0 才出）。 */
+/** 放行提示（A2-10 / R02）：存在未定档（draft）成果文件时按内置字典顺序、其后自定义顺序出 warning（计数 > 0 才出）。 */
 function buildDraftWarnings(rows: readonly TaskGateDocCountRow[]): TaskGateWarning[] {
   const counts = new Map(rows.map((row) => [row.docType, row.present]));
+  const docTypes = [...DOC_TYPES, ...[...counts.keys()].filter((docType) => !(DOC_TYPES as readonly string[]).includes(docType))];
   const warnings: TaskGateWarning[] = [];
-  for (const docType of DOC_TYPES) {
+  for (const docType of docTypes) {
     const count = counts.get(docType) ?? 0;
     if (count > 0) warnings.push({ code: "draft_doc_present", docType, count });
   }

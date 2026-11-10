@@ -110,6 +110,35 @@ export class ReportRepository {
     return { rows: rows as DailyReportRow[], total: counted[0]?.total ?? 0 };
   }
 
+  /** 导出专用行读取：保持列表口径，不重复查询 total。 */
+  async listForExport(
+    projectId: string,
+    filter: DailyReportFilter,
+    page: number,
+    limit: number,
+    client: DbClient = this.database.db,
+  ): Promise<DailyReportRow[]> {
+    const where = this.buildWhere(projectId, filter);
+    const rows = await client
+      .select(REPORT_COLUMNS)
+      .from(dailyReports)
+      .leftJoin(users, eq(users.id, dailyReports.authorId))
+      .where(where)
+      .orderBy(desc(dailyReports.reportDate), desc(dailyReports.createdAt))
+      .limit(limit)
+      .offset((page - 1) * limit);
+    return rows as DailyReportRow[];
+  }
+
+  /** 导出专用总数：只读 count，不加载日报正文或提交人信息。 */
+  async countForExport(projectId: string, client: DbClient = this.database.db): Promise<number> {
+    const counted = await client
+      .select({ total: sql<number>`count(*)::int` })
+      .from(dailyReports)
+      .where(eq(dailyReports.projectId, projectId));
+    return counted[0]?.total ?? 0;
+  }
+
   async findById(projectId: string, reportId: string, client: DbClient = this.database.db): Promise<DailyReportRow | null> {
     const rows = await client
       .select(REPORT_COLUMNS)

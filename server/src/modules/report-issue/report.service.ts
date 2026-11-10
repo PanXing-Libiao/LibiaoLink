@@ -163,6 +163,19 @@ export class ReportService {
     };
   }
 
+  /** 内部导出用：只读取项目日报总数，不扫描日报正文、提交人或附图。 */
+  async countForExport(projectId: string): Promise<number> {
+    return this.reports.countForExport(projectId);
+  }
+
+  /** 内部导出用：按页加载日报正文与附图，不重复查询 total。 */
+  async listForExport(projectId: string, query: { page: number; limit: number }): Promise<DailyReport[]> {
+    const filter = parseReportFilter(query);
+    const rows = await this.reports.listForExport(projectId, filter, query.page, query.limit);
+    const photos = await loadReportPhotos(rows.map((row) => row.id), this.database.db);
+    return rows.map((row) => toDailyReportView(row, photos.get(row.id) ?? { onsite: [], issue: [] }));
+  }
+
   /** GET /api/v1/projects/{id}/reports/{reportId}：不属本项目 / 不存在统一 404。 */
   async detail(projectId: string, reportId: string): Promise<DailyReport> {
     const row = await this.requireReport(projectId, reportId, this.database.db);

@@ -1,4 +1,10 @@
-# shared/ 契约包（LibiaoLink API）
+> **2026-11-09 物料变更补发字段扩展**：`MaterialReissueBodySchema` 增加可选 `emailTitle`（1–500 字）与 `customerName`（≤200 字，可空）覆盖字段；`MaterialReissueSnapshotSchema` 固化实际 `emailTitle`（旧记录可缺省）和 `customerName: string | null`。服务端 / DOCX 使用实际快照值，客户名称不回写项目主数据。生成物已重出，`npm run check` 零漂移。
+
+> **2026-11-09 物料变更补发契约（模板版）**：`files.ts` 新增 `ChangeType`、补发类别 / 申请部门 / 责任归属部门 / 运费 / 审批选项、`MaterialReissueBodySchema`、`CreateMaterialReissueBodySchema`、`MaterialReissueSnapshotSchema`、`MaterialReissueResultSchema`；申请部门收窄为模板三项 `project / after_sales / other`，责任归属部门保留七项。`ChangeRequest` 增加 `changeType` 与 `materialReissue`。`openapi.ts` 注册 `POST /api/v1/projects/{id}/change-requests/material-reissue`（201 返回变更记录 + DOCX 文件 + v1 版本）。生成物已重出，`npm run check` 零漂移。
+
+> **2026-11-09 物料变更补发契约**：`files.ts` 新增 `ChangeType`、补发类别 / 部门 / 运费 / 审批选项、`MaterialReissueBodySchema`、`CreateMaterialReissueBodySchema`、`MaterialReissueSnapshotSchema`、`MaterialReissueResultSchema`；`ChangeRequest` 增加 `changeType` 与 `materialReissue`。`openapi.ts` 注册 `POST /api/v1/projects/{id}/change-requests/material-reissue`（201 返回变更记录 + DOCX 文件 + v1 版本）。生成物已重出，`npm run check` 零漂移。
+
+> **2026-11-06 全站自定义成果类型（跨线：以 px 请求实现，请 wmj 复核）**：`DeliverableTypeSchema`（1–50 字名称，不含英文逗号 / 换行）供 Task 的 `deliverableTypes` 与 File 的 `docType` / 文件库筛选使用；`DOC_TYPES` 保留为内置十类候选。全站自定义名称写入 `deliverableType` 字典，由当前项目项目经理经 `POST /api/v1/projects/{id}/deliverable-types` 新增，所有项目 / 任务共享。`DocTypeSchema` 与流程蓝图 / 节点 `required_doc` 仍固定内置十类，不放宽。任务创建 / 编辑最多 20 项；生成物随本批重出。数据库迁移 `0082_custom_task_deliverable_types.sql` 移除只允许内置十类的 CHECK，`0083_global_deliverable_types.sql` 登记字典类型（高风险 DDL，未部署）。
 
 /api/v1 的契约唯一真相：**Zod schema → OpenAPI 3.1 → TypeScript 类型**，三段式自动生成。
 本包是定档任务 g2（S5·契约包）的交付物；错误模型与约定对齐《技术设计v0.2-架构与数据模型.md》§7。

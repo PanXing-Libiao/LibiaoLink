@@ -11,6 +11,7 @@ import {
   fetchProjectFileLibrary,
   previewKindOf,
   recordPreviewView,
+  recycleFile,
   triggerDownload,
   type ApiChangeRequest,
   type FileLibraryItem,
@@ -24,6 +25,7 @@ import { useLiveRefresh } from "../useLiveRefresh";
 import { FilePreviewOverlay } from "./FilePreviewOverlay";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { Loader } from "./Loader";
+import { RowDeleteButton } from "./RowDeleteButton";
 import { SearchInput } from "./SearchInput";
 import { SearchSelect } from "./SearchSelect";
 import { Toast } from "./Toast";
@@ -45,12 +47,13 @@ import { Toast } from "./Toast";
  * 变更文件仍按最新一次变更拆成「变更前 / 变更后」。
  *
  * 交互：关键字 + 阶段 + 文件状态筛选（本地内存过滤，单项目一次取满）、50 行分页（变更前后同页）、
- * 整行点击预览、操作列下载原文件。预览 / 审计 / 下载均使用该行对应 versionId；阶段来自任务；
+ * 整行点击预览、操作列下载原文件；仅「补发申请」DOCX 行额外复用行内删除胶囊，确认后移入文件回收站（30 天可恢复）。
+ * 预览 / 审计 / 下载均使用该行对应 versionId；阶段来自任务；
  * 无任务的历史任务文件显示「未关联阶段」，仅变更文件显示「变更文件」。
  */
 const PAGE_LIMIT = 50;
 const CURRENT_FILE_STATUSES = ["draft", "final", "changed", "archived"] as const;
-const FILE_STATUS_FILTERS = ["draft", "final", "before", "after", "archived"] as const;
+const FILE_STATUS_FILTERS = ["draft", "final", "before", "after", "material", "archived"] as const;
 const CHANGED_STAGE = "__changed";
 const UNKNOWN_STAGE = "__unknown";
 
@@ -58,6 +61,7 @@ const STATUS_LABELS: Record<string, string> = {
   draft: "未定档",
   final: "已定档",
   changed: "变更后",
+  material: "补发申请",
   archived: "已归档",
 };
 
@@ -65,12 +69,14 @@ const STATUS_CLASS: Record<string, string> = {
   draft: "bg-zinc-100 text-zinc-600",
   final: "bg-amber-100 text-amber-800",
   changed: "bg-blue-50 text-blue-700",
+  material: "bg-emerald-100 text-emerald-700",
   archived: "bg-zinc-100 text-zinc-500",
 };
 
-const CHANGE_SIDE_CLASS: Record<"before" | "after", string> = {
+const CHANGE_SIDE_CLASS: Record<"before" | "after" | "material", string> = {
   before: "bg-zinc-100 text-zinc-600",
   after: "bg-blue-50 text-blue-700",
+  material: "bg-emerald-100 text-emerald-700",
 };
 
 type ProjectFileRow = {
@@ -85,7 +91,7 @@ type ProjectFileRow = {
   versionId: string | null;
   versionSeq: number | null;
   uploadedAt: string;
-  changeSide: "before" | "after" | null;
+  changeSide: "before" | "after" | "material" | null;
 };
 
 type LoadState =
@@ -109,6 +115,10 @@ function versionIdOfRow(row: ProjectFileRow): string | undefined {
 
 function rowHasVersion(row: ProjectFileRow): boolean {
   return row.changeSide === null || row.versionId !== null;
+}
+
+function isMaterialReissueDocument(row: ProjectFileRow): boolean {
+  return row.changeSide === "material" && row.name.toLowerCase().endsWith(".docx");
 }
 
 type Notice = { kind: "ok" | "error"; text: string };
@@ -200,6 +210,21 @@ async function loadProjectFileRows(projectId: string): Promise<ProjectFileRow[]>
     const afterName = detail?.file?.name ?? file.name;
     const beforeName = detail?.filePreviousName ?? afterName;
     const afterUploadedAt = detail?.version?.uploadedAt ?? afterVersion?.uploadedAt ?? file.updatedAt;
+    if (latestChange.changeType === "material_reissue") {
+      rowsByFileId.set(file.id, [
+        {
+          key: file.id + ":material",
+          file,
+          changed: true,
+          name: afterName,
+          versionId: afterVersionId,
+          versionSeq: afterSeq,
+          uploadedAt: afterUploadedAt,
+          changeSide: "material",
+        },
+      ]);
+      return;
+    }
     rowsByFileId.set(file.id, [
       {
         key: file.id + ":before",
@@ -238,6 +263,8 @@ export function ProjectFilesPanel({ projectId, tasks }: { projectId: string; tas
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [previewBusy, setPreviewBusy] = useState<string | null>(null);
   const [downloadBusy, setDownloadBusy] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
 
   useEffect(() => {
@@ -332,6 +359,7 @@ export function ProjectFilesPanel({ projectId, tasks }: { projectId: string; tas
   const statusLabelOf = (status: string): string => {
     if (status === "before") return t("pd.files.status.before");
     if (status === "after") return t("pd.files.status.after");
+    if (status === "material") return t("pd.files.status.material");
     return statusText(locale, STATUS_LABELS[status] ?? status);
   };
   const statusOptions = [
@@ -488,6 +516,28 @@ export function ProjectFilesPanel({ projectId, tasks }: { projectId: string; tas
     }
   }
 
+  async function deleteMaterialReissue(row: ProjectFileRow): Promise<void> {
+    if (deleteBusy !== null || !isMaterialReissueDocument(row)) {
+      return;
+    }
+    setPendingDelete(null);
+    setDeleteBusy(row.key);
+    setNotice(null);
+    try {
+      await recycleFile(row.file.id);
+      setNotice({ kind: "ok", text: t("pd.files.material.deleteSuccess", { name: row.name }) });
+      setPage(1);
+      setReloadTick((tick) => tick + 1);
+    } catch (error) {
+      setNotice({
+        kind: "error",
+        text: error instanceof Error && error.message !== "" ? error.message : t("pd.files.material.deleteFailed"),
+      });
+    } finally {
+      setDeleteBusy(null);
+    }
+  }
+
   return (
     <section data-project-files="" className="space-y-4">
       <header className="flex flex-wrap items-end justify-between gap-3">
@@ -608,7 +658,7 @@ export function ProjectFilesPanel({ projectId, tasks }: { projectId: string; tas
                   const statusKey = statusValueOf(row);
                   const statusLabel = statusLabelOf(statusKey);
                   const statusClass =
-                    statusKey === "before" || statusKey === "after"
+                    statusKey === "before" || statusKey === "after" || statusKey === "material"
                       ? CHANGE_SIDE_CLASS[statusKey]
                       : STATUS_CLASS[statusKey] ?? "bg-zinc-100 text-zinc-600";
                   return (
@@ -643,6 +693,7 @@ export function ProjectFilesPanel({ projectId, tasks }: { projectId: string; tas
                         void openPreview(row);
                       }}
                       className={
+                        "group " +
                         (available
                           ? "cursor-pointer transition hover:bg-zinc-50/70 focus-visible:bg-blue-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400"
                           : "cursor-default") +
@@ -653,8 +704,41 @@ export function ProjectFilesPanel({ projectId, tasks }: { projectId: string; tas
                         <span className="flex min-w-0 items-center gap-2.5">
                           <FileTypeIcon name={row.name} className="h-5 w-5 shrink-0" />
                           <span className="min-w-0">
-                            <span className="block truncate text-base text-zinc-800" title={row.name}>
-                              {row.name}
+                            <span className="flex min-w-0 flex-wrap items-center gap-2">
+                              <span className="block min-w-0 truncate text-base text-zinc-800" title={row.name}>
+                                {row.name}
+                              </span>
+                              {isMaterialReissueDocument(row) ? (
+                                deleteBusy === row.key ? (
+                                  <span data-project-file-deleting={row.key} className="inline-flex h-6 min-w-12 shrink-0 items-center justify-center rounded-full bg-red-50 px-2 text-[11px] font-medium text-red-600">
+                                    {t("pd.files.material.deleting")}
+                                  </span>
+                                ) : pendingDelete === row.key ? (
+                                  <span data-project-file-delete-confirm={row.key} className="flex shrink-0 items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => { void deleteMaterialReissue(row); }}
+                                      className="flex h-6 shrink-0 items-center justify-center rounded-full bg-red-500 px-2.5 text-[11px] font-semibold leading-none text-white shadow-[0_1px_2px_rgba(220,38,38,0.25)] transition-colors hover:bg-red-600"
+                                    >
+                                      {t("drawer.file.deleteOk")}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => { setPendingDelete(null); }}
+                                      className="flex h-6 shrink-0 items-center justify-center rounded-full bg-zinc-100 px-2.5 text-[11px] font-medium leading-none text-zinc-600 transition-colors hover:bg-zinc-200"
+                                    >
+                                      {t("drawer.file.deleteCancel")}
+                                    </button>
+                                  </span>
+                                ) : (
+                                  <span data-project-file-delete={row.key} className="flex h-6 w-12 shrink-0 items-center">
+                                    <RowDeleteButton
+                                      onDelete={() => { setPendingDelete(row.key); }}
+                                      label={t("drawer.file.deleteAria", { name: row.name })}
+                                    />
+                                  </span>
+                                )
+                              ) : null}
                             </span>
                             {row.changeSide !== null && row.versionSeq !== null ? (
                               <span className="mt-0.5 block text-[11px] text-zinc-400">v{String(row.versionSeq)}</span>
@@ -693,17 +777,19 @@ export function ProjectFilesPanel({ projectId, tasks }: { projectId: string; tas
                         {row.uploadedAt === "" ? "—" : formatDateTime(row.uploadedAt)}
                       </td>
                       <td data-mobile-label={t("lib.col.actions")} className="align-middle whitespace-nowrap border-b border-zinc-100 px-4 py-3">
-                        <button
-                          type="button"
-                          data-project-file-download={row.key}
-                          disabled={downloadBusy !== null || !available}
-                          onClick={() => {
-                            void downloadFile(row);
-                          }}
-                          className="inline-flex w-16 items-center justify-center rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-300"
-                        >
-                          {downloadBusy === row.key ? t("lib.download.busy") : t("lib.download")}
-                        </button>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            data-project-file-download={row.key}
+                            disabled={downloadBusy !== null || deleteBusy !== null || !available}
+                            onClick={() => {
+                              void downloadFile(row);
+                            }}
+                            className="inline-flex w-16 items-center justify-center rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-300"
+                          >
+                            {downloadBusy === row.key ? t("lib.download.busy") : t("lib.download")}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import type { Dict, DictItemCreateBody, DictItemUpdateBody, DictListResponse } from "@libiaolink/contracts";
+import { CUSTOM_DELIVERABLE_DICT_TYPE, DOC_TYPES, type Dict, type DictItemCreateBody, type DictItemUpdateBody, type DictListResponse } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { AuditService } from "../audit/index.js";
@@ -14,7 +14,7 @@ function itemSnapshot(row: DictItemRow): Record<string, unknown> {
 
 /**
  * 字典用例（h7 · C9）：读下发 + 管理端维护。
- * 口径：类型是契约枚举（region / projectType），条目可维护；「删除」= 物理删行（Push 173 起 DELETE 接口直接从 dict_items
+ * 口径：类型注册表含 region / projectType 与全站自定义成果类型 deliverableType；内置十类成果仍走契约枚举。条目可维护；「删除」= 物理删行（Push 173 起 DELETE 接口直接从 dict_items
  * 删除，删除前快照写审计；存量项目按原码 / 原名渲染，不受影响）；每次变更写审计留痕（对象 = dict_item，字段级 before / after）。
  * Push 174：删除前判**引用**（未删除项目数 > 0 → 409 DICT_ITEM_IN_USE，不删不写审计）；下发条目带 usageCount 供前端置灰。
  */
@@ -40,6 +40,24 @@ export class DictService {
   async get(type: string, includeDisabled: boolean): Promise<Dict> {
     const row = await this.requireType(type);
     return this.toDict(row, includeDisabled);
+  }
+
+  /**
+   * POST /api/v1/projects/{id}/deliverable-types（仅该项目项目经理）：
+   * 自定义成果类型写入全站 deliverableType 字典，code = name、name = name；返回更新后的整类字典。
+   * 内置十类不进 dict_items；与内置同名视为已存在（409 DICT_ITEM_EXISTS），避免选择器出现重复项。
+   */
+  async createCustomDeliverableType(name: string, actorId: string): Promise<Dict> {
+    if ((DOC_TYPES as readonly string[]).includes(name)) {
+      throw new AppError("DICT_ITEM_EXISTS", "内置成果文件类型已存在：" + name);
+    }
+    const items = await this.dicts.listItems(CUSTOM_DELIVERABLE_DICT_TYPE, true);
+    const maxSort = items.reduce((max, item) => Math.max(max, item.sort), 0);
+    return this.createItem(
+      CUSTOM_DELIVERABLE_DICT_TYPE,
+      { code: name, name, sort: maxSort + 10, enabled: true, metadata: {} },
+      actorId,
+    );
   }
 
   /** POST /api/v1/dicts/{type}/items（C9-02 修订：region = 登录即可；其余类型 dict.manage）：同类型内码唯一 409 DICT_ITEM_EXISTS；写审计 create。 */

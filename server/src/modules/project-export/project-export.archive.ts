@@ -297,7 +297,7 @@ export class ProjectZipWriter {
     name: string,
     source: Readable,
     declaredSize: number,
-    options: { compress?: boolean; maxBytes?: number } = {},
+    options: { compress?: boolean; maxBytes?: number; onChunk?: (chunk: Buffer) => void; hash?: boolean } = {},
   ): Promise<ProjectZipWriteResult> {
     const handle = this.requireHandle();
     const nameBytes = Buffer.from(name, "utf8");
@@ -320,7 +320,7 @@ export class ProjectZipWriter {
     let crc = 0xffffffff;
     let uncompressedSize = 0;
     let compressedSize = 0;
-    const hash = createHash("sha256");
+    const hash = options.hash === false ? undefined : createHash("sha256");
     const meter = new Transform({
       transform(chunk: Buffer, _encoding, callback) {
         const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
@@ -330,7 +330,8 @@ export class ProjectZipWriter {
           callback(new Error("ZIP 条目超过允许的大小"));
           return;
         }
-        hash.update(bytes);
+        options.onChunk?.(bytes);
+        hash?.update(bytes);
         callback(null, bytes);
       },
     });
@@ -376,7 +377,77 @@ export class ProjectZipWriter {
     if (declaredSize >= 0 && uncompressedSize !== declaredSize) {
       // 对象存储长度可能被并发重写；manifest 以实际写入字节为准，不因预检值不同截断文件。
     }
-    return { sizeBytes: uncompressedSize, sha256: hash.digest("hex") };
+    return { sizeBytes: uncompressedSize, sha256: hash?.digest("hex") ?? "" };
+  }
+
+  /**
+   * 直接复制 ZIP 条目已有的压缩字节，保留来源 CRC、压缩算法与尺寸。
+   * 用于工作簿注入等只改写少量 XML 条目的场景，避免未修改内容再次解压 / 压缩。
+   */
+  async addCompressedStream(
+    name: string,
+    source: Readable,
+    metadata: { method: number; crc32: number; compressedSize: number; uncompressedSize: number },
+  ): Promise<void> {
+    const nameBytes = Buffer.from(name, "utf8");
+    if (nameBytes.byteLength === 0 || nameBytes.byteLength > 0xffff) throw new Error("ZIP 条目名称长度非法");
+    if (!Number.isInteger(metadata.method) || metadata.method < 0 || metadata.method > 0xffff) {
+      throw new Error("ZIP 压缩条目元数据非法");
+    }
+    for (const value of [metadata.crc32, metadata.compressedSize, metadata.uncompressedSize]) {
+      if (!Number.isInteger(value) || value < 0 || value > 0xffffffff) throw new Error("ZIP 压缩条目元数据非法");
+    }
+
+    const localHeaderOffset = this.offset;
+    const localHeader = Buffer.alloc(30);
+    localHeader.writeUInt32LE(0x04034b50, 0);
+    localHeader.writeUInt16LE(ZIP_VERSION, 4);
+    localHeader.writeUInt16LE(ZIP_FLAGS, 6);
+    localHeader.writeUInt16LE(metadata.method, 8);
+    localHeader.writeUInt16LE(this.dosTime, 10);
+    localHeader.writeUInt16LE(this.dosDate, 12);
+    localHeader.writeUInt16LE(nameBytes.byteLength, 26);
+    localHeader.writeUInt16LE(0, 28);
+    await this.write(localHeader);
+    await this.write(nameBytes);
+
+    let compressedSize = 0;
+    const sink = new Writable({
+      write: (chunk: Buffer, _encoding, callback) => {
+        void this.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)).then(
+          (bytesWritten) => {
+            compressedSize += bytesWritten;
+            callback();
+          },
+          callback,
+        );
+      },
+    });
+    try {
+      await pipeline(source, sink);
+    } catch (error) {
+      source.destroy();
+      throw error;
+    }
+    if (compressedSize !== metadata.compressedSize) throw new Error("ZIP 压缩条目长度不一致");
+
+    const descriptor = Buffer.alloc(16);
+    descriptor.writeUInt32LE(0x08074b50, 0);
+    descriptor.writeUInt32LE(metadata.crc32, 4);
+    descriptor.writeUInt32LE(metadata.compressedSize, 8);
+    descriptor.writeUInt32LE(metadata.uncompressedSize, 12);
+    await this.write(descriptor);
+    this.entries.push({
+      name: nameBytes,
+      flags: ZIP_FLAGS,
+      method: metadata.method,
+      dosTime: this.dosTime,
+      dosDate: this.dosDate,
+      crc32: metadata.crc32,
+      compressedSize: metadata.compressedSize,
+      uncompressedSize: metadata.uncompressedSize,
+      localHeaderOffset,
+    });
   }
 
   async close(): Promise<void> {

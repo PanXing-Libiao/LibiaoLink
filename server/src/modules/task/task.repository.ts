@@ -202,6 +202,23 @@ export class TaskRepository {
     today: string,
     client: DbClient = this.database.db,
   ): Promise<{ items: TaskListRow[]; total: number }> {
+    const [items, total] = await Promise.all([
+      this.listPageForExport(projectId, filter, sorts, limit, offset, today, client),
+      this.countForExport(projectId, filter, today, client),
+    ]);
+    return { items, total };
+  }
+
+  /** 导出专用行读取：保持公共列表的筛选 / 排序 / 分页，不附带 total。 */
+  async listPageForExport(
+    projectId: string,
+    filter: TaskListFilter,
+    sorts: readonly TaskSort[],
+    limit: number,
+    offset: number,
+    today: string,
+    client: DbClient = this.database.db,
+  ): Promise<TaskListRow[]> {
     const where = and(...taskConditions(projectId, filter, today));
     const rows = await client
       .select({ task: tasks, ownerNames: OWNER_NAMES_SQL, changeLinks: CHANGE_LINKS_SQL })
@@ -210,9 +227,19 @@ export class TaskRepository {
       .orderBy(...taskOrderBy(sorts))
       .limit(limit)
       .offset(offset);
+    return rows.map((row) => ({ ...row, changeLinks: row.changeLinks ?? [] }));
+  }
+
+  /** 导出专用总数：与 listPageForExport 共用筛选口径。 */
+  async countForExport(
+    projectId: string,
+    filter: TaskListFilter,
+    today: string,
+    client: DbClient = this.database.db,
+  ): Promise<number> {
+    const where = and(...taskConditions(projectId, filter, today));
     const totals = await client.select({ value: count() }).from(tasks).where(where);
-    const items = rows.map((row) => ({ ...row, changeLinks: row.changeLinks ?? [] }));
-    return { items, total: Number(totals[0]?.value ?? 0) };
+    return Number(totals[0]?.value ?? 0);
   }
 
   async findListRowById(taskId: string, projectId: string, client: DbClient = this.database.db): Promise<TaskListRow | null> {

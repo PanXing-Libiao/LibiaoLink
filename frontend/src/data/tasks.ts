@@ -56,7 +56,7 @@ export type ProjectTask = {
   doneDate: string;
   /** 预计所需天数（契约 estimatedDays；服务端未填时由开始 / 预计完成日期含首尾推算）。 */
   days: number;
-  /** 要求输出成果文件（契约 deliverableTypes，十类字典多选、空数组 = 不要求）。 */
+  /** 要求输出成果文件（契约 deliverableTypes，内置十类 + 自定义多选、空数组 = 不要求）。 */
   deliverableTypes: string[];
   /** 随行文件摘要（列表列渲染计数）。 */
   files: TaskFileSummary;

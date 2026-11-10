@@ -11,6 +11,7 @@ import { STAGE_KEYS, STAGE_NAMES } from "@libiaolink/contracts";
 import { and, asc, count, eq, inArray, isNull, sql } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
+import { changeRequests } from "../../db/schema/change.js";
 import { users } from "../../db/schema/identity.js";
 import { files, fileLinks, fileVersions } from "../../db/schema/files.js";
 import { notifyDeliveries, wecomGroupCandidates, wecomGroups } from "../../db/schema/notify.js";
@@ -22,6 +23,7 @@ import type {
   DailyReportPosterIssue,
   DailyReportPosterPhoto,
 } from "./daily-report.poster.types.js";
+import type { MaterialReissuePosterData } from "./material-reissue.poster.types.js";
 import type { StageCompletePosterData } from "./stage-complete.poster.types.js";
 
 export type WecomGroupRow = typeof wecomGroups.$inferSelect;
@@ -260,6 +262,36 @@ export class NotifyGroupRepository {
         done: totals.get(key)?.done ?? 0,
       })),
     };
+  }
+
+  /**
+   * 物料变更补发图片快照：按项目 + 变更 id 读取提交时固化的物料补发表单。
+   * notify 是平台模块，直接读 change_requests，不反向依赖 file 领域；普通变更 / 快照缺失 = null。
+   */
+  async findMaterialReissuePosterData(
+    projectId: string,
+    changeId: string,
+    client: DbClient = this.database.db,
+  ): Promise<MaterialReissuePosterData | null> {
+    const rows = await client
+      .select({
+        materialReissue: changeRequests.materialReissue,
+        appliedAt: changeRequests.appliedAt,
+      })
+      .from(changeRequests)
+      .where(
+        and(
+          eq(changeRequests.id, changeId),
+          eq(changeRequests.projectId, projectId),
+          eq(changeRequests.changeType, "material_reissue"),
+        ),
+      )
+      .limit(1);
+    const row = rows[0];
+    if (row === undefined || row.materialReissue === null) {
+      return null;
+    }
+    return { snapshot: row.materialReissue, submittedAt: row.appliedAt };
   }
 
   /**

@@ -822,6 +822,8 @@ export class FileService {
         projectId: file.projectId,
         nodeId: file.nodeId,
         stageKey,
+        changeType: "file_change",
+        materialReissue: null,
         reason: payload.reason,
         beforeSummary: payload.beforeSummary,
         afterSummary: payload.afterSummary,
@@ -1357,6 +1359,22 @@ export class FileService {
       limit: query.limit,
       total,
     };
+  }
+
+  /** 项目导出专用文件总数：只查 count，不加载文件行。 */
+  async countProjectFilesForExport(projectId: string): Promise<number> {
+    return this.repository.countProjectFilesForExport(projectId, parseFileListFilter({ page: 1, limit: 1 }));
+  }
+
+  /** 项目导出专用文件行读取：保持公共列表字段与默认排序，不重复查询 total。 */
+  async listProjectFilesForExport(
+    projectId: string,
+    query: Pick<FileListQueryInput, "page" | "limit">,
+  ): Promise<FileListResponse["items"]> {
+    const filter = parseFileListFilter(query);
+    const offset = (query.page - 1) * query.limit;
+    const items = await this.repository.listProjectFilesForExport(projectId, filter, [], query.limit, offset);
+    return items.map(({ file, createdByName }) => ({ ...toFileView(file), createdByName }));
   }
 
   /**
@@ -1896,6 +1914,8 @@ export function toChangeRequestView(
     projectId: row.projectId,
     nodeId: row.nodeId,
     stageKey: row.stageKey as ChangeRequestView["stageKey"],
+    changeType: row.changeType as ChangeRequestView["changeType"],
+    materialReissue: row.materialReissue,
     reason: row.reason,
     beforeSummary: row.beforeSummary,
     afterSummary: row.afterSummary,

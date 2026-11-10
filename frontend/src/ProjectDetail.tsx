@@ -108,6 +108,10 @@ type ProjectDetailProps = {
   focus: ProjectFocus | null;
   /** 关闭深链抽屉后清掉地址里的精确落点，避免刷新再次弹开。 */
   onClearFocus: () => void;
+  /** 全站自定义成果类型（字典 deliverableType）：项目内所有任务共享。 */
+  customDeliverableTypes?: readonly string[];
+  /** 项目经理新增全站自定义成果类型；服务端还会按当前项目再次校验。 */
+  onCreateDeliverableType?: (projectId: string, name: string) => Promise<string | null>;
   /** 人员候选（GET /api/v1/users → directoryMemberOptions）：项目经理列 / 任务负责人 / 任务详情抽屉的多选共用。 */
   members: readonly Member[];
   /** 任务编辑里改「项目经理」时回写项目（项目经理是项目级字段，Push 136 起可多位）。 */
@@ -126,7 +130,7 @@ type ProjectDetailProps = {
   readOnly?: boolean;
 };
 
-export default function ProjectDetail({ me, project, view, dailySub, focus, onClearFocus, members, onChangeManagers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange, canManageStakeholders, onSetProjectDone, readOnly = false }: ProjectDetailProps) {
+export default function ProjectDetail({ me, project, view, dailySub, focus, onClearFocus, customDeliverableTypes = [], onCreateDeliverableType, members, onChangeManagers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange, canManageStakeholders, onSetProjectDone, readOnly = false }: ProjectDetailProps) {
   /** 顶部视图（Push 82 / 121）：阶段标签收进「项目总览」，另两块是看板视图，最后一块是「日报及问题」；Push 154 起当前标签由地址 `?view=` 派生。 */
   const locale = useLocale();
   const t = useT();
@@ -134,6 +138,11 @@ export default function ProjectDetail({ me, project, view, dailySub, focus, onCl
   const activeView = VIEW_TABS.find((tab) => VIEW_KEYS[tab] === view) ?? VIEW_TABS[0];
   const projectId = project?.id ?? null;
   const writeEnabled = !readOnly;
+  /** 项目详情里的新增入口只给项目经理（既有定档口径同源）：主数据 manager_ids 命中才可点，服务端仍做最终裁决。 */
+  const createDeliverableType =
+    writeEnabled && currentActorId !== null && project !== null && project.managerIds.includes(currentActorId) && onCreateDeliverableType !== undefined
+      ? (name: string): Promise<string | null> => onCreateDeliverableType(project.id, name)
+      : undefined;
   /** 定档 / 取消定档只看角色：任务当前负责人或项目经理；只读项目不再保留可点击入口。
    *  角色外键是本库 users.id —— 必须取权限画像的 userId，不能拿 /auth/me 的 Casdoor id 比较。 */
   const canFinalizeTask = (task: ProjectTask): boolean => {
@@ -1201,7 +1210,7 @@ export default function ProjectDetail({ me, project, view, dailySub, focus, onCl
             <>
               {/* 汇总卡（M3-07 刀 1 后半）：最慢 / 最新阶段由服务端按任务聚合（GET /projects/{id}/summary） */}
               <ProjectSummary summary={summary} />
-              <TaskBoard tasks={tasks} members={members} skeletonStages={BOARD_STAGES} onSetProgress={writeEnabled ? handleSetProgress : undefined} onSetStatus={writeEnabled ? handleSetStatus : undefined} onSetActualEnd={writeEnabled ? handleSetActualEnd : undefined} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={writeEnabled ? handleAddNode : undefined} onAddNodes={writeEnabled ? handleAddNodes : undefined} onCreateTempTask={writeEnabled ? (values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values) : undefined} viewStage="项目总览" managers={managers} managerIds={project.managerIds} canFinalizeTask={canFinalizeTask} onSubmitTaskEdit={writeEnabled ? handleSubmitTaskEdit : undefined} onRenameTask={writeEnabled ? handleRenameTask : undefined} onPatchTask={writeEnabled ? handlePatchTask : undefined} onChangeManagers={writeEnabled ? handleBoardManagerChange : undefined} onDeleteTask={writeEnabled ? requestDeleteTask : undefined} onUploadFiles={writeEnabled ? handleUploadTaskFiles : undefined} onDeleteFile={writeEnabled ? handleDeleteTaskFile : undefined} onRenameFile={writeEnabled ? handleRenameTaskFile : undefined} onFinalize={writeEnabled ? handleFinalizeTask : undefined} onUnfinalize={writeEnabled ? handleUnfinalizeTask : undefined} onChanged={reloadAll} actorName={me.user.displayName ?? ""} filesByTask={taskFiles} projectId={project.id} tierTint={tintRows} focusTaskId={focus?.kind === "task" ? focus.id : null} onFocusClosed={onClearFocus} />
+              <TaskBoard tasks={tasks} members={members} customDeliverableTypes={customDeliverableTypes} onCreateDeliverableType={createDeliverableType} skeletonStages={BOARD_STAGES} onSetProgress={writeEnabled ? handleSetProgress : undefined} onSetStatus={writeEnabled ? handleSetStatus : undefined} onSetActualEnd={writeEnabled ? handleSetActualEnd : undefined} visibleColumns={visibleColumns} scrollRef={tableScrollRef} collapsed={collapsedStages} onToggleStage={toggleStage} onToggleAllStages={toggleAllStages} onAddNode={writeEnabled ? handleAddNode : undefined} onAddNodes={writeEnabled ? handleAddNodes : undefined} onCreateTempTask={writeEnabled ? (values) => handleQuickAdd({ ownerIds: [], status: "待开始" }, values) : undefined} viewStage="项目总览" managers={managers} managerIds={project.managerIds} canFinalizeTask={canFinalizeTask} onSubmitTaskEdit={writeEnabled ? handleSubmitTaskEdit : undefined} onRenameTask={writeEnabled ? handleRenameTask : undefined} onPatchTask={writeEnabled ? handlePatchTask : undefined} onChangeManagers={writeEnabled ? handleBoardManagerChange : undefined} onDeleteTask={writeEnabled ? requestDeleteTask : undefined} onUploadFiles={writeEnabled ? handleUploadTaskFiles : undefined} onDeleteFile={writeEnabled ? handleDeleteTaskFile : undefined} onRenameFile={writeEnabled ? handleRenameTaskFile : undefined} onFinalize={writeEnabled ? handleFinalizeTask : undefined} onUnfinalize={writeEnabled ? handleUnfinalizeTask : undefined} onChanged={reloadAll} actorName={me.user.displayName ?? ""} filesByTask={taskFiles} projectId={project.id} tierTint={tintRows} focusTaskId={focus?.kind === "task" ? focus.id : null} onFocusClosed={onClearFocus} />
             </>
           ) : activeView === "甘特图" ? (
             // 甘特图（Push 142）：与项目总览同一份任务数据（服务端任务接口）；拖动改期 / 改进度走同一套写入口径
@@ -1223,6 +1232,8 @@ export default function ProjectDetail({ me, project, view, dailySub, focus, onCl
               managers={managers}
               managerIds={project.managerIds}
               canFinalizeTask={canFinalizeTask}
+              customDeliverableTypes={customDeliverableTypes}
+              onCreateDeliverableType={createDeliverableType}
               members={members}
               onAddTask={writeEnabled ? handleQuickAdd : undefined}
               onAddStageTask={writeEnabled ? handleKanbanAddNode : undefined}

@@ -1,7 +1,7 @@
 /**
- * 数据字典（C9-01 · A3）：GET /api/v1/dicts 一期两类 —— region（地区）/ projectType（项目类型）。
+ * 数据字典（C9-01 · A3）：GET /api/v1/dicts —— region（地区）/ projectType（项目类型）/ deliverableType（全站自定义成果类型）。
  * 项目类型主题色随条目 metadata.accent / accentText 下发，前端不硬编码（《前端功能需求》§3.2 / §二.1）。
- * 契约 shared/src/modules/dicts.ts：服务端只下发 enabled=true 的项；阶段 / 成果文件类型 / 紧急重要度是契约枚举，不走本接口。
+ * 契约 shared/src/modules/dicts.ts：服务端只下发 enabled=true 的项；内置十类成果 / 阶段 / 紧急重要度仍是契约枚举，不走本接口。
  * Push 172：新增项目类型时从预置色板（DICT_ACCENT_PALETTE，「颜色模板」）选色。
  * Push 173：删除 = **物理删行**（DELETE /dicts/{type}/items/{code}，仅管理员 dict.manage）—— 删除无记忆：同码可重新新增，
  *   按全新条目处理（本次所选颜色、排到末尾），界面不出现「已停用 / 恢复」字样。
@@ -10,7 +10,7 @@
  */
 import { apiRequest, apiSend } from "./api";
 
-export type DictTypeCode = "region" | "projectType";
+export type DictTypeCode = "region" | "projectType" | "deliverableType";
 
 export type DictItem = {
   code: string;
@@ -24,7 +24,7 @@ export type DictItem = {
 
 export type Dicts = Record<DictTypeCode, DictItem[]>;
 
-export const EMPTY_DICTS: Dicts = { region: [], projectType: [] };
+export const EMPTY_DICTS: Dicts = { region: [], projectType: [], deliverableType: [] };
 
 /** 条目名称 / 码上限：契约 code ≤ 64、name ≤ 80；前端两个入口（地区 / 项目类型）统一按 64 收口。 */
 export const DICT_NAME_MAX = 64;
@@ -53,12 +53,11 @@ function toTypeResult(dict: { type: string; items: DictItem[] }): DictTypeResult
  * 调用方失败时回落 EMPTY_DICTS，页面继续可用。
  */
 export async function loadDicts(): Promise<Dicts> {
-  const dicts: Dicts = { region: [], projectType: [] };
+  const dicts: Dicts = { region: [], projectType: [], deliverableType: [] };
   for (const dict of (await apiRequest<DictListResponse>("/api/v1/dicts")).items) {
-    if (dict.type !== "region" && dict.type !== "projectType") {
-      continue;
+    if (dict.type === "region" || dict.type === "projectType" || dict.type === "deliverableType") {
+      dicts[dict.type] = enabledOnly(dict.items);
     }
-    dicts[dict.type] = enabledOnly(dict.items);
   }
   return dicts;
 }
@@ -90,6 +89,21 @@ export async function createDictItem(
   input: { code: string; name: string; sort: number; enabled: boolean; metadata: Record<string, unknown> },
 ): Promise<DictTypeResult> {
   return toTypeResult(await apiSend<{ type: string; items: DictItem[] }>("/api/v1/dicts/" + type + "/items", "POST", input));
+}
+
+/**
+ * 项目经理新增全站自定义成果文件类型：POST /api/v1/projects/{id}/deliverable-types。
+ * 服务端校验当前账号是该项目的项目经理（manager_ids 或名册 project_manager）；新增后进入全站
+ * deliverableType 字典，所有项目 / 任务 / 文件库共享。响应 = 更新后的整类字典（直接替换缓存）。
+ */
+export async function createProjectDeliverableType(projectId: string, name: string): Promise<DictTypeResult> {
+  return toTypeResult(
+    await apiSend<{ type: string; items: DictItem[] }>(
+      "/api/v1/projects/" + encodeURIComponent(projectId) + "/deliverable-types",
+      "POST",
+      { name },
+    ),
+  );
 }
 
 /**

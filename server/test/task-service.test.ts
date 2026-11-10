@@ -78,12 +78,24 @@ class FakeTaskRepository {
   counts = { overdue: 0, done: 0, total: 0 };
   /** 按阶段计数（summary 两阶段字段的输入；口径同 GET /projects/{id}/stages）。 */
   perStage: { stageKey: string | null; status: string; value: number }[] = [];
+  listRowsForExport: TaskListRow[] = [];
+  listPageForExportCalls = 0;
+  countForExportCalls = 0;
+  fileSummaryCalls = 0;
 
   async summaryCounts(): Promise<{ overdue: number; done: number; total: number }> {
     return this.counts;
   }
   async listPage(): Promise<{ items: TaskListRow[]; total: number }> {
     return { items: [], total: 0 };
+  }
+  async listPageForExport(): Promise<TaskListRow[]> {
+    this.listPageForExportCalls += 1;
+    return this.listRowsForExport;
+  }
+  async countForExport(): Promise<number> {
+    this.countForExportCalls += 1;
+    return this.listRowsForExport.length;
   }
   async findListRowById(): Promise<TaskListRow | null> {
     return this.task === null
@@ -103,6 +115,7 @@ class FakeTaskRepository {
     return this.changeLinks.filter((link) => changeRefs.includes(link.id));
   }
   async fileSummaries(): Promise<Map<string, TaskFileSummaryCounts>> {
+    this.fileSummaryCalls += 1;
     return new Map();
   }
   async findProject(): Promise<TaskProjectRow | null> {
@@ -506,22 +519,27 @@ describe("TaskService.update（A12 状态联动 + 乐观锁 + 留痕）", () => 
     expect(repo.task?.version).toBe(3);
   });
 
-  it("输出成果文件常规编辑开放（2026-10-08「文件输出成果也要可以选择」）：节点任务可直接改、去重保序、版本 +1 + 审计含 deliverableTypes", async () => {
+  it("输出成果文件常规编辑开放：内置与自定义类型去重保序、版本 +1 + 审计含 deliverableTypes", async () => {
     const repo = new FakeTaskRepository();
     repo.task = makeRow({ deliverableTypes: ["技术协议"] });
     const audit = new FakeAuditService();
     const service = makeService(repo, new FakePermissionService(), new FakeTaskGateRepository(), audit);
-    const updated = await service.update(PROJECT, TASK, { deliverableTypes: ["CAD图纸", "技术协议", "CAD图纸"], version: 3 }, ACTOR);
-    expect(updated.deliverableTypes).toEqual(["CAD图纸", "技术协议"]);
+    const updated = await service.update(
+      PROJECT,
+      TASK,
+      { deliverableTypes: ["CAD图纸", "技术协议", "CAD图纸", "  竣工图  ", "   "], version: 3 },
+      ACTOR,
+    );
+    expect(updated.deliverableTypes).toEqual(["CAD图纸", "技术协议", "竣工图"]);
     expect(repo.task?.version).toBe(4);
     expect(repo.events).toEqual([]);
     const entry = audit.entries.at(-1) as { changes: Array<{ field: string; to: unknown }> };
-    expect(entry.changes.some((change) => change.field === "deliverableTypes" && JSON.stringify(change.to) === JSON.stringify(["CAD图纸", "技术协议"]))).toBe(true);
+    expect(entry.changes.some((change) => change.field === "deliverableTypes" && JSON.stringify(change.to) === JSON.stringify(["CAD图纸", "技术协议", "竣工图"]))).toBe(true);
   });
 
-  it("输出成果文件清空（显式 []）→ 空数组 = 不要求；未知类型被过滤", async () => {
+  it("输出成果文件清空（显式 []）→ 空数组 = 不要求", async () => {
     const repo = new FakeTaskRepository();
-    repo.task = makeRow({ deliverableTypes: ["验收单", "非字典值"] });
+    repo.task = makeRow({ deliverableTypes: ["验收单", "竣工图"] });
     const updated = await makeService(repo).update(PROJECT, TASK, { deliverableTypes: [], version: 3 }, ACTOR);
     expect(updated.deliverableTypes).toEqual([]);
   });
@@ -967,5 +985,23 @@ describe("任务定档角色权限（2026-10-27）", () => {
     await expect(service.finalize(PROJECT, TASK, { version: 3 }, ACTOR)).rejects.toMatchObject({ code: "FORBIDDEN", httpStatus: 403 });
     await expect(service.unfinalize(PROJECT, TASK, { version: 3 }, ACTOR)).rejects.toMatchObject({ code: "FORBIDDEN", httpStatus: 403 });
     expect(repo.task?.finalizedAt).toBe(FINALIZED_AT);
+  });
+});
+
+describe("任务导出专用读取（P3）", () => {
+  it("不查询 total，也不补附件摘要；总数查询单独且只走导出接口", async () => {
+    const repo = new FakeTaskRepository();
+    repo.listRowsForExport = [{ task: makeRow(), ownerNames: ["张三"], changeLinks: [] }];
+    const service = makeService(repo);
+
+    const items = await service.listForExport(PROJECT, { page: 1, limit: 1_000 });
+    expect(items).toHaveLength(1);
+    expect(items[0]?.fileSummary).toEqual({ total: 0, draft: 0, final: 0 });
+    expect(repo.listPageForExportCalls).toBe(1);
+    expect(repo.fileSummaryCalls).toBe(0);
+    expect(repo.countForExportCalls).toBe(0);
+
+    await expect(service.countForExport(PROJECT)).resolves.toBe(1);
+    expect(repo.countForExportCalls).toBe(1);
   });
 });

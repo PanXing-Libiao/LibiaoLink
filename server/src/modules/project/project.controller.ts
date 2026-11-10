@@ -14,6 +14,7 @@ import {
 } from "@nestjs/common";
 import {
   ProjectCreateBodySchema,
+  ProjectDeliverableTypeCreateBodySchema,
   ProjectGroupPutBodySchema,
   ProjectListQuerySchema,
   ProjectMemberCreateBodySchema,
@@ -25,6 +26,7 @@ import {
 import { AppError } from "../../common/errors/app-error.js";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
+import { DictService } from "../admin/index.js";
 import { AllowDeletedProjectAccess, CurrentProjectAccess, ProjectAccess, ProjectAccessGuard, ProjectScope, RequirePermission } from "../permission/index.js";
 import { TranslateService } from "../translate/index.js";
 import type { ProjectAccessContext, ProjectScopeFilter } from "../permission/index.js";
@@ -38,6 +40,7 @@ import type { ProjectFacetsResult, ProjectListResult, ProjectPurgeResult, Projec
 type ProjectListQuery = z.infer<typeof ProjectListQuerySchema>;
 type ProjectCreateBody = z.infer<typeof ProjectCreateBodySchema>;
 type ProjectUpdateBody = z.infer<typeof ProjectUpdateBodySchema>;
+type ProjectDeliverableTypeCreateBody = z.infer<typeof ProjectDeliverableTypeCreateBodySchema>;
 type ProjectMemberCreateBody = z.infer<typeof ProjectMemberCreateBodySchema>;
 type ProjectGroupPutBody = z.input<typeof ProjectGroupPutBodySchema>;
 type ProjectRecycleActionBody = z.infer<typeof ProjectRecycleActionBodySchema>;
@@ -59,6 +62,7 @@ export class ProjectsController {
     private readonly members: ProjectMemberService,
     private readonly groups: ProjectGroupService,
     private readonly translate: TranslateService,
+    private readonly dicts: DictService,
   ) {}
 
   /**
@@ -132,6 +136,24 @@ export class ProjectsController {
     const project = await this.projects.updateProject(id, body, actorId);
     this.warmupProjectText(project);
     return project;
+  }
+
+  /**
+   * 新增全站自定义成果文件类型（2026-11-06）：仅当前项目项目经理（manager_ids 或名册 project_manager）。
+   * 新增后写入 deliverableType 全局字典，所有项目 / 任务 / 文件库立即可选；响应 = 更新后的整个字典。
+   */
+  @Post(":id/deliverable-types")
+  @RequirePermission("project.update")
+  async createDeliverableType(
+    @Param("id", uuidParam) id: string,
+    @Body(new ZodValidationPipe(ProjectDeliverableTypeCreateBodySchema)) body: ProjectDeliverableTypeCreateBody,
+    @CurrentProjectAccess() access: ProjectAccessContext,
+    @CurrentActorId() actorId: string,
+  ) {
+    if (!access.projectManager) {
+      throw new AppError("FORBIDDEN", "仅项目经理可新增自定义成果文件类型");
+    }
+    return this.dicts.createCustomDeliverableType(body.name, actorId);
   }
 
   /** 移入项目回收站（2026-10-19）：If-Match 回传当前 version 防误删；返回 deleted_at 已置位的项目。需 project.delete。 */

@@ -1,6 +1,6 @@
 import { z } from "../zod.ts";
 import { DateTimeSchema, DateOnlySchema, PageQuerySchema, SortQuerySchema, UuidSchema, VersionSchema } from "../common/conventions.ts";
-import { ProjectStatusSchema, StageKeySchema } from "../common/dicts.ts";
+import { DeliverableTypeSchema, ProjectStatusSchema, StageKeySchema } from "../common/dicts.ts";
 import { GroupAccessAccessLevelSchema } from "./group-access.ts";
 
 const PROJECT_MANAGER_IDS_LIMIT = 200;
@@ -167,6 +167,15 @@ export const ProjectUpdateBodySchema = z
   })
   .openapi("ProjectUpdateBody");
 
+
+/** 项目经理新增全站自定义成果文件类型：名称同时作为字典 code / name；新增后所有项目与任务均可选用。 */
+export const ProjectDeliverableTypeCreateBodySchema = z
+  .object({
+    name: DeliverableTypeSchema.openapi({ description: "自定义成果文件类型名称（1–50 字，不含英文逗号 / 换行；新增后全站共享）" }),
+  })
+  .openapi("ProjectDeliverableTypeCreateBody", {
+    description: "仅当前项目的项目经理 / 名册项目经理可新增；条目进入全站 deliverableType 字典，所有账号与项目可见",
+  });
 
 const ZeroOrMore = z.number().int().min(0);
 

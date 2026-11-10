@@ -3,6 +3,7 @@ import { and, asc, count, desc, eq, ilike, inArray, isNotNull, isNull, lt, lte, 
 import type { DbClient, DbTransaction } from "../../db/db-client.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { changeRequests } from "../../db/schema/change.js";
+import type { MaterialReissueSnapshot } from "@libiaolink/contracts";
 import { fileLinks, files, fileVersions, uploadSessions } from "../../db/schema/files.js";
 import { projectNodes } from "../../db/schema/flow.js";
 import { users } from "../../db/schema/identity.js";
@@ -26,6 +27,16 @@ export interface FileProjectBriefRow {
   deletedAt: Date | null;
 }
 
+/** 补发申请读面（项目编号 / 名称 / 客户随表单快照固化）。 */
+export interface FileProjectReissueBriefRow {
+  id: string;
+  code: string;
+  name: string;
+  customer: string | null;
+  status: string;
+  deletedAt: Date | null;
+}
+
 /** 节点摘要（nodeId 归属校验：必须属于该项目且未删除）。 */
 export interface FileNodeBriefRow {
   id: string;
@@ -41,6 +52,16 @@ export interface FileTaskBriefRow {
   ownerIds: string[];
   /** 任务定档时间（非空 = 已定档：直接修改一律 409 TASK_FINALIZED；修改走变更，A4-13）。 */
   finalizedAt: Date | null;
+}
+
+/** 补发申请读面（来源任务阶段 / 节点 / 标题随表单快照固化）。 */
+export interface FileTaskReissueBriefRow {
+  id: string;
+  projectId: string;
+  stageKey: string | null;
+  nodeId: string | null;
+  title: string;
+  deletedAt: Date | null;
 }
 
 export type FileRow = typeof files.$inferSelect;
@@ -64,6 +85,8 @@ export interface ChangeRequestJoinedRow {
   projectId: string;
   nodeId: string | null;
   stageKey: string | null;
+  changeType: string;
+  materialReissue: MaterialReissueSnapshot | null;
   reason: string;
   beforeSummary: string | null;
   afterSummary: string | null;
@@ -113,6 +136,10 @@ export interface ChangeRequestInsertInput {
   projectId: string;
   nodeId: string | null;
   stageKey: string | null;
+  /** 0084：普通文件变更 / 物料变更补发。 */
+  changeType: "file_change" | "material_reissue";
+  /** 0084：物料补发表单快照；普通变更为 null。 */
+  materialReissue: MaterialReissueSnapshot | null;
   reason: string;
   beforeSummary: string | null;
   afterSummary: string | null;
@@ -166,6 +193,9 @@ export interface FileCompletePatch {
   version: number;
   /** M4-04：变更流完成时置 changed（final → changed）；非变更流不传。 */
   status?: string;
+  /** 0084：服务端生成的补发 DOCX 入库即定档（成对写入）；普通上传不传。 */
+  finalizedAt?: Date;
+  finalizedBy?: string;
   /** Push 256：变更流采纳「变更后文件名称」（更名 + 扩展名随上传）；未更名不传。 */
   name?: string;
   updatedAt: Date;
@@ -228,6 +258,23 @@ export class FileRepository {
     return rows[0] ?? null;
   }
 
+  /** 补发申请：一次取齐自动带入表单的项目编号 / 名称 / 客户。 */
+  async findProjectReissueBrief(projectId: string, client: DbClient = this.database.db): Promise<FileProjectReissueBriefRow | null> {
+    const rows = await client
+      .select({
+        id: projects.id,
+        code: projects.code,
+        name: projects.name,
+        customer: projects.customer,
+        status: projects.status,
+        deletedAt: projects.deletedAt,
+      })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
   async findNodeBrief(nodeId: string, client: DbClient = this.database.db): Promise<FileNodeBriefRow | null> {
     const rows = await client
       .select({ id: projectNodes.id, projectId: projectNodes.projectId, deletedAt: projectNodes.deletedAt })
@@ -240,6 +287,23 @@ export class FileRepository {
   async findTaskBrief(taskId: string, client: DbClient = this.database.db): Promise<FileTaskBriefRow | null> {
     const rows = await client
       .select({ id: tasks.id, projectId: tasks.projectId, ownerIds: tasks.ownerIds, finalizedAt: tasks.finalizedAt })
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  /** 补发申请：来源任务需校验未删除并取阶段 / 节点 / 标题。 */
+  async findTaskReissueBrief(taskId: string, client: DbClient = this.database.db): Promise<FileTaskReissueBriefRow | null> {
+    const rows = await client
+      .select({
+        id: tasks.id,
+        projectId: tasks.projectId,
+        stageKey: tasks.stageKey,
+        nodeId: tasks.nodeId,
+        title: tasks.title,
+        deletedAt: tasks.deletedAt,
+      })
       .from(tasks)
       .where(eq(tasks.id, taskId))
       .limit(1);
@@ -326,6 +390,8 @@ export class FileRepository {
         currentVersionId: patch.currentVersionId,
         version: patch.version,
         ...(patch.status === undefined ? {} : { status: patch.status }),
+        ...(patch.finalizedAt === undefined ? {} : { finalizedAt: patch.finalizedAt }),
+        ...(patch.finalizedBy === undefined ? {} : { finalizedBy: patch.finalizedBy }),
         ...(patch.name === undefined ? {} : { name: patch.name }),
         updatedAt: patch.updatedAt,
       })
@@ -374,6 +440,8 @@ export class FileRepository {
         projectId: input.projectId,
         nodeId: input.nodeId,
         stageKey: input.stageKey,
+        changeType: input.changeType,
+        materialReissue: input.materialReissue,
         reason: input.reason,
         beforeSummary: input.beforeSummary,
         afterSummary: input.afterSummary,
@@ -704,6 +772,37 @@ export class FileRepository {
     return { items, total: Number(totals[0]?.value ?? 0) };
   }
 
+  /** 导出专用文件行读取：保持列表口径，不重复查询 total。 */
+  async listProjectFilesForExport(
+    projectId: string,
+    filter: FileListFilter,
+    sorts: readonly FileListSort[],
+    limit: number,
+    offset: number,
+    client: DbClient = this.database.db,
+  ): Promise<FileLibraryRow[]> {
+    const where = and(...fileLibraryConditions(projectId, filter));
+    return client
+      .select({ file: files, createdByName: users.displayName })
+      .from(files)
+      .leftJoin(users, eq(users.id, files.createdBy))
+      .where(where)
+      .orderBy(...fileLibraryOrderBy(sorts))
+      .limit(limit)
+      .offset(offset);
+  }
+
+  /** 导出专用文件总数：与 listProjectFilesForExport 共用筛选口径。 */
+  async countProjectFilesForExport(
+    projectId: string,
+    filter: FileListFilter,
+    client: DbClient = this.database.db,
+  ): Promise<number> {
+    const where = and(...fileLibraryConditions(projectId, filter));
+    const totals = await client.select({ value: count() }).from(files).where(where);
+    return Number(totals[0]?.value ?? 0);
+  }
+
   /**
    * 变更记录列表（M4-04 读面 · A4-15）：项目 + 多值阶段 / 节点 / 变更文件 / 申请人筛选 + 关键字 + 白名单排序 + 分页；
    * `total` 与 items 走同一 where（分页元数据一致）。fileId / versionId / versionSeq 由 file_versions 反查
@@ -732,6 +831,41 @@ export class FileRepository {
       .leftJoin(fileVersions, eq(fileVersions.changeRequestId, changeRequests.id))
       .where(where);
     return { items, total: Number(totals[0]?.value ?? 0) };
+  }
+
+  /** 导出专用变更行读取：保持列表口径，不重复查询 total。 */
+  async listChangeRequestsForExport(
+    projectId: string,
+    filter: ChangeRequestListFilter,
+    sorts: readonly ChangeRequestSort[],
+    limit: number,
+    offset: number,
+    client: DbClient = this.database.db,
+  ): Promise<ChangeRequestJoinedRow[]> {
+    const where = and(...changeRequestConditions(projectId, filter));
+    return client
+      .select(CHANGE_REQUEST_SELECT)
+      .from(changeRequests)
+      .leftJoin(fileVersions, eq(fileVersions.changeRequestId, changeRequests.id))
+      .where(where)
+      .orderBy(...changeRequestOrderBy(sorts))
+      .limit(limit)
+      .offset(offset);
+  }
+
+  /** 导出专用变更总数：与 listChangeRequestsForExport 共用筛选与连接口径。 */
+  async countChangeRequestsForExport(
+    projectId: string,
+    filter: ChangeRequestListFilter,
+    client: DbClient = this.database.db,
+  ): Promise<number> {
+    const where = and(...changeRequestConditions(projectId, filter));
+    const totals = await client
+      .select({ value: count() })
+      .from(changeRequests)
+      .leftJoin(fileVersions, eq(fileVersions.changeRequestId, changeRequests.id))
+      .where(where);
+    return Number(totals[0]?.value ?? 0);
   }
 
   /** 变更记录单条（M4-04 读面 · 详情）：不存在 → null；可见性由服务层按 projectId 判定（不可见统一 404）。 */
@@ -791,6 +925,8 @@ const CHANGE_REQUEST_SELECT = {
   projectId: changeRequests.projectId,
   nodeId: changeRequests.nodeId,
   stageKey: changeRequests.stageKey,
+  changeType: changeRequests.changeType,
+  materialReissue: changeRequests.materialReissue,
   reason: changeRequests.reason,
   beforeSummary: changeRequests.beforeSummary,
   afterSummary: changeRequests.afterSummary,

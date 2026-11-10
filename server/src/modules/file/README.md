@@ -1,4 +1,12 @@
-# file 模块（S7·file：上传管道 + 版本 / 定档 / 回溯 / 回收站 + 文件库查询与多态关联 + 变更申请即通过（写入 + 读面）+ 预览（数据层 + 转换队列 + 读 API + 产物清理收口）+ 下载切片 + ONLYOFFICE 查看器 + 安全位图原对象直签 + H1 · S2 精确 MIME / 文件头裁决与 S4 SVG → PNG 队列接线已落地；S2 / S3 / S4 须同批上线）
+> **2026-11-09 物料变更补发群图片**：补发提交事务内新增一条 `notify.group`（模板码 `MATERIAL_REISSUE_GROUP`，`refId` = 变更 id）；提交成功后企微机器人先发摘要，再按同一 `materialReissue` 快照生成补发/补货申请表 PNG 发群。通知与图片失败只走 outbox 重试 / 日志，不回滚变更记录、项目文件与 DOCX。
+>
+> **2026-11-09 物料变更补发邮件标题 / 客户名称可编辑**：`MaterialReissueService` 接受并固化 `emailTitle`（1–500 字）与 `customerName`（≤200 字，可空）；客户名称缺省取项目客户但允许本次覆盖，不回写项目主数据；DOCX 使用实际快照值，旧快照缺少 `emailTitle` 时回退默认标题；正文按原模板固定为宋体五号、标题微软雅黑 16 pt，勾选使用 Unicode `☑` / `☐`，并压缩多余空段与空物料行保证 A4 单页展示。
+
+> **2026-11-09 物料变更补发（模板版）**：`MaterialReissueService` 新增 `POST /api/v1/projects/{id}/change-requests/material-reissue`（`file.upload`）。服务端校验项目未归档、来源任务属于该项目且未删除，自动补齐项目 / 客户 / 任务 / 申请人 / 上海时区时间快照，生成《补发/补货申请表》DOCX（`material-reissue-document.ts`）。生成器以 `material-reissue-template.docx` 为静态包模板，保留原页眉 / 页脚 / logo / 样式 / 编号 / 主题，只替换 `word/document.xml` 与文档属性；正文按模板输出两列主表 18 行、7 列物料表、四条编号备注，勾选使用 Wingdings 2 `w:sym`，出库日期按 `YYYY/MM/DD`。同一事务写变更记录、文件 / v1 版本、项目 / 任务 / 变更 / 节点关联、任务 `change_refs`、审计和两条 outbox；事务失败时清理本次新对象。普通文件变更继续写 `change_type=file_change` 与 `material_reissue=null`。`nest-cli.json` 已配置把模板复制到 `dist/modules/file/`。
+
+> **2026-11-09 物料变更补发**：`MaterialReissueService` 新增 `POST /api/v1/projects/{id}/change-requests/material-reissue`（`file.upload`）。服务端校验项目未归档、来源任务属于该项目且未删除，自动补齐项目 / 客户 / 任务 / 申请人 / 上海时区时间快照，生成《补发/补货申请表》DOCX（`material-reissue-document.ts`），并在同一事务写变更记录、文件 / v1 版本、项目 / 任务 / 变更 / 节点关联、任务 `change_refs`、审计和两条 outbox。事务失败时清理本次新对象。普通文件变更继续写 `change_type=file_change` 与 `material_reissue=null`。
+
+> **2026-11-06 全站自定义成果类型（跨线代记，请 lan / wmj 复核）**：上传 / 文件读面的 `docType` 与文件库 `filter[docType]` 接受内置十类之外的 1–50 字名称（不含英文逗号 / 换行），来源为全站 `deliverableType` 字典；普通附件仍为空。无对象键、预览或权限变更。
 
 > **2026-11-03 CAD 输入流式交接**：STEP / DWG 提交不再由 API 把对象存储内容收集成完整 Buffer，也不再在传输层重算整文件 SHA-256。`CadInputService.enginePayload` 返回只读流与已绑定的大小 / 哈希，经 Unix socket 带背压转发；流中超出声明大小或摘要不符仍抛 `CadInputIntegrityError`，由后台任务落为 `source-integrity-failed`。DXF 因配套资源包协议与 64 MiB 预算保持单帧 Buffer。接口契约、DDL、权限与对象键不变。
 
