@@ -3,12 +3,12 @@ import { mediumCardBorderOf, mediumCardTintOf, vividCardBorderOf, vividCardTintO
 import { PROJECT_STAGES } from "../data/projects";
 import type { Member } from "../data/members";
 import type { TaskFileRef } from "../fileApi";
-import { TEMP_TASK_STAGE, addedNodeIdsOf, addedNodeKeysOf, dateOnlyText, daysBetweenInclusive, lateDeliveryLabel, ownersLabel, taskCapabilitiesOf, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
+import { TEMP_TASK_STAGE, addedNodeIdsOf, addedNodeKeysOf, daysBetweenInclusive, lateDeliveryLabel, ownersLabel, taskCapabilitiesOf, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
 import { stageNameOf, type ApiProjectSummary, type TaskUpdateInput } from "../taskApi";
 import { fieldText, isLocalizedLocale, mdText, priorityText, stageText, statusText, useLocale, useLocalizedText, useT } from "../i18n";
 import { InlineDateCell, InlineMemberMultiCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { SelectOption } from "./SelectMenu";
-import { ChangeDetailModal } from "./ChangeDetailModal";
+import { TaskChangesPopover } from "./TaskChangesPopover";
 import { TaskDrawer } from "./TaskDrawer";
 import type { TaskEditSubmit } from "./TaskDrawer";
 import { TaskFilesPopover } from "./TaskFilesPopover";
@@ -395,6 +395,8 @@ type TaskBoardProps = {
   filesByTask?: ReadonlyMap<string, TaskFileRef[]>;
   /** 任务详情接口所需（抽屉里的文件清单按它取详情）；不传 = 抽屉不拉清单。 */
   projectId?: string;
+  /** 行内「变更关联」气泡底部的「查看全部变更」入口；不传 = 不显示该入口。 */
+  onOpenChangeRecords?: (taskId?: string | null) => void;
 };
 
 function Chevron({ collapsed }: { collapsed: boolean }) {
@@ -417,7 +419,7 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
  *  （onSetStatus）/ 紧急重要度与成果文件与进展描述（onPatch）/ 「文件」列下拉（onUploadFiles + onDeleteFile）/
  *  三段日期与人数（onPatch）；天数不单开编辑（随日期联动写回，与项目页同口径）。点行 = onSelect（开抽屉）；**onSelect 不传 = 整行不可点**（不出「点击查看任务详情」提示、不出 pointer 光标、不占键盘 Tab 焦点；行内各列仍按回调照常只读 / 可编辑 —— 甘特图「画不出时间轴」的兜底列表这样用，Push 294）。
  *  subtitle 缺省 = 英文名小行（项目页口径）；工作台传「阶段 / 临时任务 · 英文名」保持自己那张表的副行。 */
-export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, canFinalize = false, members, customDeliverableTypes = [], onCreateDeliverableType, onSetStatus, onSetActualEnd, onChangeManagers, canEditManagers, onPatch, onUploadFiles, onDeleteFile, files, tierTint, subtitle }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect?: () => void; onProgress?: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; canFinalize?: boolean; members: readonly Member[]; customDeliverableTypes?: readonly string[]; onCreateDeliverableType?: (name: string) => Promise<string | null>; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; canEditManagers?: boolean; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; tierTint?: TintedTier | false; subtitle?: string }) {
+export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, canFinalize = false, members, customDeliverableTypes = [], onCreateDeliverableType, onSetStatus, onSetActualEnd, onChangeManagers, canEditManagers, onPatch, onUploadFiles, onDeleteFile, files, tierTint, subtitle, onOpenAllChanges }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect?: () => void; onProgress?: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; canFinalize?: boolean; members: readonly Member[]; customDeliverableTypes?: readonly string[]; onCreateDeliverableType?: (name: string) => Promise<string | null>; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; canEditManagers?: boolean; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; tierTint?: TintedTier | false; subtitle?: string; onOpenAllChanges?: (() => void) | null }) {
   const locale = useLocale();
   const t = useT();
   /** 手打内容机翻显示（业务口径 2026-10-13「因为页面有些内容是手打的 我建议是提前后台机翻」）：
@@ -480,8 +482,6 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
     });
   };
 
-  /** 「变更关联」列点击弹窗（Push 256 · 业务口径「变更关联点击后要显示一个这样的内容在中间」）：非空 = 中央展示该变更的「变更管理」详情。 */
-  const [changeModalId, setChangeModalId] = useState<string | null>(null);
   /** 「文件」列胶囊内容（Push 226 续二 · 业务口径「应该是文件名字 超出长度后面写+1 +2」；Push 246 起兼作下拉触发器）：
    *  与「输出成果文件」列同套 —— 第一份出名字（截断 + title 全名）、后面还有就「+N」；
    *  文件清单没取到（老数据 / 请求失败）退回「N 份」计数。 */
@@ -815,31 +815,8 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
         )}
       </span>
     ),
-    change: (
-      <span
-        className="flex items-center gap-1"
-        title={
-          task.changes.length === 0
-            ? undefined
-            : task.changes.map((change) => t("board.change.tip", { date: dateOnlyText(change.appliedAt) }) + (change.reason === "" ? "" : (isLocalizedLocale(locale) ? " (" + change.reason + ")" : "（" + change.reason + "）"))).join(isLocalizedLocale(locale) ? "; " : "；")
-        }
-      >
-        {task.changes.length === 0 ? null : (
-          <button
-            type="button"
-            data-change-link-open="true"
-            title={t("drawer.change.linkTitle")}
-            onClick={(event) => {
-              event.stopPropagation();
-              setChangeModalId(task.changes[0].id);
-            }}
-            className="flex items-center gap-1"
-          >
-            <span className="inline-block whitespace-nowrap rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 transition hover:bg-amber-200">{t("board.change.chip")}</span>
-            {task.changes.length > 1 ? <span className="text-[10px] text-zinc-400">+{task.changes.length - 1}</span> : null}
-          </button>
-        )}
-      </span>
+    change: task.changes.length === 0 ? null : (
+      <TaskChangesPopover task={task} members={members} onOpenAllChanges={onOpenAllChanges} onOpenLinkedTask={onSelect} />
     ),
   };
 
@@ -896,16 +873,6 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
           </Fragment>
         ))}
       </div>
-      {changeModalId === null ? null : (
-        <ChangeDetailModal
-          changeId={changeModalId}
-          linkedTaskTitle={task.title}
-          members={members}
-          deliverableTypes={task.deliverableTypes}
-          onOpenLinkedTask={() => { setChangeModalId(null); onSelect?.(); }}
-          onClose={() => { setChangeModalId(null); }}
-        />
-      )}
     </>
   );
 }
@@ -947,7 +914,7 @@ export function ProjectSummary({ summary }: { summary: ApiProjectSummary | null 
   );
 }
 
-export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgress, onSetStatus, onSetActualEnd, members, customDeliverableTypes = [], onCreateDeliverableType, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, canEditManagers, canFinalizeTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, filesByTask, projectId, tierTint }: TaskBoardProps) {
+export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgress, onSetStatus, onSetActualEnd, members, customDeliverableTypes = [], onCreateDeliverableType, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, canEditManagers, canFinalizeTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, filesByTask, projectId, tierTint, onOpenChangeRecords }: TaskBoardProps) {
   const t = useT();
   const locale = useLocale();
   /**
@@ -1348,6 +1315,7 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
                         onUploadFiles={onUploadFiles}
                         onDeleteFile={onDeleteFile}
                         files={filesByTask?.get(task.id)}
+                        onOpenAllChanges={onOpenChangeRecords === undefined ? undefined : () => { onOpenChangeRecords(task.id); }}
                       />
                     ))}
                   </div>
