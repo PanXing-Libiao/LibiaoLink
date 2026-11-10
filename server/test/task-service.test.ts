@@ -989,7 +989,7 @@ describe("任务定档角色权限（Pro 逐人权限）", () => {
     expect(unfinalized.finalizedAt).toBeNull();
   });
 
-  it("只读项目经理、旁观者不能定档，重复调用也不能维持已定档状态", async () => {
+  it("最终权限 view 的上下文（即使带项目经理关系标记）与旁观者不能定档", async () => {
     const repo = new FakeTaskRepository();
     const permission = new FakePermissionService();
     permission.accessLevel = "view";
@@ -1050,7 +1050,7 @@ describe("Pro 逐人权限：任务负责人只能编辑本人任务", () => {
     expect(repo.task?.ownerIds).toEqual([ACTOR]);
   });
 
-  it("只读项目经理与旁观者不能编辑非本人任务、不能改进度 / 完成", async () => {
+  it("非项目编辑者不能编辑非本人任务、不能改进度 / 完成", async () => {
     const repo = new FakeTaskRepository();
     repo.task = makeRow({ ownerIds: [MANAGER] });
     const permission = new FakePermissionService();

@@ -10186,7 +10186,7 @@ export interface components {
             roleCodes: string[];
             /** @description 固定全量数据范围基线；实际项目范围由部门规则收窄 */
             dataScopes: components["schemas"]["DataScope"][];
-            /** @description 全量功能权限位基线；业务写能力另由部门编辑范围 / 项目 groupAccessLevel 裁决 */
+            /** @description 全量功能权限位基线；业务写能力另由部门编辑范围 / Project.accessLevel 裁决 */
             permissionKeys: components["schemas"]["PermissionKey"][];
             /** @description 当前账号的 Casdoor 群组键（owner/name；按登录或目录同步落地） */
             groupKeys?: string[];
@@ -10196,7 +10196,7 @@ export interface components {
             groupAccessEnforced?: boolean;
             /** @description 当前账号是否可进入群组权限管理页 */
             groupAccessAdmin?: boolean;
-            /** @description 兼容摘要：账号没有任何编辑范围时为 true；项目级写能力以项目 groupAccessLevel 为准，全局写能力以 groupAllEdit 为准 */
+            /** @description 兼容摘要：账号没有任何编辑范围时为 true；项目级写能力以Project.accessLevel 为准，全局写能力以 groupAllEdit 为准 */
             groupReadOnly?: boolean;
             groupProjectAccess?: components["schemas"]["GroupProjectAccess"];
             /** @description 当前账号命中的部门项目范围并集：all / own / selected / none；用于空态展示当前权限 */
@@ -11416,7 +11416,7 @@ export interface components {
          */
         FollowObjectType: "project" | "task";
         /**
-         * @description 当前登录账号对该项目的有效访问级别：edit = 可执行项目级写操作 / view = 仅浏览。项目经理、项目成员与任务负责人关系只保证可见；只有部门 / 个人规则命中 edit 才提升为项目编辑（管理员除外）
+         * @description 当前登录账号对该项目的最终有效访问级别：edit = 可执行项目级写操作 / view = 仅浏览。管理员、所管本项目的项目经理或部门 / 个人规则命中 edit 时为 edit；项目成员、任务负责人关系仅保证浏览，且项目经理身份不外溢到其他项目
          * @enum {string}
          */
         GroupAccessAccessLevel: "edit" | "view";
@@ -12446,7 +12446,7 @@ export interface components {
             /** @description 导入的蓝图版本；缺省 = 当前已发布版本 */
             blueprintVersion?: number;
         };
-        /** @description 仅当前项目的项目编辑者（部门 / 个人规则 edit 或系统管理员）可新增；项目经理关系本身只读；条目进入全站 deliverableType 字典，所有账号与项目可见 */
+        /** @description 仅当前项目的项目编辑者（管理员、所管本项目的项目经理或部门 / 个人规则 edit）可新增；条目进入全站 deliverableType 字典，所有账号与项目可见 */
         ProjectDeliverableTypeCreateBody: {
             name: components["schemas"]["DeliverableType"];
         };

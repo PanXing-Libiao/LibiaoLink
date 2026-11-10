@@ -22,11 +22,11 @@ export const ProjectSchema = z
       description: "项目经理姓名数组：服务端按 managerIds 解析后随行下发，与 managerIds 同下标一一对应（列表 / 详情 / 创建与编辑返回均含，免前端二次查目录）；人员停用 / 离职后仍返回姓名，取不到时该位为 null（前端显示「—」）",
     }),
     accessLevel: GroupAccessAccessLevelSchema.openapi({
-      description: "当前登录账号对该项目的有效访问级别：edit = 可执行项目级写操作 / view = 仅浏览。项目经理、项目成员与任务负责人关系只保证可见；只有部门 / 个人规则命中 edit 才提升为项目编辑（管理员除外）",
+      description: "当前登录账号对该项目的最终有效访问级别：edit = 可执行项目级写操作 / view = 仅浏览。管理员、所管本项目的项目经理或部门 / 个人规则命中 edit 时为 edit；项目成员、任务负责人关系仅保证浏览，且项目经理身份不外溢到其他项目",
     }),
     stageKey: StageKeySchema,
     status: ProjectStatusSchema,
-    groupAccessLevel: GroupAccessAccessLevelSchema.openapi({ description: "当前登录账号对该项目的部门权限：edit 可写 / view 仅浏览；由服务端按所有命中范围取最高权限后随项目下发" }),
+    groupAccessLevel: GroupAccessAccessLevelSchema.openapi({ description: "旧客户端兼容字段：当前与 accessLevel 同值下发；项目级写入口统一以 accessLevel 为准" }),
     description: z.string().nullable(),
     version: VersionSchema,
     createdAt: DateTimeSchema,
@@ -177,7 +177,7 @@ export const ProjectDeliverableTypeCreateBodySchema = z
     name: DeliverableTypeSchema.openapi({ description: "自定义成果文件类型名称（1–50 字，不含英文逗号 / 换行；新增后全站共享）" }),
   })
   .openapi("ProjectDeliverableTypeCreateBody", {
-    description: "仅当前项目的项目编辑者（部门 / 个人规则 edit 或系统管理员）可新增；项目经理关系本身只读；条目进入全站 deliverableType 字典，所有账号与项目可见",
+    description: "仅当前项目的项目编辑者（管理员、所管本项目的项目经理或部门 / 个人规则 edit）可新增；条目进入全站 deliverableType 字典，所有账号与项目可见",
   });
 
 const ZeroOrMore = z.number().int().min(0);

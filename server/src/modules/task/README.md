@@ -1,4 +1,4 @@
-> **2026-11-10 Pro 逐人权限（无迁移）**：任务列表 / 详情随行 `capabilities`（`level` / `source` / `canEditFields` / `canUpdateProgress` / `canComplete` / `canFinalize` / `canUpload` / `canAssignOwners` / `canDelete`）。项目编辑者拥有整个项目任务；当前任务负责人只能编辑本人任务普通字段、进度、完成、定档和本人任务文件，不能改负责人 / 排序 / 删除 / 批量 / 新建。单任务编辑 / 进度 / 完成 / 定档在服务层逐任务裁决；创建 / 模板创建 / 批量 / 删除仍要求项目最终 `accessLevel=edit`。项目经理、项目成员与任务负责人关系只保证浏览，不提升项目编辑；能力字段缺失时前端按只读处理。
+> **2026-11-10 Pro 逐人权限（无迁移）**：任务列表 / 详情随行 `capabilities`（`level` / `source` / `canEditFields` / `canUpdateProgress` / `canComplete` / `canFinalize` / `canUpload` / `canAssignOwners` / `canDelete`）。项目编辑者（管理员、所管本项目的项目经理、规则 `edit`）拥有整个项目任务；当前任务负责人只能编辑本人任务普通字段、进度、完成、定档和本人任务文件，不能改负责人 / 排序 / 删除 / 批量 / 新建。单任务编辑 / 进度 / 完成 / 定档在服务层逐任务裁决；创建 / 模板创建 / 批量 / 删除仍要求项目最终 `accessLevel=edit`。项目成员关系只保证浏览；任务负责人关系只提升本人任务。能力字段缺失时前端按只读处理。
 
 # task 模块（h4 · S6·task：任务主表 / 五态派生 + 显式覆盖 / 进度聚合 / 完成门禁 / 批量操作 / 软删 / 锁定字段例外调整 / 节点库来源与模板实例化（M3-07 刀 3））
 

@@ -50,7 +50,7 @@ export type Project = {
   stageKey: string;
   /** 项目状态（契约 status：active / paused / done / archived）。 */
   status: string;
-  /** 当前登录人在该项目的有效项目权限：edit = 可做项目级写操作；view = 项目关系可见但只读。 */
+  /** 当前登录人在该项目的最终项目权限：管理员 / 所管本项目的项目经理 / 规则 edit 为 edit；其余可见关系为 view。 */
   accessLevel: "edit" | "view";
   /** 兼容旧字段：当前值同 accessLevel；项目级写入口统一改用 accessLevel。 */
   groupAccessLevel: "edit" | "view";

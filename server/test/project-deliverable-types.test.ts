@@ -33,7 +33,7 @@ function makeController(): { controller: ProjectsController; dicts: FakeDictServ
 }
 
 describe("项目内新增全站自定义成果类型（仅限项目编辑者）", () => {
-  it("只读项目经理 403 FORBIDDEN，且不写字典", async () => {
+  it("最终权限 view（即使上下文带项目经理关系标记）403 FORBIDDEN，且不写字典", async () => {
     const { controller, dicts } = makeController();
     await expect(
       controller.createDeliverableType(

@@ -133,7 +133,7 @@
             "items": {
               "$ref": "#/components/schemas/PermissionKey"
             },
-            "description": "全量功能权限位基线；业务写能力另由部门编辑范围 / 项目 groupAccessLevel 裁决"
+            "description": "全量功能权限位基线；业务写能力另由部门编辑范围 / Project.accessLevel 裁决"
           },
           "groupKeys": {
             "type": "array",
@@ -159,7 +159,7 @@
           },
           "groupReadOnly": {
             "type": "boolean",
-            "description": "兼容摘要：账号没有任何编辑范围时为 true；项目级写能力以项目 groupAccessLevel 为准，全局写能力以 groupAllEdit 为准"
+            "description": "兼容摘要：账号没有任何编辑范围时为 true；项目级写能力以Project.accessLevel 为准，全局写能力以 groupAllEdit 为准"
           },
           "groupProjectAccess": {
             "$ref": "#/components/schemas/GroupProjectAccess"
@@ -177,7 +177,7 @@
                 "$ref": "#/components/schemas/GroupAccessAccessLevel"
               },
               {
-                "description": "旧客户端兼容摘要：任一范围可编辑 = edit，否则 view；项目级写权限以项目 groupAccessLevel 为准"
+                "description": "旧客户端兼容摘要：任一范围可编辑 = edit，否则 view；项目级写权限以Project.accessLevel 为准"
               }
             ]
           },
@@ -4788,7 +4788,7 @@
           "edit",
           "view"
         ],
-        "description": "当前登录账号对该项目的有效访问级别：edit = 可执行项目级写操作 / view = 仅浏览。项目经理、项目成员与任务负责人关系只保证可见；只有部门 / 个人规则命中 edit 才提升为项目编辑（管理员除外）"
+        "description": "当前登录账号对该项目的最终有效访问级别：edit = 可执行项目级写操作 / view = 仅浏览。管理员、所管本项目的项目经理或部门 / 个人规则命中 edit 时为 edit；项目成员、任务负责人关系仅保证浏览，且项目经理身份不外溢到其他项目"
       },
       "GroupAccessAdmin": {
         "type": "object",
@@ -8020,7 +8020,7 @@
                 "$ref": "#/components/schemas/GroupAccessAccessLevel"
               },
               {
-                "description": "当前登录账号对该项目的部门权限：edit 可写 / view 仅浏览；由服务端按所有命中范围取最高权限后随项目下发"
+                "description": "旧客户端兼容字段：当前与 accessLevel 同值下发；项目级写入口统一以 accessLevel 为准"
               }
             ]
           },
@@ -8576,7 +8576,7 @@
         "required": [
           "name"
         ],
-        "description": "仅当前项目的项目编辑者（部门 / 个人规则 edit 或系统管理员）可新增；项目经理关系本身只读；条目进入全站 deliverableType 字典，所有账号与项目可见"
+        "description": "仅当前项目的项目编辑者（管理员、所管本项目的项目经理或部门 / 个人规则 edit）可新增；条目进入全站 deliverableType 字典，所有账号与项目可见"
       },
       "ProjectFacets": {
         "type": "object",

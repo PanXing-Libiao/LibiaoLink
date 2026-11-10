@@ -600,7 +600,7 @@ describe("策略服务：M5-06 管理面仅系统管理员", () => {
 
 // ---------- Pro 逐人权限：关系可见 / 任务级编辑 ----------
 
-describe("Pro 逐人权限：关系只读、本人任务可编辑、部门编辑整项目可编辑", () => {
+describe("Pro 逐人权限：所管项目经理可编辑、成员只读、本人任务可编辑", () => {
   const config = new AppConfig({
     GROUP_ACCESS_ENFORCED: "true",
     GROUP_ACCESS_ADMIN_GROUP_KEYS: "",
@@ -625,42 +625,66 @@ describe("Pro 逐人权限：关系只读、本人任务可编辑、部门编辑
     });
   });
 
-  it("非项目部项目经理只保证浏览，不因项目经理关系获得项目编辑", async () => {
+  it("本项目项目经理即使没有部门编辑规则，也获得本项目编辑权", async () => {
     const repository = new FakePermissionRepository();
     repository.refs.set(PROJECT_ID, { managerIds: [ACTOR_ID], deletedAt: null });
     const { service } = makeService([fullCapabilityAuthorization(ACTOR_ID)], repository, config);
     const access = await service.assertProjectVisible(ACTOR_ID, PROJECT_ID);
 
-    expect(access).toMatchObject({ projectManager: true, groupAccessLevel: null, accessLevel: "view" });
-    await expectAppError(
-      () => service.assertCan(ACTOR_ID, "project.update", access, "只读项目经理不能改项目"),
-      "FORBIDDEN",
-    );
-    await expectAppError(
-      () => service.assertCan(ACTOR_ID, "project.export", access, "只读项目经理不能导出"),
-      "FORBIDDEN",
-    );
+    expect(access).toMatchObject({ projectManager: true, groupAccessLevel: null, accessLevel: "edit" });
+    await service.assertCan(ACTOR_ID, "project.update", access);
+    await service.assertCan(ACTOR_ID, "project.export", access);
   });
 
-  it("部门规则 edit 才把项目经理提升为项目编辑", async () => {
+  it("项目经理编辑权只限所管项目：非所管项目仍按规则只读", async () => {
     const repository = new FakePermissionRepository();
     repository.refs.set(PROJECT_ID, { managerIds: [ACTOR_ID], deletedAt: null });
+    repository.refs.set(OTHER_PROJECT, { managerIds: [MANAGER_ID], deletedAt: null });
     repository.groupKeys = ["libiaorobot.com/项目部"];
     repository.groupRules = [{
       groupKey: "libiaorobot.com/项目部",
       allowedPages: [],
-      scopePermissions: [{ projectScope: "all", accessLevel: "edit" }],
+      scopePermissions: [{ projectScope: "all", accessLevel: "view" }],
       projectScope: "all",
-      accessLevel: "edit",
+      accessLevel: "view",
       projectIds: [],
       memberScope: "all",
       memberUserIds: [],
     }];
     const { service } = makeService([fullCapabilityAuthorization(ACTOR_ID)], repository, config);
-    const access = await service.assertProjectVisible(ACTOR_ID, PROJECT_ID);
 
-    expect(access).toMatchObject({ projectManager: true, groupAccessLevel: "edit", accessLevel: "edit" });
-    await service.assertCan(ACTOR_ID, "project.update", access);
+    const managed = await service.assertProjectVisible(ACTOR_ID, PROJECT_ID);
+    const other = await service.assertProjectVisible(ACTOR_ID, OTHER_PROJECT);
+    expect(managed).toMatchObject({ projectManager: true, groupAccessLevel: "view", accessLevel: "edit" });
+    expect(other).toMatchObject({ projectManager: false, groupAccessLevel: "view", accessLevel: "view" });
+    await service.assertCan(ACTOR_ID, "project.update", managed);
+    await expectAppError(
+      () => service.assertCan(ACTOR_ID, "project.update", other, "非所管项目经理不能改项目"),
+      "FORBIDDEN",
+    );
+  });
+
+  it("名册 project_manager 同样获得本项目编辑；普通项目成员仍只读", async () => {
+    const managerRepository = new FakePermissionRepository();
+    managerRepository.refs.set(PROJECT_ID, { managerIds: [MANAGER_ID], deletedAt: null });
+    managerRepository.memberships.set(PROJECT_ID, "project_manager");
+    const managerService = makeService([fullCapabilityAuthorization(ACTOR_ID)], managerRepository, config).service;
+    expect(await managerService.assertProjectVisible(ACTOR_ID, PROJECT_ID)).toMatchObject({
+      projectManager: true,
+      groupAccessLevel: null,
+      accessLevel: "edit",
+    });
+
+    const memberRepository = new FakePermissionRepository();
+    memberRepository.refs.set(PROJECT_ID, { managerIds: [MANAGER_ID], deletedAt: null });
+    memberRepository.memberships.set(PROJECT_ID, "project_member");
+    const memberService = makeService([fullCapabilityAuthorization(ACTOR_ID)], memberRepository, config).service;
+    expect(await memberService.assertProjectVisible(ACTOR_ID, PROJECT_ID)).toMatchObject({
+      member: true,
+      projectManager: false,
+      groupAccessLevel: null,
+      accessLevel: "view",
+    });
   });
 
   it("任务能力：项目编辑者全开；任务负责人只开本人任务普通写口；旁观者只读", () => {

@@ -92,14 +92,14 @@ export interface ProjectResourceContext {
   accessLevel?: "edit" | "view";
 }
 
-/** 有效项目编辑权：关系（项目经理 / 成员 / 任务负责人）不提升项目编辑；只认部门 / 个人规则或管理员。 */
+/** 有效项目编辑权：管理员、本项目项目经理或规则 edit（均汇总进 accessLevel）；成员 / 任务负责人关系不提升。 */
 export function isProjectEditor(context?: Pick<ProjectResourceContext, "accessLevel" | "groupAccessLevel">): boolean {
   return context?.accessLevel === "edit" || (context?.accessLevel === undefined && context?.groupAccessLevel === "edit");
 }
 
 /**
  * 任务级能力（Pro 逐人权限唯一口径）：
- * - 项目编辑者 = 整项目任务可编辑；
+ * - 项目编辑者（管理员 / 本项目项目经理 / 规则 edit）= 整项目任务可编辑；
  * - 任务负责人 = 仅本人任务可编辑，不能改负责人 / 排序 / 删除 / 批量；
  * - 其余 = 只读。
  */
@@ -186,7 +186,7 @@ export const PROJECT_MANAGER_IMPLIED_KEYS: readonly PermissionKey[] = [
 
 /**
  * 任务定档 / 取消定档的唯一口径（Pro 逐人权限）：任务当前负责人或项目编辑者。
- * 仅被任命为项目经理、但没有部门 / 个人 edit 规则时是只读，不再凭项目经理关系定档。
+ * 被任命为本项目项目经理时由权限服务写入 accessLevel=edit；成员 / 任务负责人关系不凭关系本身定档。
  * 该规则同时供任务接口与文件定档联动任务定档的旁路复用，避免两套判定漂移。
  */
 export function canManageTaskFinalization(

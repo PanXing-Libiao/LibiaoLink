@@ -50,7 +50,7 @@ export function toArchiveView(row: ArchiveViewRow): ProjectArchiveView {
  *      首次归档 422 ARCHIVE_GATE_NOT_PASSED 返回明细，项目编辑者确认（confirm = true）后放行，缺项随清单 acknowledgedMissing 留痕。
  *   3. 归档事务（全部同事务）：锁项目行 → 乐观锁 version 判定 → 置 status = archived + archived_at / archived_by →
  *      生成 project_archives 清单 → 撤销进行中的上传会话 → 审计 action = archive；不删数据、不改阶段。
- *   4. 权限：仅最终项目编辑者（管理员或部门 / 个人规则 edit）；项目经理 / 成员 / 任务负责人关系本身不提升编辑权。记录级可见性由 ProjectAccessGuard 先行（404 语义）。
+ *   4. 权限：仅最终项目编辑者（管理员、所管本项目的项目经理或规则 edit）；项目成员 / 任务负责人关系不提升编辑权。记录级可见性由 ProjectAccessGuard 先行（404 语义）。
  */
 @Injectable()
 export class ArchiveService {

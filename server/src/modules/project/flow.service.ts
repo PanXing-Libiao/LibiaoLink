@@ -526,7 +526,7 @@ export class FlowService {
     );
   }
 
-  /** 项目级流程写权限：只认最终项目编辑权；项目经理 / 成员 / 任务负责人关系本身不提升。 */
+  /** 项目级流程写权限：只认最终项目编辑权；所管项目经理已计入 accessLevel，成员 / 任务负责人关系不提升。 */
   async assertProjectEditor(projectId: string, actorId: string, action: string): Promise<void> {
     const access = await this.permission.assertProjectVisible(actorId, projectId);
     if (isProjectEditor(access)) return;

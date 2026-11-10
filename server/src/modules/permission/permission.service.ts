@@ -266,24 +266,34 @@ export class PermissionService {
     throw new AppError("FORBIDDEN", message ?? "该操作需要全部项目编辑权限");
   }
 
-  /** 批量裁决项目级部门权限；用于项目列表 / 工作台项目卡随行下发，避免逐项目查库。 */
+  /**
+   * 批量裁决项目的最终有效权限；用于项目列表 / 详情 / 工作台随行下发，避免逐项目查库。
+   * 规则档位只决定数据范围与基础权限；本项目的项目经理（主数据 manager_ids 或名册 project_manager）
+   * 额外获得该项目编辑权，但不会外溢到其他项目。
+   */
   async projectGroupAccessLevelsOf(
     actorId: string,
     projectIds: readonly string[],
   ): Promise<Map<string, GroupAccessAccessLevel>> {
     const levels = new Map<string, GroupAccessAccessLevel>();
     const groupAccess = await this.groupAccessOf(actorId);
+    if (groupAccess.admin) {
+      for (const projectId of projectIds) levels.set(projectId, "edit");
+      return levels;
+    }
     let ownProjectIds = new Set<string>();
-    if (groupAccess.enforced && !groupAccess.admin && groupAccess.ownProjects) {
+    if (groupAccess.enforced && groupAccess.ownProjects) {
       ownProjectIds = new Set(
         await this.repository.listVisibleProjectIds(actorId, { all: false, managed: false, member: true }),
       );
     }
+    const managed = new Set([
+      ...(await this.repository.listOwnedProjectIds(actorId)),
+      ...(await this.repository.listManagedRosterProjectIds(actorId)),
+    ]);
     for (const projectId of projectIds) {
-      levels.set(
-        projectId,
-        projectGroupAccessLevelOf(groupAccess, projectId, ownProjectIds.has(projectId)) ?? "view",
-      );
+      const ruleLevel = projectGroupAccessLevelOf(groupAccess, projectId, ownProjectIds.has(projectId));
+      levels.set(projectId, managed.has(projectId) || ruleLevel === "edit" ? "edit" : "view");
     }
     return levels;
   }
@@ -291,7 +301,7 @@ export class PermissionService {
   /**
    * 可见项目过滤（列表 / facets 用）：all = 不裁剪；ids 空集 = 无可见项目。
    * Pro 口径：部门 / 个人规则决定项目数据范围，项目关系（经理 / 成员 / 任务负责人）再取并集；
-   * 关系项目即使部门规则为 none 也可浏览，但只给 view，不提升项目编辑权。
+   * 关系项目即使部门规则为 none 也可浏览；所管项目的项目经理另获该项目编辑权，成员 / 任务负责人仍只读。
    */
   async projectScope(actorId: string): Promise<ProjectScopeFilter> {
     const groupAccess = await this.groupAccessOf(actorId);
@@ -343,7 +353,7 @@ export class PermissionService {
       projectManager,
       taskOwner,
       groupAccessLevel,
-      accessLevel: groupAccess.admin ? "edit" : groupAccessLevel ?? "view",
+      accessLevel: groupAccess.admin || projectManager || groupAccessLevel === "edit" ? "edit" : "view",
     };
   }
 

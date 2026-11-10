@@ -406,7 +406,8 @@ function TaskTable({ projectId, project, items, tierTint, members, onOpenTask, r
                     onCreateDeliverableType={onCreateDeliverableType}
                     onSetStatus={handlers === undefined ? undefined : (status) => { handlers.onSetStatus(projectId, task.id, status); }}
                     onSetActualEnd={handlers === undefined ? undefined : (iso) => { handlers.onSetActualEnd(projectId, task.id, iso); }}
-                    onChangeManagers={handlers === undefined || project?.accessLevel !== "edit" ? undefined : (managerIds) => { handlers.onChangeManagers(projectId, managerIds); }}
+                    onChangeManagers={handlers === undefined ? undefined : (managerIds) => { handlers.onChangeManagers(projectId, managerIds); }}
+                    canEditManagers={project?.accessLevel === "edit"}
                     onPatch={handlers === undefined ? undefined : (patch) => { handlers.onPatch(projectId, task.id, patch); }}
                     onUploadFiles={handlers === undefined ? undefined : (taskId, files, onProgress, finalize) => handlers.onUploadFiles(projectId, taskId, files, onProgress, finalize)}
                     onDeleteFile={handlers?.onDeleteFile}

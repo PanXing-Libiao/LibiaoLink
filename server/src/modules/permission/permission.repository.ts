@@ -48,7 +48,7 @@ export interface ProjectAccessContext {
   taskOwner?: boolean;
   /** 当前账号在该项目的部门 / 个人规则权限（所有命中范围取最高）；null = 关系可见但部门规则未命中。 */
   groupAccessLevel: GroupAccessAccessLevel | null;
-  /** 有效项目访问级别：只有部门 / 个人规则 edit 或管理员为 edit；关系来源只给 view。 */
+  /** 最终有效项目访问级别：管理员、本项目项目经理或规则 edit 为 edit；其余关系来源只给 view。 */
   accessLevel?: GroupAccessAccessLevel;
 }
 
@@ -140,7 +140,7 @@ export class PermissionRepository {
     return rows.map((row) => row.projectId);
   }
 
-  /** 项目关系并集：名册成员 ∪ 项目经理 ∪ 任务负责人。关系项目只保证浏览，不提升项目编辑权。 */
+  /** 项目关系并集：名册成员 ∪ 项目经理 ∪ 任务负责人。成员 / 任务负责人关系只保证浏览；本项目项目经理可编辑。 */
   async listRelatedProjectIds(actorId: string): Promise<string[]> {
     const [memberIds, ownedIds, managedRosterIds, taskOwnerIds] = await Promise.all([
       this.listMemberProjectIds(actorId),

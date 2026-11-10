@@ -12,7 +12,7 @@ import { ChangeDetailModal } from "./ChangeDetailModal";
 import { TaskDrawer } from "./TaskDrawer";
 import type { TaskEditSubmit } from "./TaskDrawer";
 import { TaskFilesPopover } from "./TaskFilesPopover";
-import { Tracker, TrackerDots } from "./Tracker";
+import { Tracker } from "./Tracker";
 import { RowDeleteButton } from "./RowDeleteButton";
 import { DeliverableCell, docTypeCapsule } from "./DeliverablePicker";
 import { StageAddCard } from "./StageAddCard";
@@ -331,6 +331,8 @@ type TaskBoardProps = {
   managers?: string;
   /** 项目经理 id 名单（项目级字段：行内多选下拉的当前选中项，Push 136）。 */
   managerIds?: string[];
+  /** 当前账号是否可修改项目经理列；不传 = 有回写回调时可改。只读账号仍渲染同款控件，仅禁用交互。 */
+  canEditManagers?: boolean;
   /** 当前账号是否可对指定任务定档 / 取消定档：由任务负责人与项目经理名单共同裁决。 */
   canFinalizeTask?: (task: ProjectTask) => boolean;
   /** 任务编辑保存：负责人 / 日期（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述 + 项目经理 id。 */
@@ -415,7 +417,7 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
  *  （onSetStatus）/ 紧急重要度与成果文件与进展描述（onPatch）/ 「文件」列下拉（onUploadFiles + onDeleteFile）/
  *  三段日期与人数（onPatch）；天数不单开编辑（随日期联动写回，与项目页同口径）。点行 = onSelect（开抽屉）；**onSelect 不传 = 整行不可点**（不出「点击查看任务详情」提示、不出 pointer 光标、不占键盘 Tab 焦点；行内各列仍按回调照常只读 / 可编辑 —— 甘特图「画不出时间轴」的兜底列表这样用，Push 294）。
  *  subtitle 缺省 = 英文名小行（项目页口径）；工作台传「阶段 / 临时任务 · 英文名」保持自己那张表的副行。 */
-export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, canFinalize = false, members, customDeliverableTypes = [], onCreateDeliverableType, onSetStatus, onSetActualEnd, onChangeManagers, onPatch, onUploadFiles, onDeleteFile, files, tierTint, subtitle }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect?: () => void; onProgress?: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; canFinalize?: boolean; members: readonly Member[]; customDeliverableTypes?: readonly string[]; onCreateDeliverableType?: (name: string) => Promise<string | null>; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; tierTint?: TintedTier | false; subtitle?: string }) {
+export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, canFinalize = false, members, customDeliverableTypes = [], onCreateDeliverableType, onSetStatus, onSetActualEnd, onChangeManagers, canEditManagers, onPatch, onUploadFiles, onDeleteFile, files, tierTint, subtitle }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect?: () => void; onProgress?: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; canFinalize?: boolean; members: readonly Member[]; customDeliverableTypes?: readonly string[]; onCreateDeliverableType?: (name: string) => Promise<string | null>; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; canEditManagers?: boolean; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; tierTint?: TintedTier | false; subtitle?: string }) {
   const locale = useLocale();
   const t = useT();
   /** 手打内容机翻显示（业务口径 2026-10-13「因为页面有些内容是手打的 我建议是提前后台机翻」）：
@@ -433,14 +435,29 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
    *  2026-10-10 业务追订「项目经理也不可以修改」——「项目经理」列随行一并锁定；「文件」列仍走既有 taskFinalized 门控（修改走变更）。 */
   const taskFinalized = task.finalizedAt !== null;
   const capabilities = taskCapabilitiesOf(task);
-  const canEditFields = onPatch !== undefined && capabilities.canEditFields && !taskFinalized;
-  const canAssignOwners = canEditFields && capabilities.canAssignOwners;
-  const canUpdateProgress = onProgress !== undefined && capabilities.canUpdateProgress && !taskFinalized;
-  const canUpdateStatus = onSetStatus !== undefined && capabilities.canEditFields && !taskFinalized;
-  const canUpdateActualEnd = onSetActualEnd !== undefined && capabilities.canComplete && !taskFinalized;
-  /** 文件下拉始终保留给可写任务角色；定档后只关闭上传 / 删除，预览与下载继续可用。 */
-  const showFilesPopover = (onUploadFiles !== undefined || onDeleteFile !== undefined) && capabilities.canUpload;
-  const canManageFiles = showFilesPopover && !taskFinalized;
+  const viewOnlyHint = t("board.viewOnlyHint");
+  const editLocked = !capabilities.canEditFields || taskFinalized;
+  const editLockedHint = taskFinalized ? t("board.finalizedHint") : viewOnlyHint;
+  const progressLocked = !capabilities.canUpdateProgress || taskFinalized;
+  const progressLockedHint = taskFinalized ? t("board.finalizedHint") : viewOnlyHint;
+  const ownersLocked = !capabilities.canAssignOwners || taskFinalized;
+  const ownersLockedHint = taskFinalized
+    ? t("board.finalizedHint")
+    : capabilities.canEditFields
+      ? t("board.ownerLockedHint")
+      : viewOnlyHint;
+  const managersEditable = canEditManagers ?? onChangeManagers !== undefined;
+  const managersLocked = !managersEditable || taskFinalized;
+  const managersLockedHint = taskFinalized
+    ? t("board.finalizedHint")
+    : managersEditable
+      ? undefined
+      : t("board.managerLockedHint");
+  const completionLocked = !capabilities.canComplete || taskFinalized;
+  const completionLockedHint = taskFinalized ? t("board.finalizedHint") : viewOnlyHint;
+  const canManageFiles = capabilities.canUpload && !taskFinalized;
+  /** 同一套胶囊入口覆盖编辑 / 只读：只读时仍可预览下载，仅禁用上传与删除。 */
+  const showFilesPopover = files !== undefined || onUploadFiles !== undefined || onDeleteFile !== undefined;
   const canDeleteThisTask = onDelete !== undefined && capabilities.canDelete && !taskFinalized;
   /** Push 301：状态 / 优先级下拉选项按当前语言换词（显示值经 statusText / priorityText）。 */
   const statusOptions = statusOptionsOf((value) => statusText(locale, value));
@@ -498,13 +515,13 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
             <p className="mt-0.5 max-w-[280px] truncate text-[11px] leading-4 text-zinc-400" title={subText}>{subText}</p>
           )}
         </div>
-        {!canUpdateProgress ? (
-          <span className="shrink-0">
-            <TrackerDots progress={task.progress} hovered={0} onHoverChange={() => { /* 只读行：不接悬停预览 */ }} vivid={tierTint === "vivid"} />
-          </span>
-        ) : (
-          <Tracker progress={task.progress} onChange={onProgress} vivid={tierTint === "vivid"} />
-        )}
+        <Tracker
+          progress={task.progress}
+          onChange={onProgress}
+          disabled={progressLocked}
+          disabledHint={progressLockedHint}
+          vivid={tierTint === "vivid"}
+        />
         {!canDeleteThisTask ? null : (
           // 删除动作位（Push 141，业务口径「不要这个笔作为编辑了…改成删除按钮吧」）：固定 48px 槽位 + 右侧 16px 留白（业务反馈「当项目经理大于两位时 就是会触碰到」—— 展开胶囊右缘原与「项目经理」列齐平，留白后不贴列），
           // 行悬停浮现 24px 幽灵态删除按钮（无底色，业务反馈「黑的太突兀了…要比较看不出来」）、悬停按钮展开成 48px 小号红底胶囊 —— 展开只吃槽位，不挤动四格进度条与描述文字。
@@ -522,8 +539,8 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
           values={managerIds}
           options={members}
           ariaLabel={t("board.edit.aria", { field: fieldText(locale, "项目经理") })}
-          disabled={taskFinalized}
-          disabledHint={t("board.finalizedHint")}
+          disabled={managersLocked}
+          disabledHint={managersLockedHint}
           display={<span className="text-zinc-600" title={managers}>{managers}</span>}
           onPick={(member) => {
             if (managerIds.includes(member.id)) {
@@ -539,7 +556,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
         />
       ),
     owner:
-      !canAssignOwners ? (
+      onPatch === undefined ? (
         task.owners.length === 0 ? (
           <span className="text-xs text-zinc-300">{fieldText(locale, "待分配")}</span>
         ) : (
@@ -552,8 +569,8 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
           values={task.ownerIds}
           options={members}
           ariaLabel={t("board.edit.aria", { field: fieldText(locale, "任务负责人") })}
-          disabled={taskFinalized}
-          disabledHint={t("board.finalizedHint")}
+          disabled={ownersLocked}
+          disabledHint={ownersLockedHint}
           display={
             task.owners.length === 0 ? (
               <span className="text-zinc-300">{fieldText(locale, "待分配")}</span>
@@ -573,7 +590,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
         />
       ),
     status:
-      !canUpdateStatus ? (
+      onSetStatus === undefined ? (
         <span className={"inline-flex items-center gap-1.5 text-xs " + STATUS_TEXT_CLASS[status]}>
           <span className={"h-1.5 w-1.5 shrink-0 rounded-full " + dotClass} />
           {statusText(locale, status)}
@@ -583,8 +600,8 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
           value={status}
           options={statusOptions}
           ariaLabel={t("board.edit.aria", { field: fieldText(locale, "任务状态") })}
-          disabled={taskFinalized}
-          disabledHint={t("board.finalizedHint")}
+          disabled={editLocked}
+          disabledHint={editLockedHint}
           // Push 134：状态列改成裸框胶囊 —— 简约档（默认）= 图一色签的色**填满整颗胶囊**（原白底小框 + 内层色签合成一颗）；
           // 背景档位铺色档（tierTint = medium / vivid）= 行上已有状态色，状态列收口 —— 撤掉胶囊底色只留该状态的深色字
           // （否则胶囊底 ≈ 行底色、看上去忽有忽无）。铺色档字色 = STATUS_TAG_TEXT_TIER_CLASS（自定 oklch：
@@ -607,7 +624,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
       <span>
         {task.priority === null ? (
           <span className="text-xs text-zinc-300">—</span>
-        ) : !canEditFields ? (
+        ) : onPatch === undefined ? (
           <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + PRIORITY_CLASS[task.priority]}>
             {priorityText(locale, task.priority)}
           </span>
@@ -616,8 +633,8 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
             value={task.priority}
             options={priorityOptions}
             ariaLabel={t("board.edit.aria", { field: fieldText(locale, "紧急重要度") })}
-            disabled={taskFinalized}
-            disabledHint={t("board.finalizedHint")}
+            disabled={editLocked}
+            disabledHint={editLockedHint}
             // Push 134：紧急重要度同状态列 —— 裸框胶囊，色签底色**填满整颗胶囊**（业务口径「紧急程度也要」）
             bare
             triggerClassName={PRIORITY_CAPSULE_CLASS[task.priority] + " px-3 py-1.5 text-[11px] font-medium"}
@@ -647,7 +664,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
     // 输出成果文件（2026-10-08 · 业务口径「文件输出成果也要可以选择」）：只读徽标改可点选择 ——
     // 点开 = DeliverablePicker（搜索 + 内置十类 / 自定义彩签多选）；列窄走「首枚 + +N」，全名清单进浮层。
     deliverable:
-      !canEditFields ? (
+      onPatch === undefined ? (
         <span className="flex min-w-0 items-center gap-1">
           {task.deliverableTypes.length === 0 ? (
             <span className="text-xs text-zinc-300">—</span>
@@ -664,8 +681,8 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
           customTypes={customDeliverableTypes}
           canCreateCustom={onCreateDeliverableType !== undefined}
           onCreateCustom={onCreateDeliverableType}
-          disabled={taskFinalized}
-          disabledHint={t("board.finalizedHint")}
+          disabled={editLocked}
+          disabledHint={editLockedHint}
           onChange={(next) => {
             onPatch({ deliverableTypes: next });
           }}
@@ -684,6 +701,8 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
             onDelete={canManageFiles ? onDeleteFile : undefined}
             taskFinalized={task.finalizedAt !== null}
             canFinalize={canFinalize}
+            canEdit={canManageFiles}
+            readOnlyHint={viewOnlyHint}
           >
             {fileCellContent}
           </TaskFilesPopover>
@@ -692,7 +711,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
     ),
     note: (
       <span className="min-w-0">
-        {!canEditFields ? (
+        {onPatch === undefined ? (
           task.note === "" ? (
             <span className="text-xs text-zinc-300">—</span>
           ) : (
@@ -702,8 +721,8 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
           <InlineTextCell
             value={task.note}
             ariaLabel={t("board.edit.aria", { field: fieldText(locale, "项目进展描述") })}
-            disabled={taskFinalized}
-            disabledHint={t("board.finalizedHint")}
+            disabled={editLocked}
+            disabledHint={editLockedHint}
             display={task.note === "" ? <span className="text-zinc-300">—</span> : <span className="text-zinc-600" title={task.note}>{localizedNote}</span>}
             onSave={(value) => {
               onPatch({ note: value });
@@ -713,14 +732,14 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
       </span>
     ),
     start:
-      !canEditFields ? (
+      onPatch === undefined ? (
         <span className="text-xs tabular-nums text-zinc-600">{startText}</span>
       ) : (
         <InlineDateCell
           valueIso={startIso}
           ariaLabel={t("board.edit.aria", { field: fieldText(locale, "开始日期") })}
-          disabled={taskFinalized}
-          disabledHint={t("board.finalizedHint")}
+          disabled={editLocked}
+          disabledHint={editLockedHint}
           triggerClassName="tabular-nums text-zinc-600"
           display={startText === "" ? <span className="text-zinc-300">—</span> : startText}
           onChange={(iso) => {
@@ -735,14 +754,14 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
       </span>
     ),
     due:
-      !canEditFields ? (
+      onPatch === undefined ? (
         <span className="text-xs tabular-nums text-zinc-600">{dueText}</span>
       ) : (
         <InlineDateCell
           valueIso={dueIso}
           ariaLabel={t("board.edit.aria", { field: fieldText(locale, "预计完成日期") })}
-          disabled={taskFinalized}
-          disabledHint={t("board.finalizedHint")}
+          disabled={editLocked}
+          disabledHint={editLockedHint}
           triggerClassName="tabular-nums text-zinc-600"
           display={dueText === "" ? <span className="text-zinc-300">—</span> : dueText}
           onChange={(iso) => {
@@ -752,7 +771,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
       ),
     headcount: (
       <span className="text-xs tabular-nums text-zinc-600">
-        {!canEditFields ? (
+        {onPatch === undefined ? (
           task.headcount > 0 ? (
             t("drawer.headcount.value", { n: task.headcount })
           ) : (
@@ -762,8 +781,8 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
           <InlineNumberCell
             value={task.headcount}
             ariaLabel={t("board.edit.aria", { field: fieldText(locale, "预计所需施工人数") })}
-            disabled={taskFinalized}
-            disabledHint={t("board.finalizedHint")}
+            disabled={editLocked}
+            disabledHint={editLockedHint}
             display={task.headcount > 0 ? t("drawer.headcount.value", { n: task.headcount }) : <span className="text-zinc-300">—</span>}
             onSave={(value) => {
               onPatch({ headcount: value });
@@ -774,7 +793,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
     ),
     doneDate: (
       <span className="text-xs tabular-nums">
-        {!canUpdateActualEnd ? (
+        {onSetActualEnd === undefined ? (
           task.doneDate !== "" ? (
             <span className="text-zinc-600">{doneText}</span>
           ) : (
@@ -784,8 +803,8 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
           <InlineDateCell
             valueIso={doneIso}
             ariaLabel={t("board.edit.aria", { field: fieldText(locale, "实际完成日期") })}
-            disabled={taskFinalized}
-            disabledHint={t("board.finalizedHint")}
+            disabled={completionLocked}
+            disabledHint={completionLockedHint}
             triggerClassName="tabular-nums"
             display={task.doneDate !== "" ? <span className="text-zinc-600">{doneText}</span> : <span className="text-zinc-400">—</span>}
             onChange={(iso) => {
@@ -928,7 +947,7 @@ export function ProjectSummary({ summary }: { summary: ApiProjectSummary | null 
   );
 }
 
-export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgress, onSetStatus, onSetActualEnd, members, customDeliverableTypes = [], onCreateDeliverableType, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, canFinalizeTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, filesByTask, projectId, tierTint }: TaskBoardProps) {
+export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgress, onSetStatus, onSetActualEnd, members, customDeliverableTypes = [], onCreateDeliverableType, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, canEditManagers, canFinalizeTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, filesByTask, projectId, tierTint }: TaskBoardProps) {
   const t = useT();
   const locale = useLocale();
   /**
@@ -1317,6 +1336,7 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
                         }
                         managers={managers ?? ""}
                         managerIds={managerIds ?? []}
+                        canEditManagers={canEditManagers}
                         canFinalize={canFinalizeTask?.(task) === true}
                         members={members}
                         customDeliverableTypes={customDeliverableTypes}
@@ -1394,7 +1414,7 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
         managers={managers ?? ""}
         managerIds={managerIds ?? []}
         canFinalize={drawerTask !== null && canFinalizeTask?.(drawerTask) === true}
-        canEditManagers={onChangeManagers !== undefined}
+        canEditManagers={canEditManagers ?? onChangeManagers !== undefined}
         members={members}
         customDeliverableTypes={customDeliverableTypes}
         onCreateDeliverableType={onCreateDeliverableType}

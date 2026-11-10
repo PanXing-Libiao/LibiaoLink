@@ -25,7 +25,7 @@ const stageKeyParam = new ZodValidationPipe(StageKeySchema);
 /**
  * 流程接口（h3 · S6·blueprint/node）：契约 shared/src/modules/flow.ts。
  * 读接口要求登录 + 记录级可见（非成员 / 不可见项目 404，h6 ProjectAccessGuard）；
- * 节点增删（ADR-020）与阶段推进 / 回退（ADR-023）在服务层按最终项目编辑权判定，本层叠加矩阵键；项目经理关系本身不提升编辑权。
+ * 节点增删（ADR-020）与阶段推进 / 回退（ADR-023）在服务层按最终项目编辑权判定，本层叠加矩阵键；所管项目经理已计入最终权限，非所管项目不提升。
  */
 @Controller("api/v1/projects")
 @UseGuards(SessionGuard, CsrfGuard, ProjectAccessGuard)
