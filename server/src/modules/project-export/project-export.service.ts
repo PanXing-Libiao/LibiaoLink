@@ -1439,23 +1439,23 @@ export class ProjectExportService implements OnModuleInit {
       throwIfAborted(signal);
 
       const setup = await telemetry.measure("dataLoad", async () => {
-        const [userItems, fileItems, reportIdentity] = await Promise.all([
+        const [userItems, fileItems, reportTotal] = await Promise.all([
           collectPaged((page, limit) => this.users.listUsers({ page, limit }), "用户目录", signal),
           collectPaged((page, limit) => this.files.listProjectFiles(project.id, { page, limit }), "文件", signal),
-          this.collectReportIdentity(project.id, signal),
+          this.reports.countForExport(project.id),
         ]);
         const users = this.userLabels(userItems);
         return {
           users,
-          reportIdentity,
+          reportTotal,
           fileItemsById: new Map(fileItems.map((file) => [file.id, { id: file.id, name: file.name }])),
-          groupedIssues: await this.collectIssues(project.id, reportIdentity.ids, signal),
+          groupedIssues: await this.collectIssues(project.id, signal),
           managerLabels: project.managerIds.map((id, index) => personLabel(id, project.managerNames[index] ?? null, users)),
           taskFilesById: this.taskFiles(fileItems),
           relatedByChange: new Map<string, string[]>(),
         };
       });
-      const { users, reportIdentity, fileItemsById, groupedIssues, managerLabels, taskFilesById, relatedByChange } = setup;
+      const { users, reportTotal, fileItemsById, groupedIssues, managerLabels, taskFilesById, relatedByChange } = setup;
       const counts: StreamingCounts = { tasks: 0, reports: 0, changes: 0, stakeholders: 0, imageIds: new Set() };
 
       const photoLoader = this.createStreamingPhotoLoader(project.id, signal, telemetry);
@@ -1464,7 +1464,7 @@ export class ProjectExportService implements OnModuleInit {
       const workbook = await telemetry.measure("workbook", async () => {
         await activeWriter.writeTasks(this.streamTaskRows(project.id, managerLabels, users, taskFilesById, relatedByChange, counts, signal, telemetry));
         await activeWriter.writeReports(prefetchPhotoRows(
-          this.streamReportRows(project.id, reportIdentity.total, users, groupedIssues, counts, signal, telemetry),
+          this.streamReportRows(project.id, reportTotal, users, groupedIssues, counts, signal, telemetry),
           (row) => [...row.onsitePhotos, ...row.issuePhotos],
           photoLoader.load,
         ));
@@ -1527,22 +1527,8 @@ export class ProjectExportService implements OnModuleInit {
     }
   }
 
-  private async collectReportIdentity(
-    projectId: string,
-    signal: AbortSignal | undefined,
-  ): Promise<{ ids: Set<string>; total: number }> {
-    const ids = new Set<string>();
-    let total = 0;
-    for await (const page of readPaged((page, limit) => this.reports.list(projectId, { page, limit }), "日报", signal)) {
-      total = page.total;
-      for (const report of page.items) ids.add(report.id);
-    }
-    return { ids, total };
-  }
-
   private async collectIssues(
     projectId: string,
-    reportIds: ReadonlySet<string>,
     signal: AbortSignal | undefined,
   ): Promise<{ byReport: Map<string, Issue[]>; orphans: Issue[] }> {
     const byReport = new Map<string, Issue[]>();
@@ -1550,7 +1536,7 @@ export class ProjectExportService implements OnModuleInit {
     for await (const page of readPaged((page, limit) => this.issues.list(projectId, { page, limit }), "问题", signal)) {
       for (const issue of page.items) {
         const sourceReportId = issue.sourceReportId;
-        if (sourceReportId === null || !reportIds.has(sourceReportId)) {
+        if (sourceReportId === null) {
           orphans.push(issue);
           continue;
         }

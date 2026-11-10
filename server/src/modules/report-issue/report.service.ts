@@ -163,6 +163,11 @@ export class ReportService {
     };
   }
 
+  /** 内部导出用：只读取项目日报总数，不扫描日报正文、提交人或附图。 */
+  async countForExport(projectId: string): Promise<number> {
+    return this.reports.countForExport(projectId);
+  }
+
   /** GET /api/v1/projects/{id}/reports/{reportId}：不属本项目 / 不存在统一 404。 */
   async detail(projectId: string, reportId: string): Promise<DailyReport> {
     const row = await this.requireReport(projectId, reportId, this.database.db);
