@@ -79,6 +79,12 @@ export class ProjectGroupService {
     return toProjectGroupView(projectId, row, canManage);
   }
 
+  /** 机器人群聊只读入口：按 chatid 读取群绑定项目；未绑定返回 null，不暴露 chatid 全文。 */
+  async projectIdByChatid(chatid: string): Promise<string | null> {
+    const row = await this.groups.findByChatid(chatid);
+    return row?.projectId ?? null;
+  }
+
   /** 自动发现候选：最近 30 天活跃、最多 50 条；已绑定群不进入列表。 */
   async getCandidates(projectId: string): Promise<ProjectGroupCandidateList> {
     await this.requireProject(projectId);
