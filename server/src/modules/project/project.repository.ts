@@ -23,6 +23,13 @@ export interface ProjectViewRow {
   managerNames: (string | null)[] | null;
 }
 
+/** 项目精确查询的最小引用：只暴露定位与展示所需字段。 */
+export interface ProjectReferenceRow {
+  id: string;
+  code: string;
+  name: string;
+}
+
 export interface ProjectInsertInput {
   /** 显式主键（导入表导入：图片对象键要含 projectId，须在事务前定下项目 id）；缺省 = 库内 defaultRandom()。 */
   id?: string;
@@ -165,6 +172,36 @@ export class ProjectRepository {
       .where(and(eq(projects.id, id), isNull(projects.deletedAt)))
       .limit(1);
     return rows[0] ?? null;
+  }
+
+  /** 按权限范围读取项目引用（id / code / name）：供机器人按编号或名称精确解析，不加载业务明细。 */
+  async listVisibleReferences(
+    scope: ProjectScopeFilter,
+    client: DbClient = this.database.db,
+  ): Promise<ProjectReferenceRow[]> {
+    if (scope.kind === "ids" && scope.ids.length === 0) return [];
+    const where = scope.kind === "ids"
+      ? and(isNull(projects.deletedAt), inArray(projects.id, scope.ids))
+      : isNull(projects.deletedAt);
+    const rows = await client
+      .select({ id: projects.id, code: projects.code, name: projects.name })
+      .from(projects)
+      .where(where)
+      .orderBy(asc(projects.code), asc(projects.id));
+    return rows as ProjectReferenceRow[];
+  }
+
+  /** 按 id 读取最小项目引用（供群绑定命令只与绑定项目比对）。 */
+  async findReferenceById(
+    id: string,
+    client: DbClient = this.database.db,
+  ): Promise<ProjectReferenceRow | null> {
+    const rows = await client
+      .select({ id: projects.id, code: projects.code, name: projects.name })
+      .from(projects)
+      .where(and(eq(projects.id, id), isNull(projects.deletedAt)))
+      .limit(1);
+    return (rows[0] ?? null) as ProjectReferenceRow | null;
   }
 
   async insert(input: ProjectInsertInput, at: Date, client: DbClient = this.database.db): Promise<ProjectRow> {

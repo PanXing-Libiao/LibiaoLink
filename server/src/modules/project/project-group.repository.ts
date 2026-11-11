@@ -23,6 +23,12 @@ export class ProjectGroupRepository {
     return rows[0] ?? null;
   }
 
+  /** 按群会话反查绑定（chatid 唯一；未绑定 = null）。 */
+  async findByChatid(chatid: string, client: DbClient = this.database.db): Promise<WecomGroupRow | null> {
+    const rows = await client.select().from(wecomGroups).where(eq(wecomGroups.chatid, chatid)).limit(1);
+    return rows[0] ?? null;
+  }
+
   /** 自动发现候选：最近活跃优先；排除已经绑定到任何项目的 chatid。 */
   async listCandidates(since: Date, limit = 50, client: DbClient = this.database.db): Promise<WecomGroupCandidateRow[]> {
     const bound = client

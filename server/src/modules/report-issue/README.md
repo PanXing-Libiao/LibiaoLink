@@ -5,7 +5,7 @@
 | 类型 | 领域模块（domain） |
 | 职责 | 日报填报与闭环（M6-01 / M6-02）、问题三态（Push 215）与处理留痕（M6-02 / M6-03） |
 | 主责 | wmj（团队分工.md §2） |
-| 对外出口 | `ReportService`、`IssueService`、`ReportSummaryService`（跨模块只允许 import 本目录 `index.ts`） |
+| 对外出口 | `ReportService`、`IssueService`、`ReportSummaryService`、`ReportDigestService`（跨模块只允许 import 本目录 `index.ts`） |
 | 依赖 | identity（会话/用户）、permission（项目上下文与权限位）、admin（审计）+ calendar（工作日判定，横切出口）+ project（项目名册出口 `ProjectMemberService` —— A7-05 的应填范围）+ notify（发送归档只读 `NotifyDeliveryReadRepository` —— M5-06-3 已提醒）；不反向依赖 task / node 等其它领域模块（`shanghaiToday` 走 task 纯规则出口，无 DI） |
 | 契约 | `shared/src/modules/reports.ts` / `issues.ts`（Push 215 修订：同日多条 / 关联阶段 / 归类多值 / 三态 / 附图 / 删 dueAt；**Push 243 修订：内联问题清单 `issues` / `ReportIssueDraft` / 处理人 `ownerId`**）；表口径 `0023` + 修订迁移 `0041_reports_issues_revision.sql` + **`0043_report_multi_issues.sql`（Push 243）** |
 
@@ -16,6 +16,7 @@ report-issue/
 ├── report-issue.controller.ts  ReportController（:id/reports 四路径七操作）+ IssueController（:id/issues 两路径四操作）
 ├── report.service.ts           日报用例：填报 / 编辑 / 提交 / 补填 + A3-09 问题生成与问题图转挂 + 成对删除
 ├── report-summary.service.ts   当日读用例：A7-01 当日汇总 + A7-05 应填未填（名册 × 日历 × 当日状态）
+├── report-digest.service.ts    企微机器人查询读面：日报 + 按日问题 + 批量附件元数据（只读事务）
 ├── report.repository.ts        日报数据访问（列表 / 乐观锁 / 删除级联）
 ├── report-issue.links.ts       附图链（file_links）：项目内校验 / 读写 / 整体替换 / 问题图转挂 / 级联清理
 ├── issue.service.ts            问题用例：三态流转 / 解决方案 / 分派 / 描述与归类编辑 + 留痕
@@ -56,6 +57,7 @@ report-issue/
 - **成对删除（Push 215）**：删日报 = 删其派生问题 + 两侧 `file_links`（`issue_events` 无级联外键，按序先删）；删问题：无来源日报只删自己，有来源日报 = 连来源日报及其全部问题；重复删除 404。
 - **空更新 400**：问题更新必须至少一个实际变化（防刷留痕）；日报编辑同理走契约校验（`doneWork` 等最小长度）。
 - **A7-01 当日汇总（Push 162）**：`GET :id/reports/summary?date=` —— 只聚合**已提交**（`submitted` / `supplement`）条目（草稿只进 `draftCount`，不进正文、不计人数）；`headcountTotal` 未填按 0 计；`issueCount` = 「现场发现问题」非空（空白串不算）；`entries` 按 `submittedAt` 升序、同刻按作者 id 兜底；工作日信息随行（`isWorkday` / `dayKind` / `dayName`）。
+- **S1 机器人查询快照（2026-11-11）**：`ReportDigestService.getSnapshot(projectId, date)` 在 `repeatable read` + `read only` 事务内一次读取项目、当日日报、按 `raised_at` 的问题及批量附件元数据；日报只返回 `submitted` / `supplement`（草稿只返回 `draftCount`，正文 / 阶段 / 附图不返回），同人同日多篇按 `submittedAt → createdAt → id` 稳定排序；问题包含手工与日报派生两类，返回当前状态 / 责任人 / 解决方案 / 来源日报摘要 / 问题附图。不读取附件字节，不写审计、outbox 或站内信。
 - **A7-05 应填未填（Push 162；M5-06-3 增已提醒）**：`GET :id/reports/missing?date=` —— **名册即应填范围**（`project_members`，项目经理在前；顺序由名册出口保证），逐人下发 `reportId` / `state` / `submittedAt` / `reminderSentAt`；**草稿未提交仍计未填**、已提交（submitted / supplement）不进 `missingUserIds`；`missingCount = 名册 − 已提交`（工作日），**非工作日整列为空（不催报）**；名册外的人当日提交不扩大应填范围（也不因此进名单）。`reminderSentAt` 只按 `A01:<memberId>:<date>` 与 `:aibot` / `:app` 回读发送归档，仅 `last_state=sent` 取最早成功时刻，不写日报主体。
 - **当日读接口共用口径（Push 162）**：`date` 缺省 = 今天（Asia/Shanghai），**未来日期 400 `VALIDATION_FAILED`**（与 A3-04 填报同口径，`details[].path = date`）；静态段 `summary` / `missing` 路由注册在 `:reportId` **之前**（Nest 按声明顺序匹配）；数据面一次 `listByDate` 取当日全量行，不落分页。
 - **归档项目 409 `PROJECT_ARCHIVED`**（ADR-027）；不可见 / 跨项目 / 不存在统一 404（记录级，h6）。
@@ -65,5 +67,6 @@ report-issue/
 
 - `server/test/report-issue.test.ts`：**40 例**（2026-10-27 增 3 例：非 PM 403 / 未绑定 409 / 草稿 400 / 成功审计与 outbox 载荷和去重键；2026-10-28 增 1 例：已绑定未激活 409 且分别提示原因 / 激活处置；Push 243 增：多条生成 / 草稿携带清单 PATCH 提交 / 重新提交幂等 / 契约互斥按内容判定）（日报 20 + 问题 12 · Push 215 整文件重写）—— 日报：创建与提交 / **草稿写库** / **同日多条（无 409 判重）** / 补填推导 / 未来日期 400 / 问题生成与自动分派 / 原因类不分派 / A3-09 幂等 / **附图校验与整体替换 + 转挂** / 草稿 → 提交 / 已提交不可退回 / 编辑后缺归类 400 / 乐观锁 409 / 归档 409 / 跨项目与不存在 404 / 列表筛选 / **成对删除**；问题：状态流转事件 / 三态回退清关闭字段 / 分派 / **描述与多值归类 PATCH** / **附图整体替换** / 空更新 400 / 乐观锁 409 / 归档 409 / 404 / 详情留痕正序 / 列表同源 / **成对删除**。另 `server/test/task-remove.test.ts` 11 例覆盖删除引用守卫（Push 215 起仅 `issue_ref`；`report_ref` 随关联阶段删除）。
 - `server/test/report-summary.test.ts`（**Push 162 · 14 例 → M5-06-3 · 15 例**；Push 215 注入 DatabaseService + 附图替身）：当日汇总 7（只算已提交 / 人数合计与问题计数（空白串不算）/ 提交时刻升序 + 同刻作者兜底 / 契约形态 stageKeys / stageNames 同下标 + 附图随行（Push 215）/ 缺省日期 = 今天 / 只取当日 / 未来日期 400 且不读库）+ 应填未填 8（草稿未提交仍计未填 / 逐行状态与 reportId / **A01 已提醒回读** / missingUserIds 顺序同名册 / 非工作日整列为空 / 名册为空 / 名册外提交不扩大应填范围 / 未来日期 400）—— 日历 / 名册 / 仓储 / 发送归档替身，不连库。全量：**M5-06-3 合并 main 后 83 文件 / 1288 例全绿**。
+- `server/test/report-digest.test.ts`：5 例，覆盖草稿排除与计数、补填、同人同日多篇稳定排序、手工 + 派生问题、批量附图、只读事务选项与空态。
 - 随 `npm test` 常跑；`check:boundaries` 覆盖跨模块 import（本模块只进口对端 `index.ts`；新增 calendar / project 两条出口依赖）。
 - 真机回放（真 PG + 真 api）随 M3-06 压测 / 联调卡；M6 回放脚本已补 A7-01 / A7-05 断言（`server/scripts/m6-replay.mjs` 证据五 S0 ~ S6），由 CI `database` job 真机执行 —— **本片已执行（CI run `35946672352`）S0 ~ S6 全 PASS**。**Push 215 整文件重写脚本并本机真机重跑：57 项断言全 PASS（P / R / I / T / E / G / S / W / A 全链）—— 证据 `docs/m6-回放证据(日报与问题+工作台).md`（+ 同名 .json）**。

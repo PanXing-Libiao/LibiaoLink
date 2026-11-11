@@ -27,6 +27,10 @@ interface LinkRow {
 export const photoStore = {
   files: new Map<string, { name: string; projectId: string }>(),
   links: [] as LinkRow[],
+  calls: {
+    loadReportPhotos: [] as string[][],
+    loadIssuePhotos: [] as string[][],
+  },
   /** 成对删除钩子：由用例接到假仓储上，保持「删日报 = 连派生问题」「删问题 = 连来源日报」语义一致。 */
   hooks: {
     issueIdsByReport: (_reportId: string): string[] => [],
@@ -36,6 +40,8 @@ export const photoStore = {
   reset(): void {
     photoStore.files.clear();
     photoStore.links.length = 0;
+    photoStore.calls.loadReportPhotos.length = 0;
+    photoStore.calls.loadIssuePhotos.length = 0;
     photoStore.hooks.issueIdsByReport = () => [];
     photoStore.hooks.onIssuesPurged = () => {};
     photoStore.hooks.onReportPurged = () => {};
@@ -100,6 +106,7 @@ export function createReportIssueLinksFake() {
       return new Map(unique.map((id) => [id, photoStore.files.get(id)?.name ?? ""]));
     },
     loadReportPhotos: async (reportIds: readonly string[]) => {
+      photoStore.calls.loadReportPhotos.push([...reportIds]);
       const result = new Map<string, { onsite: FilePhotoRef[]; issue: FilePhotoRef[] }>();
       for (const id of new Set(reportIds)) {
         result.set(id, { onsite: photoStore.refs("report", id, "onsite"), issue: photoStore.refs("report", id, "issue") });
@@ -107,6 +114,7 @@ export function createReportIssueLinksFake() {
       return result;
     },
     loadIssuePhotos: async (issueIds: readonly string[]) => {
+      photoStore.calls.loadIssuePhotos.push([...issueIds]);
       const result = new Map<string, FilePhotoRef[]>();
       for (const id of new Set(issueIds)) result.set(id, photoStore.refs("issue", id));
       return result;
