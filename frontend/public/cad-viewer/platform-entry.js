@@ -4,8 +4,8 @@ import {LoadPhases} from "./core/load-phases.js";
 import {hydrateBinary} from './core/binary-transport.js';
 import {missingFaceManifest} from './core/nonmeshable-ui.js';
 import {repairManifest} from './core/mesh-repair-ui.js';
-import {ImportUI} from './import-ui.js?v=cad-0.21.14';
-import {trackResponse} from './import-progress.js?v=cad-0.21.13';
+import {ImportUI} from './import-ui.js?v=cad-0.21.15';
+import {trackResponse} from './import-progress.js?v=cad-0.21.15';
 
 const query=new URLSearchParams(location.search);
 const fileId=query.get('fileId'),versionId=query.get('versionId'),viewId=query.get('viewId');
@@ -18,10 +18,10 @@ const isDrawing=format==='DXF'||format==='DWG';
 const hasResources=isDrawing;
 let resolveContext;
 const contextReady=new Promise(resolve=>{resolveContext=resolve;});
-let currentJob=null,jobBase=null,reusedJob=false,delivered=false,cancelled=false,loadedEnvelope=null,csrfToken=null,csrfPending=null,authExpiredNotified=false;
+let currentJob=null,jobBase=null,delivered=false,cancelled=false,loadedEnvelope=null,csrfToken=null,csrfPending=null,authExpiredNotified=false;
 const platformTiming={start:performance.now()};
 window.__cadTimingMark=name=>{platformTiming[name]=Math.round((performance.now()-platformTiming.start)*10)/10;};
-const ui=new ImportUI({fileId,versionId,engineVersion:query.get('engineVersion')||'unknown',format});
+const ui=new ImportUI(Number(query.get('openedAt')));
 const nameSelect=document.getElementById('nameCodepage'),reloadNames=document.getElementById('reloadNames');
 nameSelect.value=nameCodepage;
 document.querySelector('.name-encoding').hidden=isDrawing;
@@ -325,32 +325,39 @@ loadPlatformModel(async({signal,progress,mark,record})=>{
   phases.phase('jobRequest');mark('jobRequestStart');
   const created=await requestJson(base+'?'+new URLSearchParams({nameCodepage:isDrawing?'UTF8':nameCodepage}),{method:'POST',signal:active,
    headers:{'Content-Type':'application/json'},body:JSON.stringify(selection)});
-  currentJob=created.job;reusedJob=created.reused===true;
+  currentJob=created.job;
  window.__cadTimingMark?.("jobCreated");mark("jobCreated");record({jobReused:created.reused});
   if(!/^[a-f0-9]{32}$/.test(currentJob?.id||''))throw new Error('模型任务响应无效');
   jobBase=base+'/'+currentJob.id;
-  ui.job(currentJob,{reused:reusedJob});
   active.throwIfAborted();
   // If the scratch directory retires between the manifest and buffer reads,
   // stay on the same job and switch to its published archive once.
   let allowDisplay=true;
   const displayEnded=new Error('临时绘图已切换到归档');
   for (;;) {
+   let reportDownload;
    try {
     while(!['completed','partial'].includes(currentJob.state) && !(allowDisplay && format==='DWG' && currentJob.phase==='vector-available')){
      if(['failed','cancelled','timed-out'].includes(currentJob.state))throw new Error(failureMessage(currentJob));
      if(!['queued','running'].includes(currentJob.state))throw new Error('模型任务状态无效');
      phases.phase(currentJob.state==="queued"||currentJob.phase==="waiting-for-drawing"||currentJob.phase==="queue-entered"?"queued":currentJob.phase==="persisting"?"persisting":"processing");
-     progress(ui.job(currentJob,{reused:reusedJob}));
+     progress(ui.job(currentJob));
      await delay(active);currentJob=await requestJson(jobBase,{signal:active});
     }
     const staging=currentJob.phase==="vector-available";
     window.__cadTimingMark?.("jobReady");
     mark("jobReady");phases.phase("manifestRead");
-    ui.bytes=currentJob.sourceByteLength;ui.artifactBytes=Number.isSafeInteger(currentJob.artifactBytes)&&currentJob.artifactBytes>0?currentJob.artifactBytes:ui.artifactBytes;
     ui.update(2,"正在准备模型视图");
     progress('正在读取模型…');
-    const prefetchedBuffers=new Map();
+    const prefetchedBuffers=new Map(), receivedByBuffer=new Map();
+    const trackBuffer=(response,sha)=>{
+     let bytes=0;
+     return trackResponse(response,count=>{
+      bytes+=count;
+      receivedByBuffer.set(sha,bytes);
+      reportDownload?.(sha,bytes);
+     });
+    };
     const resourceHint=currentJob.resources;
     if(resourceHint&&/^[a-f0-9]{48}$/.test(resourceHint.lease)&&Array.isArray(resourceHint.buffers)){
      const unique=new Map();
@@ -361,11 +368,10 @@ loadPlatformModel(async({signal,progress,mark,record})=>{
      const prefetchRows=[...unique.values()].sort((a,b)=>b.byteLength-a.byteLength).slice(0,4);
      const prefetchBytes=prefetchRows.reduce((sum,row)=>sum+row.byteLength,0);
      if(prefetchBytes>0&&prefetchBytes<=256*1024*1024){
-      ui.downloading(prefetchBytes);
       for(const descriptor of prefetchRows){
        const promise=request(jobBase+"/resources/"+resourceHint.lease+"/"+descriptor.sha256,{signal:prefetchController.signal}).then(response=>{
         if(!response.ok)throw new Error("Resource unavailable");
-        return trackResponse(response,count=>ui.receive(count)).arrayBuffer();
+        return trackBuffer(response,descriptor.sha256).arrayBuffer();
        });
        promise.catch(()=>{});
        prefetchedBuffers.set(descriptor.sha256,promise);
@@ -398,20 +404,33 @@ loadPlatformModel(async({signal,progress,mark,record})=>{
      if(packet.displayOnly && options?.method==='DELETE')return;
      const resource=await request(jobBase+'/resources/'+match[1]+(match[2]?'/'+match[2]:''),options);
      if(staging && [404,503].includes(resource.status))throw displayEnded;
-     return match[2]?trackResponse(resource,count=>ui.receive(count)):resource;
+     return match[2]?trackBuffer(resource,match[2]):resource;
     };
     progress('正在读取模型几何…');
-    const total=Object.values(packet.document.buffers).reduce((sum,buffer)=>sum+buffer.byteLength,0);
-    ui.downloading(Number.isSafeInteger(total)&&total>0&&total<=256*1024*1024?total:0,{reset:false});
+    ui.update(2,'正在读取模型几何');
+    const sizes=new Map(Object.values(packet.document.buffers).map(b=>[b.sha256,b.byteLength]));
+    const counted=new Map();let downloaded=0;
     phases.phase("resources");mark("resourceHydrationStart");window.__cadTimingMark?.("buffersHydrateStart");
     packet=await hydrateBinary(packet,{signal:active,fetcher,
      prefetched:currentJob.resources?.lease===packet.resourceLease?prefetchedBuffers:new Map(),
-     onPlan:plan=>{ui.downloading(plan.totalBytes,{reset:false});record({uniqueBufferBytes:plan.totalBytes,uniqueBuffers:plan.uniqueBuffers});}});
+     onPlan:plan=>{
+      reportDownload=(sha,bytes)=>{
+       if(!sizes.has(sha))return;
+       const used=Math.min(bytes,sizes.get(sha));
+       downloaded+=used-(counted.get(sha)||0);counted.set(sha,used);
+       ui.downloadProgress(downloaded,plan.totalBytes);
+      };
+      ui.downloadProgress(0,plan.totalBytes);
+      if(currentJob.resources?.lease===packet.resourceLease)receivedByBuffer.forEach((bytes,sha)=>reportDownload(sha,bytes));
+      record({uniqueBufferBytes:plan.totalBytes,uniqueBuffers:plan.uniqueBuffers});
+     }});
+    reportDownload=null;
     window.__cadTimingMark?.("buffersHydrated");mark("resourceHydrationEnd");
     active.throwIfAborted();progress('正在显示模型…');
     ui.update(2,'正在生成可交互视图');
     loadedEnvelope=packet;delivered=true;outcome='ready';return packet;
    } catch(error) {
+    reportDownload=null;
     if(error!==displayEnded || !allowDisplay)throw error;
     allowDisplay=false;
     currentJob=await requestJson(jobBase,{signal:active});
