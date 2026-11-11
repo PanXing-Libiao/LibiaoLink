@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { readStoredFilters } from "./homePrefs";
 import { AUDIT_ACTIONS, AUDIT_OBJECT_TYPES, AUDIT_RESULTS } from "./auditApi";
+import { parseDailyDateParam, removeDailyDateParam } from "./dailyDateFilter";
 import { PROJECT_STATUS_VALUES } from "./types";
 
 /**
@@ -120,7 +121,8 @@ export type Route =
   | { kind: "hub"; view: HubView | null }
   | { kind: "workspace"; tab: WorkspaceTab; sub: WorkspaceIssueView }
   | { kind: "list"; filters: ListQueryState }
-  | { kind: "project"; id: string; view: ProjectView; sub: DailySubView; focus: ProjectFocus | null }
+  /** `date` = 日报查询深链的单日筛选（YYYY-MM-DD）；null = 不筛选。 */
+  | { kind: "project"; id: string; view: ProjectView; sub: DailySubView; focus: ProjectFocus | null; date: string | null }
   | { kind: "placeholder"; page: PlaceholderPage; section: string | null }
   | { kind: "audit"; query: AuditQueryState }
   | { kind: "access" }
@@ -333,6 +335,11 @@ function parseProjectSub(search: string): DailySubView {
   return "records";
 }
 
+/** 日报查询深链的 `date=`：只对「日报记录 / 问题追踪」生效，非法值在路由层清理。 */
+function parseProjectDate(search: string, sub: DailySubView): string | null {
+  return sub === "records" || sub === "issues" ? parseDailyDateParam(search) : null;
+}
+
 const PROJECT_FOCUS_KINDS: readonly ProjectFocus["kind"][] = ["task", "report", "issue"];
 
 /** 项目深链的精确落点（`?task=` / `?report=` / `?issue=`）：只认三类，id 只做长度兜底；重复键认第一个。 */
@@ -456,23 +463,37 @@ export function replaceTemplateSection(section: string): void {
  * 项目详情某个标签的地址（标签走 query，可直接刷新 / 收藏 / 分享；「项目总览」为缺省、不落参数）。
  * Push 214：「日报及问题」的页内子视图同走地址（`?view=daily&sub=`，ASCII slug；缺省「日报记录」records 不落参数 —— Push 243 改缺省）。
  */
-export function projectViewHref(id: string, view: ProjectView, sub: DailySubView = "records"): string {
+export function projectViewHref(id: string, view: ProjectView, sub: DailySubView = "records", date: string | null = null): string {
   const base = PROJECT_BASE_HASH + encodeURIComponent(id);
   if (view === "overview") {
     return base;
   }
-  if (view === "daily" && sub !== "records") {
-    return base + "?view=daily&sub=" + sub;
+  if (view === "daily") {
+    const parts = ["view=daily"];
+    if (sub !== "records") {
+      parts.push("sub=" + sub);
+    }
+    if (date !== null && (sub === "records" || sub === "issues")) {
+      parts.push("date=" + encodeURIComponent(date));
+    }
+    return base + "?" + parts.join("&");
   }
   return base + "?view=" + view;
+}
+
+function projectHrefWithFocus(id: string, view: ProjectView, sub: DailySubView, date: string | null, focus: ProjectFocus | null): string {
+  const base = projectViewHref(id, view, sub, date);
+  if (focus === null) {
+    return base;
+  }
+  return base + (base.includes("?") ? "&" : "?") + focus.kind + "=" + encodeURIComponent(focus.id);
 }
 
 /** 站内信深链：任务落到项目总览并自动开抽屉；日报 / 问题落到日报及问题对应子视图。 */
 export function projectFocusHref(id: string, focus: ProjectFocus): string {
   const view: ProjectView = focus.kind === "task" ? "overview" : "daily";
   const sub: DailySubView = focus.kind === "issue" ? "issues" : "records";
-  const base = projectViewHref(id, view, sub);
-  return base + (base.includes("?") ? "&" : "?") + focus.kind + "=" + encodeURIComponent(focus.id);
+  return projectHrefWithFocus(id, view, sub, null, focus);
 }
 
 /** 切换项目详情标签：同步渲染并写回地址（replace，不新增历史条目）；切进「日报及问题」固定落在缺省「日报记录」（子视图不跨标签记忆；Push 243 前缺省为「日报填写」）。 */
@@ -480,7 +501,7 @@ export function replaceProjectView(id: string, view: ProjectView): void {
   if (currentRoute.kind !== "project" || currentRoute.id !== id || currentRoute.view === view) {
     return;
   }
-  currentRoute = { ...currentRoute, view, sub: "records", focus: null };
+  currentRoute = { ...currentRoute, view, sub: "records", focus: null, date: null };
   emit();
   try {
     window.history.replaceState(null, "", projectViewHref(id, view));
@@ -494,10 +515,11 @@ export function replaceProjectSubView(id: string, sub: DailySubView): void {
   if (currentRoute.kind !== "project" || currentRoute.id !== id || currentRoute.view !== "daily" || currentRoute.sub === sub) {
     return;
   }
-  currentRoute = { ...currentRoute, sub, focus: null };
+  const date = sub === "records" || sub === "issues" ? currentRoute.date : null;
+  currentRoute = { ...currentRoute, sub, focus: null, date };
   emit();
   try {
-    window.history.replaceState(null, "", projectViewHref(id, "daily", sub));
+    window.history.replaceState(null, "", projectViewHref(id, "daily", sub, date));
   } catch {
     // URL 只是当前子视图的投影：写不进去也不影响页面（个别浏览器对 history 调用限流）
   }
@@ -661,7 +683,8 @@ export function parseHash(hash: string): Route {
     const focus = parseProjectFocus(search);
     const view: ProjectView = focus === null ? parseProjectView(search) : focus.kind === "task" ? "overview" : "daily";
     const sub: DailySubView = view !== "daily" ? "form" : focus?.kind === "issue" ? "issues" : focus?.kind === "report" ? "records" : parseProjectSub(search);
-    return { kind: "project", id: safeDecode(match[1] ?? ""), view, sub, focus };
+    const date = view === "daily" ? parseProjectDate(search, sub) : null;
+    return { kind: "project", id: safeDecode(match[1] ?? ""), view, sub, focus, date };
   }
   return { kind: "list", filters: parseListQuery(search) };
 }
@@ -869,6 +892,23 @@ function readHash(): string {
   return typeof window === "undefined" ? "" : window.location.hash;
 }
 
+/** 非法 / 空 date 只从地址清理，页面按无筛选渲染；其它参数与顺序保持原样。 */
+function cleanInvalidProjectDate(hash: string): void {
+  const route = parseHash(hash);
+  if (route.kind !== "project" || route.date !== null) {
+    return;
+  }
+  const cleaned = removeDailyDateParam(hash);
+  if (cleaned === hash) {
+    return;
+  }
+  try {
+    window.history.replaceState(null, "", cleaned);
+  } catch {
+    // URL 只是筛选态的投影：写不进去也不影响页面
+  }
+}
+
 /** 裸根地址（无 hash —— 登录回跳的 `/`、直输域名；或只有 `#`）：Push 285 起 = 登录默认入口，落项目空间。 */
 function isBareRootHash(hash: string): boolean {
   return hash === "" || hash === "#";
@@ -915,6 +955,10 @@ let retryTimer: number | null = null;
 let installed = false;
 const listeners = new Set<() => void>();
 
+if (typeof window !== "undefined") {
+  cleanInvalidProjectDate(window.location.hash);
+}
+
 // 初始化时把从本地记忆恢复出的筛选态、或裸根默认入口规范化出的列表地址写回地址栏（replace，不产生历史条目）
 if (initial.restored || initial.normalized) {
   flushHash();
@@ -929,6 +973,7 @@ function emit(): void {
 function applyHash(hash: string): void {
   const fromList = currentRoute.kind === "list";
   const next = parseHash(hash);
+  cleanInvalidProjectDate(hash);
   cameFromList = next.kind === "project" && fromList;
   currentRoute = next;
   emit();
@@ -994,9 +1039,24 @@ export function clearProjectFocus(): void {
   currentRoute = next;
   emit();
   try {
-    window.history.replaceState(null, "", projectViewHref(next.id, next.view, next.sub));
+    window.history.replaceState(null, "", projectViewHref(next.id, next.view, next.sub, next.date));
   } catch {
     // URL 只是当前抽屉的投影：写不进去也不影响页面
+  }
+}
+
+/** 清除日报查询带来的单日筛选；保留当前标签、子视图与精确落点。 */
+export function clearProjectDate(id: string): void {
+  if (currentRoute.kind !== "project" || currentRoute.id !== id || currentRoute.date === null) {
+    return;
+  }
+  const next = { ...currentRoute, date: null };
+  currentRoute = next;
+  emit();
+  try {
+    window.history.replaceState(null, "", projectHrefWithFocus(next.id, next.view, next.sub, null, next.focus));
+  } catch {
+    // URL 只是筛选态的投影：写不进去也不影响页面
   }
 }
 

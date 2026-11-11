@@ -45,6 +45,7 @@ import { asHubDashView, type HubDashView } from "./data/dashboardProgress";
 import {
   asHubView,
   clearProjectFocus,
+  clearProjectDate,
   replaceAuditQuery,
   replaceFilesQuery,
   replaceWorkspaceSub,
@@ -1014,8 +1015,10 @@ export default function App() {
           project={detail}
           view={route.view}
           dailySub={route.sub}
+          dailyDate={route.date}
           focus={route.focus}
           onClearFocus={clearProjectFocus}
+          onClearDailyDate={() => { clearProjectDate(route.id); }}
           customDeliverableTypes={dicts.deliverableType.map((item) => item.name)}
           onCreateDeliverableType={handleCreateDeliverableType}
           members={directoryMemberOptions(directory)}
