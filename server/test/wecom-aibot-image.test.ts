@@ -106,7 +106,12 @@ async function connect(client: WecomAibotClient, sockets: FakeSocket[]): Promise
   return socket;
 }
 
-async function driveUploadAndSend(socket: FakeSocket, totalChunks: number, mediaId = "media-1"): Promise<void> {
+async function driveUploadAndSend(
+  socket: FakeSocket,
+  totalChunks: number,
+  expected: { target: string; chatType: 1 | 2 },
+  mediaId = "media-1",
+): Promise<void> {
   await sleep(0);
   const init = socket.lastFrame();
   expect(init).toMatchObject({
@@ -134,10 +139,17 @@ async function driveUploadAndSend(socket: FakeSocket, totalChunks: number, media
   socket.ackLast(0, "ok", { type: "image", media_id: mediaId });
 
   await sleep(0);
-  expect(socket.lastFrame()).toMatchObject({
+  const send = socket.lastFrame();
+  expect(send).toMatchObject({
     cmd: "aibot_send_msg",
-    body: { chat_type: 2, msgtype: "image", image: { media_id: mediaId } },
+    body: {
+      chatid: expected.target,
+      chat_type: expected.chatType,
+      msgtype: "image",
+      image: { media_id: mediaId },
+    },
   });
+  expect(Object.keys(send["body"] as Record<string, unknown>).sort()).toEqual(["chat_type", "chatid", "image", "msgtype"]);
   socket.ackLast();
 }
 
@@ -153,7 +165,7 @@ describe("企微智能机器人图片链路（本地）", () => {
       fileName: "完工喜报.png",
       groupActivated: true,
     });
-    await driveUploadAndSend(socket, 2);
+    await driveUploadAndSend(socket, 2, { target: "chat-1", chatType: 2 });
     await expect(pending).resolves.toEqual({ ok: true, attempts: 1 });
 
     const init = JSON.parse(socket.sent[1]!) as { body: Record<string, unknown> };
@@ -174,7 +186,7 @@ describe("企微智能机器人图片链路（本地）", () => {
       fileName: "喜报.png",
       groupActivated: true,
     });
-    await driveUploadAndSend(socket, 1, "media-cache-1");
+    await driveUploadAndSend(socket, 1, { target: "chat-1", chatType: 2 }, "media-cache-1");
     await expect(first).resolves.toEqual({ ok: true, attempts: 1 });
 
     const framesAfterFirst = socket.sent.length;
@@ -192,6 +204,82 @@ describe("企微智能机器人图片链路（本地）", () => {
     });
     socket.ackLast();
     await expect(second).resolves.toEqual({ ok: true, attempts: 1 });
+    await client.stop();
+  });
+
+  it("单聊图片锁帧：chatid=userid / chat_type=1 / msgtype=image / media_id", async () => {
+    const { client, sockets } = makeClient();
+    const socket = await connect(client, sockets);
+    const content = Buffer.from("fake-daily-report-png-content");
+
+    const pending = client.sendUserImage({
+      userid: "user-1",
+      content,
+      fileName: "日报.png",
+      dmActivated: true,
+    });
+    await driveUploadAndSend(socket, 1, { target: "user-1", chatType: 1 }, "media-dm-1");
+    await expect(pending).resolves.toEqual({ ok: true, attempts: 1 });
+    await client.stop();
+  });
+
+  it("单聊图片发送计入 single 双窗口桶，不占用群桶", async () => {
+    const { client, sockets } = makeClient([
+      { kind: "group", windowMs: 60_000, limit: 100 },
+      { kind: "single", windowMs: 60_000, limit: 1 },
+      { kind: "single", windowMs: 3_600_000, limit: 100 },
+    ]);
+    const socket = await connect(client, sockets);
+    const pending = client.sendUserImage({
+      userid: "user-1",
+      content: Buffer.from("fake-single-bucket-png"),
+      fileName: "日报.png",
+      dmActivated: true,
+    });
+    await driveUploadAndSend(socket, 1, { target: "user-1", chatType: 1 }, "media-dm-bucket");
+    await expect(pending).resolves.toEqual({ ok: true, attempts: 1 });
+
+    const blocked = await client.sendUserMarkdown({ userid: "user-1", content: "下一条", dmActivated: true });
+    expect(blocked).toMatchObject({ ok: false, kind: "rate_limited", attempts: 0 });
+    await client.stop();
+  });
+
+  it("图片上传 846607 按渠道与激活态分类：群看 groupActivated，单聊看 dmActivated", async () => {
+    const { client, sockets } = makeClient();
+    const socket = await connect(client, sockets);
+    const content = Buffer.from("fake-upload-846607-content");
+    const cases = [
+      {
+        name: "群未激活",
+        send: () => client.sendGroupImage({ chatid: "chat-1", content, fileName: "图.png", groupActivated: false }),
+        kind: "permanent",
+      },
+      {
+        name: "群超频",
+        send: () => client.sendGroupImage({ chatid: "chat-1", content, fileName: "图.png", groupActivated: true }),
+        kind: "rate_limited",
+      },
+      {
+        name: "单聊未激活",
+        send: () => client.sendUserImage({ userid: "user-1", content, fileName: "图.png", dmActivated: false }),
+        kind: "permanent",
+      },
+      {
+        name: "单聊超频",
+        send: () => client.sendUserImage({ userid: "user-1", content, fileName: "图.png", dmActivated: true }),
+        kind: "rate_limited",
+      },
+    ] as const;
+
+    for (const item of cases) {
+      const pending = item.send();
+      await sleep(0);
+      expect(socket.lastFrame()).toMatchObject({ cmd: "aibot_upload_media_init" });
+      socket.ackLast(846607, "aibot send msg frequency limit exceeded");
+      const result = await pending;
+      expect(result, item.name).toMatchObject({ ok: false, kind: item.kind, errcode: 846607, attempts: 0 });
+    }
+    expect(socket.sent.some((raw) => (JSON.parse(raw) as { cmd?: string }).cmd === "aibot_send_msg")).toBe(false);
     await client.stop();
   });
 

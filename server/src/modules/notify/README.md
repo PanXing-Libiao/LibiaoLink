@@ -1,5 +1,12 @@
 # notify 模块（S7·outbox · S7-4 · 通知投递内核 j1 / M5-04 首刀 · Push 178 + 接线段渠道护栏 · Push 180） + S8-3 契约落地（SSE 实时流 / 稍后提醒）· Push 210 + M5-04-1 SSE 实现 · Push 211 + M5-04-2 稍后提醒实现 · Push 212 + M5-04 收口 · Push 213 + M5-03-1 企微适配器内核 · Push 215 + M5-03-2 契约段 · Push 221 + 群通道迁移 0046 · Push 222 + M5-03-2 智能机器人长连接客户端（webhook 面退役）· Push 223 + M5-03-2 接线段（群绑定读写 + notify.group 消费 + 回调 ingest）· Push 224 + M5-03-3 应用消息 + C5-04 降级 + 告警出口 · Push 226 + M5-03-4 开工（T3-6 收官 · 93001 锁定 · PoC-2 证据骨架）· Push 227 + M5-03-4 T5 反向修复（告警复报去重）· Push 229 + M5-03-4 告警 / 失败文案收敛（核心语义口径）· Push 230 + M5-03-5-3 单聊 aibot 实现段（sendUserMarkdown + 限速 single + NotifyDmService + 激活仓储 + 回放）· Push 237 + M5-03-5-4 单聊 aibot 接线段（outbox 路由分流 + `:aibot` 产出接线 + worker 回调分流 + 集成回放）· Push 238 + M5-03-5-6 绑定码链路（迁移 0055 · 单聊 ingest 绑定 + 密文 open_userid 寻址 + D4 话术）· Push 247 + M5-03-5-6 契约刀（取码 / 查绑定态 / 解绑 + `audit_logs` + 生成客户端）· Push 249 + outbox 告警可执行化与恢复日报 · Push 257 + 单聊 enter_chat 欢迎语 · Push 261
 
+## 日报查询单聊图片（2026-11-11 · S2）
+
+- **发送面**：`WecomAibotClient.sendUserImage` 先复用 `validateAibotImage` 校验 PNG / JPG / GIF、文件名、10MB 与分片数，再完成 `aibot_upload_media_init/chunk/finish`，最后发送 `aibot_send_msg`。单聊帧固定 `chatid = 绑定行密文 open_userid`、`chat_type = 1`、`msgtype = image`、`image.media_id = upload.mediaId`，限速桶为 `single`，渠道为 `wecom_aibot`。
+- **共用路径**：`sendGroupImage` 与 `sendUserImage` 共用私有 `sendImage`；群聊仍为 `chatid = chatid`、`chat_type = 2`、`group` 桶，不改变现有群发送行为。
+- **错误分类**：图片上传阶段接收渠道与激活态，846607 群聊按 `groupActivated`、单聊按 `dmActivated` 分类，不再把单聊上传失败固定归入 `wecom_group`。上传失败不产生 image 消息；发送失败继续沿用既有回执分类。
+- **回归**：`server/test/wecom-aibot-image.test.ts` 覆盖单聊图片锁帧、群聊既有帧与上传 846607 双渠道分类；`server/scripts/m5-03-5-dm-replay.mjs` 新增 S2b，验证构建产物的上传分片、单聊图片帧与未激活分类（PASS 82 / FAIL 0）。本刀不接日报查询编排、不写审计 / outbox / 站内信；`server/` 属 wmj 线代记，请 wmj 复核。
+
 ## 物料变更补发图片（2026-11-09）
 
 - **入口**：物料变更补发提交事务内追加 `notify.group`（模板码 `MATERIAL_REISSUE_GROUP`，`refType=change`，`refId=change_requests.id`）；通知失败不回滚补发提交，outbox 重试不会重复生成业务记录。

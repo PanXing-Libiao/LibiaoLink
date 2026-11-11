@@ -373,51 +373,41 @@ export class WecomAibotClient {
     mime?: string | null;
     groupActivated?: boolean | null;
   }): Promise<AibotSendResult> {
-    const validation = validateAibotImage({
+    return this.sendImage({
+      target: params.chatid,
       content: params.content,
       fileName: params.fileName,
       mime: params.mime,
-    });
-    if (!validation.ok) {
-      return {
-        ok: false,
-        kind: "permanent",
-        errcode: null,
-        errmsg: validation.reason,
-        retryAt: null,
-        attempts: 0,
-        state: this.state,
-      };
-    }
-    if (this.state !== "subscribed" || this.socket === null) {
-      return this.notReadyResult();
-    }
-    const upload = await this.uploadImage({
-      content: params.content,
-      fileName: params.fileName,
-      mime: validation.mime,
-      totalChunks: validation.totalChunks,
-      activated: params.groupActivated ?? null,
-    });
-    if (!upload.ok) {
-      return {
-        ok: false,
-        kind: upload.kind,
-        errcode: upload.errcode,
-        errmsg: upload.errmsg,
-        retryAt: null,
-        attempts: 0,
-        state: this.state,
-      };
-    }
-    return this.sendMessage({
-      target: params.chatid,
       chatType: 2,
       rateKind: "group",
       channel: "wecom_group",
       bucketId: chatBucketId(params.chatid),
       activated: params.groupActivated ?? null,
-      message: { msgtype: "image", image: { media_id: upload.mediaId } },
+    });
+  }
+
+  /**
+   * 单聊图片推送（日报查询 S2）：先上传图片素材取得 media_id，再走 aibot_send_msg 的 image 消息。
+   * 帧 `chatid` 填绑定行中的密文 open_userid（调用方传入的 userid），`chat_type = 1`；
+   * 发送与单聊 markdown 共用 single 双窗口限速桶，上传失败按 `wecom_aibot` / `dmActivated` 分类。
+   */
+  async sendUserImage(params: {
+    userid: string;
+    content: Buffer;
+    fileName: string;
+    mime?: string | null;
+    dmActivated?: boolean | null;
+  }): Promise<AibotSendResult> {
+    return this.sendImage({
+      target: params.userid,
+      content: params.content,
+      fileName: params.fileName,
+      mime: params.mime,
+      chatType: 1,
+      rateKind: "single",
+      channel: "wecom_aibot",
+      bucketId: userBucketId(params.userid),
+      activated: params.dmActivated ?? null,
     });
   }
 
@@ -439,6 +429,67 @@ export class WecomAibotClient {
       channel: "wecom_aibot",
       bucketId: userBucketId(params.userid),
       activated: params.dmActivated ?? null,
+    });
+  }
+
+  /** 图片发送主体（群 / 单聊共用）：校验 → 上传素材 → 发送 image 消息并等待回执。 */
+  private async sendImage(input: {
+    target: string;
+    content: Buffer;
+    fileName: string;
+    mime: string | null | undefined;
+    chatType: 1 | 2;
+    rateKind: "group" | "single";
+    channel: "wecom_group" | "wecom_aibot";
+    bucketId: string;
+    activated: boolean | null;
+  }): Promise<AibotSendResult> {
+    const validation = validateAibotImage({
+      content: input.content,
+      fileName: input.fileName,
+      mime: input.mime,
+    });
+    if (!validation.ok) {
+      return {
+        ok: false,
+        kind: "permanent",
+        errcode: null,
+        errmsg: validation.reason,
+        retryAt: null,
+        attempts: 0,
+        state: this.state,
+      };
+    }
+    if (this.state !== "subscribed" || this.socket === null) {
+      return this.notReadyResult();
+    }
+    const upload = await this.uploadImage({
+      content: input.content,
+      fileName: input.fileName,
+      mime: validation.mime,
+      totalChunks: validation.totalChunks,
+      channel: input.channel,
+      activated: input.activated,
+    });
+    if (!upload.ok) {
+      return {
+        ok: false,
+        kind: upload.kind,
+        errcode: upload.errcode,
+        errmsg: upload.errmsg,
+        retryAt: null,
+        attempts: 0,
+        state: this.state,
+      };
+    }
+    return this.sendMessage({
+      target: input.target,
+      chatType: input.chatType,
+      rateKind: input.rateKind,
+      channel: input.channel,
+      bucketId: input.bucketId,
+      activated: input.activated,
+      message: { msgtype: "image", image: { media_id: upload.mediaId } },
     });
   }
 
@@ -694,6 +745,7 @@ export class WecomAibotClient {
     fileName: string;
     mime: AibotImageMimeType;
     totalChunks: number;
+    channel: "wecom_group" | "wecom_aibot";
     activated: boolean | null;
   }): Promise<AibotUploadResult> {
     const digest = createHash("md5").update(input.content).digest("hex");
@@ -717,11 +769,11 @@ export class WecomAibotClient {
       md5: digest,
     });
     if (!init.ok) {
-      return this.uploadFailure(init, "素材上传初始化", input.activated);
+      return this.uploadFailure(init, "素材上传初始化", input.channel, input.activated);
     }
     const initCode = typeof init.frame.errcode === "number" ? init.frame.errcode : null;
     if (initCode !== 0) {
-      return this.uploadFailure(init, "素材上传初始化", input.activated);
+      return this.uploadFailure(init, "素材上传初始化", input.channel, input.activated);
     }
     const uploadId = readString(asRecord(init.frame.body), "upload_id");
     if (uploadId === null || uploadId.trim() === "") {
@@ -737,21 +789,21 @@ export class WecomAibotClient {
         base64_data: input.content.subarray(from, to).toString("base64"),
       });
       if (!chunk.ok) {
-        return this.uploadFailure(chunk, "素材分片上传", input.activated);
+        return this.uploadFailure(chunk, "素材分片上传", input.channel, input.activated);
       }
       const chunkCode = typeof chunk.frame.errcode === "number" ? chunk.frame.errcode : null;
       if (chunkCode !== 0) {
-        return this.uploadFailure(chunk, "素材分片上传", input.activated);
+        return this.uploadFailure(chunk, "素材分片上传", input.channel, input.activated);
       }
     }
 
     const finish = await this.sendControlFrame("aibot_upload_media_finish", { upload_id: uploadId });
     if (!finish.ok) {
-      return this.uploadFailure(finish, "素材上传合并", input.activated);
+      return this.uploadFailure(finish, "素材上传合并", input.channel, input.activated);
     }
     const finishCode = typeof finish.frame.errcode === "number" ? finish.frame.errcode : null;
     if (finishCode !== 0) {
-      return this.uploadFailure(finish, "素材上传合并", input.activated);
+      return this.uploadFailure(finish, "素材上传合并", input.channel, input.activated);
     }
     const mediaId = readString(asRecord(finish.frame.body), "media_id");
     if (mediaId === null || mediaId.trim() === "") {
@@ -774,7 +826,12 @@ export class WecomAibotClient {
     return ack;
   }
 
-  private uploadFailure(outcome: AckOutcome, stage: string, activated: boolean | null): AibotUploadResult {
+  private uploadFailure(
+    outcome: AckOutcome,
+    stage: string,
+    channel: "wecom_group" | "wecom_aibot",
+    activated: boolean | null,
+  ): AibotUploadResult {
     if (!outcome.ok) {
       return {
         ok: false,
@@ -793,7 +850,10 @@ export class WecomAibotClient {
     }
     return {
       ok: false,
-      kind: classifyWecomErrcode("wecom_group", errcode, { groupActivated: activated }),
+      kind:
+        channel === "wecom_group"
+          ? classifyWecomErrcode("wecom_group", errcode, { groupActivated: activated })
+          : classifyWecomErrcode("wecom_aibot", errcode, { dmActivated: activated }),
       errcode,
       errmsg,
     };
