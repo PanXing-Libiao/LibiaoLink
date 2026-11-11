@@ -48,7 +48,7 @@ export interface WorkspaceTaskRow {
   updatedAt: Date;
   ownerIds: string[];
   ownerNames: (string | null)[] | null;
-  /** 本条任务的项目经理（任务级字段；工作台行内独立改派）。 */
+  /** 项目级项目经理展示快照（任务行只读；工作台与项目页共用同一名单）。 */
   managerIds: string[];
   managerNames: (string | null)[] | null;
   /** 变更关联（A1-07 / R01 多条；口径与 task 模块 CHANGE_LINKS_SQL 同源，本模块为只读副本）。 */
@@ -115,7 +115,7 @@ const OWNER_NAMES_SQL = sql<(string | null)[] | null>`(
   left join ${users} u on u.id = o.uid
 )`;
 
-/** 任务级项目经理姓名数组（与 tasks.manager_ids 同下标；缺失用户该位为 null）。 */
+/** 项目级项目经理姓名快照数组（与 tasks.manager_ids 同下标；缺失用户该位为 null）。 */
 const TASK_MANAGER_NAMES_SQL = sql<(string | null)[] | null>`(
   select array_agg(u.display_name order by m.ord)
   from unnest(${tasks.managerIds}) with ordinality as m(uid, ord)

@@ -273,8 +273,8 @@ export class ProjectService {
         throw new AppError("VERSION_CONFLICT", "项目已被他人更新，请刷新后重试");
       }
       if (patch.managerIds !== undefined) {
-        // 项目弹窗改经理 = 全局调整：同步全部有效任务；行内改经理仍走任务 PATCH，只影响当前任务。
-        await this.projects.replaceActiveTaskManagerIds(id, row.managerIds, at, tx);
+        // 项目经理是项目级字段：项目弹窗与任务行 / 抽屉共用同一份名单，全部任务同步展示快照。
+        await this.projects.syncProjectManagersToTasks(id, row.managerIds, at, tx);
       }
       const changes = diffRecords(projectAuditSnapshot(current.project), projectAuditSnapshot(row));
       await this.audit.record(tx, {

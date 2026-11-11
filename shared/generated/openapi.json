@@ -10285,7 +10285,7 @@
             },
             "minItems": 1,
             "maxItems": 200,
-            "description": "本条任务的项目经理（至少一位、可多位）：数组顺序 = 展示顺序；新建缺省继承项目当前经理，行内修改只影响本条任务；项目卡片展示所有有效任务经理的去重并集"
+            "description": "项目级项目经理快照（至少一位、可多位）：唯一可编辑来源是 projects.manager_ids，同项目所有任务一致；任务表行内 / 抽屉与项目弹窗修改都按项目级替换，并同步全部任务，不产生任务级经理身份"
           },
           "status": {
             "$ref": "#/components/schemas/TaskBaseStatus"
@@ -10897,15 +10897,6 @@
             "maxItems": 200,
             "description": "任务负责人：缺省 / 显式 [] = 「待分配」（**2026-09-24 业务口径修订**：任务添加后负责人默认为空 —— 不再兜底项目经理）；传数组 = 整体设置（≤ 200 位），数组顺序 = 展示顺序"
           },
-          "managerIds": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Uuid"
-            },
-            "minItems": 1,
-            "maxItems": 200,
-            "description": "本条任务的项目经理（至少一位、≤ 200 位）：缺省 = 当前项目项目经理名单；传数组 = 整体替换，仅影响本条任务"
-          },
           "plannedStart": {
             "allOf": [
               {
@@ -11107,7 +11098,7 @@
                     "null"
                   ]
                 },
-                "description": "本条任务的项目经理姓名数组：与 managerIds 同下标一一对应"
+                "description": "当前项目的项目经理姓名数组：与 managerIds 同下标一一对应，同项目所有任务一致"
               },
               "files": {
                 "type": "array",
@@ -11309,7 +11300,7 @@
                     "null"
                   ]
                 },
-                "description": "本条任务的项目经理姓名数组（与 managerIds 同下标一一对应；取不到姓名时该位为 null）"
+                "description": "当前项目的项目经理姓名数组（与 managerIds 同下标一一对应；同项目所有任务一致；取不到姓名时该位为 null）"
               },
               "fileSummary": {
                 "$ref": "#/components/schemas/TaskFileSummary"
@@ -11884,7 +11875,7 @@
             },
             "minItems": 1,
             "maxItems": 200,
-            "description": "本条任务的项目经理：不传 = 不改；传数组 = 整体替换（至少一位）；只影响本条任务，其他任务行不变"
+            "description": "项目级项目经理：不传 = 不改；传数组 = 整体替换（至少一位），仅项目编辑者可修改。任务表行内 / 抽屉与项目弹窗共用此名单，修改会同步同项目全部任务；任务负责人只能浏览"
           },
           "sortIndex": {
             "type": "integer",

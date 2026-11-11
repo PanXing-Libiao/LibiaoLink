@@ -61,7 +61,7 @@ export const TaskSchema = z
       .max(TASK_MANAGER_IDS_LIMIT)
       .openapi({
         description:
-          "本条任务的项目经理（至少一位、可多位）：数组顺序 = 展示顺序；新建缺省继承项目当前经理，行内修改只影响本条任务；项目卡片展示所有有效任务经理的去重并集",
+          "项目级项目经理快照（至少一位、可多位）：唯一可编辑来源是 projects.manager_ids，同项目所有任务一致；任务表行内 / 抽屉与项目弹窗修改都按项目级替换，并同步全部任务，不产生任务级经理身份",
       }),
     status: TaskBaseStatusSchema,
     displayStatus: TaskDisplayStatusSchema,
@@ -153,7 +153,7 @@ export const TaskListItemSchema = TaskSchema.extend({
     description: "负责人姓名数组（users.display_name 随行下发，与 ownerIds 同下标一一对应）；「待分配」= 空数组；某位取不到姓名时该位为 null（前端显示「—」）",
   }),
   managerNames: z.array(z.string().nullable()).openapi({
-    description: "本条任务的项目经理姓名数组（与 managerIds 同下标一一对应；取不到姓名时该位为 null）",
+    description: "当前项目的项目经理姓名数组（与 managerIds 同下标一一对应；同项目所有任务一致；取不到姓名时该位为 null）",
   }),
   fileSummary: TaskFileSummarySchema,
   capabilities: TaskCapabilitiesSchema.optional().openapi({ description: "当前登录人对本任务的有效能力（列表接口随行下发；导出等内部用途可不带）" }),
@@ -162,7 +162,7 @@ export const TaskListItemSchema = TaskSchema.extend({
 /** 任务详情（抽屉全字段，A7）：含变更关联（多条）与文件清单；列表走 TaskListItem，抽屉打开时按需请求。 */
 export const TaskDetailSchema = TaskSchema.extend({
   ownerNames: z.array(z.string().nullable()).openapi({ description: "负责人姓名数组：与 ownerIds 同下标一一对应；「待分配」= 空数组" }),
-  managerNames: z.array(z.string().nullable()).openapi({ description: "本条任务的项目经理姓名数组：与 managerIds 同下标一一对应" }),
+  managerNames: z.array(z.string().nullable()).openapi({ description: "当前项目的项目经理姓名数组：与 managerIds 同下标一一对应，同项目所有任务一致" }),
   files: z.array(TaskFileBriefSchema),
   capabilities: TaskCapabilitiesSchema.optional().openapi({ description: "当前登录人对本任务的有效能力" }),
 }).openapi("TaskDetail", { description: "任务详情（M3-01；列表 → 详情不再依赖列表随行数据）" });
@@ -309,14 +309,6 @@ export const TaskCreateBodySchema = z
       description:
         "任务负责人：缺省 / 显式 [] = 「待分配」（**2026-09-24 业务口径修订**：任务添加后负责人默认为空 —— 不再兜底项目经理）；传数组 = 整体设置（≤ 200 位），数组顺序 = 展示顺序",
     }),
-    managerIds: z
-      .array(UuidSchema)
-      .min(1)
-      .max(TASK_MANAGER_IDS_LIMIT)
-      .optional()
-      .openapi({
-        description: "本条任务的项目经理（至少一位、≤ 200 位）：缺省 = 当前项目项目经理名单；传数组 = 整体替换，仅影响本条任务",
-      }),
     plannedStart: DateOnlySchema.nullable().optional(),
     plannedEnd: DateOnlySchema.nullable().optional(),
     estimatedDays: z.number().int().min(0).nullable().optional(),
@@ -368,7 +360,7 @@ export const TaskUpdateBodySchema = z
       .max(TASK_MANAGER_IDS_LIMIT)
       .optional()
       .openapi({
-        description: "本条任务的项目经理：不传 = 不改；传数组 = 整体替换（至少一位）；只影响本条任务，其他任务行不变",
+        description: "项目级项目经理：不传 = 不改；传数组 = 整体替换（至少一位），仅项目编辑者可修改。任务表行内 / 抽屉与项目弹窗共用此名单，修改会同步同项目全部任务；任务负责人只能浏览",
       }),
     sortIndex: z.number().int().min(0).optional().openapi({
       description:

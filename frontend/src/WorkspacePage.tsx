@@ -785,7 +785,7 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, manage
     }
   };
 
-  /** 抽屉「即改即存」提交：项目经理是任务级字段，随本次任务 PATCH 一起保存，不影响同项目其他任务。 */
+  /** 抽屉「即改即存」提交：项目经理是项目级字段，随本次任务 PATCH 一起保存并同步同项目全部任务。 */
   const handleDrawerSubmit = async (values: TaskEditSubmit): Promise<number | null> => {
     const current = drawerTask;
     if (current === null) {
@@ -880,7 +880,7 @@ function MyTasksView({ data, tierTint, openIds, onToggleProject, members, manage
   };
 
   /** 行内编辑回调（Push 279）：逐列与项目页 TaskRow 同一套写入口径（回填行的 version + 防抖静默刷新）；
-   *  项目经理是任务级字段（只 PATCH 当前任务），文件两件走项目文件库（上传 / 回收站），失败都进同一条提示条。 */
+   *  项目经理是项目级字段（PATCH 当前任务入口，服务端同步全项目），文件两件走项目文件库（上传 / 回收站），失败都进同一条提示条。 */
   const rowHandlers: TaskTableHandlers = {
     onProgress: (projectId, taskId, progress) => {
       runRowWrite(taskId, (row) => updateTaskProgress(projectId, taskId, { progress, version: row.version }));

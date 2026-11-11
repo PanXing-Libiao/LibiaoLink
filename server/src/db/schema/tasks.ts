@@ -44,8 +44,8 @@ export const tasks = pgTable(
      */
     ownerIds: uuid("owner_ids").array().notNull().default(sql`array[]::uuid[]`),
     /**
-     * 本条任务的项目经理（2026-11-10）：至少一位、数组顺序 = 展示顺序；新建继承项目当前经理，
-     * 行内修改只影响本条任务。projects.manager_ids 独立维护，不汇总任务经理；任务经理不获得整项目编辑权。
+     * 项目级项目经理在任务行的展示快照（2026-11-11）：至少一位、数组顺序 = 展示顺序；
+     * 唯一可编辑来源是 projects.manager_ids，任务表 / 抽屉修改同步整个项目；不产生任务级经理身份。
      */
     managerIds: uuid("manager_ids").array().notNull(),
     status: text("status").notNull(),

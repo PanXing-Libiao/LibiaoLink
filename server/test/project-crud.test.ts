@@ -228,7 +228,7 @@ class FakeProjectRepository {
     };
   }
 
-  async replaceActiveTaskManagerIds(_id: string, _managerIds: string[], _at: Date): Promise<void> {}
+  async syncProjectManagersToTasks(_id: string, _managerIds: string[], _at: Date): Promise<void> {}
 
   async touch(id: string, at: Date): Promise<void> {
     this.lastTouched = { id, at };

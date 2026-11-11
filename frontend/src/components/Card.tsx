@@ -56,7 +56,7 @@ type CardProps = {
   watermark?: string;
   /** 水印排版口径（Push 301 追订「之前的中文不要改」）：true / 不传 = Push 289 原出血口径（右 20px / 下 46px，右侧与底部各裁一截；max-w = 卡片内宽 − 8px）；false = 完整显示口径（右内缩 28px + 贴底；max-w = 卡片内宽 − 56px，字形全高不裁）。 */
   watermarkBleed?: boolean;
-  /** 项目经理姓名（按任务经理去重后的项目并集；空值过滤后仅逐个展示姓名）。 */
+  /** 项目经理姓名（项目级 managerIds 对应姓名；空值过滤后仅逐个展示姓名）。 */
   managerNames: ReadonlyArray<string | null>;
   time: string;
   /** 编辑入口（隐式：悬停 / 聚焦才显示）。 */

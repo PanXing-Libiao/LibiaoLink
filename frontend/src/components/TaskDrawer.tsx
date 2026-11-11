@@ -162,13 +162,13 @@ const CAPTION_CLASS = "mt-1 block text-[11px] leading-4 text-zinc-400";
 const NOTE_BOX_CLASS =
   "rounded-lg border border-zinc-200 bg-white px-3 py-2 transition focus-within:border-zinc-400 focus-within:ring-2 focus-within:ring-zinc-900/10";
 
-/** 任务编辑保存值：可编辑字段 = 本条任务的项目经理（多位）/ 任务负责人（多位）/ 开始与预计完成日期（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述。 */
+/** 任务编辑保存值：可编辑字段 = 项目级项目经理（多位，修改同步整个项目）/ 任务负责人（多位）/ 开始与预计完成日期（含联动天数）/ 施工人数 / 紧急重要度 / 进展描述。 */
 export type TaskEditSubmit = {
   taskId: string;
   version: number;
-  /** 本条任务的项目经理 id（至少一位）：仅当该项变化时随任务 PATCH 写入。 */
+  /** 项目级项目经理 id（至少一位）：仅当该项变化时随任务 PATCH 写入，服务端同步整个项目。 */
   managerIds: string[];
-  /** 是否显式改过本条任务的项目经理。 */
+  /** 是否显式改过项目级项目经理名单。 */
   managerChanged: boolean;
   /** 任务负责人 id（多位，契约 ownerIds）：空数组 = 待分配。 */
   ownerIds: string[];
@@ -220,7 +220,7 @@ function draftOf(task: ProjectTask | null): Draft {
 type TaskDrawerProps = {
   /** 当前账号是否可对该任务定档 / 取消定档（服务端投影 canFinalize）。 */
   canFinalize?: boolean;
-  /** 项目经理是任务级字段：仅当前项目编辑者可改；任务负责人不得改。 */
+  /** 项目经理是项目级字段：仅当前项目编辑者可改并同步全项目；任务负责人不得改。 */
   canEditManagers?: boolean;
   task: ProjectTask | null;
   /** 抽屉内直接改字段后的即时保存；不传 = 抽屉只读（不渲染可编辑控件）。 */

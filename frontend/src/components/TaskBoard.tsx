@@ -255,7 +255,7 @@ function statusOptionsOf(statusOf: (value: string) => string): SelectOption[] {
   }));
 }
 
-/** 行内编辑能改的任务字段（项目经理也是行内字段，但只改当前任务）。 */
+/** 行内编辑能改的任务字段（项目经理是项目级字段，修改会同步整个项目）。 */
 export type TaskPatch = Partial<Pick<ProjectTask, "title" | "titleEn" | "ownerIds" | "managerIds" | "startDate" | "dueDate" | "days" | "headcount" | "priority" | "deliverableTypes" | "note">>;
 /**
  * 行内编辑 / 抽屉编辑共用的「patch → PATCH body」映射（Push 279 从项目页 handlePatchTask 抽出 · version 由调用方带）：
@@ -449,9 +449,10 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
     : capabilities.canEditFields
       ? t("board.ownerLockedHint")
       : viewOnlyHint;
-  /** 项目经理 = 本条任务自己的字段（任务级）：同项目其他行独立，不在行之间共享。 */
+  /** 项目经理 = 项目级字段：任务行展示同一条项目名单；修改会同步整个项目，不是单行独立字段。 */
   const managerIds = task.managerIds;
   const managerLabel = task.managers.length === 0 ? "—" : task.managers.join("、");
+  const managerTitle = managerLabel + " — " + t("drawer.manager.caption");
   const managersEditable = canEditManagers ?? onChangeManagers !== undefined;
   const managerChoices = memberOptionsWithExisting(managerMembers, managerIds, members);
   const managersLocked = !managersEditable || taskFinalized;
@@ -540,7 +541,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
     ),
     manager:
       onChangeManagers === undefined ? (
-        <span className="truncate text-xs text-zinc-600" title={managerLabel}>{managerLabel}</span>
+        <span className="truncate text-xs text-zinc-600" title={managerTitle}>{managerLabel}</span>
       ) : (
         <InlineMemberMultiCell
           values={managerIds}
@@ -548,7 +549,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
           ariaLabel={t("board.edit.aria", { field: fieldText(locale, "项目经理") })}
           disabled={managersLocked}
           disabledHint={managersLockedHint}
-          display={<span className="text-zinc-600" title={managerLabel}>{managerLabel}</span>}
+          display={<span className="text-zinc-600" title={managerTitle}>{managerLabel}</span>}
           onPick={(member) => {
             if (managerIds.includes(member.id)) {
               // 至少留一位（对齐契约 projects.manager_ids 非空）：取消最后一位时不生效

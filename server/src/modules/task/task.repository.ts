@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { STAGE_KEYS } from "@libiaolink/contracts";
-import { and, asc, count, desc, eq, gte, ilike, inArray, isNotNull, isNull, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, ilike, inArray, isNotNull, isNull, lte, ne, or, sql, type SQL } from "drizzle-orm";
 import { DatabaseService } from "../../db/database.service.js";
 import type { DbClient } from "../../db/db-client.js";
 import { changeRequests } from "../../db/schema/change.js";
@@ -69,7 +69,7 @@ export interface TaskInsertInput {
   titleEn: string | null;
   /** 空数组 = 「待分配」（A18 · Push 124 / A23 · Push 136）。 */
   ownerIds: string[];
-  /** 本条任务的项目经理（至少一位；缺省由 service 继承项目当前经理）。 */
+  /** 项目级项目经理快照（至少一位；由 projects.manager_ids 统一维护，所有任务保持一致）。 */
   managerIds: string[];
   /** 组内位次（A19 / A20：插入位置由 service 计算，本层落列）。 */
   sortIndex: number;
@@ -150,7 +150,7 @@ const OWNER_NAMES_SQL = sql<(string | null)[] | null>`(
   left join ${users} u on u.id = o.uid
 )`;
 
-/** 任务级项目经理姓名数组：与 manager_ids 同下标，缺失用户该位为 null。 */
+/** 项目级项目经理姓名快照数组：与 manager_ids 同下标，缺失用户该位为 null。 */
 const MANAGER_NAMES_SQL = sql<(string | null)[] | null>`(
   select array_agg(u.display_name order by m.ord)
   from unnest(${tasks.managerIds}) with ordinality as m(uid, ord)
@@ -322,6 +322,42 @@ export class TaskRepository {
       .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)))
       .limit(1);
     return rows[0] ?? null;
+  }
+
+  /**
+   * 任务表 / 抽屉改项目经理 = 项目级经理全局变更：
+   * projects.manager_ids 与同项目其他有效任务同步；当前任务由 TaskService 的事务内核写入。
+   * 已定档任务只更新展示快照，不推进 version，保持定档后的任务写保护。
+   */
+  async replaceProjectManagersExceptTask(
+    projectId: string,
+    taskId: string,
+    managerIds: string[],
+    at: Date,
+    client: DbClient = this.database.db,
+  ): Promise<void> {
+    await client
+      .update(projects)
+      .set({ managerIds, version: sql`${projects.version} + 1`, updatedAt: at })
+      .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)));
+    await client
+      .update(tasks)
+      .set({ managerIds })
+      .where(and(
+        eq(tasks.projectId, projectId),
+        ne(tasks.id, taskId),
+        isNull(tasks.deletedAt),
+        isNotNull(tasks.finalizedAt),
+      ));
+    await client
+      .update(tasks)
+      .set({ managerIds, version: sql`${tasks.version} + 1`, updatedAt: at })
+      .where(and(
+        eq(tasks.projectId, projectId),
+        ne(tasks.id, taskId),
+        isNull(tasks.deletedAt),
+        isNull(tasks.finalizedAt),
+      ));
   }
 
   /** 来源任务节点（校验属于本项目 + 取阶段）：taskCreateBody.taskNodeId 的落点。 */

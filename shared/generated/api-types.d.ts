@@ -12796,7 +12796,7 @@ export interface components {
             titleEn: string | null;
             /** @description 任务负责人（A23 · Push 136：一位也可、可多位）：数组顺序 = 展示顺序；**空数组 = 「待分配」**（合法中间状态，沿用 A18）；与 ownerNames 同下标一一对应 */
             ownerIds: components["schemas"]["Uuid"][];
-            /** @description 本条任务的项目经理（至少一位、可多位）：数组顺序 = 展示顺序；新建缺省继承项目当前经理，行内修改只影响本条任务；项目卡片展示所有有效任务经理的去重并集 */
+            /** @description 项目级项目经理快照（至少一位、可多位）：唯一可编辑来源是 projects.manager_ids，同项目所有任务一致；任务表行内 / 抽屉与项目弹窗修改都按项目级替换，并同步全部任务，不产生任务级经理身份 */
             managerIds: components["schemas"]["Uuid"][];
             status: components["schemas"]["TaskBaseStatus"];
             displayStatus: components["schemas"]["TaskDisplayStatus"];
@@ -12944,8 +12944,6 @@ export interface components {
             sourceNodeId?: components["schemas"]["Uuid"] & unknown;
             /** @description 任务负责人：缺省 / 显式 [] = 「待分配」（**2026-09-24 业务口径修订**：任务添加后负责人默认为空 —— 不再兜底项目经理）；传数组 = 整体设置（≤ 200 位），数组顺序 = 展示顺序 */
             ownerIds?: components["schemas"]["Uuid"][];
-            /** @description 本条任务的项目经理（至少一位、≤ 200 位）：缺省 = 当前项目项目经理名单；传数组 = 整体替换，仅影响本条任务 */
-            managerIds?: components["schemas"]["Uuid"][];
             plannedStart?: components["schemas"]["DateOnly"] & (string | null);
             plannedEnd?: components["schemas"]["DateOnly"] & (string | null);
             estimatedDays?: number | null;
@@ -12993,7 +12991,7 @@ export interface components {
         TaskDetail: components["schemas"]["Task"] & {
             /** @description 负责人姓名数组：与 ownerIds 同下标一一对应；「待分配」= 空数组 */
             ownerNames: (string | null)[];
-            /** @description 本条任务的项目经理姓名数组：与 managerIds 同下标一一对应 */
+            /** @description 当前项目的项目经理姓名数组：与 managerIds 同下标一一对应，同项目所有任务一致 */
             managerNames: (string | null)[];
             files: components["schemas"]["TaskFileBrief"][];
             capabilities?: components["schemas"]["TaskCapabilities"] & unknown;
@@ -13037,7 +13035,7 @@ export interface components {
         TaskListItem: components["schemas"]["Task"] & {
             /** @description 负责人姓名数组（users.display_name 随行下发，与 ownerIds 同下标一一对应）；「待分配」= 空数组；某位取不到姓名时该位为 null（前端显示「—」） */
             ownerNames: (string | null)[];
-            /** @description 本条任务的项目经理姓名数组（与 managerIds 同下标一一对应；取不到姓名时该位为 null） */
+            /** @description 当前项目的项目经理姓名数组（与 managerIds 同下标一一对应；同项目所有任务一致；取不到姓名时该位为 null） */
             managerNames: (string | null)[];
             fileSummary: components["schemas"]["TaskFileSummary"];
             capabilities?: components["schemas"]["TaskCapabilities"];
@@ -13194,7 +13192,7 @@ export interface components {
             titleEn?: string | null;
             /** @description 任务负责人（A23 · Push 136）：不传 = 不改；显式 [] = 置空为「待分配」（卡片拖进「待分配」列）；传数组 = 整体替换（≤ 200 位）、顺序 = 展示顺序 */
             ownerIds?: components["schemas"]["Uuid"][];
-            /** @description 本条任务的项目经理：不传 = 不改；传数组 = 整体替换（至少一位）；只影响本条任务，其他任务行不变 */
+            /** @description 项目级项目经理：不传 = 不改；传数组 = 整体替换（至少一位），仅项目编辑者可修改。任务表行内 / 抽屉与项目弹窗共用此名单，修改会同步同项目全部任务；任务负责人只能浏览 */
             managerIds?: components["schemas"]["Uuid"][];
             /** @description 组内位次（A19 / A20 · Push 124）：把任务移到该组第 N 位（0 起，越界 = 组尾）—— 同组其余任务位次顺延；不传 = 不动顺序 */
             sortIndex?: number;

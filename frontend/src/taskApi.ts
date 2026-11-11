@@ -253,7 +253,6 @@ export type TaskCreateInput = {
   /** 来源任务节点库节点（task_nodes；M3-07 刀 3）—— 描述 / 英文名 / 阶段取节点现值，与 taskNodeId 二选一。 */
   sourceNodeId?: string;
   ownerIds?: string[];
-  managerIds?: string[];
   plannedStart?: string | null;
   plannedEnd?: string | null;
   estimatedDays?: number | null;
@@ -298,6 +297,7 @@ export type TaskUpdateInput = {
   /** 任务描述（英文；Push 196）：同 title；null = 清空。 */
   titleEn?: string | null;
   ownerIds?: string[];
+  /** 当前项目的项目经理 id：修改即项目级经理变更，同步全部任务。 */
   managerIds?: string[];
   sortIndex?: number;
   status?: string;

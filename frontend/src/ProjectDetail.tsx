@@ -110,7 +110,7 @@ type ProjectDetailProps = {
   members: readonly Member[];
   /** 项目经理候选（有效项目部成员 ∪ 系统管理员）：项目经理列 / 抽屉项目经理字段专用。 */
   managerMembers: readonly Member[];
-  /** 任务级项目经理在任务编辑 / 行内直接 PATCH 当前任务，不再回写项目级名单。 */
+  /** 项目经理是项目级字段：任务编辑 / 行内的入口与项目弹窗共用，修改会同步全部任务。 */
   /** 任务字段被编辑（按口径刷新项目时间 updatedAt）。 */
   onTaskEdited?: (projectId: string) => void;
   /** 任务表列显隐（A4 · Push 170）：服务端偏好里的隐藏列 key；null / 缺省 = 尚未取到（先用页面默认列）。 */
@@ -131,6 +131,8 @@ export default function ProjectDetail({ me, project, view, dailySub, focus, onCl
   const t = useT();
   const activeView = VIEW_TABS.find((tab) => VIEW_KEYS[tab] === view) ?? VIEW_TABS[0];
   const projectId = project?.id ?? null;
+  /** 项目经理名单签名：项目弹窗改经理后触发任务整表重取，保证任务行与项目卡即时一致。 */
+  const projectManagerSignature = project?.managerIds.join("\u0000") ?? "";
   /** 项目级写入口只看最终项目权限；所管项目经理为 edit，项目成员 / 任务负责人关系只保证浏览。 */
   const projectEditable = !readOnly && project?.accessLevel === "edit";
   /** 任务级写入口即使项目只读也要下传，由每条任务的 capabilities 再逐项裁决。 */
@@ -155,6 +157,7 @@ export default function ProjectDetail({ me, project, view, dailySub, focus, onCl
   const [summary, setSummary] = useState<ApiProjectSummary | null>(null);
   /** 取数版本号：换项目、或新建 / 删除 / 排序 / 版本冲突后需要整表重取时 +1。 */
   const [dataVersion, setDataVersion] = useState(0);
+  const projectManagerSignatureRef = useRef<string | null>(null);
   const [dataLoading, setDataLoading] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
   /** 待确认删除的任务行（Push 264 追订 · 业务口径「任务行内删除无二次确认」）：第一下只开顶部确认 Toast，第二下才真删。 */
@@ -307,6 +310,16 @@ export default function ProjectDetail({ me, project, view, dailySub, focus, onCl
   const reloadAll = () => {
     setDataVersion((previous) => previous + 1);
   };
+
+  useEffect(() => {
+    if (projectManagerSignatureRef.current === null) {
+      projectManagerSignatureRef.current = projectManagerSignature;
+      return;
+    }
+    if (projectManagerSignatureRef.current === projectManagerSignature) return;
+    projectManagerSignatureRef.current = projectManagerSignature;
+    reloadAll();
+  }, [projectManagerSignature]);
 
   useLiveRefresh(["tasks", "projects", "files", "templates", "permissions", "users"], async () => {
     if (projectId === null) return () => {};
@@ -673,12 +686,12 @@ export default function ProjectDetail({ me, project, view, dailySub, focus, onCl
     }
   };
 
-  /** 任务详情抽屉保存：项目经理与其余任务字段走同一任务 PATCH，只影响当前任务。 */
+  /** 任务详情抽屉保存：项目经理变化会同步项目级经理与全部任务，其余字段仍只写当前任务。 */
   const handleSubmitTaskEdit = async (values: TaskEditSubmit): Promise<number | null> => {
     if (project === null) {
       return null;
     }
-    return handlePatchTask(values.taskId, {
+    const version = await handlePatchTask(values.taskId, {
       managerIds: values.managerChanged ? values.managerIds : undefined,
       ownerIds: values.ownerIds,
       startDate: values.startDate,
@@ -689,6 +702,8 @@ export default function ProjectDetail({ me, project, view, dailySub, focus, onCl
       deliverableTypes: values.deliverableTypes,
       note: values.note,
     }, values.version);
+    if (version !== null && values.managerChanged) reloadAll();
+    return version;
   };
 
   /**
@@ -699,9 +714,12 @@ export default function ProjectDetail({ me, project, view, dailySub, focus, onCl
     handlePatchTask(taskId, { title, titleEn });
   };
 
-  /** 表格行内改「项目经理」：只 PATCH 当前任务，同项目其他任务行保持不变。 */
+  /** 表格行内改「项目经理」：项目级经理变更，成功后整表重取，全部任务行同步。 */
   const handleBoardManagerChange = (taskId: string, nextManagerIds: string[]) => {
-    void handlePatchTask(taskId, { managerIds: nextManagerIds });
+    void (async () => {
+      const version = await handlePatchTask(taskId, { managerIds: nextManagerIds });
+      if (version !== null) reloadAll();
+    })();
   };
 
   /** 任务表行内删除第一下（Push 141 / A25；Push 264 追订加二次确认 · 业务口径「任务行内删除无二次确认」）：只挂起这一行，第二下在顶部确认 Toast 上。

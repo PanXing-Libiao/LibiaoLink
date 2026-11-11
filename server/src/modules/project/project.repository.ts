@@ -246,10 +246,10 @@ export class ProjectRepository {
   }
 
   /**
-   * 项目编辑弹窗全局改派项目经理：只同步未定档的有效任务，保持行展示与项目卡并集一致。
-   * 已定档任务禁止任何修改（TASK_FINALIZED），任务 version 同事务前进避免旧版本覆盖行内字段。
+   * 项目级经理变更：同步本项目全部有效任务的项目经理展示快照。
+   * 未定档任务推进 version，避免旧版行内编辑覆盖；已定档任务只更新展示快照，不推进 version。
    */
-  async replaceActiveTaskManagerIds(
+  async syncProjectManagersToTasks(
     projectId: string,
     managerIds: string[],
     at: Date,
@@ -259,6 +259,10 @@ export class ProjectRepository {
       .update(tasks)
       .set({ managerIds, version: sql`${tasks.version} + 1`, updatedAt: at })
       .where(and(eq(tasks.projectId, projectId), isNull(tasks.deletedAt), isNull(tasks.finalizedAt)));
+    await client
+      .update(tasks)
+      .set({ managerIds })
+      .where(and(eq(tasks.projectId, projectId), isNull(tasks.deletedAt), isNotNull(tasks.finalizedAt)));
   }
 
   async updateWithVersion(

@@ -31,6 +31,7 @@ const TASK_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const TASK_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const TASK_C = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const GONE = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+const DEFAULT_MANAGER = "00000000-0000-4000-8000-000000000001";
 
 interface OutboxRow {
   topic: string;
@@ -63,7 +64,7 @@ function makeRow(id: string, overrides: Partial<TaskRow> = {}): TaskRow {
     taskNodeId: null,
     title: "任务 " + id.slice(0, 8),
     titleEn: null,
-    managerIds: ["00000000-0000-4000-8000-000000000001"],
+    managerIds: [DEFAULT_MANAGER],
     ownerIds: [],
     status: "pending",
     statusOverride: null,
@@ -97,7 +98,7 @@ class FakeTaskRepository {
     return { total: 0, done: 0, deliveryReady: 0 };
   }
 
-  project: TaskProjectRow = { id: PROJECT, managerIds: [], stageKey: "install", status: "active" };
+  project: TaskProjectRow = { id: PROJECT, managerIds: [DEFAULT_MANAGER], stageKey: "install", status: "active" };
   tasks = new Map<string, TaskRow>();
   events: TaskEventInput[] = [];
   touched: string[] = [];
@@ -140,6 +141,20 @@ class FakeTaskRepository {
     this.events.push(...events);
   }
   async syncProjectManagerIdsFromTasks(_projectId: string, _at: Date): Promise<void> {}
+  async replaceProjectManagersExceptTask(
+    projectId: string,
+    taskId: string,
+    managerIds: string[],
+    at: Date,
+  ): Promise<void> {
+    this.project = { ...this.project, managerIds: [...managerIds] };
+    for (const [id, row] of this.tasks) {
+      if (id === taskId || row.projectId !== projectId || row.deletedAt !== null) continue;
+      this.tasks.set(id, row.finalizedAt === null
+        ? { ...row, managerIds: [...managerIds], version: row.version + 1, updatedAt: at }
+        : { ...row, managerIds: [...managerIds] });
+    }
+  }
   async touchProject(projectId: string): Promise<void> {
     this.touched.push(projectId);
   }
@@ -360,16 +375,26 @@ describe("M3-04 · 任务批量操作（A1-08）", () => {
   });
 });
 
-describe("任务级项目经理", () => {
-  it("行内改一条任务经理只影响当前任务，其他任务保持原名单", async () => {
+describe("项目级项目经理", () => {
+  it("任务表改经理同步项目名单与全部任务；已定档任务只更新展示快照、不推进 version", async () => {
     const repo = new FakeTaskRepository();
-    const { service } = makeService(repo);
+    const finalizedAt = new Date("2026-11-10T00:00:00Z");
+    repo.tasks.set(TASK_B, makeRow(TASK_B, { managerIds: [DEFAULT_MANAGER], version: 7, finalizedAt }));
+    const { service, audit } = makeService(repo);
     const manager = "66666666-6666-4666-8666-666666666666";
 
     const updated = await service.update(PROJECT, TASK_A, { managerIds: [manager], version: 3 }, ACTOR);
 
     expect(updated.managerIds).toEqual([manager]);
+    expect(repo.project.managerIds).toEqual([manager]);
     expect(repo.tasks.get(TASK_A)?.managerIds).toEqual([manager]);
-    expect(repo.tasks.get(TASK_B)?.managerIds).toEqual(["00000000-0000-4000-8000-000000000001"]);
+    expect(repo.tasks.get(TASK_A)?.version).toBe(4);
+    expect(repo.tasks.get(TASK_B)?.managerIds).toEqual([manager]);
+    expect(repo.tasks.get(TASK_B)?.version).toBe(7);
+    expect(audit.entries).toContainEqual(expect.objectContaining({
+      objectType: "project",
+      summary: "修改项目级项目经理（任务表入口）",
+      metadata: { entry: "task_managers", scope: "project" },
+    }));
   });
 });
