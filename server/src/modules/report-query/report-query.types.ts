@@ -1,5 +1,12 @@
+/** 日报查询主题取值；集中定义，避免查询主题被误认作 outbox 主题字面量。 */
+export const reportQueryTopics = {
+  reports: "reports",
+  issues: "issues",
+  both: "both",
+} as const;
+
 /** 日报查询主题：日报、问题或两者。 */
-export type ReportQueryTopic = "reports" | "issues" | "both";
+export type ReportQueryTopic = (typeof reportQueryTopics)[keyof typeof reportQueryTopics];
 
 /** 解析后的命令；项目为空仅允许群聊使用群绑定项目。 */
 export interface ReportQueryCommand {

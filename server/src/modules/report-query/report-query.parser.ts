@@ -1,8 +1,9 @@
-import type {
-  ReportQueryCommand,
-  ReportQueryParseOptions,
-  ReportQueryParseResult,
-  ReportQueryTopic,
+import {
+  reportQueryTopics,
+  type ReportQueryCommand,
+  type ReportQueryParseOptions,
+  type ReportQueryParseResult,
+  type ReportQueryTopic,
 } from "./report-query.types.js";
 
 /** 命令关键词；查询候选 = 去除 @ 提及后的正文以“查询”开头。 */
@@ -10,9 +11,9 @@ const QUERY_KEYWORD = "查询";
 
 /** 主题按最长优先匹配，避免“日报和问题”被识别成“日报”。 */
 const TOPICS: ReadonlyArray<{ label: string; topic: ReportQueryTopic }> = [
-  { label: "日报和问题", topic: "both" },
-  { label: "问题", topic: "issues" },
-  { label: "日报", topic: "reports" },
+  { label: "日报和问题", topic: reportQueryTopics.both },
+  { label: "问题", topic: reportQueryTopics.issues },
+  { label: "日报", topic: reportQueryTopics.reports },
 ];
 
 /**
@@ -136,11 +137,11 @@ function parseDatePrefix(text: string, today: string): DatePrefixParseResult {
 
 function parseTopic(text: string): { topic: ReportQueryTopic; rest: string } {
   const input = text.trim();
-  if (input === "") return { topic: "both", rest: "" };
+  if (input === "") return { topic: reportQueryTopics.both, rest: "" };
   for (const item of TOPICS) {
     if (input === item.label) return { topic: item.topic, rest: "" };
   }
-  return { topic: "both", rest: input };
+  return { topic: reportQueryTopics.both, rest: input };
 }
 
 /**
