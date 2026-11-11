@@ -95,7 +95,7 @@ export {
   shanghaiDayStart,
   shanghaiMinuteOfDay,
 } from "./notify.delivery.js";
-export { truncateUtf8Bytes } from "./wecom.text.js";
+export { applyMarkdownHardBreaks, truncateUtf8Bytes } from "./wecom.text.js";
 export type { DeliveryDecision, QuietHours } from "./notify.delivery.js";
 export {
   classifyWecomErrcode,
