@@ -1,3 +1,4 @@
+using CSMath.Geometry;
 using System.Collections;
 using System.Diagnostics;
 using System.Reflection;
@@ -147,11 +148,13 @@ static class Program
             _=>new[]{0.0,0.0}
         }).ToArray();
     }
-    static Row Poly(IEnumerable<XYZ> values, bool closed=false)
+    static Row Poly(IEnumerable<XYZ> values, bool closed=false, bool displayPoints=false)
     {
         var pts=values.ToArray(); int n=closed?pts.Length:pts.Length-1;
-        return R(("type","polyline"),("points",pts.Select(P).ToArray()),("closed",closed),
+        var geometry=R(("type","polyline"),("points",pts.Select(P).ToArray()),("closed",closed),
                  ("bulges",Enumerable.Repeat(0.0,Math.Max(0,n)).ToArray()),("widths",Enumerable.Range(0,Math.Max(0,n)).Select(_=>new[]{0.0,0.0}).ToArray()));
+        if (archiveCurves != null) geometry["viewPolyline"] = displayPoints ? "paired" : "zeros";
+        return geometry;
     }
     // Multi-chain presentation: the buffer holds already-paired segments, so the
     // viewer's non-indexed 'lines' pair stepping sees every element chain.
@@ -675,13 +678,15 @@ static class Program
                         ("points",polyline.Vertices.Select(v=>new[]{v.Location[0],v.Location[1],polyline.Elevation}).ToArray()),
                         ("bulges",polyline.Vertices.Take(polySegments).Select(v=>v.Bulge).ToArray()),
                         ("widths",polyWidths.Take(polySegments).ToArray()));
+                    if (archiveCurves != null && Array.TrueForAll((double[])polyGeometry["bulges"]!, b => BitConverter.DoubleToInt64Bits(b) == 0))
+                        polyGeometry["viewPolyline"]="zeroBulges";
                 } else {
                     if(e is LwPolyline or Polyline2D) {
                         var ocs=Matrix4.GetArbitraryAxis(polyline.Normal);
                         polyPoints=polyPoints.Select(p=>ocs*new XYZ(p.X,p.Y,polyline.Elevation)).ToList();
                     }
                     if(polyline.IsClosed) polyPoints=Closed(polyPoints);
-                    polyGeometry=Poly(polyPoints);
+                    polyGeometry=Poly(polyPoints,displayPoints:true);
                 }
                 if(polyline.IsClosed) polyPoints=Closed(polyPoints);
                 EntityRow(e,space,id,polyGeometry,polyPoints,local:polyLocal,original:original);
@@ -704,7 +709,7 @@ static class Program
             case Hatch hatch:
                 MapHatch(hatch,space,id);return;
             case Leader leader:
-                EntityRow(e,space,id,Poly(leader.Vertices),leader.Vertices,original:original);
+                EntityRow(e,space,id,Poly(leader.Vertices,displayPoints:true),leader.Vertices,original:original);
                 LeaderArrow(e,space,id,leader,original);return;
             case Wipeout wipeout:
                 WipeoutMask(e,space,id,wipeout,original);return;
@@ -828,6 +833,39 @@ static class Program
         if(edges.Count>0)DisplayPairs(stroke,entity,edges);
         Emit("meshPresentations",id,new{sourceKind=entity.ObjectName,fill,stroke=edges.Count>0?stroke:null,faceCount,triangleCount=triangles.Count/3,hiddenEdges,subdivision,sourceRefs=Refs(entity)});
     }
+    // A pattern probes the same boundary repeatedly. Keep the native segments for this fill only.
+    sealed class PatternPolyline(Hatch.BoundaryPath.Polyline source) : Hatch.BoundaryPath.Polyline(source.Vertices, source.IsClosed)
+    {
+        CSMath.Geometry.Segment2D[]? segments;
+        public override IEnumerable<XY> FindIntersections(CSMath.Geometry.Line2D line)
+        {
+            segments ??= ((Polyline2D)source.ToEntity()).Explode().Cast<Line>().Select(edge => {
+                var s = edge.ToSegment3D();
+                return new CSMath.Geometry.Segment2D(s.Origin.Convert<XY>(), s.End.Convert<XY>());
+            }).ToArray();
+            foreach (var segment in segments)
+                if (segment.TryFindIntersection(line, out XY point)) yield return point;
+        }
+    }
+    // ACadSharp samples an elliptic edge at precision 256 for every intersection query.
+    // Retain those same points, including the original closing segment, for this fill.
+    sealed class PatternEllipse : Hatch.BoundaryPath.Ellipse
+    {
+        XY[]? points;
+        public PatternEllipse(Hatch.BoundaryPath.Ellipse edge)
+        {
+            Center=edge.Center; MajorAxisEndPoint=edge.MajorAxisEndPoint; RadiusRatio=edge.RadiusRatio;
+            StartAngle=edge.StartAngle; EndAngle=edge.EndAngle; CounterClockWise=edge.CounterClockWise;
+        }
+        public override IEnumerable<XY> FindIntersections(Line2D line)
+        {
+            points ??= PolygonalVertexes(256).Select(p=>p.Convert<XY>()).ToArray();
+            for (int i=0; i<points.Length; i++) {
+                var seg=new Segment2D(points[i], points[i+1==points.Length ? 0 : i+1]);
+                if (seg.TryFindIntersection(line,out XY p)) yield return p;
+            }
+        }
+    }
     static void MapHatch(Hatch hatch,string space,string id)
     {
         Emit("hatchSemantics",id,new{pattern=hatch.Pattern.Name,hatch.IsSolid,hatch.PatternAngle,hatch.PatternScale,hatch.Style,
@@ -839,7 +877,7 @@ static class Program
         var boundaryIds=new List<string>(); var rings=new List<double[][]>(); int n=0;
         foreach(int index in selected) {
             var pts=localRings[index].Select(p=>basis.ApplyTransform(p)).ToList(); string child=id+"-boundary-"+n++;
-            EntityRow(hatch,space,child,Poly(pts),pts); boundaryIds.Add(child); rings.Add(pts.Select(P).ToArray());
+            EntityRow(hatch,space,child,Poly(pts,displayPoints:true),pts); boundaryIds.Add(child); rings.Add(pts.Select(P).ToArray());
             Emit("entityState",child,R(("visible",false)));
         }
         EntityRow(hatch,space,id,R(("type","hatch"),("boundaryEntityIds",boundaryIds),("fillRule","even-odd")),null);
@@ -850,7 +888,14 @@ static class Program
         else if(hatch.IsSolid) Emit("fills",id,new {rings,fillRule="even-odd"});
         else {
             var patternHatch=new Hatch { Pattern=hatch.Pattern };
-            foreach(int index in selected)patternHatch.Paths.Add(hatch.Paths[index]);
+            foreach (int index in selected) {
+                var path = hatch.Paths[index];
+                if (path.Edges.Count == 1 && path.Edges[0] is Hatch.BoundaryPath.Polyline p && !p.HasBulge)
+                    path = new Hatch.BoundaryPath(new Hatch.BoundaryPath.Edge[]{new PatternPolyline(p)}) { Entities=path.Entities, Flags=path.Flags };
+                else if (path.Edges.Count == 1 && path.Edges[0] is Hatch.BoundaryPath.Ellipse ellipse)
+                    path = new Hatch.BoundaryPath(new Hatch.BoundaryPath.Edge[]{new PatternEllipse(ellipse)}) { Entities=path.Entities, Flags=path.Flags };
+                patternHatch.Paths.Add(path);
+            }
             long offset = positions.BaseStream.Position;
             int count = 0;
             double[] min = [double.PositiveInfinity, double.PositiveInfinity, double.PositiveInfinity];

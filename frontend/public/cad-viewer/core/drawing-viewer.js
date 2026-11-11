@@ -27,10 +27,42 @@ const createStrokeGPU = gpuModules?.[1].createStrokeGPU;
 const createStrokeTilePlanner = gpuModules?.[2].createStrokeTilePlanner;
 const ACCENT = '#d9426f';
 
+function lazyField(object, key, load) {
+  Object.defineProperty(object, key, {enumerable:true, configurable:true, get() {
+    const value = load();
+    Object.defineProperty(object, key, {value, enumerable:true, writable:true, configurable:true});
+    return value;
+  }});
+}
+
 export function mountDrawingViewer(envelope) {
   window.__cadTimingMark?.("drawingViewerMountStart");
   const viewerStarted = performance.now();
   const ucd = envelope.document, drawing = ucd.drawing, presentation = envelope.presentation;
+  function bindPolylineFields() {
+    // The worker has finished transferring tables and the binary buffers are hydrated.
+    const bytes = bufferBytes('buffer-0');
+    for (const [id, hint] of envelope.polylineFields) {
+      const entity = drawing.entities[id], geometry = entity.geometry;
+      let pointCount;
+      if (hint === 'paired') {
+        const [offset, count] = envelope.displayRows[entity.displayRepresentationId];
+        const xyz = new Float64Array(bytes.buffer, bytes.byteOffset + offset, count * 3);
+        pointCount = count / 2 + 1;
+        lazyField(geometry, 'points', () => Array.from({length:pointCount}, (_, index) => {
+          // Paired line segments are p0,p1, p1,p2, ... . Take the end of each segment.
+          const at = index === 0 ? 0 : (2 * index - 1) * 3;
+          return [xyz[at], xyz[at + 1], xyz[at + 2]];
+        }));
+      } else {
+        pointCount = geometry.points.length;
+      }
+      const segments = Math.max(0, geometry.closed ? pointCount : pointCount - 1);
+      lazyField(geometry, 'bulges', () => Array(segments).fill(0));
+      if (hint !== 'zeroBulges') lazyField(geometry, 'widths', () => Array.from({length:segments}, () => [0,0]));
+    }
+    delete envelope.polylineFields;
+  }
   const styleExt = (ucd.extensions && ucd.extensions['org.cad-preview.style-inheritance/1']) || {};
   const coverageExt = (ucd.extensions && ucd.extensions['org.cad-preview.drawing-coverage/1']) || {};
   const annotationItems = ucd.extensions?.['org.cad-preview.annotation-presentation/1']?.items || {};
@@ -320,6 +352,7 @@ export function mountDrawingViewer(envelope) {
     }
     return bytes;
   }
+  if (envelope.polylineFields) bindPolylineFields();
   function accessorView(id) {
     const a = ucd.accessors[id];
     if (!a) throw new Error('missing accessor ' + id);
