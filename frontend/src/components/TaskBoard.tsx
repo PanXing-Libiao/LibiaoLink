@@ -9,6 +9,7 @@ import { fieldText, isLocalizedLocale, mdText, priorityText, stageText, statusTe
 import { InlineDateCell, InlineMemberMultiCell, InlineNumberCell, InlineOptionCell, InlineTextCell } from "./InlineEdit";
 import type { SelectOption } from "./SelectMenu";
 import { TaskChangesPopover } from "./TaskChangesPopover";
+import { ProjectChangesPopover } from "./ProjectChangesPopover";
 import { TaskDrawer } from "./TaskDrawer";
 import type { TaskEditSubmit } from "./TaskDrawer";
 import { TaskFilesPopover } from "./TaskFilesPopover";
@@ -396,8 +397,6 @@ type TaskBoardProps = {
   filesByTask?: ReadonlyMap<string, TaskFileRef[]>;
   /** 任务详情接口所需（抽屉里的文件清单按它取详情）；不传 = 抽屉不拉清单。 */
   projectId?: string;
-  /** 行内「变更关联」气泡底部的「查看全部变更」入口；不传 = 不显示该入口。 */
-  onOpenChangeRecords?: (taskId?: string | null) => void;
 };
 
 function Chevron({ collapsed }: { collapsed: boolean }) {
@@ -420,7 +419,7 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
  *  （onSetStatus）/ 紧急重要度与成果文件与进展描述（onPatch）/ 「文件」列下拉（onUploadFiles + onDeleteFile）/
  *  三段日期与人数（onPatch）；天数不单开编辑（随日期联动写回，与项目页同口径）。点行 = onSelect（开抽屉）；**onSelect 不传 = 整行不可点**（不出「点击查看任务详情」提示、不出 pointer 光标、不占键盘 Tab 焦点；行内各列仍按回调照常只读 / 可编辑 —— 甘特图「画不出时间轴」的兜底列表这样用，Push 294）。
  *  subtitle 缺省 = 英文名小行（项目页口径）；工作台传「阶段 / 临时任务 · 英文名」保持自己那张表的副行。 */
-export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, canFinalize = false, members, managerMembers = members, customDeliverableTypes = [], onCreateDeliverableType, onSetStatus, onSetActualEnd, onChangeManagers, canEditManagers, onPatch, onUploadFiles, onDeleteFile, files, tierTint, subtitle, onOpenAllChanges }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect?: () => void; onProgress?: (progress: number) => void; onDelete?: () => void; canFinalize?: boolean; members: readonly Member[]; managerMembers?: readonly Member[]; customDeliverableTypes?: readonly string[]; onCreateDeliverableType?: (name: string) => Promise<string | null>; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (taskId: string, managerIds: string[]) => void; canEditManagers?: boolean; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; tierTint?: TintedTier | false; subtitle?: string; onOpenAllChanges?: (() => void) | null }) {
+export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, canFinalize = false, members, managerMembers = members, customDeliverableTypes = [], onCreateDeliverableType, onSetStatus, onSetActualEnd, onChangeManagers, canEditManagers, onPatch, onUploadFiles, onDeleteFile, files, tierTint, subtitle }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect?: () => void; onProgress?: (progress: number) => void; onDelete?: () => void; canFinalize?: boolean; members: readonly Member[]; managerMembers?: readonly Member[]; customDeliverableTypes?: readonly string[]; onCreateDeliverableType?: (name: string) => Promise<string | null>; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (taskId: string, managerIds: string[]) => void; canEditManagers?: boolean; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; tierTint?: TintedTier | false; subtitle?: string }) {
   const locale = useLocale();
   const t = useT();
   /** 手打内容机翻显示（业务口径 2026-10-13「因为页面有些内容是手打的 我建议是提前后台机翻」）：
@@ -824,7 +823,7 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
       </span>
     ),
     change: task.changes.length === 0 ? null : (
-      <TaskChangesPopover task={task} members={members} onOpenAllChanges={onOpenAllChanges} onOpenLinkedTask={onSelect} />
+      <TaskChangesPopover task={task} members={members} onOpenLinkedTask={onSelect} />
     ),
   };
 
@@ -922,7 +921,7 @@ export function ProjectSummary({ summary }: { summary: ApiProjectSummary | null 
   );
 }
 
-export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgress, onSetStatus, onSetActualEnd, members, managerMembers, customDeliverableTypes = [], onCreateDeliverableType, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, canEditManagers, canFinalizeTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, filesByTask, projectId, tierTint, onOpenChangeRecords }: TaskBoardProps) {
+export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgress, onSetStatus, onSetActualEnd, members, managerMembers, customDeliverableTypes = [], onCreateDeliverableType, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, canEditManagers, canFinalizeTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, filesByTask, projectId, tierTint }: TaskBoardProps) {
   const t = useT();
   const locale = useLocale();
   /**
@@ -1157,7 +1156,16 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
           style={{ gridTemplateColumns: gridTemplate, minWidth: minWidth }}
         >
             {columns.map((column) =>
-              column.key === "title" ? (
+              column.key === "change" ? (
+                <span key={column.key} data-column={column.key} className="flex min-w-0 items-center justify-center self-stretch px-1">
+                  <ProjectChangesPopover
+                    tasks={tasks}
+                    members={members}
+                    projectId={projectId}
+                    onOpenTask={(taskId) => { setSelectedTaskId(taskId); }}
+                  />
+                </span>
+              ) : column.key === "title" ? (
                 <span key={column.key} data-column={column.key} className="flex min-w-0 items-center gap-2.5">
                   <span className="truncate">{column.header ?? fieldText(locale, column.label)}</span>
                   <button
@@ -1322,7 +1330,6 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
                         onUploadFiles={onUploadFiles}
                         onDeleteFile={onDeleteFile}
                         files={filesByTask?.get(task.id)}
-                        onOpenAllChanges={onOpenChangeRecords === undefined ? undefined : () => { onOpenChangeRecords(task.id); }}
                       />
                     ))}
                   </div>
