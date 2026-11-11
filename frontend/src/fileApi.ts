@@ -92,6 +92,8 @@ export type OnlyOfficePreviewViewerConfig = {
 export type CadNameCodepage = "UTF8" | "GB";
 
 export type CadPreviewViewerConfig = {
+  /** Browser click time, including the preview request and queue. */
+  openedAt?: number;
   kind: "cad";
   format: "STEP" | "DXF" | "DWG";
   sourceName: string;
@@ -826,11 +828,14 @@ export function ensurePreviewOutcome(fileId: string, versionId?: string): Promis
   const key = previewCacheKey(fileId, versionId);
   const cached = previewUrls.get(key);
   if (cached !== undefined && !stalePreviews.has(key) && (previewExpires.get(key) ?? 0) > Date.now()) return Promise.resolve({ kind: "url", url: cached });
-  const pending = previewLoading.get(key);
-  if (pending !== undefined) return pending;
-  const promise = readPreviewOutcome(fileId, versionId).finally(() => previewLoading.delete(key));
-  previewLoading.set(key, promise);
-  return promise;
+  const openedAt = performance.timeOrigin + performance.now();
+  let pending = previewLoading.get(key);
+  if (!pending) {
+    pending = readPreviewOutcome(fileId, versionId).finally(() => previewLoading.delete(key));
+    previewLoading.set(key, pending);
+  }
+  return pending.then(outcome => outcome.kind === "viewer" && outcome.viewer.kind === "cad"
+    ? { ...outcome, viewer: { ...outcome.viewer, openedAt } } : outcome);
 }
 
 /** 预览端点：`recordView` 只在用户真正点开某个图片 / 文件时追加；缩略图一律省略。 */

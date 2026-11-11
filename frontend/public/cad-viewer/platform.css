@@ -102,9 +102,8 @@ aside:has(#productTree:not([hidden])) #tree { display: none; }
 .progress-track progress:indeterminate { opacity: 0; }
 .progress-indicator { display: none; position: absolute; inset: 0 auto 0 0; width: 35%; background: #258296; border-radius: 3px; animation: import-progress 1.8s ease-in-out infinite; }
 progress:indeterminate + .progress-indicator { display: block; }
-.import-time strong { font-size: 13px; font-weight: 500; color: #405967; }
 .import-time > span { font-size: 11px; color: #728592; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.import-basis { margin: 8px 0 24px; text-align: left; font-size: 11px; color: #7b8e9a; }
+.import-time { margin-bottom: 24px; }
 #cancelLoad { min-width: 94px; color: #607786; background: transparent; border-color: #cbd9e0; }
 body:not([data-cad-state="loading"]) .import-overlay { display: none; }
 body[data-cad-state="loading"] .viewlabel, body[data-cad-state="loading"] .hint { visibility: hidden; }
@@ -156,7 +155,6 @@ body[data-cad-state="unsupported"] #error { width: min(500px, 100%); max-width: 
   .import-steps li { gap: 4px; font-size: 10px; }
   .import-steps li:not(:last-child)::after { width: 12px; margin-left: 5px; }
   .import-progress-head, .import-time { gap: 8px; }
-  .import-time strong { font-size: 12px; }
   .import-progress-head > span { font-size: 10px; }
   #error { max-width: calc(100% - 32px); margin-top: 44px; }
 }
