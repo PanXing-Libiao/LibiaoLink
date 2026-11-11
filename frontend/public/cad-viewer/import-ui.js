@@ -95,7 +95,12 @@ export class ImportUI {
     this.bytes = job.sourceByteLength;
     this.artifactBytes = Number.isSafeInteger(job.artifactBytes) && job.artifactBytes > 0 ? job.artifactBytes : this.artifactBytes;
     this.reused = Boolean(reused);
-    this.update(1, job.state === 'queued' ? '正在排队，等待处理' : phaseText[job.phase] || '正在处理模型', { queued: job.state === 'queued' });
+    const behindDrawing = job.phase === 'waiting-for-drawing';
+    const queued = behindDrawing || job.state === 'queued' || job.phase === 'queue-entered';
+    const text = behindDrawing ? '前面有图纸正在处理，轮到这张图时会自动转换并显示。'
+      : queued ? '正在等待开始转换' : phaseText[job.phase] || '正在处理模型';
+    this.update(1, text, { queued });
+    return text;
   }
   downloading(total, { reset = true } = {}) {
     const measured = Number.isSafeInteger(total) && total > 0;

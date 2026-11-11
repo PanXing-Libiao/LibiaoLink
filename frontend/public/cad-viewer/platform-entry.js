@@ -4,7 +4,7 @@ import {LoadPhases} from "./core/load-phases.js";
 import {hydrateBinary} from './core/binary-transport.js';
 import {missingFaceManifest} from './core/nonmeshable-ui.js';
 import {repairManifest} from './core/mesh-repair-ui.js';
-import {ImportUI} from './import-ui.js?v=cad-0.21.13';
+import {ImportUI} from './import-ui.js?v=cad-0.21.14';
 import {trackResponse} from './import-progress.js?v=cad-0.21.13';
 
 const query=new URLSearchParams(location.search);
@@ -340,9 +340,8 @@ loadPlatformModel(async({signal,progress,mark,record})=>{
     while(!['completed','partial'].includes(currentJob.state) && !(allowDisplay && format==='DWG' && currentJob.phase==='vector-available')){
      if(['failed','cancelled','timed-out'].includes(currentJob.state))throw new Error(failureMessage(currentJob));
      if(!['queued','running'].includes(currentJob.state))throw new Error('模型任务状态无效');
-     progress(currentJob.state==='queued'?'正在排队处理模型…':'正在处理模型…');
-     phases.phase(currentJob.state==="queued"?"queued":currentJob.phase==="persisting"?"persisting":"processing");
-     ui.job(currentJob,{reused:reusedJob});
+     phases.phase(currentJob.state==="queued"||currentJob.phase==="waiting-for-drawing"||currentJob.phase==="queue-entered"?"queued":currentJob.phase==="persisting"?"persisting":"processing");
+     progress(ui.job(currentJob,{reused:reusedJob}));
      await delay(active);currentJob=await requestJson(jobBase,{signal:active});
     }
     const staging=currentJob.phase==="vector-available";
