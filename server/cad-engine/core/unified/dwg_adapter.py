@@ -518,6 +518,32 @@ def _native_records(path):
             yield from _decode_record_batch(lines)
 
 
+def _compact_display_polylines(view_tables, polyline_hints, displays, special):
+    packed_view = view_tables['packed']
+    view_fields = []
+    for row in packed_view['entities']:
+        key = packed_view['strings'][row[0]]
+        hint = polyline_hints.get(key)
+        if not hint:
+            continue
+        geometry = row[12].copy()  # The archive still owns the complete geometry.
+        if hint == 'paired':
+            display = displays.get(key)
+            if (key not in special and display and display['topology'] == 'lines'
+                    and display['count'] > 0 and display['count'] == 2 * (len(geometry['points']) - 1)):
+                del geometry['points']
+            else:
+                hint = 'zeros'
+        del geometry['bulges']
+        if hint != 'zeroBulges':
+            del geometry['widths']
+        row[12] = geometry
+        view_fields.append([key, hint])
+    if view_fields:
+        packed_view['polylineFields'] = view_fields
+    return bool(view_fields)
+
+
 def assemble_native(folder, original, output, platform=False, binary_dir=None, packed=False, font_files=None, resource_loader=None, logical_path=None, display_lease=None):
     started=time.perf_counter()
     def phase(name):print(f'DWG UCD {name}: {time.perf_counter()-started:.3f}s',file=sys.stderr,flush=True)
@@ -556,6 +582,7 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
     displays = {}
     early = display_lease is not None and platform and packed and resource_loader is None
     curves, curve_styles, curve_pens, gap_styles = {}, [], [], set()
+    polyline_hints = {}
     entity_order = display_order = None
     for row in _native_records(folder/'ucd-records.jsonl'):
         if isinstance(row, list):
@@ -590,6 +617,8 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
             curve_styles.append(style)
             continue
         table, key, value = row['table'], row['id'], row['value']
+        if table == 'entities' and (hint := value['geometry'].pop('viewPolyline', None)) and early:
+            polyline_hints[key] = hint
         if entity_order is not None:
             if table == 'entities': entity_order.append(key)
             elif table == 'displays': display_order.append(key)
@@ -632,6 +661,8 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
             boundary_id=key+'-solid-boundary'
             boundary={**row,'id':boundary_id}
             drawing['entities'][boundary_id]=boundary
+            if hint := polyline_hints.pop(key, None):
+                polyline_hints[boundary_id] = hint
             drawing['spaces'][row['ownerSpaceId']]['entityIds'].append(boundary_id)
             extras.setdefault('entityState',{})[boundary_id]={'visible':False}
             row['geometry']={'type':'hatch','boundaryEntityIds':[boundary_id],'fillRule':'even-odd'}
@@ -945,6 +976,7 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
         saved_buffer = Path(binary_dir)/(bid+'.bin')
         saved_buffer.write_bytes(buffer_bytes)
         view_tables = pack_document(doc, ((k,r) for k,r in displays.items() if k not in special))
+        compact_polylines = bool(polyline_hints) and _compact_display_polylines(view_tables, polyline_hints, displays, special)
         if curves:
             # Only draw inputs cross the early boundary; bounds and exact parameters stay with the archive.
             view_tables['packed']['curvePens'] = curve_pens
@@ -992,6 +1024,7 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
             drawing['entities'] = {k:drawing['entities'][k] for k in entity_order} | drawing['entities']
             displays = {k:displays[k] for k in display_order if k in displays} | displays
             del entity_order, display_order, inheritance
+        if curve_styles or compact_polylines:
             archive_wire = compress_document(pack_document(doc, ((k,r) for k,r in displays.items() if k not in special)))
         for key, row in displays.items():
             if key not in special:
@@ -1011,7 +1044,7 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
         revision = doc['revision']
         doc = drawing = extras = buffer_bytes = None
         # Load after releasing the archival graph (the snapshot is already sealed).
-        if curve_styles:
+        if curve_styles or compact_polylines:
             doc = archive_wire
         else:
             with view_path.open('rb') as stream:
