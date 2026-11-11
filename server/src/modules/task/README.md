@@ -1,6 +1,8 @@
+> **2026-11-10 Pro 逐人权限（无迁移）**：任务列表 / 详情随行 `capabilities`（`level` / `source` / `canEditFields` / `canUpdateProgress` / `canComplete` / `canFinalize` / `canUpload` / `canAssignOwners` / `canDelete`）。项目编辑者（管理员、所管本项目的项目经理、规则 `edit`）拥有整个项目任务；当前任务负责人只能编辑本人任务普通字段、进度、完成、定档和本人任务文件，不能改负责人 / 排序 / 删除 / 批量 / 新建。单任务编辑 / 进度 / 完成 / 定档在服务层逐任务裁决；创建 / 模板创建 / 批量 / 删除仍要求项目最终 `accessLevel=edit`。项目成员关系只保证浏览；任务负责人关系只提升本人任务。能力字段缺失时前端按只读处理。
+
 # task 模块（h4 · S6·task：任务主表 / 五态派生 + 显式覆盖 / 进度聚合 / 完成门禁 / 批量操作 / 软删 / 锁定字段例外调整 / 节点库来源与模板实例化（M3-07 刀 3））
 
-> **2026-11-06 全站自定义输出成果类型（跨线代记，请 wmj 复核）**：`deliverableTypes` 接受内置十类之外的 1–50 字名称（不含英文逗号 / 换行）；服务端 trim、去空、首次出现保序去重，最多 20 项。候选名称由项目项目经理经 `POST /api/v1/projects/{id}/deliverable-types` 写入全站 `deliverableType` 字典，完成门禁、工作台读面与文件 `doc_type` 同步保留自定义值；数据库迁移 0082 移除内置十类 CHECK，0083 登记全站字典类型。
+> **2026-11-06 全站自定义输出成果类型（跨线代记，请 wmj 复核）**：`deliverableTypes` 接受内置十类之外的 1–50 字名称（不含英文逗号 / 换行）；服务端 trim、去空、首次出现保序去重，最多 20 项。候选名称由项目编辑者经 `POST /api/v1/projects/{id}/deliverable-types` 写入全站 `deliverableType` 字典，完成门禁、工作台读面与文件 `doc_type` 同步保留自定义值；数据库迁移 0082 移除内置十类 CHECK，0083 登记全站字典类型。
 
 | 字段 | 内容 |
 |---|---|
@@ -61,7 +63,7 @@
 
 > 口径来源：系统功能书 A1-08（批量指派 / 改状态 / 改日期 / 批量完成）；一次请求 = 同一组变更应用到 1~100 个任务。
 
-- 端点与权限：`PATCH /projects/{id}/tasks/batch`（注册在 `PATCH …/{taskId}` 之前，否则 batch 会被当作任务 id 命中）；权限键 `task.update`（项目内成员平权）；归档项目入口 409 `PROJECT_ARCHIVED`。
+- 端点与权限：`PATCH /projects/{id}/tasks/batch`（注册在 `PATCH …/{taskId}` 之前，否则 batch 会被当作任务 id 命中）；权限键 `task.update`（仅项目最终 `accessLevel=edit`；任务负责人不能用批量入口）；归档项目入口 409 `PROJECT_ARCHIVED`。
 - 变更白名单 `TaskBatchChanges`：`ownerIds` / `status`（基础三态，done = 批量完成，走同一完成门禁）/ `plannedStart` / `plannedEnd` / `estimatedDays` / `headcount` / `priority` / `note`；语义与单条编辑一致（null = 清空、缺键 = 不改）；不含任务描述（A1-17 生成后锁定）与 `sortIndex`（成果文件自 2026-10-08 起可走单条编辑、不在本批量白名单）（顺序是「插入位置」的逐条语义）；全空 changes 400 `VALIDATION_FAILED`。
 - 执行模型：`ids` 去重后按首次出现顺序**逐条独立事务**（避免长事务与整体回滚），复用单条写入内核 `applyUpdate`（锁行 → 校验 → 状态联动 → 完成门禁 → 落库 + 事件 + outbox + touch + 审计）；响应 `{ total, succeededCount, failedCount, succeeded[], failures[] }`。
 - 部分失败（条目级可预期错误降级，整体 200）：`not_found`（不存在 / 不属于该项目）/ `archived` / `gate_not_passed`（带 `missing[]`，与完成门禁同形）/ `already_done`（批量完成遇已完成条目，不重复写）/ `version_conflict` / `invalid_state`（其它 4xx）；非 AppError 照旧抛出（500）。
@@ -132,7 +134,7 @@
 
 ## 边界与后续（差异登记）
 
-- 已随 h6 落地：读路由记录级 404（不可见项目 / 跨项目任务统一 404）、写路由功能权限位（`task.create` / `task.update` / `task.progress` —— 项目内成员对这三项平权，见 `modules/permission/README.md`）；手工创建仅管理员的口径随 A1-13 复核；此处「管理员」与锁定字段例外调整统一指部门权限管理员 `groupAccessAdmin`，不再读取遗留 `roleCodes`；
+- 已随 h6 落地：读路由记录级 404（不可见项目 / 跨项目任务统一 404）、写路由功能权限位（`task.create` / 批量 / 删除要求项目编辑；单条 `task.update` / `task.progress` / 完成 / 定档由逐任务能力裁决，见 `modules/permission/README.md`）；手工创建仅管理员的口径随 A1-13 复核；此处「管理员」与锁定字段例外调整统一指部门权限管理员 `groupAccessAdmin`，不再读取遗留 `roleCodes`；
 - M3-07 刀 1 后半（前端接线）不在本模块：前端 `taskApi.ts` 接线与服务端零改动；刀 2（门禁三入口 / 批量 failures 消费）已随 M3-03 / M3-04 落地，**刀 3（添加任务模板化）已落 Push 183**；只剩快筛参数待后续切片。
 - 不在本卡（Push 152 后更新）：列表快捷筛选参数、门禁增强 M3-04 ~ M3-06（**M3-03 已落 Push 143**：`deliverableTypes` 多值 + 完成门禁；**M3-04 批量操作已落 Push 150**：批量指派 / 改状态 / 改期 / 批量完成 + 部分失败清单；**M3-05 软删已落 Push 152**：`DELETE …/tasks/{taskId}` + 统一 404 + 位次压缩；**锁定字段例外调整已落 Push 153**：仅管理员可执行（非管理员 403）/ 原因必填并留痕（审计 + outbox）/ 空调整 400 / 阶段性里程一期无列；模板实例化与快筛随 M3-05 其余切片、1 万行压测随 M3-06）；
 - A1-17 差异登记（Push 153）：系统功能书锁定字段含「阶段性里程」，一期 `tasks` 表无该列（A1-17 映射修订），本期只开放任务描述 / 英文描述 / 输出成果文件三项；里程碑列落地后再开；

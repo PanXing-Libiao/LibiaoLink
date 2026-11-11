@@ -39,13 +39,13 @@ export type MyPermissions = {
   pageKeys: GroupAccessPage[];
   groupAccessEnforced: boolean;
   groupAccessAdmin: boolean;
-  /** 兼容摘要：所有范围均无编辑权限时为 true；写入口以项目 groupAccessLevel / 能力布尔值为准。 */
+  /** 兼容摘要：所有范围均无编辑权限时为 true；写入口以Project.accessLevel / 能力布尔值为准。 */
   groupReadOnly: boolean;
   /** 部门项目权限三态：allowed 正常进入 / empty 无可见项目 / denied 仅登录。 */
   groupProjectAccess: GroupProjectAccess;
   /** 命中的项目范围并集，用于空态说明当前权限。 */
   groupProjectScopes: GroupAccessProjectScope[];
-  /** 兼容摘要：任一范围可编辑 = edit；项目级写权限以项目 groupAccessLevel 为准。 */
+  /** 兼容摘要：任一范围可编辑 = edit；项目级写权限以Project.accessLevel 为准。 */
   groupAccessLevel: GroupAccessLevel;
   /** 多范围权限，同一范围取最高权限。 */
   groupScopePermissions: GroupAccessScopePermission[];

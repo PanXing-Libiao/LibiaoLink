@@ -11,7 +11,7 @@
 
 - 契约 `shared/src/modules/stakeholders.ts`（tags=stakeholders）：`StakeholderSchema` / `StakeholderCreateBodySchema` / `StakeholderUpdateBodySchema` / `StakeholderListQuerySchema` / `StakeholderListResponseSchema` / `StakeholderProjectLinkBodySchema` / `StakeholderDeleteResponseSchema`；`AUDIT_OBJECT_TYPES` 增 `stakeholder`。OpenAPI 7 条路由：GET / POST `/api/v1/stakeholders`、GET / PATCH / DELETE `/api/v1/stakeholders/{stakeholderId}`、POST `/api/v1/stakeholders/{stakeholderId}/projects`、DELETE `/api/v1/stakeholders/{stakeholderId}/projects/{projectId}`。
 - 数据面（迁移 0019 + 0042）：`stakeholders`（全库台账，不挂项目）+ `project_stakeholders`（多对多）。台账字段 = name / company_type（四值 libiao / supplier / general_contractor / customer）/ company / title / phone / wechat / email / remark / role（干系人角色 · Push 225 代做 wmj 线增列）+ created_by（录入人）+ created_at / updated_at + 软删 deleted_at / deleted_by。
-- 四层：`stakeholder.controller.ts`（7 条路由；SessionGuard + CsrfGuard + ProjectAccessGuard；读 `stakeholder.view`；写由服务层叠加 `stakeholder.manage` 与目标项目 `groupAccessLevel=edit`；POST 201）、`stakeholder.service.ts`（用例 + 记录级 404 + 字段级裁剪 + 项目级写权限 + 审计）、`stakeholder.repository.ts`（列表 / 详情 / 增删改 / 关联 / 批量反查项目；restricted 空集短路）、`stakeholder.rules.ts`（stakeholderVisibility / buildStakeholderFilter / parseStakeholderSort / matchesKeyword，纯函数）。
+- 四层：`stakeholder.controller.ts`（7 条路由；SessionGuard + CsrfGuard + ProjectAccessGuard；读 `stakeholder.view`；写由服务层叠加 `stakeholder.manage` 与目标项目最终 `accessLevel=edit`；POST 201）、`stakeholder.service.ts`（用例 + 记录级 404 + 字段级裁剪 + 项目级写权限 + 审计）、`stakeholder.repository.ts`（列表 / 详情 / 增删改 / 关联 / 批量反查项目；restricted 空集短路）、`stakeholder.rules.ts`（stakeholderVisibility / buildStakeholderFilter / parseStakeholderSort / matchesKeyword，纯函数）。
 
 ## 口径（四条硬约束）
 

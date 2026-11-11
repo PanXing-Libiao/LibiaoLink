@@ -42,13 +42,13 @@ type HomeProps = {
   dictTools: DictTools;
   /** 是否持有 dict.manage（Push 172）：决定「＋ 添加项目类型」与两类条目删除入口的呈现。 */
   canManageDicts: boolean;
-  /** 是否持有 project.delete：功能位门槛；卡片再叠加当前项目的 groupAccessLevel === "edit"（服务端仍是最终裁决）。 */
+  /** 是否持有 project.delete：功能位门槛；卡片再叠加当前项目的 accessLevel === "edit"（服务端仍是最终裁决）。 */
   canDeleteProject: boolean;
   /** 是否具备新建项目能力（功能位 + 全部 / 自己的项目编辑）：无权限时「新建项目」出禁用观感、点击给提示条。 */
   canCreateProject: boolean;
-  /** 是否持有 project.update：功能位门槛；卡片再叠加当前项目的 groupAccessLevel === "edit"（服务端仍是最终裁决）。 */
+  /** 是否持有 project.update：功能位门槛；卡片再叠加当前项目的 accessLevel === "edit"（服务端仍是最终裁决）。 */
   canUpdateProject: boolean;
-  /** 是否持有 project.export：无权限时卡片导出入口不渲染（服务端仍是最终裁决）。 */
+  /** 是否持有 project.export：无权限时卡片导出入口不渲染；卡片再叠加当前项目的 accessLevel === "edit"（服务端仍是最终裁决）。 */
   canExportProject: boolean;
   /** 导出项目数据（xlsx / Excel+附件 zip；App 层调下载接口、持忙碌态并在失败时出全局提示）。 */
   onExportProject: (project: Project, format: ProjectExportFormat) => void;
@@ -813,14 +813,14 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                 managerNames={projectManagerText(project)}
                 time={project.createdAt}
                 onEdit={
-                  canUpdateProject && project.groupAccessLevel === "edit"
+                  canUpdateProject && project.accessLevel === "edit"
                     ? () => {
                         onEdit(project);
                       }
                     : undefined
                 }
                 onExport={
-                  canExportProject
+                  canExportProject && project.accessLevel === "edit"
                     ? (format) => {
                         onExportProject(project, format);
                       }
@@ -828,7 +828,7 @@ export default function Home({ me, dicts, directory, dictTools, canManageDicts, 
                 }
                 exporting={exportingProjectId === project.id}
                 onDelete={
-                  canDeleteProject && project.groupAccessLevel === "edit"
+                  canDeleteProject && project.accessLevel === "edit"
                     ? () => {
                         onDeleteProject(project);
                       }

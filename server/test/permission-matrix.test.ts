@@ -19,6 +19,8 @@ import {
   exitsConsistent,
   hiddenFields,
   isProjectVisible,
+  isProjectEditor,
+  taskCapabilitiesOf,
   planExit,
   projectFields,
   projectScopeSpec,
@@ -327,6 +329,7 @@ class FakePermissionRepository {
   memberIds: string[] = [];
   ownedIds: string[] = [];
   managedRosterIds: string[] = [];
+  taskOwnerProjectIds: string[] = [];
   refs = new Map<string, { managerIds: string[]; deletedAt: Date | null }>();
   memberships = new Map<string, string>();
   groupKeys: string[] = [];
@@ -344,6 +347,18 @@ class FakePermissionRepository {
 
   async listManagedRosterProjectIds(): Promise<string[]> {
     return [...this.managedRosterIds];
+  }
+
+  async listTaskOwnerProjectIds(): Promise<string[]> {
+    return [...this.taskOwnerProjectIds];
+  }
+
+  async listRelatedProjectIds(): Promise<string[]> {
+    return [...new Set([...this.memberIds, ...this.ownedIds, ...this.managedRosterIds, ...this.taskOwnerProjectIds])];
+  }
+
+  async hasTaskOwnership(_actorId: string, projectId: string): Promise<boolean> {
+    return this.taskOwnerProjectIds.includes(projectId);
   }
 
   async listActiveProjectIds(projectIds: readonly string[]): Promise<string[]> {
@@ -444,7 +459,9 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
       projectId: PROJECT_ID,
       member: true,
       projectManager: true,
+      taskOwner: false,
       groupAccessLevel: "edit",
+      accessLevel: "edit",
     });
 
     const rosterOnly = new FakePermissionRepository();
@@ -455,7 +472,9 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
       projectId: PROJECT_ID,
       member: true,
       projectManager: false,
+      taskOwner: false,
       groupAccessLevel: "edit",
+      accessLevel: "edit",
     });
 
     const owner = new FakePermissionRepository();
@@ -465,7 +484,9 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
       projectId: PROJECT_ID,
       member: true,
       projectManager: true,
+      taskOwner: false,
       groupAccessLevel: "edit",
+      accessLevel: "edit",
     });
     // A22 · Push 136：multi-manager —— 责任人是第二位经理同样命中（任意一位）。
     const secondManager = new FakePermissionRepository();
@@ -475,7 +496,9 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
       projectId: PROJECT_ID,
       member: true,
       projectManager: true,
+      taskOwner: false,
       groupAccessLevel: "edit",
+      accessLevel: "edit",
     });
   });
 
@@ -572,5 +595,133 @@ describe("策略服务：M5-06 管理面仅系统管理员", () => {
       expect(await service.can(ACTOR_ID, key)).toBe(true);
     }
     expect((await service.permissionsOf(ACTOR_ID)).permissionKeys).toEqual([...PERMISSION_KEYS]);
+  });
+});
+
+// ---------- Pro 逐人权限：关系可见 / 任务级编辑 ----------
+
+describe("Pro 逐人权限：所管项目经理可编辑、成员只读、本人任务可编辑", () => {
+  const config = new AppConfig({
+    GROUP_ACCESS_ENFORCED: "true",
+    GROUP_ACCESS_ADMIN_GROUP_KEYS: "",
+    GROUP_ACCESS_ADMIN_USER_IDS: "",
+  } as Env);
+
+  it("任务负责人关系把项目并入可见集，但部门规则为 none 时仍是 view", async () => {
+    const repository = new FakePermissionRepository();
+    repository.refs.set(PROJECT_ID, { managerIds: [MANAGER_ID], deletedAt: null });
+    repository.taskOwnerProjectIds = [PROJECT_ID];
+    const { service } = makeService([actor({ permissionKeys: ["project.view", "task.view", "task.update"] })], repository, config);
+
+    expect(await service.projectScope(ACTOR_ID)).toEqual({ kind: "ids", ids: [PROJECT_ID] });
+    expect((await service.permissionsOf(ACTOR_ID)).groupProjectAccess).toBe("allowed");
+    expect(await service.resolveProjectAccess(ACTOR_ID, PROJECT_ID)).toEqual({
+      projectId: PROJECT_ID,
+      member: false,
+      projectManager: false,
+      taskOwner: true,
+      groupAccessLevel: null,
+      accessLevel: "view",
+    });
+  });
+
+  it("本项目项目经理即使没有部门编辑规则，也获得本项目编辑权", async () => {
+    const repository = new FakePermissionRepository();
+    repository.refs.set(PROJECT_ID, { managerIds: [ACTOR_ID], deletedAt: null });
+    const { service } = makeService([fullCapabilityAuthorization(ACTOR_ID)], repository, config);
+    const access = await service.assertProjectVisible(ACTOR_ID, PROJECT_ID);
+
+    expect(access).toMatchObject({ projectManager: true, groupAccessLevel: null, accessLevel: "edit" });
+    await service.assertCan(ACTOR_ID, "project.update", access);
+    await service.assertCan(ACTOR_ID, "project.export", access);
+  });
+
+  it("项目经理编辑权只限所管项目：非所管项目仍按规则只读", async () => {
+    const repository = new FakePermissionRepository();
+    repository.refs.set(PROJECT_ID, { managerIds: [ACTOR_ID], deletedAt: null });
+    repository.refs.set(OTHER_PROJECT, { managerIds: [MANAGER_ID], deletedAt: null });
+    repository.groupKeys = ["libiaorobot.com/项目部"];
+    repository.groupRules = [{
+      groupKey: "libiaorobot.com/项目部",
+      allowedPages: [],
+      scopePermissions: [{ projectScope: "all", accessLevel: "view" }],
+      projectScope: "all",
+      accessLevel: "view",
+      projectIds: [],
+      memberScope: "all",
+      memberUserIds: [],
+    }];
+    const { service } = makeService([fullCapabilityAuthorization(ACTOR_ID)], repository, config);
+
+    const managed = await service.assertProjectVisible(ACTOR_ID, PROJECT_ID);
+    const other = await service.assertProjectVisible(ACTOR_ID, OTHER_PROJECT);
+    expect(managed).toMatchObject({ projectManager: true, groupAccessLevel: "view", accessLevel: "edit" });
+    expect(other).toMatchObject({ projectManager: false, groupAccessLevel: "view", accessLevel: "view" });
+    await service.assertCan(ACTOR_ID, "project.update", managed);
+    await expectAppError(
+      () => service.assertCan(ACTOR_ID, "project.update", other, "非所管项目经理不能改项目"),
+      "FORBIDDEN",
+    );
+  });
+
+  it("名册 project_manager 同样获得本项目编辑；普通项目成员仍只读", async () => {
+    const managerRepository = new FakePermissionRepository();
+    managerRepository.refs.set(PROJECT_ID, { managerIds: [MANAGER_ID], deletedAt: null });
+    managerRepository.memberships.set(PROJECT_ID, "project_manager");
+    const managerService = makeService([fullCapabilityAuthorization(ACTOR_ID)], managerRepository, config).service;
+    expect(await managerService.assertProjectVisible(ACTOR_ID, PROJECT_ID)).toMatchObject({
+      projectManager: true,
+      groupAccessLevel: null,
+      accessLevel: "edit",
+    });
+
+    const memberRepository = new FakePermissionRepository();
+    memberRepository.refs.set(PROJECT_ID, { managerIds: [MANAGER_ID], deletedAt: null });
+    memberRepository.memberships.set(PROJECT_ID, "project_member");
+    const memberService = makeService([fullCapabilityAuthorization(ACTOR_ID)], memberRepository, config).service;
+    expect(await memberService.assertProjectVisible(ACTOR_ID, PROJECT_ID)).toMatchObject({
+      member: true,
+      projectManager: false,
+      groupAccessLevel: null,
+      accessLevel: "view",
+    });
+  });
+
+  it("任务能力：项目编辑者全开；任务负责人只开本人任务普通写口；旁观者只读", () => {
+    const editor = taskCapabilitiesOf(ACTOR_ID, { accessLevel: "edit" }, []);
+    expect(editor).toMatchObject({
+      level: "edit",
+      source: "project_edit",
+      canEditFields: true,
+      canAssignOwners: true,
+      canDelete: true,
+      canFinalize: true,
+    });
+
+    const owner = taskCapabilitiesOf(ACTOR_ID, { accessLevel: "view", groupAccessLevel: null }, [ACTOR_ID]);
+    expect(owner).toEqual({
+      level: "edit",
+      source: "task_owner",
+      canEditFields: true,
+      canUpdateProgress: true,
+      canComplete: true,
+      canFinalize: true,
+      canUpload: true,
+      canAssignOwners: false,
+      canDelete: false,
+    });
+
+    const viewer = taskCapabilitiesOf(ACTOR_ID, { accessLevel: "view", groupAccessLevel: null }, [MANAGER_ID]);
+    expect(viewer.level).toBe("view");
+    expect(viewer.source).toBe("view");
+    expect(viewer.canEditFields).toBe(false);
+    expect(viewer.canUpload).toBe(false);
+  });
+
+  it("isProjectEditor：accessLevel 优先，兼容旧 groupAccessLevel；关系本身永不提升", () => {
+    expect(isProjectEditor({ accessLevel: "edit" })).toBe(true);
+    expect(isProjectEditor({ groupAccessLevel: "edit" })).toBe(true);
+    expect(isProjectEditor({ accessLevel: "view", groupAccessLevel: "edit" })).toBe(false);
+    expect(isProjectEditor({ accessLevel: "view" })).toBe(false);
   });
 });

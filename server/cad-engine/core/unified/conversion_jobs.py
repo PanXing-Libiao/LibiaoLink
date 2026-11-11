@@ -67,7 +67,7 @@ class ConversionJobs:
         self.binary=os.environ.get('CAD_STEP_JOB_BINARY','1')!='0'
         self.compact=self.binary and os.environ.get('CAD_STEP_JOB_COMPACT','1')!='0'
         self.upload_reserved=0
-        self.lock=threading.RLock();self.active={};self.threads={};self.cancelled_requests={};self.closed=False;self.db_closed=False
+        self.lock=threading.RLock();self.active={};self.displays={};self.threads={};self.cancelled_requests={};self.closed=False;self.db_closed=False
         for name in ('sources','artifacts','buffers','temporary','logs'):(self.root/name).mkdir(parents=True,exist_ok=True)
         self.owner=(self.root/'owner.lock').open('a')
         try:fcntl.flock(self.owner,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -225,6 +225,23 @@ class ConversionJobs:
             row=self._get(jid)
             return self._public(row) if row else None
 
+    def display(self, namespace, jid=None, *, buffer=False, lease=None, sha256=None):
+        # Only the archive owner can address the one in-flight job. Clients
+        # choose neither paths nor filenames; the worker publishes by rename.
+        with self.lock:
+            entry = self.displays.get(namespace)
+            if entry is None:return None
+            job, folder, token = entry
+            if jid is not None and jid != job:return None
+            row = self._get(job)
+            if not row or row['state'] != 'running':return None
+            manifest = next((folder/'scratch'/'display').glob('*.json'), None)
+            if manifest is None:return None
+            if buffer and (lease != token or sha256 != manifest.stem):return None
+            path = folder/'buffers'/'buffer-0.bin' if buffer else manifest
+            try:return {'path':str(path), 'bytes':path.lstat().st_size}
+            except FileNotFoundError:return None
+
     def _artifact(self,row):
         sha=row.get('artifactSHA256');path=self.root/'artifacts'/(sha or 'missing')
         if sha and path.is_file():
@@ -285,7 +302,10 @@ class ConversionJobs:
         return bool(ids)
 
     def _run(self,jid):
-        started=time.perf_counter();gate=False;proc=None
+        started=time.perf_counter();gate=False;proc=None;row=None
+        timing_events={}
+        def timing(name):
+            if is_dwg:timing_events[name]=round((time.perf_counter()-started)*1000,3)
         def event(row,name):row['trace']['events'][name]=round((time.perf_counter()-started)*1000,3)
         def fail(state,code,message):
             with self.lock:
@@ -316,7 +336,11 @@ class ConversionJobs:
                 binary_dir=folder/'buffers';binary_dir.mkdir()
                 env=dict(os.environ);env.pop('CAD_BINARY_DIR',None);env.pop('CAD_PROFILE_STAGES',None)
                 scratch=folder/'scratch';scratch.mkdir();env['TMPDIR']=str(scratch)
+                env.pop('CAD_DWG_DISPLAY_LEASE',None)
                 if self.binary:env['CAD_BINARY_DIR']=str(binary_dir)
+                if self.binary and is_dwg and row.get('namespace') and not row.get('inputSHA256'):
+                    token = env['CAD_DWG_DISPLAY_LEASE'] = secrets.token_hex(24)
+                    with self.lock:self.displays[row['namespace']] = (jid,folder,token)
                 env.pop('CAD_COMPACT_METADATA',None)
                 if self.compact and not is_dxf and not is_dwg:env['CAD_COMPACT_METADATA']='1'
                 env['CAD_TRACE_FILE']=str(trace);env['CAD_TRACE_LIVE']='1'
@@ -378,12 +402,15 @@ class ConversionJobs:
                                     current=self._get(jid)
                                     if current['state']=='running' and current.get('workerTrace')!=progress:self._update(current,workerTrace=progress,phase=next(reversed(progress['events'])))
                         time.sleep(.2)
+                timing('workerExited')
                 if out.stat().st_size+sum(f.stat().st_size for f in binary_dir.iterdir())>result_limit:raise JobLimit('result output quota exceeded')
                 if time.perf_counter()-wall>worker_seconds:
                     fail('timed-out','job-timeout','转换超过后台任务计算预算');return
-                raw=out.read_bytes();envelope=json.loads(raw)
+                raw=out.read_bytes();timing('resultRead')
+                envelope=json.loads(raw);timing('resultDecoded')
                 with self.lock:
                     current=self._get(jid);event(current,'workerCompleted')
+                    current['trace']['events'].update(timing_events)
                     if current['state'] not in TERMINAL:
                         self._update(current,workerTrace=json.loads(trace.read_text()) if trace.exists() else None)
                 if proc.returncode or 'error' in envelope:
@@ -396,6 +423,7 @@ class ConversionJobs:
                 if document.get('packed'):
                     # Validate the reconstructed document, but store the packed wire form.
                     document=unpack_document(document);envelope={**envelope,'document':document}
+                timing('metadataExpanded')
                 sources=document['sources']
                 main=next((item for item in sources if item['sha256']==row['sourceSHA256'] and item['name']==row['name']),None)
                 expected_format='DWG' if is_dwg else 'DXF' if is_dxf else 'STEP'
@@ -425,17 +453,20 @@ class ConversionJobs:
                     for entry in entries:
                         b=definitions[entry['id']]
                         if entry['byteLength']!=b['byteLength'] or entry['sha256']!=b['sha256']:raise ValueError('worker buffer metadata mismatch')
-                    blobs=read_worker_buffers(binary_dir,entries)
-                    # Same schema, complete geometry and revision validation as base64.
-                    validate_binary_envelope(document,envelope['snapshot'],envelope.get('presentation',{}),blobs.__getitem__)
+                    blobs=read_worker_buffers(binary_dir,entries);timing('buffersRead')
+                    # Parent validation always checks the received identities;
+                    # adapter-side sealing never supplies a validation shortcut.
+                    validate_binary_envelope(document,envelope['snapshot'],envelope.get('presentation',{}),blobs.__getitem__,
+                        on_phase=(lambda phase:timing('validation'+''.join(word.title() for word in phase.split()))) if is_dwg else None)
                     # The worker manifest carries only relative buffer file names, never host
                     # paths. Persist its bytes verbatim so large drawings are not parsed and
                     # serialized a second time in the parent process.
                 else:validate_envelope(envelope)
-                sha=hashlib.sha256(raw).hexdigest()
+                sha=hashlib.sha256(raw).hexdigest();timing('manifestDigestChecked')
                 with self.lock:
                     current=self._get(jid)
                     if self.closed or current['state'] in TERMINAL:return
+                    current['trace']['events'].update(timing_events)
                     event(current,'validationCompleted')
                     unique={document['buffers'][bid]['sha256']:blob for bid,blob in blobs.items()}
                     stored=sum(f.stat().st_size for name in ('artifacts','buffers') for f in (self.root/name).iterdir())
@@ -446,6 +477,8 @@ class ConversionJobs:
                     for key,blob in unique.items():
                         temporary=binary_dir/'commit';temporary.write_bytes(blob)
                         temporary.replace(self.root/'buffers'/key)
+                    timing('buffersCommitted')
+                    current['trace']['events'].update(timing_events)
                     target=self.root/'artifacts'/sha;out.replace(target)
                     event(current,'artifactCommitted')
                     self._update(current,state='partial' if (is_dxf or is_dwg) and completeness=='partial' else 'completed',phase='verified-artifact',artifactSHA256=sha,
@@ -460,7 +493,11 @@ class ConversionJobs:
             if proc is not None and proc.stdin is not None and not proc.stdin.closed:
                 try:proc.stdin.close()
                 except (BrokenPipeError,OSError):pass
-            with self.lock:self.active.pop(jid,None);self.threads.pop(jid,None)
+            with self.lock:
+                self.active.pop(jid,None);self.threads.pop(jid,None)
+                namespace = row.get('namespace') if row else None
+                if namespace in self.displays and self.displays[namespace][0] == jid:
+                    del self.displays[namespace]
             if gate:self.gate.release()
 
     def close(self):

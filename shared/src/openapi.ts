@@ -350,7 +350,7 @@ export function buildOpenApiDocument() {
     method: "post",
     path: "/api/v1/projects/{id}/deliverable-types",
     tags: ["projects"],
-    summary: "新增全站自定义成果文件类型（仅当前项目项目经理；写入 deliverableType 全局字典，所有项目共享）",
+    summary: "新增全站自定义成果文件类型（仅当前项目编辑者；写入 deliverableType 全局字典，所有项目共享）",
     request: { params: idParams, body: json(ProjectDeliverableTypeCreateBodySchema) },
     responses: {
       201: { description: "创建成功（更新后的 deliverableType 字典）", ...json(DictSchema) },

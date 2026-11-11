@@ -190,7 +190,15 @@ function makeService(
     db as unknown as DatabaseService,
     repo as unknown as TaskRepository,
     gate as unknown as TaskGateRepository,
-    {} as unknown as PermissionService,
+    {
+      assertProjectVisible: async (_actorId: string, projectId: string) => ({
+        projectId,
+        member: true,
+        projectManager: true,
+        groupAccessLevel: "edit",
+        accessLevel: "edit",
+      }),
+    } as unknown as PermissionService,
     audit as unknown as AuditService,
     {} as unknown as TaskNodeRepository,
     {} as unknown as TemplateService,

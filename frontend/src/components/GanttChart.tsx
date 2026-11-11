@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 import type { Member } from "../data/members";
 import type { TintedTier } from "../backgroundTier";
 import { PROJECT_STAGES } from "../data/projects";
-import { PROGRESS_STEPS, TEMP_TASK_STAGE, daysBetweenInclusive, isCompleteStatus, isTaskDone, ownersLabel, type ProjectTask, type TaskStatus } from "../data/tasks";
+import { PROGRESS_STEPS, TEMP_TASK_STAGE, daysBetweenInclusive, isCompleteStatus, isTaskDone, ownersLabel, taskCapabilitiesOf, type ProjectTask, type TaskStatus } from "../data/tasks";
 import { SearchSelect, type SearchSelectItem } from "./MemberSelect";
 import { fieldText, isLocalizedLocale, mdText, monthShortText, monthYearText, stageText, statusText, textOf, useLocale, useLocalizedTranslator, useT, yearText } from "../i18n";
 import type { Locale } from "../i18n";
@@ -844,10 +844,13 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
   };
 
   /** 任务条提示：锁定时去掉拖动说明，换成解锁提示；解锁时沿用完整操作说明。 */
-  const barTitleOf = (bar: GanttBar): string =>
-    barsLocked
+  const barTitleOf = (bar: GanttBar): string => {
+    const capabilities = taskCapabilitiesOf(bar.task);
+    const permitted = bar.task.finalizedAt === null && capabilities.canEditFields;
+    return barsLocked || !permitted
       ? bar.label.split("\n").filter((line) => line !== t("gantt.tip.dragBar")).concat(t("gantt.lock.lockedTip")).join("\n")
       : bar.label;
+  };
 
   /**
    * 按下任务条（官方 taskBar.moveable / resizable / 进度圆点）：按按下的是哪一块决定这一拖改什么 ——
@@ -855,7 +858,10 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
    * 三种都只先改预览值，松手才写回；指针捕获失败也不影响（move / up 挂在条自己身上）。
    */
   const beginDrag = (event: ReactPointerEvent<HTMLElement>, bar: GanttBar, mode: GanttDragMode) => {
-    if (barsLocked) {
+    const capabilities = taskCapabilitiesOf(bar.task);
+    const permitted = bar.task.finalizedAt === null &&
+      (mode === "progress" ? capabilities.canUpdateProgress : capabilities.canEditFields);
+    if (barsLocked || !permitted) {
       event.stopPropagation();
       return;
     }
@@ -1618,8 +1624,12 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
     const dragging = live.dragging;
     const barHovered = hoveredBar === bar.task.id;
     const barTitle = barTitleOf(bar);
-    const barCursor = barsLocked ? "cursor-default" : dragging ? "cursor-grabbing" : "cursor-grab";
-    const showHandles = !barsLocked && (barHovered || dragging);
+    const capabilities = taskCapabilitiesOf(bar.task);
+    const canEditDates = !barsLocked && capabilities.canEditFields && bar.task.finalizedAt === null;
+    const canEditProgress = !barsLocked && capabilities.canUpdateProgress && bar.task.finalizedAt === null;
+    const barCursor = !canEditDates ? "cursor-default" : dragging ? "cursor-grabbing" : "cursor-grab";
+    const showHandles = canEditDates && (barHovered || dragging);
+    const showProgressHandle = canEditProgress && (barHovered || dragging);
     const percent = Math.round(live.percent);
     // 条内标签对齐官方 labelText「{title} {progress}%」：条够宽写全，窄条只写百分比、再窄就不写。
     const barLabel = box.width >= 84 ? ganttTitle(bar.task) + " " + String(percent) + "%" : String(percent) + "%";
@@ -1729,7 +1739,7 @@ export function GanttChart({ tasks, members, managers = "", tierTint = false, on
               />
             </>
           ) : null}
-          {showHandles && box.width >= 60 ? (
+          {showProgressHandle && box.width >= 60 ? (
             // 进度圆点 = 改进度（四档吸附）；左右各让开 6px，免得压住两端的改工期热区。
             <span
               className="absolute z-30 cursor-ew-resize rounded-full border border-zinc-400 bg-white shadow"

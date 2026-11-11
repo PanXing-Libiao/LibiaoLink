@@ -90,6 +90,77 @@ def build(args):
     replace_once(acad / 'src/ACadSharp/Entities/Hatch.cs',
                  "\tprivate bool isPointInsideByParity(XY point, double jitter = 1e-7)\n\t{\n\t\tLine2D ray = new Line2D(new XY(point.X, point.Y + jitter), XY.AxisX);\n\n\t\tList<double> hits = new();\n\t\tforeach (BoundaryPath boundary in this.Paths)\n\t\t{\n\t\t\tforeach (XY p in boundary.FindIntersections(ray))\n\t\t\t{\n\t\t\t\tif (p.X >= point.X - MathHelper.Epsilon)\n\t\t\t\t{\n\t\t\t\t\thits.Add(p.X);\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\n\t\tList<double> merged = mergeParameters(hits).ToList();\n\t\treturn merged.Count.IsOdd();\n\t}",
                  "\tprivate bool isPointInsideByParity(XY point, double jitter = 1e-7)\n\t{\n\t\tLine2D ray = new Line2D(new XY(point.X, point.Y + jitter), XY.AxisX);\n\n\t\tbool inside = false;\n\t\tforeach (BoundaryPath boundary in this.Paths)\n\t\t{\n\t\t\t// Coincident crossings cancel between loops; only deduplicate within one loop.\n\t\t\tList<double> hits = new();\n\t\t\tforeach (XY p in boundary.FindIntersections(ray))\n\t\t\t{\n\t\t\t\tif (p.X >= point.X - MathHelper.Epsilon)\n\t\t\t\t{\n\t\t\t\t\thits.Add(p.X);\n\t\t\t\t}\n\t\t\t}\n\t\t\tinside ^= mergeParameters(hits).Count().IsOdd();\n\t\t}\n\n\t\treturn inside;\n\t}")
+    # Keep ExplodePattern's Line API and let the DWG writer consume the same clipped endpoints.
+    hatch = acad / 'src/ACadSharp/Entities/Hatch.cs'
+    replace_once(hatch,
+                 """		List<Line> lines = new();
+
+		if (this.Pattern""",
+                 """		List<Line> lines = new();
+		VisitPatternSegments((start, end, isDot) =>
+		{
+			var line = new Line(start, end);
+			line.MatchProperties(this);
+			if (!isDot) line.LineType = Tables.LineType.Continuous;
+			lines.Add(line);
+		});
+		return lines;
+	}
+
+	/// <summary>Visit the endpoints of each clipped dash or dot in pattern order.</summary>
+	public void VisitPatternSegments(System.Action<XY, XY, bool> emit)
+	{
+		if (this.Pattern""")
+    replace_once(hatch,
+                 "\t\t\treturn lines;",
+                 "\t\t\treturn;")
+    replace_once(hatch,
+                 "lines.AddRange(emitDashedSegment(geomLine, tA, tB, patLine.DashLengths));",
+                 "emitDashedSegment(geomLine, tA, tB, patLine.DashLengths, emit);")
+    replace_once(hatch,
+                 """
+		return lines;
+	}
+
+	/// <inheritdoc/>""",
+                 """
+	}
+
+	/// <inheritdoc/>""")
+    replace_once(hatch,
+                 "private IEnumerable<Line> emitDashedSegment(Line2D line, double tStart, double tEnd, List<double> dashLengths)",
+                 "private void emitDashedSegment(Line2D line, double tStart, double tEnd, List<double> dashLengths, System.Action<XY, XY, bool> emit)")
+    replace_once(hatch,
+                 """var solid = new Line(line.PointInLine(tStart), line.PointInLine(tEnd));
+			solid.MatchProperties(this);
+			solid.LineType = Tables.LineType.Continuous;
+			return new Line[] { solid };""",
+                 """emit(line.PointInLine(tStart), line.PointInLine(tEnd), false);
+			return;""")
+    replace_once(hatch,
+                 "return Enumerable.Empty<Line>();",
+                 "return;")
+    replace_once(hatch,
+                 """		var result = new List<Line>();
+""",
+                 "")
+    replace_once(hatch,
+                 """var dot = new Line(line.PointInLine(cursor), line.PointInLine(cursor + MathHelper.Epsilon));
+					dot.MatchProperties(this);
+					result.Add(dot);""",
+                 "emit(line.PointInLine(cursor), line.PointInLine(cursor + MathHelper.Epsilon), true);")
+    replace_once(hatch,
+                 """var dash = new Line(line.PointInLine((double)cursor), line.PointInLine((double)(cursor + step)));
+				dash.MatchProperties(this);
+				dash.LineType = Tables.LineType.Continuous;
+				result.Add(dash);""",
+                 "emit(line.PointInLine(cursor), line.PointInLine(cursor + step), false);")
+    replace_once(hatch,
+                 """
+		return result;
+	}""",
+                 """
+	}""")
     config = work / 'NuGet.Config'
     config.write_text('<configuration><packageSources><clear /></packageSources></configuration>')
     env = dict(os.environ, DOTNET_CLI_TELEMETRY_OPTOUT='1', DOTNET_GENERATE_ASPNET_CERTIFICATE='false',

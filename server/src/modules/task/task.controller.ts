@@ -85,8 +85,9 @@ export class TaskController {
   list(
     @Param("id", uuidParam) id: string,
     @Query(new ZodValidationPipe(TaskListQuerySchema)) query: TaskListQuery,
+    @CurrentActorId() actorId: string,
   ): Promise<z.infer<typeof TaskListResponseSchema>> {
-    return this.tasks.list(id, query);
+    return this.tasks.list(id, query, actorId);
   }
 
   /** 任务详情：抽屉全字段 + 文件清单。 */
@@ -94,8 +95,9 @@ export class TaskController {
   detail(
     @Param("id", uuidParam) id: string,
     @Param("taskId", uuidParam) taskId: string,
+    @CurrentActorId() actorId: string,
   ): Promise<z.infer<typeof TaskDetailSchema>> {
-    return this.tasks.detail(id, taskId);
+    return this.tasks.detail(id, taskId, actorId);
   }
 
   /** 创建任务：从任务节点生成（判重 409 TASK_ALREADY_EXISTS）或手工创建（仅管理员）。 */
@@ -143,9 +145,8 @@ export class TaskController {
     return result;
   }
 
-  /** 编辑任务（乐观锁；status 基础三态同事务联动进度 / 完成日期；任务描述 / 成果文件锁定不在本接口）。 */
+  /** 编辑任务（乐观锁；项目编辑者或当前任务负责人在服务层逐任务裁决）。 */
   @Patch(":id/tasks/:taskId")
-  @RequirePermission("task.update")
   async update(
     @Param("id", uuidParam) id: string,
     @Param("taskId", uuidParam) taskId: string,
@@ -197,10 +198,9 @@ export class TaskController {
     return this.tasks.canComplete(id, taskId);
   }
 
-  /** 完成提交（M3-03 · A4-20）：事务内门禁；缺件 422 TASK_REQUIRED_DOC_MISSING（拒绝留痕）；未定档放行 + warning 并触发 R02。 */
+  /** 完成提交（M3-03 · A4-20）：项目编辑者或当前任务负责人；事务内门禁；缺件 422 TASK_REQUIRED_DOC_MISSING。 */
   @Post(":id/tasks/:taskId/complete")
   @HttpCode(200)
-  @RequirePermission("task.progress")
   async complete(
     @Param("id", uuidParam) id: string,
     @Param("taskId", uuidParam) taskId: string,
@@ -218,7 +218,6 @@ export class TaskController {
    */
   @Post(":id/tasks/:taskId/finalize")
   @HttpCode(200)
-  @RequirePermission("task.update")
   finalize(
     @Param("id", uuidParam) id: string,
     @Param("taskId", uuidParam) taskId: string,
@@ -234,7 +233,6 @@ export class TaskController {
    */
   @Post(":id/tasks/:taskId/unfinalize")
   @HttpCode(200)
-  @RequirePermission("task.update")
   unfinalize(
     @Param("id", uuidParam) id: string,
     @Param("taskId", uuidParam) taskId: string,
@@ -244,9 +242,8 @@ export class TaskController {
     return this.tasks.unfinalize(id, taskId, body, actorId);
   }
 
-  /** 更新四格进度（联动状态与完成日期；progress<1 清完成日期 —— 清除的唯一方式）。 */
+  /** 更新四格进度（项目编辑者或当前任务负责人；progress<1 清完成日期）。 */
   @Patch(":id/tasks/:taskId/progress")
-  @RequirePermission("task.progress")
   updateProgress(
     @Param("id", uuidParam) id: string,
     @Param("taskId", uuidParam) taskId: string,

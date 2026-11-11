@@ -61,6 +61,7 @@ export interface FileTaskReissueBriefRow {
   stageKey: string | null;
   nodeId: string | null;
   title: string;
+  ownerIds: string[];
   deletedAt: Date | null;
 }
 
@@ -302,6 +303,7 @@ export class FileRepository {
         stageKey: tasks.stageKey,
         nodeId: tasks.nodeId,
         title: tasks.title,
+        ownerIds: tasks.ownerIds,
         deletedAt: tasks.deletedAt,
       })
       .from(tasks)

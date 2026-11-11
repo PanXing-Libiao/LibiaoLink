@@ -8,13 +8,14 @@ from collections import Counter
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import struct
 import subprocess
 import sys
 import time
 
-from .validation import validate_binary_envelope
+from .validation import seal_binary_envelope
 from .canonical import canonical_sha256,write_canonical
 from .payload_sink import FileSink
 from .dwg_pack import pack_document, compress_document
@@ -33,7 +34,8 @@ def run_reader(dotnet, reader, source, native, stdout=subprocess.DEVNULL):
     """Native diagnostics flow to the job's bounded stderr log, never an unbounded pipe."""
     try:
         subprocess.run([dotnet, reader, str(source), str(native)], check=True,
-                       stdout=stdout, stderr=sys.stderr)
+                       stdout=stdout, stderr=sys.stderr,
+                       env={**os.environ, "DOTNET_TieredCompilation": "0"})
     except subprocess.CalledProcessError as error:
         raise RuntimeError(f'native DWG reader failed (exit {error.returncode}); see bounded worker log') from error
 
@@ -134,7 +136,7 @@ def add_polyline_width_displays(entities, displays, extras, buffer_bytes):
             'sourceKind':'POLYLINE', 'fill':parts.get('fill'), 'stroke':parts.get('stroke')}
 
 
-def add_short_linetype_displays(entities, line_types, displays, extras):
+def add_short_linetype_displays(entities, line_types, displays, extras, buffer=None):
     """A-type paths shorter than a complete pattern keep their full source stroke.
 
     Only fixed simple source linetypes are resolved here. Longer patterns and
@@ -165,7 +167,11 @@ def add_short_linetype_displays(entities, line_types, displays, extras):
         groups = [{49: p['length'] * (-1 if p['kind'] == 'gap' else 1)} for p in pattern]
         geometry = entity['geometry']
         if geometry['type'] == 'line':
-            paths = [math.dist(geometry['start'], geometry['end'])]
+            if geometry.get('displayOnly'):
+                points = struct.unpack_from('<6d', buffer, displays[key]['offset'])
+                paths = [math.dist(points[:3], points[3:])]
+            else:
+                paths = [math.dist(geometry['start'], geometry['end'])]
         elif geometry['type'] == 'polyline':
             native = extras.get('nativeGeometry', {}).get(key, {})
             if 'lineTypeContinuous' not in native or any(any(w) for w in geometry.get('widths', [])):
@@ -315,7 +321,7 @@ def native_block_clip(clip):
     return {'boundary':boundary, 'inverted':False}
 
 
-def source_display_coverage(drawing, displays, presentation_items, summary, native_fonts, fills=None, text_layouts=None, dimension_semantics=None):
+def source_display_coverage(drawing, displays, presentation_items, summary, native_fonts, fills=None, text_layouts=None, dimension_semantics=None, curves=()):
     """Account for every unique native source handle exactly once.
 
     Direct display rows, annotation presentation and block-instance indirection
@@ -329,11 +335,12 @@ def source_display_coverage(drawing, displays, presentation_items, summary, nati
     instance_rows = _table_by_source_handle(drawing.get("blockInstances"))
     dimension_rows = _table_by_source_handle(dimension_semantics)
     entity_handles = set(entity_rows)
+    entity_handles.update(row[0] for row in curves)
     annotation_handles = set(annotation_rows)
     instance_handles = set(instance_rows)
     source_handles = entity_handles | annotation_handles | instance_handles
 
-    direct_handles = set()
+    direct_handles = {row[0] for row in curves}
     for row in (displays or {}).values():
         handle = _source_handle(row)
         if handle is not None:
@@ -354,6 +361,8 @@ def source_display_coverage(drawing, displays, presentation_items, summary, nati
     for handle, row in entity_rows.items():
         space = row.get("ownerSpaceId")
         entity_handles_by_space.setdefault(space, set()).add(handle)
+    for row in curves:
+        entity_handles_by_space.setdefault(row[2], set()).add(row[0])
     annotation_handles_by_space = {}
     for handle, row in annotation_rows.items():
         space = row.get("ownerSpaceId")
@@ -467,7 +476,49 @@ def source_display_coverage(drawing, displays, presentation_items, summary, nati
     }
 
 
-def assemble_native(folder, original, output, platform=False, binary_dir=None, packed=False, font_files=None, resource_loader=None, logical_path=None):
+def _decode_record_batch(lines):
+    # NaN marks the physical line boundaries. If a line supplies that token
+    # itself, or the joined text doesn't preserve the boundaries, let the
+    # original per-line decoder deliver records and errors in order.
+    if len(lines) > 1 and not any('NaN' in line for line in lines):
+        try:
+            rows = json.loads('[' + ',NaN,'.join(lines) + ']')
+        except (ValueError, RecursionError):
+            pass
+        else:
+            if len(rows) == 2 * len(lines) - 1 and all(
+                type(mark) is float and math.isnan(mark) for mark in rows[1::2]
+            ):
+                yield from rows[::2]
+                return
+    yield from map(json.loads, lines)
+
+
+def _native_records(path):
+    # Use the text reader's universal line boundaries, retaining terminators
+    # so the byte budget includes CRLF. Oversized rows bypass the batch.
+    max_bytes = 512 * 1024
+    lines = []
+    size = 0
+    with path.open(newline='') as stream:
+        for line in stream:
+            length = len(line)
+            if length <= max_bytes and not line.isascii():
+                length = len(line.encode(stream.encoding))
+            if lines and (len(lines) == 512 or size + length > max_bytes):
+                yield from _decode_record_batch(lines)
+                lines.clear()
+                size = 0
+            if length > max_bytes:
+                yield json.loads(line)
+            else:
+                lines.append(line)
+                size += length
+        if lines:
+            yield from _decode_record_batch(lines)
+
+
+def assemble_native(folder, original, output, platform=False, binary_dir=None, packed=False, font_files=None, resource_loader=None, logical_path=None, display_lease=None):
     started=time.perf_counter()
     def phase(name):print(f'DWG UCD {name}: {time.perf_counter()-started:.3f}s',file=sys.stderr,flush=True)
     folder, output = Path(folder), Path(output)
@@ -503,9 +554,45 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
     drawing = doc['drawing']
     extras = {}
     displays = {}
-    for line in (folder/'ucd-records.jsonl').open():
-        row = json.loads(line)
+    early = display_lease is not None and platform and packed and resource_loader is None
+    curves, curve_styles, curve_pens, gap_styles = {}, [], [], set()
+    entity_order = display_order = None
+    for row in _native_records(folder/'ucd-records.jsonl'):
+        if isinstance(row, list):
+            handle, kind, space, layer, style, order, visible, scale, weight, color, rgb, offset, count, low, high = row
+            key = 'entity-' + handle
+            if entity_order is not None:
+                entity_order.append(key)
+                display_order.append(key)
+                if curve_pens[style] is None:
+                    curve_pens[style] = [curve_styles[style].copy(), {}, weight, color, rgb]
+                if kind != 'line' or style not in gap_styles:
+                    curves[key] = row
+                    continue
+            refs = [{'sourceId':sid,'objectKey':handle}]
+            drawing['entities'][key] = {'id':key,'drawingId':did,'ownerSpaceId':space,'layerId':layer,
+                'localFromOwner':IDENTITY,'geometry':{'type':kind,'displayOnly':True},'style':curve_styles[style].copy(),
+                'sourceRefs':refs,'displayOrder':order}
+            extras.setdefault('entityState',{})[key] = {'visible':visible,'lineTypeScale':scale,
+                'nativeLineWeight':weight,'drawOrder':order,'nativeColor':{'index':color,'trueColor':rgb}}
+            displays[key] = {'offset':offset,'count':count,'byteLength':count*24,'topology':'lines',
+                'min':low,'max':high,'sourceRefs':refs}
+            continue
+        if row['table'] == 'curveStyles':
+            style = row['value']
+            if early:
+                if entity_order is None:
+                    entity_order, display_order = list(drawing['entities']), list(displays)
+                line = drawing['lineTypes'].get(style.get('lineTypeId'), {})
+                if any(s['kind'] == 'gap' for s in line.get('segments', ())):
+                    gap_styles.add(len(curve_styles))
+                curve_pens.append(None)
+            curve_styles.append(style)
+            continue
         table, key, value = row['table'], row['id'], row['value']
+        if entity_order is not None:
+            if table == 'entities': entity_order.append(key)
+            elif table == 'displays': display_order.append(key)
         target = drawing[table] if table in drawing else displays if table=='displays' else extras.setdefault(table,{})
         # Native state updates intentionally refine one item (e.g. hidden hatch
         # boundary); other rows must never silently replace a source identity.
@@ -535,8 +622,10 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
             clip_losses.append({'code':str(error), 'message':'Source clip retained but not applied.',
                 'handle':drawing['blockInstances'][key]['sourceRefs'][0]['objectKey'], 'sourceType':'INSERT'})
     for table, member in [('entities','entityIds'),('annotations','annotationIds'),('blockInstances','blockInstanceIds')]:
-        for key,row in drawing[table].items():
-            drawing['spaces'][row['ownerSpaceId']][member].append(key)
+        keys = entity_order if table == 'entities' and entity_order is not None else drawing[table]
+        for key in keys:
+            space = curves[key][2] if table == 'entities' and key in curves else drawing[table][key]['ownerSpaceId']
+            drawing['spaces'][space][member].append(key)
     for key,fill in extras.get('fills',{}).items():
         row=drawing['entities'][key]
         if row['geometry']['type']=='polyline':
@@ -559,7 +648,21 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
     bid = 'buffer-0'
     # Reassembly starts at the native display extent, excluding previously appended derivatives.
     native_bytes = max((row['offset'] + row['byteLength'] for row in displays.values()), default=0)
-    buffer_bytes = bytearray(buffer_path.read_bytes()[:native_bytes])
+    if curves:
+        native_bytes = max(native_bytes, max(r[11]+24*r[12] for r in curves.values()))
+    # Read directly into the mutable buffer: the previous read_bytes()+slice+
+    # bytearray sequence held three full copies of the native geometry at once.
+    buffer_bytes = bytearray(native_bytes)
+    with buffer_path.open('rb') as stream:
+        view = memoryview(buffer_bytes)
+        try:
+            while view:
+                read = stream.readinto(view)
+                if not read:
+                    raise ValueError('native-buffer-short')
+                view = view[read:]
+        finally:
+            view.release()
     from .dwg_acis import reconstruct
     acis_rows,acis_errors,acis_bytes=reconstruct(folder,extras.get('opaque',{}),drawing['entities'])
     acis_handles=set()
@@ -581,14 +684,13 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
         doc['diagnostics'].append({'code':'native-acis-unavailable','severity':'warning','stage':'mapping',
             'message':reason,'sourceRefs':drawing['entities'][key]['sourceRefs']})
     add_polyline_width_displays(drawing['entities'], displays, extras, buffer_bytes)
-    add_short_linetype_displays(drawing['entities'], drawing['lineTypes'], displays, extras)
+    add_short_linetype_displays(drawing['entities'], drawing['lineTypes'], displays, extras, buffer_bytes)
     text_layouts = {}
     if font_files:
         from .dwg_text import add_text_displays
         text_layouts = add_text_displays(drawing['annotations'], displays, extras, buffer_bytes, font_files, logical_path)
         phase('original-font text laid out')
-    for key,row in displays.items():
-        row = trim_spline_origin_pair(row, drawing['entities'].get(key), buffer_bytes)
+    def expand_display(key, row):
         aid, gid = 'a-'+key, 'g-'+key
         doc['accessors'][aid] = {'bufferId':bid, 'byteOffset':row['offset'], 'byteLength':row['byteLength'],
             'component':'f64', 'components':3, 'count':row['count'], 'normalized':False}
@@ -598,6 +700,21 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
         rid = 'representation-'+digest([key])
         doc['representations'][rid] = {'id':rid, 'kind':'drawing', 'bindings':[{'id':'b','geometryId':gid,
             'localFromRepresentation':IDENTITY, 'materialSlots':{}}], 'sourceRefs':row['sourceRefs']}
+    special = set()
+    if early:
+        for meta in extras.get('meshPresentations', {}).values():
+            special.update(part['id'] for part in meta.get('textParts', []))
+            special.update((meta.get('fill'), meta.get('stroke')))
+    for key, row in displays.items():
+        row = trim_spline_origin_pair(row, drawing['entities'].get(key), buffer_bytes)
+        if early:
+            displays[key] = row
+            refs = row['sourceRefs']
+            if (key not in special and len(refs) == 1 and set(refs[0]) == {'sourceId','objectKey'}
+                    and refs[0]['sourceId'] == sid and isinstance(refs[0]['objectKey'], str)):
+                continue
+            special.add(key)
+        expand_display(key, row)
     mesh_items = {}
     for key, meta in extras.get('meshPresentations', {}).items():
         entity = drawing['entities'].get(key) or drawing['annotations'][key]
@@ -702,21 +819,29 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
     for key, state in extras.get('nativeLayerLineWeights',{}).items():
         if state['value'] == -3:
             drawing['layers'][key]['defaultStyle']['lineWeight'] = dict(default_weight)
+    def resolve_pen(style, weight):
+        mode = {}
+        if weight in (-1, -2):
+            mode['lineWeight'] = 'by-layer' if weight == -1 else 'by-block'
+        if weight == -3:
+            mode['lineWeight'] = 'default'
+            style['lineWeight'] = dict(default_weight)
+        lt = drawing['lineTypes'].get(style.get('lineTypeId'),{}).get('name','').upper()
+        if lt in ('BYLAYER','BYBLOCK'):
+            mode['lineType'] = 'by-layer' if lt=='BYLAYER' else 'by-block'
+            del style['lineTypeId']
+        return mode
+    # The reader's pen key includes both native colors, linetype and native lineweight.
+    for pen in curve_pens:
+        pen[1] = resolve_pen(pen[0], pen[2])
     modes = {}
     for table in ('entities','blockInstances','annotations'):
         for key,row in drawing[table].items():
             style = (extras.get('annotationStyles',{}).get(key,{})
                      if table == 'annotations' else row['style'])
             weight = extras.get('entityState',{}).get(key,{}).get('nativeLineWeight')
-            if weight in (-1, -2):
-                modes.setdefault(key,{})['lineWeight'] = 'by-layer' if weight == -1 else 'by-block'
-            if weight == -3:
-                modes.setdefault(key,{})['lineWeight'] = 'default'
-                style['lineWeight'] = dict(default_weight)
-            lt = drawing['lineTypes'].get(style.get('lineTypeId'),{}).get('name','').upper()
-            if lt in ('BYLAYER','BYBLOCK'):
-                modes.setdefault(key,{})['lineType'] = 'by-layer' if lt=='BYLAYER' else 'by-block'
-                del style['lineTypeId']
+            mode = resolve_pen(style, weight)
+            if mode: modes[key] = mode
     for entry in mesh_items.values():
         for part in entry['parts']:
             modes[part['id']] = {'lineType':'by-block', 'lineWeight':'by-block'}
@@ -795,7 +920,7 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
     doc["extensions"]["org.cad-preview.drawing-coverage/1"] = {
         "sourceRead":{"status":"partial" if summary["missingHandles"] else "read-with-warnings","sourceRecords":summary.get("sourceEntityRecords",summary["sourceHandles"])},
         "displayGeometry":source_display_coverage(drawing, displays, presentation_items, summary,
-            extras.get("nativeFonts",{}), extras.get("fills",{}), text_layouts, extras.get("dimensionSemantics",{})),
+            extras.get("nativeFonts",{}), extras.get("fills",{}), text_layouts, extras.get("dimensionSemantics",{}), curves.values()),
         "engineeringAttributes":{"status":"partial","sourceRecords":summary.get("mappedSourceObjects",summary["mappedObjects"])},
         "losses":raw_losses}
     if doc['externalReferences']:
@@ -805,20 +930,108 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
     if resource_loader is not None:
         buffer_bytes=resource_loader(doc,buffer_bytes)
         buffer_path.write_bytes(buffer_bytes)
-    doc['revision'] = digest({k:v for k,v in doc.items() if k!='revision'})
-    phase('document sealed')
-    snapshot = {'schemaVersion':'2.0.0','id':'pending','documentRevision':doc['revision'],
+    phase('document assembled')
+    snapshot = {'schemaVersion':'2.0.0','id':'snapshot-'+'0'*64,'documentRevision':doc['revision'],
         'selection':{'viewContextId':'native-dwg'},'sceneRoots':[],'occurrenceOverrides':{},'draws':{},
         'completeness':'partial','diagnostics':doc['diagnostics'][:]}
-    snapshot['id'] = 'snapshot-'+digest({k:v for k,v in snapshot.items() if k!='id'})
     presentation = {'name':identity['name'],'view':None,'unit':'mm' if summary['header']['insUnits']=='Millimeters' else 'unknown',
         'sourceSHA256':identity['sha256'],'candidate':True,
         'quality':'partial','note':'Native DWG → UCD; source handles preserved. See explicit decoder/mapping/font losses.',
-        'stats':{'sourceHandles':summary['sourceHandles'],'mappedSourceObjects':summary.get('mappedSourceObjects',summary['mappedObjects']),'displayGeometry':len(displays)+len(infinite_items)+len(region_items)}}
-    validate_binary_envelope(doc,snapshot,presentation,lambda key:buffer_bytes)
+        'stats':{'sourceHandles':summary['sourceHandles'],'mappedSourceObjects':summary.get('mappedSourceObjects',summary['mappedObjects']),'displayGeometry':len(displays)+len(curves)+len(infinite_items)+len(region_items)}}
+    if early:
+        # Publish the draw inputs before restoring analytical geometry for the archive.
+        folder_view = Path(binary_dir).parent/'scratch'/'display'
+        folder_view.mkdir(parents=True, exist_ok=True)
+        saved_buffer = Path(binary_dir)/(bid+'.bin')
+        saved_buffer.write_bytes(buffer_bytes)
+        view_tables = pack_document(doc, ((k,r) for k,r in displays.items() if k not in special))
+        if curves:
+            # Only draw inputs cross the early boundary; bounds and exact parameters stay with the archive.
+            view_tables['packed']['curvePens'] = curve_pens
+            view_tables['packed']['curveRows'] = [r[:8]+r[11:13] for r in curves.values()]
+        wire = compress_document(view_tables)
+        del view_tables
+        del wire['revision']  # A display is not a sealed revision.
+        pending_view = folder_view/'view.tmp'
+        lease = display_lease
+        blob = wire['buffers'][bid]
+        descriptor = {'sha256':blob['sha256'], 'byteLength':blob['byteLength']}
+        with pending_view.open('wb') as stream:
+            write_canonical({'displayOnly':True,'transportProfile':'ucd-binary-manifest/1','resourceLease':lease,
+                             'bufferResources':{bid:{**descriptor,'url':'/api/resources/'+lease+'/'+blob['sha256']}},
+                             'document':wire, 'snapshot':{'completeness':'partial'},
+                             'presentation':presentation}, stream)
+        # Publish the descriptor only after both files are complete. The job's
+        # scratch directory owns its lifetime; the existing buffer is served in place.
+        view_path = folder_view/(blob['sha256']+'.json')
+        pending_view.replace(view_path)
+        del wire
+        phase('vector view available')
+        if curve_styles:
+            native_geometry = doc['extensions']['org.libiaolink.dwg/1']['nativeGeometry']
+            inheritance = doc['extensions']['org.cad-preview.style-inheritance/1']
+            for key, geometry, native in _native_records(folder/'archive-curves.jsonl'):
+                row = curves.pop(key, None)
+                if row is None:  # Explicit patterned lines kept their original fitting path.
+                    drawing['entities'][key]['geometry'] = geometry
+                else:
+                    handle, _, space, layer, index, order, visible, scale, weight, color, rgb, offset, count, low, high = row
+                    style, mode = curve_pens[index][:2]
+                    refs = [{'sourceId':sid,'objectKey':handle}]
+                    drawing['entities'][key] = {'id':key,'drawingId':did,'ownerSpaceId':space,'layerId':layer,
+                        'localFromOwner':IDENTITY,'geometry':geometry,'style':style,'sourceRefs':refs,'displayOrder':order}
+                    inheritance['entityState'][key] = {'invisible':not visible,'lineTypeScale':scale,
+                        'nativeLineWeight':weight,'drawOrder':order,'nativeColor':{'index':color,'trueColor':rgb}}
+                    inheritance['drawOrder'][key] = order
+                    if mode: modes[key] = mode
+                    displays[key] = {'offset':offset,'byteLength':count*24,'count':count,'topology':'lines',
+                        'min':low,'max':high,'sourceRefs':refs}
+                if native is not None:
+                    native_geometry[key] = native
+            # Preserve native interleaving and append derived records in their original order.
+            drawing['entities'] = {k:drawing['entities'][k] for k in entity_order} | drawing['entities']
+            displays = {k:displays[k] for k in display_order if k in displays} | displays
+            del entity_order, display_order, inheritance
+            archive_wire = compress_document(pack_document(doc, ((k,r) for k,r in displays.items() if k not in special)))
+        for key, row in displays.items():
+            if key not in special:
+                expand_display(key,row)
+        displays = None
+    seal_binary_envelope(doc,snapshot,presentation,lambda key:buffer_bytes,
+                         on_phase=lambda name:phase('validation '+name))
+    phase('document sealed')
     phase('contract and binary validated')
-    if packed:
-        doc = compress_document(pack_document(doc))
+    # The sealed document is the only publication source. Keep the small summary
+    # values, then retire the original entity/display tables before building the
+    # packed copy so both large representations do not overlap at peak memory.
+    tables = {k: len(v) for k, v in drawing.items()}
+    loss_counts = dict(by_loss)
+    displays = None
+    if early:
+        revision = doc['revision']
+        doc = drawing = extras = buffer_bytes = None
+        # Load after releasing the archival graph (the snapshot is already sealed).
+        if curve_styles:
+            doc = archive_wire
+        else:
+            with view_path.open('rb') as stream:
+                doc = json.load(stream)['document']
+        doc['revision'] = revision
+    else:
+        saved_buffer = None
+    if packed and not early:
+        if platform:
+            # Persist the sealed buffer before packing and reload it only for the
+            # sink; the packed copy then runs without a second 179 MB live copy.
+            sink_dir = Path(binary_dir) if binary_dir else (output/'buffers')
+            sink_dir.mkdir(parents=True, exist_ok=True)
+            saved_buffer = sink_dir/(bid+'.bin')
+            saved_buffer.write_bytes(buffer_bytes)
+            buffer_bytes = None
+        packed_doc = pack_document(doc)
+        doc = drawing = extras = None
+        doc = compress_document(packed_doc)
+        packed_doc = None
         phase('document packed')
     envelope = {'transportProfile':'ucd-worker-binary/1','document':doc,'snapshot':snapshot,
         'bufferPayloads':{bid:'native/positions.bin'},'presentation':presentation}
@@ -827,7 +1040,11 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
         # avoids parsing and re-serialising the full manifest in the worker wrapper.
         sink = FileSink(binary_dir or (output/'buffers'))
         for buffer_id, relative in envelope.pop('bufferPayloads').items():
-            sink.put(buffer_id, buffer_bytes if buffer_id == bid else (output/relative).read_bytes())
+            if buffer_id == bid and saved_buffer is not None:
+                meta = doc['buffers'][buffer_id]
+                sink.put_file(buffer_id, saved_buffer, meta['sha256'], meta['byteLength'])
+            else:
+                sink.put(buffer_id, buffer_bytes if buffer_id == bid else (output/relative).read_bytes())
         sink.attach(envelope)
         sink.finish(envelope)
     output.mkdir(parents=True,exist_ok=True)
@@ -839,6 +1056,6 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
     pending.replace(artifact)
     phase('artifact written')
     (output/'assembly-summary.json').write_text(json.dumps({'validated':True,'manifestBytes':artifact.stat().st_size,
-        'bufferBytes':buffer_path.stat().st_size,'source':identity,'tables':{k:len(v) for k,v in drawing.items()},
-        'lossCounts':dict(by_loss),'completeness':'partial'},ensure_ascii=False,indent=2))
+        'bufferBytes':buffer_path.stat().st_size,'source':identity,'tables':tables,
+        'lossCounts':loss_counts,'completeness':'partial'},ensure_ascii=False,indent=2))
     return artifact
