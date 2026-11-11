@@ -313,10 +313,38 @@ def pack_document(document, native_rows=()):
     return packed_doc
 
 
+def _display_chunks(body):
+    # Only the early DWG view has curveRows. Its native curve rows and packed
+    # display rows contain a fixed number of handle, index and numeric fields.
+    # Other tables can contain arbitrary geometry or text and stay streamed.
+    def fields(table):
+        yield b'{'
+        for index, key in enumerate(sorted(table)):
+            if index:
+                yield b','
+            yield _canonical(key).encode('utf-8') + b':'
+            value = table[key]
+            if table is body and key == 'packed':
+                yield from fields(value)
+            elif table is body['packed'] and key in ('curveRows', 'displays'):
+                yield b'['
+                for start in range(0, len(value), 256):
+                    if start:
+                        yield b','
+                    yield _canonical(value[start:start + 256])[1:-1].encode('utf-8')
+                yield b']'
+            else:
+                yield from canonical_chunks(value)
+        yield b'}'
+
+    yield from fields(body)
+
+
 def compress_document(packed_doc):
     body={key:packed_doc[key] for key in COMPRESSED_FIELDS}
     compressor=zlib.compressobj(3,zlib.DEFLATED,31);compressed=io.BytesIO();length=0
-    for chunk in canonical_chunks(body):
+    chunks = _display_chunks(body) if 'curveRows' in body['packed'] else canonical_chunks(body)
+    for chunk in chunks:
         length+=len(chunk)
         if length>MAX_EXPANDED_BYTES:raise ValueError("packed-expanded-budget-exceeded")
         compressed.write(compressor.compress(chunk))
