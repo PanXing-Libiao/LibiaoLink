@@ -818,6 +818,56 @@ const afterDelIssue = await reportsOf();
 const repD404 = await api("/api/v1/projects/" + projectId + "/reports/" + repD.id);
 check("⑦d 删问题（界面行尾垃圾桶）→ 来源日报连它一起删（成对删除 · 响应 cascadedReportId）", issDGone === true && afterDelIssue.total === 2 && repD404.status === 404, JSON.stringify({ gone: issDGone, reports: afterDelIssue.total, repD404: repD404.status }));
 
+// ---------- ⑦e 日报日期深链（S6）：按 date 过滤日报 / 问题，非法日期清理，report= 定位不回归 ----------
+const yesterdayDate = new Date(todayIso + "T00:00:00Z");
+yesterdayDate.setUTCDate(yesterdayDate.getUTCDate() - 1);
+const yesterdayIso = yesterdayDate.toISOString().slice(0, 10);
+const repYRes = await api("/api/v1/projects/" + projectId + "/reports", "POST", { date: yesterdayIso, state: "submitted", doneWork: "回放·日期深链-Y1", plan: "回放·日期深链计划-Y1", foundIssue: "回放·昨天问题-Y1", issueCategories: ["物流原因"] });
+check("⑦e-1 夹具：补一篇昨天日报并派生问题（201）", repYRes.status === 201, String(repYRes.status) + " " + repYRes.text.slice(0, 140));
+const repY = repYRes.json;
+const yesterdayIssues = await issuesOf();
+const issY = yesterdayIssues.items.filter((row) => row.sourceReportId === repY.id)[0];
+if (issY === undefined) { await bail("夹具昨天日报 Y1 没派生问题"); }
+check("⑦e-2 派生问题的提出日期 = 昨天", issY.raisedAt === yesterdayIso, JSON.stringify({ date: repY.date, raisedAt: issY.raisedAt, expected: yesterdayIso }));
+const todayRowsForDate = (await reportsOf()).items.filter((row) => row.date === todayIso);
+const todayIdsForDate = todayRowsForDate.map((row) => row.id);
+const focusReportForDate = todayIdsForDate[0];
+if (focusReportForDate === undefined) { await bail("日期深链夹具缺少今天的日报"); }
+
+async function openDailyQuery(query) {
+  await page.send("Page.navigate", { url: "about:blank" });
+  await sleep(400);
+  await page.send("Page.navigate", { url: FRONTEND + "/#/project/" + projectId + query });
+  await sleep(5200);
+}
+async function probeReportDateFilter() {
+  return await ev("(function(){var notice=document.querySelector(" + j("[data-daily-date-filter]") + ");var rows=document.querySelectorAll(" + j("[data-report-row]") + ");var ids=[];for(var i=0;i<rows.length;i++){ids.push(rows[i].getAttribute('data-report-row'));}return {hash:location.hash,filter:notice===null?null:notice.getAttribute('data-daily-date-filter'),noticeText:notice===null?'':notice.textContent.trim(),rows:ids,hint:document.body.innerText};})()");
+}
+async function probeIssueDateFilter() {
+  return await ev("(function(){var notice=document.querySelector(" + j("[data-daily-date-filter]") + ");var rows=document.querySelectorAll(" + j("[data-issue-row]") + ");var ids=[];for(var i=0;i<rows.length;i++){ids.push(rows[i].getAttribute('data-issue-row'));}return {hash:location.hash,filter:notice===null?null:notice.getAttribute('data-daily-date-filter'),noticeText:notice===null?'':notice.textContent.trim(),rows:ids,hint:document.body.innerText};})()");
+}
+
+await openDailyQuery("?view=daily&date=" + todayIso);
+const todayFilterUi = await probeReportDateFilter();
+check("⑦e-3 日报记录 date=今天：提示条在、只出今天两篇、昨天 Y1 不出现、计数写「仅看」", todayFilterUi !== null && todayFilterUi.filter === todayIso && todayFilterUi.rows.length === 2 && todayIdsForDate.every((id) => todayFilterUi.rows.includes(id)) && todayFilterUi.rows.includes(repY.id) === false && todayFilterUi.noticeText.indexOf("仅看") >= 0 && todayFilterUi.hint.indexOf("共 2 篇") >= 0, JSON.stringify(todayFilterUi));
+await clickSelector("[data-daily-date-clear]");
+const dateCleared = await waitFor("location.hash.indexOf('date=') < 0", 5000);
+await sleep(900);
+const afterClearUi = await probeReportDateFilter();
+check("⑦e-4 点「查看全部日期」清掉地址 date=、提示条消失、三天记录全部恢复", dateCleared === true && afterClearUi !== null && afterClearUi.filter === null && afterClearUi.rows.length === 3 && afterClearUi.rows.includes(repY.id) === true, JSON.stringify({ cleared: dateCleared, ui: afterClearUi }));
+
+await openDailyQuery("?view=daily&sub=issues&date=" + yesterdayIso);
+const yesterdayIssueUi = await probeIssueDateFilter();
+check("⑦e-5 问题追踪 date=昨天：按 issue.raisedAt 只出 Y1 问题", yesterdayIssueUi !== null && yesterdayIssueUi.filter === yesterdayIso && yesterdayIssueUi.rows.length === 1 && yesterdayIssueUi.rows[0] === issY.id && yesterdayIssueUi.noticeText.indexOf("仅看") >= 0, JSON.stringify(yesterdayIssueUi));
+
+await openDailyQuery("?view=daily&date=2026-02-31");
+const invalidDateUi = await probeReportDateFilter();
+check("⑦e-6 非法日期 2026-02-31：地址自动清理、无提示条、全部三天记录照常显示", invalidDateUi !== null && invalidDateUi.hash.indexOf("date=") < 0 && invalidDateUi.filter === null && invalidDateUi.rows.length === 3, JSON.stringify(invalidDateUi));
+
+await openDailyQuery("?view=daily&date=" + todayIso + "&report=" + focusReportForDate);
+const focusedDateUi = await ev("(function(){var notice=document.querySelector(" + j("[data-daily-date-filter]") + ");var row=document.querySelector(" + j("[data-report-focused=true]") + ");return {filter:notice===null?null:notice.getAttribute('data-daily-date-filter'),focused:row===null?null:row.getAttribute('data-report-row'),rows:document.querySelectorAll(" + j("[data-report-row]") + ").length,hash:location.hash};})()");
+check("⑦e-7 date= 与 report= 并用：日期提示保留、目标日报仍精确定位并高亮", focusedDateUi !== null && focusedDateUi.filter === todayIso && focusedDateUi.focused === focusReportForDate && focusedDateUi.rows === 2, JSON.stringify(focusedDateUi));
+
 // ---------- ⑧-0 甘特图层级（Push 244 业务口径「甘特图页面会挡住 日报子页面」）----------
 const ganttTask = await api("/api/v1/projects/" + projectId + "/tasks", "POST", { title: "回放·甘特层级探测", plannedStart: todayIso, plannedEnd: todayIso });
 check("⑧-0a 夹具：建一条有排期的任务（甘特图画出内容 —— 下拉遮挡断言需要页面上真有东西可压）", ganttTask.status === 201, String(ganttTask.status) + " " + ganttTask.text.slice(0, 120));

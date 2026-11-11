@@ -30,7 +30,7 @@ function fixture() {
     actorId: "66666666-6666-4666-8666-666666666666", viewId: "7".repeat(32), cancelled: false,
     expiresAt: new Date(Date.now() + 60_000), lastSeenAt: new Date(), leaseExpiresAt: null };
   const repository = {
-    view: vi.fn<CadArchiveRepository["view"]>().mockResolvedValue({ artifact, view }),
+    view: vi.fn<CadArchiveRepository["view"]>().mockResolvedValue({ artifact, view, waitingForDrawing: false }),
     touchView: vi.fn<CadArchiveRepository["touchView"]>().mockResolvedValue(undefined),
     lease: vi.fn<CadArchiveRepository["lease"]>().mockResolvedValue(undefined),
     retry: vi.fn<CadArchiveRepository["retry"]>().mockResolvedValue(undefined),

@@ -98,10 +98,14 @@ type ProjectDetailProps = {
   view: ProjectView;
   /** 「日报及问题」的页内子视图（Push 214 起由地址 `?view=daily&sub=` 派生，缺省「日报填写」form）；其它标签下无意义。 */
   dailySub: DailySubView;
+  /** 企微日报查询深链的当天日期（YYYY-MM-DD）；null = 不筛选。 */
+  dailyDate: string | null;
   /** 站内信深链的精确落点：任务自动开抽屉 / 日报定位行 / 问题自动开抽屉。 */
   focus: ProjectFocus | null;
   /** 关闭深链抽屉后清掉地址里的精确落点，避免刷新再次弹开。 */
   onClearFocus: () => void;
+  /** 清除企微日报查询深链的单日筛选。 */
+  onClearDailyDate: () => void;
   /** 全站自定义成果类型（字典 deliverableType）：项目内所有任务共享。 */
   customDeliverableTypes?: readonly string[];
   /** 项目经理新增全站自定义成果类型；服务端还会按当前项目再次校验。 */
@@ -125,7 +129,7 @@ type ProjectDetailProps = {
   readOnly?: boolean;
 };
 
-export default function ProjectDetail({ me, project, view, dailySub, focus, onClearFocus, customDeliverableTypes = [], onCreateDeliverableType, members, managerMembers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange, canManageStakeholders, onSetProjectDone, readOnly = false }: ProjectDetailProps) {
+export default function ProjectDetail({ me, project, view, dailySub, dailyDate, focus, onClearFocus, onClearDailyDate, customDeliverableTypes = [], onCreateDeliverableType, members, managerMembers, onTaskEdited, taskHiddenColumns, onTaskHiddenColumnsChange, canManageStakeholders, onSetProjectDone, readOnly = false }: ProjectDetailProps) {
   /** 顶部视图（Push 82 / 121）：阶段标签收进「项目总览」，另两块是看板视图，最后一块是「日报及问题」；Push 154 起当前标签由地址 `?view=` 派生。 */
   const locale = useLocale();
   const t = useT();
@@ -1245,7 +1249,7 @@ export default function ProjectDetail({ me, project, view, dailySub, focus, onCl
           ) : activeView === "日报及问题" ? (
             // key = 项目 id：换项目时把日报 / 问题与填写草稿一起复位（原型内存态，见 ReportIssuePanel.tsx）
             // Push 290：背景档位「适中」透传给「问题追踪」做表格呈现（原醒目模式挂点，随功能下架改吃档位）；失败提示沿用同一条 toolError
-            <ReportIssuePanel key={project.id} project={project} me={me} members={members} tierTint={tintRows} sub={dailySub} focusReportId={focus?.kind === "report" ? focus.id : null} focusIssueId={focus?.kind === "issue" ? focus.id : null} onFocusClosed={onClearFocus} readOnly={!projectEditable} onChangeSub={(next) => { replaceProjectSubView(project.id, next); }} />
+            <ReportIssuePanel key={project.id} project={project} me={me} members={members} tierTint={tintRows} sub={dailySub} dateFilter={dailyDate} focusReportId={focus?.kind === "report" ? focus.id : null} focusIssueId={focus?.kind === "issue" ? focus.id : null} onFocusClosed={onClearFocus} onClearDateFilter={onClearDailyDate} readOnly={!projectEditable} onChangeSub={(next) => { replaceProjectSubView(project.id, next); }} />
           ) : activeView === "干系人" ? (
             // 干系人（Push 221 · A27 前端接线）：表格形态与「项目总览」同一套（表头固定 + CSS grid 行 + 共用底部滑块）
             <StakeholderPanel projectId={project.id} canManage={canManageStakeholders && projectEditable} scrollRef={tableScrollRef} />

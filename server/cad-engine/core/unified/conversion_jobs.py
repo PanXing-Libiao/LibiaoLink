@@ -68,6 +68,9 @@ class ConversionJobs:
         self.binary=os.environ.get('CAD_STEP_JOB_BINARY','1')!='0'
         self.compact=self.binary and os.environ.get('CAD_STEP_JOB_COMPACT','1')!='0'
         self.upload_reserved=0
+        # At most one DWG yields to one waiting view. The heavy-work gate stays single-owner.
+        self.waiting_views = {}
+        self.view_pair = {}
         self.lock=threading.RLock();self.active={};self.displays={};self.threads={};self.cancelled_requests={};self.closed=False;self.db_closed=False
         for name in ('sources','artifacts','buffers','temporary','logs'):(self.root/name).mkdir(parents=True,exist_ok=True)
         self.owner=(self.root/'owner.lock').open('a')
@@ -313,6 +316,10 @@ class ConversionJobs:
                 row=self._get(jid)
                 if row['state'] not in TERMINAL:self._update(row,state=state,phase=state,error={'code':code,'error':message})
         try:
+            with self.lock:
+                row = self._get(jid)
+                if self.binary and row.get('sourceFormat') == 'DWG' and row.get('namespace') and not row.get('inputSHA256'):
+                    self.waiting_views[jid] = None
             while not self.gate.acquire(timeout=.1):
                 if time.perf_counter()-started>self.policy['queueWallSeconds']:
                     fail('timed-out','job-queue-timeout','转换等待超过队列预算');return
@@ -320,6 +327,7 @@ class ConversionJobs:
                     if self.closed or self._get(jid)['state'] in TERMINAL:return
             gate=True
             with self.lock:
+                self.waiting_views.pop(jid, None)
                 row=self._get(jid)
                 if self.closed or row['state'] in TERMINAL:return
                 event(row,'queueExited');self._update(row,state='running',phase='worker-starting')
@@ -337,6 +345,7 @@ class ConversionJobs:
                 binary_dir=folder/'buffers';binary_dir.mkdir()
                 env=dict(os.environ);env.pop('CAD_BINARY_DIR',None);env.pop('CAD_PROFILE_STAGES',None)
                 scratch=folder/'scratch';scratch.mkdir();env['TMPDIR']=str(scratch)
+                env.pop('CAD_DWG_RESUME_ARCHIVE',None)
                 env.pop('CAD_DWG_DISPLAY_LEASE',None)
                 if self.binary:env['CAD_BINARY_DIR']=str(binary_dir)
                 if self.binary and is_dwg and row.get('namespace') and not row.get('inputSHA256'):
@@ -368,41 +377,82 @@ class ConversionJobs:
                     for chunk in iter(lambda:stdin.read(1024*1024),b''):digest.update(chunk)
                     if digest.hexdigest()!=row['sourceSHA256']:raise ValueError('source integrity mismatch')
                     stdin.seek(0)
-                    with self.lock:
-                        row=self._get(jid)
-                        if row['state'] in TERMINAL:return
-                        proc=subprocess.Popen([self.dxf_interpreter if is_dxf else self.dwg_interpreter if is_dwg else self.interpreter,
-                                              str(self.app/('dxf_convert.py' if is_dxf else 'dwg_platform_convert.py' if is_dwg else 'step_convert.py')),row['name'],'[]'],
-                                              stdin=stdin,stdout=stdout,stderr=stderr,start_new_session=True,env=env)
-                        self.active[jid]=proc;event(row,'workerStarted')
-                        process_identity=subprocess.run(['ps','-o','lstart=','-o','command=','-p',str(proc.pid)],capture_output=True,text=True).stdout.strip()
-                        birth=subprocess.run(['ps','-o','lstart=','-p',str(proc.pid)],capture_output=True,text=True).stdout.strip()
-                        self._update(row,phase='worker-started',workerPid=proc.pid,workerProcessIdentity=process_identity,workerBirth=birth)
-                    while proc.poll() is None:
+                    resumed = False
+                    while True:
+                        wait_for = None
                         with self.lock:
                             row=self._get(jid)
-                            if self.closed or row['state']=='cancelled':self.stop_worker(proc);return
-                        if time.perf_counter()-wall>worker_seconds:
-                            self.stop_worker(proc);fail('timed-out','job-timeout','转换超过后台任务计算预算');return
-                        size=out.stat().st_size+sum(f.stat().st_size for f in binary_dir.iterdir())
-                        if size>result_limit or stderr.tell()>self.policy['stderrBytes']:
-                            self.stop_worker(proc);fail('failed','job-output-quota','转换产物或日志超过配额');return
-                        rss=process_tree_rss(proc.pid);peak_rss=max(peak_rss,rss)
-                        memory_stop=int(os.environ.get('CAD_MEMORY_STOP_BYTES','0'))
-                        cgroup_high=memory_stop and int(Path('/sys/fs/cgroup/memory.current').read_text())>memory_stop
-                        scratch_bytes=sum(f.stat().st_size for f in scratch.rglob('*') if f.is_file())
-                        if scratch_bytes>scratch_limit:
-                            self.stop_worker(proc);fail('failed','job-scratch-quota','转换临时数据超过配额');return
-                        if rss>rss_limit or cgroup_high:
-                            self.stop_worker(proc);fail('failed','job-memory-quota','转换超过后台任务内存预算');return
-                        if trace.exists():
-                            try:progress=json.loads(trace.read_text())
-                            except (ValueError,OSError):progress=None
-                            if progress:
+                            if row['state'] in TERMINAL:return
+                            proc=subprocess.Popen([self.dxf_interpreter if is_dxf else self.dwg_interpreter if is_dwg else self.interpreter,
+                                                  str(self.app/('dxf_convert.py' if is_dxf else 'dwg_platform_convert.py' if is_dwg else 'step_convert.py')),row['name'],'[]'],
+                                                  stdin=stdin,stdout=stdout,stderr=stderr,start_new_session=True,env=env)
+                            self.active[jid]=proc;event(row,'archiveResumed' if resumed else 'workerStarted')
+                            process_identity=subprocess.run(['ps','-o','lstart=','-o','command=','-p',str(proc.pid)],capture_output=True,text=True).stdout.strip()
+                            birth=subprocess.run(['ps','-o','lstart=','-p',str(proc.pid)],capture_output=True,text=True).stdout.strip()
+                            self._update(row,phase='worker-started',workerPid=proc.pid,workerProcessIdentity=process_identity,workerBirth=birth)
+                        while proc.poll() is None:
+                            with self.lock:
+                                row=self._get(jid)
+                                if self.closed or row['state']=='cancelled':self.stop_worker(proc);return
+                            if time.perf_counter()-wall>worker_seconds:
+                                self.stop_worker(proc);fail('timed-out','job-timeout','转换超过后台任务计算预算');return
+                            size=out.stat().st_size+sum(f.stat().st_size for f in binary_dir.iterdir())
+                            if size>result_limit or stderr.tell()>self.policy['stderrBytes']:
+                                self.stop_worker(proc);fail('failed','job-output-quota','转换产物或日志超过配额');return
+                            rss=process_tree_rss(proc.pid);peak_rss=max(peak_rss,rss)
+                            memory_stop=int(os.environ.get('CAD_MEMORY_STOP_BYTES','0'))
+                            cgroup_high=memory_stop and int(Path('/sys/fs/cgroup/memory.current').read_text())>memory_stop
+                            scratch_bytes=sum(f.stat().st_size for f in scratch.rglob('*') if f.is_file())
+                            if scratch_bytes>scratch_limit:
+                                self.stop_worker(proc);fail('failed','job-scratch-quota','转换临时数据超过配额');return
+                            if rss>rss_limit or cgroup_high:
+                                self.stop_worker(proc);fail('failed','job-memory-quota','转换超过后台任务内存预算');return
+                            if trace.exists():
+                                try:progress=json.loads(trace.read_text())
+                                except (ValueError,OSError):progress=None
+                                if progress:
+                                    with self.lock:
+                                        current=self._get(jid)
+                                        if current['state']=='running' and current.get('workerTrace')!=progress:self._update(current,workerTrace=progress,phase=next(reversed(progress['events'])))
+                            if not resumed and 'CAD_DWG_DISPLAY_LEASE' in env:
                                 with self.lock:
-                                    current=self._get(jid)
-                                    if current['state']=='running' and current.get('workerTrace')!=progress:self._update(current,workerTrace=progress,phase=next(reversed(progress['events'])))
-                        time.sleep(.2)
+                                    pair = self.view_pair.get(jid)
+                                    waiting = next(iter(self.waiting_views), None)
+                                    if (pair or (waiting and not self.view_pair)) and self.display(row['namespace'], jid):
+                                        if pair is None:
+                                            # First resumes after the second publishes; second resumes after first exits.
+                                            second_view, first_done = threading.Event(), threading.Event()
+                                            self.view_pair[jid] = (second_view, first_done)
+                                            self.view_pair[waiting] = (first_done, second_view)
+                                        wait_for, notify = self.view_pair[jid]
+                                        is_second = pair is not None
+                                        break
+                            time.sleep(.2)
+                        if wait_for is None:
+                            break
+                        self.stop_worker(proc)
+                        with self.lock:
+                            self.active.pop(jid, None)
+                            row = self._get(jid)
+                            event(row, 'archiveYielded')
+                            self._update(row)
+                        # No suspended Python object graph remains. The display and reader files
+                        # stay in the job directory, and the same job/lease stays addressable.
+                        self.gate.release(); gate = False
+                        paused = time.perf_counter()
+                        if is_second:
+                            notify.set()
+                        while not wait_for.wait(.2):
+                            with self.lock:
+                                if self.closed or self._get(jid)['state'] in TERMINAL:return
+                        while not self.gate.acquire(timeout=.1):
+                            with self.lock:
+                                if self.closed or self._get(jid)['state'] in TERMINAL:return
+                        gate = True
+                        wall += time.perf_counter() - paused
+                        env['CAD_DWG_RESUME_ARCHIVE'] = '1'
+                        resumed = True
+                        stdout.seek(0); stdout.truncate()
                 timing('workerExited')
                 if out.stat().st_size+sum(f.stat().st_size for f in binary_dir.iterdir())>result_limit:raise JobLimit('result output quota exceeded')
                 if time.perf_counter()-wall>worker_seconds:
@@ -512,6 +562,9 @@ class ConversionJobs:
                 try:proc.stdin.close()
                 except (BrokenPipeError,OSError):pass
             with self.lock:
+                self.waiting_views.pop(jid, None)
+                pair = self.view_pair.pop(jid, None)
+                if pair:pair[1].set()
                 self.active.pop(jid,None);self.threads.pop(jid,None)
                 namespace = row.get('namespace') if row else None
                 if namespace in self.displays and self.displays[namespace][0] == jid:

@@ -7,6 +7,7 @@ transport. Runtime paths are supplied by the sandbox environment.
 """
 import json
 import hashlib
+from contextlib import nullcontext
 import os
 from pathlib import Path, PurePosixPath
 import shutil
@@ -34,17 +35,24 @@ def main():
         fail('missing-dwg-runtime: CAD_DWG_READER and CAD_DWG_DOTNET are required')
     if not binary_dir:
         fail('dwg-binary-transport-required: CAD_BINARY_DIR is required for the DWG platform worker')
-    with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR') or None) as folder:
+    lease = os.environ.get('CAD_DWG_DISPLAY_LEASE')
+    resume = bool(lease and os.environ.get('CAD_DWG_RESUME_ARCHIVE'))
+    # The job owns this directory until both the view and its archive are finished.
+    directory = nullcontext(Path(os.environ['TMPDIR']) / 'dwg') if lease else tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR') or None)
+    with directory as folder:
         root = Path(folder)
         source = root / name
-        with source.open('wb') as target:
-            shutil.copyfileobj(sys.stdin.buffer, target, length=1024*1024)
+        root.mkdir(exist_ok=True)
+        if not resume:
+            with source.open('wb') as target:
+                shutil.copyfileobj(sys.stdin.buffer, target, length=1024*1024)
         if not source.stat().st_size:
             fail('empty-dwg-source')
         result = root / 'result'
         native = result / 'native'
         try:
-            run_reader(dotnet, reader, source, native)
+            if not resume:
+                run_reader(dotnet, reader, source, native)
             options={}
             if os.environ.get('CAD_DWG_RESOURCES'):
                 logical,files=read_manifest(os.environ['CAD_DWG_RESOURCES'])
@@ -55,7 +63,7 @@ def main():
                 options={'font_files':resources.fonts,'logical_path':logical,
                          'resource_loader':resources.loader(logical,[source_sha])}
             manifest_path = assemble_native(native, source, result, platform=True,
-                                             binary_dir=binary_dir, packed=True, display_lease=os.environ.get("CAD_DWG_DISPLAY_LEASE"), **options)
+                                             binary_dir=binary_dir, packed=True, display_lease=lease, resume_archive=resume, **options)
             result_path = os.environ.get('CAD_RESULT_PATH')
             if not result_path:
                 # conversion_jobs places trace.json next to result.json.

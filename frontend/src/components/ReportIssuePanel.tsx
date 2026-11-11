@@ -31,6 +31,7 @@ import { recordPreviewView, uploadPhoto, usePhotoUrl } from "../fileApi";
 import { stageKeyOfName } from "../taskApi";
 import { fetchProjectGroup, type ProjectGroupBinding } from "../projectGroupApi";
 import { PROJECT_STAGES } from "../data/projects";
+import { matchesDailyDate } from "../dailyDateFilter";
 import { lockBodyScroll } from "../scrollLock";
 import type { DailySubView } from "../useHashRoute";
 import { SUB_TAB_KEYS, SUB_TABS } from "./DailySubMenu";
@@ -3229,7 +3230,7 @@ function IssueDrawer({ projectId, members, issue, report, onPatchIssue, onPatchR
   );
 }
 
-export function ReportIssuePanel({ project, me, members, tierTint, sub, focusReportId = null, focusIssueId = null, onFocusClosed, onChangeSub, readOnly = false }: {
+export function ReportIssuePanel({ project, me, members, tierTint, sub, dateFilter, focusReportId = null, focusIssueId = null, onFocusClosed, onClearDateFilter, onChangeSub, readOnly = false }: {
   project: Project;
   me: MeResponse;
   /** 项目成员（Push 243：问题处理人 / 责任人下拉的候选）。 */
@@ -3239,11 +3240,15 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, focusRep
   tierTint?: TintedTier | false;
   /** 当前页内子视图（Push 214 起由地址 `?view=daily&sub=` 派生：form = 日报填写（缺省）/ records / issues / board）。 */
   sub: DailySubView;
+  /** 企微日报查询深链的单日筛选（YYYY-MM-DD）；null = 不筛选。 */
+  dateFilter: string | null;
   /** 站内信深链：日报记录定位行 / 问题追踪自动打开详情抽屉。 */
   focusReportId?: string | null;
   focusIssueId?: string | null;
   /** 问题抽屉关闭后清掉地址里的精确落点。 */
   onFocusClosed?: () => void;
+  /** 清除单日筛选（写回地址）。 */
+  onClearDateFilter: () => void;
   /** 切页内子视图（写回地址 · replace，不新增历史条目）。 */
   onChangeSub: (sub: DailySubView) => void;
   /** 部门群组只读：查看历史数据，但不渲染填写 / 编辑 / 删除 / 拖拽等写入入口。 */
@@ -3309,6 +3314,11 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, focusRep
    *  两枚关键词各管一张表（客户端过滤 —— 列表一次取满 limit 200，无需回服务端）；换项目随组件 key 复位。 */
   const [recordKeyword, setRecordKeyword] = useState("");
   const [issueKeyword, setIssueKeyword] = useState("");
+  /** 日期筛选变化时清空搜索词，避免旧关键词把目标日期挡成空表。 */
+  useEffect(() => {
+    setRecordKeyword("");
+    setIssueKeyword("");
+  }, [dateFilter]);
 
   /** 编辑弹窗（Push 223 · 业务口径「这个编辑也要和干系人同款」）：存打开行的 id —— 渲染时现找该行
    *  （行内下拉改过之后，弹窗里也始终是最新值）；编辑只走行尾「编辑」按钮，点行体不进入编辑。 */
@@ -3791,14 +3801,43 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, focusRep
     return needle === "" || fields.some((field) => String(field).toLowerCase().includes(needle));
   };
 
+  /** 深链日期先过滤，再叠加页内搜索；计数与空态都以日期范围为准。 */
+  const datedReports = reports.filter((report) => matchesDailyDate(report.date, dateFilter));
+  const datedIssues = issues.filter((issue) => matchesDailyDate(issue.raisedAt, dateFilter));
+  const dateText = dateFilter === null ? "" : fullDateText(locale, dateFilter);
+
   /** 「日报记录」过滤：覆盖表里可见的文字列（时间 / 填写者 / 关联阶段 / 当日完成工作 / 明日计划）。 */
-  const visibleReports = reports.filter((report) =>
+  const visibleReports = datedReports.filter((report) =>
     searchHit(recordKeyword, [report.date, report.author, report.stageNames.join("、"), report.doneWork, report.plan]),
   );
 
   /** 「问题追踪」过滤：覆盖表里可见的文字列（日期 / 问题描述（含并入的提出人）/ 问题归类 / 解决方案或建议 / 问题是否处理）。 */
-  const visibleIssues = issues.filter((issue) =>
+  const visibleIssues = datedIssues.filter((issue) =>
     searchHit(issueKeyword, [issue.raisedAt, issue.reporter, issue.title, issue.categories.join("、"), issue.owner, issue.solution, statusText(locale, ISSUE_STATE_NAMES[issue.state])]),
+  );
+  const recordsHint = recordKeyword.trim() === ""
+    ? dateFilter === null
+      ? t("report.records.hint", { n: reports.length })
+      : t("report.records.hintDate", { n: datedReports.length, date: dateText })
+    : t("report.records.hintFound", { found: visibleReports.length, total: datedReports.length });
+  const issuesHint = issueKeyword.trim() === ""
+    ? dateFilter === null
+      ? t("report.issues.hint", { n: issues.length })
+      : t("report.issues.hintDate", { n: datedIssues.length, date: dateText })
+    : t("report.issues.hintFound", { found: visibleIssues.length, total: datedIssues.length });
+
+  const dateFilterNotice = dateFilter === null ? null : (
+    <div data-daily-date-filter={dateFilter} className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-2 text-sm text-amber-900">
+      <span>{t("report.dateFilter.label", { date: dateText })}</span>
+      <button
+        type="button"
+        data-daily-date-clear=""
+        onClick={onClearDateFilter}
+        className="ml-auto rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-xs font-medium text-amber-800 transition hover:bg-amber-100"
+      >
+        {t("report.dateFilter.clear")}
+      </button>
+    </div>
   );
 
 
@@ -3866,14 +3905,11 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, focusRep
         </div>
       ) : subTab === "日报记录" ? (
         <section className="space-y-3">
+          {dateFilterNotice}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <SectionHeader
               title={t("report.records.title")}
-              hint={
-                recordKeyword.trim() === ""
-                  ? t("report.records.hint", { n: reports.length })
-                  : t("report.records.hintFound", { found: visibleReports.length, total: reports.length })
-              }
+              hint={recordsHint}
             />
             <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:flex-row sm:items-center">
               <PageExportButton projectId={project.id} initialSheet="reports" />
@@ -3882,7 +3918,9 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, focusRep
               </div>
             </div>
           </div>
-          {reports.length === 0 ? (
+          {dateFilter !== null && datedReports.length === 0 ? (
+            <EmptyCard text={t("report.records.emptyDate")} hint={t("report.dateFilter.emptyHint")} />
+          ) : reports.length === 0 ? (
             <EmptyCard text={t("report.records.empty")} hint={t("report.records.emptyHint")} />
           ) : visibleReports.length === 0 ? (
             <EmptyCard text={t("report.records.emptyMatch", { kw: recordKeyword.trim() })} hint={t("report.emptyHint")} />
@@ -3892,15 +3930,12 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, focusRep
         </section>
       ) : subTab === "问题追踪" ? (
         <section className="space-y-3">
+          {dateFilterNotice}
           {/* Push 290 起原「醒目模式」开关已随功能下架：观感统一由顶栏「背景 · 档位」驱动，本视图不再有独立开关。 */}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <SectionHeader
               title={t("report.issues.title")}
-              hint={
-                issueKeyword.trim() === ""
-                  ? t("report.issues.hint", { n: issues.length })
-                  : t("report.issues.hintFound", { found: visibleIssues.length, total: issues.length })
-              }
+              hint={issuesHint}
             />
             <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:flex-row sm:items-center">
               <PageExportButton projectId={project.id} initialSheet="issues" />
@@ -3909,7 +3944,9 @@ export function ReportIssuePanel({ project, me, members, tierTint, sub, focusRep
               </div>
             </div>
           </div>
-          {issues.length === 0 ? (
+          {dateFilter !== null && datedIssues.length === 0 ? (
+            <EmptyCard text={t("report.issues.emptyDate")} hint={t("report.dateFilter.emptyHint")} />
+          ) : issues.length === 0 ? (
             <EmptyCard text={t("report.issues.empty")} hint={t("report.issues.emptyHint")} />
           ) : visibleIssues.length === 0 ? (
             <EmptyCard text={t("report.issues.emptyMatch", { kw: issueKeyword.trim() })} hint={t("report.emptyHint")} />
