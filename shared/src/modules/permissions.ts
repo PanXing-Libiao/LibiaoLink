@@ -105,10 +105,13 @@ export const ActorPermissionsSchema = z
     groupProjectScopes: z.array(GroupAccessProjectScopeSchema).optional().openapi({ description: "当前账号命中的部门项目范围并集：all / own / selected / none；用于空态展示当前权限" }),
     groupAccessLevel: GroupAccessAccessLevelSchema.optional().openapi({ description: "旧客户端兼容摘要：任一范围可编辑 = edit，否则 view；项目级写权限以Project.accessLevel 为准" }),
     groupScopePermissions: GroupAccessScopePermissionsSchema.optional().openapi({ description: "当前账号命中的多范围权限（多部门 / 个人覆盖取并集后，同一范围取最高权限）；空数组 = 不显示项目数据" }),
-    groupAnyEdit: z.boolean().optional().openapi({ description: "当前账号是否至少在一个项目范围拥有编辑权限（任务模板 / 节点库写入口）" }),
+    groupAnyEdit: z.boolean().optional().openapi({ description: "当前账号是否至少在一个项目范围拥有编辑权限（兼容摘要；节点库 / 任务模板分别看 taskNodeManage / taskTemplateManage）" }),
     groupAllEdit: z.boolean().optional().openapi({ description: "当前账号是否拥有全部项目编辑权限（字典 / 日历 / 自动化等全局写入口）" }),
     groupOwnEdit: z.boolean().optional().openapi({ description: "当前账号是否拥有自己的项目编辑权限（可用于新建项目）" }),
     groupSelectedEdit: z.boolean().optional().openapi({ description: "当前账号是否拥有指定项目编辑权限" }),
+    taskNodeManage: z.boolean().optional().openapi({ description: "是否可新增 / 编辑 / 删除公共任务节点库：管理员，或至少管理一个未删除项目的项目经理；部门编辑范围不授予" }),
+    taskTemplateRead: z.boolean().optional().openapi({ description: "是否可浏览公共任务模板：管理员、有项目数据范围的账号，或至少有一个可浏览有效项目关系（项目经理 / 项目成员 / 任务负责人）" }),
+    taskTemplateManage: z.boolean().optional().openapi({ description: "是否可新建公共任务模板：管理员，或至少管理一个未删除项目的项目经理；具体模板的编辑 / 删除还要求当前账号是创建人或管理员" }),
     auditScope: AuditScopeSchema.optional().openapi({ description: "当前账号操作记录可见范围；所有登录账号至少可查看本人记录" }),
   })
   .openapi("ActorPermissions", { description: "当前用户授权画像（全量能力基线 + 部门规则裁决结果）" });

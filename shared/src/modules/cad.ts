@@ -53,6 +53,10 @@ export const CadJobSchema = z.object({
   createdAt: z.number(),
   updatedAt: z.number(),
   artifactBytes: z.number().int().nonnegative().optional(),
+  dwgCurveColumnsV1: z.object({
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    byteLength: z.number().int().min(40).max(256 * 1024 ** 2),
+  }).strict().optional().describe("已校验 DWG 的可选曲线参数列，与归档缓冲共用资源租约"),
   resources: z.object({
     lease: z.string().regex(/^[a-f0-9]{48}$/),
     buffers: z.array(z.object({

@@ -45,12 +45,13 @@ export class GroupAccessService {
   async overview(actorId: string): Promise<GroupAccessOverview> {
     await this.assertAdmin(actorId);
     const { directory, activeGroupKeys } = await this.activeDirectory();
-    const [memberships, ungroupedUsers, rules, memberRules, projects, groupAccess, admins] = await Promise.all([
+    const [memberships, ungroupedUsers, rules, memberRules, projects, automaticRoles, groupAccess, admins] = await Promise.all([
       this.repository.listGroupMembers(),
       this.repository.listUngroupedUsers([...activeGroupKeys]),
       this.repository.listAccessRules(),
       this.repository.listAccessMemberRules(),
       this.repository.listAccessProjects(),
+      this.repository.listAutomaticProjectRoles(),
       this.permission.groupAccessOf(actorId),
       this.listAdmins(),
     ]);
@@ -151,6 +152,7 @@ export class GroupAccessService {
       admins,
       groups: Array.from(groups.values()).sort((left, right) => left.groupKey.localeCompare(right.groupKey)),
       projects,
+      automaticRoles,
     };
   }
 
@@ -216,7 +218,8 @@ export class GroupAccessService {
     return { directory, activeGroupKeys };
   }
 
-  private async listAdmins(): Promise<GroupAccessAdmin[]> {
+  /** 系统管理员名单：候选 / 资格校验与权限管理页共用同一口径。 */
+  async listAdmins(): Promise<GroupAccessAdmin[]> {
     const configuredGroupKeys = parseGroupAccessAdminKeys(this.config.env.GROUP_ACCESS_ADMIN_GROUP_KEYS ?? "");
     const configuredUserIds = parseGroupAccessAdminKeys(this.config.env.GROUP_ACCESS_ADMIN_USER_IDS ?? "");
     let effectiveGroupKeys: string[] = [];

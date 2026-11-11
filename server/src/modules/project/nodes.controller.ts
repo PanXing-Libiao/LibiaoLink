@@ -13,7 +13,7 @@ const uuidParam = new ZodValidationPipe(UuidSchema);
 /**
  * 节点接口（h3）：完成门禁经 /api/v1/nodes；服务端事务内强校验，预检不替代判定（v0.2 §3.6）。
  * 路径 :id 是节点 id，ProjectAccessGuard 先解析到所属项目再做记录级 404（h6）；
- * 完成是成员平权（ADR-011 §4.3 例外），但 @RequirePermission 仍用于部门只读画像的统一拦截；预检不挂。
+ * 完成要求项目编辑权（node.complete）；项目成员关系只读，不因名册身份自动获得节点写权限。
  */
 @Controller("api/v1/nodes")
 @UseGuards(SessionGuard, CsrfGuard, ProjectAccessGuard)

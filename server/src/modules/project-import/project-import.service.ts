@@ -29,7 +29,7 @@ import { DatabaseService } from "../../db/database.service.js";
 import { buildObjectKey, extensionOf, ObjectStorage } from "../../storage/index.js";
 import { AuditService } from "../admin/index.js";
 import type { UserRow } from "../identity/index.js";
-import { PermissionService } from "../permission/index.js";
+import { PermissionService, ProjectManagerEligibilityService } from "../permission/index.js";
 import { FlowService, ProjectMemberRepository, ProjectRepository } from "../project/index.js";
 import { TaskNodeRepository } from "../template/index.js";
 import type { TaskNodeRow } from "../template/index.js";
@@ -170,6 +170,7 @@ export class ProjectImportService implements OnModuleInit {
     private readonly members: ProjectMemberRepository,
     private readonly flow: FlowService,
     private readonly permission: PermissionService,
+    private readonly managerEligibility: ProjectManagerEligibilityService,
     private readonly nodes: TaskNodeRepository,
     private readonly audit: AuditService,
     private readonly storage: ObjectStorage,
@@ -390,10 +391,18 @@ export class ProjectImportService implements OnModuleInit {
     // 账号 / 节点对账（与预览同一套函数；30 分钟窗口内账号可能刚好建好，这一步按最新库内状态挂人）。
     const resolution = await this.resolveAccounts(collectPeople(parse));
     const { groups, groupIndexByTask } = await this.buildNodeGroups(parse.tasks);
+    const eligibleManagerIds = await this.managerEligibility.eligibleUserIds();
     const managerIds: string[] = [];
+    const ineligibleManagerNames: string[] = [];
     for (const name of placement.managerNames) {
-      const id = resolution.byName.get(stripParen(name)) ?? null;
-      if (id !== null && !managerIds.includes(id)) managerIds.push(id);
+      const displayName = stripParen(name);
+      const id = resolution.byName.get(displayName) ?? null;
+      if (id === null) continue;
+      if (!eligibleManagerIds.has(id)) {
+        if (!ineligibleManagerNames.includes(displayName)) ineligibleManagerNames.push(displayName);
+        continue;
+      }
+      if (!managerIds.includes(id)) managerIds.push(id);
     }
     const extraSeeds: LegacyIssueSeed[] = [];
     const fillerIds = await this.resolveStakeholderFillers(parse);
@@ -406,22 +415,35 @@ export class ProjectImportService implements OnModuleInit {
     if (unresolvedChangeApplicants.length > 0) extraSeeds.push(changeApplicantMissingSeed(unresolvedChangeApplicants));
     const unresolvedChangeWriters = unresolvedNamesOf(changeWriterIds);
     if (unresolvedChangeWriters.length > 0) extraSeeds.push(changeWriterMissingSeed(unresolvedChangeWriters));
+    if (ineligibleManagerNames.length > 0) {
+      extraSeeds.push(ineligibleManagerSeed(ineligibleManagerNames, managerIds.length === 0));
+    }
     if (managerIds.length === 0) {
+      if (!eligibleManagerIds.has(actorId)) {
+        throw new AppError(
+          "VALIDATION_FAILED",
+          "导入项目的项目经理必须选择有效项目部成员或系统管理员；源表项目经理不符合条件，且导入人也不具备项目经理资格，请调整源表或由符合条件的账号导入",
+        );
+      }
       managerIds.push(actorId);
-      extraSeeds.push(
-        managerFallbackSeed(placement.managerNames.map((name) => stripParen(name))),
-      );
+      if (ineligibleManagerNames.length === 0) {
+        extraSeeds.push(
+          managerFallbackSeed(placement.managerNames.map((name) => stripParen(name))),
+        );
+      }
     }
     const groupAccess = await this.permission.groupAccessOf(actorId);
-    if (
-      groupAccess.enforced &&
-      !groupAccess.admin &&
-      groupAccess.ownEdit &&
-      !groupAccess.allEdit &&
-      !managerIds.includes(actorId)
-    ) {
-      // 「仅自己的项目可编辑」账号新建 / 导入项目后必须仍能访问该项目：与 ProjectService 新建口径一致。
-      managerIds.push(actorId);
+    const autoManageOwnProjects =
+      groupAccess.enforced && !groupAccess.admin && groupAccess.ownEdit && !groupAccess.allEdit;
+    let addImporterAsProjectMember = false;
+    if (autoManageOwnProjects && !managerIds.includes(actorId)) {
+      if (eligibleManagerIds.has(actorId)) {
+        // 「仅自己的项目可编辑」且本人符合资格：与 ProjectService 新建口径一致，自动成为项目经理。
+        managerIds.push(actorId);
+      } else {
+        // 不符合项目经理资格时只保留项目成员浏览入口，不隐式授予项目编辑 / 模板维护权。
+        addImporterAsProjectMember = true;
+      }
     }
     const unresolvedIssues = parse.reports.filter((report) => report.issue !== null && report.issue.state !== "done").length;
     if (unresolvedIssues > 0) {
@@ -512,6 +534,9 @@ export class ProjectImportService implements OnModuleInit {
       for (const managerId of managerIds) {
         await this.members.upsert(projectRow.id, managerId, "project_manager", at, tx);
       }
+      if (addImporterAsProjectMember) {
+        await this.members.upsert(projectRow.id, actorId, "project_member", at, tx);
+      }
 
       // 任务节点补库（业务口径：无对应任务节点按文件原名导入 + 问用户是否补进节点库；阶段外 = 临时任务不补）。
       const nodeIdByGroup = new Map<number, string | null>();
@@ -573,6 +598,7 @@ export class ProjectImportService implements OnModuleInit {
           title: clipText(task.title, 200),
           titleEn: clipNullable(task.titleEn, 200),
           ownerIds,
+          managerIds,
           status: task.baseStatus,
           statusOverride: task.statusOverride,
           progress: task.progress,
@@ -1330,6 +1356,28 @@ function unknownPeopleSeed(names: readonly string[]): LegacyIssueSeed {
       "People missing from the registry (no pinyin username): " +
       list +
       ". Add them to the registry and re-run the preview; owners / managers fall back for this import.",
+  };
+}
+
+function ineligibleManagerSeed(names: readonly string[], fallbackImporter: boolean): LegacyIssueSeed {
+  const list = names.join("、");
+  return {
+    level: "warning",
+    code: "MANAGER_INELIGIBLE",
+    row: null,
+    subject: list,
+    zh:
+      "源表项目经理不符合资格（仅有效项目部成员或系统管理员）：" +
+      list +
+      (fallbackImporter
+        ? "；本次已改记导入人为项目经理，请导入后核对成员名册"
+        : "；本次已跳过，请在项目成员名册中重新指定"),
+    en:
+      "Managers do not meet the eligibility rule (active Project Department member or system administrator): " +
+      list +
+      (fallbackImporter
+        ? ". The importer is recorded as project manager for this import; please verify the roster."
+        : ". They were skipped; please assign an eligible project manager in the member list."),
   };
 }
 

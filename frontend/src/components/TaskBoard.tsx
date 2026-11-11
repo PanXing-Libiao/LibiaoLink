@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { mediumCardBorderOf, mediumCardTintOf, vividCardBorderOf, vividCardTintOf, type TintedTier } from "../backgroundTier";
 import { PROJECT_STAGES } from "../data/projects";
-import type { Member } from "../data/members";
+import { memberOptionsWithExisting, type Member } from "../data/members";
 import type { TaskFileRef } from "../fileApi";
 import { TEMP_TASK_STAGE, addedNodeIdsOf, addedNodeKeysOf, daysBetweenInclusive, lateDeliveryLabel, ownersLabel, taskCapabilitiesOf, type ProjectTask, type TaskPriority, type TaskStatus } from "../data/tasks";
 import { stageNameOf, type ApiProjectSummary, type TaskUpdateInput } from "../taskApi";
@@ -255,8 +255,8 @@ function statusOptionsOf(statusOf: (value: string) => string): SelectOption[] {
   }));
 }
 
-/** 行内编辑能改的任务字段（项目经理是项目级字段，不在其中）。 */
-export type TaskPatch = Partial<Pick<ProjectTask, "title" | "titleEn" | "ownerIds" | "startDate" | "dueDate" | "days" | "headcount" | "priority" | "deliverableTypes" | "note">>;
+/** 行内编辑能改的任务字段（项目经理是项目级字段，修改会同步整个项目）。 */
+export type TaskPatch = Partial<Pick<ProjectTask, "title" | "titleEn" | "ownerIds" | "managerIds" | "startDate" | "dueDate" | "days" | "headcount" | "priority" | "deliverableTypes" | "note">>;
 /**
  * 行内编辑 / 抽屉编辑共用的「patch → PATCH body」映射（Push 279 从项目页 handlePatchTask 抽出 · version 由调用方带）：
  * 空串 = 清空（契约 nullable）这类字段口径只维护这一处 —— 项目页任务表与工作台「我的任务」的行内编辑同源。
@@ -271,6 +271,9 @@ export function taskPatchBody(version: number, patch: TaskPatch): TaskUpdateInpu
   }
   if (patch.ownerIds !== undefined) {
     body.ownerIds = patch.ownerIds;
+  }
+  if (patch.managerIds !== undefined) {
+    body.managerIds = patch.managerIds;
   }
   if (patch.startDate !== undefined) {
     body.plannedStart = patch.startDate === "" ? null : patch.startDate;
@@ -310,8 +313,10 @@ type TaskBoardProps = {
   onSetStatus?: (taskId: string, status: TaskStatus) => void;
   /** 实际完成日期（填 = 完成、清 = 退回进行中）；不传 = 只读。 */
   onSetActualEnd?: (taskId: string, iso: string) => void;
-  /** 人员候选（GET /api/v1/users 目录）：项目经理列 / 任务负责人列 / 抽屉共用。 */
+  /** 完整人员目录（GET /api/v1/users）：任务负责人列 / 抽屉非项目经理字段共用。 */
   members: readonly Member[];
+  /** 项目经理候选（有效项目部成员 ∪ 系统管理员）：项目经理列 / 抽屉项目经理字段专用。 */
+  managerMembers: readonly Member[];
   /** 全站自定义成果类型（字典 deliverableType）：所有任务共用。 */
   customDeliverableTypes?: readonly string[];
   /** 只有当前项目项目经理拿到新增回调；不传 = 选择器入口置灰。 */
@@ -327,10 +332,6 @@ type TaskBoardProps = {
   onAddNode?: (stage: string, node: TemplatePresetNode) => void;
   /** 加一条 / 一批并指定插入位置（Push 113：点「＋ 添加」先弹位置浮层，选完才加进项目）。不传 = 点一条直接加到该阶段最后。 */
   onAddNodes?: (stage: string, nodes: readonly TemplatePresetNode[], placement: StagePlacement, templateId?: string) => void;
-  /** 项目经理展示文本（项目级字段：取项目卡片上的名单，多位按「、」连接；不传时回落常量占位）。 */
-  managers?: string;
-  /** 项目经理 id 名单（项目级字段：行内多选下拉的当前选中项，Push 136）。 */
-  managerIds?: string[];
   /** 当前账号是否可修改项目经理列；不传 = 有回写回调时可改。只读账号仍渲染同款控件，仅禁用交互。 */
   canEditManagers?: boolean;
   /** 当前账号是否可对指定任务定档 / 取消定档：由任务负责人与项目经理名单共同裁决。 */
@@ -348,8 +349,8 @@ type TaskBoardProps = {
   onPatchTask?: (taskId: string, patch: TaskPatch) => void;
   /** 任务表行内删除（Push 141：行悬停的删除按钮，不传 = 不显示该按钮）。 */
   onDeleteTask?: (taskId: string) => void;
-  /** 表格行内改「项目经理」：项目级字段（多位，Push 136），回写项目（不传 = 该列仍是只读文本）。 */
-  onChangeManagers?: (managerIds: string[]) => void;
+  /** 表格行内改本条任务的项目经理（多位；不传 = 该列仍是只读文本）。 */
+  onChangeManagers?: (taskId: string, managerIds: string[]) => void;
   /** 当前视图的阶段（「项目总览」或某个阶段）：换阶段时把右侧卡片关掉。 */
   viewStage?: string;
   /**
@@ -419,7 +420,7 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
  *  （onSetStatus）/ 紧急重要度与成果文件与进展描述（onPatch）/ 「文件」列下拉（onUploadFiles + onDeleteFile）/
  *  三段日期与人数（onPatch）；天数不单开编辑（随日期联动写回，与项目页同口径）。点行 = onSelect（开抽屉）；**onSelect 不传 = 整行不可点**（不出「点击查看任务详情」提示、不出 pointer 光标、不占键盘 Tab 焦点；行内各列仍按回调照常只读 / 可编辑 —— 甘特图「画不出时间轴」的兜底列表这样用，Push 294）。
  *  subtitle 缺省 = 英文名小行（项目页口径）；工作台传「阶段 / 临时任务 · 英文名」保持自己那张表的副行。 */
-export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, managers, managerIds, canFinalize = false, members, customDeliverableTypes = [], onCreateDeliverableType, onSetStatus, onSetActualEnd, onChangeManagers, canEditManagers, onPatch, onUploadFiles, onDeleteFile, files, tierTint, subtitle, onOpenAllChanges }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect?: () => void; onProgress?: (progress: number) => void; onDelete?: () => void; managers: string; managerIds: string[]; canFinalize?: boolean; members: readonly Member[]; customDeliverableTypes?: readonly string[]; onCreateDeliverableType?: (name: string) => Promise<string | null>; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (managerIds: string[]) => void; canEditManagers?: boolean; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; tierTint?: TintedTier | false; subtitle?: string; onOpenAllChanges?: (() => void) | null }) {
+export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelete, canFinalize = false, members, managerMembers = members, customDeliverableTypes = [], onCreateDeliverableType, onSetStatus, onSetActualEnd, onChangeManagers, canEditManagers, onPatch, onUploadFiles, onDeleteFile, files, tierTint, subtitle, onOpenAllChanges }: { task: ProjectTask; columns: ColumnDef[]; selected: boolean; onSelect?: () => void; onProgress?: (progress: number) => void; onDelete?: () => void; canFinalize?: boolean; members: readonly Member[]; managerMembers?: readonly Member[]; customDeliverableTypes?: readonly string[]; onCreateDeliverableType?: (name: string) => Promise<string | null>; onSetStatus?: (status: TaskStatus) => void; onSetActualEnd?: (iso: string) => void; onChangeManagers?: (taskId: string, managerIds: string[]) => void; canEditManagers?: boolean; onPatch?: (patch: TaskPatch) => void; onUploadFiles?: (taskId: string, files: File[], onProgress?: (done: number, total: number) => void, finalize?: boolean) => Promise<void>; onDeleteFile?: (fileId: string) => Promise<void>; files?: readonly TaskFileRef[]; tierTint?: TintedTier | false; subtitle?: string; onOpenAllChanges?: (() => void) | null }) {
   const locale = useLocale();
   const t = useT();
   /** 手打内容机翻显示（业务口径 2026-10-13「因为页面有些内容是手打的 我建议是提前后台机翻」）：
@@ -448,7 +449,12 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
     : capabilities.canEditFields
       ? t("board.ownerLockedHint")
       : viewOnlyHint;
+  /** 项目经理 = 项目级字段：任务行展示同一条项目名单；修改会同步整个项目，不是单行独立字段。 */
+  const managerIds = task.managerIds;
+  const managerLabel = task.managers.length === 0 ? "—" : task.managers.join("、");
+  const managerTitle = managerLabel + " — " + t("drawer.manager.caption");
   const managersEditable = canEditManagers ?? onChangeManagers !== undefined;
+  const managerChoices = memberOptionsWithExisting(managerMembers, managerIds, members);
   const managersLocked = !managersEditable || taskFinalized;
   const managersLockedHint = taskFinalized
     ? t("board.finalizedHint")
@@ -522,36 +528,38 @@ export function TaskRow({ task, columns, selected, onSelect, onProgress, onDelet
           disabledHint={progressLockedHint}
           vivid={tierTint === "vivid"}
         />
-        {!canDeleteThisTask ? null : (
+        {onDelete === undefined ? null : (
           // 删除动作位（Push 141，业务口径「不要这个笔作为编辑了…改成删除按钮吧」）：固定 48px 槽位 + 右侧 16px 留白（业务反馈「当项目经理大于两位时 就是会触碰到」—— 展开胶囊右缘原与「项目经理」列齐平，留白后不贴列），
           // 行悬停浮现 24px 幽灵态删除按钮（无底色，业务反馈「黑的太突兀了…要比较看不出来」）、悬停按钮展开成 48px 小号红底胶囊 —— 展开只吃槽位，不挤动四格进度条与描述文字。
+          // 2026-11-11 修：定档 / 无删除权时只撤掉按钮本体，**槽位始终保留**（只要调用方传了 onDelete）——
+          // 原来整段槽位随 canDeleteThisTask 卸载，同一行里四格进度点会右移 80px（槽位 48px + 右留白 16px + 列间距 16px），定档行与相邻行错位。
           <span className="mr-4 flex w-12 shrink-0 items-center self-stretch">
-            <RowDeleteButton onDelete={onDelete} />
+            {canDeleteThisTask ? <RowDeleteButton onDelete={onDelete} /> : null}
           </span>
         )}
       </div>
     ),
     manager:
       onChangeManagers === undefined ? (
-        <span className="truncate text-xs text-zinc-600" title={managers}>{managers}</span>
+        <span className="truncate text-xs text-zinc-600" title={managerTitle}>{managerLabel}</span>
       ) : (
         <InlineMemberMultiCell
           values={managerIds}
-          options={members}
+          options={managerChoices}
           ariaLabel={t("board.edit.aria", { field: fieldText(locale, "项目经理") })}
           disabled={managersLocked}
           disabledHint={managersLockedHint}
-          display={<span className="text-zinc-600" title={managers}>{managers}</span>}
+          display={<span className="text-zinc-600" title={managerTitle}>{managerLabel}</span>}
           onPick={(member) => {
             if (managerIds.includes(member.id)) {
               // 至少留一位（对齐契约 projects.manager_ids 非空）：取消最后一位时不生效
               if (managerIds.length <= 1) {
                 return;
               }
-              onChangeManagers(managerIds.filter((id) => id !== member.id));
+              onChangeManagers(task.id, managerIds.filter((id) => id !== member.id));
               return;
             }
-            onChangeManagers([...managerIds, member.id]);
+            onChangeManagers(task.id, [...managerIds, member.id]);
           }}
         />
       ),
@@ -914,7 +922,7 @@ export function ProjectSummary({ summary }: { summary: ApiProjectSummary | null 
   );
 }
 
-export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgress, onSetStatus, onSetActualEnd, members, customDeliverableTypes = [], onCreateDeliverableType, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, managers, managerIds, canEditManagers, canFinalizeTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, filesByTask, projectId, tierTint, onOpenChangeRecords }: TaskBoardProps) {
+export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgress, onSetStatus, onSetActualEnd, members, managerMembers, customDeliverableTypes = [], onCreateDeliverableType, visibleColumns, scrollRef, collapsed, onToggleStage, onToggleAllStages, skeletonStages, onAddNode, onAddNodes, onCreateTempTask, viewStage, canEditManagers, canFinalizeTask, onSubmitTaskEdit, onRenameTask, onPatchTask, onDeleteTask, onChangeManagers, onUploadFiles, onDeleteFile, onRenameFile, onFinalize, onUnfinalize, onChanged, actorName, filesByTask, projectId, tierTint, onOpenChangeRecords }: TaskBoardProps) {
   const t = useT();
   const locale = useLocale();
   /**
@@ -1301,8 +1309,7 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
                                 onDeleteTask(task.id);
                               }
                         }
-                        managers={managers ?? ""}
-                        managerIds={managerIds ?? []}
+                        managerMembers={managerMembers}
                         canEditManagers={canEditManagers}
                         canFinalize={canFinalizeTask?.(task) === true}
                         members={members}
@@ -1379,11 +1386,10 @@ export function TaskBoard({ tasks, focusTaskId = null, onFocusClosed, onSetProgr
       </div>
       <TaskDrawer
         task={drawerTask}
-        managers={managers ?? ""}
-        managerIds={managerIds ?? []}
         canFinalize={drawerTask !== null && canFinalizeTask?.(drawerTask) === true}
         canEditManagers={canEditManagers ?? onChangeManagers !== undefined}
         members={members}
+        managerMembers={managerMembers}
         customDeliverableTypes={customDeliverableTypes}
         onCreateDeliverableType={onCreateDeliverableType}
         onSubmit={onSubmitTaskEdit}

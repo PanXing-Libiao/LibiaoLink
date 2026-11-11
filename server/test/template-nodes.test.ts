@@ -5,7 +5,7 @@
  * 3) 编辑：PATCH /api/v1/task-nodes/{id} —— 改名 / 英文名（trim；空串 → null 清空）；乐观锁 version 过期 409 VERSION_CONFLICT；
  *    改成同阶段已有名字 409 NODE_ALREADY_EXISTS（排除自身）；不存在 404 NOT_FOUND；
  * 4) 删除：物理删行 + 删除前快照写审计（objectType = task_node）；不存在 404 NOT_FOUND；
- * 5) 权限：写（新增 / 编辑 / 删除）= blueprint.manage（ADR-019 / ADR-020 仅系统管理员）—— 无权 403，且不落库、不留痕；
+ * 5) 权限：写（新增 / 编辑 / 删除）= 节点库管理权（系统管理员，或至少管理一个有效项目的项目经理；ADR-019 / ADR-020）—— 无权 403，且不落库、不留痕；
  * 6) 留痕：新增 / 编辑 / 删除各一条审计（create / update / delete；编辑写字段级 changes）；本刀不写 outbox（与字典维护同口径）。
  * 契约见 shared/src/modules/templates.ts；真机口径见 server/src/modules/template/README.md。
  */
@@ -95,9 +95,9 @@ class FakePermissionService {
     this.lastKey = key;
     if (!this.allowed) throw new AppError("FORBIDDEN", message ?? "无权限：" + key);
   }
-  async assertCanManageBlueprint(_actorId: string, message?: string): Promise<void> {
-    this.lastKey = "blueprint.manage";
-    if (!this.allowed) throw new AppError("FORBIDDEN", message ?? "维护任务模板需要编辑权限");
+  async assertCanManageTaskNodes(_actorId: string, message?: string): Promise<void> {
+    this.lastKey = "taskNode.manage";
+    if (!this.allowed) throw new AppError("FORBIDDEN", message ?? "维护任务节点库需要项目经理或管理员权限");
   }
 }
 
@@ -166,11 +166,11 @@ describe("节点库列表（读 = 登录即可）", () => {
   });
 });
 
-describe("新增节点（写 = blueprint.manage）", () => {
+describe("新增节点（写 = 节点库管理权）", () => {
   it("缺省 seq = 该阶段末位 + 10；title / titleEn 归一（trim；空串 → null）；审计 action=create", async () => {
     const { service, repo, audit, permission } = makeService();
     const created = await service.createNode({ stageKey: "install", title: "  货品复核  ", titleEn: "   " }, ACTOR);
-    expect(permission.lastKey).toBe("blueprint.manage");
+    expect(permission.lastKey).toBe("taskNode.manage");
     expect(created).toMatchObject({ stageKey: "install", seq: 20, title: "货品复核", titleEn: null, version: 0 });
     expect(repo.rows.map((row) => row.title)).toEqual(["货架组装", "货品复核"]);
     expect(audit.records).toHaveLength(1);
@@ -274,7 +274,7 @@ describe("编辑节点（改名 / 英文名 + 乐观锁）", () => {
   it("改名成功：version +1、diff 只含 title、审计 action=update", async () => {
     const { service, repo, audit, permission } = makeService();
     const updated = await service.updateNode(NODE, { title: "  货架复装  ", version: 0 }, ACTOR);
-    expect(permission.lastKey).toBe("blueprint.manage");
+    expect(permission.lastKey).toBe("taskNode.manage");
     expect(updated).toMatchObject({ id: NODE, title: "货架复装", titleEn: "Shelf Assembly", version: 1 });
     expect(repo.rows[0]).toMatchObject({ title: "货架复装", version: 1 });
     expect(audit.records).toHaveLength(1);

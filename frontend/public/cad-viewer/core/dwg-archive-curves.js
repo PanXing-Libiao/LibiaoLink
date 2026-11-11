@@ -40,3 +40,28 @@ export function restoreCurve(tables,entity,native) {
     native[entity.id]={type,center:xyz(12),normal:xyz(15),radius:values[i+18],startAngle:values[i+19],endAngle:values[i+20]};
   }
 }
+
+// Decode the four columns passed to attachArchiveCurves in the drawing viewer.
+export function readCurveColumns(raw, sourceSHA256) {
+  const source = Array.from(new Uint8Array(raw, 0, 32), byte =>
+    byte.toString(16).padStart(2, '0')
+  ).join('');
+  if (source !== sourceSHA256) throw new Error('Curve source mismatch');
+
+  const header = new DataView(raw);
+  const lineCount = header.getUint32(32, true);
+  const arcCount = header.getUint32(36, true);
+  let offset = 40;
+
+  function readTable(count, valuesPerCurve) {
+    const handles = new BigUint64Array(raw, offset, count);
+    offset += handles.byteLength;
+    const values = new Float64Array(raw, offset, count * valuesPerCurve);
+    offset += values.byteLength;
+    return {handles, values};
+  }
+
+  const tables = {line: readTable(lineCount, 6), arc: readTable(arcCount, 21)};
+  if (offset !== raw.byteLength) throw new Error('Curve column length mismatch');
+  return tables;
+}

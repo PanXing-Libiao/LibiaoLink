@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   assignGroupAccessAdmin,
   deleteGroupAccessMemberRules,
@@ -10,18 +10,28 @@ import {
   type GroupAccessAdmin,
   type GroupAccessGroup,
   type GroupAccessMember,
-  type GroupAccessMemberRule,
   type GroupAccessOverview,
-  type GroupAccessProject,
 } from "./accessApi";
 import { AccessDashboard, AccessDashboardSkeleton } from "./AccessDashboard";
+import { AccessPermissionMatrix } from "./AccessPermissionMatrix";
 import { buildAccessDashboardModel } from "./accessDashboardModel";
+import {
+  automaticCountsForMembers,
+  automaticRoleOf,
+  automaticRolesById,
+  effectiveMemberPermission,
+  manualLevelOf,
+  projectById,
+  projectLabel,
+  type EffectiveMemberPermission,
+} from "./accessRoleModel";
 import { effectiveMemberAccess, memberRuleOf, scopePermissionsOf } from "./accessRules";
 import { AccessScopePicker } from "./AccessScopePicker";
 import { AppHeader } from "./components/AppHeader";
 import { SelectMenu } from "./components/SelectMenu";
 import { Toast, type ToastKind } from "./components/Toast";
 import { useLocale, useT, type TextKey } from "./i18n";
+import { useLiveRefresh } from "./useLiveRefresh";
 import { loadMyPermissions, type GroupAccessScopePermission } from "./permissions";
 import type { MeResponse } from "./types";
 
@@ -31,63 +41,24 @@ type LoadState =
   | { kind: "error"; message: string };
 
 type Notice = { kind: ToastKind; text: string };
-type AccessView = "dashboard" | "rules";
+type AccessView = "departments" | "people" | "dashboard";
 type Translate = (key: TextKey, params?: Record<string, string | number>) => string;
-type DepartmentTreeNode = { group: GroupAccessGroup; children: DepartmentTreeNode[] };
+type DirectorySection = { key: string; label: string; items: Array<{ group: GroupAccessGroup; pathText: string }> };
+
+type PreviewRow = {
+  projectId: string;
+  sources: string[];
+  level: "edit" | "view" | "task";
+  taskOwner: boolean;
+};
 
 function memberSearchText(member: GroupAccessMember): string {
   return (member.displayName + " " + member.username + " " + (member.email ?? "")).toLowerCase();
 }
 
-function departmentMatches(group: GroupAccessGroup, query: string): boolean {
-  return query === "" || (group.groupName + " " + group.groupKey).toLowerCase().includes(query);
-}
-
-function filterDepartmentTree(nodes: readonly DepartmentTreeNode[], query: string): DepartmentTreeNode[] {
-  if (query === "") return [...nodes];
-  const result: DepartmentTreeNode[] = [];
-  for (const node of nodes) {
-    if (departmentMatches(node.group, query)) {
-      result.push(node);
-      continue;
-    }
-    const children = filterDepartmentTree(node.children, query);
-    const hasMember = node.group.members.some((member) => memberSearchText(member).includes(query));
-    if (children.length > 0 || hasMember) {
-      result.push({ group: node.group, children });
-    }
-  }
-  return result;
-}
-
-function buildDepartmentTree(groups: readonly GroupAccessGroup[]): DepartmentTreeNode[] {
-  const nodes = new Map<string, DepartmentTreeNode>();
-  for (const group of groups) nodes.set(group.groupKey, { group, children: [] });
-  const roots: DepartmentTreeNode[] = [];
-  for (const node of nodes.values()) {
-    const parentKey = node.group.parentGroupKey ?? null;
-    const parent = parentKey === null || parentKey === node.group.groupKey ? undefined : nodes.get(parentKey);
-    if (parent === undefined) {
-      roots.push(node);
-    } else {
-      parent.children.push(node);
-    }
-  }
-  const sort = (items: DepartmentTreeNode[]): void => {
-    items.sort((left, right) => left.group.groupName.localeCompare(right.group.groupName, "zh-Hans-CN"));
-    for (const item of items) sort(item.children);
-  };
-  sort(roots);
-  return roots;
-}
-
-function collectDepartmentKeys(nodes: readonly DepartmentTreeNode[]): string[] {
-  const keys: string[] = [];
-  for (const node of nodes) {
-    keys.push(node.group.groupKey);
-    keys.push(...collectDepartmentKeys(node.children));
-  }
-  return keys;
+function memberInitial(member: Pick<GroupAccessMember, "displayName">): string {
+  const chars = Array.from(member.displayName.trim());
+  return chars.length === 0 ? "?" : chars[0] ?? "?";
 }
 
 function departmentPathOf(groupKey: string, groups: ReadonlyMap<string, GroupAccessGroup>): string[] {
@@ -103,307 +74,219 @@ function departmentPathOf(groupKey: string, groups: ReadonlyMap<string, GroupAcc
   return path;
 }
 
-function memberInitial(member: Pick<GroupAccessMember, "displayName">): string {
-  const chars = Array.from(member.displayName.trim());
-  return chars.length === 0 ? "?" : chars[0] ?? "?";
+function buildDirectorySections(
+  groups: readonly GroupAccessGroup[],
+  groupsByKey: ReadonlyMap<string, GroupAccessGroup>,
+  query: string,
+): DirectorySection[] {
+  const byRoot = new Map<string, { label: string; sortKey: string; items: Array<{ group: GroupAccessGroup; pathText: string }> }>();
+  for (const group of groups) {
+    const path = departmentPathOf(group.groupKey, groupsByKey);
+    let root = groupsByKey.get(group.groupKey) ?? group;
+    const seen = new Set<string>();
+    while (root.parentGroupKey !== null && !seen.has(root.groupKey)) {
+      seen.add(root.groupKey);
+      const parent = groupsByKey.get(root.parentGroupKey);
+      if (parent === undefined) break;
+      root = parent;
+    }
+    const matches = query === "" ||
+      (group.groupName + " " + group.groupKey + " " + path.join(" ")).toLowerCase().includes(query) ||
+      group.members.some((member) => memberSearchText(member).includes(query));
+    if (!matches) continue;
+    const bucketKey = path.length === 0 ? "__root__" : root.groupKey;
+    const existing = byRoot.get(bucketKey) ?? {
+      label: path.length === 0 ? group.groupName : root.groupName,
+      sortKey: path.length === 0 ? group.groupName : root.groupName,
+      items: [],
+    };
+    existing.items.push({
+      group,
+      pathText: path.length > 1 ? path.join(" / ") : group.groupName,
+    });
+    byRoot.set(bucketKey, existing);
+  }
+  return [...byRoot.entries()]
+    .map(([key, section]) => ({
+      key,
+      label: section.label,
+      items: section.items.sort((left, right) => left.pathText.localeCompare(right.pathText, "zh-Hans-CN")),
+      sortKey: section.sortKey,
+    }))
+    .sort((left, right) => left.sortKey.localeCompare(right.sortKey, "zh-Hans-CN"))
+    .map(({ sortKey: _sortKey, ...section }) => section);
 }
 
 function adminSourceKey(source: GroupAccessAdmin["source"]): TextKey {
-  if (source === "manual") return "access.adminSourceManual";
-  return "access.adminSourceConfigured";
+  return source === "configured" ? "access.adminSourceConfigured" : "access.adminSourceManual";
 }
 
-function MemberRow({
-  member,
-  depth,
-  active,
-  t,
-  onSelect,
-}: {
-  member: GroupAccessMember;
-  depth: number;
-  active: boolean;
-  t: Translate;
-  onSelect: () => void;
-}) {
-  const detail = [member.username, member.email ?? ""].filter((item) => item !== "").join(" · ");
+function levelText(t: Translate, level: "edit" | "view"): string {
+  return t(level === "edit" ? "access.dashboard.operate" : "access.dashboard.viewOnly");
+}
+
+function scopeSummary(t: Translate, permissions: readonly GroupAccessScopePermission[]): string {
+  if (permissions.length === 0) return t("access.noExtraScope");
+  return permissions
+    .map((permission) => t(("access.scope." + permission.projectScope) as TextKey) + " · " + levelText(t, permission.accessLevel))
+    .join(t("access.permissionSeparator"));
+}
+
+function visibleText(t: Translate, effective: EffectiveMemberPermission): string {
+  if (effective.visibleAll) return t("access.visibleAll");
+  if (effective.visibleProjectIds.length === 0) return t("access.visibleNone");
+  if (
+    effective.manual.permissions.length === 0 &&
+    effective.automatic.managerCount === 0 &&
+    effective.automatic.memberCount === 0 &&
+    effective.automatic.taskOwnerProjectCount > 0
+  ) return t("access.visibleTaskOnly");
+  return t("access.visibleCount", { n: effective.visibleProjectIds.length });
+}
+
+function editableText(t: Translate, effective: EffectiveMemberPermission): string {
+  if (effective.editAll) return t("access.visibleAll");
+  if (effective.editProjectIds.length > 0) return t("access.editCount", { n: effective.editProjectIds.length });
+  if (effective.taskOnlyCount > 0) return t("access.taskLevelCount", { n: effective.taskOnlyCount });
+  return t("access.editNone");
+}
+
+function MemberAvatar({ member, size }: { member: GroupAccessMember; size: "sm" | "md" | "lg" }) {
+  const className = size === "lg" ? "h-14 w-14 text-xl" : size === "md" ? "h-9 w-9 text-sm" : "h-7 w-7 text-[11px]";
   return (
-    <div style={{ paddingLeft: String(32 + depth * 14) + "px" }} className="pr-2">
-      <button
-        type="button"
-        data-access-directory-member={member.userId}
-        onClick={onSelect}
-        aria-current={active ? "true" : undefined}
-        className={"flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 " + (active ? "bg-blue-50/80 ring-1 ring-inset ring-blue-200" : "hover:bg-zinc-50")}
-        title={member.email ?? member.username}
-      >
-        <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-xs font-semibold text-zinc-600">
-          {memberInitial(member)}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate text-xs font-medium text-zinc-700">{member.displayName}</span>
-            {member.status === "disabled" ? (
-              <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500">{t("access.memberDisabled")}</span>
-            ) : null}
-          </span>
-          <span className="mt-0.5 block truncate text-[11px] text-zinc-400">{detail}</span>
-        </span>
-      </button>
-    </div>
+    <span className={"flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-100 to-indigo-100 font-semibold text-blue-700 ring-1 ring-blue-200/60 " + className}>
+      {memberInitial(member)}
+    </span>
   );
 }
 
-function SelectionCheckbox({
-  checked,
-  indeterminate,
-  disabled = false,
-  onChange,
-}: {
-  checked: boolean;
-  indeterminate: boolean;
-  disabled?: boolean;
-  onChange: () => void;
-}) {
-  const ref = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (ref.current !== null) ref.current.indeterminate = indeterminate;
-  }, [indeterminate]);
-  return (
-    <input
-      ref={ref}
-      type="checkbox"
-      checked={checked}
-      disabled={disabled}
-      onChange={onChange}
-      className="h-4 w-4 shrink-0 cursor-pointer rounded border-zinc-300 accent-blue-600 disabled:cursor-not-allowed disabled:opacity-40"
-    />
-  );
+function RoleTag({ tone, children }: { tone: "blue" | "emerald" | "violet" | "amber" | "zinc"; children: ReactNode }) {
+  const tones = {
+    blue: "border-blue-200 bg-blue-50 text-blue-700",
+    emerald: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    violet: "border-violet-200 bg-violet-50 text-violet-700",
+    amber: "border-amber-200 bg-amber-50 text-amber-700",
+    zinc: "border-zinc-200 bg-zinc-50 text-zinc-500",
+  };
+  return <span className={"inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-medium " + tones[tone]}>{children}</span>;
 }
 
-function SelectableMemberRow({
-  member,
-  checked,
-  admin,
-  adminBusy,
-  personalRule,
-  focused,
-  t,
-  onToggle,
-  onToggleAdmin,
-}: {
-  member: GroupAccessMember;
-  checked: boolean;
-  admin: GroupAccessAdmin | undefined;
-  adminBusy: boolean;
-  personalRule: GroupAccessMemberRule | null;
-  focused: boolean;
-  t: Translate;
-  onToggle: () => void;
-  onToggleAdmin: () => void;
-}) {
-  const detail = [member.username, member.email ?? ""].filter((item) => item !== "").join(" · ");
-  return (
-    <div
-      data-access-rule-member={member.userId}
-      className={"flex items-center gap-2 rounded-lg px-3 py-2 transition " + (focused ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : "hover:bg-blue-50/60")}
-    >
-      <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
-        <SelectionCheckbox checked={checked} indeterminate={false} onChange={onToggle} />
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-50 text-xs font-semibold text-blue-700">
-          {memberInitial(member)}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <span className="truncate text-sm font-medium text-zinc-800">{member.displayName}</span>
-            {member.status === "disabled" ? (
-              <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500">{t("access.memberDisabled")}</span>
-            ) : null}
-            {personalRule === null ? null : (
-              <span data-access-personal-badge={member.userId} className="shrink-0 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700">
-                {t("access.personalBadge")}
-              </span>
-            )}
-            {admin === undefined ? null : (
-              <span className="shrink-0 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">{t("access.adminBadge")}</span>
-            )}
-          </span>
-          <span className="mt-0.5 block truncate text-[11px] text-zinc-400">{detail}</span>
-        </span>
-      </label>
-      {admin === undefined ? (
-        <button
-          type="button"
-          onClick={onToggleAdmin}
-          disabled={adminBusy}
-          className="shrink-0 whitespace-nowrap rounded-lg border border-zinc-200 px-2.5 py-1.5 text-[11px] font-medium text-zinc-600 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 disabled:opacity-50"
-        >
-          {adminBusy ? t("access.adminBusy") : t("access.makeAdmin")}
-        </button>
-      ) : admin.removable ? (
-        <button
-          type="button"
-          onClick={onToggleAdmin}
-          disabled={adminBusy}
-          className="shrink-0 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
-        >
-          {adminBusy ? t("access.adminBusy") : t("access.removeAdmin")}
-        </button>
-      ) : (
-        <span title={t("access.adminImmutable")} className="shrink-0 whitespace-nowrap rounded-full bg-zinc-100 px-2 py-1 text-[10px] text-zinc-500">
-          {t(adminSourceKey(admin.source))}
-        </span>
-      )}
-    </div>
-  );
+function EmptyHint({ children }: { children: ReactNode }) {
+  return <p className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50/70 px-3 py-6 text-center text-xs text-zinc-400">{children}</p>;
 }
 
-function ProjectSelectionList({
+function ProjectPicker({
   projects,
-  query,
   selectedIds,
+  query,
   t,
   onQueryChange,
   onToggle,
 }: {
-  projects: readonly GroupAccessProject[];
-  query: string;
+  projects: GroupAccessOverview["projects"];
   selectedIds: readonly string[];
+  query: string;
   t: Translate;
   onQueryChange: (value: string) => void;
   onToggle: (projectId: string) => void;
 }) {
   return (
-    <div className="mt-3 rounded-xl border border-zinc-200">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 px-3 py-2">
-        <input
-          value={query}
-          onChange={(event) => { onQueryChange(event.target.value); }}
-          placeholder={t("access.projectSearch")}
-          className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-zinc-400"
-        />
-        <span className="text-xs text-zinc-500">{t("access.selectedCount", { n: selectedIds.length })}</span>
+    <div data-access-project-picker="true" className="mt-3 overflow-hidden rounded-xl border border-zinc-200">
+      <div className="flex items-center gap-2 border-b border-zinc-100 bg-zinc-50/80 px-3 py-2">
+        <svg viewBox="0 0 20 20" aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-zinc-400"><circle cx="8.5" cy="8.5" r="4.8" fill="none" stroke="currentColor" strokeWidth="1.6" /><path d="m12.2 12.2 4 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+        <input value={query} onChange={(event) => { onQueryChange(event.target.value); }} placeholder={t("access.projectSearch")} aria-label={t("access.projectSearch")} className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-zinc-400" />
+        <span className="shrink-0 text-[10px] tabular-nums text-zinc-400">{t("access.selectedCount", { n: selectedIds.length })}</span>
       </div>
-      <div className="scrollbar-hidden max-h-56 overflow-auto p-2">
-        {projects.length === 0 ? <p className="px-2 py-3 text-xs text-zinc-500">{t("access.noProjects")}</p> : null}
-        {projects.map((project) => (
-          <label key={project.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50">
-            <input type="checkbox" checked={selectedIds.includes(project.id)} onChange={() => { onToggle(project.id); }} className="h-4 w-4 accent-zinc-900" />
-            <span className="font-mono text-xs text-zinc-400">{project.code}</span>
-            <span className="min-w-0 truncate">{project.name}</span>
-          </label>
-        ))}
+      <div className="scrollbar-hidden grid max-h-56 gap-1 overflow-y-auto p-1.5 sm:grid-cols-2">
+        {projects.length === 0 ? <p className="col-span-full px-2 py-4 text-center text-[11px] text-zinc-400">{t("access.noProjects")}</p> : projects.map((project) => {
+          const selected = selectedIds.includes(project.id);
+          return (
+            <button key={project.id} type="button" onClick={() => { onToggle(project.id); }} aria-pressed={selected} className={"flex min-w-0 items-start gap-2 rounded-lg px-2.5 py-2 text-left transition " + (selected ? "bg-blue-50 text-blue-800 ring-1 ring-inset ring-blue-200" : "text-zinc-600 hover:bg-zinc-50")}>
+              <span className={"mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border " + (selected ? "border-blue-600 bg-blue-600 text-white" : "border-zinc-300 bg-white text-transparent")}><svg viewBox="0 0 16 16" className="h-2.5 w-2.5"><path d="m3.2 8.2 3 3 6.5-6.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
+              <span className="min-w-0"><span className="block truncate text-[11px] font-medium">{project.code}</span><span className="mt-0.5 block truncate text-[10px] text-zinc-400">{project.name}</span></span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-function DepartmentTree({
-  nodes,
-  depth,
-  selectedKey,
-  expandedKeys,
-  activeMemberId,
-  query,
+function RoleProjectBlock({
+  title,
+  count,
+  tone,
+  projectIds,
+  projectsById,
+  footer,
   t,
-  onSelect,
-  onToggle,
-  onMemberSelect,
 }: {
-  nodes: readonly DepartmentTreeNode[];
-  depth: number;
-  selectedKey: string | null;
-  expandedKeys: ReadonlySet<string>;
-  activeMemberId: string | null;
-  query: string;
+  title: string;
+  count: number;
+  tone: "blue" | "emerald" | "violet";
+  projectIds: readonly string[];
+  projectsById: ReadonlyMap<string, { id: string; code: string; name: string }>;
+  footer?: string;
   t: Translate;
-  onSelect: (group: GroupAccessGroup) => void;
-  onToggle: (groupKey: string) => void;
-  onMemberSelect: (group: GroupAccessGroup, member: GroupAccessMember) => void;
 }) {
+  const tones = {
+    blue: "bg-blue-50/70 text-blue-700 ring-blue-100",
+    emerald: "bg-emerald-50/70 text-emerald-700 ring-emerald-100",
+    violet: "bg-violet-50/70 text-violet-700 ring-violet-100",
+  };
+  const visible = projectIds.slice(0, 4);
   return (
-    <>
-      {nodes.map((node) => {
-        const group = node.group;
-        const selfMatch = query !== "" && departmentMatches(group, query);
-        const members = query === "" || selfMatch
-          ? group.members
-          : group.members.filter((member) => memberSearchText(member).includes(query));
-        const expanded = query !== "" || expandedKeys.has(group.groupKey);
-        const hasContent = group.members.length > 0 || node.children.length > 0;
-        const selected = group.groupKey === selectedKey;
-        return (
-          <div key={group.groupKey} style={{ paddingLeft: String(depth * 14) + "px" }}>
-            <div className={"group flex items-stretch rounded-lg " + (selected ? "bg-blue-50 text-blue-950 ring-1 ring-inset ring-blue-200" : "text-zinc-700 hover:bg-zinc-50")}>
-              <button
-                type="button"
-                onClick={() => { onToggle(group.groupKey); }}
-                disabled={!hasContent}
-                aria-expanded={hasContent ? expanded : undefined}
-                aria-label={expanded ? t("access.collapseDepartment") : t("access.expandDepartment")}
-                className={"flex w-7 shrink-0 items-center justify-center rounded-l-lg " + (hasContent ? "cursor-pointer" : "cursor-default opacity-0")}
-              >
-                <svg viewBox="0 0 20 20" aria-hidden="true" className={"h-3.5 w-3.5 transition-transform " + (expanded ? "rotate-90" : "")}>
-                  <path d="M7 4.5 12.5 10 7 15.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </button>
-              <button type="button" onClick={() => { onSelect(group); }} className="flex min-w-0 flex-1 items-center gap-2 py-2 pr-2 text-left">
-                <svg viewBox="0 0 24 24" aria-hidden="true" className={"h-5 w-5 shrink-0 " + (selected ? "text-blue-500" : "text-blue-400")}>
-                  <path d="M3.5 6.5A2.5 2.5 0 0 1 6 4h4.1l2 2.2H18A2.5 2.5 0 0 1 20.5 8.7v8.8A2.5 2.5 0 0 1 18 20H6a2.5 2.5 0 0 1-2.5-2.5v-11Z" fill="currentColor" opacity="0.95" />
-                  <path d="M3.8 9h16.4" stroke="white" strokeOpacity="0.55" strokeWidth="1.2" />
-                </svg>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium">{group.groupName}</span>
-                  <span className={"mt-0.5 block truncate text-[11px] " + (selected ? "text-blue-600" : "text-zinc-400")}>
-                    {t("access.members", { n: group.memberCount })}
-                    {" · "}
-                    {group.rule === null ? t("access.unconfigured") : t("access.configured")}
-                  </span>
-                </span>
-              </button>
-            </div>
-            {expanded ? (
-              <div className="pb-1 pt-0.5">
-                <DepartmentTree
-                  nodes={node.children}
-                  depth={depth + 1}
-                  selectedKey={selectedKey}
-                  expandedKeys={expandedKeys}
-                  activeMemberId={activeMemberId}
-                  query={query}
-                  t={t}
-                  onSelect={onSelect}
-                  onToggle={onToggle}
-                  onMemberSelect={onMemberSelect}
-                />
-                {members.map((member) => (
-                  <MemberRow
-                    key={member.userId}
-                    member={member}
-                    depth={depth}
-                    active={member.userId === activeMemberId}
-                    t={t}
-                    onSelect={() => { onMemberSelect(group, member); }}
-                  />
-                ))}
-                {group.members.length === 0 && node.children.length === 0 ? (
-                  <p style={{ paddingLeft: String(34 + depth * 14) + "px" }} className="py-1 pr-2 text-[11px] text-zinc-400">
-                    {t("access.noMembers")}
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        );
-      })}
-    </>
+    <div className={"min-w-0 rounded-2xl p-4 ring-1 ring-inset " + tones[tone]}>
+      <div className="flex items-center justify-between gap-2"><h4 className="text-xs font-semibold">{title}</h4><span className="text-lg font-semibold tabular-nums">{count}</span></div>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {visible.length === 0 ? <span className="text-[10px] opacity-70">{t("access.noAutoRole")}</span> : visible.map((projectId) => <span key={projectId} className="max-w-full truncate rounded-md bg-white/80 px-2 py-1 text-[10px] font-medium ring-1 ring-inset ring-current/10">{projectLabel(projectsById.get(projectId), projectId)}</span>)}
+        {projectIds.length > visible.length ? <span className="rounded-md bg-white/80 px-2 py-1 text-[10px] font-medium ring-1 ring-inset ring-current/10">+{projectIds.length - visible.length}</span> : null}
+      </div>
+      {footer === undefined ? null : <p className="mt-2 text-[10px] leading-4 opacity-80">{footer}</p>}
+    </div>
   );
 }
 
+function buildPreviewRows(
+  effective: EffectiveMemberPermission,
+  projectsById: ReadonlyMap<string, { id: string; code: string; name: string }>,
+  t: Translate,
+): PreviewRow[] {
+  const manager = new Set(effective.automatic.role.projectManagerProjectIds);
+  const member = new Set(effective.automatic.role.projectMemberProjectIds);
+  const taskOwner = new Set(effective.automatic.role.taskOwnerProjectIds);
+  const allLevel = manualLevelOf(effective.manual, "all");
+  const ownLevel = manualLevelOf(effective.manual, "own");
+  const selectedLevel = manualLevelOf(effective.manual, "selected");
+  const selectedIds = new Set(effective.manual.projectIds);
+  const ids = effective.visibleProjectIds.slice(0, 12);
+  return ids.map((projectId) => {
+    const sources: string[] = [];
+    if (manager.has(projectId)) sources.push(t("access.sourceAutoManager"));
+    if (member.has(projectId)) sources.push(t("access.sourceAutoMember"));
+    if (taskOwner.has(projectId)) sources.push(t("access.sourceAutoTask"));
+    let manualLevel: "edit" | "view" | null = null;
+    if (allLevel !== null) manualLevel = allLevel;
+    if (ownLevel !== null && (manager.has(projectId) || member.has(projectId))) manualLevel = manualLevel === "edit" ? manualLevel : ownLevel;
+    if (selectedLevel !== null && selectedIds.has(projectId)) manualLevel = manualLevel === "edit" ? manualLevel : selectedLevel;
+    if (manualLevel !== null) sources.push(t("access.sourceManual"));
+    const level: PreviewRow["level"] = effective.isAdmin || manager.has(projectId) || manualLevel === "edit"
+      ? "edit"
+      : taskOwner.has(projectId)
+        ? "task"
+        : "view";
+    return { projectId, sources: [...new Set(sources)], level, taskOwner: taskOwner.has(projectId) };
+  }).sort((left, right) => {
+    const leftProject = projectsById.get(left.projectId);
+    const rightProject = projectsById.get(right.projectId);
+    return (leftProject?.code ?? left.projectId).localeCompare(rightProject?.code ?? right.projectId);
+  });
+}
+
 /**
- * 部门权限页（2026-10-23 上线；2026-10-24 改通讯录式部门树）：
- * 部门层级与直属人员来自 Casdoor 自动同步；右侧只做页面 / 项目范围配置。
- * 本页不改裁决开关：GROUP_ACCESS_ENFORCED=false 时规则仍只保存、不限制账号。
+ * 权限管理页（2026-11-11 动态授权改版）：
+ * 自动项目角色由项目和任务关系实时计算；部门 / 个人规则只配置额外范围。
+ * 页面每 30 秒后台刷新，关系变化后无需手工补规则。
  */
 export function AccessControlPage({ me }: { me: MeResponse }) {
   const t = useT();
@@ -411,7 +294,7 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
   const tRef = useRef(t);
   tRef.current = t;
   const [state, setState] = useState<LoadState>({ kind: "loading" });
-  const [accessView, setAccessView] = useState<AccessView>("dashboard");
+  const [accessView, setAccessView] = useState<AccessView>("departments");
   const [scopeGroupKey, setScopeGroupKey] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
@@ -423,20 +306,22 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
   const requestIdRef = useRef(0);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [focusedMemberId, setFocusedMemberId] = useState<string | null>(null);
+  const [personalUserId, setPersonalUserId] = useState<string | null>(null);
   const [departmentScopePermissions, setDepartmentScopePermissions] = useState<GroupAccessScopePermission[]>([]);
   const [departmentProjectIds, setDepartmentProjectIds] = useState<string[]>([]);
   const [personalScopePermissions, setPersonalScopePermissions] = useState<GroupAccessScopePermission[]>([]);
   const [personalProjectIds, setPersonalProjectIds] = useState<string[]>([]);
-  const [selectedMemberUserIds, setSelectedMemberUserIds] = useState<string[]>([]);
   const [departmentProjectQuery, setDepartmentProjectQuery] = useState("");
   const [personalProjectQuery, setPersonalProjectQuery] = useState("");
   const [directoryQuery, setDirectoryQuery] = useState("");
-  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set());
+  const [personalDirectoryQuery, setPersonalDirectoryQuery] = useState("");
+  const [showAllMembers, setShowAllMembers] = useState(false);
   const [savingDepartment, setSavingDepartment] = useState(false);
   const [deletingDepartment, setDeletingDepartment] = useState(false);
-  const [savingMembers, setSavingMembers] = useState(false);
-  const [restoringMembers, setRestoringMembers] = useState(false);
+  const [savingPersonal, setSavingPersonal] = useState(false);
+  const [restoringPersonal, setRestoringPersonal] = useState(false);
   const [adminBusyUserId, setAdminBusyUserId] = useState<string | null>(null);
+  const [matrixOpen, setMatrixOpen] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
 
   const loadAccessData = useCallback(async (options?: { background?: boolean }): Promise<boolean> => {
@@ -453,11 +338,11 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
       const next = await fetchAccessOverview();
       if (requestId !== requestIdRef.current) return false;
       hasDataRef.current = true;
+      setLastSyncedAt(new Date());
       const nextSignature = JSON.stringify(next);
       if (nextSignature !== dataSignatureRef.current) {
         dataSignatureRef.current = nextSignature;
         setState({ kind: "ready", data: next });
-        setLastSyncedAt(new Date());
         setRefreshSeq((value) => value + 1);
       }
       return true;
@@ -481,134 +366,111 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
 
   useEffect(() => {
     void loadAccessData();
-    return () => {
-      requestIdRef.current += 1;
-    };
+    return () => { requestIdRef.current += 1; };
   }, [loadAccessData, reload]);
 
-  useEffect(() => {
-    const refreshIfVisible = (): void => {
-      if (document.visibilityState === "visible") void loadAccessData({ background: true });
-    };
-    const timer = window.setInterval(refreshIfVisible, 30_000);
-    const onVisibilityChange = (): void => {
-      if (document.visibilityState === "visible") refreshIfVisible();
-    };
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, [loadAccessData]);
+  // 项目 / 任务关系变化通过实时事件立即触发后台刷新；全局 live sync 仍保留 30 秒兜底。
+  useLiveRefresh(
+    ["projects", "tasks", "permissions", "users"],
+    async () => {
+      await loadAccessData({ background: true });
+      return () => {};
+    },
+    "access-overview",
+    true,
+    { readOnly: true },
+  );
 
   const data = state.kind === "ready" ? state.data : null;
+  const allGroups = data?.groups ?? [];
+  const groupsByKey = useMemo(() => new Map(allGroups.map((group) => [group.groupKey, group] as const)), [allGroups]);
+  const rolesById = useMemo(() => data === null ? new Map() : automaticRolesById(data), [data]);
+  const projectsById = useMemo(() => data === null ? new Map() : projectById(data.projects), [data]);
+  const adminByUserId = useMemo(() => new Map((data?.admins ?? []).map((admin) => [admin.userId, admin] as const)), [data]);
+
   useEffect(() => {
     if (selectedKey !== null || data === null || data.groups.length === 0) return;
-    const byKey = new Map(data.groups.map((group) => [group.groupKey, group] as const));
-    const initial = data.groups.find((group) => data.currentGroupKeys.includes(group.groupKey)) ?? data.groups[0];
+    const initial = data.groups.find((group) => data.currentGroupKeys.includes(group.groupKey)) ?? data.groups.find((group) => group.groupKey !== "__ungrouped__") ?? data.groups[0];
     if (initial === undefined) return;
-    const branch = new Set<string>();
-    let current: GroupAccessGroup | undefined = initial;
-    while (current !== undefined && !branch.has(current.groupKey)) {
-      branch.add(current.groupKey);
-      current = current.parentGroupKey === null ? undefined : byKey.get(current.parentGroupKey);
-    }
     setSelectedKey(initial.groupKey);
-    setExpandedKeys((keys) => new Set([...keys, ...branch]));
     applyGroup(initial);
   }, [data, selectedKey]);
 
-  const allGroups = data?.groups ?? [];
-  const normalizedDirectoryQuery = directoryQuery.trim().toLowerCase();
-  const departmentTree = useMemo(() => buildDepartmentTree(allGroups), [allGroups]);
-  const filteredTree = useMemo(
-    () => filterDepartmentTree(departmentTree, normalizedDirectoryQuery),
-    [departmentTree, normalizedDirectoryQuery],
-  );
-  const allDepartmentKeys = useMemo(() => collectDepartmentKeys(departmentTree), [departmentTree]);
-  const allExpanded = allDepartmentKeys.length > 0 && allDepartmentKeys.every((key) => expandedKeys.has(key));
-  const groupByKey = new Map(allGroups.map((group) => [group.groupKey, group] as const));
-  const admins = data?.admins ?? [];
-  const adminByUserId = new Map(admins.map((admin) => [admin.userId, admin] as const));
-  const totalMemberCount = new Set(allGroups.flatMap((group) => group.members.map((member) => member.userId))).size;
-  const selectedGroup = selectedKey === null ? null : groupByKey.get(selectedKey) ?? null;
-  const selectedRule = selectedGroup?.rule ?? null;
-  const selectedRuleScopes = selectedRule === null
-    ? []
-    : scopePermissionsOf(selectedRule.scopePermissions, selectedRule.projectScope, selectedRule.accessLevel);
-  const selectedGroupMembers = selectedGroup?.members ?? [];
-  const selectedMemberIdSet = new Set(
-    selectedMemberUserIds.filter((userId) => selectedGroupMembers.some((member) => member.userId === userId)),
-  );
-  const selectedMemberCount = selectedGroupMembers.filter((member) => selectedMemberIdSet.has(member.userId)).length;
-  const allMembersSelected = selectedGroupMembers.length > 0 && selectedMemberCount === selectedGroupMembers.length;
-  const someMembersSelected = selectedMemberCount > 0 && !allMembersSelected;
-  const selectedHasPersonalRule = selectedGroupMembers.some(
-    (member) => selectedMemberIdSet.has(member.userId) && memberRuleOf(selectedGroup as GroupAccessGroup, member.userId) !== null,
-  );
-  const personalRuleCount = selectedGroup?.memberRules.length ?? 0;
-  const selectedPath = selectedKey === null ? [] : departmentPathOf(selectedKey, groupByKey);
-  const departmentQuery = departmentProjectQuery.trim().toLowerCase();
-  const personalQuery = personalProjectQuery.trim().toLowerCase();
-  const departmentProjects = data === null
-    ? []
-    : departmentQuery === ""
-      ? data.projects
-      : data.projects.filter((project) => (project.code + " " + project.name).toLowerCase().includes(departmentQuery));
-  const personalProjects = data === null
-    ? []
-    : personalQuery === ""
-      ? data.projects
-      : data.projects.filter((project) => (project.code + " " + project.name).toLowerCase().includes(personalQuery));
-  const dashboardModel = useMemo(() => data === null ? null : buildAccessDashboardModel(data, scopeGroupKey), [data, scopeGroupKey]);
-  const scopeOptions = useMemo(() => {
-    if (data === null) return [] as Array<{ groupKey: string; pathText: string }>;
-    const byKey = new Map(data.groups.map((group) => [group.groupKey, group] as const));
-    return data.groups
-      .map((group) => ({ groupKey: group.groupKey, pathText: departmentPathOf(group.groupKey, byKey).join(" / ") || group.groupName }))
-      .sort((left, right) => left.pathText.localeCompare(right.pathText, "zh-Hans-CN"));
-  }, [data]);
   useEffect(() => {
-    if (focusedMemberId === null) return;
-    const frame = window.requestAnimationFrame(() => {
-      const row = document.querySelector<HTMLElement>('[data-access-rule-member="' + focusedMemberId + '"]');
-      row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    });
-    return () => { window.cancelAnimationFrame(frame); };
-  }, [focusedMemberId, selectedKey]);
-
-  const syncTime = lastSyncedAt === null
-    ? "—"
-    : new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : locale, { hour: "2-digit", minute: "2-digit", hour12: false }).format(lastSyncedAt);
+    if (accessView !== "people" || selectedKey === null || data === null) return;
+    const group = groupsByKey.get(selectedKey);
+    if (group === undefined) return;
+    if (personalUserId !== null && group.members.some((member) => member.userId === personalUserId)) return;
+    const next = group.members.find((member) => member.userId === focusedMemberId) ?? group.members[0];
+    if (next === undefined) {
+      setPersonalUserId(null);
+      return;
+    }
+    setPersonalUserId(next.userId);
+    setFocusedMemberId(next.userId);
+    setPersonalRuleFromMember(group, next.userId);
+  }, [accessView, selectedKey, personalUserId, focusedMemberId, data, groupsByKey]);
 
   useEffect(() => {
     if (scopeGroupKey === null || data === null) return;
     if (!data.groups.some((group) => group.groupKey === scopeGroupKey)) setScopeGroupKey(null);
   }, [data, scopeGroupKey]);
 
+  const selectedGroup = selectedKey === null ? null : groupsByKey.get(selectedKey) ?? null;
+  const selectedRule = selectedGroup?.rule ?? null;
+  const selectedRuleScopes = selectedRule === null ? [] : scopePermissionsOf(selectedRule.scopePermissions, selectedRule.projectScope, selectedRule.accessLevel);
+  const selectedMembers = selectedGroup?.members ?? [];
+  const selectedMemberCounts = automaticCountsForMembers(selectedMembers, rolesById);
+  const selectedPath = selectedKey === null ? [] : departmentPathOf(selectedKey, groupsByKey);
+  const totalMemberCount = new Set(allGroups.flatMap((group) => group.members.map((member) => member.userId))).size;
+  const normalizedDirectoryQuery = directoryQuery.trim().toLowerCase();
+  const directorySections = useMemo(
+    () => buildDirectorySections(allGroups, groupsByKey, normalizedDirectoryQuery),
+    [allGroups, groupsByKey, normalizedDirectoryQuery],
+  );
+  const activeGroupCount = allGroups.filter((group) => group.groupKey !== "__ungrouped__").length;
+  const filteredDepartmentProjects = data === null
+    ? []
+    : data.projects.filter((project) => (project.code + " " + project.name).toLowerCase().includes(departmentProjectQuery.trim().toLowerCase()));
+  const filteredPersonalProjects = data === null
+    ? []
+    : data.projects.filter((project) => (project.code + " " + project.name).toLowerCase().includes(personalProjectQuery.trim().toLowerCase()));
+  const personalMember = personalUserId === null ? null : selectedMembers.find((member) => member.userId === personalUserId) ?? null;
+  const personalRule = personalMember === null || selectedGroup === null ? null : memberRuleOf(selectedGroup, personalMember.userId);
+  const personalAdmin = personalMember === null ? null : adminByUserId.get(personalMember.userId) ?? null;
+  const personalAutomatic = personalMember === null ? null : automaticRoleOf(rolesById, personalMember.userId);
+  const personalEffective = personalMember === null || personalAutomatic === null || data === null
+    ? null
+    : effectiveMemberPermission(data, personalMember.userId, personalAutomatic, personalAdmin !== null);
+  const personalPreview = personalEffective === null ? [] : buildPreviewRows(personalEffective, projectsById, t);
+  const personalManual = personalEffective?.manual ?? null;
+  const personalGroups = personalMember === null || data === null ? [] : data.groups.filter((group) => group.members.some((member) => member.userId === personalMember.userId));
+  const personalMemberQuery = personalDirectoryQuery.trim().toLowerCase();
+  const personalVisibleMembers = selectedMembers.filter((member) => personalMemberQuery === "" || (memberSearchText(member) + " " + groupNameOfMember(data, member.userId)).toLowerCase().includes(personalMemberQuery));
+
+  const dashboardModel = useMemo(() => data === null ? null : buildAccessDashboardModel(data, scopeGroupKey), [data, scopeGroupKey]);
+  const scopeOptions = useMemo(() => {
+    if (data === null) return [] as Array<{ groupKey: string; pathText: string }>;
+    return data.groups
+      .map((group) => ({ groupKey: group.groupKey, pathText: departmentPathOf(group.groupKey, groupsByKey).join(" / ") || group.groupName }))
+      .sort((left, right) => left.pathText.localeCompare(right.pathText, "zh-Hans-CN"));
+  }, [data, groupsByKey]);
+
+  const syncTime = lastSyncedAt === null
+    ? "—"
+    : new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : locale, { hour: "2-digit", minute: "2-digit", hour12: false }).format(lastSyncedAt);
+
+  function groupNameOfMember(source: GroupAccessOverview | null, userId: string): string {
+    if (source === null) return "";
+    return source.groups.find((group) => group.members.some((member) => member.userId === userId))?.groupName ?? "";
+  }
+
   function setDepartmentRuleFrom(group: GroupAccessGroup): void {
-    setDepartmentScopePermissions(
-      scopePermissionsOf(
-        group.rule?.scopePermissions,
-        group.rule?.projectScope ?? "none",
-        group.rule?.accessLevel ?? "view",
-      ),
-    );
+    setDepartmentScopePermissions(scopePermissionsOf(group.rule?.scopePermissions, group.rule?.projectScope ?? "none", group.rule?.accessLevel ?? "view"));
     setDepartmentProjectIds(group.rule?.projectIds ?? []);
   }
 
-  function setPersonalRuleFromDepartment(group: GroupAccessGroup): void {
-    setPersonalScopePermissions(
-      scopePermissionsOf(
-        group.rule?.scopePermissions,
-        group.rule?.projectScope ?? "none",
-        group.rule?.accessLevel ?? "view",
-      ),
-    );
-    setPersonalProjectIds(group.rule?.projectIds ?? []);
-  }
-
-  function setPersonalRuleFromEffective(group: GroupAccessGroup, userId: string): void {
+  function setPersonalRuleFromMember(group: GroupAccessGroup, userId: string): void {
     const effective = effectiveMemberAccess(group, userId);
     setPersonalScopePermissions(effective.scopePermissions);
     setPersonalProjectIds(effective.projectIds);
@@ -616,82 +478,66 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
 
   function applyGroup(group: GroupAccessGroup): void {
     setDepartmentRuleFrom(group);
-    setPersonalRuleFromDepartment(group);
-    setSelectedMemberUserIds([]);
     setDepartmentProjectQuery("");
     setPersonalProjectQuery("");
+    setShowAllMembers(false);
+    setFocusedMemberId(null);
+    const firstMember = group.members[0];
+    if (firstMember === undefined) {
+      setPersonalUserId(null);
+      setPersonalScopePermissions([]);
+      setPersonalProjectIds([]);
+    } else {
+      setPersonalUserId(firstMember.userId);
+      setPersonalRuleFromMember(group, firstMember.userId);
+    }
   }
 
   function openGroup(group: GroupAccessGroup): void {
     setSelectedKey(group.groupKey);
-    setFocusedMemberId(null);
-    setExpandedKeys((current) => new Set(current).add(group.groupKey));
     applyGroup(group);
   }
 
-  function openMember(group: GroupAccessGroup, member: GroupAccessMember): void {
-    if (group.groupKey !== selectedKey) {
-      setSelectedKey(group.groupKey);
-      setExpandedKeys((current) => new Set(current).add(group.groupKey));
-      applyGroup(group);
-    }
-    setSelectedMemberUserIds([member.userId]);
-    setPersonalRuleFromEffective(group, member.userId);
+  function openPersonalFor(group: GroupAccessGroup, member: GroupAccessMember): void {
+    setSelectedKey(group.groupKey);
     setFocusedMemberId(member.userId);
+    setPersonalUserId(member.userId);
+    setPersonalRuleFromMember(group, member.userId);
+    setAccessView("people");
   }
 
-  function toggleExpanded(groupKey: string): void {
-    setExpandedKeys((current) => {
-      const next = new Set(current);
-      if (next.has(groupKey)) next.delete(groupKey);
-      else next.add(groupKey);
-      return next;
-    });
+  function selectPersonalMember(member: GroupAccessMember): void {
+    if (selectedGroup === null) return;
+    setPersonalUserId(member.userId);
+    setFocusedMemberId(member.userId);
+    setPersonalRuleFromMember(selectedGroup, member.userId);
   }
 
-  function toggleAllExpanded(): void {
-    setExpandedKeys(allExpanded ? new Set() : new Set(allDepartmentKeys));
-  }
-
-  function changeDepartmentScope(next: GroupAccessScopePermission[]): void {
-    setDepartmentScopePermissions(next);
-  }
-
-  function changePersonalScope(next: GroupAccessScopePermission[]): void {
-    setPersonalScopePermissions(next);
+  function changePersonalGroup(groupKey: string): void {
+    const group = groupsByKey.get(groupKey);
+    if (group === undefined) return;
+    openGroup(group);
+    setAccessView("people");
   }
 
   function toggleDepartmentProject(projectId: string): void {
-    setDepartmentProjectIds((current) => (current.includes(projectId) ? current.filter((id) => id !== projectId) : current.concat(projectId)));
+    setDepartmentProjectIds((current) => current.includes(projectId) ? current.filter((id) => id !== projectId) : current.concat(projectId));
   }
 
   function togglePersonalProject(projectId: string): void {
-    setPersonalProjectIds((current) => (current.includes(projectId) ? current.filter((id) => id !== projectId) : current.concat(projectId)));
+    setPersonalProjectIds((current) => current.includes(projectId) ? current.filter((id) => id !== projectId) : current.concat(projectId));
   }
 
-  function toggleAllMembers(): void {
-    if (selectedGroup === null || selectedGroupMembers.length === 0) return;
-    if (allMembersSelected) {
-      setSelectedMemberUserIds([]);
-      setPersonalRuleFromDepartment(selectedGroup);
-      return;
-    }
-    setSelectedMemberUserIds(selectedGroupMembers.map((member) => member.userId));
-    setPersonalRuleFromEffective(selectedGroup, selectedGroupMembers[0]?.userId ?? "");
-  }
-
-  function toggleMember(userId: string): void {
+  function resetDepartmentDraft(): void {
     if (selectedGroup === null) return;
-    const next = new Set(selectedMemberIdSet);
-    const wasEmpty = next.size === 0;
-    if (next.has(userId)) next.delete(userId);
-    else next.add(userId);
-    setSelectedMemberUserIds(selectedGroupMembers.filter((member) => next.has(member.userId)).map((member) => member.userId));
-    if (next.size === 0) {
-      setPersonalRuleFromDepartment(selectedGroup);
-    } else if (wasEmpty) {
-      setPersonalRuleFromEffective(selectedGroup, userId);
-    }
+    setDepartmentRuleFrom(selectedGroup);
+    setDepartmentProjectQuery("");
+  }
+
+  function resetPersonalDraft(): void {
+    if (selectedGroup === null || personalMember === null) return;
+    setPersonalRuleFromMember(selectedGroup, personalMember.userId);
+    setPersonalProjectQuery("");
   }
 
   async function handleSaveDepartment(): Promise<void> {
@@ -701,9 +547,7 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
       await saveGroupAccessRule({
         groupKey: selectedKey,
         scopePermissions: departmentScopePermissions,
-        projectIds: departmentScopePermissions.some((permission) => permission.projectScope === "selected")
-          ? departmentProjectIds
-          : [],
+        projectIds: departmentScopePermissions.some((permission) => permission.projectScope === "selected") ? departmentProjectIds : [],
         memberScope: "all",
         memberUserIds: [],
       });
@@ -725,12 +569,6 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
       await deleteGroupAccessRule(selectedKey);
       setNotice({ kind: "ok", text: t("access.deleted") });
       setSelectedKey(null);
-      setSelectedMemberUserIds([]);
-      setDepartmentScopePermissions([]);
-      setDepartmentProjectIds([]);
-      setPersonalScopePermissions([]);
-      setPersonalProjectIds([]);
-      void loadMyPermissions(true);
       setReload((value) => value + 1);
     } catch (error: unknown) {
       setNotice({ kind: "error", text: t("access.deleteFailed", { message: error instanceof Error ? error.message : String(error) }) });
@@ -739,17 +577,15 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
     }
   }
 
-  async function handleSaveMembers(): Promise<void> {
-    if (selectedKey === null || selectedMemberUserIds.length === 0 || savingMembers || restoringMembers) return;
-    setSavingMembers(true);
+  async function handleSavePersonal(): Promise<void> {
+    if (selectedKey === null || personalMember === null || savingPersonal || restoringPersonal) return;
+    setSavingPersonal(true);
     try {
       await saveGroupAccessMemberRules({
         groupKey: selectedKey,
-        userIds: selectedMemberUserIds,
+        userIds: [personalMember.userId],
         scopePermissions: personalScopePermissions,
-        projectIds: personalScopePermissions.some((permission) => permission.projectScope === "selected")
-          ? personalProjectIds
-          : [],
+        projectIds: personalScopePermissions.some((permission) => permission.projectScope === "selected") ? personalProjectIds : [],
       });
       setNotice({ kind: "ok", text: t("access.personalSaved") });
       void loadMyPermissions(true);
@@ -757,31 +593,25 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
     } catch (error: unknown) {
       setNotice({ kind: "error", text: t("access.personalSaveFailed", { message: error instanceof Error ? error.message : String(error) }) });
     } finally {
-      setSavingMembers(false);
+      setSavingPersonal(false);
     }
   }
 
-  async function handleRestoreMembers(): Promise<void> {
-    if (selectedKey === null || selectedMemberUserIds.length === 0 || restoringMembers || savingMembers) return;
+  async function handleRestorePersonal(): Promise<void> {
+    if (selectedKey === null || personalMember === null || restoringPersonal || savingPersonal) return;
     if (!window.confirm(t("access.confirmRestoreDepartmentDefault"))) return;
-    setRestoringMembers(true);
+    setRestoringPersonal(true);
     try {
-      await deleteGroupAccessMemberRules({ groupKey: selectedKey, userIds: selectedMemberUserIds });
-      if (selectedGroup !== null) setPersonalRuleFromDepartment(selectedGroup);
+      await deleteGroupAccessMemberRules({ groupKey: selectedKey, userIds: [personalMember.userId] });
+      if (selectedGroup !== null) setPersonalRuleFromMember(selectedGroup, personalMember.userId);
       setNotice({ kind: "ok", text: t("access.personalRestored") });
       void loadMyPermissions(true);
       setReload((value) => value + 1);
     } catch (error: unknown) {
       setNotice({ kind: "error", text: t("access.personalRestoreFailed", { message: error instanceof Error ? error.message : String(error) }) });
     } finally {
-      setRestoringMembers(false);
+      setRestoringPersonal(false);
     }
-  }
-
-  async function handleAccessChanged(): Promise<boolean> {
-    const ok = await loadAccessData();
-    if (ok) void loadMyPermissions(true);
-    return ok;
   }
 
   async function handleToggleAdmin(member: GroupAccessMember): Promise<void> {
@@ -806,408 +636,287 @@ export function AccessControlPage({ me }: { me: MeResponse }) {
     }
   }
 
+  async function handleAccessChanged(): Promise<boolean> {
+    const ok = await loadAccessData();
+    if (ok) void loadMyPermissions(true);
+    return ok;
+  }
+
+  const tabs: Array<{ value: AccessView; labelKey: TextKey }> = [
+    { value: "departments", labelKey: "access.tabDepartment" },
+    { value: "people", labelKey: "access.tabPeople" },
+    { value: "dashboard", labelKey: "access.tabDashboard" },
+  ];
+
   return (
     <>
       <AppHeader me={me} />
-      <main className="w-full px-4 pb-10 pt-3 sm:px-6">
-        <div data-access-control="" data-access-view={accessView} className="mx-auto w-full max-w-screen-2xl space-y-4">
+      <main className="w-full px-4 pb-10 pt-4 sm:px-6">
+        <div data-access-control="" data-access-view={accessView} className="mx-auto w-full max-w-[1600px] space-y-4">
           <header className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">
-              <p className="flex items-center gap-1.5 text-[10px] font-medium tracking-wide text-zinc-400">
-                <span>{t("header.access")}</span>
-                <span aria-hidden="true">/</span>
-                <span className="text-zinc-500">{accessView === "dashboard" ? t("access.dashboard.breadcrumb") : t("access.viewRules")}</span>
-              </p>
-              <div className="mt-1 flex flex-wrap items-center gap-2">
-                <h1 className="text-xl font-semibold tracking-tight text-zinc-900">{accessView === "dashboard" ? t("access.dashboard.title") : t("access.title")}</h1>
-                {accessView === "dashboard" ? (
-                  <div data-access-scope="" className="w-[260px] min-w-[220px] max-w-[320px]">
-                    <SelectMenu
-                      value={scopeGroupKey ?? ""}
-                      options={[
-                        { value: "", label: t("access.dashboard.allDepartments") },
-                        ...scopeOptions.map((option) => ({ value: option.groupKey, label: option.pathText })),
-                      ]}
-                      onChange={(value) => { setScopeGroupKey(value === "" ? null : value); }}
-                      ariaLabel={t("access.dashboard.departmentScope")}
-                      disabled={data === null}
-                    />
-                  </div>
-                ) : null}
-              </div>
-              <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-zinc-400">
-                <span className={"inline-flex items-center gap-1.5 " + (refreshing ? "text-blue-600" : "text-emerald-600")}>
-                  <span className={"h-1.5 w-1.5 rounded-full " + (refreshing ? "animate-pulse bg-blue-500" : "bg-emerald-500")} />
-                  {refreshing ? t("access.dashboard.syncing") : t("access.dashboard.autoSync")}
-                </span>
-                <span aria-hidden="true">·</span>
-                <span className="tabular-nums">{syncTime}</span>
-                {data === null || dashboardModel === null ? null : (
-                  <>
-                    <span aria-hidden="true">·</span>
-                    <span>{t("access.dashboard.summary", { departments: dashboardModel.topDepartmentCount, members: dashboardModel.globalMemberCount })}</span>
-                  </>
-                )}
-                <button
-                  type="button"
-                  data-access-refresh="true"
-                  disabled={refreshing || data === null}
-                  onClick={() => { setReload((value) => value + 1); }}
-                  aria-label={t("access.dashboard.refresh")}
-                  title={t("access.dashboard.refresh")}
-                  className="ml-0.5 flex h-5 w-5 items-center justify-center rounded-md text-zinc-400 transition hover:bg-blue-50 hover:text-blue-600 disabled:cursor-default disabled:opacity-50"
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true" className={"h-3.5 w-3.5 " + (refreshing ? "access-refresh-spin" : "")}>
-                    <path d="M18.5 8.5A7.5 7.5 0 1 0 19.2 13" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-                    <path d="M18.5 4.5v4h-4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </button>
-              </div>
+              <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">{t("access.managementTitle")}</h1>
             </div>
             <div className="flex flex-wrap items-center gap-2 self-start">
-              {data === null ? null : (
-                <span data-access-rule-state={data.enforced ? "enforced" : "draft"} className={"inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-medium " + (data.enforced ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700")}>
-                  <span className={"h-1.5 w-1.5 rounded-full " + (data.enforced ? "bg-emerald-500" : "bg-amber-500")} />
-                  {data.enforced ? t("access.dashboard.ruleLive") : t("access.dashboard.ruleDraft")}
-                </span>
-              )}
-              <div data-access-view-toggle="" role="tablist" aria-label={t("access.viewAria")} className="inline-flex rounded-xl bg-zinc-100 p-0.5 ring-1 ring-inset ring-zinc-200">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={accessView === "dashboard"}
-                  data-access-view="dashboard"
-                  onClick={() => { setAccessView("dashboard"); }}
-                  className={"rounded-[10px] px-3 py-1.5 text-[11px] font-medium transition " + (accessView === "dashboard" ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800")}
-                >
-                  {t("access.viewDashboard")}
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={accessView === "rules"}
-                  data-access-view="rules"
-                  onClick={() => { setAccessView("rules"); }}
-                  className={"rounded-[10px] px-3 py-1.5 text-[11px] font-medium transition " + (accessView === "rules" ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800")}
-                >
-                  {t("access.viewRules")}
-                </button>
-              </div>
+              <span className={"inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-medium " + (refreshing ? "border-blue-200 bg-blue-50 text-blue-700" : "border-emerald-200 bg-emerald-50 text-emerald-700")}>
+                <span className={"h-1.5 w-1.5 rounded-full " + (refreshing ? "animate-pulse bg-blue-500" : "bg-emerald-500")} />
+                {refreshing ? t("access.dashboard.syncing") : t("access.dashboard.autoSync")}
+                <span className="tabular-nums text-current/70">{syncTime}</span>
+              </span>
+              <button type="button" onClick={() => { setMatrixOpen(true); }} className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-[11px] font-medium text-zinc-600 shadow-sm transition hover:border-blue-200 hover:text-blue-700">
+                <svg viewBox="0 0 20 20" aria-hidden="true" className="h-3.5 w-3.5"><path d="M3.5 4.5h5v11h-5zM11.5 4.5h5v7h-5z" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" /></svg>
+                {t("access.matrixOpen")}
+              </button>
+              <button type="button" disabled={refreshing || data === null} onClick={() => { setReload((value) => value + 1); }} aria-label={t("access.dashboard.refresh")} title={t("access.dashboard.refresh")} className="flex h-8 w-8 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 shadow-sm transition hover:text-blue-700 disabled:opacity-40">
+                <svg viewBox="0 0 24 24" aria-hidden="true" className={"h-4 w-4 " + (refreshing ? "access-refresh-spin" : "")}><path d="M18.5 8.5A7.5 7.5 0 1 0 19.2 13" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /><path d="M18.5 4.5v4h-4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              </button>
             </div>
           </header>
 
+          <section data-access-admin-roster="" className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-sm font-semibold text-zinc-900">{t("access.adminTitle")}</h2><p className="mt-0.5 text-[11px] text-zinc-500">{t("access.adminHint")}</p></div><span className="text-[10px] tabular-nums text-zinc-400">{data === null ? "—" : t("access.adminSummary", { n: data.admins.length })}</span></div>
+            <div className="mt-2.5 flex flex-wrap gap-1.5">{data === null ? <span className="h-6 w-40 animate-pulse rounded-full bg-zinc-100" aria-hidden="true" /> : data.admins.length === 0 ? <span className="text-xs text-zinc-400">{t("access.adminEmpty")}</span> : data.admins.map((admin) => <span key={admin.userId} className="inline-flex items-center gap-1.5 rounded-full border border-emerald-100 bg-emerald-50 px-2.5 py-1 text-[10px] font-medium text-emerald-700">{admin.displayName}<span className="text-emerald-500/80">{t(adminSourceKey(admin.source))}</span></span>)}</div>
+          </section>
+
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div data-access-view-toggle="" role="tablist" aria-label={t("access.viewAria")} className="inline-flex rounded-xl border border-zinc-200 bg-white p-1 shadow-sm">
+              {tabs.map((tab) => (
+                <button key={tab.value} type="button" role="tab" aria-selected={accessView === tab.value} data-access-view={tab.value} onClick={() => { setAccessView(tab.value); }} className={"rounded-lg px-3.5 py-1.5 text-xs font-medium transition " + (accessView === tab.value ? "bg-zinc-900 text-white shadow-sm" : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800")}>
+                  {t(tab.labelKey)}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 text-[11px] text-zinc-400">
+              {data === null ? null : <span>{t("access.directorySummary", { departments: activeGroupCount, members: totalMemberCount })}</span>}
+              {data === null ? null : <span className={"rounded-full px-2 py-0.5 font-medium " + (data.enforced ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700")}>{data.enforced ? t("access.dashboard.ruleLive") : t("access.dashboard.ruleDraft")}</span>}
+            </div>
+          </div>
+
           {state.kind === "loading" && accessView === "dashboard" ? <AccessDashboardSkeleton /> : null}
-          {state.kind === "loading" && accessView === "rules" ? <p className="rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-500">{t("access.loading")}</p> : null}
+          {state.kind === "loading" && accessView !== "dashboard" ? (
+            <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
+              <div className="h-[520px] animate-pulse rounded-2xl border border-zinc-200 bg-white" />
+              <div className="space-y-4"><div className="h-36 animate-pulse rounded-2xl border border-zinc-200 bg-white" /><div className="h-64 animate-pulse rounded-2xl border border-zinc-200 bg-white" /></div>
+            </div>
+          ) : null}
           {state.kind === "error" ? <p className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{t("access.loadFailed", { message: state.message })}</p> : null}
 
           {data === null ? null : accessView === "dashboard" ? (
-            dashboardModel === null ? null : (
-              <AccessDashboard
-                data={data}
-                model={dashboardModel}
-                refreshSeq={refreshSeq}
-                refreshing={refreshing}
-                onChanged={handleAccessChanged}
-                onNotify={(kind, text) => { setNotice({ kind, text }); }}
-              />
-            )
-          ) : (
-            <>
-              <div className="grid gap-4 xl:grid-cols-[minmax(220px,260px)_minmax(300px,360px)_minmax(0,1fr)]">
-                <div className="grid gap-4 lg:grid-cols-[minmax(300px,360px)_minmax(0,1fr)] xl:contents">
-                  <aside data-access-admin-column="" className="self-start overflow-hidden rounded-2xl border border-zinc-200 bg-white">
-                    <div data-access-admins="" className="border-b border-zinc-200 bg-zinc-50/80 px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
-                          <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4">
-                            <path d="M12 3.5 19 6v5.1c0 4.3-2.8 7.8-7 9.4-4.2-1.6-7-5.1-7-9.4V6l7-2.5Z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
-                            <path d="m8.7 12 2.1 2.1 4.5-4.5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <h2 className="text-sm font-semibold text-zinc-900">{t("access.adminTitle")}</h2>
-                          <p className="mt-0.5 text-[11px] text-zinc-400">{t("access.adminHint")}</p>
-                        </div>
-                        <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-medium text-zinc-500 ring-1 ring-inset ring-zinc-200">
-                          {t("access.adminSummary", { n: admins.length })}
-                        </span>
-                      </div>
-                      <div className="scrollbar-hidden mt-2 max-h-[620px] space-y-1 overflow-auto">
-                        {admins.length === 0 ? (
-                          <p className="rounded-lg bg-white px-2.5 py-2 text-center text-[11px] text-zinc-400">{t("access.adminEmpty")}</p>
-                        ) : admins.map((admin) => (
-                          <div key={admin.userId} data-access-admin={admin.userId} className="flex items-start gap-2 rounded-lg bg-white px-2.5 py-2 ring-1 ring-inset ring-zinc-100">
-                            <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-[11px] font-semibold text-emerald-700">
-                              {memberInitial(admin)}
-                            </span>
-                            <span className="min-w-0 flex-1">
-                              <span className="flex min-w-0 items-center gap-1.5">
-                                <span className="truncate text-xs font-semibold text-zinc-800">{admin.displayName}</span>
-                                {admin.status === "disabled" ? (
-                                  <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500">{t("access.memberDisabled")}</span>
-                                ) : null}
-                              </span>
-                              <span className="mt-0.5 block truncate text-[10px] text-zinc-400">
-                                {[admin.username, admin.email ?? ""].filter((item) => item !== "").join(" · ")}
-                              </span>
-                            </span>
-                            <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
-                              {t(adminSourceKey(admin.source))}
-                            </span>
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-zinc-200 bg-white px-4 py-3">
+                <span className="text-xs font-medium text-zinc-600">{t("access.dashboard.departmentScope")}</span>
+                <div className="w-[280px] max-w-full"><SelectMenu value={scopeGroupKey ?? ""} options={[{ value: "", label: t("access.dashboard.allDepartments") }, ...scopeOptions.map((option) => ({ value: option.groupKey, label: option.pathText }))]} onChange={(value) => { setScopeGroupKey(value === "" ? null : value); }} ariaLabel={t("access.dashboard.departmentScope")} disabled={data === null} /></div>
+              </div>
+              {dashboardModel === null ? null : <AccessDashboard data={data} model={dashboardModel} refreshSeq={refreshSeq} refreshing={refreshing} onChanged={handleAccessChanged} onNotify={(kind, text) => { setNotice({ kind, text }); }} />}
+            </div>
+          ) : accessView === "departments" ? (
+            <div className="grid items-start gap-4 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)]">
+              <aside className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm lg:sticky lg:top-3">
+                <div className="border-b border-zinc-200 px-4 py-3.5">
+                  <div className="flex items-center justify-between gap-2"><h2 className="text-sm font-semibold text-zinc-900">{t("access.directoryTitle")}</h2><span className="text-[10px] text-zinc-400">{t("access.departmentCount", { n: activeGroupCount })}</span></div>
+                  <label className="mt-2.5 flex items-center gap-2 rounded-lg bg-zinc-100 px-2.5 py-2 ring-1 ring-inset ring-zinc-200 focus-within:bg-white focus-within:ring-blue-300">
+                    <svg viewBox="0 0 20 20" aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-zinc-400"><circle cx="8.5" cy="8.5" r="4.8" fill="none" stroke="currentColor" strokeWidth="1.7" /><path d="m12.2 12.2 4 4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg>
+                    <input value={directoryQuery} onChange={(event) => { setDirectoryQuery(event.target.value); }} placeholder={t("access.directorySearch")} aria-label={t("access.directorySearch")} className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-zinc-400" />
+                    {directoryQuery === "" ? null : <button type="button" onClick={() => { setDirectoryQuery(""); }} aria-label={t("access.clearSearch")} className="shrink-0 text-zinc-400 hover:text-zinc-700"><svg viewBox="0 0 20 20" aria-hidden="true" className="h-3.5 w-3.5"><path d="m5 5 10 10M15 5 5 15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg></button>}
+                  </label>
+                </div>
+                <div className="scrollbar-hidden max-h-[calc(100vh-235px)] min-h-[280px] overflow-y-auto p-2">
+                  {directorySections.length === 0 ? <EmptyHint>{t("access.directoryNoMatch")}</EmptyHint> : directorySections.map((section) => (
+                    <div key={section.key} className="mb-2 last:mb-0">
+                      <p className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">{section.label}</p>
+                      {section.items.map(({ group, pathText }) => {
+                        const selected = group.groupKey === selectedKey;
+                        return (
+                          <button key={group.groupKey} type="button" onClick={() => { openGroup(group); }} aria-pressed={selected} className={"group mb-0.5 flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition " + (selected ? "bg-blue-50 text-blue-800 ring-1 ring-inset ring-blue-200" : "text-zinc-600 hover:bg-zinc-50")}>
+                            <span className={"flex h-8 w-8 shrink-0 items-center justify-center rounded-lg " + (selected ? "bg-white text-blue-600 shadow-sm" : "bg-zinc-100 text-zinc-400 group-hover:text-blue-500")}><svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4"><path d="M3.5 6.5A2.5 2.5 0 0 1 6 4h4.1l2 2.2H18A2.5 2.5 0 0 1 20.5 8.7v8.8A2.5 2.5 0 0 1 18 20H6a2.5 2.5 0 0 1-2.5-2.5v-11Z" fill="currentColor" /></svg></span>
+                            <span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{group.groupName}</span><span className={"mt-0.5 block truncate text-[10px] " + (selected ? "text-blue-600/70" : "text-zinc-400")}>{pathText}</span></span>
+                            <span className={"shrink-0 text-[10px] tabular-nums " + (selected ? "text-blue-700" : "text-zinc-400")}>{group.memberCount}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+                <div className="border-t border-zinc-100 bg-zinc-50/60 px-3 py-2.5 text-[10px] leading-4 text-zinc-400">{t("access.directorySideNote")}</div>
+              </aside>
+
+              <section className="min-w-0 space-y-4">
+                {selectedGroup === null ? <EmptyHint>{t("access.noGroupSelected")}</EmptyHint> : (
+                  <>
+                    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm sm:p-5">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="flex min-w-0 items-start gap-3">
+                          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-500 ring-1 ring-blue-100"><svg viewBox="0 0 24 24" aria-hidden="true" className="h-6 w-6"><path d="M3.5 6.5A2.5 2.5 0 0 1 6 4h4.1l2 2.2H18A2.5 2.5 0 0 1 20.5 8.7v8.8A2.5 2.5 0 0 1 18 20H6a2.5 2.5 0 0 1-2.5-2.5v-11Z" fill="currentColor" /><path d="M3.8 9h16.4" stroke="white" strokeOpacity="0.55" strokeWidth="1.2" /></svg></span>
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-lg font-semibold tracking-tight text-zinc-900">{selectedGroup.groupName}</h2>{selectedRule === null ? <RoleTag tone="zinc">{t("access.unconfigured")}</RoleTag> : <RoleTag tone="emerald">{t("access.configured")}</RoleTag>}</div>
+                            <p className="mt-1 truncate text-[11px] text-zinc-400">{selectedPath.length > 0 ? selectedPath.join(" / ") : selectedGroup.groupKey}</p>
+                            <p className="mt-1 text-[11px] text-zinc-500">{t("access.departmentHeroMeta", { members: selectedMembers.length, personal: selectedGroup.memberRules.length })}</p>
                           </div>
-                        ))}
-                      </div>
-                    </div>
-                  </aside>
-
-                  <aside className="overflow-hidden rounded-2xl border border-zinc-200 bg-white">
-                    <div className="border-b border-zinc-200 px-4 py-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <h2 className="text-sm font-semibold text-zinc-900">{t("access.directoryTitle")}</h2>
-                          <p className="mt-0.5 truncate text-[11px] text-zinc-400">
-                            {t("access.directorySummary", { departments: allGroups.length, members: totalMemberCount })}
-                          </p>
                         </div>
-                        {normalizedDirectoryQuery === "" && allDepartmentKeys.length > 0 ? (
-                          <button
-                            type="button"
-                            onClick={toggleAllExpanded}
-                            className="shrink-0 rounded-lg px-2 py-1 text-[10px] font-medium text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800"
-                          >
-                            {allExpanded ? t("access.collapseAll") : t("access.expandAll")}
-                          </button>
-                        ) : null}
+                        <div className="flex flex-wrap gap-1.5">
+                          <RoleTag tone="blue">{t("access.roleManagerCount", { n: selectedMemberCounts.projectManagers })}</RoleTag>
+                          <RoleTag tone="emerald">{t("access.roleMemberCount", { n: selectedMemberCounts.projectMembers })}</RoleTag>
+                          <RoleTag tone="violet">{t("access.roleTaskOwnerCount", { n: selectedMemberCounts.taskOwners })}</RoleTag>
+                        </div>
                       </div>
-                      <label className="mt-2 flex items-center gap-1.5 rounded-lg bg-zinc-100 px-2.5 py-1.5 ring-1 ring-inset ring-zinc-200 focus-within:bg-white focus-within:ring-blue-300">
-                        <svg viewBox="0 0 20 20" aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-zinc-400">
-                          <circle cx="8.5" cy="8.5" r="4.8" fill="none" stroke="currentColor" strokeWidth="1.7" />
-                          <path d="m12.2 12.2 4 4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-                        </svg>
-                        <input
-                          value={directoryQuery}
-                          onChange={(event) => { setDirectoryQuery(event.target.value); }}
-                          placeholder={t("access.directorySearch")}
-                          aria-label={t("access.directorySearch")}
-                          className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-zinc-400"
-                        />
-                        {directoryQuery === "" ? null : (
-                          <button type="button" onClick={() => { setDirectoryQuery(""); }} aria-label={t("access.clearSearch")} className="shrink-0 rounded p-0.5 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-600">
-                            <svg viewBox="0 0 20 20" aria-hidden="true" className="h-3.5 w-3.5">
-                              <path d="m5 5 10 10M15 5 5 15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-                            </svg>
-                          </button>
-                        )}
-                      </label>
                     </div>
 
-                    <div className="scrollbar-hidden max-h-[620px] overflow-auto p-2">
-                      {filteredTree.length === 0 ? (
-                        <p className="px-2 py-6 text-center text-xs text-zinc-400">
-                          {normalizedDirectoryQuery === "" ? t("access.noObservedGroups") : t("access.directoryNoMatch")}
-                        </p>
-                      ) : (
-                        <DepartmentTree
-                          nodes={filteredTree}
-                          depth={0}
-                          selectedKey={selectedKey}
-                          expandedKeys={expandedKeys}
-                          activeMemberId={focusedMemberId}
-                          query={normalizedDirectoryQuery}
-                          t={t}
-                          onSelect={openGroup}
-                          onToggle={toggleExpanded}
-                          onMemberSelect={openMember}
-                        />
+                    <div data-access-department-default="true" className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm sm:p-5">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div><h3 className="text-sm font-semibold text-zinc-800">{t("access.extraScopeTitle")}</h3><p className="mt-0.5 text-xs leading-5 text-zinc-500">{t("access.extraScopeHint")}</p></div>
+                        <button type="button" onClick={() => { setDepartmentScopePermissions([]); setDepartmentProjectIds([]); }} className="rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-zinc-500 transition hover:bg-amber-50 hover:text-amber-700">{t("access.clearExtraScope")}</button>
+                      </div>
+                      <div className="mt-3"><AccessScopePicker scopePermissions={departmentScopePermissions} onChange={setDepartmentScopePermissions} /></div>
+                      {departmentScopePermissions.some((permission) => permission.projectScope === "selected") ? <ProjectPicker projects={filteredDepartmentProjects} selectedIds={departmentProjectIds} query={departmentProjectQuery} t={t} onQueryChange={setDepartmentProjectQuery} onToggle={toggleDepartmentProject} /> : null}
+                      <p className="mt-3 flex items-start gap-1.5 text-[10px] leading-4 text-zinc-400"><svg viewBox="0 0 20 20" aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0"><circle cx="10" cy="10" r="7.5" fill="none" stroke="currentColor" strokeWidth="1.4" /><path d="M10 9v4M10 6.6v.2" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg><span>{t("access.scopeFootNote")}</span></p>
+                    </div>
+
+                    <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
+                      <div className="flex flex-wrap items-start justify-between gap-2 border-b border-zinc-100 px-4 py-3.5 sm:px-5">
+                        <div><h3 className="text-sm font-semibold text-zinc-800">{t("access.memberEffectTitle")}</h3><p className="mt-0.5 text-xs text-zinc-500">{t("access.memberEffectHint")}</p></div>
+                        <RoleTag tone="amber">{t("access.personalCoverageCount", { n: selectedGroup.memberRules.length })}</RoleTag>
+                      </div>
+                      <div className="grid grid-cols-2 divide-x divide-y divide-zinc-100 border-b border-zinc-100 bg-zinc-50/50 sm:grid-cols-4 sm:divide-y-0">
+                        <div className="px-3 py-2.5"><p className="text-[10px] text-zinc-400">{t("access.summaryMembers")}</p><p className="mt-0.5 text-sm font-semibold text-zinc-800">{selectedMembers.length}</p></div>
+                        <div className="px-3 py-2.5"><p className="text-[10px] text-zinc-400">{t("access.summaryRelations")}</p><p className="mt-0.5 text-sm font-semibold text-zinc-800">{selectedMemberCounts.relations}</p></div>
+                        <div className="px-3 py-2.5"><p className="text-[10px] text-zinc-400">{t("access.summaryOverrides")}</p><p className="mt-0.5 text-sm font-semibold text-zinc-800">{selectedGroup.memberRules.length}</p></div>
+                        <div className="px-3 py-2.5"><p className="text-[10px] text-zinc-400">{t("access.summaryDefaultScope")}</p><p className="mt-0.5 truncate text-xs font-semibold text-zinc-800">{scopeSummary(t, selectedRuleScopes)}</p></div>
+                      </div>
+                      {selectedMembers.length === 0 ? <div className="p-4"><EmptyHint>{t("access.noMembers")}</EmptyHint></div> : (
+                        <div>
+                          <div className="hidden grid-cols-[minmax(150px,1.2fr)_minmax(190px,1.35fr)_minmax(140px,1fr)_96px_104px] gap-3 border-b border-zinc-100 bg-white px-4 py-2 text-[10px] font-medium text-zinc-400 xl:grid">
+                            <span>{t("access.memberColumn")}</span><span>{t("access.autoRoleColumn")}</span><span>{t("access.overrideColumn")}</span><span>{t("access.visibleColumn")}</span><span>{t("access.editableColumn")}</span>
+                          </div>
+                          <div className="divide-y divide-zinc-100">
+                            {(showAllMembers ? selectedMembers : selectedMembers.slice(0, 8)).map((member) => {
+                              const automatic = automaticRoleOf(rolesById, member.userId);
+                              const effective = effectiveMemberPermission(data, member.userId, automatic, adminByUserId.has(member.userId));
+                              const personal = memberRuleOf(selectedGroup, member.userId);
+                              return (
+                                <div key={member.userId} className="px-4 py-3 transition hover:bg-zinc-50/70 xl:grid xl:grid-cols-[minmax(150px,1.2fr)_minmax(190px,1.35fr)_minmax(140px,1fr)_96px_104px] xl:items-center xl:gap-3">
+                                  <div className="flex min-w-0 items-center gap-2.5">
+                                    <MemberAvatar member={member} size="md" />
+                                    <span className="min-w-0"><span className="flex items-center gap-1.5"><span className="truncate text-xs font-semibold text-zinc-800">{member.displayName}</span>{adminByUserId.has(member.userId) ? <RoleTag tone="blue">{t("access.adminBadge")}</RoleTag> : null}{member.status === "disabled" ? <RoleTag tone="zinc">{t("access.memberDisabled")}</RoleTag> : null}</span><span className="mt-0.5 block truncate text-[10px] text-zinc-400">{member.username}{member.email === null ? "" : " · " + member.email}</span></span>
+                                    <button type="button" onClick={() => { openPersonalFor(selectedGroup, member); }} className="ml-auto shrink-0 rounded-md p-1 text-zinc-300 transition hover:bg-indigo-50 hover:text-indigo-600 xl:hidden" aria-label={t("access.openPersonalFor", { name: member.displayName })}><svg viewBox="0 0 20 20" aria-hidden="true" className="h-3.5 w-3.5"><path d="m7 4 6 6-6 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></button>
+                                  </div>
+                                  <div className="mt-2 flex flex-wrap gap-1 xl:mt-0">
+                                    {automatic.managerCount === 0 && automatic.memberCount === 0 && automatic.taskOwnerProjectCount === 0 ? <span className="text-[10px] text-zinc-400">{t("access.noAutoRole")}</span> : null}
+                                    {automatic.managerCount > 0 ? <RoleTag tone="blue">{t("access.managerTag", { n: automatic.managerCount })}</RoleTag> : null}
+                                    {automatic.memberCount > 0 ? <RoleTag tone="emerald">{t("access.memberTag", { n: automatic.memberCount })}</RoleTag> : null}
+                                    {automatic.taskOwnerProjectCount > 0 ? <RoleTag tone="violet">{t("access.taskOwnerTag", { n: automatic.taskOwnerProjectCount })}</RoleTag> : null}
+                                  </div>
+                                  <div className="mt-2 min-w-0 xl:mt-0"><p className="truncate text-[10px] text-zinc-500">{personal === null ? t("access.overrideInherit") : scopeSummary(t, scopePermissionsOf(personal.scopePermissions, personal.projectScope, personal.accessLevel))}</p>{personal === null ? null : <button type="button" onClick={() => { openPersonalFor(selectedGroup, member); }} className="mt-0.5 text-[10px] font-medium text-indigo-600 hover:text-indigo-800 xl:hidden">{t("access.editPersonal")}</button>}</div>
+                                  <div className="mt-2 xl:mt-0"><p className="text-[10px] text-zinc-400 xl:hidden">{t("access.visibleColumn")}</p><p className="truncate text-[11px] font-medium text-zinc-700">{visibleText(t, effective)}</p></div>
+                                  <div className="mt-1 xl:mt-0"><p className="text-[10px] text-zinc-400 xl:hidden">{t("access.editableColumn")}</p><p className="truncate text-[11px] font-medium text-zinc-700">{editableText(t, effective)}</p></div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-100 px-4 py-2.5 text-[10px] text-zinc-400">
+                            <span>{t("access.memberTableFoot")}</span>
+                            {selectedMembers.length > 8 ? <button type="button" onClick={() => { setShowAllMembers((value) => !value); }} className="font-medium text-blue-600 hover:text-blue-800">{showAllMembers ? t("access.showFewerMembers") : t("access.viewAllMembers", { n: selectedMembers.length })}</button> : null}
+                          </div>
+                        </div>
                       )}
                     </div>
-                  </aside>
+
+
+                    <div className="sticky bottom-3 z-20 flex flex-col gap-3 rounded-2xl border border-zinc-200 bg-white/95 p-3 shadow-[0_12px_32px_rgba(15,23,42,0.12)] backdrop-blur sm:flex-row sm:items-center">
+                      <p className="flex min-w-0 items-start gap-1.5 text-[10px] leading-4 text-zinc-400"><svg viewBox="0 0 20 20" aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-500"><path d="m10 2 1.5 4.3L16 8l-4.5 1.7L10 14l-1.5-4.3L4 8l4.5-1.7L10 2Z" fill="currentColor" /></svg><span>{t("access.saveBarDepartment")}</span></p>
+                      <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                        {selectedRule === null ? null : <button type="button" onClick={() => { void handleDeleteDepartment(); }} disabled={deletingDepartment || savingDepartment} className="rounded-lg px-2.5 py-2 text-[11px] font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-40">{deletingDepartment ? t("access.deleting") : t("access.deleteDepartmentDefault")}</button>}
+                        <button type="button" onClick={resetDepartmentDraft} className="rounded-lg border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50">{t("access.reset")}</button>
+                        <button type="button" onClick={() => { void handleSaveDepartment(); }} disabled={savingDepartment || deletingDepartment} className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-50">{savingDepartment ? t("access.saving") : t("access.saveDepartmentDefault")}</button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </section>
+            </div>
+          ) : (
+
+            <div className="grid items-start gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
+              <aside className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm lg:sticky lg:top-3">
+                <div className="border-b border-zinc-200 px-4 py-3.5">
+                  <div className="flex items-center justify-between gap-2"><h2 className="text-sm font-semibold text-zinc-900">{t("access.personalDirectoryTitle")}</h2><span className="text-[10px] text-zinc-400">{t("access.departmentCount", { n: activeGroupCount })}</span></div>
+                  <div className="mt-2.5"><SelectMenu value={selectedKey ?? ""} options={scopeOptions.map((option) => ({ value: option.groupKey, label: option.pathText }))} onChange={changePersonalGroup} ariaLabel={t("access.selectDepartment")} disabled={data === null} /></div>
+                  <label className="mt-2 flex items-center gap-2 rounded-lg bg-zinc-100 px-2.5 py-2 ring-1 ring-inset ring-zinc-200 focus-within:bg-white focus-within:ring-blue-300"><svg viewBox="0 0 20 20" aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-zinc-400"><circle cx="8.5" cy="8.5" r="4.8" fill="none" stroke="currentColor" strokeWidth="1.7" /><path d="m12.2 12.2 4 4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg><input value={personalDirectoryQuery} onChange={(event) => { setPersonalDirectoryQuery(event.target.value); }} placeholder={t("access.personSearch")} aria-label={t("access.personSearch")} className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-zinc-400" /></label>
                 </div>
+                <div className="scrollbar-hidden max-h-[calc(100vh-285px)] min-h-[260px] overflow-y-auto p-2">
+                  <p className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">{selectedGroup?.groupName ?? t("access.selectDepartment")}</p>
+                  {personalVisibleMembers.length === 0 ? <EmptyHint>{t("access.directoryNoMatch")}</EmptyHint> : personalVisibleMembers.map((member) => {
+                    const automatic = automaticRoleOf(rolesById, member.userId);
+                    const selected = member.userId === personalUserId;
+                    return (
+                      <button key={member.userId} type="button" onClick={() => { selectPersonalMember(member); }} aria-pressed={selected} className={"mb-1 flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition " + (selected ? "bg-indigo-50 ring-1 ring-inset ring-indigo-200" : "hover:bg-zinc-50")}>
+                        <MemberAvatar member={member} size="md" />
+                        <span className="min-w-0 flex-1"><span className="block truncate text-xs font-semibold text-zinc-800">{member.displayName}</span><span className="mt-0.5 block truncate text-[10px] text-zinc-400">{t("access.autoRelationsShort", { n: automatic.relationCount })}</span></span>
+                        <svg viewBox="0 0 20 20" aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-zinc-300"><path d="m7 4 6 6-6 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="border-t border-zinc-100 bg-zinc-50/60 px-3 py-2.5 text-[10px] leading-4 text-zinc-400">{t("access.personalSideNote")}</div>
+              </aside>
 
-                <section className="space-y-4">
-                  {selectedKey === null ? (
-                    <p className="rounded-2xl border border-zinc-200 bg-white p-6 text-sm text-zinc-500">{t("access.noGroupSelected")}</p>
-                  ) : (
-                    <>
-                      <div className="rounded-2xl border border-zinc-200 bg-white p-5">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="flex min-w-0 items-start gap-3">
-                            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-500">
-                              <svg viewBox="0 0 24 24" aria-hidden="true" className="h-6 w-6">
-                                <path d="M3.5 6.5A2.5 2.5 0 0 1 6 4h4.1l2 2.2H18A2.5 2.5 0 0 1 20.5 8.7v8.8A2.5 2.5 0 0 1 18 20H6a2.5 2.5 0 0 1-2.5-2.5v-11Z" fill="currentColor" />
-                                <path d="M3.8 9h16.4" stroke="white" strokeOpacity="0.55" strokeWidth="1.2" />
-                              </svg>
-                            </span>
-                            <div className="min-w-0">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <h2 className="truncate text-base font-semibold text-zinc-900">{selectedGroup?.groupName ?? selectedKey}</h2>
-                                {selectedRuleScopes.map((permission) => (
-                                  <span
-                                    key={permission.projectScope}
-                                    className={"rounded-full px-2 py-0.5 text-[10px] font-medium " + (permission.accessLevel === "edit" ? "bg-indigo-50 text-indigo-700" : "bg-emerald-50 text-emerald-700")}
-                                  >
-                                    {t(("access.scope." + permission.projectScope) as TextKey)} · {t(permission.accessLevel === "edit" ? "access.dashboard.operate" : "access.dashboard.viewOnly")}
-                                  </span>
-                                ))}
-                              </div>
-                              <p className="mt-0.5 truncate text-[11px] text-zinc-400">
-                                {selectedPath.length > 0 ? selectedPath.join(" / ") : selectedKey}
-                              </p>
-                              <p className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-zinc-500">
-                                <span>{t("access.members", { n: selectedGroup?.memberCount ?? 0 })}</span>
-                                {personalRuleCount === 0 ? null : <span>{t("access.personalRuleCount", { n: personalRuleCount })}</span>}
-                              </p>
-                            </div>
-                          </div>
-                          <span className={"rounded-full px-2.5 py-1 text-[11px] font-medium " + (selectedRule === null && personalRuleCount === 0 ? "bg-zinc-100 text-zinc-500" : "bg-emerald-50 text-emerald-700")}>
-                            {selectedRule === null && personalRuleCount === 0 ? t("access.unconfigured") : t("access.configured")}
-                          </span>
-                        </div>
+              <section className="min-w-0 space-y-4">
+                {personalMember === null || personalEffective === null || personalManual === null ? <EmptyHint>{t("access.personNoMember")}</EmptyHint> : (
+                  <>
+                    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm sm:p-5">
+                      <div className="flex flex-wrap items-start gap-3">
+                        <MemberAvatar member={personalMember} size="lg" />
+                        <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h2 className="text-lg font-semibold tracking-tight text-zinc-900">{personalMember.displayName}</h2><RoleTag tone={personalMember.status === "active" ? "emerald" : "zinc"}>{personalMember.status === "active" ? t("access.active") : t("access.memberDisabled")}</RoleTag>{personalAdmin === null ? null : <RoleTag tone="blue">{t("access.adminBadge")}</RoleTag>}</div><p className="mt-1 text-[11px] text-zinc-500">{personalMember.username}{personalMember.email === null ? "" : " · " + personalMember.email}</p><p className="mt-1 truncate text-[11px] text-zinc-400">{personalGroups.map((group) => group.groupName).join(" / ")}</p></div>
+                        <div className="flex flex-wrap items-center gap-2"><button type="button" onClick={() => { void handleToggleAdmin(personalMember); }} disabled={adminBusyUserId !== null || (personalAdmin !== null && !personalAdmin.removable)} title={personalAdmin !== null && !personalAdmin.removable ? t("access.adminImmutable") : undefined} className="rounded-lg border border-zinc-200 px-3 py-2 text-[11px] font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-40">{adminBusyUserId === personalMember.userId ? t("access.adminBusy") : personalAdmin === null ? t("access.makeAdmin") : t("access.removeAdmin")}</button><span className="rounded-full bg-zinc-100 px-2.5 py-1 text-[10px] font-medium text-zinc-500">{t("access.autoRelationsShort", { n: personalEffective.automatic.relationCount })}</span></div>
                       </div>
+                    </div>
 
-                      <div data-access-department-default="true" className="rounded-2xl border border-zinc-200 bg-white p-5">
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div>
-                            <h3 className="text-sm font-semibold text-zinc-800">{t("access.departmentDefaultTitle")}</h3>
-                            <p className="mt-0.5 text-xs leading-5 text-zinc-500">{t("access.departmentDefaultHint")}</p>
-                          </div>
-                          <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500">{t("access.departmentDefaultBadge")}</span>
-                        </div>
-                        <div className="mt-3">
-                          <AccessScopePicker
-                            scopePermissions={departmentScopePermissions}
-                            onChange={changeDepartmentScope}
-                          />
-                        </div>
-                        {departmentScopePermissions.some((permission) => permission.projectScope === "selected") ? (
-                          <ProjectSelectionList
-                            projects={departmentProjects}
-                            query={departmentProjectQuery}
-                            selectedIds={departmentProjectIds}
-                            t={t}
-                            onQueryChange={setDepartmentProjectQuery}
-                            onToggle={toggleDepartmentProject}
-                          />
-                        ) : null}
-                        <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
-                          {selectedRule === null ? null : (
-                            <button type="button" onClick={() => { void handleDeleteDepartment(); }} disabled={deletingDepartment || savingDepartment} className="mr-auto rounded-lg px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">
-                              {deletingDepartment ? t("access.deleting") : t("access.deleteDepartmentDefault")}
-                            </button>
-                          )}
-                          <button type="button" onClick={() => { void handleSaveDepartment(); }} disabled={savingDepartment || deletingDepartment} className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50">
-                            {savingDepartment ? t("access.saving") : t("access.saveDepartmentDefault")}
-                          </button>
-                        </div>
+                    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm sm:p-5">
+                      <div className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="text-sm font-semibold text-zinc-800">{t("access.autoRolesTitle")}</h3><p className="mt-0.5 text-xs text-zinc-500">{t("access.autoRolesHint")}</p></div><RoleTag tone="blue"><svg viewBox="0 0 20 20" aria-hidden="true" className="h-3 w-3"><rect x="4.5" y="8.5" width="11" height="8" rx="2" fill="none" stroke="currentColor" strokeWidth="1.4" /><path d="M7 8.5V6.7a3 3 0 0 1 6 0v1.8" fill="none" stroke="currentColor" strokeWidth="1.4" /></svg>{t("access.systemMaintained")}</RoleTag></div>
+                      <div className="mt-3 grid gap-2.5 md:grid-cols-3">
+                        <RoleProjectBlock title={t("access.autoRoleManagers")} count={personalEffective.automatic.managerCount} tone="blue" projectIds={personalEffective.automatic.role.projectManagerProjectIds} projectsById={projectsById} t={t} />
+                        <RoleProjectBlock title={t("access.autoRoleMembers")} count={personalEffective.automatic.memberCount} tone="emerald" projectIds={personalEffective.automatic.role.projectMemberProjectIds} projectsById={projectsById} t={t} />
+                        <RoleProjectBlock title={t("access.autoRoleTaskOwners")} count={personalEffective.automatic.taskOwnerProjectCount} tone="violet" projectIds={personalEffective.automatic.role.taskOwnerProjectIds} projectsById={projectsById} footer={t("access.taskCountNote", { n: personalEffective.automatic.taskOwnerTaskCount })} t={t} />
                       </div>
+                      <p className="mt-3 flex items-start gap-1.5 text-[10px] leading-4 text-zinc-400"><svg viewBox="0 0 20 20" aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0"><circle cx="10" cy="10" r="7.5" fill="none" stroke="currentColor" strokeWidth="1.4" /><path d="M10 9v4M10 6.6v.2" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg><span>{t("access.taskOwnerNote")}</span></p>
+                    </div>
 
-                      <div data-access-personal-editor="true" className="rounded-2xl border border-indigo-100 bg-white p-5 shadow-sm">
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div>
-                            <h3 className="text-sm font-semibold text-zinc-800">{t("access.personalTitle")}</h3>
-                            <p className="mt-0.5 text-xs leading-5 text-zinc-500">{t("access.personalHint")}</p>
-                          </div>
-                          <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700">
-                            {t("access.memberSelectionCount", { selected: selectedMemberCount, total: selectedGroupMembers.length })}
-                          </span>
-                        </div>
+                    <div data-access-personal-editor="true" className="rounded-2xl border border-indigo-100 bg-white p-4 shadow-sm sm:p-5">
+                      <div className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="text-sm font-semibold text-zinc-800">{t("access.extraPersonalTitle")}</h3><p className="mt-0.5 text-xs leading-5 text-zinc-500">{t("access.extraPersonalHint")}</p></div><RoleTag tone="amber">{t("access.manualConfigured")}</RoleTag></div>
+                      <div className="mt-3"><AccessScopePicker scopePermissions={personalScopePermissions} onChange={setPersonalScopePermissions} /></div>
+                      {personalScopePermissions.some((permission) => permission.projectScope === "selected") ? <ProjectPicker projects={filteredPersonalProjects} selectedIds={personalProjectIds} query={personalProjectQuery} t={t} onQueryChange={setPersonalProjectQuery} onToggle={togglePersonalProject} /> : null}
+                      <p className="mt-3 flex items-start gap-1.5 text-[10px] leading-4 text-zinc-400"><svg viewBox="0 0 20 20" aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0"><circle cx="10" cy="10" r="7.5" fill="none" stroke="currentColor" strokeWidth="1.4" /><path d="M10 9v4M10 6.6v.2" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg><span>{t("access.personalFootNote")}</span></p>
+                    </div>
 
-                        <div className="mt-3 overflow-hidden rounded-xl border border-zinc-200">
-                          <label className="flex cursor-pointer items-center gap-2.5 border-b border-zinc-200 bg-zinc-50 px-3 py-2.5">
-                            <SelectionCheckbox
-                              checked={allMembersSelected}
-                              indeterminate={someMembersSelected}
-                              disabled={selectedGroupMembers.length === 0}
-                              onChange={toggleAllMembers}
-                            />
-                            <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5 shrink-0 text-indigo-500">
-                              <path d="M3.5 6.5A2.5 2.5 0 0 1 6 4h4.1l2 2.2H18A2.5 2.5 0 0 1 20.5 8.7v8.8A2.5 2.5 0 0 1 18 20H6a2.5 2.5 0 0 1-2.5-2.5v-11Z" fill="currentColor" />
-                              <path d="M3.8 9h16.4" stroke="white" strokeOpacity="0.55" strokeWidth="1.2" />
-                            </svg>
-                            <span className="min-w-0 flex-1 truncate text-sm font-semibold text-zinc-800">{t("access.selectAllMembers")}</span>
-                            <span className="shrink-0 text-[11px] text-zinc-500">
-                              {t("access.memberSelectionCount", { selected: selectedMemberCount, total: selectedGroupMembers.length })}
-                            </span>
-                          </label>
-                          {selectedGroupMembers.length === 0 ? (
-                            <p className="px-3 py-3 text-xs text-zinc-400">{t("access.noMembers")}</p>
-                          ) : (
-                            <div className="scrollbar-hidden max-h-[min(46vh,520px)] overflow-y-auto overscroll-contain p-1.5">
-                              {selectedGroupMembers.map((member) => (
-                                <SelectableMemberRow
-                                  key={member.userId}
-                                  member={member}
-                                  checked={selectedMemberIdSet.has(member.userId)}
-                                  admin={adminByUserId.get(member.userId)}
-                                  adminBusy={adminBusyUserId === member.userId}
-                                  personalRule={selectedGroup === null ? null : memberRuleOf(selectedGroup, member.userId)}
-                                  focused={focusedMemberId === member.userId}
-                                  t={t}
-                                  onToggle={() => { toggleMember(member.userId); }}
-                                  onToggleAdmin={() => { void handleToggleAdmin(member); }}
-                                />
-                              ))}
-                            </div>
-                          )}
-                        </div>
-
-                        {selectedMemberCount === 0 ? (
-                          <p className="mt-3 rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-500">{t("access.personalEmpty")}</p>
-                        ) : (
-                          <div className="mt-4 border-t border-zinc-100 pt-4">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <p className="text-xs font-medium text-zinc-700">{t("access.personalSelectedSettings", { n: selectedMemberCount })}</p>
-                              {selectedHasPersonalRule ? (
-                                <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700">{t("access.personalBadge")}</span>
-                              ) : (
-                                <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500">{t("access.inheritDepartmentDefault")}</span>
-                              )}
-                            </div>
-                            <div className="mt-3">
-                              <AccessScopePicker
-                                scopePermissions={personalScopePermissions}
-                                onChange={changePersonalScope}
-                              />
-                            </div>
-                            {personalScopePermissions.some((permission) => permission.projectScope === "selected") ? (
-                              <ProjectSelectionList
-                                projects={personalProjects}
-                                query={personalProjectQuery}
-                                selectedIds={personalProjectIds}
-                                t={t}
-                                onQueryChange={setPersonalProjectQuery}
-                                onToggle={togglePersonalProject}
-                              />
-                            ) : null}
-                            <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
-                              <button
-                                type="button"
-                                onClick={() => { void handleRestoreMembers(); }}
-                                disabled={!selectedHasPersonalRule || restoringMembers || savingMembers}
-                                className="mr-auto rounded-lg px-3 py-2 text-xs font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-40"
-                              >
-                                {restoringMembers ? t("access.restoring") : t("access.restoreDepartmentDefault")}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => { void handleSaveMembers(); }}
-                                disabled={savingMembers || restoringMembers}
-                                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-                              >
-                                {savingMembers ? t("access.saving") : t("access.savePersonalRules")}
-                              </button>
-                            </div>
-                          </div>
-                        )}
+                    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm sm:p-5">
+                      <div className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="text-sm font-semibold text-zinc-800">{t("access.finalTitle")}</h3><p className="mt-0.5 text-xs text-zinc-500">{t("access.finalHint")}</p></div><RoleTag tone="zinc">{t("access.liveCalculated")}</RoleTag></div>
+                      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                        <div className="rounded-xl border border-zinc-200 bg-zinc-50/70 px-3 py-2.5"><p className="text-[10px] text-zinc-400">{t("access.visibleColumn")}</p><p className="mt-0.5 text-sm font-semibold text-zinc-800">{visibleText(t, personalEffective)}</p></div>
+                        <div className="rounded-xl border border-zinc-200 bg-zinc-50/70 px-3 py-2.5"><p className="text-[10px] text-zinc-400">{t("access.editableColumn")}</p><p className="mt-0.5 text-sm font-semibold text-zinc-800">{editableText(t, personalEffective)}</p></div>
+                        <div className="rounded-xl border border-zinc-200 bg-zinc-50/70 px-3 py-2.5"><p className="text-[10px] text-zinc-400">{t("access.manualScopeLabel")}</p><p className="mt-0.5 truncate text-sm font-semibold text-zinc-800">{scopeSummary(t, personalManual.permissions)}</p></div>
                       </div>
-                    </>
-                  )}
-                </section>
-              </div>
-            </>
+                      <div className="mt-3 overflow-hidden rounded-xl border border-zinc-200">
+                        <div className="hidden grid-cols-[minmax(180px,1.3fr)_minmax(180px,1.2fr)_96px] gap-2 bg-zinc-50 px-3 py-2 text-[10px] font-medium text-zinc-400 sm:grid"><span>{t("access.projectTaskColumn")}</span><span>{t("access.sourceColumn")}</span><span>{t("access.finalRightsColumn")}</span></div>
+                        {personalPreview.length === 0 ? <p className="px-3 py-5 text-center text-[11px] text-zinc-400">{t("access.noEffectiveRows")}</p> : personalPreview.map((row) => <div key={row.projectId} className="grid gap-1 border-t border-zinc-100 px-3 py-2 text-[11px] first:border-t-0 sm:grid-cols-[minmax(180px,1.3fr)_minmax(180px,1.2fr)_96px] sm:items-center sm:gap-2"><span className="min-w-0 truncate font-medium text-zinc-700">{projectLabel(projectsById.get(row.projectId), row.projectId)}</span><span className="flex min-w-0 flex-wrap gap-1">{row.sources.map((source) => <span key={source} className="rounded bg-zinc-100 px-1.5 py-0.5 text-[9px] text-zinc-500">{source}</span>)}</span><span className={"font-medium " + (row.level === "edit" ? "text-blue-700" : row.level === "task" ? "text-violet-700" : "text-emerald-700")}>{row.level === "edit" ? t("access.rightEdit") : row.level === "task" ? t("access.rightTask") : t("access.rightView")}</span></div>)}
+                        {personalEffective.visibleAll || personalEffective.visibleProjectIds.length > personalPreview.length ? <div className="border-t border-zinc-100 px-3 py-2 text-[10px] text-zinc-400">{t("access.previewTruncated", { shown: personalPreview.length, total: personalEffective.visibleAll ? data.projects.length : personalEffective.visibleProjectIds.length })}</div> : null}
+                      </div>
+                    </div>
+
+                    <div className="sticky bottom-3 z-20 flex flex-col gap-3 rounded-2xl border border-zinc-200 bg-white/95 p-3 shadow-[0_12px_32px_rgba(15,23,42,0.12)] backdrop-blur sm:flex-row sm:items-center">
+                      <p className="flex min-w-0 items-start gap-1.5 text-[10px] leading-4 text-zinc-400"><svg viewBox="0 0 20 20" aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-indigo-500"><path d="m10 2 1.5 4.3L16 8l-4.5 1.7L10 14l-1.5-4.3L4 8l4.5-1.7L10 2Z" fill="currentColor" /></svg><span>{t("access.saveBarPersonal")}</span></p>
+                      <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                        <button type="button" onClick={() => { void handleRestorePersonal(); }} disabled={personalRule === null || restoringPersonal || savingPersonal} className="rounded-lg px-2.5 py-2 text-[11px] font-medium text-zinc-500 transition hover:bg-zinc-100 disabled:opacity-40">{restoringPersonal ? t("access.restoring") : t("access.restoreDepartmentDefault")}</button>
+                        <button type="button" onClick={resetPersonalDraft} className="rounded-lg border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50">{t("access.reset")}</button>
+                        <button type="button" onClick={() => { void handleSavePersonal(); }} disabled={savingPersonal || restoringPersonal} className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:opacity-50">{savingPersonal ? t("access.saving") : t("access.savePersonalRules")}</button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </section>
+            </div>
           )}
         </div>
       </main>
+      <AccessPermissionMatrix open={matrixOpen} onClose={() => { setMatrixOpen(false); }} />
       {notice === null ? null : <Toast kind={notice.kind} text={notice.text} onClose={() => { setNotice(null); }} />}
     </>
   );

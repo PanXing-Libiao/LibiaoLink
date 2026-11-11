@@ -5,7 +5,7 @@ import type { ProjectMemberService } from "../src/modules/project/project-member
 import type { ProjectGroupService } from "../src/modules/project/project-group.service.js";
 import type { ProjectService } from "../src/modules/project/project.service.js";
 import type { DictService } from "../src/modules/admin/index.js";
-import type { ProjectAccessContext } from "../src/modules/permission/index.js";
+import type { ProjectAccessContext, ProjectManagerEligibilityService } from "../src/modules/permission/index.js";
 import type { TranslateService } from "../src/modules/translate/index.js";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
@@ -26,6 +26,7 @@ function makeController(): { controller: ProjectsController; dicts: FakeDictServ
     {} as ProjectService,
     {} as ProjectMemberService,
     {} as ProjectGroupService,
+    {} as ProjectManagerEligibilityService,
     {} as TranslateService,
     dicts as unknown as DictService,
   );

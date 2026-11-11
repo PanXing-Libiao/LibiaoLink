@@ -11,12 +11,14 @@ import { ProjectMemberService, toProjectMemberView } from "../src/modules/projec
 import type { ProjectRepository, ProjectViewRow } from "../src/modules/project/project.repository.js";
 import type { DatabaseService } from "../src/db/database.service.js";
 import type { AuditService } from "../src/modules/admin/index.js";
+import type { ProjectManagerEligibilityService } from "../src/modules/permission/index.js";
 
 const AT = new Date("2026-09-20T06:00:00.000Z");
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const UUID_MANAGER = "22222222-2222-4222-8222-222222222222";
 const UUID_MEMBER = "33333333-3333-4333-8333-333333333333";
 const UUID_GHOST = "44444444-4444-4444-8444-444444444444";
+const UUID_INELIGIBLE = "55555555-5555-4555-8555-555555555555";
 
 function expectAppErrorAsync(fn: () => Promise<unknown>, code: string): Promise<void> {
   return fn().then(
@@ -99,10 +101,25 @@ class FakeProjectRepository {
   }
 }
 
+class FakeProjectManagerEligibilityService {
+  eligible = new Set<string>([UUID_MANAGER, UUID_MEMBER]);
+
+  async assertAssignable(
+    managerIds: readonly string[],
+    options: { existingUserIds?: readonly string[] } = {},
+  ): Promise<void> {
+    const preserved = new Set(options.existingUserIds ?? []);
+    if (managerIds.some((userId) => !this.eligible.has(userId) && !preserved.has(userId))) {
+      throw new AppError("VALIDATION_FAILED", "项目经理只能选择有效项目部成员或系统管理员");
+    }
+  }
+}
+
 class FakeUserService {
   directory = new Map<string, { username: string; displayName: string }>([
     [UUID_MANAGER, { username: "10001", displayName: "项目经理甲" }],
     [UUID_MEMBER, { username: "10002", displayName: "成员乙" }],
+    [UUID_INELIGIBLE, { username: "10003", displayName: "外部人员丙" }],
   ]);
 
   async getUser(userId: string): Promise<UserRow> {
@@ -154,19 +171,22 @@ function makeService(options: { status?: string; members?: ProjectMemberViewRow[
   service: ProjectMemberService;
   members: FakeProjectMemberRepository;
   projects: FakeProjectRepository;
+  managerEligibility: FakeProjectManagerEligibilityService;
 } {
   const members = new FakeProjectMemberRepository();
   members.rows = options.members ?? [];
   const projects = new FakeProjectRepository();
   projects.project = projectRow(options.status ?? "active");
+  const managerEligibility = new FakeProjectManagerEligibilityService();
   const service = new ProjectMemberService(
     FAKE_DB as unknown as DatabaseService,
     members as unknown as ProjectMemberRepository,
     projects as unknown as ProjectRepository,
+    managerEligibility as unknown as ProjectManagerEligibilityService,
     new FakeUserService() as unknown as UserService,
     new FakeAuditService() as unknown as AuditService,
   );
-  return { service, members, projects };
+  return { service, members, projects, managerEligibility };
 }
 
 // ---------- 视图映射 ----------
@@ -217,6 +237,16 @@ describe("ProjectMemberService（M2-05 名册）", () => {
     expect(updated.roleInProject).toBe("project_manager");
     expect(updated.joinedAt).toBe("2026-09-20T06:00:00.000Z");
     expect(members.rows).toHaveLength(1);
+  });
+
+  it("新增 / 升级为项目经理：非候选 400，不写名册、不 touch", async () => {
+    const { service, members, projects } = makeService();
+    await expectAppErrorAsync(
+      () => service.addMember(PROJECT_ID, { userId: UUID_INELIGIBLE, roleInProject: "project_manager" }, UUID_MANAGER),
+      "VALIDATION_FAILED",
+    );
+    expect(members.calls).toEqual([]);
+    expect(projects.touched).toEqual([]);
   });
 
   it("添加成员：用户不存在 404（不写名册、不 touch）", async () => {

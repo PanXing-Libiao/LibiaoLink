@@ -2,6 +2,7 @@ import "reflect-metadata";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
+import { buffer as collect } from "node:stream/consumers";
 import type { ObjectStorage } from "../src/storage/object-storage.js";
 import type { CadArchiveRepository, CadArtifactRow, CadViewRow } from "../src/modules/file/cad-archive.repository.js";
 import type { CadEngineClient } from "../src/modules/file/cad-engine.client.js";
@@ -47,7 +48,7 @@ function fixture() {
     sourceBytes: artifact.sourceBytes, sourceName: artifact.sourceName };
   const manifest = () => service.resource("manifest", source, view.actorId, view.viewId, view.id.replaceAll("-", ""));
   const status = () => service.job("status", source, view.actorId, view.viewId, view.id.replaceAll("-", ""));
-  return { body, artifact, view, repository, storage, manifest, inputs, status };
+  return { body, artifact, view, repository, storage, manifest, inputs, status, service, source };
 }
 
 describe("CAD cached resource lifecycle", () => {
@@ -72,6 +73,26 @@ describe("CAD cached resource lifecycle", () => {
 
     expect(state.resources).toEqual({ lease: artifact.resourceLease, buffers: [{ sha256: "a".repeat(64), byteLength: 12 }] });
     expect(JSON.stringify(state)).not.toContain("projects/private");
+  });
+
+  it("曲线派生资源使用当前视图租约，损坏时仍可从正式清单回退", async () => {
+    const { artifact, view, storage, repository, service, source, manifest, status, body } = fixture();
+    artifact.sourceFormat = "DWG";
+    const sha = "a".repeat(64);
+    artifact.buffers = [{ kind: "dwg-curve-columns-v1", sha256: sha, byteLength: body.length,
+      objectKey: artifact.objectPrefix + sha }];
+    const state = await status();
+    expect(state.dwgCurveColumnsV1).toEqual({ sha256: sha, byteLength: body.length });
+    expect(state.resources?.buffers).toEqual([]);
+    const buffer = () => service.resource("buffer", source, view.actorId, view.viewId, view.id.replaceAll("-", ""),
+      artifact.resourceLease!, sha);
+    await expect(buffer()).rejects.toThrow();
+    expect(storage.getObjectStream).not.toHaveBeenCalled();
+    view.leaseExpiresAt = new Date(Date.now() + 60_000);
+    const resource = await buffer();
+    await expect(collect(resource.stream)).rejects.toThrow();
+    expect(repository.retry).not.toHaveBeenCalled();
+    expect(await collect((await manifest()).stream)).toEqual(body);
   });
 
   it("任务完成状态在返回资源摘要前续租，避免长转换后的预取命中过期租约", async () => {

@@ -3,27 +3,28 @@
 | 字段 | 内容 |
 |---|---|
 | 类型 | 领域模块（domain） |
-| 职责 | 干系人台账与项目关联（A5-01 ~ A5-04 / A5-07） |
+| 职责 | 项目干系人台账（每条记录独立归属一个项目；A5-01 ~ A5-04 / A5-07） |
 | 主责 | wmj（团队分工.md §2） |
 | 对外接口 | StakeholderService（`src/modules/stakeholder/index.ts` 唯一公开出口） |
 
 ## 落地内容
 
-- 契约 `shared/src/modules/stakeholders.ts`（tags=stakeholders）：`StakeholderSchema` / `StakeholderCreateBodySchema` / `StakeholderUpdateBodySchema` / `StakeholderListQuerySchema` / `StakeholderListResponseSchema` / `StakeholderProjectLinkBodySchema` / `StakeholderDeleteResponseSchema`；`AUDIT_OBJECT_TYPES` 增 `stakeholder`。OpenAPI 7 条路由：GET / POST `/api/v1/stakeholders`、GET / PATCH / DELETE `/api/v1/stakeholders/{stakeholderId}`、POST `/api/v1/stakeholders/{stakeholderId}/projects`、DELETE `/api/v1/stakeholders/{stakeholderId}/projects/{projectId}`。
-- 数据面（迁移 0019 + 0042）：`stakeholders`（全库台账，不挂项目）+ `project_stakeholders`（多对多）。台账字段 = name / company_type（四值 libiao / supplier / general_contractor / customer）/ company / title / phone / wechat / email / remark / role（干系人角色 · Push 225 代做 wmj 线增列）+ created_by（录入人）+ created_at / updated_at + 软删 deleted_at / deleted_by。
-- 四层：`stakeholder.controller.ts`（7 条路由；SessionGuard + CsrfGuard + ProjectAccessGuard；读 `stakeholder.view`；写由服务层叠加 `stakeholder.manage` 与目标项目最终 `accessLevel=edit`；POST 201）、`stakeholder.service.ts`（用例 + 记录级 404 + 字段级裁剪 + 项目级写权限 + 审计）、`stakeholder.repository.ts`（列表 / 详情 / 增删改 / 关联 / 批量反查项目；restricted 空集短路）、`stakeholder.rules.ts`（stakeholderVisibility / buildStakeholderFilter / parseStakeholderSort / matchesKeyword，纯函数）。
+- 契约 `shared/src/modules/stakeholders.ts`（tags=stakeholders）：`StakeholderSchema` / `StakeholderCreateBodySchema` / `StakeholderUpdateBodySchema` / `StakeholderListQuerySchema` / `StakeholderListResponseSchema` / `StakeholderDeleteResponseSchema`；`AUDIT_OBJECT_TYPES` 增 `stakeholder`。OpenAPI 5 条路由：GET / POST `/api/v1/stakeholders`、GET / PATCH / DELETE `/api/v1/stakeholders/{stakeholderId}`；不提供跨项目追加 / 解除关联接口。
+- 数据面（迁移 0019 + 0042 + 0085）：`stakeholders`（全库台账）+ `project_stakeholders`（单项目归属；`stakeholder_id` 唯一）。迁移 0085 将存量多关联拆成独立记录：保留原记录对应一个项目，其余每个项目复制一条完整干系人记录并改挂过去，不删除任何项目的数据；同一自然人在不同项目的记录互不共享。台账字段 = name / company_type（四值 libiao / supplier / general_contractor / customer）/ company / title / phone / wechat / email / remark / role（干系人角色 · Push 225 代做 wmj 线增列）+ created_by（录入人）+ created_at / updated_at + 软删 deleted_at / deleted_by。
+- 四层：`stakeholder.controller.ts`（5 条路由；SessionGuard + CsrfGuard + ProjectAccessGuard；读 `stakeholder.view`；写由服务层叠加 `stakeholder.manage` 与所属项目最终 `accessLevel=edit`；POST 201）、`stakeholder.service.ts`（用例 + 记录级 404 + 字段级裁剪 + 项目级写权限 + 审计）、`stakeholder.repository.ts`（列表 / 详情 / 增删改 / 单项目归属写入 / 批量反查项目；restricted 空集短路）、`stakeholder.rules.ts`（stakeholderVisibility / isStakeholderProjectFilterVisible / buildStakeholderFilter / parseStakeholderSort / matchesKeyword，纯函数）。
 
-## 口径（四条硬约束）
+## 口径（五条硬约束）
 
-1. **记录级**：可见集 = 「我录入的（own_stakeholders 一期形态）」∪「关联项目落在我的可见项目内」；ownId 恒为本人 = 记录级兜底（有角色不会反而看得更少）。不可见 / 不存在 / 已软删**统一 404**（防 IDOR，与项目域同口径）。
+1. **记录级**：每条干系人记录必须归属一个项目，可见性只由所属项目决定，不按录入人跨项目兜底；不同项目即使姓名 / 联系方式相同也是独立记录。不可见 / 不存在 / 已软删**统一 404**（防 IDOR）。响应中的 `projects[]` 最多一项，且只投影当前账号可见项目；无权项目的 id / code / name 不返回。`filter[projectId]` 指向无权项目时，列表 / 总数 / 导出均为空集，不得借“我录入的”记录反推关联。
 2. **字段级**（A5-07 / C3-08）：直接复用 permission 的 `FIELD_POLICIES` + `projectFields`，无权字段**键不存在**（不落 null、不做前端打码）—— phone / wechat / email → `stakeholder.contact.view`；company / title → `stakeholder.view`；remark → `stakeholder.manage`；name / companyType / role / createdBy / projects 未登记字段级策略 = 恒可见（有权但值为空才是 null）。
-3. **留痕**：建 / 改 / 删 / 关联 / 解绑都在**同一事务**写审计（`objectType = stakeholder`、`objectId` = 干系人 id）；重复关联幂等且不重复留痕；关联不存在的项目 404 且不写审计。
-4. **写权限（0075）**：有项目关联时，更新 / 删除要求全部关联项目可编辑，关联 / 解除关联要求目标项目可编辑；无关联项目的共享台账写操作要求 `groupAllEdit + stakeholder.manage`。只读项目仍可查看台账，但写入口由服务端拒绝。
+3. **项目独立**：创建时 `projectIds` 必须且只能有 1 项，空值或多项目直接 400；不提供追加 / 解除关联接口；数据库以 `uq_project_stakeholders_stakeholder` 唯一约束兜底。不建立姓名 / 手机号唯一约束，同一个人可在不同项目各建一条独立记录。
+4. **留痕**：建 / 改 / 删都在**同一事务**写审计（`objectType = stakeholder`、`objectId` = 干系人 id）；归属不存在的项目 404 且不写审计。
+5. **写权限（0075）**：更新 / 删除要求所属项目可编辑；创建要求 `stakeholder.manage + 所属项目 edit`。裁决同时传入最终 `accessLevel`：部门规则为 view / none 时，所管项目经理仍凭本项目 edit 写台账；只读项目仍可查看台账，但写入口由服务端拒绝。
 
 ## 验收与门禁（本卡）
 
-- `npm run typecheck` / `npm run build` / `npm run test` 全绿：新增 `test/stakeholder-rules.test.ts` 12 例（记录级 4 / 过滤 3 / 排序 3 / 关键词 2）+ `test/stakeholder-service.test.ts` 15 例（字段级脱敏 4 / 记录级 5 / 用例与留痕 6，字段级脱敏为核心验收）。
-- `npm run check:boundaries` 0 违规；`npm run check:permission-matrix` 通过（种子 #6b 无需改动：project_manager / sales 三键、task_owner / project_member / viewer 读键、admin 全量）；`check:db-schema` 由 CI `database` job 复验（迁移 0019 + Drizzle schema 对齐，本机无 PostgreSQL）。
+- `npm run typecheck` / `npm run build` / `npm run test` 全绿：新增 `test/stakeholder-rules.test.ts` 12 例（记录级 4 / 过滤 3 / 排序 3 / 关键词 2）+ `test/stakeholder-service.test.ts` 22 例（字段级脱敏 4 / 导出上下文 1 / 记录级与项目隔离 7 / 写权限 5 / 用例与留痕 5）。
+- `npm run check:boundaries` 0 违规；`npm run check:permission-matrix` 通过（种子 #6b 无需改动：project_manager / sales 三键、task_owner / project_member / viewer 读键、admin 全量）；`check:db-schema` 由 CI `database` job 复验（迁移 0019 / 0085 + Drizzle schema 对齐，本机无 PostgreSQL）。
 
 ## 差异与后续
 

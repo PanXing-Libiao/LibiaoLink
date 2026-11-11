@@ -148,30 +148,33 @@ export function taskCapabilitiesOf(
 }
 
 /**
- * 项目内角色隐含的权限位（ADR-011 §4.3 平权例外 + ADR-020 / ADR-023 既有口径）：
- * 名册成员在其项目内即可读、可改任务进度、可完成节点（节点操作一期平权）、可填日报与处理问题（A3 与 §4.1）。
+ * 项目内成员隐含的权限位：仅项目浏览与只读资源访问。
+ * 任务负责人的写能力由 taskCapabilitiesOf 逐任务裁决；项目级写操作要求当前项目 accessLevel=edit。
  */
 export const PROJECT_MEMBER_IMPLIED_KEYS: readonly PermissionKey[] = [
   "project.view",
   "member.view",
   "task.view",
-  "task.create",
-  "task.update",
-  "task.progress",
   "report.view",
-  "report.fill",
   "issue.view",
-  "issue.manage",
   "node.view",
-  "node.complete",
-  "file.upload",
   "file.download",
   "stakeholder.view",
 ];
 
-/** 项目内项目经理隐含的权限位：成员全部 + 项目维护 / 名册 / 节点增删 / 阶段推进回退（ADR-020 / ADR-023）。 */
+/**
+ * 项目内项目经理隐含的权限位：成员只读位 + 项目维护、任务、节点、日报、问题与文件写能力。
+ * 写位在此显式列出，不随成员只读集合变化（ADR-020 / ADR-023）。
+ */
 export const PROJECT_MANAGER_IMPLIED_KEYS: readonly PermissionKey[] = [
   ...PROJECT_MEMBER_IMPLIED_KEYS,
+  "task.create",
+  "task.update",
+  "task.progress",
+  "report.fill",
+  "issue.manage",
+  "node.complete",
+  "file.upload",
   "project.update",
   "project.delete",
   "project.archive",

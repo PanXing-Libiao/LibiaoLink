@@ -7,7 +7,7 @@ export type {
   StakeholderRow,
   StakeholderUpdatePatch,
 } from "./stakeholder.repository.js";
-export { buildStakeholderFilter, matchesKeyword, parseStakeholderSort, stakeholderVisibility } from "./stakeholder.rules.js";
+export { buildStakeholderFilter, isStakeholderProjectFilterVisible, matchesKeyword, parseStakeholderSort, stakeholderVisibility } from "./stakeholder.rules.js";
 export type {
   StakeholderFilter,
   StakeholderListQueryInput,

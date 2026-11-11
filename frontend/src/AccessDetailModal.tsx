@@ -207,6 +207,7 @@ function MembersView({ model, onOpenDepartment }: { model: AccessDashboardModel;
 function PersonDetailRow({ person, onOpenDepartment }: { person: AccessPersonSummary; onOpenDepartment: (groupKey: string) => void }) {
   const t = useT();
   const primaryGroup = person.groups[0] ?? null;
+  const automatic = person.automatic;
 
   function openPrimary(): void {
     if (primaryGroup !== null) onOpenDepartment(primaryGroup.groupKey);
@@ -252,6 +253,13 @@ function PersonDetailRow({ person, onOpenDepartment }: { person: AccessPersonSum
             </button>
           ))}
         </span>
+        {automatic.relationCount === 0 ? null : (
+          <span className="mt-1.5 flex flex-wrap gap-1.5" aria-label={t("access.autoRolesTitle")}>
+            {automatic.managerCount > 0 ? <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[9px] font-medium text-blue-700 ring-1 ring-inset ring-blue-100">{t("access.autoRoleManagers")} {automatic.managerCount}</span> : null}
+            {automatic.memberCount > 0 ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-medium text-emerald-700 ring-1 ring-inset ring-emerald-100">{t("access.autoRoleMembers")} {automatic.memberCount}</span> : null}
+            {automatic.taskOwnerTaskCount > 0 ? <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[9px] font-medium text-violet-700 ring-1 ring-inset ring-violet-100">{t("access.autoRoleTaskOwners")} {automatic.taskOwnerTaskCount}</span> : null}
+          </span>
+        )}
       </span>
       <span className="shrink-0 text-right">
         <span className="block text-[10px] text-zinc-400">{t(personProjectKey(person))}</span>

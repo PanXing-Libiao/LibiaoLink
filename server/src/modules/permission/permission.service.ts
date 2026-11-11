@@ -147,6 +147,9 @@ export class PermissionService {
       groupAllEdit: groupAccess.allEdit,
       groupOwnEdit: groupAccess.ownEdit,
       groupSelectedEdit: groupAccess.selectedEdit,
+      taskNodeManage: await this.canManageTaskNodes(actorId),
+      taskTemplateRead: await this.canReadBlueprint(actorId),
+      taskTemplateManage: await this.canManageTaskTemplates(actorId),
       auditScope,
     };
   }
@@ -214,13 +217,13 @@ export class PermissionService {
   async can(actorId: string, key: PermissionKey, context?: ProjectResourceContext): Promise<boolean> {
     if (!can(await this.getAuthorization(actorId), key, context)) return false;
     const groupAccess = await this.groupAccessOf(actorId);
+    if (key === "blueprint.manage") return groupAccess.admin;
     if (GROUP_ACCESS_ADMIN_ONLY_KEYS.includes(key)) return groupAccess.admin;
     if (!groupAccess.enforced || groupAccess.admin) return true;
     if (PROJECT_GROUP_WRITE_KEYS.includes(key)) {
       return isProjectEditor(context);
     }
     if (GLOBAL_GROUP_WRITE_KEYS.includes(key)) return groupAccess.allEdit;
-    if (key === "blueprint.manage") return groupAccess.anyEdit;
     if (key === "project.create") return groupAccess.allEdit || groupAccess.ownEdit;
     return true;
   }
@@ -236,22 +239,83 @@ export class PermissionService {
     throw new AppError("FORBIDDEN", message ?? "无权限：" + key);
   }
 
-  /** 任务模板 / 节点库维护：系统管理员，或已开启部门限制且任一范围拥有编辑权限的账号。 */
+  /** 流程蓝图维护：仅系统管理员；部门编辑范围与项目经理身份都不授予。 */
   async canManageBlueprint(actorId: string): Promise<boolean> {
-    const groupAccess = await this.groupAccessOf(actorId);
-    return groupAccess.admin || (groupAccess.enforced && groupAccess.anyEdit);
+    return (await this.groupAccessOf(actorId)).admin;
   }
 
   async assertCanManageBlueprint(actorId: string, message?: string): Promise<void> {
     if (await this.canManageBlueprint(actorId)) return;
-    throw new AppError("FORBIDDEN", message ?? "维护任务模板需要编辑权限");
+    throw new AppError("FORBIDDEN", message ?? "维护流程蓝图需要系统管理员权限");
   }
 
-  /** 任务节点 / 模板读取：管理员、限制关闭或有项目数据范围的账号可读；仅登录 / none 范围拒绝。 */
+  /** 任务节点库维护：系统管理员，或至少管理一个未软删项目的项目经理；部门编辑范围不授予。 */
+  async canManageTaskNodes(actorId: string): Promise<boolean> {
+    return this.hasActiveManagedProject(actorId);
+  }
+
+  async assertCanManageTaskNodes(actorId: string, message?: string): Promise<void> {
+    if (await this.canManageTaskNodes(actorId)) return;
+    throw new AppError("FORBIDDEN", message ?? "维护任务节点库需要项目经理或管理员权限");
+  }
+
+  /**
+   * 公共任务模板维护（账号级）：系统管理员，或至少管理一个未软删项目的项目经理。
+   * 项目经理来源 = projects.manager_ids ∪ 名册 role_in_project=project_manager；部门 / 个人 edit 范围不再单独授予。
+   * 项目经理兼任务负责人时按项目经理身份可写；只负责任务、未担任项目经理的账号仍只读。
+   */
+  async canManageTaskTemplates(actorId: string): Promise<boolean> {
+    return this.hasActiveManagedProject(actorId);
+  }
+
+  async assertCanManageTaskTemplates(actorId: string, message?: string): Promise<void> {
+    if (await this.canManageTaskTemplates(actorId)) return;
+    throw new AppError("FORBIDDEN", message ?? "维护公共任务模板需要项目经理或管理员权限");
+  }
+
+  /**
+   * 单份公共任务模板维护：系统管理员，或仍为有效项目经理的创建人。
+   * 其他项目经理只能浏览；系统预置模板无创建人，仅管理员可维护。
+   */
+  async canManageTaskTemplate(actorId: string, createdBy: string | null): Promise<boolean> {
+    if ((await this.groupAccessOf(actorId)).admin) return true;
+    if (createdBy === null || createdBy !== actorId) return false;
+    return this.hasActiveManagedProject(actorId);
+  }
+
+  async assertCanManageTaskTemplate(
+    actorId: string,
+    createdBy: string | null,
+    message?: string,
+  ): Promise<void> {
+    if (await this.canManageTaskTemplate(actorId, createdBy)) return;
+    throw new AppError("FORBIDDEN", message ?? "仅模板创建人或系统管理员可以维护该模板");
+  }
+
+  /** 账号级项目经理资格：管理员，或至少管理一个未软删项目；两条经理来源取并集。 */
+  private async hasActiveManagedProject(actorId: string): Promise<boolean> {
+    const groupAccess = await this.groupAccessOf(actorId);
+    if (groupAccess.admin) return true;
+    const [ownedProjectIds, managedRosterProjectIds] = await Promise.all([
+      this.repository.listOwnedProjectIds(actorId),
+      this.repository.listManagedRosterProjectIds(actorId),
+    ]);
+    const managedProjectIds = uniqueIds([...ownedProjectIds, ...managedRosterProjectIds]);
+    if (managedProjectIds.length === 0) return false;
+    return (await this.repository.listActiveProjectIds(managedProjectIds)).length > 0;
+  }
+
+  /**
+   * 任务节点 / 模板读取：管理员、限制关闭、有项目数据范围，或至少有一个可浏览的有效项目关系。
+   * 项目成员与任务负责人即使部门规则为 none，也可凭关系浏览公共节点 / 模板。
+   */
   async canReadBlueprint(actorId: string): Promise<boolean> {
     const groupAccess = await this.groupAccessOf(actorId);
     if (!groupAccess.enforced || groupAccess.admin) return true;
-    return hasProjectDataScope(groupAccess);
+    if (hasProjectDataScope(groupAccess)) return true;
+    const relatedProjectIds = await this.repository.listRelatedProjectIds(actorId);
+    if (relatedProjectIds.length === 0) return false;
+    return (await this.repository.listActiveProjectIds(relatedProjectIds)).length > 0;
   }
 
   async assertCanReadBlueprint(actorId: string, message?: string): Promise<void> {

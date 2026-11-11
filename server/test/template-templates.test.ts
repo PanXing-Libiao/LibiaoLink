@@ -5,7 +5,7 @@
  * 3) 新建：POST —— 名称 trim（全空白 400）；nodeIds 允许空；重复 id / 未知节点 / 跨阶段节点 400 VALIDATION_FAILED 且不落库不留痕；
  * 4) 编辑：PATCH —— 改名 / nodeIds 全量替换（seq 重排为 10/20/30）；乐观锁 version 过期 409 VERSION_CONFLICT；不存在 404；
  * 5) 删除：DELETE —— **软删**（deletedAt 回包 + 审计 action=delete 快照）；version 过期 409；不存在 404；
- * 6) 权限：写（新建 / 编辑 / 删除）= blueprint.manage（ADR-019 / ADR-020 仅系统管理员）—— 无权 403，且不落库、不留痕；
+ * 6) 权限：写（新建 / 编辑 / 删除）= 公共任务模板管理权（系统管理员或有效项目经理）—— 无权 403，且不落库、不留痕；
  * 7) 留痕：写操作各一条审计（objectType = task_template，changes 记名称 + 节点名顺序）；不写 outbox（与节点库 / 字典同口径）。
  * 契约见 shared/src/modules/templates.ts；真机口径见 server/src/modules/template/README.md。
  */
@@ -137,14 +137,28 @@ class FakeTaskTemplateRepository {
 
 class FakePermissionService {
   lastKey: string | null = null;
-  constructor(private readonly allowed: boolean) {}
+  constructor(
+    private readonly allowed: boolean,
+    private readonly admin: boolean,
+  ) {}
   async assertCan(_actorId: string, key: string, _context?: unknown, message?: string): Promise<void> {
     this.lastKey = key;
     if (!this.allowed) throw new AppError("FORBIDDEN", message ?? "无权限：" + key);
   }
-  async assertCanManageBlueprint(_actorId: string, message?: string): Promise<void> {
-    this.lastKey = "blueprint.manage";
-    if (!this.allowed) throw new AppError("FORBIDDEN", message ?? "维护任务模板需要编辑权限");
+  async assertCanManageTaskTemplates(_actorId: string, message?: string): Promise<void> {
+    this.lastKey = "taskTemplate.manage";
+    if (!this.allowed) throw new AppError("FORBIDDEN", message ?? "维护公共任务模板需要项目经理或管理员权限");
+  }
+  async assertCanManageTaskTemplate(
+    actorId: string,
+    createdBy: string | null,
+    message?: string,
+  ): Promise<void> {
+    this.lastKey = "taskTemplate.manage";
+    if (this.admin) return;
+    if (!this.allowed || createdBy === null || createdBy !== actorId) {
+      throw new AppError("FORBIDDEN", message ?? "仅模板创建人或系统管理员可以维护该模板");
+    }
   }
 }
 
@@ -162,14 +176,14 @@ class FakeDatabase {
   } as unknown as DatabaseService["db"];
 }
 
-function makeService(options: { allowed?: boolean; repo?: FakeTaskTemplateRepository; nodes?: FakeTaskNodeRepository } = {}) {
+function makeService(options: { allowed?: boolean; admin?: boolean; repo?: FakeTaskTemplateRepository; nodes?: FakeTaskNodeRepository } = {}) {
   const repo = options.repo ?? new FakeTaskTemplateRepository();
   const nodes = options.nodes ?? new FakeTaskNodeRepository();
   for (const node of nodes.rows) {
     repo.nodesByRef.set(node.id, { title: node.title, titleEn: node.titleEn });
   }
   const audit = new FakeAuditService();
-  const permission = new FakePermissionService(options.allowed ?? true);
+  const permission = new FakePermissionService(options.allowed ?? true, options.admin ?? true);
   const service = new TemplateService(
     nodes as unknown as TaskNodeRepository,
     repo as unknown as TaskTemplateRepository,
@@ -220,14 +234,14 @@ describe("模板列表 / 详情（读 = 登录即可）", () => {
   });
 });
 
-describe("新建模板（写 = blueprint.manage）", () => {
+describe("新建模板（写 = taskTemplate.manage）", () => {
   it("名称 trim + 节点顺序落库（seq = 10/20…）+ 审计 action=create", async () => {
     const { service, repo, audit, permission } = makeService();
     const created = await service.createTemplate(
       { name: "  英国订单  ", stageKey: "install", nodeIds: [OTHER_NODE] },
       ACTOR,
     );
-    expect(permission.lastKey).toBe("blueprint.manage");
+    expect(permission.lastKey).toBe("taskTemplate.manage");
     expect(created).toMatchObject({
       name: "英国订单",
       stageKey: "install",
@@ -304,7 +318,7 @@ describe("编辑模板（改名 / 节点全量替换 + 乐观锁）", () => {
   it("改名 + 节点整体替换：version +1、diff 只含 name 与 nodes、审计 action=update", async () => {
     const { service, repo, audit, permission } = makeService();
     const updated = await service.updateTemplate(TEMPLATE, { name: "  英国订单  ", nodeIds: [OTHER_NODE], version: 0 }, ACTOR);
-    expect(permission.lastKey).toBe("blueprint.manage");
+    expect(permission.lastKey).toBe("taskTemplate.manage");
     expect(updated).toMatchObject({ id: TEMPLATE, name: "英国订单", version: 1 });
     expect(updated.nodes).toHaveLength(1);
     expect(audit.records).toHaveLength(1);
@@ -316,6 +330,21 @@ describe("编辑模板（改名 / 节点全量替换 + 乐观锁）", () => {
       metadata: { stageKey: "install", nodeCount: 1 },
     });
     expect(audit.records[0]?.changes).toEqual([{ field: "name", from: "硬件实施模板一", to: "英国订单" }]);
+  });
+
+  it("其他项目经理不能编辑别人创建的模板；创建人 / 管理员可以", async () => {
+    const foreign = makeService({ admin: false });
+    foreign.repo.rows = [makeTemplate({ createdBy: OTHER })];
+    await expect(
+      foreign.service.updateTemplate(TEMPLATE, { name: "越权改名", version: 0 }, ACTOR),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(foreign.repo.rows[0]).toMatchObject({ name: "硬件实施模板一", version: 0 });
+    expect(foreign.audit.records).toHaveLength(0);
+
+    const owner = makeService({ admin: false });
+    owner.repo.rows = [makeTemplate({ createdBy: ACTOR })];
+    const updated = await owner.service.updateTemplate(TEMPLATE, { name: "本人修改", version: 0 }, ACTOR);
+    expect(updated).toMatchObject({ name: "本人修改", createdBy: ACTOR, version: 1 });
   });
 
   it("节点清空（nodeIds = []）：引用行清掉、审计记 nodes 变化", async () => {
@@ -353,7 +382,7 @@ describe("删除模板（软删 + 审计快照）", () => {
   it("软删成功：回包 deletedAt、行从读面消失、审计 action=delete（快照进 changes）", async () => {
     const { service, repo, audit, permission } = makeService();
     const result = await service.deleteTemplate(TEMPLATE, { version: 0 }, ACTOR);
-    expect(permission.lastKey).toBe("blueprint.manage");
+    expect(permission.lastKey).toBe("taskTemplate.manage");
     expect(result).toEqual({ id: TEMPLATE, deletedAt: expect.any(String) });
     expect(repo.rows).toHaveLength(0);
     expect(audit.records).toHaveLength(1);
@@ -369,6 +398,16 @@ describe("删除模板（软删 + 审计快照）", () => {
         { field: "nodes", from: ["货架组装"], to: null },
       ],
     });
+  });
+
+  it("其他项目经理不能删除别人创建的模板", async () => {
+    const foreign = makeService({ admin: false });
+    foreign.repo.rows = [makeTemplate({ createdBy: OTHER })];
+    await expect(foreign.service.deleteTemplate(TEMPLATE, { version: 0 }, ACTOR)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    expect(foreign.repo.rows).toHaveLength(1);
+    expect(foreign.audit.records).toHaveLength(0);
   });
 
   it("version 过期 → 409 VERSION_CONFLICT，不删不留痕", async () => {

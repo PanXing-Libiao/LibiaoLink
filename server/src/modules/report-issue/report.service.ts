@@ -137,7 +137,7 @@ export function toDailyReportView(row: DailyReportRow, photos: { onsite: FilePho
  * 4) 附图（方案一）：现场图 / 问题图都挂 file_links(report, kind=onsite|issue)，整体替换语义；
  * 5) 删除为成对删除：删日报 = 连它派生的全部问题 + 两侧附图关联（DELETE）；
  * 6) 留痕：审计（对象 daily_report + 连带问题）+ outbox report.submitted / report.deleted；归档项目写保护 409 PROJECT_ARCHIVED。
- * 权限：读 = 项目可见（成员平权）；写 = report.fill（成员平权，见 permission.rules 平权例外）。
+ * 权限：读 = 项目可见；写 = report.fill，且要求当前项目 accessLevel=edit。
  */
 @Injectable()
 export class ReportService {

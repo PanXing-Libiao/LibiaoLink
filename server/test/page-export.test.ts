@@ -312,7 +312,7 @@ describe("页面级 Excel 导出契约", () => {
     expect(permission.can).toHaveBeenCalledWith(USER_ID, "stakeholder.contact.view", projectAccess);
   });
 
-  it("仅靠项目成员 / 项目经理隐含权限时，目录与导出均按项目上下文放行", async () => {
+  it("仅靠项目经理隐含权限时，目录与导出均按项目上下文放行", async () => {
     const managerAccess: ProjectAccessContext = { ...PROJECT_ACCESS, projectManager: true };
     const { service, projectAccess } = harness({
       permissions: ["project.view", "project.export"],

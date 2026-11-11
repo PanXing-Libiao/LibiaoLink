@@ -80,7 +80,7 @@ export type StakeholderCreateInput = {
   wechat?: string;
   email?: string;
   role?: string;
-  projectIds?: string[];
+  projectIds: string[];
 };
 
 /** 更新（PATCH 合并语义）：只传变更键；null = 清空该字段。 */

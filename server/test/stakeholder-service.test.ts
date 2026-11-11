@@ -84,7 +84,7 @@ interface LinkRow {
 
 class FakeStakeholderRepository {
   rows: StakeholderRow[] = [makeRow()];
-  links: LinkRow[] = [];
+  links: LinkRow[] = [{ stakeholderId: STAKEHOLDER, projectId: PROJECT }];
   projects = new Set<string>([PROJECT, STRANGER_PROJECT]);
   private seq = 0;
 
@@ -92,7 +92,6 @@ class FakeStakeholderRepository {
     const projectIds = visibility.projectIds ?? [];
     const visible = this.rows.filter((row) => {
       if (visibility.kind === "all") return true;
-      if (row.createdBy !== null && row.createdBy === visibility.ownId) return true;
       return this.links.some((link) => link.stakeholderId === row.id && projectIds.includes(link.projectId));
     });
     const filtered = visible.filter((row) => {
@@ -162,16 +161,19 @@ class FakeStakeholderRepository {
     return true;
   }
 
-  async deleteLink(stakeholderId: string, projectId: string): Promise<boolean> {
-    const before = this.links.length;
-    this.links = this.links.filter((link) => !(link.stakeholderId === stakeholderId && link.projectId === projectId));
-    return this.links.length < before;
-  }
 }
 
 class FakePermissionService {
   globalWritable = true;
   projectLevels = new Map<string, "edit" | "view">();
+  projectFinalLevels = new Map<string, "edit" | "view">();
+  projectManagers = new Set<string>();
+  lastAssertCanContext?: {
+    member?: boolean;
+    projectManager?: boolean;
+    groupAccessLevel?: "edit" | "view";
+    accessLevel?: "edit" | "view";
+  };
   getAuthorizationCalls = 0;
   projectScopeCalls = 0;
 
@@ -193,22 +195,35 @@ class FakePermissionService {
     member: boolean;
     projectManager: boolean;
     groupAccessLevel: "edit" | "view";
+    accessLevel: "edit" | "view";
   }> {
     if (!this.knownProjects.has(projectId)) {
       throw new AppError("NOT_FOUND", "项目不存在或已删除：" + projectId);
     }
+    const groupAccessLevel = this.projectLevels.get(projectId) ?? "edit";
     return {
       projectId,
       member: true,
-      projectManager: false,
-      groupAccessLevel: this.projectLevels.get(projectId) ?? "edit",
+      projectManager: this.projectManagers.has(projectId),
+      groupAccessLevel,
+      accessLevel: this.projectFinalLevels.get(projectId) ?? groupAccessLevel,
     };
   }
-  async assertCan(_actorId: string, key: string, context?: { groupAccessLevel?: "edit" | "view" }): Promise<void> {
+  async assertCan(
+    _actorId: string,
+    key: string,
+    context?: {
+      member?: boolean;
+      projectManager?: boolean;
+      groupAccessLevel?: "edit" | "view";
+      accessLevel?: "edit" | "view";
+    },
+  ): Promise<void> {
+    this.lastAssertCanContext = context;
     if (!this.authorization.permissionKeys.includes(key as never)) {
       throw new AppError("FORBIDDEN", "无权限：" + key);
     }
-    if (context?.groupAccessLevel === "view") {
+    if (context?.accessLevel !== "edit" && context?.groupAccessLevel === "view") {
       throw new AppError("FORBIDDEN", "当前项目仅浏览");
     }
   }
@@ -226,7 +241,7 @@ class FakeAuditService {
 
 function makeService(
   authorization: ActorAuthorization,
-  scope: ProjectScopeFilter = { kind: "ids", ids: [] },
+  scope: ProjectScopeFilter = { kind: "ids", ids: [PROJECT] },
   repo = new FakeStakeholderRepository(),
 ) {
   const audit = new FakeAuditService();
@@ -307,15 +322,15 @@ describe("干系人导出上下文（P3）", () => {
 });
 
 describe("记录级可见集（A5-03 / A5-04）", () => {
-  it("我录入的：即使项目可见集为空也可见（销售端口）", async () => {
-    const { service } = makeService(SALES);
-    const item = await service.get(STAKEHOLDER, ME);
-    expect(item.id).toBe(STAKEHOLDER);
+  it("项目可见集为空 → 404；不按录入人兜底", async () => {
+    const { service } = makeService(SALES, { kind: "ids", ids: [] });
+    await expect(service.get(STAKEHOLDER, ME)).rejects.toThrow(/干系人不存在/);
   });
 
-  it("他人录入 + 关联项目不在可见集 → 404", async () => {
+  it("项目不在可见集 → 404", async () => {
     const repo = new FakeStakeholderRepository();
     repo.rows = [makeRow({ createdBy: OTHER })];
+    repo.links = [];
     const { service } = makeService(VIEWER, { kind: "ids", ids: [PROJECT] }, repo);
     await expect(service.get(STAKEHOLDER, ME)).rejects.toThrow(/干系人不存在/);
   });
@@ -327,6 +342,47 @@ describe("记录级可见集（A5-03 / A5-04）", () => {
     const { service } = makeService(VIEWER, { kind: "ids", ids: [PROJECT] }, repo);
     const item = await service.get(STAKEHOLDER, ME);
     expect(item.projects.map((project) => project.id)).toEqual([PROJECT]);
+  });
+
+  it("同名干系人在不同项目是独立记录：互不共享、互不影响", async () => {
+    const projectB = "88888888-8888-4888-8888-888888888888";
+    const stakeholderB = "99999999-9999-4999-8999-999999999999";
+    const repo = new FakeStakeholderRepository();
+    repo.projects.add(projectB);
+    repo.rows = [makeRow({ createdBy: ME }), makeRow({ id: stakeholderB, createdBy: ME })];
+    repo.links = [
+      { stakeholderId: STAKEHOLDER, projectId: PROJECT },
+      { stakeholderId: stakeholderB, projectId: projectB },
+    ];
+    const admin: ActorAuthorization = {
+      userId: ME,
+      roleCodes: ["admin"],
+      dataScopes: ["all"],
+      permissionKeys: ["stakeholder.view", "stakeholder.manage", "stakeholder.contact.view"],
+    };
+    const { service } = makeService(admin, { kind: "all" }, repo);
+
+    const list = await service.list(LIST_QUERY, ME);
+    expect(list.items.map((item) => item.id).sort()).toEqual([STAKEHOLDER, stakeholderB].sort());
+    const inProject = await service.list({ ...LIST_QUERY, "filter[projectId]": PROJECT }, ME);
+    expect(inProject.items.map((item) => item.id)).toEqual([STAKEHOLDER]);
+    expect(inProject.items[0]?.projects.map((project) => project.id)).toEqual([PROJECT]);
+  });
+
+  it("按无权项目筛选：本人录入的记录也返回空集（列表 / 总数 / 导出同口径）", async () => {
+    const repo = new FakeStakeholderRepository();
+    repo.rows = [makeRow({ createdBy: ME })];
+    repo.links = [{ stakeholderId: STAKEHOLDER, projectId: STRANGER_PROJECT }];
+    const { service } = makeService(SALES, { kind: "ids", ids: [] }, repo);
+    const query = { ...LIST_QUERY, "filter[projectId]": STRANGER_PROJECT } as const;
+
+    const list = await service.list(query, ME);
+    expect(list.items).toEqual([]);
+    expect(list.total).toBe(0);
+
+    const context = await service.prepareExportContext(ME);
+    await expect(service.countForExport(query, context)).resolves.toBe(0);
+    await expect(service.listForExport(query, context)).resolves.toEqual([]);
   });
 
   it("管理员（可见集 all）：台账全量", async () => {
@@ -344,20 +400,24 @@ describe("记录级可见集（A5-03 / A5-04）", () => {
       makeRow(),
       makeRow({ id: "77777777-7777-4777-8777-777777777777", name: "张三", companyType: "supplier", company: "乙方", title: "采购", createdBy: ME }),
     ];
-    repo.links = [{ stakeholderId: STAKEHOLDER, projectId: PROJECT }];
-    const { service } = makeService(SALES, { kind: "ids", ids: [] }, repo);
+    repo.links = [
+      { stakeholderId: STAKEHOLDER, projectId: PROJECT },
+      { stakeholderId: "77777777-7777-4777-8777-777777777777", projectId: PROJECT },
+    ];
+    const { service } = makeService(SALES, { kind: "ids", ids: [PROJECT] }, repo);
     expect((await service.list({ ...LIST_QUERY, "filter[companyType]": "customer" }, ME)).total).toBe(1);
-    expect((await service.list({ ...LIST_QUERY, "filter[projectId]": PROJECT }, ME)).total).toBe(1);
+    expect((await service.list({ ...LIST_QUERY, "filter[projectId]": PROJECT }, ME)).total).toBe(2);
     expect((await service.list({ ...LIST_QUERY, q: "张三" }, ME)).total).toBe(1);
     expect((await service.list({ ...LIST_QUERY, q: "无此人" }, ME)).total).toBe(0);
   });
 });
 
 describe("写权限按项目裁决", () => {
-  it("未关联项目：仅自己的项目可编辑也不能新建未关联台账", async () => {
-    const { service, audit, permission } = makeService(SALES);
-    permission.globalWritable = false;
-    await expect(service.create({ name: "李四", companyType: "supplier" }, ME)).rejects.toMatchObject({ code: "FORBIDDEN" });
+  it("新建必须归属一个项目：空项目 400，且不写审计", async () => {
+    const { service, audit } = makeService(SALES);
+    await expect(service.create({ name: "李四", companyType: "supplier", projectIds: [] }, ME)).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+    });
     expect(audit.records).toHaveLength(0);
   });
 
@@ -372,30 +432,43 @@ describe("写权限按项目裁决", () => {
     expect(audit.records).toHaveLength(0);
   });
 
-  it("更新 / 删除共享台账：任一关联项目仅浏览即 403", async () => {
+  it("更新 / 删除：所属项目仅浏览即 403", async () => {
     const { service, repo, permission } = makeService(SALES);
-    repo.links = [
-      { stakeholderId: STAKEHOLDER, projectId: PROJECT },
-      { stakeholderId: STAKEHOLDER, projectId: STRANGER_PROJECT },
-    ];
-    permission.projectLevels.set(STRANGER_PROJECT, "view");
+    repo.links = [{ stakeholderId: STAKEHOLDER, projectId: PROJECT }];
+    permission.projectLevels.set(PROJECT, "view");
     await expect(service.update(STAKEHOLDER, { phone: "13900000000" }, ME)).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(service.remove(STAKEHOLDER, ME)).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
-  it("关联 / 解除关联：目标项目仅浏览即 403", async () => {
+  it("项目经理：部门规则仅浏览但最终 accessLevel=edit，仍可修改所属项目台账", async () => {
     const { service, repo, permission } = makeService(SALES);
-    permission.projectLevels.set(PROJECT, "view");
-    await expect(service.linkProject(STAKEHOLDER, PROJECT, ME)).rejects.toMatchObject({ code: "FORBIDDEN" });
     repo.links = [{ stakeholderId: STAKEHOLDER, projectId: PROJECT }];
-    await expect(service.unlinkProject(STAKEHOLDER, PROJECT, ME)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    permission.projectLevels.set(PROJECT, "view");
+    permission.projectManagers.add(PROJECT);
+    permission.projectFinalLevels.set(PROJECT, "edit");
+
+    const updated = await service.update(STAKEHOLDER, { phone: "13900000000" }, ME);
+    expect(updated.phone).toBe("13900000000");
+    expect(permission.lastAssertCanContext?.accessLevel).toBe("edit");
+  });
+
+  it("新建时只能关联一个项目：多项目直接 400，且不落库、不写审计", async () => {
+    const { service, repo, audit } = makeService(SALES);
+    repo.links = [];
+    const before = repo.rows.length;
+    await expect(
+      service.create({ name: "李四", companyType: "supplier", projectIds: [PROJECT, STRANGER_PROJECT] }, ME),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    expect(repo.rows).toHaveLength(before);
+    expect(repo.links).toHaveLength(0);
+    expect(audit.records).toHaveLength(0);
   });
 });
 
 describe("用例与留痕", () => {
   it("新建：写审计 create（九字段 before → after），并回读", async () => {
     const { service, audit } = makeService(SALES);
-    const created = await service.create({ name: "李四", companyType: "supplier", phone: "13800000000" }, ME);
+    const created = await service.create({ name: "李四", companyType: "supplier", phone: "13800000000", projectIds: [PROJECT] }, ME);
     expect(created.name).toBe("李四");
     expect(created.companyType).toBe("supplier");
     expect(audit.records).toHaveLength(1);
@@ -415,6 +488,15 @@ describe("用例与留痕", () => {
     ]);
   });
 
+  it("新建带单个项目：写一条干系人归属关联", async () => {
+    const { service, repo, audit } = makeService(SALES);
+    repo.links = [];
+    const created = await service.create({ name: "李四", companyType: "supplier", projectIds: [PROJECT] }, ME);
+    expect(created.projects.map((project) => project.id)).toEqual([PROJECT]);
+    expect(repo.links).toEqual([{ stakeholderId: created.id, projectId: PROJECT }]);
+    expect(audit.records[0]?.metadata).toEqual({ companyType: "supplier", projectIds: [PROJECT] });
+  });
+
   it("新建时关联不存在的项目 → 404（事务内失败，不写审计）", async () => {
     const { service, audit } = makeService(SALES);
     await expect(
@@ -429,26 +511,6 @@ describe("用例与留痕", () => {
     const changes = audit.records[0]?.changes ?? [];
     expect(changes).toHaveLength(1);
     expect(changes[0]).toEqual({ field: "phone", from: "+49 170 000000", to: "13900000000" });
-  });
-
-  it("关联项目：首次写审计（metadata.link = added），重复关联幂等不写", async () => {
-    const { service, repo, audit } = makeService(SALES);
-    await service.linkProject(STAKEHOLDER, PROJECT, ME);
-    expect(repo.links).toHaveLength(1);
-    expect(audit.records).toHaveLength(1);
-    expect(audit.records[0]?.metadata).toEqual({ projectId: PROJECT, link: "added" });
-    await service.linkProject(STAKEHOLDER, PROJECT, ME);
-    expect(repo.links).toHaveLength(1);
-    expect(audit.records).toHaveLength(1);
-  });
-
-  it("解除关联：未关联 404；已关联写审计并回读无该项目", async () => {
-    const { service, repo, audit } = makeService(SALES);
-    await expect(service.unlinkProject(STAKEHOLDER, PROJECT, ME)).rejects.toThrow(/未关联/);
-    repo.links = [{ stakeholderId: STAKEHOLDER, projectId: PROJECT }];
-    const after = await service.unlinkProject(STAKEHOLDER, PROJECT, ME);
-    expect(after.projects).toEqual([]);
-    expect(audit.records[0]?.metadata).toEqual({ projectId: PROJECT, link: "removed" });
   });
 
   it("删除：软删 + 审计 delete，之后详情 404", async () => {

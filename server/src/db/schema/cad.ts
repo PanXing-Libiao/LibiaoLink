@@ -4,7 +4,7 @@ import { files, fileVersions } from "./files.js";
 import type { CadCompanion } from "@libiaolink/contracts";
 type CadBoundCompanion = CadCompanion & { sourceSHA256: string; sourceBytes: number };
 
-export type CadStoredBuffer = { sha256: string; byteLength: number; objectKey: string };
+export type CadStoredBuffer = { sha256: string; byteLength: number; objectKey: string; kind?: "dwg-curve-columns-v1" };
 
 export const cadArtifacts = pgTable("cad_artifacts", {
   id: uuid("id").primaryKey().defaultRandom(),

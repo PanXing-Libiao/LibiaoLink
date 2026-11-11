@@ -42,9 +42,9 @@ export class BlueprintService {
     private readonly database: DatabaseService,
   ) {}
 
-  /** 蓝图写权限：系统管理员，或任一项目范围拥有编辑权限（任务模板 / 节点库统一口径）。 */
+  /** 蓝图写权限：仅系统管理员；项目经理 / 部门编辑范围不授予。 */
   async assertAdmin(actorId: string): Promise<void> {
-    await this.permission.assertCanManageBlueprint(actorId, "蓝图维护需要任务模板编辑权限");
+    await this.permission.assertCanManageBlueprint(actorId, "维护流程蓝图需要系统管理员权限");
   }
 
   /** GET /blueprint：projectType 缺省 = default 兜底模板；未创建 → 404。 */

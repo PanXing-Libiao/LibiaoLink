@@ -35,6 +35,7 @@ export interface ImportTaskInsert {
   title: string;
   titleEn: string | null;
   ownerIds: string[];
+  managerIds: string[];
   status: "pending" | "active" | "done";
   statusOverride: "overdue" | "early_done" | null;
   progress: number;
@@ -215,6 +216,7 @@ export class ProjectImportRepository {
           title: row.title,
           titleEn: row.titleEn,
           ownerIds: row.ownerIds,
+          managerIds: row.managerIds,
           status: row.status,
           statusOverride: row.statusOverride,
           progress: String(row.progress),

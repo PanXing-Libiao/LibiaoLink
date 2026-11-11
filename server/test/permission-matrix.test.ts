@@ -144,8 +144,13 @@ describe("功能权限：can（全局位 ∪ 项目内角色隐含位 · ADR-011
     expect(can(owner, "member.manage")).toBe(false);
   });
 
-  it("项目内项目经理：节点增删 / 名册 / 阶段推进放行；蓝图维护不放行", () => {
+  it("项目内项目经理：项目 / 任务 / 节点 / 日报 / 问题 / 文件写能力显式保留；蓝图维护不放行", () => {
     const plain = actor();
+    expect(can(plain, "task.progress", managerContext)).toBe(true);
+    expect(can(plain, "report.fill", managerContext)).toBe(true);
+    expect(can(plain, "issue.manage", managerContext)).toBe(true);
+    expect(can(plain, "file.upload", managerContext)).toBe(true);
+    expect(can(plain, "node.complete", managerContext)).toBe(true);
     expect(can(plain, "node.create", managerContext)).toBe(true);
     expect(can(plain, "node.delete", managerContext)).toBe(true);
     expect(can(plain, "member.manage", managerContext)).toBe(true);
@@ -153,11 +158,25 @@ describe("功能权限：can（全局位 ∪ 项目内角色隐含位 · ADR-011
     expect(can(plain, "blueprint.manage", managerContext)).toBe(false);
   });
 
-  it("项目内成员：任务进度与完成节点平权；名册 / 项目编辑 / 节点增删不放行", () => {
+  it("项目内成员：仅保留只读隐含位；任务 / 节点 / 日报 / 问题 / 文件写能力不随成员关系放行", () => {
     const plain = actor();
-    expect(can(plain, "task.progress", memberContext)).toBe(true);
-    expect(can(plain, "node.complete", memberContext)).toBe(true);
+    expect([...PROJECT_MEMBER_IMPLIED_KEYS]).toEqual([
+      "project.view",
+      "member.view",
+      "task.view",
+      "report.view",
+      "issue.view",
+      "node.view",
+      "file.download",
+      "stakeholder.view",
+    ]);
     expect(can(plain, "project.view", memberContext)).toBe(true);
+    expect(can(plain, "task.view", memberContext)).toBe(true);
+    expect(can(plain, "task.progress", memberContext)).toBe(false);
+    expect(can(plain, "node.complete", memberContext)).toBe(false);
+    expect(can(plain, "report.fill", memberContext)).toBe(false);
+    expect(can(plain, "issue.manage", memberContext)).toBe(false);
+    expect(can(plain, "file.upload", memberContext)).toBe(false);
     expect(can(plain, "member.manage", memberContext)).toBe(false);
     expect(can(plain, "project.update", memberContext)).toBe(false);
     expect(can(plain, "node.create", memberContext)).toBe(false);
@@ -510,11 +529,42 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
     expect(await service.resolveProjectAccess(ACTOR_ID, OTHER_PROJECT)).toBeNull();
   });
 
-  it("assertCan：无权限键 → 403 FORBIDDEN；项目内角色隐含位参与判定", async () => {
+  it("assertCan：无权限键 → 403 FORBIDDEN；成员只读位放行，写位仅项目经理上下文放行", async () => {
     const repository = new FakePermissionRepository();
     const { service } = makeService([member], repository);
     await expectAppError(() => service.assertCan(ACTOR_ID, "member.manage"), "FORBIDDEN");
-    await service.assertCan(ACTOR_ID, "task.progress", { member: true, projectManager: false });
+    await service.assertCan(ACTOR_ID, "task.view", { member: true, projectManager: false });
+    await expectAppError(() => service.assertCan(ACTOR_ID, "task.progress", { member: true, projectManager: false }), "FORBIDDEN");
+    await service.assertCan(ACTOR_ID, "task.progress", { member: true, projectManager: true });
+  });
+
+  it("流程蓝图仅管理员；节点库与模板新建由有效项目经理自动获得；模板编辑仅创建人或管理员", async () => {
+    const managerRepo = new FakePermissionRepository();
+    managerRepo.ownedIds = [PROJECT_ID];
+    managerRepo.refs.set(PROJECT_ID, { managerIds: [ACTOR_ID], deletedAt: null });
+    const managerService = makeService([actor({ permissionKeys: [...PERMISSION_KEYS] })], managerRepo).service;
+    expect(await managerService.canManageBlueprint(ACTOR_ID)).toBe(false);
+    expect(await managerService.can(ACTOR_ID, "blueprint.manage")).toBe(false);
+    expect(await managerService.canManageTaskNodes(ACTOR_ID)).toBe(true);
+    expect(await managerService.canManageTaskTemplates(ACTOR_ID)).toBe(true);
+    expect(await managerService.canManageTaskTemplate(ACTOR_ID, ACTOR_ID)).toBe(true);
+    expect(await managerService.canManageTaskTemplate(ACTOR_ID, MANAGER_ID)).toBe(false);
+
+    const ordinary = makeService([actor()], new FakePermissionRepository()).service;
+    expect(await ordinary.canManageTaskNodes(ACTOR_ID)).toBe(false);
+    expect(await ordinary.canManageTaskTemplates(ACTOR_ID)).toBe(false);
+    expect(await ordinary.canManageTaskTemplate(ACTOR_ID, ACTOR_ID)).toBe(false);
+
+    const adminRepo = new FakePermissionRepository();
+    adminRepo.manualAdmin = true;
+    const adminService = makeService(
+      [actor({ permissionKeys: [...PERMISSION_KEYS] })],
+      adminRepo,
+      new AppConfig({ GROUP_ACCESS_ENFORCED: "false" } as Env),
+    ).service;
+    expect(await adminService.canManageBlueprint(ACTOR_ID)).toBe(true);
+    expect(await adminService.canManageTaskNodes(ACTOR_ID)).toBe(true);
+    expect(await adminService.canManageTaskTemplate(ACTOR_ID, MANAGER_ID)).toBe(true);
   });
 
   it("授权画像缓存：同一用户两次判定只查一次库", async () => {
