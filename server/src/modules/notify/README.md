@@ -7,6 +7,13 @@
 - **错误分类**：图片上传阶段接收渠道与激活态，846607 群聊按 `groupActivated`、单聊按 `dmActivated` 分类，不再把单聊上传失败固定归入 `wecom_group`。上传失败不产生 image 消息；发送失败继续沿用既有回执分类。
 - **回归**：`server/test/wecom-aibot-image.test.ts` 覆盖单聊图片锁帧、群聊既有帧与上传 846607 双渠道分类；`server/scripts/m5-03-5-dm-replay.mjs` 新增 S2b，验证构建产物的上传分片、单聊图片帧与未激活分类（PASS 82 / FAIL 0）。本刀不接日报查询编排、不写审计 / outbox / 站内信；`server/` 属 wmj 线代记，请 wmj 复核。
 
+## 日报查询回调身份（2026-11-11 · S3）
+
+- **单聊**：`NotifyDmService.activateFromReportQuery` 只按 `(bot_id, 回调 from.userid)` 刷新激活行，不调用 `extractBindingCode`、不计绑定失败、不触发防猜锁。`resolveReportQueryActor` 只读绑定行与用户生命周期，停用 / 软删 / 未绑定均返回 `null`；`messagesEnabled` 不参与主动查询授权。
+- **群聊**：`NotifyGroupService.activateFromReportQuery` 只做合法群回调过滤、候选群登记与 `activated_at` 置位，不解析、也不执行群名命令。查询再由 `ProjectGroupService.projectIdByChatid` 读绑定项目。
+- **导出**：`applyMarkdownHardBreaks` 随 `truncateUtf8Bytes` 从 notify 公开出口导出，供 `report-query` 按企微 markdown 口径组装文字。
+- **测试 / 边界**：`server/test/report-query-service.test.ts` 覆盖查询优先于绑定码、群聊仅激活、身份未绑定与限流幂等；notify 仍不 import `report-issue`，查询链路不写审计 / outbox / 站内信 / 群播报。`server/` 属 wmj 线代记，请 wmj 复核。
+
 ## 物料变更补发图片（2026-11-09）
 
 - **入口**：物料变更补发提交事务内追加 `notify.group`（模板码 `MATERIAL_REISSUE_GROUP`，`refType=change`，`refId=change_requests.id`）；通知失败不回滚补发提交，outbox 重试不会重复生成业务记录。
