@@ -1,4 +1,4 @@
-> **2026-11-10 · CAD**　迁移 0085_cad_dwg_companion_sets.sql 允许 DWG 归档保存已选的固定版本配套文件。启用该入口前使用项目迁移器应用；原有 STEP 限制继续生效。
+> **2026-11-10 · CAD**　迁移 0088_cad_dwg_companion_sets.sql 允许 DWG 归档保存已选的固定版本配套文件。启用该入口前使用项目迁移器应用；原有 STEP 限制继续生效。
 
 # database/ · 数据库基线（g3 · S5）
 
