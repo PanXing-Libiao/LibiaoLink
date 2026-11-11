@@ -407,7 +407,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 新增全站自定义成果文件类型（仅当前项目项目经理；写入 deliverableType 全局字典，所有项目共享） */
+        /** 新增全站自定义成果文件类型（仅当前项目编辑者；写入 deliverableType 全局字典，所有项目共享） */
         post: {
             parameters: {
                 query?: never;
@@ -10186,7 +10186,7 @@ export interface components {
             roleCodes: string[];
             /** @description 固定全量数据范围基线；实际项目范围由部门规则收窄 */
             dataScopes: components["schemas"]["DataScope"][];
-            /** @description 全量功能权限位基线；业务写能力另由部门编辑范围 / 项目 groupAccessLevel 裁决 */
+            /** @description 全量功能权限位基线；业务写能力另由部门编辑范围 / Project.accessLevel 裁决 */
             permissionKeys: components["schemas"]["PermissionKey"][];
             /** @description 当前账号的 Casdoor 群组键（owner/name；按登录或目录同步落地） */
             groupKeys?: string[];
@@ -10196,7 +10196,7 @@ export interface components {
             groupAccessEnforced?: boolean;
             /** @description 当前账号是否可进入群组权限管理页 */
             groupAccessAdmin?: boolean;
-            /** @description 兼容摘要：账号没有任何编辑范围时为 true；项目级写能力以项目 groupAccessLevel 为准，全局写能力以 groupAllEdit 为准 */
+            /** @description 兼容摘要：账号没有任何编辑范围时为 true；项目级写能力以Project.accessLevel 为准，全局写能力以 groupAllEdit 为准 */
             groupReadOnly?: boolean;
             groupProjectAccess?: components["schemas"]["GroupProjectAccess"];
             /** @description 当前账号命中的部门项目范围并集：all / own / selected / none；用于空态展示当前权限 */
@@ -11138,7 +11138,7 @@ export interface components {
                 [key: string]: unknown;
             };
         };
-        /** @description 新增字典条目：region 任何登录用户可增（全站共享；重复码 409）；projectType 仅管理员 dict.manage；deliverableType 的自定义成果由项目经理走 POST /projects/{id}/deliverable-types（本通用端点仍仅 dict.manage）；变更写审计留痕（C9-02）；响应为更新后的整个字典 */
+        /** @description 新增字典条目：region 任何登录用户可增（全站共享；重复码 409）；projectType 仅管理员 dict.manage；deliverableType 的自定义成果由项目编辑者走 POST /projects/{id}/deliverable-types（本通用端点仍仅 dict.manage）；变更写审计留痕（C9-02）；响应为更新后的整个字典 */
         DictItemCreateBody: {
             /** @description 字典码：同类型内唯一；重复返回 409 DICT_ITEM_EXISTS */
             code: string;
@@ -11416,7 +11416,7 @@ export interface components {
          */
         FollowObjectType: "project" | "task";
         /**
-         * @description 当前登录账号对该项目的部门权限：edit 可写 / view 仅浏览；由服务端按所有命中范围取最高权限后随项目下发
+         * @description 当前登录账号对该项目的最终有效访问级别：edit = 可执行项目级写操作 / view = 仅浏览。管理员、所管本项目的项目经理或部门 / 个人规则命中 edit 时为 edit；项目成员、任务负责人关系仅保证浏览，且项目经理身份不外溢到其他项目
          * @enum {string}
          */
         GroupAccessAccessLevel: "edit" | "view";
@@ -12313,9 +12313,10 @@ export interface components {
             managerIds: components["schemas"]["Uuid"][];
             /** @description 项目经理姓名数组：服务端按 managerIds 解析后随行下发，与 managerIds 同下标一一对应（列表 / 详情 / 创建与编辑返回均含，免前端二次查目录）；人员停用 / 离职后仍返回姓名，取不到时该位为 null（前端显示「—」） */
             managerNames: (string | null)[];
+            accessLevel: components["schemas"]["GroupAccessAccessLevel"];
             stageKey: components["schemas"]["StageKey"];
             status: components["schemas"]["ProjectStatus"];
-            groupAccessLevel: components["schemas"]["GroupAccessAccessLevel"];
+            groupAccessLevel: components["schemas"]["GroupAccessAccessLevel"] & unknown;
             description: string | null;
             version: components["schemas"]["Version"];
             createdAt: components["schemas"]["DateTime"];
@@ -12445,7 +12446,7 @@ export interface components {
             /** @description 导入的蓝图版本；缺省 = 当前已发布版本 */
             blueprintVersion?: number;
         };
-        /** @description 仅当前项目的项目经理 / 名册项目经理可新增；条目进入全站 deliverableType 字典，所有账号与项目可见 */
+        /** @description 仅当前项目的项目编辑者（管理员、所管本项目的项目经理或部门 / 个人规则 edit）可新增；条目进入全站 deliverableType 字典，所有账号与项目可见 */
         ProjectDeliverableTypeCreateBody: {
             name: components["schemas"]["DeliverableType"];
         };
@@ -12879,6 +12880,11 @@ export interface components {
             updatedAt: components["schemas"]["DateTime"];
         };
         /**
+         * @description 任务有效权限来源：project_edit 项目编辑者 / task_owner 当前任务负责人 / view 仅浏览
+         * @enum {string}
+         */
+        TaskAccessSource: "project_edit" | "task_owner" | "view";
+        /**
          * @description 任务存储基础态（不写回派生结果）
          * @enum {string}
          */
@@ -12939,6 +12945,25 @@ export interface components {
             canComplete: boolean;
             missing: components["schemas"]["TaskGateMissing"][];
             warnings: components["schemas"]["TaskGateWarning"][];
+        };
+        /** @description 当前登录人对本任务的有效能力（列表接口随行下发；导出等内部用途可不带） */
+        TaskCapabilities: {
+            level: components["schemas"]["GroupAccessAccessLevel"] & unknown;
+            source: components["schemas"]["TaskAccessSource"];
+            /** @description 可编辑任务普通字段（状态、计划、人数、重要度、成果类型、进展描述等） */
+            canEditFields: boolean;
+            /** @description 可更新进度 / 实际完成日期 / 提交完成 */
+            canUpdateProgress: boolean;
+            /** @description 可提交任务完成（仍受完成门禁约束） */
+            canComplete: boolean;
+            /** @description 可定档 / 取消定档（任务负责人或项目编辑者） */
+            canFinalize: boolean;
+            /** @description 可上传 / 追加版本 / 对本人任务文件发起变更 */
+            canUpload: boolean;
+            /** @description 可修改任务负责人（仅项目编辑者；任务负责人不可改自己的负责人） */
+            canAssignOwners: boolean;
+            /** @description 可删除 / 排序 / 批量操作任务（仅项目编辑者） */
+            canDelete: boolean;
         };
         /** @description 任务 ↔ 变更关联项（多条；列表 / 详情同形） */
         TaskChangeLink: {
@@ -13026,6 +13051,7 @@ export interface components {
             /** @description 负责人姓名数组：与 ownerIds 同下标一一对应；「待分配」= 空数组 */
             ownerNames: (string | null)[];
             files: components["schemas"]["TaskFileBrief"][];
+            capabilities?: components["schemas"]["TaskCapabilities"] & unknown;
         };
         /**
          * @description 任务展示五态（服务端读时派生 + 显式覆盖，A12 / A14 · Push 70；2026-09-24 起五态可写）：待开始 / 进行中 / 已完成 / 已延期 / 提前完成；有显式覆盖（tasks.status_override，仅 overdue / early_done 两值）时优先取覆盖值，否则派生 —— 未完成且已过预计完成日期一律「已延期」；「逾期未交付 / 逾期已交付」不进状态列，落在「是否按时交付」（Task.onTime + 本字段）
@@ -13067,6 +13093,7 @@ export interface components {
             /** @description 负责人姓名数组（users.display_name 随行下发，与 ownerIds 同下标一一对应）；「待分配」= 空数组；某位取不到姓名时该位为 null（前端显示「—」） */
             ownerNames: (string | null)[];
             fileSummary: components["schemas"]["TaskFileSummary"];
+            capabilities?: components["schemas"]["TaskCapabilities"];
         };
         /** @description 任务列表（items 为 TaskListItem：表格直接渲染 + 内联摘要） */
         TaskListResponse: {

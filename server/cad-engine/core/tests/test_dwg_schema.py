@@ -39,6 +39,32 @@ class DwgSchema(unittest.TestCase):
             v.validate_binary_envelope(d, s, actual['presentation'], lambda key:b'')
         self.assertEqual(error.exception.code, 'invalid-revision')
 
+    def test_parent_dwg_revision_binds_fixed_geometry_and_large_source_refs(self):
+        e = dwg_fixture()
+        d = e['document']
+        d['adapter']['id'] = 'libiaolink-acadsharp-dwg'
+        m = d['drawing']
+        for i in range(128):
+            key = f'线-{i}'
+            m['entities'][key] = dict(m['entities']['E'], id=key)
+            m['spaces']['M']['entityIds'].append(key)
+        row = m['entities']['线-127']
+        row['sourceRefs'] = [{'sourceId': d['sources'][0]['id'], 'objectKey': '长' * 20000}]
+        seal(e)  # Reference revision uses the ordinary sorted JSON encoder.
+        def validate():
+            v.validate_binary_envelope(d, e['snapshot'], e['presentation'], lambda key: b'')
+        validate()
+        line = m['entities']['线-0']
+        for entity, field, value in [(line, 'geometry', dict(line['geometry'], end=[-0.0, 2, 0])),
+                                     (row, 'sourceRefs', [])]:
+            with self.subTest(field=field):
+                original = entity[field]
+                entity[field] = value
+                with self.assertRaises(v.ValidationError) as error:
+                    validate()
+                self.assertEqual(error.exception.code, 'invalid-revision')
+                entity[field] = original
+
     def test_adapter_sealing_preserves_reference_and_binary_rejections(self):
         import hashlib
         for bad in ('reference', 'hash', 'budget'):

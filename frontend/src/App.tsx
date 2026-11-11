@@ -793,7 +793,7 @@ export default function App() {
   };
 
   /**
-   * 功能权限 = 角色能力位；项目级写入口再叠加当前项目的 groupAccessLevel === "edit"。
+   * 功能权限 = 角色能力位；项目级写入口再叠加当前项目的 accessLevel === "edit"。
    * 全局写入（字典）要求全部项目编辑；项目内写入由项目卡 / 详情按项目逐项收敛（服务端逐请求仍是最终裁决）。
    */
   const canManageDicts = permissions !== null && permissions.groupAllEdit && hasPermission(permissions, "dict.manage");
@@ -926,7 +926,7 @@ export default function App() {
         dicts={dicts}
         dictTools={dictTools}
         canManageDicts={canManageDicts}
-        canArchive={canArchiveProject && editingProject.groupAccessLevel === "edit"}
+        canArchive={canArchiveProject && editingProject.accessLevel === "edit"}
         managerOptions={directoryMemberOptions(directory)}
         onClose={() => {
           setEditingProject(null);
@@ -1026,8 +1026,7 @@ export default function App() {
           taskHiddenColumns={taskTableHiddenColumns}
           onTaskHiddenColumnsChange={handleSaveTaskHiddenColumns}
           canManageStakeholders={canManageStakeholders}
-          readOnly={detail?.groupAccessLevel !== "edit"}
-          onSetProjectDone={canUpdateProject && detail?.groupAccessLevel === "edit" ? handleSetProjectDone : undefined}
+          onSetProjectDone={canUpdateProject && detail?.accessLevel === "edit" ? handleSetProjectDone : undefined}
         />
         {editModal}
         {bottomBars}

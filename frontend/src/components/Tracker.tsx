@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { PROGRESS_LABELS, PROGRESS_STEPS, progressStep } from "../data/tasks";
 import { progressLabelOf, textOf, useLocale } from "../i18n";
+import { Toast } from "./Toast";
 
 type TrackerProps = {
   progress: number;
@@ -9,6 +10,9 @@ type TrackerProps = {
   /** 炫彩档（Push 293 追订「炫彩下点这个进度条看不清」→「背景留白」→「带弧度的」→「胶囊的绿回到之前的版本」）：
    *  四格点底挖出一块胶囊白槽（rounded-full + bg-white），点回标配绿（点亮 emerald-500 / 空格 zinc-200）；缺省 = 原观感（简约 / 适中不改）。 */
   vivid?: boolean;
+  /** 无任务编辑权 / 已定档：外观与可编辑态一致，仅禁用写入并点击提示原因。 */
+  disabled?: boolean;
+  disabledHint?: string;
 };
 
 export const TRACKER_STEPS = PROGRESS_STEPS;
@@ -37,6 +41,8 @@ export function TrackerDots({
   onHoverChange,
   onChange,
   vivid = false,
+  disabled = false,
+  disabledHint,
 }: {
   progress: number;
   steps?: number;
@@ -46,51 +52,74 @@ export function TrackerDots({
   onChange?: (progress: number) => void;
   /** 炫彩档（Push 293 追订「背景留白」+「带弧度的」+「绿回标配」）：四格点外包一块胶囊白槽，点亮 = emerald-500、空格 = zinc-200 —— 白槽上清晰不打糊。 */
   vivid?: boolean;
+  disabled?: boolean;
+  disabledHint?: string;
 }) {
   const locale = useLocale();
   const filled = trackerStep(progress, steps);
+  const [lockedHintTick, setLockedHintTick] = useState(0);
+  const activeHover = disabled ? 0 : hovered;
 
   return (
-    <span
-      className={"flex items-end gap-1" + (vivid ? " rounded-full bg-white px-2 py-1" : "")}
-      onClick={(event) => {
-        event.stopPropagation();
-      }}
-      onMouseLeave={() => {
-        onHoverChange(0);
-      }}
-    >
-      {Array.from({ length: steps }, (_item, index) => {
-        const step = index + 1;
-        const on = step <= filled || step <= hovered;
-        return (
-          <button
-            key={step}
-            type="button"
-            aria-label={textOf(locale, "tracker.setAria", { name: progressLabelOf(locale, step) })}
-            title={textOf(locale, "tracker.setTitle", { name: progressLabelOf(locale, step) })}
-            onClick={(event) => {
-              event.stopPropagation();
-              onChange?.(trackerNextProgress(progress, step, steps));
-            }}
-            onKeyDown={(event) => event.stopPropagation()}
-            onMouseEnter={() => {
-              onHoverChange(step);
-            }}
-            onFocus={() => {
-              onHoverChange(step);
-            }}
-            onBlur={() => {
-              onHoverChange(0);
-            }}
-            className={
-              "block h-4 w-1.5 cursor-pointer rounded-sm transition-colors " +
-              (on ? "bg-emerald-500" : "bg-zinc-200")
-            }
-          />
-        );
-      })}
-    </span>
+    <>
+      <span
+        className={"flex items-end gap-1" + (vivid ? " rounded-full bg-white px-2 py-1" : "")}
+        data-tracker-locked={disabled ? "true" : undefined}
+        onClick={(event) => {
+          event.stopPropagation();
+        }}
+        onMouseLeave={() => {
+          onHoverChange(0);
+        }}
+      >
+        {Array.from({ length: steps }, (_item, index) => {
+          const step = index + 1;
+          const on = step <= filled || step <= activeHover;
+          return (
+            <button
+              key={step}
+              type="button"
+              aria-label={textOf(locale, "tracker.setAria", { name: progressLabelOf(locale, step) })}
+              aria-disabled={disabled}
+              title={disabled ? (disabledHint ?? textOf(locale, "tracker.setTitle", { name: progressLabelOf(locale, step) })) : textOf(locale, "tracker.setTitle", { name: progressLabelOf(locale, step) })}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (disabled) {
+                  setLockedHintTick((tick) => tick + 1);
+                  return;
+                }
+                onChange?.(trackerNextProgress(progress, step, steps));
+              }}
+              onKeyDown={(event) => event.stopPropagation()}
+              onMouseEnter={() => {
+                if (!disabled) onHoverChange(step);
+              }}
+              onFocus={() => {
+                if (!disabled) onHoverChange(step);
+              }}
+              onBlur={() => {
+                onHoverChange(0);
+              }}
+              className={
+                "block h-4 w-1.5 cursor-pointer rounded-sm transition-colors " +
+                (on ? "bg-emerald-500" : "bg-zinc-200")
+              }
+            />
+          );
+        })}
+      </span>
+      {disabled && lockedHintTick > 0 ? (
+        <Toast
+          key={"tracker-locked-hint-" + String(lockedHintTick)}
+          kind="error"
+          anchor={{ name: "data-tracker-locked-hint", value: "true" }}
+          text={disabledHint ?? textOf(locale, "tracker.overallTitle", { name: progressLabelOf(locale, filled) })}
+          onClose={() => {
+            setLockedHintTick(0);
+          }}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -175,7 +204,7 @@ export function TrackerBar({
   );
 }
 
-export function Tracker({ progress, steps = TRACKER_STEPS, onChange, vivid = false }: TrackerProps) {
+export function Tracker({ progress, steps = TRACKER_STEPS, onChange, vivid = false, disabled = false, disabledHint }: TrackerProps) {
   const [hovered, setHovered] = useState(0);
   const filled = trackerStep(progress, steps);
   const locale = useLocale();
@@ -185,7 +214,7 @@ export function Tracker({ progress, steps = TRACKER_STEPS, onChange, vivid = fal
   return (
     <span
       className="flex shrink-0 items-center gap-2"
-      title={textOf(locale, "tracker.overallTitle", { name: label })}
+      title={disabled ? (disabledHint ?? textOf(locale, "tracker.overallTitle", { name: label })) : textOf(locale, "tracker.overallTitle", { name: label })}
       onClick={(event) => {
         event.stopPropagation();
       }}
@@ -197,7 +226,7 @@ export function Tracker({ progress, steps = TRACKER_STEPS, onChange, vivid = fal
       >
         {label}
       </span>
-      <TrackerDots progress={progress} steps={steps} hovered={hovered} onHoverChange={setHovered} onChange={onChange} vivid={vivid} />
+      <TrackerDots progress={progress} steps={steps} hovered={hovered} onHoverChange={setHovered} onChange={onChange} vivid={vivid} disabled={disabled} disabledHint={disabledHint} />
     </span>
   );
 }

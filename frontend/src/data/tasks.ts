@@ -23,6 +23,19 @@ export type TaskFileSummary = {
   final: number;
 };
 
+/** 服务端逐任务计算的能力（Pro 逐人权限）：UI 只按这份投影收敛入口，不在前端重复推导。 */
+export type TaskCapabilities = {
+  level: "edit" | "view";
+  source: "project_edit" | "task_owner" | "view";
+  canEditFields: boolean;
+  canUpdateProgress: boolean;
+  canComplete: boolean;
+  canFinalize: boolean;
+  canUpload: boolean;
+  canAssignOwners: boolean;
+  canDelete: boolean;
+};
+
 /**
  * 任务（列表行 / 看板卡片 / 甘特条 / 抽屉共用一份模型）。
  * 日期字段一律 **ISO（YYYY-MM-DD）或空串**（服务端 DateOnly 口径）。
@@ -73,7 +86,27 @@ export type ProjectTask = {
   /** 任务定档（Push 249 · 契约 Task.finalizedAt）：非空 = 已定档 —— 任务不支持任何修改
    *  （行内编辑 / 删除 / 文件新增 / 直替 / 改名全部关闭，服务端 409 TASK_FINALIZED；文件修改走变更）。 */
   finalizedAt: string | null;
+  /** 服务端逐任务能力投影；写回响应缺省时沿用上一行。 */
+  capabilities?: TaskCapabilities;
 };
+
+/** 能力缺失（旧响应 / 非任务接口来源）一律按只读处理，避免前端误开写入口。 */
+export const VIEW_ONLY_TASK_CAPABILITIES: TaskCapabilities = {
+  level: "view",
+  source: "view",
+  canEditFields: false,
+  canUpdateProgress: false,
+  canComplete: false,
+  canFinalize: false,
+  canUpload: false,
+  canAssignOwners: false,
+  canDelete: false,
+};
+
+/** 任务能力投影的唯一读取口：只有当服务端明确下发 true 时才开放对应入口。 */
+export function taskCapabilitiesOf(task: Pick<ProjectTask, "capabilities">): TaskCapabilities {
+  return task.capabilities ?? VIEW_ONLY_TASK_CAPABILITIES;
+}
 
 /**
  * 没有阶段的任务（看板「添加 → 临时任务」手工创建）的展示名（Push 196）：

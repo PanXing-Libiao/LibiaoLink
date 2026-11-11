@@ -67,7 +67,7 @@ class ConversionJobs:
         self.binary=os.environ.get('CAD_STEP_JOB_BINARY','1')!='0'
         self.compact=self.binary and os.environ.get('CAD_STEP_JOB_COMPACT','1')!='0'
         self.upload_reserved=0
-        self.lock=threading.RLock();self.active={};self.threads={};self.cancelled_requests={};self.closed=False;self.db_closed=False
+        self.lock=threading.RLock();self.active={};self.displays={};self.threads={};self.cancelled_requests={};self.closed=False;self.db_closed=False
         for name in ('sources','artifacts','buffers','temporary','logs'):(self.root/name).mkdir(parents=True,exist_ok=True)
         self.owner=(self.root/'owner.lock').open('a')
         try:fcntl.flock(self.owner,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -225,6 +225,23 @@ class ConversionJobs:
             row=self._get(jid)
             return self._public(row) if row else None
 
+    def display(self, namespace, jid=None, *, buffer=False, lease=None, sha256=None):
+        # Only the archive owner can address the one in-flight job. Clients
+        # choose neither paths nor filenames; the worker publishes by rename.
+        with self.lock:
+            entry = self.displays.get(namespace)
+            if entry is None:return None
+            job, folder, token = entry
+            if jid is not None and jid != job:return None
+            row = self._get(job)
+            if not row or row['state'] != 'running':return None
+            manifest = next((folder/'scratch'/'display').glob('*.json'), None)
+            if manifest is None:return None
+            if buffer and (lease != token or sha256 != manifest.stem):return None
+            path = folder/'buffers'/'buffer-0.bin' if buffer else manifest
+            try:return {'path':str(path), 'bytes':path.lstat().st_size}
+            except FileNotFoundError:return None
+
     def _artifact(self,row):
         sha=row.get('artifactSHA256');path=self.root/'artifacts'/(sha or 'missing')
         if sha and path.is_file():
@@ -285,7 +302,7 @@ class ConversionJobs:
         return bool(ids)
 
     def _run(self,jid):
-        started=time.perf_counter();gate=False;proc=None
+        started=time.perf_counter();gate=False;proc=None;row=None
         timing_events={}
         def timing(name):
             if is_dwg:timing_events[name]=round((time.perf_counter()-started)*1000,3)
@@ -319,7 +336,11 @@ class ConversionJobs:
                 binary_dir=folder/'buffers';binary_dir.mkdir()
                 env=dict(os.environ);env.pop('CAD_BINARY_DIR',None);env.pop('CAD_PROFILE_STAGES',None)
                 scratch=folder/'scratch';scratch.mkdir();env['TMPDIR']=str(scratch)
+                env.pop('CAD_DWG_DISPLAY_LEASE',None)
                 if self.binary:env['CAD_BINARY_DIR']=str(binary_dir)
+                if self.binary and is_dwg and row.get('namespace') and not row.get('inputSHA256'):
+                    token = env['CAD_DWG_DISPLAY_LEASE'] = secrets.token_hex(24)
+                    with self.lock:self.displays[row['namespace']] = (jid,folder,token)
                 env.pop('CAD_COMPACT_METADATA',None)
                 if self.compact and not is_dxf and not is_dwg:env['CAD_COMPACT_METADATA']='1'
                 env['CAD_TRACE_FILE']=str(trace);env['CAD_TRACE_LIVE']='1'
@@ -472,7 +493,11 @@ class ConversionJobs:
             if proc is not None and proc.stdin is not None and not proc.stdin.closed:
                 try:proc.stdin.close()
                 except (BrokenPipeError,OSError):pass
-            with self.lock:self.active.pop(jid,None);self.threads.pop(jid,None)
+            with self.lock:
+                self.active.pop(jid,None);self.threads.pop(jid,None)
+                namespace = row.get('namespace') if row else None
+                if namespace in self.displays and self.displays[namespace][0] == jid:
+                    del self.displays[namespace]
             if gate:self.gate.release()
 
     def close(self):

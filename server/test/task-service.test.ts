@@ -255,9 +255,17 @@ class FakeTaskGateRepository {
 class FakePermissionService {
   groupAccessAdmin = false;
   projectManager = false;
+  accessLevel: "edit" | "view" = "edit";
 
-  async assertProjectVisible(_actorId: string, projectId: string): Promise<{ projectId: string; member: boolean; projectManager: boolean }> {
-    return { projectId, member: true, projectManager: this.projectManager };
+  async assertProjectVisible(_actorId: string, projectId: string) {
+    return {
+      projectId,
+      member: true,
+      projectManager: this.projectManager,
+      taskOwner: false,
+      groupAccessLevel: this.accessLevel,
+      accessLevel: this.accessLevel,
+    };
   }
 
   async canManageGroupAccess(): Promise<boolean> {
@@ -959,12 +967,10 @@ describe("任务取消定档入口（Push 260 · 「已」开关再次点击 + �
   });
 });
 
-describe("任务定档角色权限（2026-10-27）", () => {
-  it("项目经理非任务负责人也可定档 / 取消定档", async () => {
+describe("任务定档角色权限（Pro 逐人权限）", () => {
+  it("项目编辑者不是任务负责人也可定档 / 取消定档", async () => {
     const repo = new FakeTaskRepository();
-    const permission = new FakePermissionService();
-    permission.projectManager = true;
-    const service = makeService(repo, permission);
+    const service = makeService(repo, new FakePermissionService());
     const finalized = await service.finalize(PROJECT, TASK, { version: 3 }, ACTOR);
     expect(finalized.finalizedBy).toBe(ACTOR);
     const unfinalized = await service.unfinalize(PROJECT, TASK, { version: 4 }, ACTOR);
@@ -972,13 +978,27 @@ describe("任务定档角色权限（2026-10-27）", () => {
     expect(unfinalized.version).toBe(5);
   });
 
-  it("普通项目编辑者不能定档、不能取消，重复调用也不能维持已定档状态", async () => {
+  it("任务负责人即使项目只读也可定档 / 取消定档", async () => {
     const repo = new FakeTaskRepository();
-    const service = makeService(repo, new FakePermissionService());
+    const permission = new FakePermissionService();
+    permission.accessLevel = "view";
+    const service = makeService(repo, permission);
+    const finalized = await service.finalize(PROJECT, TASK, { version: 3 }, MANAGER);
+    expect(finalized.finalizedBy).toBe(MANAGER);
+    const unfinalized = await service.unfinalize(PROJECT, TASK, { version: 4 }, MANAGER);
+    expect(unfinalized.finalizedAt).toBeNull();
+  });
+
+  it("最终权限 view 的上下文（即使带项目经理关系标记）与旁观者不能定档", async () => {
+    const repo = new FakeTaskRepository();
+    const permission = new FakePermissionService();
+    permission.accessLevel = "view";
+    permission.projectManager = true;
+    const service = makeService(repo, permission);
     await expect(service.finalize(PROJECT, TASK, { version: 3 }, ACTOR)).rejects.toMatchObject({
       code: "FORBIDDEN",
       httpStatus: 403,
-      message: "仅任务负责人或项目经理可定档或取消定档",
+      message: "仅任务负责人或项目编辑者可定档或取消定档",
     });
     const FINALIZED_AT = new Date("2026-10-08T02:00:00Z");
     repo.task = makeRow({ finalizedAt: FINALIZED_AT, finalizedBy: MANAGER, version: 3 });
@@ -987,7 +1007,6 @@ describe("任务定档角色权限（2026-10-27）", () => {
     expect(repo.task?.finalizedAt).toBe(FINALIZED_AT);
   });
 });
-
 describe("任务导出专用读取（P3）", () => {
   it("不查询 total，也不补附件摘要；总数查询单独且只走导出接口", async () => {
     const repo = new FakeTaskRepository();
@@ -1003,5 +1022,88 @@ describe("任务导出专用读取（P3）", () => {
 
     await expect(service.countForExport(PROJECT)).resolves.toBe(1);
     expect(repo.countForExportCalls).toBe(1);
+  });
+});
+
+describe("Pro 逐人权限：任务负责人只能编辑本人任务", () => {
+  it("负责人可改普通字段与本人任务进度，不能改负责人 / 排序 / 删除", async () => {
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ ownerIds: [ACTOR] });
+    const permission = new FakePermissionService();
+    permission.accessLevel = "view";
+    const service = makeService(repo, permission);
+
+    const updated = await service.update(
+      PROJECT,
+      TASK,
+      { ownerIds: [ACTOR], headcount: 6, version: 3 },
+      ACTOR,
+    );
+    expect(updated.headcount).toBe(6);
+
+    await expect(
+      service.update(PROJECT, TASK, { ownerIds: [MANAGER_2], version: updated.version }, ACTOR),
+    ).rejects.toMatchObject({ code: "FORBIDDEN", httpStatus: 403 });
+    await expect(
+      service.update(PROJECT, TASK, { sortIndex: 2, version: updated.version }, ACTOR),
+    ).rejects.toMatchObject({ code: "FORBIDDEN", httpStatus: 403 });
+    expect(repo.task?.ownerIds).toEqual([ACTOR]);
+  });
+
+  it("非项目编辑者不能编辑非本人任务、不能改进度 / 完成", async () => {
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ ownerIds: [MANAGER] });
+    const permission = new FakePermissionService();
+    permission.accessLevel = "view";
+    permission.projectManager = true;
+    const service = makeService(repo, permission);
+
+    await expect(
+      service.update(PROJECT, TASK, { headcount: 8, version: 3 }, ACTOR),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      service.updateProgress(PROJECT, TASK, { progress: 0.5, version: 3 }, ACTOR),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(service.complete(PROJECT, TASK, { version: 3 }, ACTOR)).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("改派后旧负责人失去权限、新负责人获得权限", async () => {
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ ownerIds: [ACTOR] });
+    const permission = new FakePermissionService();
+    const service = makeService(repo, permission);
+
+    const reassigned = await service.update(PROJECT, TASK, { ownerIds: [MANAGER_2], version: 3 }, ACTOR);
+    permission.accessLevel = "view";
+
+    await expect(
+      service.update(PROJECT, TASK, { headcount: 9, version: reassigned.version }, ACTOR),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const byNewOwner = await service.update(
+      PROJECT,
+      TASK,
+      { headcount: 9, version: reassigned.version },
+      MANAGER_2,
+    );
+    expect(byNewOwner.headcount).toBe(9);
+  });
+
+  it("详情随行 capabilities：负责人可编辑，旁观者只读", async () => {
+    const repo = new FakeTaskRepository();
+    repo.task = makeRow({ ownerIds: [ACTOR] });
+    const permission = new FakePermissionService();
+    permission.accessLevel = "view";
+    const service = makeService(repo, permission);
+
+    const own = await service.detail(PROJECT, TASK, ACTOR);
+    expect(own.capabilities).toMatchObject({
+      source: "task_owner",
+      canEditFields: true,
+      canAssignOwners: false,
+      canDelete: false,
+    });
+
+    const other = await service.detail(PROJECT, TASK, MANAGER_2);
+    expect(other.capabilities).toMatchObject({ source: "view", level: "view", canEditFields: false });
   });
 });

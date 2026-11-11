@@ -16,7 +16,7 @@ function indexOf(strings, value, context) {
   return strings[value];
 }
 
-export function unpackDwgPacked(envelope) {
+export function unpackDwgPacked(envelope, streamCurves = false) {
   if (!envelope || !envelope.document || !envelope.document.packed) return envelope;
   const packedDoc = envelope.document;
   const payload = packedDoc.packed;
@@ -45,8 +45,10 @@ export function unpackDwgPacked(envelope) {
   const spacesById = drawing.spaces;
   if (!spacesById) fail('missing spaces');
   const entities = { ...(drawing.entities || {}) };
+  let deferredCurves=envelope.displayOnly && Object.values(entities).some(e=>e.geometry?.displayOnly);
   for (const row of payload.entities) {
     if (!Array.isArray(row) || row.length !== 14) fail('invalid entity row');
+    if (!deferredCurves && envelope.displayOnly && row[12]?.displayOnly) deferredCurves=true;
     const key = indexOf(strings, row[0], 'entity id');
     if (Object.hasOwn(entities, key)) fail('duplicate entity ' + key);
     const layer = Number.isSafeInteger(row[1]) ? layers[row[1]] : undefined;
@@ -87,6 +89,7 @@ export function unpackDwgPacked(envelope) {
   const accessors = { ...(packedDoc.accessors || {}) };
   const geometries = { ...(packedDoc.geometries || {}) };
   const representations = { ...(packedDoc.representations || {}) };
+  const displayRows = envelope.displayOnly ? Object.create(null) : null;
   for (const row of payload.displays) {
     if (!Array.isArray(row) || row.length !== 12) fail('invalid display row');
     const key = indexOf(strings, row[0], 'display key');
@@ -94,7 +97,7 @@ export function unpackDwgPacked(envelope) {
     const geometryId = 'g-' + key;
     const representationId = 'representation-'+key;
     if (Object.hasOwn(accessors, accessorId) || Object.hasOwn(geometries, geometryId)
-        || Object.hasOwn(representations, representationId)) fail('duplicate display ' + key);
+        || Object.hasOwn(representations, representationId) || (displayRows && Object.hasOwn(displayRows,representationId))) fail('duplicate display ' + key);
     const byteOffset = row[1];
     const byteLength = row[2];
     const count = row[3];
@@ -102,6 +105,11 @@ export function unpackDwgPacked(envelope) {
         || !Number.isSafeInteger(count)) fail('invalid accessor range');
     const topology = indexOf(strings, row[4], 'topology');
     const handle = indexOf(strings, row[11], 'display handle');
+    if (displayRows) {
+      displayRows[representationId] = [byteOffset,count,topology];
+      if (entities[key] && !entities[key].displayRepresentationId) entities[key].displayRepresentationId=representationId;
+      continue;
+    }
     const refs = [{ sourceId: 'source-0', objectKey: handle }];
     accessors[accessorId] = {
       bufferId: 'buffer-0', byteOffset, byteLength, component: 'f64', components: 3,
@@ -134,7 +142,37 @@ export function unpackDwgPacked(envelope) {
   document.accessors = accessors;
   document.geometries = geometries;
   document.representations = representations;
-  return { ...envelope, document };
+  const packet = { ...envelope, document, ...(displayRows ? {displayRows,deferredCurves:!!deferredCurves} : {}) };
+  if (displayRows && payload.curveRows) {
+    packet.deferredCurves = true;
+    if (streamCurves) {
+      packet.curveRows = payload.curveRows;
+      packet.curvePens = payload.curvePens;
+    } else applyCurveRows(packet, payload.curveRows, payload.curvePens);
+  }
+  return packet;
+}
+
+// Direct reader rows are only used by a live DWG view. Resolve one shared pen
+// per style; visibility, linetype scale and painter order remain per entity.
+export function applyCurveRows(packet, rows, pens) {
+  const drawing = packet.document.drawing;
+  const {entityState, modes, drawOrder} = packet.document.extensions[EXTENSION];
+  for (const [handle, kind, space, layer, index, order, visible, scale, offset, count] of rows) {
+    const [style, mode, weight, color, rgb] = pens[index];
+    const key = 'entity-' + handle, representation = 'representation-' + key;
+    drawing.entities[key] = {
+      id:key, drawingId:drawing.spaces[space].drawingId, ownerSpaceId:space, layerId:layer,
+      localFromOwner:IDENTITY, geometry:{type:kind, displayOnly:true}, style,
+      sourceRefs:[{sourceId:'source-0', objectKey:handle}], displayOrder:order,
+      displayRepresentationId:representation,
+    };
+    entityState[key] = {invisible:!visible, lineTypeScale:scale, nativeLineWeight:weight,
+      drawOrder:order, nativeColor:{index:color, trueColor:rgb}};
+    if (mode.lineType || mode.lineWeight) modes[key] = mode;
+    drawOrder[key] = order;
+    packet.displayRows[representation] = [offset, count, 'lines'];
+  }
 }
 
 // Stream the existing lossless tables through the browser's gzip decoder.

@@ -168,7 +168,7 @@ def _copy_geometry_accessors(geometry, document, accessors):
             accessors[accessor_id] = document['accessors'][accessor_id]
 
 
-def pack_document(document):
+def pack_document(document, native_rows=()):
     """Return a packed copy of a DWG document; the input is not mutated."""
     drawing = document.get('drawing')
     extensions = document.get('extensions')
@@ -190,14 +190,22 @@ def pack_document(document):
     strings = _Strings()
     styles = []
     style_index = {}
+    style_ids = {}
 
     def intern_style(style):
+        # Entities commonly share one style object; use that identity before
+        # re-encoding the same small style dict for every entity row.
+        marker = id(style)
+        cached = style_ids.get(marker)
+        if cached is not None and cached[0] is style:
+            return cached[1]
         text = _canonical(style)
         found = style_index.get(text)
         if found is None:
             found = len(styles)
             style_index[text] = found
             styles.append(style)
+        style_ids[marker] = (style, found)
         return found
 
     rows = []
@@ -270,6 +278,13 @@ def pack_document(document):
             fallback_accessors.add(fast['accessor'])
             continue
         display_info[fast['key']] = fast
+
+    # The adapter owns these ordinary, unindexed draws. Complex presentations
+    # are still represented by the normal geometry tables above.
+    for key, row in native_rows:
+        display_rows.append([strings(key), row['offset'], row['byteLength'], row['count'],
+                             strings(row['topology']), *row['min'], *row['max'],
+                             strings(row['sourceRefs'][0]['objectKey'])])
 
     state_remainder = {key: value for key, value in states.items()
                        if key not in fast_state or fast_state[key] == 3}

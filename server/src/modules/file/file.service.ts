@@ -47,7 +47,7 @@ import {
   toApiError,
 } from "../../storage/index.js";
 import { AuditService } from "../admin/index.js";
-import { PermissionService, canManageTaskFinalization } from "../permission/index.js";
+import { PermissionService, canManageTaskFinalization, isProjectEditor } from "../permission/index.js";
 import {
   FileRepository,
   type FileLinkInsertInput,
@@ -185,23 +185,24 @@ export class FileService {
   /** POST /files/uploads：发起分片上传（建 draft 文件 + 会话；contentHash 命中给秒传提示）。 */
   async createUpload(body: UploadCreateBody, actorId: string): Promise<UploadCreateResponse> {
     const access = await this.permission.assertProjectVisible(actorId, body.projectId);
-    await this.permission.assertCan(actorId, "file.upload", {
-      member: access.member,
-      projectManager: access.projectManager,
-      groupAccessLevel: access.groupAccessLevel,
-    });
     // 目标文件（Push 130 定案；M4-02 放开 version、M4-04 放开 change）：
     // version 给出 fileId = 对既有 draft 文件替换 / 追加版本；change 必填 fileId = 对已定档（final / changed）文件发起变更。
     // Push 256（业务口径「变更后文件的名字后后缀要用变更选择的 不然都不能预览」）：change 的 name = **变更后文件名称**
     // —— 可不同于目标文件名，随会话 change_payload.fileName 一并落库；完成上传时把 files.name 更名为该名称
     //（扩展名随之上新，预览 / 下载按新名称）；version / 新建沿用原口径（version 与目标一致、新建 = name）。
-    const target = await this.resolveUploadTarget(body, actorId);
+    const target = await this.resolveUploadTarget(body);
+    if (target !== null && target.projectId !== body.projectId) {
+      throw new AppError("VALIDATION_FAILED", "目标文件不属于该项目（projectId 与目标文件不一致）", [
+        { code: "invalid_file", message: "fileId 与 projectId 不一致", path: "fileId" },
+      ]);
+    }
     const isChange = body.intent === "change";
     const changePayload = isChange ? normalizeChangePayload(body.change, body.name) : null;
     const effectiveName = target === null || isChange ? body.name : target.name;
     const effectiveDocType = target === null ? body.docType ?? null : target.docType;
     const effectiveNodeId = target === null ? body.nodeId : target.nodeId ?? undefined;
     const effectiveTaskId = target === null ? body.taskId : target.taskId ?? undefined;
+    await this.assertFileWriteAllowed(actorId, access, body.projectId, effectiveTaskId ?? null);
 
     const project = await this.repository.findProjectBrief(body.projectId);
     if (project === null) {
@@ -981,15 +982,30 @@ export class FileService {
     return file;
   }
 
-  /** 文件装载（生命周期写路径）：可见性之后加判 `file.upload`（项目成员平权，ADR-011 平权例外）。 */
+  /** 文件装载（生命周期写路径）：项目编辑者可写全项目；任务负责人仅可写本人任务文件。 */
   private async loadFileForWrite(fileId: string, actorId: string): Promise<FileRow> {
     const file = await this.repository.findFileById(fileId);
     if (file === null) {
       throw new AppError("NOT_FOUND", "文件不存在");
     }
     const access = await this.permission.assertProjectVisible(actorId, file.projectId);
-    await this.permission.assertCan(actorId, "file.upload", { member: access.member, projectManager: access.projectManager, groupAccessLevel: access.groupAccessLevel });
+    await this.assertFileWriteAllowed(actorId, access, file.projectId, file.taskId);
     return file;
+  }
+
+  /** 文件写权限唯一口径：项目编辑者；或该文件挂接任务当前负责人。项目级文件不向任务负责人开放。 */
+  private async assertFileWriteAllowed(
+    actorId: string,
+    access: Awaited<ReturnType<PermissionService["assertProjectVisible"]>>,
+    projectId: string,
+    taskId: string | null,
+  ): Promise<void> {
+    if (isProjectEditor(access)) return;
+    if (taskId !== null) {
+      const task = await this.repository.findTaskBrief(taskId);
+      if (task !== null && task.projectId === projectId && task.ownerIds.includes(actorId)) return;
+    }
+    throw new AppError("FORBIDDEN", "仅项目编辑者或当前任务负责人可修改该任务文件");
   }
 
   /** 锁行装载：生命周期写路径一律在事务内 `for update`（乐观锁校验的基准行）。 */
@@ -1470,8 +1486,8 @@ export class FileService {
       }
       if (locked.taskId !== null) {
         const task = await this.repository.findTaskBrief(locked.taskId, tx);
-        if (task !== null && !canManageTaskFinalization(actorId, task.ownerIds, access.projectManager)) {
-          throw new AppError("FORBIDDEN", "仅任务负责人或项目经理可定档文件");
+        if (task !== null && !canManageTaskFinalization(actorId, task.ownerIds, isProjectEditor(access))) {
+          throw new AppError("FORBIDDEN", "仅任务负责人或项目编辑者可定档文件");
         }
       }
       const updated = await this.repository.updateFileState(
@@ -1560,7 +1576,7 @@ export class FileService {
    * 归属（docType / nodeId / taskId）与现状不符 → 400（change 的 name 例外 —— Push 256：= 变更后文件名称，可不同于目标）；状态：version 意图须 draft、change 意图须
    * final / changed（或 draft 但其挂接任务已定档），否则 409 FILE_STATE_INVALID。生效字段一律以目标文件现状为准。
    */
-  private async resolveUploadTarget(body: UploadCreateBody, actorId: string): Promise<FileRow | null> {
+  private async resolveUploadTarget(body: UploadCreateBody): Promise<FileRow | null> {
     const fileId = body.fileId;
     if (fileId === undefined) {
       // 仅 `intent=version` 可能省略（change 的 fileId 由契约必填）；省略 = 新建文件。
@@ -1569,13 +1585,6 @@ export class FileService {
     const file = await this.repository.findFileById(fileId);
     if (file === null) {
       throw new AppError("NOT_FOUND", "目标文件不存在或不可见");
-    }
-    const access = await this.permission.assertProjectVisible(actorId, file.projectId);
-    await this.permission.assertCan(actorId, "file.upload", { member: access.member, projectManager: access.projectManager, groupAccessLevel: access.groupAccessLevel });
-    if (file.projectId !== body.projectId) {
-      throw new AppError("VALIDATION_FAILED", "目标文件不属于该项目（projectId 与目标文件不一致）", [
-        { code: "invalid_file", message: "fileId 与 projectId 不一致", path: "fileId" },
-      ]);
     }
     if (body.intent === "change") {
       // A4-13：变更针对已定档文件（final / changed）；未定档文件直接替换版本即可。
@@ -1635,7 +1644,7 @@ export class FileService {
     }
     const access = await this.permission.assertProjectVisible(actorId, file.projectId);
     if (permission !== null) {
-      await this.permission.assertCan(actorId, permission, { member: access.member, projectManager: access.projectManager, groupAccessLevel: access.groupAccessLevel });
+      await this.assertFileWriteAllowed(actorId, access, file.projectId, file.taskId);
     }
     const session = await this.repository.findSessionById(uploadId);
     if (session === null || session.fileId !== fileId) {

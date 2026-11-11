@@ -30,7 +30,7 @@ import { useT } from "../i18n";
  *  - 上传 / 进度 / 删除确认都托管在本组件：关掉下拉后台上传继续、重开还在；预览打开时收起下拉；
  *  - 点击冒泡（2026-10-08 修正 · 业务口径「点击这部分内容现在抽屉也会出来 是bug」）：portal 的 click 按 **React 树**冒泡 ——
  *    根节点拦一道 stopPropagation，点下拉里的空白 / 图标 / 提示条不再冒到任务行（行点击 = 开详情抽屉）。 */
-export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete, taskFinalized = false, canFinalize = false, children }: {
+export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete, taskFinalized = false, canFinalize = false, canEdit, readOnlyHint, children }: {
   taskId: string;
   taskTitle: string;
   files: readonly TaskFileRef[];
@@ -41,9 +41,14 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
   taskFinalized?: boolean;
   /** 仅任务负责人 / 项目经理可定档：false 时不渲染「添加定档文件」入口。 */
   canFinalize?: boolean;
+  /** 上传 / 删除写入口；false = 只读账号仍看同款文件胶囊与清单，但添加和删除禁用。 */
+  canEdit?: boolean;
+  /** 只读态说明（与任务行其它禁用单元格同一句）。 */
+  readOnlyHint?: string;
   children: ReactNode;
 }) {
   const t = useT();
+  const editable = (canEdit ?? onUpload !== undefined) && onUpload !== undefined;
   const measuredHeight = Math.min(430, 84 + Math.max(files.length, 1) * 30);
   const { open, setOpen, position, triggerRef, popoverRef } = usePopover(276, measuredHeight, "right");
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -92,6 +97,10 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
     }
     if (taskFinalized) {
       setFinalizeNote(t("files.finalizedNote"));
+      return;
+    }
+    if (!editable) {
+      setFinalizeNote(readOnlyHint ?? t("board.viewOnlyHint"));
       return;
     }
     setFinalizeNote(null);
@@ -207,8 +216,8 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
               type="button"
               data-task-files-add="true"
               onClick={() => { beginAddFlow(false); }}
-              disabled={uploading !== null}
-              title={t("files.addTitle")}
+              disabled={uploading !== null || !editable}
+              title={editable ? t("files.addTitle") : (readOnlyHint ?? t("board.viewOnlyHint"))}
               className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-400 disabled:hover:bg-transparent"
             >
               {t("files.add")}
@@ -218,8 +227,8 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
                 type="button"
                 data-task-files-add-finalize="true"
                 onClick={() => { beginAddFlow(true); }}
-                disabled={uploading !== null}
-                title={t("files.addFinalTitle")}
+                disabled={uploading !== null || !editable}
+                title={editable ? t("files.addFinalTitle") : (readOnlyHint ?? t("board.viewOnlyHint"))}
                 className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:text-zinc-400 disabled:hover:bg-transparent"
               >
                 {t("files.addFinal")}
@@ -252,6 +261,10 @@ export function TaskFilesPopover({ taskId, taskTitle, files, onUpload, onDelete,
           {taskFinalized ? (
             <p data-task-files-note-finalized="true" className="border-t border-zinc-100 px-3 py-1.5 text-[11px] leading-4 text-amber-600">
               {t("drawer.files.lockedNote")}
+            </p>
+          ) : !editable ? (
+            <p data-task-files-note-readonly="true" className="border-t border-zinc-100 px-3 py-1.5 text-[11px] leading-4 text-zinc-500">
+              {readOnlyHint ?? t("board.viewOnlyHint")}
             </p>
           ) : null}
           <div className="border-t border-zinc-100">

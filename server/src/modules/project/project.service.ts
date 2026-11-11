@@ -47,7 +47,7 @@ export const PROJECT_RECYCLE_SWEEP_BATCH = 20;
 /** 行 → 契约视图（camelCase 对齐；managerNames 随行下发，A2 / A22；项目权限按当前登录人逐项目裁决）。 */
 export function toProjectView(
   view: ProjectViewRow,
-  groupAccessLevel: GroupAccessAccessLevel = "view",
+  accessLevel: GroupAccessAccessLevel = "view",
 ): ProjectView {
   const row = view.project;
   return {
@@ -62,7 +62,8 @@ export function toProjectView(
     managerNames: view.managerNames ?? row.managerIds.map(() => null),
     stageKey: row.stageKey as ProjectView["stageKey"],
     status: row.status as ProjectView["status"],
-    groupAccessLevel,
+    accessLevel,
+    groupAccessLevel: accessLevel,
     description: row.description,
     version: row.version,
     createdAt: row.createdAt.toISOString(),

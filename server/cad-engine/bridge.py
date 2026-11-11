@@ -202,7 +202,15 @@ class Gateway:
                 raise ValueError('Source hash mismatch')
             self.results.remember(request, row)
             return {'job': self.public(row), 'reused': reused}
+        if action in ('manifest','buffer') and request.get('displayOnly') is True:
+            result = self.jobs.display(request.get('namespace'), buffer=action=='buffer',
+                                       lease=request.get('lease'), sha256=request.get('sha256'))
+            if result is None:raise KeyError('Temporary display is no longer available')
+            return result
         row = self.owned(request)
+        if action == 'status' and row['state']=='running' and row.get('sourceFormat')=='DWG':
+            if self.jobs.display(request['namespace'], row['id']) is not None:
+                return {**self.public(row), 'phase':'vector-available'}
         if action == 'status':
             return self.public(row)
         if action == 'cancel':

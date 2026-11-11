@@ -421,11 +421,13 @@ describe("toProjectView", () => {
     expect(view.seqNo).toBe(1);
     expect(view.managerNames).toEqual([null]);
     expect(view.customer).toBeNull();
+    expect(view.accessLevel).toBe("view");
     expect(view.groupAccessLevel).toBe("view");
     expect(view.createdAt).toBe("2026-09-20T06:00:00.000Z");
     expect(view.deletedAt).toBeNull();
     expect(view.deletedBy).toBeNull();
     expect(Object.keys(view).sort()).toEqual([
+      "accessLevel",
       "archivedAt",
       "archivedBy",
       "code",

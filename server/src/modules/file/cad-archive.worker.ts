@@ -11,7 +11,7 @@ import { pipeline } from "node:stream/promises";
 import { buffer as collect } from "node:stream/consumers";
 import { ObjectStorage } from "../../storage/index.js";
 import { FileRepository } from "./file.repository.js";
-import { CadEngineBusyError, CadEngineClient } from "./cad-engine.client.js";
+import { cadArchiveNamespace, CadEngineBusyError, CadEngineClient } from "./cad-engine.client.js";
 import { CadArchiveRepository, type CadFailureContext } from "./cad-archive.repository.js";
 import { CAD_ARTIFACT_LIMIT, CAD_BUFFER_LIMIT, checkedCadStream, readCadManifest } from "./cad-archive.integrity.js";
 import { CadInputService, CadInputIntegrityError, cadInputs, cadResourceFingerprint, cadHasResourcePackage } from "./cad-inputs.js";
@@ -60,7 +60,7 @@ export class CadArchiveWorker implements OnApplicationShutdown {
     let activeLease: string | undefined, nativeId: string | undefined;
     let terminalState: CadFailureContext["terminalState"];
     let archived = false;
-    const namespace = createHash("sha256").update("cad-archive:" + row.id).digest("hex");
+    const namespace = cadArchiveNamespace(row.id);
     const heartbeat = setInterval(() => {
       void this.repository.renew(row).then((owned) => { if (!owned) this.interrupt(); }).catch(() => this.interrupt());
     }, 15_000);

@@ -423,7 +423,7 @@ function stageLabelOf(locale: Locale, stageKey: string | null): string {
 
 /** 变更原因拆分（前端提交口径：内容描述 + 「；变更原因：」+ 原因；英文界面提交为 "; Change reason: " ——
  *  两种标记都认；无标记 = 全文即内容描述，原因「—」）。 */
-function splitChangeReason(reason: string): { content: string; cause: string } {
+export function splitChangeReason(reason: string): { content: string; cause: string } {
   for (const marker of ["；变更原因：", "; Change reason: "]) {
     const at = reason.indexOf(marker);
     if (at >= 0) {

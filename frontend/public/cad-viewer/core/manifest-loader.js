@@ -1,7 +1,7 @@
-import {applyManifestEntries} from './manifest-parts.js?v=cad-handoff-1';
-import {decodeManifestBytes} from './manifest-decode.js';
+import {applyManifestEntries} from './manifest-parts.js?v=direct-1';
+import {decodeManifestBytes} from './manifest-decode.js?v=direct-1';
 const WORKER_BYTES=1024*1024;
-const createWorker=()=>new Worker(new URL('./manifest-worker.js?v=cad-handoff-2',import.meta.url),{type:'module'});
+const createWorker=()=>new Worker(new URL('./manifest-worker.js?v=direct-1',import.meta.url),{type:'module'});
 
 /** One owner per load: cancellation terminates CPU work and rejects stale results. */
 export async function decodeManifest(bytes,{signal,workerFactory=createWorker}={}){
@@ -26,6 +26,7 @@ export async function decodeManifest(bytes,{signal,workerFactory=createWorker}={
    try{
     if(data.kind==='error')throw new Error('模型数据展开失败，请重试或下载原文件');
     if(data.kind==='done'){
+     if(packet?.curvePens)delete packet.curvePens;
      finish(null,{packet,timing:{...data.timing,execution:'worker',totalMS:performance.now()-started}});return;
     }
     if(data.kind==='header')packet=data.packet;

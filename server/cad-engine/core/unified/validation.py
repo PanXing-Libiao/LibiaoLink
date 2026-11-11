@@ -10,7 +10,7 @@ import math
 import re
 import struct
 from pathlib import Path
-from .canonical import canonical_sha256
+from .canonical import canonical_sha256, _small
 
 SCHEMA = json.loads((Path(__file__).parent/'schema/ucd-1.0.schema.json').read_text())
 SCHEMA_V2 = json.loads((Path(__file__).parent/'schema/ucd-2.0.schema.json').read_text())
@@ -261,7 +261,16 @@ def _binary_envelope(document,snapshot,presentation,reader,max_decoded,on_phase,
     if on_phase:on_phase('binary payload checked')
     return _validate_core(wrapper,version,schema,max_decoded,raw,on_phase,seal)
 
+def _small_validated_entity(row):
+    # The v2 Entity schema bounds its IDs, transform and these fixed-size
+    # geometries. Only style facts and source references can still be large.
+    if row['geometry']['type'] in ('line','arc','ellipse','point'):
+        return _small((row['style'],row['sourceRefs']))
+    return _small(row)
+
+
 def _validate_core(envelope,version,schema,max_decoded,raw=None,on_phase=None,seal=False):
+    received_binary = raw is not None and not seal
     if version=='2.0.0':validate_v2(envelope)
     if on_phase:on_phase('v2 references checked')
     d,s=envelope['document'],envelope['snapshot']
@@ -394,7 +403,11 @@ def _validate_core(envelope,version,schema,max_decoded,raw=None,on_phase=None,se
     if on_phase:on_phase('scene references checked')
     validate_drawing(d)
     if on_phase:on_phase('drawing references checked')
-    revision=canonical_sha256({k:v for k,v in d.items() if k!='revision'})
+    content={k:v for k,v in d.items() if k!='revision'}
+    if received_binary and version=='2.0.0' and d['adapter']['id']=='libiaolink-acadsharp-dwg':
+        revision=canonical_sha256(content,small_rows=(d['drawing']['entities'],_small_validated_entity))
+    else:
+        revision=canonical_sha256(content)
     if seal:
         d['revision']=revision
         s['documentRevision']=revision

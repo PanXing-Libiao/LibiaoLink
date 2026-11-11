@@ -13,7 +13,7 @@ ENTRY_POINTS = ('convert.py', 'states.py', 'provenance.py', 'parser-provenance.j
 # compiled DLL lives outside the repository; a reader change must rebuild DWG
 # artifacts, so its sources join the DWG format identity.
 READER_FILES = ('Program.cs', 'CommunityText.cs', 'HatchEmptyPattern.cs', 'LegacyMTextColumns.cs',
-                'Reader.csproj', 'dependency.json')
+                'Reader.csproj', 'dependency.json', 'build.py')
 RUNTIME_FILES = ('bridge.py', 'result_cache.py', 'service.py', 'sandbox.py', 'edge.py',
                  'release.py', 'requirements-step.txt', 'requirements-step-mesher.txt',
                  'requirements-dxf.txt', 'requirements-dxf-build.txt', 'requirements-dwg.txt', 'requirements-acis.txt')
@@ -36,8 +36,11 @@ def source_files(root):
 
 
 def hashes(paths, root):
+    # Sort by the fixed POSIX relative path, not by Path objects: PurePath ordering
+    # follows the host filesystem's case rules on Windows but not on Linux.
+    ordered = sorted(paths, key=lambda path: path.relative_to(root).as_posix())
     return {path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
-            for path in sorted(paths)}
+            for path in ordered}
 
 
 def format_of(name):

@@ -127,7 +127,9 @@ class FakeRepository {
 
 class FakePermissionService {
   canCalls: unknown[] = [];
-  async assertProjectVisible() { return { member: true, projectManager: false, groupAccessLevel: null }; }
+  async assertProjectVisible() {
+    return { member: true, projectManager: false, taskOwner: false, groupAccessLevel: "edit", accessLevel: "edit" };
+  }
   async assertCan(_actorId: string, permission: string, context: unknown): Promise<void> {
     this.canCalls.push({ permission, context });
   }
@@ -220,7 +222,7 @@ describe("MaterialReissueService.create", () => {
     expect(repo.completePatch).toMatchObject({ status: "final", finalizedAt: NOW, finalizedBy: ACTOR, version: 1 });
     expect(repo.links.map((link) => link.objectType)).toEqual(["project", "task", "change", "node"]);
     expect(repo.changeRefs).toEqual([{ taskIds: [TASK], changeRequestId: repo.changeInput!.id }]);
-    expect(permission.canCalls).toHaveLength(1);
+    expect(permission.canCalls).toHaveLength(0);
     expect(audit.records).toHaveLength(2);
     expect(outbox).toHaveLength(3);
     expect(outbox[2]).toMatchObject({

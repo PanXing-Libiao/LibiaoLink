@@ -11,7 +11,7 @@ const uuidParam = new ZodValidationPipe(UuidSchema);
 /**
  * 归档接口（M7-04 · C4-02 / C4-03 · ADR-027）：契约 shared/src/modules/projects.ts。
  * 读接口要求登录 + 记录级可见（不可见 404）；归档写接口叠加 CsrfGuard + 功能权限位 project.archive，
- * 服务层再按「项目经理 / 管理员」判定（ADR-020，与阶段推进同口径）。
+ * 服务层再按最终项目编辑权判定（与阶段推进同口径；所管项目经理已计入，非所管项目不提升）。
  */
 @Controller("api/v1/projects")
 @UseGuards(SessionGuard, CsrfGuard, ProjectAccessGuard)

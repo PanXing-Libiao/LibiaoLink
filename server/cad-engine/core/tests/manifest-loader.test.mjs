@@ -82,3 +82,24 @@ test('batched handoff preserves insertion order and keeps one bounded part per a
  assert.ok(parts<16,'handoff should amortize per-message overhead');
  assert.deepEqual(packet,input);assert.deepEqual(Object.keys(packet.document.properties),Object.keys(input.document.properties));
 });
+
+test('live reader pens preserve inherited weights across batches without sharing curve geometry',async()=>{
+ const {readFile}=await import('node:fs/promises');
+ const fixture=JSON.parse(await readFile(new URL('./manifest-dwg-fixture.json',import.meta.url),'utf8'));
+ fixture.displayOnly=true;
+ const packed=fixture.document.packed;
+ const mode={lineType:'by-block',lineWeight:'by-layer'};
+ packed.curvePens=[[{color:{mode:'by-block'},plot:true},mode,-1,0,-1]];
+ packed.curveRows=Array.from({length:1025},(_,i)=>['live'+i,i%2?'arc':'line','space-1','layer-0',0,i,i!==1,0.5,i*48,2]);
+ const {packet:local}=await decodeManifest(encode(fixture));
+ fixture.padding=' '.repeat(1024*1024);
+ const {packet:worker}=await decodeManifest(encode(fixture),{workerFactory});delete worker.padding;
+ assert.deepEqual(worker,structuredClone(local));
+ const doc=worker.document,entities=doc.drawing.entities,ext=doc.extensions['org.cad-preview.style-inheritance/1'];
+ assert.equal(entities['entity-live0'].style,entities['entity-live1024'].style);
+ assert.notEqual(entities['entity-live0'].geometry,entities['entity-live1024'].geometry);
+ assert.deepEqual(ext.modes['entity-live1'],mode);
+ assert.deepEqual(ext.entityState['entity-live1'],{invisible:true,lineTypeScale:.5,nativeLineWeight:-1,drawOrder:1,nativeColor:{index:0,trueColor:-1}});
+ assert.deepEqual(worker.displayRows['representation-entity-live1024'],[49152,2,'lines']);
+ assert.equal(worker.deferredCurves,true);
+});

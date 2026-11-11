@@ -55,7 +55,7 @@ def main():
                 options={'font_files':resources.fonts,'logical_path':logical,
                          'resource_loader':resources.loader(logical,[source_sha])}
             manifest_path = assemble_native(native, source, result, platform=True,
-                                             binary_dir=binary_dir, packed=True, **options)
+                                             binary_dir=binary_dir, packed=True, display_lease=os.environ.get("CAD_DWG_DISPLAY_LEASE"), **options)
             result_path = os.environ.get('CAD_RESULT_PATH')
             if not result_path:
                 # conversion_jobs places trace.json next to result.json.
