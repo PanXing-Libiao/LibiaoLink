@@ -4,7 +4,11 @@ import { AppError } from "../../common/errors/app-error.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { IssueRepository, type IssueRow } from "./issue.repository.js";
 import { ReportRepository, type DailyReportRow } from "./report.repository.js";
-import { loadIssuePhotos, loadReportPhotos, type FilePhotoRefRow } from "./report-issue.links.js";
+import {
+  loadIssuePosterPhotos,
+  loadReportPosterPhotos,
+  type FilePosterPhotoRow,
+} from "./report-issue.links.js";
 import type { DailyReportState } from "./report-issue.rules.js";
 
 type DigestReportState = Exclude<DailyReportState, "draft">;
@@ -14,7 +18,11 @@ export interface ReportDigestProject {
   id: string;
   code: string;
   name: string;
+  managers: string[];
 }
+
+/** 查询海报附件元数据；objectKey 仅用于服务端读取对象，不进入文字或公开 API。 */
+export type ReportDigestPhoto = FilePosterPhotoRow;
 
 /** 已提交日报（submitted / supplement）；草稿不进入该结构。 */
 export interface ReportDigestReport {
@@ -23,11 +31,12 @@ export interface ReportDigestReport {
   authorName: string | null;
   submittedAt: string | null;
   state: DigestReportState;
+  headcount: number | null;
   stageKeys: string[];
   stageNames: string[];
   doneWork: string;
   plan: string | null;
-  photos: FilePhotoRefRow[];
+  photos: ReportDigestPhoto[];
 }
 
 /** 问题来源日报的只读摘要（手工问题为 null）。 */
@@ -51,7 +60,7 @@ export interface ReportDigestIssue {
   raisedAt: string;
   sourceReportId: string | null;
   sourceReport: ReportDigestSourceReport | null;
-  photos: FilePhotoRefRow[];
+  photos: ReportDigestPhoto[];
 }
 
 /** 一次查询的完整只读快照：文字与海报必须共用同一份实例。 */
@@ -109,12 +118,13 @@ export class ReportDigestService {
         const rows = await this.reports.listByDate(projectId, date, client);
         const submittedRows = rows.filter(isDigestReport).sort(bySubmittedAt);
         const issues = await this.issues.listByRaisedDate(projectId, date, client);
+        const managerNames = await this.reports.listDisplayNames(project.managerIds, client);
 
-        const reportPhotos = await loadReportPhotos(
+        const reportPhotos = await loadReportPosterPhotos(
           submittedRows.map((row) => row.id),
           client,
         );
-        const issuePhotos = await loadIssuePhotos(
+        const issuePhotos = await loadIssuePosterPhotos(
           issues.map((issue) => issue.id),
           client,
         );
@@ -122,7 +132,12 @@ export class ReportDigestService {
         const stageNameByKey = STAGE_NAMES as Record<string, string>;
         const reportById = new Map(submittedRows.map((row) => [row.id, row]));
         return {
-          project: { id: project.id, code: project.code, name: project.name },
+          project: {
+            id: project.id,
+            code: project.code,
+            name: project.name,
+            managers: project.managerIds.map((id) => managerNames.get(id) ?? "").filter((name) => name !== ""),
+          },
           date,
           reports: submittedRows.map((row) => ({
             id: row.id,
@@ -130,6 +145,7 @@ export class ReportDigestService {
             authorName: row.authorName,
             submittedAt: row.submittedAt === null ? null : row.submittedAt.toISOString(),
             state: row.state,
+            headcount: row.headcount,
             stageKeys: row.stageKeys,
             stageNames: row.stageKeys.map((key) => stageNameByKey[key] ?? key),
             doneWork: row.doneWork,
@@ -147,7 +163,7 @@ export class ReportDigestService {
   private toDigestIssue(
     issue: IssueRow,
     reportById: ReadonlyMap<string, DailyReportRow>,
-    photos: FilePhotoRefRow[],
+    photos: ReportDigestPhoto[],
   ): ReportDigestIssue {
     const sourceRow = issue.sourceReportId === null ? null : reportById.get(issue.sourceReportId) ?? null;
     return {

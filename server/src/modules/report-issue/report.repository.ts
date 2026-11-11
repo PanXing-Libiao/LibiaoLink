@@ -205,13 +205,30 @@ export class ReportRepository {
   async findProject(
     projectId: string,
     client: DbClient = this.database.db,
-  ): Promise<{ id: string; code: string; status: string; name: string } | null> {
+  ): Promise<{ id: string; code: string; status: string; name: string; managerIds: string[] } | null> {
     const rows = await client
-      .select({ id: projects.id, code: projects.code, status: projects.status, name: projects.name })
+      .select({
+        id: projects.id,
+        code: projects.code,
+        status: projects.status,
+        name: projects.name,
+        managerIds: projects.managerIds,
+      })
       .from(projects)
       .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)))
       .limit(1);
     return rows[0] ?? null;
+  }
+
+  /** 批量取显示名（查询海报项目经理位）；缺失用户由调用方过滤。 */
+  async listDisplayNames(userIds: readonly string[], client: DbClient = this.database.db): Promise<Map<string, string>> {
+    const unique = [...new Set(userIds)];
+    if (unique.length === 0) return new Map();
+    const rows = await client
+      .select({ id: users.id, displayName: users.displayName })
+      .from(users)
+      .where(inArray(users.id, unique));
+    return new Map(rows.map((row) => [row.id, row.displayName.replace(/-test$/i, "").trim()]));
   }
 
   private buildWhere(projectId: string, filter: DailyReportFilter) {

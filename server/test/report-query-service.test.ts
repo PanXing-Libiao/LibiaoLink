@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { ClockService } from "../src/common/clock/clock.service.js";
 import type { AppConfig } from "../src/config/config.module.js";
-import type { AibotIncomingMessage, AibotSendResult } from "../src/modules/notify/index.js";
+import type {
+  AibotIncomingMessage,
+  AibotSendResult,
+  DailyReportPosterDeliveryInput,
+} from "../src/modules/notify/index.js";
 import type { ProjectAccessContext } from "../src/modules/permission/index.js";
 import type { ProjectLookupResult } from "../src/modules/project/index.js";
 import type { ReportDigestIssue, ReportDigestReport, ReportDigestSnapshot } from "../src/modules/report-issue/index.js";
@@ -18,25 +22,27 @@ const BOT_ID = "bot-test";
 const ACTOR_ID = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1";
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_PROJECT_ID = "22222222-2222-4222-8222-222222222222";
-const PROJECT = { id: PROJECT_ID, code: "PRJ-001", name: "临港数据中心" };
+const PROJECT = { id: PROJECT_ID, code: "PRJ-001", name: "临港数据中心", managers: ["王经理"] };
 const CHATID = "chatid_12345";
 
-function report(id: string): ReportDigestReport {
+function report(id: string, overrides: Partial<ReportDigestReport> = {}): ReportDigestReport {
   return {
     id,
     authorId: ACTOR_ID,
     authorName: "张三",
     submittedAt: "2026-11-10T01:12:00.000Z",
     state: "submitted",
+    headcount: 2,
     stageKeys: [],
     stageNames: [],
     doneWork: "完成联调",
     plan: null,
     photos: [],
+    ...overrides,
   };
 }
 
-function issue(id: string): ReportDigestIssue {
+function issue(id: string, overrides: Partial<ReportDigestIssue> = {}): ReportDigestIssue {
   return {
     id,
     title: "现场问题",
@@ -50,6 +56,7 @@ function issue(id: string): ReportDigestIssue {
     sourceReportId: null,
     sourceReport: null,
     photos: [],
+    ...overrides,
   };
 }
 
@@ -170,6 +177,8 @@ class FakeGroupNotify {
 }
 
 class FakeAibot {
+  constructor(private readonly events: string[]) {}
+
   passive: AibotSendResult = { ok: true, attempts: 1 };
   active: AibotSendResult = { ok: true, attempts: 1 };
   passiveCalls: Array<{ reqId: string; userid: string; content: string; chatid?: string | null }> = [];
@@ -181,18 +190,35 @@ class FakeAibot {
     content: string;
     chatid?: string | null;
   }): Promise<AibotSendResult> {
+    this.events.push("sendPassive");
     this.passiveCalls.push(params);
     return this.passive;
   }
 
   async sendUserMarkdown(params: { userid: string; content: string; dmActivated?: boolean | null }): Promise<AibotSendResult> {
+    this.events.push("sendActiveDm");
     this.activeCalls.push({ kind: "dm", content: params.content });
     return this.active;
   }
 
   async sendGroupMarkdown(params: { chatid: string; content: string; groupActivated?: boolean | null }): Promise<AibotSendResult> {
+    this.events.push("sendActiveGroup");
     this.activeCalls.push({ kind: "group", content: params.content });
     return this.active;
+  }
+}
+
+class FakePosterDelivery {
+  constructor(private readonly events: string[]) {}
+
+  calls: DailyReportPosterDeliveryInput[] = [];
+  error: Error | null = null;
+
+  async send(input: DailyReportPosterDeliveryInput): Promise<number> {
+    this.events.push("posterSend");
+    this.calls.push(input);
+    if (this.error !== null) throw this.error;
+    return 0;
   }
 }
 
@@ -255,9 +281,10 @@ function makeHarness(options: { dmFlag?: string; groupFlag?: string } = {}) {
   const projects = new FakeProjectQuery(events);
   const projectGroups = new FakeProjectGroups(events);
   const digest = new FakeDigest(events);
+  const poster = new FakePosterDelivery(events);
   const dm = new FakeDmNotify(events);
   const groupNotify = new FakeGroupNotify(events);
-  const aibot = new FakeAibot();
+  const aibot = new FakeAibot(events);
   const service = new ReportQueryService(
     config,
     clock,
@@ -265,6 +292,7 @@ function makeHarness(options: { dmFlag?: string; groupFlag?: string } = {}) {
     projects as never,
     projectGroups as never,
     digest as never,
+    poster as never,
     dm as never,
     groupNotify as never,
     aibot as never,
@@ -276,6 +304,7 @@ function makeHarness(options: { dmFlag?: string; groupFlag?: string } = {}) {
     projects,
     projectGroups,
     digest,
+    poster,
     dm,
     groupNotify,
     aibot,
@@ -318,7 +347,7 @@ describe("ReportQueryService（S3 查询路由 / 权限 / 幂等限流）", () =
     };
     harness.digest.snapshot = {
       ...harness.digest.snapshot,
-      project: { id: OTHER_PROJECT_ID, code: "123456", name: "数字编号项目" },
+      project: { id: OTHER_PROJECT_ID, code: "123456", name: "数字编号项目", managers: ["王经理"] },
     };
     await harness.service.handle(
       dmMessage({ text: "查询 项目 123456 2026-11-10 日报", msgid: "msg-six-digit" }),
@@ -471,5 +500,130 @@ describe("ReportQueryService（S3 查询路由 / 权限 / 幂等限流）", () =
     noResend.aibot.passive = failed(1);
     await noResend.service.handle(dmMessage({ msgid: "no-resend" }));
     expect(noResend.aibot.activeCalls).toHaveLength(0);
+  });
+
+  it("文字送达后发送单篇日报与当天全量问题海报，图片不再查快照", async () => {
+    const harness = makeHarness();
+    harness.digest.snapshot = {
+      ...defaultSnapshot(),
+      reports: [
+        report("report-1", {
+          headcount: 3,
+          stageNames: ["设计开发"],
+          photos: [
+            { fileId: "report-photo", name: "现场.png", objectKey: "objects/report-photo", mime: "image/png" },
+          ],
+        }),
+      ],
+      issues: [
+        issue("manual", { sourceReportId: null }),
+        issue("derived", { sourceReportId: "source-report" }),
+      ],
+    };
+
+    await harness.service.handle(dmMessage({ msgid: "poster-dm" }));
+
+    expect(harness.digest.calls).toHaveLength(1);
+    expect(harness.poster.calls).toHaveLength(1);
+    const call = harness.poster.calls[0]!;
+    expect(call.target).toEqual({ chattype: "single", userid: "wecom-user-1", dmActivated: true });
+    expect(call).toMatchObject({ sendDaily: true, sendIssues: true, trace: "poster-dm" });
+    expect(call.data).toMatchObject({
+      projectId: PROJECT_ID,
+      projectCode: "PRJ-001",
+      projectName: "临港数据中心",
+      managers: ["王经理"],
+      reportId: "report-1",
+      reportDate: "2026-11-10",
+      state: "submitted",
+      authorName: "张三",
+      headcount: 3,
+      stages: ["设计开发"],
+      photos: [{ fileId: "report-photo", objectKey: "objects/report-photo", mime: "image/png" }],
+      issues: [{ id: "manual" }, { id: "derived" }],
+    });
+    expect(call.data.issues.map((entry) => entry.id)).toEqual(["manual", "derived"]);
+    expect(harness.events.indexOf("sendPassive")).toBeLessThan(harness.events.indexOf("posterSend"));
+  });
+
+  it("群聊海报使用群会话目标；主题决定日报图与问题图", async () => {
+    const group = makeHarness();
+    await group.service.handle(groupMessage({ msgid: "poster-group" }));
+    expect(group.poster.calls[0]?.target).toEqual({
+      chattype: "group",
+      chatid: CHATID,
+      groupActivated: true,
+    });
+
+    const reportsOnly = makeHarness();
+    await reportsOnly.service.handle(
+      dmMessage({ msgid: "poster-reports", text: "查询 项目 PRJ-001 2026-11-10 日报" }),
+    );
+    expect(reportsOnly.poster.calls[0]).toMatchObject({ sendDaily: true, sendIssues: false });
+    expect(reportsOnly.poster.calls[0]?.data.issues).toEqual([]);
+
+    const issuesOnly = makeHarness();
+    await issuesOnly.service.handle(
+      dmMessage({ msgid: "poster-issues", text: "查询 项目 PRJ-001 2026-11-10 问题" }),
+    );
+    expect(issuesOnly.poster.calls[0]).toMatchObject({ sendDaily: false, sendIssues: true });
+    expect(issuesOnly.poster.calls[0]?.data.issues.map((entry) => entry.id)).toEqual(["issue-1"]);
+  });
+
+  it("群聊发送人无 report.view 时不读快照、不发海报", async () => {
+    const harness = makeHarness();
+    harness.permissions.reportAllowed = false;
+    await harness.service.handle(groupMessage({ msgid: "poster-group-denied" }));
+
+    expect(harness.aibot.passiveCalls[0]?.content).toBe(REPORT_QUERY_PROJECT_UNAVAILABLE);
+    expect(harness.digest.calls).toHaveLength(0);
+    expect(harness.poster.calls).toHaveLength(0);
+  });
+
+  it("无 issue.view 时只发送日报海报，不向投递层传问题图权限", async () => {
+    const harness = makeHarness();
+    harness.permissions.issueAllowed = false;
+    await harness.service.handle(dmMessage({ msgid: "poster-no-issue" }));
+
+    expect(harness.poster.calls[0]).toMatchObject({ sendDaily: true, sendIssues: false });
+    expect(harness.poster.calls[0]?.data.issues).toEqual([]);
+  });
+
+  it("文字完全未送达时不发送孤立海报", async () => {
+    const framed = makeHarness();
+    framed.aibot.passive = failed(1);
+    await framed.service.handle(dmMessage({ msgid: "poster-no-text-framed" }));
+    expect(framed.poster.calls).toHaveLength(0);
+
+    const unavailable = makeHarness();
+    unavailable.aibot.passive = failed(0);
+    unavailable.aibot.active = failed(0);
+    await unavailable.service.handle(dmMessage({ msgid: "poster-no-text-active" }));
+    expect(unavailable.poster.calls).toHaveLength(0);
+  });
+
+  it("0 篇或多篇已提交日报在 S4 不发送海报", async () => {
+    const empty = makeHarness();
+    empty.digest.snapshot = { ...defaultSnapshot(), reports: [], issues: [] };
+    await empty.service.handle(dmMessage({ msgid: "poster-empty" }));
+    expect(empty.poster.calls).toHaveLength(0);
+
+    const multiple = makeHarness();
+    multiple.digest.snapshot = {
+      ...defaultSnapshot(),
+      reports: [report("report-1"), report("report-2")],
+    };
+    await multiple.service.handle(dmMessage({ msgid: "poster-multiple" }));
+    expect(multiple.poster.calls).toHaveLength(0);
+  });
+
+  it("海报投递异常只记日志，不把已送达文字查询变成失败", async () => {
+    const harness = makeHarness();
+    harness.poster.error = new Error("poster failed");
+    await harness.service.handle(dmMessage({ msgid: "poster-error" }));
+
+    expect(harness.aibot.passiveCalls).toHaveLength(1);
+    expect(harness.aibot.activeCalls).toHaveLength(0);
+    expect(harness.aibot.passiveCalls[0]?.content).not.toBe(REPORT_QUERY_PROJECT_UNAVAILABLE);
   });
 });

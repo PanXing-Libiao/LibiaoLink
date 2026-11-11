@@ -14,6 +14,13 @@
 - **导出**：`applyMarkdownHardBreaks` 随 `truncateUtf8Bytes` 从 notify 公开出口导出，供 `report-query` 按企微 markdown 口径组装文字。
 - **测试 / 边界**：`server/test/report-query-service.test.ts` 覆盖查询优先于绑定码、群聊仅激活、身份未绑定与限流幂等；notify 仍不 import `report-issue`，查询链路不写审计 / outbox / 站内信 / 群播报。`server/` 属 wmj 线代记，请 wmj 复核。
 
+## 日报查询单篇海报投递（2026-11-11 · S4）
+
+- **公开入口**：`DailyReportPosterDeliveryService.send({ data, target, sendDaily, sendIssues, trace })`。`data` 只使用 notify 自己的 `DailyReportPosterData`，不反向依赖 report-issue；单聊目标走 `sendUserImage`（`dmActivated=true`），群聊目标走 `sendGroupImage`（`groupActivated=true`）。
+- **发送顺序**：调用方先完成文字与深链回复；服务内严格按日报图 → 问题图发送，每次调用最多两张图。问题图只在 `sendIssues=true` 且 `data.issues` 非空时生成。
+- **附件 / 失败隔离**：按当前发送开关筛选附件，同一 `objectKey` 只读取一次；单张附件读取、渲染、10MB、上传或发送失败只跳过对应图片，日报图失败仍尝试问题图。成功 / 失败只记 `trace`、掩码目标末 4 位、错误名或 errcode，不记正文与完整 ID。
+- **测试 / 边界**：`server/test/daily-report-poster-delivery.test.ts` 覆盖双图顺序、群 / 单聊目标、主题开关、无问题权限不读问题附件、10MB、渲染 / 发送 / 附件失败隔离；不持久化海报字节、不写审计 / outbox / 站内信，既有群同步 `sendDailyReportPoster` 行为不变。`server/` 属 wmj 线代记，请 wmj 复核。
+
 ## 物料变更补发图片（2026-11-09）
 
 - **入口**：物料变更补发提交事务内追加 `notify.group`（模板码 `MATERIAL_REISSUE_GROUP`，`refType=change`，`refId=change_requests.id`）；通知失败不回滚补发提交，outbox 重试不会重复生成业务记录。

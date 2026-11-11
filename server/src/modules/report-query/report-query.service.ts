@@ -9,6 +9,7 @@ import {
   GROUP_TRUNCATION_SUFFIX,
   maskChatid,
   maskUserid,
+  DailyReportPosterDeliveryService,
   NotifyDmService,
   NotifyGroupService,
   truncateUtf8Bytes,
@@ -20,6 +21,7 @@ import { PermissionService } from "../permission/index.js";
 import { ProjectGroupService, ProjectQueryService } from "../project/index.js";
 import { ReportDigestService } from "../report-issue/index.js";
 import { isReportQueryText, parseReportQuery } from "./report-query.parser.js";
+import { toSingleReportPosterData } from "./report-query.poster.js";
 import {
   buildAmbiguousProjectMessage,
   buildReportQueryText,
@@ -47,15 +49,19 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : "unknown";
+}
+
 interface ReplyState {
   replied: boolean;
 }
 
 /**
- * 企微智能机器人日报查询编排（S3）：命令路由、日期 / 项目解析、发送人身份、权限、
- * 同一快照文字回复、查询级限流与回调幂等。
+ * 企微智能机器人日报查询编排：命令路由、日期 / 项目解析、发送人身份、权限、
+ * 同一快照文字回复与单篇海报、查询级限流与回调幂等。
  *
- * 本服务不写审计 / outbox / 站内信 / 群播报，也不生成海报；问题内容仅在 issue.view 通过后输出。
+ * 本服务不写审计 / outbox / 站内信 / 群播报；问题内容仅在 issue.view 通过后输出。
  * 查询候选必须由 worker 在绑定码 / 群名命令之前分流到本服务。
  */
 @Injectable()
@@ -71,6 +77,7 @@ export class ReportQueryService {
     private readonly projects: ProjectQueryService,
     private readonly projectGroups: ProjectGroupService,
     private readonly digest: ReportDigestService,
+    private readonly posterDelivery: DailyReportPosterDeliveryService,
     private readonly dmNotify: NotifyDmService,
     private readonly groupNotify: NotifyGroupService,
     private readonly aibot: WecomAibotClient,
@@ -233,6 +240,36 @@ export class ReportQueryService {
       maxBytes,
     });
     await this.respond(incoming, content, replyState);
+
+    if (!replyState.replied) return;
+    const posterData = toSingleReportPosterData(snapshot, {
+      includeIssues: command.topic !== "reports" && canViewIssues,
+    });
+    if (posterData === null) return;
+
+    const trace = incoming.msgid ?? "report-query";
+    const fromUserId = incoming.fromUserId;
+    const target =
+      incoming.chattype === "group"
+        ? incoming.chatid === null
+          ? null
+          : { chattype: "group" as const, chatid: incoming.chatid, groupActivated: true }
+        : fromUserId === null
+          ? null
+          : { chattype: "single" as const, userid: fromUserId, dmActivated: true };
+    if (target === null) return;
+
+    try {
+      await this.posterDelivery.send({
+        data: posterData,
+        target,
+        sendDaily: command.topic !== "issues",
+        sendIssues: posterData.issues.length > 0,
+        trace,
+      });
+    } catch (error) {
+      this.logger.warn("日报查询海报发送异常，已保留文字回复：" + trace + " · " + errorName(error));
+    }
   }
 
   /**

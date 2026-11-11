@@ -11,6 +11,17 @@ export {
   truncateGroupMarkdown,
 } from "./notify.group.service.js";
 export { NotifyGroupRepository } from "./notify.group.repository.js";
+export { DailyReportPosterDeliveryService } from "./daily-report-poster-delivery.service.js";
+export type {
+  DailyReportPosterTarget,
+  DailyReportPosterDeliveryInput,
+} from "./daily-report-poster-delivery.service.js";
+export type {
+  DailyReportPosterData,
+  DailyReportPosterFontPaths,
+  DailyReportPosterIssue,
+  DailyReportPosterPhoto,
+} from "./daily-report.poster.types.js";
 export {
   composeProjectGroupUnavailableAlert,
   projectGroupBindingDeliverability,
@@ -117,7 +128,12 @@ export { WecomTokenError, WecomTokenManager } from "./wecom.token.js";
 export type { WecomTokenInfo } from "./wecom.token.js";
 export { createWecomClientFromEnv, WecomClient } from "./wecom.client.js";
 export type { WecomClientOptions, WecomRuntime, WecomRuntimeOverrides, WecomSendResult } from "./wecom.client.js";
-export { createWecomAibotClientFromEnv, createWsSocketFactory, WecomAibotClient } from "./wecom.aibot.js";
+export {
+  createWecomAibotClientFromEnv,
+  createWsSocketFactory,
+  WECOM_AIBOT_IMAGE_MAX_BYTES,
+  WecomAibotClient,
+} from "./wecom.aibot.js";
 export type {
   AibotIncomingMessage,
   AibotSendResult,
