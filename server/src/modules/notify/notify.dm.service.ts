@@ -226,6 +226,36 @@ export class NotifyDmService {
   }
 
   /**
+   * 日报查询登记单聊激活（S3）：只刷新激活表，不提取绑定码、不计绑定失败、不触发防猜锁。
+   * 查询命令必须先于绑定码链路分流；本方法供 report-query 在解析 / 权限判断前调用。
+   */
+  async activateFromReportQuery(incoming: AibotIncomingMessage): Promise<boolean> {
+    if (incoming.cmd !== "aibot_msg_callback" || incoming.chattype !== "single" || incoming.fromUserId === null) {
+      return false;
+    }
+    const userid = incoming.fromUserId;
+    if (!DM_USERID_PATTERN.test(userid)) {
+      this.logger.warn("单聊查询回调 userid 非法（忽略，不入库）：" + maskUserid(userid));
+      return false;
+    }
+    await this.repository.upsertActivationFromCallback({ botId: this.botId(), wecomUserid: userid, at: this.clock.now() });
+    return true;
+  }
+
+  /**
+   * 日报查询发送人身份（S3）：按 (bot_id, 回调 from.userid) 读绑定行，再校验系统用户生命周期。
+   * 只读、不写审计 / outbox；messagesEnabled 是主动提醒开关，不影响用户主动查询。
+   */
+  async resolveReportQueryActor(wecomUserid: string): Promise<string | null> {
+    if (!DM_USERID_PATTERN.test(wecomUserid)) return null;
+    const binding = await this.repository.findBindingByWecomUserid(wecomUserid, this.botId());
+    if (binding === null) return null;
+    const contact = await this.repository.findContact(binding.userId);
+    if (contact === null || contact.removedAt !== null || contact.status !== "active") return null;
+    return binding.userId;
+  }
+
+  /**
    * 单聊回调 ingest（M5-03-5-6 · 口径 §5；长连接 `onMessage` 接线在 entry/worker.ts）：
    * ① 过滤：仅 cmd=aibot_msg_callback 且 chattype=single 且 from.userid 合法；事件回调（enter_chat 等）与
    *    群聊一律不处理（群聊不绑定 —— 防「发到群里以为绑定成功」）；

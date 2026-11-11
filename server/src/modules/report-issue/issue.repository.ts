@@ -185,6 +185,22 @@ export class IssueRepository {
     return rows as IssueRow[];
   }
 
+  /** 按提出日期读取（DateOnly 直比）：手工与日报派生问题同一口径，按创建时刻 / id 稳定排序。 */
+  async listByRaisedDate(
+    projectId: string,
+    raisedDate: string,
+    client: DbClient = this.database.db,
+  ): Promise<IssueRow[]> {
+    const rows = await client
+      .select(ISSUE_COLUMNS)
+      .from(issues)
+      .leftJoin(users, eq(users.id, issues.reporterId))
+      .leftJoin(ISSUE_OWNER, eq(ISSUE_OWNER.id, issues.ownerId))
+      .where(and(eq(issues.projectId, projectId), eq(issues.raisedAt, raisedDate)))
+      .orderBy(asc(issues.createdAt), asc(issues.id));
+    return rows as IssueRow[];
+  }
+
   /** 来源日报已生成的问题数（A3-09 幂等兜底 · Push 243）：> 0 = 已生成过，不重复生成。 */
   async countBySourceReport(reportId: string, client: DbClient = this.database.db): Promise<number> {
     const rows = await client.select({ total: sql<number>`count(*)::int` }).from(issues).where(eq(issues.sourceReportId, reportId));

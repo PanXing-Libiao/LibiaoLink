@@ -10,13 +10,19 @@
 import { and, eq, inArray, ne } from "drizzle-orm";
 import { AppError } from "../../common/errors/app-error.js";
 import type { DbClient } from "../../db/db-client.js";
-import { fileLinks, files } from "../../db/schema/files.js";
+import { fileLinks, fileVersions, files } from "../../db/schema/files.js";
 import { dailyReports, issueEvents, issues } from "../../db/schema/reports.js";
 
 /** 附图引用（契约 FilePhotoRef）。 */
 export interface FilePhotoRefRow {
   fileId: string;
   name: string;
+}
+
+/** 查询海报专用附件元数据（对象键仅留在服务端，不进入公开 API 响应）。 */
+export interface FilePosterPhotoRow extends FilePhotoRefRow {
+  objectKey: string | null;
+  mime: string | null;
 }
 
 /** 日报附图两类（file_links.kind）。 */
@@ -86,6 +92,70 @@ export async function loadIssuePhotos(issueIds: readonly string[], client: DbCli
   for (const row of rows) {
     const bucket = result.get(row.objectId);
     if (bucket !== undefined) bucket.push({ fileId: row.fileId, name: row.name ?? "" });
+  }
+  return result;
+}
+
+async function loadPosterPhotoRows(
+  objectType: "report" | "issue",
+  objectIds: readonly string[],
+  client: DbClient,
+): Promise<Array<{ objectId: string; kind: string; photo: FilePosterPhotoRow }>> {
+  const unique = [...new Set(objectIds)];
+  if (unique.length === 0) return [];
+  const rows = await client
+    .select({
+      objectId: fileLinks.objectId,
+      kind: fileLinks.kind,
+      fileId: fileLinks.fileId,
+      name: files.name,
+      objectKey: fileVersions.objectKey,
+      mime: fileVersions.mime,
+    })
+    .from(fileLinks)
+    .innerJoin(files, eq(files.id, fileLinks.fileId))
+    .leftJoin(fileVersions, eq(fileVersions.id, files.currentVersionId))
+    .where(and(eq(fileLinks.objectType, objectType), inArray(fileLinks.objectId, unique)))
+    .orderBy(fileLinks.createdAt, fileLinks.id);
+  return rows.map((row) => ({
+    objectId: row.objectId,
+    kind: row.kind,
+    photo: {
+      fileId: row.fileId,
+      name: row.name,
+      objectKey: row.objectKey,
+      mime: row.mime,
+    },
+  }));
+}
+
+/** 日报查询海报附件：日报图与问题图分开，附带当前版本 objectKey / MIME，不读对象字节。 */
+export async function loadReportPosterPhotos(
+  reportIds: readonly string[],
+  client: DbClient,
+): Promise<Map<string, { onsite: FilePosterPhotoRow[]; issue: FilePosterPhotoRow[] }>> {
+  const result = new Map<string, { onsite: FilePosterPhotoRow[]; issue: FilePosterPhotoRow[] }>();
+  for (const id of new Set(reportIds)) result.set(id, { onsite: [], issue: [] });
+  const rows = await loadPosterPhotoRows("report", reportIds, client);
+  for (const row of rows) {
+    const bucket = result.get(row.objectId);
+    if (bucket === undefined) continue;
+    if (row.kind === "issue") bucket.issue.push(row.photo);
+    else if (row.kind === "onsite") bucket.onsite.push(row.photo);
+  }
+  return result;
+}
+
+/** 问题查询海报附件：保持 file_links 插入顺序，附带当前版本 objectKey / MIME。 */
+export async function loadIssuePosterPhotos(
+  issueIds: readonly string[],
+  client: DbClient,
+): Promise<Map<string, FilePosterPhotoRow[]>> {
+  const result = new Map<string, FilePosterPhotoRow[]>();
+  for (const id of new Set(issueIds)) result.set(id, []);
+  const rows = await loadPosterPhotoRows("issue", issueIds, client);
+  for (const row of rows) {
+    result.get(row.objectId)?.push(row.photo);
   }
   return result;
 }
