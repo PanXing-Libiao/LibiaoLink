@@ -10,6 +10,7 @@ const PROJECT = {
   id: "11111111-1111-4111-8111-111111111111",
   code: "PRJ-001",
   name: "临港数据中心",
+  managers: ["王经理"],
 };
 
 function report(id: string, overrides: Partial<ReportDigestReport> = {}): ReportDigestReport {
@@ -19,6 +20,7 @@ function report(id: string, overrides: Partial<ReportDigestReport> = {}): Report
     authorName: "张三",
     submittedAt: "2026-11-10T01:12:00.000Z",
     state: "submitted",
+    headcount: 2,
     stageKeys: [],
     stageNames: [],
     doneWork: "完成设备联调",

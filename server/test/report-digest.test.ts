@@ -70,11 +70,12 @@ function makeIssue(id: string, overrides: Partial<IssueRow> = {}): IssueRow {
 }
 
 class FakeReportRepository {
-  project: { id: string; code: string; status: string; name: string } | null = {
+  project: { id: string; code: string; status: string; name: string; managerIds: string[] } | null = {
     id: PROJECT,
     code: "PRJ-001",
     status: "active",
     name: "临港数据中心",
+    managerIds: [BOB],
   };
   rows: DailyReportRow[] = [];
   clients: unknown[] = [];
@@ -89,6 +90,16 @@ class FakeReportRepository {
     this.clients.push(client);
     this.dates.push(reportDate);
     return this.rows.filter((row) => row.projectId === projectId && row.reportDate === reportDate);
+  }
+
+  async listDisplayNames(userIds: readonly string[], client: unknown): Promise<Map<string, string>> {
+    this.clients.push(client);
+    const names = new Map([[BOB, "李四-test"]]);
+    return new Map(
+      [...new Set(userIds)]
+        .map((id) => [id, names.get(id)?.replace(/-test$/i, "").trim() ?? ""] as const)
+        .filter(([, name]) => name !== ""),
+    );
   }
 }
 
@@ -167,11 +178,20 @@ describe("ReportDigestService（S1 日报查询快照）", () => {
     expect(snapshot.reports.some((report) => report.doneWork === "草稿正文不得返回")).toBe(false);
     expect(snapshot.reports[0]).toMatchObject({
       state: "submitted",
+      headcount: 2,
       stageKeys: ["design"],
       stageNames: ["设计开发"],
-      photos: [{ fileId: FILE_REPORT, name: "现场图.png" }],
+      photos: [
+        {
+          fileId: FILE_REPORT,
+          name: "现场图.png",
+          objectKey: "objects/" + FILE_REPORT,
+          mime: "image/png",
+        },
+      ],
     });
-    expect(photoStore.calls.loadReportPhotos).toEqual([["submitted", "supplement"]]);
+    expect(snapshot.project.managers).toEqual(["李四"]);
+    expect(photoStore.calls.loadReportPosterPhotos).toEqual([["submitted", "supplement"]]);
   });
 
   it("同人同日多篇逐篇返回，按提交时间 → 创建时间 → id 稳定排序", async () => {
@@ -233,9 +253,16 @@ describe("ReportDigestService（S1 日报查询快照）", () => {
         authorName: "张三",
         submittedAt: AT_EARLY.toISOString(),
       },
-      photos: [{ fileId: FILE_ISSUE, name: "问题图.png" }],
+      photos: [
+        {
+          fileId: FILE_ISSUE,
+          name: "问题图.png",
+          objectKey: "objects/" + FILE_ISSUE,
+          mime: "image/png",
+        },
+      ],
     });
-    expect(photoStore.calls.loadIssuePhotos).toEqual([["manual", "derived"]]);
+    expect(photoStore.calls.loadIssuePosterPhotos).toEqual([["manual", "derived"]]);
   });
 
   it("同一次快照使用只读可重复读事务，所有仓储读取共用一个事务句柄", async () => {
@@ -250,7 +277,7 @@ describe("ReportDigestService（S1 日报查询快照）", () => {
     expect(transactionCalls).toEqual([
       { options: { isolationLevel: "repeatable read", accessMode: "read only" }, tx },
     ]);
-    expect(reports.clients).toEqual([tx, tx]);
+    expect(reports.clients).toEqual([tx, tx, tx]);
     expect(issues.clients).toEqual([tx]);
   });
 
@@ -260,14 +287,14 @@ describe("ReportDigestService（S1 日报查询快照）", () => {
 
     const empty = await service.getSnapshot(PROJECT, DATE);
     expect(empty).toEqual({
-      project: { id: PROJECT, code: "PRJ-001", name: "临港数据中心" },
+      project: { id: PROJECT, code: "PRJ-001", name: "临港数据中心", managers: ["李四"] },
       date: DATE,
       reports: [],
       draftCount: 0,
       issues: [],
     });
-    expect(photoStore.calls.loadReportPhotos).toEqual([[]]);
-    expect(photoStore.calls.loadIssuePhotos).toEqual([[]]);
+    expect(photoStore.calls.loadReportPosterPhotos).toEqual([[]]);
+    expect(photoStore.calls.loadIssuePosterPhotos).toEqual([[]]);
 
     reports.project = null;
     await expect(service.getSnapshot(PROJECT, DATE)).rejects.toMatchObject({

@@ -12,6 +12,7 @@ export type { DailyReportPatch, DailyReportRow } from "./report.repository.js";
 export type { IssueEventRow, IssuePatch, IssueRow } from "./issue.repository.js";
 export type {
   ReportDigestIssue,
+  ReportDigestPhoto,
   ReportDigestProject,
   ReportDigestReport,
   ReportDigestSnapshot,

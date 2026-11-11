@@ -9,6 +9,7 @@ import { NotifyAppRepository } from "./notify.app.repository.js";
 import { NotifyAppService } from "./notify.app.service.js";
 import { NotifyDmRepository } from "./notify.dm.repository.js";
 import { NotifyDmService } from "./notify.dm.service.js";
+import { DailyReportPosterDeliveryService } from "./daily-report-poster-delivery.service.js";
 import { NotifyGroupRepository } from "./notify.group.repository.js";
 import { NotifyGroupService } from "./notify.group.service.js";
 import { ProjectGroupDeliveryAlertService } from "./project-group-delivery-alert.service.js";
@@ -68,6 +69,7 @@ import { PgRateWindowStore } from "./wecom.rate.pg.js";
     NotifyAppService,
     NotifyDmRepository,
     NotifyDmService,
+    DailyReportPosterDeliveryService,
     PgRateWindowStore,
     {
       // 群通道长连接客户端（M5-03-2 接线段）：构造不建连（start() 由 worker 启动流程显式调用）；
@@ -94,6 +96,7 @@ import { PgRateWindowStore } from "./wecom.rate.pg.js";
     ProjectGroupDeliveryAlertService,
     NotifyAppService,
     NotifyDmService,
+    DailyReportPosterDeliveryService,
     WecomAibotClient,
     WecomClient,
     RESOURCE_CHANGE_SINK,
