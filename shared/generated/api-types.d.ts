@@ -10612,6 +10612,11 @@ export interface components {
             createdAt: number;
             updatedAt: number;
             artifactBytes?: number;
+            /** @description 已校验 DWG 的可选曲线参数列，与归档缓冲共用资源租约 */
+            dwgCurveColumnsV1?: {
+                sha256: string;
+                byteLength: number;
+            };
             resources?: {
                 lease: string;
                 buffers: {

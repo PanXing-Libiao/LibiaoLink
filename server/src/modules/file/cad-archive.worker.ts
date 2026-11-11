@@ -10,6 +10,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { buffer as collect } from "node:stream/consumers";
 import { ObjectStorage } from "../../storage/index.js";
+import type { CadStoredBuffer } from "../../db/schema/cad.js";
 import { FileRepository } from "./file.repository.js";
 import { cadArchiveNamespace, CadEngineBusyError, CadEngineClient } from "./cad-engine.client.js";
 import { CadArchiveRepository, type CadFailureContext } from "./cad-archive.repository.js";
@@ -108,7 +109,7 @@ export class CadArchiveWorker implements OnApplicationShutdown {
       activeLease = packet.resourceLease;
       if (packet.presentation.sourceSHA256 !== row.sourceSHA256) throw new Error("CAD manifest source mismatch");
       if (packet.snapshot.completeness !== (job.state === "partial" ? "partial" : "complete")) throw new Error("CAD completeness mismatch");
-      const buffers = new Map<string, { sha256: string; byteLength: number; objectKey: string }>();
+      const buffers = new Map<string, CadStoredBuffer>();
       let total = raw.byteLength;
       for (const [id, buffer] of Object.entries(packet.document.buffers)) {
         const resource = packet.bufferResources[id];
@@ -122,6 +123,12 @@ export class CadArchiveWorker implements OnApplicationShutdown {
         }
       }
       if (total > CAD_ARTIFACT_LIMIT) throw new CadArchiveFailure("artifact-budget", "模型产物超过当前持久化大小限制，请下载原文件查看", false);
+      const columns = job.dwgCurveColumnsV1;
+      if (source.sourceFormat === "DWG" && columns && !buffers.has(columns.sha256)
+        && total + columns.byteLength <= CAD_ARTIFACT_LIMIT) {
+        buffers.set(columns.sha256, { ...columns, objectKey: prefix + columns.sha256, kind: "dwg-curve-columns-v1" });
+        total += columns.byteLength;
+      }
       for (const buffer of buffers.values()) {
         abort.signal.throwIfAborted();
         const resource = await this.engine.file("buffer", { namespace, jobId: nativeId, lease: activeLease, sha256: buffer.sha256 });
@@ -134,6 +141,8 @@ export class CadArchiveWorker implements OnApplicationShutdown {
           await pipeline(checked, createWriteStream(spool), { signal: abort.signal });
           await this.storage.putObjectStream({ objectKey: buffer.objectKey, body: createReadStream(spool), sizeBytes: buffer.byteLength,
             contentType: "application/octet-stream" });
+          // The handoff reads these columns once and negotiates ordinary HTTP compression.
+          if (buffer.kind === "dwg-curve-columns-v1") continue;
           const body = await collect(createReadStream(spool).pipe(cadArchiveEncoder(buffer.byteLength)))
             .catch((error: unknown) => { this.logger.warn("CAD compressed buffer derivative unavailable: " + (error as Error).message); return null; });
           if (body) {

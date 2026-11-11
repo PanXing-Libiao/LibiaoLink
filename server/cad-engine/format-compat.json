@@ -1,6 +1,7 @@
 {
   "formats": {
     "STEP": [
+      "step-0.3.3/3de3c5af94bd66d1d27e450dabf7d0552f439186c3781084d497faf5c8f83c16/gateway-1",
       "step-0.3.3/3a0b09b817618c0f88f80cd2fa8a2923f9d30907cc84282e47d307d97361557e/gateway-1",
       "step-0.3.3/ad4f9b5bc0cb069049bd253d080ace64ad73fc70d190d2fef08d94894e9c3f47/gateway-1",
       "step-0.3.3/987d8df2b3cbf6fec1c205a01772f9b253d6cc29054c20fbcd1da2c19d24ca1f/gateway-1",
@@ -12,6 +13,7 @@
       "step-0.3.3/f103d1c40812b24c3864ae90a91ea707f734dfb5/gateway-1"
     ],
     "DXF": [
+      "dxf-0.15.0/7290e5abae68bf34273350bcd996a709c9de7e22845c1e9640f5002fd524971e/gateway-1",
       "dxf-0.15.0/22c3885996499089d46209a67a24d2ba0b3a8db97c1c7156a59c04ceaf1c00da/gateway-1",
       "dxf-0.15.0/8c998f67c00630cac0dd94e94e143acc81ebdada932452b4f6d4af701ea7d7ce/gateway-1",
       "dxf-0.15.0/4f3edaa865c822c5ec29075d93f4180ff70f4c321df583bda12fdc286d2ad4ac/gateway-1",
@@ -23,6 +25,7 @@
       "dxf-0.15.0/b2585a65d76ecc3332747a11a38623c9c1982701800504e00fd906e61f9c4ef3/gateway-1"
     ],
     "DWG": [
+      "dwg-0.1.0/fc247dad7f172b5db5f2ed20cae01ed78b1594cb0bf3f27df7caca4235d8cb73/gateway-1",
       "dwg-0.1.0/8a564b8b1abb3551cb0704c8384bf4b81194cb6fbd274573d07cd32b1721eda2/gateway-1",
       "dwg-0.1.0/b830517ff86238eca3e8fea389f695bf02432e85e950e3d7fbd64d75c752bb9f/gateway-1",
       "dwg-0.1.0/088c630ee7d66ca9976c1afb4f709d364148acd378a89a1d038dd6fbbd26e156/gateway-1",

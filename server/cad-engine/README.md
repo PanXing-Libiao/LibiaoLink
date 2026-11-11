@@ -26,6 +26,12 @@ Docker 内在 `/opt/dxf` 正常安装仓内 ezdxf 1.4.2 fork，并验证安装�
 
 原本地联调已跑通文件版本 → SHA/bytes 核对 → 任务 → 完整产物 → 鉴权 manifest/buffers → ViewerSession。当前运行方式按 ADR-036 改为独立沙箱；历史 stdio 结果见 [逐文件表](../../docs/cad-platform-integration/RESULTS.md)，不冒充本次隔离验收。源码、依赖及浏览器模块的内容指纹见 `source.json`；STEP v0.3.3 已包含颜色查找与 UV 分类缓存优化，完整产物接收政策保持原有规则。
 
+## DWG 临时视图接回归档
+
+父进程复验 DWG 文档后，为已提供临时矢量视图的作业生成可选的直线、圆弧参数列。列按 64 位句柄排序，圆弧同时保留绘图与原生坐标系。列对象与同一作业的几何缓冲共用摘要校验、空间预算、socket 资源租约及回收流程。列超出剩余预算时仍发布正式归档。
+
+文件库通过 Unix socket 的 `buffer` 操作按租约、摘要读取，校验通过后才发布对象清单。曲线列放在同一归档前缀，计入 `artifactBytes`；单个视图通过已有带权限的资源路由读取。浏览器在同一窗口接回曲线时验证列的来源、长度和 SHA-256。没有派生列的旧归档，或派生列读取失败时，沿用正式清单接回。普通整图打开只预取几何缓冲。
+
 ## 准备运行环境
 
 CAD 解析已迁移到独立 Linux 容器，不再由 API 启动 Python。先按 [CAD 沙箱部署手册](../../deploy/cad/README.md) 仅构建 CAD 镜像并启动沙箱；macOS 与 Windows/WSL2 的本地 API 使用开发中继，生产 API 直接连接 Unix socket。
