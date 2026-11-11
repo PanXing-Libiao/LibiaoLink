@@ -143,6 +143,7 @@ export function unpackDwgPacked(envelope, streamCurves = false) {
   document.geometries = geometries;
   document.representations = representations;
   const packet = { ...envelope, document, ...(displayRows ? {displayRows,deferredCurves:!!deferredCurves} : {}) };
+  if (displayRows && payload.polylineFields) packet.polylineFields = payload.polylineFields;
   if (displayRows && payload.curveRows) {
     packet.deferredCurves = true;
     if (streamCurves) {

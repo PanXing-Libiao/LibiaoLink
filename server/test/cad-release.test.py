@@ -21,6 +21,9 @@ class ReleaseTest(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text('source')
             (base / 'core/unified').mkdir(parents=True, exist_ok=True)
+            # The DWG identity includes the shared DXF drawing modules.
+            for module in (release.BASE / 'core/unified').glob('dxf_*.py'):
+                (base / 'core/unified' / module.name).touch()
             (base / 'core/unified/conversion_jobs.py').write_text('source')
             for name in release.RUNTIME_FILES:
                 (base / name).write_text('runtime')

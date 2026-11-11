@@ -23,6 +23,7 @@ from .transport import read_worker_buffers
 from .input_policy import step_job_input_bytes
 from .compact_transport import WORKER,VERSION,unpack_metadata
 from .dwg_pack import unpack_document
+from .dwg_curve_columns import encode_curve_columns
 from .step_name_encoding import name_codepage as check_name_codepage
 from . import dxf_resources
 
@@ -462,6 +463,17 @@ class ConversionJobs:
                     # paths. Persist its bytes verbatim so large drawings are not parsed and
                     # serialized a second time in the parent process.
                 else:validate_envelope(envelope)
+                # Derive only from the reconstructed document that passed the parent gate.
+                # The signed document and its geometry buffers retain their original identities.
+                columns = None
+                if self.binary and is_dwg and env.get('CAD_DWG_DISPLAY_LEASE'):
+                    remaining = result_limit - len(raw) - sum(map(len, blobs.values()))
+                    try:
+                        columns = encode_curve_columns(document, row['sourceSHA256'], min(remaining, 256*1024**2))
+                    except (KeyError, TypeError, ValueError, OverflowError):
+                        # Native extension values outside the column layout still have a valid archive.
+                        columns = None
+                column_sha = hashlib.sha256(columns).hexdigest() if columns is not None else None
                 sha=hashlib.sha256(raw).hexdigest();timing('manifestDigestChecked')
                 with self.lock:
                     current=self._get(jid)
@@ -472,6 +484,12 @@ class ConversionJobs:
                     stored=sum(f.stat().st_size for name in ('artifacts','buffers') for f in (self.root/name).iterdir())
                     added=sum(len(blob) for key,blob in unique.items() if not (self.root/'buffers'/key).exists())
                     if stored+len(raw)+added>artifact_limit:raise JobLimit('artifact storage quota exceeded')
+                    derivative = {}
+                    if columns is not None:
+                        cost = 0 if (self.root/'buffers'/column_sha).exists() else len(columns)
+                        if stored + len(raw) + added + cost <= artifact_limit:
+                            unique[column_sha] = columns
+                            derivative['dwgCurveColumnsV1'] = {'sha256': column_sha, 'byteLength': len(columns)}
                     # Publish buffers first, then the manifest, then terminal metadata.
                     # Interrupted/orphan writes remain unreachable and are pruned.
                     for key,blob in unique.items():
@@ -482,7 +500,7 @@ class ConversionJobs:
                     target=self.root/'artifacts'/sha;out.replace(target)
                     event(current,'artifactCommitted')
                     self._update(current,state='partial' if (is_dxf or is_dwg) and completeness=='partial' else 'completed',phase='verified-artifact',artifactSHA256=sha,
-                                 artifactBufferSHA256=list(unique),
+                                 artifactBufferSHA256=list(unique), **derivative,
                                  documentRevision=envelope['document']['revision'],completeness=envelope['snapshot']['completeness'],
                                  artifactBytes=len(raw)+sum(map(len,unique.values())),manifestBytes=len(raw),
                                  workerPeakRSSBytes=peak_rss,workerWallSeconds=time.perf_counter()-wall)

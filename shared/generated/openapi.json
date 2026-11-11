@@ -1626,6 +1626,26 @@
             "type": "integer",
             "minimum": 0
           },
+          "dwgCurveColumnsV1": {
+            "type": "object",
+            "properties": {
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "byteLength": {
+                "type": "integer",
+                "minimum": 40,
+                "maximum": 268435456
+              }
+            },
+            "required": [
+              "sha256",
+              "byteLength"
+            ],
+            "additionalProperties": false,
+            "description": "已校验 DWG 的可选曲线参数列，与归档缓冲共用资源租约"
+          },
           "resources": {
             "type": "object",
             "properties": {

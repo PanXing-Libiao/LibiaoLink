@@ -107,6 +107,28 @@ class PackedDwgTest(unittest.TestCase):
         self.assertEqual(unpacked['geometries'], document['geometries'])
         self.assertEqual(unpacked['representations'], document['representations'])
 
+    def test_temporary_polyline_keeps_source_points_for_special_displays(self):
+        from unified.dwg_adapter import _compact_display_polylines
+
+        doc = fixture()
+        points = [[10., 20., 0.], [30., 40., 0.]]
+        geometry = {'type': 'polyline', 'points': points, 'closed': False,
+                    'bulges': [0.], 'widths': [[0., 0.]]}
+        doc['drawing']['entities']['entity-1']['geometry'] = geometry
+        display = {'topology': 'lines', 'count': 2}
+        for special, expected in [(set(), 'paired'), ({'entity-1'}, 'zeros')]:
+            view = pack_document(doc)
+            _compact_display_polylines(view, {'entity-1': 'paired'}, {'entity-1': display}, special)
+            packed = view['packed']
+            row = next(r for r in packed['entities'] if packed['strings'][r[0]] == 'entity-1')
+            self.assertEqual(packed['polylineFields'], [['entity-1', expected]])
+            self.assertEqual(row[12].get('points'), points if special else None)
+            self.assertNotIn('widths', row[12])
+            self.assertNotIn('bulges', row[12])
+        self.assertEqual(geometry['points'], points)
+        self.assertEqual(geometry['widths'], [[0., 0.]])
+        self.assertEqual(geometry['bulges'], [0.])
+
     def test_fallback_entity_and_display_stay_verbatim(self):
         document = fixture()
         packed = pack_document(document)

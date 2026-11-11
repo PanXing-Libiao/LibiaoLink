@@ -270,7 +270,7 @@ def _small_validated_entity(row):
 
 
 def _validate_core(envelope,version,schema,max_decoded,raw=None,on_phase=None,seal=False):
-    received_binary = raw is not None and not seal
+    binary_transport = raw is not None
     if version=='2.0.0':validate_v2(envelope)
     if on_phase:on_phase('v2 references checked')
     d,s=envelope['document'],envelope['snapshot']
@@ -404,7 +404,7 @@ def _validate_core(envelope,version,schema,max_decoded,raw=None,on_phase=None,se
     validate_drawing(d)
     if on_phase:on_phase('drawing references checked')
     content={k:v for k,v in d.items() if k!='revision'}
-    if received_binary and version=='2.0.0' and d['adapter']['id']=='libiaolink-acadsharp-dwg':
+    if binary_transport and version=='2.0.0' and d['adapter']['id']=='libiaolink-acadsharp-dwg':
         revision=canonical_sha256(content,small_rows=(d['drawing']['entities'],_small_validated_entity))
     else:
         revision=canonical_sha256(content)

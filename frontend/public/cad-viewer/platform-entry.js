@@ -269,7 +269,8 @@ async function joinArchivedCurves(viewer){
    else viewer.archiveCurvesFailed(()=>joinArchivedCurves(viewer));
   };
   worker.onmessage=({data})=>end(data);worker.onerror=()=>end(null);
-  worker.postMessage({url:new URL(jobBase+'/manifest',location.href).href,source:job.sourceSHA256});
+  worker.postMessage({url:new URL(jobBase+'/manifest',location.href).href,source:job.sourceSHA256,
+    columns:job.dwgCurveColumnsV1,lease:job.resources?.lease});
  }catch{
   signal.removeEventListener('abort',stop);stop();
   if(!signal.aborted && window.__drawing===viewer)viewer.archiveCurvesFailed(()=>joinArchivedCurves(viewer));
