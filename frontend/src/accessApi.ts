@@ -65,6 +65,14 @@ export type GroupAccessAdmin = {
 export type GroupAccessProject = { id: string; code: string; name: string };
 
 
+export type GroupAccessAutomaticRole = {
+  userId: string;
+  projectManagerProjectIds: string[];
+  projectMemberProjectIds: string[];
+  taskOwnerProjectIds: string[];
+  taskOwnerTaskCount: number;
+};
+
 export type GroupAccessOverview = {
   enforced: boolean;
   admin: boolean;
@@ -72,6 +80,7 @@ export type GroupAccessOverview = {
   admins: GroupAccessAdmin[];
   groups: GroupAccessGroup[];
   projects: GroupAccessProject[];
+  automaticRoles: GroupAccessAutomaticRole[];
 };
 
 export type GroupAccessRuleInput = {

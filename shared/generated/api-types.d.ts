@@ -11375,6 +11375,18 @@ export interface components {
          * @enum {string}
          */
         GroupAccessAdminSource: "configured" | "manual";
+        /** @description 自动项目角色：由项目和任务数据实时生成，随人员关系与任务分配自动变化 */
+        GroupAccessAutomaticRole: {
+            userId: components["schemas"]["Uuid"];
+            /** @description 项目经理项目：projects.manager_ids 或 project_members.role_in_project=project_manager */
+            projectManagerProjectIds: components["schemas"]["Uuid"][];
+            /** @description 项目名册成员项目（不含项目经理记录） */
+            projectMemberProjectIds: components["schemas"]["Uuid"][];
+            /** @description 至少负责一条未删除任务的项目 */
+            taskOwnerProjectIds: components["schemas"]["Uuid"][];
+            /** @description 负责的未删除任务总数 */
+            taskOwnerTaskCount: number;
+        };
         /**
          * @description 可授予数据权限的项目范围：all 全部项目 / own 仅自己的项目 / selected 仅指定项目
          * @enum {string}
@@ -11448,7 +11460,7 @@ export interface components {
          * @enum {string}
          */
         GroupAccessMemberScope: "all" | "selected";
-        /** @description 权限管理页数据：开关状态、当前账号部门、系统管理员、可配置部门树与项目；无部门账号汇总在虚拟未分组节点 */
+        /** @description 权限管理页数据：开关状态、当前账号部门、系统管理员、可配置部门树、项目与自动项目角色；无部门账号汇总在虚拟未分组节点 */
         GroupAccessOverview: {
             enforced: boolean;
             admin: boolean;
@@ -11457,6 +11469,8 @@ export interface components {
             admins: components["schemas"]["GroupAccessAdmin"][];
             groups: components["schemas"]["GroupAccessGroup"][];
             projects: components["schemas"]["GroupAccessProject"][];
+            /** @description 自动项目角色（项目经理 / 项目成员 / 任务负责人）；按用户聚合，项目或任务关系变化后随接口实时更新 */
+            automaticRoles: components["schemas"]["GroupAccessAutomaticRole"][];
         };
         /**
          * @description 页面键（旧客户端兼容）：dashboard / projects / templates / workspace / files / audit；群组规则恒放行全部页面

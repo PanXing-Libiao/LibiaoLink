@@ -74,7 +74,7 @@
 
 > 口径来源：系统功能书【修订 2026-09-22，Push 148】业务确认「任务删除要做」+ `前端功能需求.md` §3.8 A25；记录级 404 语义随 h6 策略服务。
 
-- 端点与权限：`DELETE /projects/{id}/tasks/{taskId}`（权限键 `task.update` —— 与编辑同一权限位，不新增权限键，`PROJECT_MEMBER_IMPLIED_KEYS` 已含该键）；响应 `TaskDeleteResponse = { id, deleted: true }`（只回标记，前端列表本地移除即可）；项目侧照旧先过 `loadProjectForWrite`（归档 409 `PROJECT_ARCHIVED`）。
+- 端点与权限：`DELETE /projects/{id}/tasks/{taskId}`（权限键 `task.update`，与编辑同一权限位，不新增权限键；要求当前项目 `accessLevel=edit`，`PROJECT_MEMBER_IMPLIED_KEYS` 仅含只读位）；响应 `TaskDeleteResponse = { id, deleted: true }`（只回标记，前端列表本地移除即可）；项目侧照旧先过 `loadProjectForWrite`（归档 409 `PROJECT_ARCHIVED`）。
 - 软删而非物理删：置 `tasks.deleted_at` / `deleted_by`（迁移 `0022_task_soft_delete.sql`，照 0009 projects / 0019 stakeholders 口径），行与留痕保留；**统一 404、不新增错误码** —— 重复删除、已删任务上的编辑 / 进度 / 完成提交 / 预检、跨项目与不存在一律 404 `NOT_FOUND`（记录级 404 语义）。
 - 引用守卫（系统功能书 A2-01「已产生日报 / 问题 / 变更的任务不允许删除，只能关闭或标记」）：`change_refs` 非空 → 409 `TASK_HAS_REFERENCES`（`details[].code = change_ref` + `changeRequestId`），不软删 / 不压缩位次 / 不写留痕；日报 / 问题两表随 M5 落地后在守卫处一并加判定（照「节点下已有文件 → 409 `NODE_HAS_FILES`」同一先例）。
 - 读面不可见：列表 / 详情 / summary 四格 / 阶段计数 / 看板与甘特图（与列表同源）/ 完成门禁预检与提交 / 节点判重 / 组内顺序读 / 锁行一律过滤 `deleted_at is null`；新增部分索引 `ix_tasks_active_group (project_id, stage_key, sort_index) where deleted_at is null`（列表与看板顺序读走它）。

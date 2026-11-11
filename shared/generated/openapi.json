@@ -4874,6 +4874,48 @@
         ],
         "description": "管理员来源：configured 环境配置 / manual 手工添加"
       },
+      "GroupAccessAutomaticRole": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "projectManagerProjectIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "项目经理项目：projects.manager_ids 或 project_members.role_in_project=project_manager"
+          },
+          "projectMemberProjectIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "项目名册成员项目（不含项目经理记录）"
+          },
+          "taskOwnerProjectIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "至少负责一条未删除任务的项目"
+          },
+          "taskOwnerTaskCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "负责的未删除任务总数"
+          }
+        },
+        "required": [
+          "userId",
+          "projectManagerProjectIds",
+          "projectMemberProjectIds",
+          "taskOwnerProjectIds",
+          "taskOwnerTaskCount"
+        ],
+        "description": "自动项目角色：由项目和任务数据实时生成，随人员关系与任务分配自动变化"
+      },
       "GroupAccessDataProjectScope": {
         "type": "string",
         "enum": [
@@ -5176,6 +5218,13 @@
             "items": {
               "$ref": "#/components/schemas/GroupAccessProject"
             }
+          },
+          "automaticRoles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupAccessAutomaticRole"
+            },
+            "description": "自动项目角色（项目经理 / 项目成员 / 任务负责人）；按用户聚合，项目或任务关系变化后随接口实时更新"
           }
         },
         "required": [
@@ -5184,9 +5233,10 @@
           "currentGroupKeys",
           "admins",
           "groups",
-          "projects"
+          "projects",
+          "automaticRoles"
         ],
-        "description": "权限管理页数据：开关状态、当前账号部门、系统管理员、可配置部门树与项目；无部门账号汇总在虚拟未分组节点"
+        "description": "权限管理页数据：开关状态、当前账号部门、系统管理员、可配置部门树、项目与自动项目角色；无部门账号汇总在虚拟未分组节点"
       },
       "GroupAccessPage": {
         "type": "string",

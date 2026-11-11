@@ -136,7 +136,7 @@ export const RECYCLE_SWEEP_BATCH = 100;
  * - 会话过期：访问时惰性判定（410，契约 `UPLOAD_SESSION_EXPIRED`）+ worker 定时清理（中止分片 + 清暂存 + 置 expired）；
  * - 文件上传**不触发** `projects.updated_at`（ADR-022 明示「不触发」：文件与变更各有自身时间字段）。
  *
- * 权限：创建 / 分片 / 完成 / 取消 / 定档 / 回溯 / 回收 / 恢复 = `file.upload`（项目成员平权，ADR-011 平权例外）；
+ * 权限：创建 / 分片 / 完成 / 取消 / 定档 / 回溯 / 回收 / 恢复 = `file.upload`，且要求当前项目 accessLevel=edit；
  * 读取（详情 / 版本链 / 会话状态）= 项目可见即可；彻底删除 = 仅系统管理员（权限模型落地前临时口径）；
  * 不可见资源统一 404（防 IDOR）。
  *

@@ -418,6 +418,11 @@ describe("GroupAccessService 部门通讯录", () => {
         updatedAt: new Date("2026-10-26T00:00:00Z"),
       })],
       listAccessProjects: async () => [],
+      listAutomaticProjectRoles: async () => [
+        { userId: PROJECT_A, projectManagerProjectIds: [PROJECT_B], projectMemberProjectIds: [], taskOwnerProjectIds: [PROJECT_C], taskOwnerTaskCount: 2 },
+        { userId: PROJECT_B, projectManagerProjectIds: [], projectMemberProjectIds: [PROJECT_B], taskOwnerProjectIds: [], taskOwnerTaskCount: 0 },
+        { userId: PROJECT_D, projectManagerProjectIds: [], projectMemberProjectIds: [], taskOwnerProjectIds: [PROJECT_A, PROJECT_B], taskOwnerTaskCount: 3 },
+      ],
       findRuleMetadata: async () => ({ groupName: "Quality", updatedAt: new Date("2026-10-23T00:00:00Z") }),
       listActiveUsersByIds: async (userIds: readonly string[]) => userIds.includes(PROJECT_A) ? [{
         userId: PROJECT_A,
@@ -460,6 +465,11 @@ describe("GroupAccessService 部门通讯录", () => {
       } as Env),
     );
     const overview = await service.overview(PROJECT_A);
+    expect(overview.automaticRoles).toEqual([
+      { userId: PROJECT_A, projectManagerProjectIds: [PROJECT_B], projectMemberProjectIds: [], taskOwnerProjectIds: [PROJECT_C], taskOwnerTaskCount: 2 },
+      { userId: PROJECT_B, projectManagerProjectIds: [], projectMemberProjectIds: [PROJECT_B], taskOwnerProjectIds: [], taskOwnerTaskCount: 0 },
+      { userId: PROJECT_D, projectManagerProjectIds: [], projectMemberProjectIds: [], taskOwnerProjectIds: [PROJECT_A, PROJECT_B], taskOwnerTaskCount: 3 },
+    ]);
     expect(overview.groups.map((group) => ({
       key: group.groupKey,
       parent: group.parentGroupKey,

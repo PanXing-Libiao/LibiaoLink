@@ -11,7 +11,7 @@
 
 - 策略层纯函数（permission.rules.ts，不碰数据库，CI 用例主对象）：
   - 记录级：`projectScopeSpec`（数据范围 → all / managed / member 三开关；granted 未落地（own_stakeholders 已随 j6 落地，见下「差异」1）；无角色兜底名册）；
-  - 功能权限：`can(actor, key, ctx)` = 全局权限位 ∪ 项目内项目经理隐含位 ∪ 项目内成员隐含位（ADR-011 §4.3 平权例外 + ADR-020 / ADR-023 既有口径）；
+  - 功能权限：`can(actor, key, ctx)` = 全局权限位 ∪ 项目内项目经理隐含位 ∪ 项目内成员只读隐含位（ADR-011 / ADR-020 / ADR-023）；成员写能力由 `taskCapabilitiesOf` 与项目 `accessLevel=edit` 裁决；
   - 字段级：表驱动 `FIELD_POLICIES`（干系人联系方式三个字段 → stakeholder.contact.view；公司 / 职务 → stakeholder.view；备注 → stakeholder.manage；员工邮箱一期全员可见）；无权字段**不返回**（服务端裁剪，不做前端打码 · C3-08）；
   - 五出口：`planExit(actor, exit, entity)`（page / export / search / notify）与 `exitsConsistent`（同一实体下四出口投影必须一致）；导出出口额外要求 `project.export`（C3-05 单独授权 + 审计）。
 - 数据面（permission.repository.ts）：只读名册（project_members）、项目主数据引用（manager_ids / deleted_at；A22 多位 = 任一位命中）、节点 → 项目（project_nodes）。名册与节点的写路径仍归 project 模块（本模块不写库）。

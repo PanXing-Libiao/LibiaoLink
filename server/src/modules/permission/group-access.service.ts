@@ -45,12 +45,13 @@ export class GroupAccessService {
   async overview(actorId: string): Promise<GroupAccessOverview> {
     await this.assertAdmin(actorId);
     const { directory, activeGroupKeys } = await this.activeDirectory();
-    const [memberships, ungroupedUsers, rules, memberRules, projects, groupAccess, admins] = await Promise.all([
+    const [memberships, ungroupedUsers, rules, memberRules, projects, automaticRoles, groupAccess, admins] = await Promise.all([
       this.repository.listGroupMembers(),
       this.repository.listUngroupedUsers([...activeGroupKeys]),
       this.repository.listAccessRules(),
       this.repository.listAccessMemberRules(),
       this.repository.listAccessProjects(),
+      this.repository.listAutomaticProjectRoles(),
       this.permission.groupAccessOf(actorId),
       this.listAdmins(),
     ]);
@@ -151,6 +152,7 @@ export class GroupAccessService {
       admins,
       groups: Array.from(groups.values()).sort((left, right) => left.groupKey.localeCompare(right.groupKey)),
       projects,
+      automaticRoles,
     };
   }
 

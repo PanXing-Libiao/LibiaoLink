@@ -59,7 +59,7 @@ const uuidParam = new ZodValidationPipe(UuidSchema);
 /**
  * 文件接口（M4-01 上传管道 + M4-02 版本 / 定档 / 回溯 / 回收站）：契约 shared/src/modules/files.ts。
  *
- * 权限在服务层判定（`file.upload` 需项目上下文：成员平权；读取会话状态 = 项目可见即可），
+ * 权限在服务层判定（`file.upload` 需当前项目 accessLevel=edit；读取会话状态 = 项目可见即可），
  * 因此这里只用会话 + CSRF 守卫；记录级可见性（非成员 404）在 FileService 装载文件时按项目判定。
  * 变更写入（M4-04 · 申请即通过）随上传完成 / 定档后回溯生效；预览读 API（M4-05）三态 + 短时签名（缺省只取签名；用户点开且传 recordView=true 时才写一条 preview 审计）；
  * 下载读 API（M4-05f）短时签名（attachment）+ `file.download` 权限 + download 审计。
