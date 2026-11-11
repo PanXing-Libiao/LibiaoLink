@@ -526,6 +526,7 @@ describe("ReportQueryService（S3 查询路由 / 权限 / 幂等限流）", () =
     expect(harness.digest.calls).toHaveLength(1);
     expect(harness.poster.calls).toHaveLength(1);
     const call = harness.poster.calls[0]!;
+    expect(call.kind).toBe("single");
     expect(call.target).toEqual({ chattype: "single", userid: "wecom-user-1", dmActivated: true });
     expect(call).toMatchObject({ sendDaily: true, sendIssues: true, trace: "poster-dm" });
     expect(call.data).toMatchObject({
@@ -602,19 +603,127 @@ describe("ReportQueryService（S3 查询路由 / 权限 / 幂等限流）", () =
     expect(unavailable.poster.calls).toHaveLength(0);
   });
 
-  it("0 篇或多篇已提交日报在 S4 不发送海报", async () => {
+  it("多篇日报使用合集快照，并携带草稿计数、全部日报与当天全量问题", async () => {
+    const harness = makeHarness();
+    harness.digest.snapshot = {
+      ...defaultSnapshot(),
+      draftCount: 2,
+      reports: [
+        report("report-1", { authorName: "张三", submittedAt: "2026-11-10T01:12:00.000Z" }),
+        report("report-2", {
+          authorName: "李四",
+          submittedAt: "2026-11-10T02:20:00.000Z",
+          state: "supplement",
+          stageNames: ["现场施工"],
+        }),
+      ],
+      issues: [
+        issue("manual", { sourceReport: null }),
+        issue("derived", {
+          sourceReport: {
+            id: "report-1",
+            authorId: ACTOR_ID,
+            authorName: "张三",
+            submittedAt: "2026-11-10T01:12:00.000Z",
+          },
+        }),
+      ],
+    };
+
+    await harness.service.handle(dmMessage({ msgid: "poster-multiple" }));
+
+    expect(harness.digest.calls).toHaveLength(1);
+    expect(harness.poster.calls).toHaveLength(1);
+    const call = harness.poster.calls[0]!;
+    expect(call.kind).toBe("digest");
+    expect(call).toMatchObject({ sendDaily: true, sendIssues: true, trace: "poster-multiple" });
+    if (call.kind !== "digest") throw new Error("expected digest poster");
+    expect(call.data).toMatchObject({
+      projectId: PROJECT_ID,
+      projectCode: "PRJ-001",
+      reportDate: "2026-11-10",
+      draftCount: 2,
+    });
+    expect(call.data.reports.map((entry) => entry.reportId)).toEqual(["report-1", "report-2"]);
+    expect(call.data.issues.map((entry) => entry.id)).toEqual(["manual", "derived"]);
+    expect(call.data.issues[1]?.sourceReport).toEqual({
+      id: "report-1",
+      authorName: "张三",
+      submittedAt: "2026-11-10T01:12:00.000Z",
+    });
+  });
+
+  it("0 篇日报但有问题时只发送问题合集", async () => {
+    const harness = makeHarness();
+    harness.digest.snapshot = {
+      ...defaultSnapshot(),
+      reports: [],
+      draftCount: 1,
+      issues: [issue("manual")],
+    };
+    await harness.service.handle(dmMessage({ msgid: "poster-zero-issues" }));
+
+    expect(harness.poster.calls).toHaveLength(1);
+    const call = harness.poster.calls[0]!;
+    expect(call.kind).toBe("digest");
+    expect(call).toMatchObject({ sendDaily: false, sendIssues: true });
+    if (call.kind !== "digest") throw new Error("expected digest poster");
+    expect(call.data.reports).toEqual([]);
+    expect(call.data.issues.map((entry) => entry.id)).toEqual(["manual"]);
+  });
+
+  it("0 篇日报且没有问题或仅查日报时不发送任何海报", async () => {
     const empty = makeHarness();
     empty.digest.snapshot = { ...defaultSnapshot(), reports: [], issues: [] };
     await empty.service.handle(dmMessage({ msgid: "poster-empty" }));
     expect(empty.poster.calls).toHaveLength(0);
 
-    const multiple = makeHarness();
-    multiple.digest.snapshot = {
+    const reportsOnly = makeHarness();
+    reportsOnly.digest.snapshot = { ...defaultSnapshot(), reports: [], issues: [issue("manual")] };
+    await reportsOnly.service.handle(
+      dmMessage({ msgid: "poster-empty-reports", text: "查询 项目 PRJ-001 2026-11-10 日报" }),
+    );
+    expect(reportsOnly.poster.calls).toHaveLength(0);
+  });
+
+  it("多篇仅查日报时不携带问题数据，仅查问题时使用问题合集", async () => {
+    const reportsOnly = makeHarness();
+    reportsOnly.digest.snapshot = {
       ...defaultSnapshot(),
       reports: [report("report-1"), report("report-2")],
+      issues: [issue("manual")],
     };
-    await multiple.service.handle(dmMessage({ msgid: "poster-multiple" }));
-    expect(multiple.poster.calls).toHaveLength(0);
+    await reportsOnly.service.handle(
+      dmMessage({ msgid: "poster-multiple-reports", text: "查询 项目 PRJ-001 2026-11-10 日报" }),
+    );
+    expect(reportsOnly.poster.calls[0]).toMatchObject({ kind: "digest", sendDaily: true, sendIssues: false });
+    expect(reportsOnly.poster.calls[0]?.data.issues).toEqual([]);
+
+    const issuesOnly = makeHarness();
+    issuesOnly.digest.snapshot = {
+      ...defaultSnapshot(),
+      reports: [report("report-1"), report("report-2")],
+      issues: [issue("manual")],
+    };
+    await issuesOnly.service.handle(
+      dmMessage({ msgid: "poster-multiple-issues", text: "查询 项目 PRJ-001 2026-11-10 问题" }),
+    );
+    expect(issuesOnly.poster.calls[0]).toMatchObject({ kind: "digest", sendDaily: false, sendIssues: true });
+    expect(issuesOnly.poster.calls[0]?.data.issues.map((entry) => entry.id)).toEqual(["manual"]);
+  });
+
+  it("多篇日报无 issue.view 时只发送日报合集且不携带问题数据", async () => {
+    const harness = makeHarness();
+    harness.permissions.issueAllowed = false;
+    harness.digest.snapshot = {
+      ...defaultSnapshot(),
+      reports: [report("report-1"), report("report-2")],
+      issues: [issue("manual")],
+    };
+    await harness.service.handle(dmMessage({ msgid: "poster-multiple-no-issue" }));
+
+    expect(harness.poster.calls[0]).toMatchObject({ kind: "digest", sendDaily: true, sendIssues: false });
+    expect(harness.poster.calls[0]?.data.issues).toEqual([]);
   });
 
   it("海报投递异常只记日志，不把已送达文字查询变成失败", async () => {
