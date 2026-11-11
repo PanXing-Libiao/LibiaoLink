@@ -1,5 +1,5 @@
-import {loadPlatformModel,inspectionRecord} from "./core/app.js?v=dxf-0.17.17";
-import {decodeManifest} from "./core/manifest-loader.js?v=direct-1";
+import {loadPlatformModel,inspectionRecord} from "./core/app.js?v=cad-0.21.30";
+import {decodeManifest} from "./core/manifest-loader.js?v=start-1";
 import {LoadPhases} from "./core/load-phases.js";
 import {hydrateBinary} from './core/binary-transport.js';
 import {missingFaceManifest} from './core/nonmeshable-ui.js';

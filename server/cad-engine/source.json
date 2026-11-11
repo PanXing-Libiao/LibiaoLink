@@ -490,7 +490,7 @@
     "dependency.json": "69169d3ac0655d7a8dae687ee5e4ef0738b4c8d9efe5a3873e5980eb20d875e9"
   },
   "browserFiles": {
-    "app.js": "15b3c600c7ee1edb1b64e4993da576b7ee585d9189fd67bea45b2a342ef5aa87",
+    "app.js": "aeebc12f193dd0fc302d2cd45f90997d68cd412e0519d5921bb07cf34b828fd3",
     "benchmark.js": "c81b3668354f0fc431c02f068545d5c71ce4a266bf414671341aa97674fc3e9d",
     "binary-transport.js": "e08b956fd5caa3588d5826f531d208ca12792ce10c003b2de1ceddc5527a447f",
     "camera-framing.js": "12f685ca11f995192d3f5348a44c2cf5fca5286bca58b0af99a7faa7ef5aab6d",
@@ -526,9 +526,9 @@
     "highlight.js": "1d19f0528e5fc706484efcdcb1101c4aa32285023cf550acefc04d85a386b2f5",
     "load-phases.js": "6b2c33cef7e2a6f9f08a1fbee603f3e15c1229739a09ed0aa1885fb184f1036d",
     "manifest-decode.js": "a91a0750d8be600ed207fb493fd5f4eb73fb4d3601e49c7402821c1d79921a5a",
-    "manifest-loader.js": "091b3ff738f8b0faf84fd03ab300e7e60d3235d9aba5db070acc76c6d35e05be",
+    "manifest-loader.js": "240b5cc3f3216a4e34bc22e06e8a897ffa8468a6e075855cfec97166dc51b35c",
     "manifest-parts.js": "1225af63ab61093822178a5b89bdfaa724f3d4f550ffc784e0f8699eabc4a7fb",
-    "manifest-worker.js": "325acc5cce0447711eaeb8801e837d1f560e516e88b5b0650fe53f8923d84056",
+    "manifest-worker.js": "e27bc33c2578b025cfc25fbf46dda60bb48c2776db47acec3e765d3fd2e7cf85",
     "mesh-repair-ui.js": "8750dc2c2a63d9ba10bada090fb2938a9cd9a593125f5d2f31e0e0d4e7c02aaf",
     "nonmeshable-ui.js": "d4b8a76429eea81e79e26eaef07e4a6508d6d791a2fa86f5313b21214951d618",
     "render-batches.js": "f27fcf79ee6188a9dbb9a516e466a25cd6c1f93393803eab6ede601a79f989e4",
@@ -612,8 +612,8 @@
     ]
   },
   "engineDigest": "d5fe848ffacf1a729d0b947b4e21b9ee5f08a16bcf521ad0203fa5efdc9902ee",
-  "viewerDigest": "39f2ff64596197aca3c54025d07293b36ce094f1d884fee9276d424a4122e846",
-  "releaseDigest": "3b525fbbcf626c5e31b88503cdac98fc90d2f73c942027f7c08c19d301a0b116",
+  "viewerDigest": "aab8eb57c033b9c29b5cd4dfe61887edcc2c6fb97b18774b43364e145961629f",
+  "releaseDigest": "5b07d02b6adf010123b9d27ee0d2b44d925ce18f790150d910ad8f2f9fed7d24",
   "engineVersion": "step-0.3.3/d5fe848ffacf1a729d0b947b4e21b9ee5f08a16bcf521ad0203fa5efdc9902ee/gateway-1",
-  "viewerVersion": "viewer-39f2ff64596197aca3c54025d07293b36ce094f1d884fee9276d424a4122e846"
+  "viewerVersion": "viewer-aab8eb57c033b9c29b5cd4dfe61887edcc2c6fb97b18774b43364e145961629f"
 }

@@ -28,8 +28,8 @@ it.skipIf(!databaseUrl)("0069 backfills format_version and keys artifacts by for
     await expect(db.query("insert into cad_artifacts(file_id,version_id,source_sha256,source_bytes,source_name,engine_version,format_version,main_path) values($1,$2,$3,10,'box.step','other-bundle',$4,'box.step')", [fileId, versionId, sha, stepVersion])).rejects.toMatchObject({ code: "23505" });
     await expect(db.query("insert into cad_artifacts(file_id,version_id,source_sha256,source_bytes,source_name,engine_version,format_version,main_path) values($1,$2,$3,10,'box.step','new-bundle','','box.step')", [fileId, versionId, sha])).rejects.toMatchObject({ code: "23514" });
     expect((await db.query("select engine_version,format_version from cad_artifacts order by format_version")).rows).toEqual([
-      { engine_version: "new-bundle", format_version: stepVersion },
       { engine_version: "old-bundle", format_version: "old-bundle" },
+      { engine_version: "new-bundle", format_version: stepVersion },
     ]);
   } finally { await db.query(`drop schema if exists ${schema} cascade`); db.release(); await pool.end(); }
 });
