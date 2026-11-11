@@ -19,6 +19,7 @@
 - **公开入口**：`DailyReportPosterDeliveryService.send({ kind, data, target, sendDaily, sendIssues, trace })`。`kind=single` 使用 `DailyReportPosterData` 并复用现有日报 / 问题专报；`kind=digest` 使用 `DailyReportDigestPosterData`，服务侧选择日报合集 / 问题合集渲染器。`data` 只使用 notify 自己的海报快照类型，不反向依赖 report-issue；单聊目标走 `sendUserImage`（`dmActivated=true`），群聊目标走 `sendGroupImage`（`groupActivated=true`）。
 - **发送顺序**：调用方先完成文字与深链回复；服务内严格按日报图 → 问题图发送，每次调用最多两张逻辑图。0 篇日报不生成日报合集；问题图只在 `sendIssues=true` 且对应快照有问题时生成。
 - **合集预算**：`renderDailyReportDigestPoster` / `renderDailyReportIssueDigestPoster` 固定 1440px 宽，画布最高 16000px；每篇日报 / 每个问题只取 1 张首图，取首图后整图最多 8 张缩略图。超过 8 张时投递层不生成该合集图，直接回退文字 + 深链；不截断附件后继续发送。正文预算耗尽显示“完整内容请点击上方深链”；单项原有多图但合计未超限时，图中提示每项仅展示 1 张。
+- **辅助标签可读性（2026-11-11 视觉复核）**：`REPORT` / `ISSUE` 为 12.5px 粗体，人数 / 阶段为 16px，`DONE` / `PLAN` / `PROGRESS` 节标题为 14px；节标题行高 36px、前置色块 22×7px。只调整合集海报视觉，不改发送与失败降级。
 - **附件 / 并发 / 失败隔离**：按当前发送开关筛选附件，同一 `objectKey` 只读取一次；合集日报与问题图各自只接收本图所需的图片映射。渲染闸门同时 1 张、排队最多 2 个；队列满、单张附件读取、渲染、10MB、上传或发送失败只跳过对应图片，日报图失败仍尝试问题图。成功 / 失败只记 `trace`、掩码目标末 4 位、错误名或 errcode，不记正文与完整 ID。
 - **测试 / 边界**：`server/test/daily-report-poster-delivery.test.ts` 覆盖单篇 / 合集分流、0 篇问题合集、双图顺序、每项首图 / 8 张上限、群 / 单聊目标、10MB、渲染 / 发送 / 附件失败隔离与并发队列上界；`server/test/daily-report-poster.test.ts` 覆盖两张合集图 1440px 宽、≤16000px 和超预算输出。不持久化海报字节、不写审计 / outbox / 站内信，既有群同步 `sendDailyReportPoster` 行为不变。`server/` 属 wmj 线代记，请 wmj 复核。
 
