@@ -1237,7 +1237,10 @@ const DIGEST_CARD_HEADER = 96;
 const DIGEST_CARD_BOTTOM = 28;
 const DIGEST_CARD_GAP = 26;
 const DIGEST_TEXT_LINE = 32;
-const DIGEST_SECTION_LABEL = 30;
+const DIGEST_KICKER_FONT_SIZE = 12.5;
+const DIGEST_META_FONT_SIZE = 16;
+const DIGEST_SECTION_LABEL_FONT_SIZE = 14;
+const DIGEST_SECTION_LABEL = 36;
 const DIGEST_SECTION_GAP = 18;
 const DIGEST_PHOTO_WIDTH = 360;
 const DIGEST_PHOTO_HEIGHT = 250;
@@ -1576,9 +1579,9 @@ function drawDigestSectionLabel(
   accent: string,
 ): void {
   ctx.fillStyle = accent;
-  ctx.fillRect(x, y + 7, 18, 6);
-  setFont(ctx, true, 10.5);
-  drawSpaced(ctx, label, x + 26, y + 15, 1.3, MUTED, "left");
+  ctx.fillRect(x, y + 7, 22, 7);
+  setFont(ctx, true, DIGEST_SECTION_LABEL_FONT_SIZE);
+  drawSpaced(ctx, label, x + 30, y + 18, 1.2, MUTED, "left");
 }
 
 function drawDigestLines(
@@ -1616,8 +1619,8 @@ function drawDigestReportCard(
   setFont(ctx, true, 44);
   ctx.fillStyle = YELLOW_INK;
   ctx.fillText(pad2(layout.index + 1), MARGIN + 28, y + 57);
-  setFont(ctx, false, 9.5);
-  drawSpaced(ctx, "REPORT", MARGIN + 30, y + 77, 2.2, MUTED, "left");
+  setFont(ctx, true, DIGEST_KICKER_FONT_SIZE);
+  drawSpaced(ctx, "REPORT", MARGIN + 30, y + 78, 1.8, MUTED, "left");
 
   const contentX = MARGIN + 100;
   const author = layout.report.authorName ?? "未记录填写者";
@@ -1638,7 +1641,7 @@ function drawDigestReportCard(
   ctx.textAlign = "right";
   ctx.fillText("提交  " + digestDateTime(layout.report.submittedAt), MARGIN + CONTENT_WIDTH - 28, y + 37);
   ctx.textAlign = "left";
-  setFont(ctx, false, 13);
+  setFont(ctx, false, DIGEST_META_FONT_SIZE);
   ctx.fillStyle = MUTED;
   const headcount = layout.report.headcount === null ? "人数未填" : String(layout.report.headcount) + " 人";
   const stages = layout.report.stages.length > 0 ? layout.report.stages.join(" / ") : "未关联阶段";
@@ -1881,8 +1884,8 @@ function drawDigestIssueCard(
   setFont(ctx, true, 58);
   ctx.fillStyle = ORANGE;
   ctx.fillText(pad2(layout.index + 1), MARGIN + 28, y + 58);
-  setFont(ctx, false, 9.5);
-  drawSpaced(ctx, "ISSUE", MARGIN + 30, y + 79, 2.4, MUTED, "left");
+  setFont(ctx, true, DIGEST_KICKER_FONT_SIZE);
+  drawSpaced(ctx, "ISSUE", MARGIN + 30, y + 79, 1.8, MUTED, "left");
 
   const contentX = MARGIN + 100;
   setFont(ctx, true, 13);
