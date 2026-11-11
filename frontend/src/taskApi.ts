@@ -24,6 +24,7 @@ export type ApiTask = {
   title: string;
   titleEn: string | null;
   ownerIds: string[];
+  managerIds: string[];
   status: string;
   displayStatus: string;
   progress: number;
@@ -48,6 +49,7 @@ export type ApiTask = {
 
 export type ApiTaskListItem = ApiTask & {
   ownerNames: Array<string | null>;
+  managerNames: Array<string | null>;
   fileSummary: { total: number; draft: number; final: number };
   capabilities?: TaskCapabilities;
 };
@@ -57,6 +59,7 @@ export type TaskFileBrief = { id: string; name: string; status: string; docType:
 
 export type ApiTaskDetail = ApiTask & {
   ownerNames: Array<string | null>;
+  managerNames: Array<string | null>;
   files: TaskFileBrief[];
   capabilities?: TaskCapabilities;
 };
@@ -163,6 +166,7 @@ export function toUiTask(
   const dueDate = view.plannedEnd ?? "";
   const derivedDays = startDate !== "" && dueDate !== "" ? daysBetweenInclusive(startDate, dueDate) : 0;
   const ownerNames = "ownerNames" in view ? view.ownerNames : undefined;
+  const managerNames = "managerNames" in view ? view.managerNames : undefined;
   /** 写回响应不带姓名时：先查用户目录（调用方传 resolveName），查不到再按 id 对回旧行的姓名，最后才「—」。 */
   const previousIds = previous?.ownerIds ?? [];
   const owners =
@@ -176,6 +180,16 @@ export function toUiTask(
           return at < 0 ? "—" : (previous?.owners[at] ?? "—");
         })
       : ownerNames.map((name) => (name === null || name === "" ? "—" : name));
+  const previousManagerIds = previous?.managerIds ?? [];
+  const managers =
+    managerNames === undefined
+      ? view.managerIds.map((id) => {
+          const resolved = resolveName?.(id);
+          if (resolved !== undefined && resolved !== "") return resolved;
+          const at = previousManagerIds.indexOf(id);
+          return at < 0 ? "—" : (previous?.managers[at] ?? "—");
+        })
+      : managerNames.map((name) => (name === null || name === "" ? "—" : name));
   return {
     id: view.id,
     nodeId: view.nodeId,
@@ -187,6 +201,8 @@ export function toUiTask(
     titleEn: view.titleEn ?? "",
     ownerIds: [...view.ownerIds],
     owners,
+    managerIds: [...view.managerIds],
+    managers,
     status: displayStatusLabel(view.displayStatus),
     progress: view.progress,
     startDate,
@@ -237,6 +253,7 @@ export type TaskCreateInput = {
   /** 来源任务节点库节点（task_nodes；M3-07 刀 3）—— 描述 / 英文名 / 阶段取节点现值，与 taskNodeId 二选一。 */
   sourceNodeId?: string;
   ownerIds?: string[];
+  managerIds?: string[];
   plannedStart?: string | null;
   plannedEnd?: string | null;
   estimatedDays?: number | null;
@@ -281,6 +298,7 @@ export type TaskUpdateInput = {
   /** 任务描述（英文；Push 196）：同 title；null = 清空。 */
   titleEn?: string | null;
   ownerIds?: string[];
+  managerIds?: string[];
   sortIndex?: number;
   status?: string;
   plannedStart?: string | null;

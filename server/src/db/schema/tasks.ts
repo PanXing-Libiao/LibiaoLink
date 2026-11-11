@@ -43,6 +43,11 @@ export const tasks = pgTable(
      * 空默认值与「未分配」同义，存量 / 新建都不写 null。
      */
     ownerIds: uuid("owner_ids").array().notNull().default(sql`array[]::uuid[]`),
+    /**
+     * 本条任务的项目经理（2026-11-10）：至少一位、数组顺序 = 展示顺序；新建继承项目当前经理，
+     * 行内修改只影响本条任务。projects.manager_ids 独立维护，不汇总任务经理；任务经理不获得整项目编辑权。
+     */
+    managerIds: uuid("manager_ids").array().notNull(),
     status: text("status").notNull(),
     /**
      * 状态显式覆盖（2026-09-24 定案 · 迁移 0031）：五态下拉里的「已延期 / 提前完成」落这里（原型 statusOverride 的落库版）。
@@ -100,6 +105,7 @@ export const tasks = pgTable(
      *  读面恒带 `deleted_at is null`，由下方部分索引 ix_tasks_active_group 完整覆盖，双索引只剩写放大。
      */
     index("ix_tasks_owner_ids").using("gin", table.ownerIds),
+    index("ix_tasks_manager_ids").using("gin", table.managerIds),
     index("ix_tasks_deliverable_types").using("gin", table.deliverableTypes),
     index("ix_tasks_change_refs").using("gin", table.changeRefs),
     index("ix_tasks_due").on(table.projectId, table.actualEnd, table.plannedEnd),
@@ -126,6 +132,8 @@ export const tasks = pgTable(
     ),
     check("ck_tasks_sort_index", sql`${table.sortIndex} >= 0`),
     check("ck_tasks_owner_ids_no_null", sql`array_position(${table.ownerIds}, null::uuid) is null`),
+    check("ck_tasks_manager_ids", sql`cardinality(${table.managerIds}) >= 1`),
+    check("ck_tasks_manager_ids_no_null", sql`array_position(${table.managerIds}, null::uuid) is null`),
     check("ck_tasks_deliverable_types_no_null", sql`array_position(${table.deliverableTypes}, null::text) is null`),
     check("ck_tasks_deliverable_types_no_empty", sql`array_position(${table.deliverableTypes}, ''::text) is null`),
     check("ck_tasks_change_refs_no_null", sql`array_position(${table.changeRefs}, null::uuid) is null`),

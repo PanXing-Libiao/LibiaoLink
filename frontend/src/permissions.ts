@@ -49,7 +49,7 @@ export type MyPermissions = {
   groupAccessLevel: GroupAccessLevel;
   /** 多范围权限，同一范围取最高权限。 */
   groupScopePermissions: GroupAccessScopePermission[];
-  /** 至少一个范围可编辑（任务模板 / 节点库）。 */
+  /** 至少一个范围可编辑（兼容摘要；节点库 / 任务模板分别看 taskNodeManage / taskTemplateManage）。 */
   groupAnyEdit: boolean;
   /** 全部项目编辑（字典 / 日历 / 自动化 / 重发）。 */
   groupAllEdit: boolean;
@@ -57,6 +57,12 @@ export type MyPermissions = {
   groupOwnEdit: boolean;
   /** 指定项目编辑（且至少选中一个项目）。 */
   groupSelectedEdit: boolean;
+  /** 是否可新增 / 编辑 / 删除公共任务节点库；账号级，不随当前项目切换。 */
+  taskNodeManage: boolean;
+  /** 是否可浏览公共任务模板。 */
+  taskTemplateRead: boolean;
+  /** 是否可新建公共任务模板；具体模板编辑 / 删除还要求创建人或管理员。 */
+  taskTemplateManage: boolean;
   /** 操作记录可见范围：管理员 / 项目经理 / 仅本人。 */
   auditScope: AuditScope;
 };
@@ -80,6 +86,9 @@ type PermissionMeResponse = {
     groupAllEdit?: boolean;
     groupOwnEdit?: boolean;
     groupSelectedEdit?: boolean;
+    taskNodeManage?: boolean;
+    taskTemplateRead?: boolean;
+    taskTemplateManage?: boolean;
     auditScope?: AuditScope;
   };
 };
@@ -128,6 +137,10 @@ export function loadMyPermissions(refresh = false): Promise<MyPermissions> {
           (groupAccessAdmin || groupScopePermissions.some((permission) => permission.projectScope === "own" && permission.accessLevel === "edit")),
         groupSelectedEdit: payload.permissions.groupSelectedEdit ??
           (groupAccessAdmin || groupScopePermissions.some((permission) => permission.projectScope === "selected" && permission.accessLevel === "edit")),
+        taskNodeManage: payload.permissions.taskNodeManage ?? groupAccessAdmin,
+        taskTemplateRead: payload.permissions.taskTemplateRead ??
+          (groupAccessAdmin || !groupAccessEnforced || groupScopePermissions.length > 0),
+        taskTemplateManage: payload.permissions.taskTemplateManage ?? groupAccessAdmin,
         auditScope: payload.permissions.auditScope ?? (groupAccessAdmin ? "all" : "self"),
       };
       for (const listener of listeners) listener();
@@ -151,8 +164,18 @@ export function hasPageAccess(_permissions: MyPermissions | null, _page: GroupAc
   return true;
 }
 
-/** 任务模板维护：系统管理员恒可编辑；部门限制开启且任一范围可编辑时也可编辑。 */
+/** 节点库维护：系统管理员，或至少管理一个有效项目的项目经理。 */
+export function canEditTaskNodes(permissions: MyPermissions | null): boolean {
+  return permissions !== null && permissions.taskNodeManage;
+}
+
+/** 公共任务模板新建：管理员或至少管理一个有效项目的项目经理；与节点库写权限分开。 */
 export function canEditTaskTemplates(permissions: MyPermissions | null): boolean {
-  if (permissions === null) return false;
-  return permissions.groupAccessAdmin || (permissions.groupAccessEnforced && permissions.groupAnyEdit);
+  return permissions !== null && permissions.taskTemplateManage;
+}
+
+/** 单份公共任务模板维护：管理员，或仍为有效项目经理的创建人；系统预置模板仅管理员可维护。 */
+export function canEditTaskTemplate(permissions: MyPermissions | null, createdBy: string | null): boolean {
+  if (permissions === null || !permissions.taskTemplateManage) return false;
+  return permissions.groupAccessAdmin || (createdBy !== null && createdBy === permissions.userId);
 }

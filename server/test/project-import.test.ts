@@ -10,7 +10,7 @@ import type { DatabaseService } from "../src/db/database.service.js";
 import type { ObjectStorage } from "../src/storage/index.js";
 import type { AuditService } from "../src/modules/admin/index.js";
 import type { UserRow } from "../src/modules/identity/index.js";
-import type { PermissionService } from "../src/modules/permission/index.js";
+import type { PermissionService, ProjectManagerEligibilityService } from "../src/modules/permission/index.js";
 import type { FlowService, ProjectMemberRepository, ProjectRepository } from "../src/modules/project/index.js";
 import type { TaskNodeRepository } from "../src/modules/template/index.js";
 import type { TranslateService } from "../src/modules/translate/index.js";
@@ -427,6 +427,13 @@ function createHarness() {
     },
   };
 
+  const managerEligibility = {
+    eligible: new Set<string>(["user-jia", ACTOR_ID]),
+    async eligibleUserIds(): Promise<Set<string>> {
+      return new Set(this.eligible);
+    },
+  };
+
   const database = {
     db: {
       transaction: async (fn: (tx: unknown) => Promise<unknown>): Promise<unknown> => fn({}),
@@ -455,6 +462,7 @@ function createHarness() {
     members as unknown as ProjectMemberRepository,
     flow as unknown as FlowService,
     permission as unknown as PermissionService,
+    managerEligibility as unknown as ProjectManagerEligibilityService,
     nodes as unknown as TaskNodeRepository,
     audit as unknown as AuditService,
     storage as unknown as ObjectStorage,
@@ -462,7 +470,7 @@ function createHarness() {
     admission as unknown as ImportAdmissionGate,
   );
 
-  return { service, previews, projects, members, nodes, audit, storage, translate, flow, permission, admission };
+  return { service, previews, projects, members, nodes, audit, storage, translate, flow, permission, managerEligibility, admission };
 }
 
 /** 导入表三种 sheet 的表头（与真实导入表同列名；列顺序可乱，按表头定位）。 */
@@ -1360,6 +1368,49 @@ describe("ProjectImportService.commit（确认导入 · 单事务）", () => {
     await h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh");
     expect(h.projects.inserted[0]?.managerIds).toEqual(["user-jia", ACTOR_ID]);
     expect(h.members.upserts.map((item) => item.userId)).toEqual(["user-jia", ACTOR_ID]);
+  });
+
+  it("导入：源表项目经理不符合资格时跳过，符合资格的导入人兜底", async () => {
+    const h = createHarness();
+    h.previews.users = [{ id: "user-jia", username: "jiahaiyang", displayName: "贾海洋" }];
+    h.managerEligibility.eligible = new Set([ACTOR_ID]);
+    const preview = await runPreview(h);
+    h.storage.objects.set(h.previews.row === null ? "" : h.previews.row.objectKey, mediaZip("image1.png", "image2.png"));
+
+    const result = await h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh");
+    expect(h.projects.inserted[0]?.managerIds).toEqual([ACTOR_ID]);
+    expect(result.issues.map((issue) => issue.code)).toContain("MANAGER_INELIGIBLE");
+    expect(h.previews.tasks[0]?.ownerIds).toEqual(["user-jia"]);
+  });
+
+  it("导入：源表经理与导入人均不符合资格时拒绝导入", async () => {
+    const h = createHarness();
+    h.previews.users = [{ id: "user-jia", username: "jiahaiyang", displayName: "贾海洋" }];
+    h.managerEligibility.eligible = new Set();
+    const preview = await runPreview(h);
+    h.storage.objects.set(h.previews.row === null ? "" : h.previews.row.objectKey, mediaZip("image1.png", "image2.png"));
+
+    await expectCode(
+      () => h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh"),
+      "VALIDATION_FAILED",
+    );
+    expect(h.projects.inserted).toEqual([]);
+  });
+
+  it("导入：仅自己的项目编辑，导入人不符合资格时只加普通成员", async () => {
+    const h = createHarness();
+    h.previews.users = [{ id: "user-jia", username: "jiahaiyang", displayName: "贾海洋" }];
+    h.managerEligibility.eligible = new Set(["user-jia"]);
+    const preview = await runPreview(h);
+    h.storage.objects.set(h.previews.row === null ? "" : h.previews.row.objectKey, mediaZip("image1.png", "image2.png"));
+    h.permission.groupAccess = { enforced: true, admin: false, allEdit: false, ownEdit: true };
+
+    await h.service.commit({ previewId: preview.previewId, ...COMMIT_BODY }, ACTOR_ID, "zh");
+    expect(h.projects.inserted[0]?.managerIds).toEqual(["user-jia"]);
+    expect(h.members.upserts.map((item) => [item.userId, item.role])).toEqual([
+      ["user-jia", "project_manager"],
+      [ACTOR_ID, "project_member"],
+    ]);
   });
 
   it("不勾选补节点：任务按文件原名导入（taskNodeId 为空），节点库不动", async () => {

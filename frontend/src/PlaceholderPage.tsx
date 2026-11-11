@@ -168,12 +168,12 @@ type PlaceholderPageProps = {
   page: PlaceholderPageKey;
   /** 任务模板页当前板块（来自 URL 的 `?section=`；缺省 / 不认识的值回落到第一个板块） */
   section: string | null;
-  /**
-   * 是否可维护节点库与任务模板（系统管理员，或部门限制开启且命中编辑规则）：
-   * 决定左列「＋ 添加节点」/ 节点卡片的编辑删除、右侧「＋ 新建模板」/「保存」/ 删除模板 / 拖拽改模板渲不渲染、可不可用；
-   * 服务端逐请求仍是最终裁决（无权 = 403 FORBIDDEN）。
-   */
-  canManageBlueprint: boolean;
+  /** 是否可维护公共任务节点库（系统管理员，或至少管理一个有效项目的项目经理）。 */
+  canManageNodes: boolean;
+  /** 是否可新建公共任务模板（管理员，或至少管理一个有效项目的项目经理）。 */
+  canManageTemplates: boolean;
+  /** 单份模板是否可维护：管理员，或仍为有效项目经理的创建人。 */
+  canManageTemplate: (createdBy: string | null) => boolean;
 };
 
 /** 占位页：顶层页的按钮先各自落地，页面内容后续迭代；任务模板先出阶段板块标签栏 + 左侧任务节点卡片区。 */
@@ -200,7 +200,7 @@ function InsertLine({ className }: { className: string }) {
   );
 }
 
-export default function PlaceholderPage({ me, page, section, canManageBlueprint }: PlaceholderPageProps) {
+export default function PlaceholderPage({ me, page, section, canManageNodes, canManageTemplates, canManageTemplate }: PlaceholderPageProps) {
   const t = useT();
   const locale = useLocale();
   const localize = useLocalizedTranslator();
@@ -744,7 +744,7 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
       return null;
     }
     const templateId = panel.getAttribute("data-template-panel") ?? "";
-    if (!templates.some((template) => template.id === templateId)) {
+    if (!templates.some((template) => template.id === templateId && canManageTemplate(template.createdBy))) {
       return null;
     }
     const cards = Array.from(panel.querySelectorAll("article"));
@@ -763,6 +763,10 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
    */
   const commitDrop = (info: DragInfo, spot: DropSpot | null): void => {
     if (spot === null) {
+      return;
+    }
+    const targetTemplate = templates.find((template) => template.id === spot.templateId);
+    if (targetTemplate === undefined || !canManageTemplate(targetTemplate.createdBy)) {
       return;
     }
     const insertAt = spot.index;
@@ -962,9 +966,9 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
             </div>
             {/*
               新建模板的入口在板块标签栏这一行：点一下 = POST 一份空模板（默认名「未命名模板」），
-              新面板插到「任务节点」右侧、原来的模板往右挪。写 = 系统管理员或部门编辑规则，无权不渲染（服务端仍是最终裁决）。
+              新面板插到「任务节点」右侧、原来的模板往右挪。写 = 系统管理员或有效项目经理，无权不渲染（服务端仍是最终裁决）。
             */}
-            {canManageBlueprint ? (
+            {canManageTemplates ? (
               <button
                 type="button"
                 data-template-new=""
@@ -1006,7 +1010,7 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
                         ? t("tpl.nodes.count", { n: activeNodes.length })
                         : t("tpl.nodes.countFiltered", { shown: visibleNodes.length, total: activeNodes.length })}
                     </span>
-                    {canManageBlueprint ? (
+                    {canManageNodes ? (
                       <button
                         type="button"
                         onClick={openCreateForm}
@@ -1085,23 +1089,23 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
                       <TaskNodeCard
                         title={item.title}
                         subtitle={item.titleEn}
-                        grab={canManageBlueprint}
+                        grab={canManageTemplates}
                         onPointerDown={
-                          canManageBlueprint
+                          canManageTemplates
                             ? (event) => {
                                 beginDrag({ nodeId: item.id, source: "left", fromTemplateId: null }, event);
                               }
                             : undefined
                         }
                         onEdit={
-                          canManageBlueprint
+                          canManageNodes
                             ? () => {
                                 openEditForm(item);
                               }
                             : undefined
                         }
                         onDelete={
-                          canManageBlueprint
+                          canManageNodes
                             ? () => {
                                 resetDrag();
                                 setPendingDeleteTemplate(null);
@@ -1130,6 +1134,7 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
                   const duplicate = hovered && isDuplicateIn(template);
                   const nodeCount = template.nodes.length;
                   const savedOk = !isDirty(template);
+                  const canManageThisTemplate = canManageTemplate(template.createdBy);
                   return (
                     <section
                       key={template.id}
@@ -1153,10 +1158,10 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
                             onFocus={() => { setNameFocusedId(template.id); }}
                             onBlur={() => { setNameFocusedId(null); }}
                             onChange={(event) => renameTemplate(template.id, event.target.value)}
-                            disabled={!canManageBlueprint}
+                            disabled={!canManageThisTemplate}
                             aria-label={t("tpl.name.placeholder")}
                             placeholder={t("tpl.name.placeholder")}
-                            title={canManageBlueprint ? t("tpl.name.title") : t("tpl.name.readonlyTitle")}
+                            title={canManageThisTemplate ? t("tpl.name.title") : t("tpl.template.ownerReadonlyTitle")}
                             className={
                               "-mx-1 flex-1 truncate rounded px-1 font-semibold text-zinc-800 outline-none transition hover:bg-white/40 focus:bg-white/70 disabled:cursor-not-allowed " +
                               // 2026-10-13 业务口径（英文界面「模板名称省略」）：英文模板名比中文长，名字和「计数 / 保存 / 删除」抢一行 ——
@@ -1169,7 +1174,7 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
                             <span aria-label={t("tpl.nodes.selectedAria")} className="shrink-0 text-xs text-zinc-500">
                               {t("tpl.nodes.n", { n: nodeCount })}
                             </span>
-                            {canManageBlueprint ? (
+                            {canManageThisTemplate ? (
                               <button
                                 type="button"
                                 data-template-save={template.id}
@@ -1188,13 +1193,13 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
                             ) : (
                               <span
                                 aria-label={t("tpl.save.saved")}
-                                title={t("tpl.name.readonlyTitle")}
+                                title={t("tpl.template.ownerReadonlyTitle")}
                                 className="shrink-0 rounded-md border border-white/70 bg-white/50 px-2 py-0.5 text-xs font-medium text-zinc-400"
                               >
                                 {t("tpl.readonly")}
                               </span>
                             )}
-                            {canManageBlueprint ? (
+                            {canManageThisTemplate ? (
                               <RowDeleteButton
                                 onDelete={() => removeTemplate(template.id)}
                                 label={t("row.delete.template", { name: localize(template.name) })}
@@ -1211,7 +1216,7 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
                         <div className="flex h-4 items-center gap-1.5 text-xs">
                           {duplicate ? (
                             <span className="font-medium text-amber-600">{t("tpl.dup")}</span>
-                          ) : canManageBlueprint && !savedOk ? (
+                          ) : canManageThisTemplate && !savedOk ? (
                             <>
                               <span
                                 data-template-unsaved="true"
@@ -1265,7 +1270,7 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
                       >
                         {nodeCount === 0 ? (
                           <p className="flex min-h-[160px] flex-1 items-center justify-center px-4 text-center text-xs text-zinc-400">
-                            {t("tpl.dropHere")}
+                            {canManageThisTemplate ? t("tpl.dropHere") : t("tpl.dropHereReadonly")}
                           </p>
                         ) : (
                           <div className="space-y-3 p-3">
@@ -1282,11 +1287,11 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
                                 <TaskNodeCard
                                   title={item.title}
                                   subtitle={item.titleEn}
-                                  grab={canManageBlueprint}
+                                  grab={canManageThisTemplate}
                                   highlighted={duplicate && item.id === drag?.nodeId}
                                   dimmed={drag?.source === "right" && item.id === drag.nodeId}
                                   onPointerDown={
-                                    canManageBlueprint
+                                    canManageThisTemplate
                                       ? (event) => {
                                           beginDrag({ nodeId: item.id, source: "right", fromTemplateId: template.id }, event);
                                         }
@@ -1294,7 +1299,7 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
                                   }
                                   deleteLabel={t("row.delete.template", { name: item.title })}
                                   onDelete={
-                                    canManageBlueprint
+                                    canManageThisTemplate
                                       ? () =>
                                           updateTemplates((previous) =>
                                             previous.map((entry) =>
@@ -1333,7 +1338,7 @@ export default function PlaceholderPage({ me, page, section, canManageBlueprint 
               )}
               {templates.length === 0 && !templatesLoading && templatesError === null ? (
                 <p className="flex min-h-[160px] w-full items-center justify-center rounded-2xl border border-dashed border-zinc-300 bg-white/40 px-6 text-center text-xs text-zinc-500">
-                  {t("tpl.templates.empty")}
+                  {canManageTemplates ? t("tpl.templates.empty") : t("tpl.templates.emptyReadonly")}
                 </p>
               ) : null}
               </div>

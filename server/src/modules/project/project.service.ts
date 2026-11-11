@@ -14,7 +14,7 @@ import { AppError } from "../../common/errors/app-error.js";
 import { DatabaseService } from "../../db/database.service.js";
 import { appendOutbox } from "../../db/outbox.js";
 import { AuditService, diffRecords } from "../admin/index.js";
-import { PermissionService } from "../permission/index.js";
+import { PermissionService, ProjectManagerEligibilityService } from "../permission/index.js";
 import type { ProjectScopeFilter } from "../permission/index.js";
 import { ObjectStorage, toApiError } from "../../storage/index.js";
 import { FlowService } from "./flow.service.js";
@@ -25,6 +25,7 @@ import {
   type ProjectUpdateInput,
   type ProjectViewRow,
 } from "./project.repository.js";
+import { ProjectMemberRepository } from "./project-member.repository.js";
 import { buildProjectFilter, parseProjectSort, type ProjectListQueryInput } from "./project.query.js";
 
 export type ProjectView = z.infer<typeof ProjectSchema>;
@@ -101,6 +102,8 @@ export class ProjectService {
     private readonly flow: FlowService,
     private readonly audit: AuditService,
     private readonly permission: PermissionService,
+    private readonly managerEligibility: ProjectManagerEligibilityService,
+    private readonly members: ProjectMemberRepository,
     private readonly storage: ObjectStorage,
   ) {}
 
@@ -160,15 +163,19 @@ export class ProjectService {
    */
   async createProject(body: ProjectCreateBody, actorId: string): Promise<ProjectView> {
     const at = new Date();
-    const groupAccess = await this.permission.groupAccessOf(actorId);
-    const managerIds =
-      groupAccess.enforced &&
-      !groupAccess.admin &&
-      groupAccess.ownEdit &&
-      !groupAccess.allEdit &&
-      !body.managerIds.includes(actorId)
-        ? [...body.managerIds, actorId]
-        : [...body.managerIds];
+    const [groupAccess, eligibleManagerIds] = await Promise.all([
+      this.permission.groupAccessOf(actorId),
+      this.managerEligibility.eligibleUserIds(),
+    ]);
+    const managerIds = [...body.managerIds];
+    await this.managerEligibility.assertAssignable(managerIds, { eligibleIds: eligibleManagerIds });
+    const autoManageOwnProjects =
+      groupAccess.enforced && !groupAccess.admin && groupAccess.ownEdit && !groupAccess.allEdit;
+    if (autoManageOwnProjects && !managerIds.includes(actorId) && eligibleManagerIds.has(actorId)) {
+      managerIds.push(actorId);
+    }
+    // 创建人不符合项目经理资格时，以项目成员身份保留浏览入口；绝不隐式授予项目经理 / 全站模板权限。
+    const addCreatorAsProjectMember = autoManageOwnProjects && !managerIds.includes(actorId);
     const input: ProjectInsertInput = {
       code: body.code,
       name: body.name,
@@ -181,6 +188,9 @@ export class ProjectService {
     };
     const projectId = await this.database.db.transaction(async (tx) => {
       const row = await this.projects.insert(input, at, tx);
+      if (addCreatorAsProjectMember) {
+        await this.members.upsert(row.id, actorId, "project_member", at, tx);
+      }
       const imported = await this.flow.importSnapshot(tx, {
         projectId: row.id,
         projectType: row.projectType,
@@ -234,7 +244,18 @@ export class ProjectService {
     if (body.customer !== undefined) patch.customer = body.customer;
     if (body.region !== undefined) patch.region = body.region;
     if (body.projectType !== undefined) patch.projectType = body.projectType;
-    if (body.managerIds !== undefined) patch.managerIds = body.managerIds;
+    if (body.managerIds !== undefined) {
+      const eligibleManagerIds = await this.managerEligibility.eligibleUserIds();
+      const roster = await this.members.listByProject(id);
+      const rosterManagerIds = roster
+        .filter((row) => row.member.roleInProject === "project_manager")
+        .map((row) => row.member.userId);
+      await this.managerEligibility.assertAssignable(body.managerIds, {
+        existingUserIds: [...current.project.managerIds, ...rosterManagerIds],
+        eligibleIds: eligibleManagerIds,
+      });
+      patch.managerIds = body.managerIds;
+    }
     if (body.stageKey !== undefined) patch.stageKey = body.stageKey;
     if (body.status !== undefined) patch.status = body.status;
     if (body.description !== undefined) patch.description = body.description;
@@ -250,6 +271,10 @@ export class ProjectService {
           throw new AppError("NOT_FOUND", "项目不存在或不可见");
         }
         throw new AppError("VERSION_CONFLICT", "项目已被他人更新，请刷新后重试");
+      }
+      if (patch.managerIds !== undefined) {
+        // 项目弹窗改经理 = 全局调整：同步全部有效任务；行内改经理仍走任务 PATCH，只影响当前任务。
+        await this.projects.replaceActiveTaskManagerIds(id, row.managerIds, at, tx);
       }
       const changes = diffRecords(projectAuditSnapshot(current.project), projectAuditSnapshot(row));
       await this.audit.record(tx, {

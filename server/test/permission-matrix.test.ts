@@ -517,6 +517,35 @@ describe("策略服务：可见集 / 项目上下文 / 404·403 / 缓存", () =>
     await service.assertCan(ACTOR_ID, "task.progress", { member: true, projectManager: false });
   });
 
+  it("流程蓝图仅管理员；节点库与模板新建由有效项目经理自动获得；模板编辑仅创建人或管理员", async () => {
+    const managerRepo = new FakePermissionRepository();
+    managerRepo.ownedIds = [PROJECT_ID];
+    managerRepo.refs.set(PROJECT_ID, { managerIds: [ACTOR_ID], deletedAt: null });
+    const managerService = makeService([actor({ permissionKeys: [...PERMISSION_KEYS] })], managerRepo).service;
+    expect(await managerService.canManageBlueprint(ACTOR_ID)).toBe(false);
+    expect(await managerService.can(ACTOR_ID, "blueprint.manage")).toBe(false);
+    expect(await managerService.canManageTaskNodes(ACTOR_ID)).toBe(true);
+    expect(await managerService.canManageTaskTemplates(ACTOR_ID)).toBe(true);
+    expect(await managerService.canManageTaskTemplate(ACTOR_ID, ACTOR_ID)).toBe(true);
+    expect(await managerService.canManageTaskTemplate(ACTOR_ID, MANAGER_ID)).toBe(false);
+
+    const ordinary = makeService([actor()], new FakePermissionRepository()).service;
+    expect(await ordinary.canManageTaskNodes(ACTOR_ID)).toBe(false);
+    expect(await ordinary.canManageTaskTemplates(ACTOR_ID)).toBe(false);
+    expect(await ordinary.canManageTaskTemplate(ACTOR_ID, ACTOR_ID)).toBe(false);
+
+    const adminRepo = new FakePermissionRepository();
+    adminRepo.manualAdmin = true;
+    const adminService = makeService(
+      [actor({ permissionKeys: [...PERMISSION_KEYS] })],
+      adminRepo,
+      new AppConfig({ GROUP_ACCESS_ENFORCED: "false" } as Env),
+    ).service;
+    expect(await adminService.canManageBlueprint(ACTOR_ID)).toBe(true);
+    expect(await adminService.canManageTaskNodes(ACTOR_ID)).toBe(true);
+    expect(await adminService.canManageTaskTemplate(ACTOR_ID, MANAGER_ID)).toBe(true);
+  });
+
   it("授权画像缓存：同一用户两次判定只查一次库", async () => {
     const repository = new FakePermissionRepository();
     const { service, roles } = makeService([member], repository);

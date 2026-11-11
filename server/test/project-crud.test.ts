@@ -13,12 +13,13 @@ import { DatabaseService } from "../src/db/database.service.js";
 import { FlowService } from "../src/modules/project/flow.service.js";
 import type { AuditService } from "../src/modules/admin/index.js";
 import type { ObjectStorage } from "../src/storage/index.js";
-import type { PermissionService } from "../src/modules/permission/index.js";
+import type { PermissionService, ProjectManagerEligibilityService } from "../src/modules/permission/index.js";
 
 const AT = new Date("2026-09-20T06:00:00.000Z");
 const DAY_MS = 86_400_000;
 const UUID_A = "11111111-1111-4111-8111-111111111111";
 const UUID_B = "22222222-2222-4222-8222-222222222222";
+const UUID_C = "33333333-3333-4333-8333-333333333333";
 
 function expectAppError(fn: () => unknown, code: string): void {
   try {
@@ -227,6 +228,8 @@ class FakeProjectRepository {
     };
   }
 
+  async replaceActiveTaskManagerIds(_id: string, _managerIds: string[], _at: Date): Promise<void> {}
+
   async touch(id: string, at: Date): Promise<void> {
     this.lastTouched = { id, at };
   }
@@ -272,6 +275,45 @@ class FakePermissionService {
   }
 }
 
+class FakeProjectManagerEligibilityService {
+  eligible = new Set<string>([UUID_A, UUID_B]);
+
+  async eligibleUserIds(): Promise<Set<string>> {
+    return new Set(this.eligible);
+  }
+
+  async assertAssignable(
+    managerIds: readonly string[],
+    options: { existingUserIds?: readonly string[]; eligibleIds?: ReadonlySet<string> } = {},
+  ): Promise<void> {
+    const eligible = options.eligibleIds ?? this.eligible;
+    const preserved = new Set(options.existingUserIds ?? []);
+    const invalid = managerIds.filter((userId) => !eligible.has(userId) && !preserved.has(userId));
+    if (invalid.length > 0) {
+      throw new AppError("VALIDATION_FAILED", "项目经理只能选择有效项目部成员或系统管理员");
+    }
+  }
+}
+
+class FakeProjectMemberRepository {
+  rows: Array<{ projectId: string; userId: string; roleInProject: string }> = [];
+
+  async listByProject(projectId: string): Promise<Array<{ member: { projectId: string; userId: string; roleInProject: string } }>> {
+    return this.rows
+      .filter((row) => row.projectId === projectId)
+      .map((row) => ({ member: row }));
+  }
+
+  async upsert(projectId: string, userId: string, roleInProject: string): Promise<void> {
+    const existing = this.rows.find((row) => row.projectId === projectId && row.userId === userId);
+    if (existing === undefined) {
+      this.rows.push({ projectId, userId, roleInProject });
+    } else {
+      existing.roleInProject = roleInProject;
+    }
+  }
+}
+
 class FakeObjectStorage {
   purgedPrefixes: string[] = [];
   purgeError: Error | null = null;
@@ -291,12 +333,16 @@ function makeService(
   repo: FakeProjectRepository;
   audit: FakeAuditService;
   permission: FakePermissionService;
+  managerEligibility: FakeProjectManagerEligibilityService;
+  members: FakeProjectMemberRepository;
   storage: FakeObjectStorage;
   outbox: Array<Record<string, unknown>>;
 } {
   const audit = new FakeAuditService();
   const repo = new FakeProjectRepository();
   const permission = new FakePermissionService(options.adminIds);
+  const managerEligibility = new FakeProjectManagerEligibilityService();
+  const members = new FakeProjectMemberRepository();
   const storage = new FakeObjectStorage();
   const outbox: Array<Record<string, unknown>> = [];
   repo.rows = rows.map((row) => ({ project: row, managerNames: ["张工"] }));
@@ -330,11 +376,15 @@ function makeService(
       fakeFlow as unknown as FlowService,
       audit as unknown as AuditService,
       permission as unknown as PermissionService,
+      managerEligibility as unknown as ProjectManagerEligibilityService,
+      members as unknown as import("../src/modules/project/project-member.repository.js").ProjectMemberRepository,
       storage as unknown as ObjectStorage,
     ),
     repo,
     audit,
     permission,
+    managerEligibility,
+    members,
     storage,
     outbox,
   };
@@ -476,6 +526,49 @@ describe("ProjectService（M2-01 项目 CRUD + 项目回收站）", () => {
     expect(created.version).toBe(0);
     expect(created.managerNames).toEqual(["张工"]);
     expect(repo.rows).toHaveLength(1);
+  });
+
+  it("创建：项目经理只能来自有效项目部成员或系统管理员", async () => {
+    const { service, managerEligibility, repo } = makeService();
+    managerEligibility.eligible = new Set([UUID_A]);
+
+    await expectAppErrorAsync(
+      () => service.createProject(
+        { code: "BAD-MANAGER-1", name: "非法经理", region: "华东", projectType: "分拣", managerIds: [UUID_C] },
+        UUID_A,
+      ),
+      "VALIDATION_FAILED",
+    );
+    expect(repo.rows).toEqual([]);
+  });
+
+  it("创建：创建人不符合项目经理资格时只加入普通成员，不隐式授予项目经理", async () => {
+    const { service, permission, managerEligibility, members, repo } = makeService();
+    permission.groupAccess = { enforced: true, admin: false, allEdit: false, ownEdit: true };
+    managerEligibility.eligible = new Set([UUID_B]);
+
+    await service.createProject(
+      { code: "MEMBER-CREATOR-1", name: "创建人仅成员", region: "华东", projectType: "分拣", managerIds: [UUID_B] },
+      UUID_A,
+    );
+
+    expect(repo.rows[0]?.project.managerIds).toEqual([UUID_B]);
+    expect(members.rows).toEqual([{ projectId: UUID_B, userId: UUID_A, roleInProject: "project_member" }]);
+  });
+
+  it("编辑：历史项目经理可保留，但不能新增不符合资格的人", async () => {
+    const historic = makeService([projectRow({ id: UUID_A, managerIds: [UUID_C] })]);
+    historic.managerEligibility.eligible = new Set([UUID_A, UUID_B]);
+    await expect(
+      historic.service.updateProject(UUID_A, { managerIds: [UUID_C], version: 0 }, UUID_A),
+    ).resolves.toMatchObject({ managerIds: [UUID_C] });
+
+    const fresh = makeService([projectRow({ id: UUID_A, managerIds: [UUID_A] })]);
+    fresh.managerEligibility.eligible = new Set([UUID_A, UUID_B]);
+    await expectAppErrorAsync(
+      () => fresh.service.updateProject(UUID_A, { managerIds: [UUID_C], version: 0 }, UUID_A),
+      "VALIDATION_FAILED",
+    );
   });
 
   it("仅自己的项目编辑：创建项目时自动把创建人加入项目经理，保留原经理", async () => {

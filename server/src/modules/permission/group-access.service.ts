@@ -216,7 +216,8 @@ export class GroupAccessService {
     return { directory, activeGroupKeys };
   }
 
-  private async listAdmins(): Promise<GroupAccessAdmin[]> {
+  /** 系统管理员名单：候选 / 资格校验与权限管理页共用同一口径。 */
+  async listAdmins(): Promise<GroupAccessAdmin[]> {
     const configuredGroupKeys = parseGroupAccessAdminKeys(this.config.env.GROUP_ACCESS_ADMIN_GROUP_KEYS ?? "");
     const configuredUserIds = parseGroupAccessAdminKeys(this.config.env.GROUP_ACCESS_ADMIN_USER_IDS ?? "");
     let effectiveGroupKeys: string[] = [];

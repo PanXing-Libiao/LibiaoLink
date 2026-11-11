@@ -4,6 +4,7 @@ import { DeliverableTypeSchema, FileStatusSchema, PrioritySchema, StageKeySchema
 import { GroupAccessAccessLevelSchema } from "./group-access.ts";
 
 const TASK_OWNER_IDS_LIMIT = 200;
+const TASK_MANAGER_IDS_LIMIT = 200;
 const TASK_TEMPLATE_NODE_IDS_LIMIT = 500;
 const TASK_DELIVERABLE_TYPES_LIMIT = 20;
 
@@ -54,6 +55,14 @@ export const TaskSchema = z
     ownerIds: z.array(UuidSchema).openapi({
       description: "任务负责人（A23 · Push 136：一位也可、可多位）：数组顺序 = 展示顺序；**空数组 = 「待分配」**（合法中间状态，沿用 A18）；与 ownerNames 同下标一一对应",
     }),
+    managerIds: z
+      .array(UuidSchema)
+      .min(1)
+      .max(TASK_MANAGER_IDS_LIMIT)
+      .openapi({
+        description:
+          "本条任务的项目经理（至少一位、可多位）：数组顺序 = 展示顺序；新建缺省继承项目当前经理，行内修改只影响本条任务；项目卡片展示所有有效任务经理的去重并集",
+      }),
     status: TaskBaseStatusSchema,
     displayStatus: TaskDisplayStatusSchema,
     progress: TaskProgressSchema,
@@ -143,6 +152,9 @@ export const TaskListItemSchema = TaskSchema.extend({
   ownerNames: z.array(z.string().nullable()).openapi({
     description: "负责人姓名数组（users.display_name 随行下发，与 ownerIds 同下标一一对应）；「待分配」= 空数组；某位取不到姓名时该位为 null（前端显示「—」）",
   }),
+  managerNames: z.array(z.string().nullable()).openapi({
+    description: "本条任务的项目经理姓名数组（与 managerIds 同下标一一对应；取不到姓名时该位为 null）",
+  }),
   fileSummary: TaskFileSummarySchema,
   capabilities: TaskCapabilitiesSchema.optional().openapi({ description: "当前登录人对本任务的有效能力（列表接口随行下发；导出等内部用途可不带）" }),
 }).openapi("TaskListItem");
@@ -150,6 +162,7 @@ export const TaskListItemSchema = TaskSchema.extend({
 /** 任务详情（抽屉全字段，A7）：含变更关联（多条）与文件清单；列表走 TaskListItem，抽屉打开时按需请求。 */
 export const TaskDetailSchema = TaskSchema.extend({
   ownerNames: z.array(z.string().nullable()).openapi({ description: "负责人姓名数组：与 ownerIds 同下标一一对应；「待分配」= 空数组" }),
+  managerNames: z.array(z.string().nullable()).openapi({ description: "本条任务的项目经理姓名数组：与 managerIds 同下标一一对应" }),
   files: z.array(TaskFileBriefSchema),
   capabilities: TaskCapabilitiesSchema.optional().openapi({ description: "当前登录人对本任务的有效能力" }),
 }).openapi("TaskDetail", { description: "任务详情（M3-01；列表 → 详情不再依赖列表随行数据）" });
@@ -296,6 +309,14 @@ export const TaskCreateBodySchema = z
       description:
         "任务负责人：缺省 / 显式 [] = 「待分配」（**2026-09-24 业务口径修订**：任务添加后负责人默认为空 —— 不再兜底项目经理）；传数组 = 整体设置（≤ 200 位），数组顺序 = 展示顺序",
     }),
+    managerIds: z
+      .array(UuidSchema)
+      .min(1)
+      .max(TASK_MANAGER_IDS_LIMIT)
+      .optional()
+      .openapi({
+        description: "本条任务的项目经理（至少一位、≤ 200 位）：缺省 = 当前项目项目经理名单；传数组 = 整体替换，仅影响本条任务",
+      }),
     plannedStart: DateOnlySchema.nullable().optional(),
     plannedEnd: DateOnlySchema.nullable().optional(),
     estimatedDays: z.number().int().min(0).nullable().optional(),
@@ -341,6 +362,14 @@ export const TaskUpdateBodySchema = z
     ownerIds: z.array(UuidSchema).max(TASK_OWNER_IDS_LIMIT).optional().openapi({
       description: "任务负责人（A23 · Push 136）：不传 = 不改；显式 [] = 置空为「待分配」（卡片拖进「待分配」列）；传数组 = 整体替换（≤ 200 位）、顺序 = 展示顺序",
     }),
+    managerIds: z
+      .array(UuidSchema)
+      .min(1)
+      .max(TASK_MANAGER_IDS_LIMIT)
+      .optional()
+      .openapi({
+        description: "本条任务的项目经理：不传 = 不改；传数组 = 整体替换（至少一位）；只影响本条任务，其他任务行不变",
+      }),
     sortIndex: z.number().int().min(0).optional().openapi({
       description:
         "组内位次（A19 / A20 · Push 124）：把任务移到该组第 N 位（0 起，越界 = 组尾）—— 同组其余任务位次顺延；不传 = 不动顺序",

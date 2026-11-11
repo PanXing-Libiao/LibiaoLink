@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import type { AuditService } from "../src/modules/admin/index.js";
 import type { DatabaseService } from "../src/db/database.service.js";
 import type { DbClient } from "../src/db/db-client.js";
-import type { PermissionService } from "../src/modules/permission/index.js";
+import type { PermissionService, ProjectManagerEligibilityService } from "../src/modules/permission/index.js";
 import type { TaskGateRepository } from "../src/modules/task/task.gate.repository.js";
 import type {
   TaskEventInput,
@@ -63,6 +63,7 @@ function makeRow(id: string, overrides: Partial<TaskRow> = {}): TaskRow {
     taskNodeId: null,
     title: "任务 " + id.slice(0, 8),
     titleEn: null,
+    managerIds: ["00000000-0000-4000-8000-000000000001"],
     ownerIds: [],
     status: "pending",
     statusOverride: null,
@@ -117,6 +118,7 @@ class FakeTaskRepository {
     const next: TaskRow = {
       ...current,
       ownerIds: patch.ownerIds !== undefined ? patch.ownerIds : current.ownerIds,
+      managerIds: patch.managerIds !== undefined ? patch.managerIds : current.managerIds,
       status: patch.status ?? current.status,
       statusOverride: patch.statusOverride !== undefined ? patch.statusOverride : current.statusOverride,
       progress: patch.progress ?? current.progress,
@@ -137,6 +139,7 @@ class FakeTaskRepository {
   async insertEvents(_tx: DbClient, events: readonly TaskEventInput[]): Promise<void> {
     this.events.push(...events);
   }
+  async syncProjectManagerIdsFromTasks(_projectId: string, _at: Date): Promise<void> {}
   async touchProject(projectId: string): Promise<void> {
     this.touched.push(projectId);
   }
@@ -202,6 +205,7 @@ function makeService(
     audit as unknown as AuditService,
     {} as unknown as TaskNodeRepository,
     {} as unknown as TemplateService,
+    { assertAssignable: async () => {} } as unknown as ProjectManagerEligibilityService,
   );
   return { service, db, audit };
 }
@@ -353,5 +357,19 @@ describe("M3-04 · 任务批量操作（A1-08）", () => {
     expect(repo.tasks.get(TASK_A)?.version).toBe(3);
     expect(repo.tasks.get(TASK_A)?.actualEnd).toBe("2026-09-10");
     expect(repo.tasks.get(TASK_B)?.status).toBe("done");
+  });
+});
+
+describe("任务级项目经理", () => {
+  it("行内改一条任务经理只影响当前任务，其他任务保持原名单", async () => {
+    const repo = new FakeTaskRepository();
+    const { service } = makeService(repo);
+    const manager = "66666666-6666-4666-8666-666666666666";
+
+    const updated = await service.update(PROJECT, TASK_A, { managerIds: [manager], version: 3 }, ACTOR);
+
+    expect(updated.managerIds).toEqual([manager]);
+    expect(repo.tasks.get(TASK_A)?.managerIds).toEqual([manager]);
+    expect(repo.tasks.get(TASK_B)?.managerIds).toEqual(["00000000-0000-4000-8000-000000000001"]);
   });
 });

@@ -27,7 +27,8 @@ import { AppError } from "../../common/errors/app-error.js";
 import { ZodValidationPipe } from "../../common/http/zod-validation.pipe.js";
 import { CsrfGuard, CurrentActorId, SessionGuard } from "../identity/index.js";
 import { DictService } from "../admin/index.js";
-import { AllowDeletedProjectAccess, CurrentProjectAccess, ProjectAccess, ProjectAccessGuard, ProjectScope, RequirePermission, isProjectEditor } from "../permission/index.js";
+import { AllowDeletedProjectAccess, CurrentProjectAccess, ProjectAccess, ProjectAccessGuard, ProjectManagerEligibilityService, ProjectScope, RequirePermission, isProjectEditor } from "../permission/index.js";
+import type { ProjectManagerCandidateList } from "@libiaolink/contracts";
 import { TranslateService } from "../translate/index.js";
 import type { ProjectAccessContext, ProjectScopeFilter } from "../permission/index.js";
 import { ProjectGroupService } from "./project-group.service.js";
@@ -61,6 +62,7 @@ export class ProjectsController {
     private readonly projects: ProjectService,
     private readonly members: ProjectMemberService,
     private readonly groups: ProjectGroupService,
+    private readonly managerEligibility: ProjectManagerEligibilityService,
     private readonly translate: TranslateService,
     private readonly dicts: DictService,
   ) {}
@@ -98,6 +100,12 @@ export class ProjectsController {
     @ProjectScope() scope: ProjectScopeFilter,
   ): Promise<ProjectFacetsResult> {
     return this.projects.getFacets(query, scope);
+  }
+
+  /** 项目经理候选：有效项目部成员 ∪ 有效系统管理员；新项目 / 新指派只允许从此名单选择。 */
+  @Get("manager-candidates")
+  listProjectManagerCandidates(): Promise<ProjectManagerCandidateList> {
+    return this.managerEligibility.listCandidates();
   }
 
   /** 详情：软删 / 不存在统一 404 NOT_FOUND。 */

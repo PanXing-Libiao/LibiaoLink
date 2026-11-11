@@ -245,6 +245,22 @@ export class ProjectRepository {
     return seqNo;
   }
 
+  /**
+   * 项目编辑弹窗全局改派项目经理：只同步未定档的有效任务，保持行展示与项目卡并集一致。
+   * 已定档任务禁止任何修改（TASK_FINALIZED），任务 version 同事务前进避免旧版本覆盖行内字段。
+   */
+  async replaceActiveTaskManagerIds(
+    projectId: string,
+    managerIds: string[],
+    at: Date,
+    client: DbClient = this.database.db,
+  ): Promise<void> {
+    await client
+      .update(tasks)
+      .set({ managerIds, version: sql`${tasks.version} + 1`, updatedAt: at })
+      .where(and(eq(tasks.projectId, projectId), isNull(tasks.deletedAt), isNull(tasks.finalizedAt)));
+  }
+
   async updateWithVersion(
     id: string,
     patch: ProjectUpdateInput,

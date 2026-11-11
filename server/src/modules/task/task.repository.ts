@@ -26,6 +26,8 @@ export interface TaskListRow {
   task: TaskRow;
   /** 负责人姓名数组（A23：与 owner_ids 同下标；「待分配」= 空数组；缺失用户该位为 null）。 */
   ownerNames: (string | null)[] | null;
+  /** 本条任务的项目经理姓名数组（与 manager_ids 同下标；缺失用户该位为 null）。 */
+  managerNames: (string | null)[] | null;
   /** 变更关联（A1-07 / R01 多条）：按 tasks.change_refs 追加序（末位 = 最近一次变更），空数组 = 无变更。 */
   changeLinks: TaskChangeLinkRow[];
 }
@@ -67,6 +69,8 @@ export interface TaskInsertInput {
   titleEn: string | null;
   /** 空数组 = 「待分配」（A18 · Push 124 / A23 · Push 136）。 */
   ownerIds: string[];
+  /** 本条任务的项目经理（至少一位；缺省由 service 继承项目当前经理）。 */
+  managerIds: string[];
   /** 组内位次（A19 / A20：插入位置由 service 计算，本层落列）。 */
   sortIndex: number;
   plannedStart: string | null;
@@ -88,6 +92,7 @@ export interface TaskUpdatePatch {
   titleEn?: string | null;
   deliverableTypes?: string[];
   ownerIds?: string[];
+  managerIds?: string[];
   status?: string;
   /** 显式覆盖（2026-09-24 · 迁移 0031）：overdue / early_done / null（清空）。 */
   statusOverride?: string | null;
@@ -143,6 +148,13 @@ const OWNER_NAMES_SQL = sql<(string | null)[] | null>`(
   select array_agg(u.display_name order by o.ord)
   from unnest(${tasks.ownerIds}) with ordinality as o(uid, ord)
   left join ${users} u on u.id = o.uid
+)`;
+
+/** 任务级项目经理姓名数组：与 manager_ids 同下标，缺失用户该位为 null。 */
+const MANAGER_NAMES_SQL = sql<(string | null)[] | null>`(
+  select array_agg(u.display_name order by m.ord)
+  from unnest(${tasks.managerIds}) with ordinality as m(uid, ord)
+  left join ${users} u on u.id = m.uid
 )`;
 
 /**
@@ -221,7 +233,7 @@ export class TaskRepository {
   ): Promise<TaskListRow[]> {
     const where = and(...taskConditions(projectId, filter, today));
     const rows = await client
-      .select({ task: tasks, ownerNames: OWNER_NAMES_SQL, changeLinks: CHANGE_LINKS_SQL })
+      .select({ task: tasks, ownerNames: OWNER_NAMES_SQL, managerNames: MANAGER_NAMES_SQL, changeLinks: CHANGE_LINKS_SQL })
       .from(tasks)
       .where(where)
       .orderBy(...taskOrderBy(sorts))
@@ -244,7 +256,7 @@ export class TaskRepository {
 
   async findListRowById(taskId: string, projectId: string, client: DbClient = this.database.db): Promise<TaskListRow | null> {
     const rows = await client
-      .select({ task: tasks, ownerNames: OWNER_NAMES_SQL, changeLinks: CHANGE_LINKS_SQL })
+      .select({ task: tasks, ownerNames: OWNER_NAMES_SQL, managerNames: MANAGER_NAMES_SQL, changeLinks: CHANGE_LINKS_SQL })
       .from(tasks)
       .where(and(eq(tasks.id, taskId), eq(tasks.projectId, projectId), isNull(tasks.deletedAt)))
       .limit(1);
@@ -466,6 +478,7 @@ export class TaskRepository {
         title: input.title,
         titleEn: input.titleEn,
         ownerIds: input.ownerIds,
+        managerIds: input.managerIds,
         sortIndex: input.sortIndex,
         status: "pending",
         progress: "0",

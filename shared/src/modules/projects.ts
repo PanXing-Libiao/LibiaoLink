@@ -2,6 +2,7 @@ import { z } from "../zod.ts";
 import { DateTimeSchema, DateOnlySchema, PageQuerySchema, SortQuerySchema, UuidSchema, VersionSchema } from "../common/conventions.ts";
 import { DeliverableTypeSchema, ProjectStatusSchema, StageKeySchema } from "../common/dicts.ts";
 import { GroupAccessAccessLevelSchema } from "./group-access.ts";
+import { UserSummarySchema } from "./users.ts";
 
 const PROJECT_MANAGER_IDS_LIMIT = 200;
 
@@ -45,6 +46,27 @@ export const ProjectSchema = z
     }),
   })
   .openapi("Project", { description: "项目（v0.2 §2.3 projects）" });
+
+/**
+ * 项目经理候选：有效项目部成员 ∪ 有效系统管理员。
+ * 两个来源标记用于前端说明 / 排查；C 端选择器只消费 id / username / displayName。
+ */
+export const ProjectManagerCandidateSchema = UserSummarySchema.extend({
+  inProjectDepartment: z.boolean().openapi({ description: "是否为配置部门（默认 Project Dept / 项目部，含子部门）的直属有效成员" }),
+  isSystemAdmin: z.boolean().openapi({ description: "是否属于系统管理员（环境配置 / 管理员部门 / 手工授权）" }),
+}).openapi("ProjectManagerCandidate", {
+  description: "项目经理候选（仅启用、未离职；项目部成员与系统管理员取并集并按用户去重）",
+});
+
+export const ProjectManagerCandidateListSchema = z
+  .object({
+    items: z.array(ProjectManagerCandidateSchema),
+    total: z.number().int().min(0),
+  })
+  .openapi("ProjectManagerCandidateList", { description: "项目经理候选名单（GET /projects/manager-candidates）" });
+
+export type ProjectManagerCandidate = z.infer<typeof ProjectManagerCandidateSchema>;
+export type ProjectManagerCandidateList = z.infer<typeof ProjectManagerCandidateListSchema>;
 
 /**
  * 项目总览汇总卡：最慢阶段 / 最新阶段 / 逾期 / 已完成 / 总数。

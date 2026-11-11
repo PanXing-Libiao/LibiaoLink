@@ -904,7 +904,7 @@ export function FileLibraryPage({ me, query, onChangeQuery, directory, dicts }: 
                           statusText={projectStatusTextOf(locale, project.status)}
                           accentColor={accent.color}
                           accentText={accent.text}
-                          managerNames={project.managerNames.map((name) => (name === null || name === "" ? "—" : name)).join("、")}
+                          managerNames={project.managerNames}
                           time={formatDateTime(project.deletedAt ?? project.updatedAt)}
                           onRestore={
                             canRestoreProject(project)
