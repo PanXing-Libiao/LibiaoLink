@@ -34,3 +34,30 @@ describe("生产环境部门权限开关", () => {
     expect(loadEnv({ DATABASE_URL: "postgres://test/test" }).GROUP_ACCESS_ENFORCED).toBe("false");
   });
 });
+
+describe("企微机器人日报查询开关", () => {
+  it("缺省均为关闭，不改变现有单聊与群聊回调", () => {
+    const env = loadEnv({ DATABASE_URL: "postgres://test/test" });
+    expect(env.WECOM_REPORT_QUERY_DM_ENABLED).toBe("false");
+    expect(env.WECOM_REPORT_QUERY_GROUP_ENABLED).toBe("false");
+  });
+
+  it("单聊与群聊开关可独立指定 true / false", () => {
+    const env = loadEnv({
+      DATABASE_URL: "postgres://test/test",
+      WECOM_REPORT_QUERY_DM_ENABLED: "true",
+      WECOM_REPORT_QUERY_GROUP_ENABLED: "false",
+    });
+    expect(env.WECOM_REPORT_QUERY_DM_ENABLED).toBe("true");
+    expect(env.WECOM_REPORT_QUERY_GROUP_ENABLED).toBe("false");
+  });
+
+  it("只接受字符串 true / false，拒绝 0 / 1 等模糊布尔值", () => {
+    expect(() =>
+      loadEnv({ DATABASE_URL: "postgres://test/test", WECOM_REPORT_QUERY_DM_ENABLED: "1" }),
+    ).toThrow(/WECOM_REPORT_QUERY_DM_ENABLED/);
+    expect(() =>
+      loadEnv({ DATABASE_URL: "postgres://test/test", WECOM_REPORT_QUERY_GROUP_ENABLED: "0" }),
+    ).toThrow(/WECOM_REPORT_QUERY_GROUP_ENABLED/);
+  });
+});
