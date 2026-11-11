@@ -166,9 +166,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def file(self, result):
         path = Path(result['path'])
-        if not path.resolve().is_relative_to(ROOT):
-            raise ValueError('invalid resource')
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        # Open relative to the engine root. The worker may still be running:
+        # resolving a path and opening it later would let a renamed symlink win.
+        parts = path.relative_to(ROOT).parts
+        if not parts or '..' in parts:raise ValueError('invalid resource')
+        directory = os.open(ROOT, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            for name in parts[:-1]:
+                child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+                os.close(directory);directory=child
+            fd = os.open(parts[-1], os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=directory)
+        finally:
+            os.close(directory)
         with os.fdopen(fd, 'rb') as source:
             info = os.fstat(source.fileno())
             if not stat.S_ISREG(info.st_mode) or info.st_size != result['bytes'] or info.st_size > FILE_BYTES:

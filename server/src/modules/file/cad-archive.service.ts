@@ -3,7 +3,7 @@ import type { CadNameCodepage } from "@libiaolink/contracts";
 import { AppError } from "../../common/errors/app-error.js";
 import type { DbClient } from "../../db/db-client.js";
 import { ObjectStorage } from "../../storage/index.js";
-import { CadEngineClient, type CadJob, type CadResource } from "./cad-engine.client.js";
+import { cadArchiveNamespace, CadEngineClient, type CadJob, type CadResource } from "./cad-engine.client.js";
 import { CadArchiveRepository, type CadArchiveSource, type CadArtifactRow, type CadViewRow } from "./cad-archive.repository.js";
 import { checkedCadStream } from "./cad-archive.integrity.js";
 import { CadInputService, cadAutoCacheFormat, cadInputs, CAD_DXF_INPUT_BYTES } from "./cad-inputs.js";
@@ -60,6 +60,12 @@ export class CadArchiveService {
   async resource(action: "manifest" | "buffer", source: CadArchiveSource, actorId: string, viewId: string,
     jobId: string, lease?: string, sha256?: string, precompressed?: CadPrecompressedEncoding): Promise<CadResource> {
     const { artifact, view } = await this.bound(source, actorId, viewId, jobId);
+    if (!view.cancelled && artifact.sourceFormat === "DWG" && artifact.state === "running" && artifact.phase === "vector-available") {
+      if (action === "manifest") await this.repository.lease(view.id);
+      else if (!view.leaseExpiresAt || view.leaseExpiresAt <= new Date()) throw new AppError("NOT_FOUND", "模型资源不存在或不可访问");
+      return this.engine.file(action, { namespace: cadArchiveNamespace(artifact.id), displayOnly: true,
+        ...(lease ? { lease } : {}), ...(sha256 ? { sha256 } : {}) });
+    }
     if (view.cancelled || !["completed", "partial"].includes(artifact.state) || !artifact.objectPrefix || !artifact.manifestSHA256 || !artifact.manifestBytes) {
       throw new ServiceUnavailableException("模型尚未就绪或当前窗口已取消，请重新打开");
     }

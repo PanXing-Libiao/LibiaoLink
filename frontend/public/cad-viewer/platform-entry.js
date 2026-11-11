@@ -1,5 +1,5 @@
-import {loadPlatformModel,inspectionRecord} from "./core/app.js?v=dxf-0.17.15";
-import {decodeManifest} from "./core/manifest-loader.js?v=cad-handoff-1";
+import {loadPlatformModel,inspectionRecord} from "./core/app.js?v=dxf-0.17.17";
+import {decodeManifest} from "./core/manifest-loader.js?v=direct-1";
 import {LoadPhases} from "./core/load-phases.js";
 import {hydrateBinary} from './core/binary-transport.js';
 import {missingFaceManifest} from './core/nonmeshable-ui.js';
@@ -239,12 +239,41 @@ async function requestJson(url,options={}){
  if(!response.ok)throw new Error(responseError(data,response.status));
  return data;
 }
-function delay(signal){
+function delay(signal,ms=350){
  return new Promise((resolve,reject)=>{
   const stop=()=>{clearTimeout(timer);reject(signal.reason);};
-  const timer=setTimeout(()=>{signal.removeEventListener('abort',stop);resolve();},350);
+  const timer=setTimeout(()=>{signal.removeEventListener('abort',stop);resolve();},ms);
   signal.addEventListener('abort',stop,{once:true});if(signal.aborted)stop();
  });
+}
+// Called after the first interactive paint. Stay on the same authorized view/job.
+async function joinArchivedCurves(viewer){
+ const signal=unloading.signal;
+ let worker;
+ const stop=()=>worker?.terminate();
+ try{
+  let job=currentJob;
+  while(!['partial','completed'].includes(job.state)){
+   if(!['queued','running'].includes(job.state))throw Error();
+   await delay(signal,2000);
+   job=await requestJson(jobBase,{signal});
+  }
+  signal.throwIfAborted();
+  if(window.__drawing!==viewer)return;
+  worker=new Worker(new URL('./core/dwg-archive-worker.js',import.meta.url),{type:'module'});
+  signal.addEventListener('abort',stop,{once:true});
+  const end=tables=>{
+   signal.removeEventListener('abort',stop);stop();
+   if(signal.aborted || window.__drawing!==viewer)return;
+   if(tables)viewer.attachArchiveCurves(tables);
+   else viewer.archiveCurvesFailed(()=>joinArchivedCurves(viewer));
+  };
+  worker.onmessage=({data})=>end(data);worker.onerror=()=>end(null);
+  worker.postMessage({url:new URL(jobBase+'/manifest',location.href).href,source:job.sourceSHA256});
+ }catch{
+  signal.removeEventListener('abort',stop);stop();
+  if(!signal.aborted && window.__drawing===viewer)viewer.archiveCurvesFailed(()=>joinArchivedCurves(viewer));
+ }
 }
 function cancelJob(){
  if(jobBase&&currentJob&&!['completed','partial','failed','cancelled','timed-out'].includes(currentJob.state)){
@@ -301,76 +330,93 @@ loadPlatformModel(async({signal,progress,mark,record})=>{
   jobBase=base+'/'+currentJob.id;
   ui.job(currentJob,{reused:reusedJob});
   active.throwIfAborted();
-  while(!['completed','partial'].includes(currentJob.state)){
-   if(['failed','cancelled','timed-out'].includes(currentJob.state))throw new Error(failureMessage(currentJob));
-   if(!['queued','running'].includes(currentJob.state))throw new Error('模型任务状态无效');
-   progress(currentJob.state==='queued'?'正在排队处理模型…':'正在处理模型…');
-   phases.phase(currentJob.state==="queued"?"queued":currentJob.phase==="persisting"?"persisting":"processing");
-   ui.job(currentJob,{reused:reusedJob});
-   await delay(active);currentJob=await requestJson(jobBase,{signal:active});
-  }
-  window.__cadTimingMark?.("jobReady");
-  mark("jobReady");phases.phase("manifestRead");
-  ui.bytes=currentJob.sourceByteLength;ui.artifactBytes=Number.isSafeInteger(currentJob.artifactBytes)&&currentJob.artifactBytes>0?currentJob.artifactBytes:ui.artifactBytes;
-  ui.update(2,"正在准备模型视图");
-  progress("正在读取已校验模型…");
-  const prefetchedBuffers=new Map();
-  const resourceHint=currentJob.resources;
-  if(resourceHint&&/^[a-f0-9]{48}$/.test(resourceHint.lease)&&Array.isArray(resourceHint.buffers)){
-   const unique=new Map();
-   for(const descriptor of resourceHint.buffers){
-    if(!descriptor||!/^[a-f0-9]{64}$/.test(descriptor.sha256)||!Number.isSafeInteger(descriptor.byteLength)||descriptor.byteLength<0)continue;
-    unique.set(descriptor.sha256,descriptor);
-   }
-   const prefetchRows=[...unique.values()].sort((a,b)=>b.byteLength-a.byteLength).slice(0,4);
-   const prefetchBytes=prefetchRows.reduce((sum,row)=>sum+row.byteLength,0);
-   if(prefetchBytes>0&&prefetchBytes<=256*1024*1024){
-    ui.downloading(prefetchBytes);
-    for(const descriptor of prefetchRows){
-     const promise=request(jobBase+"/resources/"+resourceHint.lease+"/"+descriptor.sha256,{signal:prefetchController.signal}).then(response=>{
-      if(!response.ok)throw new Error("Resource unavailable");
-      return trackResponse(response,count=>ui.receive(count)).arrayBuffer();
-     });
-     promise.catch(()=>{});
-     prefetchedBuffers.set(descriptor.sha256,promise);
+  // If the scratch directory retires between the manifest and buffer reads,
+  // stay on the same job and switch to its published archive once.
+  let allowDisplay=true;
+  const displayEnded=new Error('临时绘图已切换到归档');
+  for (;;) {
+   try {
+    while(!['completed','partial'].includes(currentJob.state) && !(allowDisplay && format==='DWG' && currentJob.phase==='vector-available')){
+     if(['failed','cancelled','timed-out'].includes(currentJob.state))throw new Error(failureMessage(currentJob));
+     if(!['queued','running'].includes(currentJob.state))throw new Error('模型任务状态无效');
+     progress(currentJob.state==='queued'?'正在排队处理模型…':'正在处理模型…');
+     phases.phase(currentJob.state==="queued"?"queued":currentJob.phase==="persisting"?"persisting":"processing");
+     ui.job(currentJob,{reused:reusedJob});
+     await delay(active);currentJob=await requestJson(jobBase,{signal:active});
     }
-    window.__cadTimingMark?.("resourcePrefetchStart");
+    const staging=currentJob.phase==="vector-available";
+    window.__cadTimingMark?.("jobReady");
+    mark("jobReady");phases.phase("manifestRead");
+    ui.bytes=currentJob.sourceByteLength;ui.artifactBytes=Number.isSafeInteger(currentJob.artifactBytes)&&currentJob.artifactBytes>0?currentJob.artifactBytes:ui.artifactBytes;
+    ui.update(2,"正在准备模型视图");
+    progress('正在读取模型…');
+    const prefetchedBuffers=new Map();
+    const resourceHint=currentJob.resources;
+    if(resourceHint&&/^[a-f0-9]{48}$/.test(resourceHint.lease)&&Array.isArray(resourceHint.buffers)){
+     const unique=new Map();
+     for(const descriptor of resourceHint.buffers){
+      if(!descriptor||!/^[a-f0-9]{64}$/.test(descriptor.sha256)||!Number.isSafeInteger(descriptor.byteLength)||descriptor.byteLength<0)continue;
+      unique.set(descriptor.sha256,descriptor);
+     }
+     const prefetchRows=[...unique.values()].sort((a,b)=>b.byteLength-a.byteLength).slice(0,4);
+     const prefetchBytes=prefetchRows.reduce((sum,row)=>sum+row.byteLength,0);
+     if(prefetchBytes>0&&prefetchBytes<=256*1024*1024){
+      ui.downloading(prefetchBytes);
+      for(const descriptor of prefetchRows){
+       const promise=request(jobBase+"/resources/"+resourceHint.lease+"/"+descriptor.sha256,{signal:prefetchController.signal}).then(response=>{
+        if(!response.ok)throw new Error("Resource unavailable");
+        return trackResponse(response,count=>ui.receive(count)).arrayBuffer();
+       });
+       promise.catch(()=>{});
+       prefetchedBuffers.set(descriptor.sha256,promise);
+      }
+      window.__cadTimingMark?.("resourcePrefetchStart");
+     }
+    }
+    window.__cadTimingMark?.("manifestStart");
+    const response=await request(jobBase+"/manifest",{signal:active});
+    if(staging && [404,503].includes(response.status))throw displayEnded;
+    if(!response.ok||!(response.headers.get("content-type")||"").toLowerCase().includes("json")){
+     const error=await readJson(response);throw new Error(responseError(error,response.status));
+    }
+    const bytes=await response.arrayBuffer();active.throwIfAborted();
+    window.__cadTimingMark?.("manifestReceived");
+    mark("manifestReadEnd");phases.phase("metadataExpand");mark("metadataExpandStart");
+    const decoded=await decodeManifest(bytes,{signal:active});
+    let packet=decoded.packet;record({manifestDecode:decoded.timing});
+    window.__cadTimingMark?.("packedUnpacked");
+    mark("metadataExpandEnd");
+    const expected=currentJob.state==='partial'||currentJob.phase==='vector-available'?'partial':'complete';
+    const partialFormat=currentJob.format==='DXF'||currentJob.format==='DWG';
+    if(packet.presentation?.sourceSHA256!==currentJob.sourceSHA256||packet.snapshot?.completeness!==expected
+      ||currentJob.state==='partial'&&!partialFormat)throw new Error('模型来源或完整性检查未通过');
+    const lease=packet.resourceLease;
+    const fetcher=async(url,options={})=>{
+     const match=/^\/api\/resources\/([a-f0-9]{48})(?:\/([a-f0-9]{64}))?$/.exec(url);
+     if(!match||match[1]!==lease)throw new Error('模型资源引用无效');
+     // The job owns its temporary files; closing one viewer cannot retire them.
+     if(packet.displayOnly && options?.method==='DELETE')return;
+     const resource=await request(jobBase+'/resources/'+match[1]+(match[2]?'/'+match[2]:''),options);
+     if(staging && [404,503].includes(resource.status))throw displayEnded;
+     return match[2]?trackResponse(resource,count=>ui.receive(count)):resource;
+    };
+    progress('正在读取模型几何…');
+    const total=Object.values(packet.document.buffers).reduce((sum,buffer)=>sum+buffer.byteLength,0);
+    ui.downloading(Number.isSafeInteger(total)&&total>0&&total<=256*1024*1024?total:0,{reset:false});
+    phases.phase("resources");mark("resourceHydrationStart");window.__cadTimingMark?.("buffersHydrateStart");
+    packet=await hydrateBinary(packet,{signal:active,fetcher,
+     prefetched:currentJob.resources?.lease===packet.resourceLease?prefetchedBuffers:new Map(),
+     onPlan:plan=>{ui.downloading(plan.totalBytes,{reset:false});record({uniqueBufferBytes:plan.totalBytes,uniqueBuffers:plan.uniqueBuffers});}});
+    window.__cadTimingMark?.("buffersHydrated");mark("resourceHydrationEnd");
+    active.throwIfAborted();progress('正在显示模型…');
+    ui.update(2,'正在生成可交互视图');
+    loadedEnvelope=packet;delivered=true;outcome='ready';return packet;
+   } catch(error) {
+    if(error!==displayEnded || !allowDisplay)throw error;
+    allowDisplay=false;
+    currentJob=await requestJson(jobBase,{signal:active});
    }
   }
-  window.__cadTimingMark?.("manifestStart");
-  const response=await request(jobBase+"/manifest",{signal:active});
-  if(!response.ok||!(response.headers.get("content-type")||"").toLowerCase().includes("json")){
-   const error=await readJson(response);throw new Error(responseError(error,response.status));
-  }
-  const bytes=await response.arrayBuffer();active.throwIfAborted();
-  window.__cadTimingMark?.("manifestReceived");
-  mark("manifestReadEnd");phases.phase("metadataExpand");mark("metadataExpandStart");
-  const decoded=await decodeManifest(bytes,{signal:active});
-  let packet=decoded.packet;record({manifestDecode:decoded.timing});
-  window.__cadTimingMark?.("packedUnpacked");
-  mark("metadataExpandEnd");
-  const expected=currentJob.state==='partial'?'partial':'complete';
-  const partialFormat=currentJob.format==='DXF'||currentJob.format==='DWG';
-  if(packet.presentation?.sourceSHA256!==currentJob.sourceSHA256||packet.snapshot?.completeness!==expected
-    ||currentJob.state==='partial'&&!partialFormat)throw new Error('模型来源或完整性检查未通过');
-  const lease=packet.resourceLease;
-  const fetcher=async(url,options={})=>{
-   const match=/^\/api\/resources\/([a-f0-9]{48})(?:\/([a-f0-9]{64}))?$/.exec(url);
-   if(!match||match[1]!==lease)throw new Error('模型资源引用无效');
-   const resource=await request(jobBase+'/resources/'+match[1]+(match[2]?'/'+match[2]:''),options);
-   return match[2]?trackResponse(resource,count=>ui.receive(count)):resource;
-  };
-  progress('正在读取模型几何…');
-  const total=Object.values(packet.document.buffers).reduce((sum,buffer)=>sum+buffer.byteLength,0);
-  ui.downloading(Number.isSafeInteger(total)&&total>0&&total<=256*1024*1024?total:0,{reset:false});
-  phases.phase("resources");mark("resourceHydrationStart");window.__cadTimingMark?.("buffersHydrateStart");
-  packet=await hydrateBinary(packet,{signal:active,fetcher,
-   prefetched:currentJob.resources?.lease===packet.resourceLease?prefetchedBuffers:new Map(),
-   onPlan:plan=>{ui.downloading(plan.totalBytes,{reset:false});record({uniqueBufferBytes:plan.totalBytes,uniqueBuffers:plan.uniqueBuffers});}});
-  window.__cadTimingMark?.("buffersHydrated");mark("resourceHydrationEnd");
-  active.throwIfAborted();progress('正在显示模型…');
-  ui.update(2,'正在生成可交互视图');
-  loadedEnvelope=packet;delivered=true;outcome='ready';return packet;
  }finally{
   prefetchController.abort();active.removeEventListener("abort",abortPrefetch);
   phases.phase(null);record({platform:{...phases.snapshot(),outcome:active.aborted?"cancelled":outcome}});
@@ -392,12 +438,13 @@ loadPlatformModel(async({signal,progress,mark,record})=>{
     for(const id of ['sidebarScrim','closeSidebar'])document.getElementById(id).setAttribute('aria-label','收起图纸内容');
     document.querySelector('#toggleSidebar span').textContent='图纸内容';
     document.querySelector('.hint').textContent='拖动平移 · 滚轮缩放 · 单击选中 · Shift 多选 · Esc 关闭';
-    if(currentJob.state==='partial'){
+    if(currentJob.state==='partial'||currentJob.phase==='vector-available'){
       showDrawingLimitations('部分显示：有内容缺失或暂不支持。请查看图纸覆盖清单，必要时补充配套文件；本视图不能作为加工或验收依据。',2000);
       document.getElementById('sessionStatus').textContent='部分显示';
     }else dismissDrawingLimitations();
    }else filterParts();
    parent.postMessage({type:'cad-ready',viewId,timing},location.origin);
+   if(loadedEnvelope?.deferredCurves)void joinArchivedCurves(window.__drawing);
   }));
  }else{
  const unsupported=!cancelled&&unsupportedPreview(currentJob);

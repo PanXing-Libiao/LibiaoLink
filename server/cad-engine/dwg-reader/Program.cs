@@ -21,6 +21,8 @@ static class Program
 {
     static readonly double[] Identity = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
     static StreamWriter records = null!, losses = null!;
+    static StreamWriter? archiveCurves;
+    static readonly Dictionary<(short,int,ulong,short),int> curveStyles = [];
     static BinaryWriter positions = null!;
     static string sourceId = "", drawingId = "drawing-dwg", output = "";
     static int order, lost;
@@ -117,7 +119,7 @@ static class Program
         return R(("type","arc"),("center",P(ocs*circle.Center)),("normal",P(circle.Normal.Normalize())),
             ("xAxis",P(ocs*XYZ.AxisX)),("radius",circle.Radius),("startAngle",start),("sweepAngle",sweep));
     }
-    static void Display(string id, CadObject original, IEnumerable<XYZ> pts, string topology="lines")
+    static (long offset,int count,double[] min,double[] max) WritePoints(string id, IEnumerable<XYZ> pts, string topology)
     {
         var points=pts.ToList();
         if(points.Count==0 || points.Any(p=>!double.IsFinite(p.X)||!double.IsFinite(p.Y)||!double.IsFinite(p.Z)))
@@ -128,6 +130,11 @@ static class Program
         foreach(var p in vertices) { positions.Write(p.X); positions.Write(p.Y); positions.Write(p.Z); count++; }
         var min=new[]{points.Min(p=>p.X),points.Min(p=>p.Y),points.Min(p=>p.Z)};
         var max=new[]{points.Max(p=>p.X),points.Max(p=>p.Y),points.Max(p=>p.Z)};
+        return (offset,count,min,max);
+    }
+    static void Display(string id, CadObject original, IEnumerable<XYZ> pts, string topology="lines")
+    {
+        var (offset,count,min,max)=WritePoints(id,pts,topology);
         Emit("displays",id,new {offset, byteLength=count*24, count, topology, min, max, sourceRefs=Refs(original)});
     }
     static double[][] PolylineWidths(Entity entity, IPolyline polyline)
@@ -332,6 +339,21 @@ static class Program
              ("localFromOwner",local??Identity),("geometry",geometry),("style",Style(e)),("sourceRefs",Refs(original)),("displayOrder",order)));
         State(e,id);
         if(points is not null) Display(id,original,points,topology);
+    }
+    static void OrdinaryCurve(Entity e,string space,string id,IEnumerable<XYZ> points,Row geometry,Row? native=null)
+    {
+        var (offset,count,min,max)=WritePoints(id,points,"lines");
+        var styleKey=(e.Color.Index,e.Color.TrueColor,e.LineType?.Handle??0,(short)e.LineWeight);
+        if(!curveStyles.TryGetValue(styleKey,out int style)) {
+            curveStyles[styleKey]=style=curveStyles.Count;
+            Emit("curveStyles",style.ToString(),Style(e));
+        }
+        var handle=H(e);
+        records.WriteLine(JsonSerializer.Serialize(new object[]{handle,native is null?"line":"arc",space,"layer-"+H(e.Layer),style,
+            order++,EntityVisible(e),e.LineTypeScale,(short)e.LineWeight,e.Color.Index,e.Color.TrueColor,offset,count,min,max}));
+        archiveCurves!.WriteLine(JsonSerializer.Serialize(new object?[]{id,geometry,native}));
+        emitted.Add(id);
+        if(e.Handle!=0)mappedSourceHandles.Add(e.Handle);
     }
     static void Infinite(Entity e,string space,string id,string kind,XYZ origin,XYZ direction,CadObject? original=null)
     {
@@ -600,12 +622,20 @@ static class Program
                 MapDimension(dimension,space,id,dimensionSources[dimension.Handle]);return;
             case IText text: Text(e,text,space,id,original); return;
             case Line line:
-                EntityRow(e,space,id,R(("type","line"),("start",P(line.StartPoint)),("end",P(line.EndPoint))),[line.StartPoint,line.EndPoint],original:original); return;
+                var lineGeometry=R(("type","line"),("start",P(line.StartPoint)),("end",P(line.EndPoint)));
+                if(archiveCurves!=null && derivedId==null && original==e)
+                    OrdinaryCurve(e,space,id,[line.StartPoint,line.EndPoint],lineGeometry);
+                else EntityRow(e,space,id,lineGeometry,[line.StartPoint,line.EndPoint],original:original);
+                return;
             case Arc arc:
                 double sweep=arc.EndAngle-arc.StartAngle;if(sweep<=0)sweep+=Math.PI*2;
                 var arcPoints=arc.PolygonalVertexes(Math.Max(2,(int)Math.Ceiling(sweep/(Math.PI*2)*80)+1));
-                EntityRow(e,space,id,ArcGeometry(arc,arc.StartAngle,sweep),arcPoints,original:original);
-                Emit("nativeGeometry",id,R(("type","arc"),("center",P(arc.Center)),("normal",P(arc.Normal)),("radius",arc.Radius),("startAngle",arc.StartAngle),("endAngle",arc.EndAngle))); return;
+                var arcGeometry=ArcGeometry(arc,arc.StartAngle,sweep);
+                var arcNative=R(("type","arc"),("center",P(arc.Center)),("normal",P(arc.Normal)),("radius",arc.Radius),("startAngle",arc.StartAngle),("endAngle",arc.EndAngle));
+                if(archiveCurves!=null && derivedId==null && original==e)
+                    OrdinaryCurve(e,space,id,arcPoints,arcGeometry,arcNative);
+                else { EntityRow(e,space,id,arcGeometry,arcPoints,original:original); Emit("nativeGeometry",id,arcNative); }
+                return;
             case Circle circle:
                 var circlePoints=Closed(circle.PolygonalVertexes(80));
                 EntityRow(e,space,id,ArcGeometry(circle,0,Math.PI*2),circlePoints,original:original);
@@ -821,13 +851,31 @@ static class Program
         else {
             var patternHatch=new Hatch { Pattern=hatch.Pattern };
             foreach(int index in selected)patternHatch.Paths.Add(hatch.Paths[index]);
-            var lines=patternHatch.ExplodePattern().ToArray();
-            if(lines.Length>200000) throw new InvalidDataException("Hatch community expansion exceeds per-object budget");
-            var points=lines.SelectMany(l=>new[]{basis.ApplyTransform(l.StartPoint),basis.ApplyTransform(l.EndPoint)}).ToArray();
-            // A disjoint segment list, not an invented connected polyline.
-            long offset=positions.BaseStream.Position;
-            foreach(var p in points){positions.Write(p.X);positions.Write(p.Y);positions.Write(p.Z);}
-            if(points.Length>0) Emit("displays",id,new{offset,byteLength=points.Length*24,count=points.Length,topology="lines",min=new[]{points.Min(p=>p.X),points.Min(p=>p.Y),points.Min(p=>p.Z)},max=new[]{points.Max(p=>p.X),points.Max(p=>p.Y),points.Max(p=>p.Z)},sourceRefs=Refs(hatch)});
+            long offset = positions.BaseStream.Position;
+            int count = 0;
+            double[] min = [double.PositiveInfinity, double.PositiveInfinity, double.PositiveInfinity];
+            double[] max = [double.NegativeInfinity, double.NegativeInfinity, double.NegativeInfinity];
+            void WriteEndpoint(XY local)
+            {
+                var point = basis.ApplyTransform(new XYZ(local.X, local.Y, 0));
+                positions.Write(point.X);
+                positions.Write(point.Y);
+                positions.Write(point.Z);
+                min[0] = Math.Min(min[0], point.X);
+                min[1] = Math.Min(min[1], point.Y);
+                min[2] = Math.Min(min[2], point.Z);
+                max[0] = Math.Max(max[0], point.X);
+                max[1] = Math.Max(max[1], point.Y);
+                max[2] = Math.Max(max[2], point.Z);
+            }
+            patternHatch.VisitPatternSegments((start, end, _) =>
+            {
+                if (count == 400000) throw new InvalidDataException("Hatch community expansion exceeds per-object budget");
+                WriteEndpoint(start);
+                WriteEndpoint(end);
+                count += 2;
+            });
+            if (count > 0) Emit("displays", id, new {offset, byteLength=count*24, count, topology="lines", min, max, sourceRefs=Refs(hatch)});
             else {
                 var result=HatchEmptyPattern.Classify(hatch);
                 Emit("hatchPatternOutcomes",id,new{result.status,result.reason,result.method,result.ranges,sourceRefs=Refs(hatch)});
@@ -1570,6 +1618,8 @@ static class Program
         ReadProxySources(reader,doc);
         ReadLegacyMTextColumns(doc);
         var readMemory=new{managedLiveBytes=GC.GetTotalMemory(false),managedCommittedBytes=GC.GetGCMemoryInfo().TotalCommittedBytes};
+        using(archiveCurves=!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CAD_DWG_DISPLAY_LEASE")) && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CAD_DWG_RESOURCES"))
+            ? new StreamWriter(Path.Combine(output,"archive-curves.jsonl")) : null)
         using(records=new StreamWriter(Path.Combine(output,"ucd-records.jsonl")))
         using(losses=new StreamWriter(Path.Combine(output,"losses.jsonl")))
         using(positions=new BinaryWriter(File.Create(Path.Combine(output,"positions.bin")))) {
