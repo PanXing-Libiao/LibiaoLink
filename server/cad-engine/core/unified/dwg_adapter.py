@@ -544,7 +544,7 @@ def _compact_display_polylines(view_tables, polyline_hints, displays, special):
     return bool(view_fields)
 
 
-def assemble_native(folder, original, output, platform=False, binary_dir=None, packed=False, font_files=None, resource_loader=None, logical_path=None, display_lease=None):
+def assemble_native(folder, original, output, platform=False, binary_dir=None, packed=False, font_files=None, resource_loader=None, logical_path=None, display_lease=None, resume_archive=False):
     started=time.perf_counter()
     def phase(name):print(f'DWG UCD {name}: {time.perf_counter()-started:.3f}s',file=sys.stderr,flush=True)
     folder, output = Path(folder), Path(output)
@@ -695,7 +695,16 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
         finally:
             view.release()
     from .dwg_acis import reconstruct
-    acis_rows,acis_errors,acis_bytes=reconstruct(folder,extras.get('opaque',{}),drawing['entities'])
+    # ACIS can enumerate equivalent mesh edges in a different order on a second
+    # tessellation. Reuse the exact bytes and part ranges used by the published view.
+    acis_checkpoint = folder/'view-acis.json'
+    if resume_archive and acis_checkpoint.exists():
+        acis_rows, acis_errors, has_positions = json.loads(acis_checkpoint.read_bytes())
+        acis_bytes = (folder/'acis-positions.bin').read_bytes() if has_positions else b''
+    else:
+        acis_rows,acis_errors,acis_bytes=reconstruct(folder,extras.get('opaque',{}),drawing['entities'])
+        if early and (acis_rows or acis_errors):
+            acis_checkpoint.write_text(json.dumps([acis_rows, acis_errors, bool(acis_bytes)]), encoding='utf8')
     acis_handles=set()
     acis_base=len(buffer_bytes);buffer_bytes.extend(acis_bytes)
     for result in acis_rows:
@@ -831,7 +840,7 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
             region_items[key] = {'status':'ready', 'sourceKind':'REGION',
                 'sourceRefs':entity.get('sourceRefs') or [], 'mode':'geometry', 'parts':parts}
             region_handles.add(str(meta.get('handle')))
-    if region_handles or mesh_items:
+    if (region_handles or mesh_items) and not early:
         buffer_path.write_bytes(buffer_bytes)
     # Freeze once; validation and publication share the exact same immutable bytes.
     buffer_bytes = bytes(buffer_bytes)
@@ -974,31 +983,36 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
         folder_view = Path(binary_dir).parent/'scratch'/'display'
         folder_view.mkdir(parents=True, exist_ok=True)
         saved_buffer = Path(binary_dir)/(bid+'.bin')
-        saved_buffer.write_bytes(buffer_bytes)
-        view_tables = pack_document(doc, ((k,r) for k,r in displays.items() if k not in special))
-        compact_polylines = bool(polyline_hints) and _compact_display_polylines(view_tables, polyline_hints, displays, special)
-        if curves:
-            # Only draw inputs cross the early boundary; bounds and exact parameters stay with the archive.
-            view_tables['packed']['curvePens'] = curve_pens
-            view_tables['packed']['curveRows'] = [r[:8]+r[11:13] for r in curves.values()]
-        wire = compress_document(view_tables)
-        del view_tables
-        del wire['revision']  # A display is not a sealed revision.
-        pending_view = folder_view/'view.tmp'
-        lease = display_lease
-        blob = wire['buffers'][bid]
-        descriptor = {'sha256':blob['sha256'], 'byteLength':blob['byteLength']}
-        with pending_view.open('wb') as stream:
-            write_canonical({'displayOnly':True,'transportProfile':'ucd-binary-manifest/1','resourceLease':lease,
-                             'bufferResources':{bid:{**descriptor,'url':'/api/resources/'+lease+'/'+blob['sha256']}},
-                             'document':wire, 'snapshot':{'completeness':'partial'},
-                             'presentation':presentation}, stream)
-        # Publish the descriptor only after both files are complete. The job's
-        # scratch directory owns its lifetime; the existing buffer is served in place.
-        view_path = folder_view/(blob['sha256']+'.json')
-        pending_view.replace(view_path)
-        del wire
-        phase('vector view available')
+        if resume_archive:
+            # Keep serving the original immutable files while rebuilding the archive tables.
+            view_path = next(folder_view.glob('*.json'))
+            compact_polylines = bool(polyline_hints)
+        else:
+            saved_buffer.write_bytes(buffer_bytes)
+            view_tables = pack_document(doc, ((k,r) for k,r in displays.items() if k not in special))
+            compact_polylines = bool(polyline_hints) and _compact_display_polylines(view_tables, polyline_hints, displays, special)
+            if curves:
+                # Only draw inputs cross the early boundary; bounds and exact parameters stay with the archive.
+                view_tables['packed']['curvePens'] = curve_pens
+                view_tables['packed']['curveRows'] = [r[:8]+r[11:13] for r in curves.values()]
+            wire = compress_document(view_tables)
+            del view_tables
+            del wire['revision']  # A display is not a sealed revision.
+            pending_view = folder_view/'view.tmp'
+            lease = display_lease
+            blob = wire['buffers'][bid]
+            descriptor = {'sha256':blob['sha256'], 'byteLength':blob['byteLength']}
+            with pending_view.open('wb') as stream:
+                write_canonical({'displayOnly':True,'transportProfile':'ucd-binary-manifest/1','resourceLease':lease,
+                                 'bufferResources':{bid:{**descriptor,'url':'/api/resources/'+lease+'/'+blob['sha256']}},
+                                 'document':wire, 'snapshot':{'completeness':'partial'},
+                                 'presentation':presentation}, stream)
+            # Publish the descriptor only after both files are complete. The job's
+            # scratch directory owns its lifetime; the existing buffer is served in place.
+            view_path = folder_view/(blob['sha256']+'.json')
+            pending_view.replace(view_path)
+            del wire
+            phase('vector view available')
         if curve_styles:
             native_geometry = doc['extensions']['org.libiaolink.dwg/1']['nativeGeometry']
             inheritance = doc['extensions']['org.cad-preview.style-inheritance/1']
@@ -1089,6 +1103,6 @@ def assemble_native(folder, original, output, platform=False, binary_dir=None, p
     pending.replace(artifact)
     phase('artifact written')
     (output/'assembly-summary.json').write_text(json.dumps({'validated':True,'manifestBytes':artifact.stat().st_size,
-        'bufferBytes':buffer_path.stat().st_size,'source':identity,'tables':tables,
+        'bufferBytes':(saved_buffer or buffer_path).stat().st_size,'source':identity,'tables':tables,
         'lossCounts':loss_counts,'completeness':'partial'},ensure_ascii=False,indent=2))
     return artifact

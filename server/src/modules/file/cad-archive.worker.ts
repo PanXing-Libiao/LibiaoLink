@@ -13,7 +13,7 @@ import { ObjectStorage } from "../../storage/index.js";
 import type { CadStoredBuffer } from "../../db/schema/cad.js";
 import { FileRepository } from "./file.repository.js";
 import { cadArchiveNamespace, CadEngineBusyError, CadEngineClient } from "./cad-engine.client.js";
-import { CadArchiveRepository, type CadFailureContext } from "./cad-archive.repository.js";
+import { CadArchiveRepository, type CadArtifactRow, type CadFailureContext } from "./cad-archive.repository.js";
 import { CAD_ARTIFACT_LIMIT, CAD_BUFFER_LIMIT, checkedCadStream, readCadManifest } from "./cad-archive.integrity.js";
 import { CadInputService, CadInputIntegrityError, cadInputs, cadResourceFingerprint, cadHasResourcePackage } from "./cad-inputs.js";
 import { cadArchiveEncoder, cadPrecompressedObjectKey } from "./cad-preview.compression.js";
@@ -38,8 +38,7 @@ class CadArchiveFailure extends Error {
 export class CadArchiveWorker implements OnApplicationShutdown {
   private readonly logger = new Logger(CadArchiveWorker.name);
   private running?: Promise<void>;
-  private abort?: AbortController;
-  private readonly streams = new Set<Readable>();
+  private readonly active = new Set<AbortController>();
   constructor(private readonly repository: CadArchiveRepository, private readonly files: FileRepository,
     private readonly engine: CadEngineClient, private readonly storage: ObjectStorage, private readonly inputs: CadInputService, private readonly maintenance: CadCacheMaintenance) {}
 
@@ -53,17 +52,37 @@ export class CadArchiveWorker implements OnApplicationShutdown {
     await this.repository.clearExpiredViews();
     const row = await this.repository.claim();
     if (!row) { await this.maintenance.runIfDue(); return; }
+    let next: Promise<void> | undefined;
+    const admitWaitingView = async () => {
+      if (next) return;
+      const waiting = await this.repository.claim(true);
+      if (waiting) {
+        next = this.processRow(waiting);
+        // Observe failure immediately; drain also waits for this claim before accepting another pair.
+        void next.catch(() => {});
+      }
+    };
+    try { await this.processRow(row, admitWaitingView); }
+    finally { await next; }
+  }
+
+  private async processRow(row: CadArtifactRow, admitWaitingView?: () => Promise<void>): Promise<void> {
     const started = performance.now();
     const timings: Record<string, number> = { eligibleQueueWaitMS: Math.max(0, new Date().getTime() - row.availableAt.getTime()) };
     let submittedAt: number | undefined, nativeReadyAt: number | undefined, failureCode: string | undefined;
-    const abort = this.abort = new AbortController();
+    const abort = new AbortController();
+    this.active.add(abort);
+    const streams = new Set<Readable>();
+    abort.signal.addEventListener("abort", () => {
+      for (const stream of streams) stream.destroy(new Error("CAD background task interrupted"));
+    }, { once: true });
     let prefix: string | undefined;
     let activeLease: string | undefined, nativeId: string | undefined;
     let terminalState: CadFailureContext["terminalState"];
     let archived = false;
     const namespace = cadArchiveNamespace(row.id);
     const heartbeat = setInterval(() => {
-      void this.repository.renew(row).then((owned) => { if (!owned) this.interrupt(); }).catch(() => this.interrupt());
+      void this.repository.renew(row).then((owned) => { if (!owned) abort.abort(); }).catch(() => abort.abort());
     }, 15_000);
     heartbeat.unref();
     try {
@@ -91,6 +110,9 @@ export class CadArchiveWorker implements OnApplicationShutdown {
           throw new CadArchiveFailure("conversion-timeout", "CAD 后台解析超时，请稍后重试", false);
         }
         if (!await this.repository.renew(row, job.phase)) throw new Error("CAD claim no longer owned");
+        if (admitWaitingView && job.phase === "vector-available" && source.sourceFormat === "DWG" && !cadHasResourcePackage(source)) {
+          await admitWaitingView();
+        }
         await delay(500, undefined, { signal: abort.signal });
         job = await this.engine.status({ namespace, jobId: nativeId });
       }
@@ -102,9 +124,9 @@ export class CadArchiveWorker implements OnApplicationShutdown {
       nativeReadyAt = performance.now();timings.engineWaitMS = nativeReadyAt - submittedAt;
       if (!await this.repository.renew(row, "persisting")) throw new Error("CAD claim no longer owned");
       const manifest = await this.engine.file("manifest", { namespace, jobId: nativeId });
-      this.streams.add(manifest.stream);
+      streams.add(manifest.stream);
       const raw = await readCadManifest(manifest.stream, manifest.bytes);
-      this.streams.delete(manifest.stream);
+      streams.delete(manifest.stream);
       const packet = archiveManifest.parse(JSON.parse(raw.toString("utf8")));
       activeLease = packet.resourceLease;
       if (packet.presentation.sourceSHA256 !== row.sourceSHA256) throw new Error("CAD manifest source mismatch");
@@ -134,7 +156,7 @@ export class CadArchiveWorker implements OnApplicationShutdown {
         const resource = await this.engine.file("buffer", { namespace, jobId: nativeId, lease: activeLease, sha256: buffer.sha256 });
         if (resource.bytes !== buffer.byteLength) { resource.stream.destroy(); throw new Error("CAD resource size mismatch"); }
         const checked = checkedCadStream(resource.stream, buffer.byteLength, buffer.sha256);
-        this.streams.add(checked);
+        streams.add(checked);
         const folder = await mkdtemp(join(tmpdir(), "cad-buffer-"));
         const spool = join(folder, "buffer.bin");
         try {
@@ -154,7 +176,7 @@ export class CadArchiveWorker implements OnApplicationShutdown {
             }
           }
         } finally {
-          checked.destroy(); this.streams.delete(checked);
+          checked.destroy(); streams.delete(checked);
           await rm(folder, { recursive: true, force: true }).catch(() => {});
         }
       }
@@ -192,19 +214,14 @@ export class CadArchiveWorker implements OnApplicationShutdown {
         timings: { ...timings, totalMS: performance.now() - started } });
       clearInterval(heartbeat);
       if (nativeId && activeLease) await this.engine.release({ namespace, jobId: nativeId, lease: activeLease, retire: archived }).catch(() => {});
-      this.abort = undefined;
-      for (const stream of this.streams) stream.destroy();
-      this.streams.clear();
+      this.active.delete(abort);
+      for (const stream of streams) stream.destroy();
+      streams.clear();
     }
   }
 
-  private interrupt(): void {
-    this.abort?.abort();
-    for (const stream of this.streams) stream.destroy(new Error("CAD background task interrupted"));
-  }
-
   async onApplicationShutdown(): Promise<void> {
-    this.interrupt();
+    for (const abort of this.active) abort.abort();
     await this.running?.catch(() => {});
   }
 }

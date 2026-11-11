@@ -119,11 +119,15 @@ export class CadArchiveRepository {
         objectPrefix ? eq(cadArtifacts.objectPrefix, objectPrefix) : undefined));
   }
 
-  async claim(): Promise<CadArtifactRow | null> {
+  async claim(viewedDwgOnly = false): Promise<CadArtifactRow | null> {
     return this.database.db.transaction(async (tx) => {
       const now = new Date();
       const row = (await tx.select().from(cadArtifacts).where(and(
         inArray(cadArtifacts.formatVersion, Object.values(CAD_FORMAT_VERSIONS)),
+        viewedDwgOnly ? and(eq(cadArtifacts.sourceFormat, "DWG"), eq(cadArtifacts.resourceSetHash, "0".repeat(64)),
+          eq(cadArtifacts.state, "queued"), sql`exists (select 1 from ${cadViews} where ${cadViews.artifactId} = ${cadArtifacts.id}
+            and not ${cadViews.cancelled} and ${cadViews.expiresAt} > ${now}
+            and ${cadViews.lastSeenAt} > ${new Date(now.getTime() - 30_000)})`) : undefined,
         or(and(eq(cadArtifacts.state, "queued"), lt(cadArtifacts.availableAt, now)),
           and(eq(cadArtifacts.state, "running"), lt(cadArtifacts.claimUntil, now)))))
         .orderBy(sql`case
