@@ -21,7 +21,7 @@ import { PermissionService } from "../permission/index.js";
 import { ProjectGroupService, ProjectQueryService } from "../project/index.js";
 import { ReportDigestService } from "../report-issue/index.js";
 import { isReportQueryText, parseReportQuery } from "./report-query.parser.js";
-import { toSingleReportPosterData } from "./report-query.poster.js";
+import { toReportQueryPosterData } from "./report-query.poster.js";
 import {
   buildAmbiguousProjectMessage,
   buildReportQueryText,
@@ -242,10 +242,15 @@ export class ReportQueryService {
     await this.respond(incoming, content, replyState);
 
     if (!replyState.replied) return;
-    const posterData = toSingleReportPosterData(snapshot, {
+    const poster = toReportQueryPosterData(snapshot, {
       includeIssues: command.topic !== "reports" && canViewIssues,
     });
-    if (posterData === null) return;
+    if (poster === null) return;
+    const sendDaily =
+      command.topic !== "issues" &&
+      (poster.kind === "single" || poster.data.reports.length >= 2);
+    const sendIssues = command.topic !== "reports" && poster.data.issues.length > 0;
+    if (!sendDaily && !sendIssues) return;
 
     const trace = incoming.msgid ?? "report-query";
     const fromUserId = incoming.fromUserId;
@@ -261,10 +266,10 @@ export class ReportQueryService {
 
     try {
       await this.posterDelivery.send({
-        data: posterData,
+        ...poster,
         target,
-        sendDaily: command.topic !== "issues",
-        sendIssues: posterData.issues.length > 0,
+        sendDaily,
+        sendIssues,
         trace,
       });
     } catch (error) {

@@ -14,12 +14,13 @@
 - **导出**：`applyMarkdownHardBreaks` 随 `truncateUtf8Bytes` 从 notify 公开出口导出，供 `report-query` 按企微 markdown 口径组装文字。
 - **测试 / 边界**：`server/test/report-query-service.test.ts` 覆盖查询优先于绑定码、群聊仅激活、身份未绑定与限流幂等；notify 仍不 import `report-issue`，查询链路不写审计 / outbox / 站内信 / 群播报。`server/` 属 wmj 线代记，请 wmj 复核。
 
-## 日报查询单篇海报投递（2026-11-11 · S4）
+## 日报查询海报投递（2026-11-11 · S4 / S5）
 
-- **公开入口**：`DailyReportPosterDeliveryService.send({ data, target, sendDaily, sendIssues, trace })`。`data` 只使用 notify 自己的 `DailyReportPosterData`，不反向依赖 report-issue；单聊目标走 `sendUserImage`（`dmActivated=true`），群聊目标走 `sendGroupImage`（`groupActivated=true`）。
-- **发送顺序**：调用方先完成文字与深链回复；服务内严格按日报图 → 问题图发送，每次调用最多两张图。问题图只在 `sendIssues=true` 且 `data.issues` 非空时生成。
-- **附件 / 失败隔离**：按当前发送开关筛选附件，同一 `objectKey` 只读取一次；单张附件读取、渲染、10MB、上传或发送失败只跳过对应图片，日报图失败仍尝试问题图。成功 / 失败只记 `trace`、掩码目标末 4 位、错误名或 errcode，不记正文与完整 ID。
-- **测试 / 边界**：`server/test/daily-report-poster-delivery.test.ts` 覆盖双图顺序、群 / 单聊目标、主题开关、无问题权限不读问题附件、10MB、渲染 / 发送 / 附件失败隔离；不持久化海报字节、不写审计 / outbox / 站内信，既有群同步 `sendDailyReportPoster` 行为不变。`server/` 属 wmj 线代记，请 wmj 复核。
+- **公开入口**：`DailyReportPosterDeliveryService.send({ kind, data, target, sendDaily, sendIssues, trace })`。`kind=single` 使用 `DailyReportPosterData` 并复用现有日报 / 问题专报；`kind=digest` 使用 `DailyReportDigestPosterData`，服务侧选择日报合集 / 问题合集渲染器。`data` 只使用 notify 自己的海报快照类型，不反向依赖 report-issue；单聊目标走 `sendUserImage`（`dmActivated=true`），群聊目标走 `sendGroupImage`（`groupActivated=true`）。
+- **发送顺序**：调用方先完成文字与深链回复；服务内严格按日报图 → 问题图发送，每次调用最多两张逻辑图。0 篇日报不生成日报合集；问题图只在 `sendIssues=true` 且对应快照有问题时生成。
+- **合集预算**：`renderDailyReportDigestPoster` / `renderDailyReportIssueDigestPoster` 固定 1440px 宽，画布最高 16000px；每篇日报 / 每个问题只取 1 张首图，取首图后整图最多 8 张缩略图。超过 8 张时投递层不生成该合集图，直接回退文字 + 深链；不截断附件后继续发送。正文预算耗尽显示“完整内容请点击上方深链”；单项原有多图但合计未超限时，图中提示每项仅展示 1 张。
+- **附件 / 并发 / 失败隔离**：按当前发送开关筛选附件，同一 `objectKey` 只读取一次；合集日报与问题图各自只接收本图所需的图片映射。渲染闸门同时 1 张、排队最多 2 个；队列满、单张附件读取、渲染、10MB、上传或发送失败只跳过对应图片，日报图失败仍尝试问题图。成功 / 失败只记 `trace`、掩码目标末 4 位、错误名或 errcode，不记正文与完整 ID。
+- **测试 / 边界**：`server/test/daily-report-poster-delivery.test.ts` 覆盖单篇 / 合集分流、0 篇问题合集、双图顺序、每项首图 / 8 张上限、群 / 单聊目标、10MB、渲染 / 发送 / 附件失败隔离与并发队列上界；`server/test/daily-report-poster.test.ts` 覆盖两张合集图 1440px 宽、≤16000px 和超预算输出。不持久化海报字节、不写审计 / outbox / 站内信，既有群同步 `sendDailyReportPoster` 行为不变。`server/` 属 wmj 线代记，请 wmj 复核。
 
 ## 物料变更补发图片（2026-11-09）
 

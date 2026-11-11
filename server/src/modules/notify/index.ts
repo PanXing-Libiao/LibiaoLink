@@ -12,11 +12,22 @@ export {
 } from "./notify.group.service.js";
 export { NotifyGroupRepository } from "./notify.group.repository.js";
 export { DailyReportPosterDeliveryService } from "./daily-report-poster-delivery.service.js";
+export {
+  DAILY_REPORT_DIGEST_ATTACHMENT_NOTICE,
+  DAILY_REPORT_DIGEST_TRUNCATION_NOTICE,
+  DAILY_REPORT_POSTER_MAX_HEIGHT,
+  DAILY_REPORT_POSTER_MAX_THUMBNAILS,
+} from "./daily-report.poster.constants.js";
 export type {
+  DailyReportPosterPayload,
   DailyReportPosterTarget,
   DailyReportPosterDeliveryInput,
 } from "./daily-report-poster-delivery.service.js";
 export type {
+  DailyReportDigestIssue,
+  DailyReportDigestPosterData,
+  DailyReportDigestReport,
+  DailyReportDigestSourceReport,
   DailyReportPosterData,
   DailyReportPosterFontPaths,
   DailyReportPosterIssue,
